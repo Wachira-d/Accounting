@@ -246,6 +246,9 @@ public enum PaymentEntrySource
     /// <summary>ระบบภายนอกผ่าน integration (IntegrationService.ProcessPaymentAsync — ทางเข้าที่ 9 · AUDIT_249_COVERAGE M-3) — บันทึกการชำระเอง
     /// แล้วเรียก <c>IDocumentService.AfterPaymentRecordedAsync</c> (ขั้นหลัง commit ตัวเดียวกับ CreatePaymentAsync)</summary>
     Integration,
+    /// <summary>รอบ 252 WP-12A (AUTOPILOT §5): เงินโอนในรายการเดินบัญชีจริง (statement/feed) ปิดหนี้ใบค้าง — ระบบปิดเอง (<c>BankReceiptAutoSettle</c> = AutoSettle)
+    /// หรือคนกดยืนยันข้อเสนอในคิว "เงินเข้าที่รอยืนยัน" · เดินเต็มเหมือน gateway (ออก/ส่งใบเสร็จตามค่าตั้ง)</summary>
+    BankAutoSettle,
 }
 
 /// <summary>

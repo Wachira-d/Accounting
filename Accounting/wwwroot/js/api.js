@@ -1550,6 +1550,20 @@ const API = {
       pauseRecurring: (id) => API.post(`${base}/recurring/${id}/pause`),
       resumeRecurring: (id) => API.post(`${base}/recurring/${id}/resume`),
       runRecurringNow: (id) => API.post(`${base}/recurring/${id}/run-now`),
+      // รอบ 252 WP-12A: หน้า Autopilot — ภาพรวม/เรื่องที่ติด/ค่าตั้ง/ใบเสนอราคาแปลงอัตโนมัติ/คิวเงินโอนเข้า (ทุกป้าย/ปุ่มจากเซิร์ฟเวอร์)
+      getAutopilotOverview: (days = 30) => API.get(`${base}/autopilot/overview?days=${encodeURIComponent(days)}`),
+      updateAutopilotSettings: (d) => API.put(`${base}/autopilot/settings`, d),
+      setQuotationAutopilotMode: (id, mode) => API.put(`${base}/autopilot/quotations/${encodeURIComponent(id)}/mode`, { mode }),
+      confirmAutopilotBank: (lineId, documentId) => API.post(`${base}/autopilot/bank-queue/${encodeURIComponent(lineId)}/confirm`, { documentId }),
+      rejectAutopilotBank: (lineId) => API.post(`${base}/autopilot/bank-queue/${encodeURIComponent(lineId)}/reject`),
+      setContactBankAutoSettle: (contactId, disabled) => API.put(`${base}/autopilot/contacts/${encodeURIComponent(contactId)}/bank-auto-settle`, { disabled: !!disabled }),
+      simulateAutopilotBank: (days = 30) => API.get(`${base}/autopilot/bank-simulate?days=${encodeURIComponent(days)}`),
+      // ปุ่มในรายการ "เรื่องที่ระบบทำต่อไม่ได้" — path มาจากเซิร์ฟเวอร์ (ใต้ api/companies/{cid}/ เท่านั้น · ไม่รับ / นำหน้า/..)
+      autopilotIssueAction: (path) => {
+        const p = String(path || '');
+        if (!/^[a-z0-9\-\/]+$/i.test(p) || p.includes('..') || p.startsWith('/')) return Promise.reject(new Error('ปุ่มนี้ไม่ถูกต้อง'));
+        return API.post(`${base}/${p}`);
+      },
       // รอบ 247: ผู้ติดต่อรับอีเมลเอกสารได้ไหม (ฟอร์มรายการประจำ)
       getRecurringEmailReadiness: (contactId) => API.get(`${base}/recurring/email-readiness?contactId=${encodeURIComponent(contactId)}`),
       // รอบ 248: Autopilot รายการประจำ — ตัวเลือก · ความพร้อม · ทดลองรัน (ไม่เขียนอะไร) · นโยบายอนุมัติ · ช่องทางรับเงินต่อผู้ติดต่อ

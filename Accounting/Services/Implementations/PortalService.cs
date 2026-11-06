@@ -27,12 +27,15 @@ public class PortalService : IPortalService
 
     /// <summary>รอบ 250 WP-02b (M-2): สลิปพอร์ทัล = <c>PaymentIntent(ManualSlip)</c> รอยืนยัน — ทางเดียวกับเส้นสลิป/gateway อื่น (null = สร้างนอก DI ⇒ แนบสลิปไม่ได้ ไม่ถอยไปสร้าง Payment)</summary>
     private readonly Accounting.Services.Payments.IPaymentIntentService? _intents;
+    /// <summary>รอบ 252 WP-12A: แจ้งทีม "ลูกค้าแจ้งโอน" (E-06) · null ในเทสต์ที่สร้างตรง</summary>
+    private readonly INotificationEngine? _notify;
 
     public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null, IImageProcessingService? images = null,
         Accounting.Services.Storage.IFileStorage? storage = null, Accounting.Services.Payments.IPaymentIntentService? intents = null,
-        IDocumentPayLinkService? payLinks = null)
+        IDocumentPayLinkService? payLinks = null, INotificationEngine? notify = null)
     {
         _payLinks = payLinks;
+        _notify = notify;
         _storage = storage;
         _intents = intents;
         _db = db;
@@ -574,7 +577,7 @@ public class PortalService : IPortalService
     /// พนักงานตรวจแล้วกดยืนยันที่หน้ารายการรับชำระ ⇒ <c>DocumentPaymentHandler</c> ⇒ <c>CreatePaymentAsync</c> (JE · ตัดหนี้ · ใบเสร็จ)</para>
     /// ตรวจความเป็นเจ้าของ: document.ContactId ต้องตรงผู้ติดต่อของโทเคนพอร์ทัล</summary>
     public async Task<PortalSlipUploadResponse> UploadDocumentSlipAsync(
-        Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount)
+        Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount, string? bankRef = null)
     {
         if (file == null || file.Length == 0)
             throw new ArgumentException("กรุณาเลือกไฟล์สลิป");
@@ -591,6 +594,22 @@ public class PortalService : IPortalService
         var pay = amount ?? doc.BalanceDue;
         if (DocumentSlipIntents.UploadProblem(doc.Status, doc.BalanceDue, pay) is string uploadProblem)
             throw new BusinessRuleException(uploadProblem, DocumentSlipIntents.RuleCode, 400);
+
+        // รอบ 252 WP-12A (AUTOPILOT §5.6 G-T5): สลิปกันซ้ำด้วยแฮชไฟล์ต้นฉบับ (ก่อนย่อรูป) + เลขอ้างอิงโอน — ทั้งบริษัท (สลิปเดียวจ่ายสองใบไม่ได้) ·
+        // ด่านก่อนเขียนไฟล์/สร้างรายการ · สลิปเป็นข้อบ่งชี้เท่านั้น (ไม่ปิดหนี้เอง)
+        byte[] slipBytes;
+        await using (var hs = file.OpenReadStream())
+        using (var ms = new System.IO.MemoryStream())
+        {
+            await hs.CopyToAsync(ms);
+            slipBytes = ms.ToArray();
+        }
+        var slipSha = SlipEvidenceRule.Sha256Hex(slipBytes);
+        var slipRef = SlipEvidenceRule.NormalizeRef(bankRef);
+        var sameFile = await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipFileSha256 == slipSha);
+        var sameRef = slipRef != null && await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipBankRef == slipRef);
+        if (SlipEvidenceRule.DuplicateProblem(sameFile, sameRef) is string dupProblem)
+            throw new BusinessRuleException(dupProblem, SlipEvidenceRule.RuleDuplicate, 409);
 
         // Save file under wwwroot/uploads/portal-slips/{yyyy-MM}/...
         // Run images through ImageProcessingService (Slip profile — compressed
@@ -638,6 +657,10 @@ public class PortalService : IPortalService
                 ex, DocumentSlipIntents.RuleCode, 409);
         }
 
+        // หลักฐานกันซ้ำบนรายการเดียวกับที่คนยืนยัน (ไม่ใช่ตารางที่สอง) · เลขอ้างอิงเป็นตัวระบุตัวให้ BankReceiptAutoSettle เมื่อรายการเดินบัญชีจริงมาถึง
+        await _db.PaymentIntents.Where(i => i.Id == intent.Id && i.CompanyId == companyId)
+            .ExecuteUpdateAsync(u => u.SetProperty(i => i.SlipFileSha256, slipSha).SetProperty(i => i.SlipBankRef, slipRef));
+
         _db.Set<FileAttachment>().Add(new FileAttachment
         {
             CompanyId = companyId,
@@ -652,6 +675,16 @@ public class PortalService : IPortalService
         });
 
         await _db.SaveChangesAsync();
+
+        // E-06: แจ้งทีมทันที (ลูกค้าแจ้งโอน — รอตรวจ) · เครื่องแจ้งเตือนกลางไม่โยนกลับ (ล้มไม่ย้อนการแนบสลิป)
+        if (_notify != null)
+        {
+            var (title, message) = AutopilotNotice.SlipSubmitted(doc.DocumentNumber, intent.Amount, slipRef);
+            await _notify.DispatchAsync(companyId, Accounting.Models.Constants.NotificationEvents.AutopilotSlipSubmitted, new NotificationContext
+            {
+                Title = title, Message = message, ActionUrl = "/pages/documents.html?openDoc=" + doc.Id, EntityType = "Document", EntityId = doc.Id,
+            });
+        }
 
         return new PortalSlipUploadResponse(intent.Id, doc.Id, relUrl, intent.Amount, DateTime.UtcNow, AwaitingReview: true);
     }

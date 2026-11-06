@@ -452,7 +452,9 @@ public partial class BankService : IBankService
                 BalanceAfter = account.CurrentBalance,
                 Description = description,
                 Reference = request.Reference,
-                Payee = request.Payee
+                Payee = request.Payee,
+                // รอบ 252 WP-12A: พิมพ์มือ ⇒ ไม่ใช่หลักฐานธนาคาร (BankReceiptAutoSettle ไม่ปิดหนี้เอง — เสนอได้อย่างเดียว)
+                EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceManual
             };
 
             _db.Set<BankTransaction>().Add(transaction);

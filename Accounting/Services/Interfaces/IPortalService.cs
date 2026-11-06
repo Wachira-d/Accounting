@@ -34,9 +34,8 @@ public interface IPortalService
     /// <summary>รอบ 250 WP-03 (A G-01): ตัวเลือกชำระของ<b>ใบนี้</b> (เจ้าของใบต้องเป็นผู้ติดต่อของโทเค็น) + QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง
     /// ฝังยอดค้างของใบ (<c>PromptPayQrDataUri</c>) — แทนการให้หน้าเว็บส่งเลขพร้อมเพย์+ยอดไปบริการ QR ภายนอก</summary>
     Task<StorefrontPaymentOptions> GetDocumentPaymentOptionsAsync(Guid companyId, Guid contactId, Guid documentId, CancellationToken ct = default);
-    /// <summary>Record a slip uploaded by the portal customer against
-    /// a specific Document (invoice). Creates a Payment row in
-    /// Pending status; owner reviews + marks Confirmed.</summary>
+    /// <summary>ลูกค้าแนบสลิปของใบแจ้งหนี้ — สร้าง <c>PaymentIntent(ManualSlip)</c> รอตรวจ (ไม่ใช่รับชำระ) · รอบ 252 WP-12A: กันสลิปซ้ำด้วยแฮชไฟล์ +
+    /// เลขอ้างอิงโอน (<paramref name="bankRef"/> ที่ลูกค้ากรอก · ไม่บังคับ) · แจ้งทีม E-06</summary>
     Task<PortalSlipUploadResponse> UploadDocumentSlipAsync(
-        Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount);
+        Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount, string? bankRef = null);
 }

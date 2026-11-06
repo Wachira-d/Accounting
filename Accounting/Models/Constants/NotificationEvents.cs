@@ -92,6 +92,16 @@ public static class NotificationEvents
     public const string RecurringRunFailed = "recurring.run_failed";
     /// <summary>รอบ 250 WP-04 ต่อยอด: รายการประจำจะสร้างเอกสารในอีก N วัน (ค่าตั้ง "แจ้งเตือนก่อนรัน" ของรายการ) — ค่าตั้งต้น: กระดิ่งของผู้สร้างรายการ</summary>
     public const string RecurringUpcomingRun = "recurring.upcoming_run";
+    // ===== รอบ 252 WP-12A — Autopilot (AUTOPILOT_BILLING_DESIGN §10 · คำตัดสิน §2 #36 Q7: ล้ม/ติด = ทันที · สำเร็จ = สรุปประจำวัน 08:40) =====
+    // แค็ตตาล็อก E-01…E-15 + ข้อความทุกเหตุการณ์ประกอบที่ Helpers/AutopilotNotice ตัวเดียว · ค่าตั้งต้น = กระดิ่ง + อีเมลถึงเจ้าของ (NotificationAudiencePolicy.EmailDefaultKeys)
+    /// <summary>E-01c: ลูกค้ายอมรับใบเสนอราคาแล้ว แต่ระบบแปลงเป็นใบแจ้งหนี้/ใบกำกับอัตโนมัติไม่ได้ (เนื้อหาเปลี่ยนหลังยอมรับ · แปลงล้ม · บริษัทไม่จด VAT) — ทันที</summary>
+    public const string AutopilotQuotationBlocked = "autopilot.quotation_blocked";
+    /// <summary>E-06: ลูกค้าแจ้งโอน/แนบสลิปผ่านพอร์ทัล (สลิป = ข้อบ่งชี้ ไม่ใช่รับชำระ) — ทันที</summary>
+    public const string AutopilotSlipSubmitted = "autopilot.slip_submitted";
+    /// <summary>E-14b: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ (งวดปิด · ยอดเปลี่ยน ฯลฯ) — ทันที · รายการค้างในคิว "เงินเข้าที่รอยืนยัน"</summary>
+    public const string AutopilotBankSettleFailed = "autopilot.bank_settle_failed";
+    /// <summary>E-15: สรุป Autopilot ประจำวัน (ส่งแล้ว · รับเงิน · ใบเสร็จ · แปลงใบเสนอราคา · เงินโอนจับคู่ · เรื่องที่ระบบทำต่อไม่ได้) — วันละครั้งตามเวลาที่บริษัทตั้ง (ค่าตั้งต้น 08:40)</summary>
+    public const string AutopilotDailyDigest = "autopilot.daily_digest";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
     /// เพื่อสอบ DBA / raw SQL.</summary>
@@ -176,6 +186,10 @@ public static class NotificationEvents
         ("Accounting", RecurringApprovedWithNotes, "รายการประจำอนุมัติอัตโนมัติพร้อมข้อสังเกตรายจ่ายต้องห้าม §65 ตรี"),
         ("Accounting", RecurringRunFailed, "รายการประจำสร้างเอกสารอัตโนมัติไม่สำเร็จ (ต้องแก้ที่หน้ารายการประจำ)"),
         ("Accounting", RecurringUpcomingRun, "รายการประจำจะสร้างเอกสารในอีกไม่กี่วัน (ตั้งจำนวนวันที่รายการ)"),
+        ("Accounting", AutopilotQuotationBlocked, "Autopilot: ลูกค้ายอมรับใบเสนอราคาแล้วแต่ระบบแปลงอัตโนมัติไม่ได้ (ต้องให้คนทำต่อ)"),
+        ("Accounting", AutopilotSlipSubmitted, "Autopilot: ลูกค้าแจ้งโอน/แนบสลิปผ่านพอร์ทัล (รอตรวจ)"),
+        ("Accounting", AutopilotBankSettleFailed, "Autopilot: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ"),
+        ("Accounting", AutopilotDailyDigest, "Autopilot: สรุปประจำวัน (สำเร็จ · รอยืนยัน · เรื่องที่ระบบทำต่อไม่ได้)"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
         ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),
         ("Accounting", OverdueDunningFirst, "AR เกิน 60 วัน — ส่งหนังสือทวงหนี้รอบที่ 2"),

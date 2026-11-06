@@ -1,0 +1,160 @@
+using System.Globalization;
+
+namespace Accounting.Helpers;
+
+/// <summary>
+/// **ตัวตัดสิน "เงินโอนเข้าในรายการเดินบัญชี ⇒ ปิดหนี้ใบค้างเองได้ไหม" — ตัวเดียว** (รอบ 252 WP-12A · AUTOPILOT_BILLING_DESIGN §5.4 · รอบ 250 ของแผน) · pure · <b>ไม่เรียก AI</b>
+/// (ตัวเลขล้วนไม่มีการสะกดผิด — F2 ข้อ 3 · kill-switch AI ไม่มีผล)
+/// <para><b>AutoSettle</b> เมื่อครบทุกข้อ: (1) บรรทัดมาจากธนาคารจริง (statement ที่นำเข้า/feed — ไม่ใช่พิมพ์มือ/ไม่รู้แหล่ง) ·
+/// (2) ยอดเงินเข้า = ยอดสุทธิที่ลูกค้าต้องโอนของใบ <b>ตรงเป๊ะ</b> (สูตรเดียวกับลิงก์ชำระ/QR — <c>DocumentPayLinkPolicy.AmountsFor(...).Net</c>) ·
+/// (3) มีตัวระบุตัว ≥ 1: เลขเอกสารอยู่ในคำอธิบาย/อ้างอิง · ชื่อผู้โอนตรงผู้ติดต่อแบบมั่นใจ (<c>BankMatchScorer</c>) · เลขอ้างอิงโอนตรงสลิปที่ลูกค้าแจ้ง ·
+/// (4) ยอดไม่ซ้ำ: ไม่มีใบค้างอื่น (ทุกผู้ติดต่อ) ที่ยอดสุทธิเท่ากันในกรอบวัน — ถ้ามี ต้องอ้าง<b>เลขเอกสาร</b>ใบเดียวเท่านั้น ·
+/// (5) ไม่มีรายการชำระออนไลน์ค้างของใบ (กันนับซ้ำกับ gateway) · ผู้ติดต่อไม่ปิดการปิดหนี้อัตโนมัติ · <b>บริษัทเปิดค่าตั้ง</b> (ค่าตั้งต้นปิด — Q4)</para>
+/// <para><b>Suggest</b> (คนยืนยัน 1 คลิก): ผ่านยอดแต่ขาดข้อใด · ยอดเต็มก่อนหัก ณ ที่จ่าย (ลูกค้าไม่หัก?) · ขาด/เกินไม่เกิน ฿50 หรือ 2% พร้อมตัวระบุตัว ·
+/// ยอดเท่ากันหลายใบ (ให้คนเลือก) · <b>None</b>: อื่น ๆ · ไม่ปิดหลายใบรวม (subset-sum = backlog)</para>
+/// </summary>
+public static class BankReceiptAutoSettle
+{
+    public const string RuleAuto = "BANK-AUTO-SETTLE";
+    public const string RuleSuggest = "BANK-AUTO-SUGGEST";
+    public const string RuleNone = "BANK-AUTO-NONE";
+
+    // ── แหล่งของบรรทัด (BankTransaction.EntrySource) ──
+    public const string SourceStatement = "Statement";
+    public const string SourceFeed = "Feed";
+    public const string SourceManual = "Manual";
+
+    /// <summary>บรรทัดที่ปิดหนี้อัตโนมัติได้ = ธนาคารเป็นผู้ให้ข้อมูล (ไฟล์ statement/feed) · พิมพ์มือ/แถวเก่าไม่รู้แหล่ง = ไม่ได้</summary>
+    private static bool IsBankSourced(string? entrySource)
+        => string.Equals(entrySource, SourceStatement, StringComparison.Ordinal) || string.Equals(entrySource, SourceFeed, StringComparison.Ordinal);
+
+    public enum Verdict { None, Suggest, AutoSettle }
+
+    /// <summary>ค่าที่ประทับใน <c>BankTransaction.AutoSettleVerdict</c> (คำตัดสิน + ผลหลังลงมือ)</summary>
+    public static class Stamps
+    {
+        public const string None = "None";
+        public const string Suggest = "Suggest";
+        /// <summary>เข้าเกณฑ์ปิดอัตโนมัติ — กำลังบันทึกรับชำระ (ล้มกลางทาง ⇒ รอบหน้ากู้ด้วยเลขอ้างอิงการชำระ)</summary>
+        public const string Applying = "Applying";
+        public const string Settled = "Settled";
+        public const string Failed = "Failed";
+        public const string Rejected = "Rejected";
+    }
+
+    /// <summary>ทนยอด "ขาด/เกิน" ที่ยังเสนอให้คนดู (ค่าธรรมเนียมโอน/ส่วนต่าง WHT) — ไม่ใช่เกณฑ์ปิดหนี้</summary>
+    public const decimal NearAbsolute = 50m;
+    public const decimal NearPercent = 0.02m;
+    /// <summary>ใบที่ลงวันที่หลังเงินเข้าเกินนี้ไม่ใช่ผู้สมัคร</summary>
+    public const int DocumentAfterLineDays = 7;
+
+    public sealed record Line(decimal Amount, DateTime Date, bool IsCredit, string? EntrySource, bool AlreadyMatched);
+
+    /// <param name="ExpectedNet">ยอดที่ลูกค้าต้องโอน (= ยอดค้างสุทธิหลัง WHT — สูตรลิงก์ชำระ)</param>
+    /// <param name="ExpectedGross">ยอดก่อนหัก ณ ที่จ่าย (= สุทธิ + WHT ที่ยังไม่ถูกหัก)</param>
+    /// <param name="CitesDocumentNumber">เลขเอกสารอยู่ในคำอธิบาย/อ้างอิง/ผู้โอน (<see cref="CitesDocumentNumber(string?, string?)"/>)</param>
+    /// <param name="NameConfident">ชื่อผู้โอนตรงผู้ติดต่อแบบมั่นใจ (<c>BankMatchScorer.Result.NameConfident</c>)</param>
+    /// <param name="SlipRefMatched">เลขอ้างอิงโอนบนบรรทัดตรงสลิปที่ลูกค้าแจ้งของใบนี้</param>
+    public sealed record Candidate(Guid DocumentId, string DocumentNumber, DateTime DocumentDate, decimal ExpectedNet, decimal ExpectedGross,
+        bool CitesDocumentNumber, bool NameConfident, bool SlipRefMatched, bool HasPendingOnlinePayment, bool ContactAutoSettleDisabled)
+    {
+        public bool HasIdentity => CitesDocumentNumber || NameConfident || SlipRefMatched;
+    }
+
+    /// <param name="WouldAutoSettleIfEnabled">เข้าเกณฑ์ปิดเองทุกข้อ ยกเว้นบริษัทยังไม่เปิด — ใช้แสดง "ผลจำลอง 30 วัน"</param>
+    public sealed record Result(Verdict Kind, Guid? DocumentId, string RuleCode, string Reason, bool WouldAutoSettleIfEnabled);
+
+    private static string Money(decimal v) => v.ToString("N2", CultureInfo.InvariantCulture);
+
+    /// <summary>เลขเอกสารอยู่ในข้อความของบรรทัดไหม — เทียบแบบไม่สนตัวพิมพ์ และตัดช่องว่าง/ขีด/ทับ/จุดทั้งสองฝั่ง (ธนาคารมักตัดสัญลักษณ์) ·
+    /// เลขเอกสารสั้นกว่า 6 ตัวอักษรหลังตัด = ไม่นับ (กันชนตัวเลขทั่วไป)</summary>
+    public static bool CitesDocumentNumber(string? lineText, string? documentNumber)
+    {
+        var doc = Compact(documentNumber);
+        if (doc.Length < 6) return false;
+        return Compact(lineText).Contains(doc, StringComparison.Ordinal);
+    }
+
+    private static string Compact(string? s)
+        => new string((s ?? "").Where(ch => !char.IsWhiteSpace(ch) && ch is not ('-' or '/' or '.' or '_')).Select(char.ToUpperInvariant).ToArray());
+
+    private static bool Exact(decimal a, decimal b) => Math.Round(a, 2, MidpointRounding.AwayFromZero) == Math.Round(b, 2, MidpointRounding.AwayFromZero);
+
+    public static Result Decide(Line line, IReadOnlyList<Candidate> candidates, bool companyEnabled)
+    {
+        if (!line.IsCredit || line.Amount <= 0m)
+            return new Result(Verdict.None, null, RuleNone, "ไม่ใช่เงินเข้า", false);
+        if (line.AlreadyMatched)
+            return new Result(Verdict.None, null, RuleNone, "รายการนี้จับคู่แล้ว", false);
+
+        var pool = (candidates ?? Array.Empty<Candidate>())
+            .Where(c => c.ExpectedNet > 0m && c.DocumentDate.Date <= line.Date.Date.AddDays(DocumentAfterLineDays))
+            .ToList();
+        var exact = pool.Where(c => Exact(c.ExpectedNet, line.Amount)).ToList();
+
+        if (exact.Count == 0)
+        {
+            // ยอดเต็มก่อนหัก ณ ที่จ่าย — ลูกค้าไม่หัก? (ผู้ซื้อนิติบุคคลมีหน้าที่หัก — ไม่เดาแทน)
+            var gross = pool.Where(c => c.ExpectedGross > c.ExpectedNet && Exact(c.ExpectedGross, line.Amount)).ToList();
+            if (gross.Count == 1)
+                return new Result(Verdict.Suggest, gross[0].DocumentId, RuleSuggest,
+                    $"ยอดเท่ายอดก่อนหัก ณ ที่จ่ายของ {gross[0].DocumentNumber} ({Money(gross[0].ExpectedGross)}) — ลูกค้าไม่หัก ณ ที่จ่าย? ตรวจก่อนยืนยัน", false);
+            // ขาด/เกินเล็กน้อย + มีตัวระบุตัว (ค่าธรรมเนียมโอน/หักต่างอัตรา) — ห้ามประทับว่าครบ
+            var near = pool.Where(c => c.HasIdentity
+                    && Math.Abs(c.ExpectedNet - line.Amount) <= Math.Max(NearAbsolute, Math.Round(c.ExpectedNet * NearPercent, 2, MidpointRounding.AwayFromZero)))
+                .ToList();
+            if (near.Count == 1)
+            {
+                var d = line.Amount - near[0].ExpectedNet;
+                return new Result(Verdict.Suggest, near[0].DocumentId, RuleSuggest,
+                    (d < 0 ? $"ขาด {Money(-d)}" : $"เกิน {Money(d)}") + $" จากยอดที่ต้องโอนของ {near[0].DocumentNumber} ({Money(near[0].ExpectedNet)}) — ไม่ปิดเอง ตรวจส่วนต่างก่อน", false);
+            }
+            return new Result(Verdict.None, null, RuleNone, "ไม่มีใบค้างที่ยอดตรง", false);
+        }
+
+        // (4) ยอดซ้ำหลายใบ ⇒ ต้องอ้างเลขเอกสารใบเดียวเท่านั้น
+        Candidate pick;
+        if (exact.Count > 1)
+        {
+            var cited = exact.Where(c => c.CitesDocumentNumber).ToList();
+            if (cited.Count != 1)
+                return new Result(Verdict.Suggest, null, RuleSuggest,
+                    $"มีใบค้าง {exact.Count} ใบที่ยอดเท่ากัน ({Money(line.Amount)}) และรายการไม่อ้างเลขเอกสารใบเดียว — เลือกใบเองในคิว", false);
+            pick = cited[0];
+        }
+        else pick = exact[0];
+
+        string? hold = null;
+        if (!pick.HasIdentity)
+            hold = $"ยอดตรง {pick.DocumentNumber} แต่ไม่มีตัวระบุตัว (เลขเอกสาร/ชื่อผู้โอน/เลขอ้างอิงสลิป) — ยืนยันก่อนปิดหนี้";
+        else if (!IsBankSourced(line.EntrySource))
+            hold = $"ยอดตรง {pick.DocumentNumber} แต่รายการนี้ไม่ได้มาจากธนาคาร (พิมพ์มือ/ไม่ทราบแหล่ง) — ระบบไม่ปิดหนี้เอง";
+        else if (pick.HasPendingOnlinePayment)
+            hold = $"ยอดตรง {pick.DocumentNumber} แต่ใบนี้มีรายการชำระออนไลน์ค้างอยู่ — ตรวจว่าไม่ใช่เงินก้อนเดียวกันก่อนยืนยัน";
+        else if (pick.ContactAutoSettleDisabled)
+            hold = $"ยอดตรง {pick.DocumentNumber} แต่ผู้ติดต่อนี้ตั้งไม่ให้ปิดหนี้อัตโนมัติ — ยืนยันเอง";
+        if (hold != null) return new Result(Verdict.Suggest, pick.DocumentId, RuleSuggest, hold, false);
+
+        var why = $"ยอดตรงยอดที่ต้องโอนของ {pick.DocumentNumber} ({Money(pick.ExpectedNet)}) · "
+            + string.Join(" · ", new[]
+            {
+                pick.CitesDocumentNumber ? "อ้างเลขเอกสาร" : null,
+                pick.NameConfident ? "ชื่อผู้โอนตรงผู้ติดต่อ" : null,
+                pick.SlipRefMatched ? "เลขอ้างอิงตรงสลิปที่ลูกค้าแจ้ง" : null,
+            }.Where(x => x != null));
+        if (!companyEnabled)
+            return new Result(Verdict.Suggest, pick.DocumentId, RuleSuggest, why + " — เข้าเกณฑ์ปิดอัตโนมัติ แต่บริษัทยังไม่เปิด (ยืนยันเอง)", true);
+        return new Result(Verdict.AutoSettle, pick.DocumentId, RuleAuto, why, true);
+    }
+
+    /// <summary>ผลจำลองย้อนหลัง (อ่านอย่างเดียว) — ก่อนเปิดค่าตั้ง (Q4: ดู 30 วันก่อน)</summary>
+    public sealed record Simulation(int Lines, int WouldAutoSettle, int WouldSuggest, int NoMatch);
+
+    public static Simulation Summarize(IEnumerable<Result> results)
+    {
+        var list = (results ?? Array.Empty<Result>()).ToList();
+        var auto = list.Count(r => r.WouldAutoSettleIfEnabled);
+        var suggest = list.Count(r => r.Kind == Verdict.Suggest && !r.WouldAutoSettleIfEnabled);
+        return new Simulation(list.Count, auto, suggest, list.Count - auto - suggest);
+    }
+}

@@ -149,6 +149,9 @@ WATCHED = [
     # (ลงนามในนามบริษัท + สร้าง PO ปลายน้ำ) เดิมมีแค่ [Authorize] และอยู่ใน baseline 6 แถว ⇒ ปิดด่านครบ (CompanySettings.Edit ·
     # DocumentPermissionHelper.CanApproveAsync ฝั่งซื้อ) ⇒ ถอดจาก baseline + ย้ายเข้า WATCHED ตอนเขียว
     "Accounting/Controllers/CrossTenantWorkflowController.cs",
+    # รอบ 252 WP-12A — หน้า Autopilot: ยืนยันเงินโอน = บันทึกรับชำระ (Bank.Reconcile) · ค่าตั้งปิดหนี้อัตโนมัติ/แปลงใบเสนอราคา (CompanySettings.Edit) ·
+    # ตั้ง/ลองแปลงใบเสนอราคา (Document.Create) — ใส่ตอนเขียวตั้งแต่ไฟล์เกิด (ratchet)
+    "Accounting/Controllers/AutopilotController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

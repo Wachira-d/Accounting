@@ -259,6 +259,20 @@ public class Document : TenantEntity
     /// (migration เติมจาก <c>RecurringTransactions.LastDocumentId</c> ได้เฉพาะใบล่าสุดของแต่ละรายการ)</summary>
     public Guid? RecurringTransactionId { get; set; }
 
+    // ── รอบ 252 WP-12A (AUTOPILOT §7 · คำตัดสิน §2 #36 Q5): ใบเสนอราคาที่ลูกค้ายอมรับออนไลน์ → แปลงอัตโนมัติ (ตั้งต่อใบ · ค่าตั้งต้น "ไม่แปลง") ──
+    /// <summary>โหมดแปลงเมื่อลูกค้ายอมรับ (ชื่อใน <c>Helpers/QuotationAcceptAutopilot.Modes</c>: Off · ToInvoice · ToTaxInvoice) · null = ตามค่าบริษัท
+    /// (<c>CompanySettings.QuotationAcceptAutopilotDefault</c> — ค่าตั้งต้น Off) · ผู้เขียน: <c>PUT …/autopilot/quotations/{id}/mode</c> ·
+    /// ผู้อ่าน: <c>QuotationAcceptAutopilotService.RunOnceAsync</c> (ผ่าน <c>QuotationAcceptAutopilot.Effective</c>) · ไม่สืบทอดไปใบลูก (ค่าของใบเสนอราคาเท่านั้น)</summary>
+    public string? QuotationAcceptAutopilot { get; set; }
+    /// <summary>ระบบตัดสินใบนี้แล้วเมื่อ (แปลงสำเร็จ/หยุดพร้อมเหตุ/ล้ม) — watermark ต่อใบ · null = ยังไม่ตัดสิน · ปุ่ม "ลองอีกครั้ง" ล้างค่านี้</summary>
+    public DateTime? QuotationAutopilotAt { get; set; }
+    /// <summary>ผลล่าสุด: <c>Converted</c> · <c>Held</c> · <c>Failed</c> · <c>AlreadyConverted</c> (ชื่อใน <c>QuotationAcceptAutopilot.Outcome</c>)</summary>
+    public string? QuotationAutopilotOutcome { get; set; }
+    /// <summary>เหตุ/ข้อความไทยของผลล่าสุด (หยุด/ล้ม) — แสดงในหน้า Autopilot "เรื่องที่ระบบทำต่อไม่ได้"</summary>
+    public string? QuotationAutopilotMessage { get; set; }
+    /// <summary>ใบที่ระบบแปลงได้ (ใบแจ้งหนี้/ใบกำกับ ร่าง) — null = ยังไม่ได้แปลง</summary>
+    public Guid? QuotationAutopilotChildId { get; set; }
+
     /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
     /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
     /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense
@@ -1116,6 +1130,10 @@ public class Contact : TenantEntity
     /// ใบเสร็จหลังรับชำระ · ลิงก์เซ็นอัตโนมัติ) — ชั้นผู้ติดต่อใน <c>AutopilotSettingsResolver.AutoSendBlock</c> · ค่าตั้งต้น false (พฤติกรรมเดิม) ·
     /// ตั้งที่ <c>PUT …/recurring/contacts/{id}/autopilot</c> (Contact.Edit · audit)</summary>
     public bool AutoSendDisabled { get; set; }
+
+    /// <summary>รอบ 252 WP-12A (AUTOPILOT §5.4 ข้อ "ผู้ติดต่อไม่ปิด"): <c>true</c> = เงินโอนของผู้ติดต่อรายนี้ไม่ถูกปิดหนี้อัตโนมัติจากรายการเดินบัญชี
+    /// (ยังเสนอให้คนยืนยันได้) · ค่าตั้งต้น false · ผู้อ่าน: <c>BankReceiptSettleService</c> → <c>BankReceiptAutoSettle.Decide</c></summary>
+    public bool BankAutoSettleDisabled { get; set; }
 
     /// <summary>ภาษาเอกสารเริ่มต้นของผู้ติดต่อรายนี้ ("th"/"en") — null = ตามค่า
     /// บริษัท. semantic = "ค่าตั้งต้นตอนสร้างใบ": ประทับลง Document.DocumentLanguage

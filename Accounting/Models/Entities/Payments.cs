@@ -212,6 +212,13 @@ public class PaymentIntent : TenantEntity
     /// (เฟส 2 ย้าย GatewaySettlementService ให้สร้าง batch จาก intent)</summary>
     public Guid? SettlementBatchId { get; set; }
 
+    /// <summary>รอบ 252 WP-12A (AUTOPILOT §5.6): SHA-256 ของไฟล์สลิปที่ลูกค้าแนบ (ไฟล์ต้นฉบับก่อนย่อรูป) — กันส่งสลิปเดิมซ้ำ (<c>SLIP-DUP</c>) ·
+    /// null = ไม่ใช่สลิป/แถวก่อนรอบ 252 · ผู้เขียน: <c>PortalService.UploadDocumentSlipAsync</c> · ผู้อ่าน: ด่านกันซ้ำตัวเดียวกัน</summary>
+    public string? SlipFileSha256 { get; set; }
+    /// <summary>เลขอ้างอิงรายการโอนที่ลูกค้ากรอก (ตัด/ปรับรูปด้วย <c>SlipEvidenceRule.NormalizeRef</c>) — กันซ้ำ + เป็น "ตัวระบุตัว" ให้
+    /// <c>BankReceiptAutoSettle</c> เมื่อรายการเดินบัญชีจริงมาถึง · สลิป<b>ไม่ปิดหนี้เอง</b> (F2 ข้อ 3)</summary>
+    public string? SlipBankRef { get; set; }
+
     public int AttemptCount { get; set; }
     public DateTime? LastPolledAt { get; set; }
 

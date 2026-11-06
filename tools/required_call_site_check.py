@@ -16254,6 +16254,111 @@ RULES += [
 ]
 
 
+# ── รอบ 252 WP-12A (AUDIT_249_FOR_OPUS.md §WP-12 · AUTOPILOT_BILLING_DESIGN §5/§7/§10/§11.4 · คำตัดสิน §2 #36): Autopilot ส่วน A ──
+# เงินโอนปิดหนี้ (ตัวตัดสินเดียว → สูตร WHT ลิงก์ชำระ → CreatePaymentAsync ทางเดียว → ผูก) · ใบเสนอราคาแปลงผ่าน ConvertDocumentAsync เท่านั้น ·
+# สรุปประจำวันประทับก่อนส่ง · สลิปกันซ้ำก่อนสร้างรายการ · งานเบื้องหลังผ่าน JobLock
+_R252_WHY = "รอบ 252 WP-12A: "
+_R252_BANK = "Services/Implementations/BankReceiptSettleService.cs"
+_R252_QT = "Services/Implementations/QuotationAcceptAutopilotService.cs"
+_R252_AP = "Services/Implementations/AutopilotService.cs"
+_R252_DIGEST = "Services/Implementations/AutopilotDigestService.cs"
+RULES += [
+    dict(file=_R252_BANK, method="ApplyAsync",
+         must=["PayLinkTransferWht.ForAsync(", "PayLinkTransferWht.PaymentWht(", "_docs.CreatePaymentAsync(", "PaymentReference(line.Id)", "LinkAsync("],
+         call_args=[("_docs.CreatePaymentAsync(", "paymentWht"), ("_docs.CreatePaymentAsync(", "BankAutoSettle")],
+         before=[("BankReceiptAutoSettle.Stamps.Applying", "_docs.CreatePaymentAsync("), ("_docs.CreatePaymentAsync(", "LinkAsync(")],
+         forbid=["Payments.Add(", "EnqueueAsync(", "EnqueueCoreAsync("],
+         why=_R252_WHY + "ปิดหนี้จากเงินโอน: ประทับ Applying ก่อน (กู้ได้) → WHT สูตรลิงก์ชำระ → CreatePaymentAsync ทางเดียว (งานหลังรับชำระเข้าคิวในแกน) → ผูกบรรทัด · ห้ามสร้าง Payment เอง"),
+    dict(file=_R252_BANK, method="EvaluateLineAsync",
+         must=["DecideAsync(", "BankReceiptAutoSettle.Verdict.AutoSettle", "ApplyAsync(", "NotifyFailedAsync("],
+         before=[("DecideAsync(", "ApplyAsync(")],
+         why=_R252_WHY + "ลงมือเฉพาะเมื่อตัวตัดสินเดียวบอก AutoSettle · ล้ม = แจ้งทันที (E-14b)"),
+    dict(file=_R252_BANK, method="DecideAsync",
+         must=["BankReceiptAutoSettle.Decide(", "CandidatesAsync(", "line.EntrySource"],
+         why=_R252_WHY + "แหล่งของบรรทัด (statement/feed vs พิมพ์มือ) เข้าตัวตัดสินทุกครั้ง"),
+    dict(file=_R252_BANK, method="CandidatesAsync",
+         must=["d.CompanyId == companyId", "c.CompanyId == companyId", "i.CompanyId == companyId", "PayLinkTransferWht.ForAsync(", "BankMatchScorer.Score(",
+               "BankReceiptAutoSettle.CitesDocumentNumber(", "SlipEvidenceRule.RefMatchesLine(", "BankAutoSettleDisabled"],
+         why=_R252_WHY + "ผู้สมัครของบริษัทนี้เท่านั้น · ยอดที่ต้องโอนสูตรเดียวกับลิงก์ชำระ · ตัวระบุตัว 3 แบบ · ผู้ติดต่อปิดได้"),
+    dict(file=_R252_BANK, method="ConfirmAsync",
+         must=["ChoicesFrom(", "ApplyAsync(", "BankMatchAttribution.Person(userId)"],
+         before=[("ChoicesFrom(", "ApplyAsync(")],
+         why=_R252_WHY + "คนยืนยันได้เฉพาะใบในชุดตัวเลือกของบรรทัด (ด่านกันกดผิดใบ) · ผู้จับคู่ = คนกด"),
+    dict(file=_R252_BANK, method="LinkAsync",
+         must=["AddChainedAuditLog(", "BankReceiptAutoSettle.Stamps.Settled", "t.CompanyId == companyId"],
+         why=_R252_WHY + "ผูกบรรทัด + audit chain · กรองบริษัท"),
+    dict(file="Services/Payments/PayLinkTransferWht.cs", method="ForAsync",
+         must=["DocumentService.PaymentWhtFiguresAsync(", "DocumentPayLinkPolicy.BuyerWithholds(", "DocumentPayLinkPolicy.ExpectedWht(",
+               "DocumentPayLinkPolicy.AmountsFor(", "whtFigures.NetCap", "c.CompanyId == companyId"],
+         why=_R252_WHY + "ยอดที่ลูกค้าต้องโอน = ชิ้นเดียวกับลิงก์ชำระ/DocumentPaymentHandler (ห้ามสูตรใหม่ — G-T3)"),
+    dict(file="Services/Payments/PayLinkTransferWht.cs", method="PaymentWht",
+         must=["DocumentPayLinkPolicy.WhtForPayment("], must_re=[r"BuyerWithholds\s*==\s*false\s*\?\s*0m"],
+         why=_R252_WHY + "ผู้ซื้อไม่มีหน้าที่หัก ⇒ 0 ชัด ๆ (ไม่ใช่ null = ยอดแนะนำ ⇒ 50 ทวิ เท็จ — ฝ่ายค้าน S1 รอบ 244)"),
+    dict(file=_R252_QT, method="ProcessOneAsync",
+         must=["QuotationAcceptAutopilot.Effective(", "QuotationAcceptAutopilot.Decide(", "QuotationAcceptance.ContentMatches(", "_docs.ConvertDocumentAsync(",
+               "NotifyBlockedAsync(", "c.RelatedDocumentId == qt.Id"],
+         before=[("QuotationAcceptAutopilot.Decide(", "_docs.ConvertDocumentAsync(")],
+         forbid=["Documents.Add("],
+         why=_R252_WHY + "A-7 ตัวตัดสินเดียวก่อนแปลง (เนื้อหาเปลี่ยนหลังยอมรับ = หยุด) · สูตรแปลงตัวเดียว ConvertDocumentAsync · ห้ามสร้างเอกสารเอง"),
+    dict(file=_R252_QT, method="RunOnceAsync",
+         must=["d.QuotationAutopilotAt == null", "QuotationAcceptAutopilotSince", "s.CompanyId == d.CompanyId"],
+         why=_R252_WHY + "ค่าบริษัทมี watermark (ไม่แปลงใบที่ยอมรับก่อนเปิด) · ใบที่ตัดสินแล้วไม่ถูกหยิบซ้ำ"),
+    dict(file=_R252_QT, method="StampAsync",
+         must=["d.QuotationAutopilotAt == null", "d.CompanyId == companyId"],
+         why=_R252_WHY + "ประทับแบบ compare-and-set — คนที่ประทับได้คือคนแจ้ง (แจ้งครั้งเดียว)"),
+    dict(file="Services/Background/AutopilotJob.cs", method="StepAsync",
+         must=["JobLock.RunExclusiveAsync("],
+         why=_R252_WHY + "F4 #6 งานเบื้องหลังใหม่ผ่าน JobLock (ทีละเครื่อง · คีย์ต่อขั้น)"),
+    dict(file=_R252_DIGEST, method="SendForCompanyAsync",
+         must=["AutopilotNotice.ComposeDigest(", "NotificationEvents.AutopilotDailyDigest", "_autopilot.DigestFactsAsync(", "s.CompanyId == companyId"],
+         before=[("ExecuteUpdateAsync(", "_notify.DispatchAsync(")],
+         why=_R252_WHY + "E-15 สรุปจากแถวจริง · ประทับวันก่อนส่ง (หลายเครื่อง = ส่งครั้งเดียว)"),
+    dict(file=_R252_DIGEST, method="RunOnceAsync", must=["AutopilotNotice.DigestDue("],
+         why=_R252_WHY + "เวลาส่งสรุปตามค่าตั้งของบริษัท (ตัวตัดสินเดียว)"),
+    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
+         must=["SlipEvidenceRule.Sha256Hex(", "SlipEvidenceRule.NormalizeRef(", "SlipEvidenceRule.DuplicateProblem(", "NotificationEvents.AutopilotSlipSubmitted"],
+         before=[("SlipEvidenceRule.DuplicateProblem(", "_intents.StartAsync(")],
+         forbid=["Payments.Add("],
+         why=_R252_WHY + "G-T5 สลิปกันซ้ำ (แฮชไฟล์ + เลขอ้างอิง) ก่อนสร้างรายการ · สลิปไม่ใช่รับชำระ · แจ้งทีม E-06"),
+    dict(file=_R252_AP, method="UpdateSettingsAsync",
+         must=["QuotationAcceptAutopilot.Normalize(", "AutopilotNotice.NormalizeDigestTime(", "QuotationAcceptAutopilotSince = now", "AddChainedAuditLog("],
+         why=_R252_WHY + "ค่าที่อ่านไม่ออกปฏิเสธ (ไม่ clamp เงียบ) · เปิดแปลงใบเสนอราคา = ประทับ watermark · audit"),
+    dict(file=_R252_AP, method="OverviewAsync",
+         must=["AutopilotStage.Of(", "d.CompanyId == companyId", "_bank.QueueAsync("],
+         why=_R252_WHY + "A-6 ขั้นของใบจากตัวตัดสินเดียว (read model จากแถวจริง)"),
+    dict(file=_R252_AP, method="SetQuotationModeAsync",
+         must=["QuotationAcceptAutopilot.Normalize(", "d.CompanyId == companyId", "AddChainedAuditLog("],
+         why=_R252_WHY + "ตั้งโหมดต่อใบ: ค่าที่อ่านไม่ออกปฏิเสธ · กรองบริษัท · audit"),
+    dict(file="Controllers/AutopilotController.cs", method="UpdateSettings",
+         must=["PermissionKeys.CompanySettingsEdit", "PermissionKeys.BankReconcile"],
+         why=_R252_WHY + "ค่าตั้ง = CompanySettings.Edit · เปิดปิดหนี้อัตโนมัติต้องมี Bank.Reconcile ด้วย"),
+    dict(file="Controllers/AutopilotController.cs", method="SetContactBankAutoSettle", must=["PermissionKeys.ContactEdit"],
+         why=_R252_WHY + "ปิดการปิดหนี้อัตโนมัติรายผู้ติดต่อ = แก้ผู้ติดต่อ ⇒ Contact.Edit"),
+    dict(file=_R252_AP, method="SetContactBankAutoSettleAsync", must=["c.CompanyId == companyId", "AddChainedAuditLog("],
+         why=_R252_WHY + "ผู้ติดต่อของบริษัทนี้เท่านั้น · audit chain"),
+    dict(file="Controllers/AutopilotController.cs", method="ConfirmBank", must=["PermissionKeys.BankReconcile"],
+         why=_R252_WHY + "ยืนยันเงินโอน = บันทึกรับชำระ ⇒ Bank.Reconcile"),
+    dict(file="Helpers/NotificationAudiencePolicy.cs", method="DefaultMatrix", must=["EmailDefaultKeys.Contains(eventKey)"],
+         why=_R252_WHY + "อีเมลสถานะ Autopilot ค่าตั้งต้นถึงเจ้าของ (กระดิ่ง + อีเมล)"),
+]
+REVIEWER_CASES += [
+    # WHT ไม่ส่ง ⇒ ตัวบันทึกรับชำระเดายอดแนะนำ (สูตรที่สอง) ⇒ ต้องฟ้อง
+    ("R252-1", "ApplyAsync", "WithholdingTaxAmount: paymentWht", "WithholdingTaxAmount: null", True),
+    # ทางเข้าถูกเปลี่ยนเป็น Manual ⇒ งานหลังรับชำระไม่รู้ว่าเป็นเงินโอนจากธนาคาร ⇒ ต้องฟ้อง
+    ("R252-2", "ApplyAsync", "), actor, PaymentEntrySource.BankAutoSettle);", "), actor, PaymentEntrySource.Manual);", True),
+    # ผู้สมัครไม่กรองบริษัท ⇒ ปิดหนี้ใบของบริษัทอื่น ⇒ ต้องฟ้อง
+    ("R252-3", "CandidatesAsync", ".Where(d => d.CompanyId == companyId && !d.IsDeleted", ".Where(d => !d.IsDeleted", True),
+    # ไม่ตรวจเนื้อหาเปลี่ยนหลังยอมรับ ⇒ ต้องฟ้อง
+    ("R252-4", "ProcessOneAsync", "QuotationAcceptance.ContentMatches(qt, qt.Lines)", "null", True),
+    # ถอดด่านสลิปซ้ำ ⇒ ต้องฟ้อง
+    ("R252-5", "UploadDocumentSlipAsync",
+     "if (SlipEvidenceRule.DuplicateProblem(sameFile, sameRef) is string dupProblem)\n            throw new BusinessRuleException(dupProblem, SlipEvidenceRule.RuleDuplicate, 409);",
+     "", True),
+    # ทิศตรงข้าม: จัดบรรทัดใหม่ ⇒ ต้องไม่ฟ้อง
+    ("R252-1fp", "ApplyAsync", "WithholdingTaxAmount: paymentWht\n", "WithholdingTaxAmount:\n                paymentWht\n", False),
+]
+
+
 def program_boot_migrations_errors(text: str) -> list:
     """รอบ 250 WP-04 (R246-MIG · Program.cs top-level): งานย้าย QR ครั้งเดียวต้องถูกเรียกตอนบูต <b>หลัง</b> ApplyMissingColumns
     (ตาราง marker + คอลัมน์ต้องมีก่อน) — มี ≠ ถูกเรียก (F2 ข้อ 2)"""

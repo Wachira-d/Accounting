@@ -108,6 +108,19 @@ public class BankTransaction : TenantEntity
     // (MatchedPaymentId / MatchedJournalEntryId still hold the first ID for
     // backwards compatibility / single-match queries.)
     public string? MatchedEntryIdsJson { get; set; }
+
+    // ── รอบ 252 WP-12A (AUTOPILOT §5.4 · รอบ 250 ของแผน): เงินโอนเข้า ⇒ ปิดหนี้ใบค้าง (ตัวตัดสิน Helpers/BankReceiptAutoSettle) ──
+    /// <summary>แหล่งของบรรทัด: <c>Statement</c> (ไฟล์ statement ที่นำเข้า) · <c>Feed</c> (ดึงจากธนาคาร) · <c>Manual</c> (พิมพ์มือ) · null = แถวก่อนรอบ 252 (ไม่รู้) —
+    /// ปิดหนี้อัตโนมัติได้เฉพาะ Statement/Feed (<c>BankReceiptAutoSettle.IsBankSourced</c>) · ผู้เขียน: จุดสร้างแถว 3 จุด (BankService · BankFeedService · StatementImport)</summary>
+    public string? EntrySource { get; set; }
+    /// <summary>คำตัดสินล่าสุด: <c>None</c> · <c>Suggest</c> · <c>AutoSettle</c> · <c>Settled</c> · <c>Failed</c> · <c>Rejected</c> (ชื่อใน <c>BankReceiptAutoSettle.Stamps</c>) · null = ยังไม่ประเมิน</summary>
+    public string? AutoSettleVerdict { get; set; }
+    /// <summary>เหตุผลไทยของคำตัดสิน (แสดงในคิว "เงินเข้าที่รอยืนยัน")</summary>
+    public string? AutoSettleReason { get; set; }
+    /// <summary>ใบค้างที่ระบบเสนอ/ปิดให้ — <b>ไม่ยืม</b> <see cref="SuggestedDocumentId"/> (ช่องของตัวจับคู่ AI/นักเรียน · กฎเหล็ก #4 E)</summary>
+    public Guid? AutoSettleDocumentId { get; set; }
+    /// <summary>ประเมินล่าสุดเมื่อ (งานเบื้องหลังประเมินซ้ำแถวที่ยังไม่จับคู่ทุก 6 ชั่วโมงในกรอบ 14 วัน)</summary>
+    public DateTime? AutoSettleEvaluatedAt { get; set; }
 }
 
 /// <summary>

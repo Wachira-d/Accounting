@@ -6773,3 +6773,13 @@ MED-2 `FixedAssetService.CreateAsync` ออกรหัส+INSERT ในธุ�
 doc ของ debouncedLoader · quotation-accept ไม่เติมชื่อผู้ยอมรับ (placeholder) · มือถือ openModal โฟกัสหัว modal · window.confirm ใบเสร็จ →
 Layout.confirm · html_interpolation documents 387→386 · ui_glossary_check ไม่นับเส้นทาง URL (เดิมฟ้องผิด `/line-invite`) baseline 56→53.
 ลบบริษัท: เซิร์ฟเวอร์ trim ทั้งสองฝั่งอยู่แล้ว (`CompanyService.DeleteCompanyAsync`) — ไม่ต้องแก้. ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ce0e274c_
+
+_รอบ 252 WP-12A (2026-11-06 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-12 ส่วน A · AUTOPILOT_BILLING_DESIGN §5/§7/§10/§11.4 · คำตัดสิน §2 #36 · DECISIONS 252-WP12A-1…4):
+(1) **อีเมลสถานะ/สรุปประจำวัน** — แค็ตตาล็อก E-01…E-15 + ข้อความ `Helpers/AutopilotNotice` · คีย์ใหม่ `autopilot.quotation_blocked/slip_submitted/bank_settle_failed/daily_digest`
+(ค่าตั้งต้น กระดิ่ง + อีเมลถึงเจ้าของ — `NotificationAudiencePolicy.EmailDefaultKeys`) · `AutopilotDigestService` (watermark ต่อบริษัท ประทับก่อนส่ง · ไม่มีอะไร = ไม่ส่ง).
+(2) **หน้า Autopilot** `/pages/autopilot.html` + `AutopilotController` + `AutopilotService` (read model จากแถวจริง · `Helpers/AutopilotStage` · เรื่องที่ระบบทำต่อไม่ได้พร้อมปุ่ม).
+(3) **ใบเสนอราคาแปลงอัตโนมัติ** — `Document.QuotationAcceptAutopilot` (ตั้งต่อใบ · ค่าตั้งต้นไม่แปลง) · `QuotationAcceptAutopilotService` → `ConvertDocumentAsync` (ร่าง · ครั้งเดียว · หยุดเมื่อเนื้อหาเปลี่ยน · ล้มดัง + ลองใหม่).
+(4) **เงินโอนปิดหนี้** — `BankTransaction.EntrySource` ที่จุดสร้างแถว 3 จุด · `Helpers/BankReceiptAutoSettle` (pure · ไม่มี AI) · `BankReceiptSettleService` (ค่าตั้งต้นปิด · source ใหม่ `PaymentEntrySource.BankAutoSettle` ·
+คิวยืนยัน/ปฏิเสธ · ผลจำลอง) · ยอดที่ต้องโอนจาก `Services/Payments/PayLinkTransferWht` (ชิ้นเดียวกับลิงก์ชำระ). (5) **สลิปพอร์ทัลกันซ้ำ** แฮชไฟล์ + เลขอ้างอิง (`SlipEvidenceRule` · `SLIP-DUP`).
+งานเบื้องหลังเดียว `AutopilotJob` (JobLock ต่อขั้น) · migration `Helpers/AutopilotMigration` (ADD COLUMN IF NOT EXISTS · ค่าตั้งต้น = พฤติกรรมเดิม) · เทสต์ `AutopilotRound252Tests` · `Db/AutopilotRound252DbTests` ·
+`PartnerSecurityRound250DbTests` แนบสลิปคนละไฟล์ · checker R252 + WATCHED/FILES — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81641769_
