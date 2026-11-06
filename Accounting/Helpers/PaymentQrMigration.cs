@@ -37,8 +37,7 @@ public static class PaymentQrMigration
             END IF;
         END $$;
         """,
-        // marker ของงานย้ายครั้งเดียว (ตารางเดียวกับรอบ 245 — สร้างซ้ำได้)
-        """CREATE TABLE IF NOT EXISTS "OneShotDataFixes" ("Key" varchar(100) PRIMARY KEY, "AppliedAt" timestamp NOT NULL);""",
+        // marker ของงานย้ายครั้งเดียว: ตาราง "OneShotDataFixes" สร้างที่ DatabaseMigrationHelper.OneShotDataFixesTableSql ตัวเดียว (รอบ 250 WP-04 — เดิมสร้างซ้ำในทุก migration)
     };
 
     public sealed record LegacyMoveResult(int Moved, int Skipped);
@@ -64,8 +63,10 @@ public static class PaymentQrMigration
     private static async Task<LegacyMoveResult> MoveCoreAsync(AccountingDbContext db, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var markerKey = MarkerKey;
-        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({markerKey}))", ct);
+        // รอบ 250 WP-04 (E M-3): คีย์ล็อก 64 บิตจากตัวตั้งคีย์ตัวเดียว (เดิม hashtext = int4 32 บิต · ชนกับคีย์อื่นได้) — ชุดเดียวกับรอบ 245/WP-02b
+        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            new object[] { AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey) }, ct);
+        var markerKey = MarkerKey;   // ตัวแปร (ไม่ใช่ const) ⇒ เป็นพารามิเตอร์ของ FormattableString แน่นอน
         var done = await db.Database
             .SqlQuery<int>($"""SELECT COUNT(*)::int AS "Value" FROM "OneShotDataFixes" WHERE "Key" = {markerKey}""")
             .SingleAsync(ct);

@@ -84,32 +84,7 @@ public class DocumentPurgeDbTests
         await db.SaveChangesAsync();
     }
 
-    /// <summary>รูป FK ของ production (Program.cs สร้างด้วย SQL ตอนบูต: ON DELETE RESTRICT) — ฐานเทสต์ที่สร้างจากโมเดล (EnsureCreated) ได้ CASCADE
-    /// ตามธรรมเนียม EF ⇒ จำลองให้ตรงก่อน มิฉะนั้นเทสต์ผ่านทั้งที่ production ล้ม (idempotent · ฐานเดียวทั้ง job)</summary>
-    private static Task ProductionFkShapeAsync(AccountingDbContext db) => db.Database.ExecuteSqlRawAsync(@"
-DO $$
-DECLARE r record;
-BEGIN
-  FOR r IN SELECT c.conname, c.conrelid::regclass AS t FROM pg_constraint c
-           WHERE c.contype = 'f' AND c.confdeltype <> 'r'
-             AND ((c.conrelid = '""DocumentSignatures""'::regclass AND c.confrelid IN ('""DocumentApprovals""'::regclass, '""Documents""'::regclass))
-               OR (c.conrelid = '""DocumentApprovals""'::regclass AND c.confrelid = '""Documents""'::regclass))
-  LOOP
-    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.t, r.conname);
-  END LOOP;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_DocumentSignatures_Approvals') THEN
-    ALTER TABLE ""DocumentSignatures"" ADD CONSTRAINT ""FK_DocumentSignatures_Approvals""
-      FOREIGN KEY (""DocumentApprovalId"") REFERENCES ""DocumentApprovals""(""Id"") ON DELETE RESTRICT;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_DocumentSignatures_Documents') THEN
-    ALTER TABLE ""DocumentSignatures"" ADD CONSTRAINT ""FK_DocumentSignatures_Documents""
-      FOREIGN KEY (""DocumentId"") REFERENCES ""Documents""(""Id"") ON DELETE RESTRICT;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_DocumentApprovals_Documents') THEN
-    ALTER TABLE ""DocumentApprovals"" ADD CONSTRAINT ""FK_DocumentApprovals_Documents""
-      FOREIGN KEY (""DocumentId"") REFERENCES ""Documents""(""Id"") ON DELETE RESTRICT;
-  END IF;
-END $$;");
+    // รูป FK ของ production (RESTRICT) ตั้งครั้งเดียวที่ DbTestDatabase.ProductionFkShapeSql ตอนสร้างฐาน (รอบ 250 WP-04 · E M-4 — เดิม ALTER TABLE ทุกเทสต์ที่นี่)
 
     private static DocumentService Svc(AccountingDbContext db) =>
         new(db, new AccountingService(db), null!, null!, null!, NullLogger<DocumentService>.Instance, null!, null!, null!);
@@ -122,7 +97,6 @@ END $$;");
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
-        await ProductionFkShapeAsync(db);
         var s = await SeedAsync(db);
         // ใบเสนอราคาที่ลูกค้าเซ็นยอมรับ (ยังไม่ออกเลข) → ใบแจ้งหนี้ร่างที่แปลงไป (มีขั้นอนุมัติ/ลายเซ็นของตัวเองด้วย)
         var qt = await DocAsync(db, s, DocumentType.Quotation, "DRAFT-" + Guid.NewGuid().ToString("N"), null, DocumentStatus.WaitingApproval);
@@ -167,7 +141,6 @@ END $$;");
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
-        await ProductionFkShapeAsync(db);
         var s = await SeedAsync(db);
         var qt = await DocAsync(db, s, DocumentType.Quotation, "DRAFT-" + Guid.NewGuid().ToString("N"), null, DocumentStatus.Draft);
         var tivNo = "TIV-PRG-" + Guid.NewGuid().ToString("N")[..6];
@@ -298,7 +271,6 @@ END $$;");
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
-        await ProductionFkShapeAsync(db);
         var rows = await db.Database.SqlQueryRaw<FkRow>(@"
 SELECT trim(both '""' from c.conrelid::regclass::text) AS ""Table"", a.attname AS ""Column"",
        trim(both '""' from c.confrelid::regclass::text) AS ""Referenced""

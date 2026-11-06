@@ -629,7 +629,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **816 ไฟล์ · 8,662 `[Fact]` + 1,294 `[Theory]` (6,049 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **818 ไฟล์ · 8,688 `[Fact]` + 1,295 `[Theory]` (6,059 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 
@@ -8018,5 +8018,29 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | สินทรัพย์: ชนิดที่อาจผูกต้นทุนถือคีย์เสมอ · ใบขายไม่ถือ · ทะเบียนเกิน GL อยู่ก่อน ⇒ problem | `ชนิดที่อาจผูกต้นทุน_…` · `ใบที่มีทะเบียนเกินGLอยู่ก่อน_…` |
 | go-live: ครบไม่มีข้อแดง (ส่ง URL = ทำเอง) · ไม่ตั้ง URL ⇒ แดง ไม่เดาโดเมน · ขาออกล้ม ⇒ แดง · ยังไม่ทดสอบ ⇒ ไม่ใช่เขียว | `goLive_…` ×3 · `ผลทดสอบขาออก_…` |
 | จุดเรียก (R250 · `tools/required_call_site_check.py`): CreatePaymentAsync เข้าคิวหลัง commit/หลัง Sync · ทุกผู้เรียกส่ง `source:` ถูกค่า · ห้าม controller/handler เข้าคิวเอง · LinkUsable รับ fact ใบกำกับ · ลำดับล็อกสินทรัพย์ · ห้าม `Amount + x.VatAmount`/`IsCashInflowDocAsync` ใน DocumentService · ห้าม literal คีย์ตัดสูญ | negative test ในตัว (เคส R250-1…R250-8 + self-test ฟังก์ชันระดับไฟล์) |
-| ยังไม่มีเทสต์ (บอกตรง ๆ): Db `Void_while_linking_holds_key_first` · `SettleYearEnd_locks_in_id_order` (ล็อกด้วยกติกา R250 แทน) · `R248_MED5_*` (B-19 — WP-07) | — |
+| (เดิม "ยังไม่มีเทสต์") Db `Void_while_linking_holds_key_first` · `SettleYearEnd_locks_in_id_order` · `R248_MED5_*` — ✅ เพิ่มใน WP-04 (ดูหมวดถัดไป) | — |
 
+## รอบ 250 WP-04 — เทสต์/กติกาที่ขาด: ด่านรอบ 241–249 สองทิศผ่านเส้นจริง (`erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-04 · E L-1/M-3/M-4 · C F7)
+
+> ยังไม่ได้คอมไพล์/รันในเครื่องนี้ (ไม่มี .NET SDK) — หลักฐานคือ job `test` + `db-test` บน CI
+
+| ด่าน / งาน | เทสต์ (ทิศที่ด่านทำงาน · ทิศตรงข้าม) |
+| --- | --- |
+| `PaymentQrMigration` งานย้ายตอนบูต: ย้ายถูกบริษัท · 2 บัญชีไม่เดา · บัญชีมีเลขแล้วไม่ทับ · บูตซ้ำ (marker) ไม่ทำอะไรแม้มีบริษัทใหม่เข้าเงื่อนไข · คีย์ล็อก `AdvisoryLockKey.For(OneShotDataFix, MarkerKey)` | Db `PaymentQrMigrationRound250DbTests.ย้ายถูกบริษัท_สองบัญชีไม่เดา_บัญชีมีเลขแล้วไม่ทับ_บูตซ้ำไม่ทำอะไร` |
+| ตาราง `OneShotDataFixes` สร้างที่ `DatabaseMigrationHelper.OneShotDataFixesTableSql` ตัวเดียว ก่อนบล็อกที่ใช้ marker · (ทิศตรงข้าม) งานรอบ 245/246 ไม่สร้างเอง | `GateOppositeDirectionRound250Tests.OneShotDataFixes_สร้างที่DatabaseMigrationHelperตัวเดียว_…` |
+| ฐานเทสต์ = รูป FK ของ production (RESTRICT) ตั้งครั้งเดียวตอนสร้างฐาน (`DbTestDatabase.ProductionFkShapeSql`) — `DocumentPurgeDbTests` ไม่ ALTER TABLE ระหว่างเทสต์ขนานแล้ว | `DocumentPurgeDbTests.ความครบ_ทุกFKแบบRESTRICTหรือNOACTIONที่ชี้เอกสาร_อยู่ในลำดับลบถาวร` (ยืนยันรูปจากฐานจริง) |
+| ลบถาวรใบที่โอนเป็นต้นทุนสินทรัพย์แล้ว ⇒ 409 `TFRS-NPAE-10-COST-SOURCES-PURGE` ไม่มีอะไรถูกลบ · (ทิศตรงข้าม) ใบที่ยังระหว่างจัดหา ⇒ ลบได้ แถวผูกถูกปลด ต้นทุนคิดใหม่ | Db `AssetMultiDocumentDbTests.Purge_capitalized_source_is_blocked_but_held_source_is_released_and_purged` |
+| ย้ายฝั่งใบลด/เพิ่มหนี้ที่ผูกต้นทุน ⇒ 409 · (ทิศตรงข้าม) ใบที่ไม่ผูกผ่านด่าน | Db `CnDn_side_switch_of_linked_note_is_blocked_unlinked_note_passes_the_gate` |
+| สลับบริการต่างประเทศของใบที่ผูก ⇒ 409 · (ทิศตรงข้าม) ปลดแล้วผ่านด่าน | Db `Foreign_service_toggle_of_linked_document_is_blocked_released_document_passes_the_gate` |
+| แก้ผังบรรทัดที่ผูก (`ReclassifyLineAccountAsync`) ⇒ 409 · (ทิศตรงข้าม) ปลดแล้วผ่านด่าน | Db `Reclassify_line_of_linked_source_is_blocked_released_line_passes_the_gate` |
+| resync จากระบบภายนอกบนใบที่ผูก (`IntegrationService.ResyncGuardAsync`) ⇒ ปฏิเสธพร้อมเหตุ · (ทิศตรงข้าม) ใบไม่ผูก ⇒ ผ่าน | Db `Integration_resync_guard_refuses_linked_document_and_passes_unlinked` |
+| OCR ลงทะเบียนสินทรัพย์จากสแกนที่เอกสารผูกแล้ว ⇒ 409 ไม่สร้างสินทรัพย์ · (ทิศตรงข้าม) ปลดแล้วผ่านไปถึงด่านถัดไป | Db `Ocr_register_asset_from_scan_of_linked_document_is_409_released_passes_the_gate` |
+| JE โอนต้นทุนสินทรัพย์ กลับ/แก้ไขด้วยการกลับไม่ได้ทุกทาง (รวม systemTriggered) · (ทิศตรงข้าม) JE ทั่วไปกลับได้ | Db `Asset_transfer_journal_cannot_be_reversed_or_corrected_ordinary_journal_reverses` |
+| ยกเลิกใบซื้อ (แม้ไม่ผูก) รอคีย์ผู้เขียนต้นทุน **ก่อน** FOR UPDATE แถวเอกสาร (ขณะรอ แถวยังล็อก NOWAIT ได้) · ปล่อยคีย์แล้วจบ (ไม่ deadlock) · (ทิศตรงข้าม) ไม่มีผู้ถือคีย์ ⇒ ยกเลิกเดินจบไม่รอ | Db `Void_while_linking_holds_key_first` (ดู `pg_locks` ว่ารอคีย์จริง) |
+| JE ตัดสูญภาษีถูกหัก กลับ/แก้จากสมุดรายวัน ⇒ 409 `GL-WHT-WRITEOFF-ENTRY` · (ทิศตรงข้าม) JE ธรรมดากลับได้ | Db `WhtCreditWriteOffDbTests.WhtWriteOffJournalLock_กลับJEตัดสูญ409รหัสGL_WHT_WRITEOFF_ENTRY_ทิศตรงข้ามJEธรรมดากลับได้` |
+| ปิดปีตัดสูญหลายแถว ⇒ ลง/ล็อกตามลำดับ Id (ไม่ใช่ลำดับที่ผู้ใช้ส่ง) | Db `SettleYearEnd_locks_in_id_order` |
+| (MED-5) รายการประจำ `TransferOnly` ขณะบริษัทแนบลิงก์เป็นค่าตั้งต้น ⇒ เข้าคิวและตอนส่งไม่มีลิงก์ชำระ · (ทิศตรงข้าม) รายการไม่ตั้ง ⇒ ตามบริษัท (มีลิงก์) | Db `DocumentAutoSendRound241DbTests.R248_MED5_TransferOnly_รายการ_อีเมลที่ส่งไม่มีลิงก์บัตร` · `R248_MED5_Inherit_รายการไม่ได้ตั้ง_อีเมลที่ส่งมีลิงก์ตามบริษัท` |
+| QR บนใบเพิ่มหนี้ใช้ข้อเท็จจริงฝั่งเดียวกับ JE/ลิงก์ชำระ: ย้ายเป็นฝั่งซื้อ ⇒ ไม่พิมพ์ · ย้ายเป็นฝั่งขาย (ไม่มีต้นทาง) ⇒ พิมพ์ · ตรงกับ `IsSaleSide` ทุกชุดข้อเท็จจริง | `PaymentQrRound246Tests.R250_ใบเพิ่มหนี้ย้ายฝั่ง_QRตามฝั่งที่ผู้ใช้สั่ง_ทั้งสองทิศ` |
+| `AutoApprovePolicy.Releases` เรียกตรง · `BindingHash` เปลี่ยนเมื่อแก้ราคา/ผัง/ผู้ติดต่อ ไม่เปลี่ยนเมื่อแก้คำอธิบาย · `EtaxByEmailFormat.UatWarning`/`Stage` · `EtaxDeliveryRouter.Decide` (ไม่ใช่ by Email ⇒ ธรรมดาทุกกรณี) · `PostPaymentAutomationPolicy.Effective`/`IdempotencyKey` · `DocumentPayLinkPolicy.Allowed`/`OnlineOnly` · `PaymentQrPolicy.Pick`/`PromptPayUsable` · `AssetCostSourceRules.PlaceInServiceProblem` ขอบทุกด่าน | `GateOppositeDirectionRound250Tests` (13 Fact/Theory · ทุกข้อสองทิศ) |
+| จุดเรียก (R250W4 · `tools/required_call_site_check.py`): `MoveCoreAsync` ล็อกด้วย `AdvisoryLockKey.For(OneShotDataFix, MarkerKey)` ก่อนอ่านเทมเพลต (ห้าม `hashtext(`) · Program.cs เรียกงานย้ายหลัง `ApplyMissingColumns` · `ResolveCoreAsync` ส่ง `CnDnPurchaseSideOverride`/ผู้ขายอย่างเดียวให้ `ShowBankQr` · `advisory_lock_key_check` baseline hashtext = 0 | negative test ในตัว (R250W4-1 · R250W4-2 · R250W4-2fp · `program_boot_migrations_self_test`) |
+| ยังไม่ทำใน WP-04 รอบนี้ (บอกตรง ๆ): ข้อ 7 XML e-Tax (`EtaxXmlRound250Tests`) · ข้อ 8 ตาราง `PaymentNotificationRound249Tests` ทุก `DocumentType` · ข้อ 9 `PostJe` fallback/`AgingDays` · ข้อ 10–13 checker (settings_reader · deep_link `#hash` · contact_picker ตามพฤติกรรม · checker UI ใหม่ 2 ตัว) | — |
