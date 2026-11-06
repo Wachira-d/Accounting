@@ -504,7 +504,7 @@ return Ok(dto);  // UI โชว์ → user กด "ยืนยัน" จบ
 bash tools/check_all.sh      # รัน checker ทุกตัว (57) + sim ทุกตัว + node --check + brace + U+FFFD + test_inventory --check + dotnet build/test ถ้ามี SDK — exit code เดียว
 python3 tools/callers.py <Symbol>   # ก่อนแตะสัญลักษณ์ใด: นิยาม · ผู้เรียกจริง · เทสต์ · คอมเมนต์ (แทน grep ประกอบเอง)
 ```
-> env นี้ไม่มี .NET SDK ⇒ **CI บน `claude/**` คือ compiler + runner ของเทสต์ pure ตัวแรกหลัง push** — อ่านผลผ่าน MCP (`actions_list` → `get_job_logs`) แล้วแก้ก่อนรายงานผู้ใช้ และบอกผู้ใช้เสมอว่า "ยังไม่ได้คอมไพล์ในเครื่องนี้" ·
+> env นี้ไม่มี .NET SDK ⇒ **CI บน `claude/**` คือ compiler + runner ของเทสต์ pure ตัวแรกหลัง push** (job test รันทุก push ตั้งแต่รอบ 250) — อ่านผลผ่าน MCP (`actions_list` → `get_job_logs`) แล้วแก้ก่อนรายงานผู้ใช้ และบอกผู้ใช้เสมอว่า "ยังไม่ได้คอมไพล์ในเครื่องนี้" ·
 > รายชื่อ checker ทั้ง 57 ตัวพร้อม defect class ที่แต่ละตัวจับ อยู่ที่ `docs/lessons/checker-writing.md` §"รายการ checker ทั้งหมด" — เปิดเมื่อตัวใดฟ้องแล้วต้องรู้ว่ามันตรวจอะไร
 
 ### F2. หลักการ 10 ข้อ (กลั่นจากบทเรียน 142 ข้อ — ตัวเต็มอยู่ใน `docs/lessons/`)
@@ -540,7 +540,7 @@ python3 tools/callers.py <Symbol>   # ก่อนแตะสัญลักษ
  3. ไม่มี dead helper ใหม่ (dead_helper_check) · TEST_PLAN §0 ตรงเทสต์จริง (test_inventory --check)
  4. doc sha อยู่บน branch (doc_commit_sha_check) — เติม sha ในคอมมิตตามหลัง ห้าม amend
  5. ถ้ามี dotnet: build + test ผ่าน
- 6. หลัง push: `bash tools/ci_wait.sh` (background) → static/build/test/db-test เขียวครบ · แดง = `get_job_logs` แล้วแก้ก่อนรายงาน
+ 6. หลัง push: `bash tools/ci_wait.sh` (background) → แดง = `get_job_logs` แล้วแก้ก่อนรายงานผู้ใช้ · ต้องเขียวครบ 4 job (static · build · test · db-test)
 
 ข. คนทำ — ตอบเป็นข้อความในคำอธิบายคอมมิต (ตอบไม่ได้ = ยังไม่ push)
  7. "แก้ที่นี่ แล้ว callers.py/grep รูปแบบเดิมทั้งเรพได้กี่จุด" → ตัวเลข (0 ก็เขียนว่า 0)

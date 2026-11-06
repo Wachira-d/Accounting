@@ -1603,6 +1603,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   null = ไม่เกี่ยว ไม่แสดงปุ่ม · false = ปุ่มปิดพร้อมเหตุผล) · `ForbiddenChanges` (ตาข่าย "ใบใหม่เท่าใบเดิม" ของตัวคัดลอก) · `RequestLineIssues` (ด่านของคำขอผู้ใช้ ·
   V1F R8) · `CopyDocumentForReissue`/`CopyLineForReissue` (**allowlist** `DocumentCarriedFields`/`LineCarriedFields` · V1F R7 — ทุกช่องค่าของ entity ต้องถูกจัดกลุ่ม
   ตามไป/ไม่ตามไป เทสต์ล้มถ้าช่องใหม่ไม่ถูกตัดสิน) · `Helpers/ApprovalControlPolicy.ForReissue` (SoD/วงเงินเซ็นหลายขั้น · V1F R6)
+  · **รอบ 250 WP-01** (เทสต์ R7/RV1F11 เพิ่งรันครั้งแรก — 11 ช่องไม่ได้จัดกลุ่ม): **ตามไป** `PostVatDeductionAmount` · `PostVatDeductionAccountId` ·
+  `PaymentSourceSplitJson` (เนื้อเงินของการขายเดียวกัน — เดิมตัวคัดลอกทิ้งเงียบ ⇒ ใบแทนไม่มี "หักหลัง VAT" ทั้งที่ยอดจ่ายจริงตามไป) ·
+  **ไม่ตามไป** `PayLink*` 6 ช่อง (ลิงก์ชำระของใบเดิม · hash unique) · `AutoSendRuleId` · `QuotaCountDeferred` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit 407e342a
 - **เกี่ยวเมื่อ**: ใบขาย (Invoice/TaxInvoice/Receipt) ที่ออกแล้วยังไม่ยกเลิก · ไม่ใช่ใบเสร็จอัตโนมัติ · ไม่ใช่ชิ้นของรอบโอนเอง · ยังไม่ถูกแทน ·
   **มีการรับชำระจากรอบโอนที่ลงบัญชีแล้ว** (ไม่มี = ใช้ "ยกเลิกเอกสาร" ปกติ)
 - **ด่านเดิมของ "ยกเลิกเอกสาร" ครบทุกตัว** (บล็อกพร้อมทางไปต่อ · ไม่แตะอะไร): e-Tax ของใบ**ถึงกรมสรรพากรแล้ว** (Accepted = `REISSUE-ETAX-ACCEPTED` ·

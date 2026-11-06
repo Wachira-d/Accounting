@@ -182,9 +182,16 @@ public class SiteOrderDepositInvoicingTests
         Assert.Empty(plan.Excess);
         Assert.Equal("RE-001", plan.DeductionRef);
         Assert.Equal(dep.SubTotal, plan.BaseDeducted);                       // หักฐานเท่าใบกำกับมัดจำพอดี (ไม่ซ้ำ ไม่ขาด)
-        Assert.Equal(full.Net, dep.SubTotal + final.Net);                    // ฐานไม่เพี้ยน
-        Assert.InRange(dep.VatAmount + final.Vat - full.Vat, -0.01m, 0.01m); // VAT คิดรายใบ ⇒ ต่างได้ไม่เกิน 1 สตางค์
-        Assert.InRange(dep.TotalAmount + final.Total - o.TotalAmount, -0.01m, 0.01m);
+        // รอบ 250 WP-01 (เทสต์นี้เพิ่งรันครั้งแรก · คิดมือซ้ำทุกขั้นได้ตรง CI): ฐานสองใบ = 295.95 + 690.56 = 986.51 ≠ ใบเต็ม 986.49 —
+        // ใบเต็ม: ขั้นปัด VAT แบบราคารวม VAT ย้าย 0.01 จากฐานไป VAT (986.50 → 986.49 · VAT 69.06) · ใบส่วนที่เหลือ: หักฐานมัดจำแล้วคิด VAT ใหม่บนฐานที่ลด
+        // (48.35) แล้วขั้นปัดเดียวกันย้าย 0.01 จาก VAT กลับไปฐาน (690.55 → 690.56 · VAT 48.34) ⇒ VAT รวมตรง แต่ฐาน/ยอดรวมเกิน 0.02
+        // (ลูกค้าถูกเรียก 1,055.57 แทน 1,055.55) — เดิมเทสต์อ้าง "ฐานไม่เพี้ยน" และหมายเหตุบนออเดอร์อ้าง "ส่วนต่างอยู่ที่ VAT" ซึ่งไม่จริงในเคสนี้
+        // ⇒ แก้หมายเหตุให้ไม่อ้างที่อยู่ของส่วนต่าง · การแก้สูตร (ReconcileTaxRounding ไม่ขยับฐานบนบรรทัดที่ถูกหักท้ายบิล) แตะทุกใบราคารวม VAT ที่มีส่วนลดท้ายบิล
+        // จึงส่งเป็นงานเงิน (AUDIT_249 WP-02) พร้อมฝ่ายค้าน — ที่นี่ล็อกตัวเลขจริง + ตัวบอกส่วนต่างที่ระบบประทับเป็นหมายเหตุต้องเท่าส่วนต่างจริงเสมอ
+        Assert.Equal(986.49m, full.Net);
+        Assert.Equal(986.51m, dep.SubTotal + final.Net);
+        Assert.Equal(0m, dep.VatAmount + final.Vat - full.Vat);               // VAT รวมสองใบตรงใบเต็มพอดี
+        Assert.Equal(0.02m, dep.TotalAmount + final.Total - o.TotalAmount);
         Assert.Equal(LodgingDepositSettlement.RoundingDelta(full.Total, plan.GrossDeducted, final.Total),
             dep.TotalAmount + final.Total - o.TotalAmount);
     }

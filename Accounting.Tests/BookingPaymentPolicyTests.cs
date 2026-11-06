@@ -67,10 +67,11 @@ public class BookingPaymentPolicyTests
     }
 
     [Theory]
-    [InlineData(1000, null, 25, 250)]
+    // รอบ 250 WP-01: ช่อง double? ต้องใส่ literal ชนิด double (`25d`) — xUnit แปลง int→double ได้ แต่ int→double? ไม่ได้ (ArgumentException ตอนรัน)
+    [InlineData(1000, null, 25d, 250)]
     [InlineData(999.99, null, 33.33, 333.30)]   // 333.296667 ⇒ 333.30
-    [InlineData(1000, 300, 10, 300)]            // บาทชนะ % (สูตรเดิม)
-    [InlineData(100, 500, null, 100)]           // ไม่เกินยอดรวม
+    [InlineData(1000, 300d, 10d, 300)]            // บาทชนะ % (สูตรเดิม)
+    [InlineData(100, 500d, null, 100)]           // ไม่เกินยอดรวม
     [InlineData(1000, null, null, 0)]
     public void แบบเดิม_ยอดเท่าสูตรเดิมทุกตัวอักษร(decimal total, double? fx, double? pct, decimal expected)
     {
@@ -116,10 +117,11 @@ public class BookingPaymentPolicyTests
     // ─────────────── ยอด ───────────────
 
     [Theory]
-    [InlineData(1000, 15, 100, 500, 150)]
-    [InlineData(300, 15, 100, 500, 100)]     // 45 < ขั้นต่ำ ⇒ 100
-    [InlineData(80, 15, 100, 500, 80)]       // ขั้นต่ำเกินยอดรวม ⇒ ไม่เกินยอดรวม
-    [InlineData(10000, 15, 100, 500, 500)]   // เกินสูงสุด ⇒ 500
+    // รอบ 250 WP-01: ช่อง double? ต้องใส่ literal ชนิด double (`25d`) — xUnit แปลง int→double ได้ แต่ int→double? ไม่ได้ (ArgumentException ตอนรัน)
+    [InlineData(1000, 15, 100d, 500d, 150)]
+    [InlineData(300, 15, 100d, 500d, 100)]     // 45 < ขั้นต่ำ ⇒ 100
+    [InlineData(80, 15, 100d, 500d, 80)]       // ขั้นต่ำเกินยอดรวม ⇒ ไม่เกินยอดรวม
+    [InlineData(10000, 15, 100d, 500d, 500)]   // เกินสูงสุด ⇒ 500
     [InlineData(333.35, 10, null, null, 33.34)] // 33.335 ⇒ 33.34 (AwayFromZero — banker's ได้ 33.34 เหมือนกัน · ดูเคสถัดไป)
     [InlineData(100.25, 10, null, null, 10.03)] // 10.025 ⇒ 10.03 (banker's จะได้ 10.02)
     public void มัดจำเปอร์เซ็นต์_ขั้นต่ำสูงสุด_ปัดAwayFromZero(decimal total, decimal pct, double? min, double? max, decimal expected)

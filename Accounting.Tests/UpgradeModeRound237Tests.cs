@@ -251,17 +251,19 @@ public class UpgradeModeRound237Tests
         // ทิศตรงข้าม: เงินเข้าวันเดียวกัน (คนละเวลา) ⇒ ผ่าน
         var sameDay = PlatformProration.UpgradeByMode(PlatformUpgradeMode.RestartCycle, StarterAnnual, ProAnnual, 12, End, Now.AddHours(8));
         Assert.Null(PlatformProration.RestartCreditDrift(sameDay, quoted.DaysRemaining, quoted.Credit, quoted.Amount, Now.AddHours(8)));
-        // เงินเข้าช้า 3 วัน ⇒ เหลือ 272 วัน · เครดิตที่ถูก 6,018 × 272/365 = 4,484.68 · ยอด 10,713.32 (เดิม 10,663.89)
+        // เงินเข้าช้า 3 วัน ⇒ เหลือ 272 วัน · เครดิตที่ถูก 6,018 × 272/365 = 4,484.646… ⇒ 4,484.65 · ยอด 15,198 − 4,484.65 = 10,713.35 (เดิม 10,663.89)
+        // รอบ 250 WP-01 (เทสต์นี้เพิ่งรันครั้งแรก): ค่าคาดเดิม 4,484.68 / 10,713.32 คิดมือพลาด — สูตรเดียวกับ 275 วัน (6,018 × 275/365 = 4,534.11 ที่ผ่านอยู่แล้ว)
         var late = Now.AddDays(3);
         var atPay = PlatformProration.UpgradeByMode(PlatformUpgradeMode.RestartCycle, StarterAnnual, ProAnnual, 12, End, late);
         Assert.Equal(272, atPay.DaysRemaining);
-        Assert.Equal(4_484.68m, atPay.Credit);
+        Assert.Equal(4_484.65m, atPay.Credit);
+        Assert.Equal(10_713.35m, atPay.Amount);
         var why = PlatformProration.RestartCreditDrift(atPay, quoted.DaysRemaining, quoted.Credit, quoted.Amount, late);
         Assert.NotNull(why);
         Assert.Contains("04/04/2569", why);
         Assert.Contains("10,663.89", why);
-        Assert.Contains("10,713.32", why);
-        Assert.Contains("4,484.68", why);
+        Assert.Contains("10,713.35", why);
+        Assert.Contains("4,484.65", why);
         // ณ วันชำระแบบ ข ใช้ไม่ได้แล้ว (เช่น หมดอายุวันนั้น) ⇒ มีเหตุ
         Assert.NotNull(PlatformProration.RestartCreditDrift(
             PlatformProration.UpgradeByMode(PlatformUpgradeMode.RestartCycle, StarterAnnual, ProAnnual, 12, End, End.AddHours(1)), 275, quoted.Credit, quoted.Amount, End.AddHours(1)));

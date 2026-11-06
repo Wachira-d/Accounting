@@ -335,7 +335,11 @@ public class SignRequestRound240Tests
         Assert.DoesNotContain("\n", p.Subject);
         Assert.DoesNotContain("\r", p.Subject);
         var s = SignRequestEmailText.Compose(Mail(onBehalf: true));
-        Assert.Contains("&lt;script&gt;", s.Html);
+        // รอบ 250 WP-01 (เทสต์นี้เพิ่งรันครั้งแรก): ชื่อบริษัทผ่าน OnBehalfEmailSender.SafeDisplayName ก่อน (ตัด < > " @ \ ทิ้ง — มีตั้งแต่ 61f6b0f6
+        // คอมมิตเดียวกับเทสต์) ⇒ "&lt;script&gt;" ไม่มีวันปรากฏ · ล็อกแทน: ชื่อบริษัทไม่เหลือวงเล็บแท็ก + ข้อความ/เลขเอกสารที่ผู้ใช้คุมถูก HtmlEncode จริง
+        Assert.Contains("บริษัท ก scriptalert(1)/script", s.Html);
+        Assert.Contains("&lt;img src=x onerror=alert(1)&gt;", s.Html);
+        Assert.Contains("QT-&lt;b&gt;1&lt;/b&gt;", s.Html);
     }
 
     [Fact]

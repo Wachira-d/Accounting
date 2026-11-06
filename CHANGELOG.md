@@ -6608,3 +6608,17 @@ B-13 ชั้นค่าตั้ง ตาราง › รายการป
 CS8604 BatchConvert · literal รหัสในเทสต์ → ค่าคงที่ · (Y7/Y8/N11) การ์ด go-live แอดมิน + ปุ่มทดสอบขาออก (`SiteSettings.OutboundCheck*` ใหม่).
 เทสต์ `Round250Wp02Tests` (pure) + Db ใน `DocumentAutoSendRound241DbTests`/`ImportAccountingTargetsDbTests` · กติกา R250 ใน `required_call_site_check` (negative test ในตัว) ·
 ฝ่ายค้าน: ทบทวนเองในรอบ (ไม่มีเครื่องมือ subagent ในบริบทนี้) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a40c91e5_
+
+_รอบ 250 WP-01 (AUDIT_249 · 2026-11-06): job `dotnet test` รันทุก push บน `claude/**` แล้ว (010f39b0) — รอบแรก (run 42201361957) ล้ม 45 / ผ่าน 20,320 / รวม 20,365
+⇒ ตัดสินทีละตัวด้วย `git log -S`: **(a) บั๊กโค้ดจริงที่ซ่อนอยู่** — `LodgingTaxInvoiceTimingPolicy` ไม่กันสถานะเช็คอินแล้ว (ใบกำกับล่วงหน้าออกกลางการเข้าพัก) ·
+`IdempotencyKeyPolicy.IsCredentialPath` ตรง "/password" ไม่เคยตรงเส้นจริง (reset/forgot/change-password เข้าระบบคีย์) · `SettlementPaidReissue` ทิ้ง "หักหลัง VAT"/แยกแหล่งจ่ายของใบแทน
+และไม่ได้จัดกลุ่มช่องลิงก์ชำระ · `OcrLineVatMarks` ป้าย "ยกเว้น" คำเดียว (26ec41b4) อ่านยอดรวมทั้งใบเป็นยอดยกเว้นเมื่อ Tesseract ต่อบรรทัดคำอธิบายรหัสกับยอด AMOUNT ·
+`DocumentConversionProgress` ไม่ทราบสัดส่วนคืน 0 แทน null (หน้ารายละเอียดขึ้น "แปลง 0%") · `RecurringRunOutcome` วันที่ติดคำไทย · `CmsSeoHead.AbsoluteUrl` พาธสัมพัทธ์ไม่มี "/" ได้ null ·
+`SiteOrderPublic.IsWellFormedToken` รับ GUID · `FileStorageKey.ToKey` รากซ้อนได้ "app/uploads" · อีเมลลิงก์ชำระไม่เอ่ย "50 ทวิ" ·
+**ส่งต่อ WP-02**: ใบมัดจำ + ใบส่วนที่เหลือ (ราคารวม VAT) ฐานรวมเกินใบเต็ม 0.02 (ขั้นปัด VAT แบบราคารวม VAT ขยับฐาน) — แก้หมายเหตุที่อ้าง "ส่วนต่างอยู่ที่ VAT" ให้ไม่อ้างแล้ว · ล็อกตัวเลขจริงในเทสต์ ·
+**(b) ด่านเปลี่ยนโดยตั้งใจ** — เกณฑ์หลอดโควตา 80/90/100 (c86519e1) · รอบบิลบนปฏิทินไทย (1019338e) · LineMode "Items+Bill:" (bea4651f) · ข้อมูลเทสต์ยอดบาทพิมพ์ขัด PrintedBaseUsable (12203520) ·
+**(t) เทสต์เขียนผิดตั้งแต่แรก (ไม่เคยรัน)** — คิดมือพลาด (4,484.65 · 1,878.50) · ข้อความสะกดต่าง · คาดค่าที่ด่าน SafeDisplayName ตัดทิ้งแล้ว · อีเมลบังคับตามค่าตั้ง ·
+**(c) สภาพแวดล้อม** — xUnit แปลง int→double? ไม่ได้ (8 เคส) · Assert.Contains แบบ CurrentCulture กับ U+0001 · JSON หนีอักษรไทย · tuple ที่มี byte[] · ligature "ti" ใน PDF.
+ไม่มีเทสต์ใดถูก skip · checker: `doc_commit_sha_check` รู้จัก clone ตื้น (unshallow ก่อน · ไม่ได้ = เชื่อผล CI) + กติกาอายุ placeholder ≤ 1 คอมมิต (ของเก่า 98 แถวใน baseline ratchet — WP-05 เติม) +
+ไม่นับ ✅ เลขผู้เสียภาษี 13 หลัก (checksum) + `--self-test` · `advisory_lock_key_check` ฟ้อง `pg_advisory_*lock(hashtext(` (+ self-test · baseline PaymentQrMigration 1 จุด — WP-04) ·
+`namespace_shadow_check` ตัด bin/obj/node_modules/.claude ก่อนเดิน · baseline write_permission_gate −4 · dead_helper −4 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 407e342a_

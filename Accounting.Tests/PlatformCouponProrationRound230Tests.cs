@@ -36,9 +36,11 @@ public class PlatformCouponProrationRound230Tests
     [Fact]
     public void ปัดครึ่งขึ้น_AwayFromZero_ไม่ใช่ปัดแบบธนาคาร()
     {
-        // รอบรายเดือน 01/05/2570 → 31/05/2570 (30 วัน) เหลือ 1 วัน · ส่วนต่าง 0.15 ⇒ 0.15 × 1 / 30 = 0.005 ⇒ 0.01 (banker's = 0.00)
-        var end = new DateTime(2027, 5, 30, 17, 0, 0, DateTimeKind.Utc);   // 31/05/2570 00:00 ไทย
-        var now = new DateTime(2027, 5, 30, 3, 0, 0, DateTimeKind.Utc);    // 30/05/2570 10:00 ไทย
+        // รอบรายเดือน 01/06/2570 → 01/07/2570 (30 วัน) เหลือ 1 วัน · ส่วนต่าง 0.15 ⇒ 0.15 × 1 / 30 = 0.005 ⇒ 0.01 (banker's = 0.00)
+        // รอบ 250 WP-01: เดิมใช้รอบสิ้นสุด 31/05 ไทย — ตั้งแต่ 1019338e (รอบ 235 K-4 วันเริ่มรอบคิดบนปฏิทินไทย) 31/05 − 1 เดือน = 30/04 ⇒ รอบ 31 วัน
+        // ⇒ 0.15/31 = 0.0048 ⇒ 0.00 ⇒ ไม่คิดส่วนต่าง (เทสต์ไม่ได้ทดสอบการปัดอีกต่อไป) — ย้ายไปรอบ 30 วันจริงบนปฏิทินไทย
+        var end = new DateTime(2027, 6, 30, 17, 0, 0, DateTimeKind.Utc);   // 01/07/2570 00:00 ไทย (วันเริ่มรอบ 01/06 ไทย)
+        var now = new DateTime(2027, 6, 30, 3, 0, 0, DateTimeKind.Utc);    // 30/06/2570 10:00 ไทย
         var r = PlatformProration.Upgrade(1m, 1.15m, 1, end, now);   // รอบ 233 E-3: ราคาเดิม 0 = ไม่ใช่ส่วนต่าง (เทสต์ปัดเศษคงส่วนต่าง 0.15)
         Assert.True(r.Applies);
         Assert.Equal(1, r.DaysRemaining);
@@ -224,10 +226,13 @@ public class PlatformCouponProrationRound230Tests
     [Fact]
     public void หลอดการใช้งาน_คิดที่เซิร์ฟเวอร์_เกณฑ์ไม่จำกัดและสีเตือน()
     {
+        // รอบ 250 WP-01: เกณฑ์เตือนย้ายไป QuotaWarnPolicy ตั้งแต่ c86519e1 (รอบ 231 · ตั้งต้น 80/90/100 แทน 70/90 · ระดับ 2 = เต็ม/เกินเท่านั้น)
+        // — เดิมเทสต์ล็อกเกณฑ์ 70/90 ของรอบ 230 · ล็อกทั้งสองฝั่งของเกณฑ์ 80 และของ "เต็ม"
         var u = UsageBarRule.Users(7, 10);
         Assert.Equal(70.0m, u.Percent);
-        Assert.Equal(1, u.Level);
+        Assert.Equal(0, u.Level);                              // 70% ยังไม่ถึงเกณฑ์แรก 80
         Assert.False(u.Unlimited);
+        Assert.Equal(1, UsageBarRule.Users(8, 10).Level);      // 80% ⇒ ใกล้เต็ม
 
         var unlimitedUsers = UsageBarRule.Users(50, 999);
         Assert.True(unlimitedUsers.Unlimited);
@@ -236,14 +241,15 @@ public class PlatformCouponProrationRound230Tests
 
         Assert.True(UsageBarRule.Documents(10, 0).Unlimited);          // ไม่ตั้ง = ตัวนับเอกสารไม่บังคับ
         Assert.True(UsageBarRule.Documents(10, 99_999).Unlimited);
-        Assert.Equal(2, UsageBarRule.Documents(95, 100).Level);
+        Assert.Equal(1, UsageBarRule.Documents(95, 100).Level);   // ข้าม 90 แต่ยังไม่เต็ม
+        Assert.Equal(2, UsageBarRule.Documents(100, 100).Level);  // เต็ม
         Assert.True(UsageBarRule.Storage(1, QuotaResources.UnlimitedBytes).Unlimited);
         Assert.Equal(100m, UsageBarRule.Storage(2_000, 1_000).Percent);  // เกินเพดาน = เต็มหลอด ไม่เกิน 100
 
         var ocr = UsageBarRule.Ocr(90, 50, 30, 20);                       // เพดานจริง = 50 + โบนัส 30 + เครดิต 20 = 100
         Assert.Equal(100, ocr.Limit);
         Assert.Equal(90.0m, ocr.Percent);
-        Assert.Equal(2, ocr.Level);
+        Assert.Equal(1, ocr.Level);
         Assert.True(UsageBarRule.Ocr(5, -1, 0, 0).Unlimited);
         Assert.Equal(100m, UsageBarRule.Ocr(1, 0, 0, 0).Percent);         // เพดาน 0 แต่ใช้แล้ว
 

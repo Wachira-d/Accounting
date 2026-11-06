@@ -111,6 +111,10 @@ public static class LodgingTaxInvoiceTimingPolicy
             return No("การจองนี้ออกใบเช็คเอาต์แล้ว — ไม่ออกใบกำกับล่วงหน้า");
         if (f.Status is LodgingReservationStatus.Cancelled or LodgingReservationStatus.NoShow or LodgingReservationStatus.CheckedOut)
             return No("การจองนี้ปิดแล้ว (ยกเลิก/ไม่มา/เช็คเอาต์) — ออกใบกำกับล่วงหน้าไม่ได้");
+        // รอบ 250 WP-01 (เทสต์ 51448874 เพิ่งรันครั้งแรก): เช็คอินแล้ว ⇒ ไม่ออก (DOCUMENT_FLOW §6.5 "เช็คอินแล้ว ⇒ ไม่ออก") — เดิมขาดสถานะนี้
+        // ⇒ เงินที่รับระหว่างพัก (MoneyReceived) หรือปุ่ม ออกใบกำกับเต็มยอดกลางการเข้าพัก แทนใบกำกับตอนเช็คเอาต์
+        if (f.Status == LodgingReservationStatus.CheckedIn)
+            return No("การจองนี้เช็คอินแล้ว — ใบกำกับภาษีออกตอนเช็คเอาต์ตามเดิม (ไม่ออกใบกำกับล่วงหน้ากลางการเข้าพัก)");
         if (f.HasVatBearingRoomDeposit)
             return No("การจองนี้รับมัดจำแบบมี VAT ไปแล้ว (ออกตามจังหวะเดิม) — ใบกำกับออกตอนเช็คเอาต์และหักมัดจำตามเดิม (ออกใบกำกับเต็มยอดตอนนี้ = VAT ซ้อนกับใบมัดจำ)");
         if (f.Advance == LodgingAdvanceState.Gone && !manual)

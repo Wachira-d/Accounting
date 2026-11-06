@@ -364,12 +364,15 @@ public class QuotationAcceptanceRound239Tests
         var pdf = QuestPDF.Fluent.Document.Create(c => c.Page(p =>
             p.Content().Column(col => PdfGenerationService.ComposeQuotationAcceptanceBlock(col, template, signers, "en")))).GeneratePdf();
         using var doc = UglyToad.PdfPig.PdfDocument.Open(pdf);
-        var text = string.Concat(doc.GetPage(1).Letters.Select(l => l.Value));
+        // รอบ 250 WP-01 (เทสต์นี้เพิ่งรันครั้งแรก): QuestPDF จัดรูปอักษรด้วย ligature ("ti" ใน Quotation เป็น glyph เดียว) ซึ่ง PdfPig ถอดเป็น '\0'
+        // ⇒ เทียบหลังตัดช่องว่าง/อักษรที่ถอดไม่ได้ และตัดคู่อักษรที่ฟอนต์รวมเป็น ligature ทั้งสองฝั่ง (เทียบทางเดียวกันทั้งคู่ — ไม่ขึ้นกับฟอนต์ในเครื่อง)
+        static string Squash(string s) => s.Replace(" ", "").Replace("\0", "").Replace("ti", "").Replace("fi", "").Replace("fl", "").Replace("ff", "");
+        var text = Squash(string.Concat(doc.GetPage(1).Letters.Select(l => l.Value)));
         var L = DocumentLabels.For("en");
-        Assert.Contains(L.QtAcceptHeading.Replace(" ", ""), text.Replace(" ", ""));
-        Assert.Contains("JohnSmith", text.Replace(" ", ""));
-        Assert.Contains("05Nov202614:05", text.Replace(" ", ""));
-        Assert.Contains("DeliveronMonday", text.Replace(" ", ""));
+        Assert.Contains(Squash(L.QtAcceptHeading), text, StringComparison.Ordinal);
+        Assert.Contains(Squash("JohnSmith"), text, StringComparison.Ordinal);
+        Assert.Contains(Squash("05Nov202614:05"), text, StringComparison.Ordinal);
+        Assert.Contains(Squash("DeliveronMonday"), text, StringComparison.Ordinal);
 
         // ทิศตรงข้าม: เทมเพลตมีช่องลูกค้า (ช่องที่ 3) ⇒ ไม่พิมพ์บล็อกซ้ำ (ข้อมูลอยู่ในช่องลายเซ็นแล้ว)
         var withBox = new EntTemplate { ShowSignature = true, SignatureCount = 3, SignatureLabel3 = "ลูกค้าอนุมัติ" };
@@ -380,7 +383,7 @@ public class QuotationAcceptanceRound239Tests
                 PdfGenerationService.ComposeQuotationAcceptanceBlock(col, withBox, signers, "en");
             }))).GeneratePdf();
         using var doc2 = UglyToad.PdfPig.PdfDocument.Open(pdf2);
-        Assert.DoesNotContain("JohnSmith", string.Concat(doc2.GetPage(1).Letters.Select(l => l.Value)).Replace(" ", ""));
+        Assert.DoesNotContain(Squash("JohnSmith"), Squash(string.Concat(doc2.GetPage(1).Letters.Select(l => l.Value))), StringComparison.Ordinal);
     }
 
     [Fact]

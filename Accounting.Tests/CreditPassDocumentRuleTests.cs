@@ -74,7 +74,8 @@ public class CreditPassDocumentRuleTests
         // ใบเสร็จที่ตัดลูกหนี้ใบแจ้งหนี้: JE ไม่ Cr 21713 ⇒ 0 ⇒ ไม่เปิด (เดิมเปิดได้จากยอดบรรทัด = สองบัตรจากเงินก้อนเดียว)
         Assert.Contains("ไม่ได้ลงเครดิต", CreditPassDocumentRule.ActivateProblem("RE-1", 0m, null));
         Assert.Contains("ไม่ได้ลงเครดิต", CreditPassDocumentRule.ActivateProblem("RE-1", -10m, null));
-        Assert.Contains("สายเอกสารเดียวกัน", CreditPassDocumentRule.ActivateProblem("RE-1", 4205.61m, "CP-202610-0001"));
+        // รอบ 250 WP-01 (เทสต์นี้เพิ่งรันครั้งแรก): ข้อความจริงตั้งแต่ 2f9effa6 (คอมมิตเดียวกับเทสต์) = "…อยู่ในสายเอกสารเดียวกับบัตร {บัตร}…" — เดิมเทสต์สะกด "เดียวกัน"
+        Assert.Contains("สายเอกสารเดียวกับบัตร CP-202610-0001", CreditPassDocumentRule.ActivateProblem("RE-1", 4205.61m, "CP-202610-0001"));
     }
 
     // ===== R-38 คืนเงินบางส่วน (รอบ 205 W6) — รอบ 208: ราคาต่อเครดิตคงเหลือ = ส่วนที่เหลือ 2,523.37 ÷ เครดิตที่ยังไม่ใช้ 6 = 420.5616… =====

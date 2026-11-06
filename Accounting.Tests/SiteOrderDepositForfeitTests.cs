@@ -57,12 +57,13 @@ public class SiteOrderDepositForfeitTests
     }
 
     [Theory]
+    // รอบ 250 WP-01: ช่อง double? ต้องใส่ literal ชนิด double (`25d`) — xUnit แปลง int→double ได้ แต่ int→double? ไม่ได้ (ArgumentException ตอนรัน)
     [InlineData(null, true)]
-    [InlineData(0, true)]
-    [InlineData(100, true)]
+    [InlineData(0d, true)]
+    [InlineData(100d, true)]
     [InlineData(12.5, true)]
-    [InlineData(101, false)]
-    [InlineData(-1, false)]
+    [InlineData(101d, false)]
+    [InlineData(-1d, false)]
     [InlineData(10.123, false)]
     public void ValidatePercent(double? pct, bool ok)
         => Assert.Equal(ok, SiteOrderDepositForfeit.ValidatePercent(pct is null ? null : (decimal)pct.Value) == null);

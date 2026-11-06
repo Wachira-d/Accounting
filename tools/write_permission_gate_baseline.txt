@@ -453,7 +453,6 @@ Accounting/Controllers/SampleDataController.cs	Cleanup	1
 Accounting/Controllers/SampleDataController.cs	Seed	1
 Accounting/Controllers/ScheduledReportController.cs	Create	1
 Accounting/Controllers/ScheduledReportController.cs	Delete	1
-Accounting/Controllers/ScheduledReportController.cs	SendNow	1
 Accounting/Controllers/ScheduledReportController.cs	Update	1
 Accounting/Controllers/SignatureApprovalController.cs	Approve	1
 Accounting/Controllers/SignatureApprovalController.cs	ApproveQuotation	1
@@ -470,14 +469,12 @@ Accounting/Controllers/SmeOperationsController.cs	Replenish	1
 Accounting/Controllers/SmeOperationsController.cs	SetLine	1
 Accounting/Controllers/SmeOperationsController.cs	StartStockCount	1
 Accounting/Controllers/StampDutyController.cs	Create	1
-Accounting/Controllers/StampDutyController.cs	MarkPaid	1
 Accounting/Controllers/StockTransferController.cs	Cancel	1
 Accounting/Controllers/StockTransferController.cs	Create	1
 Accounting/Controllers/StockTransferController.cs	Receive	1
 Accounting/Controllers/StockTransferController.cs	Ship	1
 Accounting/Controllers/SubscriptionController.cs	IncrementUsage	1
 Accounting/Controllers/SubscriptionController.cs	StartTrial	1
-Accounting/Controllers/SubscriptionController.cs	SubmitPayment	1
 Accounting/Controllers/SubscriptionController.cs	UpdateNotificationSettings	1
 Accounting/Controllers/SubscriptionController.cs	UploadSlip	1
 Accounting/Controllers/TaxCalendarController.cs	Initialize	1
@@ -525,7 +522,6 @@ Accounting/Controllers/WithholdingTaxCertController.cs	DismissPending	1
 Accounting/Controllers/WithholdingTaxCertController.cs	Issue	1
 Accounting/Controllers/WithholdingTaxCertController.cs	RestorePending	1
 Accounting/Controllers/WithholdingTaxCertController.cs	Update	1
-Accounting/Controllers/WithholdingTaxCertController.cs	Void	1
 # รอบ 219 เฟส 2 ขั้น 4: ลิงก์ชำระใบแจ้งหนี้ค่าบริการ NextAcc — ทางเข้าสาธารณะโดยตั้งใจ (สิทธิ์ = โทเคน 128 บิตของลิงก์ · จำกัดอัตรา fail-closed · ใบมาจากลิงก์เท่านั้น — required_call_site_check ล็อกลำดับด่าน)
 Accounting/Controllers/PlatformPayLinkController.cs	PayBySlip	1
 Accounting/Controllers/PlatformPayLinkController.cs	PayOnline	1

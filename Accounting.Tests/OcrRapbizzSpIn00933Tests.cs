@@ -344,12 +344,16 @@ public class OcrRapbizzSpIn00933Tests
     }
 
     [Fact]
-    public void ทีมT_ข้อ159_ทิศตรงข้าม_ถ้าส่วนลดท้ายบิลหาย_ยอดกลับเป็น1878_51บวกVAT131_50_ฟอร์มจึงต้องส่งbillDiscountAmountจากเซิร์ฟเวอร์()
+    public void ทีมT_ข้อ159_ทิศตรงข้าม_ถ้าส่วนลดท้ายบิลหาย_ยอดกลับเป็น1878_50บวกVAT131_50_ฟอร์มจึงต้องส่งbillDiscountAmountจากเซิร์ฟเวอร์()
     {
-        // จุดที่ตัวเลข "เปลี่ยนกลับ" ได้หลังข้อ 159: บรรทัดไม่มีส่วนลดแล้ว — ถ้า BillDiscountAmount หาย (หน้าเว็บส่ง 0 เหมือนเดิม) ⇒ ฐาน 1,878.51 · VAT 131.50 · 2,010.01 ≠ 1,434
+        // จุดที่ตัวเลข "เปลี่ยนกลับ" ได้หลังข้อ 159: บรรทัดไม่มีส่วนลดแล้ว — ถ้า BillDiscountAmount หาย (หน้าเว็บส่ง 0 เหมือนเดิม) ⇒ ฐาน 1,878.50 · VAT 131.50 · 2,010.00 ≠ 1,434
+        // รอบ 250 WP-01 (เทสต์นี้เพิ่งรันครั้งแรก): ค่าคาดเดิม 1,878.51 = Σ ถอด VAT รายบรรทัด (1,719.63 + 158.88) โดยลืมขั้นปัด VAT ของเอกสาร
+        // (ReconcileTaxRounding · มีตั้งแต่ 5c329e43 ก่อนเทสต์นี้) — เป้า VAT = round(1,878.51 × 7%) = 131.50 แต่ Σ VAT บรรทัด = 131.49 ⇒ ย้าย 0.01
+        // จากก่อน VAT ของบรรทัดใหญ่สุดไป VAT ⇒ 1,719.62 + 158.88 = 1,878.50 (ราคารวม 2,010.00 ไม่ขยับ — ถูกต้องตาม 2,010 × 7/107 = 131.50)
         var doc = ScanDocumentSimulator.Build(Xml(), EtaxFixtures.RapbizzSpIn00933Xml);
         var lost = ScanDocumentSimulator.Resave(doc with { BillDiscount = 0m });
-        Assert.Equal(1878.51m, lost.Sum(x => x.Amount));
+        Assert.Equal(1878.50m, lost.Sum(x => x.Amount));
+        Assert.Equal(131.50m, lost.Sum(x => x.Vat));
         Assert.NotEqual(1434.00m, lost.Sum(x => x.Amount) + lost.Sum(x => x.Vat));
         // เคส C (ร้านวัสดุ · ส่วนลดก่อน VAT บนราคาก่อน VAT) ยังกระจายลงบรรทัดเหมือนเดิม — ไม่ลง BillDiscountAmount
         Assert.Null(OcrLineReconciler.Classify(1395m, 1325.25m, 92.77m, 1418.02m, 69.75m).BillDiscountPreVat);

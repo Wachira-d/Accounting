@@ -1407,11 +1407,11 @@ public partial class LodgingService
             }
             if (depositPlan.BaseDeducted > 0m)
             {
-                // C7 — VAT คิดรายใบบนฐานของใบเอง (ปัด AwayFromZero) ⇒ รวมสองใบอาจต่างจากยอดจอง ±0.01 ที่ VAT (ฐานไม่เพี้ยน) · บันทึกให้เห็น
+                // C7 — VAT คิดรายใบบนฐานของใบเอง (ปัด AwayFromZero) ⇒ รวมสองใบอาจต่างจากยอดจองเล็กน้อย (ฐานหรือ VAT — ขั้นปัด VAT แบบราคารวม VAT ขยับฐานได้ · รอบ 250 WP-01) · บันทึกให้เห็น
                 roundingDelta = LodgingDepositSettlement.RoundingDelta(full.Total, depositPlan.GrossDeducted, approved.TotalAmount);
                 if (roundingDelta != 0m)
                     AppendInternal(r, $"ปัดเศษ VAT รายใบ: ใบมัดจำ + {approved.DocumentNumber} รวม {(roundingDelta > 0 ? "มากกว่า" : "น้อยกว่า")}ยอดเต็ม {Math.Abs(roundingDelta):N2} "
-                        + "(ส่วนต่างอยู่ที่ VAT · รายได้ไม่เพี้ยน · ตามกฎ VAT คิดรายใบ)");
+                        + "(ปัดเศษรายใบ — ส่วนต่างอาจอยู่ที่ฐานหรือ VAT · ตามกฎ VAT คิดรายใบ)");   // รอบ 250 WP-01: เดิมอ้าง "รายได้ไม่เพี้ยน" — ไม่จริงเสมอ (ดู SiteOrderDepositInvoicingTests)
             }
             await _db.SaveChangesAsync();
 
