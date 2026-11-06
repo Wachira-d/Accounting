@@ -3018,6 +3018,7 @@ const Layout = {
           </div>`;
         document.body.appendChild(wrap);
       }
+      if (wrap !== document.body.lastElementChild) document.body.appendChild(wrap);   // อยู่บนสุดเหนือ modal ที่เปิดอยู่ (WP-13)
       wrap.querySelector('#dcTitle').textContent = '⚠️ ' + title;
       wrap.querySelector('#dcMessage').innerHTML = message;
       wrap.querySelector('#dcPrompt').innerHTML = promptHtml;
@@ -3109,6 +3110,8 @@ const Layout = {
   _ask(opts, withField) {
     return new Promise(resolve => {
       const wrap = this._ensureAskModal();
+      // ย้ายไปท้าย body ทุกครั้ง ⇒ อยู่บนสุดเหนือ modal ที่สร้างทีหลัง (ลำดับ DOM = ลำดับซ้อน · Escape ปิดตัวท้ายสุด)
+      if (wrap !== document.body.lastElementChild) document.body.appendChild(wrap);
       const $ = s => wrap.querySelector(s);
       $('#laTitle').textContent = opts.title || (withField ? 'กรอกข้อมูล' : 'ยืนยัน');
       if (opts.messageHtml != null) $('#laMessage').innerHTML = opts.messageHtml;
@@ -3117,6 +3120,7 @@ const Layout = {
       ok.textContent = opts.okText || 'ตกลง';
       ok.className = 'btn ' + (opts.danger ? 'btn-danger' : 'btn-primary');
       $('#laCancel').textContent = opts.cancelText || 'ยกเลิก';
+      $('#laCancel').style.display = opts.noCancel ? 'none' : '';
       const field = $('#laField'), err = $('#laError');
       const multi = !!opts.multiline;
       const input = multi ? $('#laTextarea') : $('#laInput');
@@ -3164,6 +3168,13 @@ const Layout = {
    *  @param opts {title, message | messageHtml, okText, cancelText, danger} — ส่งสตริงตรง ๆ = message */
   confirm(opts) {
     return this._ask(typeof opts === 'string' ? { message: opts } : (opts || {}), false);
+  },
+
+  /** กล่องข้อความแจ้ง (แทน `alert()`) ปุ่มเดียว → Promise<void> · ข้อความยาว/หลายบรรทัดได้ (pre-line)
+   *  @param opts {title, message | messageHtml, okText} — ส่งสตริงตรง ๆ = message */
+  notice(opts) {
+    const o = typeof opts === 'string' ? { message: opts } : (opts || {});
+    return this._ask(Object.assign({ title: 'แจ้งให้ทราบ', okText: 'ปิด' }, o, { noCancel: true }), false).then(() => undefined);
   },
 
   /** ถามข้อความหนึ่งช่อง (แทน `prompt()`) → Promise<string|null> (null = ยกเลิก · '' = ตกลงโดยเว้นว่าง เมื่อไม่ required)

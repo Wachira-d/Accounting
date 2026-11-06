@@ -13,7 +13,7 @@ cleanup.html 3
 contacts.html 0
 delivery-sign.html 2
 document-templates.html 4
-documents.html 22
+documents.html 20
 email-schedule.html 0
 etax.html 1
 expense.html 3
