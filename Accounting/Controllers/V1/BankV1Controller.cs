@@ -132,7 +132,9 @@ public class BankV1Controller : PublicApiControllerBase
         OnConflict: BankStatementConflictPolicy.InsertAsNew,
         UpdateStatementSnapshot: false,
         AutoMatch: false,
-        CreatedBy: "api:v1");
+        CreatedBy: "api:v1",
+        // ฝ่ายค้าน WP-12A H1: ระบบภายนอกส่งเอง ⇒ เสนอเท่านั้น (ไม่ใช่หลักฐานให้ปิดหนี้อัตโนมัติ)
+        EntrySource: Accounting.Helpers.BankReceiptAutoSettle.SourceApi);
 
     public record ConfirmMatchRequest(Guid BankTransactionId, List<Guid> EntryIds);
 

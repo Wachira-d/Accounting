@@ -16266,7 +16266,8 @@ RULES += [
     dict(file=_R252_BANK, method="ApplyAsync",
          must=["PayLinkTransferWht.ForAsync(", "PayLinkTransferWht.PaymentWht(", "_docs.CreatePaymentAsync(", "PaymentReference(line.Id)", "LinkAsync("],
          call_args=[("_docs.CreatePaymentAsync(", "paymentWht"), ("_docs.CreatePaymentAsync(", "BankAutoSettle")],
-         before=[("BankReceiptAutoSettle.Stamps.Applying", "_docs.CreatePaymentAsync("), ("_docs.CreatePaymentAsync(", "LinkAsync(")],
+         # ฝ่ายค้าน H2: LinkAsync ถูกเรียกก่อน CreatePaymentAsync ได้ (การชำระของบรรทัดนี้มีอยู่แล้ว) ⇒ ไม่ล็อกลำดับ create→link อีก (must ยังบังคับมีทั้งคู่)
+         before=[("BankReceiptAutoSettle.Stamps.Applying", "_docs.CreatePaymentAsync(")],
          forbid=["Payments.Add(", "EnqueueAsync(", "EnqueueCoreAsync("],
          why=_R252_WHY + "ปิดหนี้จากเงินโอน: ประทับ Applying ก่อน (กู้ได้) → WHT สูตรลิงก์ชำระ → CreatePaymentAsync ทางเดียว (งานหลังรับชำระเข้าคิวในแกน) → ผูกบรรทัด · ห้ามสร้าง Payment เอง"),
     dict(file=_R252_BANK, method="EvaluateLineAsync",
@@ -16356,6 +16357,56 @@ REVIEWER_CASES += [
      "", True),
     # ทิศตรงข้าม: จัดบรรทัดใหม่ ⇒ ต้องไม่ฟ้อง
     ("R252-1fp", "ApplyAsync", "WithholdingTaxAmount: paymentWht\n", "WithholdingTaxAmount:\n                paymentWht\n", False),
+]
+
+
+# ── รอบ 252 WP-12A แก้ผลฝ่ายค้าน (H1–H4 · M1–M7): แหล่งของบรรทัด · กู้การชำระที่สร้างแล้ว · ผู้สมัครตามตัวตัดสินลิงก์ชำระ · THB · ผูกในธุรกรรมเดียว ──
+_R252F_WHY = "รอบ 252 WP-12A ฝ่ายค้าน: "
+RULES += [
+    dict(file=_R252_BANK, method="ApplyAsync",
+         must=["ExistingPaymentAsync("],
+         before=[("ExistingPaymentAsync(", "_docs.CreatePaymentAsync(")],
+         why=_R252F_WHY + "H2 การชำระของบรรทัดนี้มีแล้ว (ก่อนสร้าง + ในทางล้ม) ⇒ ผูก ไม่สร้างซ้ำ ไม่ประทับล้ม"),
+    dict(file=_R252_BANK, method="ApplyAsync",
+         must_re=[r"catch\s*\(Exception\s+ex\)[^{]*\{[\s\S]*?ExistingPaymentAsync\("],
+         why=_R252F_WHY + "H2 ในทางล้มต้องค้นการชำระที่ commit แล้วก่อนประทับ Failed"),
+    dict(file=_R252_BANK, method="CandidatesAsync",
+         must=["DocumentPayLinkPolicy.IssueRefusal(", "PaymentQrService.SupersedingTaxInvoiceNumberAsync(", "DocumentPermissionHelper.CanApproveAsync(",
+               "line.CreatedByUserId", "PaymentIntentStatus.Pending", "d.BalanceDue == amount"],
+         why=_R252F_WHY + "H3 ผู้สมัคร = ตัวตัดสินเดียวกับลิงก์ชำระ · H1 สิทธิ์อนุมัติของผู้นำเข้า · M6 สลิปรอตรวจเท่านั้น · M1 ยอดตรงไม่ตัดจำนวน"),
+    dict(file=_R252_BANK, method="EvaluateLineAsync", must=["AccountIsThbAsync("],
+         before=[("AccountIsThbAsync(", "DecideAsync(")],
+         why=_R252F_WHY + "H4 บัญชีไม่ใช่ THB ไม่เข้าเส้นนี้"),
+    dict(file=_R252_BANK, method="ConfirmAsync", must=["AccountIsThbAsync("],
+         why=_R252F_WHY + "H4 ยืนยันมือก็ไม่ข้ามสกุล"),
+    dict(file=_R252_BANK, method="LinkAsync",
+         must=["BeginTransactionAsync(", "tx.CommitAsync(", "line.CreatedBy", "NotifyFailedAsync("],
+         must_re=[r"AutoSettleVerdict\s*==\s*BankReceiptAutoSettle\.Stamps\.Applying"],
+         why=_R252F_WHY + "M5 ผูกเฉพาะบรรทัดที่ยัง Applying + audit ธุรกรรมเดียว · 0 แถว = แจ้งดัง · H1(c) ผู้นำเข้าใน audit"),
+    dict(file=_R252_BANK, method="EvaluatePendingAsync",
+         must=["t.AutoSettleEvaluatedAt != null", "throw new InvalidOperationException("],
+         why=_R252F_WHY + "M7 ไม่เคยประเมินก่อน · ล้ม = ประทับ + ผลรอบล้ม"),
+    dict(file="Services/Implementations/BankService.StatementImport.cs", method="ImportParsedStatementRowsAsync",
+         must=["options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceUserFile", "CreatedByUserId = options.UploadedByUserId"],
+         why=_R252F_WHY + "H1 แหล่งตั้งต้นของไฟล์ = UserFile (เสนอเท่านั้น) · ผู้อัปโหลดอยู่บนบรรทัด"),
+    dict(file="Services/Implementations/BankService.cs", method="ReconcileAsync", must=["BankReceiptAutoSettle.ManualMatchBlock("],
+         why=_R252F_WHY + "M5 จับคู่มือห้ามแตะบรรทัดที่ระบบกำลังบันทึกรับชำระ"),
+    dict(file="Controllers/AutopilotController.cs", method="ConfirmBank", must=["DocumentPermissionHelper.CanApproveAsync("],
+         why=_R252F_WHY + "M4 ยืนยัน = บันทึกรับชำระ ⇒ สิทธิ์อนุมัติชนิดเอกสาร"),
+    dict(file=_R252_QT, method="RunOnceAsync", must=["StampAsync(", "throw new InvalidOperationException("],
+         why=_R252F_WHY + "M7 ล้มนอกด่าน ⇒ ประทับ Failed + ผลรอบล้ม"),
+]
+REVIEWER_CASES += [
+    # H3: ถอดตัวตัดสินลิงก์ชำระออกจากผู้สมัคร ⇒ ใบแจ้งหนี้ที่มีใบกำกับแล้วถูกปิดหนี้ซ้ำ ⇒ ต้องฟ้อง
+    ("R252F-1", "CandidatesAsync",
+     "if (DocumentPayLinkPolicy.IssueRefusal(d.DocumentType, d.Status, d.BalanceDue, saleSide, d.Currency, superseding) != null) continue;", "", True),
+    # M5: ผูกโดยไม่ดูว่ายัง Applying ⇒ ต้องฟ้อง
+    ("R252F-2", "LinkAsync",
+     "&& t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Applying && t.ReconciliationStatus == ReconciliationStatus.Unmatched)",
+     "&& t.ReconciliationStatus == ReconciliationStatus.Unmatched)", True),
+    # H1: แหล่งตั้งต้นของไฟล์กลับเป็น Statement ⇒ ต้องฟ้อง
+    ("R252F-3", "ImportParsedStatementRowsAsync",
+     "options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceUserFile", "options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceStatement", True),
 ]
 
 

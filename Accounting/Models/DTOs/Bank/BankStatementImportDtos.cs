@@ -74,7 +74,10 @@ public sealed record BankStatementWriteOptions(
     string? SourceCurrency = null,
     string? CreatedBy = null,
     Guid? UploadedByUserId = null,
-    IReadOnlyList<string>? ParserNotes = null);
+    IReadOnlyList<string>? ParserNotes = null,
+    /// <summary>ฝ่ายค้าน WP-12A H1: แหล่งของบรรทัด (<c>BankReceiptAutoSettle.Source*</c>) — null = <c>UserFile</c> (ไฟล์/ทางเข้าที่ผู้ใช้ส่งเอง ⇒ เสนอเท่านั้น ·
+    /// ค่าตั้งต้นปลอดภัย) · หน้าบัญชีธนาคารตั้ง <c>Statement</c> + ผู้อัปโหลด · API v1 ตั้ง <c>Api</c></summary>
+    string? EntrySource = null);
 
 public enum BankStatementLineOutcome
 {

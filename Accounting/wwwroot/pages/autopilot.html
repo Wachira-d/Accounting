@@ -303,7 +303,7 @@ const Page = {
     try {
       const res = await api.simulateAutopilotBank(30);
       const s = (res && res.data) || {};
-      el.textContent = `เงินเข้าที่ยังไม่จับคู่ ${s.lines} รายการ: ปิดเองได้ ${s.wouldAutoSettle} · เสนอให้คนยืนยัน ${s.wouldSuggest} · ไม่พบใบ ${s.noMatch} — ${s.note || ''}`;
+      el.textContent = `เงินเข้าที่ยังไม่จับคู่ ${s.lines} รายการ: ปิดเองได้ ${s.wouldAutoSettle} · เสนอให้คนยืนยัน ${s.wouldSuggest} · ไม่พบใบ ${s.noMatch} · ไม่ทราบแหล่ง (รายการเก่า) ${s.legacyUnknownSource} · ไฟล์/API/พิมพ์มือ ${s.userSuppliedSource} — ${s.note || ''}`;
     } catch (e) { el.textContent = 'จำลองไม่สำเร็จ: ' + (e.message || ''); }
   },
 };

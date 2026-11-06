@@ -79,7 +79,16 @@ public class BankFeedService : IBankFeedService
         return MapToResponse(conn);
     }
 
-    public async Task<BankFeedSyncResult> SyncAsync(Guid companyId, Guid connectionId)
+    /// <summary>ฝ่ายค้าน WP-12A H1(b): ปลายทางของการเชื่อมต่อตรงกับที่ระบบรู้จักของธนาคารนั้น ⇒ Feed · อื่น ๆ (ผู้ใช้ตั้ง URL เอง) ⇒ FeedCustom</summary>
+    internal static string FeedSource(BankConnection conn)
+    {
+        var known = BankApiEndpoints.GetValueOrDefault((conn.BankCode ?? "").ToUpperInvariant());
+        return !string.IsNullOrEmpty(known) && string.Equals((conn.ApiEndpoint ?? known).Trim().TrimEnd('/'), known.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)
+            ? Accounting.Helpers.BankReceiptAutoSettle.SourceFeed
+            : Accounting.Helpers.BankReceiptAutoSettle.SourceFeedCustom;
+    }
+
+    public async Task<BankFeedSyncResult> SyncAsync(Guid companyId, Guid connectionId, Guid? triggeredByUserId = null)
     {
         var conn = await _db.BankConnections
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == connectionId)
@@ -123,8 +132,9 @@ public class BankFeedService : IBankFeedService
                     Description = txn.Description,
                     Reference = txn.Reference,
                     ReconciliationStatus = Models.Enums.ReconciliationStatus.Unmatched,
-                    // รอบ 252 WP-12A: ดึงจากธนาคาร = หลักฐานธนาคารจริง (ปิดหนี้อัตโนมัติได้ถ้าบริษัทเปิด)
-                    EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceFeed
+                    // รอบ 252 WP-12A + ฝ่ายค้าน H1(b): ปลายทางที่ระบบรู้จัก = Feed · ปลายทางที่ผู้ใช้ตั้งเอง = FeedCustom (ปิดเองได้เฉพาะเมื่อผู้สั่งดึงมีสิทธิ์อนุมัติ)
+                    EntrySource = FeedSource(conn),
+                    CreatedByUserId = triggeredByUserId
                 };
 
                 _db.BankTransactions.Add(bankTxn);
@@ -172,7 +182,7 @@ public class BankFeedService : IBankFeedService
         }
     }
 
-    public async Task<BankFeedSyncResult> SyncAllAsync(Guid companyId)
+    public async Task<BankFeedSyncResult> SyncAllAsync(Guid companyId, Guid? triggeredByUserId = null)
     {
         var connections = await _db.BankConnections
             .Where(c => c.CompanyId == companyId && c.AutoSync && c.Status == "Active")
@@ -182,7 +192,7 @@ public class BankFeedService : IBankFeedService
 
         foreach (var conn in connections)
         {
-            var result = await SyncAsync(companyId, conn.Id);
+            var result = await SyncAsync(companyId, conn.Id, triggeredByUserId);
             totalNew += result.NewTransactions;
             totalDuplicates += result.DuplicateSkipped;
             totalMatched += result.AutoMatched;

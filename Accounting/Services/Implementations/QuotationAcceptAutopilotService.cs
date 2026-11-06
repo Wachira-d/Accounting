@@ -52,6 +52,7 @@ public class QuotationAcceptAutopilotService
             .OrderBy(d => d.QuotationAcceptedAt).Take(BatchSize)
             .Select(d => new { d.Id, d.CompanyId }).ToListAsync(ct);
         var done = 0;
+        var failed = 0;
         foreach (var p in pending)
         {
             try
@@ -61,10 +62,16 @@ public class QuotationAcceptAutopilotService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                // ฝ่ายค้าน M7: ล้มนอกด่าน ⇒ ประทับ Failed + เหตุบนใบ (หน้า Autopilot มีปุ่มลองใหม่ · ไม่วนหัวคิวทุก 5 นาที) · รอบนี้จบแล้วโยนสรุป ⇒ ผลรอบของงาน = ล้ม
+                failed++;
                 _logger.LogError(ex, "แปลงใบเสนอราคาอัตโนมัติ {Doc} ของบริษัท {Company} ล้มนอกด่าน", p.Id, p.CompanyId);
                 _db.ChangeTracker.Clear();
+                await StampAsync(p.CompanyId, p.Id, QuotationAcceptAutopilot.Outcome.Failed,
+                    "ระบบตัดสินใบนี้ไม่สำเร็จ: " + (ex is BusinessRuleException or InvalidOperationException ? ex.Message : "ข้อผิดพลาดของระบบ"), null, nowUtc, ct);
             }
         }
+        if (failed > 0)
+            throw new InvalidOperationException($"ตัดสินใบเสนอราคา {done + failed} ใบ ล้ม {failed} ใบ — เหตุอยู่บนแต่ละใบ (หน้า Autopilot)");
         return done;
     }
 

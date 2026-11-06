@@ -18,8 +18,8 @@ public class AutopilotRound252Tests
         => new(amount, Day, credit, source, matched);
 
     private static BankReceiptAutoSettle.Candidate Cand(string number, decimal net, decimal? gross = null, bool cites = false, bool name = false,
-        bool slip = false, bool pendingOnline = false, bool contactOff = false, DateTime? date = null)
-        => new(Guid.NewGuid(), number, date ?? Day.AddDays(-10), net, gross ?? net, cites, name, slip, pendingOnline, contactOff);
+        bool slip = false, bool pendingOnline = false, bool contactOff = false, DateTime? date = null, bool creatorOk = true, bool supplier = false)
+        => new(Guid.NewGuid(), number, date ?? Day.AddDays(-10), net, gross ?? net, cites, name, slip, pendingOnline, contactOff, creatorOk, supplier);
 
     // ═══ BankReceiptAutoSettle — ปิดหนี้เองเมื่อครบทุกข้อเท่านั้น ═══
 
@@ -49,7 +49,9 @@ public class AutopilotRound252Tests
     [InlineData(BankReceiptAutoSettle.SourceManual)]
     [InlineData(null)]
     [InlineData("Slip")]
-    public void รายการพิมพ์มือ_หรือไม่รู้แหล่ง_ไม่ปิดเอง(string? source)
+    [InlineData(BankReceiptAutoSettle.SourceUserFile)]   // ฝ่ายค้าน H1: ไฟล์ศูนย์นำเข้า/นำเข้า-ส่งออก/Open Banking (ไฟล์)
+    [InlineData(BankReceiptAutoSettle.SourceApi)]        // ฝ่ายค้าน H1: API v1
+    public void รายการพิมพ์มือ_ไฟล์หรือAPIที่ผู้ใช้ส่งเอง_หรือไม่รู้แหล่ง_ไม่ปิดเอง_แม้ผู้ส่งมีสิทธิ์อนุมัติ(string? source)
     {
         var r = BankReceiptAutoSettle.Decide(Line(1_040m, source), new[] { Cand("INV-2569000001", 1_040m, cites: true) }, true);
         Assert.Equal(BankReceiptAutoSettle.Verdict.Suggest, r.Kind);
@@ -60,9 +62,49 @@ public class AutopilotRound252Tests
     [Theory]
     [InlineData(BankReceiptAutoSettle.SourceStatement)]
     [InlineData(BankReceiptAutoSettle.SourceFeed)]
-    public void statement_และ_feed_เป็นแหล่งธนาคารจริง_ปิดเองได้(string source)
+    [InlineData(BankReceiptAutoSettle.SourceFeedCustom)]
+    public void ทิศตรงข้าม_ผู้นำเข้ามีสิทธิ์อนุมัติ_statementหน้าธนาคาร_และfeed_ปิดเองได้(string source)
         => Assert.Equal(BankReceiptAutoSettle.Verdict.AutoSettle,
             BankReceiptAutoSettle.Decide(Line(1_040m, source), new[] { Cand("INV-2569000001", 1_040m, cites: true) }, true).Kind);
+
+    [Theory]
+    [InlineData(BankReceiptAutoSettle.SourceStatement)]
+    [InlineData(BankReceiptAutoSettle.SourceFeedCustom)]
+    public void ฝ่ายค้านH1_ผู้นำเข้าไม่มีสิทธิ์อนุมัติหรือไม่ทราบ_เสนอเท่านั้นพร้อมเหตุ(string source)
+    {
+        var r = BankReceiptAutoSettle.Decide(Line(1_040m, source), new[] { Cand("INV-2569000001", 1_040m, cites: true, creatorOk: false) }, true);
+        Assert.Equal(BankReceiptAutoSettle.Verdict.Suggest, r.Kind);
+        Assert.Contains("ไม่มีสิทธิ์อนุมัติ", r.Reason);
+    }
+
+    [Fact]
+    public void feedปลายทางที่ระบบรู้จัก_ไม่ต้องตรวจสิทธิ์ผู้สั่งดึง()
+        => Assert.Equal(BankReceiptAutoSettle.Verdict.AutoSettle,
+            BankReceiptAutoSettle.Decide(Line(1_040m, BankReceiptAutoSettle.SourceFeed),
+                new[] { Cand("INV-2569000001", 1_040m, cites: true, creatorOk: false) }, true).Kind);
+
+    [Fact]
+    public void ฝ่ายค้านM3_ใบลงวันหลังเงินเข้า_เสนอพร้อมเหตุtaxpoint_ใบลงวันเดียวกัน_ปิดเองได้()
+    {
+        var later = BankReceiptAutoSettle.Decide(Line(1_040m), new[] { Cand("INV-2569000001", 1_040m, cites: true, date: Day.AddDays(1)) }, true);
+        Assert.Equal(BankReceiptAutoSettle.Verdict.Suggest, later.Kind);
+        Assert.Contains("tax point", later.Reason);
+        Assert.Equal(BankReceiptAutoSettle.Verdict.AutoSettle,
+            BankReceiptAutoSettle.Decide(Line(1_040m), new[] { Cand("INV-2569000001", 1_040m, cites: true, date: Day) }, true).Kind);
+    }
+
+    [Fact]
+    public void ผู้จ่ายเป็นผู้ขายของเราด้วย_เสนอเท่านั้น()
+        => Assert.Equal(BankReceiptAutoSettle.Verdict.Suggest,
+            BankReceiptAutoSettle.Decide(Line(1_040m), new[] { Cand("INV-2569000001", 1_040m, cites: true, supplier: true) }, true).Kind);
+
+    [Fact]
+    public void จับคู่มือห้ามแตะบรรทัดที่ระบบกำลังบันทึก()
+    {
+        Assert.NotNull(BankReceiptAutoSettle.ManualMatchBlock(BankReceiptAutoSettle.Stamps.Applying));
+        Assert.Null(BankReceiptAutoSettle.ManualMatchBlock(BankReceiptAutoSettle.Stamps.Suggest));
+        Assert.Null(BankReceiptAutoSettle.ManualMatchBlock(null));
+    }
 
     [Fact]
     public void ยอดตรงแต่ไม่มีตัวระบุตัว_เสนอ_ไม่ปิดเอง()
@@ -149,8 +191,9 @@ public class AutopilotRound252Tests
         Assert.Equal(BankReceiptAutoSettle.Verdict.None, BankReceiptAutoSettle.Decide(Line(1_040m, matched: true), new[] { c }, true).Kind);
         var late = Cand("INV-2569000002", 1_040m, cites: true, date: Day.AddDays(8));
         Assert.Equal(BankReceiptAutoSettle.Verdict.None, BankReceiptAutoSettle.Decide(Line(1_040m), new[] { late }, true).Kind);
-        var ok = Cand("INV-2569000003", 1_040m, cites: true, date: Day.AddDays(7));
-        Assert.Equal(BankReceiptAutoSettle.Verdict.AutoSettle, BankReceiptAutoSettle.Decide(Line(1_040m), new[] { ok }, true).Kind);
+        // ฝ่ายค้าน M3: ภายใน 7 วันหลังเงินเข้ายังเป็นผู้สมัคร แต่เสนอเท่านั้น
+        var within = Cand("INV-2569000003", 1_040m, cites: true, date: Day.AddDays(7));
+        Assert.Equal(BankReceiptAutoSettle.Verdict.Suggest, BankReceiptAutoSettle.Decide(Line(1_040m), new[] { within }, true).Kind);
     }
 
     [Theory]
@@ -158,6 +201,8 @@ public class AutopilotRound252Tests
     [InlineData("inv 2569/110012 ค่าบริการ", "INV-2569110012", true)]
     [InlineData("TRF 2569110013", "INV-2569110012", false)]
     [InlineData("TRF IV-12 จ่าย", "IV-12", false)]   // เลขสั้นกว่า 6 ตัว — ไม่นับ (กันชนเลขทั่วไป)
+    [InlineData("TRF INV25691100123", "INV-2569110012", false)]   // ฝ่ายค้าน LOW: ตามขอบคำ — เลขยาวกว่าไม่ใช่ใบนี้
+    [InlineData("XINV2569110012 TRF", "INV-2569110012", false)]
     public void อ้างเลขเอกสาร_เทียบแบบตัดสัญลักษณ์และไม่สนตัวพิมพ์(string lineText, string number, bool expected)
         => Assert.Equal(expected, BankReceiptAutoSettle.CitesDocumentNumber(lineText, number));
 
@@ -399,10 +444,14 @@ public class AutopilotRound252Tests
         Assert.NotEqual(a, SlipEvidenceRule.Sha256Hex(new byte[] { 1, 2, 4 }));
         Assert.Equal(64, a.Length);
         Assert.Equal("ABC123456", SlipEvidenceRule.NormalizeRef(" abc-123 456 "));
-        Assert.Null(SlipEvidenceRule.NormalizeRef("12-3"));   // สั้น = ไม่ใช้
-        Assert.True(SlipEvidenceRule.RefMatchesLine("ABC123456", "REF abc 123456", null));
-        Assert.False(SlipEvidenceRule.RefMatchesLine("ABC123456", "REF 999", "TRF"));
-        Assert.False(SlipEvidenceRule.RefMatchesLine(null, "ABC123456", null));
+        Assert.Null(SlipEvidenceRule.NormalizeRef("12-3"));        // สั้น = ไม่ใช้
+        Assert.Null(SlipEvidenceRule.NormalizeRef("ABCDEFGHIJ"));  // ฝ่ายค้าน M6: ไม่มีตัวเลข = ไม่ใช้
+        Assert.Null(SlipEvidenceRule.NormalizeRef("AB12345"));     // ฝ่ายค้าน M6: สั้นกว่า 8
+        Assert.True(SlipEvidenceRule.RefMatchesLine("ABC123456", "abc-123 456"));        // ทั้งช่องเท่ากัน
+        Assert.True(SlipEvidenceRule.RefMatchesLine("ABC123456", "TRF ABC123456 KBANK")); // คำในช่องเท่ากัน
+        Assert.False(SlipEvidenceRule.RefMatchesLine("ABC123456", "XABC1234567"));       // ฝ่ายค้าน M6: ไม่ใช่ substring
+        Assert.False(SlipEvidenceRule.RefMatchesLine("ABC123456", "REF 999"));
+        Assert.False(SlipEvidenceRule.RefMatchesLine(null, "ABC123456"));
     }
 
     [Fact]

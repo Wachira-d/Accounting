@@ -13,25 +13,26 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Services.Implementations;
 
 /// <summary>
-/// **เงินโอนเข้าในรายการเดินบัญชี ⇒ ปิดหนี้ใบค้าง** (รอบ 252 WP-12A · AUTOPILOT §5 · รอบ 250 ของแผน · G-T1/G-T2/G-T3/G-T8)
+/// **เงินโอนเข้าในรายการเดินบัญชี ⇒ ปิดหนี้ใบค้าง** (รอบ 252 WP-12A · AUTOPILOT §5 · รอบ 250 ของแผน · G-T1/G-T2/G-T3/G-T8 · แก้ผลฝ่ายค้าน H1–H4 · M1–M7)
 /// <list type="bullet">
-/// <item>ตัวตัดสินตัวเดียว <see cref="BankReceiptAutoSettle.Decide"/> (pure · ไม่มี AI) — ผู้สมัคร = ใบขายค้าง (ใบแจ้งหนี้/ใบกำกับ) ของบริษัทนี้ที่ยอดใกล้เงินเข้า ·
-/// ยอดที่ต้องโอน/WHT จาก <see cref="PayLinkTransferWht"/> (สูตรเดียวกับลิงก์ชำระ)</item>
-/// <item>AutoSettle (บริษัทเปิด — ค่าตั้งต้นปิด) ⇒ <c>IDocumentService.CreatePaymentAsync</c> (ทางเดียว · source <see cref="PaymentEntrySource.BankAutoSettle"/> ⇒ งานหลังรับชำระ
-/// เข้าคิวในแกน) ⇒ ผูกบรรทัดกับการชำระ (Matched · <see cref="BankMatchAttribution.BankAutoSettle"/>) + audit chain · <b>ไม่มีทางประทับ "ชำระแล้ว" โดยไม่มีรายการเดินบัญชีจริง</b></item>
-/// <item>Suggest ⇒ ประทับคำตัดสินบนบรรทัด (คิว "เงินเข้าที่รอยืนยัน" ในหน้า Autopilot) · คนกดยืนยัน ⇒ ทางเดียวกัน (ผู้บันทึก = คนกด)</item>
-/// <item>ล้ม (งวดปิด · ยอดเปลี่ยน ฯลฯ) ⇒ ประทับ Failed + เหตุบนบรรทัด + แจ้งทันที (E-14b) · ใบยังค้าง · ล้มกลางทางหลังสร้างการชำระ ⇒ รอบหน้ากู้ด้วยเลขอ้างอิงการชำระ
-/// <c>BANK:{lineId}</c> (ไม่สร้างซ้ำ)</item>
+/// <item>ตัวตัดสินตัวเดียว <see cref="BankReceiptAutoSettle.Decide"/> (pure · ไม่มี AI) — ผู้สมัคร = เอกสารที่ลิงก์ชำระรับได้ (ตัวตัดสินเดียว
+/// <c>DocumentPayLinkPolicy.IssueRefusal</c> = null · ใบแจ้งหนี้ที่มีใบกำกับแล้วไม่ใช่ผู้สมัคร · ใบเพิ่มหนี้ฝั่งขาย) ของบริษัทนี้ ·
+/// ยอดตรงทั้งหมดไม่ตัดจำนวน (กติกายอดซ้ำต้องเห็นทุกใบ) · ยอดที่ต้องโอน/WHT จาก <see cref="PayLinkTransferWht"/> (สูตรเดียวกับลิงก์ชำระ)</item>
+/// <item>แหล่งของบรรทัด (H1): ไฟล์/API/พิมพ์มือที่ผู้ใช้ส่งเอง = เสนอเท่านั้น · ไฟล์หน้าธนาคาร/feed ที่ผู้ใช้ตั้ง URL = ปิดเองได้เมื่อผู้นำเข้ามีสิทธิ์อนุมัติใบชนิดนั้น ณ ตอนตัดสิน</item>
+/// <item>AutoSettle (บริษัทเปิด — ค่าตั้งต้นปิด) ⇒ <c>IDocumentService.CreatePaymentAsync</c> (ทางเดียว · source <see cref="PaymentEntrySource.BankAutoSettle"/>) ⇒ ผูกบรรทัด
+/// + audit ในธุรกรรมเดียว · <b>ไม่มีทางประทับ "ชำระแล้ว" โดยไม่มีรายการเดินบัญชีจริงหรือคนยืนยัน</b></item>
+/// <item>การชำระที่มีเลขอ้างอิง <c>BANK:{lineId}</c> อยู่แล้ว (สร้างสำเร็จแต่ขั้นหลัง commit ล้ม/เครื่องดับ) ⇒ ผูก ไม่สร้างซ้ำ ไม่ประทับล้ม (H2)</item>
 /// </list>
 /// </summary>
 public class BankReceiptSettleService : IBankReceiptSettleService
 {
     /// <summary>แถวต่อรอบของงานเบื้องหลัง</summary>
     public const int BatchSize = 100;
-    /// <summary>ประเมินเฉพาะรายการที่ลงวันที่ไม่เกินนี้ (เงินโอนเก่ากว่านี้ไม่เดาให้)</summary>
+    /// <summary>ประเมินเฉพาะรายการที่ลงวันที่ไม่เกินนี้ (เงินโอนเก่ากว่านี้ไม่เดาให้) — บรรทัด Applying กู้ได้เสมอ ไม่ติดกรอบนี้</summary>
     public const int LookbackDays = 14;
     /// <summary>ประเมินซ้ำบรรทัดที่ยังไม่จับคู่ทุก ๆ เท่านี้ (ใบออกทีหลังเงินเข้า · สลิปมาทีหลัง)</summary>
     public static readonly TimeSpan ReevaluateAfter = TimeSpan.FromHours(6);
+    /// <summary>ผู้สมัครยอด "ใกล้เคียง" (ไม่ตรง) สูงสุด — เรียงตามส่วนต่างยอด · ผู้สมัครยอดตรงไม่ถูกจำกัด (M1)</summary>
     public const int MaxCandidates = 30;
     /// <summary>บรรทัดที่ค้าง "Applying" โดยไม่มีการชำระนานเกินนี้ = ล้มก่อนสร้างการชำระ ⇒ ปลดให้ตัดสินใหม่ (ไม่ค้างตลอดกาล · ไม่แจ้งซ้ำทุกรอบ)</summary>
     public static readonly TimeSpan ApplyingStaleAfter = TimeSpan.FromMinutes(15);
@@ -40,24 +41,28 @@ public class BankReceiptSettleService : IBankReceiptSettleService
     private readonly IDocumentService _docs;
     private readonly ILogger<BankReceiptSettleService> _logger;
     private readonly INotificationEngine? _notify;
+    /// <summary>ตรวจสิทธิ์อนุมัติของผู้นำเข้าบรรทัด (H1) — null = ไม่รู้ ⇒ แหล่งที่ต้องตรวจสิทธิ์ = เสนอเท่านั้น</summary>
+    private readonly IPermissionService? _perms;
 
-    public BankReceiptSettleService(AccountingDbContext db, IDocumentService docs, ILogger<BankReceiptSettleService> logger, INotificationEngine? notify = null)
+    public BankReceiptSettleService(AccountingDbContext db, IDocumentService docs, ILogger<BankReceiptSettleService> logger, INotificationEngine? notify = null,
+        IPermissionService? perms = null)
     {
         _db = db;
         _docs = docs;
         _logger = logger;
         _notify = notify;
+        _perms = perms;
     }
 
-    /// <summary>เลขอ้างอิงของการชำระที่ระบบสร้างจากบรรทัดนี้ — กุญแจกันสร้างซ้ำ (กู้หลังล้มกลางทาง)</summary>
+    /// <summary>เลขอ้างอิงของการชำระที่ระบบสร้างจากบรรทัดนี้ — กุญแจกันสร้างซ้ำ (กู้หลังล้มกลางทาง) · ข้อความที่คนอ่านอยู่ในหมายเหตุของการชำระ</summary>
     public static string PaymentReference(Guid lineId) => "BANK:" + lineId.ToString("N");
 
-    private static readonly DocumentType[] SaleTypes = { DocumentType.Invoice, DocumentType.TaxInvoice };
+    private static readonly DocumentType[] PayableTypes = { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.DebitNote };
     private static readonly DocumentStatus[] OpenStatuses = { DocumentStatus.Approved, DocumentStatus.Sent, DocumentStatus.PartiallyPaid, DocumentStatus.Overdue };
 
     // ═══════════════ ผู้สมัคร + คำตัดสิน ═══════════════
 
-    private sealed record Candidate(BankReceiptAutoSettle.Candidate Facts, string? ContactName);
+    private sealed record Candidate(BankReceiptAutoSettle.Candidate Facts, string? ContactName, DocumentType Type);
 
     private async Task<List<Candidate>> CandidatesAsync(Guid companyId, BankTransaction line, CancellationToken ct)
     {
@@ -68,30 +73,55 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         // ยอดเต็มก่อนหัก (ลูกค้าไม่หัก) ⇒ ยอดค้างต่ำกว่าเงินเข้าได้ถึง ~15% (WHT สูงสุดทั่วไป) — ตัวตัดสินเลือกจาก ExpectedGross เอง
         var loGross = Math.Round(amount * 0.85m, 2, MidpointRounding.AwayFromZero);
         var latest = line.TransactionDate.Date.AddDays(BankReceiptAutoSettle.DocumentAfterLineDays + 1);
-        var docs = await _db.Documents.AsNoTracking()
+        var open = _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                && SaleTypes.Contains(d.DocumentType) && OpenStatuses.Contains(d.Status)
-                && d.BalanceDue > 0m && d.Currency == "THB" && d.DocumentDate < latest
+                && PayableTypes.Contains(d.DocumentType) && OpenStatuses.Contains(d.Status)
+                && d.BalanceDue > 0m && d.DocumentDate < latest);
+        // M1: ยอดตรงทั้งหมด (ไม่ตัดจำนวน — กติกา "ยอดซ้ำ" ต้องเห็นทุกใบ) + ยอดใกล้เคียงเรียงตามส่วนต่าง
+        var exactDocs = await open.Where(d => d.BalanceDue == amount).ToListAsync(ct);
+        var nearDocs = await open
+            .Where(d => d.BalanceDue != amount
                 && ((d.BalanceDue >= lo && d.BalanceDue <= hi) || (d.WithholdingTaxAmount > 0m && d.BalanceDue >= loGross && d.BalanceDue < amount)))
-            .OrderByDescending(d => d.DocumentDate).Take(MaxCandidates)
+            .OrderBy(d => Math.Abs(d.BalanceDue - amount)).Take(MaxCandidates)
             .ToListAsync(ct);
+        var docs = exactDocs.Concat(nearDocs).GroupBy(d => d.Id).Select(g => g.First()).ToList();
         if (docs.Count == 0) return new List<Candidate>();
 
         var docIds = docs.Select(d => d.Id).ToList();
         var contactIds = docs.Select(d => d.ContactId).Distinct().ToList();
         var contacts = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
-            .Select(c => new { c.Id, c.Name, c.BankAutoSettleDisabled }).ToListAsync(ct);
+            .Select(c => new { c.Id, c.Name, c.BankAutoSettleDisabled, c.IsSupplier, c.IsCustomer }).ToListAsync(ct);
+        var relatedIds = docs.Where(d => d.RelatedDocumentId != null).Select(d => d.RelatedDocumentId!.Value).Distinct().ToList();
+        var relatedTypes = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+            .Where(r => r.CompanyId == companyId && relatedIds.Contains(r.Id))
+            .Select(r => new { r.Id, r.DocumentType }).ToDictionaryAsync(r => r.Id, r => r.DocumentType, ct);
+        // M6: นับเฉพาะสลิปที่ยังรอตรวจ
         var intents = await _db.PaymentIntents.AsNoTracking()
             .Where(i => i.CompanyId == companyId && i.SourceKind == PaymentSourceKind.Document && docIds.Contains(i.SourceId))
             .Select(i => new { i.SourceId, i.Status, i.MethodKind, i.SlipBankRef }).ToListAsync(ct);
 
         var lineText = $"{line.Description} {line.Reference} {line.Payee}";
+        var approveByType = new Dictionary<DocumentType, bool>();
         var list = new List<Candidate>();
         foreach (var d in docs)
         {
-            var fig = await PayLinkTransferWht.ForAsync(_db, companyId, d, d.BalanceDue, ct);
             var contact = contacts.FirstOrDefault(c => c.Id == d.ContactId);
+            // H3: ตัวตัดสินเดียวกับลิงก์ชำระ — ใบแจ้งหนี้ที่ออกใบกำกับแล้ว (ลูกหนี้ย้ายไปใบกำกับ) · ใบเพิ่มหนี้ฝั่งซื้อ · สกุลอื่น ⇒ ไม่ใช่ผู้สมัคร
+            DocumentType? relatedType = null;
+            if (d.RelatedDocumentId is Guid rid && relatedTypes.TryGetValue(rid, out var rt)) relatedType = rt;
+            var saleSide = DocumentPayLinkPolicy.IsSaleSide(d.DocumentType, relatedType,
+                d.CnDnPurchaseSideOverride, contact != null && contact.IsSupplier && !contact.IsCustomer);
+            var superseding = await PaymentQrService.SupersedingTaxInvoiceNumberAsync(_db, companyId, d, ct);
+            if (DocumentPayLinkPolicy.IssueRefusal(d.DocumentType, d.Status, d.BalanceDue, saleSide, d.Currency, superseding) != null) continue;
+
+            if (!approveByType.TryGetValue(d.DocumentType, out var mayApprove))
+            {
+                mayApprove = line.CreatedByUserId is Guid uid && _perms != null
+                    && await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, uid, d.DocumentType);
+                approveByType[d.DocumentType] = mayApprove;
+            }
+            var fig = await PayLinkTransferWht.ForAsync(_db, companyId, d, d.BalanceDue, ct);
             var score = BankMatchScorer.Score(new BankMatchScorer.Input(fig.ExpectedNet, amount, d.DocumentDate, line.TransactionDate,
                 CandidateDocNumber: d.DocumentNumber, CandidateName: contact?.Name,
                 BankDescription: line.Description, BankReference: line.Reference, BankPayee: line.Payee));
@@ -101,10 +131,13 @@ public class BankReceiptSettleService : IBankReceiptSettleService
                 CitesDocumentNumber: BankReceiptAutoSettle.CitesDocumentNumber(lineText, d.DocumentNumber),
                 NameConfident: score.NameConfident,
                 SlipRefMatched: mine.Any(i => i.MethodKind == PaymentMethodKind.ManualSlip
-                    && SlipEvidenceRule.RefMatchesLine(i.SlipBankRef, line.Reference, line.Description)),
+                    && (i.Status == PaymentIntentStatus.Created || i.Status == PaymentIntentStatus.Pending)
+                    && SlipEvidenceRule.RefMatchesLine(i.SlipBankRef, line.Reference)),
                 HasPendingOnlinePayment: mine.Any(i => i.MethodKind != PaymentMethodKind.ManualSlip
                     && (i.Status == PaymentIntentStatus.Created || i.Status == PaymentIntentStatus.Pending)),
-                ContactAutoSettleDisabled: contact?.BankAutoSettleDisabled ?? false), contact?.Name));
+                ContactAutoSettleDisabled: contact?.BankAutoSettleDisabled ?? false,
+                CreatorMayApprove: mayApprove,
+                ContactIsSupplier: contact?.IsSupplier ?? false), contact?.Name, d.DocumentType));
         }
         return list;
     }
@@ -120,25 +153,37 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         return (result, candidates);
     }
 
+    /// <summary>H4: จับคู่ข้ามสกุลไม่ทำ — บัญชีที่ไม่ใช่ THB ไม่เข้าเส้นนี้ (ลิงก์ชำระ/ใบค้างเป็น THB)</summary>
+    private async Task<bool> AccountIsThbAsync(Guid companyId, Guid bankAccountId, CancellationToken ct)
+    {
+        var cur = await _db.BankAccounts.AsNoTracking().IgnoreQueryFilters()
+            .Where(a => a.Id == bankAccountId && a.CompanyId == companyId).Select(a => a.Currency).FirstOrDefaultAsync(ct);
+        return BankMatchCurrency.Normalize(cur) == "THB";
+    }
+
     // ═══════════════ งานเบื้องหลัง ═══════════════
 
-    /// <summary>หนึ่งรอบ (ทุกบริษัท · เรียกจาก <c>AutopilotJob</c> ใต้ <see cref="JobLock"/>) — บรรทัดเงินเข้าที่ยังไม่จับคู่ ลงวันที่ ≤ 14 วัน ·
-    /// ยังไม่ประเมิน หรือประเมินเป็น None/Suggest นานกว่า 6 ชั่วโมง · Rejected/Failed/Settled ไม่ประเมินซ้ำ (คนตัดสินแล้ว/ต้องให้คนแก้)</summary>
+    /// <summary>หนึ่งรอบ (ทุกบริษัท · เรียกจาก <c>AutopilotJob</c> ใต้ <see cref="JobLock"/>) — บรรทัดเงินเข้าที่ยังไม่จับคู่ ลงวันที่ ≤ 14 วัน (Applying กู้ได้ทุกอายุ) ·
+    /// ยังไม่ประเมิน หรือประเมินเป็น None/Suggest นานกว่า 6 ชั่วโมง · Rejected/Failed/Settled ไม่ประเมินซ้ำ · เรียงที่ยังไม่เคยประเมินก่อน ·
+    /// บรรทัดที่ล้มถูกประทับเวลา + เหตุ (ไปท้ายคิว) และรอบนี้โยนสรุปตอนจบ ⇒ ผลรอบของงาน = ล้ม (M7)</summary>
     public async Task<int> EvaluatePendingAsync(DateTime nowUtc, CancellationToken ct = default)
     {
         var since = nowUtc.Date.AddDays(-LookbackDays);
         var stale = nowUtc - ReevaluateAfter;
         var lines = await _db.BankTransactions
             .Where(t => !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
-                && t.TransactionType == BankTransactionType.Deposit && t.Amount > 0m && t.TransactionDate >= since
-                && (t.AutoSettleVerdict == null
-                    || ((t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.None || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest)
-                        && (t.AutoSettleEvaluatedAt == null || t.AutoSettleEvaluatedAt < stale))
-                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Applying))
-            .OrderBy(t => t.TransactionDate).Take(BatchSize)
+                && t.TransactionType == BankTransactionType.Deposit && t.Amount > 0m
+                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Applying
+                    || (t.TransactionDate >= since
+                        && (t.AutoSettleVerdict == null
+                            || ((t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.None || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest)
+                                && (t.AutoSettleEvaluatedAt == null || t.AutoSettleEvaluatedAt < stale))))))
+            .OrderBy(t => t.AutoSettleEvaluatedAt != null).ThenBy(t => t.AutoSettleEvaluatedAt).ThenBy(t => t.TransactionDate)
+            .Take(BatchSize)
             .Select(t => new { t.Id, t.CompanyId }).ToListAsync(ct);
         var enabledByCompany = new Dictionary<Guid, bool>();
         var done = 0;
+        var failed = 0;
         foreach (var l in lines)
         {
             if (!enabledByCompany.TryGetValue(l.CompanyId, out var enabled))
@@ -154,11 +199,19 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // ล้มที่บรรทัดไหน = บรรทัดนั้นมีเหตุบนแถว (ประทับใน EvaluateLineAsync เมื่อทำได้) — ไม่ล้มทั้งรอบ
+                // M7: ล้มที่บรรทัดไหน = ประทับเวลา + เหตุบนแถว (ไปท้ายคิว ไม่วนหัวคิวทุก 5 นาที) · รอบนี้จบแล้วโยนสรุป
+                failed++;
                 _logger.LogError(ex, "ประเมินเงินโอนเข้า {Line} ของบริษัท {Company} ล้ม", l.Id, l.CompanyId);
                 _db.ChangeTracker.Clear();
+                var why = "ประเมินไม่สำเร็จ: " + (ex is BusinessRuleException or InvalidOperationException ? ex.Message : "ข้อผิดพลาดของระบบ");
+                await _db.BankTransactions.Where(t => t.Id == l.Id && t.CompanyId == l.CompanyId)
+                    .ExecuteUpdateAsync(u => u
+                        .SetProperty(t => t.AutoSettleEvaluatedAt, (DateTime?)nowUtc)
+                        .SetProperty(t => t.AutoSettleReason, why), ct);
             }
         }
+        if (failed > 0)
+            throw new InvalidOperationException($"ประเมินเงินโอนเข้า {done + failed} รายการ ล้ม {failed} รายการ — เหตุอยู่บนแต่ละรายการ");
         return done;
     }
 
@@ -171,12 +224,10 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         // ล้มกลางทางรอบก่อน (สร้างการชำระแล้วแต่ยังไม่ผูก) ⇒ กู้ด้วยเลขอ้างอิง ไม่ประเมินใหม่ (ยอดค้างเปลี่ยนไปแล้ว)
         if (line.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Applying)
         {
-            var reference = PaymentReference(line.Id);
-            var paid = await _db.Payments.AsNoTracking().Where(p => p.CompanyId == companyId && p.Reference == reference && !p.IsDeleted)
-                .Select(p => new { p.Id, p.DocumentId }).FirstOrDefaultAsync(ct);
+            var paid = await ExistingPaymentAsync(companyId, line.Id, ct);
             if (paid != null)
             {
-                await LinkAsync(companyId, line, paid.Id, paid.DocumentId, BankMatchAttribution.BankAutoSettle,
+                await LinkAsync(companyId, line, paid.Value.PaymentId, paid.Value.DocumentId, BankMatchAttribution.BankAutoSettle,
                     "กู้การผูกหลังล้มกลางทาง — พบการชำระที่ระบบสร้างจากรายการนี้แล้ว", null, nowUtc, ct);
                 return;
             }
@@ -189,6 +240,13 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             line.AutoSettleVerdict = null;
         }
 
+        // H4: บัญชีไม่ใช่ THB ⇒ ไม่เข้าเส้นนี้ (ประทับเหตุ ไม่ถูกหยิบซ้ำจนกว่าจะครบรอบประเมินใหม่)
+        if (!await AccountIsThbAsync(companyId, line.BankAccountId, ct))
+        {
+            await StampAsync(companyId, line.Id, BankReceiptAutoSettle.Stamps.None, "บัญชีธนาคารนี้ไม่ใช่สกุลบาท — ระบบไม่จับคู่ใบค้างข้ามสกุล", null, nowUtc, ct);
+            return;
+        }
+
         var (result, _) = await DecideAsync(companyId, line, companyEnabled, ct);
         if (result.Kind == BankReceiptAutoSettle.Verdict.AutoSettle && result.DocumentId is Guid docId)
         {
@@ -198,17 +256,31 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             return;
         }
         var stamp = result.Kind == BankReceiptAutoSettle.Verdict.Suggest ? BankReceiptAutoSettle.Stamps.Suggest : BankReceiptAutoSettle.Stamps.None;
-        await _db.BankTransactions.Where(t => t.Id == line.Id && t.CompanyId == companyId && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
+        await StampAsync(companyId, line.Id, stamp, result.Reason, result.DocumentId, nowUtc, ct);
+    }
+
+    private async Task StampAsync(Guid companyId, Guid lineId, string stamp, string reason, Guid? documentId, DateTime nowUtc, CancellationToken ct)
+        => await _db.BankTransactions.Where(t => t.Id == lineId && t.CompanyId == companyId && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
             .ExecuteUpdateAsync(u => u
                 .SetProperty(t => t.AutoSettleVerdict, stamp)
-                .SetProperty(t => t.AutoSettleReason, result.Reason)
-                .SetProperty(t => t.AutoSettleDocumentId, result.DocumentId)
+                .SetProperty(t => t.AutoSettleReason, reason)
+                .SetProperty(t => t.AutoSettleDocumentId, documentId)
                 .SetProperty(t => t.AutoSettleEvaluatedAt, (DateTime?)nowUtc), ct);
+
+    /// <summary>การชำระที่ระบบสร้างจากบรรทัดนี้แล้ว (เลขอ้างอิง <c>BANK:{lineId}</c> · บริษัทนี้) — กุญแจกันสร้างซ้ำ</summary>
+    private async Task<(Guid PaymentId, Guid DocumentId)?> ExistingPaymentAsync(Guid companyId, Guid lineId, CancellationToken ct)
+    {
+        var reference = PaymentReference(lineId);
+        var p = await _db.Payments.AsNoTracking().Where(x => x.CompanyId == companyId && x.Reference == reference && !x.IsDeleted)
+            .Select(x => new { x.Id, x.DocumentId }).FirstOrDefaultAsync(ct);
+        if (p == null) return null;
+        return (p.Id, p.DocumentId);
     }
 
     // ═══════════════ ลงมือ (ทางเดียวของทั้งระบบและคนยืนยัน) ═══════════════
 
-    /// <summary>บันทึกรับชำระจากบรรทัด → ผูกบรรทัด · คืน (สำเร็จ, เหตุเมื่อล้ม) · <b>ลำดับ</b>: ประทับ Applying → <c>CreatePaymentAsync</c> → ผูก (กู้ได้ถ้าล้มระหว่างทาง)</summary>
+    /// <summary>บันทึกรับชำระจากบรรทัด → ผูกบรรทัด · คืน (สำเร็จ, เหตุเมื่อล้ม) · <b>ลำดับ</b>: ประทับ Applying → (มีการชำระของบรรทัดนี้แล้ว? ผูก) →
+    /// <c>CreatePaymentAsync</c> → ผูก · ล้มหลังสร้างการชำระสำเร็จ (ขั้นหลัง commit) ⇒ ค้นพบด้วยเลขอ้างอิงแล้วผูก ไม่ประทับล้ม (H2)</summary>
     private async Task<(bool Ok, string? Error)> ApplyAsync(Guid companyId, BankTransaction line, Guid documentId, string actor, string reconciledBy,
         string reason, Guid? userId, DateTime nowUtc, CancellationToken ct)
     {
@@ -225,6 +297,13 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         if (claimed == 0)
             return (false, null);   // อีกทางกำลังบันทึก/จับคู่ไปแล้ว — ผู้เรียกตัดสินเองว่าจะบอกอะไร
 
+        // H2: มีการชำระของบรรทัดนี้อยู่แล้ว (รอบก่อนสร้างสำเร็จแล้วล้มก่อนผูก) ⇒ ผูก ไม่สร้างซ้ำ
+        if (await ExistingPaymentAsync(companyId, line.Id, ct) is { } before)
+        {
+            if (await LinkAsync(companyId, line, before.PaymentId, before.DocumentId, reconciledBy, reason, userId, nowUtc, ct)) return (true, null);
+            return (false, "ผูกรายการเดินบัญชีกับการชำระที่มีอยู่ไม่สำเร็จ — ตรวจที่หน้ากระทบยอดธนาคาร");
+        }
+
         Guid paymentId;
         try
         {
@@ -232,6 +311,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             var amount = Math.Abs(line.Amount);
             var fig = await PayLinkTransferWht.ForAsync(_db, companyId, doc, amount, ct);
             var paymentWht = PayLinkTransferWht.PaymentWht(fig, amount, doc.BalanceDue);
+            var bankRef = string.IsNullOrWhiteSpace(line.Reference) ? "" : $" อ้างอิงธนาคาร {line.Reference!.Trim()}";
             var created = await _docs.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
                 DocumentId: documentId,
                 PaymentDate: line.TransactionDate,
@@ -239,7 +319,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
                 PaymentMethod: PaymentMethod.BankTransfer,
                 Reference: PaymentReference(line.Id),
                 BankAccount: null,
-                Notes: $"รับเงินโอนจากรายการเดินบัญชี {line.TransactionDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)} — {doc.DocumentNumber}",
+                Notes: $"รับเงินโอนจากรายการเดินบัญชี {line.TransactionDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}{bankRef} — {doc.DocumentNumber}",
                 OverrideBankAccountId: line.BankAccountId,
                 WithholdingTaxAmount: paymentWht
             ), actor, PaymentEntrySource.BankAutoSettle);
@@ -247,8 +327,15 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // ล้มดัง: เหตุอยู่บนบรรทัด (คิวเงินเข้า) + ผู้เรียกแจ้ง/ตอบ · ล้าง tracker กันแถวที่ค้างจากธุรกรรมที่ rollback ไปปนการบันทึกถัดไป
+            // ล้าง tracker กันแถวที่ค้างจากธุรกรรมที่ rollback ไปปนการบันทึกถัดไป
             _db.ChangeTracker.Clear();
+            // H2: การชำระอาจ commit แล้วแต่ขั้นหลัง commit ล้ม ⇒ ค้นด้วยเลขอ้างอิงอีกครั้ง — มี = ผูก (ไม่ประทับล้ม · ไม่สร้างซ้ำรอบหน้า)
+            if (await ExistingPaymentAsync(companyId, line.Id, ct) is { } committed)
+            {
+                _logger.LogError(ex, "บันทึกรับชำระจากเงินโอน {Line} สำเร็จแต่ขั้นหลังบันทึกล้ม — ผูกกับการชำระที่สร้างแล้ว", line.Id);
+                if (await LinkAsync(companyId, line, committed.PaymentId, committed.DocumentId, reconciledBy, reason, userId, nowUtc, ct)) return (true, null);
+                return (false, "ผูกรายการเดินบัญชีกับการชำระที่สร้างแล้วไม่สำเร็จ — ตรวจที่หน้ากระทบยอดธนาคาร");
+            }
             var msg = ex is BusinessRuleException or InvalidOperationException or KeyNotFoundException ? ex.Message : "ข้อผิดพลาดของระบบระหว่างบันทึกรับชำระ";
             if (ex is not (BusinessRuleException or InvalidOperationException or KeyNotFoundException))
                 _logger.LogError(ex, "บันทึกรับชำระจากเงินโอน {Line} ล้ม", line.Id);
@@ -259,37 +346,63 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             return (false, msg);
         }
 
-        await LinkAsync(companyId, line, paymentId, documentId, reconciledBy, reason, userId, nowUtc, ct);
-        return (true, null);
+        if (await LinkAsync(companyId, line, paymentId, documentId, reconciledBy, reason, userId, nowUtc, ct)) return (true, null);
+        return (false, "บันทึกรับชำระแล้วแต่ผูกรายการเดินบัญชีไม่สำเร็จ — ตรวจที่หน้ากระทบยอดธนาคาร");
     }
 
-    private async Task LinkAsync(Guid companyId, BankTransaction line, Guid paymentId, Guid documentId, string reconciledBy, string reason, Guid? userId,
+    /// <summary>ผูกบรรทัดกับการชำระ + audit ใน<b>ธุรกรรมเดียว</b> (M5) — เฉพาะบรรทัดที่ยัง Applying + ไม่จับคู่ (ทางมืออื่นจับไปก่อน = 0 แถว ⇒ แจ้งดัง · คืน false)</summary>
+    private async Task<bool> LinkAsync(Guid companyId, BankTransaction line, Guid paymentId, Guid documentId, string reconciledBy, string reason, Guid? userId,
         DateTime nowUtc, CancellationToken ct)
     {
-        await _db.BankTransactions.Where(t => t.Id == line.Id && t.CompanyId == companyId)
-            .ExecuteUpdateAsync(u => u
-                .SetProperty(t => t.MatchedPaymentId, (Guid?)paymentId)
-                .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Matched)
-                .SetProperty(t => t.ReconciledAt, (DateTime?)nowUtc)
-                .SetProperty(t => t.ReconciledBy, reconciledBy)
-                .SetProperty(t => t.MatchRuleCode, BankReceiptAutoSettle.RuleAuto)
-                .SetProperty(t => t.MatchReason, reason)
-                .SetProperty(t => t.AutoSettleVerdict, BankReceiptAutoSettle.Stamps.Settled)
-                .SetProperty(t => t.AutoSettleDocumentId, (Guid?)documentId), ct);
-        _db.AddChainedAuditLog(new AuditLog
+        var strategy = _db.Database.CreateExecutionStrategy();
+        var linked = await strategy.ExecuteAsync(async () =>
         {
-            CompanyId = companyId,
-            UserId = userId,
-            Action = AuditAction.Update,
-            EntityType = "BankTransaction",
-            EntityId = line.Id.ToString(),
-            NewValues = JsonSerializer.Serialize(new
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            var n = await _db.BankTransactions
+                .Where(t => t.Id == line.Id && t.CompanyId == companyId
+                    && t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Applying && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(t => t.MatchedPaymentId, (Guid?)paymentId)
+                    .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Matched)
+                    .SetProperty(t => t.ReconciledAt, (DateTime?)nowUtc)
+                    .SetProperty(t => t.ReconciledBy, reconciledBy)
+                    .SetProperty(t => t.MatchRuleCode, BankReceiptAutoSettle.RuleAuto)
+                    .SetProperty(t => t.MatchReason, reason)
+                    .SetProperty(t => t.AutoSettleVerdict, BankReceiptAutoSettle.Stamps.Settled)
+                    .SetProperty(t => t.AutoSettleDocumentId, (Guid?)documentId), ct);
+            if (n == 0)
             {
-                action = "bank-auto-settle", ruleCode = BankReceiptAutoSettle.RuleAuto, paymentId, documentId, amount = Math.Abs(line.Amount),
-                lineDate = line.TransactionDate, entrySource = line.EntrySource, reconciledBy, reason,
-            }),
+                await tx.RollbackAsync(ct);
+                return false;
+            }
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = userId,
+                Action = AuditAction.Update,
+                EntityType = "BankTransaction",
+                EntityId = line.Id.ToString(),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    action = "bank-auto-settle", ruleCode = BankReceiptAutoSettle.RuleAuto, paymentId, documentId, amount = Math.Abs(line.Amount),
+                    lineDate = line.TransactionDate, entrySource = line.EntrySource,
+                    // H1(c): ใครนำเข้าบรรทัดที่ใช้เป็นหลักฐาน
+                    lineCreatedBy = line.CreatedBy, lineCreatedByUserId = line.CreatedByUserId,
+                    reconciledBy, reason,
+                }),
+            });
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return true;
         });
-        await _db.SaveChangesAsync(ct);
+        if (!linked)
+        {
+            // M5: มีการชำระแต่บรรทัดถูกจับคู่/เปลี่ยนสถานะโดยทางอื่น — เงินก้อนเดียวอาจถูกนับสองครั้ง ⇒ ดัง
+            _logger.LogError("ผูกเงินโอน {Line} กับการชำระ {Payment} ไม่ได้ — บรรทัดไม่อยู่ในสถานะกำลังบันทึกแล้ว", line.Id, paymentId);
+            await NotifyFailedAsync(companyId, line, documentId,
+                "บันทึกรับชำระแล้วแต่รายการเดินบัญชีถูกจับคู่/เปลี่ยนสถานะโดยทางอื่นระหว่างบันทึก — ตรวจว่าไม่ได้นับเงินก้อนเดียวสองครั้ง", ct);
+        }
+        return linked;
     }
 
     private async Task NotifyFailedAsync(Guid companyId, BankTransaction line, Guid documentId, string error, CancellationToken ct)
@@ -347,6 +460,11 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             .ToList();
     }
 
+    /// <summary>M4: ชนิดของเอกสาร (บริษัทนี้) — ผู้เรียกตรวจสิทธิ์อนุมัติชนิดนั้นก่อนยืนยัน · null = ไม่พบ</summary>
+    public async Task<DocumentType?> DocumentTypeAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+        => await _db.Documents.AsNoTracking().Where(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            .Select(d => (DocumentType?)d.DocumentType).FirstOrDefaultAsync(ct);
+
     /// <summary>คนยืนยันข้อเสนอ — ใบต้องอยู่ในชุดตัวเลือกของบรรทัดนี้ (ด่านกันกดผิดใบ) · ล้ม = ข้อความไทยถึงผู้กด (ไม่แจ้งซ้ำทางกระดิ่ง)</summary>
     public async Task<string> ConfirmAsync(Guid companyId, Guid lineId, Guid documentId, Guid userId, CancellationToken ct = default)
     {
@@ -356,6 +474,8 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             throw new BusinessRuleException("รายการนี้จับคู่ไปแล้ว — โหลดหน้าใหม่", BankReceiptAutoSettle.RuleAuto, 409);
         if (line.TransactionType != BankTransactionType.Deposit)
             throw new BusinessRuleException("ยืนยันได้เฉพาะรายการเงินเข้า", BankReceiptAutoSettle.RuleAuto, 400);
+        if (!await AccountIsThbAsync(companyId, line.BankAccountId, ct))
+            throw new BusinessRuleException("บัญชีธนาคารนี้ไม่ใช่สกุลบาท — บันทึกรับชำระที่หน้าเอกสาร (ระบุอัตราแลกเปลี่ยน) แทน", BankReceiptAutoSettle.RuleAuto, 400);
         var cands = await CandidatesAsync(companyId, line, ct);
         if (!ChoicesFrom(line, cands).Any(c => c.DocumentId == documentId))
             throw new BusinessRuleException("ใบที่เลือกไม่อยู่ในชุดใบค้างที่ยอดตรง/ใกล้เคียงกับเงินเข้านี้ — บันทึกรับชำระที่หน้าเอกสารแทน", BankReceiptAutoSettle.RuleAuto, 400);
@@ -383,7 +503,8 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         await _db.SaveChangesAsync(ct);
     }
 
-    /// <summary>ผลจำลองย้อนหลัง N วัน (อ่านอย่างเดียว · ไม่เขียนอะไร) — คำตัดสินเมื่อ "สมมติว่าเปิด" ของบรรทัดเงินเข้าในช่วงนั้น (รวมที่จับคู่แล้ว · ใช้ยอดค้างปัจจุบัน)</summary>
+    /// <summary>ผลจำลองย้อนหลัง N วัน (อ่านอย่างเดียว · ไม่เขียนอะไร) — คำตัดสินเมื่อ "สมมติว่าเปิด" ของบรรทัดเงินเข้าที่ยังไม่จับคู่ในช่วงนั้น (ใช้ยอดค้างปัจจุบัน) ·
+    /// M2: นับแยกบรรทัด "ไม่ทราบแหล่ง (แถวเก่า)" และ "แหล่งที่ระบบไม่ปิดเอง (ไฟล์/API/พิมพ์มือ)" — ไม่ปนกับ "เสนอ"</summary>
     public async Task<BankAutoSettleSimulationDto> SimulateAsync(Guid companyId, int days, CancellationToken ct = default)
     {
         days = Math.Clamp(days, 1, 90);
@@ -396,7 +517,10 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         foreach (var l in lines)
             results.Add((await DecideAsync(companyId, l, enabled: true, ct)).Result);
         var s = BankReceiptAutoSettle.Summarize(results);
-        return new BankAutoSettleSimulationDto(days, s.Lines, s.WouldAutoSettle, s.WouldSuggest, s.NoMatch,
-            "จำลองกับเงินเข้าที่ยังไม่จับคู่ในช่วงนี้ เทียบกับยอดค้างปัจจุบัน — ไม่บันทึกอะไร · \"ปิดเองได้\" = เข้าเกณฑ์ทุกข้อ (ยอดตรงเป๊ะ + ตัวระบุตัว + ยอดไม่ซ้ำ + มาจากธนาคาร)");
+        var legacy = lines.Count(l => l.EntrySource == null);
+        var userSupplied = lines.Count(l => l.EntrySource is BankReceiptAutoSettle.SourceUserFile or BankReceiptAutoSettle.SourceApi or BankReceiptAutoSettle.SourceManual);
+        return new BankAutoSettleSimulationDto(days, s.Lines, s.WouldAutoSettle, s.WouldSuggest, s.NoMatch, legacy, userSupplied,
+            "จำลองกับเงินเข้าที่ยังไม่จับคู่ในช่วงนี้ เทียบกับยอดค้างปัจจุบัน — ไม่บันทึกอะไร · \"ปิดเองได้\" = เข้าเกณฑ์ทุกข้อ (ยอดตรงเป๊ะ + ตัวระบุตัว + ยอดไม่ซ้ำ + มาจากธนาคาร/ผู้นำเข้ามีสิทธิ์อนุมัติ) · " +
+            $"ไม่ทราบแหล่ง (รายการก่อนรอบ 252) {legacy} รายการ และไฟล์/API/พิมพ์มือ {userSupplied} รายการ = เสนอเท่านั้นเสมอ");
     }
 }

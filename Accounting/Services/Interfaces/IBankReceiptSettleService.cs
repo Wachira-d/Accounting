@@ -15,6 +15,8 @@ public interface IBankReceiptSettleService
     Task<string> ConfirmAsync(Guid companyId, Guid lineId, Guid documentId, Guid userId, CancellationToken ct = default);
     /// <summary>คนปฏิเสธข้อเสนอ</summary>
     Task RejectAsync(Guid companyId, Guid lineId, Guid userId, CancellationToken ct = default);
+    /// <summary>ชนิดของเอกสาร (บริษัทนี้) — ผู้เรียกตรวจสิทธิ์อนุมัติก่อนยืนยัน (ฝ่ายค้าน M4)</summary>
+    Task<Accounting.Models.Enums.DocumentType?> DocumentTypeAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
     /// <summary>ผลจำลองย้อนหลัง (อ่านอย่างเดียว)</summary>
     Task<BankAutoSettleSimulationDto> SimulateAsync(Guid companyId, int days, CancellationToken ct = default);
 }

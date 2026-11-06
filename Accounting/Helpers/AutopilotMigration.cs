@@ -24,6 +24,7 @@ public static class AutopilotMigration
         """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "BankAutoSettleDisabled" boolean NOT NULL DEFAULT false;""",
         // รายการเดินบัญชี: แหล่ง + คำตัดสิน (แถวเดิม EntrySource = NULL = ไม่รู้ ⇒ ไม่ปิดหนี้อัตโนมัติ — เสนอได้อย่างเดียว)
         """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "EntrySource" varchar(16) NULL;""",
+        """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "CreatedByUserId" uuid NULL;""",
         """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "AutoSettleVerdict" varchar(16) NULL;""",
         """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "AutoSettleReason" text NULL;""",
         """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "AutoSettleDocumentId" uuid NULL;""",

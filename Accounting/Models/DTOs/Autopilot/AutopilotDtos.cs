@@ -39,7 +39,9 @@ public record SetContactBankAutoSettleRequest(bool Disabled);
 
 public record BankAutoSettleConfirmRequest(Guid DocumentId);
 
-public record BankAutoSettleSimulationDto(int Days, int Lines, int WouldAutoSettle, int WouldSuggest, int NoMatch, string Note);
+/// <summary>M2: <c>LegacyUnknownSource</c> = บรรทัดก่อนรอบ 252 ไม่ทราบแหล่ง · <c>UserSuppliedSource</c> = ไฟล์/API/พิมพ์มือ — ทั้งสองกลุ่มเสนอเท่านั้นเสมอ</summary>
+public record BankAutoSettleSimulationDto(int Days, int Lines, int WouldAutoSettle, int WouldSuggest, int NoMatch, int LegacyUnknownSource,
+    int UserSuppliedSource, string Note);
 
 public record AutopilotOverviewResponse(AutopilotSummaryDto Summary, IReadOnlyList<AutopilotRowDto> Rows, IReadOnlyList<AutopilotIssueDto> Issues,
     IReadOnlyList<QuotationAutopilotRowDto> Quotations, IReadOnlyList<BankAutoSettleQueueRowDto> BankQueue, AutopilotSettingsDto Settings);

@@ -37,9 +37,14 @@ public class AutopilotDigestService
         var today = AutopilotNotice.BangkokDate(nowUtc);
         var since30 = nowUtc.AddDays(-30);
         // บริษัทที่ใช้ Autopilot (มีสิ่งที่ระบบทำแทน) · ยังไม่ส่งวันนี้
+        // ฝ่ายค้าน LOW: กรองเวลาที่ถึงแล้วใน SQL ก่อน Take (เดิมบริษัทที่ยังไม่ถึงเวลา 200 แถวแรกบังบริษัทที่ถึงแล้ว) — ค่าเก็บรูป "HH:mm" เสมอ (NormalizeDigestTime)
+        // ⇒ เทียบสตริงได้ · ตัวตัดสินจริงยังเป็น AutopilotNotice.DigestDue ข้างล่าง · โหมดแปลงใบเสนอราคา "Off" ไม่นับว่าใช้ Autopilot
+        var nowHm = nowUtc.AddHours(7).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        var defaultHm = AutopilotNotice.DefaultDigestTime.ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture);
         var candidates = await _db.CompanySettings.AsNoTracking()
             .Where(s => (s.AutopilotDigestLastSentOn == null || s.AutopilotDigestLastSentOn < today)
-                && (s.BankAutoSettleEnabled || s.QuotationAcceptAutopilotDefault != null || s.PostPayEmailReceipt
+                && string.Compare(s.AutopilotDigestLocalTime ?? defaultHm, nowHm) <= 0
+                && (s.BankAutoSettleEnabled || (s.QuotationAcceptAutopilotDefault != null && s.QuotationAcceptAutopilotDefault != "Off") || s.PostPayEmailReceipt
                     || _db.RecurringTransactions.Any(r => r.CompanyId == s.CompanyId && !r.IsDeleted && r.Status == Models.Enums.RecurringStatus.Active)
                     || _db.BankTransactions.Any(t => t.CompanyId == s.CompanyId && t.AutoSettleVerdict != null && t.CreatedAt >= since30)))
             .OrderBy(s => s.CompanyId).Take(BatchSize)

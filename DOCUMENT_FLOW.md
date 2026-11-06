@@ -3145,7 +3145,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - หน้าแท็บ: ปุ่มที่กดได้ตามสิทธิ์จริง (`canEdit` ด่านเดียวกับ write) · พรีวิว "ส่งอีเมลถึง" (รอบ 250 WP-08: ต่อสายแล้ว — ประโยคเดิม "เมื่อเส้นส่งต่อสาย (L2)" ถูกลบ)
 - เทสต์ `ContactRecipientRuleTests` · Db `ContactNotifyEndpointRound245DbTests` · ล็อก `tools/required_call_site_check.py` R245 (+ เคส R245a–n) · `write_permission_gate_check` WATCHED — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
-### 2.12j Autopilot ส่วน A — อีเมลสถานะ/สรุปประจำวัน · หน้า Autopilot · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ (รอบ 252 WP-12A · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §5/§7/§10/§11.4 · AUDIT_249 §WP-12 · คำตัดสิน §2 #36)
+### 2.12k Autopilot ส่วน A — อีเมลสถานะ/สรุปประจำวัน · หน้า Autopilot · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ (เดิมอ้างเป็น §2.12j — ชนเลขกับ 50 ทวิ ขาเข้า WP-09 · รอบ 252 WP-12A · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §5/§7/§10/§11.4 · AUDIT_249 §WP-12 · คำตัดสิน §2 #36)
 
 - **อีเมล/แจ้งเตือนสถานะถึงทีมเรา (A-5 · Q7)**: แค็ตตาล็อก E-01…E-15 + ข้อความทุกฉบับที่ `Helpers/AutopilotNotice` ตัวเดียว (เซิร์ฟเวอร์ประกอบ · ไม่อ้างมาตรา N10) ·
   **ล้ม/ติด = ทันที** ผ่าน `INotificationEngine` คีย์ใหม่ `autopilot.quotation_blocked` (E-01c) · `autopilot.slip_submitted` (E-06) · `autopilot.bank_settle_failed` (E-14b)
@@ -3180,6 +3180,20 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **สลิปพอร์ทัลกันซ้ำ (G-T5)**: `PortalService.UploadDocumentSlipAsync` คิด SHA-256 ของไฟล์ต้นฉบับ (ก่อนย่อรูป) + เลขอ้างอิงโอนที่ลูกค้ากรอก (ไม่บังคับ · `SlipEvidenceRule.NormalizeRef`) ·
   ซ้ำในบริษัท (ไฟล์เดิม/เลขเดิม) ⇒ 409 `SLIP-DUP` **ก่อน**สร้างรายการ · เก็บบน `PaymentIntent.SlipFileSha256/SlipBankRef` (รายการเดียวกับที่คนยืนยัน — ไม่มีตารางที่สอง) ·
   แจ้งทีม E-06 · สลิปไม่ปิดหนี้เอง — เลขอ้างอิงเป็นตัวระบุตัวให้ `BankReceiptAutoSettle` เมื่อเงินเข้าจริง · ยังไม่ทำ: OCR สลิป · หน้า pay-document แจ้งโอน (WP-12 ข้อ 1)
+- **แก้ผลฝ่ายค้าน WP-12A (H1–H4 · M1–M7 · LOW)** — สถานะปัจจุบัน:
+  - **แหล่งของบรรทัด (H1 · คำตัดสินผู้ประสานงาน: statement ที่ผู้ใช้อัปโหลด/พิมพ์เองไม่ใช่หลักฐานให้ปิดหนี้โดยไม่มีคน)**: `Feed` (ปลายทางที่ระบบรู้จัก) = ปิดเองได้ ·
+    `Statement` (ไฟล์หน้าบัญชีธนาคาร + ผู้อัปโหลด `BankTransaction.CreatedByUserId`) และ `FeedCustom` (ผู้ใช้ตั้ง `ApiEndpoint` เอง · ผู้สั่ง sync) = ปิดเองได้เฉพาะเมื่อผู้นำเข้า
+    **มีสิทธิ์อนุมัติเอกสารชนิดนั้น ณ ตอนตัดสิน** (`DocumentPermissionHelper.CanApproveAsync`) ไม่งั้นเสนอพร้อมเหตุ · `UserFile` (ศูนย์นำเข้า · นำเข้า-ส่งออก · Open Banking ไฟล์ ·
+    ค่าตั้งต้นของตัวเขียน statement เมื่อทางเข้าไม่ระบุ) · `Api` (API v1) · `Manual` · null (แถวเก่า) = เสนอเท่านั้นเสมอ · audit การปิดหนี้บันทึกผู้นำเข้าบรรทัด ·
+    `import-statement` + feed สร้าง/สั่งดึง/ลบ ต้องมี Bank.Reconcile · ผลจำลองนับแถวไม่ทราบแหล่ง/ไฟล์-API แยก
+  - **H2** การชำระ `BANK:{lineId}` มีอยู่แล้ว (ก่อนสร้าง และในทางล้มหลัง commit) ⇒ ผูก ไม่สร้างซ้ำ ไม่ประทับล้ม · **H3** ผู้สมัคร = `DocumentPayLinkPolicy.IssueRefusal(...) == null`
+    (ใบแจ้งหนี้ที่มีใบกำกับมีผลแล้วไม่ใช่ผู้สมัคร · ใบเพิ่มหนี้ฝั่งขายเป็นผู้สมัคร) · **H4** บัญชีไม่ใช่ THB ไม่เข้าเส้น (งาน + ยืนยันมือ)
+  - **M1** ยอดตรงดึงทั้งหมด (ยอดใกล้เคียงเรียงตามส่วนต่าง 30 ใบ) · **M3** ใบลงวันหลังเงินเข้า = เสนอ (tax point) · **M4** ยืนยันต้องมีสิทธิ์อนุมัติชนิดเอกสารด้วย ·
+    **M5** ผูกเฉพาะบรรทัดที่ยัง Applying + audit ในธุรกรรมเดียว (0 แถว = แจ้งดัง) · จับคู่มือ (`ReconcileAsync` · `BatchReconcileAsync` · กลุ่มกระทบยอด) ปฏิเสธบรรทัด Applying ·
+    **M6** เลขอ้างอิงสลิป ≥ 8 ตัวและมีตัวเลข · เทียบเท่ากันทั้งคำกับช่องอ้างอิงเท่านั้น · นับเฉพาะสลิปที่ยังรอตรวจ · **M7** ล้มต่อบรรทัด/ใบ = ประทับเวลา+เหตุ · ไม่เคยประเมินก่อน ·
+    ผลรอบของงาน = ล้ม (ใบเสนอราคาที่ล้มนอกด่าน = Failed + ปุ่มลองใหม่)
+  - LOW: บรรทัด Applying กู้ได้ทุกอายุ · ผู้จ่ายเป็นผู้ขายด้วย = เสนอ · เลขเอกสารตามขอบคำ · สรุปประจำวันกรองเวลาใน SQL และไม่นับโหมด "Off" · หมายเหตุการชำระมีเลขอ้างอิงธนาคาร
+    (เลขอ้างอิงของการชำระคง `BANK:{lineId}` เป็นกุญแจกันซ้ำ) · Last verified `commit <เติมในคอมมิตตามหลัง>`
 - ล็อก: `Accounting.Tests/AutopilotRound252Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/AutopilotRound252DbTests.cs` · `tools/required_call_site_check.py` (R252) ·
   `write_permission_gate_check` เฝ้า `AutopilotController` · `html_interpolation_escape_check` เฝ้า `autopilot.html` · Last verified `commit 81641769`
 
@@ -8097,3 +8111,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 250 WP-02 — §2.12g ง
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-13 — UX เก็บกวาด: สินทรัพย์สร้างเองรหัสว่าง = ออก FA-yyyyMM-#### (§ขึ้นทะเบียนสินทรัพย์) · ลบเอกสารถาวรเหลือหน้าต่างเดียว (แผน/planToken/needsReason จาก purgePreview เดิม — ไม่เปลี่ยนสิ่งที่ส่ง) · ไม่เปลี่ยน flow เงิน/ภาษี — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e021629c · 1929f9f4 · c2129b14 · 8ff9c7f5 · 09371cea · 30405fc4 · f8e7d5dd)_
 _Last verified against codebase: 2026-11-06 (รอบ 251 WP-07 — §2.7 รหัสความพร้อมครบชุด (ETAX/ETAX-SENDER/ETAX-RECIPIENT · PAY-QR · QUOTA · PERIOD · POSTPAY) จากผู้อ่านเดิม · คอลัมน์ระดับ Autopilot · ส่งทดสอบถึงอีเมลผู้ใช้ (ไม่บันทึกการส่ง · ไม่นับเพดาน · audit) · ผลทดลองรันกล่องแยก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 847041d2)_
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-12A — §2.12j Autopilot ส่วน A: อีเมลสถานะ E-01…E-15 (ล้ม = ทันที · สำเร็จ = สรุป 08:40) · หน้า Autopilot (read model `AutopilotStage`) · ใบเสนอราคาแปลงอัตโนมัติ (ตั้งต่อใบ · ค่าตั้งต้นไม่แปลง · `ConvertDocumentAsync`) · เงินโอนปิดหนี้ `BankReceiptAutoSettle` (ค่าตั้งต้นปิด · source BankAutoSettle) · สลิปกันซ้ำ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81641769)_
+_Last verified against codebase: 2026-11-06 (รอบ 252 WP-12A แก้ผลฝ่ายค้าน — §2.12k (เลขใหม่ — เดิม §2.12j ชนกับ WP-09): แหล่งบรรทัด UserFile/Api เสนอเท่านั้น · Statement/FeedCustom ต้องมีผู้นำเข้าที่มีสิทธิ์อนุมัติ · กู้การชำระ BANK:{lineId} · ผู้สมัครตาม IssueRefusal · THB · ผูกธุรกรรมเดียว · จับคู่มือกัน Applying — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
