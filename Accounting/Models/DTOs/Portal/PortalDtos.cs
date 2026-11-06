@@ -15,9 +15,9 @@ public record PortalStatementResponse(DateTime FromDate, DateTime ToDate, decima
 public record PortalStatementLine(DateTime Date, string DocumentNumber, string Description, decimal Amount, decimal Balance);
 public record PortalPaymentResponse(Guid Id, DateTime PaymentDate, decimal Amount, string PaymentMethod, string? Reference, string DocumentNumber)
 {
-    /// <summary>รอบ 252 WP-13 J: ชื่อช่องทางภาษาไทยจากตารางเดียว (<see cref="Accounting.Helpers.PaymentMethodNames"/>) — พอร์ทัลเคยแสดง enum ดิบ "BankTransfer"</summary>
-    public string PaymentMethodLabel => Enum.TryParse<Accounting.Models.Enums.PaymentMethod>(PaymentMethod, out var m)
-        ? Accounting.Helpers.PaymentMethodNames.Thai(m) : PaymentMethod;
+    /// <summary>รอบ 252 WP-13 J: ชื่อช่องทางภาษาไทยจากตารางเดียว (<c>PaymentMethodNames</c>) — พอร์ทัลเคยแสดง enum ดิบ "BankTransfer"</summary>
+    public string PaymentMethodLabel => Enum.TryParse<global::Accounting.Models.Enums.PaymentMethod>(PaymentMethod, out var m)
+        ? global::Accounting.Helpers.PaymentMethodNames.Thai(m) : PaymentMethod;
 }
 
 /// <summary>ผลการแนบสลิปพอร์ทัล — รอบ 250 WP-02b (M-2): ไม่ใช่การรับชำระ · <paramref name="PaymentIntentId"/> = รายการรอยืนยันของผู้ขาย

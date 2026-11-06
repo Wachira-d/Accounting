@@ -79,7 +79,7 @@ public partial class FixedAssetService : IFixedAssetService
         var asset = new FixedAsset
         {
             CompanyId = companyId,
-            AssetCode = request.AssetCode,
+            AssetCode = request.AssetCode ?? "",   // CreateAsync เติมรหัสแล้วเสมอ (ว่าง ⇒ AssetCodeGenerator)
             Name = request.Name,
             Description = request.Description,
             Category = request.Category,
