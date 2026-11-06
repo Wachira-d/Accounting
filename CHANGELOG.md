@@ -6560,4 +6560,4 @@ B-13 ชั้นค่าตั้ง ตาราง › รายการป
 ล็อกต้นทุนสินทรัพย์จากชนิดใบ (ไม่ AnyAsync นอกล็อก) · ปิดปีเครดิต WHT เรียง Id + `AdvisoryLockKey.WhtCreditWriteOff` · กระทบยอดยกมาไม่นับระหว่างจัดหา · ส่งออกทะเบียนติดป้าย · problem row ทะเบียนเกิน GL ·
 CS8604 BatchConvert · literal รหัสในเทสต์ → ค่าคงที่ · (Y7/Y8/N11) การ์ด go-live แอดมิน + ปุ่มทดสอบขาออก (`SiteSettings.OutboundCheck*` ใหม่).
 เทสต์ `Round250Wp02Tests` (pure) + Db ใน `DocumentAutoSendRound241DbTests`/`ImportAccountingTargetsDbTests` · กติกา R250 ใน `required_call_site_check` (negative test ในตัว) ·
-ฝ่ายค้าน: ทบทวนเองในรอบ (ไม่มีเครื่องมือ subagent ในบริบทนี้) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+ฝ่ายค้าน: ทบทวนเองในรอบ (ไม่มีเครื่องมือ subagent ในบริบทนี้) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a40c91e5_

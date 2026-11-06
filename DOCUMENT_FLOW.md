@@ -2211,7 +2211,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **รอบ 250 (WP-02 §2.4 ข้อ 1/3 · คำตัดสิน §2 #8/#10)**: `OnRecurringDocumentCreatedAsync` คืน `EmailEnqueueOutcome` (Enqueued/Skipped(เหตุ)/Failed(เหตุ)) — ไม่กลืนเป็น
   `LogWarning` ⇒ ธง `EmailEnqueueFailed` + เรื่องที่ต้องทำต่อตั้งจากผล (`EmailEnqueueOutcome.Apply`) · มีกฎ "เมื่ออนุมัติเอกสาร" ครอบชนิดนี้และใบอนุมัติแล้ว ⇒ **ข้าม**กฎ "เมื่อรายการประจำสร้างเอกสาร"/กฎเสมือน
   (การอนุมัติอัตโนมัติเข้าคิวตามกฎนั้นไปแล้ว — ลูกค้าได้ฉบับเดียว · ทิศเดียว ไม่แตะฝั่ง DocumentApproved) · แผงความพร้อมเตือน `EMAIL-RULES` · ใบที่สร้างประทับ
-  `Document.RecurringTransactionId` (ชั้นค่าตั้งงานหลังรับชำระ §2.12g) · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  `Document.RecurringTransactionId` (ชั้นค่าตั้งงานหลังรับชำระ §2.12g) · Last verified `commit a40c91e5`
 - **Service**: `RecurringTransactionService.cs:41`
 - ความถี่: `Daily / Weekly / BiWeekly / Monthly / Quarterly / SemiAnnual / Annual`
 - template เก็บใน `RecurringTransaction.TemplateData` (JSON)
@@ -2939,7 +2939,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ส่งได้ + `EmailQueue.ErrorMessage` "ส่งได้แต่ไม่แนบลิงก์ชำระ: <เหตุ>" (คงไว้หลังส่ง) · การ์ด go-live บนแดชบอร์ดแอดมิน (ข้อ BASEURL) — ไม่เดาโดเมน
 - **ใบขายตั้ง WHT ให้ผู้ซื้อบุคคลธรรมดา** (C F5): คำเตือนก่อนอนุมัติ `[WHT-PAYEE]` (ตัวตัดสินเดียวกับลิงก์ `BuyerWithholds` + `WhtMismatchNote`) — ทางเข้าไม่มีคนผ่านตามเดิม · ลิงก์ยังเตือน
 - เทสต์ `Round250Wp02Tests` · Db `DocumentAutoSendRound241DbTests` (รอบ 250) · `ImportAccountingTargetsDbTests.นำเข้ารับชำระCSV_ใบขาย_มีแถวงานหลังรับชำระ_แหล่งImport` ·
-  กติกา R250 ใน `tools/required_call_site_check.py` · Last verified `commit <เติมในคอมมิตตามหลัง>` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+  กติกา R250 ใน `tools/required_call_site_check.py` · Last verified `commit a40c91e5` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 2.12h ช่องทางแจ้งเตือนของผู้ติดต่อ — ผู้ติดต่อเป็นเจ้าของปลายทาง (รอบ 245 เฟส L1 · `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` · คำตัดสิน 245-L1-1…245-L1-7)
 
@@ -3422,7 +3422,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
         AutoPost CN/DN/PI/PV บรรทัดซื้อใช้ `PurchaseLineGlAmount.Standalone` (ห้ามประกอบ `Amount + VatAmount` เอง) · **ลำดับล็อก**: ยกเลิก/ลบถาวรถือคีย์
         `AssetCostSource` **เสมอ**เมื่อชนิดใบอาจเป็นต้นทุน (`AssetCostSourceRules.MayBeCostSource` — ไม่ตรวจ "ผูกอยู่ไหม" นอกล็อก) ก่อน `FOR UPDATE` แถวเอกสาร ·
         ทะเบียนเกิน GL อยู่ก่อน ⇒ problem row ในแท็บเอกสารต้นทุน · สินทรัพย์ระหว่างจัดหาไม่นับในกระทบยอดยกมา · ไฟล์ส่งออกติดป้าย "ระหว่างจัดหา"/"วันที่ซื้อ = วันพร้อมใช้" ·
-        Last verified `commit <เติมในคอมมิตตามหลัง>` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+        Last verified `commit a40c91e5` — ยังไม่ได้คอมไพล์ในเครื่องนี้
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
@@ -7807,4 +7807,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 246 QR — §2.12i QR ช
 _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง `DocumentPayLinkService`/`DocumentPayLinkPolicy` (ช่องทาง = บริษัทเปิดจริง ∩ ตาราง · ยอดสุทธิหลังหัก ณ ที่จ่าย · hash ของ token + เวลาคงที่ · ตัดสินสดทุกครั้ง) · `public-pay/documents/{token}` + `pay-document.html` · `DocumentPaymentHandler` บันทึก WHT ที่เหลือเมื่อเงินเข้ายอดสุทธิ · งานหลังรับชำระ `PostPaymentAutomationService` (1 แถวต่อการชำระ · ออกใบเสร็จด้วย `IssueReceiptForPaymentAsync` · ส่งด้วย `SendDocumentEmailAsync` · หยุดเมื่อข้อมูลไม่ครบ + แจ้งเตือน · ตรวจแถวรอ 50 ทวิ ไม่สร้างเอง) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — commit <เติมในคอมมิตตามหลัง>)_
-_Last verified against codebase: 2026-11-06 (รอบ 250 WP-02 — §2.12g งานหลังรับชำระทุกทางเข้า (`CreatePaymentAsync(…, source)` · `PaymentEntrySource` · integration `AfterPaymentRecordedAsync`) · ชั้นค่าตั้ง รายการประจำ/ผู้ติดต่อ · ลิงก์ชำระของใบแจ้งหนี้ที่มีใบกำกับ · §2.7 `EmailEnqueueOutcome` + ข้ามกฎซ้ำ · §6 GL สูตรเดียว/ลำดับล็อกสินทรัพย์ · แจ้งเตือนที่ระบุผู้รับเคารพแถวปิด · ทิศเงิน `CashFlowDirection` · การ์ด go-live แอดมิน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-06 (รอบ 250 WP-02 — §2.12g งานหลังรับชำระทุกทางเข้า (`CreatePaymentAsync(…, source)` · `PaymentEntrySource` · integration `AfterPaymentRecordedAsync`) · ชั้นค่าตั้ง รายการประจำ/ผู้ติดต่อ · ลิงก์ชำระของใบแจ้งหนี้ที่มีใบกำกับ · §2.7 `EmailEnqueueOutcome` + ข้ามกฎซ้ำ · §6 GL สูตรเดียว/ลำดับล็อกสินทรัพย์ · แจ้งเตือนที่ระบุผู้รับเคารพแถวปิด · ทิศเงิน `CashFlowDirection` · การ์ด go-live แอดมิน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a40c91e5)_
