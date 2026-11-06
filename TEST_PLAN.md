@@ -602,7 +602,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **809 ไฟล์ · 8,570 `[Fact]` + 1,281 `[Theory]` (5,992 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **811 ไฟล์ · 8,588 `[Fact]` + 1,282 `[Theory]` (5,998 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 
@@ -7937,3 +7937,21 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | (Db · ทิศตรงข้าม) บรรทัดที่ไม่ผูกในใบเดียวกันยังขึ้นทะเบียน · ยกเลิก/resync ใบที่ไม่ผูกไม่ถูกแตะ · โอนเข้า 12220 จากมัดจำ USD · VAT ต้องห้ามรถยนต์นั่งเป็นต้นทุน · ใบลดหนี้บน 12280 หลังโอนลง JE Dr 12280/Cr 12260 | `AssetMultiDocumentDbTests.Approval_still_registers_the_unlinked_line_of_the_same_document` · `…Unlinked_document_void_gate_is_silent` · `…Foreign_currency_deposit_placed_into_computer_account` · `…Passenger_car_non_claimable_vat_is_part_of_cost` · `…Credit_note_on_cip_after_placement_posts_transfer_je` |
 | (Db) มัดจำที่ใบอื่นเคลียร์ไปแล้ว ⇒ โอนไม่ได้ (ยอดคงเหลือ) · วันพร้อมใช้ก่อนใบงวด ⇒ ปฏิเสธ | `…Deposit_already_cleared_elsewhere_cannot_be_transferred_again` · `…Available_date_before_latest_source_document_is_refused` |
 | จุดเรียกด่าน (R249FA · `tools/required_call_site_check.py`): ล็อกเอกสารก่อนอ่าน · กันซ้ำ/ตาข่าย GL/ทะเบียนต่อใบ · ด่านโอนก่อน JE · ตารางจากวันพร้อมใช้ · ปลด/ยกเลิก/แก้ผัง · ตัวนับ GL ค้าง · การอนุมัติข้ามบรรทัดที่ผูก · ระหว่างจัดหาห้ามจำหน่าย/ตีราคา/ปรับอายุ · `ResolveLinePostedGlAmountAsync` ใช้ `PurchaseLineGlAmount` | negative test ในตัว R249FA-1..7 + R249FA-3fp |
+
+## รอบ 250 WP-02b — ความปลอดภัยคู่ค้า (P-1/P-2/P-3/P-6) + สลิปพอร์ทัล (M-2 · G-T7)
+
+| กรณี | เทสต์ |
+| --- | --- |
+| เลขเดียวกันสองสาขา ระบุสาขา ⇒ บริษัทสาขานั้น (ไม่ขึ้นกับลำดับ) · ระบุสาขาที่ไม่มี ⇒ ไม่ถอยไป สนญ. | `PartnerSecurityRound250Tests.สองบริษัทเลขเดียวกันต่างสาขา_…` · `…ระบุสาขาที่ไม่มีบริษัท_…` |
+| ไม่ระบุสาขา: สนญ. หนึ่งเดียว ⇒ จับ · ไม่มี สนญ./ซ้ำ ⇒ กำกวม (ไม่สุ่ม) · ทิศตรงข้าม: บริษัทเดียวของเลข ⇒ จับ (คู่เดิมไม่กรอกสาขา) | `…ไม่ระบุสาขา_…` · `…กำกวม_ไม่สุ่ม` · `ทิศตรงข้าม_คู่เดิม…` |
+| เลขภาษี 13 หลักเท่านั้น ("-" ไม่ใช่เลข) · ข้อความตอบเชิญไม่มี "ไม่พบ" | `…เลขภาษี_13หลักเท่านั้น…` · `คำตอบเชิญ_ไม่บอกผล…` |
+| ป้ายส่งคู่ค้าล้ม: ต่อท้าย · ย่อหน้าเดียว · ไม่สะสม · ล้างแล้วหมายเหตุอื่นคงเดิม · ป้าย e-Tax ไม่ถูกแตะ · ใบไม่มีป้าย = ค่าเดิม | `ป้ายส่งคู่ค้าล้ม_…` · `ส่งสำเร็จ_ล้างป้าย_…` |
+| แถว "[PENDING-VERIFY]" ไม่ผูก intent ⇒ ไม่นับเงินรับ · ทิศตรงข้าม: แถวปกติ/ป้ายกลางข้อความ/ผูก intent ⇒ นับ | `สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจ_…` |
+| (Db) เชิญเลขที่มี/ไม่มี/ของตัวเอง ⇒ 202 ไบต์เดียวกัน · แถว Pending เฉพาะที่มีจริง · audit 3 แถวไม่มี id ปลายทาง · ผู้เชิญไม่เห็นแถวรอตอบ · ทิศตรงข้าม: ผู้รับเชิญเห็น/ยอมรับ ⇒ ผู้เชิญเห็น | `PartnerSecurityRound250DbTests.เชิญ_เลขที่มีกับไม่มีในระบบ_…` |
+| (Db) เลขผิดรูป ⇒ BusinessRuleException ข้อความรูปแบบ (ไม่ดูฐาน) | `…เชิญ_เลขภาษีผิดรูป_…` |
+| (Db) เชิญระบุสาขา 00001 ⇒ คำเชิญถึงสาขา ไม่ใช่ สนญ. · ส่งเอกสารตามสาขาผู้ติดต่อ / ไม่ระบุ ⇒ สนญ. · คู่เดิมไม่กรอกสาขายังส่งได้ ไม่มีป้าย | `…เลขเดียวกันสองสาขา_เชิญ…` · `…ส่งเอกสาร_…` · `…ทิศตรงข้าม_คู่เดิม…` |
+| (Db) ส่งเข้าคู่ค้ากำกวม ⇒ ไม่มี link · ป้ายบนเอกสาร + เหตุ · เลิกคู่ซ้ำแล้วส่งใหม่ ⇒ link ถูกบริษัท + ป้ายหาย + หมายเหตุเดิมคงอยู่ | `…ส่งเข้าคู่ค้ากำกวม_…` |
+| (Db) สลิปพอร์ทัล ⇒ intent manual-slip Pending · ไม่มีแถว Payment · ยอดเดิมซ้ำ = intent เดิม · BalanceDue ไม่ลด · ใบแจ้งยอด TotalPaid 0 · ทิศตรงข้าม: แถวรับชำระจริงลดยอด/แสดงใน "การชำระของฉัน" · แถวเก่าไม่นับ | `…สลิปพอร์ทัล_สร้างรายการรอยืนยัน_…` |
+| (Db) migration: แถวสะอาด ⇒ intent รอยืนยัน + soft-delete + หมายเหตุอ้าง intent · เอกสารหาย ⇒ ไม่แตะ + audit ต้องตรวจ · แถวรับชำระจริงไม่ถูกแตะ · รันซ้ำไม่ทำซ้ำ | `…migration_แถวสลิปเก่า_…` |
+| จุดเรียกด่าน (R250 · `tools/required_call_site_check.py`): Invite 202 ห้าม NotFound/Ok · List กรองแถวผู้เชิญ · Invite/OnDocumentSent ผ่าน `PartnerCompanyMatch` · Route ล้มดัง (ห้าม LogWarning) · ApproveDocument ห้ามเรียก OnDocumentSentAsync ตรง · สลิปห้าม `Payments.Add`/`new Payment` · ผู้อ่านยอด 6 จุดใช้ `CountsAsReceived` | negative test ในตัว checker |
+| ด่านสิทธิ์ (`owner_action_wiring_check` R250 + เคส R250-X1…X3 · `write_permission_gate_check` WATCHED) | `--self-test` |

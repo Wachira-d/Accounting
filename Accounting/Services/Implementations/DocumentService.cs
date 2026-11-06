@@ -7638,13 +7638,10 @@ public partial class DocumentService : IDocumentService
         // that can always be rebuilt via BackfillFromHistoryAsync.
         await _vendorIntel.TryTrainAsync(companyId, doc.Id);
 
-        // Best-effort: cross-tenant routing. If the recipient Contact maps to a
-        // partner Company we have an Accepted partnership with, the document
-        // shows up in their inbox automatically. Failures are logged and don't
-        // unwind the approval.
-        try { await _crossTenantWorkflow.OnDocumentSentAsync(doc); }
-        catch (Exception ex)
-        { _logger.LogWarning(ex, "Cross-tenant routing failed for doc {Id}", doc.Id); }
+        // ส่งเข้ากล่องคู่ค้า (คู่ Accepted · จับคู่เลขภาษี+สาขา) — ไม่ย้อนการอนุมัติ แต่ห้ามเงียบ (รอบ 250 WP-02b P-6 · F2 ข้อ 7):
+        // ล้ม ⇒ ป้าย [PARTNER-ROUTE-FAILED] บนเอกสาร (response ธง PartnerRoutingFailed + แถบเตือน/ปุ่มส่งใหม่) + LogError ในตัว ·
+        // เดิม try { OnDocumentSentAsync } catch { LogWarning } — required_call_site_check ห้ามรูปนั้นกลับมา
+        await _crossTenantWorkflow.RouteSentDocumentAsync(doc);
 
         // Best-effort auto-generate e-Tax record for eligible types when the
         // company has e-Tax enabled. Runs OUTSIDE the approval transaction so
@@ -21219,6 +21216,7 @@ public partial class DocumentService : IDocumentService
         InternalNotes: d.InternalNotes,
         OriginModule: d.OriginModule,
         EtaxAutoFailed: Accounting.Helpers.EtaxAutoFailedNote.Has(d.InternalNotes),
+        PartnerRoutingFailed: Accounting.Helpers.PartnerRoutingFailedNote.Has(d.InternalNotes),
         ReplacedByDocumentId: d.ReplacedByDocumentId,
         ReplacesDocumentId: d.ReplacesDocumentId,
         ReplacementReason: d.ReplacementReason,

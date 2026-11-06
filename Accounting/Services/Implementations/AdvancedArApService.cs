@@ -475,6 +475,7 @@ public class AdvancedArApService : IAdvancedArApService
         // Get all payments in the period
         var payments = await _db.Payments.AsNoTracking()
             .Include(p => p.Document)
+            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 M-2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ (ห้ามลดยอดใบแจ้งยอด)
             .Where(p => p.CompanyId == companyId
                 && p.Document!.ContactId == contactId
                 && p.PaymentDate >= fromDate

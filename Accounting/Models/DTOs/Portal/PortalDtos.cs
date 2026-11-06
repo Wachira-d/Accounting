@@ -13,4 +13,6 @@ public record PortalStatementResponse(DateTime FromDate, DateTime ToDate, decima
 public record PortalStatementLine(DateTime Date, string DocumentNumber, string Description, decimal Amount, decimal Balance);
 public record PortalPaymentResponse(Guid Id, DateTime PaymentDate, decimal Amount, string PaymentMethod, string? Reference, string DocumentNumber);
 
-public record PortalSlipUploadResponse(Guid PaymentId, Guid DocumentId, string SlipUrl, decimal Amount, DateTime UploadedAt);
+/// <summary>ผลการแนบสลิปพอร์ทัล — รอบ 250 WP-02b (M-2): ไม่ใช่การรับชำระ · <paramref name="PaymentIntentId"/> = รายการรอยืนยันของผู้ขาย
+/// (เดิม <c>PaymentId</c> ของแถว Payment ที่สร้างก่อนตรวจ) · <paramref name="AwaitingReview"/> = รอพนักงานตรวจสลิปเสมอ</summary>
+public record PortalSlipUploadResponse(Guid PaymentIntentId, Guid DocumentId, string SlipUrl, decimal Amount, DateTime UploadedAt, bool AwaitingReview = true);

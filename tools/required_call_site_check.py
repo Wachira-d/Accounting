@@ -15395,6 +15395,65 @@ def wht_credit_ioe_self_test() -> list:
     return fails
 
 
+# ── รอบ 250 WP-02b (AUDIT_249_COVERAGE M-1/M-2 · AUTOPILOT_BILLING_DESIGN §6.1 P-1/P-2/P-6 · G-T7) ──
+# P-1: คำตอบเชิญคู่ค้าเหมือนกันทุกกรณี (ห้าม 404 "ไม่พบบริษัท") + ฝั่งผู้เชิญไม่เห็นแถวที่ยังไม่ตอบรับ · P-2: จับคู่ด้วยเลขภาษี + สาขา (ตัวจับคู่เดียว ·
+# กำกวม ⇒ ไม่เดา) · P-6: ส่งเข้าคู่ค้าล้ม ⇒ ป้ายบนเอกสาร + LogError + คืนเหตุ (ห้าม try/LogWarning) · M-2: สลิปพอร์ทัล = PaymentIntent รอยืนยัน
+# (ห้ามสร้าง Payment) + ผู้อ่านยอด/จับคู่ธนาคารตัดแถวสลิปรุ่นเก่าที่ยังไม่ตรวจ
+_R250_WHY = "รอบ 250 WP-02b: "
+_R250_XCTL = "Controllers/CrossTenantWorkflowController.cs"
+_R250_PORTAL = "Services/Implementations/PortalService.cs"
+_R250_SLIP_PAYMENT_WRITES = ["Payments.Add(", "Set<Payment>().Add(", "new Payment", "NextPaymentNumberAsync("]
+RULES += [
+    dict(file=_R250_XCTL, method="Invite",
+         must=["PartnerCompanyMatch.InviteAckMessage", "_service.InvitePartnerAsync("],
+         must_re=[r"return\s+StatusCode\s*\(\s*202\s*,"],
+         forbid=["NotFound(", "Ok(", "p.Id"],
+         why=_R250_WHY + "P-1 คำตอบเชิญเหมือนกันทุกไบต์ (มี/ไม่มีบริษัทของเลขนี้) — ห้ามบอกสมาชิกภาพ"),
+    dict(file=_R250_XCTL, method="List",
+         must=["p.InvitedByCompanyId != companyId", "TradingPartnershipStatus.Accepted"],
+         why=_R250_WHY + "P-1 ฝั่งผู้เชิญเห็นคู่ค้าเมื่อปลายทางตอบรับแล้วเท่านั้น (แถว Pending ที่เราเชิญ = บอกว่ามีบริษัทเลขนี้)"),
+    dict(file=XTENANT, method="InvitePartnerAsync",
+         must=["PartnerCompanyMatch.NormalizeTaxId(", "PartnerCompanyMatch.Pick(", "AddChainedAuditLog("],
+         forbid=["FirstOrDefaultAsync(c => c.TaxId", "return null", "return existing", "return p"],
+         why=_R250_WHY + "P-1/P-2 จับคู่เลขภาษี+สาขาด้วยตัวจับคู่เดียว · ไม่คืนผลการค้นให้ผู้เรียก · audit เหมือนกันทุกกรณี"),
+    dict(file=XTENANT, method="OnDocumentSentAsync",
+         must=["PartnerCompanyMatch.NormalizeTaxId(", "PartnerCompanyMatch.Pick(", "contact.BranchCode", "PartnerMatchKind.Ambiguous"],
+         forbid=["c.TaxId == contact.TaxId"],
+         why=_R250_WHY + "P-2 ส่งเอกสารเข้าคู่ค้าตามเลขภาษี+สาขา · กำกวม ⇒ ล้มดัง ไม่สุ่มบริษัท"),
+    dict(file=XTENANT, method="RouteSentDocumentAsync",
+         must=["OnDocumentSentAsync(", "StampRoutingNoteAsync(doc, reason", "LogError("],
+         must_re=[r"return\s+new\s+PartnerRouteOutcome\s*\(\s*false\s*,\s*reason\s*\)"],
+         forbid=["LogWarning("],
+         why=_R250_WHY + "P-6 ล้มดัง 3 ที่: ป้ายบนเอกสาร · LogError · คืนเหตุให้ผู้เรียก"),
+    dict(file=DOCSVC, method="ApproveDocumentAsync#2",
+         must=["_crossTenantWorkflow.RouteSentDocumentAsync("],
+         forbid=["_crossTenantWorkflow.OnDocumentSentAsync("],
+         why=_R250_WHY + "P-6 ห้ามกลับไป try { OnDocumentSentAsync } catch { LogWarning } (ล้มเงียบ)"),
+    dict(file=_R250_PORTAL, method="UploadDocumentSlipAsync",
+         must=["_intents.StartAsync(", "PaymentMethodKind.ManualSlip", "ManualSlipPaymentProvider.Code", "PaymentSourceKind.Document"],
+         forbid=_R250_SLIP_PAYMENT_WRITES,
+         forbid_lit=["[PENDING-VERIFY]"],
+         why=_R250_WHY + "M-2 สลิปพอร์ทัล = แจ้งโอน (PaymentIntent รอยืนยัน) ไม่ใช่รับชำระ — ห้ามสร้างแถว Payment ก่อนพนักงานตรวจ"),
+    dict(file=_R250_PORTAL, method="GetMyStatementAsync",
+         must=["PortalSlipPending.CountsAsReceived"],
+         why=_R250_WHY + "M-2 ใบแจ้งยอดพอร์ทัลไม่ลดยอดด้วยสลิปที่ยังไม่ตรวจ"),
+    dict(file=_R250_PORTAL, method="GetMyPaymentsAsync",
+         must=["PortalSlipPending.CountsAsReceived"],
+         why=_R250_WHY + "M-2 'การชำระของฉัน' ไม่แสดงสลิปที่ยังไม่ตรวจเป็นจ่ายแล้ว"),
+    dict(file="Services/Implementations/AdvancedArApService.cs", method="GenerateStatementAsync",
+         must=["PortalSlipPending.CountsAsReceived"],
+         why=_R250_WHY + "M-2 ใบแจ้งยอดลูกหนี้ไม่ลดยอดด้วยสลิปที่ยังไม่ตรวจ"),
+    dict(file="Services/Implementations/BankService.cs", method="AutoMatchAsync",
+         must=["PortalSlipPending.CountsAsReceived"],
+         why=_R250_WHY + "M-2 จับคู่ธนาคารอัตโนมัติห้ามจับสลิปที่ยังไม่ตรวจกับเงินเข้าจริง"),
+    dict(file="Services/Implementations/BankService.MatchCandidates.cs", method="GetMatchCandidatesAsync",
+         must=["PortalSlipPending.CountsAsReceived"],
+         why=_R250_WHY + "M-2 ผู้สมัครจับคู่ (มือ) ไม่รวมสลิปที่ยังไม่ตรวจ"),
+    dict(file="Services/Implementations/BankService.AiReconciliation.cs", method="AiSmartMatchAsync",
+         must=["PortalSlipPending.CountsAsReceived"],
+         why=_R250_WHY + "M-2 ผู้สมัครจับคู่ (AI) ไม่รวมสลิปที่ยังไม่ตรวจ"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

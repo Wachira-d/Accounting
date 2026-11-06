@@ -6548,3 +6548,13 @@ _รอบ 249 สินทรัพย์หลายใบ — แก้ผล
 (L5) `RouteOf` ตัวเดียว. (L6) ข้อความใบลด/เพิ่มหนี้. (L7) soft delete. (L8) กระทบยอด/ตรวจก่อนปิดงวด. (L9) วันไทยบนหน้า. (L10) สิทธิ์ GET.
 เทสต์เพิ่มใน `AssetCostSourceRulesTests` + Db `AssetMultiDocumentDbTests` (ทิศตรงข้าม: บรรทัดที่ไม่ผูกในใบเดียวกันยังขึ้นทะเบียน · ยกเลิกใบไม่ผูกปกติ · โอนเข้า 12220 สกุล USD ·
 VAT ต้องห้าม §82/5(6) · ใบลดหนี้บน 12280 หลังโอนลง JE · มัดจำถูกเคลียร์แล้ว · วันพร้อมใช้ก่อนใบล่าสุด) · กติกา R249FA เพิ่ม · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c314266c_
+
+_รอบ 250 WP-02b — บั๊กความปลอดภัยคู่ค้า + สลิปพอร์ทัล (AUDIT_249_COVERAGE M-1/M-2 · AUTOPILOT_BILLING_DESIGN §6.1 P-1/P-2/P-3/P-6 · G-T7) (2026-11-06):
+(P-1) เชิญคู่ค้าตอบ 202 ข้อความเดียวทุกกรณี (เดิม 404 "ไม่พบบริษัท…" ⇒ ไล่เลขภาษีหาสมาชิก NextAcc ได้) · ผู้เชิญไม่เห็นแถวที่ยังไม่ตอบรับ · audit รูปเดียว · ปฏิเสธไม่ถึง 7 วันไม่เปิดซ้ำ.
+(P-2) `Helpers/PartnerCompanyMatch` เลขภาษี + สาขา (กำกวม ⇒ ไม่เดา) ทั้งเชิญและส่งเอกสาร · ส่งเลือกเฉพาะคู่ Accepted.
+(P-3) Invite/Accept/Reject/UpdateConfig = CompanySettings.Edit + RejectApiKey · Approve/RejectIncoming = สิทธิ์อนุมัติฝั่งซื้อ + RejectApiKey · กล่องเอกสารเข้า = เห็นฝั่งซื้อ ·
+ถอด baseline 6 แถว + ย้ายไฟล์เข้า WATCHED · owner_action_wiring R250.
+(P-6) `RouteSentDocumentAsync` ทางเข้าเดียว: ล้ม ⇒ ป้าย `[PARTNER-ROUTE-FAILED]` + `DocumentResponse.PartnerRoutingFailed` + แถบเตือน/ปุ่มส่งใหม่ + LogError · `POST documents/{id}/partner-routing/retry`.
+(M-2) สลิปพอร์ทัล ⇒ `PaymentIntent(manual-slip)` รอยืนยัน (ไม่สร้าง Payment) · ยืนยันที่ ConfirmManually ⇒ CreatePaymentAsync · ผู้อ่านยอด 6 จุดตัดแถว "[PENDING-VERIFY]" ที่ยังไม่ตรวจ ·
+migration ครั้งเดียว `PortalSlipLegacyMigration` (แถวสะอาด ⇒ intent รอยืนยัน + soft-delete แถวเดิม · แถวที่ผูกธนาคาร/JE/ใบเสร็จ/เอกสารหาย ⇒ ไม่แตะ + audit ต้องตรวจ).
+เทสต์ `PartnerSecurityRound250Tests` + Db `PartnerSecurityRound250DbTests` (ทิศตรงข้าม: คู่เดิมไม่กรอกสาขายังส่งได้ · แถวรับชำระจริงยังลดยอด · ใบไม่มีป้ายไม่ถูกแตะ · ผู้รับเชิญยอมรับได้) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

@@ -145,6 +145,10 @@ WATCHED = [
     # รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (อีเมล/LINE ที่เอกสาร·ทวงชำระ·ใบเสร็จจะไปถึง = ข้อมูลส่วนบุคคล + ช่องทางส่งข้อมูลธุรกิจ) ·
     # ด่าน Contact.Edit ทุก write (DenyKeyAsync → HasPermissionAsync) · ใส่ตอนเขียวตั้งแต่ไฟล์เกิด (ratchet)
     "Accounting/Controllers/ContactNotifyEndpointsController.cs",
+    # รอบ 250 WP-02b (AUTOPILOT_BILLING_DESIGN §6.1 P-3) — เชิญ/ยอมรับ/ปฏิเสธคู่ค้า (ผูกบริษัทเข้ากับบริษัทอื่น) + อนุมัติเอกสารเข้า
+    # (ลงนามในนามบริษัท + สร้าง PO ปลายน้ำ) เดิมมีแค่ [Authorize] และอยู่ใน baseline 6 แถว ⇒ ปิดด่านครบ (CompanySettings.Edit ·
+    # DocumentPermissionHelper.CanApproveAsync ฝั่งซื้อ) ⇒ ถอดจาก baseline + ย้ายเข้า WATCHED ตอนเขียว
+    "Accounting/Controllers/CrossTenantWorkflowController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

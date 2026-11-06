@@ -2881,7 +2881,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 | เรื่อง | มีอยู่แล้ว | ช่องว่างที่ปิดรอบนี้ |
 | --- | --- | --- |
 | ตารางส่งเอกสาร | `EmailScheduleRule` + `EmailQueue` + `EmailScheduleWorker` (อนุมัติ/ใกล้ครบ/เกินกำหนด/รายเดือน/recurring/สลิป/50 ทวิ) · `RecurringTransaction.AutoSendEmail` (กฎเสมือน) · `OverdueDunningJob` | ไม่มีลิงก์ชำระเงิน · ไม่มีค่าตั้งต่อตาราง |
-| ชำระเงินออนไลน์ | `PaymentIntent` + `IPaymentProvider` (Omise · ManualSlip) · `PublicPaymentController` (ที่พัก/ออเดอร์/การจอง) · `DocumentPaymentHandler` (มีแต่ไม่มีทางเข้าสาธารณะสำหรับเอกสาร — สร้างรายการได้จาก `PaymentGatewayController` ฝั่งพนักงานเท่านั้น) · พอร์ทัลลูกค้า (ล็อกอิน · แนบสลิป) · `PaymentProviderConfig.EnabledMethodsJson` | ลิงก์สาธารณะของเอกสาร `public-pay/documents/{token}` + หน้า `/pages/pay-document.html` · ช่องทางต่อใบ |
+| ชำระเงินออนไลน์ | `PaymentIntent` + `IPaymentProvider` (Omise · ManualSlip) · `PublicPaymentController` (ที่พัก/ออเดอร์/การจอง) · `DocumentPaymentHandler` (มีแต่ไม่มีทางเข้าสาธารณะสำหรับเอกสาร — สร้างรายการได้จาก `PaymentGatewayController` ฝั่งพนักงานเท่านั้น) · พอร์ทัลลูกค้า (ล็อกอิน · แนบสลิป = `PaymentIntent` manual-slip รอยืนยัน ตั้งแต่รอบ 250 §2.12g2) · `PaymentProviderConfig.EnabledMethodsJson` | ลิงก์สาธารณะของเอกสาร `public-pay/documents/{token}` + หน้า `/pages/pay-document.html` · ช่องทางต่อใบ |
 | เงินเข้าแล้วเกิดอะไร | `CreatePaymentAsync`: JE · ตัด AR · WHT + `SyncWhtCreditReceivedAsync` (แถวรอ 50 ทวิ) · ใบเสร็จหลักฐาน `CreateSettlementReceiptAsync` ตาม `ReceiptIssuePolicy` (ใบเสร็จเปล่า หรือ ใบกำกับ/ใบเสร็จ §78/1 ตาม `SettlementReceiptPolicy`) · ฝั่งซื้อออก 50 ทวิ อัตโนมัติ · `IssueReceiptForPaymentAsync` (ออกย้อนหลัง) | ไม่มีการส่งใบเสร็จถึงลูกค้า · handler ไม่ส่ง WHT (ใบที่มี WHT ค้างเท่า WHT) |
 | 50 ทวิ ฝั่งขาย | ลูกค้าเป็นผู้ออก · ทะเบียน `WhtCreditReceived` (Pending จาก GL) · หน้า `wht-credit.html` | รอบนี้แค่ตรวจแถว (ไม่สร้าง) — ลิงก์อัปโหลด/ทวง = แบบของทีมออกแบบ (`erp-review/2026-11-06/AUTO_SEND_WHT_DESIGN.md`) |
 
@@ -2906,8 +2906,34 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - ฝ่ายค้าน (241-9 · 241-11): คิวอีเมลตามตารางผ่านตัวตัดสินผู้ส่งเดียว (`ComposeQueueMessageAsync` — เส้นแพลตฟอร์มมีเพดาน/BCC นับ/เทมเพลตคงที่/ข้อความผู้ใช้ล้วน) ·
   คิว/บันทึกเก็บที่หมาย `{PayLink}` (URL ตอนส่ง) · ตัวนับ WHT ที่หักแล้วตัวเดียว `WhtWithheldCounter` · ผู้ซื้อบุคคลธรรมดา ⇒ ยอดเต็ม + เตือน · ลิงก์ใช้ไม่ได้ ⇒ ไม่เปิดเผยข้อมูลใบ ·
   "ชำระครบ" ประทับตอนเข้าคิว
-- ยังไม่เข้า: กระทบธนาคาร/settlement · สลิปพอร์ทัล · นำเข้า · CMS/ที่พัก · กระจายหลายใบ (241-5)
+- ยังไม่เข้า: กระทบธนาคาร/settlement · นำเข้า · CMS/ที่พัก · กระจายหลายใบ (241-5) · (สลิปพอร์ทัล — เข้าแล้วตั้งแต่รอบ 250: ยืนยันสลิป = `DocumentPaymentHandler` ⇒ `EnqueueAsync` เส้นเดียวกับ gateway · §2.12g2)
 - เทสต์ `DocumentAutoSendRound241Tests` · Db `DocumentAutoSendRound241DbTests` · ล็อก `tools/required_call_site_check.py` R241 — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
+### 2.12g2 สลิปพอร์ทัล = แจ้งโอน · workflow ข้ามบริษัท (รอบ 250 WP-02b · `erp-review/2026-11-06/AUDIT_249_COVERAGE.md` M-1/M-2 · `AUTOPILOT_BILLING_DESIGN.md` §6.1 P-1/P-2/P-3/P-6 · G-T7)
+
+**สลิปพอร์ทัลลูกค้า** (`PortalService.UploadDocumentSlipAsync` · `POST api/portal/{cid}/documents/{docId}/upload-slip`):
+แนบ ⇒ `PaymentIntent(SourceKind=Document, manual-slip, ManualSlip)` สถานะ Pending ผ่าน `IPaymentIntentService.StartAsync` (ยอดเท่าเดิม + ยังเปิด ⇒ รายการเดิม · ชำระสำเร็จแล้ว ⇒ 400) + ไฟล์ผูกเอกสาร ·
+**ไม่สร้างแถว `Payment`** (เดิมสร้าง "[PENDING-VERIFY]" ทันที ⇒ ใบแจ้งยอดพอร์ทัล/ลูกหนี้ลดยอด · "การชำระของฉัน" ขึ้นว่าจ่ายแล้ว · จับคู่ธนาคารอัตโนมัติจับสลิปปลอมกับเงินเข้าจริงได้) ·
+พนักงานตรวจแล้วกด "ยืนยันรับเงิน" ที่รายการรับชำระ (`PaymentGatewayController.ConfirmManually` · สิทธิ์ ConfirmManually · เหตุผลบังคับ) ⇒ `DocumentPaymentHandler` ⇒ `CreatePaymentAsync` (JE · ตัดหนี้ · ใบเสร็จ) ⇒ งานหลังรับชำระ ·
+คำตอบ `PortalSlipUploadResponse.PaymentIntentId` + `AwaitingReview=true` (เดิม `PaymentId`) · ข้อจำกัด: ใบที่เคยมีรายการชำระออนไลน์สำเร็จแล้วรับสลิปเพิ่มผ่านพอร์ทัลไม่ได้ (กติกา StartAsync เดิม — ลูกค้าได้ข้อความ ⇒ ร้านบันทึกรับชำระส่วนที่เหลือเอง)
+- ผู้อ่านยอดตัดแถวสลิปรุ่นเก่าที่ยังไม่ตรวจด้วย `Helpers/PortalSlipPending.CountsAsReceived` (ขึ้นต้น "[PENDING-VERIFY]" + ไม่ผูก intent): ใบแจ้งยอดพอร์ทัล · การชำระของฉัน ·
+  ใบแจ้งยอดลูกหนี้ (`AdvancedArApService.GenerateStatementAsync`) · จับคู่ธนาคาร (`AutoMatchAsync` · `GetMatchCandidatesAsync` · `AiSmartMatchAsync`)
+- **ข้อมูลเดิม** (`Helpers/PortalSlipLegacyMigration` · ครั้งเดียว · marker `r250-portal-slip-pending-to-intent` · `AdvisoryLockKey.OneShotDataFix`): แถวที่ไม่ผูก intent/ใบเสร็จ/JE (Reference = เลขที่การชำระ)/
+  รายการธนาคาร และเอกสารยังอยู่ ⇒ สร้าง intent รอยืนยันยอดเดิม + แถวเดิม `IsDeleted=true` (soft · หมายเหตุอ้าง intent · ไม่เคยเป็นเงินรับ: ไม่มี JE ไม่แตะ PaidAmount) · อื่น ๆ ⇒ ไม่แตะ +
+  audit `PortalSlipLegacyNeedsReview` พร้อมเหตุ (ผู้อ่านยอดตัดออกจนกว่าคนแก้) · audit ต่อแถว (`AddChainedAuditLog`)
+
+**workflow ข้ามบริษัท** (`CrossTenantWorkflowController` · `CrossTenantWorkflowService`):
+- **เชิญ** `POST trading-partners/invite {partnerTaxId, partnerBranchCode?, message}` ⇒ **202 + "ส่งคำเชิญแล้ว ถ้าผู้รับใช้ NextAcc จะเห็นในระบบ" ทุกกรณี** (มี/ไม่มีบริษัท · เชิญตัวเอง · เชิญซ้ำ) — เดิม 404 "ไม่พบบริษัท…" ⇒ ไล่เลขภาษีได้ ·
+  เลขไม่ใช่ 13 หลัก/สาขาผิดรูป ⇒ 400 จากรูปแบบ · audit ของผู้เชิญรูปเดียวทุกกรณี · พบบริษัทแบบไม่กำกวม ⇒ แถว Pending · ถูกปฏิเสธไม่ถึง 7 วัน ⇒ ไม่เปิดซ้ำ ·
+  รายการคู่ค้า (`GET trading-partners`) ฝั่งผู้เชิญเห็นเฉพาะคู่ Accepted/Suspended (ผู้รับเชิญเห็นทุกสถานะ)
+- **จับคู่บริษัท** = เลขภาษี + สาขา ตัวเดียว `Helpers/PartnerCompanyMatch` (ระบุสาขา ⇒ ตรงเป๊ะ ไม่ถอยไป สนญ. · ไม่ระบุ ⇒ บริษัทเดียวของเลข หรือ สนญ. หนึ่งเดียว · หลายบริษัท ⇒ กำกวม ไม่เดา) ·
+  ส่งเอกสารเข้าคู่ค้า (`OnDocumentSentAsync`) เลือกจากบริษัทที่เป็นคู่ Accepted แล้วเท่านั้น · กำกวม ⇒ ล้มดัง
+- **สิทธิ์**: เชิญ/ยอมรับ/ปฏิเสธ/ตั้งค่า = `CompanySettings.Edit` + `[RejectApiKey]` · อนุมัติ/ปฏิเสธเอกสารเข้า (ลงนามในนามบริษัท + สร้าง PO) = `DocumentPermissionHelper.CanApproveAsync` ฝั่งซื้อ
+  (Document.Approve หรือ Document.Purchase.Approve) + `[RejectApiKey]` · ดูกล่องเอกสารเข้า = เห็นฝั่งซื้อ (`VisibleDirectionsAsync`) · คอนโทรลเลอร์อยู่ใน WATCHED ของ `write_permission_gate_check` (ถอด baseline 6 แถว)
+- **ส่งเข้าคู่ค้าล้ม** (หลังอนุมัติ · `RouteSentDocumentAsync` ทางเข้าเดียว): ป้าย `[PARTNER-ROUTE-FAILED]` ใน `InternalNotes` (`Helpers/PartnerRoutingFailedNote`) + `DocumentResponse.PartnerRoutingFailed` (แถบเตือน + ปุ่ม
+  "ส่งให้คู่ค้าอีกครั้ง" ใน documents.html) + LogError · ไม่ย้อนการอนุมัติ · ส่งใหม่ `POST documents/{id}/partner-routing/retry` (สิทธิ์อนุมัติชนิดของเอกสาร · ล้มอีก = 409 + เหตุ) · สำเร็จ ⇒ ล้างป้าย ·
+  outbox/worker ถาวรยังเป็นงาน WP-12
+- เทสต์ `PartnerSecurityRound250Tests` · Db `PartnerSecurityRound250DbTests` · ล็อก `required_call_site_check` R250 + `owner_action_wiring_check` (R250-X1…X3) — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 2.12h ช่องทางแจ้งเตือนของผู้ติดต่อ — ผู้ติดต่อเป็นเจ้าของปลายทาง (รอบ 245 เฟส L1 · `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` · คำตัดสิน 245-L1-1…245-L1-7)
 
@@ -7769,3 +7795,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 246 QR — §2.12i QR ช
 _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง `DocumentPayLinkService`/`DocumentPayLinkPolicy` (ช่องทาง = บริษัทเปิดจริง ∩ ตาราง · ยอดสุทธิหลังหัก ณ ที่จ่าย · hash ของ token + เวลาคงที่ · ตัดสินสดทุกครั้ง) · `public-pay/documents/{token}` + `pay-document.html` · `DocumentPaymentHandler` บันทึก WHT ที่เหลือเมื่อเงินเข้ายอดสุทธิ · งานหลังรับชำระ `PostPaymentAutomationService` (1 แถวต่อการชำระ · ออกใบเสร็จด้วย `IssueReceiptForPaymentAsync` · ส่งด้วย `SendDocumentEmailAsync` · หยุดเมื่อข้อมูลไม่ครบ + แจ้งเตือน · ตรวจแถวรอ 50 ทวิ ไม่สร้างเอง) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-06 (รอบ 250 WP-02b — §2.12g2: สลิปพอร์ทัล = PaymentIntent รอยืนยัน (ไม่สร้าง Payment) + ผู้อ่านยอด/จับคู่ธนาคารตัดแถว "[PENDING-VERIFY]" + migration ครั้งเดียว · workflow ข้ามบริษัท: คำตอบเชิญเหมือนกันทุกกรณี · จับคู่เลขภาษี+สาขา · ด่านสิทธิ์ + RejectApiKey · ส่งเข้าคู่ค้าล้มประทับป้ายบนเอกสาร + ส่งใหม่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
