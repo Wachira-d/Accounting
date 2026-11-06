@@ -24,7 +24,8 @@ public interface IWhtCertIntakeService
     /// ไม่เสนออัตรา 1%) · <paramref name="evidenceReference"/> = เลขอ้างอิง e-WHT (ข้อความอิสระ)</summary>
     Task<WhtCertSubmitResult> SubmitFromScanAsync(Guid companyId, Guid scanResultId, WhtCertIntakeChannel channel,
         IReadOnlyList<Guid>? documentHints, string submittedBy, Guid? submittedByUserId, CancellationToken ct = default,
-        WhtEvidenceKind evidenceKind = WhtEvidenceKind.PaperCertificate, string? evidenceReference = null, string? fileSha256 = null);
+        WhtEvidenceKind evidenceKind = WhtEvidenceKind.PaperCertificate, string? evidenceReference = null, string? fileSha256 = null,
+        Guid? expectedPayerContactId = null);
 
     /// <param name="status">ชื่อ <see cref="WhtCertIntakeRecordStatus"/> · ว่าง = รอยืนยันก่อน แล้วตามด้วยอื่น ๆ</param>
     Task<List<WhtCertIntakeDto>> ListInboxAsync(Guid companyId, string? status, CancellationToken ct = default);

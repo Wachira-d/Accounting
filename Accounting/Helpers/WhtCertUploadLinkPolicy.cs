@@ -51,6 +51,20 @@ public static class WhtCertUploadLinkPolicy
 
     public static DateTime ExpiresAt(DateTime issuedUtc) => issuedUtc.AddDays(TtlDays);
 
+    /// <summary>ฝ่ายค้าน WP-10 M3: กุญแจของ token ลิงก์อีเมลทวง — อนุพันธ์จากความลับของเซิร์ฟเวอร์ (JWT secret · fail-fast ใน production อยู่แล้ว) ด้วยป้ายของเรื่องนี้ ·
+    /// ว่าง ⇒ โยน (กฎ #4 C ห้ามถอยไปกุญแจ dev เงียบ ๆ)</summary>
+    public static byte[] DeriveQueueKey(string? serverSecret)
+    {
+        if (string.IsNullOrWhiteSpace(serverSecret))
+            throw new InvalidOperationException("ไม่ได้ตั้งความลับของเซิร์ฟเวอร์ (Jwt:Secret) — ออกลิงก์อัปโหลดของอีเมลทวง 50 ทวิ ไม่ได้");
+        return HMACSHA256.HashData(System.Text.Encoding.UTF8.GetBytes(serverSecret), System.Text.Encoding.UTF8.GetBytes("wht-upload-queue-token-v1"));
+    }
+
+    /// <summary>ฝ่ายค้าน WP-10 M3: token ของลิงก์ในอีเมลทวงหนึ่งฉบับ — HMAC(กุญแจ, บริษัท + แถวคิว) hex 64 ตัว · คำนวณซ้ำได้ ⇒ ส่งซ้ำ/ลองใหม่ได้ URL เดิม
+    /// และผู้ส่งคิวไม่ต้องเขียนฐานกลางทางส่ง (แถวลิงก์สร้างพร้อมแถวคิว) · ฐานยังเก็บเฉพาะ <see cref="TokenHash"/></summary>
+    public static string TokenForQueue(byte[] key, Guid companyId, Guid emailQueueId)
+        => Convert.ToHexString(HMACSHA256.HashData(key, System.Text.Encoding.UTF8.GetBytes($"whtq:{companyId:N}:{emailQueueId:N}"))).ToLowerInvariant();
+
     /// <summary>ลิงก์ใช้ได้ไหม (ตัดสินสดทุกครั้ง) — ไม่ถูกเพิกถอน · ยังไม่หมดอายุ</summary>
     public static bool Usable(DateTime expiresAtUtc, DateTime? revokedAtUtc, DateTime nowUtc)
         => revokedAtUtc == null && expiresAtUtc > nowUtc;
@@ -82,9 +96,12 @@ public static class WhtCertUploadLinkPolicy
     private static readonly string[] ActiveMarkers = { "/JavaScript", "/JS", "/Launch", "/EmbeddedFile", "/RichMedia" };
 
     /// <summary>คำสั่ง PDF ที่ทำงานเอง/ฝังไฟล์ (ชื่อแรกที่พบ) · null = ไม่พบ — ค้นแบบไบต์ตรงตัว (ชื่อ PDF เป็น ASCII) · <c>/JS</c> ต้องไม่ตามด้วยตัวอักษร
-    /// (กันชนกับชื่ออื่นที่ขึ้นต้นด้วย JS)</summary>
-    private static string? PdfActiveContent(ReadOnlySpan<byte> content)
+    /// (กันชนกับชื่ออื่นที่ขึ้นต้นด้วย JS) · ฝ่ายค้าน WP-10 L3: ถอด escape <c>#xx</c> ในชื่อก่อนค้น (<c>/Java#53cript</c> = <c>/JavaScript</c>)
+    /// <para><b>ด่านเสริม (defence-in-depth) ไม่ใช่ตัวตรวจ PDF เต็มรูป</b>: ชื่อที่อยู่ใน object stream ที่บีบอัดไว้ไม่ถูกเห็น · ด่านหลักคือ ไฟล์ไม่ถูกแสดงในต้นทางของแอป
+    /// (เก็บผ่านที่เก็บกลาง · ดาวน์โหลดด้วยสิทธิ์ภาษี + ชนิดจากไบต์) และ OCR อ่านเป็นภาพ/ข้อความเท่านั้น</para></summary>
+    private static string? PdfActiveContent(ReadOnlySpan<byte> raw)
     {
+        ReadOnlySpan<byte> content = DecodeNameEscapes(raw);
         foreach (var m in ActiveMarkers)
         {
             ReadOnlySpan<byte> needle = System.Text.Encoding.ASCII.GetBytes(m);
@@ -99,6 +116,24 @@ public static class WhtCertUploadLinkPolicy
             }
         }
         return null;
+    }
+
+    /// <summary>ถอด <c>#xx</c> (เลขฐานสิบหกสองหลัก) ทั้งไฟล์ — สำเนาสำหรับค้นชื่อเท่านั้น (ไฟล์ที่เก็บคือไบต์เดิม)</summary>
+    private static byte[] DecodeNameEscapes(ReadOnlySpan<byte> raw)
+    {
+        static int Hex(byte b) => b >= '0' && b <= '9' ? b - '0' : b >= 'a' && b <= 'f' ? b - 'a' + 10 : b >= 'A' && b <= 'F' ? b - 'A' + 10 : -1;
+        var outp = new byte[raw.Length];
+        var n = 0;
+        for (var i = 0; i < raw.Length; i++)
+        {
+            if (raw[i] == (byte)'#' && i + 2 < raw.Length && Hex(raw[i + 1]) >= 0 && Hex(raw[i + 2]) >= 0)
+            {
+                outp[n++] = (byte)(Hex(raw[i + 1]) * 16 + Hex(raw[i + 2]));
+                i += 2;
+            }
+            else outp[n++] = raw[i];
+        }
+        return outp[..n];
     }
 
     /// <summary>SHA-256 hex ตัวเล็กของไฟล์ — กันไฟล์ซ้ำในกล่องรับ (ตัวเดียวกับที่ <c>WhtCertIntakeService</c> เทียบ · hex 64 ตัว)</summary>
@@ -119,6 +154,24 @@ public static class WhtCertUploadLinkPolicy
     {
         var list = (requested ?? Array.Empty<Guid>()).Where(g => allowed.Contains(g)).Distinct().ToList();
         return list.Count == 0 ? null : list;
+    }
+
+    /// <summary>ฝ่ายค้าน WP-10 M2: ใบจากลิงก์อัปโหลด (ไม่ล็อกอิน) ต้องให้คนตรวจเสมอ — ข้อความด่านคงที่ (ใบไม่มีวันยืนยันอัตโนมัติ)</summary>
+    public const string AnonymousReviewGate = "ใบนี้ส่งผ่านลิงก์อัปโหลด (ผู้ส่งไม่ได้ล็อกอิน) — ต้องให้พนักงานตรวจแล้วกดยืนยันเสมอ";
+
+    /// <summary>
+    /// ฝ่ายค้าน WP-10 M2 — ด่านเพิ่มของช่องลิงก์อัปโหลด: (1) <see cref="AnonymousReviewGate"/> เสมอ (ยืนยันอัตโนมัติไม่ได้ · การจัดสรรค้างเป็น "เสนอ") ·
+    /// (2) ผู้จ่ายบนใบต้องเป็นลูกค้าของลิงก์ — เลขผู้เสียภาษีบนใบกับของผู้ติดต่อของลิงก์ (ทั้งคู่ถูก checksum) ไม่ตรง ⇒ ด่าน ·
+    /// รายการที่ระบบเสนอเป็นของผู้ติดต่ออื่น ⇒ ด่าน (ผู้เรียกตัดรายการเหล่านั้นทิ้ง — ไม่เสนอแถวของลูกค้ารายอื่นให้ใบจากลิงก์นี้)
+    /// </summary>
+    public static IReadOnlyList<string> LinkGates(Guid linkContactId, string? certPayerTaxId, string? linkContactTaxId, IEnumerable<Guid?> proposedPayerContacts)
+    {
+        var gates = new List<string> { AnonymousReviewGate };
+        if (ThaiTaxId.IsValid(certPayerTaxId) && ThaiTaxId.IsValid(linkContactTaxId) && !ThaiTaxId.Same(certPayerTaxId, linkContactTaxId))
+            gates.Add("ผู้จ่ายบนใบไม่ใช่ลูกค้าที่ได้รับลิงก์นี้ (เลขผู้เสียภาษีไม่ตรง) — ตรวจว่าเป็นใบของลูกค้ารายใดก่อนยืนยัน");
+        if (proposedPayerContacts.Any(p => p != linkContactId))
+            gates.Add("รายการที่จับคู่ได้บางรายการไม่ใช่ของลูกค้าที่ได้รับลิงก์นี้ — ระบบไม่เสนอรายการเหล่านั้น");
+        return gates;
     }
 
     /// <summary>ผู้ส่งที่บันทึกบนใบในกล่องรับ — ระบุช่องทางเสมอ (ผู้ตรวจรู้ว่าใบมาจากลูกค้าผ่านลิงก์ ไม่ใช่พนักงาน)</summary>

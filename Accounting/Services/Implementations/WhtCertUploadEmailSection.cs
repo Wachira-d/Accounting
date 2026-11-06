@@ -17,8 +17,10 @@ public class WhtCertUploadEmailSection : IReceiptEmailSectionProvider
 {
     private readonly AccountingDbContext _db;
     private readonly IConfiguration? _config;
+    private readonly IServiceScopeFactory? _scopes;
 
-    public WhtCertUploadEmailSection(AccountingDbContext db, IConfiguration? config = null) { _db = db; _config = config; }
+    public WhtCertUploadEmailSection(AccountingDbContext db, IConfiguration? config = null, IServiceScopeFactory? scopes = null)
+    { _db = db; _config = config; _scopes = scopes; }
 
     public async Task<IReadOnlyList<ReceiptEmailSections.Section>> SectionsAsync(Guid companyId, Guid receiptDocumentId, Guid paymentId,
         CancellationToken ct = default)
@@ -34,8 +36,18 @@ public class WhtCertUploadEmailSection : IReceiptEmailSectionProvider
             && w.Status == WhtCreditStatus.Pending && w.WhtAmount - w.ReceivedAmount > 0.005m, ct);
         if (!awaiting) return Array.Empty<ReceiptEmailSections.Section>();
 
-        var issued = await WhtCertUploadLinkService.IssueCoreAsync(_db, _config, companyId, doc.ContactId, pay.DocumentId, "receipt-email",
-            null, "receipt-email", ct);
+        // ฝ่ายค้าน WP-10 M3: ออกลิงก์ใน scope ของตัวเอง — ไม่ SaveChanges บน DbContext ของเส้นส่งใบเสร็จกลางทาง (บันทึกค่าที่เส้นนั้นยังไม่ตั้งใจบันทึก)
+        WhtCertUploadLinkIssued issued;
+        if (_scopes != null)
+        {
+            using var scope = _scopes.CreateScope();
+            var own = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+            issued = await WhtCertUploadLinkService.IssueCoreAsync(own, _config, companyId, doc.ContactId, pay.DocumentId, "receipt-email",
+                null, "receipt-email", ct);
+        }
+        else
+            issued = await WhtCertUploadLinkService.IssueCoreAsync(_db, _config, companyId, doc.ContactId, pay.DocumentId, "receipt-email",
+                null, "receipt-email", ct);
         if (issued.Url == null) return Array.Empty<ReceiptEmailSections.Section>();
         var co = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
             .Select(c => new { c.Name, c.TaxId, c.BranchCode }).FirstOrDefaultAsync(ct);

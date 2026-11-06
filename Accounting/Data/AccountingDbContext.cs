@@ -2660,6 +2660,8 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(x => new { x.CompanyId, x.TokenHash }).IsUnique().HasDatabaseName("UX_WhtCertUploadLinks_Token");
             e.HasIndex(x => new { x.CompanyId, x.ContactId }).HasDatabaseName("IX_WhtCertUploadLinks_Contact");
+            e.HasIndex(x => new { x.CompanyId, x.EmailQueueId }).IsUnique()
+                .HasFilter("\"EmailQueueId\" IS NOT NULL").HasDatabaseName("UX_WhtCertUploadLinks_Queue");
             e.Property(x => x.TokenHash).HasMaxLength(64);
             e.Property(x => x.Source).HasMaxLength(30);
             e.HasQueryFilter(x => !x.IsDeleted);

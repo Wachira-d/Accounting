@@ -29,17 +29,28 @@ public static class NoWhtChoicePolicy
 
     /// <summary>ตัวเลือกบนหน้าชำระ — <paramref name="Offered"/> แสดงตัวเลือกไหม · <paramref name="Warn"/> ต้องแสดงคำเตือน + ติ๊กยอมรับ ·
     /// <paramref name="GrossAmount"/> ยอดที่ต้องชำระเมื่อไม่หัก (จากตัวคิดยอดเดิม)</summary>
-    public sealed record Offer(bool Offered, bool Warn, decimal GrossAmount);
+    /// <param name="Eligible">ใบนี้ "เข้าเงื่อนไข" ให้เลือกไม่หักได้ถ้าเส้นลงบัญชีพร้อม (มี WHT · ผู้ซื้อไม่ใช่บุคคลธรรมดาที่รู้แน่) — ใช้เลือกข้อความปฏิเสธเท่านั้น</param>
+    public sealed record Offer(bool Offered, bool Warn, decimal GrossAmount, bool Eligible = false);
+
+    /// <summary>ข้อความเมื่อผู้ซื้อขอ "ไม่หัก ณ ที่จ่าย" ระหว่างที่ยังไม่เปิด (ฝ่ายค้าน WP-10 H1 · คำตัดสิน 253-WP10-8) — ปฏิเสธ<b>ก่อน</b>สร้างรายการชำระ (ไม่มีเงินเคลื่อน)</summary>
+    public const string NotAvailableMessage =
+        "ยังชำระแบบ \"ไม่หัก ณ ที่จ่าย\" ผ่านลิงก์นี้ไม่ได้ — กรุณาชำระยอดสุทธิที่แสดง (หลังหักภาษี ณ ที่จ่าย) แล้วส่งหนังสือรับรอง 50 ทวิ ให้ผู้ขาย "
+        + "หรือติดต่อผู้ขายหากท่านไม่ต้องหักภาษี ณ ที่จ่าย";
 
     /// <summary>
-    /// เสนอตัวเลือกไหม — มียอด WHT ที่ลูกค้าจะหัก (<c>Amounts.Wht</c> &gt; 0) และผู้ซื้อ<b>ไม่ใช่</b>บุคคลธรรมดาที่รู้แน่ (<paramref name="buyerWithholds"/> != false —
-    /// บุคคลธรรมดาไม่มี WHT ให้เลือกอยู่แล้ว: ตัวคิดยอดตั้ง Wht = 0) · คำเตือน: แสดงทุกครั้งที่เสนอ (นิติบุคคล = มีหน้าที่หัก · ไม่รู้ชนิด = ทางปลอดภัย)
+    /// เสนอตัวเลือกไหม — <b>ไม่เสนอเลย</b> (ฝ่ายค้าน WP-10 H1 · คำตัดสิน 253-WP10-8): ยอดค้างของเอกสารเป็นยอดสุทธิหลังหัก (244-7) ⇒ เงินเต็มยอด = จ่ายเกิน
+    /// ตัวบันทึกรับชำระลงไม่ได้ ⇒ เงินเข้าแต่ไม่ถูกบันทึก · เปิดได้เมื่อมีเส้น "ชำระโดยไม่ถูกหัก" เจ้าของเดียวใน <c>CreatePaymentAsync</c> (backlog) ·
+    /// <paramref name="Eligible"/> = ใบนี้เข้าเงื่อนไขเดิม (มี WHT ที่ลูกค้าจะหัก และผู้ซื้อไม่ใช่บุคคลธรรมดาที่รู้แน่) — ใช้เลือกข้อความปฏิเสธเท่านั้น
     /// </summary>
     public static Offer OfferFor(DocumentPayLinkPolicy.Amounts amounts, bool? buyerWithholds)
     {
-        var offered = amounts.Wht > 0.005m && amounts.Net > 0.005m && buyerWithholds != false;
-        return new Offer(offered, offered, offered ? amounts.Gross : amounts.Net);
+        var eligible = amounts.Wht > 0.005m && amounts.Net > 0.005m && buyerWithholds != false;
+        return new Offer(false, false, amounts.Net, eligible);
     }
+
+    /// <summary>คำขอเริ่มชำระที่เลือก "ไม่หัก" ⇒ เหตุปฏิเสธ (null = ไม่ได้เลือก/ดำเนินต่อได้) — ตัดสินก่อนสร้างรายการชำระ/บันทึกการยอมรับใด ๆ</summary>
+    public static string? StartRefusal(bool noWithholding, Offer offer)
+        => noWithholding && !offer.Offered ? NotAvailableMessage : null;
 
     /// <summary>ยอดที่ต้องชำระตามตัวเลือก — ไม่หัก (และเสนอจริง) = Gross · อื่น ๆ = Net (ยอดเดิมของลิงก์)</summary>
     public static decimal AmountDue(DocumentPayLinkPolicy.Amounts amounts, Offer offer, bool noWithholding)
@@ -48,7 +59,7 @@ public static class NoWhtChoicePolicy
     /// <summary>เหตุที่รับตัวเลือก "ไม่หัก" ไม่ได้ (null = รับได้) — ไม่ได้เสนอ (ไม่มี WHT/บุคคลธรรมดา) · ไม่ติ๊กยอมรับ · version ไม่ตรง (หน้าเก่า)</summary>
     public static string? AcceptRefusal(Offer offer, bool accepted, string? shownVersion)
     {
-        if (!offer.Offered) return "เอกสารนี้ไม่มีภาษีหัก ณ ที่จ่ายให้เลือก — ชำระตามยอดที่แสดง";
+        if (!offer.Offered) return offer.Eligible ? NotAvailableMessage : "เอกสารนี้ไม่มีภาษีหัก ณ ที่จ่ายให้เลือก — ชำระตามยอดที่แสดง";
         if (!accepted) return "กรุณาอ่านคำเตือนแล้วติ๊กยืนยันก่อนเลือก \"ไม่หัก ณ ที่จ่าย\"";
         if (!string.Equals(shownVersion, NoticeVersion, StringComparison.Ordinal))
             return "ข้อความคำเตือนมีการปรับปรุง — กรุณาโหลดหน้านี้ใหม่แล้วยืนยันอีกครั้ง";
@@ -61,9 +72,22 @@ public static class NoWhtChoicePolicy
     /// <summary>hash ของข้อความคำเตือนที่แสดง (หลักฐานว่าเห็นข้อความใด)</summary>
     public static string NoticeHash() => Sha(NoticeVersion + "\n" + NoticeText);
 
-    /// <summary>hash ของ IP ผูกบริษัท (PDPA — ไม่เก็บ IP ดิบ · บริษัทอื่นเทียบข้ามไม่ได้) · ไม่มี IP ⇒ null</summary>
-    public static string? IpHash(Guid companyId, string? ip)
-        => string.IsNullOrWhiteSpace(ip) ? null : Sha($"nowht-ip:{companyId:N}:{ip.Trim()}");
+    /// <summary>ฝ่ายค้าน WP-10 L4: กุญแจ HMAC ของ hash IP — อนุพันธ์จากความลับของเซิร์ฟเวอร์ (JWT secret · fail-fast ใน production ที่ Program.cs อยู่แล้ว)
+    /// ด้วยป้ายของเรื่องนี้ (แบบ <c>IdempotencyKeyPolicy.DeriveHashKey</c>) · ว่าง ⇒ โยน (กฎ #4 C ห้ามถอยไปกุญแจ dev เงียบ ๆ)</summary>
+    public static byte[] DeriveIpKey(string? serverSecret)
+    {
+        if (string.IsNullOrWhiteSpace(serverSecret))
+            throw new InvalidOperationException("ไม่ได้ตั้งความลับของเซิร์ฟเวอร์ (Jwt:Secret) — คำนวณ hash IP ของหลักฐาน \"ไม่หัก ณ ที่จ่าย\" ไม่ได้");
+        return HMACSHA256.HashData(Encoding.UTF8.GetBytes(serverSecret), Encoding.UTF8.GetBytes("nowht-ip-hmac-v1"));
+    }
+
+    /// <summary>HMAC-SHA256 ของ IP ผูกบริษัท (PDPA — ไม่เก็บ IP ดิบ · เดาย้อนจาก IPv4 ทั้งช่วงไม่ได้หากไม่มีความลับ · บริษัทอื่นเทียบข้ามไม่ได้) · ไม่มี IP ⇒ null</summary>
+    public static string? IpHash(byte[] key, Guid companyId, string? ip)
+        => string.IsNullOrWhiteSpace(ip) ? null
+            : Convert.ToHexString(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes($"nowht-ip:{companyId:N}:{ip.Trim()}"))).ToLowerInvariant();
+
+    /// <summary>ฝ่ายค้าน WP-10 L4: หลักฐานการยอมรับเก็บอย่างน้อย 5 ปี (หลักฐานประกอบการไม่หักภาษี ณ ที่จ่าย — พ.ร.บ.การบัญชี ม.14 · ป.รัษฎากร ม.87/3) · legal hold</summary>
+    public static DateTime RetainUntil(DateTime acceptedAtUtc) => acceptedAtUtc.AddYears(5);
 
     /// <summary>hash หลักฐานของการยอมรับ (canonical function เดียว — ฝั่งเขียนและฝั่งตรวจเรียกที่นี่ · กฎ #4 C) — ผูกเอกสาร · เวลา (UTC ระดับวินาที) ·
     /// ยอด · version · hash ข้อความ · hash IP</summary>

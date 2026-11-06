@@ -474,7 +474,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
 
         var raw = DateTime.UtcNow;
         var at = new DateTime(raw.Ticks - raw.Ticks % TimeSpan.TicksPerSecond, DateTimeKind.Utc);   // ระดับวินาที — hash หลักฐานคำนวณซ้ำได้หลัง round-trip ฐาน
-        var ipHash = NoWhtChoicePolicy.IpHash(companyId, request.Ip);
+        var ipHash = NoWhtChoicePolicy.IpHash(NoWhtChoicePolicy.DeriveIpKey(_config?["Jwt:Secret"]), companyId, request.Ip);   // ฝ่ายค้าน L4: HMAC กุญแจของเซิร์ฟเวอร์
         var name = WhtCertUploadLinkPolicy.SanitizeSenderName(request.PayerName);
         var noticeHash = NoWhtChoicePolicy.NoticeHash();
         var row = new NoWhtAcceptance
@@ -484,6 +484,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             BuyerWithholds = withholds, GrossAmount = amounts.Gross, WhtAmount = amounts.Wht, NetAmount = amounts.Net,
             EvidenceHash = NoWhtChoicePolicy.EvidenceHash(companyId, view.Target.SourceId, at, amounts.Gross, amounts.Wht, amounts.Net,
                 NoWhtChoicePolicy.NoticeVersion, noticeHash, ipHash, name),
+            RetainUntil = NoWhtChoicePolicy.RetainUntil(at), LegalHold = true,
             CreatedBy = "public-pay",
         };
         _db.NoWhtAcceptances.Add(row);

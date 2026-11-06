@@ -21,6 +21,9 @@ public class WhtCertUploadLink : TenantEntity
     public Guid? CreatedByUserId { get; set; }
     public DateTime? LastUsedAt { get; set; }
     public int UploadCount { get; set; }
+    /// <summary>ฝ่ายค้าน WP-10 M3: แถวคิวอีเมลทวงที่ลิงก์นี้เป็นของ (หนึ่งลิงก์ต่อหนึ่งฉบับ · UNIQUE) — token อนุพันธ์จากความลับของเซิร์ฟเวอร์ + id คิว
+    /// (<c>WhtCertUploadLinkPolicy.TokenForQueue</c>) ⇒ ส่งซ้ำ/ลองใหม่ได้ URL เดิม ไม่ต้องเขียนฐานกลางทางส่ง · null = ออกจากปุ่ม/อีเมลใบเสร็จ</summary>
+    public Guid? EmailQueueId { get; set; }
 }
 
 /// <summary>
@@ -67,4 +70,8 @@ public class NoWhtAcceptance : TenantEntity
     public decimal WhtAmount { get; set; }
     public decimal NetAmount { get; set; }
     public string EvidenceHash { get; set; } = "";
+    /// <summary>ฝ่ายค้าน WP-10 L4: เก็บอย่างน้อยถึงวันนี้ (<c>NoWhtChoicePolicy.RetainUntil</c> — 5 ปี) · ห้ามลบ/ทำนิรนามก่อนกำหนด</summary>
+    public DateTime RetainUntil { get; set; }
+    /// <summary>หลักฐานทางภาษี (legal hold) — งานลบตามอายุ PDPA ต้องข้าม (MAX(retention) · กฎ M)</summary>
+    public bool LegalHold { get; set; } = true;
 }

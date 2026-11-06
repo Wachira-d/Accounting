@@ -663,7 +663,7 @@ public class EmailScheduleService : IEmailScheduleService
                     : item.EntityType == "WithholdingTaxCert" ? await RecheckWhtCertAtSendAsync(item, ct)
                     // รอบ 253 (WP-10): อีเมลทวง 50 ทวิ — บริษัทปิดทวง/ผู้ติดต่อไม่ส่งอัตโนมัติ/ลูกค้าส่งใบครบแล้ว ⇒ ข้ามพร้อมเหตุ
                     : item.EntityType == Accounting.Helpers.WhtCertReminderCadence.QueueEntityType
-                        ? await WhtCertReminderService.SendTimeSkipReasonAsync(_db, item, ct)
+                        ? await WhtCertReminderService.SendTimeSkipReasonAsync(_db, _recipients, item, ct)
                     : null;
                 if (skipReason != null)
                 {
@@ -940,11 +940,11 @@ public class EmailScheduleService : IEmailScheduleService
         if (item.EntityType == Accounting.Helpers.WhtCertReminderCadence.QueueEntityType
             && msg.HtmlBody.Contains(Accounting.Helpers.WhtCertReminderCadence.UploadLinkPlaceholder, StringComparison.Ordinal))
         {
-            var link = await WhtCertUploadLinkService.IssueCoreAsync(_db, _config, item.CompanyId, item.EntityId, null, "reminder-email",
-                null, "wht-cert-reminder", ct);
-            if (link.Url == null) return new QueueCompose(null, null, null, link.Problem ?? "สร้างลิงก์อัปโหลดไม่ได้");
+            // ฝ่ายค้าน WP-10 M3: อ่านอย่างเดียว (แถวลิงก์สร้างพร้อมแถวคิว · token คำนวณซ้ำได้) — ไม่ SaveChanges บน _db กลางทางประกอบ · ลองใหม่ = URL เดิม
+            var (linkUrl, linkProblem) = await WhtCertUploadLinkService.ReminderUrlAsync(_db, _config, item.CompanyId, item.Id, ct);
+            if (linkUrl == null) return new QueueCompose(null, null, null, linkProblem ?? "สร้างลิงก์อัปโหลดไม่ได้");
             msg.HtmlBody = msg.HtmlBody.Replace(Accounting.Helpers.WhtCertReminderCadence.UploadLinkPlaceholder,
-                System.Net.WebUtility.HtmlEncode(link.Url), StringComparison.Ordinal);
+                System.Net.WebUtility.HtmlEncode(linkUrl), StringComparison.Ordinal);
         }
         return new QueueCompose(msg, sender, log, null);
     }

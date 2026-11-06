@@ -81,6 +81,10 @@ public static class WhtCertReminderCadence
             ? $"ขอหนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ) — {companyName} ต้องใช้ประกอบการยื่น ภ.ง.ด.50"
             : $"ขอหนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ) — {companyName}";
 
+    /// <summary>ฝ่ายค้าน WP-10 L6: ข้อความเลิกรับอีเมลทวง (ทุกฉบับ) — ตอบกลับอีเมลนี้ (Reply-To = บริษัท) ⇒ ผู้ขายปิดการส่งที่ผู้ติดต่อ</summary>
+    internal static string UnsubscribeText(string companyName)
+        => $"ไม่ต้องการรับอีเมลทวงหนังสือรับรองนี้อีก? ตอบกลับอีเมลนี้เพื่อแจ้ง {companyName} — ผู้ขายจะปิดการส่งอีเมลอัตโนมัติถึงท่าน";
+
     /// <summary>หนึ่งบรรทัดของรายการที่ค้างในอีเมล</summary>
     public sealed record Item(string? DocumentNumber, DateTime? WithheldSinceUtc, decimal Missing);
 
@@ -107,6 +111,8 @@ public static class WhtCertReminderCadence
         sb.Append("<p>ส่งไฟล์หนังสือรับรอง (PDF หรือรูปถ่าย) ได้ทันทีที่ลิงก์นี้ — ไม่ต้องเข้าสู่ระบบ: <a href='")
             .Append(UploadLinkPlaceholder).Append("'>อัปโหลดหนังสือรับรอง</a></p>");
         sb.Append("<p style='color:#64748b;font-size:12px'>ถ้าส่งให้แล้ว ขออภัยและขอบคุณค่ะ — ระบบจะหยุดทวงเมื่อได้รับใบครบ</p>");
+        // ฝ่ายค้าน WP-10 L6: ทางเลิกรับ — ผู้ขายปิดได้ที่ผู้ติดต่อ ("ไม่ส่งอัตโนมัติ" หรือเลิกรับเรื่อง 50 ทวิ) · ผู้ส่งตอบกลับถึงอีเมลของบริษัท (Reply-To)
+        sb.Append("<p style='color:#64748b;font-size:12px'>").Append(E(UnsubscribeText(companyName))).Append("</p>");
         return sb.ToString();
     }
 }

@@ -45,12 +45,24 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
         Guid? documentId, string source, Guid? userId, string actor, CancellationToken ct)
     {
         var token = WhtCertUploadLinkPolicy.NewToken();
+        var row = AddLinkRow(db, companyId, contactId, documentId, WhtCertUploadLinkPolicy.TokenHash(token), source, userId, actor, null);
+        await db.SaveChangesAsync(ct);
+        var origin = await SystemBaseUrl.ResolveAsync(db, config, ct);
+        return origin == null
+            ? new WhtCertUploadLinkIssued(row.Id, null, row.ExpiresAt, "ยังไม่ได้ตั้งที่อยู่เว็บของระบบ — สร้าง URL ลิงก์อัปโหลดไม่ได้ (ผู้ดูแลระบบตั้งได้ที่ค่าตั้งระบบ)")
+            : new WhtCertUploadLinkIssued(row.Id, WhtCertUploadLinkPolicy.Url(origin, companyId, token), row.ExpiresAt, null);
+    }
+
+    /// <summary>แถวลิงก์ + audit chain (ไม่บันทึก — ผู้เรียกบันทึกพร้อมงานของตัวเอง) · ผู้สร้างแถวลิงก์ตัวเดียว (ปุ่ม · อีเมลใบเสร็จ · อีเมลทวง)</summary>
+    internal static WhtCertUploadLink AddLinkRow(AccountingDbContext db, Guid companyId, Guid contactId, Guid? documentId, string tokenHash,
+        string source, Guid? userId, string actor, Guid? emailQueueId)
+    {
         var now = DateTime.UtcNow;
         var row = new WhtCertUploadLink
         {
-            CompanyId = companyId, ContactId = contactId, DocumentId = documentId,
-            TokenHash = WhtCertUploadLinkPolicy.TokenHash(token), ExpiresAt = WhtCertUploadLinkPolicy.ExpiresAt(now),
-            Source = source, CreatedByUserId = userId, CreatedBy = actor,
+            CompanyId = companyId, ContactId = contactId, DocumentId = documentId, TokenHash = tokenHash,
+            ExpiresAt = WhtCertUploadLinkPolicy.ExpiresAt(now), Source = source, CreatedByUserId = userId, CreatedBy = actor,
+            EmailQueueId = emailQueueId,
         };
         db.WhtCertUploadLinks.Add(row);
         db.AddChainedAuditLog(new AuditLog
@@ -58,14 +70,30 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
             CompanyId = companyId, UserId = userId, UserEmail = actor, Action = AuditAction.Create,
             EntityType = nameof(WhtCertUploadLink), EntityId = row.Id.ToString(),
             NewValues = System.Text.Json.JsonSerializer.Serialize(new { @event = "wht-upload-link-issued", contactId, documentId, source, row.ExpiresAt,
-                ruleCode = WhtCertUploadLinkPolicy.RuleCode }),
+                emailQueueId, ruleCode = WhtCertUploadLinkPolicy.RuleCode }),
             Timestamp = now,
         });
-        await db.SaveChangesAsync(ct);
+        return row;
+    }
+
+    /// <summary>
+    /// ฝ่ายค้าน WP-10 M3: URL ลิงก์อัปโหลดของอีเมลทวงหนึ่งฉบับ ณ ตอนส่ง — <b>อ่านอย่างเดียว</b> (ไม่เขียนฐานกลางทางส่ง): token คำนวณซ้ำจากกุญแจ + id คิว
+    /// (<see cref="WhtCertUploadLinkPolicy.TokenForQueue"/>) แล้วยืนยันว่ามีแถวลิงก์ของคิวนี้ (สร้างพร้อมแถวคิว) และ hash ตรง · ลองส่งใหม่ = URL เดิม ·
+    /// คืน (null, เหตุ) เมื่อไม่มีแถว/ไม่มีที่อยู่เว็บ ⇒ ผู้ส่งคิวไม่ส่ง (ไม่ส่งลิงก์เสีย)
+    /// </summary>
+    internal static async Task<(string? Url, string? Problem)> ReminderUrlAsync(AccountingDbContext db, IConfiguration? config, Guid companyId,
+        Guid emailQueueId, CancellationToken ct)
+    {
+        var token = WhtCertUploadLinkPolicy.TokenForQueue(WhtCertUploadLinkPolicy.DeriveQueueKey(config?["Jwt:Secret"]), companyId, emailQueueId);
+        var stored = await db.WhtCertUploadLinks.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && l.EmailQueueId == emailQueueId)
+            .Select(l => l.TokenHash).FirstOrDefaultAsync(ct);
+        if (stored == null || !WhtCertUploadLinkPolicy.TokenMatches(token, stored))
+            return (null, "ไม่พบลิงก์อัปโหลดของอีเมลทวงฉบับนี้ (หรือความลับของเซิร์ฟเวอร์เปลี่ยน) — ไม่ส่ง · งานทวงรอบหน้าจะเข้าคิวใหม่");
         var origin = await SystemBaseUrl.ResolveAsync(db, config, ct);
         return origin == null
-            ? new WhtCertUploadLinkIssued(row.Id, null, row.ExpiresAt, "ยังไม่ได้ตั้งที่อยู่เว็บของระบบ — สร้าง URL ลิงก์อัปโหลดไม่ได้ (ผู้ดูแลระบบตั้งได้ที่ค่าตั้งระบบ)")
-            : new WhtCertUploadLinkIssued(row.Id, WhtCertUploadLinkPolicy.Url(origin, companyId, token), row.ExpiresAt, null);
+            ? (null, "ยังไม่ได้ตั้งที่อยู่เว็บของระบบ — สร้าง URL ลิงก์อัปโหลดไม่ได้ (ผู้ดูแลระบบตั้งได้ที่ค่าตั้งระบบ)")
+            : (WhtCertUploadLinkPolicy.Url(origin, companyId, token), null);
     }
 
     public async Task<WhtCertUploadLinkIssued> IssueAsync(Guid companyId, Guid? contactId, Guid? documentId, Guid? userId, string actor,
@@ -195,13 +223,14 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
         {
             if (scanId is Guid sid)
                 r = await _intake.SubmitFromScanAsync(companyId, sid, WhtCertIntakeChannel.UploadLink, hints,
-                    WhtCertUploadLinkPolicy.SubmittedBy(name), null, ct, fileSha256: sha);
+                    WhtCertUploadLinkPolicy.SubmittedBy(name), null, ct, fileSha256: sha, expectedPayerContactId: link.ContactId);
             else
                 r = await _intake.SubmitAsync(companyId, new WhtCertSubmission(
                     WhtCertIntakeChannel.UploadLink, WhtEvidenceKind.PaperCertificate, null, null, null, null, null, link.ContactId, null, null,
                     null, 0m, 0m, 0m, WhtPayerFormType.Pnd53, 0m, saved.Id, sha, null, hints, null,
                     WhtCertUploadLinkPolicy.SubmittedBy(name), null,
-                    "อ่านไฟล์อัตโนมัติไม่สำเร็จ — เปิดดูไฟล์แล้วกรอกข้อมูลตามหนังสือรับรอง", AmountNeedsReview: true), ct);
+                    "อ่านไฟล์อัตโนมัติไม่สำเร็จ — เปิดดูไฟล์แล้วกรอกข้อมูลตามหนังสือรับรอง", AmountNeedsReview: true,
+                    ExpectedPayerContactId: link.ContactId), ct);
         }
         catch (BusinessRuleException ex) when (ex.StatusCode == 409)
         {
