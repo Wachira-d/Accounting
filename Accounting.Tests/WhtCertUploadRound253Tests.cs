@@ -88,6 +88,40 @@ public class WhtCertUploadRound253Tests
         Assert.Equal(64, WhtCertUploadLinkPolicy.Sha256Hex(Pdf()).Length);
     }
 
+    [Fact]
+    public void ใบจากลิงก์ต้องให้คนตรวจเสมอ_ผู้จ่ายต้องเป็นลูกค้าของลิงก์()
+    {
+        var c = Guid.NewGuid(); var other = Guid.NewGuid();
+        const string Cust = "0107556000116", Else = "0105556987652";
+        // ทิศตรง: ผู้จ่ายตรงลูกค้าของลิงก์ ⇒ เหลือแต่ด่านคนตรวจ (ไม่มีวันยืนยันอัตโนมัติ)
+        Assert.Equal(new[] { WhtCertUploadLinkPolicy.AnonymousReviewGate }, WhtCertUploadLinkPolicy.LinkGates(c, Cust, Cust, new Guid?[] { c }));
+        // ทิศตรงข้าม: เลขผู้เสียภาษีบนใบไม่ใช่ลูกค้าของลิงก์ / รายการที่จับได้เป็นของผู้ติดต่ออื่น ⇒ ด่านเพิ่ม
+        Assert.Equal(2, WhtCertUploadLinkPolicy.LinkGates(c, Else, Cust, new Guid?[] { c }).Count);
+        Assert.Equal(2, WhtCertUploadLinkPolicy.LinkGates(c, Cust, Cust, new Guid?[] { other }).Count);
+        Assert.Single(WhtCertUploadLinkPolicy.LinkGates(c, null, Cust, Array.Empty<Guid?>()));   // อ่านเลขไม่ได้ ⇒ ไม่เดาว่าผิด (ยังต้องคนตรวจ)
+    }
+
+    [Fact]
+    public void PDF_ชื่อที่ซ่อนด้วย_escape_ถูกถอดก่อนค้น()
+    {
+        Assert.Contains("/JavaScript", WhtCertUploadLinkPolicy.Inspect(Pdf("<< /S /Java#53cript >>")).Problem);
+        Assert.Contains("/EmbeddedFile", WhtCertUploadLinkPolicy.Inspect(Pdf("<< /Type /Embedded#46ile >>")).Problem);
+        Assert.Null(WhtCertUploadLinkPolicy.Inspect(Pdf("<< /Title (ใบที่ #1 ของเดือน) >>")).Problem);   // # ที่ไม่ใช่ escape ไม่ฟ้อง
+    }
+
+    [Fact]
+    public void token_ของอีเมลทวง_คำนวณซ้ำได้ต่อแถวคิว_และต่างกันทุกแถว()
+    {
+        var key = WhtCertUploadLinkPolicy.DeriveQueueKey("server-secret-1");
+        var c = Guid.NewGuid(); var q = Guid.NewGuid();
+        var t = WhtCertUploadLinkPolicy.TokenForQueue(key, c, q);
+        Assert.Equal(t, WhtCertUploadLinkPolicy.TokenForQueue(key, c, q));
+        Assert.NotEqual(t, WhtCertUploadLinkPolicy.TokenForQueue(key, c, Guid.NewGuid()));
+        Assert.NotEqual(t, WhtCertUploadLinkPolicy.TokenForQueue(WhtCertUploadLinkPolicy.DeriveQueueKey("other"), c, q));
+        Assert.True(WhtCertUploadLinkPolicy.LooksValid(t));
+        Assert.Throws<InvalidOperationException>(() => WhtCertUploadLinkPolicy.DeriveQueueKey(null));
+    }
+
     // ═══════════ จังหวะทวง ═══════════
 
     [Fact]
@@ -162,6 +196,7 @@ public class WhtCertUploadRound253Tests
         Assert.Contains("ภ.ง.ด.50", body);
         Assert.Contains("ภ.ง.ด.50", WhtCertReminderCadence.Subject("เอ", 45));
         Assert.DoesNotContain("ภ.ง.ด.50", WhtCertReminderCadence.Subject("เอ", 7));
+        Assert.Contains(System.Net.WebUtility.HtmlEncode(WhtCertReminderCadence.UnsubscribeText("<b>บริษัท เอ</b>")), body);   // L6 ทางเลิกรับทุกฉบับ
         Assert.DoesNotContain("ภ.ง.ด.50", WhtCertReminderCadence.BodyHtml("เอ", null, "สำนักงานใหญ่", "ลูกค้า", 7, Array.Empty<WhtCertReminderCadence.Item>()));
     }
 
@@ -170,50 +205,48 @@ public class WhtCertUploadRound253Tests
     private static readonly DocumentPayLinkPolicy.Amounts WithWht = DocumentPayLinkPolicy.AmountsFor(1_040m, 30m, 0m);
 
     [Fact]
-    public void นิติบุคคล_และไม่รู้ชนิด_เห็นตัวเลือกพร้อมคำเตือน_ยอดเต็มจากตัวคิดยอดเดิม()
+    public void นิติบุคคลมีภาษีหัก_ไม่ได้รับตัวเลือก_ขอไม่หักถูกปฏิเสธก่อนชำระ_ยอดสุทธิเดิม()
     {
+        // ฝ่ายค้าน WP-10 H1 (253-WP10-8): เข้าเงื่อนไข (Eligible) แต่ยังไม่เสนอ — เงินเต็มยอดลงบัญชีไม่ได้
         var o = NoWhtChoicePolicy.OfferFor(WithWht, buyerWithholds: true);
-        Assert.True(o.Offered);
-        Assert.True(o.Warn);
-        Assert.Equal(1_070m, o.GrossAmount);
-        Assert.Equal(1_070m, NoWhtChoicePolicy.AmountDue(WithWht, o, noWithholding: true));
-        Assert.Equal(1_040m, NoWhtChoicePolicy.AmountDue(WithWht, o, noWithholding: false));
-        Assert.True(NoWhtChoicePolicy.OfferFor(WithWht, null).Warn);
+        Assert.False(o.Offered);
+        Assert.False(o.Warn);
+        Assert.True(o.Eligible);
+        Assert.Equal(1_040m, NoWhtChoicePolicy.AmountDue(WithWht, o, noWithholding: true));   // ขอไม่หักก็ได้ยอดสุทธิ (ไม่มีทางได้ Gross)
+        Assert.Equal(NoWhtChoicePolicy.NotAvailableMessage, NoWhtChoicePolicy.StartRefusal(true, o));
+        Assert.Contains("50 ทวิ", NoWhtChoicePolicy.NotAvailableMessage);
+        Assert.Equal(NoWhtChoicePolicy.NotAvailableMessage, NoWhtChoicePolicy.AcceptRefusal(o, true, NoWhtChoicePolicy.NoticeVersion));
+        Assert.False(NoWhtChoicePolicy.OfferFor(WithWht, null).Offered);
     }
 
     [Fact]
-    public void บุคคลธรรมดา_หรือไม่มีภาษีหัก_ไม่เห็นตัวเลือก_และส่งตัวเลือกมาก็ได้ยอดเดิม()
-    {
-        var ind = NoWhtChoicePolicy.OfferFor(WithWht, buyerWithholds: false);
-        Assert.False(ind.Offered);
-        Assert.Equal(1_040m, NoWhtChoicePolicy.AmountDue(WithWht, ind, noWithholding: true));
-        var none = NoWhtChoicePolicy.OfferFor(DocumentPayLinkPolicy.AmountsFor(1_070m, 0m, 0m), true);
-        Assert.False(none.Offered);
-        Assert.NotNull(NoWhtChoicePolicy.AcceptRefusal(ind, accepted: true, NoWhtChoicePolicy.NoticeVersion));
-    }
-
-    [Fact]
-    public void ยอมรับได้เฉพาะเมื่อติ๊กยืนยัน_และ_version_ตรงกับข้อความที่แสดง()
+    public void ไม่ได้เลือกไม่หัก_เส้นยอดสุทธิไม่ถูกแตะ_และบุคคลธรรมดาไม่เข้าเงื่อนไข()
     {
         var o = NoWhtChoicePolicy.OfferFor(WithWht, true);
-        Assert.Null(NoWhtChoicePolicy.AcceptRefusal(o, true, NoWhtChoicePolicy.NoticeVersion));
-        Assert.NotNull(NoWhtChoicePolicy.AcceptRefusal(o, false, NoWhtChoicePolicy.NoticeVersion));
-        Assert.NotNull(NoWhtChoicePolicy.AcceptRefusal(o, true, "NOWHT-OLD"));
-        Assert.NotNull(NoWhtChoicePolicy.AcceptRefusal(o, true, null));
+        Assert.Null(NoWhtChoicePolicy.StartRefusal(false, o));
+        Assert.Equal(1_040m, NoWhtChoicePolicy.AmountDue(WithWht, o, noWithholding: false));
+        var ind = NoWhtChoicePolicy.OfferFor(WithWht, buyerWithholds: false);
+        Assert.False(ind.Eligible);
+        Assert.NotEqual(NoWhtChoicePolicy.NotAvailableMessage, NoWhtChoicePolicy.AcceptRefusal(ind, true, NoWhtChoicePolicy.NoticeVersion));
+        Assert.False(NoWhtChoicePolicy.OfferFor(DocumentPayLinkPolicy.AmountsFor(1_070m, 0m, 0m), true).Eligible);
     }
 
     [Fact]
-    public void hash_หลักฐาน_คำนวณซ้ำได้_และเปลี่ยนเมื่อยอดหรือข้อความเปลี่ยน_IP_ไม่เก็บดิบ()
+    public void hash_หลักฐาน_คำนวณซ้ำได้_IP_เป็น_HMAC_ด้วยความลับของเซิร์ฟเวอร์_และเก็บ_5_ปี()
     {
         var c = Guid.NewGuid(); var d = Guid.NewGuid();
         var at = new DateTime(2026, 11, 6, 10, 0, 0, DateTimeKind.Utc);
         var a = NoWhtChoicePolicy.EvidenceHash(c, d, at, 1_070m, 30m, 1_040m, NoWhtChoicePolicy.NoticeVersion, NoWhtChoicePolicy.NoticeHash(), "ip", null);
         Assert.Equal(a, NoWhtChoicePolicy.EvidenceHash(c, d, at, 1_070m, 30m, 1_040m, NoWhtChoicePolicy.NoticeVersion, NoWhtChoicePolicy.NoticeHash(), "ip", null));
         Assert.NotEqual(a, NoWhtChoicePolicy.EvidenceHash(c, d, at, 1_071m, 30m, 1_041m, NoWhtChoicePolicy.NoticeVersion, NoWhtChoicePolicy.NoticeHash(), "ip", null));
-        var ip = NoWhtChoicePolicy.IpHash(c, "203.0.113.9");
+        var key = NoWhtChoicePolicy.DeriveIpKey("server-secret-1");
+        var ip = NoWhtChoicePolicy.IpHash(key, c, "203.0.113.9");
         Assert.DoesNotContain("203.0.113.9", ip);
-        Assert.NotEqual(ip, NoWhtChoicePolicy.IpHash(Guid.NewGuid(), "203.0.113.9"));   // ผูกบริษัท
-        Assert.Null(NoWhtChoicePolicy.IpHash(c, null));
+        Assert.NotEqual(ip, NoWhtChoicePolicy.IpHash(key, Guid.NewGuid(), "203.0.113.9"));                       // ผูกบริษัท
+        Assert.NotEqual(ip, NoWhtChoicePolicy.IpHash(NoWhtChoicePolicy.DeriveIpKey("other-secret"), c, "203.0.113.9"));   // ไม่มีความลับ = เดาย้อนไม่ได้
+        Assert.Null(NoWhtChoicePolicy.IpHash(key, c, null));
+        Assert.Throws<InvalidOperationException>(() => NoWhtChoicePolicy.DeriveIpKey(" "));                       // ห้ามถอยไปกุญแจว่าง
+        Assert.Equal(at.AddYears(5), NoWhtChoicePolicy.RetainUntil(at));
         Assert.Contains("ท.ป.4/2528", NoWhtChoicePolicy.NoticeText);
     }
 

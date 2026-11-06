@@ -33,7 +33,10 @@ public class WhtCertRound253DbTests
     private const string Payer = "0107556000116";
 
     private static IConfiguration Config() => new ConfigurationBuilder()
-        .AddInMemoryCollection(new Dictionary<string, string?> { ["App:BaseUrl"] = "https://app.nextacc.test" }).Build();
+        .AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["App:BaseUrl"] = "https://app.nextacc.test", ["Jwt:Secret"] = "wht-253-db-test-secret-0123456789abcdef",
+        }).Build();
 
     private static string TokenOf(string url) => System.Web.HttpUtility.ParseQueryString(new Uri(url).Query)["t"]!;
 
@@ -167,6 +170,10 @@ public class WhtCertRound253DbTests
         Assert.Equal(WhtCertUploadLinkPolicy.Sha256Hex(pdf), intake.FileSha256);
         Assert.Contains("ลิงก์อัปโหลด", intake.SubmittedByName);
         Assert.DoesNotContain("\u0001", intake.SubmittedByName);
+        // ฝ่ายค้าน M2: ใบจากลิงก์ (ไม่ล็อกอิน) ต้องให้คนตรวจเสมอ — ไม่ยืนยันอัตโนมัติ · ไม่มีการจัดสรรที่ยืนยันแล้ว
+        Assert.Contains(WhtCertUploadLinkPolicy.AnonymousReviewGate, intake.GateProblems);
+        Assert.False(intake.AutoConfirmed);
+        Assert.False(await db.WhtCertAllocations.AnyAsync(a => a.CompanyId == s.CompanyId && a.Status == WhtCertAllocationStatus.Confirmed));
 
         var again = (await svc.PublicUploadAsync(s.CompanyId, token, pdf, null, null))!;
         Assert.True(again.Duplicate);
@@ -208,7 +215,7 @@ public class WhtCertRound253DbTests
             : null);
 
     private static WhtCertReminderService Reminder(AccountingDbContext db, IContactRecipientResolver? r = null)
-        => new(db, r ?? Recipients(), NullLogger<WhtCertReminderService>.Instance);
+        => new(db, r ?? Recipients(), NullLogger<WhtCertReminderService>.Instance, Config());
 
     [Fact]
     public async Task ค้าง_8_วัน_ทวงขั้น_7_หนึ่งฉบับ_รอบซ้ำไม่ส่งซ้ำ_watermark_ขยับ()
@@ -235,10 +242,22 @@ public class WhtCertRound253DbTests
         Assert.Equal(1, await db.EmailQueues.CountAsync(x => x.CompanyId == s.CompanyId));
 
         // ตอนส่ง: ยังค้าง ⇒ ส่งได้ · ได้ใบครบแล้ว ⇒ ข้ามพร้อมเหตุ
-        Assert.Null(await WhtCertReminderService.SendTimeSkipReasonAsync(db, q, default));
+        Assert.Null(await WhtCertReminderService.SendTimeSkipReasonAsync(db, Recipients(), q, default));
+        // ฝ่ายค้าน M3: ลิงก์ของฉบับนี้สร้างพร้อมแถวคิว · URL ตอนส่งคำนวณซ้ำได้ (ลองใหม่ = URL เดิม) · ไม่เขียนฐาน
+        var linkRow = await db.WhtCertUploadLinks.AsNoTracking().SingleAsync(l => l.CompanyId == s.CompanyId && l.EmailQueueId == q.Id);
+        Assert.Equal(s.ContactId, linkRow.ContactId);
+        var u1 = await WhtCertUploadLinkService.ReminderUrlAsync(db, Config(), s.CompanyId, q.Id, default);
+        var u2 = await WhtCertUploadLinkService.ReminderUrlAsync(db, Config(), s.CompanyId, q.Id, default);
+        Assert.NotNull(u1.Url);
+        Assert.Equal(u1.Url, u2.Url);
+        Assert.Equal(linkRow.TokenHash, WhtCertUploadLinkPolicy.TokenHash(TokenOf(u1.Url!)));
+        Assert.Equal(1, await db.WhtCertUploadLinks.CountAsync(l => l.CompanyId == s.CompanyId));
+        Assert.Null((await WhtCertUploadLinkService.ReminderUrlAsync(db, Config(), s.CompanyId, Guid.NewGuid(), default)).Url);   // ไม่มีแถวของคิวนี้ ⇒ ไม่ส่ง
+        // ฝ่ายค้าน L2: เลิกรับเรื่อง 50 ทวิ หลังเข้าคิว ⇒ ข้าม
+        Assert.NotNull(await WhtCertReminderService.SendTimeSkipReasonAsync(db, Recipients(available: false, reason: "ยกเลิกรับเรื่องนี้"), q, default));
         await db.WhtCreditsReceived.Where(w => w.Id == s.CreditId)
             .ExecuteUpdateAsync(x => x.SetProperty(w => w.Status, WhtCreditStatus.Received).SetProperty(w => w.ReceivedAmount, 30m));
-        Assert.NotNull(await WhtCertReminderService.SendTimeSkipReasonAsync(db, q, default));
+        Assert.NotNull(await WhtCertReminderService.SendTimeSkipReasonAsync(db, Recipients(), q, default));
     }
 
     [Fact]
@@ -254,6 +273,11 @@ public class WhtCertRound253DbTests
         Assert.Equal("Skipped", log.Outcome);
         Assert.Equal(AutopilotSettingsResolver.AutoSendDisabledReason, log.Reason);
         Assert.Equal(0, (await Reminder(db).RunCompanyAsync(s.CompanyId, DateTime.UtcNow.AddMinutes(1))).SkippedOptOut);   // ไม่บันทึกซ้ำทุกวัน
+
+        // ฝ่ายค้าน L2: ผู้ติดต่อถูกลบ (soft delete) หลังเข้าคิว ⇒ ตอนส่งข้าม
+        await db.Contacts.IgnoreQueryFilters().Where(c => c.Id == s.ContactId).ExecuteUpdateAsync(x => x.SetProperty(c => c.IsDeleted, true));
+        Assert.Equal(ContactRecipientRule.ContactDeletedReason, await WhtCertReminderService.SendTimeSkipReasonAsync(db, Recipients(),
+            new EmailQueue { CompanyId = s.CompanyId, EntityType = WhtCertReminderCadence.QueueEntityType, EntityId = s.ContactId, ToEmail = "ap@buyer253.co.th" }, default));
 
         // ยกเลิกรับเรื่อง 50 ทวิ ที่ช่องทางของผู้ติดต่อ (ตัวหาผู้รับเดียว) ⇒ ข้ามเช่นกัน
         var s2 = await SeedAsync(db, "optout2 " + Guid.NewGuid().ToString("N")[..6], daysAgo: 8, reminders: true);
@@ -333,40 +357,37 @@ public class WhtCertRound253DbTests
     }
 
     [Fact]
-    public async Task นิติบุคคลเลือกไม่หัก_เป้าหมายยอดเต็ม_แถวหลักฐาน_hash_ตรง_audit_และผูกรายการชำระ()
+    public async Task นิติบุคคลขอไม่หัก_ยังไม่เปิด_ไม่มีตัวเลือก_ปฏิเสธไม่มีแถวหลักฐาน_ยอดสุทธิเดิม()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
         var (links, cid, _, token) = await PayLinkSeedAsync(db, ContactType.JuristicPerson, Payer);
         var view = (await links.PublicViewAsync(cid, token))!;
-        Assert.True(view.NoWhtOffered);
-        Assert.True(view.NoWhtWarn);
-        Assert.Equal(NoWhtChoicePolicy.NoticeVersion, view.NoWhtNoticeVersion);
-        Assert.Equal((1_070m, 1_040m), (view.NoWhtAmount, view.Target.AmountDue));
+        // ฝ่ายค้าน H1 (253-WP10-8): ไม่เสนอ "ไม่หัก" — เส้นลงบัญชีของเงินเต็มยอดยังไม่มี
+        Assert.False(view.NoWhtOffered);
+        Assert.Null(view.NoWhtNotice);
+        Assert.Equal(1_040m, view.Target.AmountDue);   // ทิศตรงข้าม: เส้นยอดสุทธิเดิมไม่ขยับ
+        var r = await links.AcceptNoWhtAsync(cid, token, new NoWhtAcceptRequest(true, NoWhtChoicePolicy.NoticeVersion, "คุณสมชาย", "203.0.113.9"));
+        Assert.Equal(NoWhtChoicePolicy.NotAvailableMessage, r.Refusal);
+        Assert.Null(r.AcceptanceId);
+        Assert.False(await db.NoWhtAcceptances.AnyAsync(a => a.CompanyId == cid));   // L1: ไม่มีแถวกำพร้า
+    }
 
-        // ไม่ติ๊กยอมรับ / version เก่า ⇒ ไม่รับ ไม่มีแถว
-        Assert.NotNull((await links.AcceptNoWhtAsync(cid, token, new NoWhtAcceptRequest(false, NoWhtChoicePolicy.NoticeVersion, null, "203.0.113.9"))).Refusal);
-        Assert.NotNull((await links.AcceptNoWhtAsync(cid, token, new NoWhtAcceptRequest(true, "OLD", null, "203.0.113.9"))).Refusal);
-        Assert.False(await db.NoWhtAcceptances.AnyAsync(a => a.CompanyId == cid));
-
-        var ok = await links.AcceptNoWhtAsync(cid, token, new NoWhtAcceptRequest(true, NoWhtChoicePolicy.NoticeVersion, "คุณสมชาย", "203.0.113.9"));
-        Assert.Null(ok.Refusal);
-        Assert.Equal(1_070m, ok.Target!.AmountDue);
-        var row = await db.NoWhtAcceptances.AsNoTracking().SingleAsync(a => a.CompanyId == cid);
-        Assert.Equal(ok.AcceptanceId, row.Id);
-        Assert.Equal((1_070m, 30m, 1_040m), (row.GrossAmount, row.WhtAmount, row.NetAmount));
-        Assert.Equal(NoWhtChoicePolicy.NoticeText, row.NoticeText);
-        Assert.Equal(NoWhtChoicePolicy.IpHash(cid, "203.0.113.9"), row.IpHash);
-        Assert.DoesNotContain("203.0.113.9", row.IpHash);
-        Assert.Equal(NoWhtChoicePolicy.EvidenceHash(cid, row.DocumentId, row.AcceptedAt, row.GrossAmount, row.WhtAmount, row.NetAmount,
-            row.NoticeVersion, row.NoticeHash, row.IpHash, row.AcceptedByName), row.EvidenceHash);   // round-trip ผ่าน PostgreSQL แล้วคำนวณซ้ำได้
-        Assert.True(await db.AuditLogs.AnyAsync(a => a.CompanyId == cid && a.EntityType == nameof(NoWhtAcceptance) && a.EntityId == row.Id.ToString()));
-
-        var intentId = Guid.NewGuid();
-        await links.LinkNoWhtIntentAsync(cid, row.Id, intentId);
-        Assert.Equal(intentId, (await db.NoWhtAcceptances.AsNoTracking().SingleAsync(a => a.Id == row.Id)).PaymentIntentId);
-        await links.LinkNoWhtIntentAsync(cid, row.Id, Guid.NewGuid());   // ผูกแล้วไม่ทับ
-        Assert.Equal(intentId, (await db.NoWhtAcceptances.AsNoTracking().SingleAsync(a => a.Id == row.Id)).PaymentIntentId);
+    [Fact]
+    public async Task StartDocument_เลือกไม่หัก_ปฏิเสธก่อนสร้างรายการชำระ()
+    {
+        var calls = 0;
+        var intents = F4Proxy<IPaymentIntentService>.Create((_, _) => { calls++; return null; });
+        var docLinks = F4Proxy<IDocumentPayLinkService>.Create((_, _) => { calls++; return null; });
+        var ctl = new Accounting.Controllers.PublicPaymentController(intents, F4Proxy<IPublicPaymentResolver>.Create((_, _) => null),
+            Array.Empty<IPaymentProvider>(), null!, NullLogger<Accounting.Controllers.PublicPaymentController>.Instance,
+            F4Proxy<ILodgingService>.Create((_, _) => null), docLinks);
+        var res = await ctl.StartDocument(Guid.NewGuid(), WhtCertUploadLinkPolicy.NewToken(),
+            new Accounting.Controllers.PublicPaymentController.StartRequest(PaymentMethodKind.PromptPay, NoWithholding: true, NoWhtAccepted: true,
+                NoWhtNoticeVersion: NoWhtChoicePolicy.NoticeVersion));
+        var bad = Assert.IsType<Microsoft.AspNetCore.Mvc.BadRequestObjectResult>(res.Result);
+        Assert.Contains("ยอดสุทธิ", ((Accounting.Models.DTOs.ApiResponse<Accounting.Controllers.PublicPaymentController.PublicIntentResponse>)bad.Value!).Message);
+        Assert.Equal(0, calls);   // ไม่แตะรายการชำระ/ลิงก์ใด ๆ — ไม่มีเงินเคลื่อน
     }
 
     [Fact]

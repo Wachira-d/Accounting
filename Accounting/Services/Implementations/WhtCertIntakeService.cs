@@ -86,6 +86,21 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         var gates = WhtCertIntakeVerdict.Gates(new WhtCertIntakeVerdict.GateInput(
             certNo, s.CertificateDate, payerTax, payeeTax, payeeIsUs, s.IncomeAmount, s.WhtRate, s.WhtAmount,
             match.Level, s.ExtractionConfidence, certFy, rowYears, DateTime.UtcNow, s.AmountNeedsReview)).ToList();
+        // ฝ่ายค้าน WP-10 M2: ช่องลิงก์อัปโหลด (ไม่ล็อกอิน) — ต้องให้คนตรวจเสมอ (ด่าน ⇒ ไม่ถาม AI · ไม่ยืนยันอัตโนมัติ · จัดสรรค้างเป็น "เสนอ") ·
+        // ผู้จ่ายต้องเป็นลูกค้าของลิงก์ · ไม่เสนอแถวของผู้ติดต่ออื่น
+        if (s.Channel == WhtCertIntakeChannel.UploadLink)
+        {
+            var linkContact = s.ExpectedPayerContactId ?? Guid.Empty;
+            var linkTax = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.Id == linkContact && c.CompanyId == companyId).Select(c => c.TaxId).FirstOrDefaultAsync(ct);
+            gates.AddRange(WhtCertUploadLinkPolicy.LinkGates(linkContact, payerTax, linkTax,
+                match.Allocations.Select(a => candById.TryGetValue(a.CreditId, out var c) ? c.Candidate.PayerContactId : null)));
+            match = match with
+            {
+                Allocations = match.Allocations
+                    .Where(a => candById.TryGetValue(a.CreditId, out var c) && c.Candidate.PayerContactId == linkContact).ToList(),
+            };
+        }
 
         var intake = new WhtCertIntake
         {
@@ -268,7 +283,8 @@ public class WhtCertIntakeService : IWhtCertIntakeService
 
     public async Task<WhtCertSubmitResult> SubmitFromScanAsync(Guid companyId, Guid scanResultId, WhtCertIntakeChannel channel,
         IReadOnlyList<Guid>? documentHints, string submittedBy, Guid? submittedByUserId, CancellationToken ct = default,
-        WhtEvidenceKind evidenceKind = WhtEvidenceKind.PaperCertificate, string? evidenceReference = null, string? fileSha256 = null)
+        WhtEvidenceKind evidenceKind = WhtEvidenceKind.PaperCertificate, string? evidenceReference = null, string? fileSha256 = null,
+        Guid? expectedPayerContactId = null)
     {
         var scan = await _db.OcrScanResults.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == scanResultId && x.CompanyId == companyId, ct)
@@ -288,7 +304,8 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             m.ExtractionConfidence, scan.FileAttachmentId, fileSha256, scan.Id,
             documentHints, scan.RawTextContent, submittedBy, submittedByUserId,
             m.AmountUnknown ? "อ่านยอดภาษีที่หักและนำส่งจากใบไม่ได้ — กรอกยอดแล้วกดยืนยัน" : null,
-            AmountNeedsReview: m.AmountNeedsReview || m.AmountUnknown, EvidenceReference: evidenceReference), ct);
+            AmountNeedsReview: m.AmountNeedsReview || m.AmountUnknown, EvidenceReference: evidenceReference,
+            ExpectedPayerContactId: expectedPayerContactId), ct);
     }
 
     // ═══════════ ผู้ใช้ตัดสิน ═══════════

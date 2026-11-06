@@ -6415,6 +6415,11 @@ public static class DatabaseMigrationHelper
             """,
             """CREATE INDEX IF NOT EXISTS "IX_NoWhtAcceptances_Intent" ON "NoWhtAcceptances" ("CompanyId", "PaymentIntentId");""",
             """CREATE INDEX IF NOT EXISTS "IX_NoWhtAcceptances_Document" ON "NoWhtAcceptances" ("CompanyId", "DocumentId");""",
+            // ฝ่ายค้าน WP-10 (L4 · M3): อายุเก็บหลักฐาน 5 ปี + legal hold · ลิงก์ของอีเมลทวงหนึ่งลิงก์ต่อหนึ่งแถวคิว
+            """ALTER TABLE "NoWhtAcceptances" ADD COLUMN IF NOT EXISTS "RetainUntil" timestamptz NOT NULL DEFAULT (now() + interval '5 years');""",
+            """ALTER TABLE "NoWhtAcceptances" ADD COLUMN IF NOT EXISTS "LegalHold" boolean NOT NULL DEFAULT true;""",
+            """ALTER TABLE "WhtCertUploadLinks" ADD COLUMN IF NOT EXISTS "EmailQueueId" uuid NULL;""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_WhtCertUploadLinks_Queue" ON "WhtCertUploadLinks" ("CompanyId", "EmailQueueId") WHERE "EmailQueueId" IS NOT NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampedFileAttachmentId" uuid NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampRecordedBy" varchar(200) NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampRecordedAt" timestamptz NULL;""",

@@ -25,9 +25,11 @@ public class WhtCertReminderService
     private readonly AccountingDbContext _db;
     private readonly IContactRecipientResolver _recipients;
     private readonly ILogger<WhtCertReminderService> _logger;
+    private readonly IConfiguration? _config;
 
-    public WhtCertReminderService(AccountingDbContext db, IContactRecipientResolver recipients, ILogger<WhtCertReminderService> logger)
-    { _db = db; _recipients = recipients; _logger = logger; }
+    public WhtCertReminderService(AccountingDbContext db, IContactRecipientResolver recipients, ILogger<WhtCertReminderService> logger,
+        IConfiguration? config = null)
+    { _db = db; _recipients = recipients; _logger = logger; _config = config; }
 
     /// <summary>วันเริ่มต้นของ "วันนี้" ตามเวลาไทย (UTC) — watermark ต่อบริษัท: รันแล้วในวันไทยเดียวกัน ⇒ ข้าม</summary>
     internal static DateTime BangkokDayStartUtc(DateTime nowUtc) => nowUtc.AddHours(7).Date.AddHours(-7);
@@ -71,6 +73,8 @@ public class WhtCertReminderService
         var co = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
             .Select(c => new { c.Name, c.TaxId, c.BranchCode }).FirstAsync(ct);
 
+        // ฝ่ายค้าน WP-10 M3: กุญแจ token ของลิงก์ในอีเมลทวง (อนุพันธ์จากความลับของเซิร์ฟเวอร์) — ไม่มี ⇒ โยน (ล้มดังทั้งบริษัท · watermark ไม่ขยับ)
+        var linkKey = WhtCertUploadLinkPolicy.DeriveQueueKey(_config?["Jwt:Secret"]);
         int queued = 0, skipped = 0;
         foreach (var g in rows.GroupBy(r => r.PayerContactId!.Value))
         {
@@ -123,6 +127,10 @@ public class WhtCertReminderService
                 };
                 if (await _db.EmailQueues.AnyAsync(x => x.CompanyId == companyId && x.IdempotencyKey == q.IdempotencyKey && !x.IsDeleted, ct)) continue;
                 _db.EmailQueues.Add(q);
+                // ฝ่ายค้าน WP-10 M3: ลิงก์อัปโหลดของฉบับนี้สร้างพร้อมแถวคิว (ธุรกรรมเดียว) — ผู้ส่งคิวคำนวณ token ซ้ำได้ ไม่ต้องเขียนฐานตอนส่ง
+                WhtCertUploadLinkService.AddLinkRow(_db, companyId, contactId, null,
+                    WhtCertUploadLinkPolicy.TokenHash(WhtCertUploadLinkPolicy.TokenForQueue(linkKey, companyId, q.Id)),
+                    "reminder-email", null, "wht-cert-reminder", q.Id);
                 log.EmailQueueId = q.Id;
                 log.Reason = d.Reason;
                 queued++;
@@ -147,15 +155,22 @@ public class WhtCertReminderService
     /// ผู้ส่งคิวตรวจซ้ำตอนส่ง (คลาสเดียวกับ <c>RecheckDocumentAtSendAsync</c>) — บริษัทปิดทวงแล้ว · ผู้ติดต่อตั้ง "ไม่ส่งอัตโนมัติ" · ลูกค้าส่งใบครบ/ส่งแล้วรอตรวจ
     /// ⇒ เหตุ (แถวคิว "ข้าม") · null = ส่งได้ · ทุก query ผูก CompanyId
     /// </summary>
-    internal static async Task<string?> SendTimeSkipReasonAsync(AccountingDbContext db, EmailQueue item, CancellationToken ct)
+    internal static async Task<string?> SendTimeSkipReasonAsync(AccountingDbContext db, IContactRecipientResolver recipients, EmailQueue item,
+        CancellationToken ct)
     {
         var enabled = await db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == item.CompanyId)
             .Select(s => s.WhtCertReminderEnabled).FirstOrDefaultAsync(ct);
         if (!enabled) return "บริษัทปิดทวง 50 ทวิ อัตโนมัติแล้ว — ไม่ส่ง";
-        var autoOff = await db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .Where(c => c.Id == item.EntityId && c.CompanyId == item.CompanyId).Select(c => (bool?)c.AutoSendDisabled).FirstOrDefaultAsync(ct);
-        if (autoOff == null) return ContactRecipientRule.ContactDeletedReason;
-        if (AutopilotSettingsResolver.AutoSendBlock(autoOff.Value) is string block) return block;
+        // ฝ่ายค้าน WP-10 L2: ผู้ติดต่อที่ถูกลบ (soft delete) ⇒ ไม่ส่ง · ยกเลิกรับเรื่อง 50 ทวิ หลังเข้าคิว ⇒ ไม่ส่ง (ถามตัวหาผู้รับเดียวซ้ำ)
+        var contact = await db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.Id == item.EntityId && c.CompanyId == item.CompanyId).Select(c => new { c.AutoSendDisabled, c.IsDeleted }).FirstOrDefaultAsync(ct);
+        if (contact == null || contact.IsDeleted) return ContactRecipientRule.ContactDeletedReason;
+        if (AutopilotSettingsResolver.AutoSendBlock(contact.AutoSendDisabled) is string block) return block;
+        var delivery = ContactRecipientRule.ForEmail(await recipients.ResolveAsync(item.CompanyId, item.EntityId, NotifyTopic.Wht, ct));
+        if (!delivery.Deliverable) return delivery.OptOutReason ?? "ผู้ติดต่อไม่มีอีเมลที่รับเรื่อง 50 ทวิ แล้ว — ไม่ส่งอีเมลทวง";
+        var queuedTo = SignEmailThrottle.ParseRecipients(new[] { item.ToEmail }).Valid.Select(e => e.Trim().ToLowerInvariant()).ToList();
+        if (queuedTo.Count > 0 && !queuedTo.Any(e => delivery.Emails.Contains(e)))
+            return "ผู้รับในคิวไม่รับเรื่อง 50 ทวิ แล้ว (ช่องทางแจ้งเตือนของผู้ติดต่อเปลี่ยน) — ไม่ส่ง · รอบหน้าจะเข้าคิวถึงผู้รับปัจจุบัน";
         var rows = await WhtCertTracking.LoadAsync(db, item.CompanyId, DateTime.UtcNow, contactId: item.EntityId,
             statuses: WhtCertTracking.FollowUpStatuses, ct: ct);
         return rows.Any(r => WhtCertUploadLinkService.AwaitsCustomer(r.Verdict.State)
