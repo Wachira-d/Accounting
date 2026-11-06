@@ -517,6 +517,13 @@ builder.Services.AddScoped<IDepositKindService, DepositKindService>();
 // Additional modules
 builder.Services.AddScoped<IRecurringTransactionService, RecurringTransactionService>();
 builder.Services.AddScoped<IRecurringAutopilotService, RecurringAutopilotService>();   // รอบ 248 — Autopilot รายการประจำ: ความพร้อม · ทดลองรัน · นโยบายอนุมัติ · ช่องทางรับเงินต่อผู้ติดต่อ
+// รอบ 252 WP-12A — Autopilot ส่วน A: หน้า Autopilot · เงินโอนปิดหนี้ (ค่าตั้งต้นปิด) · ใบเสนอราคาแปลงอัตโนมัติ (ค่าตั้งต้นไม่แปลง) · สรุปประจำวัน ·
+// งานเบื้องหลังเดียว (AutopilotJob · JobLock ต่อขั้น)
+builder.Services.AddScoped<IBankReceiptSettleService, BankReceiptSettleService>();
+builder.Services.AddScoped<IAutopilotService, AutopilotService>();
+builder.Services.AddScoped<QuotationAcceptAutopilotService>();
+builder.Services.AddScoped<AutopilotDigestService>();
+builder.Services.AddHostedService<Accounting.Services.Background.AutopilotJob>();
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
 builder.Services.AddScoped<IFinancialManagementService, FinancialManagementService>();
 builder.Services.AddScoped<IApprovalService, ApprovalService>();

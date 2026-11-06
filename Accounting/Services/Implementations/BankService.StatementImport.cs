@@ -228,6 +228,8 @@ public partial class BankService
                     Reference = p.StoredReference,
                     Payee = string.IsNullOrWhiteSpace(r.Payee) ? null : r.Payee.Trim(),
                     ReconciliationStatus = ReconciliationStatus.Unmatched,
+                    // รอบ 252 WP-12A: ไฟล์ statement ของธนาคาร = หลักฐานธนาคารจริง (ปิดหนี้อัตโนมัติได้ถ้าบริษัทเปิด)
+                    EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceStatement,
                 };
                 if (options.CreatedBy != null) entity.CreatedBy = options.CreatedBy;
                 _db.Set<BankTransaction>().Add(entity);

@@ -300,9 +300,10 @@ public class PartnerSecurityRound250DbTests
         return new PortalService(db, cfg, storage: storage, intents: intents);
     }
 
-    private static IFormFile Slip()
+    /// <summary>รอบ 252 WP-12A: สลิปคนละใบต้องเป็นไฟล์คนละไฟล์ (ระบบกันไฟล์เดิมส่งซ้ำด้วยแฮช — SLIP-DUP) ⇒ <paramref name="tag"/> ทำให้ไบต์ต่างกัน</summary>
+    private static IFormFile Slip(string tag = "")
     {
-        var bytes = "%PDF-1.4 r250"u8.ToArray();
+        var bytes = System.Text.Encoding.UTF8.GetBytes("%PDF-1.4 r250 " + tag);
         return new FormFile(new MemoryStream(bytes), 0, bytes.Length, "file", "slip.pdf")
         {
             Headers = new HeaderDictionary(), ContentType = "application/pdf",
@@ -318,7 +319,7 @@ public class PartnerSecurityRound250DbTests
         var doc = await InvoiceAsync(db, shop.Id, RandTax(), null);
 
         var res = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 500m);
-        var again = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 500m);   // ฝ่ายค้าน H2: สลิปใหม่ = รายการใหม่ (คนละก้อน)
+        var again = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip("second"), 500m);   // ฝ่ายค้าน H2: สลิปใหม่ = รายการใหม่ (คนละก้อน)
         Assert.True(res.AwaitingReview);
         Assert.NotEqual(res.PaymentIntentId, again.PaymentIntentId);
 
@@ -460,7 +461,7 @@ public class PartnerSecurityRound250DbTests
         var shop = await CompanyAsync(db, RandTax(), "00000", "ร้านธงสลิป 250");
         var doc = await InvoiceAsync(db, shop.Id, RandTax(), null);
         var big = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 1_000m);
-        var small = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 70m);
+        var small = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip("small"), 70m);
         // เงินก้อนอื่นบันทึกแล้ว ⇒ ยอดค้างเหลือ 70
         await db.Documents.Where(d => d.Id == doc.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.PaidAmount, 1_000m).SetProperty(d => d.BalanceDue, 70m));
 
@@ -490,7 +491,7 @@ public class PartnerSecurityRound250DbTests
             .ExecuteUpdateAsync(x => x.SetProperty(d => d.PaidAmount, 500m).SetProperty(d => d.BalanceDue, 570m).SetProperty(d => d.Status, DocumentStatus.PartiallyPaid));
 
         using var c2 = DbTestDatabase.TryCreateContext()!;
-        var second = await Portal(c2).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 570m);   // เดิม: "ชำระเรียบร้อยแล้ว"
+        var second = await Portal(c2).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip("installment-2"), 570m);   // เดิม: "ชำระเรียบร้อยแล้ว"
         Assert.NotEqual(first.PaymentIntentId, second.PaymentIntentId);
         var over = await Assert.ThrowsAsync<BusinessRuleException>(() => Portal(c2).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 600m));
         Assert.Equal(DocumentSlipIntents.RuleCode, over.RuleCode);

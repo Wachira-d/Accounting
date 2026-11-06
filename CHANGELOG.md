@@ -6743,3 +6743,13 @@ _รอบ 250 WP-04 แก้ผลฝ่ายค้าน 74a2d1f6 (2026-11-0
 (M5) แถว e-Tax ไม่มีเลขผู้ซื้อมีคำเตือน §86/4. (M6) "-"/"N/A" ของบุคคล = ไม่มีเลข · ข้อความทางไปต่อ. (M7) `ComposeTxId`/ผู้ขายใช้ `TaxBranchCode.Normalize` (เกิน 5 หลัก = 5 หลักท้าย).
 (L3) คอมเมนต์ประทับก่อนส่ง = อย่างมากครั้งเดียว · (L4) ช่อง 0–30 ตรงเซิร์ฟเวอร์ · (L5) คอมเมนต์ migration อยู่กับคำสั่งของมัน · (L6) negative test form_label กับหน้าจริง ·
 (L1) คง modulo (เพดานทำให้ "ครั้งล่าสุด ≥ N วัน" ไม่จำเป็น). ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit d5257214_
+
+_รอบ 252 WP-12A (2026-11-06 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-12 ส่วน A · AUTOPILOT_BILLING_DESIGN §5/§7/§10/§11.4 · คำตัดสิน §2 #36 · DECISIONS 252-WP12A-1…4):
+(1) **อีเมลสถานะ/สรุปประจำวัน** — แค็ตตาล็อก E-01…E-15 + ข้อความ `Helpers/AutopilotNotice` · คีย์ใหม่ `autopilot.quotation_blocked/slip_submitted/bank_settle_failed/daily_digest`
+(ค่าตั้งต้น กระดิ่ง + อีเมลถึงเจ้าของ — `NotificationAudiencePolicy.EmailDefaultKeys`) · `AutopilotDigestService` (watermark ต่อบริษัท ประทับก่อนส่ง · ไม่มีอะไร = ไม่ส่ง).
+(2) **หน้า Autopilot** `/pages/autopilot.html` + `AutopilotController` + `AutopilotService` (read model จากแถวจริง · `Helpers/AutopilotStage` · เรื่องที่ระบบทำต่อไม่ได้พร้อมปุ่ม).
+(3) **ใบเสนอราคาแปลงอัตโนมัติ** — `Document.QuotationAcceptAutopilot` (ตั้งต่อใบ · ค่าตั้งต้นไม่แปลง) · `QuotationAcceptAutopilotService` → `ConvertDocumentAsync` (ร่าง · ครั้งเดียว · หยุดเมื่อเนื้อหาเปลี่ยน · ล้มดัง + ลองใหม่).
+(4) **เงินโอนปิดหนี้** — `BankTransaction.EntrySource` ที่จุดสร้างแถว 3 จุด · `Helpers/BankReceiptAutoSettle` (pure · ไม่มี AI) · `BankReceiptSettleService` (ค่าตั้งต้นปิด · source ใหม่ `PaymentEntrySource.BankAutoSettle` ·
+คิวยืนยัน/ปฏิเสธ · ผลจำลอง) · ยอดที่ต้องโอนจาก `Services/Payments/PayLinkTransferWht` (ชิ้นเดียวกับลิงก์ชำระ). (5) **สลิปพอร์ทัลกันซ้ำ** แฮชไฟล์ + เลขอ้างอิง (`SlipEvidenceRule` · `SLIP-DUP`).
+งานเบื้องหลังเดียว `AutopilotJob` (JobLock ต่อขั้น) · migration `Helpers/AutopilotMigration` (ADD COLUMN IF NOT EXISTS · ค่าตั้งต้น = พฤติกรรมเดิม) · เทสต์ `AutopilotRound252Tests` · `Db/AutopilotRound252DbTests` ·
+`PartnerSecurityRound250DbTests` แนบสลิปคนละไฟล์ · checker R252 + WATCHED/FILES — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

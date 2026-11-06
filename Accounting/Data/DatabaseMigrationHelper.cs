@@ -263,6 +263,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.LicenseLapseMigration.Statements());   // รอบ 238 (236-3) — คืนสถานะแถวบริษัทที่ถูก cascade ตาม License · License ในระยะผ่อนผัน Expired → PastDue (idempotent)
         list.AddRange(Accounting.Helpers.ContactNotifyEndpointMigration.Statements());   // รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (ย้าย Contact.LineUserId ทำในโค้ดตอนบูต — ต้องเข้ารหัส)
         list.AddRange(Accounting.Helpers.PaymentQrMigration.Statements());   // รอบ 246 QR — QR ชำระเงินของบัญชีธนาคาร (อัปโหลด/พร้อมเพย์) + ธงแสดง QR ของเทมเพลต
+        list.AddRange(Accounting.Helpers.AutopilotMigration.Statements());   // รอบ 252 WP-12A — Autopilot: สรุปประจำวัน · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ
         return list;
     }
 

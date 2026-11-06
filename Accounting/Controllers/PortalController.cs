@@ -128,14 +128,14 @@ public class PortalPublicController : ControllerBase
     [Authorize]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<ActionResult<ApiResponse<PortalSlipUploadResponse>>> UploadDocumentSlip(
-        Guid companyId, Guid documentId, IFormFile? file, [FromForm] decimal? amount)
+        Guid companyId, Guid documentId, IFormFile? file, [FromForm] decimal? amount, [FromForm] string? bankRef = null)
     {
         var contactId = GetContactIdFromToken();
         if (contactId == null) return Unauthorized(new ApiResponse<PortalSlipUploadResponse>(false, null!, "Invalid portal token"));
         if (file == null) return BadRequest(new ApiResponse<PortalSlipUploadResponse>(false, null!, "กรุณาเลือกไฟล์สลิป"));
         try
         {
-            var result = await _service.UploadDocumentSlipAsync(companyId, contactId.Value, documentId, file, amount);
+            var result = await _service.UploadDocumentSlipAsync(companyId, contactId.Value, documentId, file, amount, bankRef);
             return Ok(new ApiResponse<PortalSlipUploadResponse>(true, result, "ส่งสลิปแล้ว — ทางร้านจะตรวจสอบและยืนยันการชำระเงิน"));
         }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<PortalSlipUploadResponse>(false, null!, ex.Message)); }

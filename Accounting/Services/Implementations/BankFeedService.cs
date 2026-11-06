@@ -122,7 +122,9 @@ public class BankFeedService : IBankFeedService
                         : Models.Enums.BankTransactionType.Withdrawal,
                     Description = txn.Description,
                     Reference = txn.Reference,
-                    ReconciliationStatus = Models.Enums.ReconciliationStatus.Unmatched
+                    ReconciliationStatus = Models.Enums.ReconciliationStatus.Unmatched,
+                    // รอบ 252 WP-12A: ดึงจากธนาคาร = หลักฐานธนาคารจริง (ปิดหนี้อัตโนมัติได้ถ้าบริษัทเปิด)
+                    EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceFeed
                 };
 
                 _db.BankTransactions.Add(bankTxn);

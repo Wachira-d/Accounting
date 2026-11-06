@@ -540,6 +540,10 @@
             <label>แนบสลิป (รูปภาพ/PDF)</label>
             <input type="file" name="file" accept="image/*,.pdf" required>
           </div>
+          <div class="field" style="margin-bottom:0">
+            <label for="paySlipRef">เลขอ้างอิงการโอน (ถ้ามี — ช่วยให้ร้านจับคู่เงินเข้าได้เร็วขึ้น)</label>
+            <input type="text" id="paySlipRef" name="bankRef" maxlength="64" autocomplete="off" placeholder="เช่น เลขที่รายการบนสลิป">
+          </div>
           <div class="err" id="paySlipErr"></div>
           <button type="submit" class="btn btn-primary" style="margin-top:6px" id="paySlipBtn">📎 ส่งสลิป</button>
         </form>`}

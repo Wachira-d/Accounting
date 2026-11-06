@@ -3117,6 +3117,44 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - หน้าแท็บ: ปุ่มที่กดได้ตามสิทธิ์จริง (`canEdit` ด่านเดียวกับ write) · พรีวิว "ส่งอีเมลถึง" (รอบ 250 WP-08: ต่อสายแล้ว — ประโยคเดิม "เมื่อเส้นส่งต่อสาย (L2)" ถูกลบ)
 - เทสต์ `ContactRecipientRuleTests` · Db `ContactNotifyEndpointRound245DbTests` · ล็อก `tools/required_call_site_check.py` R245 (+ เคส R245a–n) · `write_permission_gate_check` WATCHED — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 2.12j Autopilot ส่วน A — อีเมลสถานะ/สรุปประจำวัน · หน้า Autopilot · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ (รอบ 252 WP-12A · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §5/§7/§10/§11.4 · AUDIT_249 §WP-12 · คำตัดสิน §2 #36)
+
+- **อีเมล/แจ้งเตือนสถานะถึงทีมเรา (A-5 · Q7)**: แค็ตตาล็อก E-01…E-15 + ข้อความทุกฉบับที่ `Helpers/AutopilotNotice` ตัวเดียว (เซิร์ฟเวอร์ประกอบ · ไม่อ้างมาตรา N10) ·
+  **ล้ม/ติด = ทันที** ผ่าน `INotificationEngine` คีย์ใหม่ `autopilot.quotation_blocked` (E-01c) · `autopilot.slip_submitted` (E-06) · `autopilot.bank_settle_failed` (E-14b)
+  (+ คีย์เดิม `recurring.run_failed` E-02 · `document.post_payment_blocked` E-05b · `document.customer_signed` E-01) · **สำเร็จ = สรุปประจำวัน** `autopilot.daily_digest` (E-15)
+  เวลาไทยตั้งได้ (`CompanySettings.AutopilotDigestLocalTime` · ค่าตั้งต้น 08:40) · ค่าตั้งต้นของคีย์ใหม่ = **กระดิ่ง + อีเมลถึงเจ้าของ** (+ กลุ่ม LINE ของบริษัทเมื่อผูก ·
+  `NotificationAudiencePolicy.EmailDefaultKeys`) · บริษัทตั้งแถวของคีย์เองแล้ว = ตามที่ตั้ง (ปิดได้) · สรุปประกอบจากแถวจริงตอนส่ง (`IAutopilotService.DigestFactsAsync` — ไม่มีตาราง digest) ·
+  watermark ต่อบริษัท `AutopilotDigestLastSentOn` ประทับ compare-and-set **ก่อน**ส่ง (หลายเครื่อง = ครั้งเดียว) · ไม่มีอะไรรายงาน = ไม่ส่ง · ส่งเฉพาะบริษัทที่ใช้ Autopilot ·
+  ยังไม่ทำ: รวมก้อน "ทันที > 10 เรื่อง/ชม." · เหตุการณ์ส่วน B (E-07/E-09/E-10 — แสดงในแค็ตตาล็อกว่า "ยังไม่มีผู้ส่ง")
+- **หน้า Autopilot (A-6 · `/pages/autopilot.html` · เมนูขาย/รายรับ · `GET api/companies/{cid}/autopilot/overview?days=` · Accounting.View)**: read model จากแถวจริง
+  (Documents · DocumentEmailLogs · Payments · PostPaymentAutomationRuns · EmailQueues · RecurringTransactions · BankTransactions — `AutopilotService`) · ขั้นของใบ
+  (สร้าง · อนุมัติ · ส่ง · ชำระ · ใบเสร็จ) จาก `Helpers/AutopilotStage.Of` ตัวเดียว · "เรื่องที่ระบบทำต่อไม่ได้" = union ของ รอบรายการประจำล้ม · ใบจากรายการประจำค้างร่าง ·
+  งานหลังรับชำระ Blocked/Failed (ปุ่ม = `POST document-auto-send/post-payment-runs/{id}/retry` เดิม) · อีเมลคิวล้ม · ใบเสนอราคาแปลงไม่ได้ (ปุ่มลองใหม่) · เงินโอนบันทึกล้ม/รอยืนยันเกิน 3 วัน ·
+  ปุ่มทุกปุ่มมาจากเซิร์ฟเวอร์ (`ActionPath` ใต้ `api/companies/{cid}/` · JS ตรวจรูป path ก่อนเรียก) · ยังไม่ทำ: คอลัมน์คู่ค้า/50 ทวิ (ส่วน B) · การ์ดบนแดชบอร์ด
+- **ใบเสนอราคาที่ลูกค้ายอมรับออนไลน์ → แปลงอัตโนมัติ (A-7 · Q5 ค่าตั้งต้น "ไม่แปลง" · ตั้งต่อใบ)**: `Document.QuotationAcceptAutopilot` (Off · ToInvoice · ToTaxInvoice ·
+  null = ตามบริษัท `CompanySettings.QuotationAcceptAutopilotDefault`) ตั้งที่ `PUT …/autopilot/quotations/{id}/mode` (Document.Create · audit) — **ไม่ใช่ช่องของฟอร์มเอกสาร**
+  (ไม่อยู่ใน Create/UpdateDocumentRequest · ไม่สืบทอดไปใบลูก) · ค่าบริษัทมี watermark `QuotationAcceptAutopilotSince` (เปิดเมื่อไร = ใช้กับใบที่ยอมรับหลังจากนั้น — ไม่แปลงย้อนหลัง) ·
+  งาน `AutopilotJob` ขั้น QuotationAccept (5 นาที · `JobLock`) → `QuotationAcceptAutopilotService` → ตัวตัดสิน `Helpers/QuotationAcceptAutopilot.Decide` →
+  `IDocumentService.ConvertDocumentAsync` (สูตรแปลงตัวเดียว · ผล = **ร่าง** · ผู้สร้าง "autopilot" · อนุมัติตามขั้นตอนเดิม) · หยุด: เนื้อหาเปลี่ยนหลังยอมรับ
+  (`QuotationAcceptance.ContentMatches` = false) · ใบยกเลิก/ปฏิเสธ · ใบกำกับแต่บริษัทไม่จด VAT · มีใบลูกแล้ว = AlreadyConverted (ไม่แปลงซ้ำ · ไม่แจ้ง) ·
+  ผลประทับบนใบ (`QuotationAutopilotAt/Outcome/Message/ChildId` · compare-and-set) · หยุด/ล้ม ⇒ แจ้งทันที E-01c + ปุ่ม `POST …/autopilot/quotations/{id}/retry` · ยังไม่ทำ: ToDeposit/ToRecurring · อนุมัติ/ส่งใบที่แปลงอัตโนมัติ
+- **เงินโอนเข้า → ปิดหนี้ใบค้าง (AUTOPILOT §5 · รอบ 250 ของแผน · Q4 ค่าตั้งต้นปิด + ดูผลจำลอง 30 วัน)**: `BankTransaction.EntrySource` ประทับที่จุดสร้างแถวทั้ง 3 จุด
+  (`Statement` นำเข้าไฟล์/Open Banking · `Feed` · `Manual` พิมพ์มือ · null = แถวเก่า = ไม่รู้) · งาน `AutopilotJob` ขั้น BankAutoSettle ประเมินเงินเข้าที่ยังไม่จับคู่ ≤ 14 วัน
+  (ประเมินซ้ำทุก 6 ชม. · Failed/Rejected/Settled ไม่ประเมินซ้ำ) → `BankReceiptSettleService` → ตัวตัดสินเดียว `Helpers/BankReceiptAutoSettle.Decide` (pure · **ไม่มี AI**) ·
+  ผู้สมัคร = ใบแจ้งหนี้/ใบกำกับค้างของบริษัทนี้ THB · ยอดที่ต้องโอน/WHT จาก `Services/Payments/PayLinkTransferWht` (ชิ้นเดียวกับลิงก์ชำระ/`DocumentPaymentHandler` — ห้ามสูตรใหม่) ·
+  **AutoSettle** เมื่อครบ: แหล่งธนาคาร · ยอดตรงเป๊ะ · ตัวระบุตัว (เลขเอกสารในข้อความ · ชื่อผู้โอนมั่นใจ `BankMatchScorer` · เลขอ้างอิงตรงสลิปที่ลูกค้าแจ้ง) · ยอดไม่ซ้ำ (ซ้ำ = ต้องอ้างเลขใบเดียว) ·
+  ไม่มีรายการชำระออนไลน์ค้าง · ผู้ติดต่อไม่ปิด (`Contact.BankAutoSettleDisabled` — ตั้งที่ `PUT …/autopilot/contacts/{id}/bank-auto-settle` · Contact.Edit · audit · ปุ่มในคิว) · บริษัทเปิด (`CompanySettings.BankAutoSettleEnabled`) ⇒ ประทับ `Applying` → `CreatePaymentAsync`
+  (source **`PaymentEntrySource.BankAutoSettle`** ⇒ งานหลังรับชำระเข้าคิวในแกน · `OverrideBankAccountId` = บัญชีของบรรทัด · `Reference = BANK:{lineId}`) → ผูกบรรทัด Matched
+  (`ReconciledBy = system:bank-auto-settle` · audit chain) · ล้มกลางทาง ⇒ รอบหน้ากู้ด้วยเลขอ้างอิง (ไม่สร้างซ้ำ) · ล้ม ⇒ `Failed` + เหตุ + แจ้งทันที (ใบยังค้าง) ·
+  **Suggest** (ขาดข้อใด/ยอดเต็มก่อนหัก/ขาด-เกิน ≤ ฿50 หรือ 2%/ยอดซ้ำ) ⇒ คิว "เงินเข้าที่รอยืนยัน" ในหน้า Autopilot · คนยืนยัน (`POST …/autopilot/bank-queue/{id}/confirm` ·
+  Bank.Reconcile · ใบต้องอยู่ในชุดตัวเลือกของบรรทัด) = ทางเดียวกัน (ผู้จับคู่ = คนกด) · ปฏิเสธ = `Rejected` ไม่เสนอซ้ำ · ผลจำลอง `GET …/autopilot/bank-simulate?days=30` (อ่านอย่างเดียว) ·
+  **ไม่มีทางประทับ "ชำระแล้ว" โดยไม่มีรายการเดินบัญชีจริงหรือคนยืนยัน** (F2 ข้อ 3) · ยังไม่ทำ: โอนรวมหลายใบ (subset-sum) · ปุ่มบันทึก WHT ต่างอัตรา/ค่าธรรมเนียม · ยกเลิกการจับคู่จากคิว
+- **สลิปพอร์ทัลกันซ้ำ (G-T5)**: `PortalService.UploadDocumentSlipAsync` คิด SHA-256 ของไฟล์ต้นฉบับ (ก่อนย่อรูป) + เลขอ้างอิงโอนที่ลูกค้ากรอก (ไม่บังคับ · `SlipEvidenceRule.NormalizeRef`) ·
+  ซ้ำในบริษัท (ไฟล์เดิม/เลขเดิม) ⇒ 409 `SLIP-DUP` **ก่อน**สร้างรายการ · เก็บบน `PaymentIntent.SlipFileSha256/SlipBankRef` (รายการเดียวกับที่คนยืนยัน — ไม่มีตารางที่สอง) ·
+  แจ้งทีม E-06 · สลิปไม่ปิดหนี้เอง — เลขอ้างอิงเป็นตัวระบุตัวให้ `BankReceiptAutoSettle` เมื่อเงินเข้าจริง · ยังไม่ทำ: OCR สลิป · หน้า pay-document แจ้งโอน (WP-12 ข้อ 1)
+- ล็อก: `Accounting.Tests/AutopilotRound252Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/AutopilotRound252DbTests.cs` · `tools/required_call_site_check.py` (R252) ·
+  `write_permission_gate_check` เฝ้า `AutopilotController` · `html_interpolation_escape_check` เฝ้า `autopilot.html` · Last verified `commit <เติมในคอมมิตตามหลัง>`
+
 ### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
 
 - **ที่มา**: เจ้าของ (2026-11-06) "บัญชีแต่ละบัญชีรองรับอัปโหลด QR · เอกสารที่แสดงเลขบัญชีแนบรูป QR ไปด้วย · บริษัทที่เปิด payment gateway สร้าง QR ของหน้าชำระแนบไปด้วยถ้าเลือกช่องทางนี้" ·
@@ -7997,3 +8035,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 ราย�
 _Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 250 WP-02 — §2.12g งานหลังรับชำระทุกทางเข้า (`CreatePaymentAsync(…, source)` · `PaymentEntrySource` · integration `AfterPaymentRecordedAsync`) · ชั้นค่าตั้ง รายการประจำ/ผู้ติดต่อ · ลิงก์ชำระของใบแจ้งหนี้ที่มีใบกำกับ · §2.7 `EmailEnqueueOutcome` + ข้ามกฎซ้ำ · §6 GL สูตรเดียว/ลำดับล็อกสินทรัพย์ · แจ้งเตือนที่ระบุผู้รับเคารพแถวปิด · ทิศเงิน `CashFlowDirection` · การ์ด go-live แอดมิน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a40c91e5)_
 _Last verified against codebase: 2026-11-06 (รอบ 251 WP-07 — §2.7 รหัสความพร้อมครบชุด (ETAX/ETAX-SENDER/ETAX-RECIPIENT · PAY-QR · QUOTA · PERIOD · POSTPAY) จากผู้อ่านเดิม · คอลัมน์ระดับ Autopilot · ส่งทดสอบถึงอีเมลผู้ใช้ (ไม่บันทึกการส่ง · ไม่นับเพดาน · audit) · ผลทดลองรันกล่องแยก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 847041d2)_
+_Last verified against codebase: 2026-11-06 (รอบ 252 WP-12A — §2.12j Autopilot ส่วน A: อีเมลสถานะ E-01…E-15 (ล้ม = ทันที · สำเร็จ = สรุป 08:40) · หน้า Autopilot (read model `AutopilotStage`) · ใบเสนอราคาแปลงอัตโนมัติ (ตั้งต่อใบ · ค่าตั้งต้นไม่แปลง · `ConvertDocumentAsync`) · เงินโอนปิดหนี้ `BankReceiptAutoSettle` (ค่าตั้งต้นปิด · source BankAutoSettle) · สลิปกันซ้ำ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

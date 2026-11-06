@@ -142,6 +142,16 @@ public static class NotificationAudiencePolicy
         Accounting.Models.Constants.NotificationEvents.RecurringUpcomingRun,
     };
 
+    /// <summary>รอบ 252 WP-12A (AUTOPILOT §10 · Q7 "อีเมลสถานะถึงทีมเรา"): คีย์ที่ค่าตั้งต้น = <b>กระดิ่ง + อีเมล</b>ถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทเมื่อผูกไว้) ·
+    /// บริษัทตั้งแถวของคีย์เองแล้ว ⇒ ตามที่ตั้ง (ปิดได้ทุกช่อง) · ผู้อ่าน: <see cref="DefaultMatrix"/></summary>
+    public static readonly IReadOnlySet<string> EmailDefaultKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Accounting.Models.Constants.NotificationEvents.AutopilotQuotationBlocked,
+        Accounting.Models.Constants.NotificationEvents.AutopilotSlipSubmitted,
+        Accounting.Models.Constants.NotificationEvents.AutopilotBankSettleFailed,
+        Accounting.Models.Constants.NotificationEvents.AutopilotDailyDigest,
+    };
+
     /// <summary>เส้นผู้รับที่ระบุ (บริษัทยังไม่ตั้งคีย์) ส่งอีเมลด้วยไหม — คีย์กระดิ่งเท่านั้น = ไม่ส่ง · อื่น ๆ = กระดิ่ง + อีเมลเหมือนเดิม</summary>
     public static bool DirectDefaultEmail(string eventKey) => !BellOnlyKeys.Contains(eventKey);
 
@@ -149,6 +159,8 @@ public static class NotificationAudiencePolicy
     {
         if (BellOnlyKeys.Contains(eventKey))
             return new[] { new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: false, EnableLine: false, EnableLineGroup: false) };
+        if (EmailDefaultKeys.Contains(eventKey))
+            return new[] { new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: true, EnableLine: false, EnableLineGroup: companyLineGroupConfigured) };
         if (!MigratedBroadcastKeys.Contains(eventKey)) return Array.Empty<NotificationDefaultRow>();
         return new[] { new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: false, EnableLine: false, EnableLineGroup: companyLineGroupConfigured) };
     }
