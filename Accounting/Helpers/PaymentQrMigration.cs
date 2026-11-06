@@ -66,6 +66,8 @@ public static class PaymentQrMigration
         // รอบ 250 WP-04 (E M-3): คีย์ล็อก 64 บิตจากตัวตั้งคีย์ตัวเดียว (เดิม hashtext = int4 32 บิต · ชนกับคีย์อื่นได้) — ชุดเดียวกับรอบ 245/WP-02b
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
             new object[] { AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey) }, ct);
+        // ตาราง marker จากตัวตั้งเดียว ในธุรกรรมเดียวกัน (ฝ่ายค้าน WP-04 ข้อ 5 · แบบ PortalSlipPending) — เรียกตรงจากเทสต์/ก่อน ApplyMissingColumns ก็ไม่ล้ม (idempotent)
+        await db.Database.ExecuteSqlRawAsync(Accounting.Data.DatabaseMigrationHelper.OneShotDataFixesTableSql, ct);
         var markerKey = MarkerKey;   // ตัวแปร (ไม่ใช่ const) ⇒ เป็นพารามิเตอร์ของ FormattableString แน่นอน
         var done = await db.Database
             .SqlQuery<int>($"""SELECT COUNT(*)::int AS "Value" FROM "OneShotDataFixes" WHERE "Key" = {markerKey}""")

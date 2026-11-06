@@ -228,14 +228,12 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
         // ===== Pre-flight validation & auto-fix (prevent Schematron errors) =====
-        if (string.IsNullOrWhiteSpace(company.TaxId))
-            throw new InvalidOperationException("กรุณาตั้งค่าเลขประจำตัวผู้เสียภาษีของบริษัทก่อน");
+        // รอบ 250 WP-04 ข้อ 7: ด่านเลขผู้ขาย/ผู้ซื้อตัวเดียว (Helpers/EtaxPartyTaxIdGuard · ข้อความเดิม)
+        if (Accounting.Helpers.EtaxPartyTaxIdGuard.Seller(company.TaxId) is string sellerTaxProblem)
+            throw new InvalidOperationException(sellerTaxProblem);
 
         // Auto-clean: strip dashes/dots/spaces from TaxId (users often enter "0-1234-56789-01-2")
         var sellerTaxClean = Accounting.Helpers.ThaiTaxId.Normalize(company.TaxId);
-        if (sellerTaxClean.Length != 13)
-            throw new InvalidOperationException(
-                $"เลขประจำตัวผู้เสียภาษีของบริษัทต้องเป็นตัวเลข 13 หลัก (ปัจจุบัน: \"{company.TaxId}\" → {sellerTaxClean.Length} หลัก)");
 
         // Auto-clean: strip non-digits from branch code
         var sellerBranchClean = new string((company.BranchCode ?? "").Where(char.IsDigit).ToArray());
@@ -262,10 +260,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // ต้องครบ 13 หลักเหมือนฝั่ง seller (หรือ 18 = TaxId+สาขาที่ผู้ใช้ต่อมาเอง)
         // — ถ้าปล่อยผ่าน ComposeTxId จะ "เติมศูนย์แต่งเลขให้ครบ 13" แล้วยื่นเลข
         // ประจำตัวผู้เสียภาษีปลอมไปกรมสรรพากร ซึ่งแก้ย้อนหลังไม่ได้
-        if (buyerTaxClean.Length != 13 && buyerTaxClean.Length != 18)
-            throw new InvalidOperationException(
-                $"เลขประจำตัวผู้เสียภาษีของผู้ซื้อ \"{document.Contact.Name}\" ต้องเป็นตัวเลข 13 หลัก "
-                + $"(ปัจจุบัน {buyerTaxClean.Length} หลัก: \"{document.Contact.TaxId}\") — แก้ที่ข้อมูลผู้ติดต่อก่อนออก e-Tax");
+        if (Accounting.Helpers.EtaxPartyTaxIdGuard.Buyer(document.Contact.Name, document.Contact.TaxId) is string buyerTaxProblem)
+            throw new InvalidOperationException(buyerTaxProblem);
 
         if (string.IsNullOrWhiteSpace(company.Address) && string.IsNullOrWhiteSpace(company.SubDistrict))
             throw new InvalidOperationException("กรุณาตั้งค่าที่อยู่บริษัทก่อนสร้าง e-Tax (ต้องมีอย่างน้อย ตำบล อำเภอ จังหวัด รหัสไปรษณีย์)");
@@ -827,7 +823,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     // Schema: UN/CEFACT Cross Industry Invoice (CII) D16B subset
     // Validation: สรรพากร Schematron + XSD
 
-    private string BuildEtaxXml(Document doc, Company company, string etaxRef, Document? originalDoc = null,
+    /// <remarks>รอบ 250 WP-04 ข้อ 7: <c>internal static</c> (ไม่มี state ของ instance) ⇒ เทสต์ฟิลด์ XML ตาม ETDA ได้โดยตรง (<c>EtaxXmlRound250Tests</c>)</remarks>
+    internal static string BuildEtaxXml(Document doc, Company company, string etaxRef, Document? originalDoc = null,
         decimal priorCnDnNet = 0m)
     {
         // Document-type-specific root element + RAM namespace prefix.

@@ -6680,3 +6680,14 @@ _รอบ 251 WP-07 — งานค้างรอบ 248 Autopilot (2026-11-0
 (ไม่บันทึก `DocumentEmailLog` · ไม่นับเพดาน · audit · เพดาน 10/วัน) · ผลทดลองรันกล่องแยก · บรรทัดว่างไม่ฟ้องระหว่างกรอก · แท็บช่องทางแจ้งเตือนเตือนกติกาผู้รับ e-Tax ·
 Db MED-5 ผ่าน `RecheckDocumentAtSendAsync` ตัวจริง · R251 +7 กติกา + เคส R251a–g · owner R251-K4 · ไม่ได้ทำ: ราคาแปรผัน/ทุก N เดือน/สร้างล่วงหน้า (ไม่อยู่ในใบสั่งงาน WP-07) ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 847041d2_
+
+_รอบ 250 WP-04 ข้อ 7–13 + แก้ผลฝ่ายค้าน WP-04 (2026-11-06):
+(7) `Helpers/EtaxPartyTaxIdGuard` ด่านเลขผู้ขาย/ผู้ซื้อตัวเดียว (ย้ายจาก GenerateAsync · ข้อความเดิม) · `BuildEtaxXml` เป็น internal static · `EtaxXmlRound250Tests` ฟิลด์ ETDA สองทิศ.
+(8) ตาราง PaymentNotification ทุก DocumentType × ฝั่ง จาก CashFlowDirection. (9) `PostJe` ไม่ถอยเป็นวันนี้เงียบ · AgingDays จาก DueDate.
+(10) `settings_reader_check` +4 entity — พบ 4 ช่องไม่มีผู้อ่านอยู่ก่อนแล้ว (EmailScheduleRule.AudienceFilter/RepeatEveryDays · RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore)
+⇒ baseline พร้อมหมายเหตุ · **ส่งเจ้าของตัดสินต่อสาย/ลบ** (ใบสั่งงานคาดว่า "baseline ว่าง" — ไม่จริง). (11) deep link `#k=`. (12) contact_picker R2 ตามพฤติกรรม.
+(13) `form_label_for_check` (ratchet 1,154 จุด/80 ไฟล์) · `modal_table_container_check` (ratchet 1 จุด).
+ฝ่ายค้าน: (2) ทิศ "ผ่านด่าน" ได้ผลที่คาดจริง · (3) **โค้ด**: ยกเลิก/ลบถาวรเรียกตัวปลดแถวผูกต้นทุนเฉพาะชนิดที่อาจเป็นต้นทุน — เดิมใบขายถือคีย์ผู้เขียนต้นทุน
+หลัง FOR UPDATE แถวเอกสาร (ลำดับกลับด้าน) ⇒ ยกเลิกใบขายรอการผูกต้นทุนของบริษัท · (4) ปิดปีแถวกลับด้านกับ uuid · (5) ตาราง marker ในธุรกรรมของงานย้าย + เทสต์ใช้ค่าคงที่ ·
+(6) **หมายเหตุ**: เปลี่ยนคีย์ล็อกของ `PaymentQrMigration` (hashtext → 64 บิต) ไม่มีผลกับฐานที่บูตแล้ว — marker `r246-template-promptpay-to-bank` มีแล้ว งานจบที่ "marker มีแล้ว" ·
+(7) เทสต์ DDL ตอนบูต = ฐานเทสต์ · (8) MED-5 เรียก RecheckDocumentAtSendAsync (internal) ตรง. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK)_

@@ -1,5 +1,7 @@
 # settings_reader_check baseline — property ค่าตั้งที่ยังไม่มีผู้อ่าน (นอก entity/DTO/mapper/echo) ณ วันเขียน
 # ห้ามเพิ่มแถวเพื่อให้ checker เขียว — ตัดออกเมื่อ "ต่อสาย หรือ ลบ" แล้ว (คำตัดสินเจ้าของ Q3 ของ audit-settings)
+# รอบ 250 WP-04 ข้อ 10: ขยายขอบเขตไป RecurringTransaction/Contact/EmailScheduleRule/BankAccount — 4 แถวที่ไม่มีผู้อ่านอยู่ก่อนวันขยาย (ไม่ใช่ช่องใหม่):
+#   EmailScheduleRule.AudienceFilter/RepeatEveryDays · RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore — ส่งเจ้าของตัดสิน "ต่อสาย หรือ ลบ"
 Company.SocialSecurityAccountNo
 CompanySettings.AutoCloseMonthEnd
 CompanySettings.EmailGmailServiceAccountJson
@@ -20,7 +22,11 @@ CompanySettings.ReceiptFooter
 CompanySettings.ReceiptNotes
 DocumentTemplate.DigitalCertificatePassword
 DocumentTemplate.DigitalCertificatePath
+EmailScheduleRule.AudienceFilter
+EmailScheduleRule.RepeatEveryDays
 LodgingProperty.AccountingModeAckBy
+RecurringTransaction.NotifyBeforeRun
+RecurringTransaction.NotifyDaysBefore
 SiteCommerceConfig.CartExpiryDays
 SiteCommerceConfig.OrderConfirmMessageEn
 SiteSettings.AiReviewConfidenceThreshold

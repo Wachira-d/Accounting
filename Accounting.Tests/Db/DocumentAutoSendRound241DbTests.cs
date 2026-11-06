@@ -888,7 +888,7 @@ public class DocumentAutoSendRound241DbTests
     // ───────── รอบ 250 WP-04 (AUDIT_249 A B-19 · ฝ่ายค้าน 248 MED-5): เส้น enqueue → send ของรายการประจำ ใช้ช่องทางรับเงินของ "รายการ" ตอนส่งด้วย ─────────
 
     /// <summary>บริษัทเปิด "แนบลิงก์ชำระเป็นค่าตั้งต้น" + กฎ "เมื่อรายการประจำสร้างเอกสาร" (ไม่ได้ตั้งแนบ/ไม่แนบ = ตามชั้นถัดไป) + รายการประจำโหมด
-    /// <paramref name="paymentMode"/> ⇒ เข้าคิวผ่านเมธอดจริง แล้วตรวจซ้ำตอนส่ง (RecheckDocumentAtSendAsync — เมธอด private ของรอบส่งคิว เรียกผ่าน reflection
+    /// <paramref name="paymentMode"/> ⇒ เข้าคิวผ่านเมธอดจริง แล้วตรวจซ้ำตอนส่ง (RecheckDocumentAtSendAsync — internal ของรอบส่งคิว เรียกตรง
     /// เฉพาะแถวนี้ ไม่กวาดคิวทั้งฐาน) ⇒ คืนแถวคิวหลังเขียนเนื้อใหม่ ณ เวลาส่ง</summary>
     private async Task<(EmailQueue Queued, EmailQueue AtSend, Guid RecurringId, Guid InvoiceId)?> Med5Async(string? paymentMode)
     {
@@ -920,9 +920,7 @@ public class DocumentAutoSendRound241DbTests
         var sched = new EmailScheduleService(send, Factory(new FakeSender()), F4Proxy<IPdfGenerationService>.Create((_, _) => null),
             NullLogger<EmailScheduleService>.Instance, sendLinks, Config());
         var item = await send.EmailQueues.SingleAsync(q => q.Id == queued.Id);
-        var recheck = typeof(EmailScheduleService).GetMethod("RecheckDocumentAtSendAsync",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        var skip = await (Task<string?>)recheck.Invoke(sched, new object[] { item, CancellationToken.None })!;
+        var skip = await sched.RecheckDocumentAtSendAsync(item, CancellationToken.None);   // internal (ฝ่ายค้าน WP-04 ข้อ 8 — ไม่ใช้ reflection)
         Assert.Null(skip);
         return (queued, item, rec.Id, s.Invoice.Id);
     }

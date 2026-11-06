@@ -193,6 +193,34 @@ public class GateOppositeDirectionRound250Tests
         Assert.True(firstMarkerUse > central, $"ตาราง marker ({central}) ต้องมาก่อนบล็อกที่ใช้ marker ({firstMarkerUse})");
     }
 
+    // ═══ ฝ่ายค้าน WP-04 ข้อ 7: รูป FK ของฐานเทสต์ (DbTestDatabase) ต้องตรงกับ DDL ตอนบูตของ production (Program.cs) — กัน drift ═══
+
+    private static string RepoRoot()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d != null && !File.Exists(Path.Combine(d.FullName, "Accounting.sln"))) d = d.Parent;
+        return d?.FullName ?? throw new InvalidOperationException("ไม่พบ Accounting.sln");
+    }
+
+    [Theory]
+    [InlineData("FK_DocumentSignatures_Approvals", "DocumentApprovalId", "DocumentApprovals")]
+    [InlineData("FK_DocumentSignatures_Documents", "DocumentId", "Documents")]
+    [InlineData("FK_DocumentApprovals_Documents", "DocumentId", "Documents")]
+    public void ฐานเทสต์รูปFKเดียวกับDDLตอนบูต_ONDELETERESTRICT(string name, string column, string parent)
+    {
+        // Program.cs เป็น verbatim string ("" = ") ⇒ ถอดก่อนเทียบ
+        var program = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting", "Program.cs")).Replace("\"\"", "\"");
+        var testDb = Accounting.Tests.Db.DbTestDatabase.ProductionFkShapeSql.Replace("\"\"", "\"");
+        var shape = new System.Text.RegularExpressions.Regex(
+            $"\"{name}\"\\s+FOREIGN KEY \\(\"{column}\"\\) REFERENCES \"{parent}\"\\(\"Id\"\\) ON DELETE (\\w+)");
+        var prod = shape.Match(program);
+        var test = shape.Match(testDb);
+        Assert.True(prod.Success, $"Program.cs ไม่มี {name} รูปเดิม — แก้ DDL แล้วต้องแก้ DbTestDatabase.ProductionFkShapeSql ด้วย");
+        Assert.True(test.Success, $"DbTestDatabase.ProductionFkShapeSql ไม่มี {name}");
+        Assert.Equal("RESTRICT", prod.Groups[1].Value);
+        Assert.Equal(prod.Groups[1].Value, test.Groups[1].Value);   // ทิศตรงข้าม: ฐานเทสต์ไม่ใช่ CASCADE ตามธรรมเนียม EF
+    }
+
     // ═══ AssetCostSourceRules.PlaceInServiceProblem — ขอบทุกด่าน (ผ่านพอดี/ล้มพอดี) ═══
 
     private static readonly DateTime Today = new(2026, 11, 6);

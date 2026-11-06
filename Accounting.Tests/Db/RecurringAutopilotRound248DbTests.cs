@@ -40,6 +40,12 @@ public class RecurringAutopilotRound248DbTests
 
     private sealed record Seed(Guid CompanyId, Guid ContactId, Guid SetterId, Guid RecurringId);
 
+    /// <summary>รอบ 250 WP-04 ข้อ 9 (E §3): ใบค้างชำระเกิน 30 วัน — วันครบกำหนดเป็นตัวตั้ง · AgingDays คำนวณจากวันครบกำหนด (เดิมพิมพ์ 45 ตายตัว
+    /// แยกจาก DueDate ⇒ สองค่าคลาดกันได้เงียบ ๆ เมื่อใครแก้อีกตัว)</summary>
+    private static DateTime OverdueDue() => DateTime.UtcNow.Date.AddDays(-45);
+
+    private static int AgingOf(DateTime due) => (int)(DateTime.UtcNow.Date - due.Date).TotalDays;
+
     /// <summary>บริษัท + ผังพื้นฐาน + ลูกค้านิติบุคคลครบ §86/4 + ใบค้างชำระเกิน 30 วัน (ทำให้เกิด [AR-OVERDUE]) + ผู้ตั้งนโยบาย (สมาชิก) + รายการประจำอนุมัติอัตโนมัติ</summary>
     private static async Task<Seed> SeedAsync(AccountingDbContext db, bool setterIsMember = true)
     {
@@ -67,8 +73,8 @@ public class RecurringAutopilotRound248DbTests
         db.Documents.Add(new Document
         {
             CompanyId = co.Id, ContactId = contact.Id, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Approved,
-            DocumentNumber = "INV-OLD-0001", DocumentDate = DateTime.UtcNow.Date.AddDays(-60), DueDate = DateTime.UtcNow.Date.AddDays(-45),
-            SubTotal = 1000m, VatAmount = 70m, TotalAmount = 1070m, BalanceDue = 1070m, AgingDays = 45, Currency = "THB", ExchangeRate = 1m,
+            DocumentNumber = "INV-OLD-0001", DocumentDate = DateTime.UtcNow.Date.AddDays(-60), DueDate = OverdueDue(),
+            SubTotal = 1000m, VatAmount = 70m, TotalAmount = 1070m, BalanceDue = 1070m, AgingDays = AgingOf(OverdueDue()), Currency = "THB", ExchangeRate = 1m,
         });
         var setter = new User { Email = $"r248-setter-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "ผู้ตั้งนโยบาย" };
         db.Users.Add(setter);
@@ -222,8 +228,8 @@ public class RecurringAutopilotRound248DbTests
             req.Documents.Add(new Document
             {
                 CompanyId = s.CompanyId, ContactId = other.Id, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Approved,
-                DocumentNumber = "INV-OLD-0002", DocumentDate = DateTime.UtcNow.Date.AddDays(-60), SubTotal = 1000m, VatAmount = 70m,
-                TotalAmount = 1070m, BalanceDue = 1070m, AgingDays = 45, Currency = "THB", ExchangeRate = 1m,
+                DocumentNumber = "INV-OLD-0002", DocumentDate = DateTime.UtcNow.Date.AddDays(-60), DueDate = OverdueDue(), SubTotal = 1000m, VatAmount = 70m,
+                TotalAmount = 1070m, BalanceDue = 1070m, AgingDays = AgingOf(OverdueDue()), Currency = "THB", ExchangeRate = 1m,
             });
             var rec = await req.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
             rec.ContactId = other.Id;
