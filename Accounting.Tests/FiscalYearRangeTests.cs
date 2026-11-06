@@ -69,7 +69,7 @@ public class FiscalYearRangeTests
     [Fact]
     public void ทุกเดือนเริ่มรอบ_ต้องได้รอบ_12_เดือนพอดี()
     {
-        // พ.ร.บ.การบัญชี ม.11 — รอบปกติต้องเป็น 12 เดือนพอดี
+        // พ.ร.บ.การบัญชี ม.10 — รอบปกติต้องเป็น 12 เดือนพอดี
         for (var m = 1; m <= 12; m++)
         {
             var fy = FiscalYear.RangeFor(2026, m);

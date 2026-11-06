@@ -42,7 +42,7 @@ public sealed record FileStorageMigrationReport(
 /// ปลายทางที่ระบบเขียนเอง (มี hash ใน metadata) แต่ไบต์ต่าง ⇒ <c>RemoteNewer</c> (ฉบับใหม่หลังสลับเป็น S3 — ไม่เขียนทับ ไม่นับล้ม) ·
 /// ปลายทางที่ไม่ได้เขียนผ่านระบบ + ไบต์ต่าง ⇒ ล้ม (ไม่เดาว่าฝั่งไหนถูก)</para>
 ///
-/// <para><b>ไม่ลบไฟล์บนดิสก์เลย</b> — เจ้าของถอด volume เองหลังตรวจรายงาน · ไฟล์หลักฐานบัญชีอยู่ใต้ระยะเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.10 · ป.รัษฎากร §87/3) ·
+/// <para><b>ไม่ลบไฟล์บนดิสก์เลย</b> — เจ้าของถอด volume เองหลังตรวจรายงาน · ไฟล์หลักฐานบัญชีอยู่ใต้ระยะเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.14 · ป.รัษฎากร §87/3) ·
 /// ไม่ย้ายไฟล์ความลับ (ใบรับรอง .pfx/.p12/.pem/.key) ที่บังเอิญอยู่ใต้รากเดียวกัน</para>
 ///
 /// <para>รันซ้ำได้ · ครบ <c>limit</c> ไฟล์แล้วหยุดตรวจ (ไม่อ่าน/hash ไฟล์ที่เหลือ — นับเป็น <c>Unchecked</c>) · ไฟล์ใดอ่าน/ส่งไม่ได้ ⇒ บันทึกเป็นความล้มเหลวแล้วไปต่อ ·
@@ -209,7 +209,7 @@ public sealed class FileStorageMigrationService
     /// (ฝ่ายค้าน S3) · URL สัมพัทธ์ (<c>/uploads/…</c> ของ LogoUrl) ไม่ใช่พาธดิสก์ — ไม่ตรวจ</summary>
     private async Task<(int Checked, int Unmappable, List<string> Samples)> CheckDbPathsAsync(CancellationToken ct)
     {
-        // งานของแอดมินแพลตฟอร์ม (ไม่ใช่คำขอของผู้เช่า) — อ่านแค่พาธ ไม่อ่านเนื้อไฟล์ · IgnoreQueryFilters รวมแถวที่ถอดจากรายการแต่ต้องเก็บไฟล์ (ม.10)
+        // งานของแอดมินแพลตฟอร์ม (ไม่ใช่คำขอของผู้เช่า) — อ่านแค่พาธ ไม่อ่านเนื้อไฟล์ · IgnoreQueryFilters รวมแถวที่ถอดจากรายการแต่ต้องเก็บไฟล์ (พ.ร.บ.การบัญชี ม.14)
         var rows = new List<(string Source, Guid CompanyId, Guid Id, string? Path)>();
         rows.AddRange((await _db.FileAttachments.AsNoTracking().IgnoreQueryFilters()
             .Select(f => new { f.CompanyId, f.Id, f.StoragePath }).ToListAsync(ct))

@@ -21,7 +21,7 @@ namespace Accounting.Services.Implementations;
 /// ตามแม่แบบ TFRS NPAEs ฉบับเต็ม) → caller สามารถ extend `BuildConceptMapping`
 /// ได้ตามผังจริง.
 ///
-/// **CPD gate (ม.7):** ต้องตั้ง `CompanySettings.BookkeeperCpdNumber` +
+/// **CPD gate (ม.19):** ต้องตั้ง `CompanySettings.BookkeeperCpdNumber` +
 /// `BookkeeperName` ก่อนถึงจะ generate ได้ — กันการนำส่งงบที่ไม่มีผู้ทำบัญชี
 /// รับผิดชอบ (ผู้บริหารจะรับผิดทางอาญา ถ้านำส่งโดยไม่มีผู้ทำบัญชี).
 /// </summary>
@@ -31,7 +31,7 @@ public interface IDbdXbrlExportService
     /// year = ปี ค.ศ. ของรอบบัญชี (ใช้ Company.FiscalYearStartMonth กำหนด
     /// ช่วง). คืน (filename, bytes, summary) — bytes = UTF-8 XML.
     /// throw InvalidOperationException ถ้า:
-    ///   • CompanySettings.BookkeeperCpdNumber ไม่มี (ม.7)
+    ///   • CompanySettings.BookkeeperCpdNumber ไม่มี (ม.19)
     ///   • Company.JuristicId ไม่มี (DBD ใช้เป็น key)
     ///   • ไม่มี JE Posted ในรอบปี</summary>
     Task<DbdXbrlExportResult> ExportAnnualAsync(Guid companyId, int year, CancellationToken ct = default);
@@ -67,14 +67,14 @@ public class DbdXbrlExportService : IDbdXbrlExportService
             .FirstOrDefaultAsync(c => c.Id == companyId, ct)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
 
-        // ── ม.7 gate — ต้องมีผู้ทำบัญชี ──
+        // ── ม.19 gate — ต้องมีผู้ทำบัญชี ──
         var settings = await _db.Set<CompanySettings>().AsNoTracking()
             .FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted, ct);
         if (settings == null
             || string.IsNullOrWhiteSpace(settings.BookkeeperCpdNumber)
             || string.IsNullOrWhiteSpace(settings.BookkeeperName))
             throw new InvalidOperationException(
-                "⛔ พ.ร.บ.การบัญชี ม.7: ต้องระบุ 'ชื่อผู้ทำบัญชี + เลขทะเบียน CPD' " +
+                "⛔ พ.ร.บ.การบัญชี ม.19 (คุณสมบัติตาม ม.7(6)): ต้องระบุ 'ชื่อผู้ทำบัญชี + เลขทะเบียน CPD' " +
                 "ใน Settings ก่อนนำส่งงบการเงิน (ผู้บริหารรับผิดทางอาญาถ้านำส่งโดย" +
                 "ไม่มีผู้ทำบัญชี). ไปที่ Settings → ผู้ทำบัญชี เพื่อตั้งค่า.");
 
@@ -160,7 +160,7 @@ public class DbdXbrlExportService : IDbdXbrlExportService
 
         // Header comment with filer metadata
         w.WriteComment($" Filer: {company.Name} (JuristicId {company.JuristicId}) ");
-        w.WriteComment($" Bookkeeper: {settings.BookkeeperName} — CPD #{settings.BookkeeperCpdNumber} (พ.ร.บ.การบัญชี ม.7) ");
+        w.WriteComment($" Bookkeeper: {settings.BookkeeperName} — CPD #{settings.BookkeeperCpdNumber} (พ.ร.บ.การบัญชี ม.19) ");
         w.WriteComment($" Fiscal Year: {year} ({fyStart:yyyy-MM-dd} → {fyEnd:yyyy-MM-dd}) ");
 
         // === Context: period ทั้งปี + entity ===

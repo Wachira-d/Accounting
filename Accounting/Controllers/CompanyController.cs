@@ -140,7 +140,7 @@ public class CompanyController : ControllerBase
     }
 
     /// <summary>ลบบริษัท (soft-delete) — Owner เท่านั้น + พิมพ์ชื่อบริษัทยืนยัน.
-    /// ข้อมูลบัญชีไม่ถูกลบจริง (พ.ร.บ.การบัญชี ม.10 เก็บ 5 ปี).</summary>
+    /// ข้อมูลบัญชีไม่ถูกลบจริง (พ.ร.บ.การบัญชี ม.14 เก็บ 5 ปี).</summary>
     [HttpDelete("{companyId:guid}")]
     public async Task<ActionResult> DeleteCompany(Guid companyId, [FromQuery] string confirmName)
     {

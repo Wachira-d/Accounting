@@ -48,7 +48,8 @@ public class AdversarialExportRound5Tests
         Assert.Contains("CL-202305 (ใบปิดบัญชี)", msg);
         Assert.Contains("ยังไม่มีอะไรถูกบันทึก", msg);
         Assert.Contains("ใบสำคัญปรับปรุงกำไรสะสม", msg);   // ทางไปต่อที่ทำได้จริงวันนี้
-        Assert.Contains("ม.11", msg);
+        Assert.Contains("ม.10", msg);   // รอบ 250 WP-06: รอบบัญชี = พ.ร.บ.การบัญชี ม.10
+        Assert.DoesNotContain("ม.11", msg);   // ม.11 = จัดทำ/ยื่นงบ ไม่ใช่รอบบัญชี
     }
 
     // ───────── P2-2 งวด ม.ค. ที่ยกตอนบริษัทยังเป็นปีปฏิทิน ≠ ยกยอดรุ่นเก่า ─────────
@@ -88,7 +89,8 @@ public class AdversarialExportRound5Tests
         var msg = OpeningRoll.FiscalYearStartMonthLockedMessage(1, 4, new[] { 2024, 2023 });
         Assert.Contains("เดือน 1 เป็นเดือน 4", msg);
         Assert.Contains("2566, 2567", msg);
-        Assert.Contains("ม.11", msg);
+        Assert.Contains("ม.10", msg);   // รอบ 250 WP-06: รอบบัญชี = พ.ร.บ.การบัญชี ม.10
+        Assert.DoesNotContain("ม.11", msg);   // ม.11 = จัดทำ/ยื่นงบ ไม่ใช่รอบบัญชี
         Assert.Contains("ยังไม่มีอะไรถูกบันทึก", msg);
         Assert.Contains("ผู้ดูแลระบบ", msg);
     }

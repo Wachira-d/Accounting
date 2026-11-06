@@ -1152,7 +1152,7 @@ public class DocumentController : ControllerBase
     /// <summary>ลบเอกสารถาวร — เฉพาะ Owner/SystemAdmin. เอกสารในช่วงเก็บรักษา
     /// §87/3 ปกติ block (ใช้ Void แทน) แต่ override ได้ด้วย ?force=true&reason=...
     /// (audit log ว่าใคร/ทำไม — ความเสี่ยงทางกฎหมายเป็นของผู้ override).</summary>
-    // ฝ่ายค้านรอบ 193 W-C1 (P0): force=true ข้ามช่วงเก็บรักษา 5 ปี (พ.ร.บ.บัญชี ม.10 · §87/3) — เดิมเช็กแค่ role Owner
+    // ฝ่ายค้านรอบ 193 W-C1 (P0): force=true ข้ามช่วงเก็บรักษา 5 ปี (พ.ร.บ.บัญชี ม.14 · §87/3) — เดิมเช็กแค่ role Owner
     // ⇒ คีย์ acc_ ที่มี CanDelete (ตัวตน = เจ้าของผู้ออกคีย์) และคีย์ int_ รุ่นเก่าที่สวมเจ้าของทำได้จากเครื่องที่ไม่มีคนนั่ง
     [HttpDelete("{documentId:guid}/purge")]
     [Accounting.Filters.RejectApiKey("ลบเอกสารถาวร")]

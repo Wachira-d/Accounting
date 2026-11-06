@@ -187,7 +187,7 @@ public class ProductionConsignmentController : ControllerBase
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
         // สูตรเดิม: ปิด (EffectiveTo = now) แทนการลบ — ใบที่ขายไปแล้วต้องยังอธิบายได้ว่า
-        // ตอนนั้นใช้สูตรอะไร (เอกสารบัญชีต้องตรวจสอบย้อนหลังได้ พ.ร.บ.การบัญชี ม.10)
+        // ตอนนั้นใช้สูตรอะไร (เอกสารบัญชีต้องตรวจสอบย้อนหลังได้ พ.ร.บ.การบัญชี ม.14)
         var now = DateTime.UtcNow;
         var current = await db.BillsOfMaterials
             .Where(b => b.CompanyId == companyId && b.ParentProductId == productId

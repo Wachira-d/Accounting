@@ -139,6 +139,7 @@ python3 tools/owner_action_wiring_check.py # ด่านเจ้าของ/�
 python3 tools/taxid_digits_inline_check.py # ตัวกรอง "เลขผู้เสียภาษี/เลขบัตรเหลือแต่ตัวเลข" แบบ inline (`Where(char.IsDigit)` · `Regex.Replace(@"\D")`) บนบรรทัดที่พูดถึง TaxId/tid/CitizenId — ต้องเรียก `ThaiTaxId.Normalize` (เลขไทย ⇒ ASCII) · ระดับบรรทัด · --self-test (ทีม W1d P2-6 · 2026-10-16)
 node tools/api_busy_indicator_sim.js # ตัวแสดง "กำลังทำงาน" กลาง (`ApiBusy` ใน api.js) — นานแสดง · สั้นไม่กระพริบ · ปุ่มกันกดซ้ำ (โค้ดจริง + negative test ในตัว)
 node tools/employee_form_contract_sim.js # ฟอร์มพนักงาน ↔ API: hydrate↔payload สองทิศ · คีย์ ⊆ DTO · ทุกช่องในโมดัลถูก hydrate (ซอร์สจริง · baseline จากคอมมิตก่อนแก้ · รอบ 193)
+python3 tools/legal_citation_check.py # เลขมาตรา พ.ร.บ.การบัญชีผิด (ม.10 เป็นระยะเก็บ · "ม.11 ทวิ" · ท.ป.4/2528 เป็นที่มาระยะเก็บ · Section 10) — ratchet 0 + --self-test (รอบ 250 WP-06)
 python3 tools/doc_commit_sha_check.py # sha ที่ doc อ้างแต่ไม่อยู่บน branch (amend แล้ว sha ที่จดไว้ก่อน commit ตายทันที)
 python3 tools/dead_helper_check.py    # public static ใน Helpers ที่ไม่มีผู้เรียกนอกไฟล์ (นอกคอมเมนต์ · เทสต์ไม่นับ) — ratchet กับ tools/dead_helper_baseline.txt: ล้มเฉพาะตัวใหม่ · "มี ≠ ถูกเรียก" มีตัววัดแล้ว
 python3 tools/test_inventory.py --check # TEST_PLAN §0 ต้องตรงกับ [Fact]/[Theory] จริง (เคยค้าง "~150 เคส/19 ไฟล์" จนผิด 10 เท่า) — วางผล --row ทับ
@@ -162,3 +163,4 @@ awk brace-balance                      # ทุก .cs ที่แก้
 - **negative/positive ใน self-test**: deferred 4 แบบ (function · object method · addEventListener callback · setTimeout) ต้องไม่ฟ้อง · `Bill.init();` ระดับบนสุด และ IIFE ต้องฟ้อง ·
   บล็อก `<script src>` ไม่นับเป็นบล็อก inline
 - **ข้อจำกัดที่รู้**: regex ถอดสตริงเป็นแบบหยาบ (regex literal ที่มี `{`/`(` อาจเพี้ยน depth) — ถ้าฟ้องผิดให้เพิ่มเคสใน self-test ก่อนแก้
+

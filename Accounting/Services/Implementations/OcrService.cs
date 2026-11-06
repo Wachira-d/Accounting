@@ -4441,7 +4441,7 @@ public class OcrService : IOcrService
     /// สถานะเป็น <b>Received</b> ทันที (มีใบจริงอยู่ในมือแล้ว ต่างจากแถวที่ระบบ
     /// สร้างเองตอนรับเงินซึ่งเป็น Pending เพราะยังไม่มีใบ)</para>
     ///
-    /// <para>ผูกไฟล์สแกนไว้กับรายการเพื่อให้ครบตาม พ.ร.บ.บัญชี ม.10 (เก็บ 5 ปี)</para></summary>
+    /// <para>ผูกไฟล์สแกนไว้กับรายการเพื่อให้ครบตาม พ.ร.บ.บัญชี ม.14 (เก็บ 5 ปี)</para></summary>
     private async Task EnsureWhtCreditFromCertAsync(Guid companyId, OcrScanResult result, Guid? documentId)
     {
         // OcrScanResult ไม่มีช่อง "ยอดภาษีที่ถูกหัก" ตรง ๆ — มีแค่ HasWht/WhtRate
@@ -10453,7 +10453,7 @@ public class OcrService : IOcrService
         //     the user has to void/reverse them through the normal docs UI.
         // ⚠️ สแกนที่ลง **JE ตรง** (ปุ่ม "บันทึก JE") ไม่มี Document ให้ cascade —
         // เดิมจึงหลุดด่านข้างล่างทั้งหมดแล้วลบได้ ⇒ **ลบหลักฐานของรายการบัญชีที่ post
-        // ไปแล้ว** (พ.ร.บ.การบัญชี ม.10 ให้เก็บ 5 ปี · ผู้สอบบัญชีเปิด JE แล้วไม่มีเอกสาร
+        // ไปแล้ว** (พ.ร.บ.การบัญชี ม.14 ให้เก็บ 5 ปี · ผู้สอบบัญชีเปิด JE แล้วไม่มีเอกสาร
         // ต้นทาง) — ผลตรวจไปป์ไลน์ OCR 2026-09-06 · T5
         if (result.CreatedJournalEntryId.HasValue)
         {
@@ -10463,7 +10463,7 @@ public class OcrService : IOcrService
                 .FirstOrDefaultAsync();
             throw new Accounting.Helpers.BusinessRuleException(
                 $"สแกนนี้เป็นหลักฐานของใบสำคัญ {jeNo ?? "ที่ลงบัญชีแล้ว"} — ลบไม่ได้ "
-                + "(พ.ร.บ.การบัญชี ม.10 ต้องเก็บเอกสารประกอบ 5 ปี) · ถ้าลงผิด ให้กลับรายการ "
+                + "(พ.ร.บ.การบัญชี ม.14 ต้องเก็บเอกสารประกอบ 5 ปี) · ถ้าลงผิด ให้กลับรายการ "
                 + "ใบสำคัญนั้นจากหน้าใบสำคัญก่อน แล้วค่อยลบสแกน",
                 "OCR-DELETE-HAS-JE");
         }

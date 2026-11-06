@@ -96,7 +96,7 @@ Some service providers may have servers located outside the Kingdom of Thailand.
 | Data | Retention period | Basis |
 |---|---|---|
 | User account and profile data | For as long as you use the Service | Contract |
-| Accounts, supporting accounting documents and financial statements | **5 years** | Accounting Act, Section 10 |
+| Accounts, supporting accounting documents and financial statements | **5 years** from the closing date of the accounts (the Director-General may order a longer period of up to 7 years) | Accounting Act, Section 14 |
 | Purchase/sales tax reports and supporting documents | **5 years** from the filing date | Revenue Code, Section 87/3 |
 | Personal data access records (PII access log) | Not less than **1 year** | PDPA, Section 37 |
 | Evidence of consent | For the life of the account and thereafter for the applicable limitation period | PDPA, Section 19 (burden of proof) |
@@ -157,11 +157,13 @@ These Terms constitute an agreement between you (the “**User**”) and **{{con
 - **Your user account data** (name, email, telephone number, access history) — we are the **data controller** as stated in the [Privacy Policy](/privacy.html)
 - **Data you enter into the system** (customers, vendors, employees, accounting documents, including customer data collected through your shop website/booking system) — **you** are the data controller and we are the **data processor** (Section 40), processing only on your instructions. You are responsible for having a lawful basis for collecting and using such data and for providing your own privacy policy to your customers (the system provides a template you may adapt)
 - **E-mails sent on your behalf** — when you instruct the system to send a document, or a link to sign/accept a document, to your counterparty before you have configured your own e-mail sender, we send it from the system e-mail address as your **data processor** acting on your instructions. We state your business name and tax identification number as the party on whose behalf it is sent, we never use your e-mail address or domain as the sender, replies go to your e-mail address, and we use a fixed system format for transactional e-mails about that document only (not advertising; any text you add is sent as plain text). You are responsible for ensuring that the recipient is genuinely the counterparty of that document. We limit the number of recipients per e-mail and the number of e-mails per day (lower for businesses that have not yet verified their tax identification number or have never paid for the Service) and may suspend sending that is reported as misuse. Once you have configured and successfully tested your own e-mail sender, e-mails are sent directly from your own address
+- **Exchanging documents with counterparties who use the Service** — when you link your business as a trading partner with another business that uses the Service and instruct the system to send a document (such as an invoice, tax invoice, receipt or withholding tax certificate) to that counterparty, we copy the data of that document into the counterparty's account on your instructions as your **data processor**; once it is in the counterparty's account, the counterparty is the data controller of that copy. Documents received through this channel always enter the recipient's system as a **draft**, and the system does not claim input tax on them automatically unless the source is an electronic tax invoice that has been digitally signed and time-stamped — an image or PDF rendered by the system is not the original tax invoice, and the recipient must confirm receipt of the original before claiming. You may unlink at any time; documents already sent remain in the recipient's account for the period the law requires the recipient to retain them
+- **Documents and notifications sent via LINE on your behalf** — when you instruct the system to send a document or notification to your contacts through the Service Provider's official LINE account, we send it as your **data processor** acting on your instructions, using only templates assembled by the system and stating your business name as the party on whose behalf it is sent. You warrant that you have a lawful basis to send the document to that contact and will not use this channel for marketing or advertising. Recipients may unsubscribe at any time, and we may suspend any business's use of this channel immediately when notified by LINE or when we find use that does not comply with this clause
 
 ## 3. Accuracy of Accounting and Tax Data
 
 - The Service is a **tool** to assist with bookkeeping and tax calculation; it does not constitute professional accounting services or case-specific tax advice
-- Under Section 7 of the Accounting Act B.E. 2543 (2000), a person required to prepare accounts must engage a **qualified bookkeeper**; use of the system does not replace that obligation
+- Under Section 19 of the Accounting Act B.E. 2543 (2000), a person required to prepare accounts must engage a **bookkeeper with the qualifications prescribed by the Director-General under Section 7(6)**; use of the system does not replace that obligation
 - Filing tax returns with the Revenue Department, submitting financial statements to the Department of Business Development, and the accuracy and completeness of the data filed, are your responsibility
 - You should review documents, tax reports and accounting entries generated by the system every time before actual use
 
@@ -180,7 +182,7 @@ These Terms constitute an agreement between you (the “**User**”) and **{{con
 ## 6. Data Retention and Termination of Service
 
 - You **may export your data at any time** while your account is active
-- When you terminate the Service, we will retain data for the periods required by law, namely **5 years** for accounts and supporting accounting documents (Accounting Act, Section 10) and tax reports (Revenue Code, Section 87/3). After that period, the data will be deleted or anonymized
+- When you terminate the Service, we will retain data for the periods required by law, namely **5 years** for accounts and supporting accounting documents (Accounting Act, Section 14 — counted from the closing date of the accounts) and tax reports (Revenue Code, Section 87/3). After that period, the data will be deleted or anonymized
 - During any period in which we are legally required to retain data, the data is placed under *legal hold* and **cannot be deleted upon request** (details in Clauses 7-8 of the [Privacy Policy](/privacy.html))
 - We may suspend the Service immediately if we find use that is unlawful or that affects the security of the system as a whole
 
@@ -332,7 +334,7 @@ The Shop does not sell personal data and discloses it only to the extent necessa
 
 ## 5. Retention Periods
 
-- Order, booking, receipt and tax invoice data: **5 years** under Section 87/3 of the Revenue Code and Section 10 of the Accounting Act
+- Order, booking, receipt and tax invoice data: **5 years** under Section 87/3 of the Revenue Code and Section 14 of the Accounting Act
 - Member accounts: for as long as you remain a member
 - Marketing data: until you withdraw your consent
 - Upon expiry, the Shop will delete or anonymize the data

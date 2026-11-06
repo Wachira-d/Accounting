@@ -51,7 +51,7 @@ public enum BankStatementConflictPolicy
     InsertAsNew = 3,
 }
 
-/// <summary>ไฟล์ต้นทางที่ต้องเก็บเป็นหลักฐาน (ไฟล์แนบชนิด "BankStatement" ของบัญชีธนาคาร · พ.ร.บ.การบัญชี ม.10)</summary>
+/// <summary>ไฟล์ต้นทางที่ต้องเก็บเป็นหลักฐาน (ไฟล์แนบชนิด "BankStatement" ของบัญชีธนาคาร · พ.ร.บ.การบัญชี ม.14)</summary>
 public sealed record BankStatementSourceFile(string FileName, string ContentType, byte[] Content);
 
 /// <summary>ตัวเลือกของตัวเขียน — ค่าเริ่ม = ความหมายของหน้า "ธนาคาร → นำเข้า statement"</summary>

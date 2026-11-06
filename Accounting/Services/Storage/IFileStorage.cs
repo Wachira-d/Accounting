@@ -39,7 +39,7 @@ public interface IFileStorage
     /// <summary>แบบ sync — เฉพาะด่านพาธที่เป็น pure helper รับ <c>Func&lt;string,bool&gt;</c> (เช่น <c>LodgingSlipPath.Resolve</c>)</summary>
     bool Exists(string? location);
 
-    /// <summary>ลบ · ไม่มีอยู่แล้ว = false (ไม่ใช่ error) · ผู้เรียกต้องตัดสินเรื่องระยะเก็บรักษาก่อนเรียก (พ.ร.บ.การบัญชี ม.10)</summary>
+    /// <summary>ลบ · ไม่มีอยู่แล้ว = false (ไม่ใช่ error) · ผู้เรียกต้องตัดสินเรื่องระยะเก็บรักษาก่อนเรียก (พ.ร.บ.การบัญชี ม.14)</summary>
     Task<bool> DeleteAsync(string? location, CancellationToken ct = default);
 }
 

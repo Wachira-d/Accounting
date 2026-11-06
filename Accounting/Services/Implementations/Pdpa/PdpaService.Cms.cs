@@ -280,7 +280,7 @@ public partial class PdpaService
         if (rows > 0) await _db.SaveUnderErasureScopeAsync(ct);
         var notes = new List<string>();
         if (held > 0)
-            notes.Add($"{held} แถวผูกเอกสารบัญชีที่ยังอยู่ในงวดเก็บ {CmsPdpaErasure.RetentionYears} ปี (พ.ร.บ.การบัญชี ม.10 · ป.รัษฎากร §87/3) — คงชื่อ/ที่อยู่/เลขผู้เสียภาษีของผู้ซื้อไว้ ล้างช่องติดต่อแล้ว");
+            notes.Add($"{held} แถวผูกเอกสารบัญชีที่ยังอยู่ในงวดเก็บ {CmsPdpaErasure.RetentionYears} ปี (พ.ร.บ.การบัญชี ม.14 · ป.รัษฎากร §87/3) — คงชื่อ/ที่อยู่/เลขผู้เสียภาษีของผู้ซื้อไว้ ล้างช่องติดต่อแล้ว");
         if (rows == 0) notes.Add("ไม่พบข้อมูลเว็บของเจ้าของข้อมูลนี้ (หรือถูกลบไปแล้ว)");
         notes.Add($"[{CmsPdpaErasure.RuleCode}] ผู้ติดต่อ/เอกสารบัญชีของรายนี้ลบผ่าน DSR ของผู้ติดต่อ (dsr/erase) แยกต่างหาก");
         return new CmsErasureResult(rows, held, notes);

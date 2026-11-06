@@ -60,7 +60,7 @@ public class WhtCreditReceived : TenantEntity
     /// <summary>รายการรับชำระที่ทำให้เกิดการถูกหัก (เกณฑ์เงินสด)</summary>
     public Guid? PaymentId { get; set; }
 
-    /// <summary>ไฟล์สแกนหนังสือรับรอง — ต้องเก็บ 5 ปี (พ.ร.บ.บัญชี ม.10)</summary>
+    /// <summary>ไฟล์สแกนหนังสือรับรอง — ต้องเก็บ 5 ปี (พ.ร.บ.บัญชี ม.14)</summary>
     public Guid? AttachmentId { get; set; }
 
     /// <summary>ใช้เครดิตไปกับแบบไหนแล้ว (ภ.ง.ด.51 หรือ 50) — กันใช้ซ้ำ

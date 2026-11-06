@@ -12381,7 +12381,7 @@
         const rows = (plan.nodes || []).map(x =>
           `<li>${icon[x.action] || ''} ${Layout.esc(x.typeName)} ${Layout.esc(x.documentNumber || '')} — ${Layout.esc(x.reason)}</li>`).join('');
         const legal = plan.needsReason
-          ? '<br><strong style="color:#dc2626">⚖️ มีเอกสารในช่วงเก็บรักษาตามกฎหมาย (§87/3 · พ.ร.บ.บัญชี ม.10 — 5 ปี)</strong> ' +
+          ? '<br><strong style="color:#dc2626">⚖️ มีเอกสารในช่วงเก็บรักษาตามกฎหมาย (§87/3 · พ.ร.บ.บัญชี ม.14 — 5 ปี)</strong> ' +
             'แนะนำให้ใช้ <b>"ยกเลิกเอกสาร (Void)"</b> ซึ่งคงหลักฐานไว้ · ถ้ายืนยันลบ (เช่น ข้อมูลทดสอบ/สร้างผิดซ้ำ) ต้องระบุเหตุผล — บันทึก audit ว่าคุณเป็นผู้ลบ'
           : '';
         if (!(await Layout.confirmDanger({

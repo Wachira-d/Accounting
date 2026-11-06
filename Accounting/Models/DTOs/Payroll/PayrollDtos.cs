@@ -444,7 +444,7 @@ public record SetPaymentAccountRequest(string? AccountCode);
 
 /// <summary>กลับรายการจ่ายเงินเดือน (Paid → Approved) เพื่อแก้ยอดย้อนหลัง.
 /// เหตุผลบังคับ — เป็นรายการที่กลับ JE ที่ลงบัญชีไปแล้ว ต้องตอบผู้ตรวจได้ว่า
-/// ทำไม (พ.ร.บ.การบัญชี ม.10 ร่องรอยการแก้ไข).</summary>
+/// ทำไม (พ.ร.บ.การบัญชี ม.14 ร่องรอยการแก้ไข).</summary>
 public record ReopenPayrollRunRequest(string Reason);
 
 /// <summary>แก้ยอดรายคนในรอบ (ก่อนจ่าย). field ที่ส่งมา (HasValue) เท่านั้น

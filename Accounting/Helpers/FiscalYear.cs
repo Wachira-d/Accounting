@@ -11,7 +11,7 @@ public readonly record struct FiscalYearRange(
     DateTime EndExclusive,
     DateTime HalfEndInclusive)
 {
-    /// <summary>จำนวนเดือนของรอบ — รอบปกติต้องเป็น 12 (พ.ร.บ.การบัญชี ม.11)</summary>
+    /// <summary>จำนวนเดือนของรอบ — รอบปกติต้องเป็น 12 (พ.ร.บ.การบัญชี ม.10)</summary>
     public int Months => ((EndExclusive.Year - Start.Year) * 12) + EndExclusive.Month - Start.Month;
 }
 

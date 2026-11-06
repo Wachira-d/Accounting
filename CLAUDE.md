@@ -268,7 +268,7 @@ await _recorder.RecordUserChoiceAsync(
 ### F. e-Tax Invoice / e-Receipt (ETDA ขมธอ.3-2560)
 
 - [ ] **XML schema UBL 2.1 + ETDA profile** field: `DocumentTypeCode`
-  (T01–T04), `ID`, `IssueDateTime` (ISO 8601 +07:00), `Seller.TaxID`, `Seller.BranchID`,
+  (ตาม `Helpers/EtaxDocumentTypeMap` 388/80/81/T02/T03), `ID`, `IssueDateTime` (ISO 8601 +07:00), `Seller.TaxID`, `Seller.BranchID`,
   `Buyer.TaxID`, `Buyer.BranchID`, `LineItem[]`, `VATAmount`, `TotalAmount`,
   `CurrencyCode=THB`, `ReferenceID` (กรณีอ้างใบเดิม)
 - [ ] **Digital signature** XAdES-BES, RSA-SHA256, key ≥ 2048-bit, CA ที่ ETDA รับรอง
@@ -293,11 +293,11 @@ await _recorder.RecordUserChoiceAsync(
 
 ### H. พ.ร.บ.การบัญชี พ.ศ. 2543 + DBD
 
-- [ ] **ม.7** `BookkeeperCpdNumber` + `BookkeeperName` required ก่อน finalize งบ
-- [ ] **ม.10** เก็บเอกสาร **5 ปี** (ขยายได้ถึง 7 ปี) — `RetentionUntil = AccountingPeriodEndDate + 5y`
-- [ ] **ม.11** รอบบัญชี enum `FiscalPeriodType ∈ {Normal, FirstYear, FinalYear, ChangeApproved}`;
-  Normal ต้อง = 12 เดือนพอดี
-- [ ] **DBD submission** — บริษัท: ภายใน 1 เดือนจาก AGM approve **และ** ≤ 5 เดือนจากสิ้นรอบ;
+- [ ] **ม.19** (คุณสมบัติตาม ม.7(6)) `BookkeeperCpdNumber` + `BookkeeperName` required ก่อน finalize งบ
+- [ ] **ม.14** เก็บ ≥ 5 ปีนับแต่วันปิดบัญชี (อธิบดีสั่งให้เก็บเกินได้ไม่เกิน 7 ปี) — `RetentionUntil = AccountingPeriodEndDate + 5y`
+- [ ] **ม.10** รอบบัญชี (ปิดทุก 12 เดือน · เปลี่ยนรอบต้องได้รับอนุญาต) enum `FiscalPeriodType ∈ {Normal, FirstYear, FinalYear, ChangeApproved}`;
+  Normal ต้อง = 12 เดือนพอดี · ไฟล์อิเล็กทรอนิกส์ = พ.ร.บ.ธุรกรรมฯ 2544 ม.12 · `tools/legal_citation_check.py`
+- [ ] **DBD submission (ม.11)** — บริษัท: 1 เดือนจาก AGM approve (AGM ≤ 4 เดือนตาม ป.พ.พ. ม.1197) · ห้างฯ/อื่น ≤ 5 เดือนจากวันปิดบัญชี;
   alert เมื่อ `(ApprovedAt + 30d)` หรือ `(FiscalYearEnd + 150d)` ใกล้ถึง
 - [ ] **XBRL export** ตาม taxonomy DBD — map ทุก GL account → XBRL concept
 
@@ -504,7 +504,7 @@ return Ok(dto);  // UI โชว์ → user กด "ยืนยัน" จบ
 bash tools/check_all.sh      # รัน checker ทุกตัว (57) + sim ทุกตัว + node --check + brace + U+FFFD + test_inventory --check + dotnet build/test ถ้ามี SDK — exit code เดียว
 python3 tools/callers.py <Symbol>   # ก่อนแตะสัญลักษณ์ใด: นิยาม · ผู้เรียกจริง · เทสต์ · คอมเมนต์ (แทน grep ประกอบเอง)
 ```
-> env นี้ไม่มี .NET SDK ⇒ **CI บน `claude/**` คือ compiler ตัวแรกหลัง push** — อ่านผลผ่าน MCP (`actions_list` → `get_job_logs`) แล้วแก้ก่อนรายงานผู้ใช้ และบอกผู้ใช้เสมอว่า "ยังไม่ได้คอมไพล์ในเครื่องนี้" ·
+> env นี้ไม่มี .NET SDK ⇒ **CI บน `claude/**` คือ compiler + runner ของเทสต์ pure ตัวแรกหลัง push** — อ่านผลผ่าน MCP (`actions_list` → `get_job_logs`) แล้วแก้ก่อนรายงานผู้ใช้ และบอกผู้ใช้เสมอว่า "ยังไม่ได้คอมไพล์ในเครื่องนี้" ·
 > รายชื่อ checker ทั้ง 57 ตัวพร้อม defect class ที่แต่ละตัวจับ อยู่ที่ `docs/lessons/checker-writing.md` §"รายการ checker ทั้งหมด" — เปิดเมื่อตัวใดฟ้องแล้วต้องรู้ว่ามันตรวจอะไร
 
 ### F2. หลักการ 10 ข้อ (กลั่นจากบทเรียน 142 ข้อ — ตัวเต็มอยู่ใน `docs/lessons/`)
@@ -540,7 +540,7 @@ python3 tools/callers.py <Symbol>   # ก่อนแตะสัญลักษ
  3. ไม่มี dead helper ใหม่ (dead_helper_check) · TEST_PLAN §0 ตรงเทสต์จริง (test_inventory --check)
  4. doc sha อยู่บน branch (doc_commit_sha_check) — เติม sha ในคอมมิตตามหลัง ห้าม amend
  5. ถ้ามี dotnet: build + test ผ่าน
- 6. หลัง push: `bash tools/ci_wait.sh` (background) → แดง = `get_job_logs` แล้วแก้ก่อนรายงานผู้ใช้
+ 6. หลัง push: `bash tools/ci_wait.sh` (background) → static/build/test/db-test เขียวครบ · แดง = `get_job_logs` แล้วแก้ก่อนรายงาน
 
 ข. คนทำ — ตอบเป็นข้อความในคำอธิบายคอมมิต (ตอบไม่ได้ = ยังไม่ push)
  7. "แก้ที่นี่ แล้ว callers.py/grep รูปแบบเดิมทั้งเรพได้กี่จุด" → ตัวเลข (0 ก็เขียนว่า 0)
@@ -605,14 +605,13 @@ python3 tools/callers.py <Symbol>   # ก่อนแตะสัญลักษ
 - **เลขเอกสาร** ออกตอน Approve เท่านั้น (Draft ใช้ `DRAFT-{guid}` placeholder)
   เพื่อกัน gap จากการลบ Draft (compliance §86/4)
 - **POS หลายสาขา + วัตถุดิบ** — ผลวิเคราะห์และแผน 7 เฟสอยู่ใน `POS_MULTI_BRANCH_ANALYSIS.md`
-  (ข้อเท็จจริง **ณ 2026-09-18 — แก้ doc**: `Product.CurrentStock` กับ `WarehouseStock`
+  (`Product.CurrentStock` กับ `WarehouseStock`
   **ยุบผ่าน `IStockLedger` ตัวเดียวแล้ว** (`StockLedger.MoveAsync` เขียนทั้งคู่ในคำสั่งเดียว ·
-  `tools/stock_writer_check.py` = 0 จุดนอก ledger) — ประโยคเดิม "สองความจริงที่ไม่คุยกัน"
-  ล้าสมัย · ตาข่ายซ่อมข้อมูลเก่าก่อนเฟส 0 ต่อสายแล้ว (รอบ 201 ทีม IN · C-5): `FindProductTotalMismatchesAsync`
+  `tools/stock_writer_check.py` = 0 จุดนอก ledger) · ตาข่ายซ่อมข้อมูลเก่าก่อนเฟส 0 ต่อสายแล้ว (รอบ 201 ทีม IN · C-5): `FindProductTotalMismatchesAsync`
   (รายงานอ่านอย่างเดียว) + `RepairProductTotalsAsync` (ซ่อมเฉพาะแถวที่เลือก · audit) — `ReconcileProductTotalsAsync` เดิมถูกลบ ·
   POS ผูก `Branch`/`Warehouse` แล้ว · หัวสลิปผ่าน `PosSlipHeader` → `AbbreviatedTaxInvoiceRule` (ตรวจ ภ.พ.06) — ตรวจ 2026-10-08)
 - **Payment gateway (Omise ก่อน · เปลี่ยนเจ้าได้)** — ออกแบบใน `PAYMENT_GATEWAY_DESIGN.md`
-  (แก้ doc 2026-10-02 — ข้อเดิม "ไม่มีการเชื่อม gateway ใดเลย" ล้าสมัย: มี `Services/Payments/Providers/OmisePaymentProvider` +
+  (มี `Services/Payments/Providers/OmisePaymentProvider` +
   `ManualSlipPaymentProvider` แล้ว และแขก/ลูกค้าปลายทางจ่ายผ่าน `PublicPaymentController` (`[AllowAnonymous]`
   `api/companies/{companyId}/public-pay`) ซึ่งเรียก `LodgingReservationPaymentHandler`/`SiteOrderPaymentHandler` ·
   `PaymentGatewayController` (`[Authorize]`) เป็นฝั่งพนักงานเท่านั้น · ทุกทางเข้าต้องเดินผ่าน `PaymentIntent` + `IPaymentProvider` ตัวเดียว · webhook ยืนยันแบบของ
@@ -622,8 +621,6 @@ python3 tools/callers.py <Symbol>   # ก่อนแตะสัญลักษ
   · **ผลตรวจฟีเจอร์ฝั่งผู้ใช้ (แขก/เจ้าของ) + งานที่ต้องทำต่อ อยู่ใน
   `LODGING_BOOKING_AUDIT.md`** · ผลตรวจรอบ 202 (ตั้งค่า · เว็บ/จองเอง · หลังบ้าน/เงิน) อยู่ใน
   `erp-review/2026-10-02/LODGING_REVIEW.md` + คำตัดสิน 116–127 ใน `erp-review/2026-09-29/DECISIONS.md`
-  (ข้อความเดิม "`PaymentGatewayController` เป็น `[Authorize]` ⇒ ลูกค้าปลายทางจ่ายออนไลน์ไม่ได้เลย" ล้าสมัยแล้ว —
-  ทางจ่ายของแขกคือ `PublicPaymentController` ดูข้อ Payment gateway ข้างบน)
 
 ## วิธีทำงาน
 

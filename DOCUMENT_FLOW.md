@@ -3125,7 +3125,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
    · ใบที่อนุมัติก่อนรอบ 201 คงค่าเดิม (งวดที่อาจยื่นแล้วห้ามแก้เงียบ — แนวคำตัดสินข้อ 44)
 5. **Retention** (`DocumentService.cs:5126`) — `doc.RetentionUntil ??=`
    **วันสิ้นรอบบัญชีที่เอกสารอยู่** `+ 5 ปี` (ไม่ใช่ `DocumentDate + 5y`)
-   ตาม พ.ร.บ.บัญชี ม.10 + §87/3 · คำนวณผ่าน
+   ตาม พ.ร.บ.บัญชี ม.14 + §87/3 · คำนวณผ่าน
    `Helpers.FiscalYear.FiscalYearOf(...)` → `RangeFor(...).EndInclusive`
    แล้วใช้ `MAX(fyEnd, DocumentDate)` เป็นฐาน
    _(รอบ 125 · C-T11 — สูตรเดิมสั้นไปเกือบ 12 เดือน และสั้นได้ถึง ~14 เดือน_
@@ -4533,7 +4533,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 > (SSO_NewEmployee due+30วัน / SSO_Termination due วันที่15เดือนถัดไป).
 > **หลักฐานการจ่าย:** โมดัลนำส่ง (`payroll.html`) + กล่อง "หลักฐานการจ่าย/นำส่ง"
 > ในหน้ารายละเอียดรอบ แนบสลิป/ใบเสร็จผ่าน `FileAttachment` entityType
-> `"PayrollRun"` (เก็บ 5 ปี ตาม พ.ร.บ.การบัญชี ม.10).
+> `"PayrollRun"` (เก็บ 5 ปี ตาม พ.ร.บ.การบัญชี ม.14).
 >
 > **คู่ (ลูกจ้าง, นายจ้าง) ต้องสอดคล้องกันเสมอ** (ม.33 ใช้ฐานค่าจ้างเดียวกัน) —
 > ตัวตัดสินตัวเดียวคือ `Helpers/SsoWageBase.Normalize` (ฝั่งลูกจ้างเป็นความจริง
@@ -5317,7 +5317,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - **เปิดงวดเดี่ยวที่ถูกล็อกจากการปิดปี** (`ReopenPeriodAsync`) = ล้มพร้อมทางไปต่อ `YearEndReopenRule.LockedPeriodMessage` (เดิมอ้าง "ยกเลิก year-end" ที่ไม่มีอยู่)
   - **ปิดปีเมื่องวด ธ.ค. (งวดของวันที่ใบปิดปี) ปิดชั่วคราวไว้** — เดิมตัวสร้างใบปฏิเสธ "งวดถูกปิดแล้ว" ⇒ ปิดปีไม่ได้เลย · ตอนนี้ `YearEndCloseAsync` เปิดงวดนั้นใต้ล็อกเดียวกัน
     + audit `year-end-close-through-soft-closed-period` แล้วล็อกทั้งปีในธุรกรรมเดียวกัน (งวดนอกรอบที่ผู้ใช้เลือกเป็นวันปิด = ไม่แตะ ยังล้มเหมือนเดิม · งวดอื่นที่ปิดชั่วคราวไม่ต้องเปิด)
-  - **เดือนเริ่มรอบบัญชีล็อกหลังปิดปีครั้งแรก** (`CompanyService.ApplyFiscalYearStartMonthAsync` · พ.ร.บ.การบัญชี ม.11 — ดู ACCOUNT_STRUCTURE §3.1f) · ตัวตรวจยกยอดรุ่นเก่า
+  - **เดือนเริ่มรอบบัญชีล็อกหลังปิดปีครั้งแรก** (`CompanyService.ApplyFiscalYearStartMonthAsync` · พ.ร.บ.การบัญชี ม.10 — ดู ACCOUNT_STRUCTURE §3.1f) · ตัวตรวจยกยอดรุ่นเก่า
     (`FindLegacyCalendarRollPeriodsAsync`) นับงวด ม.ค. เป็นรุ่นเก่าเมื่อตอนยก (เวลาใบปิดปีของรอบนั้น /
     ไม่มีใบปิดปี = เวลาที่แถวถูกเขียน) บริษัทใช้รอบไม่ใช่ปีปฏิทิน — **ไม่ใช้เวลาคอมมิตเป็นเส้นแบ่ง** (รอบ 5 ฝ่ายค้าน P2-1: production รันโค้ดเก่าเลยเวลาคอมมิตได้ · โค้ดใหม่ไม่เคยเขียนแถว ม.ค. ให้บริษัทรอบไม่ใช่ปีปฏิทิน) (`OpeningRoll.StartMonthAt` จาก audit `fiscal-year-start-month` — ไม่มีประวัติ = ค่าปัจจุบัน) ·
     เดิมบริษัทปีปฏิทินที่ปิดปีแล้วค่อยเปลี่ยนเดือนเริ่มรอบถูกบล็อกเท็จ และปุ่มซ่อมจะยกเลิกยอดยกมา ม.ค. ที่ถูกต้อง
@@ -5983,7 +5983,7 @@ PDF ของ PV ที่ปิดหนี้อ่านธงของใบ
   · ต้องมีสิทธิ์**สร้างหรืออนุมัติ**ประเภทเอกสารนั้น (ด่านใน `FileAttachmentController` — เดิมแค่ `[Authorize]`) ·
   ชนิดไฟล์ตัดสินจาก**ไบต์** (`UploadFileType.SniffAttachment`) ไม่ใช่นามสกุล (HTML ที่ตั้งชื่อ `.csv` ถูกปฏิเสธ) ·
   **ลบ** = ถอดจากรายการ · ไฟล์จริงถูกลบเฉพาะใบร่างและข้อมูลหลัก (ผู้ติดต่อ/สินค้า) — นอกนั้นเก็บไฟล์ไว้ (soft-delete ·
-  `Helpers/AttachmentRetention` · พ.ร.บ.การบัญชี ม.10 / §87/3 · ชนิดที่ไม่รู้จัก = เก็บ)
+  `Helpers/AttachmentRetention` · พ.ร.บ.การบัญชี ม.14 / §87/3 · ชนิดที่ไม่รู้จัก = เก็บ)
 - **ด่านไฟล์แนบทุกชนิด — service ตัวเดียว `IAttachmentAccessGate`** (รอบ 193 · คำตัดสิน #29 · ทีม U2 → S2): ตาราง "ชนิด → วิธีตัดสิน + คีย์"
   `Helpers/AttachmentPermissionScope` (คีย์เดิมของโมดูลเจ้าของทุกตัว — ไม่สร้างคีย์ใหม่) ครอบ **แนบ/ลบ/ดูรายการ/ดาวน์โหลด**:
   Document/Expense = สร้างหรืออนุมัติชนิดนั้น + ฝั่งที่มองเห็น (`VisibleDirectionsAsync`) + ชั้นความลับ · Payment = ด่านของเอกสารที่ถูกชำระ ·
@@ -6335,6 +6335,14 @@ CN/DN เดิมไม่ส่ง `doc.Contact` ต่างจากทุ�
   ต้องได้ค่าบริษัทเป๊ะ") + `TaxBranchCodeTests.cs`
 
 ### 6.3 §87/3 retention (5 ปี)
+- **ที่มาทางกฎหมาย (รอบ 250 WP-06 · `erp-review/2026-11-06/RETENTION_LAW_CHECK.md`)**: ป.รัษฎากร §87/3 (≥ 5 ปีนับแต่วันยื่นแบบ/วันทำรายงาน) +
+  **พ.ร.บ.การบัญชี 2543 ม.14 — เก็บ ≥ 5 ปีนับแต่วันปิดบัญชี (อธิบดีสั่งให้เก็บเกินได้ไม่เกิน 7 ปี)** · ม.10 = ปิดบัญชี/รอบบัญชี (เปลี่ยนรอบต้องได้รับอนุญาต
+  จากสารวัตรใหญ่บัญชี/สารวัตรบัญชี) · ม.11 = จัดทำ/ยื่นงบ (DBD) · ม.19 = ต้องมีผู้ทำบัญชี (คุณสมบัติตาม ม.7(6)) · ไฟล์/หลักฐานอิเล็กทรอนิกส์ =
+  พ.ร.บ.ธุรกรรมทางอิเล็กทรอนิกส์ 2544 ม.12 (+ ม.12/1 ไฟล์สแกน) — hash chain เป็น control ภายใน ไม่ใช่ข้อบังคับรายมาตรา · "ม.11 ทวิ" ไม่มีในตัวบท ·
+  ข้อความเดิมที่อ้าง ม.10/ม.11/ม.7/"ม.11 ทวิ"/ท.ป.4/2528 แก้แล้วทั้งโค้ด/UI/เทสต์ (ratchet `tools/legal_citation_check.py`) · **`LegalReference` ใน `AuditLog`
+  แถวก่อนวันแก้คงเลขเดิมโดยตั้งใจ** (append-only + hash chain · ไม่ migrate) · รหัสกฎ `ACC-ACT-11-FISCAL-PERIOD` คงชื่อเดิม (ค่าที่ persist) ·
+  ข้อกำหนด/นโยบายตั้งต้น (`LegalDocumentDefaults` + `.En`) แก้เลขมาตรา + เพิ่มข้อแลกเปลี่ยนข้ามผู้เช่า (N3) = **ร่างฉบับใหม่** รอเจ้าของกดเผยแพร่ (Y6) ·
+  ยืนยันจาก snippet หลายแหล่งรวมสำเนาราชการ — ยังไม่ได้เปิดตัวบทเต็ม (WebFetch dbd/krisdika ถูก network ปฏิเสธ 2026-11-06 · รอ §3 N2)
 - ทุกเอกสารตั้ง `RetentionUntil = MAX(filingDate, reportDate, DocumentDate) + 5y`
 - **ด่านลบถาวร (`PurgeDocumentAsync`) — รอบ 200 (B-06)**: ตัดสินด้วย `Helpers/DocumentRetention` ตัวเดียว — ใบที่ **ออกแล้ว**
   (ไม่ใช่ร่าง/รออนุมัติ/ถูกปฏิเสธ และเลขไม่ใช่ `DRAFT-`) ใช้ `RetentionUntil` ที่บันทึกไว้ หรือ **คำนวณจากวันที่เอกสาร** (สิ้นรอบบัญชี + 5 ปี
@@ -6690,7 +6698,7 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
   บันทึกผู้ยืนยัน ≤ 300 ตัว · (S4) จ่ายแล้วบอกก่อนเขียนไฟล์ · ยอดเปลี่ยนระหว่างแนบ ⇒ 409 + ปิดรายการชำระ · อ่านสลิปต้องเป็นไฟล์ของการจองนี้ ·
   (S5) ได้ที่จากคิวสำรอง ⇒ ตัวตัดสิน `BookingPaymentPolicy.OnSeat` เดียวกับจองใหม่ · (S6) งานยกเลิกค้างจ่ายข้ามการจองที่มีรายการชำระออนไลน์ยังไม่หมดอายุ
   (+ผ่อน 10 นาที · `GatewayPaymentInProgress`) · บันทึกบริการที่ตั้งเก็บเงินเอง ⇒ ต้องมีช่องทาง + ยอด (`ServiceChannelProblem`) ·
-  ~~PDPA: สลิปที่ถูกปฏิเสธ/แทน ของการจองที่ไม่มีเงินเข้า เก่ากว่า 90 วัน ⇒ ลบ~~ (รอบ 2 F2: ยกเลิก — ดู "ฝ่ายค้านรอบ 218 รอบ 2" ด้านล่าง) · สลิปของการจองที่มีเงิน = หลักฐาน ม.10 ไม่ลบ ·
+  ~~PDPA: สลิปที่ถูกปฏิเสธ/แทน ของการจองที่ไม่มีเงินเข้า เก่ากว่า 90 วัน ⇒ ลบ~~ (รอบ 2 F2: ยกเลิก — ดู "ฝ่ายค้านรอบ 218 รอบ 2" ด้านล่าง) · สลิปของการจองที่มีเงิน = หลักฐาน พ.ร.บ.การบัญชี ม.14 ไม่ลบ ·
   สลิปค้างเลยเวลานัด ⇒ ป้าย "ตรวจด่วน" (ไม่ยกเลิกเอง)
   **ฝ่ายค้านรอบ 218 รอบ 2**: (K2) `PaymentGatewayController.ConfirmManually` ของรายการสลิปการจอง ⇒ 409 "ตรวจที่หน้าการจอง" (`BookingSlipRule.GatewayManualConfirmProblem`) ·
   `PaymentIntents.ConfirmedBy` ตัดที่ 200 ณ จุดเขียนเดียว (`PaymentIntentPolicy.CapConfirmedBy`) · (F1) งานล้างเอาเงื่อนไขทั้งหมดเข้า SQL (`CartImageCandidates`/`SlipPurgeCandidates` · `!IsDeleted`) ·
@@ -7124,7 +7132,7 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
 | §87 ลำดับเวลาในรายงาน | `TaxService.NormalizeReportLineOrder` | เรียง + renumber `LineOrder` ท้ายการ generate ทุกครั้ง (ขาย → ซื้อ → บรรทัดสรุป; แต่ละกลุ่มตาม `TransactionDate`, ties = ลำดับเดิมเพื่อ deterministic). เรียกจาก GenerateVatReport / หลัง ApplyVatDeferrals / ComputeVatReport (ไฟล์ยื่น) / GenerateWhtReport / PullDocumentIntoReport / regenerate re-apply. `tax.html` sort ซ้ำฝั่ง client (จอ + แบบพิมพ์ §87) ให้รายงานเก่าถูกลำดับโดยไม่ต้อง regenerate — เดิม LineOrder ไล่ตามลำดับที่ query คืนเอกสาร = วันที่สลับไปมา |
 | §82/5(6) นโยบาย "ดุลพินิจผู้กรอก" | keyword auto-cut ถูกถอดออกทั้งหมด | ระบบ**ไม่เดา**จากข้อความไปตัดสิทธิ (เดิม "ค่าน้ำมัน" คำเดียวโดนตัด = น้ำมันรถกระบะผู้รับเหมาหายจาก ภ.พ.30). การตัดใช้เฉพาะ (a) flag รายบรรทัด IsVatClaimable (b) ผังบัญชีต้องห้ามที่บริษัทตั้งเอง; คำเตือนกฎรถยนต์นั่ง (ประกาศ 42: กระบะตอนเดียว/แค็บ/บรรทุก/ตู้>10 เคลมได้; เก๋ง/กระบะ 4 ประตูไม่ได้) มี 2 จุด — approve warning + confirm ตอนติ๊กเคลมในหน้าเอกสาร · **รอบ 193: ทั้งสองจุดอ่านลิสต์คำชุดเดียว `InputVatVehicleRule`** (หน้าเอกสารถามเซิร์ฟเวอร์ — ลิสต์คำใน JS = 0) |
 | ติ๊กเคลมภาษีซื้อเข้า/ออกหลังอนุมัติ | `CompleteSupplierTaxInvoiceAsync` + `ClaimInputVat` (Unclaim/ReclaimInputVatAsync) | แผงในหน้า detail ของ PV/Expense/PI (approved, VAT>0): เลิกเคลม → JE Dr ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้"/Cr 11610 หรือ 11640 + set override=ผังค่าใช้จ่าย (marker ที่ ภ.พ.30 exclude อยู่แล้ว) + ติ๊กบรรทัดงวด Draft ออก; block เมื่อเคลมในงวด Filed แล้ว (ต้องยื่นเพิ่มเติม). กลับมาเคลม → require §86/4 ครบ + กรอบ 6 เดือน §82/3 → JE ย้อน + BecameClaimableAt=now (เข้า ภ.พ.30 งวดปัจจุบัน) + PV เปิด HasTaxInvoiceReference. แก้เลขที่/วันที่/สาขาใบกำกับได้ทุกใบจากแผงเดียวกัน |
-| F14 audit hash chain | `AuditTrailService.VerifyHashChainAsync` + `AuditChainVerifyJob` → **`Helpers/AuditHashChain`** (รอบ 193 · §6.1) | cron 7 วัน · สูตร v2 `Seal` ฝั่งเขียนตัวเดียว · `Analyze` แยก ถูกแก้/ขาดตอน/แตกกิ่ง · notify ตามสาเหตุจริง (พ.ร.บ.บัญชี ม.11 ทวิ) |
+| F14 audit hash chain | `AuditTrailService.VerifyHashChainAsync` + `AuditChainVerifyJob` → **`Helpers/AuditHashChain`** (รอบ 193 · §6.1) | cron 7 วัน · สูตร v2 `Seal` ฝั่งเขียนตัวเดียว · `Analyze` แยก ถูกแก้/ขาดตอน/แตกกิ่ง · notify ตามสาเหตุจริง (control ภายในเพื่อเงื่อนไข พ.ร.บ.ว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ม.12 · ระยะเก็บ พ.ร.บ.การบัญชี ม.14 — hash chain เป็นวิธีหนึ่ง ไม่ใช่ข้อบังคับรายมาตรา) |
 | Recurring template validate | `RecurringTransactionService.ValidateTemplateAsync` + `Helpers/RecurringTemplate` | ตอน Create/Update **และตอนถึงรอบ** — รหัสแต่ละชนิดค้นในตารางของมัน (บัญชีธนาคาร → BankAccounts · ผัง → CoA · โครงการ · สาขา · ผู้ติดต่อ) + journal balance · §2.7 |
 | Reclassify line GL (post-approve) | `DocumentService.ReclassifyLineAccountAsync` | เปิดทั้งฝั่งซื้อและฝั่งขาย (Invoice/TaxInvoice/Receipt/CN/DN ด้วย — §86/4 บังคับ**สิ่งที่พิมพ์บนใบกำกับ** ซึ่งไม่มีรหัสผังบัญชีอยู่เลย); post JE คู่ใหม่ลงงวดเดิม โดย**อ่านขาที่ลงจริงใน GL** (`oldWasCredited`) แล้วกลับตามนั้น + update line.AccountId. **ยอดที่ย้าย = `ResolveLinePostedGlAmountAsync`** ไม่ใช่ `line.Amount` เสมอ: ภาษีซื้อต้องห้าม §82/5 (`IsVatClaimable=false`) → `Amount + VatAmount` เพราะ AutoPost รวม VAT เป็นต้นทุนบรรทัด (ย้ายแค่ฐาน = VAT ค้างผังเก่าถาวร โดย Dr=Cr ยังสมดุล) · ใบที่อ้างใบรับของ GRN → ฐานตัด GR-NI ไปแล้ว บรรทัดเหลือแค่ VAT ต้องห้าม · PV ที่แปลงจากใบตั้งหนี้ (settlement) → 0 (แค่เปลี่ยน AccountId ไม่ลง JE) · ต่างสกุล → คูณ `ExchangeRate` ผ่าน `ToGlAmount`. gate: period Open + no downstream (ไม่นับใบเสร็จ settlement) + not Draft/WaitingApproval/Voided/Rejected + ไม่ใช่ใบมัดจำ + ไม่ใช่บัญชีคุม + no submitted ภพ.30 + no e-Tax submitted |
 | §87(3) chronological | ExportPp30Async summary | นับ doc ที่ tax point ย้อนกลับ → surface ใน Summary.csv |
@@ -7231,7 +7239,7 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
 2. **ห้ามแก้ Approved เอกสาร** — ใช้ Void แล้วออกใหม่ (§86/4 ห้ามแก้ย้อนหลัง)
 3. **TaxPointDate snapshot ตอน approve** — ห้ามคำนวณ on-the-fly (กัน period leak)
 4. **Tenant isolation** — ทุก query ต้องมี `CompanyId == @companyId` — ไม่มีข้อยกเว้น
-5. **Soft delete + legal_hold** — ใน 5 ปีห้าม hard delete (§87/3 + ม.10)
+5. **Soft delete + legal_hold** — ใน 5 ปีห้าม hard delete (§87/3 + พ.ร.บ.การบัญชี ม.14)
 6. **Audit log append-only + hash chain** — tamper-evident
 7. **กฎเหล็ก #1 Distillation Mandate** — ทุก AI call ผ่าน `IAiOrchestrator.AskAsync`,
    capture FeedbackId, ปิดลูปด้วย `RecordUserChoiceAsync`

@@ -754,9 +754,9 @@ public class Document : TenantEntity
     /// Null = ยังไม่คำนวณ (เอกสารเก่า) → fallback DocumentDate ตอน export.</summary>
     public DateTime? TaxPointDate { get; set; }
 
-    // ===== Retention (อายุการเก็บเอกสาร) §87/3 + พ.ร.บ.บัญชี ม.10 =====
+    // ===== Retention (อายุการเก็บเอกสาร) §87/3 + พ.ร.บ.บัญชี ม.14 =====
     /// <summary>วันที่เก็บเอกสารถึง (เก็บอย่างน้อย 5 ปีจากวันสิ้นรอบ/วันยื่น
-    /// per §87/3 + ม.10). ห้ามลบจริงก่อนวันนี้ (legal hold). คำนวณตอน approve.</summary>
+    /// per §87/3 + พ.ร.บ.การบัญชี ม.14). ห้ามลบจริงก่อนวันนี้ (legal hold). คำนวณตอน approve.</summary>
     public DateTime? RetentionUntil { get; set; }
 
     // ===== §65 ตรี — รายจ่ายต้องห้าม (Non-Deductible add-back) =====
