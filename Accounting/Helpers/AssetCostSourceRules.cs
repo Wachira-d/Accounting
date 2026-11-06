@@ -67,7 +67,8 @@ public static class AssetCostSourceRules
     /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 8 · คำตัดสิน §2 #7 · C F2 · E L-3): ชนิดเอกสารที่ "อาจ" ผูกเป็นต้นทุนสินทรัพย์ได้ (ฝั่งของใบลดหนี้/ใบเพิ่มหนี้ยังไม่รู้ ⇒ นับรวม) —
     /// เส้นยกเลิก/ลบถาวรถือคีย์ผู้เขียนต้นทุน<b>เสมอ</b>เมื่อชนิดเข้าข่าย (ไม่ตรวจ "ผูกอยู่ไหม" นอกล็อก — ช่อง TOCTOU: ผูกเข้ามาระหว่างตรวจกับล็อก)</summary>
     public static bool MayBeCostSource(DocumentType type)
-        => SignFor(type, true) != null;
+        // รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน): ทุกฝั่งที่เป็นไปได้ (ซื้อ · ขาย · ไม่รู้) — ไม่พึ่งว่าวันนี้ SignFor ใช้แค่ฝั่งซื้อ
+        => (SignFor(type, true) ?? SignFor(type, false) ?? SignFor(type, null)) != null;
 
     /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 10 · C F6): ป้ายความหมายของ "วันที่ซื้อ" สำหรับสินทรัพย์ที่ต้นทุนมาจากหลายเอกสาร (หน้า/รายงาน/ไฟล์ส่งออก) · null = ใบเดียว (ความหมายเดิม)</summary>
     public static string? PurchaseDateNote(bool fromMultipleDocuments)

@@ -629,7 +629,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **823 ไฟล์ · 8,754 `[Fact]` + 1,304 `[Theory]` (6,116 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **824 ไฟล์ · 8,759 `[Fact]` + 1,308 `[Theory]` (6,156 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 
@@ -8051,6 +8051,11 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | (ฝ่ายค้าน WP-04 ข้อ 3) ระหว่างถือคีย์ผู้เขียนต้นทุน ยกเลิกใบขายจบเอง + ไม่มีใครรอคีย์ (โค้ด: ตัวปลดแถวผูกเฉพาะชนิดที่อาจเป็นต้นทุน) | Db `Void_while_linking_holds_key_first` |
 | (ฝ่ายค้าน WP-04 ข้อ 4) ปิดปี: แถวใส่กลับด้านกับ uuid ⇒ ถอด OrderBy แล้วล้มทุกครั้ง | Db `SettleYearEnd_locks_in_id_order` |
 | (ฝ่ายค้าน WP-04 ข้อ 7) DDL ตอนบูต (Program.cs) กับฐานเทสต์ FK RESTRICT ตรงกัน 3 FK | `GateOppositeDirectionRound250Tests.ฐานเทสต์รูปFKเดียวกับDDLตอนบูต_ONDELETERESTRICT` |
+| (ต่อยอด 1) ทวงเกินกำหนดส่งซ้ำทุก N วัน: 0/ติดลบ = ครั้งเดียวเหมือนเดิม · ก่อน Offset ไม่ส่ง · กุญแจครั้งแรกเดิม/ครั้งซ้ำมีวันที่ ค.ศ. (ไม่ขึ้นกับ culture) | `ScheduleSettingsWiringRound250Tests.ส่งซ้ำทุกNวัน_…` · `กุญแจกันซ้ำ_…` |
+| (ต่อยอด 2) แจ้งเตือนก่อนรอบรายการประจำ: ช่วง 1…N วัน · วันรัน/ปิด/N=0/หยุด ไม่แจ้ง · รอบเดียวแจ้งครั้งเดียว · ค่านอก 0–30 ปฏิเสธ | `ScheduleSettingsWiringRound250Tests.แจ้งก่อนรอบ_…` ×3 |
+| (ต่อยอด 3) เลขผู้ซื้อ e-Tax ตามชนิด: นิติบุคคล 13/18 (สาขาตรง) + checksum · บุคคล 13 + checksum หรือไม่มีเลข (OTHR) · ไม่รู้ชนิดไม่มีเลข = บล็อก · TXID ใช้สาขาของผู้ติดต่อ · วันที่ใบเดิมตามวันไทย (≥ 17:00Z = วันถัดไป เหมือน IssueDateTime) | `EtaxXmlRound250Tests.Buyer_ชนิด_checksum_สาขา_สองทิศ` (15 แถว) · `TXID_เลข18หลัก…` · `ใบลดหนี้อ้างวันที่ใบเดิม_…` |
+| (ต่อยอด 4) `MayBeCostSource` = SignFor ทุกฝั่ง · ลบถาวรใบขายไม่รอคีย์ผู้เขียนต้นทุน / ใบซื้อรอ | `GateOppositeDirectionRound250Tests.MayBeCostSource_…` · Db `Purge_sale_document_does_not_wait_for_cost_source_key_purchase_document_does` |
+| (ต่อยอด 5) checker: settings_reader ทุก property ยกเว้นรายการระบบ · contact_picker ตัวเลือกคงที่ ≥ 2 ที่ไม่ใช่ id · deep_link `?a=1#k=` + relative · form_label/modal_table parse ล้ม = ฟ้อง | `--self-test` ของแต่ละตัว |
 
 ## รอบ 251 WP-07 — งานค้างรอบ 248 Autopilot (`erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-07 · A B-12/B-16/B-17/F-06/B-18/B-19)
 

@@ -30,9 +30,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WWW = os.path.join(ROOT, "Accounting", "wwwroot")
 
 # ลิงก์ที่มี query string ชี้ไปหน้า .html ในเรพ
-LINK = re.compile(r'["\'`](/[A-Za-z0-9_\-./]*?\.html)\?([^"\'`\s>]+)')
+# ฝ่ายค้าน WP-04 ต่อยอด: รวมลิงก์ relative (`b.html?x=` · `../pages/b.html?x=`) — resolve จากโฟลเดอร์ของไฟล์ต้นทาง
+LINK = re.compile(r'["\'`]([A-Za-z0-9_\-./]*?\.html)\?([^"\'`\s>]+)')
 # ลิงก์แบบ hash ที่มีชื่อคีย์: "/pages/billing.html#tab=..."
-LINK_HASH = re.compile(r'["\'`](/[A-Za-z0-9_\-./]*?\.html)#([A-Za-z0-9_]+)=')
+LINK_HASH = re.compile(r'["\'`]([A-Za-z0-9_\-./]*?\.html)(?:\?[^"\'`\s>#]*)?#([A-Za-z0-9_]+)=')   # รวม ?a=1#k=v
 # ฝั่งอ่าน: params.get('x') · qs.get("x") · searchParams.get(`x`)
 READ = re.compile(r'\.get\(\s*[\'"`]([A-Za-z0-9_]+)[\'"`]\s*\)')
 
@@ -74,6 +75,13 @@ def strip_comments(text):
     return "".join(out)
 
 
+def resolve(src, path):
+    """path ของลิงก์ ⇒ path สัมพัทธ์ใต้ wwwroot (ขึ้นต้น / = จากราก · อื่น = จากโฟลเดอร์ของไฟล์ต้นทาง)"""
+    if path.startswith("/"):
+        return path.lstrip("/")
+    return os.path.normpath(os.path.join(os.path.dirname(src), path)).replace(os.sep, "/")
+
+
 def analyse(files):
     """files: {path สัมพัทธ์ใต้ wwwroot: เนื้อไฟล์ดิบ} ⇒ (จำนวนหน้า, จำนวนลิงก์, [(src, line, target, name, kind)])"""
     pages = {}        # หน้า → ชุดชื่อ param ที่อ่าน
@@ -85,7 +93,7 @@ def analyse(files):
             pages[rel] = set(READ.findall(clean))
             page_text[rel] = clean
         for m in LINK.finditer(clean):
-            target = m.group(1).lstrip("/")
+            target = resolve(rel, m.group(1))
             line = clean.count("\n", 0, m.start()) + 1
             for pair in re.split(r"[&;]", m.group(2).split("#")[0]):
                 name = pair.split("=")[0].strip()
@@ -94,7 +102,7 @@ def analyse(files):
                     continue
                 sources.append((rel, line, target, name, "query"))
         for m in LINK_HASH.finditer(clean):
-            sources.append((rel, clean.count("\n", 0, m.start()) + 1, m.group(1).lstrip("/"), m.group(2), "hash"))
+            sources.append((rel, clean.count("\n", 0, m.start()) + 1, resolve(rel, m.group(1)), m.group(2), "hash"))
 
     problems = []
     for src, line, target, name, kind in sources:
@@ -145,6 +153,16 @@ def self_test():
     _, _, p3 = analyse({"pages/a.html": link, "pages/b.html": reader, "pages/q.html": "<script>p.get('other');</script>"})
     if not any(k == "query" for *_x, k in p3):
         fails.append("query เดิม (ปลายทางไม่อ่าน id) แล้วไม่ฟ้อง — ถดถอย")
+    # ฝ่ายค้าน WP-04 ต่อยอด: ?a=1#k=v และลิงก์ relative
+    _, _, p5 = analyse({"pages/a.html": '<a href="/pages/b.html?x=1#tab=u">x</a>', "pages/b.html": "<script>p.get('x'); const t = 'view=';</script>"})
+    if not any(k == "hash" for *_x, k in p5):
+        fails.append("ลิงก์ ?a=1#k=v ที่ปลายทางไม่อ่าน hash ไม่ถูกฟ้อง")
+    _, _, p6 = analyse({"pages/a.html": '<a href="q.html?id=1">x</a>', "pages/q.html": "<script>p.get('other');</script>"})
+    if not any(t == "pages/q.html" for _s, _l, t, _n, _k in p6):
+        fails.append("ลิงก์ relative (q.html?id=) ที่ปลายทางไม่อ่าน id ไม่ถูกฟ้อง")
+    _, _, p7 = analyse({"pages/a.html": '<a href="q.html?id=1">x</a>', "pages/q.html": "<script>p.get('id');</script>"})
+    if p7:
+        fails.append(f"ลิงก์ relative ที่ปลายทางอ่านครบถูกฟ้อง: {p7}")
     _, _, p4 = analyse({"pages/a.html": "<!-- ไม่มีลิงก์ --><script>// '/pages/b.html#tab=x'\n</script>", "pages/b.html": "<p></p>"})
     if p4:
         fails.append("ลิงก์ในคอมเมนต์ถูกนับ")

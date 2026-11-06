@@ -78,25 +78,13 @@ ENTITIES = {
                                 ['Accounting/wwwroot/admin/platform-billing.html']),
     # รอบ 250 WP-04 ข้อ 10 (AUDIT_249 B F-7): ค่าตั้งต่อรายการประจำ/ผู้ติดต่อ/ตารางส่งอีเมล/บัญชีธนาคาร — เฉพาะ property ที่เป็น "ค่าตั้ง"
     # (ข้อมูลทะเบียน/สถานะที่ระบบเขียนเอง/ตารางเวลารัน ไม่นับ) · หน้าแก้ = recurring.html / contacts.html / email-schedule.html / bank.html ·
-    # ตอนขยายพบ 4 ช่องที่ไม่มีผู้อ่านอยู่ก่อนแล้ว (ไม่ใช่ช่องใหม่ — เข้า baseline พร้อมหมายเหตุ · ส่งเจ้าของตัดสินต่อสาย/ลบ): EmailScheduleRule.AudienceFilter ·
-    # RepeatEveryDays · RecurringTransaction.NotifyBeforeRun · NotifyDaysBefore — ช่องอื่นทุกช่องมีผู้อ่านแล้ว · ช่องใหม่ที่ไม่ต่อสาย = ฟ้อง
-    'RecurringTransaction': ('Accounting/Models/Entities/RecurringTransaction.cs',
-                             {'NotifyBeforeRun', 'NotifyDaysBefore', 'AutoApprove', 'AutoSendEmail', 'LateFeeEnabled', 'LateFeeRatePerDay',
-                              'LateFeeGraceDays', 'LateFeeMaxPercent', 'PaymentMode', 'PayLinkChannelsJson', 'AutoApprovePolicyJson',
-                              'PostPayEmailReceipt', 'PostPayIncludePartial', 'PreferredDay', 'MaxRuns'},
-                             ['Accounting/wwwroot/pages/recurring.html']),
-    'Contact': ('Accounting/Models/Entities/Document.cs',
-                {'DefaultArAccountId', 'DefaultApAccountId', 'DefaultIrGrAccountId', 'DefaultIssueTaxInvoice', 'WhtBorneByContractDefault',
-                 'PaymentDueDays', 'PaymentMode', 'PayLinkChannelsJson', 'AutoApprovePolicyJson', 'PostPayEmailReceipt',
-                 'PostPayIncludePartial', 'DocumentLanguage', 'CreditLimit'},
-                ['Accounting/wwwroot/pages/contacts.html']),
-    'EmailScheduleRule': ('Accounting/Models/Entities/EmailSchedule.cs',
-                          {'IsActive', 'OffsetDays', 'SendAtHour', 'RepeatEveryDays', 'SubjectTemplate', 'BodyTemplate', 'BccEmails',
-                           'DayOfMonth', 'AudienceFilter', 'AttachPayLink', 'PayLinkChannelsJson', 'PostPayEmailReceipt', 'PostPayIncludePartial'},
-                          ['Accounting/wwwroot/pages/email-schedule.html']),
-    'BankAccount': ('Accounting/Models/Entities/BankAccount.cs',
-                    {'PromptPayId', 'PaymentQrSource', 'PaymentQrImagePath', 'LinkedAccountId', 'IsActive', 'Currency'},
-                    ['Accounting/wwwroot/pages/bank.html']),
+    # ตอนขยายพบ 4 ช่องไม่มีผู้อ่านอยู่ก่อน ⇒ ต่อยอด: RepeatEveryDays (OverdueReminderSchedule) · NotifyBeforeRun/NotifyDaysBefore (RecurringUpcomingNotice)
+    # ต่อสายแล้ว · AudienceFilter เลิกใช้ (ไม่มีหน้า/API/ผู้อ่าน · คอลัมน์คงไว้เพราะ schema) — แถวเดียวที่เหลือใน baseline พร้อมหมายเหตุ deprecated
+    # ฝ่ายค้าน WP-04 ต่อยอด ข้อ 5: "ทุก property ยกเว้นรายการระบบ" (None + SYSTEM_PROPS) — ช่องค่าตั้งใหม่ของ 4 entity นี้ถูกตรวจเองโดยไม่ต้องจำมาเพิ่มชื่อ
+    'RecurringTransaction': ('Accounting/Models/Entities/RecurringTransaction.cs', None, ['Accounting/wwwroot/pages/recurring.html']),
+    'Contact': ('Accounting/Models/Entities/Document.cs', None, ['Accounting/wwwroot/pages/contacts.html']),
+    'EmailScheduleRule': ('Accounting/Models/Entities/EmailSchedule.cs', None, ['Accounting/wwwroot/pages/email-schedule.html']),
+    'BankAccount': ('Accounting/Models/Entities/BankAccount.cs', None, ['Accounting/wwwroot/pages/bank.html']),
     'StaffDailySummaryConfig': ('Accounting/Models/Entities/StaffDailySummary.cs',
                                 {'Enabled', 'SendAtLocal', 'Sections', 'RecipientUserIds', 'RecipientRoles'},
                                 ['Accounting/wwwroot/pages/settings.html', 'Accounting/wwwroot/js/staff-daily-summary.js']),
@@ -113,6 +101,17 @@ ENTITIES = {
 # property ที่ไม่ใช่ "ค่าตั้ง" ของทุก entity (กุญแจ · audit · navigation)
 NOT_SETTINGS = {'Id', 'CompanyId', 'Company', 'CreatedAt', 'UpdatedAt', 'CreatedBy', 'UpdatedBy', 'IsDeleted',
                 'SiteId', 'Site', 'SubscriptionId', 'Subscription', 'PropertyId', 'BranchId', 'Branch'}
+
+# property ที่ไม่ใช่ "ค่าตั้งที่ผู้ใช้ตั้ง" ของ entity ที่ตรวจแบบทุก property (ฝ่ายค้าน WP-04 ต่อยอด ข้อ 5) — สถานะ/ผลรัน/ยอดที่ระบบเขียนเอง ·
+# ข้อมูลทะเบียน (ชื่อ ที่อยู่ ติดต่อ) ไม่ใช่ค่าตั้ง · เพิ่มแถวต้องมีเหตุผลว่า "ระบบเขียนเอง/เป็นข้อมูล ไม่ใช่ตัวเลือกพฤติกรรม"
+SYSTEM_PROPS = {
+    'RecurringTransaction': {'LastRunDate', 'TotalRuns', 'LastRunError', 'LastRunErrorAt', 'LastRunNotice', 'LastRunOutcome',
+                             'LastDocumentId', 'UpcomingRunNotifiedFor', 'NextRunDate', 'Status'},
+    'Contact': {'LoyaltyPoints', 'LastVisitAt', 'TotalVisitCount', 'SignLinkLastRecipients', 'ExternalId', 'ExternalSystem',
+                'LineUserId', 'IsWalkInCustomer'},
+    'EmailScheduleRule': {'CreatedByName'},
+    'BankAccount': {'CurrentBalance', 'StatementBalance', 'StatementBalanceDate', 'StatementImportedAt', 'PaymentQrUploadedAt'},
+}
 
 # property "สถานะ" ที่ระบบเขียนเอง (ผลทดสอบการเชื่อมต่อ ฯลฯ) — ไม่ใช่ค่าที่ผู้ใช้ตั้ง จึงไม่อยู่ในขอบเขต
 STATUS_PROP_RE = re.compile(r'(LastTestedAt|LastTestStatus|Configured|LastFeedbackTrainingAt)$')
@@ -225,7 +224,7 @@ def entity_props(root, cls, rel, only, entity_names=frozenset()):
             m = PROP_RE.search(line)
             if m:
                 typ, name = m.group(1).strip(), m.group(2)
-                if (name not in NOT_SETTINGS and not STATUS_PROP_RE.search(name) and not NAV_TYPE_RE.match(typ)
+                if (name not in NOT_SETTINGS and name not in SYSTEM_PROPS.get(cls, ()) and not STATUS_PROP_RE.search(name) and not NAV_TYPE_RE.match(typ)
                         and typ.rstrip('?') not in entity_names and (only is None or name in only)):
                     props.append((name, typ))
         depth += line.count('{') - line.count('}')

@@ -6708,3 +6708,12 @@ _รอบ 251 WP-07 แก้ผลฝ่ายค้าน (2026-11-06 · ข�
 (5) `EtaxAutoIssueScope.PredictForUnissued` — ชนิดที่รูปแบบใบเสร็จตัดสินตอนอนุมัติ = ⓘ "ตรวจตอนอนุมัติ" (ไม่แดงหลอก) · (6) ตารางระดับถามสิทธิ์ก่อนรวบรวม + โหลดข้อเท็จจริงบริษัทครั้งเดียว ·
 (7) ด่านงวดปิดตอนสร้างเอกสารเทียบวันไทย (เดิมเวลาดิบ — บ่ายวันสุดท้ายของงวดปิดหลุด) · (8) PAY-QR ใช้ `ShowBankQr` · (9) สำเนาลับจากกฎที่ส่งจริง ·
 R251 +2 กติกา (LoadSharedFactsAsync · CreateDocumentAsync) + เคส R251h–o · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3c8c2c3d_
+
+_รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน 26a06169 · 2026-11-06):
+(1) **ต่อสาย** `EmailScheduleRule.RepeatEveryDays` — ทวงเกินกำหนดส่งซ้ำทุก N วัน (`Helpers/OverdueReminderSchedule` · กุญแจครั้งแรกเดิม · ครั้งซ้ำมีวันที่) · 0 = เหมือนเดิม.
+(2) **ต่อสาย** `RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore` — กระดิ่งผู้สร้างรายการ N วันก่อนรอบ (`recurring.upcoming_run` · คอลัมน์ใหม่ `UpcomingRunNotifiedFor`
+compare-and-set) + ช่องบน recurring.html (เดิมส่ง true/1 ตายตัว) · ⚠️ รายการเดิมทุกตัวเก็บ true/1 ไว้ (UI เดิมตายตัว) ⇒ จะเริ่มได้กระดิ่ง 1 วันก่อนรอบ — ปิดได้ที่รายการ ·
+`AudienceFilter` เลิกใช้ (ไม่รับค่า · baseline หมายเหตุ deprecated).
+(3) `EtaxPartyTaxIdGuard.Buyer(name, taxId, contactType, branchCode)` — ชนิด · checksum · สาขาของเลข 18 หลัก · บุคคลไม่มีเลข = OTHR · TXID ใช้สาขาของผู้ติดต่อ ·
+วันที่ใบเดิมของ CN/DN = วันไทย (สอดคล้อง +07:00). (4) `MayBeCostSource` ครอบทุกฝั่ง + Db test ลบถาวรใบขาย. (5) checker 5 จุด (ดู TEST_PLAN).
+(6) CN/DN ≥ 17:00Z. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 74a2d1f6_

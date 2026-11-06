@@ -73,11 +73,12 @@ class _Scan(HTMLParser):
 def violations(html):
     """จำนวนตารางกว้างใน modal-body ที่ไม่ห่อ table-container"""
     p = _Scan()
-    try:
-        p.feed(html)
-    except Exception:
-        return 0
+    p.feed(html)   # ฝ่ายค้าน WP-04 ต่อยอด: parse ล้ม = ฟ้อง (ผู้เรียกจด) — ห้ามกลืนเป็น "0 จุด"
+    p.close()
     return sum(1 for in_modal, wrapped, cols, _d in p.tables if in_modal and not wrapped and cols >= MIN_COLUMNS)
+
+
+PARSE_ERRORS = []
 
 
 def scan():
@@ -89,7 +90,11 @@ def scan():
                 continue
             path = os.path.join(base, f)
             rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
-            n = violations(open(path, encoding="utf-8", errors="ignore").read())
+            try:
+                n = violations(open(path, encoding="utf-8", errors="ignore").read())
+            except Exception as e:   # อ่าน/parse ไม่ได้ = ตรวจไม่ได้ ⇒ ล้มดัง ไม่ใช่ผ่าน
+                PARSE_ERRORS.append(f"{rel}: {type(e).__name__}: {e}")
+                continue
             if n:
                 counts[rel] = n
     return counts
@@ -116,6 +121,11 @@ def self_test():
         fails.append("table-container นอก modal-body ถูกนับว่าห่อ")
     if violations(f'<div class="modal-body"><script>const t = `{wide}`;</script></div>') != 0:
         fails.append("ตารางใน script ถูกนับ")
+    try:
+        violations(None)   # อินพุตที่ parse ไม่ได้ต้องโยน (ไม่ใช่คืน 0 จุดเงียบ)
+        fails.append("อินพุตที่ parse ไม่ได้ถูกกลืนเป็นผ่าน")
+    except Exception:
+        pass
     for f in fails:
         print("❌ self-test modal_table_container_check: " + f)
     if not fails:
@@ -134,6 +144,10 @@ def main(argv):
             json.dump(dict(sorted(counts.items())), fh, ensure_ascii=False, indent=1)
         print(f"เขียน baseline {len(counts)} ไฟล์ · {sum(counts.values())} จุด")
         return 0
+    if PARSE_ERRORS:
+        for e in PARSE_ERRORS:
+            print(f"❌ parse ไม่ได้ (ตรวจไม่ได้ = ไม่ผ่าน): {e}")
+        return 1
     base = json.load(open(BASELINE, encoding="utf-8")) if os.path.exists(BASELINE) else {}
     bad = [(f, n, base.get(f, 0)) for f, n in sorted(counts.items()) if n > base.get(f, 0)]
     for f, n, b in bad:

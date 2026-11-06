@@ -160,17 +160,60 @@ public class EtaxXmlRound250Tests
     public void Seller_เลข13หลักเท่านั้น(string? taxId, bool ok)
         => Assert.Equal(ok, EtaxPartyTaxIdGuard.Seller(taxId) == null);
 
+    // รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน): ชนิดผู้ติดต่อ · checksum · สาขาของเลข 18 หลัก · บุคคลธรรมดาไม่มีเลข = ผ่าน (ETDA OTHR "N/A")
     [Theory]
-    [InlineData(BuyerTaxId, true)]
-    [InlineData(BuyerTaxId + "00003", true)]  // 18 = เลข + สาขาที่ผู้ใช้ต่อมาเอง
-    [InlineData("010753700001", false)]       // 12 หลัก — ตัวประกอบ TXID จะเติมศูนย์แต่งเลข ⇒ ต้องบล็อกก่อน
-    [InlineData("0107537000017000", false)]   // 16 หลัก
-    [InlineData("  ", false)]
-    [InlineData(null, false)]
-    public void Buyer_13หรือ18หลัก_อื่นบล็อกพร้อมชื่อผู้ซื้อ(string? taxId, bool ok)
+    [InlineData(ContactType.JuristicPerson, BuyerTaxId, null, true)]
+    [InlineData(ContactType.JuristicPerson, BuyerTaxId + "00003", "00003", true)]   // 18 = เลข + สาขาตรงกับช่องสาขา
+    [InlineData(ContactType.JuristicPerson, BuyerTaxId + "00003", "3", true)]       // สาขา "3" normalize = 00003
+    [InlineData(ContactType.JuristicPerson, BuyerTaxId + "00003", "00004", false)]  // สาขาไม่ตรง ⇒ PDF/XML คนละสาขา
+    [InlineData(ContactType.JuristicPerson, BuyerTaxId + "00000", null, true)]      // สำนักงานใหญ่
+    [InlineData(ContactType.JuristicPerson, "0107537000018", null, false)]          // checksum ผิด
+    [InlineData(ContactType.JuristicPerson, "010753700001", null, false)]           // 12 หลัก — ตัวประกอบ TXID เคยเติมศูนย์แต่งเลข
+    [InlineData(ContactType.JuristicPerson, "0107537000017000", null, false)]       // 16 หลัก
+    [InlineData(ContactType.JuristicPerson, "  ", null, false)]                     // นิติบุคคลต้องมีเลข
+    [InlineData(ContactType.GovernmentAgency, null, null, false)]
+    [InlineData(ContactType.Unknown, null, null, false)]                            // ไม่รู้ชนิด ⇒ ไม่เดาว่าไม่จด VAT
+    [InlineData(ContactType.Individual, null, null, true)]                          // บุคคลไม่จด VAT ไม่มีเลข ⇒ OTHR
+    [InlineData(ContactType.Individual, "1101700207030", null, true)]
+    [InlineData(ContactType.Individual, "1101700207031", null, false)]              // checksum ผิด
+    [InlineData(ContactType.Individual, "1101700207030" + "00000", null, false)]    // 18 หลักไม่ใช่รูปของบุคคล
+    public void Buyer_ชนิด_checksum_สาขา_สองทิศ(ContactType type, string? taxId, string? branch, bool ok)
     {
-        var problem = EtaxPartyTaxIdGuard.Buyer("บริษัท ผู้ซื้อ 250 จำกัด", taxId);
+        var problem = EtaxPartyTaxIdGuard.Buyer("บริษัท ผู้ซื้อ 250 จำกัด", taxId, type, branch);
         Assert.Equal(ok, problem == null);
         if (!ok && !string.IsNullOrWhiteSpace(taxId)) Assert.Contains("บริษัท ผู้ซื้อ 250 จำกัด", problem);
+    }
+
+    [Fact]
+    public void TXID_เลข18หลักใช้13หลักแรกบวกสาขาของผู้ติดต่อ_บุคคลไม่มีเลขเป็นOTHR()
+    {
+        var x = Root(Doc(DocumentType.TaxInvoice, buyerTaxId: BuyerTaxId + "00003", buyerBranch: "00003"));
+        Assert.Equal(BuyerTaxId + "00003", Child(Child(One(x, "BuyerTradeParty"), "SpecifiedTaxRegistration"), "ID").Value);
+        // ตัวประกอบไม่เชื่อ 5 หลักท้ายของเลข — ใช้สาขาของผู้ติดต่อ (ตรงกับที่ PDF พิมพ์) · ด่านบล็อกกรณีไม่ตรงก่อนถึงที่นี่
+        var y = Root(Doc(DocumentType.TaxInvoice, buyerTaxId: BuyerTaxId + "00003", buyerBranch: "00004"));
+        Assert.Equal(BuyerTaxId + "00004", Child(Child(One(y, "BuyerTradeParty"), "SpecifiedTaxRegistration"), "ID").Value);
+        // ทิศตรงข้าม: บุคคลธรรมดาไม่มีเลข ⇒ OTHR "N/A" (ไม่แต่งเลข)
+        var person = Child(Child(One(Root(Doc(DocumentType.TaxInvoice, contactType: ContactType.Individual, buyerTaxId: "")), "BuyerTradeParty"),
+            "SpecifiedTaxRegistration"), "ID");
+        Assert.Equal("OTHR", person.Attribute("schemeID")!.Value);
+        Assert.Equal("N/A", person.Value);
+    }
+
+    // ฝ่ายค้าน WP-04 ข้อ 6: วันที่ใบเดิมของใบลด/เพิ่มหนี้ต้องเป็นวันเดียวกับ IssueDateTime (+07:00) ใน XML ของใบเดิม — ค่าที่เก็บตามกติกา
+    // (ThaiDate.CalendarDateUtc: วันไทย ณ 00:00Z) ได้วันเดิม (ทิศที่ต้องไม่ถูกแตะ) · แถวเก่าที่เก็บเวลาจริง ≥ 17:00Z = วันไทยถัดไป
+    [Theory]
+    [InlineData(0, "20261015")]
+    [InlineData(16, "20261015")]
+    [InlineData(17, "20261016")]
+    [InlineData(23, "20261016")]
+    public void ใบลดหนี้อ้างวันที่ใบเดิม_วันเดียวกับIssueDateTimeของใบเดิม(int hourUtc, string expected)
+    {
+        var original = Doc(DocumentType.TaxInvoice);
+        original.DocumentDate = new DateTime(2026, 10, 15, hourUtc, 0, 0, DateTimeKind.Utc);
+        var x = Root(Doc(DocumentType.CreditNote), original);
+        Assert.Equal(expected, One(One(x, "AdditionalReferencedDocument"), "DateTimeString").Value);
+        // วันเดียวกับที่ XML ของใบเดิมประกาศ
+        var originalIssue = Child(One(Root(original), "ExchangedDocument"), "IssueDateTime").Value;
+        Assert.StartsWith($"{expected[..4]}-{expected[4..6]}-{expected[6..]}", originalIssue);
     }
 }

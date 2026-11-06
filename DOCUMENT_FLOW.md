@@ -2922,6 +2922,14 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ตั้งค่า: การ์ด "ลิงก์ให้ลูกค้าเซ็น" (`/api/companies/{id}/sign-requests/settings` · บันทึก/ออกรหัสลับ = เจ้าของเท่านั้น)
 - เทสต์ `SignRequestRound240Tests` · Db `SignRequestRound240DbTests` · ล็อก `tools/required_call_site_check.py` R240 — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 2.12g-0 ตารางส่งอีเมล "เกินกำหนด" ส่งซ้ำทุก N วัน · แจ้งเตือนก่อนรอบรายการประจำ (รอบ 250 WP-04 ต่อยอด)
+- `EmailScheduleRule.RepeatEveryDays` (เดิมเก็บ+แสดงแต่ไม่มีผล): `ScanDueSoonAndOverdueAsync` ส่งเมื่อเกินกำหนดครบ Offset แล้วทุก N วัน
+  (`Helpers/OverdueReminderSchedule`) จนกว่าจะชำระครบ · ครั้งแรกกุญแจกันซ้ำเดิม `overdue-{Offset}` · ครั้งซ้ำ `overdue-{Offset}-{yyyyMMdd}` · 0 = ครั้งเดียวเหมือนเดิม
+- `RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore` (เดิม UI ส่ง true/1 ตายตัวและไม่มีผล): งานพื้นหลังเดิมของรายการประจำแจ้งกระดิ่งผู้สร้างรายการ
+  (`recurring.upcoming_run`) 1…N วันก่อนรอบ · รอบละครั้ง (`UpcomingRunNotifiedFor` compare-and-set) · ช่องบน `recurring.html` ขั้นที่ 4 · N นอก 0–30 = 400
+- `EmailScheduleRule.AudienceFilter` เลิกใช้ (ไม่มีหน้า/API/ผู้อ่าน · คอลัมน์คงไว้)
+- Last verified: commit 74a2d1f6
+
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 
 **สภาพก่อนรอบนี้ (สำรวจ):**
@@ -4632,6 +4640,10 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   และไม่ได้ป้ายซ้ำ — ตัวกันซ้ำ `NoteAlreadyStamped` จำทั้งข้อความใหม่และ `LegacyEtaxSkippedAbbreviatedNote` · เทสต์ `EtaxSkippedAbbreviatedNoteTests` · Last verified 2026-10-13 `commit 973d4913`
 - **Schema**: UBL 2.1 + ETDA profile (DocumentTypeCode T01–T04,
   ISO 8601 +07:00, CurrencyCode=THB)
+- **เลขผู้ขาย/ผู้ซื้อ (รอบ 250 WP-04 ต่อยอด · `Helpers/EtaxPartyTaxIdGuard` ตัวเดียว)**: ผู้ขาย 13 หลัก · ผู้ซื้อนิติบุคคล/รัฐ/ไม่รู้ชนิด ต้องมีเลข 13 หลัก (checksum)
+  หรือ 18 หลักที่ 5 หลักท้าย = รหัสสาขาของผู้ติดต่อ · บุคคลธรรมดา 13 หลัก (checksum) หรือ**ไม่มีเลข = ผ่าน** (ผู้ซื้อไม่จด VAT ⇒ XML `OTHR` "N/A") ·
+  TXID ของผู้ซื้อ = 13 หลักแรก + สาขาของผู้ติดต่อเสมอ (PDF กับ XML สาขาเดียวกัน) · ใบลด/เพิ่มหนี้อ้างวันที่ใบเดิมเป็นวันปฏิทินไทย
+  (`ThaiDate.CalendarDateUtc` — วันเดียวกับ IssueDateTime +07:00 ของใบเดิม)
 - **Signing**: private key เก็บใน `Company.EtaxPrivateKeyBlobEncrypted`
   (AES-256 at rest); key ≥ 2048-bit; CA ที่ ETDA รับรอง
 - **Storage**: `EtaxInvoice` entity → `XmlContent` + `EtaxRefNumber` +
