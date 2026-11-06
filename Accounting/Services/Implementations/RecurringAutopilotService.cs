@@ -241,7 +241,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         var choice = AutopilotSettingsResolver.Resolve(null, recurringLayer, contactLayer, settings?.PayLinkDefaultEnabled ?? false,
             DocumentPayLinkPolicy.ParseChannels(settings?.PayLinkDefaultChannelsJson));
         var allowed = DocumentPayLinkPolicy.Allowed(available, choice.Channels, null);
-        var saleSide = DocumentPayLinkPolicy.IsSaleSide(docType, null);
+        var saleSide = DocumentPayLinkPolicy.IsSaleSide(docType, null, null, false);   // เทมเพลต: ใบเพิ่มหนี้ไม่มีต้นทาง/ฝั่ง ⇒ ไม่ใช่ (ไม่แนบลิงก์)
         var effectiveMode = AutopilotSettingsResolver.Normalize(r.PaymentMode) ?? AutopilotSettingsResolver.Normalize(contact?.PaymentMode);
         var hasRecurringRule = await _db.EmailScheduleRules.AsNoTracking()
             .AnyAsync(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == "RecurringInvoiceCreated"

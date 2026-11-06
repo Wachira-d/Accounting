@@ -50,15 +50,6 @@ public static class EtaxByEmailFormat
     /// <summary>รหัสกฎของการปฏิเสธเชิงรูปแบบ (ลง audit/ตอบหน้าเว็บ)</summary>
     public const string RuleCode = "ETAX-EMAIL-FORMAT";
 
-    /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 7 · คำตัดสิน §2 #14 · C F4): ความยาวสูงสุดของรหัสประทับเวลา ETDA ที่เก็บ (คอลัมน์ <c>EtdaTimestampToken varchar(500)</c>)</summary>
-    public const int TimestampTokenMaxLength = 500;
-
-    /// <summary>รหัสประทับเวลายาวเกินที่เก็บได้ ⇒ ปฏิเสธพร้อมทางไปต่อ (เดิมตัดเหลือ 500 ตัวเงียบ = หลักฐานขาด) · null = เก็บได้/ไม่กรอก</summary>
-    public static string? TimestampTokenRefusal(string? token)
-        => token != null && token.Trim().Length > TimestampTokenMaxLength
-            ? $"รหัสประทับเวลายาว {token.Trim().Length} ตัวอักษร เกินที่บันทึกได้ ({TimestampTokenMaxLength}) — ระบบไม่ตัดทิ้งเอง (หลักฐานจะขาด) · "
-              + "เว้นช่องรหัสว่างไว้ แล้วใช้ไฟล์หลักฐานที่แนบเป็นหลักฐานหลัก"
-            : null;
     /// <summary>รหัสกฎของ "ส่งซ้ำต้องยืนยัน" (409 — หน้าเว็บถามแล้วส่งใหม่พร้อมยืนยัน)</summary>
     public const string ResendRuleCode = "ETAX-EMAIL-RESEND";
 

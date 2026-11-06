@@ -386,6 +386,9 @@ public static class SettlementPaidReissue
         // "หักหลัง VAT" + แยกยอดจ่ายจริงตามแหล่ง เป็นเนื้อเงินของการขายเดียวกัน — ตามไปคู่กับ ActualPaidAmount/TotalAmount
         // (เดิมใบแทนได้ 0/null ⇒ ยอดชำระบนใบแทน = TotalAmount เต็ม ไม่ตรงยอดจ่ายจริงที่ตามไป · JE ย้ายมาพร้อมขาหักหลัง VAT แต่หัวใบไม่มี)
         nameof(Document.PostVatDeductionAmount), nameof(Document.PostVatDeductionAccountId), nameof(Document.PaymentSourceSplitJson),
+        // รอบ 250 WP-02 (ฝ่ายค้าน ข้อ 1): ใบแทน = การขายเดียวกัน ⇒ รายการประจำที่สร้างใบตามไป (ชั้น "รายการประจำ" ของค่าตั้งงานหลังรับชำระ) ·
+        // หมายเหตุ: AutoSendRuleId ไม่ตามไป (อยู่ใน NotCarried) ⇒ ชั้น "ตารางส่ง" หายบนใบแทน — ใบแทนใช้ชั้นรายการประจำ › ผู้ติดต่อ › บริษัท
+        nameof(Document.RecurringTransactionId),
     };
 
     /// <summary>ช่องของเอกสารที่ "ไม่ตามไป" — ตัวตน/เวลา/เลข · สถานะ (ตั้งด้วย <see cref="ReplacementStatus"/>) · หลักฐานของลูกค้าเดิม (ลายเซ็นรับของ ·

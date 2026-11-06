@@ -51,8 +51,14 @@ public static class PostPaymentAutomationPolicy
         if (source == PaymentEntrySource.MultiDoc) return new EnqueueDecision(EnqueueKind.None, MultiDocReason);
         if (!s.Any) return new EnqueueDecision(EnqueueKind.None, "ปิดงานอัตโนมัติหลังรับชำระ");
         if (OwnReceiptPathReason(source) is string own) return new EnqueueDecision(EnqueueKind.Skipped, own);
+        // ฝ่ายค้าน WP-02 ข้อ 4: นำเข้าการชำระย้อนหลังทั้งไฟล์ตอนเปิดส่งใบเสร็จอัตโนมัติ ⇒ ลูกค้าได้อีเมลใบเสร็จเก่าเป็นชุด — ค่าตั้งต้นไม่ส่ง
+        // (แถว Skipped พร้อมเหตุ) · ผู้นำเข้าเลือก "ส่งใบเสร็จ" ในตัวเลือกของชุดเอง ⇒ ImportSendReceipt (เดินเต็ม)
+        if (source == PaymentEntrySource.Import) return new EnqueueDecision(EnqueueKind.Skipped, ImportNoSendReason);
         return new EnqueueDecision(EnqueueKind.Pending, null);
     }
+
+    public const string ImportNoSendReason =
+        "รับชำระที่นำเข้าจากไฟล์ — ไม่ส่งใบเสร็จถึงลูกค้าอัตโนมัติ (กันส่งใบเสร็จย้อนหลังเป็นชุด) · ถ้าต้องการให้เลือก \"ส่งใบเสร็จถึงลูกค้า\" ตอนนำเข้า หรือส่งเองจากหน้าเอกสาร";
 
     /// <summary>ชื่อทางเข้าที่เก็บในแถวงาน (ชื่อ enum) — แถวเก่าเก็บ "manual"/"gateway" ตัวเล็ก ⇒ อ่านแบบไม่สนตัวพิมพ์ · ไม่รู้จัก ⇒ Manual</summary>
     public static PaymentEntrySource ParseSource(string? stored)
@@ -211,7 +217,7 @@ public enum PaymentEntrySource
     Gateway,
     /// <summary>ลงบัญชีรอบโอนของช่องทางขาย (SettlementPostingService)</summary>
     Settlement,
-    /// <summary>ศูนย์นำเข้าไฟล์รับชำระ (PaymentImportTarget)</summary>
+    /// <summary>ศูนย์นำเข้าไฟล์รับชำระ (PaymentImportTarget) — ค่าตั้งต้นไม่ส่งใบเสร็จ (แถว Skipped · ฝ่ายค้าน WP-02 ข้อ 4)</summary>
     Import,
     /// <summary>หน้าร้านออนไลน์/การจองบริการ — มีเส้นออกใบเสร็จของตัวเอง</summary>
     Cms,
@@ -221,6 +227,8 @@ public enum PaymentEntrySource
     PlatformBilling,
     /// <summary>การชำระหลายใบ (CreateMultiDocPaymentAsync) — ไม่ออกใบเสร็จอัตโนมัติ (SettlementReceiptPolicy)</summary>
     MultiDoc,
+    /// <summary>ศูนย์นำเข้าไฟล์รับชำระ ที่ผู้นำเข้าเลือก "ส่งใบเสร็จถึงลูกค้า" ในตัวเลือกของชุด (<c>sendReceipts=true</c>) — เดินเต็ม</summary>
+    ImportSendReceipt,
     /// <summary>ระบบภายนอกผ่าน integration (IntegrationService.ProcessPaymentAsync — ทางเข้าที่ 9 · AUDIT_249_COVERAGE M-3) — บันทึกการชำระเอง
     /// แล้วเรียก <c>IDocumentService.AfterPaymentRecordedAsync</c> (ขั้นหลัง commit ตัวเดียวกับ CreatePaymentAsync)</summary>
     Integration,

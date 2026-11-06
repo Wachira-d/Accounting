@@ -6609,6 +6609,13 @@ CS8604 BatchConvert · literal รหัสในเทสต์ → ค่า�
 เทสต์ `Round250Wp02Tests` (pure) + Db ใน `DocumentAutoSendRound241DbTests`/`ImportAccountingTargetsDbTests` · กติกา R250 ใน `required_call_site_check` (negative test ในตัว) ·
 ฝ่ายค้าน: ทบทวนเองในรอบ (ไม่มีเครื่องมือ subagent ในบริบทนี้) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a40c91e5_
 
+_รอบ 250 WP-02 แก้ผลฝ่ายค้าน 9 ข้อ (2026-11-06): (1) ใบแทนตามไป `RecurringTransactionId` (`AutoSendRuleId` ไม่ตาม — ชั้นตารางหายบนใบแทน) ·
+(2/3) ทิศเงินตัวเดียวกับ JE — `CashFlowDirection.Of` ลำดับ `ResolvePostedSide` + `DocumentService.CashInflowAsync` (JE · ยอดธนาคาร 6 จุด) + `DocumentPayLinkPolicy.IsSaleSide`
+(ลิงก์ · งานหลังรับชำระ) — ใบเพิ่มหนี้ไม่มีต้นทาง+ผู้ขายอย่างเดียว = เงินออก · ใบที่สั่งย้ายฝั่งชนะใบต้นทาง · (4) นำเข้ารับชำระค่าตั้งต้นไม่ส่งใบเสร็จย้อนหลัง (Skipped ·
+`ImportSendReceipt` เมื่อเลือก) · (5) บั๊ก 0.02 ใบมัดจำ ราคารวม VAT — `ComputeReconciledLineAmounts` (แคบ: ราคารวม VAT + ฐานมัดจำ > 0) · หมายเหตุ "ส่วนต่างอยู่ที่ VAT" จริงอีกครั้ง ·
+backlog: ส่วนลดท้ายบิลทั่วไป (golden OCR) · (6) ข้ามอีเมลรายการประจำเฉพาะเมื่อกฎ DocumentApproved เข้าคิวจริง · (7) คำเตือน `[WHT-PAYEE]` ไม่ฟันธง ·
+(8) `EtdaTimestampToken` → text · (9) ชื่อ/เลขผู้จ่ายบนทะเบียนเครดิตภาษีถูกหัก (โหลดเอง + migration เติมแถวเก่า) · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
 _รอบ 250 WP-01 (AUDIT_249 · 2026-11-06): job `dotnet test` รันทุก push บน `claude/**` แล้ว (010f39b0) — รอบแรก (run 42201361957) ล้ม 45 / ผ่าน 20,320 / รวม 20,365
 ⇒ ตัดสินทีละตัวด้วย `git log -S`: **(a) บั๊กโค้ดจริงที่ซ่อนอยู่** — `LodgingTaxInvoiceTimingPolicy` ไม่กันสถานะเช็คอินแล้ว (ใบกำกับล่วงหน้าออกกลางการเข้าพัก) ·
 `IdempotencyKeyPolicy.IsCredentialPath` ตรง "/password" ไม่เคยตรงเส้นจริง (reset/forgot/change-password เข้าระบบคีย์) · `SettlementPaidReissue` ทิ้ง "หักหลัง VAT"/แยกแหล่งจ่ายของใบแทน

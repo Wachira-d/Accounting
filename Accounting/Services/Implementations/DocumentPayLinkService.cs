@@ -133,7 +133,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
     private sealed record DocFacts(Guid Id, Guid CompanyId, Guid ContactId, DocumentType Type, DocumentStatus Status, decimal BalanceDue,
         decimal WithholdingTaxAmount, string? Currency, string DocumentNumber, DateTime DocumentDate, DateTime? DueDate,
         string? PayLinkTokenHash, string? PayLinkTokenProtected, DateTime? PayLinkExpiresAt, DateTime? PayLinkRevokedAt, string? PayLinkChannelsJson,
-        DocumentType? RelatedType)
+        DocumentType? RelatedType, bool? CnDnPurchaseSideOverride, bool ContactSupplierOnly)
     {
         /// <summary>รอบ 250 (WP-02 §2.3): เลขใบกำกับภาษีที่อ้างใบแจ้งหนี้นี้และยังมีผล (โหลดใน <see cref="LoadDocAsync"/> — ตัดสินใน policy ไม่ใช่ service)</summary>
         public string? SupersedingTaxInvoice { get; init; }
@@ -147,7 +147,10 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         var facts = await q.Select(d => new DocFacts(d.Id, d.CompanyId, d.ContactId, d.DocumentType, d.Status, d.BalanceDue, d.WithholdingTaxAmount,
                 d.Currency, d.DocumentNumber, d.DocumentDate, d.DueDate, d.PayLinkTokenHash, d.PayLinkTokenProtected, d.PayLinkExpiresAt, d.PayLinkRevokedAt,
                 d.PayLinkChannelsJson,
-                _db.Documents.Where(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId).Select(r => (DocumentType?)r.DocumentType).FirstOrDefault()))
+                _db.Documents.Where(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId).Select(r => (DocumentType?)r.DocumentType).FirstOrDefault(),
+                d.CnDnPurchaseSideOverride,
+                // ฝ่ายค้าน WP-02 ข้อ 3: ผู้ติดต่อเป็นผู้ขายอย่างเดียว — ข้อเท็จจริงเดียวกับที่ JE รับชำระใช้ตัดสินฝั่ง
+                _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsSupplier && !c.IsCustomer).FirstOrDefault()))
             .FirstOrDefaultAsync(ct);
         if (facts == null) return null;
         // รอบ 250 (WP-02 §2.3): fact "มีใบกำกับอ้างแล้ว" — ตัวโหลดเดียวกับ QR บนกระดาษ/งานหลังรับชำระ
@@ -189,7 +192,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
     }
 
     private static string? Refusal(DocFacts d)
-        => DocumentPayLinkPolicy.IssueRefusal(d.Type, d.Status, d.BalanceDue, DocumentPayLinkPolicy.IsSaleSide(d.Type, d.RelatedType), d.Currency,
+        => DocumentPayLinkPolicy.IssueRefusal(d.Type, d.Status, d.BalanceDue, DocumentPayLinkPolicy.IsSaleSide(d.Type, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly), d.Currency,
             d.SupersedingTaxInvoice);
 
     private async Task<(IReadOnlyList<string> All, IReadOnlyList<string>? CompanyDefault, string? Unavailable)> ChannelsAsync(Guid companyId, CancellationToken ct)

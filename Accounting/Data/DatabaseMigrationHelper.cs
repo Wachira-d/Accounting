@@ -6209,6 +6209,11 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "ByEmailLastSentAt" timestamptz NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampedAt" timestamptz NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaTimestampToken" varchar(500) NULL;""",
+            // รอบ 250 ฝ่ายค้าน WP-02 ข้อ 8: รหัสประทับเวลาของ ETDA ยาวเกิน 500 ได้ ⇒ ขยายเป็น text (varchar→text ไม่เขียนแถวใหม่ · รันซ้ำได้) — เก็บครบแทนการตัด/ปฏิเสธ
+            """ALTER TABLE "EtaxInvoices" ALTER COLUMN "EtdaTimestampToken" TYPE text;""",
+            // รอบ 250 ฝ่ายค้าน WP-02 ข้อ 9: แถวเครดิตภาษีถูกหักที่สร้างจากทางเข้ารับชำระก่อนแก้ — ชื่อผู้จ่ายว่าง (ใบไม่ได้ Include Contact) ⇒ เติมจากผู้ติดต่อของแถว
+            // (บริษัทเดียวกัน · เฉพาะแถวที่ระบบสร้างเอง = ไม่มีเลขที่ 50 ทวิ · ไม่ทับค่าที่มีอยู่ · รันซ้ำได้)
+            """UPDATE "WhtCreditsReceived" w SET "PayerName" = c."Name", "PayerTaxId" = COALESCE(w."PayerTaxId", c."TaxId") FROM "Contacts" c WHERE c."Id" = w."PayerContactId" AND c."CompanyId" = w."CompanyId" AND COALESCE(w."PayerName", '') = '' AND COALESCE(w."CertificateNumber", '') = '' AND c."Name" IS NOT NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampedFileAttachmentId" uuid NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampRecordedBy" varchar(200) NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampRecordedAt" timestamptz NULL;""",

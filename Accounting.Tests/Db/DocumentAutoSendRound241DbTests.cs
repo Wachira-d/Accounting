@@ -483,6 +483,10 @@ public class DocumentAutoSendRound241DbTests
         Assert.NotEmpty(lines);
         Assert.Equal(lines.Sum(l => l.DebitAmount), lines.Sum(l => l.CreditAmount));
         Assert.Equal(1, await check.WhtCreditsReceived.CountAsync(w => w.CompanyId == cid && w.DocumentId == inv.Id));
+        // ฝ่ายค้าน WP-02 ข้อ 9: ทางเข้ารับชำระ (CreatePaymentAsync โหลดใบด้วย FOR UPDATE ไม่มี Contact) — ชื่อ/เลขผู้หักภาษีเราต้องไม่ว่าง
+        var credit = await check.WhtCreditsReceived.AsNoTracking().SingleAsync(w => w.CompanyId == cid && w.DocumentId == inv.Id);
+        Assert.Equal("บริษัท ผู้ซื้อ 241 จำกัด", credit.PayerName);
+        Assert.Equal("0107537000017", credit.PayerTaxId);
         // webhook ซ้ำ ⇒ ไม่บันทึกซ้ำ · ไม่เพิ่มแถวรอ 50 ทวิ
         await Handler(check).HandleSucceededAsync(intent);
         Assert.Equal(1, await check.Payments.CountAsync(p => p.CompanyId == cid && p.DocumentId == inv.Id));
@@ -722,7 +726,7 @@ public class DocumentAutoSendRound241DbTests
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
-        foreach (var source in new[] { PaymentEntrySource.Import, PaymentEntrySource.Settlement, PaymentEntrySource.Integration })
+        foreach (var source in new[] { PaymentEntrySource.ImportSendReceipt, PaymentEntrySource.Settlement, PaymentEntrySource.Integration })
         {
             var s = await SeedAsync(db, "r250-" + source + " " + Guid.NewGuid().ToString("N")[..6]);
             Assert.True(await PostPaymentAutomationService.EnqueueCoreAsync(db, NullLogger.Instance, s.CompanyId, s.Payment.Id, source, null, default));
@@ -849,11 +853,12 @@ public class DocumentAutoSendRound241DbTests
         if (db == null) { _out.WriteLine(Skip); return; }
         var (cid, inv) = await SaleSeedAsync(db, Guid.NewGuid().ToString("N")[..6]);
         using (var req = DbTestDatabase.TryCreateContext()!)
-            Assert.DoesNotContain(await DocSvc(req).PreviewApprovalWarningsAsync(cid, inv.Id), w => w.Contains("ไม่มีหน้าที่หัก"));
+            Assert.DoesNotContain(await DocSvc(req).PreviewApprovalWarningsAsync(cid, inv.Id), w => w.Contains("ตรวจประเภทเงินได้"));
         await db.Contacts.Where(c => c.Id == inv.ContactId).ExecuteUpdateAsync(x => x
             .SetProperty(c => c.ContactType, ContactType.Individual).SetProperty(c => c.TaxId, "1101700207030"));
         using var req2 = DbTestDatabase.TryCreateContext()!;
-        var warn = Assert.Single(await DocSvc(req2).PreviewApprovalWarningsAsync(cid, inv.Id), w => w.Contains("ไม่มีหน้าที่หัก"));
+        var warn = Assert.Single(await DocSvc(req2).PreviewApprovalWarningsAsync(cid, inv.Id), w => w.Contains("ตรวจประเภทเงินได้"));
+        Assert.DoesNotContain("(ไม่มีหน้าที่หัก)", warn);   // ฝ่ายค้าน WP-02 ข้อ 7: ไม่ฟันธง
         Assert.StartsWith(WhtCertIssuePlan.ApprovalWarningPrefix, warn);
     }
 

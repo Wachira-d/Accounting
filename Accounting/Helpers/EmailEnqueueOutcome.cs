@@ -27,9 +27,10 @@ public sealed record EmailEnqueueOutcome(EmailEnqueueKind Kind, string? Reason)
         "ส่งตามกฎ \"เมื่ออนุมัติเอกสาร\" ในหน้าตารางส่งอีเมลแล้ว — ไม่เข้าคิวซ้ำจากรายการประจำ (กันลูกค้าได้อีเมลสองฉบับ)";
 
     /// <summary>ตัดสินว่าต้องข้ามเพราะกฎ DocumentApproved ครอบแล้วไหม — <paramref name="approvedRuleCoversType"/> = มีกฎ DocumentApproved ที่ใช้งานอยู่และชนิดตรง/ว่าง ·
-    /// <paramref name="documentApproved"/> = ใบผ่านการอนุมัติแล้ว (ไม่ใช่ร่าง/รออนุมัติ/ปฏิเสธ)</summary>
-    public static bool SkipForApprovedRule(bool approvedRuleCoversType, bool documentApproved)
-        => approvedRuleCoversType && documentApproved;
+    /// <paramref name="documentApproved"/> = ใบผ่านการอนุมัติแล้ว (ไม่ใช่ร่าง/รออนุมัติ/ปฏิเสธ) ·
+    /// <paramref name="approvedRowQueued"/> = มีแถวคิวของกฎนั้นสำหรับใบนี้จริง (ฝ่ายค้าน WP-02 ข้อ 6 — ตัวเข้าคิวฝั่งอนุมัติกลืนความผิดพลาด ⇒ "มีกฎ" อย่างเดียวไม่พอ)</summary>
+    public static bool SkipForApprovedRule(bool approvedRuleCoversType, bool documentApproved, bool approvedRowQueued)
+        => approvedRuleCoversType && documentApproved && approvedRowQueued;
 
     /// <summary>ตั้งธง/ข้อความเรื่องที่ต้องทำต่อจากผล (ผู้เรียก: <c>RecurringTransactionService</c>) — Failed ⇒ <c>EmailEnqueueFailed</c> + ข้อความ (เฉพาะเมื่อรายการตั้งส่งอีเมล
     /// หรือมีกฎส่ง — ผลมาจากการพยายามส่งจริง) · Skipped/Enqueued ⇒ ไม่ตั้งธง (ทิศตรงข้าม)</summary>

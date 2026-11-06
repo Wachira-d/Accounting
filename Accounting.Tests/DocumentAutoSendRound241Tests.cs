@@ -78,11 +78,16 @@ public class DocumentAutoSendRound241Tests
     [Fact]
     public void ใบเพิ่มหนี้_ดูฝั่งจากใบต้นทาง()
     {
-        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, DocumentType.Invoice));
-        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, null));
-        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, DocumentType.PurchaseInvoice));
-        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.Invoice, null));
-        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.PurchaseInvoice, null));
+        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, DocumentType.Invoice, null, false));
+        // รอบ 250 ฝ่ายค้าน WP-02 ข้อ 3: ไม่มีต้นทาง/ไม่ได้เลือกฝั่ง = ไม่รู้ ⇒ ไม่ใช่ฝั่งขาย (JE รับชำระปฏิเสธอยู่แล้ว) · เลือกฝั่งขาย ⇒ ใช่
+        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, null, null, false));
+        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, null, false, false));
+        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, DocumentType.PurchaseInvoice, null, false));
+        // ผู้ติดต่อเป็นผู้ขายอย่างเดียว + ไม่มีต้นทาง ⇒ ฝั่งซื้อ (ไม่ออกลิงก์) · ผู้ใช้สั่งย้ายเป็นฝั่งขายชนะ
+        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, null, null, true));
+        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, null, false, true));
+        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.Invoice, null, null, false));
+        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.PurchaseInvoice, null, null, false));
     }
 
     // ───────── ยอด + WHT ─────────

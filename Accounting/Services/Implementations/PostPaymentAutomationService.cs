@@ -250,12 +250,14 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         var relatedType = doc.RelatedDocumentId is Guid rel
             ? await _db.Documents.AsNoTracking().Where(r => r.Id == rel && r.CompanyId == cid).Select(r => (DocumentType?)r.DocumentType).FirstOrDefaultAsync(ct)
             : null;
-        var saleSide = DocumentPayLinkPolicy.IsSaleSide(doc.DocumentType, relatedType);
+        var contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c => c.Id == doc.ContactId && c.CompanyId == cid, ct);
+        // ฝ่ายค้าน WP-02 ข้อ 3: ฝั่งของใบเพิ่มหนี้จากตัวตัดสินเดียวกับ JE รับชำระ (ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ขายอย่างเดียว) — ห้ามส่งใบเสร็จให้ผู้ขาย
+        var saleSide = DocumentPayLinkPolicy.IsSaleSide(doc.DocumentType, relatedType, doc.CnDnPurchaseSideOverride,
+            contact is { IsSupplier: true, IsCustomer: false });
         var settings = await SettingsForAsync(_db, cid, doc.Id, ct);
         // รอบ 250 (WP-02 §2.3): ใบแจ้งหนี้ที่มีใบกำกับภาษีอ้างและยังมีผล — ตัวโหลดเดียวกับลิงก์ชำระ/QR (PaymentQrService.SupersedingTaxInvoiceNumberAsync)
         var supersedingTaxInvoice = await PaymentQrService.SupersedingTaxInvoiceNumberAsync(_db, cid, doc, ct);
-        var contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.Id == doc.ContactId && c.CompanyId == cid, ct);
 
         // ใบเสร็จของการชำระนี้ (สองทาง เหมือนเส้นออกใบย้อนหลัง — ข้อมูลเก่าอาจไม่มี FK บน payment)
         var receipt = await _db.Documents.AsNoTracking()

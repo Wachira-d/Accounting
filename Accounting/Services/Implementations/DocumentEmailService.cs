@@ -591,10 +591,9 @@ public class DocumentEmailService : IDocumentEmailService
         if (!evidenceOk)
             throw new BusinessRuleException(
                 "แนบไฟล์ใบ/อีเมลที่ ETDA ประทับเวลาแล้วส่งกลับเข้าเอกสารนี้ก่อน — ไฟล์ต้องแนบหลังเวลาที่ส่ง (ไฟล์ที่แนบไว้ก่อน เช่น PDF ต้นฉบับ ไม่นับ)", Code, 400);
+        // รอบ 250 (WP-02 §2.4 ข้อ 7 · คำตัดสิน §2 #14): เดิมตัดเหลือ 500 ตัวเงียบ = หลักฐานขาด · ฝ่ายค้าน WP-02 ข้อ 8: ไม่ปฏิเสธด้วย —
+        // คอลัมน์ขยายเป็น text (DatabaseMigrationHelper ALTER TYPE) ⇒ เก็บค่าที่ ETDA ส่งกลับครบทุกตัว (ตัดช่องว่างหัวท้ายเท่านั้น)
         var token = req.TimestampToken?.Trim();
-        // รอบ 250 (WP-02 §2.4 ข้อ 7 · คำตัดสิน §2 #14): ยาวเกิน ⇒ ปฏิเสธพร้อมเหตุ (ไม่ตัดเงียบ — ไฟล์หลักฐานยังเป็นหลัก) · ตรวจก่อนแตะแถวใด ๆ
-        if (EtaxByEmailFormat.TimestampTokenRefusal(token) is string tooLong)
-            throw new BusinessRuleException(tooLong, Code, 400);
         var now = DateTime.UtcNow;
         etax.EtdaStampedAt = stampedUtc;
         etax.EtdaTimestampToken = string.IsNullOrEmpty(token) ? null : token;
