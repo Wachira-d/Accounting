@@ -11852,6 +11852,15 @@ public partial class DocumentService : IDocumentService
     private async Task<(string? EtaxFlag, string? VatNotice)> ReversePaymentInternalAsync(Guid companyId, Payment payment, Document doc, string reason,
         DateTime? reversalDate = null, PaymentVoidCause cause = PaymentVoidCause.User)
     {
+        // รอบ 250 ฝ่ายค้าน M3: แถวสลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจ ไม่เคยบวก PaidAmount/ลง JE/แตะธนาคาร ⇒ ยกเลิก = soft-delete อย่างเดียว
+        // (เดิมเดินเส้นถอยยอด ⇒ หัก PaidAmount ที่ไม่เคยบวก — ใบที่จ่ายจริงแล้วกลับมามียอดค้าง) · ตัวตัดสินเดียว PortalSlipPending
+        if (!Accounting.Helpers.PortalSlipPending.WasCountedAsReceived(payment))
+        {
+            payment.IsDeleted = true;
+            payment.UpdatedAt = DateTime.UtcNow;
+            return (null, null);
+        }
+
         // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ตัดสินใบเสร็จอัตโนมัติก่อนแตะอะไร — ปฏิเสธ = throw ก่อนกลับ JE
         var (receiptDecision, receiptDoc) = await DecideAutoReceiptOnPaymentVoidAsync(companyId, payment, cause);
 
@@ -15360,6 +15369,12 @@ public partial class DocumentService : IDocumentService
 
             await transaction.CommitAsync();
 
+            // รอบ 250 ฝ่ายค้าน H1: สลิปพอร์ทัลที่รอตรวจของใบนี้ซึ่งยอดเกินยอดค้างใหม่ ⇒ ติดธง (ยืนยันแล้ว = เงินซ้ำ) · เงินบันทึกแล้ว ไม่โยน —
+            // ด่านจริงอยู่ที่การยืนยัน (PaymentGatewayController.ConfirmManually บล็อกยอดสลิป > ยอดค้าง) · ล้ม = LogError (ธงหาย แต่ด่านยืนยันยังกัน)
+            try { await Accounting.Helpers.DocumentSlipIntents.FlagSupersededAsync(_db, companyId, doc.Id); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            { _logger.LogError(ex, "ติดธงสลิปพอร์ทัลที่ถูกแทนของเอกสาร {Doc} ไม่สำเร็จ", doc.DocumentNumber); }
+
             // ★ รอบ 193 ฝ่ายค้าน C-3 — ใบเสร็จที่เป็นใบกำกับ ณ วันรับเงิน (§78/1) ได้ e-Tax อัตโนมัติเหมือนเส้นอนุมัติ
             // (hook ไม่ throw · ใบเสร็จเปล่า/ร่าง = ข้ามในตัว hook)
             if (issuedSettlementReceipt != null)
@@ -15870,6 +15885,10 @@ public partial class DocumentService : IDocumentService
                         await TryReclassifyUndueOutputVatAsync(
                             companyId, allocDocId, payment.PaymentDate, createdBy);
                         await SyncWhtCreditReceivedAsync(companyId, docMap[allocDocId]);
+                        // รอบ 250 ฝ่ายค้าน H1: ธงสลิปพอร์ทัลที่ถูกแทน — แยก try ของตัวเอง (ห้ามทำให้ 50 ทวิ ข้างล่างถูกข้าม)
+                        try { await Accounting.Helpers.DocumentSlipIntents.FlagSupersededAsync(_db, companyId, allocDocId); }
+                        catch (Exception flagEx) when (flagEx is not OperationCanceledException)
+                        { _logger.LogError(flagEx, "ติดธงสลิปพอร์ทัลที่ถูกแทนของเอกสาร {Doc} ไม่สำเร็จ", allocDocId); }
                         // 50 ทวิ ของ "งวดนี้ ใบนี้" — ผูก payment id + ยอดที่หักจริง
                         // ของใบนั้น เหมือนเส้น single-doc (ท.ป.4/2528 cash basis)
                         // เฉพาะฝั่งซื้อ — ฝั่งขายเราเป็น "ผู้ถูกหัก" ลูกค้าเป็นคนออกใบให้

@@ -15454,6 +15454,77 @@ RULES += [
          why=_R250_WHY + "M-2 ผู้สมัครจับคู่ (AI) ไม่รวมสลิปที่ยังไม่ตรวจ"),
 ]
 
+# ── รอบ 250 WP-02b ฝ่ายค้าน (H1/H2/H3/M1–M5/L1–L4) ──
+_R250A_WHY = "รอบ 250 WP-02b ฝ่ายค้าน: "
+_R250A_COUNTS = ["PortalSlipPending.CountsAsReceived"]
+RULES += [
+    # M2: ผู้อ่านยอดรับชำระทุกตัวตัดแถวสลิปรุ่นเก่าที่ยังไม่ตรวจ (BankFeed ตั้ง MatchedPaymentId — สำคัญสุด)
+    dict(file="Services/Implementations/BankFeedService.cs", method="ScoreLocalPaymentCandidatesAsync", must=_R250A_COUNTS,
+         why=_R250A_WHY + "M2 จับคู่ธนาคารจาก feed ห้ามตั้ง MatchedPaymentId ให้สลิปที่ยังไม่ตรวจ"),
+    dict(file="Services/Implementations/Bank/BulkBankAiMatchService.cs", method="ProposeAsync", must=_R250A_COUNTS,
+         why=_R250A_WHY + "M2 จับคู่ธนาคารหลายรายการ (AI) ไม่รวมสลิปที่ยังไม่ตรวจ"),
+    dict(file="Services/Implementations/CommissionService.cs", method="CalculateAsync", must=_R250A_COUNTS,
+         why=_R250A_WHY + "M2 ค่าคอมจากยอดเก็บเงินไม่นับสลิปที่ยังไม่ตรวจ"),
+    dict(file="Services/Implementations/MobileApiService.cs", method="GetMobileDashboardAsync",
+         must_re=[r"todayRevenue[\s\S]*?CountsAsReceived[\s\S]*?monthRevenue[\s\S]*?CountsAsReceived"],
+         why=_R250A_WHY + "M2 รายรับวันนี้/เดือนนี้บนมือถือ"),
+    dict(file="Services/Implementations/Payments/UnifiedPaymentQueryService.cs", method="QueryAsync", must=_R250A_COUNTS,
+         why=_R250A_WHY + "M2 รายการรับ-จ่ายรวม"),
+    dict(file="Services/Implementations/CashForecastService.cs", method="BuildPaymentLagHistoryAsync", must=_R250A_COUNTS,
+         why=_R250A_WHY + "M2 พยากรณ์เงินสด"),
+    dict(file="Services/Implementations/ExecutiveReportService.Forecast.cs", method="GetCashFlowForecastAsync", must=_R250A_COUNTS,
+         why=_R250A_WHY + "M2 พยากรณ์กระแสเงินสดผู้บริหาร"),
+    dict(file="Services/Implementations/ArApAnalysisService.cs", method="GetContactDetailAsync", must=_R250A_COUNTS,
+         why=_R250A_WHY + "M2 วิเคราะห์ลูกหนี้รายผู้ติดต่อ"),
+    dict(file="Services/Implementations/ReportBuilderService.cs", method="BuildPaymentQueryAsync", must=_R250A_COUNTS,
+         why=_R250A_WHY + "M2 ตัวสร้างรายงาน"),
+    dict(file="Services/Ai/AdvancedAiAugmenter.cs", method="AnalyzeArApAsync", must=_R250A_COUNTS,
+         why=_R250A_WHY + "M2 ประวัติชำระที่ส่งให้ AI"),
+    # M3: ยกเลิกแถวที่ไม่เคยนับ ห้ามถอย PaidAmount — ตัดสินก่อนแตะ JE/ยอด
+    dict(file=DOCSVC, method="ReversePaymentInternalAsync",
+         must=["PortalSlipPending.WasCountedAsReceived("],
+         before=[("PortalSlipPending.WasCountedAsReceived(", "DecideAutoReceiptOnPaymentVoidAsync(")],
+         why=_R250A_WHY + "M3 แถวสลิปที่ไม่เคยบวก PaidAmount ยกเลิกแล้วต้องไม่ถอยยอด"),
+    # H1: หลังบันทึกรับชำระ ⇒ ติดธงสลิปรอตรวจที่ยอดเกินยอดค้างใหม่
+    dict(file=DOCSVC, method="CreatePaymentAsync", must=["DocumentSlipIntents.FlagSupersededAsync("],
+         why=_R250A_WHY + "H1 สลิปรอตรวจที่ถูกแทนด้วยเงินก้อนอื่นต้องถูกติดธง"),
+    dict(file="Controllers/PaymentGatewayController.cs", method="ConfirmManually",
+         must=["DocumentSlipIntents.IsDocumentSlip(", "DocumentSlipIntents.ExceedsBalance(", "DocumentSlipIntents.ReceivedDate(", "PaidAtUtc: slipPaidAt"],
+         before=[("DocumentSlipIntents.ExceedsBalance(", "_intents.ApplyChargeAsync(")],
+         why=_R250A_WHY + "H1/M4 ยืนยันสลิปของเอกสาร: บล็อกยอดสลิปเกินยอดค้าง · วันรับเงิน = วันเงินเข้าตามหลักฐาน"),
+    dict(file="Services/Payments/Handlers/DocumentPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["PaymentDate: intent.PaidAt ?? intent.ConfirmedAt"],
+         why=_R250A_WHY + "M4 tax point §78/1 = วันเงินเข้า ไม่ใช่วันกดยืนยัน"),
+    # H2: สลิปของเอกสารรับหลายงวด · ไม่รวมสองสลิปเป็นรายการเดียว
+    dict(file="Services/Payments/PaymentIntentService.cs", method="StartAsync",
+         must=["DocumentSlipIntents.IsDocumentSlip("],
+         must_re=[r"if\s*\(\s*settled\s*!=\s*null\s*&&\s*!\s*documentSlip\s*\)", r"reusable\s*=\s*existing\s*\.\s*FirstOrDefault\s*\(\s*i\s*=>\s*!\s*documentSlip\s*&&"],
+         why=_R250A_WHY + "H2 สลิปงวด 2 ต้องรับได้ · สลิปแต่ละใบเป็นรายการของตัวเอง"),
+    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
+         must=["DocumentSlipIntents.UploadProblem(", "storage.DeleteAsync("],
+         before=[("DocumentSlipIntents.UploadProblem(", "_intents.StartAsync(")],
+         why=_R250A_WHY + "H2/L4 ตัดสินที่ยอดค้าง · ล้มแล้วลบไฟล์"),
+    # H3: คำเชิญถึงเฉพาะบริษัทที่เปิดให้ค้นเจอ · เพดานต่อวัน · เวลาตอบคงที่
+    dict(file=XTENANT, method="InvitePartnerAsync",
+         must=["c.PartnerDiscoverable", "InviteMinimumDuration"],
+         why=_R250A_WHY + "H3 บริษัทที่ไม่เปิดไม่รับคำเชิญและไม่นับกำกวม · เวลาตอบเท่ากันทุกทาง"),
+    dict(file=_R250_XCTL, method="Invite",
+         must_re=[r"if\s*\(\s*!\s*await\s+_limiter\s*\.\s*TryConsumeAsync\s*\("],
+         before=[("_limiter.TryConsumeAsync(", "_service.InvitePartnerAsync(")],
+         why=_R250A_WHY + "H3 เพดานคำเชิญต่อบริษัทต่อวัน (fail-closed)"),
+    # M5: เลขตรงคู่ Accepted แต่สาขาไม่ตรง ⇒ ล้มดัง
+    dict(file=XTENANT, method="OnDocumentSentAsync", must=["PartnerCompanyMatch.BranchMismatchRouteMessage("],
+         why=_R250A_WHY + "M5 สาขาไม่ตรงต้องไม่เงียบ"),
+    # L2: GET ค่าตั้งห้ามเขียนแถว
+    dict(file=_R250_XCTL, method="GetConfig", must=["_service.GetConfigReadOnlyAsync("], forbid=["GetOrCreateConfigAsync("],
+         why=_R250A_WHY + "L2 GET ห้ามสร้างแถว"),
+    # M1: migration ตรวจทุกผู้อ้างแถว Payment + H1 เงินจริงแยกแล้ว
+    dict(file="Helpers/PortalSlipPending.cs", method="MigrateCoreAsync",
+         must=["db.ReconciliationGroupItems", "db.PaymentAllocations", "db.WhtCreditsReceived", "db.WithholdingTaxCerts", "db.Cheques",
+               "d.SettlementPaymentId == pid", "x.PaymentDate >= slipDate", "DocumentSlipIntents.ExceedsBalance(", "DocumentSlipIntents.SlipUrlFromLegacyNotes("],
+         why=_R250A_WHY + "M1/H1/M6 แถวที่มีผู้อ้างหรือมีเงินจริงแยกแล้ว = ให้คนตัดสิน"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

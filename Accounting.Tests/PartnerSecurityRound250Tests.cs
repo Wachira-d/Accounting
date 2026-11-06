@@ -1,5 +1,6 @@
 using Accounting.Helpers;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 using Xunit;
 
 namespace Accounting.Tests;
@@ -140,5 +141,66 @@ public class PartnerSecurityRound250Tests
         Assert.Contains("INV-0001", d);
         Assert.Contains("/uploads/portal-slips/2026-11/a.jpg", d);
         Assert.Contains("รอตรวจ", d);
+    }
+
+    // ───────── ฝ่ายค้านรอบ 250 ─────────
+
+    [Fact]
+    public void L1_หมายเหตุขึ้นต้นป้ายแต่ผู้สร้างไม่ใช่พอร์ทัล_ยังนับเป็นเงินรับ()
+    {
+        var counts = PortalSlipPending.CountsAsReceived.Compile();
+        var typedByUser = new Payment { Notes = "[PENDING-VERIFY] ผู้ใช้พิมพ์เอง", CreatedBy = "user-1", PaymentNumber = "P", Amount = 1m };
+        Assert.True(counts(typedByUser));
+        Assert.True(PortalSlipPending.WasCountedAsReceived(typedByUser));
+        var legacy = new Payment { Notes = "[PENDING-VERIFY] x", CreatedBy = PortalSlipPending.LegacyCreatedBy, PaymentNumber = "P", Amount = 1m };
+        Assert.False(PortalSlipPending.WasCountedAsReceived(legacy));
+        Assert.True(PortalSlipPending.UnverifiedLegacy.Compile()(legacy));
+        Assert.False(PortalSlipPending.UnverifiedLegacy.Compile()(typedByUser));
+    }
+
+    [Theory]
+    [InlineData(DocumentStatus.Approved, 1070, 500, true)]
+    [InlineData(DocumentStatus.PartiallyPaid, 570, 570, true)]      // งวด 2 พอดียอดค้าง
+    [InlineData(DocumentStatus.PartiallyPaid, 570, 600, false)]     // เกินยอดค้าง
+    [InlineData(DocumentStatus.Paid, 0, 100, false)]                // ชำระครบแล้ว
+    [InlineData(DocumentStatus.Draft, 1070, 100, false)]
+    [InlineData(DocumentStatus.Voided, 1070, 100, false)]
+    [InlineData(DocumentStatus.Approved, 1070, 0, false)]
+    public void H2_รับสลิปตัดสินที่ยอดค้าง(DocumentStatus status, double balance, double amount, bool ok)
+        => Assert.Equal(ok, DocumentSlipIntents.UploadProblem(status, (decimal)balance, (decimal)amount) == null);
+
+    [Fact]
+    public void H1_ยอดสลิปเกินยอดค้าง_เผื่อปัดเศษหนึ่งสตางค์()
+    {
+        Assert.True(DocumentSlipIntents.ExceedsBalance(100.02m, 100m));
+        Assert.False(DocumentSlipIntents.ExceedsBalance(100.01m, 100m));
+        Assert.False(DocumentSlipIntents.ExceedsBalance(50m, 100m));
+    }
+
+    [Fact]
+    public void M4_วันรับเงิน_ตั้งต้นวันแนบสลิปเวลาไทย_ระบุได้_อนาคตไม่ได้()
+    {
+        var now = new DateTime(2026, 11, 6, 10, 0, 0, DateTimeKind.Utc);
+        var uploaded = new DateTime(2026, 11, 2, 18, 30, 0, DateTimeKind.Utc);   // 3 พ.ย. 01:30 เวลาไทย
+        Assert.Equal((DateTime?)new DateTime(2026, 11, 3), DocumentSlipIntents.ReceivedDate(null, uploaded, now).PaidAtUtc);
+        Assert.Equal((DateTime?)new DateTime(2026, 11, 1), DocumentSlipIntents.ReceivedDate(new DateTime(2026, 11, 1), uploaded, now).PaidAtUtc);
+        var future = DocumentSlipIntents.ReceivedDate(new DateTime(2026, 11, 8), uploaded, now);
+        Assert.Null(future.PaidAtUtc);
+        Assert.NotNull(future.Problem);
+    }
+
+    [Theory]
+    [InlineData("[PENDING-VERIFY] แนบสลิปจาก Portal ลูกค้า · ไฟล์: /uploads/portal-slips/2026-10/a.jpg", "/uploads/portal-slips/2026-10/a.jpg")]
+    [InlineData("[PENDING-VERIFY] แนบสลิปจาก Portal ลูกค้า", null)]
+    [InlineData(null, null)]
+    public void M6_ไฟล์สลิปจากหมายเหตุเดิม(string? notes, string? expected)
+        => Assert.Equal(expected, DocumentSlipIntents.SlipUrlFromLegacyNotes(notes));
+
+    [Fact]
+    public void M5_ข้อความสาขาไม่ตรง_บอกเลขและสาขา()
+    {
+        var m = PartnerCompanyMatch.BranchMismatchRouteMessage("0105556000011", null);
+        Assert.Contains("0105556000011", m);
+        Assert.Contains("00000", m);
     }
 }

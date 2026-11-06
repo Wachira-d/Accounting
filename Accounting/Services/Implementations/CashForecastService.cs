@@ -193,6 +193,7 @@ public class CashForecastService : ICashForecastService
     {
         var since = DateTime.UtcNow.Date.AddMonths(-18);
         var rows = await _db.Payments.AsNoTracking()
+            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ
             .Where(p => p.CompanyId == companyId && !p.IsDeleted
                 && p.PaymentDate >= since
                 && p.Document.CompanyId == companyId

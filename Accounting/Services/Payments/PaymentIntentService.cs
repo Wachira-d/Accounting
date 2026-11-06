@@ -227,9 +227,13 @@ public class PaymentIntentService : IPaymentIntentService
             .OrderByDescending(i => i.CreatedAt)
             .ToListAsync(ct);
 
+        // รอบ 250 ฝ่ายค้าน H2: สลิปโอนของเอกสาร (พอร์ทัล) — เอกสารรับชำระได้หลายงวด ⇒ "รับได้ไหม" ตัดสินที่ยอดค้างของเอกสาร (ผู้เรียกตรวจด้วย
+        // DocumentSlipIntents.UploadProblem ก่อน) ไม่ใช่ "เคยมีรายการสำเร็จ" · สลิปแต่ละใบเป็นรายการของตัวเอง (ไม่ใช้ใบเดิมที่ยอดเท่ากัน — สองสลิปคนละก้อน)
+        var documentSlip = DocumentSlipIntents.IsDocumentSlip(request.SourceKind, request.Method);
+
         // จ่ายไปแล้ว = ห้ามสร้างใบใหม่ (กันจ่ายซ้ำ) — ต้องดังไม่ใช่เงียบแล้วสร้างใบที่สอง
         var settled = existing.FirstOrDefault(i => PaymentIntentPolicy.IsSettledPositive(i.Status));
-        if (settled != null)
+        if (settled != null && !documentSlip)
             throw new InvalidOperationException("รายการนี้ชำระเงินเรียบร้อยแล้ว");
 
         var config = await _db.PaymentProviderConfigs
@@ -242,7 +246,8 @@ public class PaymentIntentService : IPaymentIntentService
         // รอบ 227 ฝ่ายค้าน N2: และโหมดเดียวกับช่องทางตอนนี้ — QR ทดสอบที่ค้างไว้ห้ามถูกยื่นให้ผู้จ่ายหลังเปิดรับเงินจริง (และกลับกัน)
         var currentMode = PaymentIntentTestMode.StampAtCreate(config);
         var reusable = existing.FirstOrDefault(i =>
-            PaymentIntentPolicy.IsOpen(i.Status)
+            !documentSlip   // ฝ่ายค้าน H2: สลิปเอกสารไม่ใช้ใบเดิม
+            && PaymentIntentPolicy.IsOpen(i.Status)
             && i.Amount == request.Amount
             && i.MethodKind == request.Method
             && i.IsTestMode == currentMode

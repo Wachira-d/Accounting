@@ -49,6 +49,9 @@ public class CrossTenantWorkflowService
     public async Task InvitePartnerAsync(
         Guid invitingCompanyId, string partnerTaxId, string? partnerBranchCode, Guid invitedByUserId, string? message)
     {
+        // ฝ่ายค้าน H3: ข้อความเชิญยาวไม่จำกัด = ช่องฟิชชิง — ตัดที่ 500 ตัวอักษร (ข้อความถูกแสดงแบบ text เท่านั้น)
+        message = string.IsNullOrWhiteSpace(message) ? null : message.Trim();
+        if (message is { Length: > 500 }) message = message[..500];
         var taxId = Accounting.Helpers.PartnerCompanyMatch.NormalizeTaxId(partnerTaxId)
             ?? throw new Accounting.Helpers.BusinessRuleException(
                 Accounting.Helpers.PartnerCompanyMatch.InvalidTaxIdMessage, Accounting.Helpers.PartnerCompanyMatch.RuleCode, 400);
@@ -56,9 +59,13 @@ public class CrossTenantWorkflowService
             && !Accounting.Helpers.TaxBranchCode.TryNormalize(partnerBranchCode, out _, out var branchError))
             throw new Accounting.Helpers.BusinessRuleException(branchError ?? "รหัสสาขาไม่ถูกต้อง", Accounting.Helpers.PartnerCompanyMatch.RuleCode, 400);
 
+        // ฝ่ายค้าน H3: เวลาตอบเท่ากันทุกทาง — งานที่ต่างกัน (สร้าง/เปิดคำเชิญ) ถูกเติมเวลาจนถึงเพดานคงที่ (กันวัดเวลาแยก "มี/ไม่มี")
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var rawTax = (partnerTaxId ?? "").Trim();
+        // ฝ่ายค้าน H3: เฉพาะบริษัทที่เปิดให้คู่ค้าค้นเจอ (PartnerDiscoverable · ตั้งต้นปิด) — เลขภาษีของผู้เช่าไม่ได้ยืนยันกับทะเบียน ⇒ บริษัทที่ไม่เปิด
+        // ไม่รับคำเชิญและไม่นับในการตัดสิน "กำกวม" (มิฉะนั้นบริษัทปลอมที่ตั้งเลขเหยื่อรู้ได้ว่าเลขนั้นมีผู้ใช้จริง)
         var candidates = await _db.Companies.AsNoTracking()
-            .Where(c => !c.IsDeleted && c.Id != invitingCompanyId && (c.TaxId == taxId || c.TaxId == rawTax))
+            .Where(c => !c.IsDeleted && c.PartnerDiscoverable && c.Id != invitingCompanyId && (c.TaxId == taxId || c.TaxId == rawTax))
             .Select(c => new Accounting.Helpers.PartnerCompanyCandidate(c.Id, c.BranchCode))
             .ToListAsync();
         var pick = Accounting.Helpers.PartnerCompanyMatch.Pick(candidates, partnerBranchCode);
@@ -123,7 +130,15 @@ public class CrossTenantWorkflowService
         });
         await _db.SaveChangesAsync();
         _logger.LogInformation("Trading partner invite from {Company}: outcome {Outcome}", invitingCompanyId, outcome);
+        var rest = InviteMinimumDuration - sw.Elapsed;
+        if (rest > TimeSpan.Zero) await Task.Delay(rest);
     }
+
+    /// <summary>ฝ่ายค้าน H3: เวลาขั้นต่ำของการเชิญทุกกรณี (กันวัดเวลาตอบแยกสมาชิกภาพ) — สูงกว่างานจริงปกติ</summary>
+    public static readonly TimeSpan InviteMinimumDuration = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>ฝ่ายค้าน H3: เพดานคำเชิญต่อบริษัทต่อวัน (AUTOPILOT_BILLING_DESIGN §6.3 · กันสแปม/ฟิชชิงผ่านข้อความเชิญ)</summary>
+    public const int InvitesPerCompanyPerDay = 20;
 
     /// <summary>ช่วงพักก่อนเชิญซ้ำหลังปลายทางปฏิเสธ (AUTOPILOT_BILLING_DESIGN §6.3 "เชิญซ้ำได้หลัง 7 วัน")</summary>
     public const int RejectedReinviteCooldownDays = 7;
@@ -217,6 +232,10 @@ public class CrossTenantWorkflowService
             // ห้ามเดาว่าส่งเข้าสมุดของบริษัทไหน — ล้มดัง (RouteSentDocumentAsync ประทับป้ายบนเอกสาร + ทางไปต่อในข้อความ)
             throw new Accounting.Helpers.BusinessRuleException(
                 Accounting.Helpers.PartnerCompanyMatch.AmbiguousRouteMessage(taxId), Accounting.Helpers.PartnerCompanyMatch.RuleCode, 409);
+        if (pick.Kind == Accounting.Helpers.PartnerMatchKind.None && candidates.Count > 0)
+            // ฝ่ายค้าน M5: เลขตรงคู่ Accepted แต่สาขาไม่ตรง — เดิมส่งได้ (ไม่ดูสาขา) ⇒ ไม่ส่งเงียบไม่ได้: ล้มดังพร้อมทางไปต่อ
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.PartnerCompanyMatch.BranchMismatchRouteMessage(taxId, contact.BranchCode), Accounting.Helpers.PartnerCompanyMatch.RuleCode, 409);
         if (pick.CompanyId is not Guid partnerCompanyId) return null;
 
         var (a, b) = OrderPair(doc.CompanyId, partnerCompanyId);
@@ -268,10 +287,8 @@ public class CrossTenantWorkflowService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // แถว link ที่ SaveChanges ล้มยังค้างใน ChangeTracker ⇒ SaveChanges ถัดไปของผู้เรียกจะลองเขียนซ้ำแล้วล้มอีก — ทิ้งก่อน
-            foreach (var e in _db.ChangeTracker.Entries<CrossTenantDocumentLink>()
-                         .Where(e => e.State is EntityState.Added or EntityState.Modified).ToList())
-                e.State = EntityState.Detached;
+            // แถวที่ SaveChanges ล้มยังค้างใน ChangeTracker ⇒ SaveChanges ถัดไปของผู้เรียกจะลองเขียนซ้ำแล้วล้มอีก — ทิ้งก่อน (ฝ่ายค้าน L3: ครบทุกชนิด)
+            DetachPendingCrossTenantWrites();
             var reason = ex is Accounting.Helpers.BusinessRuleException
                 ? ex.Message
                 : "ระบบขัดข้องระหว่างส่ง — กดส่งใหม่ (ถ้ายังล้ม แจ้งผู้ดูแลพร้อมเลขเอกสาร)";
@@ -512,7 +529,22 @@ public class CrossTenantWorkflowService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Auto-approve failed for link {Id}", link.Id);
+            // ฝ่ายค้าน L3: ล้มกลางทาง ⇒ แถวครึ่งทางของฝั่งผู้รับ (ลายเซ็น/PO/ผู้ติดต่อที่เพิ่งสร้าง) ค้างใน ChangeTracker — SaveChanges ถัดไปของผู้เรียก
+            // (เส้นอนุมัติของผู้ขาย) จะเขียนลงสมุดของบริษัทอื่นครึ่ง ๆ ⇒ ทิ้งก่อน · เอกสารเข้ายังรออนุมัติด้วยมือในกล่อง (ไม่เงียบ: LogError)
+            DetachPendingCrossTenantWrites();
+            _logger.LogError(ex, "Auto-approve failed for link {Id} — เอกสารเข้ายังรออนุมัติด้วยมือ", link.Id);
+        }
+    }
+
+    /// <summary>ฝ่ายค้าน L3: ทิ้งการเขียนที่ยังไม่บันทึกของเส้นข้ามบริษัท (แถวใหม่ของ PO/บรรทัด/ผู้ติดต่อ/ลายเซ็น/การอนุมัติ + link ที่แก้ค้าง)</summary>
+    private void DetachPendingCrossTenantWrites()
+    {
+        foreach (var e in _db.ChangeTracker.Entries().ToList())
+        {
+            var crossTenantRow = e.Entity is CrossTenantDocumentLink or DocumentApproval or DocumentSignature;
+            var newRow = e.State == EntityState.Added && e.Entity is Document or DocumentLine or Contact;
+            if ((crossTenantRow && e.State is EntityState.Added or EntityState.Modified) || newRow)
+                e.State = EntityState.Detached;
         }
     }
 
@@ -791,6 +823,11 @@ public class CrossTenantWorkflowService
     // ═══════════════════════════════════════════════════════════════════
     // CONFIG
     // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>ฝ่ายค้าน L2: อ่านค่าตั้งโดยไม่เขียนแถว (GET ห้ามสร้างแถว) — ไม่มี = ค่าตั้งต้นที่ยังไม่บันทึก · tenant = <paramref name="companyId"/></summary>
+    public async Task<WorkflowAutomationConfig> GetConfigReadOnlyAsync(Guid companyId)
+        => await _db.WorkflowAutomationConfigs.AsNoTracking().FirstOrDefaultAsync(c => c.CompanyId == companyId)
+           ?? new WorkflowAutomationConfig { CompanyId = companyId };
 
     public async Task<WorkflowAutomationConfig> GetOrCreateConfigAsync(Guid companyId)
     {

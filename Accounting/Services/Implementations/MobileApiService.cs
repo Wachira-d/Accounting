@@ -258,6 +258,7 @@ public class MobileApiService : IMobileApiService
 
         // Today's revenue: payments received today
         var todayRevenue = await _db.Payments
+            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ
             .Where(p => p.CompanyId == companyId
                 && p.PaymentDate >= todayStart
                 && !p.IsDeleted)
@@ -265,6 +266,7 @@ public class MobileApiService : IMobileApiService
 
         // Month revenue: payments received this month
         var monthRevenue = await _db.Payments
+            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)
             .Where(p => p.CompanyId == companyId
                 && p.PaymentDate >= monthStart
                 && !p.IsDeleted)

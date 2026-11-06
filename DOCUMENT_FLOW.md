@@ -2934,6 +2934,17 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   "ส่งให้คู่ค้าอีกครั้ง" ใน documents.html) + LogError · ไม่ย้อนการอนุมัติ · ส่งใหม่ `POST documents/{id}/partner-routing/retry` (สิทธิ์อนุมัติชนิดของเอกสาร · ล้มอีก = 409 + เหตุ) · สำเร็จ ⇒ ล้างป้าย ·
   outbox/worker ถาวรยังเป็นงาน WP-12
 - เทสต์ `PartnerSecurityRound250Tests` · Db `PartnerSecurityRound250DbTests` · ล็อก `required_call_site_check` R250 + `owner_action_wiring_check` (R250-X1…X3) — ยังไม่ได้คอมไพล์ในเครื่องนี้
+- **แก้ผลฝ่ายค้าน (ตัวตัดสินเดียว `Helpers/DocumentSlipIntents`)**:
+  สลิปเอกสาร (Document + ManualSlip) รับได้ตามยอดค้าง (งวด 2 รับได้ · ชำระครบ/เกินยอดค้าง = 400) · สลิปแต่ละใบ = รายการของตัวเอง (ไม่ใช้ใบเดิม) ·
+  บันทึกรับชำระ (ใบเดียว/หลายใบ) ⇒ สลิปรอตรวจที่ยอด > ยอดค้างใหม่ถูกติดธง `slip_superseded` (ไม่เปลี่ยนสถานะ) · ยืนยันด้วยมือบล็อกยอดสลิป > ยอดค้าง (409) ·
+  ปุ่ม/endpoint "ปฏิเสธสลิป" `POST pay/intents/{id}/reject-slip` (ApplyChargeAsync Failed · เหตุผลบังคับ) · วันรับเงิน = `ReceivedDate` ที่ระบุ หรือวันแนบสลิป (เวลาไทย) ⇒
+  `PaymentIntent.PaidAt` ⇒ `DocumentPaymentHandler` ลง `PaymentDate` (§78/1) · พอร์ทัลแสดง "สลิปรอตรวจ" (`PortalDocumentResponse.SlipPendingAmount`) · อัปไฟล์แล้วสร้างรายการล้ม ⇒ ลบไฟล์ ·
+  ผู้อ่านยอดเพิ่ม 10 จุด (BankFeed · จับคู่หลายรายการ AI · ค่าคอม · มือถือ · รายการรวม · พยากรณ์ ×2 · วิเคราะห์ลูกหนี้ · ตัวสร้างรายงาน · AI) · ตัวกรองต้องตรงผู้สร้าง `portal-customer` ·
+  ยกเลิกแถวที่ไม่เคยนับ ⇒ soft-delete โดยไม่ถอย PaidAmount/BalanceDue · migration: ผู้อ้างแถวครบ (กลุ่มกระทบยอด · จัดสรร · ทะเบียน WHT · 50 ทวิ · เช็ค · ใบเสร็จ settlement)
+  + มีเงินจริงตั้งแต่วันแนบสลิป/ยอดค้าง < ยอดสลิป ⇒ ต้องตรวจ · คำอธิบายพกที่อยู่ไฟล์เดิม · แถว "ต้องตรวจ" แสดงในรายงานตรวจข้อมูล (`PortalSlipLegacyNeedsReview`)
+  คู่ค้า: รับคำเชิญเฉพาะบริษัทที่เปิด `Company.PartnerDiscoverable` (ตั้งต้นปิด · ตั้งที่ PUT workflow-automation · บริษัทที่ไม่เปิดไม่นับ "กำกวม") · คำเชิญ ≤ 20/บริษัท/วัน (`IChatRateLimiter` fail-closed · 429) ·
+  เวลาตอบเชิญขั้นต่ำคงที่ 400ms · ข้อความเชิญ ≤ 500 ตัว · ส่งเอกสาร: เลขตรงคู่ Accepted แต่สาขาไม่ตรง ⇒ ป้าย + เหตุ (เดิมส่งได้) · ตัวติดตามเอกสารส่งออกต้องเห็นฝั่งขาย ·
+  GET workflow-automation ไม่สร้างแถว + CompanySettings.Edit · อนุมัติอัตโนมัติล้ม ⇒ ทิ้งแถวครึ่งทางของผู้รับ + LogError
 
 ### 2.12h ช่องทางแจ้งเตือนของผู้ติดต่อ — ผู้ติดต่อเป็นเจ้าของปลายทาง (รอบ 245 เฟส L1 · `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` · คำตัดสิน 245-L1-1…245-L1-7)
 

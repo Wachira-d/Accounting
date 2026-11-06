@@ -483,7 +483,7 @@ public class AdvancedAiAugmenter : IAdvancedAiAugmenter
             {
                 // ดึงวันดิบมาคำนวณ client-side — DateDiffDay เป็นของ SQL Server
                 // ไม่ใช่ PostgreSQL (Npgsql แปลไม่ได้)
-                var raw = await (from p in _db.Payments.AsNoTracking()
+                var raw = await (from p in _db.Payments.AsNoTracking().Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)
                                  join d in _db.Documents.AsNoTracking() on p.DocumentId equals d.Id
                                  where d.CompanyId == companyId && !p.IsDeleted && !d.IsDeleted
                                        && types.Contains(d.DocumentType)

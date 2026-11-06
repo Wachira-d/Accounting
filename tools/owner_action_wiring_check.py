@@ -214,6 +214,9 @@ RULES += [
     (XT, 'RejectIncoming', 'attr', REJECT),
     (XT, 'RejectIncoming', 'body', CAN_APPROVE_USED),
     (XT, 'RetryPartnerRouting', 'body', CAN_APPROVE_USED),
+    # รอบ 250 ฝ่ายค้าน H1: ปฏิเสธสลิปโอนของเอกสาร = การตัดสินใจของคน (เหตุผลลงประวัติ) — สิทธิ์ยืนยันเงินเข้าด้วยมือ + ห้ามคีย์
+    (C + 'PaymentGatewayController.cs', 'RejectSlip', 'attr', REJECT),
+    (C + 'PaymentGatewayController.cs', 'RejectSlip', 'attr', PERM),
 ]
 
 MODIFIERS = r'(?:public|private|protected|internal|static|async|override|virtual|sealed|new|unsafe|extern)'

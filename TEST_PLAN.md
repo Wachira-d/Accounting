@@ -602,7 +602,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **812 ไฟล์ · 8,593 `[Fact]` + 1,283 `[Theory]` (6,000 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **812 ไฟล์ · 8,604 `[Fact]` + 1,285 `[Theory]` (6,010 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 
@@ -7956,3 +7956,11 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | (Db) migration: แถวสะอาด ⇒ intent รอยืนยัน + soft-delete + หมายเหตุอ้าง intent · เอกสารหาย ⇒ ไม่แตะ + audit ต้องตรวจ · แถวรับชำระจริงไม่ถูกแตะ · รันซ้ำไม่ทำซ้ำ | `…migration_แถวสลิปเก่า_…` |
 | จุดเรียกด่าน (R250 · `tools/required_call_site_check.py`): Invite 202 ห้าม NotFound/Ok · List กรองแถวผู้เชิญ · Invite/OnDocumentSent ผ่าน `PartnerCompanyMatch` · Route ล้มดัง (ห้าม LogWarning) · ApproveDocument ห้ามเรียก OnDocumentSentAsync ตรง · สลิปห้าม `Payments.Add`/`new Payment` · ผู้อ่านยอด 6 จุดใช้ `CountsAsReceived` | negative test ในตัว checker |
 | ด่านสิทธิ์ (`owner_action_wiring_check` R250 + เคส R250-X1…X3 · `write_permission_gate_check` WATCHED) | `--self-test` |
+| (ฝ่ายค้าน L1) ป้ายในหมายเหตุที่ผู้ใช้พิมพ์เอง (ผู้สร้างไม่ใช่พอร์ทัล) ยังนับเป็นเงินรับ · ตัวกลับด้านตรงกัน | `L1_หมายเหตุขึ้นต้นป้ายแต่ผู้สร้างไม่ใช่พอร์ทัล_…` |
+| (ฝ่ายค้าน H2) รับสลิปตามยอดค้าง (งวด 2 พอดี ✓ · เกิน/ชำระครบ/ร่าง/ยกเลิก/0 ✗) · (Db) งวด 1 สำเร็จแล้วงวด 2 รับได้ (รายการใหม่) · เกินยอดค้าง/ชำระครบ ⇒ BusinessRuleException | `H2_รับสลิปตัดสินที่ยอดค้าง` · `H2_งวดแรกยืนยันแล้ว_…` |
+| (ฝ่ายค้าน H1) ยอดสลิปเกินยอดค้าง (เผื่อ 0.01) · (Db) migration: สลิปเก่า + เงินจริงทีหลัง ⇒ ต้องตรวจ ไม่มี intent · รับชำระก้อนอื่นแล้วติดธงสลิปที่เกิน · สลิปที่ยังพอดีไม่ถูกแตะ · เรียกซ้ำไม่ซ้ำ | `H1_…` (pure + Db 2 ตัว) |
+| (ฝ่ายค้าน M4) วันรับเงินตั้งต้น = วันแนบสลิปเวลาไทย · ระบุได้ · อนาคตไม่ได้ | `M4_วันรับเงิน_…` |
+| (ฝ่ายค้าน M6) ที่อยู่ไฟล์จากหมายเหตุเดิม · (M5) ข้อความสาขาไม่ตรง · (Db M5) คู่ Accepted สาขาไม่ตรง ⇒ ป้าย + เหตุ | `M6_…` · `M5_…` |
+| (Db ฝ่ายค้าน H3) บริษัทไม่เปิดให้ค้นเจอไม่ได้คำเชิญ · บริษัทปลอมที่ไม่เปิดไม่ทำให้เหยื่อ "กำกวม" · คำตอบเท่ากัน · เกิน 20/วัน ⇒ 429 | `H3_…` (2 ตัว) |
+| (Db ฝ่ายค้าน M3) ยกเลิกแถวสลิปเก่าที่ไม่เคยนับ ⇒ PaidAmount/BalanceDue คงเดิม (เดิมหัก) · แถวถูก soft-delete | `M3_ยกเลิกแถวสลิปเก่าที่ไม่เคยนับ_…` |
+| จุดเรียกด่าน R250A (`required_call_site_check`): ผู้อ่านยอด 10 จุด · ReversePayment ตัดสินก่อนแตะ JE · CreatePayment ติดธง · ConfirmManually บล็อกก่อน ApplyCharge + PaidAtUtc · handler ใช้ PaidAt · StartAsync ข้าม settled/reuse เฉพาะสลิปเอกสาร · Portal ตรวจยอดค้างก่อน StartAsync + ลบไฟล์ · Invite: discoverable + เวลาคงที่ + limiter ก่อน service · สาขาไม่ตรงดัง · GET ไม่เขียน · migration ผู้อ้างครบ · owner_action RejectSlip | negative test ในตัว checker |

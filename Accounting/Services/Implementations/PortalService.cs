@@ -220,13 +220,28 @@ public class PortalService : IPortalService
         if (!string.IsNullOrWhiteSpace(documentType) && Enum.TryParse<DocumentType>(documentType, out var docType))
             query = query.Where(d => d.DocumentType == docType);
 
-        return await query
+        var rows = await query
             .OrderByDescending(d => d.DocumentDate)
             .Select(d => new PortalDocumentResponse(
                 d.Id, d.DocumentNumber, d.DocumentType.ToString(),
                 d.DocumentDate, d.DueDate, d.TotalAmount, d.PaidAmount,
-                d.BalanceDue, d.Status.ToString()))
+                d.BalanceDue, d.Status.ToString(), 0m))
             .ToListAsync();
+        var pending = await SlipPendingByDocumentAsync(companyId, rows.Select(r => r.Id).ToList());
+        return rows.Select(r => pending.TryGetValue(r.Id, out var amt) ? r with { SlipPendingAmount = amt } : r).ToList();
+    }
+
+    /// <summary>รอบ 250 ฝ่ายค้าน L4: ยอดสลิปรอตรวจต่อเอกสาร (รายการ manual-slip ของเอกสารที่ยังเปิด) — ลูกค้าเห็นว่าแนบแล้ว แต่ยอดค้างไม่ลดจนผู้ขายยืนยัน</summary>
+    private async Task<Dictionary<Guid, decimal>> SlipPendingByDocumentAsync(Guid companyId, List<Guid> documentIds)
+    {
+        if (documentIds.Count == 0) return new Dictionary<Guid, decimal>();
+        return await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && i.SourceKind == PaymentSourceKind.Document && documentIds.Contains(i.SourceId)
+                && i.MethodKind == PaymentMethodKind.ManualSlip
+                && (i.Status == PaymentIntentStatus.Pending || i.Status == PaymentIntentStatus.Created))
+            .GroupBy(i => i.SourceId)
+            .Select(g => new { g.Key, Sum = g.Sum(i => i.Amount) })
+            .ToDictionaryAsync(x => x.Key, x => x.Sum);
     }
 
     public async Task<PortalDocumentResponse> GetDocumentAsync(Guid companyId, Guid contactId, Guid documentId)
@@ -235,10 +250,11 @@ public class PortalService : IPortalService
             .FirstOrDefaultAsync(d => d.Id == documentId)
             ?? throw new InvalidOperationException("Document not found.");
 
+        var pending = await SlipPendingByDocumentAsync(companyId, new List<Guid> { doc.Id });
         return new PortalDocumentResponse(
             doc.Id, doc.DocumentNumber, doc.DocumentType.ToString(),
             doc.DocumentDate, doc.DueDate, doc.TotalAmount, doc.PaidAmount,
-            doc.BalanceDue, doc.Status.ToString());
+            doc.BalanceDue, doc.Status.ToString(), pending.GetValueOrDefault(doc.Id));
     }
 
     public async Task<byte[]> DownloadDocumentPdfAsync(Guid companyId, Guid contactId, Guid documentId)
@@ -519,15 +535,13 @@ public class PortalService : IPortalService
         var doc = await _db.Documents
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
-        if (doc.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Voided or DocumentStatus.Rejected)
-            throw new InvalidOperationException("เอกสารนี้ยังไม่พร้อมรับชำระ — ติดต่อผู้ขาย");
         if (_intents == null)
-            throw new InvalidOperationException("ระบบรับสลิปยังไม่พร้อม — กรุณาติดต่อผู้ขาย");
+            throw new BusinessRuleException("ระบบรับสลิปยังไม่พร้อม — กรุณาติดต่อผู้ขาย", DocumentSlipIntents.RuleCode, 503);
 
-        var balance = doc.TotalAmount - doc.PaidAmount;
-        var pay = amount ?? balance;
-        if (pay <= 0) throw new InvalidOperationException("ยอดที่จะชำระต้องมากกว่า 0");
-        if (pay > doc.TotalAmount * 1.05m) throw new InvalidOperationException("ยอดสลิปมากกว่ายอดในเอกสาร — ตรวจสอบอีกครั้ง");
+        // รอบ 250 ฝ่ายค้าน H2/L4: ตัดสินที่ยอดค้างของเอกสาร (สลิปงวด 2 รับได้ · ใบชำระครบ/ยอดเกินยอดค้าง = ปฏิเสธ) — ตัวตัดสินเดียว DocumentSlipIntents
+        var pay = amount ?? doc.BalanceDue;
+        if (DocumentSlipIntents.UploadProblem(doc.Status, doc.BalanceDue, pay) is string uploadProblem)
+            throw new BusinessRuleException(uploadProblem, DocumentSlipIntents.RuleCode, 400);
 
         // Save file under wwwroot/uploads/portal-slips/{yyyy-MM}/...
         // Run images through ImageProcessingService (Slip profile — compressed
@@ -555,13 +569,25 @@ public class PortalService : IPortalService
             relUrl = "/" + relDir + "/" + storedName;
         }
 
-        // ความจริงเรื่องเงิน = PaymentIntent (manual-slip) รอยืนยัน — ยอดซ้ำ + ยังเปิด ⇒ StartAsync คืนใบเดิม (ไม่ซ้อน) ·
-        // รายการนี้ชำระสำเร็จไปแล้วผ่านระบบ ⇒ StartAsync ปฏิเสธพร้อมข้อความ (ส่งต่อถึงลูกค้าเป็น 400)
-        var intent = await _intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
-            PaymentSourceKind.Document, doc.Id, pay, PaymentMethodKind.ManualSlip,
-            Description: PortalSlipPending.IntentDescription(doc.DocumentNumber, relUrl),
-            ContactId: contactId),
-            providerCode: Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code);
+        // ความจริงเรื่องเงิน = PaymentIntent (manual-slip) รอยืนยัน — สลิปแต่ละใบเป็นรายการของตัวเอง (ฝ่ายค้าน H2) ·
+        // ล้ม ⇒ ลบไฟล์ที่เพิ่งเขียน (ฝ่ายค้าน L4 — ไม่เก็บข้อมูลผู้โอนกำพร้า) แล้วโยนต่อ
+        Accounting.Models.Entities.PaymentIntent intent;
+        try
+        {
+            intent = await _intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
+                PaymentSourceKind.Document, doc.Id, pay, PaymentMethodKind.ManualSlip,
+                Description: PortalSlipPending.IntentDescription(doc.DocumentNumber, relUrl),
+                ContactId: contactId),
+                providerCode: Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            try { await storage.DeleteAsync(absPath); } catch (Exception delEx) when (delEx is not OperationCanceledException) { _ = delEx; }
+            if (ex is BusinessRuleException) throw;
+            // ข้อความไทยของ StartAsync (InvalidOperationException) ส่งต่อตรง · อื่น ๆ = ข้อความกลาง (ไม่รั่วข้อความภายใน)
+            throw new BusinessRuleException(ex is InvalidOperationException ? ex.Message : "บันทึกสลิปไม่สำเร็จ — กรุณาแนบอีกครั้ง หรือติดต่อผู้ขาย",
+                ex, DocumentSlipIntents.RuleCode, 409);
+        }
 
         _db.Set<FileAttachment>().Add(new FileAttachment
         {
