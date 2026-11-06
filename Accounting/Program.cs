@@ -638,6 +638,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.CrossTenantWorkfl
 builder.Services.AddSingleton<Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService>();
 builder.Services.AddScoped<IReportBuilderService, ReportBuilderService>();
 builder.Services.AddScoped<IPortalService, PortalService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.SlipEvidenceService>();   // รอบ 255 WP-12B ข้อ 1 — ประตูเดียวของการแจ้งโอน (พอร์ทัล + หน้าชำระของเอกสาร)
 
 // Phase 5: World-Class
 builder.Services.AddScoped<IFpaService, FpaService>();

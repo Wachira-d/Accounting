@@ -3209,6 +3209,26 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - ล็อก: `Accounting.Tests/AutopilotRound252Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/AutopilotRound252DbTests.cs` · `tools/required_call_site_check.py` (R252) ·
   `write_permission_gate_check` เฝ้า `AutopilotController` · `html_interpolation_escape_check` เฝ้า `autopilot.html` · Last verified `commit 81641769`
 
+### 2.12l Autopilot ส่วน B — แจ้งโอนจากหน้าชำระ · รายการประจำทุก N เดือน/สร้างล่วงหน้า (รอบ 255 WP-12B · AUDIT_249 §WP-12 ข้อ 1–2 · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §4.2 ② · §5.6 · คำตัดสิน 255-WP12B-*)
+
+- **แจ้งโอน + แนบสลิปจากหน้าชำระของเอกสาร (ข้อ 1 · `pages/pay-document.html` · `POST api/companies/{cid}/public-pay/documents/{token}/slip`)**: หน้าชำระแสดงเลขบัญชี + ปุ่ม
+  "คัดลอกเลขบัญชี" (ตัวเลขล้วน) + QR พร้อมเพย์ (เดิม 246) + ฟอร์มแจ้งโอนเมื่อเซิร์ฟเวอร์บอก `canSubmitSlip` (`SlipEvidenceRule.PayLinkSlipAllowed` = มีกล่องโอน + ยอดสุทธิ > 0 —
+  **ใช้ได้กับโหมดโอนอย่างเดียว** ที่ไม่มีช่องทางออนไลน์) · ทางเข้านี้ไม่ล็อกอิน ⇒ ด่านครบก่อนเขียน: โทเคนลิงก์ชำระ (hash · ตัดสินสด) · ชนิดไฟล์จากไบต์จริง
+  (`SlipEvidenceRule.DetectPublicType` — JPEG/PNG/WEBP/PDF · ไม่เชื่อ Content-Type) · ≤ 10 MB · มีสลิปรอตรวจของใบนี้แล้ว = 409 · ≤ 5 ครั้ง/ใบ/ชม. = 429 (นับในฐาน) ·
+  ยอด = ยอดสุทธิของลิงก์จากเซิร์ฟเวอร์ (`PublicDocumentPayView.SlipAmount` · ไม่รับยอดจากหน้าเว็บ) · คำตอบไม่มีรหัสภายใน ·
+  **ประตูเดียว `SlipEvidenceService.SubmitAsync`** (พอร์ทัล `PortalService.UploadDocumentSlipAsync` ย้ายมาเดินตัวเดียวกัน): ด่านยอดค้าง → กันซ้ำทั้งบริษัท (แฮชไฟล์ + เลขอ้างอิง 252) →
+  ที่เก็บกลาง → `PaymentIntent(ManualSlip)` รอยืนยัน → ไฟล์แนบของเอกสาร (`CreatedBy` = ช่องทาง `portal-customer`/`pay-link-customer` · ไม่มีผู้ใช้) → แจ้งทีม E-06 ·
+  **สลิป ≠ รับชำระ**: ไม่มีแถว `Payment` · ปิดหนี้เมื่อคนยืนยัน (ManualSlip เดิม) หรือรายการเดินบัญชีจริงมาถึง (`BankReceiptAutoSettle` · เลขอ้างอิงเป็นตัวระบุตัว) ·
+  ปลดคำตัดสิน 241-2 "ไม่เปิดอัปสลิปแบบไม่ล็อกอิน" ด้วยด่านชุดนี้ (DECISIONS 255-WP12B-1)
+- **รายการประจำทุก N เดือน + สร้างล่วงหน้า (ข้อ 2)**: `RecurringTransaction.IntervalMonths` (1–60 · ตั้งแล้ว**แทน**ความถี่ · ยึดวันที่ของเดือนแบบรายเดือน · null = เดิม) +
+  `LeadDays` (0 = เดิม · ต้องสั้นกว่าหนึ่งงวดและ ≤ 28 — `RecurringSchedule.LeadDaysError` · รายวันไม่ได้) · ตัวตัดสินเดียว `RecurringSchedule`:
+  `Next(…, intervalMonths)` · `IsDue(next, now, leadDays)` (วันสร้าง = วันงวด − N) · `CatchUp(…, intervalMonths, leadDays)` · `PlaceholderBaseDate(…, leadDays)` (ตัวแปร &lt;&lt;month&gt;&gt; = **เดือนของงวด**) ·
+  ผู้อ่าน: cron (`ProcessDueRecurringTransactionsAsync` ดึงกว้าง +28 วันแล้วตัดสินต่อแถวภายใต้ล็อก) · สร้างทันที (กินงวดเมื่อถึงเวลาสร้างล่วงหน้า) · ข้ามงวดค้าง · ทดลองรัน ·
+  แจ้งเตือนก่อนรอบ (นับจากวันสร้าง) · **เอกสารลงวันที่วันที่สร้าง** (ไม่ลงวันล่วงหน้า §86/4 · ครบกำหนดนับจากวันสร้างตามเดิม) · ค่าผิดช่วง = ปฏิเสธพร้อมเหตุ (ไม่ clamp) ·
+  echo + hydrate ฟอร์ม `recurring.html` (ว่าง = ตามความถี่ · แก้ไขส่ง 0 = ล้าง) · ราคาแปรผัน/มิเตอร์ = backlog (DECISIONS 255-WP12B-9)
+- ล็อก: `Accounting.Tests/AutopilotRound255Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/AutopilotRound255DbTests.cs` (สลิป = รอยืนยัน · บริษัทอื่นใช้รหัสใบไม่ได้) ·
+  `Db/RecurringTransactionDbTests.R255_*` · `tools/required_call_site_check.py` (R255) · Last verified `commit <เติมในคอมมิตตามหลัง>`
+
 ### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
 
 - **ที่มา**: เจ้าของ (2026-11-06) "บัญชีแต่ละบัญชีรองรับอัปโหลด QR · เอกสารที่แสดงเลขบัญชีแนบรูป QR ไปด้วย · บริษัทที่เปิด payment gateway สร้าง QR ของหน้าชำระแนบไปด้วยถ้าเลือกช่องทางนี้" ·
@@ -8127,3 +8147,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 251 WP-07 — §2.7 ร�
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-12A — §2.12j Autopilot ส่วน A: อีเมลสถานะ E-01…E-15 (ล้ม = ทันที · สำเร็จ = สรุป 08:40) · หน้า Autopilot (read model `AutopilotStage`) · ใบเสนอราคาแปลงอัตโนมัติ (ตั้งต่อใบ · ค่าตั้งต้นไม่แปลง · `ConvertDocumentAsync`) · เงินโอนปิดหนี้ `BankReceiptAutoSettle` (ค่าตั้งต้นปิด · source BankAutoSettle) · สลิปกันซ้ำ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81641769)_
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-12A แก้ผลฝ่ายค้าน — §2.12k (เลขใหม่ — เดิม §2.12j ชนกับ WP-09): แหล่งบรรทัด UserFile/Api เสนอเท่านั้น · Statement/FeedCustom ต้องมีผู้นำเข้าที่มีสิทธิ์อนุมัติ · กู้การชำระ BANK:{lineId} · ผู้สมัครตาม IssueRefusal · THB · ผูกธุรกรรมเดียว · จับคู่มือกัน Applying — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 80ee6cf4)_
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-09 ฝ่ายค้าน — §2.12j 50 ทวิ ขาเข้า: H1 กันซ้ำกับทะเบียน 409 · H2 คนละรอบบัญชีลงรวมแถวไม่ได้ · M1 ตัดสูญเฉพาะส่วนขาดใบ · M2 กันลบต้นทางที่ได้ใบบางส่วน · M3 GL ลด ⇒ ลดยอด · M4 ด่านความมั่นใจ/ยอด · M5 รายการใหม่ต้องมีเหตุผล + เตือน ภ.ง.ด.50 · M6 สอนเฉพาะดูใบแล้ว · L1–L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2681a9fb)_
+_Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 1–2 — §2.12l: แจ้งโอนจากหน้าชำระ (โทเคนลิงก์ชำระ · ไบต์จริง · สลิปรอตรวจ/เพดานต่อชั่วโมง · ยอดจากเซิร์ฟเวอร์) ผ่านประตูเดียว `SlipEvidenceService` (พอร์ทัลย้ายมาด้วย) · ปุ่มคัดลอกเลขบัญชี · รายการประจำ `IntervalMonths`/`LeadDays` ผ่าน `RecurringSchedule` ทุกจุด — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

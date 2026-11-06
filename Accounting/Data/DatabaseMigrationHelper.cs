@@ -266,6 +266,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PaymentQrMigration.Statements());   // รอบ 246 QR — QR ชำระเงินของบัญชีธนาคาร (อัปโหลด/พร้อมเพย์) + ธงแสดง QR ของเทมเพลต
         list.AddRange(Accounting.Helpers.AutopilotMigration.Statements());   // รอบ 252 WP-12A — Autopilot: สรุปประจำวัน · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ
         list.AddRange(Accounting.Helpers.NotifyChannelQuotaMigration.Statements());   // รอบ 254 WP-11 L4 — ตัวนับ/เพดาน/โบนัส/แพ็กแยกช่อง LINE·อีเมล (หลังบล็อกรอบ 212/213 ที่สร้างตาราง)
+        list.AddRange(Accounting.Helpers.AutopilotPartnerMigration.Statements());   // รอบ 255 WP-12B — รายการประจำทุก N เดือน/ล่วงหน้า · คู่ค้า NextAcc · ใบซื้อร่าง · 50 ทวิ ผ่านคู่ค้า · พอร์ทัลลิงก์วิเศษ
         return list;
     }
 

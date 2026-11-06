@@ -6824,3 +6824,9 @@ _รอบ 254 WP-11 L4 ส่วน OA กลาง (N8 · DECISIONS 254-WP11-1
 (`NextAccOaUsageCounters` · นับที่ `CustomerLineLinkService.ReplyAsync`) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% ครั้งเดียวต่องวด · ไม่ตัดโควตาผู้เช่า · สวิตช์ `CentralOaGroupDeliveryEnabled`
 เลื่อนไปทำพร้อมเส้นกลุ่มผ่าน OA กลาง (สวิตช์ที่ไม่มีผู้อ่าน = ค่าตั้งไม่มีผล). ยังไม่ได้คอมไพล์ในเครื่องนี้_
 
+
+_รอบ 255 WP-12B ข้อ 1–2 (AUDIT_249 §WP-12 · DECISIONS 255-WP12B-1/2/9): **แจ้งโอนจากหน้าชำระของเอกสาร** — `POST public-pay/documents/{token}/slip` (โทเคนลิงก์ชำระ ·
+ชนิดไฟล์จากไบต์จริง · ≤ 10 MB · สลิปรอตรวจ = 409 · ≤ 5/ใบ/ชม. = 429 · ยอดจากเซิร์ฟเวอร์) + ปุ่มคัดลอกเลขบัญชีบน `pay-document.html` · ประตูเดียว `SlipEvidenceService.SubmitAsync`
+(พอร์ทัลย้ายมาใช้ด้วย — ด่านยอดค้าง · กันซ้ำ 252 · ที่เก็บกลาง · `ManualSlip` รอยืนยัน · แจ้งทีม E-06 · ไม่มีแถว Payment) · **รายการประจำทุก N เดือน + สร้างล่วงหน้า**
+(`IntervalMonths`/`LeadDays` · ตัวตัดสินเดียว `RecurringSchedule` — cron/สร้างทันที/ข้ามงวดค้าง/ทดลองรัน/แจ้งก่อนรอบ · เอกสารลงวันที่วันสร้าง · ค่าผิดช่วงปฏิเสธ) ·
+migration `Helpers/AutopilotPartnerMigration` · DOCUMENT_FLOW §2.12l · TEST_PLAN AP255-1…7 · ยังไม่ได้คอมไพล์ในเครื่องนี้_

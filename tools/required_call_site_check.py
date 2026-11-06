@@ -6296,8 +6296,9 @@ RULES += [
     dict(file="Services/Implementations/CmsCommerceService.cs", method="RecordPaymentSlipAsync",
          must=["UploadAnonymousBytesAsync"], forbid=["UploadedByUserId = Guid.Empty", "UploadBytesAsync(", "new FileAttachment"],
          why=_GUEST_FILE_WHY + " · สลิปหน้าร้านออนไลน์ (ผ่าน IFileAttachmentService.UploadAnonymousBytesAsync)"),
-    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
-         must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปพอร์ทัลลูกค้า"),
+    # รอบ 255 WP-12B ข้อ 1: ย้ายเนื้อจาก PortalService.UploadDocumentSlipAsync ไปประตูเดียว SlipEvidenceService.SubmitAsync (พอร์ทัล + หน้าชำระ)
+    dict(file="Services/Implementations/SlipEvidenceService.cs", method="SubmitAsync",
+         must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปพอร์ทัล/หน้าชำระของลูกค้า"),
 ]
 
 
@@ -15889,7 +15890,8 @@ RULES += [
          must=["_crossTenantWorkflow.RouteSentDocumentAsync("],
          forbid=["_crossTenantWorkflow.OnDocumentSentAsync("],
          why=_R250_WHY + "P-6 ห้ามกลับไป try { OnDocumentSentAsync } catch { LogWarning } (ล้มเงียบ)"),
-    dict(file=_R250_PORTAL, method="UploadDocumentSlipAsync",
+    # รอบ 255 WP-12B ข้อ 1: เนื้อย้ายไปประตูเดียว SlipEvidenceService.SubmitAsync (พอร์ทัล + หน้าชำระของเอกสาร)
+    dict(file="Services/Implementations/SlipEvidenceService.cs", method="SubmitAsync",
          must=["_intents.StartAsync(", "PaymentMethodKind.ManualSlip", "ManualSlipPaymentProvider.Code", "PaymentSourceKind.Document"],
          forbid=_R250_SLIP_PAYMENT_WRITES,
          forbid_lit=["[PENDING-VERIFY]"],
@@ -15960,10 +15962,10 @@ RULES += [
          must=["DocumentSlipIntents.IsDocumentSlip("],
          must_re=[r"if\s*\(\s*settled\s*!=\s*null\s*&&\s*!\s*documentSlip\s*\)", r"reusable\s*=\s*existing\s*\.\s*FirstOrDefault\s*\(\s*i\s*=>\s*!\s*documentSlip\s*&&"],
          why=_R250A_WHY + "H2 สลิปงวด 2 ต้องรับได้ · สลิปแต่ละใบเป็นรายการของตัวเอง"),
-    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
+    dict(file="Services/Implementations/SlipEvidenceService.cs", method="SubmitAsync",
          must=["DocumentSlipIntents.UploadProblem(", "storage.DeleteAsync("],
          before=[("DocumentSlipIntents.UploadProblem(", "_intents.StartAsync(")],
-         why=_R250A_WHY + "H2/L4 ตัดสินที่ยอดค้าง · ล้มแล้วลบไฟล์"),
+         why=_R250A_WHY + "H2/L4 ตัดสินที่ยอดค้าง · ล้มแล้วลบไฟล์ (รอบ 255: ย้ายเข้าประตูเดียว)"),
     # H3: คำเชิญถึงเฉพาะบริษัทที่เปิดให้ค้นเจอ · เพดานต่อวัน · เวลาตอบคงที่
     dict(file=XTENANT, method="InvitePartnerAsync",
          must=["c.PartnerDiscoverable", "InviteMinimumDuration"],
@@ -16486,11 +16488,15 @@ RULES += [
          why=_R252_WHY + "E-15 สรุปจากแถวจริง · ประทับวันก่อนส่ง (หลายเครื่อง = ส่งครั้งเดียว)"),
     dict(file=_R252_DIGEST, method="RunOnceAsync", must=["AutopilotNotice.DigestDue("],
          why=_R252_WHY + "เวลาส่งสรุปตามค่าตั้งของบริษัท (ตัวตัดสินเดียว)"),
-    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
+    dict(file="Services/Implementations/SlipEvidenceService.cs", method="SubmitAsync",
          must=["SlipEvidenceRule.Sha256Hex(", "SlipEvidenceRule.NormalizeRef(", "SlipEvidenceRule.DuplicateProblem(", "NotificationEvents.AutopilotSlipSubmitted"],
          before=[("SlipEvidenceRule.DuplicateProblem(", "_intents.StartAsync(")],
-         forbid=["Payments.Add("],
-         why=_R252_WHY + "G-T5 สลิปกันซ้ำ (แฮชไฟล์ + เลขอ้างอิง) ก่อนสร้างรายการ · สลิปไม่ใช่รับชำระ · แจ้งทีม E-06"),
+         forbid=["Payments.Add(", "PaymentStatus.", "DocumentStatus.Paid"],
+         why=_R252_WHY + "G-T5 สลิปกันซ้ำ (แฮชไฟล์ + เลขอ้างอิง) ก่อนสร้างรายการ · สลิปไม่ใช่รับชำระ · แจ้งทีม E-06 (รอบ 255: ประตูเดียว)"),
+    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
+         must=["slips.SubmitAsync(", "SlipEvidenceService.ChannelPortal"],
+         forbid=["Payments.Add(", "_intents.StartAsync("],
+         why="รอบ 255 WP-12B ข้อ 1: สลิปพอร์ทัลเดินประตูเดียวกับหน้าชำระ — ห้ามประกอบเส้นเอง (สองความจริงของ \"จ่ายหรือยัง\")"),
     dict(file=_R252_AP, method="UpdateSettingsAsync",
          must=["QuotationAcceptAutopilot.Normalize(", "AutopilotNotice.NormalizeDigestTime(", "QuotationAcceptAutopilotSince = now", "AddChainedAuditLog("],
          why=_R252_WHY + "ค่าที่อ่านไม่ออกปฏิเสธ (ไม่ clamp เงียบ) · เปิดแปลงใบเสนอราคา = ประทับ watermark · audit"),
@@ -16522,7 +16528,7 @@ REVIEWER_CASES += [
     # ไม่ตรวจเนื้อหาเปลี่ยนหลังยอมรับ ⇒ ต้องฟ้อง
     ("R252-4", "ProcessOneAsync", "QuotationAcceptance.ContentMatches(qt, qt.Lines)", "null", True),
     # ถอดด่านสลิปซ้ำ ⇒ ต้องฟ้อง
-    ("R252-5", "UploadDocumentSlipAsync",
+    ("R252-5", "SubmitAsync",
      "if (SlipEvidenceRule.DuplicateProblem(sameFile, sameRef) is string dupProblem)\n            throw new BusinessRuleException(dupProblem, SlipEvidenceRule.RuleDuplicate, 409);",
      "", True),
     # ทิศตรงข้าม: จัดบรรทัดใหม่ ⇒ ต้องไม่ฟ้อง
@@ -16807,6 +16813,43 @@ REVIEWER_CASES += [
      "where ids.Contains(a.WhtCreditId)", True),
     # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .Match( ⇒ ต้องไม่ฟ้อง
     ("R252i", "SubmitAsync", ": WhtCertMatchPolicy.Match(", ": WhtCertMatchPolicy\n                .Match(", False),
+]
+
+# ── รอบ 255 WP-12B ข้อ 1–2 (AUDIT_249 §WP-12 · AUTOPILOT §5.6 · §4.2 ②) ──
+_R255_WHY = "รอบ 255 WP-12B: "
+RULES += [
+    # ข้อ 1: แจ้งโอนจากหน้าชำระของเอกสาร — ทางเข้าที่ไม่ล็อกอิน ⇒ ด่านครบก่อนเขียน · ชนิดไฟล์จากไบต์จริง · ยอดจากเซิร์ฟเวอร์ · ประตูเดียว
+    dict(file="Controllers/PublicPaymentController.cs", method="SubmitDocumentSlip",
+         must=["_docLinks.PublicViewAsync(", "SlipEvidenceRule.PayLinkSlipProblem(", "_slips.PayLinkLoadAsync(", "SlipEvidenceRule.DetectPublicType(",
+               "view.SlipAmount", "_slips.SubmitAsync(", "SlipEvidenceService.ChannelPayLink"],
+         before=[("SlipEvidenceRule.PayLinkSlipProblem(", "_slips.SubmitAsync("), ("SlipEvidenceRule.DetectPublicType(", "_slips.SubmitAsync(")],
+         forbid=["file.ContentType", "Payments.Add(", "_intents.StartAsync(", "ApplyChargeAsync("],
+         why=_R255_WHY + "ข้อ 1 แจ้งโอนจากลิงก์ชำระ: ด่านสแปม/สิทธิ์ก่อน · ไม่เชื่อ Content-Type · ไม่รับยอดจากหน้าเว็บ · สลิป ≠ รับชำระ"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="PublicViewAsync",
+         must=["SlipEvidenceRule.PayLinkSlipAllowed(", "SlipAmount = amounts.Net"],
+         why=_R255_WHY + "ข้อ 1 ฟอร์มแจ้งโอนแสดงตามเซิร์ฟเวอร์ (ไม่ผูกกับช่องทางออนไลน์) · ยอดสลิป = ยอดสุทธิของลิงก์"),
+    # ข้อ 2: ทุก N เดือน + สร้างล่วงหน้า — ทุกจุดตัดสิน "ถึงกำหนด" นับสร้างล่วงหน้า · ทุกจุดเลื่อนงวดนับทุก N เดือน
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="ProcessDueRecurringTransactionsAsync",
+         must=["RecurringSchedule.IsDue(recurring.NextRunDate, now, recurring.LeadDays)", "RecurringSchedule.MaxLeadDays"],
+         forbid=["RecurringSchedule.IsDue(recurring.NextRunDate, now))"],
+         why=_R255_WHY + "ข้อ 2 cron ตัดสินถึงกำหนดนับสร้างล่วงหน้า (ไม่งั้นค่าตั้งไม่มีผล)"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="RunNowAsync",
+         must=["RecurringSchedule.IsDue(recurring.NextRunDate, DateTime.UtcNow, recurring.LeadDays)"],
+         why=_R255_WHY + "ข้อ 2 สร้างทันที: งวดที่ถึงเวลาสร้างล่วงหน้าแล้ว = กินงวด (ไม่ออกซ้ำตอน cron)"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="SkipOverduePeriodsAsync",
+         must=["intervalMonths: recurring.IntervalMonths", "leadDays: recurring.LeadDays"],
+         why=_R255_WHY + "ข้อ 2 ข้ามงวดค้างด้วยตารางเวลาเดียวกับ cron"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="GetNextRunDate", must=["r.IntervalMonths"],
+         why=_R255_WHY + "ข้อ 2 เลื่อนงวดทุก N เดือน"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateAsync",
+         must=["RecurringSchedule.IntervalError(", "RecurringSchedule.LeadDaysError("],
+         before=[("RecurringSchedule.LeadDaysError(", "_db.RecurringTransactions.Add(")],
+         why=_R255_WHY + "ข้อ 2 ค่าที่ใช้ไม่ได้ปฏิเสธ (ไม่ clamp เงียบ) · สร้างล่วงหน้าต้องสั้นกว่าหนึ่งงวด"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="UpdateAsync",
+         must=["RecurringSchedule.IntervalError(", "RecurringSchedule.LeadDaysError("],
+         why=_R255_WHY + "ข้อ 2 แก้ไขตรวจด่านเดียวกับสร้าง"),
+    dict(file="Services/Implementations/RecurringAutopilotService.cs", method="BuildAsync", must=["r.IntervalMonths", "r.LeadDays"],
+         why=_R255_WHY + "ข้อ 2 ทดลองรันแสดงวันตามตารางเวลาจริง"),
 ]
 
 

@@ -134,4 +134,16 @@ public sealed record PublicDocumentPayView(
     /// <summary>เป้าหมายของรายการชำระ (ไม่ส่งออกใน JSON ของหน้า — controller เลือกช่องที่คืนเอง)</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public PublicPayTarget Target { get; init; } = null!;
+
+    /// <summary>รอบ 255 WP-12B ข้อ 1: หน้าชำระแสดงฟอร์ม "แจ้งโอน + แนบสลิป" ไหม (เซิร์ฟเวอร์ตัดสิน — <c>SlipEvidenceRule.PayLinkSlipAllowed</c>) ·
+    /// ใช้ได้ทั้งโหมดโอนอย่างเดียว (ไม่มีช่องทางออนไลน์) — ไม่ผูกกับ <see cref="CanPayOnline"/></summary>
+    public bool CanSubmitSlip { get; init; }
+
+    /// <summary>ยอดที่สลิปจากหน้านี้แทน (ยอดสุทธิของลิงก์ — ไม่รับยอดจากหน้าเว็บ) · ไม่ส่งออกใน JSON</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public decimal SlipAmount { get; init; }
+
+    /// <summary>เอกสารของลิงก์ (สลิปผูกใบนี้) · ไม่ส่งออกใน JSON</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Guid SlipDocumentId { get; init; }
 }

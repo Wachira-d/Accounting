@@ -413,6 +413,8 @@ Accounting/Controllers/PublicPaymentController.cs	StartBooking	1
 Accounting/Controllers/PublicPaymentController.cs	StartDocument	1
 Accounting/Controllers/PublicPaymentController.cs	StartLodging	1
 Accounting/Controllers/PublicPaymentController.cs	StartOrder	1
+# รอบ 255 WP-12B ข้อ 1: แจ้งโอน + แนบสลิปจากหน้าชำระของเอกสาร — ทางเข้าสาธารณะโดยตั้งใจ (สิทธิ์ = token ลิงก์ชำระเดียวกับ StartDocument · ไบต์จริง · สลิปรอตรวจ 409 · ≤5/ใบ/ชม. · ยอดจากเซิร์ฟเวอร์ · ผล = รอคนยืนยัน — ล็อก R255)
+Accounting/Controllers/PublicPaymentController.cs	SubmitDocumentSlip	1
 Accounting/Controllers/PublicQuotationController.cs	Accept	1
 Accounting/Controllers/PublicQuotationController.cs	SignDelivery	1
 Accounting/Controllers/PublicReservationController.cs	Cancel	1
