@@ -6667,4 +6667,4 @@ baseline hashtext = 0 · Db test 4 ทิศ + กติกา R250W4 (ล็อ
 (4) Db test ด่านสินทรัพย์ผ่านเส้นจริงสองทิศ: ลบถาวร · ย้ายฝั่ง CN/DN · สลับบริการต่างประเทศ · แก้ผังบรรทัด · resync · OCR ลงทะเบียนจากสแกน · กลับ/แก้ JE โอนต้นทุน ·
 `Void_while_linking_holds_key_first` (ดู `pg_locks`) · `WhtWriteOffJournalLock` 409 + ทิศตรงข้าม · `SettleYearEnd_locks_in_id_order` · MED-5 enqueue→send สองทิศ.
 (5) `GateOppositeDirectionRound250Tests` — 8 ฟังก์ชันที่ matrix ของทีม E นับว่าไม่มีทิศตรงข้าม + `Releases` เรียกตรง + `BindingHash` (ผัง/ราคา/ผู้ติดต่อเปลี่ยน · คำอธิบายไม่เปลี่ยน).
-ยังไม่ทำ (WP-04 ข้อ 7–13): XML e-Tax · ตาราง PaymentNotification ทุกชนิด · `PostJe`/`AgingDays` · checker 4 ตัว. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK)_
+ยังไม่ทำ (WP-04 ข้อ 7–13): XML e-Tax · ตาราง PaymentNotification ทุกชนิด · `PostJe`/`AgingDays` · checker 4 ตัว. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 0cb7ff24_
