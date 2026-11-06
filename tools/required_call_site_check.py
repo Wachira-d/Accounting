@@ -603,7 +603,7 @@ RULES += [
     dict(file="Services/Implementations/AccountingService.cs", method="UpdateJournalEntryAsync",
          must=["strictAccounts: true"],
          why="ID#24 แก้ใบสำคัญ (ทางมือเท่านั้น) ใช้ด่านเข้ม"),
-    dict(file="Services/Implementations/FixedAssetService.cs", method="CreateAsync",
+    dict(file="Services/Implementations/FixedAssetService.cs", method="CreateCoreAsync",  # WP-13 ห่อ CreateAsync ด้วย transaction — ตัวจริงย้ายมาที่ CreateCoreAsync
          before=[("EnsurePostingAccountsAsync(", "_db.FixedAssets.Add(")],
          why="ID#13 ผังของสินทรัพย์ (งานค่าเสื่อมรายเดือนลงสมุดด้วย id เหล่านี้) ต้องลงรายการได้ก่อนเก็บ"),
     dict(file=INTEG, method="ProcessDailySummaryAsync",
