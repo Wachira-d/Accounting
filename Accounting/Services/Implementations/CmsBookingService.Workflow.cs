@@ -530,15 +530,6 @@ public partial class CmsBookingService
         if (string.IsNullOrEmpty(resp.CustomerStatusLabel)) resp.CustomerStatusLabel = BookingStatusLabels.Customer(resp.Status);
     }
 
-    private static string PaymentMethodLabel(PaymentMethod m) => m switch
-    {
-        PaymentMethod.Cash => "เงินสด",
-        PaymentMethod.BankTransfer => "โอนเงิน",
-        PaymentMethod.CreditCard => "บัตรเครดิต",
-        PaymentMethod.Cheque => "เช็ค",
-        PaymentMethod.PromptPay => "พร้อมเพย์",
-        PaymentMethod.DirectDebit => "หักบัญชี",
-        PaymentMethod.EWallet => "e-Wallet",
-        _ => "อื่น ๆ",
-    };
+    /// <summary>รอบ 249: ตารางชื่อวิธีชำระย้ายไป <c>Helpers/PaymentMethodNames</c> (ตัวเดียวกับข้อความแจ้งเตือนรับ/จ่ายชำระ)</summary>
+    private static string PaymentMethodLabel(PaymentMethod m) => global::Accounting.Helpers.PaymentMethodNames.Thai(m);
 }

@@ -3859,6 +3859,9 @@ public static class DatabaseMigrationHelper
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_NotificationPreferences_CompanyId_UserId_EventKey"
                 ON "NotificationPreferences" ("CompanyId", "UserId", "EventKey");
             """,
+            // รอบ 249: แยกคีย์ document.payment_made (จ่ายชำระฝั่งซื้อ) จาก payment_received — คัดลอกค่าตั้ง/การปิดช่องรายคนครั้งเดียว
+            // (ต้องอยู่หลัง EnableLineGroup + ตาราง NotificationPreferences ข้างบน · ตัวตั้ง SQL ตัวเดียว Helpers/NotificationEventSplit)
+            Accounting.Helpers.NotificationEventSplit.MigrationSql,
 
             // ===== SystemAccountTemplates: admin-editable master Chart of Accounts =====
             """

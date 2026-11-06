@@ -14571,6 +14571,41 @@ public partial class DocumentService : IDocumentService
             ?? await FindAccountAsync(companyId, "4901");
     }
 
+    /// <summary>รอบ 249 — ข้อเท็จจริงของข้อความแจ้งเตือนรับ/จ่ายชำระ (ชื่อคู่ค้า · คำอธิบายบรรทัด · ฝั่งเงิน) — อ่านอย่างเดียว · กรอง CompanyId ทุกคำค้น ·
+    /// เรียกหลัง commit: อ่านชื่อ/บรรทัดไม่สำเร็จ ⇒ ข้อความยังส่งได้โดยไม่มีบรรทัดคู่ค้า/รายการ (การชำระบันทึกแล้ว — ไม่โยนกลับผู้ใช้) และ log Warning</summary>
+    private async Task<Accounting.Helpers.PaymentNotificationFacts> LoadPaymentNotificationFactsAsync(Guid companyId, Document doc, Payment payment)
+    {
+        var isInflow = await IsCashInflowDocAsync(companyId, doc);
+        string? contactName = null;
+        List<string?> lines = new();
+        try
+        {
+            contactName = await _db.Contacts.AsNoTracking()
+                .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
+                .Select(c => c.Name)
+                .FirstOrDefaultAsync();
+            lines = await _db.DocumentLines.AsNoTracking()
+                .Where(l => l.DocumentId == doc.Id && l.Document.CompanyId == companyId && !l.IsDeleted)
+                .OrderBy(l => l.LineOrder)
+                .Select(l => (string?)l.Description)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "แจ้งเตือนชำระเงิน {DocumentNumber}: อ่านชื่อคู่ค้า/รายการไม่สำเร็จ — ส่งข้อความแบบไม่มีบรรทัดคู่ค้า/รายการ", doc.DocumentNumber);
+        }
+        return new Accounting.Helpers.PaymentNotificationFacts(
+            IsInflow: isInflow,
+            DocumentType: doc.DocumentType,
+            DocumentNumber: doc.DocumentNumber,
+            ContactName: contactName,
+            LineDescriptions: lines,
+            Amount: payment.Amount,
+            Currency: doc.Currency,
+            Method: payment.PaymentMethod,
+            BalanceDue: doc.BalanceDue);
+    }
+
     /// <summary>เงินของการชำระเอกสารนี้ "เข้า" (ลูกค้าจ่ายเรา) หรือ "ออก"
     /// (เราจ่าย vendor) — DebitNote ต้องดูฝั่งจากเอกสารต้นทาง: ฝั่งซื้อ
     /// (source = PI/Expense/CIL) คือเงินออก ไม่ใช่เงินเข้า</summary>
@@ -15294,15 +15329,21 @@ public partial class DocumentService : IDocumentService
                 await _issuedHooks.RunAsync(companyId, issuedSettlementReceipt);
 
             // รอบ 232 (232-Notify): "💵 รับชำระเงินแล้ว" เดิมประกาศกลุ่ม LINE แล้วถอยไปกลุ่มกลางของแพลตฟอร์ม ⇒ เดินเครื่องแจ้งเตือนกลาง
-            // (document.payment_received · ค่าตั้งของบริษัท · ไม่โยนกลับผู้เรียก — engine กลืนเองและ log)
+            // (ค่าตั้งของบริษัท · ไม่โยนกลับผู้เรียก — engine กลืนเองและ log)
+            // รอบ 249 (เจ้าของรายงาน 2026-11-06): จ่ายชำระ PI เคยขึ้น "💵 รับชำระเงินแล้ว" + ไม่บอกคู่ค้า/รายการ ⇒ ฝั่ง · คีย์ (payment_received/payment_made) ·
+            // หัวข้อ · เนื้อความ ตัดสินที่ Helpers/PaymentNotificationText ตัวเดียว · ฝั่งเงินใช้ IsCashInflowDocAsync ตัวเดียวกับยอดธนาคารข้างบน
             if (_notify != null)
-                await _notify.DispatchAsync(companyId, NotificationEvents.PaymentReceived, new NotificationContext
+            {
+                var payNote = Accounting.Helpers.PaymentNotificationText.Build(
+                    await LoadPaymentNotificationFactsAsync(companyId, doc, payment));
+                await _notify.DispatchAsync(companyId, payNote.EventKey, new NotificationContext
                 {
-                    Title = "💵 รับชำระเงินแล้ว",
-                    Message = $"📄 {doc.DocumentNumber}\n💰 {payment.Amount:N2} บาท",
+                    Title = payNote.Title,
+                    Message = payNote.Message,
                     ActionUrl = $"/pages/documents.html?id={doc.Id}",
                     EntityType = "Document", EntityId = doc.Id,
                 });
+            }
 
             // Webhooks — payment.received (always) + document.paid
             // (when BalanceDue is now zero). Both fire outside the

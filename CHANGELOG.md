@@ -6511,3 +6511,17 @@ HIGH/MED-2 นโยบายรายการผูกลายนิ้วม
 MED-3 ไม่มีนโยบายที่มีผล ⇒ แหล่ง/ร่องรอย Unattended เดิม (`ApprovalAcknowledgement.EffectiveSource`) · MED-4 ใบจำลองไม่ถาม AI (`noAi`) · MED-5 ตอนส่งคิวต่อชั้นรายการประจำ ·
 LOW-6 อ่านความพร้อม/ทดลองรันต้องมีสิทธิ์สร้างเอกสาร · LOW-7 ป้ายในชื่อ/คำอธิบายไม่ถูกปล่อย (เทสต์) · LOW-8 แจ้ง "หยุดมีผล" เฉพาะเมื่อเกี่ยว · LOW-9 คำอธิบาย APPROVAL-LIMIT ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 249 แจ้งเตือนรับ/จ่ายชำระเงิน (2026-11-06 · เจ้าของรายงานจากกลุ่ม LINE ของบริษัท MANGKORN: "💵 รับชำระเงินแล้ว 📄 PI-20260917-0007 💰 1,733.40 บาท 🔗 /pages/documents.html?id=…"):
+(1) **ฝั่งเงินผิด** — `CreatePaymentAsync` ยิง `document.payment_received` + "💵 รับชำระเงินแล้ว" ทุกการชำระ รวม PI/ค่าใช้จ่าย (เงินที่เราจ่าย) ⇒ ตัวตัดสินเดียว
+`Helpers/PaymentNotificationText` (ฝั่งจาก `IsCashInflowDocAsync` ตัวเดียวกับยอดธนาคาร): เงินเข้า = payment_received · เงินออก = คีย์ใหม่ `document.payment_made` "💸 จ่ายชำระเงินแล้ว" ·
+เนื้อความบอกชนิด+เลขเอกสาร · "จาก/ให้ <คู่ค้า>" · รายการแรก + "และอีก N รายการ" · ยอด + วิธีชำระ (`Helpers/PaymentMethodNames` — CmsBooking ย้ายมาเรียก) · ชำระครบ/คงค้าง.
+คีย์ใหม่อยู่ในแคตตาล็อก (หน้า notifications.html เห็นเองจากเซิร์ฟเวอร์) + `MigratedBroadcastKeys` (ค่าตั้งต้นเดียวกับเดิม) · ค่าตั้งของ payment_received ที่บริษัทตั้งไว้ถูกคัดลอกมาให้ฝั่งจ่าย
+เฉพาะบริษัทที่ยังไม่มีแถวคีย์ใหม่ (`Helpers/NotificationEventSplit` ใน `DatabaseMigrationHelper`) — กันบริษัทที่ปิดกลุ่ม LINE ไว้ได้ประกาศฝั่งจ่ายกลับมา.
+(2) **ลิงก์กดไม่ได้** — LINE (1:1 + กลุ่ม) และปุ่มอีเมลต่อ `ActionUrl` สัมพัทธ์ของกระดิ่ง ⇒ `Helpers/NotificationLink.Absolute` + `SystemBaseUrl.ResolveAsync` (ตัวตั้ง URL ระบบตัวเดียว · ไม่ได้ตั้ง/ค่าที่มากับซอร์ส ⇒ ไม่ใส่ลิงก์) ·
+`NotificationEngine` รับ `IConfiguration` (DI) · กระดิ่งยังเก็บ path สัมพัทธ์.
+(3) **ปิดค่าตั้งต้นไม่ได้ (บั๊กแฝงของรอบ 232)** — engine อ่านเฉพาะแถวที่เปิดบางช่อง ⇒ บริษัทที่เอาติ๊กออกหมดแล้วบันทึก (หน้าเก็บแถวปิดทุกช่อง และแสดง "ปิด") ถูกตีเป็น "ยังไม่ตั้ง"
+แล้วได้ `DefaultMatrix` (กระดิ่งเจ้าของ + กลุ่ม LINE) กลับมาเงียบ ๆ ⇒ "ยังไม่ตั้ง" = ไม่มีแถวของคีย์เลย (เกณฑ์เดียวกับ `NotificationConfigService`) · ป้ายบนหน้าแจ้งเตือนบอกชัดว่าแถว
+"ค่าตั้งต้นของระบบ" เปิดอยู่แล้ว (เดิมเขียนแค่ "Default-deny ทุกช่องเริ่มจากปิด" ⇒ เจ้าของเข้าใจว่าไม่ได้เปิด LINE).
+ตรวจแล้ว: กลุ่มที่ได้รับคือ `CompanySettings.LineDefaultGroupId` ด้วย token ของบริษัทเอง (`LineNotifyService.TryPushCompanyGroupAsync` → `ResolveCompanyOaAsync` · ไม่มีทางถอยไปกลุ่มกลางของแพลตฟอร์ม) ·
+เทสต์ `PaymentNotificationRound249Tests` + Db `PaymentNotificationRound249DbTests` · กติกา R249 ใน `required_call_site_check` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

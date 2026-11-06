@@ -52,8 +52,12 @@ public static class NotificationEvents
     public const string PostPaymentAutomationBlocked = "document.post_payment_blocked";
     // ===== รอบ 232 (232-Notify): ย้ายจาก LineNotifyService.Notify*Async (ประกาศกลุ่ม LINE โดยไม่มีค่าตั้ง + ถอยไปกลุ่มกลางของแพลตฟอร์ม) =====
     // ค่าตั้งต้นเมื่อบริษัทยังไม่ตั้ง = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้) — Helpers/NotificationAudiencePolicy.DefaultMatrix
-    /// <summary>บันทึกรับชำระของเอกสารขาย (ตัดชำระ/ใบเสร็จ) — เดิม "💵 รับชำระเงินแล้ว" เข้ากลุ่ม LINE</summary>
+    /// <summary>บันทึกรับชำระของเอกสาร<b>ฝั่งเงินเข้า</b> (ใบแจ้งหนี้/ใบกำกับขาย · ใบเพิ่มหนี้ฝั่งขาย) — เดิม "💵 รับชำระเงินแล้ว" เข้ากลุ่ม LINE ·
+    /// ผู้ตัดสินคีย์ = <c>Helpers/PaymentNotificationText.Build</c> (รอบ 249: เดิมใช้คีย์นี้กับการจ่ายชำระฝั่งซื้อด้วย ⇒ "รับชำระ PI-…" ทั้งที่เป็นเงินที่เราจ่าย)</summary>
     public const string PaymentReceived         = "document.payment_received";
+    /// <summary>รอบ 249: บันทึกจ่ายชำระของเอกสาร<b>ฝั่งเงินออก</b> (ใบตั้งหนี้ซื้อ PI · บันทึกค่าใช้จ่าย · ใบเพิ่มหนี้ฝั่งซื้อ · คืนเงินลูกค้า) — แยกจาก
+    /// <see cref="PaymentReceived"/> ⇒ บริษัทตั้งปิด/เปิดฝั่งจ่ายแยกได้ · ค่าตั้งเดิมของ payment_received ถูกคัดลอกมาครั้งเดียว (<c>Helpers/NotificationEventSplit</c>)</summary>
+    public const string PaymentMade             = "document.payment_made";
     /// <summary>ใบแจ้งหนี้เพิ่งเกินกำหนดครั้งแรก (งาน dunning ภายใน) — เดิม "⚠️ ใบแจ้งหนี้เกินกำหนด" เข้ากลุ่ม LINE · คนละอย่างกับ `ar.dunning.*` ที่เป็นหนังสือทวงถึงลูกค้า</summary>
     public const string InvoiceOverdue          = "ar.invoice_overdue";
     /// <summary>ซิงก์ธนาคารได้รายการใหม่</summary>
@@ -152,7 +156,8 @@ public static class NotificationEvents
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
         ("Accounting", DocumentCustomerSigned, "ลูกค้ายอมรับใบเสนอราคา/เซ็นรับสินค้าผ่านลิงก์ออนไลน์"),
         ("Accounting", PostPaymentAutomationBlocked, "ส่งเอกสารอัตโนมัติหลังรับชำระหยุด/ไม่สำเร็จ (ต้องให้คนดำเนินการ)"),
-        ("Accounting", PaymentReceived, "บันทึกรับชำระเงินของเอกสาร"),
+        ("Accounting", PaymentReceived, "บันทึกรับชำระเงิน (ลูกค้าจ่ายเรา)"),
+        ("Accounting", PaymentMade, "บันทึกจ่ายชำระเงิน (เราจ่ายผู้ขาย/คืนเงิน)"),
         ("Accounting", InvoiceOverdue, "ใบแจ้งหนี้เพิ่งเกินกำหนดชำระ (แจ้งภายใน)"),
         ("Accounting", BankSyncCompleted, "ซิงก์ธนาคารได้รายการใหม่"),
         ("Accounting", ECommerceSyncCompleted, "ซิงก์ร้านค้าออนไลน์ได้ออเดอร์ใหม่"),

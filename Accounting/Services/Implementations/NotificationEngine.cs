@@ -7,6 +7,7 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
@@ -32,16 +33,19 @@ public class NotificationEngine : INotificationEngine
     private readonly IOrganizationService _organization;
     private readonly ILogger<NotificationEngine> _logger;
     private readonly ISecretProtector _secrets;
+    /// <summary>รอบ 249: อ่าน <c>App:BaseUrl</c> (ผ่าน <see cref="SystemBaseUrl.ResolveAsync"/>) เพื่อทำลิงก์เต็มใน LINE/อีเมล · null (เทสต์ที่สร้างตรง) = อ่านค่าที่ผู้ดูแลตั้งอย่างเดียว</summary>
+    private readonly IConfiguration? _config;
 
     public NotificationEngine(AccountingDbContext db, ILineNotifyService line,
         IOrganizationService organization, ILogger<NotificationEngine> logger,
-        ISecretProtector secrets)
+        ISecretProtector secrets, IConfiguration? config = null)
     {
         _db = db;
         _line = line;
         _organization = organization;
         _logger = logger;
         _secrets = secrets;
+        _config = config;
     }
 
     /// <summary>Unified target — UserId เมื่อปลายทางเป็น user ในระบบ,
@@ -57,23 +61,28 @@ public class NotificationEngine : INotificationEngine
     {
         try
         {
-            var settings = await _db.NotificationSettings
+            // รอบ 249: อ่าน "ทุกแถว" ของคีย์ (รวมแถวที่ปิดทุกช่อง) — เดิมกรองเฉพาะแถวที่เปิดบางช่อง ⇒ บริษัทที่เอาติ๊กค่าตั้งต้นออกแล้วบันทึก
+            // (หน้าเก็บแถวปิดทุกช่อง · หน้าแสดง "ปิด") ถูกตีความว่า "ยังไม่ตั้ง" แล้วได้ DefaultMatrix (กระดิ่ง + กลุ่ม LINE) กลับมาเงียบ ๆ = ปิดไม่ได้
+            var savedRows = await _db.NotificationSettings
                 .AsNoTracking()
-                .Where(s => s.CompanyId == companyId && s.EventKey == eventKey
-                    && (s.EnableSystem || s.EnableEmail || s.EnableLine || s.EnableLineGroup))
+                .Where(s => s.CompanyId == companyId && s.EventKey == eventKey)
                 .ToListAsync();
+            var settings = savedRows
+                .Where(s => s.EnableSystem || s.EnableEmail || s.EnableLine || s.EnableLineGroup)
+                .ToList();
             // ถ้า caller ระบุ RecipientUserId override + ไม่มี NotificationSettings
             // ใน event นี้ → ใช้ default channels (System+Email) สำหรับ user
             // คนนั้น แทนที่จะ no-op. ใช้กับ approval/subscription event
             // ที่ recipient เป็น user รู้ตัวอยู่แล้ว ไม่ใช่ role.
             if (settings.Count == 0 && context.RecipientUserId.HasValue)
             {
-                await DispatchDirectAsync(companyId, eventKey, context.RecipientUserId.Value, context);
+                await DispatchDirectAsync(companyId, eventKey, context.RecipientUserId.Value, context, await ExternalLinkAsync(context));
                 return;
             }
             // รอบ 232 (232-Notify): คีย์ที่ย้ายจากประกาศกลุ่ม LINE เดิม — บริษัทยังไม่ตั้ง ⇒ ค่าตั้งต้นจากตัวตัดสินเดียว
             // (กระดิ่งถึงเจ้าของ + กลุ่ม LINE ของบริษัทเมื่อผูกไว้แล้ว) · คีย์อื่น = ว่าง = ไม่ส่ง (พฤติกรรมเดิม)
-            if (settings.Count == 0)
+            // "ยังไม่ตั้ง" = ไม่มีแถวของคีย์นี้เลย — เกณฑ์เดียวกับที่หน้าตั้งค่าใช้แสดงป้าย "ค่าตั้งต้นของระบบ" (NotificationConfigService.GetCompanySettingsAsync)
+            if (savedRows.Count == 0)
             {
                 settings = NotificationAudiencePolicy.DefaultMatrix(eventKey, await CompanyLineGroupConfiguredAsync(companyId))
                     .Select(d => new NotificationSetting
@@ -85,9 +94,12 @@ public class NotificationEngine : INotificationEngine
             }
             if (settings.Count == 0) return;
 
+            // รอบ 249: ลิงก์ของช่องที่ออกนอกแอป (LINE · อีเมล) — คำนวณครั้งเดียวต่อเหตุการณ์ · กระดิ่งยังใช้ path สัมพัทธ์ (นำทางในแอป)
+            var link = settings.Any(s => s.EnableEmail || s.EnableLine || s.EnableLineGroup) ? await ExternalLinkAsync(context) : null;
+
             // ช่อง "กลุ่ม LINE ของบริษัท" — หนึ่งครั้งต่อเหตุการณ์ (ไม่ใช่ต่อผู้รับ) · OA ของบริษัทเท่านั้น · ไม่มี OA ⇒ ผลบอกเหตุ (ไม่ถอยไปกลุ่มกลาง)
             if (settings.Any(s => s.EnableLineGroup))
-                await DispatchCompanyGroupAsync(companyId, eventKey, context);
+                await DispatchCompanyGroupAsync(companyId, eventKey, context, link);
 
             // recipientKey → effective (channels + Recipient). Key combines
             // UserId.ToString() for system users, or "email:" / "line:"
@@ -168,10 +180,10 @@ public class NotificationEngine : INotificationEngine
                     await DispatchSystemAsync(r.UserId.Value, companyId, context);
 
                 if (e.Email && !supEmail && !string.IsNullOrWhiteSpace(email))
-                    await DispatchEmailAsync(companyId, email!, fullName, context);
+                    await DispatchEmailAsync(companyId, email!, fullName, context, link);
 
                 if (e.Line && !supLine && !string.IsNullOrWhiteSpace(lineUserId))
-                    await DispatchLineAsync(companyId, lineUserId!, context, eventKey);
+                    await DispatchLineAsync(companyId, lineUserId!, context, eventKey, link);
             }
         }
         catch (Exception ex)
@@ -283,7 +295,7 @@ public class NotificationEngine : INotificationEngine
     /// สำหรับ event ที่ recipient เป็น user รู้ตัวอยู่แล้ว (Approval/Subscription).
     /// ยัง apply per-user preference suppression + check user active.</summary>
     private async Task DispatchDirectAsync(Guid companyId, string eventKey,
-        Guid recipientUserId, NotificationContext context)
+        Guid recipientUserId, NotificationContext context, string? link)
     {
         var user = await _db.Users.AsNoTracking()
             .Where(u => u.Id == recipientUserId && u.Status != UserStatus.Inactive)
@@ -301,7 +313,7 @@ public class NotificationEngine : INotificationEngine
         if (!supSys)
             await DispatchSystemAsync(recipientUserId, companyId, context);
         if (!supEmail && !string.IsNullOrWhiteSpace(user.Email))
-            await DispatchEmailAsync(companyId, user.Email!, user.FullName, context);
+            await DispatchEmailAsync(companyId, user.Email!, user.FullName, context, link);
     }
 
     // ===== Channel dispatchers =====
@@ -324,7 +336,7 @@ public class NotificationEngine : INotificationEngine
         await _db.SaveChangesAsync();
     }
 
-    private async Task DispatchEmailAsync(Guid companyId, string toEmail, string? toName, NotificationContext context)
+    private async Task DispatchEmailAsync(Guid companyId, string toEmail, string? toName, NotificationContext context, string? link)
     {
         try
         {
@@ -335,8 +347,9 @@ public class NotificationEngine : INotificationEngine
                 _logger.LogInformation("Email channel skipped — company {CompanyId} has no SMTP configured", companyId);
                 return;
             }
-            var actionLink = !string.IsNullOrEmpty(context.ActionUrl)
-                ? $"<p><a href='{WebUtilityEncode(context.ActionUrl)}' style='display:inline-block;padding:8px 16px;background:#4F46E5;color:#fff;text-decoration:none;border-radius:4px'>ดูรายละเอียด</a></p>"
+            // รอบ 249: href ต้องเป็น URL เต็ม (NotificationLink) — path สัมพัทธ์ในอีเมลกดไม่ได้ · ไม่รู้โดเมนของระบบ ⇒ ไม่ใส่ปุ่ม
+            var actionLink = !string.IsNullOrEmpty(link)
+                ? $"<p><a href='{WebUtilityEncode(link)}' style='display:inline-block;padding:8px 16px;background:#4F46E5;color:#fff;text-decoration:none;border-radius:4px'>ดูรายละเอียด</a></p>"
                 : "";
             var body = $@"<div style='font-family:Tahoma,sans-serif;font-size:14px;color:#111;max-width:560px'>
                 <h3 style='margin:0 0 12px;color:#4F46E5'>{WebUtilityEncode(context.Title)}</h3>
@@ -369,7 +382,7 @@ public class NotificationEngine : INotificationEngine
     /// พนักงาน HR (<c>Employee.LineId</c> จาก "สลิป 123456") — ทั้งคู่ผูกผ่าน webhook ของ <b>OA กลาง</b>เท่านั้น ⇒ push ต้องออก OA กลางแบบระบุชัด ·
     /// เดิม <c>PushToUserAsync(companyId, …)</c> เลือก OA ของร้านเมื่อร้านเปิด LINE ⇒ userId ข้าม provider ⇒ ล้มทุกฉบับเงียบ ๆ ·
     /// แจ้งเตือนรายเหตุการณ์<b>ไม่นับ</b>โควตาข้อความช่องกลาง (§10) · ล้ม ⇒ log พร้อมเหตุ (ช่องอื่นของผู้รับยังทำงานตามเดิม)</summary>
-    private async Task DispatchLineAsync(Guid companyId, string lineUserId, NotificationContext context, string eventKey)
+    private async Task DispatchLineAsync(Guid companyId, string lineUserId, NotificationContext context, string eventKey, string? link)
     {
         // รอบ 232 (232-Notify): ผู้รับตามบทบาทของบริษัทนี้ = สมาชิกของผู้เช่า (TenantMember) ผ่านบอทกลางที่เขาผูกเอง — ตัดสินก่อนยิงทุกครั้ง
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudiencePolicy.Classify(eventKey), LineOaKind.NextAccOa, LineTargetKind.TenantMember, companyOaConfigured: false);
@@ -378,14 +391,14 @@ public class NotificationEngine : INotificationEngine
             _logger.LogWarning("NotificationEngine: นโยบายผู้รับกั้น LINE 1:1 ของ {EventKey} (company {CompanyId}) [{Rule}]: {Reason}", eventKey, companyId, route.RuleCode, route.Reason);
             return;
         }
-        var r = await _line.TryPushViaNextAccAsync(lineUserId, new[] { LineText(context) });
+        var r = await _line.TryPushViaNextAccAsync(lineUserId, new[] { LineText(context, link) });
         if (!r.Ok)
             _logger.LogWarning("NotificationEngine: LINE ถึงพนักงานไม่สำเร็จ (company {CompanyId}): {Error}", companyId, r.Error);
     }
 
     /// <summary>รอบ 232: ช่อง "กลุ่ม LINE ของบริษัท" — ตัวตัดสิน OA/ผู้รับอยู่ใน <c>LineNotifyService.TryPushCompanyGroupAsync</c> (OA ของบริษัทเท่านั้น) ·
     /// ถูกนโยบายกั้น (ไม่มี OA) = log Information ครั้งเดียวต่อเหตุการณ์ (ไม่ spam — หน้าตั้งค่าบอกผู้ใช้อยู่แล้ว) · ล้มจริง = Warning</summary>
-    private async Task DispatchCompanyGroupAsync(Guid companyId, string eventKey, NotificationContext context)
+    private async Task DispatchCompanyGroupAsync(Guid companyId, string eventKey, NotificationContext context, string? link)
     {
         var audience = NotificationAudiencePolicy.Classify(eventKey);
         if (audience != NotificationAudience.TenantBusiness)
@@ -393,7 +406,7 @@ public class NotificationEngine : INotificationEngine
             _logger.LogWarning("NotificationEngine: {EventKey} ไม่ใช่เหตุการณ์ธุรกิจของผู้เช่า — ไม่ประกาศเข้ากลุ่ม LINE ของบริษัท {CompanyId}", eventKey, companyId);
             return;
         }
-        var r = await _line.TryPushCompanyGroupAsync(companyId, LineText(context));
+        var r = await _line.TryPushCompanyGroupAsync(companyId, LineText(context, link));
         if (r.Ok) return;
         if (r.RuleCode != null)
             _logger.LogInformation("NotificationEngine: กลุ่ม LINE ของบริษัท {CompanyId} ไม่ส่ง ({EventKey}) [{Rule}]: {Reason}", companyId, eventKey, r.RuleCode, r.Error);
@@ -401,12 +414,33 @@ public class NotificationEngine : INotificationEngine
             _logger.LogWarning("NotificationEngine: ประกาศกลุ่ม LINE ของบริษัท {CompanyId} ไม่สำเร็จ ({EventKey}): {Error}", companyId, eventKey, r.Error);
     }
 
-    private static string LineText(NotificationContext context)
+    /// <summary>ข้อความ LINE — <paramref name="link"/> = URL เต็มจาก <see cref="ExternalLinkAsync"/> · null ⇒ ไม่มีบรรทัดลิงก์
+    /// (รอบ 249: เดิมต่อ <c>context.ActionUrl</c> ซึ่งเป็น path สัมพัทธ์ ⇒ "🔗 /pages/documents.html?id=…" กดไม่ได้ใน LINE)</summary>
+    private static string LineText(NotificationContext context, string? link)
     {
         var text = $"{context.Title}\n\n{context.Message}";
-        if (!string.IsNullOrEmpty(context.ActionUrl))
-            text += $"\n\n🔗 {context.ActionUrl}";
+        if (!string.IsNullOrEmpty(link))
+            text += $"\n\n🔗 {link}";
         return text;
+    }
+
+    /// <summary>รอบ 249: ลิงก์เต็มของช่องที่ออกนอกแอป — origin จาก <see cref="SystemBaseUrl.ResolveAsync"/> (ตัวตั้งตัวเดียว) + <see cref="NotificationLink.Absolute"/> ·
+    /// ไม่ได้ตั้ง URL ของระบบ / อ่านค่าตั้งไม่ได้ ⇒ null (ข้อความยังส่ง แค่ไม่มีลิงก์ — log ครั้งเดียวต่อเหตุการณ์)</summary>
+    private async Task<string?> ExternalLinkAsync(NotificationContext context)
+    {
+        if (string.IsNullOrWhiteSpace(context.ActionUrl)) return null;
+        try
+        {
+            var link = NotificationLink.Absolute(await SystemBaseUrl.ResolveAsync(_db, _config), context.ActionUrl);
+            if (link == null)
+                _logger.LogInformation("NotificationEngine: ไม่ใส่ลิงก์ในช่อง LINE/อีเมล — ยังไม่ได้ตั้ง URL ของระบบ (แอดมิน → ตั้งค่าระบบ / App:BaseUrl) หรือ ActionUrl ไม่ใช่ path ภายใน");
+            return link;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "NotificationEngine: อ่าน URL ของระบบไม่สำเร็จ — ส่งแจ้งเตือนโดยไม่มีลิงก์");
+            return null;
+        }
     }
 
     /// <summary>บริษัทผูกกลุ่ม LINE ของตัวเองไว้แล้วไหม (ตัวตัดสิน <see cref="NotificationAudiencePolicy.CompanyLineGroupConfigured"/>) — ใช้เลือกค่าตั้งต้นของคีย์ที่ย้ายมา</summary>

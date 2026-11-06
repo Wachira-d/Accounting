@@ -10868,8 +10868,8 @@ RULES += [
          forbid=["NotifyDocumentApprovedAsync(", "PushToUserAsync(null", "TryPushCompanyGroupAsync("],
          why=_R232N_WHY + "อนุมัติเอกสาร: ประกาศกลุ่ม LINE เดิม (ถอยไปกลุ่มกลาง) ถูกถอด — เดิน engine ตัวเดียว · ผู้ส่งบิลทางไลน์ = 1:1 ผ่านบอทกลาง"),
     dict(file=DOC, method="CreatePaymentAsync",
-         must=["NotificationEvents.PaymentReceived"], forbid=["NotifyPaymentReceivedAsync(", "TryPushCompanyGroupAsync("],
-         why=_R232N_WHY + "รับชำระ: เดิน engine (ค่าตั้งของบริษัท) แทนประกาศกลุ่ม LINE ที่ถอยไปกลุ่มกลาง"),
+         must=["_notify.DispatchAsync("], forbid=["NotifyPaymentReceivedAsync(", "TryPushCompanyGroupAsync("],
+         why=_R232N_WHY + "รับชำระ: เดิน engine (ค่าตั้งของบริษัท) แทนประกาศกลุ่ม LINE ที่ถอยไปกลุ่มกลาง (รอบ 249: คีย์ตัดสินที่ PaymentNotificationText — กติกาด้านล่าง)"),
     dict(file="Services/Implementations/BackgroundJobService.cs", method="ProcessDunningLetters",
          must=["NotificationEvents.InvoiceOverdue"], forbid=["NotifyOverdueInvoiceAsync(", "ILineNotifyService"],
          why=_R232N_WHY + "ใบเกินกำหนด: เดิน engine แทนประกาศกลุ่ม LINE"),
@@ -10923,6 +10923,57 @@ RULES += [
          why="ฝ่ายค้าน 232 B1: backfill ช่องกลุ่มของ document.approved ครั้งเดียว — DO-block เพิ่มคอลัมน์+UPDATE เฉพาะตอนคอลัมน์ยังไม่มี (ต้องอยู่ก่อน ADD COLUMN IF NOT EXISTS ธรรมดา · ตัวตั้ง SQL ตัวเดียว Helpers/NotificationLineGroupBackfill)"),
 ]
 
+# ── รอบ 249: แจ้งเตือนรับ/จ่ายชำระ (เจ้าของรายงาน 2026-11-06: "💵 รับชำระเงินแล้ว PI-…" + ลิงก์ /pages/… กดไม่ได้ใน LINE) ──
+_R249_WHY = "รอบ 249 (แจ้งเตือนรับ/จ่ายชำระ): "
+RULES += [
+    dict(file=DOC, method="CreatePaymentAsync",
+         must=["Accounting.Helpers.PaymentNotificationText.Build(", "LoadPaymentNotificationFactsAsync(", "payNote.EventKey", "payNote.Title", "payNote.Message"],
+         forbid=["NotificationEvents.PaymentReceived", "NotificationEvents.PaymentMade"], forbid_lit=["รับชำระเงินแล้ว", "จ่ายชำระเงินแล้ว"],
+         before=[("LoadPaymentNotificationFactsAsync(", "_notify.DispatchAsync(")],
+         why=_R249_WHY + "ฝั่งเงิน/คีย์เหตุการณ์/หัวข้อ/เนื้อความ ตัดสินที่ Helpers/PaymentNotificationText ตัวเดียว — ห้ามเลือกคีย์/พิมพ์หัวข้อเอง (PI เคยขึ้น \"รับชำระ\")"),
+    dict(file=DOC, method="LoadPaymentNotificationFactsAsync",
+         must=["IsCashInflowDocAsync(companyId, doc)", "c.CompanyId == companyId", "l.Document.CompanyId == companyId", "!l.IsDeleted"],
+         why=_R249_WHY + "ฝั่งเงินจากตัวตัดสินเดียวกับยอดธนาคาร (ใบเพิ่มหนี้ฝั่งซื้อ = เงินออก) · ทุกคำค้นกรองบริษัท (กฎ M) · ไม่เอาบรรทัดที่ลบแล้ว"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="ExternalLinkAsync",
+         must=["SystemBaseUrl.ResolveAsync(", "NotificationLink.Absolute("],
+         why=_R249_WHY + "ลิงก์ใน LINE/อีเมลต้องเป็น URL เต็มจากตัวตั้ง URL ของระบบตัวเดียว · ไม่รู้โดเมน = ไม่ใส่ลิงก์"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="LineText",
+         forbid=["context.ActionUrl"], forbid_lit=["{context.ActionUrl}"],
+         why=_R249_WHY + "ข้อความ LINE ห้ามต่อ path สัมพัทธ์ของกระดิ่ง (\"🔗 /pages/…\" กดไม่ได้)"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchEmailAsync",
+         must_lit=["WebUtilityEncode(link)"], forbid=["context.ActionUrl"], forbid_lit=["(context.ActionUrl)}"],
+         why=_R249_WHY + "ปุ่มในอีเมลต้องเป็น URL เต็ม (href สัมพัทธ์ในอีเมลกดไม่ได้)"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchAsync",
+         must=["ExternalLinkAsync(context)"], must_re=[r"if\s*\(\s*savedRows\s*\.\s*Count\s*==\s*0\s*\)"],
+         before=[("savedRows.Count", "NotificationAudiencePolicy.DefaultMatrix(")],
+         why=_R249_WHY + "ค่าตั้งต้นใช้เฉพาะเมื่อบริษัทไม่มีแถวของคีย์เลย — แถวที่ผู้ใช้ปิดทุกช่องแล้วบันทึกต้องไม่ถูกตีเป็น \"ยังไม่ตั้ง\" (เกณฑ์เดียวกับหน้าตั้งค่า)"),
+    dict(file="Data/DatabaseMigrationHelper.cs", method="GetFullTextSearchStatements",
+         must=["Accounting.Helpers.NotificationEventSplit.MigrationSql"],
+         before=[("Accounting.Helpers.NotificationLineGroupBackfill.MigrationSql", "Accounting.Helpers.NotificationEventSplit.MigrationSql")],
+         why=_R249_WHY + "แยกคีย์ payment_made แล้วต้องคัดลอกค่าตั้ง payment_received ของบริษัท (ไม่งั้นบริษัทที่ปิดกลุ่มไว้ได้ประกาศฝั่งจ่ายกลับมา) — หลังคอลัมน์ EnableLineGroup"),
+]
+
+REVIEWER_CASES += [
+    ("R249a", "CreatePaymentAsync",
+     "await _notify.DispatchAsync(companyId, payNote.EventKey,",
+     "await _notify.DispatchAsync(companyId, NotificationEvents.PaymentReceived,", True),
+    ("R249b", "LineText",
+     'text += $"\\n\\n🔗 {link}";',
+     'text += $"\\n\\n🔗 {context.ActionUrl}";', True),
+    ("R249c", "DispatchAsync",
+     "if (savedRows.Count == 0)",
+     "if (settings.Count == 0)", True),
+    ("R249d", "DispatchAsync",
+     "if (savedRows.Count == 0)",
+     "if (savedRows.Count==0)", False),
+    ("R249e", "LoadPaymentNotificationFactsAsync",
+     "            contactName = await _db.Contacts.AsNoTracking()\n                .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)",
+     "            contactName = await _db.Contacts.AsNoTracking()\n                .Where(c => c.Id == doc.ContactId)", True),
+    ("R249f", "DispatchEmailAsync",
+     "WebUtilityEncode(link)",
+     "WebUtilityEncode(context.ActionUrl)", True),
+]
+
 # เคสฝ่ายค้าน 232-Notify: ใส่ fallback กลับ / ทิ้งผลตัวตัดสิน / ถอดช่องกลุ่มของบริษัท / ประกาศกลุ่มเดิมกลับมา ⇒ ต้องฟ้อง · จัดรูปแบบใหม่ ⇒ ต้องไม่ฟ้อง
 REVIEWER_CASES += [
     ("NT1", "TryPushCompanyGroupAsync",
@@ -10932,7 +10983,7 @@ REVIEWER_CASES += [
      "if (s == null || !s.LineEnabled || string.IsNullOrWhiteSpace(s.LineChannelAccessToken)) return CompanyOa.None;",
      "if (s == null || !s.LineEnabled || string.IsNullOrWhiteSpace(s.LineChannelAccessToken)) { var nx = await _nextAcc.GetAsync(); return new CompanyOa(nx.HasToken, nx.AccessToken, nx.GroupId); }", True),
     ("NT3", "DispatchAsync",
-     "            if (settings.Any(s => s.EnableLineGroup))\n                await DispatchCompanyGroupAsync(companyId, eventKey, context);\n", "", True),
+     "            if (settings.Any(s => s.EnableLineGroup))\n                await DispatchCompanyGroupAsync(companyId, eventKey, context, link);\n", "", True),   # รอบ 249: + link
     ("NT4", "ApproveDocumentAsync#2",
      "        var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId).Select(c => c.Name).FirstOrDefaultAsync() ?? \"\";\n\n        // แจ้งกลับ",
      "        var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId).Select(c => c.Name).FirstOrDefaultAsync() ?? \"\";\n        await _lineNotify.NotifyDocumentApprovedAsync(companyId, doc.DocumentNumber, contactName, doc.TotalAmount);\n\n        // แจ้งกลับ", True),
