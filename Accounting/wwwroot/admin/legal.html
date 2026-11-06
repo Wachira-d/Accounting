@@ -85,9 +85,12 @@
         <span class="admin-card-title">✏️ ร่างฉบับใหม่</span>
         <span>
           <button class="admin-btn admin-btn-outline admin-btn-sm" id="startFromCurrentBtn">เริ่มจากฉบับปัจจุบัน</button>
+          <!-- รอบ 250 WP-06 (ฝ่ายค้าน HIGH-1 · Y6): ร่างฉบับถัดไปของระบบ (LegalDocumentDefaults.PlatformNextDraft) — ไม่เสิร์ฟสด · เติมช่องร่างเท่านั้น -->
+          <button class="admin-btn admin-btn-outline admin-btn-sm" id="useNextDraftBtn" type="button">ใช้ร่างฉบับถัดไปของระบบ</button>
           <button class="admin-btn admin-btn-outline admin-btn-sm" id="discardBtn">ทิ้งร่าง</button>
         </span>
       </div>
+      <div id="nextDraftBanner" hidden style="margin-bottom:8px;padding:10px 12px;border-radius:8px;background:#fef3c7;border:1px solid #fcd34d;color:#92400e;font-size:13px"></div>
       <div id="draftState" class="muted" style="margin-bottom:8px"></div>
       <div class="form-row">
         <label>เลขฉบับ (เช่น 1.1)<input type="text" class="admin-input" id="dVersion" maxlength="20" style="width:120px"></label>
@@ -164,6 +167,7 @@
         document.querySelectorAll('.kind-tabs button').forEach(b => b.addEventListener('click', () => this.switchKind(b.dataset.kind)));
         document.getElementById('copyUrlBtn').addEventListener('click', () => this.copyUrl());
         document.getElementById('startFromCurrentBtn').addEventListener('click', () => this.startFromCurrent());
+        document.getElementById('useNextDraftBtn').addEventListener('click', () => this.useNextDraft());   // รอบ 250 WP-06 (Y6)
         document.getElementById('discardBtn').addEventListener('click', () => this.discard());
         document.getElementById('previewBtn').addEventListener('click', () => this.preview());
         document.getElementById('previewEnBtn').addEventListener('click', () => this.preview('en'));
@@ -274,6 +278,14 @@
         document.getElementById('tokenHelp').innerHTML = (d.tokens || [])
           .map(t => `<div><code>${esc(t.token)}</code> — ${esc(t.label)}</div>`).join('');
 
+        // รอบ 250 WP-06 (Y6): แบนเนอร์ "ฉบับตั้งต้นมีข้อใหม่" + เงื่อนไขก่อนเผยแพร่ — ข้อความ/การตัดสินมาจากเซิร์ฟเวอร์ (nextDraft)
+        const nd = d.nextDraft || {};
+        const banner = document.getElementById('nextDraftBanner');
+        banner.hidden = !nd.pending;
+        banner.innerHTML = nd.pending
+          ? '📌 <b>ฉบับตั้งต้นของระบบมีข้อใหม่ที่ฉบับเผยแพร่ยังไม่มี</b> — กด "ใช้ร่างฉบับถัดไปของระบบ" แล้วตรวจทาน บันทึก และเผยแพร่เป็นเลขฉบับใหม่ (การเผยแพร่เป็นของเจ้าของบริการ)'
+            + (nd.publishGate ? '<br>⛔ ' + esc(nd.publishGate) : '')
+          : '';
         const dr = d.draft;
         document.getElementById('draftState').textContent = dr
           ? `มีร่างที่บันทึกไว้ (แก้ล่าสุด ${this.utc(dr.updatedAt || dr.createdAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })})`
@@ -327,6 +339,28 @@
         document.getElementById('dEffective').value = d.today;
         this._dirty = true;
         document.getElementById('publishBtn').disabled = true;
+      },
+
+      /** รอบ 250 WP-06 (ฝ่ายค้าน HIGH-1): เติมช่องร่างด้วยร่างฉบับถัดไปของระบบ (ไทย + อังกฤษ) — ไม่บันทึกให้ · ช่องมีข้อความ ⇒ ถามก่อนทับ */
+      async useNextDraft() {
+        const d = this.doc; if (!d) return;
+        const body = document.getElementById('dBody');
+        if ((body.value.trim() || document.getElementById('dBodyEn').value.trim()) && !confirm('แทนที่เนื้อความในร่างด้วยร่างฉบับถัดไปของระบบ?')) return;
+        try {
+          const res = await AdminAPI.get(`${this.base}/${this.kind}/next-draft`);
+          const nd = res.data || {};
+          body.value = nd.markdown || '';
+          document.getElementById('dBodyEn').value = nd.markdownEn || '';
+          const src = d.upcoming || d.current;
+          const parts = String(src.version).split('.').map(Number);
+          parts[1] = (parts[1] || 0) + 1;
+          if (!document.getElementById('dVersion').value.trim()) document.getElementById('dVersion').value = `${parts[0] || 1}.${parts[1]}`;
+          if (!document.getElementById('dEffective').value) document.getElementById('dEffective').value = d.today;
+          document.getElementById('draftEnBuiltinNote').textContent = '⚠️ ' + (nd.warning || '') + (nd.publishGate ? ' · ⛔ ' + nd.publishGate : '');
+          this._dirty = true;
+          document.getElementById('publishBtn').disabled = true;
+          AdminLayout.toast('ใส่ร่างฉบับถัดไปแล้ว — ตรวจทานแล้วกดบันทึกร่าง');
+        } catch (e) { AdminLayout.toast('ดึงร่างฉบับถัดไปไม่สำเร็จ: ' + e.message, 'error'); }
       },
 
       body() {

@@ -2907,7 +2907,7 @@ public class PayrollService : IPayrollService
                 moneyAdjusted, baseFilled, reason, run.Id,
                 run.TotalSocialSecurityEmployee, run.TotalSocialSecurityEmployer);
 
-            // ── ร่องรอยที่ตรวจย้อนหลังได้ (พ.ร.บ.การบัญชี ม.14 + กฎ M) ──
+            // ── ร่องรอยที่ตรวจย้อนหลังได้ (พ.ร.บ.การบัญชี ม.14 (เก็บ) + กฎ M) ──
             // การแก้ตัวเลขเงินอัตโนมัติต้องเข้า hash chain ของ AuditLog ไม่ใช่
             // อยู่แค่ในไฟล์ log ที่ไม่มีใครเปิด — ต้องตอบผู้สอบบัญชีได้ว่า
             // "ใครเปลี่ยน 4,403 → 4,381 เมื่อไร ด้วยกฎข้อไหน"

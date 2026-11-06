@@ -172,9 +172,9 @@ public class PdpaController : ControllerBase
     public sealed record DsrRectifyRequest(Guid? UserId, Guid? ContactId,
         Dictionary<string, string?> FieldUpdates);
 
-    /// <summary>ม.31 สิทธิแก้ไข — apply rectification. รับเป็น field-value map
+    /// <summary>ม.35 สิทธิแก้ไข (รอบ 250 WP-06 ฝ่ายค้าน LOW-6: เดิมเขียน ม.31 = portability) — apply rectification. รับเป็น field-value map
     /// ที่ DPO อนุมัติแล้ว. financial records (Document/JE) ไม่อยู่ใน scope
-    /// (ม.32 กฎหมายอื่นบังคับเก็บ พ.ร.บ.บัญชี ม.14).</summary>
+    /// (ข้อยกเว้นตาม พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล (การปฏิบัติตามกฎหมาย) — พ.ร.บ.การบัญชี ม.14 บังคับเก็บ).</summary>
     [HttpPost("dsr/rectify")]
     public async Task<ActionResult<ApiResponse<int>>> DsrRectify(
         Guid companyId, [FromBody] DsrRectifyRequest req, CancellationToken ct)
@@ -188,7 +188,7 @@ public class PdpaController : ControllerBase
                 req.ContactId, req.FieldUpdates, ct);
             await LogPiiAsync(companyId, req.UserId.HasValue ? "User" : "Contact",
                 req.UserId ?? req.ContactId ?? Guid.Empty,
-                string.Join(",", req.FieldUpdates.Keys), "Update", "DSR ม.31 สิทธิแก้ไข", ct);
+                string.Join(",", req.FieldUpdates.Keys), "Update", "DSR ม.35 สิทธิแก้ไข", ct);   // รอบ 250: แถวใหม่ใช้เลขที่ถูก · แถว PiiAccessLog เก่าไม่ migrate
             return Ok(new ApiResponse<int>(true, changed,
                 $"แก้ไขข้อมูล {changed} แหล่ง (User/Contact)"));
         }
