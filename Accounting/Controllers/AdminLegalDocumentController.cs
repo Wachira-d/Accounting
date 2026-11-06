@@ -88,6 +88,12 @@ public class AdminLegalDocumentController : ControllerBase
                 upcoming.BodyMarkdownEn,
             },
             draft = DraftDto(draftView),
+            // รอบ 250 WP-06 (ฝ่ายค้าน HIGH-1 · Y6): ร่างฉบับถัดไปของระบบ — ไม่เสิร์ฟสด · แบนเนอร์ + เงื่อนไขก่อนเผยแพร่มาจากเซิร์ฟเวอร์ (ตัวตั้งเดียว)
+            nextDraft = new
+            {
+                pending = LegalDocumentDefaults.NextDraftPending(kind, current.BodyMarkdown, upcoming?.BodyMarkdown),
+                publishGate = LegalDocumentDefaults.NextDraftPublishGate(kind),
+            },
             history = (await _legal.GetHistoryAsync(kind, ct)).Select(HistoryDto).ToList(),
             tokens = LegalDocumentDefaults.PlatformTokens.Select(t => new { token = "{{" + t.Token + "}}", label = t.Label }).ToList(),
             consentVersion = (await _legal.GetConsentVersionAsync(ct)).ConsentVersion,
@@ -143,6 +149,23 @@ public class AdminLegalDocumentController : ControllerBase
             ? $"เผยแพร่ฉบับ {item.Version} แล้ว — ประกาศล่วงหน้า มีผล {item.EffectiveDate:yyyy-MM-dd}"
             : $"เผยแพร่ฉบับ {item.Version} แล้ว — มีผลทันที";
         return Ok(new ApiResponse<object>(true, HistoryDto(item), msg));
+    }
+
+    /// <summary>รอบ 250 WP-06 (ฝ่ายค้าน HIGH-1 · Y6): ร่างฉบับถัดไปของระบบ (<see cref="LegalDocumentDefaults.PlatformNextDraft"/> + อังกฤษ) — ไม่เขียนอะไร · ไม่เสิร์ฟสด</summary>
+    [HttpGet("{kind}/next-draft")]
+    public IActionResult NextDraft(string kind)
+    {
+        if (!LegalDocumentDefaults.IsKind(kind))
+            return NotFound(new ApiResponse<object>(false, null, "ชนิดเอกสารต้องเป็น privacy · terms หรือ refund"));
+        // รอบ 250 WP-06 (ฝ่ายค้าน HIGH-1): ร่างฉบับถัดไปของระบบ (ไทย + อังกฤษ · ยังมีโทเคน) — ไม่เขียนอะไร · หน้าแอดมินเติมช่องร่างแล้วผู้ใช้บันทึก/เผยแพร่เอง
+        return Ok(new ApiResponse<object>(true, new
+        {
+            kind,
+            markdown = LegalDocumentDefaults.PlatformNextDraft(kind),
+            markdownEn = LegalDocumentDefaults.PlatformNextDraftEn(kind),
+            publishGate = LegalDocumentDefaults.NextDraftPublishGate(kind),
+            warning = "ร่างของระบบ — ตรวจทานก่อนบันทึก · การเผยแพร่เป็นของเจ้าของบริการ (ระบบประทับการยอมรับแทนลูกค้าไม่ได้)",
+        }));
     }
 
     /// <summary>รอบ 232 ต่อ (เจ้าของ: "แปลนโยบายเป็นภาษาอังกฤษให้เลย"): คำแปลอังกฤษของ<b>ฉบับตั้งต้นของระบบ</b> — ปุ่ม "ใส่คำแปลตั้งต้น (อังกฤษ)" ดึงไปเติมช่อง

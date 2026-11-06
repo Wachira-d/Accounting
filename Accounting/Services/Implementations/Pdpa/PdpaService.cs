@@ -47,9 +47,9 @@ public interface IPdpaService
     Task<DataSubjectAccessResult> GenerateAccessReportAsync(Guid companyId,
         Guid? userId, Guid? contactId, CancellationToken ct = default);
 
-    /// <summary>DSR ม.31 — สิทธิแก้ไข: apply rectification ตาม field map ที่ DPO
+    /// <summary>DSR ม.35 — สิทธิแก้ไข (เดิมเขียน ม.31): apply rectification ตาม field map ที่ DPO
     /// อนุมัติ. update User/Contact + log audit. NOTE: financial records
-    /// (Document/JournalEntry) ห้ามแก้ — ม.32 ระบุข้อมูลที่ต้องรักษาตามกฎหมายอื่น
+    /// (Document/JournalEntry) ห้ามแก้ — ข้อยกเว้นตาม พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล (การปฏิบัติตามกฎหมาย) เมื่อกฎหมายอื่นบังคับเก็บ
     /// (พ.ร.บ.บัญชี ม.14 ต้องเก็บ 5 ปี) ไม่อยู่ในขอบเขต rectification</summary>
     Task<int> ApplyRectificationAsync(Guid companyId,
         Guid? userId, Guid? contactId, IReadOnlyDictionary<string, string?> fieldUpdates,

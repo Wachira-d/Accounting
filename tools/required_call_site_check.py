@@ -752,7 +752,12 @@ RULES += [
     # รอบ 232 ต่อ (เจ้าของ: "แปลนโยบายเป็นภาษาอังกฤษให้เลย"): คำแปลตั้งต้นต่อสายจริง — ถอดการเรียกแล้วเทสต์ pure ยังเขียว ⇒ ล็อกจุดเรียก
     dict(file="Services/Implementations/LegalDocumentService.cs", method="BuiltIn",
          must=["LegalDocumentDefaults.PlatformBuiltIn(kind)", "LegalDocumentDefaults.PlatformBuiltInEn(kind)"],
+         forbid=["PlatformNextDraft"],   # รอบ 250 WP-06 ฝ่ายค้าน HIGH-1: ร่างฉบับถัดไปห้ามเสิร์ฟสดเป็น "1.0"
          why="รอบ 232 ต่อ: ฉบับตั้งต้นของแพลตฟอร์มมีคำแปลอังกฤษตั้งต้น (ฉบับที่แอดมินเผยแพร่เองไม่เติมอัตโนมัติ — ToView ไม่แตะ)"),
+    dict(file="Controllers/AdminLegalDocumentController.cs", method="NextDraft",
+         must=["LegalDocumentDefaults.PlatformNextDraft(kind)", "LegalDocumentDefaults.PlatformNextDraftEn(kind)", "LegalDocumentDefaults.NextDraftPublishGate(kind)"],
+         forbid=["SaveChanges", "PublishAsync", "SaveDraftAsync"],
+         why="รอบ 250 WP-06 ฝ่ายค้าน HIGH-1: ร่างฉบับถัดไปของระบบถึงแอดมินทางเดียว (อ่านอย่างเดียว · ไม่บันทึก/ไม่เผยแพร่ให้ — การเผยแพร่เป็นของเจ้าของ) + เงื่อนไขก่อนเผยแพร่ตัวเดียว"),
     dict(file="Services/Implementations/LegalDocumentService.cs", method="ToView",
          forbid=["PlatformBuiltInEn("],
          why="รอบ 232 ต่อ ทิศตรงข้าม: ฉบับที่แอดมินเผยแพร่เอง (ไทยอาจถูกแก้) ห้ามเติมคำแปลตั้งต้นอัตโนมัติ — ไม่มีอังกฤษ = ไทย + ประกาศ"),

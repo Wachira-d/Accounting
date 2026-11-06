@@ -91,7 +91,7 @@ public static class OpeningRoll
     public const string FiscalYearStartMonthChangeAction = "fiscal-year-start-month";
 
     /// <summary>รหัสกฎของด่าน "เปลี่ยนเดือนเริ่มรอบบัญชีหลังปิดปีแล้ว" (<see cref="FiscalYearStartMonthLockedMessage"/>)</summary>
-    /// <remarks>รอบ 250 WP-06: เลข "11" ในรหัสเป็นของเดิม (ตัวบทที่ถูกคือ พ.ร.บ.การบัญชี ม.10 — ดู LegalReference) · คงรหัสไว้เพราะเป็นค่าที่ persist ใน audit (ห้ามเปลี่ยน — ผู้ค้นประวัติใช้รหัสนี้)</remarks>
+    /// <remarks>รอบ 250 WP-06: เลข "11" ในรหัสเป็นของเดิม (ตัวบทรอบบัญชีที่ถูกคือ พ.ร.บ.การบัญชี ม.10 — ดู LegalReference) · คงรหัสไว้เพราะเป็นค่าที่ persist ใน audit (ห้ามเปลี่ยน — ผู้ค้นประวัติใช้รหัสนี้)</remarks>
     public const string FiscalYearStartMonthRuleCode = "ACC-ACT-11-FISCAL-PERIOD";
 
     /// <summary>
@@ -120,8 +120,8 @@ public static class OpeningRoll
     public static string FiscalYearStartMonthLockedMessage(int currentStartMonth, int requestedStartMonth, IEnumerable<int> closedFiscalYears)
         => $"เปลี่ยนเดือนเริ่มรอบบัญชีจากเดือน {FiscalYear.NormalizeStartMonth(currentStartMonth)} เป็นเดือน {FiscalYear.NormalizeStartMonth(requestedStartMonth)} ไม่ได้: "
             + $"บริษัทปิดปีบัญชีในระบบแล้ว ({string.Join(", ", closedFiscalYears.OrderBy(y => y).Select(y => (y + 543).ToString(System.Globalization.CultureInfo.InvariantCulture)))}) — "
-            + "ยอดยกมา งวดที่ล็อก และงบของปีเหล่านั้นคิดด้วยรอบเดิม เปลี่ยนตอนนี้จะทำให้ปีเก่าถูกตีความใหม่ · การเปลี่ยนรอบปีบัญชีต้องได้รับอนุญาตจากสารวัตรใหญ่บัญชีหรือสารวัตรบัญชี "
-            + "(พ.ร.บ.การบัญชี 2543 ม.10 · ภาษีเงินได้นิติบุคคล ป.รัษฎากร ม.65) และมีผลตั้งแต่รอบใหม่เท่านั้น ซึ่งระบบยังไม่รองรับรอบเปลี่ยนผ่าน · "
+            + "ยอดยกมา งวดที่ล็อก และงบของปีเหล่านั้นคิดด้วยรอบเดิม เปลี่ยนตอนนี้จะทำให้ปีเก่าถูกตีความใหม่ · การเปลี่ยนรอบปีบัญชีต้องได้รับอนุญาตจากสารวัตรใหญ่บัญชี/สารวัตรบัญชี (พ.ร.บ.การบัญชี 2543 ม.10) "
+            + "และอนุมัติจากอธิบดีกรมสรรพากร (ภาษีเงินได้นิติบุคคล ป.รัษฎากร ม.65) และมีผลตั้งแต่รอบใหม่เท่านั้น ซึ่งระบบยังไม่รองรับรอบเปลี่ยนผ่าน · "
             + "ยังไม่มีอะไรถูกบันทึก (ข้อมูลอื่นในหน้านี้ก็ยังไม่ถูกบันทึก — เลือกเดือนเดิมแล้วบันทึกอีกครั้ง) · ทางไปต่อ: ถ้าได้รับอนุมัติเปลี่ยนรอบแล้ว "
             + "ให้เจ้าของบริษัทติดต่อผู้ทำบัญชี/ผู้ดูแลระบบพร้อมหนังสืออนุมัติ เพื่อวางแผนรอบเปลี่ยนผ่าน (ข้อมูลรอบเดิมคงไว้)";
 

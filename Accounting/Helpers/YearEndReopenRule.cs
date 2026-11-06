@@ -61,7 +61,7 @@ public static class YearEndReopenRule
     public const string RuleCode = "GL-YEAR-END-REOPEN";
 
     public const string LegalReference =
-        "พ.ร.บ.การบัญชี 2543 ม.10 · TFRS for NPAEs บทที่ 5 (การแก้ไขข้อผิดพลาด) · ป.รัษฎากร ม.65 (ภ.ง.ด.50)";
+        "พ.ร.บ.การบัญชี 2543 ม.10 (ปิดบัญชี) · TFRS for NPAEs บทที่ 5 (การแก้ไขข้อผิดพลาด) · ป.รัษฎากร ม.65 (ภ.ง.ด.50)";
 
     /// <summary>action ของ audit ทุกแถวที่การยกเลิกการปิดปีเขียน</summary>
     public const string AuditAction = "year-end-reopen";

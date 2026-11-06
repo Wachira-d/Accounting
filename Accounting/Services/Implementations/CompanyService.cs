@@ -868,7 +868,7 @@ public class CompanyService : ICompanyService
                 action = Accounting.Helpers.OpeningRoll.FiscalYearStartMonthChangeAction,
                 fiscalYearStartMonth = requested,
                 ruleCode = Accounting.Helpers.OpeningRoll.FiscalYearStartMonthRuleCode,
-                legalReference = "พ.ร.บ.การบัญชี 2543 ม.10",
+                legalReference = "พ.ร.บ.การบัญชี 2543 ม.10 (รอบบัญชี) · ป.รัษฎากร ม.65",   // รอบ 250 WP-06: แถวใหม่ระบุเรื่อง · แถวเก่าไม่ migrate
             }),
             IpAddress = _http?.HttpContext?.Connection.RemoteIpAddress?.ToString(),
         });
