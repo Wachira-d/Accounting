@@ -129,11 +129,26 @@ public class PaymentQrService : IPaymentQrService
 
     /// <summary>ฝ่ายค้าน N6 — ใบแจ้งหนี้ที่มีใบกำกับภาษีที่ออกแล้ว (ไม่ร่าง/ไม่ยกเลิก/ไม่ถูกตีกลับ) อ้างอยู่ = ลูกหนี้ย้ายไปใบกำกับ</summary>
     internal static async Task<bool> SupersededByTaxInvoiceAsync(AccountingDbContext db, Guid companyId, Document doc, CancellationToken ct)
-        => doc.DocumentType == DocumentType.Invoice && doc.Id != Guid.Empty
-           && await db.Documents.AsNoTracking().AnyAsync(c => c.CompanyId == companyId && c.RelatedDocumentId == doc.Id && !c.IsDeleted
-               && c.DocumentType == DocumentType.TaxInvoice
-               && c.Status != DocumentStatus.Draft && c.Status != DocumentStatus.WaitingApproval
-               && c.Status != DocumentStatus.Rejected && c.Status != DocumentStatus.Voided, ct);
+        => await SupersedingTaxInvoiceNumberAsync(db, companyId, doc.DocumentType, doc.Id, ct) != null;
+
+    /// <summary>รอบ 250 (WP-02 §2.3 · คำตัดสิน §2 #16): เลขใบกำกับภาษีที่อ้างใบแจ้งหนี้นี้และยังมีผล (ออกเลขแล้ว · ไม่ยกเลิก/ปฏิเสธ) — ตัวโหลดเดียวของ
+    /// QR บนกระดาษ · ลิงก์ชำระ (<c>DocumentPayLinkService</c>) · งานหลังรับชำระ · null = ไม่มี/ไม่ใช่ใบแจ้งหนี้ (ใบกำกับถูกยกเลิก ⇒ null = ลิงก์ของใบแจ้งหนี้กลับมาใช้ได้)</summary>
+    internal static Task<string?> SupersedingTaxInvoiceNumberAsync(AccountingDbContext db, Guid companyId, Document doc, CancellationToken ct)
+        => SupersedingTaxInvoiceNumberAsync(db, companyId, doc.DocumentType, doc.Id, ct);
+
+    internal static async Task<string?> SupersedingTaxInvoiceNumberAsync(AccountingDbContext db, Guid companyId, DocumentType type, Guid documentId,
+        CancellationToken ct)
+    {
+        if (type != DocumentType.Invoice || documentId == Guid.Empty) return null;
+        return await db.Documents.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && c.RelatedDocumentId == documentId && !c.IsDeleted
+                && c.DocumentType == DocumentType.TaxInvoice
+                && c.Status != DocumentStatus.Draft && c.Status != DocumentStatus.WaitingApproval
+                && c.Status != DocumentStatus.Rejected && c.Status != DocumentStatus.Voided)
+            .OrderBy(c => c.CreatedAt)
+            .Select(c => c.DocumentNumber)
+            .FirstOrDefaultAsync(ct);
+    }
 
     // ═══════════════ ตั้งค่าบัญชี ═══════════════
 
@@ -181,7 +196,7 @@ public class PaymentQrService : IPaymentQrService
             await _storage.DeleteAsync(location, CancellationToken.None);
             throw;
         }
-        // ไฟล์เดิมลบหลังบันทึกสำเร็จ · รูป QR ไม่ใช่เอกสารทางบัญชี (ไม่อยู่ใต้ระยะเก็บ ม.10) — ประวัติอยู่ใน audit (hash)
+        // ไฟล์เดิมลบหลังบันทึกสำเร็จ · รูป QR ไม่ใช่เอกสารทางบัญชี (ไม่อยู่ใต้ระยะเก็บ พ.ร.บ.การบัญชี ม.14) — ประวัติอยู่ใน audit (hash)
         if (old != null && old != location && oldOwn)
             await _storage.DeleteAsync(old, ct);
         return Map(a);

@@ -124,7 +124,7 @@
           <div class="form-row" id="creditLimitRow">
             <div class="form-group" style="flex:1">
               <label class="form-label">วงเงินเครดิต (THB)
-                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestCreditLimit()">🤖 ให้ AI แนะนำ</button>
+                <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestCreditLimit()" aria-label="แนะนำวงเงินเครดิต">⚙️ แนะนำวงเงิน</button>
                 <span style="color:#64748b;font-size:11px;font-weight:normal">— ว่าง = ไม่จำกัด</span>
               </label>
               <input type="number" class="form-input" id="fCreditLimit" step="1000" min="0" placeholder="เช่น 100,000">
@@ -303,7 +303,7 @@
             <div class="form-row">
               <div class="form-group">
                 <label class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี
-                  <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAR','fDefaultArAccount','arHint')">🤖</button>
+                  <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAR','fDefaultArAccount','arHint')" aria-label="แนะนำผังบัญชี" title="แนะนำจากประวัติของบริษัท">⚙️</button>
                 </label>
                 <select class="form-input" id="fDefaultArAccount">
                   <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
@@ -312,7 +312,7 @@
               </div>
               <div class="form-group">
                 <label class="form-label">ถ้าเป็นเจ้าหนี้ จะบันทึกบัญชี
-                  <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAP','fDefaultApAccount','apHint')">🤖</button>
+                  <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAP','fDefaultApAccount','apHint')" aria-label="แนะนำผังบัญชี" title="แนะนำจากประวัติของบริษัท">⚙️</button>
                 </label>
                 <select class="form-input" id="fDefaultApAccount">
                   <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
@@ -322,7 +322,7 @@
             </div>
             <div class="form-group">
               <label class="form-label">บันทึกบัญชีกระทบเอกสาร (IR/GR)
-                <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactIrGr','fDefaultIrGrAccount','grHint')">🤖</button>
+                <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactIrGr','fDefaultIrGrAccount','grHint')" aria-label="แนะนำผังบัญชี" title="แนะนำจากประวัติของบริษัท">⚙️</button>
               </label>
               <select class="form-input" id="fDefaultIrGrAccount">
                 <option value="">(ใช้ค่าเริ่มต้นของระบบ)</option>
@@ -391,21 +391,21 @@
               เอกสาร/ประวัติทั้งหมดของรายการอื่นจะย้ายมารวมที่ตัวเก็บ แล้วรายการซ้ำถูกปิดใช้งาน (กู้ไม่ได้)
             </p>
             ${groups.map((g, gi) => `
-              <div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:12px" id="dupG${gi}">
+              <div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:12px" id="dupG${Number(gi)}">
                 <div style="font-size:13px;font-weight:600;color:#334155;margin-bottom:8px">
                   ${g.matchBy === 'taxId' ? `เลขผู้เสียภาษี ${esc(g.taxId)}` : 'ชื่อเหมือนกัน (ไม่มีเลขภาษี — โปรดตรวจว่าเป็นรายเดียวกันจริง)'}
                   · ${g.contacts.length} รายการ
                 </div>
                 ${g.contacts.map(c => `
                   <label style="display:flex;gap:10px;align-items:flex-start;padding:6px 4px;cursor:pointer;font-size:13px">
-                    <input type="radio" name="dupKeep${gi}" value="${c.id}" ${c.id === g.suggestedKeepId ? 'checked' : ''} style="margin-top:3px">
+                    <input type="radio" name="dupKeep${Number(gi)}" value="${Layout.esc(c.id)}" ${c.id === g.suggestedKeepId ? 'checked' : ''} style="margin-top:3px">
                     <span><b>${esc(c.name)}</b>${c.id === g.suggestedKeepId ? ' <span style="color:#16a34a;font-size:11px">← แนะนำ</span>' : ''}
                       <span style="display:block;color:#94a3b8;font-size:11px">
-                        ${esc(c.taxId || 'ไม่มีเลขภาษี')} · สาขา ${esc(c.branchCode || '00000')} · ${esc(c.address || 'ไม่มีที่อยู่')} · สร้าง ${new Date(c.createdAt).toLocaleDateString('th-TH')}
+                        ${esc(c.taxId || 'ไม่มีเลขภาษี')} · สาขา ${esc(c.branchCode || '00000')} · ${esc(c.address || 'ไม่มีที่อยู่')} · สร้าง ${esc(new Date(c.createdAt).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' }))}
                       </span>
                     </span>
                   </label>`).join('')}
-                <button class="btn btn-sm btn-primary" style="margin-top:6px" onclick="Page.mergeGroup(${gi}, this)">รวมกลุ่มนี้</button>
+                <button class="btn btn-sm btn-primary" style="margin-top:6px" onclick="Page.mergeGroup(${Number(gi)}, this)">รวมกลุ่มนี้</button>
               </div>`).join('')}
           </div>`;
         document.body.appendChild(ov);
@@ -506,9 +506,9 @@
             // Mark the system-default option with a star so user knows
             // which one fires when "(ใช้ค่าเริ่มต้นของระบบ)" is chosen.
             const sysDef = candidates.find(a => (a.accountCode || '').startsWith(defaultPrefix) && (a.level || 0) >= 4);
-            const sysDefLabel = sysDef ? ` — ระบบจะใช้ ${sysDef.accountCode} ${sysDef.accountName}` : '';
-            sel.innerHTML = `<option value="">(ใช้ค่าเริ่มต้นของระบบ${sysDefLabel})</option>` +
-              candidates.map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
+            const sysDefLabel = sysDef ? ` — ระบบจะใช้ ${Layout.esc(sysDef.accountCode)} ${Layout.esc(sysDef.accountName)}` : '';
+            sel.innerHTML = `<option value="">(ใช้ค่าเริ่มต้นของระบบ${sysDefLabel /* html — หนีด้วย Layout.esc ข้างบน */})</option>` +
+              candidates.map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
           };
           fillSelect('fDefaultArAccount', arCandidates, '113');
           fillSelect('fDefaultApAccount', apCandidates, '212');
@@ -558,11 +558,11 @@
           tbody.innerHTML = items.map(c => `<tr>
             <td class="font-medium">${Layout.esc(c.name)}</td>
             <td>${Layout.esc(c.taxId || '-')}${c.branchLabel ? ` <span class="text-gray-400 text-xs">(${Layout.esc(c.branchLabel)} · ${Layout.esc(c.branchCode || '00000')})</span>` : ''}</td>
-            <td><span class="badge ${ctCode(c)===2?'badge-info':ctCode(c)===3?'badge-warning':ctCode(c)===0?'badge-warning':'badge-gray'}" ${ctCode(c)===0?'title="ชนิดผู้ติดต่อตัดสินแบบยื่น ภ.ง.ด.3/53 และ scheme ของ e-Tax — กดแก้ไขเพื่อเลือก"':''}>${ctLabel(ctCode(c))}</span> ${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
-            <td>${c.phone || '-'}</td>
-            <td>${c.email || '-'}</td>
+            <td><span class="badge ${ctCode(c)===2?'badge-info':ctCode(c)===3?'badge-warning':ctCode(c)===0?'badge-warning':'badge-gray'}" ${ctCode(c)===0?'title="ชนิดผู้ติดต่อตัดสินแบบยื่น ภ.ง.ด.3/53 และ scheme ของ e-Tax — กดแก้ไขเพื่อเลือก"':''}>${Layout.esc(ctLabel(ctCode(c)))}</span> ${Layout.esc([c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', '))}</td>
+            <td>${Layout.esc(c.phone || '-')}</td>
+            <td>${Layout.esc(c.email || '-')}</td>
             <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
-            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')" data-i18n="common.edit">แก้ไข</button> <a class="btn btn-sm btn-ghost" href="/pages/documents.html?contactId=${c.id}" title="ดูเอกสารทั้งหมดของผู้ติดต่อ">เอกสาร</a> <button class="btn btn-sm btn-ghost text-red" onclick="Page.deleteContact('${c.id}')">ลบ</button></td>
+            <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${Layout.jsArg(c.id)}')" data-i18n="common.edit">แก้ไข</button> <a class="btn btn-sm btn-ghost" href="/pages/documents.html?contactId=${encodeURIComponent(c.id)}" title="ดูเอกสารทั้งหมดของผู้ติดต่อ">เอกสาร</a> <button class="btn btn-sm btn-ghost text-red" onclick="Page.deleteContact('${Layout.jsArg(c.id)}')">ลบ</button></td>
           </tr>`).join('');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data.totalPages || 1, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -606,11 +606,11 @@
           list.innerHTML = matches.map(m => `
             <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #fde68a">
               <div>
-                <strong>${Layout.esc ? Layout.esc(m.name) : m.name}</strong>
-                ${m.taxId ? `<span style="color:#92400e;font-size:11px;margin-left:6px">[${m.taxId}]</span>` : ''}
-                <div style="font-size:11px;color:#92400e">${m.reason} (${Math.round((m.confidence || 0) * 100)}%)</div>
+                <strong>${Layout.esc(m.name)}</strong>
+                ${m.taxId ? `<span style="color:#92400e;font-size:11px;margin-left:6px">[${Layout.esc(m.taxId)}]</span>` : ''}
+                <div style="font-size:11px;color:#92400e">${Layout.esc(m.reason)} (${Math.round((m.confidence || 0) * 100)}%)</div>
               </div>
-              <button class="btn btn-sm btn-secondary" onclick="Page._useExistingContact('${m.id}')">ใช้รายนี้</button>
+              <button class="btn btn-sm btn-secondary" onclick="Page._useExistingContact('${Layout.jsArg(m.id)}')">ใช้รายนี้</button>
             </div>
           `).join('');
           box.style.display = 'block';
@@ -762,43 +762,9 @@
       // AI suggest GL account ต่อช่อง (AR/AP/GR) — generic endpoint
       // เรียนรู้ต่อบริษัทผ่าน memory; แสดงเหตุผล + บันทึก override feedback
       async suggestGlSlot(slot, selectId, hintId) {
-        try {
-          const cid = Layout.getCompanyId();
-          const token = localStorage.getItem('token');
-          const contactId = document.getElementById('editId')?.value || '';
-          const url = `/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`
-            + (contactId ? `&contactId=${contactId}` : '');
-          const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
-          const j = await r.json();
-          const d = j?.data;
-          const sel = document.getElementById(selectId);
-          const hint = document.getElementById(hintId);
-          if (!d || !d.accountId) {
-            if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ');
-            return;
-          }
-          // option อาจยังไม่อยู่ใน dropdown (filter) — เพิ่มถ้าไม่มี
-          if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
-            const opt = document.createElement('option');
-            opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
-            sel.appendChild(opt);
-          }
-          if (sel) sel.value = d.accountId;
-          if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
-          // เรียนตอน user เปลี่ยน → ส่ง ground-truth กลับ (train ไปเลย)
-          if (sel && d.feedbackId) {
-            sel.addEventListener('change', () => {
-              try {
-                fetch(`/api/companies/${cid}/ai-feedback/record`, {
-                  method: 'POST',
-                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value,
-                    acceptedAi: sel.value === d.accountId, source: 'Explicit' })   // ยิงจาก event change
-                }).catch(() => {});
-              } catch {}
-            }, { once: true });
-          }
-        } catch { /* best-effort */ }
+        // รอบ 250 WP-03 (ฝ่ายค้าน M3): ตัวกลางเดียว Layout.suggestGlAccount — API.* + ป้ายตาม usedAi (ไม่ติด 🤖 ตายตัว) + ปิด loop
+        const contactId = document.getElementById('editId')?.value || '';
+        return Layout.suggestGlAccount({ slot, selectId, hintId, contactId });
       },
 
       // Show/hide credit-limit field — เห็นเฉพาะ contact ที่เป็น "ลูกค้า"
@@ -811,15 +777,13 @@
       async suggestCreditLimit() {
         try {
           const cid = Layout.getCompanyId();
-          const token = localStorage.getItem('token');
-          const r = await fetch(`/api/companies/${cid}/ai/credit-limit/suggest`,
-            { headers: { 'Authorization': 'Bearer ' + token } });
-          const j = await r.json();
+          // รอบ 250 WP-03 (ฝ่ายค้าน M3): API.* แทน fetch ดิบ · ป้ายตาม usedAi ของเซิร์ฟเวอร์ (ตอบจากสถิติบริษัท ⇒ "⚙️ ระบบแนะนำ")
+          const j = await API.get(`/api/companies/${cid}/ai/credit-limit/suggest`);
           if (!j?.success || !j.data) return;
           const inputEl = document.getElementById('fCreditLimit');
           const hintEl = document.getElementById('creditLimitHint');
           if (inputEl) inputEl.value = j.data.creditLimit;
-          if (hintEl) hintEl.textContent = `🤖 ${j.data.reasoning} (${Math.round((j.data.confidence || 0) * 100)}%)`;
+          if (hintEl) hintEl.textContent = `${Layout.suggestLabel(j.data)}: ${j.data.reasoning} (${Math.round((j.data.confidence || 0) * 100)}%)`;
         } catch (e) {
           if (typeof Layout.toast === 'function') Layout.toast('แนะนำวงเงินไม่สำเร็จ', 'error');
         }
@@ -1219,13 +1183,13 @@
           ].join(' ');
           return `<div style="border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;margin-bottom:8px;${ep.statusCode === 'unlinked' ? 'opacity:.6' : ''}">
             <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
-              <div><span style="color:${color(ep)}">●</span> <b>${esc(ep.display)}</b>
+              <div><span style="color:${color(ep) /* text — สีคงที่ */}">●</span> <b>${esc(ep.display)}</b>
                 ${ep.isPrimary ? '<span style="font-size:11px;color:#2563eb">★ อีเมลหลัก</span>' : (ep.label ? `<span style="font-size:12px;color:#64748b">"${esc(ep.label)}"</span>` : '')}
                 <span style="font-size:11px;color:#64748b">· ${esc(ep.kindLabel)} · ${esc(ep.statusLabel)}${ep.oaLabel ? ' · ' + esc(ep.oaLabel) : ''}</span></div>
-              <div>${actions}</div>
+              <div>${actions /* html — ปุ่มหนีแล้ว */}</div>
             </div>
             ${ep.statusReason ? `<div style="font-size:12px;color:#b45309;margin-top:2px">${esc(ep.statusReason)}</div>` : ''}
-            <div style="margin-top:4px">${topicBoxes}${amounts}</div>
+            <div style="margin-top:4px">${topicBoxes /* html — หนีแล้ว */}${amounts /* html — หนีแล้ว */}</div>
             <div style="font-size:11px;color:#64748b;margin-top:2px">ฐาน/ความยินยอม: ${esc(ep.consentLabel)} · ที่มา: ${esc(ep.sourceLabel)}${ep.unlinkedAt ? ' · ยกเลิกเมื่อ ' + esc(new Date(ep.unlinkedAt).toLocaleDateString('th-TH')) : ''}</div>
           </div>`;
         };
@@ -1246,10 +1210,10 @@
           </div>` : `<div style="font-size:12px;color:#64748b;margin-bottom:12px">🔒 ${esc(o.readOnlyReason || 'ดูได้อย่างเดียว')}</div>`}
           <div style="font-weight:600;margin:6px 0">LINE</div>
           ${lines.length ? lines.map(row).join('') : '<div style="font-size:12px;color:#64748b;margin-bottom:6px">ยังไม่มีปลายทาง LINE</div>'}
-          ${soon}
+          ${soon /* html — หนีแล้ว */}
           <div style="font-weight:600;margin:12px 0 6px">ดูว่าใครจะได้รับ (เมื่อเส้นส่งต่อสาย L2)</div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <select class="form-input" id="notifyPreviewTopic" style="max-width:220px">${topicOpts}</select>
+            <select class="form-input" id="notifyPreviewTopic" style="max-width:220px">${topicOpts /* html — หนีแล้ว */}</select>
             <button type="button" class="btn btn-sm btn-secondary" onclick="Page.previewNotifyRecipients()">ตรวจ</button>
           </div>
           <div id="notifyPreviewOut" style="font-size:12px;margin-top:6px"></div>`;
@@ -1257,31 +1221,76 @@
       _notifyEndpoint(key) {
         return (this._notify?.endpoints || []).find(e => (e.id || 'primary') === key);
       },
+      // รอบ 250 WP-03 (D §6.1 "ห้ามใครมาก่อนชนะ"): ทุกคำขอมีเลขลำดับ — วาดใหม่เฉพาะคำตอบของคำขอล่าสุด และเมื่อไม่มีการติ๊กค้างรอส่ง
+      // (เดิมติ๊ก 3 ช่องติดกัน = 3 PUT ซ้อน แล้วคำตอบที่มาช้ากว่าแต่เก่ากว่าทับสถานะใหม่ ⇒ ช่องเด้งกลับ)
+      _notifySeq: 0, _notifyPending: {}, _notifyTimers: {},
+      _notifyHasPending() { return Object.keys(this._notifyTimers).length > 0; },
       async _notifySend(method, suffix, body, okMsg) {
+        const seq = ++this._notifySeq;
+        // suffix ขึ้นต้น /api/ = URL เต็มที่จับไว้ตอนติ๊ก (ผู้ติดต่อที่ถูกต้อง แม้ผู้ใช้เปิดผู้ติดต่ออื่นระหว่างรอ 400ms)
+        const url = suffix && suffix.startsWith('/api/') ? suffix : this._notifyUrl(suffix);
+        const contactAtSend = url.split('/contacts/')[1]?.split('/')[0];
+        const stale = () => seq !== this._notifySeq || this._notifyHasPending()
+          || encodeURIComponent(document.getElementById('editId').value) !== contactAtSend;
         try {
-          const res = method === 'POST' ? await API.post(this._notifyUrl(suffix), body)
-            : method === 'PUT' ? await API.put(this._notifyUrl(suffix), body)
-            : await API.del(this._notifyUrl(suffix));
-          if (!res || !res.success) { Layout.toast(res?.message || 'บันทึกไม่สำเร็จ', 'error'); await this.loadNotify(); return; }
-          this._renderNotify(res.data);
+          const res = method === 'POST' ? await API.post(url, body)
+            : method === 'PUT' ? await API.put(url, body)
+            : await API.del(url);
+          if (!res || !res.success) { Layout.toast(res?.message || 'บันทึกไม่สำเร็จ', 'error'); if (!stale()) await this.loadNotify(); return; }
+          if (!stale()) this._renderNotify(res.data);
           if (okMsg) Layout.toast(res.message || okMsg);
-        } catch (e) { Layout.toast(e.message, 'error'); await this.loadNotify(); }
+        } catch (e) { Layout.toast(e.message, 'error'); if (!stale()) await this.loadNotify(); }
       },
       async addNotifyEmail() {
-        const email = (document.getElementById('notifyNewEmail').value || '').trim();
+        const input = document.getElementById('notifyNewEmail');
+        const email = (input.value || '').trim();
         const label = (document.getElementById('notifyNewLabel').value || '').trim();
-        if (!email) { Layout.toast('กรอกอีเมลก่อน', 'error'); return; }
+        if (!email) { Layout.toast('กรอกอีเมลก่อน', 'error'); input.focus(); return; }
+        // รอบ 250 WP-03 (D §6.2): ช่อง type=email ตรวจรูปแบบก่อนยิง (เดิมตรวจแค่ไม่ว่าง)
+        if (!input.checkValidity()) { input.reportValidity(); return; }
         await this._notifySend('POST', '/email', { email, label: label || null, topics: null }, 'เพิ่มอีเมลแล้ว');
       },
-      async onNotifyTopic(el) {
+      /** รวมการติ๊กต่อปลายทางภายใน 400ms เป็น PUT เดียว (ค่าที่ส่ง = สถานะช่องตอนติ๊กล่าสุด) */
+      _queueNotifyChange(key, patch) {
+        const tkey = this._notifyUrl('') + '|' + key;   // คีย์ต่อ (ผู้ติดต่อ, ปลายทาง) — URL ตรึงตอนติ๊ก
+        this._notifyPending[tkey] = Object.assign(this._notifyPending[tkey] || { base: this._notifyUrl(''), key }, patch);
+        clearTimeout(this._notifyTimers[tkey]);
+        if (!this._notifyUnloadHooked) {
+          // ฝ่ายค้าน L2: ปิด/ออกจากหน้าภายใน 400ms ⇒ ส่งที่ค้างทันที + เตือน (เดิมติ๊กล่าสุดหายเงียบ)
+          this._notifyUnloadHooked = true;
+          window.addEventListener('beforeunload', (e) => {
+            if (!this._notifyHasPending()) return;
+            this._flushNotify();
+            e.preventDefault(); e.returnValue = '';
+          });
+        }
+        const fire = () => {
+          delete this._notifyTimers[tkey];
+          const p = this._notifyPending[tkey] || {}; delete this._notifyPending[tkey];
+          if (p.key === 'primary') this._notifySend('PUT', p.base + '/primary', { topics: p.topics || [] }, 'บันทึกแล้ว');
+          else this._notifySend('PUT', p.base + '/' + encodeURIComponent(p.key),
+            { label: null, topics: p.topics ?? null, showAmounts: p.showAmounts ?? null }, 'บันทึกแล้ว');
+        };
+        this._notifyTimerFns = this._notifyTimerFns || {};
+        this._notifyTimerFns[tkey] = fire;
+        this._notifyTimers[tkey] = setTimeout(fire, 400);
+      },
+      /** ส่งการติ๊กที่ค้างรอ 400ms ทันที (ออกจากหน้า) — เรียก callback ของแต่ละตัวจับเวลา */
+      _flushNotify() {
+        for (const k of Object.keys(this._notifyTimers)) {
+          const fn = this._notifyTimerFns && this._notifyTimerFns[k];
+          clearTimeout(this._notifyTimers[k]);
+          if (fn) fn();
+        }
+      },
+      onNotifyTopic(el) {
         const key = el.dataset.ep;
         const boxes = document.querySelectorAll(`#contactNotifyPanel input[data-topic][data-ep="${CSS.escape(key)}"]`);
         const topics = Array.from(boxes).filter(b => b.checked).map(b => b.dataset.topic);
-        if (key === 'primary') await this._notifySend('PUT', '/primary', { topics }, 'บันทึกแล้ว');
-        else await this._notifySend('PUT', '/' + encodeURIComponent(key), { label: null, topics, showAmounts: null }, 'บันทึกแล้ว');
+        this._queueNotifyChange(key, { topics });
       },
-      async onNotifyShowAmounts(el) {
-        await this._notifySend('PUT', '/' + encodeURIComponent(el.dataset.ep), { label: null, topics: null, showAmounts: !!el.checked }, 'บันทึกแล้ว');
+      onNotifyShowAmounts(el) {
+        this._queueNotifyChange(el.dataset.ep, { showAmounts: !!el.checked });
       },
       async editNotifyLabel(el) {
         const ep = this._notifyEndpoint(el.dataset.ep); if (!ep) return;

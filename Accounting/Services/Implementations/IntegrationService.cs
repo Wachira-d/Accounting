@@ -1400,18 +1400,48 @@ public class IntegrationService : IIntegrationService
             // Create journal entry for payment
             var journalEntryId = await CreatePaymentJournalAsync(companyId, payment, document, request, payAccounts);
 
+            // รอบ 250 (WP-02 · AUDIT_249_COVERAGE M-3 · ทางเข้าที่ 9): เส้นนี้บันทึกการชำระเอง (ไม่ผ่าน CreatePaymentAsync) ⇒ เรียกขั้นหลัง commit ตัวเดียวกัน
+            // (sync ทะเบียน 50 ทวิ ของใบ → งานหลังรับชำระ source = Integration) · ล้ม = การชำระบันทึกแล้ว (ไม่ย้อน) แต่บอกดังที่ sync log + คำตอบ
+            var postStepNote = await AfterPaymentStepsAsync(companyId, payment.Id);
+
             log.Status = "Success";
             log.CreatedPaymentId = payment.Id;
             log.CreatedDocumentId = document.Id;
             log.CreatedJournalEntryId = journalEntryId;
+            if (postStepNote != null) log.ErrorMessage = postStepNote;
             log.ProcessingTimeMs = (int)sw.ElapsedMilliseconds;
             await SaveSyncLog(log, integrationId);
 
-            return new InboundSyncResponse(true, "Payment recorded", document.Id, null, journalEntryId, payment.Id, payment.PaymentNumber);
+            return new InboundSyncResponse(true, "Payment recorded" + (postStepNote == null ? "" : " — " + postStepNote),
+                document.Id, null, journalEntryId, payment.Id, payment.PaymentNumber);
         }
         catch (Exception ex)
         {
             return await HandleSyncError(log, integrationId, ex, sw);
+        }
+    }
+
+    /// <summary>รอบ 250 (WP-02 · M-3): ขั้นหลังบันทึกการชำระจาก integration — ตัวเดียวกับ <c>DocumentService.CreatePaymentAsync</c>
+    /// (<see cref="IDocumentService.AfterPaymentRecordedAsync"/>) · ไม่มี DocumentService (สร้างนอก DI) ⇒ เข้าคิวงานหลังรับชำระด้วยแกนเดียวกัน
+    /// แต่ sync ทะเบียน 50 ทวิ ไม่ได้ ⇒ คืนข้อความบอก · ล้ม ⇒ คืนข้อความ (ผู้เรียกใส่ sync log + คำตอบ) · null = สำเร็จครบ</summary>
+    private async Task<string?> AfterPaymentStepsAsync(Guid companyId, Guid paymentId)
+    {
+        if (_documentService == null)
+        {
+            await PostPaymentAutomationService.EnqueueCoreAsync(_db, _logger, companyId, paymentId,
+                Accounting.Helpers.PaymentEntrySource.Integration, "integration", CancellationToken.None);
+            return "บันทึกการชำระแล้ว แต่ยังไม่ได้ปรับทะเบียนภาษีถูกหัก ณ ที่จ่าย (50 ทวิ) ของใบนี้ — ตรวจที่ ภาษี → ภาษีถูกหัก ณ ที่จ่าย";
+        }
+        try
+        {
+            await _documentService.AfterPaymentRecordedAsync(companyId, paymentId, Accounting.Helpers.PaymentEntrySource.Integration, "integration");
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Integration payment {Payment}: ขั้นหลังรับชำระ (ทะเบียน 50 ทวิ/ใบเสร็จอัตโนมัติ) ล้ม", paymentId);
+            return "บันทึกการชำระแล้ว แต่ขั้นหลังรับชำระไม่สำเร็จ (ทะเบียน 50 ทวิ/ใบเสร็จอัตโนมัติ): " + ex.Message
+                + " — ตรวจที่หน้าเอกสาร แล้วออก/ส่งใบเสร็จเอง";
         }
     }
 

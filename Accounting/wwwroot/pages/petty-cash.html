@@ -82,7 +82,7 @@
           รายจ่ายที่พิสูจน์ผู้รับไม่ได้) · ยังบันทึกได้ตามปกติเพราะเงินออกจากลิ้นชักไปแล้วจริง
         </div>
         <label>บัญชีค่าใช้จ่าย
-          <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('PettyExpense','dExpense','dExpenseHint')">🤖</button>
+          <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('PettyExpense','dExpense','dExpenseHint')" aria-label="แนะนำผังบัญชี" title="แนะนำจากประวัติของบริษัท">⚙️</button>
         </label>
         <select id="dExpense" class="form-input"><option value="">— เลือกบัญชีค่าใช้จ่าย —</option></select>
         <div id="dExpenseHint" style="font-size:11px;color:#64748b;margin-top:4px">ทุกการเบิกลงบัญชีอัตโนมัติ: เดบิตบัญชีค่าใช้จ่ายนี้ / เครดิตผังของกองทุน</div>
@@ -167,36 +167,8 @@
         await this.load();
       },
       async aiSuggestAccount(slot, selectId, hintId) {
-        try {
-          const cid = Layout.getCompanyId();
-          const token = localStorage.getItem('token');
-          const r = await fetch(`/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`,
-            { headers: { 'Authorization': 'Bearer ' + token } });
-          const j = await r.json();
-          const d = j?.data;
-          const sel = document.getElementById(selectId);
-          const hint = hintId ? document.getElementById(hintId) : null;
-          if (!d || !d.accountId) { if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ'); return; }
-          if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
-            const opt = document.createElement('option');
-            opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
-            sel.appendChild(opt);
-          }
-          if (sel) sel.value = d.accountId;
-          if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
-          if (sel && d.feedbackId) {
-            sel.addEventListener('change', () => {
-              try {
-                fetch(`/api/companies/${cid}/ai-feedback/record`, {
-                  method: 'POST',
-                  headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value,
-                    acceptedAi: sel.value === d.accountId, source: 'Explicit' })   // ยิงจาก event change
-                }).catch(() => {});
-              } catch {}
-            }, { once: true });
-          }
-        } catch { /* best-effort */ }
+        // รอบ 250 WP-03 (ฝ่ายค้าน M3): ตัวกลางเดียว Layout.suggestGlAccount (API.* · ป้ายตาม usedAi · ปิด loop)
+        return Layout.suggestGlAccount({ slot, selectId, hintId });
       },
       // ผังบัญชีทั้งชุดโหลดครั้งเดียว — ค่าใช้จ่าย (ช่องเบิก) + สินทรัพย์ระดับรายการ (ผังของกองทุน)
       async loadAccounts() {

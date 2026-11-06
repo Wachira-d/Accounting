@@ -36,6 +36,8 @@ public class OmisePaymentProvider : IPaymentProvider
     public const string HttpClientName = "payments:omise";
 
     private const string ApiBase = "https://api.omise.co";
+    /// <summary>รอบ 250 WP-02 (Y8): ปลายทางทดสอบการเชื่อมต่อขาออกของการ์ด go-live — โดเมนของเจ้าอยู่ใน adapter เท่านั้น (payment_provider_boundary_check)</summary>
+    public const string OutboundHealthCheckUrl = ApiBase;
 
     /// <summary>รุ่น API ที่ adapter นี้อ่านชื่อช่อง — <b>ปักทุกคำขอ</b> (หัว <c>Omise-Version</c> · คำตัดสินรอบ 200 ข้อ 18)
     ///

@@ -49,6 +49,7 @@ public static class EtaxByEmailFormat
     public const decimal RevenueCeiling = 30_000_000m;
     /// <summary>รหัสกฎของการปฏิเสธเชิงรูปแบบ (ลง audit/ตอบหน้าเว็บ)</summary>
     public const string RuleCode = "ETAX-EMAIL-FORMAT";
+
     /// <summary>รหัสกฎของ "ส่งซ้ำต้องยืนยัน" (409 — หน้าเว็บถามแล้วส่งใหม่พร้อมยืนยัน)</summary>
     public const string ResendRuleCode = "ETAX-EMAIL-RESEND";
 
@@ -58,20 +59,80 @@ public static class EtaxByEmailFormat
     /// ในตัว <c>IssuedAsCashReceipt</c>) ⇒ RCT · <c>80</c> ใบเพิ่มหนี้ ⇒ DBN · <c>81</c> ใบลดหนี้ ⇒ CDN · <c>T05</c>/<c>T06</c> อย่างย่อ ⇒ null (ไม่รองรับ) ·
     /// รหัส CDN/RCT รอคนยืนยัน (คำตัดสิน 244-2)
     /// </summary>
-    private static string? SubjectCode(string? etdaTypeCode) => etdaTypeCode switch
+    private static string? SubjectCode(string? etdaTypeCode, IReadOnlyDictionary<string, string>? overrides = null)
     {
-        "388" or "T02" or "T04" => "INV",
-        "T03" => "RCT",
-        "80" => "DBN",
-        "81" => "CDN",
-        _ => null,
+        var slot = SubjectCodeSlots.FirstOrDefault(s => s.EtdaTypeCodes.Contains(etdaTypeCode ?? ""));
+        if (slot.Key == null) return null;
+        return overrides != null && overrides.TryGetValue(slot.Key, out var o) && IsValidSubjectCode(o) ? o : slot.Default;
+    }
+
+    /// <summary>รอบ 250 WP-03 (คำตัดสิน §3.3 N1): ตาราง "ชนิดเอกสาร → รหัสหัวเรื่อง" — ค่าตั้งต้น = ค่าที่ใช้อยู่ (ยัง<b>ไม่เทียบคู่มือฉบับจริง</b> · CDN/CRN และ RCT รอยืนยัน)
+    /// แอดมินแพลตฟอร์มทับได้ที่ <c>SiteSettings.EtaxByEmailSubjectCodesJson</c> (หน้า /admin/site-settings.html) — รหัสผิด ⇒ ETDA ไม่ประทับเวลาทั้งชุด จึงต้องแก้ได้
+    /// ใน 1 นาทีโดยไม่ deploy · <c>Key</c> = ชื่อช่องที่เก็บ · <c>EtdaTypeCodes</c> = รหัส ETDA ที่ใช้รหัสหัวเรื่องเดียวกัน</summary>
+    public static readonly IReadOnlyList<(string Key, string Label, string[] EtdaTypeCodes, string Default)> SubjectCodeSlots = new[]
+    {
+        ("Invoice", "ใบกำกับภาษี (ETDA 388 · T02 ใบแจ้งหนี้/ใบกำกับ · T04 ใบส่งของ/ใบกำกับ)", new[] { "388", "T02", "T04" }, "INV"),
+        ("Receipt", "ใบเสร็จรับเงิน/ใบกำกับภาษี (ETDA T03)", new[] { "T03" }, "RCT"),
+        ("DebitNote", "ใบเพิ่มหนี้ (ETDA 80)", new[] { "80" }, "DBN"),
+        ("CreditNote", "ใบลดหนี้ (ETDA 81)", new[] { "81" }, "CDN"),
     };
 
-    /// <summary>หัวเรื่องของใบนี้ — ชนิดต้องเป็น e-Tax (<see cref="EtaxAutoIssueScope.IsEtaxType"/>) แล้วรหัสจาก <see cref="EtaxDocumentTypeMap.TypeCode"/> ตัวเดียว</summary>
-    public static SubjectResult Subject(Accounting.Models.Entities.Document doc, string? originalNumber = null, string? replacesNumber = null)
+    /// <summary>หมายเหตุที่หน้าแอดมินต้องแสดงคู่ตาราง (คำตัดสิน N1 — ห้ามประทับว่ารหัสยืนยันแล้ว)</summary>
+    public const string SubjectCodesUnverifiedNote = "ยังไม่เทียบคู่มือ \"e-Tax Invoice by Email\" ฉบับจริง — ค่าตั้งต้นมาจากผลค้นหา (CDN/CRN และ RCT ยังไม่ยืนยัน) · รหัสผิด = ETDA ไม่ประทับเวลาทั้งชุด";
+
+    /// <summary>รหัสหัวเรื่องที่รับ: ตัวอักษรอังกฤษพิมพ์ใหญ่ 3 ตัว (รูปแบบเดียวกับ INV/RCT/DBN/CDN)</summary>
+    public static bool IsValidSubjectCode(string? code) => code is { Length: 3 } && code.All(c => c is >= 'A' and <= 'Z');
+
+    /// <summary>อ่านค่าทับจาก JSON (<c>{"CreditNote":"CRN"}</c>) — คีย์/ค่าที่ไม่ถูกต้องถูกข้าม (ใช้ค่าตั้งต้น) · JSON เสีย/ว่าง = ไม่มีค่าทับ</summary>
+    public static IReadOnlyDictionary<string, string> ParseSubjectCodes(string? json)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(json)) return result;
+        try
+        {
+            var raw = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string?>>(json);
+            if (raw == null) return result;
+            foreach (var (k, v) in raw)
+            {
+                var code = v?.Trim().ToUpperInvariant();
+                if (SubjectCodeSlots.Any(s => s.Key == k) && IsValidSubjectCode(code)) result[k] = code!;
+            }
+        }
+        catch (System.Text.Json.JsonException) { /* ค่าที่เก็บเสีย = ใช้ค่าตั้งต้นทั้งชุด (หน้าแอดมินแสดงค่าที่มีผลจริงจาก EffectiveSubjectCodes) */ }
+        return result;
+    }
+
+    /// <summary>เก็บเฉพาะช่องที่ต่างจากค่าตั้งต้น · ไม่มีค่าทับเลย = null (กลับไปใช้ค่าตั้งต้นทั้งชุด)</summary>
+    public static string? SerializeSubjectCodes(IReadOnlyDictionary<string, string> codes)
+    {
+        var diff = SubjectCodeSlots.Where(s => codes.TryGetValue(s.Key, out var c) && IsValidSubjectCode(c) && c != s.Default)
+            .ToDictionary(s => s.Key, s => codes[s.Key]);
+        return diff.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(diff);
+    }
+
+    /// <summary>รอบ 250 WP-03 (ฝ่ายค้าน L1): รหัสที่มีผล (ค่าทับ › ค่าตั้งต้น) ซ้ำกันข้ามชนิดเอกสารไหม — ซ้ำ ⇒ ข้อความไทย · ไม่ซ้ำ ⇒ null</summary>
+    public static string? DuplicateSubjectCode(IReadOnlyDictionary<string, string> codes)
+    {
+        var effective = SubjectCodeSlots.Select(s => (s.Key, Code: codes.TryGetValue(s.Key, out var c) && IsValidSubjectCode(c) ? c : s.Default)).ToList();
+        var dup = effective.GroupBy(x => x.Code).FirstOrDefault(g => g.Count() > 1);
+        return dup == null ? null
+            : $"รหัส “{dup.Key}” ซ้ำกันหลายชนิดเอกสาร ({string.Join(", ", dup.Select(x => x.Key))}) — ETDA ต้องแยกชนิดจากรหัสหัวเรื่อง";
+    }
+
+    /// <summary>รหัสที่มีผลจริงต่อช่อง (ค่าทับ › ค่าตั้งต้น) — ตัวเดียวที่หน้าแอดมินแสดง</summary>
+    public static IReadOnlyList<(string Key, string Label, string Code, string Default)> EffectiveSubjectCodes(string? json)
+    {
+        var o = ParseSubjectCodes(json);
+        return SubjectCodeSlots.Select(s => (s.Key, s.Label, o.TryGetValue(s.Key, out var c) ? c : s.Default, s.Default)).ToList();
+    }
+
+    /// <summary>หัวเรื่องของใบนี้ — ชนิดต้องเป็น e-Tax (<see cref="EtaxAutoIssueScope.IsEtaxType"/>) แล้วรหัสจาก <see cref="EtaxDocumentTypeMap.TypeCode"/> ตัวเดียว ·
+    /// <paramref name="subjectCodes"/> = ค่าทับของแพลตฟอร์ม (<see cref="ParseSubjectCodes"/>) · null = ค่าตั้งต้น</summary>
+    public static SubjectResult Subject(Accounting.Models.Entities.Document doc, string? originalNumber = null, string? replacesNumber = null,
+        IReadOnlyDictionary<string, string>? subjectCodes = null)
         => !EtaxAutoIssueScope.IsEtaxType(doc.DocumentType)
             ? new SubjectResult(null, $"เอกสารชนิด {doc.DocumentType} ไม่ใช่ใบกำกับภาษี/ใบเสร็จ/ใบเพิ่มหนี้/ใบลดหนี้ — ส่งแบบ e-Tax by Email ไม่ได้")
-            : Subject(EtaxDocumentTypeMap.TypeCode(doc), doc.DocumentDate, doc.DocumentNumber, originalNumber, replacesNumber);
+            : Subject(EtaxDocumentTypeMap.TypeCode(doc), doc.DocumentDate, doc.DocumentNumber, originalNumber, replacesNumber, subjectCodes);
 
     /// <summary>วันที่ในหัวเรื่อง <c>ddMMyyyy</c> เป็น พ.ศ. ของวันที่ตามปฏิทินไทย (ตัวแปลงกลาง <see cref="ThaiDate.CalendarDateUtc(DateTime)"/>) ·
     /// ใช้ InvariantCulture เสมอ (กัน th-TH บวก 543 ซ้ำ)</summary>
@@ -93,9 +154,9 @@ public static class EtaxByEmailFormat
     /// <param name="replacesNumber">เลขใบที่ถูกยกเลิกแล้วออกใบนี้แทน (ใบกำกับ/ใบเสร็จ) · null = ไม่ใช่ใบแทน</param>
     /// <param name="etdaTypeCode">รหัสชนิดเอกสาร ETDA (<see cref="EtaxDocumentTypeMap.TypeCode"/>)</param>
     public static SubjectResult Subject(string etdaTypeCode, DateTime issueDate, string? number, string? originalNumber = null,
-        string? replacesNumber = null)
+        string? replacesNumber = null, IReadOnlyDictionary<string, string>? subjectCodes = null)
     {
-        var code = SubjectCode(etdaTypeCode);
+        var code = SubjectCode(etdaTypeCode, subjectCodes);
         if (code == null)
             return new SubjectResult(null, $"รหัสชนิดเอกสาร ETDA {etdaTypeCode} ยังไม่รองรับหัวเรื่อง e-Tax by Email (เช่น ใบกำกับภาษีอย่างย่อ) — ส่งแบบ e-Tax by Email ไม่ได้");
         var no = Clean(number);
@@ -106,12 +167,13 @@ public static class EtaxByEmailFormat
         if (HasBadChars(number))
             return new SubjectResult(null, $"เลขที่เอกสาร “{number}” มีวงเล็บเหลี่ยมหรือขึ้นบรรทัด — ETDA อ่านหัวเรื่องผิด · เปลี่ยนรูปแบบเลขที่เอกสารก่อนส่ง");
         var head = $"[{BeDate(issueDate)}][{code}][{no}]";
-        if (code is "CDN" or "DBN")
+        // รอบ 250 WP-03: ตัดสินจาก "ชนิด ETDA" (80/81) ไม่ใช่ข้อความรหัส — แอดมินทับรหัสใบลดหนี้เป็น CRN ได้ แต่ยังต้องมีเลขใบเดิม (§86/9-10)
+        if (etdaTypeCode is "80" or "81")
         {
             var orig = Clean(originalNumber);
             if (orig == null)
                 return new SubjectResult(null,
-                    $"{(code == "CDN" ? "ใบลดหนี้" : "ใบเพิ่มหนี้")} {no} ไม่ได้อ้างเลขใบกำกับภาษีเดิม — หัวเรื่อง e-Tax by Email ต้องมีเลขใบเดิม (§86/9-10) · "
+                    $"{(etdaTypeCode == "81" ? "ใบลดหนี้" : "ใบเพิ่มหนี้")} {no} ไม่ได้อ้างเลขใบกำกับภาษีเดิม — หัวเรื่อง e-Tax by Email ต้องมีเลขใบเดิม (§86/9-10) · "
                     + "ผูกใบเดิมที่เอกสารนี้ก่อนส่ง");
             if (HasBadChars(originalNumber))
                 return new SubjectResult(null, $"เลขใบเดิม “{originalNumber}” มีวงเล็บเหลี่ยมหรือขึ้นบรรทัด — ETDA อ่านหัวเรื่องผิด");

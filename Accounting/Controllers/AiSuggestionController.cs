@@ -312,6 +312,8 @@ public class AiSuggestionController : ControllerBase
                     confidence = mem.Value.Confidence, source = "Learned",
                     reasoning = $"🧠 เรียนรู้จากที่ทีมคุณเลือกไว้สำหรับช่องนี้ ({mem.Value.Samples} ครั้ง)",
                     feedbackId = fid0,
+                    // รอบ 250 WP-03 (D §1.5 · กฎเหล็ก #1 ป้ายซื่อสัตย์): endpoint นี้ตอบจากความจำ/ประวัติบริษัท ไม่เรียก provider ⇒ false เสมอ
+                    usedAi = false,
                 }));
             }
         }
@@ -388,14 +390,14 @@ public class AiSuggestionController : ControllerBase
 
         if (pickedId == null)
             return Ok(new ApiResponse<object>(true, new { accountId = (Guid?)null,
-                reasoning = "ยังไม่มีข้อมูลพอจะแนะนำบัญชีช่องนี้", feedbackId = (Guid?)null }));
+                reasoning = "ยังไม่มีข้อมูลพอจะแนะนำบัญชีช่องนี้", feedbackId = (Guid?)null, usedAi = false }));
 
         var acct = await _db.ChartOfAccounts.AsNoTracking()
             .Where(x => x.Id == pickedId.Value && x.CompanyId == companyId)
             .Select(x => new { x.Id, x.AccountCode, x.AccountName }).FirstOrDefaultAsync(ct);
         if (acct == null)
             return Ok(new ApiResponse<object>(true, new { accountId = (Guid?)null,
-                reasoning = "บัญชีที่แนะนำถูกลบไปแล้ว", feedbackId = (Guid?)null }));
+                reasoning = "บัญชีที่แนะนำถูกลบไปแล้ว", feedbackId = (Guid?)null, usedAi = false }));
 
         var inputJson = JsonSerializer.Serialize(new { slot, contactId, assetCategory, source });
         Guid? feedbackId = null;
@@ -426,6 +428,7 @@ public class AiSuggestionController : ControllerBase
                 _ => $"ค่าเริ่มต้นตามผังบัญชี: {acct.AccountCode} {acct.AccountName}",
             },
             feedbackId,
+            usedAi = false,   // ประวัติ/ค่าเริ่มต้นผัง — ไม่เรียก provider (ป้าย "⚙️ ระบบแนะนำ")
         }));
     }
 
@@ -1324,6 +1327,7 @@ public class AiSuggestionController : ControllerBase
         {
             category, usefulLifeMonths, depreciationMethod = depMethod,
             confidence = 0.80m, reasoning, feedbackId,
+            usedAi = false,   // รอบ 250 WP-03: ตารางคำสำคัญ (พ.ร.ฎ.145) — ไม่เรียก provider
         }));
     }
 
@@ -2534,6 +2538,7 @@ public class AiSuggestionController : ControllerBase
                 _ => "ลูกค้าใหม่ของบริษัท — ใช้ค่าเริ่มต้น 50,000 บาท (ปรับได้ภายหลัง)",
             },
             feedbackId,
+            usedAi = false,   // รอบ 250 WP-03 (ฝ่ายค้าน M3): สถิติยอดค้างของบริษัท — ไม่เรียก provider (ป้าย "⚙️ ระบบแนะนำ")
         }));
     }
 

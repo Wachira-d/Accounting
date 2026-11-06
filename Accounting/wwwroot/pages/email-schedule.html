@@ -206,13 +206,14 @@
       async loadRules() {
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
-          const r = await fetch(`/api/companies/${cid}/email-schedule/rules`, {
-            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-          });
-          const j = await r.json();
+          // รอบ 250 WP-03 (D §8.2): API.* แทน fetch ดิบ (ApiBusy กันกดซ้ำ · 401/403 กลาง · 4xx โยนพร้อมข้อความเซิร์ฟเวอร์)
+          const j = await API.get(`/api/companies/${cid}/email-schedule/rules`);
+          if (j && j.success === false) throw new Error(j.message || 'โหลดกฎไม่สำเร็จ');
           this._rules = j.data || [];
           this.renderRules();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        } catch (e) {
+          Layout.panelError('rulesList', 'โหลดกฎการส่งอีเมลไม่สำเร็จ', () => this.loadRules(), e.message);
+        }
       },
 
       renderRules() {
@@ -236,17 +237,17 @@
         box.innerHTML = this._rules.map(r => `
           <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px;margin-bottom:8px;${r.isActive ? '' : 'opacity:.55'}">
             <div style="flex:1">
-              <div style="font-weight:600">${labelTrigger(r.trigger)} ${r.documentType ? ` · ${r.documentType}` : ''}</div>
+              <div style="font-weight:600">${Layout.esc(labelTrigger(r.trigger))} ${r.documentType ? ` · ${Layout.esc(r.documentType)}` : ''}</div>
               <div style="font-size:12px;color:#64748b;margin-top:2px">
-                ${r.offsetDays === 0 ? 'ทันที' : (r.offsetDays > 0 ? `+${r.offsetDays} วัน` : `${r.offsetDays} วัน`)}
-                · เวลา ${r.sendAtHour}:00
-                ${r.repeatEveryDays > 0 ? ` · ซ้ำทุก ${r.repeatEveryDays} วัน` : ''}
+                ${r.offsetDays === 0 ? 'ทันที' : (r.offsetDays > 0 ? `+${Number(r.offsetDays)} วัน` : `${Number(r.offsetDays)} วัน`)}
+                · เวลา ${Number(r.sendAtHour)}:00
+                ${r.repeatEveryDays > 0 ? ` · ซ้ำทุก ${Number(r.repeatEveryDays)} วัน` : ''}
               </div>
               ${r.subjectTemplate ? `<div style="font-size:12px;color:#475569;margin-top:4px">หัวเรื่อง: ${Layout.esc(r.subjectTemplate)}</div>` : ''}
             </div>
             <div style="display:flex;gap:6px">
-              <button class="btn btn-sm btn-outline" onclick="Page.openRule('${r.id}')">แก้ไข</button>
-              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteRule('${r.id}')">ลบ</button>
+              <button class="btn btn-sm btn-outline" onclick="Page.openRule('${Layout.jsArg(r.id)}')">แก้ไข</button>
+              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteRule('${Layout.jsArg(r.id)}')">ลบ</button>
             </div>
           </div>`).join('');
       },
@@ -308,14 +309,35 @@
 
       async saveRule() {
         const cid = Layout.getCompanyId(); if (!cid) return;
+        // รอบ 250 WP-03 (D §8.1): ค่าตัวเลขตรวจช่วงก่อนส่ง — เดิม `parseInt(...) || 9` ⇒ กรอก 0 (เที่ยงคืน) กลายเป็น 9 เงียบ ๆ
+        const intIn = (id, min, max, label) => {
+          const el = document.getElementById(id);
+          const raw = String(el.value ?? '').trim();
+          const n = Number(raw);
+          if (raw === '' || !Number.isInteger(n) || n < min || (max != null && n > max)) {
+            el.focus();
+            throw new Error(`${label} ต้องเป็นจำนวนเต็ม${max != null ? ` ${min}–${max}` : ` ตั้งแต่ ${min}`}`);
+          }
+          return n;
+        };
+        let sendAtHour, dayOfMonth, offsetDays, repeatEveryDays;
+        try {
+          offsetDays = intIn('rOffset', -999, 999, 'จำนวนวันก่อน/หลัง');
+          sendAtHour = intIn('rHour', 0, 23, 'ชั่วโมงที่ส่ง');
+          repeatEveryDays = intIn('rRepeat', 0, 999, 'ส่งซ้ำทุก (วัน)');
+          dayOfMonth = document.getElementById('rTrigger').value === 'MonthlyStatement'
+            ? intIn('rDayOfMonth', 1, 28, 'วันที่ของเดือน')
+            : (Number.isInteger(Number(document.getElementById('rDayOfMonth').value)) && document.getElementById('rDayOfMonth').value !== ''
+                ? Math.min(28, Math.max(1, Number(document.getElementById('rDayOfMonth').value))) : 5);
+        } catch (err) { Layout.toast(err.message, 'error'); return; }
         const body = {
           id: document.getElementById('rId').value || '00000000-0000-0000-0000-000000000000',
           trigger: document.getElementById('rTrigger').value,
           documentType: document.getElementById('rDocType').value || null,
-          offsetDays: parseInt(document.getElementById('rOffset').value, 10) || 0,
-          sendAtHour: parseInt(document.getElementById('rHour').value, 10) || 9,
-          repeatEveryDays: parseInt(document.getElementById('rRepeat').value, 10) || 0,
-          dayOfMonth: parseInt(document.getElementById('rDayOfMonth').value, 10) || 5,
+          offsetDays,
+          sendAtHour,
+          repeatEveryDays,
+          dayOfMonth,
           subjectTemplate: document.getElementById('rSubject').value || null,
           bodyTemplate: document.getElementById('rBody').value || null,
           bccEmails: document.getElementById('rBcc').value || null,
@@ -327,13 +349,8 @@
           postPayIncludePartial: ({ 'true': true, 'false': false })[document.getElementById('rPostPayPartial').value] ?? null,
         };
         try {
-          const r = await fetch(`/api/companies/${cid}/email-schedule/rules`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-            body: JSON.stringify(body),
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message);
+          const j = await API.put(`/api/companies/${cid}/email-schedule/rules`, body);
+          if (!j || !j.success) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
           Layout.closeModal('ruleModal');
           Layout.toast(j.message || 'บันทึกแล้ว');
           this.loadRules();
@@ -344,11 +361,8 @@
         if (!confirm('ลบกฎนี้?')) return;
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
-          const r = await fetch(`/api/companies/${cid}/email-schedule/rules/${id}`, {
-            method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message);
+          const j = await API.del(`/api/companies/${cid}/email-schedule/rules/${encodeURIComponent(id)}`);
+          if (!j || !j.success) throw new Error((j && j.message) || 'ลบไม่สำเร็จ');
           Layout.toast(j.message || 'ลบแล้ว');
           this.loadRules();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -357,10 +371,8 @@
       async loadQueue() {
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
-          const r = await fetch(`/api/companies/${cid}/email-schedule/queue?take=100`, {
-            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-          });
-          const j = await r.json();
+          const j = await API.get(`/api/companies/${cid}/email-schedule/queue?take=100`);
+          if (j && j.success === false) throw new Error(j.message || 'โหลดคิวไม่สำเร็จ');
           const data = j.data || { stats: {}, items: [] };
           document.getElementById('statPending').textContent = data.stats.pending ?? 0;
           document.getElementById('statSent').textContent = data.stats.sent ?? 0;
@@ -373,15 +385,15 @@
             const pill = q.status === 'Sent' ? 'pill-success' : q.status === 'Failed' ? 'pill-danger'
               : q.status === 'Pending' ? 'pill-info' : 'pill-gray';
             const actions = q.status === 'Failed'
-              ? `<button class="btn btn-sm btn-outline" onclick="Page.retry('${q.id}')">↻ ลองใหม่</button>`
+              ? `<button class="btn btn-sm btn-outline" onclick="Page.retry('${Layout.jsArg(q.id)}')">↻ ลองใหม่</button>`
               : q.status === 'Pending'
-              ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.cancel('${q.id}')">ยกเลิก</button>` : '';
+              ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.cancel('${Layout.jsArg(q.id)}')">ยกเลิก</button>` : '';
             return `<tr>
-              <td data-label="สถานะ"><span class="pill ${pill}">${Layout.esc(q.statusLabel || q.status)}</span></td>
+              <td data-label="สถานะ"><span class="pill ${pill /* text — ชื่อคลาสคงที่ของหน้า */}">${Layout.esc(q.statusLabel || q.status)}</span></td>
               <td data-label="ผู้รับ" style="font-family:monospace;font-size:12px">${Layout.esc(q.toEmail)}</td>
               <td data-label="เรื่อง">${Layout.esc(q.subject)}${q.errorMessage ? `<div style="font-size:11px;color:#ef4444;margin-top:4px">⚠ ${Layout.esc(q.errorMessage)}</div>` : ''}</td>
-              <td data-label="นัดส่ง" style="font-size:12px">${new Date(q.scheduledFor).toLocaleString('th-TH')}</td>
-              <td>${actions}</td>
+              <td data-label="นัดส่ง" style="font-size:12px">${Layout.esc(new Date(q.scheduledFor).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }))}</td>
+              <td>${actions /* html — ปุ่มที่ประกอบด้วย jsArg ข้างบน */}</td>
             </tr>`;
           }).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -390,20 +402,19 @@
       async retry(id) {
         const cid = Layout.getCompanyId();
         try {
-          await fetch(`/api/companies/${cid}/email-schedule/queue/${id}/retry`, {
-            method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-          });
-          Layout.toast('พักในคิวรอบใหม่แล้ว'); this.loadQueue();
+          // รอบ 250 WP-03 (D §8.2): อ่าน success — เดิม toast "พักในคิวรอบใหม่แล้ว" แม้เซิร์ฟเวอร์ตอบ 4xx
+          const j = await API.post(`/api/companies/${cid}/email-schedule/queue/${encodeURIComponent(id)}/retry`, {});
+          if (!j || !j.success) throw new Error((j && j.message) || 'ลองส่งใหม่ไม่สำเร็จ');
+          Layout.toast(j.message || 'พักในคิวรอบใหม่แล้ว'); this.loadQueue();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async cancel(id) {
         if (!confirm('ยกเลิกคิวนี้?')) return;
         const cid = Layout.getCompanyId();
         try {
-          await fetch(`/api/companies/${cid}/email-schedule/queue/${id}/cancel`, {
-            method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-          });
-          Layout.toast('ยกเลิกแล้ว'); this.loadQueue();
+          const j = await API.post(`/api/companies/${cid}/email-schedule/queue/${encodeURIComponent(id)}/cancel`, {});
+          if (!j || !j.success) throw new Error((j && j.message) || 'ยกเลิกไม่สำเร็จ');
+          Layout.toast(j.message || 'ยกเลิกแล้ว'); this.loadQueue();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
     };

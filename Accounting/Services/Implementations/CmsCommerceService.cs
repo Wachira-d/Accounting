@@ -1693,7 +1693,7 @@ public partial class CmsCommerceService : ICmsCommerceService
                     // (ตัวตัดสินอยู่ที่ IPaymentIntentService.ResolveMoneyInAccountAsync
                     // ที่เดียว — ที่นี่แค่ส่งต่อ). null = เส้นสลิป เงินอยู่ในธนาคารแล้ว
                     OverridePaymentAccountId: moneyInAccountId
-                ), actor);
+                ), actor, source: Accounting.Helpers.PaymentEntrySource.Cms);
                 pay.ErpPaymentId = erpPay.Id;
                 await _db.SaveChangesAsync();
                 }
@@ -1943,7 +1943,7 @@ public partial class CmsCommerceService : ICmsCommerceService
             DocumentService.PreviewTotals(lines, true, 0m, depositPlan.BaseDeducted).Total);
         if (roundingDelta != 0m)
             order.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(order.InternalNotes,
-                $"ปัดเศษ VAT รายใบ: ใบมัดจำ + ใบขายส่วนที่เหลือ รวม{(roundingDelta > 0 ? "มากกว่า" : "น้อยกว่า")}ยอดเต็ม {Math.Abs(roundingDelta):N2} (ส่วนต่างอยู่ที่ VAT · ตามกฎ VAT คิดรายใบ)");
+                $"ปัดเศษ VAT รายใบ: ใบมัดจำ + ใบขายส่วนที่เหลือ รวม{(roundingDelta > 0 ? "มากกว่า" : "น้อยกว่า")}ยอดเต็ม {Math.Abs(roundingDelta):N2} (ส่วนต่างอยู่ที่ VAT · ฐาน/รายได้ไม่เพี้ยน · ตามกฎ VAT คิดรายใบ)");   // รอบ 250 ฝ่ายค้าน WP-02 ข้อ 5: ฐานใบส่วนที่เหลือ = ฐานเต็ม − ฐานมัดจำ พอดี (ComputeReconciledLineAmounts) — หมายเหตุจริงอีกครั้ง
         var depositBranchId = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == deposits[0].Id && d.CompanyId == companyId)
             .Select(d => d.BranchId).FirstOrDefaultAsync();

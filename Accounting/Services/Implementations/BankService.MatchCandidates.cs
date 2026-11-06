@@ -151,6 +151,7 @@ public partial class BankService
             // ไม่ ThenInclude Contact (required nav + !IsDeleted → INNER JOIN
             // ตัด payment ที่ contact ถูกลบ) — hydrate แยกด้านล่าง
             .Include(p => p.Document)
+            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 M-2: สลิปพอร์ทัลที่ยังไม่ตรวจไม่ใช่ผู้สมัครจับคู่
             .Where(p => p.CompanyId == companyId
                      && !p.IsDeleted
                      && p.PaymentDate >= dateMin && p.PaymentDate <= dateMax

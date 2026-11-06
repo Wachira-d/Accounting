@@ -321,7 +321,9 @@ public class PlatformPriceOverrideRound231Tests
     {
         Assert.Equal(TrialDataRetentionPolicy.Outcome.LegalHold, TrialDataRetentionPolicy.Decide(Facts(docs: true), Now).Outcome);
         Assert.Equal(TrialDataRetentionPolicy.Outcome.LegalHold, TrialDataRetentionPolicy.Decide(Facts(je: true), Now).Outcome);
-        Assert.Contains("ม.10", TrialDataRetentionPolicy.Decide(Facts(docs: true), Now).Reason);
+        Assert.Contains("ม.14", TrialDataRetentionPolicy.Decide(Facts(docs: true), Now).Reason);   // รอบ 250 WP-06: ระยะเก็บ = ม.14 (ม.10 คือปิดบัญชี)
+        Assert.DoesNotContain("ม.10", TrialDataRetentionPolicy.Decide(Facts(docs: true, je: true), Now).Reason);
+        Assert.DoesNotContain("ท.ป.4/2528", TrialDataRetentionPolicy.Decide(Facts(wht: true), Now).Reason);   // ท.ป.4/2528 = อัตราหัก ไม่ใช่ระยะเก็บ
         // ฝ่ายค้าน B2: legal hold ขยาย — แบบภาษีที่ยื่น · e-Tax ส่งแล้ว · 50 ทวิ · งวดเงินเดือนจ่ายแล้ว
         Assert.Equal(TrialDataRetentionPolicy.Outcome.LegalHold, TrialDataRetentionPolicy.Decide(Facts(filed: true), Now).Outcome);
         Assert.Equal(TrialDataRetentionPolicy.Outcome.LegalHold, TrialDataRetentionPolicy.Decide(Facts(etax: true), Now).Outcome);

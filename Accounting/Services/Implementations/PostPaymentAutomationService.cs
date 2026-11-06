@@ -48,50 +48,84 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         _sections = sections ?? Array.Empty<IReceiptEmailSectionProvider>();
     }
 
-    /// <summary>ค่าที่มีผลของเอกสารนี้ = ค่าบริษัท ทับด้วยตารางส่งเอกสารที่ส่งใบนี้ (<c>Document.AutoSendRuleId</c>) ทีละช่อง</summary>
-    internal async Task<PostPaymentAutomationPolicy.Settings> SettingsForAsync(Guid companyId, Guid? ruleId, CancellationToken ct)
+    /// <summary>ค่าที่มีผลของเอกสารนี้ — ชั้น (เฉพาะเจาะจงชนะ ทีละช่อง): ตารางส่งเอกสารที่ส่งใบนี้ (<c>Document.AutoSendRuleId</c>) ›
+    /// รายการประจำที่สร้างใบนี้ (<c>Document.RecurringTransactionId</c> · รอบ 250 B-13) › ผู้ติดต่อของใบ › บริษัท — ตัวต่อชั้นเดียว
+    /// <see cref="PostPaymentAutomationPolicy.EffectiveLayers"/> (ไม่คำนวณเอง) · static ⇒ <c>DocumentService.CreatePaymentAsync</c> เรียกด้วย context ของตัวเองได้</summary>
+    internal static async Task<PostPaymentAutomationPolicy.Settings> SettingsForAsync(AccountingDbContext db, Guid companyId, Guid documentId, CancellationToken ct)
     {
-        var s = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
+        var s = await db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
             .Select(x => new PostPaymentAutomationPolicy.Settings(x.PostPayEmailReceipt, x.PostPayIncludePartial))
             .FirstOrDefaultAsync(ct) ?? new PostPaymentAutomationPolicy.Settings(false, false);
-        if (ruleId is not Guid rid) return s;
-        var o = await _db.EmailScheduleRules.AsNoTracking()
-            .Where(r => r.Id == rid && r.CompanyId == companyId && !r.IsDeleted)
-            .Select(r => new PostPaymentAutomationPolicy.Overrides(r.PostPayEmailReceipt, r.PostPayIncludePartial))
+        var doc = await db.Documents.AsNoTracking().IgnoreQueryFilters()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => new { d.AutoSendRuleId, d.RecurringTransactionId, d.ContactId })
             .FirstOrDefaultAsync(ct);
-        return PostPaymentAutomationPolicy.Effective(s, o);
+        if (doc == null) return s;
+        PostPaymentAutomationPolicy.Overrides? schedule = null, recurring = null, contact = null;
+        if (doc.AutoSendRuleId is Guid rid)
+            schedule = await db.EmailScheduleRules.AsNoTracking()
+                .Where(r => r.Id == rid && r.CompanyId == companyId && !r.IsDeleted)
+                .Select(r => new PostPaymentAutomationPolicy.Overrides(r.PostPayEmailReceipt, r.PostPayIncludePartial))
+                .FirstOrDefaultAsync(ct);
+        if (doc.RecurringTransactionId is Guid recId)
+            recurring = await db.RecurringTransactions.AsNoTracking().IgnoreQueryFilters()
+                .Where(r => r.Id == recId && r.CompanyId == companyId)
+                .Select(r => new PostPaymentAutomationPolicy.Overrides(r.PostPayEmailReceipt, r.PostPayIncludePartial))
+                .FirstOrDefaultAsync(ct);
+        contact = await db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
+            .Select(c => new PostPaymentAutomationPolicy.Overrides(c.PostPayEmailReceipt, c.PostPayIncludePartial))
+            .FirstOrDefaultAsync(ct);
+        return PostPaymentAutomationPolicy.EffectiveLayers(s, schedule, recurring, contact);
     }
 
-    public async Task<bool> EnqueueAsync(Guid companyId, Guid paymentId, string source, string? actor, CancellationToken ct = default)
+    public Task<bool> EnqueueAsync(Guid companyId, Guid paymentId, PaymentEntrySource source, string? actor, CancellationToken ct = default)
+        => EnqueueCoreAsync(_db, _logger, companyId, paymentId, source, actor, ct);
+
+    /// <summary>รอบ 250 (WP-02 §2.1 · คำตัดสิน §2 #4): แกนสร้างแถวงานหลังรับชำระ — ผู้เรียกจริงคือ <c>DocumentService.CreatePaymentAsync</c> หลัง commit
+    /// (ทุกทางเข้า 1:1) และ <c>DocumentService.AfterPaymentRecordedAsync</c> (integration) · ตัดสินด้วย <see cref="PostPaymentAutomationPolicy.ForEnqueue"/> ตัวเดียว ·
+    /// ทางเข้าที่มีเส้นออกใบเสร็จของตัวเอง ⇒ แถว Skipped พร้อมเหตุ (หน้าเอกสารเห็น) · ไม่โยน (การชำระ commit แล้ว — Error log)</summary>
+    internal static async Task<bool> EnqueueCoreAsync(AccountingDbContext db, ILogger logger, Guid companyId, Guid paymentId,
+        PaymentEntrySource source, string? actor, CancellationToken ct)
     {
         try
         {
-            var pay = await _db.Payments.AsNoTracking()
+            var pay = await db.Payments.AsNoTracking()
                 .Where(p => p.Id == paymentId && p.CompanyId == companyId)
-                .Select(p => new { p.DocumentId, RuleId = p.Document.AutoSendRuleId, p.Document.BalanceDue })
+                .Select(p => new { p.DocumentId, p.Document.BalanceDue })
                 .FirstOrDefaultAsync(ct);
             if (pay == null) return false;
             // ฝ่ายค้าน N: "ชำระครบ" ตัดสิน ณ เหตุการณ์ชำระนี้ (หลัง commit ของการชำระ) — ไม่ใช่ตอนงานรัน (งวดถัดไปอาจเข้ามาก่อน)
             var fullyPaid = pay.BalanceDue <= 0.005m;
-            var settings = await SettingsForAsync(companyId, pay.RuleId, ct);
-            if (!settings.Any) return false;   // ปิด ⇒ ไม่สร้างงาน (พฤติกรรมเดิม)
+            var settings = await SettingsForAsync(db, companyId, pay.DocumentId, ct);
+            var decision = PostPaymentAutomationPolicy.ForEnqueue(settings, source);
+            if (decision.Kind == PostPaymentAutomationPolicy.EnqueueKind.None) return false;   // ปิด/หลายใบ ⇒ ไม่สร้างงาน (พฤติกรรมเดิม)
 
             var now = DateTime.UtcNow;
             var id = Guid.NewGuid();
             var by = string.IsNullOrWhiteSpace(actor) ? SystemActor : actor;
-            var status = PostPaymentAutomationPolicy.StatusPending;
-            // กันซ้ำที่ฐาน (unique CompanyId+PaymentId) — webhook/poll/กดซ้ำพร้อมกันได้แถวเดียว
-            var n = await _db.Database.ExecuteSqlInterpolatedAsync($@"
+            var skipped = decision.Kind == PostPaymentAutomationPolicy.EnqueueKind.Skipped;
+            var status = skipped ? PostPaymentAutomationPolicy.StatusSkipped : PostPaymentAutomationPolicy.StatusPending;
+            var message = decision.Reason ?? "";
+            var sourceName = source.ToString();
+            // กันซ้ำที่ฐาน (unique CompanyId+PaymentId) — webhook/poll/กดซ้ำพร้อมกันได้แถวเดียว · แถว Skipped ปิดงานทันที (CompletedAt) พร้อมเหตุ
+            var n = skipped
+                ? await db.Database.ExecuteSqlInterpolatedAsync($@"
+                INSERT INTO ""PostPaymentAutomationRuns""
+                    (""Id"", ""CompanyId"", ""PaymentId"", ""DocumentId"", ""Source"", ""Status"", ""FullyPaid"", ""Attempts"", ""NextAttemptAt"", ""Message"", ""CompletedAt"", ""CreatedAt"", ""CreatedBy"", ""IsDeleted"")
+                VALUES ({id}, {companyId}, {paymentId}, {pay.DocumentId}, {sourceName}, {status}, {fullyPaid}, 0, {now}, {message}, {now}, {now}, {by}, false)
+                ON CONFLICT (""CompanyId"", ""PaymentId"") DO NOTHING", ct)
+                : await db.Database.ExecuteSqlInterpolatedAsync($@"
                 INSERT INTO ""PostPaymentAutomationRuns""
                     (""Id"", ""CompanyId"", ""PaymentId"", ""DocumentId"", ""Source"", ""Status"", ""FullyPaid"", ""Attempts"", ""NextAttemptAt"", ""CreatedAt"", ""CreatedBy"", ""IsDeleted"")
-                VALUES ({id}, {companyId}, {paymentId}, {pay.DocumentId}, {source}, {status}, {fullyPaid}, 0, {now}, {now}, {by}, false)
+                VALUES ({id}, {companyId}, {paymentId}, {pay.DocumentId}, {sourceName}, {status}, {fullyPaid}, 0, {now}, {now}, {by}, false)
                 ON CONFLICT (""CompanyId"", ""PaymentId"") DO NOTHING", ct);
             return n > 0;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // การชำระ commit แล้ว — ห้ามทำให้คำตอบการชำระล้ม · Error log (ไม่มีแถวงาน = ไม่มีอีเมลอัตโนมัติของการชำระนี้ — ส่งเองจากหน้าเอกสารได้)
-            _logger.LogError(ex, "สร้างงานส่งเอกสารหลังรับชำระไม่สำเร็จ payment {Payment} บริษัท {Company}", paymentId, companyId);
+            logger.LogError(ex, "สร้างงานส่งเอกสารหลังรับชำระไม่สำเร็จ payment {Payment} บริษัท {Company}", paymentId, companyId);
             return false;
         }
     }
@@ -216,10 +250,14 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         var relatedType = doc.RelatedDocumentId is Guid rel
             ? await _db.Documents.AsNoTracking().Where(r => r.Id == rel && r.CompanyId == cid).Select(r => (DocumentType?)r.DocumentType).FirstOrDefaultAsync(ct)
             : null;
-        var saleSide = DocumentPayLinkPolicy.IsSaleSide(doc.DocumentType, relatedType);
-        var settings = await SettingsForAsync(cid, doc.AutoSendRuleId, ct);
         var contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .FirstOrDefaultAsync(c => c.Id == doc.ContactId && c.CompanyId == cid, ct);
+        // ฝ่ายค้าน WP-02 ข้อ 3: ฝั่งของใบเพิ่มหนี้จากตัวตัดสินเดียวกับ JE รับชำระ (ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ขายอย่างเดียว) — ห้ามส่งใบเสร็จให้ผู้ขาย
+        var saleSide = DocumentPayLinkPolicy.IsSaleSide(doc.DocumentType, relatedType, doc.CnDnPurchaseSideOverride,
+            contact is { IsSupplier: true, IsCustomer: false });
+        var settings = await SettingsForAsync(_db, cid, doc.Id, ct);
+        // รอบ 250 (WP-02 §2.3): ใบแจ้งหนี้ที่มีใบกำกับภาษีอ้างและยังมีผล — ตัวโหลดเดียวกับลิงก์ชำระ/QR (PaymentQrService.SupersedingTaxInvoiceNumberAsync)
+        var supersedingTaxInvoice = await PaymentQrService.SupersedingTaxInvoiceNumberAsync(_db, cid, doc, ct);
 
         // ใบเสร็จของการชำระนี้ (สองทาง เหมือนเส้นออกใบย้อนหลัง — ข้อมูลเก่าอาจไม่มี FK บน payment)
         var receipt = await _db.Documents.AsNoTracking()
@@ -258,7 +296,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             ReceiptCarriesVat: receipt != null && (receipt.IsTaxInvoiceByLaw == true || receipt.VatAmount > 0m),
             SourceServesAsReceipt: servesAsReceipt, MayCarryVatIfIssued: mayCarryVat,
             CustomerEmail: contact?.Email?.Trim(), BuyerBlockingFields: buyerBlock,
-            PaymentWht: payment.WithholdingTaxAmount, WhtCreditRegistered: whtRegistered));
+            PaymentWht: payment.WithholdingTaxAmount, WhtCreditRegistered: whtRegistered,
+            Source: PostPaymentAutomationPolicy.ParseSource(run.Source), SupersedingTaxInvoiceNumber: supersedingTaxInvoice));
         if (plan.Skipped != null)
             return new RunResult(PostPaymentAutomationPolicy.StatusSkipped, plan.Skipped, doc.DocumentNumber, receipt?.Id);
 

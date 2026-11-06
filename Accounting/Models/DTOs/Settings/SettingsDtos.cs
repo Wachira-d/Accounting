@@ -80,7 +80,7 @@ public record UpdateCompanySettingsRequest(
     // · กติกาอยู่ที่ Helpers/MoneyAccountRule ตัวเดียว
     string? MoneyAccountCodePrefixes = null,
 
-    // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) — จำเป็นก่อน finalize งบ + XBRL export
+    // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.19) — จำเป็นก่อน finalize งบ + XBRL export
     string? BookkeeperName = null,
     string? BookkeeperCpdNumber = null,
 
@@ -211,7 +211,7 @@ public record CompanySettingsResponse(
     // แนบ PDF ใบ 50ทวิ เข้าใบสำคัญจ่ายอัตโนมัติ (default ปิด)
     bool AutoAttachWhtCertPdf = false,
 
-    // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
+    // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.19)
     string? BookkeeperName = null,
     string? BookkeeperCpdNumber = null,
 

@@ -254,7 +254,7 @@ public partial class BankService
 
             await _db.SaveChangesAsync(ct);
 
-            // ไฟล์ต้นทาง = หลักฐานประกอบรายการ (พ.ร.บ.การบัญชี ม.10 · 5 ปี) · ฝ่ายค้านรอบ 1 P2: เขียนไฟล์<b>หลัง commit</b> เมื่อธุรกรรมเป็นของเรา —
+            // ไฟล์ต้นทาง = หลักฐานประกอบรายการ (พ.ร.บ.การบัญชี ม.14 · 5 ปี) · ฝ่ายค้านรอบ 1 P2: เขียนไฟล์<b>หลัง commit</b> เมื่อธุรกรรมเป็นของเรา —
             // เดิมเขียนก่อน commit ⇒ ย้อนธุรกรรมแล้วไฟล์จริงค้างในที่เก็บโดยไม่มีแถวอ้าง (orphan) · ธุรกรรมของผู้เรียก ⇒ อยู่ในธุรกรรมนั้น (ผู้เรียกคุมความเป็นชุด)
             Guid? attachmentId = null;
             if (!ownTx && options.SourceFile is { } callerFile && imported > 0)
@@ -273,7 +273,7 @@ public partial class BankService
                     // รายการธนาคารบันทึกแล้ว (commit แล้ว) — เก็บไฟล์ไม่ได้ = คำเตือนถึงผู้ใช้ + log (ล้มดังที่คำตอบ ไม่ย้อนรายการที่ถูกต้อง)
                     _logger?.LogError(fex, "Bank statement import: keeping source file failed for account {Account}", bankAccountId);
                     DetachAddedAttachments();
-                    warnings.Add("⚠ นำเข้ารายการแล้ว แต่เก็บไฟล์ statement ต้นทางไม่สำเร็จ — แนบไฟล์เองที่หน้าบัญชีธนาคาร (หลักฐานตาม พ.ร.บ.การบัญชี ม.10)");
+                    warnings.Add("⚠ นำเข้ารายการแล้ว แต่เก็บไฟล์ statement ต้นทางไม่สำเร็จ — แนบไฟล์เองที่หน้าบัญชีธนาคาร (หลักฐานตาม พ.ร.บ.การบัญชี ม.14)");
                 }
             }
 

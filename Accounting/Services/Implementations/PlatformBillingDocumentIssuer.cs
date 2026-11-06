@@ -330,7 +330,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                             ? await MoneyInAccountIdAsync(tenantId.Value, settings, Accounting.Models.Enums.PaymentSourceKind.SubscriptionPayment, spId, null)
                             : await ResolveCashAccountIdAsync(tenantId.Value, settings),
                         WithholdingTaxAmount: whtApplied > 0m ? whtApplied : null,
-                        IssueReceiptDocument: true), Actor);
+                        IssueReceiptDocument: true), Actor, source: Accounting.Helpers.PaymentEntrySource.PlatformBilling);
                     receiptId = res.ReceiptDocumentId;
                 }
             }

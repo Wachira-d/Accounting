@@ -411,7 +411,7 @@
                    accept="image/*,application/pdf" multiple>
             <div style="font-size:11px;color:#94a3b8;margin-top:4px">
               สลิปโอน/ใบเสร็จรับเงินจากสำนักงานประกันสังคม — เก็บเป็นหลักฐานการจ่ายจริง
-              (พ.ร.บ.การบัญชี ม.10 ต้องเก็บ 5 ปี) แนบทีหลังได้ที่หน้ารายละเอียดรอบ
+              (พ.ร.บ.การบัญชี ม.14 ต้องเก็บ 5 ปี) แนบทีหลังได้ที่หน้ารายละเอียดรอบ
             </div>
           </div>
           <div id="settleSsoLateFee" style="font-size:12px;color:#dc2626;margin-bottom:8px;display:none"></div>
@@ -1584,7 +1584,7 @@ const Page = {
       </div>
       <div class="text-xs text-gray-400" style="margin-top:6px">
         สลิปโอนเงินเดือน · สลิป/ใบเสร็จนำส่งประกันสังคม (สปส.1-10) · ใบเสร็จภาษี —
-        พ.ร.บ.การบัญชี ม.10 กำหนดให้เก็บหลักฐาน 5 ปี
+        พ.ร.บ.การบัญชี ม.14 กำหนดให้เก็บหลักฐาน 5 ปี
       </div>`;
 
     this.hydrateRunAttThumbs(files);
@@ -1698,7 +1698,7 @@ const Page = {
   },
 
   async deleteRunAttachment(runId, attachmentId) {
-    if (!confirm('ลบไฟล์แนบนี้?\n\nหลักฐานการจ่ายต้องเก็บ 5 ปีตาม พ.ร.บ.การบัญชี ม.10 — ลบเฉพาะไฟล์ที่แนบผิด')) return;
+    if (!confirm('ลบไฟล์แนบนี้?\n\nหลักฐานการจ่ายต้องเก็บ 5 ปีตาม พ.ร.บ.การบัญชี ม.14 — ลบเฉพาะไฟล์ที่แนบผิด')) return;
     const api = Layout.api(); if (!api) return;
     try {
       await api.deleteAttachment(attachmentId);
@@ -1872,7 +1872,7 @@ const Page = {
             : `<button class="btn btn-secondary" disabled title="${Layout.esc(r.voidBlockReason || 'ยกเลิกรอบไม่ได้')}">🚫 ยกเลิกรอบ (ไม่ได้)</button>`);
       document.getElementById('runDetailFooter').innerHTML = `${lineAllBtn}${reopenBtn}${voidBtn}${jeBtn}<button class="btn btn-secondary" onclick="Layout.closeModal('runDetailModal')" data-i18n="common.close">ปิด</button>`;
       // หลักฐานการจ่าย/นำส่ง (สลิปโอน, ใบเสร็จ สปส., ใบเสร็จสรรพากร) — เก็บ 5 ปี
-      // ตาม พ.ร.บ.การบัญชี ม.10 แนบเพิ่ม/ดู/ลบได้ที่นี่
+      // ตาม พ.ร.บ.การบัญชี ม.14 แนบเพิ่ม/ดู/ลบได้ที่นี่
       const filesHost = document.createElement('div');
       filesHost.id = `runFiles-${id}`;
       filesHost.style.cssText = 'margin-top:20px;padding:16px;background:#fafbfc;border-radius:8px;border:1px solid #e5e7eb';

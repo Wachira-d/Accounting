@@ -19,7 +19,7 @@ namespace Accounting.Helpers;
 public static class ClosingEntryLock
 {
     public const string RuleCode = "GL-YEAR-END-CLOSING-ENTRY";
-    public const string LegalReference = "พ.ร.บ.การบัญชี 2543 ม.11 (ปิดบัญชีทุกรอบสิบสองเดือน) · TFRS for NPAEs บทที่ 5 (การแก้ไขข้อผิดพลาด)";
+    public const string LegalReference = "พ.ร.บ.การบัญชี 2543 ม.10 (ปิดบัญชีทุกรอบสิบสองเดือน) · TFRS for NPAEs บทที่ 5 (การแก้ไขข้อผิดพลาด)";
 
     /// <summary>ข้อความของด่าน (pure) · <paramref name="action"/> = สิ่งที่ผู้ใช้พยายามทำ ("กลับรายการ" · "ยกเลิก" · "ลบ")</summary>
     public static string BlockMessage(string action, IEnumerable<(string EntryNumber, int? FiscalYear)> entries)
@@ -29,7 +29,7 @@ public static class ClosingEntryLock
                 : $"{e.EntryNumber} (ใบปิดบัญชี)"))
             + $" — ใบนี้โอนกำไร(ขาดทุน)เข้ากำไรสะสมและผูกกับการปิดปี (งวดของปีนั้นถูกล็อก) · {action}แล้วงบกำไรขาดทุนของงวดที่ลงรายการจะนับรายได้/ค่าใช้จ่ายทั้งปีกลับด้าน "
             + "และปีนั้นยัง \"ปิดแล้ว\" ทั้งที่กำไรไม่ถูกโอน (ใบที่การยกเลิกการปิดปีกลับรายการไว้แล้วก็ห้ามแตะเช่นกัน) · ยังไม่มีอะไรถูกบันทึก · "
-            + YearEndReopenRule.WayForward + " (พ.ร.บ.การบัญชี 2543 ม.11)";
+            + YearEndReopenRule.WayForward + " (พ.ร.บ.การบัญชี 2543 ม.10 — ปิดบัญชีทุกรอบ)";
 
     /// <summary>
     /// ล้มดังเมื่อมีใบใดใน <paramref name="entryIds"/> เป็นใบปิดบัญชี (ธง <c>IsClosingEntry</c> หรือถูกอ้างโดย <c>YearEndClosing</c>) ของบริษัท <paramref name="companyId"/> ·

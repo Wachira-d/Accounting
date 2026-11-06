@@ -71,18 +71,23 @@ public class DocumentAutoSendRound241Tests
     [InlineData(DocumentType.Quotation, DocumentStatus.Approved, 100, true, "THB", "ฝั่งขาย")]
     public void ใบที่ออกลิงก์ได้(DocumentType type, DocumentStatus status, double balance, bool sale, string? cur, string? expect)
     {
-        var why = DocumentPayLinkPolicy.IssueRefusal(type, status, (decimal)balance, sale, cur);
+        var why = DocumentPayLinkPolicy.IssueRefusal(type, status, (decimal)balance, sale, cur, null);
         if (expect == null) Assert.Null(why); else Assert.Contains(expect, why);
     }
 
     [Fact]
     public void ใบเพิ่มหนี้_ดูฝั่งจากใบต้นทาง()
     {
-        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, DocumentType.Invoice));
-        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, null));
-        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, DocumentType.PurchaseInvoice));
-        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.Invoice, null));
-        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.PurchaseInvoice, null));
+        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, DocumentType.Invoice, null, false));
+        // รอบ 250 ฝ่ายค้าน WP-02 ข้อ 3: ไม่มีต้นทาง/ไม่ได้เลือกฝั่ง = ไม่รู้ ⇒ ไม่ใช่ฝั่งขาย (JE รับชำระปฏิเสธอยู่แล้ว) · เลือกฝั่งขาย ⇒ ใช่
+        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, null, null, false));
+        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, null, false, false));
+        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, DocumentType.PurchaseInvoice, null, false));
+        // ผู้ติดต่อเป็นผู้ขายอย่างเดียว + ไม่มีต้นทาง ⇒ ฝั่งซื้อ (ไม่ออกลิงก์) · ผู้ใช้สั่งย้ายเป็นฝั่งขายชนะ
+        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, null, null, true));
+        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, null, false, true));
+        Assert.True(DocumentPayLinkPolicy.IsSaleSide(DocumentType.Invoice, null, null, false));
+        Assert.False(DocumentPayLinkPolicy.IsSaleSide(DocumentType.PurchaseInvoice, null, null, false));
     }
 
     // ───────── ยอด + WHT ─────────
@@ -121,10 +126,10 @@ public class DocumentAutoSendRound241Tests
     public void ลิงก์ใช้ได้_เฉพาะมี_token_ไม่เพิกถอน_ไม่หมดอายุ_และ_token_สุ่มไม่ซ้ำ()
     {
         var now = new DateTime(2026, 11, 6, 3, 0, 0, DateTimeKind.Utc);
-        Assert.True(DocumentPayLinkPolicy.LinkUsable("t", now.AddDays(1), null, now));
-        Assert.False(DocumentPayLinkPolicy.LinkUsable("t", now.AddDays(1), now, now));   // เพิกถอน
-        Assert.False(DocumentPayLinkPolicy.LinkUsable("t", now, null, now));             // หมดอายุ
-        Assert.False(DocumentPayLinkPolicy.LinkUsable(null, null, null, now));
+        Assert.True(DocumentPayLinkPolicy.LinkUsable("t", now.AddDays(1), null, now, null));
+        Assert.False(DocumentPayLinkPolicy.LinkUsable("t", now.AddDays(1), now, now, null));   // เพิกถอน
+        Assert.False(DocumentPayLinkPolicy.LinkUsable("t", now, null, now, null));             // หมดอายุ
+        Assert.False(DocumentPayLinkPolicy.LinkUsable(null, null, null, now, null));
         var t1 = DocumentPayLinkPolicy.NewToken();
         Assert.Equal(64, t1.Length);
         Assert.NotEqual(t1, DocumentPayLinkPolicy.NewToken());
@@ -157,6 +162,8 @@ public class DocumentAutoSendRound241Tests
         Assert.DoesNotContain("<b>'", html);
         Assert.Contains("1,040.00", html);
         Assert.Contains("ยอดก่อนหักภาษี ณ ที่จ่าย 1,070.00", html);
+        // รอบ 250 WP-01 (เทสต์นี้เพิ่งรันครั้งแรก): ข้อความอีเมลไม่เคยมีคำว่า "50 ทวิ" — เติมในตัวสร้าง (ชื่อเดียวกับหน้า pay-document.html
+        // และ PlatformPurchaseEmailText) แทนการลดเทสต์
         Assert.Contains("50 ทวิ", html);
         var noWht = DocumentPayLinkPolicy.EmailBlock("https://x", DocumentPayLinkPolicy.AmountsFor(1070m, 0m, 0m), isEnglish: true);
         Assert.DoesNotContain("withholding", noWht);
@@ -202,8 +209,10 @@ public class DocumentAutoSendRound241Tests
     private static PostPaymentAutomationPolicy.Facts F(
         bool sale = true, DocumentStatus status = DocumentStatus.Paid, bool voided = false, bool full = true, int alloc = 0,
         bool hasReceipt = false, bool receiptDraft = false, bool receiptVat = false, bool serves = false, bool mayVat = false,
-        string? email = "ap@buyer.co.th", IReadOnlyList<string>? buyerMissing = null, decimal wht = 0m, bool whtRegistered = true)
-        => new(sale, status, voided, full, alloc, hasReceipt, receiptDraft, receiptVat, serves, mayVat, email, buyerMissing, wht, whtRegistered);
+        string? email = "ap@buyer.co.th", IReadOnlyList<string>? buyerMissing = null, decimal wht = 0m, bool whtRegistered = true,
+        PaymentEntrySource source = PaymentEntrySource.Manual, string? taxInvoice = null)
+        => new(sale, status, voided, full, alloc, hasReceipt, receiptDraft, receiptVat, serves, mayVat, email, buyerMissing, wht, whtRegistered,
+            source, taxInvoice);
 
     private static readonly PostPaymentAutomationPolicy.Settings On = new(EmailReceipt: true, IncludePartial: false);
 

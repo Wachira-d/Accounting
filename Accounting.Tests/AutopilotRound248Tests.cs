@@ -130,7 +130,7 @@ public class AutopilotRound248Tests
         Assert.NotEqual(h, AutoApprovePolicy.BindingHash(Guid.NewGuid(), "Invoice", Tpl, true, false));            // เปลี่ยนลูกค้า
         Assert.NotEqual(h, AutoApprovePolicy.BindingHash(c, "TaxInvoice", Tpl, true, false));                       // เปลี่ยนชนิด
         Assert.NotEqual(h, AutoApprovePolicy.BindingHash(c, "Invoice", Tpl, true, true));                           // เปิดส่งอีเมล
-        var bound = AutoApprovePolicy.Create(new[] { "AR-OVERDUE" }, "u1", DateTime.UtcNow, h);
+        var bound = AutoApprovePolicy.Create(new[] { ArOverdueApprovalWarning.Code }, "u1", DateTime.UtcNow, h);
         Assert.True(AutoApprovePolicy.MatchesBinding(bound, h));
         Assert.False(AutoApprovePolicy.MatchesBinding(bound, AutoApprovePolicy.BindingHash(c, "Invoice", Tpl.Replace("5000", "900000"), true, false)));
         Assert.False(AutoApprovePolicy.MatchesBinding(ReleaseAr, h));   // ไม่มีลายนิ้วมือ = ไม่ตรง (ระวังไว้ก่อน)

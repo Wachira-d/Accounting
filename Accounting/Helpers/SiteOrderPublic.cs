@@ -33,13 +33,20 @@ public static class SiteOrderPublic
     public static string NewToken()
     {
         Span<byte> b = stackalloc byte[24];
-        RandomNumberGenerator.Fill(b);
-        return Convert.ToBase64String(b).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        string t;
+        do
+        {
+            RandomNumberGenerator.Fill(b);
+            t = Convert.ToBase64String(b).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        } while (Guid.TryParse(t, out _));   // โอกาส ~1e-15 (32 ตัวเป็น hex ล้วน) — กันไว้ให้ IsWellFormedToken รับโทเคนที่ออกเองเสมอ
+        return t;
     }
 
     /// <summary>รูปโทเคนที่รับ (ใหม่ base64url 32 · backfill hex 64) — รูปอื่น ⇒ ไม่ถามฐานข้อมูลเลย (ตอบไม่พบ)</summary>
+    /// <remarks>รอบ 250 WP-01 (เทสต์ 209 P1 เพิ่งรันครั้งแรก): GUID (ลิงก์ order-success เดิมที่ใช้ Id ออเดอร์) เป็นอักขระ URL-safe ยาว 32/36
+    /// จึงเคยผ่านรูปแล้วไปถามฐาน — ตัดทิ้งก่อน (โทเคนจริง: NewToken สุ่มใหม่ถ้าบังเอิญเป็น hex ล้วน · hex 64 ของ backfill ยาวเกิน GUID)</remarks>
     public static bool IsWellFormedToken(string? token)
-        => !string.IsNullOrEmpty(token) && token.Length is >= 20 and <= 64 && token.All(IsUrlSafe);
+        => !string.IsNullOrEmpty(token) && token.Length is >= 20 and <= 64 && token.All(IsUrlSafe) && !Guid.TryParse(token, out _);
 
     private static bool IsUrlSafe(char c) => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_';
 

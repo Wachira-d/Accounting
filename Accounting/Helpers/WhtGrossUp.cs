@@ -170,6 +170,19 @@ public static class WhtGrossUp
         return result;
     }
 
+    /// <summary>รอบ 250 (WP-02 §2.2 · C F1 · A C-06): <b>ส่วนที่ผู้จ่ายออกแทนต่อบรรทัด</b> (ลงเพิ่มบนผังของบรรทัดโดย AutoPost <c>AddPayerBorneWhtExpense</c>) —
+    /// ตัวเดียวของต้นทุนสินทรัพย์หลายใบ (<c>FixedAssetService.LoadCostLineFactsAsync</c>) และตัวย้ายผังบัญชี (<c>DocumentService.ResolveLinePostedGlAmountAsync</c>) ·
+    /// <paramref name="allLinesInOrder"/> = <b>ทุกบรรทัดของใบ</b> เรียงตาม LineOrder (สัดส่วน/การเกลี่ยเศษคิดจากทั้งใบ — ไม่ใช่เฉพาะบรรทัดที่สนใจ) ·
+    /// บรรทัดที่ไม่อยู่ในผล = 0</summary>
+    public static IReadOnlyDictionary<Guid, decimal> PayerBorneShareByLine(
+        IReadOnlyList<(Guid LineId, decimal Base, decimal RatePercent)> allLinesInOrder, WithholdingTaxCertType type)
+    {
+        var parts = ForLines(allLinesInOrder.Select(l => (Base: l.Base, RatePercent: l.RatePercent)).ToList(), type);
+        var map = new Dictionary<Guid, decimal>();
+        for (var i = 0; i < allLinesInOrder.Count && i < parts.Count; i++) map[allLinesInOrder[i].LineId] = parts[i].PayerBorne;
+        return map;
+    }
+
     /// <summary>ยอดรวมของเอกสาร (Σ บรรทัด) — ภาษีนำส่ง · ส่วนที่ผู้จ่ายออกแทน</summary>
     public static (decimal Tax, decimal PayerBorne) Totals(IReadOnlyList<WhtGrossUpAmounts> perLine)
         => (perLine.Sum(a => a.Tax), perLine.Sum(a => a.PayerBorne));

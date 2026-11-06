@@ -1407,11 +1407,12 @@ public partial class LodgingService
             }
             if (depositPlan.BaseDeducted > 0m)
             {
-                // C7 — VAT คิดรายใบบนฐานของใบเอง (ปัด AwayFromZero) ⇒ รวมสองใบอาจต่างจากยอดจอง ±0.01 ที่ VAT (ฐานไม่เพี้ยน) · บันทึกให้เห็น
+                // C7 — VAT คิดรายใบบนฐานของใบเอง (ปัด AwayFromZero) ⇒ รวมสองใบอาจต่างจากยอดจอง ±0.01 ที่ VAT · ฐานไม่เพี้ยน: รอบ 250 ฝ่ายค้าน WP-02 ข้อ 5
+                // ใบที่หักฐานมัดจำ = ฐานใบเต็ม − ฐานมัดจำ พอดี (DocumentService.ComputeReconciledLineAmounts กระทบยอด VAT อย่างเดียว) · บันทึกให้เห็น
                 roundingDelta = LodgingDepositSettlement.RoundingDelta(full.Total, depositPlan.GrossDeducted, approved.TotalAmount);
                 if (roundingDelta != 0m)
                     AppendInternal(r, $"ปัดเศษ VAT รายใบ: ใบมัดจำ + {approved.DocumentNumber} รวม {(roundingDelta > 0 ? "มากกว่า" : "น้อยกว่า")}ยอดเต็ม {Math.Abs(roundingDelta):N2} "
-                        + "(ส่วนต่างอยู่ที่ VAT · รายได้ไม่เพี้ยน · ตามกฎ VAT คิดรายใบ)");
+                        + "(ส่วนต่างอยู่ที่ VAT · ฐาน/รายได้ไม่เพี้ยน · ตามกฎ VAT คิดรายใบ)");   // รอบ 250 ฝ่ายค้าน WP-02 ข้อ 5: จริงอีกครั้งหลังแก้สูตร (SiteOrderDepositInvoicingTests ล็อกฐานตรง)
             }
             await _db.SaveChangesAsync();
 
@@ -1778,7 +1779,7 @@ public partial class LodgingService
             await _docService.CreatePaymentAsync(companyId, new CreatePaymentRequest(
                 DocumentId: finalId, PaymentDate: DateTime.UtcNow, Amount: finalDoc.BalanceDue, PaymentMethod: request.PaymentMethod,
                 Reference: request.PaymentReference, BankAccount: null, Notes: $"ชำระตอนเช็คเอาต์ {r.ReservationNumber}",
-                OverrideBankAccountId: request.BankAccountId), userId);
+                OverrideBankAccountId: request.BankAccountId), userId, source: Accounting.Helpers.PaymentEntrySource.Lodging);
             collected = finalDoc.BalanceDue;
         }
 

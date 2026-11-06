@@ -188,7 +188,7 @@ public class OcrSelfCorrectionService
             var abandonedCutoff2 = DateTime.UtcNow.AddDays(-30);
 
             // Identify scan ids and their file ids in one query
-            // ฝ่ายค้านรอบสอง (R2-C4): สแกนที่ลง JE ตรง (ไฟล์ยังเป็น OcrScan) คือหลักฐานของ JE — ห้ามลบ (ม.10 · §87/3) ·
+            // ฝ่ายค้านรอบสอง (R2-C4): สแกนที่ลง JE ตรง (ไฟล์ยังเป็น OcrScan) คือหลักฐานของ JE — ห้ามลบ (พ.ร.บ.การบัญชี ม.14 · §87/3) ·
             // ตัดสินด้วย AttachmentRetention.ScanFilePurgeable ตัวเดียวกับเส้นลบสแกน · กรองที่ query ด้วยเพื่อไม่ให้แถวที่ข้ามแน่ ๆ
             // (และแถวที่ไฟล์ถูกลบไปแล้ว) กินโควตา 500 แถวทุกรอบจนแถวจริงไม่ถึงคิว
             var orphans = await _db.Set<Models.Entities.OcrScanResult>()

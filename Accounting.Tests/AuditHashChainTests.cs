@@ -8,7 +8,7 @@ using Xunit;
 namespace Accounting.Tests;
 
 /// <summary>
-/// audit hash chain — control ตาม พ.ร.บ.การบัญชี ม.11 ทวิ / SOC2 (append-only + tamper-evident)
+/// audit hash chain — control ภายใน (append-only + tamper-evident) เพื่อให้หลักฐานอิเล็กทรอนิกส์เข้าเงื่อนไข พ.ร.บ.ว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ม.12 · ระยะเก็บ พ.ร.บ.การบัญชี ม.14 / SOC2
 ///
 /// <para>═══ ขอบเขตที่เทสต์นี้พิสูจน์ได้และ<b>ไม่ได้</b> (ฝ่ายค้านรอบ 193 รอบสอง W2-C2 — เขียนไว้ตรง ๆ) ═══
 /// เรพนี้ไม่มี PostgreSQL ในเทสต์ ⇒ ขั้น "อ่านกลับจากฐาน" <b>จำลอง</b>ด้วย <see cref="PgRoundTrip"/> (ตัดเหลือไมโครวินาที + Kind=Unspecified

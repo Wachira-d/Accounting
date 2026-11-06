@@ -421,7 +421,7 @@ public partial class LodgingService
             await _docService.CreatePaymentAsync(companyId, new CreatePaymentRequest(
                 DocumentId: adv.Id, PaymentDate: DateTime.UtcNow, Amount: due, PaymentMethod: request.PaymentMethod,
                 Reference: request.PaymentReference, BankAccount: null, Notes: $"ชำระใบกำกับภาษีล่วงหน้าตอนเช็คเอาต์ {r.ReservationNumber}",
-                OverrideBankAccountId: request.BankAccountId), userId);
+                OverrideBankAccountId: request.BankAccountId), userId, source: Accounting.Helpers.PaymentEntrySource.Lodging);
             r.PaidAmount += due;
             await _db.SaveChangesAsync();
         }

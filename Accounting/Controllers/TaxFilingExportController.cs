@@ -222,7 +222,7 @@ public class TaxFilingExportController : ControllerBase
 
     /// <summary>Export DBD XBRL instance document — งบการเงินรายปีตามมาตรฐาน
     /// TFRS-NPAEs taxonomy. ต้องตั้ง BookkeeperName + BookkeeperCpdNumber ใน
-    /// CompanySettings ก่อน (พ.ร.บ.การบัญชี ม.7) — ไม่งั้น throw.</summary>
+    /// CompanySettings ก่อน (พ.ร.บ.การบัญชี ม.19) — ไม่งั้น throw.</summary>
     [HttpGet("dbd-xbrl")]
     public async Task<IActionResult> ExportDbdXbrl(Guid companyId, [FromQuery] int year, CancellationToken ct)
     {

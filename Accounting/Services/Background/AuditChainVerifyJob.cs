@@ -9,7 +9,8 @@ namespace Accounting.Services.Background;
 /// AuditTrailService.VerifyHashChainAsync re-compute SHA-256 chain ของทุกแถว
 /// (per company) แล้วเทียบกับ stored RowHash. ถ้าเจอ mismatch =
 /// chain ถูก tamper (แก้/แทรก/ลบหลัง insert) → ส่ง notification ระดับ
-/// admin + log error ดังลั่น. ผ่านมาตรฐาน พ.ร.บ.บัญชี ม.11 ทวิ
+/// admin + log error ดังลั่น. control ภายในให้หลักฐานอิเล็กทรอนิกส์เข้าเงื่อนไข พ.ร.บ.ว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ม.12 (ระยะเก็บ พ.ร.บ.การบัญชี ม.14)
+/// (hash chain เป็น control ภายใน — ETA ม.12 ต้องการ "แสดงความถูกต้อง/ไม่เปลี่ยนแปลง" hash chain เป็นวิธีหนึ่ง ไม่ใช่ข้อบังคับรายมาตรา)
 /// (เก็บข้อมูลอิเล็กทรอนิกส์ที่ตรวจสอบได้).
 ///
 /// Schedule: ทุก 7 วัน (defer first run 5 นาทีเพื่อให้ EF + migrations พร้อม).

@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Accounting.Tests;
 
-/// <summary>รอบ 200 ทีม R · B-06 — ด่านลบถาวร §87/3 / ม.10 ต้องไม่เป็น no-op กับใบที่ไม่ได้ผ่าน ApproveDocumentAsync
+/// <summary>รอบ 200 ทีม R · B-06 — ด่านลบถาวร §87/3 / พ.ร.บ.การบัญชี ม.14 ต้องไม่เป็น no-op กับใบที่ไม่ได้ผ่าน ApproveDocumentAsync
 /// สองทิศ: ใบกำกับจาก POS/API/นำเข้า (RetentionUntil = null) ต้องถูกกัน · ร่าง/รออนุมัติ/เลข DRAFT- ยังลบได้เหมือนเดิม</summary>
 public class DocumentRetentionTests
 {

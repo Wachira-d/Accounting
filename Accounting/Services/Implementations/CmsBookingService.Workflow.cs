@@ -425,7 +425,7 @@ public partial class CmsBookingService
                 await _docService.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
                     DocumentId: open.Id, PaymentDate: money.PaidAt, Amount: pay, PaymentMethod: request.PaymentMethod,
                     Reference: request.Reference, BankAccount: null, Notes: $"รับชำระตอนให้บริการเสร็จ {number}",
-                    OverrideBankAccountId: request.BankAccountId), userId);
+                    OverrideBankAccountId: request.BankAccountId), userId, source: Accounting.Helpers.PaymentEntrySource.Cms);
                 collected = pay; docNo = open.DocumentNumber;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

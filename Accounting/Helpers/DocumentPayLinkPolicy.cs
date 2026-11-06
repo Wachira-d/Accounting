@@ -101,10 +101,14 @@ public static class DocumentPayLinkPolicy
 
     /// <summary>เหตุที่ออกลิงก์ชำระเงินให้ใบนี้ไม่ได้ — null = ได้ · เฉพาะเอกสารตั้งหนี้ฝั่งขายที่ออกเลขจริงแล้ว (§86/4 — ร่างยังเป็นเลข DRAFT)
     /// และยังมียอดค้าง · ตรงกับชนิดที่ <c>DocumentPaymentHandler</c> → <c>CreatePaymentAsync</c> บันทึกรับชำระได้</summary>
-    public static string? IssueRefusal(DocumentType type, DocumentStatus status, decimal balanceDue, bool saleSide, string? currency)
+    /// <param name="supersedingTaxInvoiceNumber">รอบ 250 (WP-02 §2.3 · คำตัดสิน §2 #16): เลขใบกำกับภาษีที่อ้างใบแจ้งหนี้นี้และยังมีผล (ตัวโหลดเดียว
+    /// <c>PaymentQrService.SupersedingTaxInvoiceNumberAsync</c>) — มี ⇒ ปฏิเสธ (ลูกหนี้ย้ายไปใบกำกับแล้ว · รับชำระซ้ำ/ใบเสร็จซ้อน §86/4) · null = ไม่มี/ใบกำกับถูกยกเลิก</param>
+    public static string? IssueRefusal(DocumentType type, DocumentStatus status, decimal balanceDue, bool saleSide, string? currency,
+        string? supersedingTaxInvoiceNumber)
     {
         if (!(type is DocumentType.Invoice or DocumentType.TaxInvoice || (type == DocumentType.DebitNote && saleSide)))
             return "ลิงก์ชำระเงินใช้ได้กับใบแจ้งหนี้ · ใบกำกับภาษี · ใบเพิ่มหนี้ฝั่งขายเท่านั้น";
+        if (TaxInvoiceRefusal(type, supersedingTaxInvoiceNumber) is string taxInv) return taxInv;
         if (!string.IsNullOrWhiteSpace(currency) && !string.Equals(currency.Trim(), "THB", StringComparison.OrdinalIgnoreCase))
             return "ลิงก์ชำระเงินออนไลน์รองรับเฉพาะเอกสารสกุลเงินบาท (THB)";
         if (status is DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Rejected)
@@ -116,11 +120,16 @@ public static class DocumentPayLinkPolicy
         return null;
     }
 
-    /// <summary>เอกสารนี้เป็น "ลูกค้าจ่ายเรา" ไหม — ใบเพิ่มหนี้ดูฝั่งจากใบต้นทาง (ต้นทางฝั่งซื้อ = เราจ่ายผู้ขาย) · ตรงกับ <c>DocumentService.IsCashInflowDocAsync</c></summary>
-    public static bool IsSaleSide(DocumentType type, DocumentType? relatedType)
-        => type is DocumentType.Invoice or DocumentType.TaxInvoice
-           || (type == DocumentType.DebitNote
-               && relatedType is not (DocumentType.PurchaseInvoice or DocumentType.Expense or DocumentType.CertificateInLieu));
+    /// <summary>เอกสารนี้เป็น "ลูกค้าจ่ายเรา" ไหม — ใบแจ้งหนี้/ใบกำกับ = ใช่ · ใบเพิ่มหนี้ = ฝั่งขายตามตัวตัดสินทิศเงินเดียวกับ JE รับชำระ
+    /// (<see cref="CashFlowDirection.Of"/>: ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ติดต่อเป็นผู้ขายอย่างเดียว) · <b>ไม่รู้ฝั่ง = ไม่ใช่</b> (JE จะปฏิเสธการรับชำระอยู่แล้ว ⇒
+    /// ห้ามออกลิงก์/ส่งใบเสร็จให้คนที่อาจเป็นผู้ขาย) · รอบ 250 ฝ่ายค้าน WP-02 ข้อ 3 — เดิมดูแค่ใบต้นทาง ⇒ ใบเพิ่มหนี้ฝั่งซื้อไม่มีต้นทางออกลิงก์ได้</summary>
+    public static bool IsSaleSide(DocumentType type, DocumentType? relatedType, bool? cnDnPurchaseSideOverride, bool contactIsSupplierOnly)
+    {
+        if (type is DocumentType.Invoice or DocumentType.TaxInvoice) return true;
+        if (type != DocumentType.DebitNote) return false;
+        var r = CashFlowDirection.Of(type, cnDnPurchaseSideOverride, relatedType, contactIsSupplierOnly);
+        return !r.SideUnknown && r.IsInflow;
+    }
 
     /// <summary>ผู้ซื้อมีหน้าที่หักภาษี ณ ที่จ่ายไหม (ฝ่ายค้าน S3) — นิติบุคคล/หน่วยงานรัฐ = มี (ท.ป.4/2528) · บุคคลธรรมดา = ไม่มี ·
     /// ชนิดไม่รู้ ⇒ ใช้รูปเลขผู้เสียภาษี (<see cref="ContactTypeResolver.FromTaxId"/> ตัวเดิม) · ยังไม่รู้ ⇒ <c>null</c> (ผู้เรียกเชื่อยอดที่ผู้ใช้ตั้งบนใบ)</summary>
@@ -143,6 +152,15 @@ public static class DocumentPayLinkPolicy
     public static string? WhtMismatchNote(decimal documentWht, bool? buyerWithholds)
         => documentWht > 0.005m && buyerWithholds == false
             ? $"ใบนี้ตั้งภาษีหัก ณ ที่จ่าย {documentWht:N2} บาท แต่ผู้ซื้อเป็นบุคคลธรรมดา (ไม่มีหน้าที่หัก) — ลิงก์ชำระเรียกยอดค้างตามใบซึ่งหัก WHT ไว้แล้ว (ไม่มีหน้าที่หัก · ยอดอาจขาดเท่า WHT) · ตรวจยอด WHT บนใบหรือชนิดผู้ติดต่อ"
+            : null;
+
+    /// <summary>คำเตือนก่อนอนุมัติ (<c>[WHT-PAYEE]</c>): ใบขายตั้งภาษีหัก ณ ที่จ่ายไว้ แต่ผู้ซื้อเป็นบุคคลธรรมดา — <b>ไม่ฟันธง</b> (ฝ่ายค้าน WP-02 ข้อ 7):
+    /// หน้าที่หักของบุคคลธรรมดาขึ้นกับประเภทเงินได้ (ท.ป.4/2528 ใช้กับนิติบุคคลเป็นหลัก แต่บางประเภทเงินได้บุคคลธรรมดาก็มีหน้าที่หัก) ⇒ บอกให้ตรวจ
+    /// ไม่บอกว่า "ไม่มีหน้าที่" · เงื่อนไขเดียวกับ <see cref="WhtMismatchNote"/> (null = ไม่มีอะไรต้องเตือน)</summary>
+    public static string? BuyerWhtApprovalNote(decimal documentWht, bool? buyerWithholds)
+        => documentWht > 0.005m && buyerWithholds == false
+            ? $"ใบนี้ตั้งภาษีหัก ณ ที่จ่าย {documentWht:N2} บาท แต่ผู้ซื้อเป็นบุคคลธรรมดา — ส่วนใหญ่ไม่มีหน้าที่หักภาษี ณ ที่จ่ายค่าบริการ "
+              + "(ท.ป.4/2528 ใช้กับนิติบุคคล) ตรวจประเภทเงินได้ก่อน · ถ้าผู้ซื้อไม่หัก ให้ลบยอด WHT บนใบ หรือแก้ชนิดผู้ติดต่อ"
             : null;
 
     /// <summary>ยอดบนหน้าชำระ — <paramref name="Gross"/> = ยอดก่อนหัก ณ ที่จ่าย (ยอดค้าง + WHT ที่ยังไม่ถูกหัก) · <paramref name="Wht"/> = ภาษีหัก ณ ที่จ่ายที่ลูกค้าจะหักไว้
@@ -191,9 +209,25 @@ public static class DocumentPayLinkPolicy
             System.Text.Encoding.ASCII.GetBytes(TokenHash(token)), System.Text.Encoding.ASCII.GetBytes(storedHash));
     }
 
-    /// <summary>ลิงก์ใช้ได้ไหม — มี token (hash) · ไม่ถูกเพิกถอน · ยังไม่หมดอายุ</summary>
-    public static bool LinkUsable(string? tokenHash, DateTime? expiresAt, DateTime? revokedAt, DateTime nowUtc)
-        => !string.IsNullOrWhiteSpace(tokenHash) && revokedAt == null && (expiresAt == null || expiresAt > nowUtc);
+    /// <summary>รหัสกติกา "ใบแจ้งหนี้ที่ออกใบกำกับแล้ว" (รอบ 250 · 246-QR-10 N6)</summary>
+    public const string TaxInvoiceRuleCode = "PAYLINK-241-TAXINV";
+
+    /// <summary>รอบ 250 (WP-02 §2.3): ใบแจ้งหนี้ที่มีใบกำกับภาษีอ้างและยังมีผล ⇒ ข้อความปฏิเสธที่บอกเลขใบกำกับ · ใบชนิดอื่น/ไม่มีใบกำกับ ⇒ null</summary>
+    private static string? TaxInvoiceRefusal(DocumentType type, string? supersedingTaxInvoiceNumber)
+        => type == DocumentType.Invoice && !string.IsNullOrWhiteSpace(supersedingTaxInvoiceNumber)
+            ? $"ใบแจ้งหนี้นี้ออกใบกำกับภาษี {supersedingTaxInvoiceNumber!.Trim()} แล้ว — ชำระที่ใบกำกับ {supersedingTaxInvoiceNumber.Trim()} [{TaxInvoiceRuleCode}]"
+            : null;
+
+    /// <summary>ลิงก์ใช้ได้ไหม (ตัดสินสดทุกครั้ง) — มี token (hash) · ไม่ถูกเพิกถอน · ยังไม่หมดอายุ · รอบ 250: ใบแจ้งหนี้ยังไม่ถูกแทนด้วยใบกำกับภาษีที่มีผล
+    /// (<paramref name="supersedingTaxInvoiceNumber"/> มีค่า ⇒ ลิงก์เดิมใช้ไม่ได้ทันที · ใบกำกับถูกยกเลิก ⇒ null ⇒ ใช้ได้อีก)</summary>
+    public static bool LinkUsable(string? tokenHash, DateTime? expiresAt, DateTime? revokedAt, DateTime nowUtc, string? supersedingTaxInvoiceNumber)
+        => !string.IsNullOrWhiteSpace(tokenHash) && revokedAt == null && (expiresAt == null || expiresAt > nowUtc)
+           && string.IsNullOrWhiteSpace(supersedingTaxInvoiceNumber);
+
+    /// <summary>ข้อความของลิงก์ที่ใช้ไม่ได้บนหน้าชำระสาธารณะ — ถูกแทนด้วยใบกำกับ ⇒ บอกให้ชำระที่ใบกำกับ (ไม่เปิดเผยยอด/ชื่อลูกค้า) · อื่น ๆ = ข้อความเดิม</summary>
+    public static string UnusableNote(string? supersedingTaxInvoiceNumber, string defaultNote)
+        => string.IsNullOrWhiteSpace(supersedingTaxInvoiceNumber) ? defaultNote
+            : $"เอกสารนี้ออกใบกำกับภาษี {supersedingTaxInvoiceNumber.Trim()} แล้ว — กรุณาชำระตามใบกำกับภาษีนั้น (ติดต่อผู้ขายเพื่อขอลิงก์ของใบกำกับ)";
 
     /// <summary>URL สาธารณะ — origin จาก <c>SystemBaseUrl</c> (ไม่ประกอบโดเมนเอง) · companyId อยู่ใน URL เพราะเส้น API สาธารณะผูกบริษัท</summary>
     public static string Url(string origin, Guid companyId, string token)
@@ -244,7 +278,7 @@ public static class DocumentPayLinkPolicy
         var whtRow = a.Wht > 0.005m
             ? (isEnglish
                 ? $"<br>Less withholding tax you will withhold: THB {a.Wht:N2} (please send us the withholding tax certificate)<br>Amount to pay: <strong>THB {a.Net:N2}</strong>"
-                : $"<br>หักภาษี ณ ที่จ่ายที่ท่านหักไว้ {a.Wht:N2} บาท (กรุณาส่งหนังสือรับรองการหักภาษี ณ ที่จ่าย ให้เรา)<br>ยอดที่ต้องชำระ <strong>{a.Net:N2} บาท</strong>")
+                : $"<br>หักภาษี ณ ที่จ่ายที่ท่านหักไว้ {a.Wht:N2} บาท (กรุณาส่งหนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ) ให้เรา)<br>ยอดที่ต้องชำระ <strong>{a.Net:N2} บาท</strong>")
             : "";
         // รอบ 244: Gross = ยอดก่อนหัก ณ ที่จ่าย (ยอดค้างของเอกสารเป็นยอดสุทธิแล้ว — ดู AmountsFor)
         var head = a.Wht > 0.005m

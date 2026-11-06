@@ -105,3 +105,11 @@
 - **กติกา**: object ที่ถูกอ้างข้ามบล็อก/จาก onclick ⇒ ผูก `window.X = X` (บรรทัดเดียวต่อตัว) + ลงตาราง GLOBALS ของ `tools/window_global_check.py` · ประกาศต้องอยู่บล็อกก่อนผู้เรียกเสมอ —
   checker มีกติกาที่สอง (`check_script_order`) ฟ้องเมื่อ const/let/class ถูกเรียกจากบล็อกก่อนหน้า · ห้าม `if (window.X)` เพื่อ "เผื่อยังไม่โหลด" กับ const ในหน้าเดียวกัน — มันคือการปิดฟีเจอร์เงียบ
 - **ญาติ**: modal ที่ใช้ `<div class="modal">` โดยไม่มี `.modal-overlay` ครอบ = โผล่ค้างเสมอ (`style.css` ซ่อนที่ overlay เท่านั้น) — เจอใน billing/addons/admin-addons รอบเดียวกัน
+
+### QR บุคคลที่สามตกหล่นที่พอร์ทัลหลังแก้หน้าร้านรอบ 209 — checker ไม่จับ `<img src>` (รอบ 250 WP-03)
+- **ที่มา**: รอบ 209 ย้าย QR หน้าร้านไปสร้างที่เซิร์ฟเวอร์ (เลิกส่งเลขพร้อมเพย์+ยอดไป `api.qrserver.com`) แต่ `portal.html` มีสำเนา TLV builder + `<img src="https://api.qrserver.com/…">`
+  อีกชุด รอดมา 40 รอบ — `csp_external_ref_check` ดูแค่ `<script src>`/`<link href>` และ CSP `img-src https:` เปิดรูปจากทุกโดเมน ⇒ ไม่มีด่านไหนเห็น
+- **กติกา**: QR ทุกจุดสร้างที่เซิร์ฟเวอร์ (`PromptPayService`/`PaymentQrService` → data URI) · หน้าเว็บรับเฉพาะ `data:image/png;base64,` ·
+  แก้ "สำเนาที่สอง" ที่ไหน = `grep` ทั้ง `wwwroot/` หาโฮสต์/ฟังก์ชันเดิมก่อนปิดงาน (F2 ข้อ 1) · checker `tools/external_qr_check.py` ฟ้องโฮสต์บริการ QR ภายนอกทั้ง `wwwroot/` (รวมคอมเมนต์)
+- **ญาติ**: `${x.name}` ดิบใน innerHTML ของ 7 หน้า (ชื่อสินทรัพย์มาจาก OCR/ใบผู้ขาย) — `tools/html_interpolation_escape_check.py` (scope แคบรายไฟล์ · baseline 0)
+

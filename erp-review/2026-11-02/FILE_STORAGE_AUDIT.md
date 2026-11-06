@@ -64,7 +64,7 @@
 
 | ไฟล์ | จุด | เหตุผล | สถานะ |
 | --- | --- | --- | --- |
-| `Program.cs` | 11 | สร้างโฟลเดอร์ `uploads` ตอน start (โหมด Local) · โมเดล ONNX (`models/`) · คีย์ DataProtection | ⚙️ · ❌ **คีย์ DataProtection อยู่บนดิสก์ของเครื่อง** — หลาย instance ต้องใช้ volume ร่วมหรือย้ายไป DB (งานแยก — ไม่ใช่ไฟล์ของผู้ใช้) |
+| `Program.cs` | 11 | สร้างโฟลเดอร์ `uploads` ตอน start (โหมด Local) · โมเดล ONNX (`models/`) · คีย์ DataProtection | ⚙️ · ✅ ~~❌ **คีย์ DataProtection อยู่บนดิสก์ของเครื่อง**~~ (ตรวจ 2026-11-06 รอบ 250 WP-05: key ring อยู่ในฐานแล้ว — `Program.cs:284-301` `DbXmlRepository` · `DataProtection:KeyPath` เหลือเฉพาะ dev ที่ไม่มี DB) — หลาย instance ต้องใช้ volume ร่วมหรือย้ายไป DB (งานแยก — ไม่ใช่ไฟล์ของผู้ใช้) |
 | `Controllers/EtaxController.cs` · `Services/Implementations/EtaxInvoiceService.cs` | 3 + 1 | ใบรับรองดิจิทัล e-Tax (.pfx) ที่ผู้ดูแลวางเอง — เป็น**ความลับ** ไม่ใช่ไฟล์อัปโหลด | ⚙️ · ❌ ควรย้ายไป secret store (งานแยก) |
 | `Services/Implementations/KnowledgeBaseService.cs` | 4 | อ่านเอกสาร `.md` ของเรพเป็นฐานความรู้แชตบอต (มากับ deploy) | ⚙️ |
 | `Services/Ai/Embedding/WordPieceTokenizer.cs` · `OnnxSentenceEmbeddingService.cs` | 3 + 1 | `vocab.txt`/โมเดล ONNX (มากับ deploy · `FileInfo` ตรวจขนาด) | ⚙️ |

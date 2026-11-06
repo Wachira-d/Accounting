@@ -50,8 +50,8 @@
     <div id="needsReviewBanner" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-left:4px solid #f59e0b;border-radius:10px;padding:14px 16px;margin-bottom:14px"></div>
 
     <div class="toolbar">
-      <input type="text" class="search-input" placeholder="ค้นหาสินทรัพย์..." id="searchInput" oninput="Page.load()">
-      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+      <input type="text" class="search-input" placeholder="ค้นหาสินทรัพย์..." id="searchInput" oninput="Page.page=1;Page.load()">
+      <select class="filter-select" id="statusFilter" onchange="Page.page=1;Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Active">ใช้งาน</option>
         <option value="FullyDepreciated">หมดค่าเสื่อม/ตัดจำหน่ายแล้ว</option>
@@ -132,12 +132,14 @@
           </div>
           <div style="border-top:1px solid var(--gray-200);margin:10px 0 4px;padding-top:10px">
             <div class="text-xs text-gray-500" style="margin-bottom:8px;font-weight:600">การบันทึกบัญชี (ผังบัญชี)
-              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestAssetAccounts()">🤖 ให้ AI เลือกบัญชีให้</button>
+              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestAssetAccounts()" aria-label="แนะนำบัญชีจากสินทรัพย์หมวดเดียวกัน">⚙️ แนะนำบัญชีให้</button>
             </div>
             <div id="assetAcctHint" style="font-size:11px;color:#64748b;margin-bottom:6px"></div>
+            <div id="assetLoadError" style="margin-bottom:6px"></div>
             <div class="form-row">
               <div class="form-group"><label class="form-label" data-help="ผังบัญชีฝั่งสินทรัพย์ (asset) — เช่น 12200 อุปกรณ์สำนักงาน, 12300 ยานพาหนะ. ขึ้น Dr ตอนซื้อ • ไม่ลดด้วยค่าเสื่อมโดยตรง (ลดผ่านบัญชีค่าเสื่อมสะสม)">บัญชีสินทรัพย์</label>
-                <select class="form-select" id="fAssetAcct"><option value="">-- เลือกบัญชี --</option></select></div>
+                <select class="form-select" id="fAssetAcct"><option value="">-- เลือกบัญชี --</option></select>
+                <div id="fAssetAcctLockHint" style="display:none;font-size:11px;color:#92400e;margin-top:4px">🔒 ตอนแก้ไขปลดบัญชีสินทรัพย์ออกไม่ได้ (ค่าเสื่อม/จำหน่ายต้องลงบัญชีนี้) — ถ้าผังผิดให้เลือกบัญชีอื่นแทน</div></div>
               <div class="form-group"><label class="form-label" data-help="ผังค่าใช้จ่าย (5xxx) — เช่น 5601 ค่าเสื่อมราคา • ระบบโพสต์ Dr ทุกเดือนตามอายุใช้งาน">บัญชีค่าเสื่อมราคา (ค่าใช้จ่าย)</label>
                 <select class="form-select" id="fDepExpAcct"><option value="">-- เลือกบัญชี --</option></select></div>
             </div>
@@ -157,6 +159,7 @@
             <div class="form-row">
               <div class="form-group"><label class="form-label">โครงการ (optional)</label>
                 <select class="form-select" id="fProject"><option value="">— ไม่ระบุ —</option></select>
+                <div id="projectLoadError" style="margin-top:4px"></div>
                 <div style="font-size:11px;color:#64748b;margin-top:4px">📁 ถ้าระบุ JE ค่าเสื่อมรายเดือนจะตามไปกับโครงการนี้</div>
               </div>
               <div class="form-group"></div>
@@ -228,7 +231,7 @@
             </div>
             <div class="form-row">
               <div class="form-group"><label class="form-label" data-help="ราคาเครื่อง/งานตามสัญญา (ไม่รวม VAT) — ระบบเตือนเมื่อต้นทุนรวมจากใบที่ผูกเกินราคานี้ (เช่นใบสุดท้ายลงเต็มราคาทั้งที่ผูกมัดจำแล้ว) · ไม่บังคับ">ราคาตามสัญญา (ไม่บังคับ)</label>
-                <input type="number" step="0.01" class="form-input" id="srcContractPrice" placeholder="เช่น 1000000"></div>
+                <input type="number" step="0.01" class="form-input" id="srcContractPrice" placeholder="เช่น 1000000" oninput="Page._renderSourceSummary()"></div>
               <div class="form-group"></div>
             </div>
           </div>
@@ -394,8 +397,9 @@
     const Page = {
       page: 1, allAssets: [], _currentAsset: null, _accounts: [], currentType: '',
       showOnlyNeedsReview: false,
-      filterNeedsReview() { this.showOnlyNeedsReview = true; return this.load(); },
-      clearNeedsReviewFilter() { this.showOnlyNeedsReview = false; this.load(); },
+      filterNeedsReview() { this.showOnlyNeedsReview = true; this.page = 1; return this.load(); },
+      clearNeedsReviewFilter() { this.showOnlyNeedsReview = false; this.page = 1; this.load(); },
+      PAGE_SIZE: 50,
       async init() {
         if (!Layout.init('fixed-assets')) return;
         Layout.setTitle('ทะเบียนสินทรัพย์');
@@ -403,6 +407,11 @@
         // AI auto-suggest category + useful life + dep method ตอน blur ของชื่อ
         const nameEl = document.getElementById('fName');
         if (nameEl) nameEl.addEventListener('blur', () => this.suggestAssetCategory());
+        // รอบ 250 WP-03 (D §2.2): ธง "ผู้ใช้แตะแล้ว" ผูกถาวรครั้งเดียว (เดิมผูก once ตอนเติมคำแนะนำ ⇒ ฟอร์มที่ไม่เคยได้คำแนะนำไม่มีธง)
+        for (const [id, ev] of [['fCategory', 'input'], ['fLife', 'input'], ['fMethod', 'change']]) {
+          const el = document.getElementById(id);
+          if (el) el.addEventListener(ev, () => { el.dataset.userTouched = '1'; el.dataset.autoSrc = 'user'; });
+        }
         // Deep-link from the OCR import-result table — ?id={assetId}
         // auto-opens the detail modal.
         // รับทั้ง `?id=` และ alias `?assetId=` ที่หน้าเอกสารส่งมา (ผลตรวจทีม F · F-03)
@@ -427,17 +436,17 @@
           ['AssetAccumDep', 'fAccumAcct'],
         ];
         const cid = Layout.getCompanyId();
-        const token = localStorage.getItem('token');
         const hint = document.getElementById('assetAcctHint');
-        let filled = 0;
+        let filled = 0, failed = 0, label = Layout.suggestLabel(null);
         for (const [slot, selId] of slots) {
           try {
             const url = `/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`
               + (category ? `&assetCategory=${encodeURIComponent(category)}` : '');
-            const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
-            const j = await r.json();
+            // รอบ 250 WP-03: API.* แทน fetch ดิบ (ApiBusy/401/403 กลาง) · ป้ายตาม usedAi ที่เซิร์ฟเวอร์ตอบ (กฎเหล็ก #1 ป้ายซื่อสัตย์)
+            const j = await API.get(url);
             const d = j?.data;
             if (!d || !d.accountId) continue;
+            label = Layout.suggestLabel(d);
             const sel = document.getElementById(selId);
             if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
               const opt = document.createElement('option');
@@ -447,57 +456,60 @@
             if (sel && !sel.value) { sel.value = d.accountId; filled++; }
             if (sel && d.feedbackId) {
               sel.addEventListener('change', () => {
-                try {
-                  fetch(`/api/companies/${cid}/ai-feedback/record`, {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                    // event `change` ของดรอปดาวน์บัญชี = ผู้ใช้เลือกเอง ⇒ Explicit (รอบ 181 D7-3)
-                    body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId, source: 'Explicit' })
-                  }).catch(() => {});
-                } catch {}
+                // event `change` ของดรอปดาวน์บัญชี = ผู้ใช้เลือกเอง ⇒ Explicit (รอบ 181 D7-3) · ปิด loop เบื้องหลัง (ล้ม = ไม่กระทบงานหลัก)
+                API.post(`/api/companies/${cid}/ai-feedback/record`,
+                  { feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId, source: 'Explicit' })
+                  .catch(e => console.warn('บันทึกคำตอบผู้ใช้ไม่สำเร็จ', e));
               }, { once: true });
             }
-          } catch { /* per-slot best-effort */ }
+          } catch (e) { failed++; }
         }
         if (hint) hint.textContent = filled > 0
-          ? `🤖 เติมบัญชีให้ ${filled} ช่องจากสินทรัพย์หมวด "${category || 'ทั่วไป'}" — แก้ไขได้`
-          : '🤖 ยังไม่มีสินทรัพย์หมวดนี้ให้อ้างอิง — เลือกเองหรือใช้ค่าเริ่มต้นผังบัญชี';
+          ? `${label}: เติมบัญชีให้ ${filled} ช่องจากสินทรัพย์หมวด "${category || 'ทั่วไป'}" — แก้ไขได้`
+          : failed === slots.length
+            ? '⚠️ โหลดคำแนะนำบัญชีไม่สำเร็จ — เลือกเองได้ หรือกดแนะนำอีกครั้ง'
+            : `${label}: ยังไม่มีสินทรัพย์หมวดนี้ให้อ้างอิง — เลือกเองหรือใช้ค่าเริ่มต้นผังบัญชี`;
       },
 
       async suggestAssetCategory() {
         try {
           const name = document.getElementById('fName')?.value?.trim() || '';
           if (name.length < 3) return;
-          // ไม่ทับค่าที่ user กรอกแล้ว
+          // รอบ 250 WP-03 (D §2.2 "ห้ามใครมาก่อนชนะ"): ตอนแก้ไข (มี fId) ค่าที่บันทึกไว้ชนะเสมอ — ไม่เดาทับอายุ/วิธีคิดค่าเสื่อม
+          // (เดิม openEdit hydrate แล้วไม่ตั้งธง ⇒ แตะช่องชื่อแล้ว blur = ค่าเสื่อมที่บันทึกไว้ถูกแทนด้วยค่าเดาเงียบ ๆ)
+          if (document.getElementById('fId')?.value) return;
+          // ไม่ทับค่าที่ผู้ใช้กรอกเอง (userTouched — ตั้งโดย listener ถาวรใน init) หรือค่าที่บันทึกไว้ (autoSrc='saved')
           const catEl = document.getElementById('fCategory');
           const lifeEl = document.getElementById('fLife');
           const methodEl = document.getElementById('fMethod');
-          if (catEl?.value && lifeEl?.dataset.userTouched === '1') return;
+          const keep = (el) => !el || el.dataset.userTouched === '1' || el.dataset.autoSrc === 'saved';
+          // ฝ่ายค้าน L3: หมวดที่ได้จากคำแนะนำครั้งก่อน (autoSrc='suggest') อัปเดตตามชื่อใหม่ได้ · ค่าที่ผู้ใช้พิมพ์/ค่าที่บันทึกไว้ไม่ถูกแตะ
+          const catFromSuggest = catEl && catEl.dataset.autoSrc === 'suggest';
+          if (catEl?.value && !catFromSuggest && keep(lifeEl) && keep(methodEl)) return;
           const cost = parseFloat(document.getElementById('fCost')?.value || '0') || 0;
           const cid = Layout.getCompanyId();
-          const token = localStorage.getItem('token');
-          const r = await fetch(`/api/companies/${cid}/ai/asset/suggest-category`, {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ assetName: name, purchaseCost: cost })
-          });
-          const j = await r.json();
+          const j = await API.post(`/api/companies/${cid}/ai/asset/suggest-category`, { assetName: name, purchaseCost: cost });
           const d = j?.data;
           if (!d) return;
-          if (catEl && !catEl.value) {
+          // ผลมาถึงหลังผู้ใช้เปิดฟอร์มอื่น/แก้ชื่อแล้ว = ทิ้ง (ผลลัพธ์ห้ามขึ้นกับลำดับ response)
+          if (document.getElementById('fId')?.value || (document.getElementById('fName')?.value?.trim() || '') !== name) return;
+          const label = Layout.suggestLabel(d);
+          if (catEl && (!catEl.value || catEl.dataset.autoSrc === 'suggest') && catEl.dataset.userTouched !== '1') {
             catEl.value = d.category;
-            catEl.title = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+            catEl.dataset.autoSrc = 'suggest';
+            catEl.title = `${label}: ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
           }
-          if (lifeEl && lifeEl.dataset.userTouched !== '1') {
+          if (lifeEl && !keep(lifeEl)) {
             lifeEl.value = d.usefulLifeMonths;
-            lifeEl.title = `🤖 ${d.reasoning}`;
-            lifeEl.addEventListener('input', () => lifeEl.dataset.userTouched = '1', { once: true });
+            lifeEl.dataset.autoSrc = 'suggest';
+            lifeEl.title = `${label}: ${d.reasoning}`;
           }
-          if (methodEl && methodEl.dataset.userTouched !== '1') {
+          if (methodEl && !keep(methodEl)) {
             methodEl.value = d.depreciationMethod;
-            methodEl.addEventListener('change', () => methodEl.dataset.userTouched = '1', { once: true });
+            methodEl.dataset.autoSrc = 'suggest';
+            methodEl.title = `${label}: ${d.reasoning}`;
           }
-        } catch { /* best-effort */ }
+        } catch (e) { console.warn('คำแนะนำหมวดสินทรัพย์ไม่สำเร็จ (ไม่กระทบการบันทึก)', e); }
       },
       async loadAccounts() {
         const api = Layout.api(); if (!api) return;
@@ -506,7 +518,12 @@
           const list = res.data?.items || res.data || [];
           this._accounts = list.filter(a => a.isActive !== false);
           this._fillAccountSelects();
-        } catch (e) { console.warn('โหลดผังบัญชีไม่สำเร็จ', e); }
+          this._accountsLoaded = true;
+          const le = document.getElementById('assetLoadError'); if (le) le.innerHTML = '';
+        } catch (e) {
+          // รอบ 250 WP-03 (D §2.4): ล้มดัง — เดิม console.warn แล้ว dropdown ว่างเงียบ ๆ แต่บันทึกได้
+          Layout.panelError('assetLoadError', 'โหลดผังบัญชีไม่สำเร็จ — ช่องเลือกบัญชีจะว่าง', () => this.loadAccounts(), e?.message);
+        }
       },
       async loadProjects() {
         try {
@@ -515,22 +532,27 @@
           const r = await API.get(`/api/companies/${cid}/projects?active=true&pageSize=200`);
           const items = r.data?.items || r.data || [];
           const opts = items.map(p =>
-            `<option value="${p.id}">${(p.code || p.projectNumber || '') + ' ' + (p.name || '')}</option>`).join('');
+            `<option value="${Layout.esc(p.id)}">${Layout.esc((p.code || p.projectNumber || '') + ' ' + (p.name || ''))}</option>`).join('');
           const el = document.getElementById('fProject');
           if (el) el.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts;
-        } catch (e) { /* ignore */ }
+          this._projectsLoaded = true;
+          const pe = document.getElementById('projectLoadError'); if (pe) pe.innerHTML = '';
+        } catch (e) {
+          // รอบ 250 WP-03 (D §2.4): ล้มดัง (เดิม /* ignore */) — ช่องโครงการว่างแล้วบันทึก = ถอดโครงการเงียบ ๆ
+          Layout.panelError('projectLoadError', 'โหลดรายชื่อโครงการไม่สำเร็จ', () => this.loadProjects(), e?.message);
+        }
       },
       _fillAccountSelects() {
         const opts = '<option value="">-- เลือกบัญชี --</option>' +
           (this._accounts || []).map(a =>
-            `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('');
+            `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
         for (const id of ['fAssetAcct', 'fDepExpAcct', 'fAccumAcct', 'fCreditAcct', 'srcAssetAcct', 'placeAssetAcct']) {
           const el = document.getElementById(id);
           if (el) el.innerHTML = opts;
         }
         const optsAuto = '<option value="">-- ตามประเภทผัง --</option>' +
           (this._accounts || []).map(a =>
-            `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('');
+            `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
         for (const id of ['placeDepExp', 'placeAccum']) {
           const el = document.getElementById(id);
           if (el) el.innerHTML = optsAuto;
@@ -553,33 +575,39 @@
         const api = Layout.api(); if (!api) return;
         const search = document.getElementById('searchInput').value;
         const status = document.getElementById('statusFilter').value;
-        // Server doesn't filter by AssetType yet — pull a larger page and
-        // filter client-side. Cheap enough for typical SME asset counts
-        // (<1000); upgrade to server-side filter if usage grows.
-        let q = `?page=${this.page}&pageSize=200`;
-        if (search) q += `&search=${encodeURIComponent(search)}`;
-        if (status) q += `&status=${status}`;
+        // รอบ 250 WP-03 (D §2.5): กรองชนิด/สถานะ/รอตรวจที่เซิร์ฟเวอร์ + แบ่งหน้าจริง — เดิมดึง 200 แถวแล้วกรองเอง
+        // ⇒ บริษัทที่มีสินทรัพย์ > 200 รายการเห็นไม่ครบเงียบ ๆ และตัวนับบนแท็บผิด
+        const base = (search ? `&search=${encodeURIComponent(search)}` : '') + (status ? `&status=${encodeURIComponent(status)}` : '');
+        let q = `?page=${this.page}&pageSize=${this.PAGE_SIZE}` + base;
+        if (this.currentType) q += `&assetType=${encodeURIComponent(this.currentType)}`;
+        if (this.showOnlyNeedsReview) q += '&needsReview=true';
+        const seq = (this._loadSeq = (this._loadSeq || 0) + 1);
         try {
-          const res = await api.getAssets(q);
-          const data = res.data; const all = data?.items || data || [];
-          this.allAssets = all;
+          // ฝ่ายค้าน L4: ตัวนับล้ม ≠ รายการล้ม — allSettled · ตัวนับล้มแสดง "?" (ไม่ใช่ 0 ที่โกหก)
+          const [rSet, cSet] = await Promise.allSettled([api.getAssets(q), api.getAssetCounts(base ? '?' + base.slice(1) : '')]);
+          if (seq !== this._loadSeq) return;   // คำตอบเก่ามาช้ากว่าคำขอใหม่ — ทิ้ง
+          if (rSet.status === 'rejected') throw rSet.reason;
+          const res = rSet.value;
+          const cRes = cSet.status === 'fulfilled' ? cSet.value : null;
+          const data = res.data; const items = data?.items || [];
+          this.allAssets = items;
 
-          // Per-type counts for the tab badges — keep them stable regardless of
-          // which tab is active so the user can see the mix at a glance.
-          const counts = { Tangible:0, Intangible:0, RightOfUse:0, InvestmentProperty:0 };
-          all.forEach(a => { const t = a.assetType || 'Tangible'; if (t in counts) counts[t]++; });
-          document.getElementById('ct-').textContent = all.length;
+          // ตัวนับบนแท็บ — นับทั้งฐานที่เซิร์ฟเวอร์ (ตัวกรองเดียวกับตาราง ยกเว้นชนิด) ไม่ใช่เฉพาะหน้าที่โหลด
+          const counts = cRes?.data || null;
+          const shown = (v) => counts == null ? '?' : (v ?? 0);
+          document.getElementById('ct-').textContent = shown(counts && counts.total);
           ['Tangible','Intangible','RightOfUse','InvestmentProperty'].forEach(t => {
-            const el = document.getElementById('ct-' + t); if (el) el.textContent = counts[t];
+            const el = document.getElementById('ct-' + t); if (el) el.textContent = shown(counts && counts[t.charAt(0).toLowerCase() + t.slice(1)]);
           });
+          if (counts == null) console.warn('โหลดตัวนับแท็บไม่สำเร็จ', cSet.reason);
 
           // Banner "รอตรวจสอบ" (NeedsReview) — สินทรัพย์ที่ระบบสร้างอัตโนมัติ
           // จากใบสำคัญจ่าย/ใบแจ้งหนี้ซื้อ ที่ผู้ใช้ยังไม่ "ยืนยัน" อายุการใช้งาน +
           // วิธีคิดค่าเสื่อม (กฎ TFRS for NPAEs บทที่ 10 + กฎเหล็ก #2)
-          const needsReview = all.filter(a => a.needsReview);
+          const needsReviewCount = (counts && counts.needsReview) || 0;
           const banner = document.getElementById('needsReviewBanner');
           if (banner) {
-            if (needsReview.length === 0) {
+            if (needsReviewCount === 0 && !this.showOnlyNeedsReview) {
               banner.style.display = 'none';
             } else {
               banner.style.display = '';
@@ -587,7 +615,7 @@
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                   <span style="font-size:24px">⚠️</span>
                   <div style="flex:1;min-width:200px">
-                    <div style="font-weight:700;color:#92400e">มีสินทรัพย์ ${needsReview.length} รายการ ที่ระบบสร้างให้อัตโนมัติแต่ยังไม่ผ่านการยืนยัน</div>
+                    <div style="font-weight:700;color:#92400e">มีสินทรัพย์ ${Number(needsReviewCount)} รายการ ที่ระบบสร้างให้อัตโนมัติแต่ยังไม่ผ่านการยืนยัน</div>
                     <div style="font-size:12px;color:#78350f">ระบบใส่ค่าเริ่มต้นไว้ (อายุการใช้งาน · วิธีคิดค่าเสื่อม) — กรุณาเปิดแก้และยืนยันก่อนค่าเสื่อมจะคำนวณได้ถูกต้อง</div>
                   </div>
                   <button class="btn btn-sm btn-warning" onclick="Page.filterNeedsReview()">ดูเฉพาะที่รอตรวจสอบ</button>
@@ -595,31 +623,32 @@
                 </div>`;
             }
           }
-          let items = this.currentType ? all.filter(a => (a.assetType || 'Tangible') === this.currentType) : all;
-          if (this.showOnlyNeedsReview) items = items.filter(a => a.needsReview);
           const tbody = document.getElementById('tableBody');
+          document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data?.totalPages || 1, 'Page.goPage');
           if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
           tbody.innerHTML = items.map(a => `<tr${a.needsReview ? ' style="background:#fffbeb"' : ''}>
-            <td class="font-medium">${a.assetCode}${a.needsReview ? ' <span title="ระบบสร้างให้อัตโนมัติ — กรุณาตรวจสอบรายละเอียดก่อนใช้งาน" style="background:#fbbf24;color:#78350f;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px">⚠️ รอตรวจ</span>' : ''}
+            <td class="font-medium">${Layout.esc(a.assetCode)}${a.needsReview ? ' <span title="ระบบสร้างให้อัตโนมัติ — กรุณาตรวจสอบรายละเอียดก่อนใช้งาน" style="background:#fbbf24;color:#78350f;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px">⚠️ รอตรวจ</span>' : ''}
               ${String(a.assetCode || '').startsWith('DRAFT-')
                 ? '<div style="font-size:10px;color:#92400e;margin-top:2px">รหัสชั่วคราว — เลขจริง FA-ปีเดือน-#### จะออกเมื่อกด "ตรวจสอบและยืนยัน"</div>' : ''}</td>
-            <td>${a.name}${a.isUnderAcquisition ? ' <span title="ต้นทุนสะสมจากหลายใบ — ยังไม่คิดค่าเสื่อมจนกว่าจะโอนเป็นสินทรัพย์พร้อมใช้" style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px">🚧 ระหว่างจัดหา</span>' : ''}<div style="font-size:11px;color:#64748b">${this._typeLabel(a.assetType || 'Tangible')}${a.lessorName?' · '+Layout.esc(a.lessorName):''}</div>
+            <td>${Layout.esc(a.name)}${a.isUnderAcquisition ? ' <span title="ต้นทุนสะสมจากหลายใบ — ยังไม่คิดค่าเสื่อมจนกว่าจะโอนเป็นสินทรัพย์พร้อมใช้" style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px">🚧 ระหว่างจัดหา</span>' : ''}<div style="font-size:11px;color:#64748b">${Layout.esc(this._typeLabel(a.assetType || 'Tangible'))}${a.lessorName?' · '+Layout.esc(a.lessorName):''}</div>
               ${a.sourceDocumentNumber ? `<div style="font-size:11px;color:#64748b;margin-top:2px">📄 สร้างจาก <a href="/pages/documents.html?openDoc=${Layout.esc(a.sourceDocumentId || '')}" style="color:var(--primary)">${Layout.esc(a.sourceDocumentNumber)}</a></div>` : ''}</td>
-            <td>${a.category || '-'}</td>
+            <td>${Layout.esc(a.category || '-')}</td>
             <td>${Layout.date(a.purchaseDate)}</td>
             <td class="text-right">${Layout.money(a.purchaseCost)}</td>
             <td class="text-right">${Layout.money(a.accumulatedDepreciation)}</td>
             <td class="text-right font-semibold">${Layout.money(a.netBookValue)}</td>
             <td>${Layout.statusBadge(a.status)}</td>
             <td>
-              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${a.id}')" data-i18n="common.view">ดู</button>
-              ${a.status === 'Active' ? `<button class="btn btn-sm ${a.needsReview ? 'btn-primary' : 'btn-ghost'}" onclick="Page.openEdit('${a.id}')">${a.needsReview ? 'ตรวจสอบและยืนยัน' : 'แก้ไข'}</button>` : ''}
-              ${a.status === 'Active' && (a.accumulatedDepreciation || 0) === 0 && a.sourceDocumentId && a.sourceDocumentLineId ? `<button class="btn btn-sm btn-ghost" style="color:#b45309" onclick="Page.openNotAsset('${a.id}')" title="ระบบตัดสินผิด — ของชิ้นนี้เป็นค่าใช้จ่าย: ย้ายบรรทัดเอกสารไปผังค่าใช้จ่ายแล้วลบทะเบียนให้">ไม่ใช่สินทรัพย์</button>` : ''}
-              ${a.status === 'Active' && (a.accumulatedDepreciation || 0) === 0 ? `<button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.deleteAsset('${a.id}','${Layout.jsArg(a.name||'')}')" title="ลบสินทรัพย์ที่ลงทะเบียนผิด (เฉพาะที่ยังไม่คิดค่าเสื่อม)">ลบ</button>` : ''}
+              <button class="btn btn-sm btn-ghost" onclick="Page.viewDetail('${Layout.jsArg(a.id)}')" data-i18n="common.view">ดู</button>
+              ${a.status === 'Active' ? `<button class="btn btn-sm ${a.needsReview ? 'btn-primary' : 'btn-ghost'}" onclick="Page.openEdit('${Layout.jsArg(a.id)}')">${a.needsReview ? 'ตรวจสอบและยืนยัน' : 'แก้ไข'}</button>` : ''}
+              ${a.status === 'Active' && (a.accumulatedDepreciation || 0) === 0 && a.sourceDocumentId && a.sourceDocumentLineId ? `<button class="btn btn-sm btn-ghost" style="color:#b45309" onclick="Page.openNotAsset('${Layout.jsArg(a.id)}')" title="ระบบตัดสินผิด — ของชิ้นนี้เป็นค่าใช้จ่าย: ย้ายบรรทัดเอกสารไปผังค่าใช้จ่ายแล้วลบทะเบียนให้">ไม่ใช่สินทรัพย์</button>` : ''}
+              ${a.status === 'Active' && (a.accumulatedDepreciation || 0) === 0 ? `<button class="btn btn-sm btn-ghost" style="color:#dc2626" onclick="Page.deleteAsset('${Layout.jsArg(a.id)}','${Layout.jsArg(a.name||'')}')" title="ลบสินทรัพย์ที่ลงทะเบียนผิด (เฉพาะที่ยังไม่คิดค่าเสื่อม)">ลบ</button>` : ''}
             </td>
           </tr>`).join('');
-          document.getElementById('pagination').innerHTML = '';  // server paging disabled while we filter client-side
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        } catch (e) {
+          if (seq !== this._loadSeq) return;
+          Layout.toast(e.message, 'error');
+        }
       },
       goPage(p) { Page.page = p; Page.load(); },
       onAssetTypeChange(t) {
@@ -652,6 +681,9 @@
         document.getElementById('fLife').value = '60';
         document.getElementById('fMethod').value = 'StraightLine';
         document.getElementById('fSerial').value = '';
+        // รอบ 250 WP-03 (D §2.2): ล้างธงของฟอร์มก่อน — เดิมแตะครั้งเดียวแล้วฟอร์มใหม่ไม่ได้รับคำแนะนำอีกเลย
+        this._resetAutoFillFlags();
+        this._lockAssetAccountClear(false);
         for (const id of ['fAssetAcct', 'fDepExpAcct', 'fAccumAcct', 'fCreditAcct']) document.getElementById(id).value = '';
         document.getElementById('fProject').value = '';
         document.getElementById('fPostAcq').checked = false;
@@ -672,7 +704,7 @@
           `<b>${Layout.esc(a.name || '')}</b> · ${Layout.money(a.purchaseCost)} บาท<br>`
           + `สร้างจาก <b>${Layout.esc(a.sourceDocumentNumber || '')}</b> — บรรทัดนี้จะถูกย้ายออกจากผังสินทรัพย์`;
         const opts = (this._accounts || []).filter(x => x.accountType === 'Expense')
-          .map(x => `<option value="${x.id}">${Layout.esc(x.accountCode)} - ${Layout.esc(x.accountName)}</option>`).join('');
+          .map(x => `<option value="${Layout.esc(x.id)}">${Layout.esc(x.accountCode)} - ${Layout.esc(x.accountName)}</option>`).join('');
         document.getElementById('naAccount').innerHTML = '<option value="">-- เลือกบัญชีค่าใช้จ่าย --</option>' + opts;
         Layout.openModal('notAssetModal');
       },
@@ -715,16 +747,50 @@
           document.getElementById('fLife').value = a.usefulLifeMonths;
           document.getElementById('fMethod').value = a.depreciationMethod;
           document.getElementById('fSerial').value = a.serialNumber || '';
-          document.getElementById('fAssetAcct').value = a.assetAccountId || '';
-          document.getElementById('fDepExpAcct').value = a.depreciationExpenseAccountId || '';
-          document.getElementById('fAccumAcct').value = a.accumulatedDepreciationAccountId || '';
-          document.getElementById('fProject').value = a.projectId || '';
+          // รอบ 250 WP-03 (D §2.2): ค่าที่บันทึกไว้ชนะคำแนะนำเสมอ (ตัวเติม async ข้ามช่อง autoSrc='saved')
+          this._resetAutoFillFlags('saved');
+          // ฝ่ายค้าน H2: ค่าที่บันทึกไว้แต่ไม่อยู่ในรายการ (ผังถูกปิดใช้ · โครงการปิด · โหลดรายการล้ม) ⇒ คืนเป็นตัวเลือก ไม่ตกเป็น '' แล้วถูกล้างตอนบันทึก
+          this._setSavedSelect('fAssetAcct', a.assetAccountId, a.assetAccountCode);
+          this._lockAssetAccountClear(!!a.assetAccountId);
+          this._setSavedSelect('fDepExpAcct', a.depreciationExpenseAccountId, a.depreciationExpenseAccountCode);
+          this._setSavedSelect('fAccumAcct', a.accumulatedDepreciationAccountId, a.accumulatedDepreciationAccountCode);
+          this._setSavedSelect('fProject', a.projectId, a.projectName || a.projectCode);
           // Acquisition entry only applies at registration time.
           document.getElementById('fPostAcq').checked = false;
           document.getElementById('fCreditAcct').value = '';
           this.toggleAcqRow();
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      /** ตั้งค่าที่บันทึกไว้ให้ select — ไม่อยู่ในรายการ ⇒ เพิ่มตัวเลือก "⚠️ ค่าที่บันทึกไว้" (ส่งค่าเดิมกลับ = เซิร์ฟเวอร์ไม่แตะ) · ไม่ใช่ปล่อยเป็น '' แล้วกลายเป็นการล้าง */
+      _setSavedSelect(selId, id, label) {
+        const sel = document.getElementById(selId); if (!sel) return;
+        sel.querySelectorAll('option[data-saved-ref]').forEach(o => o.remove());
+        if (id && !Array.from(sel.options).some(o => o.value === id)) {
+          const o = document.createElement('option');
+          o.value = id; o.dataset.savedRef = '1';
+          o.textContent = '⚠️ ค่าที่บันทึกไว้' + (label ? ` (${label})` : '') + ' — ไม่อยู่ในรายการ/ปิดใช้แล้ว (บันทึก = คงเดิม)';
+          sel.appendChild(o);
+        }
+        sel.value = id || '';
+      },
+      /** ธงของตัวเติมอัตโนมัติ (CLAUDE.md #4 A dataset.autoSrc/userTouched) — src='saved' ตอน hydrate ค่าที่บันทึกไว้ · ว่าง = ฟอร์มใหม่ */
+      _resetAutoFillFlags(src) {
+        for (const id of ['fCategory', 'fLife', 'fMethod']) {
+          const el = document.getElementById(id); if (!el) continue;
+          delete el.dataset.userTouched;
+          if (src) el.dataset.autoSrc = src; else delete el.dataset.autoSrc;
+          el.title = '';
+        }
+      },
+      /** รอบ 250 WP-03 (D §2.3): ตอนแก้ไขสินทรัพย์ที่มีผังสินทรัพย์ ห้ามเลือก "ว่าง" (เซิร์ฟเวอร์ไม่ปลดผังนี้ — ค่าเสื่อม/จำหน่ายต้องใช้)
+       *  เดิมเลือกว่างแล้วบันทึก = ไม่มีผลเงียบ ๆ (ช่องค่าเสื่อม/ค่าเสื่อมสะสมว่าง = ปลดจริง) ⇒ ล็อกตัวเลือกว่าง + บอกเหตุผล */
+      _lockAssetAccountClear(locked) {
+        const sel = document.getElementById('fAssetAcct');
+        const blank = sel ? sel.querySelector('option[value=""]') : null;
+        if (blank) blank.disabled = !!locked;
+        const hint = document.getElementById('fAssetAcctLockHint');
+        if (hint) hint.style.display = locked ? 'block' : 'none';
       },
       // รอบ 200 (A12/E-04): ช่องที่เซิร์ฟเวอร์ไม่รับตอนแก้ไข (ผูกกับรายการบัญชีตอนซื้อ) — ล็อก + บอกเหตุผล (ห้าม silent no-op)
       _VALUATION_LOCKED: ['fCost', 'fPurchaseDate', 'fAssetType', 'fLessor', 'fLeaseTerm', 'fLeasePmt'],
@@ -759,10 +825,13 @@
             category: document.getElementById('fCategory').value || null,
             location: document.getElementById('fLocation').value || null,
             serialNumber: document.getElementById('fSerial').value || null,
-            assetAccountId: assetAcct,   // ว่าง = คงผังเดิม (พฤติกรรมเดิม)
-            depreciationExpenseAccountId: document.getElementById('fDepExpAcct').value || '00000000-0000-0000-0000-000000000000',
-            accumulatedDepreciationAccountId: document.getElementById('fAccumAcct').value || '00000000-0000-0000-0000-000000000000',
-            projectId: document.getElementById('fProject').value || '00000000-0000-0000-0000-000000000000',
+            // ว่าง = คงผังเดิม — ใช้ได้เฉพาะสินทรัพย์ที่ยังไม่มีผัง (มีผังแล้ว ตัวเลือกว่างถูกล็อก · เซิร์ฟเวอร์ปฏิเสธการปลด)
+            assetAccountId: assetAcct,
+            // ฝ่ายค้าน H2: รายการโหลดไม่สำเร็จ ⇒ null (= เซิร์ฟเวอร์คงค่าเดิม) — เดิมช่องว่างถูกส่งเป็น Guid.Empty = ปลดผังค่าเสื่อม/โครงการเงียบ ๆ
+            // (ค่าเสื่อม/จำหน่ายล้มทีหลัง ASSET-DISPOSE-NO-GL) · โหลดได้แล้วผู้ใช้เลือก "ว่าง" เอง = ปลดจริง (เจตนา)
+            depreciationExpenseAccountId: !this._accountsLoaded ? null : (document.getElementById('fDepExpAcct').value || '00000000-0000-0000-0000-000000000000'),
+            accumulatedDepreciationAccountId: !this._accountsLoaded ? null : (document.getElementById('fAccumAcct').value || '00000000-0000-0000-0000-000000000000'),
+            projectId: !this._projectsLoaded ? null : (document.getElementById('fProject').value || '00000000-0000-0000-0000-000000000000'),
             usefulLifeMonths: method === 'None' ? 0 : life,
             salvageValue: Layout.numOrNull('fSalvage') ?? 0,
             depreciationMethod: method,
@@ -817,16 +886,16 @@
           this._deps = depRes.data?.items || depRes.data || [];
           const depBase = a.purchaseCost - (a.salvageValue||0);
           const usedPct = depBase > 0 ? ((a.accumulatedDepreciation / depBase) * 100).toFixed(0) : 0;
-          document.getElementById('detailTitle').textContent = `${a.assetCode} - ${a.name}`;
+          document.getElementById('detailTitle').textContent = `${a.assetCode} - ${a.name}`;   // textContent — ไม่ต้อง esc
           document.getElementById('detailInfo').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
-              <div><div class="text-xs text-gray-500">รหัส</div><div class="font-medium">${a.assetCode}</div></div>
-              <div><div class="text-xs text-gray-500">หมวดหมู่</div><div>${a.category || '-'}</div></div>
-              <div><div class="text-xs text-gray-500">ที่ตั้ง</div><div>${a.location || '-'}</div></div>
+              <div><div class="text-xs text-gray-500">รหัส</div><div class="font-medium">${Layout.esc(a.assetCode)}</div></div>
+              <div><div class="text-xs text-gray-500">หมวดหมู่</div><div>${Layout.esc(a.category || '-')}</div></div>
+              <div><div class="text-xs text-gray-500">ที่ตั้ง</div><div>${Layout.esc(a.location || '-')}</div></div>
               <div><div class="text-xs text-gray-500">วันที่ซื้อ</div><div>${Layout.date(a.purchaseDate)}</div></div>
-              <div><div class="text-xs text-gray-500">หมายเลขเครื่อง</div><div>${a.serialNumber || '-'}</div></div>
-              <div><div class="text-xs text-gray-500">วิธีคิดค่าเสื่อม</div><div>${methodMap[a.depreciationMethod] || a.depreciationMethod}</div></div>
-              <div><div class="text-xs text-gray-500">อายุใช้งาน</div><div>${a.usefulLifeMonths} เดือน</div></div>
+              <div><div class="text-xs text-gray-500">หมายเลขเครื่อง</div><div>${Layout.esc(a.serialNumber || '-')}</div></div>
+              <div><div class="text-xs text-gray-500">วิธีคิดค่าเสื่อม</div><div>${Layout.esc(methodMap[a.depreciationMethod] || a.depreciationMethod)}</div></div>
+              <div><div class="text-xs text-gray-500">อายุใช้งาน</div><div>${Number(a.usefulLifeMonths)||0} เดือน</div></div>
               <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div>${Layout.statusBadge(a.status)}</div></div>
               ${a.disposalDate ? `<div><div class="text-xs text-gray-500">วันที่จำหน่าย</div><div>${Layout.date(a.disposalDate)}</div></div>` : ''}
               <div><div class="text-xs text-gray-500">เอกสารต้นทาง</div>
@@ -841,7 +910,7 @@
               <div class="kpi-card"><div class="kpi-label">มูลค่าสุทธิ</div><div class="kpi-value text-primary">${Layout.money(a.netBookValue)}</div></div>
             </div>
             <div style="margin-bottom:16px">
-              <div class="text-xs text-gray-500 mb-1">ค่าเสื่อม ${usedPct}%</div>
+              <div class="text-xs text-gray-500 mb-1">ค่าเสื่อม ${Number(usedPct)}%</div>
               <div style="background:var(--gray-200);border-radius:4px;height:10px;overflow:hidden">
                 <div style="width:${Math.min(usedPct,100)}%;background:var(--primary);height:100%;border-radius:4px"></div>
               </div>
@@ -855,10 +924,10 @@
           if (a.status === 'Active' && a.isUnderAcquisition) {
             footer += ` <button class="btn btn-primary" onclick="Page.openPlaceInService('${Layout.jsArg(a.id)}')">✅ โอนเป็นสินทรัพย์พร้อมใช้</button>`;
           } else if (a.status === 'Active') {
-            footer += ` <button class="btn btn-ghost" onclick="Page.openAdjustLife('${a.id}',${a.usefulLifeMonths},${a.salvageValue})">ปรับอายุ</button>`;
-            footer += ` <button class="btn btn-warning" onclick="Page.openRevalue('${a.id}',${a.netBookValue})">ตีราคาใหม่</button>`;
-            footer += ` <button class="btn btn-danger" onclick="Page.openWriteOff('${a.id}')">ตัดจำหน่าย</button>`;
-            footer += ` <button class="btn btn-danger" onclick="Page.openDispose('${a.id}')">จำหน่าย/ขาย</button>`;
+            footer += ` <button class="btn btn-ghost" onclick="Page.openAdjustLife('${Layout.jsArg(a.id)}',${Number(a.usefulLifeMonths)||0},${Number(a.salvageValue)||0})">ปรับอายุ</button>`;
+            footer += ` <button class="btn btn-warning" onclick="Page.openRevalue('${Layout.jsArg(a.id)}',${Number(a.netBookValue)||0})">ตีราคาใหม่</button>`;
+            footer += ` <button class="btn btn-danger" onclick="Page.openWriteOff('${Layout.jsArg(a.id)}')">ตัดจำหน่าย</button>`;
+            footer += ` <button class="btn btn-danger" onclick="Page.openDispose('${Layout.jsArg(a.id)}')">จำหน่าย/ขาย</button>`;
           }
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
@@ -894,6 +963,15 @@
         if (!createNew) {
           // เลือกสินทรัพย์ระหว่างจัดหาที่จะผูก (หรือสร้างใหม่)
           document.getElementById('srcTitle').textContent = 'ผูกบรรทัดเอกสารเข้ากับสินทรัพย์';
+          // รอบ 250 WP-03: ตารางแบ่งหน้าแล้ว — ตัวเลือกดึงสินทรัพย์ที่ใช้งานจากเซิร์ฟเวอร์ (ไม่ใช่เฉพาะหน้าที่เปิดอยู่)
+          let truncated = false;
+          try {
+            const r = await Layout.api().getAssets('?page=1&pageSize=200&status=Active');
+            const list = r?.data?.items || [];
+            truncated = (r?.data?.totalCount || 0) > list.length;
+            const known = new Set((this.allAssets || []).map(a => a.id));
+            this.allAssets = (this.allAssets || []).concat(list.filter(a => !known.has(a.id)));
+          } catch (e) { Layout.toast('โหลดรายชื่อสินทรัพย์ไม่สำเร็จ: ' + e.message, 'error'); }
           const pending = (this.allAssets || []).filter(a => a.isUnderAcquisition && a.status === 'Active');
           const info = document.getElementById('srcTargetInfo');
           info.style.display = '';
@@ -902,7 +980,8 @@
               <option value="">— สร้างสินทรัพย์ระหว่างจัดหาใหม่ —</option>
               ${(this.allAssets || []).filter(a => a.status === 'Active').map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.assetCode)} ${Layout.esc(a.name || '')}${a.isUnderAcquisition ? ' 🚧' : ''}</option>`).join('')}
             </select>
-            ${pending.length ? '' : '<div style="font-size:11px;color:#64748b;margin-top:4px">ยังไม่มีสินทรัพย์ระหว่างจัดหา — เลือก “สร้างใหม่” แล้วตั้งชื่อ</div>'}`;
+            ${pending.length ? '' : '<div style="font-size:11px;color:#64748b;margin-top:4px">ยังไม่มีสินทรัพย์ระหว่างจัดหา — เลือก “สร้างใหม่” แล้วตั้งชื่อ</div>'}
+            ${truncated ? '<div style="font-size:11px;color:#b45309;margin-top:4px">แสดง 200 รายการแรก — ถ้าไม่พบ ให้เปิดสินทรัพย์นั้นจากตารางแล้วกด “ผูกเอกสารต้นทุนเพิ่ม”</div>' : ''}`;
           this.pickSourceTarget('');
         }
         Layout.openModal('sourcesModal');
@@ -940,28 +1019,57 @@
             const sel = Object.prototype.hasOwnProperty.call(this._src.selected, id);
             const dis = !!l.problem;
             return `<tr${dis ? ' style="opacity:.6"' : ''}>
-              <td><input type="checkbox" ${sel ? 'checked' : ''} ${dis ? 'disabled' : ''} onchange="Page.toggleSourceLine('${Layout.jsArg(id)}', this.checked)"></td>
+              <td><input type="checkbox" data-src-line="${Layout.esc(id)}" ${sel ? 'checked' : ''} ${dis ? 'disabled' : ''} onchange="Page.toggleSourceLine('${Layout.jsArg(id)}', this.checked)"></td>
               <td>${Layout.esc(l.documentNumber)}<div style="font-size:10px;color:#64748b">${Layout.date(l.documentDate)} · ${Layout.esc(l.contactName || '')}</div></td>
               <td>${Layout.esc(l.description || '')}<div style="font-size:10px;color:#64748b">ผัง ${Layout.esc(l.accountCode || '-')}${l.registeredAssetCode ? ` · ทะเบียนเดี่ยว ${Layout.esc(l.registeredAssetCode)}${l.registeredAssetAbsorbable ? ' (ร่าง — จะรวมเข้า)' : ''}` : ''}</div>
                 ${dis ? `<div style="font-size:11px;color:#b45309">${Layout.esc(l.problem)}</div>` : ''}</td>
               <td>${Layout.esc(this._kindLabel(l.kind))}</td>
               <td class="text-right">${Layout.money(l.costAmount)}</td>
               <td class="text-right">${Layout.money(l.linkedAmount)}</td>
-              <td class="text-right">${dis ? '-' : `<input type="number" step="0.01" class="form-input" style="width:120px;text-align:right" value="${sel && this._src.selected[id] != null ? this._src.selected[id] : l.remainingToLink}" oninput="Page.setSourceAmount('${Layout.jsArg(id)}', this.value)" title="ค่าว่าง = ยอดที่เหลือทั้งหมด · ผูกบางส่วนได้ (เช่นมัดจำก้อนเดียวของของ 2 ชิ้น)">`}</td>
+              <td class="text-right">${dis ? '-' : `<input type="number" step="0.01" class="form-input" style="width:120px;text-align:right" value="${Number(sel && this._src.selected[id] != null ? this._src.selected[id] : l.remainingToLink) || 0}" oninput="Page.setSourceAmount('${Layout.jsArg(id)}', this.value)" title="ค่าว่าง = ยอดที่เหลือทั้งหมด · ผูกบางส่วนได้ (เช่นมัดจำก้อนเดียวของของ 2 ชิ้น)">`}</td>
             </tr>`;
           }).join('')}</tbody></table>`;
-        const n = Object.keys(this._src.selected).length;
-        document.getElementById('srcSelectedInfo').textContent = n ? `เลือก ${n} บรรทัด` : '';
+        this._renderSourceSummary();
+      },
+      /** รอบ 250 WP-03 (D §2.7): สรุปที่เลือกก่อนกดบันทึก — "เลือก n บรรทัด · รวม X / ราคาตามสัญญา Y" (เดิมเตือนหลังบันทึกแล้วเท่านั้น) */
+      _renderSourceSummary() {
+        const host = document.getElementById('srcSelectedInfo');
+        if (!host) return;
+        const ids = Object.keys(this._src.selected);
+        if (!ids.length) { host.textContent = ''; return; }
+        const byId = new Map((this._src.lines || []).map(l => [l.documentLineId, l]));
+        const total = ids.reduce((sum, id) => {
+          const v = this._src.selected[id];
+          return sum + (v != null && Number.isFinite(v) ? v : Number(byId.get(id)?.remainingToLink || 0));
+        }, 0);
+        let contract = null;
+        if (this._src.mode === 'attach' && this._src.assetId) {
+          const a = (this.allAssets || []).find(x => x.id === this._src.assetId) || this._currentAsset;
+          contract = a && a.id === this._src.assetId && a.contractPrice ? Number(a.contractPrice) : null;
+        } else {
+          const raw = document.getElementById('srcContractPrice')?.value;
+          contract = raw === '' || raw == null ? null : Number(raw);
+        }
+        const over = contract != null && contract > 0 && total > contract + 0.005;
+        host.innerHTML = `เลือก <b>${ids.length}</b> บรรทัด · รวม <b>${Layout.money(total)}</b>`
+          + (contract != null && contract > 0
+            ? ` / ราคาตามสัญญา <b>${Layout.money(contract)}</b>${over ? ' <span style="color:#b45309">⚠️ เกินราคาตามสัญญา — ตรวจว่าไม่ได้ผูกซ้ำ (เช่นใบสุดท้ายลงเต็มราคาทั้งที่ผูกมัดจำแล้ว)</span>' : ''}`
+            : '');
       },
       toggleSourceLine(id, on) {
         if (on) this._src.selected[id] = null; else delete this._src.selected[id];
         this._renderSourceLines();
       },
       setSourceAmount(id, v) {
-        if (!Object.prototype.hasOwnProperty.call(this._src.selected, id)) this._src.selected[id] = null;
+        const wasSelected = Object.prototype.hasOwnProperty.call(this._src.selected, id);
         this._src.selected[id] = (v === '' || v == null) ? null : Number(v);
-        const n = Object.keys(this._src.selected).length;
-        document.getElementById('srcSelectedInfo').textContent = n ? `เลือก ${n} บรรทัด` : '';
+        // รอบ 250 WP-03 (D §2.7): พิมพ์ยอด = เลือกบรรทัดนี้ ⇒ ติ๊ก checkbox ให้เห็น (เดิมแถวถูกส่งทั้งที่ checkbox ว่าง)
+        if (!wasSelected) {
+          const box = Array.from(document.querySelectorAll('#srcResults input[data-src-line]'))
+            .find(cb => cb.dataset.srcLine === id);
+          if (box) box.checked = true;
+        }
+        this._renderSourceSummary();
       },
       async submitSources() {
         const api = Layout.api(); if (!api) return;
@@ -998,6 +1106,7 @@
         host.innerHTML = `
           <h4 style="font-size:14px;margin-bottom:6px">🧩 เอกสารต้นทุน ${r.isUnderAcquisition ? '<span style="font-size:11px;color:#075985">(ระหว่างจัดหา — ยังไม่คิดค่าเสื่อม)</span>' : (r.availableForUseDate ? `<span style="font-size:11px;color:#166534">พร้อมใช้ ${Layout.date(r.availableForUseDate)}</span>` : '')}</h4>
           ${(r.problems || []).map(p => `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:6px 10px;font-size:12px;color:#991b1b;margin-bottom:6px">${Layout.esc(p)}</div>`).join('')}
+          ${r.purchaseDateNote ? `<div style="font-size:11px;color:#475569;margin-bottom:6px">ℹ️ ${Layout.esc(r.purchaseDateNote)}</div>` : ''}
           <table class="table" style="font-size:12px"><thead><tr><th>เอกสาร</th><th>รายการ</th><th>ชนิด</th><th>ผัง</th><th class="text-right">ต้นทุน</th><th>สถานะ</th><th></th></tr></thead><tbody>
           ${(r.sources || []).map(x => `<tr${x.status === 'Released' ? ' style="opacity:.55"' : ''}>
             <td><a href="/pages/documents.html?openDoc=${Layout.esc(x.documentId)}" style="color:var(--primary)">${Layout.esc(x.documentNumber)}</a><div style="font-size:10px;color:#64748b">${Layout.date(x.documentDate)}${x.sourceDocumentVoided ? ' · <b style="color:#dc2626">ใบถูกยกเลิก</b>' : ''}</div></td>
@@ -1005,7 +1114,7 @@
             <td>${Layout.esc(this._kindLabel(x.kind))}</td>
             <td style="font-family:ui-monospace,monospace">${Layout.esc(x.sourceAccountCode || '')}</td>
             <td class="text-right">${Layout.money(x.amount)}</td>
-            <td>${statusLabel[x.status] || Layout.esc(x.status)}${x.releasedReason ? `<div style="font-size:10px;color:#64748b">${Layout.esc(x.releasedReason)}</div>` : ''}</td>
+            <td>${Layout.esc(statusLabel[x.status] || x.status)}${x.releasedReason ? `<div style="font-size:10px;color:#64748b">${Layout.esc(x.releasedReason)}</div>` : ''}</td>
             <td>${x.status === 'Held' ? `<button class="btn btn-sm btn-ghost" style="color:#b45309" onclick="Page.releaseCostSource('${Layout.jsArg(assetId)}','${Layout.jsArg(x.id)}')">ปลดออก</button>` : ''}</td>
           </tr>`).join('')}</tbody>
           <tfoot><tr><td colspan="4" class="text-right">${r.isUnderAcquisition ? 'ต้นทุนสะสม (ถือไว้)' : 'โอนแล้ว'}</td><td class="text-right font-semibold">${Layout.money(r.isUnderAcquisition ? r.heldCost : r.capitalizedCost)}</td><td colspan="2"></td></tr></tfoot></table>`;
@@ -1062,7 +1171,7 @@
         const deps = this._deps || [];
         document.getElementById('depreciationContent').innerHTML = deps.length ?
           `<div class="table-container"><table class="table"><thead><tr><th>งวด</th><th class="text-right">จำนวน</th><th class="text-right">สะสม</th><th class="text-right">มูลค่าสุทธิ</th></tr></thead><tbody>${deps.map(d => `<tr>
-            <td>${d.month}/${d.year}</td>
+            <td>${Number(d.month)}/${Number(d.year)}</td>
             <td class="text-right">${Layout.money(d.amount)}</td>
             <td class="text-right">${Layout.money(d.accumulatedAmount)}</td>
             <td class="text-right font-semibold">${Layout.money(d.netBookValue)}</td>
@@ -1082,7 +1191,7 @@
           const sched = res.data?.schedule || res.data || [];
           document.getElementById('depreciationContent').innerHTML = sched.length ?
             `<div class="table-container"><table class="table"><thead><tr><th>งวด</th><th class="text-right">มูลค่าเปิด</th><th class="text-right">ค่าเสื่อม</th><th class="text-right">สะสม</th><th class="text-right">มูลค่าปิด</th></tr></thead><tbody>${sched.map(s => `<tr>
-              <td>${s.month}/${s.year}</td>
+              <td>${Number(s.month)}/${Number(s.year)}</td>
               <td class="text-right">${Layout.money(s.openingNBV)}</td>
               <td class="text-right">${Layout.money(s.depreciationAmount)}</td>
               <td class="text-right">${Layout.money(s.accumulatedDepreciation)}</td>
@@ -1186,15 +1295,15 @@
               <div class="kpi-card"><div class="kpi-label">ราคาทุนรวม</div><div class="kpi-value">${Layout.money(r.totalCost)}</div></div>
               <div class="kpi-card"><div class="kpi-label">ค่าเสื่อมสะสมรวม</div><div class="kpi-value text-warning">${Layout.money(r.totalAccumulatedDepreciation)}</div></div>
               <div class="kpi-card"><div class="kpi-label">มูลค่าสุทธิรวม</div><div class="kpi-value text-primary">${Layout.money(r.totalNetBookValue)}</div></div>
-              <div class="kpi-card"><div class="kpi-label">จำนวน</div><div class="kpi-value">${r.totalActive} ใช้งาน / ${r.totalDisposed} จำหน่าย / ${r.totalFullyDepreciated} หมดค่าเสื่อม</div></div>
+              <div class="kpi-card"><div class="kpi-label">จำนวน</div><div class="kpi-value">${Number(r.totalActive)} ใช้งาน / ${Number(r.totalDisposed)} จำหน่าย / ${Number(r.totalFullyDepreciated)} หมดค่าเสื่อม</div></div>
             </div>`;
           const items = r.items || [];
           document.getElementById('reportTable').innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr>
             <th>รหัส</th><th data-i18n="common.name">ชื่อ</th><th>หมวด</th><th>วันที่ซื้อ</th><th>วิธี</th>
             <th class="text-right">ราคาทุน</th><th class="text-right">ค่าเสื่อมสะสม</th><th class="text-right">NBV</th><th data-i18n="common.status">สถานะ</th>
           </tr></thead><tbody>${items.map(i => `<tr>
-            <td>${i.assetCode}</td><td>${i.name}</td><td>${i.category||'-'}</td><td>${Layout.date(i.purchaseDate)}</td>
-            <td>${methodMap[i.depreciationMethod]||i.depreciationMethod}</td>
+            <td>${Layout.esc(i.assetCode)}</td><td>${Layout.esc(i.name)}</td><td>${Layout.esc(i.category||'-')}</td><td>${Layout.date(i.purchaseDate)}</td>
+            <td>${Layout.esc(methodMap[i.depreciationMethod]||i.depreciationMethod)}</td>
             <td class="text-right">${Layout.money(i.purchaseCost)}</td>
             <td class="text-right">${Layout.money(i.accumulatedDepreciation)}</td>
             <td class="text-right font-semibold">${Layout.money(i.netBookValue)}</td>

@@ -14,6 +14,15 @@
       <div class="admin-kpi"><div class="admin-kpi-label">กำลังโหลด...</div></div>
     </div>
 
+    <!-- รอบ 250 (WP-02 · คำตัดสิน Y7/Y8/N11): รายการตรวจ go-live — แต่ละข้อตรวจจากข้อมูลจริง (เซิร์ฟเวอร์ตัดสิน · หน้าแสดงอย่างเดียว) -->
+    <div class="admin-card" id="goLiveCard">
+      <div class="admin-card-header">
+        <div class="admin-card-title">รายการตรวจ go-live (รับเงินจริงผ่าน Omise)</div>
+        <button class="admin-btn admin-btn-outline admin-btn-sm" id="outboundBtn" onclick="runOutboundCheck()">ทดสอบการเชื่อมต่อขาออก</button>
+      </div>
+      <div id="goLiveList">กำลังโหลด...</div>
+    </div>
+
     <!-- Charts row -->
     <div class="admin-grid-2">
       <div class="admin-card">
@@ -196,6 +205,51 @@
       </div>`;
     }
 
+    // รอบ 250: การ์ด go-live — ป้าย/ลิงก์/ข้อความทั้งหมดมาจากเซิร์ฟเวอร์ (PlatformGoLiveChecklist)
+    function renderGoLive(r) {
+      const icon = { Ok: '✅', Fail: '❌', Manual: '📝', Unknown: '❔' };
+      const color = { Ok: '#166534', Fail: '#b91c1c', Manual: '#475569', Unknown: '#92400e' };
+      const rows = (r.items || []).map(i => `
+        <div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid #f1f5f9">
+          <div style="width:22px">${icon[i.status] || '•'}</div>
+          <div style="flex:1">
+            <div style="font-weight:600;color:${color[i.status] || '#0f172a'}">${AdminLayout.esc(i.no)}. ${AdminLayout.esc(i.title)}</div>
+            ${i.why ? `<div style="font-size:12px;color:#64748b;margin-top:2px">${AdminLayout.esc(i.why)}</div>` : ''}
+          </div>
+          ${i.fixUrl && i.status !== 'Ok' ? `<a class="admin-btn admin-btn-outline admin-btn-sm" href="${AdminLayout.esc(i.fixUrl)}">${AdminLayout.esc(i.fixLabel || 'ไปแก้')}</a>` : ''}
+        </div>`).join('');
+      document.getElementById('goLiveList').innerHTML = `
+        <div style="font-size:13px;margin-bottom:6px">ผ่าน ${AdminLayout.esc(r.doneCount)} ข้อ · ยังไม่ผ่าน <b style="color:#b91c1c">${AdminLayout.esc(r.failCount)}</b> ข้อ</div>
+        ${rows}
+        <div style="font-size:12px;color:#475569;margin-top:8px">ℹ️ ${AdminLayout.esc(r.bankFeedNote || '')}</div>`;
+      const card = document.getElementById('goLiveCard');
+      if (card) card.style.borderLeft = (r.failCount || 0) > 0 ? '4px solid #ef4444' : '4px solid #22c55e';
+    }
+
+    async function loadGoLive() {
+      try {
+        const res = await AdminAPI.goLiveChecklist();
+        renderGoLive(res.data || {});
+      } catch (err) {
+        document.getElementById('goLiveList').innerHTML = `<div style="color:var(--admin-danger)">โหลดรายการตรวจไม่สำเร็จ: ${AdminLayout.esc(err.message)}</div>`;
+      }
+    }
+
+    async function runOutboundCheck() {
+      const btn = document.getElementById('outboundBtn');
+      if (btn) btn.disabled = true;
+      try {
+        const res = await AdminAPI.goLiveOutboundCheck();
+        renderGoLive(res.data || {});
+        const ob = ((res.data && res.data.items) || []).find(i => i.code === 'OUTBOUND');
+        AdminLayout.toast(res.message || 'ทดสอบแล้ว', ob && ob.status === 'Fail' ? 'error' : undefined);
+      } catch (err) {
+        AdminLayout.toast(err.message, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
     async function runAction(method, label) {
       if (!confirm(`ต้องการ ${AdminLayout.esc(label)}?`)) return;
       try {
@@ -208,6 +262,7 @@
     }
 
     loadDashboard();
+    loadGoLive();
   </script>
 </body>
 </html>

@@ -147,7 +147,7 @@
               <div id="fPaymentChannelHint" style="display:none;font-size:11px;margin-top:4px;color:#b45309"></div>
             </div>
             <div class="form-group" id="fExpenseCategoryGroup"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span>
-              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('RecurringExpense','fExpenseCategory','fExpenseCatHint')">🤖</button>
+              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('RecurringExpense','fExpenseCategory','fExpenseCatHint')" aria-label="แนะนำบัญชีค่าใช้จ่าย" title="แนะนำบัญชีจากประวัติของบริษัท">⚙️ แนะนำ</button>
             </label>
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
               <div id="fExpenseCatHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
@@ -194,12 +194,23 @@
             <select class="form-select" id="fPaymentMode" onchange="Page.onAutopilotChange()"></select>
             <div id="fPayChannels" style="margin-top:6px;font-size:12px"></div>
             <div id="fPayModeHint" style="margin-top:4px;font-size:11px;color:#64748b"></div>
+            <div id="fPayModeWarn" style="display:none;margin-top:4px;font-size:11px;color:#b45309"></div>
+          </div>
+          <!-- รอบ 250 (WP-02 B-13): งานหลังรับชำระต่อรายการ (ตาราง › รายการ › ผู้ติดต่อ › บริษัท) — ตัวเลือก/ป้ายจากเซิร์ฟเวอร์ -->
+          <div class="form-group">
+            <label class="form-label" for="fPostPayEmail">หลังลูกค้าชำระใบของรายการนี้</label>
+            <select class="form-select" id="fPostPayEmail" onchange="Page.refreshReadiness()"></select>
+            <select class="form-select" id="fPostPayPartial" style="margin-top:6px" onchange="Page.refreshReadiness()"></select>
           </div>
           <div class="form-group" id="fContactPayGroup" style="display:none;padding:8px 10px;border:1px dashed #cbd5e1;border-radius:8px">
             <label class="form-label" for="fCustPayMode" style="font-weight:normal">ค่าตั้งของผู้ติดต่อนี้ (ใช้กับทุกเอกสารของลูกค้ารายนี้ เมื่อรายการ/ตารางส่งไม่ได้ตั้งเอง)</label>
             <div style="display:flex;gap:6px;align-items:center">
               <select class="form-select" id="fCustPayMode"></select>
               <button type="button" class="btn btn-sm btn-secondary" onclick="Page.saveContactPayMode()">บันทึกที่ผู้ติดต่อ</button>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <select class="form-select" id="fCustPostPayEmail" aria-label="หลังชำระ: ส่งใบเสร็จ (ผู้ติดต่อ)"></select>
+              <select class="form-select" id="fCustPostPayPartial" aria-label="หลังชำระ: ส่งทุกงวด (ผู้ติดต่อ)"></select>
             </div>
           </div>
           </div>
@@ -216,9 +227,10 @@
             <div id="fPolicyNever" style="margin-top:8px;font-size:11px;color:#64748b"></div>
             <div id="fPolicyMeta" style="margin-top:6px;font-size:11px;color:#475569"></div>
             <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">
-              <button type="button" class="btn btn-sm btn-primary" onclick="Page.savePolicy('recurring')">บันทึกนโยบายของรายการนี้</button>
-              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.savePolicy('contact')">บันทึกเป็นนโยบายของผู้ติดต่อ</button>
+              <button type="button" class="btn btn-sm btn-primary" id="fPolicySaveBtn" onclick="Page.savePolicy('recurring')">บันทึกนโยบายของรายการนี้</button>
+              <button type="button" class="btn btn-sm btn-secondary" id="fPolicyContactBtn" onclick="Page.savePolicy('contact')">บันทึกเป็นนโยบายของผู้ติดต่อ</button>
             </div>
+            <div id="fPolicySaveNote" style="display:none;margin-top:4px;font-size:11px;color:#92400e"></div>
           </div>
           </div>
           </div>
@@ -270,6 +282,10 @@ const Page = {
     // รอบ 248: แผงความพร้อมตรวจใหม่ทุกครั้งที่ฟอร์มเปลี่ยน (หน่วง 600ms — เซิร์ฟเวอร์ตัดสิน)
     const fm = document.getElementById('formModal');
     if (fm) { fm.addEventListener('change', () => this.refreshReadiness()); fm.addEventListener('input', () => this.refreshReadiness()); }
+    // รอบ 250 WP-03 (D §1.2 · B F-6): นโยบายที่ผู้ใช้เปลี่ยนในขั้น ⑤ ต้องไม่หายเงียบ — จำ dirty + ปุ่มบันทึกนโยบายรู้สถานะฟอร์ม
+    const pr = document.getElementById('fPolicyRows');
+    if (pr) pr.addEventListener('change', () => { this._policyDirty = true; this._updatePolicyButtons(); });
+    if (fm) { fm.addEventListener('input', () => this._updatePolicyButtons()); fm.addEventListener('change', () => this._updatePolicyButtons()); }
     this.load();
   },
 
@@ -286,6 +302,12 @@ const Page = {
     if (pm) { pm.innerHTML = modeOpts || '<option value="">ตามค่าชั้นถัดไป</option>'; pm.disabled = !this._apOpts; }
     const cpm = document.getElementById('fCustPayMode');
     if (cpm) { cpm.innerHTML = modeOpts || '<option value="">ตามค่าชั้นถัดไป</option>'; cpm.disabled = !this._apOpts; }
+    for (const id of ['fPolicySaveBtn', 'fPolicyContactBtn']) { const b = document.getElementById(id); if (b && !this._apOpts) b.disabled = true; }
+    // รอบ 250 (WP-02 B-13): ตัวเลือกงานหลังรับชำระ (ชื่อ Inherit|On|Off · ป้ายจากเซิร์ฟเวอร์)
+    const triOpts = list => (list || []).map(o => `<option value="${Layout.esc(o.code)}">${Layout.esc(o.label)}</option>`).join('')
+      || '<option value="Inherit">ตามค่าชั้นถัดไป</option>';
+    ['fPostPayEmail', 'fCustPostPayEmail'].forEach(id => { const el = document.getElementById(id); if (el) { el.innerHTML = triOpts(this._apOpts && this._apOpts.postPayEmailOptions); el.disabled = !this._apOpts; } });
+    ['fPostPayPartial', 'fCustPostPayPartial'].forEach(id => { const el = document.getElementById(id); if (el) { el.innerHTML = triOpts(this._apOpts && this._apOpts.postPayPartialOptions); el.disabled = !this._apOpts; } });
   },
 
   goStep(n) {
@@ -298,9 +320,21 @@ const Page = {
   /** hydrate ช่องทางรับเงิน + นโยบายของรายการ (ฟอร์มใหม่ = ว่าง · แก้ไข = ค่าที่บันทึกไว้ — ห้ามค้างค่าของรายการก่อน) */
   async _hydrateAutopilot(r) {
     const pm = document.getElementById('fPaymentMode');
-    if (pm) pm.value = r.paymentMode || '';
+    this._setSavedRefWarning('fPayModeWarn', '');
+    if (pm) {
+      pm.value = r.paymentMode || '';
+      // รอบ 250 WP-03 (D §1.1): ค่าที่บันทึกไว้ไม่อยู่ในตัวเลือก (ตัวเลือกโหลดล้ม/ถูกปิด) — เดิมตกเป็น '' แล้วบันทึกทับ = ล้างเงียบ ๆ
+      if (r.paymentMode && pm.value !== r.paymentMode) {
+        this._restoreSavedOption('fPaymentMode', r.paymentMode, r.paymentMode, 'fPayModeWarn');
+        if (!this._apOpts) this._setSavedRefWarning('fPayModeWarn', `ค่าที่บันทึกไว้ (${r.paymentMode}) จะคงเดิม — โหลดตัวเลือกไม่สำเร็จ ช่องนี้จึงถูกล็อก`);
+      }
+    }
+    // รอบ 250 (WP-02 B-13): hydrate ค่าตั้งงานหลังรับชำระ (ฟอร์มใหม่ = Inherit — ห้ามค้างค่ารายการก่อน)
+    const ppe = document.getElementById('fPostPayEmail'); if (ppe) ppe.value = r.postPayEmailReceipt || 'Inherit';
+    const ppp = document.getElementById('fPostPayPartial'); if (ppp) ppp.value = r.postPayIncludePartial || 'Inherit';
     this._renderPayChannels(r.payLinkChannels || []);
     this._editingPolicy = r.autoApprovePolicy || null;
+    this._policyDirty = false;
     this._renderPolicy();
     this.onAutopilotChange();
   },
@@ -308,6 +342,11 @@ const Page = {
   _renderPayChannels(checked) {
     const box = document.getElementById('fPayChannels');
     if (!box) return;
+    if (!this._apOpts) {
+      // รอบ 250 WP-03 (D §1.1): ขั้น ④ ล็อกพร้อมเหตุผล — ค่าที่บันทึกไว้ส่งเป็น null (= ไม่แก้) ไม่ใช่ ''/[] (= ล้าง)
+      box.innerHTML = '<div style="color:#b45309">🔒 โหลดตัวเลือกช่องทางรับเงินไม่สำเร็จ — ช่องนี้ถูกล็อก และค่าที่บันทึกไว้จะคงเดิม (ไม่ถูกล้าง) · รีเฟรชหน้าเพื่อแก้ค่า</div>';
+      return;
+    }
     const chans = (this._apOpts && this._apOpts.payLinkChannels) || [];
     const why = this._apOpts && this._apOpts.payLinkUnavailableReason;
     box.innerHTML = (chans.length
@@ -344,6 +383,8 @@ const Page = {
     if (grp) grp.style.display = this._contactAp ? '' : 'none';
     const cpm = document.getElementById('fCustPayMode');
     if (cpm) cpm.value = (this._contactAp && this._contactAp.paymentMode) || '';
+    const cpe = document.getElementById('fCustPostPayEmail'); if (cpe) cpe.value = (this._contactAp && this._contactAp.postPayEmailReceipt) || 'Inherit';
+    const cpp = document.getElementById('fCustPostPayPartial'); if (cpp) cpp.value = (this._contactAp && this._contactAp.postPayIncludePartial) || 'Inherit';
     this._renderPolicy();
   },
   async saveContactPayMode() {
@@ -351,7 +392,9 @@ const Page = {
     if (!cid) { Layout.toast('เลือกผู้ติดต่อก่อน', 'error'); return; }
     const api = Layout.api(); if (!api) return;
     try {
-      const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null });
+      const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null,
+        postPayEmailReceipt: !this._apOpts ? null : (document.getElementById('fCustPostPayEmail')?.value || 'Inherit'),
+        postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fCustPostPayPartial')?.value || 'Inherit') });
       this._contactAp = res.data || this._contactAp;
       Layout.toast((res && res.message) || 'บันทึกแล้ว');
       this.refreshReadiness(true);
@@ -389,7 +432,7 @@ const Page = {
       .map(n => `• ${Layout.esc(n.label)} — ${Layout.esc(n.why || '')}`).join('<br>'));
     if (meta) {
       const who = p => p ? `ตั้งไว้${p.setAt ? 'เมื่อ ' + Layout.date(p.setAt) : ''} · ปล่อย: ${Layout.esc((p.passCodes || []).join(', ') || 'ไม่ปล่อย (หยุดรอคนทุกข้อ)')}` : 'ยังไม่ได้ตั้ง';
-      meta.innerHTML = `รายการนี้: ${own && own.inheritContact ? 'รับรองให้ใช้นโยบายของผู้ติดต่อ' + (own.setAt ? ' เมื่อ ' + Layout.date(own.setAt) : '') : who(own)}<br>ผู้ติดต่อ: ${who(contactPol)}<br>`
+      meta.innerHTML = `รายการนี้: ${own && own.inheritContact ? 'รับรองให้ใช้นโยบายของผู้ติดต่อ' + (own.setAt ? ' เมื่อ ' + Layout.date(own.setAt) : '') : who(own) /* html — who() หนีด้วย Layout.esc */}<br>ผู้ติดต่อ: ${who(contactPol) /* html — who() หนีแล้ว */}<br>`
         + 'ผู้ตั้ง/ผู้รับรองต้องมีสิทธิ์อนุมัติเอกสาร · ผู้ตั้งออกจากบริษัท หรือแก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติของรายการหลังตั้ง ⇒ นโยบายหยุดมีผลจนกว่าจะตั้ง/รับรองใหม่ · ทุกครั้งที่ปล่อยลงหมายเหตุบนใบ + บันทึกตรวจสอบ';
     }
   },
@@ -405,15 +448,50 @@ const Page = {
         Layout.toast((res && res.message) || 'บันทึกแล้ว');
       } else {
         const id = document.getElementById('fId').value;
-        if (!id) { Layout.toast('บันทึกรายการประจำก่อน แล้วจึงตั้งนโยบายของรายการนี้ (หรือบันทึกเป็นนโยบายของผู้ติดต่อ)', 'warning', 7000); return; }
-        const sc = document.getElementById('fPolicyScope')?.value || 'clear';
-        const res = await api.setRecurringApprovePolicy(id, { passCodes, inherit: sc === 'inherit', clear: sc === 'clear' });
-        this._editingPolicy = res.data || null;
+        if (!id) { Layout.toast('นโยบายของรายการนี้จะถูกบันทึกพร้อมกับปุ่ม “บันทึก” ของฟอร์ม', 'info', 7000); return; }
+        if (this._formDirty()) { Layout.toast('บันทึกรายการก่อน — นโยบายรับรองค่าที่บันทึกแล้วเท่านั้น (กด “บันทึก” ของฟอร์ม ระบบบันทึกนโยบายให้ต่อ)', 'warning', 8000); return; }
+        const res = await this._saveRecurringPolicy(id);
         Layout.toast((res && res.message) || 'บันทึกแล้ว');
       }
       this._renderPolicy();
       this.refreshReadiness(true);
     } catch (err) { Layout.toast(err.message, 'error', 8000); }
+  },
+
+  /** รอบ 250 WP-03: บันทึกนโยบายของรายการ (ตัวเดียว — ปุ่มในขั้น ⑤ และต่อท้าย save() เมื่อนโยบาย dirty) */
+  async _saveRecurringPolicy(id) {
+    const api = Layout.api(); if (!api) return null;
+    const passCodes = Array.from(document.querySelectorAll('#fPolicyRows .fPolicyCode')).filter(el => el.value === 'release').map(el => el.dataset.code);
+    const sc = document.getElementById('fPolicyScope')?.value || 'clear';
+    const res = await api.setRecurringApprovePolicy(id, { passCodes, inherit: sc === 'inherit', clear: sc === 'clear' });
+    this._editingPolicy = res.data || null;
+    this._policyDirty = false;
+    return res;
+  },
+  /** ฟอร์มต่างจากค่าที่โหลดไว้ไหม (ลายเซ็นของ _buildPayload ตัวเดียวกับตอนบันทึก) */
+  _formDirty() {
+    if (!document.getElementById('fId').value || this._loadedSig == null) return false;
+    const b = this._buildPayload();
+    return !b.data || JSON.stringify(b.data) !== this._loadedSig;
+  },
+  _snapshotForm() {
+    const b = this._buildPayload();
+    this._loadedSig = b.data ? JSON.stringify(b.data) : null;
+    this._updatePolicyButtons();
+  },
+  /** ปุ่ม "บันทึกนโยบายของรายการนี้": ฟอร์มใหม่ = ปิด (บันทึกพร้อมฟอร์ม) · ฟอร์มแก้ไขที่ยังไม่บันทึก = ปิด + "บันทึกรายการก่อน" (B F-6) */
+  _updatePolicyButtons() {
+    const btn = document.getElementById('fPolicySaveBtn');
+    const note = document.getElementById('fPolicySaveNote');
+    if (!btn) return;
+    const isNew = !document.getElementById('fId').value;
+    const dirty = !isNew && this._formDirty();
+    let msg = '';
+    if (!this._apOpts) msg = 'โหลดตัวเลือกนโยบายไม่สำเร็จ — รีเฟรชหน้าก่อนตั้งนโยบาย';
+    else if (isNew) msg = 'รายการใหม่: นโยบายที่เลือกจะถูกบันทึกให้พร้อมกับปุ่ม “บันทึก” ของฟอร์ม';
+    else if (dirty) msg = 'บันทึกรายการก่อน — มีการแก้ไขที่ยังไม่บันทึก (กด “บันทึก” ของฟอร์ม ระบบบันทึกนโยบายที่เปลี่ยนให้ต่อ)';
+    btn.disabled = !this._apOpts || isNew || dirty;
+    if (note) { note.textContent = msg; note.style.display = msg ? '' : 'none'; }
   },
 
   /** ร่างสำหรับตรวจความพร้อม/ทดลองรัน — ตัวประกอบเดียวกับตอนบันทึก (ค่าที่ยังกรอกไม่ครบใช้ค่าตั้งต้นที่ไม่เขียนอะไร) */
@@ -458,8 +536,8 @@ const Page = {
       if (it.fixUrl === '#step-pay') return ` <a href="#" style="color:#2563eb" onclick="Page.goStep(4);return false">${Layout.esc(it.fixLabel || 'แก้')}</a>`;
       return ` <a href="${Layout.esc(it.fixUrl)}" target="_blank" style="color:#2563eb">${Layout.esc(it.fixLabel || 'แก้')} ↗</a>`;
     };
-    return `<div style="font-weight:600;color:${levelColor};margin-bottom:6px">${Layout.esc(r.levelLabel)}</div>`
-      + (r.items || []).map(it => `<div style="margin:4px 0">${icon(it.verdict)} <span style="color:#64748b">[${Layout.esc(it.stage)}]</span> ${Layout.esc(it.title)}${fix(it)}`
+    return `<div style="font-weight:600;color:${levelColor /* text — สีคงที่ */};margin-bottom:6px">${Layout.esc(r.levelLabel)}</div>`
+      + (r.items || []).map(it => `<div style="margin:4px 0">${icon(it.verdict) /* text — อีโมจิคงที่ */} <span style="color:#64748b">[${Layout.esc(it.stage)}]</span> ${Layout.esc(it.title)}${fix(it) /* html — fix() หนีด้วย Layout.esc */}`
         + (it.why ? `<div style="font-size:11px;color:#64748b;margin-left:18px">${Layout.esc(it.why)}</div>` : '') + '</div>').join('');
   },
 
@@ -485,19 +563,19 @@ const Page = {
       </tbody></table>
       <div style="margin-top:4px">รวม ${Layout.money(d.totalAmount)} · หัก ณ ที่จ่าย ${Layout.money(d.withholdingTaxAmount)} · ยอดรับสุทธิ ${Layout.money(d.expectedNetReceipt)}</div>
       <div style="margin-top:6px"><strong>อนุมัติ:</strong> ${Layout.esc(d.approvalOutcome)}</div>
-      ${(d.approvalBlocking || []).length ? `<div style="color:#991b1b">หยุดเพราะ:<ul style="margin:2px 0 0 16px">${list(d.approvalBlocking)}</ul></div>` : ''}
-      ${(d.approvalReleased || []).length ? `<div style="color:#92400e">นโยบายปล่อย:<ul style="margin:2px 0 0 16px">${list(d.approvalReleased)}</ul></div>` : ''}
+      ${(d.approvalBlocking || []).length ? `<div style="color:#991b1b">หยุดเพราะ:<ul style="margin:2px 0 0 16px">${list(d.approvalBlocking) /* html — list() หนีแต่ละข้อ */}</ul></div>` : ''}
+      ${(d.approvalReleased || []).length ? `<div style="color:#92400e">นโยบายปล่อย:<ul style="margin:2px 0 0 16px">${list(d.approvalReleased) /* html */}</ul></div>` : ''}
       <div style="margin-top:4px"><strong>อีเมล:</strong> ${Layout.esc(d.emailPlan)}</div>
       <div><strong>ลิงก์ชำระ:</strong> ${Layout.esc(d.payLinkPlan)}</div>
-      ${(d.notes || []).length ? `<ul style="margin:6px 0 0 16px;font-size:11px;color:#64748b">${list(d.notes)}</ul>` : ''}
-      <hr style="margin:8px 0;border:none;border-top:1px solid #e2e8f0">${this._renderReadiness(d.readiness)}`;
+      ${(d.notes || []).length ? `<ul style="margin:6px 0 0 16px;font-size:11px;color:#64748b">${list(d.notes) /* html */}</ul>` : ''}
+      <hr style="margin:8px 0;border:none;border-top:1px solid #e2e8f0">${this._renderReadiness(d.readiness) /* html — หนีภายใน */}`;
   },
   async dryRunSaved(id) {
     const api = Layout.api(); if (!api) return;
     const box = document.getElementById('detailDryRun');
     try {
       const res = await api.dryRunRecurring(id);
-      if (box) box.innerHTML = `<div style="margin-top:12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:12px">${this._renderDryRun(res.data)}</div>`;
+      if (box) box.innerHTML = `<div style="margin-top:12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:12px">${this._renderDryRun(res.data) /* html — หนีภายใน */}</div>`;
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
@@ -517,7 +595,7 @@ const Page = {
     if (!sel) return;
     sel.innerHTML = '<option value="">-- ไม่หักภาษี ณ ที่จ่าย --</option>' +
       this._incomeTypes.map(x =>
-        `<option value="${Layout.esc(x.code)}" data-rate="${x.defaultRate ?? ''}" data-note="${Layout.esc(x.note || '')}">${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`
+        `<option value="${Layout.esc(x.code)}" data-rate="${Layout.esc(x.defaultRate ?? '')}" data-note="${Layout.esc(x.note || '')}">${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`
       ).join('');
   },
 
@@ -572,20 +650,20 @@ const Page = {
       if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ</td></tr>'; return; }
       tbody.innerHTML = items.map(r => `<tr>
         <td><span class="font-medium">${Layout.esc(r.name || '-')}</span></td>
-        <td>${Layout.docTypeLabel(r.documentType || '-')}</td>
-        <td>${freqMap[r.frequency] || Layout.esc(r.frequency || '-')}</td>
+        <td>${Layout.esc(Layout.docTypeLabel(r.documentType || '-'))}</td>
+        <td>${Layout.esc(freqMap[r.frequency] || r.frequency || '-')}</td>
         <td>${Layout.esc(r.contactName || '-')}</td>
         <td class="text-right">${Layout.money(r.amount)}</td>
         <td>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</td>
         <td>${Layout.statusBadge(r.status || 'Active')}${r.lastRunError
-          ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunError)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${r.id}')">⚠️ สร้างเอกสารไม่สำเร็จ</span></div>`
-          : (r.lastRunOutcome ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunOutcome.headline)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;cursor:pointer" onclick="Page.view('${r.id}')">ℹ️ มีเรื่องต้องทำต่อ</span></div>` : '')}${r.autoSendEmailWarning
-          ? `<div style="margin-top:4px"><span title="${Layout.esc(r.autoSendEmailWarning)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${r.id}')">📧 ผู้ติดต่อไม่มีอีเมล</span></div>` : ''}</td>
+          ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunError)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${Layout.jsArg(r.id)}')">⚠️ สร้างเอกสารไม่สำเร็จ</span></div>`
+          : (r.lastRunOutcome ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunOutcome.headline)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;cursor:pointer" onclick="Page.view('${Layout.jsArg(r.id)}')">ℹ️ มีเรื่องต้องทำต่อ</span></div>` : '')}${r.autoSendEmailWarning
+          ? `<div style="margin-top:4px"><span title="${Layout.esc(r.autoSendEmailWarning)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${Layout.jsArg(r.id)}')">📧 ผู้ติดต่อไม่มีอีเมล</span></div>` : ''}</td>
         <td>
-          <button class="btn btn-sm btn-secondary" onclick="Page.view('${r.id}')" data-i18n="common.view">ดู</button>
-          ${r.status === 'Active' ? `<button class="btn btn-sm btn-warning" onclick="Page.pause('${r.id}')">หยุด</button>` : ''}
-          ${r.status === 'Paused' ? `<button class="btn btn-sm btn-success" onclick="Page.resume('${r.id}')">เริ่มต่อ</button>` : ''}
-          ${r.status === 'Active' ? `<button class="btn btn-sm btn-primary" onclick="Page.runNow('${r.id}')">สร้างทันที</button>` : ''}
+          <button class="btn btn-sm btn-secondary" onclick="Page.view('${Layout.jsArg(r.id)}')" data-i18n="common.view">ดู</button>
+          ${r.status === 'Active' ? `<button class="btn btn-sm btn-warning" onclick="Page.pause('${Layout.jsArg(r.id)}')">หยุด</button>` : ''}
+          ${r.status === 'Paused' ? `<button class="btn btn-sm btn-success" onclick="Page.resume('${Layout.jsArg(r.id)}')">เริ่มต่อ</button>` : ''}
+          ${r.status === 'Active' ? `<button class="btn btn-sm btn-primary" onclick="Page.runNow('${Layout.jsArg(r.id)}')">สร้างทันที</button>` : ''}
         </td>
       </tr>`).join('');
       const totalPages = res.data?.totalPages || 1;
@@ -750,7 +828,8 @@ const Page = {
     if (this._contactAC) this._contactAC.clear();
     this.checkContactEmail();
     this.onDocTypeChange();
-    await this._hydrateAutopilot({ paymentMode: null, payLinkChannels: null, autoApprovePolicy: null });
+    await this._hydrateAutopilot({ paymentMode: null, payLinkChannels: null, autoApprovePolicy: null, postPayEmailReceipt: 'Inherit', postPayIncludePartial: 'Inherit' });
+    this._snapshotForm();
     this.goStep(1);
     Layout.openModal('formModal');
     const vp = document.getElementById('varPanel'); if (vp) vp.style.display = 'none';
@@ -786,9 +865,9 @@ const Page = {
     if (!show) return;
     const chips = document.getElementById('varChips');
     chips.innerHTML = this._varValues().map(([tok, val, label]) =>
-      `<button type="button" onclick="Page.insertVar('&lt;&lt;${tok}&gt;&gt;')" title="${label} → ${val}"
+      `<button type="button" onclick="Page.insertVar('&lt;&lt;${Layout.jsArg(tok)}&gt;&gt;')" title="${Layout.esc(label)} → ${Layout.esc(val)}"
         style="border:1px solid #7dd3fc;background:#fff;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;color:#0369a1">
-        &lt;&lt;${tok}&gt;&gt; <span style="color:#94a3b8">= ${val}</span></button>`).join('');
+        &lt;&lt;${Layout.esc(tok)}&gt;&gt; <span style="color:#94a3b8">= ${Layout.esc(val)}</span></button>`).join('');
     this._updateVarPreview();
   },
   insertVar(token) {
@@ -806,41 +885,13 @@ const Page = {
     if (!prev || !ta) return;
     let out = ta.value || '';
     for (const [tok, val] of this._varValues())
-      out = out.replace(new RegExp(`(?:<<|\\{\\{)\\s*${tok}\\s*(?:>>|\\}\\})`, 'gi'), val);
-    prev.innerHTML = out.trim() ? `ตัวอย่างงวดนี้: <b style="color:#0f172a">${out.replace(/</g,'&lt;')}</b>` : '';
+      out = out.replace(new RegExp(`(?:<<|\\{\\{)\\s*${tok /* text — RegExp ไม่ใช่ HTML */}\\s*(?:>>|\\}\\})`, 'gi'), val);
+    prev.innerHTML = out.trim() ? `ตัวอย่างงวดนี้: <b style="color:#0f172a">${Layout.esc(out)}</b>` : '';
   },
 
   async aiSuggestAccount(slot, selectId, hintId) {
-    try {
-      const cid = Layout.getCompanyId();
-      const token = localStorage.getItem('token');
-      const r = await fetch(`/api/companies/${cid}/ai/gl-account/suggest?slot=${slot}`,
-        { headers: { 'Authorization': 'Bearer ' + token } });
-      const j = await r.json();
-      const d = j?.data;
-      const sel = document.getElementById(selectId);
-      const hint = hintId ? document.getElementById(hintId) : null;
-      if (!d || !d.accountId) { if (hint) hint.textContent = '🤖 ' + (d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ'); return; }
-      if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
-        const opt = document.createElement('option');
-        opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
-        sel.appendChild(opt);
-      }
-      if (sel) sel.value = d.accountId;
-      if (hint) hint.textContent = `🤖 ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
-      if (sel && d.feedbackId) {
-        sel.addEventListener('change', () => {
-          try {
-            fetch(`/api/companies/${cid}/ai-feedback/record`, {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-              // event `change` ของดรอปดาวน์บัญชี = ผู้ใช้เลือกเอง ⇒ Explicit (รอบ 181 D7-3)
-              body: JSON.stringify({ feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId, source: 'Explicit' })
-            }).catch(() => {});
-          } catch {}
-        }, { once: true });
-      }
-    } catch { /* best-effort */ }
+    // รอบ 250 WP-03 (ฝ่ายค้าน M3): ตัวกลางเดียว Layout.suggestGlAccount (API.* · ป้ายตาม usedAi · ปิด loop · ล้มดังในช่องคำใบ้)
+    return Layout.suggestGlAccount({ slot, selectId, hintId });
   },
   async loadFormData() {
     const api = Layout.api(); if (!api) return;
@@ -864,13 +915,13 @@ const Page = {
       const activeBanks = this.bankAccounts.filter(a => a.isActive !== false);
       if (activeBanks.length) {
         sel.innerHTML += '<optgroup label="บัญชีธนาคาร">' +
-          activeBanks.map(a => `<option value="bank:${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('') +
+          activeBanks.map(a => `<option value="bank:${Layout.esc(a.id)}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('') +
           '</optgroup>';
       }
       const nonBankAccounts = this.paymentChannels.filter(a => !(a.accountCode || '').startsWith('1112'));
       if (nonBankAccounts.length) {
         sel.innerHTML += '<optgroup label="เงินสด / อื่นๆ">' +
-          nonBankAccounts.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') +
+          nonBankAccounts.map(a => `<option value="account:${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') +
           '</optgroup>';
       }
     }
@@ -943,13 +994,13 @@ const Page = {
     const incomeOpts = sel => '<option value="">ไม่หัก</option>' + (this._incomeTypes || []).map(x =>
       `<option value="${Layout.esc(x.code)}"${String(x.code) === String(sel) ? ' selected' : ''}>${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`).join('');
     box.innerHTML = `<table class="rec-line-table"><thead><tr><th style="width:4%">#</th><th>รายละเอียด</th><th style="width:10%">จำนวน</th><th style="width:14%">ราคาต่อหน่วย</th><th style="width:9%">VAT %</th><th style="width:18%">ประเภทเงินได้</th><th style="width:9%">หัก %</th><th style="width:5%"></th></tr></thead><tbody>`
-      + this._extraLines.map((l, i) => `<tr data-i="${i}">
-        <td>${i + 2}</td>
+      + this._extraLines.map((l, i) => `<tr data-i="${Number(i)}">
+        <td>${Number(i + 2)}</td>
         <td><input type="text" data-k="description" value="${Layout.esc(l.description)}"></td>
         <td><input type="number" step="0.01" min="0" data-k="quantity" value="${Layout.esc(String(l.quantity))}"></td>
         <td><input type="number" step="0.01" min="0" data-k="unitPrice" value="${Layout.esc(String(l.unitPrice))}"></td>
         <td><input type="number" step="0.01" data-k="vatRate" value="${Layout.esc(String(l.vatRate))}"></td>
-        <td><select data-k="incomeTypeCode">${incomeOpts(l.incomeTypeCode)}</select></td>
+        <td><select data-k="incomeTypeCode">${incomeOpts(l.incomeTypeCode) /* html — หนีภายใน */}</select></td>
         <td><input type="number" step="0.01" min="0" max="100" data-k="withholdingTaxRate" value="${Layout.esc(String(l.withholdingTaxRate))}"></td>
         <td><button type="button" class="btn btn-sm btn-ghost" title="ลบบรรทัด" onclick="Page.removeExtraLine('${Layout.jsArg(i)}')">✕</button></td>
       </tr>`).join('') + '</tbody></table>';
@@ -1047,6 +1098,18 @@ const Page = {
       // ผู้ติดต่อไม่มีอีเมล = ติ๊ก "ส่งอีเมล" ไว้ก็ไม่มีอะไรออก ⇒ เซิร์ฟเวอร์บันทึกได้ (อาจเพิ่มอีเมลทีหลัง) แต่คืนคำเตือน (saveWarnings) — หน้าแสดงตามนั้น
       const saved = id ? await api.updateRecurring(id, data) : await api.createRecurring(data);
       Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างสำเร็จ');
+      // รอบ 250 WP-03 (D §1.2): นโยบายที่เปลี่ยนในขั้น ⑤ บันทึกต่อทันทีหลังรายการ (ได้ id แล้ว) — เดิมหายเงียบ
+      const savedId = id || (saved && saved.data && saved.data.id);
+      if (this._policyDirty && this._apOpts) {
+        if (!savedId) Layout.toast('บันทึกรายการแล้ว แต่ไม่ได้รับเลขรายการ — เปิดแก้ไขแล้วบันทึกนโยบายอีกครั้ง', 'warning', 9000);
+        else {
+          try { const pr = await this._saveRecurringPolicy(savedId); Layout.toast((pr && pr.message) || 'บันทึกนโยบายอนุมัติแล้ว', 'success'); }
+          catch (pe) {
+            // รายการบันทึกแล้ว แต่นโยบายไม่ผ่าน (เช่นไม่มีสิทธิ์อนุมัติ) — บอกดัง ไม่ปิดเงียบ
+            Layout.toast('บันทึกรายการแล้ว แต่บันทึกนโยบายอนุมัติไม่สำเร็จ: ' + (pe.message || '') + ' — นโยบายเดิมยังมีผล', 'error', 12000);
+          }
+        }
+      }
       // เตือนตรง ๆ ถ้าเปิดส่งอีเมลแต่บริษัทยังไม่มีอีเมลที่ทดสอบผ่าน — จะได้
       // ไม่เข้าใจผิดว่าลูกค้าได้รับเมลจากชื่อบริษัทตัวเองทุกงวด
       if (data.autoSendEmail && !(this._emailCfg && this._emailCfg.configured))
@@ -1138,8 +1201,13 @@ const Page = {
       notifyBeforeRun: true,
       notifyDaysBefore: 1,
       // รอบ 248: ช่องทางรับเงินต่อรายการ — แก้ไข: "" = ล้าง (ตามผู้ติดต่อ › บริษัท) · [] = ล้างช่องทาง (เซิร์ฟเวอร์ตรวจชื่อเอง)
-      paymentMode: document.getElementById('fPaymentMode')?.value || (id ? '' : null),
-      payLinkChannels: this._checkedChannels()
+      // รอบ 250 WP-03 (D §1.1): ตัวเลือกโหลดไม่สำเร็จ ⇒ ส่ง null (= ไม่แก้) — เดิมส่ง ''/[] ⇒ เซิร์ฟเวอร์ล้างค่าที่ตั้งไว้เงียบ ๆ
+      paymentMode: !this._apOpts ? null : (document.getElementById('fPaymentMode')?.value || (id ? '' : null)),
+      payLinkChannels: !this._apOpts ? null : this._checkedChannels(),
+      // รอบ 250 (WP-02 B-13): ส่งค่าปัจจุบันทุกครั้ง (Inherit = ล้าง) — ห้ามแก้แล้วหายเงียบ ·
+      // ตัวเลือกโหลดไม่สำเร็จ (ตัวเลือกสำรองมีแต่ Inherit) ⇒ null = ไม่แก้ (กติกาเดียวกับ WP-03 D §1.1 — ห้ามล้างค่าที่บันทึกไว้)
+      postPayEmailReceipt: !this._apOpts ? null : (document.getElementById('fPostPayEmail')?.value || 'Inherit'),
+      postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fPostPayPartial')?.value || 'Inherit')
     };
     return { data };
   },
@@ -1158,20 +1226,20 @@ const Page = {
         tdCombined = !!td.combinedInvoiceTaxInvoice;
         if (td.paymentAccountId && this.paymentChannels) {
           const pa = this.paymentChannels.find(a => a.id === td.paymentAccountId);
-          tdPaymentName = pa ? `${pa.accountCode} - ${pa.accountName}` : '⚠️ บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ) — เปิดแก้ไขเพื่อเลือกใหม่';
+          tdPaymentName = pa ? `${pa.accountCode} - ${pa.accountName}` : '⚠️ บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ) — เปิดแก้ไขเพื่อเลือกใหม่';   // esc-ok: escape ที่ปลายทาง (Layout.esc(tdPaymentName))
         } else if (td.bankAccountId && this.bankAccounts) {
           const ba = this.bankAccounts.find(a => a.id === td.bankAccountId);
-          tdPaymentName = ba ? `${ba.accountName} (${ba.bankName} ${ba.accountNumber})${ba.isActive === false ? ' — ⚠️ ปิดใช้งาน' : ''}` : '⚠️ บัญชีธนาคารที่บันทึกไว้ (ไม่พบ) — เปิดแก้ไขเพื่อเลือกใหม่';
+          tdPaymentName = ba ? `${ba.accountName} (${ba.bankName} ${ba.accountNumber})${ba.isActive === false ? ' — ⚠️ ปิดใช้งาน' : ''}` : '⚠️ บัญชีธนาคารที่บันทึกไว้ (ไม่พบ) — เปิดแก้ไขเพื่อเลือกใหม่';   // esc-ok: escape ที่ปลายทาง
         }
         if (td.expenseCategoryId && this.expenseCategories) {
           const ec = this.expenseCategories.find(a => a.id === td.expenseCategoryId);
-          tdExpenseName = ec ? `${ec.accountCode} - ${ec.accountName}${ec.isActive === false ? ' — ⚠️ ปิดใช้งาน' : ''}` : '⚠️ บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ)';
+          tdExpenseName = ec ? `${ec.accountCode} - ${ec.accountName}${ec.isActive === false ? ' — ⚠️ ปิดใช้งาน' : ''}` : '⚠️ บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ)';   // esc-ok: escape ที่ปลายทาง (Layout.esc(tdExpenseName))
         }
       } catch {}
       document.getElementById('detailContent').innerHTML = `
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <div><span class="text-gray-500 text-sm">ประเภทเอกสาร:</span><br><strong>${tdCombined ? 'ใบแจ้งหนี้/ใบกำกับภาษี (ใบเดียว หัวรวม)' : Layout.docTypeLabel(r.documentType||r.type)}</strong></div>
-          <div><span class="text-gray-500 text-sm">ความถี่:</span><br><strong>${freqMap[r.frequency]||r.frequency}</strong></div>
+          <div><span class="text-gray-500 text-sm">ประเภทเอกสาร:</span><br><strong>${Layout.esc(tdCombined ? 'ใบแจ้งหนี้/ใบกำกับภาษี (ใบเดียว หัวรวม)' : Layout.docTypeLabel(r.documentType||r.type))}</strong></div>
+          <div><span class="text-gray-500 text-sm">ความถี่:</span><br><strong>${Layout.esc(freqMap[r.frequency]||r.frequency)}</strong></div>
           <div><span class="text-gray-500 text-sm">วันเริ่มต้น:</span><br><strong>${Layout.date(r.startDate)}</strong></div>
           <div><span class="text-gray-500 text-sm">วันสิ้นสุด:</span><br><strong>${r.endDate ? Layout.date(r.endDate) : 'ไม่กำหนด'}</strong></div>
           <div><span class="text-gray-500 text-sm">ผู้ติดต่อ:</span><br><strong>${Layout.esc(r.contactName||'-')}</strong></div>
@@ -1180,7 +1248,7 @@ const Page = {
           <div><span class="text-gray-500 text-sm">หมวดหมู่ค่าใช้จ่าย:</span><br><strong>${Layout.esc(tdExpenseName)}</strong></div>
           <div><span class="text-gray-500 text-sm">สถานะ:</span><br>${Layout.statusBadge(r.status)}</div>
           <div><span class="text-gray-500 text-sm">ครั้งถัดไป:</span><br><strong>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</strong></div>
-          <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${r.totalRuns || 0} ครั้ง${r.maxRuns ? ' จาก ' + r.maxRuns : ''}</strong>${r.lastRunDate ? `<div style="font-size:11px;color:#64748b">ล่าสุด ${Layout.date(r.lastRunDate)}${r.lastDocumentId ? ` · <a href="/pages/documents.html?openDoc=${encodeURIComponent(r.lastDocumentId)}" style="color:#2563eb">เปิดเอกสารล่าสุด</a>` : ''}</div>` : ''}</div>
+          <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${Number(r.totalRuns) || 0} ครั้ง${r.maxRuns ? ' จาก ' + r.maxRuns : ''}</strong>${r.lastRunDate ? `<div style="font-size:11px;color:#64748b">ล่าสุด ${Layout.date(r.lastRunDate)}${r.lastDocumentId ? ` · <a href="/pages/documents.html?openDoc=${encodeURIComponent(r.lastDocumentId)}" style="color:#2563eb">เปิดเอกสารล่าสุด</a>` : ''}</div>` : ''}</div>
           <div><span class="text-gray-500 text-sm">อนุมัติอัตโนมัติ:</span><br><strong>${r.autoApprove ? 'ใช่' : 'ไม่'}</strong></div>
           <div><span class="text-gray-500 text-sm">ส่งอีเมลอัตโนมัติ:</span><br><strong>${r.autoSendEmail ? '📧 ส่งให้ผู้ติดต่อทันที (แนบ PDF)' : 'ไม่'}</strong></div>
         </div>
@@ -1190,13 +1258,13 @@ const Page = {
           <div style="margin-top:6px;font-size:12px;color:#7f1d1d">แก้ตามข้อความข้างบน (ปุ่ม "แก้ไข") แล้วกด "สร้างทันที" ในตาราง — หรือรอรอบอัตโนมัติถัดไป ระบบลองใหม่ให้เองทุกรอบ</div></div>` : ''}
         ${r.autoSendEmailWarning ? `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:13px">
           📧 ${Layout.esc(r.autoSendEmailWarning)}${r.autoSendEmailFixUrl ? ` <a href="${Layout.esc(r.autoSendEmailFixUrl)}" target="_blank" style="color:#2563eb;text-decoration:underline">เปิดหน้าผู้ติดต่อเพื่อเพิ่มอีเมล</a>` : ''}</div>` : ''}
-        ${this._renderOutcome(r)}
+        ${this._renderOutcome(r) /* html — หนีภายใน */}
         <div id="detailDryRun"></div>`;
       document.getElementById('detailFooter').innerHTML = `
         <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
         <button class="btn btn-secondary" onclick="Page.dryRunSaved('${Layout.jsArg(r.id)}')">ทดลองรัน 🔍</button>
-        <button class="btn btn-danger" onclick="Page.del('${r.id}')" data-i18n="common.delete">ลบ</button>
-        <button class="btn btn-primary" onclick="Page.editFromDetail('${r.id}')" data-i18n="common.edit">แก้ไข</button>`;
+        <button class="btn btn-danger" onclick="Page.del('${Layout.jsArg(r.id)}')" data-i18n="common.delete">ลบ</button>
+        <button class="btn btn-primary" onclick="Page.editFromDetail('${Layout.jsArg(r.id)}')" data-i18n="common.edit">แก้ไข</button>`;
       Layout.openModal('detailModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
@@ -1212,8 +1280,8 @@ const Page = {
     const actions = (o.actions || []).map(btn).join(' ');
     return `<div style="margin-top:12px;padding:12px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#78350f;font-size:13px;line-height:1.6">
       <div style="font-weight:600;font-size:14px">ℹ️ ${Layout.esc(o.headline)}</div>
-      ${steps ? `<div style="margin-top:8px;font-weight:600">สิ่งที่ต้องทำ</div><ol style="margin:2px 0 0 20px;padding:0;list-style:decimal">${steps}</ol>` : ''}
-      ${actions ? `<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">${actions}</div>` : ''}
+      ${steps ? `<div style="margin-top:8px;font-weight:600">สิ่งที่ต้องทำ</div><ol style="margin:2px 0 0 20px;padding:0;list-style:decimal">${steps /* html — li หนีแล้ว */}</ol>` : ''}
+      ${actions ? `<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">${actions /* html — ปุ่มหนีแล้ว */}</div>` : ''}
       ${o.autoApproveNote ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:#fff;border:1px dashed #fcd34d;font-size:12px">✅ ${Layout.esc(o.autoApproveNote)}</div>` : ''}
       ${(o.legalNote || o.rawNotice) ? `<details style="margin-top:8px;font-size:12px;color:#92400e"><summary style="cursor:pointer">รายละเอียดเพิ่มเติม</summary>
         ${o.legalNote ? `<div style="margin-top:4px">${Layout.esc(o.legalNote)}</div>` : ''}
@@ -1284,19 +1352,20 @@ const Page = {
         const savedId = savedPaymentChannelVal.replace(/^(bank|account):/, '');
         const ba = savedPaymentChannelVal.startsWith('bank:') ? (this.bankAccounts || []).find(a => a.id === savedId) : null;
         const pa = savedPaymentChannelVal.startsWith('account:') ? (this.paymentChannels || []).find(a => a.id === savedId) : null;
-        const label = ba ? `${ba.accountName} (${ba.bankName} ${ba.accountNumber})${ba.isActive === false ? ' — ปิดใช้งาน' : ''}`
-          : pa ? `${pa.accountCode} - ${pa.accountName}`
+        const label = ba ? `${ba.accountName} (${ba.bankName} ${ba.accountNumber})${ba.isActive === false ? ' — ปิดใช้งาน' : ''}`   // esc-ok: label ไป textContent (_restoreSavedOption)
+          : pa ? `${pa.accountCode} - ${pa.accountName}`   // esc-ok: textContent
           : 'บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ)';
         this._restoreSavedOption('fPaymentChannel', savedPaymentChannelVal, label, 'fPaymentChannelHint');
       }
       if (savedExpenseCategoryId) {
         const ec = (this.expenseCategories || []).find(a => a.id === savedExpenseCategoryId);
-        const label = ec ? `${ec.accountCode} - ${ec.accountName}${ec.isActive === false ? ' — ปิดใช้งาน' : ''}` : 'บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ)';
+        const label = ec ? `${ec.accountCode} - ${ec.accountName}${ec.isActive === false ? ' — ปิดใช้งาน' : ''}` : 'บัญชีที่บันทึกไว้ (ปิดใช้งาน/ไม่พบ)';   // esc-ok: label ไป textContent (_restoreSavedOption)
         this._restoreSavedOption('fExpenseCategory', savedExpenseCategoryId, label, 'fExpenseCatWarn');
       }
       await this._hydrateWhtPayee(savedWhtPayeeId);
       this.onDocTypeChange();
       await this._hydrateAutopilot(r);
+      this._snapshotForm();
       this.goStep(1);
       Layout.openModal('formModal');
       this.refreshReadiness(true);

@@ -71,7 +71,7 @@ public class FileAttachmentController : ControllerBase
 
         // ชนิดที่รับจากหน้าเว็บ + สิทธิ์ต่อชนิด อยู่ในตารางเดียว (AttachmentPermissionScope) — เดิมเป็นอาร์เรย์ในเมธอดนี้
         // และมีด่านสิทธิ์แค่ "Document" · "ExpenseClaim" = หลักฐาน §65 ทวิ "ไม่มีใบเสร็จ" ที่พนักงานแนบเอง ·
-        // "PayrollRun" = สลิปโอนเงิน/ใบเสร็จ สปส./ภ.ง.ด.1 (เก็บ 5 ปี — พ.ร.บ.การบัญชี ม.10)
+        // "PayrollRun" = สลิปโอนเงิน/ใบเสร็จ สปส./ภ.ง.ด.1 (เก็บ 5 ปี — พ.ร.บ.การบัญชี ม.14)
         var rule = AttachmentPermissionScope.Resolve(entityType);
         if (!rule.ClientUploadAllowed)
             return BadRequest(new ApiResponse<FileAttachmentResponse>(false, null!, rule.IsKnown
@@ -160,7 +160,7 @@ public class FileAttachmentController : ControllerBase
         // ทุกชนิดผ่านด่านของโมดูลเจ้าของ (รอบ 193 ข้อ 29) · ชนิดที่ไม่รู้จัก = ห้ามลบ
         var deny = await DenyAttachmentAsync(companyId, att.EntityType, att.EntityId, AttachmentAccess.Write, "ลบไฟล์แนบ", att.Id);
         if (deny is { } d) return StatusCode(d.Status, new ApiResponse<string>(false, null!, d.Message));
-        // ★ หลักฐานประกอบรายการบัญชีต้องเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.10 · §87/3) — ฝ่ายค้านรอบ 190:
+        // ★ หลักฐานประกอบรายการบัญชีต้องเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.14 · §87/3) — ฝ่ายค้านรอบ 190:
         // เปิดให้แนบ/ลบบนใบที่อนุมัติแล้ว แต่ DeleteAsync ลบไฟล์จริง ⇒ ผู้มีสิทธิ์สร้างใบลบหลักฐานของใบที่ยื่น
         // ภ.พ.30 ไปแล้วได้ถาวร · ตอนนี้: ใบร่าง = ลบจริงได้ (ยังไม่ใช่รายการบัญชี) · นอกนั้นถอดจากรายการแต่
         // เก็บไฟล์จริงไว้ (soft-delete) — ผู้ใช้ยังถอดไฟล์ที่แนบผิดได้เหมือนเดิม

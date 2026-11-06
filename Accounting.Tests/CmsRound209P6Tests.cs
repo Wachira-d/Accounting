@@ -301,7 +301,7 @@ public class CmsRound209P6Tests
         var o = Order();
         Assert.True(CmsPdpaErasure.AnonymizeOrder(o, legalHold: true) > 0);
         Assert.Null(o.ShippingEmail); Assert.Null(o.ShippingPhone); Assert.Null(o.ShippingAddress); Assert.Null(o.CustomerNotes);
-        Assert.Equal("บริษัท เอ", o.BillingName);              // §86/4 ผู้ซื้อบนใบกำกับ — พ.ร.บ.การบัญชี ม.10 ถือ 5 ปี
+        Assert.Equal("บริษัท เอ", o.BillingName);              // §86/4 ผู้ซื้อบนใบกำกับ — พ.ร.บ.การบัญชี ม.14 ถือ 5 ปี
         Assert.Equal(ValidJuristicTaxId, o.BillingTaxId);
         Assert.Equal("2 ถนน", o.BillingAddress);
         Assert.Equal(500m, o.TotalAmount);                       // ยอดเงินไม่ใช่ข้อมูลส่วนบุคคล

@@ -310,7 +310,7 @@ public class SettlementPostingService : ISettlementPostingService
         string createdNumber;
         using (SettlementPaymentOwner.StampOnSave(_db, batch.Id, r.DocumentId))
         {
-            var created = await _documents.CreatePaymentAsync(companyId, request, userId.ToString());
+            var created = await _documents.CreatePaymentAsync(companyId, request, userId.ToString(), source: PaymentEntrySource.Settlement);
             createdId = created.Id;
             createdNumber = created.PaymentNumber;
         }

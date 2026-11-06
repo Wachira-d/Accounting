@@ -133,18 +133,31 @@ public class DocumentPayLinkService : IDocumentPayLinkService
     private sealed record DocFacts(Guid Id, Guid CompanyId, Guid ContactId, DocumentType Type, DocumentStatus Status, decimal BalanceDue,
         decimal WithholdingTaxAmount, string? Currency, string DocumentNumber, DateTime DocumentDate, DateTime? DueDate,
         string? PayLinkTokenHash, string? PayLinkTokenProtected, DateTime? PayLinkExpiresAt, DateTime? PayLinkRevokedAt, string? PayLinkChannelsJson,
-        DocumentType? RelatedType);
+        DocumentType? RelatedType, bool? CnDnPurchaseSideOverride, bool ContactSupplierOnly)
+    {
+        /// <summary>รอบ 250 (WP-02 §2.3): เลขใบกำกับภาษีที่อ้างใบแจ้งหนี้นี้และยังมีผล (โหลดใน <see cref="LoadDocAsync"/> — ตัดสินใน policy ไม่ใช่ service)</summary>
+        public string? SupersedingTaxInvoice { get; init; }
+    }
 
     /// <summary>โหลดตาม id หรือตาม <b>hash</b> ของ token (ฐานไม่มี token ตรง) — ผู้เรียกฝั่ง token ต้องยืนยันซ้ำด้วย <c>TokenMatches</c> (เวลาคงที่)</summary>
     private async Task<DocFacts?> LoadDocAsync(Guid companyId, Guid? documentId, string? tokenHash, CancellationToken ct)
     {
         var q = _db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && !d.IsDeleted);
         q = documentId is Guid id ? q.Where(d => d.Id == id) : q.Where(d => d.PayLinkTokenHash == tokenHash);
-        return await q.Select(d => new DocFacts(d.Id, d.CompanyId, d.ContactId, d.DocumentType, d.Status, d.BalanceDue, d.WithholdingTaxAmount,
+        var facts = await q.Select(d => new DocFacts(d.Id, d.CompanyId, d.ContactId, d.DocumentType, d.Status, d.BalanceDue, d.WithholdingTaxAmount,
                 d.Currency, d.DocumentNumber, d.DocumentDate, d.DueDate, d.PayLinkTokenHash, d.PayLinkTokenProtected, d.PayLinkExpiresAt, d.PayLinkRevokedAt,
                 d.PayLinkChannelsJson,
-                _db.Documents.Where(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId).Select(r => (DocumentType?)r.DocumentType).FirstOrDefault()))
+                _db.Documents.Where(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId).Select(r => (DocumentType?)r.DocumentType).FirstOrDefault(),
+                d.CnDnPurchaseSideOverride,
+                // ฝ่ายค้าน WP-02 ข้อ 3: ผู้ติดต่อเป็นผู้ขายอย่างเดียว — ข้อเท็จจริงเดียวกับที่ JE รับชำระใช้ตัดสินฝั่ง
+                _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsSupplier && !c.IsCustomer).FirstOrDefault()))
             .FirstOrDefaultAsync(ct);
+        if (facts == null) return null;
+        // รอบ 250 (WP-02 §2.3): fact "มีใบกำกับอ้างแล้ว" — ตัวโหลดเดียวกับ QR บนกระดาษ/งานหลังรับชำระ
+        return facts with
+        {
+            SupersedingTaxInvoice = await PaymentQrService.SupersedingTaxInvoiceNumberAsync(_db, companyId, facts.Type, facts.Id, ct),
+        };
     }
 
     /// <summary>ผู้ซื้อมีหน้าที่หัก ณ ที่จ่ายไหม (ฝ่ายค้าน S3) — ตัวตัดสินเดียว <see cref="DocumentPayLinkPolicy.BuyerWithholds"/></summary>
@@ -179,7 +192,8 @@ public class DocumentPayLinkService : IDocumentPayLinkService
     }
 
     private static string? Refusal(DocFacts d)
-        => DocumentPayLinkPolicy.IssueRefusal(d.Type, d.Status, d.BalanceDue, DocumentPayLinkPolicy.IsSaleSide(d.Type, d.RelatedType), d.Currency);
+        => DocumentPayLinkPolicy.IssueRefusal(d.Type, d.Status, d.BalanceDue, DocumentPayLinkPolicy.IsSaleSide(d.Type, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly), d.Currency,
+            d.SupersedingTaxInvoice);
 
     private async Task<(IReadOnlyList<string> All, IReadOnlyList<string>? CompanyDefault, string? Unavailable)> ChannelsAsync(Guid companyId, CancellationToken ct)
     {
@@ -208,7 +222,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         var now = DateTime.UtcNow;
         var json = DocumentPayLinkPolicy.SerializeChannels(allowed);
         // หนึ่งลิงก์ต่อใบ — ลิงก์เดิมยังใช้ได้ + ถอด token ฉบับเข้ารหัสได้ ⇒ URL เดิม (อีเมลรอบก่อนยังใช้ได้) · ช่องทางตามรอบล่าสุด
-        string? token = DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now)
+        string? token = DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now, d.SupersedingTaxInvoice)
             ? Recover(d.PayLinkTokenProtected, d.PayLinkTokenHash) : null;
         if (token != null)
         {
@@ -275,12 +289,15 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             new AutopilotSettingsResolver.Layer(rule.AttachPayLink, DocumentPayLinkPolicy.ParseChannels(rule.PayLinkChannelsJson)),
             null, contactLayer, companyAttach, null).Attach;
         if (!attach) return null;
+        // ชนิดที่ไม่มีลิงก์ชำระเลย (ใบซื้อ/ใบเสร็จ ฯลฯ) ⇒ ไม่มีอะไรต้องบอก (ไม่ใช่ "ไม่แนบเพราะ…" บนทุกแถวคิว)
+        if (doc.DocumentType is not (DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.DebitNote)) return null;
         var r = await EnsureLinkAsync(doc.CompanyId, doc.Id, DocumentPayLinkPolicy.ParseChannels(rule.PayLinkChannelsJson), ct);
         if (!r.Ok)
         {
-            // ไม่ใช่ความผิดพลาดของการส่ง (ใบชำระครบ/ใบซื้อ/บริษัทปิดรับออนไลน์) — อีเมลยังส่งตามปกติโดยไม่มีลิงก์ · เหตุผลอยู่ในหน้าตั้งค่า/หน้าเอกสาร
+            // ไม่ใช่ความผิดพลาดของการส่ง (ใบชำระครบ/บริษัทปิดรับออนไลน์/ยังไม่ตั้ง URL ของระบบ) — อีเมลยังส่งตามปกติโดยไม่มีลิงก์ ·
+            // รอบ 250 (WP-02 §2.4 ข้อ 2 · คำตัดสิน §2 #9): คืนผลพร้อมเหตุ (Url = null) ⇒ ตัวเข้าคิวเขียนเหตุบนแถวคิว (ส่งได้แต่บอกว่าไม่มีลิงก์เพราะอะไร) — เดิมคืน null เงียบ
             _logger?.LogInformation("ไม่แนบลิงก์ชำระเงินให้ {Doc}: {Why}", doc.Id, r.Refusal);
-            return null;
+            return r;
         }
         return r;
     }
@@ -289,7 +306,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
     {
         var d = await LoadDocAsync(companyId, documentId, null, ct);
         if (d == null || Refusal(d) != null
-            || !DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, DateTime.UtcNow)) return null;
+            || !DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, DateTime.UtcNow, d.SupersedingTaxInvoice)) return null;
         var raw = Recover(d.PayLinkTokenProtected, d.PayLinkTokenHash);
         var origin = raw == null ? null : await SystemBaseUrl.ResolveAsync(_db, _config, ct);
         return raw == null || string.IsNullOrWhiteSpace(origin) ? null : DocumentPayLinkPolicy.Url(origin, companyId, raw);
@@ -307,7 +324,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         var (amounts, whtNote) = await AmountsAsync(companyId, d, ct);
         string? url = null;
         var online = 0;
-        if (DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, DateTime.UtcNow))
+        if (DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, DateTime.UtcNow, d.SupersedingTaxInvoice))
         {
             var (all, companyDefault, unavailable) = await ChannelsAsync(companyId, ct);
             if (unavailable == null)
@@ -342,7 +359,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         var (all, companyDefault, unavailable) = await ChannelsAsync(companyId, ct);
         var allowed = DocumentPayLinkPolicy.Allowed(all, DocumentPayLinkPolicy.ParseChannels(d.PayLinkChannelsJson), companyDefault);
         var (amounts, whtNote) = await AmountsAsync(companyId, d, ct);
-        var raw = DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, DateTime.UtcNow)
+        var raw = DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, DateTime.UtcNow, d.SupersedingTaxInvoice)
             ? Recover(d.PayLinkTokenProtected, d.PayLinkTokenHash) : null;
         var usable = raw != null;
         var origin = await SystemBaseUrl.ResolveAsync(_db, _config, ct);
@@ -373,7 +390,8 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         var now = DateTime.UtcNow;
         // ฝ่ายค้าน S2: ลิงก์เพิกถอน/หมดอายุ ⇒ ไม่เปิดเผยอะไรของใบ (ชื่อลูกค้า · เลขเอกสาร · ยอด · บัญชีรับโอน) — ข้อความเดียว
         // (Target ยังผูกใบเดิมเพื่อให้รายการชำระที่สร้างไปแล้วอ่านสถานะได้ · ยอด 0 = สร้างรายการใหม่ไม่ได้ · ไม่ส่งออกใน JSON)
-        if (!DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now))
+        // รอบ 250 (WP-02 §2.3): ใบแจ้งหนี้ที่ออกใบกำกับแล้ว ⇒ ลิงก์เดิมใช้ไม่ได้ทันที (ตัดสินสด — fact จาก LoadDocAsync) · ข้อความบอกให้ชำระที่ใบกำกับ
+        if (!DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now, d.SupersedingTaxInvoice))
             return UnusableView(d);
 
         var (all, companyDefault, unavailable) = await ChannelsAsync(companyId, ct);
@@ -399,21 +417,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
 
         PublicTransferInfo? transfer = null;
         if (allowed.Contains(DocumentPayLinkPolicy.BankTransferCode, StringComparer.OrdinalIgnoreCase) && Refusal(d) == null)
-        {
-            // รอบ 246 QR (ฝ่ายค้าน S2): บัญชีของใบก่อน — ตัวเลือกบัญชีเดียวกับกระดาษ (PaymentQrService.PickDocumentAccountAsync) · ไม่มี ⇒ บัญชีรับโอนของเว็บ (เดิม)
-            transfer = await DocumentAccountTransferAsync(companyId, d.Id, amounts.Net, ct);
-            var gw = transfer != null ? null
-                : await SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, null).FirstOrDefaultAsync(ct);
-            if (gw != null)
-            {
-                // รอบ 246 QR: QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดสุทธิของลิงก์ · data URI จากไบต์ที่สร้างเอง) — เลขที่ใช้ไม่ได้ ⇒ ไม่มี QR (ข้อความเดิม)
-                string? qr = null;
-                var ppId = PaymentQrPolicy.NormalizePromptPayId(gw.PromptPayId).Id;
-                if (ppId != null && amounts.Net > 0.005m)
-                    qr = "data:image/png;base64," + Convert.ToBase64String(new PromptPayService().GenerateQrImage(ppId, amounts.Net, size: 330));
-                transfer = new PublicTransferInfo(gw.BankName, gw.BankAccountNumber, gw.BankAccountName, gw.PromptPayId, qr);
-            }
-        }
+            transfer = await TransferBlockAsync(companyId, d.Id, amounts.Net, ct);
 
         var title = heading.Title;
         var target = new PublicPayTarget(PaymentSourceKind.Document, d.Id, Guid.Empty, blocked == null ? amounts.Net : 0m,
@@ -431,6 +435,37 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             Card: blocked == null ? card : null,
             IsTestMode: cfg?.Mode == PaymentProviderMode.Test)
         { Target = target };
+    }
+
+    /// <summary>กล่อง "โอนเข้าบัญชี" ของใบ (ตัวเดียว — หน้าชำระสาธารณะ + พอร์ทัลลูกค้า · รอบ 250 WP-03 ฝ่ายค้าน H1):
+    /// บัญชีของใบก่อน (ตัวเลือกบัญชีเดียวกับกระดาษ <c>PaymentQrService.PickDocumentAccountAsync</c>) · ไม่มี ⇒ บัญชีรับโอนของเว็บ ·
+    /// QR พร้อมเพย์ฝังยอดสุทธิ <paramref name="net"/> (หลัง WHT ที่ผู้ซื้อจะหัก — ผู้เรียกต้องส่ง <c>AmountsAsync().Net</c>)</summary>
+    private async Task<PublicTransferInfo?> TransferBlockAsync(Guid companyId, Guid documentId, decimal net, CancellationToken ct)
+    {
+        // รอบ 246 QR (ฝ่ายค้าน S2): บัญชีของใบก่อน — ตัวเลือกบัญชีเดียวกับกระดาษ (PaymentQrService.PickDocumentAccountAsync) · ไม่มี ⇒ บัญชีรับโอนของเว็บ (เดิม)
+        var transfer = await DocumentAccountTransferAsync(companyId, documentId, net, ct);
+        if (transfer != null) return transfer;
+        var gw = await SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, null).FirstOrDefaultAsync(ct);
+        if (gw == null) return null;
+        // รอบ 246 QR: QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดสุทธิของลิงก์ · data URI จากไบต์ที่สร้างเอง) — เลขที่ใช้ไม่ได้ ⇒ ไม่มี QR (ข้อความเดิม)
+        string? qr = null;
+        var ppId = PaymentQrPolicy.NormalizePromptPayId(gw.PromptPayId).Id;
+        if (ppId != null && net > 0.005m)
+            qr = "data:image/png;base64," + Convert.ToBase64String(new PromptPayService().GenerateQrImage(ppId, net, size: 330));
+        return new PublicTransferInfo(gw.BankName, gw.BankAccountNumber, gw.BankAccountName, gw.PromptPayId, qr);
+    }
+
+    /// <summary>รอบ 250 WP-03 (ฝ่ายค้าน H1): ตัวเลือกโอน/QR ของใบสำหรับพอร์ทัลลูกค้า — <b>กติกาเดียวกับหน้าชำระ</b>:
+    /// <see cref="DocumentPayLinkPolicy.IssueRefusal"/> (ฝั่งขาย · THB · ออกแล้ว · ยอดค้าง &gt; 0 · ใบกำกับอ้างแล้ว) แล้วจึงประกอบกล่องโอนด้วยยอดสุทธิหลัง WHT ·
+    /// ผู้เรียกต้องตรวจความเป็นเจ้าของใบก่อน (พอร์ทัล = <c>PortalDocuments</c>) · null = ไม่พบใบ</summary>
+    public async Task<DocumentTransferView?> TransferForDocumentAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+    {
+        var d = await LoadDocAsync(companyId, documentId, null, ct);
+        if (d == null) return null;
+        if (Refusal(d) is { } refusal) return new DocumentTransferView(refusal, 0m, 0m, 0m, null);
+        var (amounts, _) = await AmountsAsync(companyId, d, ct);
+        return new DocumentTransferView(null, amounts.Gross, amounts.Wht, amounts.Net,
+            await TransferBlockAsync(companyId, d.Id, amounts.Net, ct));
     }
 
     /// <summary>รอบ 246 QR (ฝ่ายค้าน S2) — บัญชีรับโอนของใบนี้จากตัวเลือกบัญชีเดียวกับกระดาษ (แหล่งเงินของใบ → บัญชีของใบ → เทมเพลต → บัญชีเดียวที่ตั้ง QR) +
@@ -455,13 +490,17 @@ public class DocumentPayLinkService : IDocumentPayLinkService
 
     public const string UnusableLinkNote = "ลิงก์นี้ใช้ไม่ได้แล้ว (หมดอายุหรือถูกยกเลิก) — กรุณาติดต่อผู้ขายเพื่อขอลิงก์ใหม่";
 
-    /// <summary>มุมมองของลิงก์ที่ใช้ไม่ได้ — ไม่มีข้อมูลของใบเลย (ฝ่ายค้าน S2)</summary>
-    private static PublicDocumentPayView UnusableView(DocFacts d) => new(
-        CompanyName: "", DocumentTitle: "", DocumentNumber: "", DocumentDate: default, DueDate: null, CustomerName: null,
-        Gross: 0m, Wht: 0m, Net: 0m, Currency: "THB", CanPayOnline: false, BlockedNote: UnusableLinkNote,
-        OnlineMethods: new List<PayChannelOption>(), Transfer: null, Card: null, IsTestMode: false)
+    /// <summary>มุมมองของลิงก์ที่ใช้ไม่ได้ — ไม่มีข้อมูลของใบเลย (ฝ่ายค้าน S2) · รอบ 250: ใบแจ้งหนี้ที่ออกใบกำกับแล้ว ⇒ ข้อความบอกให้ชำระที่ใบกำกับ</summary>
+    private static PublicDocumentPayView UnusableView(DocFacts d)
     {
-        Target = new PublicPayTarget(PaymentSourceKind.Document, d.Id, Guid.Empty, 0m, "", null, null, "",
-            BlockedNote: UnusableLinkNote, AllowedMethods: Array.Empty<string>(), ContactId: d.ContactId),
-    };
+        var note = DocumentPayLinkPolicy.UnusableNote(d.SupersedingTaxInvoice, UnusableLinkNote);
+        return new PublicDocumentPayView(
+            CompanyName: "", DocumentTitle: "", DocumentNumber: "", DocumentDate: default, DueDate: null, CustomerName: null,
+            Gross: 0m, Wht: 0m, Net: 0m, Currency: "THB", CanPayOnline: false, BlockedNote: note,
+            OnlineMethods: new List<PayChannelOption>(), Transfer: null, Card: null, IsTestMode: false)
+        {
+            Target = new PublicPayTarget(PaymentSourceKind.Document, d.Id, Guid.Empty, 0m, "", null, null, "",
+                BlockedNote: note, AllowedMethods: Array.Empty<string>(), ContactId: d.ContactId),
+        };
+    }
 }

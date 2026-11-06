@@ -204,7 +204,8 @@
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.events('${r.id}')">ประวัติ</button>
             ${open ? `<button class="btn btn-sm btn-secondary" onclick="Page.live('${r.id}')">ตรวจสถานะสด</button>
-                      <button class="btn btn-sm btn-primary" onclick="Page.manual('${r.id}')">ยืนยันด้วยมือ</button>` : ''}
+                      <button class="btn btn-sm btn-primary" onclick="Page.manual('${r.id}', ${r.isDocumentSlip === true})">ยืนยันด้วยมือ</button>` : ''}
+            ${r.canRejectSlip ? `<button class="btn btn-sm btn-secondary" onclick="Page.rejectSlip('${r.id}')" title="สลิปปลอม/ซ้ำ/ถูกแทนด้วยเงินก้อนอื่น — ไม่มีการบันทึกเงิน">ปฏิเสธสลิป</button>` : ''}
             ${r.dispute && r.dispute.needsAttention ? `<button class="btn btn-sm btn-secondary" onclick="Page.ackDispute('${r.id}')">รับทราบข้อพิพาท</button>` : ''}
             ${r.redispatchPending ? `<button class="btn btn-sm btn-primary" onclick="Page.redispatch('${r.id}')" title="เงินเข้าแล้วแต่ต้นทางยังไม่ถูกบันทึก — ให้ระบบส่งต่อให้ handler เดิมอีกครั้ง (ไม่บันทึกเงินซ้ำ)">ส่งต่อใหม่</button>` : ''}
             ${r.refundOutcomeUnknown
@@ -299,11 +300,18 @@
         await this.load();
       },
 
-      async manual(id) {
+      async manual(id, isDocumentSlip) {
         const api = Layout.api(); if (!api) return;
         const reason = prompt('เหตุผลที่ยืนยันด้วยมือ (ผู้สอบบัญชีจะเห็นข้อความนี้):',
           'ตรวจสอบยอดในบัญชีธนาคารแล้วพบเงินเข้าจริง');
         if (!reason) return;
+        // รอบ 250 ฝ่ายค้าน M4: สลิปของเอกสาร — วันที่เงินเข้าจริง (ว่าง = วันที่ลูกค้าแนบสลิป · เซิร์ฟเวอร์ตัดสิน/ตรวจ)
+        let receivedDate = null;
+        if (isDocumentSlip) {
+          const raw = prompt('วันที่เงินเข้าบัญชีจริง (ปปปป-ดด-วว ค.ศ.) — เว้นว่าง = วันที่ลูกค้าแนบสลิป:', '');
+          if (raw === null) return;
+          receivedDate = raw.trim() || null;
+        }
         if (!(await Layout.confirmDanger({
           title: 'ยืนยันการรับเงินด้วยมือ',
           message: 'ระบบจะถือว่า<strong>เงินเข้าแล้ว</strong>และดำเนินการต่อให้ต้นทางทันที '
@@ -313,10 +321,21 @@
           mode: 'math'
         }))) return;
         try {
-          const res = await api.confirmPaymentIntentManually(id, reason);
+          const res = await api.confirmPaymentIntentManually(id, reason, receivedDate);
           Layout.toast(res?.message || 'ยืนยันแล้ว');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ยืนยันไม่สำเร็จ', 'error'); }
+      },
+
+      async rejectSlip(id) {
+        const api = Layout.api(); if (!api) return;
+        const reason = prompt('เหตุผลที่ปฏิเสธสลิป (บันทึกลงประวัติ):', 'ไม่พบเงินเข้าตามสลิป');
+        if (!reason) return;
+        try {
+          const res = await api.rejectPaymentIntentSlip(id, reason);
+          Layout.toast(res?.message || 'ปฏิเสธสลิปแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ปฏิเสธไม่สำเร็จ', 'error'); }
       },
 
       async refund(id, max) {

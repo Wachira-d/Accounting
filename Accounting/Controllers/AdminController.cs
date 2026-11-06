@@ -1451,7 +1451,7 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>ลบบริษัท (soft-delete) จาก admin console — SystemAdmin + พิมพ์ชื่อ
-    /// บริษัทยืนยัน. ข้อมูลบัญชีคงอยู่ตาม พ.ร.บ.การบัญชี ม.10 (5 ปี); บริษัทหาย
+    /// บริษัทยืนยัน. ข้อมูลบัญชีคงอยู่ตาม พ.ร.บ.การบัญชี ม.14 (5 ปี); บริษัทหาย
     /// จากรายการ/สลับเข้าไม่ได้ทันทีทุก user (query filter !IsDeleted).</summary>
     [HttpDelete("companies/{companyId:guid}")]
     public async Task<ActionResult> DeleteCompany(Guid companyId, [FromQuery] string confirmName,

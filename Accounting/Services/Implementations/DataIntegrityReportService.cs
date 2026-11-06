@@ -46,7 +46,9 @@ public sealed record DataIntegrityReport(
     // ทีม W10 2026-10-26 (R-56 · G3) — JE จาก API ที่ตัดผังมัดจำ/รับล่วงหน้าโดยไม่อ้างเลขการจองรูปที่ด่านรู้จัก (ด่าน INT-DEPOSIT-OVERDRAW ตรวจไม่ได้ ⇒ ปล่อยผ่านตั้งใจ) · อ่านอย่างเดียว
     List<DataIntegritySuspect>? ApiJournalDepositDrawnWithoutBookingRef = null,
     // ทีม U 2026-10-26 (PV-202610-0040: ฐาน 402.93 · VAT 35.07) — เอกสารฝั่งซื้อที่ลงบัญชีแล้วซึ่ง VAT ไม่สอดคล้องกับฐาน × อัตรา (ฐานถูกบีบตามยอดชำระ) · อ่านอย่างเดียว
-    List<DataIntegritySuspect>? PurchaseVatInconsistentWithBase = null)
+    List<DataIntegritySuspect>? PurchaseVatInconsistentWithBase = null,
+    // รอบ 250 ฝ่ายค้าน M3 — แถวรับชำระ "[PENDING-VERIFY]" ของสลิปพอร์ทัลรุ่นเก่าที่ระบบไม่ย้ายเอง (ต้องให้คนตัดสิน) · อ่านอย่างเดียว
+    List<DataIntegritySuspect>? PortalSlipLegacyNeedsReview = null)
 {
     /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
     /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
@@ -60,7 +62,8 @@ public sealed record DataIntegrityReport(
         + (BookingDepositOverdrawnJournals?.Count ?? 0) + (ApiJournalOutputVatWithoutInvoice?.Count ?? 0)
         + (DebitNotesCashPostedTwice?.Count ?? 0)
         + (ApiJournalDepositDrawnWithoutBookingRef?.Count ?? 0)
-        + (PurchaseVatInconsistentWithBase?.Count ?? 0);
+        + (PurchaseVatInconsistentWithBase?.Count ?? 0)
+        + (PortalSlipLegacyNeedsReview?.Count ?? 0);
 }
 
 /// <summary>
@@ -191,8 +194,28 @@ public class DataIntegrityReportService
         var dnCashTwice = await LoadDebitNoteCashPostedTwiceAsync(companyId);
         var apiNoRef = await LoadApiJournalDepositDrawnWithoutBookingRefAsync(companyId);
         var vatBase = await LoadPurchaseVatInconsistentAsync(companyId);
+        var slipReview = await LoadPortalSlipLegacyNeedsReviewAsync(companyId);
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
-            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, dnCashTwice, apiNoRef, vatBase);
+            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, dnCashTwice, apiNoRef, vatBase,
+            slipReview);
+    }
+
+    /// <summary>รอบ 250 ฝ่ายค้าน M3 — แถวสลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจและยังไม่ถูกลบ (= migration ไม่ย้ายเอง: ผูกธนาคาร/JE/ใบเสร็จ/มีเงินจริงแยกแล้ว ·
+    /// เหตุผลรายแถวอยู่ใน audit <c>PortalSlipLegacyNeedsReview</c>) · ตัวกรองเดียวกับผู้อ่านยอด (กลับด้าน) · tenant = <paramref name="companyId"/> ·
+    /// ทางไปต่อ: เงินเข้าจริงและยังไม่บันทึก ⇒ บันทึกรับชำระที่เอกสาร แล้ว "ยกเลิกการชำระ" แถวนี้ (ยกเลิกแถวนี้ไม่ถอยยอดเอกสาร — ไม่เคยนับ) · ไม่ใช่เงินจริง ⇒ ยกเลิกแถวนี้</summary>
+    private async Task<List<DataIntegritySuspect>> LoadPortalSlipLegacyNeedsReviewAsync(Guid companyId)
+    {
+        var legacy = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted)
+            .Where(Accounting.Helpers.PortalSlipPending.UnverifiedLegacy)
+            .OrderBy(p => p.PaymentDate)
+            .Select(p => new { p.Id, p.PaymentNumber, p.PaymentDate, p.Amount, p.DocumentId, DocNo = p.Document.DocumentNumber })
+            .Take(500)
+            .ToListAsync();
+        return legacy.Select(p => new DataIntegritySuspect("PortalSlipLegacyNeedsReview", p.Id, p.PaymentNumber, p.PaymentDate,
+                $"สลิปจากพอร์ทัลของ {p.DocNo} ที่ยังไม่มีใครตรวจ — ไม่นับเป็นเงินรับ (ใบแจ้งยอด/จับคู่ธนาคารตัดออกแล้ว)",
+                p.Amount, 0m, LinkUrl: $"/pages/documents.html?id={p.DocumentId}", LinkLabel: "เปิดเอกสาร"))
+            .ToList();
     }
 
     /// <summary>ทีม V 2026-10-26 (V-DN-01 · คำตัดสินข้อ 160) — ใบเพิ่มหนี้เงินเชื่อที่ JE อนุมัติ (รุ่นก่อน) ลงขาเงิน แล้วมี/จะมี JE ชำระลงขาเงินซ้ำ ·

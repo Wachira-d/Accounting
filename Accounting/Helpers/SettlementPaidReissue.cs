@@ -382,6 +382,13 @@ public static class SettlementPaidReissue
         nameof(Document.CustomsDutyPaidDate), nameof(Document.TaxPointDate), nameof(Document.RetentionUntil),
         nameof(Document.NonDeductibleAmount), nameof(Document.NonDeductibleRuleJson), nameof(Document.LateReason),
         nameof(Document.IsOpeningBalance),
+        // รอบ 250 WP-01 (เทสต์ partition R7/RV1F11 เพิ่งรันครั้งแรก — ช่องทีม U 54c45b63 ไม่ได้จัดกลุ่ม ⇒ ตัวคัดลอก allowlist ทิ้งเงียบ ๆ):
+        // "หักหลัง VAT" + แยกยอดจ่ายจริงตามแหล่ง เป็นเนื้อเงินของการขายเดียวกัน — ตามไปคู่กับ ActualPaidAmount/TotalAmount
+        // (เดิมใบแทนได้ 0/null ⇒ ยอดชำระบนใบแทน = TotalAmount เต็ม ไม่ตรงยอดจ่ายจริงที่ตามไป · JE ย้ายมาพร้อมขาหักหลัง VAT แต่หัวใบไม่มี)
+        nameof(Document.PostVatDeductionAmount), nameof(Document.PostVatDeductionAccountId), nameof(Document.PaymentSourceSplitJson),
+        // รอบ 250 WP-02 (ฝ่ายค้าน ข้อ 1): ใบแทน = การขายเดียวกัน ⇒ รายการประจำที่สร้างใบตามไป (ชั้น "รายการประจำ" ของค่าตั้งงานหลังรับชำระ) ·
+        // หมายเหตุ: AutoSendRuleId ไม่ตามไป (อยู่ใน NotCarried) ⇒ ชั้น "ตารางส่ง" หายบนใบแทน — ใบแทนใช้ชั้นรายการประจำ › ผู้ติดต่อ › บริษัท
+        nameof(Document.RecurringTransactionId),
     };
 
     /// <summary>ช่องของเอกสารที่ "ไม่ตามไป" — ตัวตน/เวลา/เลข · สถานะ (ตั้งด้วย <see cref="ReplacementStatus"/>) · หลักฐานของลูกค้าเดิม (ลายเซ็นรับของ ·
@@ -422,6 +429,11 @@ public static class SettlementPaidReissue
         // (RelatedDocumentId ตามไปแล้ว — ใบแทนผูกต้นทางเดิมโดยการออกใบแทน ไม่ใช่โดยผู้ผูกคนเดิม · ไม่ประทับเวลาที่ไม่ได้เกิดกับใบนี้)
         // เดิมช่องสองตัวนี้ถูกเพิ่มใน entity โดยไม่ได้จัดกลุ่ม ⇒ เทสต์ partition R7/RV1F11 ล้มพร้อมชื่อช่อง (ทำหน้าที่ถูกต้อง)
         nameof(Document.SourceLinkedAt), nameof(Document.SourceLinkedBy),
+        // รอบ 250 WP-01 (ช่องรอบ 241 ที่ไม่ได้จัดกลุ่ม): ลิงก์ชำระของใบเดิม — hash เป็น unique (สองใบถือ token เดียวไม่ได้) · ใบแทนออกลิงก์/เลือกช่องทางใหม่ ·
+        // ตารางส่งที่ส่งใบเดิมถึงลูกค้าเป็นเหตุการณ์ของใบเดิม ("ส่งแล้ว" ไม่ตามไปเช่นกัน) · ธงโควตาตั้งโดยเส้นสร้างของใบนั้นเอง
+        nameof(Document.PayLinkTokenHash), nameof(Document.PayLinkTokenProtected), nameof(Document.PayLinkIssuedAt),
+        nameof(Document.PayLinkExpiresAt), nameof(Document.PayLinkRevokedAt), nameof(Document.PayLinkChannelsJson),
+        nameof(Document.AutoSendRuleId), nameof(Document.QuotaCountDeferred),
     };
 
     /// <summary>ช่องของบรรทัดที่ตามไป — ทุกอย่างของรายการ ยกเว้นตัวตน/เวลา/ใบแม่ และ feedback AI ของผังบัญชี (สองบรรทัดชี้แถวเดียว)</summary>

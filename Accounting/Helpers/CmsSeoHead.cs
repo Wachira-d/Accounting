@@ -189,11 +189,15 @@ public static class CmsSeoHead
     public static string? AbsoluteUrl(string baseUrl, string? url)
     {
         var u = (url ?? "").Trim();
-        if (u.Length == 0 || !CmsGalleryBlock.IsSafeUrl(u)) return null;
+        if (u.Length == 0) return null;
+        // รอบ 250 WP-01 (เทสต์ W4 เพิ่งรันครั้งแรก): พาธสัมพัทธ์ไม่มี "/" นำ ("uploads/cms/a.jpg") — IsSafeUrl รับเฉพาะพาธที่ขึ้นต้น "/" ⇒ เดิมตกเป็น null
+        // ทั้งที่บรรทัดท้ายตั้งใจเติม "/" ให้ (โค้ดตาย) · เติม "/" ก่อนตรวจเฉพาะค่าที่ไม่มี ":" (ไม่มี scheme — "javascript:" ยังถูกปฏิเสธเหมือนเดิม)
+        if (!u.StartsWith('/') && !u.Contains(':')) u = "/" + u;
+        if (!CmsGalleryBlock.IsSafeUrl(u)) return null;
         if (IsAbsoluteHttp(u)) return u;
         var b = (baseUrl ?? "").TrimEnd('/');
         if (!IsAbsoluteHttp(b)) return null;
-        return b + (u.StartsWith('/') ? u : "/" + u);
+        return b + u;
     }
 
     /// <summary>origin ของคำขอ (scheme://host) — ค่าที่ reverse proxy ส่งมา (X-Forwarded-*) ผู้เรียกแก้ก่อน · host ว่าง ⇒ ""</summary>

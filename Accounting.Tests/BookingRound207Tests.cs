@@ -355,11 +355,12 @@ public class BookingRound207Tests
     // ═════════ BookingProductLink (ข้อ 1) ═════════
 
     [Theory]
+    // รอบ 250 WP-01: ช่อง double? ต้องใส่ literal ชนิด double (`25d`) — xUnit แปลง int→double ได้ แต่ int→double? ไม่ได้ (ArgumentException ตอนรัน)
     [InlineData(false, 7, null, 0)]      // ไม่จด VAT ⇒ 0 เสมอ
     [InlineData(true, 7, null, 7)]       // ไม่ผูกสินค้า ⇒ อัตราบริษัท (เดิม)
-    [InlineData(true, 7, 7, 7)]
-    [InlineData(true, 7, 0, 7)]          // ฝ่ายค้านข้อ 8: 0 บนสินค้ากำกวม (สร้างตอนยังไม่จด VAT) ⇒ อัตราบริษัท ไม่ใช่ 0%
-    [InlineData(true, 7, -1, -1)]        // สินค้ายกเว้น VAT ⇒ ยกเว้น
+    [InlineData(true, 7, 7d, 7)]
+    [InlineData(true, 7, 0d, 7)]          // ฝ่ายค้านข้อ 8: 0 บนสินค้ากำกวม (สร้างตอนยังไม่จด VAT) ⇒ อัตราบริษัท ไม่ใช่ 0%
+    [InlineData(true, 7, -1d, -1)]        // สินค้ายกเว้น VAT ⇒ ยกเว้น
     public void อัตราVATบรรทัดการจอง_ตามสินค้าที่ผูก(bool vat, double company, double? product, double expected)
         => Assert.Equal((decimal)expected, BookingProductLink.VatRate(vat, (decimal)company, product is null ? null : (decimal)product.Value));
 

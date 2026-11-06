@@ -80,6 +80,10 @@
             </select>
           </div>
         </div>
+        <!-- ฝ่ายค้าน WP-02 ข้อ 4: นำเข้ารับชำระ — ค่าตั้งต้นไม่ส่งใบเสร็จย้อนหลังถึงลูกค้า (เลือกเอง) -->
+        <label class="ih-muted" style="display:flex;gap:6px;align-items:center;margin:8px 0">
+          <input type="checkbox" id="ihSendReceipts"> รับชำระ: ส่งใบเสร็จถึงลูกค้าหลังบันทึก (ตามค่าตั้ง "ส่งเอกสารอัตโนมัติ" · ไม่ติ๊ก = ไม่ส่งใบเสร็จย้อนหลัง)
+        </label>
         <div class="ih-drop" id="ihDrop">
           <div style="font-size:32px">📂</div>
           <div style="font-weight:600;margin-top:6px">ลากไฟล์มาวาง หรือคลิกเพื่อเลือก</div>
@@ -348,7 +352,9 @@ const Page = {
     const entity = document.getElementById('ihEntity').value;
     if (entity) fd.append('entityType', entity);
     fd.append('dateOrder', document.getElementById('ihDateOrder').value);
-    if (this.batchOptions) fd.append('options', JSON.stringify(this.batchOptions));
+    const opts = Object.assign({}, this.batchOptions || {});
+    if (document.getElementById('ihSendReceipts')?.checked) opts.sendReceipts = 'true';
+    if (Object.keys(opts).length) fd.append('options', JSON.stringify(opts));
     msg.innerHTML = `<span class="ih-muted">⏳ กำลังอ่าน "${this.esc(file.name)}" …</span>`;
     try {
       const res = await api.importHubCreate(fd);

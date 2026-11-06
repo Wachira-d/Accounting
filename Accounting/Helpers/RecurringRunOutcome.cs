@@ -97,7 +97,9 @@ public static class RecurringRunOutcome
     {
         var isDraft = doc != null && doc.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval;
         var docLabel = doc != null ? DocumentTypeNames.Title(doc.Type, "th") : "เอกสาร";
-        var period = doc != null ? $"{docLabel}งวด {ThaiDay(doc.DocumentDate)}" : docLabel;
+        // รอบ 250 WP-01 (เทสต์รอบ 247 เพิ่งรันครั้งแรก): วันที่ต้องมีช่องว่างคั่นคำไทยที่ต่อท้าย ("งวด 26/10/2569 เป็นร่างแล้ว") —
+        // ทุกจุดใช้ "สร้าง{period}…" ต่อคำไทยตรง ๆ · เดิมหัวข้อบนหน้าขึ้น "26/10/2569เป็นร่างแล้ว"
+        var period = doc != null ? $"{docLabel}งวด {ThaiDay(doc.DocumentDate)} " : docLabel;
         var hasEmail = RecurringEmailReadiness.HasDeliverableEmail(contactEmail);
         var actions = new List<RecurringRunAction>();
         void OpenDoc(string label)

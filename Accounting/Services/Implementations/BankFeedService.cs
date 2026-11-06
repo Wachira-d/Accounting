@@ -455,8 +455,7 @@ public class BankFeedService : IBankFeedService
     /// ให้คะแนนรายการชำระเงินที่เป็นไปได้ด้วยสูตรกลาง แล้วให้ arbiter ตัดสิน.
     /// คืนคำตัดสิน + ตารางผู้สมัคร (ใช้ตรวจคำตอบ AI ต่อ)
     /// </summary>
-    private async Task<(Accounting.Helpers.BankMatchArbiter.Decision Decision,
-        Dictionary<Guid, Payment> ById)> ScoreLocalPaymentCandidatesAsync(
+    private async Task<(Accounting.Helpers.BankMatchArbiter.Decision Decision, Dictionary<Guid, Payment> ById)> ScoreLocalPaymentCandidatesAsync(
         Guid companyId, BankTransaction txn)
     {
         var winStart = txn.TransactionDate.Date.AddDays(-7);
@@ -470,6 +469,7 @@ public class BankFeedService : IBankFeedService
 
         var candidates = await _db.Payments
             .Include(p => p.Document)
+            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ (ห้ามตั้ง MatchedPaymentId ให้สลิปที่ไม่มีใครตรวจ)
             .Where(p => p.CompanyId == companyId && !p.IsDeleted
                 && p.PaymentDate >= winStart && p.PaymentDate <= winEnd
                 && p.Document.Status != Models.Enums.DocumentStatus.Voided

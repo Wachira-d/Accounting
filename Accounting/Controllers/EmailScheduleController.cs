@@ -24,6 +24,15 @@ public class EmailScheduleController : ControllerBase
         bool? AttachPayLink = null, List<string>? PayLinkChannels = null,
         bool? PostPayEmailReceipt = null, bool? PostPayIncludePartial = null);
 
+    /// <summary>ช่วงที่รับของกฎส่งอีเมล (ตัวเดียว — หน้าเว็บตรวจช่วงเดียวกันก่อนส่ง) · null = ผ่าน</summary>
+    internal static string? RuleRangeError(int sendAtHour, int dayOfMonth, int repeatEveryDays)
+    {
+        if (sendAtHour is < 0 or > 23) return $"ชั่วโมงที่ส่งต้องอยู่ระหว่าง 0–23 (ได้ {sendAtHour})";
+        if (dayOfMonth is < 1 or > 28) return $"วันที่ของเดือนต้องอยู่ระหว่าง 1–28 (ได้ {dayOfMonth}) — กันเดือนที่ไม่มีวันที่ 29–31";
+        if (repeatEveryDays < 0) return $"ส่งซ้ำทุก (วัน) ต้องไม่ติดลบ (ได้ {repeatEveryDays})";
+        return null;
+    }
+
     [HttpGet("rules")]
     public async Task<ActionResult<ApiResponse<List<EmailScheduleRule>>>> GetRules(Guid companyId)
         => Ok(new ApiResponse<List<EmailScheduleRule>>(true, await _svc.GetRulesAsync(companyId)));
@@ -32,6 +41,9 @@ public class EmailScheduleController : ControllerBase
     public async Task<ActionResult<ApiResponse<EmailScheduleRule>>> UpsertRule(
         Guid companyId, [FromBody] RuleRequest req)
     {
+        // รอบ 250 WP-03 (ฝ่ายค้าน M4): ค่านอกช่วงตอบ 400 พร้อมช่วง (ช่วงเดียวกับหน้าเว็บ) — เดิม Math.Clamp เงียบ ⇒ ส่งผิดเวลา/ผิดวันโดยผู้ใช้ไม่รู้
+        var rangeError = RuleRangeError(req.SendAtHour, req.DayOfMonth, req.RepeatEveryDays);
+        if (rangeError != null) return BadRequest(new ApiResponse<EmailScheduleRule>(false, null, rangeError));
         var rule = new EmailScheduleRule
         {
             Id = req.Id,
@@ -40,12 +52,12 @@ public class EmailScheduleController : ControllerBase
             IsActive = req.IsActive,
             DocumentType = req.DocumentType,
             OffsetDays = req.OffsetDays,
-            SendAtHour = Math.Clamp(req.SendAtHour, 0, 23),
-            RepeatEveryDays = Math.Max(0, req.RepeatEveryDays),
+            SendAtHour = req.SendAtHour,
+            RepeatEveryDays = req.RepeatEveryDays,
             SubjectTemplate = req.SubjectTemplate,
             BodyTemplate = req.BodyTemplate,
             BccEmails = req.BccEmails,
-            DayOfMonth = Math.Clamp(req.DayOfMonth, 1, 28),
+            DayOfMonth = req.DayOfMonth,
             AttachPayLink = req.AttachPayLink,
             PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(req.PayLinkChannels),
             PostPayEmailReceipt = req.PostPayEmailReceipt,

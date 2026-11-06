@@ -1603,6 +1603,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   null = ไม่เกี่ยว ไม่แสดงปุ่ม · false = ปุ่มปิดพร้อมเหตุผล) · `ForbiddenChanges` (ตาข่าย "ใบใหม่เท่าใบเดิม" ของตัวคัดลอก) · `RequestLineIssues` (ด่านของคำขอผู้ใช้ ·
   V1F R8) · `CopyDocumentForReissue`/`CopyLineForReissue` (**allowlist** `DocumentCarriedFields`/`LineCarriedFields` · V1F R7 — ทุกช่องค่าของ entity ต้องถูกจัดกลุ่ม
   ตามไป/ไม่ตามไป เทสต์ล้มถ้าช่องใหม่ไม่ถูกตัดสิน) · `Helpers/ApprovalControlPolicy.ForReissue` (SoD/วงเงินเซ็นหลายขั้น · V1F R6)
+  · **รอบ 250 WP-01** (เทสต์ R7/RV1F11 เพิ่งรันครั้งแรก — 11 ช่องไม่ได้จัดกลุ่ม): **ตามไป** `PostVatDeductionAmount` · `PostVatDeductionAccountId` ·
+  `PaymentSourceSplitJson` (เนื้อเงินของการขายเดียวกัน — เดิมตัวคัดลอกทิ้งเงียบ ⇒ ใบแทนไม่มี "หักหลัง VAT" ทั้งที่ยอดจ่ายจริงตามไป) ·
+  **ไม่ตามไป** `PayLink*` 6 ช่อง (ลิงก์ชำระของใบเดิม · hash unique) · `AutoSendRuleId` · `QuotaCountDeferred` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit 407e342a
+  · **รอบ 250 WP-02 (ฝ่ายค้าน ข้อ 1)**: **ตามไป** `RecurringTransactionId` (ใบแทน = การขายเดียวกัน — ชั้น "รายการประจำ" ของค่าตั้งงานหลังรับชำระ §2.12g) ·
+    `AutoSendRuleId` **ไม่ตามไป** (เดิม) ⇒ บนใบแทน ชั้น "ตารางส่ง" ของงานหลังรับชำระหายไป — ใช้ชั้นรายการประจำ › ผู้ติดต่อ › บริษัท แทน (ตั้งใจ: ตารางแรกที่ส่งใบแทนจะประทับใหม่)
 - **เกี่ยวเมื่อ**: ใบขาย (Invoice/TaxInvoice/Receipt) ที่ออกแล้วยังไม่ยกเลิก · ไม่ใช่ใบเสร็จอัตโนมัติ · ไม่ใช่ชิ้นของรอบโอนเอง · ยังไม่ถูกแทน ·
   **มีการรับชำระจากรอบโอนที่ลงบัญชีแล้ว** (ไม่มี = ใช้ "ยกเลิกเอกสาร" ปกติ)
 - **ด่านเดิมของ "ยกเลิกเอกสาร" ครบทุกตัว** (บล็อกพร้อมทางไปต่อ · ไม่แตะอะไร): e-Tax ของใบ**ถึงกรมสรรพากรแล้ว** (Accepted = `REISSUE-ETAX-ACCEPTED` ·
@@ -1835,12 +1840,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   Pending แต่ไม่มีทั้งคู่ (ไม่ใช่สลิปโอน) ⇒ `StartAsync` ปิดรายการ `Failed` รหัส `no_next_step` พร้อมเหตุผลไทยก่อน commit (เงินเข้าทีหลังยัง Failed→Succeeded ได้ตามนโยบายเดิม) · หมดเวลา 20 วิ/เครือข่ายขาด ⇒ `FailureMessage` ไทย (`TransportFailureText`) ·
   **เงินโหมดทดสอบไม่มีผลทางธุรกิจ (คำตัดสิน 232-Omise-2 · `Helpers/TestModePaymentPolicy` = ตัวตั้งเดียวของ "เงินทดสอบ" ขาเข้า+ขาคืน — รวม `GatewayTestPaymentRules` เดิมแล้ว · โหมดจาก `PaymentIntentTestMode.ResolveAsync` null→config ทุกจุด):** intent คีย์ทดสอบ (IsTestMode/config.Mode=Test) ของทุกต้นทางยกเว้น GatewaySelfTest ⇒ `DispatchSucceededAsync` **ด่านแรกก่อน `EntitlementBlockReason`** (ด่านสิทธิ์ไม่รู้จักโหมดทดสอบอีก — ค่าบริการ/ส่วนเสริมทดสอบ = เหตุการณ์ 🧪 ไม่ใช่งานค้างส่งต่อใหม่) ไม่เรียก handler (ไม่มี JE/ใบเสร็จ/สต็อก/ตัดชำระ · ต้นทางคงรอชำระ · เหตุการณ์ `🧪 โหมดทดสอบ — ไม่ลงบัญชี` บน intent · ไม่ใช่งานค้างส่งต่อใหม่) + `GuardAsync` ชั้นสองใน handler ทั้ง 8 · ป้าย `TestModePaymentPolicy.StatusLabel` "(ทดสอบ — ไม่ลงบัญชี)" ในรายการรับชำระ + ทุก intent response ส่ง `statusLabel`/`testNote` (`PayerNote`) ให้หน้าจ่ายแสดง (widget ไม่มีข้อความเอง) · widget: `Succeeded` ตั้งแต่สร้าง (บัตรไม่ 3DS) ⇒ หน้าสำเร็จก่อนตาข่าย "ไม่มี QR/ลิงก์" · `MissingReason` ยิงเฉพาะ `StartAsync` (poll ไม่ตัดสิน — ตั้งใจ) ·
   **รอบ 235 — เงินทดสอบที่ลงบัญชีไปแล้วก่อนรอบ 232 (คำตัดสิน 235-X3 + ฝ่ายค้าน B1/S4/S5):** ไม่กลับรายการอัตโนมัติ · หน้า "รายการรับชำระออนไลน์" แสดงรายงาน (`GET pay/intents/test-mode-legacy` · ผู้โหลด `Services/Payments/TestModeLegacyEffects` (กรองก่อน Take: สร้างก่อน `GuardSinceUtc` · `IsTestMode != false` · เพดาน 2000 + `truncated` · ผลโหลดเป็นชุด) · ตัวคัดกรอง/หลักฐาน `Helpers/TestModeLegacyEffectPolicy`) · หลักฐาน: ประทับ true / เลข Omise `chrg_test_` = พิสูจน์ได้ · มีแค่โหมดปัจจุบันของช่องทาง = พิสูจน์ไม่ได้ (ไม่มีปุ่ม · ห้ามป้าย "ไม่มีเงินจริง") · รับชำระเอกสารที่พิสูจน์ได้ ⇒ ปุ่ม "กลับรายการ" (`POST pay/intents/{id}/test-mode-legacy/reverse/{paymentId}` → `VoidPaymentAsync` เดิม + `beforeCommit` เขียน audit chain `PAY-TEST-LEGACY-REVERSE` ในธุรกรรมเดียวกัน · สิทธิ์ BankReconcile + Document.Void · กดซ้ำ = "ถูกกลับรายการไปแล้ว") · ออเดอร์/POS/ที่พัก/การจอง ⇒ ลิงก์ไปเส้นยกเลิก/ใบลดหนี้ของต้นทาง · แอดมิน: `GET admin/platform-gateway/tenant-test-mode-legacy` นับร้าน/รายการ/พิสูจน์ได้-ไม่ได้ (อ่านอย่างเดียว)
-  URL แจ้งเตือน (webhook) ที่หน้าตั้งค่าร้าน (`PaymentSettingsController`) และแอดมินแพลตฟอร์ม (`AdminPlatformGatewayController`) ใช้ `SystemBaseUrl.PublicOrigin` (URL ระบบที่ตั้งไว้ก่อน · ไม่ตั้ง = คำขอ) — เทสต์ `GatewayChargeNextStepRound232Tests` · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  URL แจ้งเตือน (webhook) ที่หน้าตั้งค่าร้าน (`PaymentSettingsController`) และแอดมินแพลตฟอร์ม (`AdminPlatformGatewayController`) ใช้ `SystemBaseUrl.PublicOrigin` (URL ระบบที่ตั้งไว้ก่อน · ไม่ตั้ง = คำขอ) — เทสต์ `GatewayChargeNextStepRound232Tests` · Last verified `commit b4780a33`
 - **รอบ 231 — ราคาพิเศษรายบริษัท · เปลี่ยนรอบบิลกลางรอบ · ชนิด subscription · audit License (คำตัดสินข้อ 231-8..231-11 · `ACCOUNT_STRUCTURE.md` §6.2f):**
   ทุกจุดที่คิดราคาแพ็กเกจ (ใบต่ออายุ · ส่วนต่าง · ดูราคา · คำขอ/แปลงทดลองใช้ · แจ้งชำระ · อนุมัติอัตโนมัติ · แอดมินเปลี่ยนแพ็กเกจ) ผ่าน `Helpers/PlatformPriceOverrideStore` → `PlatformPlanPricing.EffectiveCyclePrice`
   (ราคาพิเศษ `CompanyPlanPriceOverrides` ชนะราคาแม่แบบ · คูปองซ้อนทีหลัง) · เปลี่ยนรอบบิลยาวขึ้นกลางรอบ = รายการ `IsCycleChange` (ราคารอบใหม่ − เครดิต `PlatformProration.CycleChange`) → เงินเข้า ⇒ รอบใหม่เริ่มวันชำระ ·
   `Subscription.Kind` (`SubscriptionKindRule`) · ทดลองใช้หมดอายุ: `BlockAccessOnExpiry` บล็อกอ่าน (ด่าน `SubscriptionGatePolicy` · โหมดเดียวกับด่านเขียน) · `AllowDataExportAfterExpiry` ปล่อยเส้นส่งออก · `TrialDataRetentionJob` ปิดข้อมูลหลังพ้นระยะเก็บ (legal hold ไม่แตะ) ·
-  License `ChangeStatus/Extend/ChangeLimits` + `AdminChangeLimits` = เหตุผลบังคับ + audit chain + ประวัติ · override เพดานผู้ใช้/พื้นที่เขียนผ่าน `QuotaOverrideWriter` ตัวเดียว — เทสต์ `PlatformPriceOverrideRound231Tests` · `Db/PlatformPriceOverrideRound231DbTests` · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  License `ChangeStatus/Extend/ChangeLimits` + `AdminChangeLimits` = เหตุผลบังคับ + audit chain + ประวัติ · override เพดานผู้ใช้/พื้นที่เขียนผ่าน `QuotaOverrideWriter` ตัวเดียว — เทสต์ `PlatformPriceOverrideRound231Tests` · `Db/PlatformPriceOverrideRound231DbTests` · Last verified `commit c86519e1`
   - **ฝ่ายค้านรอบ 231 (S1–S10 · แก้ 2026-11-03):** ราคาเดิมต่อรอบของส่วนต่าง/เครดิตเปลี่ยนรอบ = **ยอดที่จ่ายจริงล่าสุด**ของ (แพ็กเกจ, รอบ) นั้น (`PlatformPriceOverrideStore.LastApprovedCycleAmountAsync` → `PlatformProration.OldPriceBasis` · ไม่มี = ราคาพิเศษ/แม่แบบ) ·
     ซื้อแพ็กเกจเดิมซ้ำ = งาน "ต่ออายุ" (`PlatformPlanPricing.IsRenewalPurchase` ทุกจุดเรียก resolver รวม handler/ออนไลน์) · quote เปลี่ยนรอบบอก "รอบใหม่ N เดือน นับจากวันที่ชำระ" ·
     อนุมัติเปลี่ยนรอบเมื่อใบต่ออายุเดิมถูกจ่าย/แจ้งชำระแล้ว ⇒ **ไม่ทับ EndDate เอง** (ออนไลน์ = พักให้แอดมิน · แอดมิน = `PLATFORM-CYCLE-CHANGE-RENEWAL-CLAIM` ให้จัดการใบนั้นก่อน) ·
@@ -1912,7 +1917,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **รอบ 227 — Omise ของ NextAcc: เงิน → เอกสาร → บัญชี (`erp-review/2026-11-02/PLATFORM_OMISE_AUDIT.md`):** รับเงินค่าบริการผ่าน gateway ⇒
   ใบเสร็จค่าแพ็กเกจ/ตัดชำระใบแจ้งหนี้ลง **Dr บัญชีพักผู้ให้บริการรับชำระ** (เดิม Dr ธนาคาร ⇒ รอบโอน Cr 11340 ซ้ำ) · **ค่าส่วนเสริมจ่ายล่วงหน้า** (ออนไลน์/สลิปที่อนุมัติ)
   ⇒ ใบกำกับภาษี/ใบเสร็จรับเงินขายเงินสดใน tenant ผู้ให้บริการ (`IPlatformBillingDocumentIssuer.IssueAddOnReceiptAsync` · เดิมไม่มีเอกสาร) + อีเมลแจ้งเจ้าของเมื่อจ่ายออนไลน์ ·
-  poll/คืนเงิน/webhook ใช้คีย์ของโหมดที่รายการถูกสร้าง · ผู้เช่าเห็นเฉพาะวิธีที่หน้าชำระทำจบได้ (พร้อมเพย์) · ข้อความล้มเหลวไทย · Last verified — commit (เติมในคอมมิตตามหลัง)
+  poll/คืนเงิน/webhook ใช้คีย์ของโหมดที่รายการถูกสร้าง · ผู้เช่าเห็นเฉพาะวิธีที่หน้าชำระทำจบได้ (พร้อมเพย์) · ข้อความล้มเหลวไทย · Last verified — `commit a138faaa`
 - **รอบ 219 ส่วน B — ช่องทางรับชำระของ NextAcc + ติ๊กยอมรับนโยบาย (คำตัดสินข้อ 179):** ผู้เช่าชำระค่าแพ็กเกจ/ส่วนเสริมออนไลน์ผ่าน `IPlatformPaymentService`
   (`platform-pay/addons/{code}/intents` · `platform-pay/subscription-payments/{id}/intents` · intent ใต้บริษัทผู้ให้บริการ + `PayerCompanyId` · ยอดจากเซิร์ฟเวอร์) —
   **มีปุ่มเฉพาะเมื่อ config ของแพลตฟอร์ม active + โหมดใช้งานจริง** (`Helpers/PlatformPayAvailability`) · นอกนั้นโอน + แนบสลิป · ตั้งค่าที่ `/admin/platform-gateway.html`
@@ -1948,7 +1953,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ไม่มีคืนเงิน gateway / คืนน้อยกว่าใบลดหนี้ / ฝั่งซื้อ / มี WHT = เส้นเดิม (ช่องทางเงินของใบ) · ป้าย "ออกใบลดหนี้แล้ว" มาจาก `CreditNoteStatesAsync` ชุดเดิม ·
   **ข้อพิพาท/chargeback** (`charge.dispute.*` · §5.4): webhook ยืนยันแบบ fetch (dispute → charge → `metadata.intentId`) → `PaymentDisputeService` บันทึก `PaymentIntent.Dispute*` +
   ประวัติ + audit `GW-DISPUTE` + กระดิ่ง (ค่าบริการ = แอดมินแพลตฟอร์ม · ของร้าน = เจ้าของบริษัท) · ล็อกแถว + ผลปลายทางไม่ถอย (ลำดับสลับ/ส่งซ้ำ) ·
-  ปุ่ม "รับทราบข้อพิพาท" (แอดมิน/หน้ารายการรับชำระของร้าน · audit) ล้างธงจนกว่าข้อพิพาทเปลี่ยน — **ไม่เปลี่ยนสถานะเงิน/สิทธิ์** (แพ้ = ผู้ให้บริการหักในรอบโอน · คนตัดสินพักสิทธิ์/ใบลดหนี้) · Last verified `commit (รอบ 228 — เติมในคอมมิตตามหลัง)`
+  ปุ่ม "รับทราบข้อพิพาท" (แอดมิน/หน้ารายการรับชำระของร้าน · audit) ล้างธงจนกว่าข้อพิพาทเปลี่ยน — **ไม่เปลี่ยนสถานะเงิน/สิทธิ์** (แพ้ = ผู้ให้บริการหักในรอบโอน · คนตัดสินพักสิทธิ์/ใบลดหนี้) · Last verified `commit d6d83995`
 - **รอบ 230 — บัตรที่บันทึก + ตัดบัตรอัตโนมัติ + รอบโอนจากผู้ให้บริการ (ค่าบริการ NextAcc · `PLATFORM_OMISE_AUDIT.md` §7.3 · สถานะปัจจุบัน):**
   **บันทึกบัตร** เกิดได้ทางเดียว = ผู้เช่าชำระด้วยบัตร (`platform-pay/.../intents`) + ติ๊ก "บันทึกบัตรเพื่อตัดอัตโนมัติ" (ข้อความ/ฉบับจาก `GET platform-pay/saved-card-offer` ·
   `Helpers/PlatformSavedCardRules`) ⇒ `PlatformSavedCardService.SaveFromTokenAsync` (หลังด่านยอมรับนโยบายเดิม): ผู้ให้บริการสร้างลูกค้า/ผูกบัตรจากโทเคน
@@ -2208,6 +2213,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 ### 2.7 Recurring
 
 - **งวดค้างหลายงวด (ฝ่ายค้าน 2026-10-14 P0)** — เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน · แก้ใน f696f418) ⇒ `NextRunDate` ค้างงวดแรก · รอบอัตโนมัติ/ปุ่มสร้างทันทีเรียก `SkipOverduePeriodsAsync` → `RecurringSchedule.CatchUp` เลื่อนไปงวดล่าสุดที่ถึงกำหนดแล้วออก **งวดเดียว** + `LastRunNotice` "ข้าม N งวด … กด สร้างทันที" (ไม่ไล่ออกใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที) · สมุดรายวันไม่แตะ (ไม่เคยค้าง)
+- **รอบ 250 (WP-02 §2.4 ข้อ 1/3 · คำตัดสิน §2 #8/#10)**: `OnRecurringDocumentCreatedAsync` คืน `EmailEnqueueOutcome` (Enqueued/Skipped(เหตุ)/Failed(เหตุ)) — ไม่กลืนเป็น
+  `LogWarning` ⇒ ธง `EmailEnqueueFailed` + เรื่องที่ต้องทำต่อตั้งจากผล (`EmailEnqueueOutcome.Apply`) · มีกฎ "เมื่ออนุมัติเอกสาร" ครอบชนิดนี้และใบอนุมัติแล้ว ⇒ **ข้าม**กฎ "เมื่อรายการประจำสร้างเอกสาร"/กฎเสมือน
+  (การอนุมัติอัตโนมัติเข้าคิวตามกฎนั้นไปแล้ว — ลูกค้าได้ฉบับเดียว · ทิศเดียว ไม่แตะฝั่ง DocumentApproved) · แผงความพร้อมเตือน `EMAIL-RULES` · ใบที่สร้างประทับ
+  `Document.RecurringTransactionId` (ชั้นค่าตั้งงานหลังรับชำระ §2.12g) · Last verified `commit a40c91e5`
 - **Service**: `RecurringTransactionService.cs:41`
 - ความถี่: `Daily / Weekly / BiWeekly / Monthly / Quarterly / SemiAnnual / Annual`
 - template เก็บใน `RecurringTransaction.TemplateData` (JSON)
@@ -2267,7 +2276,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **ฟอร์ม** `recurring.html`: ค่าที่บันทึกไว้ (ช่องทางรับ/จ่าย · หมวดค่าใช้จ่าย) ที่ไม่อยู่ในดรอปดาวน์แล้ว (ปิด/ลบ) ⇒ ใส่กลับเป็นตัวเลือก "⚠️ ชื่อ"
   + ข้อความใต้ช่อง (เดิมตกเป็น "เงินสด" เงียบ ๆ แล้วบันทึกทับ ⇒ ใบทุกงวดลงเงินสด) · โหลดตัวเลือกไม่สำเร็จ = toast + ห้ามบันทึก ·
   ~~เทมเพลตหลายบรรทัด (API) ล็อกช่องรายบรรทัด~~ (รอบ 248: แก้ได้ทุกบรรทัด — ดูข้อถัดไป) · ล้างวันสิ้นสุดตอนแก้ไขได้จริง (เดิมอ่าน `this.editingId` ที่ไม่มีใครตั้ง)
-- **รอบ 248 — Autopilot** (`erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §4–§5.1 · §12 รอบ 248 · Last verified commit <เติมในคอมมิตตามหลัง>):
+- **รอบ 248 — Autopilot** (`erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §4–§5.1 · §12 รอบ 248 · Last verified `commit 8304ce95`):
   - **ฟอร์มเป็น wizard 5 ขั้น** (① เอกสาร&รอบ ② รายการ&ราคา ③ ภาษี&บัญชี ④ ส่ง&รับเงิน ⑤ อนุมัติ) + แผงความพร้อมด้านขวา · **หลายบรรทัด**:
     บรรทัดที่ 1 = ช่องยอดเดิม · บรรทัดที่ 2..n = ตาราง "บรรทัดเพิ่มเติม" (คีย์อื่นของบรรทัดเดิมที่ตั้งผ่าน API ไม่ถูกทับ — ทับเฉพาะช่องของตาราง ตำแหน่งเดียวกัน)
   - **ช่องทางรับเงินเป็นชั้น** (`Helpers/AutopilotSettingsResolver` — ตัวต่อชั้นเดียว): ตารางส่ง › **รายการประจำ** (`RecurringTransaction.PaymentMode/PayLinkChannelsJson`)
@@ -2297,6 +2306,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     นโยบายไม่ได้ปล่อยอะไร = ไม่ประทับ "ตามนโยบาย") · ใบจำลองของทดลองรัน/ความพร้อม**ไม่ถาม AI** (`CollectApprovalWarningsAsync(noAi: true)` — ไม่จ่าย token · ไม่เขียน feedback) ·
     ตอนส่งคิว (`RecheckDocumentAtSendAsync`) ต่อชั้นรายการประจำจากกุญแจกันซ้ำ (`ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey`) — TransferOnly/None ไม่ถูกแนบลิงก์ตอนส่ง ·
     อ่านความพร้อม/ทดลองรัน/ค่าตั้งผู้ติดต่อต้องมีสิทธิ์สร้างเอกสาร · แจ้ง "นโยบายหยุดมีผล" เฉพาะรอบที่มีคำเตือนซึ่งนโยบายจะปล่อยได้
+  - **รอบ 250 WP-03 (D §1.1–1.2 · B F-6)**: (ก) โหลด `/recurring/autopilot/options` ไม่สำเร็จ ⇒ หน้าเว็บส่ง `paymentMode: null` · `payLinkChannels: null`
+    (= ไม่แก้ · `RecurringTransactionService` คงเดิม) ไม่ใช่ `""`/`[]` (= ล้าง) · ขั้น ④ ล็อกพร้อมเหตุ · ค่าที่บันทึกไว้ที่ไม่อยู่ในตัวเลือกถูกคืนเป็นตัวเลือก (`_restoreSavedOption`)
+    (ข) **นโยบายอนุมัติบันทึกกับฟอร์ม**: เปลี่ยนนโยบายในขั้น ⑤ แล้วกด "บันทึก" ⇒ บันทึกรายการก่อน (ได้ id) แล้วเรียก `PUT recurring/{id}/approve-policy` ต่อ
+    (นโยบายรับรองค่าที่บันทึกแล้ว — ลำดับนี้กันการรับรองค่าที่ยังไม่บันทึก) · นโยบายล้ม = แจ้งดังว่า "รายการบันทึกแล้วแต่นโยบายไม่ผ่าน" ·
+    ปุ่ม "บันทึกนโยบายของรายการนี้" ปิดตอนสร้างใหม่ และปิดเมื่อฟอร์มแก้ไขยังไม่บันทึก ("บันทึกรายการก่อน")
   - ยังไม่ทำในรอบนี้: คอลัมน์ "ระดับ Autopilot" ในตารางรายการ · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`) · LINE/คู่ค้าในขั้นส่ง · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน
 
 ### 2.7b ใบวางบิลรวมใบค้างชำระ (compose — ไม่ใช่ convert)
@@ -2749,7 +2763,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **ใบกำกับไหม (ข้อ 8 · 235-8):** `SaasBillingDocumentService` (ใบเสร็จ PDF เดี่ยว + ใบแจ้งหนี้ PDF) ใช้ `PlanPurchasePreview.IssuesTaxInvoice` ตัวเดียว
 - **แจ้ง "รอตรวจสอบ" (ข้อ 9 · 235-9):** `Helpers/PlatformPaymentReviewNotice.ShouldNotify` — สร้างรายการ (ยังไม่มีสลิป) ⇒ ไม่แจ้ง · แนบสลิปครั้งแรก (`UploadPaymentSlipAsync`) ⇒ แจ้ง · แนบซ้ำไม่แจ้ง
 - **บันทึกบัตรใน checkout (ข้อ 10 · 235-10):** `Services/Payments/PlatformSavedCardStart` ตัวเดียว (platform-pay + `PublicCheckoutController.StartIntent`) · `checkout.html` ดึง `public/checkout/companies/{id}/saved-card-offer` (ด่านเจ้าของเดียวกับ StartIntent · ข้อความจาก `OfferAsync` ตัวเดียวกับ platform-pay) ส่ง `savedCardOffer` ให้ PayWidget
-- เทสต์ `PlatformRound235Tests` · `PlatformRound235DbTests` · `PublicCheckoutRound233DbTests.R235_*` · Last verified working tree รอบ 235 (sha เติมในคอมมิตตามหลัง)
+- เทสต์ `PlatformRound235Tests` · `PlatformRound235DbTests` · `PublicCheckoutRound233DbTests.R235_*` · Last verified working tree รอบ 235 (`commit 1019338e`)
 
 ### 2.12d บริษัทใต้ License — แพ็กเกจที่มีผลตัวเดียว + ด่านซื้อแพ็กเกจระดับบริษัท (รอบ 236 · คำตัดสิน 236-1…236-6)
 
@@ -2881,7 +2895,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 | เรื่อง | มีอยู่แล้ว | ช่องว่างที่ปิดรอบนี้ |
 | --- | --- | --- |
 | ตารางส่งเอกสาร | `EmailScheduleRule` + `EmailQueue` + `EmailScheduleWorker` (อนุมัติ/ใกล้ครบ/เกินกำหนด/รายเดือน/recurring/สลิป/50 ทวิ) · `RecurringTransaction.AutoSendEmail` (กฎเสมือน) · `OverdueDunningJob` | ไม่มีลิงก์ชำระเงิน · ไม่มีค่าตั้งต่อตาราง |
-| ชำระเงินออนไลน์ | `PaymentIntent` + `IPaymentProvider` (Omise · ManualSlip) · `PublicPaymentController` (ที่พัก/ออเดอร์/การจอง) · `DocumentPaymentHandler` (มีแต่ไม่มีทางเข้าสาธารณะสำหรับเอกสาร — สร้างรายการได้จาก `PaymentGatewayController` ฝั่งพนักงานเท่านั้น) · พอร์ทัลลูกค้า (ล็อกอิน · แนบสลิป) · `PaymentProviderConfig.EnabledMethodsJson` | ลิงก์สาธารณะของเอกสาร `public-pay/documents/{token}` + หน้า `/pages/pay-document.html` · ช่องทางต่อใบ |
+| ชำระเงินออนไลน์ | `PaymentIntent` + `IPaymentProvider` (Omise · ManualSlip) · `PublicPaymentController` (ที่พัก/ออเดอร์/การจอง) · `DocumentPaymentHandler` (มีแต่ไม่มีทางเข้าสาธารณะสำหรับเอกสาร — สร้างรายการได้จาก `PaymentGatewayController` ฝั่งพนักงานเท่านั้น) · พอร์ทัลลูกค้า (ล็อกอิน · แนบสลิป = `PaymentIntent` manual-slip รอยืนยัน ตั้งแต่รอบ 250 §2.12g2) · `PaymentProviderConfig.EnabledMethodsJson` | ลิงก์สาธารณะของเอกสาร `public-pay/documents/{token}` + หน้า `/pages/pay-document.html` · ช่องทางต่อใบ |
 | เงินเข้าแล้วเกิดอะไร | `CreatePaymentAsync`: JE · ตัด AR · WHT + `SyncWhtCreditReceivedAsync` (แถวรอ 50 ทวิ) · ใบเสร็จหลักฐาน `CreateSettlementReceiptAsync` ตาม `ReceiptIssuePolicy` (ใบเสร็จเปล่า หรือ ใบกำกับ/ใบเสร็จ §78/1 ตาม `SettlementReceiptPolicy`) · ฝั่งซื้อออก 50 ทวิ อัตโนมัติ · `IssueReceiptForPaymentAsync` (ออกย้อนหลัง) | ไม่มีการส่งใบเสร็จถึงลูกค้า · handler ไม่ส่ง WHT (ใบที่มี WHT ค้างเท่า WHT) |
 | 50 ทวิ ฝั่งขาย | ลูกค้าเป็นผู้ออก · ทะเบียน `WhtCreditReceived` (Pending จาก GL) · หน้า `wht-credit.html` | รอบนี้แค่ตรวจแถว (ไม่สร้าง) — ลิงก์อัปโหลด/ทวง = แบบของทีมออกแบบ (`erp-review/2026-11-06/AUTO_SEND_WHT_DESIGN.md`) |
 
@@ -2906,8 +2920,82 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - ฝ่ายค้าน (241-9 · 241-11): คิวอีเมลตามตารางผ่านตัวตัดสินผู้ส่งเดียว (`ComposeQueueMessageAsync` — เส้นแพลตฟอร์มมีเพดาน/BCC นับ/เทมเพลตคงที่/ข้อความผู้ใช้ล้วน) ·
   คิว/บันทึกเก็บที่หมาย `{PayLink}` (URL ตอนส่ง) · ตัวนับ WHT ที่หักแล้วตัวเดียว `WhtWithheldCounter` · ผู้ซื้อบุคคลธรรมดา ⇒ ยอดเต็ม + เตือน · ลิงก์ใช้ไม่ได้ ⇒ ไม่เปิดเผยข้อมูลใบ ·
   "ชำระครบ" ประทับตอนเข้าคิว
-- ยังไม่เข้า: กระทบธนาคาร/settlement · สลิปพอร์ทัล · นำเข้า · CMS/ที่พัก · กระจายหลายใบ (241-5)
+- ยังไม่เข้า: กระทบธนาคาร/settlement · นำเข้า · CMS/ที่พัก · กระจายหลายใบ (241-5) · (สลิปพอร์ทัล — เข้าแล้วตั้งแต่รอบ 250: ยืนยันสลิป = `DocumentPaymentHandler` ⇒ `EnqueueAsync` เส้นเดียวกับ gateway · §2.12g2)
 - เทสต์ `DocumentAutoSendRound241Tests` · Db `DocumentAutoSendRound241DbTests` · ล็อก `tools/required_call_site_check.py` R241 — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
+### 2.12g2 สลิปพอร์ทัล = แจ้งโอน · workflow ข้ามบริษัท (รอบ 250 WP-02b · `erp-review/2026-11-06/AUDIT_249_COVERAGE.md` M-1/M-2 · `AUTOPILOT_BILLING_DESIGN.md` §6.1 P-1/P-2/P-3/P-6 · G-T7)
+
+**สลิปพอร์ทัลลูกค้า** (`PortalService.UploadDocumentSlipAsync` · `POST api/portal/{cid}/documents/{docId}/upload-slip`):
+แนบ ⇒ `PaymentIntent(SourceKind=Document, manual-slip, ManualSlip)` สถานะ Pending ผ่าน `IPaymentIntentService.StartAsync` (ยอดเท่าเดิม + ยังเปิด ⇒ รายการเดิม · ชำระสำเร็จแล้ว ⇒ 400) + ไฟล์ผูกเอกสาร ·
+**ไม่สร้างแถว `Payment`** (เดิมสร้าง "[PENDING-VERIFY]" ทันที ⇒ ใบแจ้งยอดพอร์ทัล/ลูกหนี้ลดยอด · "การชำระของฉัน" ขึ้นว่าจ่ายแล้ว · จับคู่ธนาคารอัตโนมัติจับสลิปปลอมกับเงินเข้าจริงได้) ·
+พนักงานตรวจแล้วกด "ยืนยันรับเงิน" ที่รายการรับชำระ (`PaymentGatewayController.ConfirmManually` · สิทธิ์ ConfirmManually · เหตุผลบังคับ) ⇒ `DocumentPaymentHandler` ⇒ `CreatePaymentAsync` (JE · ตัดหนี้ · ใบเสร็จ) ⇒ งานหลังรับชำระ ·
+คำตอบ `PortalSlipUploadResponse.PaymentIntentId` + `AwaitingReview=true` (เดิม `PaymentId`) · ข้อจำกัด: ใบที่เคยมีรายการชำระออนไลน์สำเร็จแล้วรับสลิปเพิ่มผ่านพอร์ทัลไม่ได้ (กติกา StartAsync เดิม — ลูกค้าได้ข้อความ ⇒ ร้านบันทึกรับชำระส่วนที่เหลือเอง)
+- ผู้อ่านยอดตัดแถวสลิปรุ่นเก่าที่ยังไม่ตรวจด้วย `Helpers/PortalSlipPending.CountsAsReceived` (ขึ้นต้น "[PENDING-VERIFY]" + ไม่ผูก intent): ใบแจ้งยอดพอร์ทัล · การชำระของฉัน ·
+  ใบแจ้งยอดลูกหนี้ (`AdvancedArApService.GenerateStatementAsync`) · จับคู่ธนาคาร (`AutoMatchAsync` · `GetMatchCandidatesAsync` · `AiSmartMatchAsync`)
+- **ข้อมูลเดิม** (`Helpers/PortalSlipLegacyMigration` · ครั้งเดียว · marker `r250-portal-slip-pending-to-intent` · `AdvisoryLockKey.OneShotDataFix`): แถวที่ไม่ผูก intent/ใบเสร็จ/JE (Reference = เลขที่การชำระ)/
+  รายการธนาคาร และเอกสารยังอยู่ ⇒ สร้าง intent รอยืนยันยอดเดิม + แถวเดิม `IsDeleted=true` (soft · หมายเหตุอ้าง intent · ไม่เคยเป็นเงินรับ: ไม่มี JE ไม่แตะ PaidAmount) · อื่น ๆ ⇒ ไม่แตะ +
+  audit `PortalSlipLegacyNeedsReview` พร้อมเหตุ (ผู้อ่านยอดตัดออกจนกว่าคนแก้) · audit ต่อแถว (`AddChainedAuditLog`)
+
+**workflow ข้ามบริษัท** (`CrossTenantWorkflowController` · `CrossTenantWorkflowService`):
+- **เชิญ** `POST trading-partners/invite {partnerTaxId, partnerBranchCode?, message}` ⇒ **202 + "ส่งคำเชิญแล้ว ถ้าผู้รับใช้ NextAcc จะเห็นในระบบ" ทุกกรณี** (มี/ไม่มีบริษัท · เชิญตัวเอง · เชิญซ้ำ) — เดิม 404 "ไม่พบบริษัท…" ⇒ ไล่เลขภาษีได้ ·
+  เลขไม่ใช่ 13 หลัก/สาขาผิดรูป ⇒ 400 จากรูปแบบ · audit ของผู้เชิญรูปเดียวทุกกรณี · พบบริษัทแบบไม่กำกวม ⇒ แถว Pending · ถูกปฏิเสธไม่ถึง 7 วัน ⇒ ไม่เปิดซ้ำ ·
+  รายการคู่ค้า (`GET trading-partners`) ฝั่งผู้เชิญเห็นเฉพาะคู่ Accepted/Suspended (ผู้รับเชิญเห็นทุกสถานะ)
+- **จับคู่บริษัท** = เลขภาษี + สาขา ตัวเดียว `Helpers/PartnerCompanyMatch` (ระบุสาขา ⇒ ตรงเป๊ะ ไม่ถอยไป สนญ. · ไม่ระบุ ⇒ บริษัทเดียวของเลข หรือ สนญ. หนึ่งเดียว · หลายบริษัท ⇒ กำกวม ไม่เดา) ·
+  ส่งเอกสารเข้าคู่ค้า (`OnDocumentSentAsync`) เลือกจากบริษัทที่เป็นคู่ Accepted แล้วเท่านั้น · กำกวม ⇒ ล้มดัง
+- **สิทธิ์**: เชิญ/ยอมรับ/ปฏิเสธ/ตั้งค่า = `CompanySettings.Edit` + `[RejectApiKey]` · อนุมัติ/ปฏิเสธเอกสารเข้า (ลงนามในนามบริษัท + สร้าง PO) = `DocumentPermissionHelper.CanApproveAsync` ฝั่งซื้อ
+  (Document.Approve หรือ Document.Purchase.Approve) + `[RejectApiKey]` · ดูกล่องเอกสารเข้า = เห็นฝั่งซื้อ (`VisibleDirectionsAsync`) · คอนโทรลเลอร์อยู่ใน WATCHED ของ `write_permission_gate_check` (ถอด baseline 6 แถว)
+- **ส่งเข้าคู่ค้าล้ม** (หลังอนุมัติ · `RouteSentDocumentAsync` ทางเข้าเดียว): ป้าย `[PARTNER-ROUTE-FAILED]` ใน `InternalNotes` (`Helpers/PartnerRoutingFailedNote`) + `DocumentResponse.PartnerRoutingFailed` (แถบเตือน + ปุ่ม
+  "ส่งให้คู่ค้าอีกครั้ง" ใน documents.html) + LogError · ไม่ย้อนการอนุมัติ · ส่งใหม่ `POST documents/{id}/partner-routing/retry` (สิทธิ์อนุมัติชนิดของเอกสาร · ล้มอีก = 409 + เหตุ) · สำเร็จ ⇒ ล้างป้าย ·
+  outbox/worker ถาวรยังเป็นงาน WP-12
+- เทสต์ `PartnerSecurityRound250Tests` · Db `PartnerSecurityRound250DbTests` · ล็อก `required_call_site_check` R250 + `owner_action_wiring_check` (R250-X1…X3) — ยังไม่ได้คอมไพล์ในเครื่องนี้
+- **แก้ผลฝ่ายค้าน (ตัวตัดสินเดียว `Helpers/DocumentSlipIntents`)**:
+  สลิปเอกสาร (Document + ManualSlip) รับได้ตามยอดค้าง (งวด 2 รับได้ · ชำระครบ/เกินยอดค้าง = 400) · สลิปแต่ละใบ = รายการของตัวเอง (ไม่ใช้ใบเดิม) ·
+  บันทึกรับชำระ (ใบเดียว/หลายใบ) ⇒ สลิปรอตรวจที่ยอด > ยอดค้างใหม่ถูกติดธง `slip_superseded` (ไม่เปลี่ยนสถานะ) · ยืนยันด้วยมือบล็อกยอดสลิป > ยอดค้าง (409) ·
+  ปุ่ม/endpoint "ปฏิเสธสลิป" `POST pay/intents/{id}/reject-slip` (ApplyChargeAsync Failed · เหตุผลบังคับ) · วันรับเงิน = `ReceivedDate` ที่ระบุ หรือวันแนบสลิป (เวลาไทย) ⇒
+  `PaymentIntent.PaidAt` ⇒ `DocumentPaymentHandler` ลง `PaymentDate` (§78/1) · พอร์ทัลแสดง "สลิปรอตรวจ" (`PortalDocumentResponse.SlipPendingAmount`) · อัปไฟล์แล้วสร้างรายการล้ม ⇒ ลบไฟล์ ·
+  ผู้อ่านยอดเพิ่ม 10 จุด (BankFeed · จับคู่หลายรายการ AI · ค่าคอม · มือถือ · รายการรวม · พยากรณ์ ×2 · วิเคราะห์ลูกหนี้ · ตัวสร้างรายงาน · AI) · ตัวกรองต้องตรงผู้สร้าง `portal-customer` ·
+  ยกเลิกแถวที่ไม่เคยนับ ⇒ soft-delete โดยไม่ถอย PaidAmount/BalanceDue · migration: ผู้อ้างแถวครบ (กลุ่มกระทบยอด · จัดสรร · ทะเบียน WHT · 50 ทวิ · เช็ค · ใบเสร็จ settlement)
+  + มีเงินจริงตั้งแต่วันแนบสลิป/ยอดค้าง < ยอดสลิป ⇒ ต้องตรวจ · คำอธิบายพกที่อยู่ไฟล์เดิม · แถว "ต้องตรวจ" แสดงในรายงานตรวจข้อมูล (`PortalSlipLegacyNeedsReview`)
+  คู่ค้า: รับคำเชิญเฉพาะบริษัทที่เปิด `Company.PartnerDiscoverable` (ตั้งต้นปิด · ตั้งที่ PUT workflow-automation · บริษัทที่ไม่เปิดไม่นับ "กำกวม") · คำเชิญ ≤ 20/บริษัท/วัน (`IChatRateLimiter` fail-closed · 429) ·
+  เวลาตอบเชิญขั้นต่ำคงที่ 400ms · ข้อความเชิญ ≤ 500 ตัว · ส่งเอกสาร: เลขตรงคู่ Accepted แต่สาขาไม่ตรง ⇒ ป้าย + เหตุ (เดิมส่งได้) · ตัวติดตามเอกสารส่งออกต้องเห็นฝั่งขาย ·
+  GET workflow-automation ไม่สร้างแถว + CompanySettings.Edit · อนุมัติอัตโนมัติล้ม ⇒ ทิ้งแถวครึ่งทางของผู้รับ + LogError
+**รอบ 250 (WP-02 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §4 · คำตัดสิน §2 #4–#16 · §3.3 Y7/Y8/N11) — สถานะปัจจุบัน (ทับข้อ 5 และ "ยังไม่เข้า" ข้างบน):**
+- **งานหลังรับชำระ "ทุกทางเข้า"** — เข้าคิวในแกน `DocumentService.CreatePaymentAsync(…, PaymentEntrySource source)` เอง หลัง commit · หลัง `SyncWhtCreditReceivedAsync`
+  (แถวรอ 50 ทวิ มีก่อนงานตรวจ) ด้วย `PostPaymentAutomationService.EnqueueCoreAsync` · `source` บังคับ (ไม่มีค่าเริ่มต้น) · controller/handler ไม่เรียกเองแล้ว ·
+  ตัวตัดสินทางเข้า `PostPaymentAutomationPolicy.ForEnqueue`:
+  | ทางเข้า (`PaymentEntrySource`) | ผู้เรียก | ผล (ค่าตั้งเปิด) |
+  | --- | --- | --- |
+  | Manual | `DocumentController.CreatePayment` (1:1) | แถว Pending (เดินเต็ม) |
+  | Gateway | `DocumentPaymentHandler` | แถว Pending |
+  | Settlement | `SettlementPostingService.EnsureReceiptAsync` | แถว Pending |
+  | Import | `PaymentImportTarget` (นำเข้าไฟล์ · ค่าตั้งต้น) | แถว **Skipped** "ไม่ส่งใบเสร็จย้อนหลังเป็นชุด" (`ImportNoSendReason` · ฝ่ายค้าน WP-02 ข้อ 4) |
+  | ImportSendReceipt | `PaymentImportTarget` เมื่อผู้นำเข้าติ๊ก "ส่งใบเสร็จถึงลูกค้า" (ตัวเลือกชุด `sendReceipts=true` · หน้า `import-hub.html`) | แถว Pending |
+  | Integration | `IntegrationService.ProcessPaymentAsync` (บันทึกเอง ⇒ `IDocumentService.AfterPaymentRecordedAsync` = Sync 50 ทวิ + เข้าคิว · ล้ม ⇒ ข้อความใน sync log + คำตอบ) | แถว Pending |
+  | Cms · Lodging · PlatformBilling | หน้าร้าน/การจอง · ที่พัก · ค่าบริการแพลตฟอร์ม | แถว **Skipped** พร้อมเหตุ "มีเส้นออกใบเสร็จของตัวเอง" (เห็นบนหน้าเอกสาร · ไม่ออก/ไม่ส่งซ้ำ) |
+  | MultiDoc | `CreateMultiDocPaymentAsync` | ไม่สร้างแถว (`SettlementReceiptPolicy` — ตั้งใจ) |
+  ค่าตั้งปิด ⇒ ไม่สร้างแถว (เดิม) · ยังไม่เข้า: สลิปพอร์ทัล (`PortalService` — ทีมอื่นรับ) · แถวเก่าเก็บ "manual"/"gateway" ตัวเล็ก ⇒ `ParseSource` อ่านได้
+- **ชั้นค่าตั้งงานหลังรับชำระ (B-13)**: ตารางส่งที่ส่งใบนี้ › **รายการประจำที่สร้างใบ** (`Document.RecurringTransactionId` — ประทับตอนรายการประจำสร้างใบ · ใบเก่าเติมได้เฉพาะ `LastDocumentId`) ›
+  **ผู้ติดต่อ** (`Contact.PostPayEmailReceipt/PostPayIncludePartial`) › บริษัท — ตัวต่อชั้นเดียว `PostPaymentAutomationPolicy.EffectiveLayers` · ตั้งที่หน้ารายการประจำ (ขั้นรับเงิน · ชื่อ Inherit/On/Off)
+- **ใบแจ้งหนี้ที่ออกใบกำกับภาษีแล้ว** (A G-02/G-03 · คำตัดสิน §2 #16): fact `PaymentQrService.SupersedingTaxInvoiceNumberAsync` (ใบกำกับที่อ้างใบนี้ · ออกเลขแล้ว · ไม่ยกเลิก/ปฏิเสธ) ⇒
+  `DocumentPayLinkPolicy.IssueRefusal` ปฏิเสธ "ชำระที่ใบกำกับ {เลข}" [`PAYLINK-241-TAXINV`] · `LinkUsable` (ตัดสินสด) ⇒ ลิงก์เดิมใช้ไม่ได้ทันที (หน้าสาธารณะบอกให้ชำระที่ใบกำกับ ·
+  ไม่เปิดเผยยอด/ชื่อ) · ใบกำกับถูกยกเลิก ⇒ ใช้ได้อีก (ทิศตรงข้าม) · งานหลังรับชำระของใบแจ้งหนี้นั้น ⇒ Blocked "ออกใบเสร็จจากใบกำกับ" (กันใบเสร็จซ้อน)
+- **ไม่ได้ตั้ง URL ของระบบ (Y7)**: แผงความพร้อม Autopilot `GATEWAY` = Warn + ปุ่มไป `/admin/site-settings.html` · ทดลองรันบอกตามจริง · ตารางส่งอีเมลที่ตั้งแนบลิงก์แต่ออกไม่ได้ ⇒
+  ส่งได้ + `EmailQueue.ErrorMessage` "ส่งได้แต่ไม่แนบลิงก์ชำระ: <เหตุ>" (คงไว้หลังส่ง) · การ์ด go-live บนแดชบอร์ดแอดมิน (ข้อ BASEURL) — ไม่เดาโดเมน
+- **ใบขายตั้ง WHT ให้ผู้ซื้อบุคคลธรรมดา** (C F5): คำเตือนก่อนอนุมัติ `[WHT-PAYEE]` (ตัวตัดสินเดียวกับลิงก์ `BuyerWithholds` · ข้อความ `BuyerWhtApprovalNote` —
+  ไม่ฟันธง "ไม่มีหน้าที่หัก" ให้ตรวจประเภทเงินได้ · ฝ่ายค้านข้อ 7) — ทางเข้าไม่มีคนผ่านตามเดิม · ลิงก์ยังเตือน (`WhtMismatchNote`)
+- **ฝ่ายค้าน WP-02 (สถานะปัจจุบัน)**:
+  - **ทิศเงินตัวเดียวกับ JE** (ข้อ 2/3): `Helpers/CashFlowDirection.Of(type, override, sourceType, supplierOnly)` = ลำดับ `AdjustmentNoteAccount.ResolvePostedSide`
+    (ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ติดต่อเป็นผู้ขายอย่างเดียว › ไม่รู้ ⇒ โยน `UnknownSideMessage`) · `DocumentService.CashInflowAsync` ตัวเดียวของ JE รับ/จ่ายชำระ
+    (`CreatePaymentJournalAsync`) · ยอดธนาคาร/กลับรายการ/ชำระหลายใบ/แจ้งเตือน · `DocumentPayLinkPolicy.IsSaleSide` (ลิงก์ชำระ · งานหลังรับชำระไม่ส่งใบเสร็จให้ผู้ขาย)
+  - **อีเมลรายการประจำ** (ข้อ 6): ข้ามเพราะกฎ "เมื่ออนุมัติเอกสาร" เฉพาะเมื่อมีแถวคิวของกฎนั้นจริง (`EmailScheduleService.DocumentQueueKey` กุญแจเดียวกับฝั่งเขียน) —
+    ตัวเข้าคิวฝั่งอนุมัติกลืนความผิดพลาด ⇒ ไม่มีแถว = เดินเส้นรายการประจำต่อ
+  - **รหัสประทับเวลา ETDA** (ข้อ 8): คอลัมน์ `EtdaTimestampToken` เป็น `text` (migration ALTER TYPE) — เก็บครบ (ตัดช่องว่างหัวท้าย) ไม่ปฏิเสธ/ไม่ตัด
+  - **ทะเบียนเครดิตภาษีถูกหัก** (ข้อ 9): `SyncWhtCreditReceivedAsync` โหลดผู้จ่ายเองเมื่อใบไม่มี Contact (ทางเข้ารับชำระ) · migration เติมชื่อ/เลขแถวเก่าที่ว่าง
+  - **ใบมัดจำ + ใบส่วนที่เหลือ ราคารวม VAT** (ข้อ 5): `DocumentService.ComputeReconciledLineAmounts` — คิดบรรทัดก่อนหักมัดจำ กระทบยอดคง gross → หักฐานมัดจำ
+    VAT = round(ฐาน × อัตรา) → กระทบยอด VAT อย่างเดียว ⇒ ฐานสองใบ = ฐานใบเต็มพอดี (ตัวอย่าง 690.54 / 48.34 / 738.88 · รวม 1,055.55) · ใบไม่มีมัดจำ/ราคาไม่รวม VAT = เส้นเดิม ·
+    **backlog**: ส่วนลดท้ายบิลทั่วไป (ไม่มีมัดจำ) ยังใช้ขั้นปัดแบบคง gross ที่ขยับฐานได้ — แก้แล้วกระทบ golden ของ OCR จึงแยกงาน
+- เทสต์ `Round250Wp02Tests` · Db `DocumentAutoSendRound241DbTests` (รอบ 250) · `ImportAccountingTargetsDbTests.นำเข้ารับชำระCSV_เลือกส่งใบเสร็จ_มีแถวงาน_ไม่เลือก_Skipped` ·
+  กติกา R250 ใน `tools/required_call_site_check.py` · Last verified `commit a40c91e5` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 2.12h ช่องทางแจ้งเตือนของผู้ติดต่อ — ผู้ติดต่อเป็นเจ้าของปลายทาง (รอบ 245 เฟส L1 · `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` · คำตัดสิน 245-L1-1…245-L1-7)
 
@@ -2972,6 +3060,16 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **ยังไม่ทำ (งานต่อ)**: สวิตช์ต่อใบ (246-QR-7) · บล็อกลิงก์ในอีเมล (ไฟล์ของรอบ 244 — PDF แนบมี QR แล้ว) · รวมบัญชีรับโอนของเว็บ (`SitePaymentGateway`) กับ `BankAccount` · `portal.html` ส่ง payload ไปสร้างรูปที่ `api.qrserver.com` + สำเนา EMVCo ฝั่ง JS
 - เทสต์ `PaymentQrRound246Tests` (payload EMVCo ทุกไบต์ · ตัวตรวจ · ตัวตัดสิน · HTML + QuestPDF มี/ไม่มี QR) · Db `PaymentQrRound246DbTests` (tenant · audit · ยอดสุทธิ · เพิกถอนแล้วไม่มี QR) ·
   ล็อก `tools/required_call_site_check.py` R246 (+ เคส R246a–h) — ยังไม่ได้คอมไพล์ในเครื่องนี้
+- **รอบ 250 WP-03 — QR พอร์ทัล/pay-link ผ่านเซิร์ฟเวอร์ (A G-01 · คำตัดสิน §2 #15)**: พอร์ทัลลูกค้าเรียก
+  `GET api/portal/{cid}/documents/{docId}/payment-options` (โทเค็นพอร์ทัล · ใบต้องเป็นของผู้ติดต่อในโทเค็น) ⇒ `PortalService.GetDocumentPaymentOptionsAsync`
+  สร้าง `PromptPayQrDataUri` ด้วย `PromptPayService.GenerateQrImage` (ตัวเดียวกับ pay-document) ฝัง `Document.BalanceDue` จากฐาน ·
+  ใบแจ้งหนี้ที่มีใบกำกับอ้างแล้ว = ไม่ฝังยอด (`PaymentQrPolicy.EmbedAmount`) · รูปที่ร้านอัปโหลดส่งต่อเฉพาะ URL ภายใน/https (`BookingPaymentChannels.QrImageUrlAcceptable`) ·
+  ลบ TLV builder ใน `portal.html` + ไม่มี `api.qrserver.com` ใน `wwwroot/` (checker `external_qr_check`) · หน้าเว็บรับเฉพาะ `data:image/png;base64,` ·
+  `pay-link.html` (ค่าบริการแพลตฟอร์ม) แสดง**รูป** QR จาก `qrPayload` ของผู้ให้บริการชำระเงิน (data URI/https — แบบเดียวกับ `pay-widget.js`) แทนข้อความดิบ ·
+  payment-options แบบไม่ระบุใบ (anonymous) คงเดิม (ไม่มี QR) · ล็อก R250W3
+  - **ฝ่ายค้าน H1/M2 (หลัง merge)**: พอร์ทัลไม่ประกอบ QR เอง — เรียก `IDocumentPayLinkService.TransferForDocumentAsync` (กติกา `IssueRefusal` ตัวเดียวกับลิงก์ชำระ:
+    ฝั่งขายเท่านั้น · THB · ออกแล้ว · ยอดค้าง > 0 · ใบแจ้งหนี้ที่มีใบกำกับอ้าง) ⇒ ยอดโอน = `AmountsAsync().Net` (หลัง WHT) · บัญชี = ของใบก่อน (`PickDocumentAccountAsync`) ·
+    กล่องโอนตัวเดียว `TransferBlockAsync` ใช้ร่วมกับ pay-document · เจ้าของใบตรวจผ่าน `PortalDocuments` · ปุ่ม "ชำระ" ตาม `PortalDocumentResponse.CanPay`
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -3125,7 +3223,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
    · ใบที่อนุมัติก่อนรอบ 201 คงค่าเดิม (งวดที่อาจยื่นแล้วห้ามแก้เงียบ — แนวคำตัดสินข้อ 44)
 5. **Retention** (`DocumentService.cs:5126`) — `doc.RetentionUntil ??=`
    **วันสิ้นรอบบัญชีที่เอกสารอยู่** `+ 5 ปี` (ไม่ใช่ `DocumentDate + 5y`)
-   ตาม พ.ร.บ.บัญชี ม.10 + §87/3 · คำนวณผ่าน
+   ตาม พ.ร.บ.บัญชี ม.14 + §87/3 · คำนวณผ่าน
    `Helpers.FiscalYear.FiscalYearOf(...)` → `RangeFor(...).EndInclusive`
    แล้วใช้ `MAX(fyEnd, DocumentDate)` เป็นฐาน
    _(รอบ 125 · C-T11 — สูตรเดิมสั้นไปเกือบ 12 เดือน และสั้นได้ถึง ~14 เดือน_
@@ -3385,6 +3483,12 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
        รายงานกระทบยอดสินทรัพย์/รายการตรวจก่อนปิดงวดไม่นับสินทรัพย์ระหว่างจัดหา · GET ค้นบรรทัด/เอกสารต้นทุนต้องมีสิทธิ์ `Asset.Manage` · ราคาตามสัญญา (ไม่บังคับ) ⇒ เตือนเมื่อเกิน ·
        **CI 7cb6bd08**: ด่านทะเบียนต่อใบนับเฉพาะส่วนเกิน/ขาด (`OverRegistrationIncrease`/`OrphanIncrease`) — รุ่นแรกฟ้องใบที่ยังไม่มีทะเบียนแล้วผูกครบพอดี ·
        ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified `commit c314266c`
+      • **รอบ 250 (WP-02 · C F1/F2/F6 · คำตัดสิน §2 #5–#7)**: ตัวย้ายผังบัญชี (`ResolveLinePostedGlAmountAsync`) ใช้ `PurchaseLineGlAmount.Posted` (ใบรับรองแทนรวม VAT เสมอ ·
+        ภาษีออกแทนต่อบรรทัด) — ส่วนออกแทนต่อบรรทัดจาก `WhtGrossUp.PayerBorneShareByLine` ตัวเดียวกับต้นทุนสินทรัพย์ · ใบรับรองแทนที่แปลงจากใบซื้อ/ค่าใช้จ่าย (จ่ายชำระ) คืน 0 เหมือน PV ·
+        AutoPost CN/DN/PI/PV บรรทัดซื้อใช้ `PurchaseLineGlAmount.Standalone` (ห้ามประกอบ `Amount + VatAmount` เอง) · **ลำดับล็อก**: ยกเลิก/ลบถาวรถือคีย์
+        `AssetCostSource` **เสมอ**เมื่อชนิดใบอาจเป็นต้นทุน (`AssetCostSourceRules.MayBeCostSource` — ไม่ตรวจ "ผูกอยู่ไหม" นอกล็อก) ก่อน `FOR UPDATE` แถวเอกสาร ·
+        ทะเบียนเกิน GL อยู่ก่อน ⇒ problem row ในแท็บเอกสารต้นทุน · สินทรัพย์ระหว่างจัดหาไม่นับในกระทบยอดยกมา · ไฟล์ส่งออกติดป้าย "ระหว่างจัดหา"/"วันที่ซื้อ = วันพร้อมใช้" ·
+        Last verified `commit a40c91e5` — ยังไม่ได้คอมไพล์ในเครื่องนี้
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
@@ -3462,8 +3566,10 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **ช่องทาง "ส่งแล้ว"** = `ByEmailSentAt` ของแถว e-Tax ที่ยังมีผล (ฝ่ายค้าน N3 · migration เติมจากบันทึกอีเมลเดิม)
 - **ตั้งค่า**: เลือก "ทั้งสองระบบ" ใหม่ไม่ได้ (`ETAX-MODE-ONE-SYSTEM` · ค่าเดิมยังส่งได้ + คำเตือน) · คำเตือนจากเซิร์ฟเวอร์ (`EtaxConfigResponse.Warnings` ·
   ตัวอย่างอีเมล `GET document/{id}/email-route` · `GET etax/{id}/email-preview`): โหมดทั้งสอง · โหมดทดสอบ = UAT · ด่านผู้ส่ง · รายได้ปีก่อน > 30 ล้าน (ไม่บล็อก)
+- **ตั้งใจ (คำตัดสิน 250-23 · A F-07)**: คอลัมน์ `CompanySettings.EtaxByEmailEmbedXml` / `EtaxByEmailAutoSendOnApprove` (`DatabaseMigrationHelper.cs:1964,1967`) ไม่มีผู้อ่านแล้ว
+  (แนบ XML = ตามโหมดเสมอ · ส่งตอนอนุมัติ = กฎ "ตารางส่งอีเมล") และ `EtaxMode.Both = 3` (`AllEnums.cs:1368`) คงค่าเก่าพร้อม `EtaxByEmailFormat.ModeWarning` — DROP ในรอบเก็บกวาด schema
 - **ยังไม่ทำ**: อีเมลยกเลิก `[CIV]` · รับใบประทับเวลาจากกล่องจดหมายอัตโนมัติ · ตรวจ PDF/A-3U ด้วย validator · รหัส CDN/RCT รอคนยืนยันกับคู่มือ RD ฉบับปัจจุบัน ·
-  Last verified 2026-11-06 (รอบ 244 · ยังไม่ได้คอมไพล์ในเครื่องนี้) — commit <เติมในคอมมิตตามหลัง>
+  Last verified 2026-11-06 (รอบ 244 · ยังไม่ได้คอมไพล์ในเครื่องนี้) — `commit 6a8e7ab3`
 
 ### 3.4 Pay / Partial Pay
 - **Methods**: `CreatePaymentAsync` / `CreateMultiDocPaymentAsync`
@@ -3849,7 +3955,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **รอบ 228 ทีมภาษี (ช่องว่างรอบ 225)**: (1) ดึงมัดจำ VAT พักที่รับรู้แล้ว ⇒ ยอด = ที่ GL ย้ายเข้า 21911 จริง (`TaxService.PullLineAmounts(..., depositVatDeferred, reclassifiedVatThb)` ·
   loader เดียวกับ loop หลัก `LoadReclassifiedDepositVatAsync`) — เดิมดึง VAT เต็มใบ · (2) `GET tax/pulled-lines/ineligible` ฟ้อง `TAX-PULL-DUP-OTHER` เมื่อใบเดียวกันถูกใช้ในรายงาน ภ.พ.30
   อีกฉบับจริง (เดิมยกเว้นด้วยการเทียบปี/เดือนของแถวแรกที่เจอ ⇒ เคลมซ้ำหลุดเมื่อแถวแรกเป็นรายงานนี้เอง)
-- Last verified `commit (รอบ 225 — เติมในคอมมิตตามหลัง)` · รอบ 228 ทีมภาษี `commit (เติมในคอมมิตตามหลัง)`
+- Last verified `commit d6d83995` · รอบ 228 ทีมภาษี `commit d6d83995`
 
 ### 3.7 มัดจำ (Deposit lifecycle)
 - **รอบ 194 ทีม B — เส้นเอกสารต่อสายประเภทเงินมัดจำแล้ว** (spec `erp-review/2026-09-25/spec-194.md` S2–S4 · กติกาเส้นเอกสาร
@@ -4533,7 +4639,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 > (SSO_NewEmployee due+30วัน / SSO_Termination due วันที่15เดือนถัดไป).
 > **หลักฐานการจ่าย:** โมดัลนำส่ง (`payroll.html`) + กล่อง "หลักฐานการจ่าย/นำส่ง"
 > ในหน้ารายละเอียดรอบ แนบสลิป/ใบเสร็จผ่าน `FileAttachment` entityType
-> `"PayrollRun"` (เก็บ 5 ปี ตาม พ.ร.บ.การบัญชี ม.10).
+> `"PayrollRun"` (เก็บ 5 ปี ตาม พ.ร.บ.การบัญชี ม.14).
 >
 > **คู่ (ลูกจ้าง, นายจ้าง) ต้องสอดคล้องกันเสมอ** (ม.33 ใช้ฐานค่าจ้างเดียวกัน) —
 > ตัวตัดสินตัวเดียวคือ `Helpers/SsoWageBase.Normalize` (ฝั่งลูกจ้างเป็นความจริง
@@ -5317,7 +5423,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - **เปิดงวดเดี่ยวที่ถูกล็อกจากการปิดปี** (`ReopenPeriodAsync`) = ล้มพร้อมทางไปต่อ `YearEndReopenRule.LockedPeriodMessage` (เดิมอ้าง "ยกเลิก year-end" ที่ไม่มีอยู่)
   - **ปิดปีเมื่องวด ธ.ค. (งวดของวันที่ใบปิดปี) ปิดชั่วคราวไว้** — เดิมตัวสร้างใบปฏิเสธ "งวดถูกปิดแล้ว" ⇒ ปิดปีไม่ได้เลย · ตอนนี้ `YearEndCloseAsync` เปิดงวดนั้นใต้ล็อกเดียวกัน
     + audit `year-end-close-through-soft-closed-period` แล้วล็อกทั้งปีในธุรกรรมเดียวกัน (งวดนอกรอบที่ผู้ใช้เลือกเป็นวันปิด = ไม่แตะ ยังล้มเหมือนเดิม · งวดอื่นที่ปิดชั่วคราวไม่ต้องเปิด)
-  - **เดือนเริ่มรอบบัญชีล็อกหลังปิดปีครั้งแรก** (`CompanyService.ApplyFiscalYearStartMonthAsync` · พ.ร.บ.การบัญชี ม.11 — ดู ACCOUNT_STRUCTURE §3.1f) · ตัวตรวจยกยอดรุ่นเก่า
+  - **เดือนเริ่มรอบบัญชีล็อกหลังปิดปีครั้งแรก** (`CompanyService.ApplyFiscalYearStartMonthAsync` · พ.ร.บ.การบัญชี ม.10 — ดู ACCOUNT_STRUCTURE §3.1f) · ตัวตรวจยกยอดรุ่นเก่า
     (`FindLegacyCalendarRollPeriodsAsync`) นับงวด ม.ค. เป็นรุ่นเก่าเมื่อตอนยก (เวลาใบปิดปีของรอบนั้น /
     ไม่มีใบปิดปี = เวลาที่แถวถูกเขียน) บริษัทใช้รอบไม่ใช่ปีปฏิทิน — **ไม่ใช้เวลาคอมมิตเป็นเส้นแบ่ง** (รอบ 5 ฝ่ายค้าน P2-1: production รันโค้ดเก่าเลยเวลาคอมมิตได้ · โค้ดใหม่ไม่เคยเขียนแถว ม.ค. ให้บริษัทรอบไม่ใช่ปีปฏิทิน) (`OpeningRoll.StartMonthAt` จาก audit `fiscal-year-start-month` — ไม่มีประวัติ = ค่าปัจจุบัน) ·
     เดิมบริษัทปีปฏิทินที่ปิดปีแล้วค่อยเปลี่ยนเดือนเริ่มรอบถูกบล็อกเท็จ และปุ่มซ่อมจะยกเลิกยอดยกมา ม.ค. ที่ถูกต้อง
@@ -5983,7 +6089,7 @@ PDF ของ PV ที่ปิดหนี้อ่านธงของใบ
   · ต้องมีสิทธิ์**สร้างหรืออนุมัติ**ประเภทเอกสารนั้น (ด่านใน `FileAttachmentController` — เดิมแค่ `[Authorize]`) ·
   ชนิดไฟล์ตัดสินจาก**ไบต์** (`UploadFileType.SniffAttachment`) ไม่ใช่นามสกุล (HTML ที่ตั้งชื่อ `.csv` ถูกปฏิเสธ) ·
   **ลบ** = ถอดจากรายการ · ไฟล์จริงถูกลบเฉพาะใบร่างและข้อมูลหลัก (ผู้ติดต่อ/สินค้า) — นอกนั้นเก็บไฟล์ไว้ (soft-delete ·
-  `Helpers/AttachmentRetention` · พ.ร.บ.การบัญชี ม.10 / §87/3 · ชนิดที่ไม่รู้จัก = เก็บ)
+  `Helpers/AttachmentRetention` · พ.ร.บ.การบัญชี ม.14 / §87/3 · ชนิดที่ไม่รู้จัก = เก็บ)
 - **ด่านไฟล์แนบทุกชนิด — service ตัวเดียว `IAttachmentAccessGate`** (รอบ 193 · คำตัดสิน #29 · ทีม U2 → S2): ตาราง "ชนิด → วิธีตัดสิน + คีย์"
   `Helpers/AttachmentPermissionScope` (คีย์เดิมของโมดูลเจ้าของทุกตัว — ไม่สร้างคีย์ใหม่) ครอบ **แนบ/ลบ/ดูรายการ/ดาวน์โหลด**:
   Document/Expense = สร้างหรืออนุมัติชนิดนั้น + ฝั่งที่มองเห็น (`VisibleDirectionsAsync`) + ชั้นความลับ · Payment = ด่านของเอกสารที่ถูกชำระ ·
@@ -6335,6 +6441,14 @@ CN/DN เดิมไม่ส่ง `doc.Contact` ต่างจากทุ�
   ต้องได้ค่าบริษัทเป๊ะ") + `TaxBranchCodeTests.cs`
 
 ### 6.3 §87/3 retention (5 ปี)
+- **ที่มาทางกฎหมาย (รอบ 250 WP-06 · `erp-review/2026-11-06/RETENTION_LAW_CHECK.md`)**: ป.รัษฎากร §87/3 (≥ 5 ปีนับแต่วันยื่นแบบ/วันทำรายงาน) +
+  **พ.ร.บ.การบัญชี 2543 ม.14 — เก็บ ≥ 5 ปีนับแต่วันปิดบัญชี (อธิบดีสั่งให้เก็บเกินได้ไม่เกิน 7 ปี)** · ม.10 = ปิดบัญชี/รอบบัญชี (เปลี่ยนรอบต้องได้รับอนุญาต
+  จากสารวัตรใหญ่บัญชี/สารวัตรบัญชี) · ม.11 = จัดทำ/ยื่นงบ (DBD) · ม.19 = ต้องมีผู้ทำบัญชี (คุณสมบัติตาม ม.7(6)) · ไฟล์/หลักฐานอิเล็กทรอนิกส์ =
+  พ.ร.บ.ธุรกรรมทางอิเล็กทรอนิกส์ 2544 ม.12 (+ ม.12/1 ไฟล์สแกน) — hash chain เป็น control ภายใน ไม่ใช่ข้อบังคับรายมาตรา · มาตรา "11 ทวิ" ที่เคยอ้าง ไม่มีในตัวบท ·
+  ข้อความที่เคยอ้างผิด (ระยะเก็บ · รอบบัญชี · ผู้ทำบัญชี · มาตราที่ไม่มีในตัวบท · คำสั่งอัตราหัก ณ ที่จ่าย) แก้แล้วทั้งโค้ด/UI/เทสต์ (ratchet `tools/legal_citation_check.py`) · **`LegalReference` ใน `AuditLog`
+  แถวก่อนวันแก้คงเลขเดิมโดยตั้งใจ** (append-only + hash chain · ไม่ migrate) · รหัสกฎ `ACC-ACT-11-FISCAL-PERIOD` คงชื่อเดิม (ค่าที่ persist) ·
+  **ข้อกำหนด/นโยบาย (แก้ตามฝ่ายค้าน HIGH-1):** ข้อความฉบับ 1.0 ในโค้ด (`PlatformBuiltIn` — ถูกเสิร์ฟสดเมื่อยังไม่มีฉบับเผยแพร่ และเป็นข้อความที่ความยินยอม "1.0" ชี้) **แช่แข็ง** = ข้อความก่อน `66677bea` (hash pin ใน `LegalReferenceTests`) · เลขมาตราที่ถูก + ข้อแลกเปลี่ยนข้ามผู้เช่า (N3) + ข้อ LINE ในนามท่าน (C9) อยู่ใน **ร่างฉบับถัดไป** `LegalDocumentDefaults.PlatformNextDraft`/`PlatformNextDraftEn` (ไม่เสิร์ฟสด) — แอดมินกด "ใช้ร่างฉบับถัดไปของระบบ" ใน `/admin/legal.html` (แบนเนอร์ "ฉบับตั้งต้นมีข้อใหม่" จาก `NextDraftPending`) แล้วเผยแพร่เป็นเลขฉบับใหม่ · **ห้ามเผยแพร่ร่างข้อกำหนดก่อน WP-12 รอบ 252 (ใบผ่านคู่ค้าเข้าเป็นร่าง — วันนี้ `CrossTenantWorkflowService` ยังสร้างใบสั่งซื้อสถานะอนุมัติในฝั่งผู้รับ) + ทางยกเลิกรับ LINE (C5) เสร็จ** (ข้อความเงื่อนไขตัวเดียว `NextDraftPublishGate` แสดงบนแบนเนอร์) ·
+  ยืนยันจาก snippet หลายแหล่งรวมสำเนาราชการ — ยังไม่ได้เปิดตัวบทเต็ม (WebFetch dbd/krisdika ถูก network ปฏิเสธ 2026-11-06 · รอ §3 N2)
 - ทุกเอกสารตั้ง `RetentionUntil = MAX(filingDate, reportDate, DocumentDate) + 5y`
 - **ด่านลบถาวร (`PurgeDocumentAsync`) — รอบ 200 (B-06)**: ตัดสินด้วย `Helpers/DocumentRetention` ตัวเดียว — ใบที่ **ออกแล้ว**
   (ไม่ใช่ร่าง/รออนุมัติ/ถูกปฏิเสธ และเลขไม่ใช่ `DRAFT-`) ใช้ `RetentionUntil` ที่บันทึกไว้ หรือ **คำนวณจากวันที่เอกสาร** (สิ้นรอบบัญชี + 5 ปี
@@ -6690,7 +6804,7 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
   บันทึกผู้ยืนยัน ≤ 300 ตัว · (S4) จ่ายแล้วบอกก่อนเขียนไฟล์ · ยอดเปลี่ยนระหว่างแนบ ⇒ 409 + ปิดรายการชำระ · อ่านสลิปต้องเป็นไฟล์ของการจองนี้ ·
   (S5) ได้ที่จากคิวสำรอง ⇒ ตัวตัดสิน `BookingPaymentPolicy.OnSeat` เดียวกับจองใหม่ · (S6) งานยกเลิกค้างจ่ายข้ามการจองที่มีรายการชำระออนไลน์ยังไม่หมดอายุ
   (+ผ่อน 10 นาที · `GatewayPaymentInProgress`) · บันทึกบริการที่ตั้งเก็บเงินเอง ⇒ ต้องมีช่องทาง + ยอด (`ServiceChannelProblem`) ·
-  ~~PDPA: สลิปที่ถูกปฏิเสธ/แทน ของการจองที่ไม่มีเงินเข้า เก่ากว่า 90 วัน ⇒ ลบ~~ (รอบ 2 F2: ยกเลิก — ดู "ฝ่ายค้านรอบ 218 รอบ 2" ด้านล่าง) · สลิปของการจองที่มีเงิน = หลักฐาน ม.10 ไม่ลบ ·
+  ~~PDPA: สลิปที่ถูกปฏิเสธ/แทน ของการจองที่ไม่มีเงินเข้า เก่ากว่า 90 วัน ⇒ ลบ~~ (รอบ 2 F2: ยกเลิก — ดู "ฝ่ายค้านรอบ 218 รอบ 2" ด้านล่าง) · สลิปของการจองที่มีเงิน = หลักฐาน พ.ร.บ.การบัญชี ม.14 ไม่ลบ ·
   สลิปค้างเลยเวลานัด ⇒ ป้าย "ตรวจด่วน" (ไม่ยกเลิกเอง)
   **ฝ่ายค้านรอบ 218 รอบ 2**: (K2) `PaymentGatewayController.ConfirmManually` ของรายการสลิปการจอง ⇒ 409 "ตรวจที่หน้าการจอง" (`BookingSlipRule.GatewayManualConfirmProblem`) ·
   `PaymentIntents.ConfirmedBy` ตัดที่ 200 ณ จุดเขียนเดียว (`PaymentIntentPolicy.CapConfirmedBy`) · (F1) งานล้างเอาเงื่อนไขทั้งหมดเข้า SQL (`CartImageCandidates`/`SlipPurgeCandidates` · `!IsDeleted`) ·
@@ -7124,7 +7238,7 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
 | §87 ลำดับเวลาในรายงาน | `TaxService.NormalizeReportLineOrder` | เรียง + renumber `LineOrder` ท้ายการ generate ทุกครั้ง (ขาย → ซื้อ → บรรทัดสรุป; แต่ละกลุ่มตาม `TransactionDate`, ties = ลำดับเดิมเพื่อ deterministic). เรียกจาก GenerateVatReport / หลัง ApplyVatDeferrals / ComputeVatReport (ไฟล์ยื่น) / GenerateWhtReport / PullDocumentIntoReport / regenerate re-apply. `tax.html` sort ซ้ำฝั่ง client (จอ + แบบพิมพ์ §87) ให้รายงานเก่าถูกลำดับโดยไม่ต้อง regenerate — เดิม LineOrder ไล่ตามลำดับที่ query คืนเอกสาร = วันที่สลับไปมา |
 | §82/5(6) นโยบาย "ดุลพินิจผู้กรอก" | keyword auto-cut ถูกถอดออกทั้งหมด | ระบบ**ไม่เดา**จากข้อความไปตัดสิทธิ (เดิม "ค่าน้ำมัน" คำเดียวโดนตัด = น้ำมันรถกระบะผู้รับเหมาหายจาก ภ.พ.30). การตัดใช้เฉพาะ (a) flag รายบรรทัด IsVatClaimable (b) ผังบัญชีต้องห้ามที่บริษัทตั้งเอง; คำเตือนกฎรถยนต์นั่ง (ประกาศ 42: กระบะตอนเดียว/แค็บ/บรรทุก/ตู้>10 เคลมได้; เก๋ง/กระบะ 4 ประตูไม่ได้) มี 2 จุด — approve warning + confirm ตอนติ๊กเคลมในหน้าเอกสาร · **รอบ 193: ทั้งสองจุดอ่านลิสต์คำชุดเดียว `InputVatVehicleRule`** (หน้าเอกสารถามเซิร์ฟเวอร์ — ลิสต์คำใน JS = 0) |
 | ติ๊กเคลมภาษีซื้อเข้า/ออกหลังอนุมัติ | `CompleteSupplierTaxInvoiceAsync` + `ClaimInputVat` (Unclaim/ReclaimInputVatAsync) | แผงในหน้า detail ของ PV/Expense/PI (approved, VAT>0): เลิกเคลม → JE Dr ค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้"/Cr 11610 หรือ 11640 + set override=ผังค่าใช้จ่าย (marker ที่ ภ.พ.30 exclude อยู่แล้ว) + ติ๊กบรรทัดงวด Draft ออก; block เมื่อเคลมในงวด Filed แล้ว (ต้องยื่นเพิ่มเติม). กลับมาเคลม → require §86/4 ครบ + กรอบ 6 เดือน §82/3 → JE ย้อน + BecameClaimableAt=now (เข้า ภ.พ.30 งวดปัจจุบัน) + PV เปิด HasTaxInvoiceReference. แก้เลขที่/วันที่/สาขาใบกำกับได้ทุกใบจากแผงเดียวกัน |
-| F14 audit hash chain | `AuditTrailService.VerifyHashChainAsync` + `AuditChainVerifyJob` → **`Helpers/AuditHashChain`** (รอบ 193 · §6.1) | cron 7 วัน · สูตร v2 `Seal` ฝั่งเขียนตัวเดียว · `Analyze` แยก ถูกแก้/ขาดตอน/แตกกิ่ง · notify ตามสาเหตุจริง (พ.ร.บ.บัญชี ม.11 ทวิ) |
+| F14 audit hash chain | `AuditTrailService.VerifyHashChainAsync` + `AuditChainVerifyJob` → **`Helpers/AuditHashChain`** (รอบ 193 · §6.1) | cron 7 วัน · สูตร v2 `Seal` ฝั่งเขียนตัวเดียว · `Analyze` แยก ถูกแก้/ขาดตอน/แตกกิ่ง · notify ตามสาเหตุจริง (control ภายในเพื่อเงื่อนไข พ.ร.บ.ว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ม.12 · ระยะเก็บ พ.ร.บ.การบัญชี ม.14 — hash chain เป็นวิธีหนึ่ง ไม่ใช่ข้อบังคับรายมาตรา) |
 | Recurring template validate | `RecurringTransactionService.ValidateTemplateAsync` + `Helpers/RecurringTemplate` | ตอน Create/Update **และตอนถึงรอบ** — รหัสแต่ละชนิดค้นในตารางของมัน (บัญชีธนาคาร → BankAccounts · ผัง → CoA · โครงการ · สาขา · ผู้ติดต่อ) + journal balance · §2.7 |
 | Reclassify line GL (post-approve) | `DocumentService.ReclassifyLineAccountAsync` | เปิดทั้งฝั่งซื้อและฝั่งขาย (Invoice/TaxInvoice/Receipt/CN/DN ด้วย — §86/4 บังคับ**สิ่งที่พิมพ์บนใบกำกับ** ซึ่งไม่มีรหัสผังบัญชีอยู่เลย); post JE คู่ใหม่ลงงวดเดิม โดย**อ่านขาที่ลงจริงใน GL** (`oldWasCredited`) แล้วกลับตามนั้น + update line.AccountId. **ยอดที่ย้าย = `ResolveLinePostedGlAmountAsync`** ไม่ใช่ `line.Amount` เสมอ: ภาษีซื้อต้องห้าม §82/5 (`IsVatClaimable=false`) → `Amount + VatAmount` เพราะ AutoPost รวม VAT เป็นต้นทุนบรรทัด (ย้ายแค่ฐาน = VAT ค้างผังเก่าถาวร โดย Dr=Cr ยังสมดุล) · ใบที่อ้างใบรับของ GRN → ฐานตัด GR-NI ไปแล้ว บรรทัดเหลือแค่ VAT ต้องห้าม · PV ที่แปลงจากใบตั้งหนี้ (settlement) → 0 (แค่เปลี่ยน AccountId ไม่ลง JE) · ต่างสกุล → คูณ `ExchangeRate` ผ่าน `ToGlAmount`. gate: period Open + no downstream (ไม่นับใบเสร็จ settlement) + not Draft/WaitingApproval/Voided/Rejected + ไม่ใช่ใบมัดจำ + ไม่ใช่บัญชีคุม + no submitted ภพ.30 + no e-Tax submitted |
 | §87(3) chronological | ExportPp30Async summary | นับ doc ที่ tax point ย้อนกลับ → surface ใน Summary.csv |
@@ -7231,7 +7345,7 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
 2. **ห้ามแก้ Approved เอกสาร** — ใช้ Void แล้วออกใหม่ (§86/4 ห้ามแก้ย้อนหลัง)
 3. **TaxPointDate snapshot ตอน approve** — ห้ามคำนวณ on-the-fly (กัน period leak)
 4. **Tenant isolation** — ทุก query ต้องมี `CompanyId == @companyId` — ไม่มีข้อยกเว้น
-5. **Soft delete + legal_hold** — ใน 5 ปีห้าม hard delete (§87/3 + ม.10)
+5. **Soft delete + legal_hold** — ใน 5 ปีห้าม hard delete (§87/3 + พ.ร.บ.การบัญชี ม.14)
 6. **Audit log append-only + hash chain** — tamper-evident
 7. **กฎเหล็ก #1 Distillation Mandate** — ทุก AI call ผ่าน `IAiOrchestrator.AskAsync`,
    capture FeedbackId, ปิดลูปด้วย `RecordUserChoiceAsync`
@@ -7549,12 +7663,12 @@ _Last verified against codebase: 2026-10-14 (ทีม F2 แหล่งเง�
 ด่านหัวเอกสารตอนบันทึก · ลงบัญชีไม่ตกเงินสดเงียบเมื่อธนาคารยังไม่ผูกผัง · ไม่มีผังเงินสด = ล้มดัง (เดิมไม่มี JE) · การชำระสืบทอดผังตรงของเอกสาร · จ่ายจากผังอื่นไม่ขยับยอดธนาคาร ·
 reclassify อ่านผังเดิมจาก JE · เทมเพลต `defaultPaymentChannel` · BankService สร้างตรวจผังที่ผูก + `activeOnly` — commit 1b39ec9f)_
 _Last verified against codebase: 2026-10-14 (ทีม F3 — แก้ผลตรวจช่องทางรับ/จ่ายเงิน + รหัสผิดตาราง (`erp-review/2026-10-14/PAYMENT_CHANNEL_AUDIT.md` PC#6/#8/#11/#12/#16/#17/#22 · ID#13/#14/#15/#17/#18/#19/#22/#23/#24): กติกาผังเงินตัวเดียว `Helpers/MoneyAccountRule` + `MoneyAccountDirectory` · ผังลงรายการได้ `Helpers/PostingAccountRule` + `PostingAccountGuard` · §3.8 แหล่งจ่ายเงินเดือน · §2 แหล่งเงิน default · §7 สามแถวใหม่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 6b406e09)_
-_Last verified against codebase: 2026-10-14 (ทีม F4 · PAYMENT_CHANNEL_AUDIT ส่วนที่ 2 ID#9/10/11/12/18/25 — §3.2: มือถืออนุมัติผ่าน `ApprovalService.SubmitActionAsync` ตัวเดียว (ผู้อนุมัติของขั้น · สิทธิ์ขั้นสุดท้าย · แก้แถวที่รอ) · ผู้อนุมัติที่ออกจากบริษัท: ส่งไม่ได้ 409 + โอนผู้อนุมัติ · workflow ข้ามบริษัทตรวจสมาชิกผู้ลงนาม/ผู้อนุมัติเริ่มต้น · อีเมลตั้งเวลาตรวจเอกสารซ้ำตอนส่ง + ไฟล์แนบล้มไม่ประทับ Sent · รายงานตั้งเวลา PARTIAL/ERROR — sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-10-14 (ทีม F4 · PAYMENT_CHANNEL_AUDIT ส่วนที่ 2 ID#9/10/11/12/18/25 — §3.2: มือถืออนุมัติผ่าน `ApprovalService.SubmitActionAsync` ตัวเดียว (ผู้อนุมัติของขั้น · สิทธิ์ขั้นสุดท้าย · แก้แถวที่รอ) · ผู้อนุมัติที่ออกจากบริษัท: ส่งไม่ได้ 409 + โอนผู้อนุมัติ · workflow ข้ามบริษัทตรวจสมาชิกผู้ลงนาม/ผู้อนุมัติเริ่มต้น · อีเมลตั้งเวลาตรวจเอกสารซ้ำตอนส่ง + ไฟล์แนบล้มไม่ประทับ Sent · รายงานตั้งเวลา PARTIAL/ERROR — `commit 2f3e7f4f`)_
 _Last verified against codebase: 2026-10-14 (รอบ 205 ทีม D — ศูนย์นำเข้า ปลายทางบัญชี + migration wizard (§2.11): target งบทดลองยกมา/เอกสาร(ร่าง+DRAFT · เลขเดิม→Reference)/รับ-จ่ายชำระ(CreatePaymentAsync ⇒ JE)/สินทรัพย์(ที่ดินไม่คิดค่าเสื่อม) · wizard แยกบล็อก/คำเตือน (ข้อ 150) + ทางไปต่องบไม่ลงตัว + ย้อนคืนยอดเดิม + ด่านสิทธิ์ทุก action · กระทบยอดหลังย้ายระบบ · adapter โปรแกรมอื่นเลือกด้วยหัวตาราง + TIS-620 + ชนิดผู้ติดต่อ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 68fb68eb)_
 _Last verified against codebase: 2026-10-14 (ฝ่ายค้านรอบ 1–2 · PAYMENT_CHANNEL_AUDIT ส่วนที่ 3 — §2 แหล่งเงิน: ค่าที่ยกมาจากต้นทาง (`carriedMoneyHeader`) ตรวจแค่ tenant ·
 reclassify ใช้ยอดขาเงินตาม JE · OCR/เทมเพลต/ระบบเชื่อมต่อขายเงินสด · §6.0b-bank ยอดที่ไม่รู้ + ล้มแล้วถอดจาก tracker + ไฟล์หลัง commit · รายการประจำ ขั้นหลังสร้างล้ม = notice ·
 `PickedAccountGuard` ใช้ `PostingAccountRule`/`MoneyAccountDirectory` · เงินเดือนไม่ตกเงินสดเงียบ · ที่พักโอน/พร้อมเพย์ต้องมีบัญชีธนาคาร (เซิร์ฟเวอร์) · รายงานตั้งเวลาล็อกต่อรายงาน ·
-โอนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
+โอนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 2560776c`)_
 _Last verified against codebase: 2026-10-14 (50 ทวิ บนมือถือ — ผู้ใช้ "กดบันทึก pdf ขึ้นแต่หน้าปริ้น บนมือถือกดมาเป็นไฟล์ไม่ได้" · §5.4: ปุ่ม ⬇️ PDF → `Layout.savePdf` (ไฟล์เซิร์ฟเวอร์ · มือถือ = แผ่นแชร์/บันทึกลงไฟล์ · iOS = เปิดไฟล์ · เดสก์ท็อป = ดาวน์โหลด) · มือถือกด 🖨 พิมพ์ = ไปทางไฟล์ · ชื่อคู่สัญญาทั้ง 3 renderer ผ่าน `WhtCertFormText.PartyName` · ทางเดียวกันใน documents (PDF/e-Tax) · tax (§87/ภ.พ.30) · etax (เดิมไม่แนบ JWT ⇒ 401) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ef59bf1f)_
 _Last verified against codebase: 2026-10-14 (ทีม PDF fix-bahttext — §5.1/§5.4: จำนวนเงินตัวอักษร ≥ 10 ล้านพิมพ์ผิด (`units[pos % 7]`) ⇒ ตัวตั้งเดียว `Helpers/ThaiBahtText.Format` · renderer 4 จุด + DTO 50 ทวิ `TotalTaxAmountInWords` · ถอดสูตรเขียนเอง C# 2 ชุด (`ThaiNumberToText` · `ConvertToThaiWords`/`ConvertThaiNumber`) + JS ใน wht.html · พรีวิว `UxHelpers.AmountInWords` ตรง C# ด้วย sim — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 05267e80)_
 _Last verified against codebase: 2026-10-14 (ทีม X3 ส่งออกรายงานบัญชี — §6.0a-x ปลายทางไฟล์ `accounting/exports/*` เจ้าของตัวเลขเดียวกับหน้า ·
@@ -7581,23 +7695,23 @@ _Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบ�
 (P2-6) ยกไปงวดแรกของรอบถัดไป + ล็อกงวดตามรอบ · (P2-7) ยกยอดด้วยมือต้องปิดปีก่อน · ล็อกเดียว · ไม่ทับยอดนำเข้า · audit · (P2-5) ตัวกรองสาขา/มิติ:
 สาขาของบรรทัด = บรรทัด ?? หัวใบ · ส่วนที่ปัน (`LedgerFilterRule.AllocationShare` = รายงานตามมิติ) · TB/GL กรองเริ่ม P&L ต้นรอบ + แถวกำไรขาดทุนก่อนรอบ · รวมยอดในฐาน ·
 (P1-3/P1-4/P2-8/P2-10 ดู ACCOUNT_STRUCTURE §3.1f · งบรวมต้องสิทธิ์งบการเงินทุกบริษัท) — เทสต์ `AdversarialExportRound2Tests` · `Db/AdversarialExportRound2DbTests` ·
-`Db/FinanceExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
+`Db/FinanceExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit de823512`)_
 _Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบส่งออก **รอบ 3** — `EXPORT_AUDIT.md` §"รอบ 3" · §6.0a-y: (P2-3) ฐานตรงต้นรอบ = P&L ปีก่อน แยกบรรทัด ไม่นับในกำไรของปี ·
 (P2-4) ยอดยกรุ่นเก่าไป ม.ค. ของรอบไม่ใช่ปีปฏิทิน: รายงานอธิบาย + ซ่อมยกเลิกแถว ม.ค. (audit) · (P2-6) ผังที่ถูกลบยังมียอด = ล้มดังพร้อมชื่อผัง · (P2-1) ไฟล์งบทดลองกรอง
 ไม่มีผลต่างเท็จ · (P1/P2-2/P2-7 ดู ACCOUNT_STRUCTURE §3.1f) — เทสต์ `AdversarialExportRound3Tests` · `Db/AdversarialExportRound3DbTests` · `AccountingReportSheetsTests`
-— ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
+— ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 774ea7bc`)_
 _Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบส่งออก **รอบ 4** — `EXPORT_AUDIT.md` §"รอบ 4" · §6.0a-y: (P2-a) ปิดปี/ยกยอดด้วยมือล้มดังเมื่อยังมียอดยกรุ่นเก่าไป ม.ค. ที่ซ่อมได้
 (ทางไปต่อ = ซ่อมปีที่ระบุ) · (P2-d) ปีที่งวดแรกมียอดนำเข้ายังรายงาน/ยกเลิกแถว ม.ค. รุ่นเก่า (แถวนำเข้าไม่ถูกแตะ) · (P2-b) ใบปิดปีล้างผังรายได้/ค่าใช้จ่ายที่ถูกลบ ·
 ผังสินทรัพย์ที่ลบแต่มียอด = ล้มก่อนสร้างใบ + ปุ่มกู้คืน `POST accounting/accounts/{id}/restore` · (P2-c ดู ACCOUNT_STRUCTURE §3.1f) — ยอดยกมารอบ 3 = `commit 774ea7bc` ·
 เทสต์ `AdversarialExportRound4Tests` · `Db/AdversarialExportRound4DbTests` · `Db/AdversarialExportRound3DbTests` (ปิดปีที่จบแล้ว — ไม่ขึ้นกับนาฬิกา)
-— ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
+— ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit eec6947d`)_
 _Last verified against codebase: 2026-10-15 (ฝ่ายค้านรอบส่งออก **รอบ 5** — `EXPORT_AUDIT.md` §"รอบ 5" · §6.0a-y: (P1) บรรทัดผังที่ลบไม่หายจากการแสดง/กลับรายการ/ส่งออก/ปรับปรุง
 (`JournalLineAccounts`) · ใบปิดบัญชีสิ้นปีกลับรายการ/ยกเลิก/ลบไม่ได้ทุกทาง (`ClosingEntryLock`) · ตัวกลับต้องครบและลงตัว · (P2-2) ตัวตรวจยกยอดรุ่นเก่าใช้เวลาใบปิดปี + ประวัติ
 เดือนเริ่มรอบ · เดือนเริ่มรอบล็อกหลังปิดปี · (P2-3) กู้คืนผังใต้ผังแม่ที่เป็นผังลงรายการ = บล็อก + หัวบัญชีที่เสนอ · (P2-4) หมายเหตุ TransferredAmount ≠ งบกำไรขาดทุนเท่าผังที่ลบ —
-รอบ 4 = `commit eec6947d` · เทสต์ `AdversarialExportRound5Tests` · `Db/AdversarialExportRound5DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
+รอบ 4 = `commit eec6947d` · เทสต์ `AdversarialExportRound5Tests` · `Db/AdversarialExportRound5DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit c8be79e6`)_
 _Last verified against codebase: 2026-10-16 (OCR Makro หน้า 2/2 — §OCR "ยึดยอดรวมทั้งสิ้นก่อน": เลขหลังป้าย "รวม VAT" ไม่ใช่ฐาน · บทบาท `VatAddedTwice` ·
 ด่านยอดเอกสารเกินยอดที่กระดาษยืนยัน (`[Σ-GAP]` ตอนสร้าง + คำเตือนสดตอนอนุมัติ) — เทสต์ `OcrMakroPage2VatAddedTwiceTests` · `OcrReplayGoldenTests` ·
-`OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมมิตตามหลัง)_
+`OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — `commit 6e56d33d`)_
 _Last verified against codebase: 2026-10-16 (ฝ่ายค้านของ 6e56d33d — §OCR "ยึดยอดรวมทั้งสิ้นก่อน": ป้ายรวม VAT เลขแรก + คำปฏิเสธ · มัดจำถอนกฎ "หัก…ที่ใดก็ได้"
 (fallback บรรทัดถัดไปรับเฉพาะยอดเงินล้วน) · ข้อความเกินกระดาษเป็นกลาง · LINE อนุมัติตรวจเกินกระดาษสด — เทสต์ `OcrReview6e56d33dTests` —
 คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 7c782d24)_
@@ -7701,7 +7815,7 @@ _Last verified against codebase: 2026-10-29 (รอบ 208 แก้ตามฝ
   (N1) เว็บล่าสุดคีย์ `cmsLastSite:<companyId>:<userId>` · (N2) lead ระดับบริษัทนับเฉพาะเว็บที่ยังอยู่ · (N4) ไม่มี `data-nav-id="undefined"` · (N7) encode subdomain · (N11) ฟอร์มที่พักค้างแก้ ⇒ ถามก่อนสลับเว็บ ·
   `required_call_site_check` +6 กติกา (`_R215_WHY`)
 - sim `tools/cms_workspace_nav_sim.js` · เทสต์ `CmsModuleResolverTests` (lead ทั้งสองทิศ · ชื่อหมวด · Newsletter) · `CmsSiteScopeTests` (รายการเว็บ 3 เคส) · Last verified `commit e717d3b5` (+ คอมมิตแก้ฝ่ายค้านตามหลัง)
-_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Omise — §2.6b ขั้นถัดไปของผู้จ่าย `GatewayChargeNextStep` (QR ชนะ authorize_uri · Pending ว่าง = Failed `no_next_step` · ข้อความไทยตอนหมดเวลา) · `pay-widget.js` QR ก่อน redirect · `platform-pay-test.html` resume · URL webhook ผ่าน `SystemBaseUrl.PublicOrigin` · เงินโหมดทดสอบไม่มีผลทางธุรกิจ `TestModePaymentPolicy` (232-Omise-2) — เทสต์ `GatewayChargeNextStepRound232Tests` · `TestModePaymentPolicyRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Omise — §2.6b ขั้นถัดไปของผู้จ่าย `GatewayChargeNextStep` (QR ชนะ authorize_uri · Pending ว่าง = Failed `no_next_step` · ข้อความไทยตอนหมดเวลา) · `pay-widget.js` QR ก่อน redirect · `platform-pay-test.html` resume · URL webhook ผ่าน `SystemBaseUrl.PublicOrigin` · เงินโหมดทดสอบไม่มีผลทางธุรกิจ `TestModePaymentPolicy` (232-Omise-2) — เทสต์ `GatewayChargeNextStepRound232Tests` · `TestModePaymentPolicyRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit b4780a33`)_
 
 - **รอบ 232 · นโยบายผู้รับแจ้งเตือน LINE — เรื่องของผู้เช่า vs เรื่องของแพลตฟอร์ม (คำตัดสิน 232-Notify · `Helpers/NotificationAudiencePolicy` · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
 
@@ -7749,18 +7863,28 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Omise — �
 - ด่าน `tools/required_call_site_check.py` บล็อก 232-Notify 24+7 กติกา + เคสฝ่ายค้าน NT1–NT7 + `LINE_PUSH_FORBID` · เทสต์ `NotificationAudiencePolicyRound232Tests` (ตาราง 3×3 ทั้งสองทิศ · HTTP capture: กลุ่มร้านไม่มี OA = ไม่ยิง · PlatformOps = token กลาง+กลุ่มกลาง · บอทกลาง 1:1 ไม่ถดถอย) ·
   `CmsRound212DailySummaryTests.Customer_push_without_company_oa_is_denied_and_never_uses_global_token` (พลิกทิศจาก `…keeps_global_resolution_unchanged`)
 
-_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — §9.9 นโยบายผู้รับแจ้งเตือน LINE `NotificationAudiencePolicy` · `ILineNotifyService` ไม่มี fallback OA กลาง · ประกาศกลุ่ม 8 ตัว → engine + `EnableLineGroup` · เทสต์ `NotificationAudiencePolicyRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
-_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม SourceLine — §2.4a ป้าย lifecycle "ไม่ทราบสัดส่วน" ทั้งที่ยอดเท่าเป๊ะ: ตัวตัดสินเดียว `Helpers/SourceLineBackfill` ประทับ/ย้าย `SourceLineId` ทุกทางเข้า (สร้าง · แก้ไข · OCR link-po) + ป้ายมองทะลุ GRN/DN + งานซ่อมข้อมูลเก่า `SourceLineBackfillJob` — เทสต์ `SourceLineBackfillTests` · `SourceLineBackfillDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — §9.9 นโยบายผู้รับแจ้งเตือน LINE `NotificationAudiencePolicy` · `ILineNotifyService` ไม่มี fallback OA กลาง · ประกาศกลุ่ม 8 ตัว → engine + `EnableLineGroup` · เทสต์ `NotificationAudiencePolicyRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit b4780a33`)_
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม SourceLine — §2.4a ป้าย lifecycle "ไม่ทราบสัดส่วน" ทั้งที่ยอดเท่าเป๊ะ: ตัวตัดสินเดียว `Helpers/SourceLineBackfill` ประทับ/ย้าย `SourceLineId` ทุกทางเข้า (สร้าง · แก้ไข · OCR link-po) + ป้ายมองทะลุ GRN/DN + งานซ่อมข้อมูลเก่า `SourceLineBackfillJob` — เทสต์ `SourceLineBackfillTests` · `SourceLineBackfillDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit b4780a33`)_
 
-_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout + นโยบาย 2 ภาษา — §2.12 ใหม่ (`PublicCheckoutController` · `PublicCheckoutService` · `PublicCheckoutPolicy` · `SiteSettings.PublicCheckoutEnabled`) · `LegalDocumentLanguage` 2 ภาษาทุกหน้านโยบาย (แพลตฟอร์ม/CMS/จองโต๊ะ) — เทสต์ `PublicCheckoutRound232Tests` · `LegalDocumentLanguageRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
-_Last verified against codebase: 2026-11-03 (รอบ 232 ต่อ — คำแปลอังกฤษตั้งต้นของนโยบาย (`LegalDocumentDefaults.En.cs` · `CmsLegalPages.EffectiveMarkdownEn` · `builtin-en`) — เทสต์ `LegalDocumentDefaultsEnRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout + นโยบาย 2 ภาษา — §2.12 ใหม่ (`PublicCheckoutController` · `PublicCheckoutService` · `PublicCheckoutPolicy` · `SiteSettings.PublicCheckoutEnabled`) · `LegalDocumentLanguage` 2 ภาษาทุกหน้านโยบาย (แพลตฟอร์ม/CMS/จองโต๊ะ) — เทสต์ `PublicCheckoutRound232Tests` · `LegalDocumentLanguageRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit b4780a33`)_
+_Last verified against codebase: 2026-11-03 (รอบ 232 ต่อ — คำแปลอังกฤษตั้งต้นของนโยบาย (`LegalDocumentDefaults.En.cs` · `CmsLegalPages.EffectiveMarkdownEn` · `builtin-en`) — เทสต์ `LegalDocumentDefaultsEnRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 73eacfd3`)_
 
-_Last verified against codebase: 2026-11-04 (รอบ 234 ทีมหัก ณ ที่จ่ายอัตโนมัติ — §2.12b `PlatformWhtSuggestion`/`PlatformPayerProfileGate`/`PlatformWhtCertificateStatus` · ทุกเส้นชำระ NextAcc เก็บยอดสุทธิ + ภาษีหัก · ด่านข้อมูลบริษัท · 50 ทวิ จากลูกค้าผูกทะเบียนภาษีถูกหัก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
-_Last verified against codebase: 2026-11-04 (รอบ 235 ทีมปิดงานค้างนอกเส้นบิล + ฝ่ายค้าน 235-X — (1) K-5 ศักราช: ตัวตัดสินกลาง `ThaiDate.TryNormalizeEra`/`NormalizeEra`/`IsOutOfEra` แทน `AddYears(±543)` 18+2 จุด · แปลงแล้วยังนอกช่วง/29 ก.พ. ไม่มีจริง = 400 (integration) / อ่านไม่ได้ (statement) · งานซ่อม `reports/repair-dates` (JournalManage) ครอบสองทิศ + ข้ามงวดปิด/ออกเลขแล้ว/แบบภาษียื่นแล้ว (`Helpers/BuddhistDateRepairPolicy`) · ปุ่มบนบัญชีแยกประเภทจาก `eraRepair` ของเซิร์ฟเวอร์ (2) อัตราจำกัดเส้นสมัคร/รีเซ็ตรหัสผ่าน/สมัครประตูลูกค้า: ต่อ IP (IPv6 /64) fail-closed · ทั้งระบบ = เตือนแอดมิน · ตารางนับใช้ไม่ได้ = 503 (`Helpers/AuthRateLimitPolicy` · `IChatRateLimiter.ConsumeAsync`) (3) รายงานเงินทดสอบที่ลงบัญชีไปแล้ว + หลักฐาน — เทสต์ `BuddhistEraNormalizeRound235Tests` · `BuddhistDateRepairPolicyRound235Tests` · `AuthRateLimitRound235Tests` · `TestModeLegacyEffectPolicyRound235Tests` · Db `BuddhistDateRepairDbTests` · `AuthRateLimitSharedDbTests` · `TestModeLegacyEffectsDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
-_Last verified against codebase: 2026-11-04 (รอบ 236 — §2.12d บริษัทใต้ License: แพ็กเกจที่มีผลตัวเดียว `PlanIdentityResolver` (+ `LicenseActive`/`CompanyPurchase`/`Label`) ผ่าน `PlanIdentityReader` · ด่านซื้อแพ็กเกจระดับบริษัททุกทางเข้า (409 `PLATFORM-LICENSE-COVERED`) · ใบเสนอ/preview `RefusedByLicense` · ไม่เตือน/ไม่ออกใบต่ออายุแถวบริษัทที่ License คุม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
-_Last verified against codebase: 2026-11-04 (รอบ 237 — §2.12e อัปเกรดกลางรอบ 2 แบบเลือกได้ (K-1): ตัวตัดสินเดียว `PlatformProration.UpgradeByMode` (คงวันหมดอายุ / เริ่มรอบใหม่หักเครดิต · เครดิตครอบยอด = ปฏิเสธ) · ค่าตั้ง `SiteSettings.PlatformUpgradeModeOffer` · แบบที่เลือกประทับ `SubscriptionPayment.UpgradeMode` · อนุมัติ `ApprovalRouteOf` ไม่อ่านค่าตั้ง · License ขยับตามแบบ ข — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
-_Last verified against codebase: 2026-11-04 (รอบ 238 — §2.12d License หมดอายุ/ระงับ (236-3 ทำจริง · 236-9): ผ่อนผันจริง `LicenseStatusAfter` · งานเตือนเลิก cascade แถวบริษัท + `LicenseLapseMigration` · ด่านเห็น License ระงับ/ยกเลิกเป็นหมดอายุ `GateStatus` · ไฟล์ยื่นแบบ/ส่งออกผ่านด่านหมดอายุ `IsComplianceOutputPath` · แจ้งเจ้าของบริษัทใต้ License · ถอดเอง (เจ้าของ/ผู้ถือ) + detach-preview + audit chain · คำเตือนผูกบริษัทที่จ่ายเอง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-04 (รอบ 234 ทีมหัก ณ ที่จ่ายอัตโนมัติ — §2.12b `PlatformWhtSuggestion`/`PlatformPayerProfileGate`/`PlatformWhtCertificateStatus` · ทุกเส้นชำระ NextAcc เก็บยอดสุทธิ + ภาษีหัก · ด่านข้อมูลบริษัท · 50 ทวิ จากลูกค้าผูกทะเบียนภาษีถูกหัก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit a1e4d857` (+ `181dbf12`))_
+_Last verified against codebase: 2026-11-04 (รอบ 235 ทีมปิดงานค้างนอกเส้นบิล + ฝ่ายค้าน 235-X — (1) K-5 ศักราช: ตัวตัดสินกลาง `ThaiDate.TryNormalizeEra`/`NormalizeEra`/`IsOutOfEra` แทน `AddYears(±543)` 18+2 จุด · แปลงแล้วยังนอกช่วง/29 ก.พ. ไม่มีจริง = 400 (integration) / อ่านไม่ได้ (statement) · งานซ่อม `reports/repair-dates` (JournalManage) ครอบสองทิศ + ข้ามงวดปิด/ออกเลขแล้ว/แบบภาษียื่นแล้ว (`Helpers/BuddhistDateRepairPolicy`) · ปุ่มบนบัญชีแยกประเภทจาก `eraRepair` ของเซิร์ฟเวอร์ (2) อัตราจำกัดเส้นสมัคร/รีเซ็ตรหัสผ่าน/สมัครประตูลูกค้า: ต่อ IP (IPv6 /64) fail-closed · ทั้งระบบ = เตือนแอดมิน · ตารางนับใช้ไม่ได้ = 503 (`Helpers/AuthRateLimitPolicy` · `IChatRateLimiter.ConsumeAsync`) (3) รายงานเงินทดสอบที่ลงบัญชีไปแล้ว + หลักฐาน — เทสต์ `BuddhistEraNormalizeRound235Tests` · `BuddhistDateRepairPolicyRound235Tests` · `AuthRateLimitRound235Tests` · `TestModeLegacyEffectPolicyRound235Tests` · Db `BuddhistDateRepairDbTests` · `AuthRateLimitSharedDbTests` · `TestModeLegacyEffectsDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 1019338e` (+ `ae7255ad` · `ceeae223`))_
+_Last verified against codebase: 2026-11-04 (รอบ 236 — §2.12d บริษัทใต้ License: แพ็กเกจที่มีผลตัวเดียว `PlanIdentityResolver` (+ `LicenseActive`/`CompanyPurchase`/`Label`) ผ่าน `PlanIdentityReader` · ด่านซื้อแพ็กเกจระดับบริษัททุกทางเข้า (409 `PLATFORM-LICENSE-COVERED`) · ใบเสนอ/preview `RefusedByLicense` · ไม่เตือน/ไม่ออกใบต่ออายุแถวบริษัทที่ License คุม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 1cea2ec6`)_
+_Last verified against codebase: 2026-11-04 (รอบ 237 — §2.12e อัปเกรดกลางรอบ 2 แบบเลือกได้ (K-1): ตัวตัดสินเดียว `PlatformProration.UpgradeByMode` (คงวันหมดอายุ / เริ่มรอบใหม่หักเครดิต · เครดิตครอบยอด = ปฏิเสธ) · ค่าตั้ง `SiteSettings.PlatformUpgradeModeOffer` · แบบที่เลือกประทับ `SubscriptionPayment.UpgradeMode` · อนุมัติ `ApprovalRouteOf` ไม่อ่านค่าตั้ง · License ขยับตามแบบ ข — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit f1d66b15` (+ `c4c79995`))_
+_Last verified against codebase: 2026-11-04 (รอบ 238 — §2.12d License หมดอายุ/ระงับ (236-3 ทำจริง · 236-9): ผ่อนผันจริง `LicenseStatusAfter` · งานเตือนเลิก cascade แถวบริษัท + `LicenseLapseMigration` · ด่านเห็น License ระงับ/ยกเลิกเป็นหมดอายุ `GateStatus` · ไฟล์ยื่นแบบ/ส่งออกผ่านด่านหมดอายุ `IsComplianceOutputPath` · แจ้งเจ้าของบริษัทใต้ License · ถอดเอง (เจ้าของ/ผู้ถือ) + detach-preview + audit chain · คำเตือนผูกบริษัทที่จ่ายเอง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit f09ca228` (+ `41b04e0a` · `a7ba4164`))_
 
+_Last verified against codebase: 2026-11-05 (รอบ 240 — §2.12f ลิงก์ให้ลูกค้าเซ็น: ชนิด/สถานะ/ป้าย `SignRequestKinds` · อีเมลขอเซ็นในนามบริษัท `OnBehalfEmailSender` (ไม่ปลอมโดเมน · Reply-To บริษัท · ข้อความเปิดเผย) ใช้กับอีเมลเอกสารด้วย · เพดาน `SignEmailThrottle` · outbox `SignEventOutbox` ในธุรกรรมของการยอมรับ/เซ็นรับ (เซ็นรับจองแบบอะตอมมิกแล้ว) · webhook ต่อเอกสาร + ลายเซ็น canonical `WebhookSignature` + SSRF ตอนต่อจริง · API v1 sign-link/sign-status/pdf · งานอัตโนมัติ/เตือน · ฝ่ายค้าน 240-9/240-10: อีเมลเอกสารบนเส้นแพลตฟอร์มมีเพดาน+เทมเพลตคงที่ · handler ขาออกตัวเดียว · ตรวจ URL ตอนส่ง · ชั้นความลับ API — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 61f6b0f6`)_
+_Last verified against codebase: 2026-11-06 (รอบ 243a — §ภาษีถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.50/51: ตัดสูญรายแถวลง JE Dr 58010 (กลุ่ม 580 · ม.65 ตรี (6 ทวิ)) / Cr 11910 ผ่าน `WhtCreditService.ExpireAsync` + `Helpers/WhtCreditWriteOff` · ได้ใบภายหลังกลับรายการ + คืนเครดิต · กระทบยอดไม่นับ JE ตัดสูญ · `CancelAfterRefundAsync` สำหรับคืนเงิน · `BusinessRuleException` ทั้งไฟล์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 26ec41b4`)_
+_Last verified against codebase: 2026-11-06 (รอบ 242 OCR — §OCR ตาราง ภ.พ. แบบอัตรานำหน้า (ไม่มีรหัส) ของใบเสร็จซูเปอร์มาร์เก็ต: `OcrLineVatMarks.ReadGroups` → `RateFirstTable` ⇒ ตารางชนะเมื่อรายการขาด (`OcrVatCodeLines.Decide` เดิม) · ยอดก่อน VAT = ยอดรวมขณะ VAT &gt; 0 ⇒ `OcrHeaderAmounts.SubTotalIsGrandTotal` ในฐานกระทบยอด + `OcrTotalAnchor.Plan` · คำเรียกกลุ่ม `OcrLineVatMarks.GroupRef` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 26ec41b4`)_
+_Last verified against codebase: 2026-11-06 (รอบ 242 เอกสาร — §6.3 ลบถาวร: ลำดับลบแถวลูก `Helpers/DocumentPurgeOrder` (แก้ 500 · 23001 `FK_DocumentSignatures_Approvals`) + ลบพร้อมเอกสารที่เกี่ยวข้อง `Helpers/DocumentCascadePurgePolicy` (ข้อ 242-A) + แผน `purge-preview` · §2.4a ป้ายสัดส่วน "ครบตามยอดรวมทั้งใบ" `DocumentConversionProgress.SoleChildMatchesTotal` (ข้อ 242-B) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 26ec41b4`)_
+_Last verified against codebase: 2026-11-06 (รอบ 246 QR — §2.12i QR ชำระเงินบนเอกสาร: QR ของบัญชีธนาคาร (อัปโหลด/พร้อมเพย์ · `PaymentQrPolicy`/`PaymentQrImageValidator`/`PaymentQrService`) · ตัวเรนเดอร์ทั้งสองวาดจาก `PaymentQrBlock` ตัวเดียว · QR หน้าชำระเฉพาะลิงก์ที่ใช้ได้ (ไม่มีในไฟล์ e-Tax) · QR พร้อมเพย์บน `pay-document.html` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 6a8e7ab3` (+ `1abfda1c` · `a16fad65`))_
+_Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง `DocumentPayLinkService`/`DocumentPayLinkPolicy` (ช่องทาง = บริษัทเปิดจริง ∩ ตาราง · ยอดสุทธิหลังหัก ณ ที่จ่าย · hash ของ token + เวลาคงที่ · ตัดสินสดทุกครั้ง) · `public-pay/documents/{token}` + `pay-document.html` · `DocumentPaymentHandler` บันทึก WHT ที่เหลือเมื่อเงินเข้ายอดสุทธิ · งานหลังรับชำระ `PostPaymentAutomationService` (1 แถวต่อการชำระ · ออกใบเสร็จด้วย `IssueReceiptForPaymentAsync` · ส่งด้วย `SendDocumentEmailAsync` · หยุดเมื่อข้อมูลไม่ครบ + แจ้งเตือน · ตรวจแถวรอ 50 ทวิ ไม่สร้างเอง) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 26ec41b4` (+ CS8126 `db2a391e`))_
+_Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 8304ce95` (+ ฝ่ายค้าน `29d6730f` · `ca10f623`))_
+_Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — `commit ecc6710f`)_
+_Last verified against codebase: 2026-11-06 (รอบ 250 WP-02b — §2.12g2: สลิปพอร์ทัล = PaymentIntent รอยืนยัน (ไม่สร้าง Payment) + ผู้อ่านยอด/จับคู่ธนาคารตัดแถว "[PENDING-VERIFY]" + migration ครั้งเดียว · workflow ข้ามบริษัท: คำตอบเชิญเหมือนกันทุกกรณี · จับคู่เลขภาษี+สาขา · ด่านสิทธิ์ + RejectApiKey · ส่งเข้าคู่ค้าล้มประทับป้ายบนเอกสาร + ส่งใหม่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4e3eef3c)_
+_Last verified against codebase: 2026-11-06 (รอบ 250 WP-03 — §2.12i QR พอร์ทัลลูกค้าสร้างที่เซิร์ฟเวอร์ (`PortalService.GetDocumentPaymentOptionsAsync` · ไม่มีบริการ QR ภายนอกใน wwwroot) · §2.7 นโยบายอนุมัติบันทึกกับฟอร์ม + payload null เมื่อโหลดตัวเลือกล้ม · แผงสินทรัพย์บนหน้าเอกสารตาม `DocumentResponse.HasAssetCandidateLines` · ปลดผังสินทรัพย์ตอนแก้ไขถูกปฏิเสธ · รหัสหัวเรื่อง e-Tax by Email ทับได้ที่ค่าตั้งแพลตฟอร์ม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 125f30a9)_
 _Last verified against codebase: 2026-11-05 (รอบ 240 — §2.12f ลิงก์ให้ลูกค้าเซ็น: ชนิด/สถานะ/ป้าย `SignRequestKinds` · อีเมลขอเซ็นในนามบริษัท `OnBehalfEmailSender` (ไม่ปลอมโดเมน · Reply-To บริษัท · ข้อความเปิดเผย) ใช้กับอีเมลเอกสารด้วย · เพดาน `SignEmailThrottle` · outbox `SignEventOutbox` ในธุรกรรมของการยอมรับ/เซ็นรับ (เซ็นรับจองแบบอะตอมมิกแล้ว) · webhook ต่อเอกสาร + ลายเซ็น canonical `WebhookSignature` + SSRF ตอนต่อจริง · API v1 sign-link/sign-status/pdf · งานอัตโนมัติ/เตือน · ฝ่ายค้าน 240-9/240-10: อีเมลเอกสารบนเส้นแพลตฟอร์มมีเพดาน+เทมเพลตคงที่ · handler ขาออกตัวเดียว · ตรวจ URL ตอนส่ง · ชั้นความลับ API — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 243a — §ภาษีถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.50/51: ตัดสูญรายแถวลง JE Dr 58010 (กลุ่ม 580 · ม.65 ตรี (6 ทวิ)) / Cr 11910 ผ่าน `WhtCreditService.ExpireAsync` + `Helpers/WhtCreditWriteOff` · ได้ใบภายหลังกลับรายการ + คืนเครดิต · กระทบยอดไม่นับ JE ตัดสูญ · `CancelAfterRefundAsync` สำหรับคืนเงิน · `BusinessRuleException` ทั้งไฟล์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 242 OCR — §OCR ตาราง ภ.พ. แบบอัตรานำหน้า (ไม่มีรหัส) ของใบเสร็จซูเปอร์มาร์เก็ต: `OcrLineVatMarks.ReadGroups` → `RateFirstTable` ⇒ ตารางชนะเมื่อรายการขาด (`OcrVatCodeLines.Decide` เดิม) · ยอดก่อน VAT = ยอดรวมขณะ VAT &gt; 0 ⇒ `OcrHeaderAmounts.SubTotalIsGrandTotal` ในฐานกระทบยอด + `OcrTotalAnchor.Plan` · คำเรียกกลุ่ม `OcrLineVatMarks.GroupRef` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
@@ -7769,3 +7893,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 246 QR — §2.12i QR ช
 _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง `DocumentPayLinkService`/`DocumentPayLinkPolicy` (ช่องทาง = บริษัทเปิดจริง ∩ ตาราง · ยอดสุทธิหลังหัก ณ ที่จ่าย · hash ของ token + เวลาคงที่ · ตัดสินสดทุกครั้ง) · `public-pay/documents/{token}` + `pay-document.html` · `DocumentPaymentHandler` บันทึก WHT ที่เหลือเมื่อเงินเข้ายอดสุทธิ · งานหลังรับชำระ `PostPaymentAutomationService` (1 แถวต่อการชำระ · ออกใบเสร็จด้วย `IssueReceiptForPaymentAsync` · ส่งด้วย `SendDocumentEmailAsync` · หยุดเมื่อข้อมูลไม่ครบ + แจ้งเตือน · ตรวจแถวรอ 50 ทวิ ไม่สร้างเอง) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-06 (รอบ 250 WP-02 — §2.12g งานหลังรับชำระทุกทางเข้า (`CreatePaymentAsync(…, source)` · `PaymentEntrySource` · integration `AfterPaymentRecordedAsync`) · ชั้นค่าตั้ง รายการประจำ/ผู้ติดต่อ · ลิงก์ชำระของใบแจ้งหนี้ที่มีใบกำกับ · §2.7 `EmailEnqueueOutcome` + ข้ามกฎซ้ำ · §6 GL สูตรเดียว/ลำดับล็อกสินทรัพย์ · แจ้งเตือนที่ระบุผู้รับเคารพแถวปิด · ทิศเงิน `CashFlowDirection` · การ์ด go-live แอดมิน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a40c91e5)_

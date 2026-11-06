@@ -52,6 +52,11 @@ public static class FileStorageKey
             return null;
         }
 
+        // รากเองไม่ใช่ไฟล์ — รวมถึงรากที่ซ้อนอยู่ใต้รากอื่น (เช่น {contentRoot}/uploads) · เดิมตกไปรากแม่ได้ "app/uploads"
+        // ซึ่งไม่ใช่ไฟล์ใด (รอบ 250 WP-01 · FileStorageKeyTests เพิ่งถูกรันครั้งแรก)
+        if (roots.Any(r => r.AbsolutePath.TrimEnd('/').Length > 0 && string.Equals(full.TrimEnd('/'), r.AbsolutePath.TrimEnd('/'), PathCmp)))
+            return null;
+
         FileStorageRoot? best = null;
         foreach (var r in roots)
         {

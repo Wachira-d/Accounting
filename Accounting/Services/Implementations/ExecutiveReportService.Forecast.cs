@@ -53,6 +53,7 @@ public partial class ExecutiveReportService
         var historyWeeks = 12;
         var historyStart = asOf.AddDays(-7 * historyWeeks);
         var paymentHistory = await _db.Payments.AsNoTracking()
+            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ
             .Where(p => p.CompanyId == companyId && !p.IsDeleted
                         && p.PaymentDate >= historyStart && p.PaymentDate < asOf)
             .Select(p => new { p.PaymentDate, p.Amount, p.Document.DocumentType })

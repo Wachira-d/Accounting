@@ -443,7 +443,7 @@ public class DimensionalAccountingService : IDimensionalAccountingService
     /// <summary>
     /// ลบสาขา — ได้เฉพาะสาขาที่ยัง "ไม่เคยถูกใช้" เท่านั้น
     /// สาขาที่มีรายการบัญชีอ้างถึงแล้วห้ามลบ (รายงานย้อนหลังจะหาต้นทางไม่เจอ +
-    /// พ.ร.บ.การบัญชี ม.10 ต้องเก็บ 5 ปี) → ให้ปิดใช้งานแทน
+    /// พ.ร.บ.การบัญชี ม.14 ต้องเก็บ 5 ปี) → ให้ปิดใช้งานแทน
     /// </summary>
     public async Task DeleteBranchAsync(Guid companyId, Guid branchId)
     {
@@ -457,7 +457,7 @@ public class DimensionalAccountingService : IDimensionalAccountingService
             .AnyAsync(l => l.BranchId == branchId && l.JournalEntry.CompanyId == companyId);
         if (usedByEntry || usedByLine)
             throw new InvalidOperationException(
-                "ลบไม่ได้ — สาขานี้มีรายการบัญชีอ้างถึงแล้ว (ต้องเก็บไว้ตาม พ.ร.บ.การบัญชี ม.10) " +
+                "ลบไม่ได้ — สาขานี้มีรายการบัญชีอ้างถึงแล้ว (ต้องเก็บไว้ตาม พ.ร.บ.การบัญชี ม.14) " +
                 "ถ้าเลิกใช้สาขานี้ ให้เอาเครื่องหมาย \"ใช้งาน\" ออกแทน");
 
         _db.Set<Branch>().Remove(branch);

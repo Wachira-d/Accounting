@@ -13,7 +13,7 @@ namespace Accounting.Services.Import;
 /// <c>JobLock.RunExclusiveAsync(db, AdvisoryLockKey.ImportBatch, batchId, …, companyId)</c> (CLAUDE.md F4 ข้อ 6) · หนึ่งรอบ = หนึ่ง chunk 500 แถว
 /// (<see cref="IImportPipelineService.ProcessQueuedAsync"/>) + heartbeat · scope ใหม่ต่อรอบ · <b>ไม่มี static state</b> (หลายเครื่องรันพร้อมกันได้)</para>
 /// <para>วันละครั้ง: ล้างแถวพัก (<c>ImportStagedRows</c>) ของชุดที่ปิดแล้วเกิน <see cref="RetainDays"/> วัน — คงสรุปของชุด (ReviewSummaryJson) + ไฟล์ต้นทาง
-/// (หลักฐานประกอบรายการ · พ.ร.บ.การบัญชี ม.10) · แถวพักมีค่าดิบที่เป็น PII (เข้ารหัส) ⇒ ไม่เก็บเกินจำเป็น (PDPA)</para>
+/// (หลักฐานประกอบรายการ · พ.ร.บ.การบัญชี ม.14) · แถวพักมีค่าดิบที่เป็น PII (เข้ารหัส) ⇒ ไม่เก็บเกินจำเป็น (PDPA)</para>
 /// <para>ล้มดัง: งานของ batch ล้ม ⇒ pipeline ประทับสถานะ + หมายเหตุที่ผู้ใช้เห็น · worker log ระดับ Error</para>
 /// </summary>
 public class ImportBatchWorker : BackgroundService

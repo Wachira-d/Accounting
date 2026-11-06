@@ -194,6 +194,31 @@ RULES += [
     (C + 'RecurringController.cs', 'UpdateContactAutopilot', 'attr', REJECT),
 ]
 
+# รอบ 250 WP-02b (AUTOPILOT_BILLING_DESIGN §6.1 P-3): workflow ข้ามบริษัท — เชิญ/ยอมรับ/ปฏิเสธคู่ค้า = ผูกบริษัทเข้ากับบริษัทอื่น (CompanySettings.Edit) ·
+# อนุมัติ/ปฏิเสธเอกสารเข้า = ลงนามในนามบริษัท + สร้าง PO ปลายน้ำ (สิทธิ์อนุมัติฝั่งซื้อ · ผลของตัวตัดสินต้องถูกใช้: `if (!await …) return Denied(…)`) ·
+# ทุกตัวไม่รับ API key (การตัดสินใจของคน) · ส่งเอกสารเข้าคู่ค้าอีกครั้ง = สิทธิ์อนุมัติชนิดของเอกสารนั้น
+CAN_APPROVE_USED = (r'if\s*\(\s*!\s*await\s+DocumentPermissionHelper\s*\.\s*CanApproveAsync\s*' + CALL_ARGS
+                    + r'\s*\)\s*return\s+Denied\s*\(')
+XT = C + 'CrossTenantWorkflowController.cs'
+RULES += [
+    (XT, 'Invite', 'attr', REJECT),
+    (XT, 'Invite', 'attr', PERM),
+    (XT, 'Accept', 'attr', REJECT),
+    (XT, 'Accept', 'attr', PERM),
+    (XT, 'Reject', 'attr', REJECT),
+    (XT, 'Reject', 'attr', PERM),
+    (XT, 'UpdateConfig', 'attr', REJECT),
+    (XT, 'UpdateConfig', 'attr', PERM),
+    (XT, 'ApproveIncoming', 'attr', REJECT),
+    (XT, 'ApproveIncoming', 'body', CAN_APPROVE_USED),
+    (XT, 'RejectIncoming', 'attr', REJECT),
+    (XT, 'RejectIncoming', 'body', CAN_APPROVE_USED),
+    (XT, 'RetryPartnerRouting', 'body', CAN_APPROVE_USED),
+    # รอบ 250 ฝ่ายค้าน H1: ปฏิเสธสลิปโอนของเอกสาร = การตัดสินใจของคน (เหตุผลลงประวัติ) — สิทธิ์ยืนยันเงินเข้าด้วยมือ + ห้ามคีย์
+    (C + 'PaymentGatewayController.cs', 'RejectSlip', 'attr', REJECT),
+    (C + 'PaymentGatewayController.cs', 'RejectSlip', 'attr', PERM),
+]
+
 MODIFIERS = r'(?:public|private|protected|internal|static|async|override|virtual|sealed|new|unsafe|extern)'
 DECL_RE_TMPL = r'(?m)^[ \t]*(?:{mods}\s+)+[\w<>\[\],.?() ]*?\b{name}\s*\('
 
@@ -375,6 +400,17 @@ REVIEWER_CASES += [
     ('R248-K1', C + 'RecurringController.cs', '[Accounting.Filters.RejectApiKey("ตั้งนโยบายอนุมัติอัตโนมัติของรายการประจำ")]', '', True),
     ('R248-K2', C + 'RecurringController.cs', '[Accounting.Filters.RejectApiKey("ตั้งนโยบายอนุมัติอัตโนมัติของผู้ติดต่อ")]', '[System.Obsolete("RejectApiKey")]', True),
     ('R248-K3', C + 'RecurringController.cs', '[Accounting.Filters.RejectApiKey("ตั้งช่องทางรับเงินของผู้ติดต่อ")]', '', True),
+]
+
+REVIEWER_CASES += [
+    # รอบ 250 WP-02b: เรียกตัวตัดสินสิทธิ์อนุมัติแล้วทิ้งผล ⇒ ต้องฟ้อง (ApproveIncoming — แถวแรกของรูปนี้ในไฟล์)
+    ('R250-X1', C + 'CrossTenantWorkflowController.cs',
+     'if (!await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.PurchaseOrder))\n            return Denied(PermissionKeys.DocumentPurchaseApprove);',
+     '_ = await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.PurchaseOrder);', True),
+    # ถอด [RejectApiKey] จากการเชิญคู่ค้า ⇒ ต้องฟ้อง · ย้ายเป็น attribute ระดับเดียวกันอีกบรรทัด (ไม่เปลี่ยนความหมาย) ⇒ ไม่ฟ้อง
+    ('R250-X2', C + 'CrossTenantWorkflowController.cs', '[Accounting.Filters.RejectApiKey("เชิญคู่ค้าเชื่อมระบบ")]', '', True),
+    ('R250-X3', C + 'CrossTenantWorkflowController.cs', '[Accounting.Filters.RejectApiKey("เชิญคู่ค้าเชื่อมระบบ")]',
+     '[Accounting.Filters.RejectApiKey("เชิญคู่ค้าเชื่อมระบบ")]\n    // คอมเมนต์คั่น', False),
 ]
 
 

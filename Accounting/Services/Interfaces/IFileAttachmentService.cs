@@ -29,6 +29,6 @@ public interface IFileAttachmentService
     /// <b>ไม่ตรวจสิทธิ์ผู้ใช้</b> — ผู้เรียกต้องผ่าน <c>IAttachmentAccessGate</c> ก่อน (รอบ 205 T0: ศูนย์นำเข้าข้อมูลอ่านไฟล์ต้นทางมาวิเคราะห์ใหม่)</summary>
     Task<byte[]?> ReadBytesAsync(Guid companyId, Guid attachmentId, CancellationToken ct = default);
     /// <param name="keepPhysicalFile">true = ถอดจากรายการ (soft-delete) แต่เก็บไฟล์จริงไว้ — หลักฐานประกอบรายการบัญชี
-    /// ที่ต้องเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.10 · ป.รัษฎากร §87/3)</param>
+    /// ที่ต้องเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.14 · ป.รัษฎากร §87/3)</param>
     Task DeleteAsync(Guid companyId, Guid attachmentId, bool keepPhysicalFile = false);
 }

@@ -573,6 +573,7 @@ public class ReportBuilderService : IReportBuilderService
         // เลือก ContactId แล้ว map ชื่อจาก dict (IgnoreQueryFilters) ทีหลัง
         var query = _db.Payments
             .Include(p => p.Document)
+            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ
             .Where(p => p.CompanyId == companyId);
 
         if (parameters != null)

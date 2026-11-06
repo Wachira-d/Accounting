@@ -38,54 +38,110 @@ public class CrossTenantWorkflowService
     // PARTNERSHIP MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════
 
-    /// <summary>Look up the partner tenant by TaxId and create a pending
-    /// invitation. Returns null when no Company exists for that TaxId —
-    /// the caller can fall back to email-based invite in that case.</summary>
-    public async Task<TradingPartnership?> InvitePartnerAsync(
-        Guid invitingCompanyId, string partnerTaxId, Guid invitedByUserId, string? message)
+    /// <summary>
+    /// เชิญคู่ค้าด้วยเลขผู้เสียภาษี (+ สาขา) — รอบ 250 WP-02b (AUTOPILOT_BILLING_DESIGN §6.1 P-1/P-2 · §6.3)
+    /// <para><b>ไม่คืนผลว่าพบบริษัทหรือไม่</b> (เดิมคืน <c>null</c> ⇒ controller ตอบ 404 "ไม่พบบริษัท…" vs 200 ⇒ สมาชิกบริษัทใดก็ไล่เลขภาษีหาว่าใครใช้ NextAcc ได้) ·
+    /// ผู้เรียกตอบ <see cref="Accounting.Helpers.PartnerCompanyMatch.InviteAckMessage"/> เสมอ · audit ของผู้เชิญเขียน<b>แถวเดียวกันทุกกรณี</b> (ไม่มีผลการค้นในแถว)</para>
+    /// <para>จับคู่ด้วย <see cref="Accounting.Helpers.PartnerCompanyMatch"/> (เลขภาษี + สาขา · กำกวม ⇒ ไม่สร้างคำเชิญ ไม่เดา) ·
+    /// เคยปฏิเสธไม่ถึง 7 วัน ⇒ ไม่เปิดคำเชิญซ้ำ (กันสแปม §6.3) — คำตอบยังเหมือนเดิม</para>
+    /// เลขภาษีผิดรูป ⇒ <see cref="Accounting.Helpers.BusinessRuleException"/> (ตัดสินจากรูปแบบอย่างเดียว ไม่ดูฐาน ⇒ ไม่รั่ว)
+    /// </summary>
+    public async Task InvitePartnerAsync(
+        Guid invitingCompanyId, string partnerTaxId, string? partnerBranchCode, Guid invitedByUserId, string? message)
     {
-        if (string.IsNullOrWhiteSpace(partnerTaxId)) throw new ArgumentException("ต้องระบุเลขประจำตัวผู้เสียภาษีของพาร์ทเนอร์");
+        // ฝ่ายค้าน H3: ข้อความเชิญยาวไม่จำกัด = ช่องฟิชชิง — ตัดที่ 500 ตัวอักษร (ข้อความถูกแสดงแบบ text เท่านั้น)
+        message = string.IsNullOrWhiteSpace(message) ? null : message.Trim();
+        if (message is { Length: > 500 }) message = message[..500];
+        var taxId = Accounting.Helpers.PartnerCompanyMatch.NormalizeTaxId(partnerTaxId)
+            ?? throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.PartnerCompanyMatch.InvalidTaxIdMessage, Accounting.Helpers.PartnerCompanyMatch.RuleCode, 400);
+        if (!string.IsNullOrWhiteSpace(partnerBranchCode)
+            && !Accounting.Helpers.TaxBranchCode.TryNormalize(partnerBranchCode, out _, out var branchError))
+            throw new Accounting.Helpers.BusinessRuleException(branchError ?? "รหัสสาขาไม่ถูกต้อง", Accounting.Helpers.PartnerCompanyMatch.RuleCode, 400);
 
-        var partner = await _db.Companies.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.TaxId == partnerTaxId && !c.IsDeleted && c.Id != invitingCompanyId);
-        if (partner == null) return null;
+        // ฝ่ายค้าน H3: เวลาตอบเท่ากันทุกทาง — งานที่ต่างกัน (สร้าง/เปิดคำเชิญ) ถูกเติมเวลาจนถึงเพดานคงที่ (กันวัดเวลาแยก "มี/ไม่มี")
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var rawTax = (partnerTaxId ?? "").Trim();
+        // ฝ่ายค้าน H3: เฉพาะบริษัทที่เปิดให้คู่ค้าค้นเจอ (PartnerDiscoverable · ตั้งต้นปิด) — เลขภาษีของผู้เช่าไม่ได้ยืนยันกับทะเบียน ⇒ บริษัทที่ไม่เปิด
+        // ไม่รับคำเชิญและไม่นับในการตัดสิน "กำกวม" (มิฉะนั้นบริษัทปลอมที่ตั้งเลขเหยื่อรู้ได้ว่าเลขนั้นมีผู้ใช้จริง)
+        var candidates = await _db.Companies.AsNoTracking()
+            .Where(c => !c.IsDeleted && c.PartnerDiscoverable && c.Id != invitingCompanyId && (c.TaxId == taxId || c.TaxId == rawTax))
+            .Select(c => new Accounting.Helpers.PartnerCompanyCandidate(c.Id, c.BranchCode))
+            .ToListAsync();
+        var pick = Accounting.Helpers.PartnerCompanyMatch.Pick(candidates, partnerBranchCode);
 
-        var (a, b) = OrderPair(invitingCompanyId, partner.Id);
-        var existing = await _db.TradingPartnerships
-            .FirstOrDefaultAsync(p => p.CompanyAId == a && p.CompanyBId == b);
-        if (existing != null)
+        var now = DateTime.UtcNow;
+        string outcome;   // ใช้ใน log ของเซิร์ฟเวอร์เท่านั้น — ห้ามไหลเข้า response/audit ที่ผู้เชิญอ่านได้
+        if (pick.Kind != Accounting.Helpers.PartnerMatchKind.Matched || pick.CompanyId is not Guid partnerId)
         {
-            if (existing.Status == TradingPartnershipStatus.Rejected)
+            outcome = pick.Kind.ToString();
+        }
+        else
+        {
+            var (a, b) = OrderPair(invitingCompanyId, partnerId);
+            var existing = await _db.TradingPartnerships
+                .FirstOrDefaultAsync(p => p.CompanyAId == a && p.CompanyBId == b);
+            if (existing == null)
             {
-                // Resending after a rejection — reset to Pending so the
-                // partner sees the new invite fresh.
+                _db.TradingPartnerships.Add(new TradingPartnership
+                {
+                    CompanyAId = a,
+                    CompanyBId = b,
+                    Status = TradingPartnershipStatus.Pending,
+                    InvitedByCompanyId = invitingCompanyId,
+                    InvitedByUserId = invitedByUserId,
+                    InvitationMessage = message,
+                    CreatedBy = invitedByUserId.ToString(),
+                });
+                outcome = "Created";
+            }
+            else if (existing.Status == TradingPartnershipStatus.Rejected
+                     && (existing.RejectedAt == null || existing.RejectedAt <= now.AddDays(-RejectedReinviteCooldownDays)))
+            {
+                // เชิญซ้ำหลังถูกปฏิเสธ (พ้นช่วงพัก) — เปิดใหม่ให้ปลายทางเห็นคำเชิญสด
                 existing.Status = TradingPartnershipStatus.Pending;
                 existing.InvitedByCompanyId = invitingCompanyId;
                 existing.InvitedByUserId = invitedByUserId;
                 existing.InvitationMessage = message;
                 existing.RejectedAt = null;
                 existing.RejectionReason = null;
-                existing.UpdatedAt = DateTime.UtcNow;
-                await _db.SaveChangesAsync();
+                existing.UpdatedAt = now;
+                outcome = "Reopened";
             }
-            return existing;
+            else outcome = "Unchanged:" + existing.Status;
         }
 
-        var p = new TradingPartnership
+        // audit ของผู้เชิญ — เนื้อหาเหมือนกันทุกกรณี (ผู้ดูแลของบริษัทผู้เชิญอ่าน audit ได้ ⇒ ห้ามมีผลการค้น)
+        _db.AddChainedAuditLog(new AuditLog
         {
-            CompanyAId = a,
-            CompanyBId = b,
-            Status = TradingPartnershipStatus.Pending,
-            InvitedByCompanyId = invitingCompanyId,
-            InvitedByUserId = invitedByUserId,
-            InvitationMessage = message,
-            CreatedBy = invitedByUserId.ToString(),
-        };
-        _db.TradingPartnerships.Add(p);
+            CompanyId = invitingCompanyId,
+            UserId = invitedByUserId,
+            Action = AuditAction.Create,
+            EntityType = "TradingPartnerInvite",
+            EntityId = invitingCompanyId.ToString(),
+            NewValues = JsonSerializer.Serialize(new
+            {
+                @event = "TradingPartnerInviteRequested",
+                partnerTaxId = taxId,
+                partnerBranchCode = Accounting.Helpers.PartnerCompanyMatch.WantedBranch(partnerBranchCode),
+                ruleCode = Accounting.Helpers.PartnerCompanyMatch.RuleCode,
+            }),
+            Timestamp = now,
+        });
         await _db.SaveChangesAsync();
-        _logger.LogInformation("Trading partnership invited: {A} → {B} (id={Id})", invitingCompanyId, partner.Id, p.Id);
-        return p;
+        _logger.LogInformation("Trading partner invite from {Company}: outcome {Outcome}", invitingCompanyId, outcome);
+        var rest = InviteMinimumDuration - sw.Elapsed;
+        if (rest > TimeSpan.Zero) await Task.Delay(rest);
     }
+
+    /// <summary>ฝ่ายค้าน H3: เวลาขั้นต่ำของการเชิญทุกกรณี (กันวัดเวลาตอบแยกสมาชิกภาพ) — สูงกว่างานจริงปกติ</summary>
+    public static readonly TimeSpan InviteMinimumDuration = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>ฝ่ายค้าน H3: เพดานคำเชิญต่อบริษัทต่อวัน (AUTOPILOT_BILLING_DESIGN §6.3 · กันสแปม/ฟิชชิงผ่านข้อความเชิญ)</summary>
+    public const int InvitesPerCompanyPerDay = 20;
+
+    /// <summary>ช่วงพักก่อนเชิญซ้ำหลังปลายทางปฏิเสธ (AUTOPILOT_BILLING_DESIGN §6.3 "เชิญซ้ำได้หลัง 7 วัน")</summary>
+    public const int RejectedReinviteCooldownDays = 7;
 
     public async Task<TradingPartnership> AcceptPartnershipAsync(
         Guid acceptingCompanyId, Guid partnershipId, Guid acceptedByUserId)
@@ -151,16 +207,38 @@ public class CrossTenantWorkflowService
         };
         if (linkType == null) return null;
 
-        // Lookup recipient Contact → corresponding Company (by TaxId)
+        // Lookup recipient Contact → corresponding Company (เลขภาษี + สาขา · รอบ 250 WP-02b P-2)
         var contact = await _db.Contacts.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == doc.ContactId && !c.IsDeleted);
-        if (contact == null || string.IsNullOrEmpty(contact.TaxId)) return null;
+            .FirstOrDefaultAsync(c => c.Id == doc.ContactId && c.CompanyId == doc.CompanyId && !c.IsDeleted);
+        if (contact == null) return null;
+        var taxId = Accounting.Helpers.PartnerCompanyMatch.NormalizeTaxId(contact.TaxId);
+        if (taxId == null) return null;   // ไม่ใช่ 13 หลัก ("-" ของบริษัทที่ยังไม่กรอกเลข) — เดิมเทียบตรงตัวแล้วชนบริษัทอื่นที่มี "-" เหมือนกัน
 
-        var partnerCompany = await _db.Companies.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.TaxId == contact.TaxId && !c.IsDeleted && c.Id != doc.CompanyId);
-        if (partnerCompany == null) return null;
+        // ผู้สมัคร = บริษัทที่มีคู่ค้า Accepted กับเราอยู่แล้ว + เลขภาษีตรง ⇒ ตัดสินสาขาด้วยตัวจับคู่เดียว (เดิม FirstOrDefault ไม่ดูสาขา = สุ่ม)
+        var acceptedPartnerIds = await _db.TradingPartnerships.AsNoTracking()
+            .Where(p => (p.CompanyAId == doc.CompanyId || p.CompanyBId == doc.CompanyId)
+                && p.Status == TradingPartnershipStatus.Accepted)
+            .Select(p => p.CompanyAId == doc.CompanyId ? p.CompanyBId : p.CompanyAId)
+            .ToListAsync();
+        if (acceptedPartnerIds.Count == 0) return null;
+        var rawTax = contact.TaxId!.Trim();
+        var candidates = await _db.Companies.AsNoTracking()
+            .Where(c => acceptedPartnerIds.Contains(c.Id) && !c.IsDeleted && c.Id != doc.CompanyId
+                && (c.TaxId == taxId || c.TaxId == rawTax))
+            .Select(c => new Accounting.Helpers.PartnerCompanyCandidate(c.Id, c.BranchCode))
+            .ToListAsync();
+        var pick = Accounting.Helpers.PartnerCompanyMatch.Pick(candidates, contact.BranchCode);
+        if (pick.Kind == Accounting.Helpers.PartnerMatchKind.Ambiguous)
+            // ห้ามเดาว่าส่งเข้าสมุดของบริษัทไหน — ล้มดัง (RouteSentDocumentAsync ประทับป้ายบนเอกสาร + ทางไปต่อในข้อความ)
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.PartnerCompanyMatch.AmbiguousRouteMessage(taxId), Accounting.Helpers.PartnerCompanyMatch.RuleCode, 409);
+        if (pick.Kind == Accounting.Helpers.PartnerMatchKind.None && candidates.Count > 0)
+            // ฝ่ายค้าน M5: เลขตรงคู่ Accepted แต่สาขาไม่ตรง — เดิมส่งได้ (ไม่ดูสาขา) ⇒ ไม่ส่งเงียบไม่ได้: ล้มดังพร้อมทางไปต่อ
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.PartnerCompanyMatch.BranchMismatchRouteMessage(taxId, contact.BranchCode), Accounting.Helpers.PartnerCompanyMatch.RuleCode, 409);
+        if (pick.CompanyId is not Guid partnerCompanyId) return null;
 
-        var (a, b) = OrderPair(doc.CompanyId, partnerCompany.Id);
+        var (a, b) = OrderPair(doc.CompanyId, partnerCompanyId);
         var partnership = await _db.TradingPartnerships
             .FirstOrDefaultAsync(p => p.CompanyAId == a && p.CompanyBId == b
                 && p.Status == TradingPartnershipStatus.Accepted);
@@ -176,7 +254,7 @@ public class CrossTenantWorkflowService
             TradingPartnershipId = partnership.Id,
             SourceCompanyId = doc.CompanyId,
             SourceDocumentId = doc.Id,
-            TargetCompanyId = partnerCompany.Id,
+            TargetCompanyId = partnerCompanyId,
             LinkType = linkType.Value,
             Status = CrossTenantLinkStatus.PendingApproval,
             CreatedBy = "system-routing",
@@ -188,6 +266,88 @@ public class CrossTenantWorkflowService
         await TryAutoApproveAsync(link);
 
         return link;
+    }
+
+    /// <summary>ผลการส่งเอกสารเข้าระบบคู่ค้า — <paramref name="Routed"/> = มีแถวในกล่องของคู่ค้าแล้ว ·
+    /// <paramref name="FailureReason"/> ≠ null = ล้ม (ป้ายถูกประทับบนเอกสารแล้ว)</summary>
+    public sealed record PartnerRouteOutcome(bool Routed, string? FailureReason);
+
+    /// <summary>
+    /// **ทางเข้าเดียวของ "ส่งเอกสารที่อนุมัติแล้วเข้ากล่องคู่ค้า"** — รอบ 250 WP-02b (P-6 · ล้มดัง 3 ที่ F2 ข้อ 7)
+    /// <para>เดิม <c>DocumentService</c> ห่อ <see cref="OnDocumentSentAsync"/> ด้วย <c>try/LogWarning</c> ⇒ ล้มเงียบ · ตอนนี้ล้ม ⇒
+    /// (1) ป้าย <see cref="Accounting.Helpers.PartnerRoutingFailedNote"/> บนเอกสาร (หน้าเอกสารแสดงแถบเตือน + ปุ่มส่งใหม่) · (2) <c>LogError</c> ·
+    /// (3) คืนเหตุให้ผู้เรียก · สำเร็จ ⇒ ล้างป้ายของรอบก่อน · ไม่โยน (การอนุมัติ commit ไปแล้ว — ส่งใหม่ได้ด้วย <see cref="RetryRoutingAsync"/>)</para>
+    /// </summary>
+    public async Task<PartnerRouteOutcome> RouteSentDocumentAsync(Document doc, CancellationToken ct = default)
+    {
+        CrossTenantDocumentLink? link;
+        try
+        {
+            link = await OnDocumentSentAsync(doc);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // แถวที่ SaveChanges ล้มยังค้างใน ChangeTracker ⇒ SaveChanges ถัดไปของผู้เรียกจะลองเขียนซ้ำแล้วล้มอีก — ทิ้งก่อน (ฝ่ายค้าน L3: ครบทุกชนิด)
+            DetachPendingCrossTenantWrites();
+            var reason = ex is Accounting.Helpers.BusinessRuleException
+                ? ex.Message
+                : "ระบบขัดข้องระหว่างส่ง — กดส่งใหม่ (ถ้ายังล้ม แจ้งผู้ดูแลพร้อมเลขเอกสาร)";
+            _logger.LogError(ex, "{Marker} ส่งเอกสาร {DocNumber} ({DocId}) ของบริษัท {Company} เข้าระบบคู่ค้าไม่สำเร็จ: {Reason}",
+                Accounting.Helpers.PartnerRoutingFailedNote.Marker, doc.DocumentNumber, doc.Id, doc.CompanyId, reason);
+            await StampRoutingNoteAsync(doc, reason, ct);
+            return new PartnerRouteOutcome(false, reason);
+        }
+        if (Accounting.Helpers.PartnerRoutingFailedNote.Has(doc.InternalNotes))
+            await StampRoutingNoteAsync(doc, null, ct);   // ส่งสำเร็จ/ไม่มีคู่ค้าแล้ว ⇒ ป้ายของรอบก่อนไม่จริงอีกต่อไป
+        return new PartnerRouteOutcome(link != null, null);
+    }
+
+    /// <summary>ส่งเอกสารเข้าระบบคู่ค้าอีกครั้ง (ปุ่ม "ส่งให้คู่ค้าอีกครั้ง") — เฉพาะเอกสารที่อนุมัติแล้ว · tenant = <paramref name="companyId"/> ·
+    /// ส่งซ้ำปลอดภัย (<see cref="OnDocumentSentAsync"/> idempotent ต่อเอกสาร+ชนิด)</summary>
+    public async Task<PartnerRouteOutcome> RetryRoutingAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+    {
+        var doc = await _db.Documents
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted, ct)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        if (doc.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Voided or DocumentStatus.Rejected)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ส่งให้คู่ค้าได้เฉพาะเอกสารที่อนุมัติแล้ว", Accounting.Helpers.PartnerRoutingFailedNote.RuleCode, 409);
+        return await RouteSentDocumentAsync(doc, ct);
+    }
+
+    /// <summary>ประทับ/ล้างป้ายบน <c>InternalNotes</c> แถวเดียว (ExecuteUpdate — ไม่ปนกับ SaveChanges ของผู้เรียก) ·
+    /// <paramref name="reason"/> = null ⇒ ล้างป้าย · อ่านค่าล่าสุดจากฐานก่อนต่อท้าย (รูปแบบเดียวกับ IssuedDocumentHooks.StampNoteAsync)</summary>
+    private async Task StampRoutingNoteAsync(Document doc, string? reason, CancellationToken ct)
+    {
+        try
+        {
+            var current = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId)
+                .Select(d => d.InternalNotes)
+                .FirstOrDefaultAsync(ct);
+            var updated = reason == null
+                ? Accounting.Helpers.PartnerRoutingFailedNote.Clear(current)
+                : Accounting.Helpers.PartnerRoutingFailedNote.Append(current, reason);
+            if (updated == current) return;
+            await _db.Documents
+                .Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId)
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.InternalNotes, updated), ct);
+
+            // ให้ entity ในหน่วยความจำตรงกับฐาน โดยไม่ทำให้ SaveChanges ถัดไปของผู้เรียกเขียนซ้ำ
+            doc.InternalNotes = updated;
+            var entry = _db.Entry(doc);
+            if (entry.State is EntityState.Unchanged or EntityState.Modified)
+            {
+                var prop = entry.Property(d => d.InternalNotes);
+                prop.OriginalValue = updated;
+                prop.IsModified = false;
+            }
+        }
+        catch (Exception saveEx) when (saveEx is not OperationCanceledException)
+        {
+            _logger.LogError(saveEx, "บันทึกป้าย {Marker} ลงเอกสาร {DocNumber} ไม่สำเร็จ: {Reason}",
+                Accounting.Helpers.PartnerRoutingFailedNote.Marker, doc.DocumentNumber, reason ?? "(ล้างป้าย)");
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -369,7 +529,22 @@ public class CrossTenantWorkflowService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Auto-approve failed for link {Id}", link.Id);
+            // ฝ่ายค้าน L3: ล้มกลางทาง ⇒ แถวครึ่งทางของฝั่งผู้รับ (ลายเซ็น/PO/ผู้ติดต่อที่เพิ่งสร้าง) ค้างใน ChangeTracker — SaveChanges ถัดไปของผู้เรียก
+            // (เส้นอนุมัติของผู้ขาย) จะเขียนลงสมุดของบริษัทอื่นครึ่ง ๆ ⇒ ทิ้งก่อน · เอกสารเข้ายังรออนุมัติด้วยมือในกล่อง (ไม่เงียบ: LogError)
+            DetachPendingCrossTenantWrites();
+            _logger.LogError(ex, "Auto-approve failed for link {Id} — เอกสารเข้ายังรออนุมัติด้วยมือ", link.Id);
+        }
+    }
+
+    /// <summary>ฝ่ายค้าน L3: ทิ้งการเขียนที่ยังไม่บันทึกของเส้นข้ามบริษัท (แถวใหม่ของ PO/บรรทัด/ผู้ติดต่อ/ลายเซ็น/การอนุมัติ + link ที่แก้ค้าง)</summary>
+    private void DetachPendingCrossTenantWrites()
+    {
+        foreach (var e in _db.ChangeTracker.Entries().ToList())
+        {
+            var crossTenantRow = e.Entity is CrossTenantDocumentLink or DocumentApproval or DocumentSignature;
+            var newRow = e.State == EntityState.Added && e.Entity is Document or DocumentLine or Contact;
+            if ((crossTenantRow && e.State is EntityState.Added or EntityState.Modified) || newRow)
+                e.State = EntityState.Detached;
         }
     }
 
@@ -648,6 +823,11 @@ public class CrossTenantWorkflowService
     // ═══════════════════════════════════════════════════════════════════
     // CONFIG
     // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>ฝ่ายค้าน L2: อ่านค่าตั้งโดยไม่เขียนแถว (GET ห้ามสร้างแถว) — ไม่มี = ค่าตั้งต้นที่ยังไม่บันทึก · tenant = <paramref name="companyId"/></summary>
+    public async Task<WorkflowAutomationConfig> GetConfigReadOnlyAsync(Guid companyId)
+        => await _db.WorkflowAutomationConfigs.AsNoTracking().FirstOrDefaultAsync(c => c.CompanyId == companyId)
+           ?? new WorkflowAutomationConfig { CompanyId = companyId };
 
     public async Task<WorkflowAutomationConfig> GetOrCreateConfigAsync(Guid companyId)
     {

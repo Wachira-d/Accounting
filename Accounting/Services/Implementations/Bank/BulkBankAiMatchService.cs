@@ -367,6 +367,7 @@ public class BulkBankAiMatchService : IBulkBankAiMatchService
             .ToListAsync(ct);
         var matchedPaymentIds = matchedPaymentIdsRaw.ToHashSet();
         var payments = await _db.Payments.AsNoTracking()
+            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ
             .Where(p => p.CompanyId == companyId && !p.IsDeleted
                         && p.Document.Currency == bankCurrency
                         && p.PaymentDate >= windowStart

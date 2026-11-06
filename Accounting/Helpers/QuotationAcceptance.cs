@@ -117,7 +117,7 @@ public static class QuotationAcceptance
         return string.Equals(doc.QuotationAcceptContentHash, DocumentSignedContent.Hash(doc, list), StringComparison.Ordinal);
     }
 
-    /// <summary>ฝ่ายค้านรอบ 239 N (PDPA) — เอกสารยังอยู่ในอายุเก็บไหม: MAX(<c>RetentionUntil</c>, วันที่เอกสาร + 5 ปี) (พ.ร.บ.การบัญชี ม.10 ·
+    /// <summary>ฝ่ายค้านรอบ 239 N (PDPA) — เอกสารยังอยู่ในอายุเก็บไหม: MAX(<c>RetentionUntil</c>, วันที่เอกสาร + 5 ปี) (พ.ร.บ.การบัญชี ม.14 ·
     /// ป.รัษฎากร §87/3 · กฎ M "MAX(retention)") — อยู่ ⇒ legal hold: คงหลักฐานลายเซ็น/การยอมรับ (หลักฐานสัญญา) แม้มีคำขอลบ</summary>
     public static bool UnderLegalHold(Document doc, DateTime nowUtc)
     {

@@ -597,7 +597,9 @@ public class PerLineWhtTests
     [Fact]
     public void ForDocument_whtRateOverride_equal_to_document_rate_is_identical_to_default()
     {
-        var doc = Doc("USD", 36m, 36_000m, (1_000m, 3m, 30m, "2"), (500m, 2m, 10m, "8ad"));
+        // รอบ 250 WP-01: ยอดบาทพิมพ์ต้องแปลงกลับได้ (1,500 USD × 36 = 54,000 · PrintedBaseUsable ตั้งแต่ 12203520) — เดิมใส่ 36,000
+        // (ของบรรทัดแรกบรรทัดเดียว) ⇒ ยอดพิมพ์ใช้ไม่ได้ ⇒ basis ตกเป็น ExchangeRate ทั้งสองทาง ⇒ เทสต์ไม่ได้ล็อกเส้นยอดพิมพ์ที่ตั้งใจล็อก
+        var doc = Doc("USD", 36m, 54_000m, (1_000m, 3m, 30m, "2"), (500m, 2m, 10m, "8ad"));
         var a = PerLineWht.ForDocument(doc).Values.Select(x => (x.BaseThb, x.WhtThb)).ToList();
         var b = PerLineWht.ForDocument(doc, 36m).Values.Select(x => (x.BaseThb, x.WhtThb)).ToList();
         Assert.Equal(a, b);

@@ -112,6 +112,14 @@ public class SiteSettings : BaseEntity
     // Application base URL — used to build invitation/reset links in system emails
     public string? AppBaseUrl { get; set; }
 
+    /// <summary>รอบ 250 (WP-02 · คำตัดสิน Y8): เวลาทดสอบการเชื่อมต่อขาออกครั้งล่าสุด (ปุ่ม "ทดสอบการเชื่อมต่อขาออก" — HEAD ไป api.omise.co ผ่าน OutboundUrlGuard) ·
+    /// ผู้อ่าน: <c>AdminGoLiveController</c> (การ์ดรายการตรวจ go-live)</summary>
+    public DateTime? OutboundCheckAt { get; set; }
+    /// <summary>ผลทดสอบขาออกล่าสุด — null = ยังไม่เคยทดสอบ</summary>
+    public bool? OutboundCheckOk { get; set; }
+    /// <summary>คำอธิบายผลทดสอบขาออกล่าสุด (ล้ม = เหตุผล)</summary>
+    public string? OutboundCheckMessage { get; set; }
+
     // ===== ใบรับรอง SSL ของโดเมนแพลตฟอร์ม (2026-10-19) — สถานะที่ TlsCertificateMonitorJob ตรวจได้ล่าสุด (ไม่ใช่ค่าตั้ง) =====
     // ผู้อ่าน: GET /api/admin/tls-status (แถบเตือนบนหน้าเว็บของผู้ดูแลระบบ) · ตัวตัดสินระดับ Helpers/TlsCertificateExpiry
     public string? TlsCertHost { get; set; }
@@ -316,4 +324,8 @@ public class SiteSettings : BaseEntity
     /// KeepExpiryOnly / RestartCycleOnly · ผู้อ่าน: <c>SubscriptionService.UpgradeModeOfferAsync</c> (ใบเสนอ + ด่านสร้างรายการ) · แก้ที่ <c>api/admin/platform-upgrade-mode</c> (audit chain) ·
     /// <b>ไม่</b>ถูกอ่านตอนอนุมัติ (รายการใช้แบบที่ประทับตอนซื้อ — 237-5) · คอลัมน์: <c>Helpers/PlatformUpgradeModeMigration</c></summary>
     public Accounting.Models.Enums.PlatformUpgradeModeOffer PlatformUpgradeModeOffer { get; set; } = Accounting.Models.Enums.PlatformUpgradeModeOffer.CustomerChooses;
+    /// <summary>รอบ 250 WP-03 (คำตัดสิน §3.3 N1): ค่าทับ "ชนิดเอกสาร → รหัสหัวเรื่อง e-Tax by Email" เป็น JSON <c>{"CreditNote":"CRN"}</c> — เก็บเฉพาะช่องที่ต่างจากค่าตั้งต้น ·
+    /// null = ค่าตั้งต้นทั้งชุด · ตัวอ่าน/ตัวตรวจเดียว <c>Helpers/EtaxByEmailFormat.ParseSubjectCodes</c> (ผู้อ่าน: <c>DocumentEmailService.SubjectForAsync</c>) ·
+    /// แก้ที่ <c>api/admin/etax-email-subject-codes</c> (audit chain)</summary>
+    public string? EtaxByEmailSubjectCodesJson { get; set; }
 }

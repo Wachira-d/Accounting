@@ -74,7 +74,9 @@ public class WhtCertStampTests
     {
         var html = PdfGenerationService.BuildWithholdingTaxCertHtml(Cert(), Payer());
         Assert.Equal(WhtCertFormText.Copies.Count, Regex.Matches(html, "<div class='stamp-area'>ประทับตรา<br>นิติบุคคล<br>\\(ถ้ามี\\)</div></td>").Count);
-        Assert.DoesNotContain("stamp-img", html);
+        // รอบ 250 WP-01: สไตล์ชีต (.stamp-img ใน WhtCertCss) มีชื่อคลาสเสมอ — ตรวจว่าไม่มี "แท็กรูปตรา" ไม่ใช่ชื่อคลาสในสไตล์ชีต
+        Assert.DoesNotContain("<img class='stamp-img'", html);
+        Assert.DoesNotContain("<div class='stamp-area has-stamp'>", html);
     }
 
     [Fact]

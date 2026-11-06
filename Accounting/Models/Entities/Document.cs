@@ -254,6 +254,10 @@ public class Document : TenantEntity
     public string? PayLinkChannelsJson { get; set; }
     /// <summary>ตารางส่งเอกสาร (EmailScheduleRule) ตัวแรกที่ส่งใบนี้ถึงลูกค้า — ค่าทับของงานหลังรับชำระอ่านจากตารางนี้ · null = ค่าบริษัท</summary>
     public Guid? AutoSendRuleId { get; set; }
+    /// <summary>รอบ 250 (WP-02 B-13): รายการประจำที่สร้างใบนี้ — ระบบประทับตอนรายการประจำสร้างใบ (ผู้ใช้ไม่ได้กรอก · ไม่สืบทอดไปใบลูก) ·
+    /// ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c> (ชั้น "รายการประจำ" ของค่าตั้งงานหลังรับชำระ) · null = ใบที่ไม่ได้มาจากรายการประจำ/ใบเก่า
+    /// (migration เติมจาก <c>RecurringTransactions.LastDocumentId</c> ได้เฉพาะใบล่าสุดของแต่ละรายการ)</summary>
+    public Guid? RecurringTransactionId { get; set; }
 
     /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
     /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
@@ -754,9 +758,9 @@ public class Document : TenantEntity
     /// Null = ยังไม่คำนวณ (เอกสารเก่า) → fallback DocumentDate ตอน export.</summary>
     public DateTime? TaxPointDate { get; set; }
 
-    // ===== Retention (อายุการเก็บเอกสาร) §87/3 + พ.ร.บ.บัญชี ม.10 =====
+    // ===== Retention (อายุการเก็บเอกสาร) §87/3 + พ.ร.บ.บัญชี ม.14 =====
     /// <summary>วันที่เก็บเอกสารถึง (เก็บอย่างน้อย 5 ปีจากวันสิ้นรอบ/วันยื่น
-    /// per §87/3 + ม.10). ห้ามลบจริงก่อนวันนี้ (legal hold). คำนวณตอน approve.</summary>
+    /// per §87/3 + พ.ร.บ.การบัญชี ม.14). ห้ามลบจริงก่อนวันนี้ (legal hold). คำนวณตอน approve.</summary>
     public DateTime? RetentionUntil { get; set; }
 
     // ===== §65 ตรี — รายจ่ายต้องห้าม (Non-Deductible add-back) =====
@@ -1103,6 +1107,11 @@ public class Contact : TenantEntity
     public string? PayLinkChannelsJson { get; set; }
     /// <summary>นโยบายอนุมัติข้ามคำเตือนระดับผู้ติดต่อ (JSON <c>AutoApprovePolicy</c>) — ใช้เมื่อรายการประจำไม่ได้ตั้งเอง · null = ไม่ปล่อย (ค่าตั้งต้น)</summary>
     public string? AutoApprovePolicyJson { get; set; }
+    /// <summary>รอบ 250 (WP-02 B-13): หลังลูกค้าชำระ ส่งใบเสร็จอัตโนมัติไหม (ชั้นผู้ติดต่อ) — null = ตามบริษัท ·
+    /// ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c> ผ่าน <c>PostPaymentAutomationPolicy.EffectiveLayers</c></summary>
+    public bool? PostPayEmailReceipt { get; set; }
+    /// <summary>รอบ 250 (WP-02 B-13): ส่งทุกงวดที่รับ (false = เฉพาะงวดที่ชำระครบ) ชั้นผู้ติดต่อ — null = ตามบริษัท</summary>
+    public bool? PostPayIncludePartial { get; set; }
 
     /// <summary>ภาษาเอกสารเริ่มต้นของผู้ติดต่อรายนี้ ("th"/"en") — null = ตามค่า
     /// บริษัท. semantic = "ค่าตั้งต้นตอนสร้างใบ": ประทับลง Document.DocumentLanguage

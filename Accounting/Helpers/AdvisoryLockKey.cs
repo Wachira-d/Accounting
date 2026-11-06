@@ -259,4 +259,9 @@ public static class AdvisoryLockKey
     /// <summary>รอบ 245 L1: งานย้ายข้อมูลครั้งเดียวที่ต้องเข้ารหัสในโค้ด (ทำใน SQL ไม่ได้) — part = คีย์ marker ของ <c>OneShotDataFixes</c> ·
     /// xact lock ทั้งระบบ (หลายเครื่องบูตพร้อมกัน ⇒ ทำครั้งเดียว)</summary>
     public const string OneShotDataFix = "one-shot-data-fix";
+
+    /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 9 · E L-2): ตัดสูญ/กลับรายการตัดสูญเครดิตภาษีถูกหัก (11910) ต่อแถว — part = id ของแถว ·
+    /// xact lock (เดิมเป็น literal "wht-credit-writeoff" ใน <c>WhtCreditService.LockCreditAsync</c> — ค่าเดิมทุกตัวอักษร ⇒ คีย์ไม่เปลี่ยน) ·
+    /// ปิดปีวนแถวเรียง Id (ลำดับล็อกคงที่ข้ามคำขอ — กัน deadlock)</summary>
+    public const string WhtCreditWriteOff = "wht-credit-writeoff";
 }

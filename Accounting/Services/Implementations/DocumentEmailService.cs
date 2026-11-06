@@ -267,7 +267,9 @@ public class DocumentEmailService : IDocumentEmailService
                 : doc.Reference;
         else if (doc.ReplacesDocumentId is Guid old)
             replaces = await _db.Documents.AsNoTracking().Where(d => d.Id == old && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefaultAsync();
-        return EtaxByEmailFormat.Subject(doc, original, replaces);   // รหัสจาก EtaxDocumentTypeMap ตัวเดียวกับ XML (ฝ่ายค้าน S3)
+        // รอบ 250 WP-03 (คำตัดสิน N1): รหัสหัวเรื่องทับได้ที่ค่าตั้งแพลตฟอร์ม (ยังไม่เทียบคู่มือฉบับจริง — แก้ได้โดยไม่ deploy) · ว่าง = ค่าตั้งต้น
+        var codesJson = await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.EtaxByEmailSubjectCodesJson).FirstOrDefaultAsync();
+        return EtaxByEmailFormat.Subject(doc, original, replaces, EtaxByEmailFormat.ParseSubjectCodes(codesJson));   // รหัสจาก EtaxDocumentTypeMap ตัวเดียวกับ XML (ฝ่ายค้าน S3)
     }
 
     /// <summary>เหตุที่ใบ/แถว e-Tax นี้ส่งไม่ได้ตามสถานะ — ใบต้องออกแล้วและไม่ยกเลิก · แถว e-Tax ต้องไม่ยกเลิก/ผิดพลาด/ถูกปฏิเสธ · null = ผ่าน</summary>
@@ -589,10 +591,12 @@ public class DocumentEmailService : IDocumentEmailService
         if (!evidenceOk)
             throw new BusinessRuleException(
                 "แนบไฟล์ใบ/อีเมลที่ ETDA ประทับเวลาแล้วส่งกลับเข้าเอกสารนี้ก่อน — ไฟล์ต้องแนบหลังเวลาที่ส่ง (ไฟล์ที่แนบไว้ก่อน เช่น PDF ต้นฉบับ ไม่นับ)", Code, 400);
+        // รอบ 250 (WP-02 §2.4 ข้อ 7 · คำตัดสิน §2 #14): เดิมตัดเหลือ 500 ตัวเงียบ = หลักฐานขาด · ฝ่ายค้าน WP-02 ข้อ 8: ไม่ปฏิเสธด้วย —
+        // คอลัมน์ขยายเป็น text (DatabaseMigrationHelper ALTER TYPE) ⇒ เก็บค่าที่ ETDA ส่งกลับครบทุกตัว (ตัดช่องว่างหัวท้ายเท่านั้น)
         var token = req.TimestampToken?.Trim();
         var now = DateTime.UtcNow;
         etax.EtdaStampedAt = stampedUtc;
-        etax.EtdaTimestampToken = string.IsNullOrEmpty(token) ? null : (token.Length > 500 ? token[..500] : token);
+        etax.EtdaTimestampToken = string.IsNullOrEmpty(token) ? null : token;
         etax.EtdaStampedFileAttachmentId = req.EvidenceAttachmentId;
         etax.EtdaStampRecordedBy = actorEmail ?? userId?.ToString();
         etax.EtdaStampRecordedAt = now;

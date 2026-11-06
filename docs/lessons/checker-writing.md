@@ -98,7 +98,7 @@ python3 tools/undeclared_local_check.py # CS0103 ส่งตัวแปรท�
 python3 tools/admin_menu_gate_check.py # เมนู/endpoint ของแพลตฟอร์มที่ลูกค้ามองเห็น
 python3 tools/upload_route_check.py  # โฟลเดอร์อัปโหลดที่เขียนได้แต่ static handler ตอบ 404
 python3 tools/regex_line_span_check.py # \s เป็นตัวคั่นระหว่างตัวเลข → กลืนขึ้นบรรทัดใหม่
-python3 tools/advisory_lock_key_check.py # คีย์ advisory lock ที่สุ่มต่อ process → ล็อกข้ามเครื่องไม่ได้
+python3 tools/advisory_lock_key_check.py # คีย์ advisory lock ที่สุ่มต่อ process → ล็อกข้ามเครื่องไม่ได้ · รอบ 250 WP-01: `pg_advisory_*lock(hashtext(...))` ใน SQL ตรง (int4 32 บิต ไม่ผ่าน `AdvisoryLockKey.For`) = ฟ้อง · ratchet ไฟล์ละจำนวน (`PaymentQrMigration.cs` 1 — WP-04) · `--self-test` · อยู่ใน `check_all.sh`
 python3 tools/csp_external_ref_check.py # สคริปต์/สไตล์ภายนอกที่ CSP ของเราเองไม่อนุญาต → เบราว์เซอร์บล็อกเงียบ
 python3 tools/tab_hidelist_check.py  # panel ของแท็บที่ไม่อยู่ในลิสต์ซ่อน → เปิดแล้วค้างทับแท็บอื่น
 python3 tools/stock_writer_check.py  # เขียนสต็อกนอก IStockLedger → สองความจริงที่ไม่มีวันตรงกัน
@@ -139,7 +139,8 @@ python3 tools/owner_action_wiring_check.py # ด่านเจ้าของ/�
 python3 tools/taxid_digits_inline_check.py # ตัวกรอง "เลขผู้เสียภาษี/เลขบัตรเหลือแต่ตัวเลข" แบบ inline (`Where(char.IsDigit)` · `Regex.Replace(@"\D")`) บนบรรทัดที่พูดถึง TaxId/tid/CitizenId — ต้องเรียก `ThaiTaxId.Normalize` (เลขไทย ⇒ ASCII) · ระดับบรรทัด · --self-test (ทีม W1d P2-6 · 2026-10-16)
 node tools/api_busy_indicator_sim.js # ตัวแสดง "กำลังทำงาน" กลาง (`ApiBusy` ใน api.js) — นานแสดง · สั้นไม่กระพริบ · ปุ่มกันกดซ้ำ (โค้ดจริง + negative test ในตัว)
 node tools/employee_form_contract_sim.js # ฟอร์มพนักงาน ↔ API: hydrate↔payload สองทิศ · คีย์ ⊆ DTO · ทุกช่องในโมดัลถูก hydrate (ซอร์สจริง · baseline จากคอมมิตก่อนแก้ · รอบ 193)
-python3 tools/doc_commit_sha_check.py # sha ที่ doc อ้างแต่ไม่อยู่บน branch (amend แล้ว sha ที่จดไว้ก่อน commit ตายทันที)
+python3 tools/legal_citation_check.py # เลขมาตรา พ.ร.บ.การบัญชีผิด (ม.10 เป็นระยะเก็บ · "ม.11 ทวิ" · ท.ป.4/2528 เป็นที่มาระยะเก็บ · Section 10) — ratchet 0 + --self-test (รอบ 250 WP-06)
+python3 tools/doc_commit_sha_check.py # sha ที่ doc อ้างแต่ไม่อยู่บน branch (amend แล้ว sha ที่จดไว้ก่อน commit ตายทันที) · รอบ 250 WP-01: clone ตื้น ⇒ `fetch --unshallow` ก่อน (fetch ไม่ได้ = "เชื่อผล CI" ไม่ใช่รายการแดง) · placeholder `เติมในคอมมิตตามหลัง` ใน DOCUMENT_FLOW/CHANGELOG/ACCOUNT_STRUCTURE/TEST_PLAN อายุ (blame) > 1 คอมมิต = fail (ของเก่า ratchet ใน `tools/doc_commit_sha_placeholder_baseline.txt`) · ✅ + เลขผู้เสียภาษี 13 หลักที่ checksum ถูก ไม่ใช่ sha · `--self-test` (เรพชั่วคราว) · อยู่ใน `check_all.sh` ทั้งแบบ glob และ self-test
 python3 tools/dead_helper_check.py    # public static ใน Helpers ที่ไม่มีผู้เรียกนอกไฟล์ (นอกคอมเมนต์ · เทสต์ไม่นับ) — ratchet กับ tools/dead_helper_baseline.txt: ล้มเฉพาะตัวใหม่ · "มี ≠ ถูกเรียก" มีตัววัดแล้ว
 python3 tools/test_inventory.py --check # TEST_PLAN §0 ต้องตรงกับ [Fact]/[Theory] จริง (เคยค้าง "~150 เคส/19 ไฟล์" จนผิด 10 เท่า) — วางผล --row ทับ
 node --check                           # ทุก <script> ใน .html ที่แก้
@@ -162,3 +163,11 @@ awk brace-balance                      # ทุก .cs ที่แก้
 - **negative/positive ใน self-test**: deferred 4 แบบ (function · object method · addEventListener callback · setTimeout) ต้องไม่ฟ้อง · `Bill.init();` ระดับบนสุด และ IIFE ต้องฟ้อง ·
   บล็อก `<script src>` ไม่นับเป็นบล็อก inline
 - **ข้อจำกัดที่รู้**: regex ถอดสตริงเป็นแบบหยาบ (regex literal ที่มี `{`/`(` อาจเพี้ยน depth) — ถ้าฟ้องผิดให้เพิ่มเคสใน self-test ก่อนแก้
+
+### 2026-11-06 · checker ฟ้องผิด 2 ตัวในสัปดาห์เดียว (`contact_picker_check` จับชื่อ id · `write_permission_gate` จับ verb)
+- ตัดสินด้วย**พฤติกรรม**ไม่ใช่ชื่อ · แก้ที่ negative case ของ `--self-test` ไม่ใช่เปลี่ยน id หน้าเว็บหลบ checker (`29d6730f` เลี่ยง · `ca10f623` ถูกทาง)
+
+### 2026-11-06 · `doc_commit_sha_check` ฟ้องผิดบน shallow clone (และทีมตรวจเชื่อตาม)
+- clone ใน env agent เป็นแบบตื้น (446 คอมมิต) ⇒ sha ที่มีจริงบน GitHub (`0a829110` · `2560776c` · `825f5c0e` · `a4dfa177`) ถูกฟ้องว่า "ไม่มีในเรพ" และทีม E ตัดสินว่า `0a829110` ตาย —
+  หลัง `git fetch --unshallow` ทุกตัวมีจริง (รอบ 250 WP-05) · กติกา: checker/ผู้ตรวจที่ตัดสินจากประวัติ git ต้องตรวจ `git rev-parse --is-shallow-repository` ก่อน ·
+  และ pattern `✅ <hex>` จับเลขผู้เสียภาษี 13 หลักในตารางเทสต์ด้วย ⇒ ข้ามตัวเลขล้วน 13 หลัก
