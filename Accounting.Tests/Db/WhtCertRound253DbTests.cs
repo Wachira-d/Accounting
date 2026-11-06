@@ -169,7 +169,7 @@ public class WhtCertRound253DbTests
         Assert.Equal(WhtCertIntakeRecordStatus.AwaitingConfirm, intake.Status);   // OCR ล่ม ⇒ รอผู้ขายตรวจ (ไม่ทิ้งไฟล์)
         Assert.Equal(WhtCertUploadLinkPolicy.Sha256Hex(pdf), intake.FileSha256);
         Assert.Contains("ลิงก์อัปโหลด", intake.SubmittedByName);
-        Assert.DoesNotContain("\u0001", intake.SubmittedByName);
+        Assert.False(intake.SubmittedByName!.Contains('\u0001'));   // ordinal — DoesNotContain(string) เทียบแบบ culture ⇒ อักขระควบคุมถือว่าพบที่ pos 0
         // ฝ่ายค้าน M2: ใบจากลิงก์ (ไม่ล็อกอิน) ต้องให้คนตรวจเสมอ — ไม่ยืนยันอัตโนมัติ · ไม่มีการจัดสรรที่ยืนยันแล้ว
         Assert.Contains(WhtCertUploadLinkPolicy.AnonymousReviewGate, intake.GateProblems);
         Assert.False(intake.AutoConfirmed);
