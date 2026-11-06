@@ -67,7 +67,7 @@ public record RecurringTransactionResponse(
     string? LastRunNotice = null,
     Guid? LastDocumentId = null,
     // รอบ 247 (UX รายการประจำ): ผลรอบล่าสุดที่เซิร์ฟเวอร์ประกอบแล้ว — หัวเรื่อง · สิ่งที่ต้องทำ · ปุ่ม (Helpers/RecurringRunOutcome) · null = ไม่มีเรื่องต้องทำ
-    Accounting.Helpers.RecurringRunOutcomeView? LastRunOutcome = null,
+    global::Accounting.Helpers.RecurringRunOutcomeView? LastRunOutcome = null,
     // ติ๊กส่งอีเมลไว้แต่ผู้ติดต่อไม่มีอีเมล (ตัวตัดสินเดียว RecurringEmailReadiness) + ลิงก์หน้าผู้ติดต่อ
     string? AutoSendEmailWarning = null,
     string? AutoSendEmailFixUrl = null,

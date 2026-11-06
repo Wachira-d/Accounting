@@ -826,7 +826,7 @@ const Page = {
     if (!o) return '';
     const steps = (o.steps || []).map(t => `<li style="margin:4px 0">${Layout.esc(t)}</li>`).join('');
     const btn = a => a.kind === 'runNow'
-      ? `<button class="btn btn-sm btn-secondary" onclick="Page.runNow('${Layout.esc(r.id)}')">${Layout.esc(a.label)}</button>`
+      ? `<button class="btn btn-sm btn-secondary" onclick="Page.runNow('${Layout.jsArg(r.id)}')">${Layout.esc(a.label)}</button>`
       : `<a class="btn btn-sm ${a.kind === 'openDocument' ? 'btn-primary' : 'btn-secondary'}" href="${Layout.esc(a.url || '#')}"${a.kind === 'openContact' ? ' target="_blank"' : ''}>${Layout.esc(a.label)}</a>`;
     const actions = (o.actions || []).map(btn).join(' ');
     return `<div style="margin-top:12px;padding:12px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#78350f;font-size:13px;line-height:1.6">
