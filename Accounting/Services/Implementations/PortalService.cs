@@ -642,7 +642,7 @@ public class PortalService : IPortalService
             ExpiresAt = DateTime.UtcNow.Add(PortalMagicLinkPolicy.Ttl), CreatedBy = "portal-magic-link",
         });
         await _db.SaveChangesAsync(ct);
-        var enc = System.Net.WebUtility.HtmlEncode;
+        Func<string?, string?> enc = System.Net.WebUtility.HtmlEncode;
         var html = $"<p>เรียน {enc(access.DisplayName ?? access.Email)}</p>"
             + $"<p>กดลิงก์ด้านล่างเพื่อเข้าพอร์ทัลลูกค้าของ {enc(companyName)} (ใช้ได้ 15 นาที ครั้งเดียว — ไม่ต้องใช้รหัสผ่าน)</p>"
             + $"<p><a href=\"{enc(link)}\">เข้าสู่พอร์ทัลลูกค้า</a></p>"
