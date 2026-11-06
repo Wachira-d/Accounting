@@ -1,13 +1,12 @@
 # ratchet ของ tools/ui_glossary_check.py (รอบ 252 WP-13 M) — ศัพท์นักพัฒนา/อังกฤษที่ผู้ใช้เห็น ต่อไฟล์ · ลดลงเท่านั้น
 # คำแทนดู docs/ui-glossary.md — ห้ามเพิ่มแถว/ตัวเลขเพื่อให้ checker เขียว
-accept-invitation.html 2
 admin/ai-config.html 1
 admin/coa-template.html 2
 admin/ocr-config.html 5
 admin/sso-config.html 1
 admin/users.html 1
 login.html 1
-pages/accountant-workspace.html 2
+pages/accountant-workspace.html 1
 pages/accounts.html 13
 pages/api-developer.html 2
 pages/course-credits.html 1

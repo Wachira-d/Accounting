@@ -1271,7 +1271,8 @@ const API = {
       getDocumentAssetLines: (docId) => API.get(`${base}/fixedasset/document-lines/${docId}`),
       // ขึ้นทะเบียนจากเอกสารที่โพสต์แล้ว — ทั้งใบ หรือเฉพาะบรรทัด
       registerAssetsFromDocument: (docId, lineId) => API.post(`${base}/fixedasset/from-document/${docId}${lineId ? `?lineId=${encodeURIComponent(lineId)}` : ''}`, {}),
-      createAsset: (d) => API.post(`${base}/fixedasset`, d),
+      // รอบ 252 WP-13 ฝ่ายค้าน MED-HIGH-1: idemKey (ไม่บังคับ) ⇒ Idempotency-Key — รหัสออกอัตโนมัติแล้วไม่มี "รหัสซ้ำ" ช่วยกันกดซ้ำอีก ⇒ คีย์ต่อการเปิดฟอร์ม
+      createAsset: (d, idemKey) => API.request('POST', `${base}/fixedasset`, d, false, null, idemKey ? { 'Idempotency-Key': idemKey } : null),
       updateAsset: (id, d) => API.put(`${base}/fixedasset/${id}`, d),
       deleteAsset: (id) => API.del(`${base}/fixedasset/${id}`),
       disposeAsset: (id, d) => API.post(`${base}/fixedasset/${id}/dispose`, d),

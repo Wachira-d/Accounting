@@ -2298,7 +2298,7 @@
         const settings = Array.from(rowsMap.values());
         try {
           const j = await API.put(`/api/companies/${cid}/notifications/config/settings`, { settings });
-          if (!j || !j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+          if (!j || !j.success) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
           Layout.toast('บันทึกการตั้งค่าแจ้งเตือนเรียบร้อย');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

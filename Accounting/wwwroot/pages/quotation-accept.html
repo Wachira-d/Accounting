@@ -86,8 +86,8 @@
       return `<div class="accept-box">
           <strong>ยอมรับใบเสนอราคานี้</strong>
           <label class="lbl" for="accName">ชื่อ-นามสกุลผู้ยอมรับ *</label>
-          <input id="accName" maxlength="200" autocomplete="name" value="${esc(q.contactName || '')}">
-          <div class="opt" style="font-size:12px">เติมชื่อลูกค้าบนใบให้แล้ว — แก้เป็นชื่อผู้ยอมรับจริงได้</div>
+          <!-- ฝ่ายค้าน LOW-10: ชื่อผู้ยอมรับเป็นหลักฐานการยอมรับ ⇒ ต้องเป็นสิ่งที่คนพิมพ์เอง (ไม่เติมค่าให้) · ชื่อลูกค้าบนใบเป็นแค่ตัวอย่างในช่อง -->
+          <input id="accName" maxlength="200" autocomplete="name" placeholder="${esc(q.contactName ? 'เช่น ผู้มีอำนาจของ ' + q.contactName : 'ชื่อ-นามสกุล')}">
           <label class="lbl">ลายเซ็น ${q.requireSignature ? '*' : '<span class="opt">(ไม่บังคับ)</span>'}</label>
           <div class="pad-wrap">
             <canvas id="pad" aria-label="ช่องวาดลายเซ็น"></canvas>

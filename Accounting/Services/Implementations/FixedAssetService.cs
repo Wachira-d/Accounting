@@ -22,6 +22,29 @@ public partial class FixedAssetService : IFixedAssetService
 
     public async Task<FixedAssetResponse> CreateAsync(Guid companyId, CreateFixedAssetRequest request, string createdBy)
     {
+        // รอบ 252 WP-13 ฝ่ายค้าน MED-2: ตัวออกรหัส (AssetCodeGenerator → pg_advisory_xact_lock) ต้องอยู่ในธุรกรรมเดียวกับการ INSERT —
+        // นอกธุรกรรม ล็อกปล่อยทันทีหลังคำสั่ง ⇒ สองคำขอได้รหัสเดียวกัน ⇒ unique (CompanyId, AssetCode) ชน = DbUpdateException ดิบ ·
+        // ผู้เรียกที่มีธุรกรรมอยู่แล้ว (OCR/ใบซื้อ) ใช้ของเขา (แบบ CalculateDepreciationAsync)
+        var ownsTransaction = _db.Database.CurrentTransaction is null;
+        await using var tx = ownsTransaction ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
+            var created = await CreateCoreAsync(companyId, request, createdBy);
+            if (tx != null) await tx.CommitAsync();
+            return created;
+        }
+        catch (DbUpdateException dbe) when (dbe.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+        {
+            var auto = string.IsNullOrWhiteSpace(request.AssetCode);
+            throw new Accounting.Helpers.BusinessRuleException(
+                auto ? "รหัสสินทรัพย์ที่ระบบออกให้ชนกับรายการที่เพิ่งบันทึกพร้อมกัน — กดบันทึกอีกครั้ง (ระบบจะออกรหัสถัดไปให้)"
+                     : $"รหัสสินทรัพย์ {request.AssetCode!.Trim()} ซ้ำกับรายการที่มีอยู่ — ใช้รหัสอื่น หรือเว้นว่างให้ระบบออกให้",
+                "FA-CODE-DUPLICATE", 409);
+        }
+    }
+
+    private async Task<FixedAssetResponse> CreateCoreAsync(Guid companyId, CreateFixedAssetRequest request, string createdBy)
+    {
         // รหัสว่าง ⇒ ออก FA-yyyyMM-#### ด้วยตัวออกรหัสตัวเดียว (รอบ 252 WP-13 · D §2: ฟอร์มบอก "ว่าง = ออกให้อัตโนมัติ" —
         // เดิม validator บังคับกรอก ทั้งที่ระบบมีตัวออกรหัสอยู่แล้วสำหรับใบที่ขึ้นทะเบียนจากเอกสาร) · กรอกเอง = ใช้ตามที่กรอก (ตรวจซ้ำเหมือนเดิม)
         request = string.IsNullOrWhiteSpace(request.AssetCode)
@@ -1022,6 +1045,10 @@ public partial class FixedAssetService : IFixedAssetService
     public async Task<List<DepreciationResponse>> CalculateDepreciationAsync(
         Guid companyId, CalculateDepreciationRequest request, string performedBy)
     {
+        // รอบ 252 WP-13 ฝ่ายค้าน MED-3: งวดอนาคต/เดือนนอก 1–12 ⇒ ปฏิเสธก่อนแตะอะไร (ตัวตัดสินเดียว DepreciationPeriodPolicy)
+        var periodProblem = Accounting.Helpers.DepreciationPeriodPolicy.PeriodProblem(request.Year, request.Month, DateTime.UtcNow);
+        if (periodProblem != null)
+            throw new Accounting.Helpers.BusinessRuleException(periodProblem, "FA-DEP-PERIOD");
         // กันการโพสต์ซ้ำของงวดเดียวกันข้าม instance/แท็บ — cron มี JobLock ของ
         // ตัวเองอยู่แล้ว แต่ล็อกนั้นอยู่ที่ตัว background service ไม่ได้อยู่ที่นี่
         // ⇒ endpoint มือกับ cron แข่งกันได้ แล้วบวกค่าเสื่อมสองเท่า (E-04)
@@ -1042,6 +1069,26 @@ public partial class FixedAssetService : IFixedAssetService
         var assets = await _db.FixedAssets
             .Where(a => a.CompanyId == companyId && a.Status == AssetStatus.Active)
             .ToListAsync();
+
+        // รอบ 252 WP-13 ฝ่ายค้าน MED-3: วิธียอดลดลงคิดจากมูลค่าสุทธิล่าสุด ⇒ ลงงวดที่เก่ากว่างวดที่ลงแล้ว = ตัวเลขผิดลำดับ ·
+        // ทางปลอดภัย: ปฏิเสธทั้งรอบพร้อมรหัสสินทรัพย์ (ไม่ข้ามเงียบ) · เส้นตรงลงย้อนหลังได้ตามเดิม (ยอดต่องวดไม่ขึ้นกับลำดับ)
+        var orderSensitiveIds = assets.Where(a => Accounting.Helpers.DepreciationPeriodPolicy.IsOrderSensitive(a.DepreciationMethod))
+            .Select(a => a.Id).ToList();
+        if (orderSensitiveIds.Count > 0)
+        {
+            var reqKey = request.Year * 12 + request.Month;
+            var laterPosted = await _db.AssetDepreciations
+                .Where(d => d.CompanyId == companyId && orderSensitiveIds.Contains(d.FixedAssetId) && d.IsPosted
+                    && d.Year * 12 + d.Month > reqKey)
+                .Select(d => d.FixedAssetId).Distinct().ToListAsync();
+            if (laterPosted.Count > 0)
+            {
+                var codes = assets.Where(a => laterPosted.Contains(a.Id)).Select(a => a.AssetCode).OrderBy(c => c).Take(5).ToList();
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"ลงค่าเสื่อมงวด {request.Month:D2}/{request.Year} ไม่ได้ — สินทรัพย์วิธียอดลดลง ({string.Join(", ", codes)}{(laterPosted.Count > 5 ? " …" : "")}) "
+                    + "ลงงวดที่ใหม่กว่าไปแล้ว (ยอดลดลงต้องลงตามลำดับเดือน) — ปรับปรุงด้วยใบสำคัญทั่วไปแทน", "FA-DEP-ORDER");
+            }
+        }
 
         var periodStart = new DateTime(request.Year, request.Month, 1);
         var processed = new List<AssetDepreciation>();   // every row touched this run (returned to caller)

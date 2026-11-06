@@ -15,6 +15,10 @@
 | UX252-12 | หน้าสาธารณะ pay-link / delivery-sign ใน in-app browser (LINE) | ข้อความผล/ผิดพลาดในกล่องบนหน้า `role=alert` (ไม่พึ่ง alert ที่ถูกปิดเงียบ) · delivery-sign ซูมได้ (ไม่มี user-scalable=no) · เวลาไทย | มือ |
 | UX252-13 | ศัพท์นักพัฒนาในข้อความที่ผู้ใช้เห็น | หน้าที่ D ระบุ = 0 · ที่เหลือ ratchet ต่อไฟล์ (ห้ามเพิ่ม) | `tools/ui_glossary_check.py` (`--self-test`: 5 รูปต้องจับ · ตัวแปร/คอมเมนต์/${…} ไม่นับ · ฉีดลง notifications.html จริงต้องเพิ่ม) |
 | UX252-14 | label ในฟอร์ม | ป้ายผูกช่อง (`for`) — recurring/fixed-assets/contacts/email-schedule/notifications = 0 · settings 100→2 · bank 29→1 · documents 62→4 | `tools/form_label_for_check.py` baseline |
+| UX252-15 | ฝ่ายค้าน MED-HIGH-1: สร้างสินทรัพย์ (รหัสว่าง · ติ๊กบันทึกบัญชีตอนซื้อ) แล้วดับเบิลคลิก/Enter ซ้ำ/เน็ตหลุดกดใหม่ | สินทรัพย์ 1 ตัว · รายการบัญชีตอนซื้อ 1 ชุด (ปุ่มล็อกระหว่างส่ง · Idempotency-Key ต่อการเปิดฟอร์ม ⇒ IdempotencyMiddleware คืนผลเดิม) · เปิดฟอร์มใหม่ = คีย์ใหม่ | `FixedAssetRound252AdversarialTests.Asset_form_sends_one_idempotency_key_per_open_and_locks_save_button` · `…Asset_create_endpoint_goes_through_idempotency_middleware` · มือ |
+| UX252-16 | ฝ่ายค้าน MED-2: สร้างสินทรัพย์รหัสว่างพร้อมกันสองคำขอ / รหัสชน unique | ออกรหัสในธุรกรรมเดียวกับ INSERT (ล็อก advisory ไม่ปล่อยก่อน) · ชน = 409 ข้อความไทย `FA-CODE-DUPLICATE` (ไม่ใช่ DbUpdateException ดิบ) | มือ · Db `…Create_with_blank_code_generates_FA_code_and_manual_code_kept` (ลำดับ) |
+| UX252-17 | ฝ่ายค้าน MED-3: คำนวณค่าเสื่อมงวดอนาคต / เดือน 13 / วิธียอดลดลงลงงวดเก่ากว่างวดที่ลงแล้ว | ปฏิเสธพร้อมเหตุไทย (`FA-DEP-PERIOD` · เดือนปัจจุบันตามเวลาไทย) · ยอดลดลงผิดลำดับ ⇒ ปฏิเสธทั้งรอบพร้อมรหัสสินทรัพย์ (`FA-DEP-ORDER` · ไม่ข้ามเงียบ) · เส้นตรงลงย้อนหลังได้ · หน้าเลือกได้ถึงเดือนปัจจุบัน | `FixedAssetRound252AdversarialTests` (งวด 2 ทิศ · ขอบเดือนเวลาไทย · ชนิดที่ต้องเรียงลำดับ) |
+| UX252-18 | ฝ่ายค้าน LOW-7: กล่องสองทาง (ผังหัวเอกสาร vs บรรทัด · เคลมภาษีซื้อขัดกัน) ปิดด้วย × / Escape | ไม่บันทึก (ไม่ถือว่าเลือกปุ่มที่สอง) · `Layout.confirm({dismissValue: null})` | มือ |
 
 ## SEC250 — ความปลอดภัย/UX ร้ายแรงจากผลตรวจ D (รอบ 250 WP-03 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §4 WP-03 · คำตัดสิน §3.3 Y4/Y6/N1)
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -647,7 +651,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **827 ไฟล์ · 8,820 `[Fact]` + 1,314 `[Theory]` (6,189 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **828 ไฟล์ · 8,824 `[Fact]` + 1,316 `[Theory]` (6,197 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 
