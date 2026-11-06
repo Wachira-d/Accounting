@@ -2266,7 +2266,38 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (กำหนดที่ผ่านไปแล้วเริ่มวันนี้)
 - **ฟอร์ม** `recurring.html`: ค่าที่บันทึกไว้ (ช่องทางรับ/จ่าย · หมวดค่าใช้จ่าย) ที่ไม่อยู่ในดรอปดาวน์แล้ว (ปิด/ลบ) ⇒ ใส่กลับเป็นตัวเลือก "⚠️ ชื่อ"
   + ข้อความใต้ช่อง (เดิมตกเป็น "เงินสด" เงียบ ๆ แล้วบันทึกทับ ⇒ ใบทุกงวดลงเงินสด) · โหลดตัวเลือกไม่สำเร็จ = toast + ห้ามบันทึก ·
-  เทมเพลตหลายบรรทัด (API) ล็อกช่องรายบรรทัด ไม่บันทึกทับ · ล้างวันสิ้นสุดตอนแก้ไขได้จริง (เดิมอ่าน `this.editingId` ที่ไม่มีใครตั้ง)
+  ~~เทมเพลตหลายบรรทัด (API) ล็อกช่องรายบรรทัด~~ (รอบ 248: แก้ได้ทุกบรรทัด — ดูข้อถัดไป) · ล้างวันสิ้นสุดตอนแก้ไขได้จริง (เดิมอ่าน `this.editingId` ที่ไม่มีใครตั้ง)
+- **รอบ 248 — Autopilot** (`erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §4–§5.1 · §12 รอบ 248 · Last verified commit <เติมในคอมมิตตามหลัง>):
+  - **ฟอร์มเป็น wizard 5 ขั้น** (① เอกสาร&รอบ ② รายการ&ราคา ③ ภาษี&บัญชี ④ ส่ง&รับเงิน ⑤ อนุมัติ) + แผงความพร้อมด้านขวา · **หลายบรรทัด**:
+    บรรทัดที่ 1 = ช่องยอดเดิม · บรรทัดที่ 2..n = ตาราง "บรรทัดเพิ่มเติม" (คีย์อื่นของบรรทัดเดิมที่ตั้งผ่าน API ไม่ถูกทับ — ทับเฉพาะช่องของตาราง ตำแหน่งเดียวกัน)
+  - **ช่องทางรับเงินเป็นชั้น** (`Helpers/AutopilotSettingsResolver` — ตัวต่อชั้นเดียว): ตารางส่ง › **รายการประจำ** (`RecurringTransaction.PaymentMode/PayLinkChannelsJson`)
+    › **ผู้ติดต่อ** (`Contact.PaymentMode/PayLinkChannelsJson` · `PUT recurring/contacts/{id}/autopilot` · `Contact.Edit`) › บริษัท ·
+    โหมด `Inherit|Online|TransferOnly|Both|None` · ชั้นที่ไม่ตั้ง = เท่าเดิม (241-1) · ผู้อ่าน: `EmailScheduleService.OnRecurringDocumentCreatedAsync` (เติมชั้นรายการลงกฎ
+    ที่ช่องว่าง/กฎเสมือน) · `DocumentPayLinkService.ForScheduledEmailAsync` (แนบไหม) · `EnsureLinkAsync` (ช่องทาง) · **`TransferOnly` = ไม่แนบลิงก์ gateway**
+    (ลูกค้าโอนตามบัญชี/QR บนเอกสาร) — หน้าเว็บที่มีแต่เลขบัญชีเป็นงานรอบ 250 (คำตัดสิน 241-2 "ลิงก์ต้องมีช่องทางออนไลน์" ยังมีผล)
+  - **นโยบายอนุมัติข้ามคำเตือน** (`Helpers/AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy`): คำเตือนค้างชำระมีป้าย `[AR-OVERDUE]`
+    (`Helpers/ArOverdueApprovalWarning` — เดิมข้อความล้วน) · ตั้งต่อรายการ (`PUT recurring/{id}/approve-policy`) และต่อผู้ติดต่อ
+    (`PUT recurring/contacts/{id}/approve-policy`) — **ต้องมีสิทธิ์อนุมัติเอกสาร** · รายการ (รวมตั้งว่าง = หยุดรอคน) ชนะผู้ติดต่อ · ไม่มีระดับบริษัท ·
+    ค่าตั้งต้น = ไม่ตั้ง (พฤติกรรมรอบ 247 เป๊ะ) · ⚠️ **รอเจ้าของยืนยัน Q3** · ตอนรัน `RecurringApprovePolicyLoader` ตรวจผู้ตั้งยังเป็นสมาชิก (`CompanyMembership`)
+    + ยังมีสิทธิ์อนุมัติ ⇒ ไม่ใช่ = ไม่ปล่อย + เรื่องต้องทำต่อบนแถว · ปล่อยได้เฉพาะรหัสใน `AutoApprovePolicy.Catalogue` (ตอนนี้ `AR-OVERDUE` ตัวเดียว) ·
+    **ปล่อยไม่ได้เสมอ**: ผู้ซื้อ §86/4 ไม่ครบ (ไม่มีป้าย ⇒ ปล่อยไม่ได้โดยโครงสร้าง) · `[Σ-GAP]` · VAT ไม่อยู่บนกระดาษ · งวดปิด · วงเงินอนุมัติ (ด่านรองไม่ถูก override —
+    `acknowledgeWarnings` ของ ApproveDocumentAsync ยังเป็น false) · ตั้งนโยบายปล่อยรหัสเหล่านี้ ⇒ 400 พร้อมเหตุ · ปล่อยจริง ⇒ หมายเหตุภายในบนใบ
+    (`AutoApprovePolicy.NoteLine`) + audit `APPROVE-UNATTENDED-POLICY` (`policyReleased` · `policyScope` · `policySetBy/At`) · ตั้ง/ล้างนโยบาย ⇒ audit `SetAutoApprovePolicy`
+  - **ตรวจความพร้อม** `Helpers/AutopilotReadiness.Evaluate` (pure · ระดับ Full/Partial/DraftOnly · ข้อ `TEMPLATE·CONTACT·BUYER-TAX·APPROVE·OWNER-POLICY·RECIPIENT·SMTP·GATEWAY·THB`
+    พร้อมลิงก์แก้) ← `RecurringAutopilotService` รวบรวมข้อเท็จจริงครั้งเดียว · `GET recurring/{id}/readiness` · `POST recurring/readiness` (ร่างในฟอร์ม)
+  - **ทดลองรัน** `POST recurring/{id}/dry-run` · `POST recurring/dry-run` (ร่าง) — **ไม่เขียนอะไรเลย** (ไม่ออกเลข · ไม่สร้างลิงก์ · ไม่ส่ง · ไม่อนุมัติ):
+    ใบจำลองในหน่วยความจำ → `DocumentService.PreviewApprovalWarningsForUnsavedAsync` (ตัวรวบรวมเดียวกับอนุมัติจริง · ถอดแถวที่ตัวรวบรวมเพิ่มลง context) →
+    `ApprovalAcknowledgement.Unacknowledged(UnattendedWithPolicy, …, policy)` · ยอดในลิงก์ `DocumentPayLinkPolicy.AmountsFor` · ยอดเป็นประมาณการจากเทมเพลต (บอกในผล) ·
+    ล็อกด้วย Db test `RecurringAutopilotRound248DbTests` (นับแถวก่อน-หลัง) + `tools/required_call_site_check.py` (R248)
+  - **ฝ่ายค้านรอบ 248 (หลัง 8304ce95)**: endpoint ตั้งนโยบาย/ช่องทางรับเงินผู้ติดต่อมี `[RejectApiKey]` (คีย์ API ห้ามประทับว่าเจ้าของตั้ง · `tools/owner_action_wiring_check.py`) ·
+    นโยบายของรายการ**ผูกลายนิ้วมือ** `AutoApprovePolicy.BindingHash` (ผู้ติดต่อ · ชนิด · ยอด/บรรทัดเชิงเงิน · AutoApprove · AutoSendEmail — คำอธิบายไม่นับ) ⇒ ผู้แก้รายการ
+    (ไม่ต้องมีสิทธิ์อนุมัติ) แก้ค่าเหล่านี้ = นโยบายหยุดมีผลจนผู้มีสิทธิ์ตั้ง/รับรองใหม่ · **นโยบายของผู้ติดต่อมีผลเฉพาะรายการที่ผู้มีสิทธิ์ "รับรอง"**
+    (`approve-policy` `{inherit:true}` ⇒ ใบรับรองผูกลายนิ้วมือ) — รายการใหม่ที่สมาชิกไม่มีสิทธิ์สร้างไม่ได้ประโยชน์จากนโยบายผู้ติดต่อ · `{clear:true}` = ไม่ใช้นโยบาย ·
+    ไม่มีนโยบายที่มีผล ⇒ ใบประจำส่งแหล่ง `Unattended` + ร่องรอยเดิม `APPROVE-UNATTENDED-PASSED-S65` (`ApprovalAcknowledgement.EffectiveSource` —
+    นโยบายไม่ได้ปล่อยอะไร = ไม่ประทับ "ตามนโยบาย") · ใบจำลองของทดลองรัน/ความพร้อม**ไม่ถาม AI** (`CollectApprovalWarningsAsync(noAi: true)` — ไม่จ่าย token · ไม่เขียน feedback) ·
+    ตอนส่งคิว (`RecheckDocumentAtSendAsync`) ต่อชั้นรายการประจำจากกุญแจกันซ้ำ (`ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey`) — TransferOnly/None ไม่ถูกแนบลิงก์ตอนส่ง ·
+    อ่านความพร้อม/ทดลองรัน/ค่าตั้งผู้ติดต่อต้องมีสิทธิ์สร้างเอกสาร · แจ้ง "นโยบายหยุดมีผล" เฉพาะรอบที่มีคำเตือนซึ่งนโยบายจะปล่อยได้
+  - ยังไม่ทำในรอบนี้: คอลัมน์ "ระดับ Autopilot" ในตารางรายการ · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`) · LINE/คู่ค้าในขั้นส่ง · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน
 
 ### 2.7b ใบวางบิลรวมใบค้างชำระ (compose — ไม่ใช่ convert)
 - **ทางเข้า**: ฟอร์มสร้างเอกสาร → ประเภท "ใบวางบิล" + เลือกลูกค้า → กล่อง
@@ -3320,6 +3351,40 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
      `NeedsReview=true` + ไม่มี posted dep → ลบ inline (ไม่เรียก DeleteAsync
      เพราะ source.Status ยังไม่ save), asset ที่ยืนยันแล้ว → log warning
      ไม่ลบ ผู้ใช้ต้อง dispose/write-off เอง
+   - **สินทรัพย์ 1 ชิ้น ↔ เอกสารซื้อหลายใบ** (รอบ 249 สินทรัพย์หลายใบ · `erp-review/2026-11-06/ASSET_MULTI_DOCUMENT_DESIGN.md`):
+     ตาราง `FixedAssetCostSources` (บรรทัดเอกสาร · ยอดบาทมีเครื่องหมาย · ผังต้นทาง · `CapitalizedAt`/`ReleasedAt` — ไม่มี FK ไป Documents ·
+     ไม่ลบแถว) · ผู้เขียนที่เดียว `FixedAssetService.CostSources.cs` · กติกาที่เดียว `Helpers/AssetCostSourceRules` ·
+     ยอดต่อบรรทัด = ยอดที่บรรทัดลง GL จริง `Helpers/PurchaseLineGlAmount` (ไม่รวม VAT ที่เคลมได้ · รวม VAT ต้องห้าม §82/5 · ×อัตราของใบ ·
+     ใบลดหนี้ฝั่งซื้อติดลบ — `DocumentService.ResolveLinePostedGlAmountAsync` เรียกตัวเดียวกัน) · ผูกได้เฉพาะผังมัดจำ (11810/11820/118) ·
+     งานระหว่างก่อสร้าง 12280 · ผังสินทรัพย์ — ผังค่าใช้จ่าย ⇒ 400 "แก้ผังบัญชีก่อน" (§65 ตรี(5))
+     • `POST /fixedasset/from-sources` สร้างสินทรัพย์ **ระหว่างจัดหา** (`IsUnderAcquisition` · `DepreciationMethod.None` ⇒ งานค่าเสื่อมข้ามเอง ·
+       รหัส `DRAFT-` · ไม่ลง JE — ยอดยังอยู่ผังของแต่ละใบ) · `POST /fixedasset/{id}/cost-sources` ผูกเพิ่ม · `GET linkable-lines` ค้นบรรทัด
+     • กันต้นทุนซ้ำ: Σ ผูกต่อบรรทัด ≤ ยอด GL ของบรรทัด (409) · ยอดผูกต่อผังต้นทาง ≤ GL ของใบบนผังนั้น (`ExcessOverGl` — ใบตัดชำระ/อ้าง GRN/ไม่มี JE ⇒ 409) ·
+       ทะเบียนต่อใบ (ทะเบียนเดี่ยว + แถวผูกบนผังสินทรัพย์) ≤ GL ผังสินทรัพย์ (ค่าประกอบที่เฉลี่ยเข้าทะเบียนเดี่ยวแล้ว ⇒ 409) ·
+       ร่างอัตโนมัติจากการอนุมัติ (ยังไม่ยืนยัน · ไม่มีค่าเสื่อม) ⇒ **รวมเข้า** (ลบในธุรกรรมเดียว + audit) · ร่างที่ยืนยันแล้ว/ใบจากสแกนที่ลงทะเบียนแล้ว ⇒ ปฏิเสธ ·
+       การอนุมัติ/ปุ่มขึ้นทะเบียนข้ามบรรทัดที่ผูกแล้ว (`LinkedLineIdsAsync`) · ด่าน "ลบแล้ว GL ค้าง" นับแถวผูกบนผังสินทรัพย์ (`AssetGlBackingAsync`)
+     • `POST /fixedasset/{id}/place-in-service` (วันพร้อมใช้ ≤ วันนี้ · ผังสินทรัพย์พร้อมใช้ · อายุ/วิธี/ซาก): JE `JV-AST-CAP-*` Dr ผังสินทรัพย์ /
+       Cr ผังต้นทางแต่ละผัง (สุทธิต่อผัง · ผังเดียวกับปลายทางไม่ลง · งวดปิด/ล็อก ⇒ 409) · `PurchaseDate = AvailableForUseDate` (ค่าเสื่อมงวดแรก = เดือนถัดไป) ·
+       ออกรหัส FA จริง · ผังค่าเสื่อมตามประเภท (`FixedAssetAccountClassifier`) · ใบต้นทางถูกยกเลิก/บรรทัดถูกย้ายไปผังค่าใช้จ่าย ⇒ 409
+     • ผูกหลังโอน (ค่าติดตั้งตามมา/ใบลดหนี้): JE ย้ายผังทันที (ถ้าผังต่าง) + ปรับต้นทุนไปข้างหน้า (`DepreciableBaseAtReview` กลไกเดียวกับทบทวนประมาณการ ·
+       งวดที่ลงแล้วไม่แตะ) · NBV ต่ำกว่าซาก/ครบอายุ ⇒ 409
+     • ปลดแถว (`…/cost-sources/{sid}/release`) เฉพาะที่ยังไม่โอน + เหตุผล + audit · ลบสินทรัพย์ที่ยังผูกอยู่ ⇒ 409 ให้ปลดก่อน ·
+       ระหว่างจัดหา: จำหน่าย/ตัดจำหน่าย/ตีราคา/ปรับอายุ/ตั้งวิธีค่าเสื่อม ⇒ 409
+     • **ยกเลิกใบต้นทาง** (`VoidDocumentAsync`): แถวที่โอนแล้ว ⇒ 409 + ทางไปต่อ (ใบลดหนี้) · แถวที่ยังถือ ⇒ ปลดในธุรกรรมของการยกเลิก (ล็อกแถวเอกสาร) ·
+       **แก้ผังบัญชี** บรรทัดที่ผูกอยู่ (`ReclassifyLineAccountAsync`) ⇒ 409 ให้ปลดก่อน · กู้คืนใบที่ยกเลิก = แถวที่ปลดแล้วไม่กลับมาเอง (ผูกใหม่)
+     • หน้าเอกสาร: แผงสินทรัพย์แสดงบรรทัดมัดจำ 118xx ด้วย + "🔗 ผูกเข้าสินทรัพย์…" (ไป `fixed-assets.html?linkLine=&doc=`) · หน้าทะเบียน:
+       "🧩 สร้างจากเอกสารหลายใบ" · แท็บเอกสารต้นทุน + ปัญหาที่เซิร์ฟเวอร์ตรวจ · "✅ โอนเป็นสินทรัพย์พร้อมใช้" — หน้าไม่มีสูตร/ชุดผัง ·
+       ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified `commit 369bc403`
+     • **ผลฝ่ายค้าน 369bc403 (แก้ในคอมมิตตามหลัง)**: ลบถาวรใบที่โอนแล้ว ⇒ บล็อกในตัวตัดสิน `DocumentCascadePurgePolicy` (`AssetCostCapitalized`) +
+       กันซ้ำใน `PurgeOneDocumentCoreAsync` (ที่ถือไว้ปลด) · ร่างที่มีแถวต้นทุนไม่ถูกลบตอนยกเลิก/ลบถาวร (FK) · ย้ายฝั่ง CN/DN · สลับบริการต่างประเทศ ·
+       resync จากระบบภายนอก ใบที่ผูก ⇒ 409 (`CostSourceDocumentChangeBlockAsync`) · โอน: ตาข่าย GL ตรวจซ้ำทุกใบ + ยอดคงเหลือทั้งบริษัทของผังที่จะเครดิต
+       ณ วันลงรายการต้องพอ (`SourceBalanceProblem` — มัดจำที่ใบอื่นเคลียร์ไปแล้ว) + วันพร้อมใช้ต้องไม่ก่อนใบต้นทุนล่าสุด · ใบรับรองแทนใบเสร็จ (VAT รวมเสมอ) และ
+       ภาษีที่ผู้จ่ายออกแทนเป็นต้นทุนของบรรทัด (`PurchaseLineGlAmount.Posted`) · สแกนลงทะเบียนซ้ำใบที่ผูก ⇒ 409 · ผูกหลังโอนระบุ `EntryDate` ได้ (งวดปิด) ·
+       ลำดับล็อกเดียว (คีย์ `AdvisoryLockKey.AssetCostSource` → เอกสาร → สินทรัพย์ ทั้งผูก/โอน/ปลด/ยกเลิก/ลบถาวร) · ปลดแล้ว GL ค้าง ⇒ แสดงใน "เอกสารต้นทุน" ·
+       ลบสินทรัพย์ที่มีแถวปลดแล้ว = soft (คงประวัติ) · JE โอนกลับ/แก้จากสมุดรายวันไม่ได้ · `FiscalPeriodId` ใน JE โอน · งวดปิดตัดสินด้วย `ClosedPeriodRanges` ·
+       รายงานกระทบยอดสินทรัพย์/รายการตรวจก่อนปิดงวดไม่นับสินทรัพย์ระหว่างจัดหา · GET ค้นบรรทัด/เอกสารต้นทุนต้องมีสิทธิ์ `Asset.Manage` · ราคาตามสัญญา (ไม่บังคับ) ⇒ เตือนเมื่อเกิน ·
+       **CI 7cb6bd08**: ด่านทะเบียนต่อใบนับเฉพาะส่วนเกิน/ขาด (`OverRegistrationIncrease`/`OrphanIncrease`) — รุ่นแรกฟ้องใบที่ยังไม่มีทะเบียนแล้วผูกครบพอดี ·
+       ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified `commit c314266c`
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
@@ -7665,6 +7730,7 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Omise — �
   ส่งหนึ่งครั้งต่อเหตุการณ์ (ไม่ขึ้นกับบทบาท) ผ่าน `TryPushCompanyGroupAsync` · **ค่าตั้งต้น** (บริษัทยังไม่มีแถวของคีย์นั้น) = `NotificationAudiencePolicy.DefaultMatrix`: กระดิ่งถึงเจ้าของ + กลุ่ม LINE ของบริษัท**เฉพาะเมื่อผูก OA+กลุ่มไว้แล้ว**
   (`CompanyLineGroupConfigured` — บริษัทที่เคยได้ประกาศกลุ่มผ่าน OA ของตัวเองไม่ถดถอย) · คีย์อื่นค่าตั้งต้นว่างเหมือนเดิม · `NotificationConfigService.GetCompanySettingsAsync` ส่งแถวตั้งต้น `IsDefault=true` ให้ `notifications.html` แสดง (ป้าย "ค่าตั้งต้นของระบบ") — JS ไม่มีสำเนากติกา ·
   `NotificationEngine.DispatchLineAsync` ผ่าน `LineRoute(Classify(eventKey), NextAccOa, TenantMember)` ก่อนยิงทุกครั้ง · `DispatchCompanyGroupAsync` รับเฉพาะ `TenantBusiness`
+- **รอบ 249 — รับ/จ่ายชำระ**: `CreatePaymentAsync` เลือกคีย์ด้วย `Helpers/PaymentNotificationText` (ฝั่งจาก `IsCashInflowDocAsync`) — เงินเข้า `document.payment_received` "💵 รับชำระเงินแล้ว จาก <ลูกค้า>" · เงินออก (PI/ค่าใช้จ่าย/ใบเพิ่มหนี้ฝั่งซื้อ) คีย์ใหม่ `document.payment_made` "💸 จ่ายชำระเงินแล้ว ให้ <ผู้ขาย>" (อยู่ใน `MigratedBroadcastKeys` · ค่าตั้ง payment_received ของบริษัทคัดลอกมาให้ด้วย `Helpers/NotificationEventSplit`) · เนื้อความ: ชนิด+เลขเอกสาร · รายการแรก + "และอีก N รายการ" · ยอด + วิธีชำระ · ครบ/คงค้าง · ลิงก์ใน LINE/อีเมล = URL เต็ม (`NotificationLink.Absolute` + `SystemBaseUrl`) ไม่ได้ตั้ง URL ระบบ ⇒ ไม่มีลิงก์ · **ค่าตั้งต้นใช้เฉพาะเมื่อบริษัทไม่มีแถวของคีย์นั้นเลย** — แถวปิดทุกช่องที่บันทึกจากหน้า = ปิดจริง (เดิม engine ตีเป็น "ยังไม่ตั้ง")
 - **หน้าตั้งค่า**: `settings.html` แท็บ LINE แสดง `LineConfigResponse.TenantLineNotice` (`NotificationAudiencePolicy.CompanyGroupNotice`) — "บริษัทยังไม่ได้ผูก LINE OA ของตัวเอง — แจ้งเตือนธุรกิจส่งทางกระดิ่ง/อีเมลแทน (ไม่ส่งผ่าน OA กลาง)" (ห้าม fallback เงียบ) ·
   แอดมิน `site-settings.html` แท็บ LINE OA กลาง: ป้ายนโยบาย + ติ๊ก "ส่งเรื่องของระบบเข้ากลุ่มนี้" (`LineMessagingOpsAlertsToGroup` · ตั้งต้น true · ผู้อ่าน `NextAccLineConfig` → `TryPushPlatformOpsAsync`) ·
   PlatformAccount ผ่าน OA กลางยังคุมด้วยค่าตั้งเดิม (`PlatformBillingSettings.ReminderLineEnabled` · ตาราง `subscription.*` ของบริษัท) — ไม่สร้างสวิตช์ซ้ำ
@@ -7701,3 +7767,5 @@ _Last verified against codebase: 2026-11-06 (รอบ 242 OCR — §OCR ตา�
 _Last verified against codebase: 2026-11-06 (รอบ 242 เอกสาร — §6.3 ลบถาวร: ลำดับลบแถวลูก `Helpers/DocumentPurgeOrder` (แก้ 500 · 23001 `FK_DocumentSignatures_Approvals`) + ลบพร้อมเอกสารที่เกี่ยวข้อง `Helpers/DocumentCascadePurgePolicy` (ข้อ 242-A) + แผน `purge-preview` · §2.4a ป้ายสัดส่วน "ครบตามยอดรวมทั้งใบ" `DocumentConversionProgress.SoleChildMatchesTotal` (ข้อ 242-B) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 246 QR — §2.12i QR ชำระเงินบนเอกสาร: QR ของบัญชีธนาคาร (อัปโหลด/พร้อมเพย์ · `PaymentQrPolicy`/`PaymentQrImageValidator`/`PaymentQrService`) · ตัวเรนเดอร์ทั้งสองวาดจาก `PaymentQrBlock` ตัวเดียว · QR หน้าชำระเฉพาะลิงก์ที่ใช้ได้ (ไม่มีในไฟล์ e-Tax) · QR พร้อมเพย์บน `pay-document.html` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง `DocumentPayLinkService`/`DocumentPayLinkPolicy` (ช่องทาง = บริษัทเปิดจริง ∩ ตาราง · ยอดสุทธิหลังหัก ณ ที่จ่าย · hash ของ token + เวลาคงที่ · ตัดสินสดทุกครั้ง) · `public-pay/documents/{token}` + `pay-document.html` · `DocumentPaymentHandler` บันทึก WHT ที่เหลือเมื่อเงินเข้ายอดสุทธิ · งานหลังรับชำระ `PostPaymentAutomationService` (1 แถวต่อการชำระ · ออกใบเสร็จด้วย `IssueReceiptForPaymentAsync` · ส่งด้วย `SendDocumentEmailAsync` · หยุดเมื่อข้อมูลไม่ครบ + แจ้งเตือน · ตรวจแถวรอ 50 ทวิ ไม่สร้างเอง) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — commit <เติมในคอมมิตตามหลัง>)_

@@ -516,6 +516,7 @@ builder.Services.AddScoped<IDepositKindService, DepositKindService>();
 
 // Additional modules
 builder.Services.AddScoped<IRecurringTransactionService, RecurringTransactionService>();
+builder.Services.AddScoped<IRecurringAutopilotService, RecurringAutopilotService>();   // รอบ 248 — Autopilot รายการประจำ: ความพร้อม · ทดลองรัน · นโยบายอนุมัติ · ช่องทางรับเงินต่อผู้ติดต่อ
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
 builder.Services.AddScoped<IFinancialManagementService, FinancialManagementService>();
 builder.Services.AddScoped<IApprovalService, ApprovalService>();

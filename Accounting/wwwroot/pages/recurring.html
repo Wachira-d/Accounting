@@ -31,12 +31,34 @@
     </div>
     <div id="pagination"></div>
 
-    <!-- Create/Edit Modal -->
+    <!-- Create/Edit Modal — รอบ 248 (AUTOPILOT_BILLING_DESIGN §4.1): wizard แยกขั้น (เดินหน้า/ถอยได้ · บันทึกได้ทุกขั้น) + แผงความพร้อมด้านขวา
+         (เซิร์ฟเวอร์ตัดสินทุกข้อ — Helpers/AutopilotReadiness · หน้านี้แสดงอย่างเดียว) · id ของช่องเดิมทุกตัวคงเดิม -->
+    <style>
+      #recWizard { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; }
+      #recSteps { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+      #recSteps button { font-size:12px; padding:4px 10px; border-radius:999px; border:1px solid #cbd5e1; background:#fff; color:#334155; cursor:pointer; }
+      #recSteps button.active { background:#2563eb; border-color:#2563eb; color:#fff; }
+      #readinessPanel { border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; background:#f8fafc; font-size:12px; line-height:1.55; align-self:start; position:sticky; top:0; max-height:70vh; overflow:auto; }
+      .rec-line-table { width:100%; border-collapse:collapse; font-size:12px; }
+      .rec-line-table th, .rec-line-table td { border-bottom:1px solid #e2e8f0; padding:4px; text-align:left; vertical-align:top; }
+      .rec-line-table input, .rec-line-table select { width:100%; font-size:12px; padding:3px 4px; }
+      @media (max-width: 860px) { #recWizard { grid-template-columns:minmax(0,1fr); } #readinessPanel { position:static; max-height:none; } }
+    </style>
     <div class="modal-overlay" id="formModal">
-      <div class="modal" style="max-width:700px">
+      <div class="modal" style="max-width:1120px;width:calc(100% - 32px)">
         <div class="modal-header"><h3 class="modal-title" id="formTitle">สร้างรายการประจำ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="fId">
+          <div id="recSteps">
+            <button type="button" data-step="1" onclick="Page.goStep(1)">① เอกสาร &amp; รอบ</button>
+            <button type="button" data-step="2" onclick="Page.goStep(2)">② รายการ &amp; ราคา</button>
+            <button type="button" data-step="3" onclick="Page.goStep(3)">③ ภาษี &amp; บัญชี</button>
+            <button type="button" data-step="4" onclick="Page.goStep(4)">④ ส่ง &amp; รับเงิน</button>
+            <button type="button" data-step="5" onclick="Page.goStep(5)">⑤ อนุมัติ</button>
+          </div>
+          <div id="recWizard">
+          <div>
+          <div class="rec-step" data-step="1">
           <div class="form-group"><label class="form-label">ชื่อรายการ *</label><input type="text" class="form-input" id="fName" placeholder="เช่น ค่าเช่าสำนักงาน"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
@@ -73,23 +95,14 @@
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContact"></div>
-            <div class="form-group"><label class="form-label">ยอดเงิน *</label><input type="number" class="form-input" id="fAmount" step="0.01" min="0"></div>
+          </div>
+          </div>
+          <div class="rec-step" data-step="2" style="display:none">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ยอดเงิน (บรรทัดที่ 1) *</label><input type="number" class="form-input" id="fAmount" step="0.01" min="0"></div>
           </div>
           <!-- เทมเพลตหลายบรรทัด (ตั้งผ่าน API) — ฟอร์มนี้แก้ได้แค่บรรทัดเดียว: ล็อกช่องยอด/รายละเอียด/ภาษีพร้อมเหตุผล และไม่บันทึกทับบรรทัด -->
-          <div id="fMultiLineHint" style="display:none;margin:-4px 0 10px;padding:8px 10px;border-radius:8px;font-size:12px;background:#fffbeb;border:1px solid #fde68a;color:#92400e"></div>
-          <div class="form-row">
-            <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
-              <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
-              <div id="fPaymentChannelHint" style="display:none;font-size:11px;margin-top:4px;color:#b45309"></div>
-            </div>
-            <div class="form-group" id="fExpenseCategoryGroup"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span>
-              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('RecurringExpense','fExpenseCategory','fExpenseCatHint')">🤖</button>
-            </label>
-              <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
-              <div id="fExpenseCatHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
-              <div id="fExpenseCatWarn" style="display:none;font-size:11px;margin-top:4px;color:#b45309"></div>
-            </div>
-          </div>
+          <div id="fMultiLineHint" style="display:none"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">VAT (%)</label><input type="number" class="form-input" id="fVatRate" step="0.01" value="7"></div>
             <!-- ประเภทเงินได้มาก่อน แล้ว "อัตรา" เติมตามกฎหมายให้เอง —
@@ -118,12 +131,30 @@
               <div id="varPreview" style="margin-top:8px;font-size:11px;color:#64748b;border-top:1px dashed #bae6fd;padding-top:6px"></div>
             </div>
           </div>
+          <!-- รอบ 248: หลายบรรทัด — บรรทัดที่ 1 = ช่องข้างบน · บรรทัดที่ 2..n แก้ที่ตารางนี้ (คีย์อื่นของบรรทัดเดิมที่ตั้งผ่าน API ถูกเก็บไว้ ไม่ถูกบันทึกทับ) -->
+          <div class="form-group">
+            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+              <span>บรรทัดเพิ่มเติม</span>
+              <button type="button" class="btn btn-sm btn-secondary" style="font-size:11px;padding:2px 8px" onclick="Page.addExtraLine()">+ เพิ่มบรรทัด</button>
+            </label>
+            <div id="fExtraLines"></div>
+          </div>
+          </div>
+          <div class="rec-step" data-step="3" style="display:none">
           <div class="form-row">
-            <div class="form-group">
-              <label class="form-label" id="fAutoApproveLabel"><input type="checkbox" id="fAutoApprove" onchange="Page.onAutoFlagChange()"> อนุมัติอัตโนมัติ (สร้างเป็น Approved ทันที)</label>
-              <!-- รอบ 247: อธิบายช่องที่ถูกล็อก + ขอบเขตของการอนุมัติอัตโนมัติ (เจ้าของถามว่า "ต้องไปติ๊กที่ไหนถึงจะอนุมัติได้") -->
-              <div id="autoApproveHint" style="margin-top:4px;font-size:11px;line-height:1.6;color:#64748b"></div>
+            <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
+              <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
+              <div id="fPaymentChannelHint" style="display:none;font-size:11px;margin-top:4px;color:#b45309"></div>
             </div>
+            <div class="form-group" id="fExpenseCategoryGroup"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span>
+              <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('RecurringExpense','fExpenseCategory','fExpenseCatHint')">🤖</button>
+            </label>
+              <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
+              <div id="fExpenseCatHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
+              <div id="fExpenseCatWarn" style="display:none;font-size:11px;margin-top:4px;color:#b45309"></div>
+            </div>
+          </div>
+          <div class="form-row">
             <div class="form-group">
               <label class="form-label"><input type="checkbox" id="fAutoWht" checked> สร้างหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติ (เมื่อมี WHT)</label>
               <!-- รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: ใช้กับเอกสารฝั่งผู้จ่าย (ใบสำคัญจ่าย/ค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ) ·
@@ -149,14 +180,58 @@
               <input type="hidden" id="fWhtPayeeContactId">
             </div>
           </div>
+          </div>
+          <div class="rec-step" data-step="4" style="display:none" id="step-pay">
           <div class="form-group">
             <label class="form-label"><input type="checkbox" id="fAutoSendEmail" onchange="Page.onAutoFlagChange()"> 📧 ส่งอีเมลเอกสาร (แนบ PDF) ให้ผู้ติดต่อทันทีที่ระบบสร้างเอกสาร</label>
             <div id="autoEmailHint" style="margin-top:6px;padding:8px 10px;border-radius:8px;font-size:11px;line-height:1.6;background:#f8fafc;border:1px solid #e2e8f0;color:#475569">
               กำลังตรวจการตั้งค่าอีเมลของบริษัท…
             </div>
           </div>
+          <!-- รอบ 248 (AUTOPILOT §4.2 ⑤ · §5.1): ช่องทางรับเงินต่อรายการ — ตัวเลือก/ป้ายจากเซิร์ฟเวอร์ (/recurring/autopilot/options) -->
+          <div class="form-group">
+            <label class="form-label" for="fPaymentMode">ช่องทางรับเงินของรายการนี้</label>
+            <select class="form-select" id="fPaymentMode" onchange="Page.onAutopilotChange()"></select>
+            <div id="fPayChannels" style="margin-top:6px;font-size:12px"></div>
+            <div id="fPayModeHint" style="margin-top:4px;font-size:11px;color:#64748b"></div>
+          </div>
+          <div class="form-group" id="fContactPayGroup" style="display:none;padding:8px 10px;border:1px dashed #cbd5e1;border-radius:8px">
+            <label class="form-label" for="fCustPayMode" style="font-weight:normal">ค่าตั้งของผู้ติดต่อนี้ (ใช้กับทุกเอกสารของลูกค้ารายนี้ เมื่อรายการ/ตารางส่งไม่ได้ตั้งเอง)</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <select class="form-select" id="fCustPayMode"></select>
+              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.saveContactPayMode()">บันทึกที่ผู้ติดต่อ</button>
+            </div>
+          </div>
+          </div>
+          <div class="rec-step" data-step="5" style="display:none" id="step-approve">
+            <div class="form-group">
+              <label class="form-label" id="fAutoApproveLabel"><input type="checkbox" id="fAutoApprove" onchange="Page.onAutoFlagChange()"> อนุมัติอัตโนมัติ (สร้างเป็น Approved ทันที)</label>
+              <!-- รอบ 247: อธิบายช่องที่ถูกล็อก + ขอบเขตของการอนุมัติอัตโนมัติ (เจ้าของถามว่า "ต้องไปติ๊กที่ไหนถึงจะอนุมัติได้") -->
+              <div id="autoApproveHint" style="margin-top:4px;font-size:11px;line-height:1.6;color:#64748b"></div>
+            </div>
+          <!-- รอบ 248 (AUTOPILOT §4.3): นโยบายอนุมัติข้ามคำเตือน — ตั้งได้ต่อรายการ/ต่อผู้ติดต่อ · ต้องมีสิทธิ์อนุมัติ · บันทึกแยกจากฟอร์ม (audit) -->
+          <div class="form-group" id="fPolicyGroup" style="padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff">
+            <div class="form-label" style="margin-bottom:6px">เมื่อพบคำเตือนต่อไปนี้ตอนอนุมัติอัตโนมัติ ระบบจะ:</div>
+            <div id="fPolicyRows"></div>
+            <div id="fPolicyNever" style="margin-top:8px;font-size:11px;color:#64748b"></div>
+            <div id="fPolicyMeta" style="margin-top:6px;font-size:11px;color:#475569"></div>
+            <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">
+              <button type="button" class="btn btn-sm btn-primary" onclick="Page.savePolicy('recurring')">บันทึกนโยบายของรายการนี้</button>
+              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.savePolicy('contact')">บันทึกเป็นนโยบายของผู้ติดต่อ</button>
+            </div>
+          </div>
+          </div>
+          </div>
+          <aside id="readinessPanel" aria-live="polite">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+              <strong style="font-size:13px">ตรวจความพร้อม</strong>
+              <button type="button" class="btn btn-sm btn-ghost" style="font-size:11px;padding:1px 6px" onclick="Page.refreshReadiness(true)">ตรวจใหม่</button>
+            </div>
+            <div id="readinessBody" style="margin-top:6px;color:#64748b">กรอกข้อมูลแล้วระบบจะตรวจให้</div>
+          </aside>
+          </div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-secondary" onclick="Page.stepNav(-1)">◀ ก่อนหน้า</button><button class="btn btn-secondary" onclick="Page.stepNav(1)">ถัดไป ▶</button><button class="btn btn-secondary" onclick="Page.dryRunDraft()">ทดลองรัน 🔍</button><button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
 
@@ -191,7 +266,239 @@ const Page = {
     ], '📥 Export ▾', '');
     Layout.setTitle('รายการประจำ');
     await this.loadIncomeTypes();
+    await this.loadAutopilotOptions();
+    // รอบ 248: แผงความพร้อมตรวจใหม่ทุกครั้งที่ฟอร์มเปลี่ยน (หน่วง 600ms — เซิร์ฟเวอร์ตัดสิน)
+    const fm = document.getElementById('formModal');
+    if (fm) { fm.addEventListener('change', () => this.refreshReadiness()); fm.addEventListener('input', () => this.refreshReadiness()); }
     this.load();
+  },
+
+  // ═══════════════ รอบ 248 — Autopilot (wizard · ช่องทางรับเงิน · นโยบายอนุมัติ · ความพร้อม · ทดลองรัน) ═══════════════
+  // ตัวเลือก/ป้าย/รหัสคำเตือนทั้งหมดมาจากเซิร์ฟเวอร์ (/recurring/autopilot/options) — หน้านี้ไม่มีตารางกติกาของตัวเอง
+
+  async loadAutopilotOptions() {
+    const api = Layout.api(); if (!api) return;
+    try { const res = await api.getRecurringAutopilotOptions(); this._apOpts = (res && res.data) || null; }
+    catch (e) { this._apOpts = null; Layout.toast('โหลดตัวเลือกช่องทางรับเงิน/นโยบายอนุมัติไม่สำเร็จ: ' + (e.message || '') + ' — ช่องเหล่านี้จะถูกปิดไว้', 'warning', 7000); }
+    const modeOpts = ((this._apOpts && this._apOpts.paymentModes) || []).map(m =>
+      `<option value="${Layout.esc(m.code === 'Inherit' ? '' : m.code)}">${Layout.esc(m.label)}</option>`).join('');
+    const pm = document.getElementById('fPaymentMode');
+    if (pm) { pm.innerHTML = modeOpts || '<option value="">ตามค่าชั้นถัดไป</option>'; pm.disabled = !this._apOpts; }
+    const cpm = document.getElementById('fCustPayMode');
+    if (cpm) { cpm.innerHTML = modeOpts || '<option value="">ตามค่าชั้นถัดไป</option>'; cpm.disabled = !this._apOpts; }
+  },
+
+  goStep(n) {
+    this._step = n;
+    document.querySelectorAll('#formModal .rec-step').forEach(el => { el.style.display = String(el.dataset.step) === String(n) ? '' : 'none'; });
+    document.querySelectorAll('#recSteps button').forEach(b => b.classList.toggle('active', String(b.dataset.step) === String(n)));
+  },
+  stepNav(d) { this.goStep(Math.min(5, Math.max(1, (this._step || 1) + d))); },
+
+  /** hydrate ช่องทางรับเงิน + นโยบายของรายการ (ฟอร์มใหม่ = ว่าง · แก้ไข = ค่าที่บันทึกไว้ — ห้ามค้างค่าของรายการก่อน) */
+  async _hydrateAutopilot(r) {
+    const pm = document.getElementById('fPaymentMode');
+    if (pm) pm.value = r.paymentMode || '';
+    this._renderPayChannels(r.payLinkChannels || []);
+    this._editingPolicy = r.autoApprovePolicy || null;
+    this._renderPolicy();
+    this.onAutopilotChange();
+  },
+
+  _renderPayChannels(checked) {
+    const box = document.getElementById('fPayChannels');
+    if (!box) return;
+    const chans = (this._apOpts && this._apOpts.payLinkChannels) || [];
+    const why = this._apOpts && this._apOpts.payLinkUnavailableReason;
+    box.innerHTML = (chans.length
+      ? '<div style="color:#475569;margin-bottom:2px">ช่องทางย่อย (ไม่เลือก = ทุกช่องที่บริษัทเปิด):</div>' + chans.map(c =>
+          `<label style="display:inline-flex;gap:4px;align-items:center;margin-right:10px"><input type="checkbox" class="fPayCh" value="${Layout.esc(c.code)}"${(checked || []).includes(c.code) ? ' checked' : ''}> ${Layout.esc(c.label)}</label>`).join('')
+      : '') + (why ? `<div style="color:#b45309;margin-top:4px">${Layout.esc(why)} <a href="/pages/payment-settings.html" target="_blank" style="color:#2563eb">ตั้งค่ารับชำระเงิน ↗</a></div>` : '');
+  },
+  _checkedChannels() {
+    return Array.from(document.querySelectorAll('#fPayChannels .fPayCh:checked')).map(el => el.value);
+  },
+  onAutopilotChange() {
+    const pm = document.getElementById('fPaymentMode');
+    const hint = document.getElementById('fPayModeHint');
+    const opt = pm && pm.selectedOptions[0];
+    if (hint) hint.textContent = !pm || !pm.value
+      ? 'ไม่ได้ตั้งที่รายการนี้ — ใช้ค่าของผู้ติดต่อ (ถ้าตั้งไว้) แล้วค่าบริษัท'
+      : (opt ? opt.textContent : '');
+  },
+
+  async _loadContactAutopilot(cid) {
+    const grp = document.getElementById('fContactPayGroup');
+    this._contactAp = null;
+    this._contactApFor = cid;
+    if (!cid) { if (grp) grp.style.display = 'none'; this._renderPolicy(); return; }
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getContactAutopilot(cid);
+      if (this._contactApFor !== cid) return;   // เปลี่ยนผู้ติดต่อระหว่างรอ — คำตอบเก่าห้ามทับ
+      this._contactAp = res.data || null;
+    } catch (e) {
+      if (this._contactApFor !== cid) return;
+      this._contactAp = null;
+    }
+    if (grp) grp.style.display = this._contactAp ? '' : 'none';
+    const cpm = document.getElementById('fCustPayMode');
+    if (cpm) cpm.value = (this._contactAp && this._contactAp.paymentMode) || '';
+    this._renderPolicy();
+  },
+  async saveContactPayMode() {
+    const cid = document.getElementById('fContactId')?.value || '';
+    if (!cid) { Layout.toast('เลือกผู้ติดต่อก่อน', 'error'); return; }
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null });
+      this._contactAp = res.data || this._contactAp;
+      Layout.toast((res && res.message) || 'บันทึกแล้ว');
+      this.refreshReadiness(true);
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  /** นโยบายอนุมัติ: แถวต่อรหัสคำเตือนที่ปล่อยได้ (จากเซิร์ฟเวอร์) + รายการที่ปล่อยไม่ได้พร้อมเหตุ + ค่าที่ตั้งไว้ของรายการ/ผู้ติดต่อ */
+  _renderPolicy() {
+    const rows = document.getElementById('fPolicyRows');
+    const never = document.getElementById('fPolicyNever');
+    const meta = document.getElementById('fPolicyMeta');
+    if (!rows) return;
+    const rel = (this._apOpts && this._apOpts.releasableWarnings) || [];
+    const own = this._editingPolicy;
+    const contactPol = this._contactAp && this._contactAp.autoApprovePolicy;
+    // ฝ่ายค้าน HIGH/MED-2: นโยบายของผู้ติดต่อมีผลเฉพาะรายการที่ผู้มีสิทธิ์อนุมัติ "รับรอง" · แก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติแล้วต้องรับรองใหม่ (แผงความพร้อมบอก)
+    const scope = !own ? 'clear' : own.inheritContact ? 'inherit' : 'own';
+    const effective = scope === 'own' ? own : contactPol;
+    rows.innerHTML = `<div style="margin-bottom:6px"><label style="font-size:12px">นโยบายของรายการนี้:
+        <select class="form-select" id="fPolicyScope" style="display:inline-block;width:auto;margin-left:4px">
+          <option value="clear"${scope === 'clear' ? ' selected' : ''}>ไม่ใช้นโยบาย (หยุดรอคนทุกข้อ — ค่าเริ่มต้น)</option>
+          <option value="inherit"${scope === 'inherit' ? ' selected' : ''}>รับรองให้ใช้นโยบายของผู้ติดต่อ</option>
+          <option value="own"${scope === 'own' ? ' selected' : ''}>ตั้งเองสำหรับรายการนี้</option>
+        </select></label></div>`
+      + rel.map(c => {
+        const on = !!(effective && (effective.passCodes || []).includes(c.code));
+        return `<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:4px 0;border-top:1px dashed #e2e8f0">
+          <div style="font-size:12px"><strong>${Layout.esc(c.label)}</strong> <span style="color:#64748b">(${Layout.esc(c.code)})</span><div style="font-size:11px;color:#64748b">${Layout.esc(c.why || '')}</div></div>
+          <select class="form-select fPolicyCode" data-code="${Layout.esc(c.code)}" style="width:auto">
+            <option value="stop"${on ? '' : ' selected'}>หยุดรอคน</option>
+            <option value="release"${on ? ' selected' : ''}>อนุมัติต่อ + บันทึก</option>
+          </select></div>`;
+      }).join('');
+    if (never) never.innerHTML = '<strong>ปล่อยผ่านไม่ได้ (กฎหมาย/ความถูกต้อง) — หยุดเสมอ:</strong><br>' + (((this._apOpts && this._apOpts.neverReleasable) || [])
+      .map(n => `• ${Layout.esc(n.label)} — ${Layout.esc(n.why || '')}`).join('<br>'));
+    if (meta) {
+      const who = p => p ? `ตั้งไว้${p.setAt ? 'เมื่อ ' + Layout.date(p.setAt) : ''} · ปล่อย: ${Layout.esc((p.passCodes || []).join(', ') || 'ไม่ปล่อย (หยุดรอคนทุกข้อ)')}` : 'ยังไม่ได้ตั้ง';
+      meta.innerHTML = `รายการนี้: ${own && own.inheritContact ? 'รับรองให้ใช้นโยบายของผู้ติดต่อ' + (own.setAt ? ' เมื่อ ' + Layout.date(own.setAt) : '') : who(own)}<br>ผู้ติดต่อ: ${who(contactPol)}<br>`
+        + 'ผู้ตั้ง/ผู้รับรองต้องมีสิทธิ์อนุมัติเอกสาร · ผู้ตั้งออกจากบริษัท หรือแก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติของรายการหลังตั้ง ⇒ นโยบายหยุดมีผลจนกว่าจะตั้ง/รับรองใหม่ · ทุกครั้งที่ปล่อยลงหมายเหตุบนใบ + บันทึกตรวจสอบ';
+    }
+  },
+  async savePolicy(scope) {
+    const api = Layout.api(); if (!api) return;
+    const passCodes = Array.from(document.querySelectorAll('#fPolicyRows .fPolicyCode')).filter(el => el.value === 'release').map(el => el.dataset.code);
+    try {
+      if (scope === 'contact') {
+        const cid = document.getElementById('fContactId')?.value || '';
+        if (!cid) { Layout.toast('เลือกผู้ติดต่อก่อน', 'error'); return; }
+        const res = await api.setContactApprovePolicy(cid, { passCodes, inherit: false });
+        this._contactAp = res.data || this._contactAp;
+        Layout.toast((res && res.message) || 'บันทึกแล้ว');
+      } else {
+        const id = document.getElementById('fId').value;
+        if (!id) { Layout.toast('บันทึกรายการประจำก่อน แล้วจึงตั้งนโยบายของรายการนี้ (หรือบันทึกเป็นนโยบายของผู้ติดต่อ)', 'warning', 7000); return; }
+        const sc = document.getElementById('fPolicyScope')?.value || 'clear';
+        const res = await api.setRecurringApprovePolicy(id, { passCodes, inherit: sc === 'inherit', clear: sc === 'clear' });
+        this._editingPolicy = res.data || null;
+        Layout.toast((res && res.message) || 'บันทึกแล้ว');
+      }
+      this._renderPolicy();
+      this.refreshReadiness(true);
+    } catch (err) { Layout.toast(err.message, 'error', 8000); }
+  },
+
+  /** ร่างสำหรับตรวจความพร้อม/ทดลองรัน — ตัวประกอบเดียวกับตอนบันทึก (ค่าที่ยังกรอกไม่ครบใช้ค่าตั้งต้นที่ไม่เขียนอะไร) */
+  _draftForCheck() {
+    const built = this._buildPayload();
+    if (built.error) return { error: built.error };
+    const d = Object.assign({}, built.data);
+    if (!d.startDate) d.startDate = new Date().toISOString().slice(0, 10);
+    if (d.endDate === '0001-01-01') d.endDate = null;
+    if (!d.name) d.name = '(ร่าง)';
+    if (d.paymentMode === '') d.paymentMode = null;
+    return { data: d };
+  },
+  refreshReadiness(now) {
+    clearTimeout(this._readyTimer);
+    this._readyTimer = setTimeout(() => this._runReadiness(), now ? 0 : 600);
+  },
+  async _runReadiness() {
+    const body = document.getElementById('readinessBody');
+    if (!body || !document.getElementById('formModal')?.classList.contains('active')) return;
+    const draft = this._draftForCheck();
+    if (draft.error) { body.innerHTML = `<div style="color:#b45309">${Layout.esc(draft.error)}</div>`; return; }
+    const api = Layout.api(); if (!api) return;
+    const seq = (this._readySeq = (this._readySeq || 0) + 1);
+    try {
+      const res = await api.recurringReadinessDraft(draft.data, document.getElementById('fId').value || null);
+      if (seq !== this._readySeq) return;   // คำตอบเก่าห้ามทับคำตอบใหม่
+      body.innerHTML = this._renderReadiness(res.data);
+    } catch (e) {
+      if (seq !== this._readySeq) return;
+      body.innerHTML = `<div style="color:#b91c1c">ตรวจความพร้อมไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+    }
+  },
+  /** แสดงผลตรวจความพร้อม — ระดับ/ข้อความ/ลิงก์แก้มาจากเซิร์ฟเวอร์ทั้งหมด */
+  _renderReadiness(r) {
+    if (!r) return '';
+    const icon = v => v === 'Ok' ? '✅' : v === 'Warn' ? '⚠️' : v === 'Fail' ? '❌' : 'ⓘ';
+    const levelColor = r.level === 'Full' ? '#166534' : r.level === 'Partial' ? '#92400e' : '#991b1b';
+    const fix = it => {
+      if (!it.fixUrl) return '';
+      if (it.fixUrl === '#step-approve') return ` <a href="#" style="color:#2563eb" onclick="Page.goStep(5);return false">${Layout.esc(it.fixLabel || 'แก้')}</a>`;
+      if (it.fixUrl === '#step-pay') return ` <a href="#" style="color:#2563eb" onclick="Page.goStep(4);return false">${Layout.esc(it.fixLabel || 'แก้')}</a>`;
+      return ` <a href="${Layout.esc(it.fixUrl)}" target="_blank" style="color:#2563eb">${Layout.esc(it.fixLabel || 'แก้')} ↗</a>`;
+    };
+    return `<div style="font-weight:600;color:${levelColor};margin-bottom:6px">${Layout.esc(r.levelLabel)}</div>`
+      + (r.items || []).map(it => `<div style="margin:4px 0">${icon(it.verdict)} <span style="color:#64748b">[${Layout.esc(it.stage)}]</span> ${Layout.esc(it.title)}${fix(it)}`
+        + (it.why ? `<div style="font-size:11px;color:#64748b;margin-left:18px">${Layout.esc(it.why)}</div>` : '') + '</div>').join('');
+  },
+
+  /** ทดลองรันร่างในฟอร์ม — เซิร์ฟเวอร์ไม่เขียนอะไรเลย (ไม่ออกเลข · ไม่สร้างลิงก์ · ไม่ส่ง) */
+  async dryRunDraft() {
+    const draft = this._draftForCheck();
+    if (draft.error) { Layout.toast(draft.error, 'error'); return; }
+    const api = Layout.api(); if (!api) return;
+    const body = document.getElementById('readinessBody');
+    try {
+      const res = await api.dryRunRecurringDraft(draft.data, document.getElementById('fId').value || null);
+      if (body) body.innerHTML = this._renderDryRun(res.data);
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+  _renderDryRun(d) {
+    if (!d) return '';
+    const list = (arr) => (arr || []).map(x => `<li>${Layout.esc(x)}</li>`).join('');
+    return `<div style="font-weight:600;margin-bottom:4px">🔍 ทดลองรัน (ไม่ได้บันทึกอะไร)</div>
+      <div>${Layout.esc(d.documentTypeLabel)} · ${Layout.esc(d.numberNote)}</div>
+      <div style="margin-top:4px">รอบถัดไป: ${(d.nextRunDates || []).map(x => Layout.date(x)).join(', ') || '-'}</div>
+      <table class="rec-line-table" style="margin-top:6px"><thead><tr><th>รายการ</th><th style="text-align:right">ยอด</th><th style="text-align:right">VAT</th></tr></thead><tbody>
+        ${(d.lines || []).map(l => `<tr><td>${Layout.esc(l.description)}</td><td style="text-align:right">${Layout.money(l.amount)}</td><td style="text-align:right">${Layout.money(l.vatAmount)}</td></tr>`).join('')}
+      </tbody></table>
+      <div style="margin-top:4px">รวม ${Layout.money(d.totalAmount)} · หัก ณ ที่จ่าย ${Layout.money(d.withholdingTaxAmount)} · ยอดรับสุทธิ ${Layout.money(d.expectedNetReceipt)}</div>
+      <div style="margin-top:6px"><strong>อนุมัติ:</strong> ${Layout.esc(d.approvalOutcome)}</div>
+      ${(d.approvalBlocking || []).length ? `<div style="color:#991b1b">หยุดเพราะ:<ul style="margin:2px 0 0 16px">${list(d.approvalBlocking)}</ul></div>` : ''}
+      ${(d.approvalReleased || []).length ? `<div style="color:#92400e">นโยบายปล่อย:<ul style="margin:2px 0 0 16px">${list(d.approvalReleased)}</ul></div>` : ''}
+      <div style="margin-top:4px"><strong>อีเมล:</strong> ${Layout.esc(d.emailPlan)}</div>
+      <div><strong>ลิงก์ชำระ:</strong> ${Layout.esc(d.payLinkPlan)}</div>
+      ${(d.notes || []).length ? `<ul style="margin:6px 0 0 16px;font-size:11px;color:#64748b">${list(d.notes)}</ul>` : ''}
+      <hr style="margin:8px 0;border:none;border-top:1px solid #e2e8f0">${this._renderReadiness(d.readiness)}`;
+  },
+  async dryRunSaved(id) {
+    const api = Layout.api(); if (!api) return;
+    const box = document.getElementById('detailDryRun');
+    try {
+      const res = await api.dryRunRecurring(id);
+      if (box) box.innerHTML = `<div style="margin-top:12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:12px">${this._renderDryRun(res.data)}</div>`;
+    } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
   /// ตารางประเภทเงินได้ + อัตราตามกฎหมาย — แหล่งเดียวกับ wht.html /
@@ -352,6 +659,8 @@ const Page = {
   // undefined = ยังไม่ได้ตรวจ · null = ไม่ได้เลือกผู้ติดต่อ/ตรวจไม่ได้
   async checkContactEmail() {
     const cid = document.getElementById('fContactId')?.value || '';
+    this._loadContactAutopilot(cid);
+    this.refreshReadiness();
     this._contactEmailFor = cid;
     if (!cid) { this._contactEmail = null; this.renderAutoEmailHint(); return; }
     this._contactEmail = undefined;
@@ -430,7 +739,8 @@ const Page = {
     document.getElementById('fWhtCertType').value = 'Withhold';
     document.getElementById('fAutoSendEmail').checked = false;
     this._editingTd = null;
-    this._setMultiLineLock(0);
+    this._editingPolicy = null;
+    this._setExtraLines([]);
     this._setSavedRefWarning('fPaymentChannelHint', '');
     this._setSavedRefWarning('fExpenseCatWarn', '');
     await this._hydrateWhtPayee(null);
@@ -440,8 +750,11 @@ const Page = {
     if (this._contactAC) this._contactAC.clear();
     this.checkContactEmail();
     this.onDocTypeChange();
+    await this._hydrateAutopilot({ paymentMode: null, payLinkChannels: null, autoApprovePolicy: null });
+    this.goStep(1);
     Layout.openModal('formModal');
     const vp = document.getElementById('varPanel'); if (vp) vp.style.display = 'none';
+    this.refreshReadiness(true);
   },
 
   // ── ตัวแปร placeholder — คำนวณค่าตัวอย่าง (งวดวันนี้) ให้ตรงกับ backend ──
@@ -602,21 +915,70 @@ const Page = {
     sel.value = value;
   },
 
-  /** เทมเพลตหลายบรรทัด (ตั้งผ่าน API) — ฟอร์มนี้แก้ได้บรรทัดเดียว ⇒ ล็อกช่องรายบรรทัดพร้อมเหตุผล และ save() ไม่บันทึกทับบรรทัด
-   *  (เดิมบันทึกแล้วบรรทัดที่ 2..n หายเงียบ ๆ · ยอดรวมถูกยัดลงบรรทัดเดียว) */
-  _setMultiLineLock(lineCount) {
-    this._multiLine = lineCount > 1;
-    ['fAmount', 'fDescription', 'fVatRate', 'fWhtRate', 'fIncomeType'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.disabled = this._multiLine;
+  // ── รอบ 248: หลายบรรทัด — บรรทัดที่ 2..n (บรรทัดที่ 1 = ช่องยอด/รายละเอียด/ภาษีข้างบน) ──
+  // เดิม (รอบ 247) เทมเพลตหลายบรรทัดถูกล็อกทั้งชุด · ตอนนี้แก้ได้ทุกบรรทัด และคีย์อื่นของบรรทัดเดิม (ตั้งผ่าน API) ไม่ถูกทับ (_collectExtraLines)
+  _extraLines: [],
+  _setExtraLines(rows) {
+    this._extraLines = (rows || []).map(l => ({
+      description: l.description || '', quantity: l.quantity ?? 1, unitPrice: l.unitPrice ?? 0,
+      vatRate: l.vatRate ?? 7, withholdingTaxRate: l.withholdingTaxRate ?? 0, incomeTypeCode: this.resolveIncomeTypeValue(l.incomeTypeCode)
+    }));
+    this._renderExtraLines();
+  },
+  addExtraLine() {
+    this._readExtraLines();
+    this._extraLines.push({ description: '', quantity: 1, unitPrice: 0, vatRate: parseFloat(document.getElementById('fVatRate').value) || 0, withholdingTaxRate: 0, incomeTypeCode: '' });
+    this._renderExtraLines();
+  },
+  removeExtraLine(i) {
+    this._readExtraLines();
+    this._extraLines.splice(+i, 1);
+    this._renderExtraLines();
+    this.refreshReadiness();
+  },
+  _renderExtraLines() {
+    const box = document.getElementById('fExtraLines');
+    if (!box) return;
+    if (!this._extraLines.length) { box.innerHTML = '<div style="font-size:11px;color:#64748b">มีบรรทัดเดียว (บรรทัดที่ 1 ข้างบน) — กด "+ เพิ่มบรรทัด" ถ้าใบนี้มีหลายรายการ</div>'; return; }
+    const incomeOpts = sel => '<option value="">ไม่หัก</option>' + (this._incomeTypes || []).map(x =>
+      `<option value="${Layout.esc(x.code)}"${String(x.code) === String(sel) ? ' selected' : ''}>${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`).join('');
+    box.innerHTML = `<table class="rec-line-table"><thead><tr><th style="width:4%">#</th><th>รายละเอียด</th><th style="width:10%">จำนวน</th><th style="width:14%">ราคาต่อหน่วย</th><th style="width:9%">VAT %</th><th style="width:18%">ประเภทเงินได้</th><th style="width:9%">หัก %</th><th style="width:5%"></th></tr></thead><tbody>`
+      + this._extraLines.map((l, i) => `<tr data-i="${i}">
+        <td>${i + 2}</td>
+        <td><input type="text" data-k="description" value="${Layout.esc(l.description)}"></td>
+        <td><input type="number" step="0.01" min="0" data-k="quantity" value="${Layout.esc(String(l.quantity))}"></td>
+        <td><input type="number" step="0.01" min="0" data-k="unitPrice" value="${Layout.esc(String(l.unitPrice))}"></td>
+        <td><input type="number" step="0.01" data-k="vatRate" value="${Layout.esc(String(l.vatRate))}"></td>
+        <td><select data-k="incomeTypeCode">${incomeOpts(l.incomeTypeCode)}</select></td>
+        <td><input type="number" step="0.01" min="0" max="100" data-k="withholdingTaxRate" value="${Layout.esc(String(l.withholdingTaxRate))}"></td>
+        <td><button type="button" class="btn btn-sm btn-ghost" title="ลบบรรทัด" onclick="Page.removeExtraLine('${Layout.jsArg(i)}')">✕</button></td>
+      </tr>`).join('') + '</tbody></table>';
+  },
+  _readExtraLines() {
+    document.querySelectorAll('#fExtraLines tr[data-i]').forEach(tr => {
+      const l = this._extraLines[+tr.dataset.i]; if (!l) return;
+      tr.querySelectorAll('[data-k]').forEach(el => {
+        const k = el.dataset.k;
+        l[k] = (k === 'description' || k === 'incomeTypeCode') ? el.value : (parseFloat(el.value) || 0);
+      });
     });
-    const hint = document.getElementById('fMultiLineHint');
-    if (hint) {
-      hint.style.display = this._multiLine ? '' : 'none';
-      hint.textContent = this._multiLine
-        ? `รายการนี้มี ${lineCount} บรรทัด (ตั้งผ่านระบบเชื่อมต่อ/API) — หน้านี้แก้ยอด/รายละเอียด/ภาษีรายบรรทัดไม่ได้ ช่องเหล่านี้จึงถูกล็อก และบรรทัดเดิมจะไม่ถูกบันทึกทับ (ช่องอื่นแก้ได้ตามปกติ)`
-        : '';
+  },
+  /** บรรทัดที่ 2..n สำหรับคำขอ — ทับเฉพาะช่องของตาราง บนบรรทัดเดิมตำแหน่งเดียวกัน (คีย์อื่นที่ตั้งผ่าน API คงอยู่) */
+  _collectExtraLines(prevLines) {
+    this._readExtraLines();
+    const prev = Array.isArray(prevLines) ? prevLines.slice(1) : [];
+    const out = [];
+    for (let i = 0; i < this._extraLines.length; i++) {
+      const l = this._extraLines[i];
+      if (!String(l.description || '').trim()) return { error: `บรรทัดที่ ${i + 2}: กรอกรายละเอียด (หรือกด ✕ ลบบรรทัด)` };
+      if (!(l.quantity > 0)) return { error: `บรรทัดที่ ${i + 2}: จำนวนต้องมากกว่า 0` };
+      if (l.unitPrice < 0) return { error: `บรรทัดที่ ${i + 2}: ราคาต่อหน่วยต้องไม่ติดลบ` };
+      out.push(Object.assign({}, prev[i] || {}, {
+        description: String(l.description).trim(), quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate,
+        withholdingTaxRate: l.withholdingTaxRate, incomeTypeCode: l.incomeTypeCode || null
+      }));
     }
+    return { lines: out };
   },
 
   WHT_PAYER_TYPES: ['PaymentVoucher', 'Expense', 'PurchaseInvoice', 'CertificateInLieu'],
@@ -671,13 +1033,37 @@ const Page = {
     const name = document.getElementById('fName').value.trim();
     const startDate = document.getElementById('fStartDate').value;
     const amount = parseFloat(document.getElementById('fAmount').value) || 0;
-    const description = document.getElementById('fDescription').value.trim();
-    if (!name || !startDate || (!this._multiLine && !amount)) { Layout.toast('กรุณากรอกชื่อ, วันเริ่มต้น และยอดเงิน', 'error'); return; }
-    if (!this._multiLine && amount < 0) { Layout.toast('ยอดเงินต้องไม่ติดลบ — ถ้าต้องการลดหนี้ ให้ออกใบลดหนี้แยก', 'error'); return; }
+    if (!name || !startDate || !amount) { Layout.toast('กรุณากรอกชื่อ, วันเริ่มต้น และยอดเงิน (บรรทัดที่ 1)', 'error'); return; }
+    if (amount < 0) { Layout.toast('ยอดเงินต้องไม่ติดลบ — ถ้าต้องการลดหนี้ ให้ออกใบลดหนี้แยก', 'error'); return; }
     if ((this._formDataErrors || []).length) {
       Layout.toast('ตัวเลือกในฟอร์มโหลดไม่ครบ — รีเฟรชหน้าแล้วลองใหม่ (กันช่องทางรับ/จ่ายถูกบันทึกเป็นเงินสดโดยไม่ตั้งใจ)', 'error', 7000);
       return;
     }
+    const built = this._buildPayload();
+    if (built.error) { Layout.toast(built.error, 'error'); return; }
+    const data = built.data;
+
+    try {
+      // ผู้ติดต่อไม่มีอีเมล = ติ๊ก "ส่งอีเมล" ไว้ก็ไม่มีอะไรออก ⇒ เซิร์ฟเวอร์บันทึกได้ (อาจเพิ่มอีเมลทีหลัง) แต่คืนคำเตือน (saveWarnings) — หน้าแสดงตามนั้น
+      const saved = id ? await api.updateRecurring(id, data) : await api.createRecurring(data);
+      Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างสำเร็จ');
+      // เตือนตรง ๆ ถ้าเปิดส่งอีเมลแต่บริษัทยังไม่มีอีเมลที่ทดสอบผ่าน — จะได้
+      // ไม่เข้าใจผิดว่าลูกค้าได้รับเมลจากชื่อบริษัทตัวเองทุกงวด
+      if (data.autoSendEmail && !(this._emailCfg && this._emailCfg.configured))
+        Layout.toast('บันทึกแล้ว — แต่ยังไม่ได้ตั้งค่า/ทดสอบอีเมลบริษัท ระบบจะส่งจากอีเมลกลางแทน', 'info');
+      ((saved && saved.data && saved.data.saveWarnings) || []).forEach(w => Layout.toast(w, 'warning', 9000));
+      Layout.closeModal('formModal');
+      this.load();
+    } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  /** รอบ 248: ประกอบคำขอจากฟอร์ม (ตัวเดียวทั้งบันทึก · ตรวจความพร้อม · ทดลองรัน) — คืน {data} หรือ {error} */
+  _buildPayload() {
+    const id = document.getElementById('fId').value;
+    const name = document.getElementById('fName').value.trim();
+    const startDate = document.getElementById('fStartDate').value;
+    const amount = parseFloat(document.getElementById('fAmount').value) || 0;
+    const description = document.getElementById('fDescription').value.trim();
 
     const vatRate = parseFloat(document.getElementById('fVatRate').value) || 0;
     const whtRate = parseFloat(document.getElementById('fWhtRate').value) || 0;
@@ -699,18 +1085,20 @@ const Page = {
     const payerSide = this.WHT_PAYER_TYPES.includes(docTypeNow);
     const payeeDiffers = payerSide && document.getElementById('fWhtPayeeDiffers')?.checked;
     const payeeId = payeeDiffers ? (document.getElementById('fWhtPayeeContactId')?.value || '') : '';
-    if (payeeDiffers && !payeeId) { Layout.toast('เลือกผู้ถูกหักภาษีจากรายชื่อผู้ติดต่อ (หรือเอาเครื่องหมายถูกออก)', 'error'); return; }
+    if (payeeDiffers && !payeeId) return { error: 'เลือกผู้ถูกหักภาษีจากรายชื่อผู้ติดต่อ (หรือเอาเครื่องหมายถูกออก)' };
+    const extra = this._collectExtraLines(prevTd.lines);
+    if (extra.error) return { error: extra.error };
     const autoWht = document.getElementById('fAutoWht').checked;
     const templateData = JSON.stringify(Object.assign(prevTd, {
-      // หลายบรรทัด (ช่องถูกล็อก) ⇒ คงบรรทัดเดิมทั้งชุด · บรรทัดเดียว ⇒ ทับเฉพาะช่องของหน้านี้
-      lines: this._multiLine ? prevTd.lines : [Object.assign({}, prevLine, {
+      // รอบ 248: บรรทัดที่ 1 = ช่องข้างบน · บรรทัดที่ 2..n = ตาราง "บรรทัดเพิ่มเติม" — ทับเฉพาะช่องของหน้านี้ (คีย์อื่นของบรรทัดเดิมคงอยู่)
+      lines: [Object.assign({}, prevLine, {
         description: description || name,
         quantity: 1,
         unitPrice: amount,
         vatRate: vatRate,
         withholdingTaxRate: whtRate,
         incomeTypeCode: incomeType
-      })],
+      })].concat(extra.lines),
       bankAccountId: bankAccountId,
       paymentAccountId: paymentAccountId,
       expenseCategoryId: expenseCategoryId,
@@ -748,21 +1136,12 @@ const Page = {
       autoApprove: document.getElementById('fAutoApprove').checked,
       autoSendEmail: document.getElementById('fAutoSendEmail').checked,
       notifyBeforeRun: true,
-      notifyDaysBefore: 1
+      notifyDaysBefore: 1,
+      // รอบ 248: ช่องทางรับเงินต่อรายการ — แก้ไข: "" = ล้าง (ตามผู้ติดต่อ › บริษัท) · [] = ล้างช่องทาง (เซิร์ฟเวอร์ตรวจชื่อเอง)
+      paymentMode: document.getElementById('fPaymentMode')?.value || (id ? '' : null),
+      payLinkChannels: this._checkedChannels()
     };
-
-    try {
-      // ผู้ติดต่อไม่มีอีเมล = ติ๊ก "ส่งอีเมล" ไว้ก็ไม่มีอะไรออก ⇒ เซิร์ฟเวอร์บันทึกได้ (อาจเพิ่มอีเมลทีหลัง) แต่คืนคำเตือน (saveWarnings) — หน้าแสดงตามนั้น
-      const saved = id ? await api.updateRecurring(id, data) : await api.createRecurring(data);
-      Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างสำเร็จ');
-      // เตือนตรง ๆ ถ้าเปิดส่งอีเมลแต่บริษัทยังไม่มีอีเมลที่ทดสอบผ่าน — จะได้
-      // ไม่เข้าใจผิดว่าลูกค้าได้รับเมลจากชื่อบริษัทตัวเองทุกงวด
-      if (data.autoSendEmail && !(this._emailCfg && this._emailCfg.configured))
-        Layout.toast('บันทึกแล้ว — แต่ยังไม่ได้ตั้งค่า/ทดสอบอีเมลบริษัท ระบบจะส่งจากอีเมลกลางแทน', 'info');
-      ((saved && saved.data && saved.data.saveWarnings) || []).forEach(w => Layout.toast(w, 'warning', 9000));
-      Layout.closeModal('formModal');
-      this.load();
-    } catch (err) { Layout.toast(err.message, 'error'); }
+    return { data };
   },
 
   async view(id) {
@@ -811,9 +1190,11 @@ const Page = {
           <div style="margin-top:6px;font-size:12px;color:#7f1d1d">แก้ตามข้อความข้างบน (ปุ่ม "แก้ไข") แล้วกด "สร้างทันที" ในตาราง — หรือรอรอบอัตโนมัติถัดไป ระบบลองใหม่ให้เองทุกรอบ</div></div>` : ''}
         ${r.autoSendEmailWarning ? `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:13px">
           📧 ${Layout.esc(r.autoSendEmailWarning)}${r.autoSendEmailFixUrl ? ` <a href="${Layout.esc(r.autoSendEmailFixUrl)}" target="_blank" style="color:#2563eb;text-decoration:underline">เปิดหน้าผู้ติดต่อเพื่อเพิ่มอีเมล</a>` : ''}</div>` : ''}
-        ${this._renderOutcome(r)}`;
+        ${this._renderOutcome(r)}
+        <div id="detailDryRun"></div>`;
       document.getElementById('detailFooter').innerHTML = `
         <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
+        <button class="btn btn-secondary" onclick="Page.dryRunSaved('${Layout.jsArg(r.id)}')">ทดลองรัน 🔍</button>
         <button class="btn btn-danger" onclick="Page.del('${r.id}')" data-i18n="common.delete">ลบ</button>
         <button class="btn btn-primary" onclick="Page.editFromDetail('${r.id}')" data-i18n="common.edit">แก้ไข</button>`;
       Layout.openModal('detailModal');
@@ -864,13 +1245,13 @@ const Page = {
       let savedExpenseCategoryId = '';
       let savedWhtPayeeId = null;
       this._editingTd = null;
-      this._setMultiLineLock(0);
+      this._setExtraLines([]);
       try {
         const td = JSON.parse(r.templateData || '{}');
         this._editingTd = td;
         savedWhtPayeeId = td.whtPayeeContactId || null;
         const line = td.lines && td.lines[0];
-        this._setMultiLineLock(Array.isArray(td.lines) ? td.lines.length : 0);
+        this._setExtraLines(Array.isArray(td.lines) ? td.lines.slice(1) : []);
         if (line) {
           document.getElementById('fVatRate').value = line.vatRate ?? 7;
           document.getElementById('fWhtRate').value = line.withholdingTaxRate ?? 0;
@@ -915,7 +1296,10 @@ const Page = {
       }
       await this._hydrateWhtPayee(savedWhtPayeeId);
       this.onDocTypeChange();
+      await this._hydrateAutopilot(r);
+      this.goStep(1);
       Layout.openModal('formModal');
+      this.refreshReadiness(true);
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 

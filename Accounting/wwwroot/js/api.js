@@ -1281,6 +1281,13 @@ const API = {
       getAssetRegisterReport: () => API.get(`${base}/fixedasset/report/register`),
       getDepreciationSchedule: (id) => API.get(`${base}/fixedasset/${id}/report/depreciation-schedule`),
       importAssets: (d) => API.post(`${base}/fixedasset/import`, d),
+      // รอบ 249 — สินทรัพย์ 1 ชิ้น ↔ เอกสารซื้อหลายใบ (มัดจำ · งวด · ใบสุดท้าย · ใบลดหนี้)
+      getLinkableAssetCostLines: (search, documentId) => API.get(`${base}/fixedasset/linkable-lines?search=${encodeURIComponent(search || '')}${documentId ? `&documentId=${encodeURIComponent(documentId)}` : ''}`),
+      createAssetFromSources: (d) => API.post(`${base}/fixedasset/from-sources`, d),
+      getAssetCostSources: (id) => API.get(`${base}/fixedasset/${id}/cost-sources`),
+      attachAssetCostSources: (id, d) => API.post(`${base}/fixedasset/${id}/cost-sources`, d),
+      releaseAssetCostSource: (id, sourceId, d) => API.post(`${base}/fixedasset/${id}/cost-sources/${sourceId}/release`, d),
+      placeAssetInService: (id, d) => API.post(`${base}/fixedasset/${id}/place-in-service`, d),
       // Budget
       getBudgets: (q = '') => API.get(`${base}/budget${q}`),
       getBudget: (id) => API.get(`${base}/budget/${id}`),
@@ -1537,6 +1544,16 @@ const API = {
       runRecurringNow: (id) => API.post(`${base}/recurring/${id}/run-now`),
       // รอบ 247: ผู้ติดต่อรับอีเมลเอกสารได้ไหม (ฟอร์มรายการประจำ)
       getRecurringEmailReadiness: (contactId) => API.get(`${base}/recurring/email-readiness?contactId=${encodeURIComponent(contactId)}`),
+      // รอบ 248: Autopilot รายการประจำ — ตัวเลือก · ความพร้อม · ทดลองรัน (ไม่เขียนอะไร) · นโยบายอนุมัติ · ช่องทางรับเงินต่อผู้ติดต่อ
+      getRecurringAutopilotOptions: () => API.get(`${base}/recurring/autopilot/options`),
+      getRecurringReadiness: (id) => API.get(`${base}/recurring/${id}/readiness`),
+      recurringReadinessDraft: (d, id) => API.post(`${base}/recurring/readiness${id ? '?recurringId=' + encodeURIComponent(id) : ''}`, d),
+      dryRunRecurring: (id) => API.post(`${base}/recurring/${id}/dry-run`),
+      dryRunRecurringDraft: (d, id) => API.post(`${base}/recurring/dry-run${id ? '?recurringId=' + encodeURIComponent(id) : ''}`, d),
+      setRecurringApprovePolicy: (id, d) => API.put(`${base}/recurring/${id}/approve-policy`, d),
+      getContactAutopilot: (contactId) => API.get(`${base}/recurring/contacts/${encodeURIComponent(contactId)}/autopilot`),
+      updateContactAutopilot: (contactId, d) => API.put(`${base}/recurring/contacts/${encodeURIComponent(contactId)}/autopilot`, d),
+      setContactApprovePolicy: (contactId, d) => API.put(`${base}/recurring/contacts/${encodeURIComponent(contactId)}/approve-policy`, d),
       // Import/Export
       importData: (d) => API.post(`${base}/import-export/import`, d),
       validateImport: (d) => API.post(`${base}/import-export/validate`, d),

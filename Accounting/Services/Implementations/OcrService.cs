@@ -10210,6 +10210,12 @@ public class OcrService : IOcrService
             ?? throw new InvalidOperationException("OCR scan result not found.");
         if (scan.ScanStatus != "Completed")
             throw new InvalidOperationException("Scan ยังไม่เสร็จ — ไม่สามารถลงทะเบียนสินทรัพย์");
+        // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน M4): เอกสารที่สร้างจากสแกนนี้ผูกเป็นต้นทุนสินทรัพย์หลายใบแล้ว ⇒ ลงทะเบียน (+ JE ซื้อของตัวเอง) ซ้ำไม่ได้
+        if (scan.CreatedDocumentId is Guid scanDocId
+            && (await FixedAssetService.LinkedLineIdsAsync(_db, companyId, scanDocId)).Count > 0)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "เอกสารที่สร้างจากสแกนนี้ผูกเป็นต้นทุนของสินทรัพย์ (หลายใบ) แล้ว — ลงทะเบียนสินทรัพย์จากสแกนซ้ำ = ต้นทุนสองครั้ง · เปิดสินทรัพย์นั้นที่หน้าทะเบียนแทน",
+                Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
 
         // Side-effect: if the user assigned a project to this line via
         // the review UI (POST /line-project), promote it into the scope

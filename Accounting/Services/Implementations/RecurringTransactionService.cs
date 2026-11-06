@@ -20,6 +20,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     private readonly IErrorLogService _errorLogService;
     private readonly IEmailScheduleService? _emailSchedule;
     private readonly INotificationEngine? _notify;
+    private readonly IPermissionService? _permissions;
 
     public RecurringTransactionService(
         AccountingDbContext db,
@@ -28,7 +29,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         ILogger<RecurringTransactionService> logger,
         IErrorLogService errorLogService,
         IEmailScheduleService? emailSchedule = null,
-        INotificationEngine? notify = null)
+        INotificationEngine? notify = null,
+        IPermissionService? permissions = null)
     {
         _db = db;
         _documentService = documentService;
@@ -37,6 +39,17 @@ public class RecurringTransactionService : IRecurringTransactionService
         _errorLogService = errorLogService;
         _emailSchedule = emailSchedule;
         _notify = notify;
+        _permissions = permissions;   // รอบ 248: ผู้ตั้งนโยบายอนุมัติยังมีสิทธิ์อนุมัติไหม (null ในเทสต์ = ตรวจแค่สมาชิกภาพ)
+    }
+
+    /// <summary>รอบ 248: ตรวจ + แปลงโหมดรับเงิน/ช่องทางของคำขอ — ค่าที่ไม่รู้จัก = ปฏิเสธพร้อมเหตุ (ห้ามเก็บเงียบ) · คืน (โหมดมาตรฐาน · JSON ช่องทาง)</summary>
+    private static (string? Mode, string? ChannelsJson) PaymentSettingsFrom(string? mode, List<string>? channels)
+    {
+        if (AutopilotSettingsResolver.ValidateMode(mode) is { } badMode)
+            throw new BusinessRuleException(badMode, AutopilotSettingsResolver.RuleCode);
+        if (AutopilotSettingsResolver.ValidateChannels(channels) is { } badCh)
+            throw new BusinessRuleException(badCh + " — เลือกจากรายการช่องทางที่บริษัทเปิดในขั้น \"รับเงิน\"", AutopilotSettingsResolver.RuleCode);
+        return (AutopilotSettingsResolver.Normalize(mode), DocumentPayLinkPolicy.SerializeChannels(channels));
     }
 
     /// <summary>ตัวตัดสินกลางว่า template เป็น "สมุดรายวัน" หรือ "เอกสาร" —
@@ -56,6 +69,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     public async Task<RecurringTransactionResponse> CreateAsync(Guid companyId, CreateRecurringTransactionRequest request, string createdBy)
     {
         await ValidateTemplateAsync(companyId, request.TemplateType, request.TemplateData, request.ContactId, atSave: true);
+        var (payMode, payChannels) = PaymentSettingsFrom(request.PaymentMode, request.PayLinkChannels);
         // วันสิ้นสุดก่อนวันเริ่ม = รายการที่ไม่มีวันรันเลย (เดิมบันทึกได้แล้วค้าง "ใช้งาน" เงียบ ๆ ตลอดไป)
         if (request.EndDate.HasValue && !RecurringSchedule.WithinEnd(request.StartDate, request.EndDate))
             throw new BusinessRuleException("วันสิ้นสุดอยู่ก่อนวันเริ่มต้น — แก้วันสิ้นสุด (หรือเว้นว่างถ้าไม่มีกำหนด) แล้วบันทึกอีกครั้ง",
@@ -89,6 +103,9 @@ public class RecurringTransactionService : IRecurringTransactionService
             AutoApprove = request.AutoApprove
                 || (request.AutoSendEmail && !IsJournalTemplate(request.TemplateType)),
             AutoSendEmail = request.AutoSendEmail && !IsJournalTemplate(request.TemplateType),
+            // รอบ 248: ช่องทางรับเงินต่อรายการ (สมุดรายวันไม่มีลิงก์ชำระ ⇒ ไม่เก็บ) · นโยบายอนุมัติตั้งผ่าน endpoint แยก (ต้องมีสิทธิ์อนุมัติ)
+            PaymentMode = IsJournalTemplate(request.TemplateType) ? null : payMode,
+            PayLinkChannelsJson = IsJournalTemplate(request.TemplateType) ? null : payChannels,
             CreatedBy = createdBy
         };
 
@@ -184,6 +201,14 @@ public class RecurringTransactionService : IRecurringTransactionService
         if (request.NotifyDaysBefore.HasValue) recurring.NotifyDaysBefore = request.NotifyDaysBefore.Value;
         if (request.AutoApprove.HasValue) recurring.AutoApprove = request.AutoApprove.Value;
         if (request.AutoSendEmail.HasValue) recurring.AutoSendEmail = request.AutoSendEmail.Value;
+        // รอบ 248: null = ไม่แก้ · ""/Inherit = ล้าง · [] = ล้างช่องทาง (ฟอร์มส่งค่าปัจจุบันทุกครั้ง — ห้ามแก้แล้วหายเงียบ)
+        if (request.PaymentMode != null || request.PayLinkChannels != null)
+        {
+            var (pm, pc) = PaymentSettingsFrom(request.PaymentMode, request.PayLinkChannels);
+            if (request.PaymentMode != null) recurring.PaymentMode = pm;
+            if (request.PayLinkChannels != null) recurring.PayLinkChannelsJson = pc;
+        }
+        if (IsJournalTemplate(recurring.TemplateType)) { recurring.PaymentMode = null; recurring.PayLinkChannelsJson = null; }
         // template สมุดรายวันไม่มีคู่ค้า/PDF ให้ส่ง → ปัดธงทิ้ง **เสมอ** ไม่ใช่
         // เฉพาะตอน request ส่ง field มา — แถวเก่า/ที่แก้ตรง DB ที่ค้างธงไว้ จะได้
         // ไม่ไปบังคับ AutoApprove (ฝั่ง journal = post JE อัตโนมัติ คนละเรื่อง)
@@ -823,12 +848,19 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // Auto-approve if configured (ผู้ถูกหักถูกตัดทิ้ง = ไม่อนุมัติอัตโนมัติ — ข้างบน)
                 if (recurring.AutoApprove && result != null && droppedPayees == 0)
                 {
+                    string? stoppedPolicyReason = null;
                     try
                     {
                         // คำตัดสินข้อ 114 Q1: ข้อสังเกต §65 ตรีที่การอนุมัติอัตโนมัติผ่านไป (ไม่บล็อก — ข้อ 110) ต้องถึงคน — เก็บรายการที่ผ่านแล้วแจ้งผู้ตั้งรายการประจำ
                         var passed = new List<string>();
+                        // รอบ 248 (AUTOPILOT §4.3): นโยบายอนุมัติข้ามคำเตือนของเจ้าของ (รายการ › ผู้ติดต่อ) — ผู้ตั้งออกจากบริษัท/หมดสิทธิ์ ⇒ ไม่ปล่อย ·
+                        // ไม่ตั้งนโยบาย = Unattended เดิมทุกประการ (ใบค้างร่างเหมือนรอบ 247) · ชุดห้ามปล่อยหยุดเสมอ (ตัวตัดสินเดียว ApprovalAcknowledgement)
+                        var policyLoad = await RecurringApprovePolicyLoader.LoadAsync(_db, _permissions, recurring.CompanyId, recurring);
+                        stoppedPolicyReason = policyLoad.SetterActive == false ? policyLoad.InactiveReason : null;
+                        // ฝ่ายค้าน MED-3: ไม่มีนโยบายที่มีผล ⇒ แหล่ง Unattended เดิม (ร่องรอยเดิม APPROVE-UNATTENDED-PASSED-S65)
                         var approvedDoc = await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy,
-                            Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passed);
+                            policyLoad.Policy != null ? Accounting.Helpers.ApprovalAckSource.UnattendedWithPolicy : Accounting.Helpers.ApprovalAckSource.Unattended,
+                            withAiHints: false, passed, autoApprovePolicy: policyLoad.Policy);
                         approved = true;
                         // + ของราคาต่ำที่ขึ้นทะเบียนสินทรัพย์ (LowValueAssetLineCheck · ฝ่ายค้าน P2-2) — ช่องเดียวกัน
                         var noticeParts = new[] {
@@ -872,6 +904,10 @@ public class RecurringTransactionService : IRecurringTransactionService
                                 ApproveWarnings = ex is DocumentApprovalWarningsException aw ? aw.Warnings.ToList() : null,
                             };
                         await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoApprove/{result.Id}");
+                        // ฝ่ายค้าน LOW-8: บอก "นโยบายหยุดมีผล" เฉพาะรอบที่มีคำเตือนซึ่งนโยบายจะปล่อยได้จริง (ไม่ใช่ทุกรอบ)
+                        if (stoppedPolicyReason != null && ex is DocumentApprovalWarningsException stopAw
+                            && stopAw.Warnings.Any(w => Accounting.Helpers.AutoApprovePolicy.CodeOf(w) != null))
+                            notices.Add("นโยบายอนุมัติข้ามคำเตือนของรายการนี้หยุดมีผล — " + stoppedPolicyReason + " (ขั้น \"อนุมัติ\" ของรายการประจำ)");
                     }
                 }
 
@@ -1031,6 +1067,9 @@ public class RecurringTransactionService : IRecurringTransactionService
             r.NotifyDaysBefore, r.AutoApprove, r.CreatedAt, r.AutoSendEmail,
             r.LastRunError, r.LastRunErrorAt, r.LastRunNotice, r.LastDocumentId,
             LastRunOutcome: outcome,
+            PaymentMode: r.PaymentMode,
+            PayLinkChannels: DocumentPayLinkPolicy.ParseChannels(r.PayLinkChannelsJson),
+            AutoApprovePolicy: RecurringApprovePolicyLoader.View(AutoApprovePolicy.Parse(r.AutoApprovePolicyJson, AutoApprovePolicy.ScopeRecurring)),
             AutoSendEmailWarning: emailWarning,
             AutoSendEmailFixUrl: emailWarning != null && r.ContactId is { } fixId ? RecurringEmailReadiness.ContactUrl(fixId) : null);
 

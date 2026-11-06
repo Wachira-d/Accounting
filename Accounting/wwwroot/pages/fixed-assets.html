@@ -20,6 +20,8 @@
         <button class="btn btn-secondary" onclick="Page.runDepreciation()"
                 data-tour-step="2"
                 data-tour-text="ขั้นที่ 2 — สิ้นเดือนกดคำนวณค่าเสื่อม ระบบสร้าง JE Dr ค่าเสื่อม / Cr ค่าเสื่อมสะสม ให้อัตโนมัติทุกตัว">คำนวณค่าเสื่อม</button>
+        <button class="btn btn-secondary" onclick="Page.openSourcesCreate()"
+                title="ของชิ้นเดียวที่มีหลายใบ — ใบมัดจำ · ใบงวด · ใบสุดท้าย · ค่าขนส่ง/ติดตั้ง: รวมเป็นสินทรัพย์ตัวเดียว (ระหว่างจัดหา) แล้วโอนเมื่อพร้อมใช้">🧩 สร้างจากเอกสารหลายใบ</button>
         <button class="btn btn-primary" onclick="Page.openCreate()"
                 data-tour-step="1"
                 data-tour-text="ขั้นที่ 1 — เพิ่มสินทรัพย์ ใส่ราคา / อายุการใช้งาน / วันได้มา → ระบบคิดค่าเสื่อมรายเดือนให้ตามวิธีเส้นตรง">+ เพิ่มสินทรัพย์</button>
@@ -197,6 +199,7 @@
         <div class="modal-header"><h3 class="modal-title" id="detailTitle">รายละเอียดสินทรัพย์</h3><button class="modal-close" onclick="Layout.closeModal('detailModal')">&times;</button></div>
         <div class="modal-body">
           <div id="detailInfo" style="margin-bottom:16px"></div>
+          <div id="costSourcesContent" style="margin-bottom:16px"></div>
           <div style="display:flex;gap:8px;margin-bottom:12px">
             <button class="btn btn-sm btn-secondary" onclick="Page.showDepHistory()" id="btnDepHist" style="font-weight:600">ประวัติค่าเสื่อม</button>
             <button class="btn btn-sm btn-ghost" onclick="Page.showDepSchedule()" id="btnDepSched">ตารางค่าเสื่อม (Forecast)</button>
@@ -205,6 +208,84 @@
           <div id="depreciationContent" style="max-height:300px;overflow-y:auto"></div>
         </div>
         <div class="modal-footer" id="detailFooter"></div>
+      </div>
+    </div>
+
+    <!-- รอบ 249: สร้าง/ผูกสินทรัพย์จากเอกสารหลายใบ (มัดจำ · งวด · ใบสุดท้าย · ใบลดหนี้) -->
+    <div class="modal-overlay" id="sourcesModal">
+      <div class="modal" style="max-width:980px">
+        <div class="modal-header"><h3 class="modal-title" id="srcTitle">สร้างสินทรัพย์จากเอกสารหลายใบ</h3><button class="modal-close" onclick="Layout.closeModal('sourcesModal')">&times;</button></div>
+        <div class="modal-body">
+          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;font-size:12px;color:#1e3a8a;margin-bottom:10px">
+            เลือก<b>บรรทัด</b>ของใบมัดจำ (ผัง 118xx) · ใบงวด (12280 งานระหว่างก่อสร้าง) · ใบสุดท้าย/ค่าขนส่ง-ติดตั้ง (ผังสินทรัพย์) และใบลดหนี้ — ระบบใช้<b>ยอดที่แต่ละใบลงบัญชีจริง</b>
+            (ไม่รวม VAT ที่เคลมได้ · รวม VAT ต้องห้าม) เป็นต้นทุน · สินทรัพย์จะอยู่สถานะ <b>🚧 ระหว่างจัดหา</b> (ยังไม่คิดค่าเสื่อม) จนกว่าจะกด “โอนเป็นสินทรัพย์พร้อมใช้”
+          </div>
+          <div id="srcNewFields">
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">ชื่อสินทรัพย์ *</label><input type="text" class="form-input" id="srcName" placeholder="เช่น เครื่องจักร CNC รุ่น X"></div>
+              <div class="form-group"><label class="form-label" data-help="ผังที่จะโอนเข้าเมื่อพร้อมใช้ (เช่น 12260 เครื่องจักร) — ระหว่างจัดหายอดยังอยู่ผังเดิมของแต่ละใบ">ผังสินทรัพย์ที่ตั้งใจ</label>
+                <select class="form-select" id="srcAssetAcct"><option value="">-- เลือกบัญชี --</option></select></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label" data-help="ราคาเครื่อง/งานตามสัญญา (ไม่รวม VAT) — ระบบเตือนเมื่อต้นทุนรวมจากใบที่ผูกเกินราคานี้ (เช่นใบสุดท้ายลงเต็มราคาทั้งที่ผูกมัดจำแล้ว) · ไม่บังคับ">ราคาตามสัญญา (ไม่บังคับ)</label>
+                <input type="number" step="0.01" class="form-input" id="srcContractPrice" placeholder="เช่น 1000000"></div>
+              <div class="form-group"></div>
+            </div>
+          </div>
+          <div id="srcEntryDateRow" style="display:none" class="form-row">
+            <div class="form-group"><label class="form-label" data-help="ใช้เมื่อผูกเข้าสินทรัพย์ที่โอนแล้ว: วันลงรายการโอน/ปรับต้นทุน · ว่าง = วันที่ของใบล่าสุด (ไม่ก่อนวันพร้อมใช้) · ถ้าวันนั้นอยู่ในงวดที่ปิดแล้ว ให้ระบุวันในงวดที่เปิด">วันลงรายการ (ถ้าสินทรัพย์โอนแล้ว)</label>
+              <input type="date" class="form-input" id="srcEntryDate"></div>
+            <div class="form-group"></div>
+          </div>
+          <div id="srcTargetInfo" style="display:none;font-size:13px;margin-bottom:8px"></div>
+          <div style="display:flex;gap:8px;margin:8px 0">
+            <input type="text" class="form-input" id="srcSearch" placeholder="ค้นเลขเอกสาร / ชื่อผู้ขาย / รายการ" onkeydown="if(event.key==='Enter')Page.searchSourceLines()">
+            <button class="btn btn-secondary" onclick="Page.searchSourceLines()">ค้นหา</button>
+          </div>
+          <div id="srcResults" style="max-height:380px;overflow:auto"></div>
+          <div id="srcSelectedInfo" style="text-align:right;font-size:12px;color:#475569;margin-top:6px"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('sourcesModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" id="srcSubmit" onclick="Page.submitSources()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- รอบ 249: โอนเป็นสินทรัพย์พร้อมใช้ -->
+    <div class="modal-overlay" id="placeModal">
+      <div class="modal" style="max-width:620px">
+        <div class="modal-header"><h3 class="modal-title">โอนเป็นสินทรัพย์พร้อมใช้</h3><button class="modal-close" onclick="Layout.closeModal('placeModal')">&times;</button></div>
+        <div class="modal-body">
+          <div id="placeSummary" style="font-size:13px;margin-bottom:10px"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" data-help="TFRS for NPAEs บทที่ 10 — เริ่มคิดค่าเสื่อมเมื่อพร้อมใช้งาน (ไม่ใช่วันที่จ่ายมัดจำ) · งวดแรก = เดือนถัดไป">วันที่พร้อมใช้งาน *</label><input type="date" class="form-input" id="placeDate"></div>
+            <div class="form-group"><label class="form-label">ผังสินทรัพย์ *</label><select class="form-select" id="placeAssetAcct"><option value="">-- เลือกบัญชี --</option></select></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">อายุใช้งาน (เดือน) *</label><input type="number" class="form-input" id="placeLife" value="60"></div>
+            <div class="form-group"><label class="form-label">วิธีคิดค่าเสื่อม</label>
+              <select class="form-select" id="placeMethod">
+                <option value="StraightLine">เส้นตรง (Straight Line)</option>
+                <option value="DecliningBalance">ยอดลดลง (Declining Balance)</option>
+                <option value="DoubleDecliningBalance">ยอดลดลงทวีคูณ</option>
+                <option value="None">ไม่คิดค่าเสื่อม (ที่ดิน)</option>
+              </select></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">มูลค่าซาก</label><input type="number" class="form-input" id="placeSalvage" step="0.01" value="0"></div>
+            <div class="form-group"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" data-help="ว่าง = ระบบเลือกตามประเภทผังสินทรัพย์">บัญชีค่าเสื่อมราคา</label><select class="form-select" id="placeDepExp"><option value="">-- ตามประเภทผัง --</option></select></div>
+            <div class="form-group"><label class="form-label" data-help="ว่าง = ระบบเลือกตามประเภทผังสินทรัพย์">บัญชีค่าเสื่อมราคาสะสม</label><select class="form-select" id="placeAccum"><option value="">-- ตามประเภทผัง --</option></select></div>
+          </div>
+          <div style="font-size:12px;color:#64748b">ระบบลงรายการโอน Dr ผังสินทรัพย์ / Cr ผังมัดจำ·งานระหว่างก่อสร้างของแต่ละใบ (ใบที่ลงผังสินทรัพย์เดียวกันอยู่แล้วไม่ต้องโอน) ลงวันที่พร้อมใช้งาน</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('placeModal')" data-i18n="common.cancel">ยกเลิก</button>
+          <button class="btn btn-primary" id="placeSubmit" onclick="Page.confirmPlaceInService()">โอนเป็นสินทรัพย์พร้อมใช้</button>
+        </div>
       </div>
     </div>
 
@@ -331,6 +412,9 @@
         if (qs.get('filter') === 'needs-review') await this.filterNeedsReview();
         const deepId = qs.get('id') || qs.get('assetId');
         if (deepId) await this.viewDetail(deepId);
+        // รอบ 249: จากแผงสินทรัพย์บนหน้าเอกสาร — ?linkLine={lineId}&doc={docId}[&mode=new] เปิดหน้าต่างผูก/สร้างพร้อมบรรทัดนั้น
+        const linkLine = qs.get('linkLine');
+        if (linkLine) await this.openSourcesFromDocument(linkLine, qs.get('doc'), qs.get('mode') === 'new');
       },
 
       // AI เลือกบัญชีทั้ง 3 ช่อง (สินทรัพย์ / ค่าเสื่อม / ค่าเสื่อมสะสม)
@@ -440,9 +524,16 @@
         const opts = '<option value="">-- เลือกบัญชี --</option>' +
           (this._accounts || []).map(a =>
             `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('');
-        for (const id of ['fAssetAcct', 'fDepExpAcct', 'fAccumAcct', 'fCreditAcct']) {
+        for (const id of ['fAssetAcct', 'fDepExpAcct', 'fAccumAcct', 'fCreditAcct', 'srcAssetAcct', 'placeAssetAcct']) {
           const el = document.getElementById(id);
           if (el) el.innerHTML = opts;
+        }
+        const optsAuto = '<option value="">-- ตามประเภทผัง --</option>' +
+          (this._accounts || []).map(a =>
+            `<option value="${a.id}">${a.accountCode} - ${a.accountName}</option>`).join('');
+        for (const id of ['placeDepExp', 'placeAccum']) {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = optsAuto;
         }
       },
       toggleAcqRow() {
@@ -512,7 +603,7 @@
             <td class="font-medium">${a.assetCode}${a.needsReview ? ' <span title="ระบบสร้างให้อัตโนมัติ — กรุณาตรวจสอบรายละเอียดก่อนใช้งาน" style="background:#fbbf24;color:#78350f;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px">⚠️ รอตรวจ</span>' : ''}
               ${String(a.assetCode || '').startsWith('DRAFT-')
                 ? '<div style="font-size:10px;color:#92400e;margin-top:2px">รหัสชั่วคราว — เลขจริง FA-ปีเดือน-#### จะออกเมื่อกด "ตรวจสอบและยืนยัน"</div>' : ''}</td>
-            <td>${a.name}<div style="font-size:11px;color:#64748b">${this._typeLabel(a.assetType || 'Tangible')}${a.lessorName?' · '+Layout.esc(a.lessorName):''}</div>
+            <td>${a.name}${a.isUnderAcquisition ? ' <span title="ต้นทุนสะสมจากหลายใบ — ยังไม่คิดค่าเสื่อมจนกว่าจะโอนเป็นสินทรัพย์พร้อมใช้" style="background:#e0f2fe;color:#075985;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px">🚧 ระหว่างจัดหา</span>' : ''}<div style="font-size:11px;color:#64748b">${this._typeLabel(a.assetType || 'Tangible')}${a.lessorName?' · '+Layout.esc(a.lessorName):''}</div>
               ${a.sourceDocumentNumber ? `<div style="font-size:11px;color:#64748b;margin-top:2px">📄 สร้างจาก <a href="/pages/documents.html?openDoc=${Layout.esc(a.sourceDocumentId || '')}" style="color:var(--primary)">${Layout.esc(a.sourceDocumentNumber)}</a></div>` : ''}</td>
             <td>${a.category || '-'}</td>
             <td>${Layout.date(a.purchaseDate)}</td>
@@ -756,8 +847,14 @@
               </div>
             </div>`;
           this.showDepHistory();
+          this.renderCostSources(a.id);
           let footer = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           if (a.status === 'Active') {
+            footer += ` <button class="btn btn-ghost" onclick="Page.openSourcesAttach('${Layout.jsArg(a.id)}')" title="ผูกใบมัดจำ/ใบงวด/ค่าติดตั้ง/ใบลดหนี้เพิ่ม">🔗 ผูกเอกสารต้นทุน</button>`;
+          }
+          if (a.status === 'Active' && a.isUnderAcquisition) {
+            footer += ` <button class="btn btn-primary" onclick="Page.openPlaceInService('${Layout.jsArg(a.id)}')">✅ โอนเป็นสินทรัพย์พร้อมใช้</button>`;
+          } else if (a.status === 'Active') {
             footer += ` <button class="btn btn-ghost" onclick="Page.openAdjustLife('${a.id}',${a.usefulLifeMonths},${a.salvageValue})">ปรับอายุ</button>`;
             footer += ` <button class="btn btn-warning" onclick="Page.openRevalue('${a.id}',${a.netBookValue})">ตีราคาใหม่</button>`;
             footer += ` <button class="btn btn-danger" onclick="Page.openWriteOff('${a.id}')">ตัดจำหน่าย</button>`;
@@ -766,6 +863,198 @@
           document.getElementById('detailFooter').innerHTML = footer;
           Layout.openModal('detailModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ═══ รอบ 249 — สินทรัพย์ 1 ชิ้น ↔ เอกสารซื้อหลายใบ (ตัวเลข/สถานะ/ปัญหามาจากเซิร์ฟเวอร์ทั้งหมด — หน้านี้แสดงอย่างเดียว) ═══
+      _src: { mode: 'create', assetId: null, lines: [], selected: {} },
+      _kindLabel(k) {
+        return ({ Deposit:'มัดจำ', Progress:'งวด/ระหว่างก่อสร้าง', Final:'ใบซื้อ', Auxiliary:'ค่าขนส่ง/ติดตั้ง', CreditNote:'ใบลดหนี้', DebitNote:'ใบเพิ่มหนี้' })[k] || k;
+      },
+      _srcReset(mode, assetId) {
+        this._src = { mode, assetId, lines: [], selected: {} };
+        document.getElementById('srcNewFields').style.display = mode === 'create' ? '' : 'none';
+        document.getElementById('srcTitle').textContent = mode === 'create' ? 'สร้างสินทรัพย์จากเอกสารหลายใบ' : 'ผูกเอกสารต้นทุนเพิ่ม';
+        document.getElementById('srcSubmit').textContent = mode === 'create' ? 'สร้างสินทรัพย์ระหว่างจัดหา' : 'ผูกเข้ากับสินทรัพย์นี้';
+        document.getElementById('srcResults').innerHTML = '<div class="text-center text-gray-400" style="padding:16px">ค้นด้วยเลขเอกสาร/ชื่อผู้ขาย/รายการ</div>';
+        document.getElementById('srcSelectedInfo').textContent = '';
+        document.getElementById('srcSearch').value = '';
+        const info = document.getElementById('srcTargetInfo');
+        const a = (this.allAssets || []).find(x => x.id === assetId);
+        info.style.display = mode === 'attach' ? '' : 'none';
+        info.innerHTML = mode === 'attach' && a
+          ? `ผูกเข้ากับ <b>${Layout.esc(a.assetCode)}</b> ${Layout.esc(a.name || '')}${a.isUnderAcquisition ? ' (🚧 ระหว่างจัดหา — สะสมต้นทุน ยังไม่ลงบัญชี)' : ' (โอนแล้ว — ระบบลงรายการโอนและปรับฐานค่าเสื่อมงวดถัดไปให้)'}`
+          : '';
+        if (mode === 'create') { document.getElementById('srcName').value = ''; document.getElementById('srcAssetAcct').value = ''; document.getElementById('srcContractPrice').value = ''; }
+        document.getElementById('srcEntryDate').value = '';
+        document.getElementById('srcEntryDateRow').style.display = mode === 'attach' && a && !a.isUnderAcquisition ? '' : 'none';
+      },
+      openSourcesCreate() { this._srcReset('create', null); Layout.openModal('sourcesModal'); },
+      openSourcesAttach(assetId) { this._srcReset('attach', assetId); Layout.closeModal('detailModal'); Layout.openModal('sourcesModal'); },
+      async openSourcesFromDocument(lineId, docId, createNew) {
+        this._srcReset(createNew ? 'create' : 'pick', null);
+        if (!createNew) {
+          // เลือกสินทรัพย์ระหว่างจัดหาที่จะผูก (หรือสร้างใหม่)
+          document.getElementById('srcTitle').textContent = 'ผูกบรรทัดเอกสารเข้ากับสินทรัพย์';
+          const pending = (this.allAssets || []).filter(a => a.isUnderAcquisition && a.status === 'Active');
+          const info = document.getElementById('srcTargetInfo');
+          info.style.display = '';
+          info.innerHTML = `<label class="form-label">ผูกเข้ากับสินทรัพย์</label>
+            <select class="form-select" id="srcPickAsset" onchange="Page.pickSourceTarget(this.value)">
+              <option value="">— สร้างสินทรัพย์ระหว่างจัดหาใหม่ —</option>
+              ${(this.allAssets || []).filter(a => a.status === 'Active').map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.assetCode)} ${Layout.esc(a.name || '')}${a.isUnderAcquisition ? ' 🚧' : ''}</option>`).join('')}
+            </select>
+            ${pending.length ? '' : '<div style="font-size:11px;color:#64748b;margin-top:4px">ยังไม่มีสินทรัพย์ระหว่างจัดหา — เลือก “สร้างใหม่” แล้วตั้งชื่อ</div>'}`;
+          this.pickSourceTarget('');
+        }
+        Layout.openModal('sourcesModal');
+        await this.searchSourceLines(docId);
+        const hit = this._src.lines.find(l => l.documentLineId === lineId);
+        if (hit && !hit.problem) this.toggleSourceLine(lineId, true);
+        if (hit && !document.getElementById('srcName').value) document.getElementById('srcName').value = hit.description || '';
+      },
+      pickSourceTarget(assetId) {
+        this._src.mode = assetId ? 'attach' : 'create';
+        this._src.assetId = assetId || null;
+        document.getElementById('srcNewFields').style.display = assetId ? 'none' : '';
+        const picked = (this.allAssets || []).find(x => x.id === assetId);
+        document.getElementById('srcEntryDateRow').style.display = picked && !picked.isUnderAcquisition ? '' : 'none';
+        document.getElementById('srcSubmit').textContent = assetId ? 'ผูกเข้ากับสินทรัพย์นี้' : 'สร้างสินทรัพย์ระหว่างจัดหา';
+      },
+      async searchSourceLines(documentId) {
+        const api = Layout.api(); if (!api) return;
+        const q = document.getElementById('srcSearch').value.trim();
+        const host = document.getElementById('srcResults');
+        try {
+          const res = await api.getLinkableAssetCostLines(q, documentId || null);
+          this._src.lines = res.data || [];
+          this._renderSourceLines();
+        } catch (e) { host.innerHTML = `<div style="color:#dc2626;font-size:12px">ค้นหาไม่สำเร็จ: ${Layout.esc(e.message)}</div>`; }
+      },
+      _renderSourceLines() {
+        const host = document.getElementById('srcResults');
+        const lines = this._src.lines || [];
+        if (!lines.length) { host.innerHTML = '<div class="text-center text-gray-400" style="padding:16px">ไม่พบบรรทัดที่เป็นต้นทุนสินทรัพย์ได้ (ผังมัดจำ 118xx · งานระหว่างก่อสร้าง · ผังสินทรัพย์)</div>'; return; }
+        host.innerHTML = `<table class="table" style="font-size:12px"><thead><tr>
+            <th></th><th>เอกสาร</th><th>รายการ</th><th>ชนิด</th><th class="text-right">ต้นทุนของบรรทัด</th><th class="text-right">ผูกแล้ว</th><th class="text-right">ยอดที่จะผูก</th></tr></thead><tbody>
+          ${lines.map(l => {
+            const id = l.documentLineId;
+            const sel = Object.prototype.hasOwnProperty.call(this._src.selected, id);
+            const dis = !!l.problem;
+            return `<tr${dis ? ' style="opacity:.6"' : ''}>
+              <td><input type="checkbox" ${sel ? 'checked' : ''} ${dis ? 'disabled' : ''} onchange="Page.toggleSourceLine('${Layout.jsArg(id)}', this.checked)"></td>
+              <td>${Layout.esc(l.documentNumber)}<div style="font-size:10px;color:#64748b">${Layout.date(l.documentDate)} · ${Layout.esc(l.contactName || '')}</div></td>
+              <td>${Layout.esc(l.description || '')}<div style="font-size:10px;color:#64748b">ผัง ${Layout.esc(l.accountCode || '-')}${l.registeredAssetCode ? ` · ทะเบียนเดี่ยว ${Layout.esc(l.registeredAssetCode)}${l.registeredAssetAbsorbable ? ' (ร่าง — จะรวมเข้า)' : ''}` : ''}</div>
+                ${dis ? `<div style="font-size:11px;color:#b45309">${Layout.esc(l.problem)}</div>` : ''}</td>
+              <td>${Layout.esc(this._kindLabel(l.kind))}</td>
+              <td class="text-right">${Layout.money(l.costAmount)}</td>
+              <td class="text-right">${Layout.money(l.linkedAmount)}</td>
+              <td class="text-right">${dis ? '-' : `<input type="number" step="0.01" class="form-input" style="width:120px;text-align:right" value="${sel && this._src.selected[id] != null ? this._src.selected[id] : l.remainingToLink}" oninput="Page.setSourceAmount('${Layout.jsArg(id)}', this.value)" title="ค่าว่าง = ยอดที่เหลือทั้งหมด · ผูกบางส่วนได้ (เช่นมัดจำก้อนเดียวของของ 2 ชิ้น)">`}</td>
+            </tr>`;
+          }).join('')}</tbody></table>`;
+        const n = Object.keys(this._src.selected).length;
+        document.getElementById('srcSelectedInfo').textContent = n ? `เลือก ${n} บรรทัด` : '';
+      },
+      toggleSourceLine(id, on) {
+        if (on) this._src.selected[id] = null; else delete this._src.selected[id];
+        this._renderSourceLines();
+      },
+      setSourceAmount(id, v) {
+        if (!Object.prototype.hasOwnProperty.call(this._src.selected, id)) this._src.selected[id] = null;
+        this._src.selected[id] = (v === '' || v == null) ? null : Number(v);
+        const n = Object.keys(this._src.selected).length;
+        document.getElementById('srcSelectedInfo').textContent = n ? `เลือก ${n} บรรทัด` : '';
+      },
+      async submitSources() {
+        const api = Layout.api(); if (!api) return;
+        const items = Object.keys(this._src.selected).map(id => ({ documentLineId: id, amount: this._src.selected[id] }));
+        if (!items.length) { Layout.toast('เลือกบรรทัดเอกสารอย่างน้อย 1 บรรทัด', 'warning'); return; }
+        try {
+          let res;
+          if (this._src.mode === 'attach' && this._src.assetId) {
+            res = await api.attachAssetCostSources(this._src.assetId, { items, entryDate: document.getElementById('srcEntryDate').value || null });
+          } else {
+            const name = document.getElementById('srcName').value.trim();
+            if (!name) { Layout.toast('ระบุชื่อสินทรัพย์', 'warning'); return; }
+            const cpRaw = document.getElementById('srcContractPrice').value;
+            res = await api.createAssetFromSources({ name, items, assetAccountId: document.getElementById('srcAssetAcct').value || null,
+              contractPrice: cpRaw === '' ? null : Number(cpRaw) });
+          }
+          Layout.closeModal('sourcesModal');
+          Layout.toast(res?.message || 'บันทึกแล้ว', 'success', 8000);
+          await this.load();
+          const id = res?.data?.asset?.id;
+          if (id) await this.viewDetail(id);
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error', 10000); }
+      },
+      async renderCostSources(assetId) {
+        const host = document.getElementById('costSourcesContent');
+        if (!host) return;
+        host.innerHTML = '';
+        const api = Layout.api(); if (!api) return;
+        let r;
+        try { r = (await api.getAssetCostSources(assetId))?.data; }
+        catch (e) { host.innerHTML = `<div style="color:#dc2626;font-size:12px">โหลดเอกสารต้นทุนไม่สำเร็จ: ${Layout.esc(e.message)}</div>`; return; }
+        if (!r || (!(r.sources || []).length && !r.isUnderAcquisition)) return;
+        const statusLabel = { Held: '🚧 ถือไว้ (ยังไม่โอน)', Capitalized: '✅ โอนแล้ว', Released: '↩️ ปลดแล้ว' };
+        host.innerHTML = `
+          <h4 style="font-size:14px;margin-bottom:6px">🧩 เอกสารต้นทุน ${r.isUnderAcquisition ? '<span style="font-size:11px;color:#075985">(ระหว่างจัดหา — ยังไม่คิดค่าเสื่อม)</span>' : (r.availableForUseDate ? `<span style="font-size:11px;color:#166534">พร้อมใช้ ${Layout.date(r.availableForUseDate)}</span>` : '')}</h4>
+          ${(r.problems || []).map(p => `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:6px 10px;font-size:12px;color:#991b1b;margin-bottom:6px">${Layout.esc(p)}</div>`).join('')}
+          <table class="table" style="font-size:12px"><thead><tr><th>เอกสาร</th><th>รายการ</th><th>ชนิด</th><th>ผัง</th><th class="text-right">ต้นทุน</th><th>สถานะ</th><th></th></tr></thead><tbody>
+          ${(r.sources || []).map(x => `<tr${x.status === 'Released' ? ' style="opacity:.55"' : ''}>
+            <td><a href="/pages/documents.html?openDoc=${Layout.esc(x.documentId)}" style="color:var(--primary)">${Layout.esc(x.documentNumber)}</a><div style="font-size:10px;color:#64748b">${Layout.date(x.documentDate)}${x.sourceDocumentVoided ? ' · <b style="color:#dc2626">ใบถูกยกเลิก</b>' : ''}</div></td>
+            <td>${Layout.esc(x.lineDescription || '')}${x.nonClaimableVatIncluded ? `<div style="font-size:10px;color:#92400e">รวม VAT ต้องห้าม ${Layout.money(x.nonClaimableVatIncluded)}</div>` : ''}</td>
+            <td>${Layout.esc(this._kindLabel(x.kind))}</td>
+            <td style="font-family:ui-monospace,monospace">${Layout.esc(x.sourceAccountCode || '')}</td>
+            <td class="text-right">${Layout.money(x.amount)}</td>
+            <td>${statusLabel[x.status] || Layout.esc(x.status)}${x.releasedReason ? `<div style="font-size:10px;color:#64748b">${Layout.esc(x.releasedReason)}</div>` : ''}</td>
+            <td>${x.status === 'Held' ? `<button class="btn btn-sm btn-ghost" style="color:#b45309" onclick="Page.releaseCostSource('${Layout.jsArg(assetId)}','${Layout.jsArg(x.id)}')">ปลดออก</button>` : ''}</td>
+          </tr>`).join('')}</tbody>
+          <tfoot><tr><td colspan="4" class="text-right">${r.isUnderAcquisition ? 'ต้นทุนสะสม (ถือไว้)' : 'โอนแล้ว'}</td><td class="text-right font-semibold">${Layout.money(r.isUnderAcquisition ? r.heldCost : r.capitalizedCost)}</td><td colspan="2"></td></tr></tfoot></table>`;
+      },
+      async releaseCostSource(assetId, sourceId) {
+        const reason = prompt('เหตุผลที่ปลดใบนี้ออกจากสินทรัพย์ (เก็บลงประวัติ):');
+        if (reason == null) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.releaseAssetCostSource(assetId, sourceId, { reason });
+          Layout.toast('ปลดเอกสารออกแล้ว — ต้นทุนสะสมคิดใหม่', 'success');
+          await this.load();
+          await this.viewDetail(assetId);
+        } catch (e) { Layout.toast(e.message || 'ปลดไม่สำเร็จ', 'error', 10000); }
+      },
+      openPlaceInService(assetId) {
+        const a = this._currentAsset && this._currentAsset.id === assetId ? this._currentAsset : (this.allAssets || []).find(x => x.id === assetId);
+        if (!a) return;
+        this._placeAssetId = assetId;
+        document.getElementById('placeSummary').innerHTML = `<b>${Layout.esc(a.assetCode)}</b> ${Layout.esc(a.name || '')} · ต้นทุนสะสม <b>${Layout.money(a.purchaseCost)}</b> บาท`
+          + (a.contractPrice ? ` · ราคาตามสัญญา ${Layout.money(a.contractPrice)} บาท` : '');
+        // L9: วันที่ตั้งต้น = วันนี้ตามเวลาไทย (toISOString เป็น UTC — ก่อน 07:00 จะได้เมื่อวาน)
+        document.getElementById('placeDate').value = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+        document.getElementById('placeAssetAcct').value = a.assetAccountId || '';
+        document.getElementById('placeDepExp').value = '';
+        document.getElementById('placeAccum').value = '';
+        document.getElementById('placeSalvage').value = '0';
+        Layout.closeModal('detailModal');
+        Layout.openModal('placeModal');
+      },
+      async confirmPlaceInService() {
+        const api = Layout.api(); if (!api || !this._placeAssetId) return;
+        const body = {
+          availableForUseDate: document.getElementById('placeDate').value,
+          assetAccountId: document.getElementById('placeAssetAcct').value || null,
+          usefulLifeMonths: parseInt(document.getElementById('placeLife').value || '0', 10),
+          depreciationMethod: document.getElementById('placeMethod').value,
+          salvageValue: Number(document.getElementById('placeSalvage').value || 0),
+          depreciationExpenseAccountId: document.getElementById('placeDepExp').value || null,
+          accumulatedDepreciationAccountId: document.getElementById('placeAccum').value || null,
+        };
+        if (!body.availableForUseDate || !body.assetAccountId) { Layout.toast('ระบุวันที่พร้อมใช้งานและผังสินทรัพย์', 'warning'); return; }
+        try {
+          const res = await api.placeAssetInService(this._placeAssetId, body);
+          Layout.closeModal('placeModal');
+          Layout.toast(res?.message || 'โอนแล้ว', 'success', 8000);
+          await this.load();
+          await this.viewDetail(this._placeAssetId);
+        } catch (e) { Layout.toast(e.message || 'โอนไม่สำเร็จ', 'error', 10000); }
       },
       showDepHistory() {
         document.getElementById('btnDepHist').className = 'btn btn-sm btn-secondary';

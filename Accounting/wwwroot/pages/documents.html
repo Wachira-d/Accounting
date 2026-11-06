@@ -2694,7 +2694,8 @@
         if (!buySide.includes(d.documentType)) return false;
         // prefix 12 เป็นแค่ตัวกรองราคาถูกก่อนยิง API — บรรทัดไหน “เข้าข่ายจริง” เซิร์ฟเวอร์ตัดสิน
         // (ตัวจำแนกเดียวกับตอนอนุมัติ: 12110 เงินให้กู้/12410 รอตัดจ่าย ไม่ใช่สินทรัพย์ถาวร)
-        return (d.lines || []).some(l => String(l.accountCode || '').startsWith('12'));
+        // รอบ 249: ใบมัดจำ (118xx) ก็เป็นต้นทุนของสินทรัพย์หลายใบได้ — เซิร์ฟเวอร์ตัดสินว่าบรรทัดไหนผูกได้ (AssetCostSourceRules)
+        return (d.lines || []).some(l => String(l.accountCode || '').startsWith('12') || String(l.accountCode || '').startsWith('118'));
       },
 
       /** แผง "สินทรัพย์ถาวร" บนหน้ารายละเอียดเอกสาร
@@ -2719,24 +2720,37 @@
           return;
         }
         if (!st) return;
-        const assetLines = (st.lines || []).filter(l => l.isAssetAccount);
+        // รอบ 249: บรรทัดที่เป็นต้นทุนของสินทรัพย์หลายใบได้/ผูกอยู่ (มัดจำ 118xx · งานระหว่างก่อสร้าง) แสดงด้วย — ตัดสินโดยเซิร์ฟเวอร์
+        const isCostLine = (l) => l.isCostSourceEligible || (l.links || []).length > 0;
+        const assetLines = (st.lines || []).filter(l => l.isAssetAccount || isCostLine(l));
         const list = st.assets || [];
         // เซิร์ฟเวอร์บอกว่าไม่มีบรรทัดที่เข้าข่าย (เช่น 12410 รอตัดจ่าย) และไม่มีทะเบียน → ไม่วาดอะไร
         if (!assetLines.length && !list.length) { host.innerHTML = ''; return; }
         const approved = !!st.isIssued;
-        const missing = assetLines.filter(l => !l.assetId && !l.isAuxiliary);
+        const missing = assetLines.filter(l => l.isAssetAccount && !l.assetId && !l.isAuxiliary && !(l.links || []).length);
         const esc = (v) => this.escapeHtml(v ?? '');
+
+        // รอบ 249: ของชิ้นเดียวหลายใบ — ผูกบรรทัดเข้ากับสินทรัพย์ (ระหว่างจัดหา) ที่หน้าทะเบียนสินทรัพย์
+        const multiCell = (l) => {
+          const links = (l.links || []).map(k => `<a href="/pages/fixed-assets.html?assetId=${esc(k.assetId)}" style="color:var(--primary);font-size:11px">🧩 ${esc(k.assetCode)} ${Layout.money(k.amount)}${k.isCapitalized ? ' ✅' : (k.assetIsUnderAcquisition ? ' 🚧' : '')}</a>`).join('<br>');
+          const actions = approved && l.isCostSourceEligible
+            ? `<div style="margin-top:2px"><a class="btn btn-sm btn-ghost" style="font-size:11px" href="/pages/fixed-assets.html?linkLine=${encodeURIComponent(l.lineId)}&doc=${encodeURIComponent(docId)}" title="ใบมัดจำ/ใบงวด/ใบสุดท้ายของของชิ้นเดียวกัน — รวมเป็นสินทรัพย์ตัวเดียว (เหลือผูกได้ ${Layout.money(l.remainingToLink)})">🔗 ผูกเข้าสินทรัพย์…</a></div>`
+            : '';
+          const why = !l.isCostSourceEligible && l.costSourceProblem && !(l.links || []).length && !l.assetId
+            ? `<div style="font-size:10px;color:#94a3b8" title="${esc(l.costSourceProblem)}">ผูกหลายใบไม่ได้ (ชี้เพื่อดูเหตุ)</div>` : '';
+          return links + actions + why;
+        };
 
         const lineRows = assetLines.map(l => `<tr>
             <td>${esc(l.description)}${l.isAuxiliary ? ' <span style="font-size:10px;color:#64748b">(ค่าประกอบ — เฉลี่ยเข้าสินทรัพย์หลัก)</span>' : ''}</td>
             <td style="font-family:ui-monospace,monospace">${esc(l.accountCode)}</td>
             <td class="text-right">${Layout.money(l.amount)}</td>
-            <td>${l.assetId
+            <td>${(l.links || []).length || !l.isAssetAccount ? multiCell(l) : l.assetId
               ? `<a class="btn btn-sm btn-ghost" href="/pages/fixed-assets.html?assetId=${esc(l.assetId)}">${esc(l.assetCode)}${l.assetNeedsReview ? ' ⚠️ รอตรวจ' : ''} →</a>`
               : l.isAuxiliary ? '<span style="color:#94a3b8;font-size:12px">—</span>'
               : approved
                 ? `<button class="btn btn-sm btn-warning" onclick="Page.registerAssetFromLine('${Layout.jsArg(docId)}','${Layout.jsArg(l.lineId)}')">➕ ขึ้นทะเบียนจากบรรทัดนี้</button>`
-                : '<span style="color:#92400e;font-size:12px">จะสร้างให้เมื่ออนุมัติ</span>'}</td>
+                : '<span style="color:#92400e;font-size:12px">จะสร้างให้เมื่ออนุมัติ</span>'}${(l.links || []).length || !l.isAssetAccount ? '' : multiCell(l)}</td>
           </tr>`).join('');
 
         const pending = list.filter(a => a.needsReview).length;

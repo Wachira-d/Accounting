@@ -196,7 +196,12 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         if (Refusal(d) is { } no) return new PayLinkResult(null, null, Array.Empty<string>(), no);
         var (all, companyDefault, unavailable) = await ChannelsAsync(companyId, ct);
         if (unavailable != null) return new PayLinkResult(null, null, Array.Empty<string>(), unavailable);
-        var allowed = DocumentPayLinkPolicy.Allowed(all, scheduleChannels, companyDefault);
+        // รอบ 248 (AUTOPILOT §5.1): ช่องทาง = ตารางส่ง › ผู้ติดต่อ › ค่าบริษัท (ตัวต่อชั้นเดียว AutopilotSettingsResolver) — ผู้ติดต่อไม่ได้ตั้ง = เท่าเดิม
+        var contactLayer = await ContactPayLayerAsync(companyId, d.ContactId, all, ct);
+        var choice = AutopilotSettingsResolver.Resolve(
+            scheduleChannels is { Count: > 0 } ? new AutopilotSettingsResolver.Layer(null, scheduleChannels.ToList()) : null,
+            null, contactLayer, companyAttach: true, companyDefault);
+        var allowed = DocumentPayLinkPolicy.Allowed(all, choice.Channels, null);
         if (DocumentPayLinkPolicy.OnlineOnly(allowed).Count == 0)
             return new PayLinkResult(null, null, allowed, "ช่องทางที่เลือกไม่มีช่องทางออนไลน์ที่บริษัทเปิดอยู่ — ตรวจช่องทางในตารางส่งเอกสาร/ค่าตั้งส่งเอกสารอัตโนมัติ");
 
@@ -245,11 +250,31 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         return new PayLinkResult(DocumentPayLinkPolicy.Url(origin, companyId, token), amounts, allowed, null);
     }
 
+    /// <summary>รอบ 248: ชั้นช่องทางรับเงินของผู้ติดต่อ (null = ไม่ได้ตั้ง — ตามบริษัท) · <paramref name="companyAvailable"/> null ⇒ อ่านเองเมื่อจำเป็น (โหมด Online) ·
+    /// กรองบริษัทเสมอ (tenant) · ผู้ติดต่อถูกลบก็ยังใช้ค่าที่ตั้งไว้ได้ (IgnoreQueryFilters แบบตัวอ่านผู้ซื้อของไฟล์นี้)</summary>
+    private async Task<AutopilotSettingsResolver.Layer?> ContactPayLayerAsync(Guid companyId, Guid contactId,
+        IReadOnlyList<string>? companyAvailable, CancellationToken ct)
+    {
+        var c = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(x => x.Id == contactId && x.CompanyId == companyId)
+            .Select(x => new { x.PaymentMode, x.PayLinkChannelsJson })
+            .FirstOrDefaultAsync(ct);
+        if (c == null || (c.PaymentMode == null && c.PayLinkChannelsJson == null)) return null;
+        var available = companyAvailable ?? DocumentPayLinkPolicy.CompanyAvailable(await CompanyFactsAsync(companyId, ct));
+        var layer = AutopilotSettingsResolver.FromMode(c.PaymentMode, DocumentPayLinkPolicy.ParseChannels(c.PayLinkChannelsJson), available);
+        return layer.Attach == null && layer.Channels == null ? null : layer;
+    }
+
     public async Task<PayLinkResult?> ForScheduledEmailAsync(EmailScheduleRule rule, Document doc, CancellationToken ct = default)
     {
         var companyAttach = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == doc.CompanyId)
             .Select(s => (bool?)s.PayLinkDefaultEnabled).FirstOrDefaultAsync(ct) ?? false;
-        if (!(rule.AttachPayLink ?? companyAttach)) return null;
+        // รอบ 248: แนบไหม = ตารางส่ง (รวมชั้นรายการประจำที่ EmailScheduleService เติมไว้) › ผู้ติดต่อ › บริษัท — ตัวต่อชั้นเดียว
+        var contactLayer = await ContactPayLayerAsync(doc.CompanyId, doc.ContactId, null, ct);
+        var attach = AutopilotSettingsResolver.Resolve(
+            new AutopilotSettingsResolver.Layer(rule.AttachPayLink, DocumentPayLinkPolicy.ParseChannels(rule.PayLinkChannelsJson)),
+            null, contactLayer, companyAttach, null).Attach;
+        if (!attach) return null;
         var r = await EnsureLinkAsync(doc.CompanyId, doc.Id, DocumentPayLinkPolicy.ParseChannels(rule.PayLinkChannelsJson), ct);
         if (!r.Ok)
         {

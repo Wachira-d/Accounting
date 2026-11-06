@@ -6567,13 +6567,39 @@ public partial class DocumentService : IDocumentService
         return await CollectApprovalWarningsAsync(companyId, doc);
     }
 
+    /// <summary>รอบ 248 (ทดลองรันรายการประจำ): คำเตือนก่อนอนุมัติของ <b>ใบจำลองที่ไม่ได้อยู่ในฐานข้อมูล</b> — ตัวรวบรวมเดียวกับการอนุมัติจริง
+    /// (<c>CollectApprovalWarningsAsync</c> อ่านอย่างเดียว) · ไม่บันทึก ไม่เรียก AI · ใบที่ถูกติดตามโดย context ⇒ ปฏิเสธ (กันเผลอบันทึกใบจำลอง)</summary>
+    public async Task<IReadOnlyList<string>> PreviewApprovalWarningsForUnsavedAsync(Guid companyId, Document draft)
+    {
+        if (draft.CompanyId != companyId)
+            throw new BusinessRuleException("ใบจำลองไม่ใช่ของบริษัทนี้", Accounting.Helpers.AutopilotReadiness.RuleCode);
+        if (_db.Entry(draft).State != EntityState.Detached)
+            throw new BusinessRuleException("ใบจำลองต้องไม่ถูกติดตามโดยฐานข้อมูล (ทดลองรันห้ามบันทึก)", Accounting.Helpers.AutopilotReadiness.RuleCode);
+        // ตัวรวบรวมคำเตือนบางเส้นทิ้งร่องรอยลง context (เช่น RecordWhtSilence → AddChainedAuditLog) — ใบจำลองต้องไม่ทิ้งอะไรไว้เลย:
+        // แถวที่ "เพิ่งถูกเพิ่ม" ระหว่างการถามถูกถอดออกจาก context ก่อนคืน (กันคำสั่ง SaveChanges ถัดไปของคำขอเดียวกันบันทึกตาม)
+        var addedBefore = _db.ChangeTracker.Entries().Where(e => e.State == EntityState.Added)
+            .Select(e => e.Entity).ToHashSet(ReferenceEqualityComparer.Instance);
+        try
+        {
+            return await CollectApprovalWarningsAsync(companyId, draft, noAi: true);
+        }
+        finally
+        {
+            foreach (var e in _db.ChangeTracker.Entries().Where(e => e.State == EntityState.Added && !addedBefore.Contains(e.Entity)).ToList())
+                e.State = EntityState.Detached;
+        }
+    }
+
     /// <param name="ackSource">ใคร "ผ่าน" คำเตือน — ตัวตัดสิน Helpers/ApprovalAcknowledgement (ห้ามระบบประทับรับทราบแทนคน)</param>
     /// <param name="withAiHints">เสริมคำเตือนด้วย AI ตอนหยุด — false สำหรับทางเข้าที่ไม่มีหน้าจอแสดงคำแนะนำ (API) ⇒ ไม่เรียก AI
     /// แล้วโยนคำตอบทิ้ง (กฎเหล็ก #1)</param>
     /// <param name="passedWarnings">ฝ่ายค้านรอบ 201 รอบสาม P2-2: ที่รับคำเตือนที่ "ผ่าน" ในการอนุมัติครั้งนี้ (ชุดเดียวกับที่ลงร่องรอย) — ทางเข้าที่มีคนอยู่หน้าจอ/แชท
     /// แต่ใช้แหล่ง Unattended (OCR สร้าง+อนุมัติ · LINE · จ่ายใบเบิก) เอาไปคืนให้คนเห็นผ่าน <c>Section65TerApprovalWarnings.PassedNotice</c> · null = ไม่เก็บ</param>
+    /// <param name="autoApprovePolicy">รอบ 248: นโยบายอนุมัติข้ามคำเตือนที่เจ้าของตั้ง (ใบประจำ) — มีผลเฉพาะแหล่ง <c>UnattendedWithPolicy</c> ·
+    /// null = ไม่มีนโยบาย (เหมือน Unattended) · ตัวตัดสินเดียว <c>ApprovalAcknowledgement.Unacknowledged(source, warnings, policy)</c></param>
     public async Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy,
-        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints, ICollection<string>? passedWarnings = null)
+        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints, ICollection<string>? passedWarnings = null,
+        Accounting.Helpers.AutoApprovePolicy? autoApprovePolicy = null)
     {
         // ด่านรอง (งบประมาณ Block · วางบิลเกิน · วงเงินเครดิต) ยอมให้ "ผู้ใช้/ระบบที่ส่งผ่านคำเตือน" override ได้ตามเดิม
         // แต่ API ไม่ได้รับทราบอะไรนอกจาก [Σ-GAP] ⇒ ไม่ override ด่านพวกนั้น
@@ -6651,7 +6677,7 @@ public partial class DocumentService : IDocumentService
         // typed exception the controller turns into a 422 with the list
         // so the UI can prompt for explicit confirmation.
         var warnings = await CollectApprovalWarningsAsync(companyId, doc);
-        var unacknowledged = Accounting.Helpers.ApprovalAcknowledgement.Unacknowledged(ackSource, warnings);
+        var unacknowledged = Accounting.Helpers.ApprovalAcknowledgement.Unacknowledged(ackSource, warnings, autoApprovePolicy);
         if (unacknowledged.Count > 0)
         {
             warnings = unacknowledged.ToList();
@@ -6717,7 +6743,15 @@ public partial class DocumentService : IDocumentService
             // (PdfGenerationService.SanitizeNotesForPrint) ⇒ คำเตือนภายในจะไป
             // โผล่บนใบที่ส่งให้ลูกค้า
             // รอบ 193 (ฝ่ายค้าน C5): ข้อความ/รหัสกฎแยก "ผู้ใช้รับทราบ" ออกจาก "ระบบ workflow/API ส่งผ่าน" — Helpers/ApprovalAcknowledgement
+            // รอบ 248: คำเตือนที่ "นโยบายของเจ้าของ" ปล่อย (ไม่ใช่ชุดที่ผ่านโดยไม่มีคนอยู่แล้ว) — บอกบนใบว่าปล่อยตามนโยบายของใคร ระดับไหน
+            var policyReleased = ackSource == Accounting.Helpers.ApprovalAckSource.UnattendedWithPolicy && autoApprovePolicy != null
+                ? Accounting.Helpers.AutoApprovePolicy.Released(autoApprovePolicy, warnings)
+                : (IReadOnlyList<string>)Array.Empty<string>();
+            // ฝ่ายค้าน MED-3: นโยบายไม่ได้ปล่อยอะไรจริง ⇒ ร่องรอยต้องเป็นของ Unattended เดิม (APPROVE-UNATTENDED-PASSED-S65) ไม่ใช่ "ตามนโยบายเจ้าของ"
+            ackSource = Accounting.Helpers.ApprovalAcknowledgement.EffectiveSource(ackSource, policyReleased.Count);
             var ackNote = Accounting.Helpers.ApprovalAcknowledgement.Note(ackSource, warnings, approvedBy, DateTime.UtcNow);
+            if (policyReleased.Count > 0)
+                ackNote += "\n" + Accounting.Helpers.AutoApprovePolicy.NoteLine(autoApprovePolicy!, policyReleased);
             AppendInternalNote(doc, ackNote);
 
             _db.AddChainedAuditLog(new AuditLog
@@ -6738,6 +6772,11 @@ public partial class DocumentService : IDocumentService
                     ruleCode = Accounting.Helpers.ApprovalAcknowledgement.RuleCode(ackSource),
                     // ฝ่ายค้านรอบ 201 รอบสาม P2-4 (กฎ M): อ้างมาตราของชุดคำเตือนที่ผ่านจริง — เดิมตายตัว "RD-86 / RD-82/5(1)" แม้ทางเข้าอัตโนมัติ/API ผ่านได้แค่ชุด §65 ตรี
                     legalReference = Accounting.Helpers.ApprovalAcknowledgement.LegalReference(warnings),
+                    // รอบ 248 (หลักการ #10): นโยบายที่ปล่อย — รายการคำเตือน + ระดับ + ผู้ตั้ง/เมื่อไร (ว่าง = ไม่ได้ใช้นโยบาย)
+                    policyReleased,
+                    policyScope = policyReleased.Count > 0 ? autoApprovePolicy!.Scope : null,
+                    policySetBy = policyReleased.Count > 0 ? autoApprovePolicy!.SetBy : null,
+                    policySetAt = policyReleased.Count > 0 ? autoApprovePolicy!.SetAt : null,
                 }),
             });
             if (passedWarnings != null)
@@ -8281,6 +8320,9 @@ public partial class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"ห้ามย้ายเข้าบัญชีคุม {newAccount.AccountCode} {newAccount.AccountName} — " +
                 "บัญชีภาษี/ลูกหนี้/เจ้าหนี้/มัดจำ ระบบลงให้เองตามเอกสาร");
+        // รอบ 249: บรรทัดที่ผูกเป็นต้นทุนของสินทรัพย์หลายใบ — แถวผูกอ้างผังนี้ (ขา Cr ของ JE โอน) ⇒ ปลดก่อนแล้วจึงแก้ผัง
+        if (await FixedAssetService.CostSourceLineChangeBlockAsync(_db, companyId, line.Id) is string assetLinkBlock)
+            throw new BusinessRuleException(assetLinkBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
 
         // ย้ายออกจากผังสินทรัพย์ (12xxx → ค่าใช้จ่าย) = "ของชิ้นนี้ไม่ใช่สินทรัพย์" ⇒ ทะเบียนที่ขึ้นจากบรรทัดนี้
         // ต้องออกไปพร้อมกันในธุรกรรมเดียว (Helpers/AssetRemovalGlCheck) — เดิมย้ายผังแล้วทะเบียนค้าง
@@ -8844,6 +8886,9 @@ public partial class DocumentService : IDocumentService
         if (doc.IsForeignService == toForeignService)
             throw new InvalidOperationException(
                 $"เอกสารนี้{(toForeignService ? "เป็นบริการต่างประเทศ" : "ไม่ได้เป็นบริการต่างประเทศ")}อยู่แล้ว");
+        // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน H2): สลับบริการต่างประเทศ = กลับ/ลง JE ใหม่ ⇒ ยอดที่ผูกเป็นต้นทุนสินทรัพย์ไม่ตรง GL
+        if (await FixedAssetService.CostSourceDocumentChangeBlockAsync(_db, companyId, documentId, doc.DocumentNumber, "สลับบริการต่างประเทศของ") is string fsAssetBlock)
+            throw new BusinessRuleException(fsAssetBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
 
         // รอบ 203 ทีม F3 (คำตัดสินข้อ 134): ปลดธงใบที่นำส่ง ภ.พ.36/รับรู้ภาษีซื้อแล้ว = กลับ 21912 ที่จ่ายสรรพากรไปแล้ว ⇒ บล็อกพร้อมทางไปต่อ
         if (!toForeignService
@@ -9102,6 +9147,9 @@ public partial class DocumentService : IDocumentService
 
         if (doc.DocumentType is not (DocumentType.CreditNote or DocumentType.DebitNote))
             throw new InvalidOperationException("ย้ายฝั่งได้เฉพาะใบลดหนี้/ใบเพิ่มหนี้");
+        // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน H2): ย้ายฝั่ง = ลง JE ของใบใหม่ ⇒ ยอดที่ผูกเป็นต้นทุนสินทรัพย์ไม่ตรง GL
+        if (await FixedAssetService.CostSourceDocumentChangeBlockAsync(_db, companyId, documentId, doc.DocumentNumber, "ย้ายฝั่ง") is string cnDnAssetBlock)
+            throw new BusinessRuleException(cnDnAssetBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
 
         if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
                        or DocumentStatus.Rejected or DocumentStatus.WaitingApproval)
@@ -9835,6 +9883,11 @@ public partial class DocumentService : IDocumentService
                 .TryGetValue(documentId, out var childBlock))
             throw new InvalidOperationException(childBlock);
 
+        // รอบ 249 (ASSET_MULTI_DOCUMENT_DESIGN §2 ข้อ 7): ใบนี้เป็นต้นทุนของสินทรัพย์หลายใบที่ "โอนเป็นสินทรัพย์พร้อมใช้" แล้ว ⇒ 409 + ทางไปต่อ (ใบลดหนี้) ·
+        // แถวที่ยังระหว่างจัดหาปลดในธุรกรรมของการยกเลิกด้านล่าง (ReleaseCostSourcesForVoidAsync)
+        if (await FixedAssetService.CostSourceVoidBlockAsync(_db, companyId, documentId, doc.DocumentNumber) is string assetCostBlock)
+            throw new BusinessRuleException(assetCostBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
+
         // ── วันที่ลงรายการกลับบัญชี ──
         // default = **วันที่ของเอกสารเอง** ไม่ใช่วันที่กดยกเลิก: ยกเลิกใบของเดือน
         // ก่อนแล้วรายการกลับไปโผล่เดือนปัจจุบัน ทำให้ผิด **สองเดือนพร้อมกัน**
@@ -9855,6 +9908,8 @@ public partial class DocumentService : IDocumentService
             await using var transaction = await _db.Database.BeginTransactionAsync();
             try
             {
+                // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน M2): ใบที่ผูกเป็นต้นทุนสินทรัพย์ ⇒ ถือคีย์ผู้เขียนต้นทุนก่อนล็อกแถวเอกสาร (ลำดับเดียวกับผูก/โอน/ปลด)
+                await FixedAssetService.LockCostSourcesIfLinkedAsync(_db, companyId, new[] { documentId });
                 // Row lock + re-read สถานะใต้ล็อก — กัน double-void race (2 คลิกพร้อมกัน
                 // → reverse JE ซ้ำ). ถ้าอีก request ยกเลิกไปแล้ว → no-op (idempotent).
                 await _db.Database.ExecuteSqlRawAsync(
@@ -10237,6 +10292,9 @@ public partial class DocumentService : IDocumentService
                     }
                 }
 
+                // 7-asset0) รอบ 249: ปลดใบนี้ออกจากสินทรัพย์หลายใบที่ยังระหว่างจัดหา + คิดต้นทุนสะสมใหม่ (แถวยังอยู่เป็นประวัติ · audit chain)
+                await FixedAssetService.ReleaseCostSourcesForVoidAsync(_db, companyId, documentId, doc.DocumentNumber);
+
                 // 7-asset) Cascade FixedAsset ที่ AutoRegister มาจาก doc นี้:
                 //   • ยังไม่ยืนยัน (NeedsReview=true) + ไม่มี posted dep → ลบ
                 //     เลย (รวม projected dep) — ถือเป็น orphan placeholder
@@ -10249,8 +10307,15 @@ public partial class DocumentService : IDocumentService
                 var ourAssets = await _db.FixedAssets
                     .Where(a => a.CompanyId == companyId && a.SourceDocumentId == documentId)
                     .ToListAsync();
+                // ฝ่ายค้าน H1: ร่างที่ถูกผูกเอกสารต้นทุนอื่นเข้าไปแล้ว ลบไม่ได้ (FK Restrict + ประวัติการผูก) — คงไว้ ผู้ใช้จัดการที่หน้าทะเบียน
+                var voidAssetsWithSources = await FixedAssetService.AssetIdsWithCostSourcesAsync(_db, companyId, ourAssets.Select(a => a.Id).ToList());
                 foreach (var asset in ourAssets)
                 {
+                    if (voidAssetsWithSources.Contains(asset.Id))
+                    {
+                        _logger.LogWarning("Doc {Doc} void: asset {Code} มีเอกสารต้นทุนผูกอยู่ — ไม่ลบ", documentId, asset.AssetCode);
+                        continue;
+                    }
                     if (!asset.NeedsReview)
                     {
                         _logger.LogWarning(
@@ -10895,6 +10960,8 @@ public partial class DocumentService : IDocumentService
             // ฝ่ายค้านรอบ 242 S1 (TOCTOU): ล็อกแถวเอกสารทุกใบในแผน แล้วสร้างแผน + ตัดสินซ้ำใต้ล็อก — แผนเปลี่ยน (ใบลูกเพิ่ม · ถูกอนุมัติ/ยกเลิก ·
             // ต่างจากแผนที่ผู้ใช้เห็น) ⇒ 409 ไม่ลบอะไร
             var planIds = verdict.Nodes.Select(v => v.Node.Id).OrderBy(id => id).ToArray();
+            // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน M2): คีย์ผู้เขียนต้นทุนสินทรัพย์ก่อนล็อกแถวเอกสาร
+            await FixedAssetService.LockCostSourcesIfLinkedAsync(_db, companyId, planIds);
             await _db.Database.ExecuteSqlRawAsync(
                 @"SELECT 1 FROM ""Documents"" WHERE ""CompanyId"" = {0} AND ""Id"" = ANY({1}) ORDER BY ""Id"" FOR UPDATE",
                 companyId, planIds);
@@ -11070,6 +11137,8 @@ public partial class DocumentService : IDocumentService
                 select new { a.DocumentId, PaymentDoc = p.DocumentId })
             .ToListAsync();
 
+        // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน H1): ใบที่โอนเป็นต้นทุนสินทรัพย์แล้ว — ลบแล้ว JE ต้นทางหาย แต่ JE โอนยังเครดิตผังของใบนี้ ⇒ ผังติดลบ
+        var assetCapitalizedDocs = await FixedAssetService.CapitalizedSourceDocumentIdsAsync(_db, companyId, raw.Select(x => x.Id).ToList());
         var result = new List<Accounting.Helpers.PurgeNodeFacts>(raw.Count);
         foreach (var r in raw)
         {
@@ -11090,6 +11159,7 @@ public partial class DocumentService : IDocumentService
                 HasLivePayment = livePayments.Any(p => p.DocumentId == r.Id),
                 PosLinked = posDocs.Contains(r.Id),
                 WhtCreditUsed = whtUsedDocs.Contains(r.Id),
+                AssetCostCapitalized = assetCapitalizedDocs.Contains(r.Id),
                 ReplacesLiveDocumentId = replaces != null && liveTargets.Contains(replaces.Target) ? replaces.Target : null,
                 ReplacedByPointers = replacedBy.Where(x => x.Target == r.Id).Select(x => x.Id).ToList(),
                 AllocationCounterparts = counterparts,
@@ -11115,6 +11185,13 @@ public partial class DocumentService : IDocumentService
             doc.DocumentNumber, doc.DocumentType, doc.Status,
             doc.TotalAmount, doc.ContactId, doc.DocumentDate
         });
+
+        // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน H1): ใบที่โอนเป็นต้นทุนสินทรัพย์แล้ว ลบถาวรไม่ได้ (ตัวตัดสินลบถาวรบล็อกแล้ว — กันซ้ำที่นี่) ·
+        // แถวที่ยังถือไว้ ⇒ ปลดในธุรกรรมเดียวกัน (คิดต้นทุนสะสมใหม่ · แถวยังอยู่เป็นประวัติ)
+        if (await FixedAssetService.CostSourceVoidBlockAsync(_db, companyId, documentId, doc.DocumentNumber, "ลบถาวร") is string purgeAssetBlock)
+            throw new BusinessRuleException(purgeAssetBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
+        if (await FixedAssetService.ReleaseCostSourcesForVoidAsync(_db, companyId, documentId, doc.DocumentNumber) > 0)
+            await _db.SaveChangesAsync();
 
         {
             // รอบ 194 R3-2 — ใบมัดจำที่การลบนี้จะคืนยอด (ตัวรวบรวมเดียวกับ void) ถือคีย์ล็อกยอดตัวเดียวกับปุ่มรับรู้/ริบ + ล็อกแถว + ค่าล่าสุด
@@ -11232,11 +11309,13 @@ public partial class DocumentService : IDocumentService
             var purgeAssets = await _db.FixedAssets
                 .Where(a => a.CompanyId == companyId && a.SourceDocumentId == documentId)
                 .ToListAsync();
+            var purgeAssetsWithSources = await FixedAssetService.AssetIdsWithCostSourcesAsync(_db, companyId, purgeAssets.Select(a => a.Id).ToList());
             foreach (var asset in purgeAssets)
             {
                 var hasPostedDep = await _db.AssetDepreciations
                     .AnyAsync(d => d.FixedAssetId == asset.Id && d.IsPosted && !d.IsDeleted);
-                if (asset.NeedsReview && !hasPostedDep)
+                // ฝ่ายค้าน H1: ร่างที่มีแถวต้นทุนผูกอยู่ ลบไม่ได้ (FK Restrict ⇒ 500) — ไปทางคงไว้ + ตัด link
+                if (asset.NeedsReview && !hasPostedDep && !purgeAssetsWithSources.Contains(asset.Id))
                 {
                     var deps = await _db.AssetDepreciations
                         .Where(d => d.FixedAssetId == asset.Id).ToListAsync();
@@ -14532,6 +14611,41 @@ public partial class DocumentService : IDocumentService
             ?? await FindAccountAsync(companyId, "4901");
     }
 
+    /// <summary>รอบ 249 — ข้อเท็จจริงของข้อความแจ้งเตือนรับ/จ่ายชำระ (ชื่อคู่ค้า · คำอธิบายบรรทัด · ฝั่งเงิน) — อ่านอย่างเดียว · กรอง CompanyId ทุกคำค้น ·
+    /// เรียกหลัง commit: อ่านชื่อ/บรรทัดไม่สำเร็จ ⇒ ข้อความยังส่งได้โดยไม่มีบรรทัดคู่ค้า/รายการ (การชำระบันทึกแล้ว — ไม่โยนกลับผู้ใช้) และ log Warning</summary>
+    private async Task<Accounting.Helpers.PaymentNotificationFacts> LoadPaymentNotificationFactsAsync(Guid companyId, Document doc, Payment payment)
+    {
+        var isInflow = await IsCashInflowDocAsync(companyId, doc);
+        string? contactName = null;
+        List<string?> lines = new();
+        try
+        {
+            contactName = await _db.Contacts.AsNoTracking()
+                .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
+                .Select(c => c.Name)
+                .FirstOrDefaultAsync();
+            lines = await _db.DocumentLines.AsNoTracking()
+                .Where(l => l.DocumentId == doc.Id && l.Document.CompanyId == companyId && !l.IsDeleted)
+                .OrderBy(l => l.LineOrder)
+                .Select(l => (string?)l.Description)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "แจ้งเตือนชำระเงิน {DocumentNumber}: อ่านชื่อคู่ค้า/รายการไม่สำเร็จ — ส่งข้อความแบบไม่มีบรรทัดคู่ค้า/รายการ", doc.DocumentNumber);
+        }
+        return new Accounting.Helpers.PaymentNotificationFacts(
+            IsInflow: isInflow,
+            DocumentType: doc.DocumentType,
+            DocumentNumber: doc.DocumentNumber,
+            ContactName: contactName,
+            LineDescriptions: lines,
+            Amount: payment.Amount,
+            Currency: doc.Currency,
+            Method: payment.PaymentMethod,
+            BalanceDue: doc.BalanceDue);
+    }
+
     /// <summary>เงินของการชำระเอกสารนี้ "เข้า" (ลูกค้าจ่ายเรา) หรือ "ออก"
     /// (เราจ่าย vendor) — DebitNote ต้องดูฝั่งจากเอกสารต้นทาง: ฝั่งซื้อ
     /// (source = PI/Expense/CIL) คือเงินออก ไม่ใช่เงินเข้า</summary>
@@ -15255,15 +15369,21 @@ public partial class DocumentService : IDocumentService
                 await _issuedHooks.RunAsync(companyId, issuedSettlementReceipt);
 
             // รอบ 232 (232-Notify): "💵 รับชำระเงินแล้ว" เดิมประกาศกลุ่ม LINE แล้วถอยไปกลุ่มกลางของแพลตฟอร์ม ⇒ เดินเครื่องแจ้งเตือนกลาง
-            // (document.payment_received · ค่าตั้งของบริษัท · ไม่โยนกลับผู้เรียก — engine กลืนเองและ log)
+            // (ค่าตั้งของบริษัท · ไม่โยนกลับผู้เรียก — engine กลืนเองและ log)
+            // รอบ 249 (เจ้าของรายงาน 2026-11-06): จ่ายชำระ PI เคยขึ้น "💵 รับชำระเงินแล้ว" + ไม่บอกคู่ค้า/รายการ ⇒ ฝั่ง · คีย์ (payment_received/payment_made) ·
+            // หัวข้อ · เนื้อความ ตัดสินที่ Helpers/PaymentNotificationText ตัวเดียว · ฝั่งเงินใช้ IsCashInflowDocAsync ตัวเดียวกับยอดธนาคารข้างบน
             if (_notify != null)
-                await _notify.DispatchAsync(companyId, NotificationEvents.PaymentReceived, new NotificationContext
+            {
+                var payNote = Accounting.Helpers.PaymentNotificationText.Build(
+                    await LoadPaymentNotificationFactsAsync(companyId, doc, payment));
+                await _notify.DispatchAsync(companyId, payNote.EventKey, new NotificationContext
                 {
-                    Title = "💵 รับชำระเงินแล้ว",
-                    Message = $"📄 {doc.DocumentNumber}\n💰 {payment.Amount:N2} บาท",
+                    Title = payNote.Title,
+                    Message = payNote.Message,
                     ActionUrl = $"/pages/documents.html?id={doc.Id}",
                     EntityType = "Document", EntityId = doc.Id,
                 });
+            }
 
             // Webhooks — payment.received (always) + document.paid
             // (when BalanceDue is now zero). Both fire outside the
@@ -17212,7 +17332,8 @@ public partial class DocumentService : IDocumentService
         if (await GetReceivedViaGrnAccrualAccountAsync(companyId, doc) != null)
             return line.IsVatClaimable ? 0m : ToGlAmount(doc, line.VatAmount);
 
-        return ToGlAmount(doc, line.IsVatClaimable ? line.Amount : line.Amount + line.VatAmount);
+        // ตัวตั้งเดียวกับต้นทุนสินทรัพย์หลายใบ (รอบ 249 · Helpers/PurchaseLineGlAmount)
+        return ToGlAmount(doc, Accounting.Helpers.PurchaseLineGlAmount.Standalone(line.Amount, line.VatAmount, line.IsVatClaimable));
     }
 
     /// <summary>JE ย้ายภาษีขายถึงกำหนด (§78/1 · Dr 21913) ของใบนี้ที่ยังมีผล — อ่านจาก GL จริง (ห้ามเดาจากข้อความ) · คืนวันที่ของแต่ละ JE
@@ -21794,7 +21915,9 @@ public partial class DocumentService : IDocumentService
         }
     }
 
-    private async Task<List<string>> CollectApprovalWarningsAsync(Guid companyId, Document doc)
+    /// <param name="noAi">รอบ 248 (ฝ่ายค้าน MED-4): ใบจำลองของทดลองรัน/แผงความพร้อม — ห้ามถามชั้นเรียนรู้/AI (ไม่จ่าย token · ไม่เขียนแถว feedback)
+    /// ⇒ ใช้คำเตือนตามกฎ local อย่างเดียว (ทิศที่ปลอดภัยกว่า: เตือนไว้ก่อน)</param>
+    private async Task<List<string>> CollectApprovalWarningsAsync(Guid companyId, Document doc, bool noAi = false)
     {
         var warnings = new List<string>();
         var today = DateTime.UtcNow.Date;
@@ -22122,7 +22245,9 @@ public partial class DocumentService : IDocumentService
                             // (กฎเหล็ก #1) orchestrator ถาม local model ก่อนเสมอ แล้วค่อย
                             // ตกไปหา AI เมื่อนักเรียนไม่มั่นใจ · ปิด provider ทุกตัวแล้ว
                             // นักเรียนยังตอบได้
-                            var advice = await AdviseWhtApplicabilityAsync(companyId, doc, paidToContactThisYear);
+                            var advice = noAi
+                                ? new WhtAdvice(false, false, null, 0m, false, null)   // ทดลองรัน: ไม่ถาม AI — เตือนตามกฎ local
+                                : await AdviseWhtApplicabilityAsync(companyId, doc, paidToContactThisYear);
 
                             doc.WhtAdviceAiFeedbackId = advice.FeedbackId ?? doc.WhtAdviceAiFeedbackId;
                             doc.WhtAdviceAnswer = advice.Answer ?? doc.WhtAdviceAnswer;
@@ -22646,7 +22771,8 @@ public partial class DocumentService : IDocumentService
             if (overdue.Count > 0)
             {
                 var total = overdue.Sum(d => d.BalanceDue);
-                warnings.Add($"ผู้ติดต่อนี้ยังค้างชำระ {overdue.Count} ใบ รวม {total:N2} THB — ตรวจวงเงินเครดิตก่อนอนุมัติเอกสารใหม่");
+                // รอบ 248: ป้ายรหัส [AR-OVERDUE] — นโยบายอนุมัติของใบประจำ (AutoApprovePolicy) ปล่อยได้ด้วยป้าย ไม่ใช่ข้อความไทย
+                warnings.Add(Accounting.Helpers.ArOverdueApprovalWarning.Message(overdue.Count, total));
             }
         }
 

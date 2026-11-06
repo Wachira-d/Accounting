@@ -142,6 +142,11 @@ public static class AdvisoryLockKey
     /// ด่าน <c>IsPosted</c> พร้อมกันทั้งคู่แล้ว <b>บวก AccumulatedDepreciation
     /// สองเท่า</b> พร้อม JE คนละใบ (ผลตรวจทีม E · E-04)</para></summary>
     public const string AssetDepreciation = "asset-dep";
+
+    /// <summary>ผู้เขียนต้นทุนของสินทรัพย์หลายใบ (<c>FixedAssetCostSources</c> · รอบ 249 สินทรัพย์หลายใบ) — part = "" ต่อบริษัท ·
+    /// ฝ่ายค้าน 369bc403 M2: สร้าง/ผูก/ปลด/โอน/ยกเลิกใบ/ลบถาวร ล็อกแถวเอกสารกับแถวสินทรัพย์คนละลำดับ ⇒ deadlock ·
+    /// ทุกเส้นถือคีย์นี้ <b>ก่อน</b> ล็อกแถวใด ๆ (ลำดับเดียว: คีย์นี้ → เอกสาร → สินทรัพย์)</summary>
+    public const string AssetCostSource = "asset-cost-src";
     /// <summary>เลขการจองที่พัก — part = prefix รวมงวด</summary>
     public const string ReservationSequence = "resv-seq";
     /// <summary>บันทึก "คืนเงินแขกแล้ว" ของการจองที่พัก — part = id การจอง (รอบ 193 ฝ่ายค้าน: สองคำขอพร้อมกันผ่านด่านทั้งคู่

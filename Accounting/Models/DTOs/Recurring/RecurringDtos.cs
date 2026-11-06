@@ -17,7 +17,10 @@ public record CreateRecurringTransactionRequest(
     int NotifyDaysBefore = 1,
     bool AutoApprove = false,
     // ส่งอีเมลให้ผู้ติดต่อทันทีเมื่อสร้างเอกสาร (ใช้ SMTP/อีเมลของบริษัทเอง)
-    bool AutoSendEmail = false);
+    bool AutoSendEmail = false,
+    // รอบ 248: โหมดรับเงินต่อรายการ (ชื่อใน AutopilotSettingsResolver.Modes · null/Inherit = ตามผู้ติดต่อ › บริษัท) + ช่องทางย่อย (ชื่อ enum)
+    string? PaymentMode = null,
+    List<string>? PayLinkChannels = null);
 
 public record UpdateRecurringTransactionRequest(
     string? Name,
@@ -35,7 +38,11 @@ public record UpdateRecurringTransactionRequest(
     bool? AutoSendEmail = null,
     /// <summary>เดิมไม่มีในสัญญา ทั้งที่ฟอร์มแก้ไขเปิดช่อง "วันเริ่มต้น *" ให้แก้
     /// ⇒ แก้แล้วหายเงียบ. การแก้วันเริ่ม/ความถี่ต้อง recompute กำหนดรันถัดไปด้วย</summary>
-    DateTime? StartDate = null);
+    DateTime? StartDate = null,
+    /// <summary>รอบ 248: null = ไม่แก้ · "" หรือ "Inherit" = ล้าง (ตามผู้ติดต่อ › บริษัท)</summary>
+    string? PaymentMode = null,
+    /// <summary>รอบ 248: null = ไม่แก้ · [] = ล้าง (ทุกช่องตามโหมด)</summary>
+    List<string>? PayLinkChannels = null);
 
 public record RecurringTransactionResponse(
     Guid Id,
@@ -72,7 +79,64 @@ public record RecurringTransactionResponse(
     string? AutoSendEmailWarning = null,
     string? AutoSendEmailFixUrl = null,
     // คำเตือนหลังบันทึก (สร้าง/แก้ไข) — บันทึกสำเร็จแล้ว แต่มีเรื่องควรรู้
-    IReadOnlyList<string>? SaveWarnings = null);
+    IReadOnlyList<string>? SaveWarnings = null,
+    // รอบ 248: echo กลับให้ฟอร์ม hydrate (โหมดรับเงิน · ช่องทาง · นโยบายอนุมัติของรายการนี้ — null = ไม่ได้ตั้ง/ตามผู้ติดต่อ)
+    string? PaymentMode = null,
+    IReadOnlyList<string>? PayLinkChannels = null,
+    AutoApprovePolicyView? AutoApprovePolicy = null);
+
+/// <summary>รอบ 248: นโยบายอนุมัติข้ามคำเตือนที่หน้าแสดง — รหัสที่ปล่อย · ผู้ตั้ง/เมื่อไร · ระดับ (Recurring/Contact)</summary>
+public record AutoApprovePolicyView(IReadOnlyList<string> PassCodes, string? SetBy, DateTime? SetAt, string? Scope, bool InheritContact = false);
+
+/// <summary>รอบ 248: ตั้ง/ล้างนโยบาย — <c>Clear=true</c> ⇒ ล้าง (รายการ: ไม่มีนโยบาย — นโยบายผู้ติดต่อไม่มีผลกับรายการนี้ · ผู้ติดต่อ: ไม่ปล่อย) ·
+/// <c>Inherit=true</c> (รายการเท่านั้น) ⇒ ผู้มีสิทธิ์ "รับรอง" ให้รายการนี้ใช้นโยบายของผู้ติดต่อ (ผูกลายนิ้วมือค่าปัจจุบัน) ·
+/// ไม่งั้นตั้งเป็นรหัสชุดนี้ (ว่าง = หยุดรอคนทุกข้อ)</summary>
+public record SetAutoApprovePolicyRequest(List<string>? PassCodes, bool Inherit = false, bool Clear = false);
+
+/// <summary>รอบ 248: ค่าตั้ง Autopilot ระดับผู้ติดต่อ (ช่องทางรับเงิน + นโยบาย) — echo กลับทุกช่อง</summary>
+public record ContactAutopilotSettingsResponse(Guid ContactId, string ContactName, string? PaymentMode, IReadOnlyList<string>? PayLinkChannels,
+    AutoApprovePolicyView? AutoApprovePolicy);
+
+/// <summary>รอบ 248: แก้ช่องทางรับเงินของผู้ติดต่อ — PaymentMode null = ไม่แก้ · "" / "Inherit" = ล้าง · PayLinkChannels null = ไม่แก้ · [] = ล้าง</summary>
+public record UpdateContactAutopilotRequest(string? PaymentMode, List<string>? PayLinkChannels);
+
+/// <summary>รอบ 248: รายการตัวเลือกที่หน้าแสดง (เซิร์ฟเวอร์คำนวณ) — โหมดรับเงิน · ช่องทางที่บริษัทเปิด · คำเตือนที่ปล่อยได้/ไม่ได้</summary>
+public record AutopilotOptionsResponse(
+    IReadOnlyList<AutopilotOption> PaymentModes,
+    IReadOnlyList<AutopilotOption> PayLinkChannels,
+    IReadOnlyList<AutopilotOption> ReleasableWarnings,
+    IReadOnlyList<AutopilotOption> NeverReleasable,
+    string? PayLinkUnavailableReason);
+
+public record AutopilotOption(string Code, string Label, string? Why = null);
+
+/// <summary>รอบ 248: ผลตรวจความพร้อม (Helpers/AutopilotReadiness) — หน้าแสดงตรง ๆ</summary>
+public record AutopilotReadinessResponse(string Level, string LevelLabel, IReadOnlyList<global::Accounting.Helpers.AutopilotReadiness.Item> Items,
+    int WarnCount, int FailCount);
+
+/// <summary>รอบ 248: ทดลองรัน (ไม่เขียนอะไรเลย) — ลำดับเหตุการณ์ของรอบถัดไป</summary>
+public record RecurringDryRunResponse(
+    AutopilotReadinessResponse Readiness,
+    IReadOnlyList<DateTime> NextRunDates,
+    string DocumentTypeLabel,
+    string NumberNote,
+    IReadOnlyList<RecurringDryRunLine> Lines,
+    decimal SubTotal,
+    decimal VatAmount,
+    decimal TotalAmount,
+    decimal WithholdingTaxAmount,
+    decimal ExpectedNetReceipt,
+    string ApprovalOutcome,
+    IReadOnlyList<string> ApprovalWarnings,
+    IReadOnlyList<string> ApprovalReleased,
+    IReadOnlyList<string> ApprovalBlocking,
+    string? EmailTo,
+    string EmailPlan,
+    string PayLinkPlan,
+    IReadOnlyList<string> Notes);
+
+public record RecurringDryRunLine(string Description, decimal Quantity, decimal UnitPrice, decimal VatRate, decimal Amount, decimal VatAmount,
+    decimal WithholdingTaxRate, decimal WithholdingTaxAmount);
 
 /// <summary>รอบ 247: ฟอร์มรายการประจำ — ผู้ติดต่อที่เลือกรับอีเมลเอกสารได้ไหม (กติกาเดียวกับผู้ส่งจริง · Helpers/RecurringEmailReadiness)</summary>
 public record RecurringEmailReadinessResponse(bool ContactHasEmail, string? Reason, string ContactUrl);

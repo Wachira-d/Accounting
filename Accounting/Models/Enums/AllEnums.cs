@@ -807,6 +807,18 @@ public enum AssetStatus
     WrittenOff = 4
 }
 
+/// <summary>ชนิดของ "ใบที่เป็นต้นทุน" ของสินทรัพย์ (<c>FixedAssetCostSource.Kind</c>) — รอบ 249 · ASSET_MULTI_DOCUMENT_DESIGN ·
+/// เป็นป้ายแสดงผล/รายงานเท่านั้น สูตรต้นทุนไม่อ่านค่านี้ (ตัวจำแนกเดียว <c>Helpers/AssetCostSourceRules.KindFor</c>)</summary>
+public enum AssetCostSourceKind
+{
+    Deposit = 1,      // มัดจำ/เงินจ่ายล่วงหน้า (ผัง 118xx)
+    Progress = 2,     // งวดงาน/งานระหว่างก่อสร้าง (ผัง 12280)
+    Final = 3,        // ใบซื้อตัวสินทรัพย์ (ผังสินทรัพย์)
+    Auxiliary = 4,    // ค่าขนส่ง/ติดตั้ง/ทำให้พร้อมใช้
+    CreditNote = 5,   // ใบลดหนี้ฝั่งซื้อ (ลดต้นทุน)
+    DebitNote = 6     // ใบเพิ่มหนี้ฝั่งซื้อ (เพิ่มต้นทุน)
+}
+
 /// <summary>
 /// Classifies an asset by accounting treatment so the same module can hold
 /// the four broad categories of non-current assets defined by TFRS:

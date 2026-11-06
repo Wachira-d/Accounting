@@ -3525,6 +3525,10 @@ public class IntegrationService : IIntegrationService
         if (hasChildren)
             return $"เอกสาร {doc.DocumentNumber} มีใบลดหนี้/ใบเพิ่มหนี้/เอกสารลูกอ้างถึง — resync แก้ไม่ได้";
 
+        // 2b) รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน H2): ใบที่ผูกเป็นต้นทุนสินทรัพย์ — resync กลับ/ลง JE ใหม่ ⇒ ยอดที่ผูก/โอนไม่ตรง GL
+        if (await FixedAssetService.CostSourceDocumentChangeBlockAsync(_db, companyId, doc.Id, doc.DocumentNumber, "resync ") is string assetBlock)
+            return assetBlock;
+
         // 3) เดือนภาษีของเอกสารยื่น ภ.พ.30 ไปแล้ว/ล็อก → ห้ามแก้ย้อน (RD compliance)
         var taxDate = (doc.TaxPointDate ?? doc.DocumentDate);
         var vatFiled = await _db.TaxReports.AsNoTracking().AnyAsync(r =>

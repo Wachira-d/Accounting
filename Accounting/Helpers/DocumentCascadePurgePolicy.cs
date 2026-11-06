@@ -31,6 +31,8 @@ public sealed record PurgeNodeFacts(
     public bool PosLinked { get; init; }
     /// <summary>เครดิตภาษีถูกหัก ณ ที่จ่ายของใบนี้ได้รับหนังสือรับรอง/ใช้เครดิตแล้ว (Received/Claimed · N3)</summary>
     public bool WhtCreditUsed { get; init; }
+    /// <summary>ใบนี้เป็นต้นทุนของสินทรัพย์ที่ "โอนเป็นสินทรัพย์พร้อมใช้" แล้ว (รอบ 249 สินทรัพย์หลายใบ · ฝ่ายค้าน H1) — JE โอนเครดิตผังของใบนี้</summary>
+    public bool AssetCostCapitalized { get; init; }
     /// <summary>ใบนี้เป็น "ใบแทน" ของใบที่ยังมีผล (<c>ReplacesDocumentId</c> · S3) — id ใบเดิม</summary>
     public Guid? ReplacesLiveDocumentId { get; init; }
     /// <summary>ใบอื่นที่ชี้มาที่ใบนี้ด้วย <c>ReplacedByDocumentId</c> (S3)</summary>
@@ -91,6 +93,7 @@ public static class DocumentCascadePurgePolicy
     public const string RuleRetention = "ACC-M10-RETENTION-PURGE";
     public const string RuleReasonRequired = "ACC-M10-PURGE-REASON";
     public const string RulePlanChanged = "PURGE-PLAN-CHANGED";
+    public const string RuleAssetCostCapitalized = "TFRS-NPAE-10-COST-SOURCES-PURGE";
 
     /// <summary>ข้อความเมื่อแผนเปลี่ยนระหว่างผู้ใช้ยืนยัน (S1)</summary>
     public const string PlanChangedMessage = "เอกสารเปลี่ยนระหว่างยืนยัน — เปิดแผนการลบใหม่แล้วตรวจอีกครั้ง · ระบบยังไม่ได้ลบอะไร";
@@ -211,6 +214,9 @@ public static class DocumentCascadePurgePolicy
         if (n.WhtCreditUsed)
             return Block(n, inRetention, RuleWhtCreditUsed,
                 "เครดิตภาษีถูกหัก ณ ที่จ่ายของใบนี้ได้รับหนังสือรับรอง/ใช้เครดิตแล้ว — ลบไม่ได้ · ยกเลิก (Void) ใบนี้แทน");
+        if (n.AssetCostCapitalized)
+            return Block(n, inRetention, RuleAssetCostCapitalized,
+                "เป็นต้นทุนของสินทรัพย์ที่โอนเป็นสินทรัพย์พร้อมใช้แล้ว — ลบแล้วรายการบัญชีของใบหายแต่รายการโอนยังเครดิตผังของใบนี้ (ผังมัดจำ/งานระหว่างก่อสร้างติดลบ) · ปรับด้วยใบลดหนี้/ใบเพิ่มหนี้แทน");
         // (2) ลูกหลาน/ใบเสร็จหลักฐานที่ยังมีผล — ระบบไม่ยกเลิกแทน
         if (!n.IsRoot)
         {

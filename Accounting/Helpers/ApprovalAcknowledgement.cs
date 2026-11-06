@@ -23,6 +23,11 @@ public enum ApprovalAckSource
     /// OCR อนุมัติอัตโนมัติ · integration — ผู้เรียกรูปสามอาร์กิวเมนต์ของ <c>ApproveDocumentAsync</c>) — คำเตือนทั่วไปหยุดเหมือน <see cref="None"/>
     /// (พฤติกรรมเดิม) · <b>ข้อสังเกต §65 ตรีผ่าน</b> แล้วทิ้งร่องรอยบนเอกสาร + audit (<see cref="UnattendedRuleCode"/>) — ไม่ใช่ "คนรับทราบ"</summary>
     Unattended = 4,
+    /// <summary>รอบ 248 (AUTOPILOT_BILLING_DESIGN §4.3): ทางเข้าอัตโนมัติแบบ <see cref="Unattended"/> <b>บวก</b> นโยบายที่เจ้าของตั้งไว้
+    /// (<see cref="AutoApprovePolicy"/> — ต่อรายการประจำ/ต่อผู้ติดต่อ) ⇒ คำเตือนที่มีป้ายรหัสในนโยบาย (เช่น <c>[AR-OVERDUE]</c>) ผ่านพร้อมร่องรอย
+    /// <see cref="UnattendedPolicyRuleCode"/> · ไม่มีนโยบาย = เหมือน <see cref="Unattended"/> ทุกประการ · ชุดห้ามปล่อย (§86/4 ผู้ซื้อ · [Σ-GAP] ·
+    /// VAT ไม่อยู่บนกระดาษ) หยุดเสมอ · <b>ไม่ใช่การรับทราบของคน</b> และไม่ override ด่านรอง (งบประมาณ · วงเงินเครดิต · วงเงินอนุมัติ)</summary>
+    UnattendedWithPolicy = 5,
 }
 
 /// <summary>
@@ -49,6 +54,9 @@ public static class ApprovalAcknowledgement
 
     /// <summary>ทางเข้าอัตโนมัติส่งผ่านข้อสังเกต §65 ตรี (คำตัดสินข้อ 110) — ไม่มีผู้ใช้เห็นรายการ</summary>
     public const string UnattendedRuleCode = "APPROVE-UNATTENDED-PASSED-S65";
+
+    /// <summary>รอบ 248: ทางเข้าอัตโนมัติอนุมัติต่อตามนโยบายที่เจ้าของตั้ง (ตัวตั้งค่าเดียว <see cref="AutoApprovePolicy.RuleCode"/>)</summary>
+    public const string UnattendedPolicyRuleCode = AutoApprovePolicy.RuleCode;
 
     /// <summary>คำเตือนที่ทางเข้าไม่มีคนส่งผ่านได้ (ไม่หยุด) — ชุด §65 ตรี (คำตัดสินข้อ 110) · ตัวตั้งอยู่ที่ <see cref="Section65TerApprovalWarnings.IsWarning"/></summary>
     /// รอบ 203 (คำตัดสินข้อ 140): ชุดรูปแบบใบเสร็จ <c>[RCPT-FORM]</c> (<see cref="ReceiptFormRule.IsApprovalWarning"/>) ก็ผ่านโดยไม่มีคน —
@@ -80,8 +88,21 @@ public static class ApprovalAcknowledgement
             // คำตัดสินข้อ 110: API ส่งผ่านข้อสังเกต §65 ตรี แล้วคืนธงในผลตอบ (เหมือน [Σ-GAP])
             ApprovalAckSource.ApiClient => warnings.Where(w => !OcrApprovalGapWarning.IsAmountGapWarning(w) && !PassesWithoutPerson(w)).ToList(),
             ApprovalAckSource.Unattended => warnings.Where(w => !PassesWithoutPerson(w)).ToList(),
+            // ไม่มีนโยบายส่งมา = เหมือน Unattended (ทางเข้าที่ลืมส่งนโยบายไม่ได้สิทธิ์เพิ่ม)
+            ApprovalAckSource.UnattendedWithPolicy => warnings.Where(w => !PassesWithoutPerson(w)).ToList(),
             _ => warnings,
         };
+    }
+
+    /// <summary>รอบ 248: เหมือน <see cref="Unacknowledged(ApprovalAckSource, IReadOnlyList{string})"/> แต่แหล่ง
+    /// <see cref="ApprovalAckSource.UnattendedWithPolicy"/> ปล่อยคำเตือนที่นโยบายครอบเพิ่ม (<see cref="AutoApprovePolicy.Releases"/> — ชุดห้ามปล่อยหยุดเสมอ) ·
+    /// แหล่งอื่นไม่สนนโยบาย (เว็บ/API/workflow ไม่ได้สิทธิ์จากนโยบายของใบประจำ)</summary>
+    public static IReadOnlyList<string> Unacknowledged(ApprovalAckSource source, IReadOnlyList<string> warnings, AutoApprovePolicy? policy)
+    {
+        var left = Unacknowledged(source, warnings);
+        if (source != ApprovalAckSource.UnattendedWithPolicy || policy == null || left.Count == 0) return left;
+        // ชุดห้ามปล่อย ([Σ-GAP] · VAT ไม่อยู่บนกระดาษ) ตรวจซ้ำตรงนี้อีกชั้น — แม้ Catalogue ในอนาคตจะมีป้ายที่ซ้อนกัน ก็หยุดเสมอ
+        return left.Where(w => AutoApprovePolicy.NeverPassable(w) || !AutoApprovePolicy.Releases(policy, w)).ToList();
     }
 
     /// <summary>รหัสที่ API v1 คืน (ให้เครื่องอ่าน) เมื่อ<b>ปฏิเสธ</b>การอนุมัติเพราะ VAT ของใบสแกนไม่ได้พิมพ์บนกระดาษ/ตรวจกับกระดาษไม่ได้
@@ -181,12 +202,18 @@ public static class ApprovalAcknowledgement
         return msg;
     }
 
+    /// <summary>รอบ 248 (ฝ่ายค้าน MED-3): แหล่งที่ลงร่องรอยจริง — <see cref="ApprovalAckSource.UnattendedWithPolicy"/> ที่นโยบายไม่ได้ปล่อยคำเตือนสักข้อ
+    /// = <see cref="ApprovalAckSource.Unattended"/> (รหัส/หมายเหตุเดิม · ห้ามประทับ "อนุมัติตามนโยบายเจ้าของ" ทั้งที่ไม่มีนโยบายมีผล)</summary>
+    public static ApprovalAckSource EffectiveSource(ApprovalAckSource source, int policyReleasedCount)
+        => source == ApprovalAckSource.UnattendedWithPolicy && policyReleasedCount <= 0 ? ApprovalAckSource.Unattended : source;
+
     /// <summary>รหัสกฎของร่องรอยเมื่ออนุมัติทั้งที่มีคำเตือน</summary>
     public static string RuleCode(ApprovalAckSource source) => source switch
     {
         ApprovalAckSource.SystemWorkflow => SystemRuleCode,
         ApprovalAckSource.ApiClient => ApiRuleCode,
         ApprovalAckSource.Unattended => UnattendedRuleCode,
+        ApprovalAckSource.UnattendedWithPolicy => UnattendedPolicyRuleCode,
         _ => UserRuleCode,
     };
 
@@ -216,6 +243,7 @@ public static class ApprovalAcknowledgement
                   || WhtPaymentSuggestion.IsApprovalWarning(w) || WhtRoyaltyPolicy.IsApprovalWarning(w) ? WhtWarningsLegalReference
                 : ForeignServiceVat.IsPp36BaseApprovalWarning(w) ? Pp36WarningsLegalReference
                 : LowValueAssetLineCheck.IsApprovalWarning(w) ? LowValueAssetLineCheck.LegalReference
+                : ArOverdueApprovalWarning.IsApprovalWarning(w) ? ArOverdueApprovalWarning.LegalReference   // รอบ 248: การควบคุมสินเชื่อภายใน — ไม่ใช่ §86
                 : GeneralWarningsLegalReference;
             if (!refs.Contains(r)) refs.Add(r);
         }
@@ -238,6 +266,7 @@ public static class ApprovalAcknowledgement
             ApprovalAckSource.SystemWorkflow => "— คำเตือนตอนอนุมัติ: ระบบ workflow ส่งผ่าน (ไม่มีผู้ใช้เห็นรายการนี้ก่อนอนุมัติ) —",
             ApprovalAckSource.ApiClient => "— คำเตือนตอนอนุมัติผ่าน API: คืนรายการให้ระบบปลายทางในคำตอบ (ไม่มีผู้ใช้กดรับทราบ) —",
             ApprovalAckSource.Unattended => "— ข้อสังเกตตอนอนุมัติ: ทางเข้าอัตโนมัติส่งผ่าน (ไม่มีผู้ใช้เห็นรายการนี้ก่อนอนุมัติ · คำตัดสินข้อ 110) — ตรวจก่อนปิดรอบ —",
+            ApprovalAckSource.UnattendedWithPolicy => "— คำเตือนตอนอนุมัติ: ทางเข้าอัตโนมัติอนุมัติต่อตามนโยบายที่เจ้าของตั้ง (ไม่มีผู้ใช้เห็นรายการนี้ก่อนอนุมัติ · รอบ 248) — ตรวจก่อนปิดรอบ —",
             _ => "— รับทราบคำเตือนตอนอนุมัติ —",
         };
         var tail = source == ApprovalAckSource.User

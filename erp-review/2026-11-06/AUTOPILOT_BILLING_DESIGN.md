@@ -732,6 +732,14 @@ PortalLoginToken (ใหม่) TokenHash, ContactId, Email, ExpiresAt, UsedAt  
 - readiness: JS ไม่มีรหัสกติกา (grep) · ผู้ซื้อขาดสาขา ⇒ `BUYER-TAX` ❌ · **ทิศตรงข้าม:** ผู้ซื้อบุคคลธรรมดา ⇒ ไม่ฟ้อง
 `required_call_site_check`: `RecurringTransactionService` อนุมัติด้วย `UnattendedWithPolicy` + ส่งนโยบายจากแถว · dry-run ไม่เรียก `SaveChangesAsync`/`Send*`/`EnsureLinkAsync` · resolver ถูกเรียกในผู้อ่าน 3 จุด
 
+> **สถานะรอบ 248 (ลงมือแล้ว · ยังไม่ได้คอมไพล์ในเครื่องนี้ — รอ CI):** ทำ ①นโยบายอนุมัติ (`AutoApprovePolicy` · `UnattendedWithPolicy` · `[AR-OVERDUE]` ·
+> audit `APPROVE-UNATTENDED-POLICY`) ②ช่องทางรับเงินต่อรายการ/ต่อผู้ติดต่อ (`AutopilotSettingsResolver` → `OnRecurringDocumentCreatedAsync` · `ForScheduledEmailAsync` · `EnsureLinkAsync`)
+> ③`AutopilotReadiness` + แผงในฟอร์ม ④ทดลองรัน (ไม่เขียนอะไร · Db test) ⑤wizard 5 ขั้น + หลายบรรทัด · **ค่าตั้งต้นที่ใช้ตามข้อเสนอทีม — รอเจ้าของยืนยัน:**
+> Q3 = นโยบายตั้งได้ต่อรายการประจำ + ต่อผู้ติดต่อ (รายการชนะ · ตั้งว่างที่รายการ = หยุดรอคน ทับผู้ติดต่อ) **ไม่มีค่าระดับบริษัท** · ค่าตั้งต้น **ปิด** (ไม่ปล่อยอะไร) ·
+> Q6 (เกินวงเงินเครดิต) **ยังไม่เพิ่ม** — ไม่แสดงในรายการปล่อยได้จนกว่าจะมีตัวเตือนจริง (มี ≠ ถูกเรียก) · `TransferOnly` = ไม่แนบลิงก์ gateway (หน้าเลขบัญชีอย่างเดียวรอรอบ 250 — 241-2) ·
+> **ยังไม่ทำ:** คอลัมน์ระดับ Autopilot ในตาราง (§4.6) · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`/`PostPaymentAutomationService.SettingsForAsync`) · ราคาแปรผัน/ทุก N เดือน/สร้างล่วงหน้า ·
+> LINE/คู่ค้าในขั้นส่ง · "ส่งทดสอบถึงอีเมลฉัน" · `EtaxDeliveryRouter.Decide` ในผลทดลองรัน · ข้อ SMTP โหมด e-Tax by Email · `PAY-QR`/`QUOTA`/`PERIOD`/`POSTPAY` ในแผงความพร้อม
+
 ### รอบ 249 — อีเมลสถานะ + หน้า Autopilot + ทุกทางรับเงินเข้างานหลังรับชำระ + ใบเสนอราคาแปลงอัตโนมัติ
 งาน: `NotificationEvents` E-01…E-15 + digest · `autopilot.html` + `AutopilotStage` · G-6/G-T6: `EnqueueAsync` ใน `SettlementPostingService` (`:313`) · ยืนยันสลิปพอร์ทัล · `PaymentImportTarget` · CMS/Lodging · ยืนยัน ManualSlip · `QuotationAcceptAutopilotJob` · L1 Resolver เข้า `PostPaymentAutomationService` (แทน `contact?.Email` `:260`)
 เทสต์: settlement หลายใบ ⇒ แถว run ต่อการชำระ · **ทิศตรงข้าม:** ปิดค่าตั้ง ⇒ ไม่มีแถว · ยอมรับใบเสนอราคา ⇒ INV 1 ใบแม้งานรันสองเครื่อง (Db JobLock) · เนื้อเปลี่ยนหลังเซ็น ⇒ ไม่แปลง + E-01 บอกเหตุ · digest รวม 1 อีเมล/ผู้ใช้/วัน

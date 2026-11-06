@@ -240,6 +240,11 @@ READ_ONLY_POSTS = {
 # POST ที่ "อ่านอย่างเดียว" ระบุรายไฟล์ (ชื่อ GeneratePdf ฯลฯ มีหลายคอนโทรลเลอร์ — ชื่อลอยจะเปิดช่องให้ไฟล์อื่นเขียวไปด้วย) ·
 # รอบ 200 ทีม RF: สร้าง PDF/HTML/พรีวิวจากเทมเพลต — `PdfGenerationService` ไม่เรียก SaveChanges เลย (ตรวจด้วย grep ตอนเพิ่ม)
 READ_ONLY_POSTS_IN_FILE = {
+    # รอบ 248: ทดลองรัน/ตรวจความพร้อมของรายการประจำ — คำนวณจาก body แล้วคืนผล ไม่เขียนอะไร (ล็อกด้วย Db test
+    # RecurringAutopilotRound248DbTests นับแถวก่อน-หลัง + ไม่ถาม AI) · ด่านอ่านอยู่ที่ DenyAutopilotReadAsync (Document.Create ของชนิดเอกสาร)
+    ("RecurringController.cs", "DryRun"),
+    ("RecurringController.cs", "DryRunDraft"),
+    ("RecurringController.cs", "ReadinessDraft"),
     ("DocumentTemplateController.cs", "GeneratePdf"),
     ("DocumentTemplateController.cs", "GenerateHtml"),
     ("DocumentTemplateController.cs", "PreviewHtmlDraft"),

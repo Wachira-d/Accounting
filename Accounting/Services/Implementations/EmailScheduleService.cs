@@ -210,10 +210,13 @@ public class EmailScheduleService : IEmailScheduleService
                     && r.Trigger == "RecurringInvoiceCreated"
                     && (r.DocumentType == null || r.DocumentType == doc.DocumentType.ToString()))
                 .ToListAsync(ct);
+            // รอบ 248 (AUTOPILOT §5.1 · A-1): ช่องทางรับเงินของรายการประจำเป็นชั้นใต้ตารางส่ง (ตาราง › รายการ › ผู้ติดต่อ › บริษัท — AutopilotSettingsResolver) ·
+            // ช่องที่ตารางไม่ได้ตั้ง (null) รับค่าจากรายการ · ชั้นผู้ติดต่อ/บริษัทต่อใน DocumentPayLinkService.ForScheduledEmailAsync
+            var recurringLayer = await RecurringPayLayerAsync(companyId, recurringId, ct);
             if (rules.Count > 0)
             {
                 // recurringId เข้า suffix → idempotency: ทุก recurring run ไม่ทับกัน
-                foreach (var rule in rules)
+                foreach (var rule in rules.Select(r => WithRecurringPayLayer(r, recurringLayer)))
                     await EnqueueDocumentAsync(rule, doc, daysOffset: rule.OffsetDays,
                         suffix: $"recurring-{recurringId}", ct);
                 await _db.SaveChangesAsync(ct);
@@ -247,6 +250,9 @@ public class EmailScheduleService : IEmailScheduleService
                 Trigger = "RecurringInvoiceCreated",
                 OffsetDays = 0,
                 SendAtHour = 9,
+                // รอบ 248: ชั้นรายการประจำ (null = ตามผู้ติดต่อ › บริษัท — พฤติกรรมเดิม)
+                AttachPayLink = recurringLayer?.Attach,
+                PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(recurringLayer?.Channels),
             };
             // ส่งทันที ไม่รอ 09:00 ของวัน — เจตนาคือ "ออกเอกสารแล้วส่งเลย"
             await EnqueueDocumentAsync(inlineRule, doc, daysOffset: 0,
@@ -254,6 +260,29 @@ public class EmailScheduleService : IEmailScheduleService
             await _db.SaveChangesAsync(ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "OnRecurringDocumentCreated enqueue failed Doc={Doc}", documentId); }
+    }
+
+    /// <summary>รอบ 248: ชั้นช่องทางรับเงินของรายการประจำ (null = ไม่ได้ตั้ง) — ตัวต่อชั้นเดียว <see cref="AutopilotSettingsResolver.FromMode"/></summary>
+    private async Task<AutopilotSettingsResolver.Layer?> RecurringPayLayerAsync(Guid companyId, Guid recurringId, CancellationToken ct)
+    {
+        var rec = await _db.RecurringTransactions.AsNoTracking()
+            .Where(r => r.Id == recurringId && r.CompanyId == companyId)
+            .Select(r => new { r.PaymentMode, r.PayLinkChannelsJson })
+            .FirstOrDefaultAsync(ct);
+        if (rec == null || (rec.PaymentMode == null && rec.PayLinkChannelsJson == null) || _payLinks == null) return null;
+        var available = DocumentPayLinkPolicy.CompanyAvailable(await _payLinks.CompanyFactsAsync(companyId, ct));
+        var layer = AutopilotSettingsResolver.FromMode(rec.PaymentMode, DocumentPayLinkPolicy.ParseChannels(rec.PayLinkChannelsJson), available);
+        return layer.Attach == null && layer.Channels == null ? null : layer;
+    }
+
+    /// <summary>รอบ 248: ตารางส่ง (ชั้นบนสุด) ทับรายการประจำ — เติมเฉพาะช่องที่ตารางว่าง · ⚠️ แก้บนแถวที่อ่านแบบ AsNoTracking เท่านั้น
+    /// (ไม่ถูกติดตาม ⇒ ไม่ถูกบันทึกกลับเป็นค่าของกฎ)</summary>
+    internal static EmailScheduleRule WithRecurringPayLayer(EmailScheduleRule rule, AutopilotSettingsResolver.Layer? layer)
+    {
+        if (layer == null) return rule;
+        rule.AttachPayLink ??= layer.Attach;
+        rule.PayLinkChannelsJson ??= DocumentPayLinkPolicy.SerializeChannels(layer.Channels);
+        return rule;
     }
 
     /// <summary>สรุปรายการที่เกิดขึ้นกับลูกค้าในเดือนที่แล้ว — invoice ที่
@@ -824,6 +853,9 @@ public class EmailScheduleService : IEmailScheduleService
             await _db.HydrateContactAsync(item.CompanyId, doc);
             var heading = await HeadingForAsync(doc.CompanyId, doc.Id);
             var ctx = DocumentEmailContext(doc, heading, _headingCompanies[doc.CompanyId].Company);
+            // รอบ 248 (ฝ่ายค้าน MED-5): กฎที่โหลดใหม่ตอนส่งไม่มีชั้นรายการประจำ ⇒ ต่อชั้นเดียวกับตอนเข้าคิว (รหัสรายการจากกุญแจกันซ้ำ)
+            if (ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey(item.IdempotencyKey) is { } sendRecurringId)
+                rule = WithRecurringPayLayer(rule, await RecurringPayLayerAsync(item.CompanyId, sendRecurringId, ct));
             // รอบ 241: ลิงก์ ณ เวลาส่ง (ยอดสุทธิปัจจุบัน · ใบชำระครบ/ยกเลิกแล้ว = ไม่แนบ)
             var payLink = await PayLinkFor(rule, doc, ct);
             ctx["PayLink"] = payLink?.Url != null ? DocumentPayLinkPolicy.QueuePlaceholder : "";   // ฝ่ายค้าน S1: คิวเก็บที่หมาย

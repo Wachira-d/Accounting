@@ -164,7 +164,8 @@ public class SubLedgerReconciliationService
             foreach (var acc in faAccounts)
                 glBal += await ComputeGlBalanceAsync(companyId, acc.Id, asOfExclusive);
             var assets = await _db.FixedAssets.AsNoTracking()
-                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.Status != AssetStatus.Disposed)
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.Status != AssetStatus.Disposed
+                    && !a.IsUnderAcquisition)   // รอบ 249 (L8): ต้นทุนระหว่างจัดหายังอยู่ผังมัดจำ/งานระหว่างก่อสร้างของแต่ละใบ ไม่ใช่ผังสินทรัพย์
                 .ToListAsync();
             var subBal = assets.Sum(a => a.NetBookValue);
             var variance = Math.Round(glBal - subBal, 2);

@@ -194,6 +194,8 @@ public class AccountingDbContext : DbContext
     // Fixed Assets
     public DbSet<FixedAsset> FixedAssets => Set<FixedAsset>();
     public DbSet<AssetDepreciation> AssetDepreciations => Set<AssetDepreciation>();
+    /// <summary>รอบ 249 — บรรทัดเอกสารซื้อที่เป็นต้นทุนของสินทรัพย์ (หลายใบ ↔ สินทรัพย์ 1 ตัว · Helpers/AssetCostSourceRules)</summary>
+    public DbSet<FixedAssetCostSource> FixedAssetCostSources => Set<FixedAssetCostSource>();
 
     // Approval Workflow
     public DbSet<ApprovalRule> ApprovalRules => Set<ApprovalRule>();
@@ -1401,6 +1403,7 @@ public class AccountingDbContext : DbContext
             e.Property(a => a.AccumulatedDepreciation).HasPrecision(18, 2);
             e.Property(a => a.NetBookValue).HasPrecision(18, 2);
             e.Property(a => a.DisposalAmount).HasPrecision(18, 2);
+            e.Property(a => a.ContractPrice).HasPrecision(18, 2);
             e.HasQueryFilter(a => !a.IsDeleted);
         });
 
@@ -1411,6 +1414,20 @@ public class AccountingDbContext : DbContext
             e.Property(d => d.AccumulatedAmount).HasPrecision(18, 2);
             e.Property(d => d.NetBookValue).HasPrecision(18, 2);
             e.HasOne(d => d.FixedAsset).WithMany(a => a.Depreciations).HasForeignKey(d => d.FixedAssetId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // ===== FixedAssetCostSource (รอบ 249 · ASSET_MULTI_DOCUMENT_DESIGN §3) — ไม่มี FK ไป Documents โดยเจตนา =====
+        modelBuilder.Entity<FixedAssetCostSource>(e =>
+        {
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.Property(x => x.NonClaimableVatIncluded).HasPrecision(18, 2);
+            e.Property(x => x.DocumentNumber).HasMaxLength(50);
+            e.Property(x => x.SourceAccountCode).HasMaxLength(20);
+            e.HasOne(x => x.FixedAsset).WithMany(a => a.CostSources).HasForeignKey(x => x.FixedAssetId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.CompanyId, x.FixedAssetId });
+            e.HasIndex(x => new { x.CompanyId, x.DocumentLineId });
+            e.HasIndex(x => new { x.CompanyId, x.DocumentId });
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         // ===== ApprovalRule =====

@@ -81,4 +81,15 @@ public class RecurringTransaction : TenantEntity
     /// <summary>เพดานค่าปรับ (% ของ totalAmount). default 20% = stop accrue
     /// เมื่อ accumulated late fee ถึง 20% ของยอดต้นทุน. null = no cap.</summary>
     public decimal? LateFeeMaxPercent { get; set; } = 20m;
+
+    // ── รอบ 248 (AUTOPILOT_BILLING_DESIGN §4.2 ⑤ · §4.3 · §11.1) ──
+
+    /// <summary>โหมดรับเงินต่อรายการ (ชื่อใน <see cref="Accounting.Helpers.AutopilotSettingsResolver.Modes"/>) — null/Inherit = ตามผู้ติดต่อ › บริษัท
+    /// (พฤติกรรมเดิม) · ผู้อ่าน: <c>EmailScheduleService.OnRecurringDocumentCreatedAsync</c> ผ่าน <c>AutopilotSettingsResolver</c></summary>
+    public string? PaymentMode { get; set; }
+    /// <summary>ช่องทางชำระที่รายการนี้เลือก (JSON ชื่อ enum — ตัวอ่าน/เขียน <c>DocumentPayLinkPolicy.ParseChannels/SerializeChannels</c>) · null = ทุกช่องตามโหมด</summary>
+    public string? PayLinkChannelsJson { get; set; }
+    /// <summary>นโยบายอนุมัติข้ามคำเตือนของรายการนี้ (JSON ของ <see cref="Accounting.Helpers.AutoApprovePolicy"/>) — null = ตามผู้ติดต่อ ·
+    /// ตั้งผ่าน <c>PUT …/recurring/{id}/approve-policy</c> เท่านั้น (ต้องมีสิทธิ์อนุมัติเอกสารชนิดนั้น) · ผู้อ่าน: <c>RecurringTransactionService</c> ตอนอนุมัติอัตโนมัติ</summary>
+    public string? AutoApprovePolicyJson { get; set; }
 }
