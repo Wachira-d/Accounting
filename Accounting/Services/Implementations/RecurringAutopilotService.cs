@@ -388,6 +388,8 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         var etaxActive = isDocument && settings != null && EtaxDeliveryRouter.ByEmailActive(settings.EtaxEnabled, settings.EtaxMode);
         string? etaxSenderRefusal = null, etaxRecipientProblem = null;
         var etaxRecipientFromSchedule = false;
+        // ฝ่ายค้าน WP-08 HIGH-1: ทำนายตามผู้ส่งจริง — ใบ e-Tax by Email ส่งถึงอีเมลหลักเท่านั้น (ContactRecipientRule.ForChannel ตัวเดียวกับคิว/งานหลังรับชำระ)
+        ContactRecipientRule.ChannelRecipients? etaxChannel = null;
         if (etaxActive && etaxRoute.Channel == EtaxEmailChannel.EtaxByEmail)
         {
             etaxSenderRefusal = EtaxByEmailSenderGate.Refusal(EtaxByEmailSenderGate.From(settings!, hasTenantSender));
@@ -399,9 +401,11 @@ public class RecurringAutopilotService : IRecurringAutopilotService
                     .Where(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == sendTrigger
                         && (x.DocumentType == null || x.DocumentType == docType.ToString()) && x.BccEmails != null && x.BccEmails != "")
                     .Select(x => x.BccEmails).FirstOrDefaultAsync(ct);
-                var contactProblem = EtaxByEmailFormat.Recipients(docDelivery.To, null, null, true, true, false, false).Problem;
+                etaxChannel = ContactRecipientRule.ForChannel(docDelivery, etaxByEmail: true);
+                var contactProblem = etaxChannel.Problem
+                    ?? EtaxByEmailFormat.Recipients(etaxChannel.To, null, null, true, true, false, false).Problem;
                 etaxRecipientProblem = contactProblem
-                    ?? EtaxByEmailFormat.Recipients(docDelivery.To, null, scheduleBcc, true, true, false, false).Problem;
+                    ?? EtaxByEmailFormat.Recipients(etaxChannel.To, null, scheduleBcc, true, true, false, false).Problem;
                 etaxRecipientFromSchedule = contactProblem == null && etaxRecipientProblem != null;
             }
         }
@@ -518,8 +522,10 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             : blocking.Count > 0 ? "ไม่ส่ง — ใบยังเป็นร่าง (เลขที่จริงออกตอนอนุมัติ §86/4)"
             // รอบ 251 (WP-07 · DoD): ใบ e-Tax by Email ไม่มีทางถอยไปอีเมลของ NextAcc — บอกตามจริงว่าจะล้มที่ด่านไหน
             : etaxByEmail && etaxSenderRefusal != null ? "จะล้มที่ด่านผู้ส่ง e-Tax by Email — อีเมลไม่ถูกส่ง: " + etaxSenderRefusal
+            : etaxByEmail && etaxChannel?.Problem is { } chProblem ? chProblem   // ไม่เข้าคิว (แถว "ข้าม" พร้อมเหตุ) — ไม่ใช่ "ล้มตอนส่ง"
             : etaxByEmail && etaxRecipientProblem != null ? "จะล้มตอนส่ง (ผู้รับ e-Tax by Email): " + etaxRecipientProblem
-            : etaxByEmail ? "ส่งแบบ e-Tax by Email จากอีเมลบริษัทที่ลงทะเบียนกับกรมสรรพากร ถึง " + docDelivery.To + " (สำเนาถึง ETDA เพื่อประทับเวลา)"
+            : etaxByEmail ? "ส่งแบบ e-Tax by Email จากอีเมลบริษัทที่ลงทะเบียนกับกรมสรรพากร ถึง " + (etaxChannel?.To ?? docDelivery.To) + " (สำเนาถึง ETDA เพื่อประทับเวลา)"
+                + (etaxChannel?.Note is { } etaxNote ? " · " + etaxNote : "")
             : (senderVerified ? "ส่งจากอีเมลบริษัท" : "ส่งผ่านอีเมลของ NextAcc ในนามบริษัท") + " ถึง " + docDelivery.To;
         var payPlan = !saleSide ? "ไม่มีลิงก์ชำระ (ไม่ใช่เอกสารเรียกเก็บเงิน)"
             : !choice.Attach ? $"ไม่แนบลิงก์ชำระ (ตาม{choice.Source})"

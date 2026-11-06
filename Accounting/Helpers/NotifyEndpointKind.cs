@@ -132,7 +132,6 @@ public static class NotifyTopics
         catch (JsonException) { return null; }
     }
 
-    /// <summary>รับชื่อเรื่องจากคำขอ — ชื่อที่ไม่รู้จัก/ตัวเลข ⇒ ปฏิเสธ (ไม่ตัดทิ้งเงียบ) · <paramref name="allowEmpty"/> = อีเมลหลักปิดทุกเรื่องได้</summary>
     /// <summary>รอบ 250 WP-08 (L1 ต่อสาย · DESIGN §3.g): เรื่องของ trigger ในตารางส่งอีเมล — ตัวเดียวของทุกเส้นส่ง (ห้าม map เองในบริการ) ·
     /// trigger ที่ไม่รู้จัก ⇒ <see cref="NotifyTopic.Other"/> (ปลายทางที่ไม่ได้เลือก "อื่น ๆ" ไม่ได้รับ — ไม่เดาว่าเป็นเอกสาร)</summary>
     public static NotifyTopic ForTrigger(string? trigger) => trigger switch
@@ -143,6 +142,7 @@ public static class NotifyTopics
         _ => NotifyTopic.Other,
     };
 
+    /// <summary>รับชื่อเรื่องจากคำขอ — ชื่อที่ไม่รู้จัก/ตัวเลข ⇒ ปฏิเสธ (ไม่ตัดทิ้งเงียบ) · <paramref name="allowEmpty"/> = อีเมลหลักปิดทุกเรื่องได้</summary>
     public static (IReadOnlyList<NotifyTopic>? Topics, string? Problem) FromRequest(IEnumerable<string>? names, bool allowEmpty)
     {
         var list = new List<NotifyTopic>();

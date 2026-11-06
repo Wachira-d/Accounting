@@ -1029,6 +1029,10 @@ public partial class FixedAssetService : IFixedAssetService
             Accounting.Helpers.AdvisoryLockKey.For(companyId,
                 Accounting.Helpers.AdvisoryLockKey.AssetDepreciation,
                 $"{request.Year}-{request.Month:D2}"));
+        // รอบ 250 WP-08 ฝ่ายค้าน MED-5: ล็อกแถวสินทรัพย์ของบริษัท (เรียงตาม Id กัน deadlock) ก่อนอ่านจุดตั้งต้นค่าเสื่อม — คำขอแก้วันพร้อมใช้
+        // (SetAvailableForUseDateAsync ล็อกแถวเดียวกันก่อนตรวจ "ลงค่าเสื่อมแล้วไหม") ⇒ ไม่มีการโพสต์จากวันเดิมหลังวันถูกเปลี่ยน หรือเปลี่ยนวันหลังเพิ่งโพสต์
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"FixedAssets\" WHERE \"CompanyId\" = {0} ORDER BY \"Id\" FOR UPDATE", companyId);
 
         var assets = await _db.FixedAssets
             .Where(a => a.CompanyId == companyId && a.Status == AssetStatus.Active)

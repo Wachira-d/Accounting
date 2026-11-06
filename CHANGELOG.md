@@ -6690,3 +6690,11 @@ _รอบ 250 WP-08 (AUDIT_249 §4 WP-08 · คำตัดสิน 250-24…2
 **สินทรัพย์ P2**: `PATCH …/contract-price` + `PATCH …/available-date` (Asset.Manage · audit chain) · จุดตั้งต้นค่าเสื่อมตัวเดียว `DepreciationSchedule.StartDate` (แผน/GL/ไล่ตาม/ทบทวนอายุ) ·
 ฟอร์มล็อกช่องพร้อมเหตุจาก `AvailableDateLockReason` · confirmPlaceInService ตรวจอายุ > 0 + วันตั้งต้นตามปฏิทินผู้ใช้. เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests`
 (7) · `AssetEditsRound250DbTests` (4) · R250L1/R250FA (+9 เคสฝ่ายค้าน) · settings_reader เพิ่ม ContactNotifyEndpoint.TopicsJson/Contact.AutoSendDisabled · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 31479320_
+
+_รอบ 250 WP-08 แก้ตามฝ่ายค้าน (merge 93d43ce3): **HIGH-1** e-Tax by Email ส่งถึงอีเมลหลักเท่านั้น (`ContactRecipientRule.ForChannel` · อีเมลหลักก่อนเสมอ `EmailDelivery.PrimaryEmails`) —
+อีเมลเสริมไม่ได้รับสำเนาธรรมดา แต่บันทึกว่าไม่ได้ส่ง (หมายเหตุคงไว้หลังส่ง) · อีเมลหลักปิดรับ ⇒ ไม่ส่งพร้อมเหตุ · คิว/งานหลังรับชำระ/ทดลองรันใช้ตัวเดียว.
+**HIGH-2/MED-4** "ไม่ส่งอัตโนมัติ" ออกจากชั้นค่าตั้งของงานหลังรับชำระ (เดิมทำให้ไม่ออกใบเสร็จเงียบ) → `Facts.AutoSendBlockedReason` ตัดเฉพาะขั้นส่งอีเมล ชนะทุกชั้น · ลบ `ContactPostPayEmailReceipt`.
+**MED-1** ลิงก์เซ็นอัตโนมัติกรองตามเรื่องเซ็น. **MED-2** ผู้ติดต่อถูกลบ ⇒ เหตุ `ContactDeletedReason`. **MED-3** ตัดผู้รับตอนเข้าคิว (`CapForSender` · ≤5 NextAcc · ≤500 ตัวอักษร) ·
+`EMAIL-PLATFORM-CAP` หยุดไม่ลองซ้ำ · บันทึกแถวคิวล้มไม่ลากแบตช์. **MED-5** วันพร้อมใช้ล็อกเมื่อไม่ใช่สถานะใช้งาน/ยอดยกมา/ทบทวนอายุ · คิดค่าเสื่อมล็อกแถวสินทรัพย์.
+**MED-6** แถว "ข้าม" ไม่นับว่ากฎเมื่ออนุมัติครอบ. LOW: กันซ้ำก่อนหาผู้รับ · คำตอบ PATCH ราคาสัญญามีเหตุล็อก · doc comment `FromRequest` · แฮชอีเมลใน audit · วันไทยใน hint.
+R250L1-6…9 · Db +6 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

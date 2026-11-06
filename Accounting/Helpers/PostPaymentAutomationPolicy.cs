@@ -122,7 +122,9 @@ public static class PostPaymentAutomationPolicy
         PaymentEntrySource Source,
         string? SupersedingTaxInvoiceNumber,
         // รอบ 250 WP-08: ผู้ติดต่อมีอีเมลแต่ไม่รับเรื่อง "ใบเสร็จ" (ContactRecipientRule.ForEmail) — บอกเหตุนี้แทน "ไม่มีอีเมล" · null = ไม่ได้ติดที่ค่าตั้งนี้
-        string? EmailOptOutReason = null);
+        string? EmailOptOutReason = null,
+        // ฝ่ายค้าน WP-08 HIGH-2/MED-4: ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" (AutopilotSettingsResolver.AutoSendBlock) — ห้ามเฉพาะขั้นส่งอีเมล (ทุกชั้นค่าตั้ง) · การออกใบเสร็จยังเดินตามเดิม
+        string? AutoSendBlockedReason = null);
 
     /// <summary>ผล — ขั้นที่ทำ + เหตุที่ต้องหยุด (ข้อความไทยพร้อมทางไปต่อ · ส่งเข้าการแจ้งเตือน) · <paramref name="Notes"/> = ข้อสังเกตที่ไม่หยุดงาน ·
     /// <paramref name="Skipped"/> = ไม่มีอะไรต้องทำ (ไม่ใช่ความผิดพลาด)</summary>
@@ -157,7 +159,8 @@ public static class PostPaymentAutomationPolicy
         if (!(f.FullyPaid || s.IncludePartial))
             return new Plan(steps, blocked, notes, notes.Count == 0 ? "ยังชำระไม่ครบ — ตั้งให้ส่งเฉพาะงวดที่ชำระครบ" : null);
 
-        if (!OnBehalfEmailSender.IsPlausibleEmail(f.CustomerEmail))
+        var autoOff = f.AutoSendBlockedReason;
+        if (autoOff == null && !OnBehalfEmailSender.IsPlausibleEmail(f.CustomerEmail))
             blocked.Add(f.EmailOptOutReason != null
                 ? "ยังไม่ได้ส่งใบเสร็จ — " + f.EmailOptOutReason + " · แก้แล้วกด \"ลองใหม่\" หรือส่งอีเมลที่ใบเสร็จ"
                 : "ลูกค้าไม่มีอีเมลที่ใช้ได้ — ยังไม่ได้ส่งใบเสร็จ · เติมอีเมลที่ผู้ติดต่อแล้วกด \"ลองใหม่\" หรือส่งอีเมลที่ใบเสร็จ");
@@ -177,8 +180,15 @@ public static class PostPaymentAutomationPolicy
             blocked.Add("ข้อมูลผู้ซื้อไม่ครบสำหรับใบกำกับภาษี (" + string.Join(", ", f.BuyerBlockingFields) + ") — ระบบไม่ออกใบเสร็จรับเงิน/ใบกำกับภาษีอัตโนมัติ · แก้ข้อมูลผู้ติดต่อแล้วกด \"ลองใหม่\" หรือ \"ออกใบเสร็จ\" ที่การชำระนี้");
         else { steps.Add(Step.IssueReceipt); steps.Add(Step.EmailReceipt); }
 
+        // ฝ่ายค้าน WP-08 HIGH-2 (Option 1): ไม่ส่งอัตโนมัติ ⇒ ตัดเฉพาะขั้นส่งอีเมล แล้วหยุดพร้อมเหตุบนเอกสาร (ใบเสร็จยังออกตามค่าตั้ง — ไม่เงียบ ไม่หายทั้งงาน)
+        if (autoOff != null && steps.RemoveAll(x => x is Step.EmailReceipt or Step.EmailSourceAsReceipt) > 0)
+            blocked.Add(AutoSendBlockedPrefix + autoOff);
+
         return new Plan(steps, blocked, notes, null);
     }
+
+    /// <summary>คำนำของเหตุ "ไม่ส่งอีเมลเพราะผู้ติดต่อปิดส่งอัตโนมัติ" (ตัวเดียว — เทสต์อ้างได้)</summary>
+    public const string AutoSendBlockedPrefix = "ไม่ส่งอีเมลใบเสร็จ — ";
 
     /// <summary>ข้อความหยุดเมื่อใบแจ้งหนี้มีใบกำกับภาษีอ้างแล้ว (ตัวเดียว — เทสต์อ้างได้)</summary>
     private static string TaxInvoiceSupersedesBlock(string taxInvoiceNumber)

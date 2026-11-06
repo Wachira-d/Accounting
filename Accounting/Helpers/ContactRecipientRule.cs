@@ -42,6 +42,11 @@ public static class ContactRecipientRule
         return (email, null, 200);
     }
 
+    /// <summary>รอบ 250 WP-08 (ฝ่ายค้าน LOW): แฮช SHA-256 ของอีเมล (ตัวเล็ก · ผูกบริษัท) สำหรับ audit append-only — ไม่ใช่ความลับ แต่ไม่เปิดเผยที่อยู่ตรง ๆ (PDPA ม.33)</summary>
+    public static string EmailAuditHash(Guid companyId, string email)
+        => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{companyId:N}|{email.Trim().ToLowerInvariant()}"))).ToLowerInvariant();
+
     /// <summary>ป้ายของปลายทาง — ตัดช่องว่าง/อักขระควบคุม · ว่าง ⇒ null · ยาวเกิน ⇒ ปฏิเสธ (ไม่ตัดเงียบ)</summary>
     public static (string? Label, string? Problem) NormalizeLabel(string? raw)
     {
@@ -75,30 +80,95 @@ public static class ContactRecipientRule
             .Select(o => o.Email!.ToLowerInvariant()).Distinct().ToList();
         public IReadOnlyList<RecipientOption> LineUsers => Options.Where(o => o.Available && o.Kind == NotifyEndpointKind.LineUser).ToList();
         public IReadOnlyList<RecipientOption> LineGroups => Options.Where(o => o.Available && o.Kind == NotifyEndpointKind.LineGroup).ToList();
+        /// <summary>รอบ 250 WP-08 ฝ่ายค้าน MED-2: ผู้ติดต่อของบริษัทนี้ถูกลบ (ชุดว่างโดยตั้งใจ) — ต่างจาก "ไม่มีผู้ติดต่อ/บริษัทอื่น" ที่ไม่มีเหตุให้บอก</summary>
+        public bool ContactDeleted { get; init; }
     }
 
+    /// <summary>รอบ 250 WP-08 ฝ่ายค้าน MED-2: เหตุไม่ส่งเมื่อผู้ติดต่อถูกลบ (ตัวเดียว — คิว/งานหลังรับชำระ/หน้ารายการประจำแสดงตรงตัว)</summary>
+    public const string ContactDeletedReason = "ผู้ติดต่อนี้ถูกลบแล้ว — ระบบไม่ส่งอีเมลอัตโนมัติถึงผู้ติดต่อที่ลบ (กู้คืนผู้ติดต่อ หรือส่งเองจากหน้าเอกสาร)";
+
     /// <summary>รอบ 250 WP-08 (L1 ต่อสาย): ผล "ส่งอีเมลเรื่องนี้ถึงใคร" ของทุกเส้นส่ง (ตารางส่ง · ทวงชำระ · ใบแจ้งยอด · 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น ·
-    /// ความพร้อมของรายการประจำ) — <see cref="Emails"/> ว่าง + <see cref="OptOutReason"/> มีค่า = ผู้ติดต่อมีอีเมลแต่ไม่รับเรื่องนี้ (ยกเลิกรับ/ค่าตั้งเสียหาย/รูปแบบผิด)
-    /// ⇒ ผู้ส่ง<b>ไม่ส่ง</b>และบันทึกเหตุ (ล้มดัง) · ว่างทั้งคู่ = ผู้ติดต่อไม่มีอีเมลเลย (พฤติกรรมเดิม: ไม่เข้าคิว)</summary>
+    /// ความพร้อมของรายการประจำ) — <see cref="Emails"/> ว่าง + <see cref="OptOutReason"/> มีค่า = ไม่ส่งเพราะค่าตั้ง (ยกเลิกรับ/ค่าตั้งเสียหาย/รูปแบบผิด/ผู้ติดต่อถูกลบ)
+    /// ⇒ ผู้ส่ง<b>ไม่ส่ง</b>และบันทึกเหตุ (ล้มดัง) · ว่างทั้งคู่ = ผู้ติดต่อไม่มีอีเมลเลย (พฤติกรรมเดิม: ไม่เข้าคิว) ·
+    /// ลำดับ: <b>อีเมลหลักก่อนเสมอ</b> (<see cref="PrimaryEmails"/> แยกไว้ชัด — ไม่พึ่งลำดับของ Options) แล้วตามด้วยอีเมลเพิ่มเติม</summary>
     public sealed record EmailDelivery(IReadOnlyList<string> Emails, string? OptOutReason)
     {
+        /// <summary>อีเมลหลัก (<c>Contact.Email</c>) ที่รับเรื่องนี้ — ว่าง = อีเมลหลักไม่รับ/ไม่มี · ผู้รับใบกำกับ e-Tax by Email (<see cref="ForChannel"/>)</summary>
+        public IReadOnlyList<string> PrimaryEmails { get; init; } = Array.Empty<string>();
         public bool Deliverable => Emails.Count > 0;
         /// <summary>ผู้รับทั้งหมดคั่นด้วย ", " (ตัวแยกเดียวกับ <c>SignEmailThrottle.ParseRecipients</c>) · null = ไม่มี</summary>
         public string? To => Emails.Count == 0 ? null : string.Join(", ", Emails);
         public string? First => Emails.Count == 0 ? null : Emails[0];
     }
 
-    /// <summary>อีเมลที่ส่งได้ของชุดผู้รับ + เหตุเมื่อมีปลายทางอีเมลแต่ไม่มีตัวที่รับเรื่องนี้ · LINE ไม่ถูกนับ (L1: ยังไม่เปิดส่ง · ไม่ใช่เหตุให้ไม่ส่งอีเมล)</summary>
+    /// <summary>อีเมลที่ส่งได้ของชุดผู้รับ (อีเมลหลักก่อน) + เหตุเมื่อไม่ส่ง · LINE ไม่ถูกนับ (L1: ยังไม่เปิดส่ง · ไม่ใช่เหตุให้ไม่ส่งอีเมล)</summary>
     public static EmailDelivery ForEmail(RecipientSet set)
     {
-        var emails = set.Emails;
-        if (emails.Count > 0) return new EmailDelivery(emails, null);
+        var primary = set.Options
+            .Where(o => o.Available && o.IsPrimary && o.Kind == NotifyEndpointKind.Email && o.Email != null)
+            .Select(o => o.Email!.ToLowerInvariant()).Distinct().ToList();
+        var emails = primary.Concat(set.Emails.Where(e => !primary.Contains(e))).ToList();
+        if (emails.Count > 0) return new EmailDelivery(emails, null) { PrimaryEmails = primary };
+        if (set.ContactDeleted) return new EmailDelivery(emails, ContactDeletedReason);
         var blocked = set.Options
             .Where(o => o.Kind == NotifyEndpointKind.Email && !o.Available && !string.IsNullOrWhiteSpace(o.Reason))
             .Select(o => $"{o.Display}: {o.Reason}").Distinct().ToList();
         return new EmailDelivery(emails, blocked.Count == 0 ? null
             : $"ไม่ส่งอีเมลเรื่อง \"{NotifyTopics.Label(set.Topic)}\" ตามช่องทางแจ้งเตือนของผู้ติดต่อ — {string.Join(" · ", blocked)} (แก้ที่หน้าผู้ติดต่อ แท็บช่องทางแจ้งเตือน)");
     }
+
+    /// <summary>รอบ 250 WP-08 ฝ่ายค้าน HIGH-1: ผู้รับตามเส้นการส่งจริง — <paramref name="To"/> null = ไม่ส่ง (<paramref name="Problem"/> = เหตุ) ·
+    /// <paramref name="NotSent"/> = ปลายทางที่รับเรื่องนี้แต่เส้นนี้ส่งถึงไม่ได้ · <paramref name="Note"/> = ข้อความบนแถวคิว/งาน (คงไว้หลังส่ง)</summary>
+    public sealed record ChannelRecipients(string? To, IReadOnlyList<string> NotSent, string? Problem, string? Note);
+
+    /// <summary>หมายเหตุที่คงไว้บนแถวคิวหลังส่งสำเร็จ (ผู้ส่งคิวไม่ล้าง — <c>EmailScheduleService.AfterSentNote</c>)</summary>
+    public const string EtaxPrimaryOnlyPrefix = "ส่งใบกำกับ e-Tax ถึงอีเมลหลักเท่านั้น: ";
+
+    /// <summary>
+    /// รอบ 250 WP-08 ฝ่ายค้าน HIGH-1 — <b>e-Tax by Email ส่งถึงผู้ซื้อ 1 อีเมล ไม่มีสำเนา</b> (คู่มือกรมสรรพากร · <c>EtaxByEmailFormat.Recipients</c>) ⇒
+    /// เส้น e-Tax ส่งถึง<b>อีเมลหลักเท่านั้น</b> (ตรงกับข้อความ <c>EtaxByEmailFormat.ContactRecipientsNote</c>: "อีเมลเพิ่มเติมจะไม่ได้รับใบกำกับ") ·
+    /// อีเมลเพิ่มเติมที่รับเรื่องนี้ ⇒ <b>ไม่ส่งสำเนาแบบอีเมลธรรมดา</b> (PDF/A-3 ที่ไม่ผ่าน ETDA = สำเนาใบกำกับที่ไม่ใช่ทางที่กฎหมายรับ · ตัวตรวจผู้รับปฏิเสธสำเนาอยู่แล้ว)
+    /// แต่<b>บันทึกว่าไม่ได้ส่ง</b>บนแถว · อีเมลหลักไม่รับเรื่องนี้ ⇒ ไม่ส่งพร้อมเหตุ (ไม่ย้ายไปอีเมลเพิ่มเติม) · อีเมลหลักหลายอีเมลในช่องเดียว ⇒ ส่งต่อให้ตัวตรวจผู้รับปฏิเสธ (ตามข้อความเดิม) ·
+    /// ไม่ใช่เส้น e-Tax ⇒ ทุกปลายทาง (ผลเดิม)
+    /// </summary>
+    public static ChannelRecipients ForChannel(EmailDelivery d, bool etaxByEmail)
+    {
+        if (!d.Deliverable) return new ChannelRecipients(null, Array.Empty<string>(), d.OptOutReason, null);
+        if (!etaxByEmail) return new ChannelRecipients(d.To, Array.Empty<string>(), null, null);
+        var rest = d.Emails.Where(e => !d.PrimaryEmails.Contains(e)).ToList();
+        if (d.PrimaryEmails.Count == 0)
+            return new ChannelRecipients(null, rest,
+                "ไม่ส่งใบกำกับภาษี — บริษัทใช้ e-Tax by Email ซึ่งส่งถึงผู้ซื้อได้ 1 อีเมล (อีเมลหลัก) แต่อีเมลหลักของผู้ติดต่อไม่ได้เลือกรับเรื่องนี้ · "
+                + $"อีเมลเพิ่มเติม ({string.Join(", ", rest)}) ไม่ได้รับใบกำกับ (ไม่มีสำเนา) — เปิดรับที่อีเมลหลัก หรือส่งเองจากหน้าเอกสาร", null);
+        var to = string.Join(", ", d.PrimaryEmails);
+        return new ChannelRecipients(to, rest, null, rest.Count == 0 ? null
+            : EtaxPrimaryOnlyPrefix + $"ไม่ได้ส่งถึง {string.Join(", ", rest)} (e-Tax by Email ไม่มีสำเนา — ส่งต่ออีเมลที่ ETDA ประทับเวลาแล้วได้)");
+    }
+
+    /// <summary>รอบ 250 WP-08 ฝ่ายค้าน MED-3: เพดานผู้รับของอีเมลผ่าน NextAcc (To+Cc+Bcc ≤ <c>SignEmailThrottle.MaxRecipients</c>) และความยาวช่อง (≤ <paramref name="maxLength"/>) —
+    /// ตัดตั้งแต่ตอนเข้าคิว (อีเมลหลักก่อน) พร้อมหมายเหตุ ไม่ใช่ปล่อยให้ผู้ส่งปฏิเสธทั้งฉบับ · ส่งผ่าน SMTP บริษัท ⇒ ไม่จำกัดจำนวน (จำกัดแค่ความยาว)</summary>
+    public static (string To, string? Note) CapForSender(string to, bool platformSender, int otherRecipients, int maxRecipients, int maxLength)
+    {
+        var all = SignEmailThrottle.ParseRecipients(new[] { to }).Valid.ToList();
+        if (all.Count == 0) return (to, null);
+        var keep = new List<string>();
+        var limit = platformSender ? Math.Max(1, maxRecipients - Math.Max(0, otherRecipients)) : int.MaxValue;
+        foreach (var a in all)
+        {
+            if (keep.Count >= limit) break;
+            if (keep.Count > 0 && string.Join(", ", keep.Append(a)).Length > maxLength) break;
+            keep.Add(a);
+        }
+        var dropped = all.Skip(keep.Count).ToList();
+        return (string.Join(", ", keep), dropped.Count == 0 ? null
+            : $"{CappedPrefix}ไม่ได้ส่งถึง {string.Join(", ", dropped)} — "
+              + (platformSender && all.Count > limit
+                  ? $"อีเมลผ่านระบบ NextAcc ส่งได้ครั้งละไม่เกิน {maxRecipients} ผู้รับ (รวมสำเนา/สำเนาลับ) · ตั้งค่าอีเมลของบริษัทเพื่อส่งถึงทุกปลายทาง"
+                  : "ช่องผู้รับยาวเกินที่ระบบเก็บได้ · ลดปลายทางที่รับเรื่องนี้"));
+    }
+
+    /// <summary>หมายเหตุ "ตัดผู้รับ" ที่คงไว้หลังส่ง</summary>
+    public const string CappedPrefix = "ส่งไม่ครบทุกปลายทาง: ";
 
     /// <summary>groupId นี้เป็นกลุ่มกลางของระบบ (แหล่งใดแหล่งหนึ่ง) ไหม — เทียบตรงตัวหลังตัดช่องว่าง</summary>
     internal static bool IsPlatformCentralGroup(string? groupId, IEnumerable<string?> platformGroupIds)
@@ -211,6 +281,8 @@ public static class ContactRecipientRule
         IReadOnlyCollection<string> platformGroupIds, bool lineDeliveryOpen)
     {
         var options = new List<RecipientOption>();
+        // ฝ่ายค้าน MED-2: ผู้ติดต่อของบริษัทนี้ที่ถูกลบ ⇒ ชุดว่างพร้อมธง (ForEmail บอกเหตุ) · บริษัทอื่น/ไม่พบ ⇒ ชุดว่างเฉย ๆ (ไม่เปิดเผยอะไร)
+        if (contact != null && contact.CompanyId == companyId && contact.IsDeleted) return new RecipientSet(topic, options) { ContactDeleted = true };
         if (contact == null || contact.CompanyId != companyId || contact.IsDeleted) return new RecipientSet(topic, options);
         var rows = endpoints.Where(e => e.CompanyId == companyId && e.ContactId == contact.Id && !e.IsDeleted).ToList();
         var topicLabel = NotifyTopics.Label(topic);

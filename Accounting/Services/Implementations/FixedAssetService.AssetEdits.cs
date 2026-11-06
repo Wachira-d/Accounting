@@ -24,7 +24,7 @@ public partial class FixedAssetService
         var asset = await _db.FixedAssets.FirstOrDefaultAsync(a => a.Id == assetId && a.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบสินทรัพย์ถาวร");
         var before = asset.ContractPrice;
-        if (before == value) return MapToResponse(asset);   // ไม่เปลี่ยน ⇒ ไม่เขียน audit ซ้ำ
+        if (before == value) return await WithEditLocksAsync(companyId, MapToResponse(asset));   // ไม่เปลี่ยน ⇒ ไม่เขียน audit ซ้ำ
         asset.ContractPrice = value;
         _db.AddChainedAuditLog(new AuditLog
         {
@@ -42,7 +42,8 @@ public partial class FixedAssetService
             }),
         });
         await _db.SaveChangesAsync();
-        return MapToResponse(asset);
+        // ฝ่ายค้าน LOW: คำตอบเดียวกับ GET (ฟอร์มที่ hydrate จากคำตอบนี้ยังรู้ว่าช่องวันพร้อมใช้ถูกล็อกไหม)
+        return await WithEditLocksAsync(companyId, MapToResponse(asset));
     }
 
     public async Task<FixedAssetResponse> SetAvailableForUseDateAsync(Guid companyId, Guid assetId, DateTime? availableForUseDate, string actor)
@@ -59,7 +60,7 @@ public partial class FixedAssetService
             var hasPosted = await _db.AssetDepreciations.AnyAsync(d => d.CompanyId == companyId && d.FixedAssetId == asset.Id && d.IsPosted);
             var newDate = availableForUseDate?.Date;
             var problem = FixedAssetValuationEdit.AvailableDateProblem(asset.IsUnderAcquisition, hasSources, hasPosted,
-                asset.PurchaseDate, newDate, TodayBangkok());
+                asset.PurchaseDate, newDate, TodayBangkok(), asset.Status, asset.AccumulatedDepreciation, asset.ReviewEffectiveFromMonthIndex != null);
             if (problem != null) throw new BusinessRuleException(problem, AssetCostSourceRules.RuleCode, 409);
 
             var before = asset.AvailableForUseDate;
@@ -106,7 +107,10 @@ public partial class FixedAssetService
     {
         var hasSources = await _db.FixedAssetCostSources.AsNoTracking().AnyAsync(s => s.CompanyId == companyId && s.FixedAssetId == r.Id);
         var hasPosted = await _db.AssetDepreciations.AsNoTracking().AnyAsync(d => d.CompanyId == companyId && d.FixedAssetId == r.Id && d.IsPosted);
-        var lockReason = FixedAssetValuationEdit.AvailableDateProblem(r.IsUnderAcquisition, hasSources, hasPosted, r.PurchaseDate, null, TodayBangkok());
+        var hasReview = await _db.FixedAssets.AsNoTracking()
+            .AnyAsync(a => a.Id == r.Id && a.CompanyId == companyId && a.ReviewEffectiveFromMonthIndex != null);
+        var lockReason = FixedAssetValuationEdit.AvailableDateProblem(r.IsUnderAcquisition, hasSources, hasPosted, r.PurchaseDate, null, TodayBangkok(),
+            r.Status, r.AccumulatedDepreciation, hasReview);
         return r with
         {
             AvailableDateLockReason = lockReason,
