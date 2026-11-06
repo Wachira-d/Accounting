@@ -17062,6 +17062,99 @@ RULES += [
 ]
 
 
+
+# ── รอบ 253 (WP-10 · AUTO_SEND_WHT_DESIGN §3.2/§4.3/§6.3 · คำตัดสินเจ้าของ §11 ข้อ 3–4 · AUDIT_249 §3.3 N4): ลิงก์อัปโหลด · ทวงอัตโนมัติ · ไม่หัก · e-WHT ──
+# ลิงก์สาธารณะ: RateLimit ก่อนอ่านไฟล์ · token ค้นด้วย hash + เทียบเวลาคงที่ · MagicBytes ก่อนเก็บ · ไฟล์ซ้ำไม่เก็บ/ไม่สแกนซ้ำ · เข้าประตูเดียว (SubmitAsync/SubmitFromScanAsync) ·
+# ทวง: JobLock + ตัวหาผู้รับเดียว + ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" + ตัวตัดสินจังหวะเดียว · ห้ามส่งอีเมลตรง (คิวเดิม = ผู้ส่งในนามบริษัท + โควตา) ·
+# ไม่หัก: บันทึกการยอมรับก่อนสร้างรายการ · ยอดจาก AmountsFor เดิม · ตัวบันทึกรับชำระอ่านการยอมรับก่อนตัดสิน WHT
+_R253_WHY = "รอบ 253 WP-10 (AUTO_SEND_WHT_DESIGN §3.2/§4.3/§6.3 · คำตัดสินเจ้าของ §11 ข้อ 3–4): "
+_R253_PUB = "Controllers/WhtCertPublicController.cs"
+_R253_LINK = "Services/Implementations/WhtCertUploadLinkService.cs"
+_R253_REM = "Services/Implementations/WhtCertReminderService.cs"
+_R253_JOB = "Services/Background/WhtCertReminderJob.cs"
+_R253_PAY = "Controllers/PublicPaymentController.cs"
+_R253_PL = "Services/Implementations/DocumentPayLinkService.cs"
+RULES += [
+    dict(file=_R253_PUB, method="Upload",
+         must=["_limiter.TryConsumeAsync(", "failClosed: true", "_links.PublicUploadAsync(", "WhtCertUploadLinkPolicy.UploadsPerTokenPerDay"],
+         before=[("_limiter.TryConsumeAsync(", "file.OpenReadStream("), ("_limiter.TryConsumeAsync(", "_links.PublicUploadAsync(")],
+         why=_R253_WHY + "RateLimit ต่อ IP + ต่อ token (DB · failClosed) ก่อนอ่านไฟล์"),
+    dict(file=_R253_PUB, method="Show",
+         must=["_limiter.TryConsumeAsync(", "failClosed: true", "_links.PublicViewAsync("],
+         why=_R253_WHY + "หน้าอัปโหลดสาธารณะจำกัดความถี่ (กันไล่เดา token)"),
+    dict(file=_R253_LINK, method="FindAsync",
+         must=["WhtCertUploadLinkPolicy.LooksValid(", "WhtCertUploadLinkPolicy.TokenHash(", "WhtCertUploadLinkPolicy.TokenMatches(", "l.CompanyId == companyId"],
+         why=_R253_WHY + "token ค้นด้วย hash ของบริษัทนี้ แล้วยืนยันซ้ำแบบเวลาคงที่ (ฐานไม่มี token ดิบ)"),
+    dict(file=_R253_LINK, method="PublicUploadAsync",
+         must=["FindAsync(", "WhtCertUploadLinkPolicy.Usable(", "WhtCertUploadLinkPolicy.Inspect(", "_intake.FindDuplicateShaAsync(",
+               "WhtCertUploadLinkPolicy.FilterHints(", "_files.UploadAnonymousBytesAsync(", "_intake.SubmitFromScanAsync(", "_intake.SubmitAsync(",
+               "WhtCertIntakeChannel.UploadLink", "PublicMessage("],
+         before=[("WhtCertUploadLinkPolicy.Usable(", "WhtCertUploadLinkPolicy.Inspect("),
+                 ("WhtCertUploadLinkPolicy.Inspect(", "_files.UploadAnonymousBytesAsync("),
+                 ("_intake.FindDuplicateShaAsync(", "_files.UploadAnonymousBytesAsync("),
+                 ("_files.UploadAnonymousBytesAsync(", "_ocr.ScanAsync(")],
+         forbid=["WhtCreditsReceived.Add(", "IEmailService", "_ai."],
+         why=_R253_WHY + "MagicBytes ก่อนเก็บ · ไฟล์ซ้ำไม่เก็บ/ไม่สแกน · เข้าประตูเดียว (ด่าน/นักเรียน AI เดียวกับทุกช่องทาง) · ข้อความถึงลูกค้าคงที่"),
+    dict(file=_R253_LINK, method="IssueCoreAsync",
+         must=["WhtCertUploadLinkPolicy.NewToken(", "WhtCertUploadLinkPolicy.TokenHash(", "AddChainedAuditLog(", "SaveChangesAsync(", "SystemBaseUrl.ResolveAsync("],
+         forbid=["TokenHash = token"],
+         why=_R253_WHY + "ฐานเก็บเฉพาะ hash · ออกลิงก์ลง audit chain · บันทึกก่อนคืน URL (ลิงก์ที่ส่งออกต้องมีแถวรองรับ)"),
+    dict(file=_R253_JOB, method="RunOnceAsync",
+         must=["JobLock.RunExclusiveAsync(", "RunDueAsync("],
+         why=_R253_WHY + "งานทวงทีละเครื่อง (F4 ข้อ 6 · กฎ #4 D)"),
+    dict(file=_R253_REM, method="RunCompanyAsync",
+         must=["WhtCertReminderCadence.Decide(", "_recipients.ResolveAsync(", "NotifyTopic.Wht", "AutopilotSettingsResolver.AutoSendBlock(",
+               "WhtCertTracking.LoadAsync(", "WhtCertReminderCadence.QueueKey(", "_db.EmailQueues.Add(", "WhtCertReminderLastRunAt",
+               "settings?.WhtCertReminderEnabled"],
+         before=[("WhtCertReminderCadence.Decide(", "_db.EmailQueues.Add("), ("_recipients.ResolveAsync(", "_db.EmailQueues.Add(")],
+         forbid=["IEmailService", "SendAsync(", "WhtCreditsReceived.Add("],
+         why=_R253_WHY + "จังหวะจากตัวตัดสินเดียว · ผู้รับจากตัวหาผู้รับเดียว · ผู้ติดต่อไม่ส่งอัตโนมัติชนะ · เข้าคิวอีเมลเดิม (โควตา) ไม่ส่งตรง · ไม่สร้างแถวรอใบเอง"),
+    dict(file=_R253_REM, method="SendTimeSkipReasonAsync",
+         must=["WhtCertReminderEnabled", "AutopilotSettingsResolver.AutoSendBlock(", "WhtCertTracking.LoadAsync(", "c.CompanyId == item.CompanyId"],
+         why=_R253_WHY + "ตรวจซ้ำตอนส่ง: ปิดทวง/ไม่ส่งอัตโนมัติ/ได้ใบแล้ว ⇒ ข้ามพร้อมเหตุ"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="ComposeQueueMessageAsync",
+         must=["WhtCertReminderCadence.UploadLinkPlaceholder", "WhtCertUploadLinkService.IssueCoreAsync(", "System.Net.WebUtility.HtmlEncode(link.Url)"],
+         why=_R253_WHY + "ลิงก์อัปโหลดของอีเมลทวงออกตอนส่ง (คิวไม่เก็บ token) · URL ถูกหนีก่อนใส่ HTML"),
+    dict(file=_R253_PAY, method="StartDocument",
+         must=["_docLinks.AcceptNoWhtAsync(", "accepted.Refusal", "LinkNoWhtIntentAsync(", "limiter.TryConsumeAsync("],
+         before=[("_docLinks.AcceptNoWhtAsync(", "afterStart:")],
+         forbid=["req.Amount", "AmountsFor("],
+         why=_R253_WHY + "ไม่หัก: บันทึกการยอมรับก่อนสร้างรายการชำระ · ยอดจากเซิร์ฟเวอร์ (ตัวคิดยอดเดิมผ่าน AcceptNoWhtAsync) ไม่รับยอดจากหน้า"),
+    dict(file=_R253_PL, method="AcceptNoWhtAsync",
+         must=["PublicViewAsync(", "NoWhtChoicePolicy.OfferFor(", "NoWhtChoicePolicy.AcceptRefusal(", "NoWhtChoicePolicy.EvidenceHash(",
+               "NoWhtChoicePolicy.IpHash(", "_db.NoWhtAcceptances.Add(", "AddChainedAuditLog(", "NoWhtChoicePolicy.AmountDue("],
+         before=[("NoWhtChoicePolicy.AcceptRefusal(", "_db.NoWhtAcceptances.Add("), ("_db.NoWhtAcceptances.Add(", "NoWhtChoicePolicy.AmountDue(")],
+         forbid=["Ip = request.Ip", "IpAddress = request.Ip"],
+         why=_R253_WHY + "ตัวตัดสินเดียว · เก็บหลักฐาน (hash IP ไม่เก็บดิบ · hash ข้อความ · hash หลักฐาน) + audit ก่อนคืนยอดเต็ม"),
+    dict(file=_R253_PL, method="PublicViewAsync",
+         must=["NoWhtChoicePolicy.OfferFor(", "DocumentPayLinkPolicy.LinkUsable("],
+         why=_R253_WHY + "ตัวเลือก \"ไม่หัก\" มาจากตัวตัดสินเดียวบนยอดชุดเดียวกับลิงก์"),
+    dict(file="Services/Payments/Handlers/DocumentPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["NoWhtAcceptances", "NoWhtChoicePolicy.HandlerRefusal(", "a.CompanyId == intent.CompanyId"],
+         must_re=[r"paymentWht\s*=\s*noWht\s*\?\s*0m"],
+         before=[("NoWhtChoicePolicy.HandlerRefusal(", "_docs.CreatePaymentAsync(")],
+         why=_R253_WHY + "เงินจากการเลือกไม่หัก: WHT งวดนี้ = 0 (ห้ามออก 50 ทวิ เท็จ) · ยอดเกินยอดค้าง ⇒ ล้มดังพร้อมป้ายฝั่งผู้ขาย ไม่ลงเอง"),
+    dict(file="Controllers/WhtCertIntakeController.cs", method="Upload",
+         must=["WhtEvidenceReference.KindFor(", "body.EvidenceReference"],
+         forbid=["WhtRate = 1", "0.01m"],
+         why=_R253_WHY + "N4: e-WHT แนบเป็นใบ 50 ทวิ ธรรมดา (ด่านเดียวกัน) · ไม่เสนออัตรา 1% (AUDIT_249 §2 #32)"),
+]
+REVIEWER_CASES += [
+    # ถอดเพดานต่อ token (เหลือแต่ต่อ IP — ลิงก์รั่วถูกยิงไฟล์ได้ไม่จำกัด) ⇒ ต้องฟ้อง
+    ("R253a", "Upload", "WhtCertUploadLinkPolicy.UploadsPerMinute, WhtCertUploadLinkPolicy.UploadsPerTokenPerDay",
+     "WhtCertUploadLinkPolicy.UploadsPerMinute, WhtCertUploadLinkPolicy.UploadsPerDay", True),
+    # เก็บไฟล์ก่อนตรวจไบต์ ⇒ ต้องฟ้อง
+    ("R253b", "PublicUploadAsync", "        var verdict = WhtCertUploadLinkPolicy.Inspect(content);", "        var verdict = new WhtCertUploadLinkPolicy.FileVerdict(new UploadFileKind(\".pdf\", \"application/pdf\", false), null);", True),
+    # งานทวงไม่ผ่าน JobLock ⇒ ต้องฟ้อง
+    ("R253c", "RunOnceAsync", "return await Accounting.Helpers.JobLock.RunExclusiveAsync(db,", "return await NoLock(db,", True),
+    # ทวงโดยไม่ถามตัวหาผู้รับ (ส่งถึง Contact.Email ตรง) ⇒ ต้องฟ้อง
+    ("R253d", "RunCompanyAsync", "await _recipients.ResolveAsync(companyId, contactId, NotifyTopic.Wht, ct)", "await EmailOf(companyId, contactId)", True),
+    # สร้างรายการยอดเต็มโดยไม่บันทึกการยอมรับ ⇒ ต้องฟ้อง
+    ("R253e", "StartDocument", "var accepted = await _docLinks.AcceptNoWhtAsync(companyId, token,", "var accepted = await NoRecord(companyId, token,", True),
+    # ตัวบันทึกรับชำระลืมการเลือกไม่หัก (ลง WHT ตามยอดแนะนำ ⇒ 50 ทวิ เท็จ) ⇒ ต้องฟ้อง
+    ("R253f", "HandleSucceededAsync", "var paymentWht = noWht ? 0m : buyerWithholds == false ? 0m", "var paymentWht = buyerWithholds == false ? 0m", True),
+]
+
 def wht_credit_add_errors() -> list:
     """รอบ 252 (AUTO_SEND §3.0 / เฟส 244 R243): ห้าม `WhtCreditsReceived.Add(` นอก DocumentService.SyncWhtCreditReceivedAsync + WhtCreditService.CreateAsync
     (ล็อกจำนวนจุด = 2) — ทุกทางเข้าของใบ 50 ทวิ เข้าประตูเดียว WhtCertIntakeService · `ReceivedAmount` เขียนได้ที่กล่องรับเท่านั้น ·

@@ -511,6 +511,12 @@
             <input type="checkbox" id="asIncludePartial" style="margin-top:3px">
             <span>ส่งทุกงวดที่รับเงิน (ไม่เลือก = ส่งเมื่อชำระครบเท่านั้น)</span>
           </label>
+          <!-- รอบ 253 (WP-10): ทวง 50 ทวิ อัตโนมัติ — จังหวะ/เพดานอยู่ที่เซิร์ฟเวอร์ (WhtCertReminderCadence) · ค่าตั้งต้นปิด -->
+          <label class="form-checkbox" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:8px">
+            <input type="checkbox" id="asWhtReminder" style="margin-top:3px">
+            <span>ทวงหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) จากลูกค้าอัตโนมัติทางอีเมล
+              <span style="display:block;font-size:11px;color:#94a3b8">ทวงวันที่ 7 · 21 · 45 หลังรับชำระ แล้วรายเดือนสูงสุด 6 ครั้ง · รวมทุกใบที่ค้างของลูกค้าในอีเมลเดียว พร้อมลิงก์อัปโหลดที่ไม่ต้องล็อกอิน · หยุดเมื่อได้ใบ · ผู้ติดต่อที่ตั้ง "ไม่ส่งอัตโนมัติ" หรือไม่รับเรื่อง 50 ทวิ จะไม่ได้รับ</span></span>
+          </label>
           <button type="button" class="btn btn-sm btn-primary" onclick="Page.saveAutoSendSettings()">บันทึกส่วนนี้</button>
         </div>
         <div class="form-group advanced-only" style="grid-column:1/3">
@@ -1452,6 +1458,7 @@
           if (!(s.companyChannels || []).length) box.textContent = 'ยังไม่มีช่องทางที่เปิด';
           document.getElementById('asEmailReceipt').checked = !!s.postPayEmailReceipt;
           document.getElementById('asIncludePartial').checked = !!s.postPayIncludePartial;
+          document.getElementById('asWhtReminder').checked = !!s.whtCertReminderEnabled;
           document.getElementById('asSenderInfo').textContent = s.senderNote || '';
           this._lockCard('autoSendCard', null);
           // ปลดล็อกแล้วคืนสถานะปิดของช่องลิงก์ชำระที่เซิร์ฟเวอร์ตัดสิน
@@ -1468,6 +1475,7 @@
             payLinkDefaultChannels: channels,
             postPayEmailReceipt: !!document.getElementById('asEmailReceipt').checked,
             postPayIncludePartial: !!document.getElementById('asIncludePartial').checked,
+            whtCertReminderEnabled: !!document.getElementById('asWhtReminder').checked,
           });
           Layout.toast((r && r.message) || 'บันทึกแล้ว', 'success');
           await this.loadAutoSendSettings();

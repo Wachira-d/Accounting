@@ -90,6 +90,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             PayLinkDefaultChannels: DocumentPayLinkPolicy.ParseChannels(s?.PayLinkDefaultChannelsJson),
             PostPayEmailReceipt: s?.PostPayEmailReceipt ?? false,
             PostPayIncludePartial: s?.PostPayIncludePartial ?? false,
+            WhtCertReminderEnabled: s?.WhtCertReminderEnabled ?? false,
             SenderNote: verified
                 ? "อีเมลอัตโนมัติส่งจากอีเมลของบริษัท (ตั้งค่า → อีเมล ทดสอบผ่านแล้ว)"
                 : "ยังไม่ได้ตั้ง/ทดสอบอีเมลของบริษัท — อีเมลอัตโนมัติ (ตามตารางและหลังรับชำระ) ส่งด้วยอีเมลของระบบ NextAcc ในนามบริษัท: "
@@ -110,18 +111,19 @@ public class DocumentPayLinkService : IDocumentPayLinkService
 
         var s = await _db.CompanySettings.FirstOrDefaultAsync(x => x.CompanyId == companyId, ct)
                 ?? await CompanySettingsFactory.AddNewAsync(_db, companyId, ct);
-        var before = new { s.PayLinkDefaultEnabled, s.PayLinkDefaultChannelsJson, s.PostPayEmailReceipt, s.PostPayIncludePartial };
+        var before = new { s.PayLinkDefaultEnabled, s.PayLinkDefaultChannelsJson, s.PostPayEmailReceipt, s.PostPayIncludePartial, s.WhtCertReminderEnabled };
         if (request.PayLinkDefaultEnabled is { } en) s.PayLinkDefaultEnabled = en;
         if (request.PayLinkDefaultChannels != null) s.PayLinkDefaultChannelsJson = DocumentPayLinkPolicy.SerializeChannels(request.PayLinkDefaultChannels);
         if (request.PostPayEmailReceipt is { } er) s.PostPayEmailReceipt = er;
         if (request.PostPayIncludePartial is { } ip) s.PostPayIncludePartial = ip;
+        if (request.WhtCertReminderEnabled is { } wr) s.WhtCertReminderEnabled = wr;
         s.UpdatedAt = DateTime.UtcNow;
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId, Action = AuditAction.Update, EntityType = nameof(CompanySettings), EntityId = s.Id.ToString(),
             OldValues = System.Text.Json.JsonSerializer.Serialize(before),
             NewValues = System.Text.Json.JsonSerializer.Serialize(new { @event = "DocumentAutoSendSettings", s.PayLinkDefaultEnabled, s.PayLinkDefaultChannelsJson,
-                s.PostPayEmailReceipt, s.PostPayIncludePartial, actor }),
+                s.PostPayEmailReceipt, s.PostPayIncludePartial, s.WhtCertReminderEnabled, actor }),
             Timestamp = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync(ct);
@@ -420,6 +422,10 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             transfer = await TransferBlockAsync(companyId, d.Id, amounts.Net, ct);
 
         var title = heading.Title;
+        // รอบ 253 (WP-10 · AUTO_SEND §6.3 · §11 ข้อ 3): ตัวเลือก "ไม่หัก ณ ที่จ่าย" — ตัวตัดสินเดียว NoWhtChoicePolicy บนยอดชุดเดียวกับลิงก์ (AmountsFor)
+        var noWht = blocked == null
+            ? NoWhtChoicePolicy.OfferFor(amounts, await BuyerWithholdsAsync(companyId, d.ContactId, ct))
+            : new NoWhtChoicePolicy.Offer(false, false, amounts.Net);
         var target = new PublicPayTarget(PaymentSourceKind.Document, d.Id, Guid.Empty, blocked == null ? amounts.Net : 0m,
             $"{title} {d.DocumentNumber}", contact?.Email, contact?.Phone, d.DocumentNumber, BlockedNote: blocked,
             AllowedMethods: online, ContactId: d.ContactId);
@@ -433,7 +439,12 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             OnlineMethods: blocked == null ? Options(online) : new List<PayChannelOption>(),
             Transfer: transfer,
             Card: blocked == null ? card : null,
-            IsTestMode: cfg?.Mode == PaymentProviderMode.Test)
+            IsTestMode: cfg?.Mode == PaymentProviderMode.Test,
+            NoWhtOffered: noWht.Offered,
+            NoWhtWarn: noWht.Warn,
+            NoWhtNotice: noWht.Warn ? NoWhtChoicePolicy.NoticeText : null,
+            NoWhtNoticeVersion: noWht.Offered ? NoWhtChoicePolicy.NoticeVersion : null,
+            NoWhtAmount: noWht.GrossAmount)
         {
             Target = target,
             // รอบ 255 WP-12B ข้อ 1: แจ้งโอนได้เมื่อหน้านี้แสดงกล่องโอน (ใบรับโอนได้ · มีบัญชีรับโอน) และยังมียอดค้าง — ไม่ขึ้นกับว่าเปิดชำระออนไลน์ไหม (โหมดโอนอย่างเดียว)
@@ -442,6 +453,62 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             SlipDocumentId = d.Id,
         };
     }
+
+    /// <summary>
+    /// รอบ 253 (WP-10 · คำตัดสินเจ้าของ §11 ข้อ 3) — ลูกค้าเลือก "ไม่หัก ณ ที่จ่าย": ตรวจ token/ใบ/ยอดผ่าน <see cref="PublicViewAsync"/> ตัวเดิม →
+    /// ตัวตัดสินเดียว <see cref="NoWhtChoicePolicy.AcceptRefusal"/> (เสนอจริง · ติ๊กยอมรับ · version ตรงข้อความที่แสดง) → <b>บันทึกการยอมรับ</b>
+    /// (แถว <see cref="NoWhtAcceptance"/> + audit chain: ผู้กด · เวลา · hash IP · ข้อความ/version/hash · ยอด · hash หลักฐาน) ก่อนสร้างรายการชำระ ·
+    /// เป้าหมายที่คืน = เป้าหมายเดิมของลิงก์ แต่ยอด = <see cref="NoWhtChoicePolicy.AmountDue"/> (Gross จากตัวคิดยอดเดิม — ไม่มีสูตรที่สอง)
+    /// </summary>
+    public async Task<NoWhtAcceptResult> AcceptNoWhtAsync(Guid companyId, string token, NoWhtAcceptRequest request, CancellationToken ct = default)
+    {
+        var view = await PublicViewAsync(companyId, token, ct);
+        if (view == null) return new NoWhtAcceptResult(null, null, null);
+        if (!view.CanPayOnline || view.Target.ContactId is not Guid contactId)
+            return new NoWhtAcceptResult(view.Target, null, view.BlockedNote ?? "เอกสารนี้ชำระออนไลน์ไม่ได้ตอนนี้ — กรุณาติดต่อผู้ขาย");
+        var amounts = new DocumentPayLinkPolicy.Amounts(view.Gross, view.Wht, view.Net);
+        var withholds = await BuyerWithholdsAsync(companyId, contactId, ct);
+        var offer = NoWhtChoicePolicy.OfferFor(amounts, withholds);
+        if (NoWhtChoicePolicy.AcceptRefusal(offer, request.Accepted, request.NoticeVersion) is string refusal)
+            return new NoWhtAcceptResult(view.Target, null, refusal);
+
+        var raw = DateTime.UtcNow;
+        var at = new DateTime(raw.Ticks - raw.Ticks % TimeSpan.TicksPerSecond, DateTimeKind.Utc);   // ระดับวินาที — hash หลักฐานคำนวณซ้ำได้หลัง round-trip ฐาน
+        var ipHash = NoWhtChoicePolicy.IpHash(companyId, request.Ip);
+        var name = WhtCertUploadLinkPolicy.SanitizeSenderName(request.PayerName);
+        var noticeHash = NoWhtChoicePolicy.NoticeHash();
+        var row = new NoWhtAcceptance
+        {
+            CompanyId = companyId, DocumentId = view.Target.SourceId, ContactId = contactId, AcceptedAt = at, AcceptedByName = name, IpHash = ipHash,
+            NoticeVersion = NoWhtChoicePolicy.NoticeVersion, NoticeText = NoWhtChoicePolicy.NoticeText, NoticeHash = noticeHash,
+            BuyerWithholds = withholds, GrossAmount = amounts.Gross, WhtAmount = amounts.Wht, NetAmount = amounts.Net,
+            EvidenceHash = NoWhtChoicePolicy.EvidenceHash(companyId, view.Target.SourceId, at, amounts.Gross, amounts.Wht, amounts.Net,
+                NoWhtChoicePolicy.NoticeVersion, noticeHash, ipHash, name),
+            CreatedBy = "public-pay",
+        };
+        _db.NoWhtAcceptances.Add(row);
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserEmail = name ?? "ผู้ถือลิงก์ชำระ (ไม่ได้ล็อกอิน)", Action = AuditAction.Create,
+            EntityType = nameof(NoWhtAcceptance), EntityId = row.Id.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                @event = "no-wht-accepted", ruleCode = NoWhtChoicePolicy.RuleCode,
+                legalReference = "ประมวลรัษฎากร ม.3 เตรส · ม.50 · ม.54 · ท.ป.4/2528",
+                documentId = view.Target.SourceId, view.DocumentNumber, row.GrossAmount, row.WhtAmount, row.NetAmount, row.BuyerWithholds,
+                row.NoticeVersion, row.NoticeHash, row.IpHash, row.EvidenceHash,
+            }),
+            Timestamp = at,
+        });
+        await _db.SaveChangesAsync(ct);
+        return new NoWhtAcceptResult(view.Target with { AmountDue = NoWhtChoicePolicy.AmountDue(amounts, offer, noWithholding: true) }, row.Id, null);
+    }
+
+    /// <summary>ผูกการยอมรับกับรายการชำระที่สร้างตามมา (ตัวบันทึกรับชำระอ่านด้วย PaymentIntentId) · ผูกแล้วไม่ทับ</summary>
+    public async Task LinkNoWhtIntentAsync(Guid companyId, Guid acceptanceId, Guid paymentIntentId, CancellationToken ct = default)
+        => await _db.NoWhtAcceptances
+            .Where(a => a.Id == acceptanceId && a.CompanyId == companyId && a.PaymentIntentId == null)
+            .ExecuteUpdateAsync(x => x.SetProperty(a => a.PaymentIntentId, (Guid?)paymentIntentId), ct);
 
     /// <summary>กล่อง "โอนเข้าบัญชี" ของใบ (ตัวเดียว — หน้าชำระสาธารณะ + พอร์ทัลลูกค้า · รอบ 250 WP-03 ฝ่ายค้าน H1):
     /// บัญชีของใบก่อน (ตัวเลือกบัญชีเดียวกับกระดาษ <c>PaymentQrService.PickDocumentAccountAsync</c>) · ไม่มี ⇒ บัญชีรับโอนของเว็บ ·

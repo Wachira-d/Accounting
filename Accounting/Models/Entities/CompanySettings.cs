@@ -341,6 +341,11 @@ public class CompanySettings : TenantEntity
     public bool PostPayEmailReceipt { get; set; } = false;
     /// <summary>ส่งทุกงวดที่รับ (false = เฉพาะงวดที่ชำระครบ) · ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c></summary>
     public bool PostPayIncludePartial { get; set; } = false;
+    /// <summary>รอบ 253 (WP-10 · AUTO_SEND §4.3 · คำตัดสินเจ้าของ §11 ข้อ 4): ทวงหนังสือรับรอง 50 ทวิ อัตโนมัติทางอีเมล (7/21/45 วัน + รายเดือนสูงสุด 6 ครั้ง) ·
+    /// <b>ค่าตั้งต้นปิด</b> (คำตัดสิน 253-WP10-4: อีเมลถึงลูกค้าจริงต้องเปิดเอง) · ผู้อ่าน: <c>WhtCertReminderService.RunCompanyAsync</c></summary>
+    public bool WhtCertReminderEnabled { get; set; } = false;
+    /// <summary>รอบ 253: watermark ต่อบริษัทของงานทวง 50 ทวิ (รอบล่าสุดที่ประมวลผลบริษัทนี้ · ระบบเขียนเอง) — ผู้อ่าน: <c>WhtCertReminderService.DueCompaniesAsync</c></summary>
+    public DateTime? WhtCertReminderLastRunAt { get; set; }
 
     // ── รอบ 252 WP-12A (AUTOPILOT §5 · §7 · §10 · คำตัดสิน §2 #36) — หน้า: Autopilot (autopilot.html) · API: AutopilotController ──
     /// <summary>ปิดหนี้อัตโนมัติจากเงินโอนในรายการเดินบัญชี (ยอดสุทธิตรงเป๊ะ + ตัวระบุตัว + ยอดไม่ซ้ำ — <c>BankReceiptAutoSettle</c>) · <b>ค่าตั้งต้นปิด</b>

@@ -30,7 +30,11 @@ public class WhtCertIntakeController : ControllerBase
         _intake = intake; _ocr = ocr; _db = db;
     }
 
-    public sealed record UploadBody(Guid FileAttachmentId, Guid? DocumentId = null);
+    /// <param name="EWithholding">รอบ 253 (WP-10 · N4): ไฟล์นี้เป็นหลักฐาน e-WHT — แนบเป็นใบ 50 ทวิ ธรรมดา (ด่านเดียวกัน · ไม่เสนออัตรา 1%)</param>
+    /// <param name="EvidenceReference">เลขอ้างอิง e-WHT (ข้อความอิสระ · ไม่บังคับ)</param>
+    public sealed record UploadBody(Guid FileAttachmentId, Guid? DocumentId = null, bool EWithholding = false, string? EvidenceReference = null);
+    /// <summary>รอบ 253 (WP-10): ออกลิงก์อัปโหลด 50 ทวิ ให้ลูกค้า — ระบุเอกสาร (ผู้ติดต่อของเอกสาร) หรือผู้ติดต่อ</summary>
+    public sealed record IssueLinkBody(Guid? ContactId = null, Guid? DocumentId = null);
     public sealed record FilterOption(string Value, string Label);
 
     /// <summary>ตัวเลือกตัวกรอง "50 ทวิ" ของหน้ารายการเอกสาร (ค่า + ป้ายจากตัวตัดสินเดียว — หน้าเว็บไม่มีสำเนา)</summary>
@@ -79,7 +83,8 @@ public class WhtCertIntakeController : ControllerBase
             return Ok(new ApiResponse<WhtCertSubmitResult>(true, dup, dup.Message));
         var scan = await _ocr.ScanAsync(companyId, body.FileAttachmentId, actingUserId: uid);
         var r = await _intake.SubmitFromScanAsync(companyId, scan.Id, WhtCertIntakeChannel.Manual,
-            body.DocumentId is Guid d ? new[] { d } : null, name, uid, ct);
+            body.DocumentId is Guid d ? new[] { d } : null, name, uid, ct,
+            WhtEvidenceReference.KindFor(body.EWithholding), body.EvidenceReference);
         return StatusCode(r.Duplicate ? 200 : 201, new ApiResponse<WhtCertSubmitResult>(true, r, r.Message));
     }
 
@@ -99,6 +104,34 @@ public class WhtCertIntakeController : ControllerBase
         var uid = JwtHelper.GetUserIdFromClaims(User);
         var r = await _intake.RejectAsync(companyId, id, body, uid, User?.Identity?.Name ?? "user", ct);
         return Ok(new ApiResponse<WhtCertIntakeDto>(true, r, "ตีกลับแล้ว"));
+    }
+
+    // ═══════════ รอบ 253 (WP-10 · AUTO_SEND §3.2 ช่อง ①): ลิงก์อัปโหลด 50 ทวิ ให้ลูกค้า (ไม่ต้องล็อกอิน) — สิทธิ์ Tax.File ═══════════
+
+    /// <summary>ออกลิงก์ใหม่ (URL มี token — แสดงครั้งเดียว · ฐานเก็บเฉพาะ hash) · ผู้ขายคัดลอกส่งทาง LINE/อีเมลเอง</summary>
+    [HttpPost("upload-links")]
+    [RequirePermission(PermissionKeys.TaxFile)]
+    public async Task<ActionResult<ApiResponse<WhtCertUploadLinkIssued>>> IssueUploadLink(Guid companyId, [FromBody] IssueLinkBody body,
+        [FromServices] IWhtCertUploadLinkService links, CancellationToken ct)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        var r = await links.IssueAsync(companyId, body?.ContactId, body?.DocumentId, uid, User?.Identity?.Name ?? "user", ct);
+        return Ok(new ApiResponse<WhtCertUploadLinkIssued>(true, r, r.Problem ?? "ออกลิงก์อัปโหลดแล้ว — คัดลอกส่งให้ลูกค้า (ลิงก์นี้แสดงครั้งเดียว)"));
+    }
+
+    [HttpGet("upload-links")]
+    [RequirePermission(PermissionKeys.TaxFile)]
+    public async Task<ActionResult<ApiResponse<List<WhtCertUploadLinkDto>>>> UploadLinks(Guid companyId, [FromQuery] Guid contactId,
+        [FromServices] IWhtCertUploadLinkService links, CancellationToken ct)
+        => Ok(new ApiResponse<List<WhtCertUploadLinkDto>>(true, await links.ListAsync(companyId, contactId, ct)));
+
+    [HttpPost("upload-links/{linkId:guid}/revoke")]
+    [RequirePermission(PermissionKeys.TaxFile)]
+    public async Task<ActionResult<ApiResponse<bool>>> RevokeUploadLink(Guid companyId, Guid linkId,
+        [FromServices] IWhtCertUploadLinkService links, CancellationToken ct)
+    {
+        await links.RevokeAsync(companyId, linkId, User?.Identity?.Name ?? "user", ct);
+        return Ok(new ApiResponse<bool>(true, true, "ยกเลิกลิงก์แล้ว — ลูกค้าใช้ลิงก์นี้ส่งไฟล์ไม่ได้อีก"));
     }
 
     /// <summary>การ์ด "50 ทวิ ที่ต้องตาม" — ทั้งบริษัท (แดชบอร์ด) หรือรายผู้ติดต่อ (<paramref name="contactId"/>)</summary>

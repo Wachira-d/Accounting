@@ -661,6 +661,9 @@ public class EmailScheduleService : IEmailScheduleService
                 // ฝ่ายค้าน F4: 50 ทวิ ที่ถูกยกเลิกหลังเข้าคิวก็ต้องไม่ถูกส่ง (ไฟล์แนบเป็นใบที่ไม่มีผลแล้ว) — คลาสเดียวกัน
                 var skipReason = item.EntityType == "Document" ? await RecheckDocumentAtSendAsync(item, ct)
                     : item.EntityType == "WithholdingTaxCert" ? await RecheckWhtCertAtSendAsync(item, ct)
+                    // รอบ 253 (WP-10): อีเมลทวง 50 ทวิ — บริษัทปิดทวง/ผู้ติดต่อไม่ส่งอัตโนมัติ/ลูกค้าส่งใบครบแล้ว ⇒ ข้ามพร้อมเหตุ
+                    : item.EntityType == Accounting.Helpers.WhtCertReminderCadence.QueueEntityType
+                        ? await WhtCertReminderService.SendTimeSkipReasonAsync(_db, item, ct)
                     : null;
                 if (skipReason != null)
                 {
@@ -933,6 +936,16 @@ public class EmailScheduleService : IEmailScheduleService
         }
         msg.Subject = DocumentPayLinkPolicy.ResolvePlaceholder(subject, payUrl, html: false);
         msg.HtmlBody = DocumentPayLinkPolicy.ResolvePlaceholder(body, payUrl, html: true);
+        // รอบ 253 (WP-10): อีเมลทวง 50 ทวิ — ลิงก์อัปโหลดออกตอนส่ง (คิว/บันทึกเก็บที่หมาย ไม่เก็บ token) · ไม่มีที่อยู่เว็บของระบบ ⇒ ไม่ส่ง (ไม่ส่งลิงก์เสีย)
+        if (item.EntityType == Accounting.Helpers.WhtCertReminderCadence.QueueEntityType
+            && msg.HtmlBody.Contains(Accounting.Helpers.WhtCertReminderCadence.UploadLinkPlaceholder, StringComparison.Ordinal))
+        {
+            var link = await WhtCertUploadLinkService.IssueCoreAsync(_db, _config, item.CompanyId, item.EntityId, null, "reminder-email",
+                null, "wht-cert-reminder", ct);
+            if (link.Url == null) return new QueueCompose(null, null, null, link.Problem ?? "สร้างลิงก์อัปโหลดไม่ได้");
+            msg.HtmlBody = msg.HtmlBody.Replace(Accounting.Helpers.WhtCertReminderCadence.UploadLinkPlaceholder,
+                System.Net.WebUtility.HtmlEncode(link.Url), StringComparison.Ordinal);
+        }
         return new QueueCompose(msg, sender, log, null);
     }
 

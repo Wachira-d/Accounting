@@ -6342,6 +6342,79 @@ public static class DatabaseMigrationHelper
               JOIN "WhtCertIntakes" i ON i."Id" = w."Id" AND i."CompanyId" = w."CompanyId"
              WHERE NOT EXISTS (SELECT 1 FROM "WhtCertAllocations" a WHERE a."IntakeId" = w."Id" AND a."WhtCreditId" = w."Id" AND a."CompanyId" = w."CompanyId");
             """,
+            // ── รอบ 253 (WP-10 · AUTO_SEND_WHT_DESIGN §3.2/§4.3/§6.3 · N4): ลิงก์อัปโหลด 50 ทวิ · ทวงอัตโนมัติ · ยอมรับ "ไม่หัก" · เลขอ้างอิง e-WHT ──
+            """ALTER TABLE "WhtCertIntakes" ADD COLUMN IF NOT EXISTS "EvidenceReference" varchar(100) NULL;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WhtCertReminderEnabled" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WhtCertReminderLastRunAt" timestamptz NULL;""",
+            """
+            CREATE TABLE IF NOT EXISTS "WhtCertUploadLinks" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL REFERENCES "Companies"("Id") ON DELETE CASCADE,
+                "ContactId" uuid NOT NULL,
+                "DocumentId" uuid NULL,
+                "TokenHash" varchar(64) NOT NULL,
+                "ExpiresAt" timestamptz NOT NULL,
+                "RevokedAt" timestamptz NULL,
+                "Source" varchar(30) NOT NULL DEFAULT 'manual',
+                "CreatedByUserId" uuid NULL,
+                "LastUsedAt" timestamptz NULL,
+                "UploadCount" integer NOT NULL DEFAULT 0,
+                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamptz NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_WhtCertUploadLinks_Token" ON "WhtCertUploadLinks" ("CompanyId", "TokenHash");""",
+            """CREATE INDEX IF NOT EXISTS "IX_WhtCertUploadLinks_Contact" ON "WhtCertUploadLinks" ("CompanyId", "ContactId");""",
+            """
+            CREATE TABLE IF NOT EXISTS "WhtCertReminderLogs" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL REFERENCES "Companies"("Id") ON DELETE CASCADE,
+                "ContactId" uuid NOT NULL,
+                "Step" integer NOT NULL DEFAULT 0,
+                "AnchorDate" timestamptz NOT NULL,
+                "Outcome" varchar(20) NOT NULL DEFAULT 'Queued',
+                "Reason" text NULL,
+                "EmailQueueId" uuid NULL,
+                "CreditIdsJson" text NULL,
+                "MissingAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamptz NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_WhtCertReminderLogs_Step" ON "WhtCertReminderLogs" ("CompanyId", "ContactId", "Step", "AnchorDate") WHERE "IsDeleted" = false;""",
+            """
+            CREATE TABLE IF NOT EXISTS "NoWhtAcceptances" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL REFERENCES "Companies"("Id") ON DELETE CASCADE,
+                "DocumentId" uuid NOT NULL,
+                "ContactId" uuid NULL,
+                "PaymentIntentId" uuid NULL,
+                "AcceptedAt" timestamptz NOT NULL,
+                "AcceptedByName" varchar(100) NULL,
+                "IpHash" varchar(64) NULL,
+                "NoticeVersion" varchar(40) NOT NULL DEFAULT '',
+                "NoticeText" text NOT NULL DEFAULT '',
+                "NoticeHash" varchar(64) NOT NULL DEFAULT '',
+                "BuyerWithholds" boolean NULL,
+                "GrossAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "WhtAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "NetAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "EvidenceHash" varchar(64) NOT NULL DEFAULT '',
+                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamptz NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_NoWhtAcceptances_Intent" ON "NoWhtAcceptances" ("CompanyId", "PaymentIntentId");""",
+            """CREATE INDEX IF NOT EXISTS "IX_NoWhtAcceptances_Document" ON "NoWhtAcceptances" ("CompanyId", "DocumentId");""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampedFileAttachmentId" uuid NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampRecordedBy" varchar(200) NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampRecordedAt" timestamptz NULL;""",

@@ -114,6 +114,8 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             SubmittedByUserId = s.SubmittedByUserId,
             Notes = Trim(s.Notes),
             CreatedBy = Trim(s.SubmittedBy),
+            // รอบ 253 (WP-10 · N4): เลขอ้างอิง e-WHT เป็นข้อความอิสระ (ไม่ตีความ · ไม่ใช้ตัดสินอะไร) — เก็บไม่เกิน 100 ตัวอักษร
+            EvidenceReference = WhtEvidenceReference.Normalize(s.EvidenceReference),
         };
 
         // (4) ตรวจของจริง — เฉพาะเมื่อด่านเชิงกำหนดผ่านครบ (AI ไม่ได้ตัดสินแทนด่าน · ไม่เสีย token กับใบที่ไม่ auto อยู่แล้ว)
@@ -235,6 +237,10 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         return sha == null ? null : await FindLiveByFileAsync(companyId, sha, ct);
     }
 
+    public Task<WhtCertSubmitResult?> FindDuplicateShaAsync(Guid companyId, string sha256, CancellationToken ct = default)
+        => string.IsNullOrWhiteSpace(sha256) ? Task.FromResult<WhtCertSubmitResult?>(null)
+            : FindLiveByFileAsync(companyId, sha256.Trim().ToLowerInvariant(), ct);
+
     /// <summary>ใบในกล่องรับที่ยังมีผล (ไม่ถูกตีกลับ) ของไฟล์นี้ — ตัวเดียวของการกันไฟล์ซ้ำ (ตรงกับ index UX_WhtCertIntakes_FileLive)</summary>
     private async Task<WhtCertSubmitResult?> FindLiveByFileAsync(Guid companyId, string sha, CancellationToken ct)
     {
@@ -261,7 +267,8 @@ public class WhtCertIntakeService : IWhtCertIntakeService
     }
 
     public async Task<WhtCertSubmitResult> SubmitFromScanAsync(Guid companyId, Guid scanResultId, WhtCertIntakeChannel channel,
-        IReadOnlyList<Guid>? documentHints, string submittedBy, Guid? submittedByUserId, CancellationToken ct = default)
+        IReadOnlyList<Guid>? documentHints, string submittedBy, Guid? submittedByUserId, CancellationToken ct = default,
+        WhtEvidenceKind evidenceKind = WhtEvidenceKind.PaperCertificate, string? evidenceReference = null, string? fileSha256 = null)
     {
         var scan = await _db.OcrScanResults.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == scanResultId && x.CompanyId == companyId, ct)
@@ -273,15 +280,15 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             scan.FieldConfidenceJson, scan.Confidence, co.BusinessType);
         var weAreWithheld = Ocr.OcrDocumentRoleInferrer.InferWhtCertWeAreWithheld(scan.RawTextContent, co.TaxId);
         return await SubmitAsync(companyId, new WhtCertSubmission(
-            channel, WhtEvidenceKind.PaperCertificate,
+            channel, evidenceKind,
             scan.ExtractedDocumentNumber, scan.ExtractedDate,
             scan.ExtractedVendorName, scan.ExtractedVendorTaxId, null, scan.MatchedContactId,
             null, weAreWithheld,
             m.IncomeTypeCode, m.IncomeAmount, m.WhtRate, m.WhtAmount, m.PayerFormType,
-            m.ExtractionConfidence, scan.FileAttachmentId, null, scan.Id,
+            m.ExtractionConfidence, scan.FileAttachmentId, fileSha256, scan.Id,
             documentHints, scan.RawTextContent, submittedBy, submittedByUserId,
             m.AmountUnknown ? "อ่านยอดภาษีที่หักและนำส่งจากใบไม่ได้ — กรอกยอดแล้วกดยืนยัน" : null,
-            AmountNeedsReview: m.AmountNeedsReview || m.AmountUnknown), ct);
+            AmountNeedsReview: m.AmountNeedsReview || m.AmountUnknown, EvidenceReference: evidenceReference), ct);
     }
 
     // ═══════════ ผู้ใช้ตัดสิน ═══════════
@@ -536,7 +543,8 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             i.AuthenticityAnswer, i.AuthenticityConfidence, i.WhtCertAuthenticityUsedAi,
             WhtCertIntakeVerdict.AuthenticityLabel(i.AuthenticityAnswer, i.AuthenticityConfidence, i.WhtCertAuthenticityUsedAi, PriorConfirmed(i)),
             i.AutoConfirmed, i.SubmittedByName, i.CreatedAt, i.ConfirmedAt, i.RejectedReason, i.RejectedAt,
-            byIntake.TryGetValue(i.Id, out var list) ? list : new List<WhtCertAllocationDto>()))
+            byIntake.TryGetValue(i.Id, out var list) ? list : new List<WhtCertAllocationDto>(),
+            i.EvidenceReference, WhtEvidenceReference.Label(i.EvidenceKind, i.EvidenceReference)))
             .ToList();
     }
 
@@ -601,7 +609,8 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             summary.GlBalance, summary.Difference,
             missing.Select(x => new WhtCertMissingRowDto(x.Row.CreditId, x.Row.PayerName, x.Row.PayerTaxId, x.Row.DocumentId, x.Row.DocumentNumber,
                 x.Row.WithheldSince, x.Row.IncomeAmount, x.Row.WhtAmount, x.Row.ReceivedAmount, x.Missing,
-                x.Row.Verdict.State.ToString(), x.Row.Verdict.Label, x.Row.Verdict.DaysWaiting, x.Row.Verdict.IsOverdue, x.Row.LastChannel)).ToList());
+                x.Row.Verdict.State.ToString(), x.Row.Verdict.Label, x.Row.Verdict.DaysWaiting, x.Row.Verdict.IsOverdue, x.Row.LastChannel,
+                x.Row.PayerContactId)).ToList());
     }
 
     // ═══════════ ภายใน ═══════════

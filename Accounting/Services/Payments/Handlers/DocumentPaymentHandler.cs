@@ -87,8 +87,14 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
             .Select(c => new { c.ContactType, c.TaxId }).FirstOrDefaultAsync(ct);
         var buyerWithholds = Accounting.Helpers.DocumentPayLinkPolicy.BuyerWithholds(buyer?.ContactType, buyer?.TaxId);
         var expectedWht = Accounting.Helpers.DocumentPayLinkPolicy.ExpectedWht(whtFigures.NetCap, buyerWithholds);
+        // รอบ 253 (WP-10 · คำตัดสินเจ้าของ §11 ข้อ 3): ลูกค้าเลือก "ไม่หัก ณ ที่จ่าย" บนหน้าชำระ (แถวหลักฐานผูกรายการนี้) ⇒ ภาษีหัก ณ ที่จ่ายของงวดนี้ = 0 ·
+        // เงินเต็มยอดเกินยอดค้าง (ใบตั้งยอดสุทธิหลังหัก) ⇒ ล้มดังพร้อมป้ายฝั่งผู้ขาย (ประวัติรายการ + แจ้งเจ้าของ) ไม่เดาว่าจะลงส่วนเกินที่ไหน (คำตัดสิน 253-WP10-3)
+        var noWht = await _db.NoWhtAcceptances.AsNoTracking()
+            .AnyAsync(a => a.CompanyId == intent.CompanyId && a.PaymentIntentId == intent.Id, ct);
+        if (noWht && Accounting.Helpers.NoWhtChoicePolicy.HandlerRefusal(intent.Amount, doc.BalanceDue, doc.DocumentNumber) is string noWhtRefusal)
+            throw new Accounting.Helpers.BusinessRuleException(noWhtRefusal, Accounting.Helpers.NoWhtChoicePolicy.RuleCode, 409);
         // รอบ 244 (ฝ่ายค้าน S1): ผู้ซื้อไม่มีหน้าที่หัก ⇒ ส่ง 0 ชัด ๆ — null = ตัวบันทึกรับชำระใช้ยอดแนะนำ (หัก WHT ที่ลูกค้าไม่ได้หักจริง + ออก 50 ทวิ เท็จ)
-        var paymentWht = buyerWithholds == false ? 0m
+        var paymentWht = noWht ? 0m : buyerWithholds == false ? 0m
             : Accounting.Helpers.DocumentPayLinkPolicy.WhtForPayment(intent.Amount, doc.BalanceDue,
                 Accounting.Helpers.DocumentPayLinkPolicy.AmountsFor(doc.BalanceDue, expectedWht, 0m).Wht);
 

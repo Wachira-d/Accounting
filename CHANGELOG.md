@@ -6854,3 +6854,10 @@ _รอบ 255 WP-12B ข้อ 6–8 (AUDIT_249 §WP-12 · คำตัดส�
 _รอบ 255 WP-12B ข้อ 6–8 เติม sha: commit 145ba355 (DOCUMENT_FLOW Last verified · ACCOUNT_STRUCTURE · DECISIONS 255-WP12B-3…8/10/11) — doc-only คอมมิตตามหลัง ไม่ amend_
 
 _รอบ 255 WP-12B แก้ผล CI: (1) โทเคนพอร์ทัลถอดไม่ได้ทุกใบ (`DecodeJwtToken` ตัดที่จุดทศนิยมของวันหมดอายุ — บั๊กเดิม · DECISIONS 255-WP12B-12) (2) `SettlementPaidReissue.DocumentCarriedFields` เพิ่ม `PartnerInputVatEvidence`/`PartnerSourceLinkId` (ใบแทนต้องคงด่านภาษีซื้อ — เทสต์ partition R7/RV1F11) (3) CS8917 HtmlEncode_
+_Last verified against codebase: 2026-11-06 (รอบ 253 WP-10 — 50 ทวิ ขาเข้า ต่อจาก WP-09 (DOCUMENT_FLOW §2.12m): ลิงก์อัปโหลดสาธารณะ
+`/wht-upload.html` + `WhtCertPublicController` (token hash · เทียบเวลาคงที่ · rate limit ต่อ IP/token แบบ DB failClosed · ไบต์ตัดสิน PDF/JPG/PNG ≤ 10 MB ·
+PDF มีสคริปต์/ไฟล์ฝัง = ปฏิเสธ · ไฟล์ซ้ำไม่เก็บ/ไม่สแกน · เข้าประตูเดียว Channel UploadLink · OCR ล้ม = เข้ากล่องรับแบบรอตรวจ) · ลิงก์ในอีเมลใบเสร็จ
+(`IReceiptEmailSectionProvider`) + ปุ่ม 🔗 ในรายงาน "ยังขาด" · ทวงอัตโนมัติ `WhtCertReminderJob` (JobLock · watermark ต่อบริษัท · 7/21/45 + รายเดือน ≤ 6 ·
+ตาข่าย ≤ 6/30 วัน · ตัวหาผู้รับเดียว · ไม่ส่งอัตโนมัติ/ไม่รับเรื่อง = แถวข้ามพร้อมเหตุ · คิวอีเมลเดิม + โควตา · ตรวจซ้ำและออกลิงก์ตอนส่ง · ค่าตั้งต้นปิด) ·
+"ไม่หัก ณ ที่จ่าย" บน pay-document (คำเตือน + บันทึกการยอมรับ `NoWhtAcceptances` + audit · ยอด Gross จาก AmountsFor · handler WHT 0 / ล้มดังเมื่อเกินยอดค้าง) ·
+e-WHT แนบเป็นใบ 50 ทวิ ธรรมดา + เลขอ้างอิง (ไม่เสนอ 1%) · คำตัดสิน 253-WP10-1…7 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1f5a7f6c)_

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>ส่งหนังสือรับรองการหักภาษี ณ ที่จ่าย</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Noto Sans Thai', sans-serif; background: #f1f5f9; color: #0f172a;
+           min-height: 100vh; display: flex; justify-content: center; padding: 20px 12px; }
+    .card { background: #fff; border-radius: 14px; box-shadow: 0 4px 24px rgba(15,23,42,.08);
+            max-width: 520px; width: 100%; padding: 22px; height: fit-content; }
+    h1 { font-size: 18px; margin-bottom: 4px; }
+    .sub { color: #64748b; font-size: 13px; margin-bottom: 12px; }
+    .box { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin: 10px 0; font-size: 14px; line-height: 1.7; }
+    .row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .copy { border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; border-radius: 6px; font-size: 12px; padding: 2px 8px; cursor: pointer; font-family: inherit; }
+    .item { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid #f1f5f9; font-size: 13.5px; }
+    .muted { color: #64748b; font-size: 12px; }
+    .btn { display: block; width: 100%; background: #4f46e5; color: #fff; border: 0; border-radius: 10px;
+           padding: 13px; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; margin-top: 10px; }
+    .btn[disabled] { opacity: .6; cursor: default; }
+    .pick { display: block; border: 2px dashed #c7d2fe; border-radius: 10px; padding: 18px; text-align: center; cursor: pointer; color: #3730a3; }
+    input[type=text] { width: 100%; padding: 9px; border: 1px solid #e2e8f0; border-radius: 8px; font-family: inherit; font-size: 14px; }
+    .ok { background: #dcfce7; color: #166534; border-radius: 8px; padding: 10px 12px; font-size: 13.5px; margin: 8px 0; }
+    .warn { background: #fef3c7; color: #92400e; border-radius: 8px; padding: 10px 12px; font-size: 13.5px; margin: 8px 0; }
+    .err { text-align: center; color: #b91c1c; padding: 36px 10px; }
+  </style>
+</head>
+<body>
+  <div class="card" id="card"><div class="err">กำลังโหลด...</div></div>
+  <script>
+    // รอบ 253 (WP-10 · AUTO_SEND_WHT_DESIGN §6.5) — หน้าส่งหนังสือรับรอง 50 ทวิ แบบไม่ต้องล็อกอิน (mobile-first)
+    // ตัวตนอยู่ใน token ของ URL · ข้อมูลทั้งหมดมาจากเซิร์ฟเวอร์ (WhtCertPublicController) · ทุกค่าที่แสดงหนีก่อนต่อ HTML
+    const qs = new URLSearchParams(location.search);
+    const companyId = qs.get('c');
+    const token = qs.get('t');
+    const card = document.getElementById('card');
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const money = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const dateTh = (d) => d ? new Date(d).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-';
+    const base = () => `/api/companies/${encodeURIComponent(companyId)}/public-wht/${encodeURIComponent(token)}`;
+    let view = null;
+    let results = [];
+
+    async function load() {
+      if (!companyId || !token) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง — กรุณาติดต่อผู้ขาย</div>'; return; }
+      let r;
+      try { r = await fetch(base()); }
+      catch { card.innerHTML = '<div class="err">เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง</div>'; return; }
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j || !j.data) { card.innerHTML = `<div class="err">${esc((j && j.message) || 'ลิงก์ไม่ถูกต้อง — กรุณาติดต่อผู้ขาย')}</div>`; return; }
+      view = j.data;
+      render();
+    }
+
+    function render() {
+      const v = view;
+      if (!v.usable) { card.innerHTML = `<div class="err">${esc(v.message || 'ลิงก์ใช้ไม่ได้')}</div>`; return; }
+      const items = v.items || [];
+      const resultHtml = results.map(x => `<div class="${x.ok ? 'ok' : 'warn'}" aria-live="polite">${esc(x.text)}</div>`).join('');
+      card.innerHTML = `
+        <h1>ส่งหนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ)</h1>
+        <div class="sub">ถึง ${esc(v.companyName)}${v.contactName ? ' · จาก ' + esc(v.contactName) : ''}</div>
+        <div class="box"><b>โปรดออกหนังสือรับรองในนาม</b>
+          <div class="row"><span>${esc(v.companyName)}</span><button class="copy" data-copy="${esc(v.companyName)}">คัดลอก</button></div>
+          <div class="row"><span>${esc(v.companyTaxId)} · ${esc(v.companyBranchLabel)}</span><button class="copy" data-copy="${esc(v.companyTaxId)}">คัดลอก</button></div>
+          ${v.companyAddress ? `<div class="row"><span class="muted">${esc(v.companyAddress)}</span><button class="copy" data-copy="${esc(v.companyAddress)}">คัดลอก</button></div>` : ''}
+        </div>
+        ${resultHtml}
+        ${v.allReceived ? '<div class="ok">ได้รับหนังสือรับรองครบแล้ว ขอบคุณค่ะ — ส่งไฟล์เพิ่มได้ถ้ามีใบอื่น</div>' : ''}
+        ${items.length ? `<div class="box"><b>เอกสารที่รอหนังสือรับรอง (${items.length})</b>
+          ${items.map((i, ix) => `<label class="item"><input type="checkbox" data-doc-index="${ix}" ${i.preselected && !i.submitted ? 'checked' : ''}>
+            <span>${esc(i.documentNumber || 'รายการรับชำระ')} · ชำระ ${esc(dateTh(i.withheldSince))} · ภาษี ${money(i.missing)} บาท
+            <span class="muted">· ${esc(i.label)}</span></span></label>`).join('')}
+          <div class="muted">ติ๊กใบที่ไฟล์นี้ครอบ — ไม่แน่ใจ ข้ามได้</div></div>` : ''}
+        <label class="pick" for="file">📷 ถ่ายรูป หรือ 📁 เลือกไฟล์<br><span class="muted">PDF / JPG / PNG · ไม่เกิน 10 MB</span></label>
+        <input type="file" id="file" accept="application/pdf,image/jpeg,image/png" style="display:none">
+        <div id="picked" class="muted" style="margin-top:6px"></div>
+        <div style="margin-top:10px"><input type="text" id="sender" maxlength="100" placeholder="ชื่อผู้ส่ง (ไม่บังคับ)"></div>
+        <button class="btn" id="send" disabled>ส่งหนังสือรับรอง</button>
+        <div class="muted" style="margin-top:10px">ไฟล์ใช้เพื่อบันทึกภาษีของ ${esc(v.companyName)} เท่านั้น และเก็บตามกฎหมาย · <a href="/privacy.html">นโยบายความเป็นส่วนตัว</a></div>`;
+      card.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(b.dataset.copy || ''); b.textContent = 'คัดลอกแล้ว'; } catch { /* เบราว์เซอร์ไม่อนุญาต — ผู้ใช้เลือกข้อความเองได้ */ }
+      }));
+      const fileEl = document.getElementById('file');
+      fileEl.addEventListener('change', () => {
+        const f = fileEl.files && fileEl.files[0];
+        document.getElementById('picked').textContent = f ? `${f.name} · ${(f.size / 1048576).toFixed(1)} MB` : '';
+        document.getElementById('send').disabled = !f;
+      });
+      document.getElementById('send').addEventListener('click', send);
+    }
+
+    async function send() {
+      const f = document.getElementById('file').files[0];
+      if (!f) return;
+      const btn = document.getElementById('send');
+      btn.disabled = true; btn.textContent = 'กำลังส่ง…';
+      const ids = Array.from(card.querySelectorAll('[data-doc-index]')).filter(c => c.checked)
+        .map(c => (view.items || [])[Number(c.dataset.docIndex)]?.documentId).filter(Boolean);
+      const fd = new FormData();
+      fd.append('file', f);
+      fd.append('documentIds', ids.join(','));
+      fd.append('senderName', document.getElementById('sender').value || '');
+      let ok = false, text = '';
+      try {
+        const r = await fetch(base(), { method: 'POST', body: fd });
+        const j = await r.json().catch(() => null);
+        ok = r.ok && j && j.success;
+        text = (j && j.message) || (ok ? 'ได้รับแล้ว' : 'ส่งไม่สำเร็จ — ลองใหม่อีกครั้ง');
+      } catch { text = 'เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง'; }
+      results = [{ ok, text: `${f.name}: ${text}` }].concat(results).slice(0, 5);
+      if (ok) await load(); else render();
+    }
+
+    load();
+  </script>
+</body>
+</html>

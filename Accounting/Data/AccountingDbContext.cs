@@ -250,6 +250,10 @@ public class AccountingDbContext : DbContext
     /// <summary>รอบ 252 (WP-09): กล่องรับ 50 ทวิ ขาเข้า (หนึ่งแถว = หนึ่งใบที่ส่งมา) + การจัดสรรใบ ↔ แถวเครดิต</summary>
     public DbSet<WhtCertIntake> WhtCertIntakes => Set<WhtCertIntake>();
     public DbSet<WhtCertAllocation> WhtCertAllocations => Set<WhtCertAllocation>();
+    // รอบ 253 (WP-10): ลิงก์อัปโหลด 50 ทวิ · บันทึกการทวง · หลักฐานการยอมรับ "ไม่หัก ณ ที่จ่าย"
+    public DbSet<WhtCertUploadLink> WhtCertUploadLinks => Set<WhtCertUploadLink>();
+    public DbSet<WhtCertReminderLog> WhtCertReminderLogs => Set<WhtCertReminderLog>();
+    public DbSet<NoWhtAcceptance> NoWhtAcceptances => Set<NoWhtAcceptance>();
     public DbSet<WithholdingTaxCertLine> WithholdingTaxCertLines => Set<WithholdingTaxCertLine>();
 
     // API Keys
@@ -2635,6 +2639,7 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.MatchLevel).HasMaxLength(20);
             e.Property(x => x.AuthenticityAnswer).HasMaxLength(20);
             e.Property(x => x.SubmittedByName).HasMaxLength(200);
+            e.Property(x => x.EvidenceReference).HasMaxLength(100);
             e.Property(x => x.IncomeAmount).HasPrecision(18, 2);
             e.Property(x => x.WhtAmount).HasPrecision(18, 2);
             e.Property(x => x.WhtRate).HasPrecision(9, 4);
@@ -2648,6 +2653,37 @@ public class AccountingDbContext : DbContext
                 .HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_WhtCertAllocations_Pair");
             e.HasIndex(x => new { x.CompanyId, x.WhtCreditId }).HasDatabaseName("IX_WhtCertAllocations_Credit");
             e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 253 (WP-10) — ชื่อ index ตรงกับ DatabaseMigrationHelper
+        modelBuilder.Entity<WhtCertUploadLink>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.TokenHash }).IsUnique().HasDatabaseName("UX_WhtCertUploadLinks_Token");
+            e.HasIndex(x => new { x.CompanyId, x.ContactId }).HasDatabaseName("IX_WhtCertUploadLinks_Contact");
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.Property(x => x.Source).HasMaxLength(30);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<WhtCertReminderLog>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.ContactId, x.Step, x.AnchorDate }).IsUnique()
+                .HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_WhtCertReminderLogs_Step");
+            e.Property(x => x.Outcome).HasMaxLength(20);
+            e.Property(x => x.MissingAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<NoWhtAcceptance>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.PaymentIntentId }).HasDatabaseName("IX_NoWhtAcceptances_Intent");
+            e.HasIndex(x => new { x.CompanyId, x.DocumentId }).HasDatabaseName("IX_NoWhtAcceptances_Document");
+            e.Property(x => x.NoticeVersion).HasMaxLength(40);
+            e.Property(x => x.NoticeHash).HasMaxLength(64);
+            e.Property(x => x.IpHash).HasMaxLength(64);
+            e.Property(x => x.EvidenceHash).HasMaxLength(64);
+            e.Property(x => x.AcceptedByName).HasMaxLength(100);
+            e.Property(x => x.GrossAmount).HasPrecision(18, 2);
+            e.Property(x => x.WhtAmount).HasPrecision(18, 2);
+            e.Property(x => x.NetAmount).HasPrecision(18, 2);
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<PerformanceObligation>().HasQueryFilter(e => !e.IsDeleted);
