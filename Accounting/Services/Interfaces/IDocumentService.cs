@@ -370,6 +370,9 @@ public interface IDocumentService
     Task<List<EtaxCancellationCreditNoteOption>> ListEtaxCancellationCreditNotesAsync(Guid companyId, Guid receiptId);
     /// <summary>รอบ 200 ทีม V1G (ข้อ 44) — รายงานอ่านอย่างเดียวให้นักบัญชีตรวจ (ใบเสร็จติดธงที่ถูกถอยภาษีไปแล้ว · ปิดธงด้วยเส้นเดิม · ใบแทนที่คัดลอกช่องเกิน)</summary>
     Task<Accounting.Helpers.EtaxReissueReviewReport> GetEtaxReissueReviewAsync(Guid companyId);
+    /// <summary>รอบ 255 (ETR-ACK) — บันทึก "ตรวจแล้ว" ของแถว e-Tax ในสองกลุ่มแถว e-Tax ของรายงานข้อ 44 (audit append-only · ไม่แตะแถว/เอกสาร) ·
+    /// <b>ผู้เรียกต้องตรวจสิทธิ์ยกเลิก e-Tax + ยกเลิกเอกสารชนิดนั้นมาก่อน</b></summary>
+    Task<string> AcknowledgeEtaxReviewRowAsync(Guid companyId, Guid etaxInvoiceId, AcknowledgeEtaxReviewRequest request, string actor);
     /// <summary>ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (ย้อนหลัง) — ทางไปต่อ
     /// ของแถวที่มี JE รับเงินแต่ไม่มีเอกสารคู่ (ดูรายละเอียดที่ implementation).
     /// idempotent: มีใบอยู่แล้วคืนใบเดิมพร้อม <c>AlreadyExisted=true</c></summary>

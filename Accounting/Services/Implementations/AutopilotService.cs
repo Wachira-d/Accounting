@@ -83,7 +83,8 @@ public class AutopilotService : IAutopilotService
         var bankWaiting = await _db.BankTransactions.AsNoTracking()
             .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
                 && t.AutoSettleDocumentId != null && ids.Contains(t.AutoSettleDocumentId.Value)
-                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed))
+                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed
+                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held))
             .Select(t => t.AutoSettleDocumentId!.Value).Distinct().ToListAsync(ct);
         var autopilotChildren = await _db.Documents.AsNoTracking()
             .Where(q => q.CompanyId == companyId && q.QuotationAutopilotChildId != null && ids.Contains(q.QuotationAutopilotChildId.Value))
@@ -183,13 +184,13 @@ public class AutopilotService : IAutopilotService
         var staleCut = nowUtc.Date.AddDays(-BankSuggestStaleDays);
         var bank = await _db.BankTransactions.AsNoTracking()
             .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
-                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed
+                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held
                     || (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest && t.AutoSettleDocumentId != null && t.TransactionDate < staleCut)))
             .OrderByDescending(t => t.TransactionDate).Take(50)
             .Select(t => new { t.Id, t.Amount, t.TransactionDate, t.AutoSettleVerdict, t.AutoSettleReason, t.AutoSettleDocumentId }).ToListAsync(ct);
         list.AddRange(bank.Select(t => new AutopilotIssueDto(
-            t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed ? "BankSettleFailed" : "BankSuggestStale",
-            t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed
+            t.AutoSettleVerdict != BankReceiptAutoSettle.Stamps.Suggest ? "BankSettleFailed" : "BankSuggestStale",
+            t.AutoSettleVerdict != BankReceiptAutoSettle.Stamps.Suggest
                 ? $"เงินโอน {Math.Abs(t.Amount):N2} บาท บันทึกรับชำระอัตโนมัติไม่สำเร็จ"
                 : $"เงินโอน {Math.Abs(t.Amount):N2} บาท รอยืนยันเกิน {BankSuggestStaleDays} วัน",
             t.AutoSettleReason ?? "", t.TransactionDate, t.AutoSettleDocumentId,
@@ -381,7 +382,8 @@ public class AutopilotService : IAutopilotService
                 && t.ReconciledBy == BankMatchAttribution.BankAutoSettle && t.ReconciledAt >= fromUtc && t.ReconciledAt < toUtc, ct);
         var bankWaiting = await _db.BankTransactions.AsNoTracking()
             .CountAsync(t => t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
-                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed)
+                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed
+                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held)
                 && t.AutoSettleDocumentId != null, ct);
         var issues = await IssuesAsync(companyId, toUtc, ct);
         return new AutopilotNotice.DigestFacts(emailed, pays.Count, pays.Sum(), receipts, quotations, bankSettled, bankWaiting,

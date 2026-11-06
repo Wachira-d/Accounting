@@ -59,29 +59,49 @@ public class AutopilotRound252Tests
         Assert.Contains("ไม่ได้มาจากธนาคาร", r.Reason);
     }
 
-    [Theory]
-    [InlineData(BankReceiptAutoSettle.SourceStatement)]
-    [InlineData(BankReceiptAutoSettle.SourceFeed)]
-    [InlineData(BankReceiptAutoSettle.SourceFeedCustom)]
-    public void ทิศตรงข้าม_ผู้นำเข้ามีสิทธิ์อนุมัติ_statementหน้าธนาคาร_และfeed_ปิดเองได้(string source)
+    [Fact]
+    public void ทิศตรงข้าม_ผู้อัปโหลดstatementหน้าธนาคารมีสิทธิ์อนุมัติ_ปิดเองได้()
         => Assert.Equal(BankReceiptAutoSettle.Verdict.AutoSettle,
-            BankReceiptAutoSettle.Decide(Line(1_040m, source), new[] { Cand("INV-2569000001", 1_040m, cites: true) }, true).Kind);
+            BankReceiptAutoSettle.Decide(Line(1_040m, BankReceiptAutoSettle.SourceStatement), new[] { Cand("INV-2569000001", 1_040m, cites: true) }, true).Kind);
 
-    [Theory]
-    [InlineData(BankReceiptAutoSettle.SourceStatement)]
-    [InlineData(BankReceiptAutoSettle.SourceFeedCustom)]
-    public void ฝ่ายค้านH1_ผู้นำเข้าไม่มีสิทธิ์อนุมัติหรือไม่ทราบ_เสนอเท่านั้นพร้อมเหตุ(string source)
+    [Fact]
+    public void ฝ่ายค้านH1_ผู้อัปโหลดไม่มีสิทธิ์อนุมัติหรือไม่ทราบ_เสนอเท่านั้นพร้อมเหตุ()
     {
-        var r = BankReceiptAutoSettle.Decide(Line(1_040m, source), new[] { Cand("INV-2569000001", 1_040m, cites: true, creatorOk: false) }, true);
+        var r = BankReceiptAutoSettle.Decide(Line(1_040m, BankReceiptAutoSettle.SourceStatement),
+            new[] { Cand("INV-2569000001", 1_040m, cites: true, creatorOk: false) }, true);
         Assert.Equal(BankReceiptAutoSettle.Verdict.Suggest, r.Kind);
         Assert.Contains("ไม่มีสิทธิ์อนุมัติ", r.Reason);
     }
 
+    [Theory]
+    [InlineData(BankReceiptAutoSettle.SourceFeed)]
+    [InlineData(BankReceiptAutoSettle.SourceFeedCustom)]
+    public void ฝ่ายค้านรอบสองHA_feed_ทุกปลายทาง_เสนอเท่านั้น_แม้ผู้สั่งดึงมีสิทธิ์อนุมัติ(string source)
+    {
+        var r = BankReceiptAutoSettle.Decide(Line(1_040m, source), new[] { Cand("INV-2569000001", 1_040m, cites: true, creatorOk: true) }, true);
+        Assert.Equal(BankReceiptAutoSettle.Verdict.Suggest, r.Kind);
+        Assert.False(r.WouldAutoSettleIfEnabled);
+        Assert.Contains("feed", r.Reason);
+    }
+
     [Fact]
-    public void feedปลายทางที่ระบบรู้จัก_ไม่ต้องตรวจสิทธิ์ผู้สั่งดึง()
-        => Assert.Equal(BankReceiptAutoSettle.Verdict.AutoSettle,
-            BankReceiptAutoSettle.Decide(Line(1_040m, BankReceiptAutoSettle.SourceFeed),
-                new[] { Cand("INV-2569000001", 1_040m, cites: true, creatorOk: false) }, true).Kind);
+    public void ฝ่ายค้านรอบสองMC_feedไม่มีเลขอ้างอิง_กุญแจกันซ้ำจากวันยอดทิศคำอธิบาย()
+    {
+        var a = BankFeedDedupe.NoReferenceKey(new DateTime(2026, 11, 5, 10, 0, 0), 1_040m, true, "TRF fr PP-01");
+        Assert.Equal(a, BankFeedDedupe.NoReferenceKey(new DateTime(2026, 11, 5), 1_040.00m, true, "trf FR pp 01"));   // ดึงซ้ำ = กุญแจเดิม
+        Assert.NotEqual(a, BankFeedDedupe.NoReferenceKey(new DateTime(2026, 11, 5), 1_040m, false, "TRF fr PP-01"));  // ทิศต่าง
+        Assert.NotEqual(a, BankFeedDedupe.NoReferenceKey(new DateTime(2026, 11, 6), 1_040m, true, "TRF fr PP-01"));   // วันต่าง
+        Assert.NotEqual(a, BankFeedDedupe.NoReferenceKey(new DateTime(2026, 11, 5), 1_040.01m, true, "TRF fr PP-01")); // ยอดต่าง
+        Assert.NotEqual(a, BankFeedDedupe.NoReferenceKey(new DateTime(2026, 11, 5), 1_040m, true, "TRF fr QQ-01"));   // คำอธิบายต่าง
+    }
+
+    [Fact]
+    public void ฝ่ายค้านรอบสอง_สกุลว่างเป็นบาท_ตัวเดียวกับลิงก์ชำระ()
+    {
+        Assert.True(DocumentPayLinkPolicy.IsThb(null));
+        Assert.True(DocumentPayLinkPolicy.IsThb(" thb "));
+        Assert.False(DocumentPayLinkPolicy.IsThb("USD"));
+    }
 
     [Fact]
     public void ฝ่ายค้านM3_ใบลงวันหลังเงินเข้า_เสนอพร้อมเหตุtaxpoint_ใบลงวันเดียวกัน_ปิดเองได้()
