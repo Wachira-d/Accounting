@@ -977,4 +977,22 @@ body.ui-mode-simple .advanced-only { display: none !important; }
   /* (7) ข้อความยาวไม่มีช่องว่าง (เลขที่เอกสาร/ชื่อไฟล์/อีเมล) ตัดบรรทัดเมื่อล้น
      (break-word ไม่ลด min-content ⇒ ไม่ทำให้คอลัมน์ตารางถูกบีบเพิ่ม) */
   .page-content .card, .modal-body { overflow-wrap: break-word; }
+
+  /* (8) grid ฟอร์ม inline 2–3 คอลัมน์ (`1fr 1fr` / `1fr 1fr 1fr` / `2fr 1fr` …) ยุบเหลือคอลัมน์เดียว
+     (รอบ 252 WP-13 E · D §11 E: settings e-Tax/อีเมล/SMTP · fixed-assets รายละเอียด · portal — เดิมจับแค่ repeat(4..6)
+     ⇒ ช่องกรอกกว้าง ~150px ที่ 375px พิมพ์อีเมล/เลขภาษีไม่เห็นทั้งค่า) · ครอบทั้ง .page-content และ .modal-body */
+  .page-content [style*="grid-template-columns:1fr 1fr"],
+  .page-content [style*="grid-template-columns: 1fr 1fr"],
+  .page-content [style*="grid-template-columns:2fr 1fr"],
+  .page-content [style*="grid-template-columns: 2fr 1fr"],
+  .page-content [style*="grid-template-columns:1fr 2fr"],
+  .page-content [style*="grid-template-columns: 1fr 2fr"],
+  .modal-body [style*="grid-template-columns:1fr 1fr"],
+  .modal-body [style*="grid-template-columns: 1fr 1fr"],
+  .modal-body [style*="grid-template-columns:2fr 1fr"],
+  .modal-body [style*="grid-template-columns: 2fr 1fr"] { grid-template-columns: minmax(0, 1fr) !important; }
+
+  /* (9) ตารางใน modal ที่ห่อ .table-container แล้ว (modal_table_container_check) — กว้างพอพิมพ์ได้ แล้วเลื่อนในกล่อง
+     แทนการบีบ 8 คอลัมน์ลง 311px (D §11 F วัด recurring ที่ 375px) */
+  .modal-body .table-container > table:has(> thead > tr > th:nth-child(5)) { min-width: 640px; }
 }

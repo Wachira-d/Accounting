@@ -2814,11 +2814,31 @@ const Layout = {
   },
 
   // Modal helpers
+  /** เปิด modal + ย้าย focus เข้า modal (รอบ 252 WP-13 B · D §11 B — เดิม focus ค้างที่ปุ่มบนหน้าหลัง overlay ⇒
+   *  ผู้ใช้คีย์บอร์ด/screen reader ต้อง Tab ฝ่าทั้งหน้า) · ลำดับ: `[autofocus]` → ช่องกรอกตัวแรกที่มองเห็น → ปุ่มตัวแรก
+   *  · จำ element เดิมไว้คืน focus ตอนปิด */
   openModal(id) {
-    document.getElementById(id).classList.add('active');
+    const el = document.getElementById(id);
+    el.classList.add('active');
     this._ensureModalKeyboardWired();
+    el._returnFocus = document.activeElement;
+    setTimeout(() => this._focusFirstIn(el), 30);
   },
-  closeModal(id) { document.getElementById(id).classList.remove('active'); },
+  closeModal(id) {
+    const el = document.getElementById(id);
+    el.classList.remove('active');
+    const back = el._returnFocus; el._returnFocus = null;
+    if (back && typeof back.focus === 'function' && document.contains(back)) { try { back.focus(); } catch (_) { /* element ถูกซ่อนแล้ว */ } }
+  },
+  _focusFirstIn(root) {
+    if (!root || !root.classList.contains('active')) return;
+    if (root.contains(document.activeElement) && document.activeElement !== root) return;   // ผู้เรียกตั้ง focus เองแล้ว
+    const visible = n => n && !n.disabled && n.offsetParent !== null && n.type !== 'hidden';
+    const pick = [...root.querySelectorAll('[autofocus]')].find(visible)
+      || [...root.querySelectorAll('.modal-body input, .modal-body select, .modal-body textarea')].find(visible)
+      || [...root.querySelectorAll('.modal-body button, .modal-footer button, button')].find(visible);
+    if (pick) { try { pick.focus({ preventScroll: true }); } catch (_) { pick.focus(); } }
+  },
 
   /** Wire keyboard shortcuts สำหรับทุก modal ในระบบ (one-time global listener):
    *  • Escape → ปิด modal บนสุดที่กำลังเปิด
@@ -2835,7 +2855,7 @@ const Layout = {
       const top = open[open.length - 1];   // topmost = nested-friendly
       if (e.key === 'Escape') {
         e.preventDefault();
-        top.classList.remove('active');
+        if (top.id) this.closeModal(top.id); else top.classList.remove('active');
         // modal ที่มีผู้รอผล (เช่น หน้าต่างคำเตือนก่อนอนุมัติ) ตั้ง _onDismiss ไว้ ⇒ Escape = ยกเลิก ไม่ปล่อยผู้เรียกค้างรอ
         if (typeof top._onDismiss === 'function') top._onDismiss();
         return;
@@ -2846,8 +2866,11 @@ const Layout = {
         const tag = (t.tagName || '').toUpperCase();
         // textarea / contenteditable / button = ปล่อยทำงานตามปกติ
         if (tag === 'TEXTAREA' || tag === 'BUTTON' || t.isContentEditable) return;
-        // ปุ่ม primary ตัวสุดท้ายใน footer (CTA หลัก) — กดให้
-        const cta = top.querySelector('.modal-footer .btn-primary');
+        // modal ตั้ง `data-enter-target="<css selector>"` ได้ (wizard: Enter = "ถัดไป" ไม่ใช่ "บันทึก" — WP-13 B) ·
+        // ไม่ตั้ง/ปุ่มนั้นซ่อนอยู่ ⇒ ปุ่ม primary ตัวแรกที่มองเห็นใน footer (CTA หลัก)
+        const sel = top.getAttribute('data-enter-target');
+        const viaAttr = sel ? [...top.querySelectorAll(sel)].find(b => b.offsetParent !== null) : null;
+        const cta = viaAttr || [...top.querySelectorAll('.modal-footer .btn-primary')].find(b => b.offsetParent !== null);
         if (cta && !cta.disabled) { e.preventDefault(); cta.click(); }
       }
     });
@@ -3006,6 +3029,7 @@ const Layout = {
       setTimeout(() => input.focus(), 50);
 
       const cleanup = (val) => {
+        wrap._onDismiss = null;
         wrap.classList.remove('active');
         wrap.querySelector('#dcOk').onclick = null;
         wrap.querySelector('#dcCancel').onclick = null;
@@ -3031,6 +3055,7 @@ const Layout = {
           input.select();
         }
       };
+      wrap._onDismiss = () => cleanup(false);   // Escape จากตัวฟังกลาง (focus นอกช่อง) = ยกเลิก — เดิม Promise ค้างตลอดไป (WP-13 B)
       wrap.querySelector('#dcOk').onclick = tryConfirm;
       wrap.querySelector('#dcCancel').onclick = () => cleanup(false);
       wrap.querySelector('#dcClose').onclick = () => cleanup(false);
@@ -3039,6 +3064,140 @@ const Layout = {
         if (e.key === 'Escape') cleanup(false);
       };
     });
+  },
+
+  // ===== กล่องถามแบบ Promise ตัวเดียวของระบบ (รอบ 252 WP-13 C · D §11 C) =====
+  //
+  // ที่มา: หน้าแอปปน `confirm()`/`prompt()` ของเบราว์เซอร์กับ `confirmDanger` — กล่อง native บล็อกทั้งแท็บ, หน้าตาไม่เหมือนระบบ,
+  // บนมือถือ (in-app browser LINE) บางตัวถูกปิดเงียบ ๆ ⇒ `confirm()` คืน false = กดแล้วไม่มีอะไรเกิด (silent no-op)
+  // · `confirm` = การกระทำที่ย้อนได้/ไม่ทำลาย · ลบ/ยกเลิกถาวรยังใช้ `confirmDanger` · ข้อความเป็น text (textContent) ปลอดภัยเสมอ —
+  // ส่ง `messageHtml` เฉพาะ HTML ที่ผู้เรียก escape แล้ว
+
+  _ensureAskModal() {
+    let wrap = document.getElementById('layoutAskModal');
+    if (wrap) return wrap;
+    wrap = document.createElement('div');
+    wrap.id = 'layoutAskModal';
+    wrap.className = 'modal-overlay';
+    wrap.setAttribute('role', 'dialog');
+    wrap.setAttribute('aria-modal', 'true');
+    wrap.setAttribute('aria-labelledby', 'laTitle');
+    wrap.innerHTML = `
+      <div class="modal" style="max-width:460px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="laTitle"></h3>
+          <button type="button" class="modal-close" id="laClose" aria-label="ปิด">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="laMessage" style="line-height:1.55;white-space:pre-line"></div>
+          <div id="laField" style="margin-top:12px;display:none">
+            <label class="form-label" for="laInput" id="laLabel"></label>
+            <input type="text" class="form-input" id="laInput" autocomplete="off">
+            <textarea class="form-input" id="laTextarea" rows="3" style="display:none"></textarea>
+            <div id="laError" role="alert" style="color:var(--danger,#dc2626);font-size:13px;margin-top:6px;min-height:18px"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="laCancel">ยกเลิก</button>
+          <button type="button" class="btn btn-primary" id="laOk">ตกลง</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    return wrap;
+  },
+
+  _ask(opts, withField) {
+    return new Promise(resolve => {
+      const wrap = this._ensureAskModal();
+      const $ = s => wrap.querySelector(s);
+      $('#laTitle').textContent = opts.title || (withField ? 'กรอกข้อมูล' : 'ยืนยัน');
+      if (opts.messageHtml != null) $('#laMessage').innerHTML = opts.messageHtml;
+      else $('#laMessage').textContent = opts.message || '';
+      const ok = $('#laOk');
+      ok.textContent = opts.okText || 'ตกลง';
+      ok.className = 'btn ' + (opts.danger ? 'btn-danger' : 'btn-primary');
+      $('#laCancel').textContent = opts.cancelText || 'ยกเลิก';
+      const field = $('#laField'), err = $('#laError');
+      const multi = !!opts.multiline;
+      const input = multi ? $('#laTextarea') : $('#laInput');
+      $('#laInput').style.display = multi ? 'none' : '';
+      $('#laTextarea').style.display = multi ? '' : 'none';
+      $('#laLabel').setAttribute('for', multi ? 'laTextarea' : 'laInput');
+      field.style.display = withField ? '' : 'none';
+      err.textContent = '';
+      if (withField) {
+        $('#laLabel').textContent = opts.label || '';
+        input.value = opts.value != null ? String(opts.value) : '';
+        input.placeholder = opts.placeholder || '';
+        if (!multi) input.type = opts.inputType || 'text';
+      }
+      let done = false;
+      const finish = val => {
+        if (done) return; done = true;
+        wrap._onDismiss = null;
+        ok.onclick = null; $('#laCancel').onclick = null; $('#laClose').onclick = null; input.onkeydown = null;
+        this.closeModal('layoutAskModal');
+        resolve(val);
+      };
+      const accept = () => {
+        if (!withField) return finish(true);
+        const v = input.value.trim();
+        if (opts.required && !v) { err.textContent = opts.requiredMessage || 'กรุณากรอกช่องนี้'; input.focus(); return; }
+        if (!multi && input.type === 'email' && v && !input.checkValidity()) { err.textContent = 'รูปแบบอีเมลไม่ถูกต้อง'; input.focus(); return; }
+        if (typeof opts.validate === 'function') {
+          const m = opts.validate(v);
+          if (m) { err.textContent = m; input.focus(); return; }
+        }
+        finish(v);
+      };
+      ok.onclick = accept;
+      $('#laCancel').onclick = () => finish(withField ? null : false);
+      $('#laClose').onclick = () => finish(withField ? null : false);
+      wrap._onDismiss = () => finish(withField ? null : false);   // Escape (ตัวฟังกลาง) = ยกเลิก ไม่ปล่อยผู้เรียกค้างรอ
+      input.onkeydown = e => { if (e.key === 'Enter' && !multi && !e.isComposing) { e.preventDefault(); e.stopPropagation(); accept(); } };
+      this.openModal('layoutAskModal');
+      setTimeout(() => (withField ? input : ok).focus(), 40);
+    });
+  },
+
+  /** ยืนยันการกระทำทั่วไป (แทน `confirm()`) → Promise<boolean>
+   *  @param opts {title, message | messageHtml, okText, cancelText, danger} — ส่งสตริงตรง ๆ = message */
+  confirm(opts) {
+    return this._ask(typeof opts === 'string' ? { message: opts } : (opts || {}), false);
+  },
+
+  /** ถามข้อความหนึ่งช่อง (แทน `prompt()`) → Promise<string|null> (null = ยกเลิก · '' = ตกลงโดยเว้นว่าง เมื่อไม่ required)
+   *  @param opts {title, message, label, value, placeholder, required, requiredMessage, inputType:'text'|'email', multiline, validate(v)→ข้อความผิด|null, okText} */
+  promptText(opts) {
+    return this._ask(opts || {}, true);
+  },
+
+  /** ตัวโหลดสำหรับช่องค้นหา/ตัวกรอง (รอบ 252 WP-13 A · D §11 A) — debounce + seq-guard ในตัวเดียว
+   *
+   *  ที่มา: `oninput="Page.load()"` ยิงทุกตัวอักษร · คำตอบของคำค้นเก่ากลับมาทีหลังทับผลของคำค้นใหม่ ("ใครมาก่อนชนะ" กฎ #4 A)
+   *  ใช้: `this._searchLoad = Layout.debouncedLoader(isCurrent => this.load(isCurrent), 300)` แล้ว `oninput="Page._searchLoad()"`
+   *  · `fn(isCurrent)` — ก่อนเขียนผลลงจอให้เช็ก `if (!isCurrent()) return;` · `.now()` = รอบใหม่ทันทีไม่รอ */
+  debouncedLoader(fn, ms = 300) {
+    let timer = null, seq = 0;
+    const run = () => { const my = ++seq; return fn(() => my === seq); };
+    const d = () => { clearTimeout(timer); timer = setTimeout(run, ms); };
+    d.now = () => { clearTimeout(timer); return run(); };
+    return d;
+  },
+
+  /** แถว "โหลดไม่สำเร็จ — ลองใหม่" ใน tbody (รอบ 252 WP-13 L · D §11 L — เดิมตารางค้าง "กำลังโหลด..." ตลอดไปเมื่อ API ล้ม)
+   *  สร้างด้วย DOM (ข้อความ error ปลอดภัยเสมอ) */
+  tableError(tbody, colspan, message, onRetry, detail) {
+    const host = typeof tbody === 'string' ? document.getElementById(tbody) : tbody;
+    if (!host) return;
+    host.innerHTML = '';
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = colspan || 1;
+    td.style.padding = '12px';
+    tr.appendChild(td);
+    host.appendChild(tr);
+    this.panelError(td, message, onRetry, detail);
   },
 
   // ===== VAT รวมใน (price-inclusive) — ตัวคำนวณกลางตัวเดียวฝั่ง JS =====
