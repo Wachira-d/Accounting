@@ -3069,7 +3069,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   `DocumentAutoSendMigration` (`NOT NULL DEFAULT false` = พฤติกรรมเดิมทุกแถว)
 - เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests` · ล็อก R250L1 (+ เคส R250L1-1…9) · `settings_reader_check` (`ContactNotifyEndpoint.TopicsJson` ·
   `Contact.AutoSendDisabled`) · audit การเพิ่มอีเมลเพิ่มเติมเก็บแฮชที่อยู่ (`ContactRecipientRule.EmailAuditHash` ผูกบริษัท) — ยังไม่ได้คอมไพล์ในเครื่องนี้ ·
-  Last verified commit 31479320 (+ แก้ตามฝ่ายค้าน commit <เติมในคอมมิตตามหลัง>)
+  Last verified commit 31479320 (+ แก้ตามฝ่ายค้าน commit 2ab57d65)
 - **ทางเข้า HTTP** `ContactNotifyEndpointsController` (`api/companies/{cid}/contacts/{id}/notify-endpoints`): `GET` (สมาชิกบริษัท) · `GET recipients?topic=` (ดูว่าใครจะได้รับ — ตัวหาผู้รับตัวเดียวกัน) ·
   `POST email` · `PUT primary` · `PUT {eid}` (ป้าย · เรื่อง · แสดงยอด = กลุ่มเท่านั้น ชนิดอื่นปฏิเสธ 400) · `DELETE {eid}` (ยกเลิก · ล้าง LINE id · อีเมลหลักยกเลิกไม่ได้) —
   เขียนทุกตัว `Contact.Edit` + ปฏิเสธคีย์ API · ผู้เขียนเดียว `ContactNotifyEndpointService`: ล็อก `AdvisoryLockKey.ContactNotifyEndpoint` ต่อผู้ติดต่อ · tenant 404 · อีเมลผ่าน
