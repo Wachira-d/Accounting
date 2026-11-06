@@ -17,7 +17,7 @@ public static class PlatformGoLiveChecklist
     public const string Unknown = "Unknown";
 
     /// <summary>ปลายทางของการทดสอบขาออก (Y8) — API ของผู้ให้บริการรับชำระที่ระบบต้องเรียกถึงจริง</summary>
-    public const string OutboundTestUrl = "https://api.omise.co";
+    public const string OutboundTestUrl = global::Accounting.Services.Payments.Providers.OmisePaymentProvider.OutboundHealthCheckUrl;
 
     /// <summary>ค่าตั้งต้นของเส้นโอนเมื่อไม่รู้ธนาคาร/feed ที่ลูกค้าใช้ (N11) — แสดงใต้การ์ด</summary>
     public const string BankFeedNote =
@@ -106,8 +106,8 @@ public static class PlatformGoLiveChecklist
         Add("OUTBOUND", outbound,
             f.OutboundCheckOk switch
             {
-                true => "เชื่อมต่อขาออกถึง api.omise.co ได้",
-                false => "เชื่อมต่อขาออกถึง api.omise.co ไม่ได้ — คีย์/การชำระ/webhook จะล้ม",
+                true => "เชื่อมต่อขาออกถึงผู้ให้บริการรับชำระได้",
+                false => "เชื่อมต่อขาออกถึงผู้ให้บริการรับชำระไม่ได้ — คีย์/การชำระ/webhook จะล้ม",
                 _ => "ยังไม่ได้ทดสอบการเชื่อมต่อขาออก",
             },
             f.OutboundCheckMessage is { Length: > 0 } m ? m + (f.OutboundCheckAt is DateTime at ? $" (ทดสอบเมื่อ {at:yyyy-MM-dd HH:mm} UTC)" : "")
