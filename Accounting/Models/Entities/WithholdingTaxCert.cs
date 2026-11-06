@@ -43,6 +43,17 @@ public class WithholdingTaxCert : TenantEntity
     /// <summary>ป้ายที่มาของอัตรา (<c>DocumentFx.WhtRateBasisLabel</c>) · ใบบาท = "บาท" · null = ใบเก่า</summary>
     public string? ExchangeRateBasis { get; set; }
 
+    // ── รอบ 255 WP-12B ข้อ 8: ส่งใบนี้เข้ากล่องรับ 50 ทวิ ของผู้ขายที่เป็นคู่ค้า NextAcc (ระบบเขียนเอง — PartnerWhtCertExchangeService) ──
+    /// <summary>เวลาที่กล่องรับของผู้ขายตอบผลจริง (ประทับหลังได้รหัสรายการเท่านั้น) · null = ยังไม่ส่ง/ไม่ใช่คู่ค้า</summary>
+    public DateTime? PartnerDeliveredAt { get; set; }
+    /// <summary>รหัสรายการในกล่องรับของผู้ขาย (WhtCertIntake ของบริษัทผู้ขาย)</summary>
+    public Guid? PartnerIntakeId { get; set; }
+    /// <summary>เหตุที่ส่งไม่สำเร็จล่าสุด (ไทย) · null = ไม่มี</summary>
+    public string? PartnerDeliveryError { get; set; }
+    public int PartnerDeliveryAttempts { get; set; }
+    /// <summary>ผู้จ่ายยกเลิกใบที่ส่งไปแล้ว — แจ้งผู้ขายเมื่อไร (ครั้งเดียว)</summary>
+    public DateTime? PartnerVoidNotifiedAt { get; set; }
+
     public ICollection<WithholdingTaxCertLine> Lines { get; set; } = new List<WithholdingTaxCertLine>();
 }
 

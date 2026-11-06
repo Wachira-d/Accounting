@@ -558,6 +558,11 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 
 ---
 
+
+  **รอบ 255 WP-12B ข้อ 6 — เพดานคู่ค้า NextAcc ต่อแพ็กเกจ (คำตัดสินเจ้าของ §3.3 Y5 · DECISIONS 255-WP12B-4)** 🔨 *(ยังไม่ได้คอมไพล์)*:
+  `PlanTemplate.MaxTradingPartners` (null/-1 = **ไม่จำกัด** — ค่าตั้งต้นทุกแพ็กเกจ · migration ไม่ตั้งตัวเลข) · แอดมินตั้งที่ /admin/plans.html (`UpdatePlanTemplateRequest.MaxTradingPartners` · -1 = ล้าง) ·
+  ตัวอ่าน `CrossTenantWorkflowService.TradingPartnerCapAsync` (กลุ่มบัญชี ⇒ แม่แบบของกลุ่ม · ไม่งั้นแม่แบบตามระดับแพ็กเกจ — ลำดับเดียวกับเพดานข้อความ) · ตรวจตอน**ยอมรับ**คู่ ทั้งสองบริษัท
+  (`PartnerExchangeRules.CapProblem` · 409 พร้อมทางไปต่อ) · คำเชิญไม่ถูกบล็อก (คำตอบเชิญเท่ากันทุกกรณี — P-1) · ไม่มีราคา/แพ็กเสริม
 ## 6. Billing
 
 ### 6.1 สองโหมด (ตั้งที่ Account)
@@ -1515,3 +1520,4 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — 
   แถวค่าแทน (ExpiryNeedsReview) ดาวน์เกรด ⇒ มีผลทันที ไม่ตั้งเวลา
 
 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout — §6.2i หน้าซื้อแพ็กเกจสาธารณะ · `SiteSettings.PublicCheckoutEnabled` · `Helpers/PublicCheckoutPolicy` · `Services/Platform/PublicCheckoutService` · เทสต์ `PublicCheckoutRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit b4780a33`)_
+_Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 6 — `PlanTemplate.MaxTradingPartners` เพดานคู่ค้า NextAcc (null = ไม่จำกัด · Y5) ตรวจตอนยอมรับคู่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

@@ -166,6 +166,7 @@ public static class NotificationAudiencePolicy
         Accounting.Models.Constants.NotificationEvents.AutopilotSlipSubmitted,
         Accounting.Models.Constants.NotificationEvents.AutopilotBankSettleFailed,
         Accounting.Models.Constants.NotificationEvents.AutopilotDailyDigest,
+        Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange,
     };
 
     /// <summary>เส้นผู้รับที่ระบุ (บริษัทยังไม่ตั้งคีย์) ส่งอีเมลด้วยไหม — คีย์กระดิ่งเท่านั้น = ไม่ส่ง · อื่น ๆ = กระดิ่ง + อีเมลเหมือนเดิม</summary>

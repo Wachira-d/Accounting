@@ -39,6 +39,14 @@ public class Document : TenantEntity
     /// Contact.BranchCode ตอน export (back-compat กับเอกสารเก่า).</summary>
     public string? SupplierBranchCode { get; set; }
 
+    /// <summary>รอบ 255 WP-12B ข้อ 7 (คำตัดสินเจ้าของ N3): หลักฐานภาษีซื้อของใบซื้อที่มาจากคู่ค้า NextAcc (ชื่อใน <c>Helpers/PartnerInputVatEvidence</c>:
+    /// EtaxVerified · AwaitingTimestamp · PaperRequired · PaperConfirmed) · null = ไม่ใช่ใบจากคู่ค้า (ไม่แตะ) · ผู้อ่าน: <c>TaxInvoiceCompletenessChecker.Evaluate</c>
+    /// (AwaitingTimestamp/PaperRequired = §86/4 ไม่ครบ ⇒ ไม่ลงภาษีซื้อ) · ผู้เขียน: ระบบตอนสร้างร่าง + ผู้ใช้กด "ได้รับต้นฉบับแล้ว"</summary>
+    public string? PartnerInputVatEvidence { get; set; }
+    /// <summary>รอบ 255 WP-12B ข้อ 7: แถวกล่องเข้า (<c>CrossTenantDocumentLink</c>) ที่ใบร่างนี้ถูกสร้างจาก · null = ไม่ใช่ใบจากคู่ค้า ·
+    /// ไม่ใช่ช่องของฟอร์มเอกสาร (ไม่อยู่ใน Create/UpdateDocumentRequest · ไม่สืบทอดไปใบลูก)</summary>
+    public Guid? PartnerSourceLinkId { get; set; }
+
     /// <summary>True เมื่อ approve เอกสารแล้ว ใบกำกับภาษียัง §86/4 ไม่ครบ →
     /// VAT ถูก post เข้า 11640 "ภาษีซื้อยังไม่ถึงกำหนด" แทน 11610 "ภาษีซื้อ ภ.พ.30"
     /// (ป.รัษฎากร §82/3 — เครดิตได้เมื่อใบกำกับครบ). พอ user มาแก้ให้ครบ

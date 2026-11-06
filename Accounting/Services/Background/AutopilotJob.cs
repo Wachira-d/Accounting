@@ -34,6 +34,9 @@ public class AutopilotJob : BackgroundService
                 n => $"ประเมินเงินโอนเข้า {n} รายการ", stoppingToken);
             await StepAsync("Digest", async sp => await sp.GetRequiredService<AutopilotDigestService>().RunOnceAsync(DateTime.UtcNow, stoppingToken),
                 n => $"ส่งสรุป Autopilot ประจำวัน {n} บริษัท", stoppingToken);
+            // รอบ 255 WP-12B ข้อ 8: 50 ทวิ ที่ผู้จ่ายออก ⇒ กล่องรับของผู้ขายที่เป็นคู่ค้า NextAcc (ค่าตั้งต้นปิด · JobLock ของขั้นนี้)
+            await StepAsync("PartnerWhtCerts", async sp => await sp.GetRequiredService<PartnerWhtCertExchangeService>().RunOnceAsync(DateTime.UtcNow, stoppingToken),
+                n => $"ส่ง/แจ้ง 50 ทวิ ผ่านคู่ค้า NextAcc {n} ใบ", stoppingToken);
             try { await Task.Delay(Cycle, stoppingToken); } catch { return; }
         }
     }

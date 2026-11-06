@@ -638,7 +638,8 @@ builder.Services.AddScoped<Accounting.Services.Implementations.CrossTenantWorkfl
 builder.Services.AddSingleton<Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService>();
 builder.Services.AddScoped<IReportBuilderService, ReportBuilderService>();
 builder.Services.AddScoped<IPortalService, PortalService>();
-builder.Services.AddScoped<Accounting.Services.Implementations.SlipEvidenceService>();   // รอบ 255 WP-12B ข้อ 1 — ประตูเดียวของการแจ้งโอน (พอร์ทัล + หน้าชำระของเอกสาร)
+builder.Services.AddScoped<Accounting.Services.Implementations.SlipEvidenceService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.PartnerWhtCertExchangeService>();   // รอบ 255 WP-12B ข้อ 8 — 50 ทวิ ผ่านคู่ค้า (AutopilotJob)   // รอบ 255 WP-12B ข้อ 1 — ประตูเดียวของการแจ้งโอน (พอร์ทัล + หน้าชำระของเอกสาร)
 
 // Phase 5: World-Class
 builder.Services.AddScoped<IFpaService, FpaService>();

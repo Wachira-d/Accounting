@@ -36,6 +36,12 @@ public interface IPortalService
     Task<StorefrontPaymentOptions> GetDocumentPaymentOptionsAsync(Guid companyId, Guid contactId, Guid documentId, CancellationToken ct = default);
     /// <summary>ลูกค้าแนบสลิปของใบแจ้งหนี้ — สร้าง <c>PaymentIntent(ManualSlip)</c> รอตรวจ (ไม่ใช่รับชำระ) · รอบ 252 WP-12A: กันสลิปซ้ำด้วยแฮชไฟล์ +
     /// เลขอ้างอิงโอน (<paramref name="bankRef"/> ที่ลูกค้ากรอก · ไม่บังคับ) · แจ้งทีม E-06</summary>
+    /// <summary>รอบ 255 WP-12B ข้อ 8: ขอลิงก์วิเศษทางอีเมล (ผู้เรียกตอบข้อความเดียวเสมอ) · true = ส่งแล้ว</summary>
+    Task<bool> RequestMagicLinkAsync(Guid companyId, string? email, CancellationToken ct = default);
+    /// <summary>รอบ 255 WP-12B ข้อ 8: แลกลิงก์วิเศษเป็นเซสชันพอร์ทัล (ใช้ครั้งเดียว)</summary>
+    Task<PortalLoginResponse> RedeemMagicLinkAsync(Guid companyId, string? token, CancellationToken ct = default);
+    /// <summary>รอบ 255 WP-12B ข้อ 8: Excel รูปแบบทั่วไปให้นักบัญชีของลูกค้า</summary>
+    Task<byte[]> ExportAccountantLedgerAsync(Guid companyId, Guid contactId, DateTime fromDate, DateTime toDate, CancellationToken ct = default);
     Task<PortalSlipUploadResponse> UploadDocumentSlipAsync(
         Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount, string? bankRef = null);
 }

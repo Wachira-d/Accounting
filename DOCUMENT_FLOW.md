@@ -3233,6 +3233,38 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ผู้อ่าน: cron (`ProcessDueRecurringTransactionsAsync` ดึงกว้าง +28 วันแล้วตัดสินต่อแถวภายใต้ล็อก) · สร้างทันที (กินงวดเมื่อถึงเวลาสร้างล่วงหน้า) · ข้ามงวดค้าง · ทดลองรัน ·
   แจ้งเตือนก่อนรอบ (นับจากวันสร้าง) · **เอกสารลงวันที่วันที่สร้าง** (ไม่ลงวันล่วงหน้า §86/4 · ครบกำหนดนับจากวันสร้างตามเดิม) · ค่าผิดช่วง = ปฏิเสธพร้อมเหตุ (ไม่ clamp) ·
   echo + hydrate ฟอร์ม `recurring.html` (ว่าง = ตามความถี่ · แก้ไขส่ง 0 = ล้าง) · ราคาแปรผัน/มิเตอร์ = backlog (DECISIONS 255-WP12B-9)
+- **คู่ค้า NextAcc — ต่อยอด `TradingPartnership` เดิม (ข้อ 6 · Y5 · A H-06)**: เพดานจำนวนคู่ต่อแพ็กเกจ `PlanTemplate.MaxTradingPartners` (null = **ไม่จำกัด** — Y5 ทุกแพ็กเกจ ·
+  แอดมินตั้งที่ /admin/plans.html ได้โดยไม่ deploy) ตรวจตอน**ยอมรับ**ทั้งสองบริษัท (`EnsureTradingPartnerCapAsync` · กลุ่มบัญชี ⇒ แม่แบบของกลุ่ม · ไม่งั้นแม่แบบตามระดับ) · คำเชิญไม่ถูกบล็อก
+  (คำตอบ P-1 ต้องเท่ากันทุกกรณี) · สถานะการเชื่อมของผู้ติดต่อ `GET …/contacts/{id}/partner-status` (CompanySettings.Edit) — เชื่อมแล้ว/ระงับ/**เขา**ขอเชื่อมมา ไม่งั้น "ยังไม่เชื่อม"
+  (คำเชิญที่เราส่งเองไม่บอกผล · ไม่พบ/กำกวม = คำตอบเดียวกัน) · "ใช้ NextAcc" บอกเฉพาะปลายทางเปิด `Company.PartnerDiscoverable` เอง (ค่าตั้งต้นปิด) ·
+  หน้า `/pages/partners.html` (เมนูขาย/รายรับ): ส่งคำขอ · ยอมรับ/ปฏิเสธ · เพดานยอดใบซื้อร่างต่อคู่ · ใบซื้อร่างจากคู่ค้า · ค่าตั้ง 3 ตัว (ค้นเจอ · ใบซื้อร่าง · 50 ทวิ) ·
+  API v1: scope **`documents:read`** แยก — `GET /api/v1/documents/{id}/sign-status` + `/pdf` ใช้ scope อ่าน · ตัวตัดสินเดียว `Helpers/ApiScopePolicy` (`documents:write` ครอบ read — คีย์เดิมไม่พัง ·
+  read ไม่ครอบ write)
+- **ใบขายที่ส่งถึงคู่ค้า ⇒ ใบซื้อร่างของผู้รับ (ข้อ 7 · คำตัดสินเจ้าของ N3)**: ต่อจาก `OnDocumentSentAsync` (แถวกล่องเข้า InvoiceFlow ใหม่) ⇒ `TryCreatePurchaseDraftAsync` ·
+  ผู้รับเปิด `WorkflowAutomationConfig.CreatePurchaseDraftsFromPartners` (**ค่าตั้งต้นปิด**) + ยอด ≤ เพดานต่อคู่ของผู้รับ (`TradingPartnership.PurchaseDraftLimitA/B` · null = ไม่จำกัด ·
+  `PUT …/trading-partners/{id}/purchase-draft-limit` · audit) + THB + ต้นทางออกแล้ว ⇒ `Document(PurchaseInvoice, Draft, DRAFT-…)` **ของบริษัทผู้รับ** (ผู้ติดต่อของผู้รับ
+  `FindPartnerContactAsync`/สร้างใหม่ · บรรทัดใหม่ · เลข/วันที่/สาขาใบกำกับของผู้ขาย · `PartnerSourceLinkId`) · ไม่ผ่าน ⇒ เหตุบนแถวกล่องเข้า (`link.Comment`) · ส่งซ้ำ = no-op ·
+  ล้ม ⇒ ทิ้งแถวครึ่งทาง + เหตุ + LogError (การส่งของผู้ขายไม่ล้มตาม) · **ไม่อนุมัติเอง · ไม่ลงภาษีซื้อเอง**: `Document.PartnerInputVatEvidence` (`Helpers/PartnerInputVatEvidence.Of`) —
+  ใบกำกับ + e-Tax ลงลายมือชื่อ + **ไฟล์ XML ส่งถึงผู้รับแล้ว** (ไฟล์แนบของใบร่างผ่านที่เก็บกลาง) + หลักฐานประทับเวลา ETDA ⇒ `EtaxVerified` · ยังไม่ประทับ ⇒ `AwaitingTimestamp` ·
+  อื่น ๆ (PDF ที่แพลตฟอร์มเรนเดอร์ไม่ใช่ต้นฉบับ) ⇒ `PaperRequired` · `AwaitingTimestamp`/`PaperRequired` ⇒ ตัวตรวจ §86/4 ตัวเดียว (`TaxInvoiceCompletenessChecker.Evaluate`) นับว่า
+  "ต้นฉบับใบกำกับ" ขาด ⇒ อนุมัติแล้ว VAT พัก 11640 · ผู้รับกด "ได้รับต้นฉบับแล้ว" (`POST …/partner-purchase-drafts/{id}/confirm-original` · Document.Purchase.Approve · audit) ⇒ `PaperConfirmed`
+  + ใบที่อนุมัติแล้วย้าย 11640 → 11610 ผ่าน `CompleteSupplierTaxInvoiceAsync` เดิม (ในกรอบ §82/3) · **tenant isolation**: ผู้รับได้สำเนาเท่านั้น (ไม่ข้าม: ผังบัญชี · ต้นทุน · หมายเหตุภายใน ·
+  ไฟล์แนบภายในของผู้ส่ง) · รายการใบร่าง `GET …/partner-purchase-drafts` เฉพาะผู้เห็นฝั่งซื้อ · ยังไม่ทำ: `BillAutoPost` · ผังบัญชีจากนักเรียนตอนสร้างร่าง (ผู้ใช้เติมตอนตรวจ) ·
+  เหตุการณ์ปฏิเสธ/ยกเลิก/ใบลดหนี้ระหว่างคู่ (backlog 255-WP12B-9)
+- **50 ทวิ กลับผ่านคู่ค้า (ข้อ 8)**: ผู้จ่ายเปิด `WorkflowAutomationConfig.SendWhtCertsToPartners` (**ค่าตั้งต้นปิด** · เปิดแล้วประทับ `SendWhtCertsToPartnersSince` = ไม่ส่งย้อนหลัง) ⇒
+  งาน `AutopilotJob` ขั้น PartnerWhtCerts (JobLock) ⇒ `PartnerWhtCertExchangeService`: ใบที่**ออกแล้ว** (Issued/Printed) หลังเปิด · ผู้ถูกหักเป็นผู้ติดต่อผูก `NextAccTenant` + คู่ Accepted ·
+  ภ.ง.ด.3/53 ⇒ **ประตูเดียวของผู้ขาย** `WhtCertIntakeService.SubmitAsync(ผู้ขาย, Channel = NextAccLink)` (กันซ้ำเลขที่+ผู้จ่าย · ด่านเชิงกำหนด — เลขภาษีผู้ถูกหักต้องเป็นของผู้ขาย ·
+  ตรวจของจริง local-first · WP-09) · เอกสารฝั่งผู้ขายที่ใบครอบ = ใบต้นทางของใบซื้อร่าง (แถวกล่องเข้า) · `WithholdingTaxCert.PartnerDeliveredAt/PartnerIntakeId` ประทับ**เฉพาะเมื่อกล่องรับตอบผลจริง** ·
+  ล้ม ⇒ `PartnerDeliveryError` + `PartnerDeliveryAttempts` (≤ 8 ครั้ง) · ผู้จ่ายยกเลิกใบที่ส่งแล้ว ⇒ แจ้งผู้ขายครั้งเดียว `autopilot.partner_exchange` (E-11 · ไม่ตีกลับรายการของผู้ขายเอง)
+- **พอร์ทัลลูกค้าไม่ต้องจำรหัสผ่าน (ข้อ 8 · AUTOPILOT §8.1)**: `POST api/portal/magic-link {companyId, email}` — ส่งเฉพาะอีเมลที่ผู้ขายเปิด `PortalAccess` ไว้ (ใช้งานอยู่) ·
+  **คำตอบเดียวทุกกรณี** (`PortalMagicLinkPolicy.AckMessage` · 202) · เพดานต่ออีเมล 1/นาที 5/วัน + ต่อบริษัท 10/นาที 200/วัน (ตัวนับในฐาน fail-closed) · เวลาตอบขั้นต่ำคงที่ ·
+  โทเคนสุ่ม 32 ไบต์ เก็บ SHA-256 ใน `PortalMagicLinks` · อายุ 15 นาที · ใช้ครั้งเดียว (compare-and-set `UsedAt`) · ไม่มี URL ของระบบ/SMTP ⇒ ไม่ส่ง (log error · ไม่แต่งโดเมน) ·
+  `POST api/portal/magic-link/redeem {companyId, token}` (เพดานต่อบริษัท) ⇒ เซสชันพอร์ทัลเดิม (โทเคนลงนามแบบเดียวกับล็อกอินรหัสผ่าน) + กิจกรรม `MagicLogin` · รหัสผ่านเดิมยังใช้ได้ ·
+  สร้างสิทธิ์พอร์ทัลแบบไม่มีรหัสผ่านได้ (รหัสว่าง = ล็อกอินด้วยรหัสไม่ได้ ใช้ลิงก์วิเศษเท่านั้น) · `portal.html` ปุ่ม "ส่งลิงก์เข้าสู่ระบบทางอีเมล" + แลก `?magic=` แล้วลบออกจาก URL ·
+  **ส่งออก Excel ให้นักบัญชี** `GET api/portal/{cid}/export/accountant?fromDate&toDate` (โทเคนพอร์ทัล · ด่านเอกสารพอร์ทัลเดียว · ≤ 1 ปี) — `Helpers/PortalAccountantExport` รูปแบบ**ทั่วไป**
+  (วันที่ · เลขที่ · ชนิด · ผู้ขาย/เลขภาษี/สาขา · มูลค่า · VAT · ยอดรวม · WHT · สถานะ) ผ่าน MiniExcel · ปุ่มในแท็บใบแจ้งยอด · PEAK/FlowAccount/Express + อีเมลขาเข้า ETDA + ราคาแปรผัน = backlog (255-WP12B-9)
+- ล็อกเพิ่ม: `Accounting.Tests/PartnerExchangeRound255Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/PartnerExchangeRound255DbTests.cs` (ใบซื้อร่างสองทิศ · เพดาน/ปิด · ยืนยันต้นฉบับ ·
+  สถานะการเชื่อม · 50 ทวิ ส่ง/ไม่ส่ง/ล้ม · ลิงก์วิเศษ) · `tools/required_call_site_check.py` (R255 ข้อ 6–8) · `settings_reader_check` ENTITIES (`WorkflowAutomationConfig` · `TradingPartnership` · `PlanTemplate`)
 - ล็อก: `Accounting.Tests/AutopilotRound255Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/AutopilotRound255DbTests.cs` (สลิป = รอยืนยัน · บริษัทอื่นใช้รหัสใบไม่ได้) ·
   `Db/RecurringTransactionDbTests.R255_*` · `tools/required_call_site_check.py` (R255) · Last verified `commit 67407644`
 
@@ -8161,3 +8193,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 252 WP-09 ฝ่ายค
 _Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 1–2 — §2.12l: แจ้งโอนจากหน้าชำระ (โทเคนลิงก์ชำระ · ไบต์จริง · สลิปรอตรวจ/เพดานต่อชั่วโมง · ยอดจากเซิร์ฟเวอร์) ผ่านประตูเดียว `SlipEvidenceService` (พอร์ทัลย้ายมาด้วย) · ปุ่มคัดลอกเลขบัญชี · รายการประจำ `IntervalMonths`/`LeadDays` ผ่าน `RecurringSchedule` ทุกจุด — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 67407644)_
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-09 ฝ่ายค้านรอบสอง — §2.12j ทะเบียน ↔ กล่องรับ: H-A/H-B ล็อกแถวที่ได้ใบบางส่วน · M-A/M-D กันซ้ำสองทางปีเดียวกันใต้ล็อกเดียว · M-B/M-C หมดสิทธิ์/ต้นทางลดหลังตัดสูญ · เศษ ≤ ฿1 · สรุป · ปุ่มตัดสูญ · L4 · ความมั่นใจ 1.0 · L7 งานล้าง feedback · แก้ CI H2_ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 82577044)_
 _Last verified against codebase: 2026-11-06 (รอบ 255 ETR-ACK — §รายงานตรวจ e-Tax ข้อ 44: ปุ่ม "ตรวจแล้ว" ต่อแถว e-Tax สองกลุ่ม (`POST document/etax-reissue-review/etax-rows/{id}/acknowledge` · audit `etax-review-acknowledged` อย่างเดียว · แถวที่บันทึกแล้วออกจากรายงาน) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8f190401)_
+_Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 6–8 — §2.12l: เพดานคู่ค้าต่อแพ็กเกจ (null = ไม่จำกัด) · สถานะการเชื่อมไม่รั่ว · `documents:read` · ใบขายถึงคู่ค้า = ใบซื้อร่างของผู้รับ + `PartnerInputVatEvidence` ผ่านตัวตรวจ §86/4 ตัวเดียว · 50 ทวิ กลับผ่านประตูเดียวของผู้ขาย · พอร์ทัลลิงก์วิเศษ · Excel ทั่วไปให้นักบัญชี — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

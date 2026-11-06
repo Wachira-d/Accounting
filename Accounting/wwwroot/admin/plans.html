@@ -352,6 +352,11 @@
                   <div style="font-size:11px;color:#64748b;margin-top:4px">LINE OA/อีเมลของ NextAcc ถึงลูกค้าของร้าน · ว่าง = ไม่จำกัด (ค่าเริ่มต้น) · OA/อีเมลของร้านเองไม่นับ${p.suggestedSharedMessagesPerMonth != null ? ' · แนะนำ ' + p.suggestedSharedMessagesPerMonth.toLocaleString() : ''}</div>
                 </div>
                 <div class="admin-form-group">
+                  <label class="admin-label" for="ep_trading_partners">คู่ค้า NextAcc ที่เชื่อมได้ (ราย)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trading_partners" value="${p.maxTradingPartners ?? ''}" placeholder="ว่าง = ไม่จำกัด">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">ว่าง = ไม่จำกัด (ค่าเริ่มต้น — ทุกแพ็กเกจเชื่อมคู่ค้าได้ไม่จำกัด) · ตรวจตอนยอมรับคู่ ทั้งสองบริษัท</div>
+                </div>
+                <div class="admin-form-group">
                   <label class="admin-label">ข้อความ LINE ช่องกลาง/เดือน (แยกช่อง)</label>
                   <input type="number" min="0" class="admin-input" id="ep_shared_line" value="${(p.notifyChannels || {}).maxSharedLineMessagesPerMonth ?? ''}" placeholder="ว่าง = ไม่แยก (นับรวมก้อนบน)">
                   <div style="font-size:11px;color:#64748b;margin-top:4px">ตั้งแล้ว LINE ผ่าน OA ของ NextAcc นับแยกจากก้อนรวม · ว่าง = ไม่แยก${suggestHint((p.notifyChannels || {}).suggestedLine)}</div>
@@ -501,6 +506,8 @@
           // รอบ 254 WP-11 L4: เพดานแยกช่อง (ว่าง = -1 = ไม่แยก)
           maxSharedLineMessagesPerMonth: limitOrClear('ep_shared_line'),
           maxSharedEmailsPerMonth: limitOrClear('ep_shared_email'),
+          // รอบ 255 WP-12B ข้อ 6 (Y5): ว่าง = -1 = ไม่จำกัด
+          maxTradingPartners: limitOrClear('ep_trading_partners'),
           maxStorageBytes: storageMB * 1048576,
           // Trial settings
           trialDurationDays: parseInt(document.getElementById('ep_trial_days').value),

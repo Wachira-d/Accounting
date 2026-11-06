@@ -126,12 +126,51 @@
           </div></div>`;
         return;
       }
+      // รอบ 255 WP-12B ข้อ 8: ลิงก์วิเศษจากอีเมล (?magic=) — แลกเป็นเซสชันแล้วลบออกจาก URL ทันที (ไม่ค้างในประวัติ/แชร์ต่อ)
+      const magic = new URLSearchParams(location.search).get('magic');
+      if (magic) { this.redeemMagic(magic); return; }
       const stored = localStorage.getItem(this._key());
       if (stored) {
         try { this.auth = JSON.parse(stored); } catch (_) { localStorage.removeItem(this._key()); }
       }
       if (this.auth?.accessToken) this.showDashboard();
       else this.showLogin();
+    },
+
+    async redeemMagic(token) {
+      const url = new URL(location.href); url.searchParams.delete('magic');
+      history.replaceState(null, '', url.pathname + url.search);
+      try {
+        const r = await fetch('/api/portal/magic-link/redeem', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ companyId: this.companyId, token })
+        });
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j?.success) throw new Error(j?.message || 'ลิงก์เข้าสู่ระบบใช้ไม่ได้ — ขอลิงก์ใหม่');
+        this.auth = j.data;
+        localStorage.setItem(this._key(), JSON.stringify(this.auth));
+        this.showDashboard();
+      } catch (e) {
+        this.showLogin();
+        const err = document.getElementById('lgErr'); if (err) err.textContent = e.message || 'ลิงก์เข้าสู่ระบบใช้ไม่ได้';
+      }
+    },
+
+    // รอบ 255 WP-12B ข้อ 8: ขอลิงก์เข้าสู่ระบบทางอีเมล — เซิร์ฟเวอร์ตอบข้อความเดียวเสมอ (ไม่บอกว่าอีเมลนี้มีสิทธิ์ไหม)
+    async requestMagic() {
+      const err = document.getElementById('lgErr');
+      const email = document.getElementById('lgEmail').value.trim();
+      if (!email) { err.textContent = 'กรอกอีเมลก่อน แล้วกด "ส่งลิงก์เข้าสู่ระบบ"'; return; }
+      const btn = document.getElementById('lgMagicBtn'); btn.disabled = true;
+      try {
+        const r = await fetch('/api/portal/magic-link', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ companyId: this.companyId, email })
+        });
+        const j = await r.json().catch(() => null);
+        err.textContent = (j && j.message) || (r.ok ? 'ส่งคำขอแล้ว' : 'ขอลิงก์ไม่สำเร็จ — ลองใหม่');
+      } catch (_) { err.textContent = 'เชื่อมต่อไม่ได้ — ลองใหม่'; }
+      finally { btn.disabled = false; }
     },
 
     _key() { return `portal_auth_${this.companyId}`; },
@@ -163,8 +202,9 @@
               <div class="err" id="lgErr"></div>
               <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px;padding:12px" id="lgBtn">เข้าระบบ</button>
             </form>
+            <button type="button" class="btn btn-ghost" style="width:100%;margin-top:8px" id="lgMagicBtn" onclick="Portal.requestMagic()">📧 ไม่มี/ลืมรหัสผ่าน — ส่งลิงก์เข้าสู่ระบบทางอีเมล</button>
             <p style="font-size:12px;color:var(--gray-500);text-align:center;margin-top:18px">
-              ลืมรหัสผ่าน? ติดต่อร้านค้า — ร้านค้าตั้งรหัสผ่านใหม่ให้ได้จากหน้าจัดการพอร์ทัลลูกค้า
+              ลิงก์ใช้ได้ 15 นาทีและครั้งเดียว · ใช้ได้กับอีเมลที่ร้านค้าเปิดสิทธิ์พอร์ทัลไว้เท่านั้น
             </p>
           </div>
         </div>`;
@@ -432,6 +472,7 @@
           <label for="stTo" style="font-size:13px;color:var(--gray-600)">ถึง</label>
           <input type="date" id="stTo" value="${esc(to)}" class="search">
           <button class="btn btn-primary btn-sm" onclick="Portal.loadStatement()">โหลด</button>
+          <button class="btn btn-ghost btn-sm" onclick="Portal.exportAccountant()" title="รายการเอกสารจากผู้ขายในช่วงนี้ รูปแบบทั่วไป (Excel)">📥 ส่งออก Excel ให้นักบัญชี</button>
         </div>
         <div id="stmtBody"><div class="empty">กำลังโหลด...</div></div>`;
 
@@ -462,6 +503,24 @@
       } catch (e) {
         document.getElementById('stmtBody').innerHTML = `<div class="empty" style="color:var(--danger)">${esc(e.message||'โหลดไม่สำเร็จ')}</div>`;
       }
+    },
+
+    // รอบ 255 WP-12B ข้อ 8: Excel รูปแบบทั่วไปให้นักบัญชีของลูกค้า (เซิร์ฟเวอร์ประกอบแถว — หน้าไม่มีกติกาคอลัมน์เอง)
+    async exportAccountant() {
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date());
+      const from = document.getElementById('stFrom')?.value || (todayStr.slice(0, 8) + '01');
+      const to = document.getElementById('stTo')?.value || todayStr;
+      try {
+        const r = await this.api(`/api/portal/${this.companyId}/export/accountant?fromDate=${encodeURIComponent(from)}&toDate=${encodeURIComponent(to)}`);
+        if (!r.ok) { const j = await r.json().catch(() => null); throw new Error(j?.message || 'ส่งออกไม่สำเร็จ'); }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `documents-${from}-${to}.xlsx`;
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 200);
+        toast('ส่งออกสำเร็จ', 'ok');
+      } catch (e) { toast(e.message || 'ส่งออกไม่สำเร็จ', 'err'); }
     },
 
     closeModal() {

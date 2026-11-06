@@ -16933,6 +16933,74 @@ REVIEWER_CASES += [
      "if (false)\n            return Forbid403<string>(\"ไม่มีสิทธิ์ยกเลิกเอกสารชนิดนี้ — บันทึกผลตรวจแถว e-Tax", True),
 ]
 
+# ── รอบ 255 WP-12B ข้อ 6–8 (คู่ค้า NextAcc · ใบซื้อร่าง · 50 ทวิ ผ่านคู่ค้า · ลิงก์วิเศษ · ส่งออกนักบัญชี) ──
+_R255X = "Services/Implementations/CrossTenantWorkflowService.Partners.cs"
+RULES += [
+    # ข้อ 6: เพดานคู่ (Y5) ตรวจก่อนยอมรับ · สถานะไม่รั่ว · scope documents:read
+    dict(file=XTENANT, method="AcceptPartnershipAsync", must=["EnsureTradingPartnerCapAsync("],
+         before=[("EnsureTradingPartnerCapAsync(", "TradingPartnershipStatus.Accepted;")],
+         why=_R255_WHY + "ข้อ 6 Y5 เพดานคู่ต่อแพ็กเกจตรวจก่อนยอมรับ (null = ไม่จำกัด)"),
+    dict(file=_R255X, method="EnsureTradingPartnerCapAsync", must=["TradingPartnerCapAsync(", "PartnerExchangeRules.CapProblem("],
+         why=_R255_WHY + "ข้อ 6 ตัวตัดสินเพดานเดียว · ตรวจทั้งสองบริษัท"),
+    dict(file=_R255X, method="PartnerStatusForContactAsync",
+         must=["PartnerExchangeRules.StateOf(", "PartnerExchangeRules.ShowDiscoverable(", "PartnerCompanyMatch.Pick(", "c.CompanyId == companyId"],
+         why=_R255_WHY + "ข้อ 6 P-1 คำเชิญที่เราส่งเองไม่บอกผล · บอก 'ใช้ NextAcc' เฉพาะปลายทางเปิดเอง"),
+    dict(file="Controllers/V1/PublicApiControllerBase.cs", method="HasScope", must=["ApiScopePolicy.Satisfies("],
+         why=_R255_WHY + "ข้อ 6 A H-06 ขอบเขต API ตัวตัดสินเดียว"),
+    dict(file="Controllers/V1/DocumentsV1Controller.cs", method="SignStatus", must=["ApiScopePolicy.DocumentsRead"],
+         why=_R255_WHY + "ข้อ 6 อ่านสถานะลายเซ็นด้วย scope อ่าน"),
+    dict(file="Controllers/V1/DocumentsV1Controller.cs", method="Pdf", must=["ApiScopePolicy.DocumentsRead"],
+         why=_R255_WHY + "ข้อ 6 ดาวน์โหลด PDF ด้วย scope อ่าน"),
+    # ข้อ 7: ใบซื้อร่าง (N3) — ค่าตั้งต้นปิด · เพดานต่อคู่ · ร่างเสมอ · หลักฐานภาษีซื้อ · ไม่ลงภาษีซื้อเอง · tenant ของผู้รับ
+    dict(file=XTENANT, method="OnDocumentSentAsync", must=["TryCreatePurchaseDraftAsync("],
+         before=[("_db.CrossTenantDocumentLinks.Add(link)", "TryCreatePurchaseDraftAsync(")],
+         why=_R255_WHY + "ข้อ 7 ใบขายที่ส่งถึงคู่ค้าเข้าทางใบซื้อร่างตัวเดียว"),
+    dict(file=_R255X, method="TryCreatePurchaseDraftAsync",
+         must=["PartnerExchangeRules.DraftProblem(", "CreatePurchaseDraftsFromPartners", "PartnerExchangeRules.ReceiverLimit(",
+               "DocumentStatus.Draft", "PartnerInputVatEvidence.Of(", "CompanyId = link.TargetCompanyId", "d.CompanyId == link.SourceCompanyId",
+               "DetachPendingCrossTenantWrites(", "AddChainedAuditLog("],
+         before=[("PartnerExchangeRules.DraftProblem(", "_db.Documents.Add(draft)")],
+         forbid=["ApproveDocumentAsync(", "DocumentStatus.Approved", "InputVatBecameClaimableAt", "PaperConfirmed"],
+         why=_R255_WHY + "ข้อ 7 N3 ร่างเสมอ (ไม่อนุมัติ/ไม่ลงภาษีซื้อเอง) · สำเนาเป็นแถวของผู้รับ · ล้มแล้วทิ้งแถวครึ่งทาง"),
+    dict(file="Services/Implementations/Tax/TaxInvoiceCompletenessChecker.cs", method="Evaluate",
+         must=["PartnerInputVatEvidence.BlocksClaim(doc.PartnerInputVatEvidence)"],
+         why=_R255_WHY + "ข้อ 7 N3 ใบจากคู่ค้าที่ยังไม่มีต้นฉบับ = §86/4 ไม่ครบ (ตัวตรวจเดียวของ JE/ภ.พ.30)"),
+    dict(file=_R255X, method="ConfirmPartnerOriginalAsync",
+         must=["PartnerInputVatEvidence.ConfirmProblem(", "d.CompanyId == companyId", "AddChainedAuditLog("],
+         why=_R255_WHY + "ข้อ 7 ยืนยันต้นฉบับ: ด่าน · tenant · audit"),
+    dict(file="Controllers/PartnerExchangeController.cs", method="ConfirmOriginal",
+         must=["_service.ConfirmPartnerOriginalAsync(", "_docs.CompleteSupplierTaxInvoiceAsync("],
+         before=[("_service.ConfirmPartnerOriginalAsync(", "_docs.CompleteSupplierTaxInvoiceAsync(")],
+         why=_R255_WHY + "ข้อ 7 ย้าย VAT 11640→11610 ผ่านเส้นเติมใบกำกับเดิมเท่านั้น (ไม่ประกอบ JE เอง)"),
+    dict(file=_R255X, method="IncomingPurchaseDraftsAsync", must=["d.CompanyId == companyId", "c.CompanyId == companyId"],
+         why=_R255_WHY + "ข้อ 7 ผู้รับเห็นเฉพาะสำเนาของตัวเอง"),
+    # ข้อ 8: 50 ทวิ ผ่านคู่ค้า — ประตูเดียวของผู้ขาย · ประทับ "ส่งแล้ว" หลังได้ผลจริง · เฉพาะคู่ Accepted
+    dict(file="Services/Implementations/PartnerWhtCertExchangeService.cs", method="DeliverForPayerAsync",
+         must=["_intake.SubmitAsync(", "WhtCertIntakeChannel.NextAccLink", "PartnerExchangeRules.WhtCertDeliverable(",
+               "TradingPartnershipStatus.Accepted", "w.CompanyId == payerId", "c.CompanyId == payerId"],
+         before=[("_intake.SubmitAsync(", "PartnerDeliveredAt, nowUtc")],
+         forbid=["WhtCreditsReceived.Add(", "WhtCertIntakes.Add("],
+         why=_R255_WHY + "ข้อ 8 เข้าประตูเดียวของผู้ขาย (กันซ้ำ/ด่าน) · ประทับส่งแล้วเฉพาะเมื่อกล่องรับตอบจริง"),
+    dict(file="Services/Background/AutopilotJob.cs", method="ExecuteAsync", must=["PartnerWhtCertExchangeService>().RunOnceAsync("],
+         why=_R255_WHY + "ข้อ 8 งานส่ง 50 ทวิ เดินใต้ JobLock ของ AutopilotJob"),
+    # ข้อ 8: ลิงก์วิเศษ — คำตอบเดียว · เพดาน · ใช้ครั้งเดียว
+    dict(file="Controllers/PortalController.cs", method="RequestMagicLink",
+         must=["_limiter.TryConsumeAsync(", "PortalMagicLinkPolicy.AckMessage", "_service.RequestMagicLinkAsync("],
+         before=[("_limiter.TryConsumeAsync(", "_service.RequestMagicLinkAsync(")],
+         why=_R255_WHY + "ข้อ 8 ขอลิงก์: เพดานก่อน · คำตอบเดียวทุกกรณี (ไม่รั่วว่าอีเมลมีสิทธิ์)"),
+    dict(file="Services/Implementations/PortalService.cs", method="RedeemMagicLinkAsync",
+         must=["PortalMagicLinkPolicy.RedeemProblem(", "m.UsedAt == null", "m.CompanyId == companyId", "GenerateJwtToken("],
+         before=[("m.UsedAt == null", "GenerateJwtToken(")],
+         why=_R255_WHY + "ข้อ 8 แลกลิงก์: compare-and-set ก่อนออกเซสชัน (ใช้ครั้งเดียว) · tenant"),
+    dict(file="Services/Implementations/PortalService.cs", method="RequestMagicLinkAsync",
+         must=["PortalMagicLinkPolicy.Hash(", "p.IsActive", "p.CompanyId == companyId", "PortalMagicLinkPolicy.Link("],
+         forbid=["TokenHash = token"],
+         why=_R255_WHY + "ข้อ 8 ลิงก์ส่งเฉพาะอีเมลที่ผู้ขายเปิดสิทธิ์ · เก็บแค่ hash · ไม่แต่งโดเมน"),
+    dict(file="Services/Implementations/PortalService.cs", method="ExportAccountantLedgerAsync",
+         must=["PortalDocuments(companyId, contactId)", "PortalAccountantExport.Build(", "MiniExcelLibs.MiniExcel.SaveAs("],
+         why=_R255_WHY + "ข้อ 8 ส่งออกนักบัญชี: ด่านเอกสารของพอร์ทัลตัวเดียว · MiniExcel เท่านั้น"),
+]
+
 
 def wht_credit_add_errors() -> list:
     """รอบ 252 (AUTO_SEND §3.0 / เฟส 244 R243): ห้าม `WhtCreditsReceived.Add(` นอก DocumentService.SyncWhtCreditReceivedAsync + WhtCreditService.CreateAsync

@@ -23,15 +23,19 @@ namespace Accounting.Services.Implementations;
 ///   • Defaults are conservative (everything off). Companies opt in to
 ///     the level of automation matching their internal control standards.
 /// </summary>
-public class CrossTenantWorkflowService
+public partial class CrossTenantWorkflowService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<CrossTenantWorkflowService> _logger;
+    /// <summary>รอบ 255 WP-12B ข้อ 7: ส่งไฟล์ e-Tax (XML ที่ลงลายมือชื่อ) ของผู้ขายเป็นไฟล์แนบของใบซื้อร่างฝั่งผู้รับ · null (สร้างนอก DI) = ไม่ส่ง ⇒ หลักฐานไม่ถึง EtaxVerified</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
 
-    public CrossTenantWorkflowService(AccountingDbContext db, ILogger<CrossTenantWorkflowService> logger)
+    public CrossTenantWorkflowService(AccountingDbContext db, ILogger<CrossTenantWorkflowService> logger,
+        Accounting.Services.Storage.IFileStorage? storage = null)
     {
         _db = db;
         _logger = logger;
+        _storage = storage;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -154,6 +158,8 @@ public class CrossTenantWorkflowService
         if (p.InvitedByCompanyId == acceptingCompanyId)
             throw new InvalidOperationException("ผู้เชิญไม่สามารถยอมรับเอง — รอผู้รับเชิญตอบกลับ");
         if (p.Status == TradingPartnershipStatus.Accepted) return p;
+        // รอบ 255 WP-12B ข้อ 6 (Y5): เพดานจำนวนคู่ต่อแพ็กเกจ — ตั้งต้นไม่จำกัด · ตั้งแล้วตรวจทั้งสองบริษัทก่อนยอมรับ
+        await EnsureTradingPartnerCapAsync(p);
 
         p.Status = TradingPartnershipStatus.Accepted;
         p.AcceptedAt = DateTime.UtcNow;
@@ -264,6 +270,8 @@ public class CrossTenantWorkflowService
 
         // Check target's config for auto-approve
         await TryAutoApproveAsync(link);
+        // รอบ 255 WP-12B ข้อ 7 (N3): ใบแจ้งหนี้/ใบกำกับ ⇒ ใบซื้อร่างของผู้รับ (ค่าตั้งต้นปิด · ไม่อนุมัติ/ไม่ลงภาษีซื้อเอง · ล้มไม่ล้มการส่งของผู้ขาย)
+        await TryCreatePurchaseDraftAsync(link);
 
         return link;
     }

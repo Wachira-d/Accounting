@@ -96,6 +96,13 @@ ENTITIES = {
     # ผ่าน AutopilotSettingsResolver (class Contact อยู่ใน Document.cs)
     'Contact': ('Accounting/Models/Entities/Document.cs', {'AutoSendDisabled'},
                 ['Accounting/wwwroot/pages/contacts.html', 'Accounting/wwwroot/pages/recurring.html']),
+    # รอบ 255 WP-12B ข้อ 6–8: ค่าตั้งคู่ค้า NextAcc — ผู้อ่าน = CrossTenantWorkflowService.TryCreatePurchaseDraftAsync (ใบซื้อร่าง · เพดานต่อคู่ผ่าน
+    # PartnerExchangeRules.ReceiverLimit) · PartnerWhtCertExchangeService.RunOnceAsync (50 ทวิ) · CrossTenantWorkflowService.TradingPartnerCapAsync (เพดานคู่ Y5)
+    'WorkflowAutomationConfig': ('Accounting/Models/Entities/CrossTenantWorkflow.cs', {'CreatePurchaseDraftsFromPartners', 'SendWhtCertsToPartners'},
+                                 ['Accounting/wwwroot/pages/partners.html']),
+    'TradingPartnership': ('Accounting/Models/Entities/CrossTenantWorkflow.cs', {'PurchaseDraftLimitA', 'PurchaseDraftLimitB'},
+                           ['Accounting/wwwroot/pages/partners.html']),
+    'PlanTemplate': ('Accounting/Models/Entities/Subscription.cs', {'MaxTradingPartners'}, ['Accounting/wwwroot/admin/plans.html']),
 }
 
 # property ที่ไม่ใช่ "ค่าตั้ง" ของทุก entity (กุญแจ · audit · navigation)

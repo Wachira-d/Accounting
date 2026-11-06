@@ -315,7 +315,9 @@ public record UpdatePlanTemplateRequest(
     int? MaxSharedLineMessagesPerMonth = null,
     int? TrialMaxSharedLineMessagesPerMonth = null,
     int? MaxSharedEmailsPerMonth = null,
-    int? TrialMaxSharedEmailsPerMonth = null);
+    int? TrialMaxSharedEmailsPerMonth = null,
+    // รอบ 255 WP-12B ข้อ 6 (Y5): เพดานคู่ค้า NextAcc (-1 = ไม่จำกัด/ล้าง · null = ไม่แตะ)
+    int? MaxTradingPartners = null);
 
 public record PlanTemplateResponse(
     Guid Id,
@@ -362,7 +364,9 @@ public record PlanTemplateResponse(
     Dictionary<string, string>? LimitTexts = null,
     Dictionary<string, bool>? Unlimited = null,
     // รอบ 254 WP-11 L4 (Q3): เพดานแยกช่อง + ค่าแนะนำ (echo ให้หน้าแอดมิน hydrate)
-    PlanNotifyChannelLimits? NotifyChannels = null);
+    PlanNotifyChannelLimits? NotifyChannels = null,
+    // รอบ 255 WP-12B ข้อ 6 (Y5): เพดานคู่ค้า NextAcc (null = ไม่จำกัด · echo ให้หน้าแอดมิน hydrate)
+    int? MaxTradingPartners = null);
 
 /// <summary>รอบ 254 WP-11 L4: เพดานแยกช่อง LINE/อีเมลของแม่แบบ (null = ไม่แยก) + ค่าแนะนำจากเซิร์ฟเวอร์ (<c>NotifyQuotaPolicy.SuggestedChannelLimit</c> — คำใบ้ ไม่ตั้งให้อัตโนมัติ)</summary>
 public record PlanNotifyChannelLimits(

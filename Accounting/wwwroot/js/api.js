@@ -1554,6 +1554,17 @@ const API = {
       runRecurringNow: (id) => API.post(`${base}/recurring/${id}/run-now`),
       // รอบ 252 WP-12A: หน้า Autopilot — ภาพรวม/เรื่องที่ติด/ค่าตั้ง/ใบเสนอราคาแปลงอัตโนมัติ/คิวเงินโอนเข้า (ทุกป้าย/ปุ่มจากเซิร์ฟเวอร์)
       getAutopilotOverview: (days = 30) => API.get(`${base}/autopilot/overview?days=${encodeURIComponent(days)}`),
+      // รอบ 255 WP-12B ข้อ 6–8: หน้า "คู่ค้าที่ใช้ NextAcc" (ต่อยอด trading-partners/workflow-automation เดิม)
+      getTradingPartners: () => API.get(`${base}/trading-partners`),
+      invitePartner: (d) => API.post(`${base}/trading-partners/invite`, d),
+      acceptPartner: (id) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/accept`),
+      rejectPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/reject`, { reason: reason || null }),
+      setPartnerDraftLimit: (id, limit) => API.put(`${base}/trading-partners/${encodeURIComponent(id)}/purchase-draft-limit`, { limit }),
+      getWorkflowAutomation: () => API.get(`${base}/workflow-automation`),
+      updateWorkflowAutomation: (d) => API.put(`${base}/workflow-automation`, d),
+      getPartnerPurchaseDrafts: () => API.get(`${base}/partner-purchase-drafts`),
+      confirmPartnerOriginal: (id) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-original`),
+      getContactPartnerStatus: (contactId) => API.get(`${base}/contacts/${encodeURIComponent(contactId)}/partner-status`),
       updateAutopilotSettings: (d) => API.put(`${base}/autopilot/settings`, d),
       setQuotationAutopilotMode: (id, mode) => API.put(`${base}/autopilot/quotations/${encodeURIComponent(id)}/mode`, { mode }),
       confirmAutopilotBank: (lineId, documentId) => API.post(`${base}/autopilot/bank-queue/${encodeURIComponent(lineId)}/confirm`, { documentId }),

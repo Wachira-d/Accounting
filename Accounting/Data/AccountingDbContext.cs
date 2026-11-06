@@ -366,6 +366,7 @@ public class AccountingDbContext : DbContext
 
     // Portal
     public DbSet<PortalAccess> PortalAccesses => Set<PortalAccess>();
+    public DbSet<PortalMagicLink> PortalMagicLinks => Set<PortalMagicLink>();   // รอบ 255 WP-12B ข้อ 8 — ลิงก์วิเศษพอร์ทัล (hash · อายุสั้น · ใช้ครั้งเดียว)
     public DbSet<PortalActivity> PortalActivities => Set<PortalActivity>();
 
     // FP&A
@@ -3729,6 +3730,13 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => new { x.Status, x.ScheduledFor }).HasDatabaseName("IX_LineQueues_Status_Scheduled");
             e.HasIndex(x => new { x.CompanyId, x.BaseKey }).HasDatabaseName("IX_LineQueues_Company_BaseKey");
             e.HasIndex(x => new { x.CompanyId, x.EntityId }).HasDatabaseName("IX_LineQueues_Company_Entity");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PortalMagicLink>(e =>
+        {
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.HasIndex(x => x.TokenHash).IsUnique().HasDatabaseName("IX_PortalMagicLinks_TokenHash");
+            e.HasIndex(x => new { x.CompanyId, x.PortalAccessId }).HasDatabaseName("IX_PortalMagicLinks_Company_Access");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<ContactLineInvite>(e =>
