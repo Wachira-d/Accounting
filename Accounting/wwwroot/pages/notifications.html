@@ -273,8 +273,8 @@
           const d = res.data || {};
           document.getElementById('lineUid').value = d.lineUserId || '';
           document.getElementById('lineStatus').innerHTML = d.isBound
-            ? '<span style="color:#059669">✓ เชื่อมต่อ LINE แล้ว — ระบบจะ push เข้า LINE ส่วนตัวของคุณ</span>'
-            : '<span style="color:#94a3b8">ยังไม่ได้เชื่อมต่อ — ระบบจะ fallback ไป System / Email</span>';
+            ? '<span style="color:#059669">✓ เชื่อมต่อ LINE แล้ว — ระบบจะส่งแจ้งเตือนเข้า LINE ส่วนตัวของคุณ</span>'
+            : '<span style="color:#94a3b8">ยังไม่ได้เชื่อมต่อ — ระบบจะแจ้งทางกระดิ่งในระบบ / อีเมลแทน</span>';
         } catch (e) {
           // รอบ 250 WP-03 (D §4.5): ล้มดัง (เดิม /* ignore */ — ช่องว่างดูเหมือน "ยังไม่ผูก")
           Layout.panelError('lineStatus', 'โหลดสถานะการเชื่อมต่อ LINE ไม่สำเร็จ — สถานะจริงอาจผูกอยู่แล้ว', () => this.loadLine(), e && e.message);
