@@ -6548,3 +6548,22 @@ _รอบ 249 สินทรัพย์หลายใบ — แก้ผล
 (L5) `RouteOf` ตัวเดียว. (L6) ข้อความใบลด/เพิ่มหนี้. (L7) soft delete. (L8) กระทบยอด/ตรวจก่อนปิดงวด. (L9) วันไทยบนหน้า. (L10) สิทธิ์ GET.
 เทสต์เพิ่มใน `AssetCostSourceRulesTests` + Db `AssetMultiDocumentDbTests` (ทิศตรงข้าม: บรรทัดที่ไม่ผูกในใบเดียวกันยังขึ้นทะเบียน · ยกเลิกใบไม่ผูกปกติ · โอนเข้า 12220 สกุล USD ·
 VAT ต้องห้าม §82/5(6) · ใบลดหนี้บน 12280 หลังโอนลง JE · มัดจำถูกเคลียร์แล้ว · วันพร้อมใช้ก่อนใบล่าสุด) · กติกา R249FA เพิ่ม · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c314266c_
+
+_รอบ 250 WP-03 ความปลอดภัย/UX ร้ายแรงจากผลตรวจ D (2026-11-06 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §4 WP-03 + คำตัดสิน §3.3 Y4/Y6/N1):
+(1–2) XSS — `Layout.esc`/`jsArg` ทุกจุดที่ D ยก (fixed-assets ตาราง/รายละเอียด/รายงาน/ผังบัญชี/โครงการ · documents ผู้รับรอง/พยาน · contacts อีเมล + ผังตั้งต้น ·
+email-schedule ชนิดเอกสาร · notifications `data-k`/`data-pe` · portal `src`/`onsubmit`) + checker `html_interpolation_escape_check` (baseline 0 · self-test ฉีดลงไฟล์จริง).
+(3–4) recurring: โหลดตัวเลือกล้ม ⇒ `paymentMode/payLinkChannels: null` (ไม่ล้าง) + ล็อกขั้น ④ · ค่าที่บันทึกไว้นอกตัวเลือกถูกคืน · นโยบายอนุมัติบันทึกต่อหลังบันทึกรายการ ·
+ปุ่มบันทึกนโยบายปิดเมื่อสร้างใหม่/ฟอร์มยังไม่บันทึก. (5) fixed-assets: `autoSrc='saved'` ตอน hydrate · ไม่เดาทับตอนแก้ไข · reset ธงตอนฟอร์มใหม่.
+(6) QR พอร์ทัลจากเซิร์ฟเวอร์ (`GET api/portal/{cid}/documents/{id}/payment-options` · `PromptPayService`) · ลบ TLV builder · pay-link แสดงรูป QR ·
+checker `external_qr_check` (`grep qrserver wwwroot` = 0). (7) notifications: โหลดล้ม = ปิดปุ่มบันทึก + ลองใหม่ · dirty + `beforeunload` · LINE ล้มดัง.
+(8) settings e-Tax: บันทึกสำเร็จ ⇒ โหลดใหม่ · โหลดล้ม = แผงลองใหม่ + ไม่บันทึกทับ · ตรวจอีเมลผู้ส่ง · ลิงก์ไปแท็บอีเมล · การ์ดลิงก์เซ็น/ส่งอัตโนมัติ 403 ⇒ ล็อก + "เฉพาะเจ้าของบริษัท" ·
+ป้ายสองธงทดสอบ (Y4 · §2 #20) · LINE config ย้ายไป `API.*`. (9) email-schedule: ช่วง 0–23/1–28 · อ่าน `success` ของ retry/cancel · fetch ดิบ 6→0.
+(10) contacts: รวมการติ๊กต่อปลายทาง 400ms + seq-guard · ตรวจรูปแบบอีเมล. (11) documents: แผงลิงก์ชำระ/QR ล้มดัง · clipboard ถูกปฏิเสธบอกตรง · เหตุไม่ขึ้นทะเบียนในแผง ·
+`DocumentResponse.HasAssetCandidateLines` (`FixedAssetService.HasAssetCandidateLines`). (12) fixed-assets: ปลดผังสินทรัพย์ตอนแก้ไข = ล็อก + เซิร์ฟเวอร์ปฏิเสธ ·
+โหลดผัง/โครงการล้มดัง · กรองชนิด/สถานะ/รอตรวจ + แบ่งหน้าที่เซิร์ฟเวอร์ (`GET fixedasset/counts`) · แผงเลือกบรรทัดติ๊กให้ + สรุปยอดเทียบราคาตามสัญญา.
+(13 · Y6) แบนเนอร์ /admin/legal.html ข้อใหม่ของฉบับตั้งต้น (`Helpers/LegalDocumentClauseDiff` · `GET legal-documents/{kind}/builtin`) — เผยแพร่ยังเป็นของเจ้าของ.
+(14) ป้ายซื่อสัตย์ `Layout.suggestLabel` + `usedAi=false` จาก `gl-account/suggest`/`asset/suggest-category`. (N1) รหัสหัวเรื่อง e-Tax by Email เป็นค่าตั้งแพลตฟอร์ม
+(`SiteSettings.EtaxByEmailSubjectCodesJson` · `api/admin/etax-email-subject-codes` · audit chain) + หมายเหตุ "ยังไม่เทียบคู่มือฉบับจริง" (เครือข่าย session เข้า etax.rd.go.th ไม่ได้ — ยังไม่ได้เทียบ).
+`Layout.panelError` ใหม่ (DOM/textContent). raw fetch baseline: email-schedule 6→0 · recurring 2→0 · fixed-assets 2→0 · settings 9→6.
+เทสต์ `LegalDocumentClauseDiffTests` · `EtaxByEmailSubjectCodeOverrideTests` · Db `PaymentQrRound246DbTests` +2 (พอร์ทัล dataUri / ทิศตรงข้ามไม่มีพร้อมเพย์) · กติกา R250W3 ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

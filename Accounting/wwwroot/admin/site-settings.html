@@ -409,6 +409,16 @@
           </div>
         </div>
       </div>
+      <!-- รอบ 250 WP-03 (คำตัดสิน AUDIT_249 §3.3 N1): รหัสหัวเรื่อง e-Tax by Email ต่อชนิดเอกสาร — ค่าตั้งต้น/ป้าย/หมายเหตุจากเซิร์ฟเวอร์ (api/admin/etax-email-subject-codes · Helpers/EtaxByEmailFormat) -->
+      <div class="admin-card" id="etaxSubjectCodesCard" style="margin-top:16px">
+        <div class="section-title">📧 รหัสหัวเรื่อง e-Tax by Email</div>
+        <div id="etaxSubjectUnverified" class="help-text" style="color:#92400e;margin-bottom:8px"></div>
+        <div id="etaxSubjectRows" style="display:flex;flex-direction:column;gap:8px;font-size:14px">กำลังโหลด...</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center">
+          <button class="admin-btn admin-btn-primary admin-btn-sm" type="button" id="etaxSubjectSave" disabled>บันทึก</button>
+          <span class="help-text">ว่าง = รหัสตั้งต้น · มีผลกับอีเมล e-Tax ฉบับถัดไปทันที (ไม่ต้อง deploy)</span>
+        </div>
+      </div>
     </div>
 
     <!-- Tab 5: Platform Billing Seller (WP-B2) -->
@@ -677,6 +687,49 @@
       } catch (e) { AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error'); }
     });
     loadUpgradeMode();
+
+    // ===== รอบ 250 WP-03 (N1): รหัสหัวเรื่อง e-Tax by Email — ช่อง/ค่าตั้งต้น/หมายเหตุจากเซิร์ฟเวอร์ (หน้านี้แสดง + ส่งค่าที่พิมพ์กลับ) =====
+    function renderEtaxSubjectCodes(d) {
+      const host = document.getElementById('etaxSubjectRows');
+      host.textContent = '';
+      document.getElementById('etaxSubjectUnverified').textContent = '⚠️ ' + (d.unverifiedNote || '');
+      (d.slots || []).forEach(s => {
+        const row = document.createElement('label');
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+        const inp = document.createElement('input');
+        inp.type = 'text'; inp.maxLength = 3; inp.className = 'form-input';
+        inp.style.cssText = 'width:80px;text-transform:uppercase;font-family:monospace';
+        inp.dataset.slot = s.key; inp.value = s.isOverridden ? s.code : ''; inp.placeholder = s.defaultCode;
+        inp.pattern = '[A-Za-z]{3}';
+        inp.title = (d.unverifiedNote || '') + ' · ค่าตั้งต้น ' + s.defaultCode;
+        const txt = document.createElement('span');
+        txt.textContent = `${s.label} — ใช้อยู่: ${s.code}${s.isOverridden ? ` (ทับค่าตั้งต้น ${s.defaultCode})` : ' (ค่าตั้งต้น)'}`;
+        row.appendChild(inp); row.appendChild(txt);
+        host.appendChild(row);
+      });
+      document.getElementById('etaxSubjectSave').disabled = false;
+    }
+    async function loadEtaxSubjectCodes() {
+      document.getElementById('etaxSubjectSave').disabled = true;   // โหลดล้ม = ห้ามบันทึกค่าว่างทับ (ล้มดัง)
+      try { renderEtaxSubjectCodes((await AdminAPI.get('/etax-email-subject-codes')).data || {}); }
+      catch (e) { document.getElementById('etaxSubjectRows').textContent = 'โหลดไม่สำเร็จ: ' + e.message + ' — รีเฟรชหน้าเพื่อลองใหม่'; }
+    }
+    document.getElementById('etaxSubjectSave').addEventListener('click', async () => {
+      const codes = {};
+      let bad = null;
+      document.querySelectorAll('#etaxSubjectRows input[data-slot]').forEach(inp => {
+        const v = inp.value.trim().toUpperCase();
+        if (v && !/^[A-Z]{3}$/.test(v)) bad = bad || inp;
+        codes[inp.dataset.slot] = v || null;
+      });
+      if (bad) { bad.reportValidity(); AdminLayout.toast('รหัสต้องเป็นตัวอักษรอังกฤษ 3 ตัว', 'warning'); return; }
+      try {
+        const res = await AdminAPI.put('/etax-email-subject-codes', { codes });
+        AdminLayout.toast(res.message || 'บันทึกแล้ว');
+        if (res.data) renderEtaxSubjectCodes(res.data);
+      } catch (e) { AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error'); }
+    });
+    loadEtaxSubjectCodes();
     // รอบ 232: ลิงก์ตรง ?tab=<แท็บ>#<การ์ด> (เช่น ทางลัดจากหน้าช่องทางรับชำระ) ⇒ เปิดแท็บนั้นแล้วเลื่อนไปการ์ด — เดิมสวิตช์หน้าซื้อแพ็กเกจอยู่ท้ายแท็บ "แพ็กเกจบริการ" หาไม่เจอ
     (function openFromUrl() {
       let tab = null;

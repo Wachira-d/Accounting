@@ -43,11 +43,29 @@ public class FixedAssetController : ControllerBase
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResponse<FixedAssetResponse>>>> GetAll(
-        Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
+        Guid companyId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
+        [FromQuery] string? assetType = null, [FromQuery] string? status = null, [FromQuery] bool? needsReview = null)
     {
-        var result = await _assetService.GetAllAsync(companyId, new PagedRequest(page, pageSize, search));
+        // รอบ 250 WP-03 (D §2.5): กรองที่เซิร์ฟเวอร์ + แบ่งหน้าจริง (เดิม status ถูกส่งมาแต่ไม่มีผู้อ่าน · ชนิดกรองฝั่งหน้าเว็บจาก 200 แถวแรก)
+        var result = await _assetService.GetAllAsync(companyId, new PagedRequest(page, pageSize, search),
+            ParseEnum<global::Accounting.Models.Enums.AssetType>(assetType),
+            ParseEnum<global::Accounting.Models.Enums.AssetStatus>(status), needsReview);
         return Ok(new ApiResponse<PagedResponse<FixedAssetResponse>>(true, result));
     }
+
+    /// <summary>ตัวนับบนแท็บชนิด + จำนวนรอตรวจ — นับทั้งฐานตามคำค้น/สถานะ (ไม่ใช่เฉพาะหน้าที่โหลด)</summary>
+    [HttpGet("counts")]
+    public async Task<ActionResult<ApiResponse<FixedAssetTypeCounts>>> GetCounts(
+        Guid companyId, [FromQuery] string? search = null, [FromQuery] string? status = null)
+    {
+        var result = await _assetService.GetTypeCountsAsync(companyId, search,
+            ParseEnum<global::Accounting.Models.Enums.AssetStatus>(status));
+        return Ok(new ApiResponse<FixedAssetTypeCounts>(true, result));
+    }
+
+    /// <summary>ค่าว่าง/สะกดไม่ตรง = ไม่กรอง (ไม่ใช่ 400 — ตัวกรองเป็นตัวเลือกของหน้าจอ)</summary>
+    private static TEnum? ParseEnum<TEnum>(string? raw) where TEnum : struct, Enum
+        => !string.IsNullOrWhiteSpace(raw) && Enum.TryParse<TEnum>(raw, ignoreCase: true, out var v) && Enum.IsDefined(v) ? v : null;
 
     [HttpGet("{assetId:guid}")]
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> GetById(Guid companyId, Guid assetId)

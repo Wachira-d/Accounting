@@ -60,9 +60,18 @@ public class AdminLegalDocumentController : ControllerBase
         var current = await _legal.GetCurrentAsync(kind, ct);
         var upcoming = await _legal.GetUpcomingAsync(kind, ct);
         var (baseUrl, fromSettings) = await PublicBaseAsync(ct);
+        var draftView = await _legal.GetDraftAsync(kind, ct);
+        // รอบ 250 WP-03 (A H-01 · คำตัดสิน Y6): ข้อของฉบับตั้งต้นที่ฉบับเผยแพร่ล่าสุด (ประกาศล่วงหน้า › ปัจจุบัน) ยังไม่มี — แบนเนอร์ให้เจ้าของกดเผยแพร่เอง
+        // (ระบบประทับการยอมรับแทนไม่ได้) · ปัจจุบันเป็นฉบับตั้งต้น (ยังไม่เคยเผยแพร่) = ไม่มีส่วนต่าง
+        var builtInBody = LegalDocumentDefaults.PlatformBuiltIn(kind);
+        var latestPublishedBody = upcoming?.BodyMarkdown ?? (current.Source == "builtin" ? null : current.BodyMarkdown);
+        var builtInNewClauses = LegalDocumentClauseDiff.MissingFromPublished(builtInBody, latestPublishedBody);
         return Ok(new ApiResponse<object>(true, new
         {
             kind,
+            builtInNewClauses,
+            draftCoversBuiltInNewClauses = draftView != null && builtInNewClauses.Count > 0
+                && LegalDocumentClauseDiff.MissingFromPublished(builtInBody, draftView.BodyMarkdown).Count == 0,
             title = LegalDocumentDefaults.Title(kind),
             publicUrl = baseUrl + LegalDocumentDefaults.PlatformPath(kind),
             publicUrlEn = baseUrl + LegalDocumentDefaults.PlatformPath(kind) + "?lang=" + LegalDocumentLanguage.English,   // รอบ 232: ฉบับเดียว ภาษาเป็น query
@@ -78,7 +87,7 @@ public class AdminLegalDocumentController : ControllerBase
                 upcoming.Version, effectiveDate = upcoming.EffectiveDate.ToString("yyyy-MM-dd"), upcoming.ChangeSummary, upcoming.BodyMarkdown,
                 upcoming.BodyMarkdownEn,
             },
-            draft = DraftDto(await _legal.GetDraftAsync(kind, ct)),
+            draft = DraftDto(draftView),
             history = (await _legal.GetHistoryAsync(kind, ct)).Select(HistoryDto).ToList(),
             tokens = LegalDocumentDefaults.PlatformTokens.Select(t => new { token = "{{" + t.Token + "}}", label = t.Label }).ToList(),
             consentVersion = (await _legal.GetConsentVersionAsync(ct)).ConsentVersion,
@@ -151,6 +160,21 @@ public class AdminLegalDocumentController : ControllerBase
         {
             kind, basedOnVersion = LegalDocumentDefaults.BuiltInVersion, markdown = md, html,
             warning = "คำแปลนี้แปลจากฉบับตั้งต้นของระบบ — ถ้าแก้ฉบับไทยไปแล้วให้ตรวจให้ตรงก่อนบันทึก (ฉบับไทยเป็นฉบับผูกพัน)",
+        }));
+    }
+
+    /// <summary>รอบ 250 WP-03 (A H-01 · คำตัดสิน Y6): ฉบับตั้งต้นของระบบ (ไทย + คำแปลตั้งต้น · ยังมีโทเคน) ให้แอดมินคัดลอกเป็นร่างฉบับใหม่
+    /// เมื่อแบนเนอร์ฟ้องว่าฉบับเผยแพร่ขาดข้อ · อ่านอย่างเดียว — การเผยแพร่ยังเป็นการกดของแอดมิน (เส้นเดิม draft → publish)</summary>
+    [HttpGet("{kind}/builtin")]
+    public ActionResult<ApiResponse<object>> BuiltIn(string kind)
+    {
+        if (!LegalDocumentDefaults.IsKind(kind))
+            return NotFound(new ApiResponse<object>(false, null, "ชนิดเอกสารต้องเป็น privacy · terms หรือ refund"));
+        return Ok(new ApiResponse<object>(true, new
+        {
+            kind, basedOnVersion = LegalDocumentDefaults.BuiltInVersion,
+            bodyMarkdown = LegalDocumentDefaults.PlatformBuiltIn(kind),
+            bodyMarkdownEn = LegalDocumentDefaults.PlatformBuiltInEn(kind),
         }));
     }
 

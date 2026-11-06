@@ -31,6 +31,9 @@ public interface IPortalService
     /// gateway so the portal can render QR + account info for the
     /// customer to pay an outstanding invoice.</summary>
     Task<StorefrontPaymentOptions> GetCompanyPaymentOptionsAsync(Guid companyId);
+    /// <summary>รอบ 250 WP-03 (A G-01): ตัวเลือกชำระของ<b>ใบนี้</b> (เจ้าของใบต้องเป็นผู้ติดต่อของโทเค็น) + QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง
+    /// ฝังยอดค้างของใบ (<c>PromptPayQrDataUri</c>) — แทนการให้หน้าเว็บส่งเลขพร้อมเพย์+ยอดไปบริการ QR ภายนอก</summary>
+    Task<StorefrontPaymentOptions> GetDocumentPaymentOptionsAsync(Guid companyId, Guid contactId, Guid documentId, CancellationToken ct = default);
     /// <summary>Record a slip uploaded by the portal customer against
     /// a specific Document (invoice). Creates a Payment row in
     /// Pending status; owner reviews + marks Confirmed.</summary>

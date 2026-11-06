@@ -1093,7 +1093,11 @@ public record DocumentResponse(
     /// <summary>ยอดที่ต้องชำระ = ยอดรวมทั้งสิ้น − หักหลัง VAT (เซิร์ฟเวอร์คำนวณ — <c>PostVatDeduction.AmountDue</c>) · null เมื่อไม่มีหัก</summary>
     decimal? AmountDueAfterPostVatDeduction = null,
     /// <summary>ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง" ที่เก็บไว้ — null = ไม่ได้ติ๊ก</summary>
-    IReadOnlyList<PaymentSourceLineDto>? PaymentSources = null);
+    IReadOnlyList<PaymentSourceLineDto>? PaymentSources = null,
+    /// <summary>รอบ 250 WP-03 (D §3.4 · server computes): ใบนี้ควรแสดงแผง "สินทรัพย์ถาวร" ไหม — ชนิดฝั่งซื้อที่ลงทะเบียนอัตโนมัติได้
+    /// (<c>FixedAssetService.SupportsAutoRegister</c>) + มีบรรทัดผังสินทรัพย์ (12xxx) หรือมัดจำ (118xx) · บรรทัดไหนผูกได้จริงยังตัดสินที่
+    /// <c>GetDocumentAssetLinesAsync</c> · เดิมหน้าเว็บถือกติกาเอง ⇒ เพิ่มผังใหม่ที่เซิร์ฟเวอร์เมื่อไรแผงหายเงียบ</summary>
+    bool HasAssetCandidateLines = false);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);

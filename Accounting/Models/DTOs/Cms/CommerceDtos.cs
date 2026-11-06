@@ -426,6 +426,10 @@ public class StorefrontPaymentOptions
     /// When false the storefront falls back to "pay later only" mode
     /// and instructs the customer that the shop will contact them.</summary>
     public bool HasPaymentMethod { get; set; }
+    /// <summary>รอบ 250 WP-03 (A G-01 · D §9.1): QR พร้อมเพย์ที่<b>เซิร์ฟเวอร์สร้าง</b> (<c>PromptPayService</c> ตัวเดียวกับ pay-document รอบ 246) เป็น
+    /// <c>data:image/png;base64,…</c> — เดิมพอร์ทัลส่งเลขพร้อมเพย์+ยอดไปให้ <c>api.qrserver.com</c> (บุคคลที่สาม · PDPA) · null = ไม่มีเลขที่ใช้ได้ /
+    /// ทางเข้าที่ไม่คำนวณ (payment-options แบบไม่ระบุใบ)</summary>
+    public string? PromptPayQrDataUri { get; set; }
     // ── รอบ 209 P2 — สวิตช์ร้าน (เซิร์ฟเวอร์ตัดสิน · หน้าเว็บแสดงตาม) ──
     /// <summary>false = ร้านไม่รับโอน/แนบสลิป (ไม่ส่งเลขบัญชี · ซ่อนกล่องโอน — ไม่ใช่ "ยังไม่ตั้งบัญชี")</summary>
     public bool BankTransferEnabled { get; set; } = true;

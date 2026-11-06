@@ -633,6 +633,7 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "HelpResources" ADD COLUMN IF NOT EXISTS "Body" text NULL;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_HelpResources_Slug" ON "HelpResources" ("Slug") WHERE "Slug" IS NOT NULL AND "IsDeleted" = false;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "ContactAddress" text NULL;""",
+            """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "EtaxByEmailSubjectCodesJson" text NULL;""",   // รอบ 250 WP-03 (N1) — รหัสหัวเรื่อง e-Tax by Email ที่แอดมินทับ
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "BusinessHours" text NULL;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "GoogleLoginEnabled" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "GoogleClientId" text NULL;""",

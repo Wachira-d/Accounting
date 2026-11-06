@@ -3677,7 +3677,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
         if (r.canUploadSlip !== true) return '';
         const amt = r.slipRequired ? r.amountToTransfer : null;
         const ppId = pay && pay.promptPayId;
-        // รอบ 209 P1: QR สร้างที่เซิร์ฟเวอร์ (เดิมส่งเลขพร้อมเพย์+ยอดไป api.qrserver.com)
+        // รอบ 209 P1: QR สร้างที่เซิร์ฟเวอร์ (เดิมส่งเลขพร้อมเพย์+ยอดไป บริการสร้าง QR ภายนอก)
         const qr = ppId && amt > 0
           ? this._promptPayQrSrc(amt)
           : ((pay && pay.promptPayQrUrl) || null);

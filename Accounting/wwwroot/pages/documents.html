@@ -2688,14 +2688,9 @@
        *  มาตรฐานของระบบ) และเป็นเอกสาร**ฝั่งซื้อ** — ใบขายที่บังเอิญอ้างผัง 12
        *  (เช่นขายทรัพย์สินออก) ไม่ใช่การ "ได้มา" จึงไม่ต้องชวนลงทะเบียน */
       _docHasAssetAccountLine(d) {
-        // ชนิดต้องตรงกับ FixedAssetService.SupportsAutoRegister ฝั่งเซิร์ฟเวอร์ — เดิมนับใบรับ
-        // สินค้า (GRN) ด้วย ⇒ แผงบอกว่า “ระบบจะสร้างให้ตอนอนุมัติ” แล้วไม่สร้าง
-        const buySide = ['PurchaseInvoice', 'Expense', 'PaymentVoucher'];
-        if (!buySide.includes(d.documentType)) return false;
-        // prefix 12 เป็นแค่ตัวกรองราคาถูกก่อนยิง API — บรรทัดไหน “เข้าข่ายจริง” เซิร์ฟเวอร์ตัดสิน
-        // (ตัวจำแนกเดียวกับตอนอนุมัติ: 12110 เงินให้กู้/12410 รอตัดจ่าย ไม่ใช่สินทรัพย์ถาวร)
-        // รอบ 249: ใบมัดจำ (118xx) ก็เป็นต้นทุนของสินทรัพย์หลายใบได้ — เซิร์ฟเวอร์ตัดสินว่าบรรทัดไหนผูกได้ (AssetCostSourceRules)
-        return (d.lines || []).some(l => String(l.accountCode || '').startsWith('12') || String(l.accountCode || '').startsWith('118'));
+        // รอบ 250 WP-03 (D §3.4 · F2 ข้อ 5 server computes): เซิร์ฟเวอร์ตัดสิน (FixedAssetService.HasAssetCandidateLines —
+        // ชนิดที่ลงทะเบียนอัตโนมัติได้ + บรรทัดผัง 12xxx/118xx) · เดิมหน้านี้ถือรายชื่อชนิด + prefix เอง ⇒ เพิ่มผังที่เซิร์ฟเวอร์เมื่อไรแผงหายเงียบ
+        return d.hasAssetCandidateLines === true;
       },
 
       /** แผง "สินทรัพย์ถาวร" บนหน้ารายละเอียดเอกสาร
@@ -2781,8 +2776,14 @@
           const res = await api.registerAssetsFromDocument(docId, lineId);
           const r = res?.data;
           Layout.toast(res?.message || 'ขึ้นทะเบียนแล้ว', r && r.created > 0 ? 'success' : 'info', 8000);
-          if (r?.notes?.length && r.created === 0) console.warn('register asset notes:', r.notes);
           await this.renderDocAssetSection(docId);
+          // รอบ 250 WP-03 (D §3.6 ล้มดัง): ไม่ได้สร้างเลย ⇒ เหตุผลจากเซิร์ฟเวอร์ต้องอยู่ในแผงให้เห็น (เดิมไป console.warn)
+          if (r?.notes?.length && r.created === 0) {
+            const host = document.getElementById('docAssetPanel_' + docId);
+            if (host) host.insertAdjacentHTML('afterbegin',
+              `<div role="status" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;font-size:12px;color:#78350f;margin-bottom:8px">
+                <b>ยังไม่ได้ขึ้นทะเบียน</b> — ${r.notes.map(n => this.escapeHtml(n)).join('<br>')}</div>`);
+          }
         } catch (e) { Layout.toast(e.message || 'ขึ้นทะเบียนไม่สำเร็จ', 'error', 8000); }
       },
 
@@ -11183,8 +11184,8 @@
               ${d.certificateReason ? `<div class="text-sm"><strong>เหตุผล:</strong> ${d.certificateReason}</div>` : ''}
               ${d.paymentDate ? `<div class="text-sm"><strong>วันที่จ่ายเงิน:</strong> ${Layout.date(d.paymentDate)}</div>` : ''}
               <div style="display:flex;gap:40px;margin-top:8px">
-                <div>${d.certifierName ? `<div class="text-sm"><strong>ผู้รับรอง:</strong> ${d.certifierName}</div>` : ''}${d.certifierPosition ? `<div class="text-sm"><strong>ตำแหน่ง:</strong> ${d.certifierPosition}</div>` : ''}</div>
-                <div>${d.witnessName ? `<div class="text-sm"><strong>พยาน:</strong> ${d.witnessName}</div>` : ''}${d.witnessPosition ? `<div class="text-sm"><strong>ตำแหน่ง:</strong> ${d.witnessPosition}</div>` : ''}</div>
+                <div>${d.certifierName ? `<div class="text-sm"><strong>ผู้รับรอง:</strong> ${this.escapeHtml(d.certifierName)}</div>` : ''}${d.certifierPosition ? `<div class="text-sm"><strong>ตำแหน่ง:</strong> ${this.escapeHtml(d.certifierPosition)}</div>` : ''}</div>
+                <div>${d.witnessName ? `<div class="text-sm"><strong>พยาน:</strong> ${this.escapeHtml(d.witnessName)}</div>` : ''}${d.witnessPosition ? `<div class="text-sm"><strong>ตำแหน่ง:</strong> ${this.escapeHtml(d.witnessPosition)}</div>` : ''}</div>
               </div>
             </div>` : ''}
             <!-- Adjusting JE Lines — 3 Dr/1 Cr, 1 Dr/3 Cr, ฯลฯ (Option 1) -->
@@ -13181,7 +13182,13 @@
         const api = Layout.api();
         if (!host || !api) return;
         let s;
-        try { const r = await api.getDocumentPaymentQr(docId); s = r && r.data; } catch (_) { return; }
+        try { const r = await api.getDocumentPaymentQr(docId); s = r && r.data; }
+        catch (e) {
+          // รอบ 250 WP-03 (D §3.1): ล้มดัง — แบบเดียวกับ renderDocAssetSection (เดิม return เงียบ ⇒ ไม่รู้ว่า QR บนกระดาษมีปัญหาไหม)
+          if (e && e.status === 403) { host.textContent = ''; return; }
+          Layout.panelError(host, 'ตรวจ QR ชำระเงินบนเอกสารไม่สำเร็จ', () => this.renderPayQrNotice(docId), e && e.message);
+          return;
+        }
         if (!s) return;
         const esc = Layout.esc;
         const lines = [];
@@ -13198,7 +13205,13 @@
         if (!host || !api || !cid) return;
         let s;
         try { const r = await api.get(`/api/companies/${cid}/document-auto-send/documents/${docId}`); s = r && r.data; }
-        catch (_) { return; }
+        catch (e) {
+          // รอบ 250 WP-03 (D §3.1): เดิม return เงียบ ⇒ หัวข้อ "ลิงก์ชำระเงิน & ส่งเอกสารอัตโนมัติ" หายทั้งแผง (ผู้ใช้คิดว่าใบนี้ไม่มีฟีเจอร์)
+          // ไม่มีสิทธิ์ (403) = ไม่เกี่ยวกับผู้ใช้คนนี้ ⇒ คงว่างตามเดิม
+          if (e && e.status === 403) { host.textContent = ''; return; }
+          Layout.panelError(host, 'โหลดส่วน “ลิงก์ชำระเงิน & ส่งเอกสารอัตโนมัติ” ไม่สำเร็จ', () => this.renderAutoSendSection(docId), e && e.message);
+          return;
+        }
         if (!s || (!s.url && !(s.runs || []).length && s.refusal)) { host.textContent = ''; return; }
         const esc = Layout.esc;
         const runs = (s.runs || []).map(r => `<tr><td>${Layout.date(r.createdAt)}</td><td>${esc(r.statusLabel)}</td><td>${esc(r.message || '')}</td>
@@ -13219,8 +13232,11 @@
           try {
             const r = await api.post(`/api/companies/${cid}/document-auto-send/documents/${docId}/pay-link`, {});
             const url = r && r.data && r.data.url;
-            if (url) { try { await navigator.clipboard.writeText(url); } catch (_) { /* ไม่มีสิทธิ์ clipboard */ } }
-            Layout.toast(url ? 'คัดลอกลิงก์ชำระเงินแล้ว' : ((r && r.message) || 'สร้างลิงก์แล้ว'), 'success');
+            // รอบ 250 WP-03 (D §3.2): บอกตามที่เกิดจริง — clipboard ถูกปฏิเสธ ⇒ "สร้างลิงก์แล้ว — คัดลอกจากด้านบน" (เดิมบอกว่าคัดลอกแล้วทั้งที่ไม่ได้)
+            let copied = false;
+            if (url) { try { await navigator.clipboard.writeText(url); copied = true; } catch (_) { copied = false; } }
+            Layout.toast(url ? (copied ? 'คัดลอกลิงก์ชำระเงินแล้ว' : 'สร้างลิงก์แล้ว — คัดลอกจากด้านบน (เบราว์เซอร์ไม่อนุญาตให้คัดลอกอัตโนมัติ)')
+              : ((r && r.message) || 'สร้างลิงก์แล้ว'), 'success', copied ? undefined : 8000);
             await this.renderAutoSendSection(docId);
           } catch (e) { Layout.toast(e.message, 'error', 8000); }
         });

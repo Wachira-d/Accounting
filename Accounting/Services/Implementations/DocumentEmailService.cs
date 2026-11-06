@@ -267,7 +267,9 @@ public class DocumentEmailService : IDocumentEmailService
                 : doc.Reference;
         else if (doc.ReplacesDocumentId is Guid old)
             replaces = await _db.Documents.AsNoTracking().Where(d => d.Id == old && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefaultAsync();
-        return EtaxByEmailFormat.Subject(doc, original, replaces);   // รหัสจาก EtaxDocumentTypeMap ตัวเดียวกับ XML (ฝ่ายค้าน S3)
+        // รอบ 250 WP-03 (คำตัดสิน N1): รหัสหัวเรื่องทับได้ที่ค่าตั้งแพลตฟอร์ม (ยังไม่เทียบคู่มือฉบับจริง — แก้ได้โดยไม่ deploy) · ว่าง = ค่าตั้งต้น
+        var codesJson = await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.EtaxByEmailSubjectCodesJson).FirstOrDefaultAsync();
+        return EtaxByEmailFormat.Subject(doc, original, replaces, EtaxByEmailFormat.ParseSubjectCodes(codesJson));   // รหัสจาก EtaxDocumentTypeMap ตัวเดียวกับ XML (ฝ่ายค้าน S3)
     }
 
     /// <summary>เหตุที่ใบ/แถว e-Tax นี้ส่งไม่ได้ตามสถานะ — ใบต้องออกแล้วและไม่ยกเลิก · แถว e-Tax ต้องไม่ยกเลิก/ผิดพลาด/ถูกปฏิเสธ · null = ผ่าน</summary>

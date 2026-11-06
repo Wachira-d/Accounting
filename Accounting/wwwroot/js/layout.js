@@ -2704,6 +2704,42 @@ const Layout = {
     document.body.appendChild(badge);
   },
 
+  /** ป้ายที่มาของคำแนะนำ (checklist กฎเหล็ก #1 "ป้ายซื่อสัตย์") — **ตัวเดียวของทั้งระบบ**
+   *
+   *  ที่มา (รอบ 250 WP-03 · D §1.5/§2.9): หน้า recurring/fixed-assets ติด "🤖" ทุกคำแนะนำ ทั้งที่ endpoint ตอบจากความจำ/ประวัติ
+   *  ของบริษัท (ไม่เรียก provider) · เซิร์ฟเวอร์เป็นคนบอก `usedAi` — ไม่มีค่า/false = "⚙️ ระบบแนะนำ" (ไม่เดาว่าเป็น AI) */
+  suggestLabel(resp) {
+    return resp && resp.usedAi === true ? '🤖 AI แนะนำ' : '⚙️ ระบบแนะนำ';
+  },
+
+  /** แผง "โหลดไม่สำเร็จ — ลองใหม่" ในกล่องที่โหลดล้ม (ล้มดัง F2 ข้อ 7 — แทน `catch {}`/`console.warn` ที่ทิ้งกล่องว่างเงียบ ๆ)
+   *
+   *  สร้างด้วย DOM (textContent) ไม่ต่อ HTML ⇒ ข้อความ error จากเซิร์ฟเวอร์ปลอดภัยเสมอ · `onRetry` เป็นฟังก์ชัน (ไม่ใช่สตริง onclick)
+   *  @param target  element หรือ id
+   *  @param message ข้อความหลัก (ไทย)
+   *  @param onRetry ฟังก์ชันที่ปุ่ม "ลองใหม่" เรียก (ไม่ส่ง = ไม่มีปุ่ม)
+   *  @param detail  ข้อความ error ดิบ (ไม่บังคับ — แสดงต่อท้ายตัวเล็ก) */
+  panelError(target, message, onRetry, detail) {
+    const host = typeof target === 'string' ? document.getElementById(target) : target;
+    if (!host) return;
+    host.innerHTML = '';
+    const box = document.createElement('div');
+    box.setAttribute('role', 'alert');
+    box.style.cssText = 'background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+    const txt = document.createElement('span');
+    txt.textContent = '⚠️ ' + (message || 'โหลดไม่สำเร็จ') + (detail ? ' — ' + detail : '');
+    box.appendChild(txt);
+    if (typeof onRetry === 'function') {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm btn-ghost';
+      btn.textContent = '🔄 ลองใหม่';
+      btn.addEventListener('click', () => { try { onRetry(); } catch (e) { console.error(e); } });
+      box.appendChild(btn);
+    }
+    host.appendChild(box);
+  },
+
   /** แจ้งเตือนมุมจอ.
    *  @param durationMs เวลาแสดง (ms) — เดิมพารามิเตอร์นี้ **ไม่มี** แต่มีคน
    *  เรียกส่งมาแล้ว 40 จุดทั่วระบบ (`Layout.toast(msg,'info',12000)`) ซึ่งถูก

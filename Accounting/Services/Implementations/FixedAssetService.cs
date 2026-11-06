@@ -211,15 +211,12 @@ public partial class FixedAssetService : IFixedAssetService
         return MapToResponse(asset);
     }
 
-    public async Task<PagedResponse<FixedAssetResponse>> GetAllAsync(Guid companyId, PagedRequest request)
+    public async Task<PagedResponse<FixedAssetResponse>> GetAllAsync(Guid companyId, PagedRequest request,
+        AssetType? assetType = null, AssetStatus? status = null, bool? needsReview = null)
     {
-        var query = _db.FixedAssets.Where(a => a.CompanyId == companyId);
-
-        if (!string.IsNullOrEmpty(request.Search))
-        {
-            var search = $"%{request.Search}%";
-            query = query.Where(a => EF.Functions.ILike(a.Name, search) || EF.Functions.ILike(a.AssetCode, search));
-        }
+        var query = FilteredAssets(companyId, request.Search, status);
+        if (assetType.HasValue) query = query.Where(a => a.AssetType == assetType.Value);
+        if (needsReview.HasValue) query = query.Where(a => a.NeedsReview == needsReview.Value);
 
         var total = await query.CountAsync();
         var items = await query
@@ -232,6 +229,31 @@ public partial class FixedAssetService : IFixedAssetService
             await MapWithSourceDocAsync(companyId, items),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
+    }
+
+    /// <summary>ตัวกรองร่วมของรายการ + ตัวนับแท็บ (ตัวเดียว — ตัวนับกับตารางต้องนับชุดเดียวกัน)</summary>
+    private IQueryable<FixedAsset> FilteredAssets(Guid companyId, string? search, AssetStatus? status)
+    {
+        var query = _db.FixedAssets.Where(a => a.CompanyId == companyId);
+        if (!string.IsNullOrEmpty(search))
+        {
+            var like = $"%{search}%";
+            query = query.Where(a => EF.Functions.ILike(a.Name, like) || EF.Functions.ILike(a.AssetCode, like));
+        }
+        if (status.HasValue) query = query.Where(a => a.Status == status.Value);
+        return query;
+    }
+
+    public async Task<FixedAssetTypeCounts> GetTypeCountsAsync(Guid companyId, string? search, AssetStatus? status = null)
+    {
+        var rows = await FilteredAssets(companyId, search, status).AsNoTracking()
+            .GroupBy(a => a.AssetType)
+            .Select(g => new { Type = g.Key, Count = g.Count() })
+            .ToListAsync();
+        int Of(AssetType t) => rows.Where(r => r.Type == t).Sum(r => r.Count);
+        var needsReview = await FilteredAssets(companyId, search, status).CountAsync(a => a.NeedsReview);
+        return new FixedAssetTypeCounts(rows.Sum(r => r.Count), Of(AssetType.Tangible), Of(AssetType.Intangible),
+            Of(AssetType.RightOfUse), Of(AssetType.InvestmentProperty), needsReview);
     }
 
     /// <summary>คืน list สินทรัพย์ที่ระบบ auto-register จาก PV/PI/Expense
@@ -391,6 +413,12 @@ public partial class FixedAssetService : IFixedAssetService
         // ผังที่เปลี่ยน: ตัวตัดสินเดียวกับตอนสร้าง (ID#13) — Guid.Empty (ปลดค่า) ข้ามโดย EnsurePostingAccountsAsync
         // ฝ่ายค้านรอบ 2 P2(e): ตรวจเฉพาะช่องที่ "เปลี่ยน" — หน้าเว็บส่งค่าเดิมกลับทุกครั้ง ⇒ ผังที่ถูกปิดใช้ทีหลังเคยทำให้แก้ชื่อ/ที่ตั้งไม่ได้
         static Guid? Changed(Guid? requested, Guid? current) => requested.HasValue && requested != current ? requested : null;
+        // รอบ 250 WP-03 (D §2.3): ผังสินทรัพย์ "ปลด" ไม่ได้ตอนแก้ไข — ค่าเสื่อม/จำหน่าย/ตีราคาใหม่ต้องใช้ผังนี้ (บรรทัด JE ฝั่งสินทรัพย์)
+        // เดิมหน้าเว็บส่ง null (= คงเดิม) เมื่อล้างช่อง ⇒ ผู้ใช้ล้างแล้ว "แก้ไขสำเร็จ" โดยไม่มีผล · ตอนนี้หน้าเว็บล็อกตัวเลือกว่าง +
+        // เซิร์ฟเวอร์ปฏิเสธ Guid.Empty ให้ชัด (ทางเข้า API) แทนการปลดเงียบ ๆ แล้วไปพังตอนคิดค่าเสื่อม · ทางไปต่อ: เลือกผังสินทรัพย์อื่นแทน
+        if (request.AssetAccountId == Guid.Empty && asset.AssetAccountId.HasValue)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "ปลดบัญชีสินทรัพย์ออกไม่ได้ — ค่าเสื่อม/การจำหน่ายต้องลงบัญชีนี้ · ถ้าผังผิด ให้เลือกบัญชีสินทรัพย์ที่ถูกแทน");
         await _db.EnsurePostingAccountsAsync(companyId, new (Guid?, string)[]
         {
             (Changed(request.AssetAccountId, asset.AssetAccountId), "บัญชีสินทรัพย์"),
@@ -1455,6 +1483,13 @@ public partial class FixedAssetService : IFixedAssetService
     /// “ระบบจะสร้างให้ตอนอนุมัติ” แล้วไม่สร้าง)</summary>
     public static bool SupportsAutoRegister(DocumentType type)
         => type is DocumentType.Expense or DocumentType.PurchaseInvoice or DocumentType.PaymentVoucher;
+
+    /// <summary>รอบ 250 WP-03 — ตัวตัดสินเดียวว่าหน้าเอกสารควรวาดแผง "สินทรัพย์ถาวร" (ย้ายจาก <c>documents.html _docHasAssetAccountLine</c>):
+    /// ชนิดที่ลงทะเบียนอัตโนมัติได้ + มีบรรทัดผัง 12xxx (สินทรัพย์ถาวร — ตัวกรองหยาบ) หรือ 118xx (มัดจำที่เป็นต้นทุนสินทรัพย์หลายใบได้ · รอบ 249) ·
+    /// บรรทัดไหน "เข้าข่ายจริง" ตัดสินต่อที่ <see cref="GetDocumentAssetLinesAsync"/> (12110 เงินให้กู้/12410 รอตัดจ่ายไม่ใช่สินทรัพย์ถาวร)</summary>
+    public static bool HasAssetCandidateLines(DocumentType type, IEnumerable<string?> lineAccountCodes)
+        => SupportsAutoRegister(type)
+           && lineAccountCodes.Any(c => c != null && (c.StartsWith("12", StringComparison.Ordinal) || c.StartsWith("118", StringComparison.Ordinal)));
 
     public async Task<DocumentAssetLinesResponse> GetDocumentAssetLinesAsync(Guid companyId, Guid documentId)
     {

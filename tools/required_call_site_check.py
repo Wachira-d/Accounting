@@ -15356,6 +15356,35 @@ RULES += [
     dict(file="Services/Implementations/SubLedgerReconciliationService.cs", method="ReconcileAsync", must=["!a.IsUnderAcquisition"], why=_R249FA_WHY + "L8"),
 ]
 
+# รอบ 250 WP-03 (AUDIT_249 · A G-01 · D §9.1 · คำตัดสิน §2 #15 + §3.3 N1/Y6 · D §2.3/§3.4): QR พอร์ทัลสร้างที่เซิร์ฟเวอร์ (PromptPayService ตัวเดียวกับ pay-document) ·
+# ยอดฝังจากฐาน (ไม่รับจากหน้าเว็บ) · ใบแจ้งหนี้ที่มีใบกำกับอ้างแล้วไม่ฝังยอด · ใบต้องเป็นของผู้ติดต่อในโทเค็น · รหัสหัวเรื่อง e-Tax by Email อ่านค่าทับของแพลตฟอร์ม
+_R250W3_WHY = "รอบ 250 WP-03 — "
+RULES += [
+    dict(file="Services/Implementations/PortalService.cs", method="GetDocumentPaymentOptionsAsync",
+         must=["new PromptPayService().GenerateQrImage(", "PaymentQrPolicy.EmbedAmount(", "PaymentQrService.SupersededByTaxInvoiceAsync(",
+               "doc.BalanceDue", "d.ContactId == contactId", "d.CompanyId == companyId", "BookingPaymentChannels.QrImageUrlAcceptable(",
+               "GetCompanyPaymentOptionsAsync("],
+         forbid=["qrserver", "BuildPromptPayPayload"],
+         why=_R250W3_WHY + "QR พอร์ทัลจากเซิร์ฟเวอร์ (ไม่ส่งข้อมูลการเงินไปบุคคลที่สาม) · ยอดจากฐาน · ผู้ติดต่อในโทเค็นเท่านั้น"),
+    dict(file="Controllers/PortalController.cs", method="GetDocumentPaymentOptions",
+         must=["GetContactIdFromToken()", "_service.GetDocumentPaymentOptionsAsync("],
+         why=_R250W3_WHY + "ทางเข้า payment-options ต่อใบต้องตรวจโทเค็นพอร์ทัลก่อน"),
+    dict(file="Services/Implementations/DocumentEmailService.cs", method="SubjectForAsync",
+         must=["EtaxByEmailFormat.ParseSubjectCodes(", "EtaxByEmailSubjectCodesJson"],
+         call_args=[("EtaxByEmailFormat.Subject(", "EtaxByEmailFormat.ParseSubjectCodes(")],
+         why=_R250W3_WHY + "N1 รหัสหัวเรื่องที่แอดมินทับต้องมีผลกับอีเมลจริง (ค่าตั้งที่ไม่มีผู้อ่าน = ไม่มี)"),
+    dict(file="Services/Implementations/FixedAssetService.cs", method="UpdateAsync",
+         must=["request.AssetAccountId == Guid.Empty && asset.AssetAccountId.HasValue"],
+         before=[("request.AssetAccountId == Guid.Empty && asset.AssetAccountId.HasValue", "if (request.AssetAccountId.HasValue) asset.AssetAccountId")],
+         why=_R250W3_WHY + "D §2.3 ปลดผังสินทรัพย์ตอนแก้ไข = ปฏิเสธชัด (ไม่ใช่ no-op/ปลดเงียบ)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="MapDocumentToResponse",
+         must=["FixedAssetService.HasAssetCandidateLines("],
+         why=_R250W3_WHY + "D §3.4 แผงสินทรัพย์ตัดสินที่เซิร์ฟเวอร์ (หน้าเว็บไม่ถือรายชื่อชนิด/prefix เอง)"),
+    dict(file="Controllers/AdminLegalDocumentController.cs", method="Get",
+         must=["LegalDocumentClauseDiff.MissingFromPublished(", "LegalDocumentDefaults.PlatformBuiltIn("],
+         why=_R250W3_WHY + "Y6 แบนเนอร์ข้อใหม่ของฉบับตั้งต้น (ระบบเผยแพร่แทนเจ้าของไม่ได้ — บอกดังที่หน้าแอดมิน)"),
+]
+
 REVIEWER_CASES += [
     ("R249FA-1", "LinkLinesCoreAsync", "if (allocProblem != null)", "if (allocProblem == \"never\")", True),
     ("R249FA-2", "LinkLinesCoreAsync", "await LockDocumentsAsync(companyId, docIds);", "", True),

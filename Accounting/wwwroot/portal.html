@@ -332,7 +332,7 @@
                   <td>
                     <button class="btn btn-ghost btn-sm" onclick="Portal.viewDocument('${d.id}')">ดู</button>
                     <button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${d.id}','${jsArg(d.documentNumber)}')">PDF</button>
-                    ${payable ? `<button class="btn btn-sm" style="background:#059669;color:#fff" onclick="Portal.openPay('${d.id}', ${d.balanceDue}, '${jsArg(d.documentNumber)}')">💳 ชำระ</button>` : ''}
+                    ${payable ? `<button class="btn btn-sm" style="background:#059669;color:#fff" onclick="Portal.openPay('${jsArg(d.id)}', ${Number(d.balanceDue) || 0}, '${jsArg(d.documentNumber)}')">💳 ชำระ</button>` : ''}
                   </td>
                 </tr>`;
               }).join('')}</tbody>
@@ -482,16 +482,25 @@
       footerEl.innerHTML = '<button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>';
       document.getElementById('modalBg').classList.add('open');
 
-      let pay = null;
+      // รอบ 250 WP-03 (A G-01 · D §9.1): QR พร้อมเพย์สร้างที่เซิร์ฟเวอร์ (PromptPayService ตัวเดียวกับ pay-document) ฝังยอดค้างของใบจากฐาน
+      // — เดิมประกอบ payload ใน JS แล้วส่งเลขพร้อมเพย์+ยอดไปบริการสร้าง QR ภายนอก (บุคคลที่สาม) · โหลดล้ม = บอกตรง ๆ ไม่ใช่ "ร้านยังไม่ตั้งค่า"
+      let pay = null, loadErr = null;
       try {
-        const r = await fetch(`/api/portal/${this.companyId}/payment-options`);
-        if (r.ok) pay = (await r.json()).data;
-      } catch (_) {}
+        const r = await fetch(`/api/portal/${encodeURIComponent(this.companyId)}/documents/${encodeURIComponent(documentId)}/payment-options`,
+          { headers: { 'Authorization': `Bearer ${this.auth.accessToken}` }, cache: 'no-store' });
+        const j = await r.json().catch(() => null);
+        if (r.ok && j?.success) pay = j.data; else loadErr = j?.message || `HTTP ${r.status}`;
+      } catch (e) { loadErr = e.message || 'เชื่อมต่อไม่ได้'; }
+      if (loadErr) {
+        bodyEl.innerHTML = `<div class="empty" style="background:#FEF2F2;color:#991b1b;border-radius:8px">โหลดวิธีชำระเงินไม่สำเร็จ — ${esc(loadErr)}
+          <div style="margin-top:8px"><button class="btn btn-ghost" onclick="Portal.openPay('${jsArg(documentId)}', ${Number(balanceDue) || 0}, '${jsArg(docNumber)}')">🔄 ลองใหม่</button></div></div>`;
+        return;
+      }
 
       const ppId = pay?.promptPayId;
-      const ppQr = ppId
-        ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(buildPromptPayPayload(ppId, balanceDue))}&margin=8`
-        : (pay?.promptPayQrUrl || null);
+      // รับเฉพาะรูปที่เซิร์ฟเวอร์สร้าง (data:image/png;base64,) แบบ pay-document · ถ้าไม่มี = รูปที่ร้านอัปโหลด (เซิร์ฟเวอร์กรอง URL แล้ว)
+      const dataQr = typeof pay?.promptPayQrDataUri === 'string' && pay.promptPayQrDataUri.startsWith('data:image/png;base64,') ? pay.promptPayQrDataUri : null;
+      const ppQr = dataQr || (pay?.promptPayQrUrl || null);
       const hasPay = pay?.hasPaymentMethod;
 
       bodyEl.innerHTML = `
@@ -502,7 +511,7 @@
         ${ppQr ? `
           <div style="text-align:center;background:#F9FAFB;padding:18px;border-radius:8px;margin-bottom:14px">
             <div style="font-size:13px;color:var(--gray-500);margin-bottom:8px">สแกน QR PromptPay</div>
-            <img src="${ppQr}" alt="PromptPay QR" style="width:220px;height:220px">
+            <img src="${esc(ppQr)}" alt="PromptPay QR" style="width:220px;height:220px">
             <div style="font-size:12px;color:var(--gray-500);margin-top:8px">PromptPay: <strong>${esc(ppId||'')}</strong></div>
           </div>` : ''}
         ${pay?.bankAccountNumber ? `
@@ -512,7 +521,7 @@
             <div>เลขบัญชี: <strong style="font-family:monospace">${esc(pay.bankAccountNumber)}</strong></div>
             <div>ชื่อบัญชี: <strong>${esc(pay.bankAccountName||'-')}</strong></div>
           </div>` : ''}
-        <form id="paySlipForm" onsubmit="Portal.uploadSlip(event, '${documentId}', '${esc(docNumber)}')" style="display:grid;gap:10px">
+        <form id="paySlipForm" onsubmit="Portal.uploadSlip(event, '${jsArg(documentId)}', '${jsArg(docNumber)}')" style="display:grid;gap:10px">
           <div class="field" style="margin-bottom:0">
             <label>จำนวนที่โอน (บาท)</label>
             <input type="number" step="0.01" min="0.01" name="amount" value="${Number(balanceDue||0).toFixed(2)}" required>
@@ -580,35 +589,7 @@
     'ReceiptVoucher':'ใบสำคัญรับ','CertificateInLieu':'ใบรับรองแทนใบเสร็จรับเงิน'
   };
   function docTypeLabel(t) { return DOC_TYPE[t] || t; }
-  /**
-   * EMVCo-compliant PromptPay QR payload — same client-side TLV
-   * builder the storefront uses. Encodes a phone (10 digit) or tax-id
-   * (13 digit) + amount + CRC16/CCITT-FALSE checksum so the customer's
-   * mobile-banking app reads it.
-   */
-  function buildPromptPayPayload(ppId, amount) {
-    const digits = String(ppId).replace(/\D/g, '');
-    let target;
-    if (digits.length === 13) target = digits;
-    else if (digits.startsWith('0') && digits.length === 10) target = '0066' + digits.slice(1);
-    else if (digits.length === 10) target = '0066' + digits;
-    else target = digits;
-    const aid = '0016A000000677010111';
-    const idTag = digits.length === 13 ? '02' : '01';
-    const idTlv = idTag + String(target.length).padStart(2, '0') + target;
-    const m29 = aid + idTlv;
-    const tlv = (id, v) => id + String(v.length).padStart(2, '0') + v;
-    let body = tlv('00','01') + tlv('01', amount > 0 ? '12' : '11') +
-               tlv('29', m29) + tlv('53', '764') + tlv('58','TH');
-    if (amount > 0) body += tlv('54', Number(amount).toFixed(2));
-    const partial = body + '6304';
-    let crc = 0xFFFF;
-    for (let i = 0; i < partial.length; i++) {
-      crc ^= partial.charCodeAt(i) << 8;
-      for (let j = 0; j < 8; j++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
-    }
-    return partial + crc.toString(16).toUpperCase().padStart(4, '0');
-  }
+  // รอบ 250 WP-03: ลบ buildPromptPayPayload (TLV builder สำเนาใน JS) — QR สร้างที่เซิร์ฟเวอร์ (PromptPayService) ตัวเดียว
 
   function toast(msg, kind = 'ok') {
     const div = document.createElement('div');

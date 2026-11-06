@@ -294,3 +294,6 @@ public record LinkableCostLine(
     string? RegisteredAssetCode, bool RegisteredAssetAbsorbable, string? Problem);
 
 public record AttachCostSourcesResult(FixedAssetResponse Asset, int Linked, List<string> AbsorbedDraftAssetCodes, Guid? JournalEntryId);
+
+/// <summary>รอบ 250 WP-03 — ตัวนับบนแท็บชนิดของหน้าทะเบียนสินทรัพย์ (นับทั้งฐานตามคำค้น/สถานะ · ตัวกรองเดียวกับรายการ)</summary>
+public record FixedAssetTypeCounts(int Total, int Tangible, int Intangible, int RightOfUse, int InvestmentProperty, int NeedsReview);
