@@ -99,6 +99,10 @@ public static class DocumentPayLinkPolicy
         return list is { Count: > 0 } ? System.Text.Json.JsonSerializer.Serialize(list) : null;
     }
 
+    /// <summary>สกุลเงินนี้คือบาทไหม — ว่าง/null = บาท (ค่าตั้งต้นของเอกสาร/บัญชี) · ตัวเดียวของลิงก์ชำระและการปิดหนี้จากเงินโอน (ฝ่ายค้าน WP-12A รอบสอง LOW)</summary>
+    public static bool IsThb(string? currency)
+        => string.IsNullOrWhiteSpace(currency) || string.Equals(currency.Trim(), "THB", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>เหตุที่ออกลิงก์ชำระเงินให้ใบนี้ไม่ได้ — null = ได้ · เฉพาะเอกสารตั้งหนี้ฝั่งขายที่ออกเลขจริงแล้ว (§86/4 — ร่างยังเป็นเลข DRAFT)
     /// และยังมียอดค้าง · ตรงกับชนิดที่ <c>DocumentPaymentHandler</c> → <c>CreatePaymentAsync</c> บันทึกรับชำระได้</summary>
     /// <param name="supersedingTaxInvoiceNumber">รอบ 250 (WP-02 §2.3 · คำตัดสิน §2 #16): เลขใบกำกับภาษีที่อ้างใบแจ้งหนี้นี้และยังมีผล (ตัวโหลดเดียว
@@ -109,7 +113,7 @@ public static class DocumentPayLinkPolicy
         if (!(type is DocumentType.Invoice or DocumentType.TaxInvoice || (type == DocumentType.DebitNote && saleSide)))
             return "ลิงก์ชำระเงินใช้ได้กับใบแจ้งหนี้ · ใบกำกับภาษี · ใบเพิ่มหนี้ฝั่งขายเท่านั้น";
         if (TaxInvoiceRefusal(type, supersedingTaxInvoiceNumber) is string taxInv) return taxInv;
-        if (!string.IsNullOrWhiteSpace(currency) && !string.Equals(currency.Trim(), "THB", StringComparison.OrdinalIgnoreCase))
+        if (!IsThb(currency))
             return "ลิงก์ชำระเงินออนไลน์รองรับเฉพาะเอกสารสกุลเงินบาท (THB)";
         if (status is DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Rejected)
             return "ต้องอนุมัติเอกสารก่อน (ฉบับร่าง/รออนุมัติยังไม่มีเลขเอกสารจริง)";

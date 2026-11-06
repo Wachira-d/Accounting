@@ -78,6 +78,7 @@ public class LineNotifyService : ILineNotifyService
         try
         {
             var client = _httpClientFactory.CreateClient();
+            client.Timeout = PushTimeout;   // ฝ่ายค้าน M2: เพดานต่อคำขอ ⇒ แบตช์คิวจบก่อนเกณฑ์ "ค้างกำลังส่ง" เสมอ
             using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.line.me/v2/bot/message/push")
             {
                 Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
@@ -86,6 +87,9 @@ public class LineNotifyService : ILineNotifyService
             req.Headers.TryAddWithoutValidation(LineRetryKeyHeader, (retryKey ?? Guid.NewGuid()).ToString("D"));
             using var resp = await client.SendAsync(req);
             var requestId = resp.Headers.TryGetValues("x-line-request-id", out var ids) ? ids.FirstOrDefault() : null;
+            // ฝ่ายค้าน L2: 409 (retry key เดิม) ⇒ หลักฐานคือคำขอที่ LINE รับไว้ก่อน (x-line-accepted-request-id) ไม่ใช่คำขอซ้ำนี้
+            if ((int)resp.StatusCode == 409 && resp.Headers.TryGetValues("x-line-accepted-request-id", out var accepted))
+                requestId = accepted.FirstOrDefault() ?? requestId;
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync();
@@ -105,6 +109,9 @@ public class LineNotifyService : ILineNotifyService
 
     /// <summary>ชื่อ header กันส่งซ้ำของ LINE Messaging API (UUID · ⚠ DESIGN §7.4 ยืนยันกับเอกสารทางการ)</summary>
     internal const string LineRetryKeyHeader = "X-Line-Retry-Key";
+
+    /// <summary>เพดานเวลาต่อคำขอ LINE (ฝ่ายค้าน M2) — <c>ContactLineQueueService.StaleSending</c> ต้องมากกว่า BatchSize × ค่านี้</summary>
+    internal static readonly TimeSpan PushTimeout = TimeSpan.FromSeconds(15);
 
     private static object TextPayload(string to, string text)
         => new { to, messages = new[] { new { type = "text", text } } };
@@ -157,23 +164,131 @@ public class LineNotifyService : ILineNotifyService
     public async Task<LinePushResult> TryPushContactAsync(Guid companyId, string oaScope, LineTargetKind target, string to,
         string altText, object flexContents, Guid retryKey)
     {
-        if (string.IsNullOrWhiteSpace(to)) return LinePushResult.Fail("ปลายทาง LINE ไม่มีค่า (ถอดรหัสไม่ได้หรือถูกล้างแล้ว)");
+        var (denied, token) = await ContactRouteAsync(companyId, oaScope, target, to);
+        if (denied != null) return denied;
+        return await PushCoreAsync(token, FlexPayload(to.Trim(), altText, flexContents),
+            $"contact {(target == LineTargetKind.ContactGroup ? "group" : "user")} {CustomerLineLinkRule.Mask(to)}", retryKey);
+    }
+
+    public async Task<LinePushResult> TryPushContactTextAsync(Guid companyId, string oaScope, LineTargetKind target, string to, string text, Guid retryKey)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return LinePushResult.Fail("ไม่มีข้อความให้ส่ง");
+        var (denied, token) = await ContactRouteAsync(companyId, oaScope, target, to);
+        if (denied != null) return denied;
+        return await PushCoreAsync(token, TextPayload(to.Trim(), LineMessageLimits.Truncate(text, 5000)),
+            $"contact-text {CustomerLineLinkRule.Mask(to)}", retryKey);
+    }
+
+    /// <summary>ด่านเดียวของปลายทางผู้ติดต่อ (flex + text): กลุ่มกลางของแอดมินปฏิเสธเสมอ (Q1(b)) · OA กลางยังปิด (N8) · OA ของบริษัทเท่านั้น</summary>
+    private async Task<(LinePushResult? Denied, string? Token)> ContactRouteAsync(Guid companyId, string oaScope, LineTargetKind target, string to)
+    {
+        if (string.IsNullOrWhiteSpace(to)) return (LinePushResult.Fail("ปลายทาง LINE ไม่มีค่า (ถอดรหัสไม่ได้หรือถูกล้างแล้ว)"), null);
         if (target is not (LineTargetKind.TenantMember or LineTargetKind.ContactGroup))
-            return LinePushResult.Denied(NotificationAudiencePolicy.RuleTenantNotPlatform, NotificationAudiencePolicy.TenantNotPlatformMessage);
+            return (LinePushResult.Denied(NotificationAudiencePolicy.RuleTenantNotPlatform, NotificationAudiencePolicy.TenantNotPlatformMessage), null);
         // คำตอบเจ้าของ Q1(b): groupId กลางของแอดมิน (ทุกแหล่ง — หน้าแอดมิน + config) ห้ามเป็นปลายทางของผู้ติดต่อ <b>ไม่ว่าผ่าน OA ใด</b> — ด่านชั้นที่สอง
         // (ชั้นแรกคือ ContactRecipientRule.GroupProblem ตอนหาผู้รับ) · กันค่าที่หลุดมาทางอื่น (แถวที่ถูกแก้ในฐาน/ผูกก่อนแอดมินตั้งกลุ่มกลาง)
         if (ContactRecipientRule.IsPlatformCentralGroup(to, await _nextAcc.PlatformGroupIdsAsync()))
-            return LinePushResult.Denied(ContactRecipientRule.RuleCodePlatformGroup,
-                "ปลายทางนี้คือกลุ่ม LINE กลางของระบบ NextAcc (รับเฉพาะเรื่องของระบบ) — ไม่ส่งเรื่องของบริษัท/ผู้ติดต่อเข้ากลุ่มนี้ (คำตัดสินเจ้าของ Q1(b))");
+            return (LinePushResult.Denied(ContactRecipientRule.RuleCodePlatformGroup,
+                "ปลายทางนี้คือกลุ่ม LINE กลางของระบบ NextAcc (รับเฉพาะเรื่องของระบบ) — ไม่ส่งเรื่องของบริษัท/ผู้ติดต่อเข้ากลุ่มนี้ (คำตัดสินเจ้าของ Q1(b))"), null);
         if (oaScope != NotifyEndpointKind.ScopeCompany)
-            return oaScope == NotifyEndpointKind.ScopeNextAcc
+            return (oaScope == NotifyEndpointKind.ScopeNextAcc
                 ? LinePushResult.Denied(ContactRecipientRule.RuleCodeNextAccNotOpen, ContactRecipientRule.NextAccNotOpenReason)
-                : LinePushResult.Fail("ไม่รู้ว่าปลายทางนี้ผูกกับ LINE OA ใด — ไม่ส่ง (ให้ผู้รับผูกใหม่)");
+                : LinePushResult.Fail("ไม่รู้ว่าปลายทางนี้ผูกกับ LINE OA ใด — ไม่ส่ง (ให้ผู้รับผูกใหม่)"), null);
         var oa = await ResolveCompanyOaAsync(companyId);
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, target, oa.Configured);
-        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
-        return await PushCoreAsync(oa.Token, FlexPayload(to.Trim(), altText, flexContents),
-            $"contact {(target == LineTargetKind.ContactGroup ? "group" : "user")} {CustomerLineLinkRule.Mask(to)}", retryKey);
+        if (!route.Allowed) return (LinePushResult.Denied(route.RuleCode, route.Reason!), null);
+        return (null, oa.Token);
+    }
+
+    public async Task<LineGroupSummary?> TryGetCompanyGroupSummaryAsync(Guid companyId, string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId)) return null;
+        var oa = await ResolveCompanyOaAsync(companyId);
+        if (!oa.Configured || string.IsNullOrWhiteSpace(oa.Token)) return null;
+        var id = Uri.EscapeDataString(groupId.Trim());
+        string? name = null;
+        int? count = null;
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = PushTimeout;
+            using (var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.line.me/v2/bot/group/{id}/summary"))
+            {
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", oa.Token);
+                using var resp = await client.SendAsync(req);
+                if (resp.IsSuccessStatusCode)
+                {
+                    using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+                    name = doc.RootElement.TryGetProperty("groupName", out var n) ? n.GetString() : null;
+                }
+            }
+            using (var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.line.me/v2/bot/group/{id}/members/count"))
+            {
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", oa.Token);
+                using var resp = await client.SendAsync(req);
+                if (resp.IsSuccessStatusCode)
+                {
+                    using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+                    if (doc.RootElement.TryGetProperty("count", out var c) && c.TryGetInt32(out var v)) count = v;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || ex is TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "อ่านข้อมูลกลุ่ม LINE ({Group}) ไม่สำเร็จ", CustomerLineLinkRule.Mask(groupId));
+        }
+        return new LineGroupSummary(name, count);
+    }
+
+    public async Task<bool> TryLeaveCompanyGroupAsync(Guid companyId, string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId)) return false;
+        if (ContactRecipientRule.IsPlatformCentralGroup(groupId, await _nextAcc.PlatformGroupIdsAsync())) return false;
+        var oa = await ResolveCompanyOaAsync(companyId);
+        if (!oa.Configured || string.IsNullOrWhiteSpace(oa.Token)) return false;
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = PushTimeout;
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"https://api.line.me/v2/bot/group/{Uri.EscapeDataString(groupId.Trim())}/leave");
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", oa.Token);
+            using var resp = await client.SendAsync(req);
+            if (!resp.IsSuccessStatusCode)
+                _logger.LogWarning("บอทออกจากกลุ่ม LINE ({Group}) ไม่สำเร็จ: {Status}", CustomerLineLinkRule.Mask(groupId), (int)resp.StatusCode);
+            return resp.IsSuccessStatusCode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || ex is TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "บอทออกจากกลุ่ม LINE ({Group}) ไม่สำเร็จ", CustomerLineLinkRule.Mask(groupId));
+            return false;
+        }
+    }
+
+    public async Task<string?> TryGetCompanyOaProfileNameAsync(Guid companyId, string lineUserId)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId)) return null;
+        var oa = await ResolveCompanyOaAsync(companyId);
+        if (!oa.Configured || string.IsNullOrWhiteSpace(oa.Token)) return null;
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = PushTimeout;
+            using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.line.me/v2/bot/profile/" + Uri.EscapeDataString(lineUserId.Trim()));
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", oa.Token);
+            using var resp = await client.SendAsync(req);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("LINE profile ({User}) ตอบ {Status}", CustomerLineLinkRule.Mask(lineUserId), (int)resp.StatusCode);
+                return null;
+            }
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            return doc.RootElement.TryGetProperty("displayName", out var n) ? n.GetString() : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || ex is TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "อ่านโปรไฟล์ LINE ({User}) ไม่สำเร็จ", CustomerLineLinkRule.Mask(lineUserId));
+            return null;
+        }
     }
 
     public async Task<(bool ok, string message)> TestConfigAsync(Guid companyId, string toLineId)
@@ -237,6 +352,33 @@ public class LineNotifyService : ILineNotifyService
         if (!nx.HasToken) return LinePushResult.Fail(nx.Problem ?? NextAccLineConfigRule.NotConfiguredMessage);
         if (string.IsNullOrWhiteSpace(nx.GroupId)) return LinePushResult.Fail("ยังไม่ได้ตั้ง Group ID ของกลุ่ม LINE กลาง (ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์ → LINE OA กลาง)");
         return await PushCoreAsync(nx.AccessToken, TextPayload(nx.GroupId, LineMessageLimits.Truncate(message, 5000)), "platform-ops");
+    }
+
+    public async Task<NextAccOaQuotaReading?> TryReadNextAccQuotaAsync(CancellationToken ct = default)
+    {
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = PushTimeout;
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            using var quotaResp = await client.GetAsync("https://api.line.me/v2/bot/message/quota", ct);
+            using var usedResp = await client.GetAsync("https://api.line.me/v2/bot/message/quota/consumption", ct);
+            if (!quotaResp.IsSuccessStatusCode || !usedResp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("อ่านโควตา OA กลางไม่สำเร็จ (quota {Q} · consumption {C})", (int)quotaResp.StatusCode, (int)usedResp.StatusCode);
+                return null;
+            }
+            var used = NextAccOaQuotaRule.ParseConsumption(await usedResp.Content.ReadAsStringAsync(ct));
+            if (used is not long u) return null;
+            return new NextAccOaQuotaReading(NextAccOaQuotaRule.ParseQuota(await quotaResp.Content.ReadAsStringAsync(ct)), u);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "อ่านโควตา OA กลางไม่สำเร็จ");
+            return null;
+        }
     }
 
     /// <summary>token ของ OA กลาง (NextAcc) — ผ่าน resolver ตัวเดียว (รอบ 212 D)</summary>

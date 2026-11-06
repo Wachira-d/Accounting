@@ -53,7 +53,12 @@ public static class ContactLineChannel
     }
 
     /// <summary>ส่งอีเมลของใบนี้ไหม — ติ๊กอีเมล · ถอยมาจาก LINE · หรือผู้เรียกบังคับ (เส้นถอยตอนส่ง)</summary>
-    public static bool EmailWanted(bool channelEmail, bool fallbackNow, bool forceEmail) => forceEmail || channelEmail || fallbackNow;
+    public static bool EmailWanted(bool channelEmail, bool fallbackNow, bool forceEmail, bool etaxByEmail = false)
+        => forceEmail || channelEmail || fallbackNow || etaxByEmail;
+
+    /// <summary>ฝ่ายค้าน M3: หมายเหตุบนแถวคิวอีเมลเมื่อกฎติ๊ก LINE อย่างเดียวแต่ใบต้องส่งแบบ e-Tax by Email (คงไว้หลังส่ง)</summary>
+    public const string EtaxForcedEmailNote =
+        "ส่งอีเมลด้วยแม้กฎติ๊ก LINE อย่างเดียว: ใบกำกับของบริษัทโหมด e-Tax by Email ต้องส่งทางอีเมล (การ์ด LINE เป็นการแจ้ง ไม่ใช่การส่งใบกำกับภาษีอิเล็กทรอนิกส์)";
 
     /// <summary>แผนเข้าคิว LINE ของใบหนึ่ง — <paramref name="Endpoints"/> = ปลายทางที่ส่ง (ชนิดที่ติ๊ก + ใช้ได้ + รับเรื่องนี้) ·
     /// <paramref name="FallbackNow"/> = ไม่มีปลายทาง LINE ⇒ เข้าคิวอีเมลแทน (Q7) · <paramref name="NotSent"/> = เหตุเมื่อไม่ส่งทาง LINE เลย</summary>

@@ -32,7 +32,7 @@ public interface IBankService
     Task<BankTransactionResponse> UnmatchTransactionAsync(Guid companyId, UnmatchRequest request);
 
     // Bank Statement Import
-    Task<ImportBankStatementResponse> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request);
+    Task<ImportBankStatementResponse> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request, Guid? uploadedByUserId = null);
 
     /// <summary>
     /// **ตัวเขียน statement ตัวเดียว** (รอบ 205 ทีม C) — ทุกทางเข้าที่สร้างรายการธนาคารจาก statement (หน้า "ธนาคาร" · open-banking file ·

@@ -16,7 +16,9 @@ public class AccountingDbContext : DbContext
     public DbSet<CustomerLineLink> CustomerLineLinks => Set<CustomerLineLink>();   // รอบ 211
     public DbSet<CustomerLineLinkCode> CustomerLineLinkCodes => Set<CustomerLineLinkCode>();   // รอบ 211
     public DbSet<LineQueue> LineQueues => Set<LineQueue>();   // รอบ 254 WP-11 L2 — คิวส่ง LINE ถึงผู้ติดต่อ (Helpers/ContactLineDeliveryMigration)
-    public DbSet<ContactLineInvite> ContactLineInvites => Set<ContactLineInvite>();   // รอบ 254 WP-11 L2 — ลิงก์/QR ผูก LINE ของผู้ติดต่อ (ผ่าน OA บริษัท)
+    public DbSet<ContactLineInvite> ContactLineInvites => Set<ContactLineInvite>();
+    public DbSet<LineGroupBindCode> LineGroupBindCodes => Set<LineGroupBindCode>();   // รอบ 254 WP-11 L3 — รหัสผูกกลุ่ม #HeyNextAcc
+    public DbSet<LineWebhookEventSeen> LineWebhookEventsSeen => Set<LineWebhookEventSeen>();   // รอบ 254 WP-11 L3 — กัน webhook ซ้ำ   // รอบ 254 WP-11 L2 — ลิงก์/QR ผูก LINE ของผู้ติดต่อ (ผ่าน OA บริษัท)
     public DbSet<ContactNotifyEndpoint> ContactNotifyEndpoints => Set<ContactNotifyEndpoint>();   // รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (Helpers/ContactNotifyEndpointMigration)
     public DbSet<StaffDailySummaryConfig> StaffDailySummaryConfigs => Set<StaffDailySummaryConfig>();   // รอบ 212 C
     public DbSet<StaffDailySummaryDelivery> StaffDailySummaryDeliveries => Set<StaffDailySummaryDelivery>();   // รอบ 212 C
@@ -26,6 +28,7 @@ public class AccountingDbContext : DbContext
     public DbSet<SignEventOutboxEntry> SignEventOutbox => Set<SignEventOutboxEntry>();   // รอบ 240 — outbox เหตุการณ์ลูกค้าเซ็น (ตาราง/index ตรงกับ Helpers/SignRequestMigration)
     public DbSet<DeferredNotification> DeferredNotifications => Set<DeferredNotification>();   // รอบ 217 — แจ้งเตือนตามหลัง (Helpers/DeferredNotifyPolicy)
     public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
+    public DbSet<NextAccOaUsageCounter> NextAccOaUsageCounters => Set<NextAccOaUsageCounter>();   // รอบ 254 WP-11 L4 — ต้นทุน OA กลาง (Helpers/NotifyChannelQuotaMigration)
     // รอบ 229 — โควตาเสริม (ตาราง/index ต้องตรงกับ Helpers/QuotaAddOnMigration)
     public DbSet<PlanQuotaAllowance> PlanQuotaAllowances => Set<PlanQuotaAllowance>();
     public DbSet<CompanyQuotaOverride> CompanyQuotaOverrides => Set<CompanyQuotaOverride>();
@@ -3737,6 +3740,22 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => new { x.CompanyId, x.CodeHash }).HasDatabaseName("IX_ContactLineInvites_Company_CodeHash");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
+        modelBuilder.Entity<LineGroupBindCode>(e =>
+        {
+            e.Property(x => x.CodeHash).HasMaxLength(64);
+            e.Property(x => x.GroupIdHash).HasMaxLength(64);
+            e.Property(x => x.OaScope).HasMaxLength(16);
+            e.Property(x => x.OaDestination).HasMaxLength(64);
+            e.Property(x => x.GroupName).HasMaxLength(200);
+            e.HasIndex(x => x.CodeHash).IsUnique().HasDatabaseName("IX_LineGroupBindCodes_CodeHash");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<LineWebhookEventSeen>(e =>
+        {
+            e.ToTable("LineWebhookEventsSeen");
+            e.HasKey(x => x.WebhookEventId);
+            e.Property(x => x.WebhookEventId).HasMaxLength(100);
+        });
         // รอบ 245 L1 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactNotifyEndpointMigration (ไม่มี unique โดยตั้งใจ — ดูเหตุในไฟล์นั้น)
         modelBuilder.Entity<ContactNotifyEndpoint>(e =>
         {
@@ -3855,8 +3874,15 @@ public class AccountingDbContext : DbContext
         });
         modelBuilder.Entity<NotifyUsageCounter>(e =>
         {
-            e.HasKey(x => new { x.CompanyId, x.Period });
+            e.HasKey(x => new { x.CompanyId, x.Period, x.Channel });   // รอบ 254 WP-11 L4 — ต้องตรงกับ Helpers/NotifyChannelQuotaMigration
             e.Property(x => x.Period).HasMaxLength(7);
+            e.Property(x => x.Channel).HasMaxLength(8);
+        });
+        modelBuilder.Entity<NextAccOaUsageCounter>(e =>
+        {
+            e.HasKey(x => new { x.Period, x.Kind });   // รอบ 254 WP-11 L4 — ต้องตรงกับ Helpers/NotifyChannelQuotaMigration
+            e.Property(x => x.Period).HasMaxLength(7);
+            e.Property(x => x.Kind).HasMaxLength(16);
         });
         // รอบ 231 — ส่วนเกินโควตา + ประวัติการใช้งาน (ตาราง/index ต้องตรงกับ Helpers/OverageMigration)
         modelBuilder.Entity<OverageRate>(e =>

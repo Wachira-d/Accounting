@@ -290,9 +290,11 @@ public class CmsRound212PrefsQuotaTests
 
         public Task<NotifyClaim> ClaimAsync(Guid companyId, string? messageKey, string eventKey, string? targetKind, Guid? targetId, CancellationToken ct = default)
         { Calls.Add("claim"); return Task.FromResult(Claim); }
-        public Task<NotifyReservation> TryReserveAsync(Guid companyId, bool essential, CancellationToken ct = default)
+        public List<string?> Channels { get; } = new();
+        public Task<NotifyReservation> TryReserveAsync(Guid companyId, bool essential, CancellationToken ct = default, string? channel = null, bool combinedFallback = true)
         {
             Calls.Add("reserve");
+            Channels.Add(channel);
             EssentialFlags.Add(essential);
             return Task.FromResult(Full && !essential
                 ? new NotifyReservation(false, "full", "2026-10", 300, 2, 300)
@@ -306,7 +308,8 @@ public class CmsRound212PrefsQuotaTests
         { Calls.Add("complete:" + status); CompletedStatus = status; CompletedSource = source; CompletedSuppressReason = suppressReason; return Task.CompletedTask; }
         public Task<NotifyQuotaStatus> GetStatusAsync(Guid companyId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null,
-            int? expectedPackSize = null, decimal? expectedPackPrice = null) => throw new NotSupportedException();
+            int? expectedPackSize = null, decimal? expectedPackPrice = null, string? channel = null) => throw new NotSupportedException();
+        public Task<NotifyReservation> ReservePlatformEmailAsync(Guid companyId, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     private sealed class TestNotifier : BookingNotifier

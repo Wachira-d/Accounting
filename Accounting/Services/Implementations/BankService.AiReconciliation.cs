@@ -795,6 +795,9 @@ public partial class BankService
                 // Fiscal-period guard per item — a batch can span months and
                 // we don't want a single closed-period txn to silently corrupt.
                 await EnsureFiscalPeriodOpenAsync(companyId, txn.TransactionDate, "batch-reconcile");
+                // ฝ่ายค้าน WP-12A M5: บรรทัดที่ระบบกำลังบันทึกรับชำระ ห้ามจับคู่มือซ้อน
+                if (Accounting.Helpers.BankReceiptAutoSettle.ManualMatchBlock(txn.AutoSettleVerdict) is string applyingBlock)
+                    throw new Accounting.Helpers.BusinessRuleException(applyingBlock, Accounting.Helpers.BankReceiptAutoSettle.RuleAuto, 409);
 
                 // RE-VERIFY ownership after the lock: another transaction
                 // might have committed a match for this bank line BEFORE we

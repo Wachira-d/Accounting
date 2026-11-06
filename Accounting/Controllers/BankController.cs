@@ -161,10 +161,11 @@ public class BankController : ControllerBase
     // file ceiling is ~22MB without this override. Bumping to 100MB covers
     // even year-long exports comfortably.
     [RequestSizeLimit(100_000_000)]
+    [RequirePermission(PermissionKeys.BankReconcile)]   // ฝ่ายค้าน WP-12A H1(d): นำเข้า statement = หลักฐานเงินเข้า ⇒ สิทธิ์เขียนธนาคาร
     public async Task<ActionResult<ApiResponse<ImportBankStatementResponse>>> ImportStatement(
         Guid companyId, [FromBody] ImportBankStatementRequest request)
     {
-        var result = await _bankService.ImportBankStatementAsync(companyId, request);
+        var result = await _bankService.ImportBankStatementAsync(companyId, request, Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User));
         if (result.Conflicts > 0)
             return Ok(new ApiResponse<ImportBankStatementResponse>(true, result,
                 $"พบรายการซ้ำ {result.Conflicts} รายการ กรุณาเลือกใช้ข้อมูลเก่าหรือใหม่"));

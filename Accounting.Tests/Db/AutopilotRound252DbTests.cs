@@ -44,6 +44,8 @@ public class AutopilotRound252DbTests
         public List<(CreatePaymentRequest Req, string Actor, PaymentEntrySource Source)> Payments { get; } = new();
         public List<(Guid Source, DocumentType Target, string Actor)> Converts { get; } = new();
         public Exception? ThrowOnPayment { get; set; }
+        /// <summary>ฝ่ายค้าน H2: บันทึกการชำระสำเร็จ (commit) แล้วขั้นหลัง commit โยน — จำลองงานหลังรับชำระ/แจ้งเตือนล้มหลังบันทึก</summary>
+        public Exception? ThrowAfterPaymentCommit { get; set; }
         public Exception? ThrowOnConvert { get; set; }
     }
 
@@ -65,6 +67,7 @@ public class AutopilotRound252DbTests
             other.SaveChanges();
             other.Documents.Where(d => d.Id == req.DocumentId)
                 .ExecuteUpdate(x => x.SetProperty(d => d.BalanceDue, 0m).SetProperty(d => d.Status, DocumentStatus.Paid));
+            if (rec.ThrowAfterPaymentCommit != null) throw rec.ThrowAfterPaymentCommit;
             return new PaymentResponse(pay.Id, pay.PaymentNumber, req.DocumentId, req.PaymentDate, req.Amount, req.PaymentMethod,
                 req.Reference, null, null, req.Notes, DateTime.UtcNow);
         }
@@ -126,6 +129,9 @@ public class AutopilotRound252DbTests
         return inv;
     }
 
+    /// <summary>ผู้อัปโหลด statement ของบรรทัดทดสอบ (ฝ่ายค้าน H1: ปิดเองได้เมื่อผู้อัปโหลดมีสิทธิ์อนุมัติ — สิทธิ์จาก <see cref="Perms"/>)</summary>
+    private static readonly Guid Uploader = Guid.NewGuid();
+
     private static async Task<BankTransaction> AddLineAsync(Accounting.Data.AccountingDbContext db, BankSeed s, decimal amount, string description,
         string? source = BankReceiptAutoSettle.SourceStatement, string? payee = null)
     {
@@ -133,15 +139,19 @@ public class AutopilotRound252DbTests
         {
             CompanyId = s.CompanyId, BankAccountId = s.BankAccountId, TransactionDate = DateTime.UtcNow.Date.AddDays(-1),
             TransactionType = BankTransactionType.Deposit, Amount = amount, Description = description, Payee = payee,
-            ReconciliationStatus = ReconciliationStatus.Unmatched, EntrySource = source,
+            ReconciliationStatus = ReconciliationStatus.Unmatched, EntrySource = source, CreatedByUserId = Uploader, CreatedBy = Uploader.ToString(),
         };
         db.BankTransactions.Add(line);
         await db.SaveChangesAsync();
         return line;
     }
 
-    private static BankReceiptSettleService Bank(Accounting.Data.AccountingDbContext db, Guid companyId, Recorder rec, FakeNotify notify)
-        => new(db, Docs(companyId, rec), NullLogger<BankReceiptSettleService>.Instance, notify);
+    /// <summary>ตัวตรวจสิทธิ์ปลอม — <paramref name="approve"/> = ผู้อัปโหลดมีสิทธิ์อนุมัติเอกสาร</summary>
+    private static IPermissionService Perms(bool approve) => F4Proxy<IPermissionService>.Create((m, _) =>
+        m == nameof(IPermissionService.HasPermissionAsync) ? approve : null);
+
+    private static BankReceiptSettleService Bank(Accounting.Data.AccountingDbContext db, Guid companyId, Recorder rec, FakeNotify notify, bool uploaderMayApprove = true)
+        => new(db, Docs(companyId, rec), NullLogger<BankReceiptSettleService>.Instance, notify, Perms(uploaderMayApprove));
 
     private static async Task<BankTransaction> LineOfAsync(Guid id)
     {
@@ -251,6 +261,7 @@ public class AutopilotRound252DbTests
         var after = await LineOfAsync(line.Id);
         Assert.Equal(ReconciliationStatus.Matched, after.ReconciliationStatus);
         Assert.Equal(BankMatchAttribution.Person(userId), after.ReconciledBy);
+        Assert.Equal(BankReceiptAutoSettle.RuleConfirm, after.MatchRuleCode);   // ฝ่ายค้านรอบสอง LOW: คนยืนยัน ≠ ระบบปิดเอง
     }
 
     [Fact]
@@ -305,6 +316,126 @@ public class AutopilotRound252DbTests
         var after = await LineOfAsync(line.Id);
         Assert.Equal((Guid?)pay.Id, after.MatchedPaymentId);
         Assert.Equal(BankReceiptAutoSettle.Stamps.Settled, after.AutoSettleVerdict);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านH1_ผู้อัปโหลดstatementไม่มีสิทธิ์อนุมัติ_เสนอเท่านั้น_ไฟล์ศูนย์นำเข้าก็เสนอเท่านั้น()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedBankAsync(db, enabled: true);
+        var line = await AddLineAsync(db, s, 1_040m, "TRF " + s.InvoiceNumber);
+        var rec = new Recorder();
+        await Bank(db, s.CompanyId, rec, new FakeNotify(), uploaderMayApprove: false).EvaluateLineAsync(s.CompanyId, line.Id, true, DateTime.UtcNow);
+        Assert.Empty(rec.Payments);
+        var after = await LineOfAsync(line.Id);
+        Assert.Equal(BankReceiptAutoSettle.Stamps.Suggest, after.AutoSettleVerdict);
+        Assert.Contains("ไม่มีสิทธิ์อนุมัติ", after.AutoSettleReason);
+
+        // ไฟล์จากศูนย์นำเข้า/นำเข้า-ส่งออก (UserFile) — แม้ผู้ส่งมีสิทธิ์อนุมัติก็เสนอเท่านั้น
+        var s2 = await SeedBankAsync(db, enabled: true);
+        var userFile = await AddLineAsync(db, s2, 1_040m, "TRF " + s2.InvoiceNumber, source: BankReceiptAutoSettle.SourceUserFile);
+        await Bank(db, s2.CompanyId, rec, new FakeNotify()).EvaluateLineAsync(s2.CompanyId, userFile.Id, true, DateTime.UtcNow);
+        Assert.Empty(rec.Payments);
+        Assert.Equal(BankReceiptAutoSettle.Stamps.Suggest, (await LineOfAsync(userFile.Id)).AutoSettleVerdict);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านH2_บันทึกการชำระสำเร็จแต่ขั้นหลังcommitโยน_บรรทัดจบSettled_การชำระมีหนึ่งรายการ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedBankAsync(db, enabled: true);
+        var line = await AddLineAsync(db, s, 1_040m, "TRF " + s.InvoiceNumber);
+        var rec = new Recorder { ThrowAfterPaymentCommit = new InvalidOperationException("แจ้งเตือนหลังบันทึกล้ม") };
+        var notify = new FakeNotify();
+
+        await Bank(db, s.CompanyId, rec, notify).EvaluateLineAsync(s.CompanyId, line.Id, true, DateTime.UtcNow);
+
+        var after = await LineOfAsync(line.Id);
+        Assert.Equal(BankReceiptAutoSettle.Stamps.Settled, after.AutoSettleVerdict);
+        Assert.Equal(ReconciliationStatus.Matched, after.ReconciliationStatus);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var reference = BankReceiptSettleService.PaymentReference(line.Id);
+        var pay = Assert.Single(await check.Payments.AsNoTracking().Where(p => p.CompanyId == s.CompanyId && p.Reference == reference).ToListAsync());
+        Assert.Equal((Guid?)pay.Id, after.MatchedPaymentId);
+        Assert.Empty(notify.Calls);   // ไม่ประทับล้ม ไม่แจ้งล้ม
+
+        // รอบถัดไปไม่สร้างซ้ำ
+        rec.ThrowAfterPaymentCommit = null;
+        await Bank(check, s.CompanyId, rec, notify).EvaluatePendingAsync(DateTime.UtcNow);
+        Assert.Single(rec.Payments);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านH3_ใบแจ้งหนี้ที่มีใบกำกับภาษีมีผลแล้ว_ไม่ใช่ผู้สมัคร()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedBankAsync(db, enabled: true);
+        db.Documents.Add(new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.TaxInvoice, DocumentNumber = "TIV252" + Random.Shared.Next(100000, 999999),
+            Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date.AddDays(-4), RelatedDocumentId = s.InvoiceId, Currency = "THB",
+            SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_040m, WithholdingTaxAmount = 30m, BalanceDue = 0m, PaidAmount = 1_040m,
+        });
+        await db.SaveChangesAsync();
+        var line = await AddLineAsync(db, s, 1_040m, "TRF " + s.InvoiceNumber);
+        var rec = new Recorder();
+        await Bank(db, s.CompanyId, rec, new FakeNotify()).EvaluateLineAsync(s.CompanyId, line.Id, true, DateTime.UtcNow);
+        Assert.Empty(rec.Payments);
+        var after = await LineOfAsync(line.Id);
+        Assert.Equal(BankReceiptAutoSettle.Stamps.None, after.AutoSettleVerdict);
+        Assert.Null(after.AutoSettleDocumentId);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านH4_บัญชีไม่ใช่THB_ไม่เข้าเส้น_ยืนยันมือก็ปฏิเสธ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedBankAsync(db, enabled: true);
+        await db.BankAccounts.Where(a => a.Id == s.BankAccountId).ExecuteUpdateAsync(x => x.SetProperty(a => a.Currency, "USD"));
+        var line = await AddLineAsync(db, s, 1_040m, "TRF " + s.InvoiceNumber);
+        var rec = new Recorder();
+        var svc = Bank(db, s.CompanyId, rec, new FakeNotify());
+        await svc.EvaluateLineAsync(s.CompanyId, line.Id, true, DateTime.UtcNow);
+        Assert.Empty(rec.Payments);
+        Assert.Equal(BankReceiptAutoSettle.Stamps.None, (await LineOfAsync(line.Id)).AutoSettleVerdict);
+        await Assert.ThrowsAsync<BusinessRuleException>(() => svc.ConfirmAsync(s.CompanyId, line.Id, s.InvoiceId, Guid.NewGuid()));
+        Assert.Empty(rec.Payments);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านรอบสองME_ใบยอดเท่ากันเกิน8ใบไม่อ้างเลข_เสนอโดยไม่เลือกใบ_อ้างเลขใบเดียว_ปิดใบนั้น()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedBankAsync(db, enabled: true);
+        var others = new List<Document>();
+        for (var i = 0; i < BankReceiptAutoSettle.MaxExactForFacts + 1; i++)
+            others.Add(await AddInvoiceAsync(db, s.CompanyId, s.ContactId, 1_040m, 30m));
+        var rec = new Recorder();
+
+        var anon = await AddLineAsync(db, s, 1_040m, "TRF FR KASIKORN");
+        await Bank(db, s.CompanyId, rec, new FakeNotify()).EvaluateLineAsync(s.CompanyId, anon.Id, true, DateTime.UtcNow);
+        var stamped = await LineOfAsync(anon.Id);
+        Assert.Equal(BankReceiptAutoSettle.Stamps.Suggest, stamped.AutoSettleVerdict);
+        Assert.Equal(BankReceiptAutoSettle.TooManyEqualReason, stamped.AutoSettleReason);
+        Assert.Null(stamped.AutoSettleDocumentId);
+        Assert.Empty(rec.Payments);
+        using (var q = DbTestDatabase.TryCreateContext()!)
+        {
+            var row = Assert.Single(await Bank(q, s.CompanyId, rec, new FakeNotify()).QueueAsync(s.CompanyId), r => r.LineId == anon.Id);
+            Assert.True(row.Choices.Count >= BankReceiptAutoSettle.MaxExactForFacts + 1);   // ตัวเลือกยอดตรงครบ (≤ 30)
+        }
+
+        // ทิศตรงข้าม: อ้างเลขใบหนึ่งในกลุ่มยอดเท่ากัน ⇒ ปิดใบนั้น
+        var target = others[3];
+        var cited = await AddLineAsync(db, s, 1_040m, "TRF " + target.DocumentNumber);
+        await Bank(db, s.CompanyId, rec, new FakeNotify()).EvaluateLineAsync(s.CompanyId, cited.Id, true, DateTime.UtcNow);
+        var call = Assert.Single(rec.Payments);
+        Assert.Equal(target.Id, call.Req.DocumentId);
     }
 
     // ═══════════════ ใบเสนอราคา ⇒ แปลงอัตโนมัติ ═══════════════

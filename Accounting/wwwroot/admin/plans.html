@@ -177,6 +177,17 @@
       }
     }
 
+    // รอบ 254 WP-11 L4: คำใบ้ค่าแนะนำจากเซิร์ฟเวอร์ (NotifyQuotaPolicy.SuggestedChannelLimit — หน้าเว็บไม่มีสำเนาตัวเลข) · -1 = แนะนำไม่จำกัด
+    function suggestHint(v) {
+      if (v == null) return '';
+      return ' · แนะนำ ' + (v < 0 ? 'ไม่จำกัด (เว้นว่าง)' : Number(v).toLocaleString());
+    }
+    // ช่องว่าง = -1 (เซิร์ฟเวอร์ล้างเป็น "ไม่แยก") · ตัวเลข = เพดาน
+    function limitOrClear(id) {
+      const v = document.getElementById(id).value;
+      return v === '' ? -1 : parseInt(v, 10);
+    }
+
     function formatBytes(bytes) {
       if (!bytes) return '-';
       if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(0) + ' GB';
@@ -341,6 +352,16 @@
                   <div style="font-size:11px;color:#64748b;margin-top:4px">LINE OA/อีเมลของ NextAcc ถึงลูกค้าของร้าน · ว่าง = ไม่จำกัด (ค่าเริ่มต้น) · OA/อีเมลของร้านเองไม่นับ${p.suggestedSharedMessagesPerMonth != null ? ' · แนะนำ ' + p.suggestedSharedMessagesPerMonth.toLocaleString() : ''}</div>
                 </div>
                 <div class="admin-form-group">
+                  <label class="admin-label">ข้อความ LINE ช่องกลาง/เดือน (แยกช่อง)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_shared_line" value="${(p.notifyChannels || {}).maxSharedLineMessagesPerMonth ?? ''}" placeholder="ว่าง = ไม่แยก (นับรวมก้อนบน)">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">ตั้งแล้ว LINE ผ่าน OA ของ NextAcc นับแยกจากก้อนรวม · ว่าง = ไม่แยก${suggestHint((p.notifyChannels || {}).suggestedLine)}</div>
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">อีเมลช่องกลาง/เดือน (แยกช่อง)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_shared_email" value="${(p.notifyChannels || {}).maxSharedEmailsPerMonth ?? ''}" placeholder="ว่าง = ไม่แยก (นับอย่างเดียว)">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">อีเมลเอกสาร/ขอเซ็นผ่าน SMTP ของ NextAcc · ว่าง = นับอย่างเดียวไม่จำกัด (เพดานรายวันยังคุม) · ตั้งตัวเลขหลังวัดยอดจริง (SQL NOTIFY §4)${suggestHint((p.notifyChannels || {}).suggestedEmail)}</div>
+                </div>
+                <div class="admin-form-group">
                   <label class="admin-label">พื้นที่จัดเก็บ (MB)</label>
                   <input type="number" min="0" class="admin-input" id="ep_storage_mb" value="${Math.round((p.maxStorageBytes || 0) / 1048576)}">
                 </div>
@@ -420,6 +441,16 @@
                   <div style="font-size:11px;color:#64748b;margin-top:4px">ว่าง = ใช้ค่าของแพ็กเกจ${p.suggestedTrialSharedMessagesPerMonth != null ? ' · แนะนำ ' + p.suggestedTrialSharedMessagesPerMonth.toLocaleString() : ''}</div>
                 </div>
                 <div class="admin-form-group">
+                  <label class="admin-label">ข้อความ LINE ช่องกลาง/เดือน (Trial)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_shared_line" value="${(p.notifyChannels || {}).trialMaxSharedLineMessagesPerMonth ?? ''}" placeholder="ว่าง = ตามแพ็กเกจ">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">ว่าง = ใช้ค่าของแพ็กเกจ${suggestHint((p.notifyChannels || {}).suggestedTrialLine)}</div>
+                </div>
+                <div class="admin-form-group">
+                  <label class="admin-label">อีเมลช่องกลาง/เดือน (Trial)</label>
+                  <input type="number" min="0" class="admin-input" id="ep_trial_shared_email" value="${(p.notifyChannels || {}).trialMaxSharedEmailsPerMonth ?? ''}" placeholder="ว่าง = ตามแพ็กเกจ">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">ว่าง = ใช้ค่าของแพ็กเกจ${suggestHint((p.notifyChannels || {}).suggestedTrialEmail)}</div>
+                </div>
+                <div class="admin-form-group">
                   <label class="admin-label">รายการบัญชี/เดือน (Trial) <span style="font-weight:600;color:#b45309;font-size:11px">— ไม่บังคับใช้ (เลิกใช้)</span></label>
                   <input type="number" min="0" class="admin-input" id="ep_trial_journals" value="${p.trialMaxJournalEntriesPerMonth || 0}">
                 </div>
@@ -467,6 +498,9 @@
           maxJournalEntriesPerMonth: parseInt(document.getElementById('ep_journals').value),
           // ว่าง = ไม่จำกัด (ส่ง -1 ⇒ เซิร์ฟเวอร์เก็บ null)
           maxSharedMessagesPerMonth: document.getElementById('ep_shared_msgs').value === '' ? -1 : parseInt(document.getElementById('ep_shared_msgs').value),
+          // รอบ 254 WP-11 L4: เพดานแยกช่อง (ว่าง = -1 = ไม่แยก)
+          maxSharedLineMessagesPerMonth: limitOrClear('ep_shared_line'),
+          maxSharedEmailsPerMonth: limitOrClear('ep_shared_email'),
           maxStorageBytes: storageMB * 1048576,
           // Trial settings
           trialDurationDays: parseInt(document.getElementById('ep_trial_days').value),
@@ -476,6 +510,8 @@
           trialMaxDocumentsPerMonth: parseInt(document.getElementById('ep_trial_docs').value),
           trialMaxJournalEntriesPerMonth: parseInt(document.getElementById('ep_trial_journals').value),
           trialMaxSharedMessagesPerMonth: document.getElementById('ep_trial_shared_msgs').value === '' ? -1 : parseInt(document.getElementById('ep_trial_shared_msgs').value),
+          trialMaxSharedLineMessagesPerMonth: limitOrClear('ep_trial_shared_line'),
+          trialMaxSharedEmailsPerMonth: limitOrClear('ep_trial_shared_email'),
           trialGracePeriodDays: parseInt(document.getElementById('ep_trial_grace').value),
           trialBlockOnExpiry: document.getElementById('ep_trial_block').value === 'true',
           // Permanent free flag

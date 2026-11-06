@@ -29,6 +29,8 @@ public partial class BankService
         IReadOnlyList<BankStatementLineInput> lines, BankStatementWriteOptions? options = null, CancellationToken ct = default)
     {
         options ??= new BankStatementWriteOptions();
+        // รอบ 252 WP-12A ฝ่ายค้าน H1: ทางเข้าที่ไม่ระบุแหล่ง = UserFile (เสนอเท่านั้น) · ใช้ทั้งบรรทัดใหม่และ Overwrite (รอบสอง M-B)
+        var entrySource = options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceUserFile;
         var account = await _db.Set<BankAccount>()
             .FirstOrDefaultAsync(a => a.Id == bankAccountId && a.CompanyId == companyId, ct)
             ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
@@ -200,6 +202,9 @@ public partial class BankService
                                     existingEntity.BalanceAfterUnknown = false;
                                 }
                                 if (!string.IsNullOrWhiteSpace(r.Payee)) existingEntity.Payee = r.Payee;
+                                // ฝ่ายค้านรอบสอง M-B: เนื้อหาถูกแทนด้วยไฟล์ใหม่ ⇒ แหล่ง/ผู้นำเข้าตามคำขอที่เขียนทับ (ไม่คงสถานะหลักฐานของไฟล์เดิม)
+                                existingEntity.EntrySource = entrySource;
+                                existingEntity.CreatedByUserId = options.UploadedByUserId;
                                 existingEntity.UpdatedAt = DateTime.UtcNow;
                                 overwritten.Add(existingEntity);
                                 imported++;
@@ -228,8 +233,9 @@ public partial class BankService
                     Reference = p.StoredReference,
                     Payee = string.IsNullOrWhiteSpace(r.Payee) ? null : r.Payee.Trim(),
                     ReconciliationStatus = ReconciliationStatus.Unmatched,
-                    // รอบ 252 WP-12A: ไฟล์ statement ของธนาคาร = หลักฐานธนาคารจริง (ปิดหนี้อัตโนมัติได้ถ้าบริษัทเปิด)
-                    EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceStatement,
+                    // รอบ 252 WP-12A + ฝ่ายค้าน H1: แหล่งตามทางเข้า (ค่าตั้งต้น UserFile = เสนอเท่านั้น) · ผู้อัปโหลด = ผู้ที่สิทธิ์อนุมัติถูกตรวจตอนปิดหนี้
+                    EntrySource = entrySource,
+                    CreatedByUserId = options.UploadedByUserId,
                 };
                 if (options.CreatedBy != null) entity.CreatedBy = options.CreatedBy;
                 _db.Set<BankTransaction>().Add(entity);

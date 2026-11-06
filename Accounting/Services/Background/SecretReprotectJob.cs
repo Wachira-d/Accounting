@@ -166,8 +166,12 @@ public static class SecretReprotectPass
         await Pass(Scope(db.Documents.IgnoreQueryFilters().Where(d => d.PayLinkTokenProtected != null)), "Documents", r => r.CompanyId,
             Col<Document>(r => r.PayLinkTokenProtected));
         // รอบ 245 L1: LINE userId ของปลายทางผู้ติดต่อ (เข้ารหัส · ย้ายจาก Contact.LineUserId) — กรองเฉพาะแถวที่มีค่า
-        await Pass(Scope(db.ContactNotifyEndpoints.IgnoreQueryFilters().Where(e => e.LineUserId != null)), "ContactNotifyEndpoints", r => r.CompanyId,
-            Col<ContactNotifyEndpoint>(r => r.LineUserId));
+        // รอบ 254 ฝ่ายค้าน L4: + LineGroupId (ผูกกลุ่ม L3 เขียนผ่าน Protect) — ทั้งสองช่องในรอบเดียว
+        await Pass(Scope(db.ContactNotifyEndpoints.IgnoreQueryFilters().Where(e => e.LineUserId != null || e.LineGroupId != null)), "ContactNotifyEndpoints", r => r.CompanyId,
+            Col<ContactNotifyEndpoint>(r => r.LineUserId), Col<ContactNotifyEndpoint>(r => r.LineGroupId));
+        // รอบ 254 WP-11 L3: groupId ในรหัสผูกกลุ่ม (ระดับแพลตฟอร์ม · อายุ 30 นาที แต่ค้างได้ถึงงานลบรายคืน)
+        await Pass(db.LineGroupBindCodes.IgnoreQueryFilters().Where(r => r.GroupIdProtected != ""), "LineGroupBindCodes", _ => (Guid?)null,
+            Col<LineGroupBindCode>(r => r.GroupIdProtected));
 
         return new Result(scanned, per.Values.Sum(), per, skipped, pendingWrap, wrappedAmbiguous);
     }

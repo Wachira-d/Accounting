@@ -18,15 +18,40 @@ public static class BankReceiptAutoSettle
     public const string RuleAuto = "BANK-AUTO-SETTLE";
     public const string RuleSuggest = "BANK-AUTO-SUGGEST";
     public const string RuleNone = "BANK-AUTO-NONE";
+    /// <summary>ฝ่ายค้านรอบสอง LOW: คนกดยืนยันข้อเสนอ (ไม่ใช่ระบบปิดเอง) — รหัสกติกาบนบรรทัดแยกจาก <see cref="RuleAuto"/></summary>
+    public const string RuleConfirm = "BANK-CONFIRM-SUGGEST";
 
     // ── แหล่งของบรรทัด (BankTransaction.EntrySource) ──
+    // ฝ่ายค้าน WP-12A H1 (คำตัดสินผู้ประสานงาน): statement ที่ผู้ใช้อัปโหลด/พิมพ์เอง ไม่ใช่หลักฐานให้ระบบปิดหนี้โดยไม่มีคน — เสนอได้อย่างเดียว
+    // ยกเว้นผู้นำเข้าเองมีสิทธิ์อนุมัติใบชนิดนั้น ณ ตอนลงมือ (เท่ากับคนอนุมัติ) — ต่อไฟล์หน้าธนาคาร/feed ที่ปลายทางผู้ใช้ตั้งเอง
+    /// <summary>ไฟล์ statement ที่อัปโหลดที่หน้าบัญชีธนาคาร (มีผู้อัปโหลด <c>CreatedByUserId</c>) — ปิดเองได้เมื่อผู้อัปโหลดมีสิทธิ์อนุมัติใบชนิดนั้น</summary>
     public const string SourceStatement = "Statement";
+    /// <summary>ดึงจากธนาคารผ่านการเชื่อมต่อ feed — <b>เสนอเท่านั้น</b> (ฝ่ายค้านรอบสอง H-A · DECISIONS 252-WP12A-6: ยังไม่มีการเชื่อมธนาคารจริงที่ตรวจแล้ว ·
+    /// ปลายทาง/บัญชีผูกกับเลขบัญชีไม่ได้ ⇒ ทบทวนเมื่อทำสัญญา API ธนาคารจริง)</summary>
     public const string SourceFeed = "Feed";
+    /// <summary>ค่าเดิมของรอบก่อน (feed ที่ผู้ใช้ตั้ง URL) — ไม่มีผู้เขียนแล้ว · แถวที่มีค่านี้ = เสนอเท่านั้นเหมือน Feed</summary>
+    public const string SourceFeedCustom = "FeedCustom";
+    /// <summary>ไฟล์จากศูนย์นำเข้า/นำเข้า-ส่งออก/Open Banking (ไฟล์) — เสนอเท่านั้น</summary>
+    public const string SourceUserFile = "UserFile";
+    /// <summary>ระบบภายนอกผ่าน API v1 — เสนอเท่านั้น</summary>
+    public const string SourceApi = "Api";
     public const string SourceManual = "Manual";
 
-    /// <summary>บรรทัดที่ปิดหนี้อัตโนมัติได้ = ธนาคารเป็นผู้ให้ข้อมูล (ไฟล์ statement/feed) · พิมพ์มือ/แถวเก่าไม่รู้แหล่ง = ไม่ได้</summary>
-    private static bool IsBankSourced(string? entrySource)
-        => string.Equals(entrySource, SourceStatement, StringComparison.Ordinal) || string.Equals(entrySource, SourceFeed, StringComparison.Ordinal);
+    /// <summary>บรรทัดนี้เป็นหลักฐานให้ระบบปิดหนี้เองได้ไหม — null = ได้ · ข้อความ = เหตุที่เสนอเท่านั้น ·
+    /// <paramref name="creatorMayApprove"/> = ผู้นำเข้า/ผู้สั่งดึงบรรทัดนี้มีสิทธิ์อนุมัติใบชนิดนั้น ณ ตอนนี้ (ไม่รู้ผู้นำเข้า = false)</summary>
+    private static string? SourceProblem(string? entrySource, bool creatorMayApprove) => entrySource switch
+    {
+        // DECISIONS 252-WP12A-6: ปิดเองได้ทางเดียว = ไฟล์ statement หน้าบัญชีธนาคารที่ผู้อัปโหลดมีสิทธิ์อนุมัติ
+        SourceStatement => creatorMayApprove ? null
+            : "รายการนี้นำเข้าโดยผู้ใช้ที่ไม่มีสิทธิ์อนุมัติใบชนิดนี้ (หรือไม่ทราบผู้นำเข้า) — ระบบไม่ปิดหนี้เอง ให้ผู้มีสิทธิ์ยืนยัน",
+        SourceFeed or SourceFeedCustom =>
+            "รายการนี้มาจากการเชื่อมต่อธนาคาร (feed) ที่ยังไม่ได้ตรวจยืนยันกับธนาคารจริง — ระบบไม่ปิดหนี้เอง ให้ผู้มีสิทธิ์ยืนยัน",
+        _ => "รายการนี้ไม่ได้มาจากธนาคาร (พิมพ์มือ · ไฟล์/API ที่ผู้ใช้ส่งเอง · หรือไม่ทราบแหล่ง) — ระบบไม่ปิดหนี้เอง",
+    };
+
+    /// <summary>ทางจับคู่ด้วยมือของหน้าธนาคารต้องไม่แตะบรรทัดที่ระบบกำลังบันทึกรับชำระ (ฝ่ายค้าน M5) — null = ทำได้</summary>
+    public static string? ManualMatchBlock(string? verdict)
+        => verdict == Stamps.Applying ? "รายการนี้กำลังถูกบันทึกรับชำระอัตโนมัติ — รอสักครู่แล้วโหลดหน้าใหม่" : null;
 
     public enum Verdict { None, Suggest, AutoSettle }
 
@@ -40,7 +65,15 @@ public static class BankReceiptAutoSettle
         public const string Settled = "Settled";
         public const string Failed = "Failed";
         public const string Rejected = "Rejected";
+        /// <summary>ฝ่ายค้านรอบสอง M7: ประเมินล้มซ้ำครบ <see cref="PoisonFailures"/> ครั้ง — พักไว้ให้คนดู (อยู่ในคิว · ไม่ประเมินซ้ำอัตโนมัติ)</summary>
+        public const string Held = "Held";
     }
+
+    /// <summary>ประเมินล้มกี่ครั้งแล้วพักบรรทัด (<see cref="Stamps.Held"/>)</summary>
+    public const int PoisonFailures = 3;
+    /// <summary>ฝ่ายค้านรอบสอง M-E: ใบค้างยอดตรงเกินจำนวนนี้ และรายการไม่อ้างเลขเอกสาร ⇒ เสนอโดยไม่โหลดข้อเท็จจริงทุกใบ (คงขอบเขตงาน)</summary>
+    public const int MaxExactForFacts = 8;
+    public const string TooManyEqualReason = "มีใบค้างยอดเท่ากันจำนวนมากและรายการไม่อ้างเลขเอกสาร — เลือกใบเองในคิว";
 
     /// <summary>ทนยอด "ขาด/เกิน" ที่ยังเสนอให้คนดู (ค่าธรรมเนียมโอน/ส่วนต่าง WHT) — ไม่ใช่เกณฑ์ปิดหนี้</summary>
     public const decimal NearAbsolute = 50m;
@@ -55,8 +88,11 @@ public static class BankReceiptAutoSettle
     /// <param name="CitesDocumentNumber">เลขเอกสารอยู่ในคำอธิบาย/อ้างอิง/ผู้โอน (<see cref="CitesDocumentNumber(string?, string?)"/>)</param>
     /// <param name="NameConfident">ชื่อผู้โอนตรงผู้ติดต่อแบบมั่นใจ (<c>BankMatchScorer.Result.NameConfident</c>)</param>
     /// <param name="SlipRefMatched">เลขอ้างอิงโอนบนบรรทัดตรงสลิปที่ลูกค้าแจ้งของใบนี้</param>
+    /// <param name="CreatorMayApprove">ผู้นำเข้าบรรทัดมีสิทธิ์อนุมัติใบชนิดของผู้สมัครนี้ (ตรวจ ณ ตอนตัดสิน) — ใช้กับแหล่ง Statement/FeedCustom</param>
+    /// <param name="ContactIsSupplier">ผู้จ่ายเป็นผู้ขายของเราด้วย (เงินเข้าอาจเป็นเงินคืน/หักกลบ) ⇒ เสนอเท่านั้น</param>
     public sealed record Candidate(Guid DocumentId, string DocumentNumber, DateTime DocumentDate, decimal ExpectedNet, decimal ExpectedGross,
-        bool CitesDocumentNumber, bool NameConfident, bool SlipRefMatched, bool HasPendingOnlinePayment, bool ContactAutoSettleDisabled)
+        bool CitesDocumentNumber, bool NameConfident, bool SlipRefMatched, bool HasPendingOnlinePayment, bool ContactAutoSettleDisabled,
+        bool CreatorMayApprove = false, bool ContactIsSupplier = false)
     {
         public bool HasIdentity => CitesDocumentNumber || NameConfident || SlipRefMatched;
     }
@@ -66,17 +102,38 @@ public static class BankReceiptAutoSettle
 
     private static string Money(decimal v) => v.ToString("N2", CultureInfo.InvariantCulture);
 
-    /// <summary>เลขเอกสารอยู่ในข้อความของบรรทัดไหม — เทียบแบบไม่สนตัวพิมพ์ และตัดช่องว่าง/ขีด/ทับ/จุดทั้งสองฝั่ง (ธนาคารมักตัดสัญลักษณ์) ·
+    /// <summary>เลขเอกสารอยู่ในข้อความของบรรทัดไหม — <b>ตามขอบคำ</b> (ฝ่ายค้าน LOW): แยกข้อความเป็นคำตามอักขระที่ไม่ใช่ตัวอักษร/ตัวเลข แล้วต้องมี
+    /// "คำติดกัน" ที่ต่อกันได้เท่ากับเลขเอกสาร (ตัดสัญลักษณ์ · ไม่สนตัวพิมพ์) พอดี — <c>INV25691100123</c> ไม่นับเป็น <c>INV2569110012</c> ·
     /// เลขเอกสารสั้นกว่า 6 ตัวอักษรหลังตัด = ไม่นับ (กันชนตัวเลขทั่วไป)</summary>
     public static bool CitesDocumentNumber(string? lineText, string? documentNumber)
     {
-        var doc = Compact(documentNumber);
+        var doc = string.Concat(Tokens(documentNumber));
         if (doc.Length < 6) return false;
-        return Compact(lineText).Contains(doc, StringComparison.Ordinal);
+        var toks = Tokens(lineText);
+        for (var i = 0; i < toks.Count; i++)
+        {
+            var acc = "";
+            for (var j = i; j < toks.Count && acc.Length < doc.Length; j++)
+            {
+                acc += toks[j];
+                if (acc.Length == doc.Length && acc == doc) return true;
+            }
+        }
+        return false;
     }
 
-    private static string Compact(string? s)
-        => new string((s ?? "").Where(ch => !char.IsWhiteSpace(ch) && ch is not ('-' or '/' or '.' or '_')).Select(char.ToUpperInvariant).ToArray());
+    private static List<string> Tokens(string? s)
+    {
+        var list = new List<string>();
+        var cur = new System.Text.StringBuilder();
+        foreach (var ch in s ?? "")
+        {
+            if (char.IsLetterOrDigit(ch)) cur.Append(char.ToUpperInvariant(ch));
+            else if (cur.Length > 0) { list.Add(cur.ToString()); cur.Clear(); }
+        }
+        if (cur.Length > 0) list.Add(cur.ToString());
+        return list;
+    }
 
     private static bool Exact(decimal a, decimal b) => Math.Round(a, 2, MidpointRounding.AwayFromZero) == Math.Round(b, 2, MidpointRounding.AwayFromZero);
 
@@ -127,8 +184,12 @@ public static class BankReceiptAutoSettle
         string? hold = null;
         if (!pick.HasIdentity)
             hold = $"ยอดตรง {pick.DocumentNumber} แต่ไม่มีตัวระบุตัว (เลขเอกสาร/ชื่อผู้โอน/เลขอ้างอิงสลิป) — ยืนยันก่อนปิดหนี้";
-        else if (!IsBankSourced(line.EntrySource))
-            hold = $"ยอดตรง {pick.DocumentNumber} แต่รายการนี้ไม่ได้มาจากธนาคาร (พิมพ์มือ/ไม่ทราบแหล่ง) — ระบบไม่ปิดหนี้เอง";
+        else if (SourceProblem(line.EntrySource, pick.CreatorMayApprove) is string srcWhy)
+            hold = $"ยอดตรง {pick.DocumentNumber} แต่{srcWhy}";
+        else if (pick.DocumentDate.Date > line.Date.Date)
+            hold = $"ยอดตรง {pick.DocumentNumber} แต่ใบลงวันที่หลังวันเงินเข้า — จุดความรับผิดภาษี (tax point §78/1) อาจเป็นวันรับเงิน ตรวจวันที่ก่อนยืนยัน";
+        else if (pick.ContactIsSupplier)
+            hold = $"ยอดตรง {pick.DocumentNumber} แต่ผู้ติดต่อเป็นผู้ขายของเราด้วย (เงินเข้าอาจเป็นเงินคืน/หักกลบ) — ยืนยันเอง";
         else if (pick.HasPendingOnlinePayment)
             hold = $"ยอดตรง {pick.DocumentNumber} แต่ใบนี้มีรายการชำระออนไลน์ค้างอยู่ — ตรวจว่าไม่ใช่เงินก้อนเดียวกันก่อนยืนยัน";
         else if (pick.ContactAutoSettleDisabled)

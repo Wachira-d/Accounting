@@ -52,6 +52,7 @@ public class QuotationAcceptAutopilotService
             .OrderBy(d => d.QuotationAcceptedAt).Take(BatchSize)
             .Select(d => new { d.Id, d.CompanyId }).ToListAsync(ct);
         var done = 0;
+        var failed = 0;
         foreach (var p in pending)
         {
             try
@@ -61,10 +62,21 @@ public class QuotationAcceptAutopilotService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                // ฝ่ายค้าน M7: ล้มนอกด่าน ⇒ ประทับ Failed + เหตุบนใบ (หน้า Autopilot มีปุ่มลองใหม่ · ไม่วนหัวคิวทุก 5 นาที) · รอบนี้จบแล้วโยนสรุป ⇒ ผลรอบของงาน = ล้ม
+                failed++;
                 _logger.LogError(ex, "แปลงใบเสนอราคาอัตโนมัติ {Doc} ของบริษัท {Company} ล้มนอกด่าน", p.Id, p.CompanyId);
                 _db.ChangeTracker.Clear();
+                // ฝ่ายค้านรอบสอง LOW: แปลงสำเร็จแล้วแต่ประทับล้ม ⇒ กู้ด้วยการหาใบลูกที่ระบบสร้าง (ไม่ประทับ Failed ทั้งที่มีใบแล้ว)
+                if (await AutopilotChildAsync(p.CompanyId, p.Id, ct) is Guid childId)
+                    await StampAsync(p.CompanyId, p.Id, QuotationAcceptAutopilot.Outcome.Converted,
+                        "ระบบแปลงแล้ว (กู้หลังบันทึกผลไม่สำเร็จ) — รออนุมัติตามขั้นตอนเดิม", childId, nowUtc, ct);
+                else
+                    await StampAsync(p.CompanyId, p.Id, QuotationAcceptAutopilot.Outcome.Failed,
+                        "ระบบตัดสินใบนี้ไม่สำเร็จ: " + (ex is BusinessRuleException or InvalidOperationException ? ex.Message : "ข้อผิดพลาดของระบบ"), null, nowUtc, ct);
             }
         }
+        if (failed > 0)
+            throw new InvalidOperationException($"ตัดสินใบเสนอราคา {done + failed} ใบ ล้ม {failed} ใบ — เหตุอยู่บนแต่ละใบ (หน้า Autopilot)");
         return done;
     }
 
@@ -105,6 +117,14 @@ public class QuotationAcceptAutopilotService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _db.ChangeTracker.Clear();
+            // ฝ่ายค้านรอบสอง LOW: ตัวแปลง commit ใบลูกแล้วแต่ขั้นหลังโยน ⇒ ถือว่าแปลงแล้ว (ไม่ประทับล้ม · ไม่แปลงซ้ำรอบหน้า)
+            if (await AutopilotChildAsync(companyId, qt.Id, ct) is Guid committedChild)
+            {
+                _logger.LogError(ex, "แปลงใบเสนอราคา {Doc} สำเร็จแต่ขั้นหลังแปลงล้ม — ใช้ใบลูกที่สร้างแล้ว", qt.Id);
+                await StampAsync(companyId, qt.Id, QuotationAcceptAutopilot.Outcome.Converted,
+                    "ระบบแปลงแล้ว (ขั้นหลังแปลงล้ม — ตรวจใบที่แปลงได้) — รออนุมัติตามขั้นตอนเดิม", committedChild, nowUtc, ct);
+                return;
+            }
             var msg = ex is BusinessRuleException or InvalidOperationException or KeyNotFoundException ? ex.Message : "ข้อผิดพลาดของระบบระหว่างแปลงเอกสาร";
             if (ex is not (BusinessRuleException or InvalidOperationException or KeyNotFoundException))
                 _logger.LogError(ex, "แปลงใบเสนอราคา {Doc} อัตโนมัติล้ม", qt.Id);
@@ -116,6 +136,13 @@ public class QuotationAcceptAutopilotService
         await StampAsync(companyId, qt.Id, QuotationAcceptAutopilot.Outcome.Converted,
             "ระบบแปลงเป็นร่าง " + (decision.Target == DocumentType.TaxInvoice ? "ใบกำกับภาษี" : "ใบแจ้งหนี้") + " แล้ว — รออนุมัติตามขั้นตอนเดิม", childId, nowUtc, ct);
     }
+
+    /// <summary>ใบลูกที่ระบบ (ผู้สร้าง <see cref="Actor"/>) แปลงจากใบเสนอราคานี้และยังมีผล — ใช้กู้เมื่อแปลงสำเร็จแต่บันทึกผลล้ม</summary>
+    private async Task<Guid?> AutopilotChildAsync(Guid companyId, Guid quotationId, CancellationToken ct)
+        => await _db.Documents.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && c.RelatedDocumentId == quotationId && !c.IsDeleted && c.CreatedBy == Actor
+                && c.Status != DocumentStatus.Voided && c.Status != DocumentStatus.Rejected)
+            .OrderBy(c => c.CreatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
 
     /// <summary>ประทับผลแบบ compare-and-set (เฉพาะใบที่ยังไม่ตัดสิน) — คืน true เมื่อประทับได้ (คนที่ประทับได้คือคนแจ้ง — แจ้งครั้งเดียว)</summary>
     private async Task<bool> StampAsync(Guid companyId, Guid quotationId, QuotationAcceptAutopilot.Outcome outcome, string? message, Guid? childId,

@@ -159,12 +159,12 @@ public class CmsRound213NotifyResendTests
     [Fact]
     public void Topup_pack_defaults_to_500_messages_60_days_and_admin_values_win()
     {
-        var def = NotifyQuotaPolicy.TopUpPack(null, null);
+        var def = NotifyQuotaPolicy.TopUpPackFor(NotifyQuotaPolicy.ChannelAll, null, null);
         Assert.Equal(AddOnCodes.MessagesPerNotifyTopUpPack, def.Size);
         Assert.Equal(AddOnCodes.TopUpValidDays, def.ValidDays);
-        Assert.Equal(new NotifyTopUpPack(1000, 90), NotifyQuotaPolicy.TopUpPack(1000, 90));
+        Assert.Equal(new NotifyTopUpPack(1000, 90), NotifyQuotaPolicy.TopUpPackFor(NotifyQuotaPolicy.ChannelAll, 1000, 90));
         // ค่านอกช่วงที่หลุดเข้าฐาน ⇒ ไม่ให้ 0 ข้อความ/หมดอายุทันที (ถอยไปค่าตั้งต้น)
-        Assert.Equal(def, NotifyQuotaPolicy.TopUpPack(0, -3));
+        Assert.Equal(def, NotifyQuotaPolicy.TopUpPackFor(NotifyQuotaPolicy.ChannelAll, 0, -3));
         // documents.topup ไม่แตะ — ค่าคงที่เดิม
         Assert.Equal(100, AddOnCodes.DocumentsPerTopUpPack);
         Assert.Equal(60, AddOnCodes.TopUpValidDays);

@@ -73,3 +73,34 @@ public class ContactLineInvite : TenantEntity
     /// <summary>ผู้ดูแลยกเลิกคำเชิญ</summary>
     public DateTime? RevokedAt { get; set; }
 }
+
+/// <summary>
+/// รอบ 254 WP-11 L3 (LINE_MULTICHANNEL_DESIGN §4.2) — รหัสผูกกลุ่ม LINE ที่บอทออกเมื่อมีคนพิมพ์ <c>#HeyNextAcc</c> ในกลุ่ม ·
+/// <b>BaseEntity</b> (ระดับแพลตฟอร์ม: บน OA กลาง ตอนออกรหัสยังไม่รู้ว่าบริษัทใดจะอ้าง) · OA ของบริษัท ⇒ <see cref="CompanyIdHint"/> = บริษัทเจ้าของ webhook
+/// และรหัสใช้ได้กับบริษัทนั้นเท่านั้น · groupId เข้ารหัส (<see cref="GroupIdProtected"/>) · เก็บ hash ของรหัส · ใช้ครั้งเดียว · ลบเมื่อหมดอายุเกิน 1 วัน
+/// </summary>
+public class LineGroupBindCode : BaseEntity
+{
+    public string CodeHash { get; set; } = "";
+    /// <summary>groupId — <b>ค่าที่เข้ารหัสแล้ว</b> (<c>ISecretProtector.Protect</c>)</summary>
+    public string GroupIdProtected { get; set; } = "";
+    /// <summary><c>NotifyEndpointKind.LineIdHash(OaDestination, groupId)</c> — ค้นตอน leave/member event โดยไม่ถอดรหัส</summary>
+    public string GroupIdHash { get; set; } = "";
+    public string OaScope { get; set; } = "";
+    public string? OaDestination { get; set; }
+    /// <summary>OA ของบริษัท ⇒ บริษัทเจ้าของ webhook (รหัสใช้กับบริษัทอื่นไม่ได้) · OA กลาง ⇒ null</summary>
+    public Guid? CompanyIdHint { get; set; }
+    public string? GroupName { get; set; }
+    public int? MemberCount { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? UsedAt { get; set; }
+    public Guid? UsedByCompanyId { get; set; }
+    public Guid? EndpointId { get; set; }
+}
+
+/// <summary>รอบ 254 WP-11 L3 — webhookEventId ที่ประมวลแล้ว (LINE ส่ง webhook ซ้ำได้ ⇒ ผูก/ตอบซ้ำ — G10) · INSERT … ON CONFLICT DO NOTHING · ลบเมื่อเก่ากว่า 7 วัน</summary>
+public class LineWebhookEventSeen
+{
+    public string WebhookEventId { get; set; } = "";
+    public DateTime SeenAt { get; set; } = DateTime.UtcNow;
+}

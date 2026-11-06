@@ -10,7 +10,7 @@ namespace Accounting.Services.Implementations;
 /// <summary>
 /// รอบ 254 WP-11 L2 (LINE_MULTICHANNEL_DESIGN §3.e) — ผู้ส่งคิว LINE ถึงปลายทางของผู้ติดต่อ · ลำดับต่อแถว (ล็อกด้วย required_call_site_check):
 /// <list type="number">
-/// <item>จองแถวด้วย <c>FOR UPDATE SKIP LOCKED</c> (หลายเครื่องไม่ส่งซ้ำ) · แถวค้าง "กำลังส่ง" เกิน <see cref="StaleSending"/> ⇒ กลับมารอส่ง (retry key เดิม ⇒ LINE ไม่ส่งสองข้อความ)</item>
+/// <item>จองแถวด้วย <c>FOR UPDATE SKIP LOCKED</c> (หลายเครื่องไม่ส่งซ้ำ) + ยืนยันการจองต่อแถวก่อนยิง · แถวค้าง "กำลังส่ง" เกิน <see cref="StaleSending"/> ⇒ กลับมารอส่ง นับหนึ่งครั้ง (retry key เดิม ⇒ LINE ไม่ส่งสองข้อความ) · ครบเพดาน ⇒ ล้มพร้อมเหตุ</item>
 /// <item>ตรวจใบซ้ำตอนส่ง (<see cref="ScheduledEmailSendCheck.SkipReason"/> ตัวเดียวกับคิวอีเมล) — ยกเลิก/กลับเป็นร่าง/ชำระครบ ⇒ ข้ามพร้อมเหตุ</item>
 /// <item>ปลายทางยังใช้ได้ไหม — ตัวหาผู้รับเดียว (<see cref="IContactRecipientResolver.ResolveAsync"/>: ยกเลิก · บล็อก · ถอนยินยอม · กลุ่มกลางของแอดมิน · OA เปลี่ยน · OA กลางยังไม่เปิด)</item>
 /// <item>การ์ด <see cref="LineDocumentCard"/> (ภาษา/หัวเดียวกับ PDF · ลิงก์ชำระจาก <see cref="IDocumentPayLinkService"/> เท่านั้น)</item>
@@ -30,7 +30,7 @@ public class ContactLineQueueService : IContactLineQueueService
     private readonly ILogger<ContactLineQueueService> _logger;
 
     /// <summary>แถว "กำลังส่ง" ที่ค้างนานกว่านี้ = เครื่องล้มกลางทาง ⇒ กลับมารอส่ง</summary>
-    internal static readonly TimeSpan StaleSending = TimeSpan.FromMinutes(10);
+    internal static readonly TimeSpan StaleSending = TimeSpan.FromMinutes(30);   // > BatchSize × LineNotifyService.PushTimeout (50 × 15 วินาที = 12.5 นาที)
     private const int BatchSize = 50;
 
     public ContactLineQueueService(AccountingDbContext db, ILineNotifyService line, IContactRecipientResolver recipients, ISecretProtector secrets,
@@ -43,9 +43,20 @@ public class ContactLineQueueService : IContactLineQueueService
     {
         var now = DateTime.UtcNow;
         var staleBefore = now - StaleSending;
+        // ฝ่ายค้าน M2: แถวค้าง "กำลังส่ง" (เครื่องล้มกลางทาง) ⇒ นับเป็นความพยายามหนึ่งครั้ง (ครบเพดาน = ล้มพร้อมเหตุ ไม่วนไม่จบ) ·
+        // เกณฑ์ค้าง (StaleSending) > เวลาทั้งแบตช์ (BatchSize × LineNotifyService.PushTimeout) ⇒ แถวที่ยังรอคิวในแบตช์ของเครื่องอื่นไม่ถูกรีเซ็ต
+        await _db.LineQueues
+            .Where(q => q.Status == ContactLineChannel.StatusSending && q.UpdatedAt != null && q.UpdatedAt < staleBefore
+                && q.RetryCount + 1 >= LinePushOutcome.MaxAttempts)
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.Status, ContactLineChannel.StatusFailed)
+                .SetProperty(q => q.RetryCount, q => q.RetryCount + 1)
+                .SetProperty(q => q.ErrorMessage, StaleFailedReason)
+                .SetProperty(q => q.UpdatedAt, (DateTime?)now), ct);
         await _db.LineQueues
             .Where(q => q.Status == ContactLineChannel.StatusSending && q.UpdatedAt != null && q.UpdatedAt < staleBefore)
-            .ExecuteUpdateAsync(s => s.SetProperty(q => q.Status, ContactLineChannel.StatusPending), ct);
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.Status, ContactLineChannel.StatusPending)
+                .SetProperty(q => q.RetryCount, q => q.RetryCount + 1)
+                .SetProperty(q => q.UpdatedAt, (DateTime?)now), ct);
 
         // จองแถวแบบเดียวกับคิวอีเมล (EmailScheduleService.ProcessPendingQueueAsync) — สองเครื่องไม่ได้แถวเดียวกัน
         var claimedIds = await _db.Database.SqlQuery<Guid>(
@@ -63,13 +74,20 @@ public class ContactLineQueueService : IContactLineQueueService
               WHERE q.""Id"" = claimed.""Id""
               RETURNING q.""Id""").ToListAsync(ct);
         if (claimedIds.Count == 0) return 0;
-        foreach (var tracked in _db.ChangeTracker.Entries<LineQueue>().Where(e => claimedIds.Contains(e.Entity.Id)).ToList())
-            tracked.State = EntityState.Detached;
-        var batch = await _db.LineQueues.Where(q => claimedIds.Contains(q.Id)).Take(BatchSize).ToListAsync(ct);
 
         var sent = 0;
-        foreach (var item in batch)
+        foreach (var id in claimedIds.Take(BatchSize))
         {
+            // ฝ่ายค้าน M1(ข): ทีละแถว — context สะอาดทุกรอบ (บันทึกแถวก่อนหน้าล้ม/Clear แล้ว แถวนี้ยังถูกติดตามและบันทึกได้)
+            _db.ChangeTracker.Clear();
+            // ฝ่ายค้าน M2: ยืนยันการจองต่อแถวก่อนยิง (ยังเป็น "กำลังส่ง" ของรอบนี้) + ต่ออายุ — ถูกรีเซ็ต/เครื่องอื่นหยิบไปแล้ว ⇒ ข้าม
+            var stamp = DateTime.UtcNow;
+            var held = await _db.LineQueues
+                .Where(q => q.Id == id && q.Status == ContactLineChannel.StatusSending)
+                .ExecuteUpdateAsync(s => s.SetProperty(q => q.UpdatedAt, (DateTime?)stamp), ct);
+            if (held != 1) continue;
+            var item = await _db.LineQueues.FirstOrDefaultAsync(q => q.Id == id, ct);
+            if (item == null) continue;
             try
             {
                 if (await SendOneAsync(item, ct)) sent++;
@@ -87,18 +105,22 @@ public class ContactLineQueueService : IContactLineQueueService
             try { await _db.SaveChangesAsync(ct); }
             catch (Exception saveEx) when (saveEx is not OperationCanceledException)
             {
-                // บันทึกแถวหนึ่งล้ม ⇒ ไม่ลากทั้งแบตช์ (แถวค้าง "กำลังส่ง") — ประทับแถวนี้ล้มด้วยคำสั่งตรง
+                // บันทึกแถวหนึ่งล้ม ⇒ ไม่ลากทั้งแบตช์ · ฝ่ายค้าน M1(ก): LINE รับไปแล้ว ⇒ ต้องประทับ "ส่งแล้ว" (ไม่ใช่ล้ม — กด "ส่งอีกครั้ง" = ลูกค้าได้สองข้อความ)
                 _logger.LogError(saveEx, "LineQueue save failed Id={Id}", item.Id);
+                var outcome = SaveFailureOutcome.For(item.Status, item.SentAt, item.LineRequestId, saveEx.GetBaseException().Message);
                 _db.ChangeTracker.Clear();
-                var why = Trunc("บันทึกผลการส่งไม่สำเร็จ: " + saveEx.GetBaseException().Message, 2000);
                 var itemId = item.Id;
                 await _db.LineQueues.Where(q => q.Id == itemId)
-                    .ExecuteUpdateAsync(x => x.SetProperty(q => q.Status, ContactLineChannel.StatusFailed).SetProperty(q => q.ErrorMessage, why)
+                    .ExecuteUpdateAsync(x => x.SetProperty(q => q.Status, outcome.Status).SetProperty(q => q.ErrorMessage, outcome.Note)
+                        .SetProperty(q => q.SentAt, outcome.SentAt).SetProperty(q => q.LineRequestId, outcome.LineRequestId)
                         .SetProperty(q => q.UpdatedAt, (DateTime?)DateTime.UtcNow), ct);
             }
         }
         return sent;
     }
+
+    /// <summary>เหตุเมื่อแถวค้าง "กำลังส่ง" ครบเพดานความพยายาม</summary>
+    internal const string StaleFailedReason = "ค้างสถานะกำลังส่งเกินเวลาครบจำนวนครั้ง (เครื่องล้มกลางทาง) — ไม่รู้ว่า LINE รับแล้วหรือไม่ · ตรวจกับผู้รับก่อนกดส่งอีกครั้ง";
 
     /// <summary>ส่งแถวเดียว — คืน true เมื่อ LINE รับแล้ว · ทุกทางที่ไม่ส่งประทับสถานะ + เหตุบนแถว</summary>
     private async Task<bool> SendOneAsync(LineQueue item, CancellationToken ct)

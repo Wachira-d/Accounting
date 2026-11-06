@@ -15,20 +15,31 @@ public static class SlipEvidenceRule
     /// <summary>SHA-256 (hex ตัวเล็ก) ของไบต์ไฟล์ต้นฉบับ — ก่อนย่อ/แปลงรูป (ไฟล์เดิมส่งซ้ำ = แฮชเดิม)</summary>
     public static string Sha256Hex(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes ?? Array.Empty<byte>())).ToLowerInvariant();
 
-    /// <summary>เลขอ้างอิงโอน: ตัดช่องว่าง/ขีด · ตัวพิมพ์ใหญ่ · ตัวอักษร/ตัวเลขเท่านั้น · สั้นกว่า 6 = ไม่ใช้ (กันชนเลขทั่วไป) · ยาวเกินตัดที่ 64</summary>
+    /// <summary>ความยาวขั้นต่ำของเลขอ้างอิงโอนที่ใช้ได้ (ฝ่ายค้าน M6 — สั้นกว่านี้ชนเลขทั่วไปได้ง่าย)</summary>
+    public const int MinRefLength = 8;
+
+    /// <summary>เลขอ้างอิงโอน: ตัดช่องว่าง/ขีด · ตัวพิมพ์ใหญ่ · ตัวอักษร/ตัวเลขเท่านั้น · สั้นกว่า 8 หรือไม่มีตัวเลขเลย = ไม่ใช้ (ฝ่ายค้าน M6) · ยาวเกินตัดที่ 64</summary>
     public static string? NormalizeRef(string? input)
     {
         var s = new string((input ?? "").Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
-        if (s.Length < 6) return null;
+        if (s.Length < MinRefLength || !s.Any(char.IsDigit)) return null;
         return s.Length > MaxRefLength ? s[..MaxRefLength] : s;
     }
 
-    /// <summary>เลขอ้างอิงของสลิปอยู่ในข้อความของรายการเดินบัญชีไหม (อ้างอิง/คำอธิบาย) — ตัวระบุตัวข้อ 3 ของ <c>BankReceiptAutoSettle</c></summary>
-    public static bool RefMatchesLine(string? slipRef, string? lineReference, string? lineDescription)
+    /// <summary>เลขอ้างอิงของสลิปตรงกับช่อง <b>อ้างอิง</b>ของรายการเดินบัญชีแบบเท่ากันทั้งคำ (ฝ่ายค้าน M6 — ไม่ใช่ substring ของคำอธิบาย) —
+    /// ทั้งช่องหลังปรับรูปเท่ากัน หรือคำใดคำหนึ่งในช่อง (แยกด้วยอักขระที่ไม่ใช่ตัวอักษร/ตัวเลข) เท่ากัน · ตัวระบุตัวข้อ 3 ของ <c>BankReceiptAutoSettle</c></summary>
+    public static bool RefMatchesLine(string? slipRef, string? lineReference)
     {
-        if (string.IsNullOrEmpty(slipRef)) return false;
-        var hay = NormalizeAll(lineReference) + "|" + NormalizeAll(lineDescription);
-        return hay.Contains(slipRef, StringComparison.Ordinal);
+        if (string.IsNullOrEmpty(slipRef) || string.IsNullOrWhiteSpace(lineReference)) return false;
+        if (NormalizeAll(lineReference) == slipRef) return true;
+        var token = new System.Text.StringBuilder();
+        foreach (var ch in lineReference + " ")
+        {
+            if (char.IsLetterOrDigit(ch)) { token.Append(char.ToUpperInvariant(ch)); continue; }
+            if (token.Length > 0 && token.ToString() == slipRef) return true;
+            token.Clear();
+        }
+        return false;
     }
 
     private static string NormalizeAll(string? s) => new string((s ?? "").Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());

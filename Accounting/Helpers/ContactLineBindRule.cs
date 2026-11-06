@@ -54,6 +54,30 @@ public static class ContactLineBindRule
     /// <summary>ข้อความในแชต 1:1 = ขอหยุดรับ (ทั้งข้อความ — "หยุดก่อนนะ" ไม่นับ)</summary>
     public static bool IsStop(string? text) => !string.IsNullOrWhiteSpace(text) && StopRe.IsMatch(text);
 
+    /// <summary>ป้ายของปลายทางจากชื่อโปรไฟล์ LINE (ฝ่ายค้าน M4) — ตัดอักขระควบคุม · ≤ 100 ตัว · ว่าง ⇒ null</summary>
+    public static string? ProfileLabel(string? displayName)
+    {
+        var t = new string((displayName ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();
+        if (t.Length == 0) return null;
+        return "LINE: " + (t.Length > 90 ? t[..90] : t);
+    }
+
+    /// <summary>ชื่อแบบปิดบังสำหรับ audit (ตัวแรก + •••) — audit ห้ามเก็บชื่อเต็ม</summary>
+    public static string? MaskName(string? name)
+    {
+        var t = (name ?? "").Trim();
+        if (t.StartsWith("LINE: ", StringComparison.Ordinal)) t = t[6..];
+        return t.Length == 0 ? null : t[..1] + "•••";
+    }
+
+    // ── RoPA (PDPA ม.39 · ฝ่ายค้าน L7) ──
+    public const string RopaPurpose = "ส่งการแจ้งเอกสารถึงผู้ติดต่อทาง LINE (LINE OA ของบริษัท)";
+    public const string RopaDataCategories = "LineUserId, LineDisplayName, DocumentNumber, Amount, DueDate";
+    public const string RopaRetention = "จนผู้รับยกเลิก (พิมพ์ หยุด/บล็อก) หรือลบตามคำขอ · บันทึกการส่งตามอายุเอกสารบัญชี";
+    public const string RopaRecipients = "LY Corporation (LINE)";
+    public const string RopaTransferNote = "ข้อกำหนดการใช้ LINE Official Account ของ LY Corporation — ต้องยืนยันสถานที่จัดเก็บกับเอกสารทางการ (LINE_OA_TERMS_CHECK)";
+    public const string RopaNote = "ระบบสร้างอัตโนมัติเมื่อสร้างลิงก์ผูก LINE ครั้งแรก (รอบ 254) — ผู้ดูแลข้อมูลทบทวนได้ที่หน้า PDPA";
+
     public static class Replies
     {
         public static string Linked(string? companyName)
@@ -62,6 +86,7 @@ public static class ContactLineBindRule
         public const string Invalid = "❌ รหัสไม่ถูกต้อง หมดอายุ หรือใช้ไปแล้ว — เปิดลิงก์เดิมแล้วกด \"รับรหัสใหม่\" (หรือขอลิงก์ใหม่จากผู้ส่งเอกสาร)";
         public const string WrongChannel = "❌ บริษัทเปลี่ยนบัญชี LINE ที่ใช้ส่งเอกสารแล้ว — ขอลิงก์ผูกใหม่จากผู้ส่งเอกสาร";
         public static string Stopped(string? companyName)
-            => $"ยกเลิกแล้ว — จะไม่ส่งการแจ้งเอกสารของ {(string.IsNullOrWhiteSpace(companyName) ? "บริษัท" : companyName)} มาที่ LINE นี้อีก (ยังติดต่อบริษัททางอื่นได้ตามปกติ)";
+            => $"ยกเลิกแล้ว — จะไม่ส่งการแจ้งเอกสารของ {(string.IsNullOrWhiteSpace(companyName) ? "บริษัท" : companyName)} มาที่ LINE นี้อีก · "
+               + "หยุดเฉพาะทาง LINE: ถ้าบริษัทตั้งให้ส่งทางอีเมลด้วยหรือส่งอีเมลแทนเมื่อ LINE ส่งไม่ได้ คุณจะยังได้รับเอกสารทางอีเมล";
     }
 }

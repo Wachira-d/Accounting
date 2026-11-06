@@ -124,10 +124,11 @@ public class UsageSnapshotService : IUsageSnapshotService
             var docUnlimited = docLimit <= 0 || docLimit >= UsageBarRule.UnlimitedCountAt;
             await UpsertAsync(_db, companyId, period, OverageResources.Documents, docsUsed, UsageHistoryRule.StoredLimit(docLimit, docUnlimited), 0, UsageSnapshotSource.Daily, now, "system:daily", ct);
         }
-        var notify = await _db.NotifyUsageCounters.AsNoTracking().Where(x => x.CompanyId == companyId && x.Period == period)
-            .Select(x => new { x.Used, x.BonusUsed }).FirstOrDefaultAsync(ct);
-        if (notify != null)
-            await UpsertAsync(_db, companyId, period, OverageResources.NotifyMessages, notify.Used + notify.BonusUsed, null, 0, UsageSnapshotSource.Daily, now, "system:daily", ct);
+        // รอบ 254 WP-11 L4: ตัวนับแยกช่อง (all/line/email) หลายแถวต่องวด ⇒ ประวัติการใช้งานเป็นยอดรวมทุกช่อง
+        var notifyRows = await _db.NotifyUsageCounters.AsNoTracking().Where(x => x.CompanyId == companyId && x.Period == period)
+            .Select(x => x.Used + x.BonusUsed).ToListAsync(ct);
+        if (notifyRows.Count > 0)
+            await UpsertAsync(_db, companyId, period, OverageResources.NotifyMessages, notifyRows.Sum(), null, 0, UsageSnapshotSource.Daily, now, "system:daily", ct);
 
         // ตัวอย่างพื้นที่รายวัน — เก็บเฉพาะวันที่บริษัท "เปิดส่วนเกินพื้นที่อยู่ + ไม่ถูกล็อก + มีราคา" พร้อม snapshot ราคาของวันนั้น (ฝ่ายค้าน B2):
         // สิ้นเดือนคิดจากตัวอย่างเสมอ ไม่ถามนโยบาย ⇒ ปิดส่วนเกินวันที่ 30 ก็ยังโดนคิดวันที่เปิดอยู่ · วันที่ไม่ได้เปิด = ไม่มีตัวอย่าง = ไม่คิด
@@ -228,7 +229,11 @@ public class UsageSnapshotService : IUsageSnapshotService
             .Select(u => new { u.FeatureCode, u.OccurredAt, u.Quantity, u.ChargedAmount, u.BilledDocumentId }).ToListAsync(ct);
         var invoiceIds = overageEvents.Where(e => e.BilledDocumentId != null).Select(e => e.BilledDocumentId!.Value).Distinct().ToList();
         var invoices = invoiceIds.Count == 0 ? new List<Document>() : await _db.Documents.AsNoTracking().Where(d => invoiceIds.Contains(d.Id)).ToListAsync(ct);
-        var notifyCounters = await _db.NotifyUsageCounters.AsNoTracking().Where(x => x.CompanyId == companyId && periods.Contains(x.Period)).ToListAsync(ct);
+        // รอบ 254 WP-11 L4: รวมทุกช่องต่องวด (แถว all/line/email) — แถบประวัติแสดงยอดรวม
+        var notifyCounters = (await _db.NotifyUsageCounters.AsNoTracking().Where(x => x.CompanyId == companyId && periods.Contains(x.Period)).ToListAsync(ct))
+            .GroupBy(x => x.Period)
+            .Select(g => new NotifyUsageCounter { CompanyId = companyId, Period = g.Key, Used = g.Sum(x => x.Used), BonusUsed = g.Sum(x => x.BonusUsed) })
+            .ToList();
         var ai = await _db.AiUsageDailyTenants.AsNoTracking().Where(a => a.CompanyId == companyId && !a.IsSandbox && a.UsageDate >= oldestStart.AddHours(7).Date)
             .Select(a => new { a.UsageDate, a.CallsTotal, a.CallsAi }).ToListAsync(ct);
 

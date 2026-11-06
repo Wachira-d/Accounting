@@ -83,6 +83,11 @@ public class AutopilotController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> ConfirmBank(Guid companyId, Guid lineId, [FromBody] BankAutoSettleConfirmRequest request)
     {
         if (await DenyKeyAsync<object>(companyId, PermissionKeys.BankReconcile, "ยืนยันเงินโอนเข้า") is { } deny) return deny;
+        // ฝ่ายค้าน M4: ยืนยัน = บันทึกรับชำระของใบนั้น ⇒ ต้องมีสิทธิ์อนุมัติเอกสารชนิดนั้นด้วย (ระดับเดียวกับบันทึกรับชำระที่หน้าเอกสาร)
+        var docType = await _bank.DocumentTypeAsync(companyId, request.DocumentId);
+        if (docType == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, UserId, docType.Value))
+            return StatusCode(403, new ApiResponse<object>(false, null, "ยืนยันเงินโอนเข้าได้เฉพาะผู้มีสิทธิ์อนุมัติเอกสารชนิดนี้ (Document.Approve)"));
         var msg = await _bank.ConfirmAsync(companyId, lineId, request.DocumentId, UserId);
         return Ok(new ApiResponse<object>(true, null, msg));
     }

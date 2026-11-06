@@ -127,6 +127,16 @@ public class Subscription : BaseEntity
     public int NotifyBonusQuota { get; set; }
     public DateTime? NotifyBonusExpiresAt { get; set; }
 
+    /// <summary>รอบ 254 WP-11 L4 (Q3 · N9): เพดานแยกช่องเฉพาะบริษัท — null = ตามแพ็กเกจ (แพ็กเกจว่าง = นับรวมกับก้อนรวมเดิม) · -1 = ไม่จำกัด ·
+    /// ตัวตัดสิน <c>Helpers/NotifyQuotaPolicy.ChannelPlanLimit</c> · อีเมล: ไม่มีเพดานรวมระดับแพลตฟอร์ม — ทับรายบริษัทที่นี่ (N9)</summary>
+    public int? MaxSharedLineMessagesPerMonth { get; set; }
+    public int? MaxSharedEmailsPerMonth { get; set; }
+    /// <summary>รอบ 254 WP-11 L4: โบนัสแยกช่องจากแพ็ก <c>notify.topup.line</c>/<c>notify.topup.email</c> (ใช้ก่อนโบนัสก้อนรวม <see cref="NotifyBonusQuota"/>)</summary>
+    public int NotifyBonusLineQuota { get; set; }
+    public DateTime? NotifyBonusLineExpiresAt { get; set; }
+    public int NotifyBonusEmailQuota { get; set; }
+    public DateTime? NotifyBonusEmailExpiresAt { get; set; }
+
     /// <summary>ปิด "ทำภารกิจแลกโควตา" เฉพาะบริษัทนี้ (ชั้นที่ 3 ของสวิตช์ —
     /// ใช้กับบริษัทที่ใช้ในทางที่ผิด). ชั้น 1 = ปิดทุก QuotaRewardOption ·
     /// ชั้น 2 = PlanTemplate.AllowQuotaReward</summary>
@@ -295,6 +305,11 @@ public class PlanTemplate : BaseEntity
     public int TrialMaxOcrPagesPerMonth { get; set; } = 10;
     /// <summary>รอบ 212: เพดานข้อความช่องกลาง/เดือนระหว่างทดลองใช้ (null = ใช้ค่าของแพ็กเกจ · -1 = ไม่จำกัด) — เจ้าของตั้งที่ /admin/plans.html</summary>
     public int? TrialMaxSharedMessagesPerMonth { get; set; }
+    /// <summary>รอบ 254 WP-11 L4 (Q3): เพดานแยกช่องของแพ็กเกจ — null = ไม่แยก (นับรวมก้อนเดิม · ค่าเริ่มต้น = พฤติกรรมเดิม) · ค่าแนะนำ <c>NotifyQuotaPolicy.SuggestedChannelLimit</c></summary>
+    public int? MaxSharedLineMessagesPerMonth { get; set; }
+    public int? TrialMaxSharedLineMessagesPerMonth { get; set; }
+    public int? MaxSharedEmailsPerMonth { get; set; }
+    public int? TrialMaxSharedEmailsPerMonth { get; set; }
     public bool TrialBlockOnExpiry { get; set; } = false;
     public int TrialGracePeriodDays { get; set; } = 7;
     /// <summary>แพ็กเกจนี้ให้ "ทำภารกิจแลกโควตาเอกสาร" ได้ไหม (LODGING_LICENSING_PLAN §12)

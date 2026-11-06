@@ -24,6 +24,8 @@ public static class AutopilotMigration
         """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "BankAutoSettleDisabled" boolean NOT NULL DEFAULT false;""",
         // รายการเดินบัญชี: แหล่ง + คำตัดสิน (แถวเดิม EntrySource = NULL = ไม่รู้ ⇒ ไม่ปิดหนี้อัตโนมัติ — เสนอได้อย่างเดียว)
         """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "EntrySource" varchar(16) NULL;""",
+        """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "CreatedByUserId" uuid NULL;""",
+        """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "AutoSettleFailCount" integer NOT NULL DEFAULT 0;""",
         """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "AutoSettleVerdict" varchar(16) NULL;""",
         """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "AutoSettleReason" text NULL;""",
         """ALTER TABLE "BankTransactions" ADD COLUMN IF NOT EXISTS "AutoSettleDocumentId" uuid NULL;""",
@@ -34,5 +36,7 @@ public static class AutopilotMigration
         """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "SlipBankRef" varchar(64) NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_PaymentIntents_SlipFileSha256" ON "PaymentIntents" ("CompanyId", "SlipFileSha256") WHERE "SlipFileSha256" IS NOT NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_PaymentIntents_SlipBankRef" ON "PaymentIntents" ("CompanyId", "SlipBankRef") WHERE "SlipBankRef" IS NOT NULL;""",
+        // ฝ่ายค้านรอบสอง LOW (กติกา M6 ใช้กับค่าที่เก็บไว้แล้ว): เลขอ้างอิงสลิปที่สั้นกว่า 8 หรือไม่มีตัวเลข = ไม่ใช้ (ล้างเป็น NULL · ทำซ้ำได้)
+        """UPDATE "PaymentIntents" SET "SlipBankRef" = NULL WHERE "SlipBankRef" IS NOT NULL AND (length("SlipBankRef") < 8 OR "SlipBankRef" !~ '[0-9]');""",
     };
 }
