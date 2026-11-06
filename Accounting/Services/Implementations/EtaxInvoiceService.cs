@@ -236,10 +236,7 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var sellerTaxClean = Accounting.Helpers.ThaiTaxId.Normalize(company.TaxId);
 
         // Auto-clean: strip non-digits from branch code
-        var sellerBranchClean = new string((company.BranchCode ?? "").Where(char.IsDigit).ToArray());
-        if (sellerBranchClean.Length == 0) sellerBranchClean = "00000";
-        else if (sellerBranchClean.Length > 5) sellerBranchClean = sellerBranchClean.Substring(0, 5);
-        else if (sellerBranchClean.Length < 5) sellerBranchClean = sellerBranchClean.PadLeft(5, '0');
+        var sellerBranchClean = TaxBranchCode.Normalize(company.BranchCode);   // ฝ่ายค้าน M7: ตัวจัดรูปสาขาตัวเดียว
 
         // Persist cleaned values so future calls don't hit the same issue
         var dirty = false;
@@ -1125,11 +1122,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 if (digits.Length == 18) digits = digits.Substring(0, 13);
                 // Ensure exactly 13-digit tax ID
                 var tid = digits.Length >= 13 ? digits.Substring(0, 13) : digits.PadRight(13, '0');
-                // Ensure exactly 5-digit branch (all-numeric per TIV-SellerTradeParty-013)
-                var bd = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
-                if (bd.Length == 0) bd = "00000";
-                else if (bd.Length > 5) bd = bd.Substring(0, 5);
-                else if (bd.Length < 5) bd = bd.PadLeft(5, '0');
+                // Ensure exactly 5-digit branch (all-numeric per TIV-SellerTradeParty-013) — ตัวจัดรูปสาขาตัวเดียวของระบบ (ฝ่ายค้าน M7 ·
+                // ตัวเดียวกับ PDF/ด่านเลขผู้ซื้อ) · ว่าง = 00000 · เกิน 5 หลัก = 5 หลักท้าย
+                var bd = TaxBranchCode.Normalize(branchCode);
                 var result = tid + bd;
                 // Final sanity: must be exactly 18 digits
                 if (result.Length != 18 || !result.All(char.IsDigit))
@@ -1458,7 +1453,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         };
     }
 
-    private static EtaxInvoiceResponse MapToResponse(EtaxInvoice e) => new(
+    private static EtaxInvoiceResponse MapToResponse(EtaxInvoice e)
+    {
+        return new EtaxInvoiceResponse(
         e.Id, e.DocumentId, e.EtaxRefNumber.Split('-').Length > 2 ? e.EtaxRefNumber : "",
         e.EtaxRefNumber, e.XmlContent.Length > 500 ? e.XmlContent[..500] + "..." : e.XmlContent,
         e.DigitalSignature, e.Status, e.SubmissionId, e.SubmittedAt,
@@ -1468,7 +1465,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         e.VoidedAt, e.VoidReason, EtaxVoidPolicy.VoidedStatusNote(e.Status, e.VoidReason),
         e.ByEmailSentAt, e.EtdaStampedAt, e.EtdaTimestampToken,
         EtaxByEmailFormat.Stage(e.ByEmailSentAt, e.EtdaStampedAt).ToString(),
-        EtaxByEmailFormat.StageLabel(EtaxByEmailFormat.Stage(e.ByEmailSentAt, e.EtdaStampedAt)));
+        EtaxByEmailFormat.StageLabel(EtaxByEmailFormat.Stage(e.ByEmailSentAt, e.EtdaStampedAt)),
+        EtaxPartyTaxIdGuard.BuyerWarning(e.BuyerTaxId));
+    }
 
     private class RdSubmissionResult
     {

@@ -419,7 +419,9 @@ public record EtaxInvoiceResponse(
     DateTime? EtdaStampedAt = null,
     string? EtdaTimestampToken = null,
     string ByEmailStage = "NotSent",
-    string? ByEmailStageLabel = null);
+    string? ByEmailStageLabel = null,
+    // รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน M5): ออกโดยไม่มีเลขผู้ซื้อ (บุคคลธรรมดา · OTHR) ⇒ คำเตือน §86/4 (ข้อความจากเซิร์ฟเวอร์)
+    string? BuyerTaxIdWarning = null);
 
 /// <summary>คำขอยกเลิกแถว e-Tax ในระบบนี้ (รอบ 200 ทีม V1H · คำตัดสินข้อ 51) — แถวที่ส่งถึงกรมสรรพากรแล้ว (Submitted) ต้องมีเหตุผล + ไฟล์หลักฐาน
 /// การยกเลิกจากกรมสรรพากร/ผู้ให้บริการที่แนบเข้าเอกสารของแถวนี้ · เลขอ้างอิงไม่บังคับ (เก็บลง audit)</summary>

@@ -184,11 +184,11 @@
           <div class="rec-step" data-step="4" style="display:none" id="step-pay">
           <!-- รอบ 250 WP-04 ต่อยอด: แจ้งเตือนก่อนรอบรัน (เดิมส่ง true/1 ตายตัวและไม่มีผล) — กระดิ่งของผู้สร้างรายการ N วันก่อนสร้างเอกสาร -->
           <div class="form-group">
-            <label class="form-label" for="fNotifyBeforeRun"><input type="checkbox" id="fNotifyBeforeRun" checked> 🔔 แจ้งเตือนฉันก่อนระบบสร้างเอกสารรอบถัดไป</label>
+            <label class="form-label" for="fNotifyBeforeRun"><input type="checkbox" id="fNotifyBeforeRun"> 🔔 แจ้งเตือนฉันก่อนระบบสร้างเอกสารรอบถัดไป</label>
             <div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px">
               <label for="fNotifyDaysBefore">ล่วงหน้า</label>
-              <input type="number" class="form-input" id="fNotifyDaysBefore" min="1" max="30" value="1" style="width:80px">
-              <span>วัน (1–30)</span>
+              <input type="number" class="form-input" id="fNotifyDaysBefore" min="0" max="30" value="1" style="width:80px">
+              <span>วัน (0–30 · 0 = ไม่แจ้ง · รายการรายวันไม่แจ้ง)</span>
             </div>
           </div>
           <div class="form-group">
@@ -895,7 +895,7 @@ const Page = {
     document.getElementById('fAutoWht').checked = true;
     document.getElementById('fWhtCertType').value = 'Withhold';
     document.getElementById('fAutoSendEmail').checked = false;
-    document.getElementById('fNotifyBeforeRun').checked = true;
+    document.getElementById('fNotifyBeforeRun').checked = false;   // ฝ่ายค้าน H2: ค่าตั้งต้นไม่ติ๊ก
     document.getElementById('fNotifyDaysBefore').value = '1';
     this._editingTd = null;
     this._editingPolicy = null;
@@ -1393,8 +1393,8 @@ const Page = {
       document.getElementById('fDescription').value = r.description || '';
       document.getElementById('fAutoApprove').checked = r.autoApprove || false;
       document.getElementById('fAutoSendEmail').checked = r.autoSendEmail || false;
-      document.getElementById('fNotifyBeforeRun').checked = r.notifyBeforeRun !== false;
-      document.getElementById('fNotifyDaysBefore').value = String(r.notifyDaysBefore > 0 ? r.notifyDaysBefore : 1);
+      document.getElementById('fNotifyBeforeRun').checked = r.notifyBeforeRun === true;
+      document.getElementById('fNotifyDaysBefore').value = String(r.notifyDaysBefore ?? 1);
       this.onAutoFlagChange();
       this.loadEmailStatus();
 

@@ -135,8 +135,20 @@ public static class NotificationAudiencePolicy
 
     /// <summary>ค่าตั้งต้นเมื่อบริษัทยังไม่ได้ตั้งแถวของคีย์นั้น: คีย์ที่ย้ายมา = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทเมื่อบริษัทผูกกลุ่มไว้แล้ว —
 /// คงสิ่งที่บริษัทที่ตั้ง OA เองเคยได้รับ) · คีย์อื่น = ว่าง (พฤติกรรมเดิม: ไม่ตั้ง = ไม่ส่ง)</summary>
+    /// <summary>รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน H2): คีย์ที่ค่าตั้งต้น = <b>กระดิ่งเท่านั้น</b> (ไม่มีอีเมล/กลุ่ม LINE เว้นแต่บริษัทตั้งคีย์นี้เอง) —
+    /// ใช้ทั้งเส้นค่าตั้งต้นของระบบ (<see cref="DefaultMatrix"/> ⇒ กระดิ่งเจ้าของ) และเส้นผู้รับที่ระบุ (<see cref="DirectDefaultEmail"/> = false)</summary>
+    public static readonly IReadOnlySet<string> BellOnlyKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Accounting.Models.Constants.NotificationEvents.RecurringUpcomingRun,
+    };
+
+    /// <summary>เส้นผู้รับที่ระบุ (บริษัทยังไม่ตั้งคีย์) ส่งอีเมลด้วยไหม — คีย์กระดิ่งเท่านั้น = ไม่ส่ง · อื่น ๆ = กระดิ่ง + อีเมลเหมือนเดิม</summary>
+    public static bool DirectDefaultEmail(string eventKey) => !BellOnlyKeys.Contains(eventKey);
+
     public static IReadOnlyList<NotificationDefaultRow> DefaultMatrix(string eventKey, bool companyLineGroupConfigured)
     {
+        if (BellOnlyKeys.Contains(eventKey))
+            return new[] { new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: false, EnableLine: false, EnableLineGroup: false) };
         if (!MigratedBroadcastKeys.Contains(eventKey)) return Array.Empty<NotificationDefaultRow>();
         return new[] { new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: false, EnableLine: false, EnableLineGroup: companyLineGroupConfigured) };
     }

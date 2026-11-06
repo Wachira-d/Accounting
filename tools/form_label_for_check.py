@@ -112,6 +112,19 @@ def self_test():
         fails.append("for ชี้ id ที่ไม่มี (ซ้อนลึก) ไม่ถูกฟ้อง")
     if violations('<div class="form-group"><script>const t = `<label>${x}</label>`;</script></div>'):
         fails.append("label ใน script ถูกนับ")
+    # ฝ่ายค้าน L6: negative test กับไฟล์จริง — ฉีด label ไม่ผูกช่องลงสำเนาหน้าจริงแล้วจำนวนต้องเพิ่ม 1 · ฉีด label ที่ผูกถูกแล้วต้องเท่าเดิม
+    real = os.path.join(WWW, "pages", "recurring.html")
+    if os.path.exists(real):
+        html = open(real, encoding="utf-8").read()
+        n = len(violations(html))
+        bad = html.replace("</body>", '<div class="form-group"><label>ช่องที่ฉีด</label><input id="zzInjected"></div></body>', 1)
+        good = html.replace("</body>", '<div class="form-group"><label for="zzInjected2">ช่องที่ฉีด</label><input id="zzInjected2"></div></body>', 1)
+        if len(violations(bad)) != n + 1:
+            fails.append("ฉีด label ไม่ผูกช่องลงหน้าจริงแล้วไม่ถูกนับ")
+        if len(violations(good)) != n:
+            fails.append("ฉีด label ที่ผูกถูกลงหน้าจริงแล้วถูกนับ")
+    else:
+        fails.append("ไม่พบหน้าจริงสำหรับ negative test (pages/recurring.html) — แก้ self-test")
     try:
         violations(None)   # อินพุตที่ parse ไม่ได้ต้องโยน (ไม่ใช่คืน 0 จุดเงียบ)
         fails.append("อินพุตที่ parse ไม่ได้ถูกกลืนเป็นผ่าน")

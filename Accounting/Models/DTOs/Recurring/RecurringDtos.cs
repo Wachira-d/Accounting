@@ -13,7 +13,7 @@ public record CreateRecurringTransactionRequest(
     DocumentType? DocumentType,
     Guid? ContactId,
     string TemplateData,        // JSON
-    bool NotifyBeforeRun = true,
+    bool NotifyBeforeRun = false,   // รอบ 250 WP-04 ต่อยอด: ไม่ส่ง = ไม่แจ้ง (ฝ่ายค้าน H2)
     int NotifyDaysBefore = 1,
     bool AutoApprove = false,
     // ส่งอีเมลให้ผู้ติดต่อทันทีเมื่อสร้างเอกสาร (ใช้ SMTP/อีเมลของบริษัทเอง)
