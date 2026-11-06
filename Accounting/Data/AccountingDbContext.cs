@@ -2619,7 +2619,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<WhtCertIntake>(e =>
         {
             e.HasIndex(x => new { x.CompanyId, x.FileSha256 }).IsUnique()
-                .HasFilter("\"FileSha256\" IS NOT NULL AND \"IsDeleted\" = false").HasDatabaseName("UX_WhtCertIntakes_File");
+                .HasFilter("\"FileSha256\" IS NOT NULL AND \"IsDeleted\" = false AND \"Status\" <> 2").HasDatabaseName("UX_WhtCertIntakes_FileLive");
             e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_WhtCertIntakes_Status");
             e.Property(x => x.FileSha256).HasMaxLength(64);
             e.Property(x => x.CertificateNumber).HasMaxLength(50);

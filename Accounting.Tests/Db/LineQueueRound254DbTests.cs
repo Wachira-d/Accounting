@@ -283,9 +283,9 @@ public class LineQueueRound254DbTests
         var s = await SeedAsync(db, "no-oa " + Guid.NewGuid().ToString("N")[..6], companyOa: false);
         var svc = Sched(db);
         var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.UpsertRuleAsync(s.CompanyId,
-            new EmailScheduleRule { Trigger = "DocumentApproved", ChannelEmail = false, ChannelLineUser = true }, "tester"));
+            new EmailScheduleRule { Id = Guid.Empty, Trigger = "DocumentApproved", ChannelEmail = false, ChannelLineUser = true }, "tester"));
         Assert.Contains("LINE OA ของบริษัท", ex.Message);
-        var saved = await svc.UpsertRuleAsync(s.CompanyId, new EmailScheduleRule { Trigger = "DocumentApproved", ChannelEmail = true }, "tester");
+        var saved = await svc.UpsertRuleAsync(s.CompanyId, new EmailScheduleRule { Id = Guid.Empty, Trigger = "DocumentApproved", ChannelEmail = true }, "tester");
         Assert.True(saved.ChannelEmail);
         Assert.False(saved.ChannelLineUser);
         // ปลายทาง LINE ที่มีอยู่แสดงเหตุ "OA ของบริษัทยังไม่พร้อม" (ไม่หายเงียบ)

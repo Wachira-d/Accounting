@@ -16535,7 +16535,7 @@ RULES += [
          must=["WhtCertTracking.LoadAsync(", "WhtCertIntakeStatus.NeedsFollowUp(", "WhtCreditableAmount.Missing("],
          why=_R252_WHY + "การ์ดแดชบอร์ด/ผู้ติดต่อ: ตัวตัดสินเดียว"),
     dict(file=OCR, method="EnsureWhtCreditFromCertAsync",
-         must=["_whtIntake.SubmitFromScanAsync("],
+         must=["SubmitFromScanAsync(", "_scopes.CreateScope("],
          forbid=["WhtCreditsReceived.Add(", "WhtCreditStatus.Received", "match.Status ="],
          why=_R252_WHY + "เส้นสแกนใบ 50 ทวิ เข้าประตูเดียว — ห้ามสร้าง/อัปเกรดแถวเครดิตเอง (ความเสี่ยงซ้ำ G-4)"),
     dict(file=_R252_CTL, method="Upload",
@@ -16548,7 +16548,7 @@ RULES += [
     dict(file=_R243A_WHT, method="ListAsync",
          must=["WhtCertTracking.LoadAsync(", "WhtCreditableAmount.Of("],
          why=_R252_WHY + "ทะเบียนแสดงป้าย 50 ทวิ จากตัวตัดสินเดียว (ไม่ประกอบจาก Status เอง)"),
-    dict(file=_R243A_WHT, method="CreditableAmountAsync", must=["WhtCreditableAmount.Of("], forbid=["SumAsync(w => (decimal?)w.WhtAmount)"],
+    dict(file=_R243A_WHT, method="CreditableAmountAsync", must=["CreditableInPeriod(", "CreditableSumAsync("], forbid=["SumAsync(w => (decimal?)w.WhtAmount)"],
          why=_R252_WHY + "เครดิตใช้ได้ = ตัวคำนวณเดียว (ใบรวม/ผ่อนงวดนับเฉพาะส่วนที่ได้ใบ)"),
     dict(file=_R243A_WHT, method="SummaryAsync", must=["WhtCreditableAmount.Missing(", "WhtCreditableAmount.Of("],
          why=_R252_WHY + "KPI ทะเบียน: ส่วนที่ได้ใบ/ยังขาดจากตัวคำนวณเดียว · ผลรวมเท่ายอดถูกหัก ⇒ กระทบ GL สูตรเดิม"),
@@ -16571,6 +16571,51 @@ RULES += [
          forbid=["existing.ReceivedAmount ="],
          why=_R252_WHY + "ทะเบียนจาก GL: ฐานนับวันค้าง · แถวที่ได้ใบผ่านกล่องรับ GL เพิ่ม ⇒ ขยายยอด · ห้ามแตะ ReceivedAmount (ผู้เขียนเดียว = กล่องรับ)"),
 ]
+# ── รอบ 252 ฝ่ายค้าน WP-09 (H1/H2/M1–M6/L1–L10) ──
+_R252F_WHY = _R252_WHY + "ฝ่ายค้าน WP-09: "
+RULES += [
+    dict(file=_R252_SVC, method="SubmitAsync", must=["EnsureNotInRegisterAsync(", "FindLiveByFileAsync("],
+         must_lit=['SqlState: "23505"'],
+         why=_R252F_WHY + "H1 ใบที่อยู่ในทะเบียนแล้ว = 409 · L5 ไฟล์ซ้ำนับเฉพาะใบที่ยังมีผล · L10 อัปโหลดชนกัน = ตอบซ้ำ ไม่ใช่ 500"),
+    dict(file=_R252_SVC, method="FindLiveByFileAsync", must=["WhtCertIntakeRecordStatus.Rejected", "i.CompanyId == companyId"],
+         why=_R252F_WHY + "L5 ใบที่ถูกตีกลับส่งไฟล์เดิมใหม่ได้"),
+    dict(file=_R252_SVC, method="EnsureNotInRegisterAsync", must=["WhtCreditStatus.Expired", "w.CompanyId == companyId"],
+         must_re=[r"throw\s+new\s+BusinessRuleException\([^;]*409\s*\)"],
+         why=_R252F_WHY + "H1 ทะเบียน (ไม่ถูกลบ · ไม่ใช่ตัดสูญ) มีเลขที่ใบ + ผู้จ่ายเดียวกัน ⇒ 409"),
+    dict(file=_R252_SVC, method="ConfirmAsync",
+         must=["EnsureNotInRegisterAsync(", "WhtCertIntakeVerdict.ShouldTeachGenuine(", "req.AllowOtherPayer", "req.StandaloneReason",
+               "intake.CertificateDate is null"],
+         must_re=[r"learn\s*=\s*WhtCertIntakeVerdict\s*\.\s*ShouldTeachGenuine\s*\("],
+         why=_R252F_WHY + "H1 ซ้ำตอนยืนยัน (รวมเลขที่ที่แก้) · H2 คนละรอบ · L3 ผู้จ่าย · L4 วันที่ · M5 เหตุผลรายการใหม่ · M6 สอนเฉพาะดูใบแล้ว"),
+    dict(file=_R243A_WHT, method="ExpireCoreAsync", must=["WhtCreditWriteOff.AmountOf("],
+         why=_R252F_WHY + "M1 ตัดสูญเฉพาะส่วนที่ไม่มีใบ"),
+    dict(file=_R243A_WHT, method="WriteOffPreviewAsync", must=["WhtCreditWriteOff.AmountOf("],
+         why=_R252F_WHY + "M1 หน้ายืนยันแสดงยอดเดียวกับที่จะลงบัญชี"),
+    dict(file=_R243A_WHT, method="WriteOffCandidatesAsync", must=["WhtCreditableAmount.Missing("],
+         why=_R252F_WHY + "M1 เสนอเฉพาะยอดที่ขาดใบ"),
+    dict(file=_R243A_WHT, method="SettleYearEndAsync", must=["WhtCreditWriteOff.AmountOf("],
+         why=_R252F_WHY + "M1 ปิดปีตัดสูญเฉพาะส่วนที่ไม่มีใบ"),
+    dict(file=_R243A_WHT, method="SummaryAsync", must=["CreditableAmountAsync("],
+         why=_R252F_WHY + "L9 เครดิตที่ใช้ได้ = กติกางวดเดียวกับ ภ.ง.ด.50"),
+    dict(file=_R243A_WHT, method="CreditableSplitAsync", must=["CreditableInPeriod(", "CreditableSumAsync("],
+         why=_R252F_WHY + "L9 ยอดได้ใบ/ใช้แล้วของรายงานปลายปี = กติกางวด ภ.ง.ด.50"),
+    dict(file=_R252_SVC, method="MissingReportAsync", must=["_credits.CreditableSplitAsync("],
+         why=_R252F_WHY + "L9 รายงาน \"50 ทวิ ที่ยังขาด\" ไม่รวมยอดตามปีภาษีของแถวเอง"),
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateCitReport", must=[".SummaryAsync(companyId, year)"], must_lit=['"WHT_OVER_GL"'],
+         why=_R252F_WHY + "M5 ทะเบียนเกิน GL ⇒ แถวเตือนบนรายงาน ภ.ง.ด.50"),
+    dict(file=DOC, method="SyncWhtCreditReceivedAsync", must=["WhtCreditableAmount.ResyncWithGl(", "existing.WhtAmount = resync.NewWhtAmount"],
+         why=_R252F_WHY + "M3 GL ลด (ไม่ต่ำกว่ายอดที่ได้ใบ) ⇒ ลดยอดถูกหัก"),
+    dict(file=DOC, method="BuildPurgePlanAsync", must=["w.ReceivedAmount > 0m"],
+         why=_R252F_WHY + "M2 แถวที่ได้ใบบางส่วนแล้วกันการลบเอกสาร (หลักฐานเครดิต)"),
+    dict(file="Services/Ai/Prompts/WhtCertAuthenticityPrompt.cs", method="Build", must=["MaskIndividualIds(", "ThaiTaxId.IsJuristic("],
+         why=_R252F_WHY + "L7 PDPA เลขบุคคลห้ามออกนอกระบบ"),
+]
+REVIEWER_CASES += [
+    ("R252j", "SubmitAsync", "            await EnsureNotInRegisterAsync(companyId, certNo, payerTax, s.PayerContactId, ct);\n", "", True),
+    ("R252k", "ConfirmAsync", "learn = WhtCertIntakeVerdict.ShouldTeachGenuine(req.ViewedFile, intake.AuthenticityAnswer);", "learn = true;", True),
+    ("R252l", "FindLiveByFileAsync", "i.FileSha256 == sha && i.Status != WhtCertIntakeRecordStatus.Rejected)", "i.FileSha256 == sha)", True),
+    ("R252m", "ExpireCoreAsync", "var writeOffAmount = WhtCreditWriteOff.AmountOf(e.Status, e.WhtAmount, e.ReceivedAmount);", "var writeOffAmount = e.WhtAmount;", True),
+]
 REVIEWER_CASES += [
     # ถาม AI ก่อนด่านเชิงกำหนด (AI ตัดสินแทนด่าน) ⇒ ต้องฟ้อง
     ("R252a", "SubmitAsync", "if (gates.Count == 0)\n        {", "if (true)\n        {", True),
@@ -16581,7 +16626,7 @@ REVIEWER_CASES += [
     # ตีกลับเหตุอื่นก็สอนว่า Suspect (สอนผิด) ⇒ ต้องฟ้อง
     ("R252d", "RejectAsync", "learn = req.NotGenuine;", "learn = true;", True),
     # เส้นสแกนกลับไปสร้างแถวเครดิตเอง ⇒ ต้องฟ้อง
-    ("R252e", "EnsureWhtCreditFromCertAsync", "return await _whtIntake.SubmitFromScanAsync(",
+    ("R252e", "EnsureWhtCreditFromCertAsync", "return await intake.SubmitFromScanAsync(",
      "_db.WhtCreditsReceived.Add(new WhtCreditReceived { CompanyId = companyId, Status = WhtCreditStatus.Received });\n        return await NoIntake(", True),
     # อัปโหลดสแกนก่อนผ่านด่านไฟล์ ⇒ ต้องฟ้อง
     ("R252f", "Upload", "var deny = await gate.DenyAttachmentAsync(", "AttachmentDenial? deny = null; var _x = (", True),
@@ -16621,6 +16666,11 @@ def wht_credit_add_errors() -> list:
             for m in re.finditer(r"\.\s*ReceivedAmount\s*=(?!=)", code):
                 if rel == _R252_SVC or "QuotaAddOn" in rel:
                     continue
+                # ฝ่ายค้าน WP-09 L2/M1: ผู้ใช้ประกาศ "ได้ใบครบทั้งแถว" (กรอกมือ/ได้รับใบแล้ว) — ตัวเขียนเดียวนอกกล่องรับ
+                if rel == _R243A_WHT:
+                    span = method_body(code, "MarkFullyCertified")
+                    if span is not None and span[0] <= m.start() < span[1]:
+                        continue
                 line = code.count("\n", 0, m.start()) + 1
                 errs.append(f"{rel}:{line} เขียน ReceivedAmount นอกกล่องรับ — {_R252_WHY}ยอดที่ได้ใบเขียนโดย WhtCertIntakeService เท่านั้น")
     if found != 2:

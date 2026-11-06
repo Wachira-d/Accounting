@@ -6298,7 +6298,9 @@ public static class DatabaseMigrationHelper
                 "IsDeleted" boolean NOT NULL DEFAULT false
             );
             """,
-            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_WhtCertIntakes_File" ON "WhtCertIntakes" ("CompanyId", "FileSha256") WHERE "FileSha256" IS NOT NULL AND "IsDeleted" = false;""",
+            // ฝ่ายค้าน WP-09 L5: ใบที่ถูกตีกลับส่งไฟล์เดิมใหม่ได้ ⇒ unique เฉพาะใบที่ยังมีผล (Status 2 = Rejected) · index เดิม (รอบ 252 ก่อนแก้) ถูกถอด
+            """DROP INDEX IF EXISTS "UX_WhtCertIntakes_File";""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_WhtCertIntakes_FileLive" ON "WhtCertIntakes" ("CompanyId", "FileSha256") WHERE "FileSha256" IS NOT NULL AND "IsDeleted" = false AND "Status" <> 2;""",
             """CREATE INDEX IF NOT EXISTS "IX_WhtCertIntakes_Status" ON "WhtCertIntakes" ("CompanyId", "Status");""",
             """
             CREATE TABLE IF NOT EXISTS "WhtCertAllocations" (

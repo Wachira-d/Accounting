@@ -2412,6 +2412,22 @@ public partial class TaxService : ITaxService
                 IncomeTypeCode = "WHT_PENDING"
             });
         }
+        // ฝ่ายค้าน WP-09 M5: ทะเบียนภาษีถูกหักมากกว่ายอดบัญชี 11910 (เช่น ใบ 50 ทวิ ที่บันทึกเป็นรายการใหม่โดยไม่มีการรับชำระที่หักในระบบ) ⇒
+        // เครดิตที่ยื่นอาจเกินที่ถูกหักจริง — ดังบนรายงาน (ตัวกระทบยอดเดียวกับหน้าทะเบียน · ไม่ประกอบสูตรเอง)
+        var whtRecon = await new WhtCreditService(_db, Microsoft.Extensions.Logging.Abstractions.NullLogger<WhtCreditService>.Instance)
+            .SummaryAsync(companyId, year);
+        if (whtRecon.Difference > 0.01m)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = $"⚠️ ทะเบียนภาษีถูกหักมากกว่ายอดบัญชี 11910 อยู่ {whtRecon.Difference:N2} — ตรวจรายการเครดิตที่บันทึกโดยไม่มีการรับชำระที่หัก ณ ที่จ่ายในระบบ ก่อนยื่น",
+                IncomeAmount = whtRecon.Difference,
+                TaxAmount = 0,
+                IncomeTypeCode = "WHT_OVER_GL"
+            });
+        }
         if (whtUndated > 0)
         {
             // รอบ 230 S5: หนังสือรับรองที่ได้รับแล้วแต่ไม่มีวันที่ ⇒ นับเข้ารอบไม่ได้ — ดังบนรายงาน (ไม่ทิ้งเงียบ)

@@ -184,4 +184,68 @@ public class WhtCertMatchPolicyTests
         Assert.Equal(WhtPayerFormType.Pnd53, computed.PayerFormType);
         Assert.Equal(WhtPayerFormType.Pnd3, WhtCertScanMapping.Map(10_000m, 3m, null, "", null, 0.9m, BusinessType.Individual).PayerFormType);
     }
+    // ═══════════ รอบ 252 ฝ่ายค้าน WP-09 ═══════════
+
+    [Fact]
+    public void L1_ยอดเท่ากันหลายแถว_กำกวมแม้วันที่ต่างกัน_เสนอแถวใกล้สุด_ทิศตรงข้ามแถวเดียวยังตรงพอดี()
+    {
+        var near = Row(300m, 1); var far = Row(300m, 20);
+        var r = WhtCertMatchPolicy.Match(Cert(300m), Ours, new[] { far, near });
+        Assert.Equal(L.Ambiguous, r.Level);
+        Assert.Equal(near.CreditId, Assert.Single(r.Allocations).CreditId);   // ข้อเสนอ ไม่ใช่การเลือกเอง
+        Assert.Contains(WhtCertIntakeVerdict.Gates(Gate(level: r.Level)), p => p.Contains("มากกว่าหนึ่งแบบ"));
+        Assert.Equal(L.Exact, WhtCertMatchPolicy.Match(Cert(300m), Ours, new[] { near }).Level);
+    }
+
+    [Fact]
+    public void M4_ยอดภาษีอ่านจากตัวอักษร_ไม่auto_ทิศตรงข้ามยอดคำนวณได้ผ่าน()
+    {
+        Assert.Contains(WhtCertIntakeVerdict.Gates(Gate() with { AmountNeedsReview = true }), p => p.Contains("ตัวอักษร"));
+        Assert.Empty(WhtCertIntakeVerdict.Gates(Gate() with { AmountNeedsReview = false }));
+    }
+
+    [Fact]
+    public void M4_ความมั่นใจ_สแกนไม่บอก_เป็นศูนย์_สเกล0ถึง100_1คือ1เปอร์เซ็นต์_เลขที่วันที่อยู่ในชุด()
+    {
+        Assert.Equal(0m, WhtCertScanMapping.Map(10_000m, 3m, null, "", null, 0m, BusinessType.JuristicPerson).ExtractionConfidence);
+        Assert.Equal(0.01m, WhtCertScanMapping.Map(10_000m, 3m, null, "", null, 1m, BusinessType.JuristicPerson).ExtractionConfidence);
+        Assert.Equal(0.92m, WhtCertScanMapping.Map(10_000m, 3m, null, "", null, 92m, BusinessType.JuristicPerson).ExtractionConfidence);
+        // ชุดรายช่องสเกล 0–100 ⇒ 1 = 1%
+        Assert.Equal(0.01m, WhtCertScanMapping.MinConfidence("{\"SellerTaxId\":97,\"SubTotal\":1}"));
+        // ทิศตรงข้าม: ชุด 0–1 คงเดิม
+        Assert.Equal(0.9m, WhtCertScanMapping.MinConfidence("{\"SellerTaxId\":0.97,\"SubTotal\":0.9}"));
+        // เลขที่/วันที่อ่านไม่มั่นใจ ⇒ ต่ำสุดของชุด
+        Assert.Equal(0.4m, WhtCertScanMapping.MinConfidence("{\"SellerTaxId\":0.97,\"DocumentNumber\":0.4}"));
+        Assert.Contains(OcrFieldKeys.DocumentDate, WhtCertScanMapping.ConfidenceKeys);
+    }
+
+    [Fact]
+    public void M6_ป้ายนักเรียน_ไม่อ้างว่าตรวจกระดาษ_สอนเฉพาะดูใบแล้วและไม่ทับSuspect()
+    {
+        var student = WhtCertIntakeVerdict.AuthenticityLabel("Genuine", 0.9m, usedAi: false, priorConfirmedFromPayer: 7);
+        Assert.Contains("ผู้จ่ายรายนี้ยืนยันแล้ว 7 ใบ", student);
+        Assert.Contains("ไม่ได้ตรวจกระดาษ", student);
+        Assert.DoesNotContain("🤖", student);
+        Assert.StartsWith("🤖", WhtCertIntakeVerdict.AuthenticityLabel("Genuine", 0.9m, usedAi: true));
+        Assert.True(WhtCertIntakeVerdict.ShouldTeachGenuine(viewedFile: true, "Genuine"));
+        Assert.True(WhtCertIntakeVerdict.ShouldTeachGenuine(viewedFile: true, null));
+        Assert.False(WhtCertIntakeVerdict.ShouldTeachGenuine(viewedFile: false, "Genuine"));
+        Assert.False(WhtCertIntakeVerdict.ShouldTeachGenuine(viewedFile: true, "Suspect"));
+    }
+
+    [Fact]
+    public void L7_เลขบุคคลธรรมดาถูกปิดบังก่อนส่งAI_ทิศตรงข้ามเลขนิติบุคคลคงไว้()
+    {
+        var masked = Accounting.Services.Ai.Prompts.WhtCertAuthenticityPrompt.MaskIndividualIds(
+            "ผู้จ่าย 3100100123451 และ 3-1001-00123-45-1 · ผู้ถูกหัก 0105556123453");
+        Assert.DoesNotContain("3100100123451", masked);
+        Assert.DoesNotContain("3-1001-00123-45-1", masked);
+        Assert.Contains("0105556123453", masked);
+        var req = Accounting.Services.Ai.Prompts.WhtCertAuthenticityPrompt.Build(Guid.NewGuid(), Guid.NewGuid(), WhtCertIntakeChannel.Manual,
+            "นาย ก", "3100100123451", "1/2569", D, "40(2)", 10_000m, 3m, 300m, "เลขผู้จ่าย 3100100123451");
+        Assert.DoesNotContain("3100100123451", req.UserPromptJson);
+        var juristic = Accounting.Services.Ai.Prompts.WhtCertAuthenticityPrompt.Build(Guid.NewGuid(), Guid.NewGuid(), WhtCertIntakeChannel.Manual,
+            "บจก. ข", Payer, "1/2569", D, "40(2)", 10_000m, 3m, 300m, null);
+        Assert.Contains(Payer, juristic.UserPromptJson);
+    }
 }

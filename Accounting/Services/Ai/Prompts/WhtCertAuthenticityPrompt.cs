@@ -37,6 +37,14 @@ Respond ONLY as JSON:
   ""reasoning"": ""<1 short Thai sentence>""
 }";
 
+    private static readonly System.Text.RegularExpressions.Regex IndividualIdRe = new(
+        @"(?<!\d)[1-8][- \t]?\d{4}[- \t]?\d{5}[- \t]?\d{2}[- \t]?\d(?!\d)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>ปิดบังเลข 13 หลักที่ขึ้นต้น 1–8 (บุคคลธรรมดา/ต่างด้าว — ข้อมูลส่วนบุคคล) ทั้งรูปติดกันและมีขีด/วรรค · เลขนิติบุคคล (ขึ้นต้น 0) คงไว้ ·
+    /// ฝ่ายค้าน WP-09 L7 — คำขอนี้ปิดตัวกรอง PII ของ orchestrator สำหรับเลขผู้เสียภาษี (AllowTaxIdInPrompt) จึงต้องปิดบังเองตรงนี้</summary>
+    public static string? MaskIndividualIds(string? text)
+        => text == null ? null : IndividualIdRe.Replace(text, "[เลขบุคคล]");
+
     /// <summary>รูปแบบเลขที่ใบ — ตัวเลข → d · ตัวอักษร → a (กุญแจคงที่ต่อผู้จ่าย ไม่ผูกกับเลขที่ใบจริง)</summary>
     public static string CertNumberShape(string? certNo)
         => "cn-" + new string((certNo ?? "").Trim().Select(ch => char.IsDigit(ch) ? 'd' : char.IsLetter(ch) ? 'a' : ch).Take(30).ToArray());
@@ -49,7 +57,12 @@ Respond ONLY as JSON:
     {
         var digits = Accounting.Helpers.ThaiTaxId.Normalize(payerTaxId);
         static string Letters(string s) => new(s.Select(ch => ch is >= '0' and <= '9' ? (char)('a' + (ch - '0')) : ch).ToArray());
-        var payerKey = digits.Length == 13 ? "pt-" + Letters(digits)
+        // ฝ่ายค้าน WP-09 L7 (PDPA ม.26/ม.37): เลข 13 หลักของ "บุคคลธรรมดา" ห้ามออกนอกระบบ — นิติบุคคล (ขึ้นต้น 0) เป็นข้อมูลสาธารณะ ส่งได้ ·
+        // กุญแจนักเรียนของบุคคลใช้แฮชที่ย้อนกลับไม่ได้ (ยังคงที่ต่อผู้จ่าย ⇒ distillation ทำงาน)
+        var juristic = digits.Length == 13 && Accounting.Helpers.ThaiTaxId.IsJuristic(digits);
+        var payerKey = juristic ? "pt-" + Letters(digits)
+            : digits.Length == 13 ? "pi-" + Letters(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes("wht-auth|" + companyId.ToString("N") + "|" + digits))).ToLowerInvariant()[..16])
             : "pn-" + Letters(string.Concat((payerName ?? "").Where(c => !char.IsWhiteSpace(c))).ToLowerInvariant());
         var payload = new
         {
@@ -61,14 +74,15 @@ Respond ONLY as JSON:
             // หลักฐานประกอบ (ไม่เข้ากุญแจ — Helpers/AiMemoryKey.ContextOnlyKeys)
             paper_evidence = new
             {
-                payer_name = Accounting.Helpers.OcrVatCodeMeaning.SanitizeEvidence(payerName),
-                payer_tax_id = digits.Length == 13 ? digits : null,
-                certificate_number = Accounting.Helpers.OcrVatCodeMeaning.SanitizeEvidence(certificateNumber),
+                payer_name = MaskIndividualIds(Accounting.Helpers.OcrVatCodeMeaning.SanitizeEvidence(payerName)),
+                payer_tax_id = juristic ? digits : null,
+                payer_is_individual = digits.Length == 13 && !juristic,
+                certificate_number = MaskIndividualIds(Accounting.Helpers.OcrVatCodeMeaning.SanitizeEvidence(certificateNumber)),
                 certificate_date = certificateDate?.ToString("yyyy-MM-dd"),
                 income_amount = incomeAmount,
                 wht_rate = whtRate,
                 wht_amount = whtAmount,
-                ocr_text = Accounting.Helpers.OcrVatCodeMeaning.SanitizeEvidence(rawText),
+                ocr_text = MaskIndividualIds(Accounting.Helpers.OcrVatCodeMeaning.SanitizeEvidence(rawText)),
             },
         };
         return new AiRequest
@@ -83,7 +97,7 @@ Respond ONLY as JSON:
             LocalModelVersion = "WhtCertAuthenticity-cold-v1",
             SourceEntityType = "WhtCertIntake",
             SourceEntityId = intakeId,
-            AllowTaxIdInPrompt = true,      // เลขนิติบุคคลของผู้จ่าย = ข้อมูลสาธารณะ · เป็นส่วนของกุญแจ
+            AllowTaxIdInPrompt = true,      // เลขนิติบุคคลของผู้จ่าย = ข้อมูลสาธารณะ · เป็นส่วนของกุญแจ · เลขบุคคลถูกปิดบังเองแล้ว (MaskIndividualIds)
             CacheTtlOverrideDays = 30,
             MaxTokensOverride = 300,
             TemperatureOverride = 0m,

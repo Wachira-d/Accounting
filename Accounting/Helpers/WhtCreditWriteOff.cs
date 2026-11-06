@@ -89,8 +89,23 @@ public static class WhtCreditWriteOff
         => status == JournalEntryStatus.Posted && !reversedByEntryId.HasValue && !isDeleted;
 
     /// <summary>แถวที่สิ้นรอบควรเสนอให้ผู้ทำบัญชีตัดสินใจ (ตามต่อ/ตัดสูญ) — ยังรอใบ และรอบบัญชีของแถวสิ้นสุดแล้ว · ไม่ตัดอัตโนมัติ</summary>
-    public static bool IsYearEndCandidate(WhtCreditStatus status, DateTime fiscalYearEnd, DateTime todayBangkok)
-        => status == WhtCreditStatus.Pending && fiscalYearEnd.Date < todayBangkok.Date;
+    /// <param name="missingAmount">ยอดที่ยังขาดใบ (<see cref="WhtCreditableAmount.Missing"/>) — ได้ใบครบแล้ว (0) ไม่ใช่ผู้สมัคร (ฝ่ายค้าน WP-09 M1)</param>
+    public static bool IsYearEndCandidate(WhtCreditStatus status, decimal missingAmount, DateTime fiscalYearEnd, DateTime todayBangkok)
+        => status == WhtCreditStatus.Pending && missingAmount > 0.005m && fiscalYearEnd.Date < todayBangkok.Date;
+
+    /// <summary>ยอดที่ตัดสูญได้ของแถว (ฝ่ายค้าน WP-09 M1) — <b>เฉพาะส่วนที่ไม่มีใบ</b>: Pending = ยอดขาดใบ · Received ที่ได้ใบผ่านกล่องรับ = เศษที่ใบต่ำกว่า
+    /// (≤ ฿1) · Received รุ่นเก่า (ReceivedAmount 0) = เต็มแถว (พฤติกรรมเดิม — ผู้ทำบัญชีเลือกเอง) · ส่วนที่มีใบแล้วไม่ถูกตัดสูญ (คงเป็นเครดิต)</summary>
+    public static decimal AmountOf(WhtCreditStatus status, decimal whtAmount, decimal receivedAmount)
+    {
+        var wht = Math.Max(0m, whtAmount);
+        var v = status switch
+        {
+            WhtCreditStatus.Pending => WhtCreditableAmount.Missing(status, whtAmount, receivedAmount),
+            WhtCreditStatus.Received => receivedAmount > 0.005m ? Math.Max(0m, wht - Math.Max(0m, receivedAmount)) : wht,
+            _ => wht,
+        };
+        return Math.Round(v, 2, MidpointRounding.AwayFromZero);
+    }
 
     /// <summary>ผังที่ใช้ตัดสูญต้องเป็นผังภาษีเงินได้ (กลุ่ม 580) — มิฉะนั้นรายจ่ายนี้ไหลเข้า ภ.ง.ด.50 เป็นรายจ่ายหักได้ (ผิด ม.65 ตรี (6 ทวิ))</summary>
     public static bool IsNonDeductibleAccount(string? accountCode, AccountType accountType, string? parentAccountCode)

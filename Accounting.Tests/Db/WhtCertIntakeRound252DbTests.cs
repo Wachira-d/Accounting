@@ -63,10 +63,11 @@ public class WhtCertIntakeRound252DbTests
     }
 
     private static WhtCertSubmission Sub(decimal tax, string? certNo, string? payee = Ours, string? sha = null,
-        WhtCertIntakeChannel ch = WhtCertIntakeChannel.Manual, decimal? conf = 0.95m)
+        WhtCertIntakeChannel ch = WhtCertIntakeChannel.Manual, decimal? conf = 0.95m, DateTime? date = null, bool noDate = false,
+        string payer = Payer)
     {
         var income = Math.Round(tax / 0.03m, 2, MidpointRounding.AwayFromZero);
-        return new(ch, WhtEvidenceKind.PaperCertificate, certNo, CertDate, "ลูกค้าผู้หัก จำกัด", Payer, "00000", null,
+        return new(ch, WhtEvidenceKind.PaperCertificate, certNo, noDate ? null : date ?? CertDate, "ลูกค้าผู้หัก จำกัด", payer, "00000", null,
             payee, null, "40(2)", income, 3m, tax, WhtPayerFormType.Pnd53, conf, null, sha, null, null,
             "หนังสือรับรองการหักภาษี ณ ที่จ่าย ตามมาตรา 50 ทวิ แห่งประมวลรัษฎากร", "ผู้ทดสอบ", null);
     }
@@ -237,6 +238,11 @@ public class WhtCertIntakeRound252DbTests
         var sum = await credits.SummaryAsync(s.CompanyId, s.Year);
         Assert.Equal(200m, sum.PendingAmount);
         Assert.Equal(100m, sum.ReceivedAmount);
+        Assert.Equal(100m, sum.CreditableAmount);   // L9: กติกางวด ภ.ง.ด.50 ตัวเดียว
+        // L9: รายงานปลายปีใช้กติกางวดเดียวกัน — ได้ใบ 100 · ขาด 200
+        var rep = await Svc(read, new AiProbe().For(null, null, false)).MissingReportAsync(s.CompanyId, s.Year);
+        Assert.Equal(100m, rep.ReceivedAmount);
+        Assert.Equal(200m, rep.MissingAmount);
     }
 
     [Fact]
@@ -261,9 +267,10 @@ public class WhtCertIntakeRound252DbTests
         Assert.Equal(first.IntakeId, scanned.IntakeId);
         using var read = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(1, await read.WhtCertIntakes.AsNoTracking().CountAsync(i => i.CompanyId == s.CompanyId));
-        // สองแถวยอดเท่ากัน ⇒ เลือกแถวที่ถูกหักใกล้วันที่บนใบที่สุด (K3) — เครดิตครั้งเดียว 300 ไม่ใช่ 600 ทั้งที่ส่งมาสามครั้ง
-        Assert.Equal(300m, await CreditableAsync(read, s.CompanyId, s.Year));
-        Assert.Equal(1, await read.WhtCreditsReceived.AsNoTracking().CountAsync(w => w.CompanyId == s.CompanyId && w.ReceivedAmount > 0m));
+        // ฝ่ายค้าน WP-09 L1: สองแถวยอดเท่ากัน ⇒ กำกวม (ไม่เลือกเอง) — เสนอแถวใกล้วันที่บนใบ 1 แถว · ยังไม่มีเครดิตจนคนยืนยัน (ไม่ใช่ 600 ทั้งที่ส่งมาสามครั้ง)
+        Assert.Equal(0m, await CreditableAsync(read, s.CompanyId, s.Year));
+        Assert.Equal(1, await read.WhtCertAllocations.AsNoTracking().CountAsync(x => x.IntakeId == first.IntakeId && x.CompanyId == s.CompanyId
+            && x.Status == WhtCertAllocationStatus.Proposed));
     }
 
     [Fact]
@@ -288,9 +295,9 @@ public class WhtCertIntakeRound252DbTests
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
-        var s = await SeedAsync(db, 300m, 210m, 120m);
-        var fb1 = Guid.NewGuid(); var fb2 = Guid.NewGuid(); var fb3 = Guid.NewGuid();
-        WhtCertSubmitResult a, b, c;
+        var s = await SeedAsync(db, 300m, 210m, 120m, 90m);
+        var fb1 = Guid.NewGuid(); var fb2 = Guid.NewGuid(); var fb3 = Guid.NewGuid(); var fb4 = Guid.NewGuid();
+        WhtCertSubmitResult a, b, c, d;
         // มั่นใจไม่พอ (0.60) ⇒ รอผู้ใช้ทั้งสามใบ
         using (var req = DbTestDatabase.TryCreateContext()!)
             a = await Svc(req, new AiProbe().For("Genuine", 0.60m, usedAi: true, fb1)).SubmitAsync(s.CompanyId, Sub(300m, "2569/0901"));
@@ -298,11 +305,17 @@ public class WhtCertIntakeRound252DbTests
             b = await Svc(req, new AiProbe().For("Genuine", 0.60m, usedAi: true, fb2)).SubmitAsync(s.CompanyId, Sub(210m, "2569/0902"));
         using (var req = DbTestDatabase.TryCreateContext()!)
             c = await Svc(req, new AiProbe().For("Genuine", 0.60m, usedAi: true, fb3)).SubmitAsync(s.CompanyId, Sub(120m, "2569/0903"));
-        Assert.False(a.AutoConfirmed || b.AutoConfirmed || c.AutoConfirmed);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            d = await Svc(req, new AiProbe().For("Genuine", 0.60m, usedAi: true, fb4)).SubmitAsync(s.CompanyId, Sub(90m, "2569/0904"));
+        Assert.False(a.AutoConfirmed || b.AutoConfirmed || c.AutoConfirmed || d.AutoConfirmed);
 
         var rec = new RecorderProbe();
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await Svc(req, new AiProbe().For(null, null, false), rec.Create()).ConfirmAsync(s.CompanyId, a.IntakeId, new WhtCertConfirmRequest(),
+            await Svc(req, new AiProbe().For(null, null, false), rec.Create()).ConfirmAsync(s.CompanyId, a.IntakeId, new WhtCertConfirmRequest(ViewedFile: true),
+                Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
+        // ฝ่ายค้าน WP-09 M6 ทิศตรงข้าม: ยืนยันโดยไม่เปิดดูใบ ⇒ เครดิตได้ แต่ไม่สอนนักเรียนว่า "ของจริง"
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req, new AiProbe().For(null, null, false), rec.Create()).ConfirmAsync(s.CompanyId, d.IntakeId, new WhtCertConfirmRequest(),
                 Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
         using (var req = DbTestDatabase.TryCreateContext()!)
             await Svc(req, new AiProbe().For(null, null, false), rec.Create()).RejectAsync(s.CompanyId, b.IntakeId,
@@ -314,8 +327,9 @@ public class WhtCertIntakeRound252DbTests
         Assert.Contains((fb1, WhtCertIntakeVerdict.Genuine, true), rec.Choices);
         Assert.Contains((fb2, WhtCertIntakeVerdict.Suspect, false), rec.Choices);
         Assert.DoesNotContain(rec.Choices, x => x.Id == fb3);   // ตีกลับเหตุอื่น ⇒ ไม่บอกอะไรเรื่องของจริง ⇒ ไม่สอน
+        Assert.DoesNotContain(rec.Choices, x => x.Id == fb4);   // ไม่ได้เปิดดูใบ ⇒ ไม่สอน (M6)
         using var read = DbTestDatabase.TryCreateContext()!;
-        Assert.Equal(300m, await CreditableAsync(read, s.CompanyId, s.Year));   // เฉพาะใบที่ยืนยัน
+        Assert.Equal(390m, await CreditableAsync(read, s.CompanyId, s.Year));   // เฉพาะใบที่ยืนยัน (300 + 90)
         Assert.True(await read.WhtCertAllocations.AsNoTracking().Where(x => x.IntakeId == b.IntakeId && x.CompanyId == s.CompanyId)
             .AllAsync(x => x.Status == WhtCertAllocationStatus.Reversed));
         // ใบที่ตีกลับยืนยันซ้ำไม่ได้ (ทางไปต่อ: ให้ลูกค้าส่งใบใหม่)
@@ -338,14 +352,206 @@ public class WhtCertIntakeRound252DbTests
         using (var req = DbTestDatabase.TryCreateContext()!)
             await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req, new AiProbe().For(null, null, false))
                 .ConfirmAsync(s.CompanyId, r.IntakeId, new WhtCertConfirmRequest(), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true));
+        // ฝ่ายค้าน WP-09 M5: ผู้จ่ายมีรายการรอใบอยู่ (77) ⇒ รายการใหม่ต้องมีเหตุผล · ส่งทั้งรายการและรายการใหม่ = 400
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(400, (await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req, new AiProbe().For(null, null, false))
+                .ConfirmAsync(s.CompanyId, r.IntakeId, new WhtCertConfirmRequest(CreateStandalone: true), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true))).StatusCode);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(400, (await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req, new AiProbe().For(null, null, false))
+                .ConfirmAsync(s.CompanyId, r.IntakeId, new WhtCertConfirmRequest(CreateStandalone: true,
+                    Allocations: new[] { new WhtCertAllocationInput(s.Credits[0], 77m) }), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true))).StatusCode);
         using (var req = DbTestDatabase.TryCreateContext()!)
             await Svc(req, new AiProbe().For(null, null, false)).ConfirmAsync(s.CompanyId, r.IntakeId,
-                new WhtCertConfirmRequest(CreateStandalone: true), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
+                new WhtCertConfirmRequest(CreateStandalone: true, StandaloneReason: "รับเงินสดหน้างาน ไม่ได้บันทึกรับชำระในระบบ"),
+                Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
         using var read = DbTestDatabase.TryCreateContext()!;
         var created = await read.WhtCreditsReceived.AsNoTracking()
             .SingleAsync(w => w.CompanyId == s.CompanyId && w.CertificateNumber == "2569/1001");
         Assert.Equal(WhtCreditStatus.Received, created.Status);
         Assert.Equal(900m, created.WhtAmount);
         Assert.Equal(900m, await CreditableAsync(read, s.CompanyId, s.Year));
+        // M5: ทะเบียนเกิน GL (รายการใหม่ไม่มี Dr 11910 คู่) ⇒ ผลต่างฟ้อง = เงื่อนไขของแถวเตือนบน ภ.ง.ด.50 (WHT_OVER_GL)
+        var sum = await new WhtCreditService(read, NullLogger<WhtCreditService>.Instance).SummaryAsync(s.CompanyId, s.Year);
+        Assert.True(sum.Difference > 0.01m);
+    }
+
+    // ═══════════ ฝ่ายค้าน WP-09 (H1 · H2 · L2 · L3 · L4 · L5 · L8 · M1) ═══════════
+
+    [Fact]
+    public async Task H1_ใบที่อยู่ในทะเบียนแล้ว_ปฏิเสธ409_ทิศตรงข้ามผู้จ่ายคนละรายเลขเดียวกันเข้ากล่องรับได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, 300m);
+        // ใบที่ผู้ใช้กรอกมือไว้ก่อน (ทะเบียน Received · ไม่มีใบในกล่องรับ)
+        db.WhtCreditsReceived.Add(new WhtCreditReceived { CompanyId = s.CompanyId, TaxYear = s.Year, PayerName = "ลูกค้าผู้หัก จำกัด", PayerTaxId = Payer,
+            CertificateNumber = "2569/1100", CertificateDate = CertDate, WhtAmount = 300m, IncomeAmount = 10_000m, WhtRate = 3m, Status = WhtCreditStatus.Received });
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req, new AiProbe().For("Genuine", 0.99m, usedAi: true))
+                .SubmitAsync(s.CompanyId, Sub(300m, "2569/1100")))).StatusCode);
+        // ทิศตรงข้าม: เลขที่เดียวกันของผู้จ่ายอีกราย (เลขที่ใบของแต่ละผู้จ่ายซ้ำกันได้) ⇒ ไม่ถูกปฏิเสธ
+        WhtCertSubmitResult other;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            other = await Svc(req, new AiProbe().For(null, null, false)).SubmitAsync(s.CompanyId, Sub(300m, "2569/1100", payer: "0105556000068"));
+        Assert.False(other.Duplicate);
+        // ยืนยัน: แก้เลขที่ให้ชนทะเบียน ⇒ 409 ตอนยืนยันด้วย
+        WhtCertSubmitResult edit;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            edit = await Svc(req, new AiProbe().For(null, null, false)).SubmitAsync(s.CompanyId, Sub(300m, "2569/1101", conf: 0.5m));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req, new AiProbe().For(null, null, false))
+                .ConfirmAsync(s.CompanyId, edit.IntakeId, new WhtCertConfirmRequest(CertificateNumber: "2569/1100"), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true))).StatusCode);
+    }
+
+    [Fact]
+    public async Task H2_ใบงวดสองคนละรอบบัญชี_ลงรวมแถวไม่ได้_รายการใหม่ได้โดยไม่ต้องมีเหตุผล_ทิศตรงข้ามรอบเดียวกันลงรวมได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, 300m);
+        WhtCertSubmitResult first, sameYear, otherYear;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            first = await Svc(req, new AiProbe().For(null, null, false)).SubmitAsync(s.CompanyId, Sub(100m, "2569/1200"));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req, new AiProbe().For(null, null, false)).ConfirmAsync(s.CompanyId, first.IntakeId,
+                new WhtCertConfirmRequest(Allocations: new[] { new WhtCertAllocationInput(s.Credits[0], 100m) }), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            otherYear = await Svc(req, new AiProbe().For(null, null, false)).SubmitAsync(s.CompanyId, Sub(100m, "2569/1201", date: CertDate.AddYears(-1)));
+        var alloc = new[] { new WhtCertAllocationInput(s.Credits[0], 100m) };
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req, new AiProbe().For(null, null, false))
+                .ConfirmAsync(s.CompanyId, otherYear.IntakeId, new WhtCertConfirmRequest(Allocations: alloc), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true))).StatusCode);
+        // ทางไปต่อ: รายการใหม่ (กรณีนี้ไม่ต้องมีเหตุผล แม้ผู้จ่ายมีรายการรอใบ)
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req, new AiProbe().For(null, null, false)).ConfirmAsync(s.CompanyId, otherYear.IntakeId,
+                new WhtCertConfirmRequest(CreateStandalone: true), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
+        // ทิศตรงข้าม: ใบงวดสองรอบเดียวกัน ⇒ ลงรวมแถวได้
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            sameYear = await Svc(req, new AiProbe().For(null, null, false)).SubmitAsync(s.CompanyId, Sub(100m, "2569/1202"));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req, new AiProbe().For(null, null, false)).ConfirmAsync(s.CompanyId, sameYear.IntakeId,
+                new WhtCertConfirmRequest(Allocations: alloc), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
+        using var read = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(200m, (await read.WhtCreditsReceived.AsNoTracking().FirstAsync(w => w.Id == s.Credits[0])).ReceivedAmount);
+    }
+
+    [Fact]
+    public async Task L2_ใบต่ำกว่ายอดค้างไม่เกิน1บาท_ปิดเป็นได้รับ_เครดิตเท่าใบ_ทิศตรงข้ามยอดตรงเต็มแถว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, 300.50m);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.True((await Svc(req, new AiProbe().For("Genuine", 0.95m, usedAi: true)).SubmitAsync(s.CompanyId, Sub(300m, "2569/1300"))).AutoConfirmed);
+        using var read = DbTestDatabase.TryCreateContext()!;
+        var row = await read.WhtCreditsReceived.AsNoTracking().FirstAsync(w => w.Id == s.Credits[0]);
+        Assert.Equal(WhtCreditStatus.Received, row.Status);           // ไม่ค้างทวงตลอดไป
+        Assert.Equal(300m, await CreditableAsync(read, s.CompanyId, s.Year));   // ไม่เกินใบ (ไม่ใช่ 300.50)
+        Assert.Contains("ต่ำกว่ายอดถูกหัก", row.Notes);
+    }
+
+    [Fact]
+    public async Task L3_เลือกรายการของผู้จ่ายอื่น_ปฏิเสธ_ทิศตรงข้ามติ๊กยืนยันผู้จ่ายเดียวกันได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, 300m);
+        var foreign = new WhtCreditReceived { CompanyId = s.CompanyId, TaxYear = s.Year, PayerName = "ผู้จ่ายอื่น", PayerTaxId = "0105556000068",
+            WhtAmount = 150m, IncomeAmount = 5_000m, WhtRate = 3m, Status = WhtCreditStatus.Pending, FirstWithheldAt = CertDate };
+        db.WhtCreditsReceived.Add(foreign);
+        await db.SaveChangesAsync();
+        WhtCertSubmitResult r;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            r = await Svc(req, new AiProbe().For(null, null, false)).SubmitAsync(s.CompanyId, Sub(150m, "2569/1400"));
+        var alloc = new[] { new WhtCertAllocationInput(foreign.Id, 150m) };
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req, new AiProbe().For(null, null, false))
+                .ConfirmAsync(s.CompanyId, r.IntakeId, new WhtCertConfirmRequest(Allocations: alloc), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true))).StatusCode);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req, new AiProbe().For(null, null, false)).ConfirmAsync(s.CompanyId, r.IntakeId,
+                new WhtCertConfirmRequest(Allocations: alloc, AllowOtherPayer: true), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
+        using var read = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(WhtCreditStatus.Received, (await read.WhtCreditsReceived.AsNoTracking().FirstAsync(w => w.Id == foreign.Id)).Status);
+    }
+
+    [Fact]
+    public async Task L4_ไม่มีวันที่บนใบ_ยืนยันไม่ได้_ทิศตรงข้ามใส่วันที่แล้วยืนยันได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, 300m);
+        WhtCertSubmitResult r;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            r = await Svc(req, new AiProbe().For(null, null, false)).SubmitAsync(s.CompanyId, Sub(300m, "2569/1500", noDate: true));
+        Assert.False(r.AutoConfirmed);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req, new AiProbe().For(null, null, false))
+                .ConfirmAsync(s.CompanyId, r.IntakeId, new WhtCertConfirmRequest(), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req, new AiProbe().For(null, null, false)).ConfirmAsync(s.CompanyId, r.IntakeId,
+                new WhtCertConfirmRequest(CertificateDate: CertDate, Allocations: new[] { new WhtCertAllocationInput(s.Credits[0], 300m) }),
+                Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
+        using var read = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(300m, await CreditableAsync(read, s.CompanyId, s.Year));
+    }
+
+    [Fact]
+    public async Task L5_ไฟล์ที่ถูกตีกลับส่งใหม่ได้_ทิศตรงข้ามไฟล์ที่รอยืนยันยังนับเป็นซ้ำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, 300m);
+        var sha = new string('c', 64);
+        WhtCertSubmitResult first, again, resubmit;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            first = await Svc(req, new AiProbe().For(null, null, false)).SubmitAsync(s.CompanyId, Sub(300m, "2569/1600", sha: sha, conf: 0.5m));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            again = await Svc(req, new AiProbe().For(null, null, false)).SubmitAsync(s.CompanyId, Sub(300m, "2569/1600", sha: sha, conf: 0.5m));
+        Assert.True(again.Duplicate);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req, new AiProbe().For(null, null, false)).RejectAsync(s.CompanyId, first.IntakeId,
+                new WhtCertRejectRequest("ภาพเบลอ อ่านเลขที่ไม่ออก"), Guid.NewGuid(), "ผู้ทำบัญชี");
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            resubmit = await Svc(req, new AiProbe().For(null, null, false)).SubmitAsync(s.CompanyId, Sub(300m, "2569/1600", sha: sha, conf: 0.5m));
+        Assert.False(resubmit.Duplicate);
+        Assert.NotEqual(first.IntakeId, resubmit.IntakeId);
+    }
+
+    [Fact]
+    public async Task L8_การ์ดต้องตาม_จำกัดปีภาษี_ทิศตรงข้ามไม่ระบุปีเห็นทุกปี()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, 300m);
+        db.WhtCreditsReceived.Add(new WhtCreditReceived { CompanyId = s.CompanyId, TaxYear = s.Year - 1, PayerName = "ลูกค้าปีก่อน", PayerTaxId = Payer,
+            WhtAmount = 50m, IncomeAmount = 1_666.67m, WhtRate = 3m, Status = WhtCreditStatus.Pending, FirstWithheldAt = CertDate.AddYears(-1) });
+        await db.SaveChangesAsync();
+        using var read = DbTestDatabase.TryCreateContext()!;
+        var svc = Svc(read, new AiProbe().For(null, null, false));
+        Assert.Equal(300m, (await svc.TrackingAsync(s.CompanyId, null, s.Year)).OutstandingAmount);
+        Assert.Equal(350m, (await svc.TrackingAsync(s.CompanyId, null)).OutstandingAmount);
+    }
+
+    [Fact]
+    public async Task M1_สิ้นรอบเสนอตัดสูญเฉพาะส่วนที่ขาดใบ_ทิศตรงข้ามแถวไม่มีใบเสนอเต็มยอด()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var lastYear = DateTime.UtcNow.Year - 2;   // รอบที่สิ้นสุดแล้วแน่นอน
+        var partial = new WhtCreditReceived { CompanyId = s.CompanyId, TaxYear = lastYear, PayerName = "ได้ใบบางส่วน", PayerTaxId = Payer,
+            WhtAmount = 300m, ReceivedAmount = 100m, CertificateNumber = "2567/0001", IncomeAmount = 10_000m, WhtRate = 3m, Status = WhtCreditStatus.Pending };
+        var none = new WhtCreditReceived { CompanyId = s.CompanyId, TaxYear = lastYear, PayerName = "ไม่มีใบ", PayerTaxId = Payer,
+            WhtAmount = 300m, IncomeAmount = 10_000m, WhtRate = 3m, Status = WhtCreditStatus.Pending };
+        db.WhtCreditsReceived.AddRange(partial, none);
+        await db.SaveChangesAsync();
+        using var read = DbTestDatabase.TryCreateContext()!;
+        var credits = new WhtCreditService(read, NullLogger<WhtCreditService>.Instance);
+        var cands = await credits.WriteOffCandidatesAsync(s.CompanyId);
+        Assert.Equal(200m, cands.Single(c => c.Id == partial.Id).WhtAmount);
+        Assert.Equal(300m, cands.Single(c => c.Id == none.Id).WhtAmount);
+        Assert.Equal(200m, (await credits.WriteOffPreviewAsync(s.CompanyId, partial.Id)).Amount);
+        Assert.Equal(300m, (await credits.WriteOffPreviewAsync(s.CompanyId, none.Id)).Amount);
     }
 }

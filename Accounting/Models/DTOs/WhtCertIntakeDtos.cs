@@ -32,7 +32,8 @@ public sealed record WhtCertSubmission(
     string? RawText,
     string SubmittedBy,
     Guid? SubmittedByUserId,
-    string? Notes = null);
+    string? Notes = null,
+    bool AmountNeedsReview = false);
 
 /// <param name="Status">ชื่อ <see cref="WhtCertIntakeRecordStatus"/></param>
 /// <param name="Duplicate">ไฟล์/ใบนี้เคยส่งแล้ว — คืนแถวเดิม (idempotent ไม่สร้างแถวใหม่)</param>
@@ -62,13 +63,16 @@ public sealed record WhtCertCandidateDto(Guid WhtCreditId, Guid? DocumentId, str
 public sealed record WhtCertAllocationInput(Guid WhtCreditId, decimal Amount);
 
 /// <summary>ยืนยันใบ — ช่องที่ผู้ใช้แก้ (null = ใช้ค่าที่อ่านได้) + การจัดสรร (null = ตามที่ระบบเสนอ) ·
-/// <c>CreateStandalone</c> = ไม่มีรายการรอใบที่ตรง ⇒ บันทึกเป็นรายการเครดิตใหม่ (ทางเดิมของการสแกนใบที่ไม่มีการรับชำระในระบบ)</summary>
+/// <c>CreateStandalone</c> = ไม่มีรายการรอใบที่ตรง ⇒ บันทึกเป็นรายการเครดิตใหม่ (ทางเดิมของการสแกนใบที่ไม่มีการรับชำระในระบบ) — ผู้จ่ายมีรายการรอใบอยู่ ⇒ ต้องมี
+/// <c>StandaloneReason</c> ≥ 10 ตัวอักษร (ยกเว้นรายการรอใบมีใบแรกคนละรอบบัญชี) · <c>AllowOtherPayer</c> = ยืนยันว่ารายการที่เลือกเป็นผู้จ่ายเดียวกับบนใบ ·
+/// <c>ViewedFile</c> = ผู้ใช้เปิดดูใบก่อนยืนยัน (สอนนักเรียนว่า "ของจริง" เฉพาะกรณีนี้ — ฝ่ายค้าน WP-09 M6)</summary>
 public sealed record WhtCertConfirmRequest(
     string? CertificateNumber = null, DateTime? CertificateDate = null,
     string? PayerName = null, string? PayerTaxId = null,
     string? IncomeTypeCode = null, decimal? IncomeAmount = null, decimal? WhtRate = null, decimal? WhtAmount = null,
     IReadOnlyList<WhtCertAllocationInput>? Allocations = null,
-    bool CreateStandalone = false, int? TaxYear = null);
+    bool CreateStandalone = false, int? TaxYear = null,
+    string? StandaloneReason = null, bool AllowOtherPayer = false, bool ViewedFile = false);
 
 /// <param name="NotGenuine">ผู้ใช้ตีกลับเพราะ "ไม่ใช่ของจริง" — สอนนักเรียน (Suspect) · false = เหตุอื่น (ไม่ใช่ใบของเรา/อ่านไม่ได้) ไม่สอน</param>
 public sealed record WhtCertRejectRequest(string? Reason, bool NotGenuine = false);

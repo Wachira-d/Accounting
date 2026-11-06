@@ -434,6 +434,9 @@ public static class SettlementPaidReissue
         nameof(Document.PayLinkTokenHash), nameof(Document.PayLinkTokenProtected), nameof(Document.PayLinkIssuedAt),
         nameof(Document.PayLinkExpiresAt), nameof(Document.PayLinkRevokedAt), nameof(Document.PayLinkChannelsJson),
         nameof(Document.AutoSendRuleId), nameof(Document.QuotaCountDeferred),
+        // รอบ 252 WP-12A: โหมด/ผลแปลงใบเสนอราคาอัตโนมัติเป็นของใบเดิม (ใบแทนไม่แปลงซ้ำเอง — ทางปลอดภัย)
+        nameof(Document.QuotationAcceptAutopilot), nameof(Document.QuotationAutopilotAt), nameof(Document.QuotationAutopilotOutcome),
+        nameof(Document.QuotationAutopilotMessage), nameof(Document.QuotationAutopilotChildId),
     };
 
     /// <summary>ช่องของบรรทัดที่ตามไป — ทุกอย่างของรายการ ยกเว้นตัวตน/เวลา/ใบแม่ และ feedback AI ของผังบัญชี (สองบรรทัดชี้แถวเดียว)</summary>
