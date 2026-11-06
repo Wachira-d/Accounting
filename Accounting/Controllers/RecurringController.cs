@@ -84,17 +84,9 @@ public class RecurringController : ControllerBase
     {
         var list = (ids ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(x => Guid.TryParse(x, out var g) ? g : Guid.Empty).Where(g => g != Guid.Empty).Distinct().ToList();
-        var rows = await _autopilot.LevelsAsync(companyId, list);
-        var allowed = new Dictionary<DocumentType, bool>();
-        var visible = new List<RecurringAutopilotLevelRow>(rows.Count);
-        foreach (var row in rows)
-        {
-            var t = row.DocumentType ?? DocumentType.Invoice;
-            if (!allowed.TryGetValue(t, out var ok))
-                allowed[t] = ok = await DenyAutopilotReadAsync(companyId, t) == null;
-            if (ok) visible.Add(row);
-        }
-        return Ok(new ApiResponse<IReadOnlyList<RecurringAutopilotLevelRow>>(true, visible));
+        // ฝ่ายค้านข้อ 6: ด่านสิทธิ์ต่อชนิดถูกถามก่อนรวบรวม (service จำผลต่อชนิด) — แถวที่ไม่มีสิทธิ์ไม่ถูกรวบรวมและไม่ส่งกลับ
+        var rows = await _autopilot.LevelsAsync(companyId, list, async t => await DenyAutopilotReadAsync(companyId, t) == null);
+        return Ok(new ApiResponse<IReadOnlyList<RecurringAutopilotLevelRow>>(true, rows));
     }
 
     /// <summary>รอบ 251 (WP-07 ข้อ 4 · §4.5): ส่งอีเมลทดสอบของรอบถัดไปถึง<b>ผู้ใช้ที่กดเท่านั้น</b> — ไม่นับเพดานอีเมลเอกสาร · ไม่บันทึกเป็นการส่งเอกสาร ·

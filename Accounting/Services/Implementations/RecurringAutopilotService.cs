@@ -82,7 +82,8 @@ public class RecurringAutopilotService : IRecurringAutopilotService
     /// <summary>รอบ 251 (WP-07 ข้อ 1): เพดานแถวที่ตรวจต่อคำขอ (แต่ละแถวเดินตัวรวบรวมข้อเท็จจริงทั้งชุด — หน้าแบ่งหน้าละ 20 อยู่แล้ว)</summary>
     public const int MaxLevelRows = 50;
 
-    public async Task<IReadOnlyList<RecurringAutopilotLevelRow>> LevelsAsync(Guid companyId, IReadOnlyList<Guid> recurringIds, CancellationToken ct = default)
+    public async Task<IReadOnlyList<RecurringAutopilotLevelRow>> LevelsAsync(Guid companyId, IReadOnlyList<Guid> recurringIds,
+        Func<DocumentType, Task<bool>>? canRead = null, CancellationToken ct = default)
     {
         var ids = recurringIds.Distinct().Take(MaxLevelRows).ToList();
         if (ids.Count == 0) return Array.Empty<RecurringAutopilotLevelRow>();
@@ -90,11 +91,21 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             .Where(r => r.CompanyId == companyId && ids.Contains(r.Id) && r.Status != RecurringStatus.Completed)
             .ToListAsync(ct);
         var list = new List<RecurringAutopilotLevelRow>(rows.Count);
+        // ฝ่ายค้านข้อ 6: ตัดชนิดที่ผู้เรียกไม่มีสิทธิ์ก่อนรวบรวม (ไม่เสียแรงกับแถวที่ไม่ส่งกลับ) · ข้อเท็จจริงระดับบริษัทโหลดครั้งเดียว
+        var allowed = new Dictionary<DocumentType, bool>();
+        SharedCompanyFacts? shared = null;
         foreach (var r in rows)
         {
+            var type = r.DocumentType ?? DocumentType.Invoice;
+            if (canRead != null)
+            {
+                if (!allowed.TryGetValue(type, out var ok)) allowed[type] = ok = await canRead(type);
+                if (!ok) continue;
+            }
             try
             {
-                var rep = (await BuildAsync(companyId, r, ct)).Readiness;
+                shared ??= await LoadSharedFactsAsync(companyId, ct);
+                var rep = (await BuildAsync(companyId, r, ct, shared)).Readiness;
                 var top = rep.Items.FirstOrDefault(i => i.Verdict == AutopilotReadiness.Fail) ?? rep.Items.FirstOrDefault(i => i.Verdict == AutopilotReadiness.Warn);
                 list.Add(new RecurringAutopilotLevelRow(r.Id, r.DocumentType, rep.Level, rep.LevelLabel, rep.WarnCount, rep.FailCount, top?.Title, null));
             }
@@ -113,53 +124,85 @@ public class RecurringAutopilotService : IRecurringAutopilotService
     {
         if (_senders == null)
             throw new BusinessRuleException("ระบบส่งอีเมลยังไม่พร้อม — ส่งทดสอบไม่ได้ (ใช้ปุ่ม \"ทดลองรัน\" แทน)", RecurringTestEmail.RuleCode, 503);
-        // ผู้รับ = ผู้ใช้ที่กดเท่านั้น (ไม่รับที่อยู่จากคำขอ — กันใช้เป็นทางส่งอีเมลถึงคนอื่น)
-        var to = (await _db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.Email).FirstOrDefaultAsync(ct))?.Trim();
+        // ผู้รับ = ผู้ใช้ที่กดเท่านั้น (ไม่รับที่อยู่จากคำขอ) · ฝ่ายค้านข้อ 2a: อีเมลต้องยืนยันแล้ว — ไม่งั้นสมัครด้วยอีเมลของคนอื่นแล้วใช้ปุ่มนี้ส่งอีเมลในนามบริษัทถึงเขาได้
+        var user = await _db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => new { u.Email, u.EmailVerified }).FirstOrDefaultAsync(ct);
+        var to = user?.Email?.Trim();
         if (!OnBehalfEmailSender.IsPlausibleEmail(to))
             throw new BusinessRuleException("บัญชีผู้ใช้ของคุณยังไม่มีอีเมลที่ใช้ได้ — ส่งทดสอบไม่ได้ (ตั้งอีเมลที่โปรไฟล์ หรือใช้ปุ่ม \"ทดลองรัน\")",
                 RecurringTestEmail.RuleCode, 409);
+        if (RecurringTestEmail.UnverifiedRefusal(user!.EmailVerified) is { } unverified)
+            throw new BusinessRuleException(unverified, RecurringTestEmail.RuleCode, 409);
         var r = await LoadAsync(companyId, recurringId, ct);
-        var dayStart = SignEmailThrottle.BangkokDayStartUtc(DateTime.UtcNow);
-        var entityId = r.Id.ToString();
-        var sentToday = await _db.AuditLogs.AsNoTracking()
-            .CountAsync(a => a.CompanyId == companyId && a.UserId == userId && a.EntityType == "RecurringTransaction" && a.EntityId == entityId
-                && a.Timestamp >= dayStart && a.NewValues != null && a.NewValues.Contains(RecurringTestEmail.AuditActionName), ct);
-        if (RecurringTestEmail.LimitRefusal(sentToday) is { } limit)
-            throw new BusinessRuleException(limit, RecurringTestEmail.RuleCode, 429);
 
+        // ผลทดลองรัน + ผู้ส่ง + เนื้อหา ประกอบนอกล็อก (อ่านอย่างเดียว)
         var dry = await BuildAsync(companyId, r, ct);
         var settings = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(x => x.CompanyId == companyId, ct);
         var (plan, sender) = await DocumentEmailService.ResolveOnBehalfSenderAsync(_db, _senders, companyId, settings, ct);
-        var companyName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
-        var text = RecurringTestEmail.Compose(r.Name, companyName, dry);
-        var msg = new EmailMessage
+        var co = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => new { c.Name, c.TaxId }).FirstOrDefaultAsync(ct);
+        var text = RecurringTestEmail.Compose(r.Name, co?.Name, dry);   // อีเมลผู้รับจริงถูกปิดบังในเนื้อ (ฝ่ายค้านข้อ 2)
+        var subject = text.Subject;
+        var html = text.Html;
+        if (plan.OnBehalf)
         {
-            FromAddress = plan.FromAddress, FromName = plan.FromName, ReplyTo = plan.ReplyTo,
-            Subject = text.Subject, HtmlBody = text.Html, PlainTextBody = text.Text,
-        };
-        msg.To.Add(to!);
-        EmailSendResult result;
-        try { result = await sender.SendAsync(msg, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { result = EmailSendResult.Fail(ex.Message); }
-        // ไม่บันทึก DocumentEmailLog (ไม่ใช่การส่งเอกสาร · ไม่นับเพดาน) — ร่องรอยว่าใครกดอยู่ใน hash chain (หลักการ #10) ทั้งสำเร็จและล้ม
-        _db.AddChainedAuditLog(new AuditLog
+            // ฝ่ายค้านข้อ 2b · คำตัดสิน 240-9: เส้นแพลตฟอร์มห่อด้วยหัวเปิดเผยตัวเดียวกับอีเมลเอกสาร (ส่งในนามบริษัทผ่าน NextAcc · ช่องแจ้งใช้ผิด)
+            var origin = await SystemBaseUrl.ResolveAsync(_db, _config, ct);
+            html = SignRequestEmailText.WrapPlatformDocumentEmail(false, co?.Name, co?.TaxId, plan.ReplyTo, RecurringTestEmail.SubjectPrefix.Trim(),
+                null, html, origin == null ? null : $"{origin}/contact.html?topic=email-abuse");
+            subject = SignRequestEmailText.SafeSubject(subject);
+        }
+
+        // ฝ่ายค้านข้อ 2c/2d: เพดานต่อผู้ใช้ต่อบริษัทต่อวัน (ไม่ใช่ต่อรายการ) ใต้ xact lock ของผู้ใช้ — นับ → ส่ง → audit อยู่ในล็อกเดียว (สองคำขอพร้อมกันเกินไม่ได้)
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            CompanyId = companyId,
-            UserId = userId,
-            UserEmail = to,
-            Action = AuditAction.Export,
-            EntityType = "RecurringTransaction",
-            EntityId = entityId,
-            NewValues = JsonSerializer.Serialize(new
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.RecurringSendTest, userId.ToString()) }, ct);
+            var dayStart = SignEmailThrottle.BangkokDayStartUtc(DateTime.UtcNow);
+            var sentToday = await _db.AuditLogs.AsNoTracking()
+                .CountAsync(a => a.CompanyId == companyId && a.UserId == userId && a.Action == AuditAction.SendEmail
+                    && a.EntityType == RecurringTestEmail.AuditEntityType && a.Timestamp >= dayStart, ct);
+            if (RecurringTestEmail.LimitRefusal(sentToday) is { } limit)
+                throw new BusinessRuleException(limit, RecurringTestEmail.RuleCode, 429);
+            if (plan.OnBehalf)
             {
-                action = RecurringTestEmail.AuditActionName, to, senderMode = plan.Mode, success = result.Success,
-                error = result.Success ? null : result.ErrorMessage, ruleCode = RecurringTestEmail.RuleCode,
-            }),
+                // ฝ่ายค้านข้อ 2b: เส้นแพลตฟอร์มเคารพเพดานรายวันของบริษัท + เพดานต่อผู้รับ (ตัวนับ/ตัวตัดสินเดียวกับอีเมลเอกสาร) — อีเมลทดสอบเองไม่ถูกนับเป็นการส่งเอกสาร
+                var quota = await PlatformEmailQuota.ForCompanyAsync(_db, _config, companyId, DateTime.UtcNow, ct);
+                var (_, anyToday) = await PlatformEmailQuota.RecipientCountsAsync(_db, companyId, Guid.Empty, to!, quota.DayStartUtc, ct);
+                if (SignEmailThrottle.Refusal(true, quota.SentToday, quota.Cap, 0, anyToday) is { } capRefusal)
+                    throw new BusinessRuleException(capRefusal, "EMAIL-PLATFORM-CAP", 429);
+            }
+
+            var msg = new EmailMessage
+            {
+                FromAddress = plan.FromAddress, FromName = plan.FromName, ReplyTo = plan.ReplyTo,
+                Subject = subject, HtmlBody = html, PlainTextBody = text.Text,
+            };
+            msg.To.Add(to!);
+            EmailSendResult result;
+            try { result = await sender.SendAsync(msg, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { result = EmailSendResult.Fail(ex.Message); }
+            // ไม่บันทึก DocumentEmailLog (ไม่ใช่การส่งเอกสาร · ไม่นับเพดาน) — ร่องรอยว่าใครกดอยู่ใน hash chain (หลักการ #10) ทั้งสำเร็จและล้ม · ตัวนับเพดานอ่านแถวนี้
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = userId,
+                UserEmail = to,
+                Action = AuditAction.SendEmail,
+                EntityType = RecurringTestEmail.AuditEntityType,
+                EntityId = r.Id.ToString(),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    action = RecurringTestEmail.AuditActionName, to, senderMode = plan.Mode, success = result.Success,
+                    error = result.Success ? null : result.ErrorMessage, ruleCode = RecurringTestEmail.RuleCode,
+                }),
+            });
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            if (!result.Success)
+                throw new BusinessRuleException("ส่งอีเมลทดสอบไม่สำเร็จ: " + (result.ErrorMessage ?? "ผู้ให้บริการอีเมลไม่ตอบรับ"), RecurringTestEmail.RuleCode, 502);
+            return new RecurringSendTestResponse(to!, OnBehalfEmailSender.Describe(plan), subject, RecurringTestEmail.NotCountedNote);
         });
-        await _db.SaveChangesAsync(ct);
-        if (!result.Success)
-            throw new BusinessRuleException("ส่งอีเมลทดสอบไม่สำเร็จ: " + (result.ErrorMessage ?? "ผู้ให้บริการอีเมลไม่ตอบรับ"), RecurringTestEmail.RuleCode, 502);
-        return new RecurringSendTestResponse(to!, OnBehalfEmailSender.Describe(plan), text.Subject, RecurringTestEmail.NotCountedNote);
     }
 
     private async Task<RecurringTransaction> LoadAsync(Guid companyId, Guid recurringId, CancellationToken ct)
@@ -215,9 +258,29 @@ public class RecurringAutopilotService : IRecurringAutopilotService
     private async Task<DocumentPayLinkPolicy.CompanyFacts?> CompanyPayFactsAsync(Guid companyId, CancellationToken ct)
         => _payLinks == null ? null : await _payLinks.CompanyFactsAsync(companyId, ct);
 
-    /// <summary>รวบรวมข้อเท็จจริงครั้งเดียว (อ่านอย่างเดียว) → ตัวตัดสิน → ผลทดลองรัน</summary>
-    private async Task<RecurringDryRunResponse> BuildAsync(Guid companyId, RecurringTransaction r, CancellationToken ct)
+    /// <summary>รอบ 251 (WP-07 ฝ่ายค้านข้อ 6): ข้อเท็จจริงระดับบริษัทที่ไม่ขึ้นกับแถว — ตารางหลายแถวโหลดครั้งเดียวต่อคำขอ</summary>
+    private sealed record SharedCompanyFacts(DocumentPayLinkPolicy.CompanyFacts? PayFacts, CompanySettings? Settings, bool BaseUrlConfigured,
+        IReadOnlyList<ClosedDateRange> ClosedRanges);
+
+    /// <summary>อ่านอย่างเดียว · tenant: ค่าตั้งบริษัท · ช่องทางรับเงินที่เปิด · URL ของระบบ (Y7) · งวดที่ปิด (ตัวรวมช่วงเดียว ClosedPeriodRanges)</summary>
+    private async Task<SharedCompanyFacts> LoadSharedFactsAsync(Guid companyId, CancellationToken ct)
     {
+        var payFacts = await CompanyPayFactsAsync(companyId, ct);
+        var settings = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId).FirstOrDefaultAsync(ct);
+        // รอบ 250 (WP-02 §2.4 ข้อ 2 · Y7): URL ของระบบตั้งแล้วจริงไหม (ตัวตัดสินเดียว SystemBaseUrl.IsConfigured — ค่าที่มากับซอร์ส ≠ ตั้งแล้ว)
+        var adminBaseUrl = await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.AppBaseUrl).FirstOrDefaultAsync(ct);
+        var periods = await _db.FiscalPeriods.AsNoTracking()
+            .Where(fp => fp.CompanyId == companyId)
+            .Select(fp => new { fp.StartDate, fp.EndDate, fp.Status })
+            .ToListAsync(ct);
+        return new SharedCompanyFacts(payFacts, settings, SystemBaseUrl.IsConfigured(adminBaseUrl, _config?["App:BaseUrl"]),
+            ClosedPeriodRanges.Build(periods.Select(p => (p.StartDate, p.EndDate, p.Status))));
+    }
+
+    /// <summary>รวบรวมข้อเท็จจริงครั้งเดียว (อ่านอย่างเดียว) → ตัวตัดสิน → ผลทดลองรัน</summary>
+    private async Task<RecurringDryRunResponse> BuildAsync(Guid companyId, RecurringTransaction r, CancellationToken ct, SharedCompanyFacts? shared = null)
+    {
+        var cf = shared ?? await LoadSharedFactsAsync(companyId, ct);
         var notes = new List<string>();
         var isDocument = !string.Equals(r.TemplateType, "journal", StringComparison.OrdinalIgnoreCase);
         var docType = r.DocumentType ?? DocumentType.Invoice;
@@ -337,9 +400,9 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         var released = warnings == null ? Array.Empty<string>() : AutoApprovePolicy.Released(policy.Policy, warnings);
 
         // ── ช่องทางรับเงิน (ตัวต่อชั้นเดียว) ──
-        var payFacts = await CompanyPayFactsAsync(companyId, ct);
+        var payFacts = cf.PayFacts;
         var available = payFacts == null ? Array.Empty<string>() : DocumentPayLinkPolicy.CompanyAvailable(payFacts);
-        var settings = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId).FirstOrDefaultAsync(ct);
+        var settings = cf.Settings;
         var recurringLayer = AutopilotSettingsResolver.FromMode(r.PaymentMode, DocumentPayLinkPolicy.ParseChannels(r.PayLinkChannelsJson), available);
         var contactLayer = contact == null ? null
             : AutopilotSettingsResolver.FromMode(contact.PaymentMode, DocumentPayLinkPolicy.ParseChannels(contact.PayLinkChannelsJson), available);
@@ -355,9 +418,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         var hasApprovedRule = await _db.EmailScheduleRules.AsNoTracking()
             .AnyAsync(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == "DocumentApproved"
                 && (x.DocumentType == null || x.DocumentType == docType.ToString()), ct);
-        // รอบ 250 (WP-02 §2.4 ข้อ 2 · Y7): URL ของระบบตั้งแล้วจริงไหม (ตัวตัดสินเดียว SystemBaseUrl.IsConfigured — ค่าที่มากับซอร์ส ≠ ตั้งแล้ว)
-        var adminBaseUrl = await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.AppBaseUrl).FirstOrDefaultAsync(ct);
-        var baseUrlConfigured = SystemBaseUrl.IsConfigured(adminBaseUrl, _config?["App:BaseUrl"]);
+        var baseUrlConfigured = cf.BaseUrlConfigured;   // SystemBaseUrl.IsConfigured ใน LoadSharedFactsAsync
         if (hasRecurringRule)
             notes.Add("มีกฎ \"เมื่อรายการประจำสร้างเอกสาร\" ในหน้าตารางส่งอีเมล — ระบบส่งตามกฎนั้น (ค่าของกฎชนะค่าของรายการนี้เมื่อกฎตั้งไว้)");
 
@@ -375,18 +436,23 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         var buyerDeclined = TemplateBuyerDeclined(r.TemplateData);
         var notFullTaxInvoice = EtaxAutoIssueScope.IsTitleDecidedType(docType) && vatTotal > 0.005m
             && TaxService.NotFullTaxInvoiceByDesign(vatTotal, buyerDeclined, contact);
-        var etaxScope = EtaxAutoIssueScope.Judge(docType, DocumentStatus.Approved, false, false, null, null, null, notFullTaxInvoice);
+        // ฝ่ายค้านข้อ 5: ตัวโหลดจริงอ่าน IsTaxInvoiceByLaw ที่ตรึงตอนอนุมัติ — ใบที่ยังไม่ถูกสร้างทำนายด้วยตัวเดียว (ชนิดที่รูปแบบใบเสร็จตัดสินตอนอนุมัติ = ไม่แน่นอน)
+        var (predictedByLaw, etaxUncertain) = EtaxAutoIssueScope.PredictForUnissued(docType, vatTotal);
+        var etaxScope = EtaxAutoIssueScope.Judge(docType, DocumentStatus.Approved, false, false, null, null, predictedByLaw, notFullTaxInvoice);
         var etaxRoute = EtaxDeliveryRouter.Decide(settings?.EtaxEnabled ?? false, settings?.EtaxMode ?? EtaxMode.None, etaxScope, false);
         var etaxActive = isDocument && settings != null && EtaxDeliveryRouter.ByEmailActive(settings.EtaxEnabled, settings.EtaxMode);
+        // ด่านผู้ส่งเป็นของบริษัท (ไม่ขึ้นกับใบ) — ใช้ทั้งใบของรอบและใบเสร็จหลังรับชำระ
+        var etaxGateRefusal = etaxActive ? EtaxByEmailSenderGate.Refusal(EtaxByEmailSenderGate.From(settings!, hasTenantSender)) : null;
+        // ฝ่ายค้านข้อ 9: กฎที่จะส่งใบนี้จริง — มีกฎ "เมื่ออนุมัติเอกสาร" ครอบ ⇒ ส่งตามกฎนั้นเสมอ (อนุมัติมือหรืออัตโนมัติ · รายการประจำข้ามฝั่งตัวเอง WP-02) ·
+        // ไม่งั้นกฎ "เมื่อรายการประจำสร้างเอกสาร" · ไม่มีกฎ (ติ๊กส่งของรายการ) = ไม่มีสำเนาลับ
+        var sendTrigger = hasApprovedRule ? "DocumentApproved" : "RecurringInvoiceCreated";
         string? etaxSenderRefusal = null, etaxRecipientProblem = null;
         var etaxRecipientFromSchedule = false;
         if (etaxActive && etaxRoute.Channel == EtaxEmailChannel.EtaxByEmail)
         {
-            etaxSenderRefusal = EtaxByEmailSenderGate.Refusal(EtaxByEmailSenderGate.From(settings!, hasTenantSender));
+            etaxSenderRefusal = etaxGateRefusal;
             if (RecurringEmailReadiness.HasDeliverableEmail(contact?.Email))
             {
-                // ตารางที่จะส่งใบนี้จริง: อนุมัติอัตโนมัติ + กฎ "เมื่ออนุมัติเอกสาร" ครอบ ⇒ กฎนั้น · ไม่งั้นกฎ "เมื่อรายการประจำสร้างเอกสาร" · ไม่มีกฎ = ไม่มีสำเนาลับ
-                var sendTrigger = (r.AutoApprove || r.AutoSendEmail) && hasApprovedRule ? "DocumentApproved" : "RecurringInvoiceCreated";
                 var scheduleBcc = await _db.EmailScheduleRules.AsNoTracking()
                     .Where(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == sendTrigger
                         && (x.DocumentType == null || x.DocumentType == docType.ToString()) && x.BccEmails != null && x.BccEmails != "")
@@ -398,6 +464,16 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             }
         }
 
+        // ── ฝ่ายค้านข้อ 4: ใบเสร็จที่งานหลังรับชำระจะออก (อ้างใบชนิดนี้) — ขอบเขต e-Tax ตัวเดียวกัน (ใบเสร็จรับชำระใบกำกับ = ไม่ใช่ใบกำกับ) ──
+        string? postPayReceiptRefusal = null;
+        if (etaxActive && saleSide && etaxGateRefusal != null)
+        {
+            var receiptNotFull = vatTotal > 0.005m && TaxService.NotFullTaxInvoiceByDesign(vatTotal, buyerDeclined, contact);
+            var receiptScope = EtaxAutoIssueScope.Judge(DocumentType.Receipt, DocumentStatus.Approved, false, false, null, docType, null, receiptNotFull);
+            if (EtaxDeliveryRouter.Decide(settings!.EtaxEnabled, settings.EtaxMode, receiptScope, false).Channel == EtaxEmailChannel.EtaxByEmail)
+                postPayReceiptRefusal = etaxGateRefusal;
+        }
+
         // ── รอบ 251 (WP-07 · PAY-QR): QR บัญชีธนาคารบนเอกสาร — ตัวเลือกบัญชีเดียวกับกระดาษ (แหล่งเงินของใบ → บัญชีของใบ → เทมเพลต → บัญชีเดียวที่ตั้ง QR) ──
         var bankQrApplies = false;
         string? bankQrAccount = null, bankQrProblem = null;
@@ -405,7 +481,8 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         {
             var template = await PdfGenerationService.ResolveDocumentTemplateAsync(_db, companyId,
                 new Document { CompanyId = companyId, DocumentType = docType, VatAmount = vatTotal, Currency = currency }, null);
-            bankQrApplies = template.ShowPaymentQr && PaymentQrPolicy.IsBankQrDocument(docType, null, null, false);   // เทมเพลตยังไม่มีเอกสาร ⇒ ไม่รู้ฝั่ง (ใบเพิ่มหนี้ = ไม่มี QR) — เหมือน PaymentQrService ฝั่งเทมเพลต
+            // ฝ่ายค้านข้อ 8: ตัวตัดสินเดียวกับกระดาษ (ShowBankQr — เทมเพลต · ชนิด · สกุล · ใบอนุมัติแล้วที่ยังมียอดค้าง) · ใบเพิ่มหนี้ไม่รู้ฝั่ง = ไม่มี QR
+            bankQrApplies = PaymentQrPolicy.ShowBankQr(template.ShowPaymentQr, docType, null, null, false, DocumentStatus.Approved, total, currency);
             if (bankQrApplies)
             {
                 var (qrAccount, qrPick) = await PaymentQrService.PickDocumentAccountAsync(_db, _storage.Locator.AttachmentsRoot, companyId,
@@ -421,11 +498,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             platformQuota = await PlatformEmailQuota.ForCompanyAsync(_db, _config, companyId, DateTime.UtcNow, ct);
 
         // ── รอบ 251 (WP-07 · PERIOD): งวดบัญชีของวันที่เอกสาร (รอบค้าง ⇒ วันที่รันจริง = วันนี้) · กติกางวดปิดเดียว ClosedPeriodRanges ──
-        var periods = await _db.FiscalPeriods.AsNoTracking()
-            .Where(fp => fp.CompanyId == companyId)
-            .Select(fp => new { fp.StartDate, fp.EndDate, fp.Status })
-            .ToListAsync(ct);
-        var closedRanges = ClosedPeriodRanges.Build(periods.Select(p => (p.StartDate, p.EndDate, p.Status)));
+        var closedRanges = cf.ClosedRanges;
         var todayTh = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
         DateTime? nextDocDate = nextDates.Count > 0 ? (nextDates[0].Date < todayTh.Date ? todayTh.Date : nextDates[0].Date) : null;
         bool? nextPeriodClosed = nextDocDate is { } ndd ? ClosedPeriodRanges.Covers(closedRanges, ndd) : null;
@@ -435,7 +508,6 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         PostPaymentAutomationPolicy.Overrides? postPaySchedule = null;
         if (r.AutoSendEmail || hasRecurringRule || hasApprovedRule)
         {
-            var sendTrigger = (r.AutoApprove || r.AutoSendEmail) && hasApprovedRule ? "DocumentApproved" : "RecurringInvoiceCreated";
             var ruleOverrides = await _db.EmailScheduleRules.AsNoTracking()
                 .Where(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == sendTrigger
                     && (x.DocumentType == null || x.DocumentType == docType.ToString()))
@@ -449,7 +521,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             new PostPaymentAutomationPolicy.Overrides(r.PostPayEmailReceipt, r.PostPayIncludePartial),
             contact == null ? null : new PostPaymentAutomationPolicy.Overrides(contact.PostPayEmailReceipt, contact.PostPayIncludePartial));
 
-        var report = AutopilotReadiness.Evaluate(new AutopilotReadiness.Facts
+        var facts = new AutopilotReadiness.Facts
         {
             IsDocumentTemplate = isDocument,
             DocumentType = docType,
@@ -493,7 +565,10 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             LaterClosedRunDates = laterClosed,
             PostPayEmailReceipt = isDocument && saleSide ? postPay.EmailReceipt : null,
             PostPayIncludePartial = postPay.IncludePartial,
-        });
+            EtaxScopeUncertain = etaxUncertain,
+            PostPayReceiptEtaxRefusal = isDocument && saleSide && postPay.EmailReceipt ? postPayReceiptRefusal : null,
+        };
+        var report = AutopilotReadiness.Evaluate(facts);
         var readiness = new AutopilotReadinessResponse(report.Level, report.LevelLabel, report.Items, report.WarnCount, report.FailCount);
 
         var approvalOutcome = isDocument && nextPeriodClosed == true ? "จะสร้างเอกสารไม่ได้ — วันที่เอกสารอยู่ในงวดบัญชีที่ปิดแล้ว"
@@ -503,14 +578,22 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             : released.Count > 0 ? $"จะอนุมัติ — นโยบายปล่อย {released.Count} ข้อ (ลงหมายเหตุ + audit {AutoApprovePolicy.RuleCode})"
             : "จะอนุมัติ (ได้เลขที่จริงตอนอนุมัติ)";
         var etaxByEmail = etaxActive && etaxRoute.Channel == EtaxEmailChannel.EtaxByEmail;
-        var emailPlan = !r.AutoSendEmail ? "ไม่ส่งอีเมลอัตโนมัติ"
+        // ฝ่ายค้านข้อ 3: ส่งจริงเมื่อติ๊กส่ง หรือมีกฎในตารางส่ง (ตัวตัดสินเดียว AutopilotReadiness.WillEmail) · บอกว่าส่งตามอะไร
+        var willEmail = AutopilotReadiness.WillEmail(facts);
+        var autoApproves = r.AutoApprove || r.AutoSendEmail;
+        var via = hasApprovedRule ? " (ตามกฎ \"เมื่ออนุมัติเอกสาร\" ในตารางส่งอีเมล)"
+            : !r.AutoSendEmail ? " (ตามกฎ \"เมื่อรายการประจำสร้างเอกสาร\" ในตารางส่งอีเมล)" : "";
+        var whenSent = !autoApproves || blocking.Count > 0 ? "เมื่อมีคนอนุมัติใบร่าง " : "";
+        var etaxMaybe = etaxUncertain ? "ถ้ารูปแบบที่ออกตอนอนุมัติเป็นใบกำกับภาษี: " : "";
+        var emailPlan = !willEmail
+                ? (autoApproves && blocking.Count == 0 ? "ไม่ส่งอีเมลอัตโนมัติ" : "ไม่ส่งอีเมลอัตโนมัติ — ใบยังเป็นร่างจนกว่ามีคนอนุมัติ (เลขที่จริงออกตอนอนุมัติ §86/4)")
             : !RecurringEmailReadiness.HasDeliverableEmail(contact?.Email) ? RecurringEmailReadiness.NotSentNoEmail
-            : blocking.Count > 0 ? "ไม่ส่ง — ใบยังเป็นร่าง (เลขที่จริงออกตอนอนุมัติ §86/4)"
+            : blocking.Count > 0 && !hasApprovedRule ? "ไม่ส่ง — ใบยังเป็นร่าง (เลขที่จริงออกตอนอนุมัติ §86/4)"
             // รอบ 251 (WP-07 · DoD): ใบ e-Tax by Email ไม่มีทางถอยไปอีเมลของ NextAcc — บอกตามจริงว่าจะล้มที่ด่านไหน
-            : etaxByEmail && etaxSenderRefusal != null ? "จะล้มที่ด่านผู้ส่ง e-Tax by Email — อีเมลไม่ถูกส่ง: " + etaxSenderRefusal
-            : etaxByEmail && etaxRecipientProblem != null ? "จะล้มตอนส่ง (ผู้รับ e-Tax by Email): " + etaxRecipientProblem
-            : etaxByEmail ? "ส่งแบบ e-Tax by Email จากอีเมลบริษัทที่ลงทะเบียนกับกรมสรรพากร ถึง " + contact!.Email!.Trim() + " (สำเนาถึง ETDA เพื่อประทับเวลา)"
-            : (senderVerified ? "ส่งจากอีเมลบริษัท" : "ส่งผ่านอีเมลของ NextAcc ในนามบริษัท") + " ถึง " + contact!.Email!.Trim();
+            : etaxByEmail && etaxSenderRefusal != null ? whenSent + etaxMaybe + "จะล้มที่ด่านผู้ส่ง e-Tax by Email — อีเมลไม่ถูกส่ง: " + etaxSenderRefusal + via
+            : etaxByEmail && etaxRecipientProblem != null ? whenSent + etaxMaybe + "จะล้มตอนส่ง (ผู้รับ e-Tax by Email): " + etaxRecipientProblem + via
+            : etaxByEmail ? whenSent + etaxMaybe + "ส่งแบบ e-Tax by Email จากอีเมลบริษัทที่ลงทะเบียนกับกรมสรรพากร ถึง " + contact!.Email!.Trim() + " (สำเนาถึง ETDA เพื่อประทับเวลา)" + via
+            : whenSent + (senderVerified ? "ส่งจากอีเมลบริษัท" : "ส่งผ่านอีเมลของ NextAcc ในนามบริษัท") + " ถึง " + contact!.Email!.Trim() + via;
         var payPlan = !saleSide ? "ไม่มีลิงก์ชำระ (ไม่ใช่เอกสารเรียกเก็บเงิน)"
             : !choice.Attach ? $"ไม่แนบลิงก์ชำระ (ตาม{choice.Source})"
             : DocumentPayLinkPolicy.OnlineOnly(allowed).Count == 0 ? "ตั้งให้แนบ แต่ไม่มีช่องทางออนไลน์ที่บริษัทเปิด — จะไม่แนบ"

@@ -74,6 +74,18 @@ public static class EtaxAutoIssueScope
     public static bool DeclaredNotTaxInvoice(DocumentType type, bool? isTaxInvoiceByLaw)
         => IsTitleDecidedType(type) && isTaxInvoiceByLaw == false;
 
+    /// <summary>รอบ 251 (WP-07 ฝ่ายค้านข้อ 5): ทำนาย <c>IsTaxInvoiceByLaw</c> ของใบที่<b>ยังไม่ถูกสร้าง</b> (เทมเพลตรายการประจำ/ใบเสร็จหลังรับชำระ) —
+    /// ตัวโหลดจริง (<c>IssuedDocumentHooks.JudgeEtaxScopeAsync</c>) อ่านค่าที่ตรึงตอนอนุมัติ ซึ่งชนิดที่ <see cref="ReceiptFormRule.AppliesTo"/> ครอบ
+    /// (ใบเสร็จ · ใบกำกับที่เป็นหลักฐานรับเงิน) ถูกตัดสินจากรูปแบบใบเสร็จ ณ ตอนอนุมัติ (<c>DecideReceiptFormAsync</c> — อาจเป็นอย่างย่อ/ธรรมดา) ⇒ ทำนายไม่ได้ =
+    /// <c>Uncertain</c> (ผู้เรียกบอก "ตรวจตอนอนุมัติ" แทนการฟ้องแดง) · ใบกำกับขายเชื่อที่มี VAT = ใบกำกับเสมอ (พื้นบังคับของ
+    /// <see cref="TaxInvoiceSeriesPolicy.CarriesTaxInvoiceRole"/>) · ชนิดที่หัวไม่ได้ตัดสิน = null (ไม่ใช้ค่านี้)</summary>
+    public static (bool? ByLaw, bool Uncertain) PredictForUnissued(DocumentType type, decimal vatAmount, bool paysOnIssue = false)
+    {
+        if (!IsTitleDecidedType(type)) return (null, false);
+        if (ReceiptFormRule.AppliesTo(type, vatAmount, paysOnIssue)) return (null, true);
+        return type == DocumentType.TaxInvoice && vatAmount > 0.005m ? (true, false) : (null, true);
+    }
+
     /// <summary>ใบนี้ "ข้ามโดยเจตนา" ไหม — <see cref="EtaxAutoSkip.None"/> = ควรมี e-Tax (ออกไม่ได้ = ต้องดัง)</summary>
     /// <param name="relatedDocumentType">ชนิดของใบต้นทาง (<c>RelatedDocumentId</c>) · <c>null</c> = ไม่มี/ไม่รู้
     /// ⇒ ไม่ข้าม (ให้ตัวออก e-Tax ตัดสินแล้วดังถ้าขาดใบอ้างอิง — "ไม่รู้" ห้ามตกเป็น "เงียบ")</param>

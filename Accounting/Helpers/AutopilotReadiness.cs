@@ -88,6 +88,11 @@ public static class AutopilotReadiness
         public string? EtaxRecipientProblem { get; init; }
         /// <summary>ปัญหาผู้รับมาจากสำเนาลับ (BCC) ของตารางส่ง ⇒ ทางแก้ = หน้าตารางส่ง · false = จากอีเมลของผู้ติดต่อ</summary>
         public bool EtaxRecipientFromSchedule { get; init; }
+        /// <summary>ฝ่ายค้านข้อ 5: ชนิดนี้ตัดสิน "เป็นใบกำกับไหม" ตอนอนุมัติจากรูปแบบใบเสร็จ (<see cref="EtaxAutoIssueScope.PredictForUnissued"/>) ⇒ ทำนายไม่ได้ ·
+        /// ด่านผู้ส่ง/ผู้รับที่ไม่ผ่านแสดงเป็น ⓘ "ตรวจตอนอนุมัติ" (ไม่ฟ้องแดงหลอก)</summary>
+        public bool EtaxScopeUncertain { get; init; }
+        /// <summary>ฝ่ายค้านข้อ 4: ใบเสร็จที่งานหลังรับชำระจะออก (อ้างใบชนิดนี้) ต้องไปทาง e-Tax by Email แต่ด่านผู้ส่งปฏิเสธ — null = ผ่าน/ไม่เกี่ยว</summary>
+        public string? PostPayReceiptEtaxRefusal { get; init; }
 
         /// <summary>เอกสารชนิดนี้พิมพ์ QR บัญชีธนาคาร (เทมเพลตเปิด + ชนิดเข้า — <c>PaymentQrPolicy.IsBankQrDocument</c>) · false = ไม่ออกข้อ PAY-QR</summary>
         public bool BankQrApplies { get; init; }
@@ -140,6 +145,10 @@ public static class AutopilotReadiness
         LevelPartial => "Autopilot บางส่วน — มีขั้นที่ต้องมีคนทำ (ดูข้อ ⚠️/ⓘ)",
         _ => "สร้างใบร่างเท่านั้น — ต้องมีคนอนุมัติ/ส่งทุกงวด",
     };
+
+    /// <summary>ฝ่ายค้านข้อ 3: ใบของรายการนี้จะถูกส่งอีเมลอัตโนมัติไหม — กฎ "เมื่ออนุมัติเอกสาร" (อนุมัติมือหรืออัตโนมัติ) ·
+    /// หรืออนุมัติตอนสร้าง + (ติ๊กส่งของรายการ หรือกฎ "เมื่อรายการประจำสร้างเอกสาร") — ตัวเดียวกับเส้นเข้าคิว (<c>EmailScheduleService</c>)</summary>
+    public static bool WillEmail(Facts f) => f.ApprovedEmailRuleCovers || (f.AutoApprove && (f.AutoSendEmail || f.RecurringEmailRuleExists));
 
     public static Report Evaluate(Facts f)
     {
@@ -230,23 +239,32 @@ public static class AutopilotReadiness
 
         // รอบ 251 (WP-07 · B-17/F-06): ใบที่ต้องส่งแบบ e-Tax by Email ไม่มีทางถอยไปอีเมลของ NextAcc (ด่าน EtaxByEmailSenderGate) ⇒ ข้อ SMTP แบบเดิมไม่จริงสำหรับใบนี้ —
         // ผู้ส่งตัดสินที่ข้อ ETAX-SENDER แทน
-        var etaxEmail = f.EtaxChannel == EtaxEmailChannel.EtaxByEmail;
+        var etaxEmail = f.EtaxChannel == EtaxEmailChannel.EtaxByEmail && !f.EtaxScopeUncertain;
+        var willEmail = WillEmail(f);
         if (f.AutoSendEmail && !etaxEmail)
             Add("SMTP", "ส่ง", f.CompanySenderVerified ? Ok : Warn,
                 f.CompanySenderVerified ? "ส่งจากอีเมลของบริษัท (ทดสอบผ่านแล้ว)" : "ยังไม่ได้ตั้ง/ทดสอบอีเมลบริษัท — ระบบส่งผ่านอีเมลของ NextAcc ในนามบริษัท (มีเพดานต่อวัน)",
                 null, f.CompanySenderVerified ? null : EmailSettingsUrl, f.CompanySenderVerified ? null : "ตั้งค่าอีเมลบริษัท");
 
-        if (f.AutoSendEmail && f.EtaxChannel is { } channel)
+        // ฝ่ายค้านข้อ 3: ประเมินเมื่อใบจะถูกส่งจริง (ติ๊กส่ง หรือกฎในตารางส่ง) — ไม่ใช่เฉพาะติ๊กส่งของรายการ
+        if (willEmail && f.EtaxChannel is { } channel)
         {
             if (channel == EtaxEmailChannel.EtaxByEmail)
             {
-                Add("ETAX", "ส่ง", Ok, "ใบของรอบนี้ส่งแบบ e-Tax by Email (สำเนาถึง ETDA เพื่อประทับเวลา)", f.EtaxRouteReason);
+                // ฝ่ายค้านข้อ 5: รูปแบบใบเสร็จตัดสินตอนอนุมัติ ⇒ ไม่รู้แน่ว่าเป็นใบกำกับ — ด่านที่ไม่ผ่านเป็น ⓘ "ตรวจตอนอนุมัติ"
+                var unsure = f.EtaxScopeUncertain;
+                var failOrCheck = unsure ? Info : Fail;
+                Add("ETAX", "ส่ง", unsure ? Info : Ok, unsure
+                        ? "ตรวจตอนอนุมัติ — ถ้ารูปแบบที่ออกเป็นใบกำกับภาษี ใบของรอบนี้จะส่งแบบ e-Tax by Email (สำเนาถึง ETDA)"
+                        : "ใบของรอบนี้ส่งแบบ e-Tax by Email (สำเนาถึง ETDA เพื่อประทับเวลา)", f.EtaxRouteReason);
                 if (f.EtaxSenderRefusal != null)
-                    Add("ETAX-SENDER", "ส่ง", Fail, EtaxSenderFailTitle, f.EtaxSenderRefusal, EtaxSettingsUrl, "ตั้งค่า e-Tax / อีเมลบริษัท");
+                    Add("ETAX-SENDER", "ส่ง", failOrCheck, unsure ? "e-Tax by Email: ถ้าออกเป็นใบกำกับ จะล้มที่ด่านผู้ส่ง (ตรวจตอนอนุมัติ)" : EtaxSenderFailTitle,
+                        f.EtaxSenderRefusal, EtaxSettingsUrl, "ตั้งค่า e-Tax / อีเมลบริษัท");
                 else
                     Add("ETAX-SENDER", "ส่ง", Ok, "ผู้ส่ง e-Tax by Email พร้อม — ส่งจากอีเมลที่ลงทะเบียนกับกรมสรรพากร (ทดสอบผ่านแล้ว)");
                 if (f.EtaxRecipientProblem != null)
-                    Add("ETAX-RECIPIENT", "ส่ง", Fail, "e-Tax by Email: ผู้รับไม่ตรงกติกา — อีเมลของรอบนี้จะล้มตอนส่ง", f.EtaxRecipientProblem,
+                    Add("ETAX-RECIPIENT", "ส่ง", failOrCheck, unsure ? "e-Tax by Email: ถ้าออกเป็นใบกำกับ ผู้รับไม่ตรงกติกา (ตรวจตอนอนุมัติ)"
+                            : "e-Tax by Email: ผู้รับไม่ตรงกติกา — อีเมลของรอบนี้จะล้มตอนส่ง", f.EtaxRecipientProblem,
                         f.EtaxRecipientFromSchedule ? EmailScheduleUrl : f.ContactId is { } rcid ? RecurringEmailReadiness.ContactUrl(rcid) : null,
                         f.EtaxRecipientFromSchedule ? "แก้สำเนาลับในตารางส่ง" : "แก้อีเมลที่หน้าผู้ติดต่อ");
                 else if (RecurringEmailReadiness.HasDeliverableEmail(f.ContactEmail))
@@ -319,7 +337,12 @@ public static class AutopilotReadiness
         }
 
         // ── รอบ 251 (WP-07 · POSTPAY): หลังรับชำระ (ชั้น ตาราง › รายการ › ผู้ติดต่อ › บริษัท — PostPaymentAutomationPolicy.EffectiveLayers) · ปิด ⇒ ⓘ (ระดับบางส่วน) ──
-        if (f.SaleSide && f.PostPayEmailReceipt is bool postPay)
+        // ฝ่ายค้านข้อ 4: ใบเสร็จหลังรับชำระของบริษัทโหมด e-Tax by Email ไปทาง e-Tax — ด่านผู้ส่งปฏิเสธ ⇒ งานหลังรับชำระจะล้มตอนส่ง
+        // (⚠️ ไม่ใช่ ❌: รูปแบบใบเสร็จตัดสินตอนออก — ฝ่ายค้านข้อ 5)
+        if (f.SaleSide && f.PostPayEmailReceipt == true && f.PostPayReceiptEtaxRefusal != null)
+            Add("POSTPAY", "หลังรับเงิน", Warn, "หลังรับชำระ ใบเสร็จ(-ใบกำกับ) จะต้องส่งแบบ e-Tax by Email แต่ด่านผู้ส่งยังไม่ผ่าน — งานส่งใบเสร็จจะล้ม",
+                f.PostPayReceiptEtaxRefusal, EtaxSettingsUrl, "ตั้งค่า e-Tax / อีเมลบริษัท");
+        else if (f.SaleSide && f.PostPayEmailReceipt is bool postPay)
             Add("POSTPAY", "หลังรับเงิน", postPay ? Ok : Info,
                 postPay
                     ? "หลังรับชำระ ระบบออก/ส่งใบเสร็จถึงลูกค้าอัตโนมัติ — " + (f.PostPayIncludePartial ? "ทุกงวดที่รับ (รวมชำระบางส่วน)" : "เฉพาะงวดที่ชำระครบ")
