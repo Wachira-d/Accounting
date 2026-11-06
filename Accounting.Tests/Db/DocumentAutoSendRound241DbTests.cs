@@ -1,5 +1,6 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs.Document;
+using Accounting.Models.DTOs.Integration;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
@@ -149,9 +150,9 @@ public class DocumentAutoSendRound241DbTests
         var rec = await AddReceiptAsync(db, s);
         var (svc, sender, notify, calls) = Automation(db, s);
 
-        Assert.True(await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, "gateway", "payment-gateway"));
-        Assert.False(await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, "gateway", "payment-gateway"));   // webhook ซ้ำ
-        Assert.False(await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, "manual", null));
+        Assert.True(await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, PaymentEntrySource.Gateway, "payment-gateway"));
+        Assert.False(await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, PaymentEntrySource.Gateway, "payment-gateway"));   // webhook ซ้ำ
+        Assert.False(await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, PaymentEntrySource.Manual, null));
         var run = await RunOfAsync(db, s);
 
         await svc.ProcessRunAsync(run.Id, default);
@@ -179,7 +180,7 @@ public class DocumentAutoSendRound241DbTests
         if (db == null) { _out.WriteLine(Skip); return; }
         var s = await SeedAsync(db, "issue " + Guid.NewGuid().ToString("N")[..6]);
         var (svc, sender, _, calls) = Automation(db, s);
-        await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, "manual", Guid.NewGuid().ToString());
+        await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, PaymentEntrySource.Manual, Guid.NewGuid().ToString());
         await svc.ProcessRunAsync((await RunOfAsync(db, s)).Id, default);
         db.ChangeTracker.Clear();
         var run = await RunOfAsync(db, s);
@@ -199,7 +200,7 @@ public class DocumentAutoSendRound241DbTests
         if (db == null) { _out.WriteLine(Skip); return; }
         var s = await SeedAsync(db, "buyer " + Guid.NewGuid().ToString("N")[..6], buyerComplete: false);
         var (svc, sender, notify, calls) = Automation(db, s);
-        await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, "gateway", null);
+        await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, PaymentEntrySource.Gateway, null);
         await svc.ProcessRunAsync((await RunOfAsync(db, s)).Id, default);
         db.ChangeTracker.Clear();
         var run = await RunOfAsync(db, s);
@@ -222,7 +223,7 @@ public class DocumentAutoSendRound241DbTests
         if (db == null) { _out.WriteLine(Skip); return; }
         var s = await SeedAsync(db, "void " + Guid.NewGuid().ToString("N")[..6], invoiceStatus: DocumentStatus.Voided);
         var (svc, sender, _, _) = Automation(db, s);
-        await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, "gateway", null);
+        await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, PaymentEntrySource.Gateway, null);
         await svc.ProcessRunAsync((await RunOfAsync(db, s)).Id, default);
         db.ChangeTracker.Clear();
         Assert.Equal(PostPaymentAutomationPolicy.StatusSkipped, (await RunOfAsync(db, s)).Status);
@@ -230,7 +231,7 @@ public class DocumentAutoSendRound241DbTests
 
         var off = await SeedAsync(db, "off " + Guid.NewGuid().ToString("N")[..6], emailReceipt: false);
         var (svcOff, _, _, _) = Automation(db, off);
-        Assert.False(await svcOff.EnqueueAsync(off.CompanyId, off.Payment.Id, "gateway", null));
+        Assert.False(await svcOff.EnqueueAsync(off.CompanyId, off.Payment.Id, PaymentEntrySource.Gateway, null));
         Assert.False(await db.PostPaymentAutomationRuns.AnyAsync(r => r.CompanyId == off.CompanyId));
     }
 
@@ -250,8 +251,8 @@ public class DocumentAutoSendRound241DbTests
         });
         await db.SaveChangesAsync();
         var (svc, _, _, _) = Automation(db, s);
-        await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, "gateway", null);
-        Assert.False(await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, "gateway", null));   // webhook ซ้ำ
+        await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, PaymentEntrySource.Gateway, null);
+        Assert.False(await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, PaymentEntrySource.Gateway, null));   // webhook ซ้ำ
         await svc.ProcessRunAsync((await RunOfAsync(db, s)).Id, default);
         db.ChangeTracker.Clear();
         Assert.Equal(1, await db.WhtCreditsReceived.CountAsync(w => w.CompanyId == s.CompanyId && w.DocumentId == s.Invoice.Id));
@@ -262,7 +263,7 @@ public class DocumentAutoSendRound241DbTests
         await AddReceiptAsync(db, s2);
         await db.Payments.Where(p => p.Id == s2.Payment.Id).ExecuteUpdateAsync(x => x.SetProperty(p => p.WithholdingTaxAmount, 30m));
         var (svc2, sender2, _, _) = Automation(db, s2);
-        await svc2.EnqueueAsync(s2.CompanyId, s2.Payment.Id, "gateway", null);
+        await svc2.EnqueueAsync(s2.CompanyId, s2.Payment.Id, PaymentEntrySource.Gateway, null);
         await svc2.ProcessRunAsync((await RunOfAsync(db, s2)).Id, default);
         db.ChangeTracker.Clear();
         Assert.Equal(0, await db.WhtCreditsReceived.CountAsync(w => w.CompanyId == s2.CompanyId));
@@ -378,7 +379,7 @@ public class DocumentAutoSendRound241DbTests
         Assert.Equal(rule.Id, doc.AutoSendRuleId);
         // ตารางนี้ทับค่าบริษัท: ไม่ส่งใบเสร็จหลังชำระ ⇒ ไม่สร้างงาน
         var (svc, _, _, _) = Automation(db, s);
-        Assert.False(await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, "gateway", null));
+        Assert.False(await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, PaymentEntrySource.Gateway, null));
         // ฝ่ายค้าน S1: คิวไม่มี token ตรง (เก็บที่หมาย {PayLink}) — URL ประกอบตอนส่ง
         Assert.DoesNotContain("t=", q.Body);
         Assert.Contains(DocumentPayLinkPolicy.QueuePlaceholder, q.Body);
@@ -456,10 +457,10 @@ public class DocumentAutoSendRound241DbTests
         ConfirmedAt = DateTime.UtcNow, IdempotencyKey = "idem-" + Guid.NewGuid().ToString("N"),
     };
 
-    private static Accounting.Services.Payments.Handlers.DocumentPaymentHandler Handler(Accounting.Data.AccountingDbContext db,
-        IPostPaymentAutomationService? postPay = null)
+    // รอบ 250 (WP-02 §2.1): handler ไม่รับ IPostPaymentAutomationService แล้ว — งานหลังรับชำระเข้าคิวในแกน CreatePaymentAsync (source: Gateway)
+    private static Accounting.Services.Payments.Handlers.DocumentPaymentHandler Handler(Accounting.Data.AccountingDbContext db)
         => new(db, DocSvc(db), F4Proxy<IGatewayAccountResolver>.Create((_, _) => null),
-            NullLogger<Accounting.Services.Payments.Handlers.DocumentPaymentHandler>.Instance, postPay);
+            NullLogger<Accounting.Services.Payments.Handlers.DocumentPaymentHandler>.Instance);
 
     [Fact]
     public async Task handler_เส้นเต็ม_ยอดสุทธิ_บันทึก_WHT_ถูก_ปิดหนี้_JE_สมดุล_ทะเบียนรอ50ทวิ_1_แถว()
@@ -615,7 +616,7 @@ public class DocumentAutoSendRound241DbTests
         var s = await SeedAsync(db, "retry " + Guid.NewGuid().ToString("N")[..6]);
         var (svc, sender, _, calls) = Automation(db, s);
         sender.Succeed = false;
-        await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, "gateway", null);
+        await svc.EnqueueAsync(s.CompanyId, s.Payment.Id, PaymentEntrySource.Gateway, null);
         var runId = (await RunOfAsync(db, s)).Id;
         await svc.ProcessRunAsync(runId, default);
         db.ChangeTracker.Clear();
@@ -709,5 +710,173 @@ public class DocumentAutoSendRound241DbTests
         Assert.Null(r.Log);
         Assert.Equal("<b>เนื้อเดิม</b>", r.Message!.HtmlBody);
         Assert.Equal(5, r.Message.Bcc.Count);
+    }
+
+    // ═══════════════ รอบ 250 (WP-02 · AUDIT_249_FOR_OPUS §4) ═══════════════
+
+    private static async Task<PostPaymentAutomationRun?> RunOrNullAsync(Accounting.Data.AccountingDbContext db, Seed s)
+        => await db.PostPaymentAutomationRuns.AsNoTracking().SingleOrDefaultAsync(r => r.CompanyId == s.CompanyId && r.PaymentId == s.Payment.Id);
+
+    [Fact]
+    public async Task นำเข้ารับชำระCSV_มีแถวงานหลังรับชำระ_Settlement_มีแถวงาน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        foreach (var source in new[] { PaymentEntrySource.Import, PaymentEntrySource.Settlement, PaymentEntrySource.Integration })
+        {
+            var s = await SeedAsync(db, "r250-" + source + " " + Guid.NewGuid().ToString("N")[..6]);
+            Assert.True(await PostPaymentAutomationService.EnqueueCoreAsync(db, NullLogger.Instance, s.CompanyId, s.Payment.Id, source, null, default));
+            var run = await RunOrNullAsync(db, s);
+            Assert.NotNull(run);
+            Assert.Equal(PostPaymentAutomationPolicy.StatusPending, run!.Status);
+            Assert.Equal(source.ToString(), run.Source);
+        }
+    }
+
+    [Fact]
+    public async Task CMS_มีแถวSkippedพร้อมเหตุ_ไม่ออกใบเสร็จซ้ำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "r250-cms " + Guid.NewGuid().ToString("N")[..6]);
+        Assert.True(await PostPaymentAutomationService.EnqueueCoreAsync(db, NullLogger.Instance, s.CompanyId, s.Payment.Id, PaymentEntrySource.Cms, null, default));
+        var run = (await RunOrNullAsync(db, s))!;
+        Assert.Equal(PostPaymentAutomationPolicy.StatusSkipped, run.Status);
+        Assert.Contains("มีเส้นออกใบเสร็จของตัวเอง", run.Message);
+        Assert.NotNull(run.CompletedAt);
+        // ตัวประมวลผลไม่หยิบแถว Skipped ⇒ ไม่ออก/ไม่ส่ง
+        var (svc, sender, _, calls) = Automation(db, s);
+        await svc.ProcessRunAsync(run.Id, default);
+        Assert.Empty(sender.Sent);
+        Assert.DoesNotContain(nameof(IDocumentService.IssueReceiptForPaymentAsync), calls);
+    }
+
+    [Fact]
+    public async Task MultiDoc_ไม่สร้างแถว_ปิดค่าตั้ง_ไม่สร้างแถว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "r250-multi " + Guid.NewGuid().ToString("N")[..6]);
+        Assert.False(await PostPaymentAutomationService.EnqueueCoreAsync(db, NullLogger.Instance, s.CompanyId, s.Payment.Id, PaymentEntrySource.MultiDoc, null, default));
+        Assert.Null(await RunOrNullAsync(db, s));
+        var off = await SeedAsync(db, "r250-off " + Guid.NewGuid().ToString("N")[..6], emailReceipt: false);
+        Assert.False(await PostPaymentAutomationService.EnqueueCoreAsync(db, NullLogger.Instance, off.CompanyId, off.Payment.Id, PaymentEntrySource.Cms, null, default));
+        Assert.Null(await RunOrNullAsync(db, off));
+    }
+
+    private static async Task<Guid> RecurringOfAsync(Accounting.Data.AccountingDbContext db, Seed s, bool? postPayEmail)
+    {
+        var rec = new RecurringTransaction
+        {
+            CompanyId = s.CompanyId, Name = "รายการประจำ 250", Frequency = RecurringFrequency.Monthly, StartDate = DateTime.UtcNow.Date,
+            NextRunDate = DateTime.UtcNow.Date.AddMonths(1), TemplateType = "Document", DocumentType = DocumentType.Invoice, ContactId = s.ContactId,
+            TemplateData = "{}", PostPayEmailReceipt = postPayEmail,
+        };
+        db.RecurringTransactions.Add(rec);
+        await db.SaveChangesAsync();
+        await db.Documents.Where(d => d.Id == s.Invoice.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.RecurringTransactionId, (Guid?)rec.Id));
+        return rec.Id;
+    }
+
+    [Fact]
+    public async Task R248_ค่าตั้งต่อรายการปิด_ไม่ออกใบเสร็จแม้บริษัทเปิด_ทิศตรงข้ามInheritตามบริษัท()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var off = await SeedAsync(db, "r250-recoff " + Guid.NewGuid().ToString("N")[..6], emailReceipt: true);
+        await RecurringOfAsync(db, off, postPayEmail: false);
+        Assert.False((await PostPaymentAutomationService.SettingsForAsync(db, off.CompanyId, off.Invoice.Id, default)).EmailReceipt);
+        Assert.False(await PostPaymentAutomationService.EnqueueCoreAsync(db, NullLogger.Instance, off.CompanyId, off.Payment.Id, PaymentEntrySource.Manual, null, default));
+        Assert.Null(await RunOrNullAsync(db, off));
+
+        var inherit = await SeedAsync(db, "r250-recinh " + Guid.NewGuid().ToString("N")[..6], emailReceipt: true);
+        await RecurringOfAsync(db, inherit, postPayEmail: null);
+        Assert.True(await PostPaymentAutomationService.EnqueueCoreAsync(db, NullLogger.Instance, inherit.CompanyId, inherit.Payment.Id, PaymentEntrySource.Manual, null, default));
+        // ผู้ติดต่อปิด ⇒ ทับบริษัท (รายการไม่ได้ตั้ง)
+        var contactOff = await SeedAsync(db, "r250-ctoff " + Guid.NewGuid().ToString("N")[..6], emailReceipt: true);
+        await db.Contacts.Where(c => c.Id == contactOff.ContactId).ExecuteUpdateAsync(x => x.SetProperty(c => c.PostPayEmailReceipt, (bool?)false));
+        Assert.False((await PostPaymentAutomationService.SettingsForAsync(db, contactOff.CompanyId, contactOff.Invoice.Id, default)).EmailReceipt);
+    }
+
+    [Fact]
+    public async Task handler_เข้าคิวงานหลังรับชำระในแกนCreatePaymentAsync_แหล่งGateway_webhookซ้ำไม่เพิ่ม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (cid, inv) = await SaleSeedAsync(db, Guid.NewGuid().ToString("N")[..6]);
+        var intent = NetIntent(cid, inv.Id, 1_040m);
+        await Handler(db).HandleSucceededAsync(intent);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var run = await check.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.CompanyId == cid && r.DocumentId == inv.Id);
+        Assert.Equal(nameof(PaymentEntrySource.Gateway), run.Source);
+        Assert.Equal(PostPaymentAutomationPolicy.StatusPending, run.Status);
+        // ทะเบียนรอ 50 ทวิ มีก่อนแถวงาน (Sync ในธุรกรรม → เข้าคิวหลัง commit)
+        Assert.Equal(1, await check.WhtCreditsReceived.CountAsync(w => w.CompanyId == cid && w.DocumentId == inv.Id));
+        await Handler(check).HandleSucceededAsync(intent);
+        Assert.Equal(1, await check.PostPaymentAutomationRuns.CountAsync(r => r.CompanyId == cid && r.DocumentId == inv.Id));
+    }
+
+    [Fact]
+    public async Task PublicView_INVที่ออกใบกำกับแล้ว_ลิงก์เดิมใช้ไม่ได้_บอกเลขใบกำกับ_ยกเลิกใบกำกับแล้วใช้ได้อีก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (links, s) = await LinkSeedAsync(db, "r250-tiv " + Guid.NewGuid().ToString("N")[..6]);
+        var token = TokenOf((await links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, null)).Url!);
+        Assert.True((await links.PublicViewAsync(s.CompanyId, token))!.CanPayOnline);
+        var tiv = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.TaxInvoice, DocumentNumber = "TIV250-" + Random.Shared.Next(100000, 999999),
+            Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date, RelatedDocumentId = s.Invoice.Id,
+            SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_040m, WithholdingTaxAmount = 30m, BalanceDue = 1_040m, Currency = "THB",
+        };
+        db.Documents.Add(tiv);
+        await db.SaveChangesAsync();
+        var v = (await links.PublicViewAsync(s.CompanyId, token))!;
+        Assert.False(v.CanPayOnline);
+        Assert.Contains(tiv.DocumentNumber, v.BlockedNote);
+        Assert.Equal(0m, v.Target.AmountDue);
+        Assert.Contains(tiv.DocumentNumber, (await links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, null)).Refusal);
+        // ทิศตรงข้าม: ยกเลิกใบกำกับ ⇒ ลิงก์ของใบแจ้งหนี้กลับมาใช้ได้ (ตัดสินสด)
+        await db.Documents.Where(d => d.Id == tiv.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.Status, DocumentStatus.Voided));
+        Assert.True((await links.PublicViewAsync(s.CompanyId, token))!.CanPayOnline);
+    }
+
+    [Fact]
+    public async Task ผู้ซื้อบุคคลธรรมดาและใบมีWHT_มีคำเตือนตอนอนุมัติ_นิติบุคคลไม่เตือน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (cid, inv) = await SaleSeedAsync(db, Guid.NewGuid().ToString("N")[..6]);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.DoesNotContain(await DocSvc(req).PreviewApprovalWarningsAsync(cid, inv.Id), w => w.Contains("ไม่มีหน้าที่หัก"));
+        await db.Contacts.Where(c => c.Id == inv.ContactId).ExecuteUpdateAsync(x => x
+            .SetProperty(c => c.ContactType, ContactType.Individual).SetProperty(c => c.TaxId, "1101700207030"));
+        using var req2 = DbTestDatabase.TryCreateContext()!;
+        var warn = Assert.Single(await DocSvc(req2).PreviewApprovalWarningsAsync(cid, inv.Id), w => w.Contains("ไม่มีหน้าที่หัก"));
+        Assert.StartsWith(WhtCertIssuePlan.ApprovalWarningPrefix, warn);
+    }
+
+    // AUDIT_249_COVERAGE M-3: ทางเข้าที่ 9 — integration บันทึกการชำระเอง แล้วเรียกขั้นหลัง commit ตัวเดียวกับ CreatePaymentAsync
+    [Fact]
+    public async Task Integration_รับชำระ_มีแถวงานหลังรับชำระ_แหล่งIntegration_และทะเบียน50ทวิ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (cid, inv) = await SaleSeedAsync(db, Guid.NewGuid().ToString("N")[..6]);
+        var integration = new ExternalIntegration { CompanyId = cid, SystemName = "TakeTime", SystemType = "PMS" };
+        db.Set<ExternalIntegration>().Add(integration);
+        await db.SaveChangesAsync();
+        InboundSyncResponse res;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            res = await new IntegrationService(req, null!, NullLogger<IntegrationService>.Instance, null!, null!, null!, documentService: DocSvc(req))
+                .ProcessPaymentAsync(cid, integration.Id, new InboundPaymentRequest(
+                    ExternalId: "EXT-250", ExternalRef: "REF-250", InvoiceExternalRef: null, DocumentId: inv.Id, CustomerExternalId: null, CustomerName: null,
+                    PaymentDate: DateTime.UtcNow.Date, Amount: 1_040m, PaymentMethod: "Cash", BankAccountName: null, ReferenceNo: "REF-250-" + Guid.NewGuid().ToString("N")[..6],
+                    SlipUrl: null, Notes: null));
+        Assert.True(res.Success, res.Message);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var run = await check.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.CompanyId == cid && r.DocumentId == inv.Id);
+        Assert.Equal(nameof(PaymentEntrySource.Integration), run.Source);
     }
 }

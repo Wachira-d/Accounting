@@ -68,6 +68,13 @@ public static class AutopilotReadiness
         public string? PolicyInactiveReason { get; init; }
         /// <summary>เหตุผลที่สร้างเอกสารไม่ได้เลย (ตัวตรวจเทมเพลตเดิม) · null = สร้างได้</summary>
         public string? TemplateError { get; init; }
+        /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 2 · คำตัดสิน §2 #9/Y7): ตั้ง URL ของระบบแล้วจริงไหม (<see cref="SystemBaseUrl.IsConfigured"/> — ค่าที่มากับซอร์ส ≠ ตั้งแล้ว) ·
+        /// false ⇒ ลิงก์ชำระ/QR/ลิงก์ในอีเมล-LINE ไม่ถูกแนบ · null = ผู้เรียกไม่ได้ตรวจ (ไม่ตัดสิน)</summary>
+        public bool? SystemBaseUrlConfigured { get; init; }
+        /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 3 · คำตัดสิน §2 #10): มีกฎ "เมื่ออนุมัติเอกสาร" ที่ใช้งานอยู่ครอบชนิดเอกสารนี้</summary>
+        public bool ApprovedEmailRuleCovers { get; init; }
+        /// <summary>มีกฎ "เมื่อรายการประจำสร้างเอกสาร" ครอบชนิดเอกสารนี้</summary>
+        public bool RecurringEmailRuleExists { get; init; }
     }
 
     public sealed record Item(string Code, string Stage, string Verdict, string Title, string? Why, string? FixUrl, string? FixLabel);
@@ -75,6 +82,10 @@ public static class AutopilotReadiness
     public sealed record Report(string Level, string LevelLabel, IReadOnlyList<Item> Items, int WarnCount, int FailCount);
 
     public const string PaymentSettingsUrl = "/pages/payment-settings.html";
+    /// <summary>รอบ 250: หน้าตั้ง URL ของระบบ (ผู้ดูแลระบบเท่านั้น)</summary>
+    public const string SystemSettingsUrl = "/admin/site-settings.html";
+    public const string EmailScheduleUrl = "/pages/email-schedule.html";
+    public const string SystemBaseUrlMissingTitle = "ยังไม่ได้ตั้ง URL ของระบบ — ลิงก์ชำระ/QR จะไม่ถูกแนบในอีเมล";
     public const string EmailSettingsUrl = "/pages/settings.html#email";
     /// <summary>ทางไปต่อภายในฟอร์ม — หน้ารายการประจำเปิดขั้น "อนุมัติ" ของ wizard</summary>
     public const string PolicyStepUrl = "#step-approve";
@@ -165,6 +176,13 @@ public static class AutopilotReadiness
                 f.CompanySenderVerified ? "ส่งจากอีเมลของบริษัท (ทดสอบผ่านแล้ว)" : "ยังไม่ได้ตั้ง/ทดสอบอีเมลบริษัท — ระบบส่งผ่านอีเมลของ NextAcc ในนามบริษัท (มีเพดานต่อวัน)",
                 null, f.CompanySenderVerified ? null : EmailSettingsUrl, f.CompanySenderVerified ? null : "ตั้งค่าอีเมลบริษัท");
 
+        // รอบ 250 (WP-02 §2.4 ข้อ 3 · คำตัดสิน §2 #10): สองกฎครอบใบเดียวกัน — ระบบส่งตามกฎ "เมื่ออนุมัติเอกสาร" ฉบับเดียว (ข้ามฝั่งรายการประจำ) · บอกให้รู้ว่าค่าไหนมีผล
+        if (f.AutoApprove && (f.AutoSendEmail || f.RecurringEmailRuleExists) && f.ApprovedEmailRuleCovers)
+            Add("EMAIL-RULES", "ส่ง", Warn, "มีกฎส่งทั้งสองแบบ — ระบบส่งตามกฎ \"เมื่ออนุมัติเอกสาร\" ฉบับเดียว",
+                "การอนุมัติอัตโนมัติเข้าคิวตามกฎ \"เมื่ออนุมัติเอกสาร\" แล้ว ⇒ การส่งอัตโนมัติของรายการนี้/กฎ \"เมื่อรายการประจำสร้างเอกสาร\" ไม่ส่งซ้ำ "
+                + "(ช่องทางรับเงิน/เวลาส่งของรายการนี้ไม่มีผลกับฉบับที่ส่ง) — ถ้าต้องการให้รายการนี้คุม ให้ปิดกฎ \"เมื่ออนุมัติเอกสาร\" ของชนิดนี้",
+                EmailScheduleUrl, "เปิดตารางส่งอีเมล");
+
         // ── รับเงิน ──
         if (!f.SaleSide)
             Add("GATEWAY", "รับเงิน", Info, "เอกสารชนิดนี้ไม่ใช่เอกสารเรียกเก็บเงินจากลูกค้า — ไม่มีลิงก์ชำระ");
@@ -176,6 +194,11 @@ public static class AutopilotReadiness
                     ? "ตั้งให้ลูกค้าโอนเข้าบัญชี — ไม่แนบลิงก์ชำระออนไลน์ (ลูกค้าโอนตามบัญชี/QR บนเอกสาร · คนบันทึกรับชำระ)"
                     : $"ไม่แนบลิงก์ชำระในอีเมล (ตาม{f.PayLinkSource}) — ลูกค้าจ่ายช่องทางอื่น แล้วคนบันทึกรับชำระ",
                 null, PaymentStepUrl, "ตั้งช่องทางรับเงิน");
+        else if (f.SystemBaseUrlConfigured == false)
+            // รอบ 250 (WP-02 §2.4 ข้อ 2 · Y7): ไม่เดาโดเมน — ลิงก์ไม่ถูกแนบ (อีเมลยังส่ง) · ทางไปต่อ = ผู้ดูแลระบบตั้ง URL
+            Add("GATEWAY", "รับเงิน", Warn, SystemBaseUrlMissingTitle,
+                "ลิงก์ชำระสร้างจาก URL ของระบบ — ยังไม่ได้ตั้ง (หรือยังเป็นค่าที่มากับโปรแกรม) ⇒ อีเมลส่งได้แต่ไม่มีลิงก์/QR ชำระ · แจ้งผู้ดูแลระบบให้ตั้งที่หน้าแอดมิน → ตั้งค่าระบบ",
+                SystemSettingsUrl, "ตั้ง URL ของระบบ (ผู้ดูแลระบบ)");
         else if (f.PayLinkUnavailableReason != null)
             Add("GATEWAY", "รับเงิน", Warn, "ตั้งให้แนบลิงก์ชำระ แต่บริษัทยังรับชำระออนไลน์ไม่ได้", f.PayLinkUnavailableReason,
                 PaymentSettingsUrl, "ตั้งค่ารับชำระเงินออนไลน์");

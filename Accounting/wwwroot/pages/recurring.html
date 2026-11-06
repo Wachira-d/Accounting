@@ -196,11 +196,21 @@
             <div id="fPayModeHint" style="margin-top:4px;font-size:11px;color:#64748b"></div>
             <div id="fPayModeWarn" style="display:none;margin-top:4px;font-size:11px;color:#b45309"></div>
           </div>
+          <!-- รอบ 250 (WP-02 B-13): งานหลังรับชำระต่อรายการ (ตาราง › รายการ › ผู้ติดต่อ › บริษัท) — ตัวเลือก/ป้ายจากเซิร์ฟเวอร์ -->
+          <div class="form-group">
+            <label class="form-label" for="fPostPayEmail">หลังลูกค้าชำระใบของรายการนี้</label>
+            <select class="form-select" id="fPostPayEmail" onchange="Page.refreshReadiness()"></select>
+            <select class="form-select" id="fPostPayPartial" style="margin-top:6px" onchange="Page.refreshReadiness()"></select>
+          </div>
           <div class="form-group" id="fContactPayGroup" style="display:none;padding:8px 10px;border:1px dashed #cbd5e1;border-radius:8px">
             <label class="form-label" for="fCustPayMode" style="font-weight:normal">ค่าตั้งของผู้ติดต่อนี้ (ใช้กับทุกเอกสารของลูกค้ารายนี้ เมื่อรายการ/ตารางส่งไม่ได้ตั้งเอง)</label>
             <div style="display:flex;gap:6px;align-items:center">
               <select class="form-select" id="fCustPayMode"></select>
               <button type="button" class="btn btn-sm btn-secondary" onclick="Page.saveContactPayMode()">บันทึกที่ผู้ติดต่อ</button>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <select class="form-select" id="fCustPostPayEmail" aria-label="หลังชำระ: ส่งใบเสร็จ (ผู้ติดต่อ)"></select>
+              <select class="form-select" id="fCustPostPayPartial" aria-label="หลังชำระ: ส่งทุกงวด (ผู้ติดต่อ)"></select>
             </div>
           </div>
           </div>
@@ -293,6 +303,11 @@ const Page = {
     const cpm = document.getElementById('fCustPayMode');
     if (cpm) { cpm.innerHTML = modeOpts || '<option value="">ตามค่าชั้นถัดไป</option>'; cpm.disabled = !this._apOpts; }
     for (const id of ['fPolicySaveBtn', 'fPolicyContactBtn']) { const b = document.getElementById(id); if (b && !this._apOpts) b.disabled = true; }
+    // รอบ 250 (WP-02 B-13): ตัวเลือกงานหลังรับชำระ (ชื่อ Inherit|On|Off · ป้ายจากเซิร์ฟเวอร์)
+    const triOpts = list => (list || []).map(o => `<option value="${Layout.esc(o.code)}">${Layout.esc(o.label)}</option>`).join('')
+      || '<option value="Inherit">ตามค่าชั้นถัดไป</option>';
+    ['fPostPayEmail', 'fCustPostPayEmail'].forEach(id => { const el = document.getElementById(id); if (el) { el.innerHTML = triOpts(this._apOpts && this._apOpts.postPayEmailOptions); el.disabled = !this._apOpts; } });
+    ['fPostPayPartial', 'fCustPostPayPartial'].forEach(id => { const el = document.getElementById(id); if (el) { el.innerHTML = triOpts(this._apOpts && this._apOpts.postPayPartialOptions); el.disabled = !this._apOpts; } });
   },
 
   goStep(n) {
@@ -314,6 +329,9 @@ const Page = {
         if (!this._apOpts) this._setSavedRefWarning('fPayModeWarn', `ค่าที่บันทึกไว้ (${r.paymentMode}) จะคงเดิม — โหลดตัวเลือกไม่สำเร็จ ช่องนี้จึงถูกล็อก`);
       }
     }
+    // รอบ 250 (WP-02 B-13): hydrate ค่าตั้งงานหลังรับชำระ (ฟอร์มใหม่ = Inherit — ห้ามค้างค่ารายการก่อน)
+    const ppe = document.getElementById('fPostPayEmail'); if (ppe) ppe.value = r.postPayEmailReceipt || 'Inherit';
+    const ppp = document.getElementById('fPostPayPartial'); if (ppp) ppp.value = r.postPayIncludePartial || 'Inherit';
     this._renderPayChannels(r.payLinkChannels || []);
     this._editingPolicy = r.autoApprovePolicy || null;
     this._policyDirty = false;
@@ -365,6 +383,8 @@ const Page = {
     if (grp) grp.style.display = this._contactAp ? '' : 'none';
     const cpm = document.getElementById('fCustPayMode');
     if (cpm) cpm.value = (this._contactAp && this._contactAp.paymentMode) || '';
+    const cpe = document.getElementById('fCustPostPayEmail'); if (cpe) cpe.value = (this._contactAp && this._contactAp.postPayEmailReceipt) || 'Inherit';
+    const cpp = document.getElementById('fCustPostPayPartial'); if (cpp) cpp.value = (this._contactAp && this._contactAp.postPayIncludePartial) || 'Inherit';
     this._renderPolicy();
   },
   async saveContactPayMode() {
@@ -372,7 +392,9 @@ const Page = {
     if (!cid) { Layout.toast('เลือกผู้ติดต่อก่อน', 'error'); return; }
     const api = Layout.api(); if (!api) return;
     try {
-      const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null });
+      const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null,
+        postPayEmailReceipt: !this._apOpts ? null : (document.getElementById('fCustPostPayEmail')?.value || 'Inherit'),
+        postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fCustPostPayPartial')?.value || 'Inherit') });
       this._contactAp = res.data || this._contactAp;
       Layout.toast((res && res.message) || 'บันทึกแล้ว');
       this.refreshReadiness(true);
@@ -806,7 +828,7 @@ const Page = {
     if (this._contactAC) this._contactAC.clear();
     this.checkContactEmail();
     this.onDocTypeChange();
-    await this._hydrateAutopilot({ paymentMode: null, payLinkChannels: null, autoApprovePolicy: null });
+    await this._hydrateAutopilot({ paymentMode: null, payLinkChannels: null, autoApprovePolicy: null, postPayEmailReceipt: 'Inherit', postPayIncludePartial: 'Inherit' });
     this._snapshotForm();
     this.goStep(1);
     Layout.openModal('formModal');
@@ -1207,7 +1229,11 @@ const Page = {
       // รอบ 248: ช่องทางรับเงินต่อรายการ — แก้ไข: "" = ล้าง (ตามผู้ติดต่อ › บริษัท) · [] = ล้างช่องทาง (เซิร์ฟเวอร์ตรวจชื่อเอง)
       // รอบ 250 WP-03 (D §1.1): ตัวเลือกโหลดไม่สำเร็จ ⇒ ส่ง null (= ไม่แก้) — เดิมส่ง ''/[] ⇒ เซิร์ฟเวอร์ล้างค่าที่ตั้งไว้เงียบ ๆ
       paymentMode: !this._apOpts ? null : (document.getElementById('fPaymentMode')?.value || (id ? '' : null)),
-      payLinkChannels: !this._apOpts ? null : this._checkedChannels()
+      payLinkChannels: !this._apOpts ? null : this._checkedChannels(),
+      // รอบ 250 (WP-02 B-13): ส่งค่าปัจจุบันทุกครั้ง (Inherit = ล้าง) — ห้ามแก้แล้วหายเงียบ ·
+      // ตัวเลือกโหลดไม่สำเร็จ (ตัวเลือกสำรองมีแต่ Inherit) ⇒ null = ไม่แก้ (กติกาเดียวกับ WP-03 D §1.1 — ห้ามล้างค่าที่บันทึกไว้)
+      postPayEmailReceipt: !this._apOpts ? null : (document.getElementById('fPostPayEmail')?.value || 'Inherit'),
+      postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fPostPayPartial')?.value || 'Inherit')
     };
     return { data };
   },

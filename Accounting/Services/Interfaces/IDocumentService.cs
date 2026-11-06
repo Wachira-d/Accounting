@@ -326,7 +326,12 @@ public interface IDocumentService
     Task<ContactSmartDefaults> GetContactSmartDefaultsAsync(Guid companyId, Guid contactId);
 
     // Payments
-    Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy);
+    /// <summary>บันทึกรับ/จ่ายชำระ 1:1 — รอบ 250 (WP-02 §2.1 · คำตัดสิน §2 #4): <paramref name="source"/> = ทางเข้า (บังคับ · ไม่มีค่าเริ่มต้น) ⇒
+    /// งานหลังรับชำระ (ออก/ส่งใบเสร็จ) เข้าคิวที่นี่หลัง commit ทุกทางเข้า ตามตัวตัดสิน <c>PostPaymentAutomationPolicy.ForEnqueue</c></summary>
+    Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy, Accounting.Helpers.PaymentEntrySource source);
+    /// <summary>รอบ 250 (WP-02 · AUDIT_249_COVERAGE M-3): ขั้นหลัง commit ตัวเดียวกับ <see cref="CreatePaymentAsync"/> สำหรับทางเข้าที่บันทึกการชำระเอง
+    /// (integration) — sync ทะเบียนเครดิตภาษีถูกหัก (50 ทวิ) ของใบ แล้วเข้าคิวงานหลังรับชำระ · โยนเมื่อ sync ทะเบียนล้ม (ผู้เรียกต้องบอกผู้ใช้)</summary>
+    Task AfterPaymentRecordedAsync(Guid companyId, Guid paymentId, Accounting.Helpers.PaymentEntrySource source, string? actor);
     /// <summary>Multi-document payment — one Payment row that settles
     /// many Documents pro-rata to caller-supplied AllocatedAmount per
     /// row. Use when one cheque / transfer covers multiple invoices.

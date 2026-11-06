@@ -111,12 +111,12 @@ public class WhtPaymentSuggestionDbTests
         }
         PaymentResponse first;
         using (var req = DbTestDatabase.TryCreateContext()!)
-            first = await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 4_850m, null), "tester");
+            first = await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 4_850m, null), "tester", PaymentEntrySource.Manual);
         Assert.Null(first.Warnings);
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
             // งวดสุดท้าย = ที่เหลือทั้งหมด (300 − 150)
-            var last = await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 4_850m, null), "tester");
+            var last = await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 4_850m, null), "tester", PaymentEntrySource.Manual);
             Assert.Null(last.Warnings);
         }
         using var check = DbTestDatabase.TryCreateContext()!;
@@ -149,7 +149,7 @@ public class WhtPaymentSuggestionDbTests
         }
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
-            var paid = await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 8_730m, null), "tester");
+            var paid = await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 8_730m, null), "tester", PaymentEntrySource.Manual);
             Assert.Null(paid.Warnings);
         }
         using var check = DbTestDatabase.TryCreateContext()!;
@@ -179,11 +179,11 @@ public class WhtPaymentSuggestionDbTests
         // เกินเพดานใบเดิม (300) = บล็อกเหมือนเดิม — ยังไม่มีการจ่ายใดถูกบันทึก
         using (var req = DbTestDatabase.TryCreateContext()!)
             await Assert.ThrowsAsync<InvalidOperationException>(
-                () => Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 8_730m, 301m), "tester"));
+                () => Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 8_730m, 301m), "tester", PaymentEntrySource.Manual));
 
         PaymentResponse paid;
         using (var req = DbTestDatabase.TryCreateContext()!)
-            paid = await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 8_730m, 300m), "tester");
+            paid = await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 8_730m, 300m), "tester", PaymentEntrySource.Manual);
         var warn = Assert.Single(paid.Warnings!);
         Assert.Contains("ระบบแนะนำ 270.00 (ใบเดิม 300.00 − ใบลดหนี้ 30.00 = 270.00)", warn);
         Assert.Contains("บันทึก 300.00 ตามที่ผู้ใช้ระบุ", warn);
@@ -207,7 +207,7 @@ public class WhtPaymentSuggestionDbTests
 
         PaymentResponse paid;
         using (var req = DbTestDatabase.TryCreateContext()!)
-            paid = await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 8_730m, 250m), "tester");
+            paid = await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(s.PiId, 8_730m, 250m), "tester", PaymentEntrySource.Manual);
         Assert.Null(paid.Warnings);
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(250m, Assert.Single(await PaymentsAsync(check, s)).WithholdingTaxAmount);

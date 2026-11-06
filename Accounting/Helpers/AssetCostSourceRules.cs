@@ -64,6 +64,26 @@ public static class AssetCostSourceRules
             _ => null,
         };
 
+    /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 8 · คำตัดสิน §2 #7 · C F2 · E L-3): ชนิดเอกสารที่ "อาจ" ผูกเป็นต้นทุนสินทรัพย์ได้ (ฝั่งของใบลดหนี้/ใบเพิ่มหนี้ยังไม่รู้ ⇒ นับรวม) —
+    /// เส้นยกเลิก/ลบถาวรถือคีย์ผู้เขียนต้นทุน<b>เสมอ</b>เมื่อชนิดเข้าข่าย (ไม่ตรวจ "ผูกอยู่ไหม" นอกล็อก — ช่อง TOCTOU: ผูกเข้ามาระหว่างตรวจกับล็อก)</summary>
+    public static bool MayBeCostSource(DocumentType type)
+        => SignFor(type, true) != null;
+
+    /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 10 · C F6): ป้ายความหมายของ "วันที่ซื้อ" สำหรับสินทรัพย์ที่ต้นทุนมาจากหลายเอกสาร (หน้า/รายงาน/ไฟล์ส่งออก) · null = ใบเดียว (ความหมายเดิม)</summary>
+    public static string? PurchaseDateNote(bool fromMultipleDocuments)
+        => fromMultipleDocuments ? "วันที่ซื้อ = วันพร้อมใช้งาน (ต้นทุนมาจากหลายเอกสาร — ดูวันที่ของแต่ละใบในแท็บเอกสารต้นทุน)" : null;
+
+    /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 10 · C F6 เคส #4): ใบที่มีทะเบียนรองรับเกินยอดที่ลงผังสินทรัพย์ใน GL อยู่ก่อน — ด่านตอนผูกตั้งใจ "ห้ามแย่ลง"
+    /// (<see cref="OverRegistrationIncrease"/>) จึงปล่อยเคสนี้ ⇒ หน้าเอกสารต้นทุนของสินทรัพย์ต้องบอก · null = ไม่เกิน</summary>
+    public static string? PreExistingOverRegistration(string documentNumber, decimal registeredMinusGl, int sign)
+    {
+        var over = Math.Round(Math.Max(0m, sign * registeredMinusGl), 2, MidpointRounding.AwayFromZero);
+        return over > AssetRemovalGlCheck.Tolerance
+            ? $"เอกสาร {documentNumber} มีทะเบียนสินทรัพย์รองรับเกินยอดที่ใบนี้ลงผังสินทรัพย์ใน GL {over:N2} บาท (เกินอยู่ก่อน — ทะเบียนอื่นอ้างใบเดียวกัน?) · "
+              + "ตรวจทะเบียนที่อ้างใบนี้ แล้วปลด/แก้ราคาทุนที่ซ้ำ"
+            : null;
+    }
+
     /// <summary>ป้ายชนิดของแถวผูก (แสดงผลเท่านั้น)</summary>
     public static AssetCostSourceKind KindFor(DocumentType type, AccountRole role, string? description)
     {

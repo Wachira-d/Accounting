@@ -85,6 +85,37 @@ public static class AutopilotSettingsResolver
         };
     }
 
+    // ═══ รอบ 250 (WP-02 B-13): ค่าตั้งงานหลังรับชำระต่อรายการประจำ/ผู้ติดต่อ — สามสถานะ (ชื่อ) ═══
+    public const string On = "On";
+    public const string Off = "Off";
+    public static readonly IReadOnlyList<string> TriStates = new[] { Inherit, On, Off };
+
+    /// <summary>ชื่อสถานะของช่อง bool? (echo กลับหน้า) — null = ตามชั้นถัดไป</summary>
+    public static string TriStateName(bool? value) => value == null ? Inherit : value.Value ? On : Off;
+
+    /// <summary>ป้ายของสถานะ (หน้าแสดงจากตรงนี้) — <paramref name="onLabel"/>/<paramref name="offLabel"/> ตามความหมายของช่อง</summary>
+    public static string TriStateLabel(string state, string onLabel, string offLabel) => state switch
+    {
+        On => onLabel,
+        Off => offLabel,
+        _ => "ตามค่าชั้นถัดไป (ผู้ติดต่อ › บริษัท)",
+    };
+
+    /// <summary>null = ใช้ได้ · ข้อความ = ปฏิเสธ (บอกค่าที่เลือกได้)</summary>
+    public static string? ValidateTriState(string? state)
+        => string.IsNullOrWhiteSpace(state) || TriStates.Any(x => string.Equals(x, state.Trim(), StringComparison.OrdinalIgnoreCase))
+            ? null
+            : $"ไม่รู้จักค่า \"{state}\" — เลือกได้: {string.Join(" · ", TriStates)}";
+
+    /// <summary>ชื่อ ⇒ ค่าที่เก็บ (ว่าง/Inherit = null = ตามชั้นถัดไป) · ผู้เรียกตรวจด้วย <see cref="ValidateTriState"/> ก่อน</summary>
+    public static bool? ParseTriState(string? state)
+    {
+        if (string.IsNullOrWhiteSpace(state)) return null;
+        if (string.Equals(state.Trim(), On, StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(state.Trim(), Off, StringComparison.OrdinalIgnoreCase)) return false;
+        return null;
+    }
+
     /// <summary>ต่อชั้น — แต่ละเรื่องเลือกจากชั้นเฉพาะที่สุดที่ตอบ</summary>
     public static PayLinkChoice Resolve(Layer? schedule, Layer? recurring, Layer? contact, bool companyAttach, IReadOnlyList<string>? companyChannels)
     {

@@ -181,7 +181,7 @@ public class PaymentImportTarget : IImportTarget
                 FeeAmount: Amount(r, "FeeAmount"));
             try
             {
-                var p = await _documents.CreatePaymentAsync(ctx.CompanyId, req, CreatedBy(ctx));
+                var p = await _documents.CreatePaymentAsync(ctx.CompanyId, req, CreatedBy(ctx), source: Accounting.Helpers.PaymentEntrySource.Import);
                 results.Add(new ImportRowCommitResult(r.RowId, true, CommittedEntity, p.Id));
             }
             catch (Exception ex) when (ex is BusinessRuleException or InvalidOperationException or KeyNotFoundException)

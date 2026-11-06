@@ -43,7 +43,7 @@ public interface IPostPaymentAutomationService
 {
     /// <summary>จุดเข้าเดียวหลังบันทึกรับ/จ่ายชำระ (gateway · มือ) — สร้างแถวงาน 1 แถวต่อการชำระ (ซ้ำ = ไม่เพิ่ม) · ไม่โยน (การชำระสำเร็จแล้ว) ·
     /// คืน true เมื่อสร้างแถวใหม่</summary>
-    Task<bool> EnqueueAsync(Guid companyId, Guid paymentId, string source, string? actor, CancellationToken ct = default);
+    Task<bool> EnqueueAsync(Guid companyId, Guid paymentId, Accounting.Helpers.PaymentEntrySource source, string? actor, CancellationToken ct = default);
 
     /// <summary>ประมวลผลแถวที่ถึงเวลา (ทุกบริษัท · จองแถวด้วย SKIP LOCKED) — เรียกจาก <c>EmailScheduleWorker</c> ทุกนาที</summary>
     Task<int> ProcessDueAsync(CancellationToken ct = default);

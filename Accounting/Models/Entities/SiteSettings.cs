@@ -112,6 +112,14 @@ public class SiteSettings : BaseEntity
     // Application base URL — used to build invitation/reset links in system emails
     public string? AppBaseUrl { get; set; }
 
+    /// <summary>รอบ 250 (WP-02 · คำตัดสิน Y8): เวลาทดสอบการเชื่อมต่อขาออกครั้งล่าสุด (ปุ่ม "ทดสอบการเชื่อมต่อขาออก" — HEAD ไป api.omise.co ผ่าน OutboundUrlGuard) ·
+    /// ผู้อ่าน: <c>AdminGoLiveController</c> (การ์ดรายการตรวจ go-live)</summary>
+    public DateTime? OutboundCheckAt { get; set; }
+    /// <summary>ผลทดสอบขาออกล่าสุด — null = ยังไม่เคยทดสอบ</summary>
+    public bool? OutboundCheckOk { get; set; }
+    /// <summary>คำอธิบายผลทดสอบขาออกล่าสุด (ล้ม = เหตุผล)</summary>
+    public string? OutboundCheckMessage { get; set; }
+
     // ===== ใบรับรอง SSL ของโดเมนแพลตฟอร์ม (2026-10-19) — สถานะที่ TlsCertificateMonitorJob ตรวจได้ล่าสุด (ไม่ใช่ค่าตั้ง) =====
     // ผู้อ่าน: GET /api/admin/tls-status (แถบเตือนบนหน้าเว็บของผู้ดูแลระบบ) · ตัวตัดสินระดับ Helpers/TlsCertificateExpiry
     public string? TlsCertHost { get; set; }

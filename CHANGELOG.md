@@ -6595,3 +6595,16 @@ checker `external_qr_check` (`grep qrserver wwwroot` = 0). (7) notifications: �
 `Layout.panelError` ใหม่ (DOM/textContent). raw fetch baseline: email-schedule 6→0 · recurring 2→0 · fixed-assets 2→0 · settings 9→6.
 เทสต์ `LegalDocumentClauseDiffTests` · `EtaxByEmailSubjectCodeOverrideTests` · Db `PaymentQrRound246DbTests` +2 (พอร์ทัล dataUri / ทิศตรงข้ามไม่มีพร้อมเพย์) · กติกา R250W3 ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 125f30a9_
+
+_รอบ 250 WP-02 — บั๊กเงิน/ความถูกต้อง P0–P1 (`erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §4 · คำตัดสิน §2 #4–#16 · §3.3 Y7/Y8/N11 · AUDIT_249_COVERAGE M-3 · DECISIONS 250-1…250-6):
+(§2.1) งานหลังรับชำระเข้าคิวในแกน `DocumentService.CreatePaymentAsync(…, PaymentEntrySource source)` หลัง commit/หลัง `SyncWhtCreditReceivedAsync` ทุกทางเข้า 1:1
+(มือ · gateway · รอบโอน · นำเข้าไฟล์ · CMS/ที่พัก/ค่าบริการแพลตฟอร์ม = Skipped พร้อมเหตุ) · controller/handler ไม่เรียกเอง · integration ⇒ `AfterPaymentRecordedAsync` ·
+B-13 ชั้นค่าตั้ง ตาราง › รายการประจำ (`Document.RecurringTransactionId` ใหม่ + backfill จาก `LastDocumentId`) › ผู้ติดต่อ (`Contact/RecurringTransaction.PostPayEmailReceipt/PostPayIncludePartial` ใหม่) › บริษัท ·
+(§2.2) ตัวย้ายผังใช้ `PurchaseLineGlAmount.Posted` + `WhtGrossUp.PayerBorneShareByLine` (CIL รวม VAT · ภาษีออกแทน · CIL จ่ายชำระคืน 0) · AutoPost CN/DN/PI/PV ใช้ `Standalone` ·
+(§2.3) ลิงก์ชำระของใบแจ้งหนี้ที่มีใบกำกับภาษีแล้ว ⇒ ปฏิเสธ/ลิงก์เดิมใช้ไม่ได้ (ตัดสินสด) · งานหลังรับชำระ Blocked ·
+(§2.4) `EmailEnqueueOutcome` (ธง `EmailEnqueueFailed` ถึงได้จริง) · ข้ามกฎรายการประจำเมื่อกฎ DocumentApproved ครอบ (+ แผงเตือน) · URL ระบบไม่ตั้ง ⇒ GATEWAY Warn + หมายเหตุบนแถวคิว ·
+แจ้งเตือนระบุผู้รับเคารพแถวปิด · `Helpers/CashFlowDirection` (ใบลดหนี้ฝั่งซื้อ = เงินเข้า) · WHT ให้ผู้ซื้อบุคคล ⇒ คำเตือนก่อนอนุมัติ · รหัส ETDA > 500 ปฏิเสธ ·
+ล็อกต้นทุนสินทรัพย์จากชนิดใบ (ไม่ AnyAsync นอกล็อก) · ปิดปีเครดิต WHT เรียง Id + `AdvisoryLockKey.WhtCreditWriteOff` · กระทบยอดยกมาไม่นับระหว่างจัดหา · ส่งออกทะเบียนติดป้าย · problem row ทะเบียนเกิน GL ·
+CS8604 BatchConvert · literal รหัสในเทสต์ → ค่าคงที่ · (Y7/Y8/N11) การ์ด go-live แอดมิน + ปุ่มทดสอบขาออก (`SiteSettings.OutboundCheck*` ใหม่).
+เทสต์ `Round250Wp02Tests` (pure) + Db ใน `DocumentAutoSendRound241DbTests`/`ImportAccountingTargetsDbTests` · กติกา R250 ใน `required_call_site_check` (negative test ในตัว) ·
+ฝ่ายค้าน: ทบทวนเองในรอบ (ไม่มีเครื่องมือ subagent ในบริบทนี้) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a40c91e5_

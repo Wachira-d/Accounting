@@ -9353,7 +9353,7 @@ public partial class DocumentService : IDocumentService
         var amount = doc.ExchangeRate == 1m
             ? doc.PaidAmount
             : Math.Round(doc.PaidAmount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
-        var isInflow = await IsCashInflowDocAsync(companyId, doc);
+        var isInflow = Accounting.Helpers.CashFlowDirection.IsInflow(doc.DocumentType, await CashFlowRelatedTypeAsync(companyId, doc), doc.CnDnPurchaseSideOverride);
 
         // ยังไม่ได้จ่าย/รับจริง (ไม่กระทบ GL แหล่งเงิน) → แค่อัปเดต field (ไม่ต้องหาผังเดิม)
         if (amount <= 0.005m)
@@ -9906,7 +9906,8 @@ public partial class DocumentService : IDocumentService
             try
             {
                 // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน M2): ใบที่ผูกเป็นต้นทุนสินทรัพย์ ⇒ ถือคีย์ผู้เขียนต้นทุนก่อนล็อกแถวเอกสาร (ลำดับเดียวกับผูก/โอน/ปลด)
-                await FixedAssetService.LockCostSourcesIfLinkedAsync(_db, companyId, new[] { documentId });
+                // รอบ 250 (WP-02 §2.4 ข้อ 8): ตัดสินจากชนิดใบ (ถือคีย์เสมอเมื่อเข้าข่าย) — ไม่ตรวจ "ผูกอยู่ไหม" นอกล็อก (TOCTOU)
+                await FixedAssetService.LockCostSourcesForTypesAsync(_db, companyId, new[] { doc.DocumentType });
                 // Row lock + re-read สถานะใต้ล็อก — กัน double-void race (2 คลิกพร้อมกัน
                 // → reverse JE ซ้ำ). ถ้าอีก request ยกเลิกไปแล้ว → no-op (idempotent).
                 await _db.Database.ExecuteSqlRawAsync(
@@ -10958,7 +10959,8 @@ public partial class DocumentService : IDocumentService
             // ต่างจากแผนที่ผู้ใช้เห็น) ⇒ 409 ไม่ลบอะไร
             var planIds = verdict.Nodes.Select(v => v.Node.Id).OrderBy(id => id).ToArray();
             // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน M2): คีย์ผู้เขียนต้นทุนสินทรัพย์ก่อนล็อกแถวเอกสาร
-            await FixedAssetService.LockCostSourcesIfLinkedAsync(_db, companyId, planIds);
+            // รอบ 250 (WP-02 §2.4 ข้อ 8): ชนิดของทุกใบในแผน (ถือคีย์เสมอเมื่อมีใบที่เข้าข่าย) — แผนเปลี่ยนใต้ล็อก ⇒ 409 ข้างล่างอยู่แล้ว
+            await FixedAssetService.LockCostSourcesForTypesAsync(_db, companyId, verdict.Nodes.Select(v => v.Node.Type));
             await _db.Database.ExecuteSqlRawAsync(
                 @"SELECT 1 FROM ""Documents"" WHERE ""CompanyId"" = {0} AND ""Id"" = ANY({1}) ORDER BY ""Id"" FOR UPDATE",
                 companyId, planIds);
@@ -11900,7 +11902,7 @@ public partial class DocumentService : IDocumentService
         // before adjusting. Mirrors the conversion in CreatePaymentJournalAsync.
         if (payment.BankAccountId.HasValue)
         {
-            var isInflow = await IsCashInflowDocAsync(companyId, doc);
+            var isInflow = Accounting.Helpers.CashFlowDirection.IsInflow(doc.DocumentType, await CashFlowRelatedTypeAsync(companyId, doc), doc.CnDnPurchaseSideOverride);
             // ใช้ rate เดียวกับตอนบันทึกรับ/จ่าย (settlement rate ถ้ามี) —
             // มิฉะนั้นยอดธนาคารกลับไม่เท่าที่บวกไว้
             var reverseFx = payment.ExchangeRate ?? doc.ExchangeRate;
@@ -12176,7 +12178,7 @@ public partial class DocumentService : IDocumentService
                     : Math.Round(unapplied * upFx, 2, MidpointRounding.AwayFromZero);
             }
 
-            var isInflow = await IsCashInflowDocAsync(companyId, docs[0]);
+            var isInflow = Accounting.Helpers.CashFlowDirection.IsInflow(docs[0].DocumentType, await CashFlowRelatedTypeAsync(companyId, docs[0]), docs[0].CnDnPurchaseSideOverride);
             var delta = isInflow ? -thbMoved : thbMoved;
             await _db.BankAccounts
                 .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
@@ -14612,7 +14614,7 @@ public partial class DocumentService : IDocumentService
     /// เรียกหลัง commit: อ่านชื่อ/บรรทัดไม่สำเร็จ ⇒ ข้อความยังส่งได้โดยไม่มีบรรทัดคู่ค้า/รายการ (การชำระบันทึกแล้ว — ไม่โยนกลับผู้ใช้) และ log Warning</summary>
     private async Task<Accounting.Helpers.PaymentNotificationFacts> LoadPaymentNotificationFactsAsync(Guid companyId, Document doc, Payment payment)
     {
-        var isInflow = await IsCashInflowDocAsync(companyId, doc);
+        var isInflow = Accounting.Helpers.CashFlowDirection.IsInflow(doc.DocumentType, await CashFlowRelatedTypeAsync(companyId, doc), doc.CnDnPurchaseSideOverride);
         string? contactName = null;
         List<string?> lines = new();
         try
@@ -14643,25 +14645,14 @@ public partial class DocumentService : IDocumentService
             BalanceDue: doc.BalanceDue);
     }
 
-    /// <summary>เงินของการชำระเอกสารนี้ "เข้า" (ลูกค้าจ่ายเรา) หรือ "ออก"
-    /// (เราจ่าย vendor) — DebitNote ต้องดูฝั่งจากเอกสารต้นทาง: ฝั่งซื้อ
-    /// (source = PI/Expense/CIL) คือเงินออก ไม่ใช่เงินเข้า</summary>
-    private async Task<bool> IsCashInflowDocAsync(Guid companyId, Document doc)
+    /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 5): ชนิดใบต้นทางสำหรับตัดสินทิศเงิน (<see cref="Accounting.Helpers.CashFlowDirection.IsInflow"/>) — โหลดเฉพาะใบลดหนี้/ใบเพิ่มหนี้ที่อ้างใบเดิม · tenant</summary>
+    private async Task<DocumentType?> CashFlowRelatedTypeAsync(Guid companyId, Document doc)
     {
-        var inflow = doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice
-            or DocumentType.Receipt or DocumentType.ReceiptVoucher
-            or DocumentType.DebitNote or DocumentType.BillingNote;
-        if (inflow && doc.DocumentType == DocumentType.DebitNote && doc.RelatedDocumentId.HasValue)
-        {
-            var srcType = await _db.Documents.AsNoTracking()
-                .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
-                .Select(d => (DocumentType?)d.DocumentType)
-                .FirstOrDefaultAsync();
-            if (srcType is DocumentType.PurchaseInvoice or DocumentType.Expense
-                or DocumentType.CertificateInLieu)
-                inflow = false;
-        }
-        return inflow;
+        if (!Accounting.Helpers.CashFlowDirection.NeedsRelatedType(doc.DocumentType, doc.RelatedDocumentId)) return null;
+        return await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == doc.RelatedDocumentId!.Value && d.CompanyId == companyId)
+            .Select(d => (DocumentType?)d.DocumentType)
+            .FirstOrDefaultAsync();
     }
 
     /// <summary>ออก "ใบเสร็จรับเงิน" (Document) เป็นหลักฐานคู่กับ Payment ที่เพิ่ง
@@ -14927,7 +14918,8 @@ public partial class DocumentService : IDocumentService
         });
     }
 
-    public async Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)
+    public async Task<PaymentResponse> CreatePaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy,
+        Accounting.Helpers.PaymentEntrySource source)
     {
         // Validate Amount > 0 — ยกเว้น "ปิดหนี้ค้างด้วยบรรทัดปรับอย่างเดียว" (ฝ่ายค้าน C9 รอบ 193): ชำระ 438 ผ่าน integration/
         // นำเข้าไฟล์ (ทางเข้าที่ไม่รู้จักบรรทัดปรับ) แล้วหนี้ค้าง 98 ⇒ ต้องปิดด้วยคูปอง −98 ได้โดยไม่ต้อง void การชำระเดิม
@@ -15325,7 +15317,7 @@ public partial class DocumentService : IDocumentService
             // always THB in this iteration). Same conversion as the GL posting.
             if (payment.BankAccountId.HasValue)
             {
-                var isInflow = await IsCashInflowDocAsync(companyId, doc);
+                var isInflow = Accounting.Helpers.CashFlowDirection.IsInflow(doc.DocumentType, await CashFlowRelatedTypeAsync(companyId, doc), doc.CnDnPurchaseSideOverride);
                 var bankFx = payment.ExchangeRate ?? doc.ExchangeRate;
                 var thbAmount = bankFx == 1m
                     ? payment.Amount
@@ -15368,7 +15360,7 @@ public partial class DocumentService : IDocumentService
             // รอบ 232 (232-Notify): "💵 รับชำระเงินแล้ว" เดิมประกาศกลุ่ม LINE แล้วถอยไปกลุ่มกลางของแพลตฟอร์ม ⇒ เดินเครื่องแจ้งเตือนกลาง
             // (ค่าตั้งของบริษัท · ไม่โยนกลับผู้เรียก — engine กลืนเองและ log)
             // รอบ 249 (เจ้าของรายงาน 2026-11-06): จ่ายชำระ PI เคยขึ้น "💵 รับชำระเงินแล้ว" + ไม่บอกคู่ค้า/รายการ ⇒ ฝั่ง · คีย์ (payment_received/payment_made) ·
-            // หัวข้อ · เนื้อความ ตัดสินที่ Helpers/PaymentNotificationText ตัวเดียว · ฝั่งเงินใช้ IsCashInflowDocAsync ตัวเดียวกับยอดธนาคารข้างบน
+            // หัวข้อ · เนื้อความ ตัดสินที่ Helpers/PaymentNotificationText ตัวเดียว · ฝั่งเงินใช้ CashFlowDirection.IsInflow ตัวเดียวกับยอดธนาคารข้างบน
             if (_notify != null)
             {
                 var payNote = Accounting.Helpers.PaymentNotificationText.Build(
@@ -15381,6 +15373,12 @@ public partial class DocumentService : IDocumentService
                     EntityType = "Document", EntityId = doc.Id,
                 });
             }
+
+            // รอบ 250 (WP-02 §2.1 · คำตัดสิน §2 #4 · B F-3): งานหลังรับชำระ (ออก/ส่งใบเสร็จ) — แกนเดียวของทุกทางเข้า 1:1 (มือ · gateway · รอบโอน ·
+            // นำเข้าไฟล์ · CMS · ที่พัก · ค่าบริการแพลตฟอร์ม) แทนการให้ผู้เรียกแต่ละทางเติมเอง (เดิมมีแค่มือ/gateway) · หลัง commit · หลัง
+            // SyncWhtCreditReceivedAsync (ในธุรกรรมข้างบน — แถวรอ 50 ทวิ มีก่อนงานตรวจ) · ทางเข้าที่มีเส้นใบเสร็จของตัวเอง = แถว Skipped พร้อมเหตุ ·
+            // ไม่โยน (เงินบันทึกแล้ว — Error log)
+            await PostPaymentAutomationService.EnqueueCoreAsync(_db, _logger, companyId, payment.Id, source, createdBy, CancellationToken.None);
 
             // Webhooks — payment.received (always) + document.paid
             // (when BalanceDue is now zero). Both fire outside the
@@ -15535,6 +15533,20 @@ public partial class DocumentService : IDocumentService
     ///     balance hits the OverrideBankAccountId or the FIRST doc's
     ///     BankAccountId in that order.
     /// </summary>
+    /// <inheritdoc />
+    public async Task AfterPaymentRecordedAsync(Guid companyId, Guid paymentId, Accounting.Helpers.PaymentEntrySource source, string? actor)
+    {
+        var docId = await _db.Payments.AsNoTracking()
+            .Where(p => p.Id == paymentId && p.CompanyId == companyId)
+            .Select(p => (Guid?)p.DocumentId).FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException("ไม่พบการชำระ");
+        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == docId && d.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสารของการชำระ");
+        // ลำดับเดียวกับ CreatePaymentAsync: ทะเบียนเครดิตภาษีถูกหักก่อน แล้วงานหลังรับชำระ (ตัวตรวจแถวรอ 50 ทวิ อ่านทะเบียนนี้)
+        await SyncWhtCreditReceivedAsync(companyId, doc);
+        await PostPaymentAutomationService.EnqueueCoreAsync(_db, _logger, companyId, paymentId, source, actor, CancellationToken.None);
+    }
+
     public async Task<PaymentResponse> CreateMultiDocPaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)
     {
         if (request.Allocations == null || request.Allocations.Count == 0)
@@ -15784,7 +15796,7 @@ public partial class DocumentService : IDocumentService
                 // ถ้าไม่ book ส่วนต่าง GL เงินสดจะน้อยกว่ายอดธนาคารถาวร:
                 //   ฝั่งรับ → Dr เงินสด/ธนาคาร  Cr เงินรับล่วงหน้าจากลูกค้า (217xx)
                 //   ฝั่งจ่าย → Dr เงินจ่ายล่วงหน้า (114xx)  Cr เงินสด/ธนาคาร
-                var isInflowDoc = await IsCashInflowDocAsync(companyId, firstDoc);
+                var isInflowDoc = Accounting.Helpers.CashFlowDirection.IsInflow(firstDoc.DocumentType, await CashFlowRelatedTypeAsync(companyId, firstDoc), firstDoc.CnDnPurchaseSideOverride);
                 var unapplied = request.Amount - allocSum;
                 if (unapplied > 0.005m)
                 {
@@ -17317,20 +17329,45 @@ public partial class DocumentService : IDocumentService
     private async Task<decimal> ResolveLinePostedGlAmountAsync(
         Guid companyId, Document doc, DocumentLine line)
     {
+        // รอบ 250 (WP-02 §2.2 · C F1 · คำตัดสิน §2 #5): ใบรับรองแทนใบเสร็จลงบรรทัดเองเหมือนใบซื้อ (§82/4 VAT รวมต้นทุนเสมอ) — เดิมตกไปคืน "ฐาน" ⇒ ย้ายผังแล้ว VAT ค้างผังเก่า
         var purchaseSide = doc.DocumentType is DocumentType.PurchaseInvoice
-            or DocumentType.Expense or DocumentType.PaymentVoucher;
+            or DocumentType.Expense or DocumentType.PaymentVoucher or DocumentType.CertificateInLieu;
         if (!purchaseSide) return ToGlAmount(doc, line.Amount);
 
         // ใบสำคัญจ่ายที่ตัดใบตั้งหนี้ต้นทาง — บรรทัดไม่ได้ลง GL
         if (doc.DocumentType == DocumentType.PaymentVoucher && doc.RelatedDocumentId.HasValue)
             return 0m;
+        // ใบรับรองแทนที่แปลงจากเอกสารตั้งหนี้ (ใบซื้อ/ค่าใช้จ่าย) = จ่ายชำระ (Dr เจ้าหนี้ / Cr เงินสด — AutoPost เส้นเดียวกับ PV) ⇒ บรรทัดไม่ได้ลง GL
+        if (doc.DocumentType == DocumentType.CertificateInLieu && doc.RelatedDocumentId is Guid cilSourceId)
+        {
+            var cilSourceType = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == cilSourceId && d.CompanyId == companyId)
+                .Select(d => (DocumentType?)d.DocumentType)
+                .FirstOrDefaultAsync();
+            if (cilSourceType is DocumentType.PurchaseInvoice or DocumentType.Expense) return 0m;
+        }
 
         // ใบซื้อ/ค่าใช้จ่ายที่อ้างใบรับของ — ฐานตัด GR-NI, บรรทัดเหลือแค่ VAT ต้องห้าม
         if (await GetReceivedViaGrnAccrualAccountAsync(companyId, doc) != null)
             return line.IsVatClaimable ? 0m : ToGlAmount(doc, line.VatAmount);
 
-        // ตัวตั้งเดียวกับต้นทุนสินทรัพย์หลายใบ (รอบ 249 · Helpers/PurchaseLineGlAmount)
-        return ToGlAmount(doc, Accounting.Helpers.PurchaseLineGlAmount.Standalone(line.Amount, line.VatAmount, line.IsVatClaimable));
+        // รอบ 250 (WP-02 §2.2): ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทนลงเพิ่มบนผังของบรรทัด — ส่วนต่อบรรทัดจากตัวเดียวกับต้นทุนสินทรัพย์ (คิดจากทุกบรรทัดของใบ)
+        var payerBorneShare = 0m;
+        if (doc.WhtPayerBorneAmount != 0m)
+        {
+            var allLines = await _db.DocumentLines.AsNoTracking()
+                .Where(x => x.DocumentId == doc.Id && x.Document.CompanyId == companyId)
+                .OrderBy(x => x.LineOrder)
+                .Select(x => new { x.Id, x.Amount, x.WithholdingTaxRate })
+                .ToListAsync();
+            var shares = Accounting.Helpers.WhtGrossUp.PayerBorneShareByLine(
+                allLines.Select(x => (LineId: x.Id, Base: x.Amount, RatePercent: x.WithholdingTaxRate)).ToList(), doc.WhtCertType);
+            payerBorneShare = shares.TryGetValue(line.Id, out var share) ? share : 0m;
+        }
+
+        // ตัวตั้งเดียวกับต้นทุนสินทรัพย์หลายใบ (Helpers/PurchaseLineGlAmount.Posted — ครบ CIL + ส่วนออกแทน · รอบ 249 ฝ่ายค้าน M3)
+        return ToGlAmount(doc, Accounting.Helpers.PurchaseLineGlAmount.Posted(
+            doc.DocumentType == DocumentType.CertificateInLieu, line.Amount, line.VatAmount, line.IsVatClaimable, payerBorneShare));
     }
 
     /// <summary>JE ย้ายภาษีขายถึงกำหนด (§78/1 · Dr 21913) ของใบนี้ที่ยังมีผล — อ่านจาก GL จริง (ห้ามเดาจากข้อความ) · คืนวันที่ของแต่ละ JE
@@ -18816,8 +18853,9 @@ public partial class DocumentService : IDocumentService
                 // ลง 11610 ⇒ CN/DN ที่กลับรายการต้องกลับ "ต้นทุนรวม VAT" ให้ตรงกัน
                 // ไม่งั้น 11610 ติดลบทั้งที่ไม่เคยถูก Dr และค่าใช้จ่ายกลับไม่ครบ
                 // (เส้น PI/PV ทำแบบนี้อยู่แล้ว — ที่นี่คือจุดที่ตกหล่น)
-                var lineAmt = isPurchaseSide && !docLine.IsVatClaimable
-                    ? docLine.Amount + docLine.VatAmount
+                // รอบ 250 (WP-02 §2.2 · คำตัดสิน §2 #6): ตัวตั้งเดียว PurchaseLineGlAmount.Standalone (ห้ามประกอบ Amount + VatAmount เอง)
+                var lineAmt = isPurchaseSide
+                    ? Accounting.Helpers.PurchaseLineGlAmount.Standalone(docLine.Amount, docLine.VatAmount, docLine.IsVatClaimable)
                     : docLine.Amount;
                 AddLine(lineAccId.Value,
                     lineIsDebit ? lineAmt : 0,
@@ -19093,9 +19131,7 @@ public partial class DocumentService : IDocumentService
                 {
                     var expenseAccountId = resolvePiLineAcc(docLine);
                     if (!expenseAccountId.HasValue) continue;
-                    var debitAmount = docLine.IsVatClaimable
-                        ? docLine.Amount
-                        : docLine.Amount + docLine.VatAmount;
+                    var debitAmount = Accounting.Helpers.PurchaseLineGlAmount.Standalone(docLine.Amount, docLine.VatAmount, docLine.IsVatClaimable);
                     var desc = docLine.IsVatClaimable
                         ? docLine.Description
                         : $"{docLine.Description} (รวม VAT ต้องห้าม{(string.IsNullOrWhiteSpace(docLine.VatNonClaimableReason) ? "" : " - " + docLine.VatNonClaimableReason)})";
@@ -19881,9 +19917,7 @@ public partial class DocumentService : IDocumentService
                 {
                     var expenseAccountId = docLine.AccountId ?? defaultExpense?.Id;
                     if (!expenseAccountId.HasValue) continue;
-                    var debitAmount = docLine.IsVatClaimable
-                        ? docLine.Amount
-                        : docLine.Amount + docLine.VatAmount;
+                    var debitAmount = Accounting.Helpers.PurchaseLineGlAmount.Standalone(docLine.Amount, docLine.VatAmount, docLine.IsVatClaimable);
                     var desc = docLine.IsVatClaimable
                         ? docLine.Description
                         : $"{docLine.Description} (รวม VAT ต้องห้าม{(string.IsNullOrWhiteSpace(docLine.VatNonClaimableReason) ? "" : " - " + docLine.VatNonClaimableReason)})";
@@ -22519,6 +22553,20 @@ public partial class DocumentService : IDocumentService
         // อีกทั้งยอดสะสมของมันรวม PI+Expense+PV **ตรง ๆ** (ไม่กันนับซ้ำ) ต่างจาก
         // `WhtCumulativeScope.SumDistinct` ที่ด่านใหม่ใช้ ⇒ การซื้อครั้งเดียวที่มี
         // ทั้งใบกำกับและใบสำคัญจ่ายถูกนับสองรอบ. ด่านเดียวที่เหลือคือด่านใหม่
+
+        // ── รอบ 250 (WP-02 §2.4 ข้อ 6 · คำตัดสิน §2 #13 · C F5): ใบขายตั้งภาษีหัก ณ ที่จ่ายให้ผู้ซื้อที่ไม่มีหน้าที่หัก (บุคคลธรรมดา) — ต้นเหตุอยู่ตอนสร้างใบ ⇒
+        // เตือนก่อนอนุมัติ (ชุด [WHT-PAYEE] — ทางเข้าไม่มีคนผ่านตาม ApprovalAcknowledgement เดิม · ไม่บล็อก) · ตัวตัดสินเดียวกับลิงก์ชำระ
+        // (DocumentPayLinkPolicy.BuyerWithholds + WhtMismatchNote) — ลิงก์ยังเตือนเหมือนเดิม
+        if (doc.WithholdingTaxAmount > 0.005m
+            && doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice)   // ใบเพิ่มหนี้ไม่รวม — ฝั่งขึ้นกับใบต้นทาง (ฝั่งซื้อ = เราเป็นผู้หัก)
+        {
+            var saleBuyer = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
+                .Select(c => new { c.ContactType, c.TaxId }).FirstOrDefaultAsync();
+            if (Accounting.Helpers.DocumentPayLinkPolicy.WhtMismatchNote(doc.WithholdingTaxAmount,
+                    Accounting.Helpers.DocumentPayLinkPolicy.BuyerWithholds(saleBuyer?.ContactType, saleBuyer?.TaxId)) is string buyerWhtNote)
+                warnings.Add(Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix + " " + buyerWhtNote);
+        }
 
         // ── ผู้ถูกหักภาษี (คำขอเจ้าของ 2026-10-12) — ตรวจ "ผู้ถูกหัก" ไม่ใช่ผู้รับเงิน (ประกันผ่านโบรกเกอร์: ผู้รับเงิน = โบรกเกอร์ ·
         // ผู้มีเงินได้ = บริษัทประกัน) · ชื่อต่างจากผู้รับเงินเป็นเรื่องปกติ ⇒ ไม่เตือนเพราะชื่อต่าง · เตือนเฉพาะสิ่งที่ทำให้ 50 ทวิ ออกไม่ได้/ผิดคน

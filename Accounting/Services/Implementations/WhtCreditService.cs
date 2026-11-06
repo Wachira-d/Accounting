@@ -787,7 +787,7 @@ public class WhtCreditService
 
     private Task LockCreditAsync(Guid companyId, Guid id)
         => _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
-            AdvisoryLockKey.For(companyId, "wht-credit-writeoff", id.ToString("N")));
+            AdvisoryLockKey.For(companyId, AdvisoryLockKey.WhtCreditWriteOff, id.ToString("N")));
 
     /// <summary>โหลดแถวหลังได้ล็อก — แถวที่ติดตามอยู่แล้วต้องอ่านค่าล่าสุดจากฐาน (อีกคำขอเพิ่งตัดสูญไป)</summary>
     /// <param name="includeRemoved">รอบ 244: รวมแถวที่ถอดแล้ว (soft-delete) — เฉพาะ <see cref="UndoWriteOffAsync"/> ที่เรียกซ้ำได้หลังถอดแถว</param>
@@ -909,8 +909,10 @@ public class WhtCreditService
         {
             if (await Journal.JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, end) is string closed)
                 throw new BusinessRuleException("ปิดปีภาษีไม่ได้ — " + closed);
+            // รอบ 250 (WP-02 §2.4 ข้อ 9 · E L-2): เรียง Id ⇒ ExpireCoreAsync ล็อกแถว (LockCreditAsync) ตามลำดับคงที่ — สองคำขอปิดปี/ตัดสูญรายแถวพร้อมกันไม่ deadlock
             var rows = await _db.WhtCreditsReceived.AsNoTracking()
                 .Where(w => w.CompanyId == companyId && ids.Contains(w.Id))
+                .OrderBy(w => w.Id)
                 .Select(w => new { w.Id, w.TaxYear, w.WhtAmount, w.Status, w.WriteOffJournalEntryId, w.WriteOffReversalJournalEntryId })
                 .ToListAsync();
             if (rows.Count != ids.Count)

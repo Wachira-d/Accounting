@@ -53,5 +53,17 @@ public static class DocumentAutoSendMigration
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PostPaymentAutomationRuns_Company_Payment" ON "PostPaymentAutomationRuns" ("CompanyId", "PaymentId");""",
         """CREATE INDEX IF NOT EXISTS "IX_PostPaymentAutomationRuns_Status_Next" ON "PostPaymentAutomationRuns" ("Status", "NextAttemptAt");""",
         """CREATE INDEX IF NOT EXISTS "IX_PostPaymentAutomationRuns_Company_Doc" ON "PostPaymentAutomationRuns" ("CompanyId", "DocumentId");""",
+        // รอบ 250 (WP-02 B-13): ชั้นค่าตั้งงานหลังรับชำระ รายการประจำ › ผู้ติดต่อ (NULL = ตามชั้นถัดไป = พฤติกรรมเดิม) + ใบ → รายการประจำที่สร้าง
+        """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "PostPayEmailReceipt" boolean NULL;""",
+        """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "PostPayIncludePartial" boolean NULL;""",
+        """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PostPayEmailReceipt" boolean NULL;""",
+        """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PostPayIncludePartial" boolean NULL;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "RecurringTransactionId" uuid NULL;""",
+        // ใบเก่า: เติมได้เฉพาะใบล่าสุดของแต่ละรายการ (LastDocumentId) — ใบก่อนหน้านั้นไม่มีร่องรอยในฐาน ⇒ คง NULL (ตามผู้ติดต่อ › บริษัท = พฤติกรรมเดิม) · idempotent
+        """UPDATE "Documents" d SET "RecurringTransactionId" = r."Id" FROM "RecurringTransactions" r WHERE r."LastDocumentId" = d."Id" AND r."CompanyId" = d."CompanyId" AND d."RecurringTransactionId" IS NULL;""",
+        // รอบ 250 (WP-02 · คำตัดสิน Y8): ผลทดสอบการเชื่อมต่อขาออกล่าสุด (ปุ่มในหน้าแอดมิน · การ์ด go-live แดงเมื่อล้ม)
+        """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OutboundCheckAt" timestamptz NULL;""",
+        """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OutboundCheckOk" boolean NULL;""",
+        """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OutboundCheckMessage" varchar(500) NULL;""",
     };
 }

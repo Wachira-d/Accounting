@@ -24,14 +24,17 @@ public class RecurringAutopilotService : IRecurringAutopilotService
     private readonly IDocumentService _docs;
     private readonly IDocumentPayLinkService? _payLinks;
     private readonly IPermissionService? _permissions;
+    /// <summary>รอบ 250: ค่า <c>App:BaseUrl</c> สำหรับตัวตัดสิน "ตั้ง URL ของระบบแล้วไหม" (null = นอก DI ⇒ ดูแค่ค่าที่ผู้ดูแลตั้ง)</summary>
+    private readonly IConfiguration? _config;
 
     public RecurringAutopilotService(AccountingDbContext db, IDocumentService docs,
-        IDocumentPayLinkService? payLinks = null, IPermissionService? permissions = null)
+        IDocumentPayLinkService? payLinks = null, IPermissionService? permissions = null, IConfiguration? config = null)
     {
         _db = db;
         _docs = docs;
         _payLinks = payLinks;
         _permissions = permissions;
+        _config = config;
     }
 
     // ═══════════════ ตัวเลือก ═══════════════
@@ -45,7 +48,11 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             available.Select(c => new AutopilotOption(c, DocumentPayLinkPolicy.Label(c))).ToList(),
             AutoApprovePolicy.Catalogue.Select(c => new AutopilotOption(c.Code, c.Title, c.Why)).ToList(),
             AutoApprovePolicy.NeverList.Select(c => new AutopilotOption(c.Code, c.Title, c.Why)).ToList(),
-            facts == null ? "ยังไม่ได้ตั้งค่ารับชำระเงินออนไลน์" : DocumentPayLinkPolicy.UnavailableReason(facts));
+            facts == null ? "ยังไม่ได้ตั้งค่ารับชำระเงินออนไลน์" : DocumentPayLinkPolicy.UnavailableReason(facts),
+            PostPayEmailOptions: AutopilotSettingsResolver.TriStates.Select(s => new AutopilotOption(s,
+                AutopilotSettingsResolver.TriStateLabel(s, "ส่งใบเสร็จถึงลูกค้าอัตโนมัติหลังรับชำระ", "ไม่ส่งใบเสร็จอัตโนมัติ"))).ToList(),
+            PostPayPartialOptions: AutopilotSettingsResolver.TriStates.Select(s => new AutopilotOption(s,
+                AutopilotSettingsResolver.TriStateLabel(s, "ส่งทุกงวดที่รับ (รวมชำระบางส่วน)", "ส่งเฉพาะงวดที่ชำระครบ"))).ToList());
     }
 
     // ═══════════════ ความพร้อม / ทดลองรัน ═══════════════
@@ -239,6 +246,13 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         var hasRecurringRule = await _db.EmailScheduleRules.AsNoTracking()
             .AnyAsync(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == "RecurringInvoiceCreated"
                 && (x.DocumentType == null || x.DocumentType == docType.ToString()), ct);
+        // รอบ 250 (WP-02 §2.4 ข้อ 3): กฎ "เมื่ออนุมัติเอกสาร" ครอบชนิดนี้ ⇒ ตัวเข้าคิวของรายการประจำข้าม (EmailEnqueueOutcome.SkipForApprovedRule) — แผงบอกให้รู้
+        var hasApprovedRule = await _db.EmailScheduleRules.AsNoTracking()
+            .AnyAsync(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == "DocumentApproved"
+                && (x.DocumentType == null || x.DocumentType == docType.ToString()), ct);
+        // รอบ 250 (WP-02 §2.4 ข้อ 2 · Y7): URL ของระบบตั้งแล้วจริงไหม (ตัวตัดสินเดียว SystemBaseUrl.IsConfigured — ค่าที่มากับซอร์ส ≠ ตั้งแล้ว)
+        var adminBaseUrl = await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.AppBaseUrl).FirstOrDefaultAsync(ct);
+        var baseUrlConfigured = SystemBaseUrl.IsConfigured(adminBaseUrl, _config?["App:BaseUrl"]);
         if (hasRecurringRule)
             notes.Add("มีกฎ \"เมื่อรายการประจำสร้างเอกสาร\" ในหน้าตารางส่งอีเมล — ระบบส่งตามกฎนั้น (ค่าของกฎชนะค่าของรายการนี้เมื่อกฎตั้งไว้)");
 
@@ -276,6 +290,9 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             PolicySetterActive = policy.SetterActive,
             PolicyInactiveReason = policy.InactiveReason,
             TemplateError = templateError,
+            SystemBaseUrlConfigured = baseUrlConfigured,
+            ApprovedEmailRuleCovers = hasApprovedRule,
+            RecurringEmailRuleExists = hasRecurringRule,
         });
         var readiness = new AutopilotReadinessResponse(report.Level, report.LevelLabel, report.Items, report.WarnCount, report.FailCount);
 
@@ -291,6 +308,8 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         var payPlan = !saleSide ? "ไม่มีลิงก์ชำระ (ไม่ใช่เอกสารเรียกเก็บเงิน)"
             : !choice.Attach ? $"ไม่แนบลิงก์ชำระ (ตาม{choice.Source})"
             : DocumentPayLinkPolicy.OnlineOnly(allowed).Count == 0 ? "ตั้งให้แนบ แต่ไม่มีช่องทางออนไลน์ที่บริษัทเปิด — จะไม่แนบ"
+            // รอบ 250 (WP-02 §2.4 ข้อ 2): บอกตามจริง — ไม่มี URL ของระบบ ⇒ ไม่มีลิงก์ในอีเมล (ไม่เดาโดเมน)
+            : !baseUrlConfigured ? "ตั้งให้แนบ แต่ยังไม่ได้ตั้ง URL ของระบบ — อีเมลจะส่งโดยไม่มีลิงก์ชำระ (แจ้งผู้ดูแลระบบ)"
             : $"แนบลิงก์ชำระ ({string.Join(" · ", allowed.Select(DocumentPayLinkPolicy.Label))}) ยอดในลิงก์ {amounts.Net:N2} บาท"
               + (amounts.Wht > 0m ? $" (หลังหัก ณ ที่จ่าย {amounts.Wht:N2})" : "");
         notes.Add("ยอดในการทดลองรันคำนวณจากเทมเพลต (ประมาณการ) — ยอดจริงคำนวณตอนสร้างเอกสารด้วยตัวคำนวณของเอกสาร");
@@ -395,9 +414,14 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             throw new BusinessRuleException(badMode, AutopilotSettingsResolver.RuleCode);
         if (AutopilotSettingsResolver.ValidateChannels(request.PayLinkChannels) is { } badCh)
             throw new BusinessRuleException(badCh, AutopilotSettingsResolver.RuleCode);
-        var before = new { c.PaymentMode, c.PayLinkChannelsJson };
+        if ((AutopilotSettingsResolver.ValidateTriState(request.PostPayEmailReceipt) ?? AutopilotSettingsResolver.ValidateTriState(request.PostPayIncludePartial)) is { } badTri)
+            throw new BusinessRuleException(badTri, AutopilotSettingsResolver.RuleCode);
+        var before = new { c.PaymentMode, c.PayLinkChannelsJson, c.PostPayEmailReceipt, c.PostPayIncludePartial };
         if (request.PaymentMode != null) c.PaymentMode = AutopilotSettingsResolver.Normalize(request.PaymentMode);
         if (request.PayLinkChannels != null) c.PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(request.PayLinkChannels);
+        // รอบ 250 (WP-02 B-13): ชั้นผู้ติดต่อของงานหลังรับชำระ (ผู้อ่าน PostPaymentAutomationService.SettingsForAsync) · null = ไม่แก้
+        if (request.PostPayEmailReceipt != null) c.PostPayEmailReceipt = AutopilotSettingsResolver.ParseTriState(request.PostPayEmailReceipt);
+        if (request.PostPayIncludePartial != null) c.PostPayIncludePartial = AutopilotSettingsResolver.ParseTriState(request.PostPayIncludePartial);
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId,
@@ -407,7 +431,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             EntityId = c.Id.ToString(),
             OldValues = JsonSerializer.Serialize(before),
             NewValues = JsonSerializer.Serialize(new { action = "SetContactPaymentMode", c.PaymentMode, c.PayLinkChannelsJson,
-                ruleCode = AutopilotSettingsResolver.RuleCode }),
+                c.PostPayEmailReceipt, c.PostPayIncludePartial, ruleCode = AutopilotSettingsResolver.RuleCode }),
         });
         await _db.SaveChangesAsync(ct);
         return ContactView(c);
@@ -415,5 +439,6 @@ public class RecurringAutopilotService : IRecurringAutopilotService
 
     private static ContactAutopilotSettingsResponse ContactView(Contact c)
         => new(c.Id, c.Name, c.PaymentMode, DocumentPayLinkPolicy.ParseChannels(c.PayLinkChannelsJson),
-            RecurringApprovePolicyLoader.View(AutoApprovePolicy.Parse(c.AutoApprovePolicyJson, AutoApprovePolicy.ScopeContact)));
+            RecurringApprovePolicyLoader.View(AutoApprovePolicy.Parse(c.AutoApprovePolicyJson, AutoApprovePolicy.ScopeContact)),
+            AutopilotSettingsResolver.TriStateName(c.PostPayEmailReceipt), AutopilotSettingsResolver.TriStateName(c.PostPayIncludePartial));
 }

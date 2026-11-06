@@ -148,7 +148,7 @@ public class DocumentMoneyChannelDbTests
         var s = await SeedAsync(db);
         var pi = await PiAsync(db, s, "PI-BANK-" + Guid.NewGuid().ToString("N")[..6], bankAccountId: s.LinkedBankId);
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id), "tester");
+            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id), "tester", PaymentEntrySource.Manual);
         using var check = DbTestDatabase.TryCreateContext()!;
         var lines = await PaymentJeLinesAsync(check, s, pi.Id);
         Assert.Equal(1_000m, lines.Where(l => l.AccountId == s.BankGlId).Sum(l => l.CreditAmount));
@@ -165,7 +165,7 @@ public class DocumentMoneyChannelDbTests
         var pi = await PiAsync(db, s, "PI-UNL-" + Guid.NewGuid().ToString("N")[..6], bankAccountId: s.UnlinkedBankId);
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
-            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id), "tester"));
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id), "tester", PaymentEntrySource.Manual));
             Assert.Contains("ยังไม่ได้ผูกผังบัญชี", ex.Message);
             Assert.Contains("หน้า “บัญชีธนาคาร”", ex.Message);
         }
@@ -177,7 +177,7 @@ public class DocumentMoneyChannelDbTests
 
         // ทางไปต่อที่ข้อความบอก: เลือกธนาคารที่ผูกผังแล้วในหน้าบันทึกชำระ ⇒ ผ่าน
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id, overrideBank: s.LinkedBankId), "tester");
+            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id, overrideBank: s.LinkedBankId), "tester", PaymentEntrySource.Manual);
         using var after = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(1_000m, (await PaymentJeLinesAsync(after, s, pi.Id)).Where(l => l.AccountId == s.BankGlId).Sum(l => l.CreditAmount));
     }
@@ -191,7 +191,7 @@ public class DocumentMoneyChannelDbTests
         var pi = await PiAsync(db, s, "PI-NOCASH-" + Guid.NewGuid().ToString("N")[..6]);
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
-            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id), "tester"));
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id), "tester", PaymentEntrySource.Manual));
             Assert.Contains("11111", ex.Message);
         }
         using var check = DbTestDatabase.TryCreateContext()!;
@@ -206,7 +206,7 @@ public class DocumentMoneyChannelDbTests
         var s = await SeedAsync(db);
         var pi = await PiAsync(db, s, "PI-GL-" + Guid.NewGuid().ToString("N")[..6], paymentAccountId: s.DirectorLoanId);
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id), "tester");
+            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id), "tester", PaymentEntrySource.Manual);
         using var check = DbTestDatabase.TryCreateContext()!;
         var lines = await PaymentJeLinesAsync(check, s, pi.Id);
         Assert.Equal(1_000m, lines.Where(l => l.AccountId == s.DirectorLoanId).Sum(l => l.CreditAmount));
@@ -226,11 +226,11 @@ public class DocumentMoneyChannelDbTests
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
             var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
-                Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id, overrideBank: s.LinkedBankId, overrideGl: s.DirectorLoanId), "tester"));
+                Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id, overrideBank: s.LinkedBankId, overrideGl: s.DirectorLoanId), "tester", PaymentEntrySource.Manual));
             Assert.Contains("เลือกได้ทางเดียว", ex.Message);
         }
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id, overrideGl: s.DirectorLoanId), "tester");
+            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id, overrideGl: s.DirectorLoanId), "tester", PaymentEntrySource.Manual);
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(1_000m, (await PaymentJeLinesAsync(check, s, pi.Id)).Where(l => l.AccountId == s.DirectorLoanId).Sum(l => l.CreditAmount));
         Assert.Equal(50_000m, (await check.BankAccounts.AsNoTracking().FirstAsync(b => b.Id == s.LinkedBankId)).CurrentBalance);

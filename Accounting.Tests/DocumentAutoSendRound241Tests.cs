@@ -71,7 +71,7 @@ public class DocumentAutoSendRound241Tests
     [InlineData(DocumentType.Quotation, DocumentStatus.Approved, 100, true, "THB", "ฝั่งขาย")]
     public void ใบที่ออกลิงก์ได้(DocumentType type, DocumentStatus status, double balance, bool sale, string? cur, string? expect)
     {
-        var why = DocumentPayLinkPolicy.IssueRefusal(type, status, (decimal)balance, sale, cur);
+        var why = DocumentPayLinkPolicy.IssueRefusal(type, status, (decimal)balance, sale, cur, null);
         if (expect == null) Assert.Null(why); else Assert.Contains(expect, why);
     }
 
@@ -121,10 +121,10 @@ public class DocumentAutoSendRound241Tests
     public void ลิงก์ใช้ได้_เฉพาะมี_token_ไม่เพิกถอน_ไม่หมดอายุ_และ_token_สุ่มไม่ซ้ำ()
     {
         var now = new DateTime(2026, 11, 6, 3, 0, 0, DateTimeKind.Utc);
-        Assert.True(DocumentPayLinkPolicy.LinkUsable("t", now.AddDays(1), null, now));
-        Assert.False(DocumentPayLinkPolicy.LinkUsable("t", now.AddDays(1), now, now));   // เพิกถอน
-        Assert.False(DocumentPayLinkPolicy.LinkUsable("t", now, null, now));             // หมดอายุ
-        Assert.False(DocumentPayLinkPolicy.LinkUsable(null, null, null, now));
+        Assert.True(DocumentPayLinkPolicy.LinkUsable("t", now.AddDays(1), null, now, null));
+        Assert.False(DocumentPayLinkPolicy.LinkUsable("t", now.AddDays(1), now, now, null));   // เพิกถอน
+        Assert.False(DocumentPayLinkPolicy.LinkUsable("t", now, null, now, null));             // หมดอายุ
+        Assert.False(DocumentPayLinkPolicy.LinkUsable(null, null, null, now, null));
         var t1 = DocumentPayLinkPolicy.NewToken();
         Assert.Equal(64, t1.Length);
         Assert.NotEqual(t1, DocumentPayLinkPolicy.NewToken());
@@ -202,8 +202,10 @@ public class DocumentAutoSendRound241Tests
     private static PostPaymentAutomationPolicy.Facts F(
         bool sale = true, DocumentStatus status = DocumentStatus.Paid, bool voided = false, bool full = true, int alloc = 0,
         bool hasReceipt = false, bool receiptDraft = false, bool receiptVat = false, bool serves = false, bool mayVat = false,
-        string? email = "ap@buyer.co.th", IReadOnlyList<string>? buyerMissing = null, decimal wht = 0m, bool whtRegistered = true)
-        => new(sale, status, voided, full, alloc, hasReceipt, receiptDraft, receiptVat, serves, mayVat, email, buyerMissing, wht, whtRegistered);
+        string? email = "ap@buyer.co.th", IReadOnlyList<string>? buyerMissing = null, decimal wht = 0m, bool whtRegistered = true,
+        PaymentEntrySource source = PaymentEntrySource.Manual, string? taxInvoice = null)
+        => new(sale, status, voided, full, alloc, hasReceipt, receiptDraft, receiptVat, serves, mayVat, email, buyerMissing, wht, whtRegistered,
+            source, taxInvoice);
 
     private static readonly PostPaymentAutomationPolicy.Settings On = new(EmailReceipt: true, IncludePartial: false);
 

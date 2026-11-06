@@ -108,6 +108,9 @@ const AdminAPI = {
 
   // Dashboard
   dashboard() { return this.get('/dashboard'); },
+  // รอบ 250 (WP-02 · Y7/Y8/N11): รายการตรวจ go-live (เซิร์ฟเวอร์ตัดสินทุกข้อ) + ทดสอบการเชื่อมต่อขาออก
+  goLiveChecklist() { return this.get('/go-live'); },
+  goLiveOutboundCheck() { return this.post('/go-live/outbound-check', {}); },
   revenueDashboard(months = 12) { return this.get(`/revenue-dashboard?months=${months}`); },
   usageAlerts(threshold = 85) { return this.get(`/usage-alerts?thresholdPercent=${threshold}`); },
   // รอบ 219 เฟส 0 — รายงานอ่านอย่างเดียวของรอยรั่วค่าบริการ (เจ้าของตัดสินว่าจะทำอะไรต่อ)

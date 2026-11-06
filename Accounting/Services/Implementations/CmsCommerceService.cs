@@ -1693,7 +1693,7 @@ public partial class CmsCommerceService : ICmsCommerceService
                     // (ตัวตัดสินอยู่ที่ IPaymentIntentService.ResolveMoneyInAccountAsync
                     // ที่เดียว — ที่นี่แค่ส่งต่อ). null = เส้นสลิป เงินอยู่ในธนาคารแล้ว
                     OverridePaymentAccountId: moneyInAccountId
-                ), actor);
+                ), actor, source: Accounting.Helpers.PaymentEntrySource.Cms);
                 pay.ErpPaymentId = erpPay.Id;
                 await _db.SaveChangesAsync();
                 }

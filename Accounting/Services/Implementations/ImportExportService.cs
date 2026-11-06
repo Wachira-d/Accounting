@@ -1640,8 +1640,15 @@ public class ImportExportService : IImportExportService
             .Where(a => a.CompanyId == companyId)
             .OrderBy(a => a.AssetCode)
             .ToListAsync();
+        // รอบ 250 (WP-02 §2.4 ข้อ 10 · C F6): สินทรัพย์ที่ต้นทุนมาจากหลายเอกสาร — "วันที่ซื้อ" ในทะเบียน = วันพร้อมใช้ (ไม่ใช่วันที่ของใบใดใบหนึ่ง) ⇒ ติดป้ายในไฟล์ส่งออก
+        var assetIds = assets.Select(a => a.Id).ToList();
+        var multiSource = (await _db.FixedAssetCostSources.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && assetIds.Contains(s.FixedAssetId) && s.ReleasedAt == null)
+            .Select(s => s.FixedAssetId).Distinct().ToListAsync()).ToHashSet();
         return assets.Select(a => new Dictionary<string, string>
         {
+            ["UnderAcquisition"] = a.IsUnderAcquisition ? "ระหว่างจัดหา (ยังไม่โอนเข้าใช้งาน · ยังไม่คิดค่าเสื่อม)" : "",
+            ["PurchaseDateNote"] = Accounting.Helpers.AssetCostSourceRules.PurchaseDateNote(multiSource.Contains(a.Id)) ?? "",
             ["AssetCode"] = a.AssetCode,
             ["Name"] = a.Name,
             ["Category"] = a.Category ?? "",

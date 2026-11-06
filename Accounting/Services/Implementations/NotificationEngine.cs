@@ -70,13 +70,15 @@ public class NotificationEngine : INotificationEngine
             var settings = savedRows
                 .Where(s => s.EnableSystem || s.EnableEmail || s.EnableLine || s.EnableLineGroup)
                 .ToList();
-            // ถ้า caller ระบุ RecipientUserId override + ไม่มี NotificationSettings
-            // ใน event นี้ → ใช้ default channels (System+Email) สำหรับ user
-            // คนนั้น แทนที่จะ no-op. ใช้กับ approval/subscription event
-            // ที่ recipient เป็น user รู้ตัวอยู่แล้ว ไม่ใช่ role.
-            if (settings.Count == 0 && context.RecipientUserId.HasValue)
+            // รอบ 250 (WP-02 §2.4 ข้อ 4 · คำตัดสิน §2 #11): ลำดับตัดสินตัวเดียว NotificationDispatchRoute.Decide — บริษัทบันทึกแถวของคีย์แล้วแต่ปิดทุกช่อง ⇒ ไม่ส่ง
+            // **ก่อน** สาขาผู้รับที่ระบุ (เดิมสาขา RecipientUserId มาก่อน ⇒ ปิดไม่ได้สำหรับเหตุการณ์อนุมัติ/รายการประจำ/ค่าบริการ)
+            var route = NotificationDispatchRoute.Decide(savedRows.Count, settings.Count, context.RecipientUserId.HasValue);
+            if (route == NotificationDispatchRoute.Route.SuppressedByCompany) return;
+            // ถ้า caller ระบุ RecipientUserId override + ยังไม่ตั้งคีย์นี้เลย → ใช้ default channels (System+Email) สำหรับ user
+            // คนนั้น แทนที่จะ no-op. ใช้กับ approval/subscription event ที่ recipient เป็น user รู้ตัวอยู่แล้ว ไม่ใช่ role.
+            if (route == NotificationDispatchRoute.Route.DirectToRecipient && context.RecipientUserId is Guid directUser)
             {
-                await DispatchDirectAsync(companyId, eventKey, context.RecipientUserId.Value, context, await ExternalLinkAsync(context));
+                await DispatchDirectAsync(companyId, eventKey, directUser, context, await ExternalLinkAsync(context));
                 return;
             }
             // รอบ 232 (232-Notify): คีย์ที่ย้ายจากประกาศกลุ่ม LINE เดิม — บริษัทยังไม่ตั้ง ⇒ ค่าตั้งต้นจากตัวตัดสินเดียว

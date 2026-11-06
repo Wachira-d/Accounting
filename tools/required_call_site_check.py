@@ -364,7 +364,7 @@ RULES += [
          must_re=[r"if\s*\(\s*!\s*d\.Ok\s*\)\s*throw\b"],
          why="PC#4/ID#7 ด่านหัวเอกสารต้องโยนเมื่อตัวตัดสินบอกว่าใช้ไม่ได้"),
     dict(file=DOC, method="ReclassifyPaymentSourceAsync",
-         must=["DocumentMoneyChannel.EvaluateAsync(", "JournalEntryLines", "IsCashInflowDocAsync("],
+         must=["DocumentMoneyChannel.EvaluateAsync(", "JournalEntryLines", "CashFlowDirection.IsInflow("],   # รอบ 250: แทน IsCashInflowDocAsync
          forbid=["Select(b => b.LinkedAccountId)"],
          why="ID#6 ผังแหล่งเงินเดิมต้องอ่านจาก JE ที่ลงไว้จริง ไม่ใช่ LinkedAccountId ปัจจุบันของธนาคาร"),
     dict(file=BANKSVC, method="CreateBankAccountAsync", must=["ValidateLinkedAccountAsync("],
@@ -10932,7 +10932,7 @@ RULES += [
          before=[("LoadPaymentNotificationFactsAsync(", "_notify.DispatchAsync(")],
          why=_R249_WHY + "ฝั่งเงิน/คีย์เหตุการณ์/หัวข้อ/เนื้อความ ตัดสินที่ Helpers/PaymentNotificationText ตัวเดียว — ห้ามเลือกคีย์/พิมพ์หัวข้อเอง (PI เคยขึ้น \"รับชำระ\")"),
     dict(file=DOC, method="LoadPaymentNotificationFactsAsync",
-         must=["IsCashInflowDocAsync(companyId, doc)", "c.CompanyId == companyId", "l.Document.CompanyId == companyId", "!l.IsDeleted"],
+         must=["CashFlowDirection.IsInflow(doc.DocumentType", "c.CompanyId == companyId", "l.Document.CompanyId == companyId", "!l.IsDeleted"],   # รอบ 250: แทน IsCashInflowDocAsync
          why=_R249_WHY + "ฝั่งเงินจากตัวตัดสินเดียวกับยอดธนาคาร (ใบเพิ่มหนี้ฝั่งซื้อ = เงินออก) · ทุกคำค้นกรองบริษัท (กฎ M) · ไม่เอาบรรทัดที่ลบแล้ว"),
     dict(file="Services/Implementations/NotificationEngine.cs", method="ExternalLinkAsync",
          must=["SystemBaseUrl.ResolveAsync(", "NotificationLink.Absolute("],
@@ -14454,23 +14454,23 @@ _R241_AUTO = "Services/Implementations/PostPaymentAutomationService.cs"
 _R241_LINK = "Services/Implementations/DocumentPayLinkService.cs"
 RULES += [
     dict(file="Services/Payments/Handlers/DocumentPaymentHandler.cs", method="HandleSucceededAsync",
-         must=["DocumentPayLinkPolicy.WhtForPayment(", "WithholdingTaxAmount: paymentWht", "_postPay.EnqueueAsync(",
+         must=["DocumentPayLinkPolicy.WhtForPayment(", "WithholdingTaxAmount: paymentWht",
                # รอบ 244: S2 ตัวคิด WHT เดียวกับตัวบันทึกรับชำระ · S1 ผู้ซื้อไม่มีหน้าที่หัก ⇒ 0 ชัด ๆ (ไม่ใช่ null = ยอดแนะนำ)
                "DocumentService.PaymentWhtFiguresAsync(", "DocumentPayLinkPolicy.BuyerWithholds(", "DocumentPayLinkPolicy.ExpectedWht(",
                "whtFigures.NetCap"],
          must_re=[r"buyerWithholds\s*==\s*false\s*\?\s*0m"],
-         call_args=[("_docs.CreatePaymentAsync(", "WithholdingTaxAmount: paymentWht")],
-         forbid=["p.WithholdingTaxAmount"],
-         before=[("CreatePaymentAsync(", "_postPay.EnqueueAsync(")],
-         why=_R241_WHY + "241-3/241-5 เงินเข้าผ่านลิงก์ = ยอดสุทธิ ⇒ บันทึก WHT ที่เหลือ (ปิดหนี้) · เส้นเงินเข้าเรียกจุดเข้างานหลังรับชำระหลัง commit"),
+         call_args=[("_docs.CreatePaymentAsync(", "WithholdingTaxAmount: paymentWht"), ("_docs.CreatePaymentAsync(", "Gateway")],
+         forbid=["p.WithholdingTaxAmount", "EnqueueAsync("],
+         why=_R241_WHY + "241-3/241-5 เงินเข้าผ่านลิงก์ = ยอดสุทธิ ⇒ บันทึก WHT ที่เหลือ (ปิดหนี้) · รอบ 250: งานหลังรับชำระเข้าคิวในแกน CreatePaymentAsync (source: Gateway) — ห้ามเรียกซ้ำที่ handler"),
     dict(file="Controllers/DocumentController.cs", method="CreatePayment",
-         must=["EnqueueAsync(companyId, result.Id"],
-         before=[("CreatePaymentAsync(", "EnqueueAsync(companyId, result.Id")],
-         why=_R241_WHY + "241-5 บันทึกรับชำระด้วยมือ (1:1) เรียกจุดเข้าเดียวกับ gateway"),
-    dict(file=_R241_AUTO, method="EnqueueAsync",
-         must=["SettingsForAsync(", "p.CompanyId == companyId"],
+         call_args=[("_documentService.CreatePaymentAsync(", "Manual")],
+         forbid=["EnqueueAsync("],
+         why=_R241_WHY + "241-5 บันทึกรับชำระด้วยมือ (1:1) · รอบ 250: เข้าคิวในแกน CreatePaymentAsync (source: Manual) — ห้ามเรียกซ้ำที่ controller"),
+    dict(file=_R241_AUTO, method="EnqueueCoreAsync",
+         must=["SettingsForAsync(", "p.CompanyId == companyId", "PostPaymentAutomationPolicy.ForEnqueue("],
          must_lit=['ON CONFLICT (""CompanyId"", ""PaymentId"") DO NOTHING'],
-         why=_R241_WHY + "241-6 กันซ้ำที่ฐาน: 1 แถวต่อการชำระ (webhook/poll/กดซ้ำ) · ปิดค่าตั้ง = ไม่สร้างงาน"),
+         before=[("PostPaymentAutomationPolicy.ForEnqueue(", "ExecuteSqlInterpolatedAsync(")],
+         why=_R241_WHY + "241-6 กันซ้ำที่ฐาน: 1 แถวต่อการชำระ (webhook/poll/กดซ้ำ) · ปิดค่าตั้ง = ไม่สร้างงาน · รอบ 250: ทางเข้าตัดสินที่ ForEnqueue ตัวเดียว"),
     dict(file=_R241_AUTO, method="ProcessDueAsync",
          must=["ProcessRunAsync("], must_lit=["FOR UPDATE SKIP LOCKED"],
          why=_R241_WHY + "F2 D หลายเครื่องไม่ทำงานเดียวกันซ้ำ (จองแถว + สัญญาเช่า)"),
@@ -15298,8 +15298,10 @@ RULES += [
          must=["FixedAssetService.CostSourceLineChangeBlockAsync("],
          why=_R249FA_WHY + "แก้ผังบรรทัดที่ผูกเป็นต้นทุนสินทรัพย์ ⇒ ปลดก่อน (ขา Cr ของ JE โอนอ้างผังนี้)"),
     dict(file=DOC, method="ResolveLinePostedGlAmountAsync",
-         must=["PurchaseLineGlAmount.Standalone("], forbid=["line.Amount + line.VatAmount"],
-         why=_R249FA_WHY + "ยอด GL ของบรรทัด = ตัวตั้งเดียวกับต้นทุนสินทรัพย์หลายใบ (G10)"),
+         # รอบ 250 (WP-02 §2.2 · คำตัดสิน §2 #5): Posted (ครบ CIL + ส่วนออกแทน) แทน Standalone · ส่วนออกแทนจาก helper เดียวกับต้นทุนสินทรัพย์
+         must=["PurchaseLineGlAmount.Posted(", "WhtGrossUp.PayerBorneShareByLine(", "DocumentType.CertificateInLieu"],
+         forbid=["line.Amount + line.VatAmount", "PurchaseLineGlAmount.Standalone(", "WhtGrossUp.ForLines("],
+         why=_R249FA_WHY + "ยอด GL ของบรรทัด = ตัวตั้งเดียวกับต้นทุนสินทรัพย์หลายใบ (G10) · รอบ 250: สูตรเดียวต่อบรรทัด (CIL · ภาษีออกแทน)"),
 ]
 # ── ฝ่ายค้าน 369bc403 (H1–H3 · M1–M6 · L1–L10) + CI 7cb6bd08 (ด่านทะเบียนต่อใบฟ้องเคสถูก) ──
 _R249FA_DOC = "Services/Implementations/DocumentService.cs"
@@ -15328,13 +15330,13 @@ RULES += [
     dict(file=_R249FA_SRC, method="EnsurePeriodOpenForAssetJournalAsync",
          must=["ClosedPeriodRanges.Build("], why=_R249FA_WHY + "L4 นิยาม 'งวดปิด' ตัวเดียวของระบบ"),
     dict(file=_R249FA_SRC, method="LoadCostLineFactsAsync",
-         must=["AssetCostSourceRules.RouteOf(", "WhtGrossUp.ForLines("],
+         must=["AssetCostSourceRules.RouteOf(", "WhtGrossUp.PayerBorneShareByLine("], forbid=["WhtGrossUp.ForLines("],   # รอบ 250: helper เดียวกับตัวย้ายผัง
          why=_R249FA_WHY + "L5 เส้นลงบัญชีตัวตัดสินเดียว · M3 ภาษีที่ผู้จ่ายออกแทนเป็นต้นทุนของบรรทัด"),
     dict(file=_R249FA_SRC, method="GetCostSourcesAsync",
          must=["UnbackedAssetAmountForDocumentAsync(", "AssetCostSourceRules.ContractPriceWarning("],
          why=_R249FA_WHY + "M6 ปลดแล้ว GL ค้างต้องบอก · ราคาตามสัญญา"),
     dict(file=_R249FA_DOC, method="VoidDocumentAsync",
-         must=["FixedAssetService.LockCostSourcesIfLinkedAsync(", "FixedAssetService.AssetIdsWithCostSourcesAsync("],
+         must=["FixedAssetService.LockCostSourcesForTypesAsync(", "FixedAssetService.AssetIdsWithCostSourcesAsync("],   # รอบ 250 (ข้อ 8): ตัดสินจากชนิด
          why=_R249FA_WHY + "M2 คีย์ก่อนล็อกแถวเอกสาร · H1 ร่างที่มีแถวต้นทุนห้ามลบ (FK)"),
     dict(file=_R249FA_DOC, method="PurgeOneDocumentCoreAsync",
          must=["FixedAssetService.CostSourceVoidBlockAsync(", "FixedAssetService.ReleaseCostSourcesForVoidAsync(", "FixedAssetService.AssetIdsWithCostSourcesAsync("],
@@ -15392,8 +15394,8 @@ REVIEWER_CASES += [
      "if (await Task.FromResult<string?>(null) is string assetCostBlock)", True),
     ("R249FA-3fp", "VoidDocumentAsync", "if (await FixedAssetService.CostSourceVoidBlockAsync(_db, companyId, documentId, doc.DocumentNumber) is string assetCostBlock)",
      "if (await FixedAssetService\n            .CostSourceVoidBlockAsync(_db, companyId,\n                documentId, doc.DocumentNumber) is string assetCostBlock)", False),
-    ("R249FA-4", "ResolveLinePostedGlAmountAsync", "Accounting.Helpers.PurchaseLineGlAmount.Standalone(line.Amount, line.VatAmount, line.IsVatClaimable)",
-     "line.IsVatClaimable ? line.Amount : line.Amount + line.VatAmount", True),
+    ("R249FA-4", "ResolveLinePostedGlAmountAsync", "Accounting.Helpers.PurchaseLineGlAmount.Posted(",
+     "Accounting.Helpers.PurchaseLineGlAmount.Standalone(", True),   # รอบ 250: ถอยกลับสูตรที่ขาด CIL/ส่วนออกแทน ⇒ ต้องฟ้อง
     ("R249FA-5", "PlaceInServiceAsync", "TodayBangkok(), latestSource);\n            if (problem != null)", "TodayBangkok(), latestSource);\n            if (problem == \"never\")", True),
     ("R249FA-6", "RegisterFromDocumentAsync#1", "var linkedLineIds = await LinkedLineIdsAsync(_db, companyId, doc.Id);", "var linkedLineIds = new HashSet<Guid>();", True),
     ("R249FA-8", "LinkLinesCoreAsync", "var overIncrease = Accounting.Helpers.AssetCostSourceRules.OverRegistrationIncrease(overBefore[docId], reg - gl, DocSign(docId));\n            if (overIncrease >",
@@ -15483,6 +15485,245 @@ RULES += [
          why=_R250_WHY + "M-2 ผู้สมัครจับคู่ (AI) ไม่รวมสลิปที่ยังไม่ตรวจ"),
 ]
 
+# ── รอบ 250 WP-02 (erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md §4 · คำตัดสิน §2 #4–#16 · §3.3 Y7/Y8/N11 · AUDIT_249_COVERAGE M-3) ──
+_R250_WHY = "รอบ 250 WP-02: "
+_R250_INTEG = "Services/Implementations/IntegrationService.cs"
+_R250_PAY_CALLERS = [
+    ("Services/Settlement/SettlementPostingService.cs", "EnsureReceiptAsync", "Settlement"),
+    ("Services/Import/Targets/PaymentImportTarget.cs", "CommitGroupAsync", "Import"),
+    ("Services/Implementations/CmsBookingService.Workflow.cs", "ApplyCompletionPaymentAsync", "Cms"),
+    ("Services/Implementations/CmsCommerceService.cs", "ConfirmPaymentLockedAsync", "Cms"),
+    ("Services/Implementations/Lodging/LodgingService.Lifecycle.cs", "SettleCheckOutAsync", "Lodging"),
+    ("Services/Implementations/Lodging/LodgingService.TaxTiming.cs", "CheckOutWithAdvanceAsync", "Lodging"),
+    ("Services/Implementations/PlatformBillingDocumentIssuer.cs", "SettleInvoiceAsync", "PlatformBilling"),
+    ("Controllers/DocumentController.cs", "CreatePayment", "Manual"),
+    ("Services/Payments/Handlers/DocumentPaymentHandler.cs", "HandleSucceededAsync", "Gateway"),
+]
+RULES += [
+    # ── §2.1 งานหลังรับชำระ: แกนเดียวทุกทางเข้า (B F-3 · A B-21/D-02/D-13) ──
+    dict(file=DOC, method="CreatePaymentAsync",
+         must=["SyncWhtCreditReceivedAsync(", "PostPaymentAutomationService.EnqueueCoreAsync("],
+         call_args=[("PostPaymentAutomationService.EnqueueCoreAsync(", "source")],
+         before=[("SyncWhtCreditReceivedAsync(", "PostPaymentAutomationService.EnqueueCoreAsync("),
+                 ("transaction.CommitAsync(", "PostPaymentAutomationService.EnqueueCoreAsync(")],
+         why=_R250_WHY + "§2.1 ข้อ 1/4 งานหลังรับชำระเข้าคิวในแกน CreatePaymentAsync หลัง commit · หลังทะเบียน 50 ทวิ · ส่งทางเข้าที่ผู้เรียกระบุ"),
+    dict(file=DOC, method="AfterPaymentRecordedAsync",
+         must=["SyncWhtCreditReceivedAsync(", "PostPaymentAutomationService.EnqueueCoreAsync(", "p.CompanyId == companyId"],
+         call_args=[("PostPaymentAutomationService.EnqueueCoreAsync(", "source")],
+         before=[("SyncWhtCreditReceivedAsync(", "PostPaymentAutomationService.EnqueueCoreAsync(")],
+         why=_R250_WHY + "M-3 ขั้นหลัง commit ตัวเดียวกับ CreatePaymentAsync สำหรับทางเข้าที่บันทึกการชำระเอง"),
+    dict(file=_R250_INTEG, method="ProcessPaymentAsync",
+         must=["AfterPaymentStepsAsync("],
+         before=[("CreatePaymentJournalAsync(", "AfterPaymentStepsAsync("), ("AfterPaymentStepsAsync(", "log.CreatedJournalEntryId")],
+         why=_R250_WHY + "M-3 ทางเข้าที่ 9 (integration) เดินขั้นหลังรับชำระ (ทะเบียน 50 ทวิ + งานหลังรับชำระ) — ผลล้มลง sync log"),
+    dict(file=_R250_INTEG, method="AfterPaymentStepsAsync",
+         must=["_documentService.AfterPaymentRecordedAsync(", "PostPaymentAutomationService.EnqueueCoreAsync("],
+         call_args=[("_documentService.AfterPaymentRecordedAsync(", "Integration"), ("PostPaymentAutomationService.EnqueueCoreAsync(", "Integration")],
+         why=_R250_WHY + "M-3 ทางเข้า integration ระบุ source = Integration"),
+    dict(file="Services/Implementations/PostPaymentAutomationService.cs", method="EnqueueCoreAsync",
+         must=["StatusSkipped"], forbid=["catch { }"],
+         why=_R250_WHY + "§2.1 ข้อ 3 ทางเข้าที่มีเส้นใบเสร็จของตัวเอง = แถว Skipped พร้อมเหตุ (ไม่ใช่ไม่มีแถว)"),
+    dict(file="Services/Implementations/PostPaymentAutomationService.cs", method="SettingsForAsync",
+         must=["PostPaymentAutomationPolicy.EffectiveLayers(", "d.RecurringTransactionId", "c.PostPayEmailReceipt", "r.PostPayEmailReceipt",
+               "c.CompanyId == companyId", "r.CompanyId == companyId"],
+         forbid=["PostPaymentAutomationPolicy.Effective(s"],
+         why=_R250_WHY + "B-13 ชั้นค่าตั้ง ตาราง › รายการประจำ › ผู้ติดต่อ › บริษัท ผ่านตัวต่อชั้นเดียว (ไม่คำนวณเอง) · tenant"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateDocumentFromTemplateAsync",
+         must=["SetProperty(d => d.RecurringTransactionId", "EmailEnqueueOutcome.Apply("],
+         forbid=["EmailEnqueueFailed = true"],
+         why=_R250_WHY + "B-13 ใบ → รายการประจำ (ชั้นรายการของงานหลังรับชำระ) · §2.4 ข้อ 1 ธง EmailEnqueueFailed ตั้งจากผลด้วยตัวตัดสินเดียว"),
+    dict(file="Services/Implementations/PostPaymentAutomationService.cs", method="ExecuteAsync",
+         must=["PaymentQrService.SupersedingTaxInvoiceNumberAsync(", "SupersedingTaxInvoiceNumber: supersedingTaxInvoice", "PostPaymentAutomationPolicy.ParseSource(run.Source)"],
+         why=_R250_WHY + "§2.3 ข้อ 3 ใบแจ้งหนี้ที่มีใบกำกับแล้ว ⇒ หยุด (กันใบเสร็จซ้อน) · ทางเข้าจากแถวงาน"),
+    # ── §2.3 ลิงก์ชำระของใบแจ้งหนี้ที่มีใบกำกับแล้ว (A G-02/G-03 · §2 #16) ──
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="LoadDocAsync",
+         must=["PaymentQrService.SupersedingTaxInvoiceNumberAsync("],
+         why=_R250_WHY + "§2.3 ข้อ 2 fact 'มีใบกำกับอ้างแล้ว' โหลดที่เดียว (ตัดสินใน policy ไม่ใช่ service)"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="PublicViewAsync",
+         call_args=[("DocumentPayLinkPolicy.LinkUsable(", "SupersedingTaxInvoice")],
+         why=_R250_WHY + "§2.3 ข้อ 4 หน้าชำระสาธารณะตัดสินสดรวมเงื่อนไขใบกำกับ ⇒ ลิงก์เดิมใช้ไม่ได้ทันที"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="EnsureLinkAsync",
+         call_args=[("DocumentPayLinkPolicy.LinkUsable(", "SupersedingTaxInvoice")],
+         why=_R250_WHY + "§2.3 ลิงก์เดิมไม่ถูกใช้ซ้ำหลังออกใบกำกับ"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="PayQrFactsAsync",
+         call_args=[("DocumentPayLinkPolicy.LinkUsable(", "SupersedingTaxInvoice")],
+         why=_R250_WHY + "§2.3 QR บนกระดาษของใบแจ้งหนี้ที่มีใบกำกับ ⇒ ไม่มี URL ลิงก์"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="StatusAsync",
+         call_args=[("DocumentPayLinkPolicy.LinkUsable(", "SupersedingTaxInvoice")],
+         why=_R250_WHY + "§2.3 หน้าเอกสารบอกสถานะลิงก์ตามจริง"),
+    dict(file="Controllers/PublicPaymentController.cs", method="StartAsync",
+         must=["target.CanPayNow"], before=[("target.CanPayNow", "_intents.StartAsync(")],
+         why=_R250_WHY + "§2.3 ข้อ 4 สร้างรายการชำระจากเป้าหมายของ PublicViewAsync (ยอด 0 เมื่อลิงก์ใช้ไม่ได้) — ตรวจก่อนสร้าง"),
+    # ── §2.4 ล้มดัง + ซ้ำ + ลำดับ ──
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="OnRecurringDocumentCreatedAsync",
+         must=["EmailEnqueueOutcome.Failed(", "EmailEnqueueOutcome.SkipForApprovedRule(", "EmailEnqueueOutcome.Enqueued()"],
+         before=[("EmailEnqueueOutcome.SkipForApprovedRule(", "WithRecurringPayLayer(")],
+         forbid=["LogWarning(ex"],
+         why=_R250_WHY + "§2.4 ข้อ 1/3 คืนผล (ไม่กลืนเป็น LogWarning) · กฎ 'เมื่ออนุมัติเอกสาร' ครอบแล้ว ⇒ ข้ามก่อนเข้าคิวซ้ำ"),
+    dict(file="Services/Implementations/RecurringAutopilotService.cs", method="BuildAsync",
+         must=["SystemBaseUrl.IsConfigured(", "SystemBaseUrlConfigured = baseUrlConfigured", "ApprovedEmailRuleCovers = hasApprovedRule",
+               "RecurringEmailRuleExists = hasRecurringRule"],
+         why=_R250_WHY + "§2.4 ข้อ 2/3 แผงความพร้อมรู้ว่า URL ของระบบยังไม่ตั้ง (Y7) และมีกฎส่งสองแบบ"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="EnqueueDocumentAsync",
+         must=["PayLinkSkipNote(payLink)"],
+         why=_R250_WHY + "§2.4 ข้อ 2 ส่งได้แต่บอกเหตุที่ไม่แนบลิงก์บนแถวคิว (ไม่เงียบ)"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="RecheckDocumentAtSendAsync",
+         must=["PayLinkSkipNote(payLink)"],
+         why=_R250_WHY + "§2.4 ข้อ 2 เหตุที่ไม่แนบลิงก์ ณ เวลาส่ง"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="ForScheduledEmailAsync",
+         must_re=[r"if\s*\(\s*!\s*r\s*\.\s*Ok\s*\)\s*\{[^}]*return\s+r\s*;"],
+         why=_R250_WHY + "§2.4 ข้อ 2 ออกลิงก์ไม่ได้ ⇒ คืนผลพร้อมเหตุ (เดิมคืน null เงียบ)"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchAsync",
+         must=["NotificationDispatchRoute.Decide(", "NotificationDispatchRoute.Route.SuppressedByCompany"],
+         before=[("NotificationDispatchRoute.Decide(", "DispatchDirectAsync(")],
+         why=_R250_WHY + "§2.4 ข้อ 4 บริษัทปิดทุกช่องของคีย์ ⇒ ไม่ส่ง ก่อนสาขาผู้รับที่ระบุ (B F-8)"),
+    dict(file=DOC, method="CollectApprovalWarningsAsync",
+         must=["DocumentPayLinkPolicy.WhtMismatchNote(", "DocumentPayLinkPolicy.BuyerWithholds(", "c.CompanyId == companyId"],
+         why=_R250_WHY + "§2.4 ข้อ 6 ใบขายตั้ง WHT ให้ผู้ซื้อที่ไม่มีหน้าที่หัก ⇒ เตือนก่อนอนุมัติ ([WHT-PAYEE]) ตัวตัดสินเดียวกับลิงก์"),
+    dict(file="Services/Implementations/DocumentEmailService.cs", method="RecordEtdaStampAsync",
+         must=["EtaxByEmailFormat.TimestampTokenRefusal("], forbid=["token[..500]"],
+         before=[("EtaxByEmailFormat.TimestampTokenRefusal(", "etax.EtdaStampedAt = ")],
+         why=_R250_WHY + "§2.4 ข้อ 7 รหัสประทับเวลายาวเกิน ⇒ ปฏิเสธพร้อมเหตุ ก่อนแตะแถว (ไม่ตัดเงียบ)"),
+    # R250-LOCK (ข้อ 8 · คำตัดสิน §2 #7): ถือคีย์ผู้เขียนต้นทุนสินทรัพย์จากชนิดใบ ก่อน FOR UPDATE แถวเอกสาร — ไม่ตรวจ AnyAsync นอกล็อก
+    dict(file=DOC, method="VoidDocumentAsync",
+         must=["FixedAssetService.LockCostSourcesForTypesAsync("], forbid=["LockCostSourcesIfLinkedAsync("],
+         before=[("FixedAssetService.LockCostSourcesForTypesAsync(", "ExecuteSqlRawAsync(")],
+         why=_R250_WHY + "R250-LOCK คีย์ก่อนล็อกแถวเอกสาร (TOCTOU)"),
+    dict(file=DOC, method="PurgeDocumentAsync#3",
+         must=["FixedAssetService.LockCostSourcesForTypesAsync("], forbid=["LockCostSourcesIfLinkedAsync("],
+         before=[("FixedAssetService.LockCostSourcesForTypesAsync(", "ExecuteSqlRawAsync(")],
+         why=_R250_WHY + "R250-LOCK ลบถาวร: คีย์ก่อนล็อกแถวเอกสารในแผน"),
+    dict(file="Services/Implementations/FixedAssetService.CostSources.cs", method="LockCostSourcesForTypesAsync",
+         must=["AssetCostSourceRules.MayBeCostSource", "LockCostSourceWritersAsync("], forbid=["FixedAssetCostSources", "AnyAsync("],
+         why=_R250_WHY + "R250-LOCK ตัดสินจากชนิด ไม่ใช่การค้นนอกล็อก"),
+    dict(file="Services/Implementations/WhtCreditService.cs", method="SettleYearEndAsync",
+         must_re=[r"OrderBy\(\s*w\s*=>\s*w\s*\.\s*Id\s*\)"],
+         before=[("OrderBy(", "ExpireCoreAsync(")],
+         why=_R250_WHY + "§2.4 ข้อ 9 ปิดปีล็อกแถวตามลำดับ Id (กัน deadlock)"),
+    dict(file="Services/Import/OpeningBalanceReconciliation.cs", method="ReconcileAsync",
+         must=["!a.IsUnderAcquisition"],
+         why=_R250_WHY + "§2.4 ข้อ 10 สินทรัพย์ระหว่างจัดหาไม่นับเทียบผัง 122xx/123xx"),
+    dict(file="Services/Implementations/ImportExportService.cs", method="ExportFixedAssetsAsync",
+         must=["AssetCostSourceRules.PurchaseDateNote(", "a.IsUnderAcquisition", "s.CompanyId == companyId"],
+         why=_R250_WHY + "§2.4 ข้อ 10 ไฟล์ส่งออกติดป้ายระหว่างจัดหา/วันที่ซื้อ = วันพร้อมใช้"),
+    dict(file="Services/Implementations/FixedAssetService.CostSources.cs", method="GetCostSourcesAsync",
+         must=["AssetCostSourceRules.PreExistingOverRegistration(", "AssetGlBackingAsync(", "AssetCostSourceRules.PurchaseDateNote("],
+         why=_R250_WHY + "§2.4 ข้อ 10 เคส #4 ใบที่มีทะเบียนเกิน GL อยู่ก่อน ⇒ problem row"),
+    dict(file="Controllers/DocumentController.cs", method="BatchConvert",
+         must=["BatchConvertDocumentsAsync(companyId, sourceIds"], forbid=["request.DocumentIds.Distinct()"],
+         why=_R250_WHY + "§2.4 ข้อ 11 รายการเดียวใช้ทั้งด่านสิทธิ์/ตัวแปลง/ตัวนับ (CS8604)"),
+    # ── §3.3 Y7/Y8/N11 การ์ด go-live ──
+    dict(file="Controllers/AdminGoLiveController.cs", method="OutboundCheck",
+         must=["OutboundUrlGuard.CheckResolvedAsync(", "OutboundUrlGuard.WebhookClientName", "PlatformGoLiveChecklist.OutboundResult(",
+               "AddChainedAuditLog(", "s.OutboundCheckOk = ok"],
+         before=[("OutboundUrlGuard.CheckResolvedAsync(", "client.SendAsync(")],
+         forbid=["new HttpClient("],
+         why=_R250_WHY + "Y8 ทดสอบขาออกผ่านด่าน URL + client ขาออกตัวเดียว (ไม่ผ่าน proxy) · ผลบันทึกถาวร + audit"),
+    dict(file="Controllers/AdminGoLiveController.cs", method="FactsAsync",
+         must=["SystemBaseUrl.IsConfigured(", "s?.OutboundCheckOk", "_platform.PlatformConfigAsync(", "_legal.GetCurrentAsync("],
+         why=_R250_WHY + "Y7/N11 ทุกข้อตรวจจากข้อมูลจริง · URL ระบบ: ค่าที่มากับซอร์ส ≠ ตั้งแล้ว"),
+]
+# ทุกทางเข้าที่บันทึกการชำระผ่าน CreatePaymentAsync ระบุทางเข้าแบบชื่อพารามิเตอร์ + ค่าที่ถูก (ทางเข้าใหม่ต้องเพิ่มที่นี่)
+RULES += [
+    dict(file=f, method=m, must_re=[r"CreatePaymentAsync\([^;]*\bsource\s*:"], call_args=[("CreatePaymentAsync(", src)],
+         why=_R250_WHY + f"§2.1 ข้อ 2/5 ทางเข้า {src} ส่ง source ให้แกน CreatePaymentAsync ตัดสินงานหลังรับชำระ")
+    for f, m, src in _R250_PAY_CALLERS
+]
+
+REVIEWER_CASES += [
+    # ย้ายเข้าคิวกลับไปไว้ก่อน commit ⇒ ต้องฟ้อง
+    ("R250-1", "CreatePaymentAsync",
+     "            await PostPaymentAutomationService.EnqueueCoreAsync(_db, _logger, companyId, payment.Id, source, createdBy, CancellationToken.None);\n",
+     "", True),
+    # handler กลับมาเรียกเข้าคิวเอง ⇒ ต้องฟ้อง
+    ("R250-2", "HandleSucceededAsync",
+     "source: Accounting.Helpers.PaymentEntrySource.Gateway);",
+     "source: Accounting.Helpers.PaymentEntrySource.Gateway); await _postPay.EnqueueAsync(intent.CompanyId, Guid.Empty, PaymentEntrySource.Gateway, null);", True),
+    # นำเข้าไฟล์ส่งทางเข้าผิด (Manual) ⇒ ต้องฟ้อง
+    ("R250-3", "CommitGroupAsync",
+     "source: Accounting.Helpers.PaymentEntrySource.Import)", "source: Accounting.Helpers.PaymentEntrySource.Manual)", True),
+    # จัดรูปแบบใหม่ (ขึ้นบรรทัด) ⇒ ต้องไม่ฟ้อง
+    ("R250-3fp", "CommitGroupAsync",
+     "source: Accounting.Helpers.PaymentEntrySource.Import)", "\n                    source: Accounting.Helpers.PaymentEntrySource.Import)", False),
+    # ลิงก์สาธารณะลืมเงื่อนไขใบกำกับ ⇒ ต้องฟ้อง
+    ("R250-4", "PublicViewAsync",
+     "if (!DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now, d.SupersedingTaxInvoice))",
+     "if (!DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now, null))", True),
+    ("R250-4b", "EnsureLinkAsync",
+     "string? token = DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now, d.SupersedingTaxInvoice)",
+     "string? token = DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now, null)", True),
+    # engine กลับไปส่งตรงก่อนดูแถวที่ปิด ⇒ ต้องฟ้อง
+    ("R250-5", "DispatchAsync",
+     "if (route == NotificationDispatchRoute.Route.SuppressedByCompany) return;", "", True),
+    # ยกเลิกใบกลับไปตรวจ "ผูกอยู่ไหม" นอกล็อก ⇒ ต้องฟ้อง
+    ("R250-6", "VoidDocumentAsync",
+     "await FixedAssetService.LockCostSourcesForTypesAsync(_db, companyId, new[] { doc.DocumentType });",
+     "await FixedAssetService.LockCostSourcesIfLinkedAsync(_db, companyId, new[] { documentId });", True),
+    # ตัดรหัสประทับเวลาเงียบกลับมา ⇒ ต้องฟ้อง
+    ("R250-7", "RecordEtdaStampAsync",
+     "etax.EtdaTimestampToken = string.IsNullOrEmpty(token) ? null : token;",
+     "etax.EtdaTimestampToken = string.IsNullOrEmpty(token) ? null : (token.Length > 500 ? token[..500] : token);", True),
+    # ตัวต่อชั้นค่าตั้งถูกแทนด้วยสูตรสองชั้นเดิม ⇒ ต้องฟ้อง
+    ("R250-8", "SettingsForAsync",
+     "return PostPaymentAutomationPolicy.EffectiveLayers(s, schedule, recurring, contact);",
+     "return PostPaymentAutomationPolicy.Effective(s, schedule);", True),
+]
+
+
+def doc_inline_vat_formula_errors(text: str) -> list:
+    """รอบ 250 (WP-02 §2.2 ข้อ 4 · คำตัดสิน §2 #6): ยอด Dr ของบรรทัดซื้อ (ฐาน + VAT ต้องห้าม) ต้องผ่าน Helpers/PurchaseLineGlAmount ตัวเดียว —
+    ห้ามประกอบ `Amount + x.VatAmount` เองใน DocumentService (allowlist = ยอดรวมที่ไม่ใช่ยอด GL ของบรรทัด: ยอดค่ารับรอง §65 ตรี · ยอดรวมบรรทัดของใบ) ·
+    ตรวจบนโค้ดที่ตัดคอมเมนต์+สตริงแล้ว"""
+    allow = ["(decimal?)(l.Amount + l.VatAmount)", "liveLines.Sum(l => l.Amount + l.VatAmount)"]
+    errs = []
+    code = mask(text)
+    lines = code.split("\n")
+    for i, ln in enumerate(lines, 1):
+        for m in re.finditer(r"\bAmount\s*\+\s*\w+\s*\.\s*VatAmount\b", ln):
+            if any(a in ln for a in allow):
+                continue
+            errs.append(f"{DOC}:{i} ประกอบ `Amount + VatAmount` เอง — ใช้ PurchaseLineGlAmount.Standalone/Posted (รอบ 250 WP-02 §2.2 · สองสูตรสำหรับบรรทัดเดียว)")
+    # IsCashInflowDocAsync ถูกแทนด้วย Helpers/CashFlowDirection (ข้อ 5) — ห้ามกลับมา
+    if re.search(r"\bIsCashInflowDocAsync\s*\(", code):
+        errs.append(f"{DOC}: มี IsCashInflowDocAsync( — ทิศเงินตัดสินที่ Helpers/CashFlowDirection.IsInflow ตัวเดียว (รอบ 250 WP-02 §2.4 ข้อ 5)")
+    return errs
+
+
+def doc_inline_vat_formula_self_test() -> list:
+    fails = []
+    base = "class X { void M() { var ok = await _db.X.SumAsync(l => (decimal?)(l.Amount + l.VatAmount)); } }"
+    if doc_inline_vat_formula_errors(base):
+        fails.append("self-test doc_inline_vat_formula: allowlist ฟ้องผิด")
+    if not doc_inline_vat_formula_errors(base.replace("var ok", "var d = docLine.Amount + docLine.VatAmount;\n var ok")):
+        fails.append("self-test doc_inline_vat_formula: ใส่ docLine.Amount + docLine.VatAmount แล้วไม่ฟ้อง")
+    if not doc_inline_vat_formula_errors(base.replace("var ok", "var d = await IsCashInflowDocAsync(companyId, doc);\n var ok")):
+        fails.append("self-test doc_inline_vat_formula: IsCashInflowDocAsync กลับมาแล้วไม่ฟ้อง")
+    if doc_inline_vat_formula_errors(base.replace("var ok", "// docLine.Amount + docLine.VatAmount\n var ok")):
+        fails.append("self-test doc_inline_vat_formula: นับคอมเมนต์เป็นโค้ด")
+    return fails
+
+
+def wht_writeoff_lock_key_errors(text: str) -> list:
+    """รอบ 250 (WP-02 §2.4 ข้อ 9 · E L-2): คีย์ล็อกตัดสูญเครดิตภาษีถูกหักต้องมาจาก AdvisoryLockKey.WhtCreditWriteOff (ค่าคงที่เดียว) — ห้าม literal"""
+    errs = []
+    lit = mask(text, keep_strings=True)
+    if re.search(r'AdvisoryLockKey\s*\.\s*For\s*\([^;]*"wht-credit-writeoff"', lit):
+        errs.append(f"{_R243A_WHT}: มี literal \"wht-credit-writeoff\" — ใช้ AdvisoryLockKey.WhtCreditWriteOff (รอบ 250 WP-02 §2.4 ข้อ 9)")
+    if not re.search(r"AdvisoryLockKey\s*\.\s*WhtCreditWriteOff\b", mask(text)):
+        errs.append(f"{_R243A_WHT}: ไม่พบ AdvisoryLockKey.WhtCreditWriteOff ใน LockCreditAsync (รอบ 250 WP-02 §2.4 ข้อ 9)")
+    return errs
+
+
+def wht_writeoff_lock_key_self_test() -> list:
+    good = 'class X { Task L() => _db.Database.ExecuteSqlRawAsync("q", AdvisoryLockKey.For(c, AdvisoryLockKey.WhtCreditWriteOff, i)); string a = "wht-credit-writeoff-reversed"; string b = "wht-credit-writeoff"; }'
+    fails = []
+    if wht_writeoff_lock_key_errors(good):
+        fails.append("self-test wht_writeoff_lock_key: โค้ดถูกฟ้องผิด (action ที่ขึ้นต้นเหมือนคีย์ต้องไม่ฟ้อง)")
+    if not wht_writeoff_lock_key_errors(good.replace("AdvisoryLockKey.WhtCreditWriteOff", '"wht-credit-writeoff"')):
+        fails.append("self-test wht_writeoff_lock_key: literal กลับมาแล้วไม่ฟ้อง")
+    return fails
+
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
@@ -15507,9 +15748,12 @@ def main() -> int:
     errs += cascade_writer_errors(cascade_writer_files())   # รอบ 238 (236-3 ข้อ 2)
     errs += program_outbound_clients_errors((SRC / "Program.cs").read_text(encoding="utf-8"))   # รอบ 240 (ฝ่ายค้าน S7/N2)
     errs += wht_credit_ioe_errors((SRC / _R243A_WHT).read_text(encoding="utf-8"))   # รอบ 243a (G-10)
+    errs += doc_inline_vat_formula_errors((SRC / DOC).read_text(encoding="utf-8"))   # รอบ 250 WP-02 §2.2/§2.4 ข้อ 5
+    errs += wht_writeoff_lock_key_errors((SRC / _R243A_WHT).read_text(encoding="utf-8"))   # รอบ 250 WP-02 §2.4 ข้อ 9
     st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
           + notes_marker_self_test(marker_files) + line_config_self_test(marker_files) + line_push_self_test(marker_files)
-          + cascade_writer_self_test() + program_outbound_clients_self_test() + wht_credit_ioe_self_test())
+          + cascade_writer_self_test() + program_outbound_clients_self_test() + wht_credit_ioe_self_test()
+          + doc_inline_vat_formula_self_test() + wht_writeoff_lock_key_self_test())
     for e in errs + st:
         print("❌ " + e)
     if errs or st:
