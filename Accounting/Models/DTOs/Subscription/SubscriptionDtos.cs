@@ -30,7 +30,11 @@ public record TrialStatusResponse(
     ConversionIncentive? Incentive,
     /// <summary>วันที่ได้เพิ่มต่อการขยาย 1 ครั้ง (จากแพ็กเกจที่แอดมินตั้ง) — หน้าเว็บแสดงค่านี้
     /// ห้ามพิมพ์ "7 วัน" ตายตัว (เดิม `subscription.html` พิมพ์ไว้ 3 จุดขณะที่ Enterprise ตั้ง 15)</summary>
-    int ExtensionDays = 0);
+    int ExtensionDays = 0)
+{
+    /// <summary>รอบ 252 WP-13 J: ป้ายไทยของสถานะทดลองใช้ (หน้าเว็บเลิกใช้ statusMap ของตัวเอง)</summary>
+    public string TrialStatusLabel => SubscriptionLabels.Trial(TrialStatus);
+}
 
 public record TrialUsageInfo(
     int DocumentsUsed,
@@ -216,7 +220,11 @@ public record SubscriptionResponse(
     /// <summary>รอบ 236: ลิงก์ทางไปต่อของ <see cref="PurchaseBlocked"/> (หน้า License)</summary>
     string? PurchaseNextStepUrl = null,
     /// <summary>รอบ 236 (ฝ่ายค้าน B1): ผู้ดูเป็นผู้ถือ License ⇒ แพ็ก (ชื่อ enum) ที่เลือกได้เพื่อ "ต่ออายุ License" · null = เลือกไม่ได้</summary>
-    string? LicenseRenewalPlan = null);
+    string? LicenseRenewalPlan = null)
+{
+    /// <summary>รอบ 252 WP-13 J: ป้ายไทยจากตารางเดียว (หน้าเว็บเลิกใช้ cycleMap ของตัวเอง)</summary>
+    public string BillingCycleLabel => SubscriptionLabels.Cycle(BillingCycle);
+}
 
 public record UsageLimits(
     int MaxUsers,
@@ -507,7 +515,12 @@ public record SubscriptionPaymentResponse(
     Guid? PriceOverrideId = null,
     /// <summary>รอบ 237 (K-1 · กฎ #4 A echo): แบบอัปเกรดที่ลูกค้าเลือกตอนซื้อ (KeepExpiry | RestartCycle · null = แถวเก่า/ไม่ใช่อัปเกรด) + ป้ายไทย</summary>
     string? UpgradeMode = null,
-    string? UpgradeModeLabel = null);
+    string? UpgradeModeLabel = null)
+{
+    /// <summary>รอบ 252 WP-13 J: ป้ายไทยจากตารางเดียว — หน้าเว็บไม่มีตาราง enum→ไทยเอง</summary>
+    public string RequestedBillingCycleLabel => SubscriptionLabels.Cycle(RequestedBillingCycle);
+    public string PaymentMethodLabel => PaymentMethodNames.Thai(PaymentMethod);
+}
 
 public record SubscriptionPaymentListResponse(
     List<SubscriptionPaymentResponse> Payments,

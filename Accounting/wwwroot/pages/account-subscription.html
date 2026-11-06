@@ -58,19 +58,19 @@
     <div class="ap-shell">
       <div class="ap-hero">
         <h1>🎫 License ของฉัน</h1>
-        <p>จัดการแผนการใช้งานของคุณ — ครอบหลายบริษัทใต้บัญชีเดียว · นักบัญชีจัดการลูกค้าหลายราย · Holding ที่มีหลายบริษัทย่อย จ่ายครั้งเดียวคุ้ม</p>
+        <p>แพ็กเกจแบบหลายบริษัทของคุณ — ครอบหลายบริษัทใต้บัญชีผู้ใช้เดียว · นักบัญชีดูแลลูกค้าหลายราย · กลุ่มบริษัทที่มีหลายบริษัทย่อย จ่ายครั้งเดียวคุ้ม</p>
       </div>
 
       <div class="ap-help">
-        💡 <strong>License อยู่ที่ผู้ใช้ (User) เป็นหลัก</strong> — บริษัทเป็น workspace ใต้ License นี้<br>
-        <strong>เคสที่รองรับ:</strong>
+        💡 <strong>License เป็นของผู้ใช้</strong> — บริษัทที่ผูกไว้ใช้สิทธิ์ภายใต้ License นี้<br>
+        <strong>กรณีที่รองรับ:</strong>
         <ul style="margin:6px 0;padding-left:22px">
-          <li><strong>เจ้าของบริษัทสมัครเอง</strong> → ผูกบริษัทตัวเอง + invite นักบัญชี/พนักงานเข้า — นักบัญชีเป็นแค่ User ใน Plan นี้</li>
-          <li><strong>นักบัญชีสมัครเอง</strong> → สร้าง 10 บริษัทให้ลูกค้า + invite เจ้าของจริงเข้ามา — ลูกค้าไม่ต้องจ่าย Plan</li>
-          <li><strong>1 คนเปิดหลายบริษัท</strong> (Holding/Franchise) → เปิด Plan ครั้งเดียว ครอบทุกบริษัท</li>
+          <li><strong>เจ้าของบริษัทสมัครเอง</strong> → ผูกบริษัทตัวเอง + เชิญนักบัญชี/พนักงานเข้า — นักบัญชีเป็นผู้ใช้คนหนึ่งในแพ็กเกจนี้</li>
+          <li><strong>นักบัญชีสมัครเอง</strong> → สร้างบริษัทให้ลูกค้า + เชิญเจ้าของจริงเข้ามา — ลูกค้าไม่ต้องซื้อแพ็กเกจเอง</li>
+          <li><strong>1 คนเปิดหลายบริษัท</strong> (กลุ่มบริษัท/แฟรนไชส์) → ซื้อแพ็กเกจครั้งเดียว ครอบทุกบริษัท</li>
         </ul>
-        ⚠️ <strong>ยอดใช้งาน</strong> (เอกสาร / JE / OCR / Storage) <strong>นับรวมทุกบริษัทใต้ Plan</strong> — ไม่ใช่ต่อบริษัท<br>
-        ⚙️ บริษัทเลือกได้ว่าจะ "จ่ายเอง" (subscription แยก) หรือ "ใต้ Account Plan" — ปุ่ม ผูก/ถอด ด้านล่าง
+        ⚠️ <strong>ยอดใช้งาน</strong> (เอกสาร / สมุดรายวัน / สแกน OCR / พื้นที่ไฟล์) <strong>นับรวมทุกบริษัทใต้ License</strong> — ไม่ใช่ต่อบริษัท<br>
+        ⚙️ แต่ละบริษัทเลือกได้ว่าจะ "จ่ายแพ็กเกจเอง" หรือ "อยู่ใต้ License" — ปุ่ม ผูก/ถอด ด้านล่าง
       </div>
 
       <div id="apContent">
@@ -90,18 +90,17 @@
         Layout.mountBillingHub('license');   // รอบ 232: หน้านี้ = แท็บ "License หลายบริษัท" ของ hub
         Layout.setTitle('License ของฉัน');
         await Promise.all([this.load(), this.loadPlans()]);
+        if (this.info) this.render();   // วาดใหม่เมื่อรายการแพ็กเกจมาถึงหลังข้อมูล License
       },
       async load() {
         try {
-          const r = await fetch('/api/account-subscription', {
-            headers: { 'Authorization': 'Bearer ' + API.token }
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message);
+          const j = await API.get('/api/account-subscription');   // API.* (WP-13 H)
+          if (!j || !j.success) throw new Error((j && j.message) || 'โหลดข้อมูล License ไม่สำเร็จ');
           this.info = j.data;
           this.render();
         } catch(e) {
-          document.getElementById('apContent').innerHTML = `<div style="color:#dc2626;padding:20px">⚠️ ${e.message}</div>`;
+          // ล้มดัง + ลองใหม่ (WP-13 I) · ข้อความ error ผ่าน textContent (เดิมต่อ e.message ดิบเข้า innerHTML)
+          Layout.panelError('apContent', 'โหลดข้อมูล License ไม่สำเร็จ', () => this.load(), e && e.message);
         }
       },
       async loadPlans() {
@@ -110,15 +109,15 @@
           // กับฝั่งแอดมิน) — เดิมยิงไป /api/admin/plan-templates ซึ่งบังคับ role
           // SystemAdmin ⇒ ลูกค้าได้ 403 แล้ว catch กลืนเงียบ ⇒ หน้า "License ของฉัน"
           // โชว์รายการแพ็กเกจ **ว่างเปล่า** โดยไม่มีอะไรบอกว่าทำไม
-          const r = await fetch('/api/subscription/plans', {
-            headers: { 'Authorization': 'Bearer ' + API.token }
-          });
-          const j = await r.json();
+          const j = await API.get('/api/subscription/plans');
           // รอบ 205 ทีม I: เรียง + บรรทัดฟีเจอร์ผ่าน PlanDisplay ตัวเดียวกับหน้าแพ็กเกจ/หน้าแรก (เดิมพิมพ์ลิมิตดิบ — "99999 เอกสาร" ขณะหน้าอื่นบอก "ไม่จำกัด")
-          if (j.success) this.plans = PlanDisplay.sort((j.data || []).filter(p => p.isActive !== false));
+          if (!j || !j.success) throw new Error((j && j.message) || 'โหลดรายการแพ็กเกจไม่สำเร็จ');
+          this.plans = PlanDisplay.sort((j.data || []).filter(p => p.isActive !== false));
+          this._plansError = null; this._plansLoaded = true;
           try { const c = await API.getFeatureCatalog(); this.catalog = c?.data || null; } catch { this.catalog = null; }
-        } catch { this.plans = []; }
+        } catch (e) { this.plans = []; this._plansError = (e && e.message) || 'โหลดไม่สำเร็จ'; this._plansLoaded = true; }
       },
+      async reloadPlans() { await this.loadPlans(); this.render(); },
       render() {
         if (!this.info) return;
         if (this.info.hasAccountPlan) {
@@ -174,12 +173,12 @@
             <div class="ap-plan-strip">
               <div class="badge">${this._esc(p.planName)}</div>
               <div class="info">
-                <strong>Account Plan</strong>
-                <div class="meta">สถานะ ${p.status} · หมดอายุ ${Layout.date(p.endDate)}</div>
+                <strong>License หลายบริษัท</strong>
+                <div class="meta">สถานะ ${this._esc(this.info.planStatusLabel || p.status)} · หมดอายุ ${Layout.date(p.endDate)}</div>
               </div>
             </div>
             <div style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px">
-              📊 ยอดใช้งาน <span style="color:#dc2626">รวมทุกบริษัทใต้ Plan</span> ในเดือนนี้
+              📊 ยอดใช้งาน <span style="color:#dc2626">รวมทุกบริษัทใต้ License</span> ในเดือนนี้
             </div>
             <div class="ap-grid">
               <div class="ap-stat"><div class="v">${u.companiesUsed||0} / ${u.maxCompanies||p.maxCompanies}</div><div class="l">บริษัท</div></div>
@@ -192,22 +191,22 @@
           </div>
 
           <div class="ap-card">
-            <h3>🏢 บริษัทที่ผูกกับ Account Plan</h3>
-            <div class="desc">License อยู่ที่คุณ — บริษัทแต่ละแห่งใช้สิทธิ์ภายใต้ Plan นี้ · ตัวเลขด้านท้ายแถวคือยอดใช้งานของบริษัทนั้นในเดือนนี้</div>
+            <h3>🏢 บริษัทที่อยู่ใต้ License นี้</h3>
+            <div class="desc">License เป็นของคุณ — บริษัทแต่ละแห่งใช้สิทธิ์ภายใต้ License นี้ · ตัวเลขด้านท้ายแถวคือยอดใช้งานของบริษัทนั้นในเดือนนี้</div>
             ${attached.length === 0
               ? '<div style="text-align:center;padding:24px;color:#94a3b8;font-size:13px">ยังไม่ได้ผูกบริษัทใดเข้ามา</div>'
               : attached.map(c => `
                 <div class="ap-co-row">
                   <div style="flex:1;min-width:0">
-                    <div><span class="name">${this._esc(c.companyName)}</span> <span class="pill attached">ใต้ Account Plan</span></div>
+                    <div><span class="name">${this._esc(c.companyName)}</span> <span class="pill attached">ใต้ License</span></div>
                     <div style="font-size:11px;color:#64748b;margin-top:3px">
                       📄 ${c.currentMonthDocuments||0} เอกสาร ·
-                      📒 ${c.currentMonthJournalEntries||0} JE ·
+                      📒 ${c.currentMonthJournalEntries||0} รายการบัญชี ·
                       📸 ${c.currentMonthOcrPages||0} OCR ·
                       💾 ${this._fmtBytes(c.currentStorageUsed||0)}
                     </div>
                   </div>
-                  <button class="detach" onclick="Page.detach('${c.companyId}','${Layout.jsArg(c.companyName)}')">ถอดออก</button>
+                  <button class="detach" onclick="Page.detach('${Layout.jsArg(c.companyId)}','${Layout.jsArg(c.companyName)}')">ถอดออก</button>
                 </div>`).join('')}
             ${unattachedOwned.length > 0 ? `
               <h3 style="margin-top:20px">+ ผูกบริษัทเพิ่ม</h3>
@@ -218,7 +217,7 @@
                     <span class="name">${this._esc(c.name)}</span>
                     <span class="pill own">จ่ายเอง</span>
                   </div>
-                  <button class="attach" onclick="Page.attach('${c.id}','${Layout.jsArg(c.name)}')">+ ผูกเข้า Plan</button>
+                  <button class="attach" onclick="Page.attach('${Layout.jsArg(c.id)}','${Layout.jsArg(c.name)}')">+ ผูกเข้า License</button>
                 </div>`).join('')}` : ''}
           </div>`;
       },
@@ -234,37 +233,34 @@
                 ${this._planLines(p).map(f => `<li style="${f.check ? '' : 'color:#94a3b8'}">${f.check ? '' : '✗ '}${this._esc(f.text)}</li>`).join('')}
                 <li>${this._esc(PlanDisplay.limit(p, 'ocr', 'ไม่จำกัด'))} หน้า OCR / เดือน</li>
               </ul>
-              <button onclick="Page.startTrial('${p.id}','${Layout.jsArg(p.name)}')">ทดลองใช้ ${p.trialDurationDays||14} วัน</button>
+              <button onclick="Page.startTrial('${Layout.jsArg(p.id)}','${Layout.jsArg(p.name)}')">ทดลองใช้ ${Number(p.trialDurationDays||14)} วัน</button>
             </div>`).join('')
-          : '<div style="color:#94a3b8;padding:14px">โหลด plan ไม่สำเร็จ — รีเฟรช หรือใช้หน้า /subscription</div>';
+          : !this._plansLoaded ? '<div style="color:#94a3b8;padding:14px">กำลังโหลดแพ็กเกจ...</div>'
+          : `<div style="color:#991b1b;padding:14px">⚠️ ${this._plansError ? 'โหลดรายการแพ็กเกจไม่สำเร็จ — ' + this._esc(this._plansError) : 'ยังไม่มีแพ็กเกจที่เปิดขาย'}
+              <button type="button" class="btn btn-sm btn-ghost" onclick="Page.reloadPlans()">🔄 ลองใหม่</button></div>`;
 
         document.getElementById('apContent').innerHTML = `
           <div class="ap-card">
-            <h3>⭐ ยังไม่มี Account Plan</h3>
+            <h3>⭐ ยังไม่มี License หลายบริษัท</h3>
             <div class="desc">
-              ตอนนี้แต่ละบริษัทใช้ subscription ของตัวเอง · เปิด Account Plan ครั้งเดียว
-              เพื่อให้ทุกบริษัทที่คุณเป็นเจ้าของอยู่ใต้ plan เดียวกัน
+              ตอนนี้แต่ละบริษัทใช้แพ็กเกจของตัวเอง · เปิด License ครั้งเดียว
+              เพื่อให้ทุกบริษัทที่คุณเป็นเจ้าของอยู่ใต้แพ็กเกจเดียวกัน
               ${owned.length > 0 ? `<br><br>คุณเป็นเจ้าของอยู่ <strong>${owned.length}</strong> บริษัท: ${owned.map(c=>this._esc(c.name)).join(', ')}` : ''}
             </div>
           </div>
           <div class="ap-card">
-            <h3>🎁 เลือกแผน</h3>
+            <h3>🎁 เลือกแพ็กเกจ</h3>
             <div class="desc">ทดลองใช้ฟรี — ยกเลิกได้ทุกเมื่อ ไม่มีเก็บค่าใช้จ่ายล่วงหน้า</div>
             <div class="ap-plans-grid">${planCards}</div>
           </div>`;
       },
 
       async startTrial(planId, planName) {
-        if (!confirm(`เริ่มทดลองใช้ "${planName}"?\n\nระยะทดลอง — ยกเลิกได้ทุกเมื่อ`)) return;
+        if (!(await Layout.confirm({ title: 'เริ่มทดลองใช้', okText: 'เริ่มทดลองใช้', message: `เริ่มทดลองใช้ "${planName}"?\n\nระยะทดลอง — ยกเลิกได้ทุกเมื่อ` }))) return;
         try {
-          const r = await fetch('/api/account-subscription/start-trial', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ planTemplateId: planId })
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message);
-          Layout.toast('✓ เปิด Account Plan สำเร็จ');
+          const j = await API.post('/api/account-subscription/start-trial', { planTemplateId: planId });
+          if (!j || !j.success) throw new Error((j && j.message) || 'เริ่มทดลองใช้ไม่สำเร็จ');
+          Layout.toast('✓ เปิด License หลายบริษัทสำเร็จ');
           await this.load();
         } catch(e) { Layout.toast(e.message, 'error'); }
       },
@@ -272,17 +268,17 @@
       async attach(companyId, name) {
         try {
           // รอบ 238 (236-9): บริษัทที่จ่ายแพ็กเกจเองไว้ — เซิร์ฟเวอร์คิดคำเตือน "เวลาที่จ่ายไว้ X วันยังเดินอยู่ ไม่คืนเงิน" ให้ยืนยันก่อนผูก
-          const pv = await API.get(`/api/account-subscription/attach-preview/${encodeURIComponent(companyId)}`).catch(() => null);
+          // Y3 (คำตัดสิน 3.3): เตือนพร้อมจำนวนวันที่เหลือก่อนผูก — ข้อความจากเซิร์ฟเวอร์ (PlanIdentityResolver.AttachPaidTimeWarning)
+          // · พรีวิวล้ม ⇒ ไม่ผูกเงียบ ๆ (เดิม .catch(() => null) แล้วผูกต่อโดยไม่เตือน) — ถามก่อนว่าจะผูกโดยไม่เห็นคำเตือนไหม
+          let pv = null, pvErr = null;
+          try { pv = await API.get(`/api/account-subscription/attach-preview/${encodeURIComponent(companyId)}`); } catch (e) { pvErr = e; }
           const warn = pv?.success ? pv.data?.paidTimeWarning : null;
-          if (warn && !confirm(`ผูก "${name}" เข้า Account Plan?\n\n⚠️ ${warn}`)) return;
-          const r = await fetch('/api/account-subscription/attach', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ companyId })
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message);
-          Layout.toast(j.data ? j.message : `✓ ผูก "${name}" เข้า Plan แล้ว`);
+          if (warn && !(await Layout.confirm({ title: 'ผูกบริษัทเข้า License', okText: 'ผูกเข้า License', message: `ผูก "${name}" เข้า License?\n\n⚠️ ${warn}` }))) return;
+          if (!pv?.success && !(await Layout.confirm({ title: 'ตรวจคำเตือนก่อนผูกไม่สำเร็จ', okText: 'ผูกต่อ',
+            message: `ระบบตรวจไม่ได้ว่า "${name}" ยังมีเวลาแพ็กเกจที่จ่ายไว้เหลืออยู่ไหม (${(pvErr && pvErr.message) || (pv && pv.message) || 'ไม่ทราบสาเหตุ'})\n\nถ้ายังเหลือ เวลานั้นจะเดินต่อและไม่คืนเงินระหว่างอยู่ใต้ License — ผูกต่อไหม?` }))) return;
+          const j = await API.post('/api/account-subscription/attach', { companyId });
+          if (!j || !j.success) throw new Error((j && j.message) || 'ผูกไม่สำเร็จ');
+          Layout.toast(j.data ? j.message : `✓ ผูก "${name}" เข้า License แล้ว`);
           await this.load();
         } catch(e) { Layout.toast(e.message, 'error'); }
       },
@@ -295,15 +291,11 @@
           if (pv?.success && pv.data?.text) after = pv.data.text;
           else if (pv && !pv.success) { Layout.toast(pv.message || 'ถอดไม่ได้', 'error'); return; }
         } catch { /* พรีวิวล้ม = ยังยืนยันได้ด้วยข้อความทั่วไป */ }
-        if (!confirm(`ถอด "${name}" ออกจาก Account Plan?\n\n${after || 'บริษัทจะกลับไปใช้แพ็กเกจของตัวเอง'}`)) return;
+        if (!(await Layout.confirm({ title: 'ถอดบริษัทออกจาก License', danger: true, okText: 'ถอดออก',
+          message: `ถอด "${name}" ออกจาก License?\n\n${after || 'บริษัทจะกลับไปใช้แพ็กเกจของตัวเอง'}` }))) return;
         try {
-          const r = await fetch('/api/account-subscription/detach', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ companyId })
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message);
+          const j = await API.post('/api/account-subscription/detach', { companyId });
+          if (!j || !j.success) throw new Error((j && j.message) || 'ถอดไม่สำเร็จ');
           Layout.toast(j.message || `✓ ถอด "${name}" ออกแล้ว`);
           await this.load();
         } catch(e) { Layout.toast(e.message, 'error'); }

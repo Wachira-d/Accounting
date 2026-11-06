@@ -6743,3 +6743,12 @@ _รอบ 250 WP-04 แก้ผลฝ่ายค้าน 74a2d1f6 (2026-11-0
 (M5) แถว e-Tax ไม่มีเลขผู้ซื้อมีคำเตือน §86/4. (M6) "-"/"N/A" ของบุคคล = ไม่มีเลข · ข้อความทางไปต่อ. (M7) `ComposeTxId`/ผู้ขายใช้ `TaxBranchCode.Normalize` (เกิน 5 หลัก = 5 หลักท้าย).
 (L3) คอมเมนต์ประทับก่อนส่ง = อย่างมากครั้งเดียว · (L4) ช่อง 0–30 ตรงเซิร์ฟเวอร์ · (L5) คอมเมนต์ migration อยู่กับคำสั่งของมัน · (L6) negative test form_label กับหน้าจริง ·
 (L1) คง modulo (เพดานทำให้ "ครั้งล่าสุด ≥ N วัน" ไม่จำเป็น). ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit d5257214_
+
+_รอบ 252 WP-13 (UX เก็บกวาดจากผลตรวจ D · AUDIT_249 §4 WP-13 · §3.3 Y3/N5): ตัวช่วยกลาง `Layout.confirm/promptText/notice` (Promise · textContent · Escape = ยกเลิก ·
+อยู่บนสุดเหนือ modal) · `Layout.debouncedLoader` · `Layout.tableError` · `openModal` ย้าย/คืน focus + `data-enter-target` · confirmDanger Escape ไม่ค้าง ·
+style.css ≤768px ยุบ grid `1fr 1fr`/`2fr 1fr` + ตารางใน modal 640px เลื่อนในกล่อง. กล่องถาม native → ของระบบ ~85 จุด (documents 50 · ลบถาวร 4 ชั้นเหลือหน้าต่างเดียว)
+· fetch ดิบ → API.* (settings 6→0 · contacts 2→0 · account-subscription 5→0 · subscription 1→0 · documents 22→20) · settings ตารางแจ้งเตือนโหลดล้มห้ามบันทึก
+`settings: []` (เดิมล้างค่าทั้งหมด) · label for ~300 จุด · modal_table_container 1→0 ทั้งระบบ · 🖥 สินทรัพย์รหัสว่าง = `FA-yyyyMM-####` (`FixedAssetService.CreateAsync`) ·
+ป้ายไทยจาก DTO (`planStatusLabel` · `SubscriptionLabels` · `PortalPaymentResponse.PaymentMethodLabel`) · Y3 พรีวิวคำเตือนล้มต้องยืนยันก่อนผูก · N5
+`LatePaymentPenaltyPolicy.PendingRegulationNote` ในคำอธิบายเบี้ยปรับ ภ.พ.30 · glossary `docs/ui-glossary.md` + `tools/ui_glossary_check.py` (ratchet 56 จุด/19 ไฟล์) ·
+หน้าสาธารณะ pay-link/delivery-sign alert → กล่องบนหน้า · portal ภาษา/modal/เวลาไทย. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit e021629c · 1929f9f4 · c2129b14 · 8ff9c7f5 · 09371cea · 30405fc4 · f8e7d5dd_

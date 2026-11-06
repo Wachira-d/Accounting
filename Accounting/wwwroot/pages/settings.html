@@ -78,7 +78,7 @@
 
       <!-- Logo Upload Section -->
       <div style="margin-bottom:24px;padding:20px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
-        <label class="form-label" style="font-weight:600;margin-bottom:12px;display:block">โลโก้บริษัท (แสดงหัวเอกสาร)</label>
+        <label for="logoFile" class="form-label" style="font-weight:600;margin-bottom:12px;display:block">โลโก้บริษัท (แสดงหัวเอกสาร)</label>
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <div id="logoPreview" style="width:120px;height:80px;border:2px dashed #cbd5e1;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff">
             <span style="color:#94a3b8;font-size:12px" id="logoPlaceholder">ยังไม่มีโลโก้</span>
@@ -94,7 +94,7 @@
 
       <!-- Company Stamp (ตราประทับบริษัท) Section -->
       <div style="margin-bottom:24px;padding:20px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
-        <label class="form-label" style="font-weight:600;margin-bottom:4px;display:block">ตราประทับบริษัท (ประทับบนเอกสารที่อนุมัติแล้ว)</label>
+        <label for="stampFile" class="form-label" style="font-weight:600;margin-bottom:4px;display:block">ตราประทับบริษัท (ประทับบนเอกสารที่อนุมัติแล้ว)</label>
         <p style="color:#64748b;font-size:12px;margin:0 0 12px">แนะนำไฟล์ PNG พื้นหลังโปร่งใส · ประทับเฉพาะเอกสารที่ <b>ผู้มีอำนาจอนุมัติแล้ว</b> (ฉบับร่าง/รออนุมัติจะไม่ประทับ) · วางในโซนลายเซ็นผู้อนุมัติ</p>
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <div id="stampPreview" style="width:100px;height:100px;border:2px dashed #cbd5e1;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff">
@@ -106,9 +106,9 @@
             <button class="btn btn-outline" onclick="Page.deleteStamp()" id="btnDeleteStamp" style="margin-bottom:8px;display:none">ลบตรา</button>
           </div>
           <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-            <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">กว้าง (มม.)</label><input type="number" id="sStampW" class="form-input" min="0" max="120" step="1" style="width:90px" placeholder="32"></div>
-            <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">สูง (มม.)</label><input type="number" id="sStampH" class="form-input" min="5" max="120" step="1" style="width:90px" placeholder="32"></div>
-            <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">ตำแหน่ง</label>
+            <div class="form-group" style="margin:0"><label for="sStampW" class="form-label" style="font-size:12px">กว้าง (มม.)</label><input type="number" id="sStampW" class="form-input" min="0" max="120" step="1" style="width:90px" placeholder="32"></div>
+            <div class="form-group" style="margin:0"><label for="sStampH" class="form-label" style="font-size:12px">สูง (มม.)</label><input type="number" id="sStampH" class="form-input" min="5" max="120" step="1" style="width:90px" placeholder="32"></div>
+            <div class="form-group" style="margin:0"><label for="sStampAlign" class="form-label" style="font-size:12px">ตำแหน่ง</label>
               <select id="sStampAlign" class="form-select" style="width:120px">
                 <option value="Right">ขวา</option>
                 <option value="Center">กลาง</option>
@@ -132,12 +132,12 @@
               <tbody id="srStages"></tbody>
             </table>
             <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
-              <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">ตำแหน่ง</label>
+              <div class="form-group" style="margin:0"><label for="srAlign" class="form-label" style="font-size:12px">ตำแหน่ง</label>
                 <select id="srAlign" class="form-select" style="width:110px"><option value="Right">ขวา</option><option value="Center">กลาง</option><option value="Left">ซ้าย</option></select></div>
-              <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">เลื่อนแนวนอน (มม.)</label><input type="number" id="srOffX" class="form-input" min="-60" max="60" step="1" style="width:100px"></div>
-              <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">เลื่อนแนวตั้ง (มม.)</label><input type="number" id="srOffY" class="form-input" min="-60" max="60" step="1" style="width:100px"></div>
-              <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">กว้าง (มม.)</label><input type="number" id="srW" class="form-input" min="5" max="120" step="1" style="width:90px"></div>
-              <div class="form-group" style="margin:0"><label class="form-label" style="font-size:12px">สูง (มม.)</label><input type="number" id="srH" class="form-input" min="5" max="120" step="1" style="width:90px"></div>
+              <div class="form-group" style="margin:0"><label for="srOffX" class="form-label" style="font-size:12px">เลื่อนแนวนอน (มม.)</label><input type="number" id="srOffX" class="form-input" min="-60" max="60" step="1" style="width:100px"></div>
+              <div class="form-group" style="margin:0"><label for="srOffY" class="form-label" style="font-size:12px">เลื่อนแนวตั้ง (มม.)</label><input type="number" id="srOffY" class="form-input" min="-60" max="60" step="1" style="width:100px"></div>
+              <div class="form-group" style="margin:0"><label for="srW" class="form-label" style="font-size:12px">กว้าง (มม.)</label><input type="number" id="srW" class="form-input" min="5" max="120" step="1" style="width:90px"></div>
+              <div class="form-group" style="margin:0"><label for="srH" class="form-label" style="font-size:12px">สูง (มม.)</label><input type="number" id="srH" class="form-input" min="5" max="120" step="1" style="width:90px"></div>
             </div>
             <div style="margin-top:10px;font-size:13px">
               <div style="font-weight:600;margin-bottom:4px">ผู้ลงนามที่มีสิทธิ์ <span style="font-weight:400;color:#64748b">(ไม่เลือกเลย = ทุกคน · ลายเซ็นของผู้ที่ไม่มีสิทธิ์จะไม่พิมพ์ — ชื่อยังอยู่ใต้เส้น)</span></div>
@@ -154,16 +154,16 @@
       </div>
 
       <div class="form-row">
-        <div class="form-group" style="flex:2"><label class="form-label">ชื่อบริษัท <span class="req">*</span></label><input type="text" id="cName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD" autocomplete="off"></div>
-        <div class="form-group"><label class="form-label">ชื่อบริษัท (EN)</label><input type="text" id="cNameEn" class="form-input" placeholder="Company Name"></div>
+        <div class="form-group" style="flex:2"><label for="cName" class="form-label">ชื่อบริษัท <span class="req">*</span></label><input type="text" id="cName" class="form-input" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหาจาก DBD" autocomplete="off"></div>
+        <div class="form-group"><label for="cNameEn" class="form-label">ชื่อบริษัท (EN)</label><input type="text" id="cNameEn" class="form-input" placeholder="Company Name"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">เลขผู้เสียภาษี 13 หลัก <span class="req">*</span></label><div style="display:flex;gap:8px"><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13" style="flex:1"><button class="btn btn-secondary" id="cDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
-        <div class="form-group"><label class="form-label">รหัสสาขา</label><input type="text" id="cBranchCode" class="form-input" placeholder="00000" value="00000"></div>
-        <div class="form-group"><label class="form-label">ชื่อสาขา</label><input type="text" id="cBranchName" class="form-input" placeholder="สำนักงานใหญ่"></div>
+        <div class="form-group"><label for="cTaxId" class="form-label">เลขผู้เสียภาษี 13 หลัก <span class="req">*</span></label><div style="display:flex;gap:8px"><input type="text" id="cTaxId" class="form-input" placeholder="เลข 13 หลัก" maxlength="13" style="flex:1"><button class="btn btn-secondary" id="cDbdBtn" style="white-space:nowrap">ดึงข้อมูล</button></div></div>
+        <div class="form-group"><label for="cBranchCode" class="form-label">รหัสสาขา</label><input type="text" id="cBranchCode" class="form-input" placeholder="00000" value="00000"></div>
+        <div class="form-group"><label for="cBranchName" class="form-label">ชื่อสาขา</label><input type="text" id="cBranchName" class="form-input" placeholder="สำนักงานใหญ่"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">ประเภทนิติบุคคล <span style="font-weight:normal;color:#64748b;font-size:12px">(กำหนดโครงสร้างส่วนของเจ้าของในผังบัญชี)</span></label>
+        <div class="form-group"><label for="cBizType" class="form-label">ประเภทนิติบุคคล <span style="font-weight:normal;color:#64748b;font-size:12px">(กำหนดโครงสร้างส่วนของเจ้าของในผังบัญชี)</span></label>
           <select id="cBizType" class="form-select" onchange="Page.onBizTypeChange()">
             <option value="JuristicPerson">🏢 บริษัทจำกัด</option><option value="Partnership">🤝 ห้างหุ้นส่วน</option>
             <option value="Individual">👤 บุคคลธรรมดา</option><option value="PublicCompany">🏛️ บริษัทมหาชน</option>
@@ -171,7 +171,7 @@
           </select>
           <div id="bizTypeDesc" style="margin-top:6px;font-size:12px;color:#64748b;padding:8px 12px;background:#f8fafc;border-radius:6px;display:none"></div>
         </div>
-        <div class="form-group"><label class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label><input type="text" id="cJuristicId" class="form-input" placeholder="เลขทะเบียนนิติบุคคล" maxlength="13"></div>
+        <div class="form-group"><label for="cJuristicId" class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label><input type="text" id="cJuristicId" class="form-input" placeholder="เลขทะเบียนนิติบุคคล" maxlength="13"></div>
       </div>
 
       <div class="form-group">
@@ -207,7 +207,7 @@
            (ผลตรวจรอบ 182 — ของที่ "ถูกอ่านแต่ไม่มีใครเขียน") -->
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">ทุนจดทะเบียนที่ชำระแล้ว (บาท)</label>
+          <label for="cPaidUpCapital" class="form-label">ทุนจดทะเบียนที่ชำระแล้ว (บาท)</label>
           <input type="number" id="cPaidUpCapital" class="form-input" min="0" step="0.01" placeholder="0.00">
           <div class="form-hint">ใช้ตัดสิน<b>อัตราภาษีนิติบุคคล</b> (SME = ทุน ≤ 5 ล้าน และรายได้ ≤ 30 ล้าน
             → 0% / 15% / 20% แบบขั้นบันได · เกินเกณฑ์ = 20% ทั้งก้อน) และ<b>เพดานค่ารับรอง</b>
@@ -223,7 +223,7 @@
           <!-- R2-C8: ยังไม่มีใครยืนยันสถานะ VAT — ปุ่มนี้ยืนยันค่าที่แสดงอยู่โดยไม่ต้องติ๊กเปลี่ยน (ซ่อนเมื่อยืนยันแล้ว) -->
           <button type="button" class="btn btn-secondary btn-sm hidden" data-vat-confirm style="margin-top:6px" onclick="Page.confirmVatAsShown()">ยืนยันสถานะ VAT ตามที่เลือกอยู่</button>
         </div>
-        <div class="form-group"><label class="form-label">อัตรา VAT (%)</label><input type="number" id="cVatRate" class="form-input" value="7" step="0.01"></div>
+        <div class="form-group"><label for="cVatRate" class="form-label">อัตรา VAT (%)</label><input type="number" id="cVatRate" class="form-input" value="7" step="0.01"></div>
       </div>
       <!-- ใบกำกับภาษีอย่างย่อ (§86/6) — ธง = กิจการขายปลีก (ทุกช่องทาง) · ภ.พ.06 = ขอใช้เครื่องบันทึกการเก็บเงิน (เฉพาะสลิป POS)
            ที่มา: สลิป POS เคยพิมพ์คำว่า "ใบกำกับภาษีอย่างย่อ" ทุกใบโดยไม่ตรวจอะไรเลย
@@ -240,7 +240,7 @@
             <b>ไม่ต้องใช้ ภ.พ.06</b> — ภ.พ.06 ใช้เฉพาะสลิปที่พิมพ์จากเครื่อง POS/เครื่องบันทึกการเก็บเงิน (ช่องขวา)</div>
         </div>
         <div class="form-group">
-          <label class="form-label">วันที่อนุมัติ ภ.พ.06 (ใช้เครื่องบันทึกการเก็บเงิน/POS)</label>
+          <label for="cPhoR06Date" class="form-label">วันที่อนุมัติ ภ.พ.06 (ใช้เครื่องบันทึกการเก็บเงิน/POS)</label>
           <input type="date" class="form-input" id="cPhoR06Date">
           <div class="form-hint">เฉพาะ<b>สลิปจากเครื่อง POS</b> — ว่าง หรือสลิปลงวันที่ก่อนวันนี้ = สลิปพิมพ์เป็น "ใบเสร็จรับเงิน"</div>
         </div>
@@ -292,12 +292,12 @@
         </div>
       </div>
       <div class="form-group" id="cSocialSecurityGroup" style="display:none">
-        <label class="form-label">เลขที่บัญชีประกันสังคม</label>
+        <label for="cSocialSecurityAccountNo" class="form-label">เลขที่บัญชีประกันสังคม</label>
         <input type="text" id="cSocialSecurityAccountNo" class="form-input" placeholder="เลขที่บัญชีนายจ้าง">
       </div>
       <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ที่อยู่ (ตามใบทะเบียน)</h4>
       <div class="form-group">
-        <label class="form-label">วางที่อยู่เพื่อแยกอัตโนมัติ <span style="font-weight:normal;color:#64748b;font-size:12px">(ไม่จำเป็น — กรอกช่องด้านล่างได้เลย)</span></label>
+        <label for="cAddressPaste" class="form-label">วางที่อยู่เพื่อแยกอัตโนมัติ <span style="font-weight:normal;color:#64748b;font-size:12px">(ไม่จำเป็น — กรอกช่องด้านล่างได้เลย)</span></label>
         <div style="display:flex;gap:8px">
           <input type="text" class="form-input" id="cAddressPaste" placeholder="วางที่อยู่เต็มแล้วกดแยก..." style="flex:1">
           <button type="button" class="btn btn-secondary btn-sm" style="white-space:nowrap" onclick="Page.parseAddressPaste()">แยกที่อยู่</button>
@@ -307,23 +307,23 @@
       <div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:12px">
         <div style="font-weight:600;margin-bottom:8px">ที่อยู่ <span style="font-weight:normal;color:#64748b;font-size:12px">(ใช้สำหรับเอกสาร, e-Tax XML)</span></div>
         <div class="form-row">
-          <div class="form-group"><label class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="cBuildingNumber" placeholder="123/45"></div>
-          <div class="form-group"><label class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="cBuildingName"></div>
+          <div class="form-group"><label for="cBuildingNumber" class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="cBuildingNumber" placeholder="123/45"></div>
+          <div class="form-group"><label for="cBuildingName" class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="cBuildingName"></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="cMoo" placeholder="3" maxlength="5"></div>
-          <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="cStreetName" placeholder="สุขุมวิท"></div>
+          <div class="form-group"><label for="cMoo" class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="cMoo" placeholder="3" maxlength="5"></div>
+          <div class="form-group"><label for="cStreetName" class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="cStreetName" placeholder="สุขุมวิท"></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label class="form-label">แขวง/ตำบล *</label><input type="text" id="cSubDistrict" class="form-input"></div>
-          <div class="form-group"><label class="form-label">เขต/อำเภอ *</label><input type="text" id="cDistrict" class="form-input"></div>
+          <div class="form-group"><label for="cSubDistrict" class="form-label">แขวง/ตำบล *</label><input type="text" id="cSubDistrict" class="form-input"></div>
+          <div class="form-group"><label for="cDistrict" class="form-label">เขต/อำเภอ *</label><input type="text" id="cDistrict" class="form-input"></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label class="form-label">จังหวัด *</label><input type="text" id="cProvince" class="form-input"></div>
-          <div class="form-group"><label class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#64748b;font-size:11px">(5 หลัก)</span></label><input type="text" id="cPostalCode" class="form-input" maxlength="5" inputmode="numeric"></div>
+          <div class="form-group"><label for="cProvince" class="form-label">จังหวัด *</label><input type="text" id="cProvince" class="form-input"></div>
+          <div class="form-group"><label for="cPostalCode" class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#64748b;font-size:11px">(5 หลัก)</span></label><input type="text" id="cPostalCode" class="form-input" maxlength="5" inputmode="numeric"></div>
         </div>
         <div class="form-group" style="margin-top:6px">
-          <label class="form-label">ที่อยู่ภาษาอังกฤษ (สำหรับเอกสารโหมดอังกฤษ)
+          <label for="cAddressEn" class="form-label">ที่อยู่ภาษาอังกฤษ (สำหรับเอกสารโหมดอังกฤษ)
             <span style="font-weight:normal;color:#64748b;font-size:11px">— ว่าง = ระบบถอดอักษรจากที่อยู่ไทยให้อัตโนมัติ</span>
           </label>
           <div style="display:flex;gap:8px;align-items:flex-start">
@@ -334,13 +334,13 @@
         </div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" id="cPhone" class="form-input"></div>
-        <div class="form-group"><label class="form-label">แฟกซ์</label><input type="text" id="cFax" class="form-input"></div>
+        <div class="form-group"><label for="cPhone" class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" id="cPhone" class="form-input"></div>
+        <div class="form-group"><label for="cFax" class="form-label">แฟกซ์</label><input type="text" id="cFax" class="form-input"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">อีเมลบริษัท</label><input type="email" id="cEmail" class="form-input"></div>
-        <div class="form-group"><label class="form-label">เว็บไซต์</label><input type="text" id="cWebsite" class="form-input" placeholder="https://"></div>
-        <div class="form-group"><label class="form-label">เดือนเริ่มต้นปีบัญชี</label>
+        <div class="form-group"><label for="cEmail" class="form-label">อีเมลบริษัท</label><input type="email" id="cEmail" class="form-input"></div>
+        <div class="form-group"><label for="cWebsite" class="form-label">เว็บไซต์</label><input type="text" id="cWebsite" class="form-input" placeholder="https://"></div>
+        <div class="form-group"><label for="cFiscalMonth" class="form-label">เดือนเริ่มต้นปีบัญชี</label>
           <select id="cFiscalMonth" class="form-select">
             <option value="1">มกราคม</option><option value="2">กุมภาพันธ์</option><option value="3">มีนาคม</option>
             <option value="4">เมษายน</option><option value="5">พฤษภาคม</option><option value="6">มิถุนายน</option>
@@ -358,18 +358,18 @@
     <div id="tabGeneral" class="card hidden">
       <h3 class="card-title" style="margin-bottom:16px">ตั้งค่าระบบ</h3>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">สีหลัก</label><input type="color" id="sPrimaryColor" value="#4F46E5" class="form-input" style="height:42px"></div>
-        <div class="form-group"><label class="form-label">สีรอง</label><input type="color" id="sSecondaryColor" value="#0EA5E9" class="form-input" style="height:42px"></div>
+        <div class="form-group"><label for="sPrimaryColor" class="form-label">สีหลัก</label><input type="color" id="sPrimaryColor" value="#4F46E5" class="form-input" style="height:42px"></div>
+        <div class="form-group"><label for="sSecondaryColor" class="form-label">สีรอง</label><input type="color" id="sSecondaryColor" value="#0EA5E9" class="form-input" style="height:42px"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">เงื่อนไขชำระเงินเริ่มต้น</label><input type="text" class="form-input" id="sPaymentTerms" placeholder="30 วัน"></div>
-        <div class="form-group"><label class="form-label">จำนวนวันครบกำหนด</label><input type="number" class="form-input" id="sPaymentDueDays" value="30"></div>
+        <div class="form-group"><label for="sPaymentTerms" class="form-label">เงื่อนไขชำระเงินเริ่มต้น</label><input type="text" class="form-input" id="sPaymentTerms" placeholder="30 วัน"></div>
+        <div class="form-group"><label for="sPaymentDueDays" class="form-label">จำนวนวันครบกำหนด</label><input type="number" class="form-input" id="sPaymentDueDays" value="30"></div>
       </div>
       <div class="form-row">
         <!-- S-06 (รอบ 193): ไม่มี job ปิดงวดอัตโนมัติ และไม่มีผู้อ่านค่าสองช่องนี้ ⇒ ล็อกช่อง + บอกเหตุผล (กฎ #4 A ห้าม silent no-op)
              ไม่ส่งสองค่านี้ตอนบันทึก (ค่าเดิมคงอยู่ · ห้ามลบฟิลด์ — รอเจ้าของตัดสิน Q3 "ต่อสาย หรือ ลบ") -->
         <div class="form-group form-checkbox"><input type="checkbox" id="sAutoClose" disabled><label for="sAutoClose" style="color:#94a3b8">ปิดงวดอัตโนมัติ</label><span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></div>
-        <div class="form-group"><label class="form-label" style="color:#94a3b8">วันปิดงวด<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><input type="number" class="form-input" id="sCloseDay" value="5" min="1" max="28" disabled></div>
+        <div class="form-group"><label for="sCloseDay" class="form-label" style="color:#94a3b8">วันปิดงวด<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><input type="number" class="form-input" id="sCloseDay" value="5" min="1" max="28" disabled></div>
       </div>
       <div class="text-xs text-gray-500" style="margin:-6px 0 12px">ปิดงวดบัญชีทำได้ที่หน้าผังบัญชี/งวดบัญชี (ปิดงวด · ปิดปี) — ระบบยังไม่มีการปิดงวดอัตโนมัติตามวันที่</div>
 
@@ -401,23 +401,23 @@
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <div class="form-group">
-          <label class="form-label">หมายเหตุใบแจ้งหนี้</label>
+          <label for="sInvoiceNotes" class="form-label">หมายเหตุใบแจ้งหนี้</label>
           <textarea class="form-textarea" id="sInvoiceNotes" rows="3" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ (ใช้หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร)" placeholder="ข้อความที่แสดงในใบแจ้งหนี้ทุกฉบับ..."></textarea>
         </div>
         <div class="form-group">
-          <label class="form-label">หมายเหตุใบเสร็จ</label>
+          <label for="sReceiptNotes" class="form-label">หมายเหตุใบเสร็จ</label>
           <textarea class="form-textarea" id="sReceiptNotes" rows="3" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ (ใช้หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร)" placeholder="ข้อความที่แสดงในใบเสร็จทุกฉบับ..."></textarea>
         </div>
         <div class="form-group">
-          <label class="form-label">หมายเหตุใบเสนอราคา</label>
+          <label for="sQuotationNotes" class="form-label">หมายเหตุใบเสนอราคา</label>
           <textarea class="form-textarea" id="sQuotationNotes" rows="3" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ (ใช้หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร)" placeholder="ข้อความที่แสดงในใบเสนอราคาทุกฉบับ..."></textarea>
         </div>
         <div class="form-group">
-          <label class="form-label">ข้อความท้ายใบแจ้งหนี้</label>
+          <label for="sInvoiceFooter" class="form-label">ข้อความท้ายใบแจ้งหนี้</label>
           <textarea class="form-textarea" id="sInvoiceFooter" rows="3" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ (ใช้หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร)" placeholder="เช่น เงื่อนไขการชำระ, ข้อมูลธนาคาร..."></textarea>
         </div>
         <div class="form-group" style="grid-column:1/3">
-          <label class="form-label">ข้อความท้ายใบเสร็จ</label>
+          <label for="sReceiptFooter" class="form-label">ข้อความท้ายใบเสร็จ</label>
           <textarea class="form-textarea" id="sReceiptFooter" rows="3" disabled title="ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ (ใช้หมายเหตุท้ายเอกสารในหน้าเทมเพลตเอกสาร)" placeholder="เช่น ขอบคุณที่ใช้บริการ..."></textarea>
         </div>
         <div class="form-group" style="grid-column:1/3">
@@ -430,7 +430,7 @@
           </label>
         </div>
         <div class="form-group" style="grid-column:1/3">
-          <label class="form-label">ภาษาของเอกสารที่ออก</label>
+          <label for="sDocumentLanguage" class="form-label">ภาษาของเอกสารที่ออก</label>
           <select class="form-input" id="sDocumentLanguage" style="max-width:320px">
             <option value="th">ไทย (Thai)</option>
             <option value="en">อังกฤษ (English)</option>
@@ -541,11 +541,11 @@
           </label>
           <div id="customSignatoryFields" style="display:none;margin-top:10px;padding:12px;background:#fff;border:1px dashed #e2e8f0;border-radius:8px">
             <div class="form-row">
-              <div class="form-group"><label class="form-label">ชื่อผู้มีอำนาจลงนาม</label><input type="text" class="form-input" id="sSignatoryName" placeholder="เช่น นายวชิร ..."></div>
-              <div class="form-group"><label class="form-label">ตำแหน่ง</label><input type="text" class="form-input" id="sSignatoryTitle" placeholder="เช่น กรรมการผู้จัดการ"></div>
+              <div class="form-group"><label for="sSignatoryName" class="form-label">ชื่อผู้มีอำนาจลงนาม</label><input type="text" class="form-input" id="sSignatoryName" placeholder="เช่น นายวชิร ..."></div>
+              <div class="form-group"><label for="sSignatoryTitle" class="form-label">ตำแหน่ง</label><input type="text" class="form-input" id="sSignatoryTitle" placeholder="เช่น กรรมการผู้จัดการ"></div>
             </div>
             <div class="form-group">
-              <label class="form-label">รูปลายเซ็น (PNG พื้นโปร่ง แนะนำกว้าง ~400px)</label>
+              <label for="sSignatoryFile" class="form-label">รูปลายเซ็น (PNG พื้นโปร่ง แนะนำกว้าง ~400px)</label>
               <input type="file" accept="image/png,image/jpeg" id="sSignatoryFile" onchange="Page.readSignatoryImage(this)">
               <div id="sSignatoryPreview" style="margin-top:8px"></div>
               <input type="hidden" id="sSignatoryImage">
@@ -703,13 +703,13 @@
       <!-- Email Templates -->
       <h3 class="card-title" style="margin:24px 0 16px;border-top:1px solid #e2e8f0;padding-top:20px">เทมเพลตอีเมล</h3>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">ชื่อผู้ส่ง</label><input type="text" class="form-input" id="sEmailFromName" placeholder="ชื่อบริษัท"></div>
-        <div class="form-group"><label class="form-label">ตอบกลับไปที่</label><input type="email" class="form-input" id="sEmailReplyTo" placeholder="email@company.com"></div>
+        <div class="form-group"><label for="sEmailFromName" class="form-label">ชื่อผู้ส่ง</label><input type="text" class="form-input" id="sEmailFromName" placeholder="ชื่อบริษัท"></div>
+        <div class="form-group"><label for="sEmailReplyTo" class="form-label">ตอบกลับไปที่</label><input type="email" class="form-input" id="sEmailReplyTo" placeholder="email@company.com"></div>
       </div>
       <!-- S-06 (รอบ 193): หัว/เนื้ออีเมลสองช่องนี้ไม่มีผู้อ่าน — DocumentEmailService ประกอบหัว/เนื้อจากหัวเอกสารของ PDF เอง
            ⇒ ล็อกช่อง + บอกเหตุผล · ไม่ส่งค่าตอนบันทึก (ค่าเดิมคงอยู่ · รอเจ้าของตัดสิน Q3) -->
-      <div class="form-group"><label class="form-label" style="color:#94a3b8">หัวข้ออีเมลใบแจ้งหนี้<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><input type="text" class="form-input" id="sInvoiceEmailSubject" placeholder="ใบแจ้งหนี้จาก {company}" disabled></div>
-      <div class="form-group"><label class="form-label" style="color:#94a3b8">เนื้อหาอีเมลใบแจ้งหนี้<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><textarea class="form-textarea" id="sInvoiceEmailBody" rows="4" placeholder="เรียน {customer}\n\nแนบใบแจ้งหนี้เลขที่ {docNumber}..." disabled></textarea></div>
+      <div class="form-group"><label for="sInvoiceEmailSubject" class="form-label" style="color:#94a3b8">หัวข้ออีเมลใบแจ้งหนี้<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><input type="text" class="form-input" id="sInvoiceEmailSubject" placeholder="ใบแจ้งหนี้จาก {company}" disabled></div>
+      <div class="form-group"><label for="sInvoiceEmailBody" class="form-label" style="color:#94a3b8">เนื้อหาอีเมลใบแจ้งหนี้<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><textarea class="form-textarea" id="sInvoiceEmailBody" rows="4" placeholder="เรียน {customer}\n\nแนบใบแจ้งหนี้เลขที่ {docNumber}..." disabled></textarea></div>
       <div class="text-xs text-gray-500" style="margin-top:-6px">อีเมลที่ส่งเอกสารใช้หัวเรื่องตามหัวเอกสารที่พิมพ์บน PDF (เช่น "ใบแจ้งหนี้ เลขที่ …") ในภาษาเดียวกับ PDF · แก้หัว/เนื้อได้ทีละฉบับในหน้าต่างส่งอีเมล · อีเมลอัตโนมัติตั้งเทมเพลตได้ที่หน้า <a href="/pages/email-schedule.html" style="color:#0369a1">ตั้งเวลาส่งอีเมล</a></div>
     </div>
 
@@ -717,19 +717,19 @@
     <div id="tabTax" class="card hidden">
       <h3 class="card-title" style="margin-bottom:16px">การตั้งค่าภาษี</h3>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">อัตรา VAT เริ่มต้น (%)</label><input type="number" class="form-input" id="sVatRate" value="7" step="0.01"></div>
+        <div class="form-group"><label for="sVatRate" class="form-label">อัตรา VAT เริ่มต้น (%)</label><input type="number" class="form-input" id="sVatRate" value="7" step="0.01"></div>
         <div class="form-group form-checkbox" style="margin-top:28px"><input type="checkbox" id="sVatRegistered" onchange="Page.markVatTouched();var o=document.getElementById('cVatRegistered');if(o)o.checked=this.checked"><label for="sVatRegistered">จดทะเบียนภาษีมูลค่าเพิ่ม</label>
           <button type="button" class="btn btn-secondary btn-sm hidden" data-vat-confirm style="margin-left:8px" onclick="Page.confirmVatAsShown()">ยืนยันสถานะ VAT ตามที่เลือกอยู่</button></div>
       </div>
       <div class="form-row" style="margin-top:12px">
-        <div class="form-group"><label class="form-label">วันที่จดทะเบียน VAT</label><input type="date" class="form-input" id="sVatRegistrationDate"></div>
+        <div class="form-group"><label for="sVatRegistrationDate" class="form-label">วันที่จดทะเบียน VAT</label><input type="date" class="form-input" id="sVatRegistrationDate"></div>
       </div>
       <!-- เกณฑ์รับรู้ภาษีหัก ณ ที่จ่าย — มีผลกับ JE โดยตรง (ลูกหนี้ gross vs net)
            enum มีมานานแล้วแต่ไม่เคยมีที่ให้ดู/เปลี่ยน ผู้ใช้จึงไม่รู้ว่าระบบ
            เดินเกณฑ์ไหนอยู่ ทั้งที่มันเปลี่ยนรูป JE ของทุกใบที่มี WHT -->
       <div class="form-row" style="margin-top:12px">
         <div class="form-group">
-          <label class="form-label">เกณฑ์รับรู้ภาษีหัก ณ ที่จ่าย (ที่เราถูกหัก)</label>
+          <label for="sWhtRecognitionBasis" class="form-label">เกณฑ์รับรู้ภาษีหัก ณ ที่จ่าย (ที่เราถูกหัก)</label>
           <select class="form-select" id="sWhtRecognitionBasis">
             <option value="Cash">รับรู้ตอนรับเงินจริง (Cash) — ตามตัวบท §50/§52 · ค่าเริ่มต้น</option>
             <option value="Accrual">รับรู้ตอนออกใบแจ้งหนี้ (Accrual) — ธุรกิจไทยหลายแห่งใช้</option>
@@ -757,7 +757,7 @@
 
       <h3 class="card-title" style="margin:24px 0 12px">การตั้งค่า OCR สแกนเอกสาร</h3>
       <div class="form-group">
-        <label class="form-label">เมื่อสแกนใบกำกับภาษีซื้อ ระบบควรสร้างเอกสารประเภทใดเป็นค่าเริ่มต้น</label>
+        <label for="sOcrBuyerTarget" class="form-label">เมื่อสแกนใบกำกับภาษีซื้อ ระบบควรสร้างเอกสารประเภทใดเป็นค่าเริ่มต้น</label>
         <select class="form-select" id="sOcrBuyerTarget">
           <option value="13">ใบสำคัญจ่าย (จ่ายแล้ว) — Cash-basis (แนะนำสำหรับ SME)</option>
           <option value="11">ใบกำกับภาษีซื้อ — Accrual A/P (ตั้งหนี้ก่อน จ่ายทีหลัง)</option>
@@ -769,7 +769,7 @@
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">แหล่งเงินเริ่มต้น (บัญชี Cr) เมื่อ OCR สร้างใบสำคัญจ่าย/ใบเสร็จแบบจ่ายสด</label>
+        <label for="sDefaultPaymentAccount" class="form-label">แหล่งเงินเริ่มต้น (บัญชี Cr) เมื่อ OCR สร้างใบสำคัญจ่าย/ใบเสร็จแบบจ่ายสด</label>
         <select class="form-select" id="sDefaultPaymentAccount" onchange="Page._defaultPaymentTouched = true">
           <option value="">— ให้ระบบเลือกอัตโนมัติ (บัญชีเงินสด/ธนาคารแรก) —</option>
         </select>
@@ -781,7 +781,7 @@
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">รหัสผังบัญชีเงินสด/ธนาคาร (เฉพาะบริษัทที่ใช้ผังบัญชีของตัวเอง)</label>
+        <label for="sMoneyAccountPrefixes" class="form-label">รหัสผังบัญชีเงินสด/ธนาคาร (เฉพาะบริษัทที่ใช้ผังบัญชีของตัวเอง)</label>
         <input class="form-input" id="sMoneyAccountPrefixes" maxlength="200" placeholder="เว้นว่าง = ผังมาตรฐาน (111, 1133, 2123)">
         <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
           💡 รหัสขึ้นต้นของบัญชีเงินสด/ธนาคาร/ช่องจ่าย คั่นด้วยจุลภาค เช่น <code>101, 102</code> — ระบบใช้เลือกรายการ "แหล่งเงิน" ทุกหน้า
@@ -808,7 +808,7 @@
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">อัตราสมทบ (% ของค่าจ้าง)</label>
+        <label for="sWorkersCompRate" class="form-label">อัตราสมทบ (% ของค่าจ้าง)</label>
         <input type="number" class="form-input" id="sWorkersCompRate" step="0.01" min="0.2" max="1.0" value="0.2" style="max-width:200px">
         <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
           ตามประกาศกระทรวงแรงงาน 10 หมวด:
@@ -846,7 +846,7 @@
       </div>
       <!-- คำตัดสินเจ้าของข้อ 162 (Q2 · 2026-10-26): อัตราแลกเปลี่ยนของใบต่างสกุล — ตั้งค่าได้ต่อบริษัท · ค่าตั้งต้น = เดิมทุกสตางค์ -->
       <div class="form-group">
-        <label class="form-label">อัตราแลกเปลี่ยนที่ใช้กับฐานหัก ณ ที่จ่ายของใบต่างสกุลที่จ่ายเป็นงวด</label>
+        <label for="sWhtFxRateBasis" class="form-label">อัตราแลกเปลี่ยนที่ใช้กับฐานหัก ณ ที่จ่ายของใบต่างสกุลที่จ่ายเป็นงวด</label>
         <select class="form-select" id="sWhtFxRateBasis" style="max-width:520px">
           <option value="DocumentDate">อัตราของเอกสาร (วันที่ใบ) — ค่าเริ่มต้น</option>
           <option value="PaymentDate">อัตรา ณ วันจ่าย (ป.132/2548)</option>
@@ -862,7 +862,7 @@
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">อัตรา ธปท. ที่ใช้เมื่อไม่ได้กรอกอัตราเอง</label>
+        <label for="sFxBotRateType" class="form-label">อัตรา ธปท. ที่ใช้เมื่อไม่ได้กรอกอัตราเอง</label>
         <select class="form-select" id="sFxBotRateType" style="max-width:520px">
           <option value="Mid">อัตรากลาง — ค่าเริ่มต้น</option>
           <option value="AverageBuying">อัตราซื้อถัวเฉลี่ย (โอน)</option>
@@ -880,11 +880,11 @@
         ⚠️ <b>จำเป็นต้องระบุก่อนนำส่งงบการเงิน DBD</b> — กิจการต้องจัดให้มีผู้ทำบัญชีที่มีคุณสมบัติ (พ.ร.บ.การบัญชี ม.19) — ฝ่าฝืนมีโทษตาม พ.ร.บ. และกรรมการ/ผู้จัดการที่สั่งการหรือละเว้นอาจต้องรับผิดด้วย (ม.40)
       </div>
       <div class="form-group">
-        <label class="form-label">ชื่อ-สกุลผู้ทำบัญชี</label>
+        <label for="sBookkeeperName" class="form-label">ชื่อ-สกุลผู้ทำบัญชี</label>
         <input type="text" class="form-input" id="sBookkeeperName" placeholder="เช่น นายสมชาย ใจดี" style="max-width:400px">
       </div>
       <div class="form-group">
-        <label class="form-label">เลขทะเบียนผู้ทำบัญชี (CPD)</label>
+        <label for="sBookkeeperCpdNumber" class="form-label">เลขทะเบียนผู้ทำบัญชี (CPD)</label>
         <input type="text" class="form-input" id="sBookkeeperCpdNumber" placeholder="เช่น CPD-123456" style="max-width:300px">
         <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
           เลขทะเบียนที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี (TFAC). ตรวจได้ที่ <a href="https://www.tfac.or.th" target="_blank">tfac.or.th</a>
@@ -940,11 +940,11 @@
             <input type="checkbox" id="sEtaxByEmailRdRegistered"><label for="sEtaxByEmailRdRegistered" style="font-weight:600">ลงทะเบียนกับสรรพากรเรียบร้อย</label>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div class="form-group"><label class="form-label">วันที่ได้รับอนุมัติ</label><input type="date" class="form-input" id="sEtaxByEmailRegDate"></div>
-            <div class="form-group"><label class="form-label">เลขรหัสรับรอง (ถ้ามี)</label><input type="text" class="form-input" id="sEtaxByEmailRegNumber"></div>
-            <div class="form-group"><label class="form-label">อีเมลผู้ส่งที่ลงทะเบียน <span class="req">*</span></label><input type="email" class="form-input" id="sEtaxByEmailSender" placeholder="ตรงกับที่แจ้งสรรพากร"></div>
+            <div class="form-group"><label for="sEtaxByEmailRegDate" class="form-label">วันที่ได้รับอนุมัติ</label><input type="date" class="form-input" id="sEtaxByEmailRegDate"></div>
+            <div class="form-group"><label for="sEtaxByEmailRegNumber" class="form-label">เลขรหัสรับรอง (ถ้ามี)</label><input type="text" class="form-input" id="sEtaxByEmailRegNumber"></div>
+            <div class="form-group"><label for="sEtaxByEmailSender" class="form-label">อีเมลผู้ส่งที่ลงทะเบียน <span class="req">*</span></label><input type="email" class="form-input" id="sEtaxByEmailSender" placeholder="ตรงกับที่แจ้งสรรพากร"></div>
             <div class="form-group">
-              <label class="form-label">CC สรรพากร (Time Stamp) <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">ETDA กำหนด</span></label>
+              <label for="sEtaxByEmailRdCc" class="form-label">CC สรรพากร (Time Stamp) <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">ETDA กำหนด</span></label>
               <input type="email" class="form-input" id="sEtaxByEmailRdCc" value="csemail@etax.teda.th" readonly style="background:#f1f5f9;cursor:not-allowed;font-family:monospace">
               <div style="font-size:11px;color:#64748b;margin-top:2px">ETDA กำหนด (ติ๊กทดสอบด้านล่าง = ที่อยู่ UAT ของ ETDA) — ห้ามเปลี่ยน</div>
             </div>
@@ -966,15 +966,15 @@
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
             <div style="padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
               <h4 style="margin:0 0 12px;font-size:14px;color:#334155">ใบรับรองดิจิทัล (X.509)</h4>
-              <div class="form-group"><label class="form-label">ไฟล์ Certificate (.p12/.pfx)</label><input type="text" class="form-input" id="sEtaxCertPath" placeholder="/path/to/certificate.p12 (เว้นว่าง = ใช้ค่าเดิม)"></div>
-              <div class="form-group"><label class="form-label">รหัสผ่าน Certificate</label><input type="password" class="form-input" id="sEtaxCertPassword" placeholder="เว้นว่าง = ใช้รหัสผ่านเดิม"></div>
+              <div class="form-group"><label for="sEtaxCertPath" class="form-label">ไฟล์ Certificate (.p12/.pfx)</label><input type="text" class="form-input" id="sEtaxCertPath" placeholder="/path/to/certificate.p12 (เว้นว่าง = ใช้ค่าเดิม)"></div>
+              <div class="form-group"><label for="sEtaxCertPassword" class="form-label">รหัสผ่าน Certificate</label><input type="password" class="form-input" id="sEtaxCertPassword" placeholder="เว้นว่าง = ใช้รหัสผ่านเดิม"></div>
               <div id="etaxCertStatus"></div>
             </div>
             <div style="padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
               <h4 style="margin:0 0 12px;font-size:14px;color:#334155">API กรมสรรพากร</h4>
-              <div class="form-group"><label class="form-label">API Key</label><input type="text" class="form-input" id="sEtaxApiKey" placeholder="RD API Key (เว้นว่าง = ใช้ค่าเดิม)"></div>
-              <div class="form-group"><label class="form-label">API Secret</label><input type="password" class="form-input" id="sEtaxApiSecret" placeholder="เว้นว่าง = ใช้ค่าเดิม"></div>
-              <div class="form-group"><label class="form-label">ผู้ให้บริการ</label>
+              <div class="form-group"><label for="sEtaxApiKey" class="form-label">API Key</label><input type="text" class="form-input" id="sEtaxApiKey" placeholder="RD API Key (เว้นว่าง = ใช้ค่าเดิม)"></div>
+              <div class="form-group"><label for="sEtaxApiSecret" class="form-label">API Secret</label><input type="password" class="form-input" id="sEtaxApiSecret" placeholder="เว้นว่าง = ใช้ค่าเดิม"></div>
+              <div class="form-group"><label for="sEtaxProvider" class="form-label">ผู้ให้บริการ</label>
                 <select id="sEtaxProvider" class="form-select"><option value="RD">กรมสรรพากร (RD)</option><option value="INET">INET</option><option value="OTHER">อื่นๆ</option></select>
               </div>
             </div>
@@ -1004,7 +1004,7 @@
       <div id="emailStatus" style="margin-bottom:16px"></div>
 
       <div class="form-group">
-        <label class="form-label">ผู้ให้บริการ</label>
+        <label for="emailProvider" class="form-label">ผู้ให้บริการ</label>
         <select id="emailProvider" class="form-select" onchange="Page.toggleEmailProvider()">
           <option value="Smtp">SMTP (รองรับทุกผู้ให้บริการ)</option>
           <option value="MicrosoftGraph">Microsoft Graph API (Microsoft 365 / Outlook)</option>
@@ -1013,10 +1013,10 @@
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label class="form-label">ที่อยู่อีเมลผู้ส่ง (From Address)</label><input type="email" class="form-input" id="emailFromAddress" placeholder="invoice@yourcompany.com"></div>
-        <div class="form-group"><label class="form-label">ชื่อผู้ส่ง (From Name)</label><input type="text" class="form-input" id="emailFromName" placeholder="บริษัท ABC จำกัด"></div>
+        <div class="form-group"><label for="emailFromAddress" class="form-label">ที่อยู่อีเมลผู้ส่ง (From Address)</label><input type="email" class="form-input" id="emailFromAddress" placeholder="invoice@yourcompany.com"></div>
+        <div class="form-group"><label for="emailFromName" class="form-label">ชื่อผู้ส่ง (From Name)</label><input type="text" class="form-input" id="emailFromName" placeholder="บริษัท ABC จำกัด"></div>
       </div>
-      <div class="form-group"><label class="form-label">Reply-To (อีเมลตอบกลับ)</label><input type="email" class="form-input" id="emailReplyTo" placeholder="accounting@yourcompany.com — เว้นว่างจะใช้ From Address"></div>
+      <div class="form-group"><label for="emailReplyTo" class="form-label">Reply-To (อีเมลตอบกลับ)</label><input type="email" class="form-input" id="emailReplyTo" placeholder="accounting@yourcompany.com — เว้นว่างจะใช้ From Address"></div>
 
       <div id="emailProviderWarning" style="display:none;padding:10px;background:#fef3c7;border-radius:6px;color:#78350f;font-size:13px;margin-bottom:12px"></div>
 
@@ -1024,12 +1024,12 @@
       <div id="emailSmtp" style="padding:16px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;margin-bottom:12px">
         <h4 style="margin:0 0 12px;font-size:14px;color:#334155">SMTP Configuration</h4>
         <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">
-          <div class="form-group"><label class="form-label">SMTP Host</label><input type="text" class="form-input" id="smtpHost" placeholder="smtp.gmail.com / smtp.office365.com"></div>
-          <div class="form-group"><label class="form-label">Port</label><input type="number" class="form-input" id="smtpPort" value="587"></div>
+          <div class="form-group"><label for="smtpHost" class="form-label">SMTP Host</label><input type="text" class="form-input" id="smtpHost" placeholder="smtp.gmail.com / smtp.office365.com"></div>
+          <div class="form-group"><label for="smtpPort" class="form-label">Port</label><input type="number" class="form-input" id="smtpPort" value="587"></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <div class="form-group"><label class="form-label">Username</label><input type="text" class="form-input" id="smtpUsername" placeholder="user@gmail.com"></div>
-          <div class="form-group"><label class="form-label">Password / App Password</label><input type="password" class="form-input" id="smtpPassword" placeholder="••••••••"></div>
+          <div class="form-group"><label for="smtpUsername" class="form-label">Username</label><input type="text" class="form-input" id="smtpUsername" placeholder="user@gmail.com"></div>
+          <div class="form-group"><label for="smtpPassword" class="form-label">Password / App Password</label><input type="password" class="form-input" id="smtpPassword" placeholder="••••••••"></div>
         </div>
         <div class="form-group form-checkbox"><input type="checkbox" id="smtpUseSsl" checked><label for="smtpUseSsl">ใช้ SSL/TLS</label></div>
         <details style="margin-top:8px">
@@ -1050,10 +1050,10 @@
           ต้อง register app ใน Azure AD และให้สิทธิ์ <code>Mail.Send</code> (Admin Consent)
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <div class="form-group"><label class="form-label">Tenant ID</label><input type="text" class="form-input" id="msTenantId" placeholder="GUID หรือ contoso.onmicrosoft.com"></div>
-          <div class="form-group"><label class="form-label">Client ID (App ID)</label><input type="text" class="form-input" id="msClientId"></div>
-          <div class="form-group"><label class="form-label">Client Secret</label><input type="password" class="form-input" id="msClientSecret"></div>
-          <div class="form-group"><label class="form-label">Sender Mailbox (UPN) <span class="req">*</span></label><input type="email" class="form-input" id="msSenderUpn" placeholder="invoice@yourtenant.com"></div>
+          <div class="form-group"><label for="msTenantId" class="form-label">Tenant ID</label><input type="text" class="form-input" id="msTenantId" placeholder="GUID หรือ contoso.onmicrosoft.com"></div>
+          <div class="form-group"><label for="msClientId" class="form-label">Client ID (App ID)</label><input type="text" class="form-input" id="msClientId"></div>
+          <div class="form-group"><label for="msClientSecret" class="form-label">Client Secret</label><input type="password" class="form-input" id="msClientSecret"></div>
+          <div class="form-group"><label for="msSenderUpn" class="form-label">Sender Mailbox (UPN) <span class="req">*</span></label><input type="email" class="form-input" id="msSenderUpn" placeholder="invoice@yourtenant.com"></div>
         </div>
       </div>
 
@@ -1064,10 +1064,10 @@
           ต้องสร้าง OAuth Client ใน Google Cloud Console และทำ OAuth Flow ครั้งแรกเพื่อรับ refresh token
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-          <div class="form-group"><label class="form-label">Client ID</label><input type="text" class="form-input" id="gmailClientId"></div>
-          <div class="form-group"><label class="form-label">Client Secret</label><input type="password" class="form-input" id="gmailClientSecret"></div>
+          <div class="form-group"><label for="gmailClientId" class="form-label">Client ID</label><input type="text" class="form-input" id="gmailClientId"></div>
+          <div class="form-group"><label for="gmailClientSecret" class="form-label">Client Secret</label><input type="password" class="form-input" id="gmailClientSecret"></div>
         </div>
-        <div class="form-group"><label class="form-label">Refresh Token</label><input type="password" class="form-input" id="gmailRefreshToken"></div>
+        <div class="form-group"><label for="gmailRefreshToken" class="form-label">Refresh Token</label><input type="password" class="form-input" id="gmailRefreshToken"></div>
       </div>
 
       <div style="display:flex;gap:8px;margin-top:16px">
@@ -1099,7 +1099,7 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">รหัสเชื่อม LINE OA ของร้าน <span class="text-gray-400" style="font-size:12px">(Channel Access Token แบบ long-lived)</span></label>
+        <label for="lineToken" class="form-label">รหัสเชื่อม LINE OA ของร้าน <span class="text-gray-400" style="font-size:12px">(Channel Access Token แบบ long-lived)</span></label>
         <input type="password" class="form-input" id="lineToken"
                placeholder="ใส่ใหม่เพื่อแทนค่าเดิม / เว้นว่าง = ใช้ค่าเดิม" autocomplete="off" />
         <div class="text-gray-400" style="font-size:11px;margin-top:4px">
@@ -1108,7 +1108,7 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">รหัสลับของ LINE OA <span class="text-gray-400" style="font-size:12px">(Channel Secret — ใช้ตรวจว่าข้อความมาจาก LINE จริง)</span></label>
+        <label for="lineSecret" class="form-label">รหัสลับของ LINE OA <span class="text-gray-400" style="font-size:12px">(Channel Secret — ใช้ตรวจว่าข้อความมาจาก LINE จริง)</span></label>
         <input type="password" class="form-input" id="lineSecret"
                placeholder="ใส่ใหม่เพื่อแทนค่าเดิม / เว้นว่าง = ใช้ค่าเดิม" autocomplete="off" />
         <div class="text-gray-400" style="font-size:11px;margin-top:4px">
@@ -1117,12 +1117,12 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">LINE กลุ่มของทีม <span class="text-gray-400" style="font-size:12px">(ไม่บังคับ · Group/Room ID — สำหรับแจ้งเตือนกลุ่ม เช่น "ทีมบัญชี")</span></label>
+        <label for="lineGroupId" class="form-label">LINE กลุ่มของทีม <span class="text-gray-400" style="font-size:12px">(ไม่บังคับ · Group/Room ID — สำหรับแจ้งเตือนกลุ่ม เช่น "ทีมบัญชี")</span></label>
         <input type="text" class="form-input" id="lineGroupId" placeholder="Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
       </div>
 
       <div class="form-group">
-        <label class="form-label">LINE OA Basic ID <span class="text-gray-400" style="font-size:12px">(เช่น @myshop — ใช้ทำปุ่ม "เพิ่มเพื่อน/ส่งรหัส" ให้ลูกค้าหน้าเว็บผูก LINE รับแจ้งเตือน และให้พนักงานผูก LINE รับสลิป)</span></label>
+        <label for="lineOaBasicId" class="form-label">LINE OA Basic ID <span class="text-gray-400" style="font-size:12px">(เช่น @myshop — ใช้ทำปุ่ม "เพิ่มเพื่อน/ส่งรหัส" ให้ลูกค้าหน้าเว็บผูก LINE รับแจ้งเตือน และให้พนักงานผูก LINE รับสลิป)</span></label>
         <input type="text" class="form-input" id="lineOaBasicId" placeholder="@myshop" />
       </div>
       </details>
@@ -1140,7 +1140,7 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">📨 ทดสอบส่งข้อความ — LINE User ID / Group ID</label>
+        <label for="lineTestId" class="form-label">📨 ทดสอบส่งข้อความ — LINE User ID / Group ID</label>
         <input type="text" class="form-input" id="lineTestId" placeholder="U... หรือ C... ของผู้รับ" />
         <div class="text-gray-400" style="font-size:11px;margin-top:4px">
           พนักงาน/ผู้ใช้ต้อง add Official Account ของคุณเป็นเพื่อนก่อน ระบบจึงจะส่งข้อความหาได้
@@ -1189,13 +1189,13 @@
     <div id="tabApproval" class="card hidden">
       <h3 class="card-title" style="margin-bottom:16px">การอนุมัติและการเข้าถึง</h3>
       <div class="form-group form-checkbox"><input type="checkbox" id="sRequireApproval"><label for="sRequireApproval">ต้องอนุมัติเอกสารก่อนส่ง</label></div>
-      <div class="form-group"><label class="form-label">จำนวนเงินขั้นต่ำที่ต้องอนุมัติ</label><input type="number" class="form-input" id="sApprovalThreshold" step="0.01"></div>
+      <div class="form-group"><label for="sApprovalThreshold" class="form-label">จำนวนเงินขั้นต่ำที่ต้องอนุมัติ</label><input type="number" class="form-input" id="sApprovalThreshold" step="0.01"></div>
 
       <h4 style="font-size:15px;font-weight:600;margin:24px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0">🛡️ การควบคุมภายใน (Internal Control)</h4>
       <p style="font-size:12px;color:#94a3b8;margin:-6px 0 12px;line-height:1.5">ตัวช่วยลดความเสี่ยงทุจริต/ผิดพลาด — ค่าเริ่มต้นปิดไว้เพื่อให้บริษัทที่ใช้งานอยู่ทำงานเหมือนเดิม</p>
       <div class="form-group form-checkbox"><input type="checkbox" id="sSodBlockSelfApproval"><label for="sSodBlockSelfApproval">แยกหน้าที่ (SoD) — ห้ามคนสร้างเอกสารอนุมัติเอกสารของตัวเอง</label></div>
       <div class="form-group">
-        <label class="form-label">คุมงบผูกพัน (Budget Commitment) — เมื่อสร้าง PO/ใบแจ้งหนี้ซื้อ/ค่าใช้จ่ายเกินงบ</label>
+        <label for="sBudgetCommitmentMode" class="form-label">คุมงบผูกพัน (Budget Commitment) — เมื่อสร้าง PO/ใบแจ้งหนี้ซื้อ/ค่าใช้จ่ายเกินงบ</label>
         <select class="form-select" id="sBudgetCommitmentMode" style="max-width:280px">
           <option value="Off">ปิด — ไม่ตรวจงบ</option>
           <option value="Warn">เตือน — แจ้งเตือนแต่ให้ผ่านได้</option>
@@ -1215,7 +1215,7 @@
       <h4 style="font-size:15px;font-weight:600;margin:24px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0">API Access</h4>
       <div class="form-group form-checkbox"><input type="checkbox" id="sEnableApiAccess"><label for="sEnableApiAccess">เปิดใช้งาน API Access (สร้าง API Key เชื่อมต่อระบบภายนอก)</label></div>
       <div class="text-xs text-gray-500" style="margin:-6px 0 12px 26px">ปิดสวิตช์นี้ = คีย์ <b>acc_</b> ทุกดอกที่ออกไว้แล้ว<b>หยุดใช้งานทันที</b> (ตอบ 403) จนกว่าจะเปิดอีกครั้ง · คีย์ <b>int_</b> ของหน้าเชื่อมต่อระบบไม่ได้ขึ้นกับสวิตช์นี้</div>
-      <div class="form-group"><label class="form-label">จำนวน API Key สูงสุด</label><input type="number" class="form-input" id="sMaxApiKeys" value="5" min="1" max="20" style="max-width:120px"></div>
+      <div class="form-group"><label for="sMaxApiKeys" class="form-label">จำนวน API Key สูงสุด</label><input type="number" class="form-input" id="sMaxApiKeys" value="5" min="1" max="20" style="max-width:120px"></div>
 
       <!-- API Key (acc_) จัดการที่หน้า "Webhooks & API" → แท็บ API Keys
            (โซน Developer/API). ที่นี่เป็นแค่ master switch + ลิงก์ — กันมี
@@ -1264,11 +1264,11 @@
         <strong>สร้าง</strong> หรือ <strong>อนุมัติ</strong> เพื่อใช้เป็นหลักฐานทางบัญชี
       </p>
       <div class="form-group">
-        <label class="form-label">ชื่อ-นามสกุล (ใต้ลายเซ็น)</label>
+        <label for="sigName" class="form-label">ชื่อ-นามสกุล (ใต้ลายเซ็น)</label>
         <input id="sigName" type="text" class="form-input" placeholder="เช่น สมชาย ใจดี" />
       </div>
       <div class="form-group">
-        <label class="form-label">ตำแหน่ง</label>
+        <label for="sigTitle" class="form-label">ตำแหน่ง</label>
         <input id="sigTitle" type="text" class="form-input" placeholder="เช่น ผู้จัดการ / กรรมการ" />
       </div>
 
@@ -1285,7 +1285,7 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">📁 วิธีที่ 2 — อัพโหลดรูปลายเซ็น (PNG พื้นหลังโปร่งใส แนะนำ)</label>
+        <label for="sigUpload" class="form-label">📁 วิธีที่ 2 — อัพโหลดรูปลายเซ็น (PNG พื้นหลังโปร่งใส แนะนำ)</label>
         <div style="display:flex;gap:12px;align-items:flex-start">
           <div style="flex:1">
             <input id="sigUpload" type="file" accept="image/png,image/jpeg" onchange="Page.onSignatureUpload(event)" />
@@ -1330,14 +1330,15 @@
       async deleteCompany() {
         const api = Layout.api(); if (!api) return;
         const company = JSON.parse(localStorage.getItem('currentCompany') || '{}');
-        const typed = prompt(
-          `⛔ การลบบริษัทถอนคืนเองไม่ได้จากหน้าจอ\n\nบริษัทจะหายจากรายการของสมาชิกทุกคน (ข้อมูลบัญชีถูกเก็บตามกฎหมาย 5 ปี)\n\nพิมพ์ชื่อบริษัทให้ตรงทุกตัวอักษรเพื่อยืนยัน:\n"${company.name || ''}"`);
+        const typed = await Layout.promptText({ title: '⛔ ลบบริษัท', danger: true, okText: 'ลบบริษัท', required: true,
+          message: `การลบบริษัทถอนคืนเองไม่ได้จากหน้าจอ\n\nบริษัทจะหายจากรายการของสมาชิกทุกคน (ข้อมูลบัญชีถูกเก็บตามกฎหมาย 5 ปี)\n\nพิมพ์ชื่อบริษัทให้ตรงทุกตัวอักษรเพื่อยืนยัน:\n"${company.name || ''}"`,
+          label: 'ชื่อบริษัท', placeholder: company.name || '' });
         if (typed === null) return;
         try {
           await api.deleteCompany(typed);
           localStorage.removeItem('currentCompany');
-          alert('ลบบริษัทเรียบร้อย — กลับสู่หน้าเลือกบริษัท');
-          location.href = Layout.dashboardUrl();
+          Layout.toast('ลบบริษัทเรียบร้อย — กำลังกลับสู่หน้าเลือกบริษัท', 'success');
+          setTimeout(() => { location.href = Layout.dashboardUrl(); }, 1200);
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
       // อ่านรูปลายเซ็นผู้มีอำนาจลงนาม → base64 (จำกัด ~300KB กัน payload บวม)
@@ -1363,18 +1364,14 @@
           const g = id => document.getElementById(id)?.value || null;
           // หมายเหตุ: CompanyController route คือ /api/company (เอกพจน์) ไม่ใช่
           // /api/companies เหมือน controller ส่วนใหญ่
-          const res = await fetch(`/api/company/${Layout.getCompanyId()}/romanize-address`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              buildingNumber: g('cBuildingNumber'), buildingName: g('cBuildingName'),
-              moo: g('cMoo'), streetName: g('cStreetName'), subDistrict: g('cSubDistrict'),
-              district: g('cDistrict'), province: g('cProvince'), postalCode: g('cPostalCode'),
-              address: g('cAddress'),
-            }),
+          // API.post (WP-13 H): 401/403/ไม่ใช่ JSON จัดการที่เดียว + ตัวกันกดซ้ำกลาง
+          const j = await API.post(`/api/company/${Layout.getCompanyId()}/romanize-address`, {
+            buildingNumber: g('cBuildingNumber'), buildingName: g('cBuildingName'),
+            moo: g('cMoo'), streetName: g('cStreetName'), subDistrict: g('cSubDistrict'),
+            district: g('cDistrict'), province: g('cProvince'), postalCode: g('cPostalCode'),
+            address: g('cAddress'),
           });
-          const j = await res.json();
-          if (!res.ok || !j?.success) throw new Error(j?.message || 'แปลงไม่สำเร็จ');
+          if (!j?.success) throw new Error(j?.message || 'แปลงไม่สำเร็จ');
           const out = j.data || '';
           if (!out) { Layout.toast('ยังไม่มีที่อยู่ไทยให้แปลง — กรอกที่อยู่ด้านบนก่อน', 'error'); return; }
           document.getElementById('cAddressEn').value = out;
@@ -1478,13 +1475,14 @@
       },
       async rotateSignSecret() {
         const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
-        if (!confirm('ออกรหัสลับใหม่? รหัสเดิมจะใช้ตรวจลายเซ็น webhook ไม่ได้ทันที — ระบบปลายทางต้องเปลี่ยนตาม')) return;
+        if (!(await Layout.confirm('ออกรหัสลับใหม่? รหัสเดิมจะใช้ตรวจลายเซ็น webhook ไม่ได้ทันที — ระบบปลายทางต้องเปลี่ยนตาม'))) return;
         try {
           const r = await api.post(`/api/companies/${cid}/sign-requests/settings/rotate-secret`, {});
           const secret = r && r.data && r.data.secret;
           if (secret) {
             try { await navigator.clipboard.writeText(secret); } catch (_) { /* ไม่มีสิทธิ์ clipboard — ยังแสดงให้คัดลอกเอง */ }
-            prompt('รหัสลับลงนาม webhook (คัดลอกแล้ว — จะไม่แสดงเต็มอีก):', secret);
+            await Layout.promptText({ title: 'รหัสลับลงนาม webhook', okText: 'ปิด', cancelText: 'ปิด', value: secret, label: 'รหัสลับ',
+              message: 'คัดลอกไว้ให้แล้ว (ถ้าเบราว์เซอร์อนุญาต) — ระบบจะไม่แสดงเต็มอีก · เลือกข้อความในช่องเพื่อคัดลอกเองได้' });
           }
           await this.loadSignRequestSettings();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -1624,10 +1622,7 @@
         const cid = Layout.getCompanyId();
         const el = document.getElementById('licenseContent');
         try {
-          const r = await fetch(`/api/account-subscription/effective/${cid}`, {
-            headers: { 'Authorization': 'Bearer ' + API.token }
-          });
-          const j = await r.json();
+          const j = await API.get(`/api/account-subscription/effective/${cid}`);
           if (!j.success || !j.data?.hasPlan) {
             el.innerHTML = `
               <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:14px 18px;color:#78350f;font-size:13px">
@@ -1923,7 +1918,7 @@
       },
       async removeDepositKind(id) {
         const k = ((this._dk || {}).items || []).find(x => x.id === id);
-        if (!k || !confirm(`ลบประเภท “${k.name}”? (ถ้ามีใบ/ที่พักใช้อยู่ ระบบจะปิดใช้แทน)`)) return;
+        if (!k || !(await Layout.confirm(`ลบประเภท “${k.name}”? (ถ้ามีใบ/ที่พักใช้อยู่ ระบบจะปิดใช้แทน)`))) return;
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.deleteDepositKind(id);
@@ -1949,8 +1944,7 @@
         if (!box) return;
         try {
           if (!this._ssoCfg) {
-            const r = await fetch('/api/auth/sso-config');
-            const d = await r.json();
+            const d = await API.get('/api/auth/sso-config');
             this._ssoCfg = d.data || d || {};
           }
           const cfg = this._ssoCfg;
@@ -2017,7 +2011,7 @@
       },
 
       async removeExternalLogin(id, label) {
-        if (!confirm(`ถอดการผูกบัญชี ${label} ออกจากบัญชีนี้?`)) return;
+        if (!(await Layout.confirm(`ถอดการผูกบัญชี ${label} ออกจากบัญชีนี้?`))) return;
         try {
           const j = await API.removeExternalLogin(id);
           if (!j || !j.success) throw new Error((j && j.message) || 'ถอดไม่สำเร็จ');
@@ -2236,17 +2230,18 @@
         if (!cid) return;
         const wrap = document.getElementById('notifyMatrixWrap');
         try {
+          this._notifyCatalog = null;   // โหลดไม่ครบ = ห้ามบันทึก (เดิมส่ง settings: [] ทับค่าที่ตั้งไว้ทั้งหมด — แบบเดียวกับ notifications.html WP-03 ข้อ 7)
           const [catRes, setRes] = await Promise.all([
-            fetch(`/api/companies/${cid}/notifications/config/catalog`,
-              { headers: { 'Authorization': 'Bearer ' + API.token } }).then(r => r.json()),
-            fetch(`/api/companies/${cid}/notifications/config/settings`,
-              { headers: { 'Authorization': 'Bearer ' + API.token } }).then(r => r.json()),
+            API.get(`/api/companies/${cid}/notifications/config/catalog`),
+            API.get(`/api/companies/${cid}/notifications/config/settings`),
           ]);
-          this._notifyCatalog = catRes.data || { events: [], recipientRoles: [] };
+          if (!catRes?.success || !setRes?.success) throw new Error((catRes && catRes.message) || (setRes && setRes.message) || 'เซิร์ฟเวอร์ไม่ตอบข้อมูล');
           this._notifySettings = setRes.data || [];
+          this._notifyCatalog = catRes.data || { events: [], recipientRoles: [] };
           this._renderNotifyMatrix();
         } catch (e) {
-          wrap.innerHTML = '<div style="color:#dc2626;padding:20px">โหลดไม่สำเร็จ: ' + e.message + '</div>';
+          // ล้มดัง + ลองใหม่ (WP-13 I) · ข้อความ error ผ่าน textContent (เดิมต่อ e.message ดิบเข้า innerHTML)
+          Layout.panelError(wrap, 'โหลดตารางแจ้งเตือนไม่สำเร็จ — ยังบันทึกไม่ได้', () => this.loadNotifyMatrix(), e && e.message);
         }
       },
       _renderNotifyMatrix() {
@@ -2272,11 +2267,11 @@
             const key = `${ev.key}|${role}`;
             const s = map.get(key) || { enableSystem: false, enableEmail: false, enableLine: false };
             html += `<tr>
-              <td><div><strong>${ev.label}</strong></div><div class="text-gray-400" style="font-size:11px">${ev.key}</div></td>
-              <td>${roleLabel[role] || role}</td>
-              <td style="text-align:center"><input type="checkbox" data-ev="${ev.key}" data-role="${role}" data-ch="sys" ${s.enableSystem ? 'checked' : ''}></td>
-              <td style="text-align:center"><input type="checkbox" data-ev="${ev.key}" data-role="${role}" data-ch="email" ${s.enableEmail ? 'checked' : ''}></td>
-              <td style="text-align:center"><input type="checkbox" data-ev="${ev.key}" data-role="${role}" data-ch="line" ${s.enableLine ? 'checked' : ''}></td>
+              <td><div><strong>${Layout.esc(ev.label)}</strong></div></td>
+              <td>${Layout.esc(roleLabel[role] || role)}</td>
+              <td style="text-align:center"><input type="checkbox" aria-label="${Layout.esc(ev.label)} · ${Layout.esc(roleLabel[role] || role)} · กระดิ่ง" data-ev="${Layout.esc(ev.key)}" data-role="${Layout.esc(role)}" data-ch="sys" ${s.enableSystem ? 'checked' : ''}></td>
+              <td style="text-align:center"><input type="checkbox" aria-label="${Layout.esc(ev.label)} · ${Layout.esc(roleLabel[role] || role)} · อีเมล" data-ev="${Layout.esc(ev.key)}" data-role="${Layout.esc(role)}" data-ch="email" ${s.enableEmail ? 'checked' : ''}></td>
+              <td style="text-align:center"><input type="checkbox" aria-label="${Layout.esc(ev.label)} · ${Layout.esc(roleLabel[role] || role)} · LINE" data-ev="${Layout.esc(ev.key)}" data-role="${Layout.esc(role)}" data-ch="line" ${s.enableLine ? 'checked' : ''}></td>
             </tr>`;
           }
         }
@@ -2286,6 +2281,7 @@
       async saveNotifyMatrix() {
         const cid = Layout.getCompanyId();
         if (!cid) return;
+        if (!this._notifyCatalog) { Layout.toast('ตารางแจ้งเตือนยังโหลดไม่สำเร็จ — กด "ลองใหม่" ก่อนบันทึก (กันค่าที่ตั้งไว้ถูกล้าง)', 'error', 6000); return; }
         const rowsMap = new Map();
         document.querySelectorAll('#notifyMatrixWrap input[type=checkbox]').forEach(cb => {
           const k = `${cb.dataset.ev}|${cb.dataset.role}`;
@@ -2301,13 +2297,8 @@
         // ส่งทุก row — backend จัด upsert/delete ให้
         const settings = Array.from(rowsMap.values());
         try {
-          const r = await fetch(`/api/companies/${cid}/notifications/config/settings`, {
-            method: 'PUT',
-            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ settings })
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+          const j = await API.put(`/api/companies/${cid}/notifications/config/settings`, { settings });
+          if (!j || !j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
           Layout.toast('บันทึกการตั้งค่าแจ้งเตือนเรียบร้อย');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -2387,7 +2378,7 @@
         }
         if (missing.length > 0) {
           warn.style.display = 'block';
-          warn.innerHTML = `⚠️ ยังขาดข้อมูลที่จำเป็นสำหรับ ${provider}: <strong>${missing.join(', ')}</strong> — หากไม่กรอก ระบบจะ fallback ไปใช้ SMTP ส่วนกลาง`;
+          warn.innerHTML = `⚠️ ยังขาดข้อมูลที่จำเป็นสำหรับ ${Layout.esc(provider)}: <strong>${Layout.esc(missing.join(', '))}</strong> — หากไม่กรอก ระบบจะส่งผ่านเซิร์ฟเวอร์อีเมลส่วนกลางของระบบแทน (ชื่อผู้ส่งไม่ใช่ของบริษัทคุณ)`;
         } else {
           warn.style.display = 'none';
         }
@@ -2427,11 +2418,12 @@
       },
       async testEmailConfig() {
         const api = Layout.api(); if (!api) return;
-        const to = prompt('กรอกอีเมลที่จะทดสอบส่งถึง:');
+        const to = await Layout.promptText({ title: 'ทดสอบส่งอีเมล', okText: 'ส่งทดสอบ', inputType: 'email', required: true,
+          label: 'อีเมลผู้รับทดสอบ', placeholder: 'name@example.com', message: 'ระบบจะส่งอีเมลทดสอบด้วยค่าที่บันทึกไว้ล่าสุด' });
         if (!to) return;
         try {
           const res = await api.testEmailConfig({ toAddress: to });
-          Layout.toast(res.success ? 'ส่งทดสอบสำเร็จ — โปรดตรวจสอบกล่องอีเมล' : 'ส่งไม่สำเร็จ: ' + (res.message || 'unknown'), res.success ? 'success' : 'error');
+          Layout.toast(res.success ? 'ส่งทดสอบสำเร็จ — โปรดตรวจสอบกล่องอีเมล' : 'ส่งไม่สำเร็จ: ' + (res.message || 'เซิร์ฟเวอร์ไม่ได้ระบุสาเหตุ'), res.success ? 'success' : 'error');
           await this.loadEmailConfig();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -3133,7 +3125,7 @@
         fileInput.value = '';
       },
       async deleteLogo() {
-        if (!confirm('ต้องการลบโลโก้?')) return;
+        if (!(await Layout.confirm('ต้องการลบโลโก้?'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.deleteLogo();
@@ -3162,7 +3154,7 @@
         fileInput.value = '';
       },
       async deleteStamp() {
-        if (!confirm('ต้องการลบตราประทับ?')) return;
+        if (!(await Layout.confirm('ต้องการลบตราประทับ?'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.deleteStamp();

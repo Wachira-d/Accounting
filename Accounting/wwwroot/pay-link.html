@@ -26,7 +26,9 @@
 <body>
   <!-- รอบ 219 เฟส 2 ขั้น 4 (คำตัดสินข้อ 180): ลิงก์ชำระใบแจ้งหนี้ค่าบริการ NextAcc — ทุกค่ามาจาก GET /api/platform-pay/links/{token} (เซิร์ฟเวอร์ตัดสิน) ·
        ไม่ขอรหัสผ่าน/ข้อมูลบัตรบนหน้านี้ · เนื้อหาจากเซิร์ฟเวอร์ escape ทุกช่อง -->
-  <div class="wrap" id="app"><div class="card">กำลังโหลด...</div></div>
+  <!-- WP-13 (D §10 · §11 C): ข้อความผล/ข้อผิดพลาดแสดงในกล่องบนหน้า (role=alert) แทน alert() ของเบราว์เซอร์ — in-app browser บางตัวปิด alert เงียบ ๆ -->
+  <div class="wrap"><div id="flash" role="alert" aria-live="assertive"></div></div>
+  <div class="wrap" id="app" style="padding-top:0"><div class="card">กำลังโหลด...</div></div>
   <script src="/js/policy-accept.js"></script>
   <script>
     const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -40,6 +42,15 @@
     if (qs.get('t')) ssSet('paylinkToken', qs.get('t'));
     const api = `/api/platform-pay/links/${encodeURIComponent(token)}`;
     let view = null;
+    /** แสดงข้อความบนหน้า (แทน alert) · ok=true = สีเขียว · ข้อความเป็น text เสมอ */
+    function say(msg, ok) {
+      const el = document.getElementById('flash');
+      if (!el) return;
+      el.className = 'card note ' + (ok ? 'ok' : 'bad');
+      el.textContent = String(msg || '');
+      el.style.display = msg ? '' : 'none';
+      try { el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (_) { el.scrollIntoView(); }
+    }
 
     async function load() {
       const app = document.getElementById('app');
@@ -68,7 +79,7 @@
             : `<div class="note bad">${esc(po.fallbackNote || '')}</div>`}
           ${!po.online && po.onlineNote ? `<div class="muted">${esc(po.onlineNote)}</div>` : ''}
           <form id="f">
-            <label>ไฟล์สลิป (รูปหรือ PDF)<input type="file" name="file" accept="image/*,application/pdf"></label>
+            <label>ไฟล์สลิป (รูปหรือ PDF) <span style="color:#dc2626">* บังคับ</span><input type="file" name="file" accept="image/*,application/pdf" required></label>
             <label>วันที่โอน<input type="date" name="paymentDate"></label>
             <label>อ้างอิงการโอน (ถ้ามี)<input type="text" name="transferReference" maxlength="100"></label>
             ${v.withholdingLine ? `<div class="note">${esc(v.withholdingLine)}</div>` : ''}
@@ -91,21 +102,21 @@
     // ฝ่ายค้านรอบสุดท้าย 4a: หนังสือรับรอง 50 ทวิ ของรายการล่าสุดของใบนี้ที่หักภาษี (เซิร์ฟเวอร์เลือกรายการ — ไม่รับ id จากหน้าเว็บ)
     async function sendWht() {
       const f = document.getElementById('whtFile');
-      if (!f || !f.files.length) { alert('กรุณาเลือกไฟล์'); return; }
+      if (!f || !f.files.length) { say('กรุณาเลือกไฟล์ 50 ทวิ'); f && f.focus(); return; }
       const fd = new FormData(); fd.append('file', f.files[0]);
       try {
         const r = await fetch(`${api}/wht-certificate`, { method: 'POST', body: fd });
         const j = await r.json().catch(() => null);
         if (!r.ok || !j?.success) throw new Error(j?.message || 'ส่งไม่สำเร็จ (ยังไม่มีรายการชำระที่หักภาษีของใบนี้)');
-        alert(j.message || 'ส่งแล้ว');
-      } catch (e) { alert(e.message); }
+        say(j.message || 'ส่ง 50 ทวิ แล้ว', true);
+      } catch (e) { say(e.message); }
     }
 
     async function sendSlip() {
       const f = document.getElementById('f');
-      if (!f.file.files.length) { alert('กรุณาเลือกไฟล์สลิป'); return; }
+      if (!f.file.files.length) { say('กรุณาเลือกไฟล์สลิป'); f.file.focus(); return; }
       let pol;
-      try { pol = PolicyAccept.require('pol'); } catch (e) { alert(e.message); return; }
+      try { pol = PolicyAccept.require('pol'); } catch (e) { say(e.message); return; }
       const fd = new FormData(f);
       if (!String(fd.get('withholdingTaxAmount') || '').trim()) fd.delete('withholdingTaxAmount');
       fd.set('policyAccepted', String(pol.policyAccepted));
@@ -115,13 +126,13 @@
         const r = await fetch(`${api}/slip`, { method: 'POST', body: fd });
         const j = await r.json().catch(() => null);
         if (!r.ok || !j?.success) throw new Error(j?.message || 'ส่งไม่สำเร็จ');
-        alert(j.message || 'ส่งแล้ว'); await load();
-      } catch (e) { alert(e.message); } finally { b.disabled = false; }
+        await load(); say(j.message || 'ส่งสลิปแล้ว — รอตรวจสอบ', true);
+      } catch (e) { say(e.message); } finally { const b2 = document.getElementById('send'); if (b2) b2.disabled = false; }
     }
     // ชำระออนไลน์ผ่านช่องทางของ NextAcc (part B) — ไปหน้าธนาคาร/บัตร หรือแสดง QR แล้วถามสถานะจากเซิร์ฟเวอร์ (ไม่เชื่อ query string)
     async function payOnline() {
       let pol;
-      try { pol = PolicyAccept.require('pol'); } catch (e) { alert(e.message); return; }
+      try { pol = PolicyAccept.require('pol'); } catch (e) { say(e.message); return; }
       const method = (view.payOptions.methods || [])[0] || 'PromptPay';
       try {
         const r = await fetch(`${api}/intents`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -137,13 +148,14 @@
           ${qrOk ? `<div style="text-align:center;margin-top:8px"><img src="${esc(qrSrc)}" alt="QR พร้อมเพย์สำหรับชำระเงิน" style="width:230px;height:230px;object-fit:contain;border:1px solid #e2e8f0;border-radius:10px"></div>`
             : '<div style="margin-top:6px">ยังไม่ได้รับรูป QR จากระบบชำระเงิน — กด “ตรวจสถานะการชำระ” หรือเริ่มใหม่อีกครั้ง</div>'}
           <button type="button" style="margin-top:8px" onclick="checkIntent('${String(j.data.id || '').replace(/[^0-9a-fA-F-]/g, '') /* text — กรองเหลือ hex/ขีดเท่านั้น */}')">ตรวจสถานะการชำระ</button></div>`;
-      } catch (e) { alert(e.message); }
+      } catch (e) { say(e.message); }
     }
     async function checkIntent(id) {
-      const r = await fetch(`${api}/intents/${encodeURIComponent(id)}`, { cache: 'no-store' });
-      const j = await r.json().catch(() => null);
-      if (j?.data?.status === 'Succeeded') { alert('ชำระสำเร็จ — ขอบคุณค่ะ'); load(); }
-      else alert(j?.data?.failureMessage || 'ยังไม่ได้รับเงิน — ลองตรวจสถานะอีกครั้งในอีกสักครู่');
+      let j = null;
+      try { const r = await fetch(`${api}/intents/${encodeURIComponent(id)}`, { cache: 'no-store' }); j = await r.json().catch(() => null); }
+      catch { say('ตรวจสถานะไม่สำเร็จ — ตรวจสอบอินเทอร์เน็ตแล้วกด "ตรวจสถานะการชำระ" อีกครั้ง'); return; }
+      if (j?.data?.status === 'Succeeded') { await load(); say('ชำระสำเร็จ — ขอบคุณค่ะ', true); }
+      else say(j?.data?.failureMessage || 'ยังไม่ได้รับเงิน — ลองตรวจสถานะอีกครั้งในอีกสักครู่');
     }
     load().then(() => {
       // กลับจากหน้าธนาคาร ⇒ ถามสถานะรายการที่เพิ่งเริ่ม (เซิร์ฟเวอร์ตัดสิน — ไม่เชื่อ query string)

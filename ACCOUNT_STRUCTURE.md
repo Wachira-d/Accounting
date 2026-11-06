@@ -230,6 +230,9 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
   (`MayDetach` · สมาชิกอื่น 403) · `AddChainedAuditLog` + ประวัติ `DetachedFromAccountPlan` · แจ้งอีกฝ่าย · `GET detach-preview/{companyId}` ("หลังถอดจะใช้ {Label} ถึง {วันที่} / ซื้อได้ทันที" — `DetachPreview`) ·
   `GET effective/{companyId}` + `graceEndsAt` · `canSelfDetach` · หน้า License ของผู้ถือแสดง License ที่ Expired ซึ่งยังมีบริษัทผูก (ถอดได้) · **ผูกบริษัทที่จ่ายเอง** ⇒ เวลาที่จ่ายไว้เดินต่อ ไม่คืนเงิน
   (236-9 ค่าตั้งต้น รอเจ้าของยืนยัน) — `AttachPaidTimeWarning` ใน `GET attach-preview/{companyId}` · `Attach` · `AdminAttach`
+  · **รอบ 252 WP-13 (AUDIT_249 §3.3 Y3 ยืนยัน "ใช่"):** หน้า License เดิม `.catch(() => null)` ⇒ พรีวิวล้มแล้วผูกต่อโดยไม่เตือน — ตอนนี้พรีวิวล้มต้องยืนยันก่อน ·
+  `GET /api/account-subscription` ส่ง `planStatusLabel` (`PlanIdentityResolver.StatusLabel`) · DTO แพ็กเกจส่งป้ายไทย `BillingCycleLabel` /
+  `RequestedBillingCycleLabel` / `PaymentMethodLabel` / `TrialStatusLabel` (`Helpers/SubscriptionLabels` + `PaymentMethodNames`) — หน้า subscription เลิกมีตาราง enum→ไทยเอง
 - **รอบ 238 ฝ่ายค้าน (236-10):** migration ครั้งเดียว (ตาราง marker ใหม่ `OneShotDataFixes(Key, AppliedAt)` — ใช้ซ้ำได้กับงานซ่อมข้อมูลครั้งเดียวอื่น) · ไม่พลิก License ที่แอดมินตั้ง Expired เอง ·
   คืนสถานะ cascade เฉพาะแถวที่ยังผูก/ฟรีถาวร/ยังไม่หมดอายุ · ถอดแถวที่เลยวันหมดอายุ ⇒ Expired ทันที (`CompanyStatusAfterDetach` + ประวัติ `DetachStatusSettled`) ·
   License ระงับ/ยกเลิก ⇒ `SubscriptionGateState.InactiveReadOnly` เขียน 402 ทุกโหมด · ผูกอัตโนมัติตอนสร้างบริษัทเฉพาะ License ที่ยังไม่พ้นวันหมดอายุ (`MayAutoAttach`) ·

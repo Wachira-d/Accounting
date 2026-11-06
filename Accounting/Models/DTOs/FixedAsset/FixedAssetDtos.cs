@@ -3,7 +3,8 @@ using Accounting.Models.Enums;
 namespace Accounting.Models.DTOs.FixedAsset;
 
 public record CreateFixedAssetRequest(
-    string AssetCode,
+    // รอบ 252 WP-13: ว่าง/null = ระบบออก FA-yyyyMM-#### (FixedAssetService.CreateAsync)
+    string? AssetCode,
     string Name,
     string? Description,
     string? Category,

@@ -193,6 +193,9 @@ public static class LatePaymentPenaltyPolicy
         _ => 0.20m,
     };
 
+    /// <summary>ป้าย "ค่าเสนอ — ยังไม่ยืนยันเลขระเบียบ" (AUDIT_249 §3.3 N5 · ระบบไม่ลงบัญชีเบี้ยปรับเอง ผู้ใช้ตัดสินตอนยื่นจริง) — ตัวเดียว</summary>
+    public const string PendingRegulationNote = "ค่าเสนอ — ยังไม่ยืนยันเลขระเบียบกรมสรรพากรของตารางลดเบี้ยปรับ";
+
     private static (decimal Amount, string? Ref, string Note) PenaltyFor(string type, decimal tax, int daysLate)
     {
         switch (type)
@@ -203,7 +206,9 @@ public static class LatePaymentPenaltyPolicy
                 var amt = Math.Round(tax * rate, 2, MidpointRounding.AwayFromZero);
                 return (amt, "RD-89",
                     $"เบี้ยปรับ ม.89 ลดเหลือ {rate * 100m:0}% (ยื่นเองช้า {daysLate} วัน · ≤15 วัน 2% · ≤30 วัน 5% · ≤60 วัน 10% · เกิน 20%) — "
-                    + "ใช้เมื่อยื่นเองก่อนถูกตรวจ/ได้รับหมายเรียก · ยึดตามใบเสร็จจริง");
+                    + "ใช้เมื่อยื่นเองก่อนถูกตรวจ/ได้รับหมายเรียก · ยึดตามใบเสร็จจริง · "
+                    // รอบ 252 WP-13 (AUDIT_249 §3.3 N5): ตารางลดเบี้ยปรับยังไม่ได้ยืนยันเลขระเบียบกับผู้ทำบัญชี ⇒ บอกในข้อความที่หน้าแสดง (tooltip/คำอธิบายช่อง)
+                    + PendingRegulationNote);
             }
             case "VatPp36":
             {

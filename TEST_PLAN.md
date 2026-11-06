@@ -1,3 +1,21 @@
+## UX252 — UX เก็บกวาดจากผลตรวจ D (รอบ 252 WP-13 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §4 WP-13 · คำตัดสิน §3.3 Y3/N5 · คำศัพท์ `docs/ui-glossary.md`)
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| UX252-1 | กดปุ่มที่เคยใช้ `confirm()/prompt()/alert()` (recurring สร้างทันที · fixed-assets ลบ/ปลด/คำนวณค่าเสื่อม · settings ลบบริษัท/ทดสอบอีเมล · bank · contacts · email-schedule · notifications · documents 50 จุด · account-subscription · subscription · tax-remittance) | กล่องของระบบ (`Layout.confirm` / `Layout.promptText` / `Layout.notice`) · Escape/ปุ่ม × = ยกเลิก (ไม่ค้าง) · Enter ในช่องบรรทัดเดียว = ตกลง · ช่องบังคับว่าง ⇒ ข้อความใต้ช่อง ไม่ปิดกล่อง | มือ · `grep -E '(^|[^.A-Za-z_$])(alert|confirm|prompt)\(' ` ในไฟล์ที่แก้ = 0 (เหลือคำในคอมเมนต์) |
+| UX252-2 | documents ลบถาวรใบที่มีเอกสารที่เกี่ยวข้อง / ใบในช่วงเก็บ 5 ปี / ทางหนึ่งถูกกัน | หน้าต่างเดียว: radio ขอบเขต (ทางที่ถูกกัน = ปิด + ข้อความเซิร์ฟเวอร์) · รายการแผนเปลี่ยนตามขอบเขต · ช่องเหตุผลเฉพาะ needsReason (บังคับ) · พิมพ์เลขที่ตรงก่อนลบ · ส่ง needsReason/reason/cascade/planToken เดิม | มือ |
+| UX252-3 | เปิด modal ใดก็ได้ด้วยคีย์บอร์ด | focus ย้ายเข้าช่องแรก/`[autofocus]` · ปิดแล้วคืน focus ปุ่มเดิม · wizard รายการประจำ Enter = "ถัดไป" (`data-enter-target`) · กล่องถามอยู่บนสุดเหนือ modal ที่เปิดอยู่ | มือ · Playwright scratchpad (focus = laTextarea) |
+| UX252-4 | พิมพ์ช่องค้นหา recurring/fixed-assets เร็ว ๆ | ยิงครั้งเดียวหลังหยุด 300ms · คำตอบเก่าไม่ทับผลใหม่ (`Layout.debouncedLoader` + `_loadSeq`) | มือ |
+| UX252-5 | API ตารางหลักล้ม (recurring · fixed-assets · ประวัติชำระแพ็กเกจ) | แถว "โหลดไม่สำเร็จ — ลองใหม่" ใน tbody (ไม่ค้าง "กำลังโหลด..." / ไม่ขึ้น "ไม่มีข้อมูล") · ว่างเพราะตัวกรอง ≠ ยังไม่มีรายการ (ปุ่มล้างตัวกรอง / + สร้าง) | มือ · Playwright scratchpad (แถว error ขึ้นเมื่อไม่มี backend) |
+| UX252-6 | มือถือ 375px: ฟอร์ม settings/สินทรัพย์ (grid `1fr 1fr`) · ตารางบรรทัดเพิ่มเติมรายการประจำ · ตารางพอร์ทัล | grid ยุบคอลัมน์เดียว · ตารางใน modal ห่อ `.table-container` กว้าง 640px เลื่อนในกล่อง (ไม่บีบ 8 คอลัมน์ใน 311px) · หน้าไม่เลื่อนข้าง | Playwright scratchpad (recurring box 311 · table 640 · scroll ในกล่อง · settings 12 grid = 1 คอลัมน์) · `modal_table_container_check` baseline 0 ทั้งระบบ |
+| UX252-7 | settings แท็บตารางแจ้งเตือนโหลดล้ม แล้วกดบันทึก | ไม่ส่ง `settings: []` (เดิมล้างค่าที่ตั้งทั้งหมด) · แผงลองใหม่ · ชื่อเหตุการณ์/บทบาทผ่าน esc | มือ |
+| UX252-8 | สร้างสินทรัพย์โดยเว้นรหัสว่าง / กรอก " MY-001 " / กรอกรหัสซ้ำ | ได้ `FA-yyyyMM-####` · ได้ "MY-001" · ซ้ำถูกปฏิเสธ · ชื่อว่างยังไม่ผ่าน validator | Db `AssetEditsRound250DbTests.Create_with_blank_code_generates_FA_code_and_manual_code_kept` |
+| UX252-9 | ผูกบริษัทที่จ่ายเองเข้า License (Y3) · พรีวิวคำเตือนล้ม | มีเวลาที่จ่ายเหลือ ⇒ เตือน "เวลาที่จ่ายไว้ N วันยังเดินอยู่ ไม่คืนเงิน" ก่อนผูก · พรีวิวล้ม ⇒ ถามยืนยันก่อน (เดิมผูกเงียบ) | มือ · `PlanIdentityResolver.AttachPaidTimeWarning` (เทสต์เดิมรอบ 238) |
+| UX252-10 | ป้ายสถานะ/รอบบิล/ช่องทางชำระบนหน้าแพ็กเกจ · License · พอร์ทัล | ป้ายไทยจาก DTO (`*Label`) — หน้าไม่มีตาราง enum→ไทยเอง · ค่าไม่รู้จักแสดงชื่อเดิม (ไม่แต่งคำ) | `SubscriptionLabelsRound252Tests` (3) |
+| UX252-11 | นำส่ง ภ.พ.30 ช้า (N5) / ชำระทันกำหนด | คำอธิบายเบี้ยปรับที่เสนอมี "ค่าเสนอ — ยังไม่ยืนยันเลขระเบียบ…" (tooltip + ใต้ช่อง) · ทันกำหนดไม่มีป้าย | `LatePaymentPenaltyPolicyTests.Pp30_reduced_penalty_note_says_regulation_number_not_confirmed` |
+| UX252-12 | หน้าสาธารณะ pay-link / delivery-sign ใน in-app browser (LINE) | ข้อความผล/ผิดพลาดในกล่องบนหน้า `role=alert` (ไม่พึ่ง alert ที่ถูกปิดเงียบ) · delivery-sign ซูมได้ (ไม่มี user-scalable=no) · เวลาไทย | มือ |
+| UX252-13 | ศัพท์นักพัฒนาในข้อความที่ผู้ใช้เห็น | หน้าที่ D ระบุ = 0 · ที่เหลือ ratchet ต่อไฟล์ (ห้ามเพิ่ม) | `tools/ui_glossary_check.py` (`--self-test`: 5 รูปต้องจับ · ตัวแปร/คอมเมนต์/${…} ไม่นับ · ฉีดลง notifications.html จริงต้องเพิ่ม) |
+| UX252-14 | label ในฟอร์ม | ป้ายผูกช่อง (`for`) — recurring/fixed-assets/contacts/email-schedule/notifications = 0 · settings 100→2 · bank 29→1 · documents 62→4 | `tools/form_label_for_check.py` baseline |
+
 ## SEC250 — ความปลอดภัย/UX ร้ายแรงจากผลตรวจ D (รอบ 250 WP-03 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §4 WP-03 · คำตัดสิน §3.3 Y4/Y6/N1)
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
 | --- | --- | --- | --- |
@@ -629,7 +647,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **824 ไฟล์ · 8,784 `[Fact]` + 1,309 `[Theory]` (6,166 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **825 ไฟล์ · 8,789 `[Fact]` + 1,309 `[Theory]` (6,166 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 

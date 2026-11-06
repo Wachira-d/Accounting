@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Customer Portal</title>
+  <title>พอร์ทัลลูกค้า</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -71,6 +71,9 @@
     .modal-body { padding: 20px 22px; }
     .modal-footer { padding: 14px 22px; border-top: 1px solid var(--gray-200); display: flex; justify-content: flex-end; gap: 8px; }
     .x { border: none; background: transparent; font-size: 24px; cursor: pointer; color: var(--gray-500); }
+    .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .tbl-wrap > table { min-width: 560px; }
+    @media (max-width: 480px) { .modal-body [style*="grid-template-columns:1fr 1fr"] { grid-template-columns: minmax(0,1fr) !important; } }
     .toast { position: fixed; top: 20px; right: 20px; padding: 12px 18px; border-radius: 8px; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,.15); z-index: 999; max-width: 360px; }
     .toast-ok { background: #ECFDF5; color: var(--success); border: 1px solid #A7F3D0; }
     .toast-err { background: #FEF2F2; color: var(--danger); border: 1px solid #FECACA; }
@@ -146,22 +149,22 @@
       document.getElementById('root').innerHTML = `
         <div class="login-wrap">
           <div class="login-card">
-            <h1>🔐 Portal ลูกค้า</h1>
-            <p class="sub">เข้าระบบเพื่อดูใบแจ้งหนี้ · ใบกำกับภาษี · ดาวน์โหลดเอกสาร · ดู statement</p>
+            <h1>🔐 พอร์ทัลลูกค้า</h1>
+            <p class="sub">เข้าระบบเพื่อดูใบแจ้งหนี้ · ใบกำกับภาษี · ดาวน์โหลดเอกสาร · ดูใบแจ้งยอด</p>
             <form onsubmit="Portal.doLogin(event)">
               <div class="field">
-                <label>อีเมล</label>
+                <label for="lgEmail">อีเมล</label>
                 <input id="lgEmail" type="email" required autocomplete="email">
               </div>
               <div class="field">
-                <label>รหัสผ่าน</label>
+                <label for="lgPass">รหัสผ่าน</label>
                 <input id="lgPass" type="password" required autocomplete="current-password">
               </div>
               <div class="err" id="lgErr"></div>
               <button type="submit" class="btn btn-primary" style="width:100%;margin-top:8px;padding:12px" id="lgBtn">เข้าระบบ</button>
             </form>
             <p style="font-size:12px;color:var(--gray-500);text-align:center;margin-top:18px">
-              ลืมรหัสผ่าน? ติดต่อร้านค้า — เจ้าของจัดการสิทธิ์เข้าถึงผ่าน Portal Admin
+              ลืมรหัสผ่าน? ติดต่อร้านค้า — ร้านค้าตั้งรหัสผ่านใหม่ให้ได้จากหน้าจัดการพอร์ทัลลูกค้า
             </p>
           </div>
         </div>`;
@@ -209,26 +212,26 @@
         <div class="container">
           ${localStorage.getItem('portalIntroSeen') ? '' : `
           <div id="portalIntro" style="background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #93c5fd;border-radius:10px;padding:14px 16px;margin-bottom:14px;font-size:14px;line-height:1.6;position:relative">
-            <button onclick="localStorage.setItem('portalIntroSeen','1');document.getElementById('portalIntro').remove()" style="position:absolute;top:8px;right:10px;background:transparent;border:none;font-size:20px;cursor:pointer;color:#64748b">&times;</button>
-            <strong style="color:#1e40af">👋 ยินดีต้อนรับสู่ Portal ลูกค้า</strong>
+            <button aria-label="ปิดคำแนะนำ" onclick="localStorage.setItem('portalIntroSeen','1');document.getElementById('portalIntro').remove()" style="position:absolute;top:8px;right:10px;background:transparent;border:none;font-size:20px;cursor:pointer;color:#64748b">&times;</button>
+            <strong style="color:#1e40af">👋 ยินดีต้อนรับสู่พอร์ทัลลูกค้า</strong>
             <ul style="margin:6px 0 0;padding-left:20px;color:#1e3a8a">
               <li><strong>📄 เอกสาร</strong> — ดูใบเสนอราคา/ใบกำกับ/ใบเสร็จ กดดาวน์โหลด PDF</li>
               <li><strong>💳 การชำระเงิน</strong> — ดูรายการที่ค้างชำระ กด <em>"💳 ชำระ"</em> เพื่อโอนด้วย QR PromptPay หรือแนบสลิป</li>
-              <li><strong>📊 Statement</strong> — สรุปยอดคงค้าง รายงานเดบิต/เครดิต ส่งออก PDF</li>
+              <li><strong>📊 ใบแจ้งยอด</strong> — สรุปยอดคงค้าง รายการเพิ่ม/ชำระ ส่งออก PDF</li>
             </ul>
           </div>`}
           <div class="tabs">
             <button class="tab ${this.activeTab==='documents'?'active':''}" onclick="Portal.setTab('documents')">📄 เอกสาร</button>
             <button class="tab ${this.activeTab==='payments'?'active':''}" onclick="Portal.setTab('payments')">💳 การชำระเงิน</button>
-            <button class="tab ${this.activeTab==='statement'?'active':''}" onclick="Portal.setTab('statement')">📊 Statement</button>
+            <button class="tab ${this.activeTab==='statement'?'active':''}" onclick="Portal.setTab('statement')">📊 ใบแจ้งยอด</button>
           </div>
           <div id="tabContent"><div class="empty">กำลังโหลด...</div></div>
         </div>
-        <div class="modal-bg" id="modalBg">
-          <div class="modal">
+        <div class="modal-bg" id="modalBg" onclick="if (event.target === this) Portal.closeModal()">
+          <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
             <div class="modal-header">
               <h3 id="modalTitle" style="margin:0;font-size:16px"></h3>
-              <button class="x" onclick="Portal.closeModal()">&times;</button>
+              <button class="x" aria-label="ปิด" onclick="Portal.closeModal()">&times;</button>
             </div>
             <div class="modal-body" id="modalBody"></div>
             <div class="modal-footer" id="modalFooter">
@@ -267,7 +270,7 @@
           } catch (_) {}
         }
         this.logout();
-        throw new Error('Session หมดอายุ — กรุณา login ใหม่');
+        throw new Error('หมดเวลาการเข้าสู่ระบบ — กรุณาเข้าสู่ระบบใหม่');
       }
       return r;
     },
@@ -309,19 +312,19 @@
         </div>
         ${docs.length === 0
           ? '<div class="empty">ยังไม่มีเอกสาร</div>'
-          : `<table>
+          : `<div class="tbl-wrap"><table>
               <thead><tr>
                 <th>เลขที่</th><th>ประเภท</th><th>วันที่</th><th>ครบกำหนด</th>
                 <th class="right">ยอดรวม</th><th class="right">ค้างชำระ</th><th>สถานะ</th><th></th>
               </tr></thead>
               <tbody>${docs.map(d => {
                 // สถานะจากเซิร์ฟเวอร์เป็นตัวตั้ง — ใบยกเลิกห้ามขึ้น "ชำระแล้ว"/ปุ่มจ่าย (A-02)
-                const voided = d.status === 'Voided';
+                const voided = d.status === 'Voided';   // ป้ายสถานะ: docStatusText (ตัวเดียวกับหน้าต่างรายละเอียด)
                 // รอบ 250 WP-03 (ฝ่ายค้าน H1): เซิร์ฟเวอร์ตัดสินว่าใบนี้ชำระที่นี่ได้ไหม (ฝั่งขาย · THB · ยอดค้าง > 0) — หน้าเว็บไม่ตัดสินชนิดเอง
                 const payable = !voided && d.canPay === true;
                 const overdue = payable && d.dueDate && new Date(d.dueDate) < new Date();
                 const cls = voided ? 'pill-void' : (d.balanceDue <= 0 ? 'pill-paid' : (overdue ? 'pill-overdue' : 'pill-due'));
-                const lbl = voided ? 'ยกเลิก' : (d.balanceDue <= 0 ? 'ชำระแล้ว' : (overdue ? 'เกินกำหนด' : 'รอชำระ'));
+                const lbl = docStatusText(d);
                 return `<tr>
                   <td><strong>${esc(d.documentNumber)}</strong></td>
                   <td>${esc(docTypeLabel(d.documentType))}</td>
@@ -337,7 +340,7 @@
                   </td>
                 </tr>`;
               }).join('')}</tbody>
-             </table>`}`;
+             </table></div>`}`;
     },
 
     async viewDocument(id) {
@@ -351,7 +354,7 @@
         document.getElementById('modalBody').innerHTML = `
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;margin-bottom:14px">
             <div><div style="font-size:11px;color:var(--gray-500)">ประเภท</div><div>${esc(docTypeLabel(d.documentType))}</div></div>
-            <div><div style="font-size:11px;color:var(--gray-500)">สถานะ</div><div>${esc(d.status)}</div></div>
+            <div><div style="font-size:11px;color:var(--gray-500)">สถานะ</div><div>${esc(docStatusText(d))}</div></div>
             <div><div style="font-size:11px;color:var(--gray-500)">วันที่เอกสาร</div><div>${dateThai(d.documentDate)}</div></div>
             <div><div style="font-size:11px;color:var(--gray-500)">วันครบกำหนด</div><div>${d.dueDate ? dateThai(d.dueDate) : '-'}</div></div>
           </div>
@@ -367,7 +370,7 @@
           <button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>
           <button class="btn btn-primary" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>
         `;
-        document.getElementById('modalBg').classList.add('open');
+        this._openModal();
       } catch (e) { toast(e.message, 'err'); }
     },
 
@@ -398,35 +401,35 @@
         </div>
         ${pays.length === 0
           ? '<div class="empty">ยังไม่มีการชำระเงิน</div>'
-          : `<table>
+          : `<div class="tbl-wrap"><table>
               <thead><tr>
                 <th>วันที่</th><th>เลขเอกสาร</th><th>ช่องทาง</th><th>อ้างอิง</th><th class="right">จำนวน</th>
               </tr></thead>
               <tbody>${pays.map(p => `<tr>
                 <td>${dateThai(p.paymentDate)}</td>
                 <td><strong>${esc(p.documentNumber || '-')}</strong></td>
-                <td>${esc(p.paymentMethod || '-')}</td>
+                <td>${esc(p.paymentMethodLabel || p.paymentMethod || '-')}</td>
                 <td>${esc(p.reference || '-')}</td>
                 <td class="right" style="color:var(--success);font-weight:600">฿${money(p.amount)}</td>
               </tr>`).join('')}</tbody>
-             </table>`}`;
+             </table></div>`}`;
     },
 
     // ───────── Statement tab ─────────
     async loadStatement() {
       const fromVal = document.getElementById('stFrom')?.value;
       const toVal = document.getElementById('stTo')?.value;
-      const today = new Date();
-      const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0,10);
-      const todayStr = today.toISOString().slice(0,10);
+      // วันตามเวลาไทย (WP-13 · D §9 — เดิม toISOString() = UTC ⇒ ช่วง 00:00–07:00 น. ได้ "เมื่อวาน" / ต้นเดือนผิดเดือน)
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date());
+      const firstOfMonth = todayStr.slice(0, 8) + '01';
       const from = fromVal || firstOfMonth;
       const to = toVal || todayStr;
 
       document.getElementById('tabContent').innerHTML = `
         <div class="toolbar">
-          <label style="font-size:13px;color:var(--gray-600)">ตั้งแต่</label>
+          <label for="stFrom" style="font-size:13px;color:var(--gray-600)">ตั้งแต่</label>
           <input type="date" id="stFrom" value="${esc(from)}" class="search">
-          <label style="font-size:13px;color:var(--gray-600)">ถึง</label>
+          <label for="stTo" style="font-size:13px;color:var(--gray-600)">ถึง</label>
           <input type="date" id="stTo" value="${esc(to)}" class="search">
           <button class="btn btn-primary btn-sm" onclick="Portal.loadStatement()">โหลด</button>
         </div>
@@ -446,7 +449,7 @@
           </div>
           ${(s.lines||[]).length === 0
             ? '<div class="empty">ไม่มีรายการในช่วงนี้</div>'
-            : `<table>
+            : `<div class="tbl-wrap"><table>
                 <thead><tr><th>วันที่</th><th>เอกสาร</th><th>รายการ</th><th class="right">จำนวน</th><th class="right">คงเหลือ</th></tr></thead>
                 <tbody>${(s.lines||[]).map(l => `<tr>
                   <td>${dateThai(l.date)}</td>
@@ -455,13 +458,27 @@
                   <td class="right" style="color:${l.amount>=0?'var(--warning)':'var(--success)'}">${l.amount>=0?'+':''}฿${money(Math.abs(l.amount))}</td>
                   <td class="right" style="font-weight:600">฿${money(l.balance)}</td>
                 </tr>`).join('')}</tbody>
-               </table>`}`;
+               </table></div>`}`;
       } catch (e) {
         document.getElementById('stmtBody').innerHTML = `<div class="empty" style="color:var(--danger)">${esc(e.message||'โหลดไม่สำเร็จ')}</div>`;
       }
     },
 
-    closeModal() { document.getElementById('modalBg')?.classList.remove('open'); },
+    closeModal() {
+      document.getElementById('modalBg')?.classList.remove('open');
+      const back = this._modalReturnFocus; this._modalReturnFocus = null;
+      if (back && document.contains(back)) { try { back.focus(); } catch (_) { /* ปุ่มเดิมถูกวาดใหม่แล้ว */ } }
+    },
+    /** เปิด modal + ย้าย focus เข้า (WP-13 · D §9 — เดิมไม่มี Escape/คลิกนอก/focus) */
+    _openModal() {
+      this._modalReturnFocus = document.activeElement;
+      document.getElementById('modalBg')?.classList.add('open');
+      setTimeout(() => {
+        const bg = document.getElementById('modalBg'); if (!bg) return;
+        const el = bg.querySelector('.modal-body input, .modal-body select, .modal-body textarea, .modal-body button, .modal-footer button, button.x');
+        if (el) el.focus();
+      }, 30);
+    },
 
     // ============================================================
     // PAY — customer-self-service payment against an open invoice
@@ -481,7 +498,7 @@
       titleEl.textContent = `💳 ชำระ ${docNumber}`;
       bodyEl.innerHTML = '<div class="empty">กำลังโหลดวิธีรับเงิน...</div>';
       footerEl.innerHTML = '<button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>';
-      document.getElementById('modalBg').classList.add('open');
+      this._openModal();
 
       // รอบ 250 WP-03 (A G-01 · D §9.1): QR พร้อมเพย์สร้างที่เซิร์ฟเวอร์ (PromptPayService ตัวเดียวกับ pay-document) ฝังยอดค้างของใบจากฐาน
       // — เดิมประกอบ payload ใน JS แล้วส่งเลขพร้อมเพย์+ยอดไปบริการสร้าง QR ภายนอก (บุคคลที่สาม) · โหลดล้ม = บอกตรง ๆ ไม่ใช่ "ร้านยังไม่ตั้งค่า"
@@ -601,8 +618,21 @@
   function docTypeLabel(t) { return DOC_TYPE[t] || t; }
   // รอบ 250 WP-03: ลบ buildPromptPayPayload (TLV builder สำเนาใน JS) — QR สร้างที่เซิร์ฟเวอร์ (PromptPayService) ตัวเดียว
 
+  // Escape ปิด modal (ตัวเดียวทั้งหน้า)
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('modalBg')?.classList.contains('open')) Portal.closeModal();
+  });
+  /** ป้ายสถานะเอกสาร — ตัวเดียวของหน้านี้ (ตาราง + หน้าต่างรายละเอียด · เดิมหน้าต่างแสดง enum ดิบ "Approved") ·
+   *  ยอดค้าง/สถานะยกเลิกมาจากเซิร์ฟเวอร์ (หน้านี้แค่เลือกคำ) */
+  function docStatusText(d) {
+    if (d.status === 'Voided') return 'ยกเลิก';
+    if (d.balanceDue <= 0) return 'ชำระแล้ว';
+    return d.dueDate && new Date(d.dueDate) < new Date() ? 'เกินกำหนด' : 'รอชำระ';
+  }
+
   function toast(msg, kind = 'ok') {
     const div = document.createElement('div');
+    div.setAttribute('role', kind === 'err' || kind === 'error' ? 'alert' : 'status');
     div.className = `toast toast-${kind}`;
     div.textContent = msg;
     document.body.appendChild(div);

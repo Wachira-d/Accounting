@@ -342,4 +342,16 @@ public class LatePaymentPenaltyPolicyTests
         Assert.Equal("54820", PenaltyExpenseAccount.EffectiveCode("  "));
         Assert.Equal("54830", PenaltyExpenseAccount.EffectiveCode(" 54830 "));
     }
+
+    /// <summary>รอบ 252 WP-13 (AUDIT_249 §3.3 N5): เบี้ยปรับ ภ.พ.30 ที่เสนอจากตารางลด (2/5/10/20%) ต้องบอกว่า "ยังไม่ยืนยันเลขระเบียบ" ในข้อความที่หน้าแสดง ·
+    /// ทิศตรงข้าม: ชำระทันกำหนด (ไม่มีเบี้ยปรับเสนอ) ไม่ติดป้ายนี้</summary>
+    [Fact]
+    public void Pp30_reduced_penalty_note_says_regulation_number_not_confirmed()
+    {
+        var late = S("VatPp30", 10_000m, due => due.AddDays(10));
+        Assert.True(late.Penalty > 0);
+        Assert.Contains(LatePaymentPenaltyPolicy.PendingRegulationNote, late.PenaltyNote);
+        var onTime = S("VatPp30", 10_000m, due => due);
+        Assert.DoesNotContain(LatePaymentPenaltyPolicy.PendingRegulationNote, onTime.PenaltyNote);
+    }
 }
