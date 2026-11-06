@@ -199,6 +199,14 @@ public static class EtaxByEmailFormat
            && (string.Equals(address.Trim(), ProductionTimestampAddress, StringComparison.OrdinalIgnoreCase)
                || string.Equals(address.Trim(), UatTimestampAddress, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>รอบ 251 (WP-07 · F-06): คำเตือนในแท็บ "ช่องทางแจ้งเตือน" ของผู้ติดต่อเมื่อบริษัทใช้ e-Tax by Email — ใบกำกับภาษีส่งถึงผู้ซื้อได้ 1 อีเมล
+    /// ไม่มีสำเนา (กติกาเดียวกับ <see cref="Recipients"/>) ⇒ อีเมลเพิ่มเติม/หลายอีเมลในช่องเดียวไม่ได้รับใบกำกับ · null = บริษัทไม่ได้ใช้ by Email</summary>
+    public static string? ContactRecipientsNote(bool etaxEnabled, Accounting.Models.Enums.EtaxMode mode)
+        => EtaxDeliveryRouter.ByEmailActive(etaxEnabled, mode)
+            ? "บริษัทใช้ e-Tax by Email — ใบกำกับภาษี/ใบเพิ่มหนี้/ใบลดหนี้ส่งถึงผู้ซื้อได้ 1 อีเมลต่อฉบับ (อีเมลหลัก) โดยไม่มีสำเนา/สำเนาลับ (คู่มือกรมสรรพากร) · "
+              + "อีเมลหลักที่ใส่หลายอีเมลในช่องเดียว หรือตารางส่งที่ใส่สำเนาลับ จะทำให้การส่งใบกำกับล้ม · อีเมลเพิ่มเติมด้านล่างจะไม่ได้รับใบกำกับ (เอกสารอื่นยังได้ตามเรื่องที่เลือก)"
+            : null;
+
     /// <summary>ผู้รับที่ส่งได้จริง — To 1 อีเมล · CC = ที่อยู่ประทับเวลา 1 อีเมลเท่านั้น (ไม่ซ้ำ)</summary>
     public sealed record Envelope(string? To, IReadOnlyList<string> Cc, string? Problem);
 

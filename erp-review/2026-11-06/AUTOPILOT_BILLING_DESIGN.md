@@ -739,6 +739,9 @@ PortalLoginToken (ใหม่) TokenHash, ContactId, Email, ExpiresAt, UsedAt  
 > Q6 (เกินวงเงินเครดิต) **ยังไม่เพิ่ม** — ไม่แสดงในรายการปล่อยได้จนกว่าจะมีตัวเตือนจริง (มี ≠ ถูกเรียก) · `TransferOnly` = ไม่แนบลิงก์ gateway (หน้าเลขบัญชีอย่างเดียวรอรอบ 250 — 241-2) ·
 > **ยังไม่ทำ:** คอลัมน์ระดับ Autopilot ในตาราง (§4.6) · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`/`PostPaymentAutomationService.SettingsForAsync`) · ราคาแปรผัน/ทุก N เดือน/สร้างล่วงหน้า ·
 > LINE/คู่ค้าในขั้นส่ง · "ส่งทดสอบถึงอีเมลฉัน" · `EtaxDeliveryRouter.Decide` ในผลทดลองรัน · ข้อ SMTP โหมด e-Tax by Email · `PAY-QR`/`QUOTA`/`PERIOD`/`POSTPAY` ในแผงความพร้อม
+>
+> **รอบ 251 (WP-07) ✅:** คอลัมน์ระดับ Autopilot (§4.6 — endpoint แยก) · ส่งทดสอบถึงอีเมลฉัน (ไม่นับเพดาน · ไม่บันทึกการส่ง — ต่างจาก §4.5 "นับโควตาตามปกติ" ตามใบสั่งงาน WP-07) · `EtaxDeliveryRouter.Decide` ในทดลองรัน + `ETAX-SENDER`/`ETAX-RECIPIENT` · `PAY-QR`/`QUOTA`/`PERIOD`/`POSTPAY` ·
+> หลังรับเงินต่อรายการทำใน WP-02 · **ยังค้าง:** ราคาแปรผัน/ทุก N เดือน/สร้างล่วงหน้า · LINE/คู่ค้าในขั้นส่ง · `WHT-SETUP` · `PARTNER` · `BANK-AUTO` · ตัวกรอง "ติดปัญหา" ในตาราง
 
 ### รอบ 249 — อีเมลสถานะ + หน้า Autopilot + ทุกทางรับเงินเข้างานหลังรับชำระ + ใบเสนอราคาแปลงอัตโนมัติ
 งาน: `NotificationEvents` E-01…E-15 + digest · `autopilot.html` + `AutopilotStage` · G-6/G-T6: `EnqueueAsync` ใน `SettlementPostingService` (`:313`) · ยืนยันสลิปพอร์ทัล · `PaymentImportTarget` · CMS/Lodging · ยืนยัน ManualSlip · `QuotationAcceptAutopilotJob` · L1 Resolver เข้า `PostPaymentAutomationService` (แทน `contact?.Email` `:260`)

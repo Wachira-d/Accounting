@@ -368,6 +368,8 @@
 
 ### WP-07 · งานค้างรอบ 248 Autopilot (A B-12 · B-16 · B-17/F-06 · B-18 · B-19) · effort 1½ วัน
 
+> **สถานะ:** ✅ 847041d2 (โค้ด+เทสต์+กติกา R251+doc · ยังไม่ได้คอมไพล์ในเครื่องนี้ — รอ CI) · ทุกข้อ 1–6 ทำแล้ว · ต่างจากใบสั่งงาน: `QUOTA` อ่าน `PlatformEmailQuota`/`SignEmailThrottle` (ตัวจำกัดจริงของอีเมลเอกสาร — `NotifyQuotaPolicy` ไม่นับอีเมลเอกสาร) · `POSTPAY` ใช้ `EffectiveLayers` (ชั้นรายการ/ผู้ติดต่อจาก WP-02) · `PAY-QR` เรียก `PaymentQrService.PickDocumentAccountAsync` (ซึ่งเรียก `PaymentQrPolicy.Pick`) · ระดับในตารางมาจาก endpoint แยก `GET recurring/autopilot/levels` ไม่ใช่ list DTO (ไม่ให้ list ช้าลง) · ฝ่ายค้าน = ผู้ประสานงาน
+
 **เป้าหมาย:** แผงความพร้อม/ทดลองรันบอกความจริงครบ (e-Tax · QR · โควตา · งวด · หลังรับเงิน) · ตารางเห็นระดับ · ส่งทดสอบได้ · Db test เส้น enqueue→send
 
 | # | รายการแก้ | ที่ | ที่มา |

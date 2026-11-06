@@ -192,6 +192,8 @@ RULES += [
     (C + 'RecurringController.cs', 'SetApprovePolicy', 'attr', REJECT),
     (C + 'RecurringController.cs', 'SetContactApprovePolicy', 'attr', REJECT),
     (C + 'RecurringController.cs', 'UpdateContactAutopilot', 'attr', REJECT),
+    # รอบ 251 (WP-07 ข้อ 4): ส่งทดสอบถึง "อีเมลของผู้ใช้ที่กด" — คีย์ API ไม่มีผู้ใช้ ⇒ ห้าม
+    (C + 'RecurringController.cs', 'SendTest', 'attr', REJECT),
 ]
 
 # รอบ 250 WP-02b (AUTOPILOT_BILLING_DESIGN §6.1 P-3): workflow ข้ามบริษัท — เชิญ/ยอมรับ/ปฏิเสธคู่ค้า = ผูกบริษัทเข้ากับบริษัทอื่น (CompanySettings.Edit) ·
@@ -400,6 +402,8 @@ REVIEWER_CASES += [
     ('R248-K1', C + 'RecurringController.cs', '[Accounting.Filters.RejectApiKey("ตั้งนโยบายอนุมัติอัตโนมัติของรายการประจำ")]', '', True),
     ('R248-K2', C + 'RecurringController.cs', '[Accounting.Filters.RejectApiKey("ตั้งนโยบายอนุมัติอัตโนมัติของผู้ติดต่อ")]', '[System.Obsolete("RejectApiKey")]', True),
     ('R248-K3', C + 'RecurringController.cs', '[Accounting.Filters.RejectApiKey("ตั้งช่องทางรับเงินของผู้ติดต่อ")]', '', True),
+    # รอบ 251 (WP-07): ถอด [RejectApiKey] จากส่งทดสอบ ⇒ ต้องฟ้อง
+    ('R251-K4', C + 'RecurringController.cs', '[Accounting.Filters.RejectApiKey("ส่งอีเมลทดสอบของรายการประจำ")]', '', True),
 ]
 
 REVIEWER_CASES += [

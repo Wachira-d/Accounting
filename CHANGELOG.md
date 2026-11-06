@@ -6668,3 +6668,15 @@ baseline hashtext = 0 · Db test 4 ทิศ + กติกา R250W4 (ล็อ
 `Void_while_linking_holds_key_first` (ดู `pg_locks`) · `WhtWriteOffJournalLock` 409 + ทิศตรงข้าม · `SettleYearEnd_locks_in_id_order` · MED-5 enqueue→send สองทิศ.
 (5) `GateOppositeDirectionRound250Tests` — 8 ฟังก์ชันที่ matrix ของทีม E นับว่าไม่มีทิศตรงข้าม + `Releases` เรียกตรง + `BindingHash` (ผัง/ราคา/ผู้ติดต่อเปลี่ยน · คำอธิบายไม่เปลี่ยน).
 ยังไม่ทำ (WP-04 ข้อ 7–13): XML e-Tax · ตาราง PaymentNotification ทุกชนิด · `PostJe`/`AgingDays` · checker 4 ตัว. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 0cb7ff24_
+
+
+_รอบ 251 WP-07 — งานค้างรอบ 248 Autopilot (2026-11-06 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-07 · A B-12/B-16/B-17/F-06/B-18/B-19 · D §1.8–1.9):
+แผงความพร้อม/ทดลองรันบอกความจริงครบ — รหัสใหม่ `ETAX`/`ETAX-SENDER`/`ETAX-RECIPIENT` (`EtaxAutoIssueScope.Judge` → `EtaxDeliveryRouter.Decide` → `EtaxByEmailSenderGate.Refusal` ·
+`EtaxByEmailFormat.Recipients`) · `PAY-QR` (`PaymentQrService.PickDocumentAccountAsync` → `PaymentQrPolicy`) · `QUOTA` (`PlatformEmailQuota` → `SignEmailThrottle` — **ใช้ตัวจำกัดจริง
+ไม่ใช่ `NotifyQuotaPolicy`**: อีเมลเอกสารผ่าน NextAcc ไม่ตัดโควตาข้อความแจ้งเตือน · แสดงตัวเลขโควตาข้อความ = ตัวเลขที่แต่งขึ้น) · `PERIOD` (`ClosedPeriodRanges.Build` + ตัวช่วยใหม่ `Covers` ·
+งวดปิด = สร้างเอกสารไม่ได้ ⇒ ระดับต่ำสุด) · `POSTPAY` (`PostPaymentAutomationPolicy.EffectiveLayers` — ไม่ใช่ `Effective` สองชั้นตามใบสั่งงาน เพราะรายการ/ผู้ติดต่อเป็นชั้นจริงตั้งแต่ WP-02) ·
+ใบ e-Tax by Email ไม่ออกข้อ SMTP/QUOTA ("ส่งผ่าน NextAcc" ไม่จริงสำหรับใบที่ห้ามถอย) · ทดลองรัน `EtaxPlan` + `EmailPlan` บอก "จะล้มที่ด่านผู้ส่ง" · คอลัมน์ "ระดับ Autopilot" จาก
+`GET recurring/autopilot/levels` (endpoint แยกจาก list — แต่ละแถวเดินตัวรวบรวมข้อเท็จจริงทั้งชุด ไม่ให้หน้ารายการช้าลง) · `POST recurring/{id}/send-test` ถึงผู้ใช้ที่กดเท่านั้น
+(ไม่บันทึก `DocumentEmailLog` · ไม่นับเพดาน · audit · เพดาน 10/วัน) · ผลทดลองรันกล่องแยก · บรรทัดว่างไม่ฟ้องระหว่างกรอก · แท็บช่องทางแจ้งเตือนเตือนกติกาผู้รับ e-Tax ·
+Db MED-5 ผ่าน `RecheckDocumentAtSendAsync` ตัวจริง · R251 +7 กติกา + เคส R251a–g · owner R251-K4 · ไม่ได้ทำ: ราคาแปรผัน/ทุก N เดือน/สร้างล่วงหน้า (ไม่อยู่ในใบสั่งงาน WP-07) ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 847041d2_

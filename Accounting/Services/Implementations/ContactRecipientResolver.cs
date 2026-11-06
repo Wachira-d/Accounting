@@ -83,6 +83,11 @@ public class ContactRecipientResolver : IContactRecipientResolver
                 CanEditTopics: active, CanEditLabel: active, CanUnlink: active));
         }
 
+        // รอบ 251 (WP-07 · F-06): บริษัทโหมด e-Tax by Email ⇒ บอกกติกาผู้รับใบกำกับ 1 อีเมล (ตัวตัดสินโหมดเดียว EtaxDeliveryRouter.ByEmailActive)
+        var etaxMode = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
+            .Select(x => new { x.EtaxEnabled, x.EtaxMode }).FirstOrDefaultAsync(ct);
+        var etaxNote = etaxMode == null ? null : EtaxByEmailFormat.ContactRecipientsNote(etaxMode.EtaxEnabled, etaxMode.EtaxMode);
+
         return new ContactNotifyOverviewResponse(contact.Id, facts.ContactName, string.IsNullOrWhiteSpace(contact.Email) ? null : contact.Email!.Trim(), list,
             NotifyTopics.All.Select(t => new NotifyTopicOption(t.ToString(), NotifyTopics.Label(t))).ToList(),
             LineDeliveryOpen,
@@ -97,7 +102,8 @@ public class ContactRecipientResolver : IContactRecipientResolver
             "ปลายทางที่ตั้งที่นี่ใช้ได้กับทุกการแจ้งเตือนถึงผู้ติดต่อรายนี้ (ตัวหาผู้รับตัวเดียว) · ⚠️ ตอนนี้เส้นส่งอัตโนมัติ (ตารางส่งอีเมล · ทวงชำระ · ใบเสร็จหลังรับชำระ · "
             + "ลิงก์เซ็น) ยังส่งถึงอีเมลหลักเท่านั้น — อีเมลเพิ่มเติมและเรื่องที่เลือกจะเริ่มมีผลเมื่อเส้นส่งต่อสาย (เฟส L2) · อีเมลหลักแก้ที่แท็บข้อมูลทั่วไป",
             canEdit,
-            canEdit ? null : $"ดูได้อย่างเดียว — แก้ช่องทางแจ้งเตือนต้องมีสิทธิ์ {Accounting.Models.Constants.PermissionKeys.ContactEdit.Replace("perm:", "")}");
+            canEdit ? null : $"ดูได้อย่างเดียว — แก้ช่องทางแจ้งเตือนต้องมีสิทธิ์ {Accounting.Models.Constants.PermissionKeys.ContactEdit.Replace("perm:", "")}",
+            EtaxByEmailNote: etaxNote);
     }
 
     private sealed record RowMeta(DateTime LinkedAt, DateTime? LastSentAt, string? LastFailure);
