@@ -1205,10 +1205,10 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 ---
 
 _Last verified against codebase: 2026-10-15 (rev 45 · ฝ่ายค้านรอบส่งออก — **§3.1f** ผังที่นำเข้าผูกบัญชีแม่ (`ChartParentLink`) + ลำดับผังตั้งต้นเจ้าของเดียว (`PostingAccountGuard.DefaultPostingCandidates`) + รายงาน/ซ่อมผังที่นำเข้าไว้ก่อน — ไม่มีคอลัมน์ใหม่ — commit 825f5c0e)_
-_Last verified against codebase: 2026-10-15 (rev 46 · ฝ่ายค้านรอบส่งออก รอบ 2 — **§3.1f** ผังลงรายการของแม่แบบไม่เป็นบัญชีแม่ · "ถูกใช้อยู่" ไล่ทุก FK (`ChartAccountReferences`) · ลำดับผังตั้งต้น "มีแม่ก่อน" + ตัดผังเฉพาะกิจจากการหาตามหมวด/รหัสต้น (`SpecialPurposeAccount` · `DefaultFallbackCandidates`) · ลูกหลานปรับระดับ + audit — ไม่มีคอลัมน์ใหม่ — sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-10-15 (rev 46 · ฝ่ายค้านรอบส่งออก รอบ 2 — **§3.1f** ผังลงรายการของแม่แบบไม่เป็นบัญชีแม่ · "ถูกใช้อยู่" ไล่ทุก FK (`ChartAccountReferences`) · ลำดับผังตั้งต้น "มีแม่ก่อน" + ตัดผังเฉพาะกิจจากการหาตามหมวด/รหัสต้น (`SpecialPurposeAccount` · `DefaultFallbackCandidates`) · ลูกหลานปรับระดับ + audit — ไม่มีคอลัมน์ใหม่ — `commit de823512`)_
 _Last verified against codebase: 2026-10-15 (rev 47 · ฝ่ายค้านรอบส่งออก รอบ 3 — **§3.1f** ผังเฉพาะกิจ = ผังที่ระบบสร้าง (ไม่ดูตัวชี้ใน config · ไม่ตัดด้วยรหัสอย่างเดียว) และเลื่อนไปท้ายแทนตัดทิ้ง (`OrderByGeneralPurposeFirst`) · นำเข้าผังไม่ไล่ FK ของผังใหม่ · รายงาน/ย้ายผังใต้ผังลงรายการของแม่แบบ — ไม่มีคอลัมน์ใหม่ — commit 774ea7bc)_
 _Last verified against codebase: 2026-10-15 (rev 48 · ฝ่ายค้านรอบส่งออก รอบ 4 — **§3.1f** ผังใต้ผังลงรายการของแม่แบบรายงาน/ย้ายเฉพาะที่มีหลักฐานว่าระบบผูก (ผู้ใช้สร้างเอง = ไม่แตะ) · `ImportAccountAsync` ประทับ `CreatedBy` ของผังที่นำเข้า · กู้คืนผังที่ถูกลบ (เจ้าของ · audit) — ไม่มีคอลัมน์ใหม่ — commit eec6947d)_
-_Last verified against codebase: 2026-10-15 (rev 49 · ฝ่ายค้านรอบส่งออก รอบ 5 — **§3.1f** กู้คืนผังใต้ผังแม่ที่กลายเป็นผังลงรายการ = บล็อก + หัวบัญชีที่เสนอ (`newParentId`) · `Company.FiscalYearStartMonth` ล็อกหลังปิดปีครั้งแรก + audit การเปลี่ยน — ไม่มีคอลัมน์ใหม่ — sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-10-15 (rev 49 · ฝ่ายค้านรอบส่งออก รอบ 5 — **§3.1f** กู้คืนผังใต้ผังแม่ที่กลายเป็นผังลงรายการ = บล็อก + หัวบัญชีที่เสนอ (`newParentId`) · `Company.FiscalYearStartMonth` ล็อกหลังปิดปีครั้งแรก + audit การเปลี่ยน — ไม่มีคอลัมน์ใหม่ — `commit c8be79e6`)_
 _Last verified against codebase: 2026-10-16 (rev 50 · ยกเลิกการปิดปี — **§3.1f** `YearEndClosing` + `ReopenedAt`/`ReopenedBy`/`ReopenReason`/`ReopenJournalEntryId` · unique index ปิดปี/ยอดยกมาเป็น partial `IsDeleted = false` · ยกเลิกปีเดียวที่ปิด ⇒ ด่านเดือนเริ่มรอบปลดเอง — commit 9f983f0d)_
 
 _Last verified against codebase: 2026-10-14 (rev 44 · ฝ่ายค้านรอบ 204 — **§3.1e** ค่าตั้งค่าสิทธิ ม.40(3) มีประวัติ: คอลัมน์ `Companies.WhtRoyaltyPnd2History` (text) + `WhtRoyaltyFormDecidedAt` (timestamptz) ผ่าน `DatabaseMigrationHelper.Round204RoyaltyHistoryStatements` — commit 7e931322)_
@@ -1394,8 +1394,8 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL หลัง�
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่ายค้านรอบสาม — หน้าแอดมินตั้ง/ลด Owner ไม่ได้ + audit · รับคำเชิญตรวจบทบาทซ้ำ · AdminAttach ล็อกแถวแทน Serializable — commit adf19a87)_
 
 _Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LS — §3.1b สถานะเปิดจองออนไลน์ของที่พัก + id เว็บ/นโยบายต้องเป็นของบริษัท — commit 7b83b697)_
-_Last verified against codebase: 2026-10-22 (rev 49 · รอบ 205 ทีม I — **§3.1g** ผู้สร้างบริษัท = Owner ทุกทางเข้า (`CompanyCreatorMembership`) + ตัวซ่อมบริษัทไม่มีเจ้าของ + `LastOwnerGuard` + `BuiltInRolePermissions`/`PermissionMatrix`/`RoleTemplates` + `PlanIdentityResolver` — ไม่มีคอลัมน์ใหม่ — sha เติมในคอมมิตตามหลัง)_
-_Last verified against codebase: 2026-10-22 (rev 50 · รอบ 205 ทีม I ฝ่ายค้าน — **§3.1g** ตัวซ่อมตั้งเองเฉพาะผู้สร้าง active · ตัดฝั่งแพลตฟอร์มจากตัวเลือก · ล็อกต่อบริษัท · `ActorRowAfter` · `LastOwnerGuard` นับเฉพาะ Owner ลูกค้า · migration id เมนู — ไม่มีคอลัมน์ใหม่ — sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-10-22 (rev 49 · รอบ 205 ทีม I — **§3.1g** ผู้สร้างบริษัท = Owner ทุกทางเข้า (`CompanyCreatorMembership`) + ตัวซ่อมบริษัทไม่มีเจ้าของ + `LastOwnerGuard` + `BuiltInRolePermissions`/`PermissionMatrix`/`RoleTemplates` + `PlanIdentityResolver` — ไม่มีคอลัมน์ใหม่ — `commit 53bf731b`)_
+_Last verified against codebase: 2026-10-22 (rev 50 · รอบ 205 ทีม I ฝ่ายค้าน — **§3.1g** ตัวซ่อมตั้งเองเฉพาะผู้สร้าง active · ตัดฝั่งแพลตฟอร์มจากตัวเลือก · ล็อกต่อบริษัท · `ActorRowAfter` · `LastOwnerGuard` นับเฉพาะ Owner ลูกค้า · migration id เมนู — ไม่มีคอลัมน์ใหม่ — `commit c499d91a`)_
 
 ## รอบ 209 P6 — เว็บ (Site) ผูกสาขา/คลังมีผลจริง
 
@@ -1417,11 +1417,11 @@ _Last verified against codebase: 2026-10-22 (rev 50 · รอบ 205 ทีม I
   `erp-review/2026-11-02/FILE_STORAGE_AUDIT.md` §5
 - โควตาพื้นที่ (`AttachmentStorageNotice` · Σ `FileAttachment.FileSize`) ไม่เปลี่ยน — นับจากแถว ไม่ใช่จากดิสก์/bucket
 
-_Last verified against codebase: 2026-11-02 (ทีม FS — ที่เก็บไฟล์กลาง Local | S3 · ไม่มี entity/คอลัมน์ใหม่ · เทสต์ `FileStorageKeyTests` `S3SigV4Tests` `FileStorageConfigPolicyTests` `FileStorageProviderTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit: เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-11-02 (ทีม FS — ที่เก็บไฟล์กลาง Local | S3 · ไม่มี entity/คอลัมน์ใหม่ · เทสต์ `FileStorageKeyTests` `S3SigV4Tests` `FileStorageConfigPolicyTests` `FileStorageProviderTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit d6d83995`)_
 
-_Last verified against codebase: 2026-11-03 (รอบ 230 Omise — §6.2d บัตรที่บันทึก/ตัดบัตรอัตโนมัติ/รอบโอนจากผู้ให้บริการ: 5 ตารางระดับแพลตฟอร์มใหม่ (`PlatformCardBillingMigration`) · เทสต์ `PlatformCardBillingRound230Tests` `PlatformCardBillingRound230DbTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ · sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-11-03 (รอบ 230 Omise — §6.2d บัตรที่บันทึก/ตัดบัตรอัตโนมัติ/รอบโอนจากผู้ให้บริการ: 5 ตารางระดับแพลตฟอร์มใหม่ (`PlatformCardBillingMigration`) · เทสต์ `PlatformCardBillingRound230Tests` `PlatformCardBillingRound230DbTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ · `commit ab876762`)_
 
-_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — แถว LINE OA กลาง: นโยบายผู้รับ `NotificationAudiencePolicy` · `SiteSettings.LineMessagingOpsAlertsToGroup` (คอลัมน์ใหม่ใน `NextAccLineConfigMigration`) · `NotificationSetting.EnableLineGroup` · เทสต์ `NotificationAudiencePolicyRound232Tests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ · sha เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — แถว LINE OA กลาง: นโยบายผู้รับ `NotificationAudiencePolicy` · `SiteSettings.LineMessagingOpsAlertsToGroup` (คอลัมน์ใหม่ใน `NextAccLineConfigMigration`) · `NotificationSetting.EnableLineGroup` · เทสต์ `NotificationAudiencePolicyRound232Tests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ · `commit b4780a33`)_
 
 ### 6.2i หน้าซื้อแพ็กเกจสาธารณะ — cart + checkout จบในเว็บ (รอบ 232 · คำตัดสิน 232-Checkout-2 · `erp-review/2026-11-03/OMISE_READINESS.md`)
 
@@ -1475,4 +1475,4 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — 
 - **ฝ่ายค้าน 233:** วันรับเงินย้อนจนรอบจบก่อนอนุมัติ ⇒ นับจากเวลาอนุมัติ (233-1b) · ฟรีถาวร→ซื้อ: `ApplyTemplate(paidPeriodEndUtc)` · ฐานเครดิต = ยอดก่อนหัก ณ ที่จ่าย · Approved ยอด 0 = เครดิต 0 ·
   แถวค่าแทน (ExpiryNeedsReview) ดาวน์เกรด ⇒ มีผลทันที ไม่ตั้งเวลา
 
-_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout — §6.2i หน้าซื้อแพ็กเกจสาธารณะ · `SiteSettings.PublicCheckoutEnabled` · `Helpers/PublicCheckoutPolicy` · `Services/Platform/PublicCheckoutService` · เทสต์ `PublicCheckoutRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout — §6.2i หน้าซื้อแพ็กเกจสาธารณะ · `SiteSettings.PublicCheckoutEnabled` · `Helpers/PublicCheckoutPolicy` · `Services/Platform/PublicCheckoutService` · เทสต์ `PublicCheckoutRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit b4780a33`)_

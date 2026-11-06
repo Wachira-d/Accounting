@@ -44,6 +44,7 @@
 | พอร์ทัลลูกค้า | `PortalController.cs:110` `upload-slip` (ลูกค้าอัปโหลดสลิปต่อเอกสาร · login พอร์ทัล) | ต้นแบบ endpoint อัปโหลด — เพิ่ม `upload-wht-cert` คู่กัน |
 | ลิงก์สาธารณะแบบ token | `PublicQuotationController` (`api/public/quotation/{token}` + rate limit `:52`) · `api/public/delivery/{token}/sign` · `PayslipPublicController` · `PlatformPaymentLinks.TokenHash` (`PlatformBillingPhase2Migration.cs:51-52`) | ต้นแบบ: **เก็บ hash ของ token** (แบบ PlatformPaymentLinks) — หมายเหตุ `Document.PayLinkToken` ของรอบ 241 เก็บ token ตรง ๆ (⚠️ ข้อสังเกตถึงทีม 241) |
 | ผู้ส่งในนามบริษัท | `Helpers/OnBehalfEmailSender.cs` · `Helpers/PlatformEmailQuota.cs` · `DocumentEmailService.ResolveOnBehalfSenderAsync` (รอบ 240) | ส่งทุกอีเมลทวง/ลิงก์ผ่านตัวนี้ (โควตา + ผู้ส่ง) |
+| คู่ค้าข้ามผู้เช่า (มีอยู่แล้ว) | `Models/Entities/CrossTenantWorkflow.cs:22` `TradingPartnership` · `Services/Implementations/CrossTenantWorkflowService.cs` · `Controllers/CrossTenantWorkflowController.cs` | ✅ การจับคู่บริษัท NextAcc↔NextAcc มีแล้ว · **ยังไม่ต่อกับการส่งเอกสาร/50 ทวิ** ⇒ เฟส 246 ต่อยอดตัวนี้ (แก้รอบ 250 WP-05 · คำตัดสิน 250-30: ต่อยอด `TradingPartnership` ที่มีอยู่ — ดู AUTOPILOT_BILLING_DESIGN §6 รอบ 251–253 · ไม่สร้างตารางสำเนา) |
 | Intercompany | `IntercompanyTransaction` (`DimensionalAccounting.cs:75`) · `IntercompanyService` | **คนละเรื่อง** — รายการระหว่างบริษัทในกลุ่มเดียวกัน (ภายใต้เจ้าของเดียว) ไม่ใช่การแลกเอกสารข้ามผู้เช่า · **ไม่มี** `PartnerConnection`/Peppol/การผูก Contact กับ tenant อื่น ⇒ NextAcc↔NextAcc ต้องสร้างใหม่ (§3.5) |
 | ต้นแบบ "ผู้เช่า ↔ NextAcc" | `PlatformBillingDocumentIssuer` (ออกใบลงบัญชีผู้เช่า `:320` เรียก `CreatePaymentAsync(tenantId…)`) · `PlatformWhtSuggestion` · `PlatformWhtCertificateService` | ✅ เคยเขียนข้อมูลข้าม tenant แล้วหนึ่งคู่ (แพลตฟอร์ม↔ผู้เช่า) — ใช้เป็นแบบของการส่ง 50 ทวิ ข้ามบัญชี |
 
@@ -81,7 +82,7 @@
 | G-5 | ไม่มีธง "ลูกค้าหักผ่าน e-WHT — ไม่มีกระดาษ" ฝั่งขาย | แถว Pending ค้างตลอดกาล หรือผู้ใช้ "ตัดสูญ" ผิด ๆ | 245 |
 | G-6 | ทางรับชำระอื่นยังไม่เข้า `PostPaymentAutomationService.EnqueueAsync` (คอมเมนต์คลาสระบุเฉพาะ gateway + `DocumentController.CreatePayment`) — กระทบธนาคาร/settlement หลายใบ (`SettlementPostingService.cs:313`) · สลิปพอร์ทัล · นำเข้า (`PaymentImportTarget.cs:184`) · CMS/Lodging | ใบเสร็จ+คำขอ 50 ทวิ ไม่ออกในทางเหล่านี้ | 243 (ประสานกับ 241) |
 | G-7 | ใบเสร็จที่ออกอัตโนมัติไม่ trigger กฎ `DocumentApproved` | ผู้ตั้งกฎ "ส่งใบเสร็จตอนอนุมัติ" คาดว่าได้ แต่ไม่ได้ (silent no-op) | 241 ครอบบางส่วนด้วย post-pay — ต้องให้หน้าเมทริกซ์บอกชัด (243) |
-| G-8 | ไม่มีการเชื่อมคู่ค้าข้ามผู้เช่า (NextAcc↔NextAcc) | ลูกค้า NextAcc ต้องดาวน์โหลด PDF แล้วส่งเอง | 246–247 |
+| G-8 | ~~ไม่มีการเชื่อมคู่ค้าข้ามผู้เช่า (NextAcc↔NextAcc)~~ มี `TradingPartnership` + `CrossTenantWorkflowService/Controller` แล้ว แต่**ยังไม่ต่อกับการส่งเอกสาร/50 ทวิ** (แก้รอบ 250 WP-05 · คำตัดสิน 250-30: ต่อยอด `TradingPartnership` ที่มีอยู่ — ดู AUTOPILOT_BILLING_DESIGN §6 รอบ 251–253 · ไม่สร้างตารางสำเนา) | ลูกค้า NextAcc ต้องดาวน์โหลด PDF แล้วส่งเอง | 246–247 |
 | G-9 | `WhtCreditService.ExpireAsync` (`:360`) ไม่ลง JE — 11910 ค้างหลัง "ตัดสูญ" (ต้องผ่าน `SettleYearEndAsync`) | GL กับทะเบียนไม่ตรงระหว่างปี | ตรวจใน 245 |
 | G-10 | `MarkReceivedAsync`/`ExpireAsync`/`CreateAsync` โยน `InvalidOperationException` | ข้อความไทยอาจถูก middleware กลืน (กฎ #4 E) | 243 (แก้ระหว่างทาง) |
 | G-11 | ไม่มีหน้าเมทริกซ์รวม "เอกสาร × จังหวะส่ง" — ตั้งกฎทีละแถว | ไม่รู้ว่าเอกสารไหนส่งอัตโนมัติแล้วบ้าง | 243 |
@@ -393,7 +394,7 @@ DTO: `DocumentListItem` เพิ่ม `WhtCertState` (ชื่อ enum) · `W
 
 ## 5. ค่าตั้ง (Settings) — บริษัท › ผู้ติดต่อ › ตารางส่ง (ค่าเฉพาะชนะค่าทั่วไปทีละช่อง)
 
-ลำดับชั้นผ่าน **resolver กลางตัวเดียว** `AutoSendSettingsResolver.Effective(company, contact, schedule)` (กฎ #4 A ห้าม inline `??`) — ขยายจาก `PostPaymentAutomationPolicy.Effective` (`:28`) ที่รอบ 241 ทำไว้ (บริษัท › ตาราง) โดยเพิ่มชั้นผู้ติดต่อ
+ลำดับชั้นผ่าน **resolver กลางตัวเดียว** `AutopilotSettingsResolver` (แก้รอบ 250 · คำตัดสิน 250-29 — เดิมเขียน ~~`AutoSendSettingsResolver.Effective(company, contact, schedule)`~~) (กฎ #4 A ห้าม inline `??`) — ขยายจาก `PostPaymentAutomationPolicy.Effective` (`:28`) ที่รอบ 241 ทำไว้ (บริษัท › ตาราง) โดยเพิ่มชั้นผู้ติดต่อ
 
 | ค่าตั้ง | บริษัท | ผู้ติดต่อ | ตารางส่ง | ที่เก็บ |
 | --- | --- | --- | --- | --- |
@@ -664,6 +665,8 @@ INV-0101    หจก.อี          2,140.00   [ชำระแล้ว] [⚪
 
 ### 7.1 ตาราง/คอลัมน์ใหม่ (ผ่าน `DatabaseMigrationHelper` `ADD COLUMN/CREATE TABLE IF NOT EXISTS` — ห้าม EF Migrations)
 
+> ⚠️ (แก้รอบ 250 WP-05 · คำตัดสิน 250-30: ต่อยอด `TradingPartnership` ที่มีอยู่ — ดู AUTOPILOT_BILLING_DESIGN §6 รอบ 251–253 · ไม่สร้างตารางสำเนา) — `TenantPartnerLink` ข้างล่าง**ยกเลิก** (เก็บไว้เป็นประวัติ) · คอลัมน์ที่ต้องการให้เติมบน `TradingPartnership`/ขอบเขตตาม AUTOPILOT §6.2
+
 ```
 WhtCertIntake (TenantEntity)                 -- 1 แถว = 1 ไฟล์/ใบที่เข้ามา (ทุกช่องทาง)
   Id, CompanyId
@@ -780,7 +783,7 @@ EmailScheduleRule (เพิ่ม) AttachWhtUploadLink bool? ; Trigger ให�
 | L-5 ใบอิเล็กทรอนิกส์/ลายมือชื่ออิเล็กทรอนิกส์ | พ.ร.บ.ว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ 2544 (ม.7–9 ข้อมูล/ลายมือชื่ออิเล็กทรอนิกส์มีผลทางกฎหมาย · ม.26 ลายมือชื่อที่เชื่อถือได้) + แนวปฏิบัติกรมสรรพากรเรื่องหนังสือรับรองในรูปอิเล็กทรอนิกส์ | ช่อง ③: PDF ที่ระบบผู้จ่ายออก + ลายมือชื่อ/ตราอิเล็กทรอนิกส์ที่ผู้มีอำนาจตั้งไว้ + hash + audit ทั้งสองฝั่ง · ⚠️ ระดับลายมือชื่อที่ต้องใช้ (ภาพลายเซ็น vs ใบรับรองดิจิทัล) ต้องยืนยันกับประกาศอธิบดีฯ ที่ใช้อยู่ — **ห้ามเปิด auto-Received ช่อง ③ ใน production จนกว่ายืนยัน** (เฟส 246 เปิดเป็น "รอยืนยัน" ก่อนได้) | ⚠️ |
 | L-6 เครดิตต้องมีใบ | การนำภาษีถูกหักไปเครดิต ภ.ง.ด.50/51 ต้องมีหลักฐาน (หนังสือรับรอง) | ยอด Pending/ส่วนที่ไม่มีใบ **ห้ามนับเครดิต** (WHT_CREDIT_PLAN L1) · ReceivedAmount บางส่วนนับเฉพาะส่วนที่มีใบ | ✅ หลักเดิม |
 | L-7 e-Withholding | ผู้จ่ายที่หักผ่าน e-WHT ไม่ต้องออก 50 ทวิ/ยื่น ภ.ง.ด.3/53 สำหรับรายการนั้น · ผู้ถูกหักตรวจข้อมูลผ่านระบบของกรมสรรพากร · อัตราลดเหลือ 1% (ค่าบริการ) ถึง 31 ธ.ค. 2570 | EvidenceKind=EWithholding + หลักฐานจากระบบกรมสรรพากร | ⚠️ ยืนยันวันสิ้นสุด/อัตรา (ข่าว ปชส. 14/2569) + รูปหลักฐานที่ยอมรับตอนตรวจ |
-| L-8 ระยะเก็บ | พ.ร.บ.การบัญชี 2543 (5 ปี · ขยายได้ 7) + ป.รัษฎากร (ขอคืนได้ 3 ปีนับแต่วันสุดท้ายของกำหนดยื่น) | §7.4 MAX retention + legal hold | ⚠️ เลขมาตรา (ม.10 vs ม.14) |
+| L-8 ระยะเก็บ | พ.ร.บ.การบัญชี 2543 ม.14 (≥ 5 ปีนับแต่วันปิดบัญชี · อธิบดีสั่งให้เก็บเกินได้ไม่เกิน 7 ปี — แก้รอบ 250 WP-06) + ป.รัษฎากร (ขอคืนได้ 3 ปีนับแต่วันสุดท้ายของกำหนดยื่น) | §7.4 MAX retention + legal hold | ⚠️ เลขมาตรา (ม.10 vs ม.14) |
 | L-9 PDPA ข้ามผู้เช่า | พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล 2562 ม.19 (ยินยอม) · ม.23 (แจ้งวัตถุประสงค์) · ม.24(3)(6) (สัญญา/หน้าที่ตามกฎหมาย) · ม.39 (RoPA) | การเชื่อมคู่ค้าต้องยินยอมสองฝ่าย + ข้อความเวอร์ชัน + เพิกถอนได้ · ไม่เปิดเผยการเป็นผู้ใช้ NextAcc ก่อนยินยอม | 📋 |
 | L-10 ลูกค้าต่างประเทศ | ผู้จ่ายนอกราชอาณาจักรไม่อยู่ใต้ ม.50/ม.3 เตรส · ม.70 = ผู้จ่ายในไทยจ่ายออกนอก (ฝั่งซื้อของเรา) | ฝั่งขายไม่คาด 50 ทวิ จากลูกค้าต่างประเทศ (เตือนถ้ามี WHT) | ✅ |
 | L-11 VAT ไม่ใช่ฐาน WHT | ฐานหัก = ยอดก่อน VAT | ใช้ฐานจากเอกสาร (`AmountsFor` / `PlatformWhtSuggestion.BaseOf*` แบบเดียวกัน) · ตรวจ K7 | ✅ |
@@ -811,7 +814,7 @@ EmailScheduleRule (เพิ่ม) AttachWhtUploadLink bool? ; Trigger ให�
 4. `GET auto-send/matrix` + แท็บ "ภาพรวม" ใน email-schedule.html (อ่าน+สลับเปิดปิดกฎเดิม)
 5. G-6: ทุกทางรับชำระเรียก `PostPaymentAutomationService.EnqueueAsync` (settlement · พอร์ทัลสลิปเมื่อยืนยัน · นำเข้า · CMS · Lodging) — ประสานเจ้าของไฟล์ 241
 6. G-10: `WhtCreditService` เปลี่ยน `InvalidOperationException` → `BusinessRuleException`
-7. `AutoSendSettingsResolver` (บริษัท › ผู้ติดต่อ › ตาราง) + คอลัมน์ Contact ชุดแรก (`DocumentEmail`, `DocumentCcEmails`, `AutoSendDisabled`)
+7. ~~`AutoSendSettingsResolver` (บริษัท › ผู้ติดต่อ › ตาราง)~~ **ชั้น "ผู้ติดต่อ" ใน `Helpers/AutopilotSettingsResolver` ตัวเดียว** (คำตัดสิน 250-29 — ไม่สร้าง resolver ที่สอง) + คอลัมน์ Contact ชุดแรก (`DocumentEmail`, `DocumentCcEmails`, `AutoSendDisabled`)
 
 เทสต์ยอมรับ:
 - ใบที่ชำระมี WHT 300 ไม่มีใบ ⇒ `AwaitingCert` · วันที่ 31 ⇒ `IsOverdue=true` · **ทิศตรงข้าม:** ใบที่ไม่มี WHT ⇒ `NotApplicable` (ไม่มีชิป) · ใบที่ยังไม่ชำระแต่มี WHT คาด ⇒ `NotYetPaid` (ไม่ใช่ค้าง — กันคำเตือนฟ้องใบถูก)
@@ -858,6 +861,8 @@ EmailScheduleRule (เพิ่ม) AttachWhtUploadLink bool? ; Trigger ให�
 `required_call_site_check`: `WhtCertReminderJob` ผ่าน `JobLock` · ส่งผ่าน `OnBehalfEmailSender`/คิวอีเมลเดิม (ห้าม `IEmailService` ตรง)
 
 ### เฟส 246 — NextAcc↔NextAcc (ส่งจาก "ออก 50 ทวิ แล้ว")
+
+> ⚠️ (แก้รอบ 250 WP-05 · คำตัดสิน 250-30: ต่อยอด `TradingPartnership` ที่มีอยู่ — ดู AUTOPILOT_BILLING_DESIGN §6 รอบ 251–253 · ไม่สร้างตารางสำเนา) — ชื่อ `TenantPartnerLink`/`TenantWhtCertExchange` ข้างล่างอ่านเป็น "ขอบเขต WhtCert บน `TradingPartnership`"
 
 งาน: `TenantPartnerLink` + หน้า "คู่ค้าที่ใช้ NextAcc" (เชิญ/ยอมรับ/เพิกถอน) · `WhtCertExchangeOutbox` + worker · hook `OnWhtCertIssuedAsync` / `VoidAsync` · intake Channel=NextAccLink (structured) · RoPA entry · เปิด auto-Received หลังยืนยัน L-5 เท่านั้น (ก่อนนั้น = รอยืนยัน 1 คลิก)
 

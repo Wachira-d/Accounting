@@ -164,3 +164,10 @@ awk brace-balance                      # ทุก .cs ที่แก้
   บล็อก `<script src>` ไม่นับเป็นบล็อก inline
 - **ข้อจำกัดที่รู้**: regex ถอดสตริงเป็นแบบหยาบ (regex literal ที่มี `{`/`(` อาจเพี้ยน depth) — ถ้าฟ้องผิดให้เพิ่มเคสใน self-test ก่อนแก้
 
+### 2026-11-06 · checker ฟ้องผิด 2 ตัวในสัปดาห์เดียว (`contact_picker_check` จับชื่อ id · `write_permission_gate` จับ verb)
+- ตัดสินด้วย**พฤติกรรม**ไม่ใช่ชื่อ · แก้ที่ negative case ของ `--self-test` ไม่ใช่เปลี่ยน id หน้าเว็บหลบ checker (`29d6730f` เลี่ยง · `ca10f623` ถูกทาง)
+
+### 2026-11-06 · `doc_commit_sha_check` ฟ้องผิดบน shallow clone (และทีมตรวจเชื่อตาม)
+- clone ใน env agent เป็นแบบตื้น (446 คอมมิต) ⇒ sha ที่มีจริงบน GitHub (`0a829110` · `2560776c` · `825f5c0e` · `a4dfa177`) ถูกฟ้องว่า "ไม่มีในเรพ" และทีม E ตัดสินว่า `0a829110` ตาย —
+  หลัง `git fetch --unshallow` ทุกตัวมีจริง (รอบ 250 WP-05) · กติกา: checker/ผู้ตรวจที่ตัดสินจากประวัติ git ต้องตรวจ `git rev-parse --is-shallow-repository` ก่อน ·
+  และ pattern `✅ <hex>` จับเลขผู้เสียภาษี 13 หลักในตารางเทสต์ด้วย ⇒ ข้ามตัวเลขล้วน 13 หลัก
