@@ -45,6 +45,39 @@ Respond ONLY as JSON:
     public static string? MaskIndividualIds(string? text)
         => text == null ? null : IndividualIdRe.Replace(text, "[เลขบุคคล]");
 
+    private static string Letters(string s) => new(s.Select(ch => ch is >= '0' and <= '9' ? (char)('a' + (ch - '0')) : ch).ToArray());
+
+    /// <summary>กุญแจนักเรียนของผู้จ่าย — ตัวเดียวของคำขอใหม่และงานล้างข้อมูลเก่า ·
+    /// ฝ่ายค้าน WP-09 L7 (PDPA ม.26/ม.37): เลข 13 หลักของ "บุคคลธรรมดา" ห้ามออกนอกระบบ — นิติบุคคล (ขึ้นต้น 0) เป็นข้อมูลสาธารณะ ส่งได้ (<c>pt-</c>) ·
+    /// บุคคลใช้แฮชที่ย้อนกลับไม่ได้ต่อบริษัท (<c>pi-</c> · คงที่ต่อผู้จ่าย ⇒ distillation ทำงาน · DECISIONS 252-WP09-11 รับการเปลี่ยนกุญแจ pt- → pi-)</summary>
+    public static string PayerKey(Guid companyId, string? payerTaxId, string? payerName)
+    {
+        var digits = Accounting.Helpers.ThaiTaxId.Normalize(payerTaxId);
+        if (digits.Length == 13 && Accounting.Helpers.ThaiTaxId.IsJuristic(digits)) return "pt-" + Letters(digits);
+        if (digits.Length == 13)
+            return "pi-" + Letters(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes("wht-auth|" + companyId.ToString("N") + "|" + digits))).ToLowerInvariant()[..16]);
+        return "pn-" + Letters(string.Concat((payerName ?? "").Where(c => !char.IsWhiteSpace(c))).ToLowerInvariant());
+    }
+
+    // กุญแจรุ่นแรก (ก่อน L7) ของบุคคล: "pt-" + เลข 13 หลักแปลงเป็นตัวอักษร a–j (ย้อนกลับได้ = เลขบัตร) · หลักแรก 1–8 ⇒ b–i
+    private static readonly System.Text.RegularExpressions.Regex LegacyIndividualKeyRe = new(
+        @"(?<![a-z0-9])pt-([b-i][a-j]{12})(?![a-z0-9])", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>ฝ่ายค้าน WP-09 รอบสอง L7 (งานล้างข้อมูลครั้งเดียว): ล้าง PII ใน feedback ที่เก็บไว้ของ feature นี้ — กุญแจบุคคลรุ่นแรก <c>pt-…</c> ⇒ กุญแจ
+    /// <c>pi-…</c> ตัวเดียวกับคำขอใหม่ (<see cref="PayerKey"/> — ประวัตินักเรียนต่อเนื่อง) · เลข 13 หลักของบุคคลในข้อความ ⇒ ปิดบัง (<see cref="MaskIndividualIds"/>) ·
+    /// เลขนิติบุคคลคงไว้ · ไม่มีอะไรต้องล้าง ⇒ คืนค่าเดิม (ผู้เรียกไม่เขียน)</summary>
+    public static string? ScrubStoredJson(Guid companyId, string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return json;
+        var rekeyed = LegacyIndividualKeyRe.Replace(json, m =>
+        {
+            var digits = new string(m.Groups[1].Value.Select(ch => (char)('0' + (ch - 'a'))).ToArray());
+            return PayerKey(companyId, digits, null);
+        });
+        return MaskIndividualIds(rekeyed);
+    }
+
     /// <summary>รูปแบบเลขที่ใบ — ตัวเลข → d · ตัวอักษร → a (กุญแจคงที่ต่อผู้จ่าย ไม่ผูกกับเลขที่ใบจริง)</summary>
     public static string CertNumberShape(string? certNo)
         => "cn-" + new string((certNo ?? "").Trim().Select(ch => char.IsDigit(ch) ? 'd' : char.IsLetter(ch) ? 'a' : ch).Take(30).ToArray());
@@ -56,14 +89,8 @@ Respond ONLY as JSON:
         string? rawText)
     {
         var digits = Accounting.Helpers.ThaiTaxId.Normalize(payerTaxId);
-        static string Letters(string s) => new(s.Select(ch => ch is >= '0' and <= '9' ? (char)('a' + (ch - '0')) : ch).ToArray());
-        // ฝ่ายค้าน WP-09 L7 (PDPA ม.26/ม.37): เลข 13 หลักของ "บุคคลธรรมดา" ห้ามออกนอกระบบ — นิติบุคคล (ขึ้นต้น 0) เป็นข้อมูลสาธารณะ ส่งได้ ·
-        // กุญแจนักเรียนของบุคคลใช้แฮชที่ย้อนกลับไม่ได้ (ยังคงที่ต่อผู้จ่าย ⇒ distillation ทำงาน)
         var juristic = digits.Length == 13 && Accounting.Helpers.ThaiTaxId.IsJuristic(digits);
-        var payerKey = juristic ? "pt-" + Letters(digits)
-            : digits.Length == 13 ? "pi-" + Letters(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes("wht-auth|" + companyId.ToString("N") + "|" + digits))).ToLowerInvariant()[..16])
-            : "pn-" + Letters(string.Concat((payerName ?? "").Where(c => !char.IsWhiteSpace(c))).ToLowerInvariant());
+        var payerKey = PayerKey(companyId, payerTaxId, payerName);
         var payload = new
         {
             task = "wht_cert_authenticity",

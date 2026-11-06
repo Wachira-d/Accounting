@@ -14628,8 +14628,8 @@ REVIEWER_CASES += [
      "var rev = await NotTheStandardReversal(companyId, jeId, today,", True),
     # คืนเป็น "ได้รับแล้ว" โดยไม่ดูว่าตัดสูญพร้อม JE ⇒ ต้องฟ้อง
     ("R243a4", "MarkReceivedAsync",
-     "if (WhtCreditWriteOff.NeedsReversal(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId))\n            {\n                if (journalActor == null)",
-     "if (false)\n            {\n                if (journalActor == null)", True),
+     "var writtenOff = WhtCreditWriteOff.NeedsReversal(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId);",
+     "var writtenOff = false;", True),
     # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .PostAsync( เป็นบรรทัดเดียว ⇒ ต้องไม่ฟ้อง
     ("R243a5", "ExpireCoreAsync", "\n            .PostAsync(actor.Name);", ".PostAsync(actor.Name);", False),
     # S1: กลับไปใช้ยอดสะสมทั้งบริษัท ⇒ ต้องฟ้อง
@@ -16678,7 +16678,7 @@ RULES += [
     dict(file=_R252_SVC, method="SubmitAsync",
          must=["WhtCertMatchPolicy.Match(", "WhtCertIntakeVerdict.Gates(", "WhtCertIntakeVerdict.Decide(", "_ai.AskAsync(",
                "WhtCertIntakeVerdict.ParseAuthenticity(", "OcrAiAugmenter.IsStudentAnswer(", "LockCreditAsync(", "ApplyToCredit(",
-               "i.CompanyId == companyId"],
+               "FindLiveByCertAsync("],   # ฝ่ายค้านรอบสอง: คิวรีซ้ำของกล่องรับย้ายไป FindLiveByCertAsync (กติกาของมันเฝ้า CompanyId)
          must_re=[r"if\s*\(\s*gates\s*\.\s*Count\s*==\s*0\s*\)", r"intake\s*\.\s*WhtCertAuthenticityAiFeedbackId\s*=\s*resp\s*\.\s*FeedbackId",
                   r"intake\s*\.\s*WhtCertAuthenticityUsedAi\s*=\s*resp\s*\.\s*UsedAi", r"\bAudit\s*\(\s*companyId"],
          before=[("WhtCertIntakeVerdict.Gates(", "_ai.AskAsync("), ("_ai.AskAsync(", "WhtCertIntakeVerdict.Decide("),
@@ -16744,17 +16744,45 @@ RULES += [
 # ── รอบ 252 ฝ่ายค้าน WP-09 (H1/H2/M1–M6/L1–L10) ──
 _R252F_WHY = _R252_WHY + "ฝ่ายค้าน WP-09: "
 RULES += [
-    dict(file=_R252_SVC, method="SubmitAsync", must=["EnsureNotInRegisterAsync(", "FindLiveByFileAsync("],
+    dict(file=_R252_SVC, method="SubmitAsync", must=["_credits.EnsureCertificateNotRecordedAsync(", "FindLiveByFileAsync(", "FindLiveByCertAsync(",
+                                                    "WhtCertIntakeVerdict.CrossesCreditPeriod(row.CertificateDate"],
+         # races: ตรวจซ้ำใต้ล็อกในธุรกรรม — EnsureCertificateNotRecordedAsync ตามด้วย FindLiveByCertAsync (ผลแพ้ = lost)
+         must_re=[r"EnsureCertificateNotRecordedAsync\([^;]*;\s*if\s*\(\s*await\s+FindLiveByCertAsync\([^;]*is\s*\{\s*\}\s*lost"],
          must_lit=['SqlState: "23505"'],
          why=_R252F_WHY + "H1 ใบที่อยู่ในทะเบียนแล้ว = 409 · L5 ไฟล์ซ้ำนับเฉพาะใบที่ยังมีผล · L10 อัปโหลดชนกัน = ตอบซ้ำ ไม่ใช่ 500"),
     dict(file=_R252_SVC, method="FindLiveByFileAsync", must=["WhtCertIntakeRecordStatus.Rejected", "i.CompanyId == companyId"],
          why=_R252F_WHY + "L5 ใบที่ถูกตีกลับส่งไฟล์เดิมใหม่ได้"),
-    dict(file=_R252_SVC, method="EnsureNotInRegisterAsync", must=["WhtCreditStatus.Expired", "w.CompanyId == companyId"],
-         must_re=[r"throw\s+new\s+BusinessRuleException\([^;]*409\s*\)"],
-         why=_R252F_WHY + "H1 ทะเบียน (ไม่ถูกลบ · ไม่ใช่ตัดสูญ) มีเลขที่ใบ + ผู้จ่ายเดียวกัน ⇒ 409"),
+    dict(file=_R243A_WHT, method="EnsureCertificateNotRecordedAsync",
+         must=["WhtCreditStatus.Expired", "w.CompanyId == companyId", "i.CompanyId == companyId", "WhtCertIntakeRecordStatus.Confirmed",
+               "LockCertificateAsync(", "WhtCertIntakeVerdict.SameCertYear("],
+         must_re=[r"DedupeRuleCode\s*,\s*409\s*\)"],
+         why=_R252F_WHY + "H1 + รอบสอง M-A/M-D ตัวเดียวของการกันใบซ้ำ: ทะเบียน + ใบที่ยืนยันแล้ว · ปีเดียวกัน · ใต้ล็อกเลขที่ใบ + ผู้จ่าย ⇒ 409"),
+    dict(file=_R252_SVC, method="FindLiveByCertAsync", must=["WhtCertIntakeRecordStatus.Rejected", "i.CompanyId == companyId", "WhtCertIntakeVerdict.SameCertYear("],
+         why=_R252F_WHY + "รอบสอง M-D ใบในกล่องรับซ้ำ = เลขที่ + ผู้จ่าย + ปีเดียวกัน"),
+    dict(file=_R243A_WHT, method="CreateAsync", must=["EnsureCertificateNotRecordedAsync(", "CertificateDateRequiredMessage"],
+         why=_R252F_WHY + "รอบสอง M-A กันซ้ำสองทาง · L4 มีเลขที่ต้องมีวันที่"),
+    dict(file=_R243A_WHT, method="UpdateAsync",
+         must=["EnsureCertificateNotRecordedAsync(", "e.ReceivedAmount > 0.005m", "WhtCertIntakeVerdict.CrossesCreditPeriod(", "CertificateLockedMessage"],
+         forbid=["MarkFullyCertified(", "e.ReceivedAmount ="],
+         must_re=[r"if\s*\(\s*certChanged\s*\)\s*throw\s+new\s+BusinessRuleException\(\s*CertificateLockedMessage"],
+         why=_R252F_WHY + "รอบสอง H-A/H-B แถวที่ได้ใบบางส่วน: ห้ามประกาศครบเพราะมีเลขที่ · เลขที่ใบแรกล็อก · วันที่ข้ามรอบไม่ได้ (ตัวตัดสินเดียวกับ H2) · M-A กันซ้ำ"),
+    dict(file=_R243A_WHT, method="MarkReceivedAsync",
+         must=["EnsureCertificateNotRecordedAsync(", "e.ReceivedAmount > 0.005m", "CertificateDateRequiredMessage"],
+         forbid=["MarkFullyCertified(", "e.ReceivedAmount ="],
+         before=[("e.ReceivedAmount > 0.005m", "ApplyCertificate(")],
+         why=_R252F_WHY + "รอบสอง H-B แถวที่ได้ใบบางส่วน ⇒ 409 (ใบถัดไปเข้ากล่องรับ) · M-A กันซ้ำ (รวมเส้นแอดมินแพลตฟอร์ม) · L4 วันที่"),
+    dict(file=_R243A_WHT, method="UndoWriteOffAsync", must=["e.ReceivedAmount = 0m", "WhtCreditableAmount.StatusForReceived("],
+         why=_R252F_WHY + "รอบสอง M-B หมดสิทธิ์ไม่ใช่ตัดสูญ ⇒ ส่วนที่ได้ใบไม่เป็นเครดิต · สถานะตัดสินใหม่จากยอดที่ได้ใบ"),
+    dict(file=_R243A_WHT, method="CancelAfterRefundAsync", must=["e.ReceivedAmount = 0m"],
+         why=_R252F_WHY + "รอบสอง M-B คืนเงินแล้ว ⇒ Of(Expired) = 0"),
+    dict(file=_R243A_WHT, method="ListAsync", must=["WhtCreditWriteOff.AmountOf(", "CertificateLockedMessage"],
+         why=_R252F_WHY + "รอบสอง ปุ่มตัดสูญ/ล็อกใบแรก ตัดสินที่เซิร์ฟเวอร์"),
+    dict(file=DOC, method="SyncWhtCreditReceivedAsync", must=["WhtCreditableAmount.AfterSourceGlDrop(", ".UndoWriteOffAsync(companyId, existing.Id"],
+         before=[("WhtCreditableAmount.AfterSourceGlDrop(", "WhtCreditableAmount.ResyncWithGl(")],
+         why=_R252F_WHY + "รอบสอง M-C แถวมีใบที่ตัดสูญพร้อม JE + GL ต้นทางลด ⇒ กลับ JE ตัดสูญ (ก่อนเส้น 'ใบจริงชนะ')"),
     dict(file=_R252_SVC, method="ConfirmAsync",
-         must=["EnsureNotInRegisterAsync(", "WhtCertIntakeVerdict.ShouldTeachGenuine(", "req.AllowOtherPayer", "req.StandaloneReason",
-               "intake.CertificateDate is null"],
+         must=["_credits.EnsureCertificateNotRecordedAsync(", "WhtCertIntakeVerdict.ShouldTeachGenuine(", "req.AllowOtherPayer", "req.StandaloneReason",
+               "intake.CertificateDate is null", "WhtCertIntakeVerdict.CrossesCreditPeriod(row.CertificateDate"],
          must_re=[r"learn\s*=\s*WhtCertIntakeVerdict\s*\.\s*ShouldTeachGenuine\s*\("],
          why=_R252F_WHY + "H1 ซ้ำตอนยืนยัน (รวมเลขที่ที่แก้) · H2 คนละรอบ · L3 ผู้จ่าย · L4 วันที่ · M5 เหตุผลรายการใหม่ · M6 สอนเฉพาะดูใบแล้ว"),
     dict(file=_R243A_WHT, method="ExpireCoreAsync", must=["WhtCreditWriteOff.AmountOf("],
@@ -16781,7 +16809,10 @@ RULES += [
          why=_R252F_WHY + "L7 PDPA เลขบุคคลห้ามออกนอกระบบ"),
 ]
 REVIEWER_CASES += [
-    ("R252j", "SubmitAsync", "            await EnsureNotInRegisterAsync(companyId, certNo, payerTax, s.PayerContactId, ct);\n", "", True),
+    ("R252j", "SubmitAsync", "                await _credits.EnsureCertificateNotRecordedAsync(companyId, certNo, payerTax, s.PayerContactId, s.CertificateDate, null, ct: ct);\n                if (await FindLiveByCertAsync", "                if (await FindLiveByCertAsync", True),
+    ("R252n", "UpdateAsync", "if (certChanged)\n                        throw", "if (false)\n                        throw", True),
+    ("R252o", "MarkReceivedAsync", "if (e.ReceivedAmount > 0.005m)\n                throw", "if (false)\n                throw", True),
+    ("R252p", "CancelAfterRefundAsync", "e.ReceivedAmount = 0m;   // ฝ่ายค้าน WP-09 รอบสอง M-B: คืนเงินแล้ว", "// ฝ่ายค้าน WP-09 รอบสอง M-B: คืนเงินแล้ว", True),
     ("R252k", "ConfirmAsync", "learn = WhtCertIntakeVerdict.ShouldTeachGenuine(req.ViewedFile, intake.AuthenticityAnswer);", "learn = true;", True),
     ("R252l", "FindLiveByFileAsync", "i.FileSha256 == sha && i.Status != WhtCertIntakeRecordStatus.Rejected)", "i.FileSha256 == sha)", True),
     ("R252m", "ExpireCoreAsync", "var writeOffAmount = WhtCreditWriteOff.AmountOf(e.Status, e.WhtAmount, e.ReceivedAmount);", "var writeOffAmount = e.WhtAmount;", True),
@@ -16836,11 +16867,12 @@ def wht_credit_add_errors() -> list:
             for m in re.finditer(r"\.\s*ReceivedAmount\s*=(?!=)", code):
                 if rel == _R252_SVC or "QuotaAddOn" in rel:
                     continue
-                # ฝ่ายค้าน WP-09 L2/M1: ผู้ใช้ประกาศ "ได้ใบครบทั้งแถว" (กรอกมือ/ได้รับใบแล้ว) — ตัวเขียนเดียวนอกกล่องรับ
-                if rel == _R243A_WHT:
-                    span = method_body(code, "MarkFullyCertified")
-                    if span is not None and span[0] <= m.start() < span[1]:
-                        continue
+                # ฝ่ายค้าน WP-09 รอบสอง M-B: ทะเบียน "ลด" ยอดที่ได้ใบได้เฉพาะตอนหมดสิทธิ์ที่ไม่ใช่การตัดสูญ (ต้นทางหาย/คืนเงิน) — ไม่มีทางเพิ่มนอกกล่องรับ
+                # (MarkFullyCertified ถูกลบ: H-A/H-B)
+                if rel == _R243A_WHT and any(
+                        (sp := method_body(code, mname)) is not None and sp[0] <= m.start() < sp[1]
+                        for mname in ("UndoWriteOffAsync", "CancelAfterRefundAsync")):
+                    continue
                 line = code.count("\n", 0, m.start()) + 1
                 errs.append(f"{rel}:{line} เขียน ReceivedAmount นอกกล่องรับ — {_R252_WHY}ยอดที่ได้ใบเขียนโดย WhtCertIntakeService เท่านั้น")
     if found != 2:
