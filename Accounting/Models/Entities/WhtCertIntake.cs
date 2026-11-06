@@ -69,6 +69,8 @@ public class WhtCertIntake : TenantEntity
     public Guid? RejectedByUserId { get; set; }
     public DateTime? RejectedAt { get; set; }
     public string? Notes { get; set; }
+    /// <summary>รอบ 253 (WP-10 · N4): เลขอ้างอิงของหลักฐาน e-WHT (ข้อความอิสระที่ผู้ใช้กรอก — ไม่ตีความ · ไม่เสนออัตราใด) · ใบกระดาษ = null</summary>
+    public string? EvidenceReference { get; set; }
 }
 
 /// <summary>รอบ 252 — ใบ 50 ทวิ (<see cref="WhtCertIntake"/>) ↔ แถวเครดิต (<see cref="WhtCreditReceived"/>) · ยอดที่ใบนี้ครอบแถวนั้น ·

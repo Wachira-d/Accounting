@@ -25,6 +25,10 @@
         <!-- รอบ 252 (WP-09): อัปโหลดใบ 50 ทวิ หลายไฟล์ ⇒ OCR ⇒ กล่องรับ (ประตูเดียว WhtCertIntakeService) — กรอกเองยังทำได้ที่ปุ่มถัดไป -->
         <input type="file" id="inboxFiles" accept="image/*,application/pdf" multiple style="display:none" onchange="Page.uploadFiles(this.files)">
         <button class="btn btn-primary" id="inboxUploadBtn" onclick="document.getElementById('inboxFiles').click()">📤 อัปโหลดใบ 50 ทวิ</button>
+        <!-- รอบ 253 (WP-10 · N4): หลักฐาน e-WHT แนบเป็นใบ 50 ทวิ ธรรมดา (ด่านเดียวกัน · ไม่เสนออัตรา 1%) + เลขอ้างอิงเป็นข้อความ -->
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap" title="ลูกค้าหักผ่านระบบ e-Withholding Tax — แนบหลักฐานจากระบบแทนใบ 50 ทวิ กระดาษ (ตรวจเหมือนใบทั่วไป)">
+          <input type="checkbox" id="inboxEwht"> หลักฐาน e-WHT</label>
+        <input type="text" id="inboxEwhtRef" class="form-input" maxlength="100" placeholder="เลขอ้างอิง e-WHT (ถ้ามี)" style="width:170px">
         <button class="btn btn-secondary" onclick="Page.openNew()">+ บันทึกหนังสือรับรอง (กรอกเอง)</button>
       </div>
     </div>
@@ -410,7 +414,7 @@
               <span class="st" style="background:${Layout.esc(stColor)};color:#fff">${Layout.esc(stText)}</span>
               <b>${Layout.esc(i.certificateNumber || '— ไม่มีเลขที่ —')}</b> · ${Layout.esc(i.payerName || '—')} ${Layout.esc(i.payerTaxId || '')}
               · ภาษี <b>${Layout.money(i.whtAmount)}</b>${i.certificateDate ? ' · ' + Layout.date(i.certificateDate) : ''}
-              <div style="font-size:11.5px;color:#475569">${Layout.esc(i.authenticityLabel || '')}${covers ? ' · ครอบ: ' + covers : ''}${i.matchReason ? ' · ' + Layout.esc(i.matchReason) : ''}</div>
+              <div style="font-size:11.5px;color:#475569">${i.evidenceLabel ? '🧾 ' + Layout.esc(i.evidenceLabel) + ' · ' : ''}${Layout.esc(i.authenticityLabel || '')}${covers ? ' · ครอบ: ' + covers : ''}${i.matchReason ? ' · ' + Layout.esc(i.matchReason) : ''}</div>
               ${gates /* html */}
               ${i.rejectedReason ? `<div style="font-size:11.5px;color:#991b1b">เหตุที่ตีกลับ: ${Layout.esc(i.rejectedReason)}</div>` : ''}
             </div>
@@ -436,7 +440,11 @@
             const up = await API.upload(`/api/companies/${cid}/attachments/WhtCredit/00000000-0000-0000-0000-000000000000`, fd);
             const fileId = up?.data?.id;
             if (!fileId) throw new Error('อัปโหลดไฟล์ไม่สำเร็จ');
-            const res = await API.post(`/api/companies/${cid}/wht-certs/inbox`, { fileAttachmentId: fileId, documentId: null });
+            const res = await API.post(`/api/companies/${cid}/wht-certs/inbox`, {
+              fileAttachmentId: fileId, documentId: null,
+              eWithholding: !!document.getElementById('inboxEwht')?.checked,
+              evidenceReference: (document.getElementById('inboxEwhtRef')?.value || '').trim() || null,
+            });
             Layout.toast(`${f.name}: ${res?.message || 'เข้ากล่องรับแล้ว'}`, res?.data?.autoConfirmed ? 'success' : 'info', 9000);
           } catch (e) { Layout.toast(`${f.name}: ${e.message}`, 'error', 12000); }
           done++;
@@ -562,13 +570,28 @@
               · ได้รับใบแล้ว ${m(r.receivedAmount)} · ใช้เครดิตแล้ว ${m(r.claimedAmount)} · ยอดบัญชี 11910 ${m(r.glBalance)}
               ${Math.abs(diff) >= 0.01 ? `<span style="color:#b91c1c">· ทะเบียนต่างจากบัญชี ${m(diff)} — ตรวจรายการ "ปิดยอดแล้วแต่ไม่ได้บันทึกภาษีถูกหัก" ด้านบน</span>` : ''}</div>`
             + (rows.length ? `<div class="table-container" style="overflow-x:auto"><table class="table"><thead><tr><th>ลูกค้า</th><th>เอกสาร</th><th>วันที่ถูกหัก</th>
-                <th class="text-right">ภาษีถูกหัก</th><th class="text-right">ได้รับแล้ว</th><th class="text-right">ขาด</th><th>สถานะ</th></tr></thead><tbody>`
+                <th class="text-right">ภาษีถูกหัก</th><th class="text-right">ได้รับแล้ว</th><th class="text-right">ขาด</th><th>สถานะ</th><th></th></tr></thead><tbody>`
               + rows.map(x => `<tr><td>${Layout.esc(x.payerName || '—')}<div style="font-size:11px;color:#64748b">${Layout.esc(x.payerTaxId || '')}</div></td>
                   <td>${Layout.esc(x.documentNumber || '—')}</td><td>${x.withheldSince ? Layout.date(x.withheldSince) : '—'}</td>
                   <td class="text-right">${m(x.whtAmount)}</td><td class="text-right">${m(x.receivedAmount)}</td><td class="text-right"><b>${m(x.missing)}</b></td>
-                  <td>${Layout.esc(x.label || '')}</td></tr>`).join('')
+                  <td>${Layout.esc(x.label || '')}</td>
+                  <td>${x.documentId || x.payerContactId ? `<button class="btn btn-sm btn-secondary" title="ออกลิงก์ให้ลูกค้าส่งหนังสือรับรองเอง (ไม่ต้องล็อกอิน)"
+                    onclick="Page.issueUploadLink('${Layout.jsArg(x.documentId || '')}','${Layout.jsArg(x.payerContactId || '')}')">🔗 ลิงก์อัปโหลด</button>` : ''}</td></tr>`).join('')
               + '</tbody></table></div>' : '<div style="color:#15803d;font-size:12.5px">ไม่มีรายการที่ยังขาดใบในปีภาษีนี้</div>');
         } catch (e) { box.innerHTML = `<div style="color:#991b1b;font-size:12.5px">โหลดรายงานไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`; }
+      },
+
+      // รอบ 253 (WP-10 · AUTO_SEND §3.2 ข้อ 5): ออกลิงก์อัปโหลด 50 ทวิ ให้ลูกค้า — URL แสดงครั้งเดียว (ฐานเก็บเฉพาะ hash) · สิทธิ์ภาษี (เซิร์ฟเวอร์ตรวจ)
+      async issueUploadLink(documentId, contactId) {
+        try {
+          const res = await API.post(`/api/companies/${Layout.getCompanyId()}/wht-certs/upload-links`,
+            { documentId: documentId || null, contactId: contactId || null });
+          const d = res?.data || {};
+          if (!d.url) { Layout.toast(res?.message || 'สร้าง URL ไม่ได้', 'error', 9000); return; }
+          try { await navigator.clipboard.writeText(d.url); } catch (_) { /* ไม่มีสิทธิ์ clipboard — ผู้ใช้คัดลอกเองจากกล่อง */ }
+          await Layout.promptText({ title: 'ลิงก์อัปโหลดหนังสือรับรอง 50 ทวิ', okText: 'ปิด', cancelText: 'ปิด', value: d.url, label: 'ลิงก์',
+            message: `คัดลอกไว้ให้แล้ว (ถ้าเบราว์เซอร์อนุญาต) — ส่งให้ลูกค้าทาง LINE/อีเมล · ใช้ได้ถึง ${Layout.date(d.expiresAt)} · ระบบไม่แสดงลิงก์นี้ซ้ำ` });
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async exportMissing() {

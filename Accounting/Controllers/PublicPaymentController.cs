@@ -69,7 +69,10 @@ public class PublicPaymentController : ControllerBase
     /// webhook ยังเป็นเส้นหลักอยู่แล้ว — การ poll เป็นตาข่ายรับเมื่อ webhook หาย</para></summary>
     private static readonly TimeSpan MinLiveRefreshInterval = TimeSpan.FromSeconds(5);
 
-    public sealed record StartRequest(PaymentMethodKind Method, string? ReturnUrl = null, string? CardToken = null);
+    /// <param name="NoWithholding">รอบ 253 (WP-10): ลูกค้าเลือก "ไม่หัก ณ ที่จ่าย" (ลิงก์ชำระของเอกสารเท่านั้น) — หน้าเว็บส่งแค่ตัวเลือก ไม่ส่งยอด</param>
+    /// <param name="NoWhtAccepted">ติ๊กยืนยันคำเตือน · <paramref name="NoWhtNoticeVersion"/> = version ของข้อความที่หน้าแสดง · <paramref name="PayerName"/> = ชื่อผู้กด (ไม่บังคับ)</param>
+    public sealed record StartRequest(PaymentMethodKind Method, string? ReturnUrl = null, string? CardToken = null,
+        bool NoWithholding = false, bool NoWhtAccepted = false, string? NoWhtNoticeVersion = null, string? PayerName = null);
 
     /// <summary>ข้อมูลที่หน้าจ่ายเงินต้องใช้ — ไม่มี secret · ไม่มีชื่อเจ้า</summary>
     public sealed record PublicIntentResponse(
@@ -182,9 +185,30 @@ public class PublicPaymentController : ControllerBase
     }
 
     [HttpPost("documents/{token}/intents")]
-    public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StartDocument(
-        Guid companyId, string token, [FromBody] StartRequest req, CancellationToken ct)
-        => StartAsync(companyId, () => ResolveDocumentAsync(companyId, token, ct), req, ct);
+    public async Task<ActionResult<ApiResponse<PublicIntentResponse>>> StartDocument(
+        Guid companyId, string token, [FromBody] StartRequest req, [FromServices] Accounting.Services.Interfaces.IChatRateLimiter limiter,
+        CancellationToken ct)
+    {
+        if (!req.NoWithholding)
+            return await StartAsync(companyId, () => ResolveDocumentAsync(companyId, token, ct), req, ct);
+
+        // รอบ 253 (WP-10 · คำตัดสินเจ้าของ §11 ข้อ 3): "ไม่หัก ณ ที่จ่าย" — อ่าน/บันทึกการยอมรับ (NoWhtAcceptance) ก่อนสร้างรายการ ·
+        // ยอด = Gross จากตัวคิดยอดเดิมของลิงก์ (AmountsFor ผ่าน PublicViewAsync — เซิร์ฟเวอร์คำนวณ หน้าแสดงอย่างเดียว) · จำกัดความถี่ต่อ IP (กันแถวหลักฐานบวม)
+        if (_docLinks == null)
+            return NotFound(new ApiResponse<PublicIntentResponse>(false, null, "ไม่พบรายการ"));
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        if (!await limiter.TryConsumeAsync($"public-pay-nowht:{ip ?? "unknown"}", 6, 60, ct, failClosed: true))
+            return StatusCode(429, new ApiResponse<PublicIntentResponse>(false, null, "ทำรายการถี่เกินไป — รอสักครู่แล้วลองใหม่"));
+        var accepted = await _docLinks.AcceptNoWhtAsync(companyId, token,
+            new Accounting.Services.Interfaces.NoWhtAcceptRequest(req.NoWhtAccepted, req.NoWhtNoticeVersion, req.PayerName, ip), ct);
+        if (accepted.Target == null)
+            return NotFound(new ApiResponse<PublicIntentResponse>(false, null, "ไม่พบรายการ"));
+        if (accepted.Refusal != null || accepted.AcceptanceId is not Guid acceptanceId)
+            return BadRequest(new ApiResponse<PublicIntentResponse>(false, null, accepted.Refusal ?? "บันทึกการยืนยันไม่สำเร็จ — ลองใหม่อีกครั้ง"));
+        var target = accepted.Target;
+        return await StartAsync(companyId, () => Task.FromResult<PublicPayTarget?>(target), req, ct,
+            afterStart: intent => _docLinks!.LinkNoWhtIntentAsync(companyId, acceptanceId, intent.Id, ct));
+    }
 
     [HttpGet("documents/{token}/intents/{intentId:guid}")]
     public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StatusDocument(
@@ -195,9 +219,10 @@ public class PublicPaymentController : ControllerBase
 
     /// <param name="holdForPayment">ต้นทางที่ต้อง "กันของไว้ระหว่างจ่าย" (การจองที่พัก) — เรียกก่อนสร้างรายการ (วันหมดอายุ null) และหลังสร้าง
     /// (วันหมดอายุของรายการ) · โยน <see cref="BusinessRuleException"/> = ปฏิเสธพร้อมข้อความ (ก่อนแขกจ่าย)</param>
+    /// <param name="afterStart">รอบ 253 (WP-10): หลังได้รายการชำระ (ผูกหลักฐานการยอมรับ "ไม่หัก" กับรายการ) — ไม่มี = เส้นเดิม</param>
     private async Task<ActionResult<ApiResponse<PublicIntentResponse>>> StartAsync(
         Guid companyId, Func<Task<PublicPayTarget?>> resolve, StartRequest req, CancellationToken ct,
-        Func<PublicPayTarget, DateTime?, Task>? holdForPayment = null)
+        Func<PublicPayTarget, DateTime?, Task>? holdForPayment = null, Func<PaymentIntent, Task>? afterStart = null)
     {
         if (req.Method == PaymentMethodKind.ManualSlip)
             return BadRequest(new ApiResponse<PublicIntentResponse>(false, null,
@@ -238,6 +263,7 @@ public class PublicPaymentController : ControllerBase
                 ReturnUrl: req.ReturnUrl, CardToken: req.CardToken,
                 SiteId: target.SiteId == Guid.Empty ? null : target.SiteId, ContactId: target.ContactId), ct: ct);
             if (holdForPayment != null) await holdForPayment(target, intent.QrExpiresAt);
+            if (afterStart != null) await afterStart(intent);
 
             return Ok(new ApiResponse<PublicIntentResponse>(true,
                 Map(intent, await IsTestModeAsync(intent, ct))));

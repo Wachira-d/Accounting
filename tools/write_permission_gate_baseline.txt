@@ -512,6 +512,7 @@ Accounting/Controllers/WarehouseController.cs	SetDefault	1
 Accounting/Controllers/WarehouseController.cs	Ship	1
 Accounting/Controllers/WarehouseController.cs	Update	1
 Accounting/Controllers/WarehouseController.cs	VoidTransfer	1
+Accounting/Controllers/WhtCertPublicController.cs	Upload	1
 Accounting/Controllers/WhtCreditController.cs	Create	1
 Accounting/Controllers/WhtCreditController.cs	Delete	1
 Accounting/Controllers/WhtCreditController.cs	Update	1

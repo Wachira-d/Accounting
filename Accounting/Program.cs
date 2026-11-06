@@ -340,6 +340,10 @@ builder.Services.AddScoped<ITaxService, TaxService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.WhtCreditService>();
 // รอบ 252 (WP-09): กล่องรับ 50 ทวิ ขาเข้า — ประตูเดียวของทุกช่องทาง (นักเรียน WhtCertAuthenticity ลงทะเบียนผ่าน DistillationModelRegistry)
 builder.Services.AddScoped<Accounting.Services.Interfaces.IWhtCertIntakeService, Accounting.Services.Implementations.WhtCertIntakeService>();
+// รอบ 253 (WP-10): ลิงก์อัปโหลด 50 ทวิ (ไม่ต้องล็อกอิน) · บล็อกลิงก์ในอีเมลใบเสร็จ · ทวง 50 ทวิ อัตโนมัติ (งานใต้ JobLock) — ไม่มีจุดเรียก AI ใหม่ (ไฟล์เข้าประตูเดียวที่มีนักเรียนแล้ว)
+builder.Services.AddScoped<Accounting.Services.Interfaces.IWhtCertUploadLinkService, Accounting.Services.Implementations.WhtCertUploadLinkService>();
+builder.Services.AddScoped<Accounting.Services.Interfaces.IReceiptEmailSectionProvider, Accounting.Services.Implementations.WhtCertUploadEmailSection>();
+builder.Services.AddScoped<Accounting.Services.Implementations.WhtCertReminderService>();
 // รอบ 234 (คำตัดสิน 234-W*): ติดตาม 50 ทวิ ที่ผู้เช่าส่งให้ NextAcc — ผูกเข้าทะเบียนภาษีถูกหักของบริษัทผู้ให้บริการ (ทะเบียนเดียว)
 builder.Services.AddScoped<Accounting.Services.Platform.PlatformWhtCertificateService>();
 builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
@@ -833,6 +837,7 @@ builder.Services.AddScoped<Accounting.Services.Background.DeferredNotifyDispatch
 builder.Services.AddHostedService<Accounting.Services.Background.DeferredNotifyDispatchJob>();   // รอบ 217 — เดินคิว DeferredNotifications ทุก 10 วิ (JobLock · lease)
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.WhtCertReminderJob>();   // รอบ 253 (WP-10) — ทวง 50 ทวิ 7/21/45 + รายเดือน (JobLock · watermark ต่อบริษัท)
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.CourseCreditExpiryJob>();   // ทีม L — ปิดบัตรคอร์สหมดอายุ (breakage)

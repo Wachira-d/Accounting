@@ -15,9 +15,16 @@ public interface IWhtCertIntakeService
     /// <summary>ไฟล์นี้ (SHA-256) เคยเข้ากล่องรับของบริษัทนี้แล้วไหม — คืนผลแบบ Duplicate · null = ยังไม่เคย (ผู้เรียกสแกนต่อได้)</summary>
     Task<WhtCertSubmitResult?> FindDuplicateFileAsync(Guid companyId, Guid fileAttachmentId, CancellationToken ct = default);
 
-    /// <summary>อ่านผลสแกน (OCR pipeline เดิม — มี distillation แล้ว) แล้วเข้า <see cref="SubmitAsync"/></summary>
+    /// <summary>รอบ 253 (WP-10): ไฟล์ที่ยังไม่ได้เก็บ (ลิงก์อัปโหลดสาธารณะ) — SHA-256 hex เคยเข้ากล่องรับของบริษัทนี้แล้วไหม (ตัวกันซ้ำเดียวกับ <see cref="SubmitAsync"/>) ·
+    /// null = ยังไม่เคย · ใช้ก่อนเก็บไฟล์/สแกน (ไม่เสียโควตา OCR และไม่เก็บไฟล์ซ้ำของลูกค้า)</summary>
+    Task<WhtCertSubmitResult?> FindDuplicateShaAsync(Guid companyId, string sha256, CancellationToken ct = default);
+
+    /// <summary>อ่านผลสแกน (OCR pipeline เดิม — มี distillation แล้ว) แล้วเข้า <see cref="SubmitAsync"/> ·
+    /// รอบ 253 (WP-10 · N4): <paramref name="evidenceKind"/> = EWithholding เมื่อผู้ใช้บอกว่าเป็นหลักฐาน e-WHT (แนบเป็นใบ 50 ทวิ ธรรมดา — ด่าน/การจับคู่เดียวกันทุกข้อ ·
+    /// ไม่เสนออัตรา 1%) · <paramref name="evidenceReference"/> = เลขอ้างอิง e-WHT (ข้อความอิสระ)</summary>
     Task<WhtCertSubmitResult> SubmitFromScanAsync(Guid companyId, Guid scanResultId, WhtCertIntakeChannel channel,
-        IReadOnlyList<Guid>? documentHints, string submittedBy, Guid? submittedByUserId, CancellationToken ct = default);
+        IReadOnlyList<Guid>? documentHints, string submittedBy, Guid? submittedByUserId, CancellationToken ct = default,
+        WhtEvidenceKind evidenceKind = WhtEvidenceKind.PaperCertificate, string? evidenceReference = null, string? fileSha256 = null);
 
     /// <param name="status">ชื่อ <see cref="WhtCertIntakeRecordStatus"/> · ว่าง = รอยืนยันก่อน แล้วตามด้วยอื่น ๆ</param>
     Task<List<WhtCertIntakeDto>> ListInboxAsync(Guid companyId, string? status, CancellationToken ct = default);

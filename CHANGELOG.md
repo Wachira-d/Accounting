@@ -6824,3 +6824,11 @@ _รอบ 254 WP-11 L4 ส่วน OA กลาง (N8 · DECISIONS 254-WP11-1
 (`NextAccOaUsageCounters` · นับที่ `CustomerLineLinkService.ReplyAsync`) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% ครั้งเดียวต่องวด · ไม่ตัดโควตาผู้เช่า · สวิตช์ `CentralOaGroupDeliveryEnabled`
 เลื่อนไปทำพร้อมเส้นกลุ่มผ่าน OA กลาง (สวิตช์ที่ไม่มีผู้อ่าน = ค่าตั้งไม่มีผล). ยังไม่ได้คอมไพล์ในเครื่องนี้_
 
+
+_Last verified against codebase: 2026-11-06 (รอบ 253 WP-10 — 50 ทวิ ขาเข้า ต่อจาก WP-09 (DOCUMENT_FLOW §2.12l): ลิงก์อัปโหลดสาธารณะ
+`/wht-upload.html` + `WhtCertPublicController` (token hash · เทียบเวลาคงที่ · rate limit ต่อ IP/token แบบ DB failClosed · ไบต์ตัดสิน PDF/JPG/PNG ≤ 10 MB ·
+PDF มีสคริปต์/ไฟล์ฝัง = ปฏิเสธ · ไฟล์ซ้ำไม่เก็บ/ไม่สแกน · เข้าประตูเดียว Channel UploadLink · OCR ล้ม = เข้ากล่องรับแบบรอตรวจ) · ลิงก์ในอีเมลใบเสร็จ
+(`IReceiptEmailSectionProvider`) + ปุ่ม 🔗 ในรายงาน "ยังขาด" · ทวงอัตโนมัติ `WhtCertReminderJob` (JobLock · watermark ต่อบริษัท · 7/21/45 + รายเดือน ≤ 6 ·
+ตาข่าย ≤ 6/30 วัน · ตัวหาผู้รับเดียว · ไม่ส่งอัตโนมัติ/ไม่รับเรื่อง = แถวข้ามพร้อมเหตุ · คิวอีเมลเดิม + โควตา · ตรวจซ้ำและออกลิงก์ตอนส่ง · ค่าตั้งต้นปิด) ·
+"ไม่หัก ณ ที่จ่าย" บน pay-document (คำเตือน + บันทึกการยอมรับ `NoWhtAcceptances` + audit · ยอด Gross จาก AmountsFor · handler WHT 0 / ล้มดังเมื่อเกินยอดค้าง) ·
+e-WHT แนบเป็นใบ 50 ทวิ ธรรมดา + เลขอ้างอิง (ไม่เสนอ 1%) · คำตัดสิน 253-WP10-1…7 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_

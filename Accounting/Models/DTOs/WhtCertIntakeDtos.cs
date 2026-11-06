@@ -33,7 +33,8 @@ public sealed record WhtCertSubmission(
     string SubmittedBy,
     Guid? SubmittedByUserId,
     string? Notes = null,
-    bool AmountNeedsReview = false);
+    bool AmountNeedsReview = false,
+    string? EvidenceReference = null);
 
 /// <param name="Status">ชื่อ <see cref="WhtCertIntakeRecordStatus"/></param>
 /// <param name="Duplicate">ไฟล์/ใบนี้เคยส่งแล้ว — คืนแถวเดิม (idempotent ไม่สร้างแถวใหม่)</param>
@@ -54,7 +55,9 @@ public sealed record WhtCertIntakeDto(
     string? AuthenticityAnswer, decimal? AuthenticityConfidence, bool AuthenticityUsedAi, string AuthenticityLabel,
     bool AutoConfirmed, string? SubmittedByName, DateTime CreatedAt, DateTime? ConfirmedAt,
     string? RejectedReason, DateTime? RejectedAt,
-    IReadOnlyList<WhtCertAllocationDto> Allocations);
+    IReadOnlyList<WhtCertAllocationDto> Allocations,
+    string? EvidenceReference = null,
+    string? EvidenceLabel = null);
 
 /// <summary>แถวเครดิตที่ใบนี้ครอบได้ (ตัวเลือกบนฟอร์มยืนยัน) — Pending ของผู้จ่ายรายนี้ (ไม่รู้ผู้จ่าย ⇒ ทุกราย)</summary>
 public sealed record WhtCertCandidateDto(Guid WhtCreditId, Guid? DocumentId, string? DocumentNumber, DateTime? DocumentDate,
@@ -91,7 +94,8 @@ public sealed record WhtCertTrackingItemDto(Guid WhtCreditId, Guid? DocumentId, 
 public sealed record WhtCertMissingRowDto(
     Guid WhtCreditId, string PayerName, string? PayerTaxId, Guid? DocumentId, string? DocumentNumber,
     DateTime? WithheldSince, decimal IncomeAmount, decimal WhtAmount, decimal ReceivedAmount, decimal Missing,
-    string State, string Label, int? DaysWaiting, bool IsOverdue, string? LastChannel);
+    string State, string Label, int? DaysWaiting, bool IsOverdue, string? LastChannel,
+    Guid? PayerContactId = null);
 
 /// <summary>รายงานปลายปี + ตัวเลขกระทบ GL 11910 (ขาด + ได้รับยังไม่ใช้ + ใช้แล้ว = ยอด 11910 ของรอบ)</summary>
 public sealed record WhtCertMissingReportDto(int TaxYear, int MissingCount, decimal MissingAmount, decimal ReceivedAmount,
