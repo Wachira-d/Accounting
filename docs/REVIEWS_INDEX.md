@@ -254,3 +254,49 @@ recurring · payroll · integration · course credit · ที่พัก) ห�
 (**V-DN-01** ใบเพิ่มหนี้ของใบที่ชำระครบลง Dr เงินสดตอนอนุมัติแล้วซ้ำตอนรับชำระ · **V-CN-03** ขาเงิน CN/DN ลง "111" ตายตัว) ·
 ⚠ 5 · ❓ 2 (V-PAY-05 ย้าย 21913 ทั้งก้อนเมื่อรับบางส่วน · V-CN-04 CN ของใบชำระครบ = คืนเงินทันทีเสมอ) · §3 SQL ตรวจข้อมูลเก่า (อ่านอย่างเดียว) ·
 ตัวตัดสินใหม่ `AdjustmentNoteAccount.CounterLegIsMoney` · เทสต์ `JePostingAuditTests` · ยังไม่ผ่านฝ่ายค้าน
+
+## 🗂 erp-review 2026-10-01 … 2026-11-06 — ดัชนีรายไฟล์ (เติมรอบ 250 WP-05 · 1 บรรทัด/ไฟล์ = ใช้ตัดสินเรื่องอะไร)
+
+> ปิดแถวใดให้ติ๊ก `✅ <sha>` ในไฟล์ต้นทาง ไม่ลบแถว · ไฟล์ "สถานะปัจจุบัน" ยังเป็น DOCUMENT_FLOW / ACCOUNT_STRUCTURE / TEST_PLAN — ไฟล์ข้างล่างคือหลักฐาน ณ วันที่ตรวจ
+
+**2026-10-01 (รอบ 201 · 8 ทีมขนาน)** — `BRIEF.md` ขอบเขต/ทีม · `BACKLOG.md` ทะเบียนงานค้างหลังรอบ 200 · `team-AI.md` AI/ธนาคาร (+ แก้ผลฝ่ายค้าน X-1..X-10) ·
+`team-DV.md` ยกเลิก/ใบแทน/e-Tax · `team-GW.md` gateway/integration (GWO-1..7) · `team-IN.md` สต็อก/สินทรัพย์/ค่าตั้ง/ที่พัก (ตาข่าย C-5) ·
+`team-OC.md` OCR · `team-PL.md` platform/audit hash chain/advisory lock · `team-PR2.md` เงินเดือน (ฝ่ายค้านรอบสอง) · `team-ST.md` settlement · `team-TX.md` ภาษี/ด่านอนุมัติ/มัดจำ
+**2026-10-02 (รอบ 202)** — `LODGING_REVIEW.md` ที่พัก 3 ทีม (คำตัดสิน 116–127) · `PP36_REVIEW.md` ภ.พ.36 บริการต่างประเทศ §83/6 (ฐานรวมภาษีที่ออกแทน — คำตัดสินข้อ 40)
+**2026-10-16** — `UNIT_TEST_TRIAGE.md` เทสต์ที่เน่าเพราะไม่มีด่านรัน (ต้นเรื่องของ WP-01 รอบ 250)
+**2026-10-29 (รอบ 209 · CMS จำลองธุรกิจจริง)** — `README.md` ภาพรวม · `PLAN.md` แผนจากทีม A–E · `BUSINESS_SIMULATIONS.md` 5 ธุรกิจเดินจากโค้ด · `MTO_ORDER_REVIEW.md` สินค้าตามสั่ง ·
+`SHIPPING_REVIEW.md` จัดส่ง/รับเอง · `CLASS_BOOKING_REVIEW.md` จองคลาส · `SETTINGS_INTEGRATION_MAP.md` แผนที่ค่าตั้ง CMS ↔ ERP
+**2026-10-30 (รอบ 211–219)** — `BOOKING_PAYMENT_DESIGN.md` รับชำระล่วงหน้าการจอง · `CMS_UX_REDESIGN.md` พื้นที่ทำงานรายเว็บ (รอบ 215) · `LINE_CUSTOMER_NOTIFY_DESIGN.md` แจ้งลูกค้าปลายทางทาง LINE (ข้อ 170) ·
+`NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` ค่าตั้งแจ้งเตือน/โควตาช่องกลาง · `PLATFORM_BILLING_AUDIT.md` เงินผู้เช่าเข้า NextAcc (G-16 ปิดโดยรอบ 231) · `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` Omise ของ NextAcc + นโยบายคืนเงิน · `mockups/`
+- `erp-review/2026-11-01/BOOKING_PAYMENT_AUDIT.md` — มัดจำการจองทุกค่าตั้ง × ทุกช่องทาง (ค่าส่ง POS ปิดแล้ว — ติ๊กรอบ 250)
+- `erp-review/2026-11-01/PETTY_CASH_AUDIT.md` — เงินสดย่อยเปิด→ปิดกองทุน (รอบ 221–228)
+- `erp-review/2026-11-01/TAX_PENALTY_AUDIT.md` — เงินเพิ่ม/เบี้ยปรับ/ค่าปรับ (ค่า "เสนอ" + tooltip — N5)
+- `erp-review/2026-11-02/CMS_SETTINGS_UX_AUDIT.md` — UX ตั้งค่า CMS ทั้งหมด (รอบ 230 wizard)
+- `erp-review/2026-11-02/FILE_STORAGE_AUDIT.md` — ที่เก็บไฟล์กลาง Local/S3 · ผู้เขียน/ผู้อ่านไฟล์ (DataProtection อยู่ DB แล้ว — ติ๊กรอบ 250)
+- `erp-review/2026-11-02/PLATFORM_OMISE_AUDIT.md` — Omise ฝั่งแอดมินแพลตฟอร์ม เงิน→เอกสาร→บัญชี (รอบ 227)
+- `erp-review/2026-11-02/QUOTA_ADDON_SUBSCRIPTION_AUDIT.md` — โควตา · ส่วนเสริม · ต่ออายุ
+- `erp-review/2026-11-03/LICENSE_CASE_MATRIX.md` — ทุกเคสแพ็กเกจ/License + สิ่งที่ลูกค้าได้
+- `erp-review/2026-11-03/LICENSE_USAGE_OVERAGE_AUDIT.md` — ส่วนเกินโควตา · ราคาพิเศษ · ชนิดบัญชี (รอบ 231 — บรรทัดสถานะ ⏳ แก้เป็น ✅ รอบ 250)
+- `erp-review/2026-11-03/OMISE_READINESS.md` — ความพร้อมส่ง Omise ตรวจ + รายการ go-live 10 ข้อ (N11) · webhook ขาออกไม่ใช้ proxy (Y8)
+- `erp-review/2026-11-03/legal-en/` — ร่างคำแปลนโยบาย 6 ฉบับ (ประวัติ — ตัวจริง `LegalDocumentDefaults.En.cs`)
+- `erp-review/2026-11-06/ASSET_MULTI_DOCUMENT_DESIGN.md` — สินทรัพย์ 1 ชิ้น ↔ หลายใบ (รอบ 249 · Q1–Q5 → คำตัดสิน 250-24…27)
+- `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` — รายการประจำ→ส่ง→รับเงิน→ออกใบ→คู่ค้า (รอบ 248–254 · คู่ค้าข้ามผู้เช่า §6 = ตัวตั้ง)
+- `erp-review/2026-11-06/AUTO_SEND_WHT_DESIGN.md` — ส่งเอกสารอัตโนมัติ + รับ 50 ทวิ เข้า (คำตัดสินเจ้าของ §11 → DECISIONS 243-AS · §1.1/G-8 ชี้ `TradingPartnership` รอบ 250)
+- `erp-review/2026-11-06/ETAX_BY_EMAIL_AUDIT.md` — e-Tax by Email (รอบ 244 · รหัสหัวเรื่อง — N1)
+- `erp-review/2026-11-06/EWHT_EVIDENCE_RESEARCH.md` — หลักฐาน e-WHT (N4 — แนบเป็น 50 ทวิ ธรรมดา · ไม่เสนอ 1%)
+- `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` — ส่งเอกสาร/แจ้งเตือนหลายช่องทาง L1–L6 (§10 คำตอบเจ้าของ)
+- `erp-review/2026-11-06/LINE_OA_TERMS_CHECK.md` — ข้อกำหนด LINE OA ส่งในนามผู้เช่า (C1–C10 · C9 อยู่ในร่างข้อกำหนด Y6 แล้ว)
+- `erp-review/2026-11-06/NOTIFY_PRICING_ANALYSIS.md` — ราคา/โควตาข้อความ LINE-อีเมล (N7 · N9)
+- `erp-review/2026-11-06/RETENTION_LAW_CHECK.md` — เลขมาตรา พ.ร.บ.การบัญชี (ม.14 เก็บ · ม.10 รอบบัญชี · ม.19 ผู้ทำบัญชี · ETA ม.12) — ลงมือรอบ 250 WP-06
+- `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` — **ใบสั่งงานรวมรอบ 250** (WP-01…13 · คำตัดสิน §2 41 ข้อ + §3.3 19 ข้อ → DECISIONS 250-*)
+- `erp-review/2026-11-06/AUDIT_249_COVERAGE.md` — ตรวจความครอบคลุมใบสั่งงาน (~93% · ดึงบั๊กคู่ค้า P-1/2/3/6 เข้า WP-02b)
+- `erp-review/2026-11-06/audit-249/A_BACKLOG_DECISIONS.md` — งานค้าง/คำตัดสินค้าง 233–249 (95 แถว)
+- `erp-review/2026-11-06/audit-249/B_E2E_BILLING_PROCESS.md` — กระบวนการรายการประจำต้นจนจบ (F-1…F-9)
+- `erp-review/2026-11-06/audit-249/C_TAX_MONEY_CORRECTNESS.md` — เงิน/ภาษีรอบ 241–249 (F1…F9 · ลงบัญชีผิดเงียบ = 0)
+- `erp-review/2026-11-06/audit-249/D_UX_UI.md` — UX/UI 71 ข้อ + 13 รูปแบบ (ร้ายแรง 10 ข้อ → WP-03)
+- `erp-review/2026-11-06/audit-249/E_QUALITY_TESTS_DOCS.md` — CI/เทสต์/เอกสาร (H-1 เทสต์ pure ไม่เคยรัน · M-1…M-6)
+
+**`docs/BACKLOG_REGISTER_2026-10-26.md` — 24 แถวยังไม่มี ✅ (ตรวจกับโค้ด 2026-11-06 รอบ 250):** ไม่มีแถวใดปิดในโค้ดแล้วโดยไม่ได้ติ๊ก ·
+**R-21** (JE ขา 2191x ใบต่างสกุล `PerLineWht` vs `ToBaht`) ยังเปิดจริง — W7 วิเคราะห์ไม่ merge (`0a74e86b`) · **R-37** golden/replay harness รอผล job เทสต์ pure ที่เปิดใน WP-01 (`010f39b0`) ·
+**R-22 · R-28 · R-29 · R-30 · R-35 · R-36 · R-42 · R-48** (+ R-52 OCR สลิป · R-13 · R-16 บางส่วน) = **ตั้งใจไม่ทำ/รอข้อมูลภายนอก** ตามตาราง §ไม่ทำ ของไฟล์นั้น ·
+**R-66 + M-01…M-14** = ชุดทดสอบด้วยมือ (ต้องคนกด — agent ปิดเองไม่ได้)

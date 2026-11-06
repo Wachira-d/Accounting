@@ -50,14 +50,14 @@ public interface IPdpaService
     /// <summary>DSR ม.31 — สิทธิแก้ไข: apply rectification ตาม field map ที่ DPO
     /// อนุมัติ. update User/Contact + log audit. NOTE: financial records
     /// (Document/JournalEntry) ห้ามแก้ — ม.32 ระบุข้อมูลที่ต้องรักษาตามกฎหมายอื่น
-    /// (พ.ร.บ.บัญชี ม.10 ต้องเก็บ 5 ปี) ไม่อยู่ในขอบเขต rectification</summary>
+    /// (พ.ร.บ.บัญชี ม.14 ต้องเก็บ 5 ปี) ไม่อยู่ในขอบเขต rectification</summary>
     Task<int> ApplyRectificationAsync(Guid companyId,
         Guid? userId, Guid? contactId, IReadOnlyDictionary<string, string?> fieldUpdates,
         CancellationToken ct = default);
 
     /// <summary>DSR ม.33 — สิทธิลบ: cascade anonymize ทุก field ที่ identifies
     /// subject. เก็บ row ไว้แต่ replace ค่าด้วย hash/anonymous. รักษา legal_hold:
-    /// ข้อมูลในงวดที่ยังต้อง retain ตาม พ.ร.บ.บัญชี ม.10 (5 ปี) จะคงเลขผู้เสียภาษี
+    /// ข้อมูลในงวดที่ยังต้อง retain ตาม พ.ร.บ.บัญชี ม.14 (5 ปี) จะคงเลขผู้เสียภาษี
     /// + จำนวนเงิน + ลบชื่อ/ที่อยู่/อีเมล/โทรศัพท์</summary>
     Task<int> ApplyErasureAsync(Guid companyId, Guid? userId, Guid? contactId,
         string actor, CancellationToken ct = default);
@@ -908,7 +908,7 @@ public partial class PdpaService : IPdpaService
             }
 
             // ── รอบ 239 ฝ่ายค้าน N: หลักฐานการยอมรับใบเสนอราคา/เซ็นรับสินค้าออนไลน์ของคู่ค้ารายนี้ (ม.33) ──
-            // ใบที่ยังอยู่ในอายุเก็บ (QuotationAcceptance.UnderLegalHold = MAX(RetentionUntil, วันที่เอกสาร + 5 ปี) · พ.ร.บ.การบัญชี ม.10 ·
+            // ใบที่ยังอยู่ในอายุเก็บ (QuotationAcceptance.UnderLegalHold = MAX(RetentionUntil, วันที่เอกสาร + 5 ปี) · พ.ร.บ.การบัญชี ม.14 ·
             // ป.รัษฎากร §87/3 · หลักฐานสัญญา) ⇒ legal hold คงไว้ · พ้นอายุแล้ว ⇒ ล้างชื่อ/หมายเหตุ/IP/รูปลายเซ็น (ErasePii ตัวเดียว)
             var signedDocs = await _db.Documents
                 .Where(d => d.CompanyId == companyId && d.ContactId == contactId.Value
@@ -932,7 +932,7 @@ public partial class PdpaService : IPdpaService
             // ช่องที่แยกไว้แล้วอีกสิบกว่าช่อง (ผลตรวจ 2026-09-06 · T5)
             //
             // ★ ใช้กติกา legal hold **ชุดเดียวกับ Contact** ข้างบน: สแกนของ
-            //   เอกสารที่ยังอยู่ในงวดเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.10 · §87/3)
+            //   เอกสารที่ยังอยู่ในงวดเก็บ 5 ปี (พ.ร.บ.การบัญชี ม.14 · §87/3)
             //   ต้องคงไว้ — MAX(retention) ชนะสิทธิขอลบตามที่ CLAUDE.md กฎ M ระบุ
             //   ส่วนสแกนที่พ้นงวดแล้วล้างช่องข้อมูลส่วนบุคคลทิ้งได้จริง
             var scanCutoff = DateTime.UtcNow.AddYears(-5);

@@ -721,7 +721,7 @@ PortalLoginToken (ใหม่) TokenHash, ContactId, Email, ExpiresAt, UsedAt  
 
 ## 12. แผนลงมือ (รอบ 248+) — เรียงตามคุณค่าถึงเจ้าของเร็วสุด
 
-> พึ่งพา: L2/L4 (LINE) แตะเส้นส่งชุดเดียวกัน — รอบ 248–249 ใช้ "อีเมลผ่าน Resolver" ก่อน (L1 ต่อสายในรอบ 249) · กล่องรับ 50 ทวิ = AUTO_SEND เฟส 244 (**ยังไม่มีในโค้ด**) ต้องเสร็จก่อนรอบ 253
+> พึ่งพา: L2/L4 (LINE) แตะเส้นส่งชุดเดียวกัน — รอบ 248–249 ใช้ "อีเมลผ่าน Resolver" ก่อน (~~L1 ต่อสายในรอบ 249~~ **ยังไม่ต่อ** — ตรวจรอบ 250: คิวอีเมลเอกสารยังอ่าน `Contact.Email` ไม่อ่าน `ContactRecipientResolver` ⇒ งาน WP-08) · กล่องรับ 50 ทวิ = AUTO_SEND เฟส 244 (**ยังไม่มีในโค้ด**) ต้องเสร็จก่อนรอบ 253
 
 ### รอบ 248 — รายการประจำ Autopilot (ไม่มีคู่ค้า · ไม่มีธนาคาร)
 งาน: wizard 8 ขั้น (`recurring.html` แยกเป็นส่วน · หลายบรรทัด) · คอลัมน์ RecurringTransaction §11.1 · `AutopilotSettingsResolver` (รายการ › ผู้ติดต่อ › บริษัท) ต่อเข้า `EnsureLinkAsync`/`PostPaymentAutomationService.SettingsForAsync`/`OnRecurringDocumentCreatedAsync` · `AutopilotReadiness` + แผง · dry-run · `ApprovalAcknowledgement.UnattendedWithPolicy` + `[AR-OVERDUE]` · `Contact.PaymentMode/PayLinkChannelsJson`

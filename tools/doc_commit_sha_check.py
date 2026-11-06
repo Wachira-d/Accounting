@@ -52,6 +52,9 @@ def main():
             continue
         for no, line in enumerate(lines, 1):
             for sha in PATTERN.findall(line):
+                # รอบ 250 WP-05: เลขผู้เสียภาษี 13 หลัก ("✅ `0105556000249`" ในตารางเทสต์) ไม่ใช่ sha — ตัวเลขล้วน 13 หลักข้าม
+                if sha.isdigit() and len(sha) == 13:
+                    continue
                 if sha not in cache:
                     exists = git('cat-file', '-t', sha).stdout.strip() == 'commit'
                     on_branch = exists and git(

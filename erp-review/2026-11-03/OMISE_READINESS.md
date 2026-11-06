@@ -53,6 +53,8 @@
 
 ## 3. สิ่งที่เจ้าของต้องทำเอง (ตามลำดับ)
 
+> **deploy note (รอบ 250 WP-05 · คำตัดสิน Y8):** webhook/callback **ขาออก**ของระบบ (`OutboundUrlGuard.CreatePublicOnlyHandler` — `Helpers/OutboundUrlGuard.cs:105` `UseProxy = false`) **ไม่ใช้ proxy ระบบ** — โฮสต์โปรดักชันต้องมี egress ตรง (resolve + pin IP กัน SSRF ทำในตัว) · ถ้าโฮสต์บังคับผ่าน proxy = งานใหม่ (resolve+pin ผ่าน proxy) — ไม่ใช่การตั้งค่า
+
 1. **ตั้ง "URL ของระบบ"** (`/admin/site-settings.html` แท็บทั่วไป → `AppBaseUrl` = `https://<โดเมนจริง>`) — URL ที่ส่งให้ Omise · ลิงก์ในอีเมลยืนยัน · `returnUrl` หลัง 3-D Secure · webhook (รอบ 232 B2) ใช้ค่านี้ทั้งหมด
 2. **ตั้งช่องทาง Omise ของแพลตฟอร์ม** (`/admin/platform-gateway.html`) ด้วยคีย์ **test** ก่อน · เปิดวิธี Card + PromptPay · ตรวจว่า `GET /api/public/checkout/catalog` ตอบ `isTestMode=true` + `methodOptions` มี 2 วิธี
 3. **เปิดสวิตช์** "หน้าซื้อแพ็กเกจสาธารณะ" (การ์ดใหม่ใน site-settings แท็บบริการ) — การ์ดแสดง URL สองอันที่จะส่งให้ Omise + ป้ายโหมด

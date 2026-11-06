@@ -7408,10 +7408,10 @@ public partial class DocumentService : IDocumentService
                 if (doc.VatAmount != 0)
                     doc.TaxPointDate = TaxPointResolver.Resolve(doc, TaxPointResolver.KindForApproval(doc));
 
-                // ===== Retention §87/3 + พ.ร.บ.บัญชี ม.10 — เก็บ 5 ปี =====
+                // ===== Retention §87/3 + พ.ร.บ.บัญชี ม.14 — เก็บ 5 ปี =====
                 //
                 // นับจาก **วันสิ้นรอบบัญชี**ที่เอกสารอยู่ ไม่ใช่วันที่เอกสาร
-                // (ผลตรวจ C-T11): §87/3 นับจากวันยื่นแบบ · ม.10 นับจากวันสิ้นรอบ
+                // (ผลตรวจ C-T11): §87/3 นับจากวันยื่นแบบ · พ.ร.บ.การบัญชี ม.14 นับจากวันสิ้นรอบ
                 // ⇒ ใบลงวันที่ 5 ม.ค. ของรอบ ม.ค.–ธ.ค. ต้องเก็บถึงสิ้นปีที่ 5
                 // **นับจาก 31 ธ.ค.** ไม่ใช่จาก 5 ม.ค. — สูตรเดิมสั้นไปเกือบ 12 เดือน
                 // และถ้ารอบบัญชีไม่ตรงปีปฏิทินจะสั้นได้ถึง ~14 เดือน
@@ -10934,7 +10934,7 @@ public partial class DocumentService : IDocumentService
     public async Task<Accounting.Helpers.DocumentPurgeVerdict> PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId,
         bool forceOverrideRetention, string? overrideReason, bool cascadeDescendants, string? expectedPlanToken = null)
     {
-        // Legal hold §87/3 + พ.ร.บ.บัญชี ม.10 (รอบ 200 B-06: วันเก็บที่มีผลคำนวณใน BuildPurgePlanAsync — DocumentRetention.EffectiveUntil) ·
+        // Legal hold §87/3 + พ.ร.บ.บัญชี ม.14 (รอบ 200 B-06: วันเก็บที่มีผลคำนวณใน BuildPurgePlanAsync — DocumentRetention.EffectiveUntil) ·
         // ด่านทั้งหมดอยู่ในตัวตัดสินเดียว — ไม่ผ่าน = ไม่แตะอะไรเลย
         var plan = await BuildPurgePlanAsync(companyId, documentId);
         var verdict = Accounting.Helpers.DocumentCascadePurgePolicy.Decide(

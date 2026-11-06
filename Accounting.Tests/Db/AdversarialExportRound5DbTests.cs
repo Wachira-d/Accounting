@@ -254,7 +254,8 @@ public class AdversarialExportRound5DbTests
             var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.ApplyFiscalYearStartMonthAsync(company, userId, 4));
             Assert.Equal(OpeningRoll.FiscalYearStartMonthRuleCode, ex.RuleCode);
             Assert.Contains("2567", ex.Message);
-            Assert.Contains("ม.11", ex.Message);
+            Assert.Contains("ม.10", ex.Message);   // รอบ 250 WP-06: รอบบัญชี = พ.ร.บ.การบัญชี ม.10 (ม.11 = ยื่นงบ)
+            Assert.DoesNotContain("อธิบดี", ex.Message);   // ฝ่ายค้าน B: ผู้อนุญาตเปลี่ยนรอบ = สารวัตรใหญ่บัญชี/สารวัตรบัญชี
             // ค่าเดิม (หน้าตั้งค่าส่งช่องนี้ทุกครั้ง) ไม่ใช่การเปลี่ยน ⇒ ไม่ล้ม
             await svc.ApplyFiscalYearStartMonthAsync(company, userId, 1);
         }

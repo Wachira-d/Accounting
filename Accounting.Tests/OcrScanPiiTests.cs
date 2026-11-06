@@ -38,7 +38,7 @@ public class OcrScanPiiTests
             VendorAddress = "99/1 ถนนสุขุมวิท",
             BuyerName = "บริษัท ทดสอบ จำกัด",
             ProcessingNotes = "[Buyer] บริษัท ทดสอบ จำกัด TaxID:0105558123456",
-            // โครงบัญชีที่ต้องคงไว้ตาม พ.ร.บ.การบัญชี ม.10
+            // โครงบัญชีที่ต้องคงไว้ตาม พ.ร.บ.การบัญชี ม.14
             ExtractedDocumentNumber = "INV-2020-0001",
             ExtractedTotalAmount = 1070m,
             ScanStatus = "Completed",

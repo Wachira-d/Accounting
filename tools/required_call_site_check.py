@@ -9133,7 +9133,7 @@ RULES += [
          must=["YearEndClosings", "OpeningRoll.FiscalYearStartMonthLockedMessage(", "AddChainedAuditLog(", "OpeningRoll.FiscalYearStartMonthChangeAction",
                "y.CompanyId == company.Id"],
          before=[("OpeningRoll.FiscalYearStartMonthLockedMessage(", "AddChainedAuditLog(")],
-         why=_ADVX + " รอบ 5 P2-2: ปิดปีแล้วเปลี่ยนเดือนเริ่มรอบไม่ได้ (พ.ร.บ.การบัญชี ม.11) · ก่อนปิดปี = เปลี่ยนได้ + audit เป็นหลักฐานของตัวตรวจ"),
+         why=_ADVX + " รอบ 5 P2-2: ปิดปีแล้วเปลี่ยนเดือนเริ่มรอบไม่ได้ (พ.ร.บ.การบัญชี ม.10) · ก่อนปิดปี = เปลี่ยนได้ + audit เป็นหลักฐานของตัวตรวจ"),
     dict(file=_YEC, method="FindLegacyCalendarRollPeriodsAsync",
          must=["OpeningRoll.IsLegacyCalendarRoll(", "LoadFiscalYearStartMonthChangesAsync(", "OpeningRoll.LegacyRepairYear(", "YearEndClosings"],
          why=_ADVX + " รอบ 5 P2-2: งวด ม.ค. ที่ยกตอนบริษัทยังเป็นปีปฏิทิน (ปิดหลังการแก้ / audit ค่าเดิม = 1) ไม่ใช่รุ่นเก่า — ไม่บล็อก/ไม่ซ่อมทับประวัติ"),

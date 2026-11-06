@@ -21,7 +21,7 @@
 
 | ทีม | ขอบเขต | จำนวน finding | แยกความรุนแรง |
 | --- | --- | --- | --- |
-| A Backlog/Decisions | งานค้าง+คำตัดสินค้างรอบ 233–249 (88 แถว A-01…K-03) | 88 | **P0** 1 (A-01 — ปิดแล้ว: fe9036f7 เขียว) · **P1** 27 · **P2** 43 · **P3** 16 · ปิดระหว่างตรวจ 1 (K-03) |
+| A Backlog/Decisions | งานค้าง+คำตัดสินค้างรอบ 233–249 (~~88~~ **95** แถว A-01…K-03 — แก้ตาม AUDIT_249_COVERAGE ข้อ 1) | 95 | **P0** 1 (A-01 — ปิดแล้ว: fe9036f7 เขียว) · **P1** 28 · **P2** 49 · **P3** 16 · ปิดระหว่างตรวจ 1 (K-03) |
 | B E2E billing | รายการประจำ→ส่ง→รับเงิน→ออกใบ→แจ้งเตือน | 9 (F-1…F-9) | สูง 1 (F-3) · กลาง 2 (F-1 · F-2) · กลาง-ต่ำ 1 (F-4) · ต่ำ 5 (F-5…F-9) |
 | C Tax/Money | สินทรัพย์หลายใบ · WHT ลิงก์ชำระ · e-Tax by Email · แจ้งเตือน · นโยบายอนุมัติ · ปัดเศษ | 9 (F1…F9) | Medium 1 (F1) · Low-Med 2 (F2 · F3) · Low 5 (F4…F8) · Info 1 (F9) · ❌ ลงบัญชีผิดเงียบ = 0 |
 | D UX/UI | 10 กลุ่มหน้าที่แก้ใน 3 วัน + cross-cutting | 71 ข้อ + 13 รูปแบบ (A–M) | ร้ายแรง (XSS/ข้อมูลหาย/privacy/silent no-op) 10 ข้อ (= "ทำก่อน 10 ข้อ" D §12) · ที่เหลือ S/M |
@@ -34,7 +34,7 @@
 | --- | --- | --- | --- | --- |
 | 1 | job `dotnet test` pure บน `claude/**` | **เปิดรันทุก push** (ตัด `if:` ออก) · เทสต์เก่าที่ล้มสะสม = แก้ให้เขียวในรอบเดียวกัน ไม่ `[Skip]` | เทสต์ที่ไม่มี runner = ไม่มีเทสต์ (F2 ข้อ 2) | E H-1 |
 | 2 | `doc_commit_sha_check` | ต่อเข้า `check_all.sh` + รู้จัก shallow clone (พิมพ์ "clone ตื้น — fetch --unshallow แล้วตรวจซ้ำ" ไม่ใช่รายการแดง) + นับ placeholder `เติมในคอมมิตตามหลัง` ที่อายุ > 1 คอมมิตเป็น fail | checker ที่ไม่มีใครเรียก = ไม่มี · ฟ้องผิดบน clone ตื้นเกือบทำให้แก้ sha ที่ถูกอยู่แล้ว | E H-2 · M-1 · A-02 |
-| 3 | sha `0a829110` (RETENTION_LAW_CHECK.md:190) | **sha ตาย** — หา sha จริงของ R2-C4 รอบ 193 ด้วย `git log -S"R2-C4" -- erp-review/2026-09-24/` แล้วแทนทั้ง RETENTION และ `review193-r2-sec-tax.md:54/62` | A ว่าพบบน GitHub แต่ E ตรวจ blame พบว่าคัดลอกจากที่ที่ตายอยู่แล้ว — E ตรวจลึกกว่า | E H-2 (ยึด E) |
+| 3 | sha `0a829110` (RETENTION_LAW_CHECK.md:190) | ⚠️ **แก้ 2026-11-06 (WP-05): sha มีจริง** — หลัง fetch --unshallow = คอมมิตรอบ 193 ทีม S2 ที่ปิด R2-C1…C4 ⇒ ไม่ต้องแทน (A ถูก · E ผิดเพราะ clone ตื้น) · เดิม: ~~**sha ตาย** — หา sha จริงของ R2-C4 รอบ 193 ด้วย `git log -S"R2-C4" -- erp-review/2026-09-24/` แล้วแทนทั้ง RETENTION และ `review193-r2-sec-tax.md:54/62`~~ | A ว่าพบบน GitHub แต่ E ตรวจ blame พบว่าคัดลอกจากที่ที่ตายอยู่แล้ว — E ตรวจลึกกว่า | E H-2 (ยึด E) |
 | 4 | สองทางแก้ F-3 (post-payment ไม่ enqueue) | **ย้าย `EnqueueAsync` + `SyncWhtCreditReceivedAsync` เข้าไปหลัง commit ใน `CreatePaymentAsync` เอง** (1:1 · `source` จากพารามิเตอร์) ไม่ใช่ไล่เติมทีละทางเข้า · `CreateMultiDocPaymentAsync` ยกเว้นโดยตั้งใจ (`SettlementReceiptPolicy`) · CMS/Lodging/PlatformBilling ส่ง `source` ที่ policy ตัดสิน "ไม่ออกใบเสร็จซ้ำ" (มีเส้นออกใบเสร็จของตัวเอง) | ทุกทางเข้าที่แตะข้อมูลชุดเดียวกันต้องเดินด่านเดียว (F3 ข้อ 8) | B F-3 · A B-21/D-02/D-13 |
 | 5 | `ResolveLinePostedGlAmountAsync` | ใช้ `PurchaseLineGlAmount.Posted(isCIL, …, payerBorneShare)` · เพิ่ม CIL ใน `purchaseSide` · CIL ที่ `RelatedDocumentId` เป็น PI/Expense คืน 0 เหมือน PV · แยก helper "ส่วนออกแทนต่อบรรทัด" จาก `LoadCostLineFactsAsync` ให้ทั้งสองเส้นเรียก | สองสูตรสำหรับบรรทัดเดียว = defect class "สอง renderer" | C F1 · A C-06 |
 | 6 | สูตร VAT ต้องห้ามรวมต้นทุนใน AutoPost CN/DN (`DocumentService.cs:18822-18824`) | แทนด้วย `PurchaseLineGlAmount.Standalone` + กติกา forbid literal `Amount + docLine.VatAmount` ใน DocumentService | ตัวตั้งตัวเดียว | A C-07 |

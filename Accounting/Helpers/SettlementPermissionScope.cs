@@ -33,7 +33,7 @@ public static class SettlementPermissionScope
     /// ต้องเป็นคนที่นำเข้าหรือลงบัญชีรอบโอน</summary>
     public static readonly IReadOnlyList<string> SourceFileReaders = new[] { Import, Post };
 
-    /// <summary>ลบไฟล์ต้นฉบับ — หลักฐานประกอบรายการบัญชี (พ.ร.บ.การบัญชี ม.10) ⇒ เฉพาะคนนำเข้า (ไฟล์ของรอบที่ลงบัญชีแล้วยังมีด่านไฟล์แนบชั้นถัดไป)</summary>
+    /// <summary>ลบไฟล์ต้นฉบับ — หลักฐานประกอบรายการบัญชี (พ.ร.บ.การบัญชี ม.14) ⇒ เฉพาะคนนำเข้า (ไฟล์ของรอบที่ลงบัญชีแล้วยังมีด่านไฟล์แนบชั้นถัดไป)</summary>
     public static readonly IReadOnlyList<string> SourceFileWriters = new[] { Import };
 
     /// <summary>

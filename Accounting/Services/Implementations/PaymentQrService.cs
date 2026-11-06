@@ -181,7 +181,7 @@ public class PaymentQrService : IPaymentQrService
             await _storage.DeleteAsync(location, CancellationToken.None);
             throw;
         }
-        // ไฟล์เดิมลบหลังบันทึกสำเร็จ · รูป QR ไม่ใช่เอกสารทางบัญชี (ไม่อยู่ใต้ระยะเก็บ ม.10) — ประวัติอยู่ใน audit (hash)
+        // ไฟล์เดิมลบหลังบันทึกสำเร็จ · รูป QR ไม่ใช่เอกสารทางบัญชี (ไม่อยู่ใต้ระยะเก็บ พ.ร.บ.การบัญชี ม.14) — ประวัติอยู่ใน audit (hash)
         if (old != null && old != location && oldOwn)
             await _storage.DeleteAsync(old, ct);
         return Map(a);

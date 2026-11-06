@@ -174,7 +174,7 @@ public class PdpaController : ControllerBase
 
     /// <summary>ม.31 สิทธิแก้ไข — apply rectification. รับเป็น field-value map
     /// ที่ DPO อนุมัติแล้ว. financial records (Document/JE) ไม่อยู่ใน scope
-    /// (ม.32 กฎหมายอื่นบังคับเก็บ พ.ร.บ.บัญชี ม.10).</summary>
+    /// (ม.32 กฎหมายอื่นบังคับเก็บ พ.ร.บ.บัญชี ม.14).</summary>
     [HttpPost("dsr/rectify")]
     public async Task<ActionResult<ApiResponse<int>>> DsrRectify(
         Guid companyId, [FromBody] DsrRectifyRequest req, CancellationToken ct)
@@ -198,7 +198,7 @@ public class PdpaController : ControllerBase
     public sealed record DsrEraseRequest(Guid? UserId, Guid? ContactId, string? Acknowledgement);
 
     /// <summary>ม.33 สิทธิลบ — cascade anonymize. legal_hold: ข้อมูลในงวด
-    /// retention 5 ปี (พ.ร.บ.บัญชี ม.10) จะคงไว้แต่ replace identifying fields
+    /// retention 5 ปี (พ.ร.บ.บัญชี ม.14) จะคงไว้แต่ replace identifying fields
     /// ด้วย "[ANONYMIZED]". DPO ต้องยืนยันก่อนเรียก endpoint นี้ (ส่ง
     /// Acknowledgement = "I confirm" ใน body)</summary>
     // รอบ 193 (W-C1 ไล่ทางทำลายข้อมูลถาวรอื่น): anonymize ถาวร — คีย์ที่ถือตัวตนเจ้าของผ่าน Pii.View เสมอ ⇒ ต้องเป็นคน

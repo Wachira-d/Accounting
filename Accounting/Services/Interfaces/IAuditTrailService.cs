@@ -14,7 +14,7 @@ public interface IAuditTrailService
     /// คืน list ของแถวที่ RowHash/PrevHash ไม่ match (= ถูกแก้ไข/แทรก/ลบ
     /// หลัง insert) — list ว่าง = chain ปลอดภัย. ใช้โดย background job
     /// ตรวจรายสัปดาห์ + เรียกตอน RD/DBD audit เพื่อพิสูจน์ตามมาตรฐาน
-    /// พ.ร.บ.บัญชี ม.11 ทวิ (เก็บข้อมูลอิเล็กทรอนิกส์).</summary>
+    /// พ.ร.บ.ว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ม.12 (เก็บรักษาข้อมูลอิเล็กทรอนิกส์ — hash chain เป็น control ภายใน ไม่ใช่ข้อบังคับรายมาตรา) · ระยะเก็บ พ.ร.บ.การบัญชี ม.14.</summary>
     /// <param name="afterId">รอบ 201 ทีม PL (A-PL3): &gt; 0 = ตรวจเฉพาะแถว Id มากกว่านี้ (ต่อจาก watermark ของงานตรวจ ·
     /// parent ก่อนช่วงต้องมีอยู่จริงในฐาน) · 0 = ทั้งบริษัท (พฤติกรรมเดิม)</param>
     Task<AuditChainVerifyResult> VerifyHashChainAsync(Guid companyId, long afterId = 0);

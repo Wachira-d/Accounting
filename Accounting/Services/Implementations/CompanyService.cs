@@ -582,7 +582,7 @@ public class CompanyService : ICompanyService
     };
 
     /// <summary>ลบบริษัท (soft-delete — Owner เท่านั้น + พิมพ์ชื่อบริษัทยืนยัน).
-    /// ข้อมูลบัญชี "ไม่ถูกลบจริง" (พ.ร.บ.การบัญชี ม.10 เก็บ 5 ปี) — บริษัทหายจาก
+    /// ข้อมูลบัญชี "ไม่ถูกลบจริง" (พ.ร.บ.การบัญชี ม.14 เก็บ 5 ปี) — บริษัทหายจาก
     /// รายการ/สลับบริษัทไม่ได้ (query filter !IsDeleted) แต่ audit trail คงอยู่.</summary>
     public async Task DeleteCompanyAsync(Guid companyId, Guid requestingUserId, string confirmName)
     {
@@ -834,7 +834,7 @@ public class CompanyService : ICompanyService
 
     /// <summary>
     /// เปลี่ยนเดือนเริ่มรอบบัญชี (ฝ่ายค้านรอบส่งออก รอบ 5 P2-2) — <b>บริษัทที่ปิดปีในระบบแล้วเปลี่ยนไม่ได้</b> (ปีเก่า/ยอดยกมา/งวดที่ล็อกคิดด้วยรอบเดิม ·
-    /// เดิมเปลี่ยนได้เงียบ ๆ ⇒ ด่านยกยอดรุ่นเก่าบล็อกเท็จ + ปุ่มซ่อมเขียนประวัติใหม่ · พ.ร.บ.การบัญชี ม.11 เปลี่ยนรอบต้องได้รับอนุมัติ) ·
+    /// เดิมเปลี่ยนได้เงียบ ๆ ⇒ ด่านยกยอดรุ่นเก่าบล็อกเท็จ + ปุ่มซ่อมเขียนประวัติใหม่ · พ.ร.บ.การบัญชี ม.10 เปลี่ยนรอบต้องได้รับอนุมัติ) ·
     /// ก่อนปิดปีครั้งแรก = เปลี่ยนได้ + audit (<see cref="Accounting.Helpers.OpeningRoll.FiscalYearStartMonthChangeAction"/> — หลักฐานของตัวตรวจยกยอดรุ่นเก่า) ·
     /// ค่าเท่าเดิม (หลังปรับช่วง) = ไม่ใช่การเปลี่ยน (หน้าตั้งค่าส่งช่องนี้ทุกครั้ง)
     /// </summary>
@@ -868,7 +868,7 @@ public class CompanyService : ICompanyService
                 action = Accounting.Helpers.OpeningRoll.FiscalYearStartMonthChangeAction,
                 fiscalYearStartMonth = requested,
                 ruleCode = Accounting.Helpers.OpeningRoll.FiscalYearStartMonthRuleCode,
-                legalReference = "พ.ร.บ.การบัญชี 2543 ม.11",
+                legalReference = "พ.ร.บ.การบัญชี 2543 ม.10",
             }),
             IpAddress = _http?.HttpContext?.Connection.RemoteIpAddress?.ToString(),
         });

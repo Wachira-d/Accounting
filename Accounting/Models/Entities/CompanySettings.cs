@@ -342,7 +342,7 @@ public class CompanySettings : TenantEntity
     /// <summary>ส่งทุกงวดที่รับ (false = เฉพาะงวดที่ชำระครบ) · ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c></summary>
     public bool PostPayIncludePartial { get; set; } = false;
 
-    // ── พ.ร.บ.การบัญชี ม.7 — ผู้ทำบัญชี (Bookkeeper / CPD) ──
+    // ── พ.ร.บ.การบัญชี ม.19 (คุณสมบัติตาม ม.7(6)) — ผู้ทำบัญชี (Bookkeeper / CPD) ──
     // กฎหมาย: งบการเงินที่นำส่ง DBD ต้องระบุชื่อ + เลขทะเบียนผู้ทำบัญชี (CPD)
     // ที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี. ไม่มี = ยื่นไม่ได้ (ผู้บริหารรับผิด
     // ทางอาญา). ระบบใช้ field นี้เป็น gate ก่อน finalize งบ + XBRL export.

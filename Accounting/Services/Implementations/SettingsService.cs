@@ -357,7 +357,7 @@ public class SettingsService : ISettingsService
             settings.WorkersCompensationRatePercent = request.WorkersCompensationRatePercent.Value;
         }
 
-        // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7) — null = ไม่แตะ, ค่าว่าง = ล้าง
+        // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.19) — null = ไม่แตะ, ค่าว่าง = ล้าง
         if (request.BookkeeperName != null)
             settings.BookkeeperName = string.IsNullOrWhiteSpace(request.BookkeeperName) ? null : request.BookkeeperName.Trim();
         if (request.BookkeeperCpdNumber != null)
