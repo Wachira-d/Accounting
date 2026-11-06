@@ -127,7 +127,6 @@ public static class SecretReprotectPass
 
         await Pass(Scope(db.CompanySettings.IgnoreQueryFilters()), "CompanySettings", r => r.CompanyId,
             Col<CompanySettings>(r => r.EmailSmtpPassword),
-            Col<ContactNotifyEndpoint>(r => r.LineUserId),   // รอบ 245 L1 — LINE userId/groupId ของผู้ติดต่อ (เข้ารหัส)
             Col<CompanySettings>(r => r.EmailMsClientSecret),
             Col<CompanySettings>(r => r.EmailGmailClientSecret),
             Col<CompanySettings>(r => r.EmailGmailRefreshToken),
@@ -166,6 +165,9 @@ public static class SecretReprotectPass
         // รอบ 241 (241-10): token ลิงก์ชำระเงินของเอกสารฉบับเข้ารหัส — กรองเฉพาะใบที่มีลิงก์ (ไม่สแกนเอกสารทั้งตาราง)
         await Pass(Scope(db.Documents.IgnoreQueryFilters().Where(d => d.PayLinkTokenProtected != null)), "Documents", r => r.CompanyId,
             Col<Document>(r => r.PayLinkTokenProtected));
+        // รอบ 245 L1: LINE userId ของปลายทางผู้ติดต่อ (เข้ารหัส · ย้ายจาก Contact.LineUserId) — กรองเฉพาะแถวที่มีค่า
+        await Pass(Scope(db.ContactNotifyEndpoints.IgnoreQueryFilters().Where(e => e.LineUserId != null)), "ContactNotifyEndpoints", r => r.CompanyId,
+            Col<ContactNotifyEndpoint>(r => r.LineUserId));
 
         return new Result(scanned, per.Values.Sum(), per, skipped, pendingWrap, wrappedAmbiguous);
     }
