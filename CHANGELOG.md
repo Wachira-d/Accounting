@@ -6701,3 +6701,12 @@ _รอบ 250 WP-04 ข้อ 7–13 + แก้ผลฝ่ายค้าน 
 หลัง FOR UPDATE แถวเอกสาร (ลำดับกลับด้าน) ⇒ ยกเลิกใบขายรอการผูกต้นทุนของบริษัท · (4) ปิดปีแถวกลับด้านกับ uuid · (5) ตาราง marker ในธุรกรรมของงานย้าย + เทสต์ใช้ค่าคงที่ ·
 (6) **หมายเหตุ**: เปลี่ยนคีย์ล็อกของ `PaymentQrMigration` (hashtext → 64 บิต) ไม่มีผลกับฐานที่บูตแล้ว — marker `r246-template-promptpay-to-bank` มีแล้ว งานจบที่ "marker มีแล้ว" ·
 (7) เทสต์ DDL ตอนบูต = ฐานเทสต์ · (8) MED-5 เรียก RecheckDocumentAtSendAsync (internal) ตรง. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 26a06169_
+
+_รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน 26a06169 · 2026-11-06):
+(1) **ต่อสาย** `EmailScheduleRule.RepeatEveryDays` — ทวงเกินกำหนดส่งซ้ำทุก N วัน (`Helpers/OverdueReminderSchedule` · กุญแจครั้งแรกเดิม · ครั้งซ้ำมีวันที่) · 0 = เหมือนเดิม.
+(2) **ต่อสาย** `RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore` — กระดิ่งผู้สร้างรายการ N วันก่อนรอบ (`recurring.upcoming_run` · คอลัมน์ใหม่ `UpcomingRunNotifiedFor`
+compare-and-set) + ช่องบน recurring.html (เดิมส่ง true/1 ตายตัว) · ⚠️ รายการเดิมทุกตัวเก็บ true/1 ไว้ (UI เดิมตายตัว) ⇒ จะเริ่มได้กระดิ่ง 1 วันก่อนรอบ — ปิดได้ที่รายการ ·
+`AudienceFilter` เลิกใช้ (ไม่รับค่า · baseline หมายเหตุ deprecated).
+(3) `EtaxPartyTaxIdGuard.Buyer(name, taxId, contactType, branchCode)` — ชนิด · checksum · สาขาของเลข 18 หลัก · บุคคลไม่มีเลข = OTHR · TXID ใช้สาขาของผู้ติดต่อ ·
+วันที่ใบเดิมของ CN/DN = วันไทย (สอดคล้อง +07:00). (4) `MayBeCostSource` ครอบทุกฝั่ง + Db test ลบถาวรใบขาย. (5) checker 5 จุด (ดู TEST_PLAN).
+(6) CN/DN ≥ 17:00Z. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK)_

@@ -858,4 +858,59 @@ public class AssetMultiDocumentDbTests
         Assert.Equal(DocumentStatus.Voided, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == s.ExpenseDoc)).Status);
         Assert.Equal(DocumentStatus.Voided, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == sale.Id)).Status);
     }
+
+    /// <summary>ฝ่ายค้าน WP-04 ต่อยอด ข้อ 4: ลบถาวรใบขายระหว่างที่คีย์ผู้เขียนต้นทุนถูกถือ ⇒ จบเองไม่รอคีย์ · ทิศตรงข้าม: ลบถาวรใบซื้อ ⇒ รอคีย์</summary>
+    [Fact]
+    public async Task Purge_sale_document_does_not_wait_for_cost_source_key_purchase_document_does()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var sale = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Draft,
+            DocumentNumber = "DRAFT-" + Guid.NewGuid().ToString("N"), DocumentDate = DateTime.SpecifyKind(Y(3, 6), DateTimeKind.Utc),
+            SubTotal = 1_000m, TotalAmount = 1_000m, BalanceDue = 1_000m, Currency = "THB", ExchangeRate = 1m,
+        };
+        db.Documents.Add(sale);
+        await db.SaveChangesAsync();
+        var key = AdvisoryLockKey.For(s.CompanyId, AdvisoryLockKey.AssetCostSource, "");
+
+        using var holder = DbTestDatabase.TryCreateContext()!;
+        var tx = await holder.Database.BeginTransactionAsync();
+        await holder.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", key);
+
+        var salePurge = Task.Run(async () =>
+        {
+            using var r = DbTestDatabase.TryCreateContext()!;
+            await Docs(r).PurgeDocumentAsync(s.CompanyId, sale.Id, null, true, "ร่างผิด (ทดสอบ)", cascadeDescendants: false);
+        });
+        Assert.Same(salePurge, await Task.WhenAny(salePurge, Task.Delay(TimeSpan.FromSeconds(10))));   // holder ยังถือคีย์ — จบได้ = ไม่ได้รอ
+        await salePurge;
+        using (var p0 = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(0, await WaitersAsync(p0, key));
+            Assert.False(await p0.Documents.IgnoreQueryFilters().AnyAsync(d => d.Id == sale.Id));
+        }
+
+        // ทิศตรงข้าม: ใบซื้อ (อาจเป็นต้นทุน) ⇒ รอคีย์จนกว่าผู้ถือจะปล่อย
+        var pvPurge = Task.Run(async () =>
+        {
+            using var r = DbTestDatabase.TryCreateContext()!;
+            await Docs(r).PurgeDocumentAsync(s.CompanyId, s.ExpenseDoc, null, true, "ทดสอบ", cascadeDescendants: false);
+        });
+        using var probe = DbTestDatabase.TryCreateContext()!;
+        var waiting = false;
+        for (var i = 0; i < 300 && !waiting && !pvPurge.IsCompleted; i++)
+        {
+            waiting = await WaitersAsync(probe, key) > 0;
+            if (!waiting) await Task.Delay(100);
+        }
+        Assert.False(pvPurge.IsCompleted, pvPurge.IsFaulted ? pvPurge.Exception!.GetBaseException().Message : "ลบถาวรใบซื้อจบทั้งที่คีย์ถูกถือ");
+        Assert.True(waiting, "ลบถาวรใบซื้อไม่ได้รอคีย์ผู้เขียนต้นทุน");
+        await tx.CommitAsync();
+        await tx.DisposeAsync();
+        Assert.Same(pvPurge, await Task.WhenAny(pvPurge, Task.Delay(TimeSpan.FromSeconds(60))));
+        await pvPurge;
+    }
 }

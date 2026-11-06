@@ -60,10 +60,8 @@ class _Scan(HTMLParser):
 def violations(html):
     """[(for_value|None)] ของ label ใน .form-group ที่ไม่ผูกกับช่อง"""
     p = _Scan()
-    try:
-        p.feed(html)
-    except Exception:
-        return []
+    p.feed(html)   # ฝ่ายค้าน WP-04 ต่อยอด: parse ล้ม = ฟ้อง (ผู้เรียกจด) — ห้ามกลืนเป็น "0 จุด"
+    p.close()
     ids = set(ID_RE.findall(html))
     out = []
     for for_value, wraps, in_fg in p.labels:
@@ -78,6 +76,9 @@ def violations(html):
     return out
 
 
+PARSE_ERRORS = []
+
+
 def scan():
     counts = {}
     for base, dirs, files in os.walk(WWW):
@@ -87,7 +88,11 @@ def scan():
                 continue
             path = os.path.join(base, f)
             rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
-            n = len(violations(open(path, encoding="utf-8", errors="ignore").read()))
+            try:
+                n = len(violations(open(path, encoding="utf-8", errors="ignore").read()))
+            except Exception as e:   # อ่าน/parse ไม่ได้ = ตรวจไม่ได้ ⇒ ล้มดัง ไม่ใช่ผ่าน
+                PARSE_ERRORS.append(f"{rel}: {type(e).__name__}: {e}")
+                continue
             if n:
                 counts[rel] = n
     return counts
@@ -107,6 +112,11 @@ def self_test():
         fails.append("for ชี้ id ที่ไม่มี (ซ้อนลึก) ไม่ถูกฟ้อง")
     if violations('<div class="form-group"><script>const t = `<label>${x}</label>`;</script></div>'):
         fails.append("label ใน script ถูกนับ")
+    try:
+        violations(None)   # อินพุตที่ parse ไม่ได้ต้องโยน (ไม่ใช่คืน 0 จุดเงียบ)
+        fails.append("อินพุตที่ parse ไม่ได้ถูกกลืนเป็นผ่าน")
+    except Exception:
+        pass
     for f in fails:
         print("❌ self-test form_label_for_check: " + f)
     if not fails:
@@ -125,6 +135,10 @@ def main(argv):
             json.dump(dict(sorted(counts.items())), fh, ensure_ascii=False, indent=1)
         print(f"เขียน baseline {len(counts)} ไฟล์ · {sum(counts.values())} จุด")
         return 0
+    if PARSE_ERRORS:
+        for e in PARSE_ERRORS:
+            print(f"❌ parse ไม่ได้ (ตรวจไม่ได้ = ไม่ผ่าน): {e}")
+        return 1
     base = json.load(open(BASELINE, encoding="utf-8")) if os.path.exists(BASELINE) else {}
     bad = [(f, n, base.get(f, 0)) for f, n in sorted(counts.items()) if n > base.get(f, 0)]
     for f, n, b in bad:

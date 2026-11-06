@@ -82,6 +82,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         await ValidateTemplateAsync(companyId, request.TemplateType, request.TemplateData, request.ContactId, atSave: true);
         var (payMode, payChannels) = PaymentSettingsFrom(request.PaymentMode, request.PayLinkChannels);
         CheckPostPaySettings(request.PostPayEmailReceipt, request.PostPayIncludePartial);
+        if (RecurringUpcomingNotice.RangeError(request.NotifyDaysBefore) is string notifyErr)
+            throw new BusinessRuleException(notifyErr, RecurringTemplate.RuleCode);
         // วันสิ้นสุดก่อนวันเริ่ม = รายการที่ไม่มีวันรันเลย (เดิมบันทึกได้แล้วค้าง "ใช้งาน" เงียบ ๆ ตลอดไป)
         if (request.EndDate.HasValue && !RecurringSchedule.WithinEnd(request.StartDate, request.EndDate))
             throw new BusinessRuleException("วันสิ้นสุดอยู่ก่อนวันเริ่มต้น — แก้วันสิ้นสุด (หรือเว้นว่างถ้าไม่มีกำหนด) แล้วบันทึกอีกครั้ง",
@@ -212,6 +214,8 @@ public class RecurringTransactionService : IRecurringTransactionService
                 request.ContactId ?? recurring.ContactId, atSave: true);
         if (request.ContactId.HasValue) recurring.ContactId = request.ContactId.Value;
         if (request.TemplateData != null) recurring.TemplateData = request.TemplateData;
+        if (RecurringUpcomingNotice.RangeError(request.NotifyDaysBefore) is string notifyErr)
+            throw new BusinessRuleException(notifyErr, RecurringTemplate.RuleCode);
         if (request.NotifyBeforeRun.HasValue) recurring.NotifyBeforeRun = request.NotifyBeforeRun.Value;
         if (request.NotifyDaysBefore.HasValue) recurring.NotifyDaysBefore = request.NotifyDaysBefore.Value;
         if (request.AutoApprove.HasValue) recurring.AutoApprove = request.AutoApprove.Value;
@@ -360,6 +364,14 @@ public class RecurringTransactionService : IRecurringTransactionService
     public async Task ProcessDueRecurringTransactionsAsync()
     {
         var now = DateTime.UtcNow;
+        // รอบ 250 WP-04 ต่อยอด: แจ้งเตือนก่อนรอบรัน (ค่าตั้ง NotifyBeforeRun/NotifyDaysBefore ของรายการ) — ล้มไม่ขวางการสร้างเอกสาร
+        try { await NotifyUpcomingRunsAsync(now); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Recurring upcoming-run notifications failed");
+            try { await _errorLogService.LogErrorAsync(ex, "RecurringTransaction.NotifyUpcoming"); }
+            catch (Exception lex) when (lex is not OperationCanceledException) { _logger.LogError(lex, "Failed to record upcoming-run failure"); }
+        }
         var dueCutoff = RecurringSchedule.DueCutoffUtc(now);   // งวดของ "วันนี้ตามปฏิทินไทย" ถึงกำหนดตั้งแต่ 00:00 น. เวลาไทย
         // อ่านแค่รหัส — แต่ละรายการโหลดใหม่ภายใต้ล็อก (ไม่ถือ entity ข้ามรอบ: ของค้างจากรายการที่ล้มห้ามไหลไปกับการบันทึกของรายการถัดไป) ·
         // ไม่กรองวันสิ้นสุดที่นี่ — รายการที่เลยวันสิ้นสุดถูกปิดเป็น "เสร็จสิ้น" ในลูป (เดิมค้าง "ใช้งาน" ตลอดไป และงวดที่ตรงวันสิ้นสุดถูกตัดทิ้ง)
@@ -413,6 +425,44 @@ public class RecurringTransactionService : IRecurringTransactionService
                 }
             }
         }
+    }
+
+    /// <summary>รอบ 250 WP-04 ต่อยอด: แจ้งเตือนผู้สร้างรายการ N วันก่อนรอบสร้างเอกสาร (ตัวตัดสิน <see cref="RecurringUpcomingNotice.ShouldNotify"/>) ·
+    /// รอบเดียวกันแจ้งครั้งเดียว: ประทับ <c>UpcomingRunNotifiedFor</c> แบบ compare-and-set (UPDATE … WHERE ยังไม่ประทับรอบนี้) ⇒ หลายเครื่องรันพร้อมกันได้แจ้งครั้งเดียว ·
+    /// ไม่มีเครื่องแจ้งเตือน ⇒ ไม่ประทับ (ห้ามบอกว่าแจ้งแล้วทั้งที่ไม่ได้แจ้ง) · คืนจำนวนที่แจ้ง</summary>
+    internal async Task<int> NotifyUpcomingRunsAsync(DateTime nowUtc)
+    {
+        if (_notify == null) return 0;
+        var today = ThaiDate.CalendarDateUtc(nowUtc).Date;
+        var horizon = today.AddDays(RecurringUpcomingNotice.MaxDaysBefore + 1);
+        var candidates = await _db.RecurringTransactions.AsNoTracking()
+            .Where(r => r.Status == RecurringStatus.Active && r.NotifyBeforeRun && r.NotifyDaysBefore > 0
+                && r.NextRunDate > today && r.NextRunDate < horizon)
+            .Select(r => new { r.Id, r.CompanyId, r.Name, r.CreatedBy, r.NextRunDate, r.NotifyDaysBefore, r.UpcomingRunNotifiedFor })
+            .ToListAsync();
+        var sent = 0;
+        foreach (var r in candidates)
+        {
+            if (!RecurringUpcomingNotice.ShouldNotify(true, r.NotifyDaysBefore, true, r.NextRunDate, today, r.UpcomingRunNotifiedFor)) continue;
+            var runDate = r.NextRunDate;
+            var claimed = await _db.RecurringTransactions
+                .Where(x => x.Id == r.Id && x.CompanyId == r.CompanyId && x.NextRunDate == runDate
+                    && (x.UpcomingRunNotifiedFor == null || x.UpcomingRunNotifiedFor != runDate))
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.UpcomingRunNotifiedFor, (DateTime?)runDate));
+            if (claimed == 0) continue;   // อีกเครื่องแจ้งไปแล้ว / รอบเลื่อนแล้ว
+            var days = RecurringUpcomingNotice.DaysUntil(runDate, today);
+            await _notify.DispatchAsync(r.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringUpcomingRun, new NotificationContext
+            {
+                Title = $"รายการประจำ \"{r.Name}\" จะสร้างเอกสารในอีก {days} วัน",
+                Message = $"รอบถัดไปวันที่ {runDate.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)} — ตรวจยอด/ผู้ติดต่อ/ช่องทางรับเงินได้ที่หน้ารายการประจำ (กด \"ทดลองรัน\" เพื่อดูใบที่จะออก)",
+                ActionUrl = "/pages/recurring.html",
+                EntityType = "RecurringTransaction",
+                EntityId = r.Id,
+                RecipientUserId = Guid.TryParse(r.CreatedBy, out var ownerId) ? ownerId : null,
+            });
+            sent++;
+        }
+        return sent;
     }
 
     /// <summary>ฝ่ายค้าน 2026-10-14 P0: รายการประจำชนิด<b>เอกสาร</b>ล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน) ⇒ NextRunDate ค้างงวดแรก ·

@@ -221,6 +221,25 @@ public class GateOppositeDirectionRound250Tests
         Assert.Equal(prod.Groups[1].Value, test.Groups[1].Value);   // ทิศตรงข้าม: ฐานเทสต์ไม่ใช่ CASCADE ตามธรรมเนียม EF
     }
 
+    // ═══ ฝ่ายค้าน WP-04 ต่อยอด ข้อ 4: MayBeCostSource ครอบทุกชนิดที่ SignFor ให้เครื่องหมายได้ในฝั่งใดฝั่งหนึ่ง (ยกเลิก/ลบถาวรถือคีย์ตามนี้) ═══
+
+    [Fact]
+    public void MayBeCostSource_ทุกDocumentType_ตรงกับSignForทุกฝั่ง()
+    {
+        foreach (var t in Enum.GetValues<DocumentType>())
+        {
+            var any = new bool?[] { true, false, null }.Any(side => AssetCostSourceRules.SignFor(t, side) != null);
+            Assert.Equal(any, AssetCostSourceRules.MayBeCostSource(t));
+        }
+        // ทิศที่ถือคีย์ · ทิศที่ไม่ถือ (ใบขายไม่รอการผูกต้นทุน)
+        Assert.True(AssetCostSourceRules.MayBeCostSource(DocumentType.PurchaseInvoice));
+        Assert.True(AssetCostSourceRules.MayBeCostSource(DocumentType.CreditNote));
+        Assert.True(AssetCostSourceRules.MayBeCostSource(DocumentType.DebitNote));
+        Assert.False(AssetCostSourceRules.MayBeCostSource(DocumentType.Invoice));
+        Assert.False(AssetCostSourceRules.MayBeCostSource(DocumentType.TaxInvoice));
+        Assert.False(AssetCostSourceRules.MayBeCostSource(DocumentType.Quotation));
+    }
+
     // ═══ AssetCostSourceRules.PlaceInServiceProblem — ขอบทุกด่าน (ผ่านพอดี/ล้มพอดี) ═══
 
     private static readonly DateTime Today = new(2026, 11, 6);

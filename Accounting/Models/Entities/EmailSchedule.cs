@@ -62,9 +62,8 @@ public class EmailScheduleRule : TenantEntity
     /// ส่งวันที่ 5 ของเดือน รวมยอดเดือนก่อน). อื่น ๆ ไม่ใช้.</summary>
     public int DayOfMonth { get; set; } = 5;
 
-    /// <summary>เฉพาะ MonthlyStatement: กรองเฉพาะ contact ที่ใช้ filter นี้
-    /// — "ทุกคน" (null/empty), "เฉพาะ contact ที่มีรายการในเดือน" (default),
-    /// หรือ tag/group ID เฉพาะ.</summary>
+    /// <summary><b>เลิกใช้ (รอบ 250 WP-04 ต่อยอด)</b> — ออกแบบไว้กรองผู้รับของ MonthlyStatement แต่ไม่เคยมีหน้าตั้งค่า/API รับค่า/ผู้อ่าน ·
+    /// คอลัมน์คงไว้ (ฐานเดิมมีแล้ว · ลบคอลัมน์ไม่ได้ทันที) · ไม่มีทางเข้าใดเขียนค่าแล้ว — ห้ามต่อสายใหม่โดยไม่มีคำตัดสินเจ้าของ</summary>
     public string? AudienceFilter { get; set; }
 
     /// <summary>ผู้ใช้ที่สร้างกฎ (audit).</summary>

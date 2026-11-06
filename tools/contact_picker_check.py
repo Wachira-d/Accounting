@@ -67,6 +67,7 @@ def _strip_comments(text, suffix):
     return text
 
 
+ID_LIKE = re.compile(r"^(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\d+)$")
 STATIC_OPTION = re.compile(r"<option\b[^>]*\bvalue\s*=\s*[\"']([^\"'$]+)[\"']", re.I)
 
 
@@ -74,7 +75,7 @@ def _static_option_values(code, start):
     """ค่า option ที่เขียนคงที่ใน select ที่เริ่มที่ start (ถึง </select>) — ว่าง = รายการมาจากข้อมูล (template/JS)"""
     end = code.find("</select>", start)
     body = code[start: end if end > 0 else start]
-    return [v for v in STATIC_OPTION.findall(body) if v.strip()]
+    return [v for v in STATIC_OPTION.findall(body) if v.strip() and not ID_LIKE.match(v.strip())]
 
 
 def _files():
@@ -113,7 +114,8 @@ def scan(overrides=None):
                     continue
                 # รอบ 250 WP-04 ข้อ 12 (E §5 · §6.4 ข้อ 3): ตัดสินด้วยพฤติกรรม ไม่ใช่ชื่อ id — select ที่มีตัวเลือกคงที่ (ค่า option ไม่ว่าง
                 # เขียนในหน้า เช่น โหมดรับเงินของผู้ติดต่อ) คือ "ตัวเลือกค่าตั้ง" ไม่ใช่ "ตัวเลือกผู้ติดต่อ" · ตัวเลือกผู้ติดต่อ = รายการมาจากข้อมูล (ไม่มีค่าคงที่)
-                if _static_option_values(code, m.end()):
+                # ฝ่ายค้าน WP-04 ต่อยอด: ต้องมีตัวเลือกคงที่ ≥ 2 ค่าที่ไม่ใช่ id (GUID/ตัวเลข) — option เดียว หรือค่าที่เป็น id ผู้ติดต่อฝังไว้ = ยังเป็นตัวเลือกผู้ติดต่อ
+                if len(_static_option_values(code, m.end())) >= 2:
                     continue
                 if (name, sid) in ALLOW_SELECT:
                     continue
@@ -174,6 +176,8 @@ def self_test():
         ("เรียกชื่อเก่า", "R1", {wht: wt.replace(call, "Layout.contactAutocomplete('fContact', 'fContactId'")}),
         ("select ผู้ติดต่อใหม่", "R2", {fake: '<select class="form-select" id="fSupplierPick"></select>'}),
         # ทิศตรงข้ามของข้อ 12: มีแค่ตัวเลือกว่าง (placeholder) แล้วเติมรายชื่อจากข้อมูล = ตัวเลือกผู้ติดต่อ ⇒ ยังฟ้อง
+        ("select ผู้ติดต่อที่มีค่าคงที่ตัวเดียว", "R2", {fake: '<select id="fVendorPick"><option value="new">+ เพิ่มใหม่</option></select>'}),
+        ("select ผู้ติดต่อที่ฝัง id คงที่", "R2", {fake: '<select id="fPartnerPick"><option value="3f2504e0-4f89-11d3-9a0c-0305e82c3301">ก</option><option value="9b2c3d4e-0000-4000-8000-000000000001">ข</option></select>'}),
         ("select ผู้ติดต่อที่มี placeholder ว่าง", "R2", {fake: '<select id="fCustomerPick"><option value="">— เลือก —</option></select><script>fill(contacts)</script>'}),
         ("select ใน JS template", "R2", {fake: "<script>el.innerHTML = `<select id=\"payeeSel\">${o}</select>`;</script>"}),
         ("อ่านรายชื่อเพิ่ม (หน้าใหม่)", "R3", {fake: "<script>api.getContacts('?pageSize=500').then(r => fill(r));</script>"}),

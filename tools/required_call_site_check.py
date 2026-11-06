@@ -15993,7 +15993,7 @@ REVIEWER_CASES += [
 # ── รอบ 250 WP-04 ข้อ 7–13 + ฝ่ายค้าน WP-04 ──
 RULES += [
     dict(file="Services/Implementations/EtaxInvoiceService.cs", method="GenerateAsync",
-         must=["EtaxPartyTaxIdGuard.Seller(company.TaxId)", "EtaxPartyTaxIdGuard.Buyer(document.Contact.Name, document.Contact.TaxId)"],
+         must=["EtaxPartyTaxIdGuard.Seller(company.TaxId)", "EtaxPartyTaxIdGuard.Buyer(document.Contact.Name, document.Contact.TaxId, document.Contact.ContactType"],
          before=[("EtaxPartyTaxIdGuard.Buyer(", "BuildEtaxXml(")],
          why=_R250W4_WHY + "ข้อ 7 เลขผู้ขาย/ผู้ซื้อผ่านด่านเดียวก่อนสร้าง XML (ตัวประกอบ TXID เติมศูนย์แต่งเลข — ห้ามถึงกรมสรรพากร)"),
     dict(file=DOC, method="VoidDocumentAsync",
@@ -16008,6 +16008,26 @@ RULES += [
          why=_R250W4_WHY + "ฝ่ายค้านข้อ 5 ตาราง marker จากตัวตั้งเดียวในธุรกรรมของงานย้าย"),
     dict(file="Helpers/ContactNotifyEndpointMigration.cs", method="MigrateCoreAsync", must=["DatabaseMigrationHelper.OneShotDataFixesTableSql"],
          why=_R250W4_WHY + "ฝ่ายค้านข้อ 5 ตาราง marker จากตัวตั้งเดียวในธุรกรรมของงานย้าย"),
+]
+
+# ── รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน 26a06169): ค่าตั้งที่เคยไม่มีผล ต่อสายจริง ──
+RULES += [
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="ScanDueSoonAndOverdueAsync",
+         must=["OverdueReminderSchedule.SendToday(", "OverdueReminderSchedule.Suffix(", "rule.RepeatEveryDays", "d.CompanyId == rule.CompanyId"],
+         why=_R250W4_WHY + "ทวงเกินกำหนดส่งซ้ำทุก N วันผ่านตัวตัดสินเดียว · กุญแจกันซ้ำต่อรอบ (เดิมช่องนี้ไม่มีผล)"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="ProcessDueRecurringTransactionsAsync",
+         must=["NotifyUpcomingRunsAsync("],
+         why=_R250W4_WHY + "แจ้งเตือนก่อนรอบรันเดินในงานพื้นหลังเดิมของรายการประจำ"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="NotifyUpcomingRunsAsync",
+         must=["RecurringUpcomingNotice.ShouldNotify(", "NotificationEvents.RecurringUpcomingRun", "x.CompanyId == r.CompanyId"],
+         before=[("ExecuteUpdateAsync(", "_notify.DispatchAsync(")],
+         why=_R250W4_WHY + "ประทับรอบแบบ compare-and-set ก่อนแจ้ง (หลายเครื่อง = แจ้งครั้งเดียว) · ตัวตัดสินเดียว"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateAsync", must=["RecurringUpcomingNotice.RangeError("],
+         why=_R250W4_WHY + "ค่านอกช่วงปฏิเสธพร้อมเหตุ (ไม่ clamp เงียบ)"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="UpdateAsync", must=["RecurringUpcomingNotice.RangeError("],
+         why=_R250W4_WHY + "ค่านอกช่วงปฏิเสธพร้อมเหตุ (ไม่ clamp เงียบ)"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="UpsertRuleAsync", forbid=["existing.AudienceFilter ="],
+         why=_R250W4_WHY + "AudienceFilter เลิกใช้ — ไม่มีทางเข้าเขียนค่า"),
 ]
 
 

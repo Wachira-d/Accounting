@@ -19,15 +19,28 @@ public static class EtaxPartyTaxIdGuard
             : null;
     }
 
-    /// <summary>ผู้ซื้อ — 13 หลัก หรือ 18 หลัก (เลข 13 + สาขา 5 ที่ผู้ใช้ต่อมาเอง) · ว่าง = ต้องระบุ · null = ผ่าน</summary>
-    public static string? Buyer(string? buyerName, string? taxId)
+    /// <summary>ผู้ซื้อ (รอบ 250 WP-04 ต่อยอด · ฝ่ายค้าน) — null = ผ่าน:
+    /// <list type="bullet">
+    /// <item>บุคคลธรรมดา: ไม่มีเลข = ผ่าน (ผู้ซื้อที่ไม่จด VAT · ETDA ยอม scheme OTHR "N/A" · §86/4 บังคับเลขเมื่อผู้ซื้อจด VAT — Contact ไม่มีธงจด VAT
+    /// จึงใช้ชนิดผู้ติดต่อเป็นข้อเท็จจริงที่มี) · มีเลข = 13 หลัก + checksum (18 หลักไม่ใช่รูปของบุคคล)</item>
+    /// <item>นิติบุคคล/หน่วยงานรัฐ/ไม่รู้ชนิด: ต้องมีเลข · 13 หลัก หรือ 18 หลักที่ 5 หลักท้าย = รหัสสาขาของผู้ติดต่อ (normalize) · checksum ของ 13 หลักแรก</item>
+    /// </list>
+    /// ตัวประกอบ TXID ของ XML ใช้ 13 หลักแรก + สาขาของผู้ติดต่อเสมอ ⇒ PDF (สาขาจากผู้ติดต่อ) กับ XML ตรงกัน</summary>
+    public static string? Buyer(string? buyerName, string? taxId, Accounting.Models.Enums.ContactType contactType, string? branchCode)
     {
+        var individual = contactType == Accounting.Models.Enums.ContactType.Individual;
         if (string.IsNullOrWhiteSpace(taxId))
-            return "กรุณาระบุเลขประจำตัวผู้เสียภาษีของผู้ซื้อ";
+            return individual ? null : "กรุณาระบุเลขประจำตัวผู้เสียภาษีของผู้ซื้อ";
         var clean = ThaiTaxId.Normalize(taxId);
-        return clean.Length != 13 && clean.Length != 18
-            ? $"เลขประจำตัวผู้เสียภาษีของผู้ซื้อ \"{buyerName}\" ต้องเป็นตัวเลข 13 หลัก "
-              + $"(ปัจจุบัน {clean.Length} หลัก: \"{taxId}\") — แก้ที่ข้อมูลผู้ติดต่อก่อนออก e-Tax"
-            : null;
+        if (clean.Length != 13 && (individual || clean.Length != 18))
+            return $"เลขประจำตัวผู้เสียภาษีของผู้ซื้อ \"{buyerName}\" ต้องเป็นตัวเลข 13 หลัก "
+                   + $"(ปัจจุบัน {clean.Length} หลัก: \"{taxId}\") — แก้ที่ข้อมูลผู้ติดต่อก่อนออก e-Tax";
+        if (!ThaiTaxId.HasValidChecksum(clean[..13]))
+            return $"เลขประจำตัวผู้เสียภาษีของผู้ซื้อ \"{buyerName}\" ไม่ถูกต้อง (ตรวจหลักสุดท้ายไม่ผ่าน: \"{taxId}\") — "
+                   + "แก้ที่ข้อมูลผู้ติดต่อก่อนออก e-Tax (ห้ามส่งเลขที่ไม่มีอยู่จริงถึงกรมสรรพากร)";
+        if (clean.Length == 18 && clean[13..] != TaxBranchCode.Normalize(branchCode))
+            return $"เลขผู้เสียภาษี 18 หลักของผู้ซื้อ \"{buyerName}\" ลงท้ายสาขา {clean[13..]} แต่รหัสสาขาของผู้ติดต่อคือ {TaxBranchCode.Normalize(branchCode)} — "
+                   + "ใส่เลข 13 หลักในช่องเลขผู้เสียภาษี และรหัสสาขาในช่องสาขา (PDF กับ XML ต้องเป็นสาขาเดียวกัน)";
+        return null;
     }
 }

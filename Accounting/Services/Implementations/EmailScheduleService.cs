@@ -527,6 +527,9 @@ public class EmailScheduleService : IEmailScheduleService
             var target = rule.Trigger == "DocumentDueSoon"
                 ? today.AddDays(Math.Abs(rule.OffsetDays))
                 : today.AddDays(-rule.OffsetDays);
+            // รอบ 250 WP-04 ต่อยอด: "เกินกำหนด" + ส่งซ้ำทุก N วัน ⇒ ใบที่เกินกำหนดครบ Offset แล้วทุกใบ แล้วคัดด้วยตัวตัดสินเดียว (OverdueReminderSchedule) ·
+            // ไม่ตั้งส่งซ้ำ (0) ⇒ เท่ากับวันเป้าหมายตามเดิม
+            var repeating = rule.Trigger == "DocumentOverdue" && rule.RepeatEveryDays > 0;
 
             var docsQuery = _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == rule.CompanyId
@@ -534,18 +537,22 @@ public class EmailScheduleService : IEmailScheduleService
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
                     && d.BalanceDue > 0
                     && d.DueDate != null
-                    && d.DueDate.Value.Date == target);
+                    && (repeating ? d.DueDate.Value.Date <= target : d.DueDate.Value.Date == target));
             if (!string.IsNullOrEmpty(rule.DocumentType)
                 && Enum.TryParse<DocumentType>(rule.DocumentType, out var dt))
                 docsQuery = docsQuery.Where(d => d.DocumentType == dt);
 
             var docs = await docsQuery.ToListAsync(ct);
+            if (repeating)
+                docs = docs.Where(d => Accounting.Helpers.OverdueReminderSchedule.SendToday(
+                    (today - d.DueDate!.Value.Date).Days, rule.OffsetDays, rule.RepeatEveryDays)).ToList();
             await _db.HydrateContactsAsync(rule.CompanyId, docs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
             var sendUtc = ScheduledUtc(today, rule.SendAtHour);
             foreach (var doc in docs)
             {
                 var queued = await EnqueueDocumentAsync(rule, doc, daysOffset: 0,
-                    suffix: rule.Trigger == "DocumentDueSoon" ? $"due-{rule.OffsetDays}" : $"overdue-{rule.OffsetDays}",
+                    suffix: rule.Trigger == "DocumentDueSoon" ? $"due-{rule.OffsetDays}"
+                        : Accounting.Helpers.OverdueReminderSchedule.Suffix(rule.OffsetDays, (today - doc.DueDate!.Value.Date).Days, today),
                     ct, overrideSendUtc: sendUtc);
                 if (queued.Queued) enqueued++;
                 else if (queued.NotSent != null) notSentRows++;
@@ -1105,7 +1112,7 @@ public class EmailScheduleService : IEmailScheduleService
             existing.BodyTemplate = rule.BodyTemplate;
             existing.BccEmails = rule.BccEmails;
             existing.DayOfMonth = rule.DayOfMonth;
-            existing.AudienceFilter = rule.AudienceFilter;
+            // AudienceFilter: เลิกใช้ (รอบ 250 WP-04 ต่อยอด — ไม่มีหน้า/ผู้อ่าน · คอลัมน์คงไว้เพราะ schema) ⇒ ไม่รับค่า
             // รอบ 241: ค่าทับต่อตาราง (null = ตามบริษัท) — ไม่ลอกไม่ได้ (ห้าม silent no-op)
             existing.AttachPayLink = rule.AttachPayLink;
             existing.PayLinkChannelsJson = rule.PayLinkChannelsJson;
