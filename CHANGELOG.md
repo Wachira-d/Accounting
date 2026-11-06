@@ -6506,12 +6506,6 @@ _รอบ 248 รายการประจำ Autopilot (2026-11-06 · `erp-r
 เทสต์ `AutopilotRound248Tests` + Db `RecurringAutopilotRound248DbTests` · กติกา R248 ใน `required_call_site_check` · ยังไม่ทำ: คอลัมน์ระดับในตาราง · หลังรับเงินต่อรายการ ·
 LINE/คู่ค้า · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
 
-_รอบ 248 ฝ่ายค้าน (หลัง 8304ce95): HIGH-1 `[RejectApiKey]` บน approve-policy ×2 + ช่องทางรับเงินผู้ติดต่อ (+ owner_action_wiring_check R248-K1..K3) ·
-HIGH/MED-2 นโยบายรายการผูกลายนิ้วมือ `AutoApprovePolicy.BindingHash` (ยอด/บรรทัด · ผู้ติดต่อ · ชนิด · ธงอัตโนมัติ) + นโยบายผู้ติดต่อมีผลเฉพาะรายการที่ผู้มีสิทธิ์รับรอง (`inherit`) ·
-MED-3 ไม่มีนโยบายที่มีผล ⇒ แหล่ง/ร่องรอย Unattended เดิม (`ApprovalAcknowledgement.EffectiveSource`) · MED-4 ใบจำลองไม่ถาม AI (`noAi`) · MED-5 ตอนส่งคิวต่อชั้นรายการประจำ ·
-LOW-6 อ่านความพร้อม/ทดลองรันต้องมีสิทธิ์สร้างเอกสาร · LOW-7 ป้ายในชื่อ/คำอธิบายไม่ถูกปล่อย (เทสต์) · LOW-8 แจ้ง "หยุดมีผล" เฉพาะเมื่อเกี่ยว · LOW-9 คำอธิบาย APPROVAL-LIMIT ·
-ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
-
 _รอบ 249 แจ้งเตือนรับ/จ่ายชำระเงิน (2026-11-06 · เจ้าของรายงานจากกลุ่ม LINE ของบริษัท MANGKORN: "💵 รับชำระเงินแล้ว 📄 PI-20260917-0007 💰 1,733.40 บาท 🔗 /pages/documents.html?id=…"):
 (1) **ฝั่งเงินผิด** — `CreatePaymentAsync` ยิง `document.payment_received` + "💵 รับชำระเงินแล้ว" ทุกการชำระ รวม PI/ค่าใช้จ่าย (เงินที่เราจ่าย) ⇒ ตัวตัดสินเดียว
 `Helpers/PaymentNotificationText` (ฝั่งจาก `IsCashInflowDocAsync` ตัวเดียวกับยอดธนาคาร): เงินเข้า = payment_received · เงินออก = คีย์ใหม่ `document.payment_made` "💸 จ่ายชำระเงินแล้ว" ·
@@ -6525,6 +6519,12 @@ _รอบ 249 แจ้งเตือนรับ/จ่ายชำระเ�
 "ค่าตั้งต้นของระบบ" เปิดอยู่แล้ว (เดิมเขียนแค่ "Default-deny ทุกช่องเริ่มจากปิด" ⇒ เจ้าของเข้าใจว่าไม่ได้เปิด LINE).
 ตรวจแล้ว: กลุ่มที่ได้รับคือ `CompanySettings.LineDefaultGroupId` ด้วย token ของบริษัทเอง (`LineNotifyService.TryPushCompanyGroupAsync` → `ResolveCompanyOaAsync` · ไม่มีทางถอยไปกลุ่มกลางของแพลตฟอร์ม) ·
 เทสต์ `PaymentNotificationRound249Tests` + Db `PaymentNotificationRound249DbTests` · กติกา R249 ใน `required_call_site_check` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 248 ฝ่ายค้าน (หลัง 8304ce95): HIGH-1 `[RejectApiKey]` บน approve-policy ×2 + ช่องทางรับเงินผู้ติดต่อ (+ owner_action_wiring_check R248-K1..K3) ·
+HIGH/MED-2 นโยบายรายการผูกลายนิ้วมือ `AutoApprovePolicy.BindingHash` (ยอด/บรรทัด · ผู้ติดต่อ · ชนิด · ธงอัตโนมัติ) + นโยบายผู้ติดต่อมีผลเฉพาะรายการที่ผู้มีสิทธิ์รับรอง (`inherit`) ·
+MED-3 ไม่มีนโยบายที่มีผล ⇒ แหล่ง/ร่องรอย Unattended เดิม (`ApprovalAcknowledgement.EffectiveSource`) · MED-4 ใบจำลองไม่ถาม AI (`noAi`) · MED-5 ตอนส่งคิวต่อชั้นรายการประจำ ·
+LOW-6 อ่านความพร้อม/ทดลองรันต้องมีสิทธิ์สร้างเอกสาร · LOW-7 ป้ายในชื่อ/คำอธิบายไม่ถูกปล่อย (เทสต์) · LOW-8 แจ้ง "หยุดมีผล" เฉพาะเมื่อเกี่ยว · LOW-9 คำอธิบาย APPROVAL-LIMIT ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
 
 _รอบ 249 สินทรัพย์หลายใบ (2026-11-06 · คำขอเจ้าของ "ใบเสร็จรับเงินที่เป็นงวด หรือแยกใบมัดจำ ของ 1 ชิ้นจะมีหลายใบ — ตอนบันทึก Asset จัดการยังไง" ·
 `erp-review/2026-11-06/ASSET_MULTI_DOCUMENT_DESIGN.md`): เดิมทะเบียนผูกได้ 1 บรรทัด (`SourceDocumentLineId`) ⇒ เครื่องจักรเครื่องเดียวเป็นหลายแถว ·

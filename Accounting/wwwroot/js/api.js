@@ -1544,13 +1544,6 @@ const API = {
       runRecurringNow: (id) => API.post(`${base}/recurring/${id}/run-now`),
       // รอบ 247: ผู้ติดต่อรับอีเมลเอกสารได้ไหม (ฟอร์มรายการประจำ)
       getRecurringEmailReadiness: (contactId) => API.get(`${base}/recurring/email-readiness?contactId=${encodeURIComponent(contactId)}`),
-      // Import/Export
-      importData: (d) => API.post(`${base}/import-export/import`, d),
-      validateImport: (d) => API.post(`${base}/import-export/validate`, d),
-      getImportTemplate: (entity) => `${base}/import-export/templates/${entity}/download`,
-      // Field metadata for the smart-import column-mapping dropdown
-      getImportTemplateMeta: (entity) => API.get(`${base}/import-export/templates/${entity}`),
-      // ศูนย์นำเข้า/ส่งออก: เซิร์ฟเวอร์ตอบเป็นไฟล์ (ไม่ใช่ JSON) — เดิมเรียก API.post ⇒ "Server returned non-JSON" ทุกครั้ง ไม่เคยได้ไฟล์ (EXPORT_AUDIT §X2)
       // รอบ 248: Autopilot รายการประจำ — ตัวเลือก · ความพร้อม · ทดลองรัน (ไม่เขียนอะไร) · นโยบายอนุมัติ · ช่องทางรับเงินต่อผู้ติดต่อ
       getRecurringAutopilotOptions: () => API.get(`${base}/recurring/autopilot/options`),
       getRecurringReadiness: (id) => API.get(`${base}/recurring/${id}/readiness`),
@@ -1561,6 +1554,13 @@ const API = {
       getContactAutopilot: (contactId) => API.get(`${base}/recurring/contacts/${encodeURIComponent(contactId)}/autopilot`),
       updateContactAutopilot: (contactId, d) => API.put(`${base}/recurring/contacts/${encodeURIComponent(contactId)}/autopilot`, d),
       setContactApprovePolicy: (contactId, d) => API.put(`${base}/recurring/contacts/${encodeURIComponent(contactId)}/approve-policy`, d),
+      // Import/Export
+      importData: (d) => API.post(`${base}/import-export/import`, d),
+      validateImport: (d) => API.post(`${base}/import-export/validate`, d),
+      getImportTemplate: (entity) => `${base}/import-export/templates/${entity}/download`,
+      // Field metadata for the smart-import column-mapping dropdown
+      getImportTemplateMeta: (entity) => API.get(`${base}/import-export/templates/${entity}`),
+      // ศูนย์นำเข้า/ส่งออก: เซิร์ฟเวอร์ตอบเป็นไฟล์ (ไม่ใช่ JSON) — เดิมเรียก API.post ⇒ "Server returned non-JSON" ทุกครั้ง ไม่เคยได้ไฟล์ (EXPORT_AUDIT §X2)
       exportData: (d) => API.fetchFile(`${base}/import-export/export`, `export.${d && d.fileFormat === 'xlsx' ? 'xlsx' : 'csv'}`, { method: 'POST', body: d }),
       getExportableEntities: () => API.get(`${base}/import-export/exportable-entities`),
       getImportableEntities: () => API.get(`${base}/import-export/importable-entities`),
