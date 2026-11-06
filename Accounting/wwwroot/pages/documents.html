@@ -234,6 +234,11 @@
               title="ใบเสนอราคา/ใบขอซื้อ/ใบสั่งซื้อ/ใบรับสินค้า/ใบส่งของ — ออกเอกสารต่อ (เช่น ใบแจ้งหนี้) ไปแล้วหรือยัง">
         <option value="">ออกเอกสารต่อ: ทั้งหมด</option>
       </select>
+      <!-- รอบ 252 (WP-09 · AUTO_SEND §4.2): ตัวกรอง "50 ทวิ" — ตัวเลือก/ป้ายจาก GET wht-certs/filter-options (Helpers/WhtCertIntakeStatus) · กรองที่เซิร์ฟเวอร์ก่อนแบ่งหน้า -->
+      <select class="filter-select" id="whtCertFilter" onchange="Page.page = 1; Page.load()" style="display:none"
+              title="หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่ลูกค้าต้องส่งให้เรา">
+        <option value="">50 ทวิ: ทั้งหมด</option>
+      </select>
       <select class="filter-select" id="projectFilter" onchange="Page.load()" title="กรองตามโครงการ">
         <option value="">ทุกโครงการ</option>
       </select>
@@ -1945,6 +1950,7 @@
 
         // ตัวเลือกตัวกรอง "ออกเอกสารต่อ" — โหลดก่อนลิสต์รอบแรก (ล้มเงียบได้: ช่องนี้แค่ซ่อน ลิสต์ยังทำงานครบ)
         await this.loadConversionFilterOptions();
+        await this.loadWhtCertFilterOptions();
 
         // Auto-set side filter from URL
         if (sideParam) this.setSide(sideParam);
@@ -7916,6 +7922,21 @@
         }
         this._syncConversionFilter();
       },
+      // ── ตัวกรอง "50 ทวิ" (รอบ 252 · WP-09) — ตัวเลือก {value, label} จากเซิร์ฟเวอร์ · โหลดไม่ได้ = ซ่อน (ไม่เดาตัวเลือกเอง) ──
+      async loadWhtCertFilterOptions() {
+        const sel = document.getElementById('whtCertFilter');
+        if (!sel) return;
+        try {
+          const res = await API.get(`/api/companies/${Layout.getCompanyId()}/wht-certs/filter-options`);
+          const opts = Array.isArray(res?.data) ? res.data : [];
+          sel.innerHTML = '<option value="">50 ทวิ: ทั้งหมด</option>'
+            + opts.map(o => `<option value="${Layout.esc(o.value)}">50 ทวิ: ${Layout.esc(o.label)}</option>`).join('');
+          sel.style.display = opts.length ? '' : 'none';
+        } catch (e) {
+          sel.style.display = 'none';
+          sel.value = '';
+        }
+      },
       // แสดงเมื่อแท็บ "ทั้งหมด" หรือแท็บของชนิดที่เซิร์ฟเวอร์บอกว่าใช้ได้ · ซ่อนแล้วล้างค่า (ห้ามกรองค้างแบบมองไม่เห็น)
       _syncConversionFilter() {
         const sel = document.getElementById('conversionFilter');
@@ -8047,6 +8068,9 @@
         const convSel = document.getElementById('conversionFilter');
         if (convSel && convSel.style.display !== 'none' && convSel.value)
           q += `&conversion=${encodeURIComponent(convSel.value)}`;
+        const whtSel = document.getElementById('whtCertFilter');
+        if (whtSel && whtSel.style.display !== 'none' && whtSel.value)
+          q += `&whtCert=${encodeURIComponent(whtSel.value)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (projectId) q += `&projectId=${projectId}`;
         if (contactIdFilter) q += `&contactId=${contactIdFilter}`;
@@ -8164,6 +8188,13 @@
             } else if (d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && !d.isForeignService) {
               undueVatBadge = `<span title="ใบกำกับภาษีซื้อยังไม่ครบ §86/4 — ภาษีซื้อพักไว้ที่ 11640 'ยังไม่ถึงกำหนด' ยังเคลม ภ.พ.30 ไม่ได้ กด 'ดู' เพื่อเติมข้อมูลใบกำกับ" style="margin-left:6px;padding:1px 6px;background:#7c3aed;color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ รอใบกำกับ</span>`;
             }
+            // รอบ 252 (WP-09 · AUTO_SEND §4.2): สถานะ 50 ทวิ ที่ลูกค้าต้องส่งให้เรา — ป้าย/โทน/วันค้างคำนวณที่เซิร์ฟเวอร์ (WhtCertIntakeStatus) · หน้านี้ map โทนเป็นสีเท่านั้น
+            let whtCertBadge = '';
+            if (d.whtCertLabel) {
+              const whtTones = { danger: '#dc2626', warning: '#d97706', info: '#2563eb', success: '#15803d', muted: '#64748b' };
+              const whtColor = whtTones[d.whtCertTone] || '#64748b';
+              whtCertBadge = `<span title="หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — ดู/ยืนยันที่หน้า ภาษีถูกหัก ณ ที่จ่าย" style="margin-left:6px;padding:1px 6px;background:${Layout.esc(whtColor)};color:#fff;border-radius:6px;font-size:10px;font-weight:600">${Layout.esc(d.whtCertLabel)}</span>`;
+            }
             // ป้ายเคลมภาษีซื้อ (ฝั่งซื้อ) — บอกใน list ทันทีว่าใบไหนเคลม ภ.พ.30 ได้
             // (รายละเอียด "เคลมแล้วงวดไหน" ดูใน modal ซึ่งอ่านจากรายงานจริง)
             let vatClaimBadge = '';
@@ -8186,7 +8217,7 @@
               : '';
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${revBadge}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}${vatClaimBadge}</td>
+            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${revBadge}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}${whtCertBadge /* html */}${vatClaimBadge}</td>
             <td>${Layout.docHeaderBadge(d)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${Layout.esc(d.contact?.name || '-')}</td>

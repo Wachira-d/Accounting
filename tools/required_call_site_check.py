@@ -16203,6 +16203,158 @@ def wht_writeoff_lock_key_self_test() -> list:
     return fails
 
 
+# ── รอบ 252 (WP-09 · AUTO_SEND_WHT_DESIGN §3.0/§9 เฟส 243+244a · AUDIT_249 §2 #31): กล่องรับ 50 ทวิ ขาเข้า ──
+# ประตูเดียว SubmitAsync (ทุกทางเข้า) · ด่านเชิงกำหนดก่อน AI · AI ผ่าน orchestrator + ปิดลูปตอนผู้ใช้ตัดสิน · เครดิตนับผ่าน WhtCreditableAmount ตัวเดียว ·
+# ป้าย 50 ทวิ ผ่าน WhtCertIntakeStatus ตัวเดียว (ห้ามเทียบ WhtCreditStatus.Pending เองในผู้แสดงผล) · ห้าม WhtCreditsReceived.Add นอก 2 จุดเดิม
+_R252_WHY = "รอบ 252 WP-09 (AUTO_SEND_WHT_DESIGN §3.0 · คำตัดสินเจ้าของ §11 ข้อ 1–2 · AUDIT_249 §2 #31): "
+_R252_SVC = "Services/Implementations/WhtCertIntakeService.cs"
+_R252_CTL = "Controllers/WhtCertIntakeController.cs"
+_R252_TRACK = "Helpers/WhtCertTracking.cs"
+RULES += [
+    dict(file=_R252_SVC, method="SubmitAsync",
+         must=["WhtCertMatchPolicy.Match(", "WhtCertIntakeVerdict.Gates(", "WhtCertIntakeVerdict.Decide(", "_ai.AskAsync(",
+               "WhtCertIntakeVerdict.ParseAuthenticity(", "OcrAiAugmenter.IsStudentAnswer(", "LockCreditAsync(", "ApplyToCredit(",
+               "i.CompanyId == companyId"],
+         must_re=[r"if\s*\(\s*gates\s*\.\s*Count\s*==\s*0\s*\)", r"intake\s*\.\s*WhtCertAuthenticityAiFeedbackId\s*=\s*resp\s*\.\s*FeedbackId",
+                  r"intake\s*\.\s*WhtCertAuthenticityUsedAi\s*=\s*resp\s*\.\s*UsedAi", r"\bAudit\s*\(\s*companyId"],
+         before=[("WhtCertIntakeVerdict.Gates(", "_ai.AskAsync("), ("_ai.AskAsync(", "WhtCertIntakeVerdict.Decide("),
+                 ("WhtCertIntakeVerdict.Decide(", "ApplyToCredit(")],
+         forbid=["WhtCreditsReceived.Add(", "_deepseek", "IAiProvider"],
+         why=_R252_WHY + "ประตูเดียว: จับคู่ → ด่านเชิงกำหนด → (ผ่านครบเท่านั้น) ถามตรวจของจริงผ่าน orchestrator → ตัดสิน → ลงเครดิตใต้ล็อกแถว + audit chain"),
+    dict(file=_R252_SVC, method="ConfirmAsync",
+         must=["_feedback.RecordUserChoiceAsync(", "WhtCertIntakeVerdict.Genuine", "LockCreditAsync(", "ApplyToCredit(", "_credits.CreateAsync(",
+               "UserChoiceSource.Explicit"],
+         before=[("_db.SaveChangesAsync(", "_feedback.RecordUserChoiceAsync(")],
+         forbid=["WhtCreditsReceived.Add("],
+         why=_R252_WHY + "ผู้ใช้ยืนยัน ⇒ ปิดลูปกฎเหล็ก #1 หลัง commit · รายการใหม่ผ่านตัวสร้างทะเบียนเดียว (WhtCreditService.CreateAsync)"),
+    dict(file=_R252_SVC, method="RejectAsync",
+         must=["_feedback.RecordUserChoiceAsync(", "WhtCertIntakeVerdict.Suspect", "WhtCertAllocationStatus.Reversed"],
+         must_re=[r"learn\s*=\s*req\s*\.\s*NotGenuine"],
+         why=_R252_WHY + "ตีกลับเพราะไม่ใช่ของจริงเท่านั้นที่สอนนักเรียน (Suspect) · ถอน allocation ที่เสนอ"),
+    dict(file=_R252_SVC, method="SubmitFromScanAsync",
+         must=["WhtCertScanMapping.Map(", "OcrDocumentRoleInferrer.InferWhtCertWeAreWithheld(", "SubmitAsync(", "x.CompanyId == companyId"],
+         why=_R252_WHY + "ผลสแกน → ค่าบนใบผ่านตัวแปลงเดียว (ยอดภาษี WhtCertAmountResolver · ห้ามเดา) → ประตูเดียว"),
+    dict(file=_R252_SVC, method="MissingReportAsync",
+         must=["WhtCertTracking.LoadAsync(", "WhtCreditableAmount.Missing(", "_credits.SummaryAsync("],
+         why=_R252_WHY + "รายงานปลายปี: ตัวโหลด/ตัวตัดสินเดียวกับป้าย · กระทบ GL ด้วยสูตรเดียวกับหน้าทะเบียน"),
+    dict(file=_R252_SVC, method="TrackingAsync",
+         must=["WhtCertTracking.LoadAsync(", "WhtCertIntakeStatus.NeedsFollowUp(", "WhtCreditableAmount.Missing("],
+         why=_R252_WHY + "การ์ดแดชบอร์ด/ผู้ติดต่อ: ตัวตัดสินเดียว"),
+    dict(file=OCR, method="EnsureWhtCreditFromCertAsync",
+         must=["_whtIntake.SubmitFromScanAsync("],
+         forbid=["WhtCreditsReceived.Add(", "WhtCreditStatus.Received", "match.Status ="],
+         why=_R252_WHY + "เส้นสแกนใบ 50 ทวิ เข้าประตูเดียว — ห้ามสร้าง/อัปเกรดแถวเครดิตเอง (ความเสี่ยงซ้ำ G-4)"),
+    dict(file=_R252_CTL, method="Upload",
+         must=["gate.DenyAttachmentAsync(", "_intake.FindDuplicateFileAsync(", "_ocr.ScanAsync(", "_intake.SubmitFromScanAsync("],
+         before=[("gate.DenyAttachmentAsync(", "_ocr.ScanAsync("), ("_intake.FindDuplicateFileAsync(", "_ocr.ScanAsync(")],
+         why=_R252_WHY + "ช่อง ② อัปโหลดเอง: ด่านไฟล์ก่อน · ไฟล์ซ้ำไม่สแกนซ้ำ · เข้าประตูเดียว"),
+    dict(file=_R252_TRACK, method="LoadAsync",
+         must=["WhtCertIntakeStatus.Of(", "w.CompanyId == companyId", "a.CompanyId == companyId", "i.CompanyId == companyId", "d.CompanyId == companyId"],
+         why=_R252_WHY + "ตัวโหลดข้อเท็จจริงเดียวของป้าย 50 ทวิ — tenant ทุก query · ตัดสินที่ WhtCertIntakeStatus.Of"),
+    dict(file=_R243A_WHT, method="ListAsync",
+         must=["WhtCertTracking.LoadAsync(", "WhtCreditableAmount.Of("],
+         why=_R252_WHY + "ทะเบียนแสดงป้าย 50 ทวิ จากตัวตัดสินเดียว (ไม่ประกอบจาก Status เอง)"),
+    dict(file=_R243A_WHT, method="CreditableAmountAsync", must=["WhtCreditableAmount.Of("], forbid=["SumAsync(w => (decimal?)w.WhtAmount)"],
+         why=_R252_WHY + "เครดิตใช้ได้ = ตัวคำนวณเดียว (ใบรวม/ผ่อนงวดนับเฉพาะส่วนที่ได้ใบ)"),
+    dict(file=_R243A_WHT, method="SummaryAsync", must=["WhtCreditableAmount.Missing(", "WhtCreditableAmount.Of("],
+         why=_R252_WHY + "KPI ทะเบียน: ส่วนที่ได้ใบ/ยังขาดจากตัวคำนวณเดียว · ผลรวมเท่ายอดถูกหัก ⇒ กระทบ GL สูตรเดิม"),
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateCitReport",
+         must=["CreditableInPeriod(", "CreditableSumAsync(", "WhtCreditableAmount.Missing("],
+         forbid=[".Select(w => w.WhtAmount)"],
+         why=_R252_WHY + "เครดิต ภ.ง.ด.50 นับจาก WhtCreditableAmount ไม่ใช่ทั้งแถว (Definition of done WP-09)"),
+    dict(file="Services/Implementations/FinancialManagementService.Part2.cs", method="CalculateCITAsync",
+         must=["CreditableInPeriod(", "CreditableSumAsync("], forbid=["SumAsync(w => (decimal?)w.WhtAmount)"],
+         why=_R252_WHY + "เครื่องคำนวณหน้าบริหารการเงิน — ตัวรวมเดียวกับ ภ.ง.ด.50"),
+    dict(file="Helpers/CitCalculation.cs", method="CreditableSumAsync", must=["WhtCreditableAmount.Of("],
+         why=_R252_WHY + "ตัวรวมเครดิตเดียว"),
+    dict(file=DOC, method="GetDocumentsAsync",
+         must=["WhtCertTracking.StatesForDocumentsAsync(", "WhtCertTracking.LoadAsync(", "WhtCertIntakeStatus.MatchesFilter(", "WhtCertIntakeStatus.ShowsChip("],
+         why=_R252_WHY + "ชิป + ตัวกรอง 50 ทวิ ของรายการเอกสาร = ตัวตัดสินเดียว (กรองก่อนแบ่งหน้า)"),
+    dict(file=DOC, method="GetDocumentAsync", must=["WhtCertTracking.StatesForDocumentsAsync(", "WhtCertIntakeStatus.ShowsChip("],
+         why=_R252_WHY + "หน้าเอกสาร = ตัวโหลดเดียวกับรายการ"),
+    dict(file=DOC, method="SyncWhtCreditReceivedAsync",
+         must=["FirstWithheldAt = DateTime.UtcNow", "existing.ReceivedAmount > 0.005m"],
+         forbid=["existing.ReceivedAmount ="],
+         why=_R252_WHY + "ทะเบียนจาก GL: ฐานนับวันค้าง · แถวที่ได้ใบผ่านกล่องรับ GL เพิ่ม ⇒ ขยายยอด · ห้ามแตะ ReceivedAmount (ผู้เขียนเดียว = กล่องรับ)"),
+]
+REVIEWER_CASES += [
+    # ถาม AI ก่อนด่านเชิงกำหนด (AI ตัดสินแทนด่าน) ⇒ ต้องฟ้อง
+    ("R252a", "SubmitAsync", "if (gates.Count == 0)\n        {", "if (true)\n        {", True),
+    # ไม่เก็บ FeedbackId (ปิดลูปไม่ได้) ⇒ ต้องฟ้อง
+    ("R252b", "SubmitAsync", "intake.WhtCertAuthenticityAiFeedbackId = resp.FeedbackId;", "", True),
+    # ผู้ใช้ยืนยันแล้วไม่สอนนักเรียน ⇒ ต้องฟ้อง
+    ("R252c", "ConfirmAsync", "await _feedback.RecordUserChoiceAsync(fb, WhtCertIntakeVerdict.Genuine", "await NotLearning(fb, WhtCertIntakeVerdict.Genuine", True),
+    # ตีกลับเหตุอื่นก็สอนว่า Suspect (สอนผิด) ⇒ ต้องฟ้อง
+    ("R252d", "RejectAsync", "learn = req.NotGenuine;", "learn = true;", True),
+    # เส้นสแกนกลับไปสร้างแถวเครดิตเอง ⇒ ต้องฟ้อง
+    ("R252e", "EnsureWhtCreditFromCertAsync", "return await _whtIntake.SubmitFromScanAsync(",
+     "_db.WhtCreditsReceived.Add(new WhtCreditReceived { CompanyId = companyId, Status = WhtCreditStatus.Received });\n        return await NoIntake(", True),
+    # อัปโหลดสแกนก่อนผ่านด่านไฟล์ ⇒ ต้องฟ้อง
+    ("R252f", "Upload", "var deny = await gate.DenyAttachmentAsync(", "AttachmentDenial? deny = null; var _x = (", True),
+    # ภ.ง.ด.50 กลับไปรวม WhtAmount ทั้งแถว ⇒ ต้องฟ้อง
+    ("R252g", "GenerateCitReport", ".CreditableSumAsync();", ".Select(w => w.WhtAmount).SumAsync();", True),
+    # ตัวโหลดป้ายถอด tenant ของ allocation ⇒ ต้องฟ้อง
+    ("R252h", "LoadAsync", "where a.CompanyId == companyId && i.CompanyId == companyId && ids.Contains(a.WhtCreditId)",
+     "where ids.Contains(a.WhtCreditId)", True),
+    # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .Match( ⇒ ต้องไม่ฟ้อง
+    ("R252i", "SubmitAsync", ": WhtCertMatchPolicy.Match(", ": WhtCertMatchPolicy\n                .Match(", False),
+]
+
+
+def wht_credit_add_errors() -> list:
+    """รอบ 252 (AUTO_SEND §3.0 / เฟส 244 R243): ห้าม `WhtCreditsReceived.Add(` นอก DocumentService.SyncWhtCreditReceivedAsync + WhtCreditService.CreateAsync
+    (ล็อกจำนวนจุด = 2) — ทุกทางเข้าของใบ 50 ทวิ เข้าประตูเดียว WhtCertIntakeService · `ReceivedAmount` เขียนได้ที่กล่องรับเท่านั้น ·
+    กล่องรับเขียน audit ผ่าน hash chain เท่านั้น · ตรวจบนโค้ดที่ตัดคอมเมนต์+สตริงแล้ว"""
+    errs = []
+    allowed = {DOC: "SyncWhtCreditReceivedAsync", _R243A_WHT: "CreateAsync"}
+    found = 0
+    for path in sorted(SRC.rglob("*.cs")):
+        rel = path.relative_to(SRC).as_posix()
+        if "/obj/" in "/" + rel or "/bin/" in "/" + rel:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "WhtCreditsReceived" not in text and "ReceivedAmount" not in text and rel != _R252_SVC:
+            continue
+        code = mask(text)
+        for m in re.finditer(r"\bWhtCreditsReceived\s*\.\s*(?:Add|AddRange)\s*\(", code):
+            found += 1
+            line = code.count("\n", 0, m.start()) + 1
+            meth = allowed.get(rel)
+            span = method_body(code, meth) if meth else None
+            if span is None or not (span[0] <= m.start() < span[1]):
+                errs.append(f"{rel}:{line} เพิ่มแถว WhtCreditsReceived นอก 2 จุดที่อนุญาต — {_R252_WHY}ใบ 50 ทวิ ขาเข้าต้องผ่าน WhtCertIntakeService.SubmitAsync")
+        if rel.startswith("Services/") or rel.startswith("Controllers/") or rel.startswith("Helpers/"):
+            for m in re.finditer(r"\.\s*ReceivedAmount\s*=(?!=)", code):
+                if rel == _R252_SVC or "QuotaAddOn" in rel:
+                    continue
+                line = code.count("\n", 0, m.start()) + 1
+                errs.append(f"{rel}:{line} เขียน ReceivedAmount นอกกล่องรับ — {_R252_WHY}ยอดที่ได้ใบเขียนโดย WhtCertIntakeService เท่านั้น")
+    if found != 2:
+        errs.append(f"WhtCreditsReceived.Add( พบ {found} จุด (คาด 2: SyncWhtCreditReceivedAsync + WhtCreditService.CreateAsync) — {_R252_WHY}")
+    svc = mask((SRC / _R252_SVC).read_text(encoding="utf-8"))
+    if re.search(r"\bAuditLogs\s*\.\s*Add\s*\(", svc) or not re.search(r"_db\s*\.\s*AddChainedAuditLog\s*\(", svc):
+        errs.append(f"{_R252_SVC}: audit ของกล่องรับต้องผ่าน _db.AddChainedAuditLog( เท่านั้น — {_R252_WHY}กฎ M hash chain")
+    return errs
+
+
+def wht_credit_add_self_test() -> list:
+    fails = []
+    good = wht_credit_add_errors()
+    if good:
+        fails.append("self-test R252 wht_credit_add: เรพจริงถูกฟ้องผิด — " + "; ".join(good[:3]))
+    # ฉีดผู้เพิ่มแถวใหม่ลงสำเนา OcrService ⇒ ต้องฟ้อง (ตรวจตัวนับด้วย mask ตรง ๆ)
+    sample = "class X { void F() { _db.WhtCreditsReceived.Add(new WhtCreditReceived()); } }"
+    if not re.search(r"\bWhtCreditsReceived\s*\.\s*(?:Add|AddRange)\s*\(", mask(sample)):
+        fails.append("self-test R252 wht_credit_add: รูป `_db.WhtCreditsReceived.Add(` ไม่ถูกจับ")
+    if re.search(r"\bWhtCreditsReceived\s*\.\s*(?:Add|AddRange)\s*\(", mask('class X { // _db.WhtCreditsReceived.Add(x)\n string s = "WhtCreditsReceived.Add("; }')):
+        fails.append("self-test R252 wht_credit_add: คอมเมนต์/สตริงถูกนับเป็นการเพิ่มแถว")
+    if not re.search(r"\.\s*ReceivedAmount\s*=(?!=)", mask("class X { void F() { row.ReceivedAmount = 5m; } }")):
+        fails.append("self-test R252 wht_credit_add: ผู้เขียน ReceivedAmount ไม่ถูกจับ")
+    if re.search(r"\.\s*ReceivedAmount\s*=(?!=)", mask("class X { bool F() => row.ReceivedAmount == 5m; }")):
+        fails.append("self-test R252 wht_credit_add: การเทียบ == ถูกนับเป็นการเขียน")
+    return fails
+
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
@@ -16230,10 +16382,12 @@ def main() -> int:
     errs += doc_inline_vat_formula_errors((SRC / DOC).read_text(encoding="utf-8"))   # รอบ 250 WP-02 §2.2/§2.4 ข้อ 5
     errs += wht_writeoff_lock_key_errors((SRC / _R243A_WHT).read_text(encoding="utf-8"))   # รอบ 250 WP-02 §2.4 ข้อ 9
     errs += program_boot_migrations_errors((SRC / "Program.cs").read_text(encoding="utf-8"))   # รอบ 250 WP-04 R246-MIG
+    errs += wht_credit_add_errors()   # รอบ 252 WP-09 (ประตูเดียวของ 50 ทวิ ขาเข้า)
     st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
           + notes_marker_self_test(marker_files) + line_config_self_test(marker_files) + line_push_self_test(marker_files)
           + cascade_writer_self_test() + program_outbound_clients_self_test() + wht_credit_ioe_self_test()
-          + doc_inline_vat_formula_self_test() + wht_writeoff_lock_key_self_test() + program_boot_migrations_self_test())
+          + doc_inline_vat_formula_self_test() + wht_writeoff_lock_key_self_test() + program_boot_migrations_self_test()
+          + wht_credit_add_self_test())
     for e in errs + st:
         print("❌ " + e)
     if errs or st:

@@ -255,6 +255,10 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 | --- | --- | --- | --- |
 | **58010** ภาษีเงินได้ถูกหัก ณ ที่จ่ายที่ขอเครดิตไม่ได้ (Expense · ใต้กลุ่ม **580** ภาษีเงินได้) | ตัดสูญแถวทะเบียน 50 ทวิ ที่ลูกค้าไม่ออกใบ (Dr 58010 / Cr 11910) · ช่อง "ตัดสูญ" ของปิดปีภาษี | `Helpers/WhtCreditWriteOff` (`ExpenseAccountCode` · `IsNonDeductibleAccount` = `CitCalculation.IsCitExpenseAccount`) ← `WhtCreditService.ExpireAsync` / `SettleYearEndAsync` | ✅ แถวใน `ChartOfAccountTemplates.GetCommonAccounts` (บริษัทใหม่ได้จาก seed) · บริษัทเดิม: **สร้างตอนใช้ครั้งแรก** `SettlementChartSeed.EnsureStandardAccountAsync` ใต้กลุ่ม 580 ของบริษัท (ไม่มีกลุ่ม 580 ⇒ ล้มดังพร้อมทางไปต่อ · ไม่มี migration seed) · ผังที่ไม่อยู่กลุ่ม 580 ⇒ ปฏิเสธ (ภ.ง.ด.50 จะหักเป็นรายจ่ายผิด ม.65 ตรี (6 ทวิ)) · อยู่ใน `SpecialPurposeAccount.Codes` (ไม่เป็นผังค่าใช้จ่ายตั้งต้น) · ภ.ง.ด.50/51 ตัดออกจากรายจ่ายด้วย `ExceptCitExpense` (แก้ร่วม: จับ 58000–58099 · เดิมแค่ 58000–58009 — ผังของบริษัทเดิมที่ใช้รหัสช่วงนี้นอกกลุ่ม 580 ขึ้นคำเตือนที่ `GET wht-credits/account-warnings` · ฝ่ายค้าน N1) · สร้างผังในธุรกรรมเดียวกับ JE ตัดสูญ (N5) |
 
+**รอบ 252 (WP-09) — 11910 กับกล่องรับ 50 ทวิ (ชั้น Company · ยังไม่ได้คอมไพล์ในเครื่องนี้):** ไม่มีผังใหม่ — 11910 ยังเป็นยอดถูกหักทั้งหมดตาม GL (ผู้ตั้ง = `SyncWhtCreditReceivedAsync`) ·
+ส่วนที่ "เครดิตได้" แยกด้วยข้อมูล ไม่ใช่ผัง: `WhtCreditsReceived.ReceivedAmount` (Σ allocation ที่ยืนยันใน `WhtCertAllocations` ← `WhtCertIntakes`) + ตัวคำนวณเดียว
+`Helpers/WhtCreditableAmount` · กระทบยอด 11910 สูตรเดิม (ส่วนที่ขาดใบ + ส่วนที่ได้ใบ + ใช้แล้ว + ตัดสูญพร้อม JE = GL) · ตารางใหม่ทั้งสองผูก `CompanyId` (tenant) · DOCUMENT_FLOW §2.12j
+
 ### 3.1e ผังภาษีหัก ณ ที่จ่ายค้างจ่ายต่อแบบ ภ.ง.ด. ✅ รอบ 204 (คำตัดสินเจ้าของ DECISIONS ข้อ 148) — ชั้น Company (ผังของบริษัท)
 
 | ผัง | แบบ | ผู้ตัดสิน | สถานะ |

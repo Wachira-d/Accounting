@@ -1100,7 +1100,16 @@ public record DocumentResponse(
     /// <summary>รอบ 250 WP-03 (D §3.4 · server computes): ใบนี้ควรแสดงแผง "สินทรัพย์ถาวร" ไหม — ชนิดฝั่งซื้อที่ลงทะเบียนอัตโนมัติได้
     /// (<c>FixedAssetService.SupportsAutoRegister</c>) + มีบรรทัดผังสินทรัพย์ (12xxx) หรือมัดจำ (118xx) · บรรทัดไหนผูกได้จริงยังตัดสินที่
     /// <c>GetDocumentAssetLinesAsync</c> · เดิมหน้าเว็บถือกติกาเอง ⇒ เพิ่มผังใหม่ที่เซิร์ฟเวอร์เมื่อไรแผงหายเงียบ</summary>
-    bool HasAssetCandidateLines = false);
+    bool HasAssetCandidateLines = false,
+    /// <summary>รอบ 252 (WP-09 · AUTO_SEND §4.2 · server computes): สถานะ 50 ทวิ ที่ลูกค้าต้องส่งให้เรา — ชื่อ enum <c>WhtCertIntakeStatus.State</c>
+    /// (ตัวตัดสินเดียว <c>Helpers/WhtCertIntakeStatus.Of</c> ผ่านตัวโหลด <c>Helpers/WhtCertTracking</c>) · ใบเสร็จที่ออกจากใบแจ้งหนี้แสดงสถานะของใบต้นทาง ·
+    /// null = ไม่ได้ตรวจ (เส้นทางที่ไม่คำนวณ) ≠ "NotApplicable" (ตรวจแล้วไม่มี WHT) — หลักการ #5</summary>
+    string? WhtCertState = null,
+    /// <summary>ป้ายภาษาไทยของ <see cref="WhtCertState"/> (เช่น "รอ 50 ทวิ · 12 วัน") — null เมื่อไม่ต้องแสดงชิป</summary>
+    string? WhtCertLabel = null,
+    /// <summary>โทนของชิป: none · muted · info · warning · danger · success (หน้าเว็บ map เป็นสีเท่านั้น)</summary>
+    string? WhtCertTone = null,
+    int? WhtCertDaysWaiting = null);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);

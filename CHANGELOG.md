@@ -6743,3 +6743,15 @@ _รอบ 250 WP-04 แก้ผลฝ่ายค้าน 74a2d1f6 (2026-11-0
 (M5) แถว e-Tax ไม่มีเลขผู้ซื้อมีคำเตือน §86/4. (M6) "-"/"N/A" ของบุคคล = ไม่มีเลข · ข้อความทางไปต่อ. (M7) `ComposeTxId`/ผู้ขายใช้ `TaxBranchCode.Normalize` (เกิน 5 หลัก = 5 หลักท้าย).
 (L3) คอมเมนต์ประทับก่อนส่ง = อย่างมากครั้งเดียว · (L4) ช่อง 0–30 ตรงเซิร์ฟเวอร์ · (L5) คอมเมนต์ migration อยู่กับคำสั่งของมัน · (L6) negative test form_label กับหน้าจริง ·
 (L1) คง modulo (เพดานทำให้ "ครั้งล่าสุด ≥ N วัน" ไม่จำเป็น). ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit d5257214_
+
+_รอบ 252 (2026-11-06 · WP-09 · AUTO_SEND_WHT_DESIGN §9 เฟส 243 + 244a · คำตัดสินเจ้าของ §11 ข้อ 1–2 · AUDIT_249 §2 #31): **50 ทวิ ขาเข้า "เห็นก่อน–รับเข้าได้"** —
+ประตูเดียว `WhtCertIntakeService.SubmitAsync` (สแกนเอกสาร · อัปโหลดหลายไฟล์ที่หน้า "ภาษีถูกหัก ณ ที่จ่าย") + ตาราง `WhtCertIntakes`/`WhtCertAllocations` + คอลัมน์
+`WhtCreditsReceived.ReceivedAmount/EvidenceKind/FirstWithheldAt` (migration ใบย้อนหลัง 1:1 ของแถวที่มีเลขที่ใบแล้ว) · จับคู่ `Helpers/WhtCertMatchPolicy` (K0–K6 · ใบรวม · ผ่อนงวด ·
+กำกวม = ไม่เลือกเอง) · ด่านเชิงกำหนดก่อน AI `Helpers/WhtCertIntakeVerdict` (checksum · ผู้ถูกหัก = เรา · ยอด/อัตรา/ปีภาษี · OCR ≥ 0.85) · ตรวจของจริง
+`AiFeatureKey.WhtCertAuthenticity` = 61 ผ่าน orchestrator + นักเรียน generic (`DistillationModelRegistry.GenericFeatureKeys`) · มั่นใจ ≥ 0.85 ⇒ ยืนยันอัตโนมัติ · ปิด AI ⇒ รอผู้ใช้ ·
+ยืนยัน/ตีกลับ ⇒ `RecordUserChoiceAsync` · เครดิตทุกผู้อ่านผ่าน `Helpers/WhtCreditableAmount` + `CitCalculation.CreditableSumAsync` (ผ่อน 3 งวดได้ใบงวดแรก ⇒ เครดิตงวดแรก) ·
+ป้าย 10 สถานะ `Helpers/WhtCertIntakeStatus` ผ่านตัวโหลด `Helpers/WhtCertTracking` ⇒ ชิป + ตัวกรอง "50 ทวิ" ในรายการเอกสาร · `DocumentResponse.WhtCert*` · ทะเบียน · กล่องรับ +
+รายงานปลายปี "50 ทวิ ที่ยังขาด" + Excel · การ์ดแดชบอร์ด/ผู้ติดต่อ · `OcrService.EnsureWhtCreditFromCertAsync` ย้ายเข้าประตูเดียว (ไม่สร้างแถวเครดิตเอง) · R252 (+ ห้าม
+`WhtCreditsReceived.Add(` นอก 2 จุด · `ReceivedAmount` ผู้เขียนเดียว) · `attachment_gate_check`/`write_permission_gate_check` เฝ้าคอนโทรลเลอร์ใหม่ · เทสต์ `WhtCertIntakeStatusTests` ·
+`WhtCreditableAmountTests` · `WhtCertMatchPolicyTests` · `Db/WhtCertIntakeRound252DbTests` · ไม่ทำรอบนี้: ลิงก์อัปโหลด/ทวง/"ไม่หัก" (WP-10) · WHT ส่วนเสริม CompanyFeature (WP-09 ข้อ 5 backlog) ·
+เมทริกซ์ auto-send · แผงไทม์ไลน์หน้าเอกสาร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

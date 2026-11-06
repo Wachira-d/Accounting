@@ -3154,6 +3154,30 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     ฝั่งขายเท่านั้น · THB · ออกแล้ว · ยอดค้าง > 0 · ใบแจ้งหนี้ที่มีใบกำกับอ้าง) ⇒ ยอดโอน = `AmountsAsync().Net` (หลัง WHT) · บัญชี = ของใบก่อน (`PickDocumentAccountAsync`) ·
     กล่องโอนตัวเดียว `TransferBlockAsync` ใช้ร่วมกับ pay-document · เจ้าของใบตรวจผ่าน `PortalDocuments` · ปุ่ม "ชำระ" ตาม `PortalDocumentResponse.CanPay`
 
+### 2.12j 50 ทวิ ขาเข้า — กล่องรับ + ป้าย "50 ทวิ ที่ต้องตาม" (รอบ 252 · WP-09 · `erp-review/2026-11-06/AUTO_SEND_WHT_DESIGN.md` §9 เฟส 243 + 244a · คำตัดสินเจ้าของ §11 ข้อ 1–2 · AUDIT_249 §2 #31)
+
+**สถานะปัจจุบัน** (ยังไม่ได้คอมไพล์ในเครื่องนี้):
+
+| เรื่อง | ทำงานอย่างไร | ตัวตัดสิน/ไฟล์ |
+| --- | --- | --- |
+| ประตูเดียว | ทุกทางเข้าของใบ 50 ทวิ ที่ลูกค้าหักเรา (สแกนเอกสาร · อัปโหลดหลายไฟล์ที่หน้า "ภาษีถูกหัก ณ ที่จ่าย" · ต่อไป: ลิงก์/พอร์ทัล/NextAcc — WP-10) เข้า `IWhtCertIntakeService.SubmitAsync` · ห้าม `WhtCreditsReceived.Add(` นอก `SyncWhtCreditReceivedAsync` + `WhtCreditService.CreateAsync` (ล็อก = 2 จุด) · `ReceivedAmount` เขียนที่กล่องรับเท่านั้น | `Services/Implementations/WhtCertIntakeService.cs` · R252 ใน `tools/required_call_site_check.py` |
+| กันซ้ำ | ไฟล์เดิม (SHA-256 · UNIQUE CompanyId+FileSha256) ⇒ แถวเดิม (ไม่สแกน OCR ซ้ำ) · เลขที่ใบ + ผู้จ่ายเดิมที่ยังไม่ถูกตีกลับ ⇒ แถวเดิม (สแกนใบเดียวกันหลังอัปโหลด ⇒ ไม่มีเครดิตซ้ำ) | `SubmitAsync` · `FindDuplicateFileAsync` |
+| จับคู่ | K0 ผู้ถูกหักไม่ใช่เรา ⇒ ตีกลับทันที · K1 ผู้จ่ายเลขผู้เสียภาษีตรงเป๊ะ (ไม่มี fuzzy) · K2 เอกสารที่ระบุก่อน · K3 ยอดเดี่ยว ±฿1 · K4 ใบรวมหลายใบแจ้งหนี้ (subset ≤ 12 แถว · หลายชุด ⇒ กำกวม ไม่เลือกเอง) · K5 บางส่วน (ผ่อนงวด) · K6 เกินยอดค้าง | `Helpers/WhtCertMatchPolicy` (pure · ห้ามถาม AI) |
+| ยืนยันอัตโนมัติ | ด่านเชิงกำหนดก่อนเสมอ (เลขที่+วันที่ · checksum เลขผู้จ่าย mod-11 · ผู้ถูกหัก = เรา · ภาษี = เงินได้ × อัตรา · จับคู่ Exact · OCR ช่องเงิน/เลข ≥ 0.85 · ปีภาษีของใบ = ของแถว) — ไม่ผ่าน ⇒ **ไม่ถาม AI** · ผ่านครบ ⇒ ตรวจของจริง `AiFeatureKey.WhtCertAuthenticity` ผ่าน `IAiOrchestrator.AskAsync` (นักเรียน `GenericFeedbackDistillationModel` ก่อน · AI เป็นครู) ⇒ "Genuine" ความมั่นใจ ≥ 0.85 ⇒ ยืนยันอัตโนมัติ · อื่น ๆ (รวมปิด provider ทุกตัว) ⇒ รอผู้ใช้กดยืนยัน (ฟอร์มเติมครบ · ความมั่นใจต่ำ = พื้นเหลือง) | `Helpers/WhtCertIntakeVerdict` · `Services/Ai/Prompts/WhtCertAuthenticityPrompt` |
+| ลงเครดิต | allocation ที่ยืนยัน ⇒ `WhtCreditReceived.ReceivedAmount += ยอด` · ครบยอด ⇒ Received · ไม่ครบ ⇒ คง Pending แต่เครดิตได้เฉพาะส่วนที่ได้ใบ · ใต้ล็อกแถวเดียวกับการตัดสูญ · audit chain (`RD-50BIS-INTAKE` · ม.50 ทวิ/ม.69 ทวิ) · ไม่มีรายการรอใบที่ตรง ⇒ ผู้ใช้เลือก "บันทึกเป็นรายการเครดิตใหม่" (ผ่าน `WhtCreditService.CreateAsync` — ทางเดิมของการสแกนใบที่ไม่มีการรับชำระในระบบ) | `ApplyToCredit` · `ConfirmAsync` |
+| ผู้อ่านเครดิต | ภ.ง.ด.50 (`TaxService.GenerateCitReport`) · เครื่องคำนวณหน้าบริหารการเงิน · ทะเบียน (`CreditableAmountAsync` · `SummaryAsync`) รวมยอดผ่าน `CreditableInPeriod(...).CreditableSumAsync()` → `WhtCreditableAmount.Of` ตัวเดียว (Received/Claimed เต็มแถว · Pending เฉพาะ `ReceivedAmount` · ตัดสูญ 0) — ผ่อน 3 งวดได้ใบงวดแรก ⇒ เครดิตงวดแรก | `Helpers/WhtCreditableAmount` · `Helpers/CitCalculation` |
+| ทะเบียนจาก GL (ผ่อนงวดถัดไป) | แถวที่ได้ใบผ่านกล่องรับแล้ว GL ถูกหักเพิ่ม ⇒ `SyncWhtCreditReceivedAsync` ขยาย `WhtAmount` + กลับเป็น Pending (ส่วนที่เหลือรอใบ) · GL ลดต่ำกว่ายอดที่ได้ใบ ⇒ ไม่ลบ/ไม่ลดยอด + หมายเหตุ "ยอดใบเกินยอดที่ถูกหัก" · ไม่แตะ `ReceivedAmount` · แถวใหม่ประทับ `FirstWithheldAt` | `DocumentService.SyncWhtCreditReceivedAsync` |
+| ป้าย 10 สถานะ | NotApplicable · NotYetPaid (คาดว่าจะถูกหัก/ตั้ง 11910 ตอนออกใบแต่ยังไม่รับเงิน — ไม่ใช่การค้าง) · AwaitingCert · Submitted · PartiallyReceived · Received · EWhtAwaitingEvidence · Rejected · Claimed · WrittenOff · เกินกำหนด = เกิน 30 วันหลังถูกหัก (สถานะที่รอลูกค้า) | `Helpers/WhtCertIntakeStatus.Of` ← ตัวโหลดเดียว `Helpers/WhtCertTracking` |
+| ที่แสดง | รายการเอกสาร: ชิป + ตัวกรอง "50 ทวิ" (`?whtCert=` awaiting · overdue · submitted · received · ewht · กรองก่อนแบ่งหน้า · ตัวเลือกจาก `GET wht-certs/filter-options`) · ใบเสร็จที่ไม่มีแถวของตัวเองแสดงสถานะใบต้นทาง · `DocumentResponse.WhtCert*` (รายการ + รายละเอียด) · ทะเบียน `wht-credit.html`: กล่องรับ (อัปโหลดหลายไฟล์ · ตรวจและยืนยัน · ตีกลับพร้อมเหตุ) + รายงานปลายปี "50 ทวิ ที่ยังขาด" + Excel (MiniExcel) · แดชบอร์ด `app.html` การ์ด "50 ทวิ ที่ต้องตามจากลูกค้า" · ผู้ติดต่อ (แท็บช่องทางแจ้งเตือน) การ์ดของลูกค้ารายนั้น | `WhtCertIntakeController` (`api/companies/{cid}/wht-certs/*` · Tax.File) |
+| ปิดลูป AI | ผู้ใช้ยืนยัน ⇒ `RecordUserChoiceAsync(feedbackId, "Genuine")` · ตีกลับเพราะ "ไม่ใช่ของจริง" ⇒ "Suspect" · ตีกลับเหตุอื่น ⇒ ไม่สอน · ป้ายซื่อสัตย์ 🤖 (เรียก provider จริง) / ⚙️ (นักเรียน/ไม่ได้ตรวจ) จากเซิร์ฟเวอร์ | `WhtCertIntakeVerdict.AuthenticityLabel` |
+| migration | ตาราง `WhtCertIntakes` · `WhtCertAllocations` · คอลัมน์ `WhtCreditsReceived.ReceivedAmount/EvidenceKind/FirstWithheldAt` · แถวเครดิตเดิมที่มีเลขที่ใบ (Received/Claimed) ⇒ ใบในกล่องรับย้อนหลัง 1:1 (Confirmed · Id เดียวกับแถว · รันซ้ำได้) | `DatabaseMigrationHelper` |
+
+ยังไม่ทำในรอบนี้ (WP-10/ภายหลัง): ลิงก์อัปโหลดสาธารณะ + พอร์ทัล · ทวงอัตโนมัติ 7/21/45 + รายเดือน ≤ 6 · "ไม่หัก" บนหน้าชำระ · หลักฐาน e-WHT (ช่อง `EvidenceKind` มีแล้ว — ยังไม่มีทางตั้ง) ·
+แผงไทม์ไลน์บนหน้าเอกสาร (§6.6 — รอบนี้มีชิป/ป้ายในรายการ + ข้อมูลใน `DocumentResponse`) · เมทริกซ์ `GET auto-send/matrix` · WHT ของส่วนเสริม `CompanyFeature` (WP-09 ข้อ 5 — backlog) ·
+`PostPaymentAutomationService` ยังตรวจแค่ "มีแถวทะเบียน" (ไม่ข้ามขั้นขอ 50 ทวิ เมื่อได้ใบแล้ว) · feedback รายช่องของ OCR ตอนผู้ใช้แก้ค่าบนฟอร์มยืนยัน (บันทึกใน audit `before` เท่านั้น)
+
+เทสต์ `WhtCertIntakeStatusTests` · `WhtCreditableAmountTests` · `WhtCertMatchPolicyTests` · `Db/WhtCertIntakeRound252DbTests` · Last verified 2026-11-06 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>
+
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
 ### 3.1 Create / Update (Draft → Draft)

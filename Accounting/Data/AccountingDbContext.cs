@@ -242,6 +242,9 @@ public class AccountingDbContext : DbContext
     /// <summary>หนังสือรับรองหัก ณ ที่จ่ายที่ "เราได้รับ" — เครดิต ภ.ง.ด.50/51
     /// (คนละตัวกับ WithholdingTaxCerts ที่เป็นใบที่เราออกให้ผู้อื่น)</summary>
     public DbSet<WhtCreditReceived> WhtCreditsReceived => Set<WhtCreditReceived>();
+    /// <summary>รอบ 252 (WP-09): กล่องรับ 50 ทวิ ขาเข้า (หนึ่งแถว = หนึ่งใบที่ส่งมา) + การจัดสรรใบ ↔ แถวเครดิต</summary>
+    public DbSet<WhtCertIntake> WhtCertIntakes => Set<WhtCertIntake>();
+    public DbSet<WhtCertAllocation> WhtCertAllocations => Set<WhtCertAllocation>();
     public DbSet<WithholdingTaxCertLine> WithholdingTaxCertLines => Set<WithholdingTaxCertLine>();
 
     // API Keys
@@ -2609,6 +2612,38 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<ProjectTask>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ProjectCostEntry>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<WhtCreditReceived>().HasQueryFilter(e => !e.IsDeleted);
+        // รอบ 252 (WP-09) — ชื่อ index ตรงกับ DatabaseMigrationHelper (ฐานเทสต์สร้างจากโมเดล · production สร้างด้วย SQL)
+        modelBuilder.Entity<WhtCreditReceived>().Property(e => e.ReceivedAmount).HasPrecision(18, 2);
+        modelBuilder.Entity<WhtCertIntake>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.FileSha256 }).IsUnique()
+                .HasFilter("\"FileSha256\" IS NOT NULL AND \"IsDeleted\" = false").HasDatabaseName("UX_WhtCertIntakes_File");
+            e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_WhtCertIntakes_Status");
+            e.Property(x => x.FileSha256).HasMaxLength(64);
+            e.Property(x => x.CertificateNumber).HasMaxLength(50);
+            e.Property(x => x.PayerName).HasMaxLength(300);
+            e.Property(x => x.PayerTaxId).HasMaxLength(20);
+            e.Property(x => x.PayerBranchCode).HasMaxLength(10);
+            e.Property(x => x.PayeeTaxId).HasMaxLength(20);
+            e.Property(x => x.IncomeTypeCode).HasMaxLength(20);
+            e.Property(x => x.MatchLevel).HasMaxLength(20);
+            e.Property(x => x.AuthenticityAnswer).HasMaxLength(20);
+            e.Property(x => x.SubmittedByName).HasMaxLength(200);
+            e.Property(x => x.IncomeAmount).HasPrecision(18, 2);
+            e.Property(x => x.WhtAmount).HasPrecision(18, 2);
+            e.Property(x => x.WhtRate).HasPrecision(9, 4);
+            e.Property(x => x.ExtractionConfidence).HasPrecision(5, 4);
+            e.Property(x => x.AuthenticityConfidence).HasPrecision(5, 4);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<WhtCertAllocation>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.IntakeId, x.WhtCreditId }).IsUnique()
+                .HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_WhtCertAllocations_Pair");
+            e.HasIndex(x => new { x.CompanyId, x.WhtCreditId }).HasDatabaseName("IX_WhtCertAllocations_Credit");
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
         modelBuilder.Entity<PerformanceObligation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<RevenueSchedule>().HasQueryFilter(e => !e.IsDeleted);
 

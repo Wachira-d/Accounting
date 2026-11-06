@@ -1163,7 +1163,34 @@
           const res = await API.get(this._notifyUrl());
           if (!res || !res.success) { panel.innerHTML = `<div class="text-red" style="font-size:13px">${Layout.esc(res?.message || 'โหลดช่องทางแจ้งเตือนไม่สำเร็จ')}</div>`; return; }
           this._renderNotify(res.data);
+          this.loadContactWhtCert();
         } catch (e) { panel.innerHTML = `<div class="text-red" style="font-size:13px">${Layout.esc(e.message)}</div>`; }
+      },
+      // รอบ 252 (WP-09 · AUTO_SEND §4.2): การ์ด "50 ทวิ ที่ต้องตามจากลูกค้ารายนี้" — ตัวเลข/ป้ายจากตัวตัดสินเดียว (GET wht-certs/tracking?contactId=)
+      // ไม่มีสิทธิ์ภาษี (403) = ไม่แสดงการ์ด · ล้มอื่น = บอกในการ์ด (ไม่เงียบ)
+      async loadContactWhtCert() {
+        const panel = document.getElementById('contactNotifyPanel');
+        const id = document.getElementById('editId').value;
+        if (!panel || !id) return;
+        let box = document.getElementById('contactWhtCertBox');
+        if (!box) { box = document.createElement('div'); box.id = 'contactWhtCertBox'; box.style.marginTop = '14px'; panel.appendChild(box); }
+        box.innerHTML = '<div style="color:#64748b;font-size:12px">กำลังโหลด 50 ทวิ ที่ต้องตาม…</div>';
+        try {
+          const res = await API.get(`/api/companies/${encodeURIComponent(Layout.getCompanyId())}/wht-certs/tracking?contactId=${encodeURIComponent(id)}`);
+          if (document.getElementById('editId').value !== id) return;   // เปลี่ยนผู้ติดต่อระหว่างโหลด
+          const d = res?.data || {};
+          const items = d.items || [];
+          box.innerHTML = `<div style="font-weight:600;font-size:13px;margin-bottom:4px">50 ทวิ ที่ต้องตามจากลูกค้ารายนี้</div>`
+            + (Number(d.outstandingCount || 0) === 0
+              ? '<div style="font-size:12px;color:#15803d">ไม่มีหนังสือรับรองหัก ณ ที่จ่ายค้าง</div>'
+              : `<div style="font-size:12px">${Number(d.outstandingCount)} รายการ ${Layout.money(d.outstandingAmount)} · เก่าสุด ${Number(d.topCustomerOldestDays || 0)} วัน
+                  · <a href="/pages/wht-credit.html" class="text-primary">เปิดหน้าภาษีถูกหัก ณ ที่จ่าย</a></div>
+                 <ul style="margin:4px 0 0 18px;padding:0;font-size:12px">${items.slice(0, 10).map(x =>
+                   `<li>${Layout.esc(x.documentNumber || '—')} · ${Layout.money(x.missing)} · ${Layout.esc(x.label || '')}</li>`).join('')}</ul>`);
+        } catch (e) {
+          if (e && (e.status === 403 || /403|สิทธิ์/.test(String(e.message || '')))) { box.innerHTML = ''; return; }
+          box.innerHTML = `<div class="text-red" style="font-size:12px">โหลด 50 ทวิ ที่ต้องตามไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+        }
       },
       _renderNotify(o) {
         this._notify = o;

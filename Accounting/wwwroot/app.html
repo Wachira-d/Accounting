@@ -159,6 +159,16 @@
       </div>
     </div>
 
+    <!-- รอบ 252 (WP-09 · AUTO_SEND §6.7): การ์ด "50 ทวิ ที่ต้องตาม" — ตัวเลข/ป้ายจากตัวตัดสินเดียว (GET wht-certs/tracking) ·
+         ซ่อนเมื่อไม่มีสิทธิ์ภาษี (403) หรือไม่มีรายการต้องตาม -->
+    <div class="card" id="whtCertCard" style="margin-top:24px;display:none">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <h3 class="card-title">50 ทวิ ที่ต้องตามจากลูกค้า</h3>
+        <a href="/pages/wht-credit.html" class="text-primary" style="font-size:12.5px">ดูทั้งหมด →</a>
+      </div>
+      <div id="whtCertCardContent" style="padding:16px"></div>
+    </div>
+
     <!-- VAT/WHT Summary -->
     <div class="card dash-widget" data-widget="taxSummary" style="margin-top:24px">
       <div class="card-header"><h3 class="card-title">สรุปภาษี (VAT/WHT)</h3></div>
@@ -468,6 +478,26 @@
         return this.FILING_STYLE[cell.overdue ? 'Overdue' : cell.status] || this.FILING_STYLE.NotRequired;
       },
 
+      async loadWhtCertCard() {
+        const card = document.getElementById('whtCertCard');
+        const host = document.getElementById('whtCertCardContent');
+        if (!card || !host) return;
+        let d;
+        try {
+          const res = await API.get(`/api/companies/${Layout.getCompanyId()}/wht-certs/tracking`);
+          d = res?.data;
+        } catch (e) { card.style.display = 'none'; return; }
+        if (!d || (!d.outstandingCount && !d.awaitingConfirmCount)) { card.style.display = 'none'; return; }
+        const m = v => Layout.money(v || 0);
+        host.innerHTML = `<div style="font-size:18px;font-weight:700">${m(d.outstandingAmount)} <span style="font-size:12.5px;font-weight:400;color:#64748b">ยังเครดิตไม่ได้ · ${Number(d.outstandingCount || 0)} รายการ · ${Number(d.customerCount || 0)} ลูกค้า</span></div>
+          <div style="font-size:12.5px;margin-top:6px">
+            ${Number(d.overdueCount || 0) ? `<span style="color:#b91c1c">🔴 เกินกำหนด ${Number(d.overdueCount)} รายการ ${m(d.overdueAmount)}</span> · ` : ''}
+            ${Number(d.awaitingConfirmCount || 0) ? `<span style="color:#2563eb">🔵 รอยืนยัน ${Number(d.awaitingConfirmCount)} ใบ</span>` : ''}
+          </div>
+          ${d.topCustomerName ? `<div style="font-size:12.5px;color:#475569;margin-top:4px">ลูกค้าที่ค้างมากสุด: ${Layout.esc(d.topCustomerName)} ${m(d.topCustomerAmount)} (${Number(d.topCustomerCount || 0)} รายการ · ${Number(d.topCustomerOldestDays || 0)} วัน)</div>` : ''}`;
+        card.style.display = '';
+      },
+
       async loadFilingCalendar() {
         const host = document.getElementById('filingCalendarContent');
         if (!host) return;
@@ -668,6 +698,8 @@
           this.loadActionAlerts().catch(() => {});
           // ปฏิทินนำส่ง — โหลดแยกไม่ให้บล็อกตัวเลข KPI ที่ผู้ใช้เห็นก่อน
           this.loadFilingCalendar().catch(() => {});
+          // 50 ทวิ ที่ต้องตาม (รอบ 252) — โหลดแยก · ไม่มีสิทธิ์/ล้ม = ซ่อนการ์ด (ไม่บล็อกแดชบอร์ด)
+          this.loadWhtCertCard().catch(() => {});
 
           // Cash flow
           const cf = d.cashFlow || {};

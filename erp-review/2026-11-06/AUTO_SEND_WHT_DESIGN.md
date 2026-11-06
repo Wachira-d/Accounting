@@ -827,6 +827,10 @@ EmailScheduleRule (เพิ่ม) AttachWhtUploadLink bool? ; Trigger ให�
 - `WhtCertIntakeStatus.Of` ต้องถูกเรียกใน: `DocumentService` (list/detail mapper) · `WhtCreditService.ListAsync` · `PostPaymentAutomationService.ExecuteAsync` · dashboard service — และห้ามมี `WhtCreditStatus.Pending` เปรียบเทียบตรงในไฟล์ UI-mapper (ห้ามประกอบเอง)
 - `PostPaymentAutomationService.EnqueueAsync` ต้องอยู่ใน: `DocumentPaymentHandler` · `DocumentController.CreatePayment` · `SettlementPostingService` · `PortalService` (ยืนยันสลิป) · `PaymentImportTarget` · `CmsBookingService.Workflow` · `LodgingService.Lifecycle/TaxTiming` · `CmsCommerceService`
 
+> **สถานะ (รอบ 252 · WP-09 · ยังไม่ได้คอมไพล์ในเครื่องนี้):** เฟส 243 ข้อ 1–3 ✅ (ตัวตัดสิน `Helpers/WhtCertIntakeStatus` · ชิป/ตัวกรองรายการเอกสาร · การ์ดผู้ติดต่อ/แดชบอร์ด · ไทม์ไลน์หน้าเอกสาร ⏳) · ข้อ 4 เมทริกซ์ ⏳ · ข้อ 5 ✅ (รอบ 250 WP-02) · ข้อ 6 ✅ (243a) ·
+> เฟส 244 ข้อ 1–4 ✅ (ตาราง + migration · `SubmitAsync` + `WhtCertMatchPolicy` + `WhtCertIntakeVerdict` · `WhtCreditableAmount` ทุกผู้อ่าน · เส้นสแกนเข้าประตูเดียว + หน้า wht-credit อัปโหลดหลายไฟล์/แผงยืนยัน) · ข้อ 5–6 ⏳ WP-10 ·
+> คำตัดสิน §11 ข้อ 1–2 (AI ตรวจของจริง) ✅ — DOCUMENT_FLOW §2.12j · DECISIONS 252-WP09-1…4
+
 ### เฟส 244 — "รับเข้าได้": กล่องรับ + ลิงก์อัปโหลด + allocation
 
 งาน:
