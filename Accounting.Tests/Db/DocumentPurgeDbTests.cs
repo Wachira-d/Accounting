@@ -231,7 +231,8 @@ END $$;");
         var audit = await check.AuditLogs.AsNoTracking()
             .SingleAsync(a => a.CompanyId == s.CompanyId && a.EntityType == "Document" && a.EntityId == inv.Id.ToString()
                 && a.Action == AuditAction.Delete);
-        Assert.Contains("ข้อมูลทดสอบ", audit.NewValues);
+        // NewValues เป็น JSON ที่หนีอักขระไทยเป็น \uXXXX ⇒ ถอดก่อนเทียบ (CI รอบ 244–246)
+        Assert.Contains("ข้อมูลทดสอบ", System.Text.Json.JsonDocument.Parse(audit.NewValues!).RootElement.GetProperty("reason").GetString());
     }
 
     [Fact]

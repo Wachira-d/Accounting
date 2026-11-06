@@ -127,6 +127,7 @@ public static class SecretReprotectPass
 
         await Pass(Scope(db.CompanySettings.IgnoreQueryFilters()), "CompanySettings", r => r.CompanyId,
             Col<CompanySettings>(r => r.EmailSmtpPassword),
+            Col<ContactNotifyEndpoint>(r => r.LineUserId),   // รอบ 245 L1 — LINE userId/groupId ของผู้ติดต่อ (เข้ารหัส)
             Col<CompanySettings>(r => r.EmailMsClientSecret),
             Col<CompanySettings>(r => r.EmailGmailClientSecret),
             Col<CompanySettings>(r => r.EmailGmailRefreshToken),

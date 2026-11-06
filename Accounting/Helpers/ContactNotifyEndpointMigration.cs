@@ -128,8 +128,8 @@ public static class ContactNotifyEndpointMigration
         {
             var id = c.LineUserId!.Trim();
             if (id.Length == 0) continue;
-            string? protectedId;
-            try { protectedId = secrets.Protect(id); }
+            var ep = new ContactNotifyEndpoint();
+            try { ep.LineUserId = secrets.Protect(id); }   // เขียนลงช่องตรง ๆ ⇒ secret_registry_check เห็นช่องปลายทาง (ลงทะเบียนใน SecretReprotectJob)
             catch (BusinessRuleException)
             {
                 // ฝ่ายค้าน N1: ค่าที่ดูเป็น ciphertext อยู่แล้ว (enc1:) — ไม่เดา ไม่ล้าง · นับลง audit/log · งานยังปิดได้
@@ -138,22 +138,19 @@ public static class ContactNotifyEndpointMigration
                 perCompany[c.CompanyId] = (s.Moved, s.Skipped + 1);
                 continue;
             }
-            db.ContactNotifyEndpoints.Add(new ContactNotifyEndpoint
-            {
-                CompanyId = c.CompanyId,
-                ContactId = c.Id,
-                Kind = NotifyEndpointKind.LineUser,
-                LineUserId = protectedId,
-                LineIdHash = NotifyEndpointKind.LineIdHash(null, id),
-                OaScope = NotifyEndpointKind.ScopeUnknown,
-                Verified = false,
-                Source = NotifyEndpointKind.SourceLegacyLineUserId,
-                TopicsJson = NotifyTopics.Serialize(NotifyTopics.DefaultsFor(NotifyEndpointKind.LineUser)),
-                ShowAmounts = true,
-                LinkedAt = now,
-                CreatedAt = now,
-                CreatedBy = Actor,
-            });
+            ep.CompanyId = c.CompanyId;
+            ep.ContactId = c.Id;
+            ep.Kind = NotifyEndpointKind.LineUser;
+            ep.LineIdHash = NotifyEndpointKind.LineIdHash(null, id);
+            ep.OaScope = NotifyEndpointKind.ScopeUnknown;
+            ep.Verified = false;
+            ep.Source = NotifyEndpointKind.SourceLegacyLineUserId;
+            ep.TopicsJson = NotifyTopics.Serialize(NotifyTopics.DefaultsFor(NotifyEndpointKind.LineUser));
+            ep.ShowAmounts = true;
+            ep.LinkedAt = now;
+            ep.CreatedAt = now;
+            ep.CreatedBy = Actor;
+            db.ContactNotifyEndpoints.Add(ep);
             created++;
             var m = perCompany.GetValueOrDefault(c.CompanyId);
             perCompany[c.CompanyId] = (m.Moved + 1, m.Skipped);

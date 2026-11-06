@@ -196,7 +196,7 @@ public class DocumentEmailService : IDocumentEmailService
                 Accounting.Services.Implementations.Email.EmailSenderFactory.HasTenantSender(settings))) is { } senderRefusal)
             await RefuseEtaxEmailAsync(new DocumentEmailLog
             {
-                CompanyId = companyId, DocumentId = documentId, ToEmail = req.To ?? "", Subject = "", Body = "", IsEtaxByEmail = true,
+                CompanyId = companyId, DocumentId = documentId, ToEmail = req.To, Subject = "", Body = "", IsEtaxByEmail = true,
                 AttachedPdf = true, Purpose = "etax-by-email", CreatedBy = actorEmail,
             }, senderRefusal, EtaxByEmailSenderGate.RuleCode, 409);
         var etaxId = await EnsureEtaxForEmailAsync(companyId, documentId);
@@ -366,7 +366,7 @@ public class DocumentEmailService : IDocumentEmailService
             CompanyId = companyId,
             DocumentId = etax.DocumentId,
             EtaxInvoiceId = etaxInvoiceId,
-            ToEmail = req.To ?? "",
+            ToEmail = req.To,
             CcEmail = req.Cc,
             BccEmail = req.Bcc,
             Subject = "",

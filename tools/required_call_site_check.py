@@ -14955,7 +14955,7 @@ REVIEWER_CASES += [
     # ถอดด่านสิทธิ์ของการเพิ่มอีเมล ⇒ ต้องฟ้อง
     ("R245f", "AddEmail", "if (await DenyKeyAsync(companyId, \"เพิ่มช่องทางแจ้งเตือนของผู้ติดต่อ\") is { } deny) return Forbid403(deny);", "", True),
     # migration เดา OA ⇒ ต้องฟ้อง
-    ("R245g", "MigrateCoreAsync", "OaScope = NotifyEndpointKind.ScopeUnknown,", "OaScope = NotifyEndpointKind.ScopeNextAcc,", True),
+    ("R245g", "MigrateCoreAsync", "ep.OaScope = NotifyEndpointKind.ScopeUnknown;", "ep.OaScope = NotifyEndpointKind.ScopeNextAcc;", True),
     # ฝ่ายค้าน B1: ล้มแล้วไม่ล้าง ChangeTracker ⇒ ต้องฟ้อง
     ("R245j", "MigrateLegacyLineUserIdsAsync", "            db.ChangeTracker.Clear();\n            throw;", "            throw;", True),
     # ฝ่ายค้าน S2: กลับไปใช้ผล Merge (แหล่งเดียว) ⇒ ต้องฟ้อง
