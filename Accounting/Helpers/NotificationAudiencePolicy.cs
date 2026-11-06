@@ -31,6 +31,9 @@ public enum LineTargetKind
     /// <summary>กลุ่ม LINE กลางของแพลตฟอร์ม (<c>SiteSettings.LineMessagingGroupId</c>) — ห้องของผู้ดูแลระบบ · (ฝ่ายค้าน 232 N3: ไม่มีปลายทาง "แอดมิน 1:1" —
     /// กระดิ่งถึงแอดมินเดินทาง <c>PlatformPaymentAttention</c> ไม่ใช่ LINE · ทางที่ไม่มีผู้เรียกถูกลบ)</summary>
     PlatformGroup,
+    /// <summary>รอบ 254 WP-11 — กลุ่ม LINE ของ<b>ผู้ติดต่อ</b>ที่ผูกด้วยรหัส (<c>ContactNotifyEndpoint</c> Kind=LineGroup) — ไม่ใช่ห้องของแพลตฟอร์ม ·
+    /// ผ่าน OA ของบริษัท = ได้ · ผ่าน OA กลาง = เฉพาะเมื่อแอดมินเปิด <c>CentralOaGroupDeliveryEnabled</c> (คำตัดสิน N8 · ค่าตั้งต้นปิด)</summary>
+    ContactGroup,
 }
 
 /// <summary>ผลตัดสินเส้นทาง — <see cref="Reason"/> เป็นข้อความถึงผู้ใช้/แอดมิน (ไม่มี userId)</summary>
@@ -65,6 +68,12 @@ public static class NotificationAudiencePolicy
     public const string RuleAccountNotCompanyOa = "NOTIFY-ACCOUNT-NOT-COMPANY-OA";
     public const string RuleOpsPlatform = "NOTIFY-OPS-PLATFORM";
     public const string RuleOpsNotTenant = "NOTIFY-OPS-NOT-TENANT";
+    public const string RuleTenantContactGroupViaNextAcc = "NOTIFY-TENANT-CONTACT-GROUP-NEXTACC";
+    public const string RuleCentralOaGroupOff = "NOTIFY-CENTRAL-OA-GROUP-OFF";
+
+    /// <summary>คำตัดสิน N8: ส่งเข้ากลุ่มของผู้ติดต่อผ่าน OA กลางยังปิด (เปิดเมื่อได้หนังสือยืนยันจาก LINE + แอดมินเปิดสวิตช์)</summary>
+    public const string CentralOaGroupOffMessage =
+        "ส่งเข้ากลุ่ม LINE ของผู้ติดต่อผ่าน LINE OA กลางของ NextAcc ยังไม่เปิด (รอผู้ดูแลระบบเปิดหลังได้หนังสือยืนยันจาก LINE) — ใช้ LINE OA ของบริษัทแทน";
 
     /// <summary>ข้อความเมื่อบริษัทยังไม่ผูก OA ของตัวเอง — ประโยคเดียวใช้ทั้งผลส่ง + หน้าตั้งค่า</summary>
     public const string NoCompanyOaMessage =
@@ -87,8 +96,10 @@ public static class NotificationAudiencePolicy
         return NotificationAudience.TenantBusiness;
     }
 
-    /// <summary>ตัดสินเส้นทาง LINE หนึ่งครั้งต่อการยิง — <paramref name="companyOaConfigured"/> = บริษัทเปิด LINE + มี token ที่ถอดได้ (ตัวอ่านคือ <c>LineNotifyService</c>)</summary>
-    public static LineRouteDecision LineRoute(NotificationAudience audience, LineOaKind oa, LineTargetKind target, bool companyOaConfigured)
+    /// <summary>ตัดสินเส้นทาง LINE หนึ่งครั้งต่อการยิง — <paramref name="companyOaConfigured"/> = บริษัทเปิด LINE + มี token ที่ถอดได้ (ตัวอ่านคือ <c>LineNotifyService</c>) ·
+    /// <paramref name="centralOaGroupDeliveryEnabled"/> = สวิตช์แอดมิน "กลุ่มของผู้ติดต่อผ่าน OA กลาง" (คำตัดสิน N8 · ค่าตั้งต้นปิด · L2 ยังไม่มีผู้ส่งค่า true)</summary>
+    public static LineRouteDecision LineRoute(NotificationAudience audience, LineOaKind oa, LineTargetKind target, bool companyOaConfigured,
+        bool centralOaGroupDeliveryEnabled = false)
     {
         switch (audience)
         {
@@ -99,6 +110,11 @@ public static class NotificationAudiencePolicy
                     return companyOaConfigured
                         ? LineRouteDecision.Ok(RuleTenantCompanyOa)
                         : LineRouteDecision.Deny(RuleTenantNoCompanyOa, NoCompanyOaMessage);
+                // รอบ 254 (N8): กลุ่มของผู้ติดต่อผ่าน OA กลาง ⇒ เฉพาะเมื่อแอดมินเปิดสวิตช์ (ค่าตั้งต้นปิด) · กลุ่มกลางของแอดมินถูกกันข้างบนแล้ว (PlatformGroup)
+                if (target == LineTargetKind.ContactGroup)
+                    return centralOaGroupDeliveryEnabled
+                        ? LineRouteDecision.Ok(RuleTenantContactGroupViaNextAcc)
+                        : LineRouteDecision.Deny(RuleCentralOaGroupOff, CentralOaGroupOffMessage);
                 // NextAccOa + TenantMember: ช่องส่วนตัวของสมาชิก/ลูกค้าที่ผูกกับบอทกลางเอง
                 return target == LineTargetKind.TenantMember
                     ? LineRouteDecision.Ok(RuleTenantMemberViaNextAcc)
@@ -142,6 +158,17 @@ public static class NotificationAudiencePolicy
         Accounting.Models.Constants.NotificationEvents.RecurringUpcomingRun,
     };
 
+    /// <summary>รอบ 252 WP-12A (AUTOPILOT §10 · Q7 "อีเมลสถานะถึงทีมเรา"): คีย์ที่ค่าตั้งต้น = <b>กระดิ่ง + อีเมล</b>ถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทเมื่อผูกไว้) ·
+    /// บริษัทตั้งแถวของคีย์เองแล้ว ⇒ ตามที่ตั้ง (ปิดได้ทุกช่อง) · ผู้อ่าน: <see cref="DefaultMatrix"/></summary>
+    public static readonly IReadOnlySet<string> EmailDefaultKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Accounting.Models.Constants.NotificationEvents.AutopilotQuotationBlocked,
+        Accounting.Models.Constants.NotificationEvents.AutopilotSlipSubmitted,
+        Accounting.Models.Constants.NotificationEvents.AutopilotBankSettleFailed,
+        Accounting.Models.Constants.NotificationEvents.AutopilotDailyDigest,
+        Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange,
+    };
+
     /// <summary>เส้นผู้รับที่ระบุ (บริษัทยังไม่ตั้งคีย์) ส่งอีเมลด้วยไหม — คีย์กระดิ่งเท่านั้น = ไม่ส่ง · อื่น ๆ = กระดิ่ง + อีเมลเหมือนเดิม</summary>
     public static bool DirectDefaultEmail(string eventKey) => !BellOnlyKeys.Contains(eventKey);
 
@@ -149,6 +176,8 @@ public static class NotificationAudiencePolicy
     {
         if (BellOnlyKeys.Contains(eventKey))
             return new[] { new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: false, EnableLine: false, EnableLineGroup: false) };
+        if (EmailDefaultKeys.Contains(eventKey))
+            return new[] { new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: true, EnableLine: false, EnableLineGroup: companyLineGroupConfigured) };
         if (!MigratedBroadcastKeys.Contains(eventKey)) return Array.Empty<NotificationDefaultRow>();
         return new[] { new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: false, EnableLine: false, EnableLineGroup: companyLineGroupConfigured) };
     }

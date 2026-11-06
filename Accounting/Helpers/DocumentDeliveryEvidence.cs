@@ -14,7 +14,7 @@ namespace Accounting.Helpers;
 /// <para>LINE (รอบ 201 ทีม ST · A-ST10 ตรวจแล้ว NOT-A-BUG): <c>DocumentLineDeliveryService.SendDocumentLineAsync</c> <b>ไม่มีผู้เรียกทั้งเรพ</b> (มีแค่การลงทะเบียน DI) ⇒
 /// วันนี้ไม่มีทางเข้าใดส่งเอกสารผ่าน LINE จึงไม่มีการส่งที่ต้องนับ · ถ้าวันหน้าต่อสายปุ่มส่ง LINE ต้องทำพร้อมกัน: (1) push ที่คืนผล (รอบ 232: ใช้
 /// <c>ILineNotifyService.TryPushFlexToUserAsync</c> คืน <c>LinePushResult</c> แล้ว — ข้อ (1) ปิดแล้ว) (2) บันทึกการส่งที่ API ตอบสำเร็จ
-/// (3) ช่องทาง LINE ในตัวตัดสินนี้ — ไม่เดาจากการกดปุ่ม (คำตัดสินข้อ 25)</para>
+/// (3) ช่องทาง LINE ในตัวตัดสินนี้ — ไม่เดาจากการกดปุ่ม (คำตัดสินข้อ 25) · <b>รอบ 254 WP-11 L2: ต่อแล้ว</b> — แถว <c>LineQueues</c> สถานะ Sent ของใบนั้น</para>
 /// </summary>
 public static class DocumentDeliveryEvidence
 {
@@ -31,6 +31,18 @@ public static class DocumentDeliveryEvidence
             .Where(l => l.CompanyId == companyId && !l.IsDeleted && l.DocumentId != null && ids.Contains(l.DocumentId.Value))
             .Select(l => new { DocumentId = l.DocumentId!.Value, l.Status })
             .ToListAsync(ct);
-        return rows.Where(r => IsDeliveryEvidence(r.Status)).Select(r => r.DocumentId).ToHashSet();
+        var delivered = rows.Where(r => IsDeliveryEvidence(r.Status)).Select(r => r.DocumentId).ToHashSet();
+        // รอบ 254 WP-11 L2 (DESIGN §1.5 G8 · §4.2): การ์ดเอกสารทาง LINE ที่ LINE <b>ตอบรับจริง</b> (สถานะ Sent ประทับเฉพาะเมื่อ LINE ตอบ 200/409) = หลักฐานการส่งด้วย ·
+        // ไม่ใช่การส่ง e-Tax by Email (ตัวตัดสินคนละตัว — EtaxDeliveryRouter)
+        // ฝ่ายค้าน M3: บริษัทโหมด e-Tax by Email ⇒ การ์ด LINE ไม่นับเป็นหลักฐาน (ใบกำกับต้องถึงผู้ซื้อทาง e-Tax — การแจ้งทาง LINE ไม่ใช่การส่งใบกำกับ)
+        var etax = await db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
+            .Select(x => new { x.EtaxEnabled, x.EtaxMode }).FirstOrDefaultAsync(ct);
+        if (etax != null && EtaxDeliveryRouter.ByEmailActive(etax.EtaxEnabled, etax.EtaxMode)) return delivered;
+        var lineSent = await db.LineQueues.AsNoTracking()
+            .Where(q => q.CompanyId == companyId && !q.IsDeleted && q.EntityType == "Document" && ids.Contains(q.EntityId)
+                && q.Status == ContactLineChannel.StatusSent)
+            .Select(q => q.EntityId).Distinct().ToListAsync(ct);
+        delivered.UnionWith(lineSent);
+        return delivered;
     }
 }

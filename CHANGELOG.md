@@ -6743,3 +6743,128 @@ _รอบ 250 WP-04 แก้ผลฝ่ายค้าน 74a2d1f6 (2026-11-0
 (M5) แถว e-Tax ไม่มีเลขผู้ซื้อมีคำเตือน §86/4. (M6) "-"/"N/A" ของบุคคล = ไม่มีเลข · ข้อความทางไปต่อ. (M7) `ComposeTxId`/ผู้ขายใช้ `TaxBranchCode.Normalize` (เกิน 5 หลัก = 5 หลักท้าย).
 (L3) คอมเมนต์ประทับก่อนส่ง = อย่างมากครั้งเดียว · (L4) ช่อง 0–30 ตรงเซิร์ฟเวอร์ · (L5) คอมเมนต์ migration อยู่กับคำสั่งของมัน · (L6) negative test form_label กับหน้าจริง ·
 (L1) คง modulo (เพดานทำให้ "ครั้งล่าสุด ≥ N วัน" ไม่จำเป็น). ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit d5257214_
+
+_รอบ 252 WP-13 (UX เก็บกวาดจากผลตรวจ D · AUDIT_249 §4 WP-13 · §3.3 Y3/N5): ตัวช่วยกลาง `Layout.confirm/promptText/notice` (Promise · textContent · Escape = ยกเลิก ·
+อยู่บนสุดเหนือ modal) · `Layout.debouncedLoader` · `Layout.tableError` · `openModal` ย้าย/คืน focus + `data-enter-target` · confirmDanger Escape ไม่ค้าง ·
+style.css ≤768px ยุบ grid `1fr 1fr`/`2fr 1fr` + ตารางใน modal 640px เลื่อนในกล่อง. กล่องถาม native → ของระบบ ~85 จุด (documents 50 · ลบถาวร 4 ชั้นเหลือหน้าต่างเดียว)
+· fetch ดิบ → API.* (settings 6→0 · contacts 2→0 · account-subscription 5→0 · subscription 1→0 · documents 22→20) · settings ตารางแจ้งเตือนโหลดล้มห้ามบันทึก
+`settings: []` (เดิมล้างค่าทั้งหมด) · label for ~300 จุด · modal_table_container 1→0 ทั้งระบบ · 🖥 สินทรัพย์รหัสว่าง = `FA-yyyyMM-####` (`FixedAssetService.CreateAsync`) ·
+ป้ายไทยจาก DTO (`planStatusLabel` · `SubscriptionLabels` · `PortalPaymentResponse.PaymentMethodLabel`) · Y3 พรีวิวคำเตือนล้มต้องยืนยันก่อนผูก · N5
+`LatePaymentPenaltyPolicy.PendingRegulationNote` ในคำอธิบายเบี้ยปรับ ภ.พ.30 · glossary `docs/ui-glossary.md` + `tools/ui_glossary_check.py` (ratchet 56 จุด/19 ไฟล์) ·
+หน้าสาธารณะ pay-link/delivery-sign alert → กล่องบนหน้า · portal ภาษา/modal/เวลาไทย. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit e021629c · 1929f9f4 · c2129b14 · 8ff9c7f5 · 09371cea · 30405fc4 · f8e7d5dd_
+
+_รอบ 254 WP-11 L2 (2026-11-06 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-11 ข้อ 1–2 · LINE_MULTICHANNEL_DESIGN §3.b–§3.f · คำตอบเจ้าของ §10 Q1(b)/Q5/Q6/Q7 ·
+คำตัดสิน N8 · DECISIONS 254-WP11-1…6): **LINE ถึงผู้ติดต่อผ่าน LINE OA ของบริษัท**. (1) `X-Line-Retry-Key` ทุก push (`LineNotifyService.PushCoreAsync` · คืนสถานะ HTTP +
+`x-line-request-id`) · ข้อความผ่าน OA กลางของ `BookingNotifier` มีป้าย "ในนาม {ร้าน} · ผ่าน NextAcc" + ช่องทางยกเลิก (`Helpers/LineOnBehalfText` · C2/C5).
+(2) ติ๊กช่องทางต่อกฎตารางส่ง (`ChannelEmail` true · `ChannelLineUser` · `ChannelLineGroup` · `LineFallbackToEmail` true — migration `ContactLineDeliveryMigration` ค่าตั้งต้น =
+พฤติกรรมเดิม) + ด่านบันทึก (`ContactLineChannel.RuleProblem`). (3) คิว `LineQueues` (SKIP LOCKED · retry key คงที่ · ไม่เก็บ LINE id) เข้าจาก `EnqueueDocumentAsync` ·
+ผู้ส่ง `ContactLineQueueService` (ใบซ้ำตอนส่ง → ปลายทางผ่านตัวหาผู้รับเดียว → การ์ด `LineDocumentCard` → `TryPushContactAsync` → `LinePushOutcome`) · ล้มถาวร ⇒ ถอยไปอีเมลครั้งเดียว.
+(4) ช่อง LINE ต่อขอบเขต OA (`ContactRecipientRule.LineGate` · `CompanyLineReadiness`) — `LineDeliveryOpen` เปิด · OA กลางยังปิด · กลุ่มกลางของแอดมินกันสองชั้น.
+(5) หลักฐานการส่งนับ LINE ที่ LINE ตอบรับ (`DocumentDeliveryEvidence` · G8). (6) ลิงก์/QR ผูก LINE ผู้ติดต่อ (`ContactLineBindingService` · `contact-line-join.html` · ยินยอมก่อนรหัส ·
+"หยุด" ปลด + ถอนยินยอม · PDPA erase ยกเลิกคำเชิญค้าง). (7) หน้า `email-schedule.html` ช่องทาง + คิว LINE · `contacts.html` ปุ่มลิงก์/QR. เทสต์ `LineDeliveryRound254Tests` ·
+Db `LineQueueRound254DbTests` · ล็อก R254 (24 กติกา + เคส R254a–j) · R245 ปรับตามพารามิเตอร์ใหม่. **ยังไม่ทำ**: L3 กลุ่ม `#HeyNextAcc` · L4 โควตาแยกช่อง/แพ็ก/แอดมิน/
+`NextAccOaQuotaWatch` · ชั่วโมงเงียบ · `DocumentViewLink` · LINE ของใบแจ้งยอด/50 ทวิ/ใบเสร็จ/ลิงก์เซ็น · ทดลองหน่วยนับกลุ่มบน OA จริง (WP-11 ข้อ 3).
+ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit cee44a3c_
+
+_รอบ 252 WP-13 แก้ผลฝ่ายค้าน (2026-11-06): MED-HIGH-1 สร้างสินทรัพย์ส่งครั้งเดียว (`SubmitOnce.run` + Idempotency-Key ต่อการเปิดฟอร์ม · `api.createAsset(d, idemKey)`) ·
+MED-2 `FixedAssetService.CreateAsync` ออกรหัส+INSERT ในธุรกรรมเดียว · unique ชน ⇒ `BusinessRuleException` 409 ไทย · MED-3 `DepreciationPeriodPolicy`
+(เดือน 1–12 · ไม่เกินเดือนปัจจุบันเวลาไทย · ยอดลดลงต้องเรียงงวด) + หน้า max = เดือนปัจจุบัน · LOW: promptText ตั้งชนิดก่อนค่า/min/max/required ·
+วันที่กลับรายการบังคับ + แสดง พ.ศ. · confirmDanger Escape ไม่ทะลุ · กล่องสองทางปิดด้วย ×/Escape = ไม่บันทึก (`dismissValue`) · `(j && j.message)` ·
+doc ของ debouncedLoader · quotation-accept ไม่เติมชื่อผู้ยอมรับ (placeholder) · มือถือ openModal โฟกัสหัว modal · window.confirm ใบเสร็จ →
+Layout.confirm · html_interpolation documents 387→386 · ui_glossary_check ไม่นับเส้นทาง URL (เดิมฟ้องผิด `/line-invite`) baseline 56→53.
+ลบบริษัท: เซิร์ฟเวอร์ trim ทั้งสองฝั่งอยู่แล้ว (`CompanyService.DeleteCompanyAsync`) — ไม่ต้องแก้. ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ce0e274c_
+
+_รอบ 252 WP-12A (2026-11-06 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-12 ส่วน A · AUTOPILOT_BILLING_DESIGN §5/§7/§10/§11.4 · คำตัดสิน §2 #36 · DECISIONS 252-WP12A-1…4):
+(1) **อีเมลสถานะ/สรุปประจำวัน** — แค็ตตาล็อก E-01…E-15 + ข้อความ `Helpers/AutopilotNotice` · คีย์ใหม่ `autopilot.quotation_blocked/slip_submitted/bank_settle_failed/daily_digest`
+(ค่าตั้งต้น กระดิ่ง + อีเมลถึงเจ้าของ — `NotificationAudiencePolicy.EmailDefaultKeys`) · `AutopilotDigestService` (watermark ต่อบริษัท ประทับก่อนส่ง · ไม่มีอะไร = ไม่ส่ง).
+(2) **หน้า Autopilot** `/pages/autopilot.html` + `AutopilotController` + `AutopilotService` (read model จากแถวจริง · `Helpers/AutopilotStage` · เรื่องที่ระบบทำต่อไม่ได้พร้อมปุ่ม).
+(3) **ใบเสนอราคาแปลงอัตโนมัติ** — `Document.QuotationAcceptAutopilot` (ตั้งต่อใบ · ค่าตั้งต้นไม่แปลง) · `QuotationAcceptAutopilotService` → `ConvertDocumentAsync` (ร่าง · ครั้งเดียว · หยุดเมื่อเนื้อหาเปลี่ยน · ล้มดัง + ลองใหม่).
+(4) **เงินโอนปิดหนี้** — `BankTransaction.EntrySource` ที่จุดสร้างแถว 3 จุด · `Helpers/BankReceiptAutoSettle` (pure · ไม่มี AI) · `BankReceiptSettleService` (ค่าตั้งต้นปิด · source ใหม่ `PaymentEntrySource.BankAutoSettle` ·
+คิวยืนยัน/ปฏิเสธ · ผลจำลอง) · ยอดที่ต้องโอนจาก `Services/Payments/PayLinkTransferWht` (ชิ้นเดียวกับลิงก์ชำระ). (5) **สลิปพอร์ทัลกันซ้ำ** แฮชไฟล์ + เลขอ้างอิง (`SlipEvidenceRule` · `SLIP-DUP`).
+งานเบื้องหลังเดียว `AutopilotJob` (JobLock ต่อขั้น) · migration `Helpers/AutopilotMigration` (ADD COLUMN IF NOT EXISTS · ค่าตั้งต้น = พฤติกรรมเดิม) · เทสต์ `AutopilotRound252Tests` · `Db/AutopilotRound252DbTests` ·
+`PartnerSecurityRound250DbTests` แนบสลิปคนละไฟล์ · checker R252 + WATCHED/FILES — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81641769_
+
+_รอบ 252 (2026-11-06 · WP-09 · AUTO_SEND_WHT_DESIGN §9 เฟส 243 + 244a · คำตัดสินเจ้าของ §11 ข้อ 1–2 · AUDIT_249 §2 #31): **50 ทวิ ขาเข้า "เห็นก่อน–รับเข้าได้"** —
+ประตูเดียว `WhtCertIntakeService.SubmitAsync` (สแกนเอกสาร · อัปโหลดหลายไฟล์ที่หน้า "ภาษีถูกหัก ณ ที่จ่าย") + ตาราง `WhtCertIntakes`/`WhtCertAllocations` + คอลัมน์
+`WhtCreditsReceived.ReceivedAmount/EvidenceKind/FirstWithheldAt` (migration ใบย้อนหลัง 1:1 ของแถวที่มีเลขที่ใบแล้ว) · จับคู่ `Helpers/WhtCertMatchPolicy` (K0–K6 · ใบรวม · ผ่อนงวด ·
+กำกวม = ไม่เลือกเอง) · ด่านเชิงกำหนดก่อน AI `Helpers/WhtCertIntakeVerdict` (checksum · ผู้ถูกหัก = เรา · ยอด/อัตรา/ปีภาษี · OCR ≥ 0.85) · ตรวจของจริง
+`AiFeatureKey.WhtCertAuthenticity` = 61 ผ่าน orchestrator + นักเรียน generic (`DistillationModelRegistry.GenericFeatureKeys`) · มั่นใจ ≥ 0.85 ⇒ ยืนยันอัตโนมัติ · ปิด AI ⇒ รอผู้ใช้ ·
+ยืนยัน/ตีกลับ ⇒ `RecordUserChoiceAsync` · เครดิตทุกผู้อ่านผ่าน `Helpers/WhtCreditableAmount` + `CitCalculation.CreditableSumAsync` (ผ่อน 3 งวดได้ใบงวดแรก ⇒ เครดิตงวดแรก) ·
+ป้าย 10 สถานะ `Helpers/WhtCertIntakeStatus` ผ่านตัวโหลด `Helpers/WhtCertTracking` ⇒ ชิป + ตัวกรอง "50 ทวิ" ในรายการเอกสาร · `DocumentResponse.WhtCert*` · ทะเบียน · กล่องรับ +
+รายงานปลายปี "50 ทวิ ที่ยังขาด" + Excel · การ์ดแดชบอร์ด/ผู้ติดต่อ · `OcrService.EnsureWhtCreditFromCertAsync` ย้ายเข้าประตูเดียว (ไม่สร้างแถวเครดิตเอง) · R252 (+ ห้าม
+`WhtCreditsReceived.Add(` นอก 2 จุด · `ReceivedAmount` ผู้เขียนเดียว) · `attachment_gate_check`/`write_permission_gate_check` เฝ้าคอนโทรลเลอร์ใหม่ · เทสต์ `WhtCertIntakeStatusTests` ·
+`WhtCreditableAmountTests` · `WhtCertMatchPolicyTests` · `Db/WhtCertIntakeRound252DbTests` · ไม่ทำรอบนี้: ลิงก์อัปโหลด/ทวง/"ไม่หัก" (WP-10) · WHT ส่วนเสริม CompanyFeature (WP-09 ข้อ 5 backlog) ·
+เมทริกซ์ auto-send · แผงไทม์ไลน์หน้าเอกสาร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8557ac36_
+
+_รอบ 252 WP-12A แก้ผลฝ่ายค้าน (2026-11-06 · DOCUMENT_FLOW §2.12k — เลขใหม่ เดิม §2.12j ชนกับ WP-09 · DECISIONS 252-WP12A-5):
+(H1 · คำตัดสินผู้ประสานงาน) statement ที่ผู้ใช้อัปโหลด/พิมพ์เองไม่ใช่หลักฐานให้ปิดหนี้โดยไม่มีคน — แหล่งใหม่ `UserFile` (ค่าตั้งต้นของตัวเขียน statement · ศูนย์นำเข้า/นำเข้า-ส่งออก/Open Banking ไฟล์) ·
+`Api` (v1) = เสนอเท่านั้น · `Statement` (หน้าบัญชีธนาคาร) / `FeedCustom` (URL ที่ผู้ใช้ตั้ง) ปิดเองได้เฉพาะเมื่อผู้นำเข้า (`BankTransaction.CreatedByUserId` ใหม่) มีสิทธิ์อนุมัติชนิดเอกสาร ณ ตอนตัดสิน ·
+ผู้นำเข้าอยู่ใน audit · `import-statement` และ feed สร้าง/ดึง/ลบ ต้องมี Bank.Reconcile · ผลจำลองแยกนับแถวไม่ทราบแหล่ง/ไฟล์-API.
+(H2) ค้นการชำระ `BANK:{lineId}` ก่อนสร้างและในทางล้ม ⇒ ผูก ไม่สร้างซ้ำ. (H3) ผู้สมัคร = `DocumentPayLinkPolicy.IssueRefusal` + ใบเพิ่มหนี้ฝั่งขาย. (H4) ไม่ใช่ THB ไม่เข้าเส้น.
+(M1) ยอดตรงไม่ตัดจำนวน · (M3) ใบลงวันหลังเงินเข้า = เสนอ · (M4) ยืนยันต้องมีสิทธิ์อนุมัติชนิดเอกสาร · (M5) ผูก+audit ธุรกรรมเดียวเฉพาะ Applying · จับคู่มือ 3 ทางปฏิเสธ Applying ·
+(M6) เลขอ้างอิงสลิป ≥ 8 + มีตัวเลข · เทียบทั้งคำกับช่องอ้างอิง · สลิปรอตรวจเท่านั้น · (M7) ล้มต่อแถว = ประทับ + ผลรอบล้ม (ทั้งเงินโอนและใบเสนอราคา) · LOW ครบ ยกเว้นเลขอ้างอิงการชำระที่อ่านได้
+(คง `BANK:{lineId}` เป็นกุญแจ · เติมเลขอ้างอิงธนาคารในหมายเหตุแทน) · เทสต์ pure + Db 4 ตัวใหม่ · checker R252F-1…3 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 80ee6cf4_
+
+_รอบ 252 WP-12A ฝ่ายค้านรอบสอง (2026-11-06 · DOCUMENT_FLOW §2.12k · DECISIONS 252-WP12A-6):
+(H-A/M-A) feed ทุกปลายทาง = เสนอเท่านั้น (SCB sandbox ไม่ใช่หลักฐาน) · ปิดเองได้เฉพาะ statement ที่ผู้อัปโหลดมีสิทธิ์อนุมัติ · (H-B) Open Banking เขียน/นำเข้าต้องมี Bank.Reconcile ·
+(M-B) Overwrite ประทับแหล่ง/ผู้อัปโหลด · (M-C) feed ไม่มีเลขอ้างอิงกันซ้ำด้วยวัน/ยอด/ทิศ/คำอธิบาย · (M-D) AutoMatch ข้าม Applying · (M-E) ใบยอดตรงนับใน SQL เกิน 8 ไม่อ้างเลข = เสนอ ·
+LOW: การชำระเดิมต้องยอด/บัญชีตรง · คนยืนยันมีรหัสกฎของตัวเอง · ล้ม 3 ครั้ง = Held · สกุลว่าง = บาทตัวเดียว · ผลจำลองตรวจ THB · ล้าง SlipBankRef เดิมที่ไม่ผ่านกติกา ·
+ตัวเลือกคิวรวมใบที่อ้าง/ยอดตรง ≤ 30 · ใบเสนอราคากู้สถานะจากใบลูก · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_รอบ 252 WP-09 ฝ่ายค้าน: แก้ผลตรวจฝ่ายค้านของกล่องรับ 50 ทวิ ขาเข้า — H1 ใบที่อยู่ในทะเบียนเครดิตแล้ว (เลขที่ + ผู้จ่าย) ⇒ 409 ทั้งตอนส่งและยืนยัน · H2 ใบคนละรอบบัญชีลงรวมแถวไม่ได้ (ทางไปต่อ = รายการใหม่ · ลงวันที่รายใบ = backlog 252-WP09-5) · M1 ตัดสูญเฉพาะส่วนขาดใบ · M2 กันลบต้นทางที่ได้ใบบางส่วน · M3 GL ลด ⇒ ลดยอดถูกหัก (`ResyncWithGl`) · M4 ความมั่นใจว่าง = 0 / สเกล % / ด่านยอดคำนวณย้อน / เลขที่+วันที่อยู่ในคีย์ความมั่นใจ · M5 รายการใหม่ต้องมีเหตุผล + 400 เมื่อส่งสองแบบ + แถวเตือน `WHT_OVER_GL` บน ภ.ง.ด.50 · M6 สอน Genuine เฉพาะเปิดดูใบแล้ว + ป้ายนักเรียนของตัวเอง · L1 ยอดเท่ากันสองแถว = กำกวม · L2 ขาด ≤ ฿1 ⇒ Received เครดิต = ใบ · L3 ผู้จ่ายอื่นต้องติ๊กยืนยัน · L4 ต้องมีวันที่ · L5 ไฟล์ที่ถูกตีกลับส่งใหม่ได้ (ดัชนี `UX_WhtCertIntakes_FileLive` + migration) · L6 scope แยก + หมายเหตุสแกน · L7 ปิดบังเลขบุคคลก่อนส่ง AI · L8 การ์ด/ตัวกรองตามปี/สถานะ · L9 ลบ Claim/Unclaim · สรุปใช้กติกางวด · L10 23505 ⇒ ซ้ำ ไม่ใช่ 500 · เทสต์สองทิศใน `WhtCreditableAmountTests` · `WhtCertMatchPolicyTests` · `Db/WhtCertIntakeRound252DbTests` · R252j–m — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2681a9fb_
+
+_รอบ 255 ETR-ACK: แถบ "ตรวจที่กรมสรรพากร" ของแถว e-Tax ที่ส่งแล้วถูกยกเลิกโดยไม่มีหลักฐาน (ก่อนข้อ 51) / ส่งอีเมลประทับเวลาแล้วถูกยกเลิกในระบบ ค้างตลอดไป เพราะไม่มีทางบันทึกว่าตรวจแล้ว (ผู้ใช้รายงาน TIV-20260720-0001/0002) ⇒ ปุ่ม "ตรวจแล้ว" ต่อแถว + modal (ถูกปฏิเสธ/ไม่เคยได้รับ · ยกเลิกที่กรมสรรพากรแล้ว + เลขอ้างอิง · บันทึก ≥ 5 ตัว · ไม่มีตัวเลือก "ยังมีผล" — ไปเส้นยกเลิกทาง e-Tax/ใบลดหนี้) · endpoint `POST document/etax-reissue-review/etax-rows/{id}/acknowledge` (Etax.Void + สิทธิ์ยกเลิกเอกสาร) · audit chained `etax-review-acknowledged` อย่างเดียว · ซ้ำ = 409 · รายงานซ่อนผ่าน `EtaxReissueReview.HiddenByAcknowledgement` · เทสต์ `EtaxReviewAcknowledgementTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8f190401_
+
+_รอบ 254 WP-11 L2 แก้ตามฝ่ายค้าน (DECISIONS 254-WP11-7/8): M1 บันทึกล้มหลังส่งแล้ว = ส่งแล้ว (`SaveFailureOutcome` · คิวอีเมล+LINE) + ทีละแถว · M2 จองต่อแถว + timeout 15 วินาที +
+เกณฑ์ค้าง 30 นาที นับครั้ง · M3 ใบ e-Tax by Email ส่งอีเมลเสมอ + ไม่นับการ์ด LINE เป็นหลักฐานของบริษัทโหมดนี้ · M4 ลิงก์ใหม่ยกเลิกลิงก์เดิม + ยกเลิกลิงก์ + ชื่อโปรไฟล์ LINE ·
+L1–L7 (ตัวจำกัด · accepted request id · 200+เหตุ · ทะเบียน LineGroupId · ไม่พบผู้รับ≠บล็อก · บรรทัดยกเลิกไม่หาย · RoPA) · L9 "หยุด" = หยุดเฉพาะ LINE. ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_รอบ 254 WP-11 L3 (กลุ่ม LINE ของผู้ติดต่อผ่าน OA บริษัท · Q1(b)/Q2/Q5/Q8 · DECISIONS 254-WP11-9): `LineGroupBindRule` (คำสั่ง #HeyNextAcc/#ByeNextAcc · รหัส GB-) ·
+`ContactLineGroupService` (webhook กลุ่ม: join/leave/สมาชิก/คำสั่ง · preview/confirm ผูกด้วยรหัส + หลักฐานรับรองสิทธิ์ · บอทออกเมื่อไม่เหลือการผูก) ·
+`LineGroupBindCodes` + `LineWebhookEventsSeen` (กัน webhook ซ้ำ · ลบในงาน PDPA รายคืน) · `LineNotifyService` ข้อความ text ถึงผู้ติดต่อ/ข้อมูลกลุ่ม/ออกจากกลุ่ม (ด่านเดียวกับการ์ด ·
+ไม่มีวันออก/ส่งเข้ากลุ่มกลางของแอดมิน) · ทะเบียน SecretReprotectJob + `LineGroupBindCodes.GroupIdProtected` · หน้า contacts ฟอร์มผูกกลุ่ม. ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_รอบ 254 WP-11 L4 ส่วนโควตา (Q3/Q4 · N7/N9 · DECISIONS 254-WP11-10): `NotifyUsageCounters.Channel` (PK ใหม่ · แถวเดิม = ก้อนรวม) · เพดานแยก LINE/อีเมลบนแพ็กเกจ/บริษัท
+(ว่าง = ไม่แยก · migration ไม่จำกัดใคร) · โบนัส/แพ็กแยกช่อง `notify.topup.line` ฿290/1,000 · `notify.topup.email` ฿190/5,000 · อีเมลเอกสาร/ตารางส่ง/ขอเซ็นผ่าน SMTP ของ NextAcc
+ตัดโควตาอีเมลรายเดือน (ไม่กินก้อนรวม · ต่อจากเพดานรายวัน) · `BookingNotifier` บอกช่อง · หน้าแอดมิน plans/บริษัท + การ์ดลูกค้าแสดง/ซื้อต่อช่อง. ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_รอบ 254 WP-11 L4 ส่วน OA กลาง (N8 · DECISIONS 254-WP11-11): `NextAccOaQuotaWatch` (รายชั่วโมง · JobLock) อ่านยอด push/โควตาของ OA กลางจาก LINE + ตัวนับ reply ต่อเดือน
+(`NextAccOaUsageCounters` · นับที่ `CustomerLineLinkService.ReplyAsync`) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% ครั้งเดียวต่องวด · ไม่ตัดโควตาผู้เช่า · สวิตช์ `CentralOaGroupDeliveryEnabled`
+เลื่อนไปทำพร้อมเส้นกลุ่มผ่าน OA กลาง (สวิตช์ที่ไม่มีผู้อ่าน = ค่าตั้งไม่มีผล). ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_รอบ 254 WP-11 ฝ่ายค้าน fix2 (DECISIONS 254-WP11-12): แพ็กของช่องขายเฉพาะช่องที่แยกเพดาน (409 ก่อนคิดเงิน · ไม่มีปุ่ม) · อีเมลแพลตฟอร์มไม่ใช้แพ็กรวม/ส่วนเกิน ·
+ตัวยกเลิกปลายทางเดียว `NotifyEndpointKind.MarkUnlinked` (ล้างป้ายจาก LINE + ชื่อกลุ่ม) · webhook ล้มถอนการประทับ + 500 · ยกเลิกคิวแบบมีเงื่อนไข · Sent ไม่ถูกลดสถานะ ·
+ช่องที่ไม่รู้จัก 400 · Idempotency-Key ต่อการกด · สรุปรายวันนับช่อง LINE · หักโบนัสคำสั่งเดียว + คืนหน่วยเมื่อยกเลิก · เพดานต่อช่องรวมแพ็กรวม. ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+
+_รอบ 255 WP-12B ข้อ 1–2 (AUDIT_249 §WP-12 · DECISIONS 255-WP12B-1/2/9): **แจ้งโอนจากหน้าชำระของเอกสาร** — `POST public-pay/documents/{token}/slip` (โทเคนลิงก์ชำระ ·
+ชนิดไฟล์จากไบต์จริง · ≤ 10 MB · สลิปรอตรวจ = 409 · ≤ 5/ใบ/ชม. = 429 · ยอดจากเซิร์ฟเวอร์) + ปุ่มคัดลอกเลขบัญชีบน `pay-document.html` · ประตูเดียว `SlipEvidenceService.SubmitAsync`
+(พอร์ทัลย้ายมาใช้ด้วย — ด่านยอดค้าง · กันซ้ำ 252 · ที่เก็บกลาง · `ManualSlip` รอยืนยัน · แจ้งทีม E-06 · ไม่มีแถว Payment) · **รายการประจำทุก N เดือน + สร้างล่วงหน้า**
+(`IntervalMonths`/`LeadDays` · ตัวตัดสินเดียว `RecurringSchedule` — cron/สร้างทันที/ข้ามงวดค้าง/ทดลองรัน/แจ้งก่อนรอบ · เอกสารลงวันที่วันสร้าง · ค่าผิดช่วงปฏิเสธ) ·
+migration `Helpers/AutopilotPartnerMigration` · DOCUMENT_FLOW §2.12l · TEST_PLAN AP255-1…7 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_รอบ 255 WP-12B ข้อ 1–2 เติม sha: commit 67407644 (DOCUMENT_FLOW §2.12l + Last verified · DECISIONS 255-WP12B-1/2) — doc-only คอมมิตตามหลัง ไม่ amend_
+_รอบ 252 WP-09 ฝ่ายค้านรอบสอง: ทะเบียนเครดิต ↔ กล่องรับ 50 ทวิ — H-A แก้แถวที่ได้ใบบางส่วนไม่ประกาศครบ (ลบ MarkFullyCertified) · H-B ได้รับใบแล้ว/แก้เลขที่ใบแรกบนแถวนั้น = 409 วันที่ข้ามรอบไม่ได้ (CrossesCreditPeriod ตัวเดียวกับ H2) · M-A/M-D กันซ้ำสองทางตัวเดียว EnsureCertificateNotRecordedAsync (ทะเบียน + ใบที่ยืนยันแล้ว · ปีเดียวกัน · ใต้ล็อกเลขที่ใบ + ผู้จ่าย ที่ทุกทางถือร่วม) · M-B หมดสิทธิ์ไม่ใช่ตัดสูญ ⇒ ReceivedAmount 0 · M-C ต้นทางลดหลังตัดสูญส่วนขาด ⇒ กลับ JE (AfterSourceGlDrop) · เศษ ≤ ฿1 เห็นเป็นรอใบ (DECISIONS 252-WP09-10) · สรุปไม่นับ Expired ซ้ำ · ปุ่มตัดสูญ CanWriteOff · UndoWriteOff ตัดสินสถานะใหม่ · AlreadyWrittenOff ยอด JE จริง · L4 สร้าง/ได้รับใบแล้วต้องมีวันที่ · ความมั่นใจ 1.0 = 100% · races ล็อก + ตรวจรอบซ้ำใน AutoConfirm · L7 งานล้าง feedback เก่าครั้งเดียว (DECISIONS 252-WP09-11) · แก้ CI Db H2_: ยืนยัน "รายการใหม่" ที่ไม่ส่ง Allocations ไหลไปใช้ข้อเสนอของระบบแล้วชนด่าน H2 (บั๊กโค้ด ไม่ใช่เทสต์) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 82577044_
+
+_รอบ 255 WP-12B ข้อ 6–8 (AUDIT_249 §WP-12 · คำตัดสินเจ้าของ Y5/N3 · DECISIONS 255-WP12B-3…8/10/11): **คู่ค้า NextAcc ต่อยอด `TradingPartnership`** —
+`PlanTemplate.MaxTradingPartners` (null = ไม่จำกัด · ตรวจตอนยอมรับทั้งสองบริษัท) · `GET contacts/{id}/partner-status` (ไม่รั่วผลคำเชิญ) · `ApiScopePolicy` + `documents:read` ·
+หน้า `/pages/partners.html` · **ใบขายถึงคู่ค้า = ใบซื้อร่างของผู้รับ** (`TryCreatePurchaseDraftAsync` · ค่าตั้งต้นปิด · เพดานต่อคู่ · สำเนาเป็นแถวของผู้รับ ·
+`PartnerInputVatEvidence` ⇒ ตัวตรวจ §86/4 ตัวเดียว · ยืนยันต้นฉบับ ⇒ `CompleteSupplierTaxInvoiceAsync`) · **50 ทวิ กลับผ่านคู่ค้า** (`PartnerWhtCertExchangeService` ขั้นใหม่ของ
+`AutopilotJob` ⇒ `WhtCertIntakeService.SubmitAsync` ของผู้ขาย · ประทับหลังผลจริง · ยกเลิกหลังส่ง ⇒ แจ้ง E-11) · **พอร์ทัลลิงก์วิเศษ** (`PortalMagicLinks` · hash · 15 นาที · ครั้งเดียว ·
+คำตอบเดียว · เพดาน) · **Excel ทั่วไปให้นักบัญชี** (MiniExcel) · DOCUMENT_FLOW §2.12l · ACCOUNT_STRUCTURE (เพดานคู่ค้า) · TEST_PLAN AP255-8…19 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_รอบ 255 WP-12B ข้อ 6–8 เติม sha: commit 145ba355 (DOCUMENT_FLOW Last verified · ACCOUNT_STRUCTURE · DECISIONS 255-WP12B-3…8/10/11) — doc-only คอมมิตตามหลัง ไม่ amend_
+
+_รอบ 255 WP-12B แก้ผลฝ่ายค้าน (DECISIONS 255-WP12B-13…20): H1/M9 scheme "Portal" แยก (`PortalAuthenticationHandler`) + ชนิดโทเคน access/refresh + ตรวจสิทธิ์/บริษัททุกคำขอ · H2 ระบบไม่ตั้ง `EtaxVerified` เอง (ผู้รับยืนยัน Paper/StampedEtax) · H3 การขายเดิม (แปลง/ออกแทน) แนบเข้าใบซื้อเดิม · M1 แก้ยอดใบจากคู่ค้า ⇒ `PaperRequired` + echo ใน `DocumentResponse` · M2 ต้นทางยกเลิก ⇒ `SourceVoided` + แจ้ง + ตรวจสดตอนอนุมัติ/ยืนยัน · M3 ยืนยัน + ย้าย VAT ธุรกรรมเดียว · M4/M5 ยอมรับจาก Pending ใต้ล็อก · M6 ลิงก์วิเศษเข้า `EmailQueue` · M7 เพดานต่อ IP/อีเมล/โทเคน · M8 สลิปหน้าชำระไม่เสิร์ฟตรง · LOW สลิปใต้ล็อก/ไบต์จริง · ร่างธุรกรรมเดียว · 50 ทวิ ลงวันจ่าย · ป้ายความถี่ · ป้าย Pending · scope · `PORTAL_SIGNING_KEY` fail-fast · settings_reader Contact — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f53b6847_
+
+_รอบ 255 WP-12B แก้ผล CI: (1) โทเคนพอร์ทัลถอดไม่ได้ทุกใบ (`DecodeJwtToken` ตัดที่จุดทศนิยมของวันหมดอายุ — บั๊กเดิม · DECISIONS 255-WP12B-12) (2) `SettlementPaidReissue.DocumentCarriedFields` เพิ่ม `PartnerInputVatEvidence`/`PartnerSourceLinkId` (ใบแทนต้องคงด่านภาษีซื้อ — เทสต์ partition R7/RV1F11) (3) CS8917 HtmlEncode_
+_Last verified against codebase: 2026-11-06 (รอบ 253 WP-10 — 50 ทวิ ขาเข้า ต่อจาก WP-09 (DOCUMENT_FLOW §2.12m): ลิงก์อัปโหลดสาธารณะ
+`/wht-upload.html` + `WhtCertPublicController` (token hash · เทียบเวลาคงที่ · rate limit ต่อ IP/token แบบ DB failClosed · ไบต์ตัดสิน PDF/JPG/PNG ≤ 10 MB ·
+PDF มีสคริปต์/ไฟล์ฝัง = ปฏิเสธ · ไฟล์ซ้ำไม่เก็บ/ไม่สแกน · เข้าประตูเดียว Channel UploadLink · OCR ล้ม = เข้ากล่องรับแบบรอตรวจ) · ลิงก์ในอีเมลใบเสร็จ
+(`IReceiptEmailSectionProvider`) + ปุ่ม 🔗 ในรายงาน "ยังขาด" · ทวงอัตโนมัติ `WhtCertReminderJob` (JobLock · watermark ต่อบริษัท · 7/21/45 + รายเดือน ≤ 6 ·
+ตาข่าย ≤ 6/30 วัน · ตัวหาผู้รับเดียว · ไม่ส่งอัตโนมัติ/ไม่รับเรื่อง = แถวข้ามพร้อมเหตุ · คิวอีเมลเดิม + โควตา · ตรวจซ้ำและออกลิงก์ตอนส่ง · ค่าตั้งต้นปิด) ·
+"ไม่หัก ณ ที่จ่าย" บน pay-document (คำเตือน + บันทึกการยอมรับ `NoWhtAcceptances` + audit · ยอด Gross จาก AmountsFor · handler WHT 0 / ล้มดังเมื่อเกินยอดค้าง) ·
+e-WHT แนบเป็นใบ 50 ทวิ ธรรมดา + เลขอ้างอิง (ไม่เสนอ 1%) · คำตัดสิน 253-WP10-1…7 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1f5a7f6c)_
+
+_Last verified against codebase: 2026-11-06 (รอบ 253 WP-10 ฝ่ายค้าน (DOCUMENT_FLOW §2.12m · คำตัดสิน 253-WP10-8…11): H1 "ไม่หัก" ปฏิเสธก่อนสร้างรายการชำระ
+(OfferFor ไม่เสนอ · StartDocument 400 · ไม่บันทึกการยอมรับ · เส้นที่ถูก = backlog) · H3 StartDocument กลับเป็น (companyId, token, req, ct) · M2 ใบจากลิงก์ให้คนตรวจเสมอ +
+ผู้จ่ายต้องเป็นลูกค้าของลิงก์ · M3 ลิงก์อีเมลทวงสร้างพร้อมแถวคิว token อนุพันธ์ (ผู้ส่งอ่านอย่างเดียว) + บล็อกใบเสร็จออกลิงก์ใน scope ของตัวเอง · L2 ผู้ติดต่อถูกลบ/เลิกรับตอนส่ง ·
+L3 ด่าน PDF เสริม + ถอด #xx · L4 hash IP แบบ HMAC + RetainUntil 5 ปี + LegalHold · L6 ข้อความเลิกรับ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 070a49e2)_

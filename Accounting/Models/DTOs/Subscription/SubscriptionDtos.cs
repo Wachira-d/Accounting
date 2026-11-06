@@ -30,7 +30,11 @@ public record TrialStatusResponse(
     ConversionIncentive? Incentive,
     /// <summary>วันที่ได้เพิ่มต่อการขยาย 1 ครั้ง (จากแพ็กเกจที่แอดมินตั้ง) — หน้าเว็บแสดงค่านี้
     /// ห้ามพิมพ์ "7 วัน" ตายตัว (เดิม `subscription.html` พิมพ์ไว้ 3 จุดขณะที่ Enterprise ตั้ง 15)</summary>
-    int ExtensionDays = 0);
+    int ExtensionDays = 0)
+{
+    /// <summary>รอบ 252 WP-13 J: ป้ายไทยของสถานะทดลองใช้ (หน้าเว็บเลิกใช้ statusMap ของตัวเอง)</summary>
+    public string TrialStatusLabel => SubscriptionLabels.Trial(TrialStatus);
+}
 
 public record TrialUsageInfo(
     int DocumentsUsed,
@@ -216,7 +220,11 @@ public record SubscriptionResponse(
     /// <summary>รอบ 236: ลิงก์ทางไปต่อของ <see cref="PurchaseBlocked"/> (หน้า License)</summary>
     string? PurchaseNextStepUrl = null,
     /// <summary>รอบ 236 (ฝ่ายค้าน B1): ผู้ดูเป็นผู้ถือ License ⇒ แพ็ก (ชื่อ enum) ที่เลือกได้เพื่อ "ต่ออายุ License" · null = เลือกไม่ได้</summary>
-    string? LicenseRenewalPlan = null);
+    string? LicenseRenewalPlan = null)
+{
+    /// <summary>รอบ 252 WP-13 J: ป้ายไทยจากตารางเดียว (หน้าเว็บเลิกใช้ cycleMap ของตัวเอง)</summary>
+    public string BillingCycleLabel => SubscriptionLabels.Cycle(BillingCycle);
+}
 
 public record UsageLimits(
     int MaxUsers,
@@ -258,7 +266,12 @@ public record CreatePlanTemplateRequest(
     bool IsPermanentFree = false,
     // รอบ 212: เพดานข้อความช่องกลาง/เดือน (null/-1 = ไม่จำกัด · ไม่ตั้งให้อัตโนมัติ)
     int? MaxSharedMessagesPerMonth = null,
-    int? TrialMaxSharedMessagesPerMonth = null);
+    int? TrialMaxSharedMessagesPerMonth = null,
+    // รอบ 254 WP-11 L4 (Q3): เพดานแยกช่อง (null/-1 = ไม่แยก — นับรวมก้อนเดิม)
+    int? MaxSharedLineMessagesPerMonth = null,
+    int? TrialMaxSharedLineMessagesPerMonth = null,
+    int? MaxSharedEmailsPerMonth = null,
+    int? TrialMaxSharedEmailsPerMonth = null);
 
 public record UpdatePlanTemplateRequest(
     string? Name,
@@ -297,7 +310,14 @@ public record UpdatePlanTemplateRequest(
     int? TrialMaxOcrPagesPerMonth = null,
     // รอบ 212 (คำตัดสินข้อ 171): เพดานข้อความช่องกลาง/เดือน (-1 = ไม่จำกัด · null = ไม่แตะ)
     int? MaxSharedMessagesPerMonth = null,
-    int? TrialMaxSharedMessagesPerMonth = null);
+    int? TrialMaxSharedMessagesPerMonth = null,
+    // รอบ 254 WP-11 L4 (Q3): เพดานแยกช่อง (-1 = ไม่แยก/ล้าง · null = ไม่แตะ)
+    int? MaxSharedLineMessagesPerMonth = null,
+    int? TrialMaxSharedLineMessagesPerMonth = null,
+    int? MaxSharedEmailsPerMonth = null,
+    int? TrialMaxSharedEmailsPerMonth = null,
+    // รอบ 255 WP-12B ข้อ 6 (Y5): เพดานคู่ค้า NextAcc (-1 = ไม่จำกัด/ล้าง · null = ไม่แตะ)
+    int? MaxTradingPartners = null);
 
 public record PlanTemplateResponse(
     Guid Id,
@@ -342,7 +362,17 @@ public record PlanTemplateResponse(
     int? SuggestedTrialSharedMessagesPerMonth = null,
     // รอบ 231 (P0 จ): ข้อความ/ธง "ไม่จำกัด" ของแพ็กเกจจากเซิร์ฟเวอร์ (UsageBarRule.LimitTexts) — หน้าแรก/สมัคร/License/แพ็กเกจ อ่านค่านี้แทนเกณฑ์ใน JS
     Dictionary<string, string>? LimitTexts = null,
-    Dictionary<string, bool>? Unlimited = null);
+    Dictionary<string, bool>? Unlimited = null,
+    // รอบ 254 WP-11 L4 (Q3): เพดานแยกช่อง + ค่าแนะนำ (echo ให้หน้าแอดมิน hydrate)
+    PlanNotifyChannelLimits? NotifyChannels = null,
+    // รอบ 255 WP-12B ข้อ 6 (Y5): เพดานคู่ค้า NextAcc (null = ไม่จำกัด · echo ให้หน้าแอดมิน hydrate)
+    int? MaxTradingPartners = null);
+
+/// <summary>รอบ 254 WP-11 L4: เพดานแยกช่อง LINE/อีเมลของแม่แบบ (null = ไม่แยก) + ค่าแนะนำจากเซิร์ฟเวอร์ (<c>NotifyQuotaPolicy.SuggestedChannelLimit</c> — คำใบ้ ไม่ตั้งให้อัตโนมัติ)</summary>
+public record PlanNotifyChannelLimits(
+    int? MaxSharedLineMessagesPerMonth, int? TrialMaxSharedLineMessagesPerMonth,
+    int? MaxSharedEmailsPerMonth, int? TrialMaxSharedEmailsPerMonth,
+    int? SuggestedLine, int SuggestedTrialLine, int? SuggestedEmail, int SuggestedTrialEmail);
 
 /// <summary>1 ฟีเจอร์ในแคตตาล็อก — ป้ายไทย/อังกฤษ + หมวด + คำอธิบาย (จาก <c>Helpers/FeatureCatalog</c>)</summary>
 public record FeatureFlagInfo(string Name, string Category, string LabelTh, string LabelEn = "", string Description = "");
@@ -507,7 +537,12 @@ public record SubscriptionPaymentResponse(
     Guid? PriceOverrideId = null,
     /// <summary>รอบ 237 (K-1 · กฎ #4 A echo): แบบอัปเกรดที่ลูกค้าเลือกตอนซื้อ (KeepExpiry | RestartCycle · null = แถวเก่า/ไม่ใช่อัปเกรด) + ป้ายไทย</summary>
     string? UpgradeMode = null,
-    string? UpgradeModeLabel = null);
+    string? UpgradeModeLabel = null)
+{
+    /// <summary>รอบ 252 WP-13 J: ป้ายไทยจากตารางเดียว — หน้าเว็บไม่มีตาราง enum→ไทยเอง</summary>
+    public string RequestedBillingCycleLabel => SubscriptionLabels.Cycle(RequestedBillingCycle);
+    public string PaymentMethodLabel => PaymentMethodNames.Thai(PaymentMethod);
+}
 
 public record SubscriptionPaymentListResponse(
     List<SubscriptionPaymentResponse> Payments,

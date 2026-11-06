@@ -438,4 +438,41 @@ public class RecurringTransactionDbTests
         Assert.Equal(unlinked.Id, doc.BankAccountId);
         Assert.Equal(DocumentType.Invoice, doc.DocumentType);
     }
+
+    // ═══════════ รอบ 255 WP-12B ข้อ 2: ทุก N เดือน + สร้างล่วงหน้า ═══════════
+
+    [Fact]
+    public async Task R255_ทุกNเดือน_สร้างล่วงหน้า_บันทึกและechoกลับ_ค่าผิดช่วงปฏิเสธ_ล้างได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var start = Today.AddDays(40);
+        var created = await Svc(db).CreateAsync(s.CompanyId,
+            Req(s, DocumentType.Invoice, Template(bankAccountId: s.BankId), start) with { IntervalMonths = 2, LeadDays = 5 }, "tester");
+        Assert.Equal((int?)2, created.IntervalMonths);
+        Assert.Equal(5, created.LeadDays);
+
+        // ทิศตรงข้าม: สร้างล่วงหน้าเกินหนึ่งงวด/ทุก 0 เดือน ⇒ ปฏิเสธพร้อมเหตุ (ไม่ clamp เงียบ) · ไม่มีแถวใหม่
+        using (var bad = DbTestDatabase.TryCreateContext()!)
+        {
+            await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(bad).CreateAsync(s.CompanyId,
+                Req(s, DocumentType.Invoice, Template(bankAccountId: s.BankId), start) with { LeadDays = 30 }, "tester"));
+            await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(bad).CreateAsync(s.CompanyId,
+                Req(s, DocumentType.Invoice, Template(bankAccountId: s.BankId), start) with { IntervalMonths = 0 }, "tester"));
+            Assert.Equal(1, await bad.RecurringTransactions.CountAsync(r => r.CompanyId == s.CompanyId));
+        }
+
+        // แก้ไข: 0 = ล้างกลับไปใช้ความถี่ · null = ไม่แก้ (สร้างล่วงหน้าคงเดิม)
+        using var upd = DbTestDatabase.TryCreateContext()!;
+        var cleared = await Svc(upd).UpdateAsync(s.CompanyId, created.Id, new UpdateRecurringTransactionRequest(
+            null, null, null, null, null, null, null, null, null, null, null, null, IntervalMonths: 0));
+        Assert.Null(cleared.IntervalMonths);
+        Assert.Equal(5, cleared.LeadDays);
+        // ทิศตรงข้าม (เทสต์เดิมไม่ส่งสองช่องนี้) — รายการที่ไม่ตั้ง = 0/null = พฤติกรรมเดิม
+        using var plain = DbTestDatabase.TryCreateContext()!;
+        var old = await Svc(plain).CreateAsync(s.CompanyId, Req(s, DocumentType.Invoice, Template(bankAccountId: s.BankId), start), "tester");
+        Assert.Null(old.IntervalMonths);
+        Assert.Equal(0, old.LeadDays);
+    }
 }

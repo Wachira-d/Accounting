@@ -331,9 +331,9 @@
         <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มบัญชีธนาคาร</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="fId">
-          <div class="form-group"><label class="form-label">ชื่อบัญชี *</label><input type="text" class="form-input" id="fName"></div>
+          <div class="form-group"><label for="fName" class="form-label">ชื่อบัญชี *</label><input type="text" class="form-input" id="fName"></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ธนาคาร *</label>
+            <div class="form-group"><label for="fBank" class="form-label">ธนาคาร *</label>
               <select class="form-select" id="fBank">
                 <option value="กสิกรไทย">ธนาคารกสิกรไทย</option>
                 <option value="กรุงเทพ">ธนาคารกรุงเทพ</option>
@@ -344,22 +344,22 @@
                 <option value="อื่นๆ">อื่นๆ</option>
               </select>
             </div>
-            <div class="form-group"><label class="form-label">เลขที่บัญชี *</label><input type="text" class="form-input" id="fAccNum"></div>
+            <div class="form-group"><label for="fAccNum" class="form-label">เลขที่บัญชี *</label><input type="text" class="form-input" id="fAccNum"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ประเภทบัญชี</label>
+            <div class="form-group"><label for="fAccType" class="form-label">ประเภทบัญชี</label>
               <select class="form-select" id="fAccType"><option value="Savings">ออมทรัพย์</option><option value="Current">กระแสรายวัน</option><option value="Fixed">ฝากประจำ</option></select>
             </div>
-            <div class="form-group"><label class="form-label">สกุลเงิน</label><input type="text" class="form-input" id="fCurrency" value="THB"></div>
+            <div class="form-group"><label for="fCurrency" class="form-label">สกุลเงิน</label><input type="text" class="form-input" id="fCurrency" value="THB"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">สาขา</label><input type="text" class="form-input" id="fBranch"></div>
-            <div class="form-group"><label class="form-label" id="fOpeningLabel">ยอดเปิดบัญชี</label><input type="number" class="form-input" id="fOpening" step="0.01" value="0">
+            <div class="form-group"><label for="fBranch" class="form-label">สาขา</label><input type="text" class="form-input" id="fBranch"></div>
+            <div class="form-group"><label for="fOpening" class="form-label" id="fOpeningLabel">ยอดเปิดบัญชี</label><input type="number" class="form-input" id="fOpening" step="0.01" value="0">
               <div class="text-xs text-gray-400 hidden" id="fOpeningHint">แก้ยอดเปิดบัญชีหลังสร้างไม่ได้ — ใช้ "เพิ่มรายการเคลื่อนไหว" หรือ JE ปรับปรุงแทน</div>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">ผังบัญชีที่เชื่อมโยง</label>
+            <label for="fLinkedAccount" class="form-label">ผังบัญชีที่เชื่อมโยง</label>
             <select class="form-select" id="fLinkedAccount"><option value="">— ระบบสร้างให้อัตโนมัติ —</option></select>
             <div class="text-xs text-gray-400">ต้องผูกก่อนจึงจะกระทบยอดกับ<b>สมุดรายวัน</b>ได้ (จับคู่กับรายการชำระเงินไม่ต้องใช้)</div>
           </div>
@@ -368,11 +368,11 @@
           <div class="form-group" id="fQrSection" style="border-top:1px solid #e5e7eb;padding-top:10px;margin-top:6px">
             <label class="form-label">QR ชำระเงิน (พิมพ์บนเอกสารขาย)</label>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">เลขพร้อมเพย์</label>
+              <div class="form-group"><label for="fPromptPay" class="form-label">เลขพร้อมเพย์</label>
                 <input type="text" class="form-input" id="fPromptPay" inputmode="numeric" maxlength="17" placeholder="เบอร์มือถือ 10 หลัก หรือเลขผู้เสียภาษี 13 หลัก" oninput="Page.qrPreviewSoon()">
                 <div class="text-xs text-gray-400">ระบบสร้าง QR พร้อมเพย์ที่ใส่ยอดของใบให้เอง (ลูกค้าไม่ต้องพิมพ์ยอด)</div>
               </div>
-              <div class="form-group"><label class="form-label">QR ที่ใช้ก่อน</label>
+              <div class="form-group"><label for="fQrSource" class="form-label">QR ที่ใช้ก่อน</label>
                 <select class="form-select" id="fQrSource" onchange="Page.qrPreviewSoon()">
                   <option value="auto">อัตโนมัติ (พร้อมเพย์ก่อน ถ้าไม่มีใช้รูปที่อัปโหลด)</option>
                   <option value="promptpay">พร้อมเพย์ก่อน</option>
@@ -381,7 +381,7 @@
               </div>
             </div>
             <div class="form-group">
-              <label class="form-label">รูป QR จากแอปธนาคาร (PNG/JPEG ไม่เกิน 1 MB)</label>
+              <label for="fQrFile" class="form-label">รูป QR จากแอปธนาคาร (PNG/JPEG ไม่เกิน 1 MB)</label>
               <input type="file" accept="image/png,image/jpeg" id="fQrFile" onchange="Page.uploadQr(this)">
               <button type="button" class="btn btn-secondary btn-sm hidden" id="fQrRemove" onclick="Page.removeQr()">ลบรูป QR</button>
               <div class="text-xs text-gray-400" id="fQrUploadHint"></div>
@@ -414,17 +414,17 @@
         <div class="modal-header"><h3 class="modal-title">เพิ่มรายการเคลื่อนไหว</h3><button class="modal-close" onclick="Layout.closeModal('transModal')">&times;</button></div>
         <div class="modal-body">
           <div class="form-row">
-            <div class="form-group"><label class="form-label">วันที่ *</label><input type="date" class="form-input" id="tDate"></div>
-            <div class="form-group"><label class="form-label">ประเภท *</label>
+            <div class="form-group"><label for="tDate" class="form-label">วันที่ *</label><input type="date" class="form-input" id="tDate"></div>
+            <div class="form-group"><label for="tType" class="form-label">ประเภท *</label>
               <select class="form-select" id="tType"><option value="Deposit">ฝาก</option><option value="Withdrawal">ถอน</option><option value="Transfer">โอน</option><option value="Fee">ค่าธรรมเนียม</option><option value="Interest">ดอกเบี้ย</option></select>
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="tAmount" step="0.01"></div>
-            <div class="form-group"><label class="form-label">ผู้รับ/ผู้จ่าย</label><input type="text" class="form-input" id="tPayee"></div>
+            <div class="form-group"><label for="tAmount" class="form-label">จำนวนเงิน *</label><input type="number" class="form-input" id="tAmount" step="0.01"></div>
+            <div class="form-group"><label for="tPayee" class="form-label">ผู้รับ/ผู้จ่าย</label><input type="text" class="form-input" id="tPayee"></div>
           </div>
-          <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="tDesc"></div>
-          <div class="form-group"><label class="form-label">เลขอ้างอิง</label><input type="text" class="form-input" id="tRef"></div>
+          <div class="form-group"><label for="tDesc" class="form-label" data-i18n="common.description">คำอธิบาย</label><input type="text" class="form-input" id="tDesc"></div>
+          <div class="form-group"><label for="tRef" class="form-label">เลขอ้างอิง</label><input type="text" class="form-input" id="tRef"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('transModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -443,17 +443,17 @@
             ไฟล์จากธนาคารที่หน้านี้อ่านไม่ได้ หรืออยากตรวจทีละแถวก่อนลง?
             <a href="#" id="impHubLink" style="font-weight:600" onclick="Page.openImportHub();return false;">เปิดในศูนย์นำเข้าข้อมูล →</a>
           </div>
-          <div class="form-group"><label class="form-label">บัญชีธนาคาร *</label>
+          <div class="form-group"><label for="impAccount" class="form-label">บัญชีธนาคาร *</label>
             <select class="form-select" id="impAccount"></select>
           </div>
-          <div class="form-group"><label class="form-label">รูปแบบไฟล์ *</label>
+          <div class="form-group"><label for="impFormat" class="form-label">รูปแบบไฟล์ *</label>
             <select class="form-select" id="impFormat">
               <option value="CSV">CSV (.csv)</option>
               <option value="EXCEL">Excel (.xlsx)</option>
               <option value="OFX">OFX (.ofx)</option>
             </select>
           </div>
-          <div class="form-group"><label class="form-label">ไฟล์ Statement *</label>
+          <div class="form-group"><label for="impFile" class="form-label">ไฟล์ Statement *</label>
             <input type="file" class="form-input" id="impFile" accept=".csv,.xlsx,.xls,.txt,.ofx,.qif">
           </div>
           <div style="background:#f1f5f9;padding:10px;border-radius:6px;font-size:12px;color:#475569;line-height:1.5">
@@ -490,16 +490,16 @@
             ใช้ฟีเจอร์นี้เมื่อ <strong>นำเข้าผิดปี</strong> หรือ <strong>ผิดช่วงวันที่</strong>
           </div>
           <div class="form-group">
-            <label class="form-label">บัญชีธนาคาร</label>
+            <label for="bdAccountName" class="form-label">บัญชีธนาคาร</label>
             <input type="text" class="form-input" id="bdAccountName" disabled style="background:#f8fafc">
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             <div class="form-group">
-              <label class="form-label">ตั้งแต่วันที่</label>
+              <label for="bdFrom" class="form-label">ตั้งแต่วันที่</label>
               <input type="date" class="form-input" id="bdFrom">
             </div>
             <div class="form-group">
-              <label class="form-label">ถึงวันที่</label>
+              <label for="bdTo" class="form-label">ถึงวันที่</label>
               <input type="date" class="form-input" id="bdTo">
             </div>
           </div>
@@ -521,18 +521,18 @@
       <div class="modal">
         <div class="modal-header"><h3 class="modal-title">เพิ่มการเชื่อมต่อ Open Banking</h3><button class="modal-close" onclick="Layout.closeModal('connModal')">&times;</button></div>
         <div class="modal-body">
-          <div class="form-group"><label class="form-label">ชื่อการเชื่อมต่อ *</label><input type="text" class="form-input" id="cName"></div>
-          <div class="form-group"><label class="form-label">ธนาคาร *</label>
+          <div class="form-group"><label for="cName" class="form-label">ชื่อการเชื่อมต่อ *</label><input type="text" class="form-input" id="cName"></div>
+          <div class="form-group"><label for="cBank" class="form-label">ธนาคาร *</label>
             <select class="form-select" id="cBank">
               <option value="KBANK">กสิกรไทย</option><option value="BBL">กรุงเทพ</option><option value="SCB">ไทยพาณิชย์</option>
               <option value="KTB">กรุงไทย</option><option value="BAY">กรุงศรี</option><option value="TTB">ทหารไทยธนชาต</option>
             </select>
           </div>
-          <div class="form-group"><label class="form-label">บัญชีธนาคาร *</label>
+          <div class="form-group"><label for="cAccount" class="form-label">บัญชีธนาคาร *</label>
             <select class="form-select" id="cAccount"></select>
           </div>
-          <div class="form-group"><label class="form-label">API Key</label><input type="text" class="form-input" id="cApiKey"></div>
-          <div class="form-group"><label class="form-label">API Secret</label><input type="password" class="form-input" id="cApiSecret"></div>
+          <div class="form-group"><label for="cApiKey" class="form-label">API Key</label><input type="text" class="form-input" id="cApiKey"></div>
+          <div class="form-group"><label for="cApiSecret" class="form-label">API Secret</label><input type="password" class="form-input" id="cApiSecret"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('connModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -660,14 +660,14 @@
         </div>
         <div class="modal-body" style="padding:0">
           <div style="padding:10px 18px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <label style="font-size:12px;color:#475569">บัญชี:</label>
+            <label for="grAccount" style="font-size:12px;color:#475569">บัญชี:</label>
             <select id="grAccount" class="form-select" style="font-size:13px;max-width:300px" onchange="GroupReconcile.reload()"></select>
             <button class="btn btn-sm" onclick="GroupReconcile.applyAiLearned()" type="button"
               style="background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;font-weight:600;font-size:12px;padding:6px 12px"
               title="ดึงคำแนะนำจาก AI ที่เรียนรู้จากประวัติการจับคู่ของคุณ — จะติ๊กรายการที่เข้าเค้าให้อัตโนมัติ">
               ✨ AI จับคู่จากประวัติ
             </button>
-            <label style="font-size:12px;color:#475569;margin-left:auto">วันที่กระทบยอด:</label>
+            <label for="grDate" style="font-size:12px;color:#475569;margin-left:auto">วันที่กระทบยอด:</label>
             <input type="date" id="grDate" class="form-input" style="font-size:13px;max-width:160px">
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #e2e8f0">
@@ -1308,7 +1308,7 @@
         }
       },
       async quickMatch(txnId, candidateType, candidateId) {
-        if (!confirm('ยืนยันการจับคู่รายการนี้?')) return;
+        if (!(await Layout.confirm('ยืนยันการจับคู่รายการนี้?'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           // ผู้ใช้เลือกคู่นี้เองจากรายการ = Explicit (คลังจับคู่นับความมั่นใจเฉพาะแบบนี้ · รอบ 201 A-AI1)
@@ -2204,7 +2204,7 @@
       },
       async acceptAllSuggestions() {
         if (!this.aiResult?.suggestions?.length) return;
-        if (!confirm(`ยืนยันจับคู่ทั้ง ${this.aiResult.suggestions.length} คู่?`)) return;
+        if (!(await Layout.confirm(`ยืนยันจับคู่ทั้ง ${this.aiResult.suggestions.length} คู่?`))) return;
         const api = Layout.api(); if (!api) return;
         let ok = 0, fail = 0;
         for (let i = 0; i < this.aiResult.suggestions.length; i++) {
@@ -2224,7 +2224,7 @@
         this.aiResult = null;
       },
       async unmatchTxn(txnId) {
-        if (!confirm('ต้องการยกเลิกการจับคู่?')) return;
+        if (!(await Layout.confirm('ต้องการยกเลิกการจับคู่?'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.unmatchTransaction({ bankTransactionId: txnId });
@@ -2597,7 +2597,7 @@
         }
         if (diff >= 0.01) msg += `\n\n⚠️ ยอดต่างกัน ฿${diff.toFixed(2)}`;
         msg += '\n\nยืนยันการจับคู่?';
-        if (!confirm(msg)) return;
+        if (!(await Layout.confirm(msg))) return;
 
         const api = Layout.api(); if (!api) return;
         try {
@@ -2784,7 +2784,7 @@
       },
       async removeQr() {
         const id = document.getElementById('fId').value;
-        if (!id || !confirm('ลบรูป QR ของบัญชีนี้?')) return;
+        if (!id || !(await Layout.confirm('ลบรูป QR ของบัญชีนี้?'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.removeBankPaymentQrImage(id);
@@ -3090,7 +3090,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async deleteConn(id) {
-        if (!confirm('ต้องการลบการเชื่อมต่อนี้?')) return;
+        if (!(await Layout.confirm('ต้องการลบการเชื่อมต่อนี้?'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.deleteConnection(id);
@@ -3457,7 +3457,7 @@
         const iSel = this.items.filter(it => it._selected);
         if (!bSel.length || !iSel.length) return;
         const diff = bSel.reduce((s, t) => s + t._alloc, 0) - iSel.reduce((s, it) => s + it._alloc, 0);
-        if (Math.abs(diff) > 0.01 && !confirm(`ยอดสองฝั่งไม่สมดุล ผลต่าง ฿${Math.abs(diff).toFixed(2)} ต้องการดำเนินการต่อหรือไม่?`)) return;
+        if (Math.abs(diff) > 0.01 && !(await Layout.confirm(`ยอดสองฝั่งไม่สมดุล ผลต่าง ฿${Math.abs(diff).toFixed(2)} ต้องการดำเนินการต่อหรือไม่?`))) return;
         const api = Layout.api(); if (!api) return;
         const payload = {
           bankAccountId: this.accountId,
@@ -3571,7 +3571,7 @@
       },
       async unmatchCurrent() {
         if (!this.currentDetailId) return;
-        if (!confirm('ยกเลิกการกระทบยอดของกลุ่มนี้? รายการธนาคารและเอกสารจะกลับสู่สถานะยังไม่กระทบยอด')) return;
+        if (!(await Layout.confirm('ยกเลิกการกระทบยอดของกลุ่มนี้? รายการธนาคารและเอกสารจะกลับสู่สถานะยังไม่กระทบยอด'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.unreconcileGroup(this.currentDetailId);

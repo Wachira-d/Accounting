@@ -48,9 +48,24 @@ public record ContactNotifyOverviewResponse(
     bool CanEdit,
     string? ReadOnlyReason,
     // รอบ 251 (WP-07 · F-06): บริษัทใช้ e-Tax by Email ⇒ คำเตือนเรื่องผู้รับใบกำกับ 1 อีเมล (Helpers/EtaxByEmailFormat.ContactRecipientsNote) · null = ไม่ใช่โหมดนี้
-    string? EtaxByEmailNote = null);
+    string? EtaxByEmailNote = null,
+    // รอบ 254 WP-11 L2: ปุ่ม "ลิงก์/QR ผูก LINE" (ผ่าน OA ของบริษัท · ผู้รับยินยอมบนมือถือ — Q6) · null = ไม่แสดง
+    ContactLineBindOffer? LineBind = null);
 
 public record ContactNotifyComingSoon(string Key, string Label, string Reason);
+
+/// <summary>รอบ 254 WP-11 L2 — <paramref name="Available"/> false ⇒ ปุ่มปิดพร้อม <paramref name="Reason"/></summary>
+public record ContactLineBindOffer(bool Available, string? Reason, int OpenInvites = 0);
+
+/// <summary>รอบ 254 WP-11 L2 — ลิงก์ให้ผู้รับเปิดบนมือถือ (หน้า <c>contact-line-join.html</c>) · token แสดงครั้งเดียว (เก็บเฉพาะ hash) · หมดอายุ <paramref name="ExpiresAt"/> ·
+/// <paramref name="Url"/>/<paramref name="QrDataUri"/> null = ยังไม่ได้ตั้ง URL ของระบบ (หน้าเว็บประกอบจาก <paramref name="Path"/> + โดเมนที่เปิดอยู่ และบอกให้ตั้ง)</summary>
+public record ContactLineInviteResponse(string Path, string? Url, string? QrDataUri, DateTime ExpiresAt, string Note);
+
+/// <summary>หน้าเชิญ (public) — ข้อความยินยอม + ชื่อบริษัท · <paramref name="Problem"/> มีค่า = ลิงก์ใช้ไม่ได้ (หมดอายุ/ใช้แล้ว/บริษัทเปลี่ยน OA)</summary>
+public record ContactLineJoinView(string? CompanyName, string? ContactName, string? ConsentText, string? ConsentVersion, string? Problem);
+
+/// <summary>ผลกดยินยอม — รหัสผูก + ปุ่มเพิ่มเพื่อน/ส่งรหัส (เปิดแชต OA ของบริษัทพร้อมข้อความ) · ไม่มี basic id ⇒ แสดงรหัสให้พิมพ์เอง</summary>
+public record ContactLineJoinConsentResponse(string MessageText, string? AddFriendUrl, string? SendCodeUrl, DateTime ExpiresAt);
 
 /// <summary>ผู้รับของเรื่องหนึ่ง (ตัวตัดสินเดียว <c>ContactRecipientRule.Resolve</c>)</summary>
 public record ContactRecipientsResponse(string Topic, string TopicLabel, List<string> Emails, List<ContactRecipientOptionResponse> Options);
@@ -65,3 +80,10 @@ public record UpdateContactNotifyEndpointRequest(string? Label, List<string>? To
 
 /// <summary>เรื่องที่อีเมลหลัก (<c>Contact.Email</c>) รับ — ว่างได้ (= อีเมลหลักไม่รับเรื่องใด · ให้ปลายทางอื่นรับแทน)</summary>
 public record UpdateContactNotifyPrimaryRequest(List<string>? Topics);
+
+/// <summary>รอบ 254 WP-11 L3 — ตรวจรหัสผูกกลุ่ม: <paramref name="Problem"/> มีค่า = ผูกไม่ได้ (ข้อความถึงผู้ใช้) · ข้อความรับรองที่ต้องติ๊ก (เวอร์ชัน = hash)</summary>
+public record ContactLineGroupPreview(string? GroupName, int? MemberCount, string ContactName, string? AttestText, string? AttestVersion, string? Problem);
+
+/// <summary>รอบ 254 WP-11 L3 — ผูกกลุ่ม · <paramref name="ShowAmounts"/> null = แสดงยอด (Q5 ค่าตั้งต้น) · <paramref name="Topics"/> null = เอกสาร+ทวงชำระ</summary>
+public record ConfirmContactLineGroupRequest(string? Code, List<string>? Topics, bool? ShowAmounts, bool AcceptResponsibility);
+

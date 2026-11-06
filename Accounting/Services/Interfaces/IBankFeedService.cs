@@ -7,8 +7,8 @@ public interface IBankFeedService
     Task<BankFeedConnectionResponse> CreateConnectionAsync(Guid companyId, CreateBankFeedConnectionRequest request);
     Task<List<BankFeedConnectionResponse>> GetConnectionsAsync(Guid companyId);
     Task<BankFeedConnectionResponse> GetConnectionAsync(Guid companyId, Guid connectionId);
-    Task<BankFeedSyncResult> SyncAsync(Guid companyId, Guid connectionId);
-    Task<BankFeedSyncResult> SyncAllAsync(Guid companyId);
+    Task<BankFeedSyncResult> SyncAsync(Guid companyId, Guid connectionId, Guid? triggeredByUserId = null);
+    Task<BankFeedSyncResult> SyncAllAsync(Guid companyId, Guid? triggeredByUserId = null);
     Task DeleteConnectionAsync(Guid companyId, Guid connectionId);
     Task<BankFeedConnectionResponse> TestConnectionAsync(Guid companyId, Guid connectionId);
 }

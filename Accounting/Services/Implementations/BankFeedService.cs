@@ -79,7 +79,7 @@ public class BankFeedService : IBankFeedService
         return MapToResponse(conn);
     }
 
-    public async Task<BankFeedSyncResult> SyncAsync(Guid companyId, Guid connectionId)
+    public async Task<BankFeedSyncResult> SyncAsync(Guid companyId, Guid connectionId, Guid? triggeredByUserId = null)
     {
         var conn = await _db.BankConnections
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == connectionId)
@@ -101,11 +101,33 @@ public class BankFeedService : IBankFeedService
                 .Where(r => r != null)
                 .ToListAsync();
 
+            // ฝ่ายค้านรอบสอง M-C: บรรทัดไม่มีเลขอ้างอิง ⇒ กันซ้ำด้วย (วัน · ยอด · ทิศ · คำอธิบายที่ปรับรูป) — กุญแจตัวเดียว Helpers/BankFeedDedupe
+            var noRefKeys = new HashSet<string>(StringComparer.Ordinal);
+            if (transactions.Any(t => string.IsNullOrEmpty(t.Reference)))
+            {
+                var minDate = transactions.Min(t => t.Date).Date;
+                var maxDate = transactions.Max(t => t.Date).Date.AddDays(1);
+                var existingNoRef = await _db.BankTransactions.AsNoTracking()
+                    .Where(t => t.CompanyId == companyId && t.BankAccountId == conn.LinkedBankAccountId && !t.IsDeleted
+                        && (t.Reference == null || t.Reference == "") && t.TransactionDate >= minDate && t.TransactionDate < maxDate)
+                    .Select(t => new { t.TransactionDate, t.Amount, t.TransactionType, t.Description })
+                    .ToListAsync();
+                foreach (var e in existingNoRef)
+                    noRefKeys.Add(Accounting.Helpers.BankFeedDedupe.NoReferenceKey(e.TransactionDate.Date, e.Amount,
+                        e.TransactionType == Models.Enums.BankTransactionType.Deposit, e.Description));
+            }
+
             int newCount = 0, duplicateCount = 0, autoMatched = 0;
 
             foreach (var txn in transactions)
             {
                 if (!string.IsNullOrEmpty(txn.Reference) && existingRefs.Contains(txn.Reference))
+                {
+                    duplicateCount++;
+                    continue;
+                }
+                if (string.IsNullOrEmpty(txn.Reference)
+                    && !noRefKeys.Add(Accounting.Helpers.BankFeedDedupe.NoReferenceKey(txn.Date.Date, txn.Amount, txn.Amount >= 0, txn.Description)))
                 {
                     duplicateCount++;
                     continue;
@@ -122,7 +144,10 @@ public class BankFeedService : IBankFeedService
                         : Models.Enums.BankTransactionType.Withdrawal,
                     Description = txn.Description,
                     Reference = txn.Reference,
-                    ReconciliationStatus = Models.Enums.ReconciliationStatus.Unmatched
+                    ReconciliationStatus = Models.Enums.ReconciliationStatus.Unmatched,
+                    // รอบ 252 WP-12A ฝ่ายค้านรอบสอง H-A (DECISIONS 252-WP12A-6): feed ทุกปลายทาง (รวม sandbox ที่ตั้งไว้ในระบบ) = เสนอเท่านั้น จนกว่ามีการเชื่อมธนาคารจริงที่ตรวจแล้ว
+                    EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceFeed,
+                    CreatedByUserId = triggeredByUserId
                 };
 
                 _db.BankTransactions.Add(bankTxn);
@@ -170,7 +195,7 @@ public class BankFeedService : IBankFeedService
         }
     }
 
-    public async Task<BankFeedSyncResult> SyncAllAsync(Guid companyId)
+    public async Task<BankFeedSyncResult> SyncAllAsync(Guid companyId, Guid? triggeredByUserId = null)
     {
         var connections = await _db.BankConnections
             .Where(c => c.CompanyId == companyId && c.AutoSync && c.Status == "Active")
@@ -180,7 +205,7 @@ public class BankFeedService : IBankFeedService
 
         foreach (var conn in connections)
         {
-            var result = await SyncAsync(companyId, conn.Id);
+            var result = await SyncAsync(companyId, conn.Id, triggeredByUserId);
             totalNew += result.NewTransactions;
             totalDuplicates += result.DuplicateSkipped;
             totalMatched += result.AutoMatched;

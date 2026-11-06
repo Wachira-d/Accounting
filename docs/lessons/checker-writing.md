@@ -114,6 +114,7 @@ python3 tools/sequence_lock_check.py # ออกเลขรันเองด�
 python3 tools/deep_link_param_check.py # ลิงก์ส่ง query param ชื่อที่หน้าปลายทางไม่เคยอ่าน → กดแล้วตกที่ลิสต์เปล่า (dead_link_check ดูแค่ว่าไฟล์มีอยู่) · รอบ 250 WP-04: ลิงก์ hash `#k=` ⇒ ปลายทางต้องอ่าน location.hash + มีชื่อ k · `--self-test`
 python3 tools/form_label_for_check.py # (รอบ 250 WP-04) label ใน .form-group ไม่ผูกช่อง (ไม่มี for / for ชี้ id ที่ไม่มี / ไม่ห่อช่อง) — ratchet ต่อไฟล์ `tools/form_label_for_baseline.json` · `--self-test`
 python3 tools/modal_table_container_check.py # (รอบ 250 WP-04) ตาราง ≥ 5 คอลัมน์ใน .modal-body ไม่ห่อ .table-container — ratchet ต่อไฟล์ · `--self-test`
+python3 tools/ui_glossary_check.py # (รอบ 252 WP-13 M) ศัพท์นักพัฒนา/อังกฤษที่ผู้ใช้เห็น (fallback · push · Trigger · Default-deny · Sys/Mail · L2 · workspace · invite · Portal · Session) ในข้อความหน้า/สตริง JS — ratchet ต่อไฟล์ `tools/ui_glossary_baseline.txt` · คำแทน `docs/ui-glossary.md` · `--self-test`
 python3 tools/flag_field_overwrite_check.py # เขียนทับช่องข้อความที่เป็นที่สะสม**และ**มีด่านอ่านธงจากมัน → ธงของด่านหายเงียบ
 python3 tools/ocr_helper_test_check.py # ตัวตัดสิน OCR (Helpers/Ocr*.cs) ที่ไม่มีเทสต์อ้างถึง → แก้แล้วใบที่เคยถูกกลับมาผิดโดยไม่มีอะไรฟ้อง
 python3 tools/ocr_golden_corpus_check.py # กระดาษตัวอย่าง OCR (OcrPaperSamples / EtaxFixtures) ที่ไม่มี golden row ใน replay harness → "มีเคสใหม่ = ต้องเพิ่ม golden row" · ใบใน Corpus ที่ไม่มี Assert · `--self-test` ไฟล์สังเคราะห์ (2026-10-09)

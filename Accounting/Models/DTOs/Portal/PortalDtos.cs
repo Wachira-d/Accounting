@@ -1,6 +1,6 @@
 namespace Accounting.Models.DTOs.Portal;
 
-public record CreatePortalAccessRequest(Guid ContactId, string Email, string Password, string? DisplayName, bool CanViewInvoices, bool CanViewStatements, bool CanDownloadPdf, bool CanMakePayment);
+public record CreatePortalAccessRequest(Guid ContactId, string Email, string? Password, string? DisplayName, bool CanViewInvoices, bool CanViewStatements, bool CanDownloadPdf, bool CanMakePayment);
 public record UpdatePortalAccessRequest(bool? CanViewInvoices, bool? CanViewStatements, bool? CanDownloadPdf, bool? CanMakePayment, bool? IsActive);
 public record PortalAccessResponse(Guid Id, Guid ContactId, string ContactName, string Email, string? DisplayName, bool IsActive, DateTime? LastLoginAt, bool CanViewInvoices, bool CanViewStatements, bool CanDownloadPdf, bool CanMakePayment);
 
@@ -13,7 +13,12 @@ public record PortalRefreshRequest(string RefreshToken);
 public record PortalDocumentResponse(Guid Id, string DocumentNumber, string DocumentType, DateTime DocumentDate, DateTime? DueDate, decimal TotalAmount, decimal PaidAmount, decimal BalanceDue, string Status, decimal SlipPendingAmount = 0m, bool CanPay = false);
 public record PortalStatementResponse(DateTime FromDate, DateTime ToDate, decimal OpeningBalance, decimal TotalCharged, decimal TotalPaid, decimal ClosingBalance, List<PortalStatementLine> Lines);
 public record PortalStatementLine(DateTime Date, string DocumentNumber, string Description, decimal Amount, decimal Balance);
-public record PortalPaymentResponse(Guid Id, DateTime PaymentDate, decimal Amount, string PaymentMethod, string? Reference, string DocumentNumber);
+public record PortalPaymentResponse(Guid Id, DateTime PaymentDate, decimal Amount, string PaymentMethod, string? Reference, string DocumentNumber)
+{
+    /// <summary>รอบ 252 WP-13 J: ชื่อช่องทางภาษาไทยจากตารางเดียว (<c>PaymentMethodNames</c>) — พอร์ทัลเคยแสดง enum ดิบ "BankTransfer"</summary>
+    public string PaymentMethodLabel => Enum.TryParse<global::Accounting.Models.Enums.PaymentMethod>(PaymentMethod, out var m)
+        ? global::Accounting.Helpers.PaymentMethodNames.Thai(m) : PaymentMethod;
+}
 
 /// <summary>ผลการแนบสลิปพอร์ทัล — รอบ 250 WP-02b (M-2): ไม่ใช่การรับชำระ · <paramref name="PaymentIntentId"/> = รายการรอยืนยันของผู้ขาย
 /// (เดิม <c>PaymentId</c> ของแถว Payment ที่สร้างก่อนตรวจ) · <paramref name="AwaitingReview"/> = รอพนักงานตรวจสลิปเสมอ</summary>

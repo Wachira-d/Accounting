@@ -22,11 +22,12 @@ public static class RecurringUpcomingNotice
 
     /// <param name="frequency">รายวัน ⇒ ไม่แจ้ง (ทุกวันคือรอบ — แจ้งล่วงหน้าไม่มีความหมาย · ฝ่ายค้าน H2)</param>
     /// <param name="endDate">/<paramref name="totalRuns"/>/<paramref name="maxRuns"/>: รอบถัดไปเลยวันสิ้นสุด/ครบจำนวนครั้ง ⇒ จะไม่รัน ⇒ ไม่แจ้ง (ฝ่ายค้าน M1 · ตัวตัดสิน RecurringSchedule.IsFinished)</param>
+    /// <param name="intervalMonths">รอบ 255 ฝ่ายค้าน LOW: "ทุก N เดือน" ชนะความถี่ (ตัวตัดสินเดียว RecurringSchedule.Next) — ตั้งไว้ ⇒ ไม่ใช่รายวัน แม้ frequency เป็น Daily</param>
     public static bool ShouldNotify(bool notifyBeforeRun, int notifyDaysBefore, bool active, Accounting.Models.Enums.RecurringFrequency frequency,
-        DateTime nextRunDate, DateTime? endDate, int totalRuns, int? maxRuns, DateTime todayThai, DateTime? notifiedForRun)
+        DateTime nextRunDate, DateTime? endDate, int totalRuns, int? maxRuns, DateTime todayThai, DateTime? notifiedForRun, int? intervalMonths = null)
     {
         if (!notifyBeforeRun || notifyDaysBefore <= 0 || !active) return false;
-        if (frequency == Accounting.Models.Enums.RecurringFrequency.Daily) return false;
+        if (frequency == Accounting.Models.Enums.RecurringFrequency.Daily && !RecurringSchedule.UsesInterval(intervalMonths)) return false;
         if (RecurringSchedule.IsFinished(nextRunDate, endDate, totalRuns, maxRuns)) return false;
         var days = DaysUntil(nextRunDate, todayThai);
         if (days < 1 || days > notifyDaysBefore) return false;

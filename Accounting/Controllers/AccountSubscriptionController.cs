@@ -115,6 +115,8 @@ public class AccountSubscriptionController : ControllerBase
         {
             hasAccountPlan = true,
             plan = dto,
+            // ป้ายสถานะภาษาไทยจากตารางเดียว (WP-13 J · D §10 — หน้าเว็บเคยแสดง enum ดิบ "Active"/"Trial")
+            planStatusLabel = PlanIdentityResolver.StatusLabel(acct.Status),
             attachedCompanies = attached,
             ownedCompanies = ownedNotAttached,
             usage = agg,

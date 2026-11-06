@@ -827,6 +827,10 @@ EmailScheduleRule (เพิ่ม) AttachWhtUploadLink bool? ; Trigger ให�
 - `WhtCertIntakeStatus.Of` ต้องถูกเรียกใน: `DocumentService` (list/detail mapper) · `WhtCreditService.ListAsync` · `PostPaymentAutomationService.ExecuteAsync` · dashboard service — และห้ามมี `WhtCreditStatus.Pending` เปรียบเทียบตรงในไฟล์ UI-mapper (ห้ามประกอบเอง)
 - `PostPaymentAutomationService.EnqueueAsync` ต้องอยู่ใน: `DocumentPaymentHandler` · `DocumentController.CreatePayment` · `SettlementPostingService` · `PortalService` (ยืนยันสลิป) · `PaymentImportTarget` · `CmsBookingService.Workflow` · `LodgingService.Lifecycle/TaxTiming` · `CmsCommerceService`
 
+> **สถานะ (รอบ 252 · WP-09 · ยังไม่ได้คอมไพล์ในเครื่องนี้):** เฟส 243 ข้อ 1–3 ✅ (ตัวตัดสิน `Helpers/WhtCertIntakeStatus` · ชิป/ตัวกรองรายการเอกสาร · การ์ดผู้ติดต่อ/แดชบอร์ด · ไทม์ไลน์หน้าเอกสาร ⏳) · ข้อ 4 เมทริกซ์ ⏳ · ข้อ 5 ✅ (รอบ 250 WP-02) · ข้อ 6 ✅ (243a) ·
+> เฟส 244 ข้อ 1–4 ✅ (ตาราง + migration · `SubmitAsync` + `WhtCertMatchPolicy` + `WhtCertIntakeVerdict` · `WhtCreditableAmount` ทุกผู้อ่าน · เส้นสแกนเข้าประตูเดียว + หน้า wht-credit อัปโหลดหลายไฟล์/แผงยืนยัน) · ข้อ 5–6 ⏳ WP-10 ·
+> คำตัดสิน §11 ข้อ 1–2 (AI ตรวจของจริง) ✅ — DOCUMENT_FLOW §2.12j · DECISIONS 252-WP09-1…4
+
 ### เฟส 244 — "รับเข้าได้": กล่องรับ + ลิงก์อัปโหลด + allocation
 
 งาน:
@@ -852,6 +856,8 @@ EmailScheduleRule (เพิ่ม) AttachWhtUploadLink bool? ; Trigger ให�
 - `WhtCertIntakeService.SubmitAsync` ต้องถูกเรียกใน `WhtCertPublicController` · `PortalService` · `WhtCreditController` · `OcrService` (เส้น 50 ทวิ)
 - ผู้อ่านเครดิตทุกตัวต้องเรียก `WhtCreditableAmount.Of` (ห้าม `Sum(w => w.WhtAmount)` บนแถว Received ตรงในไฟล์ภาษี)
 
+> ✅ รอบ 253 (WP-10 · DOCUMENT_FLOW §2.12m): เฟส 244 ข้อ 5–6 บางส่วน — หน้า `wht-upload.html` + `WhtCertPublicController` (rate limit · magic bytes · hash) · ลิงก์ในอีเมลใบเสร็จ (`IReceiptEmailSectionProvider`) · ปุ่มลิงก์ในรายงาน "ยังขาด" · ยังไม่ทำ: endpoint พอร์ทัล · ปุ่มบนหน้าชำระสำเร็จ
+
 ### เฟส 245 — "ตามให้เอง": ทวงอัตโนมัติ + e-WHT + รายงานปลายปี
 
 งาน: `WhtCertReminderJob` (JobLock) + trigger `WhtCertReminder` + ค่าตั้ง/override ผู้ติดต่อ · ปุ่มทวง/หยุดทวง · EvidenceKind=EWithholding + หลักฐาน · ตัวเลือก e-WHT บนหน้าชำระ · รายงาน §4.5 + Excel · G-9 ตัดสูญลง JE (ยืนยันผังกับผู้ทำบัญชี) · สรุปภายในรายสัปดาห์
@@ -859,6 +865,8 @@ EmailScheduleRule (เพิ่ม) AttachWhtUploadLink bool? ; Trigger ให�
 เทสต์: ใบค้าง 7/21/45 วัน ⇒ อีเมล 1 ฉบับต่อ**ลูกค้า**ต่อรอบ (ไม่ใช่ต่อใบ) · ได้ใบแล้ว ⇒ หยุดทวง · **ทิศตรงข้าม:** ใบที่ `RemindersPaused` / ผู้ติดต่อปิดทวง / State=Submitted ⇒ ไม่ส่ง · สองเครื่องรันพร้อมกัน ⇒ ส่งครั้งเดียว (Db test JobLock) · e-WHT ไม่มีหลักฐาน ⇒ ไม่นับเครดิต · มีหลักฐาน ⇒ นับ · รายงานปลายปีกระทบ GL 11910 ตรง
 
 `required_call_site_check`: `WhtCertReminderJob` ผ่าน `JobLock` · ส่งผ่าน `OnBehalfEmailSender`/คิวอีเมลเดิม (ห้าม `IEmailService` ตรง)
+
+> ✅ รอบ 253 (WP-10 · DOCUMENT_FLOW §2.12m · คำตัดสิน 253-WP10-3…6): `WhtCertReminderJob` (JobLock · watermark ต่อบริษัท · ค่าตั้งต้นปิด) · ทวงทางอีเมลเท่านั้น (LINE backlog) · e-WHT แบบ N4 (แนบเป็นใบธรรมดา) · "ไม่หัก" บนหน้าชำระ (§11 ข้อ 3) · ยังไม่ทำ: ปุ่มทวง/หยุดทวง · ตัวเลือก e-WHT บนหน้าชำระ · รายงานปลายปีส่วนที่เหลือ · G-9 · สรุปภายในรายสัปดาห์
 
 ### เฟส 246 — NextAcc↔NextAcc (ส่งจาก "ออก 50 ทวิ แล้ว")
 

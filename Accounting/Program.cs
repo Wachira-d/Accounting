@@ -117,6 +117,11 @@ if (string.IsNullOrEmpty(jwtSecret) || jwtIsPlaceholder)
     jwtSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
     Console.WriteLine("⚠ WARNING: Using auto-generated JWT secret. Set JWT_SECRET env var for persistent sessions.");
 }
+// รอบ 255 WP-12B ฝ่ายค้าน LOW: กุญแจลงนามโทเคนพอร์ทัล — production ปฏิเสธค่าว่าง/placeholder (กฎ #4 C · fail-fast แบบ JWT_SECRET)
+if (builder.Environment.IsProduction()
+    && Accounting.Helpers.PortalTokenPolicy.SigningKeyProblem(Environment.GetEnvironmentVariable("PORTAL_SIGNING_KEY")
+        ?? builder.Configuration["Portal:SigningKey"]) is string portalKeyProblem)
+    throw new InvalidOperationException(portalKeyProblem);
 // Write back to configuration so JwtHelper.GenerateToken() uses the same key
 builder.Configuration["Jwt:Secret"] = jwtSecret;
 
@@ -256,7 +261,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 }));
             },
         };
-    });
+    })
+    // รอบ 255 WP-12B ฝ่ายค้าน H1: scheme แยกของพอร์ทัลลูกค้า (โทเคน HMAC ของพอร์ทัล ไม่ใช่ JWT) — เส้นพอร์ทัลประกาศ AuthenticationSchemes = "Portal" เท่านั้น
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, Accounting.Filters.PortalAuthenticationHandler>(
+        Accounting.Helpers.PortalTokenPolicy.Scheme, _ => { });
 
 builder.Services.AddAuthorization();
 builder.Services.AddMemoryCache();
@@ -338,6 +346,12 @@ builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 // ทะเบียนภาษีที่เราถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.51/50 (WHT_CREDIT_PLAN.md)
 builder.Services.AddScoped<Accounting.Services.Implementations.WhtCreditService>();
+// รอบ 252 (WP-09): กล่องรับ 50 ทวิ ขาเข้า — ประตูเดียวของทุกช่องทาง (นักเรียน WhtCertAuthenticity ลงทะเบียนผ่าน DistillationModelRegistry)
+builder.Services.AddScoped<Accounting.Services.Interfaces.IWhtCertIntakeService, Accounting.Services.Implementations.WhtCertIntakeService>();
+// รอบ 253 (WP-10): ลิงก์อัปโหลด 50 ทวิ (ไม่ต้องล็อกอิน) · บล็อกลิงก์ในอีเมลใบเสร็จ · ทวง 50 ทวิ อัตโนมัติ (งานใต้ JobLock) — ไม่มีจุดเรียก AI ใหม่ (ไฟล์เข้าประตูเดียวที่มีนักเรียนแล้ว)
+builder.Services.AddScoped<Accounting.Services.Interfaces.IWhtCertUploadLinkService, Accounting.Services.Implementations.WhtCertUploadLinkService>();
+builder.Services.AddScoped<Accounting.Services.Interfaces.IReceiptEmailSectionProvider, Accounting.Services.Implementations.WhtCertUploadEmailSection>();
+builder.Services.AddScoped<Accounting.Services.Implementations.WhtCertReminderService>();
 // รอบ 234 (คำตัดสิน 234-W*): ติดตาม 50 ทวิ ที่ผู้เช่าส่งให้ NextAcc — ผูกเข้าทะเบียนภาษีถูกหักของบริษัทผู้ให้บริการ (ทะเบียนเดียว)
 builder.Services.AddScoped<Accounting.Services.Platform.PlatformWhtCertificateService>();
 builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
@@ -517,6 +531,13 @@ builder.Services.AddScoped<IDepositKindService, DepositKindService>();
 // Additional modules
 builder.Services.AddScoped<IRecurringTransactionService, RecurringTransactionService>();
 builder.Services.AddScoped<IRecurringAutopilotService, RecurringAutopilotService>();   // รอบ 248 — Autopilot รายการประจำ: ความพร้อม · ทดลองรัน · นโยบายอนุมัติ · ช่องทางรับเงินต่อผู้ติดต่อ
+// รอบ 252 WP-12A — Autopilot ส่วน A: หน้า Autopilot · เงินโอนปิดหนี้ (ค่าตั้งต้นปิด) · ใบเสนอราคาแปลงอัตโนมัติ (ค่าตั้งต้นไม่แปลง) · สรุปประจำวัน ·
+// งานเบื้องหลังเดียว (AutopilotJob · JobLock ต่อขั้น)
+builder.Services.AddScoped<IBankReceiptSettleService, BankReceiptSettleService>();
+builder.Services.AddScoped<IAutopilotService, AutopilotService>();
+builder.Services.AddScoped<QuotationAcceptAutopilotService>();
+builder.Services.AddScoped<AutopilotDigestService>();
+builder.Services.AddHostedService<Accounting.Services.Background.AutopilotJob>();
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
 builder.Services.AddScoped<IFinancialManagementService, FinancialManagementService>();
 builder.Services.AddScoped<IApprovalService, ApprovalService>();
@@ -629,6 +650,8 @@ builder.Services.AddScoped<Accounting.Services.Implementations.CrossTenantWorkfl
 builder.Services.AddSingleton<Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService>();
 builder.Services.AddScoped<IReportBuilderService, ReportBuilderService>();
 builder.Services.AddScoped<IPortalService, PortalService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.SlipEvidenceService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.PartnerWhtCertExchangeService>();   // รอบ 255 WP-12B ข้อ 8 — 50 ทวิ ผ่านคู่ค้า (AutopilotJob)   // รอบ 255 WP-12B ข้อ 1 — ประตูเดียวของการแจ้งโอน (พอร์ทัล + หน้าชำระของเอกสาร)
 
 // Phase 5: World-Class
 builder.Services.AddScoped<IFpaService, FpaService>();
@@ -744,6 +767,9 @@ builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
 builder.Services.AddScoped<IPosService, PosService>();
 builder.Services.AddScoped<IContactRecipientResolver, ContactRecipientResolver>();   // รอบ 245 L1 — ผู้อ่านเดียวของปลายทางแจ้งเตือนของผู้ติดต่อ
 builder.Services.AddScoped<IContactNotifyEndpointService, ContactNotifyEndpointService>();   // รอบ 245 L1 — ผู้เขียนเดียว (แท็บช่องทางแจ้งเตือน)
+builder.Services.AddScoped<IContactLineBindingService, ContactLineBindingService>();   // รอบ 254 WP-11 L2 — ลิงก์/QR ผูก LINE ของผู้ติดต่อ (OA บริษัท · ยินยอมบนมือถือ)
+builder.Services.AddScoped<IContactLineQueueService, ContactLineQueueService>();
+builder.Services.AddScoped<IContactLineGroupService, ContactLineGroupService>();   // รอบ 254 WP-11 L3 — กลุ่ม LINE ของผู้ติดต่อ (#HeyNextAcc · OA บริษัท)   // รอบ 254 WP-11 L2 — ผู้ส่งคิว LINE ถึงผู้ติดต่อ (EmailScheduleWorker เรียก)
 builder.Services.AddScoped<INextAccLineConfig, NextAccLineConfig>();   // รอบ 212 D — ค่าตั้ง LINE OA กลาง: หน้าแอดมินก่อน · config Line:* fallback (ผู้อ่านตัวเดียว)
 builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
 // รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน (push ผ่าน OA กลาง) · มิเตอร์ช่องกลาง = no-op จนกว่าโควตาแพ็ก A เข้า (ผู้ประสานงานต่อสายตอน merge)
@@ -821,6 +847,7 @@ builder.Services.AddScoped<Accounting.Services.Background.DeferredNotifyDispatch
 builder.Services.AddHostedService<Accounting.Services.Background.DeferredNotifyDispatchJob>();   // รอบ 217 — เดินคิว DeferredNotifications ทุก 10 วิ (JobLock · lease)
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.WhtCertReminderJob>();   // รอบ 253 (WP-10) — ทวง 50 ทวิ 7/21/45 + รายเดือน (JobLock · watermark ต่อบริษัท)
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.CourseCreditExpiryJob>();   // ทีม L — ปิดบัตรคอร์สหมดอายุ (breakage)
@@ -831,6 +858,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.UndueInputVatEx
 // กวาดสแกน OCR ที่ค้าง Processing (process ถูกฆ่ากลางทาง) + คืนโควตาที่หักไปแล้ว
 builder.Services.AddHostedService<Accounting.Services.Background.OcrStuckScanSweepJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.NextAccOaQuotaWatch>();   // รอบ 254 WP-11 L4 (N8) — เฝ้าต้นทุน OA กลาง (push/reply) ทุกชั่วโมง · JobLock
 builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
 // 2026-10-19: ตรวจวันหมดอายุใบรับรอง SSL ของโดเมนแพลตฟอร์ม วันละครั้ง — เตือนผู้ดูแลระบบล่วงหน้า 30/14/7/1 วัน (หน้าเว็บ + อีเมล)
 builder.Services.AddHostedService<Accounting.Services.Background.TlsCertificateMonitorJob>();
@@ -1140,6 +1168,8 @@ var publicUploadPrefixes = new[]
     // ⚠️ "/uploads/slips" (สลิปโอนค่าบริการ NextAcc + ค่าส่วนเสริม) **ถูกถอดออกแล้ว** (ฝ่ายค้านรอบ 219 เฟส 2 S9) — สลิปมีชื่อผู้โอน/เลขบัญชี/ยอด
     // = ข้อมูลส่วนบุคคล · ลิงก์ชำระสาธารณะทำให้คนนอกอัปโหลดได้ด้วย ⇒ เสิร์ฟผ่าน endpoint ที่ตรวจสิทธิ์เท่านั้น
     // (ผู้เช่า: billing-center/payments/{id}/slip · แอดมิน: platform-billing/subscription-payments/{id}/slip · metering/addon-payments/.../slip)
+    // ⚠️ "/uploads/document-slips" (สลิปแจ้งโอนจากหน้าชำระของเอกสาร — คนนอกระบบอัปโหลด) **ตั้งใจไม่อยู่ในลิสต์นี้** (รอบ 255 ฝ่ายค้าน M8):
+    // พนักงานเปิดผ่าน api/companies/{cid}/attachments/{id}/download (ด่านสิทธิ์ + บริษัท) · ผลลัพธ์ของหน้าชำระไม่คืน URL ไฟล์
     // ⚠️ "/uploads/lodging-slips" **ถูกถอดออกจากลิสต์นี้แล้ว** (LDG-P2-06) —
     // สลิปโอนเงินมีชื่อผู้โอน + เลขบัญชี + ยอด = ข้อมูลส่วนบุคคลของแขก ไม่ใช่ของ
     // สาธารณะ · ชื่อไฟล์เป็น GUID ก็จริง แต่ URL ถูกส่งกลับใน API response ของหน้า
@@ -2133,6 +2163,18 @@ try
     catch (Exception ex)
     {
         app.Logger.LogError(ex, "รอบ 245: ย้าย Contact.LineUserId เป็นปลายทาง legacy ไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
+    }
+
+    // รอบ 252 ฝ่ายค้าน WP-09 รอบสอง L7: ล้างเลขบุคคลธรรมดาใน feedback ตรวจของจริง 50 ทวิ ที่เก็บก่อนรอบนี้ (ครั้งเดียว · marker OneShotDataFixes) ·
+    // ล้ม = ธุรกรรมย้อน + ไม่มี marker ⇒ บูตถัดไปทำใหม่ · log Error (ไม่ล้มทั้งแอป — คำขอใหม่ปิดบังแล้วตั้งแต่รอบนี้)
+    try
+    {
+        var scrubbed = await Accounting.Helpers.WhtCertFeedbackPiiMigration.RunAsync(db);
+        if (scrubbed > 0) app.Logger.LogInformation("รอบ 252: ล้างเลขบุคคลใน feedback ตรวจของจริง 50 ทวิ {Count} แถว", scrubbed);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "รอบ 252: ล้างเลขบุคคลใน feedback ตรวจของจริง 50 ทวิ ไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
     }
 
     // รอบ 246 QR (ฝ่ายค้าน N3): ย้ายเลขพร้อมเพย์เดิมของเทมเพลต → บัญชีธนาคาร ครั้งเดียว (เฉพาะบริษัทที่ชัดเจน · audit ทุกบริษัท) · ล้ม = ย้อน + บูตถัดไปทำใหม่

@@ -30,6 +30,10 @@ FILES = [
     os.path.join(W, "portal.html"),
     os.path.join(W, "pay-link.html"),
     os.path.join(W, "pages", "documents.html"),
+    # รอบ 252 WP-12A — หน้า Autopilot ใหม่ (ข้อความจากเซิร์ฟเวอร์/OCR/รายการเดินบัญชีทุกช่อง) · ratchet 0 ตั้งแต่ไฟล์เกิด
+    os.path.join(W, "pages", "autopilot.html"),
+    # รอบ 255 WP-12B — หน้าคู่ค้า NextAcc (ชื่อ/เลขภาษีของบริษัทอื่น · ป้ายหลักฐานภาษีซื้อ) · ratchet 0 ตั้งแต่ไฟล์เกิด
+    os.path.join(W, "pages", "partners.html"),
 ]
 BASELINE_FILE = os.path.join(ROOT, "tools", "html_interpolation_escape_baseline.txt")
 

@@ -184,4 +184,32 @@ public class AssetEditsRound250DbTests
         Assert.Equal((Bought().Year, 2), await FirstPlannedAsync(db, assetId));   // กลับไปเริ่มเดือนถัดจากวันที่ซื้อ
         Assert.Equal(2, await AuditCountAsync(db, cid, assetId, "available-for-use-date-updated"));
     }
+
+    /// <summary>รอบ 252 WP-13: ฟอร์มสินทรัพย์ "รหัสว่าง = ออกให้อัตโนมัติ" — เซิร์ฟเวอร์ออก FA-yyyyMM-#### ด้วยตัวออกรหัสตัวเดียว ·
+    /// ทิศตรงข้าม: กรอกเอง = ใช้ตามที่กรอก (ตัดช่องว่าง) · รหัสซ้ำยังถูกปฏิเสธ · validator ไม่บังคับรหัสแต่ยังบังคับชื่อ</summary>
+    [Fact]
+    public async Task Create_with_blank_code_generates_FA_code_and_manual_code_kept()
+    {
+        var v = new Accounting.Validators.CreateFixedAssetRequestValidator();
+        CreateFixedAssetRequest Req(string code, string name = "โต๊ะ") => new(code, name, null, null, null, null,
+            Bought(), 10_000m, 0m, 12);
+        Assert.True(v.Validate(Req("")).IsValid);
+        Assert.False(v.Validate(Req("", name: "")).IsValid);
+        Assert.False(v.Validate(Req(new string('X', 51))).IsValid);
+
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var company = new Company { Name = "บริษัทรหัสอัตโนมัติ " + Guid.NewGuid().ToString("N")[..6], TaxId = "" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var svc = new FixedAssetService(db);
+
+        var auto = await svc.CreateAsync(company.Id, Req("   "), Actor);
+        Assert.Matches(@"^FA-\d{6}-\d{4}$", auto.AssetCode);
+        var manual = await svc.CreateAsync(company.Id, Req("  MY-001 "), Actor);
+        Assert.Equal("MY-001", manual.AssetCode);
+        await Assert.ThrowsAnyAsync<Exception>(() => svc.CreateAsync(company.Id, Req("MY-001"), Actor));
+        var auto2 = await svc.CreateAsync(company.Id, Req(""), Actor);
+        Assert.NotEqual(auto.AssetCode, auto2.AssetCode);
+    }
 }

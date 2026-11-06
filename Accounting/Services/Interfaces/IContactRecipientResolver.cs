@@ -14,4 +14,8 @@ public interface IContactRecipientResolver
     /// <summary>แท็บ "ช่องทางแจ้งเตือน" — null = ไม่พบผู้ติดต่อในบริษัทนี้ · <paramref name="canEdit"/> = ผู้เรียกมีสิทธิ์ <c>Contact.Edit</c> จริง
     /// (ฝ่ายค้าน N3: ปุ่มบนหน้าตามสิทธิ์จริง · controller ตรวจ · ผู้เขียนส่ง true เพราะผ่านด่านมาแล้ว)</summary>
     Task<ContactNotifyOverviewResponse?> GetOverviewAsync(Guid companyId, Guid contactId, bool canEdit, CancellationToken ct = default);
+
+    /// <summary>รอบ 254 WP-11 L2: ความพร้อมของช่อง LINE ของบริษัท (ตัวเดียวกับที่ตัดสินสถานะปลายทาง) — ด่านบันทึกกฎตารางส่ง · ปุ่มผูก LINE ·
+    /// ตัวหาผู้รับแบบอีเมลอย่างเดียว (นอก DI) ⇒ ปิด</summary>
+    Task<ContactRecipientRule.LineOpenness> LineChannelAsync(Guid companyId, CancellationToken ct = default);
 }

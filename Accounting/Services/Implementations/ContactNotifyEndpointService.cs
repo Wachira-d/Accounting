@@ -17,9 +17,12 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
     private readonly AccountingDbContext _db;
     private readonly IContactRecipientResolver _resolver;
 
-    public ContactNotifyEndpointService(AccountingDbContext db, IContactRecipientResolver resolver)
+    /// <summary>รอบ 254 WP-11 L3 (Q8): ยกเลิกกลุ่มแล้วไม่เหลือการผูก ⇒ บอทออกจากกลุ่ม · null (เทสต์/นอก DI) ⇒ ไม่ออก</summary>
+    private readonly IContactLineGroupService? _groups;
+
+    public ContactNotifyEndpointService(AccountingDbContext db, IContactRecipientResolver resolver, IContactLineGroupService? groups = null)
     {
-        _db = db; _resolver = resolver;
+        _db = db; _resolver = resolver; _groups = groups;
     }
 
     public async Task<ContactNotifyOverviewResponse> AddEmailAsync(Guid companyId, Guid contactId, AddContactNotifyEmailRequest request, ContactNotifyActor actor, CancellationToken ct = default)
@@ -125,12 +128,7 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
             var primaries = await ActiveRows(companyId, contactId).Where(e => e.IsPrimary && e.Kind == NotifyEndpointKind.Email).ToListAsync(ct);
             var row = ContactRecipientRule.PickPrimary(primaries, e => e.LinkedAt, e => e.CreatedAt);
             foreach (var extra in primaries.Where(p => !ReferenceEquals(p, row)))
-            {
-                extra.UnlinkedAt = now;
-                extra.UnlinkReason = NotifyEndpointKind.UnlinkMerge;
-                extra.UpdatedAt = now;
-                extra.UpdatedBy = actor.Email;
-            }
+                NotifyEndpointKind.MarkUnlinked(extra, NotifyEndpointKind.UnlinkMerge, now, actor.Email);   // ฝ่ายค้าน fix2 M3: ตัวยกเลิกเดียว
             var before = row?.TopicsJson;
             if (row == null)
             {
@@ -166,6 +164,7 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
 
     public async Task<ContactNotifyOverviewResponse> UnlinkAsync(Guid companyId, Guid contactId, Guid endpointId, ContactNotifyActor actor, CancellationToken ct = default)
     {
+        string? groupProtected = null, groupHash = null;
         await using (var tx = await _db.Database.BeginTransactionAsync(ct))
         {
             await LockContactAsync(companyId, contactId, ct);
@@ -178,18 +177,16 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
             if (row.UnlinkedAt != null)
                 throw new BusinessRuleException("ปลายทางนี้ยกเลิกไปแล้ว", "NOTIFY-CONTACT-UNLINKED", 409);
             var now = DateTime.UtcNow;
-            row.UnlinkedAt = now;
-            row.UnlinkReason = NotifyEndpointKind.UnlinkCompany;
-            // ส่งให้น้อยที่สุด (PDPA ม.22): ยกเลิกแล้วไม่ใช้ id อีก ⇒ ล้างค่าที่เข้ารหัส (คงแฮชไว้เป็นร่องรอยว่าเคยผูก)
-            row.LineUserId = null;
-            row.LineGroupId = null;
-            row.UpdatedAt = now;
-            row.UpdatedBy = actor.Email;
+            if (row.Kind == NotifyEndpointKind.LineGroup) { groupProtected = row.LineGroupId; groupHash = row.LineIdHash; }
+            // ส่งให้น้อยที่สุด (PDPA ม.22): ยกเลิกแล้วไม่ใช้ id อีก ⇒ ล้างค่าที่เข้ารหัส + ป้ายจาก LINE + ชื่อกลุ่ม (คงแฮชไว้เป็นร่องรอยว่าเคยผูก) — ตัวยกเลิกเดียว
+            NotifyEndpointKind.MarkUnlinked(row, NotifyEndpointKind.UnlinkCompany, now, actor.Email);
             Audit(companyId, contactId, actor, AuditAction.Delete, "unlink", null,
                 new { endpointId = row.Id, kind = row.Kind, reason = row.UnlinkReason });
             await _db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
         }
+        // Q8: ไม่เหลือการผูกของกลุ่มนี้กับบริษัทนี้ ⇒ บอทออกจากกลุ่ม (หลัง commit — ออกไม่สำเร็จไม่ย้อนการยกเลิก)
+        if (_groups != null && groupHash != null) await _groups.LeaveIfUnboundAsync(companyId, groupProtected, groupHash, ct);
         return await OverviewAsync(companyId, contactId, ct);
     }
 

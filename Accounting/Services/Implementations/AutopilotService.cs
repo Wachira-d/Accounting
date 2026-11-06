@@ -1,0 +1,392 @@
+using System.Text.Json;
+using Accounting.Data;
+using Accounting.Helpers;
+using Accounting.Models.DTOs.Autopilot;
+using Accounting.Models.Entities;
+using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
+
+namespace Accounting.Services.Implementations;
+
+/// <summary>
+/// **หน้า Autopilot "ใบนี้อยู่ขั้นไหน · ติดอะไร" + ค่าตั้ง + ตัวเลขสรุปประจำวัน** (รอบ 252 WP-12A · AUTOPILOT §11.4 · A-5/A-6)
+/// <para>read model จากแถวจริงเท่านั้น (Documents · DocumentEmailLogs · Payments · PostPaymentAutomationRuns · EmailQueues · RecurringTransactions ·
+/// BankTransactions) — ไม่มีตารางสถานะซ้ำ · ขั้นของใบตัดสินที่ <see cref="AutopilotStage.Of"/> ตัวเดียว · ทุก query มี <c>CompanyId</c> · query แบบชุด (ไม่ N+1)</para>
+/// </summary>
+public class AutopilotService : IAutopilotService
+{
+    public const int MaxRows = 200;
+    /// <summary>ข้อเสนอเงินโอนที่ค้างเกินนี้ขึ้นเป็น "เรื่องที่ระบบทำต่อไม่ได้" (AUTOPILOT §11.4)</summary>
+    public const int BankSuggestStaleDays = 3;
+
+    private readonly AccountingDbContext _db;
+    private readonly IBankReceiptSettleService _bank;
+
+    public AutopilotService(AccountingDbContext db, IBankReceiptSettleService bank)
+    {
+        _db = db;
+        _bank = bank;
+    }
+
+    private static readonly DocumentType[] SaleTypes = { DocumentType.Invoice, DocumentType.TaxInvoice };
+
+    private static string TypeLabel(DocumentType t) => t switch
+    {
+        DocumentType.Invoice => "ใบแจ้งหนี้",
+        DocumentType.TaxInvoice => "ใบกำกับภาษี",
+        DocumentType.Quotation => "ใบเสนอราคา",
+        _ => t.ToString(),
+    };
+
+    private async Task<Dictionary<Guid, string>> ContactNamesAsync(Guid companyId, IEnumerable<Guid> contactIds, CancellationToken ct)
+    {
+        var ids = contactIds.Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<Guid, string>();
+        return await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && ids.Contains(c.Id))
+            .Select(c => new { c.Id, c.Name }).ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+    }
+
+    private static string DocHref(Guid id) => "/pages/documents.html?openDoc=" + id.ToString();
+
+    // ═══════════════ ภาพรวม ═══════════════
+
+    public async Task<AutopilotOverviewResponse> OverviewAsync(Guid companyId, int days, CancellationToken ct = default)
+    {
+        days = Math.Clamp(days, 1, 90);
+        var now = DateTime.UtcNow;
+        var since = now.Date.AddDays(-days);
+
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && SaleTypes.Contains(d.DocumentType) && d.DocumentDate >= since)
+            .OrderByDescending(d => d.DocumentDate).ThenByDescending(d => d.CreatedAt).Take(MaxRows)
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.DocumentDate, d.TotalAmount, d.BalanceDue, d.RecurringTransactionId,
+                d.RelatedDocumentId, d.ContactId })
+            .ToListAsync(ct);
+        var ids = docs.Select(d => d.Id).ToList();
+        // ชื่อผู้ติดต่อแยก query (รวมที่ถูกลบ) — นำทาง d.Contact ใน projection = INNER JOIN ใต้ query filter ⇒ ใบของผู้ติดต่อที่ถูกลบหายจากหน้าเงียบ ๆ
+        var names = await ContactNamesAsync(companyId, docs.Select(d => d.ContactId), ct);
+
+        var emails = await _db.DocumentEmailLogs.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && l.DocumentId != null && ids.Contains(l.DocumentId.Value))
+            .Select(l => new { DocumentId = l.DocumentId!.Value, l.Status }).ToListAsync(ct);
+        var payments = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && ids.Contains(p.DocumentId))
+            .Select(p => new { p.DocumentId, p.PaymentIntentId, p.Reference, p.CreatedAt }).ToListAsync(ct);
+        var runs = await _db.PostPaymentAutomationRuns.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && ids.Contains(r.DocumentId))
+            .Select(r => new { r.DocumentId, r.Status, r.Message, r.ReceiptDocumentId, r.CreatedAt }).ToListAsync(ct);
+        var receiptIds = runs.Where(r => r.ReceiptDocumentId != null).Select(r => r.ReceiptDocumentId!.Value).Distinct().ToList();
+        var receiptNumbers = await _db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && receiptIds.Contains(d.Id))
+            .Select(d => new { d.Id, d.DocumentNumber }).ToDictionaryAsync(d => d.Id, d => d.DocumentNumber, ct);
+        var bankWaiting = await _db.BankTransactions.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
+                && t.AutoSettleDocumentId != null && ids.Contains(t.AutoSettleDocumentId.Value)
+                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed
+                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held))
+            .Select(t => t.AutoSettleDocumentId!.Value).Distinct().ToListAsync(ct);
+        var autopilotChildren = await _db.Documents.AsNoTracking()
+            .Where(q => q.CompanyId == companyId && q.QuotationAutopilotChildId != null && ids.Contains(q.QuotationAutopilotChildId.Value))
+            .Select(q => q.QuotationAutopilotChildId!.Value).ToListAsync(ct);
+
+        var rows = new List<AutopilotRowDto>();
+        foreach (var d in docs)
+        {
+            var mineEmails = emails.Where(e => e.DocumentId == d.Id).ToList();
+            var minePays = payments.Where(p => p.DocumentId == d.Id).OrderByDescending(p => p.CreatedAt).ToList();
+            var lastRun = runs.Where(r => r.DocumentId == d.Id).OrderByDescending(r => r.CreatedAt).FirstOrDefault();
+            var last = minePays.FirstOrDefault();
+            var via = last == null ? null
+                : last.PaymentIntentId != null ? "Gateway"
+                : (last.Reference ?? "").StartsWith("BANK:", StringComparison.Ordinal) ? "Bank"
+                : "Manual";
+            var stage = AutopilotStage.Of(new AutopilotStage.DocFacts(d.Status,
+                Emailed: mineEmails.Any(e => e.Status == EmailLogStatus.Sent),
+                EmailFailed: mineEmails.Count > 0 && mineEmails.All(e => e.Status == EmailLogStatus.Failed),
+                d.BalanceDue, AnyPayment: minePays.Count > 0, via,
+                lastRun?.Status, lastRun?.Message,
+                lastRun?.ReceiptDocumentId is Guid rid && receiptNumbers.TryGetValue(rid, out var rn) ? rn : null,
+                AwaitingBankConfirm: bankWaiting.Contains(d.Id)));
+            var origin = d.RecurringTransactionId != null ? "รายการประจำ" : autopilotChildren.Contains(d.Id) ? "ใบเสนอราคา (แปลงอัตโนมัติ)" : null;
+            rows.Add(new AutopilotRowDto(d.Id, d.DocumentNumber, TypeLabel(d.DocumentType), names.GetValueOrDefault(d.ContactId), d.DocumentDate, d.TotalAmount, d.BalanceDue,
+                origin, stage.Overall, stage.OverallLabel,
+                stage.Steps.Select(s => new AutopilotStepDto(s.Key, s.Label, s.State.ToString(), s.Note)).ToList(), stage.Problem));
+        }
+
+        var issues = await IssuesAsync(companyId, now, ct);
+        var queue = await _bank.QueueAsync(companyId, ct);
+        var summary = new AutopilotSummaryDto(days,
+            rows.Count(r => r.Overall == AutopilotStage.OverallDone),
+            rows.Count(r => r.Overall == AutopilotStage.OverallRunning),
+            rows.Count(r => r.Overall == AutopilotStage.OverallStuck),
+            issues.Count, queue.Count);
+        return new AutopilotOverviewResponse(summary, rows, issues, await QuotationsAsync(companyId, ct), queue, await SettingsAsync(companyId, ct));
+    }
+
+    // ═══════════════ เรื่องที่ระบบทำต่อไม่ได้ ═══════════════
+
+    public async Task<IReadOnlyList<AutopilotIssueDto>> IssuesAsync(Guid companyId, DateTime nowUtc, CancellationToken ct = default)
+    {
+        var list = new List<AutopilotIssueDto>();
+        var window = nowUtc.AddDays(-30);
+
+        // (1) รอบรายการประจำล้ม
+        var recurring = await _db.RecurringTransactions.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.LastRunError != null && r.Status == RecurringStatus.Active)
+            .Select(r => new { r.Id, r.Name, r.LastRunError, r.LastRunErrorAt, r.UpdatedAt }).ToListAsync(ct);
+        list.AddRange(recurring.Select(r => new AutopilotIssueDto("RecurringFailed", $"รายการประจำ \"{r.Name}\" สร้างเอกสารไม่สำเร็จ", r.LastRunError ?? "",
+            r.LastRunErrorAt ?? r.UpdatedAt ?? nowUtc, null, "แก้ที่หน้ารายการประจำ", "/pages/recurring.html", null, null, null)));
+
+        // (2) ใบจากรายการประจำค้างร่าง (อนุมัติอัตโนมัติไม่ผ่าน/ไม่ได้ตั้ง)
+        var drafts = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.RecurringTransactionId != null && d.CreatedAt >= window
+                && (d.Status == DocumentStatus.Draft || d.Status == DocumentStatus.WaitingApproval))
+            .OrderByDescending(d => d.CreatedAt).Take(50)
+            .Select(d => new { d.Id, d.DocumentNumber, d.CreatedAt }).ToListAsync(ct);
+        list.AddRange(drafts.Select(d => new AutopilotIssueDto("RecurringDraft", $"{d.DocumentNumber} จากรายการประจำยังเป็นร่าง",
+            "อนุมัติอัตโนมัติไม่ผ่าน (คำเตือนที่นโยบายไม่ปล่อย) หรือรายการไม่ได้ตั้งอนุมัติอัตโนมัติ — ตรวจแล้วอนุมัติเอง หรือตั้งนโยบายที่รายการประจำ",
+            d.CreatedAt, d.Id, "เปิดใบร่าง", DocHref(d.Id), null, null, null)));
+
+        // (3) งานหลังรับชำระหยุด/ล้ม
+        var runs = await _db.PostPaymentAutomationRuns.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.CreatedAt >= window
+                && (r.Status == PostPaymentAutomationPolicy.StatusBlocked || r.Status == PostPaymentAutomationPolicy.StatusFailed))
+            .OrderByDescending(r => r.CreatedAt).Take(50)
+            .Select(r => new { r.Id, r.DocumentId, r.Message, r.CreatedAt, Number = _db.Documents.Where(d => d.Id == r.DocumentId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefault() })
+            .ToListAsync(ct);
+        list.AddRange(runs.Select(r => new AutopilotIssueDto("PostPayment", $"{r.Number ?? "เอกสาร"}: ส่งใบเสร็จหลังรับชำระไม่สำเร็จ",
+            r.Message ?? "งานหลังรับชำระหยุด", r.CreatedAt, r.DocumentId, "ลองใหม่ (หลังแก้สาเหตุ)", null,
+            $"document-auto-send/post-payment-runs/{r.Id}/retry", "เปิดเอกสาร", DocHref(r.DocumentId))));
+
+        // (4) อีเมลเอกสารส่งไม่สำเร็จ (คิว)
+        var failedMail = await _db.EmailQueues.AsNoTracking()
+            .Where(q => q.CompanyId == companyId && q.Status == "Failed" && q.EntityType == "Document" && q.CreatedAt >= window)
+            .OrderByDescending(q => q.CreatedAt).Take(50)
+            .Select(q => new { q.EntityId, q.ToEmail, q.ErrorMessage, q.CreatedAt,
+                Number = _db.Documents.Where(d => d.Id == q.EntityId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefault() })
+            .ToListAsync(ct);
+        list.AddRange(failedMail.Select(m => new AutopilotIssueDto("EmailFailed", $"{m.Number ?? "เอกสาร"}: ส่งอีเมลถึง {m.ToEmail} ไม่สำเร็จ",
+            m.ErrorMessage ?? "ส่งไม่สำเร็จครบรอบ", m.CreatedAt, m.EntityId, "เปิดเอกสารแล้วส่งใหม่", DocHref(m.EntityId), null, null, null)));
+
+        // (5) ใบเสนอราคาที่ลูกค้ายอมรับแต่แปลงอัตโนมัติไม่ได้
+        var held = new[] { nameof(QuotationAcceptAutopilot.Outcome.Held), nameof(QuotationAcceptAutopilot.Outcome.Failed) };
+        var qts = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.DocumentType == DocumentType.Quotation && d.QuotationAutopilotAt != null
+                && held.Contains(d.QuotationAutopilotOutcome!))
+            .OrderByDescending(d => d.QuotationAutopilotAt).Take(50)
+            .Select(d => new { d.Id, d.DocumentNumber, d.QuotationAutopilotMessage, d.QuotationAutopilotAt }).ToListAsync(ct);
+        list.AddRange(qts.Select(q => new AutopilotIssueDto("QuotationBlocked", $"ใบเสนอราคา {q.DocumentNumber}: ลูกค้ายอมรับแล้วแต่แปลงอัตโนมัติไม่ได้",
+            q.QuotationAutopilotMessage ?? "", q.QuotationAutopilotAt ?? nowUtc, q.Id, "ลองแปลงอีกครั้ง", null,
+            $"autopilot/quotations/{q.Id}/retry", "เปิดใบเสนอราคา", DocHref(q.Id))));
+
+        // (6) เงินโอนเข้าบันทึกรับชำระไม่สำเร็จ + ข้อเสนอค้างเกิน 3 วัน
+        var staleCut = nowUtc.Date.AddDays(-BankSuggestStaleDays);
+        var bank = await _db.BankTransactions.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
+                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held
+                    || (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest && t.AutoSettleDocumentId != null && t.TransactionDate < staleCut)))
+            .OrderByDescending(t => t.TransactionDate).Take(50)
+            .Select(t => new { t.Id, t.Amount, t.TransactionDate, t.AutoSettleVerdict, t.AutoSettleReason, t.AutoSettleDocumentId }).ToListAsync(ct);
+        list.AddRange(bank.Select(t => new AutopilotIssueDto(
+            t.AutoSettleVerdict != BankReceiptAutoSettle.Stamps.Suggest ? "BankSettleFailed" : "BankSuggestStale",
+            t.AutoSettleVerdict != BankReceiptAutoSettle.Stamps.Suggest
+                ? $"เงินโอน {Math.Abs(t.Amount):N2} บาท บันทึกรับชำระอัตโนมัติไม่สำเร็จ"
+                : $"เงินโอน {Math.Abs(t.Amount):N2} บาท รอยืนยันเกิน {BankSuggestStaleDays} วัน",
+            t.AutoSettleReason ?? "", t.TransactionDate, t.AutoSettleDocumentId,
+            "ไปที่คิวเงินเข้าที่รอยืนยัน (ด้านล่าง)", null, null, "เปิดหน้ากระทบยอดธนาคาร", "/pages/bank.html")));
+
+        return list.OrderByDescending(i => i.At).ToList();
+    }
+
+    // ═══════════════ ใบเสนอราคา ═══════════════
+
+    private async Task<IReadOnlyList<QuotationAutopilotRowDto>> QuotationsAsync(Guid companyId, CancellationToken ct)
+    {
+        var companyDefault = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => s.QuotationAcceptAutopilotDefault).FirstOrDefaultAsync(ct);
+        var since = DateTime.UtcNow.AddDays(-60);
+        var qts = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.DocumentType == DocumentType.Quotation
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && (d.QuotationAcceptedAt != null || d.DocumentDate >= since))
+            .OrderByDescending(d => d.QuotationAcceptedAt ?? d.DocumentDate).Take(100)
+            .Select(d => new { d.Id, d.DocumentNumber, d.ContactId, d.QuotationAcceptedAt, d.QuotationAcceptAutopilot,
+                d.QuotationAutopilotOutcome, d.QuotationAutopilotMessage, d.QuotationAutopilotChildId })
+            .ToListAsync(ct);
+        var names = await ContactNamesAsync(companyId, qts.Select(q => q.ContactId), ct);
+        var childIds = qts.Where(q => q.QuotationAutopilotChildId != null).Select(q => q.QuotationAutopilotChildId!.Value).ToList();
+        var childNumbers = await _db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && childIds.Contains(d.Id))
+            .Select(d => new { d.Id, d.DocumentNumber }).ToDictionaryAsync(d => d.Id, d => d.DocumentNumber, ct);
+        return qts.Select(q => ToRow(q.Id, q.DocumentNumber, names.GetValueOrDefault(q.ContactId), q.QuotationAcceptedAt, q.QuotationAcceptAutopilot, companyDefault,
+            q.QuotationAutopilotOutcome, q.QuotationAutopilotMessage, q.QuotationAutopilotChildId,
+            q.QuotationAutopilotChildId is Guid c && childNumbers.TryGetValue(c, out var n) ? n : null)).ToList();
+    }
+
+    private static QuotationAutopilotRowDto ToRow(Guid id, string number, string? contactName, DateTime? acceptedAt, string? mode, string? companyDefault,
+        string? outcome, string? message, Guid? childId, string? childNumber)
+    {
+        var eff = QuotationAcceptAutopilot.Effective(mode, companyDefault);
+        var label = QuotationAcceptAutopilot.Modes.First(m => m.Code == eff.ToString()).Label
+            + (QuotationAcceptAutopilot.Parse(mode) == null ? " (ตามค่าบริษัท)" : "");
+        var canRetry = outcome is nameof(QuotationAcceptAutopilot.Outcome.Held) or nameof(QuotationAcceptAutopilot.Outcome.Failed);
+        return new QuotationAutopilotRowDto(id, number, contactName, acceptedAt, QuotationAcceptAutopilot.Parse(mode)?.ToString(), eff.ToString(), label,
+            outcome, message, childId, childNumber, canRetry);
+    }
+
+    public async Task<QuotationAutopilotRowDto> SetQuotationModeAsync(Guid companyId, Guid quotationId, string? mode, Guid userId, CancellationToken ct = default)
+    {
+        var (stored, problem) = QuotationAcceptAutopilot.Normalize(mode);
+        if (problem != null) throw new BusinessRuleException(problem, QuotationAcceptAutopilot.RuleCode, 400);
+        var qt = await _db.Documents.FirstOrDefaultAsync(d => d.Id == quotationId && d.CompanyId == companyId && !d.IsDeleted, ct)
+            ?? throw new KeyNotFoundException("ไม่พบใบเสนอราคา");
+        if (qt.DocumentType != DocumentType.Quotation)
+            throw new BusinessRuleException("ตั้งการแปลงอัตโนมัติได้เฉพาะใบเสนอราคา", QuotationAcceptAutopilot.RuleCode, 400);
+        if (qt.QuotationAutopilotOutcome is nameof(QuotationAcceptAutopilot.Outcome.Converted))
+            throw new BusinessRuleException("ใบเสนอราคานี้ระบบแปลงไปแล้ว — เปลี่ยนโหมดไม่มีผล (แก้ที่ใบที่แปลงได้)", QuotationAcceptAutopilot.RuleCode, 409);
+        var before = qt.QuotationAcceptAutopilot;
+        qt.QuotationAcceptAutopilot = stored;
+        // ผลที่หยุด/ล้ม/ไม่ต้องทำไว้ ⇒ ล้าง ให้รอบถัดไปตัดสินใหม่ตามโหมดใหม่ (ไม่ใช่ปุ่มที่กดแล้วไม่มีผล)
+        if (qt.QuotationAutopilotOutcome is nameof(QuotationAcceptAutopilot.Outcome.Held) or nameof(QuotationAcceptAutopilot.Outcome.Failed)
+            or nameof(QuotationAcceptAutopilot.Outcome.AlreadyConverted))
+        {
+            qt.QuotationAutopilotAt = null;
+            qt.QuotationAutopilotOutcome = null;
+            qt.QuotationAutopilotMessage = null;
+        }
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = userId, Action = AuditAction.Update, EntityType = "Document", EntityId = qt.Id.ToString(),
+            OldValues = JsonSerializer.Serialize(new { quotationAcceptAutopilot = before }),
+            NewValues = JsonSerializer.Serialize(new { quotationAcceptAutopilot = stored, ruleCode = QuotationAcceptAutopilot.RuleCode }),
+        });
+        await _db.SaveChangesAsync(ct);
+        var companyDefault = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => s.QuotationAcceptAutopilotDefault).FirstOrDefaultAsync(ct);
+        var contactName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters().Where(c => c.Id == qt.ContactId && c.CompanyId == companyId)
+            .Select(c => c.Name).FirstOrDefaultAsync(ct);
+        return ToRow(qt.Id, qt.DocumentNumber, contactName, qt.QuotationAcceptedAt, qt.QuotationAcceptAutopilot, companyDefault,
+            qt.QuotationAutopilotOutcome, qt.QuotationAutopilotMessage, qt.QuotationAutopilotChildId, null);
+    }
+
+    public async Task RetryQuotationAsync(Guid companyId, Guid quotationId, Guid userId, CancellationToken ct = default)
+    {
+        var held = new[] { nameof(QuotationAcceptAutopilot.Outcome.Held), nameof(QuotationAcceptAutopilot.Outcome.Failed) };
+        var n = await _db.Documents
+            .Where(d => d.Id == quotationId && d.CompanyId == companyId && !d.IsDeleted && d.DocumentType == DocumentType.Quotation
+                && held.Contains(d.QuotationAutopilotOutcome!))
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(d => d.QuotationAutopilotAt, (DateTime?)null)
+                .SetProperty(d => d.QuotationAutopilotOutcome, (string?)null)
+                .SetProperty(d => d.QuotationAutopilotMessage, (string?)null), ct);
+        if (n == 0) throw new KeyNotFoundException("ไม่พบใบเสนอราคาที่หยุด/ล้มให้ลองใหม่ (อาจแปลงไปแล้ว)");
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = userId, Action = AuditAction.Update, EntityType = "Document", EntityId = quotationId.ToString(),
+            NewValues = JsonSerializer.Serialize(new { action = "quotation-autopilot-retry", ruleCode = QuotationAcceptAutopilot.RuleCode }),
+        });
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task SetContactBankAutoSettleAsync(Guid companyId, Guid contactId, bool disabled, Guid userId, CancellationToken ct = default)
+    {
+        var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == contactId && c.CompanyId == companyId, ct)
+            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        var before = contact.BankAutoSettleDisabled;
+        contact.BankAutoSettleDisabled = disabled;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = userId, Action = AuditAction.Update, EntityType = "Contact", EntityId = contactId.ToString(),
+            OldValues = JsonSerializer.Serialize(new { bankAutoSettleDisabled = before }),
+            NewValues = JsonSerializer.Serialize(new { bankAutoSettleDisabled = disabled, ruleCode = BankReceiptAutoSettle.RuleAuto }),
+        });
+        await _db.SaveChangesAsync(ct);
+    }
+
+    // ═══════════════ ค่าตั้ง ═══════════════
+
+    public async Task<AutopilotSettingsDto> SettingsAsync(Guid companyId, CancellationToken ct = default)
+    {
+        var s = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
+            .Select(x => new { x.BankAutoSettleEnabled, x.QuotationAcceptAutopilotDefault, x.AutopilotDigestLocalTime })
+            .FirstOrDefaultAsync(ct);
+        return new AutopilotSettingsDto(
+            s?.BankAutoSettleEnabled ?? false,
+            (QuotationAcceptAutopilot.Parse(s?.QuotationAcceptAutopilotDefault) ?? QuotationAcceptMode.Off).ToString(),
+            AutopilotNotice.DigestTime(s?.AutopilotDigestLocalTime).ToString(@"hh\:mm"),
+            QuotationAcceptAutopilot.Modes.Select(m => new AutopilotOptionDto(m.Code, m.Label)).ToList(),
+            AutopilotNotice.Catalogue.Select(e => new AutopilotCatalogueDto(e.Code, e.Label, e.Delivery.ToString(),
+                e.Delivery switch
+                {
+                    AutopilotDelivery.Immediate => "แจ้งทันที",
+                    AutopilotDelivery.Digest => "รวมในสรุปประจำวัน",
+                    _ => "ไม่แจ้ง",
+                }, e.Wired)).ToList());
+    }
+
+    public async Task<AutopilotSettingsDto> UpdateSettingsAsync(Guid companyId, UpdateAutopilotSettingsRequest request, Guid userId, CancellationToken ct = default)
+    {
+        var s = await _db.CompanySettings.FirstOrDefaultAsync(x => x.CompanyId == companyId, ct)
+            ?? await CompanySettingsFactory.AddNewAsync(_db, companyId, ct);
+        var before = new { s.BankAutoSettleEnabled, s.QuotationAcceptAutopilotDefault, s.AutopilotDigestLocalTime };
+        var now = DateTime.UtcNow;
+        // เปิด/ปิดเมื่อไร/โดยใคร = แถว audit ด้านล่าง (hash chain) — ไม่เก็บสำเนาที่สองบนค่าตั้ง
+        if (request.BankAutoSettleEnabled is bool on) s.BankAutoSettleEnabled = on;
+        if (request.QuotationAcceptAutopilotDefault != null)
+        {
+            var (stored, problem) = QuotationAcceptAutopilot.Normalize(request.QuotationAcceptAutopilotDefault);
+            if (problem != null) throw new BusinessRuleException(problem, QuotationAcceptAutopilot.RuleCode, 400);
+            var wasOn = QuotationAcceptAutopilot.Effective(null, s.QuotationAcceptAutopilotDefault) != QuotationAcceptMode.Off;
+            var nowOn = QuotationAcceptAutopilot.Effective(null, stored) != QuotationAcceptMode.Off;
+            s.QuotationAcceptAutopilotDefault = stored;
+            // watermark: เปิดใหม่ ⇒ ใบที่ลูกค้ายอมรับก่อนเวลานี้ไม่ถูกแปลงย้อนหลัง · ปิด ⇒ ล้าง
+            if (nowOn && !wasOn) s.QuotationAcceptAutopilotSince = now;
+            if (!nowOn) s.QuotationAcceptAutopilotSince = null;
+        }
+        if (request.DigestLocalTime != null)
+        {
+            var (value, problem) = AutopilotNotice.NormalizeDigestTime(request.DigestLocalTime);
+            if (problem != null) throw new BusinessRuleException(problem, "AUTOPILOT-DIGEST", 400);
+            s.AutopilotDigestLocalTime = value;
+        }
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = userId, Action = AuditAction.Update, EntityType = "CompanySettings", EntityId = companyId.ToString(),
+            OldValues = JsonSerializer.Serialize(before),
+            NewValues = JsonSerializer.Serialize(new { s.BankAutoSettleEnabled, s.QuotationAcceptAutopilotDefault, s.AutopilotDigestLocalTime, area = "autopilot" }),
+        });
+        await _db.SaveChangesAsync(ct);
+        return await SettingsAsync(companyId, ct);
+    }
+
+    // ═══════════════ สรุปประจำวัน ═══════════════
+
+    public async Task<AutopilotNotice.DigestFacts> DigestFactsAsync(Guid companyId, DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
+    {
+        var emailed = await _db.DocumentEmailLogs.AsNoTracking()
+            .CountAsync(l => l.CompanyId == companyId && l.DocumentId != null && l.Status == EmailLogStatus.Sent
+                && l.SentAt >= fromUtc && l.SentAt < toUtc, ct);
+        var pays = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.CreatedAt >= fromUtc && p.CreatedAt < toUtc
+                && _db.Documents.Any(d => d.Id == p.DocumentId && d.CompanyId == companyId && SaleTypes.Contains(d.DocumentType)))
+            .Select(p => p.Amount).ToListAsync(ct);
+        var receipts = await _db.PostPaymentAutomationRuns.AsNoTracking()
+            .CountAsync(r => r.CompanyId == companyId && r.Status == PostPaymentAutomationPolicy.StatusDone
+                && r.CompletedAt >= fromUtc && r.CompletedAt < toUtc, ct);
+        var converted = nameof(QuotationAcceptAutopilot.Outcome.Converted);
+        var quotations = await _db.Documents.AsNoTracking()
+            .CountAsync(d => d.CompanyId == companyId && d.QuotationAutopilotOutcome == converted
+                && d.QuotationAutopilotAt >= fromUtc && d.QuotationAutopilotAt < toUtc, ct);
+        var bankSettled = await _db.BankTransactions.AsNoTracking()
+            .CountAsync(t => t.CompanyId == companyId && t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Settled
+                && t.ReconciledBy == BankMatchAttribution.BankAutoSettle && t.ReconciledAt >= fromUtc && t.ReconciledAt < toUtc, ct);
+        var bankWaiting = await _db.BankTransactions.AsNoTracking()
+            .CountAsync(t => t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
+                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed
+                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held)
+                && t.AutoSettleDocumentId != null, ct);
+        var issues = await IssuesAsync(companyId, toUtc, ct);
+        return new AutopilotNotice.DigestFacts(emailed, pays.Count, pays.Sum(), receipts, quotations, bankSettled, bankWaiting,
+            issues.Count, issues.Take(5).Select(i => i.Title).ToList());
+    }
+}

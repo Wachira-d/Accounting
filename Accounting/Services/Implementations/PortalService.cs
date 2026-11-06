@@ -27,12 +27,21 @@ public class PortalService : IPortalService
 
     /// <summary>รอบ 250 WP-02b (M-2): สลิปพอร์ทัล = <c>PaymentIntent(ManualSlip)</c> รอยืนยัน — ทางเดียวกับเส้นสลิป/gateway อื่น (null = สร้างนอก DI ⇒ แนบสลิปไม่ได้ ไม่ถอยไปสร้าง Payment)</summary>
     private readonly Accounting.Services.Payments.IPaymentIntentService? _intents;
+    /// <summary>รอบ 252 WP-12A: แจ้งทีม "ลูกค้าแจ้งโอน" (E-06) · null ในเทสต์ที่สร้างตรง</summary>
+    private readonly INotificationEngine? _notify;
+    /// <summary>รอบ 255 WP-12B ข้อ 8: อีเมลลิงก์วิเศษ (SMTP ของระบบ) · null = ส่งไม่ได้ (ไม่สร้างแถว)</summary>
+    private readonly IEmailService? _email;
+    /// <summary>รอบ 255: URL ของระบบสำหรับลิงก์วิเศษ (SystemBaseUrl)</summary>
+    private readonly IConfiguration _config;
 
     public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null, IImageProcessingService? images = null,
         Accounting.Services.Storage.IFileStorage? storage = null, Accounting.Services.Payments.IPaymentIntentService? intents = null,
-        IDocumentPayLinkService? payLinks = null)
+        IDocumentPayLinkService? payLinks = null, INotificationEngine? notify = null, IEmailService? email = null)
     {
+        _email = email;
+        _config = configuration;
         _payLinks = payLinks;
+        _notify = notify;
         _storage = storage;
         _intents = intents;
         _db = db;
@@ -62,7 +71,8 @@ public class PortalService : IPortalService
             CompanyId = companyId,
             ContactId = request.ContactId,
             Email = request.Email,
-            PasswordHash = HashPassword(request.Password),
+            // รอบ 255 WP-12B ข้อ 8: ไม่ตั้งรหัสผ่าน = เข้าด้วยลิงก์วิเศษเท่านั้น (รหัสว่างล็อกอินด้วยรหัสไม่ได้ — VerifyPassword คืน false)
+            PasswordHash = string.IsNullOrEmpty(request.Password) ? "" : HashPassword(request.Password!),
             DisplayName = request.DisplayName,
             CanViewInvoices = request.CanViewInvoices,
             CanViewStatements = request.CanViewStatements,
@@ -181,10 +191,13 @@ public class PortalService : IPortalService
     public async Task<PortalLoginResponse> RefreshTokenAsync(string refreshToken)
     {
         // Decode the refresh token to extract claims
-        var (portalAccessId, contactId, companyId) = DecodeJwtToken(refreshToken);
+        var (portalAccessId, contactId, companyId, tokenType) = DecodeJwtToken(refreshToken);
+        // รอบ 255 ฝ่ายค้าน M9: /refresh รับเฉพาะโทเคน refresh · สิทธิ์ต้องเป็นของบริษัท/ผู้ติดต่อในโทเคน
+        if (tokenType != PortalTokenPolicy.TypeRefresh)
+            throw new InvalidOperationException("Invalid token type.");
 
         var access = await _db.Set<PortalAccess>()
-            .FirstOrDefaultAsync(p => p.Id == portalAccessId && p.IsActive)
+            .FirstOrDefaultAsync(p => p.Id == portalAccessId && p.IsActive && p.CompanyId == companyId && p.ContactId == contactId)
             ?? throw new InvalidOperationException("Portal access not found or inactive.");
 
         // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach เอง
@@ -384,6 +397,11 @@ public class PortalService : IPortalService
     // ===== JWT Token Helpers =====
 
     private string GenerateJwtToken(Guid portalAccessId, Guid contactId, Guid companyId, TimeSpan expiry)
+        => GenerateJwtToken(portalAccessId, contactId, companyId, expiry,
+            expiry > PortalTokenPolicy.AccessLifetime ? PortalTokenPolicy.TypeRefresh : PortalTokenPolicy.TypeAccess);
+
+    /// <summary>รอบ 255 ฝ่ายค้าน M9: ช่องที่ 5 = ชนิดโทเคน (access/refresh — <see cref="PortalTokenPolicy"/>)</summary>
+    private string GenerateJwtToken(Guid portalAccessId, Guid contactId, Guid companyId, TimeSpan expiry, string tokenType)
     {
         // Build a simple base64-encoded JWT-like token containing the claims and expiry
         // In production, use Microsoft.IdentityModel.Tokens with proper signing keys
@@ -395,6 +413,8 @@ public class PortalService : IPortalService
         payload.Append(companyId.ToString());
         payload.Append('|');
         payload.Append(DateTime.UtcNow.Add(expiry).ToString("O"));
+        payload.Append('|');
+        payload.Append(tokenType);
 
         var payloadBytes = Encoding.UTF8.GetBytes(payload.ToString());
 
@@ -414,8 +434,8 @@ public class PortalService : IPortalService
     {
         try
         {
-            var (_, contactId, _) = DecodeJwtToken(token);
-            return contactId;
+            var (_, contactId, _, type) = DecodeJwtToken(token);
+            return type == PortalTokenPolicy.TypeAccess ? contactId : null;   // รอบ 255 M9: refresh ใช้แทน access ไม่ได้
         }
         catch
         {
@@ -423,29 +443,39 @@ public class PortalService : IPortalService
         }
     }
 
-    private (Guid portalAccessId, Guid contactId, Guid companyId) DecodeJwtToken(string token)
+    /// <summary>รอบ 255 ฝ่ายค้าน H1/M9: ตัวตรวจของ scheme "Portal" — โทเคน access ที่ลายเซ็นถูก ยังไม่หมดอายุ · สิทธิ์พอร์ทัลยังเปิด (ตรวจทุกคำขอ) ·
+    /// บริษัทของสิทธิ์ = บริษัทในโทเคน = บริษัทในเส้นทาง (ถ้ามี) · ไม่ผ่าน = null</summary>
+    public async Task<PortalTokenPrincipal?> AuthenticateAccessAsync(string token, Guid? routeCompanyId, CancellationToken ct = default)
+    {
+        (Guid accessId, Guid contactId, Guid companyId, string type) t;
+        try { t = DecodeJwtToken(token); }
+        catch (InvalidOperationException) { return null; }
+        var row = await _db.Set<PortalAccess>().AsNoTracking().IgnoreQueryFilters()
+            .Where(p => p.Id == t.accessId && !p.IsDeleted)
+            .Select(p => new { p.IsActive, p.CompanyId, p.ContactId })
+            .FirstOrDefaultAsync(ct);
+        if (row == null || row.ContactId != t.contactId) return null;
+        if (PortalTokenPolicy.AccessProblem(t.type, t.companyId, routeCompanyId, row.IsActive, row.CompanyId) != null) return null;
+        return new PortalTokenPrincipal(t.accessId, t.contactId, t.companyId);
+    }
+
+    private (Guid portalAccessId, Guid contactId, Guid companyId, string tokenType) DecodeJwtToken(string token)
     {
         try
         {
             var tokenBytes = Convert.FromBase64String(token);
-            var dotIndex = Array.IndexOf(tokenBytes, (byte)'.');
-            if (dotIndex < 0)
+            // รอบ 255 WP-12B (พบจากเทสต์ลิงก์วิเศษ): เดิมหาตัวคั่นด้วย IndexOf('.') ตัวแรก — แต่วันหมดอายุรูป "O" มีจุดทศนิยมวินาที
+            // ⇒ ตัดผิดตำแหน่ง ⇒ โทเคนพอร์ทัลทุกใบถอดไม่ได้ (ทุกเส้น [Authorize] ของพอร์ทัลตอบ 401) · ลายเซ็น HMAC-SHA256 ยาวคงที่ 32 ไบต์
+            // ⇒ ตัวคั่นอยู่ตำแหน่ง len − 33 เสมอ (ตรวจว่าเป็น '.' จริง)
+            const int SigLen = 32;
+            var dotIndex = tokenBytes.Length - SigLen - 1;
+            if (dotIndex <= 0 || tokenBytes[dotIndex] != (byte)'.')
                 throw new InvalidOperationException("Invalid token format.");
 
             var payloadBytes = new byte[dotIndex];
             Buffer.BlockCopy(tokenBytes, 0, payloadBytes, 0, dotIndex);
 
-            var payload = Encoding.UTF8.GetString(payloadBytes);
-            var parts = payload.Split('|');
-
-            if (parts.Length != 4)
-                throw new InvalidOperationException("Invalid token payload.");
-
-            var expiry = DateTime.Parse(parts[3]);
-            if (expiry < DateTime.UtcNow)
-                throw new InvalidOperationException("Token has expired.");
-
-            // Verify signature
+            // รอบ 255 ฝ่ายค้าน M9: ตรวจลายเซ็นก่อนเชื่อเนื้อหา · รูปเก่า 4 ช่อง (ไม่มีชนิด) = ปฏิเสธ (DECISIONS 255-WP12B-13)
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_portalSigningKey));
             var expectedSignature = hmac.ComputeHash(payloadBytes);
 
@@ -455,7 +485,17 @@ public class PortalService : IPortalService
             if (!CryptographicOperations.FixedTimeEquals(expectedSignature, actualSignature))
                 throw new InvalidOperationException("Invalid token signature.");
 
-            return (Guid.Parse(parts[0]), Guid.Parse(parts[1]), Guid.Parse(parts[2]));
+            var payload = Encoding.UTF8.GetString(payloadBytes);
+            var parts = payload.Split('|');
+
+            if (parts.Length != 5 || (parts[4] != PortalTokenPolicy.TypeAccess && parts[4] != PortalTokenPolicy.TypeRefresh))
+                throw new InvalidOperationException("Invalid token payload.");
+
+            var expiry = DateTime.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime();
+            if (expiry < DateTime.UtcNow)
+                throw new InvalidOperationException("Token has expired.");
+
+            return (Guid.Parse(parts[0]), Guid.Parse(parts[1]), Guid.Parse(parts[2]), parts[4]);
         }
         catch (FormatException)
         {
@@ -574,85 +614,146 @@ public class PortalService : IPortalService
     /// พนักงานตรวจแล้วกดยืนยันที่หน้ารายการรับชำระ ⇒ <c>DocumentPaymentHandler</c> ⇒ <c>CreatePaymentAsync</c> (JE · ตัดหนี้ · ใบเสร็จ)</para>
     /// ตรวจความเป็นเจ้าของ: document.ContactId ต้องตรงผู้ติดต่อของโทเคนพอร์ทัล</summary>
     public async Task<PortalSlipUploadResponse> UploadDocumentSlipAsync(
-        Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount)
+        Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount, string? bankRef = null)
     {
         if (file == null || file.Length == 0)
             throw new ArgumentException("กรุณาเลือกไฟล์สลิป");
         if (!file.ContentType.StartsWith("image/") && file.ContentType != "application/pdf")
             throw new ArgumentException("รองรับเฉพาะรูปภาพหรือ PDF");
 
-        var doc = await _db.Documents
-            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted)
-            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
-        if (_intents == null)
-            throw new BusinessRuleException("ระบบรับสลิปยังไม่พร้อม — กรุณาติดต่อผู้ขาย", DocumentSlipIntents.RuleCode, 503);
-
-        // รอบ 250 ฝ่ายค้าน H2/L4: ตัดสินที่ยอดค้างของเอกสาร (สลิปงวด 2 รับได้ · ใบชำระครบ/ยอดเกินยอดค้าง = ปฏิเสธ) — ตัวตัดสินเดียว DocumentSlipIntents
-        var pay = amount ?? doc.BalanceDue;
-        if (DocumentSlipIntents.UploadProblem(doc.Status, doc.BalanceDue, pay) is string uploadProblem)
-            throw new BusinessRuleException(uploadProblem, DocumentSlipIntents.RuleCode, 400);
-
-        // Save file under wwwroot/uploads/portal-slips/{yyyy-MM}/...
-        // Run images through ImageProcessingService (Slip profile — compressed
-        // but still readable). PDFs and unknown types pass through untouched.
-        // ทีม FS 2026-11-02: เขียนผ่านที่เก็บกลางตัวเดียวกับ ImageProcessingService (Local/S3) — ห้ามแตะดิสก์ตรง
-        var storage = _storage ?? _images?.Storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
-        var relDir = $"uploads/portal-slips/{DateTime.UtcNow:yyyy-MM}";
-        var absDir = System.IO.Path.Combine(storage.Locator.RelativeBase, "wwwroot", relDir);
-        string storedName; string absPath; string relUrl;
-        if (_images != null && _images.IsProcessableImage(file.ContentType))
+        byte[] slipBytes;
+        await using (var hs = file.OpenReadStream())
+        using (var ms = new System.IO.MemoryStream())
         {
-            await using var s = file.OpenReadStream();
-            var processed = await _images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, absDir, "/" + relDir, ImageProfile.Slip);
-            absPath = processed.AbsolutePath;
-            storedName = System.IO.Path.GetFileName(absPath);
-            relUrl = processed.RelativeUrl;
+            await hs.CopyToAsync(ms);
+            slipBytes = ms.ToArray();
         }
-        else
-        {
-            var ext = System.IO.Path.GetExtension(file.FileName);
-            if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
-            storedName = $"{Guid.NewGuid():N}{ext}";
-            absPath = System.IO.Path.Combine(absDir, storedName);
-            await using (var fs = file.OpenReadStream()) await storage.WriteAsync(absPath, fs, file.ContentType);
-            relUrl = "/" + relDir + "/" + storedName;
-        }
+        // รอบ 255 WP-12B ข้อ 1: ประตูเดียวของการแจ้งโอน (ด่านยอดค้าง · กันซ้ำ · เก็บไฟล์ · รายการรอยืนยัน · แจ้งทีม) — ใช้ร่วมกับหน้าชำระของเอกสาร ·
+        // ด่านความเป็นเจ้าของ = ผู้ติดต่อในโทเคนพอร์ทัล (contactId) · สลิปไม่สร้างแถว Payment (ไม่ใช่รับชำระ)
+        var slips = new SlipEvidenceService(_db, _intents, _storage, _images, _notify);
+        var r = await slips.SubmitAsync(companyId, documentId, contactId, new SlipFile(slipBytes, file.ContentType, file.FileName ?? ""),
+            amount, bankRef, SlipEvidenceService.ChannelPortal);
+        return new PortalSlipUploadResponse(r.Intent.Id, documentId, r.FileUrl, r.Intent.Amount, DateTime.UtcNow, AwaitingReview: true);
+    }
 
-        // ความจริงเรื่องเงิน = PaymentIntent (manual-slip) รอยืนยัน — สลิปแต่ละใบเป็นรายการของตัวเอง (ฝ่ายค้าน H2) ·
-        // ล้ม ⇒ ลบไฟล์ที่เพิ่งเขียน (ฝ่ายค้าน L4 — ไม่เก็บข้อมูลผู้โอนกำพร้า) แล้วโยนต่อ
-        Accounting.Models.Entities.PaymentIntent intent;
-        try
-        {
-            intent = await _intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
-                PaymentSourceKind.Document, doc.Id, pay, PaymentMethodKind.ManualSlip,
-                Description: PortalSlipPending.IntentDescription(doc.DocumentNumber, relUrl),
-                ContactId: contactId),
-                providerCode: Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            try { await storage.DeleteAsync(absPath); } catch (Exception delEx) when (delEx is not OperationCanceledException) { _ = delEx; }
-            if (ex is BusinessRuleException) throw;
-            // ข้อความไทยของ StartAsync (InvalidOperationException) ส่งต่อตรง · อื่น ๆ = ข้อความกลาง (ไม่รั่วข้อความภายใน)
-            throw new BusinessRuleException(ex is InvalidOperationException ? ex.Message : "บันทึกสลิปไม่สำเร็จ — กรุณาแนบอีกครั้ง หรือติดต่อผู้ขาย",
-                ex, DocumentSlipIntents.RuleCode, 409);
-        }
+    // ====================================================================
+    // รอบ 255 WP-12B ข้อ 8 — ลิงก์วิเศษ (ไม่ต้องจำรหัสผ่าน) + ส่งออก Excel ให้นักบัญชีของลูกค้า
+    // ====================================================================
 
-        _db.Set<FileAttachment>().Add(new FileAttachment
+    /// <summary>ขอลิงก์เข้าสู่ระบบทางอีเมล — <b>ไม่บอกผล</b> (ผู้เรียกตอบ <see cref="PortalMagicLinkPolicy.AckMessage"/> เสมอ · กันไล่อีเมล) ·
+    /// ส่งเฉพาะอีเมลที่ผู้ขายเปิดสิทธิ์พอร์ทัลไว้ (<c>PortalAccess</c> ใช้งานอยู่) · โทเคนเก็บเป็น hash · อายุ 15 นาที · ใช้ครั้งเดียว ·
+    /// ไม่มี URL ของระบบ/SMTP ⇒ ไม่สร้างแถว + log (ลูกค้าได้คำตอบเดิม — ห้ามบอกว่าส่งแล้วกับผู้ดูแล: log ระดับ error) · คืน true เมื่อส่งจริง (เทสต์/ผู้ดูแล)</summary>
+    public async Task<bool> RequestMagicLinkAsync(Guid companyId, string? email, CancellationToken ct = default)
+    {
+        var e = PortalMagicLinkPolicy.NormalizeEmail(email);
+        if (e == null) return false;
+        var access = await _db.Set<PortalAccess>().AsNoTracking().IgnoreQueryFilters()
+            .Where(p => p.CompanyId == companyId && p.IsActive && !p.IsDeleted && p.Email.ToLower() == e)
+            .Select(p => new { p.Id, p.Email, p.DisplayName })
+            .FirstOrDefaultAsync(ct);
+        if (access == null) return false;
+        // รอบ 255 ฝ่ายค้าน M6: เข้าคิว EmailQueue (ผู้ส่งในนามบริษัท + โควตา/เพดานอีเมลของแพลตฟอร์มเดิม · ตรวจซ้ำตอนส่ง) — ไม่ส่งตรงจากคำขอนิรนาม ·
+        // โทเคนออกตอนส่ง (PortalMagicLinkPolicy.LinkPlaceholder ⇒ IssueMagicLinkUrlAsync) — คิว/บันทึกอีเมลไม่เก็บ token
+        var companyName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
+        Func<string?, string?> enc = System.Net.WebUtility.HtmlEncode;
+        var html = $"<p>เรียน {enc(access.DisplayName ?? access.Email)}</p>"
+            + $"<p>กดลิงก์ด้านล่างเพื่อเข้าพอร์ทัลลูกค้าของ {enc(companyName)} (ใช้ได้ 15 นาที ครั้งเดียว — ไม่ต้องใช้รหัสผ่าน)</p>"
+            + $"<p><a href=\"{PortalMagicLinkPolicy.LinkPlaceholder}\">เข้าสู่พอร์ทัลลูกค้า</a></p>"
+            + "<p style=\"color:#64748b;font-size:12px\">ถ้าท่านไม่ได้ขอลิงก์นี้ ไม่ต้องทำอะไร — ลิงก์จะหมดอายุเอง</p>";
+        var now = DateTime.UtcNow;
+        _db.EmailQueues.Add(new EmailQueue
         {
-            CompanyId = companyId,
-            FileName = storedName,
-            OriginalFileName = file.FileName ?? storedName,
-            ContentType = file.ContentType ?? "application/octet-stream",
-            StoragePath = absPath,
-            EntityType = "Document",
-            EntityId = doc.Id,
-            UploadedByUserId = null,
-            CreatedBy = "portal-customer"
+            CompanyId = companyId, EntityType = PortalMagicLinkPolicy.QueueEntityType, EntityId = access.Id,
+            ToEmail = access.Email, Subject = $"ลิงก์เข้าสู่พอร์ทัลลูกค้า — {companyName}", Body = html,
+            AttachPdf = false, ScheduledFor = now, Status = "Pending",
+            IdempotencyKey = $"portal-magic:{access.Id:N}:{Guid.NewGuid():N}", CreatedBy = "portal-magic-link",
         });
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
 
-        await _db.SaveChangesAsync();
+    /// <summary>รอบ 255 ฝ่ายค้าน M6: ตรวจแถวคิวลิงก์วิเศษตอนส่ง — สิทธิ์ยังเปิด · คำขอไม่ค้างนานเกิน · null = ส่ง</summary>
+    internal static async Task<string?> MagicLinkSkipReasonAsync(AccountingDbContext db, EmailQueue item, CancellationToken ct)
+    {
+        var active = await db.Set<PortalAccess>().AsNoTracking().IgnoreQueryFilters()
+            .Where(p => p.Id == item.EntityId && p.CompanyId == item.CompanyId && !p.IsDeleted)
+            .Select(p => (bool?)p.IsActive).FirstOrDefaultAsync(ct);
+        return PortalMagicLinkPolicy.QueueSkipReason(active == true, item.CreatedAt, DateTime.UtcNow);
+    }
 
-        return new PortalSlipUploadResponse(intent.Id, doc.Id, relUrl, intent.Amount, DateTime.UtcNow, AwaitingReview: true);
+    /// <summary>รอบ 255 ฝ่ายค้าน M6: ออกโทเคนลิงก์วิเศษตอนส่งอีเมลจากคิว (แถว PortalMagicLink ใหม่ · อายุนับจากตอนส่ง) · ไม่มี URL ของระบบ ⇒ (null, เหตุ) — ไม่ส่งลิงก์เสีย</summary>
+    internal static async Task<(string? Url, string? Problem)> IssueMagicLinkUrlAsync(AccountingDbContext db, IConfiguration? config, Guid companyId, Guid portalAccessId, CancellationToken ct)
+    {
+        var baseUrl = await SystemBaseUrl.ResolveAsync(db, config, ct);
+        var token = PortalMagicLinkPolicy.NewToken();
+        var link = PortalMagicLinkPolicy.Link(baseUrl, companyId, token);
+        if (link == null) return (null, "ยังไม่ได้ตั้ง URL ของระบบ — ส่งลิงก์เข้าพอร์ทัลไม่ได้");
+        db.PortalMagicLinks.Add(new PortalMagicLink
+        {
+            CompanyId = companyId, PortalAccessId = portalAccessId, TokenHash = PortalMagicLinkPolicy.Hash(token),
+            ExpiresAt = DateTime.UtcNow.Add(PortalMagicLinkPolicy.Ttl), CreatedBy = "portal-magic-link",
+        });
+        await db.SaveChangesAsync(ct);
+        return (link, null);
+    }
+
+    /// <summary>แลกลิงก์วิเศษเป็นเซสชันพอร์ทัล — compare-and-set <c>UsedAt</c> (สองแท็บพร้อมกัน = ครั้งเดียว) · ข้อความเดียวทุกเหตุที่แลกไม่ได้ ·
+    /// โทเคนพอร์ทัลแบบเดียวกับล็อกอินด้วยรหัสผ่าน (ลงนามด้วยกุญแจพอร์ทัลเดิม) · บันทึกกิจกรรม "MagicLogin"</summary>
+    public async Task<PortalLoginResponse> RedeemMagicLinkAsync(Guid companyId, string? token, CancellationToken ct = default)
+    {
+        if (!PortalMagicLinkPolicy.LooksValid(token))
+            throw new BusinessRuleException(PortalMagicLinkPolicy.InvalidMessage, PortalMagicLinkPolicy.RuleCode, 400);
+        var hash = PortalMagicLinkPolicy.Hash(token!);
+        var row = await _db.PortalMagicLinks.AsNoTracking()
+            .Where(m => m.CompanyId == companyId && m.TokenHash == hash && !m.IsDeleted)
+            .Select(m => new { m.Id, m.PortalAccessId, m.ExpiresAt, m.UsedAt })
+            .FirstOrDefaultAsync(ct);
+        var access = row == null ? null : await _db.Set<PortalAccess>().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Id == row.PortalAccessId && p.CompanyId == companyId && !p.IsDeleted, ct);
+        var now = DateTime.UtcNow;
+        if (row == null || access == null || PortalMagicLinkPolicy.RedeemProblem(row.ExpiresAt, row.UsedAt, access.IsActive, now) is string)
+            throw new BusinessRuleException(PortalMagicLinkPolicy.InvalidMessage, PortalMagicLinkPolicy.RuleCode, 400);
+        var claimed = await _db.PortalMagicLinks
+            .Where(m => m.Id == row.Id && m.CompanyId == companyId && m.UsedAt == null && m.ExpiresAt > now)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.UsedAt, (DateTime?)now), ct);
+        if (claimed == 0)
+            throw new BusinessRuleException(PortalMagicLinkPolicy.InvalidMessage, PortalMagicLinkPolicy.RuleCode, 400);
+
+        var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId, ct)
+            ?? throw new BusinessRuleException(PortalMagicLinkPolicy.InvalidMessage, PortalMagicLinkPolicy.RuleCode, 400);
+        var contactName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.Id == access.ContactId && c.CompanyId == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
+        access.LastLoginAt = now;
+        _db.Set<PortalActivity>().Add(new PortalActivity
+        {
+            CompanyId = companyId, PortalAccessId = access.Id, ActivityType = "MagicLogin", ActivityAt = now,
+        });
+        await _db.SaveChangesAsync(ct);
+        var accessToken = GenerateJwtToken(access.Id, access.ContactId, companyId, TimeSpan.FromHours(2));
+        var refreshToken = GenerateJwtToken(access.Id, access.ContactId, companyId, TimeSpan.FromDays(30));
+        return new PortalLoginResponse(accessToken, refreshToken, access.ContactId,
+            contactName ?? access.DisplayName ?? access.Email, company.Id, company.Name);
+    }
+
+    /// <summary>ส่งออก Excel "รายการเอกสารจากผู้ขาย" ให้นักบัญชีของลูกค้า (รูปแบบ<b>ทั่วไป</b> · MiniExcel — PEAK/FlowAccount/Express รอไฟล์ตัวอย่างจริง Q9) ·
+    /// เฉพาะเอกสารที่ออกแล้วของผู้ติดต่อในโทเคน (ด่านเดียว <c>PortalDocuments</c>) · ช่วงวันที่ ≤ 366 วัน · ยอดปัด 2 ตำแหน่ง (AwayFromZero)</summary>
+    public async Task<byte[]> ExportAccountantLedgerAsync(Guid companyId, Guid contactId, DateTime fromDate, DateTime toDate, CancellationToken ct = default)
+    {
+        if (toDate < fromDate) throw new ArgumentException("วันที่สิ้นสุดต้องไม่ก่อนวันเริ่ม");
+        if ((toDate - fromDate).TotalDays > 366) throw new ArgumentException("ส่งออกได้ครั้งละไม่เกิน 1 ปี — แบ่งช่วงแล้วส่งออกใหม่");
+        var seller = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => new { c.Name, c.TaxId, c.BranchCode }).FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+        var to = toDate.Date.AddDays(1);
+        var docs = await PortalDocuments(companyId, contactId).AsNoTracking()
+            .Where(d => d.DocumentDate >= fromDate.Date && d.DocumentDate < to && PortalAccountantExport.Types.Contains(d.DocumentType))
+            .OrderBy(d => d.DocumentDate).ThenBy(d => d.DocumentNumber)
+            .Select(d => new PortalAccountantExport.Row(d.DocumentDate, d.DocumentNumber, d.DocumentType, d.SubTotal, d.VatAmount, d.TotalAmount,
+                d.WithholdingTaxAmount, d.Status == DocumentStatus.Voided))
+            .ToListAsync(ct);
+        var rows = PortalAccountantExport.Build(docs, seller.Name, seller.TaxId, seller.BranchCode);
+        using var ms = new System.IO.MemoryStream();
+        MiniExcelLibs.MiniExcel.SaveAs(ms, rows, sheetName: "เอกสารจากผู้ขาย");
+        return ms.ToArray();
     }
 }

@@ -63,6 +63,9 @@ public class OcrService : IOcrService
     /// <summary>ที่เก็บไฟล์กลาง (Local | S3 · ทีม FS 2026-11-02) — ไฟล์ต้นฉบับของสแกนอ่าน/ลบผ่านตัวนี้ ไม่แตะดิสก์ตรง ·
     /// DI ใส่ให้เสมอ (null = สร้างนอก DI ⇒ FileStorageDefaults.Local ดิสก์ค่าเริ่มต้น)</summary>
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
+    /// <summary>รอบ 252 (WP-09): ประตูเดียวของใบ 50 ทวิ ขาเข้า — สแกนใบที่เราถูกหักส่งเข้ากล่องรับ (ไม่สร้างแถวเครดิตเอง) ·
+    /// ฝ่ายค้าน WP-09 L6: เรียกผ่าน scope แยก (DbContext ของตัวเอง) — กล่องรับล้มแล้ว <c>ChangeTracker.Clear()</c> ต้องไม่ถอดเอนทิตีของ OcrService</summary>
+    private readonly Microsoft.Extensions.DependencyInjection.IServiceScopeFactory? _scopes;
     private Accounting.Services.Storage.IFileStorage Files
         => _storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
 
@@ -92,9 +95,11 @@ public class OcrService : IOcrService
         Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null,
         Services.Interfaces.IBotExchangeRateService? fxRates = null,
         Services.Interfaces.IPermissionService? perms = null,
-        Accounting.Services.Storage.IFileStorage? storage = null)
+        Accounting.Services.Storage.IFileStorage? storage = null,
+        Microsoft.Extensions.DependencyInjection.IServiceScopeFactory? scopes = null)
     {
         _storage = storage;
+        _scopes = scopes;
         _perms = perms;
         _docWorkflowLearner = docWorkflowLearner;
         _aiAugmenter = aiAugmenter;
@@ -4435,136 +4440,29 @@ public class OcrService : IOcrService
             data.ReasoningTrace.Add($"[Azure DI KV] {azure.KeyValuePairs.Count} key-value pairs scanned for fallback");
     }
 
-    /// <summary>สร้างรายการทะเบียน "ภาษีถูกหัก ณ ที่จ่าย" จากหนังสือรับรองที่สแกน
+    /// <summary>ใบ 50 ทวิ ที่ "เราถูกหัก" จากสแกน ⇒ <b>กล่องรับ 50 ทวิ</b> (รอบ 252 · WP-09 · AUTO_SEND_WHT_DESIGN §3.3)
     ///
-    /// <para>เข้าเงื่อนไขเมื่อบริษัทเราอยู่ช่อง <b>ผู้ถูกหักภาษี</b> บนกระดาษ —
-    /// สถานะเป็น <b>Received</b> ทันที (มีใบจริงอยู่ในมือแล้ว ต่างจากแถวที่ระบบ
-    /// สร้างเองตอนรับเงินซึ่งเป็น Pending เพราะยังไม่มีใบ)</para>
-    ///
-    /// <para>ผูกไฟล์สแกนไว้กับรายการเพื่อให้ครบตาม พ.ร.บ.บัญชี ม.14 (เก็บ 5 ปี)</para></summary>
-    private async Task EnsureWhtCreditFromCertAsync(Guid companyId, OcrScanResult result, Guid? documentId)
+    /// <para>เดิมเมธอดนี้สร้าง/อัปเกรดแถว <c>WhtCreditReceived</c> เอง (จับคู่ ±฿1 แถวเดียว · ไม่มีด่านเลขผู้เสียภาษี · Received ทันที) —
+    /// ย้ายเข้าประตูเดียว <see cref="Services.Interfaces.IWhtCertIntakeService.SubmitFromScanAsync"/>: กันซ้ำ (ไฟล์/เลขที่ใบ) · จับคู่ใบรวม/ผ่อนงวด
+    /// (<c>Helpers/WhtCertMatchPolicy</c>) · ด่านเชิงกำหนด + ตรวจของจริง (นักเรียนก่อน · AI เป็นครู) · มั่นใจ ⇒ ยืนยันอัตโนมัติ ไม่งั้นรอผู้ใช้กดยืนยัน ·
+    /// ยอดภาษีผ่าน <c>WhtCertAmountResolver</c> ตัวเดิม (อ่านไม่ได้ ⇒ ไม่เครดิต)</para>
+    /// <para>คืน null = ไม่มีกล่องรับลงทะเบียน (ผู้เรียกบอกผู้ใช้ — ไม่เงียบ)</para></summary>
+    private async Task<Accounting.Models.DTOs.WhtCertSubmitResult?> EnsureWhtCreditFromCertAsync(Guid companyId, OcrScanResult result, Guid? documentId)
     {
-        // OcrScanResult ไม่มีช่อง "ยอดภาษีที่ถูกหัก" ตรง ๆ — มีแค่ HasWht/WhtRate
-        // จึงคำนวณจากฐาน × อัตรา ถ้าครบ
-        //
-        // ⚠️ เดิมบรรทัดสุดท้ายเป็น `derived > 0 ? derived : ExtractedTotalAmount`
-        // = **เอายอดรวมทั้งใบมาเป็นยอดภาษี** เมื่ออ่านฐาน/อัตราไม่ครบ ⇒ ใบ 50 ทวิ
-        // ยอด 1,070 หัก 3% ถูกบันทึกเป็นเครดิต CIT 1,070 บาทแทนที่จะเป็น 30 บาท
-        // และ IncomeAmount ถูกเขียน 0 ⇒ อัตราที่คำนวณกลับได้เป็นอนันต์ ไม่มีด่านไหน
-        // จับได้เลย แถวนั้นเป็น Status=Received ⇒ **หักภาษีจริงใน ภ.ง.ด.50 ทันที**
-        // นี่คือ "ค่า default ที่แต่งขึ้นเพื่อให้โค้ดเดินต่อได้" ในเส้นทางที่เป็นเงิน
-        // ตรรกะทั้งหมดอยู่ใน resolver กลางที่เทสต์ได้ (Helpers/WhtCertAmountResolver)
-        // — ตัวเลขภาษีต้องมีเทสต์ยืนยัน ไม่ใช่คำนวณสด ๆ กลางเมธอด async
-        var whtResolved = Accounting.Helpers.WhtCertAmountResolver.Resolve(
-            result.ExtractedSubTotal, result.WhtRate,
-            result.ExtractedTotalAmount, result.RawTextContent);
-        var whtAmount = whtResolved.Amount;
-        var needsReview = whtResolved.NeedsReview;
-
-        // อ่านไม่ได้ทั้งสองทาง = **ไม่รู้** → ยังบันทึกแถวไว้ให้ผู้ใช้เห็นและกรอกเอง
-        // แต่เป็น Pending (TaxService นับเฉพาะ Received/Claimed เข้าเครดิต CIT)
-        // ห้ามเดายอดแล้วตั้งเป็น Received เด็ดขาด
-        var unknownAmount = whtResolved.IsUnknown;
-
-        // กันซ้ำ: สแกนใบเดิมอีกรอบไม่ควรได้เครดิตสองเท่า
-        var certNo = result.ExtractedDocumentNumber?.Trim();
-        var dup = await _db.WhtCreditsReceived.AnyAsync(w => w.CompanyId == companyId
-            && ((documentId != null && w.DocumentId == documentId)
-                || (certNo != null && w.CertificateNumber == certNo)));
-        if (dup) return;
-
-        var docDate = result.ExtractedDate ?? DateTime.UtcNow.Date;
-        var ourProfile = await _db.Companies.AsNoTracking()
-            .Where(c => c.Id == companyId)
-            .Select(c => new { c.FiscalYearStartMonth, c.BusinessType })
-            .FirstOrDefaultAsync();
-        var startMonth = ourProfile?.FiscalYearStartMonth ?? 1;
-        var ourBusinessType = ourProfile?.BusinessType ?? BusinessType.JuristicPerson;
-        if (startMonth is < 1 or > 12) startMonth = 1;
-        var taxYear = docDate.Month >= startMonth ? docDate.Year : docDate.Year - 1;
-
-        // ── กันเครดิตซ้ำข้ามเส้นทาง (เงินก้อนเดียว 2 แถว) ─────────────────
-        // `DocumentService.SyncWhtCreditReceivedAsync` สร้างแถว **Pending**
-        // ไว้แล้วตอนรับชำระใบขาย (ผูกกับ**ใบขายต้นทาง**, ไม่มีเลขที่ใบรับรอง)
-        // ส่วนเมธอดนี้ผูกกับ **ReceiptVoucher ใบใหม่** ที่สร้างจากการสแกน
-        // ⇒ key ของสองทางไม่มีวันชนกัน ⇒ ภ.ง.ด.50 หักเครดิตเกินเท่าตัว
-        // (แถวหนึ่ง Received นับทันที อีกแถว Pending รอผู้ใช้กด "ได้รับใบแล้ว")
-        //
-        // ทางแก้: ถ้าเจอแถว Pending ของผู้จ่ายรายเดียวกัน ปีภาษีเดียวกัน
-        // ยอดใกล้เคียงกัน → **อัปเกรดแถวเดิม** (เติมเลขที่ใบ/ไฟล์แนบ/สถานะ)
-        // แทนการสร้างแถวใหม่ — ใบจริงคือหลักฐานของเงินก้อนเดิม ไม่ใช่ก้อนใหม่
-        if (!unknownAmount && result.MatchedContactId is Guid payerId)
+        if (_scopes == null)
         {
-            const decimal matchTolerance = 1m;
-            var candidates = await _db.WhtCreditsReceived
-                .Where(w => w.CompanyId == companyId && !w.IsDeleted
-                            && w.Status == WhtCreditStatus.Pending
-                            && w.PayerContactId == payerId
-                            && w.TaxYear == taxYear
-                            && w.CertificateNumber == null)
-                .ToListAsync();
-            var match = candidates
-                .FirstOrDefault(w => Math.Abs(w.WhtAmount - whtAmount) <= matchTolerance);
-            if (match != null)
-            {
-                match.CertificateNumber = certNo;
-                match.CertificateDate = result.ExtractedDate;
-                match.AttachmentId = result.FileAttachmentId;
-                match.Status = WhtCreditStatus.Received;   // มีใบจริงในมือแล้ว
-                match.Notes = (match.Notes ?? "") +
-                    $" · จับคู่กับหนังสือรับรองที่สแกน ({result.OriginalFileName})";
-                match.UpdatedAt = DateTime.UtcNow;
-                await _db.SaveChangesAsync();
-                _logger.LogInformation(
-                    "จับคู่ใบ 50 ทวิ ที่สแกนกับเครดิตที่รอใบอยู่แล้ว (credit {Id}) — ไม่สร้างแถวใหม่",
-                    match.Id);
-                return;
-            }
+            _logger.LogError("ไม่มี IServiceScopeFactory — ใบ 50 ทวิ จากสแกน {Id} ไม่เข้ากล่องรับ", result.Id);
+            return null;
         }
-        var baseAmount = result.ExtractedSubTotal ?? 0m;
-        _db.WhtCreditsReceived.Add(new WhtCreditReceived
+        using var scope = _scopes.CreateScope();
+        var intake = scope.ServiceProvider.GetService(typeof(Services.Interfaces.IWhtCertIntakeService)) as Services.Interfaces.IWhtCertIntakeService;
+        if (intake == null)
         {
-            CompanyId = companyId,
-            TaxYear = taxYear,
-            CertificateNumber = certNo,
-            CertificateDate = result.ExtractedDate,
-            PayerContactId = result.MatchedContactId,
-            // ผู้จ่าย = ผู้ที่หักเรา — บนใบคือคู่ค้าที่ OCR อ่านได้
-            PayerName = result.ExtractedVendorName ?? "",
-            PayerTaxId = result.ExtractedVendorTaxId,
-            // แบบที่ผู้จ่ายต้องยื่นตัดสินจาก **ผู้ถูกหัก = ตัวเรา** ไม่ใช่ผู้จ่าย:
-            // หักจากบุคคลธรรมดา → ภ.ง.ด.3 · หักจากนิติบุคคล → ภ.ง.ด.53
-            // เดิม hardcode Pnd53 เสมอ ⇒ ผู้ใช้ที่เป็นบุคคลธรรมดา/คณะบุคคล
-            // (BusinessType.Individual) ได้แบบผิดทุกใบโดยไม่มีอะไรบอกว่าเป็นการเดา
-            PayerFormType = ourBusinessType == BusinessType.Individual
-                ? WhtPayerFormType.Pnd3
-                : WhtPayerFormType.Pnd53,
-            // ประเภทเงินได้ — ป้อนให้ CheckRate ตรวจอัตรากับ ท.ป.4/2528 ได้
-            // ★ ตัวอ่านอยู่ที่ Helpers/WhtCertIncomeType — ส่งฐานเงินได้ไปช่วยชี้ขาด
-            // ด้วย (ฟอร์ม 50 ทวิ พิมพ์ทุกประเภทเป็นรายการให้ติ๊ก ⇒ ต้องดูว่า
-            // **แถวไหนมีจำนวนเงิน** ไม่ใช่ดูว่าคำไหนปรากฏ)
-            IncomeTypeCode = Accounting.Helpers.WhtCertIncomeType.Infer(
-                result.RawTextContent, baseAmount > 0m ? baseAmount : null),
-            IncomeAmount = baseAmount,
-            WhtRate = whtResolved.Rate,
-            WhtAmount = whtAmount,
-            // มีใบจริงอยู่ในมือแล้ว (นี่คือตัวใบที่เพิ่งสแกน) → ใช้เครดิตได้เลย
-            // **ยกเว้น** อ่านยอดภาษีไม่ได้เลย → Pending เพื่อให้ TaxService
-            // (นับเฉพาะ Received/Claimed) ไม่เอาไปหักภาษีจนกว่าคนจะกรอกยอดจริง
-            Status = unknownAmount ? WhtCreditStatus.Pending : WhtCreditStatus.Received,
-            DocumentId = documentId,
-            AttachmentId = result.FileAttachmentId,
-            Notes = $"สร้างจากการสแกนหนังสือรับรอง ({result.OriginalFileName})"
-                + (unknownAmount
-                    ? " — ⚠️ อ่าน \"ยอดภาษีที่หักและนำส่ง\" จากใบไม่ได้ "
-                      + "กรุณากรอกยอดแล้วกดยืนยันเพื่อใช้เป็นเครดิต (ยังไม่ถูกนับใน ภ.ง.ด.50)"
-                    : needsReview
-                        ? " — ⚠️ อ่านอัตรา/ฐานภาษีไม่ครบ ยอดภาษีมาจากจำนวนเงินตัวอักษรบนใบ กรุณาตรวจก่อนใช้เครดิต"
-                        : ""),
-        });
-        await _db.SaveChangesAsync();
-        _logger.LogInformation("บันทึกเครดิตภาษีถูกหักจากหนังสือรับรองที่สแกน {Amount} (scan {Id})",
-            whtAmount, result.Id);
+            _logger.LogError("ไม่ได้ลงทะเบียน IWhtCertIntakeService — ใบ 50 ทวิ จากสแกน {Id} ไม่เข้ากล่องรับ", result.Id);
+            return null;
+        }
+        return await intake.SubmitFromScanAsync(companyId, result.Id, WhtCertIntakeChannel.Scan,
+            documentId is Guid d ? new[] { d } : null, "สแกนเอกสาร", null);
     }
 
     // InferCurrency ย้ายไป Helpers/OcrCurrencyEvidence (รอบ 200 ทีม K2 · C-09) — ตัวเดิมอ่าน "บาท" ทั้งหน้า ⇒ ใบ USD ที่มีบรรทัดอ้างอิงอัตรา
@@ -6833,17 +6731,26 @@ public class OcrService : IOcrService
                 result.RawTextContent, ourTaxIdForCert);
             if (certWeAreWithheld == true && (result.ExtractedTotalAmount ?? 0) > 0)
             {
-                try { await EnsureWhtCreditFromCertAsync(companyId, result, null); }
+                // รอบ 252 (WP-09): ใบเข้ากล่องรับผ่านประตูเดียว — ผลจริง (ยืนยันอัตโนมัติ/รอยืนยัน/ตีกลับ/ล้ม) ขึ้นถึงผู้ใช้ ไม่ประกาศว่า "ลงทะเบียนแล้ว" เอง
+                string intakeNote;
+                try
+                {
+                    var intake = await EnsureWhtCreditFromCertAsync(companyId, result, null);
+                    intakeNote = intake == null
+                        ? "ส่งเข้ากล่องรับ 50 ทวิ ไม่ได้ (ระบบกล่องรับไม่พร้อม) — อัปโหลดใบที่หน้า \"ภาษีถูกหัก ณ ที่จ่าย\" อีกครั้ง"
+                        : "ส่งเข้ากล่องรับ 50 ทวิ แล้ว — " + intake.Message;
+                }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "ลงทะเบียนภาษีถูกหักจากหนังสือรับรองไม่สำเร็จ (scan {Id})", result.Id);
+                    _logger.LogError(ex, "ส่งใบ 50 ทวิ จากสแกนเข้ากล่องรับไม่สำเร็จ (scan {Id})", result.Id);
+                    intakeNote = "ส่งเข้ากล่องรับ 50 ทวิ ไม่สำเร็จ (" + ex.Message + ") — อัปโหลดใบที่หน้า \"ภาษีถูกหัก ณ ที่จ่าย\" อีกครั้ง";
                 }
                 result.ProcessingNotes = (result.ProcessingNotes ?? "")
-                    + "\n[WHT-CERT] หนังสือรับรอง 50 ทวิ ที่เราถูกหัก — ลงทะเบียนเครดิตภาษี (ภ.ง.ด.50/51) ให้แล้ว ไม่สร้างเอกสารขายใหม่";
+                    + "\n[WHT-CERT] หนังสือรับรอง 50 ทวิ ที่เราถูกหัก — " + intakeNote + " · ไม่สร้างเอกสารขายใหม่";
                 await _db.SaveChangesAsync();
                 throw new Accounting.Helpers.BusinessRuleException(
-                    "กระดาษนี้เป็นหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่บริษัทเรา“ถูกหัก” — ไม่ใช่ใบขายใบใหม่ "
-                    + "ระบบลงทะเบียนเครดิตภาษีไว้ให้แล้ว (เมนู ภาษีถูกหัก) · ถ้าต้องการบันทึกรับเงิน ให้เปิดใบแจ้งหนี้/ใบกำกับเดิม "
+                    "กระดาษนี้เป็นหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่บริษัทเรา“ถูกหัก” — ไม่ใช่ใบขายใบใหม่ · "
+                    + intakeNote + " (เมนู ภาษีถูกหัก › กล่องรับ 50 ทวิ) · ถ้าต้องการบันทึกรับเงิน ให้เปิดใบแจ้งหนี้/ใบกำกับเดิม "
                     + "แล้วบันทึกรับชำระโดยระบุยอดหัก ณ ที่จ่าย แทนการสร้างเอกสารจากสแกน",
                     "OCR-WHTCERT-NO-SALE");
             }
@@ -7645,12 +7552,21 @@ public class OcrService : IOcrService
                 result.RawTextContent, ourTaxId);
             if (weAreWithheld == true && (result.ExtractedTotalAmount ?? 0) > 0)
             {
-                await EnsureWhtCreditFromCertAsync(companyId, result, document.Id);
+                // ฝ่ายค้าน WP-09 L6: ผลจริงของกล่องรับถึงผู้ใช้ทางหมายเหตุของสแกน (ไม่ใช่ log อย่างเดียว)
+                var intakeResult = await EnsureWhtCreditFromCertAsync(companyId, result, document.Id);
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[WHT-CERT] หนังสือรับรอง 50 ทวิ ที่เราถูกหัก — "
+                    + (intakeResult == null ? "ส่งเข้ากล่องรับไม่ได้ (ระบบกล่องรับไม่พร้อม) — อัปโหลดใบที่หน้า \"ภาษีถูกหัก ณ ที่จ่าย\" อีกครั้ง"
+                        : "ส่งเข้ากล่องรับแล้ว — " + intakeResult.Message);
+                await _db.SaveChangesAsync();
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "บันทึกทะเบียนภาษีถูกหักจากหนังสือรับรองไม่สำเร็จ (scan {Id})", result.Id);
+            _logger.LogError(ex, "ส่งใบ 50 ทวิ จากสแกนเข้ากล่องรับไม่สำเร็จ (scan {Id})", result.Id);
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[WHT-CERT] ส่งเข้ากล่องรับ 50 ทวิ ไม่สำเร็จ (" + ex.Message
+                + ") — อัปโหลดใบที่หน้า \"ภาษีถูกหัก ณ ที่จ่าย\" อีกครั้ง";
+            try { await _db.SaveChangesAsync(); }
+            catch (Exception saveEx) { _logger.LogError(saveEx, "บันทึกหมายเหตุ 50 ทวิ ของสแกน {Id} ไม่สำเร็จ", result.Id); }
         }
 
         if (_rdComplianceValidator != null)

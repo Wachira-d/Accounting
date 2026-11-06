@@ -906,6 +906,10 @@ public partial class PdpaService : IPdpaService
                 e.UpdatedBy = actor;
                 changed++;
             }
+            // รอบ 254 WP-11 L2: ลิงก์/QR ผูก LINE ที่ยังไม่ถูกใช้ของผู้ติดต่อรายนี้ ⇒ ยกเลิก (ไม่ให้ผูกปลายทางใหม่หลังลบตามคำขอ) · tenant
+            changed += await _db.ContactLineInvites
+                .Where(i => i.CompanyId == companyId && i.ContactId == contactId.Value && i.UsedAt == null && i.RevokedAt == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(i => i.RevokedAt, (DateTime?)DateTime.UtcNow), ct);
 
             // ── รอบ 239 ฝ่ายค้าน N: หลักฐานการยอมรับใบเสนอราคา/เซ็นรับสินค้าออนไลน์ของคู่ค้ารายนี้ (ม.33) ──
             // ใบที่ยังอยู่ในอายุเก็บ (QuotationAcceptance.UnderLegalHold = MAX(RetentionUntil, วันที่เอกสาร + 5 ปี) · พ.ร.บ.การบัญชี ม.14 ·

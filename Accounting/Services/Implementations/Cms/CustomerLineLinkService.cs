@@ -327,7 +327,12 @@ public class CustomerLineLinkService : ICustomerLineLinkService
             using var content = new StringContent(JsonSerializer.Serialize(new { replyToken, messages = new[] { new { type = "text", text } } }),
                 Encoding.UTF8, "application/json");
             var resp = await client.PostAsync("https://api.line.me/v2/bot/message/reply", content, ct);
-            if (resp.IsSuccessStatusCode) return true;
+            if (resp.IsSuccessStatusCode)
+            {
+                // รอบ 254 WP-11 L4 (N8): นับ reply ของ OA กลาง (OA ของบริษัทไม่นับ — บริษัทจ่ายเอง) · นับไม่สำเร็จไม่ทำให้การตอบล้ม (log Error)
+                if (scope != CustomerNotifyChannel.ScopeCompany) await NextAccOaUsage.IncrementAsync(_db, NextAccOaQuotaRule.KindReply, _logger, ct);
+                return true;
+            }
             _logger.LogWarning("LINE reply ({Scope}) ตอบ {Status}", scope, (int)resp.StatusCode);
             return false;
         }

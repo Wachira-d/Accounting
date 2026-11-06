@@ -341,6 +341,26 @@ public class CompanySettings : TenantEntity
     public bool PostPayEmailReceipt { get; set; } = false;
     /// <summary>ส่งทุกงวดที่รับ (false = เฉพาะงวดที่ชำระครบ) · ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c></summary>
     public bool PostPayIncludePartial { get; set; } = false;
+    /// <summary>รอบ 253 (WP-10 · AUTO_SEND §4.3 · คำตัดสินเจ้าของ §11 ข้อ 4): ทวงหนังสือรับรอง 50 ทวิ อัตโนมัติทางอีเมล (7/21/45 วัน + รายเดือนสูงสุด 6 ครั้ง) ·
+    /// <b>ค่าตั้งต้นปิด</b> (คำตัดสิน 253-WP10-4: อีเมลถึงลูกค้าจริงต้องเปิดเอง) · ผู้อ่าน: <c>WhtCertReminderService.RunCompanyAsync</c></summary>
+    public bool WhtCertReminderEnabled { get; set; } = false;
+    /// <summary>รอบ 253: watermark ต่อบริษัทของงานทวง 50 ทวิ (รอบล่าสุดที่ประมวลผลบริษัทนี้ · ระบบเขียนเอง) — ผู้อ่าน: <c>WhtCertReminderService.DueCompaniesAsync</c></summary>
+    public DateTime? WhtCertReminderLastRunAt { get; set; }
+
+    // ── รอบ 252 WP-12A (AUTOPILOT §5 · §7 · §10 · คำตัดสิน §2 #36) — หน้า: Autopilot (autopilot.html) · API: AutopilotController ──
+    /// <summary>ปิดหนี้อัตโนมัติจากเงินโอนในรายการเดินบัญชี (ยอดสุทธิตรงเป๊ะ + ตัวระบุตัว + ยอดไม่ซ้ำ — <c>BankReceiptAutoSettle</c>) · <b>ค่าตั้งต้นปิด</b>
+    /// (Q4: ปิด + ดูผลจำลอง 30 วันก่อนเปิด) · ปิด = ระบบเสนอให้คนยืนยันเท่านั้น · ผู้อ่าน: <c>BankReceiptSettleService.EvaluateCompanyAsync</c></summary>
+    public bool BankAutoSettleEnabled { get; set; } = false;
+    /// <summary>ค่าตั้งต้นของบริษัท "ลูกค้ายอมรับใบเสนอราคาออนไลน์แล้วแปลงอัตโนมัติ" (Off · ToInvoice · ToTaxInvoice) · null = Off (Q5) ·
+    /// ใบเสนอราคาทับได้ต่อใบ · ผู้อ่าน: <c>QuotationAcceptAutopilotService.RunOnceAsync</c></summary>
+    public string? QuotationAcceptAutopilotDefault { get; set; }
+    /// <summary>watermark ของค่าตั้งต้นบริษัท — ประทับตอนเปลี่ยนจาก "ไม่แปลง" เป็นแปลง · ใบที่ลูกค้ายอมรับ<b>ก่อน</b>เวลานี้ไม่ถูกแปลงย้อนหลังเงียบ ๆ
+    /// (ใบที่ตั้งโหมดต่อใบเองไม่ติด watermark — ผู้ใช้ตั้งเองตั้งใจ) · ผู้อ่าน: <c>QuotationAcceptAutopilotService.RunOnceAsync</c></summary>
+    public DateTime? QuotationAcceptAutopilotSince { get; set; }
+    /// <summary>เวลาส่งสรุป Autopilot ประจำวันถึงทีม (เวลาไทย "HH:mm") · null = 08:40 (Q7) · ผู้อ่าน: <c>AutopilotDigestService.RunOnceAsync</c> (ผ่าน <c>AutopilotNotice.DigestDue</c>)</summary>
+    public string? AutopilotDigestLocalTime { get; set; }
+    /// <summary>watermark: วันไทยล่าสุดที่ส่งสรุปแล้ว (ประทับแบบ compare-and-set ก่อนส่ง — หลายเครื่องส่งครั้งเดียว) · ระบบเขียนเท่านั้น</summary>
+    public DateTime? AutopilotDigestLastSentOn { get; set; }
 
     // ── พ.ร.บ.การบัญชี ม.19 (คุณสมบัติตาม ม.7(6)) — ผู้ทำบัญชี (Bookkeeper / CPD) ──
     // กฎหมาย: งบการเงินที่นำส่ง DBD ต้องระบุชื่อ + เลขทะเบียนผู้ทำบัญชี (CPD)

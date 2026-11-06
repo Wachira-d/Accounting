@@ -1,6 +1,6 @@
 # ratchet ของ tools/raw_fetch_api_check.py (รอบ 201 ทีม OC · A-OC3) — fetch('/api/…') ดิบที่มีอยู่ก่อนกติกา ต่อไฟล์ใน wwwroot/pages
 # ลดลงเท่านั้น: ย้ายไป API.* แล้วลดตัวเลข · ห้ามเพิ่มแถว/ตัวเลขเพื่อให้ checker เขียว · document-scan.html = 0 ตั้งแต่รอบ 201
-account-subscription.html 5
+account-subscription.html 0
 accountant-workspace.html 1
 addons.html 1
 admin-ai-usage.html 1
@@ -10,10 +10,10 @@ bank.html 2
 cash-forecast.html 1
 cash-management.html 14
 cleanup.html 3
-contacts.html 2
+contacts.html 0
 delivery-sign.html 2
 document-templates.html 4
-documents.html 22
+documents.html 20
 email-schedule.html 0
 etax.html 1
 expense.html 3
@@ -36,8 +36,8 @@ products.html 5
 quotation-accept.html 0
 recurring.html 0
 sensitivity.html 2
-settings.html 6
+settings.html 0
 sme-config.html 19
-subscription.html 1
+subscription.html 0
 tax.html 2
 vat-history.html 4

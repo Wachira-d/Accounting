@@ -51,12 +51,29 @@ public class NotifyUsageCounter
 {
     public Guid CompanyId { get; set; }
     public string Period { get; set; } = "";
+    /// <summary>รอบ 254 WP-11 L4: ช่องของตัวนับ — <c>all</c> (ก้อนรวมเดิม) · <c>line</c> · <c>email</c> (<see cref="Accounting.Helpers.NotifyQuotaPolicy"/>) · PK (CompanyId, Period, Channel)</summary>
+    public string Channel { get; set; } = Accounting.Helpers.NotifyQuotaPolicy.ChannelAll;
     /// <summary>ข้อความที่นับในเพดานแพ็กเกจ (รวมข้อความจำเป็นที่นับเกินเพดาน)</summary>
     public int Used { get; set; }
     /// <summary>ข้อความที่ใช้โบนัส (แพ็กที่ซื้อ)</summary>
     public int BonusUsed { get; set; }
     public DateTime? Warned80At { get; set; }
     public DateTime? Warned100At { get; set; }
+}
+
+/// <summary>
+/// รอบ 254 WP-11 L4 (N8) — ตัวนับต้นทุนของ <b>OA กลาง</b> ต่องวด (เดือนเวลาไทย) ต่อชนิด (<c>reply</c> นับเองทุกครั้งที่ตอบสำเร็จ · <c>push</c> = ยอดจาก LINE ล่าสุด) ·
+/// PK (Period, Kind) · ระดับแพลตฟอร์ม (ไม่มี CompanyId — ต้นทุนรวมของ OA กลาง) · ตัวตัดสิน <see cref="Accounting.Helpers.NextAccOaQuotaRule"/>
+/// </summary>
+public class NextAccOaUsageCounter
+{
+    public string Period { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public long Count { get; set; }
+    /// <summary>เพดานที่ LINE ให้ (push) · null = ไม่รู้/ไม่จำกัด</summary>
+    public long? Limit { get; set; }
+    public DateTime? WarnedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
 }
 
 /// <summary>สถานะของ <see cref="CustomerNotifyLog"/> (เก็บเป็นข้อความ)</summary>

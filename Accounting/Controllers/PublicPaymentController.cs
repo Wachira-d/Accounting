@@ -50,12 +50,16 @@ public class PublicPaymentController : ControllerBase
     /// <summary>รอบ 241: ลิงก์ชำระเงินของเอกสาร (null = สร้างนอก DI — เส้นเอกสารตอบ 404)</summary>
     private readonly Accounting.Services.Interfaces.IDocumentPayLinkService? _docLinks;
 
+    /// <summary>รอบ 255 WP-12B ข้อ 1: ประตูเดียวของการแจ้งโอน (null = สร้างนอก DI — แจ้งโอนจากหน้าชำระตอบ 503)</summary>
+    private readonly Accounting.Services.Implementations.SlipEvidenceService? _slips;
+
     public PublicPaymentController(IPaymentIntentService intents, IPublicPaymentResolver resolver,
         IEnumerable<IPaymentProvider> providers,
         AccountingDbContext db, ILogger<PublicPaymentController> logger,
         Accounting.Services.Interfaces.ILodgingService lodging,
-        Accounting.Services.Interfaces.IDocumentPayLinkService? docLinks = null)
-    { _intents = intents; _resolver = resolver; _providers = providers; _db = db; _logger = logger; _lodging = lodging; _docLinks = docLinks; }
+        Accounting.Services.Interfaces.IDocumentPayLinkService? docLinks = null,
+        Accounting.Services.Implementations.SlipEvidenceService? slips = null)
+    { _intents = intents; _resolver = resolver; _providers = providers; _db = db; _logger = logger; _lodging = lodging; _docLinks = docLinks; _slips = slips; }
 
     /// <summary>เพดานการสร้าง intent ต่อ source ต่อชั่วโมง — กันคนกดรัวจนตาราง
     /// intent บวมและกัน provider โดนยิงแทนเรา (StartAsync ใช้ intent เดิมซ้ำอยู่แล้ว
@@ -69,7 +73,10 @@ public class PublicPaymentController : ControllerBase
     /// webhook ยังเป็นเส้นหลักอยู่แล้ว — การ poll เป็นตาข่ายรับเมื่อ webhook หาย</para></summary>
     private static readonly TimeSpan MinLiveRefreshInterval = TimeSpan.FromSeconds(5);
 
-    public sealed record StartRequest(PaymentMethodKind Method, string? ReturnUrl = null, string? CardToken = null);
+    /// <param name="NoWithholding">รอบ 253 (WP-10): ลูกค้าเลือก "ไม่หัก ณ ที่จ่าย" (ลิงก์ชำระของเอกสารเท่านั้น) — หน้าเว็บส่งแค่ตัวเลือก ไม่ส่งยอด</param>
+    /// <param name="NoWhtAccepted">ติ๊กยืนยันคำเตือน · <paramref name="NoWhtNoticeVersion"/> = version ของข้อความที่หน้าแสดง · <paramref name="PayerName"/> = ชื่อผู้กด (ไม่บังคับ)</param>
+    public sealed record StartRequest(PaymentMethodKind Method, string? ReturnUrl = null, string? CardToken = null,
+        bool NoWithholding = false, bool NoWhtAccepted = false, string? NoWhtNoticeVersion = null, string? PayerName = null);
 
     /// <summary>ข้อมูลที่หน้าจ่ายเงินต้องใช้ — ไม่มี secret · ไม่มีชื่อเจ้า</summary>
     public sealed record PublicIntentResponse(
@@ -183,13 +190,77 @@ public class PublicPaymentController : ControllerBase
 
     [HttpPost("documents/{token}/intents")]
     public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StartDocument(
-        Guid companyId, string token, [FromBody] StartRequest req, CancellationToken ct)
-        => StartAsync(companyId, () => ResolveDocumentAsync(companyId, token, ct), req, ct);
+        Guid companyId, string token, [FromBody] StartRequest req, CancellationToken ct = default)
+    {
+        // ฝ่ายค้าน WP-10 H1 (คำตัดสิน 253-WP10-8): "ไม่หัก ณ ที่จ่าย" ปฏิเสธ<b>ก่อน</b>สร้างรายการชำระ — ไม่มีเงินเคลื่อน · ไม่บันทึกการยอมรับ (L1) ·
+        // เหตุ: ยอดค้างของเอกสารเป็นยอดสุทธิหลังหัก ⇒ เงินเต็มยอดเข้ามาแล้วตัวบันทึกรับชำระลงไม่ได้ (เงินเข้าแต่ไม่ถูกบันทึก) · เส้นที่ถูก = backlog
+        if (NoWhtChoicePolicy.StartRefusal(req.NoWithholding, new NoWhtChoicePolicy.Offer(false, false, 0m)) is string noWhtRefusal)
+            return Task.FromResult<ActionResult<ApiResponse<PublicIntentResponse>>>(
+                BadRequest(new ApiResponse<PublicIntentResponse>(false, null, noWhtRefusal)));
+        return StartAsync(companyId, () => ResolveDocumentAsync(companyId, token, ct), req, ct);
+    }
 
     [HttpGet("documents/{token}/intents/{intentId:guid}")]
     public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StatusDocument(
         Guid companyId, string token, Guid intentId, CancellationToken ct)
         => StatusAsync(companyId, intentId, () => ResolveDocumentAsync(companyId, token, ct), ct);
+
+    /// <summary>คำตอบของการแจ้งโอน — ไม่มีรหัสภายใน (รหัสรายการ/ที่อยู่ไฟล์) เพราะผู้ถือโทเคนไม่ใช่ผู้ใช้ของระบบ</summary>
+    public sealed record PublicSlipResponse(decimal Amount, string Status, string Message);
+
+    /// <summary>
+    /// **แจ้งโอน + แนบสลิปจากหน้าชำระของเอกสาร** (รอบ 255 WP-12B ข้อ 1 · AUTOPILOT §5.6–5.7 · ปลดคำตัดสิน 241-2 ด้วยด่านครบ — DECISIONS 255-WP12B-1)
+    /// <para>พิสูจน์สิทธิ์ด้วยโทเคนลิงก์ชำระ (สุ่ม · เก็บเป็น hash · ตัดสินสดทุกครั้ง) · ยอด = ยอดสุทธิของลิงก์ (ไม่รับยอดจากหน้าเว็บ) · ชนิดไฟล์จากไบต์จริง
+    /// (JPEG/PNG/WEBP/PDF) · ≤ 10 MB · มีสลิปรอตรวจของใบนี้แล้ว = ไม่รับเพิ่ม · ≤ 5 ครั้ง/ใบ/ชม. (นับในฐาน) · กันซ้ำทั้งบริษัท (แฮชไฟล์ + เลขอ้างอิง)</para>
+    /// <para><b>ผล = รายการรอผู้ขายยืนยัน</b> — ไม่ประทับ "ชำระแล้ว" (ทางเดียวกับพอร์ทัล: <c>SlipEvidenceService.SubmitAsync</c>)</para>
+    /// </summary>
+    [HttpPost("documents/{token}/slip")]
+    [RequestSizeLimit(SlipEvidenceRule.PayLinkMaxBytes + 64 * 1024)]
+    public async Task<ActionResult<ApiResponse<PublicSlipResponse>>> SubmitDocumentSlip(
+        Guid companyId, string token, IFormFile? file, [FromForm] string? bankRef, CancellationToken ct)
+    {
+        var view = _docLinks == null ? null : await _docLinks.PublicViewAsync(companyId, token, ct);
+        if (view == null || string.IsNullOrEmpty(view.DocumentNumber))
+            return NotFound(new ApiResponse<PublicSlipResponse>(false, null, "ลิงก์ไม่ถูกต้อง — กรุณาติดต่อผู้ขาย"));
+        if (_slips == null)
+            return StatusCode(503, new ApiResponse<PublicSlipResponse>(false, null, "ระบบรับสลิปยังไม่พร้อม — กรุณาติดต่อผู้ขาย"));
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<PublicSlipResponse>(false, null, "กรุณาเลือกไฟล์สลิป"));
+        if (file.Length > SlipEvidenceRule.PayLinkMaxBytes)
+            return BadRequest(new ApiResponse<PublicSlipResponse>(false, null, "ไฟล์ใหญ่เกิน 10 MB — ถ่ายภาพหน้าจอสลิปแล้วแนบใหม่"));
+
+        var (pending, lastHour) = await _slips.PayLinkLoadAsync(companyId, view.SlipDocumentId, ct);
+        if (SlipEvidenceRule.PayLinkSlipProblem(view.CanSubmitSlip, pending, lastHour) is string problem)
+            return StatusCode(pending || !view.CanSubmitSlip ? 409 : 429, new ApiResponse<PublicSlipResponse>(false, null, problem));
+
+        byte[] bytes;
+        await using (var hs = file.OpenReadStream())
+        using (var ms = new MemoryStream())
+        {
+            await hs.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+        var type = SlipEvidenceRule.DetectPublicType(bytes);
+        if (type == null)
+            return BadRequest(new ApiResponse<PublicSlipResponse>(false, null, "รองรับเฉพาะรูปภาพ (JPEG/PNG/WEBP) หรือ PDF ของสลิป"));
+
+        try
+        {
+            var r = await _slips.SubmitAsync(companyId, view.SlipDocumentId, view.Target.ContactId,
+                new Accounting.Services.Implementations.SlipFile(bytes, type, Path.GetFileName(file.FileName ?? "")),
+                view.SlipAmount, bankRef, Accounting.Services.Implementations.SlipEvidenceService.ChannelPayLink, ct);
+            return Ok(new ApiResponse<PublicSlipResponse>(true, new PublicSlipResponse(r.Intent.Amount, "AwaitingReview",
+                "ได้รับสลิปแล้ว — ผู้ขายจะตรวจยอดและยืนยันการชำระ (สถานะยังไม่เปลี่ยนเป็น \"ชำระแล้ว\" จนกว่าผู้ขายยืนยัน)")));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new ApiResponse<PublicSlipResponse>(false, null, "ลิงก์ไม่ถูกต้อง — กรุณาติดต่อผู้ขาย"));
+        }
+        catch (BusinessRuleException ex)
+        {
+            return StatusCode(ex.StatusCode, new ApiResponse<PublicSlipResponse>(false, null, ex.Message));
+        }
+    }
 
     // ═══════════════ แกนกลาง — ทางเข้าทุกเส้นเดินผ่านสองเมธอดนี้ ═══════════════
 

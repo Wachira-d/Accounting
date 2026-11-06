@@ -1100,7 +1100,21 @@ public record DocumentResponse(
     /// <summary>รอบ 250 WP-03 (D §3.4 · server computes): ใบนี้ควรแสดงแผง "สินทรัพย์ถาวร" ไหม — ชนิดฝั่งซื้อที่ลงทะเบียนอัตโนมัติได้
     /// (<c>FixedAssetService.SupportsAutoRegister</c>) + มีบรรทัดผังสินทรัพย์ (12xxx) หรือมัดจำ (118xx) · บรรทัดไหนผูกได้จริงยังตัดสินที่
     /// <c>GetDocumentAssetLinesAsync</c> · เดิมหน้าเว็บถือกติกาเอง ⇒ เพิ่มผังใหม่ที่เซิร์ฟเวอร์เมื่อไรแผงหายเงียบ</summary>
-    bool HasAssetCandidateLines = false);
+    bool HasAssetCandidateLines = false,
+    /// <summary>รอบ 252 (WP-09 · AUTO_SEND §4.2 · server computes): สถานะ 50 ทวิ ที่ลูกค้าต้องส่งให้เรา — ชื่อ enum <c>WhtCertIntakeStatus.State</c>
+    /// (ตัวตัดสินเดียว <c>Helpers/WhtCertIntakeStatus.Of</c> ผ่านตัวโหลด <c>Helpers/WhtCertTracking</c>) · ใบเสร็จที่ออกจากใบแจ้งหนี้แสดงสถานะของใบต้นทาง ·
+    /// null = ไม่ได้ตรวจ (เส้นทางที่ไม่คำนวณ) ≠ "NotApplicable" (ตรวจแล้วไม่มี WHT) — หลักการ #5</summary>
+    string? WhtCertState = null,
+    /// <summary>ป้ายภาษาไทยของ <see cref="WhtCertState"/> (เช่น "รอ 50 ทวิ · 12 วัน") — null เมื่อไม่ต้องแสดงชิป</summary>
+    string? WhtCertLabel = null,
+    /// <summary>โทนของชิป: none · muted · info · warning · danger · success (หน้าเว็บ map เป็นสีเท่านั้น)</summary>
+    string? WhtCertTone = null,
+    int? WhtCertDaysWaiting = null,
+    /// <summary>รอบ 255 ฝ่ายค้าน M1 (กฎ #4 A "เก็บแล้วต้อง echo กลับ"): หลักฐานภาษีซื้อของใบซื้อจากคู่ค้า NextAcc — ค่าคงที่ใน <c>Helpers/PartnerInputVatEvidence</c> ·
+    /// null = ไม่ใช่ใบจากคู่ค้า</summary>
+    string? PartnerInputVatEvidence = null,
+    /// <summary>ป้ายไทยของ <see cref="PartnerInputVatEvidence"/> (server computes)</summary>
+    string? PartnerInputVatEvidenceLabel = null);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);
@@ -1150,6 +1164,12 @@ public sealed record ReissueLineDescription(Guid LineId, string? Description);
 /// <param name="CreditNoteDocumentId">ทาง (ข): ใบลดหนี้ในระบบนี้ที่อ้างใบเสร็จ/ใบต้นทาง (ห้ามส่งแค่เลขที่ · ข้อ 47)</param>
 public sealed record ResolveEtaxCancellationRequest(string? Reason, string? RdCancellationReference,
     EtaxCancellationPath? Path = null, Guid? EvidenceAttachmentId = null, Guid? CreditNoteDocumentId = null);
+
+/// <summary>รอบ 255 (ETR-ACK) — คำขอ "ตรวจแล้ว" ของแถว e-Tax ในรายงานข้อ 44 (ตัวตรวจ <c>EtaxReissueReview.ValidateAcknowledgement</c>)</summary>
+/// <param name="Outcome"><c>RejectedOrNotReceived</c> (ถูกปฏิเสธ/ไม่เคยได้รับ) หรือ <c>CancelledAtRd</c> (ยกเลิกที่กรมสรรพากรแล้ว) — ไม่มี "ยังมีผล" (ต้องไปเส้นยกเลิกทาง e-Tax)</param>
+/// <param name="RdReference">เลขอ้างอิงการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ — บังคับเมื่อ <c>CancelledAtRd</c></param>
+/// <param name="Note">สิ่งที่ตรวจ (≥ 5 ตัวอักษร)</param>
+public sealed record AcknowledgeEtaxReviewRequest(string? Outcome, string? RdReference, string? Note);
 
 /// <summary>ผลของ "บันทึกการยกเลิกทาง e-Tax" (รอบ 200 ทีม V1G) — ใบต้นทาง (null = ไม่มี) + ข้อความที่บอกสิ่งที่ระบบทำจริง (ทาง ก/ข · ใบกำกับใหม่ที่ออก)</summary>
 public sealed record EtaxCancellationResult(DocumentResponse? Source, string Message);

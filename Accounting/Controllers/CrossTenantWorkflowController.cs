@@ -71,6 +71,14 @@ public class CrossTenantWorkflowController : ControllerBase
                 p.RejectedAt,
                 p.RejectionReason,
                 p.AutoApproveAmountLimit,
+                // รอบ 255 WP-12B ข้อ 7: เพดานใบซื้อร่างที่ "เรา" รับจากคู่นี้ (ฝั่งผู้รับ) + ป้ายสถานะไทยจากเซิร์ฟเวอร์
+                PurchaseDraftLimit = p.CompanyAId == companyId ? p.PurchaseDraftLimitA : p.PurchaseDraftLimitB,
+                StatusLabel = p.Status == TradingPartnershipStatus.Accepted ? "เชื่อมแล้ว"
+                    : p.Status == TradingPartnershipStatus.Suspended ? "ระงับชั่วคราว"
+                    : p.Status == TradingPartnershipStatus.Pending
+                        // รอบ 255 ฝ่ายค้าน LOW: แยกฝั่ง — คำเชิญที่เราส่ง = รอคู่ค้า · ที่เราได้รับ = รอเรา
+                        ? (p.InvitedByCompanyId == companyId ? "รอคู่ค้ายอมรับ" : "รอเรายอมรับ")
+                        : "ปฏิเสธแล้ว",
                 p.CreatedAt,
             })
             .ToListAsync();
@@ -152,6 +160,10 @@ public class CrossTenantWorkflowController : ControllerBase
             c.DefaultSignatureId,
             c.NotifyOnIncomingDocument,
             c.NotifyEmail,
+            // รอบ 255 WP-12B ข้อ 7–8 (ค่าตั้งต้นปิด)
+            c.CreatePurchaseDraftsFromPartners,
+            c.SendWhtCertsToPartners,
+            c.SendWhtCertsToPartnersSince,
         }));
     }
 
@@ -170,7 +182,11 @@ public class CrossTenantWorkflowController : ControllerBase
         bool? NotifyOnIncomingDocument,
         string? NotifyEmail,
         // ฝ่ายค้าน H3 (คำตัดสิน AUTOPILOT ข้อ 3): เปิดให้คู่ค้าที่ใช้ NextAcc ส่งคำเชิญถึงบริษัทนี้ · null = ไม่แก้ · ตั้งต้นปิด
-        bool? PartnerDiscoverable = null);
+        bool? PartnerDiscoverable = null,
+        // รอบ 255 WP-12B ข้อ 7: ใบซื้อร่างจากเอกสารของคู่ค้า (null = ไม่แก้ · ตั้งต้นปิด)
+        bool? CreatePurchaseDraftsFromPartners = null,
+        // รอบ 255 WP-12B ข้อ 8: ส่ง 50 ทวิ ให้คู่ค้าอัตโนมัติ (null = ไม่แก้ · ตั้งต้นปิด · เปิด = ประทับเวลาเริ่ม — ไม่ส่งย้อนหลัง)
+        bool? SendWhtCertsToPartners = null);
 
     // ID#10: ค่าตั้งนี้คุมการอนุมัติอัตโนมัติ + ผู้ลงนามในนามบริษัท = ด่านควบคุมภายในชุดเดียวกับกฎการอนุมัติ (สิทธิ์ตั้งค่าบริษัท · ไม่รับ API key)
     [HttpPut("workflow-automation")]
@@ -191,6 +207,14 @@ public class CrossTenantWorkflowController : ControllerBase
             await _service.ApplyDefaultSignerAsync(c, req.DefaultApproverUserId, req.DefaultSignatureId);
         if (req.NotifyOnIncomingDocument.HasValue) c.NotifyOnIncomingDocument = req.NotifyOnIncomingDocument.Value;
         if (req.NotifyEmail != null) c.NotifyEmail = req.NotifyEmail;
+        if (req.CreatePurchaseDraftsFromPartners.HasValue) c.CreatePurchaseDraftsFromPartners = req.CreatePurchaseDraftsFromPartners.Value;
+        if (req.SendWhtCertsToPartners.HasValue)
+        {
+            // เปิดจากปิด = ประทับเวลาเริ่มใหม่ (ส่งเฉพาะใบที่ออกหลังจากนี้) · ปิด = ล้าง
+            if (req.SendWhtCertsToPartners.Value && !c.SendWhtCertsToPartners) c.SendWhtCertsToPartnersSince = DateTime.UtcNow;
+            if (!req.SendWhtCertsToPartners.Value) c.SendWhtCertsToPartnersSince = null;
+            c.SendWhtCertsToPartners = req.SendWhtCertsToPartners.Value;
+        }
         if (req.PartnerDiscoverable.HasValue)
         {
             var company = await _db.Companies.FirstOrDefaultAsync(x => x.Id == companyId)

@@ -29,6 +29,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 WATCHED = [
     "Accounting/Controllers/DocumentController.cs",
+    # รอบ 252 (WP-09): กล่องรับ 50 ทวิ — ยืนยัน/ตีกลับ/อัปโหลด = ตั้งเครดิตภาษี ภ.ง.ด.50 (Tax.File)
+    "Accounting/Controllers/WhtCertIntakeController.cs",
     "Accounting/Controllers/PayrollController.cs",
     # เพิ่มรอบ 126d — ทุก write ที่นี่ "ก่อค่าใช้จ่ายให้บริษัท" (เปิด add-on รายเดือน ·
     # ซื้อโควตา · ส่งหลักฐานชำระเงิน) แต่มีแค่ [Authorize] ระดับคลาสมาตลอด
@@ -149,6 +151,12 @@ WATCHED = [
     # (ลงนามในนามบริษัท + สร้าง PO ปลายน้ำ) เดิมมีแค่ [Authorize] และอยู่ใน baseline 6 แถว ⇒ ปิดด่านครบ (CompanySettings.Edit ·
     # DocumentPermissionHelper.CanApproveAsync ฝั่งซื้อ) ⇒ ถอดจาก baseline + ย้ายเข้า WATCHED ตอนเขียว
     "Accounting/Controllers/CrossTenantWorkflowController.cs",
+    # รอบ 252 WP-12A — หน้า Autopilot: ยืนยันเงินโอน = บันทึกรับชำระ (Bank.Reconcile) · ค่าตั้งปิดหนี้อัตโนมัติ/แปลงใบเสนอราคา (CompanySettings.Edit) ·
+    # ตั้ง/ลองแปลงใบเสนอราคา (Document.Create) — ใส่ตอนเขียวตั้งแต่ไฟล์เกิด (ratchet)
+    "Accounting/Controllers/AutopilotController.cs",
+    # รอบ 252 WP-12A ฝ่ายค้านรอบสอง H-B — การเชื่อมต่อธนาคาร/ดึงรายการ/นำเข้าไฟล์ = เขียนหลักฐานเงินเข้า (Bank.Reconcile ทุก write · ใส่ตอนเขียว)
+    "Accounting/Controllers/OpenBankingController.cs",
+    "Accounting/Controllers/BankFeedController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -267,6 +275,9 @@ READ_ONLY_POSTS_IN_FILE = {
     # รอบ 214: ตัวอย่างหน้านโยบาย/ข้อกำหนดของร้าน — แปลง markdown คืน HTML (CmsRenderingService.PreviewLegalPageAsync ไม่มี SaveChanges ·
     # AsNoTracking · ตรวจด้วยตาตอนเพิ่ม) · การเก็บจริงผ่าน PUT {siteId} เส้นเดิม
     ("CmsSiteController.cs", "LegalPreview"),
+    # รอบ 254 WP-11 L2: หน้าเชิญผูก LINE (public · สิทธิ์ = token) — GetJoinViewAsync อ่านอย่างเดียว (ไม่มี SaveChanges · ตรวจด้วยตาตอนเพิ่ม) ·
+    # POST เพื่อไม่ให้ token อยู่ใน URL ของ API/log
+    ("ContactLineJoinController.cs", "View"),
 }
 
 # POST ที่เป็น "งานของผู้ใช้เอง" (ไม่มีข้อมูลของคนอื่นให้แตะ) — ระบุเป็น (ไฟล์, เมธอด) ไม่ใช่ชื่อเมธอดลอย ๆ
@@ -290,6 +301,10 @@ SELF_SERVICE_POSTS = {
     # รอบ 216 (คำตัดสินข้อ 174): สมาชิกหน้าร้านแก้ข้อมูลส่วนตัวของตัวเอง — ไม่มีผู้ใช้ ERP ให้ตรวจสิทธิ์ (โทเคนหน้าร้าน) ·
     # ด่าน = Me(companyId, siteId) (โทเคนของเว็บนี้ + ลูกค้ายังใช้งาน) แล้วเขียนเฉพาะ id ในโทเคน (required_call_site_check ล็อก)
     ("CmsStorefrontCustomerController.cs", "UpdateMyProfile"),
+    # รอบ 254 WP-11 L2: ผู้รับฝั่งผู้ติดต่อกดยินยอมรับเอกสารทาง LINE ของ**ตัวเอง** (PDPA ม.19) — ไม่มีผู้ใช้ ERP ให้ตรวจสิทธิ์ · ด่าน = token ของคำเชิญ
+    # (สุ่ม 32 ไบต์ · hash · ใช้ครั้งเดียว · หมดอายุ) + จำกัดความถี่ต่อ IP (DB) · เขียนแค่หลักฐานยินยอม + hash รหัสผูกของคำเชิญนั้น
+    # (required_call_site_check R254 ConsentAsync ล็อกลำดับ limiter → คำเชิญ → หลักฐาน)
+    ("ContactLineJoinController.cs", "Consent"),
 }
 
 ACTION_RE = re.compile(r'^\s*\[Http(Get|Post|Put|Delete|Patch)(\("([^"]*)"\))?\]')

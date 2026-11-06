@@ -293,7 +293,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         for (var i = 0; i < 6 && RecurringSchedule.WithinEnd(cursor, r.EndDate) && (r.MaxRuns == null || r.TotalRuns + i < r.MaxRuns); i++)
         {
             nextDates.Add(cursor);
-            cursor = RecurringSchedule.Next(r.Frequency, cursor, r.PreferredDay, r.StartDate);
+            cursor = RecurringSchedule.Next(r.Frequency, cursor, r.PreferredDay, r.StartDate, r.IntervalMonths);
         }
 
         // ── ผู้ติดต่อ ──
@@ -322,7 +322,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
                 if (RecurringTemplate.Text(root, "currency") is { Length: > 0 } cur) currency = cur.Trim().ToUpperInvariant();
                 if (Guid.TryParse(RecurringTemplate.Text(root, "bankAccountId"), out var tb)) templateBankId = tb;
                 if (Guid.TryParse(RecurringTemplate.Text(root, "paymentAccountId"), out var tp)) templatePaymentAccountId = tp;
-                var baseDate = RecurringSchedule.PlaceholderBaseDate(r.NextRunDate, DateTime.UtcNow, true);
+                var baseDate = RecurringSchedule.PlaceholderBaseDate(r.NextRunDate, DateTime.UtcNow, true, r.LeadDays);
                 if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("lines", out var linesEl) && linesEl.ValueKind == JsonValueKind.Array)
                 {
                     var lineNo = 0;

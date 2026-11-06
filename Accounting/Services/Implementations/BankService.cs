@@ -452,7 +452,9 @@ public partial class BankService : IBankService
                 BalanceAfter = account.CurrentBalance,
                 Description = description,
                 Reference = request.Reference,
-                Payee = request.Payee
+                Payee = request.Payee,
+                // รอบ 252 WP-12A: พิมพ์มือ ⇒ ไม่ใช่หลักฐานธนาคาร (BankReceiptAutoSettle ไม่ปิดหนี้เอง — เสนอได้อย่างเดียว)
+                EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceManual
             };
 
             _db.Set<BankTransaction>().Add(transaction);
@@ -668,6 +670,9 @@ public partial class BankService : IBankService
         var transaction = await _db.Set<BankTransaction>()
             .FirstOrDefaultAsync(t => t.Id == request.BankTransactionId && t.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการธนาคาร");
+        // ฝ่ายค้าน WP-12A M5: ระบบกำลังบันทึกรับชำระจากบรรทัดนี้ (Applying) ⇒ ห้ามจับคู่มือซ้อน (ได้สองคู่ของเงินก้อนเดียว)
+        if (Accounting.Helpers.BankReceiptAutoSettle.ManualMatchBlock(transaction.AutoSettleVerdict) is string applyingBlock)
+            throw new Accounting.Helpers.BusinessRuleException(applyingBlock, Accounting.Helpers.BankReceiptAutoSettle.RuleAuto, 409);
 
         // FISCAL PERIOD GUARD — once a period is Closed/Locked the books are
         // frozen for audit. Allowing a reconcile in a closed period would
@@ -779,7 +784,9 @@ public partial class BankService : IBankService
             var unmatched = await _db.Set<BankTransaction>()
                 .Where(t => t.CompanyId == companyId
                     && t.BankAccountId == bankAccountId
-                    && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
+                    && t.ReconciliationStatus == ReconciliationStatus.Unmatched
+                    // ฝ่ายค้านรอบสอง M-D: บรรทัดที่ระบบกำลังบันทึกรับชำระจากเงินโอน (Applying) ห้ามจับคู่ซ้อน
+                    && (t.AutoSettleVerdict == null || t.AutoSettleVerdict != Accounting.Helpers.BankReceiptAutoSettle.Stamps.Applying))
                 .ToListAsync();
 
             // ⚠ เดิมกรอง `p.PaymentMethod == PaymentMethod.BankTransfer` ตรงนี้
@@ -994,7 +1001,7 @@ public partial class BankService : IBankService
 
     /// <summary>หน้า "ธนาคาร → นำเข้า statement" — แยกไฟล์ (CSV/TSV/Excel/OFX · เลือกชนิดจากเนื้อไฟล์) แล้วลงผ่านตัวเขียนตัวเดียว
     /// <see cref="ImportParsedStatementRowsAsync"/> (รอบ 205 ทีม C) · QIF/.xls/PDF ⇒ ล้มดังพร้อมทางไปต่อ (คำตัดสินข้อ 151)</summary>
-    public async Task<ImportBankStatementResponse> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request)
+    public async Task<ImportBankStatementResponse> ImportBankStatementAsync(Guid companyId, ImportBankStatementRequest request, Guid? uploadedByUserId = null)
     {
         if (string.IsNullOrWhiteSpace(request.Base64Content))
             throw new ArgumentException("กรุณาระบุเนื้อหาไฟล์");
@@ -1018,7 +1025,12 @@ public partial class BankService : IBankService
             : BankStatementConflictPolicy.Report;
         var result = await ImportParsedStatementRowsAsync(companyId, request.BankAccountId,
             BankStatementFileReader.ToLines(parsed), BankStatementFileReader.WriteOptions(parsed, policy,
-                BankStatementFileReader.SourceFile(parsed, request.FileName, fileBytes)));
+                BankStatementFileReader.SourceFile(parsed, request.FileName, fileBytes)) with
+            {
+                // ฝ่ายค้าน WP-12A H1: ไฟล์หน้าบัญชีธนาคาร = Statement + ผู้อัปโหลด (ระบบปิดหนี้เองได้เฉพาะเมื่อผู้อัปโหลดมีสิทธิ์อนุมัติ) · ไม่รู้ผู้อัปโหลด = UserFile
+                EntrySource = uploadedByUserId is Guid ? Accounting.Helpers.BankReceiptAutoSettle.SourceStatement : Accounting.Helpers.BankReceiptAutoSettle.SourceUserFile,
+                UploadedByUserId = uploadedByUserId,
+            });
         return result.ToResponse();
     }
 

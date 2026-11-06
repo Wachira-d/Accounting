@@ -15,6 +15,10 @@ public class AccountingDbContext : DbContext
     public DbSet<EmployeeLineBindCode> EmployeeLineBindCodes => Set<EmployeeLineBindCode>();
     public DbSet<CustomerLineLink> CustomerLineLinks => Set<CustomerLineLink>();   // รอบ 211
     public DbSet<CustomerLineLinkCode> CustomerLineLinkCodes => Set<CustomerLineLinkCode>();   // รอบ 211
+    public DbSet<LineQueue> LineQueues => Set<LineQueue>();   // รอบ 254 WP-11 L2 — คิวส่ง LINE ถึงผู้ติดต่อ (Helpers/ContactLineDeliveryMigration)
+    public DbSet<ContactLineInvite> ContactLineInvites => Set<ContactLineInvite>();
+    public DbSet<LineGroupBindCode> LineGroupBindCodes => Set<LineGroupBindCode>();   // รอบ 254 WP-11 L3 — รหัสผูกกลุ่ม #HeyNextAcc
+    public DbSet<LineWebhookEventSeen> LineWebhookEventsSeen => Set<LineWebhookEventSeen>();   // รอบ 254 WP-11 L3 — กัน webhook ซ้ำ   // รอบ 254 WP-11 L2 — ลิงก์/QR ผูก LINE ของผู้ติดต่อ (ผ่าน OA บริษัท)
     public DbSet<ContactNotifyEndpoint> ContactNotifyEndpoints => Set<ContactNotifyEndpoint>();   // รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (Helpers/ContactNotifyEndpointMigration)
     public DbSet<StaffDailySummaryConfig> StaffDailySummaryConfigs => Set<StaffDailySummaryConfig>();   // รอบ 212 C
     public DbSet<StaffDailySummaryDelivery> StaffDailySummaryDeliveries => Set<StaffDailySummaryDelivery>();   // รอบ 212 C
@@ -24,6 +28,7 @@ public class AccountingDbContext : DbContext
     public DbSet<SignEventOutboxEntry> SignEventOutbox => Set<SignEventOutboxEntry>();   // รอบ 240 — outbox เหตุการณ์ลูกค้าเซ็น (ตาราง/index ตรงกับ Helpers/SignRequestMigration)
     public DbSet<DeferredNotification> DeferredNotifications => Set<DeferredNotification>();   // รอบ 217 — แจ้งเตือนตามหลัง (Helpers/DeferredNotifyPolicy)
     public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
+    public DbSet<NextAccOaUsageCounter> NextAccOaUsageCounters => Set<NextAccOaUsageCounter>();   // รอบ 254 WP-11 L4 — ต้นทุน OA กลาง (Helpers/NotifyChannelQuotaMigration)
     // รอบ 229 — โควตาเสริม (ตาราง/index ต้องตรงกับ Helpers/QuotaAddOnMigration)
     public DbSet<PlanQuotaAllowance> PlanQuotaAllowances => Set<PlanQuotaAllowance>();
     public DbSet<CompanyQuotaOverride> CompanyQuotaOverrides => Set<CompanyQuotaOverride>();
@@ -242,6 +247,13 @@ public class AccountingDbContext : DbContext
     /// <summary>หนังสือรับรองหัก ณ ที่จ่ายที่ "เราได้รับ" — เครดิต ภ.ง.ด.50/51
     /// (คนละตัวกับ WithholdingTaxCerts ที่เป็นใบที่เราออกให้ผู้อื่น)</summary>
     public DbSet<WhtCreditReceived> WhtCreditsReceived => Set<WhtCreditReceived>();
+    /// <summary>รอบ 252 (WP-09): กล่องรับ 50 ทวิ ขาเข้า (หนึ่งแถว = หนึ่งใบที่ส่งมา) + การจัดสรรใบ ↔ แถวเครดิต</summary>
+    public DbSet<WhtCertIntake> WhtCertIntakes => Set<WhtCertIntake>();
+    public DbSet<WhtCertAllocation> WhtCertAllocations => Set<WhtCertAllocation>();
+    // รอบ 253 (WP-10): ลิงก์อัปโหลด 50 ทวิ · บันทึกการทวง · หลักฐานการยอมรับ "ไม่หัก ณ ที่จ่าย"
+    public DbSet<WhtCertUploadLink> WhtCertUploadLinks => Set<WhtCertUploadLink>();
+    public DbSet<WhtCertReminderLog> WhtCertReminderLogs => Set<WhtCertReminderLog>();
+    public DbSet<NoWhtAcceptance> NoWhtAcceptances => Set<NoWhtAcceptance>();
     public DbSet<WithholdingTaxCertLine> WithholdingTaxCertLines => Set<WithholdingTaxCertLine>();
 
     // API Keys
@@ -358,6 +370,7 @@ public class AccountingDbContext : DbContext
 
     // Portal
     public DbSet<PortalAccess> PortalAccesses => Set<PortalAccess>();
+    public DbSet<PortalMagicLink> PortalMagicLinks => Set<PortalMagicLink>();   // รอบ 255 WP-12B ข้อ 8 — ลิงก์วิเศษพอร์ทัล (hash · อายุสั้น · ใช้ครั้งเดียว)
     public DbSet<PortalActivity> PortalActivities => Set<PortalActivity>();
 
     // FP&A
@@ -2609,6 +2622,72 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<ProjectTask>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<ProjectCostEntry>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<WhtCreditReceived>().HasQueryFilter(e => !e.IsDeleted);
+        // รอบ 252 (WP-09) — ชื่อ index ตรงกับ DatabaseMigrationHelper (ฐานเทสต์สร้างจากโมเดล · production สร้างด้วย SQL)
+        modelBuilder.Entity<WhtCreditReceived>().Property(e => e.ReceivedAmount).HasPrecision(18, 2);
+        modelBuilder.Entity<WhtCertIntake>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.FileSha256 }).IsUnique()
+                .HasFilter("\"FileSha256\" IS NOT NULL AND \"IsDeleted\" = false AND \"Status\" <> 2").HasDatabaseName("UX_WhtCertIntakes_FileLive");
+            e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_WhtCertIntakes_Status");
+            e.Property(x => x.FileSha256).HasMaxLength(64);
+            e.Property(x => x.CertificateNumber).HasMaxLength(50);
+            e.Property(x => x.PayerName).HasMaxLength(300);
+            e.Property(x => x.PayerTaxId).HasMaxLength(20);
+            e.Property(x => x.PayerBranchCode).HasMaxLength(10);
+            e.Property(x => x.PayeeTaxId).HasMaxLength(20);
+            e.Property(x => x.IncomeTypeCode).HasMaxLength(20);
+            e.Property(x => x.MatchLevel).HasMaxLength(20);
+            e.Property(x => x.AuthenticityAnswer).HasMaxLength(20);
+            e.Property(x => x.SubmittedByName).HasMaxLength(200);
+            e.Property(x => x.EvidenceReference).HasMaxLength(100);
+            e.Property(x => x.IncomeAmount).HasPrecision(18, 2);
+            e.Property(x => x.WhtAmount).HasPrecision(18, 2);
+            e.Property(x => x.WhtRate).HasPrecision(9, 4);
+            e.Property(x => x.ExtractionConfidence).HasPrecision(5, 4);
+            e.Property(x => x.AuthenticityConfidence).HasPrecision(5, 4);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<WhtCertAllocation>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.IntakeId, x.WhtCreditId }).IsUnique()
+                .HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_WhtCertAllocations_Pair");
+            e.HasIndex(x => new { x.CompanyId, x.WhtCreditId }).HasDatabaseName("IX_WhtCertAllocations_Credit");
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 253 (WP-10) — ชื่อ index ตรงกับ DatabaseMigrationHelper
+        modelBuilder.Entity<WhtCertUploadLink>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.TokenHash }).IsUnique().HasDatabaseName("UX_WhtCertUploadLinks_Token");
+            e.HasIndex(x => new { x.CompanyId, x.ContactId }).HasDatabaseName("IX_WhtCertUploadLinks_Contact");
+            e.HasIndex(x => new { x.CompanyId, x.EmailQueueId }).IsUnique()
+                .HasFilter("\"EmailQueueId\" IS NOT NULL").HasDatabaseName("UX_WhtCertUploadLinks_Queue");
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.Property(x => x.Source).HasMaxLength(30);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<WhtCertReminderLog>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.ContactId, x.Step, x.AnchorDate }).IsUnique()
+                .HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_WhtCertReminderLogs_Step");
+            e.Property(x => x.Outcome).HasMaxLength(20);
+            e.Property(x => x.MissingAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<NoWhtAcceptance>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.PaymentIntentId }).HasDatabaseName("IX_NoWhtAcceptances_Intent");
+            e.HasIndex(x => new { x.CompanyId, x.DocumentId }).HasDatabaseName("IX_NoWhtAcceptances_Document");
+            e.Property(x => x.NoticeVersion).HasMaxLength(40);
+            e.Property(x => x.NoticeHash).HasMaxLength(64);
+            e.Property(x => x.IpHash).HasMaxLength(64);
+            e.Property(x => x.EvidenceHash).HasMaxLength(64);
+            e.Property(x => x.AcceptedByName).HasMaxLength(100);
+            e.Property(x => x.GrossAmount).HasPrecision(18, 2);
+            e.Property(x => x.WhtAmount).HasPrecision(18, 2);
+            e.Property(x => x.NetAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
         modelBuilder.Entity<PerformanceObligation>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<RevenueSchedule>().HasQueryFilter(e => !e.IsDeleted);
 
@@ -3670,6 +3749,59 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => x.LineUserId).HasDatabaseName("IX_CustomerLineLinks_LineUser");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
+        // รอบ 254 WP-11 L2 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactLineDeliveryMigration
+        modelBuilder.Entity<LineQueue>(e =>
+        {
+            e.Property(x => x.EntityType).HasMaxLength(40);
+            e.Property(x => x.EndpointKind).HasMaxLength(16);
+            e.Property(x => x.Topic).HasMaxLength(16);
+            e.Property(x => x.Trigger).HasMaxLength(40);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.OaScope).HasMaxLength(16);
+            e.Property(x => x.LineRequestId).HasMaxLength(100);
+            e.Property(x => x.ErrorMessage).HasMaxLength(2000);
+            e.Property(x => x.RuleCode).HasMaxLength(64);
+            e.Property(x => x.IdempotencyKey).HasMaxLength(300);
+            e.Property(x => x.BaseKey).HasMaxLength(250);
+            e.HasIndex(x => new { x.CompanyId, x.IdempotencyKey }).IsUnique().HasDatabaseName("IX_LineQueues_Company_Idempotency")
+                .HasFilter("NOT \"IsDeleted\"");
+            e.HasIndex(x => new { x.Status, x.ScheduledFor }).HasDatabaseName("IX_LineQueues_Status_Scheduled");
+            e.HasIndex(x => new { x.CompanyId, x.BaseKey }).HasDatabaseName("IX_LineQueues_Company_BaseKey");
+            e.HasIndex(x => new { x.CompanyId, x.EntityId }).HasDatabaseName("IX_LineQueues_Company_Entity");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PortalMagicLink>(e =>
+        {
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.HasIndex(x => x.TokenHash).IsUnique().HasDatabaseName("IX_PortalMagicLinks_TokenHash");
+            e.HasIndex(x => new { x.CompanyId, x.PortalAccessId }).HasDatabaseName("IX_PortalMagicLinks_Company_Access");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<ContactLineInvite>(e =>
+        {
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.Property(x => x.OaDestination).HasMaxLength(64);
+            e.Property(x => x.CodeHash).HasMaxLength(64);
+            e.HasIndex(x => x.TokenHash).IsUnique().HasDatabaseName("IX_ContactLineInvites_TokenHash");
+            e.HasIndex(x => new { x.CompanyId, x.CodeHash }).HasDatabaseName("IX_ContactLineInvites_Company_CodeHash");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<LineGroupBindCode>(e =>
+        {
+            e.Property(x => x.CodeHash).HasMaxLength(64);
+            e.Property(x => x.GroupIdHash).HasMaxLength(64);
+            e.Property(x => x.OaScope).HasMaxLength(16);
+            e.Property(x => x.OaDestination).HasMaxLength(64);
+            e.Property(x => x.GroupName).HasMaxLength(200);
+            e.HasIndex(x => x.CodeHash).IsUnique().HasDatabaseName("IX_LineGroupBindCodes_CodeHash");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<LineWebhookEventSeen>(e =>
+        {
+            e.ToTable("LineWebhookEventsSeen");
+            e.HasKey(x => x.WebhookEventId);
+            e.Property(x => x.WebhookEventId).HasMaxLength(100);
+        });
         // รอบ 245 L1 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactNotifyEndpointMigration (ไม่มี unique โดยตั้งใจ — ดูเหตุในไฟล์นั้น)
         modelBuilder.Entity<ContactNotifyEndpoint>(e =>
         {
@@ -3788,8 +3920,15 @@ public class AccountingDbContext : DbContext
         });
         modelBuilder.Entity<NotifyUsageCounter>(e =>
         {
-            e.HasKey(x => new { x.CompanyId, x.Period });
+            e.HasKey(x => new { x.CompanyId, x.Period, x.Channel });   // รอบ 254 WP-11 L4 — ต้องตรงกับ Helpers/NotifyChannelQuotaMigration
             e.Property(x => x.Period).HasMaxLength(7);
+            e.Property(x => x.Channel).HasMaxLength(8);
+        });
+        modelBuilder.Entity<NextAccOaUsageCounter>(e =>
+        {
+            e.HasKey(x => new { x.Period, x.Kind });   // รอบ 254 WP-11 L4 — ต้องตรงกับ Helpers/NotifyChannelQuotaMigration
+            e.Property(x => x.Period).HasMaxLength(7);
+            e.Property(x => x.Kind).HasMaxLength(16);
         });
         // รอบ 231 — ส่วนเกินโควตา + ประวัติการใช้งาน (ตาราง/index ต้องตรงกับ Helpers/OverageMigration)
         modelBuilder.Entity<OverageRate>(e =>

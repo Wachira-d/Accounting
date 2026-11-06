@@ -57,6 +57,10 @@ public partial class BankService
             await EnsureFiscalPeriodOpenAsync(companyId, t.TransactionDate, "create-reconciliation-group");
         if (bankTxns.Count != bankTxnIds.Count)
             throw new InvalidOperationException("มี bank transaction บางรายการไม่พบในบัญชีนี้");
+        // ฝ่ายค้าน WP-12A M5: บรรทัดที่ระบบกำลังบันทึกรับชำระ ห้ามจับคู่มือซ้อน
+        foreach (var t in bankTxns)
+            if (Accounting.Helpers.BankReceiptAutoSettle.ManualMatchBlock(t.AutoSettleVerdict) is string applyingBlock)
+                throw new Accounting.Helpers.BusinessRuleException(applyingBlock, Accounting.Helpers.BankReceiptAutoSettle.RuleAuto, 409);
 
         // Reject already-reconciled bank txns (either in another group or in the legacy 1:1 path)
         var alreadyReconciled = bankTxns

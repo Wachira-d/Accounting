@@ -22,7 +22,14 @@
       </div>
       <div class="flex gap-2">
         <select id="fYear" class="form-select" style="width:130px" onchange="Page.load()"></select>
-        <button class="btn btn-primary" onclick="Page.openNew()">+ บันทึกหนังสือรับรอง</button>
+        <!-- รอบ 252 (WP-09): อัปโหลดใบ 50 ทวิ หลายไฟล์ ⇒ OCR ⇒ กล่องรับ (ประตูเดียว WhtCertIntakeService) — กรอกเองยังทำได้ที่ปุ่มถัดไป -->
+        <input type="file" id="inboxFiles" accept="image/*,application/pdf" multiple style="display:none" onchange="Page.uploadFiles(this.files)">
+        <button class="btn btn-primary" id="inboxUploadBtn" onclick="document.getElementById('inboxFiles').click()">📤 อัปโหลดใบ 50 ทวิ</button>
+        <!-- รอบ 253 (WP-10 · N4): หลักฐาน e-WHT แนบเป็นใบ 50 ทวิ ธรรมดา (ด่านเดียวกัน · ไม่เสนออัตรา 1%) + เลขอ้างอิงเป็นข้อความ -->
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap" title="ลูกค้าหักผ่านระบบ e-Withholding Tax — แนบหลักฐานจากระบบแทนใบ 50 ทวิ กระดาษ (ตรวจเหมือนใบทั่วไป)">
+          <input type="checkbox" id="inboxEwht"> หลักฐาน e-WHT</label>
+        <input type="text" id="inboxEwhtRef" class="form-input" maxlength="100" placeholder="เลขอ้างอิง e-WHT (ถ้ามี)" style="width:170px">
+        <button class="btn btn-secondary" onclick="Page.openNew()">+ บันทึกหนังสือรับรอง (กรอกเอง)</button>
       </div>
     </div>
 
@@ -42,6 +49,35 @@
     </div>
 
     <div id="alertBox"></div>
+
+    <!-- รอบ 252 (WP-09 · AUTO_SEND §6.6): กล่องรับ 50 ทวิ — ใบที่ผ่านทุกด่านและตรวจของจริงมั่นใจถูกยืนยันอัตโนมัติ ที่เหลือรอตรวจแล้วกดยืนยัน (ฟอร์มเติมครบ) -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="flex gap-2" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:8px">
+        <div>
+          <b>กล่องรับ 50 ทวิ</b> <span id="inboxCount" style="font-size:12px;color:#64748b"></span>
+          <div style="font-size:11.5px;color:#64748b">ใบที่อัปโหลด/สแกน/ลูกค้าส่งมา — ตรงกับรายการรอใบ ผ่านด่านเลขผู้เสียภาษี/ยอด/ปีภาษี และตรวจของจริงมั่นใจ ⇒ ยืนยันอัตโนมัติ · ไม่งั้นตรวจแล้วกดยืนยัน</div>
+        </div>
+        <select id="fInbox" class="form-select" style="width:170px" onchange="Page.loadInbox()" aria-label="สถานะกล่องรับ">
+          <option value="AwaitingConfirm">รอยืนยัน</option>
+          <option value="Confirmed">ยืนยันแล้ว</option>
+          <option value="Rejected">ตีกลับ</option>
+          <option value="">ทั้งหมด</option>
+        </select>
+      </div>
+      <div id="inboxList"></div>
+    </div>
+
+    <!-- รอบ 252 (WP-09 · AUTO_SEND §4.5): รายงาน "50 ทวิ ที่ยังขาด" ของปีภาษีที่เลือก + ส่งออก Excel — ตัวเลขชุดเดียวกับทะเบียน/การ์ด -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="flex gap-2" style="justify-content:space-between;align-items:center;flex-wrap:wrap">
+        <b>50 ทวิ ที่ยังขาด (ปีภาษีที่เลือก)</b>
+        <div class="flex gap-2">
+          <button class="btn btn-sm btn-secondary" onclick="Page.loadMissing()">แสดงรายงาน</button>
+          <button class="btn btn-sm btn-secondary" onclick="Page.exportMissing()">ส่งออก Excel</button>
+        </div>
+      </div>
+      <div id="missingBox" style="margin-top:8px"></div>
+    </div>
 
     <div class="card">
       <div class="flex gap-2" style="margin-bottom:10px;flex-wrap:wrap">
@@ -84,7 +120,7 @@
         <div class="form-row">
           <div class="form-group"><label class="form-label">เลขที่หนังสือรับรอง</label>
             <input class="form-input" id="mCertNo" placeholder="เลขที่บนใบของผู้จ่าย">
-            <div class="form-help">เว้นว่าง = ยังไม่ได้รับใบ (จะยังเครดิตไม่ได้)</div>
+            <div class="form-help" id="mCertHelp">เว้นว่าง = ยังไม่ได้รับใบ (จะยังเครดิตไม่ได้)</div>
           </div>
           <div class="form-group"><label class="form-label">วันที่บนหนังสือ</label><input type="date" class="form-input" id="mCertDate"></div>
         </div>
@@ -163,6 +199,75 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="Layout.closeModal('lateModal')">ยกเลิก</button>
         <button class="btn btn-primary" id="lateSave" onclick="Page.confirmLate()">บันทึกและคืนเครดิต</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- รอบ 252 (WP-09): ตรวจและยืนยันใบในกล่องรับ — ช่องเติมครบจากเซิร์ฟเวอร์ (กฎเหล็ก #3) · ความมั่นใจต่ำ = พื้นเหลือง (ยังมีค่า) · ปุ่มยืนยันเด่น -->
+  <div class="modal-overlay" id="icModal">
+    <div class="modal" style="max-width:760px">
+      <div class="modal-header">
+        <h3 class="modal-title">ตรวจหนังสือรับรอง 50 ทวิ</h3>
+        <button class="modal-close" onclick="Layout.closeModal('icModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="icInfo" style="font-size:12.5px;margin-bottom:8px"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label" for="icNo">เลขที่หนังสือรับรอง</label><input class="form-input" id="icNo"></div>
+          <div class="form-group"><label class="form-label" for="icDate">วันที่บนหนังสือ</label><input type="date" class="form-input" id="icDate"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label" for="icPayer">ผู้จ่าย (ผู้หักเรา)</label><input class="form-input" id="icPayer"></div>
+          <div class="form-group"><label class="form-label" for="icPayerTax">เลขผู้เสียภาษีผู้จ่าย</label><input class="form-input wht-money" id="icPayerTax" maxlength="13"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label" for="icIncomeType">ประเภทเงินได้</label><input class="form-input" id="icIncomeType"></div>
+          <div class="form-group"><label class="form-label" for="icRate">อัตรา (%)</label><input type="number" step="0.01" class="form-input wht-money" id="icRate"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label" for="icBase">เงินได้</label><input type="number" step="0.01" class="form-input wht-money" id="icBase"></div>
+          <div class="form-group"><label class="form-label" for="icAmt">ภาษีที่ถูกหัก</label><input type="number" step="0.01" class="form-input wht-money" id="icAmt"></div>
+        </div>
+        <div style="font-size:12.5px;font-weight:600;margin:6px 0 4px">ใบนี้ครอบรายการ (เลือก + ยอดที่จัดสรร)</div>
+        <div class="table-container" style="overflow-x:auto">
+          <table class="table"><thead><tr><th></th><th>เอกสาร</th><th>ผู้จ่าย</th><th class="text-right">ถูกหัก</th><th class="text-right">ยังรอใบ</th><th class="text-right">จัดสรร</th></tr></thead>
+            <tbody id="icCands"></tbody></table>
+        </div>
+        <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-top:8px">
+          <input type="checkbox" id="icAllowOtherPayer"> ยืนยันว่ารายการที่เลือกเป็นผู้จ่ายเดียวกับบนใบ (เช่น ผู้จ่ายเปลี่ยนชื่อ/สาขา)
+        </label>
+        <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-top:6px">
+          <input type="checkbox" id="icStandalone"> ไม่มีรายการที่ตรง — บันทึกเป็นรายการเครดิตใหม่ (เช่น รับชำระนอกระบบ)
+        </label>
+        <div class="form-group" style="margin-top:6px">
+          <label class="form-label" for="icStandaloneReason">เหตุผล (เมื่อบันทึกเป็นรายการใหม่ทั้งที่ผู้จ่ายมีรายการรอใบอยู่ — อย่างน้อย 10 ตัวอักษร)</label>
+          <input class="form-input" id="icStandaloneReason" placeholder="เช่น รับเงินสดหน้างาน ไม่ได้บันทึกรับชำระในระบบ">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="icViewBtn" onclick="Page.viewIntakeFile()">📎 เปิดดูใบ</button>
+        <button class="btn btn-secondary" onclick="Page.openReject()">ตีกลับพร้อมเหตุผล…</button>
+        <button class="btn btn-primary" id="icSave" onclick="Page.confirmIntake()">✔ ยืนยัน — บันทึกเป็นได้รับแล้ว</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="rjModal">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <h3 class="modal-title">ตีกลับใบ 50 ทวิ</h3>
+        <button class="modal-close" onclick="Layout.closeModal('rjModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group"><label class="form-label" for="rjReason">เหตุผล (อย่างน้อย 5 ตัวอักษร — ลูกค้าจะเห็น)</label>
+          <textarea class="form-input" id="rjReason" rows="2" placeholder="เช่น ใบออกในนามบริษัทอื่น · ยอดไม่ตรงกับที่หัก · อ่านไม่ออก"></textarea></div>
+        <label style="display:flex;gap:6px;align-items:center;font-size:12.5px">
+          <input type="checkbox" id="rjNotGenuine"> ใบนี้ไม่ใช่ของจริง/ถูกแก้ไข (ระบบจะเรียนรู้จากคำตอบนี้)
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('rjModal')">ยกเลิก</button>
+        <button class="btn btn-danger" id="rjSave" onclick="Page.confirmReject()">ตีกลับ</button>
       </div>
     </div>
   </div>
@@ -270,7 +375,230 @@
           this.renderSummary(sumRes.data || {});
           this.renderRows();
         } catch (e) { Layout.toast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'error'); }
+        await this.loadInbox();
+        document.getElementById('missingBox').innerHTML = '';
       },
+
+      // ═══════════ รอบ 252 (WP-09): กล่องรับ 50 ทวิ ═══════════
+      inbox: [],
+      async loadInbox() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const st = document.getElementById('fInbox').value;
+        const box = document.getElementById('inboxList');
+        try {
+          const res = await API.get(`/api/companies/${cid}/wht-certs/inbox${st ? '?status=' + encodeURIComponent(st) : ''}`);
+          this.inbox = res?.data || [];
+          this.renderInbox();
+        } catch (e) {
+          // ล้มดัง — ไม่ปล่อยกล่องว่างเหมือนไม่มีใบรอ
+          box.innerHTML = `<div style="color:#991b1b;font-size:12.5px">โหลดกล่องรับไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`;
+        }
+      },
+
+      renderInbox() {
+        const box = document.getElementById('inboxList');
+        const list = this.inbox || [];
+        const waiting = list.filter(i => i.status === 'AwaitingConfirm').length;
+        document.getElementById('inboxCount').textContent = waiting ? `· รอยืนยัน ${waiting} ใบ` : '';
+        if (!list.length) { box.innerHTML = '<div style="color:#94a3b8;font-size:12.5px;padding:8px 0">ไม่มีใบในกล่องรับ</div>'; return; }
+        box.innerHTML = list.map(i => {
+          // สีของสถานะใบในกล่องรับ (แสดงผลเท่านั้น — สถานะเครดิต/ป้าย 50 ทวิ มาจากเซิร์ฟเวอร์)
+          const stColor = i.status === 'Confirmed' ? '#15803d' : i.status === 'Rejected' ? '#991b1b' : '#2563eb';
+          const stText = i.status === 'Confirmed' ? (i.autoConfirmed ? 'ยืนยันอัตโนมัติ' : 'ยืนยันแล้ว') : i.status === 'Rejected' ? 'ตีกลับ' : 'รอยืนยัน';
+          const gates = (i.gateProblems || []).length
+            ? `<div style="font-size:11.5px;color:#b45309">⚠️ ${(i.gateProblems || []).map(g => Layout.esc(g)).join(' · ')}</div>` : '';
+          const covers = (i.allocations || []).filter(a => a.status !== 'Reversed')
+            .map(a => `${Layout.esc(a.documentNumber || '—')} (${Layout.money(a.amount)})`).join(', ');
+          return `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap">
+            <div style="min-width:0">
+              <span class="st" style="background:${Layout.esc(stColor)};color:#fff">${Layout.esc(stText)}</span>
+              <b>${Layout.esc(i.certificateNumber || '— ไม่มีเลขที่ —')}</b> · ${Layout.esc(i.payerName || '—')} ${Layout.esc(i.payerTaxId || '')}
+              · ภาษี <b>${Layout.money(i.whtAmount)}</b>${i.certificateDate ? ' · ' + Layout.date(i.certificateDate) : ''}
+              <div style="font-size:11.5px;color:#475569">${i.evidenceLabel ? '🧾 ' + Layout.esc(i.evidenceLabel) + ' · ' : ''}${Layout.esc(i.authenticityLabel || '')}${covers ? ' · ครอบ: ' + covers : ''}${i.matchReason ? ' · ' + Layout.esc(i.matchReason) : ''}</div>
+              ${gates /* html */}
+              ${i.rejectedReason ? `<div style="font-size:11.5px;color:#991b1b">เหตุที่ตีกลับ: ${Layout.esc(i.rejectedReason)}</div>` : ''}
+            </div>
+            <div style="white-space:nowrap">
+              ${i.fileAttachmentId ? `<button class="btn btn-sm btn-secondary" onclick="Page.viewIntakeFile('${Layout.jsArg(i.id)}')">📎 ดูใบ</button>` : ''}
+              ${i.status === 'AwaitingConfirm' ? `<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="Page.openIntake('${Layout.jsArg(i.id)}')">ตรวจและยืนยัน</button>` : ''}
+            </div>
+          </div>`;
+        }).join('');
+      },
+
+      async uploadFiles(files) {
+        const cid = Layout.getCompanyId();
+        const list = Array.from(files || []);
+        if (!list.length) return;
+        const btn = document.getElementById('inboxUploadBtn');
+        btn.disabled = true;
+        let done = 0;
+        for (const f of list) {
+          btn.textContent = `กำลังอ่านใบ ${done + 1}/${list.length}…`;
+          try {
+            const fd = new FormData(); fd.append('file', f);
+            const up = await API.upload(`/api/companies/${cid}/attachments/WhtCredit/00000000-0000-0000-0000-000000000000`, fd);
+            const fileId = up?.data?.id;
+            if (!fileId) throw new Error('อัปโหลดไฟล์ไม่สำเร็จ');
+            const res = await API.post(`/api/companies/${cid}/wht-certs/inbox`, {
+              fileAttachmentId: fileId, documentId: null,
+              eWithholding: !!document.getElementById('inboxEwht')?.checked,
+              evidenceReference: (document.getElementById('inboxEwhtRef')?.value || '').trim() || null,
+            });
+            Layout.toast(`${f.name}: ${res?.message || 'เข้ากล่องรับแล้ว'}`, res?.data?.autoConfirmed ? 'success' : 'info', 9000);
+          } catch (e) { Layout.toast(`${f.name}: ${e.message}`, 'error', 12000); }
+          done++;
+        }
+        btn.disabled = false; btn.textContent = '📤 อัปโหลดใบ 50 ทวิ';
+        document.getElementById('inboxFiles').value = '';
+        await this.load();
+      },
+
+      // ฝ่ายค้าน WP-09 M6: ระบบสอนนักเรียนว่า "ของจริง" เฉพาะเมื่อผู้ใช้เปิดดูใบก่อนยืนยัน — จำว่าเปิดดูใบไหนแล้ว (ส่ง viewedFile ไปให้เซิร์ฟเวอร์ตัดสิน)
+      _viewed: {},
+      async viewIntakeFile(id) {
+        const iid = id || this._icId;
+        const it = (this.inbox || []).find(x => x.id === iid);
+        if (!it || !it.fileAttachmentId) { Layout.toast('ใบนี้ไม่มีไฟล์แนบ', 'error'); return; }
+        this._viewed[iid] = true;
+        await this.openFile(it.fileAttachmentId);
+      },
+
+      async openIntake(id) {
+        const it = (this.inbox || []).find(x => x.id === id); if (!it) return;
+        this._icId = id;
+        document.getElementById('icViewBtn').style.display = it.fileAttachmentId ? '' : 'none';
+        document.getElementById('icAllowOtherPayer').checked = false;
+        document.getElementById('icStandaloneReason').value = '';
+        const set = (k, v) => { document.getElementById(k).value = v == null ? '' : v; };
+        set('icNo', it.certificateNumber); set('icDate', it.certificateDate ? Layout.dateInput(it.certificateDate) : '');
+        set('icPayer', it.payerName); set('icPayerTax', it.payerTaxId); set('icIncomeType', it.incomeTypeCode);
+        set('icRate', it.whtRate); set('icBase', it.incomeAmount); set('icAmt', it.whtAmount);
+        // ความมั่นใจต่ำ (เซิร์ฟเวอร์ตัดสิน · lowConfidence) ⇒ พื้นเหลืองที่ช่องเงิน/เลขผู้เสียภาษี — ยังมีค่าเติมไว้ ไม่ใช่ช่องว่าง
+        document.querySelectorAll('#icModal .wht-money').forEach(el => {
+          el.style.background = it.lowConfidence ? '#fef9c3' : '';
+          el.title = it.lowConfidence ? 'ความมั่นใจในการอ่านต่ำ — ตรวจกับใบจริงอีกครั้ง' : '';
+        });
+        document.getElementById('icStandalone').checked = false;
+        document.getElementById('icInfo').innerHTML = `<div>${Layout.esc(it.authenticityLabel || '')}</div>`
+          + ((it.gateProblems || []).length ? `<div style="color:#b45309">⚠️ ยืนยันอัตโนมัติไม่ได้เพราะ: ${(it.gateProblems || []).map(g => Layout.esc(g)).join(' · ')}</div>` : '')
+          + (it.matchReason ? `<div style="color:#475569">${Layout.esc(it.matchReason)}</div>` : '');
+        const tb = document.getElementById('icCands');
+        tb.innerHTML = '<tr><td colspan="6" style="color:#94a3b8">กำลังโหลด…</td></tr>';
+        Layout.openModal('icModal');
+        try {
+          const res = await API.get(`/api/companies/${Layout.getCompanyId()}/wht-certs/inbox/${encodeURIComponent(id)}/candidates`);
+          const cands = res?.data || [];
+          const proposed = {};
+          (it.allocations || []).filter(a => a.status === 'Proposed').forEach(a => { proposed[a.whtCreditId] = a.amount; });
+          tb.innerHTML = cands.length ? cands.map(c => `<tr>
+              <td><input type="checkbox" class="ic-pick" data-id="${Layout.esc(c.whtCreditId)}" aria-label="เลือกรายการ" ${proposed[c.whtCreditId] != null ? 'checked' : ''}></td>
+              <td>${Layout.esc(c.documentNumber || '—')}${c.documentDate ? '<div style="font-size:11px;color:#64748b">' + Layout.date(c.documentDate) + '</div>' : ''}</td>
+              <td>${Layout.esc(c.payerName || '—')}</td>
+              <td class="text-right">${Layout.money(c.whtAmount)}</td>
+              <td class="text-right">${Layout.money(c.outstanding)}</td>
+              <td class="text-right"><input type="number" step="0.01" class="form-input ic-amt" data-id="${Layout.esc(c.whtCreditId)}" aria-label="ยอดที่จัดสรร" style="width:110px;text-align:right"
+                    value="${Number(proposed[c.whtCreditId] != null ? proposed[c.whtCreditId] : c.outstanding).toFixed(2)}"></td>
+            </tr>`).join('')
+            : '<tr><td colspan="6" style="color:#94a3b8">ไม่มีรายการรอ 50 ทวิ — ติ๊ก "บันทึกเป็นรายการเครดิตใหม่" ด้านล่าง</td></tr>';
+        } catch (e) { tb.innerHTML = `<tr><td colspan="6" style="color:#991b1b">${Layout.esc(e.message || 'โหลดรายการไม่สำเร็จ')}</td></tr>`; }
+      },
+
+      async confirmIntake() {
+        const num = id => { const v = document.getElementById(id).value; return v === '' ? null : parseFloat(v); };
+        const standalone = document.getElementById('icStandalone').checked;
+        // เลือกได้อย่างเดียว (เซิร์ฟเวอร์ปฏิเสธ 400 ถ้าส่งทั้งคู่) — ติ๊กรายการใหม่ = ไม่ส่งรายการที่ติ๊กไว้
+        const allocations = standalone ? [] : Array.from(document.querySelectorAll('#icCands .ic-pick:checked')).map(cb => {
+          const amt = Array.from(document.querySelectorAll('#icCands .ic-amt')).find(x => x.dataset.id === cb.dataset.id);
+          return { whtCreditId: cb.dataset.id, amount: parseFloat(amt ? amt.value : '') || 0 };
+        });
+        const body = {
+          certificateNumber: document.getElementById('icNo').value.trim(),
+          certificateDate: document.getElementById('icDate').value || null,
+          payerName: document.getElementById('icPayer').value.trim(),
+          payerTaxId: document.getElementById('icPayerTax').value.trim(),
+          incomeTypeCode: document.getElementById('icIncomeType').value.trim(),
+          incomeAmount: num('icBase'), whtRate: num('icRate'), whtAmount: num('icAmt'),
+          allocations,
+          createStandalone: standalone,
+          standaloneReason: document.getElementById('icStandaloneReason').value.trim() || null,
+          allowOtherPayer: document.getElementById('icAllowOtherPayer').checked,
+          viewedFile: !!this._viewed[this._icId],
+        };
+        const btn = document.getElementById('icSave');
+        btn.disabled = true;
+        try {
+          const res = await API.post(`/api/companies/${Layout.getCompanyId()}/wht-certs/inbox/${encodeURIComponent(this._icId)}/confirm`, body);
+          Layout.closeModal('icModal');
+          Layout.toast(res?.message || 'ยืนยันแล้ว', 'success');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error', 12000); }
+        finally { btn.disabled = false; }
+      },
+
+      openReject() {
+        document.getElementById('rjReason').value = '';
+        document.getElementById('rjNotGenuine').checked = false;
+        Layout.openModal('rjModal');
+      },
+
+      async confirmReject() {
+        const btn = document.getElementById('rjSave');
+        btn.disabled = true;
+        try {
+          await API.post(`/api/companies/${Layout.getCompanyId()}/wht-certs/inbox/${encodeURIComponent(this._icId)}/reject`, {
+            reason: document.getElementById('rjReason').value.trim(),
+            notGenuine: document.getElementById('rjNotGenuine').checked,
+          });
+          Layout.closeModal('rjModal'); Layout.closeModal('icModal');
+          Layout.toast('ตีกลับแล้ว', 'success');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; }
+      },
+
+      async loadMissing() {
+        const box = document.getElementById('missingBox');
+        box.innerHTML = '<div style="color:#94a3b8;font-size:12.5px">กำลังโหลด…</div>';
+        try {
+          const res = await API.get(`/api/companies/${Layout.getCompanyId()}/wht-certs/missing-report?taxYear=${this._year()}`);
+          const r = res?.data || {};
+          const rows = r.rows || [];
+          const m = v => Layout.money(v || 0);
+          const diff = Number(r.difference || 0);
+          box.innerHTML = `<div style="font-size:12.5px;margin-bottom:6px">ยังขาด <b>${Number(r.missingCount || 0)}</b> รายการ รวม <b>${m(r.missingAmount)}</b>
+              · ได้รับใบแล้ว ${m(r.receivedAmount)} · ใช้เครดิตแล้ว ${m(r.claimedAmount)} · ยอดบัญชี 11910 ${m(r.glBalance)}
+              ${Math.abs(diff) >= 0.01 ? `<span style="color:#b91c1c">· ทะเบียนต่างจากบัญชี ${m(diff)} — ตรวจรายการ "ปิดยอดแล้วแต่ไม่ได้บันทึกภาษีถูกหัก" ด้านบน</span>` : ''}</div>`
+            + (rows.length ? `<div class="table-container" style="overflow-x:auto"><table class="table"><thead><tr><th>ลูกค้า</th><th>เอกสาร</th><th>วันที่ถูกหัก</th>
+                <th class="text-right">ภาษีถูกหัก</th><th class="text-right">ได้รับแล้ว</th><th class="text-right">ขาด</th><th>สถานะ</th><th></th></tr></thead><tbody>`
+              + rows.map(x => `<tr><td>${Layout.esc(x.payerName || '—')}<div style="font-size:11px;color:#64748b">${Layout.esc(x.payerTaxId || '')}</div></td>
+                  <td>${Layout.esc(x.documentNumber || '—')}</td><td>${x.withheldSince ? Layout.date(x.withheldSince) : '—'}</td>
+                  <td class="text-right">${m(x.whtAmount)}</td><td class="text-right">${m(x.receivedAmount)}</td><td class="text-right"><b>${m(x.missing)}</b></td>
+                  <td>${Layout.esc(x.label || '')}</td>
+                  <td>${x.documentId || x.payerContactId ? `<button class="btn btn-sm btn-secondary" title="ออกลิงก์ให้ลูกค้าส่งหนังสือรับรองเอง (ไม่ต้องล็อกอิน)"
+                    onclick="Page.issueUploadLink('${Layout.jsArg(x.documentId || '')}','${Layout.jsArg(x.payerContactId || '')}')">🔗 ลิงก์อัปโหลด</button>` : ''}</td></tr>`).join('')
+              + '</tbody></table></div>' : '<div style="color:#15803d;font-size:12.5px">ไม่มีรายการที่ยังขาดใบในปีภาษีนี้</div>');
+        } catch (e) { box.innerHTML = `<div style="color:#991b1b;font-size:12.5px">โหลดรายงานไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`; }
+      },
+
+      // รอบ 253 (WP-10 · AUTO_SEND §3.2 ข้อ 5): ออกลิงก์อัปโหลด 50 ทวิ ให้ลูกค้า — URL แสดงครั้งเดียว (ฐานเก็บเฉพาะ hash) · สิทธิ์ภาษี (เซิร์ฟเวอร์ตรวจ)
+      async issueUploadLink(documentId, contactId) {
+        try {
+          const res = await API.post(`/api/companies/${Layout.getCompanyId()}/wht-certs/upload-links`,
+            { documentId: documentId || null, contactId: contactId || null });
+          const d = res?.data || {};
+          if (!d.url) { Layout.toast(res?.message || 'สร้าง URL ไม่ได้', 'error', 9000); return; }
+          try { await navigator.clipboard.writeText(d.url); } catch (_) { /* ไม่มีสิทธิ์ clipboard — ผู้ใช้คัดลอกเองจากกล่อง */ }
+          await Layout.promptText({ title: 'ลิงก์อัปโหลดหนังสือรับรอง 50 ทวิ', okText: 'ปิด', cancelText: 'ปิด', value: d.url, label: 'ลิงก์',
+            message: `คัดลอกไว้ให้แล้ว (ถ้าเบราว์เซอร์อนุญาต) — ส่งให้ลูกค้าทาง LINE/อีเมล · ใช้ได้ถึง ${Layout.date(d.expiresAt)} · ระบบไม่แสดงลิงก์นี้ซ้ำ` });
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async exportMissing() {
+        try { await API.download(`/api/companies/${Layout.getCompanyId()}/wht-certs/missing-report/export?taxYear=${this._year()}`, 'wht-cert-missing'); }
+        catch (e) { Layout.toast(e.message || 'ส่งออกไม่สำเร็จ', 'error'); }
+      },
+
 
       renderSummary(s) {
         const m = v => Layout.money(v || 0);
@@ -374,7 +702,7 @@
         }
         tb.innerHTML = this.rows.map(r => `
           <tr>
-            <td>${this._badge(r.status, r)}</td>
+            <td>${this._badge(r.status, r)}${r.whtCertLabel ? `<div style="font-size:10.5px;color:#475569;margin-top:2px">${Layout.esc(r.whtCertLabel)}</div>` : ''}${Number(r.receivedAmount || 0) > 0 && r.status === 'Pending' ? `<div style="font-size:10.5px;color:#15803d">ได้ใบแล้ว ${Layout.money(r.receivedAmount)}</div>` : ''}</td>
             <td>${Layout.esc(r.certificateNumber || '—')}</td>
             <td>${r.certificateDate ? Layout.date(r.certificateDate) : '—'}</td>
             <td>${Layout.esc(r.payerName || '—')}<div style="font-size:11px;color:#64748b">${Layout.esc(r.payerTaxId || '')} · ${Layout.esc(r.payerFormType)}</div></td>
@@ -390,7 +718,7 @@
                   ? `<button class="btn btn-sm btn-secondary" disabled title="ตัดสูญพร้อมรายการบัญชีแล้ว — แก้ไข/ลบไม่ได้ · ได้ใบภายหลังให้กด &quot;ได้รับใบแล้ว&quot;">แก้ไข 🔒</button>
                      <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="Page.openLate('${r.id}')">ได้รับใบแล้ว</button>`
                   : `<button class="btn btn-sm btn-secondary" onclick="Page.openEdit('${r.id}')">แก้ไข</button>`}
-              ${(r.status === 'Pending' || r.status === 'Received') ? `<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="Page.expire('${r.id}')">ตัดสูญ</button>` : ''}
+              ${r.canWriteOff ? `<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="Page.expire('${r.id}')">ตัดสูญ</button>` : ''}
             </td>
           </tr>`).join('');
       },
@@ -415,6 +743,7 @@
         document.getElementById('mTitle').textContent = 'บันทึกหนังสือรับรอง';
         ['mCertNo','mCertDate','mPayer','mPayerTax','mBase','mRate','mAmt','mNotes'].forEach(id => document.getElementById(id).value = '');
         this._hydrateIncomeType({});   // ล้างค่า + ตัวเลือก "(ค่าเดิม)" ของใบก่อน
+        this._lockCert(null);
         document.getElementById('mForm').value = '53';
         document.getElementById('mYear').value = this._year();
         document.getElementById('mFile').value = '';
@@ -424,6 +753,14 @@
         Layout.openModal('editModal');
       },
 
+      // ฝ่ายค้าน WP-09 รอบสอง H-B: เซิร์ฟเวอร์ล็อกเลขที่/วันที่ใบแรกของแถวที่ได้ใบผ่านกล่องรับแล้ว — หน้าล็อกช่องพร้อมเหตุผลจากเซิร์ฟเวอร์ (ไม่ให้กดบันทึกแล้วถูกปฏิเสธเงียบ ๆ)
+      _lockCert(reason) {
+        const no = document.getElementById('mCertNo'), help = document.getElementById('mCertHelp');
+        no.disabled = !!reason;
+        help.textContent = reason || 'เว้นว่าง = ยังไม่ได้รับใบ (จะยังเครดิตไม่ได้)';
+        help.style.color = reason ? '#b45309' : '';
+      },
+
       openEdit(id) {
         const r = this.rows.find(x => x.id === id); if (!r) return;
         this.editingId = id;
@@ -431,6 +768,7 @@
         document.getElementById('mYear').value = r.taxYear;
         document.getElementById('mCertNo').value = r.certificateNumber || '';
         document.getElementById('mCertDate').value = r.certificateDate ? Layout.dateInput(r.certificateDate) : '';
+        this._lockCert(r.certificateLockReason || null);
         document.getElementById('mPayer').value = r.payerName || '';
         document.getElementById('mPayerTax').value = r.payerTaxId || '';
         this._hydrateIncomeType(r);

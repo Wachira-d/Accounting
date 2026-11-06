@@ -28,11 +28,16 @@ public class CustomerLineWebhookController : ControllerBase
     private readonly ICustomerLineLinkService _links;
     private readonly ILogger<CustomerLineWebhookController> _logger;
     private readonly ICustomerRelinkInviteService? _relink;
+    /// <summary>รอบ 254 WP-11 L2: ผูก/หยุด/บล็อก LINE ของ<b>ผู้ติดต่อ</b> (ลิงก์/QR ผูก LINE ผ่าน OA ของบริษัท) — ก่อนเส้นลูกค้าเว็บ</summary>
+    private readonly IContactLineBindingService? _contactLine;
+    /// <summary>รอบ 254 WP-11 L3: กลุ่ม LINE ของผู้ติดต่อ + กัน webhook ซ้ำ</summary>
+    private readonly IContactLineGroupService? _groups;
 
     public CustomerLineWebhookController(AccountingDbContext db, ISecretProtector secrets, ICustomerLineLinkService links,
-        ILogger<CustomerLineWebhookController> logger, ICustomerRelinkInviteService? relink = null)
+        ILogger<CustomerLineWebhookController> logger, ICustomerRelinkInviteService? relink = null, IContactLineBindingService? contactLine = null,
+        IContactLineGroupService? groups = null)
     {
-        _db = db; _secrets = secrets; _links = links; _logger = logger; _relink = relink;
+        _db = db; _secrets = secrets; _links = links; _logger = logger; _relink = relink; _contactLine = contactLine; _groups = groups;
     }
 
     /// <summary>body ของ LINE webhook เล็ก (event ไม่กี่ตัว) — จำกัด 256 KB กันยิง body ใหญ่ใส่ทางเข้าสาธารณะ (ฝ่ายค้าน ข้อ 6)</summary>
@@ -68,10 +73,31 @@ public class CustomerLineWebhookController : ControllerBase
             // userId ของ OA นั้นส่งด้วย token ปัจจุบันไม่ได้ ⇒ ไม่ประมวลผล (หน้า LINE ตั้งค่าแสดงปัญหาให้ร้านแก้ secret แล้ว)
             if (!destinationAccepted) return Ok();
             if (!doc.RootElement.TryGetProperty("events", out var events)) return Ok();
+            var anyFailed = false;
             foreach (var ev in events.EnumerateArray())
             {
                 var type = ev.TryGetProperty("type", out var t) ? t.GetString() : null;
-                if (!ev.TryGetProperty("source", out var src) || !src.TryGetProperty("type", out var st) || st.GetString() != "user") continue;
+                // รอบ 254 WP-11 L3 (G10): LINE ส่ง webhook ซ้ำได้ ⇒ event ที่เห็นแล้วข้าม (ผูก/ตอบไม่ซ้ำ · ตารางกลางหลายเครื่อง)
+                var eventId = ev.TryGetProperty("webhookEventId", out var we) ? we.GetString() : null;
+                if (_groups != null && !await _groups.MarkEventSeenAsync(eventId, ct)) continue;
+                // ฝ่ายค้าน fix2 L1: ประทับ "เห็นแล้ว" ค้างไว้เฉพาะเมื่อประมวลผลสำเร็จ — ล้ม ⇒ ถอนการประทับ + ตอบ 500 ให้ LINE ส่งซ้ำ (เหตุการณ์ที่สำเร็จในชุดเดียวกันถูกข้าม)
+                try
+                {
+                if (!ev.TryGetProperty("source", out var src) || !src.TryGetProperty("type", out var st)) continue;
+                var sourceType = st.GetString();
+                if (sourceType is "group" or "room")
+                {
+                    // รอบ 254 WP-11 L3: กลุ่มของผู้ติดต่อ (#HeyNextAcc/#ByeNextAcc · join/leave · สมาชิก) — ข้อความอื่นในกลุ่มไม่ประมวล/ไม่เก็บ
+                    if (_groups == null) continue;
+                    var outcome = await _groups.HandleCompanyGroupEventAsync(companyId, destination, ev, ct);
+                    var groupReplyToken = ev.TryGetProperty("replyToken", out var grt) ? grt.GetString() : null;
+                    if (!string.IsNullOrEmpty(outcome.Reply) && !string.IsNullOrEmpty(groupReplyToken))
+                        await _links.ReplyAsync(CustomerNotifyChannel.ScopeCompany, companyId, groupReplyToken, outcome.Reply, ct);
+                    if (outcome.LeaveAfterReply && src.TryGetProperty("groupId", out var leaveGroup))
+                        await _groups.LeaveGroupIfUnboundAsync(companyId, destination, leaveGroup.GetString() ?? "", ct);   // Q8 หลังตอบ
+                    continue;
+                }
+                if (sourceType != "user") continue;
                 var userId = src.TryGetProperty("userId", out var u) ? u.GetString() ?? "" : "";
                 var replyToken = ev.TryGetProperty("replyToken", out var rt) ? rt.GetString() : null;
                 string? reply = null;
@@ -79,20 +105,36 @@ public class CustomerLineWebhookController : ControllerBase
                 {
                     case "message":
                         if (ev.TryGetProperty("message", out var msg) && msg.TryGetProperty("type", out var mt) && mt.GetString() == "text")
-                            reply = await _links.TryRedeemAsync(CustomerNotifyChannel.ScopeCompany, companyId, destination, userId,
-                                msg.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "", ct);
+                        {
+                            var text = msg.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "";
+                            // รอบ 254 WP-11 L2: รหัสของลิงก์ผูก LINE ผู้ติดต่อ / "หยุด" ก่อน — ไม่ใช่ของผู้ติดต่อ (null) ⇒ เส้นลูกค้าเว็บเดิม
+                            if (_contactLine != null)
+                                reply = await _contactLine.TryRedeemAsync(companyId, destination, userId, text, ct)
+                                    ?? await _contactLine.TryStopAsync(companyId, destination, userId, text, ct);
+                            reply ??= await _links.TryRedeemAsync(CustomerNotifyChannel.ScopeCompany, companyId, destination, userId, text, ct);
+                        }
                         break;
                     case "follow":
                         var restored = await _links.SetBlockedAsync(CustomerNotifyChannel.ScopeCompany, companyId, userId, blocked: false, ct);
+                        if (_contactLine != null) restored += await _contactLine.SetBlockedAsync(companyId, destination, userId, blocked: false, ct);
                         reply = restored > 0 ? CustomerLineLinkRule.Replies.WelcomeBack : CustomerLineLinkRule.Replies.FollowHint;
                         break;
                     case "unfollow":
                         await _links.SetBlockedAsync(CustomerNotifyChannel.ScopeCompany, companyId, userId, blocked: true, ct);
+                        if (_contactLine != null) await _contactLine.SetBlockedAsync(companyId, destination, userId, blocked: true, ct);
                         break;
                 }
                 if (!string.IsNullOrEmpty(reply) && !string.IsNullOrEmpty(replyToken))
                     await _links.ReplyAsync(CustomerNotifyChannel.ScopeCompany, companyId, replyToken, reply, ct);
+                }
+                catch (Exception evEx) when (evEx is not OperationCanceledException)
+                {
+                    anyFailed = true;
+                    _logger.LogError(evEx, "LINE webhook ของบริษัท {CompanyId}: ประมวลเหตุการณ์ {EventId} ล้ม — ถอนการประทับให้ส่งซ้ำได้", companyId, eventId);
+                    if (_groups != null) await _groups.UnmarkEventSeenAsync(eventId, CancellationToken.None);
+                }
             }
+            if (anyFailed) return StatusCode(500);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

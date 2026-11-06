@@ -319,7 +319,8 @@ public class MeteringController : ControllerBase
         => Ok(new ApiResponse<DocumentQuotaStatus>(true, await _quota.GetDocumentQuotaAsync(companyId, ct)));
 
     /// <summary>ฝ่ายค้านรอบ 213 S4: <c>ExpectedPackSize/ExpectedPackPrice</c> = ข้อเสนอที่ผู้ซื้อเห็น (ไม่ตรงของจริง ⇒ 409) · รอบ 229: ใช้กับ documents.topup ด้วย</summary>
-    public record TopUpRequest(int Packs = 1, int? ExpectedPackSize = null, decimal? ExpectedPackPrice = null);
+    /// <summary><c>Channel</c> (รอบ 254 WP-11 L4 · ใช้กับแพ็กข้อความเท่านั้น): <c>line</c>/<c>email</c> = แพ็กของช่อง · ว่าง = แพ็กรวมเดิม</summary>
+    public record TopUpRequest(int Packs = 1, int? ExpectedPackSize = null, decimal? ExpectedPackPrice = null, string? Channel = null);
 
     /// <summary>header <c>Idempotency-Key</c> ของคำขอซื้อ (null = ไม่ได้ส่ง · ยาวเกิน 200 ตัดทิ้ง — ใช้แค่ hash)</summary>
     private string? IdempotencyKeyHeader()
@@ -374,12 +375,15 @@ public class MeteringController : ControllerBase
         if (block != null) return block;
         if (_notifyQuota == null) return StatusCode(503, new ApiResponse<NotifyQuotaStatus>(false, null, "บริการโควตาข้อความไม่พร้อม"));
 
+        // ฝ่ายค้าน fix2 L5: ช่องที่ไม่รู้จัก ⇒ 400 (ไม่เดาเป็นแพ็กรวม)
+        if (!Accounting.Helpers.NotifyQuotaPolicy.TryParseChannel(req.Channel, out var topUpChannel))
+            return BadRequest(new ApiResponse<NotifyQuotaStatus>(false, null, Accounting.Helpers.NotifyQuotaPolicy.UnknownChannelMessage));
         var actor = User.Identity?.Name ?? "unknown";
         NotifyQuotaStatus status;
         try
         {
             status = await _notifyQuota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct, IdempotencyKeyHeader(),
-                req.ExpectedPackSize, req.ExpectedPackPrice);
+                req.ExpectedPackSize, req.ExpectedPackPrice, topUpChannel);
         }
         catch (NotifyTopUpOfferChangedException ex)
         {
@@ -388,9 +392,13 @@ public class MeteringController : ControllerBase
         }
         // ฝ่ายค้านรอบ 213 S4: จำนวนที่ให้จริงจากการซื้อครั้งนี้ (ขนาดแพ็ก ณ ตอนซื้อ) — คำขอซ้ำ (คีย์เดิม) ไม่มีค่า ⇒ ไม่อ้างจำนวน
         var granted = status.Granted;
+        // รอบ 254 WP-11 L4: แพ็กของช่อง ⇒ วันหมดอายุของถังช่องนั้น (เซิร์ฟเวอร์ประกอบ)
+        var grantedChannel = status.Channels.FirstOrDefault(c => c.Channel == status.GrantedChannel);
+        var until = grantedChannel != null ? grantedChannel.BonusExpiresAt : status.BonusExpiresAt;
+        var what = grantedChannel != null ? $"{grantedChannel.Label} " : "";
         return Ok(new ApiResponse<NotifyQuotaStatus>(true, status,
             granted is int g
-                ? $"เพิ่มข้อความแจ้งเตือน {g:N0} ข้อความแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"
+                ? $"เพิ่มข้อความแจ้งเตือน {what}{g:N0} ข้อความแล้ว — ใช้ได้ถึง {until?.AddHours(7):dd/MM/yyyy}"
                 : "คำขอนี้ดำเนินการไปแล้ว — แสดงสถานะล่าสุด"));
     }
 

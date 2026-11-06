@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Autopilot - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .ap-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:14px; }
+    .ap-kpi { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; }
+    .ap-kpi .v { font-size:22px; font-weight:700; }
+    .ap-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:14px; }
+    .ap-card h3 { font-size:15px; font-weight:700; margin:0 0 8px; }
+    .ap-issue { border-left:4px solid #dc2626; padding:8px 10px; margin-bottom:8px; background:#fef2f2; border-radius:6px; }
+    .ap-issue .t { font-weight:600; }
+    .ap-issue .d { font-size:13px; color:#475569; margin:2px 0 6px; }
+    .ap-step { display:inline-block; font-size:12px; padding:2px 6px; border-radius:999px; margin:1px; white-space:nowrap; }
+    .ap-Done { background:#dcfce7; color:#166534; }
+    .ap-Waiting { background:#f1f5f9; color:#475569; }
+    .ap-Problem { background:#fee2e2; color:#991b1b; }
+    .ap-NotApplicable { background:#fafafa; color:#94a3b8; }
+    .ap-muted { color:#64748b; font-size:13px; }
+    .ap-grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">Autopilot</h2>
+        <p class="page-subtitle">ใบนี้อยู่ขั้นไหน · เรื่องที่ระบบทำต่อไม่ได้ (พร้อมปุ่มแก้) · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนเข้าที่รอยืนยัน — ทุกสถานะคำนวณที่เซิร์ฟเวอร์จากข้อมูลจริง</p></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <label for="apDays" class="ap-muted">ช่วง</label>
+        <select id="apDays" class="filter-select" onchange="Page.load()">
+          <option value="7">7 วัน</option><option value="30" selected>30 วัน</option><option value="90">90 วัน</option>
+        </select>
+        <button class="btn btn-secondary" onclick="Page.load()">รีเฟรช</button>
+      </div>
+    </div>
+
+    <div id="apKpis" class="ap-kpis"></div>
+
+    <div class="ap-card">
+      <h3>❗ เรื่องที่ระบบทำต่อไม่ได้</h3>
+      <div id="apIssues" class="ap-muted">กำลังโหลด...</div>
+    </div>
+
+    <div class="ap-card" id="bankQueue">
+      <h3>💰 เงินโอนเข้าที่รอยืนยัน</h3>
+      <p class="ap-muted">ระบบเสนอใบค้างที่ยอดตรง/ใกล้เคียงจากรายการเดินบัญชีจริง (ไม่ใช้ AI) — ยืนยันแล้วบันทึกรับชำระ + ออก/ส่งใบเสร็จตามค่าตั้ง · สลิปจากลูกค้าเป็นแค่ข้อบ่งชี้ ไม่ปิดหนี้เอง</p>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>วันที่</th><th class="text-right">ยอด</th><th>รายการ</th><th>ข้อเสนอ / เหตุผล</th><th>ใบที่จะปิด</th><th>จัดการ</th></tr></thead>
+          <tbody id="apBankBody"><tr><td colspan="6" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="ap-card">
+      <h3>📄 เอกสารขาย — อยู่ขั้นไหน</h3>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>เอกสาร</th><th>ลูกค้า</th><th class="text-right">ยอด</th><th>ขั้น</th><th>สถานะ</th></tr></thead>
+          <tbody id="apRowsBody"><tr><td colspan="5" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="ap-card">
+      <h3>📝 ใบเสนอราคา — แปลงอัตโนมัติเมื่อลูกค้ายอมรับออนไลน์</h3>
+      <p class="ap-muted">ค่าตั้งต้น "ไม่แปลง" · ตั้งต่อใบได้ · ระบบแปลงเป็น<strong>ร่าง</strong> (อนุมัติตามขั้นตอนเดิม) · เนื้อหาเปลี่ยนหลังลูกค้ายอมรับ = ไม่แปลง + แจ้งทันที</p>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>ใบเสนอราคา</th><th>ลูกค้า</th><th>ยอมรับเมื่อ</th><th>โหมด (ใบนี้)</th><th>ผล</th></tr></thead>
+          <tbody id="apQtBody"><tr><td colspan="5" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="ap-card">
+      <h3>⚙️ ค่าตั้ง Autopilot ของบริษัท</h3>
+      <div class="ap-grid2">
+        <div>
+          <label for="apBankAuto"><input type="checkbox" id="apBankAuto"> ปิดหนี้อัตโนมัติจากเงินโอนเข้า (ยอดตรงเป๊ะ + ตัวระบุตัว + ยอดไม่ซ้ำ + มาจากธนาคาร)</label>
+          <p class="ap-muted">ค่าตั้งต้นปิด — ดูผลจำลองย้อนหลังก่อนเปิด · ปิดอยู่ = ระบบเสนอให้คนยืนยันเท่านั้น</p>
+          <button class="btn btn-secondary btn-sm" onclick="Page.simulate()">ดูผลจำลอง 30 วัน</button>
+          <div id="apSim" class="ap-muted" style="margin-top:6px"></div>
+        </div>
+        <div>
+          <label for="apQtDefault">ใบเสนอราคาที่ลูกค้ายอมรับ (ค่าตั้งต้นของบริษัท)</label>
+          <select id="apQtDefault" class="filter-select"></select>
+          <p class="ap-muted">ใช้กับใบที่ลูกค้ายอมรับ<strong>หลัง</strong>เปลี่ยนค่านี้เท่านั้น (ไม่แปลงย้อนหลัง)</p>
+          <label for="apDigest">ส่งสรุป Autopilot ประจำวันเวลา (เวลาไทย)</label>
+          <input type="time" id="apDigest" class="filter-select">
+          <p class="ap-muted">ล้ม/ติด = แจ้งทันที · สำเร็จ = รวมในสรุปประจำวัน · ผู้รับ/ช่องทางตั้งได้ที่หน้าแจ้งเตือน</p>
+        </div>
+      </div>
+      <div style="margin-top:10px"><button class="btn btn-primary" id="apSaveBtn" onclick="Page.saveSettings()">บันทึกค่าตั้ง</button></div>
+      <details style="margin-top:10px">
+        <summary class="ap-muted">เหตุการณ์ที่แจ้งทีม (E-01…E-15)</summary>
+        <div id="apCatalogue" class="ap-muted"></div>
+      </details>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+const Page = {
+  data: null,
+
+  async init() {
+    if (!Layout.init('autopilot')) return;
+    Layout.setTitle('Autopilot');
+    await this.load();
+  },
+
+  async load() {
+    const api = Layout.api(); if (!api) return;
+    const days = document.getElementById('apDays').value || '30';
+    try {
+      const res = await api.getAutopilotOverview(days);
+      this.data = (res && res.data) || null;
+    } catch (e) {
+      this.data = null;
+      document.getElementById('apIssues').textContent = 'โหลดไม่สำเร็จ: ' + (e.message || '');
+      Layout.toast('โหลดหน้า Autopilot ไม่สำเร็จ: ' + (e.message || ''), 'error');
+      return;
+    }
+    this.render();
+  },
+
+  render() {
+    const d = this.data; if (!d) return;
+    const s = d.summary || {};
+    document.getElementById('apKpis').innerHTML = `
+      <div class="ap-kpi"><div class="ap-muted">จบแล้ว (${Number(s.days)} วัน)</div><div class="v">${Number(s.done)}</div></div>
+      <div class="ap-kpi"><div class="ap-muted">กำลังเดิน</div><div class="v">${Number(s.running)}</div></div>
+      <div class="ap-kpi"><div class="ap-muted">ติด</div><div class="v" style="color:#dc2626">${Number(s.stuck)}</div></div>
+      <div class="ap-kpi"><div class="ap-muted">เรื่องที่ระบบทำต่อไม่ได้</div><div class="v" style="color:#dc2626">${Number(s.openIssues)}</div></div>
+      <div class="ap-kpi"><div class="ap-muted">เงินโอนรอยืนยัน</div><div class="v">${Number(s.bankAwaitingConfirm)}</div></div>`;
+    this.renderIssues(d.issues || []);
+    this.renderBank(d.bankQueue || []);
+    this.renderRows(d.rows || []);
+    this.renderQuotations(d.quotations || [], (d.settings && d.settings.quotationModes) || []);
+    this.renderSettings(d.settings || {});
+  },
+
+  renderIssues(list) {
+    const el = document.getElementById('apIssues');
+    if (!list.length) { el.innerHTML = '<span style="color:#166534">✅ ไม่มีเรื่องค้าง</span>'; return; }
+    el.innerHTML = list.map((i, idx) => `
+      <div class="ap-issue">
+        <div class="t">${Layout.esc(i.title)}</div>
+        <div class="d">${Layout.esc(i.detail)} · ${Layout.esc(Layout.dateTime(i.at))}</div>
+        ${i.actionPath ? `<button class="btn btn-primary btn-sm" onclick="Page.issueAction(${Number(idx)})">${Layout.esc(i.actionLabel)}</button>`
+          : i.actionHref ? `<a class="btn btn-primary btn-sm" href="${Layout.esc(i.actionHref)}">${Layout.esc(i.actionLabel)}</a>`
+          : `<span class="ap-muted">${Layout.esc(i.actionLabel)}</span>`}
+        ${i.secondaryHref ? `<a class="btn btn-secondary btn-sm" href="${Layout.esc(i.secondaryHref)}">${Layout.esc(i.secondaryLabel)}</a>` : ''}
+      </div>`).join('');
+  },
+
+  async issueAction(idx) {
+    const i = ((this.data && this.data.issues) || [])[idx]; if (!i || !i.actionPath) return;
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.autopilotIssueAction(i.actionPath);
+      Layout.toast((res && res.message) || 'ดำเนินการแล้ว');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'ดำเนินการไม่สำเร็จ', 'error'); }
+  },
+
+  renderBank(list) {
+    const body = document.getElementById('apBankBody');
+    if (!list.length) { body.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400">ไม่มีเงินโอนเข้าที่รอยืนยัน</td></tr>'; return; }
+    body.innerHTML = list.map(l => {
+      const opts = (l.choices || []).map(c =>
+        `<option value="${Layout.esc(c.documentId)}" ${c.documentId === l.documentId ? 'selected' : ''}>${Layout.esc(c.documentNumber)} · ${Layout.esc(c.contactName || '')} · ${Layout.money(c.expectedNet)}</option>`).join('');
+      return `<tr>
+        <td>${Layout.esc(Layout.date(l.date))}</td>
+        <td class="text-right">${Layout.money(l.amount)}</td>
+        <td>${Layout.esc(l.description || '')}${l.reference ? ` · ${Layout.esc(l.reference)}` : ''}</td>
+        <td>${l.verdict === 'Failed' ? '❌ ' : '⚙️ '}${Layout.esc(l.reason)}</td>
+        <td>${opts ? `<select id="apPick_${Layout.esc(l.lineId)}" class="filter-select">${opts /* html */}</select>` : '<span class="ap-muted">ไม่มีใบที่ยอดใกล้เคียง</span>'}</td>
+        <td style="white-space:nowrap">
+          ${opts ? `<button class="btn btn-primary btn-sm" onclick="Page.confirmBank('${Layout.jsArg(l.lineId)}')">ยืนยัน</button>` : ''}
+          <button class="btn btn-secondary btn-sm" onclick="Page.rejectBank('${Layout.jsArg(l.lineId)}')">ไม่ใช่</button>
+          ${l.contactId ? `<button class="btn btn-ghost btn-sm" title="${Layout.esc(l.contactName || '')}" onclick="Page.toggleContactAuto('${Layout.jsArg(l.contactId)}', ${l.contactAutoSettleDisabled ? 'false' : 'true'})">${l.contactAutoSettleDisabled ? 'ให้ผู้ติดต่อนี้ปิดหนี้อัตโนมัติได้' : 'ไม่ปิดอัตโนมัติกับผู้ติดต่อนี้'}</button>` : ''}
+        </td></tr>`;
+    }).join('');
+  },
+
+  async confirmBank(lineId) {
+    const sel = document.getElementById('apPick_' + lineId);
+    const documentId = sel && sel.value; if (!documentId) return;
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.confirmAutopilotBank(lineId, documentId);
+      Layout.toast((res && res.message) || 'บันทึกรับชำระแล้ว');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+  },
+
+  async rejectBank(lineId) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.rejectAutopilotBank(lineId);
+      Layout.toast((res && res.message) || 'ปฏิเสธแล้ว');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'ไม่สำเร็จ', 'error'); }
+  },
+
+  async toggleContactAuto(contactId, disabled) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.setContactBankAutoSettle(contactId, disabled);
+      Layout.toast((res && res.message) || 'บันทึกแล้ว');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'ไม่สำเร็จ', 'error'); }
+  },
+
+  renderRows(rows) {
+    const body = document.getElementById('apRowsBody');
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400">ไม่มีเอกสารขายในช่วงนี้</td></tr>'; return; }
+    body.innerHTML = rows.map(r => `<tr>
+      <td><a href="/pages/documents.html?openDoc=${encodeURIComponent(r.documentId)}">${Layout.esc(r.documentNumber)}</a>
+        <div class="ap-muted">${Layout.esc(r.documentType)}${r.origin ? ` · ${Layout.esc(r.origin)}` : ''}</div></td>
+      <td>${Layout.esc(r.contactName || '')}</td>
+      <td class="text-right">${Layout.money(r.totalAmount)}${r.balanceDue > 0 ? `<div class="ap-muted">ค้าง ${Layout.money(r.balanceDue)}</div>` : ''}</td>
+      <td>${(r.steps || []).map(st => `<span class="ap-step ap-${Layout.esc(st.state)}" title="${Layout.esc(st.note || '')}">${Layout.esc(st.label)}${st.note ? `: ${Layout.esc(st.note)}` : ''}</span>`).join('')}</td>
+      <td>${Layout.esc(r.overallLabel)}${r.problem ? `<div class="ap-muted" style="color:#991b1b">${Layout.esc(r.problem)}</div>` : ''}</td>
+    </tr>`).join('');
+  },
+
+  renderQuotations(list, modes) {
+    const body = document.getElementById('apQtBody');
+    if (!list.length) { body.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400">ไม่มีใบเสนอราคาในช่วงนี้</td></tr>'; return; }
+    body.innerHTML = list.map(q => {
+      const opts = `<option value="" ${q.mode ? '' : 'selected'}>ตามค่าบริษัท</option>` + modes.map(m =>
+        `<option value="${Layout.esc(m.code)}" ${q.mode === m.code ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
+      const locked = q.outcome === 'Converted';
+      return `<tr>
+        <td><a href="/pages/documents.html?openDoc=${encodeURIComponent(q.id)}">${Layout.esc(q.documentNumber)}</a></td>
+        <td>${Layout.esc(q.contactName || '')}</td>
+        <td>${q.acceptedAt ? Layout.esc(Layout.dateTime(q.acceptedAt)) : '<span class="ap-muted">ยังไม่ยอมรับ</span>'}</td>
+        <td><select class="filter-select" ${locked ? 'disabled title="แปลงแล้ว — เปลี่ยนโหมดไม่มีผล"' : ''} onchange="Page.setQtMode('${Layout.jsArg(q.id)}', this.value)">${opts /* html */}</select>
+          <div class="ap-muted">มีผล: ${Layout.esc(q.effectiveLabel)}</div></td>
+        <td>${q.childNumber ? `✅ <a href="/pages/documents.html?openDoc=${encodeURIComponent(q.childId)}">${Layout.esc(q.childNumber)}</a>` : ''}
+          ${q.message ? `<div class="ap-muted">${Layout.esc(q.message)}</div>` : ''}
+          ${q.canRetry ? `<button class="btn btn-secondary btn-sm" onclick="Page.issueActionPath('${Layout.jsArg('autopilot/quotations/' + q.id + '/retry')}')">ลองอีกครั้ง</button>` : ''}</td>
+      </tr>`;
+    }).join('');
+  },
+
+  async issueActionPath(path) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.autopilotIssueAction(path);
+      Layout.toast((res && res.message) || 'ดำเนินการแล้ว');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'ไม่สำเร็จ', 'error'); }
+  },
+
+  async setQtMode(id, mode) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.setQuotationAutopilotMode(id, mode || null);
+      Layout.toast((res && res.message) || 'บันทึกแล้ว');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); await this.load(); }
+  },
+
+  renderSettings(st) {
+    document.getElementById('apBankAuto').checked = !!st.bankAutoSettleEnabled;
+    const sel = document.getElementById('apQtDefault');
+    sel.innerHTML = (st.quotationModes || []).map(m => `<option value="${Layout.esc(m.code)}">${Layout.esc(m.label)}</option>`).join('');
+    sel.value = st.quotationAcceptAutopilotDefault || 'Off';
+    document.getElementById('apDigest').value = st.digestLocalTime || '08:40';
+    document.getElementById('apCatalogue').innerHTML = (st.catalogue || []).map(c =>
+      `<div>${Layout.esc(c.code)} · ${Layout.esc(c.label)} — ${Layout.esc(c.deliveryLabel)}${c.wired ? '' : ' (ยังไม่มีผู้ส่ง — ส่วน B)'}</div>`).join('');
+  },
+
+  async saveSettings() {
+    const api = Layout.api(); if (!api) return;
+    const btn = document.getElementById('apSaveBtn'); btn.disabled = true;
+    try {
+      const res = await api.updateAutopilotSettings({
+        bankAutoSettleEnabled: document.getElementById('apBankAuto').checked,
+        quotationAcceptAutopilotDefault: document.getElementById('apQtDefault').value || 'Off',
+        digestLocalTime: document.getElementById('apDigest').value || '',
+      });
+      Layout.toast((res && res.message) || 'บันทึกแล้ว');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); await this.load(); }
+    finally { btn.disabled = false; }
+  },
+
+  async simulate() {
+    const api = Layout.api(); if (!api) return;
+    const el = document.getElementById('apSim'); el.textContent = 'กำลังจำลอง...';
+    try {
+      const res = await api.simulateAutopilotBank(30);
+      const s = (res && res.data) || {};
+      el.textContent = `เงินเข้าที่ยังไม่จับคู่ ${s.lines} รายการ: ปิดเองได้ ${s.wouldAutoSettle} · เสนอให้คนยืนยัน ${s.wouldSuggest} · ไม่พบใบ ${s.noMatch} · ไม่ทราบแหล่ง (รายการเก่า) ${s.legacyUnknownSource} · ไฟล์/API/พิมพ์มือ ${s.userSuppliedSource} — ${s.note || ''}`;
+    } catch (e) { el.textContent = 'จำลองไม่สำเร็จ: ' + (e.message || ''); }
+  },
+};
+
+Page.init();
+  </script>
+</body>
+</html>

@@ -1106,8 +1106,16 @@ public partial class DocumentService
                 .ToHashSet();
             var emailed = await DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync(_db, companyId,
                 voidedEtax.Select(x => x.DocumentId).Distinct().ToList());
+            // รอบ 255 (ETR-ACK) (ทางไปต่อ · F2 ข้อ 8): แถวที่นักบัญชีบันทึก "ตรวจแล้ว" (audit etax-review-acknowledged) ออกจากทั้งสองกลุ่ม — ตัวตัดสินเดียว HiddenByAcknowledgement
+            var ackAudits = (await _db.AuditLogs.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && a.EntityType == nameof(EtaxInvoice) && a.EntityId != null && etaxIdTexts.Contains(a.EntityId)
+                        && a.NewValues != null && a.NewValues.Contains(EtaxReissueReview.AcknowledgedAction))
+                    .Select(a => new { EntityId = a.EntityId!, a.NewValues })
+                    .ToListAsync())
+                .Select(a => (a.EntityId, (string?)a.NewValues)).ToList();
             foreach (var x in voidedEtax)
             {
+                if (EtaxReissueReview.HiddenByAcknowledgement(x.Id, ackAudits)) continue;
                 var docCancelled = cancelRecorded.Contains(x.DocumentId.ToString());
                 if (EtaxReissueReview.SubmittedEtaxVoidedWithoutEvidence(x.Status, x.SubmittedAt, decided.Contains(x.Id.ToString()), docCancelled))
                     etaxRowsSubmitted.Add(new EtaxReviewEtaxRow(x.Id, x.DocumentId, x.DocumentNumber, x.EtaxRefNumber, x.SubmittedAt, x.VoidedAt, x.VoidReason,
@@ -1152,6 +1160,74 @@ public partial class DocumentService
 
         return new EtaxReissueReviewReport(undone, resolvedRows, excessRows, misdated,
             stuckRows, etaxRowsSubmitted, keptLostRows, etaxRowsEmailed);
+    }
+
+    /// <summary>รอบ 255 (ETR-ACK) — <b>บันทึก "ตรวจแล้ว"</b> ของแถว e-Tax ในสองกลุ่มของรายงานข้อ 44 (<c>SubmittedEtaxVoidedWithoutEvidence</c> · <c>EmailedEtaxVoidedInSystem</c>):
+    /// นักบัญชีตรวจที่ระบบ e-Tax ของกรมสรรพากรแล้วพบว่าใบนี้ถูกปฏิเสธ/ไม่เคยได้รับ หรือถูกยกเลิกที่กรมสรรพากรแล้ว ⇒ เขียน audit append-only
+    /// (<see cref="EtaxReissueReview.AcknowledgedAction"/>) แล้วแถวออกจากรายงาน · <b>ไม่แตะแถว e-Tax/เอกสาร/ภาษี</b> (ไม่ประทับสถานะของกรมสรรพากรเอง — F2 ข้อ 3) ·
+    /// กรณีกรมสรรพากรยังถือใบนี้อยู่ไม่มีทางนี้ — ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากรผ่านเส้น "ยกเลิกทาง e-Tax" · แถวต้องอยู่ในกลุ่ม<b>ตอนนี้</b>
+    /// (จำแนกด้วย <see cref="GetEtaxReissueReviewAsync"/> ตัวเดียว ไม่เขียนกติกาซ้ำ) · บันทึกซ้ำ = 409 · tenant · <b>ผู้เรียกต้องตรวจสิทธิ์มาก่อน</b></summary>
+    public async Task<string> AcknowledgeEtaxReviewRowAsync(Guid companyId, Guid etaxInvoiceId, AcknowledgeEtaxReviewRequest request, string actor)
+    {
+        var invalid = EtaxReissueReview.ValidateAcknowledgement(request.Outcome, request.RdReference, request.Note);
+        if (invalid != null) throw new BusinessRuleException(invalid, EtaxReissueReview.AcknowledgedRuleCode);
+
+        var etax = await _db.EtaxInvoices.AsNoTracking()
+            .Where(e => e.Id == etaxInvoiceId && e.CompanyId == companyId)
+            .Select(e => new { e.Id, e.DocumentId, e.EtaxRefNumber, e.Status })
+            .FirstOrDefaultAsync()
+            ?? throw new BusinessRuleException("ไม่พบแถว e-Tax นี้", EtaxReissueReview.AcknowledgedRuleCode, 404);
+        if (etax.Status != EtaxStatus.Voided)
+            throw new BusinessRuleException("แถว e-Tax นี้ไม่ได้อยู่ในสถานะยกเลิกในระบบ — ไม่มีรายการให้บันทึกว่าตรวจแล้ว", EtaxReissueReview.AcknowledgedRuleCode);
+
+        var idText = etax.Id.ToString();
+        var existing = (await _db.AuditLogs.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.EntityType == nameof(EtaxInvoice) && a.EntityId == idText
+                    && a.NewValues != null && a.NewValues.Contains(EtaxReissueReview.AcknowledgedAction))
+                .Select(a => new { EntityId = a.EntityId!, a.NewValues })
+                .ToListAsync())
+            .Select(a => (a.EntityId, (string?)a.NewValues)).ToList();
+        if (EtaxReissueReview.HiddenByAcknowledgement(etax.Id, existing))
+            throw new BusinessRuleException($"แถว e-Tax {etax.EtaxRefNumber} ถูกบันทึกว่าตรวจแล้ว — บันทึกซ้ำไม่ได้ (ดูประวัติใน audit log)",
+                EtaxReissueReview.AcknowledgedRuleCode, 409);
+
+        var report = await GetEtaxReissueReviewAsync(companyId);
+        var group = report.SubmittedEtaxVoidedWithoutEvidence.Any(r => r.EtaxId == etax.Id) ? nameof(EtaxReissueReviewReport.SubmittedEtaxVoidedWithoutEvidence)
+            : report.EmailedEtaxVoidedInSystem.Any(r => r.EtaxId == etax.Id) ? nameof(EtaxReissueReviewReport.EmailedEtaxVoidedInSystem)
+            : null;
+        if (group == null)
+            throw new BusinessRuleException("แถว e-Tax นี้ไม่อยู่ในรายการที่ต้องตรวจแล้ว (อาจบันทึกยกเลิกทาง e-Tax พร้อมหลักฐานไปแล้ว) — ไม่ต้องบันทึกว่าตรวจแล้ว",
+                EtaxReissueReview.AcknowledgedRuleCode);
+
+        var label = EtaxReissueReview.AcknowledgementOutcomeLabel(request.Outcome)!;
+        var rdReference = string.IsNullOrWhiteSpace(request.RdReference) ? null : EtaxReissueReview.OneLine(request.RdReference).Trim();
+        var note = request.Note!.Trim();
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = Guid.TryParse(actor, out var actorId) ? actorId : (Guid?)null,
+            EntityType = nameof(EtaxInvoice),
+            EntityId = idText,
+            Action = AuditAction.Update,
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new { status = etax.Status.ToString(), reviewGroup = group }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = EtaxReissueReview.AcknowledgedAction,
+                ruleCode = EtaxReissueReview.AcknowledgedRuleCode,
+                legalReference = EtaxReissueReview.AcknowledgedLegalReference,
+                reviewGroup = group,
+                outcome = request.Outcome,
+                outcomeLabel = label,
+                rdReference,
+                note,
+                actor,
+                documentId = etax.DocumentId,
+                etaxRefNumber = etax.EtaxRefNumber,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+        return $"บันทึกว่าตรวจแล้ว ({label}) — แถว e-Tax {etax.EtaxRefNumber} ออกจากรายการที่ต้องตรวจ · ระบบไม่ได้เปลี่ยนสถานะที่กรมสรรพากร";
     }
 
     /// <summary>ยอดรับชำระที่ยังมีผลของใบต้นทาง นับจาก<b>รายการรับชำระจริง</b> (ไม่ใช่ <c>PaidAmount</c> ซึ่งรวมใบลดหนี้ที่หักล้างด้วย) — การรับชำระตรง =

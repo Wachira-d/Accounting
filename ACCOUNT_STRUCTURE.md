@@ -230,6 +230,9 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
   (`MayDetach` · สมาชิกอื่น 403) · `AddChainedAuditLog` + ประวัติ `DetachedFromAccountPlan` · แจ้งอีกฝ่าย · `GET detach-preview/{companyId}` ("หลังถอดจะใช้ {Label} ถึง {วันที่} / ซื้อได้ทันที" — `DetachPreview`) ·
   `GET effective/{companyId}` + `graceEndsAt` · `canSelfDetach` · หน้า License ของผู้ถือแสดง License ที่ Expired ซึ่งยังมีบริษัทผูก (ถอดได้) · **ผูกบริษัทที่จ่ายเอง** ⇒ เวลาที่จ่ายไว้เดินต่อ ไม่คืนเงิน
   (236-9 ค่าตั้งต้น รอเจ้าของยืนยัน) — `AttachPaidTimeWarning` ใน `GET attach-preview/{companyId}` · `Attach` · `AdminAttach`
+  · **รอบ 252 WP-13 (AUDIT_249 §3.3 Y3 ยืนยัน "ใช่"):** หน้า License เดิม `.catch(() => null)` ⇒ พรีวิวล้มแล้วผูกต่อโดยไม่เตือน — ตอนนี้พรีวิวล้มต้องยืนยันก่อน ·
+  `GET /api/account-subscription` ส่ง `planStatusLabel` (`PlanIdentityResolver.StatusLabel`) · DTO แพ็กเกจส่งป้ายไทย `BillingCycleLabel` /
+  `RequestedBillingCycleLabel` / `PaymentMethodLabel` / `TrialStatusLabel` (`Helpers/SubscriptionLabels` + `PaymentMethodNames`) — หน้า subscription เลิกมีตาราง enum→ไทยเอง
 - **รอบ 238 ฝ่ายค้าน (236-10):** migration ครั้งเดียว (ตาราง marker ใหม่ `OneShotDataFixes(Key, AppliedAt)` — ใช้ซ้ำได้กับงานซ่อมข้อมูลครั้งเดียวอื่น) · ไม่พลิก License ที่แอดมินตั้ง Expired เอง ·
   คืนสถานะ cascade เฉพาะแถวที่ยังผูก/ฟรีถาวร/ยังไม่หมดอายุ · ถอดแถวที่เลยวันหมดอายุ ⇒ Expired ทันที (`CompanyStatusAfterDetach` + ประวัติ `DetachStatusSettled`) ·
   License ระงับ/ยกเลิก ⇒ `SubscriptionGateState.InactiveReadOnly` เขียน 402 ทุกโหมด · ผูกอัตโนมัติตอนสร้างบริษัทเฉพาะ License ที่ยังไม่พ้นวันหมดอายุ (`MayAutoAttach`) ·
@@ -254,6 +257,10 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 | ผัง | ใช้เมื่อ | ผู้ตัดสิน | สถานะ |
 | --- | --- | --- | --- |
 | **58010** ภาษีเงินได้ถูกหัก ณ ที่จ่ายที่ขอเครดิตไม่ได้ (Expense · ใต้กลุ่ม **580** ภาษีเงินได้) | ตัดสูญแถวทะเบียน 50 ทวิ ที่ลูกค้าไม่ออกใบ (Dr 58010 / Cr 11910) · ช่อง "ตัดสูญ" ของปิดปีภาษี | `Helpers/WhtCreditWriteOff` (`ExpenseAccountCode` · `IsNonDeductibleAccount` = `CitCalculation.IsCitExpenseAccount`) ← `WhtCreditService.ExpireAsync` / `SettleYearEndAsync` | ✅ แถวใน `ChartOfAccountTemplates.GetCommonAccounts` (บริษัทใหม่ได้จาก seed) · บริษัทเดิม: **สร้างตอนใช้ครั้งแรก** `SettlementChartSeed.EnsureStandardAccountAsync` ใต้กลุ่ม 580 ของบริษัท (ไม่มีกลุ่ม 580 ⇒ ล้มดังพร้อมทางไปต่อ · ไม่มี migration seed) · ผังที่ไม่อยู่กลุ่ม 580 ⇒ ปฏิเสธ (ภ.ง.ด.50 จะหักเป็นรายจ่ายผิด ม.65 ตรี (6 ทวิ)) · อยู่ใน `SpecialPurposeAccount.Codes` (ไม่เป็นผังค่าใช้จ่ายตั้งต้น) · ภ.ง.ด.50/51 ตัดออกจากรายจ่ายด้วย `ExceptCitExpense` (แก้ร่วม: จับ 58000–58099 · เดิมแค่ 58000–58009 — ผังของบริษัทเดิมที่ใช้รหัสช่วงนี้นอกกลุ่ม 580 ขึ้นคำเตือนที่ `GET wht-credits/account-warnings` · ฝ่ายค้าน N1) · สร้างผังในธุรกรรมเดียวกับ JE ตัดสูญ (N5) |
+
+**รอบ 252 (WP-09) — 11910 กับกล่องรับ 50 ทวิ (ชั้น Company · ยังไม่ได้คอมไพล์ในเครื่องนี้):** ไม่มีผังใหม่ — 11910 ยังเป็นยอดถูกหักทั้งหมดตาม GL (ผู้ตั้ง = `SyncWhtCreditReceivedAsync`) ·
+ส่วนที่ "เครดิตได้" แยกด้วยข้อมูล ไม่ใช่ผัง: `WhtCreditsReceived.ReceivedAmount` (Σ allocation ที่ยืนยันใน `WhtCertAllocations` ← `WhtCertIntakes`) + ตัวคำนวณเดียว
+`Helpers/WhtCreditableAmount` · กระทบยอด 11910 สูตรเดิม (ส่วนที่ขาดใบ + ส่วนที่ได้ใบ + ใช้แล้ว + ตัดสูญพร้อม JE = GL) · ตารางใหม่ทั้งสองผูก `CompanyId` (tenant) · DOCUMENT_FLOW §2.12j
 
 ### 3.1e ผังภาษีหัก ณ ที่จ่ายค้างจ่ายต่อแบบ ภ.ง.ด. ✅ รอบ 204 (คำตัดสินเจ้าของ DECISIONS ข้อ 148) — ชั้น Company (ผังของบริษัท)
 
@@ -458,6 +465,35 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
   **ฝ่ายค้านรอบ 213**: หน่วย ณ ตอนซื้อเก็บบน `UsageEvent.UnitLabelSnapshot` — `UsageInvoicingJob` แยกบรรทัดตามหน่วยนั้น (`AddOnBilling.InvoiceUnit` · แถวเก่า/ฟีเจอร์อื่น = ป้ายของฟีเจอร์) ·
   ซื้อแพ็กส่งขนาด/ราคาที่เห็น เทียบใต้ล็อกก่อนคิดเงิน ไม่ตรง ⇒ 409 (ไม่คิดเงิน) · แอดมินคืนค่าแพ็กตั้งต้นได้
 
+  **รอบ 254 WP-11 L2 (LINE ถึงผู้ติดต่อ) — ไม่แตะตัวนับ/ราคา**: การ์ดเอกสารทาง LINE ส่งผ่าน **LINE OA ของบริษัทเท่านั้น** (คำตัดสิน N8) ⇒ **ไม่นับ**โควตาช่องกลาง
+  (`NotifyQuotaPolicy.IsMetered` เดิม — OA ของร้านเองไม่นับ · LINE คิดเงินบริษัทเองตามแผน OA) · ข้อความ OA บริษัทหมด (429 monthly limit) ⇒ แถวคิว LINE ล้มพร้อมเหตุ +
+  ถอยไปอีเมลถ้ากฎตั้งไว้ (Q7 — อีเมลผ่าน SMTP ของ NextAcc ยังอยู่ใต้เพดานรายวัน `PlatformEmailQuota` เดิม) · ความพร้อม "OA ของบริษัท" = เปิด LINE + token + secret ถอดได้
+  (`Helpers/CompanyLineReadiness` — ไม่มี secret ⇒ webhook ตรวจลายเซ็นไม่ได้ ⇒ ผูก/หยุดรับไม่ได้ ⇒ ไม่พร้อม) · ส่งผ่าน OA กลางถึงผู้ติดต่อ = **ปิด** (`ContactRecipientResolver.NextAccTenantDeliveryOpen`)
+  **รอบ 254 WP-11 L4 — โควตาแยกช่อง LINE / อีเมล (คำตอบเจ้าของ Q3/Q4 · AUDIT_249 §3.3 N7/N9 · DECISIONS 254-WP11-10)** 🔨 *(ยังไม่ได้คอมไพล์)*:
+  - ตัวนับ `NotifyUsageCounters` PK (CompanyId, Period, **Channel**) — `all` = ก้อนรวมเดิม (แถวเดิมทั้งหมด) · `line` · `email` (`Helpers/NotifyChannelQuotaMigration` เปลี่ยน PK ครั้งเดียว)
+  - เพดานแยกช่อง `PlanTemplate.MaxSharedLineMessagesPerMonth`/`MaxSharedEmailsPerMonth` (+ Trial) และทับรายบริษัท `Subscription.MaxSharedLineMessagesPerMonth`/`MaxSharedEmailsPerMonth`
+    (ตัวตัดสิน `NotifyQuotaPolicy.ChannelPlanLimit` · **ว่างทุกชั้น = ไม่แยก ⇒ นับรวมก้อนเดิม** — migration ไม่ตั้งตัวเลข · ค่าแนะนำ LINE 100/300/1,000/5,000 · อีเมล 300/1,500/6,000/ไม่จำกัด
+    แสดงเป็นคำใบ้ที่ /admin/plans.html · อีเมลตั้งจริงหลังรัน SQL NOTIFY §4 — N9 ไม่มีเพดานรวมระดับแพลตฟอร์ม · บริษัทที่เกิน ⇒ ทับรายบริษัทที่ /admin/customers.html)
+  - ลำดับเมื่อเต็ม (แถวของช่อง): แพ็กของช่อง (`Subscription.NotifyBonusLine*`/`NotifyBonusEmail*`) ⇒ แพ็กรวมเดิม `NotifyBonusQuota` (ใช้ได้ทั้งสองช่องจนหมด) ⇒ ข้อความจำเป็น ⇒ ส่วนเกิน ⇒ เต็ม ·
+    เตือน 80%/100% ครั้งเดียวต่องวด**ต่อช่อง** (ข้อความนำหน้าด้วยชื่อช่อง) · คืนหน่วยเข้าถังที่หักไป
+  - แพ็ก `notify.topup.line` (1,000 ข้อความ ฿290) · `notify.topup.email` (5,000 ฉบับ ฿190) อายุ 60 วัน — N7 · ขนาด/อายุ/ราคาแก้ที่ /admin/addons.html (ไม่ deploy · ผู้ให้บริการอีเมลแพง ⇒ 2,000/฿190) ·
+    มิเตอร์ระบบ (`AddOnCodes.SystemMeters`) · ซื้อผ่าน `POST …/metering/notify-quota/topup` `{channel}` (ล็อกเดียวกับแพ็กรวม · คิดเงินก่อนให้ของ · audit) · `notify.topup` ก้อนรวมยังขายจนแอดมินปิด (design §5.2)
+  - **อีเมลผ่าน SMTP ของ NextAcc ตัดโควตาอีเมลรายเดือน (Q4)**: อีเมลเอกสาร · คิวตารางส่ง · อีเมลขอเซ็น — แถวช่องอีเมลเสมอ (**ไม่กินก้อนรวม**ของข้อความแจ้งลูกค้า) · ต้องผ่านเพดานรายวัน
+    `PlatformEmailQuota` ด้วย · เต็ม ⇒ ไม่ส่ง + เหตุ + ทางไปต่อ (DOCUMENT_FLOW §อีเมลเอกสาร) · ข้อความแจ้งลูกค้า (`BookingNotifier`) บอกช่องของขั้นส่ง ⇒ ช่องที่แยกนับแถวของช่อง
+  - สถานะ `GET …/metering/notify-quota` มี `channels[]` (เซิร์ฟเวอร์คำนวณ) · แอดมินบริษัทเห็นสรุปต่อช่อง + ตั้งเพดานต่อช่อง (`PUT …/notify-quota` `{channel}` · ประวัติ + audit)
+  - ประวัติการใช้งาน (`UsageSnapshotService`) รวมทุกช่องต่องวด
+  - **ฝ่ายค้าน fix2 (DECISIONS 254-WP11-12)**: แพ็กของช่อง**ขายได้เฉพาะช่องที่แยกเพดาน** (`NotifyQuotaPolicy.ChannelPackSellable` — ไม่แยก ⇒ ซื้อ 409 ก่อนคิดเงิน + บอกให้ซื้อแพ็กรวม ·
+    สถานะไม่ส่งราคา ⇒ หน้าเว็บไม่แสดงปุ่ม) · อีเมลแพลตฟอร์มใช้**เฉพาะแพ็กอีเมล** (ไม่ใช้แพ็กรวม · ไม่มีส่วนเกิน — เต็ม = ไม่ส่ง) · ข้อความแจ้งลูกค้ายังใช้แพ็กรวม/ส่วนเกินตามเดิม ·
+    สรุปรายวันของพนักงานนับช่อง LINE · ช่องที่ไม่รู้จักในคำขอ (ซื้อแพ็ก/ตั้งเพดานบริษัท) ⇒ 400 · หักโบนัส+นับเป็นคำสั่งเดียว · ปุ่มซื้อส่ง Idempotency-Key ต่อการกด ·
+    เพดานที่ใช้ได้ต่อช่องรวมแพ็กรวมที่ยังใช้ได้ · **ความหมาย -1**: ค่าเฉพาะบริษัท -1 = แยกช่องแบบไม่จำกัด · ค่าของแพ็กเกจ ≤ -1 ถูกเก็บเป็นว่าง = ไม่แยก (คงสัญญาเดิมของหน้า plans)
+  - **เฝ้าต้นทุน OA กลาง (N8)**: งาน `Services/Background/NextAccOaQuotaWatch` (ทุกชั่วโมง · `JobLock`) — อ่านยอด push/โควตาของ OA กลางจาก LINE
+    (`ILineNotifyService.TryReadNextAccQuotaAsync`) + **ตัวนับ reply ต่อเดือน** (นับที่ `CustomerLineLinkService.ReplyAsync` เมื่อเป็น OA กลาง · ตาราง `NextAccOaUsageCounters`
+    ระดับแพลตฟอร์ม) · ถึง 90% (push เทียบโควตาของ LINE · reply เทียบ 25,000 ฟรีตามประกาศที่ยังไม่ยืนยัน) ⇒ เตือนกลุ่มผู้ดูแลแพลตฟอร์มครั้งเดียวต่องวด ·
+    ส่งเตือนไม่สำเร็จ ⇒ ไม่ประทับ (รอบหน้าลองใหม่) · **ไม่ตัดโควตาผู้เช่า**
+  **ยังไม่ทำ (บอกตรง ๆ · DECISIONS 254-WP11-11)**: สวิตช์แอดมิน `CentralOaGroupDeliveryEnabled` — ยังไม่สร้างเพราะเส้นกลุ่มผ่าน OA กลาง (รหัสจาก webhook กลาง ·
+  ผูกปลายทาง scope กลาง · ส่งด้วย token กลาง + ตัดโควตา LINE ตามสมาชิก · ออกจากกลุ่มด้วย token กลาง) ยังไม่มี ⇒ สวิตช์ที่เปิดแล้วไม่มีผล = ค่าตั้งไม่มีผู้อ่าน (F2 ข้อ 2) ·
+  ทำพร้อมเส้นนั้นหลังได้หนังสือจาก LINE · หน่วยนับกลุ่มตามสมาชิก (รอทดสอบบน OA จริง — AUDIT_249 ข้อ 35) · ปิดขาย `notify.topup` ก้อนรวม (มือแอดมิน)
+
 ### 5.1 โควตาของเว็บ CMS (หน้า · สินค้า · พื้นที่) ✅ *(บังคับจริงตั้งแต่รอบ 159)*
 
 เพดานของ **เว็บ** อยู่บน `Site` เอง (`MaxPages` · `MaxProducts` · `MaxStorageBytes`)
@@ -526,6 +562,11 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 
 ---
 
+
+  **รอบ 255 WP-12B ข้อ 6 — เพดานคู่ค้า NextAcc ต่อแพ็กเกจ (คำตัดสินเจ้าของ §3.3 Y5 · DECISIONS 255-WP12B-4)** 🔨 *(ยังไม่ได้คอมไพล์)*:
+  `PlanTemplate.MaxTradingPartners` (null/-1 = **ไม่จำกัด** — ค่าตั้งต้นทุกแพ็กเกจ · migration ไม่ตั้งตัวเลข) · แอดมินตั้งที่ /admin/plans.html (`UpdatePlanTemplateRequest.MaxTradingPartners` · -1 = ล้าง) ·
+  ตัวอ่าน `CrossTenantWorkflowService.TradingPartnerCapAsync` (กลุ่มบัญชี ⇒ แม่แบบของกลุ่ม · ไม่งั้นแม่แบบตามระดับแพ็กเกจ — ลำดับเดียวกับเพดานข้อความ) · ตรวจตอน**ยอมรับ**คู่ ทั้งสองบริษัท
+  (`PartnerExchangeRules.CapProblem` · 409 พร้อมทางไปต่อ) · คำเชิญไม่ถูกบล็อก (คำตอบเชิญเท่ากันทุกกรณี — P-1) · ไม่มีราคา/แพ็กเสริม
 ## 6. Billing
 
 ### 6.1 สองโหมด (ตั้งที่ Account)
@@ -1483,3 +1524,4 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — 
   แถวค่าแทน (ExpiryNeedsReview) ดาวน์เกรด ⇒ มีผลทันที ไม่ตั้งเวลา
 
 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout — §6.2i หน้าซื้อแพ็กเกจสาธารณะ · `SiteSettings.PublicCheckoutEnabled` · `Helpers/PublicCheckoutPolicy` · `Services/Platform/PublicCheckoutService` · เทสต์ `PublicCheckoutRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit b4780a33`)_
+_Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 6 — `PlanTemplate.MaxTradingPartners` เพดานคู่ค้า NextAcc (null = ไม่จำกัด · Y5) ตรวจตอนยอมรับคู่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 145ba355)_

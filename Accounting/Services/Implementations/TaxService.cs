@@ -2259,16 +2259,17 @@ public partial class TaxService : ITaxService
         // รายการ Pending คือถูกหักแล้วแต่ยังไม่ได้ใบ ซึ่งกฎหมายยังเครดิตไม่ได้
         // (ดู WHT_CREDIT_PLAN.md ข้อ L1) การเอา Pending มารวมจะทำให้ยื่นเกินสิทธิ์
         // รอบ 230 ฝ่ายค้าน S5: กติกาเดียวกับเครื่องคำนวณหน้าบริหารการเงิน — วันที่บนหนังสือรับรองอยู่ในรอบบัญชี (เดิม TaxYear = ปีที่กรอก ⇒ รอบไม่ตรงปีปฏิทินนับผิดรอบ)
-        var whtCreditRows = await _db.WhtCreditsReceived.AsNoTracking()
+        // รอบ 252 (WP-09): ใบรวม/ผ่อนงวด ⇒ แถว Pending ที่ได้ใบบางส่วนเครดิตได้เฉพาะส่วนที่ได้ใบ — รวมยอดผ่านตัวคำนวณเดียว (WhtCreditableAmount)
+        var whtCredit = await _db.WhtCreditsReceived.AsNoTracking()
             .CreditableInPeriod(companyId, startDate, endDate)
-            .Select(w => w.WhtAmount).ToListAsync();
+            .CreditableSumAsync();
         var whtUndated = await _db.WhtCreditsReceived.AsNoTracking().CreditableUndated(companyId, year).CountAsync();
-        var whtCredit = whtCreditRows.Sum();
         var whtPendingRows = await _db.WhtCreditsReceived.AsNoTracking()
             .Where(w => w.CompanyId == companyId && w.TaxYear == year
-                && w.Status == WhtCreditStatus.Pending)
-            .Select(w => w.WhtAmount).ToListAsync();
-        var whtPending = whtPendingRows.Sum();
+                && (w.Status == WhtCreditStatus.Pending || w.Status == WhtCreditStatus.Received))   // ฝ่ายค้าน WP-09 รอบสอง: เศษที่ใบต่ำกว่า (≤ ฿1) ก็ยังขาดใบ
+            .Select(w => new { w.Status, w.WhtAmount, w.ReceivedAmount }).ToListAsync();
+        // ยอดที่ยังขาดใบ (ถูกหักแล้ว − ได้ใบแล้ว) — ตัวคำนวณเดียวกับรายงาน "50 ทวิ ที่ยังขาด"
+        var whtPending = whtPendingRows.Sum(w => WhtCreditableAmount.Missing(w.Status, w.WhtAmount, w.ReceivedAmount));
 
         // ภาษีที่ต้องชำระเพิ่ม (ติดลบ = ชำระเกิน → ขอคืน/ยกไปปีหน้า ตาม L4)
         var citPayable = netCitAmount - whtCredit;
@@ -2409,6 +2410,22 @@ public partial class TaxService : ITaxService
                 IncomeAmount = whtPending,
                 TaxAmount = 0,
                 IncomeTypeCode = "WHT_PENDING"
+            });
+        }
+        // ฝ่ายค้าน WP-09 M5: ทะเบียนภาษีถูกหักมากกว่ายอดบัญชี 11910 (เช่น ใบ 50 ทวิ ที่บันทึกเป็นรายการใหม่โดยไม่มีการรับชำระที่หักในระบบ) ⇒
+        // เครดิตที่ยื่นอาจเกินที่ถูกหักจริง — ดังบนรายงาน (ตัวกระทบยอดเดียวกับหน้าทะเบียน · ไม่ประกอบสูตรเอง)
+        var whtRecon = await new WhtCreditService(_db, Microsoft.Extensions.Logging.Abstractions.NullLogger<WhtCreditService>.Instance)
+            .SummaryAsync(companyId, year);
+        if (whtRecon.Difference > 0.01m)
+        {
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = $"⚠️ ทะเบียนภาษีถูกหักมากกว่ายอดบัญชี 11910 อยู่ {whtRecon.Difference:N2} — ตรวจรายการเครดิตที่บันทึกโดยไม่มีการรับชำระที่หัก ณ ที่จ่ายในระบบ ก่อนยื่น",
+                IncomeAmount = whtRecon.Difference,
+                TaxAmount = 0,
+                IncomeTypeCode = "WHT_OVER_GL"
             });
         }
         if (whtUndated > 0)

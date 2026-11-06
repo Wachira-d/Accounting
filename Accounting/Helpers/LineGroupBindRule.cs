@@ -1,0 +1,91 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
+
+namespace Accounting.Helpers;
+
+/// <summary>คำสั่งในกลุ่ม LINE ที่บอทรับ (นอกนี้ = ไม่ทำอะไรและไม่เก็บ)</summary>
+public enum LineGroupCommand
+{
+    None,
+    HeyNextAcc,
+    ByeNextAcc,
+}
+
+/// <summary>
+/// รอบ 254 WP-11 L3 (LINE_MULTICHANNEL_DESIGN §3.c · คำตอบเจ้าของ Q2/Q5/Q8 · Q1(b)) — <b>ตัวตั้งเดียว</b> (pure) ของการผูกกลุ่ม LINE กับผู้ติดต่อ
+/// <list type="bullet">
+/// <item>คำสั่ง (<see cref="Parse"/>): <c>#HeyNextAcc</c> ⇒ ออกรหัส · <c>#ByeNextAcc</c> ⇒ ยกเลิกการผูกกลุ่มนี้ (บอทออกเมื่อไม่เหลือการผูก — Q8) · ไม่สนตัวพิมพ์ ·
+/// รับ <c>＃</c> เต็มความกว้าง · ข้อความอื่นทั้งหมด ⇒ <see cref="LineGroupCommand.None"/> (บอทไม่ประมวล/ไม่เก็บข้อความกลุ่ม)</item>
+/// <item>รหัส <c>GB-XXXXXXXX</c> (ตัวอักษรชุดเดียวกับ <see cref="CustomerLineLinkRule.Alphabet"/>) · เก็บ SHA-256 · อายุ 30 นาที · ใช้ครั้งเดียว ·
+/// ผูกด้วย groupId อย่างเดียวไม่ได้ (กันวาง groupId ผิดกลุ่ม — G9)</item>
+/// <item>ผูก/ส่งไม่ได้: กลุ่มกลางของแอดมิน (Q1(b)) · เกิน 200 คน (Q2) — ตัวตัดสินเดียว <see cref="ContactRecipientRule.GroupProblem"/></item>
+/// </list>
+/// </summary>
+public static class LineGroupBindRule
+{
+    public const string RuleCode = "NOTIFY-LINE-GROUP-BIND";
+    public const string Prefix = "GB";
+    public const string SourceGroupCode = "group-code";
+    public const string UnlinkBotRemoved = "bot-removed";
+    public const string UnlinkGroupBye = "group-bye";
+    public const string AttestPurpose = "contact-line-group-attest";
+    public static readonly TimeSpan CodeLifetime = TimeSpan.FromMinutes(30);
+    /// <summary>webhookEventId ที่เห็นแล้วเก็บไว้กันประมวลซ้ำ (ลบเมื่อเก่ากว่านี้)</summary>
+    public static readonly TimeSpan SeenRetention = TimeSpan.FromDays(7);
+
+    private static readonly Regex HeyRe = new(@"^\s*[#＃]\s*heynextacc\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex ByeRe = new(@"^\s*[#＃]\s*byenextacc\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex CodeRe = new(@"^\s*GB\s*-?\s*([A-Za-z0-9]{8})\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    public static LineGroupCommand Parse(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return LineGroupCommand.None;
+        if (HeyRe.IsMatch(text)) return LineGroupCommand.HeyNextAcc;
+        if (ByeRe.IsMatch(text)) return LineGroupCommand.ByeNextAcc;
+        return LineGroupCommand.None;
+    }
+
+    public static string NewCode() => CustomerLineLinkRule.NewCode();
+
+    public static string Display(string code) => $"{Prefix}-{code}";
+
+    /// <summary>รหัสที่ผู้ดูแลพิมพ์ (GB-XXXXXXXX หรือ 8 ตัว) ⇒ ตัวพิมพ์ใหญ่ · ผิดรูป/มีตัวนอกชุด ⇒ null</summary>
+    public static string? TryParseCode(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return null;
+        var t = input.Trim();
+        var m = CodeRe.Match(t);
+        var code = m.Success ? m.Groups[1].Value : (t.Length == 8 ? t : null);
+        if (code == null) return null;
+        code = code.ToUpperInvariant();
+        return code.All(c => CustomerLineLinkRule.Alphabet.IndexOf(c) >= 0) ? code : null;
+    }
+
+    public static string Hash(string code)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{Prefix}-{(code ?? "").Trim().ToUpperInvariant()}"))).ToLowerInvariant();
+
+    public static bool IsRedeemable(DateTime expiresAt, DateTime? usedAt, DateTime nowUtc) => usedAt == null && expiresAt > nowUtc;
+
+    /// <summary>ข้อความรับรองของผู้ดูแลบริษัท (PDPA ม.23 · DESIGN §6.3) — เวอร์ชัน = hash ของข้อความ</summary>
+    public static string AttestText(string? contactName, string? groupName)
+        => $"ข้าพเจ้ายืนยันว่าสมาชิกทุกคนในกลุ่ม LINE \"{(string.IsNullOrWhiteSpace(groupName) ? "กลุ่มนี้" : groupName!.Trim())}\" มีสิทธิ์เห็นเอกสารของ "
+           + $"{(string.IsNullOrWhiteSpace(contactName) ? "ผู้ติดต่อนี้" : contactName!.Trim())} และบอทจะประกาศการผูกในกลุ่มทันที";
+
+    public static class Replies
+    {
+        public const string Join = "สวัสดีครับ — บอทพร้อมส่งการแจ้งเอกสารเข้ากลุ่มนี้ เมื่อผู้ดูแลบริษัทผูกกลุ่มกับผู้ติดต่อแล้ว\n"
+            + "พิมพ์ #HeyNextAcc เพื่อรับรหัสผูก · บอทไม่อ่านหรือเก็บข้อความอื่นในกลุ่ม";
+        public static string Code(string code, string? groupName, DateTime expiresUtc)
+            => $"🔗 รหัสผูกกลุ่ม \"{(string.IsNullOrWhiteSpace(groupName) ? "กลุ่มนี้" : groupName)}\": {Display(code)}\n"
+               + $"หมดอายุ {expiresUtc.AddHours(7):HH:mm} น. (ใช้ได้ครั้งเดียว)\n"
+               + "ขั้นต่อไป: ผู้ดูแลบริษัทเปิด ผู้ติดต่อ › ช่องทางแจ้งเตือน › เพิ่มกลุ่ม LINE › ใส่รหัสนี้";
+        public static string Refused(string problem) => "❌ ผูกกลุ่มนี้ไม่ได้ — " + problem;
+        public const string Throttled = "⛔ ขอรหัสบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่";
+        public static string Bound(string? companyName, string? contactName, IEnumerable<string> topics)
+            => $"✅ กลุ่มนี้ผูกกับ {(string.IsNullOrWhiteSpace(companyName) ? "บริษัท" : companyName)} สำหรับผู้ติดต่อ {(string.IsNullOrWhiteSpace(contactName) ? "-" : contactName)} แล้ว\n"
+               + $"เรื่องที่ส่ง: {string.Join(", ", topics)} · พิมพ์ #ByeNextAcc เพื่อยกเลิก";
+        public const string Bye = "ยกเลิกการผูกกลุ่มนี้แล้ว — บอทจะไม่ส่งการแจ้งเอกสารเข้ากลุ่มนี้อีกและจะออกจากกลุ่ม";
+        public const string ByeNothing = "กลุ่มนี้ยังไม่ได้ผูกกับผู้ติดต่อใด";
+    }
+}

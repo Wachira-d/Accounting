@@ -24,6 +24,12 @@
     .transfer { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-top: 14px; font-size: 14px; line-height: 1.7; }
     .err { text-align: center; color: #b91c1c; padding: 40px 10px; }
     .done { text-align: center; padding: 26px 10px; }
+    .copy { border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-family: inherit; cursor: pointer; margin-left: 6px; }
+    .slip { border-top: 1px dashed #e2e8f0; margin-top: 10px; padding-top: 10px; }
+    .slip label { display: block; font-size: 13px; margin: 6px 0 3px; }
+    .slip input[type=text], .slip input[type=file] { width: 100%; font-family: inherit; font-size: 13px; padding: 7px; border: 1px solid #cbd5e1; border-radius: 8px; }
+    .msg { border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
+    .msg.ok { background: #dcfce7; color: #166534; } .msg.bad { background: #fee2e2; color: #991b1b; }
   </style>
 </head>
 <body>
@@ -41,6 +47,8 @@
     const dateTh = (d) => d ? new Date(d).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-';
     const base = () => `/api/companies/${encodeURIComponent(companyId)}/public-pay/documents/${encodeURIComponent(token)}`;
     let view = null;
+    // รอบ 253 (WP-10): ตัวเลือก "ไม่หัก ณ ที่จ่าย" — หน้าแสดงยอดที่เซิร์ฟเวอร์คำนวณ (net / noWhtAmount) และส่งแค่ตัวเลือก + version ข้อความที่แสดง
+    let noWht = false;
 
     async function load(flash) {
       if (!companyId || !token) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง</div>'; return; }
@@ -65,12 +73,24 @@
       // ลิงก์ใช้ไม่ได้ — เซิร์ฟเวอร์ไม่ส่งข้อมูลของใบมาเลย (เลข/ยอด/ลูกค้า) · แสดงข้อความอย่างเดียว
       if (!v.documentNumber) { card.innerHTML = `<div class="err">${esc(v.blockedNote || 'ลิงก์ใช้ไม่ได้')}</div>`; return; }
       const wht = Number(v.wht || 0) > 0.005;
+      if (!v.noWhtOffered) noWht = false;
       // รอบ 244: gross = ยอดก่อนหัก ณ ที่จ่าย (ยอดค้างของใบเป็นยอดสุทธิแล้ว — เซิร์ฟเวอร์คำนวณ DocumentPayLinkPolicy.AmountsFor)
       const rows = [`<tr><td>${wht ? 'ยอดก่อนหักภาษี ณ ที่จ่าย' : 'ยอดค้างชำระตามเอกสาร'}</td><td class="num">${money(v.gross)} บาท</td></tr>`];
-      if (wht) rows.push(`<tr><td>หัก ภาษีหัก ณ ที่จ่าย (ท่านเป็นผู้หักและออกหนังสือรับรอง 50 ทวิ)</td><td class="num">− ${money(v.wht)} บาท</td></tr>`);
-      rows.push(`<tr class="total"><td>ยอดที่ต้องชำระ</td><td class="num">${money(v.net)} บาท</td></tr>`);
+      if (wht && !noWht) rows.push(`<tr><td>หัก ภาษีหัก ณ ที่จ่าย (ท่านเป็นผู้หักและออกหนังสือรับรอง 50 ทวิ)</td><td class="num">− ${money(v.wht)} บาท</td></tr>`);
+      rows.push(`<tr class="total"><td>ยอดที่ต้องชำระ</td><td class="num">${money(noWht ? v.noWhtAmount : v.net)} บาท</td></tr>`);
       const methods = (v.onlineMethods || []);
-      const t = v.transfer;
+      // โอนเข้าบัญชี/QR ฝังยอดหลังหัก — เลือก "ไม่หัก" แล้วซ่อน (ให้ชำระออนไลน์ด้วยยอดเต็ม หรือติดต่อผู้ขาย)
+      const t = noWht ? null : v.transfer;
+      const choice = v.noWhtOffered && v.canPayOnline ? `<div class="transfer" style="margin-top:0">
+          <b>ภาษีหัก ณ ที่จ่าย</b>
+          <label style="display:flex;gap:8px;margin-top:6px"><input type="radio" name="whtChoice" value="wht" ${noWht ? '' : 'checked'}>
+            <span>หัก ณ ที่จ่าย ${money(v.wht)} บาท (ออกหนังสือรับรอง 50 ทวิ ให้ผู้ขาย) — ชำระ ${money(v.net)} บาท</span></label>
+          <label style="display:flex;gap:8px;margin-top:4px"><input type="radio" name="whtChoice" value="nowht" ${noWht ? 'checked' : ''}>
+            <span>ไม่หัก ณ ที่จ่าย — ชำระยอดเต็ม ${money(v.noWhtAmount)} บาท</span></label>
+          ${noWht && v.noWhtWarn ? `<div class="note">${esc(v.noWhtNotice)}</div>
+            <label style="display:flex;gap:8px;font-size:13px"><input type="checkbox" id="noWhtAccept"><span>ข้าพเจ้าได้อ่านคำเตือนและยืนยันว่าไม่หักภาษี ณ ที่จ่าย</span></label>
+            <input id="noWhtName" maxlength="100" placeholder="ชื่อผู้ยืนยัน (ไม่บังคับ)" style="width:100%;margin-top:6px;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-family:inherit">` : ''}
+        </div>` : '';
       card.innerHTML = `
         ${v.isTestMode ? '<div class="test">โหมดทดสอบ — ไม่มีการเก็บเงินจริง</div>' : ''}
         ${flash ? `<div class="note" style="background:#dcfce7;color:#166534">${esc(flash)}</div>` : ''}
@@ -78,21 +98,72 @@
         <div class="sub">${esc(v.companyName)}${v.customerName ? ' · ถึง ' + esc(v.customerName) : ''}<br>
           ลงวันที่ ${esc(dateTh(v.documentDate))}${v.dueDate ? ' · ครบกำหนด ' + esc(dateTh(v.dueDate)) : ''}</div>
         <table>${rows.join('')}</table>
+        ${choice}
         ${v.blockedNote ? `<div class="note">${esc(v.blockedNote)}</div>` : ''}
         ${v.canPayOnline ? methods.map((m, i) => `<button class="btn" data-pay-index="${i}">ชำระด้วย ${esc(m.label)}</button>`).join('') : ''}
-        ${t ? `<div class="transfer"><b>หรือโอนเข้าบัญชี</b><br>
-          ${t.bankName ? esc(t.bankName) + '<br>' : ''}${t.accountNumber ? 'เลขที่บัญชี ' + esc(t.accountNumber) + '<br>' : ''}
+        ${t ? `<div class="transfer"><b>${v.canPayOnline ? 'หรือโอนเข้าบัญชี' : 'โอนเข้าบัญชี'}</b><br>
+          ${t.bankName ? esc(t.bankName) + '<br>' : ''}${t.accountNumber ? 'เลขที่บัญชี <b>' + esc(t.accountNumber) + '</b><button type="button" class="copy" data-copy="account" aria-label="คัดลอกเลขบัญชี">คัดลอกเลขบัญชี</button><br>' : ''}
           ${t.accountName ? 'ชื่อบัญชี ' + esc(t.accountName) + '<br>' : ''}${t.promptPayId ? 'พร้อมเพย์ ' + esc(t.promptPayId) + '<br>' : ''}
           ${qrImg(t.promptPayQrDataUri)}
-          <span style="font-size:12px;color:#64748b">โอนแล้วกรุณาส่งหลักฐานการโอนถึงผู้ขาย (ตอบกลับอีเมลที่ได้รับ) — ระบบยืนยันยอดโอนให้อัตโนมัติไม่ได้</span></div>` : ''}`;
+          <span style="font-size:12px;color:#64748b">โปรดระบุเลขที่ ${esc(v.documentNumber)} ในบันทึกการโอน (ถ้าแอปธนาคารให้กรอก)</span>
+          ${v.canSubmitSlip ? `<form class="slip" id="slipForm">
+            <b>โอนแล้ว? แจ้งโอนพร้อมแนบสลิป</b>
+            <label for="slipFile">ไฟล์สลิป (รูปภาพหรือ PDF · ไม่เกิน 10 MB)</label>
+            <input type="file" id="slipFile" accept="image/jpeg,image/png,image/webp,application/pdf" required>
+            <label for="slipRef">เลขอ้างอิงการโอน (ถ้ามี — ช่วยให้ผู้ขายจับคู่ยอดได้เร็วขึ้น)</label>
+            <input type="text" id="slipRef" maxlength="64" autocomplete="off">
+            <button type="submit" class="btn" id="slipBtn">ส่งสลิปให้ผู้ขาย</button>
+            <div style="font-size:12px;color:#64748b;margin-top:6px">ผู้ขายจะตรวจยอดแล้วยืนยันการชำระ — สถานะเปลี่ยนเป็น "ชำระแล้ว" เมื่อผู้ขายยืนยันเท่านั้น</div>
+            <div id="slipMsg" role="status"></div>
+          </form>` : '<span style="font-size:12px;color:#64748b">โอนแล้วกรุณาส่งหลักฐานการโอนถึงผู้ขาย (ตอบกลับอีเมลที่ได้รับ)</span>'}</div>` : ''}`;
       card.querySelectorAll('[data-pay-index]').forEach(b => b.addEventListener('click', () => pay(methods[Number(b.dataset.payIndex)].code)));
+      card.querySelectorAll('input[name="whtChoice"]').forEach(r => r.addEventListener('change', () => { noWht = r.value === 'nowht' && r.checked; render(); }));
+      const copyBtn = card.querySelector('[data-copy="account"]');
+      if (copyBtn && t && t.accountNumber) copyBtn.addEventListener('click', () => copyText(String(t.accountNumber).replace(/[^0-9]/g, ''), copyBtn));
+      const form = document.getElementById('slipForm');
+      if (form) form.addEventListener('submit', (e) => { e.preventDefault(); submitSlip(); });
+    }
+
+    // รอบ 255 WP-12B ข้อ 1 — คัดลอกเลขบัญชี (ตัวเลขล้วน วางในแอปธนาคารได้ทันที) · เบราว์เซอร์ที่ไม่มี clipboard API ⇒ บอกให้คัดลอกเอง
+    async function copyText(text, btn) {
+      try { await navigator.clipboard.writeText(text); btn.textContent = 'คัดลอกแล้ว ✓'; }
+      catch { btn.textContent = 'คัดลอกไม่ได้ — กดค้างที่เลขบัญชีเพื่อคัดลอก'; }
+      setTimeout(() => { btn.textContent = 'คัดลอกเลขบัญชี'; }, 2500);
+    }
+
+    // รอบ 255 WP-12B ข้อ 1 — แจ้งโอน: ยอด/ชนิดไฟล์/สิทธิ์ ตัดสินที่เซิร์ฟเวอร์ (SlipEvidenceService) · หน้านี้ส่งแค่ไฟล์ + เลขอ้างอิง
+    async function submitSlip() {
+      const f = document.getElementById('slipFile').files[0];
+      const msg = document.getElementById('slipMsg');
+      const btn = document.getElementById('slipBtn');
+      if (!f) { msg.className = 'msg bad'; msg.textContent = 'กรุณาเลือกไฟล์สลิป'; return; }
+      const fd = new FormData();
+      fd.append('file', f);
+      fd.append('bankRef', document.getElementById('slipRef').value || '');
+      btn.disabled = true; msg.className = 'msg'; msg.textContent = 'กำลังส่ง...';
+      let r, j = null;
+      try { r = await fetch(base() + '/slip', { method: 'POST', body: fd }); j = await r.json().catch(() => null); }
+      catch { msg.className = 'msg bad'; msg.textContent = 'เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง'; btn.disabled = false; return; }
+      if (!r.ok || !j || !j.success) {
+        msg.className = 'msg bad'; msg.textContent = (j && j.message) || 'ส่งสลิปไม่สำเร็จ — ลองใหม่ หรือติดต่อผู้ขาย'; btn.disabled = false; return;
+      }
+      load(j.message || 'ได้รับสลิปแล้ว — รอผู้ขายยืนยัน');
     }
 
     function pay(method) {
+      // เลือก "ไม่หัก" ⇒ ต้องติ๊กยืนยันคำเตือนก่อน (เซิร์ฟเวอร์ตรวจซ้ำ + บันทึกการยอมรับ) · ยอดไม่ถูกส่งจากหน้านี้
+      let extraBody;
+      if (noWht) {
+        const acc = document.getElementById('noWhtAccept');
+        if (view.noWhtWarn && !(acc && acc.checked)) { alert('กรุณาอ่านคำเตือนแล้วติ๊กยืนยันก่อนเลือก "ไม่หัก ณ ที่จ่าย"'); return; }
+        extraBody = { noWithholding: true, noWhtAccepted: true, noWhtNoticeVersion: view.noWhtNoticeVersion,
+          payerName: (document.getElementById('noWhtName')?.value || '').trim() || null };
+      }
       PayWidget.open({
         companyId,
         publicBase: base(),
         method,
+        extraBody,
         card: view && view.card ? view.card : undefined,
         onPaid: () => { setTimeout(() => load('ชำระเงินสำเร็จ — ขอบคุณ'), 800); },
       });

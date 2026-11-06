@@ -107,8 +107,9 @@ public partial class FinancialManagementService
         }
 
         // เครดิต: ว่าง = ระบบดึง — ภาษีถูกหัก (หนังสือรับรองที่ได้รับแล้ว ลงวันที่ในงวด) · ภ.ง.ด.50 หัก ภ.ง.ด.51 ที่ตั้งหนี้แล้วของรอบเดียวกัน
+        // รอบ 252 (WP-09): รวมยอดผ่านตัวคำนวณเดียว (ใบรวม/ผ่อนงวด ⇒ เฉพาะส่วนที่ได้ใบ) — กติกาเดียวกับ ภ.ง.ด.50
         var whtCredit = request.WithholdingTaxCredit ?? await _db.WhtCreditsReceived.AsNoTracking()
-            .CreditableInPeriod(companyId, range.Start, range.EndInclusive).SumAsync(w => (decimal?)w.WhtAmount) ?? 0m;
+            .CreditableInPeriod(companyId, range.Start, range.EndInclusive).CreditableSumAsync();
         if (request.WithholdingTaxCredit is null)
         {
             if (whtCredit > 0m) notes.Add($"ภาษีถูกหัก ณ ที่จ่าย {whtCredit:N2} ดึงจากหนังสือรับรองที่ได้รับแล้วซึ่งลงวันที่ในงวด (กติกาเดียวกับ ภ.ง.ด.50)");

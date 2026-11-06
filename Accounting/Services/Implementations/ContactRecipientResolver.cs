@@ -11,9 +11,12 @@ namespace Accounting.Services.Implementations;
 /// <see cref="ContactRecipientRule"/> · ทุก query มี <c>CompanyId == companyId</c> · ไม่มี cache ข้ามคำขอ</summary>
 public class ContactRecipientResolver : IContactRecipientResolver
 {
-    /// <summary>L1: ระบบยังไม่ส่งข้อความทาง LINE ถึงผู้ติดต่อ (คิว LINE/การ์ด = เฟส L2 · กลุ่ม = L3) ⇒ ปลายทาง LINE แสดงพร้อมเหตุ แต่ไม่อยู่ในชุดผู้รับ ·
-    /// เฟส L2 แทนค่าคงที่นี้ด้วยความพร้อมของช่อง (ChannelSenderPolicy) — ห้ามเปิดก่อนมีคิว/การจองโควตา</summary>
-    public const bool LineDeliveryOpen = false;
+    /// <summary>รอบ 254 WP-11 L2: ระบบส่ง LINE ถึงผู้ติดต่อแล้ว (คิว <c>LineQueues</c> + การ์ด) — ความพร้อมต่อปลายทางตัดสินที่
+    /// <see cref="ContactRecipientRule.LineGate"/> จากข้อเท็จจริงของ OA บริษัท (<see cref="LoadLineAsync"/>) · ตัวหาผู้รับแบบอีเมลอย่างเดียว (<see cref="EmailOnly"/>) = ปิด</summary>
+    public const bool LineDeliveryOpen = true;
+
+    /// <summary>คำตัดสิน N8: ส่งถึงผู้ติดต่อผ่าน OA กลางยังไม่เปิดใน L2 (รอโควตา LINE แยกช่อง L4 + สวิตช์แอดมิน) — ห้ามเปิดก่อนมีการจองโควตา</summary>
+    public const bool NextAccTenantDeliveryOpen = false;
 
     private readonly AccountingDbContext _db;
     private readonly ISecretProtector? _secrets;
@@ -36,8 +39,10 @@ public class ContactRecipientResolver : IContactRecipientResolver
     public async Task<ContactRecipientRule.RecipientSet> ResolveAsync(Guid companyId, Guid contactId, NotifyTopic topic, CancellationToken ct = default)
     {
         var facts = await LoadFactsAsync(companyId, contactId, ct);
-        return ContactRecipientRule.Resolve(companyId, facts.Contact, facts.Endpoints, topic, facts.PlatformGroupIds, LineDeliveryOpen);
+        return ContactRecipientRule.Resolve(companyId, facts.Contact, facts.Endpoints, topic, facts.PlatformGroupIds, facts.Line);
     }
+
+    public Task<ContactRecipientRule.LineOpenness> LineChannelAsync(Guid companyId, CancellationToken ct = default) => LoadLineAsync(companyId, ct);
 
     public async Task<ContactNotifyOverviewResponse?> GetOverviewAsync(Guid companyId, Guid contactId, bool canEdit, CancellationToken ct = default)
     {
@@ -76,7 +81,7 @@ public class ContactRecipientResolver : IContactRecipientResolver
         foreach (var e in rows.Where(e => !(e.IsPrimary && e.Kind == NotifyEndpointKind.Email))
                      .OrderBy(e => e.UnlinkedAt != null).ThenBy(e => e.Kind).ThenBy(e => meta[e.Id].LinkedAt))
         {
-            var st = ContactRecipientRule.Status(e, facts.PlatformGroupIds, LineDeliveryOpen);
+            var st = ContactRecipientRule.Status(e, facts.PlatformGroupIds, facts.Line);
             var topics = NotifyTopics.Parse(e.TopicsJson);
             var reason = topics == null && st.Usable ? "ค่าตั้งเรื่องที่รับเสียหาย — เลือกเรื่องแล้วบันทึกใหม่" : st.Reason;
             var active = e.UnlinkedAt == null && canEdit;   // ฝ่ายค้าน N3: ปุ่มที่กดได้ตามสิทธิ์จริง (Contact.Edit)
@@ -99,31 +104,48 @@ public class ContactRecipientResolver : IContactRecipientResolver
 
         return new ContactNotifyOverviewResponse(contact.Id, facts.ContactName, string.IsNullOrWhiteSpace(contact.Email) ? null : contact.Email!.Trim(), list,
             NotifyTopics.All.Select(t => new NotifyTopicOption(t.ToString(), NotifyTopics.Label(t))).ToList(),
-            LineDeliveryOpen,
+            _secrets != null && LineDeliveryOpen,
             new List<ContactNotifyComingSoon>
             {
-                new(NotifyEndpointKind.LineUser, "เชิญผู้ใช้ให้ผูก LINE / สแกน QR ผูกทันที",
-                    "เร็ว ๆ นี้ (เฟส L5) — มีทั้งสองทาง: สมัครผู้ใช้พอร์ทัลก่อน หรือสแกน QR แล้วกดยินยอมบนมือถือของผู้รับ (คำตอบเจ้าของ Q6) · ต้องมีความยินยอมของผู้รับเสมอ"),
-                new(NotifyEndpointKind.LineGroup, "เพิ่มกลุ่ม LINE (#HeyNextAcc)",
-                    $"เร็ว ๆ นี้ (เฟส L3) — เชิญบอทเข้ากลุ่ม พิมพ์ #HeyNextAcc แล้วนำรหัสผูกมาใส่ที่นี่ (ใช้ groupId อย่างเดียวผูกไม่ได้) · กลุ่มไม่เกิน {ContactRecipientRule.MaxGroupMembers} คน · "
-                    + "แสดงยอดเงินเป็นค่าตั้งต้นและปิดได้รายกลุ่ม · กลุ่ม LINE กลางของระบบใช้เป็นปลายทางไม่ได้ (คำตอบเจ้าของ Q1(b)/Q2/Q5)"),
+                new(NotifyEndpointKind.LineUser, "เชิญผู้ใช้ให้ผูก LINE (สมัครผู้ใช้พอร์ทัลก่อน)",
+                    "เร็ว ๆ นี้ (เฟส L5) — ทางลัด \"ลิงก์/QR ผูก LINE\" ใช้ได้แล้ว (ผู้รับกดยินยอมบนมือถือของตัวเอง · ผ่าน LINE OA ของบริษัท · คำตอบเจ้าของ Q6)"),
             },
             DeliveryNote,
             canEdit,
             canEdit ? null : $"ดูได้อย่างเดียว — แก้ช่องทางแจ้งเตือนต้องมีสิทธิ์ {Accounting.Models.Constants.PermissionKeys.ContactEdit.Replace("perm:", "")}",
-            EtaxByEmailNote: etaxNote);
+            EtaxByEmailNote: etaxNote,
+            LineBind: await LineBindOfferAsync(companyId, contact.Id, canEdit, ct));
+    }
+
+    /// <summary>รอบ 254 WP-11 L2 (คำตอบเจ้าของ Q6 ทางลัด): ปุ่ม "ลิงก์/QR ผูก LINE" — กดได้เมื่อมีสิทธิ์แก้ + OA ของบริษัทพร้อม (ตัวตัดสินเดียว CompanyLineReadiness) ·
+    /// ไม่พร้อม ⇒ ปุ่มปิดพร้อมเหตุ (server computes · page displays)</summary>
+    private async Task<ContactLineBindOffer> LineBindOfferAsync(Guid companyId, Guid contactId, bool canEdit, CancellationToken ct)
+    {
+        var line = await LoadLineAsync(companyId, ct);
+        if (!canEdit) return new ContactLineBindOffer(false, "ต้องมีสิทธิ์แก้ผู้ติดต่อ");
+        // ฝ่ายค้าน M4: ลิงก์ที่ยังเปิด (ปุ่มยกเลิกบนหน้า)
+        var now = DateTime.UtcNow;
+        var open = await _db.ContactLineInvites.AsNoTracking()
+            .CountAsync(i => i.CompanyId == companyId && i.ContactId == contactId && i.UsedAt == null && i.RevokedAt == null && i.ExpiresAt > now, ct);
+        if (!line.CompanyOaReady)
+            return new ContactLineBindOffer(false, (line.CompanyOaProblem ?? "LINE OA ของบริษัทยังไม่พร้อม")
+                + " — ผูก LINE ของผู้ติดต่อได้ผ่าน LINE OA ของบริษัทเท่านั้น (OA กลางของ NextAcc ยังไม่เปิดสำหรับผู้ติดต่อ)", open);
+        return new ContactLineBindOffer(true, null, open);
     }
 
     /// <summary>รอบ 250 WP-08: ประโยคบนแท็บ (เซิร์ฟเวอร์ส่ง · หน้าแสดงตรงตัว) — เส้นส่งที่อ่านค่าตั้งนี้แล้วจริง (ล็อกด้วย required_call_site_check R250L1)</summary>
     internal const string DeliveryNote =
         "ปลายทางที่ตั้งที่นี่มีผลกับการส่งอีเมลถึงผู้ติดต่อรายนี้แล้ว (ตัวหาผู้รับตัวเดียว): ตารางส่งอีเมล (เมื่ออนุมัติ/รายการประจำ) · ทวงชำระ/ใบแจ้งยอด · "
         + "ส่ง 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น — เรื่องที่ไม่ได้เลือกจะไม่ถูกส่งไปปลายทางนั้น และถ้าไม่มีปลายทางใดรับเรื่องนั้นเลย ระบบไม่ส่งพร้อมบันทึกเหตุบนคิว · "
-        + "ช่องผู้รับที่ผู้ใช้กรอกเองตอนส่ง (เช่นลิงก์เซ็นครั้งก่อน) ยังชนะ · LINE ยังไม่ส่ง (เปิดเฟส L2/L3 · อีเมลเป็นทางหลัก) · อีเมลหลักแก้ที่แท็บข้อมูลทั่วไป";
+        + "ช่องผู้รับที่ผู้ใช้กรอกเองตอนส่ง (เช่นลิงก์เซ็นครั้งก่อน) ยังชนะ · อีเมลหลักแก้ที่แท็บข้อมูลทั่วไป · "
+        + "LINE (รอบ 254): ส่งการ์ดเอกสารถึงผู้ใช้ LINE ที่ผูกผ่าน LINE OA ของบริษัทเมื่อกฎในตารางส่งติ๊กช่อง LINE (เมื่ออนุมัติ · ใกล้/เกินกำหนด · รายการประจำ) · "
+        + "ผ่าน LINE OA กลางของ NextAcc ยังไม่เปิด";
 
     private sealed record RowMeta(DateTime LinkedAt, DateTime? LastSentAt, string? LastFailure);
 
     private sealed record Facts(ContactRecipientRule.ContactFacts? Contact, string ContactName,
-        List<ContactRecipientRule.EndpointFacts> Endpoints, Dictionary<Guid, RowMeta> Meta, IReadOnlyList<string> PlatformGroupIds);
+        List<ContactRecipientRule.EndpointFacts> Endpoints, Dictionary<Guid, RowMeta> Meta, IReadOnlyList<string> PlatformGroupIds,
+        ContactRecipientRule.LineOpenness Line);
 
     private async Task<Facts> LoadFactsAsync(Guid companyId, Guid contactId, CancellationToken ct)
     {
@@ -132,7 +154,7 @@ public class ContactRecipientResolver : IContactRecipientResolver
             .Where(x => x.Id == contactId && x.CompanyId == companyId)
             .Select(x => new { x.Id, x.CompanyId, x.Email, x.Name, x.IsDeleted })
             .FirstOrDefaultAsync(ct);
-        if (c == null) return new Facts(null, "", new(), new(), Array.Empty<string>());
+        if (c == null) return new Facts(null, "", new(), new(), Array.Empty<string>(), ContactRecipientRule.LineOpenness.Closed);
 
         var rows = await _db.ContactNotifyEndpoints.AsNoTracking()
             .Where(e => e.CompanyId == companyId && e.ContactId == contactId)
@@ -150,7 +172,22 @@ public class ContactRecipientResolver : IContactRecipientResolver
 
         var facts = rows.Select(r => ToFacts(r, consents)).ToList();
         var meta = rows.ToDictionary(r => r.Id, r => new RowMeta(r.LinkedAt, r.LastSentAt, r.LastFailure));
-        return new Facts(new ContactRecipientRule.ContactFacts(c.Id, c.CompanyId, c.Email, c.IsDeleted), c.Name, facts, meta, platformGroups);
+        // รอบ 254 WP-11 L2: ความพร้อมของช่อง LINE (อ่านเฉพาะเมื่อมีปลายทาง LINE · ไม่มี cache ข้ามคำขอ)
+        var line = rows.Any(r => NotifyEndpointKind.IsLine(r.Kind)) ? await LoadLineAsync(companyId, ct) : ContactRecipientRule.LineOpenness.Closed;
+        return new Facts(new ContactRecipientRule.ContactFacts(c.Id, c.CompanyId, c.Email, c.IsDeleted), c.Name, facts, meta, platformGroups, line);
+    }
+
+    /// <summary>รอบ 254 WP-11 L2: ข้อเท็จจริงของ OA บริษัท (เปิด + token/secret ถอดได้ + บอทที่จำไว้) — ตัวหาผู้รับแบบอีเมลอย่างเดียว (ไม่มีตัวถอด) ⇒ ปิด ·
+    /// เกณฑ์ "พร้อม" ตัวเดียวกับ <see cref="CompanyLineReadiness"/> (ด่านบันทึกกฎ/ปุ่มผูก LINE ใช้ตัวเดียวกัน)</summary>
+    internal async Task<ContactRecipientRule.LineOpenness> LoadLineAsync(Guid companyId, CancellationToken ct)
+    {
+        if (_secrets == null) return ContactRecipientRule.LineOpenness.Closed;
+        var s = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
+            .Select(x => new { x.LineEnabled, x.LineChannelAccessToken, x.LineChannelSecret, x.LineOaDestination })
+            .FirstOrDefaultAsync(ct);
+        var ready = CompanyLineReadiness.Evaluate(s?.LineEnabled ?? false,
+            s != null && _secrets.IsUsable(s.LineChannelAccessToken), s != null && _secrets.IsUsable(s.LineChannelSecret));
+        return new ContactRecipientRule.LineOpenness(LineDeliveryOpen, ready.Ready, s?.LineOaDestination, ready.Problem, NextAccTenantDeliveryOpen);
     }
 
     private ContactRecipientRule.EndpointFacts ToFacts(ContactNotifyEndpoint r, IReadOnlyDictionary<Guid, DateTime?> consents)
@@ -162,7 +199,7 @@ public class ContactRecipientResolver : IContactRecipientResolver
         var groupPlain = r.Kind == NotifyEndpointKind.LineGroup ? _secrets?.Unprotect(r.LineGroupId) : null;
         return new ContactRecipientRule.EndpointFacts(r.Id, r.CompanyId, r.ContactId, r.Kind, r.Label, r.Email, groupPlain, r.OaScope,
             r.GroupNameSnapshot, r.MemberCountSnapshot, r.TopicsJson, r.ShowAmounts, r.IsPrimary, r.Verified, r.Source,
-            consentId, withdrawn, r.BlockedAt, r.UnlinkedAt, r.UnlinkReason, r.IsDeleted, r.LinkedAt);
+            consentId, withdrawn, r.BlockedAt, r.UnlinkedAt, r.UnlinkReason, r.IsDeleted, r.LinkedAt) { OaDestination = r.OaDestination };
     }
 
     private static string? OaLabel(ContactRecipientRule.EndpointFacts e) => !NotifyEndpointKind.IsLine(e.Kind) ? null : e.OaScope switch

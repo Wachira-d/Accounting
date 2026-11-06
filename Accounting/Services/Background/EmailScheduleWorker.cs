@@ -39,6 +39,15 @@ public class EmailScheduleWorker : BackgroundService
                 if (sent > 0)
                     _logger.LogInformation("EmailScheduleWorker: ส่ง {Count} ฉบับสำเร็จ", sent);
 
+                // รอบ 254 WP-11 L2: คิว LINE ถึงผู้ติดต่อ — scope ของตัวเอง (แถวหนึ่งพังไม่ลากคิวอีเมล) · จองแถวด้วย SKIP LOCKED (หลายเครื่องไม่ส่งซ้ำ)
+                using (var lineScope = _services.CreateScope())
+                {
+                    var lineQueue = lineScope.ServiceProvider.GetRequiredService<IContactLineQueueService>();
+                    var lineSent = await lineQueue.ProcessPendingAsync(stoppingToken);
+                    if (lineSent > 0)
+                        _logger.LogInformation("EmailScheduleWorker: ส่ง LINE ถึงผู้ติดต่อ {Count} ข้อความ", lineSent);
+                }
+
                 // รอบ 241: งานหลังรับชำระ (ออก/ส่งใบเสร็จ) — scope ของตัวเอง (แถวหนึ่งพังไม่ลากคิวอีเมล) · จองแถวด้วย SKIP LOCKED (หลายเครื่องไม่ทำซ้ำ)
                 using (var postPayScope = _services.CreateScope())
                 {

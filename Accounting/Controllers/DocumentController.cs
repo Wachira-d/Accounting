@@ -382,13 +382,18 @@ public class DocumentController : ControllerBase
         [FromQuery] string? sortBy = null, [FromQuery] bool sortDesc = false,
         // ออกเอกสารต่อแล้วหรือยัง (รอบ 196): "None" | "Partial" | "Full" — ชื่อ enum ConversionProgressState ·
         // กรองที่เซิร์ฟเวอร์ (ก่อนแบ่งหน้า) เฉพาะชนิดต้นทาง · ตัวเลือก+ป้ายจาก GET document/conversion-filter-options
-        [FromQuery] string? conversion = null)
+        [FromQuery] string? conversion = null,
+        // รอบ 252 (WP-09): ตัวกรอง "50 ทวิ" — awaiting | overdue | submitted | received | ewht (ตัวเลือก+ป้ายจาก GET wht-certs/filter-options)
+        [FromQuery] string? whtCert = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
 
         if (!DocumentConversionProgress.TryParseFilter(conversion, out var conversionState))
             return BadRequest(new ApiResponse<PagedResponse<DocumentResponse>>(false, default,
                 "ตัวกรอง \"ออกเอกสารต่อ\" ไม่ถูกต้อง — ใช้ได้เฉพาะ None / Partial / Full"));
+        if (!WhtCertIntakeStatus.TryParseFilter(whtCert, out var whtCertFilter))
+            return BadRequest(new ApiResponse<PagedResponse<DocumentResponse>>(false, default,
+                "ตัวกรอง \"50 ทวิ\" ไม่ถูกต้อง — ใช้ได้เฉพาะ " + string.Join(" / ", WhtCertIntakeStatus.FilterOptions.Select(o => o.Value))));
 
         // Direction gate — Sales role with only Revenue.View can't list PVs.
         // Explicit type query rejected with 403 so the UI surfaces the
@@ -405,7 +410,7 @@ public class DocumentController : ControllerBase
 
         var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search, sortBy, sortDesc),
             projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, effTypes,
-            conversionState);
+            conversionState, whtCertFilter);
 
         // Visibility redaction — จำเป็นเฉพาะ list ที่ "ไม่ได้ระบุ type/types"
         // (service คืนทุกประเภท). เมื่อมี type/types เราจำกัดด้วยสิทธิ์ server-side
@@ -1385,6 +1390,29 @@ public class DocumentController : ControllerBase
         var total = r.Total;
         return Ok(new ApiResponse<EtaxReissueReviewReport>(true, r,
             total == 0 ? "ไม่พบรายการที่ต้องตรวจ" : $"พบ {total} รายการที่ต้องให้นักบัญชีตรวจ (ระบบไม่แก้อัตโนมัติ)"));
+    }
+
+    /// <summary>รอบ 255 (ETR-ACK) — <b>บันทึก "ตรวจแล้ว"</b> ของแถว e-Tax ในสองกลุ่มของรายงานข้อ 44 (ส่งแล้วถูกยกเลิกโดยไม่มีหลักฐาน · ส่งอีเมลประทับเวลาแล้วถูกยกเลิกในระบบ) —
+    /// ทางไปต่อของแถบเตือนที่เดิมค้างตลอดไป (F2 ข้อ 8) · สิทธิ์ = ด่านที่เข้มกว่าของสองเส้นยกเลิก: <c>Etax.Void</c> (EtaxController.Void) <b>และ</b>
+    /// สิทธิ์ยกเลิกเอกสารชนิดนั้น (ResolveEtaxCancellation) · ไม่แตะแถว e-Tax/เอกสาร/ภาษี — เขียน audit อย่างเดียว</summary>
+    [HttpPost("etax-reissue-review/etax-rows/{etaxInvoiceId:guid}/acknowledge")]
+    public async Task<ActionResult<ApiResponse<string>>> AcknowledgeEtaxReviewRow(Guid companyId, Guid etaxInvoiceId,
+        [FromBody] AcknowledgeEtaxReviewRequest request)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var deny = await DenyKeyAsync(companyId, userIdGuid, Accounting.Models.Constants.PermissionKeys.EtaxVoid, "บันทึกผลตรวจแถว e-Tax ที่ถูกยกเลิก");
+        if (deny != null) return Forbid403<string>(deny);
+        // ชนิดเอกสารของแถว — เอกสารอาจถูกซ่อนแล้ว (รายงานอ่านด้วย IgnoreQueryFilters) · tenant ทั้งสองตาราง
+        var docType = await (
+            from e in _db.EtaxInvoices.AsNoTracking()
+            join d in _db.Documents.IgnoreQueryFilters().AsNoTracking() on e.DocumentId equals d.Id
+            where e.Id == etaxInvoiceId && e.CompanyId == companyId && d.CompanyId == companyId
+            select (DocumentType?)d.DocumentType).FirstOrDefaultAsync();
+        if (docType == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบแถว e-Tax นี้"));
+        if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<string>("ไม่มีสิทธิ์ยกเลิกเอกสารชนิดนี้ — บันทึกผลตรวจแถว e-Tax ต้องใช้ทั้งสิทธิ์ยกเลิก e-Tax และสิทธิ์ยกเลิกเอกสาร");
+        var message = await _documentService.AcknowledgeEtaxReviewRowAsync(companyId, etaxInvoiceId, request, userIdGuid.ToString());
+        return Ok(new ApiResponse<string>(true, message, message));
     }
 
     /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 11) — รายการงานค้าง: ใบที่ติดธง "ต้องยกเลิกทาง e-Tax" (เช็คเด้งแต่ใบเสร็จอยู่ที่กรมสรรพากรแล้ว) ·

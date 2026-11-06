@@ -79,16 +79,11 @@ public abstract class PublicApiControllerBase : ControllerBase
             key?.IsSandbox ?? false, scopes), null);
     }
 
-    /// <summary>scope ตรงตัว หรือมี wildcard ของหมวดนั้น ("ocr:*" ครอบ "ocr:write")</summary>
+    /// <summary>scope ตรงตัว · wildcard ของหมวด ("ocr:*" ครอบ "ocr:write") · รอบ 255 WP-12B: "{หมวด}:write" ครอบ "{หมวด}:read" —
+    /// ตัวตัดสินเดียว <see cref="Accounting.Helpers.ApiScopePolicy.Satisfies"/></summary>
     protected static bool HasScope(string granted, string required)
     {
-        if (string.IsNullOrWhiteSpace(granted) || string.IsNullOrWhiteSpace(required)) return false;
-        var parts = granted.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
-        var domain = required.Split(':')[0];
-        return parts.Any(p =>
-            p.Equals(required, StringComparison.OrdinalIgnoreCase)
-            || p.Equals("*", StringComparison.Ordinal)
-            || p.Equals($"{domain}:*", StringComparison.OrdinalIgnoreCase));
+        return Accounting.Helpers.ApiScopePolicy.Satisfies(granted, required);
     }
 
     /// <summary>

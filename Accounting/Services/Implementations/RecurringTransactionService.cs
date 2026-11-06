@@ -84,6 +84,10 @@ public class RecurringTransactionService : IRecurringTransactionService
         CheckPostPaySettings(request.PostPayEmailReceipt, request.PostPayIncludePartial);
         if (RecurringUpcomingNotice.RangeError(request.NotifyDaysBefore) is string notifyErr)
             throw new BusinessRuleException(notifyErr, RecurringTemplate.RuleCode);
+        // รอบ 255 WP-12B ข้อ 2: ทุก N เดือน + สร้างล่วงหน้า — ปฏิเสธค่าที่ใช้ไม่ได้ (ไม่ clamp เงียบ)
+        if ((RecurringSchedule.IntervalError(request.IntervalMonths)
+             ?? RecurringSchedule.LeadDaysError(request.LeadDays ?? 0, request.Frequency, request.IntervalMonths)) is string schedErr)
+            throw new BusinessRuleException(schedErr, RecurringTemplate.RuleCode);
         // วันสิ้นสุดก่อนวันเริ่ม = รายการที่ไม่มีวันรันเลย (เดิมบันทึกได้แล้วค้าง "ใช้งาน" เงียบ ๆ ตลอดไป)
         if (request.EndDate.HasValue && !RecurringSchedule.WithinEnd(request.StartDate, request.EndDate))
             throw new BusinessRuleException("วันสิ้นสุดอยู่ก่อนวันเริ่มต้น — แก้วันสิ้นสุด (หรือเว้นว่างถ้าไม่มีกำหนด) แล้วบันทึกอีกครั้ง",
@@ -123,6 +127,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             // รอบ 250 (WP-02 B-13): ชั้นรายการประจำของงานหลังรับชำระ (สมุดรายวันไม่มีการรับชำระ ⇒ ไม่เก็บ)
             PostPayEmailReceipt = IsJournalTemplate(request.TemplateType) ? null : AutopilotSettingsResolver.ParseTriState(request.PostPayEmailReceipt),
             PostPayIncludePartial = IsJournalTemplate(request.TemplateType) ? null : AutopilotSettingsResolver.ParseTriState(request.PostPayIncludePartial),
+            IntervalMonths = request.IntervalMonths,
+            LeadDays = request.LeadDays ?? 0,
             CreatedBy = createdBy
         };
 
@@ -188,6 +194,17 @@ public class RecurringTransactionService : IRecurringTransactionService
             recurring.Frequency = request.Frequency.Value;
             scheduleChanged = true;
         }
+        // รอบ 255 WP-12B ข้อ 2: ทุก N เดือน (null = ไม่แก้ · 0 = ล้างกลับไปใช้ความถี่) · สร้างล่วงหน้า (null = ไม่แก้)
+        if (request.IntervalMonths.HasValue)
+        {
+            var wanted = request.IntervalMonths.Value == 0 ? (int?)null : request.IntervalMonths.Value;
+            if (RecurringSchedule.IntervalError(wanted) is string intervalErr)
+                throw new BusinessRuleException(intervalErr, RecurringTemplate.RuleCode);
+            if (recurring.IntervalMonths != wanted) { recurring.IntervalMonths = wanted; scheduleChanged = true; }
+        }
+        if (request.LeadDays.HasValue) recurring.LeadDays = request.LeadDays.Value;
+        if (RecurringSchedule.LeadDaysError(recurring.LeadDays, recurring.Frequency, recurring.IntervalMonths) is string leadErr)
+            throw new BusinessRuleException(leadErr, RecurringTemplate.RuleCode);
         if (scheduleChanged)
         {
             // ยังไม่เคยรัน → นัดแรก = วันเริ่ม · เคยรันแล้ว → นัดถัดไปคำนวณจาก
@@ -326,7 +343,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             // งวดค้างหลายงวด ⇒ ข้ามไปงวดล่าสุดที่ถึงกำหนด (ปุ่มนี้ออกงวดเดียว — ไม่ใช่งวดเก่าสุด) · ตัวตัดสินเดียวกับ cron
             var skipNote = await SkipOverduePeriodsAsync(recurring, DateTime.UtcNow);
             // ถึงกำหนดแล้ว = รอบนี้คืองวดนั้น (เลื่อนกำหนดถัดไป) · ก่อนกำหนด = รอบพิเศษ ไม่กินงวด
-            var consumesPeriod = RecurringSchedule.IsDue(recurring.NextRunDate, DateTime.UtcNow);
+            var consumesPeriod = RecurringSchedule.IsDue(recurring.NextRunDate, DateTime.UtcNow, recurring.LeadDays);
             try
             {
                 await ExecuteRecurringAsync(recurring, performedBy, consumesPeriod);
@@ -376,7 +393,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         // อ่านแค่รหัส — แต่ละรายการโหลดใหม่ภายใต้ล็อก (ไม่ถือ entity ข้ามรอบ: ของค้างจากรายการที่ล้มห้ามไหลไปกับการบันทึกของรายการถัดไป) ·
         // ไม่กรองวันสิ้นสุดที่นี่ — รายการที่เลยวันสิ้นสุดถูกปิดเป็น "เสร็จสิ้น" ในลูป (เดิมค้าง "ใช้งาน" ตลอดไป และงวดที่ตรงวันสิ้นสุดถูกตัดทิ้ง)
         var due = await _db.RecurringTransactions.AsNoTracking()
-            .Where(r => r.Status == RecurringStatus.Active && r.NextRunDate < dueCutoff)
+            // รอบ 255: ดึงกว้างถึงเพดานสร้างล่วงหน้า — ตัดสินจริงต่อแถวภายใต้ล็อกด้วย IsDue(…, LeadDays)
+            .Where(r => r.Status == RecurringStatus.Active && r.NextRunDate < dueCutoff.AddDays(RecurringSchedule.MaxLeadDays))
             .OrderBy(r => r.NextRunDate)
             .Select(r => new { r.Id, r.CompanyId, r.Name, r.CreatedBy })
             .ToListAsync();
@@ -392,7 +410,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                     var recurring = await _db.RecurringTransactions
                         .FirstOrDefaultAsync(r => r.Id == item.Id && r.CompanyId == item.CompanyId);
                     // อ่านใหม่ภายใต้ล็อก: อีกเครื่องเพิ่งรันเสร็จ (NextRunDate เลื่อนแล้ว) / ถูกหยุด / ถูกลบ ⇒ ข้าม
-                    if (recurring == null || recurring.Status != RecurringStatus.Active || !RecurringSchedule.IsDue(recurring.NextRunDate, now)) return;
+                    if (recurring == null || recurring.Status != RecurringStatus.Active || !RecurringSchedule.IsDue(recurring.NextRunDate, now, recurring.LeadDays)) return;
                     try
                     {
                         var skipNote = await SkipOverduePeriodsAsync(recurring, now);
@@ -437,16 +455,18 @@ public class RecurringTransactionService : IRecurringTransactionService
         var horizon = today.AddDays(RecurringUpcomingNotice.MaxDaysBefore + 1);
         var candidates = await _db.RecurringTransactions.AsNoTracking()
             .Where(r => r.Status == RecurringStatus.Active && r.NotifyBeforeRun && r.NotifyDaysBefore > 0
-                && r.NextRunDate > today && r.NextRunDate < horizon)
+                && r.NextRunDate > today && r.NextRunDate < horizon.AddDays(RecurringSchedule.MaxLeadDays))
             .Select(r => new { r.Id, r.CompanyId, r.Name, r.CreatedBy, r.NextRunDate, r.NotifyDaysBefore, r.UpcomingRunNotifiedFor,
-                r.Frequency, r.EndDate, r.TotalRuns, r.MaxRuns })
+                r.Frequency, r.EndDate, r.TotalRuns, r.MaxRuns, r.LeadDays, r.IntervalMonths })
             .ToListAsync();
         var sent = 0;
         foreach (var r in candidates)
         {
             // ฝ่ายค้าน H2/M1: รายวันไม่แจ้ง · รอบที่เลยวันสิ้นสุด/ครบจำนวนครั้ง (จะไม่รัน) ไม่แจ้ง
-            if (!RecurringUpcomingNotice.ShouldNotify(true, r.NotifyDaysBefore, true, r.Frequency, r.NextRunDate, r.EndDate, r.TotalRuns, r.MaxRuns,
-                    today, r.UpcomingRunNotifiedFor)) continue;
+            // รอบ 255: แจ้งล่วงหน้านับจาก "วันที่ระบบสร้าง" (วันงวด − สร้างล่วงหน้า) · ประทับยังผูกกับวันงวด (compare-and-set เดิม)
+            var createAt = RecurringSchedule.CreateAt(r.NextRunDate, r.LeadDays);
+            if (!RecurringUpcomingNotice.ShouldNotify(true, r.NotifyDaysBefore, true, r.Frequency, createAt, r.EndDate, r.TotalRuns, r.MaxRuns,
+                    today, r.UpcomingRunNotifiedFor?.Date == r.NextRunDate.Date ? createAt : r.UpcomingRunNotifiedFor, r.IntervalMonths)) continue;
             var runDate = r.NextRunDate;
             var claimed = await _db.RecurringTransactions
                 .Where(x => x.Id == r.Id && x.CompanyId == r.CompanyId && x.NextRunDate == runDate
@@ -454,7 +474,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                 .ExecuteUpdateAsync(u => u.SetProperty(x => x.UpcomingRunNotifiedFor, (DateTime?)runDate));
             if (claimed == 0) continue;   // อีกเครื่องแจ้งไปแล้ว / รอบเลื่อนแล้ว
             // ประทับก่อนส่ง = อย่างมากครั้งเดียว (DispatchAsync กลืนข้อผิดพลาดเองไม่คืนผล — ส่งล้ม = รอบนั้นไม่ได้กระดิ่ง · L3)
-            var days = RecurringUpcomingNotice.DaysUntil(runDate, today);
+            var days = RecurringUpcomingNotice.DaysUntil(createAt, today);
             // ฝ่ายค้าน H2: ผู้รับ = ผู้สร้างที่ยังเป็นสมาชิกที่ใช้งานของบริษัทนี้ · ไม่งั้น null ⇒ ค่าตั้งต้นของคีย์ (กระดิ่งเจ้าของ)
             Guid? recipient = null;
             if (Guid.TryParse(r.CreatedBy, out var creatorId)
@@ -464,7 +484,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             await _notify.DispatchAsync(r.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringUpcomingRun, new NotificationContext
             {
                 Title = $"รายการประจำ \"{r.Name}\" จะสร้างเอกสารในอีก {days} วัน",
-                Message = $"รอบถัดไปวันที่ {runDate.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)} — ตรวจยอด/ผู้ติดต่อ/ช่องทางรับเงินได้ที่หน้ารายการประจำ (กด \"ทดลองรัน\" เพื่อดูใบที่จะออก)",
+                Message = $"รอบถัดไปวันที่ {createAt.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)} — ตรวจยอด/ผู้ติดต่อ/ช่องทางรับเงินได้ที่หน้ารายการประจำ (กด \"ทดลองรัน\" เพื่อดูใบที่จะออก)",
                 ActionUrl = "/pages/recurring.html",
                 EntityType = "RecurringTransaction",
                 EntityId = r.Id,
@@ -481,9 +501,9 @@ public class RecurringTransactionService : IRecurringTransactionService
     /// สมุดรายวันไม่แตะ (ไม่เคยค้าง — CreateJournalEntryAsync ใช้ธุรกรรมเดิม · พฤติกรรมเดิมเป๊ะ) · คืนข้อความแจ้ง หรือ null เมื่อไม่ค้าง</summary>
     private async Task<SkippedPeriods?> SkipOverduePeriodsAsync(RecurringTransaction recurring, DateTime nowUtc)
     {
-        if (IsJournalTemplate(recurring.TemplateType) || !RecurringSchedule.IsDue(recurring.NextRunDate, nowUtc)) return null;
+        if (IsJournalTemplate(recurring.TemplateType) || !RecurringSchedule.IsDue(recurring.NextRunDate, nowUtc, recurring.LeadDays)) return null;
         var (latest, skipped) = RecurringSchedule.CatchUp(recurring.Frequency, recurring.NextRunDate, recurring.PreferredDay,
-            recurring.StartDate, nowUtc);
+            recurring.StartDate, nowUtc, intervalMonths: recurring.IntervalMonths, leadDays: recurring.LeadDays);
         if (skipped == 0) return null;
         var from = ThaiDate.CalendarDateUtc(recurring.NextRunDate);
         recurring.NextRunDate = latest;
@@ -520,7 +540,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         // ของที่อ้างไว้ถูกลบ/ปิดหลังบันทึก ⇒ ข้อความบอกช่อง (เดิมไปล้มลึกใน CreateDocumentAsync เป็นข้อความเทคนิค —
         // หรือแย่กว่า: บัญชีธนาคารที่ถูกลบ ⇒ AutoPost ตกไปลงเงินสด 111 เงียบ ๆ)
         await ValidateTemplateAsync(recurring.CompanyId, recurring.TemplateType, recurring.TemplateData, recurring.ContactId, atSave: false);
-        var baseDate = RecurringSchedule.PlaceholderBaseDate(recurring.NextRunDate, DateTime.UtcNow, consumesPeriod);
+        var baseDate = RecurringSchedule.PlaceholderBaseDate(recurring.NextRunDate, DateTime.UtcNow, consumesPeriod, recurring.LeadDays);
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
         if (IsJournalTemplate(recurring.TemplateType))
@@ -679,7 +699,10 @@ public class RecurringTransactionService : IRecurringTransactionService
     }
 
     private static DateTime GetNextRunDate(RecurringTransaction r)
-        => RecurringSchedule.Next(r.Frequency, r.NextRunDate, r.PreferredDay, r.StartDate);
+    {
+        // รอบ 255 WP-12B ข้อ 2: ทุก N เดือน (ตั้งแล้วแทนความถี่) — ตัวตัดสินเดียว RecurringSchedule.Next
+        return RecurringSchedule.Next(r.Frequency, r.NextRunDate, r.PreferredDay, r.StartDate, r.IntervalMonths);
+    }
 
     private static readonly string[] _thMonthsFull =
         { "", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -1164,6 +1187,9 @@ public class RecurringTransactionService : IRecurringTransactionService
             AutoApprovePolicy: RecurringApprovePolicyLoader.View(AutoApprovePolicy.Parse(r.AutoApprovePolicyJson, AutoApprovePolicy.ScopeRecurring)),
             PostPayEmailReceipt: AutopilotSettingsResolver.TriStateName(r.PostPayEmailReceipt),
             PostPayIncludePartial: AutopilotSettingsResolver.TriStateName(r.PostPayIncludePartial),
+            IntervalMonths: r.IntervalMonths,
+            LeadDays: r.LeadDays,
+            FrequencyLabel: RecurringSchedule.FrequencyLabel(r.Frequency, r.IntervalMonths),
             AutoSendEmailWarning: emailWarning,
             AutoSendEmailFixUrl: emailWarning != null && r.ContactId is { } fixId ? RecurringEmailReadiness.ContactUrl(fixId) : null);
 

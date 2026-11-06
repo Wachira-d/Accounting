@@ -153,11 +153,8 @@
       /// covers this from your personal account".</summary>
       async loadAccountBanner(cid) {
         try {
-          const r = await fetch(`/api/account-subscription/effective/${cid}`, {
-            headers: { 'Authorization': 'Bearer ' + API.token }
-          });
-          const j = await r.json();
-          if (!j.success || !j.data?.hasPlan) return;
+          const j = await API.quietly(() => API.get(`/api/account-subscription/effective/${cid}`));   // API.* (WP-13 H) · ป้ายประกอบ = เงียบ
+          if (!j || !j.success || !j.data?.hasPlan) return;
           const d = j.data;
           const banner = document.getElementById('accountPlanBanner');
           if (d.source === 'Account') {
@@ -168,7 +165,7 @@
                   <div style="font-weight:700;font-size:15px;color:#0c4a6e">${d.viewerIsLicenseHolder ? 'บริษัทนี้อยู่ใต้ License ของคุณ' : 'บริษัทนี้อยู่ใต้ License' + (d.licenseOwner ? ' ของ ' + Layout.esc(d.licenseOwner) : '')}</div>
                   <div style="font-size:12px;color:#475569;margin-top:2px">
                     ${Layout.esc(d.label || '')} · สถานะ ${Layout.esc(d.statusLabel || d.status)} · หมดอายุ ${Layout.date(d.endDate)}
-                    · MaxUsers ${d.maxUsers} · MaxDocs ${d.maxDocumentsPerMonth}/เดือน (รวมทุกบริษัทใต้ License)
+                    · ผู้ใช้สูงสุด ${Number(d.maxUsers) || 0} คน/บริษัท · เอกสาร ${Number(d.maxDocumentsPerMonth) || 0} ใบ/เดือน (รวมทุกบริษัทใต้ License)
                   </div>
                   ${d.lapseNote ? `<div style="font-size:12px;color:#9a3412;margin-top:6px">${Layout.esc(d.lapseNote)}</div>` : ''}
                 </div>
@@ -198,7 +195,7 @@
         try {
           const pv = await API.get(`/api/account-subscription/detach-preview/${encodeURIComponent(cid)}`);
           if (!pv.success) throw new Error(pv.message || 'ถอดไม่ได้');
-          if (!confirm(`ถอดบริษัทนี้ออกจาก License?\n\n${pv.data.text}`)) return;
+          if (!(await Layout.confirm({ title: 'ถอดบริษัทออกจาก License', danger: true, okText: 'ถอดออก', message: `ถอดบริษัทนี้ออกจาก License?\n\n${pv.data.text}` }))) return;
           const j = await API.post('/api/account-subscription/detach', { companyId: cid });
           if (!j.success) throw new Error(j.message || 'ถอดไม่สำเร็จ');
           Layout.toast(j.message || 'ถอดบริษัทออกจาก License แล้ว');
@@ -254,21 +251,23 @@
           const res = await API.get(`/api/subscription/${cid}/payments`);
           const payments = res.data?.payments || res.data?.items || res.data || [];
           const tbody = document.getElementById('paymentHistory');
-          const cycleMap = { Monthly:'รายเดือน', Quarterly:'ราย 3 เดือน', SemiAnnual:'ราย 6 เดือน', Annual:'รายปี' };
-          const methodMap = { Cash:'เงินสด', BankTransfer:'โอนเงิน', CreditCard:'บัตรเครดิต', PromptPay:'พร้อมเพย์' };
+          // ป้ายไทยมาจากเซิร์ฟเวอร์ (SubscriptionLabels.Cycle · PaymentMethodNames.Thai — WP-13 J · เดิมตาราง enum→ไทยในหน้านี้)
           if (!payments.length) { tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่มีประวัติการชำระเงิน</td></tr>'; return; }
           tbody.innerHTML = payments.map(p => `<tr>
             <td class="font-medium">${Layout.esc(p.paymentNumber)}</td>
             <td>${Layout.date(p.paymentDate)}</td>
             <td>${Layout.esc(this._planName(p.requestedPlan))}</td>
-            <td>${cycleMap[p.requestedBillingCycle] || Layout.esc(p.requestedBillingCycle)}</td>
+            <td>${Layout.esc(p.requestedBillingCycleLabel || p.requestedBillingCycle)}</td>
             <td class="text-right font-semibold">฿${Layout.money(p.amount)}</td>
-            <td>${methodMap[p.paymentMethod] || Layout.esc(p.paymentMethod)}</td>
+            <td>${Layout.esc(p.paymentMethodLabel || p.paymentMethod)}</td>
             <td>${Layout.statusBadge(p.status)}${p.status === 'Pending' && !p.slipFileName
               ? ` <button class="btn btn-secondary btn-sm" onclick="Sub.openPayById('${Layout.jsArg(p.id)}')">📎 แนบสลิป</button>` : ''}</td>
           </tr>`).join('');
           this._payments = payments;
-        } catch (e) { document.getElementById('paymentHistory').innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>'; }
+        } catch (e) {
+          // เดิม "ไม่มีข้อมูล" ทั้งที่โหลดล้ม (ประวัติชำระหาย = ผู้ใช้คิดว่าไม่เคยจ่าย) ⇒ แถว error + ลองใหม่ (WP-13 L)
+          Layout.tableError('paymentHistory', 7, 'โหลดประวัติการชำระเงินไม่สำเร็จ', () => this.loadPayments(Layout.getCompanyId()), e && e.message);
+        }
       },
 
       openPayById(id) {
@@ -279,14 +278,12 @@
       renderSubscription() {
         const s = this.subscription;
         if (!s) return;
-        const statusMap = { Trial:'ทดลองใช้', Active:'ใช้งาน', PastDue:'เกินกำหนดชำระ', Cancelled:'ยกเลิก', Expired:'หมดอายุ', Suspended:'ระงับ' };
-        const cycleMap = { Monthly:'รายเดือน', Quarterly:'ราย 3 เดือน', SemiAnnual:'ราย 6 เดือน', Annual:'รายปี' };
 
         document.getElementById('currentSubContent').innerHTML = `
           <div class="grid grid-4 gap-4" style="margin-bottom:16px">
             <div><div class="text-xs text-gray-500">แพ็กเกจ</div><div class="text-lg font-bold"><span class="plan-badge plan-${Layout.esc(s.plan?.toLowerCase())}">${Layout.esc(s.planName || this._planName(s.plan))}</span></div></div>
             <div><div class="text-xs text-gray-500" data-i18n="common.status">สถานะ</div><div class="text-lg font-bold">${Layout.statusBadge(s.status)}</div></div>
-            <div><div class="text-xs text-gray-500">รอบบิล</div><div class="text-lg font-bold">${cycleMap[s.billingCycle] || Layout.esc(s.billingCycle)}</div></div>
+            <div><div class="text-xs text-gray-500">รอบบิล</div><div class="text-lg font-bold">${Layout.esc(s.billingCycleLabel || s.billingCycle)}</div></div>
             <div><div class="text-xs text-gray-500">ราคา/รอบ</div><div class="text-lg font-bold">฿${Layout.money(s.pricePerCycle)}</div></div>
           </div>
           <div class="grid grid-4 gap-4">
@@ -330,16 +327,18 @@
       },
       async cancelSub() {
         // ข้อความจากเซิร์ฟเวอร์ (SubscriptionCancelPolicy.ConfirmText) — ไม่สรุปนโยบายในหน้าเว็บ
-        if (!confirm((this.subscription && this.subscription.cancelConfirmText) || 'ยกเลิกแพ็กเกจ?')) return;
+        if (!(await Layout.confirm({ title: 'ยกเลิกแพ็กเกจ', danger: true, okText: 'ยกเลิกแพ็กเกจ', cancelText: 'ไม่ยกเลิก',
+          message: (this.subscription && this.subscription.cancelConfirmText) || 'ยกเลิกแพ็กเกจ?' }))) return;
         try {
           const res = await API.post(`/api/subscription/${Layout.getCompanyId()}/cancel`, {});
-          Layout.toast(res?.message || 'บันทึกแล้ว'); setTimeout(() => location.reload(), 1500);
+          // วาดใหม่จากเซิร์ฟเวอร์ (WP-13 · เดิม location.reload ทั้งหน้า) — ขอยกเลิก = ใช้ได้ถึงวันหมดอายุ ไม่เปลี่ยนสิทธิ์เมนูทันที
+          Layout.toast(res?.message || 'บันทึกแล้ว'); await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async undoCancel() {
         try {
           const res = await API.post(`/api/subscription/${Layout.getCompanyId()}/cancel/undo`, {});
-          Layout.toast(res?.message || 'บันทึกแล้ว'); setTimeout(() => location.reload(), 1200);
+          Layout.toast(res?.message || 'บันทึกแล้ว'); await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -363,12 +362,11 @@
             </div>`;
         }
 
-        const statusMap = { NotStarted:'ยังไม่เริ่ม', Active:'กำลังทดลอง', Extended:'ขยายเวลาแล้ว', Expired:'หมดอายุ', Converted:'อัปเกรดแล้ว' };
         const usage = t.usage || {};
 
         document.getElementById('trialDetailContent').innerHTML = `
           <div class="grid grid-3 gap-4" style="margin-bottom:20px">
-            <div class="sub-card"><div class="text-xs text-gray-500">สถานะ Trial</div><div class="font-bold text-lg">${statusMap[t.trialStatus] || Layout.esc(t.trialStatus)}</div></div>
+            <div class="sub-card"><div class="text-xs text-gray-500">สถานะการทดลองใช้</div><div class="font-bold text-lg">${Layout.esc(t.trialStatusLabel || t.trialStatus)}</div></div>
             <div class="sub-card"><div class="text-xs text-gray-500">วันเริ่ม - สิ้นสุด</div><div class="font-medium">${Layout.date(t.trialStartDate)} - ${Layout.date(t.trialEndDate)}</div></div>
             <div class="sub-card"><div class="text-xs text-gray-500">ใช้ไป / ทั้งหมด</div><div class="font-bold text-lg">${t.daysUsed} / ${t.totalTrialDays} วัน</div></div>
           </div>
@@ -488,7 +486,7 @@
           await API.post(`/api/subscription/${cid}/trial/extend`, {});
           Layout.closeModal('extendModal');
           Layout.toast('ขยายเวลาทดลองใช้สำเร็จ!');
-          setTimeout(() => location.reload(), 1000);
+          await this.load();   // WP-13: วาดใหม่ (สิทธิ์เมนูไม่เปลี่ยน — ขยายเวลาอย่างเดียว)
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -637,7 +635,7 @@
           const j = await API.upload(`/api/subscription/payments/${this._payId}/slip`, fd);
           Layout.closeModal('payModal');
           Layout.toast(j?.message || 'ส่งสลิปแล้ว — รอผู้ดูแลระบบตรวจสอบ');
-          setTimeout(() => location.reload(), 1200);
+          await this.load();   // WP-13: ส่งสลิป = ยังรอตรวจ สิทธิ์ไม่เปลี่ยน ⇒ วาดใหม่พอ
         } catch (e) { Layout.toast(e.message || 'ส่งสลิปไม่สำเร็จ', 'error'); }
       },
 

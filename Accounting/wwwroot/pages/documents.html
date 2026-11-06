@@ -234,6 +234,11 @@
               title="ใบเสนอราคา/ใบขอซื้อ/ใบสั่งซื้อ/ใบรับสินค้า/ใบส่งของ — ออกเอกสารต่อ (เช่น ใบแจ้งหนี้) ไปแล้วหรือยัง">
         <option value="">ออกเอกสารต่อ: ทั้งหมด</option>
       </select>
+      <!-- รอบ 252 (WP-09 · AUTO_SEND §4.2): ตัวกรอง "50 ทวิ" — ตัวเลือก/ป้ายจาก GET wht-certs/filter-options (Helpers/WhtCertIntakeStatus) · กรองที่เซิร์ฟเวอร์ก่อนแบ่งหน้า -->
+      <select class="filter-select" id="whtCertFilter" onchange="Page.page = 1; Page.load()" style="display:none"
+              title="หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่ลูกค้าต้องส่งให้เรา">
+        <option value="">50 ทวิ: ทั้งหมด</option>
+      </select>
       <select class="filter-select" id="projectFilter" onchange="Page.load()" title="กรองตามโครงการ">
         <option value="">ทุกโครงการ</option>
       </select>
@@ -277,7 +282,7 @@
         <div class="modal-body">
           <div class="doc-section-head"><span class="dsh-icon">🧾</span> ข้อมูลเอกสาร &amp; คู่ค้า</div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
+            <div class="form-group"><label for="fPaper" class="form-label">ประเภทเอกสาร *</label>
               <!-- ══ ตัวเลือกเดียว = "กระดาษที่จะออก" ══
                    เดิมผู้ใช้ต้องเลือก 2 ชั้น: ชนิดเอกสารดิบ (Invoice/TaxInvoice)
                    แล้วค่อยเลือก "หัวกระดาษ" อีก dropdown ที่โผล่ทีหลัง — ผู้ใช้
@@ -333,7 +338,7 @@
                    นี้แบรนด์จะขึ้นหัวได้หรือจะเป็นแค่โลโก้/สี — กติกามาจาก API
                    ห้ามตัดสินในหน้าเว็บ (กฎหมายอยู่ที่ DocumentIssuerIdentity) -->
               <div id="fBrandRow" style="display:none;margin-top:10px">
-                <label class="form-label" style="font-size:12px">🏷️ ออกในนามชื่อทางการค้า</label>
+                <label for="fBrand" class="form-label" style="font-size:12px">🏷️ ออกในนามชื่อทางการค้า</label>
                 <select class="form-select" id="fBrand" onchange="Page.onBrandChange()">
                   <option value="">— ใช้ชื่อบริษัท —</option>
                 </select>
@@ -344,7 +349,7 @@
                    ขึ้นไป (กิจการสาขาเดียวไม่เห็นช่องนี้เลย — ไม่มีอะไรเปลี่ยน)
                    ว่าง = ใช้รหัสสาขา/ที่อยู่ของบริษัทตามเดิม -->
               <div id="fBranchRow" style="display:none;margin-top:10px">
-                <label class="form-label" style="font-size:12px">🏬 ออกจากสถานประกอบการ (สาขา)</label>
+                <label for="fBranch" class="form-label" style="font-size:12px">🏬 ออกจากสถานประกอบการ (สาขา)</label>
                 <select class="form-select" id="fBranch" onchange="Page.onBranchChange()">
                   <option value="">— ตามค่าของบริษัท —</option>
                 </select>
@@ -355,7 +360,7 @@
                    "เทมเพลตเอกสาร PDF") · ว่าง = ใช้ตั้งต้นของชนิดเอกสารตามเดิม
                    เลือกแบรนด์ที่ผูกรูปแบบไว้ = ระบบเติมให้ แต่ยังเปลี่ยนรายใบได้ -->
               <div id="fTemplateRow" style="display:none;margin-top:10px">
-                <label class="form-label" style="font-size:12px">🎨 รูปแบบเอกสาร</label>
+                <label for="fTemplate" class="form-label" style="font-size:12px">🎨 รูปแบบเอกสาร</label>
                 <select class="form-select" id="fTemplate">
                   <option value="">— รูปแบบตั้งต้นของชนิดเอกสารนี้ —</option>
                 </select>
@@ -404,7 +409,7 @@
                      หัวกระดาษให้แล้วชั้นเดียว. select นี้ยังเป็นตัวกลางตั้ง flag
                      (fPaper → fIssueMode → checkbox) จึงคงไว้ใน DOM · hint สีเขียว
                      ข้างล่างยังแสดง เพื่ออธิบายผลของหัวที่เลือก -->
-                <label class="form-label" style="display:none;font-size:12.5px;margin-bottom:4px">เอกสารที่จะออกให้ลูกค้า (หัวกระดาษ) *</label>
+                <label for="fIssueMode" class="form-label" style="display:none;font-size:12.5px;margin-bottom:4px">เอกสารที่จะออกให้ลูกค้า (หัวกระดาษ) *</label>
                 <select class="form-select" id="fIssueMode" style="display:none" onchange="Page.onIssueModeChange()">
                   <option value="invoice">ใบแจ้งหนี้ — ขายเครดิต ยังไม่ออกใบกำกับภาษี</option>
                   <option value="invoice_tax">ใบแจ้งหนี้/ใบกำกับภาษี — ขายเครดิต ออกใบกำกับเลย</option>
@@ -454,7 +459,7 @@
               <!-- รูปแบบกระดาษหลักฐานรับเงินรายใบ (รอบ 203 · Helpers/ReceiptFormRule) — ว่าง = ให้ค่าตั้งบริษัท/ค่าแนะนำตัดสินตอนอนุมัติ ·
                    ตัวเลือกที่ผิดกฎหมายสำหรับใบนี้ เซิร์ฟเวอร์ปฏิเสธตอนอนุมัติพร้อมเหตุผล (ไม่ทับเงียบ) · ป้ายมาจาก ReceiptFormRule.Label -->
               <div id="fReceiptFormRow" style="display:none;margin-top:8px;font-size:13px">
-                <label class="form-label" style="font-size:12px;margin-bottom:2px">รูปแบบใบเสร็จ/ใบกำกับของใบนี้</label>
+                <label for="fReceiptForm" class="form-label" style="font-size:12px;margin-bottom:2px">รูปแบบใบเสร็จ/ใบกำกับของใบนี้</label>
                 <select class="form-input" id="fReceiptForm" style="font-size:13px">
                   <option value="">ตามค่าตั้งบริษัท (ค่าแนะนำ: ใบกำกับเต็มรูปเมื่อข้อมูลผู้ซื้อครบ)</option>
                   <option value="ReceiptTaxInvoiceFull">ใบเสร็จรับเงิน/ใบกำกับภาษี (เต็มรูป §86/4)</option>
@@ -464,7 +469,7 @@
                 <div class="text-xs" style="color:#64748b;margin-top:2px">ผู้จด VAT ที่ใบพิมพ์ VAT ต้องเป็นใบกำกับเต็มรูปหรืออย่างย่อ (ม.86) — ตั้งค่าเริ่มต้นต่อกรณีได้ที่ ตั้งค่า → รูปแบบการออกใบกำกับ/ใบเสร็จ</div>
               </div>
             </div>
-            <div class="form-group"><label class="form-label">ผู้ติดต่อ *</label>
+            <div class="form-group"><label for="fContact" class="form-label">ผู้ติดต่อ *</label>
               <input type="hidden" id="fContactId">
               <!-- ตัวเลือกผู้ติดต่อกลาง Layout.contactPicker ใส่ปุ่ม "+ สร้างใหม่" (หน้าต่างเพิ่มด่วนในหน้าเดิม ·
                    ฟอร์มเอกสารที่กรอกค้างไม่หาย) ให้เอง — ห้ามเขียนปุ่มซ้ำที่นี่ (คำสั่งเจ้าของ 2026-10-14) -->
@@ -617,37 +622,37 @@
             <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:10px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
             <!-- เหตุผล (ยาว) + วันที่ (สั้น) → 2-1 ratio แทน flex:2 inline -->
             <div class="form-row-2-1">
-              <div class="form-group"><label class="form-label">เหตุผลที่ไม่ได้รับใบเสร็จ <span class="req">*</span></label>
+              <div class="form-group"><label for="fCertReason" class="form-label">เหตุผลที่ไม่ได้รับใบเสร็จ <span class="req">*</span></label>
                 <input type="text" class="form-input" id="fCertReason" placeholder="เช่น ผู้ขายไม่สามารถออกใบเสร็จได้ / จ่ายค่าเดินทางให้บุคคลภายนอก">
               </div>
-              <div class="form-group"><label class="form-label">วันที่จ่ายเงิน</label>
+              <div class="form-group"><label for="fPaymentDate" class="form-label">วันที่จ่ายเงิน</label>
                 <input type="date" class="form-input" id="fPaymentDate">
               </div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">ชื่อผู้รับรอง <span class="req">*</span></label>
+              <div class="form-group"><label for="fCertifierName" class="form-label">ชื่อผู้รับรอง <span class="req">*</span></label>
                 <input type="text" class="form-input" id="fCertifierName" placeholder="ชื่อ-นามสกุล">
               </div>
-              <div class="form-group"><label class="form-label">ตำแหน่งผู้รับรอง</label>
+              <div class="form-group"><label for="fCertifierPosition" class="form-label">ตำแหน่งผู้รับรอง</label>
                 <input type="text" class="form-input" id="fCertifierPosition" placeholder="เช่น ผู้จัดการฝ่ายบัญชี">
               </div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">ชื่อพยาน</label>
+              <div class="form-group"><label for="fWitnessName" class="form-label">ชื่อพยาน</label>
                 <input type="text" class="form-input" id="fWitnessName" placeholder="ชื่อ-นามสกุล (ถ้ามี)">
               </div>
-              <div class="form-group"><label class="form-label">ตำแหน่งพยาน</label>
+              <div class="form-group"><label for="fWitnessPosition" class="form-label">ตำแหน่งพยาน</label>
                 <input type="text" class="form-input" id="fWitnessPosition" placeholder="เช่น พนักงานบัญชี">
               </div>
             </div>
           </div>
 
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate();Page.onCurrencyOrDateChange()"></div>
+            <div class="form-group"><label for="fDate" class="form-label" data-help="วันที่เอกสารเกิดขึ้นจริง — มีผลต่อการลงงวดบัญชีและรายงาน VAT (ภพ.30 ของเดือนนี้)">วันที่เอกสาร *</label><input type="date" class="form-input" id="fDate" onchange="Page.refreshEmailTemplate();Page.onCurrencyOrDateChange()"></div>
             <!-- ป้าย + การแสดงของช่องนี้เปลี่ยนตามชนิดเอกสาร (_docFieldProfile):
                  ใบเสนอราคา = "ยืนราคาถึงวันที่" · PO = "กำหนดส่งมอบ" · ใบเสร็จ/
                  ใบลดหนี้ = ซ่อน (เงินรับแล้ว/ไม่มีเครดิตใหม่) -->
-            <div class="form-group" id="fDueDateGroup"><label class="form-label" id="fDueDateLabel" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate" oninput="Page.onDueDateInput(event)"></div>
+            <div class="form-group" id="fDueDateGroup"><label for="fDueDate" class="form-label" id="fDueDateLabel" data-help="วันที่ลูกค้าต้องชำระ — แสดงในการแจ้งเตือนค้างชำระ มักตั้ง 'วันที่เอกสาร + 30 วัน' (Net 30)">วันครบกำหนด</label><input type="date" class="form-input" id="fDueDate" oninput="Page.onDueDateInput(event)"></div>
           </div>
           <!-- เลขจอง (Booking) — ผูกเอกสารหลายใบเข้าด้วยกัน (มัดจำ→ใบสุดท้าย→ใบเสร็จ).
                PMS โรงแรม / POS ร้าน / CRM ส่ง booking key มา; ระบบ index ไว้
@@ -655,7 +660,7 @@
                booking key ปกติ 10-15 อักษร, ไม่ต้องยืดเต็มแถว -->
           <div class="form-row" id="bookingRow">
             <div class="form-group fg-mid">
-              <label class="form-label" data-help="เลข booking/จองจากระบบภายนอก เช่น PMS โรงแรม / POS / CRM งานแต่ง. เอกสารที่มี booking เดียวกันจะถูก link เข้า booking เดียว (มัดจำ→ใบสุดท้าย→ใบเสร็จ) สำหรับ query รวม">เลขจอง (Booking) <span style="color:var(--gray-500);font-size:11px">— optional</span></label>
+              <label for="fBookingNumber" class="form-label" data-help="เลข booking/จองจากระบบภายนอก เช่น PMS โรงแรม / POS / CRM งานแต่ง. เอกสารที่มี booking เดียวกันจะถูก link เข้า booking เดียว (มัดจำ→ใบสุดท้าย→ใบเสร็จ) สำหรับ query รวม">เลขจอง (Booking) <span style="color:var(--gray-500);font-size:11px">— optional</span></label>
               <input type="text" class="form-input" id="fBookingNumber" placeholder="เช่น BK-2026-001, RSV-12345" onchange="Page.onBookingNumberChange()" onblur="Page.onBookingNumberChange()">
             </div>
           </div>
@@ -668,16 +673,16 @@
             <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#854d0e">📅 จุดความรับผิด VAT (Tax Point §78) — ปล่อยว่างได้ ระบบใช้วันที่เอกสาร</summary>
             <!-- 3 date fields → ใช้ .form-row-3 (เดิม form-row=2col ทำให้ field ที่ 3 ตก row) -->
             <div class="form-row-3" style="margin-top:8px">
-              <div class="form-group"><label class="form-label" data-help="วันส่งมอบสินค้า — §78 ขายสินค้า: tax point = วันแรกสุดของ ส่งมอบ/โอนกรรมสิทธิ์/รับเงิน/ออกใบ">วันส่งมอบสินค้า</label><input type="date" class="form-input" id="fDeliveryDate"></div>
-              <div class="form-group"><label class="form-label" data-help="วันโอนกรรมสิทธิ์ (ถ้าต่างจากส่งมอบ)">วันโอนกรรมสิทธิ์</label><input type="date" class="form-input" id="fOwnershipTransferDate"></div>
-              <div class="form-group"><label class="form-label" data-help="วันที่ใช้บริการ/บริการเสร็จ — §78/1 บริการ: tax point = วันแรกสุดของ รับเงิน/ออกใบ/ใช้บริการ">วันใช้บริการ</label><input type="date" class="form-input" id="fServiceUsedDate"></div>
+              <div class="form-group"><label for="fDeliveryDate" class="form-label" data-help="วันส่งมอบสินค้า — §78 ขายสินค้า: tax point = วันแรกสุดของ ส่งมอบ/โอนกรรมสิทธิ์/รับเงิน/ออกใบ">วันส่งมอบสินค้า</label><input type="date" class="form-input" id="fDeliveryDate"></div>
+              <div class="form-group"><label for="fOwnershipTransferDate" class="form-label" data-help="วันโอนกรรมสิทธิ์ (ถ้าต่างจากส่งมอบ)">วันโอนกรรมสิทธิ์</label><input type="date" class="form-input" id="fOwnershipTransferDate"></div>
+              <div class="form-group"><label for="fServiceUsedDate" class="form-label" data-help="วันที่ใช้บริการ/บริการเสร็จ — §78/1 บริการ: tax point = วันแรกสุดของ รับเงิน/ออกใบ/ใช้บริการ">วันใช้บริการ</label><input type="date" class="form-input" id="fServiceUsedDate"></div>
             </div>
           </details>
           <!-- Currency + FX rate (auto-fill จาก CurrencyRate history) — ซ่อนค่า
                default THB เพื่อไม่รบกวน flow ปกติ; เลือกสกุลอื่นแล้ว rate +
                hint โผล่ -->
           <div class="form-row" id="fxRow">
-            <div class="form-group"><label class="form-label">สกุลเงิน</label>
+            <div class="form-group"><label for="fCurrency" class="form-label">สกุลเงิน</label>
               <select class="form-select" id="fCurrency" onchange="Page.onCurrencyOrDateChange()">
                 <option value="THB">THB - ไทย (฿)</option>
                 <option value="USD">USD - ดอลลาร์สหรัฐ ($)</option>
@@ -689,7 +694,7 @@
               </select>
             </div>
             <div class="form-group" id="fxRateGroup" style="display:none">
-              <label class="form-label">อัตราแลก → THB <span id="fxRateHint" style="font-weight:normal;color:#64748b;font-size:11px"></span></label>
+              <label for="fExchangeRate" class="form-label">อัตราแลก → THB <span id="fxRateHint" style="font-weight:normal;color:#64748b;font-size:11px"></span></label>
               <input type="number" step="0.000001" class="form-input" id="fExchangeRate" value="1" oninput="this.dataset.userTouched='1'">
               <!-- ทีม F: ใบต่างสกุลที่พิมพ์ "ยอดเทียบเท่าเงินบาท" ไว้ — ยึดยอดนั้นเป็นฐานหัก ณ ที่จ่าย/VAT · อัตรา = ยอดนี้ ÷ ยอดก่อน VAT (เซิร์ฟเวอร์คำนวณ ·
                    Helpers/DocumentFx.Decide) · ว่าง = ใช้อัตราช่องบน · ตรึงตั้งแต่สร้างเหมือนอัตรา -->
@@ -704,7 +709,7 @@
                .payment-voucher-only based on docType. -->
           <div class="form-row payment-voucher-only" style="display:none">
             <div class="form-group">
-              <label class="form-label" data-help="ใบสำคัญจ่าย = การจ่ายเงินจริง (เงินออกทันที ลงเงินสด/ธนาคาร) | เครดิตใช้เฉพาะใบที่แปลงมาจากเอกสารตั้งหนี้ (ใบแจ้งหนี้ซื้อ/ใบบันทึกค่าใช้จ่าย) — ถ้ายังไม่จ่ายให้ตั้งหนี้ด้วยใบบันทึกค่าใช้จ่ายแทน">ประเภทการจ่าย</label>
+              <label for="fPaymentType" class="form-label" data-help="ใบสำคัญจ่าย = การจ่ายเงินจริง (เงินออกทันที ลงเงินสด/ธนาคาร) | เครดิตใช้เฉพาะใบที่แปลงมาจากเอกสารตั้งหนี้ (ใบแจ้งหนี้ซื้อ/ใบบันทึกค่าใช้จ่าย) — ถ้ายังไม่จ่ายให้ตั้งหนี้ด้วยใบบันทึกค่าใช้จ่ายแทน">ประเภทการจ่าย</label>
               <select class="form-select" id="fPaymentType" onchange="Page.onPaymentTypeChange(true)">
                 <option value="Cash">จ่ายทันที (เงินสด/โอน)</option>
                 <option value="Credit">เครดิต (เฉพาะใบที่อ้างอิงเอกสารตั้งหนี้)</option>
@@ -731,15 +736,15 @@
                based on docType (see togglePurchaseFields below). -->
           <div class="form-row supplier-invoice-only" style="display:none">
             <div class="form-group">
-              <label class="form-label" id="fSupplierInvoiceNumberLabel" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (ไม่ใช่เลขที่เอกสารของเรา) — ใช้กระทบกับ statement ของผู้ขายและเป็นหลักฐานเคลม VAT ในสรรพากร">เลขใบกำกับของผู้ขาย</label>
+              <label for="fSupplierInvoiceNumber" class="form-label" id="fSupplierInvoiceNumberLabel" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (ไม่ใช่เลขที่เอกสารของเรา) — ใช้กระทบกับ statement ของผู้ขายและเป็นหลักฐานเคลม VAT ในสรรพากร">เลขใบกำกับของผู้ขาย</label>
               <input type="text" class="form-input" id="fSupplierInvoiceNumber" maxlength="100" placeholder="เช่น INV-2026-0042">
             </div>
             <div class="form-group">
-              <label class="form-label" id="fSupplierTaxInvoiceDateLabel" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภพ.30 ที่จะเคลมภาษีซื้อ (อาจต่างจากวันที่เราบันทึก)">วันที่ใบกำกับของผู้ขาย</label>
+              <label for="fSupplierTaxInvoiceDate" class="form-label" id="fSupplierTaxInvoiceDateLabel" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภพ.30 ที่จะเคลมภาษีซื้อ (อาจต่างจากวันที่เราบันทึก)">วันที่ใบกำกับของผู้ขาย</label>
               <input type="date" class="form-input" id="fSupplierTaxInvoiceDate">
             </div>
             <div class="form-group">
-              <label class="form-label" data-help="งวด ภพ.30 ที่จะเคลมภาษีซื้อใบนี้ — ตอนแก้ไขจะเติมเดือนภาษีของเอกสารไว้ให้ (คืองวดที่ระบบจะใช้ถ้าไม่ย้าย) เปลี่ยนเป็นเดือนอื่นได้ไม่เกิน 6 เดือนตาม §82/3 · ลบให้ว่าง = กลับไปตามเดือนเอกสาร · ถ้าใบถูกใช้ในรายงานงวดใดแล้ว รายงานนั้นชนะ (ต้องติ๊กออกจากรายงานก่อนจึงย้ายได้)">งวดที่เคลมภาษีซื้อ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ค่าปกติ = เดือนภาษีของเอกสาร)</span></label>
+              <label for="fVatClaimPeriod" class="form-label" data-help="งวด ภพ.30 ที่จะเคลมภาษีซื้อใบนี้ — ตอนแก้ไขจะเติมเดือนภาษีของเอกสารไว้ให้ (คืองวดที่ระบบจะใช้ถ้าไม่ย้าย) เปลี่ยนเป็นเดือนอื่นได้ไม่เกิน 6 เดือนตาม §82/3 · ลบให้ว่าง = กลับไปตามเดือนเอกสาร · ถ้าใบถูกใช้ในรายงานงวดใดแล้ว รายงานนั้นชนะ (ต้องติ๊กออกจากรายงานก่อนจึงย้ายได้)">งวดที่เคลมภาษีซื้อ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ค่าปกติ = เดือนภาษีของเอกสาร)</span></label>
               <input type="month" class="form-input" id="fVatClaimPeriod">
               <div id="fVatClaimLocked" style="display:none;font-size:11px;color:#b45309;margin-top:3px"></div>
             </div>
@@ -754,7 +759,7 @@
                เทมเพลตชนิดเอกสาร -->
           <div class="form-row-1-2" id="paymentTermsRow">
             <div class="form-group">
-              <label class="form-label" data-help="จำนวนวันเครดิต — ค่าเริ่มต้นดึงจากที่ตั้งไว้กับลูกค้า (ถ้ามี) หรือเทมเพลตชนิดเอกสาร แก้ทับได้รายใบ · ถ้าไม่ใส่ 'วันครบกำหนด' ระบบคำนวณให้ (วันที่เอกสาร + วันเครดิต)">วันเครดิต</label>
+              <label for="fCreditDays" class="form-label" data-help="จำนวนวันเครดิต — ค่าเริ่มต้นดึงจากที่ตั้งไว้กับลูกค้า (ถ้ามี) หรือเทมเพลตชนิดเอกสาร แก้ทับได้รายใบ · ถ้าไม่ใส่ 'วันครบกำหนด' ระบบคำนวณให้ (วันที่เอกสาร + วันเครดิต)">วันเครดิต</label>
               <input type="number" class="form-input" id="fCreditDays" min="0" max="365" placeholder="เช่น 30" oninput="Page.onCreditDaysInput(event)">
               <div id="fCreditDaysSrc" style="display:none;font-size:11px;color:var(--gray-500);margin-top:2px"></div>
             </div>
@@ -779,7 +784,7 @@
                ซึ่งทำให้ใบเก่าทุกใบเปลี่ยนภาษาตามไปด้วยตอนพิมพ์ซ้ำ -->
           <div class="form-row-1-2" id="docLanguageRow">
             <div class="form-group">
-              <label class="form-label" data-help="ภาษาที่พิมพ์บนเอกสารใบนี้ใบเดียว — ไม่กระทบใบอื่นและไม่กระทบค่าตั้งต้นของบริษัท · หัวเอกสารภาษีจะพิมพ์สองภาษาเสมอ (เช่น 'Tax Invoice / ใบกำกับภาษี') เพราะ §86/4 บังคับให้มีคำไทย มิฉะนั้นผู้ซื้อเคลมภาษีซื้อไม่ได้ (§82/5(1))">ภาษาของเอกสารใบนี้</label>
+              <label for="fDocumentLanguage" class="form-label" data-help="ภาษาที่พิมพ์บนเอกสารใบนี้ใบเดียว — ไม่กระทบใบอื่นและไม่กระทบค่าตั้งต้นของบริษัท · หัวเอกสารภาษีจะพิมพ์สองภาษาเสมอ (เช่น 'Tax Invoice / ใบกำกับภาษี') เพราะ §86/4 บังคับให้มีคำไทย มิฉะนั้นผู้ซื้อเคลมภาษีซื้อไม่ได้ (§82/5(1))">ภาษาของเอกสารใบนี้</label>
               <select class="form-select" id="fDocumentLanguage" onchange="this.dataset.userTouched='1';delete this.dataset.autoSrc;Page.onDocLanguageChange()">
                 <option value="">— ตามค่าเริ่มต้นของบริษัท —</option>
                 <option value="th">ไทย (Thai)</option>
@@ -801,7 +806,7 @@
             <details style="font-size:12px">
               <summary style="cursor:pointer;color:var(--gray-600);font-weight:600;user-select:none">⚙️ ตัวเลือกขั้นสูง — เปลี่ยนผังบัญชีปลายทางของ VAT ซื้อ (กรณีไม่เคลม)</summary>
               <div style="margin-top:8px;padding:10px 12px;background:var(--gray-50);border:1px dashed var(--gray-300);border-radius:6px">
-                <label class="form-label" style="font-size:12px">ผังบัญชี VAT ปลายทาง <span style="color:var(--gray-500);font-weight:400">(เว้นว่าง = ตามระบบ 11610 หรือ 11640 ตามความครบของใบ)</span></label>
+                <label for="fInputVatAccountCodeOverride" class="form-label" style="font-size:12px">ผังบัญชี VAT ปลายทาง <span style="color:var(--gray-500);font-weight:400">(เว้นว่าง = ตามระบบ 11610 หรือ 11640 ตามความครบของใบ)</span></label>
                 <input type="text" class="form-input fg-mid" id="fInputVatAccountCodeOverride" list="coaList" placeholder="เช่น 51000 / 54xxx" style="font-size:13px">
                 <div class="form-help">เลือกผัง 5xxxx (ค่าใช้จ่าย/ต้นทุน) เมื่อต้องการ <b>รวม VAT เข้าเป็นต้นทุน</b> (ไม่เคลม ภ.พ.30) — เช่น §82/5(1) ใบไม่ครบ, §82/5(3) ค่ารับรอง</div>
               </div>
@@ -809,21 +814,21 @@
           </div>
           <div class="form-row advanced-only">
             <div class="form-group">
-              <label class="form-label" data-help="ใช้เมื่อต้องการให้รายงานแยกตามโครงการ/งาน เช่น 'รีโนเวทห้องประชุม' ระบบจะสรุปรายรับ-รายจ่ายต่อโครงการให้อัตโนมัติ">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
+              <label for="fProject" class="form-label" data-help="ใช้เมื่อต้องการให้รายงานแยกตามโครงการ/งาน เช่น 'รีโนเวทห้องประชุม' ระบบจะสรุปรายรับ-รายจ่ายต่อโครงการให้อัตโนมัติ">โครงการ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ไม่บังคับ — ใส่เพื่อแยกบัญชีต่อโครงการ)</span></label>
               <select class="form-select" id="fProject"><option value="">— ไม่ระบุโครงการ —</option></select>
             </div>
             <div class="form-group">
-              <label class="form-label" data-help="Cost center: สาขา/แผนก (หน่วยงานถาวร — วัดต้นทุนตามโครงสร้างองค์กร) ต่างจากโครงการที่เป็นงานชั่วคราวมีจบ · ไหลลงบัญชีอัตโนมัติ → ดูกำไร-ขาดทุนต่อสาขา/แผนกได้ที่เมนู สาขา & มิติ">สาขา / แผนก (Cost Center)</label>
+              <label for="fDimension" class="form-label" data-help="Cost center: สาขา/แผนก (หน่วยงานถาวร — วัดต้นทุนตามโครงสร้างองค์กร) ต่างจากโครงการที่เป็นงานชั่วคราวมีจบ · ไหลลงบัญชีอัตโนมัติ → ดูกำไร-ขาดทุนต่อสาขา/แผนกได้ที่เมนู สาขา & มิติ">สาขา / แผนก (Cost Center)</label>
               <select class="form-select" id="fDimension"><option value="">— ไม่ระบุ —</option></select>
             </div>
-            <div class="form-group"><label class="form-label" data-help="หมายเลขอ้างอิงภายในหรือเลข PO ของลูกค้า — แสดงบนเอกสารที่พิมพ์" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
+            <div class="form-group"><label for="fRef" class="form-label" data-help="หมายเลขอ้างอิงภายในหรือเลข PO ของลูกค้า — แสดงบนเอกสารที่พิมพ์" data-i18n="common.reference">อ้างอิง</label><input type="text" class="form-input" id="fRef"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-help="บัญชีเงินสด/ธนาคารที่จะใช้รับ–จ่ายงวดนี้ — เลือกเพื่อให้ระบบลงบัญชีฝั่ง Cr ให้อัตโนมัติ (ไม่เลือก = เงินสด)">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
+            <div class="form-group"><label for="fPaymentChannel" class="form-label" data-help="บัญชีเงินสด/ธนาคารที่จะใช้รับ–จ่ายงวดนี้ — เลือกเพื่อให้ระบบลงบัญชีฝั่ง Cr ให้อัตโนมัติ (ไม่เลือก = เงินสด)">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
               <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
             </div>
             <div class="form-group">
-              <label class="form-label" data-help="ผังบัญชี Dr (เดบิต) เริ่มต้นของเอกสาร — ระบบใช้เป็น fallback หากบรรทัดสินค้าไม่ระบุผังเอง" style="display:flex;justify-content:space-between;align-items:center">
+              <label for="fExpenseCategory" class="form-label" data-help="ผังบัญชี Dr (เดบิต) เริ่มต้นของเอกสาร — ระบบใช้เป็น fallback หากบรรทัดสินค้าไม่ระบุผังเอง" style="display:flex;justify-content:space-between;align-items:center">
                 <span>ผังบัญชี (หมวดค่าใช้จ่าย)</span>
                 <button type="button" id="fExpenseCategoryAiBtn" class="btn-ai" onclick="Page.askAiExpenseCategory(event)">
                   🤖 ให้ AI ช่วย
@@ -889,15 +894,15 @@
             <summary style="cursor:pointer;font-weight:600;color:#475569;font-size:13px">📝 หมายเหตุท้ายเอกสาร / เงื่อนไขเฉพาะฉบับนี้ (override ค่าเริ่มต้นจากบริษัท)</summary>
             <div style="margin-top:12px;display:grid;gap:10px">
               <div>
-                <label class="form-label" style="font-size:12px">ภาคผนวก/ข้อมูลเพิ่มเติม</label>
+                <label for="fCustomAppendix" class="form-label" style="font-size:12px">ภาคผนวก/ข้อมูลเพิ่มเติม</label>
                 <textarea class="form-input" id="fCustomAppendix" rows="2" placeholder="ข้อมูลเพิ่มเติมที่จะแสดงเหนือ Footer (เช่น เงื่อนไขการรับประกัน)"></textarea>
               </div>
               <div>
-                <label class="form-label" style="font-size:12px">หมายเหตุท้ายเอกสาร (Footer)</label>
+                <label for="fCustomFooterNotes" class="form-label" style="font-size:12px">หมายเหตุท้ายเอกสาร (Footer)</label>
                 <textarea class="form-input" id="fCustomFooterNotes" rows="2" placeholder="ใช้แทน Footer Notes ของบริษัท เฉพาะเอกสารฉบับนี้"></textarea>
               </div>
               <div>
-                <label class="form-label" style="font-size:12px">เงื่อนไขข้อตกลง (Terms &amp; Conditions)</label>
+                <label for="fCustomTerms" class="form-label" style="font-size:12px">เงื่อนไขข้อตกลง (Terms &amp; Conditions)</label>
                 <textarea class="form-input" id="fCustomTerms" rows="2" placeholder="เงื่อนไข/ข้อตกลงเฉพาะฉบับนี้"></textarea>
               </div>
             </div>
@@ -965,11 +970,11 @@
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
                 <div>
-                  <label class="text-sm font-medium" data-help="หมายเลขอ้างอิงงาน/จองจากระบบภายนอก — ถ้าเป็นเลขจองเดียวกับ 'เลขจอง' โซนข้อมูลเอกสารด้านบน ไม่ต้องกรอกซ้ำ (ระบบ sync ให้)">หมายเลขอ้างอิง / เลขจอง</label>
+                  <label for="fDepositRef" class="text-sm font-medium" data-help="หมายเลขอ้างอิงงาน/จองจากระบบภายนอก — ถ้าเป็นเลขจองเดียวกับ 'เลขจอง' โซนข้อมูลเอกสารด้านบน ไม่ต้องกรอกซ้ำ (ระบบ sync ให้)">หมายเลขอ้างอิง / เลขจอง</label>
                   <input type="text" class="form-input" id="fDepositRef" placeholder="เช่น เลขที่จอง BK-2026-001">
                 </div>
                 <div>
-                  <label class="text-sm font-medium">ผังบัญชีขายรอรับรู้ (เว้นว่าง = 21712)</label>
+                  <label for="fDepositDeferredAcc" class="text-sm font-medium">ผังบัญชีขายรอรับรู้ (เว้นว่าง = 21712)</label>
                   <input type="text" class="form-input" id="fDepositDeferredAcc" placeholder="21712 / 21713">
                 </div>
               </div>
@@ -1120,7 +1125,7 @@
           <!-- ฟิลด์เดี่ยวเต็มแถว — เอา wrapper form-row ที่ unnecessary ออก,
                ไม่ใช้ flex:1 inline (ปล่อย .form-input width:100% เป็น default) -->
           <div class="form-group">
-            <label class="form-label" data-i18n="common.note">หมายเหตุ
+            <label for="fNotes" class="form-label" data-i18n="common.note">หมายเหตุ
               <button data-g="primary" type="button" class="btn-ai" style="margin-left:8px" onclick="Page.generateMemo()" title="ให้ AI สร้างหมายเหตุจากผู้ติดต่อ + รายการ">🤖 ให้ AI ช่วยเขียน</button>
             </label>
             <!-- textarea: Enter = ขึ้นบรรทัดใหม่ (input เดิม Enter จะ submit ฟอร์ม
@@ -1170,7 +1175,7 @@
               <!-- Mode 1: เลือก PurchaseInvoice → auto-fill -->
               <div class="form-row" id="taxInvSystemPicker" style="margin-bottom:6px">
                 <div class="form-group" style="width:100%">
-                  <label class="form-label">เลือกใบแจ้งหนี้ซื้อ/ใบกำกับภาษี</label>
+                  <label for="fTaxInvSourceDoc" class="form-label">เลือกใบแจ้งหนี้ซื้อ/ใบกำกับภาษี</label>
                   <select class="form-select" id="fTaxInvSourceDoc" onchange="Page.onTaxInvoiceSourceDocSelect()">
                     <option value="">-- เลือก contact ก่อน เพื่อโหลดรายการ --</option>
                   </select>
@@ -1181,21 +1186,21 @@
               <!-- ข้อมูลตามกฎสรรพากร — กรอกได้/แก้ได้/auto-fill -->
               <div class="form-row-2-1">
                 <div class="form-group">
-                  <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span class="req">*</span></label>
+                  <label for="fSupplierInvoiceNumberPV" class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span class="req">*</span></label>
                   <input type="text" class="form-input" id="fSupplierInvoiceNumberPV" maxlength="100" placeholder="เช่น INV-2026-0042">
                 </div>
                 <div class="form-group">
-                  <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span class="req">*</span></label>
+                  <label for="fSupplierTaxInvoiceDatePV" class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span class="req">*</span></label>
                   <input type="date" class="form-input" id="fSupplierTaxInvoiceDatePV">
                 </div>
               </div>
               <div class="form-row-2-1">
                 <div class="form-group">
-                  <label class="form-label" data-help="เลขประจำตัวผู้เสียภาษีของผู้ขาย (13 หลัก) — จาก contact">เลขผู้เสียภาษีผู้ขาย</label>
+                  <label for="fSupplierTaxIdReadonly" class="form-label" data-help="เลขประจำตัวผู้เสียภาษีของผู้ขาย (13 หลัก) — จาก contact">เลขผู้เสียภาษีผู้ขาย</label>
                   <input type="text" class="form-input" id="fSupplierTaxIdReadonly" readonly style="background:var(--gray-100)" placeholder="ดึงจาก contact">
                 </div>
                 <div class="form-group">
-                  <label class="form-label" data-help="00000 = สำนักงานใหญ่ • 00001+ = สาขา • สำคัญ! รายงานภาษีซื้อต้องระบุสาขาตามใบจริง">สาขาผู้ขาย <span class="req">*</span></label>
+                  <label for="fSupplierBranchCode" class="form-label" data-help="00000 = สำนักงานใหญ่ • 00001+ = สาขา • สำคัญ! รายงานภาษีซื้อต้องระบุสาขาตามใบจริง">สาขาผู้ขาย <span class="req">*</span></label>
                   <input type="text" class="form-input" id="fSupplierBranchCode" placeholder="00000" maxlength="5" pattern="\d{5}">
                 </div>
               </div>
@@ -1213,7 +1218,7 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">📎 แนบไฟล์ (รูป/PDF ใบกำกับ, ใบโอน, ฯลฯ)</label>
+            <label for="fAttachments" class="form-label">📎 แนบไฟล์ (รูป/PDF ใบกำกับ, ใบโอน, ฯลฯ)</label>
             <input type="file" class="form-input" id="fAttachments" multiple
                    accept="image/*,application/pdf"
                    onchange="Page.onAttachmentsPicked(this)"
@@ -1233,14 +1238,14 @@
             </div>
             <div id="sendEmailFields" style="display:none">
               <div class="form-row">
-                <div class="form-group"><label class="form-label">ถึง <span class="req">*</span></label><input type="email" class="form-input" id="fEmailTo" placeholder="customer@example.com"></div>
-                <div class="form-group"><label class="form-label">CC</label><input type="email" class="form-input" id="fEmailCc"></div>
+                <div class="form-group"><label for="fEmailTo" class="form-label">ถึง <span class="req">*</span></label><input type="email" class="form-input" id="fEmailTo" placeholder="customer@example.com"></div>
+                <div class="form-group"><label for="fEmailCc" class="form-label">CC</label><input type="email" class="form-input" id="fEmailCc"></div>
               </div>
               <div class="form-group">
-                <label class="form-label">หัวข้อ</label>
+                <label for="fEmailSubject" class="form-label">หัวข้อ</label>
                 <input type="text" class="form-input" id="fEmailSubject">
               </div>
-              <div class="form-group"><label class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="fEmailBody" rows="4"></textarea></div>
+              <div class="form-group"><label for="fEmailBody" class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="fEmailBody" rows="4"></textarea></div>
               <!-- รอบ 244: ไม่มีช่องติ๊ก "ส่งแบบ e-Tax" แล้ว — เซิร์ฟเวอร์เลือกช่องทางเอง (EtaxDeliveryRouter) · ใบกำกับของบริษัทโหมด by Email ไปทาง e-Tax เสมอ -->
               <div style="display:none;font-size:12px;color:#0369a1;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;padding:8px 10px;line-height:1.6" id="etaxByEmailHint">
                 🧾 บริษัทใช้ <strong>e-Tax by Email</strong> — ถ้าใบนี้เป็นใบกำกับภาษี/ใบเพิ่มหนี้/ใบลดหนี้ ระบบส่งแบบ e-Tax by Email ให้เอง
@@ -1283,7 +1288,7 @@
             <div id="rclResolved" style="font-size:11px;color:#64748b;margin-top:4px"></div>
           </div>
           <div class="form-group">
-            <label class="form-label" data-help="บันทึกเหตุผลลง JE description เพื่อ audit trail">เหตุผล (optional)</label>
+            <label for="rclReason" class="form-label" data-help="บันทึกเหตุผลลง JE description เพื่อ audit trail">เหตุผล (ไม่บังคับ)</label>
             <input type="text" class="form-input" id="rclReason" placeholder="เช่น ลงผังผิด ควรเป็นค่าน้ำมัน ไม่ใช่ค่าซ่อม">
           </div>
           <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
@@ -1324,7 +1329,7 @@
           </div>
           <div id="wpcLines"></div>
           <div class="form-group">
-            <label class="form-label">เหตุผล <span class="req">*</span></label>
+            <label for="wpcReason" class="form-label">เหตุผล <span class="req">*</span></label>
             <input type="text" class="form-input" id="wpcReason" placeholder="เช่น ผู้มีเงินได้คือบริษัทประกัน ไม่ใช่โบรกเกอร์">
           </div>
           <!-- รอบ 204 ทีม D (#8c): งวดที่ยื่น/นำส่งแล้ว — เซิร์ฟเวอร์ตอบ 409 RD-50BIS-PAYEE-CHANGE-FILED ⇒ โชว์ข้อความ + ช่องรับทราบ (ผู้ถือ Tax.File) -->
@@ -1366,11 +1371,11 @@
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:10px">
             <div>
-              <label class="form-label" style="font-size:12px">วันที่ลงใบปรับปรุง</label>
+              <label for="jeaDate" class="form-label" style="font-size:12px">วันที่ลงใบปรับปรุง</label>
               <input type="date" class="form-input" id="jeaDate" style="width:180px">
             </div>
             <div style="flex:1;min-width:220px">
-              <label class="form-label" style="font-size:12px">เหตุผล (บันทึกลงประวัติ)</label>
+              <label for="jeaReason" class="form-label" style="font-size:12px">เหตุผล (บันทึกลงประวัติ)</label>
               <input type="text" class="form-input" id="jeaReason" placeholder="เช่น ลงผังผิด ควรเป็นค่าที่ปรึกษา ไม่ใช่ค่าโฆษณา">
             </div>
           </div>
@@ -1400,7 +1405,7 @@
         <div class="modal-body">
           <div id="rsInfo" style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px;line-height:1.7"></div>
           <div class="form-group">
-            <label class="form-label">ผู้ซื้อของใบใหม่</label>
+            <label for="rsContact" class="form-label">ผู้ซื้อของใบใหม่</label>
             <input type="hidden" id="rsContactId"><input type="text" class="form-input" id="rsContact">
             <div class="text-xs text-gray-500" style="margin-top:4px">ถ้าชื่อ/ที่อยู่ในทะเบียนผู้ติดต่อผิด ให้แก้ที่ผู้ติดต่อก่อน แล้วเลือกผู้ซื้อเดิม — ใบกำกับภาษีต้องมีข้อมูลผู้ซื้อครบตาม §86/4</div>
           </div>
@@ -1410,11 +1415,11 @@
               <tbody id="rsLines"></tbody></table>
           </div>
           <div class="form-group">
-            <label class="form-label">หมายเหตุ (พิมพ์บนใบใหม่ — ระบบต่อท้ายด้วยข้อความอ้างใบเดิมให้เอง)</label>
+            <label for="rsNotes" class="form-label">หมายเหตุ (พิมพ์บนใบใหม่ — ระบบต่อท้ายด้วยข้อความอ้างใบเดิมให้เอง)</label>
             <textarea class="form-input" id="rsNotes" rows="2"></textarea>
           </div>
           <div class="form-group">
-            <label class="form-label">เหตุผลที่ยกเลิก (บังคับ — พิมพ์บนใบใหม่และเก็บให้ผู้สอบบัญชี)</label>
+            <label for="rsReason" class="form-label">เหตุผลที่ยกเลิก (บังคับ — พิมพ์บนใบใหม่และเก็บให้ผู้สอบบัญชี)</label>
             <input class="form-input" id="rsReason" placeholder="เช่น ชื่อผู้ซื้อไม่ถูกต้อง / ที่อยู่ผู้ซื้อไม่ครบ">
           </div>
         </div>
@@ -1445,30 +1450,66 @@
           </div>
           <div id="ecPathA">
             <div class="form-group">
-              <label class="form-label">เลขอ้างอิงการยกเลิก (จำเป็นเมื่อใบถึงกรมสรรพากรแล้ว)</label>
+              <label for="ecReference" class="form-label">เลขอ้างอิงการยกเลิก (จำเป็นเมื่อใบถึงกรมสรรพากรแล้ว)</label>
               <input class="form-input" id="ecReference" placeholder="เลขอ้างอิงจากระบบ e-Tax ของกรมสรรพากร/ผู้ให้บริการ">
             </div>
             <div class="form-group">
-              <label class="form-label">ไฟล์หลักฐานการยกเลิก (จำเป็นเมื่อใช้เลขอ้างอิง — แนบเข้าเอกสารนี้)</label>
+              <label for="ecEvidence" class="form-label">ไฟล์หลักฐานการยกเลิก (จำเป็นเมื่อใช้เลขอ้างอิง — แนบเข้าเอกสารนี้)</label>
               <input class="form-input" type="file" id="ecEvidence" accept="image/*,application/pdf">
               <div class="text-xs text-gray-500" style="margin-top:4px">เว้นว่างได้ถ้ากดยกเลิก e-Tax ของใบนี้ในหน้า e-Tax แล้ว (ก่อนกรมสรรพากรตอบรับ)</div>
             </div>
           </div>
           <div id="ecPathB" style="display:none">
             <div class="form-group">
-              <label class="form-label">ใบลดหนี้ในระบบนี้ (อ้างใบเสร็จ/ใบต้นทาง · ผู้ซื้อเดียวกัน · อนุมัติแล้ว)</label>
+              <label for="ecCreditNote" class="form-label">ใบลดหนี้ในระบบนี้ (อ้างใบเสร็จ/ใบต้นทาง · ผู้ซื้อเดียวกัน · อนุมัติแล้ว)</label>
               <select class="form-input" id="ecCreditNote"></select>
               <div class="text-xs text-gray-500" id="ecCreditNoteHint" style="margin-top:4px"></div>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">เหตุผล (บังคับ — เก็บไว้ให้ผู้สอบบัญชี)</label>
+            <label for="ecReason" class="form-label">เหตุผล (บังคับ — เก็บไว้ให้ผู้สอบบัญชี)</label>
             <input class="form-input" id="ecReason" value="เช็คเด้ง — จัดการใบเสร็จทาง e-Tax แล้ว">
           </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('etaxCancelModal')">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.submitEtaxCancellation()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- รอบ 255 (ETR-ACK) — บันทึก "ตรวจแล้ว" ของแถว e-Tax ในรายงานข้อ 44 (ทางไปต่อของแถบเตือน · เซิร์ฟเวอร์ตัดสินว่าแถวอยู่ในกลุ่ม/บันทึกซ้ำ/สิทธิ์) -->
+    <div class="modal-overlay" id="etaxReviewAckModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header">
+          <h3 class="modal-title">บันทึกผลตรวจแถว e-Tax ที่กรมสรรพากร</h3>
+          <button class="modal-close" onclick="Layout.closeModal('etaxReviewAckModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="eraEtaxId">
+          <div id="eraRowInfo" style="font-size:13px;margin-bottom:10px;color:#374151"></div>
+          <div class="form-group">
+            <label for="eraOutcomeRejected" class="form-label">ผลที่ตรวจพบในระบบ e-Tax ของกรมสรรพากร/ผู้ให้บริการ</label>
+            <label style="display:block;font-size:13px;margin-bottom:4px"><input type="radio" id="eraOutcomeRejected" name="eraOutcome" value="RejectedOrNotReceived" checked onchange="Page.etaxReviewAckOutcomeChanged()">
+              ถูกปฏิเสธ หรือกรมสรรพากร/ผู้ให้บริการไม่เคยได้รับใบนี้ — ไม่ต้องทำอะไรเพิ่ม</label>
+            <label style="display:block;font-size:13px"><input type="radio" name="eraOutcome" value="CancelledAtRd" onchange="Page.etaxReviewAckOutcomeChanged()">
+              ใบนี้ถูกยกเลิกที่กรมสรรพากรแล้ว (ต้องระบุเลขอ้างอิงการยกเลิก)</label>
+            <div class="text-xs text-gray-500" style="margin-top:6px">ถ้ากรมสรรพากรยังถือใบนี้อยู่ (ยังมีผล) — ห้ามบันทึกที่นี่ ต้องยกเลิกหรือออกใบลดหนี้ทางกรมสรรพากร
+              แล้วบันทึกผ่าน “ยกเลิกทาง e-Tax”/ใบลดหนี้ของเอกสารนั้น</div>
+          </div>
+          <div class="form-group" id="eraRefGroup" style="display:none">
+            <label for="eraRdReference" class="form-label">เลขอ้างอิงการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ</label>
+            <input class="form-input" id="eraRdReference" maxlength="200">
+          </div>
+          <div class="form-group">
+            <label for="eraNote" class="form-label">บันทึกสิ่งที่ตรวจ (บังคับ อย่างน้อย 5 ตัวอักษร — เก็บใน audit ให้ผู้สอบบัญชี)</label>
+            <textarea class="form-input" id="eraNote" rows="3" maxlength="1000" placeholder="เช่น ตรวจที่ระบบ e-Tax ของกรมสรรพากรวันที่ … สถานะ “ปฏิเสธ”"></textarea>
+          </div>
+          <div class="text-xs text-gray-500">ระบบเก็บเป็นบันทึกการตรวจเท่านั้น — ไม่เปลี่ยนสถานะแถว e-Tax เอกสาร หรือภาษี</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('etaxReviewAckModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="eraSubmitBtn" onclick="Page.submitEtaxReviewAck()">บันทึกว่าตรวจแล้ว</button>
         </div>
       </div>
     </div>
@@ -1529,11 +1570,11 @@
             ตั้งครั้งเดียว — เอกสาร<b id="ptSetupTypeName">ชนิดนี้</b>ทุกใบถัดไปจะเติมให้อัตโนมัติ (แก้ทับได้ทุกใบ)
           </div>
           <div class="form-group">
-            <label class="form-label">เงื่อนไขการชำระเงิน <span style="color:var(--gray-500);font-weight:normal;font-size:11px">— 1 ข้อ/บรรทัด</span></label>
+            <label for="ptSetupTerms" class="form-label">เงื่อนไขการชำระเงิน <span style="color:var(--gray-500);font-weight:normal;font-size:11px">— 1 ข้อ/บรรทัด</span></label>
             <textarea class="form-input" id="ptSetupTerms" rows="4" placeholder="เช่น&#10;ชำระภายใน 30 วันนับจากวันที่ในเอกสาร&#10;โอนเข้าบัญชีบริษัทเท่านั้น&#10;ราคานี้ยืนยัน 15 วัน"></textarea>
           </div>
           <div class="form-group">
-            <label class="form-label">วันเครดิต (วัน)</label>
+            <label for="ptSetupCreditDays" class="form-label">วันเครดิต (วัน)</label>
             <input type="number" class="form-input" id="ptSetupCreditDays" min="0" max="365" placeholder="เช่น 30">
           </div>
           <div style="font-size:11px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;padding:8px;border-radius:6px">
@@ -1558,11 +1599,11 @@
         <div class="modal-body">
           <div id="rpsInfo" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:12px;margin-bottom:12px"></div>
           <div class="form-group">
-            <label class="form-label" data-help="บัญชีเงินสด/ธนาคารที่เงินจ่ายออกจริง — ระบบจะ Cr ผังนี้ใน JE คู่ใหม่">แหล่งเงินใหม่ <span class="req">*</span></label>
+            <label for="rpsNewChannel" class="form-label" data-help="บัญชีเงินสด/ธนาคารที่เงินจ่ายออกจริง — ระบบจะ Cr ผังนี้ใน JE คู่ใหม่">แหล่งเงินใหม่ <span class="req">*</span></label>
             <select class="form-select" id="rpsNewChannel"><option value="">— เลือกแหล่งเงิน —</option></select>
           </div>
           <div class="form-group">
-            <label class="form-label" data-help="บันทึกเหตุผลลง JE description เพื่อ audit trail">เหตุผล (optional)</label>
+            <label for="rpsReason" class="form-label" data-help="บันทึกเหตุผลลง JE description เพื่อ audit trail">เหตุผล (ไม่บังคับ)</label>
             <input type="text" class="form-input" id="rpsReason" placeholder="เช่น OCR เลือกธนาคารผิด ควรเป็นกสิกร">
           </div>
           <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
@@ -1590,7 +1631,7 @@
             <b>ผลรวม Dr ของ adjusting ต้องเท่ากับ Cr</b> (กัน JE หลักเสียสมดุล).
             เฉพาะเอกสารฉบับร่าง (Draft) — หลัง approve ใช้ Reclassify หรือ Manual JE แทน.
           </div>
-          <div style="overflow-x:auto">
+          <div class="table-container">
             <table class="table" style="font-size:13px">
               <thead><tr>
                 <th style="width:32px">#</th>
@@ -1671,7 +1712,7 @@
           <div class="form-help" style="margin-bottom:8px">เลือกเอกสารต้นทางของคู่ค้ารายนี้ แล้วจับคู่รายการ — เอกสารต้นทางจะนับยอดของใบนี้เหมือนแปลงมา
             (ไม่เปลี่ยนเนื้อเอกสาร · ใบแจ้งหนี้ซื้อฉบับร่างที่ผูกใบรับสินค้า: ตอนอนุมัติจะล้างบัญชีพักรับสินค้า 21240 แทนรับสต็อกซ้ำ)</div>
           <div class="form-group">
-            <label class="form-label" id="linkSourceLabel">เอกสารต้นทาง</label>
+            <label for="linkSourceSelect" class="form-label" id="linkSourceLabel">เอกสารต้นทาง</label>
             <select id="linkSourceSelect" class="form-input" onchange="Page.renderLinkMap()"></select>
           </div>
           <div id="linkSourceInfo" class="form-help"></div>
@@ -1690,7 +1731,7 @@
         <div class="modal-body">
           <input type="hidden" id="convertDocId">
           <div class="form-group">
-            <label class="form-label">แปลงเป็นเอกสารประเภท</label>
+            <label for="convertTarget" class="form-label">แปลงเป็นเอกสารประเภท</label>
             <select class="form-select" id="convertTarget" onchange="Page.onConvertTargetChange()">
               <optgroup label="📥 ฝั่งรายรับ">
                 <option value="Invoice" title="แจ้งหนี้ลูกค้า (ยังไม่รับเงิน) — Dr AR / Cr รายได้">ใบแจ้งหนี้</option>
@@ -1945,6 +1986,7 @@
 
         // ตัวเลือกตัวกรอง "ออกเอกสารต่อ" — โหลดก่อนลิสต์รอบแรก (ล้มเงียบได้: ช่องนี้แค่ซ่อน ลิสต์ยังทำงานครบ)
         await this.loadConversionFilterOptions();
+        await this.loadWhtCertFilterOptions();
 
         // Auto-set side filter from URL
         if (sideParam) this.setSide(sideParam);
@@ -2415,8 +2457,8 @@
 
       async ackWhtCertReview(docId) {
         const api = Layout.api(); if (!api) return;
-        const reason = (prompt('รับทราบ "50 ทวิ ต้องตรวจ" — ระบุสิ่งที่ตรวจ/ทำไปแล้ว (บังคับ · บันทึกลงประวัติ)\n'
-          + 'เช่น "ตรวจแล้ว ผู้ถูกหักคือผู้รับเงินจริง" / "ยกเลิกใบเดิมและออกใหม่แล้ว" / "ยื่นแบบเพิ่มเติมแล้ว"') || '').trim();
+        const reason = ((await Layout.promptText({ message: 'รับทราบ "50 ทวิ ต้องตรวจ" — ระบุสิ่งที่ตรวจ/ทำไปแล้ว (บังคับ · บันทึกลงประวัติ)\n'
+          + 'เช่น "ตรวจแล้ว ผู้ถูกหักคือผู้รับเงินจริง" / "ยกเลิกใบเดิมและออกใหม่แล้ว" / "ยื่นแบบเพิ่มเติมแล้ว"', multiline: true })) || '').trim();
         if (!reason) { Layout.toast('ยังไม่ได้รับทราบ — ต้องระบุเหตุผล', 'warning'); return; }
         try {
           await api.ackWhtCertReview(docId, reason);
@@ -2744,7 +2786,8 @@
             ? `<div style="margin-top:2px"><a class="btn btn-sm btn-ghost" style="font-size:11px" href="/pages/fixed-assets.html?linkLine=${encodeURIComponent(l.lineId)}&doc=${encodeURIComponent(docId)}" title="ใบมัดจำ/ใบงวด/ใบสุดท้ายของของชิ้นเดียวกัน — รวมเป็นสินทรัพย์ตัวเดียว (เหลือผูกได้ ${Layout.money(l.remainingToLink)})">🔗 ผูกเข้าสินทรัพย์…</a></div>`
             : '';
           const why = !l.isCostSourceEligible && l.costSourceProblem && !(l.links || []).length && !l.assetId
-            ? `<div style="font-size:10px;color:#94a3b8" title="${esc(l.costSourceProblem)}">ผูกหลายใบไม่ได้ (ชี้เพื่อดูเหตุ)</div>` : '';
+            // เหตุแสดงตรง ๆ (WP-13 · D §2 — เดิมซ่อนใน title ⇒ มือถือ/คีย์บอร์ดไม่เห็น)
+            ? `<div style="font-size:11px;color:#92400e">ผูกหลายใบไม่ได้: ${esc(l.costSourceProblem)}</div>` : '';
           return links + actions + why;
         };
 
@@ -2838,7 +2881,7 @@
       },
 
       async repairMissingJournal(docId) {
-        if (!confirm('ลงบัญชีให้เอกสารใบนี้ด้วยกติกาเดียวกับตอนอนุมัติ (เลขเอกสารคงเดิม · บันทึกร่องรอยผู้ทำ)?')) return;
+        if (!(await Layout.confirm('ลงบัญชีให้เอกสารใบนี้ด้วยกติกาเดียวกับตอนอนุมัติ (เลขเอกสารคงเดิม · บันทึกร่องรอยผู้ทำ)?'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.repairMissingJournal(docId);
@@ -3004,13 +3047,13 @@
         this.renderJeaRows();
       },
 
-      jeaRemoveRow(i) {
+      async jeaRemoveRow(i) {
         const rows = this._jeaRows || [];
         if (!rows[i]) return;
         // บัญชีคุมลบได้แล้ว แต่ต้องรู้ตัวว่ากำลังทำอะไร — ยืนยันก่อน
-        if (rows[i].control && !confirm(
+        if (rows[i].control && !(await Layout.confirm(
             `บรรทัดนี้เป็นบัญชีคุม (${rows[i].accountCode}) — ลบแล้วยอดฝั่งรายงาน`
-            + 'ภาษี/อายุหนี้จะไม่ตรงกับ GL\nยืนยันลบ?')) return;
+            + 'ภาษี/อายุหนี้จะไม่ตรงกับ GL\nยืนยันลบ?'))) return;
         rows.splice(i, 1);
         this.renderJeaRows();
       },
@@ -3073,10 +3116,10 @@
           });
           const moved = controlIds.filter(id =>
             Math.round(net(je?.lines || [], id) * 100) !== Math.round(net(lines, id) * 100));
-          if (moved.length && !confirm(
+          if (moved.length && !(await Layout.confirm(
             `⚠️ ยอดบัญชีคุมถูกแก้ ${moved.length} บัญชี (ลูกหนี้/เจ้าหนี้/ภาษี/มัดจำ/WHT)\n\n`
             + 'ยอดฝั่งรายงานภาษี/อายุหนี้จะไม่ตรงกับ GL จนกว่าจะกระทบยอด\n'
-            + 'ทุกการแก้ถูกบันทึกลง audit\n\nยืนยันบันทึกใบปรับปรุง?')) return;
+            + 'ทุกการแก้ถูกบันทึกลง audit\n\nยืนยันบันทึกใบปรับปรุง?'))) return;
         }
         try {
           const res = await api.adjustDocumentJournalEntry(ctx.docId, ctx.jeId, {
@@ -3256,7 +3299,7 @@
         const dr = lines.reduce((s,l) => s + (Number(l.debitAmount)||0), 0);
         const cr = lines.reduce((s,l) => s + (Number(l.creditAmount)||0), 0);
         if (lines.length > 0 && Math.abs(dr - cr) >= 0.01) {
-          if (!confirm(`ยอด Dr (${Layout.money(dr)}) ≠ Cr (${Layout.money(cr)}). บันทึกไว้ก่อนก็ได้ แต่ Approve จะ block ถ้าไม่ balance — ดำเนินการต่อ?`))
+          if (!(await Layout.confirm(`ยอด Dr (${Layout.money(dr)}) ≠ Cr (${Layout.money(cr)}). บันทึกไว้ก่อนก็ได้ แต่ Approve จะ block ถ้าไม่ balance — ดำเนินการต่อ?`)))
             return;
         }
 
@@ -4008,7 +4051,7 @@
       async pickJvDeposit(entryNumber, gross) {
         const api = Layout.api(); if (!api) return;
         if (this.editingId) {
-          if (!confirm(`หัก JV มัดจำ ${entryNumber} (${Layout.money(gross)}) เข้าใบนี้?`)) return;
+          if (!(await Layout.confirm(`หัก JV มัดจำ ${entryNumber} (${Layout.money(gross)}) เข้าใบนี้?`))) return;
           try {
             // ส่งวันที่เอกสารเป็นวันที่ JE ตัดชำระ (VAT ตกเดือนภาษีเดียวกับใบ §78)
             const dRaw = document.getElementById('fDate')?.value;
@@ -4048,7 +4091,7 @@
        *  (กฎเหล็ก #3 spirit). ใช้ outstandingAmount ของใบนั้นทันที. */
       async quickApplyDeposit(depositId, outstanding) {
         const api = Layout.api(); if (!api || !this.editingId) return;
-        if (!confirm(`ยืนยันหักมัดจำ ${Layout.money(outstanding)} จากใบนี้?`)) return;
+        if (!(await Layout.confirm(`ยืนยันหักมัดจำ ${Layout.money(outstanding)} จากใบนี้?`))) return;
         try {
           await api.applyDeposit(this.editingId, {
             depositDocumentId: depositId, amount: outstanding,
@@ -5786,7 +5829,7 @@
       /** ก่อนบันทึก: หัวเอกสารกับบรรทัดต้องเล่าเรื่องเดียวกัน — JE ลงตาม**บรรทัด**
        *  ถ้าหัวบอกผังหนึ่งแต่บรรทัดใช้อีกผัง ต้องให้คนตัดสิน ไม่ปล่อยให้ “แก้แล้วไม่เปลี่ยน” เงียบ
        *  คืน false = ผู้ใช้ยกเลิกการบันทึก */
-      _confirmHeaderLineAccountAgreement() {
+      async _confirmHeaderLineAccountAgreement() {
         const sel = document.getElementById('fExpenseCategory');
         const side = document.getElementById('linesTable')?.dataset.docSide;
         if (!sel || side !== 'expense' || !sel.value) return true;
@@ -5802,11 +5845,12 @@
         if (!mismatched.length) return true;
         const sample = mismatched.slice(0, 3).map(r =>
           `• ${(r.querySelector('[data-f="desc"]')?.value || '').trim().slice(0, 40)} → ${(r.querySelector('[data-f="accountCode"]')?.value || '').trim()}`).join('\n');
-        const useHeader = confirm(
-          `หมวดค่าใช้จ่ายบนหัวเอกสารคือ ${code} (${acc.accountName})\n`
+        const useHeader = (await Layout.confirm({ title: 'ผังบัญชีบนหัวเอกสารไม่ตรงกับบรรทัด',
+          message: `หมวดค่าใช้จ่ายบนหัวเอกสารคือ ${code} (${acc.accountName})\n`
           + `แต่ ${mismatched.length} บรรทัดใช้ผังอื่น:\n${sample}${mismatched.length > 3 ? '\n• …' : ''}\n\n`
-          + 'รายการบัญชี (JE) ลงตาม**ผังของบรรทัด** ไม่ใช่หัวเอกสาร\n\n'
-          + `กด OK = ใช้ ${code} กับทุกบรรทัด\nกด Cancel = คงผังรายบรรทัดตามเดิม (หัวเอกสารเป็นแค่ป้าย)`);
+          + 'รายการบัญชีลงตาม "ผังของบรรทัด" ไม่ใช่หัวเอกสาร',
+          okText: `ใช้ ${code} กับทุกบรรทัด`, cancelText: 'คงผังรายบรรทัดตามเดิม', dismissValue: null }));
+        if (useHeader === null) return false;   // ปิดด้วย × / Escape = ไม่บันทึก (ฝ่ายค้าน LOW-7)
         if (useHeader) {
           mismatched.forEach(r => {
             const inp = r.querySelector('[data-f="accountCode"]');
@@ -7916,6 +7960,21 @@
         }
         this._syncConversionFilter();
       },
+      // ── ตัวกรอง "50 ทวิ" (รอบ 252 · WP-09) — ตัวเลือก {value, label} จากเซิร์ฟเวอร์ · โหลดไม่ได้ = ซ่อน (ไม่เดาตัวเลือกเอง) ──
+      async loadWhtCertFilterOptions() {
+        const sel = document.getElementById('whtCertFilter');
+        if (!sel) return;
+        try {
+          const res = await API.get(`/api/companies/${Layout.getCompanyId()}/wht-certs/filter-options`);
+          const opts = Array.isArray(res?.data) ? res.data : [];
+          sel.innerHTML = '<option value="">50 ทวิ: ทั้งหมด</option>'
+            + opts.map(o => `<option value="${Layout.esc(o.value)}">50 ทวิ: ${Layout.esc(o.label)}</option>`).join('');
+          sel.style.display = opts.length ? '' : 'none';
+        } catch (e) {
+          sel.style.display = 'none';
+          sel.value = '';
+        }
+      },
       // แสดงเมื่อแท็บ "ทั้งหมด" หรือแท็บของชนิดที่เซิร์ฟเวอร์บอกว่าใช้ได้ · ซ่อนแล้วล้างค่า (ห้ามกรองค้างแบบมองไม่เห็น)
       _syncConversionFilter() {
         const sel = document.getElementById('conversionFilter');
@@ -8047,6 +8106,9 @@
         const convSel = document.getElementById('conversionFilter');
         if (convSel && convSel.style.display !== 'none' && convSel.value)
           q += `&conversion=${encodeURIComponent(convSel.value)}`;
+        const whtSel = document.getElementById('whtCertFilter');
+        if (whtSel && whtSel.style.display !== 'none' && whtSel.value)
+          q += `&whtCert=${encodeURIComponent(whtSel.value)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         if (projectId) q += `&projectId=${projectId}`;
         if (contactIdFilter) q += `&contactId=${contactIdFilter}`;
@@ -8164,6 +8226,13 @@
             } else if (d.inputVatPostedAsUndue && !d.inputVatBecameClaimableAt && !d.isForeignService) {
               undueVatBadge = `<span title="ใบกำกับภาษีซื้อยังไม่ครบ §86/4 — ภาษีซื้อพักไว้ที่ 11640 'ยังไม่ถึงกำหนด' ยังเคลม ภ.พ.30 ไม่ได้ กด 'ดู' เพื่อเติมข้อมูลใบกำกับ" style="margin-left:6px;padding:1px 6px;background:#7c3aed;color:#fff;border-radius:6px;font-size:10px;font-weight:600">⏳ รอใบกำกับ</span>`;
             }
+            // รอบ 252 (WP-09 · AUTO_SEND §4.2): สถานะ 50 ทวิ ที่ลูกค้าต้องส่งให้เรา — ป้าย/โทน/วันค้างคำนวณที่เซิร์ฟเวอร์ (WhtCertIntakeStatus) · หน้านี้ map โทนเป็นสีเท่านั้น
+            let whtCertBadge = '';
+            if (d.whtCertLabel) {
+              const whtTones = { danger: '#dc2626', warning: '#d97706', info: '#2563eb', success: '#15803d', muted: '#64748b' };
+              const whtColor = whtTones[d.whtCertTone] || '#64748b';
+              whtCertBadge = `<span title="หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — ดู/ยืนยันที่หน้า ภาษีถูกหัก ณ ที่จ่าย" style="margin-left:6px;padding:1px 6px;background:${Layout.esc(whtColor)};color:#fff;border-radius:6px;font-size:10px;font-weight:600">${Layout.esc(d.whtCertLabel)}</span>`;
+            }
             // ป้ายเคลมภาษีซื้อ (ฝั่งซื้อ) — บอกใน list ทันทีว่าใบไหนเคลม ภ.พ.30 ได้
             // (รายละเอียด "เคลมแล้วงวดไหน" ดูใน modal ซึ่งอ่านจากรายงานจริง)
             let vatClaimBadge = '';
@@ -8186,7 +8255,7 @@
               : '';
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${revBadge}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}${vatClaimBadge}</td>
+            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${revBadge}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}${whtCertBadge /* html */}${vatClaimBadge}</td>
             <td>${Layout.docHeaderBadge(d)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${Layout.esc(d.contact?.name || '-')}</td>
@@ -9292,12 +9361,12 @@
           const s = res?.data; if (!s) return;
           const lines = (s.lines || []).map(l =>
             `  • ${l.description} — ${Number(l.quantity).toLocaleString()} ${l.unit || ''} × ${Layout.money(l.unitPrice)} = ${Layout.money(l.amount)}`).join('\n');
-          alert(`${Layout.docTypeLabel(s.documentType) || 'เอกสาร'} ${s.documentNumber} (Rev.${s.revisionNumber})\n`
+          (await Layout.notice(`${Layout.docTypeLabel(s.documentType) || 'เอกสาร'} ${s.documentNumber} (Rev.${s.revisionNumber})\n`
             + `วันที่ ${new Date(s.documentDate).toLocaleDateString('th-TH')} · คู่ค้า ${s.contactName || '-'}\n`
             + `${'-'.repeat(42)}\n${lines}\n${'-'.repeat(42)}\n`
             + `รวมก่อน VAT ${Layout.money(s.subTotal)} · VAT ${Layout.money(s.vatAmount)} · สุทธิ ${Layout.money(s.totalAmount)}`
             + (s.acceptedAt ? `\n\n✅ ลูกค้ายอมรับฉบับนี้เมื่อ ${new Date(s.acceptedAt).toLocaleString('th-TH')} โดย ${s.acceptedBy || '-'}` : '')
-            + (s.deliverySignedAt ? `\n\n✍️ ลูกค้าเซ็นรับของฉบับนี้เมื่อ ${new Date(s.deliverySignedAt).toLocaleString('th-TH')} โดย ${s.deliverySignedBy || '-'}` : ''));
+            + (s.deliverySignedAt ? `\n\n✍️ ลูกค้าเซ็นรับของฉบับนี้เมื่อ ${new Date(s.deliverySignedAt).toLocaleString('th-TH')} โดย ${s.deliverySignedBy || '-'}` : '')));
         } catch (e) { Layout.toast(e.message || 'เปิดประวัติไม่ได้', 'error'); }
       },
 
@@ -9318,13 +9387,13 @@
               + `${new Date(d.deliverySignedAt).toLocaleString('th-TH')}`
             : null);
         if (binding) {
-          const ok = confirm(
+          const ok = (await Layout.confirm(
             `⚠️ ${binding}\n\n`
             + 'การแก้ไขจะทำให้หลักฐานเดิมใช้ไม่ได้ และต้องส่งลิงก์ให้ลูกค้ายืนยัน Rev ใหม่อีกครั้ง\n'
-            + '(หลักฐานเดิมถูกเก็บไว้ในประวัติ revision — ไม่หาย)\n\nยืนยันแก้ไข?');
+            + '(หลักฐานเดิมถูกเก็บไว้ในประวัติ revision — ไม่หาย)\n\nยืนยันแก้ไข?'));
           if (!ok) return;
         }
-        const reason = prompt(`เหตุผลการแก้ไข${label} (บันทึกลงประวัติ — เช่น "ลูกค้าต่อราคา"):`);
+        const reason = (await Layout.promptText({ message: `เหตุผลการแก้ไข${label} (บันทึกลงประวัติ — เช่น "ลูกค้าต่อราคา"):`, multiline: true }));
         if (reason === null) return;   // กด Cancel = ไม่แก้
         this._revisionPending = { reason: reason.trim() || null, ack: true };
         await this.openEdit(id);
@@ -9685,7 +9754,7 @@
       async repopulateFromOcr() {
         const docId = this._ocrRepopulateDocId;
         if (!docId) return;
-        if (!confirm('ดึงรายการสินค้า/บริการจากไฟล์ OCR ต้นฉบับมาเติมในเอกสารนี้?')) return;
+        if (!(await Layout.confirm('ดึงรายการสินค้า/บริการจากไฟล์ OCR ต้นฉบับมาเติมในเอกสารนี้?'))) return;
         const cid = Layout.getCompanyId();
         const token = localStorage.getItem('token');
         const btn = document.getElementById('btnOcrRepopulate');
@@ -9719,7 +9788,7 @@
           const asCustomer = rule === 'CONTACT-ROLE-CUSTOMER', asSupplier = rule === 'CONTACT-ROLE-SUPPLIER';
           if (!(asCustomer || asSupplier) || !payload.contactId) throw e;
           const role = asCustomer ? 'ลูกค้า' : 'ผู้จำหน่าย';
-          if (!confirm(e.message + '\n\nเปิดสถานะ "' + role + '" ให้ผู้ติดต่อนี้แล้วบันทึกต่อเลยไหม?')) throw e;
+          if (!(await Layout.confirm(e.message + '\n\nเปิดสถานะ "' + role + '" ให้ผู้ติดต่อนี้แล้วบันทึกต่อเลยไหม?'))) throw e;
           try {
             await api.updateContact(payload.contactId, asCustomer ? { isCustomer: true } : { isSupplier: true });
           } catch (e2) {
@@ -9733,7 +9802,7 @@
       async save(approveAfter = false) {
         const api = Layout.api(); if (!api) return;
         // หัวเอกสาร vs ผังรายบรรทัด — ถามก่อนเมื่อขัดกัน (JE ลงตามบรรทัด)
-        if (!this._confirmHeaderLineAccountAgreement()) return;
+        if (!(await this._confirmHeaderLineAccountAgreement())) return;
         // ── ด่านความขัดแย้ง: ติ๊ก "มีใบกำกับภาษีซื้อ (ขอเครดิต ภ.พ.30)" แต่
         // ทุกบรรทัดเป็น 🚫 ไม่เคลม (เคสจริง: OCR ตั้ง 🚫 จากใบอย่างย่อ แล้ว
         // ผู้ใช้ได้ใบเต็มรูปมาทีหลัง) — ถามเป็นภาษาคนก่อนบันทึก ไม่ปล่อยให้
@@ -9746,11 +9815,13 @@
           const claimable = vatRows.filter(r =>
             r.querySelector('[data-f="vatClaim"]')?.dataset.claim !== 'false');
           if (vatRows.length > 0 && claimable.length === 0) {
-            const doClaim = confirm(
-              'คุณติ๊ก "มีใบกำกับภาษีซื้อ — ขอเครดิต ภ.พ.30" ไว้ '
+            const doClaim = (await Layout.confirm({ title: 'ตั้งค่าเคลมภาษีซื้อขัดกัน',
+              message: 'คุณติ๊ก "มีใบกำกับภาษีซื้อ — ขอเครดิต ภ.พ.30" ไว้ '
               + 'แต่ทุกบรรทัดถูกตั้งเป็น "ไม่เคลม VAT" (🚫) — ขัดกันเอง\n\n'
-              + 'กด OK  = เคลมภาษีซื้อใบนี้ (เปิด ✓ ให้ทุกบรรทัด — ใบกำกับเต็มรูปเคลมได้)\n'
-              + 'กด Cancel = คงไม่เคลมตามเดิม (VAT รวมเป็นต้นทุนค่าใช้จ่าย ไม่ขึ้น ภ.พ.30)');
+              + '"เคลมภาษีซื้อ" = เปิด ✓ ให้ทุกบรรทัด (ใบกำกับเต็มรูปเคลมได้)\n'
+              + '"คงไม่เคลม" = VAT รวมเป็นต้นทุนค่าใช้จ่าย ไม่ขึ้น ภ.พ.30',
+              okText: 'เคลมภาษีซื้อ', cancelText: 'คงไม่เคลม', dismissValue: null }));
+            if (doClaim === null) return;   // ปิดด้วย × / Escape = ยังไม่ตัดสิน ⇒ ไม่บันทึก (ฝ่ายค้าน LOW-7 · เดิมเท่ากับ "คงไม่เคลม")
             if (doClaim) {
               vatRows.forEach(r => {
                 const c = r.querySelector('[data-f="vatClaim"]');
@@ -9868,12 +9939,12 @@
           return c.startsWith('215') || c.startsWith('217');
         });
         if (_hasDepositAcctLine && !_isDepositDocNow) {
-          if (!confirm('พบบรรทัดที่เลือกผังบัญชี "ขายรอรับรู้/รับล่วงหน้า" (215xx/217xx) '
+          if (!(await Layout.confirm('พบบรรทัดที่เลือกผังบัญชี "ขายรอรับรู้/รับล่วงหน้า" (215xx/217xx) '
             + 'แต่ยังไม่ได้ตั้งเป็นเอกสารมัดจำ\n\n'
             + '⚠️ ถ้าลงแบบนี้ GL จะเข้า 217xx จริง แต่ระบบมัดจำจะไม่รู้จักใบนี้ '
             + '(หน้าเงินมัดจำไม่โชว์ · Realize/หักเข้าใบกำกับ/drives ไม่ได้)\n\n'
             + 'แนะนำ: เลือกประเภท "💰 ใบมัดจำ / รับเงินล่วงหน้า" แทน\n\n'
-            + 'กด "ตกลง" = ลงตามที่เลือก (ไม่แนะนำ) · "ยกเลิก" = กลับไปแก้'))
+            + 'กด "ตกลง" = ลงตามที่เลือก (ไม่แนะนำ) · "ยกเลิก" = กลับไปแก้')))
             return;
         }
         // Required-field validation ที่เดิม "ติด * แต่ไม่เตือน" (audit พบ
@@ -11550,7 +11621,7 @@
             const msg = e.message || '';
             if (msg.includes('workflow') || msg.includes('ต้องผ่าน multi-level')
                 || msg.includes('ผ่านการอนุมัติ')) {
-              if (confirm('เอกสารนี้เข้ากฎอนุมัติหลายขั้น (ตามวงเงิน/ประเภท)\n\nส่งเข้าคิวขออนุมัติเลยหรือไม่? ผู้อนุมัติตามกฎจะได้รับแจ้งเตือน')) {
+              if ((await Layout.confirm('เอกสารนี้เข้ากฎอนุมัติหลายขั้น (ตามวงเงิน/ประเภท)\n\nส่งเข้าคิวขออนุมัติเลยหรือไม่? ผู้อนุมัติตามกฎจะได้รับแจ้งเตือน'))) {
                 try {
                   await api.submitForApproval('Document', id);
                   Layout.closeModal('detailModal');
@@ -11969,7 +12040,7 @@
         const etaxRoute = this._seRoute?.channel === 'EtaxByEmail';
         // ฝ่ายค้าน B1: เปิดทดสอบ e-Tax by Email (สำเนาไป UAT) ⇒ ถามยืนยัน — ใบจะไม่ถูกประทับเวลาจริง
         if (etaxRoute && this._seRoute?.usesUat
-            && !confirm('บริษัทเปิด "ทดสอบ e-Tax by Email" — สำเนาจะไปที่ UAT ของ ETDA (' + (this._seRoute.timestampAddress || '') + ') ใบนี้จะไม่ถูกประทับเวลาจริง\n\nยืนยันส่งแบบทดสอบ?')) {
+            && !(await Layout.confirm('บริษัทเปิด "ทดสอบ e-Tax by Email" — สำเนาจะไปที่ UAT ของ ETDA (' + (this._seRoute.timestampAddress || '') + ') ใบนี้จะไม่ถูกประทับเวลาจริง\n\nยืนยันส่งแบบทดสอบ?'))) {
           btn.disabled = false; return;
         }
         const req = { to, cc: etaxRoute ? null : cc, subject: etaxRoute ? null : subject, body, attachPdf: etaxRoute ? true : attachPdf,
@@ -11987,7 +12058,7 @@
           catch (e) {
             // ส่ง e-Tax ซ้ำต้องยืนยัน (409 ETAX-EMAIL-RESEND) — ถามแล้วส่งใหม่พร้อมยืนยัน
             if (e && e.status === 409 && e.body?.data?.ruleCode === 'ETAX-EMAIL-RESEND'
-                && confirm((e.message || 'ใบนี้ส่ง e-Tax แล้ว') + '\n\nยืนยันส่งซ้ำ?')) {
+                && (await Layout.confirm((e.message || 'ใบนี้ส่ง e-Tax แล้ว') + '\n\nยืนยันส่งซ้ำ?'))) {
               res = await send(Object.assign({}, req, { confirmEtaxResend: true }));
             } else throw e;
           }
@@ -12000,7 +12071,7 @@
         } finally { btn.disabled = false; }
       },
       async generateEtax(id) {
-        if (!confirm('สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) สำหรับเอกสารนี้?\n\nหลังจากสร้างแล้วจะสามารถดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัวได้')) return;
+        if (!(await Layout.confirm('สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) สำหรับเอกสารนี้?\n\nหลังจากสร้างแล้วจะสามารถดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัวได้'))) return;
         try {
           Layout.toast('กำลังสร้าง e-Tax Invoice ...', 'info');
           const companyId = Layout.getCompanyId();
@@ -12038,7 +12109,7 @@
        * ไปเปิด edit form ของ doc ใหม่ทันที.
        */
       async cloneDoc(id) {
-        if (!confirm('สร้างเอกสารใหม่จากต้นแบบนี้ (ลูกค้า + รายการ + บัญชี)?')) return;
+        if (!(await Layout.confirm('สร้างเอกสารใหม่จากต้นแบบนี้ (ลูกค้า + รายการ + บัญชี)?'))) return;
         try {
           const cid = Layout.getCompanyId();
           const r = await fetch(`/api/companies/${cid}/documents/${id}/clone`, {
@@ -12074,12 +12145,12 @@
               && r.vehicle !== 'VehicleDealerExempt');
             vehicleWarn = hit ? hit.warning : null;
           } catch { vehicleWarn = 'ตรวจรายการรถอัตโนมัติไม่สำเร็จ — ตรวจเองว่าไม่ใช่ค่าใช้จ่ายรถยนต์นั่ง ≤ 10 ที่นั่ง'; }
-          if (vehicleWarn && !confirm('⚠️ §82/5(6) — ' + vehicleWarn
-            + '\n\nยืนยันว่าเป็นรถประเภทที่เคลมได้ และเปิดเคลมภาษีซื้อใบนี้?')) { revert(); return; }
+          if (vehicleWarn && !(await Layout.confirm('⚠️ §82/5(6) — ' + vehicleWarn
+            + '\n\nยืนยันว่าเป็นรถประเภทที่เคลมได้ และเปิดเคลมภาษีซื้อใบนี้?'))) { revert(); return; }
         } else {
-          if (!confirm('เลิกเคลมภาษีซื้อใบนี้?\n\nระบบจะสร้าง JE ย้าย VAT ออกจากภาษีซื้อ (11610/11640) '
+          if (!(await Layout.confirm('เลิกเคลมภาษีซื้อใบนี้?\n\nระบบจะสร้าง JE ย้าย VAT ออกจากภาษีซื้อ (11610/11640) '
             + 'ไปลงค่าใช้จ่าย "ภาษีซื้อขอคืนไม่ได้" และใบนี้จะไม่ขึ้น ภ.พ.30\n(กลับมาติ๊กเคลมใหม่ได้'
-            + 'ภายในกรอบ 6 เดือน §82/3)')) { revert(); return; }
+            + 'ภายในกรอบ 6 เดือน §82/3)'))) { revert(); return; }
         }
         try {
           await API.post(`/api/companies/${Layout.getCompanyId()}/document/${id}/complete-tax-invoice`,
@@ -12167,22 +12238,19 @@
         const docDate = Layout.dateInput(this._currentDoc?.documentDate) || '';
         let revDate = docDate;
         if (hasJe) {
-          const input = prompt(
-            'วันที่ลงรายการกลับบัญชี (YYYY-MM-DD)\n\n' +
-            `ค่าเริ่มต้น = วันที่ของเอกสาร (${docDate}) เพื่อให้รายการกลับอยู่งวดเดียวกัน\n` +
-            'เปลี่ยนได้ถ้าต้องการลงงวดอื่น (เช่น งวดเดิมปิดแล้ว)',
-            docDate);
-          if (input === null) return;                 // กด Cancel = ไม่ยกเลิกเอกสาร
-          revDate = (input || '').trim() || docDate;
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(revDate)) {
-            Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)', 'error');
-            return;
-          }
+          const input = (await Layout.promptText({ title: 'วันที่ลงรายการกลับบัญชี', inputType: 'date', label: 'วันที่ลงรายการกลับบัญชี', okText: 'ไปต่อ',
+            message: `ค่าเริ่มต้น = วันที่ของเอกสาร (${docDate}) เพื่อให้รายการกลับอยู่งวดเดียวกัน\n` +
+            'เปลี่ยนได้ถ้าต้องการลงงวดอื่น (เช่น งวดเดิมปิดแล้ว)', value: docDate,
+            // ฝ่ายค้าน LOW-5: บังคับ + ตรวจรูปในกล่อง (เดิมว่าง = ถอยไปวันที่เอกสารเงียบ ๆ / ผิดรูป = toast แล้วยกเลิกทั้งขั้นตอน)
+            required: true, requiredMessage: 'กรุณาเลือกวันที่ลงรายการกลับบัญชี',
+            validate: v => /^\d{4}-\d{2}-\d{2}$/.test(v) ? null : 'รูปแบบวันที่ไม่ถูกต้อง' }));
+          if (input === null) return;                 // กด ยกเลิก/Escape = ไม่ยกเลิกเอกสาร
+          revDate = input.trim();
         }
         if (!(await Layout.confirmDanger({
           title: 'ยกเลิกเอกสาร',
           message: (hasJe
-              ? `ระบบจะสร้างรายการกลับบัญชี (Reversal JE) ลงวันที่ <strong>${Layout.esc(revDate)}</strong> `
+              ? `ระบบจะสร้างรายการกลับบัญชี (Reversal JE) ลงวันที่ <strong>${Layout.esc(Layout.date(revDate))}</strong> `
               : 'เอกสารนี้ยังไม่ได้ลงบัญชี — ยกเลิกได้โดยไม่กระทบสมุดบัญชี ')
             + 'เก็บเอกสารเดิมไว้ในระบบเพื่อการตรวจสอบ (audit trail)' + extra,
           mode: 'math'
@@ -12343,10 +12411,10 @@
 
       async restoreDoc(id, docNumber) {
         const api = Layout.api(); if (!api) return;
-        if (!confirm(`กู้คืนเอกสาร ${docNumber || ''} ที่ยกเลิกผิด?\n\n` +
+        if (!(await Layout.confirm(`กู้คืนเอกสาร ${docNumber || ''} ที่ยกเลิกผิด?\n\n` +
                      '• คืนเป็นฉบับร่าง (Draft) คงเลขเดิม → กด "อนุมัติ" เพื่อลงบัญชี/e-Tax ใหม่\n' +
                      '• การรับชำระ/หักมัดจำเดิมถูกยกเลิกไปแล้ว ต้องบันทึกใหม่หลังอนุมัติ\n' +
-                     '• ระบบจะบล็อกถ้าเดือนภาษียื่น ภ.พ.30 แล้ว หรือมี e-Tax ที่กรมสรรพากรรับรองแล้ว')) return;
+                     '• ระบบจะบล็อกถ้าเดือนภาษียื่น ภ.พ.30 แล้ว หรือมี e-Tax ที่กรมสรรพากรรับรองแล้ว'))) return;
         try {
           await api.restoreDocument(id);
           Layout.closeModal('detailModal');
@@ -12381,41 +12449,14 @@
         } catch (e) { Layout.toast(e.message || 'ตรวจแผนการลบไม่สำเร็จ', 'error'); return; }
         if (!single) { Layout.toast('ตรวจแผนการลบไม่สำเร็จ', 'error'); return; }
 
-        let cascade = false;
-        if (related) {
-          const n = related.nodes.filter(x => x.depth > 0).length;
-          if (!isBlocked(related)) {
-            cascade = confirm(`ใบนี้มีเอกสารที่เกี่ยวข้อง ${n} ใบ\n\n` +
-              'ตกลง = ลบพร้อมเอกสารที่เกี่ยวข้องทั้งหมด\nยกเลิก = ลบเฉพาะใบนี้ (คงเอกสารที่เกี่ยวข้องไว้ ตัดการอ้างอิงถึงใบนี้)');
-          } else if (!isBlocked(single)) {
-            if (!confirm(`${related.message}\n\nต้องการ "ลบเฉพาะใบนี้" แทนไหม? (คงเอกสารที่เกี่ยวข้องไว้ ตัดการอ้างอิงถึงใบนี้)`)) return;
-          }
-        }
+        // WP-13 (D §3 · audit 249): เดิมถาม 4 ชั้น (confirm×2 + confirmDanger 2 ขั้น + prompt) ⇒ หน้าต่างเดียว: เลือกขอบเขต · เห็นแผนของขอบเขตนั้น ·
+        // เหตุผล (บังคับเมื่อ needsReason) · พิมพ์เลขที่ยืนยัน — แผน/เหตุ/การกันไว้มาจากเซิร์ฟเวอร์ทั้งหมด (หน้านี้แสดงอย่างเดียว)
+        if (isBlocked(single) && (!related || isBlocked(related))) { Layout.toast((related || single).message || single.message, 'error', 12000); return; }
+        const choice = await this._purgeDialog(single, related, docNumber, isBlocked);
+        if (!choice) return;
+        const cascade = choice.cascade;
         const plan = cascade ? related : single;
-        if (isBlocked(plan)) { Layout.toast(plan.message, 'error', 12000); return; }
-
-        const icon = { Delete: '🗑️', Unlink: '🔗', Block: '⛔' };
-        const rows = (plan.nodes || []).map(x =>
-          `<li>${icon[x.action] || ''} ${Layout.esc(x.typeName)} ${Layout.esc(x.documentNumber || '')} — ${Layout.esc(x.reason)}</li>`).join('');
-        const legal = plan.needsReason
-          ? '<br><strong style="color:#dc2626">⚖️ มีเอกสารในช่วงเก็บรักษาตามกฎหมาย (§87/3 · พ.ร.บ.บัญชี ม.14 — 5 ปี)</strong> ' +
-            'แนะนำให้ใช้ <b>"ยกเลิกเอกสาร (Void)"</b> ซึ่งคงหลักฐานไว้ · ถ้ายืนยันลบ (เช่น ข้อมูลทดสอบ/สร้างผิดซ้ำ) ต้องระบุเหตุผล — บันทึก audit ว่าคุณเป็นผู้ลบ'
-          : '';
-        if (!(await Layout.confirmDanger({
-          title: cascade ? 'ลบเอกสารพร้อมเอกสารที่เกี่ยวข้อง (Owner เท่านั้น)' : 'ลบเอกสารและข้อมูลทั้งหมด (Owner เท่านั้น)',
-          message: 'ระบบจะลบเอกสาร รายการบัญชี(JE) การชำระเงิน ใบหัก ณ ที่จ่าย e-Tax และข้อมูลเกี่ยวข้องของทุกใบที่มี 🗑️<br>' +
-                   `<ul style="margin:6px 0 6px 16px;font-size:13px">${rows}</ul>` +
-                   '<strong style="color:#dc2626">⚠️ ข้อมูลจะถูกลบถาวร ไม่สามารถกู้คืนได้</strong>' + legal + '<br>' +
-                   '<span style="font-size:12px;color:#666">การดำเนินการนี้จะถูกบันทึกใน Audit Log ทุกใบ</span>',
-          mode: 'doubleCheck',
-          confirmText: docNumber || 'DELETE'
-        }))) return;
-        let reason = null;
-        if (plan.needsReason) {
-          reason = prompt('ระบุเหตุผลที่ต้องลบถาวร (บังคับ — จะถูกบันทึกใน audit):\nเช่น "ข้อมูลทดสอบ", "สร้างซ้ำจาก integration ผิด"');
-          if (!reason || !reason.trim()) { Layout.toast('ต้องระบุเหตุผลจึงจะลบถาวรได้', 'warning'); return; }
-          reason = reason.trim();
-        }
+        const reason = plan.needsReason ? choice.reason : null;
         try {
           const r = await api.purgeDocument(id, plan.needsReason, reason, cascade, plan.planToken);
           Layout.closeModal('detailModal');
@@ -12423,16 +12464,102 @@
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error', 12000); }
       },
+      /** หน้าต่างลบถาวรหน้าเดียว (WP-13) → Promise<{cascade, reason}|null> · ข้อมูลทุกบรรทัดผ่าน Layout.esc */
+      _purgeDialog(single, related, docNumber, isBlocked) {
+        return new Promise(resolve => {
+          let wrap = document.getElementById('purgeDocModal');
+          if (!wrap) {
+            wrap = document.createElement('div');
+            wrap.id = 'purgeDocModal';
+            wrap.className = 'modal-overlay';
+            wrap.setAttribute('role', 'dialog');
+            wrap.setAttribute('aria-modal', 'true');
+            wrap.setAttribute('aria-labelledby', 'pgTitle');
+            wrap.innerHTML = `<div class="modal" style="max-width:600px">
+              <div class="modal-header" style="border-bottom:2px solid var(--danger,#dc2626)">
+                <h3 class="modal-title" id="pgTitle" style="color:var(--danger,#dc2626)">⚠️ ลบเอกสารถาวร (เจ้าของบริษัทเท่านั้น)</h3>
+                <button type="button" class="modal-close" id="pgClose" aria-label="ปิด">&times;</button>
+              </div>
+              <div class="modal-body">
+                <div id="pgScope" style="margin-bottom:10px"></div>
+                <div style="font-size:13px">ระบบจะลบเอกสาร รายการบัญชี การชำระเงิน ใบหัก ณ ที่จ่าย e-Tax และข้อมูลเกี่ยวข้องของทุกใบที่มี 🗑️</div>
+                <ul id="pgPlan" style="margin:6px 0 8px 16px;font-size:13px"></ul>
+                <div id="pgLegal"></div>
+                <div id="pgReasonWrap" style="display:none;margin-top:8px">
+                  <label class="form-label" for="pgReason">เหตุผลที่ต้องลบถาวร (บังคับ — บันทึกใน audit) *</label>
+                  <textarea class="form-input" id="pgReason" rows="2" placeholder="เช่น ข้อมูลทดสอบ · สร้างซ้ำจากการเชื่อมต่อผิด"></textarea>
+                </div>
+                <div style="margin-top:10px">
+                  <label class="form-label" for="pgTyped" id="pgTypedLabel"></label>
+                  <input type="text" class="form-input" id="pgTyped" autocomplete="off">
+                </div>
+                <div id="pgError" role="alert" style="color:var(--danger,#dc2626);font-size:13px;margin-top:6px;min-height:18px"></div>
+                <div style="font-size:12px;color:#666">⚠️ ลบแล้วกู้คืนไม่ได้ · การดำเนินการนี้ถูกบันทึกใน Audit Log ทุกใบ</div>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="pgCancel">ยกเลิก</button>
+                <button type="button" class="btn btn-danger" id="pgOk">ลบถาวร</button>
+              </div>
+            </div>`;
+          }
+          document.body.appendChild(wrap);
+          const $ = q => wrap.querySelector(q);
+          const esc = Layout.esc;
+          const icon = { Delete: '🗑️', Unlink: '🔗', Block: '⛔' };
+          const relCount = related ? (related.nodes || []).filter(x => x.depth > 0).length : 0;
+          const canSingle = !isBlocked(single);
+          const canRelated = !!related && !isBlocked(related);
+          const expected = docNumber || 'DELETE';
+          // ขอบเขต: มีเอกสารที่เกี่ยวข้อง ⇒ radio สองทาง (ทางที่เซิร์ฟเวอร์กันไว้ = ปิด + เหตุผลของเซิร์ฟเวอร์)
+          $('#pgScope').innerHTML = related
+            ? `<div style="font-weight:600;margin-bottom:4px">ใบนี้มีเอกสารที่เกี่ยวข้อง ${Number(relCount)} ใบ — เลือกขอบเขตการลบ</div>
+               <label style="display:block;font-size:13px;margin:2px 0"><input type="radio" name="pgScopeR" value="single" ${canSingle ? '' : 'disabled'}> ลบเฉพาะใบนี้ (คงเอกสารที่เกี่ยวข้องไว้ ตัดการอ้างอิงถึงใบนี้)${canSingle ? '' : ` — <span style="color:#b91c1c">${esc(single.message || 'ทำไม่ได้')}</span>`}</label>
+               <label style="display:block;font-size:13px;margin:2px 0"><input type="radio" name="pgScopeR" value="related" ${canRelated ? '' : 'disabled'}> ลบพร้อมเอกสารที่เกี่ยวข้อง (${Number(relCount)} ใบ)${canRelated ? '' : ` — <span style="color:#b91c1c">${esc(related.message || 'ทำไม่ได้')}</span>`}</label>`
+            : '';
+          const radios = [...wrap.querySelectorAll('input[name="pgScopeR"]')];
+          const firstOk = radios.find(r => !r.disabled && r.value === (canRelated ? 'related' : 'single')) || radios.find(r => !r.disabled);
+          if (firstOk) firstOk.checked = true;
+          const current = () => { const r = radios.find(x => x.checked); return r && r.value === 'related' ? related : single; };
+          const render = () => {
+            const plan = current();
+            $('#pgPlan').innerHTML = (plan.nodes || []).map(x =>
+              `<li>${icon[x.action] || ''} ${esc(x.typeName)} ${esc(x.documentNumber || '')} — ${esc(x.reason)}</li>`).join('');
+            $('#pgLegal').innerHTML = plan.needsReason
+              ? '<div style="font-size:13px;color:#b91c1c">⚖️ มีเอกสารในช่วงเก็บรักษาตามกฎหมาย (§87/3 · พ.ร.บ.บัญชี ม.14 — 5 ปี) — แนะนำ <b>"ยกเลิกเอกสาร (Void)"</b> ซึ่งคงหลักฐานไว้ · ถ้ายืนยันลบ (เช่น ข้อมูลทดสอบ/สร้างผิดซ้ำ) ต้องระบุเหตุผล</div>'
+              : '';
+            $('#pgReasonWrap').style.display = plan.needsReason ? '' : 'none';
+          };
+          radios.forEach(r => r.onchange = render);
+          render();
+          $('#pgTypedLabel').textContent = `พิมพ์ "${expected}" เพื่อยืนยัน`;
+          $('#pgTyped').value = ''; $('#pgReason').value = ''; $('#pgError').textContent = '';
+          let done = false;
+          const finish = v => {
+            if (done) return; done = true;
+            wrap._onDismiss = null;
+            Layout.closeModal('purgeDocModal');
+            resolve(v);
+          };
+          $('#pgOk').onclick = () => {
+            const plan = current();
+            const reason = $('#pgReason').value.trim();
+            if (plan.needsReason && !reason) { $('#pgError').textContent = 'ต้องระบุเหตุผลจึงจะลบถาวรได้'; $('#pgReason').focus(); return; }
+            if ($('#pgTyped').value.trim() !== expected) { $('#pgError').textContent = `พิมพ์ "${expected}" ให้ตรงก่อนกดลบ`; $('#pgTyped').focus(); return; }
+            finish({ cascade: plan === related, reason: reason || null });
+          };
+          $('#pgCancel').onclick = () => finish(null);
+          $('#pgClose').onclick = () => finish(null);
+          wrap._onDismiss = () => finish(null);
+          Layout.openModal('purgeDocModal');
+          setTimeout(() => $('#pgTyped').focus(), 40);
+        });
+      },
       // สร้างลิงก์ลูกค้าเซ็นรับสินค้าออนไลน์ (POD) → คัดลอกเข้า clipboard
       async deliverySignLink(docId) {
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
-          const r = await fetch(`/api/companies/${cid}/document/${docId}/delivery-sign-link`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message || 'สร้างลิงก์ไม่สำเร็จ');
+          const j = await API.post(`/api/companies/${cid}/document/${encodeURIComponent(docId)}/delivery-sign-link`, {});   // WP-13 H
+          if (!j || !j.success) throw new Error((j && j.message) || 'สร้างลิงก์ไม่สำเร็จ');
           const url = j.data.url;
           try { await navigator.clipboard.writeText(url); } catch {}
           if (j.data.signedAt) {
@@ -12440,7 +12567,7 @@
           } else {
             Layout.toast('คัดลอกลิงก์แล้ว — ส่งให้ลูกค้าเซ็นรับสินค้าได้เลย (อายุ 14 วัน)', 'success');
           }
-          prompt('ลิงก์เซ็นรับสินค้า (คัดลอกแล้ว):', url);
+          (await Layout.notice({ title: 'ลิงก์เซ็นรับสินค้า', messageHtml: 'คัดลอกแล้ว (ถ้าเบราว์เซอร์อนุญาต) — เลือกข้อความด้านล่างเพื่อคัดลอกเองได้<br><code style="word-break:break-all;user-select:all">' + Layout.esc(url) + '</code>' }));
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -12448,12 +12575,8 @@
       async quotationAcceptLink(docId) {
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
-          const r = await fetch(`/api/companies/${cid}/document/${docId}/quotation-accept-link`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message || 'สร้างลิงก์ไม่สำเร็จ');
+          const j = await API.post(`/api/companies/${cid}/document/${encodeURIComponent(docId)}/quotation-accept-link`, {});   // WP-13 H
+          if (!j || !j.success) throw new Error((j && j.message) || 'สร้างลิงก์ไม่สำเร็จ');
           const url = j.data.url;
           try { await navigator.clipboard.writeText(url); } catch {}
           if (j.data.acceptedAt) {
@@ -12461,7 +12584,7 @@
           } else {
             Layout.toast('คัดลอกลิงก์แล้ว — ส่งให้ลูกค้ากดยอมรับได้เลย (อายุ 30 วัน)', 'success');
           }
-          prompt('ลิงก์ยอมรับใบเสนอราคา (คัดลอกแล้ว):', url);
+          (await Layout.notice({ title: 'ลิงก์ยอมรับใบเสนอราคา', messageHtml: 'คัดลอกแล้ว (ถ้าเบราว์เซอร์อนุญาต) — เลือกข้อความด้านล่างเพื่อคัดลอกเองได้<br><code style="word-break:break-all;user-select:all">' + Layout.esc(url) + '</code>' }));
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -12996,12 +13119,12 @@
           // ⇒ ต้องออกใบกำกับภาษีเต็มจำนวนก่อน แล้วรับชำระที่ใบกำกับ. รับ "เต็ม"
           // ไม่ต้องแปลง — ระบบออกใบกำกับ/ใบเสร็จ ใบเดียวให้เอง
           if (docType === 'Invoice' && docVat > 0 && amount < balanceDue - 0.01) {
-            const goConv = confirm(
-              'รับชำระ "บางส่วน" ของใบแจ้งหนี้ที่มี VAT\n\n' +
+            const goConv = (await Layout.confirm({ title: 'รับชำระบางส่วนของใบที่มี VAT',
+              message: 'รับชำระ "บางส่วน" ของใบแจ้งหนี้ที่มี VAT\n\n' +
               'จุดรับผิด VAT (§78/1) เกิดเต็มจำนวนตั้งแต่งวดแรก — ใบเสร็จผ่อนถือ VAT เต็มไม่ได้\n' +
               'ต้องออกใบกำกับภาษีเต็มจำนวนก่อน แล้วรับชำระที่ใบกำกับ\n\n' +
-              'กด OK = แปลงเป็นใบกำกับภาษีก่อน\n' +
-              'กด Cancel = ยกเลิก (แก้ยอดเป็นเต็มจำนวนเพื่อออกใบเดียวจบก็ได้)');
+              '"ยกเลิก" = กลับไปแก้ยอดเป็นเต็มจำนวนเพื่อออกใบเดียวจบก็ได้',
+              okText: 'แปลงเป็นใบกำกับภาษีก่อน' }));
             if (goConv) {
               try {
                 const r = await api.convertDocument(docId, 'TaxInvoice');
@@ -13021,7 +13144,7 @@
             try { chk = await _rpWhtSuggestion(_whtEntered); }
             catch (e) { chk = null; /* ตรวจไม่ได้ ⇒ ให้เซิร์ฟเวอร์ตัดสินตอนบันทึก (ด่านเพดานอยู่ที่ CreatePaymentAsync) */ }
             if (chk?.aboveGrossError) { Layout.toast(chk.aboveGrossError, 'error', 9000); return; }
-            if (chk?.aboveNetWarning && !confirm(chk.aboveNetWarning + '\n\nกด OK = บันทึกตามยอดที่กรอก · Cancel = กลับไปแก้')) return;
+            if (chk?.aboveNetWarning && !(await Layout.confirm({ message: chk.aboveNetWarning, okText: 'บันทึกตามยอดที่กรอก', cancelText: 'กลับไปแก้' }))) return;
           }
           submit.disabled = true; submit.textContent = 'กำลังบันทึก...';
           try {
@@ -13119,7 +13242,7 @@
        *  → Receipt อ้างอิงเอกสารเดิม. VAT รับรู้ที่ใบกำกับแล้ว ไม่คิดซ้ำ. */
       async _offerIssueReceipt(docId, dt) {
         const label = dt === 'TaxInvoice' ? 'ใบกำกับภาษี' : 'ใบแจ้งหนี้';
-        if (!window.confirm(`${label}นี้ชำระครบแล้ว\n\nต้องการออก “ใบเสร็จรับเงิน” ให้ลูกค้าเลยไหม?\n(ระบบจะสร้าง Receipt อ้างอิงเอกสารนี้ — VAT รับรู้แล้วที่ใบเดิม ไม่คิดซ้ำ)`)) return;
+        if (!(await Layout.confirm({ title: 'ออกใบเสร็จรับเงิน', okText: 'ออกใบเสร็จ', message: `${label}นี้ชำระครบแล้ว\n\nต้องการออก “ใบเสร็จรับเงิน” ให้ลูกค้าเลยไหม?\n(ระบบจะสร้าง Receipt อ้างอิงเอกสารนี้ — VAT รับรู้แล้วที่ใบเดิม ไม่คิดซ้ำ)` }))) return;
         const api = Layout.api(); if (!api) return;
         try {
           const r = await api.convertDocument(docId, 'Receipt');
@@ -13131,7 +13254,7 @@
       },
       async writeOffBadDebt(id) {
         const api = Layout.api(); if (!api) return;
-        const reason = prompt('เหตุผลการตัดหนี้สูญ (ไม่บังคับ):', '');
+        const reason = (await Layout.promptText({ message: 'เหตุผลการตัดหนี้สูญ (ไม่บังคับ):', value: '', multiline: true }));
         if (reason === null) return; // user cancelled
         if (!(await Layout.confirmDanger({
           title: 'ตัดหนี้สูญ (Bad Debt Write-off)',
@@ -13154,8 +13277,7 @@
       // ให้ลูกค้า ลูกค้าจะเคลมภาษีซื้อสองรอบจากการขายครั้งเดียว
       async issueFullTaxInvoice(id, docNo) {
         const api = Layout.api(); if (!api) return;
-        const reason = prompt('เหตุผลที่ออกใบกำกับภาษีเต็มรูปแทน (เก็บไว้ให้ผู้สอบบัญชี):',
-          'ลูกค้าขอใบกำกับภาษีเต็มรูปเพื่อใช้เคลมภาษีซื้อ');
+        const reason = (await Layout.promptText({ message: 'เหตุผลที่ออกใบกำกับภาษีเต็มรูปแทน (เก็บไว้ให้ผู้สอบบัญชี):', value: 'ลูกค้าขอใบกำกับภาษีเต็มรูปเพื่อใช้เคลมภาษีซื้อ', multiline: true }));
         if (reason === null) return;   // ผู้ใช้กดยกเลิก
         if (!(await Layout.confirmDanger({
           title: 'ออกใบกำกับภาษีเต็มรูปแทนใบนี้',
@@ -13181,9 +13303,9 @@
       /// หน้านี้แค่กดแล้วโหลดใหม่
       async issueReceiptForPayment(paymentId, docId) {
         const api = Layout.api(); if (!api) return;
-        if (!confirm('ออกใบเสร็จรับเงินสำหรับการรับชำระนี้?\n\n'
+        if (!(await Layout.confirm('ออกใบเสร็จรับเงินสำหรับการรับชำระนี้?\n\n'
           + 'ใบจะลงวันที่ "วันที่รับเงินจริง" ตาม ป.รัษฎากร ม.105 '
-          + 'และไม่ลงบัญชีซ้ำ (JE ของการรับชำระลงไปแล้ว)')) return;
+          + 'และไม่ลงบัญชีซ้ำ (JE ของการรับชำระลงไปแล้ว)'))) return;
         try {
           const res = await api.issueReceiptForPayment(paymentId);
           Layout.toast(res.message || 'ออกใบเสร็จรับเงินแล้ว', 'success', 8000);
@@ -13258,7 +13380,7 @@
         });
         const revoke = host.querySelector('[data-autosend-revoke]');
         if (revoke) revoke.addEventListener('click', async () => {
-          if (!confirm('ยกเลิกลิงก์ชำระเงินของเอกสารนี้? ลิงก์ที่ส่งไปแล้วจะใช้จ่ายไม่ได้ทันที')) return;
+          if (!(await Layout.confirm({ title: 'ยกเลิกลิงก์ชำระเงิน', danger: true, okText: 'ยกเลิกลิงก์', cancelText: 'ไม่ยกเลิก', message: 'ยกเลิกลิงก์ชำระเงินของเอกสารนี้? ลิงก์ที่ส่งไปแล้วจะใช้จ่ายไม่ได้ทันที' }))) return;
           try { const r = await api.post(`/api/companies/${cid}/document-auto-send/documents/${docId}/pay-link/revoke`, {});
             Layout.toast((r && r.message) || 'ยกเลิกลิงก์แล้ว', 'success'); await this.renderAutoSendSection(docId); }
           catch (e) { Layout.toast(e.message, 'error', 8000); }
@@ -13344,7 +13466,7 @@
       },
       async cancelReissueRequest(id) {
         const api = Layout.api(); if (!api) return;
-        if (!confirm('ยกเลิกคำขอยกเลิกและออกใบแทนของใบนี้? (ใบนี้ไม่ถูกแตะ)')) return;
+        if (!(await Layout.confirm('ยกเลิกคำขอยกเลิกและออกใบแทนของใบนี้? (ใบนี้ไม่ถูกแตะ)'))) return;
         try {
           const res = await api.cancelReissueRequest(id);
           Layout.toast(res?.message || 'ยกเลิกคำขอแล้ว', 'success', 8000);
@@ -13453,9 +13575,46 @@
             + revs.slice(0, 20).map(x => `<div>• ${link(x.sourceId, x.sourceNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(revs)
             + stuck.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(stuck)
             + keptLost.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(keptLost)
-            + etaxRows.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(etaxRows);
+            // รอบ 255 (ETR-ACK): ปุ่ม "ตรวจแล้ว" ต่อแถว e-Tax (ทางไปต่อ — เดิมแถบค้างตลอดไป) · เซิร์ฟเวอร์ตัดสินทั้งหมด
+            + etaxRows.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')} `
+              + `<button type="button" class="btn btn-sm btn-secondary" style="padding:1px 8px;font-size:12px" `
+              + `onclick="Page.openEtaxReviewAck('${Layout.jsArg(x.etaxId)}','${Layout.jsArg(x.etaxRefNumber || '')}','${Layout.jsArg(x.documentNumber || '')}')">✓ ตรวจแล้ว</button></div>`).join('') + more(etaxRows);
           el.style.display = '';
         } catch (e) { el.style.display = 'none'; }
+      },
+      openEtaxReviewAck(etaxId, etaxRef, docNo) {
+        document.getElementById('eraEtaxId').value = etaxId;
+        document.getElementById('eraRowInfo').innerHTML = `แถว e-Tax <b>${Layout.esc(etaxRef || '-')}</b> ของเอกสาร <b>${Layout.esc(docNo || '-')}</b>`;
+        document.querySelectorAll('input[name="eraOutcome"]').forEach(r => { r.checked = r.value === 'RejectedOrNotReceived'; });
+        document.getElementById('eraRdReference').value = '';
+        document.getElementById('eraNote').value = '';
+        document.getElementById('eraSubmitBtn').disabled = false;
+        this.etaxReviewAckOutcomeChanged();
+        Layout.openModal('etaxReviewAckModal');
+      },
+      etaxReviewAckOutcomeChanged() {
+        const v = document.querySelector('input[name="eraOutcome"]:checked')?.value;
+        document.getElementById('eraRefGroup').style.display = v === 'CancelledAtRd' ? '' : 'none';
+      },
+      async submitEtaxReviewAck() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('eraEtaxId').value;
+        const outcome = document.querySelector('input[name="eraOutcome"]:checked')?.value || null;
+        const payload = {
+          outcome,
+          rdReference: outcome === 'CancelledAtRd' ? (document.getElementById('eraRdReference').value || null) : null,
+          note: document.getElementById('eraNote').value,
+        };
+        const btn = document.getElementById('eraSubmitBtn');
+        btn.disabled = true;
+        try {
+          const res = await api.acknowledgeEtaxReviewRow(id, payload);
+          Layout.closeModal('etaxReviewAckModal');
+          Layout.toast(res?.message || 'บันทึกว่าตรวจแล้ว', 'success', 10000);
+          await this.loadEtaxReissueReview();
+        } catch (e) {
+          Layout.toast(e.message || 'บันทึกผลตรวจไม่สำเร็จ', 'error', 12000);
+        } finally { btn.disabled = false; }
       },
 
       async voidPayment(paymentId) {
@@ -13480,14 +13639,14 @@
         if (!target) { Layout.toast('กรุณาเลือกประเภทที่ต้องการแปลง', 'error'); return; }
         const ids = [...this.selectedDocs];
         if (!ids.length) { Layout.toast('กรุณาเลือกเอกสาร', 'error'); return; }
-        if (!confirm(`แปลง ${ids.length} เอกสารเป็น ${Layout.docTypeLabel(target)} หรือไม่?`)) return;
+        if (!(await Layout.confirm(`แปลง ${ids.length} เอกสารเป็น ${Layout.docTypeLabel(target)} หรือไม่?`))) return;
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.batchConvertDocuments(ids, target);
           const failed = Array.isArray(res.errors) ? res.errors : [];
           if (failed.length) {
             Layout.toast(`${res.message || ''} — แปลงไม่ได้ ${failed.length} ฉบับ (ดูรายละเอียด)`, 'warning');
-            alert('เอกสารที่แปลงไม่ได้:\n\n' + failed.join('\n'));
+            (await Layout.notice('เอกสารที่แปลงไม่ได้:\n\n' + failed.join('\n')));
           } else {
             Layout.toast(res.message || `แปลงสำเร็จ ${res.data.length} ฉบับ`);
           }
@@ -13806,14 +13965,14 @@
       async openCnSideMove(docId, currentlyPurchase) {
         const target = !currentlyPurchase;   // สลับไปอีกฝั่ง
         const targetTxt = target ? 'ฝั่งซื้อ (ลดภาษีซื้อ)' : 'ฝั่งขาย (ลดภาษีขาย)';
-        if (!confirm(
+        if (!(await Layout.confirm(
           `ย้ายเอกสารนี้ไป "${targetTxt}" ?\n\n`
           + 'ระบบจะ:\n'
           + '  1) กลับรายการบัญชี (JE) เดิมของใบนี้\n'
           + '  2) ลงบัญชีใหม่ให้ถูกฝั่ง\n\n'
           + 'หลังจากนั้นให้กด "สร้างรายงานภาษีใหม่" ของงวดนี้ เพื่อให้ยอดตรง\n'
-          + '(ทำไม่ได้ถ้างวดบัญชีปิดแล้ว / ยื่น ภ.พ.30 แล้ว / ส่ง e-Tax แล้ว)')) return;
-        const reason = prompt('เหตุผลการย้ายฝั่ง (บันทึกลง audit log):', 'ใบถูกจัดฝั่งผิดตอนอนุมัติ');
+          + '(ทำไม่ได้ถ้างวดบัญชีปิดแล้ว / ยื่น ภ.พ.30 แล้ว / ส่ง e-Tax แล้ว)'))) return;
+        const reason = (await Layout.promptText({ message: 'เหตุผลการย้ายฝั่ง (บันทึกลง audit log):', value: 'ใบถูกจัดฝั่งผิดตอนอนุมัติ', multiline: true }));
         if (reason === null) return;
         try {
           const cid = Layout.getCompanyId();
@@ -13836,7 +13995,7 @@
       async openForeignServiceFix(docId, currentlyForeign) {
         const target = !currentlyForeign;
         const what = target ? 'บริการต่างประเทศ (ภ.พ.36 §83/6)' : 'ซื้อในประเทศ';
-        if (!confirm(
+        if (!(await Layout.confirm(
           `เปลี่ยนการลงบัญชีของใบนี้เป็น "${what}" ?\n\n`
           + 'ระบบจะ:\n'
           + '  1) กลับรายการบัญชี (JE) เดิมของใบนี้\n'
@@ -13845,9 +14004,8 @@
                 + '     (ผู้ขายต่างประเทศไม่เก็บ VAT ไทย — เราประเมิน 7% เองเพื่อนำส่งแทน)\n'
               : ' ตามการซื้อในประเทศ\n')
           + '\nหลังจากนั้นให้กด "สร้างรายงานภาษีใหม่" ของงวดนี้ เพื่อให้ยอดตรง\n'
-          + '(ทำไม่ได้ถ้างวดบัญชีปิดแล้ว / ยื่นภาษีงวดนั้นแล้ว / มีรายการจ่ายชำระแยก / ส่ง e-Tax แล้ว)')) return;
-        const reason = prompt('เหตุผล (บันทึกลง audit log):',
-          target ? 'ลืมติ๊กบริการต่างประเทศตอนอนุมัติ' : 'ติ๊กบริการต่างประเทศผิด');
+          + '(ทำไม่ได้ถ้างวดบัญชีปิดแล้ว / ยื่นภาษีงวดนั้นแล้ว / มีรายการจ่ายชำระแยก / ส่ง e-Tax แล้ว)'))) return;
+        const reason = (await Layout.promptText({ message: 'เหตุผล (บันทึกลง audit log):', value: target ? 'ลืมติ๊กบริการต่างประเทศตอนอนุมัติ' : 'ติ๊กบริการต่างประเทศผิด', multiline: true }));
         if (reason === null) return;
         try {
           const cid = Layout.getCompanyId();
@@ -13867,10 +14025,10 @@
        */
       async openWhtBorneContractFix(docId, currentlyByContract) {
         const target = !currentlyByContract;
-        if (!confirm(target
+        if (!(await Layout.confirm(target
           ? 'ตั้งใบนี้เป็น "ผู้จ่ายรับภาระภาษีตามสัญญา" ?\n\nภาษีที่ผู้จ่ายออกแทนจะหักเป็นรายจ่ายได้ (ไม่บวกกลับ ภ.ง.ด.50) — เก็บ/แนบสัญญาเป็นหลักฐาน\n(ไม่แตะรายการบัญชี)'
-          : 'ยกเลิก "ผู้จ่ายรับภาระภาษีตามสัญญา" ?\n\nภาษีที่ผู้จ่ายออกแทนจะบวกกลับ ภ.ง.ด.50 (§65 ตรี (3) — ให้โดยเสน่หา)\n(ไม่แตะรายการบัญชี)')) return;
-        const reason = prompt('เหตุผล / เลขที่สัญญา (บันทึกลง audit log):', target ? 'สัญญาเลขที่ ' : 'ไม่มีสัญญา');
+          : 'ยกเลิก "ผู้จ่ายรับภาระภาษีตามสัญญา" ?\n\nภาษีที่ผู้จ่ายออกแทนจะบวกกลับ ภ.ง.ด.50 (§65 ตรี (3) — ให้โดยเสน่หา)\n(ไม่แตะรายการบัญชี)'))) return;
+        const reason = (await Layout.promptText({ message: 'เหตุผล / เลขที่สัญญา (บันทึกลง audit log):', value: target ? 'สัญญาเลขที่ ' : 'ไม่มีสัญญา', multiline: true }));
         if (reason === null) return;
         try {
           const cid = Layout.getCompanyId();
@@ -13914,7 +14072,7 @@
       },
 
       async deleteAttachment(attachmentId, documentId) {
-        if (!confirm('ลบไฟล์แนบนี้? การกระทำนี้ไม่สามารถย้อนกลับได้')) return;
+        if (!(await Layout.confirm('ลบไฟล์แนบนี้? การกระทำนี้ไม่สามารถย้อนกลับได้'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.deleteAttachment(attachmentId);
@@ -14327,7 +14485,7 @@
             await api.linkDocumentSource(id, { sourceDocumentId, lines, confirmOverSourceAmount: false });
           } catch (e) {
             if (!(e && e.status === 422 && e.body?.data?.ruleCode === 'CONVERT-OVER-AMOUNT')) throw e;
-            if (!confirm(e.message + '\n\nยืนยันผูกต่อ?')) return;
+            if (!(await Layout.confirm(e.message + '\n\nยืนยันผูกต่อ?'))) return;
             await api.linkDocumentSource(id, { sourceDocumentId, lines, confirmOverSourceAmount: true });
           }
           Layout.closeModal('linkSourceModal');
@@ -14339,7 +14497,7 @@
 
       async unlinkSource(id) {
         const api = Layout.api(); if (!api) return;
-        if (!confirm('ยกเลิกการผูกเอกสารนี้กับเอกสารต้นทาง? (ต้นทางจะไม่นับยอดของใบนี้อีก — เนื้อเอกสารไม่เปลี่ยน)')) return;
+        if (!(await Layout.confirm('ยกเลิกการผูกเอกสารนี้กับเอกสารต้นทาง? (ต้นทางจะไม่นับยอดของใบนี้อีก — เนื้อเอกสารไม่เปลี่ยน)'))) return;
         try {
           await api.unlinkDocumentSource(id);
           Layout.toast('ยกเลิกการผูกแล้ว', 'success');
@@ -14400,7 +14558,7 @@
               converted = await api.convertDocumentPartial(id, realTarget, { lines, confirmOverSourceAmount: false });
             } catch (e) {
               if (!(e && e.status === 422 && e.body?.data?.ruleCode === 'CONVERT-OVER-AMOUNT')) throw e;
-              if (!confirm(e.message + '\n\nยืนยันแปลงต่อ? (แก้ราคาในใบร่างที่ได้ภายหลังได้)')) return;
+              if (!(await Layout.confirm(e.message + '\n\nยืนยันแปลงต่อ? (แก้ราคาในใบร่างที่ได้ภายหลังได้)'))) return;
               converted = await api.convertDocumentPartial(id, realTarget, { lines, confirmOverSourceAmount: true });
             }
           } else {

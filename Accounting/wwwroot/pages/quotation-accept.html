@@ -86,7 +86,8 @@
       return `<div class="accept-box">
           <strong>ยอมรับใบเสนอราคานี้</strong>
           <label class="lbl" for="accName">ชื่อ-นามสกุลผู้ยอมรับ *</label>
-          <input id="accName" maxlength="200" autocomplete="name">
+          <!-- ฝ่ายค้าน LOW-10: ชื่อผู้ยอมรับเป็นหลักฐานการยอมรับ ⇒ ต้องเป็นสิ่งที่คนพิมพ์เอง (ไม่เติมค่าให้) · ชื่อลูกค้าบนใบเป็นแค่ตัวอย่างในช่อง -->
+          <input id="accName" maxlength="200" autocomplete="name" placeholder="${esc(q.contactName ? 'เช่น ผู้มีอำนาจของ ' + q.contactName : 'ชื่อ-นามสกุล')}">
           <label class="lbl">ลายเซ็น ${q.requireSignature ? '*' : '<span class="opt">(ไม่บังคับ)</span>'}</label>
           <div class="pad-wrap">
             <canvas id="pad" aria-label="ช่องวาดลายเซ็น"></canvas>
@@ -106,7 +107,13 @@
       let r;
       try { r = await fetch(api()); }
       catch { card.innerHTML = '<div class="err">เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง</div>'; return; }
-      if (!r.ok) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง หรือหมดอายุแล้ว<br>กรุณาติดต่อผู้ขายเพื่อขอลิงก์ใหม่</div>'; return; }
+      if (!r.ok) {
+        // ข้อความของเซิร์ฟเวอร์ถ้ามี (WP-13 · D §7 — เช่น ถี่เกิน 429 / ลิงก์ถูกยกเลิก) · ไม่มี = ข้อความทั่วไป
+        let jm = null; try { jm = await r.json(); } catch (_) { jm = null; }
+        const m = (jm && jm.message) || (r.status === 429 ? 'เปิดถี่เกินไป — รอสักครู่แล้วลองใหม่' : 'ลิงก์ไม่ถูกต้อง หรือหมดอายุแล้ว — กรุณาติดต่อผู้ขายเพื่อขอลิงก์ใหม่');
+        card.innerHTML = `<div class="err">${esc(m)}</div>`;
+        return;
+      }
       const j = await r.json();
       const q = j.data;
       const accepted = !!q.acceptedAt;

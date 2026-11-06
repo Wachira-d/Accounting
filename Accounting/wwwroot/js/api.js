@@ -824,6 +824,8 @@ const API = {
       // รอบ 200 ทีม V1G — ใบลดหนี้ที่เลือกปิดธงทาง (ข) ได้ · รายงานอ่านอย่างเดียวของข้อ 44
       getEtaxCancellationCreditNotes: (id) => API.get(`${base}/document/${id}/etax-cancellation/credit-notes`),
       getEtaxReissueReview: () => API.get(`${base}/document/etax-reissue-review`),
+      // รอบ 255 (ETR-ACK) — บันทึก "ตรวจแล้ว" ของแถว e-Tax ในรายงานข้อ 44 (ทางไปต่อของแถบเตือน)
+      acknowledgeEtaxReviewRow: (etaxId, payload) => API.post(`${base}/document/etax-reissue-review/etax-rows/${etaxId}/acknowledge`, payload),
       // Contacts
       getContacts: (q = '') => API.get(`${base}/document/contacts${q}`),
       createContact: (d) => API.post(`${base}/document/contacts`, d),
@@ -1271,7 +1273,8 @@ const API = {
       getDocumentAssetLines: (docId) => API.get(`${base}/fixedasset/document-lines/${docId}`),
       // ขึ้นทะเบียนจากเอกสารที่โพสต์แล้ว — ทั้งใบ หรือเฉพาะบรรทัด
       registerAssetsFromDocument: (docId, lineId) => API.post(`${base}/fixedasset/from-document/${docId}${lineId ? `?lineId=${encodeURIComponent(lineId)}` : ''}`, {}),
-      createAsset: (d) => API.post(`${base}/fixedasset`, d),
+      // รอบ 252 WP-13 ฝ่ายค้าน MED-HIGH-1: idemKey (ไม่บังคับ) ⇒ Idempotency-Key — รหัสออกอัตโนมัติแล้วไม่มี "รหัสซ้ำ" ช่วยกันกดซ้ำอีก ⇒ คีย์ต่อการเปิดฟอร์ม
+      createAsset: (d, idemKey) => API.request('POST', `${base}/fixedasset`, d, false, null, idemKey ? { 'Idempotency-Key': idemKey } : null),
       updateAsset: (id, d) => API.put(`${base}/fixedasset/${id}`, d),
       deleteAsset: (id) => API.del(`${base}/fixedasset/${id}`),
       disposeAsset: (id, d) => API.post(`${base}/fixedasset/${id}/dispose`, d),
@@ -1549,6 +1552,31 @@ const API = {
       pauseRecurring: (id) => API.post(`${base}/recurring/${id}/pause`),
       resumeRecurring: (id) => API.post(`${base}/recurring/${id}/resume`),
       runRecurringNow: (id) => API.post(`${base}/recurring/${id}/run-now`),
+      // รอบ 252 WP-12A: หน้า Autopilot — ภาพรวม/เรื่องที่ติด/ค่าตั้ง/ใบเสนอราคาแปลงอัตโนมัติ/คิวเงินโอนเข้า (ทุกป้าย/ปุ่มจากเซิร์ฟเวอร์)
+      getAutopilotOverview: (days = 30) => API.get(`${base}/autopilot/overview?days=${encodeURIComponent(days)}`),
+      // รอบ 255 WP-12B ข้อ 6–8: หน้า "คู่ค้าที่ใช้ NextAcc" (ต่อยอด trading-partners/workflow-automation เดิม)
+      getTradingPartners: () => API.get(`${base}/trading-partners`),
+      invitePartner: (d) => API.post(`${base}/trading-partners/invite`, d),
+      acceptPartner: (id) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/accept`),
+      rejectPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/reject`, { reason: reason || null }),
+      setPartnerDraftLimit: (id, limit) => API.put(`${base}/trading-partners/${encodeURIComponent(id)}/purchase-draft-limit`, { limit }),
+      getWorkflowAutomation: () => API.get(`${base}/workflow-automation`),
+      updateWorkflowAutomation: (d) => API.put(`${base}/workflow-automation`, d),
+      getPartnerPurchaseDrafts: () => API.get(`${base}/partner-purchase-drafts`),
+      confirmPartnerOriginal: (id, kind) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-original`, { kind: kind || 'Paper' }),
+      getContactPartnerStatus: (contactId) => API.get(`${base}/contacts/${encodeURIComponent(contactId)}/partner-status`),
+      updateAutopilotSettings: (d) => API.put(`${base}/autopilot/settings`, d),
+      setQuotationAutopilotMode: (id, mode) => API.put(`${base}/autopilot/quotations/${encodeURIComponent(id)}/mode`, { mode }),
+      confirmAutopilotBank: (lineId, documentId) => API.post(`${base}/autopilot/bank-queue/${encodeURIComponent(lineId)}/confirm`, { documentId }),
+      rejectAutopilotBank: (lineId) => API.post(`${base}/autopilot/bank-queue/${encodeURIComponent(lineId)}/reject`),
+      setContactBankAutoSettle: (contactId, disabled) => API.put(`${base}/autopilot/contacts/${encodeURIComponent(contactId)}/bank-auto-settle`, { disabled: !!disabled }),
+      simulateAutopilotBank: (days = 30) => API.get(`${base}/autopilot/bank-simulate?days=${encodeURIComponent(days)}`),
+      // ปุ่มในรายการ "เรื่องที่ระบบทำต่อไม่ได้" — path มาจากเซิร์ฟเวอร์ (ใต้ api/companies/{cid}/ เท่านั้น · ไม่รับ / นำหน้า/..)
+      autopilotIssueAction: (path) => {
+        const p = String(path || '');
+        if (!/^[a-z0-9\-\/]+$/i.test(p) || p.includes('..') || p.startsWith('/')) return Promise.reject(new Error('ปุ่มนี้ไม่ถูกต้อง'));
+        return API.post(`${base}/${p}`);
+      },
       // รอบ 247: ผู้ติดต่อรับอีเมลเอกสารได้ไหม (ฟอร์มรายการประจำ)
       getRecurringEmailReadiness: (contactId) => API.get(`${base}/recurring/email-readiness?contactId=${encodeURIComponent(contactId)}`),
       // รอบ 248: Autopilot รายการประจำ — ตัวเลือก · ความพร้อม · ทดลองรัน (ไม่เขียนอะไร) · นโยบายอนุมัติ · ช่องทางรับเงินต่อผู้ติดต่อ

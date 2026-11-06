@@ -124,9 +124,10 @@ public class NotificationAudiencePolicyRound232Tests
     public void Platform_ops_reaches_platform_group_only()
     {
         // ฝ่ายค้าน 232 N3: ปลายทาง LINE ของ PlatformOps มีแค่กลุ่มกลาง (ไม่มี "แอดมิน 1:1" — ทางที่ไม่มีผู้เรียกถูกลบ · enum มี 3 ค่า)
-        Assert.Equal(3, Enum.GetValues<LineTargetKind>().Length);
+        // รอบ 254 WP-11: + ContactGroup (กลุ่มของผู้ติดต่อที่ผูกด้วยรหัส) ⇒ 4 ค่า — PlatformOps ต้องไม่ถึงกลุ่มของผู้ติดต่อเช่นกัน
+        Assert.Equal(4, Enum.GetValues<LineTargetKind>().Length);
         Assert.True(NotificationAudiencePolicy.LineRoute(NotificationAudience.PlatformOps, LineOaKind.NextAccOa, LineTargetKind.PlatformGroup, false).Allowed);
-        foreach (var t in new[] { LineTargetKind.TenantMember, LineTargetKind.CompanyGroup })
+        foreach (var t in new[] { LineTargetKind.TenantMember, LineTargetKind.CompanyGroup, LineTargetKind.ContactGroup })
         {
             var d = NotificationAudiencePolicy.LineRoute(NotificationAudience.PlatformOps, LineOaKind.NextAccOa, t, true);
             Assert.False(d.Allowed);

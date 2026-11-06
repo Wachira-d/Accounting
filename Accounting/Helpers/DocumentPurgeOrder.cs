@@ -47,8 +47,9 @@ public static class DocumentPurgeOrder
         Delete("OcrValidationLogs", "DocumentId", "Documents"),
         Delete("DocumentAdjustingJournalLines", "DocumentId", "Documents"),
         Delete("PaymentAllocations", "DocumentId", "Documents"),
-        // ฝ่ายค้านรอบ 242 N3 — เครดิตภาษีถูกหัก ณ ที่จ่ายที่ยังรอหนังสือรับรอง (Pending = 0) ลบไปพร้อมใบ · Received/Claimed ถูกตัวตัดสินกันก่อนถึงขั้นนี้
-        Delete("WhtCreditsReceived", "DocumentId", "Documents", "\"DocumentId\" = ANY({0}) AND \"Status\" = 0"),
+        // ฝ่ายค้านรอบ 242 N3 — เครดิตภาษีถูกหัก ณ ที่จ่ายที่ยังรอหนังสือรับรอง (Pending = 0) ลบไปพร้อมใบ · Received/Claimed ถูกตัวตัดสินกันก่อนถึงขั้นนี้ ·
+        // รอบ 252 (ฝ่ายค้าน WP-09 M2): แถว Pending ที่ได้ใบบางส่วนแล้ว (ReceivedAmount > 0) ไม่ลบ — ตัวตัดสินกันไว้ก่อน (WhtCreditUsed)
+        Delete("WhtCreditsReceived", "DocumentId", "Documents", "\"DocumentId\" = ANY({0}) AND \"Status\" = 0 AND \"ReceivedAmount\" = 0"),
         // รอบ 240 — outbox เหตุการณ์ลูกค้าเซ็น (ไม่มี FK) · ใบหายแล้วห้ามยิง webhook ถึงเว็บต้นทางเรื่องใบที่ไม่มีอยู่
         Delete("SignEventOutbox", "DocumentId", "Documents"),
         Nullify("DocumentEmailLogs", "DocumentId", "Documents"),

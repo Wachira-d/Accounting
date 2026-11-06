@@ -2429,6 +2429,14 @@ public enum AiFeatureKey
     /// (<c>Helpers/OcrVatCodeMeaning.Guard</c>) · ปิดลูปตอนอนุมัติเอกสาร (ประเภท VAT ของบรรทัดที่ไม่มี VAT)</para></summary>
     OcrVatCodeMeaning = 60,
 
+    /// <summary>รอบ 252 (WP-09 · คำตัดสินเจ้าของ AUTO_SEND_WHT_DESIGN §11 ข้อ 1–2 · AUDIT_249 §2 #31) — ตรวจว่าใบ 50 ทวิ ที่ลูกค้าส่งมา "เป็นของจริง" ไหม
+    /// <para>คำตอบเดี่ยว ∈ {Genuine, Suspect} ⇒ student = <c>GenericFeedbackDistillationModel</c> (DistillationModelRegistry.GenericFeatureKeys) ·
+    /// กุญแจ = ผู้จ่าย + รูปแบบเลขที่ใบ + ช่องทาง (ไม่ใส่ยอด/วันที่) · <b>ด่านเชิงกำหนดก่อนเสมอ</b> (checksum เลขผู้เสียภาษี · ผู้ถูกหัก = เรา ·
+    /// ยอด/ปีภาษีตรงแถวรอใบ — <c>Helpers/WhtCertIntakeVerdict.Gates</c>) — ไม่ผ่าน ⇒ ไม่ถาม AI · ด่านรับคำตอบ = <c>WhtCertIntakeVerdict.ParseAuthenticity</c> +
+    /// ความมั่นใจ ≥ 0.85 ⇒ ยืนยันอัตโนมัติ · ต่ำกว่า/ไม่มีคำตอบ ⇒ ผู้ใช้กดยืนยัน (kill-switch: ปิด provider ทุกตัว ⇒ นักเรียนไม่มั่นใจ ⇒ ไม่ auto) ·
+    /// ปิดลูปตอนผู้ใช้ยืนยัน/ตีกลับว่าไม่ใช่ของจริง (<c>WhtCertIntake.WhtCertAuthenticityAiFeedbackId</c>)</para></summary>
+    WhtCertAuthenticity = 61,
+
     /// <summary>Catch-all for ad-hoc admin queries.</summary>
     AdHocAnalysis = 99,
 }
@@ -2556,6 +2564,57 @@ public enum WhtCreditStatus
     Claimed = 2,
     /// <summary>พ้นกำหนดขอคืน 3 ปี หรือไม่ได้รับใบจนต้องตัดทิ้ง</summary>
     Expired = 3,
+}
+
+/// <summary>รอบ 252 (WP-09 · AUTO_SEND_WHT_DESIGN §3/§7.1) — ช่องทางที่ใบ 50 ทวิ ขาเข้ามาถึง (ทุกช่องเข้าประตูเดียว <c>WhtCertIntakeService.SubmitAsync</c>) ·
+/// ค่าเป็น int ในฐาน ห้ามเปลี่ยนเลข</summary>
+public enum WhtCertIntakeChannel
+{
+    /// <summary>พนักงานอัปโหลดเองที่หน้า "ภาษีถูกหัก ณ ที่จ่าย" (ช่อง ②)</summary>
+    Manual = 0,
+    /// <summary>สแกนเอกสารทั่วไปแล้วระบบรู้ว่าเป็น 50 ทวิ ที่เราถูกหัก (เส้น OcrService เดิม)</summary>
+    Scan = 1,
+    /// <summary>ลิงก์อัปโหลดสาธารณะ (ช่อง ① — WP-10)</summary>
+    UploadLink = 2,
+    /// <summary>พอร์ทัลลูกค้า (WP-10)</summary>
+    Portal = 3,
+    /// <summary>NextAcc ↔ NextAcc (ช่อง ③ — รอบ 253)</summary>
+    NextAccLink = 4,
+    /// <summary>API ภายนอก</summary>
+    Api = 5,
+}
+
+/// <summary>รอบ 252 — สถานะของ "ใบที่เข้ามา" หนึ่งใบในกล่องรับ (ไม่ใช่สถานะเครดิต — สถานะเครดิตอยู่ที่ <see cref="WhtCreditStatus"/>) · ค่าเป็น int ห้ามเปลี่ยนเลข</summary>
+public enum WhtCertIntakeRecordStatus
+{
+    /// <summary>รอผู้ใช้ตรวจแล้วกดยืนยัน (ด่านเชิงกำหนดไม่ผ่าน หรือการตรวจของจริงไม่มั่นใจ) — ฟอร์มเติมครบแล้ว (กฎเหล็ก #3)</summary>
+    AwaitingConfirm = 0,
+    /// <summary>ยืนยันแล้ว (โดยผู้ใช้ หรืออัตโนมัติตามคำตัดสินเจ้าของ §11 ข้อ 1–2) — allocation ลงเครดิตแล้ว</summary>
+    Confirmed = 1,
+    /// <summary>ตีกลับ (ไม่ใช่ใบของเรา / อ่านไม่ได้ / ไม่ใช่ของจริง) — ไม่เครดิต</summary>
+    Rejected = 2,
+}
+
+/// <summary>รอบ 252 — ชนิดหลักฐานการถูกหัก (EWHT_EVIDENCE_RESEARCH N4: e-WHT แนบเป็นหลักฐานแบบ 50 ทวิ ธรรมดา) · ค่าเป็น int ห้ามเปลี่ยนเลข</summary>
+public enum WhtEvidenceKind
+{
+    /// <summary>หนังสือรับรอง 50 ทวิ (กระดาษ/สแกน/PDF)</summary>
+    PaperCertificate = 0,
+    /// <summary>ข้อมูลโครงสร้างจากระบบผู้จ่าย (NextAcc ↔ NextAcc)</summary>
+    ElectronicCertificate = 1,
+    /// <summary>ผู้จ่ายหักผ่านระบบ e-Withholding Tax</summary>
+    EWithholding = 2,
+}
+
+/// <summary>รอบ 252 — การจัดสรรยอดของใบหนึ่งใบเข้าแถวเครดิต (ใบเดียวครอบหลายใบแจ้งหนี้ / ผ่อนหลายงวด) · ค่าเป็น int ห้ามเปลี่ยนเลข</summary>
+public enum WhtCertAllocationStatus
+{
+    /// <summary>ระบบเสนอ — ยังไม่นับเป็นเครดิต</summary>
+    Proposed = 0,
+    /// <summary>ยืนยันแล้ว — นับเป็นเครดิตตาม <c>Helpers/WhtCreditableAmount</c></summary>
+    Confirmed = 1,
+    /// <summary>ถอนแล้ว (ใบถูกตีกลับ) — ไม่นับ</summary>
+    Reversed = 2,
 }
 
 /// <summary>แบบที่ "ผู้จ่าย" ใช้ยื่นเมื่อหักภาษีเรา</summary>

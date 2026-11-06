@@ -36,6 +36,10 @@ public interface IDocumentPayLinkService
 
     /// <summary>หน้าชำระสาธารณะ — null = ไม่พบ token ของบริษัทนี้ · <see cref="PublicDocumentPayView.Target"/> = เป้าหมายของการสร้างรายการชำระ (ยอด/ช่องทางจากเซิร์ฟเวอร์)</summary>
     Task<PublicDocumentPayView?> PublicViewAsync(Guid companyId, string token, CancellationToken ct = default);
+    /// <summary>รอบ 253 (WP-10): ลูกค้าเลือก "ไม่หัก ณ ที่จ่าย" — บันทึกการยอมรับแล้วคืนเป้าหมายยอดเต็ม · <c>Target</c> null = ไม่พบ token</summary>
+    Task<NoWhtAcceptResult> AcceptNoWhtAsync(Guid companyId, string token, NoWhtAcceptRequest request, CancellationToken ct = default);
+    /// <summary>รอบ 253 (WP-10): ผูกการยอมรับ "ไม่หัก" กับรายการชำระที่สร้างตามมา</summary>
+    Task LinkNoWhtIntentAsync(Guid companyId, Guid acceptanceId, Guid paymentIntentId, CancellationToken ct = default);
     /// <summary>รอบ 250 WP-03 (ฝ่ายค้าน H1): ตัวเลือกโอน/QR ของใบสำหรับพอร์ทัล — กติกาเดียวกับหน้าชำระ (IssueRefusal · ยอดสุทธิหลัง WHT · บัญชีของใบ) · null = ไม่พบใบ</summary>
     Task<DocumentTransferView?> TransferForDocumentAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
 }
@@ -75,14 +79,17 @@ public sealed record DocumentAutoSendSettingsDto(
     List<string>? PayLinkDefaultChannels,
     bool PostPayEmailReceipt,
     bool PostPayIncludePartial,
-    string SenderNote);
+    string SenderNote,
+    // รอบ 253 (WP-10): ทวง 50 ทวิ อัตโนมัติ (ค่าตั้งต้นปิด)
+    bool WhtCertReminderEnabled = false);
 
 /// <summary>null = ไม่แตะช่องนั้น · <see cref="PayLinkDefaultChannels"/> ว่าง = ล้าง (ทุกช่องทางที่บริษัทเปิด)</summary>
 public sealed record UpdateDocumentAutoSendSettings(
     bool? PayLinkDefaultEnabled = null,
     List<string>? PayLinkDefaultChannels = null,
     bool? PostPayEmailReceipt = null,
-    bool? PostPayIncludePartial = null);
+    bool? PostPayIncludePartial = null,
+    bool? WhtCertReminderEnabled = null);
 
 /// <summary>รอบ 241 — จุดต่อ "บล็อกเพิ่มในอีเมลใบเสร็จอัตโนมัติ" (รอบนี้ไม่มีตัวลงทะเบียน · ทีมออกแบบเส้นรับ 50 ทวิ เสียบรอบถัดไป) ·
 /// ผู้ประกอบเนื้อเดียว <see cref="ReceiptEmailSections.ComposeBody"/></summary>
@@ -111,6 +118,12 @@ public sealed record DocumentPayLinkStatusDto(
 /// <summary>รอบ 250 WP-03 — ผลของ <c>TransferForDocumentAsync</c>: <paramref name="Refusal"/> ไม่ว่าง = ใบนี้รับชำระทางนี้ไม่ได้ (ข้อความไทย) · ยอดค้าง/WHT/สุทธิ · กล่องโอน (null = ไม่มีบัญชีรับโอน)</summary>
 public sealed record DocumentTransferView(string? Refusal, decimal Gross, decimal Wht, decimal Net, PublicTransferInfo? Transfer);
 
+/// <summary>รอบ 253 (WP-10): คำขอยอมรับ "ไม่หัก ณ ที่จ่าย" — <paramref name="NoticeVersion"/> = version ของข้อความที่หน้าแสดง · <paramref name="Ip"/> ไม่เก็บดิบ (hash ผูกบริษัท)</summary>
+public sealed record NoWhtAcceptRequest(bool Accepted, string? NoticeVersion, string? PayerName, string? Ip);
+
+/// <summary><paramref name="Target"/> null = ไม่พบ token · <paramref name="Refusal"/> มีค่า = ไม่รับ (ข้อความไทย) · <paramref name="AcceptanceId"/> = แถวหลักฐาน</summary>
+public sealed record NoWhtAcceptResult(PublicPayTarget? Target, Guid? AcceptanceId, string? Refusal);
+
 public sealed record PublicTransferInfo(string? BankName, string? AccountNumber, string? AccountName, string? PromptPayId, string? PromptPayQrDataUri = null);
 
 public sealed record PublicDocumentPayView(
@@ -129,9 +142,27 @@ public sealed record PublicDocumentPayView(
     List<PayChannelOption> OnlineMethods,
     PublicTransferInfo? Transfer,
     PaymentClientSetup? Card,
-    bool IsTestMode)
+    bool IsTestMode,
+    // รอบ 253 (WP-10 · AUTO_SEND §6.3): ตัวเลือก "ไม่หัก ณ ที่จ่าย" (เซิร์ฟเวอร์ตัดสิน · หน้าแสดงอย่างเดียว) — ยอดเมื่อไม่หัก = Gross ของตัวคิดยอดเดิม
+    bool NoWhtOffered = false,
+    bool NoWhtWarn = false,
+    string? NoWhtNotice = null,
+    string? NoWhtNoticeVersion = null,
+    decimal NoWhtAmount = 0m)
 {
     /// <summary>เป้าหมายของรายการชำระ (ไม่ส่งออกใน JSON ของหน้า — controller เลือกช่องที่คืนเอง)</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public PublicPayTarget Target { get; init; } = null!;
+
+    /// <summary>รอบ 255 WP-12B ข้อ 1: หน้าชำระแสดงฟอร์ม "แจ้งโอน + แนบสลิป" ไหม (เซิร์ฟเวอร์ตัดสิน — <c>SlipEvidenceRule.PayLinkSlipAllowed</c>) ·
+    /// ใช้ได้ทั้งโหมดโอนอย่างเดียว (ไม่มีช่องทางออนไลน์) — ไม่ผูกกับ <see cref="CanPayOnline"/></summary>
+    public bool CanSubmitSlip { get; init; }
+
+    /// <summary>ยอดที่สลิปจากหน้านี้แทน (ยอดสุทธิของลิงก์ — ไม่รับยอดจากหน้าเว็บ) · ไม่ส่งออกใน JSON</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public decimal SlipAmount { get; init; }
+
+    /// <summary>เอกสารของลิงก์ (สลิปผูกใบนี้) · ไม่ส่งออกใน JSON</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Guid SlipDocumentId { get; init; }
 }

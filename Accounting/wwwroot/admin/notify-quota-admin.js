@@ -16,19 +16,29 @@ const NotifyQuotaAdmin = {
     }
   },
 
+  // รอบ 254 WP-11 L4 (N9): เพดานแยกช่อง LINE / อีเมลของบริษัทนี้ — บรรทัดสรุปต่อช่องมาจากเซิร์ฟเวอร์ (channelSummaries)
   render(el, companyId, d) {
-    const cur = d.maxSharedMessagesPerMonth;
-    el.innerHTML = `<div style="font-size:12px;color:#334155">💬 ${this.esc(d.summary)}</div>
-      <button type="button" class="admin-btn-sm nqa-edit" style="margin-top:4px">ตั้งเพดานข้อความเฉพาะบริษัท</button>`;
-    el.querySelector('.nqa-edit').addEventListener('click', () => this.edit(el, companyId, cur));
+    const current = { all: d.maxSharedMessagesPerMonth, line: d.maxSharedLineMessagesPerMonth, email: d.maxSharedEmailsPerMonth };
+    const rows = (d.channelSummaries || []).map(c =>
+      `<div style="font-size:12px;color:#475569;margin-top:2px">${this.esc(c.label)}: ${this.esc(c.summary)}</div>`).join('');
+    el.innerHTML = `<div style="font-size:12px;color:#334155">💬 ${this.esc(d.summary)}</div>${rows}
+      <button type="button" class="admin-btn-sm nqa-edit" data-channel="all" style="margin-top:4px">ตั้งเพดานก้อนรวมเฉพาะบริษัท</button>
+      <button type="button" class="admin-btn-sm nqa-edit" data-channel="line" style="margin-top:4px">ตั้งเพดาน LINE</button>
+      <button type="button" class="admin-btn-sm nqa-edit" data-channel="email" style="margin-top:4px">ตั้งเพดานอีเมล</button>`;
+    el.querySelectorAll('.nqa-edit').forEach(b => {
+      const ch = b.dataset.channel;
+      b.addEventListener('click', () => this.edit(el, companyId, current[ch], ch));
+    });
   },
 
-  async edit(el, companyId, cur) {
-    const raw = prompt('เพดานข้อความผ่านช่องกลาง/เดือน ของบริษัทนี้\n'
+  async edit(el, companyId, cur, channel) {
+    const what = channel === 'line' ? 'ข้อความ LINE ผ่าน OA ของ NextAcc' : channel === 'email' ? 'อีเมลผ่าน SMTP ของ NextAcc' : 'ข้อความผ่านช่องกลาง (ก้อนรวม)';
+    const raw = prompt(what + '/เดือน ของบริษัทนี้\n'
       + '• เว้นว่าง = ตามแพ็กเกจ\n• -1 = ไม่จำกัด\n• ตัวเลข = เพดาน (ตัวนับเดือนนี้ไม่ถูกรีเซ็ต)', cur == null ? '' : String(cur));
     if (raw === null) return;
     const text = raw.trim();
     const body = text === '' ? { clear: true } : { maxSharedMessagesPerMonth: Number(text) };
+    if (channel !== 'all') body.channel = channel;
     if (text !== '' && !Number.isInteger(body.maxSharedMessagesPerMonth)) { alert('กรุณาใส่จำนวนเต็ม'); return; }
     const notes = prompt('หมายเหตุ (บันทึกในประวัติ — ไม่บังคับ)', '');
     if (notes) body.notes = notes;
