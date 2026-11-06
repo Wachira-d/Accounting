@@ -6557,4 +6557,4 @@ _รอบ 250 WP-02b — บั๊กความปลอดภัยคู่
 (P-6) `RouteSentDocumentAsync` ทางเข้าเดียว: ล้ม ⇒ ป้าย `[PARTNER-ROUTE-FAILED]` + `DocumentResponse.PartnerRoutingFailed` + แถบเตือน/ปุ่มส่งใหม่ + LogError · `POST documents/{id}/partner-routing/retry`.
 (M-2) สลิปพอร์ทัล ⇒ `PaymentIntent(manual-slip)` รอยืนยัน (ไม่สร้าง Payment) · ยืนยันที่ ConfirmManually ⇒ CreatePaymentAsync · ผู้อ่านยอด 6 จุดตัดแถว "[PENDING-VERIFY]" ที่ยังไม่ตรวจ ·
 migration ครั้งเดียว `PortalSlipLegacyMigration` (แถวสะอาด ⇒ intent รอยืนยัน + soft-delete แถวเดิม · แถวที่ผูกธนาคาร/JE/ใบเสร็จ/เอกสารหาย ⇒ ไม่แตะ + audit ต้องตรวจ).
-เทสต์ `PartnerSecurityRound250Tests` + Db `PartnerSecurityRound250DbTests` (ทิศตรงข้าม: คู่เดิมไม่กรอกสาขายังส่งได้ · แถวรับชำระจริงยังลดยอด · ใบไม่มีป้ายไม่ถูกแตะ · ผู้รับเชิญยอมรับได้) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+เทสต์ `PartnerSecurityRound250Tests` + Db `PartnerSecurityRound250DbTests` (ทิศตรงข้าม: คู่เดิมไม่กรอกสาขายังส่งได้ · แถวรับชำระจริงยังลดยอด · ใบไม่มีป้ายไม่ถูกแตะ · ผู้รับเชิญยอมรับได้) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4e3eef3c_
