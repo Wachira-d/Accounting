@@ -85,6 +85,11 @@ TARGETS = [
      r"\.DenyAttachmentAsync\s*\(", DENY_USE,
      [r"\.CopyToAsync\s*\(", r"\.UploadBytesAsync\s*\(", r"\.AttachReceiptAsync\s*\("],
      [r'"StatutoryRemittance"', r"\bremittanceId\b", r"AttachmentAccess\.Write"]),
+    # ── รอบ 252 (WP-09): ส่งไฟล์ในถัง "ภาษีถูกหัก" เข้ากล่องรับ 50 ทวิ — ด่านไฟล์ก่อนสแกน/ส่งเข้าประตูเดียว ──
+    ("Accounting/Controllers/WhtCertIntakeController.cs", "Upload",
+     r"\.DenyAttachmentAsync\s*\(", DENY_USE,
+     [r"\.ScanAsync\s*\(", r"\.SubmitFromScanAsync\s*\(", r"\.FindDuplicateFileAsync\s*\("],
+     [r'"WhtCredit"', r"\bbody\.FileAttachmentId\b", r"AttachmentAccess\.Read"]),
     # ── รายการสแกน/คิว/รายงาน (ตัวกรองแถว) ──
     (OCR, "GetResults", r"\.HiddenScanIdsAsync\s*\(", HIDDEN_USE, [r"\bOk\s*\("], []),
     (OCR, "ReviewQueue", r"\.HiddenScanIdsAsync\s*\(", HIDDEN_USE, [r"ScanQualityGrader\s*\.", r"\bOk\s*\("], []),

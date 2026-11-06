@@ -338,6 +338,8 @@ builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 // ทะเบียนภาษีที่เราถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.51/50 (WHT_CREDIT_PLAN.md)
 builder.Services.AddScoped<Accounting.Services.Implementations.WhtCreditService>();
+// รอบ 252 (WP-09): กล่องรับ 50 ทวิ ขาเข้า — ประตูเดียวของทุกช่องทาง (นักเรียน WhtCertAuthenticity ลงทะเบียนผ่าน DistillationModelRegistry)
+builder.Services.AddScoped<Accounting.Services.Interfaces.IWhtCertIntakeService, Accounting.Services.Implementations.WhtCertIntakeService>();
 // รอบ 234 (คำตัดสิน 234-W*): ติดตาม 50 ทวิ ที่ผู้เช่าส่งให้ NextAcc — ผูกเข้าทะเบียนภาษีถูกหักของบริษัทผู้ให้บริการ (ทะเบียนเดียว)
 builder.Services.AddScoped<Accounting.Services.Platform.PlatformWhtCertificateService>();
 builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();

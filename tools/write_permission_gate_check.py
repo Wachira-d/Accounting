@@ -29,6 +29,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 WATCHED = [
     "Accounting/Controllers/DocumentController.cs",
+    # รอบ 252 (WP-09): กล่องรับ 50 ทวิ — ยืนยัน/ตีกลับ/อัปโหลด = ตั้งเครดิตภาษี ภ.ง.ด.50 (Tax.File)
+    "Accounting/Controllers/WhtCertIntakeController.cs",
     "Accounting/Controllers/PayrollController.cs",
     # เพิ่มรอบ 126d — ทุก write ที่นี่ "ก่อค่าใช้จ่ายให้บริษัท" (เปิด add-on รายเดือน ·
     # ซื้อโควตา · ส่งหลักฐานชำระเงิน) แต่มีแค่ [Authorize] ระดับคลาสมาตลอด

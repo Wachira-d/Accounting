@@ -139,6 +139,9 @@ public partial class DocumentService : IDocumentService
     /// — กฎหมายให้เครดิตเฉพาะเมื่อมีใบจริง ผู้ใช้ต้องตามทวงแล้วมาแนบใบทีหลัง</para>
     ///
     /// <para>ไม่ throw — ทะเบียนภาษีล้มเหลวต้องไม่ทำให้อนุมัติเอกสารพัง</para></summary>
+    /// <summary>รอบ 252: หมายเหตุบนแถวเครดิตเมื่อยอดที่ได้ใบเกินยอดถูกหักตาม GL (ยกเลิก/แก้การรับชำระหลังได้ใบ) — ข้อความเดียว (กันติดซ้ำ)</summary>
+    private const string WhtCertOverGlNote = "⚠️ ยอดใบ 50 ทวิ ที่ได้รับเกินยอดที่ถูกหักตามบัญชี — ตรวจการรับชำระที่ถูกยกเลิก/แก้ไข";
+
     private async Task SyncWhtCreditReceivedAsync(Guid companyId, Document doc)
     {
         var undoingWriteOff = false;   // รอบ 243a S4: กลับ JE ตัดสูญล้มต้องดัง (ไม่ให้ catch ด้านล่างกลืน — เส้น JE)
@@ -176,6 +179,26 @@ public partial class DocumentService : IDocumentService
             // แถวที่ GL สร้างเองไม่เคยมีเลขที่ใบรับรอง จึงใช้เป็นตัวแยกได้
             if (existing != null && !string.IsNullOrWhiteSpace(existing.CertificateNumber))
             {
+                // รอบ 252 (WP-09 · AUTO_SEND §7.1): แถวที่ได้ใบผ่านกล่องรับ (ReceivedAmount = Σ allocation ที่ยืนยัน) แล้ว GL ถูกหักเพิ่ม (ผ่อนงวดถัดไป) ⇒
+                // ขยายยอดถูกหักตาม GL และกลับเป็น "รอใบส่วนที่เหลือ" (เครดิตยังนับเฉพาะส่วนที่ได้ใบ — Helpers/WhtCreditableAmount) · ห้ามแตะ ReceivedAmount/allocation ·
+                // GL ลดลงจนต่ำกว่ายอดที่ได้ใบ ⇒ ไม่ลบแถว/ไม่ลดยอด (ใบจริงชนะ) แต่ติดหมายเหตุให้เห็น (ไม่หายเงียบ)
+                if (existing.ReceivedAmount > 0.005m && existing.Status is WhtCreditStatus.Pending or WhtCreditStatus.Received)
+                {
+                    if (amount > existing.WhtAmount + 0.005m)
+                    {
+                        existing.WhtAmount = amount;
+                        existing.Status = existing.ReceivedAmount >= amount - 0.005m ? WhtCreditStatus.Received : WhtCreditStatus.Pending;
+                        existing.UpdatedAt = DateTime.UtcNow;
+                        await _db.SaveChangesAsync();
+                    }
+                    else if (amount < existing.ReceivedAmount - 0.005m && !(existing.Notes ?? "").Contains(WhtCertOverGlNote))
+                    {
+                        existing.Notes = string.IsNullOrWhiteSpace(existing.Notes) ? WhtCertOverGlNote : existing.Notes + " | " + WhtCertOverGlNote;
+                        existing.UpdatedAt = DateTime.UtcNow;
+                        await _db.SaveChangesAsync();
+                    }
+                    return;
+                }
                 _logger.LogInformation(
                     "ข้าม SyncWhtCreditReceived ของ {Doc} — แถวนี้มาจากใบ 50 ทวิ {Cert} (ตัวเลขบนกระดาษชนะ GL)",
                     doc.Id, existing.CertificateNumber);
@@ -251,6 +274,8 @@ public partial class DocumentService : IDocumentService
                     Status = WhtCreditStatus.Pending,
                     DocumentId = doc.Id,
                     Notes = $"สร้างอัตโนมัติจาก {doc.DocumentNumber}",
+                    // รอบ 252: ฐานนับ "วันค้าง" ของป้าย 50 ทวิ (Helpers/WhtCertIntakeStatus)
+                    FirstWithheldAt = DateTime.UtcNow,
                 });
             }
             await _db.SaveChangesAsync();
@@ -2124,12 +2149,20 @@ public partial class DocumentService : IDocumentService
         doc.ServedAsReceipt = resp.ServedAsReceipt;
         var pp36Detail = (await Accounting.Helpers.Pp36Ledger.StatesAsync(_db, companyId, new[] { documentId }))
             .TryGetValue(documentId, out var pp36St) ? pp36St : ((Accounting.Helpers.Pp36DocState State, string? Label)?)null;
+        // สถานะ 50 ทวิ (รอบ 252 · server computes) — ตัวโหลดเดียวกับหน้ารายการ (ใบเสร็จจากใบแจ้งหนี้แสดงสถานะของใบต้นทาง)
+        var whtCertDetail = (await WhtCertTracking.StatesForDocumentsAsync(_db, companyId,
+                new[] { (doc.Id, doc.RelatedDocumentId, doc.DocumentType, doc.Status, doc.WithholdingTaxAmount) }, DateTime.UtcNow))
+            .TryGetValue(documentId, out var whtCertSt) ? whtCertSt : null;
         resp = resp with
         {
             DocumentTitle = await PdfGenerationService.ResolveDocumentTitleAsync(_db, companyId, doc),
             // สถานะ ภ.พ.36 (รอบ 203 · server computes) — ตัวโหลดเดียวกับหน้ารายการ/หน้านำส่ง
             Pp36State = pp36Detail?.State.ToString(),
             Pp36StatusLabel = pp36Detail?.Label,
+            WhtCertState = whtCertDetail?.State.ToString(),
+            WhtCertLabel = whtCertDetail != null && WhtCertIntakeStatus.ShowsChip(whtCertDetail.State) ? whtCertDetail.Label : null,
+            WhtCertTone = whtCertDetail?.Tone,
+            WhtCertDaysWaiting = whtCertDetail?.DaysWaiting,
         };
 
         // หัวถูกลดจากใบกำกับอย่างย่อเป็นใบเสร็จเพราะยังไม่มีสิทธิ์ §86/6 → บอกบนจอ (รอบ 191 — เดิมเงียบ)
@@ -2553,9 +2586,9 @@ public partial class DocumentService : IDocumentService
             .ToList();
     }
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null, ConversionProgressState? conversion = null)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null, ConversionProgressState? conversion = null, string? whtCert = null)
     {
-        var page = await GetDocumentsAsync(companyId, type, request, projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, types, conversion);
+        var page = await GetDocumentsAsync(companyId, type, request, projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, types, conversion, whtCert);
         if (_sensitivity == null) return page;
         var visible = await _sensitivity.GetVisibleKindsAsync(companyId, userId);
 
@@ -2582,7 +2615,7 @@ public partial class DocumentService : IDocumentService
     // ข้อความชุดเดียวกับทางอ่านอื่นของเอกสารลับ (อีเมล — ฝ่ายค้านรอบ 193 รอบสอง W2-P6) · ตัวตั้งอยู่ที่ Helpers/SensitivityAccess
     private static string SensitivityRedactReason(SensitivityKind kind) => Accounting.Helpers.SensitivityAccess.RedactReason(kind);
 
-    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null, ConversionProgressState? conversion = null)
+    public async Task<PagedResponse<DocumentResponse>> GetDocumentsAsync(Guid companyId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null, ConversionProgressState? conversion = null, string? whtCert = null)
     {
         var query = _db.Documents
             .Include(d => d.Lines)
@@ -2668,6 +2701,20 @@ public partial class DocumentService : IDocumentService
                 query = query.Where(d => !fullIds.Contains(d.Id));
         }
 
+        // รอบ 252 (WP-09 · AUTO_SEND §4.2): ตัวกรอง "50 ทวิ" — ตัดสินด้วยตัวเดียวกับชิปบนแถว (WhtCertTracking → WhtCertIntakeStatus) ก่อนแบ่งหน้า ·
+        // ใบเสร็จที่ไม่มีแถวทะเบียนของตัวเองเข้าตัวกรองตามใบต้นทาง (resolver เดียวกับชิป)
+        if (!string.IsNullOrEmpty(whtCert))
+        {
+            var whtRows = await WhtCertTracking.LoadAsync(_db, companyId, DateTime.UtcNow);
+            var ownRowDocIds = whtRows.Where(r => r.DocumentId != null).Select(r => r.DocumentId!.Value).Distinct().ToList();
+            var whtMatchIds = whtRows.Where(r => r.DocumentId != null && WhtCertIntakeStatus.MatchesFilter(r.Verdict, whtCert))
+                .Select(r => r.DocumentId!.Value).Distinct().ToList();
+            var inheritTypes = WhtCertTracking.InheritFromSourceTypes.ToArray();
+            query = query.Where(d => whtMatchIds.Contains(d.Id)
+                || (d.RelatedDocumentId != null && inheritTypes.Contains(d.DocumentType)
+                    && !ownRowDocIds.Contains(d.Id) && whtMatchIds.Contains(d.RelatedDocumentId.Value)));
+        }
+
         var total = await query.CountAsync();
 
         // เรียงลำดับ — รองรับกดหัวคอลัมน์ (เลขที่/วันที่/ยอดรวม/สถานะ) + tiebreaker
@@ -2749,11 +2796,15 @@ public partial class DocumentService : IDocumentService
         var conversionByDoc = await LoadConversionSummariesAsync(companyId, conversionTotals);
         // สถานะ ภ.พ.36 ของทั้งหน้า (batch · ตัวโหลดเดียวกับหน้านำส่ง) — หน้าเว็บแสดงป้ายอย่างเดียว ไม่ตัดสินจากธงเอง (รอบ 203 T-3d/C-P2)
         var pp36States = await Accounting.Helpers.Pp36Ledger.StatesAsync(_db, companyId, ids);
+        // สถานะ 50 ทวิ ของทั้งหน้า (รอบ 252 · batch · ตัวโหลด/ตัวตัดสินเดียวกับตัวกรอง/ทะเบียน/การ์ด) — หน้าเว็บแสดงชิปอย่างเดียว
+        var whtCertStates = await WhtCertTracking.StatesForDocumentsAsync(_db, companyId,
+            items.Select(d => (d.Id, d.RelatedDocumentId, d.DocumentType, d.Status, d.WithholdingTaxAmount)).ToList(), DateTime.UtcNow);
 
         return new PagedResponse<DocumentResponse>(
             items.Select(d => {
                 var (pceCount, pceAmount) = pceSummary.GetValueOrDefault(d.Id);
                 var pp36 = pp36States.TryGetValue(d.Id, out var st) ? st : ((Accounting.Helpers.Pp36DocState State, string? Label)?)null;
+                var wc = whtCertStates.TryGetValue(d.Id, out var wcv) ? wcv : null;
                 return MapDocumentToResponse(d, etaxByDoc.GetValueOrDefault(d.Id),
                     conversion: conversionByDoc.GetValueOrDefault(d.Id),
                     hasPce: pceCount > 0, pceCount: pceCount, pceAmount: pceAmount,
@@ -2762,6 +2813,10 @@ public partial class DocumentService : IDocumentService
                     DocumentTitle = titles.GetValueOrDefault(d.Id),
                     Pp36State = pp36?.State.ToString(),
                     Pp36StatusLabel = pp36?.Label,
+                    WhtCertState = wc?.State.ToString(),
+                    WhtCertLabel = wc != null && WhtCertIntakeStatus.ShowsChip(wc.State) ? wc.Label : null,
+                    WhtCertTone = wc?.Tone,
+                    WhtCertDaysWaiting = wc?.DaysWaiting,
                 };
             }).ToList(),
             total, request.Page, request.PageSize,

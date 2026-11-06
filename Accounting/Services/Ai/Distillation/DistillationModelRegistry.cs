@@ -60,6 +60,9 @@ public static class DistillationModelRegistry
         AiFeatureKey.ImportEntityMatch,
         // 2026-10-16 (DECISIONS ข้อ 153 ข้อ 2) — ความหมายรหัส ภ.พ. (Standard7/ZeroRated/Exempt · กุญแจ = ผู้ขาย + รหัส) · ด่าน OcrVatCodeMeaning.Guard
         AiFeatureKey.OcrVatCodeMeaning,
+        // รอบ 252 (WP-09 · AUTO_SEND §11 ข้อ 1–2) — ใบ 50 ทวิ เป็นของจริงไหม (Genuine/Suspect · กุญแจ = ผู้จ่าย + รูปแบบเลขที่ + ช่องทาง) ·
+        // ด่านเชิงกำหนดก่อน (Helpers/WhtCertIntakeVerdict.Gates) · ปิด provider ⇒ นักเรียนไม่มั่นใจ ⇒ ผู้ใช้กดยืนยัน (ไม่ auto)
+        AiFeatureKey.WhtCertAuthenticity,
     };
 
     /// <summary>แชตบอต (free-form Q→A — จับคู่คำถามด้วย embedding) → <see cref="ChatAnswerDistillationModel"/></summary>

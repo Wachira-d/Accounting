@@ -82,4 +82,17 @@ public class WhtCreditReceived : TenantEntity
     public string? WriteOffReason { get; set; }
     /// <summary>JE กลับรายการตัดสูญ (ได้รับใบภายหลัง) — ร่องรอยของการคืนเครดิต · JE ตัดสูญเดิมคง Status=Reversed</summary>
     public Guid? WriteOffReversalJournalEntryId { get; set; }
+
+    // ── รอบ 252 (WP-09 · AUTO_SEND_WHT_DESIGN §7.1): กล่องรับ 50 ทวิ ขาเข้า + การจัดสรร ──
+
+    /// <summary>ยอดที่ได้รับใบแล้ว = Σ <see cref="WhtCertAllocation"/> ที่ยืนยัน (denormalized · เขียนโดย <c>WhtCertIntakeService</c> เท่านั้น) ·
+    /// ใบเดียวครอบหลายใบแจ้งหนี้ / ผ่อนหลายงวดได้ใบงวดแรก ⇒ แถวยัง Pending แต่เครดิตได้เฉพาะส่วนนี้ (<c>Helpers/WhtCreditableAmount.Of</c>) ·
+    /// แถว Received/Claimed รุ่นก่อนรอบนี้เป็น 0 ⇒ ตัวคำนวณนับเต็มแถวตามสถานะ (ไม่ต้องเติมย้อนหลัง)</summary>
+    public decimal ReceivedAmount { get; set; }
+
+    /// <summary>ชนิดหลักฐาน (EWHT_EVIDENCE_RESEARCH N4) — e-WHT แนบเป็นหลักฐานแบบ 50 ทวิ ธรรมดา · ค่าตั้งต้น = กระดาษ</summary>
+    public WhtEvidenceKind EvidenceKind { get; set; } = WhtEvidenceKind.PaperCertificate;
+
+    /// <summary>วันที่ถูกหักครั้งแรก (ฐานนับ "วันค้าง" ของป้าย 50 ทวิ · <c>Helpers/WhtCertIntakeStatus</c>) · null = แถวรุ่นเก่า ⇒ ใช้ CreatedAt</summary>
+    public DateTime? FirstWithheldAt { get; set; }
 }

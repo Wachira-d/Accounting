@@ -6246,6 +6246,98 @@ public static class DatabaseMigrationHelper
             // รอบ 250 ฝ่ายค้าน WP-02 ข้อ 9: แถวเครดิตภาษีถูกหักที่สร้างจากทางเข้ารับชำระก่อนแก้ — ชื่อผู้จ่ายว่าง (ใบไม่ได้ Include Contact) ⇒ เติมจากผู้ติดต่อของแถว
             // (บริษัทเดียวกัน · เฉพาะแถวที่ระบบสร้างเอง = ไม่มีเลขที่ 50 ทวิ · ไม่ทับค่าที่มีอยู่ · รันซ้ำได้)
             """UPDATE "WhtCreditsReceived" w SET "PayerName" = c."Name", "PayerTaxId" = COALESCE(w."PayerTaxId", c."TaxId") FROM "Contacts" c WHERE c."Id" = w."PayerContactId" AND c."CompanyId" = w."CompanyId" AND COALESCE(w."PayerName", '') = '' AND COALESCE(w."CertificateNumber", '') = '' AND c."Name" IS NOT NULL;""",
+            // ── รอบ 252 (WP-09 · AUTO_SEND_WHT_DESIGN §7.1): กล่องรับ 50 ทวิ ขาเข้า + การจัดสรรใบ ↔ แถวเครดิต ──
+            // ReceivedAmount = Σ allocation ที่ยืนยัน (แถวเดิม 0 — ตัวคำนวณ Helpers/WhtCreditableAmount นับ Received/Claimed เต็มแถวตามสถานะ) ·
+            // FirstWithheldAt = ฐานนับวันค้างของป้าย (แถวเดิม NULL ⇒ ใช้ CreatedAt) · EvidenceKind 0 = กระดาษ
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "ReceivedAmount" decimal(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "EvidenceKind" integer NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "FirstWithheldAt" timestamptz NULL;""",
+            """
+            CREATE TABLE IF NOT EXISTS "WhtCertIntakes" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL REFERENCES "Companies"("Id") ON DELETE CASCADE,
+                "Channel" integer NOT NULL DEFAULT 0,
+                "Status" integer NOT NULL DEFAULT 0,
+                "EvidenceKind" integer NOT NULL DEFAULT 0,
+                "FileAttachmentId" uuid NULL,
+                "FileSha256" varchar(64) NULL,
+                "OcrScanResultId" uuid NULL,
+                "CertificateNumber" varchar(50) NULL,
+                "CertificateDate" timestamptz NULL,
+                "PayerName" varchar(300) NULL,
+                "PayerTaxId" varchar(20) NULL,
+                "PayerBranchCode" varchar(10) NULL,
+                "PayerContactId" uuid NULL,
+                "PayeeTaxId" varchar(20) NULL,
+                "IncomeTypeCode" varchar(20) NULL,
+                "IncomeAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "WhtRate" decimal(9,4) NOT NULL DEFAULT 0,
+                "WhtAmount" decimal(18,2) NOT NULL DEFAULT 0,
+                "PayerFormType" integer NOT NULL DEFAULT 53,
+                "ExtractionConfidence" decimal(5,4) NULL,
+                "MatchLevel" varchar(20) NULL,
+                "MatchReason" text NULL,
+                "GateProblems" text NULL,
+                "AuthenticityAnswer" varchar(20) NULL,
+                "AuthenticityConfidence" decimal(5,4) NULL,
+                "WhtCertAuthenticityUsedAi" boolean NOT NULL DEFAULT false,
+                "WhtCertAuthenticityAiFeedbackId" uuid NULL,
+                "AutoConfirmed" boolean NOT NULL DEFAULT false,
+                "SubmittedByName" varchar(200) NULL,
+                "SubmittedByUserId" uuid NULL,
+                "ConfirmedByUserId" uuid NULL,
+                "ConfirmedAt" timestamptz NULL,
+                "RejectedReason" text NULL,
+                "RejectedByUserId" uuid NULL,
+                "RejectedAt" timestamptz NULL,
+                "Notes" text NULL,
+                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamptz NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_WhtCertIntakes_File" ON "WhtCertIntakes" ("CompanyId", "FileSha256") WHERE "FileSha256" IS NOT NULL AND "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_WhtCertIntakes_Status" ON "WhtCertIntakes" ("CompanyId", "Status");""",
+            """
+            CREATE TABLE IF NOT EXISTS "WhtCertAllocations" (
+                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                "CompanyId" uuid NOT NULL REFERENCES "Companies"("Id") ON DELETE CASCADE,
+                "IntakeId" uuid NOT NULL,
+                "WhtCreditId" uuid NOT NULL,
+                "Amount" decimal(18,2) NOT NULL DEFAULT 0,
+                "Status" integer NOT NULL DEFAULT 0,
+                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+                "UpdatedAt" timestamptz NULL,
+                "CreatedBy" text NULL,
+                "UpdatedBy" text NULL,
+                "IsDeleted" boolean NOT NULL DEFAULT false
+            );
+            """,
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_WhtCertAllocations_Pair" ON "WhtCertAllocations" ("CompanyId", "IntakeId", "WhtCreditId") WHERE "IsDeleted" = false;""",
+            """CREATE INDEX IF NOT EXISTS "IX_WhtCertAllocations_Credit" ON "WhtCertAllocations" ("CompanyId", "WhtCreditId");""",
+            // แถวเครดิตเดิมที่มีใบแล้ว (สแกน/กรอกมือ · Received/Claimed) ⇒ สร้างใบในกล่องรับย้อนหลัง 1:1 (Confirmed) ให้ไทม์ไลน์/ป้ายเห็น ·
+            // Id ของใบ = Id ของแถวเครดิต (คนละตาราง — ทำให้รันซ้ำได้ด้วย NOT EXISTS) · ไม่แตะยอดเครดิต (ReceivedAmount คง 0 — นับตามสถานะ)
+            """
+            INSERT INTO "WhtCertIntakes" ("Id", "CompanyId", "Channel", "Status", "EvidenceKind", "FileAttachmentId", "CertificateNumber", "CertificateDate",
+                "PayerName", "PayerTaxId", "PayerContactId", "IncomeTypeCode", "IncomeAmount", "WhtRate", "WhtAmount", "PayerFormType",
+                "MatchLevel", "MatchReason", "ConfirmedAt", "Notes", "CreatedAt")
+            SELECT w."Id", w."CompanyId", CASE WHEN COALESCE(w."Notes", '') LIKE 'สร้างจากการสแกน%' THEN 1 ELSE 0 END, 1, w."EvidenceKind", w."AttachmentId",
+                   w."CertificateNumber", w."CertificateDate", w."PayerName", w."PayerTaxId", w."PayerContactId", w."IncomeTypeCode",
+                   w."IncomeAmount", w."WhtRate", w."WhtAmount", w."PayerFormType", 'Exact', 'ย้อนหลังจากทะเบียนเดิม (รอบ 252)',
+                   COALESCE(w."UpdatedAt", w."CreatedAt"), 'สร้างย้อนหลังจากแถวเครดิตที่มีเลขที่ใบแล้ว', w."CreatedAt"
+              FROM "WhtCreditsReceived" w
+             WHERE NOT w."IsDeleted" AND COALESCE(w."CertificateNumber", '') <> '' AND w."Status" IN (1, 2)
+               AND NOT EXISTS (SELECT 1 FROM "WhtCertIntakes" i WHERE i."Id" = w."Id");
+            """,
+            """
+            INSERT INTO "WhtCertAllocations" ("Id", "CompanyId", "IntakeId", "WhtCreditId", "Amount", "Status", "CreatedAt")
+            SELECT gen_random_uuid(), w."CompanyId", w."Id", w."Id", w."WhtAmount", 1, w."CreatedAt"
+              FROM "WhtCreditsReceived" w
+              JOIN "WhtCertIntakes" i ON i."Id" = w."Id" AND i."CompanyId" = w."CompanyId"
+             WHERE NOT EXISTS (SELECT 1 FROM "WhtCertAllocations" a WHERE a."IntakeId" = w."Id" AND a."WhtCreditId" = w."Id" AND a."CompanyId" = w."CompanyId");
+            """,
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampedFileAttachmentId" uuid NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampRecordedBy" varchar(200) NULL;""",
             """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampRecordedAt" timestamptz NULL;""",

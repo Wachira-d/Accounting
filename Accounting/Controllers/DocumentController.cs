@@ -382,13 +382,18 @@ public class DocumentController : ControllerBase
         [FromQuery] string? sortBy = null, [FromQuery] bool sortDesc = false,
         // ออกเอกสารต่อแล้วหรือยัง (รอบ 196): "None" | "Partial" | "Full" — ชื่อ enum ConversionProgressState ·
         // กรองที่เซิร์ฟเวอร์ (ก่อนแบ่งหน้า) เฉพาะชนิดต้นทาง · ตัวเลือก+ป้ายจาก GET document/conversion-filter-options
-        [FromQuery] string? conversion = null)
+        [FromQuery] string? conversion = null,
+        // รอบ 252 (WP-09): ตัวกรอง "50 ทวิ" — awaiting | overdue | submitted | received | ewht (ตัวเลือก+ป้ายจาก GET wht-certs/filter-options)
+        [FromQuery] string? whtCert = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
 
         if (!DocumentConversionProgress.TryParseFilter(conversion, out var conversionState))
             return BadRequest(new ApiResponse<PagedResponse<DocumentResponse>>(false, default,
                 "ตัวกรอง \"ออกเอกสารต่อ\" ไม่ถูกต้อง — ใช้ได้เฉพาะ None / Partial / Full"));
+        if (!WhtCertIntakeStatus.TryParseFilter(whtCert, out var whtCertFilter))
+            return BadRequest(new ApiResponse<PagedResponse<DocumentResponse>>(false, default,
+                "ตัวกรอง \"50 ทวิ\" ไม่ถูกต้อง — ใช้ได้เฉพาะ " + string.Join(" / ", WhtCertIntakeStatus.FilterOptions.Select(o => o.Value))));
 
         // Direction gate — Sales role with only Revenue.View can't list PVs.
         // Explicit type query rejected with 403 so the UI surfaces the
@@ -405,7 +410,7 @@ public class DocumentController : ControllerBase
 
         var result = await _documentService.GetDocumentsForUserAsync(companyId, userId, type, new PagedRequest(page, pageSize, search, sortBy, sortDesc),
             projectId, contactId, status, fromDate, toDate, relatedDocumentId, revenueContractId, staleOnly, effTypes,
-            conversionState);
+            conversionState, whtCertFilter);
 
         // Visibility redaction — จำเป็นเฉพาะ list ที่ "ไม่ได้ระบุ type/types"
         // (service คืนทุกประเภท). เมื่อมี type/types เราจำกัดด้วยสิทธิ์ server-side
