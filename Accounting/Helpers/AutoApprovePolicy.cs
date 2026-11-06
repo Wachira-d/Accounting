@@ -30,14 +30,16 @@ public sealed record AutoApprovePolicy
     [JsonPropertyName("setAt")]
     public DateTime? SetAt { get; init; }
 
-    /// <summary>ผู้ติดต่อที่ผู้ตั้งอนุมัติให้ปล่อย (นโยบายระดับรายการประจำ) — ฝ่ายค้านรอบ 248: ผู้ไม่มีสิทธิ์อนุมัติเปลี่ยนผู้ติดต่อของรายการได้
-    /// (แก้รายการไม่ต้องมีสิทธิ์อนุมัติ) ⇒ นโยบายที่ผู้มีสิทธิ์ตั้งให้ลูกค้า A ต้องไม่ปล่อยใบของลูกค้า B · null = ไม่ผูก (นโยบายระดับผู้ติดต่อ — ผูกกับแถวตัวเองอยู่แล้ว)</summary>
-    [JsonPropertyName("contactId")]
-    public Guid? BoundContactId { get; init; }
+    /// <summary>ฝ่ายค้านรอบ 248 (HIGH/MED-2): ลายนิ้วมือของ "สิ่งที่ผู้ตั้งอนุมัติให้" ตอนตั้ง (<see cref="BindingHash"/> — ผู้ติดต่อ · ชนิดเอกสาร ·
+    /// ยอด/บรรทัดเชิงเงิน · อนุมัติอัตโนมัติ · ส่งอีเมลอัตโนมัติ) — ผู้แก้รายการ (ไม่ต้องมีสิทธิ์อนุมัติ) เปลี่ยนค่าเหล่านี้ ⇒ ไม่ตรง ⇒ นโยบายหยุดมีผล ·
+    /// null = ไม่ผูก (นโยบายระดับผู้ติดต่อ — มีผลกับรายการที่ผู้มีสิทธิ์ "รับรอง" ด้วย <see cref="InheritContact"/> เท่านั้น)</summary>
+    [JsonPropertyName("bindingHash")]
+    public string? BindingHashValue { get; init; }
 
-    /// <summary>ชนิดเอกสารตอนตั้ง (ชื่อ enum) — เปลี่ยนชนิดหลังตั้ง ⇒ นโยบายหยุดมีผล (ผู้ตั้งอนุมัติให้ชนิดนั้น) · null = ไม่ผูก</summary>
-    [JsonPropertyName("documentType")]
-    public string? BoundDocumentType { get; init; }
+    /// <summary>ใบรับรองระดับรายการ: "รายการนี้ใช้นโยบายของผู้ติดต่อ" (ผู้มีสิทธิ์อนุมัติรับรองค่าปัจจุบันของรายการ) — นโยบายของผู้ติดต่อไม่มีผลกับรายการที่ไม่มีใบรับรอง
+    /// (กันสมาชิกไม่มีสิทธิ์สร้างรายการใหม่ AutoApprove ให้ลูกค้าที่มีนโยบาย)</summary>
+    [JsonPropertyName("inheritContact")]
+    public bool InheritContact { get; init; }
 
     /// <summary>ระดับที่มาของนโยบายที่มีผล ("Recurring" · "Contact") — ไม่เก็บลง JSON (ผู้ resolve ใส่)</summary>
     [JsonIgnore]
@@ -66,7 +68,8 @@ public sealed record AutoApprovePolicy
         new NeverReleasable("Σ-GAP", "ยอดไม่ตรงกระดาษ (เอกสารจากสแกน)", "ต้องมีคนตรวจกับกระดาษ (คำตัดสินเจ้าของข้อ 12)"),
         new NeverReleasable("VAT-NOT-ON-PAPER", "VAT ไม่ได้พิมพ์บนกระดาษ/ตรวจกับกระดาษไม่ได้", "ภาษีซื้อที่ระบบแต่งขึ้นเป็นภาษีซื้อต้องห้าม §82/5(1) (คำตัดสินรอบ 198 ข้อ 6)"),
         new NeverReleasable("PERIOD-CLOSED", "งวดบัญชีปิดแล้ว", "เป็นด่านปิดงวด ไม่ใช่คำเตือน"),
-        new NeverReleasable("APPROVAL-LIMIT", "เกินวงเงินที่ต้องให้ผู้มีอำนาจอนุมัติ", "เป็นการควบคุมภายในของบริษัท — นโยบายนี้ไม่ข้ามด่านวงเงินอนุมัติ"),
+        new NeverReleasable("APPROVAL-LIMIT", "ด่านควบคุมภายในที่ไม่ใช่คำเตือน (เช่น งบประมาณแบบบล็อก · วางบิลเกิน · วงเงินเครดิตที่บล็อก)",
+            "ด่านพวกนี้หยุดการอนุมัติด้วยข้อผิดพลาด ไม่ใช่คำเตือน — นโยบายนี้ไม่ override ด่านรอง (ใบประจำอนุมัติแบบไม่มีคนรับทราบ)"),
     };
 
     /// <summary>คำเตือนที่ไม่มีวันปล่อยด้วยนโยบาย (ตัวจับป้ายของตัวตั้งเดิม — ไม่อ่านข้อความเอง)</summary>
@@ -103,11 +106,11 @@ public sealed record AutoApprovePolicy
 
     /// <summary>นโยบายใหม่จากรหัสที่ผ่าน <see cref="Validate"/> แล้ว (รหัสเป็นรูปมาตรฐานของ <see cref="Catalogue"/> · ไม่ซ้ำ)</summary>
     public static AutoApprovePolicy Create(IEnumerable<string>? codes, string setBy, DateTime utcNow,
-        Guid? boundContactId = null, string? boundDocumentType = null)
+        string? bindingHash = null, bool inheritContact = false)
         => new()
         {
-            BoundContactId = boundContactId,
-            BoundDocumentType = boundDocumentType,
+            BindingHashValue = bindingHash,
+            InheritContact = inheritContact,
             PassCodes = (codes ?? Array.Empty<string>())
                 .Select(c => Catalogue.FirstOrDefault(k => string.Equals(k.Code, c?.Trim(), StringComparison.OrdinalIgnoreCase))?.Code)
                 .Where(c => c != null).Select(c => c!).Distinct().ToList(),
@@ -132,14 +135,56 @@ public sealed record AutoApprovePolicy
 
     public static string Serialize(AutoApprovePolicy policy) => JsonSerializer.Serialize(policy);
 
-    /// <summary>ชั้นของนโยบาย: รายการประจำ (ตั้งไว้ — รวมตั้งว่าง = หยุดรอคน) ชนะผู้ติดต่อ · ไม่ตั้งทั้งคู่ = null (พฤติกรรมเดิม — หยุดรอคน)</summary>
+    /// <summary>ชั้นของนโยบาย (ฝ่ายค้าน HIGH/MED-2): รายการไม่มีใบรับรอง = null (ไม่ปล่อย — แม้ผู้ติดต่อมีนโยบาย) · รายการตั้งรหัสเอง (รวมตั้งว่าง = หยุดรอคน) =
+    /// ของรายการ · รายการรับรอง "ใช้นโยบายของผู้ติดต่อ" = ของผู้ติดต่อ (null ถ้าผู้ติดต่อไม่ได้ตั้ง) · ลายนิ้วมือ/ผู้ตั้งตรวจที่ <c>RecurringApprovePolicyLoader</c></summary>
     public static AutoApprovePolicy? Effective(string? recurringJson, string? contactJson)
-        => Parse(recurringJson, ScopeRecurring) ?? Parse(contactJson, ScopeContact);
+    {
+        var rec = Parse(recurringJson, ScopeRecurring);
+        if (rec == null) return null;
+        return rec.InheritContact ? Parse(contactJson, ScopeContact) : rec;
+    }
 
-    /// <summary>นโยบายยังตรงกับรายการตอนนี้ไหม (ผู้ติดต่อ/ชนิดเอกสารเดียวกับตอนตั้ง) — ไม่ตรง ⇒ หยุดมีผล (ผู้ตั้งไม่ได้อนุมัติให้ลูกค้า/ชนิดใหม่)</summary>
-    public static bool MatchesBinding(AutoApprovePolicy policy, Guid? contactId, string? documentType)
-        => (policy.BoundContactId == null || policy.BoundContactId == contactId)
-           && (policy.BoundDocumentType == null || string.Equals(policy.BoundDocumentType, documentType, StringComparison.Ordinal));
+    /// <summary>ลายนิ้วมือของค่าที่ผู้ตั้งอนุมัติให้ (SHA-256 · canonical ตัวเดียวทั้งฝั่งเขียน/ฝั่งตรวจ — กฎ #4 C) · เฉพาะช่องที่กระทบเงิน/การส่ง —
+    /// คำอธิบายบรรทัดไม่นับ (ตัวแปร &lt;&lt;month&gt;&gt; เปลี่ยนทุกงวดอยู่แล้ว) · เทมเพลตอ่านไม่ได้ = ค่าเฉพาะที่ไม่ตรงกับอะไร</summary>
+    public static string BindingHash(Guid? contactId, string? documentType, string? templateData, bool autoApprove, bool autoSendEmail)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("v1|c=").Append(contactId?.ToString("D") ?? "-").Append("|t=").Append(documentType ?? "-")
+          .Append("|aa=").Append(autoApprove ? 1 : 0).Append("|ae=").Append(autoSendEmail ? 1 : 0);
+        static string N(JsonElement o, string k)
+        {
+            if (o.ValueKind != JsonValueKind.Object || !o.TryGetProperty(k, out var e)) return "-";
+            return e.ValueKind switch
+            {
+                JsonValueKind.Number => e.TryGetDecimal(out var d) ? d.ToString("0.########", System.Globalization.CultureInfo.InvariantCulture) : e.GetRawText(),
+                JsonValueKind.String => decimal.TryParse(e.GetString(), System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var ds)
+                    ? ds.ToString("0.########", System.Globalization.CultureInfo.InvariantCulture) : (e.GetString() ?? "-").Trim(),
+                JsonValueKind.True => "1",
+                JsonValueKind.False => "0",
+                _ => "-",
+            };
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(templateData) ? "{}" : templateData);
+            var root = doc.RootElement;
+            foreach (var k in new[] { "pricesIncludeVat", "billDiscountPercent", "billDiscountAmount", "combinedInvoiceTaxInvoice", "currency", "whtCertType" })
+                sb.Append('|').Append(k).Append('=').Append(N(root, k));
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("lines", out var lines) && lines.ValueKind == JsonValueKind.Array)
+                foreach (var l in lines.EnumerateArray())
+                {
+                    sb.Append("|L");
+                    foreach (var k in new[] { "quantity", "unitPrice", "vatRate", "withholdingTaxRate", "discountPercent", "discountAmount", "accountId", "productCode" })
+                        sb.Append(',').Append(N(l, k));
+                }
+        }
+        catch (JsonException) { sb.Append("|unreadable"); }
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sb.ToString())));
+    }
+
+    /// <summary>ใบรับรองยังตรงกับค่าปัจจุบันของรายการไหม — ไม่มีลายนิ้วมือ (นโยบายที่ตั้งก่อนมีการผูก) = ไม่ตรง (ระวังไว้ก่อน)</summary>
+    public static bool MatchesBinding(AutoApprovePolicy recurringPolicy, string currentHash)
+        => recurringPolicy.BindingHashValue != null && string.Equals(recurringPolicy.BindingHashValue, currentHash, StringComparison.Ordinal);
 
     /// <summary>หมายเหตุบนเอกสาร (ต่อท้ายหมายเหตุอนุมัติ) — บอกว่าปล่อยตามนโยบายของใคร ระดับไหน</summary>
     public static string NoteLine(AutoApprovePolicy policy, IReadOnlyList<string> released)

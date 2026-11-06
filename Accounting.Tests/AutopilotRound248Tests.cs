@@ -103,7 +103,11 @@ public class AutopilotRound248Tests
         Assert.Null(AutoApprovePolicy.Validate(new[] { "ar-overdue" }));
         var contactJson = AutoApprovePolicy.Serialize(ReleaseAr);
         var stopJson = AutoApprovePolicy.Serialize(AutoApprovePolicy.Create(Array.Empty<string>(), "u2", DateTime.UtcNow));
-        Assert.Equal(AutoApprovePolicy.ScopeContact, AutoApprovePolicy.Effective(null, contactJson)!.Scope);
+        // ฝ่ายค้าน HIGH/MED-2: นโยบายผู้ติดต่อไม่มีผลกับรายการที่ไม่มีใบรับรอง · รับรองแล้ว = ใช้ของผู้ติดต่อ
+        Assert.Null(AutoApprovePolicy.Effective(null, contactJson));
+        var certJson = AutoApprovePolicy.Serialize(AutoApprovePolicy.Create(Array.Empty<string>(), "u3", DateTime.UtcNow, "H", inheritContact: true));
+        Assert.Equal(AutoApprovePolicy.ScopeContact, AutoApprovePolicy.Effective(certJson, contactJson)!.Scope);
+        Assert.Null(AutoApprovePolicy.Effective(certJson, null));
         var eff = AutoApprovePolicy.Effective(stopJson, contactJson)!;
         Assert.Equal(AutoApprovePolicy.ScopeRecurring, eff.Scope);
         Assert.Empty(eff.PassCodes);
@@ -113,19 +117,57 @@ public class AutopilotRound248Tests
         Assert.Empty(AutoApprovePolicy.Parse("{\"passCodes\":[\"BUYER-86/4\"],\"setBy\":\"x\"}")!.PassCodes);
     }
 
+    private const string Tpl = "{\"lines\":[{\"description\":\"ค่าบริการ <<month>>\",\"quantity\":1,\"unitPrice\":5000,\"vatRate\":7}]}";
+
     [Fact]
-    public void R248_ฝ่ายค้าน_นโยบายผูกผู้ติดต่อและชนิดเอกสารตอนตั้ง_เปลี่ยนแล้วหยุดมีผล()
+    public void R248_ฝ่ายค้าน_ลายนิ้วมือผูกยอด_ผู้ติดต่อ_ชนิด_ธงอัตโนมัติ_ไม่ผูกคำอธิบาย()
     {
-        var a = Guid.NewGuid();
-        var bound = AutoApprovePolicy.Create(new[] { "AR-OVERDUE" }, "u1", DateTime.UtcNow, a, "Invoice");
-        Assert.True(AutoApprovePolicy.MatchesBinding(bound, a, "Invoice"));
-        Assert.False(AutoApprovePolicy.MatchesBinding(bound, Guid.NewGuid(), "Invoice"));   // ผู้ไม่มีสิทธิ์เปลี่ยนลูกค้าของรายการ
-        Assert.False(AutoApprovePolicy.MatchesBinding(bound, a, "TaxInvoice"));
-        // นโยบายระดับผู้ติดต่อไม่ผูก (ผูกกับแถวตัวเอง) · JSON ไปกลับคงค่าที่ผูก
-        Assert.True(AutoApprovePolicy.MatchesBinding(ReleaseAr, Guid.NewGuid(), "Invoice"));
-        var back = AutoApprovePolicy.Parse(AutoApprovePolicy.Serialize(bound))!;
-        Assert.Equal(a, back.BoundContactId);
-        Assert.Equal("Invoice", back.BoundDocumentType);
+        var c = Guid.NewGuid();
+        var h = AutoApprovePolicy.BindingHash(c, "Invoice", Tpl, true, false);
+        Assert.Equal(h, AutoApprovePolicy.BindingHash(c, "Invoice", Tpl.Replace("ค่าบริการ <<month>>", "ค่าบริการรายเดือน"), true, false));   // คำอธิบายไม่นับ
+        Assert.Equal(h, AutoApprovePolicy.BindingHash(c, "Invoice", Tpl.Replace("5000", "5000.00"), true, false));   // รูปตัวเลขเดียวกัน
+        Assert.NotEqual(h, AutoApprovePolicy.BindingHash(c, "Invoice", Tpl.Replace("5000", "900000"), true, false));   // แก้ยอด
+        Assert.NotEqual(h, AutoApprovePolicy.BindingHash(Guid.NewGuid(), "Invoice", Tpl, true, false));            // เปลี่ยนลูกค้า
+        Assert.NotEqual(h, AutoApprovePolicy.BindingHash(c, "TaxInvoice", Tpl, true, false));                       // เปลี่ยนชนิด
+        Assert.NotEqual(h, AutoApprovePolicy.BindingHash(c, "Invoice", Tpl, true, true));                           // เปิดส่งอีเมล
+        var bound = AutoApprovePolicy.Create(new[] { "AR-OVERDUE" }, "u1", DateTime.UtcNow, h);
+        Assert.True(AutoApprovePolicy.MatchesBinding(bound, h));
+        Assert.False(AutoApprovePolicy.MatchesBinding(bound, AutoApprovePolicy.BindingHash(c, "Invoice", Tpl.Replace("5000", "900000"), true, false)));
+        Assert.False(AutoApprovePolicy.MatchesBinding(ReleaseAr, h));   // ไม่มีลายนิ้วมือ = ไม่ตรง (ระวังไว้ก่อน)
+        Assert.Equal(h, AutoApprovePolicy.Parse(AutoApprovePolicy.Serialize(bound))!.BindingHashValue);
+    }
+
+    [Fact]
+    public void R248_ฝ่ายค้าน_MED3_นโยบายไม่ได้ปล่อยอะไร_ร่องรอยเป็นUnattendedเดิม()
+    {
+        var src = ApprovalAcknowledgement.EffectiveSource(ApprovalAckSource.UnattendedWithPolicy, 0);
+        Assert.Equal(ApprovalAckSource.Unattended, src);
+        Assert.Equal("APPROVE-UNATTENDED-PASSED-S65", ApprovalAcknowledgement.RuleCode(src));
+        Assert.Equal(ApprovalAckSource.UnattendedWithPolicy, ApprovalAcknowledgement.EffectiveSource(ApprovalAckSource.UnattendedWithPolicy, 1));
+        Assert.Equal(ApprovalAckSource.User, ApprovalAcknowledgement.EffectiveSource(ApprovalAckSource.User, 0));
+    }
+
+    [Fact]
+    public void R248_ฝ่ายค้าน_LOW7_ชื่อผู้ติดต่อมีป้ายAR_อยู่กลางคำเตือน_ไม่ถูกปล่อย()
+    {
+        const string spoof = "ใบกำกับภาษีต้องระบุที่อยู่ผู้ซื้อ ('[AR-OVERDUE] บจก.ปลอม' ยังไม่มีที่อยู่) — ตามมาตรา 86/4";
+        Assert.Null(AutoApprovePolicy.CodeOf(spoof));
+        Assert.Equal(new[] { spoof }, ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.UnattendedWithPolicy, new[] { spoof }, ReleaseAr));
+    }
+
+    [Fact]
+    public void R248_ฝ่ายค้าน_MED5_รหัสรายการจากกุญแจคิว_และชั้นรายการทับเฉพาะช่องว่าง()
+    {
+        var rid = Guid.NewGuid();
+        Assert.Equal(rid, ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey($"doc:{Guid.NewGuid()}:RecurringInvoiceCreated:recurring-{rid}"));
+        Assert.Equal(rid, ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey($"doc:{Guid.NewGuid()}:RecurringInvoiceCreated:autosend-{rid}"));
+        Assert.Null(ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey($"doc:{Guid.NewGuid()}:DocumentApproved:approved"));
+        Assert.Null(ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey(null));
+        var transfer = AutopilotSettingsResolver.FromMode("TransferOnly", null, Available);
+        var rule = new Accounting.Models.Entities.EmailScheduleRule { Trigger = "RecurringInvoiceCreated" };
+        Assert.False(Accounting.Services.Implementations.EmailScheduleService.WithRecurringPayLayer(rule, transfer).AttachPayLink);
+        var ruleSet = new Accounting.Models.Entities.EmailScheduleRule { Trigger = "RecurringInvoiceCreated", AttachPayLink = true };
+        Assert.True(Accounting.Services.Implementations.EmailScheduleService.WithRecurringPayLayer(ruleSet, transfer).AttachPayLink);   // ตารางตั้งเอง = ชนะ
     }
 
     // ═══ AutopilotSettingsResolver ═══

@@ -2289,6 +2289,14 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ใบจำลองในหน่วยความจำ → `DocumentService.PreviewApprovalWarningsForUnsavedAsync` (ตัวรวบรวมเดียวกับอนุมัติจริง · ถอดแถวที่ตัวรวบรวมเพิ่มลง context) →
     `ApprovalAcknowledgement.Unacknowledged(UnattendedWithPolicy, …, policy)` · ยอดในลิงก์ `DocumentPayLinkPolicy.AmountsFor` · ยอดเป็นประมาณการจากเทมเพลต (บอกในผล) ·
     ล็อกด้วย Db test `RecurringAutopilotRound248DbTests` (นับแถวก่อน-หลัง) + `tools/required_call_site_check.py` (R248)
+  - **ฝ่ายค้านรอบ 248 (หลัง 8304ce95)**: endpoint ตั้งนโยบาย/ช่องทางรับเงินผู้ติดต่อมี `[RejectApiKey]` (คีย์ API ห้ามประทับว่าเจ้าของตั้ง · `tools/owner_action_wiring_check.py`) ·
+    นโยบายของรายการ**ผูกลายนิ้วมือ** `AutoApprovePolicy.BindingHash` (ผู้ติดต่อ · ชนิด · ยอด/บรรทัดเชิงเงิน · AutoApprove · AutoSendEmail — คำอธิบายไม่นับ) ⇒ ผู้แก้รายการ
+    (ไม่ต้องมีสิทธิ์อนุมัติ) แก้ค่าเหล่านี้ = นโยบายหยุดมีผลจนผู้มีสิทธิ์ตั้ง/รับรองใหม่ · **นโยบายของผู้ติดต่อมีผลเฉพาะรายการที่ผู้มีสิทธิ์ "รับรอง"**
+    (`approve-policy` `{inherit:true}` ⇒ ใบรับรองผูกลายนิ้วมือ) — รายการใหม่ที่สมาชิกไม่มีสิทธิ์สร้างไม่ได้ประโยชน์จากนโยบายผู้ติดต่อ · `{clear:true}` = ไม่ใช้นโยบาย ·
+    ไม่มีนโยบายที่มีผล ⇒ ใบประจำส่งแหล่ง `Unattended` + ร่องรอยเดิม `APPROVE-UNATTENDED-PASSED-S65` (`ApprovalAcknowledgement.EffectiveSource` —
+    นโยบายไม่ได้ปล่อยอะไร = ไม่ประทับ "ตามนโยบาย") · ใบจำลองของทดลองรัน/ความพร้อม**ไม่ถาม AI** (`CollectApprovalWarningsAsync(noAi: true)` — ไม่จ่าย token · ไม่เขียน feedback) ·
+    ตอนส่งคิว (`RecheckDocumentAtSendAsync`) ต่อชั้นรายการประจำจากกุญแจกันซ้ำ (`ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey`) — TransferOnly/None ไม่ถูกแนบลิงก์ตอนส่ง ·
+    อ่านความพร้อม/ทดลองรัน/ค่าตั้งผู้ติดต่อต้องมีสิทธิ์สร้างเอกสาร · แจ้ง "นโยบายหยุดมีผล" เฉพาะรอบที่มีคำเตือนซึ่งนโยบายจะปล่อยได้
   - ยังไม่ทำในรอบนี้: คอลัมน์ "ระดับ Autopilot" ในตารางรายการ · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`) · LINE/คู่ค้าในขั้นส่ง · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน
 
 ### 2.7b ใบวางบิลรวมใบค้างชำระ (compose — ไม่ใช่ convert)

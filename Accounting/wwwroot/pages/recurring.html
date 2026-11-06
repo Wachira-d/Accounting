@@ -196,9 +196,9 @@
             <div id="fPayModeHint" style="margin-top:4px;font-size:11px;color:#64748b"></div>
           </div>
           <div class="form-group" id="fContactPayGroup" style="display:none;padding:8px 10px;border:1px dashed #cbd5e1;border-radius:8px">
-            <label class="form-label" for="fContactPaymentMode" style="font-weight:normal">ค่าตั้งของผู้ติดต่อนี้ (ใช้กับทุกเอกสารของลูกค้ารายนี้ เมื่อรายการ/ตารางส่งไม่ได้ตั้งเอง)</label>
+            <label class="form-label" for="fCustPayMode" style="font-weight:normal">ค่าตั้งของผู้ติดต่อนี้ (ใช้กับทุกเอกสารของลูกค้ารายนี้ เมื่อรายการ/ตารางส่งไม่ได้ตั้งเอง)</label>
             <div style="display:flex;gap:6px;align-items:center">
-              <select class="form-select" id="fContactPaymentMode"></select>
+              <select class="form-select" id="fCustPayMode"></select>
               <button type="button" class="btn btn-sm btn-secondary" onclick="Page.saveContactPayMode()">บันทึกที่ผู้ติดต่อ</button>
             </div>
           </div>
@@ -284,7 +284,7 @@ const Page = {
       `<option value="${Layout.esc(m.code === 'Inherit' ? '' : m.code)}">${Layout.esc(m.label)}</option>`).join('');
     const pm = document.getElementById('fPaymentMode');
     if (pm) { pm.innerHTML = modeOpts || '<option value="">ตามค่าชั้นถัดไป</option>'; pm.disabled = !this._apOpts; }
-    const cpm = document.getElementById('fContactPaymentMode');
+    const cpm = document.getElementById('fCustPayMode');
     if (cpm) { cpm.innerHTML = modeOpts || '<option value="">ตามค่าชั้นถัดไป</option>'; cpm.disabled = !this._apOpts; }
   },
 
@@ -342,7 +342,7 @@ const Page = {
       this._contactAp = null;
     }
     if (grp) grp.style.display = this._contactAp ? '' : 'none';
-    const cpm = document.getElementById('fContactPaymentMode');
+    const cpm = document.getElementById('fCustPayMode');
     if (cpm) cpm.value = (this._contactAp && this._contactAp.paymentMode) || '';
     this._renderPolicy();
   },
@@ -351,7 +351,7 @@ const Page = {
     if (!cid) { Layout.toast('เลือกผู้ติดต่อก่อน', 'error'); return; }
     const api = Layout.api(); if (!api) return;
     try {
-      const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fContactPaymentMode')?.value || '', payLinkChannels: null });
+      const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null });
       this._contactAp = res.data || this._contactAp;
       Layout.toast((res && res.message) || 'บันทึกแล้ว');
       this.refreshReadiness(true);
@@ -367,11 +367,14 @@ const Page = {
     const rel = (this._apOpts && this._apOpts.releasableWarnings) || [];
     const own = this._editingPolicy;
     const contactPol = this._contactAp && this._contactAp.autoApprovePolicy;
-    const effective = own || contactPol;
-    rows.innerHTML = `<div style="margin-bottom:6px"><label style="font-size:12px">ใช้นโยบาย:
+    // ฝ่ายค้าน HIGH/MED-2: นโยบายของผู้ติดต่อมีผลเฉพาะรายการที่ผู้มีสิทธิ์อนุมัติ "รับรอง" · แก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติแล้วต้องรับรองใหม่ (แผงความพร้อมบอก)
+    const scope = !own ? 'clear' : own.inheritContact ? 'inherit' : 'own';
+    const effective = scope === 'own' ? own : contactPol;
+    rows.innerHTML = `<div style="margin-bottom:6px"><label style="font-size:12px">นโยบายของรายการนี้:
         <select class="form-select" id="fPolicyScope" style="display:inline-block;width:auto;margin-left:4px">
-          <option value="inherit"${own ? '' : ' selected'}>ตามผู้ติดต่อ (ไม่ได้ตั้งที่รายการนี้)</option>
-          <option value="own"${own ? ' selected' : ''}>ตั้งเองสำหรับรายการนี้</option>
+          <option value="clear"${scope === 'clear' ? ' selected' : ''}>ไม่ใช้นโยบาย (หยุดรอคนทุกข้อ — ค่าเริ่มต้น)</option>
+          <option value="inherit"${scope === 'inherit' ? ' selected' : ''}>รับรองให้ใช้นโยบายของผู้ติดต่อ</option>
+          <option value="own"${scope === 'own' ? ' selected' : ''}>ตั้งเองสำหรับรายการนี้</option>
         </select></label></div>`
       + rel.map(c => {
         const on = !!(effective && (effective.passCodes || []).includes(c.code));
@@ -386,7 +389,8 @@ const Page = {
       .map(n => `• ${Layout.esc(n.label)} — ${Layout.esc(n.why || '')}`).join('<br>'));
     if (meta) {
       const who = p => p ? `ตั้งไว้${p.setAt ? 'เมื่อ ' + Layout.date(p.setAt) : ''} · ปล่อย: ${Layout.esc((p.passCodes || []).join(', ') || 'ไม่ปล่อย (หยุดรอคนทุกข้อ)')}` : 'ยังไม่ได้ตั้ง';
-      meta.innerHTML = `รายการนี้: ${who(own)}<br>ผู้ติดต่อ: ${who(contactPol)}<br>ผู้ตั้งต้องมีสิทธิ์อนุมัติเอกสาร · ผู้ตั้งออกจากบริษัท ⇒ นโยบายหยุดมีผล · ทุกครั้งที่ปล่อยลงหมายเหตุบนใบ + บันทึกตรวจสอบ`;
+      meta.innerHTML = `รายการนี้: ${own && own.inheritContact ? 'รับรองให้ใช้นโยบายของผู้ติดต่อ' + (own.setAt ? ' เมื่อ ' + Layout.date(own.setAt) : '') : who(own)}<br>ผู้ติดต่อ: ${who(contactPol)}<br>`
+        + 'ผู้ตั้ง/ผู้รับรองต้องมีสิทธิ์อนุมัติเอกสาร · ผู้ตั้งออกจากบริษัท หรือแก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติของรายการหลังตั้ง ⇒ นโยบายหยุดมีผลจนกว่าจะตั้ง/รับรองใหม่ · ทุกครั้งที่ปล่อยลงหมายเหตุบนใบ + บันทึกตรวจสอบ';
     }
   },
   async savePolicy(scope) {
@@ -402,8 +406,8 @@ const Page = {
       } else {
         const id = document.getElementById('fId').value;
         if (!id) { Layout.toast('บันทึกรายการประจำก่อน แล้วจึงตั้งนโยบายของรายการนี้ (หรือบันทึกเป็นนโยบายของผู้ติดต่อ)', 'warning', 7000); return; }
-        const inherit = document.getElementById('fPolicyScope')?.value !== 'own';
-        const res = await api.setRecurringApprovePolicy(id, { passCodes, inherit });
+        const sc = document.getElementById('fPolicyScope')?.value || 'clear';
+        const res = await api.setRecurringApprovePolicy(id, { passCodes, inherit: sc === 'inherit', clear: sc === 'clear' });
         this._editingPolicy = res.data || null;
         Layout.toast((res && res.message) || 'บันทึกแล้ว');
       }

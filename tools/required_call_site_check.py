@@ -15045,18 +15045,21 @@ _R248_CTRL = "Controllers/RecurringController.cs"
 _R248_EMAIL = "Services/Implementations/EmailScheduleService.cs"
 RULES += [
     dict(file=RECURRING, method="CreateDocumentFromTemplateAsync",
-         must=["RecurringApprovePolicyLoader.LoadAsync(", "ApprovalAckSource.UnattendedWithPolicy", "autoApprovePolicy: policyLoad.Policy"],
+         must=["RecurringApprovePolicyLoader.LoadAsync(", "ApprovalAckSource.UnattendedWithPolicy", "autoApprovePolicy: policyLoad.Policy",
+               "policyLoad.Policy != null ?"],
          forbid=["autoApprovePolicy: null", "AutoApprovePolicy.Parse("],
          why=_R248_WHY + "ใบประจำอนุมัติด้วยแหล่ง UnattendedWithPolicy + นโยบายจากตัวโหลดเดียว (รายการ › ผู้ติดต่อ · ผู้ตั้งยังเป็นสมาชิก) — ห้ามอ่าน JSON เอง"),
     dict(file=DOC, method="ApproveDocumentAsync#2",
-         must=["ApprovalAcknowledgement.Unacknowledged(ackSource, warnings, autoApprovePolicy)", "AutoApprovePolicy.Released(", "AutoApprovePolicy.NoteLine("],
+         must=["ApprovalAcknowledgement.Unacknowledged(ackSource, warnings, autoApprovePolicy)", "AutoApprovePolicy.Released(", "AutoApprovePolicy.NoteLine(",
+               "ApprovalAcknowledgement.EffectiveSource(ackSource, policyReleased.Count)"],
+         before=[("ApprovalAcknowledgement.EffectiveSource(", "ApprovalAcknowledgement.Note(ackSource")],
          why=_R248_WHY + "ตัวตัดสินเดียวว่าข้อไหนหยุด (ชุดห้ามปล่อยหยุดเสมอ) · คำเตือนที่นโยบายปล่อยลงหมายเหตุ + audit (หลักการ #10)"),
     dict(file=DOC, method="PreviewApprovalWarningsForUnsavedAsync",
-         must=["CollectApprovalWarningsAsync(companyId, draft)", "EntityState.Detached", "draft.CompanyId != companyId"],
+         must=["CollectApprovalWarningsAsync(companyId, draft, noAi: true)", "EntityState.Detached", "draft.CompanyId != companyId"],
          forbid=["SaveChangesAsync(", "_db.Documents.Add(", "_db.Attach("],
          why=_R248_WHY + "คำเตือนของใบจำลองใช้ตัวรวบรวมเดียวกับการอนุมัติจริง · ไม่บันทึก · ถอดแถวที่ตัวรวบรวมเพิ่มลง context"),
     dict(file=DOC, method="CollectApprovalWarningsAsync",
-         must=["ArOverdueApprovalWarning.Message("], forbid_lit=["ตรวจวงเงินเครดิตก่อนอนุมัติเอกสารใหม่"],
+         must=["ArOverdueApprovalWarning.Message(", "var advice = noAi"], forbid_lit=["ตรวจวงเงินเครดิตก่อนอนุมัติเอกสารใหม่"],
          why=_R248_WHY + "คำเตือนค้างชำระต้องมีป้าย [AR-OVERDUE] จากตัวประกอบเดียว (นโยบายอ่านป้าย ไม่อ่านข้อความไทย)"),
     dict(file=_R248_AP, method="BuildAsync",
          must=["AutopilotReadiness.Evaluate(", "ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.UnattendedWithPolicy", "AutoApprovePolicy.Released(",
@@ -15072,7 +15075,8 @@ RULES += [
          must=["AutoApprovePolicy.Validate(", "AutoApprovePolicy.Create("],
          why=_R248_WHY + "รหัสห้ามปล่อย (§86/4 · [Σ-GAP] · VAT ไม่อยู่บนกระดาษ) / ไม่รู้จัก ⇒ ปฏิเสธพร้อมเหตุ ห้ามเก็บเงียบ"),
     dict(file=_R248_AP, method="SetRecurringPolicyAsync",
-         must=["PolicyJsonFrom(request, userId, r.ContactId,", "AuditPolicy(", "x.CompanyId == companyId"],
+         must=["PolicyJsonFrom(request, userId, RecurringApprovePolicyLoader.CurrentBindingHash(r))", "AuditPolicy(", "x.CompanyId == companyId",
+               "RecurringApprovePolicyLoader.CurrentBindingHash(r), inheritContact: true"],
          why=_R248_WHY + "ตั้งนโยบาย = ร่องรอยใน hash chain · tenant · ผูกผู้ติดต่อ/ชนิดเอกสารตอนตั้ง (ฝ่ายค้าน)"),
     dict(file=_R248_AP, method="SetContactPolicyAsync",
          must=["PolicyJsonFrom(request, userId,", "AuditPolicy(", "x.CompanyId == companyId"],
@@ -15081,8 +15085,21 @@ RULES += [
          must=["_db.AddChainedAuditLog(new AuditLog"], forbid=["_db.AuditLogs.Add("],
          why=_R248_WHY + "audit ผ่าน chain เท่านั้น (กฎ M)"),
     dict(file=_R248_LOADER, method="LoadAsync",
-         must=["AutoApprovePolicy.Effective(", "AutoApprovePolicy.MatchesBinding(", "CompanyMembership.IsActiveMemberAsync(", "DocumentPermissionHelper.CanApproveAsync(", "c.CompanyId == companyId"],
+         must=["AutoApprovePolicy.Effective(", "AutoApprovePolicy.MatchesBinding(cert, CurrentBindingHash(r))", "CanStillApproveAsync(", "c.CompanyId == companyId"],
+         before=[("AutoApprovePolicy.MatchesBinding(", "return new Loaded(stored, stored, true)")],
          why=_R248_WHY + "ผู้ตั้งออกจากบริษัท/หมดสิทธิ์อนุมัติ ⇒ นโยบายหยุดมีผล (ตัวโหลดเดียวของเส้นจริงและแผงความพร้อม)"),
+    dict(file=_R248_LOADER, method="CanStillApproveAsync",
+         must=["CompanyMembership.IsActiveMemberAsync(", "DocumentPermissionHelper.CanApproveAsync("],
+         why=_R248_WHY + "ผู้ตั้ง/ผู้รับรองต้องยังเป็นสมาชิก + มีสิทธิ์อนุมัติ"),
+    dict(file=_R248_EMAIL, method="RecheckDocumentAtSendAsync",
+         must=["ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey(item.IdempotencyKey)", "WithRecurringPayLayer(rule,"],
+         before=[("WithRecurringPayLayer(rule,", "PayLinkFor(rule, doc, ct)")],
+         why=_R248_WHY + "ฝ่ายค้าน MED-5: ตอนส่งต่อชั้นรายการประจำเหมือนตอนเข้าคิว (TransferOnly/None ห้ามถูกแนบลิงก์)"),
+    dict(file=_R248_CTRL, method="Readiness", must=["DenyAutopilotReadAsync("], why=_R248_WHY + "ฝ่ายค้าน LOW-6: อ่านความพร้อมต้องมีสิทธิ์สร้างเอกสาร"),
+    dict(file=_R248_CTRL, method="DryRun", must=["DenyAutopilotReadAsync("], why=_R248_WHY + "ฝ่ายค้าน LOW-6"),
+    dict(file=_R248_CTRL, method="ReadinessDraft", must=["DenyAutopilotReadAsync("], why=_R248_WHY + "ฝ่ายค้าน LOW-6"),
+    dict(file=_R248_CTRL, method="DryRunDraft", must=["DenyAutopilotReadAsync("], why=_R248_WHY + "ฝ่ายค้าน LOW-6"),
+    dict(file=_R248_CTRL, method="ContactAutopilot", must=["DenyAutopilotReadAsync("], why=_R248_WHY + "ฝ่ายค้าน LOW-6"),
     dict(file=_R248_CTRL, method="SetApprovePolicy",
          must=["DocumentPermissionHelper.CanApproveAsync(", "Forbid403<"],
          before=[("DocumentPermissionHelper.CanApproveAsync(", "_autopilot.SetRecurringPolicyAsync(")],
@@ -15115,8 +15132,9 @@ RULES += [
 
 REVIEWER_CASES += [
     # ใบประจำกลับไปใช้แหล่ง Unattended (ลืมนโยบาย) ⇒ ต้องฟ้อง
-    ("R248a", "CreateDocumentFromTemplateAsync", "Accounting.Helpers.ApprovalAckSource.UnattendedWithPolicy, withAiHints: false, passed,",
-     "Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passed,", True),
+    ("R248a", "CreateDocumentFromTemplateAsync",
+     "policyLoad.Policy != null ? Accounting.Helpers.ApprovalAckSource.UnattendedWithPolicy : Accounting.Helpers.ApprovalAckSource.Unattended,",
+     "Accounting.Helpers.ApprovalAckSource.Unattended,", True),
     # ตัวตัดสินไม่รับนโยบาย ⇒ ต้องฟ้อง
     ("R248b", "ApproveDocumentAsync#2", "Unacknowledged(ackSource, warnings, autoApprovePolicy)", "Unacknowledged(ackSource, warnings)", True),
     # ทดลองรันเผลอบันทึก ⇒ ต้องฟ้อง
@@ -15127,7 +15145,14 @@ REVIEWER_CASES += [
     ("R248e", "SetApprovePolicy", "if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, item.DocumentType ?? DocumentType.Invoice))",
      "if (false)", True),
     # ไม่ตรวจสมาชิกภาพของผู้ตั้ง ⇒ ต้องฟ้อง
-    ("R248f", "LoadAsync", "&& await CompanyMembership.IsActiveMemberAsync(db, companyId, setter, ct);", ";", True),
+    ("R248f", "CanStillApproveAsync", "if (!Guid.TryParse(userId, out var uid) || !await CompanyMembership.IsActiveMemberAsync(db, companyId, uid, ct)) return false;",
+     "if (!Guid.TryParse(userId, out var uid)) return false;", True),
+    # ฝ่ายค้าน HIGH/MED-2: ข้ามลายนิ้วมือ ⇒ ต้องฟ้อง
+    ("R248j", "LoadAsync", "if (!AutoApprovePolicy.MatchesBinding(cert, CurrentBindingHash(r)))", "if (false)", True),
+    # ฝ่ายค้าน MED-4: ใบจำลองกลับไปถาม AI ⇒ ต้องฟ้อง
+    ("R248k", "PreviewApprovalWarningsForUnsavedAsync", "CollectApprovalWarningsAsync(companyId, draft, noAi: true)", "CollectApprovalWarningsAsync(companyId, draft)", True),
+    # ฝ่ายค้าน MED-5: ตอนส่งไม่ต่อชั้นรายการ ⇒ ต้องฟ้อง
+    ("R248l", "RecheckDocumentAtSendAsync", "rule = WithRecurringPayLayer(rule, await RecurringPayLayerAsync(item.CompanyId, sendRecurringId, ct));", "", True),
     # ลิงก์ชำระกลับไปข้ามชั้นผู้ติดต่อ ⇒ ต้องฟ้อง
     ("R248g", "EnsureLinkAsync", "var allowed = DocumentPayLinkPolicy.Allowed(all, choice.Channels, null);",
      "var allowed = DocumentPayLinkPolicy.Allowed(all, scheduleChannels, companyDefault);", True),

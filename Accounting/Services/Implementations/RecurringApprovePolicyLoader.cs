@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -17,33 +18,48 @@ internal static class RecurringApprovePolicyLoader
     /// <c>SetterActive</c> = null เมื่อไม่มีนโยบายที่ปล่อยอะไร</summary>
     internal sealed record Loaded(AutoApprovePolicy? Policy, AutoApprovePolicy? Stored, bool? SetterActive, string? InactiveReason = null);
 
-    internal const string BindingChangedReason = "ผู้ติดต่อหรือชนิดเอกสารของรายการเปลี่ยนหลังตั้งนโยบาย — ให้ผู้มีสิทธิ์อนุมัติตั้งนโยบายใหม่สำหรับค่าปัจจุบัน";
-    internal const string SetterGoneReason = "ผู้ตั้งนโยบายไม่ได้เป็นสมาชิกของบริษัท/ไม่มีสิทธิ์อนุมัติเอกสารชนิดนี้แล้ว — ให้ผู้มีสิทธิ์ตั้งนโยบายใหม่";
+    internal const string BindingChangedReason = "ค่าของรายการ (ผู้ติดต่อ · ชนิดเอกสาร · ยอด/บรรทัด · อนุมัติ/ส่งอีเมลอัตโนมัติ) เปลี่ยนหลังผู้มีสิทธิ์ตั้ง/รับรองนโยบาย — ให้ผู้มีสิทธิ์อนุมัติตั้ง/รับรองใหม่สำหรับค่าปัจจุบัน";
+    internal const string SetterGoneReason = "ผู้ตั้ง/รับรองนโยบายไม่ได้เป็นสมาชิกของบริษัท/ไม่มีสิทธิ์อนุมัติเอกสารชนิดนี้แล้ว — ให้ผู้มีสิทธิ์ตั้งนโยบายใหม่";
 
+    /// <summary>ลายนิ้วมือของค่าปัจจุบันของรายการ (ตัวเดียวทั้งตอนตั้ง/รับรองและตอนตรวจ)</summary>
+    internal static string CurrentBindingHash(RecurringTransaction r)
+        => AutoApprovePolicy.BindingHash(r.ContactId, (r.DocumentType ?? DocumentType.Invoice).ToString(), r.TemplateData,
+            r.AutoApprove || r.AutoSendEmail, r.AutoSendEmail);
+
+    /// <summary>นโยบายที่มีผลของรายการ — ไม่มีใบรับรองระดับรายการ = ไม่ปล่อย (แม้ผู้ติดต่อมีนโยบาย) · ลายนิ้วมือไม่ตรง/ผู้ตั้งหรือผู้รับรองหมดสิทธิ์ = ไม่ปล่อย</summary>
     internal static async Task<Loaded> LoadAsync(AccountingDbContext db, IPermissionService? permissions, Guid companyId,
-        string? recurringPolicyJson, Guid? contactId, DocumentType? documentType, CancellationToken ct = default)
+        RecurringTransaction r, CancellationToken ct = default)
     {
+        var docType = r.DocumentType ?? DocumentType.Invoice;
+        var cert = AutoApprovePolicy.Parse(r.AutoApprovePolicyJson, AutoApprovePolicy.ScopeRecurring);
+        if (cert == null) return new Loaded(null, null, null);
         string? contactJson = null;
-        if (contactId is { } cid)
+        if (cert.InheritContact && r.ContactId is { } cid)
             contactJson = await db.Contacts.AsNoTracking()
                 .Where(c => c.Id == cid && c.CompanyId == companyId)
                 .Select(c => c.AutoApprovePolicyJson)
                 .FirstOrDefaultAsync(ct);
-        var stored = AutoApprovePolicy.Effective(recurringPolicyJson, contactJson);
+        var stored = AutoApprovePolicy.Effective(r.AutoApprovePolicyJson, contactJson);
         if (stored is not { PassCodes.Count: > 0 }) return new Loaded(stored, stored, null);
 
-        // ฝ่ายค้านรอบ 248: นโยบายของรายการผูกผู้ติดต่อ/ชนิดเอกสารตอนตั้ง — ผู้ไม่มีสิทธิ์อนุมัติเปลี่ยนผู้ติดต่อของรายการแล้ว ⇒ ไม่ปล่อย
-        if (!AutoApprovePolicy.MatchesBinding(stored, contactId, documentType?.ToString()))
+        // ฝ่ายค้าน HIGH/MED-2: ใบรับรองผูกลายนิ้วมือของค่าที่ผู้มีสิทธิ์เห็นตอนตั้ง — แก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติภายหลัง ⇒ ไม่ปล่อย
+        if (!AutoApprovePolicy.MatchesBinding(cert, CurrentBindingHash(r)))
             return new Loaded(null, stored, false, BindingChangedReason);
-        // ผู้ตั้งออกจากบริษัท/ถูกปิดบัญชี ⇒ นโยบายหยุดมีผล (ตัวตัดสินเดียว CompanyMembership — แบบผู้อนุมัติเริ่มต้นของ workflow ข้ามบริษัท)
-        var active = Guid.TryParse(stored.SetBy, out var setter)
-            && await CompanyMembership.IsActiveMemberAsync(db, companyId, setter, ct);
-        if (active && permissions != null)
-            active = await DocumentPermissionHelper.CanApproveAsync(permissions, companyId, setter, documentType ?? DocumentType.Invoice);
-        return new Loaded(active ? stored : null, stored, active, active ? null : SetterGoneReason);
+        // ผู้ตั้ง (และผู้รับรองระดับรายการ เมื่อใช้นโยบายของผู้ติดต่อ) ต้องยังเป็นสมาชิก + มีสิทธิ์อนุมัติชนิดนี้ (ตัวตัดสินเดียว CompanyMembership)
+        foreach (var who in new[] { stored.SetBy, cert.SetBy }.Distinct())
+            if (!await CanStillApproveAsync(db, permissions, companyId, who, docType, ct))
+                return new Loaded(null, stored, false, SetterGoneReason);
+        return new Loaded(stored, stored, true);
+    }
+
+    private static async Task<bool> CanStillApproveAsync(AccountingDbContext db, IPermissionService? permissions, Guid companyId,
+        string? userId, DocumentType docType, CancellationToken ct)
+    {
+        if (!Guid.TryParse(userId, out var uid) || !await CompanyMembership.IsActiveMemberAsync(db, companyId, uid, ct)) return false;
+        return permissions == null || await DocumentPermissionHelper.CanApproveAsync(permissions, companyId, uid, docType);
     }
 
     /// <summary>มุมมองของนโยบายสำหรับหน้า</summary>
     internal static global::Accounting.Models.DTOs.Recurring.AutoApprovePolicyView? View(AutoApprovePolicy? p)
-        => p == null ? null : new global::Accounting.Models.DTOs.Recurring.AutoApprovePolicyView(p.PassCodes, p.SetBy, p.SetAt, p.Scope);
+        => p == null ? null : new global::Accounting.Models.DTOs.Recurring.AutoApprovePolicyView(p.PassCodes, p.SetBy, p.SetAt, p.Scope, p.InheritContact);
 }

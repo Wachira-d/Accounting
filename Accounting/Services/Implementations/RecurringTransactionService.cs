@@ -848,19 +848,19 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // Auto-approve if configured (ผู้ถูกหักถูกตัดทิ้ง = ไม่อนุมัติอัตโนมัติ — ข้างบน)
                 if (recurring.AutoApprove && result != null && droppedPayees == 0)
                 {
+                    string? stoppedPolicyReason = null;
                     try
                     {
                         // คำตัดสินข้อ 114 Q1: ข้อสังเกต §65 ตรีที่การอนุมัติอัตโนมัติผ่านไป (ไม่บล็อก — ข้อ 110) ต้องถึงคน — เก็บรายการที่ผ่านแล้วแจ้งผู้ตั้งรายการประจำ
                         var passed = new List<string>();
                         // รอบ 248 (AUTOPILOT §4.3): นโยบายอนุมัติข้ามคำเตือนของเจ้าของ (รายการ › ผู้ติดต่อ) — ผู้ตั้งออกจากบริษัท/หมดสิทธิ์ ⇒ ไม่ปล่อย ·
                         // ไม่ตั้งนโยบาย = Unattended เดิมทุกประการ (ใบค้างร่างเหมือนรอบ 247) · ชุดห้ามปล่อยหยุดเสมอ (ตัวตัดสินเดียว ApprovalAcknowledgement)
-                        var policyLoad = await RecurringApprovePolicyLoader.LoadAsync(_db, _permissions, recurring.CompanyId,
-                            recurring.AutoApprovePolicyJson, contactId, docType);
-                        if (policyLoad.SetterActive == false)
-                            notices.Add("นโยบายอนุมัติข้ามคำเตือนของรายการนี้หยุดมีผล — " + policyLoad.InactiveReason + " (ขั้น \"อนุมัติ\" ของรายการประจำ)");
+                        var policyLoad = await RecurringApprovePolicyLoader.LoadAsync(_db, _permissions, recurring.CompanyId, recurring);
+                        stoppedPolicyReason = policyLoad.SetterActive == false ? policyLoad.InactiveReason : null;
+                        // ฝ่ายค้าน MED-3: ไม่มีนโยบายที่มีผล ⇒ แหล่ง Unattended เดิม (ร่องรอยเดิม APPROVE-UNATTENDED-PASSED-S65)
                         var approvedDoc = await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy,
-                            Accounting.Helpers.ApprovalAckSource.UnattendedWithPolicy, withAiHints: false, passed,
-                            autoApprovePolicy: policyLoad.Policy);
+                            policyLoad.Policy != null ? Accounting.Helpers.ApprovalAckSource.UnattendedWithPolicy : Accounting.Helpers.ApprovalAckSource.Unattended,
+                            withAiHints: false, passed, autoApprovePolicy: policyLoad.Policy);
                         approved = true;
                         // + ของราคาต่ำที่ขึ้นทะเบียนสินทรัพย์ (LowValueAssetLineCheck · ฝ่ายค้าน P2-2) — ช่องเดียวกัน
                         var noticeParts = new[] {
@@ -904,6 +904,10 @@ public class RecurringTransactionService : IRecurringTransactionService
                                 ApproveWarnings = ex is DocumentApprovalWarningsException aw ? aw.Warnings.ToList() : null,
                             };
                         await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoApprove/{result.Id}");
+                        // ฝ่ายค้าน LOW-8: บอก "นโยบายหยุดมีผล" เฉพาะรอบที่มีคำเตือนซึ่งนโยบายจะปล่อยได้จริง (ไม่ใช่ทุกรอบ)
+                        if (stoppedPolicyReason != null && ex is DocumentApprovalWarningsException stopAw
+                            && stopAw.Warnings.Any(w => Accounting.Helpers.AutoApprovePolicy.CodeOf(w) != null))
+                            notices.Add("นโยบายอนุมัติข้ามคำเตือนของรายการนี้หยุดมีผล — " + stoppedPolicyReason + " (ขั้น \"อนุมัติ\" ของรายการประจำ)");
                     }
                 }
 

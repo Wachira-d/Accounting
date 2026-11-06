@@ -187,6 +187,13 @@ RULES = [
     (S + 'IntegrationService.cs', 'RegenerateApiKeyAsync', 'body', r'\bintegration\s*\.\s*IsLegacyKey\s*=\s*false\s*;'),
 ]
 
+# รอบ 248 (ฝ่ายค้าน HIGH-1): ตั้งนโยบายอนุมัติอัตโนมัติ/ช่องทางรับเงิน = การตัดสินใจของคนที่มีสิทธิ์ — คีย์ API ห้ามประทับว่าเจ้าของตั้ง
+RULES += [
+    (C + 'RecurringController.cs', 'SetApprovePolicy', 'attr', REJECT),
+    (C + 'RecurringController.cs', 'SetContactApprovePolicy', 'attr', REJECT),
+    (C + 'RecurringController.cs', 'UpdateContactAutopilot', 'attr', REJECT),
+]
+
 MODIFIERS = r'(?:public|private|protected|internal|static|async|override|virtual|sealed|new|unsafe|extern)'
 DECL_RE_TMPL = r'(?m)^[ \t]*(?:{mods}\s+)+[\w<>\[\],.?() ]*?\b{name}\s*\('
 
@@ -360,6 +367,14 @@ REVIEWER_CASES = [
     ('SENS', C + 'DocumentController.cs', 'return Forbid403<EmailTemplate>(hidden);', 'Console.WriteLine(hidden);', True),
     ('HEAD', S + 'DocumentLineDeliveryService.cs', 'var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(',
      '_ = await PdfGenerationService.ResolveDocumentHeadingAsync(', True),
+]
+
+
+REVIEWER_CASES += [
+    # รอบ 248: ถอด [RejectApiKey] ออกจากการตั้งนโยบายอนุมัติ ⇒ ต้องฟ้อง
+    ('R248-K1', C + 'RecurringController.cs', '[Accounting.Filters.RejectApiKey("ตั้งนโยบายอนุมัติอัตโนมัติของรายการประจำ")]', '', True),
+    ('R248-K2', C + 'RecurringController.cs', '[Accounting.Filters.RejectApiKey("ตั้งนโยบายอนุมัติอัตโนมัติของผู้ติดต่อ")]', '[System.Obsolete("RejectApiKey")]', True),
+    ('R248-K3', C + 'RecurringController.cs', '[Accounting.Filters.RejectApiKey("ตั้งช่องทางรับเงินของผู้ติดต่อ")]', '', True),
 ]
 
 

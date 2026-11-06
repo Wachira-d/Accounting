@@ -238,6 +238,121 @@ public class RecurringAutopilotRound248DbTests
         Assert.Contains("หยุดมีผล", after.LastRunNotice ?? "");
     }
 
+    private static async Task<Document> NewDocAsync(AccountingDbContext check, Guid companyId, Guid contactId)
+        => await check.Documents.AsNoTracking().SingleAsync(d => d.CompanyId == companyId && d.ContactId == contactId && !d.DocumentNumber.StartsWith("INV-OLD"));
+
+    [Fact]
+    public async Task R248_ฝ่ายค้าน_แก้ยอดหลังตั้งนโยบาย_ไม่ปล่อย()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetRecurringPolicyAsync(s.CompanyId, s.RecurringId,
+                new SetAutoApprovePolicyRequest(new List<string> { ArOverdueApprovalWarning.Code }), s.SetterId);
+        // สมาชิกที่ไม่มีสิทธิ์อนุมัติแก้ยอดเป็น 900,000 (แก้รายการไม่ต้องมีสิทธิ์อนุมัติ)
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var rec = await req.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
+            rec.TemplateData = rec.TemplateData.Replace("5000", "900000");
+            await req.SaveChangesAsync();
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(DocumentStatus.Draft, (await NewDocAsync(check, s.CompanyId, s.ContactId)).Status);
+        Assert.Contains("หยุดมีผล", (await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId)).LastRunNotice ?? "");
+    }
+
+    [Fact]
+    public async Task R248_ฝ่ายค้าน_นโยบายผู้ติดต่อ_ไม่มีผลกับรายการที่ไม่ได้รับรอง_รับรองแล้วปล่อย()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetContactPolicyAsync(s.CompanyId, s.ContactId,
+                new SetAutoApprovePolicyRequest(new List<string> { ArOverdueApprovalWarning.Code }), s.SetterId);
+        // รายการที่สมาชิกไม่มีสิทธิ์สร้าง (ไม่มีใบรับรอง) ⇒ ไม่ปล่อย
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using (var check = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(DocumentStatus.Draft, (await NewDocAsync(check, s.CompanyId, s.ContactId)).Status);
+        // ผู้มีสิทธิ์รับรองรายการ ⇒ งวดถัดไปปล่อย
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetRecurringPolicyAsync(s.CompanyId, s.RecurringId,
+                new SetAutoApprovePolicyRequest(null, Inherit: true), s.SetterId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using var check2 = DbTestDatabase.TryCreateContext()!;
+        var docs = await check2.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == s.CompanyId && d.ContactId == s.ContactId && !d.DocumentNumber.StartsWith("INV-OLD"))
+            .OrderBy(d => d.CreatedAt).ToListAsync();
+        Assert.Equal(2, docs.Count);
+        Assert.NotEqual(DocumentStatus.Draft, docs[1].Status);
+    }
+
+    [Fact]
+    public async Task R248_ฝ่ายค้าน_LOW7_ชื่อผู้ติดต่อขึ้นต้นด้วยป้ายAR_คำเตือนอื่นไม่ถูกปล่อย()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var c = await req.Contacts.SingleAsync(x => x.Id == s.ContactId);
+            c.Name = "[AR-OVERDUE] บริษัทปลอมป้าย จำกัด";
+            c.Address = null;   // ⇒ คำเตือนที่อยู่ผู้ซื้อ (มีชื่อผู้ติดต่ออยู่กลางข้อความ) บนใบกำกับภาษี
+            var rec = await req.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
+            rec.DocumentType = DocumentType.TaxInvoice;
+            rec.TemplateData = rec.TemplateData.Replace("ค่าบริการเดือน <<month>>", "[AR-OVERDUE] ค่าบริการ");
+            await req.SaveChangesAsync();
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetRecurringPolicyAsync(s.CompanyId, s.RecurringId,
+                new SetAutoApprovePolicyRequest(new List<string> { ArOverdueApprovalWarning.Code }), s.SetterId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var dry = await Autopilot(req).DryRunAsync(s.CompanyId, s.RecurringId);
+            Assert.All(dry.ApprovalReleased, w => Assert.StartsWith(ArOverdueApprovalWarning.Prefix + " ผู้ติดต่อนี้ยังค้างชำระ", w));
+            Assert.NotEmpty(dry.ApprovalBlocking);   // คำเตือนที่อยู่ผู้ซื้อ (§86/4) ยังหยุด
+        }
+    }
+
+    [Fact]
+    public async Task R248_ฝ่ายค้าน_MED4_ทดลองรันใบค่าใช้จ่าย_ค่าเช่า_ไม่ถามAI()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var rec = await req.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
+            rec.DocumentType = DocumentType.Expense;
+            rec.TemplateData = JsonSerializer.Serialize(new
+            {
+                lines = new[] { new { description = "ค่าเช่าสำนักงานเดือน <<month>>", quantity = 1, unitPrice = 30000m, vatRate = 0m, withholdingTaxRate = 0m } },
+            });
+            await req.SaveChangesAsync();
+        }
+        var aiCalls = 0;
+        var before = await CountsAsync(db, s.CompanyId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var augmenter = F4Proxy<Accounting.Services.Ai.IDocumentAiAugmenter>.Create((m, _) => { aiCalls++; return null; });
+            var docs = new DocumentService(req, new AccountingService(req), RecurringTransactionDbTests.AllowAll<ISubscriptionService>.Create(), null!, null!,
+                NullLogger<DocumentService>.Instance, null!,
+                new Accounting.Services.Implementations.Ocr.VendorIntelligenceService(req, NullLogger<Accounting.Services.Implementations.Ocr.VendorIntelligenceService>.Instance),
+                null!, aiAugmenter: augmenter);
+            await new RecurringAutopilotService(req, docs).DryRunAsync(s.CompanyId, s.RecurringId);
+            await new RecurringAutopilotService(req, docs).ReadinessAsync(s.CompanyId, s.RecurringId);
+            await req.SaveChangesAsync();
+        }
+        Assert.Equal(0, aiCalls);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(before, await CountsAsync(check, s.CompanyId));
+    }
+
     [Fact]
     public async Task R248_ตั้งนโยบายปล่อยผู้ซื้อ86_4_ถูกปฏิเสธ_ไม่บันทึก()
     {

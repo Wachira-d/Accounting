@@ -6581,7 +6581,7 @@ public partial class DocumentService : IDocumentService
             .Select(e => e.Entity).ToHashSet(ReferenceEqualityComparer.Instance);
         try
         {
-            return await CollectApprovalWarningsAsync(companyId, draft);
+            return await CollectApprovalWarningsAsync(companyId, draft, noAi: true);
         }
         finally
         {
@@ -6743,11 +6743,13 @@ public partial class DocumentService : IDocumentService
             // (PdfGenerationService.SanitizeNotesForPrint) ⇒ คำเตือนภายในจะไป
             // โผล่บนใบที่ส่งให้ลูกค้า
             // รอบ 193 (ฝ่ายค้าน C5): ข้อความ/รหัสกฎแยก "ผู้ใช้รับทราบ" ออกจาก "ระบบ workflow/API ส่งผ่าน" — Helpers/ApprovalAcknowledgement
-            var ackNote = Accounting.Helpers.ApprovalAcknowledgement.Note(ackSource, warnings, approvedBy, DateTime.UtcNow);
             // รอบ 248: คำเตือนที่ "นโยบายของเจ้าของ" ปล่อย (ไม่ใช่ชุดที่ผ่านโดยไม่มีคนอยู่แล้ว) — บอกบนใบว่าปล่อยตามนโยบายของใคร ระดับไหน
             var policyReleased = ackSource == Accounting.Helpers.ApprovalAckSource.UnattendedWithPolicy && autoApprovePolicy != null
                 ? Accounting.Helpers.AutoApprovePolicy.Released(autoApprovePolicy, warnings)
                 : (IReadOnlyList<string>)Array.Empty<string>();
+            // ฝ่ายค้าน MED-3: นโยบายไม่ได้ปล่อยอะไรจริง ⇒ ร่องรอยต้องเป็นของ Unattended เดิม (APPROVE-UNATTENDED-PASSED-S65) ไม่ใช่ "ตามนโยบายเจ้าของ"
+            ackSource = Accounting.Helpers.ApprovalAcknowledgement.EffectiveSource(ackSource, policyReleased.Count);
+            var ackNote = Accounting.Helpers.ApprovalAcknowledgement.Note(ackSource, warnings, approvedBy, DateTime.UtcNow);
             if (policyReleased.Count > 0)
                 ackNote += "\n" + Accounting.Helpers.AutoApprovePolicy.NoteLine(autoApprovePolicy!, policyReleased);
             AppendInternalNote(doc, ackNote);
@@ -21831,7 +21833,9 @@ public partial class DocumentService : IDocumentService
         }
     }
 
-    private async Task<List<string>> CollectApprovalWarningsAsync(Guid companyId, Document doc)
+    /// <param name="noAi">รอบ 248 (ฝ่ายค้าน MED-4): ใบจำลองของทดลองรัน/แผงความพร้อม — ห้ามถามชั้นเรียนรู้/AI (ไม่จ่าย token · ไม่เขียนแถว feedback)
+    /// ⇒ ใช้คำเตือนตามกฎ local อย่างเดียว (ทิศที่ปลอดภัยกว่า: เตือนไว้ก่อน)</param>
+    private async Task<List<string>> CollectApprovalWarningsAsync(Guid companyId, Document doc, bool noAi = false)
     {
         var warnings = new List<string>();
         var today = DateTime.UtcNow.Date;
@@ -22159,7 +22163,9 @@ public partial class DocumentService : IDocumentService
                             // (กฎเหล็ก #1) orchestrator ถาม local model ก่อนเสมอ แล้วค่อย
                             // ตกไปหา AI เมื่อนักเรียนไม่มั่นใจ · ปิด provider ทุกตัวแล้ว
                             // นักเรียนยังตอบได้
-                            var advice = await AdviseWhtApplicabilityAsync(companyId, doc, paidToContactThisYear);
+                            var advice = noAi
+                                ? new WhtAdvice(false, false, null, 0m, false, null)   // ทดลองรัน: ไม่ถาม AI — เตือนตามกฎ local
+                                : await AdviseWhtApplicabilityAsync(companyId, doc, paidToContactThisYear);
 
                             doc.WhtAdviceAiFeedbackId = advice.FeedbackId ?? doc.WhtAdviceAiFeedbackId;
                             doc.WhtAdviceAnswer = advice.Answer ?? doc.WhtAdviceAnswer;

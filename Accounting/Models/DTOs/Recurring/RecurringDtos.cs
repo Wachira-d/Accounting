@@ -86,10 +86,12 @@ public record RecurringTransactionResponse(
     AutoApprovePolicyView? AutoApprovePolicy = null);
 
 /// <summary>รอบ 248: นโยบายอนุมัติข้ามคำเตือนที่หน้าแสดง — รหัสที่ปล่อย · ผู้ตั้ง/เมื่อไร · ระดับ (Recurring/Contact)</summary>
-public record AutoApprovePolicyView(IReadOnlyList<string> PassCodes, string? SetBy, DateTime? SetAt, string? Scope);
+public record AutoApprovePolicyView(IReadOnlyList<string> PassCodes, string? SetBy, DateTime? SetAt, string? Scope, bool InheritContact = false);
 
-/// <summary>รอบ 248: ตั้ง/ล้างนโยบาย — <c>Inherit=true</c> ⇒ ล้าง (รายการ: ตามผู้ติดต่อ · ผู้ติดต่อ: ไม่ปล่อย) · ไม่งั้นตั้งเป็นรหัสชุดนี้ (ว่าง = หยุดรอคนทุกข้อ)</summary>
-public record SetAutoApprovePolicyRequest(List<string>? PassCodes, bool Inherit = false);
+/// <summary>รอบ 248: ตั้ง/ล้างนโยบาย — <c>Clear=true</c> ⇒ ล้าง (รายการ: ไม่มีนโยบาย — นโยบายผู้ติดต่อไม่มีผลกับรายการนี้ · ผู้ติดต่อ: ไม่ปล่อย) ·
+/// <c>Inherit=true</c> (รายการเท่านั้น) ⇒ ผู้มีสิทธิ์ "รับรอง" ให้รายการนี้ใช้นโยบายของผู้ติดต่อ (ผูกลายนิ้วมือค่าปัจจุบัน) ·
+/// ไม่งั้นตั้งเป็นรหัสชุดนี้ (ว่าง = หยุดรอคนทุกข้อ)</summary>
+public record SetAutoApprovePolicyRequest(List<string>? PassCodes, bool Inherit = false, bool Clear = false);
 
 /// <summary>รอบ 248: ค่าตั้ง Autopilot ระดับผู้ติดต่อ (ช่องทางรับเงิน + นโยบาย) — echo กลับทุกช่อง</summary>
 public record ContactAutopilotSettingsResponse(Guid ContactId, string ContactName, string? PaymentMode, IReadOnlyList<string>? PayLinkChannels,

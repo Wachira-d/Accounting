@@ -853,6 +853,9 @@ public class EmailScheduleService : IEmailScheduleService
             await _db.HydrateContactAsync(item.CompanyId, doc);
             var heading = await HeadingForAsync(doc.CompanyId, doc.Id);
             var ctx = DocumentEmailContext(doc, heading, _headingCompanies[doc.CompanyId].Company);
+            // รอบ 248 (ฝ่ายค้าน MED-5): กฎที่โหลดใหม่ตอนส่งไม่มีชั้นรายการประจำ ⇒ ต่อชั้นเดียวกับตอนเข้าคิว (รหัสรายการจากกุญแจกันซ้ำ)
+            if (ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey(item.IdempotencyKey) is { } sendRecurringId)
+                rule = WithRecurringPayLayer(rule, await RecurringPayLayerAsync(item.CompanyId, sendRecurringId, ct));
             // รอบ 241: ลิงก์ ณ เวลาส่ง (ยอดสุทธิปัจจุบัน · ใบชำระครบ/ยกเลิกแล้ว = ไม่แนบ)
             var payLink = await PayLinkFor(rule, doc, ct);
             ctx["PayLink"] = payLink?.Url != null ? DocumentPayLinkPolicy.QueuePlaceholder : "";   // ฝ่ายค้าน S1: คิวเก็บที่หมาย

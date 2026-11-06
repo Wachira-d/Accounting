@@ -24,6 +24,19 @@ public static class ScheduledEmailSendCheck
         return parts.Length >= 3 && parts[0] == "doc" ? parts[2] : null;
     }
 
+    /// <summary>รอบ 248 (ฝ่ายค้าน MED-5): รหัสรายการประจำจากกุญแจกันซ้ำของคิว (<c>doc:{id}:RecurringInvoiceCreated:recurring-{recurringId}</c>
+    /// หรือ <c>…:autosend-{recurringId}</c>) — ให้ตอนส่งต่อชั้นช่องทางรับเงินของรายการได้เหมือนตอนเข้าคิว · ไม่ใช่รูปนี้ = null</summary>
+    public static Guid? RecurringIdFromIdempotencyKey(string? key)
+    {
+        if (string.IsNullOrEmpty(key)) return null;
+        var parts = key.Split(':');
+        if (parts.Length < 4 || parts[0] != "doc") return null;
+        var suffix = parts[3];
+        foreach (var p in new[] { "recurring-", "autosend-" })
+            if (suffix.StartsWith(p, StringComparison.Ordinal) && Guid.TryParse(suffix[p.Length..], out var id)) return id;
+        return null;
+    }
+
     /// <summary>null = ส่งได้ · ข้อความ = ข้าม (บันทึกลงคิวให้เห็นบนหน้า "ตารางส่งอีเมล")</summary>
     public static string? SkipReason(string? trigger, bool documentFound, DocumentStatus status, decimal balanceDue)
     {

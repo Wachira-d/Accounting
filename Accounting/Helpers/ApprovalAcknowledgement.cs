@@ -202,6 +202,11 @@ public static class ApprovalAcknowledgement
         return msg;
     }
 
+    /// <summary>รอบ 248 (ฝ่ายค้าน MED-3): แหล่งที่ลงร่องรอยจริง — <see cref="ApprovalAckSource.UnattendedWithPolicy"/> ที่นโยบายไม่ได้ปล่อยคำเตือนสักข้อ
+    /// = <see cref="ApprovalAckSource.Unattended"/> (รหัส/หมายเหตุเดิม · ห้ามประทับ "อนุมัติตามนโยบายเจ้าของ" ทั้งที่ไม่มีนโยบายมีผล)</summary>
+    public static ApprovalAckSource EffectiveSource(ApprovalAckSource source, int policyReleasedCount)
+        => source == ApprovalAckSource.UnattendedWithPolicy && policyReleasedCount <= 0 ? ApprovalAckSource.Unattended : source;
+
     /// <summary>รหัสกฎของร่องรอยเมื่ออนุมัติทั้งที่มีคำเตือน</summary>
     public static string RuleCode(ApprovalAckSource source) => source switch
     {

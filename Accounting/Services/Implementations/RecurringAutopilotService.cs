@@ -219,7 +219,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         }
 
         // ── นโยบาย (ตัวโหลดเดียวกับเส้นอนุมัติจริง) ──
-        var policy = await RecurringApprovePolicyLoader.LoadAsync(_db, _permissions, companyId, r.AutoApprovePolicyJson, r.ContactId, docType, ct);
+        var policy = await RecurringApprovePolicyLoader.LoadAsync(_db, _permissions, companyId, r, ct);
         var blocking = warnings == null ? Array.Empty<string>()
             : ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.UnattendedWithPolicy, warnings, policy.Policy);
         var released = warnings == null ? Array.Empty<string>() : AutoApprovePolicy.Released(policy.Policy, warnings);
@@ -324,8 +324,13 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         var r = await _db.RecurringTransactions.FirstOrDefaultAsync(x => x.Id == recurringId && x.CompanyId == companyId, ct)
                 ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
         var before = r.AutoApprovePolicyJson;
-        // ผูกผู้ติดต่อ + ชนิดเอกสารตอนตั้ง — เปลี่ยนภายหลัง (โดยผู้ไม่มีสิทธิ์อนุมัติ) ⇒ นโยบายหยุดมีผล (RecurringApprovePolicyLoader)
-        r.AutoApprovePolicyJson = PolicyJsonFrom(request, userId, r.ContactId, (r.DocumentType ?? DocumentType.Invoice).ToString());
+        // ผูกลายนิ้วมือของค่าปัจจุบัน (ผู้ติดต่อ · ชนิด · ยอด/บรรทัด · ธงอัตโนมัติ) — เปลี่ยนภายหลังโดยผู้ไม่มีสิทธิ์อนุมัติ ⇒ หยุดมีผล (ฝ่ายค้าน HIGH/MED-2) ·
+        // Inherit = ใบรับรอง "ใช้นโยบายของผู้ติดต่อ" ที่ผูกลายนิ้วมือเหมือนกัน (นโยบายผู้ติดต่อไม่มีผลกับรายการที่ไม่มีใบรับรอง)
+        r.AutoApprovePolicyJson = request.Clear ? null
+            : request.Inherit
+                ? AutoApprovePolicy.Serialize(AutoApprovePolicy.Create(Array.Empty<string>(), userId.ToString(), DateTime.UtcNow,
+                    RecurringApprovePolicyLoader.CurrentBindingHash(r), inheritContact: true))
+                : PolicyJsonFrom(request, userId, RecurringApprovePolicyLoader.CurrentBindingHash(r));
         AuditPolicy(companyId, "RecurringTransaction", r.Id, before, r.AutoApprovePolicyJson, userId);
         await _db.SaveChangesAsync(ct);
         return RecurringApprovePolicyLoader.View(AutoApprovePolicy.Parse(r.AutoApprovePolicyJson, AutoApprovePolicy.ScopeRecurring));
@@ -337,20 +342,18 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         var c = await _db.Contacts.FirstOrDefaultAsync(x => x.Id == contactId && x.CompanyId == companyId, ct)
                 ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
         var before = c.AutoApprovePolicyJson;
-        c.AutoApprovePolicyJson = PolicyJsonFrom(request, userId, null, null);
+        c.AutoApprovePolicyJson = request.Clear || request.Inherit ? null : PolicyJsonFrom(request, userId, null);
         AuditPolicy(companyId, "Contact", c.Id, before, c.AutoApprovePolicyJson, userId);
         await _db.SaveChangesAsync(ct);
         return ContactView(c);
     }
 
     /// <summary>คำขอ ⇒ JSON (ตัวตรวจเดียว <see cref="AutoApprovePolicy.Validate"/> — รหัสห้ามปล่อย/ไม่รู้จัก ⇒ 400 พร้อมเหตุ)</summary>
-    private static string? PolicyJsonFrom(SetAutoApprovePolicyRequest request, Guid userId, Guid? boundContactId, string? boundDocumentType)
+    private static string PolicyJsonFrom(SetAutoApprovePolicyRequest request, Guid userId, string? bindingHash)
     {
-        if (request.Inherit) return null;
         if (AutoApprovePolicy.Validate(request.PassCodes) is { } why)
             throw new BusinessRuleException(why, AutoApprovePolicy.RuleCode);
-        return AutoApprovePolicy.Serialize(AutoApprovePolicy.Create(request.PassCodes, userId.ToString(), DateTime.UtcNow,
-            boundContactId, boundDocumentType));
+        return AutoApprovePolicy.Serialize(AutoApprovePolicy.Create(request.PassCodes, userId.ToString(), DateTime.UtcNow, bindingHash));
     }
 
     /// <summary>หลักการ #10: ทุกการตั้งนโยบายปล่อยผ่าน = ร่องรอยใน hash chain (ผู้ตั้ง · ก่อน/หลัง · รหัสกฎ)</summary>

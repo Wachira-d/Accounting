@@ -28,6 +28,12 @@ public class RecurringController : ControllerBase
     private ActionResult<ApiResponse<T>> Forbid403<T>(string message)
         => StatusCode(403, new ApiResponse<T>(false, default, message));
 
+    /// <summary>ฝ่ายค้าน LOW-6: ความพร้อม/ทดลองรันเปิดเผยยอด · คำเตือนค้างชำระ · อีเมลลูกค้า ⇒ ต้องมีสิทธิ์สร้างเอกสารชนิดนั้น (คนตั้งรายการประจำ) · null = ผ่าน</summary>
+    private async Task<string?> DenyAutopilotReadAsync(Guid companyId, DocumentType? type)
+        => await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, JwtHelper.GetUserIdFromClaims(User), type ?? DocumentType.Invoice)
+            ? null
+            : "ดูความพร้อม/ทดลองรันของรายการประจำได้เฉพาะผู้มีสิทธิ์สร้างเอกสารชนิดนี้ (Document.Create)";
+
     // ═══════════════ รอบ 248 — Autopilot (AUTOPILOT_BILLING_DESIGN §4.3–§4.5 · §5.1) ═══════════════
 
     /// <summary>ตัวเลือกของ wizard (โหมดรับเงิน · ช่องทางที่บริษัทเปิด · คำเตือนที่ปล่อยได้/ไม่ได้) — เซิร์ฟเวอร์คำนวณ หน้าแสดงอย่างเดียว</summary>
@@ -38,27 +44,42 @@ public class RecurringController : ControllerBase
     /// <summary>ความพร้อมของรายการที่บันทึกแล้ว (อ่านอย่างเดียว)</summary>
     [HttpGet("{id:guid}/readiness")]
     public async Task<ActionResult<ApiResponse<AutopilotReadinessResponse>>> Readiness(Guid companyId, Guid id)
-        => Ok(new ApiResponse<AutopilotReadinessResponse>(true, await _autopilot.ReadinessAsync(companyId, id)));
+    {
+        var item = await _recurringService.GetByIdAsync(companyId, id);
+        if (await DenyAutopilotReadAsync(companyId, item.DocumentType) is { } deny) return Forbid403<AutopilotReadinessResponse>(deny);
+        return Ok(new ApiResponse<AutopilotReadinessResponse>(true, await _autopilot.ReadinessAsync(companyId, id)));
+    }
 
     /// <summary>ความพร้อมของร่างในฟอร์ม — POST เพราะรับร่างทั้งชุด · <b>อ่านอย่างเดียว ไม่เขียนอะไร</b></summary>
     [HttpPost("readiness")]
     public async Task<ActionResult<ApiResponse<AutopilotReadinessResponse>>> ReadinessDraft(Guid companyId,
         [FromBody] CreateRecurringTransactionRequest draft, [FromQuery] Guid? recurringId = null)
-        => Ok(new ApiResponse<AutopilotReadinessResponse>(true, await _autopilot.ReadinessForDraftAsync(companyId, draft, recurringId)));
+    {
+        if (await DenyAutopilotReadAsync(companyId, draft.DocumentType) is { } deny) return Forbid403<AutopilotReadinessResponse>(deny);
+        return Ok(new ApiResponse<AutopilotReadinessResponse>(true, await _autopilot.ReadinessForDraftAsync(companyId, draft, recurringId)));
+    }
 
     /// <summary>ทดลองรันรอบถัดไป — <b>ไม่เขียนอะไรเลย</b> (ไม่ออกเลข · ไม่สร้างลิงก์ · ไม่ส่ง)</summary>
     [HttpPost("{id:guid}/dry-run")]
     public async Task<ActionResult<ApiResponse<RecurringDryRunResponse>>> DryRun(Guid companyId, Guid id)
-        => Ok(new ApiResponse<RecurringDryRunResponse>(true, await _autopilot.DryRunAsync(companyId, id)));
+    {
+        var item = await _recurringService.GetByIdAsync(companyId, id);
+        if (await DenyAutopilotReadAsync(companyId, item.DocumentType) is { } deny) return Forbid403<RecurringDryRunResponse>(deny);
+        return Ok(new ApiResponse<RecurringDryRunResponse>(true, await _autopilot.DryRunAsync(companyId, id)));
+    }
 
     /// <summary>ทดลองรันร่างในฟอร์ม — ไม่เขียนอะไรเลย</summary>
     [HttpPost("dry-run")]
     public async Task<ActionResult<ApiResponse<RecurringDryRunResponse>>> DryRunDraft(Guid companyId,
         [FromBody] CreateRecurringTransactionRequest draft, [FromQuery] Guid? recurringId = null)
-        => Ok(new ApiResponse<RecurringDryRunResponse>(true, await _autopilot.DryRunDraftAsync(companyId, draft, recurringId)));
+    {
+        if (await DenyAutopilotReadAsync(companyId, draft.DocumentType) is { } deny) return Forbid403<RecurringDryRunResponse>(deny);
+        return Ok(new ApiResponse<RecurringDryRunResponse>(true, await _autopilot.DryRunDraftAsync(companyId, draft, recurringId)));
+    }
 
     /// <summary>ตั้ง/ล้างนโยบายอนุมัติข้ามคำเตือนของรายการ — <b>ต้องมีสิทธิ์อนุมัติเอกสารชนิดนั้น</b> (ผู้ไม่มีสิทธิ์อนุมัติห้ามตั้งให้ระบบอนุมัติแทน)</summary>
     [HttpPut("{id:guid}/approve-policy")]
+    [Accounting.Filters.RejectApiKey("ตั้งนโยบายอนุมัติอัตโนมัติของรายการประจำ")]   // ฝ่ายค้าน HIGH-1: คีย์ API ห้ามประทับว่าเจ้าของตั้งนโยบาย
     public async Task<ActionResult<ApiResponse<AutoApprovePolicyView?>>> SetApprovePolicy(Guid companyId, Guid id,
         [FromBody] SetAutoApprovePolicyRequest request)
     {
@@ -67,16 +88,21 @@ public class RecurringController : ControllerBase
         if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, item.DocumentType ?? DocumentType.Invoice))
             return Forbid403<AutoApprovePolicyView?>("ตั้งนโยบายอนุมัติได้เฉพาะผู้มีสิทธิ์อนุมัติเอกสารชนิดนี้ (Document.Approve) — ขอผู้ดูแลบริษัทเพิ่มสิทธิ์ หรือให้ผู้มีสิทธิ์ตั้งแทน");
         var result = await _autopilot.SetRecurringPolicyAsync(companyId, id, request, userId);
-        return Ok(new ApiResponse<AutoApprovePolicyView?>(true, result, request.Inherit ? "ล้างนโยบายแล้ว — ตามค่าของผู้ติดต่อ" : "บันทึกนโยบายอนุมัติแล้ว"));
+        return Ok(new ApiResponse<AutoApprovePolicyView?>(true, result, request.Clear ? "ล้างนโยบายแล้ว — รายการนี้ไม่ปล่อยคำเตือนใด ๆ"
+            : request.Inherit ? "รับรองแล้ว — รายการนี้ใช้นโยบายของผู้ติดต่อ (แก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติภายหลัง ต้องรับรองใหม่)" : "บันทึกนโยบายอนุมัติแล้ว"));
     }
 
     /// <summary>ค่าตั้ง Autopilot ของผู้ติดต่อ (ช่องทางรับเงิน + นโยบาย)</summary>
     [HttpGet("contacts/{contactId:guid}/autopilot")]
     public async Task<ActionResult<ApiResponse<ContactAutopilotSettingsResponse>>> ContactAutopilot(Guid companyId, Guid contactId)
-        => Ok(new ApiResponse<ContactAutopilotSettingsResponse>(true, await _autopilot.GetContactSettingsAsync(companyId, contactId)));
+    {
+        if (await DenyAutopilotReadAsync(companyId, DocumentType.Invoice) is { } deny) return Forbid403<ContactAutopilotSettingsResponse>(deny);
+        return Ok(new ApiResponse<ContactAutopilotSettingsResponse>(true, await _autopilot.GetContactSettingsAsync(companyId, contactId)));
+    }
 
     /// <summary>แก้ช่องทางรับเงินของผู้ติดต่อ — ต้องมีสิทธิ์แก้ผู้ติดต่อ</summary>
     [HttpPut("contacts/{contactId:guid}/autopilot")]
+    [Accounting.Filters.RejectApiKey("ตั้งช่องทางรับเงินของผู้ติดต่อ")]   // ฝ่ายค้าน HIGH-1
     public async Task<ActionResult<ApiResponse<ContactAutopilotSettingsResponse>>> UpdateContactAutopilot(Guid companyId, Guid contactId,
         [FromBody] UpdateContactAutopilotRequest request)
     {
@@ -89,6 +115,7 @@ public class RecurringController : ControllerBase
 
     /// <summary>ตั้ง/ล้างนโยบายอนุมัติระดับผู้ติดต่อ — ต้องมีสิทธิ์อนุมัติเอกสารขาย</summary>
     [HttpPut("contacts/{contactId:guid}/approve-policy")]
+    [Accounting.Filters.RejectApiKey("ตั้งนโยบายอนุมัติอัตโนมัติของผู้ติดต่อ")]   // ฝ่ายค้าน HIGH-1
     public async Task<ActionResult<ApiResponse<ContactAutopilotSettingsResponse>>> SetContactApprovePolicy(Guid companyId, Guid contactId,
         [FromBody] SetAutoApprovePolicyRequest request)
     {
