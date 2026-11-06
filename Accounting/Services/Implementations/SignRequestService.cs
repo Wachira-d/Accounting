@@ -25,11 +25,15 @@ public class SignRequestService : ISignRequestService
     private readonly ILogger<SignRequestService> _logger;
     /// <summary>รอบ 250 WP-08 (L1 ต่อสาย · DESIGN §3.g): ผู้รับตั้งต้นของลิงก์เซ็น = ตัวหาผู้รับเดียว เรื่อง "ลิงก์เซ็น" (ช่องที่ผู้ใช้กรอกเอง/ครั้งก่อนยังชนะ)</summary>
     private readonly IContactRecipientResolver _recipients;
+    /// <summary>รอบ 254 WP-11 L4 (Q4): โควตาอีเมลรายเดือนของเส้น SMTP ของ NextAcc · null (สร้างนอก DI) ⇒ ไม่นับรายเดือน</summary>
+    private readonly INotifyQuotaService? _notifyQuota;
 
     public SignRequestService(AccountingDbContext db, IEmailSenderFactory senders, ISecretProtector secrets,
-        ILogger<SignRequestService> logger, IConfiguration? config = null, IContactRecipientResolver? recipients = null)
+        ILogger<SignRequestService> logger, IConfiguration? config = null, IContactRecipientResolver? recipients = null,
+        INotifyQuotaService? notifyQuota = null)
     {
         _db = db;
+        _notifyQuota = notifyQuota;
         _senders = senders;
         _secrets = secrets;
         _logger = logger;
@@ -180,6 +184,13 @@ public class SignRequestService : ISignRequestService
         {
             var (sameDoc, any) = await PlatformEmailQuota.RecipientCountsAsync(_db, companyId, doc.Id, to, quota.DayStartUtc, ct);
             var refusal = SignEmailThrottle.Refusal(plan.OnBehalf, platformToday, cap, sameDoc, any);
+            // รอบ 254 WP-11 L4 (Q4): ผ่านเพดานรายวันแล้ว ⇒ เส้นแพลตฟอร์มตัดโควตาอีเมลรายเดือน (1 ผู้รับ = 1 ฉบับ) · เต็ม ⇒ ถูกกันพร้อมเหตุ (ไม่เรียกผู้ให้บริการ)
+            NotifyReservation? monthly = null;
+            if (refusal == null && plan.OnBehalf && _notifyQuota != null)
+            {
+                monthly = await _notifyQuota.ReservePlatformEmailAsync(companyId, ct);
+                if (!monthly.Ok) { refusal = NotifyQuotaPolicy.EmailMonthlyFullReason(monthly.Limit); monthly = null; }
+            }
             var log = new DocumentEmailLog
             {
                 CompanyId = companyId, DocumentId = doc.Id, ToEmail = to, Subject = text.Subject, Body = text.Html,
@@ -207,6 +218,12 @@ public class SignRequestService : ISignRequestService
             {
                 _logger.LogError(ex, "ส่งอีเมลขอเซ็นล้ม doc={DocId} company={CompanyId}", doc.Id, companyId);
                 r = EmailSendResult.Fail("ส่งไม่สำเร็จ: " + ex.Message);
+            }
+            if (monthly != null)
+            {
+                // ส่งล้ม (รวมโยน — ถูกแปลงเป็นผลล้มด้านบน) ⇒ คืนหน่วย · สำเร็จ ⇒ ประทับคำเตือน 80%/100% ครั้งเดียวต่องวด
+                if (r.Success) await _notifyQuota!.AlertIfCrossedAsync(companyId, monthly, ct);
+                else await _notifyQuota!.ReleaseAsync(companyId, monthly, ct);
             }
             log.Status = r.Success ? EmailLogStatus.Sent : EmailLogStatus.Failed;
             log.SentAt = r.Success ? DateTime.UtcNow : null;

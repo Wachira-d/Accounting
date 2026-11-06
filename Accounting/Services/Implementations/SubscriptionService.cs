@@ -2175,6 +2175,11 @@ public class SubscriptionService : ISubscriptionService
             IsPermanentFree = request.IsPermanentFree,
             MaxSharedMessagesPerMonth = request.MaxSharedMessagesPerMonth,
             TrialMaxSharedMessagesPerMonth = request.TrialMaxSharedMessagesPerMonth,
+            // รอบ 254 WP-11 L4: ค่าติดลบ = ไม่แยก (null) — ผู้อ่าน NotifyQuotaService.LoadLimitsAsync
+            MaxSharedLineMessagesPerMonth = request.MaxSharedLineMessagesPerMonth < 0 ? null : request.MaxSharedLineMessagesPerMonth,
+            TrialMaxSharedLineMessagesPerMonth = request.TrialMaxSharedLineMessagesPerMonth < 0 ? null : request.TrialMaxSharedLineMessagesPerMonth,
+            MaxSharedEmailsPerMonth = request.MaxSharedEmailsPerMonth < 0 ? null : request.MaxSharedEmailsPerMonth,
+            TrialMaxSharedEmailsPerMonth = request.TrialMaxSharedEmailsPerMonth < 0 ? null : request.TrialMaxSharedEmailsPerMonth,
         };
 
         _db.PlanTemplates.Add(template);
@@ -2262,6 +2267,11 @@ public class SubscriptionService : ISubscriptionService
         // ค่าติดลบ = กลับเป็นไม่จำกัด (null) — หน้าแอดมินส่ง -1 เมื่อช่องว่าง
         if (request.MaxSharedMessagesPerMonth.HasValue) template.MaxSharedMessagesPerMonth = request.MaxSharedMessagesPerMonth.Value < 0 ? null : request.MaxSharedMessagesPerMonth.Value;
         if (request.TrialMaxSharedMessagesPerMonth.HasValue) template.TrialMaxSharedMessagesPerMonth = request.TrialMaxSharedMessagesPerMonth.Value < 0 ? null : request.TrialMaxSharedMessagesPerMonth.Value;
+        // รอบ 254 WP-11 L4 (Q3): เพดานแยกช่อง — ติดลบ = ไม่แยก (กลับไปนับรวมก้อนเดิม) · null = ไม่แตะ
+        if (request.MaxSharedLineMessagesPerMonth is int line) template.MaxSharedLineMessagesPerMonth = line < 0 ? null : line;
+        if (request.TrialMaxSharedLineMessagesPerMonth is int trialLine) template.TrialMaxSharedLineMessagesPerMonth = trialLine < 0 ? null : trialLine;
+        if (request.MaxSharedEmailsPerMonth is int email) template.MaxSharedEmailsPerMonth = email < 0 ? null : email;
+        if (request.TrialMaxSharedEmailsPerMonth is int trialEmail) template.TrialMaxSharedEmailsPerMonth = trialEmail < 0 ? null : trialEmail;
         if (request.MaxOcrPagesPerMonth.HasValue) template.MaxOcrPagesPerMonth = request.MaxOcrPagesPerMonth.Value;
         if (request.AzureOcrPagesPerMonth.HasValue) template.AzureOcrPagesPerMonth = request.AzureOcrPagesPerMonth.Value;
         if (request.LocalOcrPagesPerMonth.HasValue) template.LocalOcrPagesPerMonth = request.LocalOcrPagesPerMonth.Value;
@@ -4520,7 +4530,13 @@ public class SubscriptionService : ISubscriptionService
             Accounting.Helpers.NotifyQuotaPolicy.SuggestedTrialLimit,
             // รอบ 231 (P0 จ): ข้อความ/ธง "ไม่จำกัด" ของแพ็กเกจคิดที่เซิร์ฟเวอร์ (UsageBarRule) — js/plan-display.js เลิกถือสำเนาเกณฑ์ 999/99/99999
             UsageBarRule.LimitTexts(t.MaxUsers, t.MaxCompanies, t.MaxDocumentsPerMonth, t.MaxJournalEntriesPerMonth, t.MaxOcrPagesPerMonth, t.MaxStorageBytes, t.MaxSharedMessagesPerMonth),
-            UsageBarRule.UnlimitedFlags(t.MaxUsers, t.MaxCompanies, t.MaxDocumentsPerMonth, t.MaxJournalEntriesPerMonth, t.MaxOcrPagesPerMonth, t.MaxStorageBytes, t.MaxSharedMessagesPerMonth));
+            UsageBarRule.UnlimitedFlags(t.MaxUsers, t.MaxCompanies, t.MaxDocumentsPerMonth, t.MaxJournalEntriesPerMonth, t.MaxOcrPagesPerMonth, t.MaxStorageBytes, t.MaxSharedMessagesPerMonth),
+            new PlanNotifyChannelLimits(
+                t.MaxSharedLineMessagesPerMonth, t.TrialMaxSharedLineMessagesPerMonth, t.MaxSharedEmailsPerMonth, t.TrialMaxSharedEmailsPerMonth,
+                Accounting.Helpers.NotifyQuotaPolicy.SuggestedChannelLimit(t.Plan, Accounting.Helpers.NotifyQuotaPolicy.ChannelLine),
+                Accounting.Helpers.NotifyQuotaPolicy.SuggestedTrialChannelLimit(Accounting.Helpers.NotifyQuotaPolicy.ChannelLine),
+                Accounting.Helpers.NotifyQuotaPolicy.SuggestedChannelLimit(t.Plan, Accounting.Helpers.NotifyQuotaPolicy.ChannelEmail),
+                Accounting.Helpers.NotifyQuotaPolicy.SuggestedTrialChannelLimit(Accounting.Helpers.NotifyQuotaPolicy.ChannelEmail)));
     }
 }
 

@@ -14,5 +14,11 @@ public static class LineOnBehalfText
 
     /// <summary>ห่อข้อความเดิมด้วยป้ายผู้ส่ง (บรรทัดแรก) + ช่องทางยกเลิก (บรรทัดท้าย) · ความยาวรวมถูกตัดที่ตัวส่ง (<see cref="LineMessageLimits"/>)</summary>
     public static string ForNextAcc(string? companyName, string text)
-        => SenderLine(companyName) + "\n" + (text ?? "").Trim() + "\n—\n" + OptOutLine;
+    {
+        // ฝ่ายค้าน L6: ตัดเนื้อก่อนต่อบรรทัดยกเลิก — ตัวส่งตัดที่ 5,000 ตัว ⇒ ถ้าตัดทีหลัง บรรทัดยกเลิก (C5) หายเป็นส่วนแรก
+        var head = SenderLine(companyName) + "\n";
+        var tail = "\n—\n" + OptOutLine;
+        var room = Math.Max(0, LineMessageLimits.MaxTextChars - head.Length - tail.Length);
+        return head + LineMessageLimits.Truncate((text ?? "").Trim(), room) + tail;
+    }
 }

@@ -61,6 +61,83 @@ public class LineDeliveryRound254Tests
         Assert.Equal(broken, c.ChannelBroken);
     }
 
+    [Theory]
+    [InlineData("Not found")]
+    [InlineData("The property, 'to', in the request body is invalid (invalid to)")]
+    public void Outcome_ไม่พบผู้รับ_ไม่ตีว่าผู้รับบล็อก_ฝ่ายค้าน_L5(string body)
+    {
+        var c = LinePushOutcome.Classify(false, 400, "LINE ตอบ 400: " + body, null, false);
+        Assert.Equal(LinePushOutcome.CodeRecipientInvalid, c.Code);
+        Assert.False(c.BlockEndpoint);
+        Assert.True(c.FallbackEligible);
+    }
+
+    [Fact]
+    public void SaveFailureOutcome_ส่งแล้วยังเป็นส่งแล้ว_ทิศตรงข้ามยังไม่ส่งเป็นล้ม_ฝ่ายค้าน_M1()
+    {
+        var at = new DateTime(2026, 11, 6, 3, 0, 0, DateTimeKind.Utc);
+        var sent = SaveFailureOutcome.For("Sent", at, "req-9", "value too long");
+        Assert.Equal("Sent", sent.Status);
+        Assert.Equal(at, sent.SentAt);
+        Assert.Equal("req-9", sent.LineRequestId);
+        Assert.StartsWith(SaveFailureOutcome.SentButNotSavedPrefix, sent.Note);
+        var pending = SaveFailureOutcome.For("Pending", null, null, "value too long");
+        Assert.Equal("Failed", pending.Status);
+        Assert.Null(pending.SentAt);
+    }
+
+    [Fact]
+    public void EmailWanted_ใบ_eTax_by_Email_บังคับอีเมลแม้ติ๊ก_LINE_อย่างเดียว_ฝ่ายค้าน_M3()
+    {
+        Assert.True(ContactLineChannel.EmailWanted(false, false, false, etaxByEmail: true));
+        Assert.False(ContactLineChannel.EmailWanted(false, false, false, etaxByEmail: false));
+        Assert.Contains("e-Tax by Email", ContactLineChannel.EtaxForcedEmailNote);
+    }
+
+    [Fact]
+    public void ข้อความผ่าน_OA_กลาง_ยาวเกิน_ยังมีบรรทัดยกเลิก_ฝ่ายค้าน_L6()
+    {
+        var t = LineOnBehalfText.ForNextAcc("ร้านเรา", new string('ก', 6000));
+        Assert.True(t.Length <= LineMessageLimits.MaxTextChars);
+        Assert.EndsWith(LineOnBehalfText.OptOutLine, t);
+    }
+
+    [Fact]
+    public void ชื่อโปรไฟล์_เป็นป้าย_และปิดบังใน_audit_ฝ่ายค้าน_M4()
+    {
+        Assert.Equal("LINE: สมหญิง", ContactLineBindRule.ProfileLabel(" สมหญิง\u0007 "));
+        Assert.Null(ContactLineBindRule.ProfileLabel("  "));
+        Assert.Equal("ส•••", ContactLineBindRule.MaskName("LINE: สมหญิง"));
+        Assert.Null(ContactLineBindRule.MaskName(null));
+        Assert.Contains("อีเมล", ContactLineBindRule.Replies.Stopped("ร้าน"));   // L9: หยุดเฉพาะ LINE
+    }
+
+    // ───── L3 กลุ่ม: คำสั่ง + รหัส ─────
+
+    [Theory]
+    [InlineData("#HeyNextAcc", LineGroupCommand.HeyNextAcc)]
+    [InlineData("  #heynextacc ", LineGroupCommand.HeyNextAcc)]
+    [InlineData("＃HeyNextAcc", LineGroupCommand.HeyNextAcc)]
+    [InlineData("# HeyNextAcc", LineGroupCommand.HeyNextAcc)]
+    [InlineData("#ByeNextAcc", LineGroupCommand.ByeNextAcc)]
+    [InlineData("HeyNextAcc", LineGroupCommand.None)]
+    [InlineData("#HeyNextAccX", LineGroupCommand.None)]
+    [InlineData("ส่งใบเสนอราคา #HeyNextAcc", LineGroupCommand.None)]
+    [InlineData("", LineGroupCommand.None)]
+    public void คำสั่งกลุ่ม_รับเฉพาะรูปที่กำหนด(string text, LineGroupCommand expected) => Assert.Equal(expected, LineGroupBindRule.Parse(text));
+
+    [Fact]
+    public void รหัสผูกกลุ่ม_อ่านได้ทั้งมีและไม่มีคำนำหน้า_ตัวนอกชุดปฏิเสธ()
+    {
+        Assert.Equal("ABCDEFGH", LineGroupBindRule.TryParseCode("gb-abcdefgh"));
+        Assert.Equal("ABCDEFGH", LineGroupBindRule.TryParseCode("ABCDEFGH"));
+        Assert.Null(LineGroupBindRule.TryParseCode("GB-ABCDEFG0"));   // 0 ไม่อยู่ในชุด
+        Assert.Null(LineGroupBindRule.TryParseCode("C1234567890abcdef1234567890abcdef"));   // groupId อย่างเดียวผูกไม่ได้
+        Assert.Equal(LineGroupBindRule.Hash("abcdefgh"), LineGroupBindRule.Hash("ABCDEFGH"));
+        Assert.NotEqual(LineGroupBindRule.Hash("ABCDEFGH"), CustomerLineLinkRule.Hash("ABCDEFGH"));   // คนละคำนำหน้า ⇒ คนละ hash
+        Assert.Contains("GB-ABCDEFGH", LineGroupBindRule.Replies.Code("ABCDEFGH", "กลุ่ม", DateTime.UtcNow));
+    }
+
     [Fact]
     public void Outcome_เครือข่ายล้ม_ลองใหม่_ส่วนไม่มี_token_ล้มถาวร()
     {

@@ -64,6 +64,13 @@ public static class AddOnCodes
     /// <c>DatabaseMigrationHelper.CmsRound212NotifyStatements</c>) แก้ต้องแก้ทั้งสองที่พร้อมกัน</summary>
     public const int MessagesPerNotifyTopUpPack = 500;
 
+    /// <summary>รอบ 254 WP-11 L4 (คำตอบเจ้าของ Q3 · N7): แพ็กข้อความ LINE ผ่าน OA ของ NextAcc — ค่าตั้งต้น 1,000 ข้อความ ฿290 อายุ 60 วัน (แก้ได้ที่ /admin/addons.html)</summary>
+    public const string NotifyTopUpLine = "notify.topup.line";
+    /// <summary>รอบ 254 WP-11 L4: แพ็กอีเมลผ่าน SMTP ของ NextAcc — ค่าตั้งต้น 5,000 ฉบับ ฿190 อายุ 60 วัน</summary>
+    public const string NotifyTopUpEmail = "notify.topup.email";
+    public const int MessagesPerNotifyTopUpLinePack = 1000;
+    public const int MessagesPerNotifyTopUpEmailPack = 5000;
+
     /// <summary>add-on ทั้งหมดที่เป็น "สวิตช์" ให้ลูกค้าเปิด/ปิดเอง (ใช้ในหน้า addons
     /// และตอน seed) — เรียงตามลำดับที่อยากให้เห็นบนหน้าจอ</summary>
     public static readonly IReadOnlyList<string> Switchable = new[]
@@ -76,7 +83,7 @@ public static class AddOnCodes
     /// (ถ้าโผล่ ลูกค้าจะ "ปิด" แล้วคิดว่าไม่ต้องจ่ายค่าเอกสารเกินโควตา)</summary>
     public static readonly IReadOnlyList<string> SystemMeters = new[]
     {
-        DocumentsOverage, LodgingStay, LodgingEmailOverage, LodgingSms, DocumentsTopUp, NotifyTopUp,
+        DocumentsOverage, LodgingStay, LodgingEmailOverage, LodgingSms, DocumentsTopUp, NotifyTopUp, NotifyTopUpLine, NotifyTopUpEmail,
     };
 
     /// <remarks>รอบ 231: มิเตอร์ส่วนเกิน <c>overage.&lt;resource&gt;</c> (<see cref="OverageResources"/>) เป็นมิเตอร์ของระบบเช่นกัน — ไม่มีแถว CompanyFeature ให้เปิด</remarks>

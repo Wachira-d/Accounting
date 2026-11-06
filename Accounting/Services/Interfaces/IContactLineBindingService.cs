@@ -10,7 +10,10 @@ public interface IContactLineBindingService
     Task<ContactLineInviteResponse> CreateInviteAsync(Guid companyId, Guid contactId, Guid? actorUserId, string? actorEmail, CancellationToken ct = default);
 
     /// <summary>หน้าเชิญ (public · สิทธิ์ = token) — ลิงก์ใช้ไม่ได้ ⇒ <c>Problem</c> (ข้อความเดียว ไม่บอกเหตุละเอียด)</summary>
-    Task<ContactLineJoinView> GetJoinViewAsync(Guid companyId, string? token, CancellationToken ct = default);
+    Task<ContactLineJoinView> GetJoinViewAsync(Guid companyId, string? token, string? ip, CancellationToken ct = default);
+
+    /// <summary>ฝ่ายค้าน M4: ยกเลิกลิงก์ผูก LINE ที่ยังเปิดของผู้ติดต่อ (ผู้เรียกตรวจ Contact.Edit แล้ว) · audit chain · คืนจำนวนที่ยกเลิก</summary>
+    Task<int> RevokeInvitesAsync(Guid companyId, Guid contactId, Guid? actorUserId, string? actorEmail, CancellationToken ct = default);
 
     /// <summary>ผู้รับกดยินยอม (public) ⇒ บันทึก <c>PdpaConsentRecord</c> + ออกรหัส <c>LN-…</c> อายุ 30 นาที · จำกัดความถี่ต่อ IP (DB)</summary>
     Task<ContactLineJoinConsentResponse> ConsentAsync(Guid companyId, string? token, string? ip, string? userAgent, CancellationToken ct = default);

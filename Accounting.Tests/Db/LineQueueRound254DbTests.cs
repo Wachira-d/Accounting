@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.DTOs.Notification;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
@@ -314,7 +315,7 @@ public class LineQueueRound254DbTests
 
         // ยังไม่ยินยอม ⇒ ไม่มีรหัส ⇒ ส่งข้อความผูกแล้วไม่ใช่ของผู้ติดต่อ (null = เส้นลูกค้าเว็บ)
         Assert.Null(await Binding(db).TryRedeemAsync(s.CompanyId, Bot, "Unew2540000000000000000000000001", "ผูก LN-ABCDEFGH"));
-        var view = await Binding(db).GetJoinViewAsync(s.CompanyId, token);
+        var view = await Binding(db).GetJoinViewAsync(s.CompanyId, token, "203.0.113.5");
         Assert.Null(view.Problem);
         Assert.Contains("LY Corporation", view.ConsentText);
 
@@ -347,6 +348,55 @@ public class LineQueueRound254DbTests
         Assert.Null(after.LineUserId);
         Assert.NotNull((await db.PdpaConsentRecords.AsNoTracking().SingleAsync(c => c.Id == ep.ConsentRecordId)).WithdrawnAt);
     }
+
+    [Fact]
+    public async Task ลิงก์ใหม่ยกเลิกลิงก์เดิมที่ยังเปิด_ยกเลิกทั้งหมดได้_ฝ่ายค้าน_M4()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "bind-revoke " + Guid.NewGuid().ToString("N")[..6]);
+        string Token(ContactLineInviteResponse r) => Uri.UnescapeDataString(r.Path.Split("t=")[1]);
+        var first = await Binding(db).CreateInviteAsync(s.CompanyId, s.ContactId, null, "owner@seller254.co.th");
+        var second = await Binding(db).CreateInviteAsync(s.CompanyId, s.ContactId, null, "owner@seller254.co.th");
+        db.ChangeTracker.Clear();
+        Assert.NotNull((await Binding(db).GetJoinViewAsync(s.CompanyId, Token(first), "203.0.113.6")).Problem);
+        Assert.Null((await Binding(db).GetJoinViewAsync(s.CompanyId, Token(second), "203.0.113.6")).Problem);   // ทิศตรงข้าม: ลิงก์ล่าสุดใช้ได้
+        Assert.Equal(1, await Binding(db).RevokeInvitesAsync(s.CompanyId, s.ContactId, null, "owner@seller254.co.th"));
+        db.ChangeTracker.Clear();
+        Assert.NotNull((await Binding(db).GetJoinViewAsync(s.CompanyId, Token(second), "203.0.113.6")).Problem);
+        // RoPA ของกิจกรรมนี้ถูกสร้างครั้งเดียว (L7)
+        Assert.Equal(1, await db.PdpaProcessingActivities.CountAsync(r => r.CompanyId == s.CompanyId && r.Purpose == ContactLineBindRule.RopaPurpose));
+    }
+
+    [Fact]
+    public async Task แถวค้างกำลังส่ง_นับหนึ่งครั้งแล้วส่งต่อ_ครบเพดานล้มพร้อมเหตุ_ฝ่ายค้าน_M2()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var retry = await SeedAsync(db, "stale-retry " + Guid.NewGuid().ToString("N")[..6]);
+        var dead = await SeedAsync(db, "stale-dead " + Guid.NewGuid().ToString("N")[..6]);
+        await Sched(db).ScanDueSoonAndOverdueAsync();
+        await DueNowAsync(db, retry, dead);
+        var old = DateTime.UtcNow - ContactLineQueueService.StaleSending - TimeSpan.FromMinutes(1);
+        await db.LineQueues.Where(q => q.CompanyId == retry.CompanyId)
+            .ExecuteUpdateAsync(x => x.SetProperty(q => q.Status, ContactLineChannel.StatusSending).SetProperty(q => q.UpdatedAt, (DateTime?)old));
+        await db.LineQueues.Where(q => q.CompanyId == dead.CompanyId)
+            .ExecuteUpdateAsync(x => x.SetProperty(q => q.Status, ContactLineChannel.StatusSending).SetProperty(q => q.UpdatedAt, (DateTime?)old)
+                .SetProperty(q => q.RetryCount, LinePushOutcome.MaxAttempts - 1));
+        var log = new List<Push>();
+
+        await Queue(db, FakeLine(log, _ => new LinePushResult(true, null, HttpStatus: 200))).ProcessPendingAsync();
+
+        var r = Assert.Single(await LineRowsAsync(db, retry));
+        Assert.Equal(ContactLineChannel.StatusSent, r.Status);
+        Assert.Equal(1, r.RetryCount);
+        var d = Assert.Single(await LineRowsAsync(db, dead));
+        Assert.Equal(ContactLineChannel.StatusFailed, d.Status);
+        Assert.Equal(ContactLineService_StaleReason, d.ErrorMessage);
+        Assert.Single(log);   // แถวที่ครบเพดานไม่ถูกยิงซ้ำ
+    }
+
+    private const string ContactLineService_StaleReason = ContactLineQueueService.StaleFailedReason;
 
     [Fact]
     public async Task ลิงก์ผูก_บริษัทไม่มี_OA_สร้างไม่ได้()

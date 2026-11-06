@@ -30,11 +30,14 @@ public class CustomerLineWebhookController : ControllerBase
     private readonly ICustomerRelinkInviteService? _relink;
     /// <summary>รอบ 254 WP-11 L2: ผูก/หยุด/บล็อก LINE ของ<b>ผู้ติดต่อ</b> (ลิงก์/QR ผูก LINE ผ่าน OA ของบริษัท) — ก่อนเส้นลูกค้าเว็บ</summary>
     private readonly IContactLineBindingService? _contactLine;
+    /// <summary>รอบ 254 WP-11 L3: กลุ่ม LINE ของผู้ติดต่อ + กัน webhook ซ้ำ</summary>
+    private readonly IContactLineGroupService? _groups;
 
     public CustomerLineWebhookController(AccountingDbContext db, ISecretProtector secrets, ICustomerLineLinkService links,
-        ILogger<CustomerLineWebhookController> logger, ICustomerRelinkInviteService? relink = null, IContactLineBindingService? contactLine = null)
+        ILogger<CustomerLineWebhookController> logger, ICustomerRelinkInviteService? relink = null, IContactLineBindingService? contactLine = null,
+        IContactLineGroupService? groups = null)
     {
-        _db = db; _secrets = secrets; _links = links; _logger = logger; _relink = relink; _contactLine = contactLine;
+        _db = db; _secrets = secrets; _links = links; _logger = logger; _relink = relink; _contactLine = contactLine; _groups = groups;
     }
 
     /// <summary>body ของ LINE webhook เล็ก (event ไม่กี่ตัว) — จำกัด 256 KB กันยิง body ใหญ่ใส่ทางเข้าสาธารณะ (ฝ่ายค้าน ข้อ 6)</summary>
@@ -73,7 +76,24 @@ public class CustomerLineWebhookController : ControllerBase
             foreach (var ev in events.EnumerateArray())
             {
                 var type = ev.TryGetProperty("type", out var t) ? t.GetString() : null;
-                if (!ev.TryGetProperty("source", out var src) || !src.TryGetProperty("type", out var st) || st.GetString() != "user") continue;
+                // รอบ 254 WP-11 L3 (G10): LINE ส่ง webhook ซ้ำได้ ⇒ event ที่เห็นแล้วข้าม (ผูก/ตอบไม่ซ้ำ · ตารางกลางหลายเครื่อง)
+                var eventId = ev.TryGetProperty("webhookEventId", out var we) ? we.GetString() : null;
+                if (_groups != null && !await _groups.MarkEventSeenAsync(eventId, ct)) continue;
+                if (!ev.TryGetProperty("source", out var src) || !src.TryGetProperty("type", out var st)) continue;
+                var sourceType = st.GetString();
+                if (sourceType is "group" or "room")
+                {
+                    // รอบ 254 WP-11 L3: กลุ่มของผู้ติดต่อ (#HeyNextAcc/#ByeNextAcc · join/leave · สมาชิก) — ข้อความอื่นในกลุ่มไม่ประมวล/ไม่เก็บ
+                    if (_groups == null) continue;
+                    var outcome = await _groups.HandleCompanyGroupEventAsync(companyId, destination, ev, ct);
+                    var groupReplyToken = ev.TryGetProperty("replyToken", out var grt) ? grt.GetString() : null;
+                    if (!string.IsNullOrEmpty(outcome.Reply) && !string.IsNullOrEmpty(groupReplyToken))
+                        await _links.ReplyAsync(CustomerNotifyChannel.ScopeCompany, companyId, groupReplyToken, outcome.Reply, ct);
+                    if (outcome.LeaveAfterReply && src.TryGetProperty("groupId", out var leaveGroup))
+                        await _groups.LeaveGroupIfUnboundAsync(companyId, destination, leaveGroup.GetString() ?? "", ct);   // Q8 หลังตอบ
+                    continue;
+                }
+                if (sourceType != "user") continue;
                 var userId = src.TryGetProperty("userId", out var u) ? u.GetString() ?? "" : "";
                 var replyToken = ev.TryGetProperty("replyToken", out var rt) ? rt.GetString() : null;
                 string? reply = null;

@@ -754,7 +754,8 @@ builder.Services.AddScoped<IPosService, PosService>();
 builder.Services.AddScoped<IContactRecipientResolver, ContactRecipientResolver>();   // รอบ 245 L1 — ผู้อ่านเดียวของปลายทางแจ้งเตือนของผู้ติดต่อ
 builder.Services.AddScoped<IContactNotifyEndpointService, ContactNotifyEndpointService>();   // รอบ 245 L1 — ผู้เขียนเดียว (แท็บช่องทางแจ้งเตือน)
 builder.Services.AddScoped<IContactLineBindingService, ContactLineBindingService>();   // รอบ 254 WP-11 L2 — ลิงก์/QR ผูก LINE ของผู้ติดต่อ (OA บริษัท · ยินยอมบนมือถือ)
-builder.Services.AddScoped<IContactLineQueueService, ContactLineQueueService>();   // รอบ 254 WP-11 L2 — ผู้ส่งคิว LINE ถึงผู้ติดต่อ (EmailScheduleWorker เรียก)
+builder.Services.AddScoped<IContactLineQueueService, ContactLineQueueService>();
+builder.Services.AddScoped<IContactLineGroupService, ContactLineGroupService>();   // รอบ 254 WP-11 L3 — กลุ่ม LINE ของผู้ติดต่อ (#HeyNextAcc · OA บริษัท)   // รอบ 254 WP-11 L2 — ผู้ส่งคิว LINE ถึงผู้ติดต่อ (EmailScheduleWorker เรียก)
 builder.Services.AddScoped<INextAccLineConfig, NextAccLineConfig>();   // รอบ 212 D — ค่าตั้ง LINE OA กลาง: หน้าแอดมินก่อน · config Line:* fallback (ผู้อ่านตัวเดียว)
 builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
 // รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน (push ผ่าน OA กลาง) · มิเตอร์ช่องกลาง = no-op จนกว่าโควตาแพ็ก A เข้า (ผู้ประสานงานต่อสายตอน merge)
@@ -842,6 +843,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.UndueInputVatEx
 // กวาดสแกน OCR ที่ค้าง Processing (process ถูกฆ่ากลางทาง) + คืนโควตาที่หักไปแล้ว
 builder.Services.AddHostedService<Accounting.Services.Background.OcrStuckScanSweepJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.NextAccOaQuotaWatch>();   // รอบ 254 WP-11 L4 (N8) — เฝ้าต้นทุน OA กลาง (push/reply) ทุกชั่วโมง · JobLock
 builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
 // 2026-10-19: ตรวจวันหมดอายุใบรับรอง SSL ของโดเมนแพลตฟอร์ม วันละครั้ง — เตือนผู้ดูแลระบบล่วงหน้า 30/14/7/1 วัน (หน้าเว็บ + อีเมล)
 builder.Services.AddHostedService<Accounting.Services.Background.TlsCertificateMonitorJob>();

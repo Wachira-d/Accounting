@@ -2895,6 +2895,9 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ทุกฉบับลง `DocumentEmailLogs` (`Purpose` sign-request/-auto/sign-reminder · `SenderMode`) — ถูกกัน/ล้ม = แถว Failed + ข้อความ · หน้าเว็บ 429/502 พร้อมเหตุ
 - **อีเมลเอกสารทั่วไป** (`SendDocumentEmailAsync`) ใช้ตัวตัดสินผู้ส่งเดียวกัน (เดิมใส่ From ของบริษัทแม้ส่งผ่าน SMTP ของระบบ = ปลอมโดเมน) · e-Tax by Email ไม่เปลี่ยน (ต้องเป็นอีเมลที่ลงทะเบียนกับสรรพากร) ·
   **เส้นแพลตฟอร์ม (240-9)**: เพดานชุดเดียวกัน (`Helpers/PlatformEmailQuota` + `SignEmailThrottle` · To+Cc+Bcc ≤ 5 · บริษัทยังไม่ยืนยันตัวตน = เลขภาษีไม่ถูก/ไม่เคยชำระ ⇒ 20/วัน · ถูกกัน = แถว Failed + 429) ·
+  **รอบ 254 WP-11 L4 (Q4)**: ผ่านเพดานรายวันแล้ว ⇒ ตัดโควตาอีเมลรายเดือน (`INotifyQuotaService.ReservePlatformEmailAsync` · แถวตัวนับช่องอีเมล · ไม่ตั้งเพดาน = นับอย่างเดียว ไม่จำกัด) ก่อนเรียกผู้ให้บริการ ·
+  เต็ม ⇒ แถว Failed + 429 `EMAIL-PLATFORM-MONTHLY` พร้อมทางไปต่อ (ซื้อแพ็กอีเมล/ตั้งผู้ส่งของบริษัท) · ส่งล้ม/โยน ⇒ คืนหน่วย · เส้นเดียวกันในคิวตารางส่ง (ล้มบนคิว · กดลองใหม่หลังซื้อ) และอีเมลขอเซ็น (1 ผู้รับ = 1 ฉบับ) ·
+  อีเมลทดสอบรายการประจำไม่นับ (คงเดิม) ·
   เนื้อ = เทมเพลตคงที่ `SignRequestEmailText.WrapPlatformDocumentEmail` (ข้อความที่ผู้ใช้แก้ = ข้อความล้วน · ค่าตั้งต้นของเซิร์ฟเวอร์ใช้ได้) · หน้าต่างส่งอีเมลแสดงโหมดผู้ส่งจาก
   `email-template` (`SenderMode`/`SenderNote`) · บริษัทที่ตั้ง SMTP แต่ยังไม่ทดสอบผ่าน = ส่งผ่าน NextAcc · เส้น SMTP ของบริษัท: เดิม
 - **ลูกค้าเปิด/เซ็น** — เปิดหน้าลิงก์ครั้งแรกประทับ `Document.SignLinkOpenedAt` (ไม่มี tracking pixel) · ยอมรับ (`Accept`) / เซ็นรับ (`SignDelivery` — จองแบบอะตอมมิกแล้ว) ⇒
@@ -3102,12 +3105,21 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     กลุ่มของผู้ติดต่อผ่าน OA กลาง ⇒ `NotificationAudiencePolicy` ปฏิเสธ (`NOTIFY-CENTRAL-OA-GROUP-OFF`) จนแอดมินเปิดสวิตช์ (L3/L4 — ยังไม่มีคอลัมน์สวิตช์ในรอบนี้)
   - **หลักฐานการส่ง (G8)**: แถว `LineQueues` สถานะ Sent (LINE ตอบรับจริงเท่านั้น · เก็บ `x-line-request-id`) นับใน `DocumentDeliveryEvidence.DeliveredAsync` ·
     **ไม่ใช่การส่ง e-Tax by Email** (ตัวตัดสินคนละตัว)
-  - **ผูก LINE ของผู้ติดต่อ — ลิงก์/QR (Q6 ทางลัด)**: แท็บช่องทางแจ้งเตือน › "ลิงก์/QR ผูก LINE" (`POST …/notify-endpoints/line-invite` · `Contact.Edit` · OA บริษัทต้องพร้อม) ⇒
+  - **ผูก LINE ของผู้ติดต่อ — ลิงก์/QR (Q6 ทางลัด)**: แท็บช่องทางแจ้งเตือน › "ลิงก์/QR ผูก LINE" (`POST …/notify-endpoints/line-link` · `Contact.Edit` · OA บริษัทต้องพร้อม) ⇒
     `ContactLineInvites` (token เก็บ hash · 7 วัน · ใช้ครั้งเดียว) ⇒ หน้า public `contact-line-join.html` (`api/public/contact-line-join/{cid}/view|consent` · token ใน body ·
     จำกัดความถี่ต่อ IP) ⇒ ผู้รับกดยินยอม (`PdpaConsentRecord` purpose `contact-line-notify` · hash หลักฐาน) ⇒ รหัส `ผูก LN-…` (รูปแบบเดียวกับลูกค้าเว็บ · 30 นาที) ⇒ ส่งในแชต OA บริษัท ⇒
     webhook บริษัท (`CustomerLineWebhookController` ก่อนเส้นลูกค้าเว็บ) สร้างปลายทาง LineUser (scope company · userId เข้ารหัส · ล็อกต่อผู้ติดต่อ · audit chain) ·
     **ยกเลิก**: ผู้รับพิมพ์ "หยุด"/stop ⇒ ปลดเฉพาะบริษัทนั้น + ถอนความยินยอม + ล้าง id · unfollow ⇒ บล็อก · follow ⇒ ปลดบล็อก · PDPA erase ⇒ ยกเลิกคำเชิญที่ค้าง
-  - **ยังไม่ทำ (บอกตรง ๆ)**: กลุ่ม `#HeyNextAcc` + webhook กลุ่ม (L3) · ส่งผ่าน OA กลาง + โควตา LINE/อีเมลแยกช่อง + แพ็ก ฿290/฿190 + `NextAccOaQuotaWatch` (L4) ·
+  - **กลุ่ม LINE ของผู้ติดต่อ — รอบ 254 L3 (ผ่าน OA บริษัท)**: เชิญ OA บริษัทเข้ากลุ่ม ⇒ `join` บอทตอบคำแนะนำ ⇒ `#HeyNextAcc` ⇒ รหัส `GB-…` (`LineGroupBindCodes` · hash ·
+    30 นาที · groupId เข้ารหัส · ผูกกับบริษัทเจ้าของ webhook) — กลุ่มกลางของแอดมิน/เกิน 200 คน/อ่านจำนวนไม่ได้ ⇒ ไม่ออกรหัส ⇒ แท็บช่องทางแจ้งเตือน › ใส่รหัส ›
+    ตรวจ (`POST …/line-group/preview`) › ติ๊กรับรองสิทธิ์ของสมาชิก + เรื่อง + แสดงยอด (Q5 ค่าตั้งต้นแสดง) › ยืนยัน (`…/line-group/confirm` · Contact.Edit · หลักฐาน PDPA ·
+    รหัสใช้ครั้งเดียวใต้ล็อก · audit) ⇒ บอทประกาศในกลุ่ม · `#ByeNextAcc`/บอทถูกเตะ (`leave`) ⇒ ปลด + ล้าง id + คิวค้างข้าม · ไม่เหลือการผูก ⇒ บอทออก (Q8 · ทั้งจากกลุ่มและจากหน้าผู้ติดต่อ) ·
+    สมาชิกเข้า/ออก ⇒ อัปเดตจำนวน (เกิน 200 ⇒ ตัวตัดสินฝั่งส่งหยุดเอง) · ข้อความอื่นในกลุ่มไม่ประมวล/ไม่เก็บ · webhook ซ้ำข้าม (`LineWebhookEventsSeen` · ลบ 7 วัน) ·
+    OA กลาง: webhook กลางยังไม่รับเหตุการณ์กลุ่ม + รหัสจาก OA กลางผูกไม่ได้ (รอสวิตช์ L4 + หนังสือจาก LINE — N8)
+  - **โควตาแยกช่อง — รอบ 254 L4**: ตัวนับ `NotifyUsageCounters` ต่อ (บริษัท·งวด·ช่อง) · เพดานแยก LINE/อีเมลบนแพ็กเกจ/บริษัท (ว่าง = ไม่แยก ⇒ ก้อนรวมเดิม) ·
+    แพ็ก `notify.topup.line` ฿290/1,000 · `notify.topup.email` ฿190/5,000 · อีเมลเอกสารผ่าน SMTP ของ NextAcc ตัดโควตารายเดือน (ด้านบน · ACCOUNT_STRUCTURE §5)
+  - **เฝ้าต้นทุน OA กลาง — รอบ 254 L4 (N8)**: `NextAccOaQuotaWatch` รายชั่วโมง (push จาก LINE + ตัวนับ reply ต่อเดือน) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% · ไม่ตัดโควตาผู้เช่า
+  - **ยังไม่ทำ (บอกตรง ๆ)**: กลุ่ม/ส่งผ่าน OA กลาง + สวิตช์ `CentralOaGroupDeliveryEnabled` (ทำพร้อมกัน — DECISIONS 254-WP11-11) ·
     ชั่วโมงเงียบ · ลิงก์ดูเอกสาร (`DocumentViewLink`) · LINE ของใบแจ้งยอด/50 ทวิ/ใบเสร็จหลังรับชำระ/ลิงก์เซ็น (L6) · กระดิ่งเมื่อล้มซ้ำ ·
     เทสต์ `LineDeliveryRound254Tests` · Db `LineQueueRound254DbTests` · ล็อก R254 (+ เคส R254a–j) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit cee44a3c
   - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·

@@ -132,9 +132,10 @@ public class MeteringAdminController : ControllerBase
             kind = f.Kind.ToString(),
             // รอบ 213: ขนาด/อายุแพ็กตั้งได้เฉพาะ notify.topup (เซิร์ฟเวอร์บอกว่าแก้ได้ไหม + ค่าที่มีผล — หน้าเว็บไม่มีสำเนากติกา)
             f.PackSize, f.PackValidDays,
-            packEditable = f.FeatureCode == Models.Constants.AddOnCodes.NotifyTopUp,
-            effectivePack = f.FeatureCode == Models.Constants.AddOnCodes.NotifyTopUp
-                ? Accounting.Helpers.NotifyQuotaPolicy.TopUpPack(f.PackSize, f.PackValidDays) : null,
+            // รอบ 254 WP-11 L4: แพ็กแยกช่อง notify.topup.line/.email ตั้งขนาด/อายุได้เช่นกัน (ผู้อ่าน NotifyQuotaService.LoadPackAsync → TopUpPackFor)
+            packEditable = Accounting.Helpers.NotifyQuotaPolicy.ChannelOfTopUpCode(f.FeatureCode) != null,
+            effectivePack = Accounting.Helpers.NotifyQuotaPolicy.ChannelOfTopUpCode(f.FeatureCode) is string packChannel
+                ? Accounting.Helpers.NotifyQuotaPolicy.TopUpPackFor(packChannel, f.PackSize, f.PackValidDays) : null,
             enabledCompanies = enabledCounts.GetValueOrDefault(f.FeatureCode, 0),
             // แผนมาตรฐาน (BillingAccountId = null) แสดงเป็นราคาหลัก;
             // ดีลเฉพาะกลุ่มนับแยกให้เห็นว่ามีกี่ดีล
@@ -168,8 +169,9 @@ public class MeteringAdminController : ControllerBase
             return BadRequest(new ApiResponse<string>(false, null, "กรุณาระบุรหัสฟีเจอร์"));
 
         // รอบ 213 (คำตัดสินข้อ 172): ขนาด/อายุแพ็กมีผู้อ่านเฉพาะ notify.topup — ส่งมากับรหัสอื่น = ปฏิเสธ (ไม่ใช่เก็บเงียบ ๆ แล้วไม่มีผล)
-        if ((req.PackSize != null || req.PackValidDays != null || req.ResetPack) && code != Models.Constants.AddOnCodes.NotifyTopUp)
-            return BadRequest(new ApiResponse<string>(false, null, "ตั้งจำนวนต่อแพ็ก/อายุแพ็กได้เฉพาะแพ็กข้อความแจ้งเตือน (notify.topup)"));
+        var packChannelOfCode = Accounting.Helpers.NotifyQuotaPolicy.ChannelOfTopUpCode(code);
+        if ((req.PackSize != null || req.PackValidDays != null || req.ResetPack) && packChannelOfCode == null)
+            return BadRequest(new ApiResponse<string>(false, null, "ตั้งจำนวนต่อแพ็ก/อายุแพ็กได้เฉพาะแพ็กข้อความแจ้งเตือน (notify.topup · notify.topup.line · notify.topup.email)"));
         if (Accounting.Helpers.NotifyQuotaPolicy.ValidatePack(req.PackSize, req.PackValidDays) is string packErr)
             return BadRequest(new ApiResponse<string>(false, null, packErr));
 
@@ -204,14 +206,14 @@ public class MeteringAdminController : ControllerBase
             // ฝ่ายค้านรอบ 213 (d): คืนค่าตั้งต้น (500 ข้อความ · 60 วัน) — ล้างค่าที่ตั้งไว้ · หน่วยบนใบแจ้งหนี้กลับเป็นของค่าตั้งต้น · ช่องที่ส่งมาพร้อมกันถูกเพิกเฉย
             row.PackSize = null;
             row.PackValidDays = null;
-            row.UnitLabel = Accounting.Helpers.NotifyQuotaPolicy.PackUnitLabel(Accounting.Helpers.NotifyQuotaPolicy.TopUpPack(null, null).Size);
+            row.UnitLabel = Accounting.Helpers.NotifyQuotaPolicy.PackUnitLabelFor(packChannelOfCode!, Accounting.Helpers.NotifyQuotaPolicy.TopUpPackFor(packChannelOfCode!, null, null).Size);
         }
         else if (req.PackValidDays != null) row.PackValidDays = req.PackValidDays;
         if (req.PackSize != null && !req.ResetPack)
         {
             row.PackSize = req.PackSize;
             // หน่วยบนใบแจ้งหนี้ประกอบจากขนาดแพ็กเสมอ (เดิม "ต้องแก้สองที่พร้อมกัน" — ตอนนี้ที่เดียว)
-            row.UnitLabel = Accounting.Helpers.NotifyQuotaPolicy.PackUnitLabel(req.PackSize.Value);
+            row.UnitLabel = Accounting.Helpers.NotifyQuotaPolicy.PackUnitLabelFor(packChannelOfCode!, req.PackSize.Value);
         }
         row.UpdatedAt = DateTime.UtcNow;
         row.UpdatedBy = User.Identity?.Name;
