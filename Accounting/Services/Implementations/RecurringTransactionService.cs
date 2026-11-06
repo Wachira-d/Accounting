@@ -438,19 +438,29 @@ public class RecurringTransactionService : IRecurringTransactionService
         var candidates = await _db.RecurringTransactions.AsNoTracking()
             .Where(r => r.Status == RecurringStatus.Active && r.NotifyBeforeRun && r.NotifyDaysBefore > 0
                 && r.NextRunDate > today && r.NextRunDate < horizon)
-            .Select(r => new { r.Id, r.CompanyId, r.Name, r.CreatedBy, r.NextRunDate, r.NotifyDaysBefore, r.UpcomingRunNotifiedFor })
+            .Select(r => new { r.Id, r.CompanyId, r.Name, r.CreatedBy, r.NextRunDate, r.NotifyDaysBefore, r.UpcomingRunNotifiedFor,
+                r.Frequency, r.EndDate, r.TotalRuns, r.MaxRuns })
             .ToListAsync();
         var sent = 0;
         foreach (var r in candidates)
         {
-            if (!RecurringUpcomingNotice.ShouldNotify(true, r.NotifyDaysBefore, true, r.NextRunDate, today, r.UpcomingRunNotifiedFor)) continue;
+            // ฝ่ายค้าน H2/M1: รายวันไม่แจ้ง · รอบที่เลยวันสิ้นสุด/ครบจำนวนครั้ง (จะไม่รัน) ไม่แจ้ง
+            if (!RecurringUpcomingNotice.ShouldNotify(true, r.NotifyDaysBefore, true, r.Frequency, r.NextRunDate, r.EndDate, r.TotalRuns, r.MaxRuns,
+                    today, r.UpcomingRunNotifiedFor)) continue;
             var runDate = r.NextRunDate;
             var claimed = await _db.RecurringTransactions
                 .Where(x => x.Id == r.Id && x.CompanyId == r.CompanyId && x.NextRunDate == runDate
                     && (x.UpcomingRunNotifiedFor == null || x.UpcomingRunNotifiedFor != runDate))
                 .ExecuteUpdateAsync(u => u.SetProperty(x => x.UpcomingRunNotifiedFor, (DateTime?)runDate));
             if (claimed == 0) continue;   // อีกเครื่องแจ้งไปแล้ว / รอบเลื่อนแล้ว
+            // ประทับก่อนส่ง = อย่างมากครั้งเดียว (DispatchAsync กลืนข้อผิดพลาดเองไม่คืนผล — ส่งล้ม = รอบนั้นไม่ได้กระดิ่ง · L3)
             var days = RecurringUpcomingNotice.DaysUntil(runDate, today);
+            // ฝ่ายค้าน H2: ผู้รับ = ผู้สร้างที่ยังเป็นสมาชิกที่ใช้งานของบริษัทนี้ · ไม่งั้น null ⇒ ค่าตั้งต้นของคีย์ (กระดิ่งเจ้าของ)
+            Guid? recipient = null;
+            if (Guid.TryParse(r.CreatedBy, out var creatorId)
+                && await _db.CompanyUsers.AsNoTracking().AnyAsync(cu => cu.CompanyId == r.CompanyId && cu.UserId == creatorId
+                    && cu.User.Status == UserStatus.Active))
+                recipient = creatorId;
             await _notify.DispatchAsync(r.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringUpcomingRun, new NotificationContext
             {
                 Title = $"รายการประจำ \"{r.Name}\" จะสร้างเอกสารในอีก {days} วัน",
@@ -458,7 +468,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                 ActionUrl = "/pages/recurring.html",
                 EntityType = "RecurringTransaction",
                 EntityId = r.Id,
-                RecipientUserId = Guid.TryParse(r.CreatedBy, out var ownerId) ? ownerId : null,
+                RecipientUserId = recipient,
             });
             sent++;
         }

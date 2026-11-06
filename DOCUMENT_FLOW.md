@@ -2922,13 +2922,18 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ตั้งค่า: การ์ด "ลิงก์ให้ลูกค้าเซ็น" (`/api/companies/{id}/sign-requests/settings` · บันทึก/ออกรหัสลับ = เจ้าของเท่านั้น)
 - เทสต์ `SignRequestRound240Tests` · Db `SignRequestRound240DbTests` · ล็อก `tools/required_call_site_check.py` R240 — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
-### 2.12g-0 ตารางส่งอีเมล "เกินกำหนด" ส่งซ้ำทุก N วัน · แจ้งเตือนก่อนรอบรายการประจำ (รอบ 250 WP-04 ต่อยอด)
-- `EmailScheduleRule.RepeatEveryDays` (เดิมเก็บ+แสดงแต่ไม่มีผล): `ScanDueSoonAndOverdueAsync` ส่งเมื่อเกินกำหนดครบ Offset แล้วทุก N วัน
-  (`Helpers/OverdueReminderSchedule`) จนกว่าจะชำระครบ · ครั้งแรกกุญแจกันซ้ำเดิม `overdue-{Offset}` · ครั้งซ้ำ `overdue-{Offset}-{yyyyMMdd}` · 0 = ครั้งเดียวเหมือนเดิม
-- `RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore` (เดิม UI ส่ง true/1 ตายตัวและไม่มีผล): งานพื้นหลังเดิมของรายการประจำแจ้งกระดิ่งผู้สร้างรายการ
-  (`recurring.upcoming_run`) 1…N วันก่อนรอบ · รอบละครั้ง (`UpcomingRunNotifiedFor` compare-and-set) · ช่องบน `recurring.html` ขั้นที่ 4 · N นอก 0–30 = 400
+### 2.12g-0 ตารางส่งอีเมล "เกินกำหนด" ส่งซ้ำทุก N วัน · แจ้งเตือนก่อนรอบรายการประจำ (รอบ 250 WP-04 ต่อยอด + ฝ่ายค้าน 74a2d1f6)
+- `EmailScheduleRule.RepeatEveryDays` (เดิมเก็บ+แสดงแต่ไม่มีผล) — **เฉพาะกฎ DocumentOverdue** (ทริกเกอร์อื่น > 0 ⇒ 400 · หน้าซ่อนช่อง):
+  ครั้งแรกวันที่เกินกำหนดครบ Offset (กุญแจเดิม `overdue-{Offset}`) · ครั้งซ้ำทุก N วัน (กุญแจ `overdue-{Offset}-{yyyyMMdd}`) **สูงสุด 6 ครั้ง**
+  และ**ไม่เกิน 180 วัน**หลังครบกำหนด (`Helpers/OverdueReminderSchedule`) · ส่งซ้ำเฉพาะใบที่วันเตือนครั้งแรก (DueDate+Offset) ≥ วันเปิดส่งซ้ำ
+  (`RepeatActivatedAt` — ระบบประทับเมื่อ 0 → > 0 · แถวที่ตั้งไว้ก่อน deploy ประทับ = วัน deploy) ⇒ ใบค้างเก่าไม่ถูกทวงซ้ำพร้อมกัน ·
+  ผู้ติดต่อปิดรับ ⇒ แถว "ข้าม" เฉพาะครั้งแรก · ทวง/เตือนครบกำหนด**เฉพาะเอกสารฝั่งลูกหนี้** (`ArApScope.ReceivableTypes` — ไม่ทวงผู้ขาย)
+- `RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore` (เดิม UI ส่ง true/1 ตายตัวและไม่มีผล): งานพื้นหลังเดิมแจ้ง**กระดิ่ง**ผู้สร้างรายการ
+  (ยังเป็นสมาชิกที่ใช้งานของบริษัท ไม่งั้นเจ้าของ · คีย์ `recurring.upcoming_run` ค่าตั้งต้นกระดิ่งเท่านั้น — อีเมล/กลุ่ม LINE เฉพาะบริษัทตั้งเอง)
+  1…N วันก่อนรอบ · รายวันไม่แจ้ง · รอบที่เลยวันสิ้นสุด/ครบจำนวนครั้งไม่แจ้ง · รอบละครั้ง (`UpcomingRunNotifiedFor` compare-and-set ก่อนส่ง) ·
+  **ค่าตั้งต้นปิด** — แถวเดิมทั้งหมดถูกปิดครั้งเดียวตอน deploy (marker `r250-recurring-notify-off`) · N นอก 0–30 = 400
 - `EmailScheduleRule.AudienceFilter` เลิกใช้ (ไม่มีหน้า/API/ผู้อ่าน · คอลัมน์คงไว้)
-- Last verified: commit 74a2d1f6
+- Last verified: commit 74a2d1f6 (ฝ่ายค้านแก้ในคอมมิตถัดไป — sha เติมตามหลัง)
 
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 
@@ -4655,7 +4660,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **Schema**: UBL 2.1 + ETDA profile (DocumentTypeCode T01–T04,
   ISO 8601 +07:00, CurrencyCode=THB)
 - **เลขผู้ขาย/ผู้ซื้อ (รอบ 250 WP-04 ต่อยอด · `Helpers/EtaxPartyTaxIdGuard` ตัวเดียว)**: ผู้ขาย 13 หลัก · ผู้ซื้อนิติบุคคล/รัฐ/ไม่รู้ชนิด ต้องมีเลข 13 หลัก (checksum)
-  หรือ 18 หลักที่ 5 หลักท้าย = รหัสสาขาของผู้ติดต่อ · บุคคลธรรมดา 13 หลัก (checksum) หรือ**ไม่มีเลข = ผ่าน** (ผู้ซื้อไม่จด VAT ⇒ XML `OTHR` "N/A") ·
+  หรือ 18 หลักที่ 5 หลักท้าย = รหัสสาขาของผู้ติดต่อ · บุคคลธรรมดา 13 หลัก (checksum) หรือ**ไม่มีเลข/"-"/"N/A" = ผ่าน** (ผู้ซื้อไม่จด VAT ⇒ XML `OTHR` "N/A" ·
+  แถว e-Tax แสดงคำเตือน "ถ้าผู้ซื้อจด VAT ต้องใส่เลข §86/4" — backlog: `Contact.IsVatRegistrant`) · ไม่รู้ชนิดไม่มีเลข ⇒ บล็อกพร้อมแนะนำตั้งเป็นบุคคลธรรมดา ·
+  สาขาจัดรูปด้วย `TaxBranchCode.Normalize` ตัวเดียว (ผู้ขาย/ผู้ซื้อ/PDF) ·
   TXID ของผู้ซื้อ = 13 หลักแรก + สาขาของผู้ติดต่อเสมอ (PDF กับ XML สาขาเดียวกัน) · ใบลด/เพิ่มหนี้อ้างวันที่ใบเดิมเป็นวันปฏิทินไทย
   (`ThaiDate.CalendarDateUtc` — วันเดียวกับ IssueDateTime +07:00 ของใบเดิม)
 - **Signing**: private key เก็บใน `Company.EtaxPrivateKeyBlobEncrypted`

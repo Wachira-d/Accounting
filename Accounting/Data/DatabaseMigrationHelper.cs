@@ -258,13 +258,34 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PlatformUpgradeModeMigration.Statements());   // รอบ 237 — อัปเกรดกลางรอบ 2 แบบ: ค่าตั้งแพลตฟอร์ม + แบบที่ลูกค้าเลือกบนรายการชำระ
         list.AddRange(Accounting.Helpers.SignRequestMigration.Statements());   // รอบ 240 — ลิงก์ให้ลูกค้าเซ็น: webhook ต่อเอกสาร · อีเมลขอเซ็น/เตือน · outbox เหตุการณ์ลูกค้าเซ็น
         list.AddRange(Accounting.Helpers.DocumentAutoSendMigration.Statements());   // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · งานหลังรับชำระ (ใบเสร็จ/ขอ 50 ทวิ)
-        list.Add(OneShotDataFixesTableSql);
-        list.Add("""ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "UpcomingRunNotifiedFor" timestamp NULL;""");   // รอบ 250 WP-04 ต่อยอด — แจ้งเตือนก่อนรอบรัน (กันแจ้งซ้ำต่อรอบ)   // รอบ 250 WP-04 — ตาราง marker ของงานย้ายข้อมูลครั้งเดียว (ตัวเดียว · ก่อนทุกบล็อกที่อ่าน/เขียน marker)
+        list.Add(OneShotDataFixesTableSql);   // รอบ 250 WP-04 — ตาราง marker ของงานย้ายข้อมูลครั้งเดียว (ตัวเดียว · ก่อนทุกบล็อกที่อ่าน/เขียน marker)
+        list.AddRange(Round250ScheduleSettingsStatements());   // รอบ 250 WP-04 ต่อยอด — แจ้งก่อนรอบรายการประจำ · วันเปิดส่งซ้ำของกฎทวง · ปิดแจ้งก่อนรอบของแถวเดิม (ครั้งเดียว)
         list.AddRange(Accounting.Helpers.LicenseLapseMigration.Statements());   // รอบ 238 (236-3) — คืนสถานะแถวบริษัทที่ถูก cascade ตาม License · License ในระยะผ่อนผัน Expired → PastDue (idempotent)
         list.AddRange(Accounting.Helpers.ContactNotifyEndpointMigration.Statements());   // รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (ย้าย Contact.LineUserId ทำในโค้ดตอนบูต — ต้องเข้ารหัส)
         list.AddRange(Accounting.Helpers.PaymentQrMigration.Statements());   // รอบ 246 QR — QR ชำระเงินของบัญชีธนาคาร (อัปโหลด/พร้อมเพย์) + ธงแสดง QR ของเทมเพลต
         return list;
     }
+
+    /// <summary>รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน 74a2d1f6 · L5 คอมเมนต์อยู่กับคำสั่ง): ค่าตั้งที่ต่อสายแล้ว —
+    /// (1) <c>RecurringTransactions.UpcomingRunNotifiedFor</c> กันแจ้งก่อนรอบซ้ำ · (2) <c>EmailScheduleRules.RepeatActivatedAt</c> วันเปิดส่งซ้ำ —
+    /// แถวที่ตั้งส่งซ้ำไว้แล้ว (ช่องเดิมไม่มีผล) ประทับ = ตอน deploy ⇒ ใบค้างเก่าไม่ถูกทวงซ้ำทันที (H1-ข) · ทำซ้ำได้ (เฉพาะแถวที่ยัง null) ·
+    /// (3) <b>ครั้งเดียว</b> (marker <c>r250-recurring-notify-off</c>): <c>NotifyBeforeRun = false</c> ทุกแถวเดิม — หน้าจอเดิมส่ง true ตายตัว ผู้ใช้ไม่เคยเลือก (H2) ·
+    /// ต้องอยู่หลัง <see cref="OneShotDataFixesTableSql"/></summary>
+    internal static IReadOnlyList<string> Round250ScheduleSettingsStatements() => new[]
+    {
+        """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "UpcomingRunNotifiedFor" timestamp NULL;""",
+        """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "RepeatActivatedAt" timestamp NULL;""",
+        """UPDATE "EmailScheduleRules" SET "RepeatActivatedAt" = (now() at time zone 'utc') WHERE "RepeatEveryDays" > 0 AND "RepeatActivatedAt" IS NULL;""",
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM "OneShotDataFixes" WHERE "Key" = 'r250-recurring-notify-off') THEN
+                UPDATE "RecurringTransactions" SET "NotifyBeforeRun" = false WHERE "NotifyBeforeRun" = true;
+                INSERT INTO "OneShotDataFixes" ("Key", "AppliedAt") VALUES ('r250-recurring-notify-off', (now() at time zone 'utc')) ON CONFLICT DO NOTHING;
+            END IF;
+        END $$;
+        """,
+    };
 
     /// <summary>รอบ 250 WP-04 (AUDIT_249 · E M-3): ตาราง marker ของงานย้ายข้อมูลครั้งเดียว (<c>OneShotDataFixes</c> · คีย์ = MarkerKey ของแต่ละงาน) —
     /// <b>สร้างที่นี่ตัวเดียว</b> (เดิมสร้างซ้ำใน <c>ContactNotifyEndpointMigration</c>/<c>PaymentQrMigration</c>) · idempotent ·

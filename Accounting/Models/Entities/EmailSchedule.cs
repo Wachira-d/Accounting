@@ -43,9 +43,13 @@ public class EmailScheduleRule : TenantEntity
     /// <summary>เวลาที่จะส่ง (ชั่วโมง UTC+7). Default 9 = 09:00 น. กรุงเทพ.</summary>
     public int SendAtHour { get; set; } = 9;
 
-    /// <summary>ส่งเตือนซ้ำทุก N วัน หลังครั้งแรก (เฉพาะ Overdue/DueSoon);
-    /// 0 = ส่งครั้งเดียว.</summary>
+    /// <summary>ส่งเตือนซ้ำทุก N วัน หลังครั้งแรก — <b>เฉพาะ DocumentOverdue</b> (รอบ 250 WP-04 ต่อยอด · <c>Helpers/OverdueReminderSchedule</c> ·
+    /// เพดาน 6 ครั้ง/ไม่เกิน 180 วัน) · 0 = ส่งครั้งเดียว.</summary>
     public int RepeatEveryDays { get; set; }
+
+    /// <summary>รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน H1-ข): เวลาที่เปิดส่งซ้ำ (0 → &gt; 0) — ส่งซ้ำเฉพาะใบที่วันเตือนครั้งแรกไม่ก่อนวันนี้ (กันอีเมลถล่มใบค้างเก่า) ·
+    /// ระบบประทับเอง (<c>OverdueReminderSchedule.NextActivatedAt</c>) · null = ไม่เปิด/ไม่รู้ ⇒ ไม่ส่งซ้ำ</summary>
+    public DateTime? RepeatActivatedAt { get; set; }
 
     /// <summary>หัวเรื่องเทมเพลต — รองรับ placeholder
     /// {DocNumber} {DueDate} {ContactName} {Amount} {CompanyName}.

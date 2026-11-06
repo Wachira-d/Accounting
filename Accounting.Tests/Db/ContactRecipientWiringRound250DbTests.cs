@@ -552,4 +552,34 @@ public class ContactRecipientWiringRound250DbTests
         return (new PostPaymentAutomationService(db, docs ?? F4Proxy<IDocumentService>.Create((_, _) => null), email, Factory(sender),
             NullLogger<PostPaymentAutomationService>.Instance, recipients: Resolver(db)), email);
     }
+
+    /// <summary>รอบ 250 WP-04 ฝ่ายค้าน M3: กฎ "เกินกำหนด" ที่ไม่ระบุชนิดเอกสาร ทวงเฉพาะเอกสารฝั่งลูกหนี้ — ใบแจ้งหนี้ซื้อที่เราค้างจ่ายผู้ขายไม่ถูกส่งอีเมลทวง ·
+    /// ทิศตรงข้าม: ใบแจ้งหนี้ขายที่เกินกำหนดวันเดียวกันถูกเข้าคิว</summary>
+    [Fact]
+    public async Task Overdue_กฎไม่ระบุชนิด_ทวงเฉพาะลูกหนี้_ไม่ทวงผู้ขาย()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "m3 " + Guid.NewGuid().ToString("N")[..6], dueSoonRule: false);
+        await db.Documents.Where(d => d.Id == s.InvoiceId).ExecuteUpdateAsync(x => x.SetProperty(d => d.DueDate, (DateTime?)TodayBkk().AddDays(-5)));
+        var pi = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.PurchaseInvoice,
+            DocumentNumber = "PI250M3-" + Random.Shared.Next(100000, 999999), Status = DocumentStatus.Approved,
+            DocumentDate = TodayBkk().AddDays(-35), DueDate = TodayBkk().AddDays(-5),
+            SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, BalanceDue = 1_070m, Currency = "THB",
+        };
+        db.Documents.Add(pi);
+        db.EmailScheduleRules.Add(new EmailScheduleRule
+        {
+            CompanyId = s.CompanyId, Trigger = "DocumentOverdue", OffsetDays = 5, SendAtHour = 9, IsActive = true, DocumentType = null,
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        await Sched(db, new FakeSender()).ScanDueSoonAndOverdueAsync();
+
+        Assert.Single(await QueueRowsAsync(db, s));                                                     // ลูกหนี้ ⇒ ทวง
+        Assert.False(await db.EmailQueues.AsNoTracking().AnyAsync(q => q.CompanyId == s.CompanyId && q.EntityId == pi.Id));   // ผู้ขาย ⇒ ไม่ทวง
+    }
 }

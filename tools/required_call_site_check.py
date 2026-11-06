@@ -16091,6 +16091,28 @@ RULES += [
          why=_R250W4_WHY + "ค่านอกช่วงปฏิเสธพร้อมเหตุ (ไม่ clamp เงียบ)"),
     dict(file="Services/Implementations/EmailScheduleService.cs", method="UpsertRuleAsync", forbid=["existing.AudienceFilter ="],
          why=_R250W4_WHY + "AudienceFilter เลิกใช้ — ไม่มีทางเข้าเขียนค่า"),
+    # ── ฝ่ายค้าน 74a2d1f6 (H1/H2/M1–M7) ──
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="ScanDueSoonAndOverdueAsync",
+         must=["ArApScope.ReceivableTypes", "rule.RepeatActivatedAt", "recordNotSent:", "OverdueReminderSchedule.MaxOverdueDays"],
+         why=_R250W4_WHY + "H1 เพดาน/วันเปิดส่งซ้ำ · M3 เฉพาะเอกสารลูกหนี้ · M4 แถวข้ามเฉพาะครั้งแรก"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="UpsertRuleAsync",
+         must=["OverdueReminderSchedule.RepeatProblem(", "OverdueReminderSchedule.NextActivatedAt("],
+         before=[("OverdueReminderSchedule.NextActivatedAt(existing.RepeatEveryDays", "existing.RepeatEveryDays = rule.RepeatEveryDays")],
+         why=_R250W4_WHY + "M2 ส่งซ้ำเฉพาะกฎเกินกำหนด · H1-ข ประทับวันเปิดก่อนเขียนค่าใหม่"),
+    dict(file="Controllers/EmailScheduleController.cs", method="UpsertRule", must=["OverdueReminderSchedule.RepeatProblem("],
+         why=_R250W4_WHY + "M2 ทริกเกอร์อื่นตั้งส่งซ้ำ ⇒ 400"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="NotifyUpcomingRunsAsync",
+         must=["r.Frequency", "r.MaxRuns", "cu.CompanyId == r.CompanyId", "UserStatus.Active"],
+         why=_R250W4_WHY + "H2/M1 รายวัน/จบแล้วไม่แจ้ง · ผู้รับต้องยังเป็นสมาชิกที่ใช้งาน ไม่งั้นเจ้าของ"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchDirectAsync",
+         must=["NotificationAudiencePolicy.DirectDefaultEmail(eventKey)"],
+         why=_R250W4_WHY + "H2 คีย์กระดิ่งเท่านั้นไม่ส่งอีเมลในเส้นค่าตั้งต้น"),
+    dict(file="Services/Implementations/EtaxInvoiceService.cs", method="ComposeTxId",
+         must=["TaxBranchCode.Normalize(branchCode)"], forbid=["bd.Substring(0, 5)"],
+         why=_R250W4_WHY + "M7 ตัวจัดรูปสาขาตัวเดียว (ตัวเดียวกับ PDF/ด่านเลขผู้ซื้อ)"),
+    dict(file="Services/Implementations/EtaxInvoiceService.cs", method="MapToResponse",
+         must=["EtaxPartyTaxIdGuard.BuyerWarning("],
+         why=_R250W4_WHY + "M5 แถว e-Tax ที่ไม่มีเลขผู้ซื้อมีคำเตือน §86/4"),
 ]
 
 

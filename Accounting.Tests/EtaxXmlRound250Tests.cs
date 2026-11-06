@@ -177,11 +177,46 @@ public class EtaxXmlRound250Tests
     [InlineData(ContactType.Individual, "1101700207030", null, true)]
     [InlineData(ContactType.Individual, "1101700207031", null, false)]              // checksum ผิด
     [InlineData(ContactType.Individual, "1101700207030" + "00000", null, false)]    // 18 หลักไม่ใช่รูปของบุคคล
+    // ฝ่ายค้าน M6: "-" / "N/A" ของบุคคลธรรมดา = ไม่มีเลข (ผ่าน · OTHR) · ชนิดอื่น/ไม่รู้ชนิด = บล็อก
+    [InlineData(ContactType.Individual, "-", null, true)]
+    [InlineData(ContactType.Individual, "N/A", null, true)]
+    [InlineData(ContactType.Unknown, "-", null, false)]
+    [InlineData(ContactType.JuristicPerson, "N/A", null, false)]
+    [InlineData(ContactType.Individual, "0000000000000", null, false)]              // เลขศูนย์ล้วน = ไม่ใช่เลขจริง ⇒ ยังบล็อก
     public void Buyer_ชนิด_checksum_สาขา_สองทิศ(ContactType type, string? taxId, string? branch, bool ok)
     {
         var problem = EtaxPartyTaxIdGuard.Buyer("บริษัท ผู้ซื้อ 250 จำกัด", taxId, type, branch);
         Assert.Equal(ok, problem == null);
         if (!ok && !string.IsNullOrWhiteSpace(taxId)) Assert.Contains("บริษัท ผู้ซื้อ 250 จำกัด", problem);
+    }
+
+    [Fact]
+    public void Buyer_ข้อความบอกทางไปต่อ_บุคคลไม่จดVATให้ลบเลข_ไม่รู้ชนิดให้ตั้งเป็นบุคคล()
+    {
+        Assert.Contains("ให้ลบเลขออก", EtaxPartyTaxIdGuard.Buyer("คุณสมชาย", "0000000000000", ContactType.Individual, null));
+        Assert.Contains("บุคคลธรรมดา", EtaxPartyTaxIdGuard.Buyer("ร้านเอ", "-", ContactType.Unknown, null));
+        Assert.DoesNotContain("ให้ลบเลขออก", EtaxPartyTaxIdGuard.Buyer("บริษัท บี", "0107537000018", ContactType.JuristicPerson, null));   // นิติบุคคลต้องมีเลขเสมอ
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("-", true)]
+    [InlineData(BuyerTaxId, false)]
+    public void คำเตือนแถวeTax_ไม่มีเลขผู้ซื้อ_ถ้าจดVATต้องใส่เลข(string? stored, bool warn)
+    {
+        var w = EtaxPartyTaxIdGuard.BuyerWarning(stored);
+        Assert.Equal(warn, w != null);
+        if (warn) Assert.Contains("86/4", w);
+    }
+
+    [Fact]
+    public void สาขาเกิน5หลัก_ใช้ตัวจัดรูปสาขาตัวเดียว_TaxBranchCode()
+    {
+        var x = Root(Doc(DocumentType.TaxInvoice, buyerBranch: "000012"), company: Company(branch: "123456"));
+        Assert.Equal(BuyerTaxId + TaxBranchCode.Normalize("000012"), Child(Child(One(x, "BuyerTradeParty"), "SpecifiedTaxRegistration"), "ID").Value);
+        Assert.Equal(SellerTaxId + TaxBranchCode.Normalize("123456"), Child(Child(One(x, "SellerTradeParty"), "SpecifiedTaxRegistration"), "ID").Value);
+        Assert.Equal(BuyerTaxId + "00012", Child(Child(One(x, "BuyerTradeParty"), "SpecifiedTaxRegistration"), "ID").Value);
     }
 
     [Fact]

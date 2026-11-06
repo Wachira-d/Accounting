@@ -125,8 +125,10 @@
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">ส่งซ้ำทุก N วัน (0 = ส่งครั้งเดียว)</label>
+            <!-- รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน M2): ส่งซ้ำมีผลเฉพาะ "เกินกำหนดชำระ" — ทริกเกอร์อื่นซ่อนช่อง (เซิร์ฟเวอร์ปฏิเสธค่า > 0) ·
+                 เพดาน 6 ครั้ง/ไม่เกิน 180 วัน · ส่งซ้ำเฉพาะใบที่ครบเตือนครั้งแรกหลังวันเปิด (เซิร์ฟเวอร์ตัดสิน) -->
+            <div class="form-group" id="rRepeatGroup" style="display:none">
+              <label class="form-label" for="rRepeat">ส่งซ้ำทุก N วัน (0 = ส่งครั้งเดียว · สูงสุด 6 ครั้ง ไม่เกิน 180 วันหลังครบกำหนด)</label>
               <input type="number" class="form-input" id="rRepeat" value="0" min="0">
             </div>
             <div class="form-group" id="rDayOfMonthGroup" style="display:none">
@@ -305,6 +307,7 @@
       _toggleTriggerFields() {
         const t = document.getElementById('rTrigger').value;
         document.getElementById('rDayOfMonthGroup').style.display = t === 'MonthlyStatement' ? '' : 'none';
+        document.getElementById('rRepeatGroup').style.display = t === 'DocumentOverdue' ? '' : 'none';
       },
 
       async saveRule() {
@@ -324,7 +327,8 @@
         try {
           offsetDays = intIn('rOffset', -999, 999, 'จำนวนวันก่อน/หลัง');
           sendAtHour = intIn('rHour', 0, 23, 'ชั่วโมงที่ส่ง');
-          repeatEveryDays = intIn('rRepeat', 0, 999, 'ส่งซ้ำทุก (วัน)');
+          // ส่งซ้ำมีผลเฉพาะ "เกินกำหนด" — ทริกเกอร์อื่นส่ง 0 (ช่องถูกซ่อน · ไม่ส่งค่าที่ไม่มีผล)
+          repeatEveryDays = document.getElementById('rTrigger').value === 'DocumentOverdue' ? intIn('rRepeat', 0, 999, 'ส่งซ้ำทุก (วัน)') : 0;
           dayOfMonth = document.getElementById('rTrigger').value === 'MonthlyStatement'
             ? intIn('rDayOfMonth', 1, 28, 'วันที่ของเดือน')
             : (Number.isInteger(Number(document.getElementById('rDayOfMonth').value)) && document.getElementById('rDayOfMonth').value !== ''

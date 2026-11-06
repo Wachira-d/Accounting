@@ -568,29 +568,41 @@ public class EmailScheduleService : IEmailScheduleService
             // ไม่ตั้งส่งซ้ำ (0) ⇒ เท่ากับวันเป้าหมายตามเดิม
             var repeating = rule.Trigger == "DocumentOverdue" && rule.RepeatEveryDays > 0;
 
+            // ฝ่ายค้าน H1: ครั้งซ้ำไม่เกิน MaxOverdueDays ⇒ ไม่ดึงใบเก่ากว่านั้น
+            var oldest = today.AddDays(-Math.Max(Accounting.Helpers.OverdueReminderSchedule.MaxOverdueDays, rule.OffsetDays));
+            // ฝ่ายค้าน M3: ทวง/เตือนครบกำหนดเฉพาะเอกสารฝั่งลูกหนี้ (ตัวตั้งเดียว ArApScope) — ไม่ส่งอีเมลทวงหาผู้ขายจากใบซื้อที่เราค้างจ่าย
+            var receivable = Accounting.Helpers.ArApScope.ReceivableTypes;
             var docsQuery = _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == rule.CompanyId
                     && !d.IsDeleted
+                    && receivable.Contains(d.DocumentType)
                     && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft
                     && d.BalanceDue > 0
                     && d.DueDate != null
-                    && (repeating ? d.DueDate.Value.Date <= target : d.DueDate.Value.Date == target));
+                    && (repeating ? d.DueDate.Value.Date <= target && d.DueDate.Value.Date >= oldest : d.DueDate.Value.Date == target));
             if (!string.IsNullOrEmpty(rule.DocumentType)
                 && Enum.TryParse<DocumentType>(rule.DocumentType, out var dt))
                 docsQuery = docsQuery.Where(d => d.DocumentType == dt);
 
             var docs = await docsQuery.ToListAsync(ct);
             if (repeating)
+            {
+                DateTime? activatedOn = rule.RepeatActivatedAt is DateTime act ? Accounting.Helpers.ThaiDate.CalendarDateUtc(act).Date : null;
                 docs = docs.Where(d => Accounting.Helpers.OverdueReminderSchedule.SendToday(
-                    (today - d.DueDate!.Value.Date).Days, rule.OffsetDays, rule.RepeatEveryDays)).ToList();
+                    (today - d.DueDate!.Value.Date).Days, rule.OffsetDays, rule.RepeatEveryDays,
+                    d.DueDate.Value.Date.AddDays(rule.OffsetDays), activatedOn)).ToList();
+            }
             await _db.HydrateContactsAsync(rule.CompanyId, docs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
             var sendUtc = ScheduledUtc(today, rule.SendAtHour);
             foreach (var doc in docs)
             {
+                var overdueDays = (today - doc.DueDate!.Value.Date).Days;
                 var queued = await EnqueueDocumentAsync(rule, doc, daysOffset: 0,
                     suffix: rule.Trigger == "DocumentDueSoon" ? $"due-{rule.OffsetDays}"
-                        : Accounting.Helpers.OverdueReminderSchedule.Suffix(rule.OffsetDays, (today - doc.DueDate!.Value.Date).Days, today),
-                    ct, overrideSendUtc: sendUtc);
+                        : Accounting.Helpers.OverdueReminderSchedule.Suffix(rule.OffsetDays, overdueDays, today),
+                    ct, overrideSendUtc: sendUtc,
+                    // ฝ่ายค้าน M4: ผู้ติดต่อปิดรับ ⇒ แถว "ข้าม" เฉพาะครั้งแรก (ไม่สะสมทุกรอบส่งซ้ำ)
+                    recordNotSent: !(rule.Trigger == "DocumentOverdue" && Accounting.Helpers.OverdueReminderSchedule.IsRepeat(overdueDays, rule.OffsetDays)));
                 if (queued.Queued) enqueued++;
                 else if (queued.NotSent != null) notSentRows++;
             }
@@ -918,7 +930,7 @@ public class EmailScheduleService : IEmailScheduleService
     internal sealed record DocQueueResult(bool Queued, bool Duplicate, string? NotSent);
 
     private async Task<DocQueueResult> EnqueueDocumentAsync(EmailScheduleRule rule, Document doc,
-        int daysOffset, string suffix, CancellationToken ct, DateTime? overrideSendUtc = null)
+        int daysOffset, string suffix, CancellationToken ct, DateTime? overrideSendUtc = null, bool recordNotSent = true)
     {
         // ฝ่ายค้าน LOW: กันซ้ำก่อน (สแกนรายวันไม่ต้องหาผู้รับของใบที่เข้าคิวแล้ว)
         var idem = DocumentQueueKey(doc.Id, rule.Trigger, suffix);
@@ -949,6 +961,7 @@ public class EmailScheduleService : IEmailScheduleService
         var heading = await HeadingForAsync(doc.CompanyId, doc.Id);
         var isEn = heading.IsEnglish;
         var ctx = DocumentEmailContext(doc, heading, _headingCompanies[doc.CompanyId].Company);
+        if (notSentReason != null && !recordNotSent) return new DocQueueResult(false, false, null);   // ครั้งซ้ำ: ไม่สะสมแถว "ข้าม"
         if (notSentReason != null)
         {
             ctx["PayLink"] = "";
@@ -1152,10 +1165,14 @@ public class EmailScheduleService : IEmailScheduleService
             if (bad.Count > 0)
                 throw new BusinessRuleException("ช่องทางที่บริษัทยังไม่ได้เปิด: " + string.Join(", ", bad), DocumentPayLinkPolicy.RuleCode);
         }
+        // ฝ่ายค้าน M2: ส่งซ้ำเฉพาะกฎเกินกำหนด (ทางเข้าอื่นนอก controller ก็ไม่เก็บค่าที่ไม่มีผล)
+        if (OverdueReminderSchedule.RepeatProblem(rule.Trigger, rule.RepeatEveryDays) is string repeatErr)
+            throw new BusinessRuleException(repeatErr, "EMAIL-SCHEDULE-RANGE");
         if (rule.Id == Guid.Empty)
         {
             rule.CompanyId = companyId;
             rule.CreatedByName = actor;
+            rule.RepeatActivatedAt = OverdueReminderSchedule.NextActivatedAt(0, null, rule.RepeatEveryDays, DateTime.UtcNow);
             _db.EmailScheduleRules.Add(rule);
         }
         else
@@ -1168,6 +1185,8 @@ public class EmailScheduleService : IEmailScheduleService
             existing.DocumentType = rule.DocumentType;
             existing.OffsetDays = rule.OffsetDays;
             existing.SendAtHour = rule.SendAtHour;
+            existing.RepeatActivatedAt = OverdueReminderSchedule.NextActivatedAt(existing.RepeatEveryDays, existing.RepeatActivatedAt,
+                rule.RepeatEveryDays, DateTime.UtcNow);   // ฝ่ายค้าน H1-ข: ประทับเมื่อเปิด (0 → > 0) — ก่อนเขียนค่าใหม่
             existing.RepeatEveryDays = rule.RepeatEveryDays;
             existing.SubjectTemplate = rule.SubjectTemplate;
             existing.BodyTemplate = rule.BodyTemplate;

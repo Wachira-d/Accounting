@@ -42,7 +42,8 @@ public class EmailScheduleController : ControllerBase
         Guid companyId, [FromBody] RuleRequest req)
     {
         // รอบ 250 WP-03 (ฝ่ายค้าน M4): ค่านอกช่วงตอบ 400 พร้อมช่วง (ช่วงเดียวกับหน้าเว็บ) — เดิม Math.Clamp เงียบ ⇒ ส่งผิดเวลา/ผิดวันโดยผู้ใช้ไม่รู้
-        var rangeError = RuleRangeError(req.SendAtHour, req.DayOfMonth, req.RepeatEveryDays);
+        var rangeError = RuleRangeError(req.SendAtHour, req.DayOfMonth, req.RepeatEveryDays)
+            ?? Accounting.Helpers.OverdueReminderSchedule.RepeatProblem(req.Trigger, req.RepeatEveryDays);   // ฝ่ายค้าน M2
         if (rangeError != null) return BadRequest(new ApiResponse<EmailScheduleRule>(false, null, rangeError));
         var rule = new EmailScheduleRule
         {

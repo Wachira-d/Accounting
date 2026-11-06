@@ -420,6 +420,7 @@
             ${e.errorMessage ? `<div class="text-danger text-xs" style="margin-top:4px">${this.esc(e.errorMessage)}</div>` : ''}
             ${e.acceptanceNumber ? `<div class="text-success text-xs" style="margin-top:4px">เลขตอบรับ: ${this.esc(e.acceptanceNumber)}</div>` : ''}
             ${e.voidedNote ? `<div class="text-xs" style="margin-top:4px;color:#64748b">${this.esc(e.voidedNote)}</div>` : ''}
+            ${e.buyerTaxIdWarning ? `<div class="text-xs" style="margin-top:4px;color:#b45309">⚠️ ${this.esc(e.buyerTaxIdWarning)}</div>` : ''}
             ${e.byEmailStage && e.byEmailStage !== 'NotSent' ? `<div class="text-xs" style="margin-top:4px;color:${e.byEmailStage === 'Stamped' ? '#166534' : '#92400e'}">📧 ${this.esc(e.byEmailStageLabel)}${e.byEmailSentAt ? ' · ส่ง ' + this.fmtDate(e.byEmailSentAt) : ''}${e.etdaStampedAt ? ' · ประทับ ' + this.fmtDate(e.etdaStampedAt) : ''}</div>` : ''}
           </td>
         </tr>
