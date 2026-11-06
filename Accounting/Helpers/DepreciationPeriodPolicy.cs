@@ -26,8 +26,4 @@ public static class DepreciationPeriodPolicy
     /// <summary>วิธีที่ยอดต่องวดขึ้นกับมูลค่าสุทธิก่อนหน้า ⇒ ต้องลงตามลำดับ</summary>
     public static bool IsOrderSensitive(DepreciationMethod m)
         => m is DepreciationMethod.DecliningBalance or DepreciationMethod.DoubleDecliningBalance;
-
-    /// <summary>งวด (y,m) เก่ากว่างวดที่ลงแล้วล่าสุด (ly,lm) หรือไม่</summary>
-    public static bool IsBefore(int year, int month, int latestYear, int latestMonth)
-        => year * 12 + month < latestYear * 12 + latestMonth;
 }

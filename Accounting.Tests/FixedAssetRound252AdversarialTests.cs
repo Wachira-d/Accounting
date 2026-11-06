@@ -44,8 +44,6 @@ public class FixedAssetRound252AdversarialTests
         Assert.True(DepreciationPeriodPolicy.IsOrderSensitive(DepreciationMethod.DecliningBalance));
         Assert.True(DepreciationPeriodPolicy.IsOrderSensitive(DepreciationMethod.DoubleDecliningBalance));
         Assert.False(DepreciationPeriodPolicy.IsOrderSensitive(DepreciationMethod.StraightLine));
-        Assert.True(DepreciationPeriodPolicy.IsBefore(2026, 2, 2026, 3));
-        Assert.False(DepreciationPeriodPolicy.IsBefore(2026, 3, 2026, 3));
     }
 
     [Fact]
