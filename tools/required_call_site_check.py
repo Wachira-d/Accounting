@@ -16588,6 +16588,36 @@ REVIEWER_CASES += [
     ("R252i", "SubmitAsync", ": WhtCertMatchPolicy.Match(", ": WhtCertMatchPolicy\n                .Match(", False),
 ]
 
+# ── รอบ 255 ETR-ACK: บันทึก "ตรวจแล้ว" ของแถว e-Tax ในรายงานข้อ 44 (ทางไปต่อของแถบเตือน · F2 ข้อ 8) — pure ทดสอบใน EtaxReviewAcknowledgementTests ──
+_ETR_WHY = "รอบ 255 ETR-ACK: "
+RULES += [
+    dict(file="Controllers/DocumentController.cs", method="AcknowledgeEtaxReviewRow",
+         must=["PermissionKeys.EtaxVoid", "DocumentPermissionHelper.CanVoidAsync(", "AcknowledgeEtaxReviewRowAsync(", "e.CompanyId == companyId",
+               "d.CompanyId == companyId"],
+         before=[("PermissionKeys.EtaxVoid", "AcknowledgeEtaxReviewRowAsync("), ("DocumentPermissionHelper.CanVoidAsync(", "AcknowledgeEtaxReviewRowAsync(")],
+         why=_ETR_WHY + "สิทธิ์ = Etax.Void และสิทธิ์ยกเลิกเอกสารชนิดนั้น (เข้มกว่าของสองเส้นยกเลิก) ก่อนถึง service · tenant"),
+    dict(file=DOC_REISSUE, method="AcknowledgeEtaxReviewRowAsync",
+         must=["EtaxReissueReview.ValidateAcknowledgement(", "EtaxReissueReview.HiddenByAcknowledgement(", "GetEtaxReissueReviewAsync(companyId)",
+               "_db.AddChainedAuditLog(", "EtaxReissueReview.AcknowledgedAction", "e.CompanyId == companyId", "a.CompanyId == companyId"],
+         must_re=[r"throw\s+new\s+BusinessRuleException\([^;]*409\)"],
+         before=[("EtaxReissueReview.HiddenByAcknowledgement(", "_db.AddChainedAuditLog("), ("GetEtaxReissueReviewAsync(companyId)", "_db.AddChainedAuditLog(")],
+         forbid=["e.Status = ", "etax.Status = ", "_db.EtaxInvoices.Update", "_db.Documents.Update"],
+         why=_ETR_WHY + "ตรวจคำขอ · ซ้ำ = 409 · แถวต้องอยู่ในกลุ่มตอนนี้ (ตัวจำแนกเดียว) · เขียน audit chained อย่างเดียว — ไม่ประทับสถานะของกรมสรรพากรเอง"),
+    dict(file=DOC_REISSUE, method="GetEtaxReissueReviewAsync",
+         must=["EtaxReissueReview.HiddenByAcknowledgement(x.Id, ackAudits)", "EtaxReissueReview.AcknowledgedAction"],
+         before=[("EtaxReissueReview.HiddenByAcknowledgement(x.Id, ackAudits)", "EtaxReissueReview.SubmittedEtaxVoidedWithoutEvidence(")],
+         why=_ETR_WHY + "แถวที่บันทึกตรวจแล้วออกจากทั้งสองกลุ่มแถว e-Tax (เดิมแถบค้างตลอดไป)"),
+]
+REVIEWER_CASES += [
+    # ถอดตัวกรองซ่อนแถวที่ตรวจแล้ว ⇒ ต้องฟ้อง (แถบกลับมาค้าง)
+    ("ETR-a", "GetEtaxReissueReviewAsync", "if (EtaxReissueReview.HiddenByAcknowledgement(x.Id, ackAudits)) continue;", "", True),
+    # ถอดด่านสิทธิ์ยกเลิกเอกสาร ⇒ ต้องฟ้อง
+    ("ETR-b", "AcknowledgeEtaxReviewRow",
+     "if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))\n"
+     "            return Forbid403<string>(\"ไม่มีสิทธิ์ยกเลิกเอกสารชนิดนี้ — บันทึกผลตรวจแถว e-Tax",
+     "if (false)\n            return Forbid403<string>(\"ไม่มีสิทธิ์ยกเลิกเอกสารชนิดนี้ — บันทึกผลตรวจแถว e-Tax", True),
+]
+
 
 def wht_credit_add_errors() -> list:
     """รอบ 252 (AUTO_SEND §3.0 / เฟส 244 R243): ห้าม `WhtCreditsReceived.Add(` นอก DocumentService.SyncWhtCreditReceivedAsync + WhtCreditService.CreateAsync
