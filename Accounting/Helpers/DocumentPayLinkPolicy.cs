@@ -202,7 +202,7 @@ public static class DocumentPayLinkPolicy
     public static bool HasPlaceholder(string? text) => text?.Contains(QueuePlaceholder, StringComparison.Ordinal) ?? false;
 
     /// <summary>แยกบล็อกลิงก์ชำระ (HTML ของเซิร์ฟเวอร์) ออกจากเนื้ออีเมล — ผู้เรียกหนีส่วนที่เหลือเป็นข้อความล้วนได้โดยไม่ทำปุ่มพัง</summary>
-    public static (string Rest, string? Block) SplitBlock(string body)
+    public static (string Remainder, string? Block) SplitBlock(string body)
     {
         var s = body.IndexOf(BlockStart, StringComparison.Ordinal);
         var e = s < 0 ? -1 : body.IndexOf(BlockEnd, s, StringComparison.Ordinal);
