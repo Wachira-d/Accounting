@@ -6772,4 +6772,4 @@ MED-2 `FixedAssetService.CreateAsync` ออกรหัส+INSERT ในธุ�
 วันที่กลับรายการบังคับ + แสดง พ.ศ. · confirmDanger Escape ไม่ทะลุ · กล่องสองทางปิดด้วย ×/Escape = ไม่บันทึก (`dismissValue`) · `(j && j.message)` ·
 doc ของ debouncedLoader · quotation-accept ไม่เติมชื่อผู้ยอมรับ (placeholder) · มือถือ openModal โฟกัสหัว modal · window.confirm ใบเสร็จ →
 Layout.confirm · html_interpolation documents 387→386 · ui_glossary_check ไม่นับเส้นทาง URL (เดิมฟ้องผิด `/line-invite`) baseline 56→53.
-ลบบริษัท: เซิร์ฟเวอร์ trim ทั้งสองฝั่งอยู่แล้ว (`CompanyService.DeleteCompanyAsync`) — ไม่ต้องแก้. ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+ลบบริษัท: เซิร์ฟเวอร์ trim ทั้งสองฝั่งอยู่แล้ว (`CompanyService.DeleteCompanyAsync`) — ไม่ต้องแก้. ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ce0e274c_
