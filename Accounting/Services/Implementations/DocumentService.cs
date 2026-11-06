@@ -184,14 +184,17 @@ public partial class DocumentService : IDocumentService
                 // GL ลดลงจนต่ำกว่ายอดที่ได้ใบ ⇒ ไม่ลบแถว/ไม่ลดยอด (ใบจริงชนะ) แต่ติดหมายเหตุให้เห็น (ไม่หายเงียบ)
                 if (existing.ReceivedAmount > 0.005m && existing.Status is WhtCreditStatus.Pending or WhtCreditStatus.Received)
                 {
-                    if (amount > existing.WhtAmount + 0.005m)
+                    // ฝ่ายค้าน WP-09 M3: ตัวตัดสินเดียว (Helpers/WhtCreditableAmount.ResyncWithGl) — GL เพิ่ม ⇒ ขยาย · GL ลด (ไม่ต่ำกว่ายอดที่ได้ใบ) ⇒ ลด ·
+                    // GL ต่ำกว่ายอดที่ได้ใบ ⇒ คงยอด + หมายเหตุ · ไม่แตะ ReceivedAmount
+                    var resync = WhtCreditableAmount.ResyncWithGl(existing.Status, existing.WhtAmount, existing.ReceivedAmount, amount);
+                    if (resync.Kind is WhtCreditableAmount.GlResyncKind.Grow or WhtCreditableAmount.GlResyncKind.Shrink)
                     {
-                        existing.WhtAmount = amount;
-                        existing.Status = existing.ReceivedAmount >= amount - 0.005m ? WhtCreditStatus.Received : WhtCreditStatus.Pending;
+                        existing.WhtAmount = resync.NewWhtAmount;
+                        existing.Status = resync.NewStatus;
                         existing.UpdatedAt = DateTime.UtcNow;
                         await _db.SaveChangesAsync();
                     }
-                    else if (amount < existing.ReceivedAmount - 0.005m && !(existing.Notes ?? "").Contains(WhtCertOverGlNote))
+                    else if (resync.Kind == WhtCreditableAmount.GlResyncKind.OverGl && !(existing.Notes ?? "").Contains(WhtCertOverGlNote))
                     {
                         existing.Notes = string.IsNullOrWhiteSpace(existing.Notes) ? WhtCertOverGlNote : existing.Notes + " | " + WhtCertOverGlNote;
                         existing.UpdatedAt = DateTime.UtcNow;
@@ -2705,8 +2708,12 @@ public partial class DocumentService : IDocumentService
         // ใบเสร็จที่ไม่มีแถวทะเบียนของตัวเองเข้าตัวกรองตามใบต้นทาง (resolver เดียวกับชิป)
         if (!string.IsNullOrEmpty(whtCert))
         {
-            var whtRows = await WhtCertTracking.LoadAsync(_db, companyId, DateTime.UtcNow);
-            var ownRowDocIds = whtRows.Where(r => r.DocumentId != null).Select(r => r.DocumentId!.Value).Distinct().ToList();
+            // ฝ่ายค้าน WP-09 L8: โหลดเฉพาะสถานะที่ตัวกรองนี้ตอบได้ (ได้รับแล้ว = Received/Claimed · อื่น ๆ = Pending) ไม่ใช่ทะเบียนทั้งบริษัททุกปี ·
+            // ใบเสร็จที่มีแถวของตัวเอง (สถานะใดก็ตาม) ไม่สืบทอดจากใบต้นทาง ⇒ ต้องรู้ id แถวทุกสถานะ (คอลัมน์เดียว)
+            var whtRows = await WhtCertTracking.LoadAsync(_db, companyId, DateTime.UtcNow,
+                statuses: whtCert == "received" ? WhtCertTracking.ReceivedStatuses : WhtCertTracking.FollowUpStatuses);
+            var ownRowDocIds = await _db.WhtCreditsReceived.AsNoTracking()
+                .Where(w => w.CompanyId == companyId && w.DocumentId != null).Select(w => w.DocumentId!.Value).Distinct().ToListAsync();
             var whtMatchIds = whtRows.Where(r => r.DocumentId != null && WhtCertIntakeStatus.MatchesFilter(r.Verdict, whtCert))
                 .Select(r => r.DocumentId!.Value).Distinct().ToList();
             var inheritTypes = WhtCertTracking.InheritFromSourceTypes.ToArray();
@@ -11229,10 +11236,11 @@ public partial class DocumentService : IDocumentService
                 .Select(o => new { o.DocumentId, o.JournalEntryId }).ToListAsync())
             .SelectMany(o => new[] { o.DocumentId, jes.FirstOrDefault(j => j.Id == o.JournalEntryId)?.Doc })
             .Where(x => x.HasValue).Select(x => x!.Value).ToHashSet();
-        // N3: เครดิตภาษีถูกหัก ณ ที่จ่ายที่ได้รับหนังสือรับรอง/ใช้แล้ว (Pending ลบไปพร้อมใบ — DocumentPurgeOrder)
+        // N3: เครดิตภาษีถูกหัก ณ ที่จ่ายที่ได้รับหนังสือรับรอง/ใช้แล้ว (Pending ลบไปพร้อมใบ — DocumentPurgeOrder) ·
+        // รอบ 252 (ฝ่ายค้าน WP-09 M2): Pending ที่ได้ใบบางส่วน (ReceivedAmount > 0) = มีหลักฐานเครดิตแล้ว ⇒ กันการลบเช่นกัน
         var whtUsedDocs = (await _db.WhtCreditsReceived.IgnoreQueryFilters().AsNoTracking()
                 .Where(w => w.CompanyId == companyId && w.DocumentId != null && ids.Contains(w.DocumentId.Value)
-                    && !w.IsDeleted && w.Status != WhtCreditStatus.Pending)
+                    && !w.IsDeleted && (w.Status != WhtCreditStatus.Pending || w.ReceivedAmount > 0m))
                 .Select(w => w.DocumentId!.Value).Distinct().ToListAsync()).ToHashSet();
         // S3: ใบแทน — ใบนี้แทนใบที่ยังมีผล · ใบอื่นชี้มาว่าใบนี้เป็นใบแทน
         var replaceRows = await _db.Documents.IgnoreQueryFilters().AsNoTracking()

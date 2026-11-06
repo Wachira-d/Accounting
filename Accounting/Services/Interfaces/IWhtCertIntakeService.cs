@@ -31,7 +31,8 @@ public interface IWhtCertIntakeService
         CancellationToken ct = default);
 
     /// <summary>การ์ด "50 ทวิ ที่ต้องตาม" — ทั้งบริษัท (แดชบอร์ด) หรือรายผู้ติดต่อ</summary>
-    Task<WhtCertTrackingDto> TrackingAsync(Guid companyId, Guid? contactId, CancellationToken ct = default);
+    /// <param name="taxYear">จำกัดปีภาษี (null = ทุกปี) — โหลดเฉพาะแถวที่ยังต้องตาม</param>
+    Task<WhtCertTrackingDto> TrackingAsync(Guid companyId, Guid? contactId, int? taxYear = null, CancellationToken ct = default);
 
     /// <summary>รายงานปลายปี "50 ทวิ ที่ยังขาด" (AUTO_SEND §4.5) + กระทบ GL 11910</summary>
     Task<WhtCertMissingReportDto> MissingReportAsync(Guid companyId, int taxYear, CancellationToken ct = default);

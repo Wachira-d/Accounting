@@ -193,11 +193,11 @@ public static class CitCalculation
     public static IQueryable<WhtCreditReceived> CreditableInPeriod(this IQueryable<WhtCreditReceived> q, Guid companyId, DateTime start, DateTime endInclusive)
     {
         var endExclusive = endInclusive.Date.AddDays(1);
-        // รอบ 252 (WP-09): แถว Pending ที่ได้ใบบางส่วนแล้ว (ReceivedAmount > 0 — ใบรวม/ผ่อนงวด) ก็เครดิตได้ <b>เฉพาะส่วนที่ได้ใบ</b> ⇒
+        // รอบ 252 (WP-09): แถว Pending ที่ได้ใบบางส่วนแล้ว / Expired ที่ตัดสูญเฉพาะส่วนที่ขาด (ReceivedAmount > 0) ก็เครดิตได้ <b>เฉพาะส่วนที่ได้ใบ</b> ⇒
         // ผู้เรียกต้องรวมยอดด้วย Helpers/WhtCreditableAmount.Of (ห้าม Sum(WhtAmount) ตรง — จะนับเต็มแถว)
         return q.Where(w => w.CompanyId == companyId
             && (w.Status == WhtCreditStatus.Received || w.Status == WhtCreditStatus.Claimed
-                || (w.Status == WhtCreditStatus.Pending && w.ReceivedAmount > 0.005m))
+                || ((w.Status == WhtCreditStatus.Pending || w.Status == WhtCreditStatus.Expired) && w.ReceivedAmount > 0.005m))
             && w.CertificateDate != null && w.CertificateDate >= start && w.CertificateDate < endExclusive);
     }
 
@@ -205,7 +205,7 @@ public static class CitCalculation
     public static IQueryable<WhtCreditReceived> CreditableUndated(this IQueryable<WhtCreditReceived> q, Guid companyId, int fiscalYear)
         => q.Where(w => w.CompanyId == companyId && w.CertificateDate == null && w.TaxYear == fiscalYear
             && (w.Status == WhtCreditStatus.Received || w.Status == WhtCreditStatus.Claimed
-                || (w.Status == WhtCreditStatus.Pending && w.ReceivedAmount > 0.005m)));
+                || ((w.Status == WhtCreditStatus.Pending || w.Status == WhtCreditStatus.Expired) && w.ReceivedAmount > 0.005m)));
 
     /// <summary>รอบ 252 (WP-09): ยอดเครดิตรวมของแถวที่ <see cref="CreditableInPeriod"/> คืน — ผ่านตัวคำนวณเดียว <see cref="WhtCreditableAmount.Of"/>
     /// (ใบรวม/ผ่อนงวด ⇒ เฉพาะส่วนที่ได้ใบ) · ตัวรวมเดียวของ ภ.ง.ด.50 (<c>TaxService</c>) + เครื่องคำนวณหน้าบริหารการเงิน</summary>

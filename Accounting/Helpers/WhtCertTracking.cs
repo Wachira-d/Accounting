@@ -19,6 +19,11 @@ public static class WhtCertTracking
     };
 
     /// <summary>ชนิดที่ "ชำระใบอื่น" — ไม่มีแถวของตัวเอง ⇒ แสดงสถานะของใบต้นทาง (RelatedDocumentId) · resolver เดียวของรายการ/หน้าเอกสาร</summary>
+    /// <summary>ฝ่ายค้าน WP-09 L8: แถวที่ "ยังต้องตาม" (การ์ด/ตัวกรองรอใบ) — Pending เท่านั้น (Received/Claimed/Expired ไม่ต้องโหลด)</summary>
+    public static readonly IReadOnlyList<WhtCreditStatus> FollowUpStatuses = new[] { WhtCreditStatus.Pending };
+    /// <summary>ตัวกรอง "ได้รับแล้ว"</summary>
+    public static readonly IReadOnlyList<WhtCreditStatus> ReceivedStatuses = new[] { WhtCreditStatus.Received, WhtCreditStatus.Claimed };
+
     public static readonly IReadOnlyList<DocumentType> InheritFromSourceTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher };
 
     /// <summary>ชนิดที่ตั้ง 11910 ได้ตอนออกใบ (เกณฑ์สิทธิ์) — ยังไม่รับเงิน ⇒ ยังไม่ใช่การค้างของลูกค้า</summary>
@@ -34,11 +39,13 @@ public static class WhtCertTracking
     /// <param name="contactId">จำกัดผู้จ่ายรายนี้ (null = ทุกราย)</param>
     /// <param name="taxYear">จำกัดปีภาษี (null = ทุกปี)</param>
     /// <param name="creditIds">จำกัดแถวเหล่านี้ (null = ไม่จำกัด)</param>
+    /// <param name="statuses">จำกัดสถานะแถว (null = ทุกสถานะ) — ฝ่ายค้าน WP-09 L8</param>
     public static async Task<List<Row>> LoadAsync(AccountingDbContext db, Guid companyId, DateTime nowUtc,
         IReadOnlyCollection<Guid>? documentIds = null, Guid? contactId = null, int? taxYear = null,
-        IReadOnlyCollection<Guid>? creditIds = null, CancellationToken ct = default)
+        IReadOnlyCollection<Guid>? creditIds = null, IReadOnlyList<WhtCreditStatus>? statuses = null, CancellationToken ct = default)
     {
         var q = db.WhtCreditsReceived.AsNoTracking().Where(w => w.CompanyId == companyId);
+        if (statuses != null) { var st = statuses.ToArray(); q = q.Where(w => st.Contains(w.Status)); }
         if (documentIds != null) q = q.Where(w => w.DocumentId != null && documentIds.Contains(w.DocumentId.Value));
         if (contactId != null) q = q.Where(w => w.PayerContactId == contactId);
         if (taxYear != null) q = q.Where(w => w.TaxYear == taxYear.Value);

@@ -230,10 +230,18 @@
             <tbody id="icCands"></tbody></table>
         </div>
         <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-top:8px">
+          <input type="checkbox" id="icAllowOtherPayer"> ยืนยันว่ารายการที่เลือกเป็นผู้จ่ายเดียวกับบนใบ (เช่น ผู้จ่ายเปลี่ยนชื่อ/สาขา)
+        </label>
+        <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-top:6px">
           <input type="checkbox" id="icStandalone"> ไม่มีรายการที่ตรง — บันทึกเป็นรายการเครดิตใหม่ (เช่น รับชำระนอกระบบ)
         </label>
+        <div class="form-group" style="margin-top:6px">
+          <label class="form-label" for="icStandaloneReason">เหตุผล (เมื่อบันทึกเป็นรายการใหม่ทั้งที่ผู้จ่ายมีรายการรอใบอยู่ — อย่างน้อย 10 ตัวอักษร)</label>
+          <input class="form-input" id="icStandaloneReason" placeholder="เช่น รับเงินสดหน้างาน ไม่ได้บันทึกรับชำระในระบบ">
+        </div>
       </div>
       <div class="modal-footer">
+        <button class="btn btn-secondary" id="icViewBtn" onclick="Page.viewIntakeFile()">📎 เปิดดูใบ</button>
         <button class="btn btn-secondary" onclick="Page.openReject()">ตีกลับพร้อมเหตุผล…</button>
         <button class="btn btn-primary" id="icSave" onclick="Page.confirmIntake()">✔ ยืนยัน — บันทึกเป็นได้รับแล้ว</button>
       </div>
@@ -407,7 +415,7 @@
               ${i.rejectedReason ? `<div style="font-size:11.5px;color:#991b1b">เหตุที่ตีกลับ: ${Layout.esc(i.rejectedReason)}</div>` : ''}
             </div>
             <div style="white-space:nowrap">
-              ${i.fileAttachmentId ? `<button class="btn btn-sm btn-secondary" onclick="Page.openFile('${Layout.jsArg(i.fileAttachmentId)}')">📎 ดูใบ</button>` : ''}
+              ${i.fileAttachmentId ? `<button class="btn btn-sm btn-secondary" onclick="Page.viewIntakeFile('${Layout.jsArg(i.id)}')">📎 ดูใบ</button>` : ''}
               ${i.status === 'AwaitingConfirm' ? `<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="Page.openIntake('${Layout.jsArg(i.id)}')">ตรวจและยืนยัน</button>` : ''}
             </div>
           </div>`;
@@ -438,9 +446,22 @@
         await this.load();
       },
 
+      // ฝ่ายค้าน WP-09 M6: ระบบสอนนักเรียนว่า "ของจริง" เฉพาะเมื่อผู้ใช้เปิดดูใบก่อนยืนยัน — จำว่าเปิดดูใบไหนแล้ว (ส่ง viewedFile ไปให้เซิร์ฟเวอร์ตัดสิน)
+      _viewed: {},
+      async viewIntakeFile(id) {
+        const iid = id || this._icId;
+        const it = (this.inbox || []).find(x => x.id === iid);
+        if (!it || !it.fileAttachmentId) { Layout.toast('ใบนี้ไม่มีไฟล์แนบ', 'error'); return; }
+        this._viewed[iid] = true;
+        await this.openFile(it.fileAttachmentId);
+      },
+
       async openIntake(id) {
         const it = (this.inbox || []).find(x => x.id === id); if (!it) return;
         this._icId = id;
+        document.getElementById('icViewBtn').style.display = it.fileAttachmentId ? '' : 'none';
+        document.getElementById('icAllowOtherPayer').checked = false;
+        document.getElementById('icStandaloneReason').value = '';
         const set = (k, v) => { document.getElementById(k).value = v == null ? '' : v; };
         set('icNo', it.certificateNumber); set('icDate', it.certificateDate ? Layout.dateInput(it.certificateDate) : '');
         set('icPayer', it.payerName); set('icPayerTax', it.payerTaxId); set('icIncomeType', it.incomeTypeCode);
@@ -472,13 +493,14 @@
                     value="${Number(proposed[c.whtCreditId] != null ? proposed[c.whtCreditId] : c.outstanding).toFixed(2)}"></td>
             </tr>`).join('')
             : '<tr><td colspan="6" style="color:#94a3b8">ไม่มีรายการรอ 50 ทวิ — ติ๊ก "บันทึกเป็นรายการเครดิตใหม่" ด้านล่าง</td></tr>';
-          if (!cands.length) document.getElementById('icStandalone').checked = true;
         } catch (e) { tb.innerHTML = `<tr><td colspan="6" style="color:#991b1b">${Layout.esc(e.message || 'โหลดรายการไม่สำเร็จ')}</td></tr>`; }
       },
 
       async confirmIntake() {
         const num = id => { const v = document.getElementById(id).value; return v === '' ? null : parseFloat(v); };
-        const allocations = Array.from(document.querySelectorAll('#icCands .ic-pick:checked')).map(cb => {
+        const standalone = document.getElementById('icStandalone').checked;
+        // เลือกได้อย่างเดียว (เซิร์ฟเวอร์ปฏิเสธ 400 ถ้าส่งทั้งคู่) — ติ๊กรายการใหม่ = ไม่ส่งรายการที่ติ๊กไว้
+        const allocations = standalone ? [] : Array.from(document.querySelectorAll('#icCands .ic-pick:checked')).map(cb => {
           const amt = Array.from(document.querySelectorAll('#icCands .ic-amt')).find(x => x.dataset.id === cb.dataset.id);
           return { whtCreditId: cb.dataset.id, amount: parseFloat(amt ? amt.value : '') || 0 };
         });
@@ -490,7 +512,10 @@
           incomeTypeCode: document.getElementById('icIncomeType').value.trim(),
           incomeAmount: num('icBase'), whtRate: num('icRate'), whtAmount: num('icAmt'),
           allocations,
-          createStandalone: document.getElementById('icStandalone').checked,
+          createStandalone: standalone,
+          standaloneReason: document.getElementById('icStandaloneReason').value.trim() || null,
+          allowOtherPayer: document.getElementById('icAllowOtherPayer').checked,
+          viewedFile: !!this._viewed[this._icId],
         };
         const btn = document.getElementById('icSave');
         btn.disabled = true;

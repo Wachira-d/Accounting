@@ -25,7 +25,7 @@ public enum WhtCertMatchLevel
 /// <item>K0 เลขผู้เสียภาษี<b>ผู้ถูกหัก</b>บนใบ ≠ ของเรา ⇒ Rejected (ไม่จับคู่ ไม่เครดิต)</item>
 /// <item>K1 จำกัดแถวเหลือผู้จ่ายรายนี้ (เลขผู้เสียภาษีตรงเป๊ะ · ใบไม่มีเลข ⇒ ใช้ผู้ติดต่อที่ระบบจับได้)</item>
 /// <item>K2 เอกสารที่ผู้ส่งระบุ (ลิงก์/หน้าเอกสาร) เป็นชุดแรก</item>
-/// <item>K3 ยอดเดี่ยว |ภาษีบนใบ − ยอดค้างของแถว| ≤ <see cref="Tolerance"/> ⇒ 1:1 (หลายแถวตรง ⇒ เลือกวันที่ใกล้วันที่บนใบที่สุด · เสมอกัน ⇒ Ambiguous)</item>
+/// <item>K3 ยอดเดี่ยว |ภาษีบนใบ − ยอดค้างของแถว| ≤ <see cref="Tolerance"/> ⇒ 1:1 (หลายแถวตรง ⇒ Ambiguous + เสนอแถวที่วันที่ใกล้สุด · ไม่ auto)</item>
 /// <item>K4 subset ≤ <see cref="MaxSubsetRows"/> แถวของผู้จ่ายเดียวกันที่รวมได้ภาษีบนใบ ⇒ 1:n · หลายชุด ⇒ Ambiguous</item>
 /// <item>K5 ภาษีบนใบ &lt; ยอดค้างของแถวเดียว ⇒ Partial (เสนอ allocation บางส่วนที่แถวเก่าสุด — ไม่ auto)</item>
 /// <item>K6 ภาษีบนใบ &gt; Σ ยอดค้างของผู้จ่าย ⇒ Over (มักเป็นการรับชำระที่ไม่ได้บันทึก WHT)</item>
@@ -91,12 +91,14 @@ public static class WhtCertMatchPolicy
 
         // K3 — ยอดเดี่ยว
         var singles = pool.Where(c => Math.Abs(c.Outstanding - tax) <= Tolerance).OrderBy(Dist).ThenBy(c => c.CreditId).ToList();
-        if (singles.Count == 1 || (singles.Count > 1 && anchor != null && Dist(singles[0]) < Dist(singles[1])))
+        if (singles.Count == 1)
             return new(WhtCertMatchLevel.Exact, new[] { new Allocation(singles[0].CreditId, R(Math.Min(tax, singles[0].Outstanding))) },
                 "ยอดภาษีบนใบตรงกับรายการรอใบหนึ่งรายการ");
+        // ฝ่ายค้าน WP-09 L1: หลายรายการยอดเท่ากัน ⇒ กำกวมเสมอ (วันที่ใกล้กว่าไม่ใช่หลักฐานว่าเป็นใบของรายการนั้น) — เสนอรายการที่ใกล้วันที่บนใบที่สุด
+        // เป็น "ข้อเสนอ" ตัวเดียว (Allocations[0]) ให้คนยืนยัน · ไม่ auto (ด่าน Level ≠ Exact)
         if (singles.Count > 1)
-            return new(WhtCertMatchLevel.Ambiguous, singles.Select(c => new Allocation(c.CreditId, R(Math.Min(tax, c.Outstanding)))).ToList(),
-                $"มี {singles.Count} รายการที่ยอดเท่ากับใบนี้ — เลือกเอกสารที่ใบนี้ครอบเอง");
+            return new(WhtCertMatchLevel.Ambiguous, new[] { new Allocation(singles[0].CreditId, R(Math.Min(tax, singles[0].Outstanding))) },
+                $"มี {singles.Count} รายการที่ยอดเท่ากับใบนี้ — ระบบเสนอรายการที่ถูกหักใกล้วันที่บนใบที่สุด ตรวจแล้วเลือกเอกสารที่ใบนี้ครอบ");
 
         var total = pool.Sum(c => c.Outstanding);
         // K6 — เกินยอดค้างทั้งหมด

@@ -110,11 +110,11 @@ public class WhtCreditWriteOffTests
     public void รายการเสนอสิ้นรอบ_เฉพาะรอใบ_และรอบบัญชีสิ้นสุดแล้ว()
     {
         var end2025 = new DateTime(2025, 12, 31, 0, 0, 0, DateTimeKind.Utc);
-        Assert.True(WhtCreditWriteOff.IsYearEndCandidate(WhtCreditStatus.Pending, end2025, Today));
-        Assert.False(WhtCreditWriteOff.IsYearEndCandidate(WhtCreditStatus.Pending, new DateTime(2026, 12, 31), Today));   // รอบยังไม่จบ
-        Assert.False(WhtCreditWriteOff.IsYearEndCandidate(WhtCreditStatus.Pending, Today, Today));                       // วันสิ้นรอบเอง
-        Assert.False(WhtCreditWriteOff.IsYearEndCandidate(WhtCreditStatus.Received, end2025, Today));
-        Assert.False(WhtCreditWriteOff.IsYearEndCandidate(WhtCreditStatus.Expired, end2025, Today));
+        Assert.True(WhtCreditWriteOff.IsYearEndCandidate(WhtCreditStatus.Pending, 100m, end2025, Today));
+        Assert.False(WhtCreditWriteOff.IsYearEndCandidate(WhtCreditStatus.Pending, 100m, new DateTime(2026, 12, 31), Today));   // รอบยังไม่จบ
+        Assert.False(WhtCreditWriteOff.IsYearEndCandidate(WhtCreditStatus.Pending, 100m, Today, Today));                       // วันสิ้นรอบเอง
+        Assert.False(WhtCreditWriteOff.IsYearEndCandidate(WhtCreditStatus.Received, 100m, end2025, Today));
+        Assert.False(WhtCreditWriteOff.IsYearEndCandidate(WhtCreditStatus.Expired, 100m, end2025, Today));
     }
 
     [Theory]

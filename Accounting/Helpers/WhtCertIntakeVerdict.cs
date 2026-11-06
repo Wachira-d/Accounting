@@ -23,14 +23,15 @@ public static class WhtCertIntakeVerdict
     /// <param name="PayeeIsUs">ผู้ถูกหักบนใบ = บริษัทเรา: true · ไม่ใช่: false · อ่านไม่ได้: null</param>
     /// <param name="ExtractionConfidence">null = ข้อมูลไม่ได้มาจาก OCR (กรอกมือ/ข้อมูลโครงสร้าง) — ไม่ใช่เหตุให้ไม่ auto</param>
     /// <param name="CertFiscalYear">ปีภาษี (รอบบัญชีของเรา) ของวันที่บนใบ</param>
-    /// <param name="RowFiscalYears">ปีภาษีของแถวที่จัดสรร</param>
+    /// <param name="RowFiscalYears">ปีภาษีของแถวที่จัดสรร + รอบของวันที่ใบแรกที่ลงแถวแล้ว (ฝ่ายค้าน WP-09 H2)</param>
+    /// <param name="AmountNeedsReview">ยอดภาษีไม่ได้มาจาก เงินได้ × อัตรา (อ่านจากตัวอักษร/อ่านไม่ได้) ⇒ ไม่ auto (ฝ่ายค้าน WP-09 M4)</param>
     public sealed record GateInput(
         string? CertificateNumber, DateTime? CertificateDate,
         string? PayerTaxId, string? PayeeTaxId, bool? PayeeIsUs,
         decimal IncomeAmount, decimal WhtRate, decimal WhtAmount,
         WhtCertMatchLevel MatchLevel, decimal? ExtractionConfidence,
         int? CertFiscalYear, IReadOnlyCollection<int> RowFiscalYears,
-        DateTime TodayUtc);
+        DateTime TodayUtc, bool AmountNeedsReview = false);
 
     /// <summary>ด่านที่ไม่ผ่าน (ข้อความไทย) — ว่าง = ผ่านทุกด่าน ⇒ ถามการตรวจของจริงได้</summary>
     public static IReadOnlyList<string> Gates(GateInput g)
@@ -43,6 +44,7 @@ public static class WhtCertIntakeVerdict
         if (g.PayeeIsUs == false) p.Add("ผู้ถูกหักบนใบไม่ใช่บริษัทเรา");
         else if (g.PayeeIsUs is null && !ThaiTaxId.IsValid(g.PayeeTaxId)) p.Add("อ่านเลขผู้เสียภาษีของผู้ถูกหัก (บริษัทเรา) บนใบไม่ได้");
         if (g.WhtAmount <= 0m) p.Add("อ่านยอดภาษีที่หักไม่ได้");
+        else if (g.AmountNeedsReview) p.Add("ยอดภาษีไม่ได้มาจาก เงินได้ × อัตรา บนใบ (อ่านจากตัวอักษร) — ต้องให้คนตรวจกับใบจริง");
         if (g.IncomeAmount <= 0m) p.Add("อ่านยอดเงินได้ไม่ได้");
         if (g.WhtAmount > 0m && g.IncomeAmount > 0m && g.WhtRate > 0m
             && Math.Abs(Math.Round(g.IncomeAmount * g.WhtRate / 100m, 2, MidpointRounding.AwayFromZero) - g.WhtAmount) > RateTolerance)
@@ -60,7 +62,7 @@ public static class WhtCertIntakeVerdict
         if (g.ExtractionConfidence is decimal c && c < ExtractionThreshold)
             p.Add($"ความมั่นใจในการอ่านช่องเงิน/เลขผู้เสียภาษีต่ำ ({c:P0})");
         if (g.CertFiscalYear is int y && g.RowFiscalYears.Count > 0 && g.RowFiscalYears.Any(r => r != y))
-            p.Add("วันที่บนใบอยู่คนละรอบบัญชีกับรายการที่จับคู่ (เครดิตใช้ในรอบของวันที่บนใบ)");
+            p.Add("วันที่บนใบอยู่คนละรอบบัญชีกับรายการที่จับคู่ — ระบบนับงวดเครดิตตามวันที่ของแถว (ใบแรก) ไม่ใช่รายใบ · ต้องให้คนตรวจ (ลงเป็นรายการแยกถ้าคนละรอบ)");
         return p;
     }
 
@@ -100,13 +102,21 @@ public static class WhtCertIntakeVerdict
 
     /// <summary>ป้ายซื่อสัตย์ของผลตรวจของจริง (กฎเหล็ก #1): "🤖 AI ตรวจ" เฉพาะเมื่อเรียก provider จริง · นักเรียน/ระบบ = "⚙️ ระบบตรวจ" ·
     /// ไม่ได้ตรวจ (ด่านเชิงกำหนดไม่ผ่าน/ไม่มีคำตอบ) = บอกตรง ๆ — หน้าเว็บแสดงข้อความนี้อย่างเดียว (ไม่มีสำเนาป้ายใน JS)</summary>
-    public static string AuthenticityLabel(string? answer, decimal? confidence, bool usedAi)
+    /// <param name="priorConfirmedFromPayer">จำนวนใบของผู้จ่ายรายนี้ที่ยืนยันแล้วก่อนหน้า — ป้ายของคำตอบนักเรียน (ฝ่ายค้าน WP-09 M6:
+    /// นักเรียนตอบจากประวัติผู้จ่าย ไม่ได้อ่านกระดาษใบนี้ ⇒ ห้ามอ้างว่า "ตรวจแล้ว")</param>
+    public static string AuthenticityLabel(string? answer, decimal? confidence, bool usedAi, int priorConfirmedFromPayer = 0)
     {
         if (answer == null) return "⚙️ ยังไม่ได้ตรวจของจริง — ผู้ใช้ตรวจใบแล้วกดยืนยัน";
-        var who = usedAi ? "🤖 AI ตรวจ" : "⚙️ ระบบตรวจ";
-        var what = answer == Genuine ? "ดูเป็นใบจริง" : "น่าสงสัย";
-        return confidence is decimal c ? $"{who}: {what} ({c:P0})" : $"{who}: {what}";
+        var pct = confidence is decimal c ? $" ({c:P0})" : "";
+        if (!usedAi)
+            return $"⚙️ ผู้จ่ายรายนี้ยืนยันแล้ว {Math.Max(0, priorConfirmedFromPayer)} ใบ — ระบบไม่ได้ตรวจกระดาษใบนี้"
+                + (answer == Genuine ? $" (ความมั่นใจจากประวัติ{pct})" : $" · ประวัติชี้ว่าน่าสงสัย{pct}");
+        return $"🤖 AI ตรวจ: {(answer == Genuine ? "ดูเป็นใบจริง" : "น่าสงสัย")}{pct}";
     }
+
+    /// <summary>ฝ่ายค้าน WP-09 M6: การยืนยันของผู้ใช้สอนนักเรียนว่า "ของจริง" ได้เฉพาะเมื่อผู้ใช้เปิดดูใบแล้ว และไม่ได้ทับคำตอบ "น่าสงสัย"</summary>
+    public static bool ShouldTeachGenuine(bool viewedFile, string? authenticityAnswer)
+        => viewedFile && authenticityAnswer != Suspect;
 
     /// <summary>ปีภาษี (รอบบัญชีของบริษัท) ของวันที่ — กติกาเดียวกับ <c>SyncWhtCreditReceivedAsync</c> (เดือนเริ่มรอบ 1–12)</summary>
     public static int FiscalYearOf(DateTime date, int fiscalStartMonth)

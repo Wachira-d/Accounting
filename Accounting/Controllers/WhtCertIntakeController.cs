@@ -104,8 +104,9 @@ public class WhtCertIntakeController : ControllerBase
     /// <summary>การ์ด "50 ทวิ ที่ต้องตาม" — ทั้งบริษัท (แดชบอร์ด) หรือรายผู้ติดต่อ (<paramref name="contactId"/>)</summary>
     [HttpGet("tracking")]
     [RequirePermission(PermissionKeys.TaxFile)]
-    public async Task<ActionResult<ApiResponse<WhtCertTrackingDto>>> Tracking(Guid companyId, [FromQuery] Guid? contactId, CancellationToken ct)
-        => Ok(new ApiResponse<WhtCertTrackingDto>(true, await _intake.TrackingAsync(companyId, contactId, ct)));
+    public async Task<ActionResult<ApiResponse<WhtCertTrackingDto>>> Tracking(Guid companyId, [FromQuery] Guid? contactId,
+        [FromQuery] int? taxYear, CancellationToken ct)
+        => Ok(new ApiResponse<WhtCertTrackingDto>(true, await _intake.TrackingAsync(companyId, contactId, taxYear, ct)));
 
     /// <summary>รายงานปลายปี "50 ทวิ ที่ยังขาด" (AUTO_SEND §4.5)</summary>
     [HttpGet("missing-report")]

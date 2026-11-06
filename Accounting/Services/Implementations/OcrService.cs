@@ -63,8 +63,9 @@ public class OcrService : IOcrService
     /// <summary>ที่เก็บไฟล์กลาง (Local | S3 · ทีม FS 2026-11-02) — ไฟล์ต้นฉบับของสแกนอ่าน/ลบผ่านตัวนี้ ไม่แตะดิสก์ตรง ·
     /// DI ใส่ให้เสมอ (null = สร้างนอก DI ⇒ FileStorageDefaults.Local ดิสก์ค่าเริ่มต้น)</summary>
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
-    /// <summary>รอบ 252 (WP-09): ประตูเดียวของใบ 50 ทวิ ขาเข้า — สแกนใบที่เราถูกหักส่งเข้ากล่องรับ (ไม่สร้างแถวเครดิตเอง)</summary>
-    private readonly Services.Interfaces.IWhtCertIntakeService? _whtIntake;
+    /// <summary>รอบ 252 (WP-09): ประตูเดียวของใบ 50 ทวิ ขาเข้า — สแกนใบที่เราถูกหักส่งเข้ากล่องรับ (ไม่สร้างแถวเครดิตเอง) ·
+    /// ฝ่ายค้าน WP-09 L6: เรียกผ่าน scope แยก (DbContext ของตัวเอง) — กล่องรับล้มแล้ว <c>ChangeTracker.Clear()</c> ต้องไม่ถอดเอนทิตีของ OcrService</summary>
+    private readonly Microsoft.Extensions.DependencyInjection.IServiceScopeFactory? _scopes;
     private Accounting.Services.Storage.IFileStorage Files
         => _storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
 
@@ -95,10 +96,10 @@ public class OcrService : IOcrService
         Services.Interfaces.IBotExchangeRateService? fxRates = null,
         Services.Interfaces.IPermissionService? perms = null,
         Accounting.Services.Storage.IFileStorage? storage = null,
-        Services.Interfaces.IWhtCertIntakeService? whtIntake = null)
+        Microsoft.Extensions.DependencyInjection.IServiceScopeFactory? scopes = null)
     {
         _storage = storage;
-        _whtIntake = whtIntake;
+        _scopes = scopes;
         _perms = perms;
         _docWorkflowLearner = docWorkflowLearner;
         _aiAugmenter = aiAugmenter;
@@ -4448,12 +4449,19 @@ public class OcrService : IOcrService
     /// <para>คืน null = ไม่มีกล่องรับลงทะเบียน (ผู้เรียกบอกผู้ใช้ — ไม่เงียบ)</para></summary>
     private async Task<Accounting.Models.DTOs.WhtCertSubmitResult?> EnsureWhtCreditFromCertAsync(Guid companyId, OcrScanResult result, Guid? documentId)
     {
-        if (_whtIntake == null)
+        if (_scopes == null)
+        {
+            _logger.LogError("ไม่มี IServiceScopeFactory — ใบ 50 ทวิ จากสแกน {Id} ไม่เข้ากล่องรับ", result.Id);
+            return null;
+        }
+        using var scope = _scopes.CreateScope();
+        var intake = scope.ServiceProvider.GetService(typeof(Services.Interfaces.IWhtCertIntakeService)) as Services.Interfaces.IWhtCertIntakeService;
+        if (intake == null)
         {
             _logger.LogError("ไม่ได้ลงทะเบียน IWhtCertIntakeService — ใบ 50 ทวิ จากสแกน {Id} ไม่เข้ากล่องรับ", result.Id);
             return null;
         }
-        return await _whtIntake.SubmitFromScanAsync(companyId, result.Id, WhtCertIntakeChannel.Scan,
+        return await intake.SubmitFromScanAsync(companyId, result.Id, WhtCertIntakeChannel.Scan,
             documentId is Guid d ? new[] { d } : null, "สแกนเอกสาร", null);
     }
 
@@ -7544,12 +7552,21 @@ public class OcrService : IOcrService
                 result.RawTextContent, ourTaxId);
             if (weAreWithheld == true && (result.ExtractedTotalAmount ?? 0) > 0)
             {
-                await EnsureWhtCreditFromCertAsync(companyId, result, document.Id);
+                // ฝ่ายค้าน WP-09 L6: ผลจริงของกล่องรับถึงผู้ใช้ทางหมายเหตุของสแกน (ไม่ใช่ log อย่างเดียว)
+                var intakeResult = await EnsureWhtCreditFromCertAsync(companyId, result, document.Id);
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[WHT-CERT] หนังสือรับรอง 50 ทวิ ที่เราถูกหัก — "
+                    + (intakeResult == null ? "ส่งเข้ากล่องรับไม่ได้ (ระบบกล่องรับไม่พร้อม) — อัปโหลดใบที่หน้า \"ภาษีถูกหัก ณ ที่จ่าย\" อีกครั้ง"
+                        : "ส่งเข้ากล่องรับแล้ว — " + intakeResult.Message);
+                await _db.SaveChangesAsync();
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "บันทึกทะเบียนภาษีถูกหักจากหนังสือรับรองไม่สำเร็จ (scan {Id})", result.Id);
+            _logger.LogError(ex, "ส่งใบ 50 ทวิ จากสแกนเข้ากล่องรับไม่สำเร็จ (scan {Id})", result.Id);
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n[WHT-CERT] ส่งเข้ากล่องรับ 50 ทวิ ไม่สำเร็จ (" + ex.Message
+                + ") — อัปโหลดใบที่หน้า \"ภาษีถูกหัก ณ ที่จ่าย\" อีกครั้ง";
+            try { await _db.SaveChangesAsync(); }
+            catch (Exception saveEx) { _logger.LogError(saveEx, "บันทึกหมายเหตุ 50 ทวิ ของสแกน {Id} ไม่สำเร็จ", result.Id); }
         }
 
         if (_rdComplianceValidator != null)
