@@ -3501,6 +3501,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
    - **AssetCode = "DRAFT-{guid:14}"** placeholder (ไม่กิน counter)
      → user กดยืนยันใน `FixedAssetService.UpdateAsync` → generate
      `FA-yyyyMM-####` จริง (gap-free, ลำดับตามเวลายืนยัน)
+   - **สร้างเองจากหน้าทะเบียน (รอบ 252 WP-13):** รหัสว่าง ⇒ `FixedAssetService.CreateAsync` ออก `FA-yyyyMM-####` ด้วย
+     `AssetCodeGenerator.NextAsync` ตัวเดียวกัน · กรอกเอง = Trim แล้วตรวจซ้ำเหมือนเดิม (validator ไม่บังคับรหัสแล้ว) ·
+     นำเข้า CSV ยังบังคับรหัสต่อแถว (ไม่เปลี่ยน)
    - `Status = Active, NeedsReview = true` พร้อม suggested `UsefulLifeMonths`
      + depreciation method (`StraightLine` default, ที่ดิน → `None`)
    - **Delete guard** (`FixedAssetService.DeleteAsync`):
@@ -7996,4 +7999,5 @@ _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่ง
 _Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 250 WP-02 — §2.12g งานหลังรับชำระทุกทางเข้า (`CreatePaymentAsync(…, source)` · `PaymentEntrySource` · integration `AfterPaymentRecordedAsync`) · ชั้นค่าตั้ง รายการประจำ/ผู้ติดต่อ · ลิงก์ชำระของใบแจ้งหนี้ที่มีใบกำกับ · §2.7 `EmailEnqueueOutcome` + ข้ามกฎซ้ำ · §6 GL สูตรเดียว/ลำดับล็อกสินทรัพย์ · แจ้งเตือนที่ระบุผู้รับเคารพแถวปิด · ทิศเงิน `CashFlowDirection` · การ์ด go-live แอดมิน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a40c91e5)_
+_Last verified against codebase: 2026-11-06 (รอบ 252 WP-13 — UX เก็บกวาด: สินทรัพย์สร้างเองรหัสว่าง = ออก FA-yyyyMM-#### (§ขึ้นทะเบียนสินทรัพย์) · ลบเอกสารถาวรเหลือหน้าต่างเดียว (แผน/planToken/needsReason จาก purgePreview เดิม — ไม่เปลี่ยนสิ่งที่ส่ง) · ไม่เปลี่ยน flow เงิน/ภาษี — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e021629c · 1929f9f4 · c2129b14 · 8ff9c7f5 · 09371cea · 30405fc4 · f8e7d5dd)_
 _Last verified against codebase: 2026-11-06 (รอบ 251 WP-07 — §2.7 รหัสความพร้อมครบชุด (ETAX/ETAX-SENDER/ETAX-RECIPIENT · PAY-QR · QUOTA · PERIOD · POSTPAY) จากผู้อ่านเดิม · คอลัมน์ระดับ Autopilot · ส่งทดสอบถึงอีเมลผู้ใช้ (ไม่บันทึกการส่ง · ไม่นับเพดาน · audit) · ผลทดลองรันกล่องแยก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 847041d2)_
