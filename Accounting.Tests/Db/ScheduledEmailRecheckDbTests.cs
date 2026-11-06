@@ -35,7 +35,10 @@ public class ScheduledEmailRecheckDbTests
             if (name == nameof(IEmailSender.SendAsync)) { box.Sent.Add((EmailMessage)args[0]!); return EmailSendResult.Ok("test"); }
             return null;
         });
-        return F4Proxy<IEmailSenderFactory>.Create((_, _) => sender);
+        // รอบ 244 (แก้ CI ข้อ 6–8): รอบ 241 ฝ่ายค้าน B2 ให้คิวเลือกผู้ส่งผ่าน DocumentEmailService.ResolveOnBehalfSenderAsync ซึ่งเรียก
+        // PlatformFromAddress() (คืน string) — ตัวปลอมเดิมคืน "ผู้ส่ง" ให้ทุกเมธอด ⇒ proxy ถูกแปลงเป็น string ไม่ได้ (InvalidCast) ⇒ คิวล้มทุกฉบับ ·
+        // ตัวปลอมต้องตอบตามชนิดของเมธอด (แบบเดียวกับเทสต์รอบ 240/241) · โค้ดจริงไม่ได้ cast ชนิด
+        return F4Proxy<IEmailSenderFactory>.Create((m, _) => m == nameof(IEmailSenderFactory.PlatformFromAddress) ? "no-reply@nextacc.net" : sender);
     }
 
     private static IPdfGenerationService Pdf(bool fail) => F4Proxy<IPdfGenerationService>.Create((name, _) =>

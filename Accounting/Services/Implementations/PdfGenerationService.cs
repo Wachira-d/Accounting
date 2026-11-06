@@ -31,13 +31,17 @@ public partial class PdfGenerationService : IPdfGenerationService
     // ค่าคงที่ของ process (singleton จาก DI) เก็บแบบเดียวกับ _webRoot
     private static Accounting.Services.Storage.IFileStorage? _storage;
 
+    /// <summary>รอบ 246 QR — ผู้สร้างเดียวของกล่อง QR ชำระเงินที่ตัวเรนเดอร์ทั้งสองวาด (null = ไม่มี QR · เทสต์เก่าที่สร้าง service เอง)</summary>
+    private readonly IPaymentQrService? _paymentQr;
+
     public PdfGenerationService(AccountingDbContext db, IDocumentTemplateService templateService,
         Pdf.IHtmlPdfRenderer? htmlPdf = null, Microsoft.AspNetCore.Hosting.IWebHostEnvironment? env = null,
-        Accounting.Services.Storage.IFileStorage? storage = null)
+        Accounting.Services.Storage.IFileStorage? storage = null, IPaymentQrService? paymentQr = null)
     {
         _db = db;
         _templateService = templateService;
         _htmlPdf = htmlPdf;
+        _paymentQr = paymentQr;
         if (env?.WebRootPath is { Length: > 0 } wr) _webRoot = wr;
         if (storage != null) _storage = storage;
     }
@@ -94,6 +98,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         // แพ็กเกจฟรี → พิมพ์เครดิต NextAcc มุมขวาล่าง (คิดครั้งเดียว ใช้ทุก renderer
         // ทั้ง e-Tax / Chromium / QuestPDF เพื่อให้ทุกทางออกได้ผลเหมือนกัน)
         var freeCredit = await IsFreeTierAsync(companyId);
+        // รอบ 246 QR: กล่อง QR ชำระเงิน (บัญชีรับเงิน + หน้าชำระออนไลน์) — resolver ตัวเดียว ส่งให้ทุก renderer (HTML · QuestPDF · e-Tax)
+        var paymentQr = await ResolvePaymentQrAsync(document, template, pdfA: false);
 
         // e-Tax path: render template-styled (สีส้ม) + PDF/A conformance →
         // inject XML. ผลลัพธ์ = หน้าตาเหมือน preview + ฝัง XML ยื่นภาษีได้.
@@ -111,7 +117,9 @@ public partial class PdfGenerationService : IPdfGenerationService
                     // Title ของ PDF/A-3 เป็นไทย (ไม่ตรงกันในไฟล์เดียว)
                     pdfTitle: $"{GetDocumentTitle(document.DocumentType, ResolveDocumentLanguage(request.Language, document, template, settings))} {document.DocumentNumber}",
                     pdfAuthor: company.Name,
-                    requirePhoR06: await RequirePhoR06Async(_db));
+                    requirePhoR06: await RequirePhoR06Async(_db),
+                    // ไฟล์ e-Tax (ส่ง ETDA/เก็บถาวร) ไม่มี QR หน้าชำระ (token) — QR บัญชีคงไว้ (คำตัดสิน 246-QR-5)
+                    paymentQr: paymentQr?.WithoutPayLink());
                 var metadata = await BuildEtaxMetadataFromEntityAsync(etax, document, company);
                 // ชื่อไฟล์ XML แนบต้องเป็น ETDA-invoice.xml (ETDA spec) — ดู EtdaEmbeddedXmlFileName
                 var xmlFileName = EtdaEmbeddedXmlFileName;
@@ -134,11 +142,11 @@ public partial class PdfGenerationService : IPdfGenerationService
         if (_htmlPdf is { Enabled: true })
         {
             var html = BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, depositApplies, freeCredit,
-                await RequirePhoR06Async(_db));
+                await RequirePhoR06Async(_db), paymentQr);
             pdfBytes = await _htmlPdf.TryRenderAsync(html);
         }
         pdfBytes ??= RenderDocumentPdfNative(document, company, settings, template, request.WatermarkOverride, request.Language, signers, gl, freeCredit,
-            requirePhoR06: await RequirePhoR06Async(_db));
+            requirePhoR06: await RequirePhoR06Async(_db), paymentQr: paymentQr);
 
         var fileName = $"{document.DocumentNumber}.pdf";
 
@@ -171,9 +179,11 @@ public partial class PdfGenerationService : IPdfGenerationService
             ? await LoadGlPostingAsync(companyId, document) : null;
         var depositApplies = document.DepositAppliedAmount > 0
             ? await LoadDepositApplyBreakdownAsync(companyId, document) : null;
+        // รอบ 246 QR: resolver ตัวเดียวกับเส้น PDF (พรีวิวพิมพ์ = ไฟล์ที่ดาวน์โหลด)
+        var paymentQr = await ResolvePaymentQrAsync(document, template, pdfA: false);
         return BuildDocumentHtml(document, company, settings, template, request.WatermarkOverride,
             request.Language, signers, gl, depositApplies, await IsFreeTierAsync(companyId),
-            await RequirePhoR06Async(_db));
+            await RequirePhoR06Async(_db), paymentQr);
     }
 
     /// <summary>Build a printable 50 ทวิ from an IN-MEMORY (un-saved) cert
@@ -304,7 +314,7 @@ public partial class PdfGenerationService : IPdfGenerationService
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
         var html = BuildPreviewHtml(company, settings, template, request.Language,
-            await IsFreeTierAsync(companyId));
+            await IsFreeTierAsync(companyId), paymentQr: await SamplePaymentQrAsync(companyId, template));
         return ConvertHtmlToPdf(html, template);
     }
 
@@ -335,7 +345,8 @@ public partial class PdfGenerationService : IPdfGenerationService
 
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
-        return BuildPreviewHtml(company, settings, template, language, await IsFreeTierAsync(companyId), copyPrint);
+        return BuildPreviewHtml(company, settings, template, language, await IsFreeTierAsync(companyId), copyPrint,
+            await SamplePaymentQrAsync(companyId, template));
     }
 
     /// <summary>
@@ -348,7 +359,8 @@ public partial class PdfGenerationService : IPdfGenerationService
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId);
         draft.CompanyId = companyId;
-        return BuildPreviewHtml(company, settings, draft, draft.Language, await IsFreeTierAsync(companyId));
+        return BuildPreviewHtml(company, settings, draft, draft.Language, await IsFreeTierAsync(companyId),
+            paymentQr: await SamplePaymentQrAsync(companyId, draft));
     }
 
     public byte[] ConvertHtmlToPdfBytes(string html) => ConvertHtmlToPdf(html, null);
@@ -2019,12 +2031,14 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// <param name="requirePhoR06">นโยบายแพลตฟอร์ม (<c>SiteSettings</c>) ว่าบังคับ ภ.พ.06
     /// ก่อนออกใบกำกับอย่างย่อหรือไม่ — ค่าตั้งต้น <c>true</c> = กฎหมายวันนี้ · ผู้เรียกที่ลืมส่ง
     /// จะได้ทิศที่<b>เข้มกว่า</b> (พิมพ์ "ใบเสร็จรับเงิน") ไม่ใช่ทิศที่ออกใบกำกับโดยไม่มีสิทธิ์</param>
-    private string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,
+    /// <param name="paymentQr">รอบ 246 QR — กล่อง QR ชำระเงินจาก resolver ตัวเดียว (<c>ResolvePaymentQrAsync</c>) · null = ไม่วาด · internal ให้เทสต์ renderer เรียกตรงได้</param>
+    internal string BuildDocumentHtml(Document doc, Company company, CompanySettings? settings,
         DocumentTemplate template, string? watermark, string? langOverride,
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
         IReadOnlyList<(string RefNo, decimal Amount)>? depositApplies = null,
         bool showFreeTierCredit = false,
-        bool requirePhoR06 = true)
+        bool requirePhoR06 = true,
+        PaymentQrBlock? paymentQr = null)
     {
         // ใบที่ออกเลขแล้ว ⇒ หัวตามบทบาทที่ตรึงไว้ (ฝ่ายค้าน C-2 รอบ 199) — ตัวเดียวกับ QuestPDF (ห้าม drift)
         var companyMayIssueAbbreviated = Accounting.Helpers.AbbreviatedTaxInvoiceRule.HeadingMayUseAbbreviated(
@@ -2468,6 +2482,8 @@ public partial class PdfGenerationService : IPdfGenerationService
             var bankHtml = System.Net.WebUtility.HtmlEncode(bankTextForLang).Replace("\r\n", "\n").Replace("\n", "<br/>");
             sb.AppendLine($"<div class='bank-details'><strong>{L.PaymentInfo}:</strong><br/>{bankHtml}</div>");
         }
+        // รอบ 246 QR: QR ชำระเงินถัดจากข้อมูลบัญชี — คู่กับ QuestPDF ComposeFooter → ComposePaymentQr (ข้อความ/ลำดับเดียวกัน)
+        sb.AppendLine(PaymentQrHtml(paymentQr, L));
 
         // เงื่อนไขการชำระเงินของใบนี้ (doc.PaymentTerms/CreditDays) — เดิม flag
         // ShowPaymentTerms มีอยู่แต่ไม่มี renderer ตัวไหน render เลย ผู้ใช้กรอก
@@ -2892,8 +2908,12 @@ public partial class PdfGenerationService : IPdfGenerationService
         return sb.ToString();
     }
 
+    /// <summary>รอบ 246 QR — ตัวอย่างหน้าเทมเพลต: QR บัญชีที่ตั้งไว้ (ไม่ฝังยอด · ไม่มี QR หน้าชำระเพราะไม่มีใบจริง) · ไม่มี service = ไม่มี</summary>
+    private async Task<PaymentQrBlock?> SamplePaymentQrAsync(Guid companyId, DocumentTemplate template)
+        => _paymentQr == null ? null : await _paymentQr.SampleForTemplateAsync(companyId, template);
+
     private string BuildPreviewHtml(Company company, CompanySettings? settings, DocumentTemplate template, string? lang,
-        bool showFreeTierCredit = false, bool copyPrint = false)
+        bool showFreeTierCredit = false, bool copyPrint = false, PaymentQrBlock? paymentQr = null)
     {
         // Render the preview through the SAME path real documents use, so every
         // toggle (show company/contact fields, line columns, summary rows,
@@ -2972,7 +2992,7 @@ public partial class PdfGenerationService : IPdfGenerationService
             ? Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang ?? template.Language).CopyDuplicate
             : null;
         return BuildDocumentHtml(doc, company, settings, template, copyWatermark, lang,
-            showFreeTierCredit: showFreeTierCredit);
+            showFreeTierCredit: showFreeTierCredit, paymentQr: paymentQr);
     }
 
     // ===== CSS Builder =====

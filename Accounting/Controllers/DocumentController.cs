@@ -113,11 +113,31 @@ public class DocumentController : ControllerBase
         if (await DenySensitiveAsync(companyId, documentId, "ส่งอีเมล") is { } hidden)
             return Forbid403<DocumentEmailLogResponse>(hidden);
         var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
-        var log = await _docEmailService.SendDocumentEmailAsync(companyId, documentId, request, actor);
+        // รอบ 244: ทางเลือกช่องทางตัวเดียว — ใบกำกับของบริษัทโหมด e-Tax by Email ไปทาง e-Tax (ด่านปฏิเสธ = 409 พร้อมเหตุ · ไม่ส่งเป็นอีเมลธรรมดาแทน)
+        var log = await _docEmailService.SendDocumentRoutedAsync(companyId, documentId, request, actor);
         var dto = MapEmailLog(log);
         return log.Status == EmailLogStatus.Sent
-            ? Ok(new ApiResponse<DocumentEmailLogResponse>(true, dto, "ส่งอีเมลสำเร็จ"))
+            ? Ok(new ApiResponse<DocumentEmailLogResponse>(true, dto, log.IsEtaxByEmail
+                ? (log.IncludedRdTimestamp
+                    ? "ส่ง e-Tax by Email แล้ว (รอประทับเวลา) — เมื่อได้อีเมลที่ ETDA ประทับเวลาส่งกลับ ให้บันทึกที่หน้า e-Tax"
+                    : "ส่ง e-Tax by Email เข้าสภาพแวดล้อมทดสอบของ ETDA แล้ว (โหมดทดสอบ — ไม่ถูกประทับเวลาจริง)")
+                : "ส่งอีเมลสำเร็จ"))
             : Ok(new ApiResponse<DocumentEmailLogResponse>(false, dto, log.ErrorMessage ?? "ส่งอีเมลไม่สำเร็จ"));
+    }
+
+    /// <summary>รอบ 244: ช่องทางส่งอีเมลของใบนี้ + ตัวอย่างอีเมล e-Tax (หัวเรื่อง/ผู้รับ/สำเนา/ผู้ส่ง/เหตุที่ส่งไม่ได้/คำเตือน) ตามที่เซิร์ฟเวอร์จะส่ง —
+    /// หน้าต่างส่งอีเมลแสดงอย่างเดียว (ไม่มีสำเนากติกาในหน้า)</summary>
+    [HttpGet("{documentId:guid}/email-route")]
+    public async Task<ActionResult<ApiResponse<EtaxEmailPreviewResponse>>> GetEmailRoute(Guid companyId, Guid documentId)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<EtaxEmailPreviewResponse>(false, null, "ไม่พบเอกสาร"));
+        var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            docType.Value, DocPerm.Create, "ส่งอีเมล");
+        if (deny != null) return Forbid403<EtaxEmailPreviewResponse>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ส่งอีเมล") is { } hidden)
+            return Forbid403<EtaxEmailPreviewResponse>(hidden);
+        return Ok(new ApiResponse<EtaxEmailPreviewResponse>(true, await _docEmailService.PreviewEtaxEmailAsync(companyId, documentId)));
     }
 
     /// <summary>หัว/เนื้ออีเมลเริ่มต้น "ตามที่ server จะส่ง" (ภาษา+หัวเอกสารเดียวกับ PDF ที่แนบ · ค่าที่ผู้ใช้คุมได้ถูกหนีแล้ว) —

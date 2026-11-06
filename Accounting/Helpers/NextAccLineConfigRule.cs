@@ -111,6 +111,12 @@ public static class NextAccLineConfigRule
         return GroupIdRe.IsMatch(normalized) ? null : "Group ID ต้องขึ้นต้นด้วย C (กลุ่ม) หรือ R (ห้อง) ตามด้วยเลขฐาน 16 อีก 32 ตัว";
     }
 
+    /// <summary>รอบ 245 L1 ฝ่ายค้าน S2 (คำตอบเจ้าของ Q1(b)) — groupId กลางของระบบ<b>ทุกแหล่ง</b> (หน้าแอดมิน + config <c>Line:GroupId</c>) แยกกัน ไม่ใช่ผลของ
+    /// <see cref="Merge"/> (Merge เลือกแหล่งเดียวตาม token ⇒ อีกแหล่งหลุดด่าน) · ตัดช่องว่าง · ไม่ซ้ำ · ว่าง = ไม่มี</summary>
+    public static IReadOnlyList<string> PlatformGroupIds(string? adminGroupId, string? configGroupId)
+        => new[] { adminGroupId, configGroupId }
+            .Where(g => !string.IsNullOrWhiteSpace(g)).Select(g => g!.Trim()).Distinct(StringComparer.Ordinal).ToList();
+
     /// <summary>webhook ที่ต้องวางใน LINE Developers — ฐาน URL ว่าง ⇒ ตัวอย่างให้แทนโดเมนเอง</summary>
     public static string WebhookUrl(string? appBaseUrl)
         => (string.IsNullOrWhiteSpace(appBaseUrl) ? "https://<โดเมนของคุณ>" : appBaseUrl.Trim().TrimEnd('/')) + "/api/line-webhook";

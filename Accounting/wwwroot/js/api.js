@@ -923,6 +923,13 @@ const API = {
       getBankAccounts: (opts) => API.get(`${base}/bank/accounts${opts && opts.activeOnly ? '?activeOnly=true' : ''}`),
       createBankAccount: (d) => API.post(`${base}/bank/accounts`, d),
       updateBankAccount: (id, d) => API.put(`${base}/bank/accounts/${id}`, d),
+      // รอบ 246 QR — QR ชำระเงินของบัญชี (สิทธิ์ CompanySettings.Edit) · preview = เซิร์ฟเวอร์คำนวณ (data URI)
+      updateBankPaymentQr: (id, d) => API.put(`${base}/bank/accounts/${id}/payment-qr`, d),
+      uploadBankPaymentQrImage: (id, formData) => API.upload(`${base}/bank/accounts/${id}/payment-qr/image`, formData),
+      removeBankPaymentQrImage: (id) => API.del(`${base}/bank/accounts/${id}/payment-qr/image`),
+      getDocumentPaymentQr: (docId) => API.get(`${base}/bank/payment-qr/documents/${docId}`),
+      checkTemplatePaymentQr: (d) => API.post(`${base}/document-templates/payment-qr-check`, d),
+      previewBankPaymentQr: (id, q) => API.get(`${base}/bank/accounts/${id}/payment-qr/preview${q ? '?' + new URLSearchParams(q).toString() : ''}`),
       getTransactions: (id, q = '') => API.get(`${base}/bank/accounts/${id}/transactions${q}`),
       createTransaction: (d) => API.post(`${base}/bank/transactions`, d),
       reconcile: (d) => API.post(`${base}/bank/reconcile`, d),
@@ -1809,6 +1816,10 @@ const API = {
       updateEtaxConfig: (d) => API.put(`${base}/etax/config`, d),
       sendEtaxByEmail: (etaxId, d) => API.post(`${base}/etax/${etaxId}/send-email`, d),
       getEtaxEmailLogs: (etaxId) => API.get(`${base}/etax/${etaxId}/email-logs`),
+      // รอบ 244: ตัวอย่างอีเมล e-Tax ตามที่เซิร์ฟเวอร์จะส่ง + บันทึกใบที่ ETDA ประทับเวลาส่งกลับ
+      getEtaxEmailPreview: (etaxId) => API.get(`${base}/etax/${etaxId}/email-preview`),
+      recordEtdaStamp: (etaxId, d) => API.post(`${base}/etax/${etaxId}/etda-stamp`, d),
+      getDocumentEmailRoute: (documentId) => API.get(`${base}/document/${documentId}/email-route`),
       // Document email
       sendDocumentEmail: (documentId, d) => API.post(`${base}/document/${documentId}/send-email`, d),
       getDocumentEmailLogs: (documentId) => API.get(`${base}/document/${documentId}/email-logs`),

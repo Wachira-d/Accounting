@@ -16,13 +16,26 @@ public interface IDocumentEmailService
         SendDocumentEmailRequest req, string? actorEmail = null);
 
     /// <summary>
-    /// Send an e-Tax invoice via email per the RD "e-Tax by Email" specification:
-    /// - Attach PDF/A-3 (with embedded XML if config requires) and XML
-    /// - CC the RD timestamp address (csemail@etax.teda.th by default)
-    /// - From address must match the email registered with RD
+    /// ส่ง e-Tax by Email ตามคู่มือกรมสรรพากร (รอบ 244 — กติกาที่ <c>Helpers/EtaxByEmailFormat</c> + <c>Helpers/EtaxByEmailSenderGate</c>):
+    /// หัวเรื่อง <c>[ddMMyyyy พ.ศ.][INV|RCT|DBN|CDN][เลขที่](เลขใบเดิม)</c> · To ผู้ซื้อ 1 อีเมล · CC ที่อยู่ประทับเวลา (prod/UAT ตามโหมดทดสอบ) ·
+    /// แนบ PDF/A-3 ฝัง XML 1 ไฟล์ ≤ 3 MB · ส่งจาก SMTP/บัญชีของบริษัทที่ทดสอบผ่านและตรงอีเมลที่ลงทะเบียนเท่านั้น (ไม่ถอยไปแพลตฟอร์ม) ·
+    /// ไม่ผ่าน = แถว Failed + <c>BusinessRuleException</c>
     /// </summary>
     Task<DocumentEmailLog> SendEtaxByEmailAsync(Guid companyId, Guid etaxInvoiceId,
         SendEtaxByEmailRequest req, string? actorEmail = null);
+
+    /// <summary>รอบ 244: ทางเข้าเดียวของการส่งเอกสารทางอีเมล — ใบกำกับของบริษัทโหมด by Email ไปทาง e-Tax (ล้มดังเมื่อด่านปฏิเสธ) · อื่น ๆ = อีเมลธรรมดาเดิม</summary>
+    Task<DocumentEmailLog> SendDocumentRoutedAsync(Guid companyId, Guid documentId,
+        SendDocumentEmailRequest req, string? actorEmail = null);
+
+    /// <summary>รอบ 244: ช่องทางส่งอีเมลของใบนี้ (<c>Helpers/EtaxDeliveryRouter</c>)</summary>
+    Task<Accounting.Helpers.EtaxEmailRoute> RouteAsync(Guid companyId, Guid documentId);
+
+    /// <summary>รอบ 244: ตัวอย่างอีเมล e-Tax (หัวเรื่อง/ผู้รับ/สำเนา/ผู้ส่ง/เหตุที่ส่งไม่ได้/คำเตือน/ขั้น) ตามที่เซิร์ฟเวอร์จะส่ง</summary>
+    Task<EtaxEmailPreviewResponse> PreviewEtaxEmailAsync(Guid companyId, Guid documentId);
+
+    /// <summary>รอบ 244: บันทึกใบที่ ETDA ประทับเวลาแล้วส่งกลับ (ผู้ใช้ยืนยัน + ไฟล์หลักฐาน)</summary>
+    Task<EtaxInvoice> RecordEtdaStampAsync(Guid companyId, Guid etaxInvoiceId, RecordEtdaStampRequest req, Guid? userId, string? actorEmail);
 
     /// <summary>Test the company's email configuration by sending to a single recipient.</summary>
     Task<EmailTestResult> TestEmailConfigAsync(Guid companyId, string toAddress);

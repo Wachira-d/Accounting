@@ -53,12 +53,20 @@
       render(flash);
     }
 
+    // รอบ 246 QR — QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดที่ต้องชำระ) · ยอมเฉพาะ data:image/png;base64 (ไม่ต่อ URL อื่นเข้า src)
+    function qrImg(uri) {
+      if (!uri || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(uri)) return '';
+      return `<div style="text-align:center;margin:8px 0"><img src="${uri}" alt="QR พร้อมเพย์" style="width:200px;height:200px">` +
+        '<div style="font-size:12px;color:#64748b">สแกนด้วยแอปธนาคาร — ยอดเงินอยู่ใน QR แล้ว</div></div>';
+    }
+
     function render(flash) {
       const v = view;
       // ลิงก์ใช้ไม่ได้ — เซิร์ฟเวอร์ไม่ส่งข้อมูลของใบมาเลย (เลข/ยอด/ลูกค้า) · แสดงข้อความอย่างเดียว
       if (!v.documentNumber) { card.innerHTML = `<div class="err">${esc(v.blockedNote || 'ลิงก์ใช้ไม่ได้')}</div>`; return; }
       const wht = Number(v.wht || 0) > 0.005;
-      const rows = [`<tr><td>ยอดค้างชำระตามเอกสาร</td><td class="num">${money(v.gross)} บาท</td></tr>`];
+      // รอบ 244: gross = ยอดก่อนหัก ณ ที่จ่าย (ยอดค้างของใบเป็นยอดสุทธิแล้ว — เซิร์ฟเวอร์คำนวณ DocumentPayLinkPolicy.AmountsFor)
+      const rows = [`<tr><td>${wht ? 'ยอดก่อนหักภาษี ณ ที่จ่าย' : 'ยอดค้างชำระตามเอกสาร'}</td><td class="num">${money(v.gross)} บาท</td></tr>`];
       if (wht) rows.push(`<tr><td>หัก ภาษีหัก ณ ที่จ่าย (ท่านเป็นผู้หักและออกหนังสือรับรอง 50 ทวิ)</td><td class="num">− ${money(v.wht)} บาท</td></tr>`);
       rows.push(`<tr class="total"><td>ยอดที่ต้องชำระ</td><td class="num">${money(v.net)} บาท</td></tr>`);
       const methods = (v.onlineMethods || []);
@@ -75,6 +83,7 @@
         ${t ? `<div class="transfer"><b>หรือโอนเข้าบัญชี</b><br>
           ${t.bankName ? esc(t.bankName) + '<br>' : ''}${t.accountNumber ? 'เลขที่บัญชี ' + esc(t.accountNumber) + '<br>' : ''}
           ${t.accountName ? 'ชื่อบัญชี ' + esc(t.accountName) + '<br>' : ''}${t.promptPayId ? 'พร้อมเพย์ ' + esc(t.promptPayId) + '<br>' : ''}
+          ${qrImg(t.promptPayQrDataUri)}
           <span style="font-size:12px;color:#64748b">โอนแล้วกรุณาส่งหลักฐานการโอนถึงผู้ขาย (ตอบกลับอีเมลที่ได้รับ) — ระบบยืนยันยอดโอนให้อัตโนมัติไม่ได้</span></div>` : ''}`;
       card.querySelectorAll('[data-pay-index]').forEach(b => b.addEventListener('click', () => pay(methods[Number(b.dataset.payIndex)].code)));
     }

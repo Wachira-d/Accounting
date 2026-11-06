@@ -138,6 +138,29 @@ public sealed class DocumentLabels
     public string PaymentInfo => this["payment_info"];
     public string PaymentTermsLabel => this["payment_terms"];
 
+    // ── รอบ 246 QR: กล่อง QR ชำระเงิน — ทั้งสอง renderer ใช้ข้อความนี้ (ห้าม literal) ──
+    public string PayQrPromptPayTitle => this["payqr_promptpay_title"];
+    public string PayQrUploadTitle => this["payqr_upload_title"];
+    public string PayQrPromptPay => this["payqr_promptpay"];
+    public string PayQrNoAmount => this["payqr_no_amount"];
+    public string PayQrLinkTitle => this["payqr_link_title"];
+    public string PayQrAmount(decimal amount)
+        => string.Format(this["payqr_amount"], amount.ToString("N2", System.Globalization.CultureInfo.InvariantCulture));
+    /// <summary>"ใช้ได้ถึง 5/1/2570" (ไทย = พ.ศ. · เวลาไทย) / "Valid until 05 Jan 2027" — รับเวลา UTC</summary>
+    public string PayQrLinkExpires(DateTime utc) => string.Format(this["payqr_link_expires"], PayQrDate(utc));
+    /// <summary>ฝ่ายค้าน N1 — "ยอด ณ วันที่พิมพ์ 6/11/2569" ใต้ QR ที่ฝังยอด (ยอดค้างเปลี่ยนได้หลังพิมพ์)</summary>
+    public string PayQrAmountAsOf(DateTime utc) => string.Format(this["payqr_amount_asof"], PayQrDate(utc));
+    public string PayQrBank(string v) => string.Format(this["payqr_bank"], v);
+    public string PayQrAccountName(string v) => string.Format(this["payqr_account_name"], v);
+    public string PayQrAccountNo(string v) => string.Format(this["payqr_account_no"], v);
+    private string PayQrDate(DateTime utc)
+    {
+        var t = Accounting.Helpers.QuotationAcceptance.BangkokLocal(utc);
+        return IsEnglish
+            ? t.ToString("dd MMM yyyy", System.Globalization.CultureInfo.InvariantCulture)
+            : $"{t.Day}/{t.Month}/{t.Year + 543}";
+    }
+
     /// <summary>"เครดิต N วัน" / "N days credit" — ประกอบเป็นข้อความเพราะรูปประโยค
     /// ต่างกันคนละภาษา (ไทยเอาคำนำหน้า อังกฤษเอาต่อท้าย) จะใช้ label เดี่ยวไม่ได้</summary>
     public string CreditDaysText(int days) => IsEnglish
@@ -291,6 +314,18 @@ public sealed class DocumentLabels
         // ── ส่วนท้าย / อื่น ๆ ──
         ["payment_info"] = "ข้อมูลชำระเงิน",
         ["payment_terms"] = "เงื่อนไขการชำระเงิน",
+        // รอบ 246 QR — กล่อง QR ชำระเงิน (ทั้งสอง renderer)
+        ["payqr_promptpay_title"] = "สแกนจ่ายด้วยพร้อมเพย์",
+        ["payqr_upload_title"] = "สแกน QR เพื่อชำระเงิน",
+        ["payqr_promptpay"] = "พร้อมเพย์",
+        ["payqr_amount"] = "ยอดใน QR {0} บาท",
+        ["payqr_no_amount"] = "QR ไม่ระบุยอด — กรุณากรอกยอดเอง",
+        ["payqr_link_title"] = "สแกนเพื่อชำระออนไลน์",
+        ["payqr_link_expires"] = "ใช้ได้ถึง {0}",
+        ["payqr_bank"] = "ธนาคาร {0}",
+        ["payqr_account_name"] = "ชื่อบัญชี {0}",
+        ["payqr_account_no"] = "เลขที่บัญชี {0}",
+        ["payqr_amount_asof"] = "ยอด ณ วันที่พิมพ์ {0}",
         ["terms"] = "เงื่อนไข",
         ["notes"] = "หมายเหตุ",
         ["gl_posting"] = "การบันทึกบัญชี",
@@ -397,6 +432,17 @@ public sealed class DocumentLabels
 
         ["payment_info"] = "Payment details",
         ["payment_terms"] = "Payment terms",
+        ["payqr_promptpay_title"] = "Scan to pay with PromptPay",
+        ["payqr_upload_title"] = "Scan QR to pay",
+        ["payqr_promptpay"] = "PromptPay",
+        ["payqr_amount"] = "QR amount THB {0}",
+        ["payqr_no_amount"] = "Amount not included in QR - please enter it",
+        ["payqr_link_title"] = "Scan to pay online",
+        ["payqr_link_expires"] = "Valid until {0}",
+        ["payqr_bank"] = "Bank {0}",
+        ["payqr_account_name"] = "Account name {0}",
+        ["payqr_account_no"] = "Account no. {0}",
+        ["payqr_amount_asof"] = "Amount as of print date {0}",
         ["terms"] = "Terms",
         ["notes"] = "Notes",
         ["gl_posting"] = "Journal entry",

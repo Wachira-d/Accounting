@@ -27,9 +27,14 @@ public class DocumentPayLinkService : IDocumentPayLinkService
     /// <summary>เข้ารหัส token สำหรับประกอบ URL เดิมในอีเมลรอบถัดไป (ฐานเก็บ hash สำหรับค้น — ไม่มี token ตรง · คำตัดสิน 241-10)</summary>
     private readonly ISecretProtector _secrets;
 
+    /// <summary>รอบ 246 QR — ที่เก็บกลาง (อ่านรูป QR ของบัญชีให้หน้าชำระสาธารณะ) · null = ใช้บัญชีรับโอนของเว็บอย่างเดียว (พฤติกรรมเดิม)</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
+
     public DocumentPayLinkService(AccountingDbContext db, IEnumerable<IPaymentProvider> providers, ISecretProtector secrets,
-        IConfiguration? config = null, ILogger<DocumentPayLinkService>? logger = null)
+        IConfiguration? config = null, ILogger<DocumentPayLinkService>? logger = null,
+        Accounting.Services.Storage.IFileStorage? storage = null)
     {
+        _storage = storage;
         _db = db;
         _providers = providers;
         _secrets = secrets;
@@ -155,8 +160,11 @@ public class DocumentPayLinkService : IDocumentPayLinkService
     private async Task<(DocumentPayLinkPolicy.Amounts Amounts, string? WhtNote)> AmountsAsync(Guid companyId, DocFacts d, CancellationToken ct)
     {
         var withholds = await BuyerWithholdsAsync(companyId, d.ContactId, ct);
-        var amounts = DocumentPayLinkPolicy.AmountsFor(d.BalanceDue, DocumentPayLinkPolicy.ExpectedWht(d.WithholdingTaxAmount, withholds),
-            await WhtAlreadyAsync(companyId, d.Id, ct));
+        // รอบ 244 (ฝ่ายค้าน S2): WHT ที่เหลือจากตัวคิดเดียวกับตัวบันทึกรับชำระ (ใบลดหนี้ที่มีผล · ที่หักไปแล้ว) — NetCap
+        var doc = await _db.Documents.AsNoTracking().FirstAsync(x => x.Id == d.Id && x.CompanyId == companyId, ct);
+        var figures = await DocumentService.PaymentWhtFiguresAsync(_db, companyId, doc, d.BalanceDue, ct);
+        var amounts = DocumentPayLinkPolicy.AmountsFor(d.BalanceDue,
+            DocumentPayLinkPolicy.ExpectedWht(figures.NetCap, withholds), 0m);
         return (amounts, DocumentPayLinkPolicy.WhtMismatchNote(d.WithholdingTaxAmount, withholds));
     }
 
@@ -168,12 +176,6 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         try { raw = _secrets.Unprotect(protectedToken); }
         catch (System.Security.Cryptography.CryptographicException) { return null; }
         return DocumentPayLinkPolicy.TokenMatches(raw, storedHash) ? raw : null;
-    }
-
-    /// <summary>ภาษีหัก ณ ที่จ่ายที่หักไปแล้วของใบนี้ — ตัวนับเดียวกับตัวบันทึกรับชำระ (ฝ่ายค้าน B1 · นับใบเสร็จ/RV/PV ที่อ้างใบนี้ด้วย)</summary>
-    private Task<decimal> WhtAlreadyAsync(Guid companyId, Guid documentId, CancellationToken ct)
-    {
-        return WhtWithheldCounter.AlreadyAsync(_db, companyId, documentId, ct: ct);
     }
 
     private static string? Refusal(DocFacts d)
@@ -268,6 +270,33 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         return raw == null || string.IsNullOrWhiteSpace(origin) ? null : DocumentPayLinkPolicy.Url(origin, companyId, raw);
     }
 
+    /// <summary>รอบ 246 QR — ข้อเท็จจริงสำหรับ QR บนกระดาษ (อ่านอย่างเดียว · ไม่ออก/ต่ออายุลิงก์): ยอดสุทธิหลังหัก ณ ที่จ่ายจากตัวคิดเดียวกับลิงก์
+    /// (<see cref="AmountsAsync"/>) · URL ของลิงก์ที่ยังใช้ได้ (เพิกถอน/หมดอายุ/ใบไม่เข้าเงื่อนไข ⇒ null — กระดาษที่พิมพ์ใหม่ไม่มี QR) ·
+    /// จำนวนช่องทางออนไลน์ของใบที่บริษัทยังเปิด · null = ไม่พบใบ</summary>
+    public async Task<DocumentPayQrFacts?> PayQrFactsAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+    {
+        var d = await LoadDocAsync(companyId, documentId, null, ct);
+        if (d == null) return null;
+        var refusal = Refusal(d);
+        if (refusal != null) return new DocumentPayQrFacts(refusal, null, null, null, 0);
+        var (amounts, whtNote) = await AmountsAsync(companyId, d, ct);
+        string? url = null;
+        var online = 0;
+        if (DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, DateTime.UtcNow))
+        {
+            var (all, companyDefault, unavailable) = await ChannelsAsync(companyId, ct);
+            if (unavailable == null)
+            {
+                online = DocumentPayLinkPolicy.OnlineOnly(
+                    DocumentPayLinkPolicy.Allowed(all, DocumentPayLinkPolicy.ParseChannels(d.PayLinkChannelsJson), companyDefault)).Count;
+                var raw = Recover(d.PayLinkTokenProtected, d.PayLinkTokenHash);
+                var origin = raw == null ? null : await SystemBaseUrl.ResolveAsync(_db, _config, ct);
+                if (raw != null && !string.IsNullOrWhiteSpace(origin)) url = DocumentPayLinkPolicy.Url(origin, companyId, raw);
+            }
+        }
+        return new DocumentPayQrFacts(null, amounts.Net, url, url == null ? null : d.PayLinkExpiresAt, online, whtNote);
+    }
+
     public async Task RevokeAsync(Guid companyId, Guid documentId, string actor, CancellationToken ct = default)
     {
         var n = await _db.Documents.Where(d => d.Id == documentId && d.CompanyId == companyId && d.PayLinkTokenHash != null && d.PayLinkRevokedAt == null)
@@ -346,8 +375,19 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         PublicTransferInfo? transfer = null;
         if (allowed.Contains(DocumentPayLinkPolicy.BankTransferCode, StringComparer.OrdinalIgnoreCase) && Refusal(d) == null)
         {
-            var gw = await SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, null).FirstOrDefaultAsync(ct);
-            if (gw != null) transfer = new PublicTransferInfo(gw.BankName, gw.BankAccountNumber, gw.BankAccountName, gw.PromptPayId);
+            // รอบ 246 QR (ฝ่ายค้าน S2): บัญชีของใบก่อน — ตัวเลือกบัญชีเดียวกับกระดาษ (PaymentQrService.PickDocumentAccountAsync) · ไม่มี ⇒ บัญชีรับโอนของเว็บ (เดิม)
+            transfer = await DocumentAccountTransferAsync(companyId, d.Id, amounts.Net, ct);
+            var gw = transfer != null ? null
+                : await SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, null).FirstOrDefaultAsync(ct);
+            if (gw != null)
+            {
+                // รอบ 246 QR: QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดสุทธิของลิงก์ · data URI จากไบต์ที่สร้างเอง) — เลขที่ใช้ไม่ได้ ⇒ ไม่มี QR (ข้อความเดิม)
+                string? qr = null;
+                var ppId = PaymentQrPolicy.NormalizePromptPayId(gw.PromptPayId).Id;
+                if (ppId != null && amounts.Net > 0.005m)
+                    qr = "data:image/png;base64," + Convert.ToBase64String(new PromptPayService().GenerateQrImage(ppId, amounts.Net, size: 330));
+                transfer = new PublicTransferInfo(gw.BankName, gw.BankAccountNumber, gw.BankAccountName, gw.PromptPayId, qr);
+            }
         }
 
         var title = heading.Title;
@@ -366,6 +406,26 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             Card: blocked == null ? card : null,
             IsTestMode: cfg?.Mode == PaymentProviderMode.Test)
         { Target = target };
+    }
+
+    /// <summary>รอบ 246 QR (ฝ่ายค้าน S2) — บัญชีรับโอนของใบนี้จากตัวเลือกบัญชีเดียวกับกระดาษ (แหล่งเงินของใบ → บัญชีของใบ → เทมเพลต → บัญชีเดียวที่ตั้ง QR) +
+    /// QR ของบัญชีนั้น (พร้อมเพย์ฝังยอดสุทธิของลิงก์ · รูปที่อัปโหลด) · ไม่มีที่เก็บ/ไม่พบบัญชี = null (ผู้เรียกใช้บัญชีรับโอนของเว็บ)</summary>
+    private async Task<PublicTransferInfo?> DocumentAccountTransferAsync(Guid companyId, Guid documentId, decimal net, CancellationToken ct)
+    {
+        if (_storage == null) return null;
+        var doc = await _db.Documents.AsNoTracking().Include(x => x.Brand)
+            .FirstOrDefaultAsync(x => x.Id == documentId && x.CompanyId == companyId, ct);
+        if (doc == null) return null;
+        var template = await PdfGenerationService.ResolveDocumentTemplateAsync(_db, companyId, doc, null);
+        var (acct, _) = await PaymentQrService.PickDocumentAccountAsync(_db, _storage.Locator.AttachmentsRoot, companyId,
+            doc.PaymentAccountId, doc.BankAccountId, template.PaymentQrBankAccountId, ct);
+        if (acct == null) return null;
+        var superseded = await PaymentQrService.SupersededByTaxInvoiceAsync(_db, companyId, doc, ct);
+        var qr = await PaymentQrService.BuildAccountQrAsync(_storage, new PromptPayService(), _logger, companyId, acct, acct.PromptPayId,
+            acct.PaymentQrSource, PaymentQrPolicy.EmbedAmount(null, net, superseded), ct);
+        return new PublicTransferInfo(acct.BankName, acct.AccountNumber, acct.AccountName,
+            qr?.PromptPayId == null ? null : PaymentQrPolicy.DisplayPromptPayId(qr.PromptPayId),
+            qr == null ? null : "data:image/png;base64," + Convert.ToBase64String(qr.Png));
     }
 
     public const string UnusableLinkNote = "ลิงก์นี้ใช้ไม่ได้แล้ว (หมดอายุหรือถูกยกเลิก) — กรุณาติดต่อผู้ขายเพื่อขอลิงก์ใหม่";

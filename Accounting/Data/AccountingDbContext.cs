@@ -15,6 +15,7 @@ public class AccountingDbContext : DbContext
     public DbSet<EmployeeLineBindCode> EmployeeLineBindCodes => Set<EmployeeLineBindCode>();
     public DbSet<CustomerLineLink> CustomerLineLinks => Set<CustomerLineLink>();   // รอบ 211
     public DbSet<CustomerLineLinkCode> CustomerLineLinkCodes => Set<CustomerLineLinkCode>();   // รอบ 211
+    public DbSet<ContactNotifyEndpoint> ContactNotifyEndpoints => Set<ContactNotifyEndpoint>();   // รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (Helpers/ContactNotifyEndpointMigration)
     public DbSet<StaffDailySummaryConfig> StaffDailySummaryConfigs => Set<StaffDailySummaryConfig>();   // รอบ 212 C
     public DbSet<StaffDailySummaryDelivery> StaffDailySummaryDeliveries => Set<StaffDailySummaryDelivery>();   // รอบ 212 C
     public DbSet<CustomerNotifyRule> CustomerNotifyRules => Set<CustomerNotifyRule>();   // รอบ 212 แพ็ก A
@@ -1317,6 +1318,9 @@ public class AccountingDbContext : DbContext
             e.Property(a => a.AccountNumber).HasMaxLength(50);
             e.Property(a => a.CurrentBalance).HasPrecision(18, 2);
             e.Property(a => a.Currency).HasMaxLength(3);
+            // รอบ 246 QR — ตรงกับ Helpers/PaymentQrMigration
+            e.Property(a => a.PromptPayId).HasMaxLength(13);
+            e.Property(a => a.PaymentQrSource).HasMaxLength(16).HasDefaultValue(Accounting.Helpers.PaymentQrPolicy.SourceAuto);
             e.HasOne(a => a.LinkedAccount).WithMany().HasForeignKey(a => a.LinkedAccountId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(a => !a.IsDeleted);
         });
@@ -1581,6 +1585,8 @@ public class AccountingDbContext : DbContext
             e.Property(ei => ei.SellerTaxId).HasMaxLength(13);
             e.Property(ei => ei.BuyerName).HasMaxLength(500);
             e.Property(ei => ei.BuyerTaxId).HasMaxLength(13);
+            e.Property(ei => ei.EtdaTimestampToken).HasMaxLength(500);    // รอบ 244
+            e.Property(ei => ei.EtdaStampRecordedBy).HasMaxLength(200);
             e.HasOne(ei => ei.Document).WithMany().HasForeignKey(ei => ei.DocumentId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(ei => !ei.IsDeleted);
         });
@@ -3645,6 +3651,25 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.UnlinkReason).HasMaxLength(32);
             e.HasIndex(x => new { x.CompanyId, x.TargetKind, x.TargetId }).HasDatabaseName("IX_CustomerLineLinks_Company_Target");
             e.HasIndex(x => x.LineUserId).HasDatabaseName("IX_CustomerLineLinks_LineUser");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 245 L1 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactNotifyEndpointMigration (ไม่มี unique โดยตั้งใจ — ดูเหตุในไฟล์นั้น)
+        modelBuilder.Entity<ContactNotifyEndpoint>(e =>
+        {
+            e.Property(x => x.Kind).HasMaxLength(16);
+            e.Property(x => x.Label).HasMaxLength(100);
+            e.Property(x => x.Email).HasMaxLength(254);
+            e.Property(x => x.LineIdHash).HasMaxLength(64);
+            e.Property(x => x.OaScope).HasMaxLength(16);
+            e.Property(x => x.OaDestination).HasMaxLength(64);
+            e.Property(x => x.GroupNameSnapshot).HasMaxLength(200);
+            e.Property(x => x.Source).HasMaxLength(32);
+            e.Property(x => x.UnlinkReason).HasMaxLength(32);
+            e.Property(x => x.LastFailure).HasMaxLength(500);
+            e.HasOne<Contact>().WithMany().HasForeignKey(x => x.ContactId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.CompanyId, x.ContactId }).HasDatabaseName("IX_ContactNotifyEndpoints_Company_Contact")
+                .HasFilter("\"UnlinkedAt\" IS NULL");
+            e.HasIndex(x => x.LineIdHash).HasDatabaseName("IX_ContactNotifyEndpoints_LineIdHash");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<CustomerLineLinkCode>(e =>

@@ -142,30 +142,35 @@ public static class DocumentPayLinkPolicy
     /// <summary>คำเตือนบนหน้าเอกสาร: ใบตั้งยอด WHT ไว้แต่ผู้ซื้อไม่มีหน้าที่หัก (null = ไม่มีอะไรต้องเตือน)</summary>
     public static string? WhtMismatchNote(decimal documentWht, bool? buyerWithholds)
         => documentWht > 0.005m && buyerWithholds == false
-            ? $"ใบนี้ตั้งภาษีหัก ณ ที่จ่าย {documentWht:N2} บาท แต่ผู้ซื้อเป็นบุคคลธรรมดา (ไม่มีหน้าที่หัก) — ลิงก์ชำระเรียกยอดเต็ม · ตรวจยอด WHT บนใบหรือชนิดผู้ติดต่อ"
+            ? $"ใบนี้ตั้งภาษีหัก ณ ที่จ่าย {documentWht:N2} บาท แต่ผู้ซื้อเป็นบุคคลธรรมดา (ไม่มีหน้าที่หัก) — ลิงก์ชำระเรียกยอดค้างตามใบซึ่งหัก WHT ไว้แล้ว (ไม่มีหน้าที่หัก · ยอดอาจขาดเท่า WHT) · ตรวจยอด WHT บนใบหรือชนิดผู้ติดต่อ"
             : null;
 
-    /// <summary>ยอดบนหน้าชำระ — <paramref name="Gross"/> = ยอดค้างตามเอกสาร · <paramref name="Wht"/> = ภาษีหัก ณ ที่จ่ายที่ลูกค้าจะหักไว้ (ส่วนที่ยังไม่ถูกหัก) ·
-    /// <paramref name="Net"/> = ยอดที่ลูกค้าโอนจริง (= รายการชำระออนไลน์)</summary>
+    /// <summary>ยอดบนหน้าชำระ — <paramref name="Gross"/> = ยอดก่อนหัก ณ ที่จ่าย (ยอดค้าง + WHT ที่ยังไม่ถูกหัก) · <paramref name="Wht"/> = ภาษีหัก ณ ที่จ่ายที่ลูกค้าจะหักไว้
+    /// (ส่วนที่ยังไม่ถูกหัก) · <paramref name="Net"/> = ยอดที่ลูกค้าโอนจริง = <b>ยอดค้างของเอกสาร</b> (= รายการชำระออนไลน์)</summary>
     public sealed record Amounts(decimal Gross, decimal Wht, decimal Net);
 
-    /// <summary>ยอดของลิงก์ — WHT ที่เหลือ = ยอด WHT ของเอกสาร − ที่หักไปแล้วกับงวดก่อน (ไม่ติดลบ · ไม่เกินยอดค้าง) · ตัวเลขของเอกสาร (<c>Document.WithholdingTaxAmount</c>)
-    /// คือผลของตัวคำนวณ WHT เดิมตอนออกใบ — ที่นี่ไม่คิดอัตราใหม่ (ไม่มีตารางอัตราสำเนาที่สอง)</summary>
+    /// <summary>
+    /// ยอดของลิงก์ — <b>ยอดค้างของเอกสาร (<c>BalanceDue</c>) เป็นยอดสุทธิหลังหัก ณ ที่จ่ายอยู่แล้ว</b>: ตัวคำนวณเอกสารตั้ง
+    /// <c>TotalAmount = SubTotal + VAT − WHT</c> (<c>WhtGrossUp.PayeeTotal</c>) และการรับชำระนับเฉพาะเงินเข้า (<c>PaidAmount += เงิน</c> · WHT ล้างลูกหนี้ใน GL ที่ขา 11910)
+    /// ⇒ ยอดโอน = ยอดค้าง · ยอดก่อนหัก = ยอดค้าง + WHT ที่เหลือ (= ยอด WHT ของเอกสาร − ที่หักไปแล้วกับงวดก่อน · ไม่ติดลบ) · ตัวเลขของเอกสาร
+    /// (<c>Document.WithholdingTaxAmount</c>) คือผลของตัวคำนวณ WHT เดิมตอนออกใบ — ไม่คิดอัตราใหม่
+    /// <para>รอบ 244 (แก้ CI ของรอบ 241): เดิมถือยอดค้างเป็นยอด<b>ก่อน</b>หัก แล้วลบ WHT ซ้ำอีกรอบ ⇒ ลิงก์เรียกเงินขาดเท่า WHT และใบค้างเท่า WHT ตลอดกาล
+    /// (ใบจริง 1,000 + VAT 70 − WHT 30 = ยอดค้าง 1,040 ⇒ ลิงก์เดิมเรียก 1,010)</para>
+    /// </summary>
     public static Amounts AmountsFor(decimal balanceDue, decimal documentWhtTotal, decimal whtAlreadyWithheld)
     {
-        var gross = Math.Round(Math.Max(0m, balanceDue), 2, MidpointRounding.AwayFromZero);
-        var wht = Math.Round(Math.Max(0m, documentWhtTotal - whtAlreadyWithheld), 2, MidpointRounding.AwayFromZero);
-        if (wht > gross) wht = gross;
-        return new Amounts(gross, wht, gross - wht);
+        var net = Math.Round(Math.Max(0m, balanceDue), 2, MidpointRounding.AwayFromZero);
+        var wht = net <= 0.005m ? 0m
+            : Math.Round(Math.Max(0m, documentWhtTotal - whtAlreadyWithheld), 2, MidpointRounding.AwayFromZero);
+        return new Amounts(net + wht, wht, net);
     }
 
-    /// <summary>เงินเข้าผ่านลิงก์แล้ว: ภาษีหัก ณ ที่จ่ายที่ต้องบันทึกคู่กับการชำระ — ลูกค้าโอน "ยอดสุทธิ" พอดี (เงิน + WHT ที่เหลือ = ยอดค้าง ± 0.01) ⇒ WHT ที่เหลือทั้งก้อน
-    /// (งวดนี้ปิดหนี้) · ไม่ตรง/ไม่มี WHT ⇒ null = ให้ตัวบันทึกรับชำระเดิมแนะนำเอง (พฤติกรรมเดิม) · เดิม handler ส่งแค่ยอดเงิน ⇒ ใบที่มี WHT
-    /// ถูกบันทึกเป็นการชำระบางส่วน + WHT ตามสัดส่วน (ยอดค้างเหลือเท่า WHT ตลอดกาล)</summary>
+    /// <summary>เงินเข้าผ่านลิงก์แล้ว: ภาษีหัก ณ ที่จ่ายที่ต้องบันทึกคู่กับการชำระ — ลูกค้าโอนยอดค้างพอดี (± 0.01 · งวดนี้ปิดหนี้) ⇒ WHT ที่เหลือทั้งก้อน ·
+    /// ไม่ตรง/ไม่มี WHT ⇒ null = ให้ตัวบันทึกรับชำระเดิมแนะนำเอง (พฤติกรรมเดิม) · ยอดค้างเป็นยอดสุทธิหลังหักแล้ว (ดู <see cref="AmountsFor"/>)</summary>
     public static decimal? WhtForPayment(decimal paidAmount, decimal balanceDue, decimal whtRemaining)
     {
         if (whtRemaining <= 0.005m) return null;
-        return Math.Abs(paidAmount + whtRemaining - balanceDue) <= 0.01m ? whtRemaining : null;
+        return Math.Abs(paidAmount - balanceDue) <= 0.01m ? whtRemaining : null;
     }
 
     /// <summary>token ใหม่ (256 บิต · hex 64 ตัว) — สุ่มจาก CSPRNG</summary>
@@ -241,7 +246,10 @@ public static class DocumentPayLinkPolicy
                 ? $"<br>Less withholding tax you will withhold: THB {a.Wht:N2} (please send us the withholding tax certificate)<br>Amount to pay: <strong>THB {a.Net:N2}</strong>"
                 : $"<br>หักภาษี ณ ที่จ่ายที่ท่านหักไว้ {a.Wht:N2} บาท (กรุณาส่งหนังสือรับรองการหักภาษี ณ ที่จ่าย ให้เรา)<br>ยอดที่ต้องชำระ <strong>{a.Net:N2} บาท</strong>")
             : "";
-        var head = isEnglish ? $"Amount due: THB {a.Gross:N2}" : $"ยอดค้างชำระตามเอกสาร {a.Gross:N2} บาท";
+        // รอบ 244: Gross = ยอดก่อนหัก ณ ที่จ่าย (ยอดค้างของเอกสารเป็นยอดสุทธิแล้ว — ดู AmountsFor)
+        var head = a.Wht > 0.005m
+            ? (isEnglish ? $"Amount before withholding tax: THB {a.Gross:N2}" : $"ยอดก่อนหักภาษี ณ ที่จ่าย {a.Gross:N2} บาท")
+            : (isEnglish ? $"Amount due: THB {a.Gross:N2}" : $"ยอดค้างชำระตามเอกสาร {a.Gross:N2} บาท");
         var btn = isEnglish ? "Pay online" : "ชำระเงินออนไลน์";
         return $"<div style='margin-top:14px;padding:12px;border:1px solid #c7d2fe;border-radius:8px;background:#eef2ff'>{head}{whtRow}"
              + $"<br><a href='{u}' style='display:inline-block;margin-top:8px;background:#4f46e5;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none'>{btn}</a>"

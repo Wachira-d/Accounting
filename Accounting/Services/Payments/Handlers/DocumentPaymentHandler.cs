@@ -81,14 +81,18 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
         // รอบ 241 (คำตัดสิน 241-3): ลิงก์ชำระเงินเก็บ "ยอดสุทธิหลังลูกค้าหัก ณ ที่จ่าย" ⇒ เงินเข้า + WHT ที่เหลือ = ยอดค้าง ⇒ บันทึก WHT ทั้งก้อน (ปิดหนี้)
         // ตัวตัดสินเดียว DocumentPayLinkPolicy.WhtForPayment · ไม่ตรง = null = ตัวบันทึกรับชำระแนะนำเอง (พฤติกรรมเดิม)
         // ตัวนับ "หักไปแล้ว" ตัวเดียวกับตัวบันทึกรับชำระ (ฝ่ายค้าน B1) · ผู้ซื้อไม่มีหน้าที่หัก ⇒ ยอดหักที่คาด 0 (ฝ่ายค้าน S3 · ตัวตัดสินเดียวกับหน้าลิงก์)
-        var whtAlready = await Accounting.Helpers.WhtWithheldCounter.AlreadyAsync(_db, intent.CompanyId, doc.Id, ct: ct);
+        // รอบ 244 (ฝ่ายค้าน S2): WHT ที่เหลือจากตัวคิดเดียวกับตัวบันทึกรับชำระ (ใบลดหนี้ที่มีผล + ตัวนับหักไปแล้ว — NetCap) — ตัวเดียวกับหน้าลิงก์
+        var docEntity = await _db.Documents.AsNoTracking().FirstAsync(d => d.Id == doc.Id && d.CompanyId == intent.CompanyId, ct);
+        var whtFigures = await Accounting.Services.Implementations.DocumentService.PaymentWhtFiguresAsync(_db, intent.CompanyId, docEntity, intent.Amount, ct);
         var buyer = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.Id == doc.ContactId && c.CompanyId == intent.CompanyId)
             .Select(c => new { c.ContactType, c.TaxId }).FirstOrDefaultAsync(ct);
-        var expectedWht = Accounting.Helpers.DocumentPayLinkPolicy.ExpectedWht(doc.WithholdingTaxAmount,
-            Accounting.Helpers.DocumentPayLinkPolicy.BuyerWithholds(buyer?.ContactType, buyer?.TaxId));
-        var paymentWht = Accounting.Helpers.DocumentPayLinkPolicy.WhtForPayment(intent.Amount, doc.BalanceDue,
-            Accounting.Helpers.DocumentPayLinkPolicy.AmountsFor(doc.BalanceDue, expectedWht, whtAlready).Wht);
+        var buyerWithholds = Accounting.Helpers.DocumentPayLinkPolicy.BuyerWithholds(buyer?.ContactType, buyer?.TaxId);
+        var expectedWht = Accounting.Helpers.DocumentPayLinkPolicy.ExpectedWht(whtFigures.NetCap, buyerWithholds);
+        // รอบ 244 (ฝ่ายค้าน S1): ผู้ซื้อไม่มีหน้าที่หัก ⇒ ส่ง 0 ชัด ๆ — null = ตัวบันทึกรับชำระใช้ยอดแนะนำ (หัก WHT ที่ลูกค้าไม่ได้หักจริง + ออก 50 ทวิ เท็จ)
+        var paymentWht = buyerWithholds == false ? 0m
+            : Accounting.Helpers.DocumentPayLinkPolicy.WhtForPayment(intent.Amount, doc.BalanceDue,
+                Accounting.Helpers.DocumentPayLinkPolicy.AmountsFor(doc.BalanceDue, expectedWht, 0m).Wht);
 
         var recorded = await _docs.CreatePaymentAsync(intent.CompanyId, new Models.DTOs.Document.CreatePaymentRequest(
             DocumentId: doc.Id,

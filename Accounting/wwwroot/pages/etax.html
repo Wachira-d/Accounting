@@ -116,28 +116,47 @@
         </div>
         <div class="modal-body">
           <div id="sendEmailWarning" style="display:none;padding:12px;background:#fef3c7;border-radius:8px;font-size:13px;margin-bottom:12px"></div>
-          <div class="form-group"><label class="form-label">ถึง <span class="req">*</span></label><input type="email" class="form-input" id="seTo" placeholder="customer@example.com"></div>
-          <div class="form-group"><label class="form-label">CC (อื่นๆ)</label><input type="text" class="form-input" id="seCc" placeholder="cc1@example.com, cc2@example.com"></div>
+          <div class="form-group"><label class="form-label">ถึง (อีเมลผู้ซื้อ 1 อีเมล) <span class="req">*</span></label><input type="email" class="form-input" id="seTo" placeholder="customer@example.com"></div>
           <div class="form-group">
-            <label class="form-label">หัวข้อ <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px">RD บังคับ</span></label>
+            <label class="form-label">หัวข้อ <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px">กรมสรรพากรกำหนด</span></label>
             <input type="text" class="form-input" id="seSubject" readonly style="background:#f1f5f9;cursor:not-allowed;font-family:monospace">
-            <div style="font-size:11px;color:#dc2626;margin-top:4px;line-height:1.5">
-              ⚠️ สรรพากรกำหนดรูปแบบ <code>{เลขผู้เสียภาษี}.{เลขที่เอกสาร}</code> เพื่อให้ ETDA ลงเวลาประทับได้ — ห้ามแก้ไข มิฉะนั้น Time Stamp จะไม่ทำงานและเอกสารจะไม่ถูกต้องตามกฎหมาย
+            <div style="font-size:11px;color:#475569;margin-top:4px;line-height:1.5">
+              รูปแบบ <code>[วันที่ พ.ศ.][INV/RCT/DBN/CDN][เลขที่](เลขใบเดิม)</code> — เซิร์ฟเวอร์ประกอบให้ (แก้ไม่ได้) · ข้อความของคุณใส่ในเนื้อความ
             </div>
           </div>
           <div class="form-group"><label class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="seBody" rows="8"></textarea></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="seIncludePdf" checked> แนบ PDF</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="seIncludeXml" checked> แนบ XML</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="seIncludeRd" checked> CC สรรพากร</label>
-          </div>
-          <div style="margin-top:12px;padding:10px;background:#f0fdf4;border-radius:6px;font-size:12px;color:#166534">
-            ℹ️ การ CC <code>csemail@etax.teda.th</code> เป็นข้อกำหนดของสรรพากรเพื่อให้ระบบลงเวลาประทับ (Time Stamp) — โปรดเปิดไว้
-          </div>
+          <!-- รอบ 244: แนบ 1 ไฟล์ (PDF/A-3 ฝัง XML) + สำเนาถึง ETDA เสมอ — ไม่มีช่องเลือกแนบ XML แยก/ปิด CC (ทางนั้นคืออีเมลธรรมดา) -->
+          <div id="sePreview" style="margin-top:12px;padding:10px;background:#f0fdf4;border-radius:6px;font-size:12px;color:#166534;line-height:1.6"></div>
         </div>
         <div class="modal-footer" style="padding:16px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px">
           <button class="btn btn-outline" onclick="Page.closeModal('sendEmailModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.doSendByEmail()">ส่งอีเมล</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- รอบ 244 (E7): บันทึกใบที่ ETDA ประทับเวลาแล้วส่งกลับ — แยก "ส่งแล้ว (รอประทับเวลา)" จาก "ประทับเวลาแล้ว" · เซิร์ฟเวอร์ตัดสินทั้งหมด -->
+    <div id="stampModal" class="modal" style="display:none">
+      <div class="modal-overlay" onclick="Page.closeModal('stampModal')"></div>
+      <div class="modal-content" style="max-width:520px">
+        <div class="modal-header">
+          <h3>🕒 บันทึกการประทับเวลาของ ETDA</h3>
+          <button class="btn-close" onclick="Page.closeModal('stampModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="padding:10px;background:#f0f9ff;border-radius:8px;font-size:13px;margin-bottom:12px;line-height:1.6">
+            เมื่อ ETDA ประทับเวลาแล้วจะส่งอีเมล/ไฟล์กลับให้ผู้ขาย — แนบไฟล์นั้น (PDF ที่ประทับเวลา หรือไฟล์อีเมล .eml) ที่นี่ ·
+            ระบบ<b>ไม่ได้ตรวจกับ ETDA เอง</b> — ผู้ใช้ยืนยัน · ตรวจความถูกต้องได้ที่ validation.etax.teda.th
+          </div>
+          <input type="hidden" id="stEtaxId"><input type="hidden" id="stDocId">
+          <div class="form-group"><label class="form-label">วันที่ประทับเวลา (ตามใบที่ ETDA ส่งกลับ) <span class="req">*</span></label><input type="date" class="form-input" id="stStampedAt"></div>
+          <div class="form-group"><label class="form-label">เลขอ้างอิง/โทเคนการประทับเวลา (ถ้ามี)</label><input type="text" class="form-input" id="stToken" maxlength="500"></div>
+          <div class="form-group"><label class="form-label">ไฟล์ใบ/อีเมลที่ ETDA ส่งกลับ <span class="req">*</span></label>
+            <input type="file" class="form-input" id="stEvidence" accept="application/pdf,message/rfc822,.eml,image/*"></div>
+        </div>
+        <div class="modal-footer" style="padding:16px;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:8px">
+          <button class="btn btn-outline" onclick="Page.closeModal('stampModal')">ปิด</button>
+          <button class="btn btn-primary" onclick="Page.doRecordStamp()">บันทึก</button>
         </div>
       </div>
     </div>
@@ -393,13 +412,15 @@
               ${e.status === 'Generated' ? `<button class="btn btn-xs btn-primary" onclick="Page.sign('${e.id}')">ลงนาม</button>` : ''}
               ${e.status === 'Signed' ? `<button class="btn btn-xs btn-success" onclick="Page.submit('${e.id}')">ส่ง RD</button>` : ''}
               ${e.status === 'Generated' ? `<button class="btn btn-xs btn-success" onclick="Page.signAndSubmit('${e.id}')">ลงนาม+ส่ง</button>` : ''}
-              ${(e.status === 'Signed' || e.status === 'Submitted' || e.status === 'Accepted') ? `<button class="btn btn-xs btn-info" onclick="Page.openSendByEmail('${e.id}')">📧 ส่งทางอีเมล</button>` : ''}
+              ${(e.status !== 'Voided' && e.status !== 'Error' && e.status !== 'Rejected') ? `<button class="btn btn-xs btn-info" onclick="Page.openSendByEmail('${e.id}')">📧 ส่ง e-Tax by Email</button>` : ''}
+              ${(e.byEmailStage === 'SentAwaitingStamp' && e.status !== 'Voided') ? `<button class="btn btn-xs btn-outline" onclick="Page.openStamp('${e.id}', '${e.documentId}')" title="บันทึกใบ/อีเมลที่ ETDA ประทับเวลาแล้วส่งกลับ">🕒 บันทึกการประทับเวลา</button>` : ''}
               ${e.status === 'Error' ? `<button class="btn btn-xs btn-warning" onclick="Page.sign('${e.id}')">ลองใหม่</button>` : ''}
               ${(e.status !== 'Accepted' && e.status !== 'Voided') ? `<button class="btn btn-xs btn-danger" onclick="Page.void('${e.id}')" data-i18n="common.cancel">ยกเลิก</button>` : ''}
             </div>
             ${e.errorMessage ? `<div class="text-danger text-xs" style="margin-top:4px">${this.esc(e.errorMessage)}</div>` : ''}
             ${e.acceptanceNumber ? `<div class="text-success text-xs" style="margin-top:4px">เลขตอบรับ: ${this.esc(e.acceptanceNumber)}</div>` : ''}
             ${e.voidedNote ? `<div class="text-xs" style="margin-top:4px;color:#64748b">${this.esc(e.voidedNote)}</div>` : ''}
+            ${e.byEmailStage && e.byEmailStage !== 'NotSent' ? `<div class="text-xs" style="margin-top:4px;color:${e.byEmailStage === 'Stamped' ? '#166534' : '#92400e'}">📧 ${this.esc(e.byEmailStageLabel)}${e.byEmailSentAt ? ' · ส่ง ' + this.fmtDate(e.byEmailSentAt) : ''}${e.etdaStampedAt ? ' · ประทับ ' + this.fmtDate(e.etdaStampedAt) : ''}</div>` : ''}
           </td>
         </tr>
       `).join('');
@@ -565,83 +586,93 @@
       const etax = (this.items || []).find(x => x.id === etaxId);
       if (!etax) { Layout.toast('ไม่พบเอกสาร', 'error'); return; }
 
-      // Pre-validate config
-      try {
-        const cfg = await API.get(`/api/companies/${this.companyId}/etax/config`);
-        const c = cfg.data || {};
-        const warnings = [];
-        if (!c.byEmailRdRegistered) warnings.push('⚠ ยังไม่ได้ลงทะเบียน e-Tax by Email กับสรรพากร');
-        if (!c.byEmailSenderEmail) warnings.push('⚠ ยังไม่ได้ตั้งค่าอีเมลผู้ส่งที่ลงทะเบียน');
-        const w = document.getElementById('sendEmailWarning');
-        if (warnings.length > 0) {
-          w.style.display = 'block';
-          w.innerHTML = warnings.join('<br>') + '<br><a href="/pages/settings.html" style="color:#0369a1">→ ไปตั้งค่า</a>';
-        } else { w.style.display = 'none'; }
-      } catch(e) {}
-
-      // Get email config to check if any provider is configured
-      try {
-        const ec = await API.get(`/api/companies/${this.companyId}/email-config`);
-        if (!ec.data?.configured) {
-          const w = document.getElementById('sendEmailWarning');
-          w.style.display = 'block';
-          w.innerHTML = (w.innerHTML || '') + '<br>⚠ ยังไม่ได้ตั้งค่าอีเมลผู้ส่ง — โปรดไปที่หน้าตั้งค่า';
-        }
-      } catch(e) {}
-
+      // รอบ 244: ตัวอย่างจากเซิร์ฟเวอร์ (หัวเรื่องตามกรมสรรพากร · To/CC · ผู้ส่ง · เหตุที่ส่งไม่ได้ · คำเตือน) — หน้าไม่ประกอบหัวเรื่อง/กติกาเอง
+      const w = document.getElementById('sendEmailWarning');
+      const pv = document.getElementById('sePreview');
+      w.style.display = 'none'; w.innerHTML = '';
+      pv.innerHTML = 'กำลังโหลดตัวอย่าง ...';
       document.getElementById('seTo').value = etax.buyerEmail || '';
-      document.getElementById('seCc').value = '';
-      // RD spec: Subject MUST be exactly "{SellerTaxId}.{EtaxRefNumber}" — auto-generated and locked.
-      // Backend re-builds and overrides this anyway, but we display the exact value users will see in their inbox.
-      const taxId = (etax.sellerTaxId || '').trim();
-      const refNum = (etax.etaxRefNumber || '').trim();
-      document.getElementById('seSubject').value = (taxId && refNum) ? `${taxId}.${refNum}` : '⚠️ ขาดข้อมูล';
-      document.getElementById('seBody').value = `<p>เรียน คุณ${etax.buyerName || 'ลูกค้า'}</p>
-<p>โปรดตรวจสอบ e-Tax Invoice เลขที่ <strong>${etax.etaxRefNumber}</strong> ตามไฟล์แนบ</p>
-<p style="background:#fef3c7;padding:10px;border-radius:6px;font-size:13px">ℹ️ อีเมลฉบับนี้เป็น e-Tax Invoice & Receipt by Email ซึ่งกรมสรรพากรจะลงเวลาประทับอัตโนมัติ — โปรดเก็บอีเมลและไฟล์แนบไว้เป็นหลักฐาน</p>`;
-      document.getElementById('seIncludePdf').checked = true;
-      document.getElementById('seIncludeXml').checked = true;
-      document.getElementById('seIncludeRd').checked = true;
+      document.getElementById('seSubject').value = '';
+      document.getElementById('seBody').value = '';
+      document.getElementById('seBody').placeholder = 'เว้นว่าง = ระบบเติมข้อความตามภาษาของเอกสาร (พร้อมหมายเหตุ e-Tax)';
       document.getElementById('sendEmailModal').style.display = 'flex';
+      try {
+        const p = (await API.get(`/api/companies/${this.companyId}/etax/${etaxId}/email-preview`))?.data || {};
+        document.getElementById('seSubject').value = p.subject || '— ประกอบไม่ได้ —';
+        if (!document.getElementById('seTo').value && p.defaultTo) document.getElementById('seTo').value = p.defaultTo;
+        pv.innerHTML = `สำเนา (CC): <code>${this.esc(p.timestampAddress)}</code> · จาก: <code>${this.esc(p.fromAddress || '— ยังไม่ตั้ง —')}</code><br>`
+          + `ไฟล์แนบ: PDF/A-3 ที่ฝัง XML 1 ไฟล์ (ไม่เกิน 3 MB) · ${this.esc(p.stageLabel || '')}`;
+        const msgs = [].concat((p.problems || []).map(t => '⛔ ' + this.esc(t)), (p.warnings || []).map(t => '⚠ ' + this.esc(t)));
+        if (msgs.length) {
+          w.style.display = 'block';
+          w.innerHTML = msgs.join('<br>') + ((p.problems || []).length ? '<br><a href="/pages/settings.html" style="color:#0369a1">→ ไปตั้งค่า</a>' : '');
+        }
+        this._sendBlocked = (p.problems || []).length > 0;
+        this._sendUat = p.usesUat === true ? (p.timestampAddress || 'UAT') : null;
+      } catch (e) { pv.innerHTML = this.esc(e.message || 'โหลดตัวอย่างไม่ได้ — เซิร์ฟเวอร์จะตรวจอีกครั้งตอนส่ง'); this._sendBlocked = false; this._sendUat = null; }
     },
 
     async doSendByEmail() {
       const to = document.getElementById('seTo').value.trim();
       if (!to) { Layout.toast('กรุณากรอกอีเมลผู้รับ', 'error'); return; }
-
-      const subj = document.getElementById('seSubject').value.trim();
-      if (!subj || subj.startsWith('⚠️')) {
-        Layout.toast('ไม่สามารถสร้างหัวข้อตามรูปแบบ RD ได้ — ตรวจสอบเลขผู้เสียภาษีและเลขเอกสาร', 'error');
-        return;
-      }
-
-      const includeRd = document.getElementById('seIncludeRd').checked;
-      if (!includeRd) {
-        if (!confirm('⚠️ คุณยังไม่ได้ติ๊ก "CC สรรพากร"\n\nหาก CC ไม่ครบ ETDA จะไม่ลงเวลาประทับ (Time Stamp) ทำให้เอกสารนี้ไม่ถูกต้องตามกฎหมายในรูปแบบ e-Tax by Email\n\nต้องการส่งต่อทั้งที่ทราบความเสี่ยงนี้?')) {
-          return;
-        }
-      }
-
-      const req = {
-        to,
-        cc: document.getElementById('seCc').value || null,
-        subject: subj,  // backend will override anyway, but send the locked value for log accuracy
-        body: document.getElementById('seBody').value || null,
-        includePdf: document.getElementById('seIncludePdf').checked,
-        includeXml: document.getElementById('seIncludeXml').checked,
-        includeRdTimestamp: includeRd
-      };
-
+      if (this._sendBlocked) { Layout.toast('ยังส่งไม่ได้ — ดูเหตุที่กล่องด้านบน', 'error'); return; }
+      // ฝ่ายค้าน B1: ทดสอบ e-Tax by Email (สำเนาไป UAT) ⇒ ถามยืนยัน
+      if (this._sendUat && !confirm('เปิด "ทดสอบ e-Tax by Email" — สำเนาจะไปที่ ' + this._sendUat + ' (UAT ของ ETDA) ใบนี้จะไม่ถูกประทับเวลาจริง\n\nยืนยันส่งแบบทดสอบ?')) return;
+      // หัวเรื่อง/CC/ไฟล์แนบ เซิร์ฟเวอร์กำหนดเอง (กรมสรรพากร) — ส่งเฉพาะผู้รับ + เนื้อความ
+      const req = { to, cc: null, subject: null, body: document.getElementById('seBody').value || null,
+        includePdf: true, includeXml: false, includeRdTimestamp: true, confirmResend: false };
+      const url = `/api/companies/${this.companyId}/etax/${this._sendingEtaxId}/send-email`;
       try {
-        const res = await API.post(
-          `/api/companies/${this.companyId}/etax/${this._sendingEtaxId}/send-email`, req);
-        if (res.success) {
-          Layout.toast(req.includeRdTimestamp ? 'ส่ง e-Tax สำเร็จ — สรรพากรจะลงเวลาประทับ' : 'ส่งอีเมลสำเร็จ');
+        let res;
+        try { res = await API.post(url, req); }
+        catch (e) {
+          // ส่งซ้ำต้องยืนยัน (409 ETAX-EMAIL-RESEND)
+          if (e && e.status === 409 && e.body?.data?.ruleCode === 'ETAX-EMAIL-RESEND' && confirm((e.message || '') + '\n\nยืนยันส่งซ้ำ?'))
+            res = await API.post(url, Object.assign({}, req, { confirmResend: true }));
+          else throw e;
+        }
+        if (res && res.success) {
+          Layout.toast(res.message || 'ส่งแล้ว (รอประทับเวลา)', 'success', 8000);
           this.closeModal('sendEmailModal');
+          await this.load();
         } else {
-          Layout.toast(res.message || 'ส่งไม่สำเร็จ', 'error');
+          Layout.toast(res?.message || 'ส่งไม่สำเร็จ', 'error');
         }
       } catch(e) { Layout.toast(e.message, 'error'); }
+    },
+
+    /** รอบ 244 (E7): บันทึกใบ/อีเมลที่ ETDA ประทับเวลาแล้วส่งกลับ — แนบไฟล์เข้าเอกสารของแถวนี้ (ด่านไฟล์แนบตัวเดียว) แล้วส่ง id ·
+     *  เซิร์ฟเวอร์ตรวจทั้งหมด (ส่งแล้ว · ไฟล์ของเอกสารนี้แนบหลังวันส่ง · เวลาไม่ก่อนวันส่ง) · ผู้ใช้ยืนยัน (ระบบไม่ได้ตรวจกับ ETDA เอง) */
+    openStamp(etaxId, docId) {
+      document.getElementById('stEtaxId').value = etaxId;
+      document.getElementById('stDocId').value = docId;
+      document.getElementById('stStampedAt').value = new Date().toISOString().substring(0, 10);
+      document.getElementById('stToken').value = '';
+      document.getElementById('stEvidence').value = '';
+      document.getElementById('stampModal').style.display = 'flex';
+    },
+
+    async doRecordStamp() {
+      const id = document.getElementById('stEtaxId').value;
+      const docId = document.getElementById('stDocId').value;
+      const file = document.getElementById('stEvidence').files?.[0];
+      if (!file) { Layout.toast('แนบไฟล์ใบ/อีเมลที่ ETDA ส่งกลับก่อน', 'error'); return; }
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const up = await API.upload(`/api/companies/${this.companyId}/attachments/Document/${docId}`, fd);
+        const attachmentId = up?.data?.id;
+        if (!attachmentId) throw new Error(up?.message || 'อัปโหลดไฟล์ไม่สำเร็จ');
+        const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/etda-stamp`, {
+          stampedAt: document.getElementById('stStampedAt').value,
+          evidenceAttachmentId: attachmentId,
+          timestampToken: document.getElementById('stToken').value || null
+        });
+        if (res && res.success === false) throw new Error(res.message || 'บันทึกไม่สำเร็จ');
+        Layout.toast(res?.message || 'บันทึกการประทับเวลาแล้ว', 'success', 7000);
+        this.closeModal('stampModal');
+        await this.load();
+      } catch (e) { Layout.toast(e.message, 'error'); }
     },
 
     async showConfig() {

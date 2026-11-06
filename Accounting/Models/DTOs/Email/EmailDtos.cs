@@ -3,6 +3,7 @@ using Accounting.Models.Enums;
 namespace Accounting.Models.DTOs.Email;
 
 // ===== Send document via email (regular, no e-Tax) =====
+/// <param name="ConfirmEtaxResend">รอบ 244: ใบที่ต้องไปทาง e-Tax by Email และเคยส่งพร้อมสำเนาถึง ETDA แล้ว — ยืนยันส่ง e-Tax ซ้ำ (ไม่ส่ง = ทางสำเนาธรรมดา)</param>
 public record SendDocumentEmailRequest(
     string To,
     string? Cc,
@@ -10,18 +11,50 @@ public record SendDocumentEmailRequest(
     string? Subject,
     string? Body,
     bool AttachPdf = true,
-    bool AttachXml = false);
+    bool AttachXml = false,
+    bool ConfirmEtaxResend = false);
 
-// ===== Send e-Tax via email (RD spec) =====
+// ===== Send e-Tax via email (RD spec · รอบ 244 — รูปแบบจาก Helpers/EtaxByEmailFormat ตัวเดียว) =====
+/// <summary>คำขอส่ง e-Tax by Email — <paramref name="Subject"/> <b>ไม่ถูกใช้</b> (หัวเรื่องตามกรมสรรพากรคำนวณที่เซิร์ฟเวอร์เสมอ · ข้อความของผู้ใช้ใส่ใน <paramref name="Body"/>) ·
+/// To = ผู้ซื้อ 1 อีเมล · Cc/Bcc รับได้เฉพาะที่อยู่ประทับเวลาของ ETDA (ระบบใส่ให้เอง — อย่างอื่นถูกปฏิเสธ) · แนบ 1 ไฟล์ (PDF/A-3 ฝัง XML) ·
+/// <paramref name="IncludeXml"/>=true / <paramref name="IncludeRdTimestamp"/>=false / <paramref name="IncludePdf"/>=false ⇒ ปฏิเสธ (ทางนั้นคืออีเมลธรรมดา) ·
+/// <paramref name="ConfirmResend"/> = ยืนยันส่งซ้ำใบที่ส่งพร้อมสำเนาถึง ETDA แล้ว</summary>
 public record SendEtaxByEmailRequest(
     string To,
-    string? Cc,                       // optional additional CC; system always adds RD timestamp
+    string? Cc,
     string? Bcc,
     string? Subject,
     string? Body,
     bool IncludePdf = true,
-    bool IncludeXml = true,
-    bool IncludeRdTimestamp = true);  // CC csemail@etax.teda.th
+    bool IncludeXml = false,
+    bool IncludeRdTimestamp = true,
+    bool ConfirmResend = false);
+
+/// <summary>รอบ 244: ตัวอย่างอีเมล e-Tax by Email ตามที่เซิร์ฟเวอร์จะส่ง (หน้าเว็บแสดงอย่างเดียว — ไม่มีสำเนากติกาในหน้า)</summary>
+/// <param name="Channel">ช่องทางของใบนี้ (<c>EtaxEmailChannel</c> เป็นชื่อ)</param>
+/// <param name="Subject">หัวเรื่องตามกรมสรรพากร · null = ประกอบไม่ได้ (ดู <paramref name="Problems"/>)</param>
+/// <param name="Problems">เหตุที่ส่งไม่ได้ตอนนี้ (ด่านผู้ส่ง/รูปแบบ/สถานะ) — ว่าง = ส่งได้</param>
+/// <param name="Warnings">คำเตือนที่ไม่บล็อก (โหมดทดสอบ · โหมดทั้งสองระบบ · รายได้เกิน 30 ล้าน)</param>
+public record EtaxEmailPreviewResponse(
+    string Channel,
+    string Reason,
+    Guid? EtaxInvoiceId,
+    string? Subject,
+    string? DefaultTo,
+    string TimestampAddress,
+    string? FromAddress,
+    IReadOnlyList<string> Problems,
+    IReadOnlyList<string> Warnings,
+    string Stage,
+    string StageLabel,
+    DateTime? ByEmailSentAt,
+    DateTime? EtdaStampedAt,
+    long? AttachmentBytes = null,
+    /// <summary>ฝ่ายค้าน B1: เปิด "ทดสอบ e-Tax by Email (ส่งไป UAT)" — หน้าส่งต้องถามยืนยันก่อนส่ง</summary>
+    bool UsesUat = false);
+
+/// <summary>รอบ 244: บันทึกใบที่ ETDA ประทับเวลาแล้วส่งกลับ — ไฟล์ต้องแนบเข้าเอกสารของแถวนี้ (ผ่านด่านไฟล์แนบ) หลังเวลาที่ส่ง · ผู้ใช้ยืนยัน (ระบบไม่ได้ตรวจกับ ETDA)</summary>
+public record RecordEtdaStampRequest(DateTime StampedAt, Guid EvidenceAttachmentId, string? TimestampToken);
 
 public record DocumentEmailLogResponse(
     Guid Id,
@@ -147,13 +180,16 @@ public record EtaxConfigResponse(
     DateTime? ByEmailRegistrationDate,
     string? ByEmailRegistrationNumber,
     string? ByEmailSenderEmail,
+    /// <summary>รอบ 244: คำนวณจากโหมดทดสอบ (<c>EtaxByEmailFormat.TimestampAddress</c>) — ไม่ใช่ค่าที่ผู้ใช้ตั้ง</summary>
     string ByEmailRdTimestampAddress,
-    bool ByEmailEmbedXml,
-    bool ByEmailAutoSendOnApprove,
     // Direct mode
     bool DirectCertificateInstalled,
     bool DirectApiCredentialsSet,
-    string? ServiceProvider);
+    string? ServiceProvider,
+    /// <summary>รอบ 244: คำเตือนที่ไม่บล็อก (โหมดทั้งสองระบบ · โหมดทดสอบ) — หน้าตั้งค่าแสดงอย่างเดียว</summary>
+    IReadOnlyList<string>? Warnings = null,
+    /// <summary>ฝ่ายค้าน B1: ทดสอบ e-Tax by Email (สำเนาไป UAT) — แยกจาก <c>TestMode</c> ของระบบเต็ม</summary>
+    bool ByEmailUseUat = false);
 
 public record UpdateEtaxConfigRequest(
     EtaxMode? Mode,
@@ -166,8 +202,9 @@ public record UpdateEtaxConfigRequest(
     DateTime? ByEmailRegistrationDate,
     string? ByEmailRegistrationNumber,
     string? ByEmailSenderEmail,
+    /// <summary>ไม่ถูกใช้ — ที่อยู่ประทับเวลากำหนดโดย ETDA (คำนวณจากโหมดทดสอบ) · คงไว้ให้ client รุ่นเก่าส่งมาได้</summary>
     string? ByEmailRdTimestampAddress,
-    bool? ByEmailEmbedXml,
-    bool? ByEmailAutoSendOnApprove,
     // Direct
-    string? ServiceProvider);
+    string? ServiceProvider,
+    /// <summary>ฝ่ายค้าน B1: ทดสอบ e-Tax by Email (สำเนาไป UAT) · null = คงเดิม</summary>
+    bool? ByEmailUseUat = null);

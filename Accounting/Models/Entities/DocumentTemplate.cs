@@ -143,11 +143,19 @@ public class DocumentTemplate : TenantEntity
     public string? DigitalCertificatePassword { get; set; }
     public bool AutoGenerateEtaxXml { get; set; } = false;
 
-    // ===== QR Code =====
-    public bool ShowQrCode { get; set; } = false;
-    public string QrCodeType { get; set; } = "PromptPay";    // PromptPay, EtaxRef, Custom
-    public string? PromptPayId { get; set; }                 // เลขบัญชี PromptPay
-    public string? QrCodeCustomData { get; set; }
+    // ===== QR ชำระเงิน (รอบ 246 QR · Helpers/PaymentQrPolicy) =====
+    /// <summary>"แสดง QR ชำระเงิน" ของบัญชีรับเงินข้างข้อมูลบัญชี (บริษัทเปิดเป็นค่าตั้งต้น · คำตัดสิน 246-QR-7)</summary>
+    public bool ShowPaymentQr { get; set; } = true;
+    /// <summary>"แสดง QR หน้าชำระออนไลน์" — เฉพาะใบที่มีลิงก์ชำระเงินที่ยังใช้ได้และช่องทางของใบมีช่องทางออนไลน์ (ไม่ออกลิงก์ใหม่ตอนพิมพ์)</summary>
+    public bool ShowPayLinkQr { get; set; } = true;
+    /// <summary>บัญชีธนาคารที่ใช้ QR เมื่อใบไม่ได้เลือกบัญชีเอง (ลำดับเต็มใน PaymentQrPolicy.PickAccount) · null = ตามลำดับอัตโนมัติ</summary>
+    public Guid? PaymentQrBankAccountId { get; set; }
+
+    // ===== QR Code เดิม — รอบ 246 QR (ฝ่ายค้าน N3 · settings_reader_check): ShowQrCode/QrCodeType/QrCodeCustomData ไม่มีตัวเรนเดอร์อ่านมาตลอด ⇒ ถอดออกจากโมเดล
+    // (คอลัมน์ในฐานเดิมคงอยู่ · PaymentQrMigration ตั้ง DEFAULT ให้ก่อน เพื่อให้ INSERT ที่ไม่ส่งคอลัมน์ไม่ล้ม) · QR ชำระเงินใช้ช่องด้านบน + บัญชีธนาคาร
+    /// <summary>เลขพร้อมเพย์เดิมของเทมเพลต — ผู้อ่านเดียวคืองานย้ายครั้งเดียว <c>PaymentQrMigration.MoveLegacyTemplatePromptPayAsync</c> (ไปที่บัญชีธนาคาร) ·
+    /// ไม่รับจาก DTO/ไม่คัดลอกแล้ว</summary>
+    public string? PromptPayId { get; set; }
 
     // ===== Copy Settings =====
     public int DefaultCopies { get; set; } = 1;

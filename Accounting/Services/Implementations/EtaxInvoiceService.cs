@@ -781,7 +781,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O2): ตัดสินด้วยสถานะที่รวม e-Tax by Email ที่ประทับเวลาแล้ว (เกณฑ์เดียวกับ EffectiveEtaxAsync) — ไม่ใช่สถานะแถวอย่างเดียว
         var emailedWithRdTimestamp = (await DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync(_db, companyId, new[] { etax.DocumentId }))
             .Contains(etax.DocumentId);
-        var decidedStatus = EtaxVoidPolicy.StatusForVoid(etax.Status, emailedWithRdTimestamp);
+        // รอบ 244 (คำตัดสิน 244-6 · ฝ่ายค้าน B2): ส่งพร้อมสำเนาถึง ETDA production = ตอบรับ (เดิม) · บันทึกการประทับแล้วก็ตอบรับ — ป้าย "รอประทับเวลา" ไม่หลวมด่าน
+        var decidedStatus = EtaxVoidPolicy.StatusForVoid(etax.Status, emailedWithRdTimestamp, etax.EtdaStampedAt != null);
         var verdict = EtaxVoidPolicy.Decide(decidedStatus, request?.Reason, evidenceAttached);
         if (!verdict.Allowed)
             throw new BusinessRuleException(verdict.Reason ?? "ยกเลิก e-Tax นี้ไม่ได้", "RD-ETAX-VOID-EVIDENCE", 409);
@@ -1462,7 +1463,10 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         e.AcceptanceNumber, e.AcceptedAt, e.ErrorMessage, e.ErrorCode,
         e.SellerName, e.SellerTaxId, e.BuyerName, e.BuyerTaxId,
         e.SignedAt, e.CertificateSerialNumber, e.CreatedAt,
-        e.VoidedAt, e.VoidReason, EtaxVoidPolicy.VoidedStatusNote(e.Status, e.VoidReason));
+        e.VoidedAt, e.VoidReason, EtaxVoidPolicy.VoidedStatusNote(e.Status, e.VoidReason),
+        e.ByEmailSentAt, e.EtdaStampedAt, e.EtdaTimestampToken,
+        EtaxByEmailFormat.Stage(e.ByEmailSentAt, e.EtdaStampedAt).ToString(),
+        EtaxByEmailFormat.StageLabel(EtaxByEmailFormat.Stage(e.ByEmailSentAt, e.EtdaStampedAt)));
 
     private class RdSubmissionResult
     {

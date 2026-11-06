@@ -16,7 +16,8 @@ namespace Accounting.Services.Implementations;
 /// commit แล้ว ⇒ แถว 1 แถวต่อการชำระ (unique ที่ฐาน — webhook ซ้ำ/กดซ้ำไม่เพิ่ม) ⇒ <c>EmailScheduleWorker</c> เรียก <see cref="ProcessDueAsync"/> ทุกนาที
 /// (จองแถวด้วย SKIP LOCKED — หลายเครื่องไม่ทำซ้ำ) ⇒ ตัดสินด้วย <see cref="PostPaymentAutomationPolicy.Decide"/> ⇒ ทำขั้นด้วย<b>เส้นเดิมเท่านั้น</b>:
 /// ออกใบเสร็จ = <c>IDocumentService.IssueReceiptForPaymentAsync</c> (idempotent · กติกา VAT/หัวเอกสาร §78/1 · เลข gap-free) ·
-/// อีเมล = <c>IDocumentEmailService.SendDocumentEmailAsync</c> (ผู้ส่งในนามบริษัท + เพดาน + บันทึกการส่งบนเอกสาร) ·
+/// อีเมล = <c>IDocumentEmailService.SendDocumentRoutedAsync</c> (รอบ 244: ใบกำกับของบริษัทโหมด e-Tax by Email ไปทาง e-Tax — ด่านปฏิเสธ = หยุด + แจ้งเตือน ·
+/// อื่น ๆ = เส้นอีเมลเอกสารเดิม: ผู้ส่งในนามบริษัท + เพดาน + บันทึกการส่งบนเอกสาร) ·
 /// บล็อกเพิ่มในอีเมล = <see cref="ReceiptEmailSections"/> จาก <see cref="IReceiptEmailSectionProvider"/> (รอบนี้ไม่มีตัวลงทะเบียน — จุดต่อของเส้นรับ 50 ทวิ)</para>
 ///
 /// <para>ล้มดัง 3 ที่: สถานะ+เหตุผลบนแถว (หน้าเอกสาร) · การแจ้งเตือน <see cref="NotificationEvents.PostPaymentAutomationBlocked"/> · บันทึกอีเมล Failed บนเอกสาร ·
@@ -297,12 +298,23 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
                     break;
                 case PostPaymentAutomationPolicy.Step.EmailReceipt:
                     if (receiptId is not Guid rid) { blocked.Add("ไม่พบใบเสร็จของการชำระนี้ — ยังไม่ได้ส่งอีเมล"); halt = true; break; }
-                    await SendReceiptAsync(cid, rid, payment.Id, to!, ct);
+                    if (await SendReceiptAsync(cid, rid, payment.Id, to!, ct) is { } etaxBlockR)
+                    {
+                        // รอบ 244: ใบนี้ต้องไปทาง e-Tax by Email แต่ด่านปฏิเสธ ⇒ หยุด + แจ้งคน (ลองใหม่อัตโนมัติไม่ช่วย — ต้องแก้ค่าตั้ง) · ห้ามส่งเป็นอีเมลธรรมดาแทน
+                        blocked.Add("ส่ง e-Tax by Email ไม่ได้ (ยังไม่ส่งอีเมล): " + etaxBlockR);
+                        halt = true;
+                        break;
+                    }
                     run = await MarkDoneAsync(run.Id, step, rid, ct);
                     done.Add("ส่งใบเสร็จถึง " + to);
                     break;
                 case PostPaymentAutomationPolicy.Step.EmailSourceAsReceipt:
-                    await SendReceiptAsync(cid, doc.Id, payment.Id, to!, ct);
+                    if (await SendReceiptAsync(cid, doc.Id, payment.Id, to!, ct) is { } etaxBlockS)
+                    {
+                        blocked.Add("ส่ง e-Tax by Email ไม่ได้ (ยังไม่ส่งอีเมล): " + etaxBlockS);
+                        halt = true;
+                        break;
+                    }
                     receiptId = doc.Id;
                     run = await MarkDoneAsync(run.Id, step, doc.Id, ct);
                     done.Add("ส่งใบกำกับภาษี/ใบเสร็จรับเงิน (ใบต้นทาง) ถึง " + to);
@@ -315,9 +327,11 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             : new RunResult(PostPaymentAutomationPolicy.StatusDone, msg.Length == 0 ? "ทำครบแล้ว" : msg, doc.DocumentNumber, receiptId);
     }
 
-    /// <summary>ส่งใบเสร็จผ่านเส้นอีเมลเอกสารเดิม (+ บล็อกเพิ่มจาก <see cref="IReceiptEmailSectionProvider"/> ผ่าน <see cref="ReceiptEmailSections.ComposeBody"/> ตัวเดียว) ·
+    /// <summary>ส่งใบเสร็จผ่านทางเข้าเดียวของอีเมลเอกสาร (<c>SendDocumentRoutedAsync</c> — รอบ 244: ใบกำกับของบริษัทโหมด e-Tax by Email ไปทาง e-Tax) ·
+    /// บล็อกเพิ่มจาก <see cref="IReceiptEmailSectionProvider"/> ผ่าน <see cref="ReceiptEmailSections.ComposeBody"/> ตัวเดียว ·
+    /// คืนเหตุ (ไม่ null) = ทาง e-Tax by Email ปฏิเสธ (ค่าตั้งผู้ส่ง/รูปแบบ/สถานะ — ลองใหม่ไม่ช่วย ⇒ ผู้เรียกหยุดแล้วแจ้งคน · แถว Failed อยู่บนเอกสารแล้ว) ·
     /// ส่งไม่สำเร็จ (ผู้ให้บริการปฏิเสธ/เกินเพดาน) ⇒ โยน (ผู้เรียกเลื่อนไปลองใหม่ · บันทึก Failed อยู่บนเอกสารแล้ว)</summary>
-    private async Task SendReceiptAsync(Guid companyId, Guid documentId, Guid paymentId, string to, CancellationToken ct)
+    private async Task<string?> SendReceiptAsync(Guid companyId, Guid documentId, Guid paymentId, string to, CancellationToken ct)
     {
         var sections = new List<ReceiptEmailSections.Section>();
         foreach (var p in _sections) sections.AddRange(await p.SectionsAsync(companyId, documentId, paymentId, ct));
@@ -329,15 +343,28 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, documentId);
             var settingsRow = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(x => x.CompanyId == companyId, ct);
             var (plan, _) = await DocumentEmailService.ResolveOnBehalfSenderAsync(_db, _senderFactory, companyId, settingsRow, ct);
+            // ฝ่ายค้านรอบ 244 N4: ใบที่ไปทาง e-Tax by Email ส่งจากอีเมลของบริษัทเสมอ ⇒ ห้ามมีข้อความ "ในนาม NextAcc" · เนื้อแบบ e-Tax (หมายเหตุ ETDA)
+            var etaxRoute = (await DocumentEmailService.RouteForAsync(_db, companyId, documentId, ct)).Channel == EtaxEmailChannel.EtaxByEmail;
             var lead = heading.IsEnglish
                 ? $"Please find attached {heading.Title} No. {doc.DocumentNumber} for THB {doc.TotalAmount:N2}."
                 : $"แนบ{heading.Title} เลขที่ {doc.DocumentNumber} จำนวนเงิน {doc.TotalAmount:N2} บาท";
-            body = ReceiptEmailSections.ComposeBody(plan.OnBehalf, DocumentEmailService.ComposeDefaultTemplate(doc, heading, false).HtmlBody, lead, sections);
+            body = ReceiptEmailSections.ComposeBody(plan.OnBehalf && !etaxRoute,
+                DocumentEmailService.ComposeDefaultTemplate(doc, heading, etaxRoute).HtmlBody, lead, sections);
         }
-        var log = await _email.SendDocumentEmailAsync(companyId, documentId,
-            new SendDocumentEmailRequest(to, null, null, null, body, AttachPdf: true), SystemActor);
+        DocumentEmailLog log;
+        try
+        {
+            log = await _email.SendDocumentRoutedAsync(companyId, documentId,
+                new SendDocumentEmailRequest(to, null, null, null, body, AttachPdf: true), SystemActor);
+        }
+        catch (BusinessRuleException ex) when (ex.RuleCode is { } rc && rc.StartsWith("ETAX-", StringComparison.Ordinal))
+        {
+            _db.ChangeTracker.Clear();
+            return ex.Message;
+        }
         if (log.Status != EmailLogStatus.Sent)
             throw new InvalidOperationException(log.ErrorMessage ?? "ผู้ให้บริการอีเมลไม่รับข้อความ");
+        return null;
     }
 
     private async Task NotifyAsync(PostPaymentAutomationRun run, string? docNo, string? message, CancellationToken ct)

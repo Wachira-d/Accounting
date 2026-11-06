@@ -8218,7 +8218,8 @@ RULES += [
     dict(file=DOC, method="SuggestPaymentWhtAsync",
          must=["PurchaseCreditNoteWhtAsync(companyId, doc)", "WhtPaymentSuggestion.Compute(", "ForeignServiceVat.PayeeAmount(doc)"],
          why=_TEAM_A_2A + "ชุดใบลดหนี้ + ตัวคิด + ตัวหาร (ยอดจ่ายผู้รับ) ตัวเดียวของทุกผู้เรียก"),
-    dict(file=DOC, method="PurchaseCreditNoteWhtAsync",
+    # รอบ 244 (ฝ่ายค้าน S2): ตัวเนื้อย้ายเป็น static PurchaseCreditNoteWhtCoreAsync (ลิงก์ชำระ/handler เรียกผ่าน PaymentWhtFiguresAsync) — ตัวเดิมเป็นทางผ่าน
+    dict(file=DOC, method="PurchaseCreditNoteWhtCoreAsync",
          must=["n.CompanyId == companyId", "n.RelatedDocumentId == doc.Id", "DocumentType.CreditNote", "n.CnDnPurchaseSideOverride != false",
                "DocumentStatus.Voided", "DocumentStatusRules.NotIssued", "WhtCertIssuePlan.AppliesTo(doc.DocumentType)", "ForeignServiceVat.PayeeAmount("],
          why=_TEAM_A_2A + "ชุดใบลดหนี้เดียวกับป้าย \"50 ทวิ ต้องตรวจ\" (ออกเลขแล้ว · ไม่ยกเลิก · ฝั่งซื้อ · บริษัทเดียวกัน)"),
@@ -14403,7 +14404,10 @@ _R241_LINK = "Services/Implementations/DocumentPayLinkService.cs"
 RULES += [
     dict(file="Services/Payments/Handlers/DocumentPaymentHandler.cs", method="HandleSucceededAsync",
          must=["DocumentPayLinkPolicy.WhtForPayment(", "WithholdingTaxAmount: paymentWht", "_postPay.EnqueueAsync(",
-               "WhtWithheldCounter.AlreadyAsync(", "DocumentPayLinkPolicy.BuyerWithholds(", "DocumentPayLinkPolicy.ExpectedWht("],
+               # รอบ 244: S2 ตัวคิด WHT เดียวกับตัวบันทึกรับชำระ · S1 ผู้ซื้อไม่มีหน้าที่หัก ⇒ 0 ชัด ๆ (ไม่ใช่ null = ยอดแนะนำ)
+               "DocumentService.PaymentWhtFiguresAsync(", "DocumentPayLinkPolicy.BuyerWithholds(", "DocumentPayLinkPolicy.ExpectedWht(",
+               "whtFigures.NetCap"],
+         must_re=[r"buyerWithholds\s*==\s*false\s*\?\s*0m"],
          call_args=[("_docs.CreatePaymentAsync(", "WithholdingTaxAmount: paymentWht")],
          forbid=["p.WithholdingTaxAmount"],
          before=[("CreatePaymentAsync(", "_postPay.EnqueueAsync(")],
@@ -14426,9 +14430,13 @@ RULES += [
          forbid=["CreateSettlementReceiptAsync(", "DocumentNumberGenerator", "_db.Documents.Add(", "WhtCreditsReceived.Add("],
          why=_R241_WHY + "241-6/241-8 ออกใบเสร็จด้วยเส้นเดิมเท่านั้น (gap-free · §78/1) หลังตัวตัดสินเดียว · ขั้นที่ทำแล้วไม่ทำซ้ำ · ไม่สร้างแถว 50 ทวิ สำเนาที่สอง"),
     dict(file=_R241_AUTO, method="SendReceiptAsync",
-         must=["_email.SendDocumentEmailAsync(", "ReceiptEmailSections.ComposeBody(", "EmailLogStatus.Sent"],
-         forbid=["sender.SendAsync(", "GetSenderAsync(", "GetGlobalFallbackSender("],
-         why=_R241_WHY + "241-9 อีเมลผ่านเส้นเอกสารเดิม (ผู้ส่งในนามบริษัท + เพดาน + บันทึก) · บล็อกเพิ่มผ่าน helper เดียว · ส่งไม่สำเร็จ = โยน (ลองใหม่)"),
+         # รอบ 244: ทางเข้าเดียวของอีเมลเอกสาร (SendDocumentRoutedAsync → EtaxDeliveryRouter) — เรียก SendDocumentEmailAsync ตรง = ข้ามทาง e-Tax by Email
+         must=["_email.SendDocumentRoutedAsync(", "ReceiptEmailSections.ComposeBody(", "EmailLogStatus.Sent", "DocumentEmailService.RouteForAsync("],
+         # ฝ่ายค้านรอบ 244 N4: เส้น e-Tax ห้ามมีข้อความ "ในนาม NextAcc"
+         must_re=[r"plan\.OnBehalf\s*&&\s*!\s*etaxRoute"],
+         forbid=["sender.SendAsync(", "GetSenderAsync(", "GetGlobalFallbackSender(", "_email.SendDocumentEmailAsync("],
+         why=_R241_WHY + "241-9 อีเมลผ่านเส้นเอกสารเดิม (ผู้ส่งในนามบริษัท + เพดาน + บันทึก) · บล็อกเพิ่มผ่าน helper เดียว · ส่งไม่สำเร็จ = โยน (ลองใหม่) · "
+             "รอบ 244 ใบกำกับของบริษัทโหมด e-Tax by Email ไปทาง e-Tax (ด่านปฏิเสธ = คืนเหตุให้ผู้เรียกหยุด+แจ้งเตือน)"),
     dict(file=_R241_LINK, method="EnsureLinkAsync",
          must=["Refusal(d)", "ChannelsAsync(", "DocumentPayLinkPolicy.Allowed(", "DocumentPayLinkPolicy.OnlineOnly(",
                "x.CompanyId == companyId && x.PayLinkTokenHash == oldHash", "DocumentPayLinkPolicy.TokenHash(fresh)", "PayLinkTokenProtected = _secrets.Protect(fresh)", "Recover("],
@@ -14464,11 +14472,14 @@ RULES += [
     dict(file=DOC, method="WhtAlreadyWithheldAsync",
          must=["WhtWithheldCounter.AlreadyAsync("], forbid=["SumAsync("],
          why=_R241_WHY + "ฝ่ายค้าน B1 ตัวนับ 'หักไปแล้ว' ตัวเดียว (ตัวบันทึกรับชำระ · ลิงก์ชำระ · handler gateway)"),
-    dict(file=_R241_LINK, method="WhtAlreadyAsync",
-         must=["WhtWithheldCounter.AlreadyAsync("], forbid=["SumAsync("],
-         why=_R241_WHY + "ฝ่ายค้าน B1 ลิงก์ใช้ตัวนับเดียวกับตัวบันทึกรับชำระ (ไม่งั้นยอดสุทธิชนเพดาน GrossCap)"),
+    # รอบ 244 (ฝ่ายค้าน S2): ลิงก์คิด WHT ที่เหลือจากตัวคิดเดียวกับตัวบันทึกรับชำระ (DocumentService.PaymentWhtFiguresAsync — ใบลดหนี้ + ตัวนับหักไปแล้ว)
+    dict(file=DOC, method="PaymentWhtFiguresAsync",
+         must=["PurchaseCreditNoteWhtCoreAsync(", "WhtWithheldCounter.AlreadyAsync(", "WhtPaymentSuggestion.Compute(", "ForeignServiceVat.PayeeAmount(doc)"],
+         forbid=["SumAsync("],
+         why=_R241_WHY + "ฝ่ายค้าน B1 + รอบ 244 S2 ลิงก์/handler ใช้ตัวนับ+ตัวคิดเดียวกับตัวบันทึกรับชำระ (ไม่งั้นยอดสุทธิชนเพดาน/ไม่ตรงใบลดหนี้)"),
     dict(file=_R241_LINK, method="AmountsAsync",
-         must=["DocumentPayLinkPolicy.ExpectedWht(", "BuyerWithholdsAsync(", "WhtAlreadyAsync(", "DocumentPayLinkPolicy.WhtMismatchNote("],
+         must=["DocumentPayLinkPolicy.ExpectedWht(", "BuyerWithholdsAsync(", "DocumentService.PaymentWhtFiguresAsync(", "figures.NetCap",
+               "DocumentPayLinkPolicy.WhtMismatchNote("],
          why=_R241_WHY + "ฝ่ายค้าน S3 ผู้ซื้อไม่มีหน้าที่หัก ⇒ ยอดเต็ม + เตือนบนหน้าเอกสาร"),
     dict(file=_R241_LINK, method="EnsureLinkAsync",
          must=["AmountsAsync("], forbid=["DocumentPayLinkPolicy.AmountsFor("],
@@ -14631,6 +14642,335 @@ REVIEWER_CASES += [
     # ยิง webhook ในคำขอของลูกค้า ⇒ ต้องฟ้อง
     ("R240i", "Accept", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, tokenHash);",
      "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, tokenHash); await _hooks.TriggerAsync(doc.CompanyId, \"quotation.accepted\", new { });", True),
+]
+
+
+# ── รอบ 244: e-Tax by Email (erp-review/2026-11-06/ETAX_BY_EMAIL_AUDIT.md · คำตัดสิน 244-*) — ทุกทางส่งเอกสารเลือกช่องทางตัวเดียว ·
+# ด่านผู้ส่งไม่มีทางถอยไปแพลตฟอร์ม · รูปแบบ/ผู้รับ/ไฟล์แนบจากตัวตั้งเดียว · "ประทับเวลาแล้ว" ตั้งได้เฉพาะจากบันทึกของผู้ใช้ ──
+_R244_WHY = "รอบ 244 (คำตัดสิน 244-*): "
+_R244_DES = "Services/Implementations/DocumentEmailService.cs"
+_R244_SCHED = "Services/Implementations/EmailScheduleService.cs"
+RULES += [
+    dict(file=_R244_DES, method="SendEtaxByEmailAsync",
+         must=["EtaxEmailStateProblem(", "EtaxByEmailSenderGate.Refusal(", "EtaxByEmailSenderGate.From(", "EmailSenderFactory.HasTenantSender(",
+               "SubjectForAsync(", "EtaxByEmailFormat.Recipients(", "EtaxByEmailFormat.AttachmentProblem(", "_senderFactory.GetSenderForSettings(",
+               "EtaxByEmailFormat.ResendRuleCode", "req.ConfirmResend", "AddChainedAuditLog(", "RefuseEtaxEmailAsync("],
+         before=[("EtaxByEmailSenderGate.Refusal(", "_senderFactory.GetSenderForSettings("), ("EtaxByEmailSenderGate.Refusal(", "sender.SendAsync("),
+                 ("EtaxByEmailFormat.Recipients(", "sender.SendAsync("), ("EtaxByEmailFormat.AttachmentProblem(", "sender.SendAsync("),
+                 ("EtaxByEmailFormat.ResendRuleCode", "sender.SendAsync("),
+                 # ฝ่ายค้าน N2: จองแถว "กำลังส่ง" แล้ว commit ธุรกรรมสั้นก่อนรอ SMTP (ไม่ถือ FOR UPDATE ค้าง)
+                 ("EmailLogStatus.Pending", "sender.SendAsync("), ("tx.CommitAsync(", "sender.SendAsync(")],
+         forbid=["GetGlobalFallbackSender(", "GetSenderAsync(", "ResolveOnBehalfSenderAsync(", "SplitAddresses(", "req.Subject",
+                 "EtdaStampedAt =", "Status = EtaxStatus.Accepted"],
+         forbid_lit=['"application/xml"'],
+         why=_R244_WHY + "ส่งจากบริษัทที่ทดสอบผ่านและตรงอีเมลที่ลงทะเบียนเท่านั้น (ห้ามถอยไปแพลตฟอร์ม) · หัวเรื่องตามคู่มือ (หัวเรื่องผู้ใช้ไม่ถูกใช้) · "
+             "To 1 + CC ETDA · แนบ 1 ไฟล์ ≤ 3 MB (ไม่แนบ XML แยก) · ส่งซ้ำต้องยืนยัน · ไม่ประทับ 'ประทับเวลาแล้ว' เอง"),
+    dict(file=_R244_DES, method="SendDocumentRoutedAsync",
+         must=["RouteAsync(", "EnsureEtaxForEmailAsync(", "SendEtaxByEmailAsync(", "SendDocumentEmailAsync(", "EtaxEmailChannel.EtaxByEmail",
+               "EtaxByEmailSenderGate.Refusal("],
+         before=[("RouteAsync(", "SendDocumentEmailAsync("), ("EtaxByEmailSenderGate.Refusal(", "EnsureEtaxForEmailAsync(")],
+         why=_R244_WHY + "244-3 ทางเข้าเดียวของการส่งเอกสารทางอีเมล — ถามตัวตัดสินช่องทางก่อนส่ง"),
+    dict(file=_R244_DES, method="RouteForAsync",
+         must=["EtaxDeliveryRouter.Decide(", "IssuedDocumentHooks.JudgeEtaxScopeAsync(", "e.ByEmailSentAt != null", "e.Status != EtaxStatus.Voided",
+               "x.CompanyId == companyId", "d.CompanyId == companyId", "e.CompanyId == companyId"],
+         forbid=["DocumentEmailLogs"],
+         why=_R244_WHY + "ข้อเท็จจริงของช่องทางจากตัวโหลดเดียวกับ hook ออก e-Tax + 'ส่งแล้ว' = ByEmailSentAt ของแถวที่ยังมีผล (ฝ่ายค้าน N3) · tenant"),
+    dict(file=_R244_DES, method="EnsureEtaxForEmailAsync",
+         must=["_etaxService.GenerateAsync("], forbid=["new EtaxInvoice"],
+         why=_R244_WHY + "แถว e-Tax ออกด้วยเส้นเดิมเท่านั้น (ด่าน §86/4) — ออกไม่ได้ = ปฏิเสธดัง"),
+    dict(file=_R244_DES, method="RecordEtdaStampAsync",
+         must=["AddChainedAuditLog(", "a.CreatedAt > sentAt", "a.EntityId == etax.DocumentId", "a.CompanyId == companyId", "etax.ByEmailSentAt"],
+         forbid=["Status = EtaxStatus.Accepted", "AuditLogs.Add("],
+         why=_R244_WHY + "244-6 ประทับเวลาแล้ว = ผู้ใช้บันทึกใบที่ ETDA ส่งกลับ (ส่งก่อน · ไฟล์ของเอกสารนี้แนบหลังส่ง · audit chain) — ไม่พลิกสถานะแถวเป็นตอบรับเอง"),
+    dict(file="Controllers/DocumentController.cs", method="SendEmail",
+         must=["SendDocumentRoutedAsync("], forbid=["SendDocumentEmailAsync(", "SendEtaxByEmailAsync("],
+         why=_R244_WHY + "244-3 ปุ่มส่งอีเมลของเอกสารเดินทางเลือกช่องทางตัวเดียว"),
+    dict(file="Controllers/EtaxController.cs", method="RecordEtdaStamp",
+         must=["RequireEtaxAsync(", "gate.DenyAttachmentAsync(", "RecordEtdaStampAsync("],
+         before=[("gate.DenyAttachmentAsync(", "RecordEtdaStampAsync(")],
+         why=_R244_WHY + "ไฟล์หลักฐานการประทับเวลาเดินด่านไฟล์แนบตัวเดียวก่อนถึง service"),
+    dict(file="Controllers/EtaxController.cs", method="UpdateConfig",
+         must_lit=['"ETAX-MODE-ONE-SYSTEM"'],
+         why=_R244_WHY + "244-1 กรมสรรพากรให้ใช้ได้ระบบเดียว — เลือก 'ทั้งสองระบบ' ใหม่ไม่ได้"),
+    dict(file=_R244_SCHED, method="ProcessPendingQueueAsync",
+         must=["SendViaEtaxIfRequiredAsync("],
+         before=[("SendViaEtaxIfRequiredAsync(", "ComposeQueueMessageAsync("), ("SendViaEtaxIfRequiredAsync(", "sender.SendAsync(")],
+         why=_R244_WHY + "244-3 คิวตามตาราง/ตอนอนุมัติ/เอกสารประจำ: ใบกำกับของบริษัทโหมด by Email ไปทาง e-Tax ก่อนถึงเส้นอีเมลธรรมดา"),
+    dict(file=_R244_SCHED, method="SendViaEtaxIfRequiredAsync",
+         must=["DocumentEmailService.RouteForAsync(", "EtaxEmailChannel.EtaxByEmail", "_docEmail.SendDocumentRoutedAsync(", "DeferOrFail("],
+         forbid=["sender.SendAsync(", "GetGlobalFallbackSender(", "ComposeQueueMessageAsync(", "SendDocumentEmailAsync("],
+         why=_R244_WHY + "ทาง e-Tax ของคิวห้ามตกไปเส้นอีเมลธรรมดา · ด่านปฏิเสธ = Failed พร้อมเหตุ"),
+    dict(file="Services/Implementations/IssuedDocumentHooks.cs", method="TryAutoGenerateEtaxAsync",
+         must=["JudgeEtaxScopeAsync("], forbid=["EtaxAutoIssueScope.Judge(", "NotFullTaxInvoiceByDesign("],
+         why=_R244_WHY + "ขอบเขต e-Tax ของใบ = ตัวโหลดเดียว (hook ออก e-Tax + ทางเลือกช่องทางอีเมล) — ห้ามสำเนาที่สอง"),
+    dict(file="Services/Implementations/IssuedDocumentHooks.cs", method="JudgeEtaxScopeAsync",
+         must=["EtaxAutoIssueScope.Judge(", "TaxService.NotFullTaxInvoiceByDesign(", "c.CompanyId == companyId", "d.CompanyId == companyId"],
+         why=_R244_WHY + "ตัวโหลดขอบเขต e-Tax ตัวเดียว · tenant"),
+    dict(file="Services/Implementations/EtaxInvoiceService.cs", method="VoidAsync",
+         call_args=[("EtaxVoidPolicy.StatusForVoid(", "EtdaStampedAt")],
+         why=_R244_WHY + "244-6 ยกเลิกแถว e-Tax: ส่งพร้อม CC = รอผล (ต้องมีหลักฐาน) · บันทึกการประทับแล้ว = ตอบรับ"),
+    dict(file="Helpers/DocumentVoidPreconditions.cs", method="EffectiveEtaxAsync",
+         must=["EtdaStampedAt", "EtaxEmailedWithRdTimestampAsync("], call_args=[("EffectiveEtax(", "Stamped")],
+         why=_R244_WHY + "244-6 สถานะที่ใช้ตัดสินการยกเลิก: ประทับแล้วต้องมาจากบันทึกการประทับ ไม่ใช่จากการส่งอีเมลสำเร็จ"),
+]
+REVIEWER_CASES += [
+    # ถอยไปผู้ส่งของแพลตฟอร์ม ⇒ ต้องฟ้อง
+    ("R244a", "SendEtaxByEmailAsync", "var sender = _senderFactory.GetSenderForSettings(settings);",
+     "var sender = _senderFactory.GetGlobalFallbackSender();", True),
+    # ถอดด่านผู้ส่ง ⇒ ต้องฟ้อง
+    ("R244b", "SendEtaxByEmailAsync",
+     "if (EtaxByEmailSenderGate.Refusal(EtaxByEmailSenderGate.From(settings, hasTenantSender)) is { } senderRefusal)\n            await RefuseEtaxEmailAsync(log, senderRefusal, EtaxByEmailSenderGate.RuleCode, 409);",
+     "", True),
+    # กลับไปแนบ XML แยก ⇒ ต้องฟ้อง
+    ("R244c", "SendEtaxByEmailAsync", "msg.To.Add(env.To!);",
+     "msg.To.Add(env.To!); msg.Attachments.Add(new EmailAttachment { FileName = \"x.xml\", ContentType = \"application/xml\", Content = new byte[1] });", True),
+    # ทางเข้าเดียวไม่ถามตัวตัดสินช่องทาง ⇒ ต้องฟ้อง
+    ("R244d", "SendDocumentRoutedAsync", "var route = await RouteAsync(companyId, documentId);",
+     "var route = new EtaxEmailRoute(EtaxEmailChannel.PlainEmail, \"\");", True),
+    # งานหลังรับชำระกลับไปเรียกเส้นอีเมลธรรมดาตรง ⇒ ต้องฟ้อง
+    ("R244e", "SendReceiptAsync", "log = await _email.SendDocumentRoutedAsync(companyId, documentId,",
+     "log = await _email.SendDocumentEmailAsync(companyId, documentId,", True),
+    # คิวข้ามทาง e-Tax ⇒ ต้องฟ้อง
+    ("R244f", "ProcessPendingQueueAsync", "if (item.EntityType == \"Document\" && await SendViaEtaxIfRequiredAsync(item, ct) is bool etaxSent)",
+     "if (false)", True),
+    # บันทึกการประทับไม่ตรวจว่าไฟล์แนบหลังส่ง ⇒ ต้องฟ้อง
+    ("R244g", "RecordEtdaStampAsync", "&& a.EntityType == \"Document\" && a.EntityId == etax.DocumentId && a.CreatedAt > sentAt);",
+     "&& a.EntityType == \"Document\" && a.EntityId == etax.DocumentId);", True),
+    # ตัวยกเลิกแถว e-Tax ไม่ส่งข้อเท็จจริงการประทับ ⇒ ต้องฟ้อง
+    ("R244h", "VoidAsync", "EtaxVoidPolicy.StatusForVoid(etax.Status, emailedWithRdTimestamp, etax.EtdaStampedAt != null);",
+     "EtaxVoidPolicy.StatusForVoid(etax.Status, emailedWithRdTimestamp);", True),
+    # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .AttachmentProblem( ⇒ ต้องไม่ฟ้อง
+    ("R244i", "SendEtaxByEmailAsync", "if (EtaxByEmailFormat.AttachmentProblem(msg.Attachments.Count",
+     "if (EtaxByEmailFormat\n            .AttachmentProblem(msg.Attachments.Count", False),
+]
+
+# ── รอบ 246 QR (คำตัดสิน 246-QR-* · DOCUMENT_FLOW §2.12i): QR ชำระเงินบนเอกสาร — ตัวเรนเดอร์ทั้งสองวาดจาก resolver ตัวเดียว ·
+#    ไฟล์ e-Tax ไม่มี QR หน้าชำระ (token) · พิมพ์ไม่ออกลิงก์ใหม่ · ยอดจากตัวคิดเดียวกับลิงก์ · เส้นอัปโหลดผ่านตัวตรวจรูป + เข้ารหัสใหม่ก่อนเขียน ──
+_R246_WHY = "รอบ 246 QR: "
+_R246_PDF = "Services/Implementations/PdfGenerationService.cs"
+_R246_QPDF = "Services/Implementations/PdfGenerationService.DocumentRenderer.cs"
+_R246_QRF = "Services/Implementations/PdfGenerationService.PaymentQr.cs"
+_R246_SVC = "Services/Implementations/PaymentQrService.cs"
+RULES += [
+    dict(file=_R246_PDF, method="GenerateDocumentPdfAsync",
+         must=["ResolvePaymentQrAsync(", "paymentQr?.WithoutPayLink()"],
+         call_args=[("RenderDocumentPdfNative(", "paymentQr"), ("BuildDocumentHtml(", "paymentQr")],
+         forbid=["new PaymentQrBlock(", "GenerateQrImage(", "PayQrFactsAsync("],
+         why=_R246_WHY + "เส้น PDF จริงส่งกล่อง QR จาก resolver ตัวเดียวให้ทุก renderer (HTML/Chromium · QuestPDF · e-Tax) · ไฟล์ e-Tax ตัด QR หน้าชำระ (246-QR-5)"),
+    dict(file=_R246_PDF, method="GenerateDocumentHtmlAsync",
+         must=["ResolvePaymentQrAsync("], call_args=[("BuildDocumentHtml(", "paymentQr")],
+         why=_R246_WHY + "พรีวิวพิมพ์ใช้ resolver เดียวกับไฟล์ PDF (พรีวิว = ไฟล์ที่ดาวน์โหลด)"),
+    dict(file=_R246_PDF, method="BuildDocumentHtml",
+         must=["PaymentQrHtml("], forbid=["GenerateQrImage(", "PromptPayService(", "QRCodeGenerator("],
+         why=_R246_WHY + "HTML renderer วาดกล่อง QR ผ่านตัววาดกลาง (ข้อความ/ลำดับเดียวกับ QuestPDF) — ไม่สร้าง QR เอง"),
+    dict(file=_R246_QPDF, method="ComposeFooter",
+         must=["ComposePaymentQr("], forbid=["GenerateQrImage(", "QRCodeGenerator("],
+         why=_R246_WHY + "QuestPDF renderer วาดกล่อง QR ผ่านตัววาดกลาง — คู่กับ HTML (สอง renderer ห้าม drift)"),
+    dict(file=_R246_QPDF, method="RenderDocumentPdfNative",
+         call_args=[("ComposeFooter(", "paymentQr"), ("BuildDocumentHtml(", "paymentQr")],
+         why=_R246_WHY + "ส่วนท้ายของ QuestPDF + เส้นสำรอง HTML ได้กล่อง QR ชุดเดียวกัน"),
+    dict(file=_R246_QRF, method="ResolvePaymentQrAsync",
+         must=["_paymentQr.ResolveForDocumentAsync(", "WithoutPayLink()"],
+         why=_R246_WHY + "ตัวเรียก resolver ตัวเดียวของเส้นพิมพ์ · PDF/A ตัด QR หน้าชำระ"),
+    dict(file="Controllers/BankController.cs", method="UploadPaymentQrImage",
+         must=["PaymentQrImageValidator.Validate(", "UploadImageAsync("],
+         before=[("PaymentQrImageValidator.Validate(", "UploadImageAsync(")],
+         why=_R246_WHY + "246-QR-6 อัปโหลดผ่านตัวตรวจรูปตัวเดียว (ชนิดจากไบต์จริง · ≤ 1 MB · ขนาด) ก่อนถึง service"),
+    dict(file=_R246_SVC, method="UploadImageAsync",
+         must=["PaymentQrImageValidator.Validate(", "Reencode(", "_storage.WriteAsync(", "Audit(", "AccountAsync(", "_storage.DeleteAsync(location"],
+         # ฝ่ายค้าน N4: ตรวจบัญชีก่อนถอดรูป · เขียนไฟล์หลังตรวจผ่าน · บันทึกล้ม ⇒ ลบไฟล์ที่เพิ่งเขียน
+         before=[("PaymentQrImageValidator.Validate(", "_storage.WriteAsync("), ("AccountAsync(", "Reencode("), ("Reencode(", "_storage.WriteAsync("),
+                 ("_storage.WriteAsync(", "_db.SaveChangesAsync(")],
+         call_args=[("_storage.WriteAsync(", "png")],
+         forbid=["File.WriteAll", "Directory.CreateDirectory(", "wwwroot"],
+         why=_R246_WHY + "service ตรวจซ้ำ (ทางเข้าอื่นไม่ข้ามด่าน) · เก็บเฉพาะไบต์ที่เข้ารหัสใหม่ · ผ่านที่เก็บกลาง (ไม่มี URL สาธารณะ) · audit chain"),
+    dict(file=_R246_SVC, method="ResolveCoreAsync",
+         must=["PaymentQrPolicy.ShowBankQr(", "PickDocumentAccountAsync(", "PaymentQrPolicy.EmbedAmount(", "PaymentQrPolicy.ShowPayLinkQr(",
+               "PayQrFactsAsync(", "r.CompanyId == cid", "SupersededByTaxInvoiceAsync(", "PaymentQrPolicy.BankTextMismatch(", "WhtNote"],
+         call_args=[("PaymentQrPolicy.EmbedAmount(", "superseded")],
+         forbid=["EnsureLinkAsync(", "DocumentPayLinkPolicy.AmountsFor(", "PaymentWhtFiguresAsync(", "doc.BalanceDue - "],
+         why=_R246_WHY + "ตัวตัดสินเดียว (ใบไหนพิมพ์ · บัญชีไหน · ยอดที่ฝัง · QR หน้าชำระ · เหตุ/คำเตือน) · พิมพ์ไม่ออกลิงก์ใหม่ · ยอดจากตัวคิดเดียวกับลิงก์ (ห้ามคิด WHT เอง) · "
+             "ใบแจ้งหนี้ที่มีใบกำกับอ้าง = ไม่ฝังยอด (N6)"),
+    dict(file=_R246_SVC, method="ConfiguredAccountsAsync",
+         must=["a.CompanyId == companyId", "a.IsActive", "IsOwnLocation(", "PaymentQrPolicy.Pick("],
+         why=_R246_WHY + "บัญชีที่ตั้ง QR = ของบริษัทนี้ · เปิดใช้ · ไฟล์ใต้โฟลเดอร์บริษัท · ตัวเลือกแหล่ง QR ตัวเดียว"),
+    dict(file=_R246_SVC, method="PickDocumentAccountAsync",
+         must=["PaymentQrPolicy.PickAccount(", "ConfiguredAccountsAsync(", "a.CompanyId == companyId", "a.IsActive", "a.LinkedAccountId == gl"],
+         why=_R246_WHY + "S3 ตัวเลือกบัญชีเดียวของกระดาษ + หน้าชำระสาธารณะ — แหล่งเงินของใบก่อน (ผังผูกหลายบัญชี = ไม่เดา) · tenant"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="DocumentAccountTransferAsync",
+         must=["PaymentQrService.PickDocumentAccountAsync(", "PaymentQrService.BuildAccountQrAsync(", "SupersededByTaxInvoiceAsync(",
+               "x.CompanyId == companyId", "PaymentQrPolicy.EmbedAmount("],
+         why=_R246_WHY + "S2 หน้าชำระสาธารณะใช้ตัวเลือกบัญชี/ตัวสร้าง QR เดียวกับกระดาษ"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="PublicViewAsync",
+         before=[("DocumentAccountTransferAsync(", "SiteTransferAccount.Rows(")],
+         why=_R246_WHY + "S2 บัญชีของใบก่อน · ไม่มีจึงใช้บัญชีรับโอนของเว็บ"),
+    dict(file="Services/Implementations/BankService.cs", method="UpdateBankAccountAsync",
+         must=["PaymentQrPolicy.CaptionChanged(", "AddChainedAuditLog(", "IsOwnLocation("],
+         must_re=[r"_permissions\s*\.\s*HasPermissionAsync\s*\(\s*companyId\s*,\s*uid\s*,\s*Accounting\s*\.\s*Models\s*\.\s*Constants\s*\.\s*PermissionKeys\s*\.\s*CompanySettingsEdit\s*\)"],
+         before=[("PaymentQrPolicy.CaptionChanged(", "account.AccountName = request.AccountName"),
+                 ("_permissions.HasPermissionAsync(", "account.AccountNumber = request.AccountNumber")],
+         why=_R246_WHY + "S1 บัญชีที่ตั้ง QR — แก้ธนาคาร/ชื่อ/เลข (ข้อความใต้ QR) ต้องสิทธิ์เดียวกับเส้น QR + audit chain (ตรวจก่อนแก้)"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="PayQrFactsAsync",
+         must=["AmountsAsync(", "DocumentPayLinkPolicy.LinkUsable(", "Recover(", "Refusal("],
+         forbid=["NewToken(", "ExecuteUpdateAsync(", "SaveChangesAsync("],
+         why=_R246_WHY + "ข้อเท็จจริงของ QR อ่านอย่างเดียว — เพิกถอน/หมดอายุ ⇒ ไม่มี URL (246-QR-5) · ยอดจากตัวคิดเดียวกับลิงก์"),
+]
+REVIEWER_CASES += [
+    # ไฟล์ e-Tax ได้ QR หน้าชำระ (token) ⇒ ต้องฟ้อง
+    ("R246a", "GenerateDocumentPdfAsync", "paymentQr: paymentQr?.WithoutPayLink());", "paymentQr: paymentQr);", True),
+    # QuestPDF ลืมวาดกล่อง QR (drift จาก HTML) ⇒ ต้องฟ้อง
+    ("R246b", "ComposeFooter", "ComposePaymentQr(col, paymentQr, L);", "", True),
+    # controller ข้ามตัวตรวจรูป ⇒ ต้องฟ้อง
+    ("R246c", "UploadPaymentQrImage", "var check = PaymentQrImageValidator.Validate(bytes);",
+     "var check = new { Ok = true, Message = (string?)null };", True),
+    # service เขียนไบต์ดิบของผู้ใช้ (ไม่ใช่ที่เข้ารหัสใหม่) ⇒ ต้องฟ้อง
+    ("R246d", "UploadImageAsync", 'await _storage.WriteAsync(location, png, "image/png", ct);',
+     'await _storage.WriteAsync(location, content, "image/png", ct);', True),
+    # พิมพ์แล้วออกลิงก์ใหม่ (ฟื้นลิงก์ที่ถูกเพิกถอน) ⇒ ต้องฟ้อง
+    ("R246e", "ResolveCoreAsync","? await _payLinks.PayQrFactsAsync(cid, doc.Id, ct) : null;",
+     "? (await _payLinks.EnsureLinkAsync(cid, doc.Id, null, ct) == null ? null : await _payLinks.PayQrFactsAsync(cid, doc.Id, ct)) : null;", True),
+    # S1: ถอดด่านสิทธิ์ของการแก้ข้อความใต้ QR ⇒ ต้องฟ้อง
+    ("R246g", "UpdateBankAccountAsync",
+     "if (_permissions == null || !await _permissions.HasPermissionAsync(companyId, uid, Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit))",
+     "if (false)", True),
+    # N6: ใบแจ้งหนี้ที่ใบกำกับอ้างแล้วยังฝังยอดเต็ม ⇒ ต้องฟ้อง
+    ("R246h", "ResolveCoreAsync", 'PaymentQrPolicy.EmbedAmount(facts == null ? "unknown" : facts.PayLinkRefusal, facts?.NetAmount, superseded);',
+     'PaymentQrPolicy.EmbedAmount(facts == null ? "unknown" : facts.PayLinkRefusal, facts?.NetAmount);', True),
+    # ทิศตรงข้าม: ขึ้นบรรทัดก่อน .Validate( ⇒ ต้องไม่ฟ้อง
+    ("R246f", "UploadPaymentQrImage", "var check = PaymentQrImageValidator.Validate(bytes);",
+     "var check = PaymentQrImageValidator\n            .Validate(bytes);", False),
+]
+
+
+# ── รอบ 245 L1: ปลายทางแจ้งเตือนของผู้ติดต่อ (erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md §8 L1 · คำตอบเจ้าของ §10 Q1–Q8) ──
+# L1 ยังไม่ต่อสายเส้นส่ง (รอบ 244 แก้ไฟล์ชุดนั้นอยู่) ⇒ ล็อกเฉพาะตัวหาผู้รับ/ตัวตัดสิน/ผู้เขียน/ทางเข้า HTTP · เส้นส่งเพิ่มในเฟส L2
+# (EmailScheduleService.Enqueue* · ScanDueSoonAndOverdueAsync · ScanMonthlyStatementsAsync · PostPaymentAutomationService.*Send* · SignRequestService.SendEmailAsync
+#  ต้องเรียก ResolveAsync + ห้าม .Contact.Email ใช้เป็นผู้รับ — DESIGN §8 L1)
+_R245_WHY = "รอบ 245 L1 (LINE_MULTICHANNEL_DESIGN §8 · คำตอบเจ้าของ §10): "
+_R245_RULE = "Helpers/ContactRecipientRule.cs"
+_R245_RES = "Services/Implementations/ContactRecipientResolver.cs"
+_R245_SVC = "Services/Implementations/ContactNotifyEndpointService.cs"
+_R245_CTL = "Controllers/ContactNotifyEndpointsController.cs"
+_R245_MIG = "Helpers/ContactNotifyEndpointMigration.cs"
+RULES += [
+    dict(file=_R245_RULE, method="Resolve",
+         must=["contact.CompanyId != companyId", "e.CompanyId == companyId && e.ContactId == contact.Id",
+               "Status(e, platformGroupIds, lineDeliveryOpen)", "SignEmailThrottle.ParseRecipients(", "WithTopic(", "PickPrimary("],
+         forbid=["OrderBy(e => e.Id)"],
+         why=_R245_WHY + "ตัวตัดสินเดียว: tenant (ผู้ติดต่อ/แถวของบริษัทอื่นไม่ถูกนับ) · อีเมลหลักจาก Contact.Email ด้วยตัวแยกเดียวกับฝั่งส่ง · สถานะ+เรื่องของทุกแถว · "
+             "ฝ่ายค้าน S4 แถวหลักเลือกด้วย PickPrimary (ไม่ใช่ตาม Guid)"),
+    dict(file=_R245_RULE, method="Status",
+         must=["GroupProblem(e.LineGroupIdPlain, e.MemberCount, platformGroupIds)", "e.ConsentRecordId == null", "e.ConsentWithdrawnAt != null",
+               "NotifyEndpointKind.ScopeNextAcc", "e.BlockedAt != null"],
+         must_re=[r"if\s*\(\s*!\s*lineDeliveryOpen\s*\)"],
+         before=[("GroupProblem(", "e.ConsentRecordId == null")],
+         why=_R245_WHY + "Q1(b) กลุ่มกลางของระบบ + Q2 เพดาน 200 คน ก่อนทุกอย่าง · PDPA ความยินยอมบังคับ/ถอนแล้วใช้ไม่ได้ · OA ไม่รู้ = ไม่ส่ง · L1 LINE ยังไม่เปิด"),
+    dict(file=_R245_RULE, method="GroupProblem",
+         must=["string.IsNullOrWhiteSpace(groupId)", "IsPlatformCentralGroup(groupId, platformGroupIds)", "MaxGroupMembers"],
+         before=[("string.IsNullOrWhiteSpace(groupId)", "IsPlatformCentralGroup(")],
+         why=_R245_WHY + "Q1(b)/Q2 ตัวเดียวทั้งฝั่งส่งและฝั่งผูก (เฟส L3 ต้องเรียกตัวนี้) · ฝ่ายค้าน S2 groupId อ่านไม่ได้ = ใช้ไม่ได้ (ก่อนเทียบกลุ่มกลาง)"),
+    dict(file="Services/Implementations/NextAccLineConfig.cs", method="PlatformGroupIdsAsync",
+         must=["NextAccLineConfigRule.PlatformGroupIds(", "FromConfig(_config).GroupId", "LineMessagingGroupId"],
+         forbid=["NextAccLineConfigRule.Merge(", "GetAsync("],
+         why=_R245_WHY + "ฝ่ายค้าน S2: กลุ่มกลางจากหน้าแอดมิน + config แยกกัน (Merge เลือกแหล่งเดียว ⇒ อีกแหล่งหลุดด่าน)"),
+    dict(file=_R245_RES, method="ResolveAsync",
+         must=["LoadFactsAsync(", "ContactRecipientRule.Resolve("],
+         call_args=[("ContactRecipientRule.Resolve(", "PlatformGroupIds"), ("ContactRecipientRule.Resolve(", "LineDeliveryOpen")],
+         why=_R245_WHY + "ผู้อ่านเดียว ส่งกลุ่มกลางของระบบ (ทุกแหล่ง) ให้ตัวตัดสินทุกครั้ง"),
+    dict(file=_R245_RES, method="GetOverviewAsync",
+         must=["LoadFactsAsync(", "ContactRecipientRule.Status(e, facts.PlatformGroupIds, LineDeliveryOpen)", "ContactRecipientRule.ConsentLabel(",
+               "ContactRecipientRule.PickPrimary(", "e.UnlinkedAt == null && canEdit", "CanEditTopics: canEdit"],
+         forbid=["OrderBy(e => e.Id)"],
+         why=_R245_WHY + "สถานะบนหน้า = ตัวตัดสินเดียวกับชุดผู้รับ (server computes · page displays) · ฝ่ายค้าน N3 ปุ่มตามสิทธิ์จริง"),
+    dict(file=_R245_RES, method="LoadFactsAsync",
+         must=["x.Id == contactId && x.CompanyId == companyId", "e.CompanyId == companyId && e.ContactId == contactId",
+               "r.CompanyId == companyId && consentIds.Contains(r.Id)", "_nextAccLine.PlatformGroupIdsAsync("],
+         forbid=["_nextAccLine.GetAsync("],
+         why=_R245_WHY + "tenant ทุก query (ผู้ติดต่อ · ปลายทาง · ความยินยอม) · กลุ่มกลางทุกแหล่งจากผู้อ่านค่าตั้ง OA กลางตัวเดียว (ฝ่ายค้าน S2)"),
+    dict(file=_R245_CTL, method="Get", must=["DenyKeyAsync(", "GetOverviewAsync(companyId, contactId, canEdit"],
+         why=_R245_WHY + "ฝ่ายค้าน N3: ภาพรวมได้ธงแก้ไขจากด่านเดียวกับ write"),
+    dict(file="Services/Implementations/CourseCredit/CourseCreditService.Membership.cs", method="SendExpiryRemindersAsync",
+         must=["CustomerLineTarget.ForContact("], forbid=["LineUserId"],
+         why=_R245_WHY + "ฝ่ายค้าน S1: แจ้งบัตรใกล้หมดอายุไม่ใช้ Contact.LineUserId (ไม่รู้ OA ⇒ ส่งผิดคน) · LINE ผ่าน CustomerLineLink เท่านั้น"),
+    dict(file=DOC, method="MergeContactsAsync",
+         must=["AdvisoryLockKey.ContactNotifyEndpoint", "ContactRecipientRule.MergeUnlinks(", "NotifyEndpointKind.UnlinkMerge", "loserEndpointIds.Contains(e.Id)"],
+         before=[("AdvisoryLockKey.ContactNotifyEndpoint", "ExecuteSqlRawAsync(sql, keepId, loser.Id)"),
+                 ("ExecuteSqlRawAsync(sql, keepId, loser.Id)", "ContactRecipientRule.MergeUnlinks(")],
+         why=_R245_WHY + "ฝ่ายค้าน S4: รวมผู้ติดต่อใต้ล็อกเดียวกับผู้เขียนปลายทาง แล้วยกเลิกแถวหลักของผู้ถูกรวม/แถวซ้ำด้วยตัวตัดสินเดียว"),
+    dict(file=_R245_RES, method="ToFacts",
+         must=["consents.ContainsKey(id)", "_secrets.Unprotect(r.LineGroupId)"],
+         why=_R245_WHY + "ความยินยอมต้องเป็นแถวของบริษัทนี้ (อ้าง id ที่ไม่พบ = ไม่มี) · groupId ถอดรหัสเพื่อเทียบกลุ่มกลาง"),
+    dict(file=_R245_SVC, method="AddEmailAsync",
+         must=["LockContactAsync(", "ContactRecipientRule.ValidateNewEmail(", "ContactRecipientRule.NormalizeLabel(", "NotifyTopics.FromRequest(",
+               "Audit(", "SaveChangesAsync(", "CommitAsync("],
+         must_re=[r"if\s*\(\s*problem\s*!=\s*null\s*\)\s*throw\b"],
+         before=[("LockContactAsync(", "ContactRecipientRule.ValidateNewEmail("), ("Audit(", "SaveChangesAsync(")],
+         forbid=["AuditLogs.Add("],
+         why=_R245_WHY + "เพิ่มอีเมล: ล็อกต่อผู้ติดต่อก่อนตรวจซ้ำ · ตัวตรวจเดียว · audit chain ในธุรกรรมเดียวกัน"),
+    dict(file=_R245_SVC, method="UpdateAsync",
+         must=["LockContactAsync(", "e.Id == endpointId && e.CompanyId == companyId && e.ContactId == contactId", "NotifyTopics.FromRequest(",
+               "Audit(", "SaveChangesAsync("],
+         must_re=[r"row\s*\.\s*Kind\s*!=\s*NotifyEndpointKind\s*\.\s*LineGroup\s*\)\s*throw\b"],
+         why=_R245_WHY + "แก้: tenant + ห้าม silent no-op (แสดงยอดเงินใช้ได้กับกลุ่มเท่านั้น · Q5)"),
+    dict(file=_R245_SVC, method="UpdatePrimaryAsync",
+         must=["LockContactAsync(", "NotifyTopics.FromRequest(request?.Topics, allowEmpty: true)", "Email = null", "Audit(", "SaveChangesAsync(",
+               "ContactRecipientRule.PickPrimary(", "NotifyEndpointKind.UnlinkMerge"],
+         forbid=["OrderBy(e => e.Id)"],
+         why=_R245_WHY + "แถวอีเมลหลักเก็บเฉพาะเรื่อง ไม่เก็บที่อยู่ซ้ำ (Contact.Email แหล่งเดียว) · ฝ่ายค้าน S4 ตัวเลือกเดียวกับตัวหาผู้รับ + ยกเลิกแถวเกิน"),
+    dict(file=_R245_SVC, method="UnlinkAsync",
+         must=["LockContactAsync(", "row.LineUserId = null", "row.LineGroupId = null", "NotifyEndpointKind.UnlinkCompany", "Audit(", "SaveChangesAsync("],
+         why=_R245_WHY + "ยกเลิก: ล้าง LINE id ที่เข้ารหัส (PDPA ม.22) + audit"),
+    dict(file=_R245_SVC, method="Audit", must=["_db.AddChainedAuditLog("], forbid=["AuditLogs.Add("],
+         why=_R245_WHY + "audit ของปลายทางเข้า hash chain (กฎ M)"),
+    dict(file=_R245_SVC, method="LockContactAsync",
+         must=["AdvisoryLockKey.For(companyId, AdvisoryLockKey.ContactNotifyEndpoint, contactId.ToString())", "c.Id == contactId && c.CompanyId == companyId"],
+         why=_R245_WHY + "ล็อกต่อผู้ติดต่อ (คีย์ deterministic) + ผู้ติดต่อของบริษัทอื่น = 404"),
+    dict(file=_R245_CTL, method="DenyKeyAsync", must=["_permissions.HasPermissionAsync(", "PermissionKeys.ContactEdit"],
+         why=_R245_WHY + "ด่านเขียน = Contact.Edit (ชุดเดียวกับแก้ผู้ติดต่อ)"),
+    dict(file=_R245_MIG, method="MigrateLegacyLineUserIdsAsync",
+         must=["MigrateCoreAsync("],
+         must_re=[r"catch\s*\{\s*db\s*\.\s*ChangeTracker\s*\.\s*Clear\s*\(\s*\)\s*;\s*throw\s*;", r"finally\s*\{\s*db\s*\.\s*ChangeTracker\s*\.\s*Clear\s*\(\s*\)"],
+         why=_R245_WHY + "ฝ่ายค้าน B1: ล้มกลางทาง ⇒ ล้าง ChangeTracker ของ context ตอนบูต (catch + finally) — แถวค้างห้ามหลุดลงฐาน"),
+    dict(file=_R245_MIG, method="MigrateCoreAsync",
+         must=["AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey)", "secrets.Protect(id)", "NotifyEndpointKind.ScopeUnknown",
+               "db.AddChainedAuditLog(", "tx.CommitAsync(", "catch (BusinessRuleException)", "skippedIds.Contains(c.Id)"],
+         before=[("AdvisoryLockKey.For(", "db.ContactNotifyEndpoints.Add(")],
+         forbid=["Verified = true", "NotifyEndpointKind.ScopeNextAcc", "NotifyEndpointKind.ScopeCompany"],
+         why=_R245_WHY + "ย้าย LINE เดิมครั้งเดียว (ล็อกทั้งระบบ + marker) · เข้ารหัส · ห้ามเดา OA/ห้ามประทับยืนยัน (F2 ข้อ 3)"),
+] + [dict(file=_R245_CTL, method=m, must=["DenyKeyAsync("], before=[("DenyKeyAsync(", "_endpoints.")],
+          why=_R245_WHY + "ทุก write ผ่านด่านสิทธิ์ก่อนเรียก service")
+     for m in ["AddEmail", "UpdatePrimary", "Update", "Unlink"]]
+REVIEWER_CASES += [
+    # ถอด tenant guard ของตัวตัดสิน ⇒ ต้องฟ้อง
+    ("R245a", "Resolve", "if (contact == null || contact.CompanyId != companyId || contact.IsDeleted) return new RecipientSet(topic, options);",
+     "if (contact == null) return new RecipientSet(topic, options);", True),
+    # Q1(b): ไม่เทียบกลุ่มกลางของระบบ ⇒ ต้องฟ้อง
+    ("R245b", "Status", "GroupProblem(e.LineGroupIdPlain, e.MemberCount, platformGroupIds)", "GroupProblem(e.LineGroupIdPlain, e.MemberCount, Array.Empty<string>())", True),
+    # ผู้อ่านส่งชุดว่างแทนกลุ่มกลาง ⇒ ต้องฟ้อง
+    ("R245c", "ResolveAsync", "topic, facts.PlatformGroupIds, LineDeliveryOpen)", "topic, Array.Empty<string>(), LineDeliveryOpen)", True),
+    # ถอด CompanyId ออกจาก query ปลายทาง ⇒ ต้องฟ้อง
+    ("R245d", "LoadFactsAsync", ".Where(e => e.CompanyId == companyId && e.ContactId == contactId)", ".Where(e => e.ContactId == contactId)", True),
+    # audit นอก chain ⇒ ต้องฟ้อง
+    ("R245e", "Audit", "_db.AddChainedAuditLog(new AuditLog", "_db.AuditLogs.Add(new AuditLog", True),
+    # ถอดด่านสิทธิ์ของการเพิ่มอีเมล ⇒ ต้องฟ้อง
+    ("R245f", "AddEmail", "if (await DenyKeyAsync(companyId, \"เพิ่มช่องทางแจ้งเตือนของผู้ติดต่อ\") is { } deny) return Forbid403(deny);", "", True),
+    # migration เดา OA ⇒ ต้องฟ้อง
+    ("R245g", "MigrateCoreAsync", "OaScope = NotifyEndpointKind.ScopeUnknown,", "OaScope = NotifyEndpointKind.ScopeNextAcc,", True),
+    # ฝ่ายค้าน B1: ล้มแล้วไม่ล้าง ChangeTracker ⇒ ต้องฟ้อง
+    ("R245j", "MigrateLegacyLineUserIdsAsync", "            db.ChangeTracker.Clear();\n            throw;", "            throw;", True),
+    # ฝ่ายค้าน S2: กลับไปใช้ผล Merge (แหล่งเดียว) ⇒ ต้องฟ้อง
+    ("R245k", "LoadFactsAsync", "platformGroups = await _nextAccLine.PlatformGroupIdsAsync(ct);",
+     "platformGroups = new[] { (await _nextAccLine.GetAsync(ct)).GroupId ?? \"\" };", True),
+    # ฝ่ายค้าน S4: รวมผู้ติดต่อแล้วไม่ยกเลิกแถวซ้ำ ⇒ ต้องฟ้อง
+    ("R245l", "MergeContactsAsync", "var endpointUnlinks = Accounting.Helpers.ContactRecipientRule.MergeUnlinks(", "var endpointUnlinks = NoMergeUnlinks(", True),
+    # ฝ่ายค้าน S1: แจ้งบัตรกลับไปใช้ Contact.LineUserId ⇒ ต้องฟ้อง
+    ("R245m", "SendExpiryRemindersAsync", "new BookingContact(contact?.Email, null)", "new BookingContact(contact?.Email, contact?.LineUserId)", True),
+    # ฝ่ายค้าน S4: เลือกแถวหลักตาม Guid ⇒ ต้องฟ้อง
+    ("R245n", "Resolve", "var primaryRow = PickPrimary(", "var primaryRow = rows.OrderBy(e => e.Id).FirstOrDefault() ?? PickPrimary(", True),
+    # ความยินยอมไม่ตรวจว่าเป็นของบริษัทนี้ ⇒ ต้องฟ้อง
+    ("R245h", "ToFacts", "Guid? consentId = r.ConsentRecordId is Guid id && consents.ContainsKey(id) ? id : null;", "Guid? consentId = r.ConsentRecordId;", True),
+    # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .Resolve( ⇒ ต้องไม่ฟ้อง
+    ("R245i", "ResolveAsync", "return ContactRecipientRule.Resolve(", "return ContactRecipientRule\n            .Resolve(", False),
 ]
 
 

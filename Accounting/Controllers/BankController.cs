@@ -1,4 +1,6 @@
+using Accounting.Filters;
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Accounting;
 using Accounting.Models.DTOs.Bank;
@@ -48,6 +50,73 @@ public class BankController : ControllerBase
     {
         var result = await _bankService.UpdateBankAccountAsync(companyId, accountId, request);
         return Ok(new ApiResponse<BankAccountResponse>(true, result));
+    }
+
+    // ─────────── รอบ 246 QR — QR ชำระเงินของบัญชี (Helpers/PaymentQrPolicy · Services/Implementations/PaymentQrService) ───────────
+    // เปลี่ยน QR/พร้อมเพย์ = เปลี่ยน "ปลายทางที่ลูกค้าโอนเงิน" บนเอกสารทุกใบ ⇒ สิทธิ์ตั้งค่าบริษัท (CompanySettings.Edit — เจ้าของโดยปริยาย) + audit chain ·
+    // แยกจากการแก้บัญชีทั่วไป (UpdateAccount) ซึ่งไม่รับช่องเหล่านี้ · รูปไม่มี URL สาธารณะ — ดูได้ผ่าน preview (data URI ที่เซิร์ฟเวอร์เข้ารหัสใหม่) ของบริษัทเท่านั้น
+
+    private string Actor() => JwtHelper.GetUserIdFromClaims(User).ToString();
+
+    [HttpPost("accounts/{accountId:guid}/payment-qr/image")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [RequestSizeLimit(2 * 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<BankAccountResponse>>> UploadPaymentQrImage(Guid companyId, Guid accountId, IFormFile? file,
+        [FromServices] IPaymentQrService paymentQr, CancellationToken ct)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(new ApiResponse<BankAccountResponse>(false, null, "กรุณาเลือกไฟล์รูป QR"));
+        if (file.Length > PaymentQrImageValidator.MaxBytes)
+            return BadRequest(new ApiResponse<BankAccountResponse>(false, null, $"รูป QR ใหญ่เกิน {PaymentQrImageValidator.MaxBytes / 1024 / 1024} MB"));
+        byte[] bytes;
+        await using (var s = file.OpenReadStream())
+        using (var ms = new MemoryStream())
+        {
+            await s.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+        // ตัวตรวจตัวเดียว (ชนิดจากไบต์จริง · ขนาด · กว้าง/สูง) — service ตรวจซ้ำก่อนเขียน (ทางเข้าอื่นในอนาคตไม่ข้ามด่าน)
+        var check = PaymentQrImageValidator.Validate(bytes);
+        if (!check.Ok) return BadRequest(new ApiResponse<BankAccountResponse>(false, null, check.Message));
+        var result = await paymentQr.UploadImageAsync(companyId, accountId, bytes, Actor(), ct);
+        return Ok(new ApiResponse<BankAccountResponse>(true, result, "อัปโหลดรูป QR แล้ว"));
+    }
+
+    [HttpDelete("accounts/{accountId:guid}/payment-qr/image")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    public async Task<ActionResult<ApiResponse<BankAccountResponse>>> RemovePaymentQrImage(Guid companyId, Guid accountId,
+        [FromServices] IPaymentQrService paymentQr, CancellationToken ct)
+    {
+        var result = await paymentQr.RemoveImageAsync(companyId, accountId, Actor(), ct);
+        return Ok(new ApiResponse<BankAccountResponse>(true, result, "ลบรูป QR แล้ว"));
+    }
+
+    [HttpPut("accounts/{accountId:guid}/payment-qr")]
+    [RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    public async Task<ActionResult<ApiResponse<BankAccountResponse>>> UpdatePaymentQr(Guid companyId, Guid accountId,
+        [FromBody] UpdateBankPaymentQrRequest request, [FromServices] IPaymentQrService paymentQr, CancellationToken ct)
+    {
+        var result = await paymentQr.UpdateSettingsAsync(companyId, accountId, request, Actor(), ct);
+        return Ok(new ApiResponse<BankAccountResponse>(true, result, "บันทึก QR ชำระเงินแล้ว"));
+    }
+
+    /// <summary>ตัวอย่าง QR ที่จะพิมพ์บนเอกสาร (เซิร์ฟเวอร์คำนวณ) — promptPayId/source ที่ส่งมา = ตัวอย่างสดก่อนบันทึก · ไม่ส่ง = ค่าที่บันทึกไว้</summary>
+    [HttpGet("accounts/{accountId:guid}/payment-qr/preview")]
+    public async Task<ActionResult<ApiResponse<BankPaymentQrPreviewResponse>>> PreviewPaymentQr(Guid companyId, Guid accountId,
+        [FromQuery] string? promptPayId, [FromQuery] string? source, [FromQuery] decimal? amount,
+        [FromServices] IPaymentQrService paymentQr, CancellationToken ct)
+    {
+        var result = await paymentQr.PreviewAsync(companyId, accountId, promptPayId, source, amount, ct);
+        return Ok(new ApiResponse<BankPaymentQrPreviewResponse>(true, result));
+    }
+
+    /// <summary>ฝ่ายค้าน S4/S2(ก)/N5 — เหตุที่ใบนี้ไม่พิมพ์ QR บัญชี + คำเตือน (หน้าเอกสาร) · ตัวตัดสินเดียวกับกระดาษ (PaymentQrService.ResolveCoreAsync)</summary>
+    [HttpGet("payment-qr/documents/{documentId:guid}")]
+    public async Task<ActionResult<ApiResponse<PaymentQrDiagnosis>>> DocumentPaymentQr(Guid companyId, Guid documentId,
+        [FromServices] IPaymentQrService paymentQr, CancellationToken ct)
+    {
+        var result = await paymentQr.DiagnoseDocumentAsync(companyId, documentId, ct);
+        return Ok(new ApiResponse<PaymentQrDiagnosis>(true, result));
     }
 
     [HttpGet("accounts/{accountId:guid}/transactions")]

@@ -214,6 +214,17 @@ public class DocumentTemplateController : ControllerBase
     /// <summary>Live preview from the editor's UNSAVED template form, so every
     /// tick/colour/layout change shows instantly. The body is a transient
     /// DocumentTemplate (never saved).</summary>
+    /// <summary>รอบ 246 QR (ฝ่ายค้าน S2(ก)/S4) — บัญชีที่ QR ของเทมเพลต (ค่าในฟอร์มที่ยังไม่บันทึก) จะใช้ + เหตุที่ไม่พิมพ์ + คำเตือนข้อความบัญชีไม่ตรง ·
+    /// อ่านอย่างเดียว (POST เพราะรับฟอร์มทั้งชุดแบบเดียวกับ preview-html-draft) · เซิร์ฟเวอร์ตัดสิน หน้าแสดงอย่างเดียว</summary>
+    [HttpPost("payment-qr-check")]
+    public async Task<ActionResult<ApiResponse<Accounting.Helpers.PaymentQrDiagnosis>>> PaymentQrCheck(Guid companyId,
+        [FromBody] CreateDocumentTemplateRequest draft, [FromServices] IPaymentQrService paymentQr)
+    {
+        var transient = _templateService.BuildTransient(companyId, draft);
+        var r = await paymentQr.DiagnoseTemplateAsync(companyId, transient);
+        return Ok(new ApiResponse<Accounting.Helpers.PaymentQrDiagnosis>(true, r));
+    }
+
     [HttpPost("preview-html-draft")]
     public async Task<ActionResult> PreviewHtmlDraft(Guid companyId, [FromBody] CreateDocumentTemplateRequest draft)
     {

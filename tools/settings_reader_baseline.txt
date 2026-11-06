@@ -3,8 +3,6 @@
 Company.SocialSecurityAccountNo
 CompanySettings.AutoCloseMonthEnd
 CompanySettings.EmailGmailServiceAccountJson
-CompanySettings.EtaxByEmailAutoSendOnApprove
-CompanySettings.EtaxByEmailEmbedXml
 CompanySettings.EtaxByEmailRegistrationDate
 CompanySettings.EtaxByEmailRegistrationNumber
 CompanySettings.EtaxXmlOutputPath

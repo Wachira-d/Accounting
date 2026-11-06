@@ -433,7 +433,9 @@ public class WhtCreditService
         return await InTxAsync(async () =>
             {
                 await LockCreditAsync(companyId, id);
-                var e = await LoadFresh(companyId, id);
+                // รอบ 244 (แก้ CI ข้อ 3): แถวที่กลับรายการแล้วพร้อมถอดแถว (removeRow ⇒ IsDeleted) ถูกตัวกรอง soft-delete ซ่อน ⇒ Load โยน KeyNotFound ·
+                // เรียกซ้ำ (ยกเลิกใบต้นทางซ้ำ/ลองใหม่) ต้อง "ไม่ทำอะไร" ไม่ใช่ 404 ⇒ อ่านรวมแถวที่ถอดแล้ว (กรองบริษัทเอง) · ไม่มีจริง = KeyNotFound เหมือนเดิม
+                var e = await LoadFresh(companyId, id, includeRemoved: true);
                 if (!WhtCreditWriteOff.NeedsReversal(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId)) return false;
                 var before = new { status = e.Status.ToString(), e.WhtAmount, e.WriteOffJournalEntryId };
                 var (reversalId, reversalNo, writeOffNo) = await ReverseWriteOffJournalCoreAsync(companyId, e, reason);
@@ -788,9 +790,13 @@ public class WhtCreditService
             AdvisoryLockKey.For(companyId, "wht-credit-writeoff", id.ToString("N")));
 
     /// <summary>โหลดแถวหลังได้ล็อก — แถวที่ติดตามอยู่แล้วต้องอ่านค่าล่าสุดจากฐาน (อีกคำขอเพิ่งตัดสูญไป)</summary>
-    private async Task<WhtCreditReceived> LoadFresh(Guid companyId, Guid id)
+    /// <param name="includeRemoved">รอบ 244: รวมแถวที่ถอดแล้ว (soft-delete) — เฉพาะ <see cref="UndoWriteOffAsync"/> ที่เรียกซ้ำได้หลังถอดแถว</param>
+    private async Task<WhtCreditReceived> LoadFresh(Guid companyId, Guid id, bool includeRemoved = false)
     {
-        var e = await Load(companyId, id);
+        var e = includeRemoved
+            ? await _db.WhtCreditsReceived.IgnoreQueryFilters().FirstOrDefaultAsync(w => w.Id == id && w.CompanyId == companyId)
+              ?? throw new KeyNotFoundException("ไม่พบรายการภาษีถูกหัก ณ ที่จ่าย")
+            : await Load(companyId, id);
         if (_db.Entry(e).State == EntityState.Unchanged) await _db.Entry(e).ReloadAsync();
         return e;
     }

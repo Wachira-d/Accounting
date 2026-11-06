@@ -90,27 +90,29 @@ public class DocumentAutoSendRound241Tests
     [Fact]
     public void ยอดสุทธิ_หักภาษีที่ลูกค้าจะหัก_แสดงทั้งยอดเต็มและยอดสุทธิ()
     {
-        // บริการ 1,000 + VAT 70 · ลูกค้านิติบุคคลหัก 3% = 30 ⇒ โอน 1,040
-        var a = DocumentPayLinkPolicy.AmountsFor(1070m, 30m, 0m);
+        // รอบ 244 (แก้ CI รอบ 241): ยอดค้างของใบเป็นยอดสุทธิหลังหักแล้ว — ใบ 1,000 + VAT 70 − WHT 30 ⇒ TotalAmount/ยอดค้าง 1,040 (WhtGrossUp.PayeeTotal)
+        // ⇒ โอน 1,040 · ยอดก่อนหัก 1,070 · เดิมลบ WHT ซ้ำ (ลิงก์เรียก 1,010 ใบค้าง 30 ตลอดกาล)
+        var a = DocumentPayLinkPolicy.AmountsFor(1040m, 30m, 0m);
         Assert.Equal((1070m, 30m, 1040m), (a.Gross, a.Wht, a.Net));
-        // งวดก่อนหักไปแล้ว 15 ⇒ เหลือหัก 15
-        var b = DocumentPayLinkPolicy.AmountsFor(535m, 30m, 15m);
+        // งวดก่อนหักไปแล้ว 15 (จ่ายสุทธิ 520) ⇒ ค้าง 520 · เหลือหัก 15
+        var b = DocumentPayLinkPolicy.AmountsFor(520m, 30m, 15m);
         Assert.Equal((535m, 15m, 520m), (b.Gross, b.Wht, b.Net));
-        // ทิศตรงข้าม: ไม่มี WHT ⇒ ยอดเต็ม · หักครบแล้ว ⇒ ไม่ติดลบ
-        Assert.Equal(1070m, DocumentPayLinkPolicy.AmountsFor(1070m, 0m, 0m).Net);
+        // ทิศตรงข้าม: ไม่มี WHT ⇒ ยอดค้างเดิม · หักครบแล้ว ⇒ ไม่ติดลบ · ปิดหนี้แล้ว ⇒ ศูนย์ทั้งหมด
+        var n = DocumentPayLinkPolicy.AmountsFor(1070m, 0m, 0m);
+        Assert.Equal((1070m, 0m, 1070m), (n.Gross, n.Wht, n.Net));
         Assert.Equal(0m, DocumentPayLinkPolicy.AmountsFor(100m, 30m, 40m).Wht);
-        // WHT เกินยอดค้าง ⇒ ตัดที่ยอดค้าง (ยอดโอน 0 ไม่ติดลบ)
-        Assert.Equal(0m, DocumentPayLinkPolicy.AmountsFor(10m, 30m, 0m).Net);
+        var z = DocumentPayLinkPolicy.AmountsFor(0m, 30m, 0m);
+        Assert.Equal((0m, 0m, 0m), (z.Gross, z.Wht, z.Net));
     }
 
     [Fact]
     public void เงินเข้ายอดสุทธิพอดี_บันทึก_WHT_ที่เหลือทั้งก้อน_ไม่ตรง_ให้ตัวเดิมตัดสิน()
     {
-        Assert.Equal(30m, DocumentPayLinkPolicy.WhtForPayment(1040m, 1070m, 30m));
-        Assert.Equal(30m, DocumentPayLinkPolicy.WhtForPayment(1040.01m, 1070m, 30m));   // ปัดเศษ ±0.01
-        Assert.Null(DocumentPayLinkPolicy.WhtForPayment(500m, 1070m, 30m));            // จ่ายบางส่วน (เส้น staff) = พฤติกรรมเดิม
-        Assert.Null(DocumentPayLinkPolicy.WhtForPayment(1070m, 1070m, 30m));           // จ่ายเต็มไม่หัก = ไม่บันทึก WHT
-        Assert.Null(DocumentPayLinkPolicy.WhtForPayment(1070m, 1070m, 0m));
+        Assert.Equal(30m, DocumentPayLinkPolicy.WhtForPayment(1040m, 1040m, 30m));
+        Assert.Equal(30m, DocumentPayLinkPolicy.WhtForPayment(1040.01m, 1040m, 30m));   // ปัดเศษ ±0.01
+        Assert.Null(DocumentPayLinkPolicy.WhtForPayment(500m, 1040m, 30m));            // จ่ายบางส่วน (เส้น staff) = พฤติกรรมเดิม
+        Assert.Null(DocumentPayLinkPolicy.WhtForPayment(1010m, 1040m, 30m));           // รูปเดิมของรอบ 241 (ยอดค้าง − WHT) ≠ ยอดค้าง ⇒ ไม่บันทึกทั้งก้อน
+        Assert.Null(DocumentPayLinkPolicy.WhtForPayment(1040m, 1040m, 0m));
     }
 
     // ───────── ลิงก์ ─────────
@@ -149,11 +151,12 @@ public class DocumentAutoSendRound241Tests
     [Fact]
     public void บล็อกอีเมลลิงก์_หนีค่า_และแสดงยอดหักภาษีเมื่อมี()
     {
-        var a = DocumentPayLinkPolicy.AmountsFor(1070m, 30m, 0m);
+        var a = DocumentPayLinkPolicy.AmountsFor(1040m, 30m, 0m);
         var html = DocumentPayLinkPolicy.EmailBlock("https://x/p?c=1&t=<b>", a, isEnglish: false);
         Assert.Contains("&lt;b&gt;", html);
         Assert.DoesNotContain("<b>'", html);
         Assert.Contains("1,040.00", html);
+        Assert.Contains("ยอดก่อนหักภาษี ณ ที่จ่าย 1,070.00", html);
         Assert.Contains("50 ทวิ", html);
         var noWht = DocumentPayLinkPolicy.EmailBlock("https://x", DocumentPayLinkPolicy.AmountsFor(1070m, 0m, 0m), isEnglish: true);
         Assert.DoesNotContain("withholding", noWht);
@@ -179,7 +182,7 @@ public class DocumentAutoSendRound241Tests
     [Fact]
     public void คิวเก็บที่หมาย_ลิงก์จริงประกอบตอนส่ง_ลิงก์ใช้ไม่ได้ถอดบล็อกทิ้ง()
     {
-        var a = DocumentPayLinkPolicy.AmountsFor(1070m, 30m, 0m);
+        var a = DocumentPayLinkPolicy.AmountsFor(1040m, 30m, 0m);
         var body = "<p>เนื้อ {PayLink}</p>" + DocumentPayLinkPolicy.EmailBlock(DocumentPayLinkPolicy.QueuePlaceholder, a, false);
         Assert.True(DocumentPayLinkPolicy.HasPlaceholder(body));
         Assert.DoesNotContain("t=", body);

@@ -1,0 +1,65 @@
+namespace Accounting.Models.DTOs.Notification;
+
+/// <summary>รอบ 245 L1 — ตัวเลือกเรื่องที่รับ (ชื่อ enum + ป้ายไทยจากเซิร์ฟเวอร์)</summary>
+public record NotifyTopicOption(string Key, string Label);
+
+/// <summary>ปลายทางหนึ่งแถว — ทุกป้าย/สถานะ/สิทธิ์กดปุ่มคำนวณที่เซิร์ฟเวอร์ (หน้าแสดงอย่างเดียว) · <paramref name="Id"/> null = อีเมลหลักที่ยังไม่มีแถวค่าตั้ง (รับทุกเรื่อง) ·
+/// ไม่มี LINE id ใน DTO (แม้แบบปิดบัง — เจ้าหน้าที่ไม่ต้องใช้)</summary>
+public record ContactNotifyEndpointResponse(
+    Guid? Id,
+    string Kind,
+    string KindLabel,
+    string? Label,
+    string? Email,
+    string Display,
+    bool IsPrimary,
+    List<string> Topics,
+    List<string> TopicLabels,
+    bool ShowAmounts,
+    bool ShowAmountsApplies,
+    bool Usable,
+    string StatusCode,
+    string StatusLabel,
+    string? StatusReason,
+    string ConsentLabel,
+    string Source,
+    string SourceLabel,
+    string? OaLabel,
+    string? GroupName,
+    int? MemberCount,
+    DateTime? LinkedAt,
+    DateTime? UnlinkedAt,
+    DateTime? LastSentAt,
+    string? LastFailure,
+    bool CanEditTopics,
+    bool CanEditLabel,
+    bool CanUnlink);
+
+/// <summary>แท็บ "ช่องทางแจ้งเตือน" ของผู้ติดต่อ — <paramref name="ComingSoon"/> = ช่องทางที่ยังไม่เปิดพร้อมเหตุ (หน้าแสดงเป็นปุ่มปิด)</summary>
+public record ContactNotifyOverviewResponse(
+    Guid ContactId,
+    string ContactName,
+    string? PrimaryEmail,
+    List<ContactNotifyEndpointResponse> Endpoints,
+    List<NotifyTopicOption> Topics,
+    bool LineDeliveryOpen,
+    List<ContactNotifyComingSoon> ComingSoon,
+    string Note,
+    bool CanEdit,
+    string? ReadOnlyReason);
+
+public record ContactNotifyComingSoon(string Key, string Label, string Reason);
+
+/// <summary>ผู้รับของเรื่องหนึ่ง (ตัวตัดสินเดียว <c>ContactRecipientRule.Resolve</c>)</summary>
+public record ContactRecipientsResponse(string Topic, string TopicLabel, List<string> Emails, List<ContactRecipientOptionResponse> Options);
+
+public record ContactRecipientOptionResponse(Guid? EndpointId, string Kind, string KindLabel, string Display, bool Available, string? Reason, string? RuleCode, bool IsPrimary);
+
+/// <summary>เพิ่มอีเมล — <paramref name="Topics"/> null = ค่าตั้งต้นของชนิด (ทุกเรื่อง)</summary>
+public record AddContactNotifyEmailRequest(string? Email, string? Label, List<string>? Topics);
+
+/// <summary>แก้ปลายทาง — null = ไม่แก้ช่องนั้น · <paramref name="Label"/> "" = ล้างป้าย · <paramref name="ShowAmounts"/> ใช้ได้กับกลุ่ม LINE เท่านั้น (ชนิดอื่น = ปฏิเสธ ไม่ใช่ไม่มีผลเงียบ)</summary>
+public record UpdateContactNotifyEndpointRequest(string? Label, List<string>? Topics, bool? ShowAmounts);
+
+/// <summary>เรื่องที่อีเมลหลัก (<c>Contact.Email</c>) รับ — ว่างได้ (= อีเมลหลักไม่รับเรื่องใด · ให้ปลายทางอื่นรับแทน)</summary>
+public record UpdateContactNotifyPrimaryRequest(List<string>? Topics);

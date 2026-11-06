@@ -146,6 +146,9 @@ public class VoidReissueR200FTests
         var d = DocumentVoidPreconditions.AutoReceiptOnPaymentVoid(DocumentVoidPreconditions.EffectiveEtax(null, true), "RE-7", PaymentVoidCause.User);
         Assert.Equal(AutoReceiptEtaxAction.Refuse, d.Action);
         Assert.Contains("e-Tax by Email", d.Message);
+        // รอบ 244 (ฝ่ายค้าน B2): บันทึกการประทับเวลาทำให้เข้มขึ้นได้อย่างเดียว — ไม่มีทางหลวมด่าน
+        Assert.Equal(EtaxStatus.Accepted, DocumentVoidPreconditions.EffectiveEtax(EtaxStatus.Generated, false, etdaStamped: true));
+        Assert.Equal(EtaxStatus.Accepted, DocumentVoidPreconditions.EffectiveEtax(EtaxStatus.Generated, true, etdaStamped: false));
         // ทิศตรงข้าม: ไม่มีบันทึกการส่ง ⇒ สถานะแถวตามเดิม (ยังไม่ถึง = ยกเลิกได้)
         Assert.Null(DocumentVoidPreconditions.EffectiveEtax(null, false));
         Assert.Equal(EtaxStatus.Error, DocumentVoidPreconditions.EffectiveEtax(EtaxStatus.Error, false));

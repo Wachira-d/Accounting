@@ -17,10 +17,12 @@ public class EmailScheduleService : IEmailScheduleService
     private readonly IDocumentPayLinkService? _payLinks;
     /// <summary>รอบ 241 ฝ่ายค้าน B2: เพดานอีเมลของแพลตฟอร์ม + URL ของระบบ (null = ค่าตั้งต้น)</summary>
     private readonly IConfiguration? _config;
+    /// <summary>รอบ 244: ทาง e-Tax by Email ของใบกำกับในคิว (<c>SendDocumentRoutedAsync</c>) · null (สร้างนอก DI) ⇒ ใบที่ต้องไปทาง e-Tax ล้มดังบนคิว (ไม่ส่งเป็นอีเมลธรรมดา)</summary>
+    private readonly IDocumentEmailService? _docEmail;
 
     public EmailScheduleService(AccountingDbContext db, IEmailSenderFactory senderFactory,
         IPdfGenerationService pdf, ILogger<EmailScheduleService> logger, IDocumentPayLinkService? payLinks = null,
-        IConfiguration? config = null)
+        IConfiguration? config = null, IDocumentEmailService? docEmail = null)
     {
         _db = db;
         _senderFactory = senderFactory;
@@ -28,6 +30,7 @@ public class EmailScheduleService : IEmailScheduleService
         _logger = logger;
         _payLinks = payLinks;
         _config = config;
+        _docEmail = docEmail;
     }
 
     /// <summary>รอบ 241: ลิงก์ชำระเงินของใบนี้ตามตาราง (ค่าตาราง ?? ค่าบริษัท · ช่องทางตาราง ∩ ที่บริษัทเปิด — ตัวตัดสิน <c>DocumentPayLinkPolicy</c>) ·
@@ -478,6 +481,15 @@ public class EmailScheduleService : IEmailScheduleService
                     continue;
                 }
 
+                // รอบ 244: ใบกำกับของบริษัทโหมด e-Tax by Email ⇒ ทาง e-Tax เท่านั้น (EtaxDeliveryRouter ตัวเดียว) — ด่านปฏิเสธ = คิว Failed พร้อมเหตุ ·
+                // ห้ามตกไปเส้นอีเมลธรรมดาข้างล่าง (ลูกค้าจะได้ PDF/A-3 ที่ไม่มีวันถูกประทับเวลา)
+                if (item.EntityType == "Document" && await SendViaEtaxIfRequiredAsync(item, ct) is bool etaxSent)
+                {
+                    if (etaxSent) sent++;
+                    await _db.SaveChangesAsync(ct);
+                    continue;
+                }
+
                 // รอบ 241 ฝ่ายค้าน B2 (คลาสเดียวกับ 240 B1): ผู้ส่งจากตัวตัดสินเดียว — บริษัทตั้ง+ทดสอบผ่าน ⇒ SMTP บริษัท (พฤติกรรมเดิม) ·
                 // ไม่งั้น ⇒ SMTP ของ NextAcc ในนามบริษัท = เพดาน (บริษัท/วัน · ผู้รับ · To+Cc+Bcc ≤ 5) + เทมเพลตคงที่ (ข้อความผู้ใช้เป็นข้อความล้วน)
                 var compose = await ComposeQueueMessageAsync(item, ct);
@@ -537,6 +549,57 @@ public class EmailScheduleService : IEmailScheduleService
             await _db.SaveChangesAsync(ct);
         }
         return sent;
+    }
+
+    /// <summary>
+    /// รอบ 244 — ใบในคิวที่ต้องส่งแบบ e-Tax by Email (<see cref="DocumentEmailService.RouteForAsync"/> → <c>EtaxDeliveryRouter</c>) ส่งผ่าน
+    /// <c>IDocumentEmailService.SendDocumentRoutedAsync</c> (ด่านผู้ส่ง/รูปแบบ/สถานะ + หัวเรื่องตามกรมสรรพากร + CC ETDA) ·
+    /// คืน null = ใบนี้ไม่ใช่ทาง e-Tax (ผู้เรียกเดินเส้นเดิม) · true = ส่งแล้ว · false = ไม่ส่ง (คิว Failed พร้อมเหตุ / ผู้ให้บริการล้ม ⇒ ลองใหม่)
+    /// <para>ด่านปฏิเสธ (ค่าตั้งผู้ส่ง · CC/BCC ของตาราง · ไม่แนบ PDF · ใบยกเลิก ฯลฯ) ลองใหม่ไม่ช่วย ⇒ Failed ทันที (กด "ลองใหม่" หลังแก้ได้) ·
+    /// ข้อความในคิว: <c>{PayLink}</c> แทนด้วย URL ตอนส่ง (ไม่เก็บ token) · หัวเรื่องของตารางไม่ถูกใช้ (หัวเรื่องตามกรมสรรพากร)</para>
+    /// </summary>
+    internal async Task<bool?> SendViaEtaxIfRequiredAsync(EmailQueue item, CancellationToken ct)
+    {
+        var route = await DocumentEmailService.RouteForAsync(_db, item.CompanyId, item.EntityId, ct);
+        if (route.Channel != EtaxEmailChannel.EtaxByEmail) return null;
+        if (_docEmail == null)
+        {
+            item.Status = "Failed";
+            item.ErrorMessage = "ใบนี้ต้องส่งแบบ e-Tax by Email แต่บริการส่ง e-Tax ไม่พร้อม — ยังไม่ส่ง (ไม่ส่งเป็นอีเมลธรรมดาแทน)";
+            item.UpdatedAt = DateTime.UtcNow;
+            return false;
+        }
+        string? payUrl = null;
+        if (_payLinks != null && DocumentPayLinkPolicy.HasPlaceholder(item.Body))
+            payUrl = await _payLinks.CurrentUrlAsync(item.CompanyId, item.EntityId, ct);
+        var body = DocumentPayLinkPolicy.ResolvePlaceholder(item.Body, payUrl, html: true);
+        try
+        {
+            var log = await _docEmail.SendDocumentRoutedAsync(item.CompanyId, item.EntityId,
+                new Models.DTOs.Email.SendDocumentEmailRequest(item.ToEmail, item.CcEmail, item.BccEmail, null, body, AttachPdf: item.AttachPdf),
+                "email-schedule");
+            if (log.Status == EmailLogStatus.Sent)
+            {
+                item.Status = "Sent";
+                item.SentAt = DateTime.UtcNow;
+                item.ErrorMessage = null;
+                item.UpdatedAt = DateTime.UtcNow;
+                return true;
+            }
+            DeferOrFail(item, log.ErrorMessage);
+            return false;
+        }
+        catch (BusinessRuleException ex) when (ex.RuleCode is { } rc && rc.StartsWith("ETAX-", StringComparison.Ordinal))
+        {
+            // แถว e-Tax ที่ถูก Add ค้างจากการออกที่ล้ม ห้ามค้างใน context ของรอบคิวนี้
+            foreach (var e in _db.ChangeTracker.Entries<EtaxInvoice>().Where(e => e.State == EntityState.Added).ToList())
+                e.State = EntityState.Detached;
+            item.Status = "Failed";
+            var reason = "ส่ง e-Tax by Email ไม่ได้ (ยังไม่ส่ง): " + ex.Message;
+            item.ErrorMessage = reason.Length > 2000 ? reason[..2000] : reason;
+            item.UpdatedAt = DateTime.UtcNow;
+            return false;
+        }
     }
 
     internal sealed record QueueCompose(EmailMessage? Message, IEmailSender? Sender, DocumentEmailLog? Log, string? Refusal);

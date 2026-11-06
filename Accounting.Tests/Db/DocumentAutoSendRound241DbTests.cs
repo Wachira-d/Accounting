@@ -76,8 +76,9 @@ public class DocumentAutoSendRound241DbTests
         {
             CompanyId = company.Id, ContactId = contact.Id, DocumentType = DocumentType.Invoice,
             DocumentNumber = "INV241-" + Random.Shared.Next(100000, 999999), Status = invoiceStatus,
-            DocumentDate = DateTime.UtcNow.Date.AddDays(-3), SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m,
-            WithholdingTaxAmount = wht, PaidAmount = 1_070m - balance, BalanceDue = balance, Currency = "THB",
+            // รอบ 244: TotalAmount = SubTotal + VAT − WHT (WhtGrossUp.PayeeTotal — กติกาของตัวสร้างเอกสารจริง) · เดิมตั้ง 1,070 แม้มี WHT (ใบที่ระบบสร้างไม่ได้)
+            DocumentDate = DateTime.UtcNow.Date.AddDays(-3), SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m - wht,
+            WithholdingTaxAmount = wht, PaidAmount = 1_070m - wht - balance, BalanceDue = balance, Currency = "THB",
         };
         inv.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7m, VatAmount = 70m });
         db.Documents.Add(inv);
@@ -282,7 +283,7 @@ public class DocumentAutoSendRound241DbTests
 
     private static async Task<(DocumentPayLinkService Links, Seed S)> LinkSeedAsync(Accounting.Data.AccountingDbContext db, string tag)
     {
-        var s = await SeedAsync(db, tag, invoiceStatus: DocumentStatus.Approved, wht: 30m, balance: 1_070m);
+        var s = await SeedAsync(db, tag, invoiceStatus: DocumentStatus.Approved, wht: 30m, balance: 1_040m);
         const string code = "gw241";
         db.PaymentProviderConfigs.Add(new PaymentProviderConfig { CompanyId = s.CompanyId, ProviderCode = code, IsActive = true, Mode = PaymentProviderMode.Test });
         await db.SaveChangesAsync();
@@ -368,7 +369,9 @@ public class DocumentAutoSendRound241DbTests
         await sched.OnDocumentApprovedAsync(s.CompanyId, s.Invoice.Id);
 
         var q = Assert.Single(await db.EmailQueues.AsNoTracking().Where(x => x.CompanyId == s.CompanyId).ToListAsync());
-        Assert.Contains("pay-document.html", q.Body);
+        // รอบ 244 (แก้ CI): คิวเก็บที่หมาย {PayLink} ไม่ใช่ URL ตั้งแต่ฝ่ายค้าน S1 ของรอบ 241 (ไม่มี token ตรงในฐาน) — บรรทัดเดิม Contains("pay-document.html", q.Body)
+        // ค้างจากก่อน S1 · URL จริงตรวจที่ข้อความที่ประกอบตอนส่งด้านล่าง
+        Assert.Contains("ชำระเงินออนไลน์", q.Body);
         Assert.Contains("1,040.00", q.Body);
         var doc = await db.Documents.AsNoTracking().SingleAsync(d => d.Id == s.Invoice.Id);
         Assert.Equal(new[] { "PromptPay" }, DocumentPayLinkPolicy.ParseChannels(doc.PayLinkChannelsJson));
@@ -418,13 +421,15 @@ public class DocumentAutoSendRound241DbTests
         };
         db.Contacts.Add(buyer);
         await db.SaveChangesAsync();
-        var paidBefore = priorReceiptWht > 0 ? 535m : 0m;
+        // รอบ 244 (แก้ CI ข้อ 1–2): ใบที่ระบบสร้างจริงมี TotalAmount = 1,000 + 70 − 30 = 1,040 (WhtGrossUp.PayeeTotal) และ PaidAmount นับเฉพาะเงินเข้า ·
+        // เดิมตั้ง TotalAmount 1,070 + จ่าย 1,040 ⇒ ยอดค้าง 30 (ใบที่ระบบสร้างไม่ได้ — ซ่อนบั๊กลิงก์ลบ WHT ซ้ำ) · งวดก่อน: เงินเข้า 520 + ลูกค้าหัก 15
+        var paidBefore = priorReceiptWht > 0 ? 520m : 0m;
         var inv = new Document
         {
             CompanyId = company.Id, ContactId = buyer.Id, DocumentType = DocumentType.Invoice, DocumentNumber = "INVH-" + tag,
             Status = paidBefore > 0 ? DocumentStatus.PartiallyPaid : DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date.AddDays(-2),
-            SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, WithholdingTaxAmount = 30m,
-            PaidAmount = paidBefore, BalanceDue = 1_070m - paidBefore, Currency = "THB",
+            SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_040m, WithholdingTaxAmount = 30m,
+            PaidAmount = paidBefore, BalanceDue = 1_040m - paidBefore, Currency = "THB",
         };
         inv.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m,
             VatRate = 7m, VatAmount = 70m, WithholdingTaxRate = 3m, WithholdingTaxAmount = 30m, IncomeTypeCode = "8" });
@@ -437,7 +442,7 @@ public class DocumentAutoSendRound241DbTests
             {
                 CompanyId = company.Id, ContactId = buyer.Id, DocumentType = DocumentType.Receipt, DocumentNumber = "RECH-" + tag,
                 Status = DocumentStatus.Paid, DocumentDate = DateTime.UtcNow.Date.AddDays(-1), RelatedDocumentId = inv.Id,
-                SubTotal = 520m, TotalAmount = 535m, WithholdingTaxAmount = priorReceiptWht, PaidAmount = 535m, Currency = "THB",
+                SubTotal = 500m, VatAmount = 35m, TotalAmount = 520m, WithholdingTaxAmount = priorReceiptWht, PaidAmount = 520m, Currency = "THB",
             });
             await db.SaveChangesAsync();
         }
@@ -517,8 +522,52 @@ public class DocumentAutoSendRound241DbTests
         await db.Contacts.Where(c => c.Id == s.ContactId).ExecuteUpdateAsync(x => x
             .SetProperty(c => c.ContactType, ContactType.Individual).SetProperty(c => c.TaxId, "1101700207030"));
         var a = (await links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, null)).Amounts!;
-        Assert.Equal((0m, 1_070m), (a.Wht, a.Net));
+        // รอบ 244: ยอดค้างของใบเป็นยอดหลังหักแล้ว (1,040) — ลิงก์เรียกยอดค้างตามใบ ไม่บวก WHT กลับเอง (เกินยอดค้าง = ตัวบันทึกรับชำระปฏิเสธ) · คำเตือนบอกให้แก้ใบ
+        Assert.Equal((0m, 1_040m), (a.Wht, a.Net));
         Assert.Contains("ไม่มีหน้าที่หัก", (await links.StatusAsync(s.CompanyId, s.Invoice.Id)).WhtNote);
+    }
+
+    // รอบ 244 ฝ่ายค้าน S1: ผู้ซื้อไม่มีหน้าที่หัก ⇒ handler ส่ง WHT 0 ชัด ๆ (เดิม null ⇒ ตัวบันทึกรับชำระหยิบยอดแนะนำ = บันทึก WHT ที่ลูกค้าไม่ได้หัก)
+    [Fact]
+    public async Task R244_ผู้ซื้อบุคคลธรรมดา_เงินเข้าผ่านลิงก์_บันทึกWHTศูนย์_ไม่ใช้ยอดแนะนำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (cid, inv) = await SaleSeedAsync(db, Guid.NewGuid().ToString("N")[..6]);
+        await db.Contacts.Where(c => c.Id == inv.ContactId).ExecuteUpdateAsync(x => x
+            .SetProperty(c => c.ContactType, ContactType.Individual).SetProperty(c => c.TaxId, "1101700207030"));
+        await Handler(db).HandleSucceededAsync(NetIntent(cid, inv.Id, 1_040m));
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var pay = await check.Payments.AsNoTracking().SingleAsync(p => p.CompanyId == cid && p.DocumentId == inv.Id);
+        Assert.Equal(0m, pay.WithholdingTaxAmount);
+        Assert.Equal(0, await check.WhtCreditsReceived.CountAsync(w => w.CompanyId == cid && w.DocumentId == inv.Id));
+        // ทิศตรงข้าม: นิติบุคคล ⇒ WHT 30 (เทสต์ handler_เส้นเต็ม ด้านบน)
+    }
+
+    // รอบ 244 ฝ่ายค้าน S2: WHT ของลิงก์ = ตัวคิดเดียวกับตัวบันทึกรับชำระ (NetCap ของ GetPaymentWhtSuggestionAsync) แม้มีใบลดหนี้อ้างใบ
+    [Fact]
+    public async Task R244_มีใบลดหนี้อ้างใบ_WHTของลิงก์เท่ากับยอดที่ตัวบันทึกรับชำระคิด()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (cid, inv) = await SaleSeedAsync(db, Guid.NewGuid().ToString("N")[..6]);
+        db.Documents.Add(new Document
+        {
+            CompanyId = cid, ContactId = inv.ContactId, DocumentType = DocumentType.CreditNote, DocumentNumber = "CNH-" + Guid.NewGuid().ToString("N")[..6],
+            Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date, RelatedDocumentId = inv.Id,
+            SubTotal = 100m, VatAmount = 7m, WithholdingTaxAmount = 3m, TotalAmount = 104m, Currency = "THB",
+        });
+        const string code = "gw241";
+        db.PaymentProviderConfigs.Add(new PaymentProviderConfig { CompanyId = cid, ProviderCode = code, IsActive = true, Mode = PaymentProviderMode.Test });
+        await db.SaveChangesAsync();
+        var links = new DocumentPayLinkService(db, new[] { Provider(code) }, Secrets, Config(), NullLogger<DocumentPayLinkService>.Instance);
+        var link = await links.EnsureLinkAsync(cid, inv.Id, null);
+        Assert.True(link.Ok, link.Refusal);
+        using var req = DbTestDatabase.TryCreateContext()!;
+        var balance = (await req.Documents.AsNoTracking().SingleAsync(d => d.Id == inv.Id)).BalanceDue;
+        var recorder = await DocSvc(req).GetPaymentWhtSuggestionAsync(cid, inv.Id, balance);
+        Assert.Equal(recorder.NetCap, link.Amounts!.Wht);
+        Assert.Equal(balance, link.Amounts.Net);
     }
 
     [Fact]

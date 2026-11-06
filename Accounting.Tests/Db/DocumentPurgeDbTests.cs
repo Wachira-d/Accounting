@@ -226,8 +226,11 @@ END $$;");
             await Svc(req).PurgeDocumentAsync(s.CompanyId, inv.Id, null, true, "ข้อมูลทดสอบ");
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.False(await ExistsAsync(check, s.CompanyId, inv.Id));
+        // รอบ 244 (แก้ CI ข้อ 5): ใบที่ seed ผ่าน EF ได้แถว audit "Create" อัตโนมัติ (AuditTrailService.CaptureAuditEntries) ⇒ ต้องกรองแถว Delete ของการลบ
+        // (แบบเดียวกับเทสต์ลบพร้อมลูกหลานด้านบน) — เดิม SingleAsync บนทุกแถวของใบ = 2 แถวเสมอ
         var audit = await check.AuditLogs.AsNoTracking()
-            .SingleAsync(a => a.CompanyId == s.CompanyId && a.EntityType == "Document" && a.EntityId == inv.Id.ToString());
+            .SingleAsync(a => a.CompanyId == s.CompanyId && a.EntityType == "Document" && a.EntityId == inv.Id.ToString()
+                && a.Action == AuditAction.Delete);
         Assert.Contains("ข้อมูลทดสอบ", audit.NewValues);
     }
 

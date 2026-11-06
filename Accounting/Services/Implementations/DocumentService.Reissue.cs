@@ -1117,7 +1117,7 @@ public partial class DocumentService
                 else if (EtaxReissueReview.EmailedEtaxVoidedInSystem(x.Status, emailed.Contains(x.DocumentId), docCancelled,
                              evidencedVoid.Contains(x.Id.ToString())))
                     etaxRowsEmailed.Add(new EtaxReviewEtaxRow(x.Id, x.DocumentId, x.DocumentNumber, x.EtaxRefNumber, x.SubmittedAt, x.VoidedAt, x.VoidReason,
-                        $"เอกสาร {x.DocumentNumber} ส่ง e-Tax by Email พร้อมประทับเวลาของกรมสรรพากรแล้ว แต่แถว e-Tax {x.EtaxRefNumber} ถูกยกเลิกในระบบนี้ "
+                        $"เอกสาร {x.DocumentNumber} ส่ง e-Tax by Email พร้อมสำเนาถึงที่อยู่ประทับเวลาของ ETDA แล้ว แต่แถว e-Tax {x.EtaxRefNumber} ถูกยกเลิกในระบบนี้ "
                         + "(ก่อนรอบ V1I บันทึกว่า “ก่อนส่งถึงกรมสรรพากร”) — ใบนี้ยังมีผลที่กรมสรรพากร · ถ้าต้องการยกเลิกจริง ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากร "
                         + "· ระบบไม่แก้อัตโนมัติ"));
             }

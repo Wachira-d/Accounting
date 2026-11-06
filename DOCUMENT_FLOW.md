@@ -2874,6 +2874,70 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - ยังไม่เข้า: กระทบธนาคาร/settlement · สลิปพอร์ทัล · นำเข้า · CMS/ที่พัก · กระจายหลายใบ (241-5)
 - เทสต์ `DocumentAutoSendRound241Tests` · Db `DocumentAutoSendRound241DbTests` · ล็อก `tools/required_call_site_check.py` R241 — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 2.12h ช่องทางแจ้งเตือนของผู้ติดต่อ — ผู้ติดต่อเป็นเจ้าของปลายทาง (รอบ 245 เฟส L1 · `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` · คำตัดสิน 245-L1-1…245-L1-7)
+
+**สถานะปัจจุบัน (L1 — ตัวหาผู้รับ + ปลายทางอีเมล · ยังไม่ต่อสายเส้นส่ง):**
+- **ตาราง `ContactNotifyEndpoints`** (`Models/Entities/ContactNotifyEndpoint` · schema `Helpers/ContactNotifyEndpointMigration.Statements`) — ชนิด `Email`/`LineUser`/`LineGroup`
+  (ตัวตั้ง `Helpers/NotifyEndpointKind`) · เรื่องที่รับต่อแถว `TopicsJson` = ชื่อ `NotifyTopic` (`Document` เอกสาร · `Dunning` ทวงชำระ/ใบแจ้งยอด · `Receipt` ใบเสร็จ ·
+  `Wht` 50 ทวิ · `Sign` ลิงก์เซ็น · `Other`) ผ่านตัวอ่าน/เขียนเดียว `NotifyTopics` · ความยินยอม `ConsentRecordId` · `UnlinkedAt/UnlinkReason/BlockedAt` ·
+  กลุ่ม: `GroupNameSnapshot` · `MemberCountSnapshot` (≤ 200) · `ShowAmounts` (ค่าตั้งต้น true) · LINE id เข้ารหัส (`ISecretProtector`) + `LineIdHash` · audit ปิดค่า LINE id (`AuditRedaction.PiiFields`)
+- **อีเมลหลัก = `Contact.Email` อ่านสดเสมอ** (ไม่คัดลอก) · แถว `IsPrimary` เก็บเฉพาะ "เรื่องที่อีเมลหลักรับ" (`Email = null`) · ไม่มีแถว = รับทุกเรื่อง (พฤติกรรมเดิม)
+- **ตัวหาผู้รับตัวเดียว** `IContactRecipientResolver.ResolveAsync(companyId, contactId, topic)` → ตัวตัดสิน pure `Helpers/ContactRecipientRule.Resolve` (ชุดผู้รับ + เหตุของปลายทางที่ไปไม่ได้):
+  tenant (ผู้ติดต่อ/แถว/ความยินยอมของบริษัทอื่นไม่นับ) · ยกเลิก/บล็อก ⇒ ไม่ได้ · เรื่องไม่ได้เลือก ⇒ ไม่ได้ · ค่าตั้งเรื่องเสียหาย ⇒ ไม่ได้ (ไม่เดาว่ารับทุกเรื่อง) ·
+  LINE: ไม่มีความยินยอม/ถอนแล้ว ⇒ ไม่ได้ (PDPA) · OA ไม่รู้ (`unknown`) ⇒ ไม่ได้ · กลุ่มยังไม่ยืนยันด้วยรหัส ⇒ ไม่ได้ · **groupId กลางของระบบ (ค่าตั้งหน้าแอดมิน
+  `SiteSettings.LineMessagingGroupId`/config `Line:GroupId` ผ่าน `NextAccLineConfig`) ⇒ ไม่เป็นปลายทางเสมอ** (`NOTIFY-CONTACT-PLATFORM-GROUP` · คำตอบเจ้าของ Q1(b)) ·
+  กลุ่ม > 200 คน ⇒ ไม่ได้ (`NOTIFY-CONTACT-GROUP-CAP` · Q2) · **L1 ยังไม่ส่งทาง LINE** (`ContactRecipientResolver.LineDeliveryOpen = false` ⇒ ปลายทาง LINE แสดงพร้อมเหตุ ไม่อยู่ในชุดผู้รับ)
+- **⚠️ ยังไม่มีเส้นส่งใดเรียก Resolver** (ตารางส่ง/ทวงชำระ/ใบแจ้งยอด · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น ยังอ่าน `Contact.Email` ตามเดิม — ต่อสายในเฟส L2 หลังรอบ 244 merge) ⇒
+  หน้าแท็บแสดงคำเตือนนี้ตรง ๆ (ไม่ให้ผู้ใช้คิดว่าอีเมลที่เพิ่มได้รับเอกสารแล้ว)
+- **ทางเข้า HTTP** `ContactNotifyEndpointsController` (`api/companies/{cid}/contacts/{id}/notify-endpoints`): `GET` (สมาชิกบริษัท) · `GET recipients?topic=` (ดูว่าใครจะได้รับ — ตัวหาผู้รับตัวเดียวกัน) ·
+  `POST email` · `PUT primary` · `PUT {eid}` (ป้าย · เรื่อง · แสดงยอด = กลุ่มเท่านั้น ชนิดอื่นปฏิเสธ 400) · `DELETE {eid}` (ยกเลิก · ล้าง LINE id · อีเมลหลักยกเลิกไม่ได้) —
+  เขียนทุกตัว `Contact.Edit` + ปฏิเสธคีย์ API · ผู้เขียนเดียว `ContactNotifyEndpointService`: ล็อก `AdvisoryLockKey.ContactNotifyEndpoint` ต่อผู้ติดต่อ · tenant 404 · อีเมลผ่าน
+  `ContactRecipientRule.ValidateNewEmail` (ตัวแยกเดียวกับฝั่งส่ง · ซ้ำอีเมลหลัก/ซ้ำแถว 409 · ≤ 10 อีเมลเพิ่มเติม) · audit chain `ContactNotifyEndpoint.Change` (EntityId = ผู้ติดต่อ)
+- **หน้าจอ** `contacts.html` แท็บ "ข้อมูลทั่วไป | ช่องทางแจ้งเตือน" (เฉพาะผู้ติดต่อที่บันทึกแล้ว): รายการอีเมล (★ อีเมลหลัก) + ติ๊กเรื่องต่อแถว · เพิ่มอีเมล/ป้าย · ยกเลิก ·
+  ฐาน/ความยินยอมต่อแถว · ปลายทาง LINE (แถว legacy แสดง "ต้องผูกใหม่") · ปุ่ม "เชิญผู้ใช้ผูก LINE / QR" และ "เพิ่มกลุ่ม LINE (#HeyNextAcc)" = **ปิดไว้ "เร็ว ๆ นี้" พร้อมเหตุจากเซิร์ฟเวอร์** (L5/L3) · "ดูว่าใครจะได้รับ"
+- **ข้อมูลเดิม**: `Contact.LineUserId` (ไม่มีโค้ดเขียน) ⇒ one-shot ตอนบูต `ContactNotifyEndpointMigration.MigrateLegacyLineUserIdsAsync` (marker `r245-contact-line-legacy` ใน `OneShotDataFixes` ·
+  `pg_advisory_xact_lock` ทั้งระบบ) ⇒ แถว `LineUser` legacy (`OaScope=unknown` · ไม่ใช้ส่ง · เข้ารหัส) + ล้างคอลัมน์ด้วย SQL ตรง (ค่าไม่เข้า audit) · ผู้ติดต่อที่ลบแล้ว = ล้างอย่างเดียว ·
+  `Contact.Email` ไม่ย้าย · ไม่มี unique index (การรวมผู้ติดต่อย้าย `*ContactId` แบบ generic — `MergeContactsAsync` ย้ายแถวปลายทางตามให้เอง)
+- **PDPA**: ลบตามคำขอ (`PdpaService` erase ผู้ติดต่อ) ⇒ ปลดทุกแถว (`erase`) + ล้างอีเมล/ป้าย/LINE id/แฮช/ชื่อกลุ่ม · รายงานสิทธิ์เข้าถึงรวม `notifyEndpoints` (ไม่มี LINE id) ·
+  audit ปิดค่า อีเมล/ป้าย/ชื่อกลุ่ม/LINE id (`AuditRedaction.PiiFields`) และแถว audit ที่ผู้เขียนเขียนเองอ้างเฉพาะ `endpointId` (ไม่มีอีเมลเปล่า)
+- **แก้ตามฝ่ายค้าน L1 (2026-11-06)**:
+  - **⚠️ แจ้งบัตรคอร์สใกล้หมดอายุทาง LINE ที่เคยอาศัย `Contact.LineUserId` หยุดส่งโดยตั้งใจ** (`CourseCreditService.Membership` · S1) — ค่านี้ไม่รู้ว่าผูกกับ OA ใด ⇒ เสี่ยงส่งผิดคน ·
+    ลูกค้าที่ผูก LINE เองผ่าน `CustomerLineLink` (สมาชิกเว็บที่ผูกกับผู้ติดต่อ · `CustomerLineTarget.ForContact`) ยังได้รับตามเดิม · ไม่มีการผูก ⇒ อีเมลอย่างเดียว · หลังรอบนี้ไม่มีเส้นส่งใดอ่านคอลัมน์นี้
+  - กลุ่มกลางของระบบเทียบ**ทั้งสองแหล่ง**แยกกัน (หน้าแอดมิน + config `Line:GroupId` · `INextAccLineConfig.PlatformGroupIdsAsync` → `NextAccLineConfigRule.PlatformGroupIds` — ไม่ใช่ผล Merge) ·
+    groupId ที่ถอดรหัสไม่ออก/ว่าง ⇒ ใช้ไม่ได้ (`NOTIFY-CONTACT-GROUP-UNREADABLE`)
+  - รวมผู้ติดต่อ (`MergeContactsAsync`) ใต้ล็อก `AdvisoryLockKey.ContactNotifyEndpoint` ของทุกรายที่เกี่ยว ⇒ ยกเลิก (เหตุ `merge`) แถวอีเมลหลักของผู้ถูกรวม + อีเมลรองที่ซ้ำกัน/ซ้ำอีเมลหลักของผู้ที่เก็บไว้ +
+    LINE ซ้ำ (`ContactRecipientRule.MergeUnlinks`) · แถวหลักเลือกด้วย `ContactRecipientRule.PickPrimary` (ผูกก่อนชนะ · ไม่ใช่ตาม Guid) ทั้งตัวหาผู้รับและ `UpdatePrimaryAsync` (แถวเกิน ⇒ ยกเลิก)
+  - งานย้ายข้อมูลล้มกลางทาง ⇒ ล้าง ChangeTracker (catch + finally) — แถวที่ค้างไม่หลุดลงฐานกับ SaveChanges ถัดไป · ค่าที่ `Protect` ปฏิเสธ ⇒ ข้าม (ไม่ล้างคอลัมน์) นับลง audit + log ครั้งเดียว
+  - หน้าแท็บ: ปุ่มที่กดได้ตามสิทธิ์จริง (`canEdit` ด่านเดียวกับ write) · พรีวิว "เมื่อเส้นส่งต่อสาย (L2) จะส่งถึง"
+- เทสต์ `ContactRecipientRuleTests` · Db `ContactNotifyEndpointRound245DbTests` · ล็อก `tools/required_call_site_check.py` R245 (+ เคส R245a–n) · `write_permission_gate_check` WATCHED — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
+### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
+
+- **ที่มา**: เจ้าของ (2026-11-06) "บัญชีแต่ละบัญชีรองรับอัปโหลด QR · เอกสารที่แสดงเลขบัญชีแนบรูป QR ไปด้วย · บริษัทที่เปิด payment gateway สร้าง QR ของหน้าชำระแนบไปด้วยถ้าเลือกช่องทางนี้" ·
+  เดิม: `BankAccount` ไม่มีช่อง QR · ข้อมูลบัญชีบนกระดาษ = ข้อความอิสระ `DocumentTemplate.BankDetailsText` · ธง `ShowQrCode/QrCodeType/PromptPayId` ของเทมเพลตไม่มีตัวเรนเดอร์อ่าน
+- **ตั้งค่า** (หน้า "บัญชีธนาคาร" → แก้ไขบัญชี): เลขพร้อมเพย์ (`BankAccount.PromptPayId` — เบอร์ 10 หลัก/เลขผู้เสียภาษี 13 หลัก · `PaymentQrPolicy.NormalizePromptPayId`) ·
+  QR ที่ใช้ก่อน (`PaymentQrSource` auto/promptpay/upload) · รูป QR (`PaymentQrImagePath` — `PaymentQrImageValidator` → เข้ารหัส PNG ใหม่ → `IFileStorage` ใต้ `bank-payment-qr/{companyId}` ไม่มี URL สาธารณะ) ·
+  ตัวอย่างสดจากเซิร์ฟเวอร์ `GET bank/accounts/{id}/payment-qr/preview` · เส้นเขียน `PUT …/payment-qr` · `POST/DELETE …/payment-qr/image` = สิทธิ์ `CompanySettings.Edit` + audit chain (SHA-256 ของรูป) ·
+  การแก้บัญชีทั่วไป (`PUT bank/accounts/{id}`) ไม่รับช่องเหล่านี้ · รายการบัญชี echo `promptPayId/paymentQrSource/hasPaymentQrImage/paymentQrEffective`
+- **เทมเพลต** (หน้า "เทมเพลตเอกสาร" → Footer): `ShowPaymentQr` · `ShowPayLinkQr` (ค่าตั้งต้น = เปิด) · `PaymentQrBankAccountId` (ว่าง = อัตโนมัติ) — คัดลอกเทมเพลตได้ค่าตาม · บัญชีต้องเป็นของบริษัทนี้ (ตรวจเมื่อเปลี่ยน)
+- **resolver เดียว** `PaymentQrService.ResolveForDocumentAsync` → `PaymentQrBlock` · ผู้เรียก: `PdfGenerationService.GenerateDocumentPdfAsync` / `GenerateDocumentHtmlAsync` (ผ่าน `ResolvePaymentQrAsync`) · พรีวิวเทมเพลตใช้ `SampleForTemplateAsync` (ไม่ฝังยอด · ไม่มี QR หน้าชำระ) ·
+  ตัววาด: HTML `PaymentQrHtml` (ใน `BuildDocumentHtml` ต่อจากข้อมูลบัญชี) · QuestPDF `ComposePaymentQr` (ใน `ComposeFooter`) · ข้อความใต้ QR `PaymentQrCaption` ตัวเดียว · ป้าย `DocumentLabels.PayQr*`
+- **ใบไหนพิมพ์ QR บัญชี** (`PaymentQrPolicy.ShowBankQr`): ใบเสนอราคา · ใบแจ้งหนี้ · ใบกำกับภาษี · ใบวางบิล · ใบเพิ่มหนี้ฝั่งขาย — ไม่พิมพ์: ใบเสร็จ · ใบลดหนี้ · ฝั่งซื้อ · ยกเลิก · ใบตั้งหนี้ที่ชำระครบ · สกุลเงินอื่น ·
+  **บัญชี** (`PickAccount` · ฝ่ายค้าน S3): บัญชีที่ผูกผังแหล่งเงินของใบ (`PaymentAccountId` ชนะตาม entity · ผูกหลายบัญชี = ไม่เดา) → บัญชีของใบ → บัญชีของเทมเพลต → บัญชีเดียวที่ตั้ง QR
+  (ระบุชัดแล้วไม่มี QR = ไม่พิมพ์ ไม่สลับ) · เหตุที่ไม่พิมพ์ + คำเตือน (ข้อความบัญชีของเทมเพลตไม่มีเลขบัญชีของ QR · WHT แบบรอบ 244 · ใบกำกับอ้างอยู่) แสดงที่หน้าเอกสาร
+  `GET bank/payment-qr/documents/{id}` และหน้าเทมเพลต `POST document-templates/payment-qr-check` (`PaymentQrService.ResolveCoreAsync` ตัวเดียวกับกระดาษ) ·
+  ใต้ QR พิมพ์ ธนาคาร / ชื่อบัญชี / เลขที่บัญชี ของบัญชีที่ QR ใช้จริงเสมอ · แก้ 3 ช่องนี้ของบัญชีที่ตั้ง QR แล้ว = สิทธิ์ `CompanySettings.Edit` + audit (`BankService.UpdateBankAccountAsync`)
+- **ยอดใน QR พร้อมเพย์** (`EmbedAmount`): ใบที่ออกลิงก์ชำระได้ = ยอดสุทธิหลังหัก ณ ที่จ่ายจาก `DocumentPayLinkService.PayQrFactsAsync` (ตัวคิดเดียวกับลิงก์ · §2.12g · ชำระบางส่วน = ยอดที่เหลือ) ·
+  ใบแจ้งหนี้ที่มีใบกำกับภาษีอ้างอยู่ = ไม่ฝังยอด + ไม่มี QR หน้าชำระ · อื่น ๆ/รูปที่อัปโหลด = ไม่ระบุยอด (กระดาษบอก) · ใต้ QR ที่ฝังยอดพิมพ์ "ยอด ณ วันที่พิมพ์ {วันที่}"
+- **ของเดิม**: ช่อง `ShowQrCode/QrCodeType/PromptPayId/QrCodeCustomData` ของเทมเพลตไม่รับ/ไม่คัดลอกแล้ว · one-shot ตอนบูต `PaymentQrMigration.MoveLegacyTemplatePromptPayAsync` ย้ายเลขพร้อมเพย์ของเทมเพลตไปบัญชีธนาคารเมื่อชัดเจน (audit ทุกบริษัท) ·
+  `PromptPayService` รับเฉพาะ 10/13/15 หลัก
+- **QR หน้าชำระ** (`ShowPayLinkQr`): เฉพาะใบที่มีลิงก์ที่ยังใช้ได้อยู่แล้ว + ช่องทางของใบยังมีช่องทางออนไลน์ — การพิมพ์ไม่ออก/ต่ออายุลิงก์ · เพิกถอน/หมดอายุ ⇒ พิมพ์ใหม่ไม่มี QR ·
+  ไม่พิมพ์ URL เป็นข้อความ · **ไฟล์ e-Tax (PDF/A-3) ไม่มี QR หน้าชำระ** (`WithoutPayLink`) แต่มี QR บัญชี
+- **หน้าชำระสาธารณะ** `pay-document.html`: กล่อง "หรือโอนเข้าบัญชี" ใช้บัญชีของใบก่อน (ตัวเลือกเดียวกับกระดาษ) แล้วจึงบัญชีรับโอนของเว็บ · มี QR ที่เซิร์ฟเวอร์สร้าง (`PublicTransferInfo.PromptPayQrDataUri` · ยอดสุทธิของลิงก์)
+- **ยังไม่ทำ (งานต่อ)**: สวิตช์ต่อใบ (246-QR-7) · บล็อกลิงก์ในอีเมล (ไฟล์ของรอบ 244 — PDF แนบมี QR แล้ว) · รวมบัญชีรับโอนของเว็บ (`SitePaymentGateway`) กับ `BankAccount` · `portal.html` ส่ง payload ไปสร้างรูปที่ `api.qrserver.com` + สำเนา EMVCo ฝั่ง JS
+- เทสต์ `PaymentQrRound246Tests` (payload EMVCo ทุกไบต์ · ตัวตรวจ · ตัวตัดสิน · HTML + QuestPDF มี/ไม่มี QR) · Db `PaymentQrRound246DbTests` (tenant · audit · ยอดสุทธิ · เพิกถอนแล้วไม่มี QR) ·
+  ล็อก `tools/required_call_site_check.py` R246 (+ เคส R246a–h) — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
 ### 3.1 Create / Update (Draft → Draft)
@@ -3277,7 +3341,8 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     `IssueReceiptForPaymentAsync`/`CreatePaymentAsync`) · **ไม่ออกโดยเจตนา** (baseline ของ `tools/approved_status_writer_check.py`):
     SampleData · PO ข้ามบริษัท · ยอดยกมา (`ImportOpeningSubledgerAsync` — ใบกำกับออกในระบบเดิมแล้ว) · CN คืนมัดจำ (`RefundDepositAsync` — ยังไม่ต่อ ·
     backlog) · ใบ **0%** จาก API = ใบกำกับ (`TaxInvoiceSeriesPolicy.IsZeroRatedFullTaxInvoice` · §2.3) · ⚠️ ใบ POS/API ที่ออกก่อนรอบนี้ไม่ถูกย้อนออก e-Tax ·
-    e-Tax by Email **ยังไม่ส่งอัตโนมัติตอนอนุมัติ** (ช่อง `EtaxByEmailAutoSendOnApprove` ถูกล็อก + ป้าย "ยังไม่รองรับ" · ตัวส่งมีที่ปุ่มของแต่ละใบ)
+    e-Tax by Email ตอนอนุมัติ = ตั้ง "ตารางส่งอีเมล" ทริกเกอร์อนุมัติ (คิวเดินทาง e-Tax ให้เอง — §3.3a) · ค่าตั้ง `EtaxByEmailAutoSendOnApprove`/`EtaxByEmailEmbedXml`
+    ถูกลบในรอบ 244 (คำตัดสิน 244-4 · คอลัมน์ในฐานคงอยู่ ไม่มีผู้อ่าน)
 
 ### 3.3 Send (Approved → Sent)
 - **Endpoint**: `POST /documents/{id}/send-email`
@@ -3298,6 +3363,38 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ทิ้งคำตอบที่ไม่ใช่คำขอล่าสุด (seq) · ฟอร์มสร้างเอกสารปล่อยหัว/เนื้ออีเมลว่าง (server เติม)
 - **ชั้นความลับ**: `email-template` และ `send-email` เดินด่าน `ISensitivityService.CanViewAsync` ตัวเดียวกับหน้าเอกสาร (ข้อความจาก `Helpers/SensitivityAccess`)
 - **ไม่กระทบ JE / stock / VAT**
+
+### 3.3a e-Tax Invoice by Email (รอบ 244 · สถานะปัจจุบัน · `erp-review/2026-11-06/ETAX_BY_EMAIL_AUDIT.md` · คำตัดสิน 244-1…244-7)
+- **ทางเลือกช่องทางตัวเดียว** `Helpers/EtaxDeliveryRouter.Decide` ← `DocumentEmailService.RouteForAsync` (ค่าตั้ง `EtaxEnabled`+`EtaxMode` · ขอบเขต e-Tax
+  ตัวโหลดเดียวกับ hook ออก e-Tax `IssuedDocumentHooks.JudgeEtaxScopeAsync` · "ส่งพร้อม CC ETDA แล้ว" จาก `DocumentVoidPreconditions.EtaxEmailedWithRdTimestampAsync`):
+  ไม่ใช้ by Email ⇒ อีเมลธรรมดา (เดิมทุกตัวอักษร) · ใบที่ไม่ใช่ใบกำกับโดยเจตนา (ใบเสนอราคา/ใบแจ้งหนี้ · อย่างย่อ/walk-in · ใบเสร็จรับชำระใบกำกับ ·
+  มัดจำ VAT พักรอ · ใบลด/เพิ่มหนี้ฝั่งซื้อ) ⇒ อีเมลธรรมดา · ส่ง e-Tax แล้ว ⇒ สำเนาธรรมดา (ส่ง e-Tax ซ้ำต้องยืนยัน) · ที่เหลือ ⇒ **e-Tax by Email เท่านั้น**
+- **ทุกทางส่งเอกสาร** เข้าทางเดียว `SendDocumentRoutedAsync`: ปุ่มส่งอีเมล/ฟอร์มสร้าง (`DocumentController.SendEmail`) · คิวตามตาราง/ตอนอนุมัติ/เอกสารประจำ
+  (`EmailScheduleService.SendViaEtaxIfRequiredAsync` ก่อนเส้นคิวเดิม) · ส่งหลังรับชำระ (`PostPaymentAutomationService.SendReceiptAsync`) · หน้า e-Tax เรียก
+  `SendEtaxByEmailAsync` ตรง · **ด่านปฏิเสธ = ล้มดัง ห้ามถอยเป็นอีเมลธรรมดา**: แถว `DocumentEmailLogs` Failed + `BusinessRuleException ETAX-*` (หน้าเว็บ 4xx) ·
+  คิว Failed พร้อมเหตุ (ไม่ลองใหม่เอง — แก้แล้วกดลองใหม่) · งานหลังรับชำระ Blocked + แจ้งเตือน · แถว e-Tax ยังไม่มี ⇒ ออกด้วย `GenerateAsync` เดิม (ออกไม่ได้ = ปฏิเสธดัง)
+- **ด่านผู้ส่ง** `Helpers/EtaxByEmailSenderGate`: โหมด by Email · ติ๊กลงทะเบียนกับสรรพากรแล้ว · ตั้งอีเมลผู้ส่งที่ลงทะเบียน · ผู้ส่งของบริษัทครบ
+  (`HasTenantSender`) **และทดสอบผ่าน** (`EmailConfigured`) · กล่องที่ส่งออกจริง (Graph = UPN · Gmail/SMTP = From ที่ตั้ง → ชื่อผู้ใช้ SMTP) ตรงอีเมลที่ลงทะเบียน
+  (ไม่สนตัวพิมพ์) · **ไม่มีทางถอยไป SMTP ของแพลตฟอร์ม** (ห้าม `GetSenderAsync`/`GetGlobalFallbackSender` — `required_call_site_check` R244)
+- **รูปแบบ** `Helpers/EtaxByEmailFormat` (ตัวตั้งเดียว · ตารางรหัสพร้อมแหล่ง/ความมั่นใจในไฟล์): หัวเรื่อง `[ddMMyyyy พ.ศ. ของวันที่เอกสาร][INV|RCT|DBN|CDN][เลขที่](เลขใบเดิม)` ·
+  ใบเพิ่ม/ลดหนี้ต้องมีเลขใบเดิม · ใบแทนต่อเลขใบที่ยกเลิก · **หัวเรื่องที่ผู้ใช้พิมพ์ไม่ถูกใช้** (ข้อความผู้ใช้อยู่ในเนื้อ) · To ผู้ซื้อ 1 อีเมล · CC =
+  `csemail@etax.teda.th` (ติ๊ก "ทดสอบ e-Tax by Email" `CompanySettings.EtaxByEmailUseUat` ⇒ `csemail@uat.etax.teda.th` + หน้าส่งถามยืนยัน · **ไม่ใช่** `EtaxTestMode`
+  ของระบบเต็ม — 244-8 B1) อย่างเดียว ตัดซ้ำ · CC/BCC อื่น ⇒ ปฏิเสธ · แนบ 1 ไฟล์ PDF/A-3 ฝัง XML ≤ 3 MB (ไม่แนบ XML แยก) · รหัสจาก `EtaxDocumentTypeMap.TypeCode`
+  ตัวเดียวกับ XML (T03 = RCT ทั้งใบเสร็จและใบกำกับที่ออกเป็นใบเสร็จในตัว) · ใบ/แถว e-Tax ยกเลิก ร่าง ผิดพลาด ⇒ ปฏิเสธ · ส่งซ้ำ ⇒ 409 `ETAX-EMAIL-RESEND`
+  (ยืนยันแล้วส่ง + audit) · กันกดซ้ำ: ธุรกรรมสั้นล็อกแถว e-Tax + จองแถวบันทึก Pending แล้ว commit ก่อนรอ SMTP · Pending ค้าง (ส่งได้แต่บันทึกผลล้ม) ยังกันส่งซ้ำ ·
+  ด่านผู้ส่งตรวจก่อนออกแถว e-Tax · กฎธุรกิจจากตัวออก e-Tax ⇒ `ETAX-EMAIL-NO-ETAX` (คิว/งานหลังรับชำระ Failed ทันที)
+- **ผลข้างเคียงที่ต้องรู้ (ล้มดังโดยตั้งใจ)**: ผู้ติดต่อที่ใส่หลายอีเมล หรือตารางส่งอีเมลที่ตั้ง CC/BCC ไว้ ⇒ ใบกำกับของบริษัทโหมด by Email ไม่ถูกส่ง (Failed พร้อมเหตุ) —
+  แก้: ให้ผู้ติดต่อมีอีเมลผู้ซื้อ 1 อีเมล · ลบ CC/BCC ออกจากตาราง (คนอื่นรับสำเนาจากอีเมลที่ ETDA ส่งกลับ) แล้วกดลองใหม่
+- **ขั้นของใบ** (`EtaxByEmailFormat.Stage`): ส่งสำเร็จพร้อม CC production ⇒ `EtaxInvoice.ByEmailSentAt` = **"ส่งแล้ว (รอประทับเวลา)"** (UAT ไม่นับ) ·
+  **"ประทับเวลาแล้ว"** ตั้งได้ทางเดียว — ผู้ใช้บันทึกใบ/อีเมลที่ ETDA ส่งกลับที่หน้า e-Tax (`POST etax/{id}/etda-stamp` · ไฟล์แนบของเอกสารนี้ผ่านด่านไฟล์แนบ ·
+  แนบหลังวันส่ง · วันที่ไม่ก่อนวันส่ง · `EtdaStampedAt`/`EtdaTimestampToken`/`EtdaStampedFileAttachmentId` · audit chain · ผู้ใช้ยืนยัน ระบบไม่ได้ตรวจกับ ETDA)
+- **ยกเลิก (คำตัดสิน 244-6 · ฝ่ายค้าน B2)**: `DocumentVoidPreconditions.EffectiveEtax` — ส่งพร้อม CC production สำเร็จ (`DocumentEmailLogs` Sent) **หรือ** บันทึกการประทับแล้ว ⇒
+  Accepted (ยกเลิกจากระบบนี้ไม่ได้ · ทางออก = ใบลดหนี้ / [CIV] เมื่อรองรับ) — ป้าย "รอประทับเวลา" แสดงผลเท่านั้น ไม่หลวมด่าน · ส่ง UAT ไม่นับ
+- **ช่องทาง "ส่งแล้ว"** = `ByEmailSentAt` ของแถว e-Tax ที่ยังมีผล (ฝ่ายค้าน N3 · migration เติมจากบันทึกอีเมลเดิม)
+- **ตั้งค่า**: เลือก "ทั้งสองระบบ" ใหม่ไม่ได้ (`ETAX-MODE-ONE-SYSTEM` · ค่าเดิมยังส่งได้ + คำเตือน) · คำเตือนจากเซิร์ฟเวอร์ (`EtaxConfigResponse.Warnings` ·
+  ตัวอย่างอีเมล `GET document/{id}/email-route` · `GET etax/{id}/email-preview`): โหมดทั้งสอง · โหมดทดสอบ = UAT · ด่านผู้ส่ง · รายได้ปีก่อน > 30 ล้าน (ไม่บล็อก)
+- **ยังไม่ทำ**: อีเมลยกเลิก `[CIV]` · รับใบประทับเวลาจากกล่องจดหมายอัตโนมัติ · ตรวจ PDF/A-3U ด้วย validator · รหัส CDN/RCT รอคนยืนยันกับคู่มือ RD ฉบับปัจจุบัน ·
+  Last verified 2026-11-06 (รอบ 244 · ยังไม่ได้คอมไพล์ในเครื่องนี้) — commit <เติมในคอมมิตตามหลัง>
 
 ### 3.4 Pay / Partial Pay
 - **Methods**: `CreatePaymentAsync` / `CreateMultiDocPaymentAsync`
@@ -7598,4 +7695,5 @@ _Last verified against codebase: 2026-11-05 (รอบ 240 — §2.12f ลิง
 _Last verified against codebase: 2026-11-06 (รอบ 243a — §ภาษีถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.50/51: ตัดสูญรายแถวลง JE Dr 58010 (กลุ่ม 580 · ม.65 ตรี (6 ทวิ)) / Cr 11910 ผ่าน `WhtCreditService.ExpireAsync` + `Helpers/WhtCreditWriteOff` · ได้ใบภายหลังกลับรายการ + คืนเครดิต · กระทบยอดไม่นับ JE ตัดสูญ · `CancelAfterRefundAsync` สำหรับคืนเงิน · `BusinessRuleException` ทั้งไฟล์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 242 OCR — §OCR ตาราง ภ.พ. แบบอัตรานำหน้า (ไม่มีรหัส) ของใบเสร็จซูเปอร์มาร์เก็ต: `OcrLineVatMarks.ReadGroups` → `RateFirstTable` ⇒ ตารางชนะเมื่อรายการขาด (`OcrVatCodeLines.Decide` เดิม) · ยอดก่อน VAT = ยอดรวมขณะ VAT &gt; 0 ⇒ `OcrHeaderAmounts.SubTotalIsGrandTotal` ในฐานกระทบยอด + `OcrTotalAnchor.Plan` · คำเรียกกลุ่ม `OcrLineVatMarks.GroupRef` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 242 เอกสาร — §6.3 ลบถาวร: ลำดับลบแถวลูก `Helpers/DocumentPurgeOrder` (แก้ 500 · 23001 `FK_DocumentSignatures_Approvals`) + ลบพร้อมเอกสารที่เกี่ยวข้อง `Helpers/DocumentCascadePurgePolicy` (ข้อ 242-A) + แผน `purge-preview` · §2.4a ป้ายสัดส่วน "ครบตามยอดรวมทั้งใบ" `DocumentConversionProgress.SoleChildMatchesTotal` (ข้อ 242-B) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-06 (รอบ 246 QR — §2.12i QR ชำระเงินบนเอกสาร: QR ของบัญชีธนาคาร (อัปโหลด/พร้อมเพย์ · `PaymentQrPolicy`/`PaymentQrImageValidator`/`PaymentQrService`) · ตัวเรนเดอร์ทั้งสองวาดจาก `PaymentQrBlock` ตัวเดียว · QR หน้าชำระเฉพาะลิงก์ที่ใช้ได้ (ไม่มีในไฟล์ e-Tax) · QR พร้อมเพย์บน `pay-document.html` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง `DocumentPayLinkService`/`DocumentPayLinkPolicy` (ช่องทาง = บริษัทเปิดจริง ∩ ตาราง · ยอดสุทธิหลังหัก ณ ที่จ่าย · hash ของ token + เวลาคงที่ · ตัดสินสดทุกครั้ง) · `public-pay/documents/{token}` + `pay-document.html` · `DocumentPaymentHandler` บันทึก WHT ที่เหลือเมื่อเงินเข้ายอดสุทธิ · งานหลังรับชำระ `PostPaymentAutomationService` (1 แถวต่อการชำระ · ออกใบเสร็จด้วย `IssueReceiptForPaymentAsync` · ส่งด้วย `SendDocumentEmailAsync` · หยุดเมื่อข้อมูลไม่ครบ + แจ้งเตือน · ตรวจแถวรอ 50 ทวิ ไม่สร้างเอง) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

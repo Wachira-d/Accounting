@@ -28,6 +28,9 @@ public interface IDocumentPayLinkService
     /// <summary>URL ของลิงก์ปัจจุบัน ณ ตอนส่งอีเมล (ฝ่ายค้าน S1 — คิวเก็บที่หมาย) · null = ลิงก์ใช้ไม่ได้/ใบไม่เข้าเงื่อนไขแล้ว (ไม่ออกลิงก์ใหม่)</summary>
     Task<string?> CurrentUrlAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
 
+    /// <summary>รอบ 246 QR — ข้อเท็จจริงของ QR บนกระดาษ (ยอดสุทธิของลิงก์ · URL ลิงก์ที่ยังใช้ได้ · ช่องทางออนไลน์) — อ่านอย่างเดียว ไม่ออกลิงก์ใหม่</summary>
+    Task<DocumentPayQrFacts?> PayQrFactsAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
+
     /// <summary>สถานะลิงก์ + งานหลังรับชำระของใบ (หน้าเอกสาร)</summary>
     Task<DocumentPayLinkStatusDto> StatusAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
 
@@ -50,6 +53,12 @@ public interface IPostPaymentAutomationService
 }
 
 public sealed record PayChannelOption(string Code, string Label);
+
+/// <summary>รอบ 246 QR — <paramref name="PayLinkRefusal"/> = เหตุที่ใบนี้ออกลิงก์ไม่ได้ (null = ได้) · <paramref name="NetAmount"/> = ยอดสุทธิหลังหัก ณ ที่จ่าย
+/// (เฉพาะใบที่ออกลิงก์ได้) · <paramref name="OnlineUrl"/> = ลิงก์ที่ยังใช้ได้ (null = ไม่มี/เพิกถอน/หมดอายุ) ·
+/// <paramref name="WhtNote"/> = คำเตือนเดียวกับหน้าลิงก์ (รอบ 244 S1: ใบตั้ง WHT แต่ผู้ซื้อไม่มีหน้าที่หัก — ยอดอาจขาดเท่า WHT) · ฝ่ายค้าน N5</summary>
+public sealed record DocumentPayQrFacts(string? PayLinkRefusal, decimal? NetAmount, string? OnlineUrl, DateTime? ExpiresAt, int OnlineChannelCount,
+    string? WhtNote = null);
 
 public sealed record PayLinkResult(string? Url, DocumentPayLinkPolicy.Amounts? Amounts, IReadOnlyList<string> Channels, string? Refusal)
 {
@@ -96,7 +105,8 @@ public sealed record DocumentPayLinkStatusDto(
     string? WhtNote,
     List<PostPaymentRunDto> Runs);
 
-public sealed record PublicTransferInfo(string? BankName, string? AccountNumber, string? AccountName, string? PromptPayId);
+/// <summary><paramref name="PromptPayQrDataUri"/> — รอบ 246 QR: QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดสุทธิของลิงก์) · null = ไม่มีเลขพร้อมเพย์ที่ใช้ได้</summary>
+public sealed record PublicTransferInfo(string? BankName, string? AccountNumber, string? AccountName, string? PromptPayId, string? PromptPayQrDataUri = null);
 
 public sealed record PublicDocumentPayView(
     string CompanyName,

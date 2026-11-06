@@ -26,6 +26,15 @@ public class BankAccount : TenantEntity
     /// <summary>เวลาที่นำเข้า statement ครั้งล่าสุด</summary>
     public DateTime? StatementImportedAt { get; set; }
 
+    // ── รอบ 246 QR: QR ชำระเงินของบัญชีนี้ (พิมพ์บนเอกสารขายข้างข้อมูลบัญชี · ตัวตัดสิน Helpers/PaymentQrPolicy) ──
+    /// <summary>เลขพร้อมเพย์ (ตัวเลขล้วน: เบอร์ 10 หลัก / เลขผู้เสียภาษี 13 หลัก) — ระบบสร้าง QR พร้อมเพย์ที่ฝังยอดของใบได้ · null = ไม่ตั้ง</summary>
+    public string? PromptPayId { get; set; }
+    /// <summary>QR ที่ใช้ก่อน: auto · promptpay · upload (ค่าใน <see cref="Accounting.Helpers.PaymentQrPolicy.Sources"/>)</summary>
+    public string PaymentQrSource { get; set; } = Accounting.Helpers.PaymentQrPolicy.SourceAuto;
+    /// <summary>ตำแหน่งไฟล์รูป QR ที่อัปโหลด (PNG ที่เข้ารหัสใหม่แล้ว · ผ่าน IFileStorage ใต้โฟลเดอร์ส่วนตัวของบริษัท · ไม่มี URL สาธารณะ) · null = ไม่มีรูป</summary>
+    public string? PaymentQrImagePath { get; set; }
+    public DateTime? PaymentQrUploadedAt { get; set; }
+
     // Mapping to Chart of Account
     public Guid? LinkedAccountId { get; set; }
     public ChartOfAccount? LinkedAccount { get; set; }

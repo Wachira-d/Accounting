@@ -59,21 +59,29 @@ public class PromptPayService : IPromptPayService
             var subData = new StringBuilder();
             subData.Append(TlvField("00", PromptPayAid));
 
+            // รอบ 246 QR (ฝ่ายค้าน N8): ความยาวต้องตรงชนิดเป๊ะ — เดิม "≥ 10 หลัก = เบอร์" ⇒ 11/12/14 หลักกลายเป็นเบอร์ผิด ๆ · < 10 หลักกลายเป็น e-Wallet ·
+            // ผิดรูป = โยน (ไม่สร้าง QR ที่โอนเข้าใครก็ไม่รู้)
             if (sanitized.Length == 13)
             {
                 // Tax ID or National ID — sub-tag 02
                 subData.Append(TlvField("02", sanitized));
             }
-            else if (sanitized.Length >= 10)
+            else if (sanitized.Length == 10 && sanitized[0] == '0')
             {
                 // Phone number — convert 0xxxxxxxxx to 0066xxxxxxxxx
                 var intlPhone = "0066" + sanitized[1..];
                 subData.Append(TlvField("01", intlPhone));
             }
-            else
+            else if (sanitized.Length == 15)
             {
                 // e-Wallet ID — sub-tag 03
                 subData.Append(TlvField("03", sanitized));
+            }
+            else
+            {
+                throw new ArgumentException(
+                    $"เลขพร้อมเพย์ต้องเป็นเบอร์มือถือ 10 หลัก (ขึ้นต้น 0) · เลขประจำตัว 13 หลัก · หรือ e-Wallet 15 หลัก (ที่ได้มี {sanitized.Length} หลัก)",
+                    nameof(promptPayId));
             }
 
             sb.Append(TlvField(MerchantAccountPromptPay, subData.ToString()));

@@ -6436,3 +6436,46 @@ _รอบ 243a ฝ่ายค้าน (2026-11-06 · DECISIONS 243-8 · ไ�
 **S3** `Helpers/WhtWriteOffJournalLock` กันกลับ/ยกเลิก/ลบ JE ตัดสูญจากสมุดรายวัน + Summary นับเฉพาะ JE ที่ยังมีผล · **S4** `UndoWriteOffAsync` — ยกเลิกใบขาย/คืนเงินแพลตฟอร์มหลังตัดสูญ กลับ JE (11910 ไม่ติดลบ) ·
 **S5** ทุกทางเขียนแถวถือล็อกเดียวกัน · **N1/N2** คำเตือนผัง/ใบปิดปีเก่า (อ่านอย่างเดียว) · **N4** ยืนยันใบแพลตฟอร์มบนแถวตัดสูญปฏิเสธก่อนบันทึก · **N5** ผัง 58010 ในธุรกรรมเดียว ·
 **N7** Db test ภ.ง.ด.50 จริง · **N8** ป้าย KPI · เทสต์เพิ่มใน `WhtCreditWriteOffTests`/`WhtCreditWriteOffDbTests` · ล็อก R243a ขยาย (+ เคส R243a6–8) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 244 (2026-11-06 · `erp-review/2026-11-06/ETAX_BY_EMAIL_AUDIT.md` · DECISIONS 244-1…244-7): **e-Tax Invoice by Email ถูกต้องครบ** — ตัวตั้งเดียว
+`Helpers/EtaxByEmailFormat` (หัวเรื่อง `[ddMMyyyy พ.ศ.][INV|RCT|DBN|CDN][เลขที่](เลขใบเดิม)` · To 1 · CC ETDA prod/UAT · 1 ไฟล์ ≤ 3 MB · ขั้นส่งแล้ว/ประทับแล้ว) ·
+ด่านผู้ส่ง `Helpers/EtaxByEmailSenderGate` (SMTP/บัญชีของบริษัทที่ทดสอบผ่าน + กล่องตรงอีเมลที่ลงทะเบียน · ไม่ถอยไปแพลตฟอร์ม) · ทางเลือกช่องทาง `Helpers/EtaxDeliveryRouter`
+ผ่าน `DocumentEmailService.SendDocumentRoutedAsync` ทุกทาง (ปุ่มส่ง · คิวตาราง/อนุมัติ/ประจำ `EmailScheduleService.SendViaEtaxIfRequiredAsync` · หลังรับชำระ) — ด่านปฏิเสธ = ล้มดัง ·
+`SendEtaxByEmailAsync` เขียนใหม่ (สถานะใบ/แถว · ส่งซ้ำต้องยืนยัน + audit · ล็อกแถว) · `EtaxInvoice.ByEmailSentAt/EtdaStampedAt/EtdaTimestampToken/EtdaStampedFileAttachmentId` +
+`POST etax/{id}/etda-stamp` · `DocumentVoidPreconditions.EffectiveEtax` ส่งแล้ว = Submitted (ประทับแล้ว = Accepted) · ลบค่าตั้งที่ไม่มีผล 3 ตัว + `sendEtaxEmailOneClick` ·
+เลือก "ทั้งสองระบบ" ใหม่ไม่ได้ · UI ตรวจ `success` · ตัวอย่างอีเมลจากเซิร์ฟเวอร์ · หน้า e-Tax แสดงส่งแล้ว/ประทับแล้ว + ปุ่มบันทึกการประทับ ·
+ขอบเขต e-Tax ตัวโหลดเดียว `IssuedDocumentHooks.JudgeEtaxScopeAsync` · เทสต์ `EtaxByEmailRound244Tests` · Db `EtaxByEmailRound244DbTests` · ล็อก `required_call_site_check` R244 (+ เคส R244a–i) ·
+**แก้ Db test ล้ม 8 ตัวของ CI รอบ 241–243a**: (1–2) ลิงก์ชำระลบ WHT ซ้ำ (ยอดค้างเป็นยอดสุทธิอยู่แล้ว — `DocumentPayLinkPolicy.AmountsFor/WhtForPayment` · คำตัดสิน 244-7 · seed เทสต์ใช้ TotalAmount ที่ระบบสร้างไม่ได้) ·
+(3) `WhtCreditService.UndoWriteOffAsync` เรียกซ้ำหลังถอดแถวโยน 404 (ตัวกรอง soft-delete) ⇒ อ่านรวมแถวที่ถอดแล้ว · (4) เทสต์ค้างจากก่อนฝ่ายค้าน S1 (คิวเก็บ `{PayLink}` ไม่ใช่ URL) ·
+(5) เทสต์ `SingleAsync` นับแถว audit Create ของ seed ด้วย ⇒ กรอง Delete · (6–8) ตัวปลอม `IEmailSenderFactory` คืนผู้ส่งให้ `PlatformFromAddress()` (string) ⇒ InvalidCast — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 244 ฝ่ายค้าน (2026-11-06 · DECISIONS 244-6 แก้ + 244-8): **B1** ธงทดสอบแยก `EtaxByEmailUseUat` (ค่าตั้งต้น false) — สำเนาไป UAT เฉพาะเมื่อติ๊กช่อง "ทดสอบ e-Tax by Email" ·
+`EtaxTestMode` (ระบบเต็ม · entity ตั้งต้น true) ไม่มีผล ⇒ บริษัทเดิมส่ง production เหมือนก่อน · หน้าส่งถามยืนยันเมื่อเปิด · **B2** ด่านยกเลิกกลับเป็น "ส่งพร้อม CC production = Accepted"
+(ร่างแรกลดเป็น Submitted) — ป้ายรอประทับเวลาแสดงผลเท่านั้น · **S1** ผู้ซื้อไม่มีหน้าที่หัก ⇒ WHT 0 · **S2** ลิงก์/handler ใช้ `DocumentService.PaymentWhtFiguresAsync` (ตัวคิดเดียวกับตัวบันทึกรับชำระ) ·
+**S3** รหัสหัวเรื่องจาก `EtaxDocumentTypeMap` · **N1** คอมเมนต์ migration · **N2** จองแถว Pending ก่อนรอ SMTP · **N3** "ส่งแล้ว" = `ByEmailSentAt` ของแถวที่มีผล · **N4** เส้น e-Tax ไม่มี "ในนาม NextAcc" ·
+**N5** ด่านผู้ส่งก่อนออกแถว e-Tax + กฎธุรกิจจากตัวออก = Failed ทันที · **ผลข้างเคียงที่ตั้งใจ**: ผู้ติดต่อที่มีหลายอีเมล หรือตารางส่งที่ตั้ง CC/BCC ไว้ ⇒ ใบกำกับของบริษัทโหมด
+e-Tax by Email จะ**ล้มดัง** (คิว Failed/งานหลังรับชำระ Blocked พร้อมเหตุ) — แก้โดยให้ผู้ติดต่อเหลืออีเมลผู้ซื้อ 1 อีเมล และลบ CC/BCC ออกจากตาราง แล้วกดลองใหม่ —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 245 L1 (2026-11-06 · `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` เฟส L1 · คำตอบเจ้าของ §10 Q1–Q8 · คำตัดสิน 245-L1-1…7 · DOCUMENT_FLOW §2.12h) —
+ผู้ติดต่อเป็นเจ้าของปลายทางแจ้งเตือน: ตาราง `ContactNotifyEndpoints` (อีเมล · ผู้ใช้ LINE · กลุ่ม LINE · เรื่องที่รับต่อแถว · ความยินยอม · ยกเลิก/บล็อก · ชื่อ/จำนวนสมาชิกกลุ่ม · แสดงยอดเงิน) +
+ตัวตั้ง `Helpers/NotifyEndpointKind` (`NotifyTopic`/`NotifyTopics`) · ตัวตัดสิน pure `Helpers/ContactRecipientRule` (tenant · เรื่อง · ความยินยอม · OA ไม่รู้ · กลุ่มกลางของระบบห้ามเป็นปลายทาง (Q1(b)) ·
+กลุ่ม ≤ 200 คน (Q2) · L1 ยังไม่ส่ง LINE) · ผู้อ่านเดียว `ContactRecipientResolver` · ผู้เขียนเดียว `ContactNotifyEndpointService` (ล็อกต่อผู้ติดต่อ · audit chain) ·
+`ContactNotifyEndpointsController` (`Contact.Edit` ทุก write · ปฏิเสธคีย์ API) · แท็บ "ช่องทางแจ้งเตือน" ใน `contacts.html` (เพิ่มอีเมล · ติ๊กเรื่อง · ยกเลิก · ฐาน/ความยินยอม ·
+LINE เชิญ/QR/กลุ่ม = ปุ่มปิด "เร็ว ๆ นี้" พร้อมเหตุ · ดูว่าใครจะได้รับ · คำเตือนว่าเส้นส่งยังใช้อีเมลหลักจนเฟส L2) · one-shot `Contact.LineUserId` → แถว legacy เข้ารหัส (ไม่ใช้ส่ง · marker
+`r245-contact-line-legacy`) · `Contact.Email` ไม่คัดลอก (อ่านสด) · PDPA erase/access ครอบปลายทาง · `AuditRedaction` ปิดค่า LINE id · **ยังไม่ต่อสายเส้นส่ง** (L2 หลังรอบ 244) ·
+เทสต์ `ContactRecipientRuleTests` · Db `ContactNotifyEndpointRound245DbTests` · ล็อก `required_call_site_check` R245 (+ เคส R245a–n) · `write_permission_gate_check` WATCHED ·
+**แก้ตามฝ่ายค้าน L1** (คำตัดสิน 245-L1-8): B1 งานย้ายล้มกลางทางล้าง ChangeTracker · S1 ถอดการอ่าน `Contact.LineUserId` ในแจ้งบัตรคอร์ส (หยุดส่ง LINE ที่ไม่รู้ OA โดยตั้งใจ · `CustomerLineLink` ยังได้) ·
+S2 กลุ่มกลางเทียบหน้าแอดมิน+config แยกกัน · groupId อ่านไม่ได้ = ใช้ไม่ได้ · S3 audit ปิดอีเมล/ป้าย/ชื่อกลุ่ม · S4 รวมผู้ติดต่อยกเลิกแถวหลัก/แถวซ้ำ + `PickPrimary` · N1 ค่าที่ Protect ปฏิเสธถูกข้าม+นับ ·
+N3 ธง canEdit ตามสิทธิ์ · N4 ข้อความพรีวิว · N5 เทสต์ DSR · N6 เทสต์คอลัมน์ —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_Last verified against codebase: 2026-11-06 (รอบ 246 QR — QR ชำระเงินบนเอกสาร (คำตัดสิน 246-QR-1…8 · DOCUMENT_FLOW §2.12i): บัญชีธนาคารมีรูป QR ที่อัปโหลด
+(`PaymentQrImageValidator` PNG/JPEG จากไบต์จริง ≤ 1 MB → เข้ารหัสใหม่ → `IFileStorage` ใต้โฟลเดอร์บริษัท · ไม่มี URL สาธารณะ) + เลขพร้อมเพย์ (สร้าง QR EMVCo ฝังยอดด้วย `PromptPayService` ตัวเดิม) ·
+ลำดับ auto/promptpay/upload (`PaymentQrPolicy.Pick`) · เส้นตั้งค่าแยก `bank/accounts/{id}/payment-qr*` สิทธิ์ `CompanySettings.Edit` + audit chain · เทมเพลต `ShowPaymentQr`/`ShowPayLinkQr` (เปิดเป็นค่าตั้งต้น) +
+`PaymentQrBankAccountId` · resolver เดียว `PaymentQrService.ResolveForDocumentAsync` → `PaymentQrBlock` ⇒ HTML `PaymentQrHtml` + QuestPDF `ComposePaymentQr` (ข้อความ `PaymentQrCaption` · ป้าย `DocumentLabels.PayQr*`) ·
+ยอดสุทธิหลังหัก ณ ที่จ่ายจาก `DocumentPayLinkService.PayQrFactsAsync` (ใหม่ · อ่านอย่างเดียว) · QR หน้าชำระเฉพาะลิงก์ที่ใช้ได้ (ไม่ออกลิงก์ตอนพิมพ์ · เพิกถอน ⇒ ไม่มี · ไม่มีในไฟล์ e-Tax) ·
+`pay-document.html` QR พร้อมเพย์ใต้กล่องโอน · migration `PaymentQrMigration` · เทสต์ `PaymentQrRound246Tests` · Db `PaymentQrRound246DbTests` · ล็อก `required_call_site_check` R246 (+ เคส R246a–h) ·
+แก้ตามฝ่ายค้าน (S1–S4 · N1–N8 · คำตัดสิน 246-QR-3/5/8/9/10): ด่านสิทธิ์การแก้ข้อความใต้ QR · ใต้ QR พิมพ์บัญชีจริง + คำเตือนข้อความเทมเพลตไม่ตรง · ลำดับบัญชีตาม entity + ผังผูกหลายบัญชีไม่เดา ·
+เหตุที่ไม่พิมพ์บนหน้าเอกสาร/เทมเพลต · "ยอด ณ วันที่พิมพ์" · ใบแจ้งหนี้ที่ใบกำกับอ้างแล้วไม่ฝังยอด · ถอดช่อง QR เดิมของเทมเพลต + ย้ายเลขพร้อมเพย์ครั้งเดียว · PromptPay ตรวจความยาว 10/13/15 —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

@@ -193,9 +193,13 @@ public class CompanySettings : TenantEntity
     public DateTime? EtaxByEmailRegistrationDate { get; set; }        // วันที่ได้รับอนุมัติ
     public string? EtaxByEmailRegistrationNumber { get; set; }        // เลขรหัสรับรอง (ถ้ามี)
     public string? EtaxByEmailSenderEmail { get; set; }               // อีเมลผู้ส่งที่ลงทะเบียนกับสรรพากร
-    public string EtaxByEmailRdTimestampAddress { get; set; } = "csemail@etax.teda.th"; // CC ไป RD timestamp
-    public bool EtaxByEmailEmbedXml { get; set; } = true;             // ฝัง XML ใน PDF/A-3 (สรรพากรกำหนด)
-    public bool EtaxByEmailAutoSendOnApprove { get; set; } = false;   // ส่งอัตโนมัติเมื่อ approve เอกสาร
+    /// <summary>รอบ 244 (ฝ่ายค้าน B1 · คำตัดสิน 244-8): ทดสอบ e-Tax by Email — สำเนาไปที่อยู่ UAT ของ ETDA (<c>EtaxByEmailFormat.TimestampAddress</c>) ·
+    /// แยกจาก <see cref="EtaxTestMode"/> (ของระบบ e-Tax เต็ม · ค่าตั้งต้น true ใน entity ⇒ ใช้ตัวนั้นจะส่งบริษัทจริงไป UAT โดยไม่รู้ตัว) · ค่าตั้งต้น false = production เหมือนก่อนรอบ 244</summary>
+    public bool EtaxByEmailUseUat { get; set; } = false;
+    // รอบ 244 (คำตัดสิน 244-4): ลบ property สามตัวที่ไม่มีผล/ขัดกฎ — คอลัมน์ในฐานคงอยู่ (มีค่าตั้งต้น ⇒ แทรกแถวใหม่ได้) แต่ไม่มีโค้ดอ่าน:
+    //   EtaxByEmailRdTimestampAddress — ที่อยู่ประทับเวลาเป็นของ ETDA คำนวณจากโหมดทดสอบที่ EtaxByEmailFormat.TimestampAddress (prod/UAT) ตัวเดียว
+    //   EtaxByEmailEmbedXml — PDF/A-3 ของ e-Tax ฝัง XML เสมอ (R3) · ปิดได้ = ไฟล์ผิดกฎ · ไม่มีผู้อ่านตั้งแต่ต้น
+    //   EtaxByEmailAutoSendOnApprove — ส่งอัตโนมัติตอนอนุมัติทำผ่าน "ตารางส่งอีเมล" (ทริกเกอร์อนุมัติ) ซึ่งตอนนี้เดิน EtaxDeliveryRouter แล้ว · ไม่มีผู้อ่านตั้งแต่ต้น
 
     // ===== Email Sending Configuration (per-company) =====
     public EmailProvider EmailProvider { get; set; } = EmailProvider.Smtp;

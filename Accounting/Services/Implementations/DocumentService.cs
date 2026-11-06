@@ -14059,6 +14059,14 @@ public partial class DocumentService : IDocumentService
         await strategy.ExecuteAsync(async () =>
         {
             await using var tx = await _db.Database.BeginTransactionAsync();
+            // รอบ 245 L1 ฝ่ายค้าน S4: ปลายทางแจ้งเตือนของผู้ติดต่อ — ล็อกเดียวกับผู้เขียน (ContactNotifyEndpointService) ทุกรายที่เกี่ยว (เรียง id กัน deadlock) ·
+            // จำแถวของผู้ถูกรวมไว้ก่อนย้าย (ย้ายแล้ว ContactId เหมือนกันหมด)
+            foreach (var lockId in mergeIds.Append(keepId).Distinct().OrderBy(x => x))
+                await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                    new object[] { Accounting.Helpers.AdvisoryLockKey.For(companyId, Accounting.Helpers.AdvisoryLockKey.ContactNotifyEndpoint, lockId.ToString()) });
+            var loserEndpointIds = (await _db.ContactNotifyEndpoints.AsNoTracking()
+                .Where(e => e.CompanyId == companyId && mergeIds.Contains(e.ContactId))
+                .Select(e => e.Id).ToListAsync()).ToHashSet();
             foreach (var loser in losers)
             {
                 foreach (var col in fkCols)
@@ -14073,6 +14081,20 @@ public partial class DocumentService : IDocumentService
                 loser.IsActive = false;
                 loser.UpdatedAt = DateTime.UtcNow;
                 loser.UpdatedBy = performedBy;
+            }
+            // รอบ 245 L1 ฝ่ายค้าน S4: หลังย้าย — ยกเลิกแถวอีเมลหลักของผู้ถูกรวม + อีเมลรอง/LINE ที่ซ้ำ (ตัวตัดสินเดียว ContactRecipientRule.MergeUnlinks · เหตุ merge)
+            var endpointRows = await _db.ContactNotifyEndpoints
+                .Where(e => e.CompanyId == companyId && e.ContactId == keepId && e.UnlinkedAt == null)
+                .ToListAsync();
+            var endpointUnlinks = Accounting.Helpers.ContactRecipientRule.MergeUnlinks(
+                endpointRows.Select(e => new Accounting.Helpers.ContactRecipientRule.MergeRow(e.Id, e.Kind, e.IsPrimary, e.Email, e.LineIdHash,
+                    loserEndpointIds.Contains(e.Id), e.LinkedAt)), keep.Email).ToHashSet();
+            foreach (var ep in endpointRows.Where(r => endpointUnlinks.Contains(r.Id)))
+            {
+                ep.UnlinkedAt = DateTime.UtcNow;
+                ep.UnlinkReason = Accounting.Helpers.NotifyEndpointKind.UnlinkMerge;
+                ep.UpdatedAt = DateTime.UtcNow;
+                ep.UpdatedBy = performedBy;
             }
             keep.UpdatedAt = DateTime.UtcNow;
             keep.UpdatedBy = performedBy;
@@ -14095,6 +14117,7 @@ public partial class DocumentService : IDocumentService
                     keepId, keepName = keep.Name, keepTaxId = keep.TaxId,
                     merged = mergeIds, rowsRepointed = repointed,
                     documentsMoved = affectedDocs.Count,
+                    notifyEndpointsUnlinked = endpointUnlinks,   // รอบ 245 L1 S4
                 }),
                 Timestamp = DateTime.UtcNow
             });
@@ -15303,7 +15326,24 @@ public partial class DocumentService : IDocumentService
     /// ใบที่ไม่ใช่ฝั่งผู้จ่าย (<see cref="Accounting.Helpers.WhtCertIssuePlan.AppliesTo"/>) = ว่าง (ฝั่งขายยังเป็นพฤติกรรมเดิม) ·
     /// ใบเพิ่มหนี้ไม่นับ — ตั้งหนี้แยกและหักภาษีตอนจ่ายใบของมันเอง (ดู <see cref="Accounting.Helpers.WhtPaymentSuggestion"/>)
     /// </summary>
-    private async Task<(List<decimal> Whts, List<decimal> Payees)> PurchaseCreditNoteWhtAsync(Guid companyId, Document doc)
+    private Task<(List<decimal> Whts, List<decimal> Payees)> PurchaseCreditNoteWhtAsync(Guid companyId, Document doc)
+    {
+        return PurchaseCreditNoteWhtCoreAsync(_db, companyId, doc);
+    }
+
+    /// <summary>รอบ 244 (ฝ่ายค้าน S2): ยอดภาษีหักของการรับชำระตามตัวคิดเดียวกับ <see cref="CreatePaymentAsync"/> (ใบลดหนี้ที่มีผล · ที่หักไปแล้ว ·
+    /// <see cref="Accounting.Helpers.WhtPaymentSuggestion.Compute"/>) — ให้ลิงก์ชำระ (<c>DocumentPayLinkService</c>) และ handler gateway เรียกตัวเดียว
+    /// (เดิมลิงก์คิดจาก <c>Document.WithholdingTaxAmount</c> ตรง ๆ ⇒ ใบที่มีใบลดหนี้ได้ยอดคนละตัวกับตัวบันทึก) · static (ไม่ต้องสร้าง DocumentService) · tenant</summary>
+    internal static async Task<Accounting.Helpers.WhtPaymentSuggestionResult> PaymentWhtFiguresAsync(AccountingDbContext db, Guid companyId,
+        Document doc, decimal amount, CancellationToken ct = default)
+    {
+        var (cnWhts, cnPayees) = await PurchaseCreditNoteWhtCoreAsync(db, companyId, doc);
+        var already = await Accounting.Helpers.WhtWithheldCounter.AlreadyAsync(db, companyId, doc.Id, ct: ct);
+        return Accounting.Helpers.WhtPaymentSuggestion.Compute(doc.WithholdingTaxAmount, cnWhts, already,
+            ForeignServiceVat.PayeeAmount(doc), cnPayees, amount, 0m, isFinal: amount + 0.01m >= doc.BalanceDue);
+    }
+
+    private static async Task<(List<decimal> Whts, List<decimal> Payees)> PurchaseCreditNoteWhtCoreAsync(AccountingDbContext _db, Guid companyId, Document doc)
     {
         if (!Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType)) return (new List<decimal>(), new List<decimal>());
         var notIssued = DocumentStatusRules.NotIssued;
