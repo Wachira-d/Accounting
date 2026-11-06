@@ -6566,4 +6566,4 @@ checker `external_qr_check` (`grep qrserver wwwroot` = 0). (7) notifications: �
 (`SiteSettings.EtaxByEmailSubjectCodesJson` · `api/admin/etax-email-subject-codes` · audit chain) + หมายเหตุ "ยังไม่เทียบคู่มือฉบับจริง" (เครือข่าย session เข้า etax.rd.go.th ไม่ได้ — ยังไม่ได้เทียบ).
 `Layout.panelError` ใหม่ (DOM/textContent). raw fetch baseline: email-schedule 6→0 · recurring 2→0 · fixed-assets 2→0 · settings 9→6.
 เทสต์ `LegalDocumentClauseDiffTests` · `EtaxByEmailSubjectCodeOverrideTests` · Db `PaymentQrRound246DbTests` +2 (พอร์ทัล dataUri / ทิศตรงข้ามไม่มีพร้อมเพย์) · กติกา R250W3 ·
-ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 125f30a9_
