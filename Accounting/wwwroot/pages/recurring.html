@@ -89,6 +89,13 @@
               </select>
             </div>
           </div>
+          <!-- รอบ 255 WP-12B ข้อ 2: ทุก N เดือน (ว่าง = ตามความถี่) + สร้างล่วงหน้า N วัน — เซิร์ฟเวอร์ตรวจช่วงเอง (RecurringSchedule.IntervalError/LeadDaysError) -->
+          <div class="form-row">
+            <div class="form-group"><label for="fIntervalMonths" class="form-label">ทุกกี่เดือน <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ว่าง = ตามความถี่ · ตั้งแล้วใช้แทนความถี่)</span></label>
+              <input type="number" class="form-input" id="fIntervalMonths" min="1" max="60" placeholder="เช่น 2 = ทุก 2 เดือน"></div>
+            <div class="form-group"><label for="fLeadDays" class="form-label">สร้างล่วงหน้า (วัน) <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(0 = สร้างในวันของงวด · เอกสารลงวันที่วันที่สร้าง)</span></label>
+              <input type="number" class="form-input" id="fLeadDays" min="0" max="28" value="0"></div>
+          </div>
           <div class="form-row">
             <div class="form-group"><label for="fStartDate" class="form-label">วันเริ่มต้น *</label><input type="date" class="form-input" id="fStartDate"></div>
             <div class="form-group"><label for="fEndDate" class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="fEndDate"></div>
@@ -928,6 +935,8 @@ const Page = {
     document.getElementById('fId').value = '';
     ['fName','fStartDate','fEndDate','fAmount','fDescription','fIncomeType'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('fFrequency').value = 'Monthly';
+    document.getElementById('fIntervalMonths').value = '';
+    document.getElementById('fLeadDays').value = '0';
     document.getElementById('fDocType').value = 'Invoice';
     document.getElementById('fVatRate').value = '7';
     document.getElementById('fWhtRate').value = '0';
@@ -1320,6 +1329,9 @@ const Page = {
       templateType: 'Document',
       documentType: _selDocType === 'TaxInvoiceCombined' ? 'TaxInvoice' : _selDocType,
       frequency: document.getElementById('fFrequency').value,
+      // รอบ 255 WP-12B ข้อ 2: ว่าง = ตามความถี่ (สร้าง: null · แก้ไข: 0 = ล้าง) · ค่าผิดช่วงให้เซิร์ฟเวอร์ปฏิเสธพร้อมเหตุ (ไม่ clamp เงียบ)
+      intervalMonths: (() => { const n = parseInt(document.getElementById('fIntervalMonths')?.value, 10); return Number.isFinite(n) ? n : (id ? 0 : null); })(),
+      leadDays: (() => { const n = parseInt(document.getElementById('fLeadDays')?.value, 10); return Number.isFinite(n) ? n : 0; })(),
       startDate,
       // แก้ไข: ว่าง = **ล้างวันสิ้นสุด** (รันไม่มีกำหนด — sentinel 0001-01-01)
       // (เดิมอ่าน this.editingId ซึ่งไม่เคยถูกตั้ง ⇒ ล้างวันสิ้นสุดตอนแก้ไขไม่ได้เลย — ส่ง null = "ไม่แก้")
@@ -1433,6 +1445,8 @@ const Page = {
       document.getElementById('fName').value = r.name || '';
       document.getElementById('fDocType').value = r.documentType || r.type || 'Invoice';
       document.getElementById('fFrequency').value = r.frequency || 'Monthly';
+      document.getElementById('fIntervalMonths').value = r.intervalMonths ? String(r.intervalMonths) : '';
+      document.getElementById('fLeadDays').value = String(r.leadDays ?? 0);
       document.getElementById('fStartDate').value = Layout.dateInput(r.startDate);
       document.getElementById('fEndDate').value = Layout.dateInput(r.endDate);
       document.getElementById('fAmount').value = r.amount || '';

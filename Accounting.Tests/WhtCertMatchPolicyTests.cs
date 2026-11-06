@@ -205,10 +205,13 @@ public class WhtCertMatchPolicyTests
     }
 
     [Fact]
-    public void M4_ความมั่นใจ_สแกนไม่บอก_เป็นศูนย์_สเกล0ถึง100_1คือ1เปอร์เซ็นต์_เลขที่วันที่อยู่ในชุด()
+    public void M4_ความมั่นใจ_สแกนไม่บอก_เป็นศูนย์_สเกล0ถึง100_1คือ100เปอร์เซ็นต์_เลขที่วันที่อยู่ในชุด()
     {
         Assert.Equal(0m, WhtCertScanMapping.Map(10_000m, 3m, null, "", null, 0m, BusinessType.JuristicPerson).ExtractionConfidence);
-        Assert.Equal(0.01m, WhtCertScanMapping.Map(10_000m, 3m, null, "", null, 1m, BusinessType.JuristicPerson).ExtractionConfidence);
+        // ฝ่ายค้าน WP-09 รอบสอง: 1.0 = มั่นใจเต็ม (100%) — เฉพาะค่า > 1 เป็นสเกล 0–100 (รอบแรกตีความ 1 = 1% ผิดทาง)
+        Assert.Equal(1m, WhtCertScanMapping.Map(10_000m, 3m, null, "", null, 1m, BusinessType.JuristicPerson).ExtractionConfidence);
+        Assert.Equal(0.95m, WhtCertScanMapping.Map(10_000m, 3m, null, "", null, 0.95m, BusinessType.JuristicPerson).ExtractionConfidence);
+        Assert.Equal(0.015m, WhtCertScanMapping.Map(10_000m, 3m, null, "", null, 1.5m, BusinessType.JuristicPerson).ExtractionConfidence);
         Assert.Equal(0.92m, WhtCertScanMapping.Map(10_000m, 3m, null, "", null, 92m, BusinessType.JuristicPerson).ExtractionConfidence);
         // ชุดรายช่องสเกล 0–100 ⇒ 1 = 1%
         Assert.Equal(0.01m, WhtCertScanMapping.MinConfidence("{\"SellerTaxId\":97,\"SubTotal\":1}"));
@@ -247,5 +250,22 @@ public class WhtCertMatchPolicyTests
         var juristic = Accounting.Services.Ai.Prompts.WhtCertAuthenticityPrompt.Build(Guid.NewGuid(), Guid.NewGuid(), WhtCertIntakeChannel.Manual,
             "บจก. ข", Payer, "1/2569", D, "40(2)", 10_000m, 3m, 300m, null);
         Assert.Contains(Payer, juristic.UserPromptJson);
+    }
+
+    [Fact]
+    public void L7รอบสอง_ล้างfeedbackเก่า_กุญแจบุคคลptเป็นpi_ตัวเดียวกับคำขอใหม่_เลขในข้อความถูกปิด_ทิศตรงข้ามนิติบุคคลคงไว้()
+    {
+        var company = Guid.NewGuid();
+        // กุญแจรุ่นแรก: pt- + เลข 3100100123451 แปลงเป็นตัวอักษร (ย้อนกลับได้)
+        var legacy = "{\"payer_key\":\"pt-dbaabaabcdefb\",\"payer_tax_id\":\"3100100123451\",\"ocr_text\":\"เลข 3-1001-00123-45-1\",\"x\":\"pt-abafffgbcdefd\",\"y\":\"0105556123453\"}";
+        var scrubbed = Accounting.Services.Ai.Prompts.WhtCertAuthenticityPrompt.ScrubStoredJson(company, legacy)!;
+        Assert.DoesNotContain("3100100123451", scrubbed);
+        Assert.DoesNotContain("3-1001-00123-45-1", scrubbed);
+        Assert.DoesNotContain("pt-dbaabaabcdefb", scrubbed);
+        Assert.Contains(Accounting.Services.Ai.Prompts.WhtCertAuthenticityPrompt.PayerKey(company, "3100100123451", null), scrubbed);
+        Assert.Contains("pt-abafffgbcdefd", scrubbed);   // นิติบุคคล (ขึ้นต้น 0 ⇒ a) ไม่แตะ
+        Assert.Contains("0105556123453", scrubbed);
+        // ไม่มีอะไรต้องล้าง ⇒ ค่าเดิม (งานล้างไม่เขียนแถวนั้น)
+        Assert.Equal("{\"payer_key\":\"pt-abafffgbcdefd\"}", Accounting.Services.Ai.Prompts.WhtCertAuthenticityPrompt.ScrubStoredJson(company, "{\"payer_key\":\"pt-abafffgbcdefd\"}"));
     }
 }

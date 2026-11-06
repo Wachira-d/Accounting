@@ -445,7 +445,13 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             NoWhtNotice: noWht.Warn ? NoWhtChoicePolicy.NoticeText : null,
             NoWhtNoticeVersion: noWht.Offered ? NoWhtChoicePolicy.NoticeVersion : null,
             NoWhtAmount: noWht.GrossAmount)
-        { Target = target };
+        {
+            Target = target,
+            // รอบ 255 WP-12B ข้อ 1: แจ้งโอนได้เมื่อหน้านี้แสดงกล่องโอน (ใบรับโอนได้ · มีบัญชีรับโอน) และยังมียอดค้าง — ไม่ขึ้นกับว่าเปิดชำระออนไลน์ไหม (โหมดโอนอย่างเดียว)
+            CanSubmitSlip = Accounting.Helpers.SlipEvidenceRule.PayLinkSlipAllowed(transfer != null, amounts.Net),
+            SlipAmount = amounts.Net,
+            SlipDocumentId = d.Id,
+        };
     }
 
     /// <summary>

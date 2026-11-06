@@ -1160,6 +1160,12 @@ public sealed record ReissueLineDescription(Guid LineId, string? Description);
 public sealed record ResolveEtaxCancellationRequest(string? Reason, string? RdCancellationReference,
     EtaxCancellationPath? Path = null, Guid? EvidenceAttachmentId = null, Guid? CreditNoteDocumentId = null);
 
+/// <summary>รอบ 255 (ETR-ACK) — คำขอ "ตรวจแล้ว" ของแถว e-Tax ในรายงานข้อ 44 (ตัวตรวจ <c>EtaxReissueReview.ValidateAcknowledgement</c>)</summary>
+/// <param name="Outcome"><c>RejectedOrNotReceived</c> (ถูกปฏิเสธ/ไม่เคยได้รับ) หรือ <c>CancelledAtRd</c> (ยกเลิกที่กรมสรรพากรแล้ว) — ไม่มี "ยังมีผล" (ต้องไปเส้นยกเลิกทาง e-Tax)</param>
+/// <param name="RdReference">เลขอ้างอิงการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ — บังคับเมื่อ <c>CancelledAtRd</c></param>
+/// <param name="Note">สิ่งที่ตรวจ (≥ 5 ตัวอักษร)</param>
+public sealed record AcknowledgeEtaxReviewRequest(string? Outcome, string? RdReference, string? Note);
+
 /// <summary>ผลของ "บันทึกการยกเลิกทาง e-Tax" (รอบ 200 ทีม V1G) — ใบต้นทาง (null = ไม่มี) + ข้อความที่บอกสิ่งที่ระบบทำจริง (ทาง ก/ข · ใบกำกับใหม่ที่ออก)</summary>
 public sealed record EtaxCancellationResult(DocumentResponse? Source, string Message);
 

@@ -856,7 +856,7 @@ EmailScheduleRule (เพิ่ม) AttachWhtUploadLink bool? ; Trigger ให�
 - `WhtCertIntakeService.SubmitAsync` ต้องถูกเรียกใน `WhtCertPublicController` · `PortalService` · `WhtCreditController` · `OcrService` (เส้น 50 ทวิ)
 - ผู้อ่านเครดิตทุกตัวต้องเรียก `WhtCreditableAmount.Of` (ห้าม `Sum(w => w.WhtAmount)` บนแถว Received ตรงในไฟล์ภาษี)
 
-> ✅ รอบ 253 (WP-10 · DOCUMENT_FLOW §2.12l): เฟส 244 ข้อ 5–6 บางส่วน — หน้า `wht-upload.html` + `WhtCertPublicController` (rate limit · magic bytes · hash) · ลิงก์ในอีเมลใบเสร็จ (`IReceiptEmailSectionProvider`) · ปุ่มลิงก์ในรายงาน "ยังขาด" · ยังไม่ทำ: endpoint พอร์ทัล · ปุ่มบนหน้าชำระสำเร็จ
+> ✅ รอบ 253 (WP-10 · DOCUMENT_FLOW §2.12m): เฟส 244 ข้อ 5–6 บางส่วน — หน้า `wht-upload.html` + `WhtCertPublicController` (rate limit · magic bytes · hash) · ลิงก์ในอีเมลใบเสร็จ (`IReceiptEmailSectionProvider`) · ปุ่มลิงก์ในรายงาน "ยังขาด" · ยังไม่ทำ: endpoint พอร์ทัล · ปุ่มบนหน้าชำระสำเร็จ
 
 ### เฟส 245 — "ตามให้เอง": ทวงอัตโนมัติ + e-WHT + รายงานปลายปี
 
@@ -866,7 +866,7 @@ EmailScheduleRule (เพิ่ม) AttachWhtUploadLink bool? ; Trigger ให�
 
 `required_call_site_check`: `WhtCertReminderJob` ผ่าน `JobLock` · ส่งผ่าน `OnBehalfEmailSender`/คิวอีเมลเดิม (ห้าม `IEmailService` ตรง)
 
-> ✅ รอบ 253 (WP-10 · DOCUMENT_FLOW §2.12l · คำตัดสิน 253-WP10-3…6): `WhtCertReminderJob` (JobLock · watermark ต่อบริษัท · ค่าตั้งต้นปิด) · ทวงทางอีเมลเท่านั้น (LINE backlog) · e-WHT แบบ N4 (แนบเป็นใบธรรมดา) · "ไม่หัก" บนหน้าชำระ (§11 ข้อ 3) · ยังไม่ทำ: ปุ่มทวง/หยุดทวง · ตัวเลือก e-WHT บนหน้าชำระ · รายงานปลายปีส่วนที่เหลือ · G-9 · สรุปภายในรายสัปดาห์
+> ✅ รอบ 253 (WP-10 · DOCUMENT_FLOW §2.12m · คำตัดสิน 253-WP10-3…6): `WhtCertReminderJob` (JobLock · watermark ต่อบริษัท · ค่าตั้งต้นปิด) · ทวงทางอีเมลเท่านั้น (LINE backlog) · e-WHT แบบ N4 (แนบเป็นใบธรรมดา) · "ไม่หัก" บนหน้าชำระ (§11 ข้อ 3) · ยังไม่ทำ: ปุ่มทวง/หยุดทวง · ตัวเลือก e-WHT บนหน้าชำระ · รายงานปลายปีส่วนที่เหลือ · G-9 · สรุปภายในรายสัปดาห์
 
 ### เฟส 246 — NextAcc↔NextAcc (ส่งจาก "ออก 50 ทวิ แล้ว")
 

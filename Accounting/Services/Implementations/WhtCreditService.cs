@@ -41,7 +41,10 @@ public class WhtCreditService
         // รอบ 252 (WP-09): ยอดที่ได้ใบแล้ว (Σ allocation ยืนยัน) · เครดิตที่ใช้ได้ของแถว (Helpers/WhtCreditableAmount) ·
         // สถานะ 50 ทวิ จากตัวตัดสินเดียว (Helpers/WhtCertIntakeStatus ผ่าน WhtCertTracking) — หน้าเว็บแสดงป้าย/โทนอย่างเดียว
         decimal ReceivedAmount = 0m, decimal CreditableAmount = 0m,
-        string? WhtCertState = null, string? WhtCertLabel = null, string? WhtCertTone = null, int? WhtCertDaysWaiting = null);
+        string? WhtCertState = null, string? WhtCertLabel = null, string? WhtCertTone = null, int? WhtCertDaysWaiting = null,
+        // ฝ่ายค้าน WP-09 รอบสอง: ปุ่ม "ตัดสูญ" แสดงเฉพาะแถวที่ยังมียอดขาดใบ (WhtCreditWriteOff.AmountOf > 0) · เลขที่/วันที่ใบแรกถูกล็อกเมื่อได้ใบผ่านกล่องรับแล้ว
+        // (H-B — ใบถัดไปเข้ากล่องรับ) — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดง
+        bool CanWriteOff = false, string? CertificateLockReason = null);
 
     public record WhtCreditSummary(
         int TaxYear,
@@ -167,7 +170,10 @@ public class WhtCreditService
             tracking.TryGetValue(w.Id, out var v) ? v.State.ToString() : null,
             tracking.TryGetValue(w.Id, out var v2) && v2.Tone != "none" ? v2.Label : null,
             tracking.TryGetValue(w.Id, out var v3) ? v3.Tone : null,
-            tracking.TryGetValue(w.Id, out var v4) ? v4.DaysWaiting : null)).ToList();
+            tracking.TryGetValue(w.Id, out var v4) ? v4.DaysWaiting : null,
+            w.Status is WhtCreditStatus.Pending or WhtCreditStatus.Received
+                && WhtCreditWriteOff.AmountOf(w.Status, w.WhtAmount, w.ReceivedAmount) > 0.005m,
+            w.ReceivedAmount > 0.005m ? CertificateLockedMessage : null)).ToList();
     }
 
     /// <summary>สรุปยอดต่อปีภาษี + กระทบกับยอดบัญชี 11910 จริง
@@ -190,12 +196,16 @@ public class WhtCreditService
         decimal Sum(WhtCreditStatus st) => rows.Where(r => r.Status == st).Sum(r => r.WhtAmount);
         // รอบ 252 (WP-09): แถว Pending ที่ได้ใบบางส่วน ⇒ ส่วนที่ได้ใบนับเป็น "ใช้เครดิตได้" ส่วนที่ขาดนับเป็น "รอใบ" (ตัวคำนวณเดียว WhtCreditableAmount) ·
         // ผลรวมสองช่องเท่ายอดถูกหักของแถวเสมอ ⇒ กระทบยอด GL 11910 ด้วยสูตรเดิม
-        var pending = rows.Where(r => r.Status == WhtCreditStatus.Pending).Sum(r => WhtCreditableAmount.Missing(r.Status, r.WhtAmount, r.ReceivedAmount));
+        // ฝ่ายค้าน WP-09 รอบสอง (L2 เศษ): Received ที่ใบต่ำกว่ายอดถูกหัก (≤ ฿1) ⇒ เศษนับเป็น "รอใบ" (Missing) ⇒ ทะเบียน = GL
+        var pending = rows.Where(r => r.Status is WhtCreditStatus.Pending or WhtCreditStatus.Received)
+            .Sum(r => WhtCreditableAmount.Missing(r.Status, r.WhtAmount, r.ReceivedAmount));
         // ฝ่ายค้าน WP-09 M1: แถวตัดสูญเฉพาะส่วนที่ขาด (Expired + ReceivedAmount > 0) ส่วนที่มีใบยังนับเป็นเครดิต
         var received = rows.Where(r => r.Status is WhtCreditStatus.Received or WhtCreditStatus.Pending or WhtCreditStatus.Expired)
             .Sum(r => WhtCreditableAmount.Of(r.Status, r.WhtAmount, r.ReceivedAmount));
         var claimed = Sum(WhtCreditStatus.Claimed);
-        var expired = Sum(WhtCreditStatus.Expired);
+        // ฝ่ายค้าน WP-09 รอบสอง: ส่วนที่ได้ใบของแถว Expired นับใน received แล้ว ⇒ expired = เฉพาะส่วนที่ไม่มีใบ (ไม่นับซ้ำ)
+        var expired = rows.Where(r => r.Status == WhtCreditStatus.Expired)
+            .Sum(r => Math.Max(0m, r.WhtAmount) - WhtCreditableAmount.Of(r.Status, r.WhtAmount, r.ReceivedAmount));
         // รอบ 243a: แถวที่ตัดสูญพร้อม JE ยังนับฝั่งทะเบียน และ JE ตัดสูญ (+ ตัวกลับรายการ) ไม่นับฝั่ง GL — สองฝั่งตัดคู่กันเอง ⇒ JE ตัดสูญลงปีไหนก็กระทบยอดตรง
         // (เดิมถ้าตัดสูญข้ามปี: ปีของแถวขาด X · ปีที่ลง JE เกิน X = แถบแดงหลอกสองปี) · แถว Expired ที่ไม่มี JE (ก่อนรอบนี้) ยังไม่นับ ⇒ 11910 ที่ค้างจริงยังฟ้อง
         var writtenOff = rows.Where(r => WhtCreditWriteOff.NeedsReversal(r.Status, r.WriteOffJournalEntryId, r.WriteOffReversalJournalEntryId)
@@ -278,6 +288,13 @@ public class WhtCreditService
     public async Task<Guid> CreateAsync(Guid companyId, UpsertRequest r, AttachmentActor? actor = null)
     {
         if (r.WhtAmount <= 0) throw new BusinessRuleException("ยอดภาษีที่ถูกหักต้องมากกว่า 0 — กรอกยอดตามหนังสือรับรอง 50 ทวิ แล้วบันทึกอีกครั้ง");
+        // ฝ่ายค้าน WP-09 รอบสอง L4: มีเลขที่ใบ ⇒ ต้องมีวันที่บนใบ (กำหนดรอบเครดิต ภ.ง.ด.50 — CreditableInPeriod)
+        if (!string.IsNullOrWhiteSpace(r.CertificateNumber) && r.CertificateDate is null)
+            throw new BusinessRuleException(CertificateDateRequiredMessage, DedupeRuleCode);
+        return await InTxAsync(async () =>
+        {
+        // ฝ่ายค้าน WP-09 รอบสอง M-A/M-D: กันซ้ำสองทาง (ทะเบียน + ใบที่ยืนยันแล้วในกล่องรับ) ปีเดียวกัน — ตัวเดียวกับกล่องรับ
+        await EnsureCertificateNotRecordedAsync(companyId, r.CertificateNumber, r.PayerTaxId, r.PayerContactId, r.CertificateDate, r.TaxYear);
         var e = new WhtCreditReceived
         {
             CompanyId = companyId,
@@ -303,6 +320,7 @@ public class WhtCreditService
         _db.WhtCreditsReceived.Add(e);
         await _db.SaveChangesAsync();
         return e.Id;
+        });
     }
 
     public async Task UpdateAsync(Guid companyId, Guid id, UpsertRequest r, AttachmentActor? actor = null)
@@ -310,11 +328,39 @@ public class WhtCreditService
         // ฝ่ายค้าน S5: ทุกทางเขียนแถวถือล็อกเดียวกับการตัดสูญ + อ่านค่าล่าสุด (แก้ไขชนกับตัดสูญ = ทะเบียน "ได้รับแล้ว" ทั้งที่ 11910 ถูกล้าง)
         await InTxAsync(async () =>
             {
+                // ลำดับล็อกเดียวกับกล่องรับ (เลขที่ใบ + ผู้จ่าย ก่อนแถว) — ไม่ให้สองทางรอกันเอง (deadlock)
+                if (Trim(r.CertificateNumber) is string lockNo) await LockCertificateAsync(companyId, lockNo, r.PayerTaxId, r.PayerContactId);
                 await LockCreditAsync(companyId, id);
                 var e = await LoadFresh(companyId, id);
                 GuardEditable(e);
+                var certNo = Trim(r.CertificateNumber);
+                var certChanged = !string.Equals(certNo, e.CertificateNumber, StringComparison.Ordinal);
+                var dateChanged = r.CertificateDate != e.CertificateDate;
+                // ฝ่ายค้าน WP-09 รอบสอง H-A/H-B: แถวที่ได้ใบบางส่วนผ่านกล่องรับ (ReceivedAmount > 0) — เลขที่ใบแรกแก้ไม่ได้ · วันที่แก้ได้เฉพาะในรอบเดียวกัน
+                // (ตัวตัดสินเดียวกับกล่องรับ H2) · ยอดถูกหักต่ำกว่ายอดที่ได้ใบไม่ได้ · สถานะ/ยอดที่ได้ใบไม่ถูกเปลี่ยนเพราะ "มีเลขที่ใบ" (ใบถัดไปเข้ากล่องรับ)
+                var partCertified = e.ReceivedAmount > 0.005m;
+                if (partCertified)
+                {
+                    if (certChanged)
+                        throw new BusinessRuleException(CertificateLockedMessage, DedupeRuleCode, 409);
+                    if (dateChanged)
+                    {
+                        var fyStart = await FiscalStartMonthAsync(companyId);
+                        if (r.CertificateDate is not DateTime nd || WhtCertIntakeVerdict.CrossesCreditPeriod(e.CertificateDate, nd, fyStart))
+                            throw new BusinessRuleException("แก้วันที่บนใบข้ามรอบบัญชีไม่ได้ — แถวนี้ได้ใบผ่านกล่องรับแล้ว และเครดิตนับงวดตามวันที่ใบแรก · "
+                                + "ถ้าวันที่ผิดจริง ให้ตีกลับใบในกล่องรับแล้วส่งใบใหม่", DedupeRuleCode, 409);
+                    }
+                    if (r.WhtAmount > 0 && r.WhtAmount < e.ReceivedAmount - 0.005m)
+                        throw new BusinessRuleException($"ยอดภาษีที่ถูกหัก {r.WhtAmount:N2} ต่ำกว่ายอดที่ได้ใบแล้ว {e.ReceivedAmount:N2} — ตรวจยอดอีกครั้ง", DedupeRuleCode, 409);
+                }
+                else if (certNo != null && (certChanged || e.Status == WhtCreditStatus.Pending) && r.CertificateDate is null)
+                    throw new BusinessRuleException(CertificateDateRequiredMessage, DedupeRuleCode);   // L4
+                if (certNo != null && (certChanged || dateChanged || r.TaxYear != e.TaxYear
+                        || ThaiTaxId.Normalize(r.PayerTaxId) != ThaiTaxId.Normalize(e.PayerTaxId)))
+                    await EnsureCertificateNotRecordedAsync(companyId, certNo, r.PayerTaxId, r.PayerContactId, r.CertificateDate, r.TaxYear, exceptCreditId: e.Id);
+                var whtBefore = e.WhtAmount;
                 e.TaxYear = r.TaxYear;
-                e.CertificateNumber = Trim(r.CertificateNumber);
+                e.CertificateNumber = certNo;
                 e.CertificateDate = r.CertificateDate;
                 e.PayerContactId = r.PayerContactId;
                 if (!string.IsNullOrWhiteSpace(r.PayerName)) e.PayerName = r.PayerName.Trim();
@@ -332,10 +378,14 @@ public class WhtCreditService
                     e.AttachmentId = r.AttachmentId;
                 }
                 e.Notes = Trim(r.Notes);
-                // มีเลขที่ใบ = ถือว่าได้รับใบแล้ว (เครดิตได้); ลบเลขออก = กลับไปรอใบ
-                e.Status = string.IsNullOrWhiteSpace(e.CertificateNumber)
-                    ? WhtCreditStatus.Pending : WhtCreditStatus.Received;
-                MarkFullyCertified(e);
+                if (!partCertified)
+                {
+                    // แถวที่ยังไม่มีใบผ่านกล่องรับ (ReceivedAmount 0): ผู้ใช้กรอกเลขที่ + วันที่ใบเอง = ประกาศว่าได้รับใบแล้ว (เครดิตได้) · ลบเลขออก = กลับไปรอใบ
+                    e.Status = string.IsNullOrWhiteSpace(e.CertificateNumber)
+                        ? WhtCreditStatus.Pending : WhtCreditStatus.Received;
+                }
+                else if (e.WhtAmount != whtBefore)
+                    e.Status = WhtCreditableAmount.StatusForReceived(e.WhtAmount, e.ReceivedAmount);   // ยอดถูกหักเปลี่ยน ⇒ ตัดสินจากยอดที่ได้ใบ (ไม่แตะ ReceivedAmount)
                 e.UpdatedAt = DateTime.UtcNow;
                 await _db.SaveChangesAsync();
                 return true;
@@ -354,21 +404,34 @@ public class WhtCreditService
         if (string.IsNullOrWhiteSpace(certificateNumber))
             throw new BusinessRuleException("ต้องระบุเลขที่หนังสือรับรอง — กฎหมายให้เครดิตเฉพาะรายการที่มีใบจริง");
         var certNo = certificateNumber.Trim();
+        var payerPre = await _db.WhtCreditsReceived.AsNoTracking().Where(w => w.Id == id && w.CompanyId == companyId)
+            .Select(w => new { w.PayerTaxId, w.PayerContactId }).FirstOrDefaultAsync();
         await InTxAsync(async () =>
         {
+            // ลำดับล็อกเดียวกับกล่องรับ (เลขที่ใบ + ผู้จ่าย ก่อนแถว)
+            if (payerPre != null) await LockCertificateAsync(companyId, certNo, payerPre.PayerTaxId, payerPre.PayerContactId);
             await LockCreditAsync(companyId, id);
             var e = await LoadFresh(companyId, id);
-            if (WhtCreditWriteOff.NeedsReversal(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId))
+            // ฝ่ายค้าน WP-09 รอบสอง H-B: แถวที่ได้ใบบางส่วนผ่านกล่องรับ ⇒ ใบถัดไปต้องเข้ากล่องรับ (จัดสรรส่วนที่เหลือพร้อมวันที่ของใบนั้น) —
+            // "ได้รับใบแล้ว" ทับเลขที่/วันที่ใบแรกและประกาศครบทั้งแถวไม่ได้ (เดิม MarkFullyCertified ⇒ เครดิตเต็มแถวด้วยใบเดียว)
+            if (e.ReceivedAmount > 0.005m)
+                throw new BusinessRuleException(CertificateLockedMessage, DedupeRuleCode, 409);
+            var writtenOff = WhtCreditWriteOff.NeedsReversal(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId);
+            if (writtenOff && journalActor == null)
+                throw new BusinessRuleException(WrittenOffNeedsJournalManageMessage, WhtCreditWriteOff.ReversalRuleCode, 403);
+            if (certificateDate is null)
+                throw new BusinessRuleException(CertificateDateRequiredMessage, DedupeRuleCode);   // L4
+            if (!writtenOff) GuardEditable(e);
+            // M-A: กันซ้ำสองทาง (รวมเส้นแอดมินแพลตฟอร์ม — PlatformWhtCertificateService เรียกเมธอดนี้)
+            await EnsureCertificateNotRecordedAsync(companyId, certNo, e.PayerTaxId, e.PayerContactId, certificateDate, e.TaxYear, exceptCreditId: e.Id);
+            if (writtenOff)
             {
-                if (journalActor == null)
-                    throw new BusinessRuleException(WrittenOffNeedsJournalManageMessage, WhtCreditWriteOff.ReversalRuleCode, 403);
                 var before = new { status = e.Status.ToString(), e.WriteOffJournalEntryId, e.WhtAmount };
                 var (reversalId, reversalNo, writeOffNo) = await ReverseWriteOffJournalCoreAsync(companyId, e,
                     $"ได้รับหนังสือรับรอง {certNo}");
                 ApplyCertificate(e, certNo, certificateDate);
                 await AttachAsync(companyId, e, attachmentId, actor);
                 e.Status = WhtCreditStatus.Received;
-                MarkFullyCertified(e);
                 e.WriteOffReversalJournalEntryId = reversalId;
                 e.Notes = AppendNote(e.Notes, $"ได้รับใบภายหลัง {certNo} — กลับรายการตัดสูญ {writeOffNo} ด้วย {reversalNo}");
                 _db.AddChainedAuditLog(new AuditLog
@@ -388,11 +451,9 @@ public class WhtCreditService
             }
             else
             {
-                GuardEditable(e);
                 ApplyCertificate(e, certNo, certificateDate);
                 await AttachAsync(companyId, e, attachmentId, actor);
                 e.Status = WhtCreditStatus.Received;
-                MarkFullyCertified(e);
             }
             await _db.SaveChangesAsync();
             return true;
@@ -404,11 +465,81 @@ public class WhtCreditService
         "รายการนี้ตัดสูญพร้อมรายการบัญชีแล้ว — การรับใบภายหลังต้องกลับรายการบัญชีตัดสูญ จึงต้องให้ผู้มีสิทธิ์จัดการใบสำคัญ (Journal.Manage) "
         + "เปิดหน้า \"ภาษีถูกหัก ณ ที่จ่าย\" แล้วกด \"ได้รับใบแล้ว\" ที่รายการนั้น (ระบบกลับรายการและคืนเครดิตให้)";
 
-    /// <summary>ฝ่ายค้าน WP-09 L2/M1: ผู้ใช้ประกาศว่า "ได้ใบครบทั้งแถว" (กรอกมือ/ได้รับใบแล้ว) บนแถวที่เคยได้ใบบางส่วนผ่านกล่องรับ ⇒ ยอดที่ได้ใบ = ยอดถูกหัก
-    /// (ไม่งั้น <see cref="WhtCreditableAmount.Of"/> นับแค่ส่วนที่กล่องรับลงไว้) · แถวรุ่นเก่า (ReceivedAmount 0) ไม่แตะ — สถานะคือหลักฐานอยู่แล้ว</summary>
-    private static void MarkFullyCertified(WhtCreditReceived e)
+    /// <summary>ฝ่ายค้าน WP-09 รอบสอง H-B: แถวที่ได้ใบบางส่วนผ่านกล่องรับ — เลขที่/วันที่ใบแรกล็อก · ใบถัดไปเข้ากล่องรับ</summary>
+    public const string CertificateLockedMessage =
+        "รายการนี้ได้หนังสือรับรองผ่านกล่องรับแล้ว (บางส่วนหรือทั้งหมด) — เลขที่/วันที่ใบแรกแก้ที่นี่ไม่ได้ และ \"ได้รับใบแล้ว\" ใช้กับรายการนี้ไม่ได้ · "
+        + "ใบถัดไป (เช่น งวดที่เหลือ) ให้อัปโหลดเข้ากล่องรับ 50 ทวิ ระบบจะจัดสรรส่วนที่เหลือพร้อมวันที่ของใบนั้น";
+
+    /// <summary>ฝ่ายค้าน WP-09 รอบสอง L4</summary>
+    public const string CertificateDateRequiredMessage =
+        "ต้องระบุวันที่บนหนังสือรับรอง — ใช้กำหนดรอบที่นำเครดิตไปใช้ใน ภ.ง.ด.50 (ไม่มีวันที่ = นับเป็นเครดิตไม่ได้)";
+
+    /// <summary>รหัสกฎของการกันใบซ้ำ/ล็อกใบแรก (audit · tooltip)</summary>
+    public const string DedupeRuleCode = "RD-50BIS-DUP";
+
+    private async Task<int> FiscalStartMonthAsync(Guid companyId)
     {
-        if (e.Status == WhtCreditStatus.Received && e.ReceivedAmount > 0.005m) e.ReceivedAmount = e.WhtAmount;
+        var m = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
+        return m is < 1 or > 12 ? 1 : m;
+    }
+
+    /// <summary>ฝ่ายค้าน WP-09 รอบสอง (races): ล็อกต่อ "เลขที่ใบ + ผู้จ่าย" ของบริษัท — ตัวเดียวของทุกทางที่ตรวจ/เขียนเลขที่ใบ (กล่องรับ ส่ง/ยืนยัน ·
+    /// ทะเบียน สร้าง/แก้/ได้รับใบ) ⇒ สองคำขอพร้อมกันไม่ผ่านด่านกันซ้ำทั้งคู่ · ต้องอยู่ในธุรกรรม (xact lock)</summary>
+    public Task LockCertificateAsync(Guid companyId, string certificateNumber, string? payerTaxId, Guid? payerContactId)
+    {
+        var payerTax = ThaiTaxId.Normalize(payerTaxId);
+        var part = "cert-" + certificateNumber.Trim().ToUpperInvariant() + "|" + (payerTax.Length == 13 ? payerTax : payerContactId?.ToString("N") ?? "");
+        return _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            AdvisoryLockKey.For(companyId, AdvisoryLockKey.WhtCreditWriteOff, part));
+    }
+
+    /// <summary>
+    /// ฝ่ายค้าน WP-09 H1 + รอบสอง M-A/M-D — <b>ตัวเดียวของการกันใบ 50 ทวิ ซ้ำ</b> ทุกทาง (กล่องรับ ส่ง/ยืนยัน · ทะเบียน สร้าง/แก้/ได้รับใบ · แอดมินแพลตฟอร์ม):
+    /// เลขที่ใบ + ผู้จ่าย (เลขผู้เสียภาษีของแถว · ไม่มี ⇒ ของผู้ติดต่อ · ใบไม่มีเลขผู้จ่าย ⇒ ผู้ติดต่อเดียวกัน) + <b>ปีเดียวกัน</b>
+    /// (<see cref="WhtCertIntakeVerdict.CertYear"/> — เลขที่เดียวกันของปีถัดไปบันทึกได้) อยู่ใน (ก) ทะเบียน (ไม่ถูกลบ · ไม่ใช่ตัดสูญ) หรือ (ข) ใบที่ยืนยันแล้วในกล่องรับ ⇒ 409
+    /// พร้อมทางไปต่อ · <paramref name="exceptCreditId"/> = แถวตัวเอง (รวมใบในกล่องรับที่ลงแถวนี้) · <paramref name="exceptIntakeId"/> = ใบในกล่องรับตัวเอง ·
+    /// ถือล็อก <see cref="LockCertificateAsync"/> (ผู้เรียกอยู่ในธุรกรรม)
+    /// </summary>
+    public async Task EnsureCertificateNotRecordedAsync(Guid companyId, string? certificateNumber, string? payerTaxId, Guid? payerContactId,
+        DateTime? certificateDate, int? taxYear, Guid? exceptCreditId = null, Guid? exceptIntakeId = null, CancellationToken ct = default)
+    {
+        var certNo = Trim(certificateNumber);
+        if (certNo == null) return;
+        var payerTax = ThaiTaxId.Normalize(payerTaxId);
+        await LockCertificateAsync(companyId, certNo, payerTax, payerContactId);
+        var fyStart = await FiscalStartMonthAsync(companyId);
+        var year = WhtCertIntakeVerdict.CertYear(certificateDate, taxYear, fyStart);
+        bool SamePayer(string? rowTax, string? contactTax, Guid? rowContact)
+            => payerTax.Length == 13
+                ? ThaiTaxId.Normalize(string.IsNullOrWhiteSpace(rowTax) ? contactTax : rowTax) == payerTax
+                : payerContactId != null && rowContact == payerContactId;
+        BusinessRuleException Duplicate(decimal amount, string where) => new(
+            $"หนังสือรับรองเลขที่ {certNo} ของผู้จ่ายรายนี้{(year is int y ? $" (ปีภาษี {y + 543})" : "")} บันทึกไว้แล้วใน{where} ({amount:N2}) — ไม่บันทึกซ้ำ · "
+            + "ถ้าเป็นใบคนละใบ: ตรวจเลขที่และวันที่บนใบอีกครั้ง (เลขที่เดียวกันของปีอื่นบันทึกได้) · ถ้าเป็นใบเดียวกัน: ไม่ต้องบันทึกอีก — เปิดรายการเดิมที่หน้า \"ภาษีถูกหัก ณ ที่จ่าย\"",
+            DedupeRuleCode, 409);
+
+        var rows = await _db.WhtCreditsReceived.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && w.CertificateNumber == certNo && w.Status != WhtCreditStatus.Expired
+                && (exceptCreditId == null || w.Id != exceptCreditId))
+            .Select(w => new
+            {
+                w.PayerTaxId, w.PayerContactId, w.WhtAmount, w.CertificateDate, w.TaxYear,
+                ContactTaxId = _db.Contacts.Where(c => c.Id == w.PayerContactId && c.CompanyId == companyId).Select(c => c.TaxId).FirstOrDefault(),
+            }).ToListAsync(ct);
+        var hit = rows.FirstOrDefault(w => SamePayer(w.PayerTaxId, w.ContactTaxId, w.PayerContactId)
+            && WhtCertIntakeVerdict.SameCertYear(year, WhtCertIntakeVerdict.CertYear(w.CertificateDate, w.TaxYear, fyStart)));
+        if (hit != null) throw Duplicate(hit.WhtAmount, "ทะเบียนภาษีถูกหัก");
+
+        var intakes = await _db.WhtCertIntakes.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && i.CertificateNumber == certNo && i.Status == WhtCertIntakeRecordStatus.Confirmed
+                && (exceptIntakeId == null || i.Id != exceptIntakeId)
+                && (exceptCreditId == null || !_db.WhtCertAllocations.Any(a => a.CompanyId == companyId && a.IntakeId == i.Id
+                    && a.WhtCreditId == exceptCreditId && a.Status == WhtCertAllocationStatus.Confirmed)))
+            .Select(i => new { i.PayerTaxId, i.PayerContactId, i.WhtAmount, i.CertificateDate })
+            .ToListAsync(ct);
+        var hitIntake = intakes.FirstOrDefault(i => SamePayer(i.PayerTaxId, null, i.PayerContactId)
+            && WhtCertIntakeVerdict.SameCertYear(year, WhtCertIntakeVerdict.CertYear(i.CertificateDate, null, fyStart)));
+        if (hitIntake != null) throw Duplicate(hitIntake.WhtAmount, "กล่องรับ 50 ทวิ (ยืนยันแล้ว)");
     }
 
     private static void ApplyCertificate(WhtCreditReceived e, string certificateNumber, DateTime? certificateDate)
@@ -472,13 +603,18 @@ public class WhtCreditService
                 e.WriteOffReversalJournalEntryId = reversalId;
                 if (remaining <= 0.005m)
                 {
+                    // ฝ่ายค้าน WP-09 รอบสอง M-B: หมดสิทธิ์โดยไม่ใช่การตัดสูญ (ต้นทางหาย/คืนเงิน) ⇒ ส่วนที่ได้ใบก็ไม่เป็นเครดิตแล้ว (Of(Expired) = 0)
                     e.Status = WhtCreditStatus.Expired;
+                    e.ReceivedAmount = 0m;
                     if (removeRow) e.IsDeleted = true;
                 }
                 else
                 {
+                    // ฝ่ายค้าน WP-09 รอบสอง: ตัดสินสถานะใหม่จากยอดที่ได้ใบ (เดิมตั้ง Pending ตายตัว — แถวที่ได้ใบครบส่วนที่เหลือกลายเป็น "รอใบ")
                     e.WhtAmount = remaining;
-                    e.Status = WhtCreditStatus.Pending;
+                    if (e.ReceivedAmount > remaining) e.ReceivedAmount = remaining;
+                    e.Status = e.ReceivedAmount > 0.005m
+                        ? WhtCreditableAmount.StatusForReceived(remaining, e.ReceivedAmount) : WhtCreditStatus.Pending;
                 }
                 e.Notes = AppendNote(e.Notes, $"กลับรายการตัดสูญ {writeOffNo} ด้วย {reversalNo}: {reason}");
                 e.UpdatedAt = DateTime.UtcNow;
@@ -605,7 +741,12 @@ public class WhtCreditService
             var doneId = e.WriteOffJournalEntryId!.Value;
             var doneNo = await _db.JournalEntries.AsNoTracking().Where(j => j.Id == doneId && j.CompanyId == companyId)
                 .Select(j => j.EntryNumber).FirstOrDefaultAsync() ?? "";
-            return new WriteOffResult(doneId, doneNo, Math.Max(0m, e.WhtAmount - Math.Max(0m, e.ReceivedAmount)), true);
+            // ฝ่ายค้าน WP-09 รอบสอง: ยอดของ JE ตัดสูญจริง (ไม่คำนวณจากแถวปัจจุบัน — ยอดถูกหัก/ได้ใบอาจเปลี่ยนหลังตัดสูญ)
+            var doneAmount = await (from l in _db.JournalEntryLines.AsNoTracking()
+                                    join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                                    where j.Id == doneId && j.CompanyId == companyId && !l.IsDeleted
+                                    select l.DebitAmount).SumAsync();
+            return new WriteOffResult(doneId, doneNo, Math.Round(doneAmount, 2, MidpointRounding.AwayFromZero), true);
         }
         if (!decision.Allowed)
             throw new BusinessRuleException(decision.Problem!, WhtCreditWriteOff.RuleCode);
@@ -795,6 +936,7 @@ public class WhtCreditService
                 if (WhtCreditWriteOff.NeedsReversal(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId))
                     throw new BusinessRuleException("รายการนี้ตัดสูญพร้อมรายการบัญชีแล้ว — ต้องกลับรายการตัดสูญก่อน (UndoWriteOffAsync)", WhtCreditWriteOff.UndoRuleCode, 409);
                 e.Status = WhtCreditStatus.Expired;
+                e.ReceivedAmount = 0m;   // ฝ่ายค้าน WP-09 รอบสอง M-B: คืนเงินแล้ว ⇒ ส่วนที่ได้ใบไม่เป็นเครดิต (Of(Expired) = 0)
                 e.Notes = AppendNote(e.Notes, $"หมดสิทธิ์ (ไม่ลงบัญชี — ใบลดหนี้ล้าง 11910 แล้ว): {reason}");
                 e.UpdatedAt = DateTime.UtcNow;
                 await _db.SaveChangesAsync();

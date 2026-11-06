@@ -48,24 +48,19 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         if (sha != null && await FindLiveByFileAsync(companyId, sha, ct) is { } dupFile)
             return dupFile;   // ฝ่ายค้าน WP-09 L5: ใบที่ถูกตีกลับส่งไฟล์เดิมใหม่ได้ (ไม่นับเป็นซ้ำ)
 
-        // (1b) กันซ้ำ — ใบเดิม (เลขที่ + ผู้จ่าย) ที่ยังไม่ถูกตีกลับ · สแกนใบเดียวกันหลังลูกค้าอัปโหลดแล้ว ⇒ ไม่มีเครดิตซ้ำ
+        // (1b) กันซ้ำ — ใบเดิม (เลขที่ + ผู้จ่าย + ปีเดียวกัน) ที่ยังไม่ถูกตีกลับ · สแกนใบเดียวกันหลังลูกค้าอัปโหลดแล้ว ⇒ ไม่มีเครดิตซ้ำ
         var certNo = Trim(s.CertificateNumber);
         var payerTax = ThaiTaxId.Normalize(s.PayerTaxId);
-        if (certNo != null)
-        {
-            var sameNo = await _db.WhtCertIntakes.AsNoTracking()
-                .Where(i => i.CompanyId == companyId && i.CertificateNumber == certNo && i.Status != WhtCertIntakeRecordStatus.Rejected)
-                .Select(i => new { i.Id, i.Status, i.PayerTaxId }).ToListAsync(ct);
-            var dupCert = sameNo.FirstOrDefault(i => payerTax.Length != 13 || ThaiTaxId.Normalize(i.PayerTaxId) == payerTax);
-            if (dupCert != null)
-                return new(dupCert.Id, dupCert.Status.ToString(), false, true, $"หนังสือรับรองเลขที่ {certNo} ของผู้จ่ายรายนี้อยู่ในกล่องรับแล้ว — ไม่สร้างรายการซ้ำ");
-            // ฝ่ายค้าน WP-09 H1: ใบเดียวกันอยู่ในทะเบียนแล้ว (กรอกมือ/ได้รับใบแล้ว/รุ่นก่อนกล่องรับ) ⇒ ปฏิเสธ 409 — ไม่ให้เครดิตซ้ำ
-            await EnsureNotInRegisterAsync(companyId, certNo, payerTax, s.PayerContactId, ct);
-        }
-
         var co = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
             .Select(c => new { c.TaxId, c.FiscalYearStartMonth }).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+        if (certNo != null)
+        {
+            if (await FindLiveByCertAsync(companyId, certNo, payerTax, s.CertificateDate, co.FiscalYearStartMonth, null, ct) is { } dupCert)
+                return dupCert;
+            // ฝ่ายค้าน WP-09 H1 + รอบสอง M-A/M-D: ใบเดียวกัน (ปีเดียวกัน) อยู่ในทะเบียน/ใบที่ยืนยันแล้ว ⇒ 409 — ตัวเดียวกับทะเบียน (ตรวจซ้ำใต้ล็อกในธุรกรรมด้านล่าง)
+            await _credits.EnsureCertificateNotRecordedAsync(companyId, certNo, payerTax, s.PayerContactId, s.CertificateDate, null, ct: ct);
+        }
         var payeeIsUs = s.PayeeIsUs
             ?? (ThaiTaxId.IsValid(s.PayeeTaxId) && ThaiTaxId.IsValid(co.TaxId) ? ThaiTaxId.Same(s.PayeeTaxId, co.TaxId) : (bool?)null);
         var payeeTax = ThaiTaxId.IsValid(s.PayeeTaxId) ? ThaiTaxId.Normalize(s.PayeeTaxId)
@@ -143,10 +138,18 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         var outcome = WhtCertIntakeVerdict.Decide(match.Level, gates, intake.AuthenticityAnswer, intake.AuthenticityConfidence, usable);
 
         // (6) เขียนในธุรกรรมเดียว · ฝ่ายค้าน WP-09 L10: อัปโหลดไฟล์เดียวกันพร้อมกันสองคำขอ ⇒ unique index ชน ⇒ ตอบ "ซ้ำ" (ไม่ใช่ 500)
+        WhtCertSubmitResult? raced = null;
         try
         {
-        await InTxAsync(async () =>
+        raced = await InTxAsync<WhtCertSubmitResult?>(async () =>
         {
+            // ฝ่ายค้าน WP-09 รอบสอง (races): ตรวจซ้ำใต้ล็อก "เลขที่ใบ + ผู้จ่าย" ตัวเดียวกับการยืนยัน/ทะเบียน — สองคำขอพร้อมกันไม่ผ่านทั้งคู่
+            if (certNo != null)
+            {
+                await _credits.EnsureCertificateNotRecordedAsync(companyId, certNo, payerTax, s.PayerContactId, s.CertificateDate, null, ct: ct);
+                if (await FindLiveByCertAsync(companyId, certNo, payerTax, s.CertificateDate, co.FiscalYearStartMonth, null, ct) is { } lost)
+                    return lost;
+            }
             var allocs = outcome == WhtCertIntakeVerdict.Outcome.Reject
                 ? new List<WhtCertMatchPolicy.Allocation>()
                 : match.Level is WhtCertMatchLevel.Exact or WhtCertMatchLevel.Partial or WhtCertMatchLevel.Ambiguous
@@ -164,6 +167,13 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                     {
                         outcome = WhtCertIntakeVerdict.Outcome.AwaitUser;
                         gates.Add("ยอดค้างของรายการเปลี่ยนระหว่างตรวจ — ตรวจแล้วกดยืนยันอีกครั้ง");
+                        break;
+                    }
+                    // ฝ่ายค้าน WP-09 รอบสอง (races): ใบแรกของแถวอาจเพิ่งลง (อีกใบยืนยันระหว่างตรวจ) — ตรวจรอบบัญชีซ้ำใต้ล็อก (ตัวตัดสินเดียวกับ H2)
+                    if (s.CertificateDate is DateTime acd && WhtCertIntakeVerdict.CrossesCreditPeriod(row.CertificateDate, acd, co.FiscalYearStartMonth))
+                    {
+                        outcome = WhtCertIntakeVerdict.Outcome.AwaitUser;
+                        gates.Add("รายการนี้มีหนังสือรับรองใบแรกลงวันที่ในรอบบัญชีอื่น — ใบนี้ลงรวมแถวเดียวไม่ได้ · เลือก \"บันทึกเป็นรายการเครดิตใหม่\"");
                         break;
                     }
                     rows[a.CreditId] = row;
@@ -199,7 +209,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                 _ => "wht-cert-intake-submitted",
             }, allocs.Select(a => new { a.CreditId, a.Amount }).ToList());
             await _db.SaveChangesAsync(ct);
-            return true;
+            return null;
         });
         }
         catch (DbUpdateException dup) when (sha != null && dup.InnerException is Npgsql.PostgresException { SqlState: "23505" })
@@ -207,6 +217,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             if (await FindLiveByFileAsync(companyId, sha, ct) is { } winner) return winner;
             throw;
         }
+        if (raced != null) return raced;
 
         var msg = outcome switch
         {
@@ -239,25 +250,20 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         return dup == null ? null : new WhtCertSubmitResult(dup.Id, dup.Status.ToString(), false, true, "ได้รับไฟล์นี้แล้ว — ไม่สร้างรายการซ้ำ");
     }
 
-    /// <summary>ฝ่ายค้าน WP-09 H1: ใบ (เลขที่ + ผู้จ่าย) อยู่ในทะเบียนเครดิตแล้ว (ไม่ถูกลบ · ไม่ใช่ตัดสูญ) ⇒ 409 · ผู้จ่ายตัดสินด้วยเลขผู้เสียภาษีของแถว
-    /// (ไม่มี ⇒ ของผู้ติดต่อ) · ใบไม่มีเลขผู้จ่าย ⇒ ผู้ติดต่อเดียวกัน · <paramref name="exceptCreditIds"/> = แถวที่ใบนี้เองเพิ่งลงไว้</summary>
-    private async Task EnsureNotInRegisterAsync(Guid companyId, string certNo, string payerTax, Guid? payerContactId, CancellationToken ct,
-        IReadOnlyCollection<Guid>? exceptCreditIds = null)
+    /// <summary>ใบในกล่องรับที่ยังมีผล (ไม่ถูกตีกลับ) เลขที่ + ผู้จ่ายเดียวกัน <b>ปีเดียวกัน</b> (ฝ่ายค้าน WP-09 รอบสอง M-D — <see cref="WhtCertIntakeVerdict.SameCertYear"/>)
+    /// ⇒ ผลเดิม (ซ้ำ) · ไม่มีเลขผู้จ่าย ⇒ เลขที่เดียวกันถือว่าซ้ำ (ทางปลอดภัย)</summary>
+    private async Task<WhtCertSubmitResult?> FindLiveByCertAsync(Guid companyId, string certNo, string payerTax, DateTime? certDate, int fyStart,
+        Guid? exceptIntakeId, CancellationToken ct)
     {
-        var rows = await _db.WhtCreditsReceived.AsNoTracking()
-            .Where(w => w.CompanyId == companyId && w.CertificateNumber == certNo && w.Status != WhtCreditStatus.Expired)
-            .Select(w => new
-            {
-                w.Id, w.PayerTaxId, w.PayerContactId, w.WhtAmount,
-                ContactTaxId = _db.Contacts.Where(c => c.Id == w.PayerContactId && c.CompanyId == companyId).Select(c => c.TaxId).FirstOrDefault(),
-            }).ToListAsync(ct);
-        var hit = rows.FirstOrDefault(w => (exceptCreditIds == null || !exceptCreditIds.Contains(w.Id))
-            && (payerTax.Length == 13
-                ? ThaiTaxId.Normalize(string.IsNullOrWhiteSpace(w.PayerTaxId) ? w.ContactTaxId : w.PayerTaxId) == payerTax
-                : payerContactId != null && w.PayerContactId == payerContactId));
-        if (hit != null)
-            throw new BusinessRuleException($"หนังสือรับรองเลขที่ {certNo} ของผู้จ่ายรายนี้อยู่ในทะเบียนภาษีถูกหักแล้ว ({hit.WhtAmount:N2}) — ไม่บันทึกซ้ำ · "
-                + "ถ้าเป็นใบคนละใบ ตรวจเลขที่บนใบอีกครั้ง", RuleCode, 409);
+        var year = WhtCertIntakeVerdict.CertYear(certDate, null, fyStart);
+        var sameNo = await _db.WhtCertIntakes.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && i.CertificateNumber == certNo && i.Status != WhtCertIntakeRecordStatus.Rejected
+                && (exceptIntakeId == null || i.Id != exceptIntakeId))
+            .Select(i => new { i.Id, i.Status, i.PayerTaxId, i.CertificateDate }).ToListAsync(ct);
+        var dup = sameNo.FirstOrDefault(i => (payerTax.Length != 13 || ThaiTaxId.Normalize(i.PayerTaxId) == payerTax)
+            && WhtCertIntakeVerdict.SameCertYear(year, WhtCertIntakeVerdict.CertYear(i.CertificateDate, null, fyStart)));
+        return dup == null ? null
+            : new(dup.Id, dup.Status.ToString(), false, true, $"หนังสือรับรองเลขที่ {certNo} ของผู้จ่ายรายนี้อยู่ในกล่องรับแล้ว — ไม่สร้างรายการซ้ำ");
     }
 
     public async Task<WhtCertSubmitResult> SubmitFromScanAsync(Guid companyId, Guid scanResultId, WhtCertIntakeChannel channel,
@@ -331,16 +337,17 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             // ฝ่ายค้าน WP-09 H1: เลขที่ใบ (รวมที่ผู้ใช้แก้) + ผู้จ่าย ซ้ำกับทะเบียน หรือกับใบอื่นในกล่องรับที่ยังมีผล ⇒ 409
             var certNo = intake.CertificateNumber!;
             var payerTax = ThaiTaxId.Normalize(intake.PayerTaxId);
-            var otherIntakes = await _db.WhtCertIntakes.AsNoTracking()
-                .Where(i => i.CompanyId == companyId && i.Id != intakeId && i.CertificateNumber == certNo && i.Status != WhtCertIntakeRecordStatus.Rejected)
-                .Select(i => i.PayerTaxId).ToListAsync(ct);
-            if (otherIntakes.Any(t => payerTax.Length != 13 || ThaiTaxId.Normalize(t) == payerTax))
-                throw new BusinessRuleException($"หนังสือรับรองเลขที่ {certNo} ของผู้จ่ายรายนี้อยู่ในกล่องรับอีกใบแล้ว — ตีกลับใบนี้ หรือตรวจเลขที่อีกครั้ง", RuleCode, 409);
-            await EnsureNotInRegisterAsync(companyId, certNo, payerTax, intake.PayerContactId, ct);
-            var certFy = WhtCertIntakeVerdict.FiscalYearOf(intake.CertificateDate.Value, co.FiscalYearStartMonth);
+            // ฝ่ายค้าน WP-09 รอบสอง: ตัวเดียวกับการส่ง (ปีเดียวกัน · ใต้ล็อกเลขที่ใบ + ผู้จ่าย ที่ EnsureCertificateNotRecordedAsync ถือ)
+            await _credits.EnsureCertificateNotRecordedAsync(companyId, certNo, payerTax, intake.PayerContactId, intake.CertificateDate, null,
+                exceptIntakeId: intakeId, ct: ct);
+            if (await FindLiveByCertAsync(companyId, certNo, payerTax, intake.CertificateDate, co.FiscalYearStartMonth, intakeId, ct) is not null)
+                throw new BusinessRuleException($"หนังสือรับรองเลขที่ {certNo} ของผู้จ่ายรายนี้อยู่ในกล่องรับอีกใบแล้ว (ปีเดียวกัน) — ตีกลับใบนี้ หรือตรวจเลขที่อีกครั้ง", RuleCode, 409);
 
             var existing = await _db.WhtCertAllocations.Where(a => a.CompanyId == companyId && a.IntakeId == intakeId).ToListAsync(ct);
-            List<WhtCertAllocationInput> wanted = req.Allocations != null
+            // แก้ CI รอบ 252 (Db H2_…): "บันทึกเป็นรายการใหม่" = ไม่จัดสรรเข้าแถวใดเลย — เดิม Allocations = null ไหลไปใช้ข้อเสนอของระบบ (Proposed) ⇒
+            // ใบงวดสองคนละรอบที่ระบบเสนอแถวเดิมไว้ ชนด่าน H2 ทั้งที่ผู้ใช้เลือกทางไปต่อที่ด่านแนะนำเอง
+            List<WhtCertAllocationInput> wanted = req.CreateStandalone ? new List<WhtCertAllocationInput>()
+                : req.Allocations != null
                 ? req.Allocations.Where(a => a.Amount > 0m).GroupBy(a => a.WhtCreditId).Select(g => new WhtCertAllocationInput(g.Key, R(g.Sum(x => x.Amount)))).ToList()
                 : existing.Where(a => a.Status == WhtCertAllocationStatus.Proposed).Select(a => new WhtCertAllocationInput(a.WhtCreditId, a.Amount)).ToList();
 
@@ -367,7 +374,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                     throw new BusinessRuleException($"รายการ {row.PayerName} ไม่ใช่ของผู้จ่ายบนใบนี้ — ใบ 50 ทวิ ใช้เป็นหลักฐานของผู้จ่ายที่ออกใบเท่านั้น · "
                         + "ถ้าแน่ใจ (เช่น ผู้จ่ายเปลี่ยนชื่อ/สาขา) ให้ติ๊ก \"ยืนยันว่าเป็นผู้จ่ายเดียวกัน\"", RuleCode, 409);
                 // ฝ่ายค้าน WP-09 H2: แถวที่มีใบแรกคนละรอบบัญชี ⇒ ลงรวมแล้วเครดิตทั้งแถวไปอยู่รอบของใบแรก (ผิดงวด) — ปฏิเสธ · ทางไปต่อ = รายการเครดิตใหม่
-                if (row.CertificateDate is DateTime firstCert && WhtCertIntakeVerdict.FiscalYearOf(firstCert, co.FiscalYearStartMonth) != certFy)
+                if (WhtCertIntakeVerdict.CrossesCreditPeriod(row.CertificateDate, intake.CertificateDate.Value, co.FiscalYearStartMonth))
                     throw new BusinessRuleException($"รายการ {row.PayerName} มีหนังสือรับรองใบแรกลงวันที่ในรอบบัญชีอื่นแล้ว — ใบนี้อยู่คนละรอบ ลงรวมแถวเดียวไม่ได้ "
                         + "(ระบบนับงวดเครดิตตามวันที่ใบแรกของแถว) · เลือก \"บันทึกเป็นรายการเครดิตใหม่\" แทน", RuleCode, 409);
                 var outstanding = R(row.WhtAmount - row.ReceivedAmount);
@@ -383,7 +390,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                 var payerPending = (await LoadCandidatesAsync(companyId, null, ct)).Where(c =>
                     (payerTax.Length == 13 && ThaiTaxId.Normalize(c.Candidate.PayerTaxId) == payerTax)
                     || (intake.PayerContactId is Guid pc && c.Candidate.PayerContactId == pc)).ToList();
-                var h2Case = payerPending.Any(c => c.CertificateDate is DateTime fc && WhtCertIntakeVerdict.FiscalYearOf(fc, co.FiscalYearStartMonth) != certFy);
+                var h2Case = payerPending.Any(c => WhtCertIntakeVerdict.CrossesCreditPeriod(c.CertificateDate, intake.CertificateDate.Value, co.FiscalYearStartMonth));
                 if (payerPending.Count > 0 && !h2Case && (Trim(req.StandaloneReason)?.Length ?? 0) < 10)
                     throw new BusinessRuleException($"ผู้จ่ายรายนี้มีรายการรอ 50 ทวิ อยู่ {payerPending.Count} รายการ — เลือกรายการที่ใบนี้ครอบ · "
                         + "ถ้าเป็นการรับชำระนอกระบบจริง ให้ระบุเหตุผลอย่างน้อย 10 ตัวอักษร (บันทึกใน audit · ทะเบียนจะมากกว่ายอดบัญชี 11910)", RuleCode, 400);

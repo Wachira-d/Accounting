@@ -57,6 +57,20 @@ public static class WhtCreditableAmount
     /// <summary>ยอดที่ยัง "ขาดใบ" ของแถว = ถูกหัก − ได้รับใบแล้ว (เฉพาะ Pending · สถานะอื่น = 0)</summary>
     public static decimal Missing(WhtCreditStatus status, decimal whtAmount, decimal receivedAmount)
         => status == WhtCreditStatus.Pending
+            // ฝ่ายค้าน WP-09 รอบสอง (L2 เศษ · DECISIONS 252-WP09-10): Received ที่ได้ใบผ่านกล่องรับต่ำกว่ายอดถูกหัก (≤ ฿1) ⇒ เศษยังเห็นเป็น "ขาดใบ"
+            // (ทะเบียน = รอใบ + ได้ใบ = ยอดถูกหัก = GL 11910 · ตัดสูญเศษได้พร้อม JE) · Received รุ่นเก่า (ReceivedAmount 0) = 0 เหมือนเดิม
+            || (status == WhtCreditStatus.Received && receivedAmount > 0.005m)
             ? Math.Round(Math.Max(0m, whtAmount) - Of(status, whtAmount, receivedAmount), 2, MidpointRounding.AwayFromZero)
             : 0m;
+
+    /// <summary>ฝ่ายค้าน WP-09 รอบสอง M-C: GL ของเอกสารต้นทางลดลง (ยกเลิก/แก้ใบ) บนแถวที่ "ตัดสูญพร้อม JE ที่ยังมีผล" ⇒ ต้องกลับ JE ตัดสูญ (ไม่งั้น 11910 ติดลบ:
+    /// ต้นทางกลับ Cr 11910 ซ้ำกับ JE ตัดสูญ) — รวมแถวที่มีเลขที่ใบ ("ใบจริงชนะ" ใช้กับยอดที่ได้ใบ ไม่ใช่กับ JE ตัดสูญ) ·
+    /// ยอดคงเหลือของแถว = max(GL, ยอดที่ได้ใบ) (ส่วนที่มีใบยังเป็นเครดิต) · เหลือ 0 ⇒ ถอดแถว (เหมือนแถวรอใบของใบที่ถูกยกเลิก)</summary>
+    public static (bool UndoWriteOff, decimal Remaining, bool RemoveRow) AfterSourceGlDrop(
+        bool liveWriteOff, decimal whtAmount, decimal receivedAmount, decimal glAmount)
+    {
+        if (!liveWriteOff || glAmount >= whtAmount - 0.005m) return (false, 0m, false);
+        var remaining = Math.Round(Math.Max(Math.Max(0m, glAmount), Math.Max(0m, receivedAmount)), 2, MidpointRounding.AwayFromZero);
+        return (true, remaining, remaining <= 0.005m);
+    }
 }

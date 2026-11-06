@@ -80,17 +80,11 @@ Accounting/Controllers/BankController.cs	CreateJeFromTransaction	1
 Accounting/Controllers/BankController.cs	CreateReconciliationGroup	1
 Accounting/Controllers/BankController.cs	CreateTransaction	1
 Accounting/Controllers/BankController.cs	DeleteTransaction	1
-Accounting/Controllers/BankController.cs	ImportStatement	1
 Accounting/Controllers/BankController.cs	Reconcile	1
 Accounting/Controllers/BankController.cs	RecordBulkMatchOutcomes	1
 Accounting/Controllers/BankController.cs	UnmatchTransaction	1
 Accounting/Controllers/BankController.cs	UnreconcileGroup	1
 Accounting/Controllers/BankController.cs	UpdateAccount	1
-Accounting/Controllers/BankFeedController.cs	CreateConnection	1
-Accounting/Controllers/BankFeedController.cs	DeleteConnection	1
-Accounting/Controllers/BankFeedController.cs	Sync	1
-Accounting/Controllers/BankFeedController.cs	SyncAll	1
-Accounting/Controllers/BankFeedController.cs	TestConnection	1
 Accounting/Controllers/BudgetController.cs	Create	1
 Accounting/Controllers/BudgetController.cs	Delete	1
 Accounting/Controllers/BudgetController.cs	Update	1
@@ -331,11 +325,6 @@ Accounting/Controllers/NotificationController.cs	MarkAllAsRead	1
 Accounting/Controllers/NotificationController.cs	MarkAsRead	1
 Accounting/Controllers/OcrController.cs	PurchaseCredits	1
 Accounting/Controllers/OcrController.cs	UploadAndScan	1
-Accounting/Controllers/OpenBankingController.cs	CreateConnection	1
-Accounting/Controllers/OpenBankingController.cs	DeleteConnection	1
-Accounting/Controllers/OpenBankingController.cs	ImportFile	1
-Accounting/Controllers/OpenBankingController.cs	Sync	1
-Accounting/Controllers/OpenBankingController.cs	UpdateConnection	1
 Accounting/Controllers/OrganizationController.cs	CreateDepartment	1
 Accounting/Controllers/OrganizationController.cs	CreatePosition	1
 Accounting/Controllers/OrganizationController.cs	DeleteDepartment	1
@@ -413,6 +402,8 @@ Accounting/Controllers/PublicPaymentController.cs	StartBooking	1
 Accounting/Controllers/PublicPaymentController.cs	StartDocument	1
 Accounting/Controllers/PublicPaymentController.cs	StartLodging	1
 Accounting/Controllers/PublicPaymentController.cs	StartOrder	1
+# รอบ 255 WP-12B ข้อ 1: แจ้งโอน + แนบสลิปจากหน้าชำระของเอกสาร — ทางเข้าสาธารณะโดยตั้งใจ (สิทธิ์ = token ลิงก์ชำระเดียวกับ StartDocument · ไบต์จริง · สลิปรอตรวจ 409 · ≤5/ใบ/ชม. · ยอดจากเซิร์ฟเวอร์ · ผล = รอคนยืนยัน — ล็อก R255)
+Accounting/Controllers/PublicPaymentController.cs	SubmitDocumentSlip	1
 Accounting/Controllers/PublicQuotationController.cs	Accept	1
 Accounting/Controllers/PublicQuotationController.cs	SignDelivery	1
 Accounting/Controllers/PublicReservationController.cs	Cancel	1

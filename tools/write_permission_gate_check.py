@@ -154,6 +154,9 @@ WATCHED = [
     # รอบ 252 WP-12A — หน้า Autopilot: ยืนยันเงินโอน = บันทึกรับชำระ (Bank.Reconcile) · ค่าตั้งปิดหนี้อัตโนมัติ/แปลงใบเสนอราคา (CompanySettings.Edit) ·
     # ตั้ง/ลองแปลงใบเสนอราคา (Document.Create) — ใส่ตอนเขียวตั้งแต่ไฟล์เกิด (ratchet)
     "Accounting/Controllers/AutopilotController.cs",
+    # รอบ 252 WP-12A ฝ่ายค้านรอบสอง H-B — การเชื่อมต่อธนาคาร/ดึงรายการ/นำเข้าไฟล์ = เขียนหลักฐานเงินเข้า (Bank.Reconcile ทุก write · ใส่ตอนเขียว)
+    "Accounting/Controllers/OpenBankingController.cs",
+    "Accounting/Controllers/BankFeedController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

@@ -64,7 +64,16 @@ public class BankReceiptSettleService : IBankReceiptSettleService
 
     private sealed record Candidate(BankReceiptAutoSettle.Candidate Facts, string? ContactName, DocumentType Type);
 
-    private async Task<List<Candidate>> CandidatesAsync(Guid companyId, BankTransaction line, CancellationToken ct)
+    /// <summary>ใบยอดตรงแบบเบา (ไม่โหลดข้อเท็จจริงต่อใบ) — ใช้เป็นตัวเลือกในคิวเมื่อมีใบยอดเท่ากันมาก (ฝ่ายค้านรอบสอง M-E · LOW ChoicesFrom)</summary>
+    private sealed record ExactLite(Guid DocumentId, string DocumentNumber, string? ContactName, decimal BalanceDue, DateTime DocumentDate);
+
+    /// <summary>ผู้สมัครของบรรทัด — <paramref name="TooManyReason"/> ≠ null = ใบยอดตรงเกิน <see cref="BankReceiptAutoSettle.MaxExactForFacts"/> และไม่อ้างเลขใบ ⇒ เสนอโดยไม่เลือกใบ</summary>
+    private sealed record CandidateSet(List<Candidate> Items, string? TooManyReason, List<ExactLite> ExactLites)
+    {
+        public static CandidateSet Empty => new(new List<Candidate>(), null, new List<ExactLite>());
+    }
+
+    private async Task<CandidateSet> CandidatesAsync(Guid companyId, BankTransaction line, CancellationToken ct)
     {
         var amount = Math.Abs(line.Amount);
         var near = Math.Max(BankReceiptAutoSettle.NearAbsolute, Math.Round(amount * BankReceiptAutoSettle.NearPercent, 2, MidpointRounding.AwayFromZero));
@@ -77,15 +86,49 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                 && PayableTypes.Contains(d.DocumentType) && OpenStatuses.Contains(d.Status)
                 && d.BalanceDue > 0m && d.DocumentDate < latest);
-        // M1: ยอดตรงทั้งหมด (ไม่ตัดจำนวน — กติกา "ยอดซ้ำ" ต้องเห็นทุกใบ) + ยอดใกล้เคียงเรียงตามส่วนต่าง
-        var exactDocs = await open.Where(d => d.BalanceDue == amount).ToListAsync(ct);
+        var lineText = $"{line.Description} {line.Reference} {line.Payee}";
+        // M1 + ฝ่ายค้านรอบสอง M-E: นับยอดตรงใน SQL ก่อน — เกิน 8 ใบ ⇒ โหลดเฉพาะใบที่รายการอ้างเลข (ไม่อ้าง = เสนอ "ยอดเท่ากันจำนวนมาก" ไม่โหลดข้อเท็จจริงทุกใบ)
+        var exactCount = await open.CountAsync(d => d.BalanceDue == amount, ct);
+        List<Document> exactDocs;
+        string? tooMany = null;
+        var exactLites = new List<ExactLite>();
+        if (exactCount <= BankReceiptAutoSettle.MaxExactForFacts)
+            exactDocs = await open.Where(d => d.BalanceDue == amount).ToListAsync(ct);
+        else
+        {
+            var lite = await open.Where(d => d.BalanceDue == amount && d.DocumentType != DocumentType.DebitNote)
+                .OrderByDescending(d => d.DocumentDate).Take(500)
+                .Select(d => new { d.Id, d.DocumentNumber, d.ContactId, d.BalanceDue, d.DocumentDate, d.Currency }).ToListAsync(ct);
+            var citedIds = lite.Where(x => BankReceiptAutoSettle.CitesDocumentNumber(lineText, x.DocumentNumber)).Select(x => x.Id).ToList();
+            exactDocs = citedIds.Count == 0 ? new List<Document>() : await open.Where(d => citedIds.Contains(d.Id)).ToListAsync(ct);
+            if (citedIds.Count == 0)
+            {
+                tooMany = BankReceiptAutoSettle.TooManyEqualReason;
+                // ตัวเลือกในคิว: ใบยอดตรงล่าสุด 30 ใบ ที่ลิงก์ชำระรับได้ (ใบแจ้งหนี้ที่มีใบกำกับแล้ว/สกุลอื่นตัดออก — ชุดเดียวกับ IssueRefusal ส่วนที่ไม่ต้องโหลดรายใบ)
+                var top = lite.Where(x => DocumentPayLinkPolicy.IsThb(x.Currency)).Take(30).ToList();
+                var topIds = top.Select(x => x.Id).ToList();
+                var superseded = await _db.Documents.AsNoTracking()
+                    .Where(c => c.CompanyId == companyId && c.RelatedDocumentId != null && topIds.Contains(c.RelatedDocumentId.Value) && !c.IsDeleted
+                        && c.DocumentType == DocumentType.TaxInvoice && c.Status != DocumentStatus.Draft && c.Status != DocumentStatus.WaitingApproval
+                        && c.Status != DocumentStatus.Rejected && c.Status != DocumentStatus.Voided)
+                    .Select(c => c.RelatedDocumentId!.Value).Distinct().ToListAsync(ct);
+                var liteContactIds = top.Select(x => x.ContactId).Distinct().ToList();
+                var liteNames = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                    .Where(c => c.CompanyId == companyId && liteContactIds.Contains(c.Id))
+                    .Select(c => new { c.Id, c.Name }).ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+                exactLites = top.Where(x => !superseded.Contains(x.Id))
+                    .Select(x => new ExactLite(x.Id, x.DocumentNumber, liteNames.GetValueOrDefault(x.ContactId), x.BalanceDue, x.DocumentDate)).ToList();
+            }
+        }
         var nearDocs = await open
             .Where(d => d.BalanceDue != amount
                 && ((d.BalanceDue >= lo && d.BalanceDue <= hi) || (d.WithholdingTaxAmount > 0m && d.BalanceDue >= loGross && d.BalanceDue < amount)))
             .OrderBy(d => Math.Abs(d.BalanceDue - amount)).Take(MaxCandidates)
             .ToListAsync(ct);
+        // ยอดตรงจำนวนมากและไม่อ้างเลขใบ ⇒ ไม่ประเมินใบใกล้เคียงด้วย (คำตัดสิน = เสนอให้คนเลือก)
+        if (tooMany != null) return new CandidateSet(new List<Candidate>(), tooMany, exactLites);
         var docs = exactDocs.Concat(nearDocs).GroupBy(d => d.Id).Select(g => g.First()).ToList();
-        if (docs.Count == 0) return new List<Candidate>();
+        if (docs.Count == 0) return CandidateSet.Empty;
 
         var docIds = docs.Select(d => d.Id).ToList();
         var contactIds = docs.Select(d => d.ContactId).Distinct().ToList();
@@ -101,7 +144,6 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             .Where(i => i.CompanyId == companyId && i.SourceKind == PaymentSourceKind.Document && docIds.Contains(i.SourceId))
             .Select(i => new { i.SourceId, i.Status, i.MethodKind, i.SlipBankRef }).ToListAsync(ct);
 
-        var lineText = $"{line.Description} {line.Reference} {line.Payee}";
         var approveByType = new Dictionary<DocumentType, bool>();
         var list = new List<Candidate>();
         foreach (var d in docs)
@@ -139,17 +181,19 @@ public class BankReceiptSettleService : IBankReceiptSettleService
                 CreatorMayApprove: mayApprove,
                 ContactIsSupplier: contact?.IsSupplier ?? false), contact?.Name, d.DocumentType));
         }
-        return list;
+        return new CandidateSet(list, null, new List<ExactLite>());
     }
 
-    private async Task<(BankReceiptAutoSettle.Result Result, List<Candidate> Candidates)> DecideAsync(Guid companyId, BankTransaction line, bool enabled,
+    private async Task<(BankReceiptAutoSettle.Result Result, CandidateSet Candidates)> DecideAsync(Guid companyId, BankTransaction line, bool enabled,
         CancellationToken ct)
     {
         var candidates = await CandidatesAsync(companyId, line, ct);
+        if (candidates.TooManyReason != null)
+            return (new BankReceiptAutoSettle.Result(BankReceiptAutoSettle.Verdict.Suggest, null, BankReceiptAutoSettle.RuleSuggest, candidates.TooManyReason, false), candidates);
         var result = BankReceiptAutoSettle.Decide(
             new BankReceiptAutoSettle.Line(Math.Abs(line.Amount), line.TransactionDate, line.TransactionType == BankTransactionType.Deposit,
                 line.EntrySource, line.MatchedPaymentId != null || line.MatchedJournalEntryId != null || line.ReconciliationStatus != ReconciliationStatus.Unmatched),
-            candidates.Select(c => c.Facts).ToList(), enabled);
+            candidates.Items.Select(c => c.Facts).ToList(), enabled);
         return (result, candidates);
     }
 
@@ -158,7 +202,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
     {
         var cur = await _db.BankAccounts.AsNoTracking().IgnoreQueryFilters()
             .Where(a => a.Id == bankAccountId && a.CompanyId == companyId).Select(a => a.Currency).FirstOrDefaultAsync(ct);
-        return BankMatchCurrency.Normalize(cur) == "THB";
+        return DocumentPayLinkPolicy.IsThb(cur);   // ว่าง = บาท (ตัวเดียวกับลิงก์ชำระ — ฝ่ายค้านรอบสอง LOW)
     }
 
     // ═══════════════ งานเบื้องหลัง ═══════════════
@@ -175,9 +219,9 @@ public class BankReceiptSettleService : IBankReceiptSettleService
                 && t.TransactionType == BankTransactionType.Deposit && t.Amount > 0m
                 && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Applying
                     || (t.TransactionDate >= since
-                        && (t.AutoSettleVerdict == null
-                            || ((t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.None || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest)
-                                && (t.AutoSettleEvaluatedAt == null || t.AutoSettleEvaluatedAt < stale))))))
+                        // ฝ่ายค้านรอบสอง M7: ยังไม่มีคำตัดสินแต่เคยล้ม (มีเวลาประเมิน) ก็รอ 6 ชม. เหมือนแถวอื่น — ไม่วนหัวคิว
+                        && (t.AutoSettleVerdict == null || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.None || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest)
+                        && (t.AutoSettleEvaluatedAt == null || t.AutoSettleEvaluatedAt < stale))))
             .OrderBy(t => t.AutoSettleEvaluatedAt != null).ThenBy(t => t.AutoSettleEvaluatedAt).ThenBy(t => t.TransactionDate)
             .Take(BatchSize)
             .Select(t => new { t.Id, t.CompanyId }).ToListAsync(ct);
@@ -207,7 +251,16 @@ public class BankReceiptSettleService : IBankReceiptSettleService
                 await _db.BankTransactions.Where(t => t.Id == l.Id && t.CompanyId == l.CompanyId)
                     .ExecuteUpdateAsync(u => u
                         .SetProperty(t => t.AutoSettleEvaluatedAt, (DateTime?)nowUtc)
+                        .SetProperty(t => t.AutoSettleFailCount, t => t.AutoSettleFailCount + 1)
                         .SetProperty(t => t.AutoSettleReason, why), ct);
+                // ฝ่ายค้านรอบสอง M7: ล้มครบ N ครั้ง ⇒ พักไว้ให้คนดู (Held · อยู่ในคิว · ไม่ประเมินซ้ำ)
+                var heldWhy = "พักไว้ (ประเมินล้มซ้ำหลายครั้ง): " + why;
+                await _db.BankTransactions
+                    .Where(t => t.Id == l.Id && t.CompanyId == l.CompanyId && t.AutoSettleFailCount >= BankReceiptAutoSettle.PoisonFailures
+                        && t.AutoSettleVerdict != BankReceiptAutoSettle.Stamps.Applying)
+                    .ExecuteUpdateAsync(u => u
+                        .SetProperty(t => t.AutoSettleVerdict, BankReceiptAutoSettle.Stamps.Held)
+                        .SetProperty(t => t.AutoSettleReason, heldWhy), ct);
             }
         }
         if (failed > 0)
@@ -224,10 +277,11 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         // ล้มกลางทางรอบก่อน (สร้างการชำระแล้วแต่ยังไม่ผูก) ⇒ กู้ด้วยเลขอ้างอิง ไม่ประเมินใหม่ (ยอดค้างเปลี่ยนไปแล้ว)
         if (line.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Applying)
         {
-            var paid = await ExistingPaymentAsync(companyId, line.Id, ct);
-            if (paid != null)
+            var paid = await ExistingPaymentAsync(companyId, line, ct);
+            if (paid is { } found)
             {
-                await LinkAsync(companyId, line, paid.Value.PaymentId, paid.Value.DocumentId, BankMatchAttribution.BankAutoSettle,
+                if (!found.Matches) { await MismatchAsync(companyId, line, found.DocumentId, ct); return; }
+                await LinkAsync(companyId, line, found.PaymentId, found.DocumentId, BankMatchAttribution.BankAutoSettle, BankReceiptAutoSettle.RuleAuto,
                     "กู้การผูกหลังล้มกลางทาง — พบการชำระที่ระบบสร้างจากรายการนี้แล้ว", null, nowUtc, ct);
                 return;
             }
@@ -250,7 +304,8 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         var (result, _) = await DecideAsync(companyId, line, companyEnabled, ct);
         if (result.Kind == BankReceiptAutoSettle.Verdict.AutoSettle && result.DocumentId is Guid docId)
         {
-            var (ok, error) = await ApplyAsync(companyId, line, docId, "bank-auto-settle", BankMatchAttribution.BankAutoSettle, result.Reason, null, nowUtc, ct);
+            var (ok, error) = await ApplyAsync(companyId, line, docId, "bank-auto-settle", BankMatchAttribution.BankAutoSettle, BankReceiptAutoSettle.RuleAuto,
+                result.Reason, null, nowUtc, ct);
             // error null = อีกทางกำลังบันทึก/จับคู่ไปแล้ว (ไม่ใช่ความล้มเหลว — ไม่แจ้ง)
             if (!ok && error != null) await NotifyFailedAsync(companyId, line, docId, error, ct);
             return;
@@ -265,16 +320,31 @@ public class BankReceiptSettleService : IBankReceiptSettleService
                 .SetProperty(t => t.AutoSettleVerdict, stamp)
                 .SetProperty(t => t.AutoSettleReason, reason)
                 .SetProperty(t => t.AutoSettleDocumentId, documentId)
+                .SetProperty(t => t.AutoSettleFailCount, 0)
                 .SetProperty(t => t.AutoSettleEvaluatedAt, (DateTime?)nowUtc), ct);
 
     /// <summary>การชำระที่ระบบสร้างจากบรรทัดนี้แล้ว (เลขอ้างอิง <c>BANK:{lineId}</c> · บริษัทนี้) — กุญแจกันสร้างซ้ำ</summary>
-    private async Task<(Guid PaymentId, Guid DocumentId)?> ExistingPaymentAsync(Guid companyId, Guid lineId, CancellationToken ct)
+    /// <remarks>Matches — ฝ่ายค้านรอบสอง LOW: ยอด = ยอดบรรทัด และบัญชีธนาคารของการชำระ = บัญชีของบรรทัด · ไม่ตรง ⇒ ห้ามผูก (แจ้งดัง)</remarks>
+    private async Task<(Guid PaymentId, Guid DocumentId, bool Matches)?> ExistingPaymentAsync(Guid companyId, BankTransaction line, CancellationToken ct)
     {
-        var reference = PaymentReference(lineId);
+        var reference = PaymentReference(line.Id);
         var p = await _db.Payments.AsNoTracking().Where(x => x.CompanyId == companyId && x.Reference == reference && !x.IsDeleted)
-            .Select(x => new { x.Id, x.DocumentId }).FirstOrDefaultAsync(ct);
+            .Select(x => new { x.Id, x.DocumentId, x.Amount, x.BankAccountId, x.OverrideBankAccountId }).FirstOrDefaultAsync(ct);
         if (p == null) return null;
-        return (p.Id, p.DocumentId);
+        var matches = p.Amount == Math.Abs(line.Amount)
+            && (p.OverrideBankAccountId == line.BankAccountId || p.BankAccountId == line.BankAccountId);
+        return (p.Id, p.DocumentId, matches);
+    }
+
+    /// <summary>พบการชำระเลขอ้างอิงของบรรทัดแต่ยอด/บัญชีไม่ตรง ⇒ ไม่ผูก · ประทับ Failed + แจ้งดัง (คนตรวจ)</summary>
+    private async Task MismatchAsync(Guid companyId, BankTransaction line, Guid documentId, CancellationToken ct)
+    {
+        const string why = "พบการชำระที่ใช้เลขอ้างอิงของรายการนี้แต่ยอด/บัญชีธนาคารไม่ตรง — ไม่ผูกอัตโนมัติ ตรวจที่หน้ากระทบยอดธนาคาร";
+        await _db.BankTransactions.Where(t => t.Id == line.Id && t.CompanyId == companyId && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(t => t.AutoSettleVerdict, BankReceiptAutoSettle.Stamps.Failed)
+                .SetProperty(t => t.AutoSettleReason, why), ct);
+        await NotifyFailedAsync(companyId, line, documentId, why, ct);
     }
 
     // ═══════════════ ลงมือ (ทางเดียวของทั้งระบบและคนยืนยัน) ═══════════════
@@ -282,7 +352,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
     /// <summary>บันทึกรับชำระจากบรรทัด → ผูกบรรทัด · คืน (สำเร็จ, เหตุเมื่อล้ม) · <b>ลำดับ</b>: ประทับ Applying → (มีการชำระของบรรทัดนี้แล้ว? ผูก) →
     /// <c>CreatePaymentAsync</c> → ผูก · ล้มหลังสร้างการชำระสำเร็จ (ขั้นหลัง commit) ⇒ ค้นพบด้วยเลขอ้างอิงแล้วผูก ไม่ประทับล้ม (H2)</summary>
     private async Task<(bool Ok, string? Error)> ApplyAsync(Guid companyId, BankTransaction line, Guid documentId, string actor, string reconciledBy,
-        string reason, Guid? userId, DateTime nowUtc, CancellationToken ct)
+        string ruleCode, string reason, Guid? userId, DateTime nowUtc, CancellationToken ct)
     {
         // กันสองทาง (งานเบื้องหลัง × คนกดยืนยัน) ลงมือกับบรรทัดเดียวพร้อมกัน — ผู้ชนะคือคนที่เปลี่ยนสถานะจากที่ไม่ใช่ Applying/Settled ได้
         var claimed = await _db.BankTransactions
@@ -298,9 +368,10 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             return (false, null);   // อีกทางกำลังบันทึก/จับคู่ไปแล้ว — ผู้เรียกตัดสินเองว่าจะบอกอะไร
 
         // H2: มีการชำระของบรรทัดนี้อยู่แล้ว (รอบก่อนสร้างสำเร็จแล้วล้มก่อนผูก) ⇒ ผูก ไม่สร้างซ้ำ
-        if (await ExistingPaymentAsync(companyId, line.Id, ct) is { } before)
+        if (await ExistingPaymentAsync(companyId, line, ct) is { } before)
         {
-            if (await LinkAsync(companyId, line, before.PaymentId, before.DocumentId, reconciledBy, reason, userId, nowUtc, ct)) return (true, null);
+            if (!before.Matches) { await MismatchAsync(companyId, line, before.DocumentId, ct); return (false, null); }
+            if (await LinkAsync(companyId, line, before.PaymentId, before.DocumentId, reconciledBy, ruleCode, reason, userId, nowUtc, ct)) return (true, null);
             return (false, "ผูกรายการเดินบัญชีกับการชำระที่มีอยู่ไม่สำเร็จ — ตรวจที่หน้ากระทบยอดธนาคาร");
         }
 
@@ -330,10 +401,11 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             // ล้าง tracker กันแถวที่ค้างจากธุรกรรมที่ rollback ไปปนการบันทึกถัดไป
             _db.ChangeTracker.Clear();
             // H2: การชำระอาจ commit แล้วแต่ขั้นหลัง commit ล้ม ⇒ ค้นด้วยเลขอ้างอิงอีกครั้ง — มี = ผูก (ไม่ประทับล้ม · ไม่สร้างซ้ำรอบหน้า)
-            if (await ExistingPaymentAsync(companyId, line.Id, ct) is { } committed)
+            if (await ExistingPaymentAsync(companyId, line, ct) is { } committed)
             {
                 _logger.LogError(ex, "บันทึกรับชำระจากเงินโอน {Line} สำเร็จแต่ขั้นหลังบันทึกล้ม — ผูกกับการชำระที่สร้างแล้ว", line.Id);
-                if (await LinkAsync(companyId, line, committed.PaymentId, committed.DocumentId, reconciledBy, reason, userId, nowUtc, ct)) return (true, null);
+                if (!committed.Matches) { await MismatchAsync(companyId, line, committed.DocumentId, ct); return (false, null); }
+                if (await LinkAsync(companyId, line, committed.PaymentId, committed.DocumentId, reconciledBy, ruleCode, reason, userId, nowUtc, ct)) return (true, null);
                 return (false, "ผูกรายการเดินบัญชีกับการชำระที่สร้างแล้วไม่สำเร็จ — ตรวจที่หน้ากระทบยอดธนาคาร");
             }
             var msg = ex is BusinessRuleException or InvalidOperationException or KeyNotFoundException ? ex.Message : "ข้อผิดพลาดของระบบระหว่างบันทึกรับชำระ";
@@ -346,13 +418,13 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             return (false, msg);
         }
 
-        if (await LinkAsync(companyId, line, paymentId, documentId, reconciledBy, reason, userId, nowUtc, ct)) return (true, null);
+        if (await LinkAsync(companyId, line, paymentId, documentId, reconciledBy, ruleCode, reason, userId, nowUtc, ct)) return (true, null);
         return (false, "บันทึกรับชำระแล้วแต่ผูกรายการเดินบัญชีไม่สำเร็จ — ตรวจที่หน้ากระทบยอดธนาคาร");
     }
 
     /// <summary>ผูกบรรทัดกับการชำระ + audit ใน<b>ธุรกรรมเดียว</b> (M5) — เฉพาะบรรทัดที่ยัง Applying + ไม่จับคู่ (ทางมืออื่นจับไปก่อน = 0 แถว ⇒ แจ้งดัง · คืน false)</summary>
-    private async Task<bool> LinkAsync(Guid companyId, BankTransaction line, Guid paymentId, Guid documentId, string reconciledBy, string reason, Guid? userId,
-        DateTime nowUtc, CancellationToken ct)
+    private async Task<bool> LinkAsync(Guid companyId, BankTransaction line, Guid paymentId, Guid documentId, string reconciledBy, string ruleCode, string reason,
+        Guid? userId, DateTime nowUtc, CancellationToken ct)
     {
         var strategy = _db.Database.CreateExecutionStrategy();
         var linked = await strategy.ExecuteAsync(async () =>
@@ -366,7 +438,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
                     .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Matched)
                     .SetProperty(t => t.ReconciledAt, (DateTime?)nowUtc)
                     .SetProperty(t => t.ReconciledBy, reconciledBy)
-                    .SetProperty(t => t.MatchRuleCode, BankReceiptAutoSettle.RuleAuto)
+                    .SetProperty(t => t.MatchRuleCode, ruleCode)
                     .SetProperty(t => t.MatchReason, reason)
                     .SetProperty(t => t.AutoSettleVerdict, BankReceiptAutoSettle.Stamps.Settled)
                     .SetProperty(t => t.AutoSettleDocumentId, (Guid?)documentId), ct);
@@ -384,7 +456,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
                 EntityId = line.Id.ToString(),
                 NewValues = JsonSerializer.Serialize(new
                 {
-                    action = "bank-auto-settle", ruleCode = BankReceiptAutoSettle.RuleAuto, paymentId, documentId, amount = Math.Abs(line.Amount),
+                    action = ruleCode == BankReceiptAutoSettle.RuleConfirm ? "bank-confirm-suggest" : "bank-auto-settle", ruleCode, paymentId, documentId, amount = Math.Abs(line.Amount),
                     lineDate = line.TransactionDate, entrySource = line.EntrySource,
                     // H1(c): ใครนำเข้าบรรทัดที่ใช้เป็นหลักฐาน
                     lineCreatedBy = line.CreatedBy, lineCreatedByUserId = line.CreatedByUserId,
@@ -423,7 +495,8 @@ public class BankReceiptSettleService : IBankReceiptSettleService
     {
         var lines = await _db.BankTransactions.AsNoTracking()
             .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
-                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed))
+                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed
+                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held))
             .OrderByDescending(t => t.TransactionDate).Take(100).ToListAsync(ct);
         if (lines.Count == 0) return Array.Empty<BankAutoSettleQueueRowDto>();
         var docIds = lines.Where(l => l.AutoSettleDocumentId != null).Select(l => l.AutoSettleDocumentId!.Value).Distinct().ToList();
@@ -448,16 +521,17 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         return rows;
     }
 
-    private static List<BankAutoSettleChoiceDto> ChoicesFrom(BankTransaction line, List<Candidate> cands)
+    /// <summary>ตัวเลือกในคิว — ใบที่อ้างเลขก่อน · ยอดตรงทุกใบ (สูงสุด 30) · แล้วใบใกล้เคียง (ฝ่ายค้านรอบสอง LOW: เดิมตัด 8 ใบ ⇒ ใบที่ถูกอาจหาย)</summary>
+    private static List<BankAutoSettleChoiceDto> ChoicesFrom(BankTransaction line, CandidateSet set)
     {
         var amount = Math.Abs(line.Amount);
         var near = Math.Max(BankReceiptAutoSettle.NearAbsolute, Math.Round(amount * BankReceiptAutoSettle.NearPercent, 2, MidpointRounding.AwayFromZero));
-        return cands
+        var full = set.Items
             .Where(c => Math.Abs(c.Facts.ExpectedNet - amount) <= near || c.Facts.DocumentId == line.AutoSettleDocumentId)
-            .OrderBy(c => Math.Abs(c.Facts.ExpectedNet - amount)).ThenByDescending(c => c.Facts.DocumentDate)
-            .Take(8)
-            .Select(c => new BankAutoSettleChoiceDto(c.Facts.DocumentId, c.Facts.DocumentNumber, c.ContactName, c.Facts.ExpectedNet))
-            .ToList();
+            .OrderByDescending(c => c.Facts.CitesDocumentNumber).ThenBy(c => Math.Abs(c.Facts.ExpectedNet - amount)).ThenByDescending(c => c.Facts.DocumentDate)
+            .Select(c => new BankAutoSettleChoiceDto(c.Facts.DocumentId, c.Facts.DocumentNumber, c.ContactName, c.Facts.ExpectedNet));
+        var lite = set.ExactLites.Select(x => new BankAutoSettleChoiceDto(x.DocumentId, x.DocumentNumber, x.ContactName, x.BalanceDue));
+        return full.Concat(lite).GroupBy(c => c.DocumentId).Select(g => g.First()).Take(30).ToList();
     }
 
     /// <summary>M4: ชนิดของเอกสาร (บริษัทนี้) — ผู้เรียกตรวจสิทธิ์อนุมัติชนิดนั้นก่อนยืนยัน · null = ไม่พบ</summary>
@@ -480,7 +554,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         if (!ChoicesFrom(line, cands).Any(c => c.DocumentId == documentId))
             throw new BusinessRuleException("ใบที่เลือกไม่อยู่ในชุดใบค้างที่ยอดตรง/ใกล้เคียงกับเงินเข้านี้ — บันทึกรับชำระที่หน้าเอกสารแทน", BankReceiptAutoSettle.RuleAuto, 400);
         var (ok, error) = await ApplyAsync(companyId, line, documentId, userId.ToString(), BankMatchAttribution.Person(userId),
-            "ผู้ใช้ยืนยันข้อเสนอเงินโอนเข้า", userId, DateTime.UtcNow, ct);
+            BankReceiptAutoSettle.RuleConfirm, "ผู้ใช้ยืนยันข้อเสนอเงินโอนเข้า", userId, DateTime.UtcNow, ct);
         if (!ok) throw new BusinessRuleException(error ?? "รายการนี้กำลังถูกบันทึกหรือถูกจับคู่ไปแล้ว — โหลดหน้าใหม่", BankReceiptAutoSettle.RuleAuto, 409);
         return "บันทึกรับชำระและจับคู่รายการเดินบัญชีแล้ว — ใบเสร็จออก/ส่งตามค่าตั้งงานหลังรับชำระ";
     }
@@ -490,7 +564,8 @@ public class BankReceiptSettleService : IBankReceiptSettleService
     {
         var n = await _db.BankTransactions
             .Where(t => t.Id == lineId && t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
-                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed))
+                && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed
+                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held))
             .ExecuteUpdateAsync(u => u
                 .SetProperty(t => t.AutoSettleVerdict, BankReceiptAutoSettle.Stamps.Rejected)
                 .SetProperty(t => t.AutoSettleReason, "ผู้ใช้ปฏิเสธข้อเสนอ — ไม่เสนอซ้ำ (จับคู่เองที่หน้ากระทบยอดธนาคาร)"), ct);
@@ -514,8 +589,22 @@ public class BankReceiptSettleService : IBankReceiptSettleService
                 && t.TransactionDate >= since && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
             .OrderByDescending(t => t.TransactionDate).Take(500).ToListAsync(ct);
         var results = new List<BankReceiptAutoSettle.Result>();
+        var thbByAccount = new Dictionary<Guid, bool>();
         foreach (var l in lines)
+        {
+            // ฝ่ายค้านรอบสอง LOW: บัญชีไม่ใช่บาทไม่เข้าเส้น ⇒ นับเป็นไม่พบ (เหมือนงานจริง)
+            if (!thbByAccount.TryGetValue(l.BankAccountId, out var thb))
+            {
+                thb = await AccountIsThbAsync(companyId, l.BankAccountId, ct);
+                thbByAccount[l.BankAccountId] = thb;
+            }
+            if (!thb)
+            {
+                results.Add(new BankReceiptAutoSettle.Result(BankReceiptAutoSettle.Verdict.None, null, BankReceiptAutoSettle.RuleNone, "บัญชีไม่ใช่สกุลบาท", false));
+                continue;
+            }
             results.Add((await DecideAsync(companyId, l, enabled: true, ct)).Result);
+        }
         var s = BankReceiptAutoSettle.Summarize(results);
         var legacy = lines.Count(l => l.EntrySource == null);
         var userSupplied = lines.Count(l => l.EntrySource is BankReceiptAutoSettle.SourceUserFile or BankReceiptAutoSettle.SourceApi or BankReceiptAutoSettle.SourceManual);

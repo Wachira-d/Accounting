@@ -6296,8 +6296,9 @@ RULES += [
     dict(file="Services/Implementations/CmsCommerceService.cs", method="RecordPaymentSlipAsync",
          must=["UploadAnonymousBytesAsync"], forbid=["UploadedByUserId = Guid.Empty", "UploadBytesAsync(", "new FileAttachment"],
          why=_GUEST_FILE_WHY + " · สลิปหน้าร้านออนไลน์ (ผ่าน IFileAttachmentService.UploadAnonymousBytesAsync)"),
-    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
-         must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปพอร์ทัลลูกค้า"),
+    # รอบ 255 WP-12B ข้อ 1: ย้ายเนื้อจาก PortalService.UploadDocumentSlipAsync ไปประตูเดียว SlipEvidenceService.SubmitAsync (พอร์ทัล + หน้าชำระ)
+    dict(file="Services/Implementations/SlipEvidenceService.cs", method="SubmitAsync",
+         must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปพอร์ทัล/หน้าชำระของลูกค้า"),
 ]
 
 
@@ -14628,8 +14629,8 @@ REVIEWER_CASES += [
      "var rev = await NotTheStandardReversal(companyId, jeId, today,", True),
     # คืนเป็น "ได้รับแล้ว" โดยไม่ดูว่าตัดสูญพร้อม JE ⇒ ต้องฟ้อง
     ("R243a4", "MarkReceivedAsync",
-     "if (WhtCreditWriteOff.NeedsReversal(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId))\n            {\n                if (journalActor == null)",
-     "if (false)\n            {\n                if (journalActor == null)", True),
+     "var writtenOff = WhtCreditWriteOff.NeedsReversal(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId);",
+     "var writtenOff = false;", True),
     # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .PostAsync( เป็นบรรทัดเดียว ⇒ ต้องไม่ฟ้อง
     ("R243a5", "ExpireCoreAsync", "\n            .PostAsync(actor.Name);", ".PostAsync(actor.Name);", False),
     # S1: กลับไปใช้ยอดสะสมทั้งบริษัท ⇒ ต้องฟ้อง
@@ -15889,7 +15890,8 @@ RULES += [
          must=["_crossTenantWorkflow.RouteSentDocumentAsync("],
          forbid=["_crossTenantWorkflow.OnDocumentSentAsync("],
          why=_R250_WHY + "P-6 ห้ามกลับไป try { OnDocumentSentAsync } catch { LogWarning } (ล้มเงียบ)"),
-    dict(file=_R250_PORTAL, method="UploadDocumentSlipAsync",
+    # รอบ 255 WP-12B ข้อ 1: เนื้อย้ายไปประตูเดียว SlipEvidenceService.SubmitAsync (พอร์ทัล + หน้าชำระของเอกสาร)
+    dict(file="Services/Implementations/SlipEvidenceService.cs", method="SubmitAsync",
          must=["_intents.StartAsync(", "PaymentMethodKind.ManualSlip", "ManualSlipPaymentProvider.Code", "PaymentSourceKind.Document"],
          forbid=_R250_SLIP_PAYMENT_WRITES,
          forbid_lit=["[PENDING-VERIFY]"],
@@ -15960,10 +15962,10 @@ RULES += [
          must=["DocumentSlipIntents.IsDocumentSlip("],
          must_re=[r"if\s*\(\s*settled\s*!=\s*null\s*&&\s*!\s*documentSlip\s*\)", r"reusable\s*=\s*existing\s*\.\s*FirstOrDefault\s*\(\s*i\s*=>\s*!\s*documentSlip\s*&&"],
          why=_R250A_WHY + "H2 สลิปงวด 2 ต้องรับได้ · สลิปแต่ละใบเป็นรายการของตัวเอง"),
-    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
+    dict(file="Services/Implementations/SlipEvidenceService.cs", method="SubmitAsync",
          must=["DocumentSlipIntents.UploadProblem(", "storage.DeleteAsync("],
          before=[("DocumentSlipIntents.UploadProblem(", "_intents.StartAsync(")],
-         why=_R250A_WHY + "H2/L4 ตัดสินที่ยอดค้าง · ล้มแล้วลบไฟล์"),
+         why=_R250A_WHY + "H2/L4 ตัดสินที่ยอดค้าง · ล้มแล้วลบไฟล์ (รอบ 255: ย้ายเข้าประตูเดียว)"),
     # H3: คำเชิญถึงเฉพาะบริษัทที่เปิดให้ค้นเจอ · เพดานต่อวัน · เวลาตอบคงที่
     dict(file=XTENANT, method="InvitePartnerAsync",
          must=["c.PartnerDiscoverable", "InviteMinimumDuration"],
@@ -16486,11 +16488,15 @@ RULES += [
          why=_R252_WHY + "E-15 สรุปจากแถวจริง · ประทับวันก่อนส่ง (หลายเครื่อง = ส่งครั้งเดียว)"),
     dict(file=_R252_DIGEST, method="RunOnceAsync", must=["AutopilotNotice.DigestDue("],
          why=_R252_WHY + "เวลาส่งสรุปตามค่าตั้งของบริษัท (ตัวตัดสินเดียว)"),
-    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
+    dict(file="Services/Implementations/SlipEvidenceService.cs", method="SubmitAsync",
          must=["SlipEvidenceRule.Sha256Hex(", "SlipEvidenceRule.NormalizeRef(", "SlipEvidenceRule.DuplicateProblem(", "NotificationEvents.AutopilotSlipSubmitted"],
          before=[("SlipEvidenceRule.DuplicateProblem(", "_intents.StartAsync(")],
-         forbid=["Payments.Add("],
-         why=_R252_WHY + "G-T5 สลิปกันซ้ำ (แฮชไฟล์ + เลขอ้างอิง) ก่อนสร้างรายการ · สลิปไม่ใช่รับชำระ · แจ้งทีม E-06"),
+         forbid=["Payments.Add(", "PaymentStatus.", "DocumentStatus.Paid"],
+         why=_R252_WHY + "G-T5 สลิปกันซ้ำ (แฮชไฟล์ + เลขอ้างอิง) ก่อนสร้างรายการ · สลิปไม่ใช่รับชำระ · แจ้งทีม E-06 (รอบ 255: ประตูเดียว)"),
+    dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
+         must=["slips.SubmitAsync(", "SlipEvidenceService.ChannelPortal"],
+         forbid=["Payments.Add(", "_intents.StartAsync("],
+         why="รอบ 255 WP-12B ข้อ 1: สลิปพอร์ทัลเดินประตูเดียวกับหน้าชำระ — ห้ามประกอบเส้นเอง (สองความจริงของ \"จ่ายหรือยัง\")"),
     dict(file=_R252_AP, method="UpdateSettingsAsync",
          must=["QuotationAcceptAutopilot.Normalize(", "AutopilotNotice.NormalizeDigestTime(", "QuotationAcceptAutopilotSince = now", "AddChainedAuditLog("],
          why=_R252_WHY + "ค่าที่อ่านไม่ออกปฏิเสธ (ไม่ clamp เงียบ) · เปิดแปลงใบเสนอราคา = ประทับ watermark · audit"),
@@ -16522,7 +16528,7 @@ REVIEWER_CASES += [
     # ไม่ตรวจเนื้อหาเปลี่ยนหลังยอมรับ ⇒ ต้องฟ้อง
     ("R252-4", "ProcessOneAsync", "QuotationAcceptance.ContentMatches(qt, qt.Lines)", "null", True),
     # ถอดด่านสลิปซ้ำ ⇒ ต้องฟ้อง
-    ("R252-5", "UploadDocumentSlipAsync",
+    ("R252-5", "SubmitAsync",
      "if (SlipEvidenceRule.DuplicateProblem(sameFile, sameRef) is string dupProblem)\n            throw new BusinessRuleException(dupProblem, SlipEvidenceRule.RuleDuplicate, 409);",
      "", True),
     # ทิศตรงข้าม: จัดบรรทัดใหม่ ⇒ ต้องไม่ฟ้อง
@@ -16557,14 +16563,30 @@ RULES += [
          must=["t.AutoSettleEvaluatedAt != null", "throw new InvalidOperationException("],
          why=_R252F_WHY + "M7 ไม่เคยประเมินก่อน · ล้ม = ประทับ + ผลรอบล้ม"),
     dict(file="Services/Implementations/BankService.StatementImport.cs", method="ImportParsedStatementRowsAsync",
-         must=["options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceUserFile", "CreatedByUserId = options.UploadedByUserId"],
+         must=["options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceUserFile", "CreatedByUserId = options.UploadedByUserId",
+               "EntrySource = entrySource,", "existingEntity.EntrySource = entrySource;", "existingEntity.CreatedByUserId = options.UploadedByUserId;"],
          why=_R252F_WHY + "H1 แหล่งตั้งต้นของไฟล์ = UserFile (เสนอเท่านั้น) · ผู้อัปโหลดอยู่บนบรรทัด"),
     dict(file="Services/Implementations/BankService.cs", method="ReconcileAsync", must=["BankReceiptAutoSettle.ManualMatchBlock("],
          why=_R252F_WHY + "M5 จับคู่มือห้ามแตะบรรทัดที่ระบบกำลังบันทึกรับชำระ"),
     dict(file="Controllers/AutopilotController.cs", method="ConfirmBank", must=["DocumentPermissionHelper.CanApproveAsync("],
          why=_R252F_WHY + "M4 ยืนยัน = บันทึกรับชำระ ⇒ สิทธิ์อนุมัติชนิดเอกสาร"),
-    dict(file=_R252_QT, method="RunOnceAsync", must=["StampAsync(", "throw new InvalidOperationException("],
-         why=_R252F_WHY + "M7 ล้มนอกด่าน ⇒ ประทับ Failed + ผลรอบล้ม"),
+    dict(file=_R252_QT, method="RunOnceAsync", must=["StampAsync(", "throw new InvalidOperationException(", "AutopilotChildAsync("],
+         why=_R252F_WHY + "M7 ล้มนอกด่าน ⇒ ประทับ Failed + ผลรอบล้ม · รอบสอง: แปลงแล้วแต่ประทับล้ม ⇒ ตรวจใบลูกก่อน"),
+    # ── ฝ่ายค้านรอบสอง ──
+    dict(file=_R252_BANK, method="CandidatesAsync",
+         must=["await open.CountAsync(d => d.BalanceDue == amount, ct)", "BankReceiptAutoSettle.MaxExactForFacts", "BankReceiptAutoSettle.TooManyEqualReason"],
+         why=_R252F_WHY + "รอบสอง M-E ยอดตรงนับใน SQL ก่อนโหลดข้อเท็จจริงต่อใบ · เกิน 8 ไม่อ้างเลข = เสนอ"),
+    dict(file=_R252_BANK, method="EvaluatePendingAsync",
+         must=["t.AutoSettleFailCount + 1", "BankReceiptAutoSettle.PoisonFailures", "BankReceiptAutoSettle.Stamps.Held"],
+         why=_R252F_WHY + "รอบสอง M7 บรรทัดล้มซ้ำ = Held ไม่วนหัวคิว"),
+    dict(file=_R252_BANK, method="ConfirmAsync", must=["BankReceiptAutoSettle.RuleConfirm"],
+         why=_R252F_WHY + "รอบสอง LOW คนยืนยัน ≠ ระบบปิดเอง (รหัสกฎแยก)"),
+    dict(file="Services/Implementations/BankFeedService.cs", method="SyncAsync",
+         must=["BankFeedDedupe.NoReferenceKey(", "EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceFeed,", "CreatedByUserId = triggeredByUserId"],
+         why=_R252F_WHY + "รอบสอง H-A feed = เสนอเท่านั้น (แหล่งเดียว Feed) · M-C feed ไม่มีเลขอ้างอิงกันซ้ำ"),
+    dict(file="Services/Implementations/BankService.cs", method="AutoMatchAsync",
+         must=["BankReceiptAutoSettle.Stamps.Applying"],
+         why=_R252F_WHY + "รอบสอง M-D จับคู่อัตโนมัติห้ามแตะบรรทัด Applying"),
 ]
 REVIEWER_CASES += [
     # H3: ถอดตัวตัดสินลิงก์ชำระออกจากผู้สมัคร ⇒ ใบแจ้งหนี้ที่มีใบกำกับแล้วถูกปิดหนี้ซ้ำ ⇒ ต้องฟ้อง
@@ -16577,6 +16599,10 @@ REVIEWER_CASES += [
     # H1: แหล่งตั้งต้นของไฟล์กลับเป็น Statement ⇒ ต้องฟ้อง
     ("R252F-3", "ImportParsedStatementRowsAsync",
      "options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceUserFile", "options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceStatement", True),
+    # รอบสอง M-E: ไม่นับยอดตรงใน SQL (โหลดทุกใบ) ⇒ ต้องฟ้อง
+    ("R252F-4", "CandidatesAsync", "await open.CountAsync(d => d.BalanceDue == amount, ct)", "0", True),
+    # รอบสอง H-A: feed กลับไปตั้งแหล่งตามปลายทาง ⇒ ต้องฟ้อง
+    ("R252F-5", "SyncAsync", "EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceFeed,", "EntrySource = FeedSource(connection),", True),
 ]
 
 
@@ -16678,7 +16704,7 @@ RULES += [
     dict(file=_R252_SVC, method="SubmitAsync",
          must=["WhtCertMatchPolicy.Match(", "WhtCertIntakeVerdict.Gates(", "WhtCertIntakeVerdict.Decide(", "_ai.AskAsync(",
                "WhtCertIntakeVerdict.ParseAuthenticity(", "OcrAiAugmenter.IsStudentAnswer(", "LockCreditAsync(", "ApplyToCredit(",
-               "i.CompanyId == companyId"],
+               "FindLiveByCertAsync("],   # ฝ่ายค้านรอบสอง: คิวรีซ้ำของกล่องรับย้ายไป FindLiveByCertAsync (กติกาของมันเฝ้า CompanyId)
          must_re=[r"if\s*\(\s*gates\s*\.\s*Count\s*==\s*0\s*\)", r"intake\s*\.\s*WhtCertAuthenticityAiFeedbackId\s*=\s*resp\s*\.\s*FeedbackId",
                   r"intake\s*\.\s*WhtCertAuthenticityUsedAi\s*=\s*resp\s*\.\s*UsedAi", r"\bAudit\s*\(\s*companyId"],
          before=[("WhtCertIntakeVerdict.Gates(", "_ai.AskAsync("), ("_ai.AskAsync(", "WhtCertIntakeVerdict.Decide("),
@@ -16744,17 +16770,45 @@ RULES += [
 # ── รอบ 252 ฝ่ายค้าน WP-09 (H1/H2/M1–M6/L1–L10) ──
 _R252F_WHY = _R252_WHY + "ฝ่ายค้าน WP-09: "
 RULES += [
-    dict(file=_R252_SVC, method="SubmitAsync", must=["EnsureNotInRegisterAsync(", "FindLiveByFileAsync("],
+    dict(file=_R252_SVC, method="SubmitAsync", must=["_credits.EnsureCertificateNotRecordedAsync(", "FindLiveByFileAsync(", "FindLiveByCertAsync(",
+                                                    "WhtCertIntakeVerdict.CrossesCreditPeriod(row.CertificateDate"],
+         # races: ตรวจซ้ำใต้ล็อกในธุรกรรม — EnsureCertificateNotRecordedAsync ตามด้วย FindLiveByCertAsync (ผลแพ้ = lost)
+         must_re=[r"EnsureCertificateNotRecordedAsync\([^;]*;\s*if\s*\(\s*await\s+FindLiveByCertAsync\([^;]*is\s*\{\s*\}\s*lost"],
          must_lit=['SqlState: "23505"'],
          why=_R252F_WHY + "H1 ใบที่อยู่ในทะเบียนแล้ว = 409 · L5 ไฟล์ซ้ำนับเฉพาะใบที่ยังมีผล · L10 อัปโหลดชนกัน = ตอบซ้ำ ไม่ใช่ 500"),
     dict(file=_R252_SVC, method="FindLiveByFileAsync", must=["WhtCertIntakeRecordStatus.Rejected", "i.CompanyId == companyId"],
          why=_R252F_WHY + "L5 ใบที่ถูกตีกลับส่งไฟล์เดิมใหม่ได้"),
-    dict(file=_R252_SVC, method="EnsureNotInRegisterAsync", must=["WhtCreditStatus.Expired", "w.CompanyId == companyId"],
-         must_re=[r"throw\s+new\s+BusinessRuleException\([^;]*409\s*\)"],
-         why=_R252F_WHY + "H1 ทะเบียน (ไม่ถูกลบ · ไม่ใช่ตัดสูญ) มีเลขที่ใบ + ผู้จ่ายเดียวกัน ⇒ 409"),
+    dict(file=_R243A_WHT, method="EnsureCertificateNotRecordedAsync",
+         must=["WhtCreditStatus.Expired", "w.CompanyId == companyId", "i.CompanyId == companyId", "WhtCertIntakeRecordStatus.Confirmed",
+               "LockCertificateAsync(", "WhtCertIntakeVerdict.SameCertYear("],
+         must_re=[r"DedupeRuleCode\s*,\s*409\s*\)"],
+         why=_R252F_WHY + "H1 + รอบสอง M-A/M-D ตัวเดียวของการกันใบซ้ำ: ทะเบียน + ใบที่ยืนยันแล้ว · ปีเดียวกัน · ใต้ล็อกเลขที่ใบ + ผู้จ่าย ⇒ 409"),
+    dict(file=_R252_SVC, method="FindLiveByCertAsync", must=["WhtCertIntakeRecordStatus.Rejected", "i.CompanyId == companyId", "WhtCertIntakeVerdict.SameCertYear("],
+         why=_R252F_WHY + "รอบสอง M-D ใบในกล่องรับซ้ำ = เลขที่ + ผู้จ่าย + ปีเดียวกัน"),
+    dict(file=_R243A_WHT, method="CreateAsync", must=["EnsureCertificateNotRecordedAsync(", "CertificateDateRequiredMessage"],
+         why=_R252F_WHY + "รอบสอง M-A กันซ้ำสองทาง · L4 มีเลขที่ต้องมีวันที่"),
+    dict(file=_R243A_WHT, method="UpdateAsync",
+         must=["EnsureCertificateNotRecordedAsync(", "e.ReceivedAmount > 0.005m", "WhtCertIntakeVerdict.CrossesCreditPeriod(", "CertificateLockedMessage"],
+         forbid=["MarkFullyCertified(", "e.ReceivedAmount ="],
+         must_re=[r"if\s*\(\s*certChanged\s*\)\s*throw\s+new\s+BusinessRuleException\(\s*CertificateLockedMessage"],
+         why=_R252F_WHY + "รอบสอง H-A/H-B แถวที่ได้ใบบางส่วน: ห้ามประกาศครบเพราะมีเลขที่ · เลขที่ใบแรกล็อก · วันที่ข้ามรอบไม่ได้ (ตัวตัดสินเดียวกับ H2) · M-A กันซ้ำ"),
+    dict(file=_R243A_WHT, method="MarkReceivedAsync",
+         must=["EnsureCertificateNotRecordedAsync(", "e.ReceivedAmount > 0.005m", "CertificateDateRequiredMessage"],
+         forbid=["MarkFullyCertified(", "e.ReceivedAmount ="],
+         before=[("e.ReceivedAmount > 0.005m", "ApplyCertificate(")],
+         why=_R252F_WHY + "รอบสอง H-B แถวที่ได้ใบบางส่วน ⇒ 409 (ใบถัดไปเข้ากล่องรับ) · M-A กันซ้ำ (รวมเส้นแอดมินแพลตฟอร์ม) · L4 วันที่"),
+    dict(file=_R243A_WHT, method="UndoWriteOffAsync", must=["e.ReceivedAmount = 0m", "WhtCreditableAmount.StatusForReceived("],
+         why=_R252F_WHY + "รอบสอง M-B หมดสิทธิ์ไม่ใช่ตัดสูญ ⇒ ส่วนที่ได้ใบไม่เป็นเครดิต · สถานะตัดสินใหม่จากยอดที่ได้ใบ"),
+    dict(file=_R243A_WHT, method="CancelAfterRefundAsync", must=["e.ReceivedAmount = 0m"],
+         why=_R252F_WHY + "รอบสอง M-B คืนเงินแล้ว ⇒ Of(Expired) = 0"),
+    dict(file=_R243A_WHT, method="ListAsync", must=["WhtCreditWriteOff.AmountOf(", "CertificateLockedMessage"],
+         why=_R252F_WHY + "รอบสอง ปุ่มตัดสูญ/ล็อกใบแรก ตัดสินที่เซิร์ฟเวอร์"),
+    dict(file=DOC, method="SyncWhtCreditReceivedAsync", must=["WhtCreditableAmount.AfterSourceGlDrop(", ".UndoWriteOffAsync(companyId, existing.Id"],
+         before=[("WhtCreditableAmount.AfterSourceGlDrop(", "WhtCreditableAmount.ResyncWithGl(")],
+         why=_R252F_WHY + "รอบสอง M-C แถวมีใบที่ตัดสูญพร้อม JE + GL ต้นทางลด ⇒ กลับ JE ตัดสูญ (ก่อนเส้น 'ใบจริงชนะ')"),
     dict(file=_R252_SVC, method="ConfirmAsync",
-         must=["EnsureNotInRegisterAsync(", "WhtCertIntakeVerdict.ShouldTeachGenuine(", "req.AllowOtherPayer", "req.StandaloneReason",
-               "intake.CertificateDate is null"],
+         must=["_credits.EnsureCertificateNotRecordedAsync(", "WhtCertIntakeVerdict.ShouldTeachGenuine(", "req.AllowOtherPayer", "req.StandaloneReason",
+               "intake.CertificateDate is null", "WhtCertIntakeVerdict.CrossesCreditPeriod(row.CertificateDate"],
          must_re=[r"learn\s*=\s*WhtCertIntakeVerdict\s*\.\s*ShouldTeachGenuine\s*\("],
          why=_R252F_WHY + "H1 ซ้ำตอนยืนยัน (รวมเลขที่ที่แก้) · H2 คนละรอบ · L3 ผู้จ่าย · L4 วันที่ · M5 เหตุผลรายการใหม่ · M6 สอนเฉพาะดูใบแล้ว"),
     dict(file=_R243A_WHT, method="ExpireCoreAsync", must=["WhtCreditWriteOff.AmountOf("],
@@ -16781,7 +16835,10 @@ RULES += [
          why=_R252F_WHY + "L7 PDPA เลขบุคคลห้ามออกนอกระบบ"),
 ]
 REVIEWER_CASES += [
-    ("R252j", "SubmitAsync", "            await EnsureNotInRegisterAsync(companyId, certNo, payerTax, s.PayerContactId, ct);\n", "", True),
+    ("R252j", "SubmitAsync", "                await _credits.EnsureCertificateNotRecordedAsync(companyId, certNo, payerTax, s.PayerContactId, s.CertificateDate, null, ct: ct);\n                if (await FindLiveByCertAsync", "                if (await FindLiveByCertAsync", True),
+    ("R252n", "UpdateAsync", "if (certChanged)\n                        throw", "if (false)\n                        throw", True),
+    ("R252o", "MarkReceivedAsync", "if (e.ReceivedAmount > 0.005m)\n                throw", "if (false)\n                throw", True),
+    ("R252p", "CancelAfterRefundAsync", "e.ReceivedAmount = 0m;   // ฝ่ายค้าน WP-09 รอบสอง M-B: คืนเงินแล้ว", "// ฝ่ายค้าน WP-09 รอบสอง M-B: คืนเงินแล้ว", True),
     ("R252k", "ConfirmAsync", "learn = WhtCertIntakeVerdict.ShouldTeachGenuine(req.ViewedFile, intake.AuthenticityAnswer);", "learn = true;", True),
     ("R252l", "FindLiveByFileAsync", "i.FileSha256 == sha && i.Status != WhtCertIntakeRecordStatus.Rejected)", "i.FileSha256 == sha)", True),
     ("R252m", "ExpireCoreAsync", "var writeOffAmount = WhtCreditWriteOff.AmountOf(e.Status, e.WhtAmount, e.ReceivedAmount);", "var writeOffAmount = e.WhtAmount;", True),
@@ -16807,6 +16864,73 @@ REVIEWER_CASES += [
      "where ids.Contains(a.WhtCreditId)", True),
     # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .Match( ⇒ ต้องไม่ฟ้อง
     ("R252i", "SubmitAsync", ": WhtCertMatchPolicy.Match(", ": WhtCertMatchPolicy\n                .Match(", False),
+]
+
+# ── รอบ 255 WP-12B ข้อ 1–2 (AUDIT_249 §WP-12 · AUTOPILOT §5.6 · §4.2 ②) ──
+_R255_WHY = "รอบ 255 WP-12B: "
+RULES += [
+    # ข้อ 1: แจ้งโอนจากหน้าชำระของเอกสาร — ทางเข้าที่ไม่ล็อกอิน ⇒ ด่านครบก่อนเขียน · ชนิดไฟล์จากไบต์จริง · ยอดจากเซิร์ฟเวอร์ · ประตูเดียว
+    dict(file="Controllers/PublicPaymentController.cs", method="SubmitDocumentSlip",
+         must=["_docLinks.PublicViewAsync(", "SlipEvidenceRule.PayLinkSlipProblem(", "_slips.PayLinkLoadAsync(", "SlipEvidenceRule.DetectPublicType(",
+               "view.SlipAmount", "_slips.SubmitAsync(", "SlipEvidenceService.ChannelPayLink"],
+         before=[("SlipEvidenceRule.PayLinkSlipProblem(", "_slips.SubmitAsync("), ("SlipEvidenceRule.DetectPublicType(", "_slips.SubmitAsync(")],
+         forbid=["file.ContentType", "Payments.Add(", "_intents.StartAsync(", "ApplyChargeAsync("],
+         why=_R255_WHY + "ข้อ 1 แจ้งโอนจากลิงก์ชำระ: ด่านสแปม/สิทธิ์ก่อน · ไม่เชื่อ Content-Type · ไม่รับยอดจากหน้าเว็บ · สลิป ≠ รับชำระ"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="PublicViewAsync",
+         must=["SlipEvidenceRule.PayLinkSlipAllowed(", "SlipAmount = amounts.Net"],
+         why=_R255_WHY + "ข้อ 1 ฟอร์มแจ้งโอนแสดงตามเซิร์ฟเวอร์ (ไม่ผูกกับช่องทางออนไลน์) · ยอดสลิป = ยอดสุทธิของลิงก์"),
+    # ข้อ 2: ทุก N เดือน + สร้างล่วงหน้า — ทุกจุดตัดสิน "ถึงกำหนด" นับสร้างล่วงหน้า · ทุกจุดเลื่อนงวดนับทุก N เดือน
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="ProcessDueRecurringTransactionsAsync",
+         must=["RecurringSchedule.IsDue(recurring.NextRunDate, now, recurring.LeadDays)", "RecurringSchedule.MaxLeadDays"],
+         forbid=["RecurringSchedule.IsDue(recurring.NextRunDate, now))"],
+         why=_R255_WHY + "ข้อ 2 cron ตัดสินถึงกำหนดนับสร้างล่วงหน้า (ไม่งั้นค่าตั้งไม่มีผล)"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="RunNowAsync",
+         must=["RecurringSchedule.IsDue(recurring.NextRunDate, DateTime.UtcNow, recurring.LeadDays)"],
+         why=_R255_WHY + "ข้อ 2 สร้างทันที: งวดที่ถึงเวลาสร้างล่วงหน้าแล้ว = กินงวด (ไม่ออกซ้ำตอน cron)"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="SkipOverduePeriodsAsync",
+         must=["intervalMonths: recurring.IntervalMonths", "leadDays: recurring.LeadDays"],
+         why=_R255_WHY + "ข้อ 2 ข้ามงวดค้างด้วยตารางเวลาเดียวกับ cron"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="GetNextRunDate", must=["r.IntervalMonths"],
+         why=_R255_WHY + "ข้อ 2 เลื่อนงวดทุก N เดือน"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateAsync",
+         must=["RecurringSchedule.IntervalError(", "RecurringSchedule.LeadDaysError("],
+         before=[("RecurringSchedule.LeadDaysError(", "_db.RecurringTransactions.Add(")],
+         why=_R255_WHY + "ข้อ 2 ค่าที่ใช้ไม่ได้ปฏิเสธ (ไม่ clamp เงียบ) · สร้างล่วงหน้าต้องสั้นกว่าหนึ่งงวด"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="UpdateAsync",
+         must=["RecurringSchedule.IntervalError(", "RecurringSchedule.LeadDaysError("],
+         why=_R255_WHY + "ข้อ 2 แก้ไขตรวจด่านเดียวกับสร้าง"),
+    dict(file="Services/Implementations/RecurringAutopilotService.cs", method="BuildAsync", must=["r.IntervalMonths", "r.LeadDays"],
+         why=_R255_WHY + "ข้อ 2 ทดลองรันแสดงวันตามตารางเวลาจริง"),
+]
+
+# ── รอบ 255 ETR-ACK: บันทึก "ตรวจแล้ว" ของแถว e-Tax ในรายงานข้อ 44 (ทางไปต่อของแถบเตือน · F2 ข้อ 8) — pure ทดสอบใน EtaxReviewAcknowledgementTests ──
+_ETR_WHY = "รอบ 255 ETR-ACK: "
+RULES += [
+    dict(file="Controllers/DocumentController.cs", method="AcknowledgeEtaxReviewRow",
+         must=["PermissionKeys.EtaxVoid", "DocumentPermissionHelper.CanVoidAsync(", "AcknowledgeEtaxReviewRowAsync(", "e.CompanyId == companyId",
+               "d.CompanyId == companyId"],
+         before=[("PermissionKeys.EtaxVoid", "AcknowledgeEtaxReviewRowAsync("), ("DocumentPermissionHelper.CanVoidAsync(", "AcknowledgeEtaxReviewRowAsync(")],
+         why=_ETR_WHY + "สิทธิ์ = Etax.Void และสิทธิ์ยกเลิกเอกสารชนิดนั้น (เข้มกว่าของสองเส้นยกเลิก) ก่อนถึง service · tenant"),
+    dict(file=DOC_REISSUE, method="AcknowledgeEtaxReviewRowAsync",
+         must=["EtaxReissueReview.ValidateAcknowledgement(", "EtaxReissueReview.HiddenByAcknowledgement(", "GetEtaxReissueReviewAsync(companyId)",
+               "_db.AddChainedAuditLog(", "EtaxReissueReview.AcknowledgedAction", "e.CompanyId == companyId", "a.CompanyId == companyId"],
+         must_re=[r"throw\s+new\s+BusinessRuleException\([^;]*409\)"],
+         before=[("EtaxReissueReview.HiddenByAcknowledgement(", "_db.AddChainedAuditLog("), ("GetEtaxReissueReviewAsync(companyId)", "_db.AddChainedAuditLog(")],
+         forbid=["e.Status = ", "etax.Status = ", "_db.EtaxInvoices.Update", "_db.Documents.Update"],
+         why=_ETR_WHY + "ตรวจคำขอ · ซ้ำ = 409 · แถวต้องอยู่ในกลุ่มตอนนี้ (ตัวจำแนกเดียว) · เขียน audit chained อย่างเดียว — ไม่ประทับสถานะของกรมสรรพากรเอง"),
+    dict(file=DOC_REISSUE, method="GetEtaxReissueReviewAsync",
+         must=["EtaxReissueReview.HiddenByAcknowledgement(x.Id, ackAudits)", "EtaxReissueReview.AcknowledgedAction"],
+         before=[("EtaxReissueReview.HiddenByAcknowledgement(x.Id, ackAudits)", "EtaxReissueReview.SubmittedEtaxVoidedWithoutEvidence(")],
+         why=_ETR_WHY + "แถวที่บันทึกตรวจแล้วออกจากทั้งสองกลุ่มแถว e-Tax (เดิมแถบค้างตลอดไป)"),
+]
+REVIEWER_CASES += [
+    # ถอดตัวกรองซ่อนแถวที่ตรวจแล้ว ⇒ ต้องฟ้อง (แถบกลับมาค้าง)
+    ("ETR-a", "GetEtaxReissueReviewAsync", "if (EtaxReissueReview.HiddenByAcknowledgement(x.Id, ackAudits)) continue;", "", True),
+    # ถอดด่านสิทธิ์ยกเลิกเอกสาร ⇒ ต้องฟ้อง
+    ("ETR-b", "AcknowledgeEtaxReviewRow",
+     "if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userIdGuid, docType.Value))\n"
+     "            return Forbid403<string>(\"ไม่มีสิทธิ์ยกเลิกเอกสารชนิดนี้ — บันทึกผลตรวจแถว e-Tax",
+     "if (false)\n            return Forbid403<string>(\"ไม่มีสิทธิ์ยกเลิกเอกสารชนิดนี้ — บันทึกผลตรวจแถว e-Tax", True),
 ]
 
 
@@ -16929,11 +17053,12 @@ def wht_credit_add_errors() -> list:
             for m in re.finditer(r"\.\s*ReceivedAmount\s*=(?!=)", code):
                 if rel == _R252_SVC or "QuotaAddOn" in rel:
                     continue
-                # ฝ่ายค้าน WP-09 L2/M1: ผู้ใช้ประกาศ "ได้ใบครบทั้งแถว" (กรอกมือ/ได้รับใบแล้ว) — ตัวเขียนเดียวนอกกล่องรับ
-                if rel == _R243A_WHT:
-                    span = method_body(code, "MarkFullyCertified")
-                    if span is not None and span[0] <= m.start() < span[1]:
-                        continue
+                # ฝ่ายค้าน WP-09 รอบสอง M-B: ทะเบียน "ลด" ยอดที่ได้ใบได้เฉพาะตอนหมดสิทธิ์ที่ไม่ใช่การตัดสูญ (ต้นทางหาย/คืนเงิน) — ไม่มีทางเพิ่มนอกกล่องรับ
+                # (MarkFullyCertified ถูกลบ: H-A/H-B)
+                if rel == _R243A_WHT and any(
+                        (sp := method_body(code, mname)) is not None and sp[0] <= m.start() < sp[1]
+                        for mname in ("UndoWriteOffAsync", "CancelAfterRefundAsync")):
+                    continue
                 line = code.count("\n", 0, m.start()) + 1
                 errs.append(f"{rel}:{line} เขียน ReceivedAmount นอกกล่องรับ — {_R252_WHY}ยอดที่ได้ใบเขียนโดย WhtCertIntakeService เท่านั้น")
     if found != 2:

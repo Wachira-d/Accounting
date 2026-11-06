@@ -261,6 +261,7 @@ public class AutopilotRound252DbTests
         var after = await LineOfAsync(line.Id);
         Assert.Equal(ReconciliationStatus.Matched, after.ReconciliationStatus);
         Assert.Equal(BankMatchAttribution.Person(userId), after.ReconciledBy);
+        Assert.Equal(BankReceiptAutoSettle.RuleConfirm, after.MatchRuleCode);   // ฝ่ายค้านรอบสอง LOW: คนยืนยัน ≠ ระบบปิดเอง
     }
 
     [Fact]
@@ -403,6 +404,38 @@ public class AutopilotRound252DbTests
         Assert.Equal(BankReceiptAutoSettle.Stamps.None, (await LineOfAsync(line.Id)).AutoSettleVerdict);
         await Assert.ThrowsAsync<BusinessRuleException>(() => svc.ConfirmAsync(s.CompanyId, line.Id, s.InvoiceId, Guid.NewGuid()));
         Assert.Empty(rec.Payments);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้านรอบสองME_ใบยอดเท่ากันเกิน8ใบไม่อ้างเลข_เสนอโดยไม่เลือกใบ_อ้างเลขใบเดียว_ปิดใบนั้น()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedBankAsync(db, enabled: true);
+        var others = new List<Document>();
+        for (var i = 0; i < BankReceiptAutoSettle.MaxExactForFacts + 1; i++)
+            others.Add(await AddInvoiceAsync(db, s.CompanyId, s.ContactId, 1_040m, 30m));
+        var rec = new Recorder();
+
+        var anon = await AddLineAsync(db, s, 1_040m, "TRF FR KASIKORN");
+        await Bank(db, s.CompanyId, rec, new FakeNotify()).EvaluateLineAsync(s.CompanyId, anon.Id, true, DateTime.UtcNow);
+        var stamped = await LineOfAsync(anon.Id);
+        Assert.Equal(BankReceiptAutoSettle.Stamps.Suggest, stamped.AutoSettleVerdict);
+        Assert.Equal(BankReceiptAutoSettle.TooManyEqualReason, stamped.AutoSettleReason);
+        Assert.Null(stamped.AutoSettleDocumentId);
+        Assert.Empty(rec.Payments);
+        using (var q = DbTestDatabase.TryCreateContext()!)
+        {
+            var row = Assert.Single(await Bank(q, s.CompanyId, rec, new FakeNotify()).QueueAsync(s.CompanyId), r => r.LineId == anon.Id);
+            Assert.True(row.Choices.Count >= BankReceiptAutoSettle.MaxExactForFacts + 1);   // ตัวเลือกยอดตรงครบ (≤ 30)
+        }
+
+        // ทิศตรงข้าม: อ้างเลขใบหนึ่งในกลุ่มยอดเท่ากัน ⇒ ปิดใบนั้น
+        var target = others[3];
+        var cited = await AddLineAsync(db, s, 1_040m, "TRF " + target.DocumentNumber);
+        await Bank(db, s.CompanyId, rec, new FakeNotify()).EvaluateLineAsync(s.CompanyId, cited.Id, true, DateTime.UtcNow);
+        var call = Assert.Single(rec.Payments);
+        Assert.Equal(target.Id, call.Req.DocumentId);
     }
 
     // ═══════════════ ใบเสนอราคา ⇒ แปลงอัตโนมัติ ═══════════════
