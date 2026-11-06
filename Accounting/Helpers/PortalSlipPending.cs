@@ -95,8 +95,8 @@ public static class PortalSlipLegacyMigration
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
             new object[] { AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey) }, ct);
-        await db.Database.ExecuteSqlRawAsync(
-            """CREATE TABLE IF NOT EXISTS "OneShotDataFixes" ("Key" varchar(100) PRIMARY KEY, "AppliedAt" timestamp NOT NULL);""", ct);
+        // ตาราง marker จากตัวตั้งเดียว (รอบ 250 WP-04) — เส้นนี้อาจถูกเรียกก่อน ApplyMissingColumns ในเทสต์ จึงสร้างซ้ำได้ (idempotent)
+        await db.Database.ExecuteSqlRawAsync(Accounting.Data.DatabaseMigrationHelper.OneShotDataFixesTableSql, ct);
         var markerKey = MarkerKey;   // ตัวแปร ⇒ เป็นพารามิเตอร์ของ FormattableString
         var done = await db.Database
             .SqlQuery<int>($"""SELECT COUNT(*)::int AS "Value" FROM "OneShotDataFixes" WHERE "Key" = {markerKey}""")

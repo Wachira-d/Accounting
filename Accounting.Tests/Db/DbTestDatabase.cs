@@ -29,6 +29,33 @@ public static class DbTestDatabase
         AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
     }
 
+    /// <summary>รูป FK ของ production (Program.cs สร้างด้วย SQL ตอนบูต: ON DELETE RESTRICT) — ฐานที่สร้างจากโมเดล (EnsureCreated) ได้ CASCADE
+    /// ตามธรรมเนียม EF ⇒ จำลองให้ตรงตอนสร้างฐาน มิฉะนั้นเทสต์ลบถาวรผ่านทั้งที่ production ล้ม (idempotent · ย้ายจาก DocumentPurgeDbTests รอบ 250 WP-04)</summary>
+    internal const string ProductionFkShapeSql = @"
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT c.conname, c.conrelid::regclass AS t FROM pg_constraint c
+           WHERE c.contype = 'f' AND c.confdeltype <> 'r'
+             AND ((c.conrelid = '""DocumentSignatures""'::regclass AND c.confrelid IN ('""DocumentApprovals""'::regclass, '""Documents""'::regclass))
+               OR (c.conrelid = '""DocumentApprovals""'::regclass AND c.confrelid = '""Documents""'::regclass))
+  LOOP
+    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.t, r.conname);
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_DocumentSignatures_Approvals') THEN
+    ALTER TABLE ""DocumentSignatures"" ADD CONSTRAINT ""FK_DocumentSignatures_Approvals""
+      FOREIGN KEY (""DocumentApprovalId"") REFERENCES ""DocumentApprovals""(""Id"") ON DELETE RESTRICT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_DocumentSignatures_Documents') THEN
+    ALTER TABLE ""DocumentSignatures"" ADD CONSTRAINT ""FK_DocumentSignatures_Documents""
+      FOREIGN KEY (""DocumentId"") REFERENCES ""Documents""(""Id"") ON DELETE RESTRICT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FK_DocumentApprovals_Documents') THEN
+    ALTER TABLE ""DocumentApprovals"" ADD CONSTRAINT ""FK_DocumentApprovals_Documents""
+      FOREIGN KEY (""DocumentId"") REFERENCES ""Documents""(""Id"") ON DELETE RESTRICT;
+  END IF;
+END $$;";
+
     /// <summary>connection string จาก env · ว่าง + ไม่บังคับ = null · ว่าง + บังคับ (job CI) = โยน</summary>
     public static string? ConnectionString
     {
@@ -55,6 +82,10 @@ public static class DbTestDatabase
             if (!_schemaReady)
             {
                 db.Database.EnsureCreated();
+                // รอบ 250 WP-04 (AUDIT_249 E M-4): ฐานเทสต์ = รูป production เสมอ — ทำครั้งเดียวตอนสร้างฐาน (เดิม DocumentPurgeDbTests ALTER TABLE
+                // ทุกเทสต์ ขณะคลาสอื่นรันขนาน ⇒ ล็อก AccessExclusive ชนกับเทสต์อื่น/ฐานรูปไม่คงที่ระหว่างรัน)
+                db.Database.ExecuteSqlRaw(Accounting.Data.DatabaseMigrationHelper.OneShotDataFixesTableSql);
+                db.Database.ExecuteSqlRaw(ProductionFkShapeSql);
                 _schemaReady = true;
             }
         }

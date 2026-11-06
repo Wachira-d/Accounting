@@ -2311,7 +2311,41 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (ข) **นโยบายอนุมัติบันทึกกับฟอร์ม**: เปลี่ยนนโยบายในขั้น ⑤ แล้วกด "บันทึก" ⇒ บันทึกรายการก่อน (ได้ id) แล้วเรียก `PUT recurring/{id}/approve-policy` ต่อ
     (นโยบายรับรองค่าที่บันทึกแล้ว — ลำดับนี้กันการรับรองค่าที่ยังไม่บันทึก) · นโยบายล้ม = แจ้งดังว่า "รายการบันทึกแล้วแต่นโยบายไม่ผ่าน" ·
     ปุ่ม "บันทึกนโยบายของรายการนี้" ปิดตอนสร้างใหม่ และปิดเมื่อฟอร์มแก้ไขยังไม่บันทึก ("บันทึกรายการก่อน")
-  - ยังไม่ทำในรอบนี้: คอลัมน์ "ระดับ Autopilot" ในตารางรายการ · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`) · LINE/คู่ค้าในขั้นส่ง · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน
+  - ~~ยังไม่ทำในรอบนี้: คอลัมน์ "ระดับ Autopilot" ในตารางรายการ · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`) · LINE/คู่ค้าในขั้นส่ง · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน~~
+    → ปิดใน WP-02 (หลังรับเงินต่อรายการ) + **รอบ 251 WP-07** ด้านล่าง · ที่ยังค้าง: LINE/คู่ค้าในขั้นส่ง · ราคาแปรผัน/ทุก N เดือน/สร้างล่วงหน้า (ไม่อยู่ใน WP-07)
+- **รอบ 251 WP-07 — งานค้าง 248** (`erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-07 · Last verified `commit 847041d2` · ยังไม่ได้คอมไพล์ในเครื่องนี้):
+  - **รหัสความพร้อมครบชุด** (`Helpers/AutopilotReadiness.Evaluate` · ทุกข้อมีลิงก์แก้): `TEMPLATE · CONTACT · BUYER-TAX · APPROVE · OWNER-POLICY · PERIOD · RECIPIENT · SMTP ·
+    QUOTA · EMAIL-RULES · ETAX · ETAX-SENDER · ETAX-RECIPIENT · GATEWAY · THB · PAY-QR · POSTPAY` — ข้อเท็จจริงใหม่ทุกตัวรวบรวมใน `RecurringAutopilotService.BuildAsync`
+    จาก**ผู้อ่านเดิม** (ไม่มีสูตรของตัวเอง): `ETAX` = `EtaxAutoIssueScope.Judge` (ใบจำลองสถานะอนุมัติ · `TaxService.NotFullTaxInvoiceByDesign`) → `EtaxDeliveryRouter.Decide` ·
+    `ETAX-SENDER` = `EtaxByEmailSenderGate.Refusal` (บริษัทโหมด ByEmail ที่ SMTP ยังไม่ทดสอบ ⇒ ❌ "จะล้มที่ด่านผู้ส่ง" · ใบนี้**ไม่ออกข้อ SMTP/QUOTA** เพราะไม่มีทางถอยไป NextAcc) ·
+    `ETAX-RECIPIENT` = `EtaxByEmailFormat.Recipients` (ผู้ติดต่อหลายอีเมล / BCC ของตารางส่งที่จะส่งใบนี้ ⇒ ❌) · `PAY-QR` = `PaymentQrService.PickDocumentAccountAsync`
+    (ตัวเลือกบัญชีเดียวกับกระดาษ → `PaymentQrPolicy.Pick`) · `QUOTA` = `PlatformEmailQuota.ForCompanyAsync` → `SignEmailThrottle` (**ตัวจำกัดจริงของอีเมลเอกสารผ่าน NextAcc** —
+    อีเมลเอกสารไม่ตัดโควตาข้อความแจ้งเตือน `NotifyQuotaPolicy` จึงไม่แสดงตัวเลขนั้น) · `PERIOD` = `ClosedPeriodRanges.Build` + `Covers` (วันที่เอกสาร = รอบหน้า หรือวันนี้ถ้ารอบค้าง ·
+    งวดปิด ⇒ ❌ + ระดับต่ำสุด เพราะ `CreateDocumentAsync` ปฏิเสธวันที่ในงวดปิดตั้งแต่ตอนสร้าง) · `POSTPAY` = `PostPaymentAutomationPolicy.EffectiveLayers`
+    (ตาราง (เมื่อมีกฎเดียว) › รายการ › ผู้ติดต่อ › บริษัท · ปิด ⇒ ⓘ ระดับบางส่วน) · ข้อเท็จจริงที่ไม่ได้ตรวจ (null) ⇒ ไม่ออกข้อ (ผู้เรียกเดิมไม่ถดถอย)
+  - **ทดลองรัน**: `RecurringDryRunResponse.EtaxPlan` (เหตุผลจาก `EtaxDeliveryRouter.Decide`) · `EmailPlan` ของใบ e-Tax by Email บอกด่านที่จะล้มตามจริง · งวดปิด ⇒ "จะสร้างเอกสารไม่ได้" ·
+    ยังไม่ถาม AI · ไม่ออก e-Tax · ไม่จองโควตา (R251 ใน `required_call_site_check`) · ร่างในฟอร์มส่งค่าหลังรับชำระ (null = คงค่าที่บันทึก — WP-03)
+  - **ตารางรายการประจำ**: คอลัมน์ "ระดับ Autopilot" 🟢/🟡/🔴 + จำนวน ❌/⚠️ จาก `GET recurring/autopilot/levels?ids=` (`RecurringAutopilotService.LevelsAsync` — ตัวตัดสินเดียวกับแผง ·
+    ≤ 50 แถว/คำขอ · ข้ามแถวเสร็จสิ้น · แถวที่ตรวจล้มบอกเหตุในช่อง · ส่งเฉพาะชนิดเอกสารที่ผู้เรียกมีสิทธิ์สร้าง)
+  - **ส่งทดสอบถึงอีเมลฉัน** `POST recurring/{id}/send-test` (`[RejectApiKey]` · สิทธิ์สร้างเอกสารชนิดนั้น): ผู้รับ = อีเมลของผู้ใช้ที่กด**เท่านั้น** (ไม่รับที่อยู่จากคำขอ · ไม่มีสำเนา) ·
+    ผู้ส่งจากตัวตัดสินเดียว `OnBehalfEmailSender` (`DocumentEmailService.ResolveOnBehalfSenderAsync`) · เนื้อ `Helpers/RecurringTestEmail` (หัว "[ทดสอบ]" · สรุปผลทดลองรัน ·
+    หนี HTML · ไม่มีเลข/ลิงก์ชำระจริง) · **ไม่บันทึก `DocumentEmailLog` ไม่นับเพดานอีเมลเอกสาร** · audit chain ทุกครั้ง (สำเร็จ/ล้ม) + เพดาน 10 ฉบับ/ผู้ใช้/รายการ/วัน (429) ·
+    ผู้ใช้ไม่มีอีเมล ⇒ 409 · ส่งล้ม ⇒ 502 · ปุ่มในขั้น ④ (ฟอร์มที่ยังไม่บันทึก = บอกให้บันทึกก่อน) + หน้ารายละเอียด
+  - **UX**: ผลทดลองรันอยู่กล่องของตัวเองใต้แผงความพร้อม (แผงตรวจใหม่ทุก 600ms ไม่ทับ · ฟอร์มเปลี่ยน ⇒ ป้าย "กดทดลองรันใหม่") · บรรทัดเพิ่มที่ยังว่างทั้งแถวไม่ทำให้แผงฟ้องระหว่างกรอก
+    (บันทึกจริงยังบังคับกรอก) · แท็บ "ช่องทางแจ้งเตือน" ของผู้ติดต่อเตือนกติกาผู้รับใบกำกับ 1 อีเมลเมื่อบริษัทโหมด e-Tax by Email (`EtaxByEmailFormat.ContactRecipientsNote`)
+  - **แก้ผลฝ่ายค้าน WP-07** (Last verified `commit 3c8c2c3d` · ยังไม่ได้คอมไพล์ในเครื่องนี้): (2) ส่งทดสอบต้อง `User.EmailVerified` (409) · เส้น NextAcc ห่อ `SignRequestEmailText.WrapPlatformDocumentEmail`
+    (คำตัดสิน 240-9) + เคารพ `PlatformEmailQuota`/`SignEmailThrottle.Refusal` (429) · เพดาน 10 ฉบับ/**ผู้ใช้/บริษัท/วัน** (ทุกรายการรวมกัน) นับจากแถว audit
+    `AuditAction.SendEmail` (ค่า enum ใหม่ 13) ใต้ `pg_advisory_xact_lock(AdvisoryLockKey.RecurringSendTest · ผู้ใช้)` ครอบ นับ → ส่ง → audit · อีเมลลูกค้าในเนื้อถูกปิดบัง
+    (`RecurringTestEmail.MaskEmails`) · (3) ข้อ ETAX* ประเมินเมื่อใบ**จะถูกส่งจริง** (`AutopilotReadiness.WillEmail` = กฎ "เมื่ออนุมัติเอกสาร" หรือ อนุมัติตอนสร้าง +
+    (ติ๊กส่ง หรือกฎ "เมื่อรายการประจำสร้างเอกสาร")) + `EmailPlan` บอกว่าส่งตามกฎไหน/เมื่อมีคนอนุมัติ · (4) `POSTPAY` เปิด + บริษัทโหมด ByEmail ⇒ ประเมินขอบเขต e-Tax
+    ของใบเสร็จที่จะออก (`Judge(Receipt, …, relatedType: ชนิดของรายการ)`) — ไปทาง e-Tax แต่ด่านผู้ส่งไม่ผ่าน ⇒ ⚠️ · (5) ขอบเขต e-Tax ใช้
+    `EtaxAutoIssueScope.PredictForUnissued` (ใบกำกับขายเชื่อมี VAT = ใบกำกับ · ชนิดที่ `ReceiptFormRule.AppliesTo` ครอบ = ตัดสินตอนอนุมัติ ⇒ ด่านที่ไม่ผ่านเป็น ⓘ
+    "ตรวจตอนอนุมัติ" ไม่ใช่ ❌) · (6) ตารางระดับ: ถามสิทธิ์ต่อชนิดก่อนรวบรวม + ข้อเท็จจริงระดับบริษัท (`LoadSharedFactsAsync`) โหลดครั้งเดียวต่อคำขอ ·
+    (7) **ด่านงวดปิดตอนสร้างเอกสาร** (`DocumentService.CreateDocumentAsync`) เทียบวันตามปฏิทินไทย (`ThaiDate.CalendarDateUtc` ตัวเดียวกับที่ใบถูกเก็บ) — เดิมเทียบเวลาดิบ
+    ⇒ บ่ายวันสุดท้ายของงวดปิดหลุดด่าน / ดึกหลัง 17:00 UTC เทียบผิดวัน · (8) PAY-QR ใช้ `PaymentQrPolicy.ShowBankQr` ตัวเดียวกับกระดาษ · (9) สำเนาลับที่ตรวจมาจากกฎที่ส่งจริง
+    (มีกฎ "เมื่ออนุมัติเอกสาร" ⇒ กฎนั้นเสมอ)
+  - Db test `RecurringAutopilotRound248DbTests`: MED-5 เส้นเข้าคิว→ตรวจซ้ำตอนส่ง (`RecheckDocumentAtSendAsync` เปิดเป็น internal) `TransferOnly` ⇒ ไม่แนบ · ทิศตรงข้าม Inherit ⇒ ตามบริษัท ·
+    ส่งทดสอบถึงผู้ใช้เท่านั้น/ไม่สร้างบันทึกการส่ง/ไม่นับเพดาน + ทิศตรงข้ามผู้ใช้ไม่มีอีเมล ⇒ 409 · ทดลองรันบริษัท ByEmail ⇒ `ETAX-SENDER` ❌ ไม่เขียนอะไร
 
 ### 2.7b ใบวางบิลรวมใบค้างชำระ (compose — ไม่ใช่ convert)
 - **ทางเข้า**: ฟอร์มสร้างเอกสาร → ประเภท "ใบวางบิล" + เลือกลูกค้า → กล่อง
@@ -2888,6 +2922,19 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ตั้งค่า: การ์ด "ลิงก์ให้ลูกค้าเซ็น" (`/api/companies/{id}/sign-requests/settings` · บันทึก/ออกรหัสลับ = เจ้าของเท่านั้น)
 - เทสต์ `SignRequestRound240Tests` · Db `SignRequestRound240DbTests` · ล็อก `tools/required_call_site_check.py` R240 — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 2.12g-0 ตารางส่งอีเมล "เกินกำหนด" ส่งซ้ำทุก N วัน · แจ้งเตือนก่อนรอบรายการประจำ (รอบ 250 WP-04 ต่อยอด + ฝ่ายค้าน 74a2d1f6)
+- `EmailScheduleRule.RepeatEveryDays` (เดิมเก็บ+แสดงแต่ไม่มีผล) — **เฉพาะกฎ DocumentOverdue** (ทริกเกอร์อื่น > 0 ⇒ 400 · หน้าซ่อนช่อง):
+  ครั้งแรกวันที่เกินกำหนดครบ Offset (กุญแจเดิม `overdue-{Offset}`) · ครั้งซ้ำทุก N วัน (กุญแจ `overdue-{Offset}-{yyyyMMdd}`) **สูงสุด 6 ครั้ง**
+  และ**ไม่เกิน 180 วัน**หลังครบกำหนด (`Helpers/OverdueReminderSchedule`) · ส่งซ้ำเฉพาะใบที่วันเตือนครั้งแรก (DueDate+Offset) ≥ วันเปิดส่งซ้ำ
+  (`RepeatActivatedAt` — ระบบประทับเมื่อ 0 → > 0 · แถวที่ตั้งไว้ก่อน deploy ประทับ = วัน deploy) ⇒ ใบค้างเก่าไม่ถูกทวงซ้ำพร้อมกัน ·
+  ผู้ติดต่อปิดรับ ⇒ แถว "ข้าม" เฉพาะครั้งแรก · ทวง/เตือนครบกำหนด**เฉพาะเอกสารฝั่งลูกหนี้** (`ArApScope.ReceivableTypes` — ไม่ทวงผู้ขาย)
+- `RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore` (เดิม UI ส่ง true/1 ตายตัวและไม่มีผล): งานพื้นหลังเดิมแจ้ง**กระดิ่ง**ผู้สร้างรายการ
+  (ยังเป็นสมาชิกที่ใช้งานของบริษัท ไม่งั้นเจ้าของ · คีย์ `recurring.upcoming_run` ค่าตั้งต้นกระดิ่งเท่านั้น — อีเมล/กลุ่ม LINE เฉพาะบริษัทตั้งเอง)
+  1…N วันก่อนรอบ · รายวันไม่แจ้ง · รอบที่เลยวันสิ้นสุด/ครบจำนวนครั้งไม่แจ้ง · รอบละครั้ง (`UpcomingRunNotifiedFor` compare-and-set ก่อนส่ง) ·
+  **ค่าตั้งต้นปิด** — แถวเดิมทั้งหมดถูกปิดครั้งเดียวตอน deploy (marker `r250-recurring-notify-off`) · N นอก 0–30 = 400
+- `EmailScheduleRule.AudienceFilter` เลิกใช้ (ไม่มีหน้า/API/ผู้อ่าน · คอลัมน์คงไว้)
+- Last verified: commit d5257214
+
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 
 **สภาพก่อนรอบนี้ (สำรวจ):**
@@ -2999,7 +3046,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 
 ### 2.12h ช่องทางแจ้งเตือนของผู้ติดต่อ — ผู้ติดต่อเป็นเจ้าของปลายทาง (รอบ 245 เฟส L1 · `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` · คำตัดสิน 245-L1-1…245-L1-7)
 
-**สถานะปัจจุบัน (L1 — ตัวหาผู้รับ + ปลายทางอีเมล · ยังไม่ต่อสายเส้นส่ง):**
+**สถานะปัจจุบัน (L1 — ตัวหาผู้รับ + ปลายทางอีเมล · ต่อสายเส้นส่งอีเมลแล้วรอบ 250 WP-08 · LINE ยังไม่ส่ง):**
 - **ตาราง `ContactNotifyEndpoints`** (`Models/Entities/ContactNotifyEndpoint` · schema `Helpers/ContactNotifyEndpointMigration.Statements`) — ชนิด `Email`/`LineUser`/`LineGroup`
   (ตัวตั้ง `Helpers/NotifyEndpointKind`) · เรื่องที่รับต่อแถว `TopicsJson` = ชื่อ `NotifyTopic` (`Document` เอกสาร · `Dunning` ทวงชำระ/ใบแจ้งยอด · `Receipt` ใบเสร็จ ·
   `Wht` 50 ทวิ · `Sign` ลิงก์เซ็น · `Other`) ผ่านตัวอ่าน/เขียนเดียว `NotifyTopics` · ความยินยอม `ConsentRecordId` · `UnlinkedAt/UnlinkReason/BlockedAt` ·
@@ -3010,8 +3057,44 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   LINE: ไม่มีความยินยอม/ถอนแล้ว ⇒ ไม่ได้ (PDPA) · OA ไม่รู้ (`unknown`) ⇒ ไม่ได้ · กลุ่มยังไม่ยืนยันด้วยรหัส ⇒ ไม่ได้ · **groupId กลางของระบบ (ค่าตั้งหน้าแอดมิน
   `SiteSettings.LineMessagingGroupId`/config `Line:GroupId` ผ่าน `NextAccLineConfig`) ⇒ ไม่เป็นปลายทางเสมอ** (`NOTIFY-CONTACT-PLATFORM-GROUP` · คำตอบเจ้าของ Q1(b)) ·
   กลุ่ม > 200 คน ⇒ ไม่ได้ (`NOTIFY-CONTACT-GROUP-CAP` · Q2) · **L1 ยังไม่ส่งทาง LINE** (`ContactRecipientResolver.LineDeliveryOpen = false` ⇒ ปลายทาง LINE แสดงพร้อมเหตุ ไม่อยู่ในชุดผู้รับ)
-- **⚠️ ยังไม่มีเส้นส่งใดเรียก Resolver** (ตารางส่ง/ทวงชำระ/ใบแจ้งยอด · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น ยังอ่าน `Contact.Email` ตามเดิม — ต่อสายในเฟส L2 หลังรอบ 244 merge) ⇒
-  หน้าแท็บแสดงคำเตือนนี้ตรง ๆ (ไม่ให้ผู้ใช้คิดว่าอีเมลที่เพิ่มได้รับเอกสารแล้ว)
+- **ต่อสายเส้นส่งแล้ว (รอบ 250 WP-08 · คำตัดสิน 250-L1 · DESIGN §3.e/§3.g)** — ทุกเส้นส่งอีเมลถึงผู้ติดต่อถาม `IContactRecipientResolver.ResolveAsync` แล้วตัดสินด้วย
+  `ContactRecipientRule.ForEmail` ตัวเดียว (อีเมลที่ส่งได้ + เหตุไม่ส่ง) · เรื่องจาก trigger ผ่าน `NotifyTopics.ForTrigger` ตัวเดียว:
+  ตารางส่ง `EmailScheduleService.EnqueueDocumentAsync` (เมื่ออนุมัติ/รายการประจำ = `Document` · ใกล้/เกินกำหนด = `Dunning`) · ใบแจ้งยอด `ScanMonthlyStatementsAsync` (`Dunning`) ·
+  ส่ง 50 ทวิ `OnWhtCertIssuedAsync` (`Wht`) · ใบเสร็จหลังรับชำระ `PostPaymentAutomationService.ExecuteAsync` (`Receipt`) · ลิงก์เซ็น `SignRequestService.SuggestRecipientsAsync`
+  (`Sign` · ผู้รับที่ผู้ใช้กรอกครั้งก่อน `SignLinkLastRecipients`/ช่องที่กรอกตอนส่งยังชนะ) · ความพร้อมของรายการประจำ (`RecurringEmailReadiness` ทุกผู้อ่าน:
+  ฟอร์ม · หน้ารายการ · ทดลองรัน/แผงความพร้อม) อ่านผลเรื่อง `Document` ตัวเดียวกัน
+  - **หลายผู้รับ**: `EmailQueue.ToEmail` คั่น ", " — **อีเมลหลักก่อนเสมอ** (`EmailDelivery.PrimaryEmails` แยกไว้ · ไม่พึ่งลำดับ Options) · ผู้ส่งคิวแยกรายตัว ·
+    **ตัดตอนเข้าคิว** (ฝ่ายค้าน MED-3 · `ContactRecipientRule.CapForSender`): อีเมลผ่าน NextAcc ⇒ To+Bcc ≤ 5 · ทุกผู้ส่ง ⇒ ช่องยาว ≤ 500 (คอลัมน์คิว/บันทึก) ·
+    ปลายทางที่ถูกตัดบันทึกเป็นหมายเหตุ "ส่งไม่ครบทุกปลายทาง: …" ที่คงไว้หลังส่ง · งานหลังรับชำระ: เพดานปฏิเสธ (`EMAIL-PLATFORM-CAP`) ⇒ หยุดพร้อมเหตุ ไม่ลองซ้ำอัตโนมัติ ·
+    บันทึกผลแถวคิวล้ม ⇒ แถวนั้น Failed พร้อมเหตุ (คำสั่งตรง) แบตช์เดินต่อ
+  - **e-Tax by Email (ฝ่ายค้าน HIGH-1 · `ContactRecipientRule.ForChannel`)**: ใบที่ `RouteForAsync` = EtaxByEmail ⇒ ส่งถึง**อีเมลหลักเท่านั้น** (To 1 อีเมล ไม่มีสำเนา —
+    ตรงกับคำเตือน `EtaxByEmailFormat.ContactRecipientsNote`) · อีเมลเพิ่มเติมที่รับเรื่องนั้น**ไม่ได้รับสำเนาแบบอีเมลธรรมดา** (PDF/A-3 ที่ไม่ผ่าน ETDA ไม่ใช่ทางที่กฎหมายรับ ·
+    ตัวตรวจผู้รับปฏิเสธสำเนาอยู่แล้ว) แต่**บันทึกว่าไม่ได้ส่ง** ("ส่งใบกำกับ e-Tax ถึงอีเมลหลักเท่านั้น: ไม่ได้ส่งถึง …" บนแถวคิว/ข้อความงาน) · อีเมลหลักปิดรับเรื่องนั้น
+    (อีเมลเพิ่มเติมรับ) ⇒ **ไม่ส่งใบกำกับ** + แถว "ข้าม"/งานหยุดพร้อมเหตุ (ไม่ย้ายไปอีเมลเพิ่มเติม) · ทั้งคิว (`EnqueueDocumentAsync`) · งานหลังรับชำระ (`SendReceiptAsync`) ·
+    ทดลองรันรายการประจำ (`BuildAsync`) ใช้ตัวตัดสินเดียวกัน · อีเมลหลักหลายอีเมลในช่องเดียว ⇒ ตัวตรวจผู้รับ e-Tax ปฏิเสธ (ตามคำเตือนเดิม)
+  - **ยกเลิกรับ (มีอีเมลแต่ไม่มีปลายทางใดรับเรื่องนั้น) ⇒ ไม่ส่ง + แถวคิวสถานะ "ข้าม" พร้อมเหตุ** (`ToEmail` ว่าง · ผู้ส่งคิวหยิบเฉพาะ Pending · กุญแจกันซ้ำเดิม ⇒
+    สแกนรอบถัดไปไม่เขียนซ้ำ) · รายการประจำ ⇒ `EmailEnqueueOutcome.NotSent` ⇒ `RecurringRunFacts.EmailNotSentReason` (หน้ารายการบอกเหตุ + ปุ่มเปิดผู้ติดต่อ) ·
+    ใบเสร็จหลังรับชำระ ⇒ งานหยุดพร้อมเหตุ (`PostPaymentAutomationPolicy.Facts.EmailOptOutReason` — ไม่ใช่ "ไม่มีอีเมล") · ลิงก์เซ็น ⇒ 400 พร้อมเหตุ (ใส่ผู้รับเองได้)
+  - **ไม่ถดถอย**: ผู้ติดต่อที่ไม่มีแถวปลายทาง ⇒ `Contact.Email` ทุกเรื่องเหมือนเดิม · ไม่มีอีเมลเลย ⇒ ไม่เข้าคิว (เดิม) · ⚠️ ผู้ติดต่อที่ถูกลบ ⇒ ไม่ส่ง
+    **พร้อมเหตุ** `ContactRecipientRule.ContactDeletedReason` (ฝ่ายค้าน MED-2 — ตัวหาผู้รับอ่านผู้ติดต่อที่ลบด้วย `IgnoreQueryFilters` · แถว "ข้าม"/งานหลังรับชำระ/หน้ารายการประจำบอกเหตุ ·
+    เดิม `HydrateContactAsync` ยังส่งถึงอีเมลของผู้ติดต่อที่ลบแล้ว) · แท็บช่องทางแจ้งเตือนของผู้ติดต่อที่ลบยัง 404
+  - **ลิงก์เซ็นอัตโนมัติ/อีเมลเตือน (ฝ่ายค้าน MED-1)**: ส่งถึงผู้รับตั้งต้น (ครั้งก่อน/ที่อีเมลแรกส่งถึง) **ตัดเฉพาะอีเมลของผู้ติดต่อที่ช่องทางปฏิเสธเรื่อง "ลิงก์เซ็น"** (`SignRequestService.SignAutomationRecipients` ·
+    `EmailDelivery.DeclinedEmails`) · ผู้รับที่ผู้ใช้พิมพ์เองและไม่ใช่อีเมลใดของผู้ติดต่อ ⇒ คงไว้ (ไม่มีค่าตั้งที่บอกว่าเขาไม่รับ · แก้ CI 42232967230) · ผู้ติดต่อถูกลบ ⇒ ไม่ส่ง ·
+    ไม่เหลือใคร ⇒ ไม่ส่ง + บันทึกการส่ง Failed พร้อมเหตุ (`SIGN-AUTO-OPTOUT`) · ส่งด้วยมือ: ผู้รับที่พิมพ์ชนะ
+  - **กฎ "เมื่ออนุมัติเอกสาร" ครอบรายการประจำ** นับเฉพาะแถวคิวที่ไม่ใช่ "ข้าม" (ฝ่ายค้าน MED-6)
+  - **LINE ยังไม่ส่ง** (คำตอบเจ้าของ §10: Q1(b) ห้ามกลุ่มกลางของแอดมิน · Q7 ติ๊กต่อกฎ/ค่าตั้งต้นถอยไปอีเมล — งานเฟส L2 WP-11) ⇒ `LineDeliveryOpen = false` คงเดิม · อีเมลเป็นทางหลัก
+  - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·
+    แจ้งเตือนจองคิว/บริการ (`BookingNotifier` — ลูกค้าเว็บ ไม่ใช่ปลายทางผู้ติดต่อ) · พอร์ทัล/ใบเสนอราคาสาธารณะ (ผู้รับเปิดเอง)
+- **ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" (`Contact.AutoSendDisabled` · คำตัดสิน 250-29 · ตัวตัดสินเดียว `AutopilotSettingsResolver.AutoSendBlock`)** — ชนะกฎบริษัททุกเส้นอัตโนมัติ:
+  ตารางส่งทุก trigger + ใบแจ้งยอด + 50 ทวิ (แถว "ข้าม" พร้อมเหตุ) · รายการประจำ (ตรวจก่อนด่าน "กฎเมื่ออนุมัติครอบแล้ว" · บอกเหตุที่หน้ารายการ) ·
+  ลิงก์เซ็นอัตโนมัติ/อีเมลเตือน (บันทึกการส่ง Failed พร้อมเหตุ ไม่ลองซ้ำ) · **งานหลังรับชำระ (ฝ่ายค้าน HIGH-2/MED-4 · Option 1)**: ห้ามแค่ "ส่งอีเมล" ไม่ห้าม "ออกเอกสาร" —
+  ใบเสร็จยังออกตามค่าตั้งเดิม แล้วขั้นส่งอีเมลถูกตัดและงานหยุด (Blocked) พร้อมเหตุ "ไม่ส่งอีเมลใบเสร็จ — …" บนเอกสาร (`PostPaymentAutomationPolicy.Facts.AutoSendBlockedReason`) ·
+  ชนะทุกชั้นรวมตาราง/รายการประจำที่ตั้งส่งใบเสร็จ On (ไม่อยู่ในชั้นค่าตั้ง `SettingsForAsync` — R250L1 ห้าม) · การส่งที่ผู้ใช้กดเองไม่ถูกกัน · ตั้งที่ `PUT …/recurring/contacts/{id}/autopilot` (`Contact.Edit` · audit chain) ·
+  echo กลับ + hydrate ใน `contacts.html` แท็บช่องทางแจ้งเตือน และ `recurring.html` ขั้นช่องทางรับเงิน (โหลดค่าผู้ติดต่อไม่ได้ ⇒ ส่ง null = คงเดิม) · migration
+  `DocumentAutoSendMigration` (`NOT NULL DEFAULT false` = พฤติกรรมเดิมทุกแถว)
+- เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests` · ล็อก R250L1 (+ เคส R250L1-1…9) · `settings_reader_check` (`ContactNotifyEndpoint.TopicsJson` ·
+  `Contact.AutoSendDisabled`) · audit การเพิ่มอีเมลเพิ่มเติมเก็บแฮชที่อยู่ (`ContactRecipientRule.EmailAuditHash` ผูกบริษัท) — ยังไม่ได้คอมไพล์ในเครื่องนี้ ·
+  Last verified commit 31479320 (+ แก้ตามฝ่ายค้าน commit 2ab57d65)
 - **ทางเข้า HTTP** `ContactNotifyEndpointsController` (`api/companies/{cid}/contacts/{id}/notify-endpoints`): `GET` (สมาชิกบริษัท) · `GET recipients?topic=` (ดูว่าใครจะได้รับ — ตัวหาผู้รับตัวเดียวกัน) ·
   `POST email` · `PUT primary` · `PUT {eid}` (ป้าย · เรื่อง · แสดงยอด = กลุ่มเท่านั้น ชนิดอื่นปฏิเสธ 400) · `DELETE {eid}` (ยกเลิก · ล้าง LINE id · อีเมลหลักยกเลิกไม่ได้) —
   เขียนทุกตัว `Contact.Edit` + ปฏิเสธคีย์ API · ผู้เขียนเดียว `ContactNotifyEndpointService`: ล็อก `AdvisoryLockKey.ContactNotifyEndpoint` ต่อผู้ติดต่อ · tenant 404 · อีเมลผ่าน
@@ -3031,7 +3114,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - รวมผู้ติดต่อ (`MergeContactsAsync`) ใต้ล็อก `AdvisoryLockKey.ContactNotifyEndpoint` ของทุกรายที่เกี่ยว ⇒ ยกเลิก (เหตุ `merge`) แถวอีเมลหลักของผู้ถูกรวม + อีเมลรองที่ซ้ำกัน/ซ้ำอีเมลหลักของผู้ที่เก็บไว้ +
     LINE ซ้ำ (`ContactRecipientRule.MergeUnlinks`) · แถวหลักเลือกด้วย `ContactRecipientRule.PickPrimary` (ผูกก่อนชนะ · ไม่ใช่ตาม Guid) ทั้งตัวหาผู้รับและ `UpdatePrimaryAsync` (แถวเกิน ⇒ ยกเลิก)
   - งานย้ายข้อมูลล้มกลางทาง ⇒ ล้าง ChangeTracker (catch + finally) — แถวที่ค้างไม่หลุดลงฐานกับ SaveChanges ถัดไป · ค่าที่ `Protect` ปฏิเสธ ⇒ ข้าม (ไม่ล้างคอลัมน์) นับลง audit + log ครั้งเดียว
-  - หน้าแท็บ: ปุ่มที่กดได้ตามสิทธิ์จริง (`canEdit` ด่านเดียวกับ write) · พรีวิว "เมื่อเส้นส่งต่อสาย (L2) จะส่งถึง"
+  - หน้าแท็บ: ปุ่มที่กดได้ตามสิทธิ์จริง (`canEdit` ด่านเดียวกับ write) · พรีวิว "ส่งอีเมลถึง" (รอบ 250 WP-08: ต่อสายแล้ว — ประโยคเดิม "เมื่อเส้นส่งต่อสาย (L2)" ถูกลบ)
 - เทสต์ `ContactRecipientRuleTests` · Db `ContactNotifyEndpointRound245DbTests` · ล็อก `tools/required_call_site_check.py` R245 (+ เคส R245a–n) · `write_permission_gate_check` WATCHED — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
@@ -3045,7 +3128,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **เทมเพลต** (หน้า "เทมเพลตเอกสาร" → Footer): `ShowPaymentQr` · `ShowPayLinkQr` (ค่าตั้งต้น = เปิด) · `PaymentQrBankAccountId` (ว่าง = อัตโนมัติ) — คัดลอกเทมเพลตได้ค่าตาม · บัญชีต้องเป็นของบริษัทนี้ (ตรวจเมื่อเปลี่ยน)
 - **resolver เดียว** `PaymentQrService.ResolveForDocumentAsync` → `PaymentQrBlock` · ผู้เรียก: `PdfGenerationService.GenerateDocumentPdfAsync` / `GenerateDocumentHtmlAsync` (ผ่าน `ResolvePaymentQrAsync`) · พรีวิวเทมเพลตใช้ `SampleForTemplateAsync` (ไม่ฝังยอด · ไม่มี QR หน้าชำระ) ·
   ตัววาด: HTML `PaymentQrHtml` (ใน `BuildDocumentHtml` ต่อจากข้อมูลบัญชี) · QuestPDF `ComposePaymentQr` (ใน `ComposeFooter`) · ข้อความใต้ QR `PaymentQrCaption` ตัวเดียว · ป้าย `DocumentLabels.PayQr*`
-- **ใบไหนพิมพ์ QR บัญชี** (`PaymentQrPolicy.ShowBankQr`): ใบเสนอราคา · ใบแจ้งหนี้ · ใบกำกับภาษี · ใบวางบิล · ใบเพิ่มหนี้ฝั่งขาย — ไม่พิมพ์: ใบเสร็จ · ใบลดหนี้ · ฝั่งซื้อ · ยกเลิก · ใบตั้งหนี้ที่ชำระครบ · สกุลเงินอื่น ·
+- **ใบไหนพิมพ์ QR บัญชี** (`PaymentQrPolicy.ShowBankQr`): ใบเสนอราคา · ใบแจ้งหนี้ · ใบกำกับภาษี · ใบวางบิล · ใบเพิ่มหนี้ฝั่งขาย (รอบ 250 WP-04: ฝั่งตัดสินด้วยข้อเท็จจริงเดียวกับ JE/ลิงก์ชำระ — `DocumentPayLinkPolicy.IsSaleSide` ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ติดต่อผู้ขายอย่างเดียว · ไม่รู้ฝั่ง = ไม่พิมพ์ · เทมเพลตไม่มีเอกสาร = ไม่รู้ฝั่ง · Last verified `commit 0cb7ff24`) — ไม่พิมพ์: ใบเสร็จ · ใบลดหนี้ · ฝั่งซื้อ · ยกเลิก · ใบตั้งหนี้ที่ชำระครบ · สกุลเงินอื่น ·
   **บัญชี** (`PickAccount` · ฝ่ายค้าน S3): บัญชีที่ผูกผังแหล่งเงินของใบ (`PaymentAccountId` ชนะตาม entity · ผูกหลายบัญชี = ไม่เดา) → บัญชีของใบ → บัญชีของเทมเพลต → บัญชีเดียวที่ตั้ง QR
   (ระบุชัดแล้วไม่มี QR = ไม่พิมพ์ ไม่สลับ) · เหตุที่ไม่พิมพ์ + คำเตือน (ข้อความบัญชีของเทมเพลตไม่มีเลขบัญชีของ QR · WHT แบบรอบ 244 · ใบกำกับอ้างอยู่) แสดงที่หน้าเอกสาร
   `GET bank/payment-qr/documents/{id}` และหน้าเทมเพลต `POST document-templates/payment-qr-check` (`PaymentQrService.ResolveCoreAsync` ตัวเดียวกับกระดาษ) ·
@@ -3489,6 +3572,19 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
         `AssetCostSource` **เสมอ**เมื่อชนิดใบอาจเป็นต้นทุน (`AssetCostSourceRules.MayBeCostSource` — ไม่ตรวจ "ผูกอยู่ไหม" นอกล็อก) ก่อน `FOR UPDATE` แถวเอกสาร ·
         ทะเบียนเกิน GL อยู่ก่อน ⇒ problem row ในแท็บเอกสารต้นทุน · สินทรัพย์ระหว่างจัดหาไม่นับในกระทบยอดยกมา · ไฟล์ส่งออกติดป้าย "ระหว่างจัดหา"/"วันที่ซื้อ = วันพร้อมใช้" ·
         Last verified `commit a40c91e5` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+      • **รอบ 250 WP-08 (สินทรัพย์ P2 · คำตัดสิน 250-24…28 · ASSET §6 Q1–Q5)**:
+        **ราคาตามสัญญาแก้ได้หลังสร้าง** (`PATCH fixedasset/{id}/contract-price` · สิทธิ์ `Asset.Manage` · audit chain `contract-price-updated` · ค่าผ่าน
+        `AssetCostSourceRules.NormalizeContractPrice` — null/0 = ล้าง · ติดลบ = 400) · ยังเป็น**คำเตือน** `ContractPriceWarning` ไม่บล็อก · ช่องในฟอร์มแก้ไข (`fContractPrice`) ·
+        **วันที่พร้อมใช้งานของสินทรัพย์ใบเดียว** (`PATCH …/available-date` · `Asset.Manage` · audit `available-for-use-date-updated`) — ตั้ง/ล้างได้จนกว่ามีค่าเสื่อมลงบัญชี
+        (`FixedAssetValuationEdit.AvailableDateProblem`: ระหว่างจัดหา/สินทรัพย์หลายใบ (ตั้งตอนโอน)/ลงค่าเสื่อมแล้ว/ก่อนวันที่ซื้อ/เกิน 1 ปีจากวันนี้ ·
+        ฝ่ายค้าน MED-5: ไม่ใช่สถานะใช้งาน/มีค่าเสื่อมสะสมยกมา/ทบทวนอายุแล้ว ⇒ 409 พร้อมทางไปต่อ) · `CalculateDepreciationAsync` ล็อกแถวสินทรัพย์ของบริษัท (เรียง Id) ก่อนอ่านจุดตั้งต้น ·
+        ล็อกแถวสินทรัพย์ก่อนตรวจ · แผนที่ยังไม่ลงบัญชีสร้างใหม่ · **วันที่ซื้อไม่ถูกแตะ** · ว่าง = วันที่เอกสาร (ไม่ถดถอย) · **จุดตั้งต้นค่าเสื่อมตัวเดียว**
+        `DepreciationSchedule.StartDate(PurchaseDate, AvailableForUseDate)` ทั้งแผน (`BuildScheduleRows`) · ยอดลง GL (`CalculateDepreciationAsync`) · ไล่ตามตอนจำหน่าย ·
+        ทบทวนอายุ · ผูกหลังโอน (สินทรัพย์หลายใบ: ทั้งสองค่าเท่ากันหลังโอน ⇒ ผลเดิม) · ฟอร์มได้ `AvailableDateLockReason`/`DepreciationStartDate` จาก `GET {id}` ⇒ ล็อกช่องพร้อมเหตุ
+        (ไม่ใช่กดแล้วถูกปฏิเสธ) · `confirmPlaceInService`: อายุใช้งาน ≤ 0 กับวิธีที่คิดค่าเสื่อม ⇒ บอกก่อนยิง · วันตั้งต้น `Layout.toDateInput(new Date())` ·
+        **ตั้งใจ (ไม่ทำรอบนี้)**: ค่าเสื่อมงวดแรก = เดือนถัดจากพร้อมใช้ (250-24 · ธรรมเนียมทั้งระบบ) · ดอกเบี้ยระหว่างก่อสร้างไม่รวมเป็นต้นทุน (250-25/N6 — ผูกบรรทัด JE ในผัง 12280
+        ด้วยมือได้) · ริบมัดจำ/ใบซื้ออ้าง GRN/ปลดแถวที่โอนแล้ว/กู้คืนไม่ผูกกลับ/แผงไม่แสดงบน CN ซื้อ (250-28 · P3 ทำเมื่อผู้ใช้ขอ) · เทสต์ `Round250Wp08Tests` ·
+        Db `AssetEditsRound250DbTests` · ล็อก R250FA (+ R250FA-1…3) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 31479320
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
@@ -4564,6 +4660,12 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   และไม่ได้ป้ายซ้ำ — ตัวกันซ้ำ `NoteAlreadyStamped` จำทั้งข้อความใหม่และ `LegacyEtaxSkippedAbbreviatedNote` · เทสต์ `EtaxSkippedAbbreviatedNoteTests` · Last verified 2026-10-13 `commit 973d4913`
 - **Schema**: UBL 2.1 + ETDA profile (DocumentTypeCode T01–T04,
   ISO 8601 +07:00, CurrencyCode=THB)
+- **เลขผู้ขาย/ผู้ซื้อ (รอบ 250 WP-04 ต่อยอด · `Helpers/EtaxPartyTaxIdGuard` ตัวเดียว)**: ผู้ขาย 13 หลัก · ผู้ซื้อนิติบุคคล/รัฐ/ไม่รู้ชนิด ต้องมีเลข 13 หลัก (checksum)
+  หรือ 18 หลักที่ 5 หลักท้าย = รหัสสาขาของผู้ติดต่อ · บุคคลธรรมดา 13 หลัก (checksum) หรือ**ไม่มีเลข/"-"/"N/A" = ผ่าน** (ผู้ซื้อไม่จด VAT ⇒ XML `OTHR` "N/A" ·
+  แถว e-Tax แสดงคำเตือน "ถ้าผู้ซื้อจด VAT ต้องใส่เลข §86/4" — backlog: `Contact.IsVatRegistrant`) · ไม่รู้ชนิดไม่มีเลข ⇒ บล็อกพร้อมแนะนำตั้งเป็นบุคคลธรรมดา ·
+  สาขาจัดรูปด้วย `TaxBranchCode.Normalize` ตัวเดียว (ผู้ขาย/ผู้ซื้อ/PDF) ·
+  TXID ของผู้ซื้อ = 13 หลักแรก + สาขาของผู้ติดต่อเสมอ (PDF กับ XML สาขาเดียวกัน) · ใบลด/เพิ่มหนี้อ้างวันที่ใบเดิมเป็นวันปฏิทินไทย
+  (`ThaiDate.CalendarDateUtc` — วันเดียวกับ IssueDateTime +07:00 ของใบเดิม)
 - **Signing**: private key เก็บใน `Company.EtaxPrivateKeyBlobEncrypted`
   (AES-256 at rest); key ≥ 2048-bit; CA ที่ ETDA รับรอง
 - **Storage**: `EtaxInvoice` entity → `XmlContent` + `EtaxRefNumber` +
@@ -7894,3 +7996,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่ง
 _Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 250 WP-02 — §2.12g งานหลังรับชำระทุกทางเข้า (`CreatePaymentAsync(…, source)` · `PaymentEntrySource` · integration `AfterPaymentRecordedAsync`) · ชั้นค่าตั้ง รายการประจำ/ผู้ติดต่อ · ลิงก์ชำระของใบแจ้งหนี้ที่มีใบกำกับ · §2.7 `EmailEnqueueOutcome` + ข้ามกฎซ้ำ · §6 GL สูตรเดียว/ลำดับล็อกสินทรัพย์ · แจ้งเตือนที่ระบุผู้รับเคารพแถวปิด · ทิศเงิน `CashFlowDirection` · การ์ด go-live แอดมิน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a40c91e5)_
+_Last verified against codebase: 2026-11-06 (รอบ 251 WP-07 — §2.7 รหัสความพร้อมครบชุด (ETAX/ETAX-SENDER/ETAX-RECIPIENT · PAY-QR · QUOTA · PERIOD · POSTPAY) จากผู้อ่านเดิม · คอลัมน์ระดับ Autopilot · ส่งทดสอบถึงอีเมลผู้ใช้ (ไม่บันทึกการส่ง · ไม่นับเพดาน · audit) · ผลทดลองรันกล่องแยก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 847041d2)_

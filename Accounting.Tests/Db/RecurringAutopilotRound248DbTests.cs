@@ -40,6 +40,12 @@ public class RecurringAutopilotRound248DbTests
 
     private sealed record Seed(Guid CompanyId, Guid ContactId, Guid SetterId, Guid RecurringId);
 
+    /// <summary>รอบ 250 WP-04 ข้อ 9 (E §3): ใบค้างชำระเกิน 30 วัน — วันครบกำหนดเป็นตัวตั้ง · AgingDays คำนวณจากวันครบกำหนด (เดิมพิมพ์ 45 ตายตัว
+    /// แยกจาก DueDate ⇒ สองค่าคลาดกันได้เงียบ ๆ เมื่อใครแก้อีกตัว)</summary>
+    private static DateTime OverdueDue() => DateTime.UtcNow.Date.AddDays(-45);
+
+    private static int AgingOf(DateTime due) => (int)(DateTime.UtcNow.Date - due.Date).TotalDays;
+
     /// <summary>บริษัท + ผังพื้นฐาน + ลูกค้านิติบุคคลครบ §86/4 + ใบค้างชำระเกิน 30 วัน (ทำให้เกิด [AR-OVERDUE]) + ผู้ตั้งนโยบาย (สมาชิก) + รายการประจำอนุมัติอัตโนมัติ</summary>
     private static async Task<Seed> SeedAsync(AccountingDbContext db, bool setterIsMember = true)
     {
@@ -67,8 +73,8 @@ public class RecurringAutopilotRound248DbTests
         db.Documents.Add(new Document
         {
             CompanyId = co.Id, ContactId = contact.Id, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Approved,
-            DocumentNumber = "INV-OLD-0001", DocumentDate = DateTime.UtcNow.Date.AddDays(-60), DueDate = DateTime.UtcNow.Date.AddDays(-45),
-            SubTotal = 1000m, VatAmount = 70m, TotalAmount = 1070m, BalanceDue = 1070m, AgingDays = 45, Currency = "THB", ExchangeRate = 1m,
+            DocumentNumber = "INV-OLD-0001", DocumentDate = DateTime.UtcNow.Date.AddDays(-60), DueDate = OverdueDue(),
+            SubTotal = 1000m, VatAmount = 70m, TotalAmount = 1070m, BalanceDue = 1070m, AgingDays = AgingOf(OverdueDue()), Currency = "THB", ExchangeRate = 1m,
         });
         var setter = new User { Email = $"r248-setter-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "ผู้ตั้งนโยบาย" };
         db.Users.Add(setter);
@@ -222,8 +228,8 @@ public class RecurringAutopilotRound248DbTests
             req.Documents.Add(new Document
             {
                 CompanyId = s.CompanyId, ContactId = other.Id, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Approved,
-                DocumentNumber = "INV-OLD-0002", DocumentDate = DateTime.UtcNow.Date.AddDays(-60), SubTotal = 1000m, VatAmount = 70m,
-                TotalAmount = 1070m, BalanceDue = 1070m, AgingDays = 45, Currency = "THB", ExchangeRate = 1m,
+                DocumentNumber = "INV-OLD-0002", DocumentDate = DateTime.UtcNow.Date.AddDays(-60), DueDate = OverdueDue(), SubTotal = 1000m, VatAmount = 70m,
+                TotalAmount = 1070m, BalanceDue = 1070m, AgingDays = AgingOf(OverdueDue()), Currency = "THB", ExchangeRate = 1m,
             });
             var rec = await req.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
             rec.ContactId = other.Id;
@@ -367,5 +373,272 @@ public class RecurringAutopilotRound248DbTests
         }
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.Null((await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId)).AutoApprovePolicyJson);
+    }
+
+    // ═══════════════ รอบ 251 (WP-07 ข้อ 5 · A B-19): MED-5 ผ่านเส้น "เข้าคิว → ตรวจซ้ำตอนส่ง" ตัวจริง ═══════════════
+
+    /// <summary>ตัวแทนบริการลิงก์ชำระ — จดค่าชั้น "แนบลิงก์ไหม" ของกฎที่เส้นคิวส่งเข้ามา (ตอนเข้าคิว + ตอนส่ง) · บริษัทเปิด gateway (PromptPay · บัตร · โอน)</summary>
+    private static IDocumentPayLinkService CapturingLinks(List<(bool? Attach, string? Channels)> seen)
+        => F4Proxy<IDocumentPayLinkService>.Create((m, a) => m switch
+        {
+            nameof(IDocumentPayLinkService.CompanyFactsAsync) => new DocumentPayLinkPolicy.CompanyFacts(true, new[] { "PromptPay", "Card" }, true),
+            nameof(IDocumentPayLinkService.ForScheduledEmailAsync) => Record(seen, (EmailScheduleRule)a[0]!),
+            _ => null,
+        });
+
+    private static object? Record(List<(bool? Attach, string? Channels)> seen, EmailScheduleRule rule)
+    {
+        seen.Add((rule.AttachPayLink, rule.PayLinkChannelsJson));
+        return null;   // ไม่ออกลิงก์จริง — เทสต์นี้ล็อก "ชั้นที่ส่งเข้าตัวออกลิงก์" ซึ่งเป็นจุดที่ MED-5 เคยหลุด
+    }
+
+    /// <summary>ใบแจ้งหนี้ที่รายการประจำสร้างแล้วอนุมัติ + กฎ "เมื่อรายการประจำสร้างเอกสาร" ที่ไม่ได้ตั้งแนบลิงก์เอง (null = ตามชั้นล่าง)</summary>
+    private static async Task<Guid> RecurringInvoiceWithRuleAsync(AccountingDbContext db, Seed s, string? recurringMode)
+    {
+        var rec = await db.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
+        rec.PaymentMode = recurringMode;
+        var doc = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Approved,
+            DocumentNumber = "INV-R251-" + Guid.NewGuid().ToString("N")[..6], DocumentDate = DateTime.UtcNow.Date, DueDate = DateTime.UtcNow.Date.AddDays(30),
+            SubTotal = 1000m, VatAmount = 70m, TotalAmount = 1070m, BalanceDue = 1070m, Currency = "THB", ExchangeRate = 1m,
+            RecurringTransactionId = s.RecurringId,
+        };
+        db.Documents.Add(doc);
+        db.EmailScheduleRules.Add(new EmailScheduleRule { CompanyId = s.CompanyId, Trigger = "RecurringInvoiceCreated", IsActive = true, AttachPayLink = null });
+        await db.SaveChangesAsync();
+        return doc.Id;
+    }
+
+    private static EmailScheduleService Schedule(AccountingDbContext db, IDocumentPayLinkService links)
+        => new(db, F4Proxy<IEmailSenderFactory>.Create((_, _) => null), F4Proxy<IPdfGenerationService>.Create((_, _) => null),
+            NullLogger<EmailScheduleService>.Instance, links);
+
+    [Fact]
+    public async Task R248_MED5_TransferOnly_รายการ_อีเมลที่ส่งไม่มีลิงก์บัตร()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var docId = await RecurringInvoiceWithRuleAsync(db, s, AutopilotSettingsResolver.TransferOnly);
+        var seen = new List<(bool? Attach, string? Channels)>();
+        var sched = Schedule(db, CapturingLinks(seen));
+
+        var outcome = await sched.OnRecurringDocumentCreatedAsync(s.CompanyId, docId, s.RecurringId);
+        Assert.True(outcome.Kind == EmailEnqueueKind.Enqueued, outcome.Reason);
+        var atEnqueue = Assert.Single(seen);
+        Assert.False(atEnqueue.Attach);   // บริษัทเปิด gateway แต่รายการตั้งโอนเข้าบัญชีอย่างเดียว ⇒ ไม่แนบลิงก์ (ไม่มีบัตร)
+
+        // ตอนส่ง: กฎถูกโหลดใหม่จากฐาน (ไม่มีชั้นรายการ) ⇒ ต้องต่อชั้นรายการจากกุญแจคิวอีกครั้ง (ฝ่ายค้าน MED-5)
+        seen.Clear();
+        var q = await db.EmailQueues.SingleAsync(x => x.CompanyId == s.CompanyId && x.EntityId == docId);
+        Assert.Null(await sched.RecheckDocumentAtSendAsync(q, CancellationToken.None));
+        var atSend = Assert.Single(seen);
+        Assert.False(atSend.Attach);
+    }
+
+    [Fact]
+    public async Task R248_MED5_ทิศตรงข้าม_Inherit_ตอนส่งตามค่าบริษัท_มีลิงก์ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var docId = await RecurringInvoiceWithRuleAsync(db, s, null);
+        var seen = new List<(bool? Attach, string? Channels)>();
+        var sched = Schedule(db, CapturingLinks(seen));
+
+        Assert.Equal(EmailEnqueueKind.Enqueued, (await sched.OnRecurringDocumentCreatedAsync(s.CompanyId, docId, s.RecurringId)).Kind);
+        seen.Clear();
+        var q = await db.EmailQueues.SingleAsync(x => x.CompanyId == s.CompanyId && x.EntityId == docId);
+        Assert.Null(await sched.RecheckDocumentAtSendAsync(q, CancellationToken.None));
+        var atSend = Assert.Single(seen);
+        Assert.Null(atSend.Attach);       // ไม่ตั้งที่รายการ ⇒ ไม่มีชั้นรายการ ⇒ ตัวออกลิงก์ใช้ผู้ติดต่อ › บริษัท (บริษัทเปิด = แนบได้) — พฤติกรรมเดิม
+        Assert.Null(atSend.Channels);
+    }
+
+    // ═══════════════ รอบ 251 (WP-07 ข้อ 4 · A B-16): ส่งทดสอบถึงอีเมลฉัน ═══════════════
+
+    private sealed class CaptureSender : IEmailSender
+    {
+        public List<EmailMessage> Sent { get; } = new();
+        public EmailProvider Provider => EmailProvider.Smtp;
+        public Task<EmailSendResult> SendAsync(EmailMessage message, CancellationToken ct = default)
+        {
+            Sent.Add(message);
+            return Task.FromResult(EmailSendResult.Ok("r251-test"));
+        }
+    }
+
+    private static IEmailSenderFactory Senders(CaptureSender s) => F4Proxy<IEmailSenderFactory>.Create((m, _) => m switch
+    {
+        nameof(IEmailSenderFactory.PlatformFromAddress) => "no-reply@nextacc.net",
+        _ => s,
+    });
+
+    [Fact]
+    public async Task R251_ส่งทดสอบ_ถึงผู้ใช้เท่านั้น_ไม่สร้างDocumentEmailLog_ไม่นับเพดาน_มีaudit()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var setter = await db.Users.SingleAsync(u => u.Id == s.SetterId);
+        setter.EmailVerified = true;   // ฝ่ายค้านข้อ 2a: ส่งได้เฉพาะอีเมลที่ยืนยันแล้ว
+        await db.SaveChangesAsync();
+        var userEmail = setter.Email;
+        var before = await CountsAsync(db, s.CompanyId);
+        var quotaBefore = await PlatformEmailQuota.ForCompanyAsync(db, null, s.CompanyId, DateTime.UtcNow);
+        var sender = new CaptureSender();
+
+        RecurringSendTestResponse res;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            res = await new RecurringAutopilotService(req, Docs(req), senders: Senders(sender)).SendTestAsync(s.CompanyId, s.RecurringId, s.SetterId);
+
+        var msg = Assert.Single(sender.Sent);
+        Assert.Equal(userEmail, Assert.Single(msg.To));       // ผู้ใช้ที่กดเท่านั้น — ไม่ใช่ผู้ติดต่อ (ap@customer.test)
+        Assert.Empty(msg.Cc);
+        Assert.Empty(msg.Bcc);
+        Assert.StartsWith(RecurringTestEmail.SubjectPrefix, msg.Subject);
+        Assert.DoesNotContain("pay-document", msg.HtmlBody);   // ไม่มีลิงก์ชำระจริง
+        Assert.DoesNotContain("ap@customer.test", msg.HtmlBody);   // ฝ่ายค้านข้อ 2: อีเมลลูกค้าไม่ไปกล่องของพนักงาน
+        Assert.DoesNotContain("ap@customer.test", msg.PlainTextBody ?? "");
+        Assert.Contains("NextAcc", msg.HtmlBody);                 // เส้นแพลตฟอร์มห่อด้วยหัวเปิดเผย (คำตัดสิน 240-9)
+        Assert.Equal(userEmail, res.To);
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var after = await CountsAsync(check, s.CompanyId);
+        Assert.Equal(before.Docs, after.Docs);
+        Assert.Equal(before.Queue, after.Queue);
+        Assert.Equal(before.Logs, after.Logs);                // ไม่บันทึกเป็นการส่งเอกสาร
+        Assert.Equal(before.Audit + 1, after.Audit);          // ร่องรอยว่าใครกด (hash chain)
+        Assert.Equal(quotaBefore.SentToday, (await PlatformEmailQuota.ForCompanyAsync(check, null, s.CompanyId, DateTime.UtcNow)).SentToday);
+    }
+
+    [Fact]
+    public async Task R251_ทิศตรงข้าม_ผู้ใช้ไม่มีอีเมล_409_ไม่ส่ง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var noMail = new User { Email = $"r251-no-mail-{Guid.NewGuid():N}", PasswordHash = "x", FullName = "ผู้ใช้ไม่มีอีเมล", EmailVerified = true };
+        db.Users.Add(noMail);
+        await db.SaveChangesAsync();
+        var sender = new CaptureSender();
+
+        using var req = DbTestDatabase.TryCreateContext()!;
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            new RecurringAutopilotService(req, Docs(req), senders: Senders(sender)).SendTestAsync(s.CompanyId, s.RecurringId, noMail.Id));
+        Assert.Equal(409, ex.StatusCode);
+        Assert.Equal(RecurringTestEmail.RuleCode, ex.RuleCode);
+        Assert.Empty(sender.Sent);
+    }
+
+    [Fact]
+    public async Task R251_ทิศตรงข้าม_อีเมลยังไม่ยืนยัน_409_ไม่ส่ง_ไม่มีaudit()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);   // ผู้ตั้งนโยบายใน seed ยังไม่ยืนยันอีเมล (ค่าตั้งต้น)
+        var before = await CountsAsync(db, s.CompanyId);
+        var sender = new CaptureSender();
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new RecurringAutopilotService(req, Docs(req), senders: Senders(sender)).SendTestAsync(s.CompanyId, s.RecurringId, s.SetterId));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Equal(RecurringTestEmail.UnverifiedRefusal(false), ex.Message);
+        }
+        Assert.Empty(sender.Sent);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(before, await CountsAsync(check, s.CompanyId));
+    }
+
+    [Fact]
+    public async Task R251_เพดานส่งทดสอบ_ต่อผู้ใช้ต่อบริษัท_ข้ามรายการ_429()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var setter = await db.Users.SingleAsync(u => u.Id == s.SetterId);
+        setter.EmailVerified = true;
+        // ส่งไปแล้วครบเพดานวันนี้ — กระจายหลายรายการ (ฝ่ายค้านข้อ 2c: เดิมนับต่อรายการ ⇒ N × 10)
+        for (var i = 0; i < RecurringTestEmail.MaxPerUserPerDay; i++)
+            db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = s.CompanyId, UserId = s.SetterId, Action = AuditAction.SendEmail, EntityType = RecurringTestEmail.AuditEntityType,
+                EntityId = Guid.NewGuid().ToString(), NewValues = "{\"action\":\"" + RecurringTestEmail.AuditActionName + "\"}",
+            });
+        await db.SaveChangesAsync();
+        var sender = new CaptureSender();
+
+        using var req = DbTestDatabase.TryCreateContext()!;
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            new RecurringAutopilotService(req, Docs(req), senders: Senders(sender)).SendTestAsync(s.CompanyId, s.RecurringId, s.SetterId));
+        Assert.Equal(429, ex.StatusCode);
+        Assert.Empty(sender.Sent);
+    }
+
+    [Fact]
+    public async Task R251_ทดลองรัน_บอกช่องทางeTax_และงวด_ยังไม่เขียนอะไร()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        // บริษัทโหมด e-Tax by Email แต่ยังไม่ได้ตั้ง SMTP ⇒ รายการใบกำกับภาษีที่ส่งอีเมลอัตโนมัติต้อง "จะล้มที่ด่านผู้ส่ง"
+        db.CompanySettings.Add(new CompanySettings { CompanyId = s.CompanyId, EtaxEnabled = true, EtaxMode = EtaxMode.ByEmail });
+        var rec = await db.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
+        rec.DocumentType = DocumentType.TaxInvoice;
+        rec.AutoSendEmail = true;
+        await db.SaveChangesAsync();
+
+        // ผู้ติดต่อมีใบค้างชำระ ⇒ [AR-OVERDUE] ค้างรับทราบ ⇒ ใบจะหยุดเป็นร่าง ⇒ ยังไม่ส่งอะไร (ก่อนถึงด่านผู้ส่ง) — ทำนายตามจริง (CI 42232967230:
+        // เทสต์เดิมไม่ได้ตั้งนโยบาย จึงได้ "ใบยังเป็นร่าง" ซึ่งถูกต้อง) · ทิศตรงข้าม: ปล่อย AR-OVERDUE ตามนโยบาย ⇒ ใบอนุมัติ ⇒ ไปถึงด่านผู้ส่ง e-Tax
+        RecurringDryRunResponse draftDry;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            draftDry = await Autopilot(req).DryRunAsync(s.CompanyId, s.RecurringId);
+        Assert.Contains("ใบยังเป็นร่าง", draftDry.EmailPlan);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetRecurringPolicyAsync(s.CompanyId, s.RecurringId,
+                new SetAutoApprovePolicyRequest(new List<string> { ArOverdueApprovalWarning.Code }), s.SetterId);
+        var before = await CountsAsync(db, s.CompanyId);
+
+        RecurringDryRunResponse dry;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            dry = await Autopilot(req).DryRunAsync(s.CompanyId, s.RecurringId);
+
+        Assert.Contains(dry.Readiness.Items, i => i.Code == "ETAX-SENDER" && i.Verdict == AutopilotReadiness.Fail);
+        Assert.DoesNotContain(dry.Readiness.Items, i => i.Code == "SMTP");   // ไม่บอกว่า "ส่งผ่าน NextAcc" กับใบที่ห้ามถอย
+        Assert.NotEqual(AutopilotReadiness.LevelFull, dry.Readiness.Level);
+        Assert.Contains(dry.Readiness.Items, i => i.Code == "PERIOD" && i.Verdict == AutopilotReadiness.Ok);
+        Assert.NotNull(dry.EtaxPlan);
+        Assert.Contains("ด่านผู้ส่ง", dry.EmailPlan);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(before, await CountsAsync(check, s.CompanyId));
+    }
+
+    [Fact]
+    public async Task R251_ไม่ติ๊กส่ง_แต่มีกฎเมื่ออนุมัติเอกสาร_ยังตรวจeTax_ทิศตรงข้ามไม่มีกฎไม่ตรวจ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        db.CompanySettings.Add(new CompanySettings { CompanyId = s.CompanyId, EtaxEnabled = true, EtaxMode = EtaxMode.ByEmail });
+        var rec = await db.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
+        rec.DocumentType = DocumentType.TaxInvoice;
+        rec.AutoSendEmail = false;
+        await db.SaveChangesAsync();
+
+        RecurringDryRunResponse noRule;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            noRule = await Autopilot(req).DryRunAsync(s.CompanyId, s.RecurringId);
+        Assert.DoesNotContain(noRule.Readiness.Items, i => i.Code == "ETAX-SENDER");   // ไม่ส่งอีเมล ⇒ ไม่มีด่านให้ล้ม
+
+        db.EmailScheduleRules.Add(new EmailScheduleRule { CompanyId = s.CompanyId, Trigger = "DocumentApproved", IsActive = true });
+        await db.SaveChangesAsync();
+        RecurringDryRunResponse withRule;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            withRule = await Autopilot(req).DryRunAsync(s.CompanyId, s.RecurringId);
+        Assert.Contains(withRule.Readiness.Items, i => i.Code == "ETAX-SENDER" && i.Verdict == AutopilotReadiness.Fail);
+        Assert.Contains("ตามกฎ", withRule.EmailPlan);
     }
 }

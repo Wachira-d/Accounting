@@ -90,6 +90,8 @@ public static class NotificationEvents
     /// <summary>ทีมตรวจรายการประจำ 2026-10-14: รอบอัตโนมัติสร้างเอกสารไม่สำเร็จ (อ้างบัญชี/ผู้ติดต่อที่ถูกลบ · งวดปิด ฯลฯ) — แจ้งผู้ตั้งรายการ
     /// ครั้งแรกที่ล้ม/เมื่อสาเหตุเปลี่ยน (ไม่ใช่ทุก 15 นาที) · เหตุผลอยู่บนแถว (<c>RecurringTransaction.LastRunError</c>) ในหน้ารายการประจำ</summary>
     public const string RecurringRunFailed = "recurring.run_failed";
+    /// <summary>รอบ 250 WP-04 ต่อยอด: รายการประจำจะสร้างเอกสารในอีก N วัน (ค่าตั้ง "แจ้งเตือนก่อนรัน" ของรายการ) — ค่าตั้งต้น: กระดิ่งของผู้สร้างรายการ</summary>
+    public const string RecurringUpcomingRun = "recurring.upcoming_run";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
     /// เพื่อสอบ DBA / raw SQL.</summary>
@@ -173,6 +175,7 @@ public static class NotificationEvents
         ("Accounting", DepreciationFailed, "ลงค่าเสื่อมราคาอัตโนมัติไม่สำเร็จ (ต้องแก้แล้วกดคำนวณค่าเสื่อมเอง)"),
         ("Accounting", RecurringApprovedWithNotes, "รายการประจำอนุมัติอัตโนมัติพร้อมข้อสังเกตรายจ่ายต้องห้าม §65 ตรี"),
         ("Accounting", RecurringRunFailed, "รายการประจำสร้างเอกสารอัตโนมัติไม่สำเร็จ (ต้องแก้ที่หน้ารายการประจำ)"),
+        ("Accounting", RecurringUpcomingRun, "รายการประจำจะสร้างเอกสารในอีกไม่กี่วัน (ตั้งจำนวนวันที่รายการ)"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
         ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),
         ("Accounting", OverdueDunningFirst, "AR เกิน 60 วัน — ส่งหนังสือทวงหนี้รอบที่ 2"),

@@ -17,6 +17,10 @@
 
 กติกา: ทุกชื่อ param ที่ถูกส่งไปยังหน้า `.html` ในเรพ ต้องมี `params.get('<ชื่อ>')`
 (หรือ `.get("<ชื่อ>")`) อยู่ในไฟล์ปลายทาง — ไม่งั้นค่าที่ส่งไปหายเงียบ
+
+รอบ 250 WP-04 ข้อ 11 (AUDIT_249 A A-06): ลิงก์แบบ hash `<page>.html#<k>=` (เช่น `billing.html#tab=`) — ปลายทางต้องอ่าน `location.hash`
+**และ** มีชื่อ `<k>` เป็นสตริง/รูปแบบในไฟล์ (`'k='` · `"k"` · `k=`) — เดิมตรวจแค่ query ⇒ ลิงก์ hash ที่ปลายทางไม่อ่าน = หน้าเปิดแท็บแรกเงียบ ๆ ·
+`--self-test` = negative test (ปลายทางไม่อ่าน hash / ไม่มีชื่อ k ⇒ ฟ้อง · อ่านครบ ⇒ ไม่ฟ้อง · query เดิมยังตรวจ)
 """
 import os
 import re
@@ -26,7 +30,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WWW = os.path.join(ROOT, "Accounting", "wwwroot")
 
 # ลิงก์ที่มี query string ชี้ไปหน้า .html ในเรพ
-LINK = re.compile(r'["\'`](/[A-Za-z0-9_\-./]*?\.html)\?([^"\'`\s>]+)')
+# ฝ่ายค้าน WP-04 ต่อยอด: รวมลิงก์ relative (`b.html?x=` · `../pages/b.html?x=`) — resolve จากโฟลเดอร์ของไฟล์ต้นทาง
+LINK = re.compile(r'["\'`]([A-Za-z0-9_\-./]*?\.html)\?([^"\'`\s>]+)')
+# ลิงก์แบบ hash ที่มีชื่อคีย์: "/pages/billing.html#tab=..."
+LINK_HASH = re.compile(r'["\'`]([A-Za-z0-9_\-./]*?\.html)(?:\?[^"\'`\s>#]*)?#([A-Za-z0-9_]+)=')   # รวม ?a=1#k=v
 # ฝั่งอ่าน: params.get('x') · qs.get("x") · searchParams.get(`x`)
 READ = re.compile(r'\.get\(\s*[\'"`]([A-Za-z0-9_]+)[\'"`]\s*\)')
 
@@ -68,57 +75,128 @@ def strip_comments(text):
     return "".join(out)
 
 
-def main():
-    pages = {}   # path สัมพัทธ์ (เช่น "pages/documents.html") → ชุดชื่อ param ที่อ่าน
-    sources = []  # (ไฟล์ต้นทาง, บรรทัด, หน้าเป้าหมาย, ชื่อ param)
+def resolve(src, path):
+    """path ของลิงก์ ⇒ path สัมพัทธ์ใต้ wwwroot (ขึ้นต้น / = จากราก · อื่น = จากโฟลเดอร์ของไฟล์ต้นทาง)"""
+    if path.startswith("/"):
+        return path.lstrip("/")
+    return os.path.normpath(os.path.join(os.path.dirname(src), path)).replace(os.sep, "/")
 
-    for dirpath, _dirs, files in os.walk(WWW):
-        for fn in files:
-            if not fn.endswith((".html", ".js")):
-                continue
-            path = os.path.join(dirpath, fn)
-            try:
-                raw = open(path, encoding="utf-8").read()
-            except Exception:
-                continue
-            clean = strip_comments(raw)
-            rel = os.path.relpath(path, WWW).replace(os.sep, "/")
-            if fn.endswith(".html"):
-                pages[rel] = set(READ.findall(clean))
-            for m in LINK.finditer(clean):
-                target = m.group(1).lstrip("/")
-                qs = m.group(2)
-                line = clean.count("\n", 0, m.start()) + 1
-                for pair in re.split(r"[&;]", qs):
-                    name = pair.split("=")[0].strip()
-                    # ข้าม template placeholder (`${...}`) และชื่อว่าง
-                    if not name or "$" in name or "{" in name:
-                        continue
-                    sources.append((rel, line, target, name))
+
+def analyse(files):
+    """files: {path สัมพัทธ์ใต้ wwwroot: เนื้อไฟล์ดิบ} ⇒ (จำนวนหน้า, จำนวนลิงก์, [(src, line, target, name, kind)])"""
+    pages = {}        # หน้า → ชุดชื่อ param ที่อ่าน
+    page_text = {}    # หน้า → เนื้อที่ตัดคอมเมนต์แล้ว (ฝั่ง hash)
+    sources = []      # (ไฟล์ต้นทาง, บรรทัด, หน้าเป้าหมาย, ชื่อ, ชนิด query/hash)
+    for rel, raw in files.items():
+        clean = strip_comments(raw)
+        if rel.endswith(".html"):
+            pages[rel] = set(READ.findall(clean))
+            page_text[rel] = clean
+        for m in LINK.finditer(clean):
+            target = resolve(rel, m.group(1))
+            line = clean.count("\n", 0, m.start()) + 1
+            for pair in re.split(r"[&;]", m.group(2).split("#")[0]):
+                name = pair.split("=")[0].strip()
+                # ข้าม template placeholder (`${...}`) และชื่อว่าง
+                if not name or "$" in name or "{" in name:
+                    continue
+                sources.append((rel, line, target, name, "query"))
+        for m in LINK_HASH.finditer(clean):
+            sources.append((rel, clean.count("\n", 0, m.start()) + 1, resolve(rel, m.group(1)), m.group(2), "hash"))
 
     problems = []
-    for src, line, target, name in sources:
+    for src, line, target, name, kind in sources:
         if target not in pages:
             continue          # ไฟล์ปลายทางไม่มี = งานของ dead_link_check
         if (os.path.basename(target), name) in IGNORED:
             continue
-        if name not in pages[target]:
-            problems.append((src, line, target, name))
+        if kind == "query":
+            if name not in pages[target]:
+                problems.append((src, line, target, name, kind))
+        else:
+            text = page_text[target]
+            reads_hash = "location.hash" in text
+            names_key = re.search(r"['\"`]" + re.escape(name) + r"(=|['\"`])", text) is not None
+            if not (reads_hash and names_key):
+                problems.append((src, line, target, name, kind))
+    return len(pages), len(sources), problems
 
+
+def load_files():
+    files = {}
+    for dirpath, _dirs, names in os.walk(WWW):
+        for fn in names:
+            if not fn.endswith((".html", ".js")):
+                continue
+            path = os.path.join(dirpath, fn)
+            try:
+                files[os.path.relpath(path, WWW).replace(os.sep, "/")] = open(path, encoding="utf-8").read()
+            except Exception:
+                continue
+    return files
+
+
+def self_test():
+    reader = "<script>const h = location.hash || ''; const m = h.match(/tab=([a-z]+)/); const t = 'tab=';</script>"
+    link = "<a href=\"/pages/b.html#tab=usage\">x</a><a href=\"/pages/q.html?id=1\">y</a>"
+    qpage = "<script>const p = new URLSearchParams(location.search); p.get('id');</script>"
+    fails = []
+    _, _, ok = analyse({"pages/a.html": link, "pages/b.html": reader, "pages/q.html": qpage})
+    if ok:
+        fails.append(f"ปลายทางอ่าน hash + ชื่อ tab แล้วยังฟ้อง: {ok}")
+    _, _, p1 = analyse({"pages/a.html": link, "pages/b.html": "<script>const t = 'tab=';</script>", "pages/q.html": qpage})
+    if not any(k == "hash" for *_x, k in p1):
+        fails.append("ปลายทางไม่อ่าน location.hash แล้วไม่ฟ้อง")
+    _, _, p2 = analyse({"pages/a.html": link, "pages/b.html": "<script>const h = location.hash; const t = 'view=';</script>", "pages/q.html": qpage})
+    if not any(k == "hash" for *_x, k in p2):
+        fails.append("ปลายทางไม่มีชื่อคีย์ tab แล้วไม่ฟ้อง")
+    _, _, p3 = analyse({"pages/a.html": link, "pages/b.html": reader, "pages/q.html": "<script>p.get('other');</script>"})
+    if not any(k == "query" for *_x, k in p3):
+        fails.append("query เดิม (ปลายทางไม่อ่าน id) แล้วไม่ฟ้อง — ถดถอย")
+    # ฝ่ายค้าน WP-04 ต่อยอด: ?a=1#k=v และลิงก์ relative
+    _, _, p5 = analyse({"pages/a.html": '<a href="/pages/b.html?x=1#tab=u">x</a>', "pages/b.html": "<script>p.get('x'); const t = 'view=';</script>"})
+    if not any(k == "hash" for *_x, k in p5):
+        fails.append("ลิงก์ ?a=1#k=v ที่ปลายทางไม่อ่าน hash ไม่ถูกฟ้อง")
+    _, _, p6 = analyse({"pages/a.html": '<a href="q.html?id=1">x</a>', "pages/q.html": "<script>p.get('other');</script>"})
+    if not any(t == "pages/q.html" for _s, _l, t, _n, _k in p6):
+        fails.append("ลิงก์ relative (q.html?id=) ที่ปลายทางไม่อ่าน id ไม่ถูกฟ้อง")
+    _, _, p7 = analyse({"pages/a.html": '<a href="q.html?id=1">x</a>', "pages/q.html": "<script>p.get('id');</script>"})
+    if p7:
+        fails.append(f"ลิงก์ relative ที่ปลายทางอ่านครบถูกฟ้อง: {p7}")
+    _, _, p4 = analyse({"pages/a.html": "<!-- ไม่มีลิงก์ --><script>// '/pages/b.html#tab=x'\n</script>", "pages/b.html": "<p></p>"})
+    if p4:
+        fails.append("ลิงก์ในคอมเมนต์ถูกนับ")
+    for f in fails:
+        print("❌ self-test deep_link_param_check: " + f)
+    if not fails:
+        print("deep_link_param_check --self-test: ผ่าน")
+    return 1 if fails else 0
+
+
+def main():
+    if "--self-test" in sys.argv:
+        return self_test()
+    if self_test():
+        return 1
+    n_pages, n_links, problems = analyse(load_files())
     seen = set()
-    for src, line, target, name in problems:
-        key = (src, target, name)
+    for src, line, target, name, kind in problems:
+        key = (src, target, name, kind)
         if key in seen:
             continue
         seen.add(key)
-        print(f"{src}:{line}: ส่ง `?{name}=` ไป /{target} "
-              f"แต่หน้านั้นไม่เคยอ่านชื่อนี้ → ค่าหายเงียบ (ตกมาที่ลิสต์เปล่า)")
-        print(f"    → เพิ่ม `params.get('{name}')` ที่ /{target} "
-              f"หรือเปลี่ยนชื่อ param ให้ตรงกับที่ปลายทางอ่านอยู่แล้ว")
+        if kind == "query":
+            print(f"{src}:{line}: ส่ง `?{name}=` ไป /{target} "
+                  f"แต่หน้านั้นไม่เคยอ่านชื่อนี้ → ค่าหายเงียบ (ตกมาที่ลิสต์เปล่า)")
+            print(f"    → เพิ่ม `params.get('{name}')` ที่ /{target} "
+                  f"หรือเปลี่ยนชื่อ param ให้ตรงกับที่ปลายทางอ่านอยู่แล้ว")
+        else:
+            print(f"{src}:{line}: ส่ง `#{name}=` ไป /{target} แต่หน้านั้นไม่อ่าน location.hash/ไม่มีชื่อ `{name}` → เปิดแท็บแรกเงียบ ๆ")
+            print(f"    → อ่าน `location.hash` ที่ /{target} แล้วแยก `{name}=` หรือเปลี่ยนลิงก์เป็น query ที่ปลายทางอ่าน")
 
     print()
-    print(f"ตรวจ {len(pages)} หน้า · ลิงก์ที่มี query {len(sources)} จุด · "
-          f"ชื่อ param ที่ปลายทางไม่อ่าน {len(seen)} จุด")
+    print(f"ตรวจ {n_pages} หน้า · ลิงก์ query/hash {n_links} จุด · "
+          f"ชื่อที่ปลายทางไม่อ่าน {len(seen)} จุด")
     return 1 if seen else 0
 
 

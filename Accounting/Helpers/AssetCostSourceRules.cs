@@ -67,7 +67,8 @@ public static class AssetCostSourceRules
     /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 8 · คำตัดสิน §2 #7 · C F2 · E L-3): ชนิดเอกสารที่ "อาจ" ผูกเป็นต้นทุนสินทรัพย์ได้ (ฝั่งของใบลดหนี้/ใบเพิ่มหนี้ยังไม่รู้ ⇒ นับรวม) —
     /// เส้นยกเลิก/ลบถาวรถือคีย์ผู้เขียนต้นทุน<b>เสมอ</b>เมื่อชนิดเข้าข่าย (ไม่ตรวจ "ผูกอยู่ไหม" นอกล็อก — ช่อง TOCTOU: ผูกเข้ามาระหว่างตรวจกับล็อก)</summary>
     public static bool MayBeCostSource(DocumentType type)
-        => SignFor(type, true) != null;
+        // รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน): ทุกฝั่งที่เป็นไปได้ (ซื้อ · ขาย · ไม่รู้) — ไม่พึ่งว่าวันนี้ SignFor ใช้แค่ฝั่งซื้อ
+        => (SignFor(type, true) ?? SignFor(type, false) ?? SignFor(type, null)) != null;
 
     /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 10 · C F6): ป้ายความหมายของ "วันที่ซื้อ" สำหรับสินทรัพย์ที่ต้นทุนมาจากหลายเอกสาร (หน้า/รายงาน/ไฟล์ส่งออก) · null = ใบเดียว (ความหมายเดิม)</summary>
     public static string? PurchaseDateNote(bool fromMultipleDocuments)
@@ -302,6 +303,15 @@ public static class AssetCostSourceRules
     }
 
     /// <summary>ต้นทุนรวมเกินราคาตามสัญญา (คำถามเจ้าของ §6 ข้อ 1 · ข้อเสนอ) — เตือน ไม่บล็อก · null = ไม่เกิน/ไม่ได้ระบุ</summary>
+    /// <summary>รอบ 250 WP-08 (คำตัดสิน 250-27): ค่าราคาตามสัญญาที่จะเก็บ — null/0 = ล้าง · ติดลบ/เกินเพดาน = ปฏิเสธ (ไม่ตัดเงียบ) · ปัด 2 ตำแหน่ง AwayFromZero</summary>
+    public static (decimal? Value, string? Problem) NormalizeContractPrice(decimal? raw)
+    {
+        if (raw is not decimal v || v == 0m) return (null, null);
+        if (v < 0m) return (null, "ราคาตามสัญญาต้องไม่ติดลบ — เว้นว่างถ้าไม่ต้องการให้ระบบเตือน");
+        if (v > 999_999_999_999m) return (null, "ราคาตามสัญญาสูงเกินจริง — ตรวจจำนวนหลักอีกครั้ง");
+        return (Math.Round(v, 2, MidpointRounding.AwayFromZero), null);
+    }
+
     public static string? ContractPriceWarning(decimal? contractPrice, decimal cost)
     {
         if (contractPrice is not decimal cp || cp <= 0m) return null;

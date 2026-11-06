@@ -73,14 +73,13 @@ public static class LicenseLapseMigration
         """;
     }
 
-    /// <summary>คำสั่งบูต: ตาราง marker + DO-block ที่ซ่อมครั้งเดียวแล้วประทับ marker ในก้อนเดียวกัน</summary>
+    /// <summary>คำสั่งบูต: DO-block ที่ซ่อมครั้งเดียวแล้วประทับ marker ในก้อนเดียวกัน · ตาราง marker <c>OneShotDataFixes</c> สร้างที่
+    /// <c>DatabaseMigrationHelper.OneShotDataFixesTableSql</c> ตัวเดียว (อยู่ก่อนบล็อกนี้ใน <c>GetAlterStatements</c> · ฐานเทสต์สร้างตอนเริ่ม) —
+    /// เดิมบล็อกนี้สร้างตารางซ้ำเอง = สองตัวตั้งของ schema เดียว (CI 42232967230 · GateOppositeDirectionRound250Tests)</summary>
     public static IReadOnlyList<string> Statements()
     {
         return new List<string>
     {
-        """
-        CREATE TABLE IF NOT EXISTS "OneShotDataFixes" ("Key" varchar(100) PRIMARY KEY, "AppliedAt" timestamp NOT NULL);
-        """,
         $"""
         DO $r238$
         BEGIN

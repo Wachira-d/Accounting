@@ -314,7 +314,8 @@ public class NotificationEngine : INotificationEngine
 
         if (!supSys)
             await DispatchSystemAsync(recipientUserId, companyId, context);
-        if (!supEmail && !string.IsNullOrWhiteSpace(user.Email))
+        // รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน H2): คีย์กระดิ่งเท่านั้น ⇒ ไม่ส่งอีเมลในเส้นค่าตั้งต้น (บริษัทตั้งคีย์เอง ⇒ ไปเส้น CompanySettings)
+        if (!supEmail && NotificationAudiencePolicy.DirectDefaultEmail(eventKey) && !string.IsNullOrWhiteSpace(user.Email))
             await DispatchEmailAsync(companyId, user.Email!, user.FullName, context, link);
     }
 

@@ -172,17 +172,41 @@ public class PaymentQrRound246Tests
     [InlineData(DocumentType.Invoice, DocumentStatus.Approved, 1040, "USD", false)]    // พร้อมเพย์รับแต่บาท
     [InlineData(DocumentType.Invoice, DocumentStatus.Voided, 1040, "THB", false)]
     public void ใบที่พิมพ์QRบัญชี(DocumentType type, DocumentStatus status, double balance, string? currency, bool expected)
-        => Assert.Equal(expected, PaymentQrPolicy.ShowBankQr(true, type, null, status, (decimal)balance, currency));
+        => Assert.Equal(expected, PaymentQrPolicy.ShowBankQr(true, type, null, null, false, status, (decimal)balance, currency));
 
     [Fact]
     public void ปิดในเทมเพลต_ไม่พิมพ์QRบัญชี()
-        => Assert.False(PaymentQrPolicy.ShowBankQr(false, DocumentType.Invoice, null, DocumentStatus.Approved, 1040m, "THB"));
+        => Assert.False(PaymentQrPolicy.ShowBankQr(false, DocumentType.Invoice, null, null, false, DocumentStatus.Approved, 1040m, "THB"));
 
     [Fact]
     public void ใบเพิ่มหนี้ของใบซื้อ_ไม่พิมพ์()
     {
-        Assert.False(PaymentQrPolicy.ShowBankQr(true, DocumentType.DebitNote, DocumentType.PurchaseInvoice, DocumentStatus.Approved, 100m, "THB"));
-        Assert.True(PaymentQrPolicy.ShowBankQr(true, DocumentType.DebitNote, DocumentType.TaxInvoice, DocumentStatus.Approved, 100m, "THB"));
+        Assert.False(PaymentQrPolicy.ShowBankQr(true, DocumentType.DebitNote, DocumentType.PurchaseInvoice, null, false, DocumentStatus.Approved, 100m, "THB"));
+        Assert.True(PaymentQrPolicy.ShowBankQr(true, DocumentType.DebitNote, DocumentType.TaxInvoice, null, false, DocumentStatus.Approved, 100m, "THB"));
+    }
+
+    /// <summary>รอบ 250 WP-04: ใบเพิ่มหนี้ที่ผู้ใช้ย้ายฝั่ง/ผู้ติดต่อเป็นผู้ขายอย่างเดียว — QR ตัดสินด้วยข้อเท็จจริงชุดเดียวกับ JE/ลิงก์ชำระ (สองทิศ)</summary>
+    [Fact]
+    public void R250_ใบเพิ่มหนี้ย้ายฝั่ง_QRตามฝั่งที่ผู้ใช้สั่ง_ทั้งสองทิศ()
+    {
+        // ต้นทางเป็นใบขาย แต่ผู้ใช้ย้ายเป็นฝั่งซื้อ ⇒ ห้ามพิมพ์ QR บัญชีเรา (เดิม: ดูแค่ต้นทาง ⇒ พิมพ์ = เชิญผู้ขายโอนเข้าบัญชีเรา)
+        Assert.False(PaymentQrPolicy.ShowBankQr(true, DocumentType.DebitNote, DocumentType.TaxInvoice, true, false, DocumentStatus.Approved, 100m, "THB"));
+        Assert.False(PaymentQrPolicy.IsBankQrDocument(DocumentType.DebitNote, DocumentType.TaxInvoice, true, false));
+        // ทิศตรงข้าม: ไม่มีใบต้นทาง แต่ผู้ใช้ย้ายเป็นฝั่งขาย ⇒ พิมพ์ (เดิม: ไม่รู้ฝั่ง ⇒ ไม่พิมพ์ ทั้งที่ลิงก์ชำระออกได้)
+        Assert.True(PaymentQrPolicy.ShowBankQr(true, DocumentType.DebitNote, null, false, false, DocumentStatus.Approved, 100m, "THB"));
+        Assert.True(PaymentQrPolicy.IsBankQrDocument(DocumentType.DebitNote, null, false, false));
+        // ไม่มีต้นทาง · ไม่สั่งฝั่ง · ผู้ติดต่อเป็นผู้ขายอย่างเดียว ⇒ ฝั่งซื้อ ⇒ ไม่พิมพ์ · ไม่รู้ฝั่งเลย ⇒ ไม่พิมพ์
+        Assert.False(PaymentQrPolicy.IsBankQrDocument(DocumentType.DebitNote, null, null, true));
+        Assert.False(PaymentQrPolicy.IsBankQrDocument(DocumentType.DebitNote, null, null, false));
+        // ตรงกับตัวตัดสินฝั่งของลิงก์ชำระทุกชุดข้อเท็จจริง (ห้าม drift)
+        foreach (var rel in new DocumentType?[] { null, DocumentType.TaxInvoice, DocumentType.Invoice, DocumentType.PurchaseInvoice })
+            foreach (var ov in new bool?[] { null, true, false })
+                foreach (var supplierOnly in new[] { true, false })
+                    Assert.Equal(DocumentPayLinkPolicy.IsSaleSide(DocumentType.DebitNote, rel, ov, supplierOnly),
+                        PaymentQrPolicy.IsBankQrDocument(DocumentType.DebitNote, rel, ov, supplierOnly));
+        // ชนิดอื่นไม่ขึ้นกับข้อเท็จจริงฝั่ง (ใบแจ้งหนี้พิมพ์เสมอ · ใบลดหนี้ไม่พิมพ์เสมอ)
+        Assert.True(PaymentQrPolicy.IsBankQrDocument(DocumentType.Invoice, null, true, true));
+        Assert.False(PaymentQrPolicy.IsBankQrDocument(DocumentType.CreditNote, DocumentType.TaxInvoice, false, false));
     }
 
     [Fact]

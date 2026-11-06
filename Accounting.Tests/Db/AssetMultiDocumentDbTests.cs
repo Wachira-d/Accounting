@@ -7,6 +7,7 @@ using Accounting.Services.Implementations;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 using Xunit.Abstractions;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Accounting.Tests.Db;
 
@@ -124,13 +125,20 @@ public class AssetMultiDocumentDbTests
     /// <summary>วันที่ในปีก่อน (ทุกวันอยู่ในอดีตเสมอ — วันพร้อมใช้ต้อง ≤ วันนี้ และ ≥ วันของใบต้นทาง)</summary>
     private static DateTime Y(int month, int day) => new(DateTime.UtcNow.Year - 1, month, day);
 
-    /// <summary>JE ลงวันเดียวกับเอกสาร (ด่านยอดคงเหลือผังต้นทาง ณ วันลงรายการโอนนับจากวันที่ JE)</summary>
+    /// <summary>JE ลงวันเดียวกับเอกสาร (ด่านยอดคงเหลือผังต้นทาง ณ วันลงรายการโอนนับจากวันที่ JE) ·
+    /// รอบ 250 WP-04 ข้อ 9 (E §3): เอกสารที่ระบุแต่ไม่อยู่ใน tracker ⇒ โยน (เดิมถอยเป็น UtcNow เงียบ ⇒ JE ลงวันนี้ ด่าน "ยอดคงเหลือ ณ วันโอน" เห็นยอดผิดวัน
+    /// แล้วเทสต์ผ่าน/ล้มด้วยเหตุที่ไม่ใช่สิ่งที่ทดสอบ) · ไม่ระบุเอกสาร = JE ทั่วไปลงวันนี้โดยตั้งใจ</summary>
     private static void PostJe(AccountingDbContext db, Guid companyId, Guid? docId, Guid dr, Guid cr, decimal amt)
     {
-        var docDate = docId.HasValue ? db.Documents.Local.FirstOrDefault(d => d.Id == docId.Value)?.DocumentDate : null;
+        DateTime entryDate;
+        if (docId is Guid id)
+            entryDate = db.Documents.Local.FirstOrDefault(d => d.Id == id)?.DocumentDate
+                ?? throw new InvalidOperationException($"PostJe: เอกสาร {id} ไม่อยู่ใน context นี้ — seed เอกสารด้วย context เดียวกันก่อน (ห้ามถอยเป็นวันนี้เงียบ ๆ)");
+        else
+            entryDate = DateTime.UtcNow;
         var je = new JournalEntry
         {
-            CompanyId = companyId, EntryNumber = "JV-SEED-" + Guid.NewGuid().ToString("N")[..8], EntryDate = docDate ?? DateTime.UtcNow,
+            CompanyId = companyId, EntryNumber = "JV-SEED-" + Guid.NewGuid().ToString("N")[..8], EntryDate = entryDate,
             Status = JournalEntryStatus.Posted, SourceDocumentId = docId, TotalDebit = amt, TotalCredit = amt, Description = "seed",
         };
         je.Lines.Add(new JournalEntryLine { AccountId = dr, DebitAmount = amt, LineOrder = 1 });
@@ -531,5 +539,378 @@ public class AssetMultiDocumentDbTests
         await Assert.ThrowsAsync<KeyNotFoundException>(() => new FixedAssetService(db).CreateFromSourcesAsync(b.CompanyId,
             new CreateAssetFromSourcesRequest("ข้ามบริษัท", new List<AttachCostSourceItem> { new(a.DepositLine) }), Actor));
         Assert.Empty(await new FixedAssetService(db).GetLinkableCostLinesAsync(b.CompanyId, "PV-MD-0001", a.DepositDoc));
+    }
+
+    // ═══ รอบ 250 WP-04 (AUDIT_249 §WP-04 ข้อ 4 · C F7 · §1.10) — ด่านสินทรัพย์ผ่านเส้นจริงนอก FixedAssetService · ทุกด่านสองทิศ ═══
+
+    private static DocumentService Docs(AccountingDbContext db)
+        => new(db, new AccountingService(db), null!, null!, null!, NullLogger<DocumentService>.Instance, null!, null!, null!);
+
+    /// <summary>ทิศตรงข้ามของด่าน: เส้นเดินผ่านด่านสินทรัพย์ไปได้ — สิ่งที่เกิดหลังด่าน (สำเร็จ/ด่านอื่น) ไม่ใช่เรื่องของเทสต์นี้ แต่ต้องไม่ใช่ 409 ของด่านสินทรัพย์</summary>
+    private static void NotAssetGate(Exception? ex)
+        => Assert.False(ex is BusinessRuleException b && b.RuleCode == AssetCostSourceRules.RuleCode,
+            "ด่านสินทรัพย์ยังบล็อกใบที่ไม่ผูก/ปลดแล้ว: " + ex?.Message);
+
+    private static async Task<(Seed S, Guid AssetId, Guid SourceRowId)> HeldProgressAsync(AccountingDbContext db)
+    {
+        var s = await SeedAsync(db);
+        var created = await new FixedAssetService(db).CreateFromSourcesAsync(s.CompanyId, new CreateAssetFromSourcesRequest(
+            "เครื่องจักร (ระหว่างจัดหา)", new List<AttachCostSourceItem> { new(s.ProgressLine) }), Actor);
+        var row = await db.FixedAssetCostSources.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.DocumentLineId == s.ProgressLine);
+        return (s, created.Asset.Id, row.Id);
+    }
+
+    private static async Task ReleaseAsync(Seed s, Guid assetId, Guid rowId)
+    {
+        using var req = DbTestDatabase.TryCreateContext()!;
+        await new FixedAssetService(req).ReleaseCostSourceAsync(s.CompanyId, assetId, rowId, new ReleaseCostSourceRequest("ผูกผิดใบ (ทดสอบทิศตรงข้าม)"), Actor);
+    }
+
+    [Fact]
+    public async Task Purge_capitalized_source_is_blocked_but_held_source_is_released_and_purged()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var (s, _) = await BuildPlacedAsync(db);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Docs(req).PurgeDocumentAsync(s.CompanyId, s.DepositDoc, null, true, "ทดสอบลบถาวร", cascadeDescendants: false));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Equal(DocumentCascadePurgePolicy.RuleAssetCostCapitalized, ex.RuleCode);
+        }
+        using (var mid = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.True(await mid.Documents.IgnoreQueryFilters().AnyAsync(d => d.Id == s.DepositDoc && d.CompanyId == s.CompanyId));
+            Assert.True(await mid.FixedAssetCostSources.AnyAsync(x => x.DocumentId == s.DepositDoc && x.ReleasedAt == null && x.CapitalizedAt != null));
+        }
+
+        // ทิศตรงข้าม: ใบที่ผูกกับสินทรัพย์ที่ยังระหว่างจัดหา ⇒ ลบได้ · แถวผูกถูกปลด (ยังอยู่เป็นประวัติ) · ต้นทุนคิดใหม่
+        var (otherDoc, otherLine) = AddDoc(db, s, "PV-MD-PRG", DocumentType.PaymentVoucher, Y(4, 2),
+            ("มัดจำเครื่องที่สาม", 20_000m, 1_400m, s.Deposit, true));
+        PostJe(db, s.CompanyId, otherDoc, s.Deposit, s.Cash, 20_000m);
+        await db.SaveChangesAsync();
+        var held = await new FixedAssetService(db).CreateFromSourcesAsync(s.CompanyId, new CreateAssetFromSourcesRequest(
+            "เครื่องที่สาม", new List<AttachCostSourceItem> { new(otherLine) }), Actor);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Docs(req).PurgeDocumentAsync(s.CompanyId, otherDoc, null, true, "สร้างผิด (ทดสอบ)", cascadeDescendants: false);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.False(await check.Documents.IgnoreQueryFilters().AnyAsync(d => d.Id == otherDoc && d.CompanyId == s.CompanyId));
+        Assert.NotNull((await check.FixedAssetCostSources.IgnoreQueryFilters().SingleAsync(x => x.DocumentLineId == otherLine)).ReleasedAt);
+        Assert.Equal(0m, (await check.FixedAssets.SingleAsync(a => a.Id == held.Asset.Id)).PurchaseCost);
+    }
+
+    [Fact]
+    public async Task CnDn_side_switch_of_linked_note_is_blocked_unlinked_note_passes_the_gate()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var (s, assetId) = await BuildPlacedAsync(db);
+        var (cnDoc, cnLine) = AddDoc(db, s, "CN-MD-SIDE", DocumentType.CreditNote, Y(6, 10), ("ส่วนลดงวดที่ 2", 10_000m, 700m, s.Cip, true));
+        var (freeCn, _) = AddDoc(db, s, "CN-MD-FREE", DocumentType.CreditNote, Y(6, 11), ("ส่วนลดไม่ผูก", 1_000m, 70m, s.Cip, true));
+        await db.SaveChangesAsync();
+        (await db.Documents.SingleAsync(d => d.Id == cnDoc)).RelatedDocumentId = s.ProgressDoc;
+        (await db.Documents.SingleAsync(d => d.Id == freeCn)).RelatedDocumentId = s.ProgressDoc;
+        PostJe(db, s.CompanyId, cnDoc, s.Ap, s.Cip, 10_000m);
+        PostJe(db, s.CompanyId, freeCn, s.Ap, s.Cip, 1_000m);
+        await db.SaveChangesAsync();
+        await new FixedAssetService(db).AttachCostSourcesAsync(s.CompanyId, assetId,
+            new AttachCostSourcesRequest(new List<AttachCostSourceItem> { new(cnLine) }), Actor);
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Docs(req).ReclassifyCnDnSideAsync(s.CompanyId, cnDoc, toPurchaseSide: false, "ย้ายผิดฝั่ง", "tester"));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Equal(AssetCostSourceRules.RuleCode, ex.RuleCode);
+            Assert.Contains("ย้ายฝั่ง", ex.Message);
+        }
+        using (var mid = DbTestDatabase.TryCreateContext()!)
+            Assert.Null((await mid.Documents.AsNoTracking().SingleAsync(d => d.Id == cnDoc)).CnDnPurchaseSideOverride);   // ไม่มีอะไรถูกเปลี่ยน
+        // ทิศตรงข้าม: ใบลดหนี้ที่ไม่ผูก ⇒ ผ่านด่านสินทรัพย์และด่านก่อนหน้าทุกตัว ไปถึงด่านสุดท้ายก่อนเขียน ("ฝั่งนี้อยู่แล้ว") — ผลที่คาดแน่นอน
+        // (ฝ่ายค้าน WP-04 ข้อ 2: เดิมยอมทุก exception ⇒ ผ่านว่าง) · ตั้งฝั่งขายไว้ก่อน แล้วขอฝั่งขายซ้ำ
+        await db.Documents.Where(d => d.Id == freeCn).ExecuteUpdateAsync(x => x.SetProperty(d => d.CnDnPurchaseSideOverride, (bool?)false));
+        db.ChangeTracker.Clear();
+        using var req2 = DbTestDatabase.TryCreateContext()!;
+        var next = await Record.ExceptionAsync(() => Docs(req2).ReclassifyCnDnSideAsync(s.CompanyId, freeCn, toPurchaseSide: false, "ทดสอบ", "tester"));
+        NotAssetGate(next);
+        Assert.IsType<InvalidOperationException>(next);
+        Assert.Contains("อยู่แล้ว", next!.Message);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.False((await check.Documents.AsNoTracking().SingleAsync(d => d.Id == freeCn)).CnDnPurchaseSideOverride);
+    }
+
+    [Fact]
+    public async Task Foreign_service_toggle_of_linked_document_is_blocked_released_document_passes_the_gate()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var (s, assetId, rowId) = await HeldProgressAsync(db);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Docs(req).ReclassifyForeignServiceAsync(s.CompanyId, s.ProgressDoc, true, "ผู้ขายต่างประเทศ", "tester"));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Equal(AssetCostSourceRules.RuleCode, ex.RuleCode);
+        }
+        using (var mid = DbTestDatabase.TryCreateContext()!)
+            Assert.False((await mid.Documents.AsNoTracking().SingleAsync(d => d.Id == s.ProgressDoc)).IsForeignService);
+        await ReleaseAsync(s, assetId, rowId);
+        // ทิศตรงข้าม: ปลดแล้ว ⇒ ผ่านด่านสินทรัพย์ + ด่านสถานะ/WHT/VAT ไปถึงด่าน "ราคารวมภาษี" (ตั้งไว้ให้เกิดแน่นอน · ไม่ต้องมีผัง ภ.พ.36 ในชุดทดสอบ)
+        // — ผลที่คาดแน่นอน (ฝ่ายค้าน WP-04 ข้อ 2: เดิมยอมทุก exception)
+        await db.Documents.Where(d => d.Id == s.ProgressDoc).ExecuteUpdateAsync(x => x.SetProperty(d => d.PricesIncludeVat, true));
+        db.ChangeTracker.Clear();
+        using var req2 = DbTestDatabase.TryCreateContext()!;
+        var next = await Record.ExceptionAsync(() => Docs(req2).ReclassifyForeignServiceAsync(s.CompanyId, s.ProgressDoc, true, "ทดสอบ", "tester"));
+        NotAssetGate(next);
+        Assert.IsType<InvalidOperationException>(next);
+        Assert.Contains("ราคารวมภาษี", next!.Message);
+    }
+
+    [Fact]
+    public async Task Reclassify_line_of_linked_source_is_blocked_released_line_passes_the_gate()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var (s, assetId, rowId) = await HeldProgressAsync(db);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Docs(req).ReclassifyLineAccountAsync(s.CompanyId, s.ProgressDoc, s.ProgressLine, s.Machine, "แก้ผัง", "tester"));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Equal(AssetCostSourceRules.RuleCode, ex.RuleCode);
+        }
+        using (var mid = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(s.Cip, (await mid.DocumentLines.AsNoTracking().SingleAsync(l => l.Id == s.ProgressLine)).AccountId);
+        await ReleaseAsync(s, assetId, rowId);
+        // ทิศตรงข้าม: ปลดแล้ว ⇒ แก้ผังสำเร็จจริง (JE ย้ายผัง 12280 → 12260 · ฝ่ายค้าน WP-04 ข้อ 2: ไม่ใช่แค่ "ไม่ใช่ 409")
+        using (var req2 = DbTestDatabase.TryCreateContext()!)
+            Assert.Null(await Record.ExceptionAsync(() => Docs(req2).ReclassifyLineAccountAsync(s.CompanyId, s.ProgressDoc, s.ProgressLine, s.Machine, "ทดสอบ", "tester")));
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(s.Machine, (await check.DocumentLines.AsNoTracking().SingleAsync(l => l.Id == s.ProgressLine)).AccountId);
+    }
+
+    [Fact]
+    public async Task Integration_resync_guard_refuses_linked_document_and_passes_unlinked()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var (s, _, _) = await HeldProgressAsync(db);
+        // ด่าน resync เป็นเมธอด private ของ IntegrationService (ResyncGuardAsync — ผู้เรียก 2 ทางของ resync) — เรียกตัวจริงผ่าน reflection
+        var guard = typeof(IntegrationService).GetMethod("ResyncGuardAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        async Task<string?> GuardAsync(Guid docId)
+        {
+            using var req = DbTestDatabase.TryCreateContext()!;
+            var doc = await req.Documents.AsNoTracking().SingleAsync(d => d.Id == docId && d.CompanyId == s.CompanyId);
+            var svc = new IntegrationService(req, null!, NullLogger<IntegrationService>.Instance, null!, null!, null!);
+            return await (Task<string?>)guard.Invoke(svc, new object[] { s.CompanyId, doc, doc.DocumentDate })!;
+        }
+        var blocked = await GuardAsync(s.ProgressDoc);
+        Assert.NotNull(blocked);
+        Assert.Contains("resync", blocked);
+        Assert.Contains("ผูกเป็นต้นทุนของสินทรัพย์", blocked);
+        Assert.Null(await GuardAsync(s.ExpenseDoc));   // ทิศตรงข้าม: ใบไม่ผูก ⇒ ด่านนี้ไม่ขวาง
+    }
+
+    [Fact]
+    public async Task Ocr_register_asset_from_scan_of_linked_document_is_409_released_passes_the_gate()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var (s, assetId, rowId) = await HeldProgressAsync(db);
+        var scan = new OcrScanResult { CompanyId = s.CompanyId, OriginalFileName = "r250-asset.pdf", ScanStatus = "Completed", CreatedDocumentId = s.ProgressDoc };
+        db.OcrScanResults.Add(scan);
+        await db.SaveChangesAsync();
+        var request = new Accounting.Controllers.OcrController.RegisterAssetFromScanRequest(0, "FA-OCR-250", "เครื่องจักรจากสแกน",
+            null, null, null, null, PurchaseCost: null, SalvageValue: 0m, UsefulLifeMonths: 60);
+        static OcrService Ocr(AccountingDbContext d) => new(d, null!, null!, NullLogger<OcrService>.Instance,
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Ocr(req).RegisterAssetFromScanAsync(s.CompanyId, scan.Id, request, new FixedAssetService(req), Actor));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Equal(AssetCostSourceRules.RuleCode, ex.RuleCode);
+        }
+        using (var mid = DbTestDatabase.TryCreateContext()!)
+            Assert.False(await mid.FixedAssets.AnyAsync(a => a.CompanyId == s.CompanyId && a.AssetCode == "FA-OCR-250"));
+        // ทิศตรงข้าม: ปลดแล้ว ⇒ ผ่านด่านไปถึงด่านถัดไป (ไม่มีราคาซื้อในคำขอ/สแกน ⇒ "ราคาซื้อต้องมากกว่า 0") — ไม่ใช่ 409 ของด่านสินทรัพย์
+        await ReleaseAsync(s, assetId, rowId);
+        using var req2 = DbTestDatabase.TryCreateContext()!;
+        var next = await Record.ExceptionAsync(() => Ocr(req2).RegisterAssetFromScanAsync(s.CompanyId, scan.Id, request, new FixedAssetService(req2), Actor));
+        NotAssetGate(next);
+        Assert.IsType<InvalidOperationException>(next);
+        Assert.Contains("ราคาซื้อ", next!.Message);
+    }
+
+    [Fact]
+    public async Task Asset_transfer_journal_cannot_be_reversed_or_corrected_ordinary_journal_reverses()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var (s, assetId) = await BuildPlacedAsync(db);
+        var code = (await db.FixedAssets.AsNoTracking().SingleAsync(a => a.Id == assetId)).AssetCode;
+        var transferJe = (await db.JournalEntries.AsNoTracking().SingleAsync(j => j.CompanyId == s.CompanyId && j.Reference == code)).Id;
+        foreach (var systemTriggered in new[] { false, true })   // ทุกทาง รวมเส้นระบบ (ยกเลิก/แก้ไขด้วยการกลับ)
+        {
+            using var req = DbTestDatabase.TryCreateContext()!;
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new AccountingService(req).ReverseJournalEntryAsync(s.CompanyId, transferJe, systemTriggered: systemTriggered));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Equal(AssetCostSourceRules.RuleCode, ex.RuleCode);
+            Assert.Contains(code, ex.Message);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => new AccountingService(req).CorrectJournalEntryAsync(s.CompanyId, transferJe, "tester"));
+            Assert.Equal(AssetCostSourceRules.RuleCode, ex.RuleCode);
+        }
+        using (var mid = DbTestDatabase.TryCreateContext()!)
+        {
+            var je = await mid.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == transferJe);
+            Assert.Equal(JournalEntryStatus.Posted, je.Status);
+            Assert.Null(je.ReversedByEntryId);
+        }
+
+        // ทิศตรงข้าม: JE ทั่วไป (ไม่ใช่รายการโอนต้นทุน · ไม่มีเอกสารต้นทาง) กลับรายการได้ตามปกติ
+        var manual = new JournalEntry
+        {
+            CompanyId = s.CompanyId, EntryNumber = "JV-R250-" + Guid.NewGuid().ToString("N")[..8], EntryDate = DateTime.UtcNow.Date,
+            Status = JournalEntryStatus.Posted, TotalDebit = 100m, TotalCredit = 100m, Description = "ปรับปรุงทั่วไป (ทดสอบ)",
+        };
+        manual.Lines.Add(new JournalEntryLine { AccountId = s.Expense, DebitAmount = 100m, LineOrder = 1 });
+        manual.Lines.Add(new JournalEntryLine { AccountId = s.Cash, CreditAmount = 100m, LineOrder = 2 });
+        db.JournalEntries.Add(manual);
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await new AccountingService(req).ReverseJournalEntryAsync(s.CompanyId, manual.Id);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var after = await check.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == manual.Id);
+        Assert.Equal(JournalEntryStatus.Reversed, after.Status);
+        Assert.NotNull(after.ReversedByEntryId);
+    }
+
+    // ═══ รอบ 250 WP-04 (ค้างจาก WP-02 §2.4 ข้อ 8): ยกเลิกใบที่อาจเป็นต้นทุน ⇒ ถือคีย์ผู้เขียนต้นทุนก่อนเสมอ (ไม่ตรวจ "ผูกไหม" นอกล็อก) ═══
+
+    /// <summary>จำนวนคำขอที่ "รอ" คีย์ advisory นี้อยู่ — คีย์ 64 บิตของ pg_advisory_xact_lock(bigint) = classid (32 บิตบน) | objid (32 บิตล่าง) · objsubid = 1</summary>
+    private static Task<int> WaitersAsync(AccountingDbContext db, long key)
+        => db.Database.SqlQuery<int>($"""
+            SELECT COUNT(*)::int AS "Value" FROM pg_locks
+            WHERE locktype = 'advisory' AND NOT granted AND objsubid = 1 AND ((classid::bigint << 32) | objid::bigint) = {key}
+            """).SingleAsync();
+
+    [Fact]
+    public async Task Void_while_linking_holds_key_first()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var sale = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Approved,
+            DocumentNumber = "INV-MD-VOID-" + Guid.NewGuid().ToString("N")[..4], DocumentDate = DateTime.SpecifyKind(Y(3, 5), DateTimeKind.Utc),
+            SubTotal = 1_000m, TotalAmount = 1_000m, BalanceDue = 1_000m, Currency = "THB", ExchangeRate = 1m,
+        };
+        db.Documents.Add(sale);
+        await db.SaveChangesAsync();
+        var key = AdvisoryLockKey.For(s.CompanyId, AdvisoryLockKey.AssetCostSource, "");
+
+        // คำขอ "ผูกต้นทุน" ที่กำลังทำงาน = ถือคีย์ผู้เขียนต้นทุนของบริษัทไว้ในธุรกรรม
+        using var holder = DbTestDatabase.TryCreateContext()!;
+        var tx = await holder.Database.BeginTransactionAsync();
+        await holder.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", key);
+
+        // ทิศตรงข้าม (ฝ่ายค้าน WP-04 ข้อ 3): ระหว่างที่คีย์ถูกถือ ใบขาย (ไม่มีวันเป็นต้นทุนสินทรัพย์) ยกเลิกจบเองภายในไม่กี่วินาที · ไม่มีใครรอคีย์
+        // (เดิมตัวปลดแถวผูกถือคีย์ทุกชนิด "หลัง" ล็อกแถวเอกสาร ⇒ ใบขายรอการผูกต้นทุนของบริษัทโดยไม่มีเหตุ)
+        var saleVoid = Task.Run(async () => { using var r = DbTestDatabase.TryCreateContext()!; return await Docs(r).VoidDocumentAsync(s.CompanyId, sale.Id); });
+        Assert.Same(saleVoid, await Task.WhenAny(saleVoid, Task.Delay(TimeSpan.FromSeconds(10))));   // holder ไม่ปล่อยคีย์จนจบขั้นถัดไป — จบได้ = ไม่ได้รอคีย์
+        await saleVoid;
+        using (var p0 = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(0, await WaitersAsync(p0, key));
+
+        // ใบซื้อที่ไม่ได้ผูก (TOCTOU เดิม: "ไม่ผูก ⇒ ไม่ถือคีย์") ⇒ ต้องรอคีย์ — และรอ "ก่อน" FOR UPDATE แถวเอกสาร
+        var pvVoid = Task.Run(async () => { using var r = DbTestDatabase.TryCreateContext()!; return await Docs(r).VoidDocumentAsync(s.CompanyId, s.ExpenseDoc); });
+        using var probe = DbTestDatabase.TryCreateContext()!;
+        var waiting = false;
+        for (var i = 0; i < 300 && !waiting && !pvVoid.IsCompleted; i++)
+        {
+            waiting = await WaitersAsync(probe, key) > 0;
+            if (!waiting) await Task.Delay(100);
+        }
+        Assert.False(pvVoid.IsCompleted, pvVoid.IsFaulted ? pvVoid.Exception!.GetBaseException().Message : "ยกเลิกใบซื้อจบทั้งที่คีย์ผู้เขียนต้นทุนถูกถือ");
+        Assert.True(waiting, "ยกเลิกใบซื้อไม่ได้รอคีย์ผู้เขียนต้นทุน");
+        // แถวเอกสารยังไม่ถูกล็อก (คีย์มาก่อน FOR UPDATE ⇒ ลำดับเดียวกับผูก/โอน/ปลด — ไม่ deadlock): NOWAIT ต้องได้ล็อกทันที
+        await using (var ptx = await probe.Database.BeginTransactionAsync())
+        {
+            await probe.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE NOWAIT", s.ExpenseDoc, s.CompanyId);
+            await ptx.RollbackAsync();
+        }
+        Assert.Equal(DocumentStatus.Approved, (await probe.Documents.AsNoTracking().SingleAsync(d => d.Id == s.ExpenseDoc)).Status);
+
+        await tx.CommitAsync();   // ปล่อยคีย์ ⇒ ยกเลิกเดินต่อจนจบ
+        await tx.DisposeAsync();
+        Assert.Same(pvVoid, await Task.WhenAny(pvVoid, Task.Delay(TimeSpan.FromSeconds(60))));
+        await pvVoid;
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(DocumentStatus.Voided, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == s.ExpenseDoc)).Status);
+        Assert.Equal(DocumentStatus.Voided, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == sale.Id)).Status);
+    }
+
+    /// <summary>ฝ่ายค้าน WP-04 ต่อยอด ข้อ 4: ลบถาวรใบขายระหว่างที่คีย์ผู้เขียนต้นทุนถูกถือ ⇒ จบเองไม่รอคีย์ · ทิศตรงข้าม: ลบถาวรใบซื้อ ⇒ รอคีย์</summary>
+    [Fact]
+    public async Task Purge_sale_document_does_not_wait_for_cost_source_key_purchase_document_does()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var sale = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Draft,
+            DocumentNumber = "DRAFT-" + Guid.NewGuid().ToString("N"), DocumentDate = DateTime.SpecifyKind(Y(3, 6), DateTimeKind.Utc),
+            SubTotal = 1_000m, TotalAmount = 1_000m, BalanceDue = 1_000m, Currency = "THB", ExchangeRate = 1m,
+        };
+        db.Documents.Add(sale);
+        await db.SaveChangesAsync();
+        var key = AdvisoryLockKey.For(s.CompanyId, AdvisoryLockKey.AssetCostSource, "");
+
+        using var holder = DbTestDatabase.TryCreateContext()!;
+        var tx = await holder.Database.BeginTransactionAsync();
+        await holder.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", key);
+
+        var salePurge = Task.Run(async () =>
+        {
+            using var r = DbTestDatabase.TryCreateContext()!;
+            await Docs(r).PurgeDocumentAsync(s.CompanyId, sale.Id, null, true, "ร่างผิด (ทดสอบ)", cascadeDescendants: false);
+        });
+        Assert.Same(salePurge, await Task.WhenAny(salePurge, Task.Delay(TimeSpan.FromSeconds(10))));   // holder ยังถือคีย์ — จบได้ = ไม่ได้รอ
+        await salePurge;
+        using (var p0 = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(0, await WaitersAsync(p0, key));
+            Assert.False(await p0.Documents.IgnoreQueryFilters().AnyAsync(d => d.Id == sale.Id));
+        }
+
+        // ทิศตรงข้าม: ใบซื้อ (อาจเป็นต้นทุน) ⇒ รอคีย์จนกว่าผู้ถือจะปล่อย
+        var pvPurge = Task.Run(async () =>
+        {
+            using var r = DbTestDatabase.TryCreateContext()!;
+            await Docs(r).PurgeDocumentAsync(s.CompanyId, s.ExpenseDoc, null, true, "ทดสอบ", cascadeDescendants: false);
+        });
+        using var probe = DbTestDatabase.TryCreateContext()!;
+        var waiting = false;
+        for (var i = 0; i < 300 && !waiting && !pvPurge.IsCompleted; i++)
+        {
+            waiting = await WaitersAsync(probe, key) > 0;
+            if (!waiting) await Task.Delay(100);
+        }
+        Assert.False(pvPurge.IsCompleted, pvPurge.IsFaulted ? pvPurge.Exception!.GetBaseException().Message : "ลบถาวรใบซื้อจบทั้งที่คีย์ถูกถือ");
+        Assert.True(waiting, "ลบถาวรใบซื้อไม่ได้รอคีย์ผู้เขียนต้นทุน");
+        await tx.CommitAsync();
+        await tx.DisposeAsync();
+        Assert.Same(pvPurge, await Task.WhenAny(pvPurge, Task.Delay(TimeSpan.FromSeconds(60))));
+        await pvPurge;
     }
 }

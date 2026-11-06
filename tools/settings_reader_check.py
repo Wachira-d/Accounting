@@ -76,14 +76,42 @@ ENTITIES = {
                                 {'RenewalInvoiceLeadDays', 'ReminderDaysBeforeDue', 'ReminderDaysAfterDue', 'SuspendGraceDays',
                                  'AutoSuspendEnabled', 'PaymentLinkExpiryDays', 'ReminderEmailEnabled', 'ReminderLineEnabled'},
                                 ['Accounting/wwwroot/admin/platform-billing.html']),
+    # รอบ 250 WP-04 ข้อ 10 (AUDIT_249 B F-7): ค่าตั้งต่อรายการประจำ/ผู้ติดต่อ/ตารางส่งอีเมล/บัญชีธนาคาร — เฉพาะ property ที่เป็น "ค่าตั้ง"
+    # (ข้อมูลทะเบียน/สถานะที่ระบบเขียนเอง/ตารางเวลารัน ไม่นับ) · หน้าแก้ = recurring.html / contacts.html / email-schedule.html / bank.html ·
+    # ตอนขยายพบ 4 ช่องไม่มีผู้อ่านอยู่ก่อน ⇒ ต่อยอด: RepeatEveryDays (OverdueReminderSchedule) · NotifyBeforeRun/NotifyDaysBefore (RecurringUpcomingNotice)
+    # ต่อสายแล้ว · AudienceFilter เลิกใช้ (ไม่มีหน้า/API/ผู้อ่าน · คอลัมน์คงไว้เพราะ schema) — แถวเดียวที่เหลือใน baseline พร้อมหมายเหตุ deprecated
+    # ฝ่ายค้าน WP-04 ต่อยอด ข้อ 5: "ทุก property ยกเว้นรายการระบบ" (None + SYSTEM_PROPS) — ช่องค่าตั้งใหม่ของ 4 entity นี้ถูกตรวจเองโดยไม่ต้องจำมาเพิ่มชื่อ
+    'RecurringTransaction': ('Accounting/Models/Entities/RecurringTransaction.cs', None, ['Accounting/wwwroot/pages/recurring.html']),
+    'Contact': ('Accounting/Models/Entities/Document.cs', None, ['Accounting/wwwroot/pages/contacts.html']),
+    'EmailScheduleRule': ('Accounting/Models/Entities/EmailSchedule.cs', None, ['Accounting/wwwroot/pages/email-schedule.html']),
+    'BankAccount': ('Accounting/Models/Entities/BankAccount.cs', None, ['Accounting/wwwroot/pages/bank.html']),
     'StaffDailySummaryConfig': ('Accounting/Models/Entities/StaffDailySummary.cs',
                                 {'Enabled', 'SendAtLocal', 'Sections', 'RecipientUserIds', 'RecipientRoles'},
                                 ['Accounting/wwwroot/pages/settings.html', 'Accounting/wwwroot/js/staff-daily-summary.js']),
+    # รอบ 250 WP-08 (L1 ต่อสาย · AUDIT_249 §5 แถว 38): เรื่องที่ปลายทางของผู้ติดต่อรับ — ผู้อ่าน = ContactRecipientRule.Resolve (ตัวหาผู้รับของทุกเส้นส่ง) ·
+    # ShowAmounts ยังไม่อยู่ในขอบเขต (มีผลเมื่อ LINE เปิดส่ง เฟส L2/L3)
+    'ContactNotifyEndpoint': ('Accounting/Models/Entities/ContactNotifyEndpoint.cs', {'TopicsJson'},
+                              ['Accounting/wwwroot/pages/contacts.html']),
+    # รอบ 250 WP-08 (คำตัดสิน 250-29): ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" — ผู้อ่าน = EmailScheduleService/PostPaymentAutomationService/SignRequestService
+    # ผ่าน AutopilotSettingsResolver (class Contact อยู่ใน Document.cs)
+    'Contact': ('Accounting/Models/Entities/Document.cs', {'AutoSendDisabled'},
+                ['Accounting/wwwroot/pages/contacts.html', 'Accounting/wwwroot/pages/recurring.html']),
 }
 
 # property ที่ไม่ใช่ "ค่าตั้ง" ของทุก entity (กุญแจ · audit · navigation)
 NOT_SETTINGS = {'Id', 'CompanyId', 'Company', 'CreatedAt', 'UpdatedAt', 'CreatedBy', 'UpdatedBy', 'IsDeleted',
                 'SiteId', 'Site', 'SubscriptionId', 'Subscription', 'PropertyId', 'BranchId', 'Branch'}
+
+# property ที่ไม่ใช่ "ค่าตั้งที่ผู้ใช้ตั้ง" ของ entity ที่ตรวจแบบทุก property (ฝ่ายค้าน WP-04 ต่อยอด ข้อ 5) — สถานะ/ผลรัน/ยอดที่ระบบเขียนเอง ·
+# ข้อมูลทะเบียน (ชื่อ ที่อยู่ ติดต่อ) ไม่ใช่ค่าตั้ง · เพิ่มแถวต้องมีเหตุผลว่า "ระบบเขียนเอง/เป็นข้อมูล ไม่ใช่ตัวเลือกพฤติกรรม"
+SYSTEM_PROPS = {
+    'RecurringTransaction': {'LastRunDate', 'TotalRuns', 'LastRunError', 'LastRunErrorAt', 'LastRunNotice', 'LastRunOutcome',
+                             'LastDocumentId', 'UpcomingRunNotifiedFor', 'NextRunDate', 'Status'},
+    'Contact': {'LoyaltyPoints', 'LastVisitAt', 'TotalVisitCount', 'SignLinkLastRecipients', 'ExternalId', 'ExternalSystem',
+                'LineUserId', 'IsWalkInCustomer'},
+    'EmailScheduleRule': {'CreatedByName'},
+    'BankAccount': {'CurrentBalance', 'StatementBalance', 'StatementBalanceDate', 'StatementImportedAt', 'PaymentQrUploadedAt'},
+}
 
 # property "สถานะ" ที่ระบบเขียนเอง (ผลทดสอบการเชื่อมต่อ ฯลฯ) — ไม่ใช่ค่าที่ผู้ใช้ตั้ง จึงไม่อยู่ในขอบเขต
 STATUS_PROP_RE = re.compile(r'(LastTestedAt|LastTestStatus|Configured|LastFeedbackTrainingAt)$')
@@ -196,7 +224,7 @@ def entity_props(root, cls, rel, only, entity_names=frozenset()):
             m = PROP_RE.search(line)
             if m:
                 typ, name = m.group(1).strip(), m.group(2)
-                if (name not in NOT_SETTINGS and not STATUS_PROP_RE.search(name) and not NAV_TYPE_RE.match(typ)
+                if (name not in NOT_SETTINGS and name not in SYSTEM_PROPS.get(cls, ()) and not STATUS_PROP_RE.search(name) and not NAV_TYPE_RE.match(typ)
                         and typ.rstrip('?') not in entity_names and (only is None or name in only)):
                     props.append((name, typ))
         depth += line.count('{') - line.count('}')
@@ -491,6 +519,17 @@ def real_negative_test(root):
            for k, v in cs.items()}
     if 'LodgingProperty.EarlyCheckInHours' not in analyse(root, cs3, web):
         print('❌ negative test: ถอดผู้อ่านของ LodgingProperty.EarlyCheckInHours แล้วไม่ฟ้อง (ตัวรับค่า `d.` ใน Apply ถูกนับเป็นผู้อ่าน?)')
+        return False
+    # รอบ 250 WP-04 ข้อ 10: entity ที่ขยายเข้ามาต้องถูกตรวจจริง — ถอดผู้อ่านของ BankAccount.PaymentQrSource (ตัวเลือก QR) แล้วต้องฟ้อง ·
+    # ทิศตรงข้าม: ในเรพจริงมีผู้อ่าน ⇒ ไม่ฟ้อง
+    if 'BankAccount.PaymentQrSource' in analyse(root, cs, web):
+        print('❌ negative test: BankAccount.PaymentQrSource ควรมีผู้อ่าน (PaymentQrService) แต่ไม่พบ')
+        return False
+    cs4 = {k: re.sub(r'\.\s*PaymentQrSource\b', '.Removed_QrSource', v) if 'Services/' in k or 'Helpers/' in k or 'Controllers/' in k else v
+           for k, v in cs.items()}
+    web4 = {k: v.replace('.paymentQrSource', '.removed') for k, v in web.items()}
+    if 'BankAccount.PaymentQrSource' not in analyse(root, cs4, web4):
+        print('❌ negative test: ถอดผู้อ่านของ BankAccount.PaymentQrSource แล้วไม่ฟ้อง (ขอบเขต WP-04 ข้อ 10 ไม่ทำงาน)')
         return False
     return True
 

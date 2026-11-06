@@ -884,4 +884,71 @@ public class DocumentAutoSendRound241DbTests
         var run = await check.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.CompanyId == cid && r.DocumentId == inv.Id);
         Assert.Equal(nameof(PaymentEntrySource.Integration), run.Source);
     }
+
+    // ───────── รอบ 250 WP-04 (AUDIT_249 A B-19 · ฝ่ายค้าน 248 MED-5): เส้น enqueue → send ของรายการประจำ ใช้ช่องทางรับเงินของ "รายการ" ตอนส่งด้วย ─────────
+
+    /// <summary>บริษัทเปิด "แนบลิงก์ชำระเป็นค่าตั้งต้น" + กฎ "เมื่อรายการประจำสร้างเอกสาร" (ไม่ได้ตั้งแนบ/ไม่แนบ = ตามชั้นถัดไป) + รายการประจำโหมด
+    /// <paramref name="paymentMode"/> ⇒ เข้าคิวผ่านเมธอดจริง แล้วตรวจซ้ำตอนส่ง (RecheckDocumentAtSendAsync — internal ของรอบส่งคิว เรียกตรง
+    /// เฉพาะแถวนี้ ไม่กวาดคิวทั้งฐาน) ⇒ คืนแถวคิวหลังเขียนเนื้อใหม่ ณ เวลาส่ง</summary>
+    private async Task<(EmailQueue Queued, EmailQueue AtSend, Guid RecurringId, Guid InvoiceId)?> Med5Async(string? paymentMode)
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return null; }
+        var (links, s) = await LinkSeedAsync(db, "med5 " + Guid.NewGuid().ToString("N")[..6]);
+        await db.CompanySettings.Where(x => x.CompanyId == s.CompanyId).ExecuteUpdateAsync(x => x.SetProperty(c => c.PayLinkDefaultEnabled, true));
+        db.ChangeTracker.Clear();
+        var today = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+        var rec = new RecurringTransaction
+        {
+            CompanyId = s.CompanyId, Name = "ค่าบริการรายเดือน (MED-5)", Frequency = RecurringFrequency.Monthly, Status = RecurringStatus.Active,
+            StartDate = today, NextRunDate = today, PreferredDay = today.Day, TemplateType = "Document", DocumentType = DocumentType.Invoice,
+            ContactId = s.ContactId, AutoApprove = true, CreatedBy = "tester", TemplateData = "{\"lines\":[]}", PaymentMode = paymentMode,
+        };
+        db.RecurringTransactions.Add(rec);
+        db.EmailScheduleRules.Add(new EmailScheduleRule { CompanyId = s.CompanyId, Trigger = "RecurringInvoiceCreated", IsActive = true, AttachPayLink = null });
+        await db.SaveChangesAsync();
+
+        var outcome = await new EmailScheduleService(db, Factory(new FakeSender()), F4Proxy<IPdfGenerationService>.Create((_, _) => null),
+            NullLogger<EmailScheduleService>.Instance, links, Config()).OnRecurringDocumentCreatedAsync(s.CompanyId, s.Invoice.Id, rec.Id);
+        Assert.Equal(EmailEnqueueKind.Enqueued, outcome.Kind);
+        var queued = await db.EmailQueues.AsNoTracking().SingleAsync(q => q.CompanyId == s.CompanyId && q.EntityId == s.Invoice.Id);
+        Assert.Equal(rec.Id, ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey(queued.IdempotencyKey));   // กุญแจพกรายการประจำไปถึงตอนส่ง
+
+        // ตอนส่ง: context ใหม่ (รอบส่งคิวเป็นคำขอแยก) · กฎถูกโหลดใหม่จากฐาน (AttachPayLink = null) ⇒ ต้องต่อชั้นรายการประจำเอง
+        using var send = DbTestDatabase.TryCreateContext()!;
+        var sendLinks = new DocumentPayLinkService(send, new[] { Provider("gw241") }, Secrets, Config(), NullLogger<DocumentPayLinkService>.Instance);
+        var sched = new EmailScheduleService(send, Factory(new FakeSender()), F4Proxy<IPdfGenerationService>.Create((_, _) => null),
+            NullLogger<EmailScheduleService>.Instance, sendLinks, Config());
+        var item = await send.EmailQueues.SingleAsync(q => q.Id == queued.Id);
+        var skip = await sched.RecheckDocumentAtSendAsync(item, CancellationToken.None);   // internal (ฝ่ายค้าน WP-04 ข้อ 8 — ไม่ใช้ reflection)
+        Assert.Null(skip);
+        return (queued, item, rec.Id, s.Invoice.Id);
+    }
+
+    [Fact]
+    public async Task R248_MED5_TransferOnly_รายการ_อีเมลที่ส่งไม่มีลิงก์บัตร()
+    {
+        var r = await Med5Async(AutopilotSettingsResolver.TransferOnly);
+        if (r == null) return;
+        var (queued, atSend, _, invoiceId) = r.Value;
+        // บริษัทแนบลิงก์เป็นค่าตั้งต้น แต่รายการตั้ง "โอนเข้าบัญชีอย่างเดียว" ⇒ ทั้งตอนเข้าคิวและตอนส่ง (เนื้อที่เขียนใหม่) ไม่มีลิงก์/ปุ่มชำระออนไลน์
+        Assert.DoesNotContain(DocumentPayLinkPolicy.QueuePlaceholder, queued.Body);
+        Assert.DoesNotContain(DocumentPayLinkPolicy.QueuePlaceholder, atSend.Body);   // เดิม (ก่อน MED-5): ตอนส่งได้ลิงก์ตามบริษัท
+        Assert.DoesNotContain("ชำระเงินออนไลน์", atSend.Body);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Null((await check.Documents.AsNoTracking().SingleAsync(d => d.Id == invoiceId)).PayLinkTokenHash);   // ไม่มีการออกลิงก์เลย
+    }
+
+    [Fact]
+    public async Task R248_MED5_Inherit_รายการไม่ได้ตั้ง_อีเมลที่ส่งมีลิงก์ตามบริษัท()
+    {
+        var r = await Med5Async(null);
+        if (r == null) return;
+        var (queued, atSend, _, invoiceId) = r.Value;
+        // ทิศตรงข้าม: รายการไม่ได้ตั้งช่องทาง ⇒ ตามบริษัท (แนบ) ทั้งตอนเข้าคิวและตอนส่ง
+        Assert.Contains(DocumentPayLinkPolicy.QueuePlaceholder, queued.Body);
+        Assert.Contains(DocumentPayLinkPolicy.QueuePlaceholder, atSend.Body);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.NotNull((await check.Documents.AsNoTracking().SingleAsync(d => d.Id == invoiceId)).PayLinkTokenHash);
+    }
 }

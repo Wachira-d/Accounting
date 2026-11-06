@@ -24,6 +24,16 @@ public interface IRecurringAutopilotService
     /// <summary>ทดลองรันร่างในฟอร์ม — ไม่เขียนอะไรเลย</summary>
     Task<RecurringDryRunResponse> DryRunDraftAsync(Guid companyId, CreateRecurringTransactionRequest draft, Guid? recurringId, CancellationToken ct = default);
 
+    /// <summary>รอบ 251 (WP-07 ข้อ 1): ระดับ Autopilot ของหลายแถว (ตารางรายการประจำ) — อ่านอย่างเดียว · ตัวตัดสินเดียวกับแผงความพร้อม ·
+    /// ข้ามแถวที่เสร็จสิ้น · แถวที่ตรวจไม่สำเร็จคืน <c>Error</c> (ไม่ทำให้ทั้งตารางล้ม)</summary>
+    /// <param name="canRead">ฝ่ายค้านข้อ 6: ด่านสิทธิ์ต่อชนิดเอกสาร (controller) — แถวที่ไม่ผ่านถูกตัดก่อนรวบรวม · null = ไม่กรอง</param>
+    Task<IReadOnlyList<RecurringAutopilotLevelRow>> LevelsAsync(Guid companyId, IReadOnlyList<Guid> recurringIds,
+        Func<Accounting.Models.Enums.DocumentType, Task<bool>>? canRead = null, CancellationToken ct = default);
+
+    /// <summary>รอบ 251 (WP-07 ข้อ 4): ส่งอีเมลทดสอบของรอบถัดไปถึง<b>ผู้ใช้ที่กดเท่านั้น</b> (ผู้ส่งจากตัวตัดสินเดียว <c>OnBehalfEmailSender</c>) ·
+    /// ไม่นับเพดานอีเมลเอกสาร · ไม่บันทึก <c>DocumentEmailLog</c> · audit ว่าใครกด · ผู้ใช้ไม่มีอีเมล ⇒ 409</summary>
+    Task<RecurringSendTestResponse> SendTestAsync(Guid companyId, Guid recurringId, Guid userId, CancellationToken ct = default);
+
     /// <summary>ตั้ง/ล้างนโยบายของรายการประจำ — ผู้เรียก (controller) ตรวจสิทธิ์อนุมัติเอกสารชนิดนั้นแล้ว · รหัสที่ห้ามปล่อย ⇒ 400 พร้อมเหตุ · audit</summary>
     Task<AutoApprovePolicyView?> SetRecurringPolicyAsync(Guid companyId, Guid recurringId, SetAutoApprovePolicyRequest request, Guid userId, CancellationToken ct = default);
 

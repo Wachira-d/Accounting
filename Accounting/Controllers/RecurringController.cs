@@ -77,6 +77,32 @@ public class RecurringController : ControllerBase
         return Ok(new ApiResponse<RecurringDryRunResponse>(true, await _autopilot.DryRunDraftAsync(companyId, draft, recurringId)));
     }
 
+    /// <summary>รอบ 251 (WP-07 ข้อ 1 · AUTOPILOT §4.6): ระดับ Autopilot ของแถวในตาราง — เซิร์ฟเวอร์คำนวณด้วยตัวตัดสินเดียวกับแผงความพร้อม ·
+    /// อ่านอย่างเดียว · ส่งเฉพาะแถวที่ผู้เรียกมีสิทธิ์สร้างเอกสารชนิดนั้น (ด่านเดียวกับความพร้อม LOW-6) · <paramref name="ids"/> คั่นด้วยจุลภาค</summary>
+    [HttpGet("autopilot/levels")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<RecurringAutopilotLevelRow>>>> AutopilotLevels(Guid companyId, [FromQuery] string? ids)
+    {
+        var list = (ids ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => Guid.TryParse(x, out var g) ? g : Guid.Empty).Where(g => g != Guid.Empty).Distinct().ToList();
+        // ฝ่ายค้านข้อ 6: ด่านสิทธิ์ต่อชนิดถูกถามก่อนรวบรวม (service จำผลต่อชนิด) — แถวที่ไม่มีสิทธิ์ไม่ถูกรวบรวมและไม่ส่งกลับ
+        var rows = await _autopilot.LevelsAsync(companyId, list, async t => await DenyAutopilotReadAsync(companyId, t) == null);
+        return Ok(new ApiResponse<IReadOnlyList<RecurringAutopilotLevelRow>>(true, rows));
+    }
+
+    /// <summary>รอบ 251 (WP-07 ข้อ 4 · §4.5): ส่งอีเมลทดสอบของรอบถัดไปถึง<b>ผู้ใช้ที่กดเท่านั้น</b> — ไม่นับเพดานอีเมลเอกสาร · ไม่บันทึกเป็นการส่งเอกสาร ·
+    /// ต้องมีสิทธิ์สร้างเอกสารชนิดนั้น · คีย์ API ห้าม (ไม่มี "ผู้ใช้" ให้ส่งถึง)</summary>
+    [HttpPost("{id:guid}/send-test")]
+    [Accounting.Filters.RejectApiKey("ส่งอีเมลทดสอบของรายการประจำ")]
+    public async Task<ActionResult<ApiResponse<RecurringSendTestResponse>>> SendTest(Guid companyId, Guid id)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var item = await _recurringService.GetByIdAsync(companyId, id);
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userId, item.DocumentType ?? DocumentType.Invoice))
+            return Forbid403<RecurringSendTestResponse>("ส่งทดสอบได้เฉพาะผู้มีสิทธิ์สร้างเอกสารชนิดนี้ (Document.Create)");
+        var result = await _autopilot.SendTestAsync(companyId, id, userId);
+        return Ok(new ApiResponse<RecurringSendTestResponse>(true, result, "ส่งอีเมลทดสอบถึง " + result.To + " แล้ว"));
+    }
+
     /// <summary>ตั้ง/ล้างนโยบายอนุมัติข้ามคำเตือนของรายการ — <b>ต้องมีสิทธิ์อนุมัติเอกสารชนิดนั้น</b> (ผู้ไม่มีสิทธิ์อนุมัติห้ามตั้งให้ระบบอนุมัติแทน)</summary>
     [HttpPut("{id:guid}/approve-policy")]
     [Accounting.Filters.RejectApiKey("ตั้งนโยบายอนุมัติอัตโนมัติของรายการประจำ")]   // ฝ่ายค้าน HIGH-1: คีย์ API ห้ามประทับว่าเจ้าของตั้งนโยบาย

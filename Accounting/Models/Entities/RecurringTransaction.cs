@@ -32,8 +32,11 @@ public class RecurringTransaction : TenantEntity
     public string TemplateData { get; set; } = null!; // JSON of CreateDocumentRequest or CreateJournalEntryRequest
 
     // Notification
-    public bool NotifyBeforeRun { get; set; } = true;
+    public bool NotifyBeforeRun { get; set; } = false;   // รอบ 250 WP-04 ต่อยอด: ค่าตั้งต้นปิด (ฝ่ายค้าน H2 — แถวเดิมปิดครั้งเดียวตอน deploy)
     public int NotifyDaysBefore { get; set; } = 1;
+    /// <summary>รอบ 250 WP-04 ต่อยอด: วันของรอบที่แจ้งเตือนล่วงหน้าไปแล้ว (ระบบเขียนเอง · compare-and-set) — รอบเดียวกันแจ้งครั้งเดียว
+    /// (<see cref="Accounting.Helpers.RecurringUpcomingNotice"/>) · null = ยังไม่เคยแจ้ง</summary>
+    public DateTime? UpcomingRunNotifiedFor { get; set; }
     public bool AutoApprove { get; set; } = false;
 
     /// <summary>ส่งอีเมลเอกสาร (PDF แนบ) ให้ผู้ติดต่อทันทีที่รอบสร้างเอกสาร —

@@ -196,7 +196,7 @@ public partial class FixedAssetService : IFixedAssetService
         var already = asset.AccumulatedDepreciation;
         foreach (var p in Accounting.Helpers.DepreciationSchedule.Build(
                      asset.DepreciationMethod, ep.Cost, ep.Salvage, ep.Life,
-                     asset.PurchaseDate.AddMonths(shift)))
+                     Accounting.Helpers.DepreciationSchedule.StartDate(asset.PurchaseDate, asset.AvailableForUseDate).AddMonths(shift)))
             rows.Add((p.Year, p.Month, p.Amount,
                       shift > 0 ? already + p.Accumulated : p.Accumulated,
                       p.NetBookValue));
@@ -208,7 +208,8 @@ public partial class FixedAssetService : IFixedAssetService
         var asset = await _db.FixedAssets
             .FirstOrDefaultAsync(a => a.Id == assetId && a.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบสินทรัพย์ถาวร");
-        return MapToResponse(asset);
+        // รอบ 250 WP-08: ฟอร์มแก้ไขรู้ว่าช่อง "วันที่พร้อมใช้งาน" แก้ได้ไหม (ตัวตัดสินเดียวกับ PATCH) + จุดตั้งต้นค่าเสื่อม
+        return await WithEditLocksAsync(companyId, MapToResponse(asset));
     }
 
     public async Task<PagedResponse<FixedAssetResponse>> GetAllAsync(Guid companyId, PagedRequest request,
@@ -780,7 +781,7 @@ public partial class FixedAssetService : IFixedAssetService
         var postedIndex = lastPosted == null
             ? -1
             : Accounting.Helpers.DepreciationSchedule.MonthIndexFor(
-                  asset.PurchaseDate, lastPosted.Year, lastPosted.Month);
+                  Accounting.Helpers.DepreciationSchedule.StartDate(asset.PurchaseDate, asset.AvailableForUseDate), lastPosted.Year, lastPosted.Month);
         var elapsed = postedIndex + 1;                       // จำนวนงวดที่คิดไปแล้ว
 
         var acctCode = asset.AssetAccountId == null ? null
@@ -934,9 +935,9 @@ public partial class FixedAssetService : IFixedAssetService
         var startIndex = lastPosted == null
             ? 0
             : Accounting.Helpers.DepreciationSchedule.MonthIndexFor(
-                  asset.PurchaseDate, lastPosted.Year, lastPosted.Month) + 1;
+                  Accounting.Helpers.DepreciationSchedule.StartDate(asset.PurchaseDate, asset.AvailableForUseDate), lastPosted.Year, lastPosted.Month) + 1;
         var endIndex = Accounting.Helpers.DepreciationSchedule.MonthIndexFor(
-            asset.PurchaseDate, upTo.Year, upTo.Month);
+            Accounting.Helpers.DepreciationSchedule.StartDate(asset.PurchaseDate, asset.AvailableForUseDate), upTo.Year, upTo.Month);
         if (startIndex < 0) startIndex = 0;
         if (endIndex < startIndex) return 0m;
 
@@ -948,7 +949,7 @@ public partial class FixedAssetService : IFixedAssetService
             var amount = Accounting.Helpers.DepreciationSchedule.AmountForPeriod(
                 asset.DepreciationMethod, ep.Cost, ep.Salvage, ep.Life, ep.Index, nbv);
             if (amount <= 0m) break;
-            var periodDate = asset.PurchaseDate.AddMonths(i + 1);
+            var periodDate = Accounting.Helpers.DepreciationSchedule.StartDate(asset.PurchaseDate, asset.AvailableForUseDate).AddMonths(i + 1);
             _db.AssetDepreciations.Add(new AssetDepreciation
             {
                 CompanyId = companyId,
@@ -1028,6 +1029,10 @@ public partial class FixedAssetService : IFixedAssetService
             Accounting.Helpers.AdvisoryLockKey.For(companyId,
                 Accounting.Helpers.AdvisoryLockKey.AssetDepreciation,
                 $"{request.Year}-{request.Month:D2}"));
+        // รอบ 250 WP-08 ฝ่ายค้าน MED-5: ล็อกแถวสินทรัพย์ของบริษัท (เรียงตาม Id กัน deadlock) ก่อนอ่านจุดตั้งต้นค่าเสื่อม — คำขอแก้วันพร้อมใช้
+        // (SetAvailableForUseDateAsync ล็อกแถวเดียวกันก่อนตรวจ "ลงค่าเสื่อมแล้วไหม") ⇒ ไม่มีการโพสต์จากวันเดิมหลังวันถูกเปลี่ยน หรือเปลี่ยนวันหลังเพิ่งโพสต์
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"FixedAssets\" WHERE \"CompanyId\" = {0} ORDER BY \"Id\" FOR UPDATE", companyId);
 
         var assets = await _db.FixedAssets
             .Where(a => a.CompanyId == companyId && a.Status == AssetStatus.Active)
@@ -1040,7 +1045,8 @@ public partial class FixedAssetService : IFixedAssetService
 
         foreach (var asset in assets)
         {
-            if (asset.PurchaseDate > periodStart) continue;
+            // รอบ 250 WP-08: จุดตั้งต้นค่าเสื่อมตัวเดียว (วันพร้อมใช้ ?? วันที่ซื้อ)
+            if (Accounting.Helpers.DepreciationSchedule.StartDate(asset.PurchaseDate, asset.AvailableForUseDate) > periodStart) continue;
             // ที่ดิน/งานระหว่างก่อสร้าง (None) หรือไม่มีอายุใช้งาน → ไม่คิดค่าเสื่อม
             if (asset.DepreciationMethod == DepreciationMethod.None || asset.UsefulLifeMonths <= 0)
                 continue;
@@ -1058,7 +1064,7 @@ public partial class FixedAssetService : IFixedAssetService
             // รวม switch-to-straight-line · การหยุดเมื่อครบอายุใช้งาน · cap ที่
             // มูลค่าซาก · การปัดเศษ 2 ตำแหน่งแบบ AwayFromZero และงวดสุดท้ายรับเศษ
             var monthIndex = Accounting.Helpers.DepreciationSchedule.MonthIndexFor(
-                asset.PurchaseDate, request.Year, request.Month);
+                Accounting.Helpers.DepreciationSchedule.StartDate(asset.PurchaseDate, asset.AvailableForUseDate), request.Year, request.Month);
             var effective = EffectiveDepParams(asset, monthIndex);
             var monthlyDepreciation = Accounting.Helpers.DepreciationSchedule.AmountForPeriod(
                 asset.DepreciationMethod, effective.Cost, effective.Salvage,

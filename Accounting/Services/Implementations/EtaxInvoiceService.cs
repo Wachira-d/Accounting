@@ -228,20 +228,15 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         var company = await _db.Companies.FirstAsync(c => c.Id == companyId);
 
         // ===== Pre-flight validation & auto-fix (prevent Schematron errors) =====
-        if (string.IsNullOrWhiteSpace(company.TaxId))
-            throw new InvalidOperationException("กรุณาตั้งค่าเลขประจำตัวผู้เสียภาษีของบริษัทก่อน");
+        // รอบ 250 WP-04 ข้อ 7: ด่านเลขผู้ขาย/ผู้ซื้อตัวเดียว (Helpers/EtaxPartyTaxIdGuard · ข้อความเดิม)
+        if (Accounting.Helpers.EtaxPartyTaxIdGuard.Seller(company.TaxId) is string sellerTaxProblem)
+            throw new InvalidOperationException(sellerTaxProblem);
 
         // Auto-clean: strip dashes/dots/spaces from TaxId (users often enter "0-1234-56789-01-2")
         var sellerTaxClean = Accounting.Helpers.ThaiTaxId.Normalize(company.TaxId);
-        if (sellerTaxClean.Length != 13)
-            throw new InvalidOperationException(
-                $"เลขประจำตัวผู้เสียภาษีของบริษัทต้องเป็นตัวเลข 13 หลัก (ปัจจุบัน: \"{company.TaxId}\" → {sellerTaxClean.Length} หลัก)");
 
         // Auto-clean: strip non-digits from branch code
-        var sellerBranchClean = new string((company.BranchCode ?? "").Where(char.IsDigit).ToArray());
-        if (sellerBranchClean.Length == 0) sellerBranchClean = "00000";
-        else if (sellerBranchClean.Length > 5) sellerBranchClean = sellerBranchClean.Substring(0, 5);
-        else if (sellerBranchClean.Length < 5) sellerBranchClean = sellerBranchClean.PadLeft(5, '0');
+        var sellerBranchClean = TaxBranchCode.Normalize(company.BranchCode);   // ฝ่ายค้าน M7: ตัวจัดรูปสาขาตัวเดียว
 
         // Persist cleaned values so future calls don't hit the same issue
         var dirty = false;
@@ -249,8 +244,12 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         if (company.BranchCode != sellerBranchClean) { company.BranchCode = sellerBranchClean; dirty = true; }
         if (dirty) await _db.SaveChangesAsync();
 
-        if (string.IsNullOrWhiteSpace(document.Contact?.TaxId))
+        if (document.Contact == null)
             throw new InvalidOperationException("กรุณาระบุเลขประจำตัวผู้เสียภาษีของผู้ซื้อ");
+        // รอบ 250 WP-04 ต่อยอด: ด่านเลขผู้ซื้อตัวเดียว (ชนิด · checksum · สาขาของเลข 18 หลัก) — บุคคลธรรมดาไม่มีเลข = ผ่าน (OTHR "N/A")
+        if (Accounting.Helpers.EtaxPartyTaxIdGuard.Buyer(document.Contact.Name, document.Contact.TaxId, document.Contact.ContactType,
+                document.Contact.BranchCode) is string buyerTaxProblem)
+            throw new InvalidOperationException(buyerTaxProblem);
 
         // Auto-clean buyer TaxId too
         var buyerTaxClean = Accounting.Helpers.ThaiTaxId.Normalize(document.Contact.TaxId);
@@ -262,10 +261,6 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         // ต้องครบ 13 หลักเหมือนฝั่ง seller (หรือ 18 = TaxId+สาขาที่ผู้ใช้ต่อมาเอง)
         // — ถ้าปล่อยผ่าน ComposeTxId จะ "เติมศูนย์แต่งเลขให้ครบ 13" แล้วยื่นเลข
         // ประจำตัวผู้เสียภาษีปลอมไปกรมสรรพากร ซึ่งแก้ย้อนหลังไม่ได้
-        if (buyerTaxClean.Length != 13 && buyerTaxClean.Length != 18)
-            throw new InvalidOperationException(
-                $"เลขประจำตัวผู้เสียภาษีของผู้ซื้อ \"{document.Contact.Name}\" ต้องเป็นตัวเลข 13 หลัก "
-                + $"(ปัจจุบัน {buyerTaxClean.Length} หลัก: \"{document.Contact.TaxId}\") — แก้ที่ข้อมูลผู้ติดต่อก่อนออก e-Tax");
 
         if (string.IsNullOrWhiteSpace(company.Address) && string.IsNullOrWhiteSpace(company.SubDistrict))
             throw new InvalidOperationException("กรุณาตั้งค่าที่อยู่บริษัทก่อนสร้าง e-Tax (ต้องมีอย่างน้อย ตำบล อำเภอ จังหวัด รหัสไปรษณีย์)");
@@ -827,7 +822,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     // Schema: UN/CEFACT Cross Industry Invoice (CII) D16B subset
     // Validation: สรรพากร Schematron + XSD
 
-    private string BuildEtaxXml(Document doc, Company company, string etaxRef, Document? originalDoc = null,
+    /// <remarks>รอบ 250 WP-04 ข้อ 7: <c>internal static</c> (ไม่มี state ของ instance) ⇒ เทสต์ฟิลด์ XML ตาม ETDA ได้โดยตรง (<c>EtaxXmlRound250Tests</c>)</remarks>
+    internal static string BuildEtaxXml(Document doc, Company company, string etaxRef, Document? originalDoc = null,
         decimal priorCnDnNet = 0m)
     {
         // Document-type-specific root element + RAM namespace prefix.
@@ -990,7 +986,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
                 new XElement(ram + "FormattedIssueDateTime",
                     new XElement(udt + "DateTimeString",
                         new XAttribute("format", "102"),
-                        origDate.ToString("yyyyMMdd", CultureInfo.InvariantCulture))));
+                        // รอบ 250 WP-04 ต่อยอด (ฝ่ายค้านข้อ 6): วันที่ปฏิทินไทยตัวเดียวกับ IssueDateTime ของใบเดิม (FormatIso = UTC+7) —
+                        // ค่าที่เก็บตามกติกา (ThaiDate: วันไทย ณ 00:00Z) ได้วันเดิม · แถวเก่าที่เก็บเป็นเวลาจริง (≥ 17:00Z) ได้วันไทยถัดไปเหมือน XML ของใบเดิม
+                        Accounting.Helpers.ThaiDate.CalendarDateUtc(origDate).ToString("yyyyMMdd", CultureInfo.InvariantCulture))));
         }
 
         // Line items (last in CII per ETDA — after Settlement)
@@ -1119,15 +1117,14 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         switch (schemeId)
         {
             case "TXID":
-                // If already 18 digits (TaxID+Branch pre-concatenated), use as-is
-                if (digits.Length == 18) return digits;
+                // 18 หลัก (เลข+สาขาที่ผู้ใช้ต่อมาเอง): ใช้ 13 หลักแรก + สาขาของคู่ค้า (รอบ 250 WP-04 ต่อยอด — PDF พิมพ์สาขาจากช่องสาขา ⇒ XML ต้องตรงกัน ·
+                // ด่าน EtaxPartyTaxIdGuard.Buyer บล็อกเลข 18 หลักที่สาขาไม่ตรงก่อนถึงที่นี่)
+                if (digits.Length == 18) digits = digits.Substring(0, 13);
                 // Ensure exactly 13-digit tax ID
                 var tid = digits.Length >= 13 ? digits.Substring(0, 13) : digits.PadRight(13, '0');
-                // Ensure exactly 5-digit branch (all-numeric per TIV-SellerTradeParty-013)
-                var bd = new string((branchCode ?? "").Where(char.IsDigit).ToArray());
-                if (bd.Length == 0) bd = "00000";
-                else if (bd.Length > 5) bd = bd.Substring(0, 5);
-                else if (bd.Length < 5) bd = bd.PadLeft(5, '0');
+                // Ensure exactly 5-digit branch (all-numeric per TIV-SellerTradeParty-013) — ตัวจัดรูปสาขาตัวเดียวของระบบ (ฝ่ายค้าน M7 ·
+                // ตัวเดียวกับ PDF/ด่านเลขผู้ซื้อ) · ว่าง = 00000 · เกิน 5 หลัก = 5 หลักท้าย
+                var bd = TaxBranchCode.Normalize(branchCode);
                 var result = tid + bd;
                 // Final sanity: must be exactly 18 digits
                 if (result.Length != 18 || !result.All(char.IsDigit))
@@ -1456,7 +1453,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         };
     }
 
-    private static EtaxInvoiceResponse MapToResponse(EtaxInvoice e) => new(
+    private static EtaxInvoiceResponse MapToResponse(EtaxInvoice e)
+    {
+        return new EtaxInvoiceResponse(
         e.Id, e.DocumentId, e.EtaxRefNumber.Split('-').Length > 2 ? e.EtaxRefNumber : "",
         e.EtaxRefNumber, e.XmlContent.Length > 500 ? e.XmlContent[..500] + "..." : e.XmlContent,
         e.DigitalSignature, e.Status, e.SubmissionId, e.SubmittedAt,
@@ -1466,7 +1465,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         e.VoidedAt, e.VoidReason, EtaxVoidPolicy.VoidedStatusNote(e.Status, e.VoidReason),
         e.ByEmailSentAt, e.EtdaStampedAt, e.EtdaTimestampToken,
         EtaxByEmailFormat.Stage(e.ByEmailSentAt, e.EtdaStampedAt).ToString(),
-        EtaxByEmailFormat.StageLabel(EtaxByEmailFormat.Stage(e.ByEmailSentAt, e.EtdaStampedAt)));
+        EtaxByEmailFormat.StageLabel(EtaxByEmailFormat.Stage(e.ByEmailSentAt, e.EtdaStampedAt)),
+        EtaxPartyTaxIdGuard.BuyerWarning(e.BuyerTaxId));
+    }
 
     private class RdSubmissionResult
     {

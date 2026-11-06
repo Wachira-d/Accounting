@@ -1290,6 +1290,9 @@ const API = {
       attachAssetCostSources: (id, d) => API.post(`${base}/fixedasset/${id}/cost-sources`, d),
       releaseAssetCostSource: (id, sourceId, d) => API.post(`${base}/fixedasset/${id}/cost-sources/${sourceId}/release`, d),
       placeAssetInService: (id, d) => API.post(`${base}/fixedasset/${id}/place-in-service`, d),
+      // รอบ 250 WP-08: ราคาตามสัญญา (คำตัดสิน 250-27) · วันที่พร้อมใช้งานของสินทรัพย์ใบเดียว (250-26)
+      patchAssetContractPrice: (id, d) => API.request('PATCH', `${base}/fixedasset/${encodeURIComponent(id)}/contract-price`, d),
+      patchAssetAvailableDate: (id, d) => API.request('PATCH', `${base}/fixedasset/${encodeURIComponent(id)}/available-date`, d),
       // Budget
       getBudgets: (q = '') => API.get(`${base}/budget${q}`),
       getBudget: (id) => API.get(`${base}/budget/${id}`),
@@ -1554,6 +1557,9 @@ const API = {
       recurringReadinessDraft: (d, id) => API.post(`${base}/recurring/readiness${id ? '?recurringId=' + encodeURIComponent(id) : ''}`, d),
       dryRunRecurring: (id) => API.post(`${base}/recurring/${id}/dry-run`),
       dryRunRecurringDraft: (d, id) => API.post(`${base}/recurring/dry-run${id ? '?recurringId=' + encodeURIComponent(id) : ''}`, d),
+      // รอบ 251 (WP-07): ระดับ Autopilot ต่อแถว · ส่งทดสอบถึงอีเมลผู้ใช้
+      getRecurringAutopilotLevels: (ids) => API.get(`${base}/recurring/autopilot/levels?ids=${encodeURIComponent((ids || []).join(','))}`),
+      sendRecurringTest: (id) => API.post(`${base}/recurring/${encodeURIComponent(id)}/send-test`),
       setRecurringApprovePolicy: (id, d) => API.put(`${base}/recurring/${id}/approve-policy`, d),
       getContactAutopilot: (contactId) => API.get(`${base}/recurring/contacts/${encodeURIComponent(contactId)}/autopilot`),
       updateContactAutopilot: (contactId, d) => API.put(`${base}/recurring/contacts/${encodeURIComponent(contactId)}/autopilot`, d),

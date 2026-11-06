@@ -79,7 +79,7 @@ public static class ContactNotifyEndpointMigration
         """CREATE INDEX IF NOT EXISTS "IX_ContactNotifyEndpoints_Company_Contact" ON "ContactNotifyEndpoints" ("CompanyId", "ContactId") WHERE "UnlinkedAt" IS NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_ContactNotifyEndpoints_LineIdHash" ON "ContactNotifyEndpoints" ("LineIdHash");""",
         """CREATE INDEX IF NOT EXISTS "IX_ContactNotifyEndpoints_ContactId" ON "ContactNotifyEndpoints" ("ContactId");""",
-        """CREATE TABLE IF NOT EXISTS "OneShotDataFixes" ("Key" varchar(100) PRIMARY KEY, "AppliedAt" timestamp NOT NULL);""",
+        // ตาราง marker "OneShotDataFixes" สร้างที่ DatabaseMigrationHelper.OneShotDataFixesTableSql ตัวเดียว (รอบ 250 WP-04)
     };
 
     /// <summary>ย้าย <c>Contact.LineUserId</c> → แถว legacy (ไม่ใช้ส่ง) ครั้งเดียว · marker มีแล้ว = (0, 0) · ล้มกลางทาง ⇒ โยนต่อ (ผู้เรียก log Error) หลังล้าง ChangeTracker</summary>
@@ -106,6 +106,8 @@ public static class ContactNotifyEndpointMigration
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
             new object[] { AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey) }, ct);
+        // ตาราง marker จากตัวตั้งเดียว ในธุรกรรมเดียวกัน (ฝ่ายค้าน WP-04 ข้อ 5 · แบบ PortalSlipPending) — เรียกตรงจากเทสต์/ก่อน ApplyMissingColumns ก็ไม่ล้ม (idempotent)
+        await db.Database.ExecuteSqlRawAsync(Accounting.Data.DatabaseMigrationHelper.OneShotDataFixesTableSql, ct);
         var markerKey = MarkerKey;   // ตัวแปร (ไม่ใช่ const) ⇒ เป็นพารามิเตอร์ของ FormattableString แน่นอน
         var done = await db.Database
             .SqlQuery<int>($"""SELECT COUNT(*)::int AS "Value" FROM "OneShotDataFixes" WHERE "Key" = {markerKey}""")

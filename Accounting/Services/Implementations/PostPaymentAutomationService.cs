@@ -37,7 +37,7 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
 
     public PostPaymentAutomationService(AccountingDbContext db, IDocumentService docs, IDocumentEmailService email,
         IEmailSenderFactory senderFactory, ILogger<PostPaymentAutomationService> logger, INotificationEngine? notify = null,
-        IEnumerable<IReceiptEmailSectionProvider>? sections = null)
+        IEnumerable<IReceiptEmailSectionProvider>? sections = null, IContactRecipientResolver? recipients = null)
     {
         _db = db;
         _docs = docs;
@@ -46,7 +46,11 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         _logger = logger;
         _notify = notify;
         _sections = sections ?? Array.Empty<IReceiptEmailSectionProvider>();
+        _recipients = recipients ?? ContactRecipientResolver.EmailOnly(db);
     }
+
+    /// <summary>รอบ 250 WP-08 (L1 ต่อสาย · DESIGN §3.g): ผู้รับใบเสร็จ = ตัวหาผู้รับเดียว เรื่อง "ใบเสร็จ" — ไม่อ่าน Contact.Email ตรง (R250L1)</summary>
+    private readonly IContactRecipientResolver _recipients;
 
     /// <summary>ค่าที่มีผลของเอกสารนี้ — ชั้น (เฉพาะเจาะจงชนะ ทีละช่อง): ตารางส่งเอกสารที่ส่งใบนี้ (<c>Document.AutoSendRuleId</c>) ›
     /// รายการประจำที่สร้างใบนี้ (<c>Document.RecurringTransactionId</c> · รอบ 250 B-13) › ผู้ติดต่อของใบ › บริษัท — ตัวต่อชั้นเดียว
@@ -72,6 +76,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
                 .Where(r => r.Id == recId && r.CompanyId == companyId)
                 .Select(r => new PostPaymentAutomationPolicy.Overrides(r.PostPayEmailReceipt, r.PostPayIncludePartial))
                 .FirstOrDefaultAsync(ct);
+        // ฝ่ายค้าน WP-08 HIGH-2 (Option 1): "ไม่ส่งอัตโนมัติ" ของผู้ติดต่อ<b>ไม่</b>อยู่ในชั้นค่าตั้งนี้ — ปิดได้แค่ "ส่งอีเมล" ไม่ใช่ "ออกเอกสาร"
+        // (ตัดสินใน PostPaymentAutomationPolicy.Decide ด้วย Facts.AutoSendBlockedReason) · ชั้นนี้คงค่า PostPayEmailReceipt ของผู้ติดต่อเท่านั้น
         contact = await db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
             .Select(c => new PostPaymentAutomationPolicy.Overrides(c.PostPayEmailReceipt, c.PostPayIncludePartial))
@@ -281,6 +287,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         // ประมาณแบบระวัง (ไม่รู้ว่ามีใบเสร็จถือ VAT ที่ยังมีผลไหม ⇒ ถือว่าอาจถือ VAT) — ขาดข้อมูลผู้ซื้อ = ไม่ออกเอง แล้วบอกคน
         var mayCarryVat = SettlementReceiptPolicy.CarriesTaxInvoiceRole(doc.DocumentType, doc.VatAmount,
             fullyPaid && paymentCount == 1, liveVatReceiptExists: false);
+        // รอบ 250 WP-08: ผู้รับเรื่อง "ใบเสร็จ" จากตัวหาผู้รับเดียว (ปลายทางของผู้ติดต่อ · ไม่ตั้ง = Contact.Email เดิม)
+        var receiptDelivery = ContactRecipientRule.ForEmail(await _recipients.ResolveAsync(cid, doc.ContactId, NotifyTopic.Receipt, ct));
         var buyerBlock = Tax.TaxInvoiceCompletenessChecker.BuyerBlockingFields(true, doc.VatAmount, contact,
             isDeferredVatDeposit: false, buyerDeclinedTaxInvoice: doc.BuyerDeclinedTaxInvoice);
 
@@ -295,16 +303,18 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             ReceiptIsDraft: receipt != null && receipt.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval,
             ReceiptCarriesVat: receipt != null && (receipt.IsTaxInvoiceByLaw == true || receipt.VatAmount > 0m),
             SourceServesAsReceipt: servesAsReceipt, MayCarryVatIfIssued: mayCarryVat,
-            CustomerEmail: contact?.Email?.Trim(), BuyerBlockingFields: buyerBlock,
+            CustomerEmail: receiptDelivery.First, BuyerBlockingFields: buyerBlock,
             PaymentWht: payment.WithholdingTaxAmount, WhtCreditRegistered: whtRegistered,
-            Source: PostPaymentAutomationPolicy.ParseSource(run.Source), SupersedingTaxInvoiceNumber: supersedingTaxInvoice));
+            Source: PostPaymentAutomationPolicy.ParseSource(run.Source), SupersedingTaxInvoiceNumber: supersedingTaxInvoice,
+            EmailOptOutReason: receiptDelivery.OptOutReason,
+            // ฝ่ายค้าน HIGH-2/MED-4: ไม่ส่งอัตโนมัติชนะทุกชั้น (รวมตาราง/รายการประจำที่ตั้ง On) แต่ห้ามแค่ขั้นส่งอีเมล — ออกใบเสร็จยังเดินตามค่าตั้ง
+            AutoSendBlockedReason: AutopilotSettingsResolver.AutoSendBlock(contact?.AutoSendDisabled == true)));
         if (plan.Skipped != null)
             return new RunResult(PostPaymentAutomationPolicy.StatusSkipped, plan.Skipped, doc.DocumentNumber, receipt?.Id);
 
         var done = new List<string>();
         var blocked = new List<string>(plan.Blocked);
         var receiptId = receipt?.Id ?? run.ReceiptDocumentId;
-        var to = contact?.Email?.Trim();
         var halt = false;
         foreach (var step in plan.Steps)
         {
@@ -337,26 +347,30 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
                     break;
                 case PostPaymentAutomationPolicy.Step.EmailReceipt:
                     if (receiptId is not Guid rid) { blocked.Add("ไม่พบใบเสร็จของการชำระนี้ — ยังไม่ได้ส่งอีเมล"); halt = true; break; }
-                    if (await SendReceiptAsync(cid, rid, payment.Id, to!, ct) is { } etaxBlockR)
+                    var sentR = await SendReceiptAsync(cid, rid, payment.Id, receiptDelivery, ct);
+                    if (sentR.Refusal is { } etaxBlockR)
                     {
                         // รอบ 244: ใบนี้ต้องไปทาง e-Tax by Email แต่ด่านปฏิเสธ ⇒ หยุด + แจ้งคน (ลองใหม่อัตโนมัติไม่ช่วย — ต้องแก้ค่าตั้ง) · ห้ามส่งเป็นอีเมลธรรมดาแทน
-                        blocked.Add("ส่ง e-Tax by Email ไม่ได้ (ยังไม่ส่งอีเมล): " + etaxBlockR);
+                        blocked.Add(etaxBlockR);
                         halt = true;
                         break;
                     }
                     run = await MarkDoneAsync(run.Id, step, rid, ct);
-                    done.Add("ส่งใบเสร็จถึง " + to);
+                    done.Add("ส่งใบเสร็จถึง " + sentR.To);
+                    if (sentR.Note != null) done.Add(sentR.Note);
                     break;
                 case PostPaymentAutomationPolicy.Step.EmailSourceAsReceipt:
-                    if (await SendReceiptAsync(cid, doc.Id, payment.Id, to!, ct) is { } etaxBlockS)
+                    var sentS = await SendReceiptAsync(cid, doc.Id, payment.Id, receiptDelivery, ct);
+                    if (sentS.Refusal is { } etaxBlockS)
                     {
-                        blocked.Add("ส่ง e-Tax by Email ไม่ได้ (ยังไม่ส่งอีเมล): " + etaxBlockS);
+                        blocked.Add(etaxBlockS);
                         halt = true;
                         break;
                     }
                     receiptId = doc.Id;
                     run = await MarkDoneAsync(run.Id, step, doc.Id, ct);
-                    done.Add("ส่งใบกำกับภาษี/ใบเสร็จรับเงิน (ใบต้นทาง) ถึง " + to);
+                    done.Add("ส่งใบกำกับภาษี/ใบเสร็จรับเงิน (ใบต้นทาง) ถึง " + sentS.To);
+                    if (sentS.Note != null) done.Add(sentS.Note);
                     break;
             }
         }
@@ -370,8 +384,21 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
     /// บล็อกเพิ่มจาก <see cref="IReceiptEmailSectionProvider"/> ผ่าน <see cref="ReceiptEmailSections.ComposeBody"/> ตัวเดียว ·
     /// คืนเหตุ (ไม่ null) = ทาง e-Tax by Email ปฏิเสธ (ค่าตั้งผู้ส่ง/รูปแบบ/สถานะ — ลองใหม่ไม่ช่วย ⇒ ผู้เรียกหยุดแล้วแจ้งคน · แถว Failed อยู่บนเอกสารแล้ว) ·
     /// ส่งไม่สำเร็จ (ผู้ให้บริการปฏิเสธ/เกินเพดาน) ⇒ โยน (ผู้เรียกเลื่อนไปลองใหม่ · บันทึก Failed อยู่บนเอกสารแล้ว)</summary>
-    private async Task<string?> SendReceiptAsync(Guid companyId, Guid documentId, Guid paymentId, string to, CancellationToken ct)
+    private sealed record SendOutcome(string? Refusal, string? To, string? Note);
+
+    private async Task<SendOutcome> SendReceiptAsync(Guid companyId, Guid documentId, Guid paymentId,
+        ContactRecipientRule.EmailDelivery delivery, CancellationToken ct)
     {
+        // ฝ่ายค้าน HIGH-1: ใบที่ไปทาง e-Tax by Email ⇒ ถึงอีเมลหลักเท่านั้น (ไม่มีสำเนา) · อีเมลเพิ่มเติมบันทึกว่าไม่ได้ส่ง · อีเมลหลักไม่รับ ⇒ ไม่ส่งพร้อมเหตุ (ตัวตัดสิน ForChannel)
+        var etaxDoc = (await DocumentEmailService.RouteForAsync(_db, companyId, documentId, ct)).Channel == EtaxEmailChannel.EtaxByEmail;
+        var channel = ContactRecipientRule.ForChannel(delivery, etaxDoc);
+        var prefix = etaxDoc ? "ส่ง e-Tax by Email ไม่ได้ (ยังไม่ส่งอีเมล): " : "ส่งอีเมลไม่ได้ (ยังไม่ส่ง): ";
+        if (channel.To == null) return new SendOutcome(prefix + (channel.Problem ?? "ไม่มีอีเมลผู้รับ"), null, null);
+        // ฝ่ายค้าน MED-3: เพดานผู้รับของอีเมลผ่าน NextAcc + ความยาวช่องบันทึก ⇒ ตัดก่อนส่งพร้อมหมายเหตุ
+        var settingsForCap = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(x => x.CompanyId == companyId, ct);
+        var onBehalf = (await DocumentEmailService.ResolveOnBehalfSenderAsync(_db, _senderFactory, companyId, settingsForCap, ct)).Plan.OnBehalf;
+        var (to, capNote) = ContactRecipientRule.CapForSender(channel.To, onBehalf && !etaxDoc, 0, SignEmailThrottle.MaxRecipients, EmailScheduleService.MaxToEmailLength);
+        var note = EmailScheduleService.JoinNotes(channel.Note, capNote);
         var sections = new List<ReceiptEmailSections.Section>();
         foreach (var p in _sections) sections.AddRange(await p.SectionsAsync(companyId, documentId, paymentId, ct));
         string? body = null;
@@ -396,14 +423,16 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             log = await _email.SendDocumentRoutedAsync(companyId, documentId,
                 new SendDocumentEmailRequest(to, null, null, null, body, AttachPdf: true), SystemActor);
         }
-        catch (BusinessRuleException ex) when (ex.RuleCode is { } rc && rc.StartsWith("ETAX-", StringComparison.Ordinal))
+        catch (BusinessRuleException ex) when (ex.RuleCode is { } rc
+            && (rc.StartsWith("ETAX-", StringComparison.Ordinal) || rc == "EMAIL-PLATFORM-CAP"))
         {
+            // ฝ่ายค้าน MED-3: เพดานอีเมลผ่าน NextAcc ⇒ หยุดพร้อมเหตุ (ลองใหม่อัตโนมัติ 4 ครั้งไม่ช่วย — ผู้ใช้กด "ลองใหม่" หลังแก้/พรุ่งนี้) · บันทึก Failed อยู่บนเอกสารแล้ว
             _db.ChangeTracker.Clear();
-            return ex.Message;
+            return new SendOutcome(prefix + ex.Message, null, null);
         }
         if (log.Status != EmailLogStatus.Sent)
             throw new InvalidOperationException(log.ErrorMessage ?? "ผู้ให้บริการอีเมลไม่รับข้อความ");
-        return null;
+        return new SendOutcome(null, to, note);
     }
 
     private async Task NotifyAsync(PostPaymentAutomationRun run, string? docNo, string? message, CancellationToken ct)

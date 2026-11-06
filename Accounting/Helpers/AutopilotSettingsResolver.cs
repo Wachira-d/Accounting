@@ -116,6 +116,17 @@ public static class AutopilotSettingsResolver
         return null;
     }
 
+    // ═══ รอบ 250 WP-08 (คำตัดสิน 250-29 · AUTO_SEND §9 เฟส 243 ข้อ 7): ชั้น "ผู้ติดต่อ" ของการส่งอัตโนมัติ — ไม่สร้าง resolver ตัวที่สอง ═══
+    public const string AutoSendRuleCode = "AUTOPILOT-CONTACT-AUTOSEND-OFF";
+
+    /// <summary>ข้อความเหตุ (ผู้ใช้เห็นบนแถวคิว/หน้ารายการประจำ/งานหลังรับชำระ)</summary>
+    public const string AutoSendDisabledReason =
+        "ผู้ติดต่อนี้ตั้ง \"ไม่ส่งเอกสารอัตโนมัติ\" ไว้ — ระบบไม่ส่งอีเมลอัตโนมัติถึงผู้ติดต่อรายนี้ (ส่งเองได้ที่หน้าเอกสาร · ปิดค่านี้ที่หน้าผู้ติดต่อ/รายการประจำ)";
+
+    /// <summary>ผู้ติดต่อปิดส่งอัตโนมัติ ⇒ ชนะ<b>ทุกชั้น</b> (ตารางส่งทุก trigger · รายการประจำ · ใบแจ้งยอด · 50 ทวิ · ลิงก์เซ็นอัตโนมัติ · ขั้นส่งอีเมลของงานหลังรับชำระ
+    /// แม้ตาราง/รายการประจำตั้ง On — ฝ่ายค้าน MED-4) · ห้ามเฉพาะการ<b>ส่งอีเมล</b> ไม่ห้ามการออกเอกสาร (HIGH-2) · null = ส่งได้ · การส่งที่ผู้ใช้กดเองไม่ผ่านตัวนี้</summary>
+    public static string? AutoSendBlock(bool contactAutoSendDisabled) => contactAutoSendDisabled ? AutoSendDisabledReason : null;
+
     /// <summary>ต่อชั้น — แต่ละเรื่องเลือกจากชั้นเฉพาะที่สุดที่ตอบ</summary>
     public static PayLinkChoice Resolve(Layer? schedule, Layer? recurring, Layer? contact, bool companyAttach, IReadOnlyList<string>? companyChannels)
     {

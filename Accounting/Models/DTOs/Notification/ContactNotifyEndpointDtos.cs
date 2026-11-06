@@ -46,7 +46,9 @@ public record ContactNotifyOverviewResponse(
     List<ContactNotifyComingSoon> ComingSoon,
     string Note,
     bool CanEdit,
-    string? ReadOnlyReason);
+    string? ReadOnlyReason,
+    // รอบ 251 (WP-07 · F-06): บริษัทใช้ e-Tax by Email ⇒ คำเตือนเรื่องผู้รับใบกำกับ 1 อีเมล (Helpers/EtaxByEmailFormat.ContactRecipientsNote) · null = ไม่ใช่โหมดนี้
+    string? EtaxByEmailNote = null);
 
 public record ContactNotifyComingSoon(string Key, string Label, string Reason);
 

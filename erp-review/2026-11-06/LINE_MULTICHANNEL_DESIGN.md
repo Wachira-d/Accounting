@@ -588,7 +588,7 @@ ABC จำกัด — ช่องทางแจ้งเตือน
 ### L1 — ปลายทางของผู้ติดต่อ + Resolver (อีเมลอย่างเดียว · ไม่มี LINE)
 
 - ตาราง `ContactNotifyEndpoint` · `NotifyTopic` · `ContactRecipientResolver` (pure core `ContactRecipientRule` + service) · แท็บ "ช่องทางแจ้งเตือน" (ส่วนอีเมล) · migration `Contact.LineUserId` → แถว legacy (ไม่ใช้ส่ง) + สคริปต์นับ
-- ต่อสาย Resolver เข้า: `EmailScheduleService.Enqueue*` · `PostPaymentAutomationService` · `SignRequestService` (ค่าตั้งต้น ช่องที่ผู้ใช้กรอกยังชนะ)
+- ต่อสาย Resolver เข้า: `EmailScheduleService.Enqueue*` · `PostPaymentAutomationService` · `SignRequestService` (ค่าตั้งต้น ช่องที่ผู้ใช้กรอกยังชนะ) — ✅ **รอบ 250 WP-08** (ตารางส่ง/ทวงชำระ/ใบแจ้งยอด/50 ทวิ/ใบเสร็จหลังรับชำระ/ลิงก์เซ็น/ความพร้อมรายการประจำ · ยกเลิกรับ ⇒ แถวคิว "ข้าม" พร้อมเหตุ · LINE ยังปิดจน L2 · ล็อก R250L1 · ดู DOCUMENT_FLOW §2.12h) — commit 31479320
 - **เทสต์:** `ContactRecipientRuleTests` — (ก) ผู้ติดต่อไม่มีแถว ⇒ ได้ `Contact.Email` เหมือนเดิม (**ทิศตรงข้าม: ไม่ถดถอย**) (ข) แถวหัวข้อ Dunning ไม่ได้รับเอกสาร Receipt (ค) แถวที่ unlink/consent ถอน ⇒ ไม่ได้ (ง) แถว legacy `OaScope=unknown` ⇒ ไม่ได้ (จ) ผู้ติดต่อของบริษัทอื่น ⇒ ไม่ได้ (tenant) · Db test: ตารางส่ง DueSoon ส่งถึงอีเมลที่สองของผู้ติดต่อ
 - **required_call_site_check:** `EmailScheduleService.EnqueueDocumentAsync` · `ScanDueSoonAndOverdueAsync` · `ScanMonthlyStatementsAsync` · `PostPaymentAutomationService.*Send*` · `SignRequestService.SendEmailAsync` ต้องเรียก `ContactRecipientResolver.ResolveAsync` · ห้ามมี `.Contact.Email` / `.Contact!.Email` ใช้เป็นผู้รับในไฟล์เหล่านี้
 

@@ -156,4 +156,73 @@ public class PaymentNotificationRound249Tests
         Assert.Contains("x.\"UserId\" = p.\"UserId\"", NotificationEventSplit.PreferencesCopySql);
         Assert.Contains("ON CONFLICT DO NOTHING", NotificationEventSplit.MigrationSql);
     }
+
+    // ───────── รอบ 250 WP-04 ข้อ 8 (A K-02): ตารางครบทุก DocumentType × ฝั่ง — ฝั่งเงินจาก CashFlowDirection ตัวเดียว (ตัวเดียวกับ JE/ยอดธนาคาร) ─────────
+
+    /// <summary>ข้อเท็จจริงฝั่งเดียวกับที่ DocumentService.LoadPaymentNotificationFactsAsync ส่ง (IsInflow = CashFlowDirection ผ่าน CashInflowAsync)</summary>
+    private static PaymentNotification? NoteFor(DocumentType type, bool? sideOverride, DocumentType? source, bool supplierOnly)
+    {
+        var r = CashFlowDirection.Of(type, sideOverride, source, supplierOnly);
+        if (r.SideUnknown) return null;   // เส้นจริงโยนก่อนถึงข้อความ (CashInflowAsync — ห้ามเดาฝั่ง)
+        return PaymentNotificationText.Build(Facts(r.IsInflow, type: type, contact: "คู่ค้า ทดสอบ"));
+    }
+
+    [Fact]
+    public void R250_ทุกDocumentTypeทุกฝั่ง_คีย์หัวข้อคู่ค้าตามทิศเงินเดียวกับJE()
+    {
+        var sides = new bool?[] { null, true, false };
+        var sources = new DocumentType?[] { null, DocumentType.TaxInvoice, DocumentType.PurchaseInvoice };
+        var checkedCount = 0;
+        foreach (var type in Enum.GetValues<DocumentType>())
+            foreach (var side in sides)
+                foreach (var source in sources)
+                    foreach (var supplierOnly in new[] { false, true })
+                    {
+                        var r = CashFlowDirection.Of(type, side, source, supplierOnly);
+                        var n = NoteFor(type, side, source, supplierOnly);
+                        if (r.SideUnknown) { Assert.Null(n); continue; }
+                        Assert.NotNull(n);
+                        Assert.Equal(r.IsInflow ? NotificationEvents.PaymentReceived : NotificationEvents.PaymentMade, n!.EventKey);
+                        Assert.Equal(r.IsInflow ? PaymentNotificationText.ReceivedTitle : PaymentNotificationText.PaidTitle, n.Title);
+                        Assert.Contains(r.IsInflow ? "👤 จาก คู่ค้า ทดสอบ" : "👤 ให้ คู่ค้า ทดสอบ", n.Message);
+                        Assert.DoesNotContain(r.IsInflow ? "👤 ให้ " : "👤 จาก ", n.Message);
+                        checkedCount++;
+                    }
+        Assert.True(checkedCount >= Enum.GetValues<DocumentType>().Length);   // ตารางไม่ว่าง (ด่านที่ผ่านตลอดกาล)
+    }
+
+    [Theory]
+    // ใบขาย/รับเงิน ⇒ รับชำระ
+    [InlineData(DocumentType.Invoice, null, null, false, true)]
+    [InlineData(DocumentType.TaxInvoice, null, null, true, true)]          // ผู้ติดต่อผู้ขายอย่างเดียวไม่เปลี่ยนใบขาย
+    [InlineData(DocumentType.Receipt, null, null, false, true)]
+    [InlineData(DocumentType.BillingNote, null, null, false, true)]
+    // ใบซื้อ/จ่ายเงิน ⇒ จ่ายชำระ (รายงานเจ้าของ: PI ขึ้น "รับชำระ")
+    [InlineData(DocumentType.PurchaseInvoice, null, null, false, false)]
+    [InlineData(DocumentType.Expense, null, null, false, false)]
+    [InlineData(DocumentType.PaymentVoucher, null, null, false, false)]
+    // ใบเพิ่มหนี้: ฝั่งขาย = เงินเข้า · ฝั่งซื้อ = เงินออก · ผู้ใช้สั่งย้ายฝั่งชนะใบต้นทาง
+    [InlineData(DocumentType.DebitNote, null, DocumentType.TaxInvoice, false, true)]
+    [InlineData(DocumentType.DebitNote, null, DocumentType.PurchaseInvoice, false, false)]
+    [InlineData(DocumentType.DebitNote, true, DocumentType.TaxInvoice, false, false)]
+    [InlineData(DocumentType.DebitNote, null, null, true, false)]          // ไม่มีต้นทาง + ผู้ขายอย่างเดียว ⇒ ฝั่งซื้อ
+    // ใบลดหนี้: ฝั่งขาย = เราคืนเงิน (ออก) · ฝั่งซื้อ = ผู้ขายคืนเงิน (เข้า)
+    [InlineData(DocumentType.CreditNote, null, DocumentType.TaxInvoice, false, false)]
+    [InlineData(DocumentType.CreditNote, null, DocumentType.PurchaseInvoice, false, true)]
+    [InlineData(DocumentType.CreditNote, false, DocumentType.PurchaseInvoice, false, false)]
+    public void R250_ตารางทิศเงินที่ระบุ_สองทิศ(DocumentType type, bool? side, DocumentType? source, bool supplierOnly, bool received)
+    {
+        var n = NoteFor(type, side, source, supplierOnly);
+        Assert.NotNull(n);
+        Assert.Equal(received ? NotificationEvents.PaymentReceived : NotificationEvents.PaymentMade, n!.EventKey);
+        Assert.Equal(received ? PaymentNotificationText.ReceivedTitle : PaymentNotificationText.PaidTitle, n.Title);
+    }
+
+    [Fact]
+    public void R250_ใบลดเพิ่มหนี้ไม่รู้ฝั่ง_ไม่มีข้อความ_ไม่เดา()
+    {
+        Assert.Null(NoteFor(DocumentType.DebitNote, null, null, false));
+        Assert.Null(NoteFor(DocumentType.CreditNote, null, null, false));
+        Assert.NotNull(NoteFor(DocumentType.CreditNote, true, null, false));   // ทิศตรงข้าม: สั่งฝั่งแล้ว ⇒ มีข้อความ
+    }
 }

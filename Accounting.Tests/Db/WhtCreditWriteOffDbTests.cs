@@ -390,4 +390,106 @@ public class WhtCreditWriteOffDbTests
         Assert.Contains(report.Lines, l => l.Description == "ค่าใช้จ่ายทั้งปี" && l.IncomeAmount == 2_000m);   // 58010 ไม่อยู่ในรายจ่าย
         Assert.Equal(48_000m, report.NetVat);   // 50,000 − 2,000 · ไม่ใช่ 47,000 (หักได้ผิด) หรือ 49,000 (บวกกลับซ้ำ)
     }
+
+    // ───────── รอบ 250 WP-04 (AUDIT_249 §WP-04 ข้อ 2 · E L-1): ด่าน WhtWriteOffJournalLock สองทิศผ่าน AccountingService จริง ─────────
+
+    [Fact]
+    public async Task WhtWriteOffJournalLock_กลับJEตัดสูญ409รหัสGL_WHT_WRITEOFF_ENTRY_ทิศตรงข้ามJEธรรมดากลับได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Guid writeOffJe;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            writeOffJe = (await Svc(req).ExpireAsync(s.CompanyId, s.CreditId, Reason, null, Actor)).JournalEntryId;
+
+        foreach (var correct in new[] { false, true })
+        {
+            using var req = DbTestDatabase.TryCreateContext()!;
+            var acc = new AccountingService(req);
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => correct
+                ? (Task)acc.CorrectJournalEntryAsync(s.CompanyId, writeOffJe, "tester")
+                : acc.ReverseJournalEntryAsync(s.CompanyId, writeOffJe));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Equal(WhtWriteOffJournalLock.RuleCode, ex.RuleCode);
+            Assert.Equal("GL-WHT-WRITEOFF-ENTRY", ex.RuleCode);
+        }
+        using (var mid = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(JournalEntryStatus.Posted, (await mid.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == writeOffJe)).Status);
+
+        // ทิศตรงข้าม: JE ธรรมดาของบริษัทเดียวกัน (ไม่มีอ้างอิงตัดสูญ · ไม่มีเอกสารต้นทาง) ⇒ ด่านไม่แตะ กลับรายการได้
+        var cash = new ChartOfAccount { CompanyId = s.CompanyId, AccountCode = "11110", AccountName = "เงินสด", AccountType = AccountType.Asset, Level = 4, IsActive = true };
+        var fee = new ChartOfAccount { CompanyId = s.CompanyId, AccountCode = "53100", AccountName = "ค่าธรรมเนียม", AccountType = AccountType.Expense, Level = 4, IsActive = true };
+        db.ChartOfAccounts.AddRange(cash, fee);
+        var plain = new JournalEntry
+        {
+            CompanyId = s.CompanyId, EntryNumber = "JV-T250-" + Guid.NewGuid().ToString("N")[..6], EntryDate = DateTime.UtcNow.Date,
+            Status = JournalEntryStatus.Posted, Description = "ค่าธรรมเนียมธนาคาร", TotalDebit = 50m, TotalCredit = 50m,
+        };
+        plain.Lines.Add(new JournalEntryLine { AccountId = fee.Id, DebitAmount = 50m, LineOrder = 1 });
+        plain.Lines.Add(new JournalEntryLine { AccountId = cash.Id, CreditAmount = 50m, LineOrder = 2 });
+        db.JournalEntries.Add(plain);
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await new AccountingService(req).ReverseJournalEntryAsync(s.CompanyId, plain.Id);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(JournalEntryStatus.Reversed, (await check.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == plain.Id)).Status);
+        Assert.Equal(JournalEntryStatus.Posted, (await check.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == writeOffJe)).Status);
+    }
+
+    // ───────── รอบ 250 WP-04 (ค้างจาก WP-02 §2.4 ข้อ 9 · E L-2): ปิดปีตัดสูญหลายแถว ⇒ ล็อก/ลงทีละแถวตามลำดับ Id คงที่ ─────────
+
+    [Fact]
+    public async Task SettleYearEnd_locks_in_id_order()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var paidOn = LastYear();
+        var s = await SeedAsync(db, paidOn);
+        // อีก 3 แถวของปีเดียวกัน + ยอด 11910 รองรับ (Dr 11910 / Cr 11310 รวม 600)
+        var wht = await db.ChartOfAccounts.SingleAsync(a => a.CompanyId == s.CompanyId && a.AccountCode == "11910");
+        var ar = await db.ChartOfAccounts.SingleAsync(a => a.CompanyId == s.CompanyId && a.AccountCode == "11310");
+        var more = new JournalEntry
+        {
+            CompanyId = s.CompanyId, EntryNumber = "RV-T250-" + Guid.NewGuid().ToString("N")[..6], EntryDate = DateTime.SpecifyKind(paidOn, DateTimeKind.Utc),
+            Status = JournalEntryStatus.Posted, Description = "รับชำระ ลูกค้าหัก ณ ที่จ่าย (เพิ่ม)", TotalDebit = 600m, TotalCredit = 600m,
+        };
+        more.Lines.Add(new JournalEntryLine { AccountId = wht.Id, DebitAmount = 600m, LineOrder = 1 });
+        more.Lines.Add(new JournalEntryLine { AccountId = ar.Id, CreditAmount = 600m, LineOrder = 2 });
+        db.JournalEntries.Add(more);
+        // ฝ่ายค้าน WP-04 ข้อ 4: Id กำหนดเอง + บันทึกทีละแถว "เรียงกลับด้านกับลำดับ uuid" ⇒ ถ้าตัวปิดปีถอด OrderBy(Id) ออก ฐานคืนตามลำดับที่ใส่ (กลับด้าน)
+        // แล้วเทสต์ล้มทุกครั้ง (ไม่ขึ้นกับดวงของ Guid สุ่ม) · แถวของ SeedAsync (1,000) ไม่อยู่ในชุดที่ปิดปี (Id สุ่ม คุมลำดับไม่ได้)
+        var ids = Enumerable.Range(0, 3).Select(_ => Guid.NewGuid()).OrderBy(i => i.ToString("D"), StringComparer.Ordinal).ToList();
+        var expectedOrder = ids;   // ลำดับ uuid ของ PostgreSQL = ลำดับสตริงตัวพิมพ์เล็ก
+        var amounts = new[] { 100m, 200m, 300m };
+        for (var i = ids.Count - 1; i >= 0; i--)
+        {
+            db.WhtCreditsReceived.Add(new WhtCreditReceived
+            {
+                Id = ids[i], CompanyId = s.CompanyId, TaxYear = s.TaxYear, PayerName = $"ลูกค้าไม่ส่งใบ {i + 2} จำกัด", IncomeAmount = amounts[i] / 0.03m,
+                WhtRate = 3m, WhtAmount = amounts[i], Status = WhtCreditStatus.Pending,
+            });
+            await db.SaveChangesAsync();   // ทีละแถว ⇒ ลำดับการใส่ = กลับด้านกับ uuid
+        }
+        // ส่งรายการตามลำดับที่ใส่ (กลับด้าน) — ตัวปิดปีต้องเรียงตาม Id เอง
+        var requested = expectedOrder.AsEnumerable().Reverse().ToArray();
+
+        string numbers;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            numbers = await Svc(req).SettleYearEndAsync(s.CompanyId,
+                new WhtCreditService.SettleRequest(s.TaxYear, 0m, 0m, 600m, Reason, requested), "ทดสอบ");
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var rows = await check.WhtCreditsReceived.AsNoTracking().Where(w => ids.Contains(w.Id)).ToListAsync();
+        Assert.All(rows, r => Assert.Equal(WhtCreditStatus.Expired, r.Status));
+        var jeIds = rows.Select(r => r.WriteOffJournalEntryId!.Value).ToList();
+        var jeNumbers = await check.JournalEntries.AsNoTracking()
+            .Where(j => j.CompanyId == s.CompanyId && jeIds.Contains(j.Id))
+            .ToDictionaryAsync(j => j.Id, j => j.EntryNumber);
+        var byCredit = rows.ToDictionary(r => r.Id, r => jeNumbers[r.WriteOffJournalEntryId!.Value]);
+        // ผลที่คืน = เลข JE ตามลำดับที่ลงจริง (ไม่มี JE ก้อนปิดปี — ช่องหักกับภาษี/ขอคืนเป็น 0) ⇒ ต้องตรงลำดับ Id ไม่ใช่ลำดับที่ส่งมา
+        Assert.Equal(expectedOrder.Select(i => byCredit[i]).ToArray(), numbers.Split(" · "));
+        Assert.NotEqual(requested.Select(i => byCredit[i]).ToArray(), numbers.Split(" · "));
+        Assert.Equal(1_000m, await Gl11910Async(check, s.CompanyId));   // เหลือเฉพาะแถวของ SeedAsync ที่ไม่ได้เลือก
+    }
 }

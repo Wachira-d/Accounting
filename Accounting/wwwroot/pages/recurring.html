@@ -25,8 +25,8 @@
     </div>
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ชื่อรายการ</th><th data-i18n="common.type">ประเภท</th><th>ความถี่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอด</th><th>ครั้งถัดไป</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>ชื่อรายการ</th><th data-i18n="common.type">ประเภท</th><th>ความถี่</th><th>ผู้ติดต่อ</th><th class="text-right">ยอด</th><th>ครั้งถัดไป</th><th title="คำนวณที่เซิร์ฟเวอร์ด้วยตัวตัดสินเดียวกับแผงตรวจความพร้อม">ระดับ Autopilot</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
@@ -182,10 +182,24 @@
           </div>
           </div>
           <div class="rec-step" data-step="4" style="display:none" id="step-pay">
+          <!-- รอบ 250 WP-04 ต่อยอด: แจ้งเตือนก่อนรอบรัน (เดิมส่ง true/1 ตายตัวและไม่มีผล) — กระดิ่งของผู้สร้างรายการ N วันก่อนสร้างเอกสาร -->
+          <div class="form-group">
+            <label class="form-label" for="fNotifyBeforeRun"><input type="checkbox" id="fNotifyBeforeRun"> 🔔 แจ้งเตือนฉันก่อนระบบสร้างเอกสารรอบถัดไป</label>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px">
+              <label for="fNotifyDaysBefore">ล่วงหน้า</label>
+              <input type="number" class="form-input" id="fNotifyDaysBefore" min="0" max="30" value="1" style="width:80px">
+              <span>วัน (0–30 · 0 = ไม่แจ้ง · รายการรายวันไม่แจ้ง)</span>
+            </div>
+          </div>
           <div class="form-group">
             <label class="form-label"><input type="checkbox" id="fAutoSendEmail" onchange="Page.onAutoFlagChange()"> 📧 ส่งอีเมลเอกสาร (แนบ PDF) ให้ผู้ติดต่อทันทีที่ระบบสร้างเอกสาร</label>
             <div id="autoEmailHint" style="margin-top:6px;padding:8px 10px;border-radius:8px;font-size:11px;line-height:1.6;background:#f8fafc;border:1px solid #e2e8f0;color:#475569">
               กำลังตรวจการตั้งค่าอีเมลของบริษัท…
+            </div>
+            <!-- รอบ 251 (WP-07 ข้อ 4): ส่งตัวอย่างรอบถัดไปถึงอีเมลของผู้ใช้ที่กดเท่านั้น (เซิร์ฟเวอร์เลือกผู้รับเอง) -->
+            <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+              <button type="button" class="btn btn-sm btn-secondary" id="fSendTestBtn" onclick="Page.sendTest()">📨 ส่งทดสอบถึงอีเมลฉัน</button>
+              <span style="font-size:11px;color:#64748b">ตัวอย่างรอบถัดไปจากค่าที่บันทึกแล้ว — ส่งถึงอีเมลของคุณเท่านั้น (ต้องยืนยันอีเมลแล้ว · วันละไม่เกิน 10 ฉบับ) · ลูกค้าไม่ได้รับ · ไม่มีลิงก์ชำระจริง · อีเมลลูกค้าในเนื้อหาถูกปิดบัง</span>
             </div>
           </div>
           <!-- รอบ 248 (AUTOPILOT §4.2 ⑤ · §5.1): ช่องทางรับเงินต่อรายการ — ตัวเลือก/ป้ายจากเซิร์ฟเวอร์ (/recurring/autopilot/options) -->
@@ -212,6 +226,9 @@
               <select class="form-select" id="fCustPostPayEmail" aria-label="หลังชำระ: ส่งใบเสร็จ (ผู้ติดต่อ)"></select>
               <select class="form-select" id="fCustPostPayPartial" aria-label="หลังชำระ: ส่งทุกงวด (ผู้ติดต่อ)"></select>
             </div>
+            <!-- รอบ 250 WP-08 (คำตัดสิน 250-29): ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" — ชนะกฎบริษัท/รายการนี้ (บันทึกด้วยปุ่ม "บันทึกที่ผู้ติดต่อ") -->
+            <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:12px;font-weight:normal">
+              <input type="checkbox" id="fCustAutoSendOff"> ไม่ส่งอีเมลอัตโนมัติถึงผู้ติดต่อรายนี้ (ทุกเส้น — ส่งเองจากหน้าเอกสารยังได้)</label>
           </div>
           </div>
           <div class="rec-step" data-step="5" style="display:none" id="step-approve">
@@ -240,6 +257,10 @@
               <button type="button" class="btn btn-sm btn-ghost" style="font-size:11px;padding:1px 6px" onclick="Page.refreshReadiness(true)">ตรวจใหม่</button>
             </div>
             <div id="readinessBody" style="margin-top:6px;color:#64748b">กรอกข้อมูลแล้วระบบจะตรวจให้</div>
+            <div id="dryRunBox" style="display:none;margin-top:10px;padding-top:8px;border-top:1px solid #e2e8f0">
+              <div id="dryRunStale" style="display:none;margin-bottom:4px;font-size:11px;color:#b45309">ฟอร์มเปลี่ยนหลังทดลองรัน — กด “ทดลองรัน” ใหม่เพื่อดูผลล่าสุด</div>
+              <div id="dryRunBody"></div>
+            </div>
           </aside>
           </div>
         </div>
@@ -385,6 +406,7 @@ const Page = {
     if (cpm) cpm.value = (this._contactAp && this._contactAp.paymentMode) || '';
     const cpe = document.getElementById('fCustPostPayEmail'); if (cpe) cpe.value = (this._contactAp && this._contactAp.postPayEmailReceipt) || 'Inherit';
     const cpp = document.getElementById('fCustPostPayPartial'); if (cpp) cpp.value = (this._contactAp && this._contactAp.postPayIncludePartial) || 'Inherit';
+    const cao = document.getElementById('fCustAutoSendOff'); if (cao) { cao.checked = !!(this._contactAp && this._contactAp.autoSendDisabled); cao.disabled = !this._contactAp; }
     this._renderPolicy();
   },
   async saveContactPayMode() {
@@ -394,8 +416,11 @@ const Page = {
     try {
       const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null,
         postPayEmailReceipt: !this._apOpts ? null : (document.getElementById('fCustPostPayEmail')?.value || 'Inherit'),
-        postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fCustPostPayPartial')?.value || 'Inherit') });
+        postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fCustPostPayPartial')?.value || 'Inherit'),
+        // รอบ 250 WP-08: ไม่ได้โหลดค่าตั้งผู้ติดต่อ ⇒ null (= เซิร์ฟเวอร์คงเดิม · ไม่ล้างเงียบ)
+        autoSendDisabled: !this._contactAp ? null : !!document.getElementById('fCustAutoSendOff')?.checked });
       this._contactAp = res.data || this._contactAp;
+      const caoAfter = document.getElementById('fCustAutoSendOff'); if (caoAfter) caoAfter.checked = !!(this._contactAp && this._contactAp.autoSendDisabled);
       Layout.toast((res && res.message) || 'บันทึกแล้ว');
       this.refreshReadiness(true);
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -496,7 +521,7 @@ const Page = {
 
   /** ร่างสำหรับตรวจความพร้อม/ทดลองรัน — ตัวประกอบเดียวกับตอนบันทึก (ค่าที่ยังกรอกไม่ครบใช้ค่าตั้งต้นที่ไม่เขียนอะไร) */
   _draftForCheck() {
-    const built = this._buildPayload();
+    const built = this._buildPayload({ forCheck: true });
     if (built.error) return { error: built.error };
     const d = Object.assign({}, built.data);
     if (!d.startDate) d.startDate = new Date().toISOString().slice(0, 10);
@@ -506,6 +531,8 @@ const Page = {
     return { data: d };
   },
   refreshReadiness(now) {
+    const stale = document.getElementById('dryRunStale');
+    if (stale && document.getElementById('dryRunBox')?.style.display !== 'none') stale.style.display = '';
     clearTimeout(this._readyTimer);
     this._readyTimer = setTimeout(() => this._runReadiness(), now ? 0 : 600);
   },
@@ -546,13 +573,35 @@ const Page = {
     const draft = this._draftForCheck();
     if (draft.error) { Layout.toast(draft.error, 'error'); return; }
     const api = Layout.api(); if (!api) return;
-    const body = document.getElementById('readinessBody');
+    const box = document.getElementById('dryRunBox');
+    const body = document.getElementById('dryRunBody');
     try {
       const res = await api.dryRunRecurringDraft(draft.data, document.getElementById('fId').value || null);
-      if (body) body.innerHTML = this._renderDryRun(res.data);
+      // รอบ 251 (WP-07 ข้อ 6): กล่องของตัวเอง — แผงความพร้อมด้านบนแสดงผลตรวจล่าสุดอยู่แล้ว (ไม่ซ้ำ ไม่ถูกทับ)
+      if (body) body.innerHTML = this._renderDryRun(res.data, true);
+      if (box) box.style.display = '';
+      const stale = document.getElementById('dryRunStale'); if (stale) stale.style.display = 'none';
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
-  _renderDryRun(d) {
+  _resetDryRun() {
+    const box = document.getElementById('dryRunBox'); if (box) box.style.display = 'none';
+    const body = document.getElementById('dryRunBody'); if (body) body.innerHTML = '';
+    const stale = document.getElementById('dryRunStale'); if (stale) stale.style.display = 'none';
+  },
+  /** รอบ 251 (WP-07 ข้อ 4): ส่งทดสอบถึงอีเมลของผู้ใช้ที่กด — ใช้ค่าที่บันทึกแล้ว (ฟอร์มที่ยังไม่บันทึก = บอกให้บันทึกก่อน ไม่ส่งของเก่าเงียบ ๆ) */
+  async sendTest(idArg) {
+    const fromForm = !idArg;
+    const id = idArg || document.getElementById('fId').value;
+    if (!id) { Layout.toast('บันทึกรายการก่อน — อีเมลทดสอบสร้างจากค่าที่บันทึกแล้ว', 'warning', 6000); return; }
+    if (fromForm && this._formDirty()) { Layout.toast('บันทึกการแก้ไขก่อน — อีเมลทดสอบสร้างจากค่าที่บันทึกแล้ว (กด “ทดลองรัน” เพื่อดูผลของค่าที่ยังไม่บันทึก)', 'warning', 8000); return; }
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.sendRecurringTest(id);
+      const d = (res && res.data) || {};
+      Layout.toast(((res && res.message) || 'ส่งอีเมลทดสอบแล้ว') + (d.senderNote ? ' · ' + d.senderNote : ''), 'success', 9000);
+    } catch (err) { Layout.toast(err.message, 'error', 8000); }
+  },
+  _renderDryRun(d, skipReadiness) {
     if (!d) return '';
     const list = (arr) => (arr || []).map(x => `<li>${Layout.esc(x)}</li>`).join('');
     return `<div style="font-weight:600;margin-bottom:4px">🔍 ทดลองรัน (ไม่ได้บันทึกอะไร)</div>
@@ -567,8 +616,9 @@ const Page = {
       ${(d.approvalReleased || []).length ? `<div style="color:#92400e">นโยบายปล่อย:<ul style="margin:2px 0 0 16px">${list(d.approvalReleased) /* html */}</ul></div>` : ''}
       <div style="margin-top:4px"><strong>อีเมล:</strong> ${Layout.esc(d.emailPlan)}</div>
       <div><strong>ลิงก์ชำระ:</strong> ${Layout.esc(d.payLinkPlan)}</div>
+      ${d.etaxPlan ? `<div><strong>e-Tax:</strong> ${Layout.esc(d.etaxPlan)}</div>` : ''}
       ${(d.notes || []).length ? `<ul style="margin:6px 0 0 16px;font-size:11px;color:#64748b">${list(d.notes) /* html */}</ul>` : ''}
-      <hr style="margin:8px 0;border:none;border-top:1px solid #e2e8f0">${this._renderReadiness(d.readiness) /* html — หนีภายใน */}`;
+      ${skipReadiness ? '' : `<hr style="margin:8px 0;border:none;border-top:1px solid #e2e8f0">${this._renderReadiness(d.readiness) /* html — หนีภายใน */}`}`;
   },
   async dryRunSaved(id) {
     const api = Layout.api(); if (!api) return;
@@ -647,7 +697,7 @@ const Page = {
       this.items = items;
       const tbody = document.getElementById('tableBody');
       const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',BiWeekly:'ราย 2 สัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',SemiAnnual:'ราย 6 เดือน',Annual:'รายปี'}; // ชื่อ = สมาชิก enum RecurringFrequency จริง (เดิม 'Yearly' ⇒ 400 ทุกครั้ง · ERP_REVIEW I-01)
-      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ</td></tr>'; return; }
+      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ</td></tr>'; return; }
       tbody.innerHTML = items.map(r => `<tr>
         <td><span class="font-medium">${Layout.esc(r.name || '-')}</span></td>
         <td>${Layout.esc(Layout.docTypeLabel(r.documentType || '-'))}</td>
@@ -655,6 +705,7 @@ const Page = {
         <td>${Layout.esc(r.contactName || '-')}</td>
         <td class="text-right">${Layout.money(r.amount)}</td>
         <td>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</td>
+        <td data-ap-level="${Layout.esc(r.id)}"><span style="color:#94a3b8;font-size:11px">${r.status === 'Completed' ? '—' : 'กำลังตรวจ…'}</span></td>
         <td>${Layout.statusBadge(r.status || 'Active')}${r.lastRunError
           ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunError)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${Layout.jsArg(r.id)}')">⚠️ สร้างเอกสารไม่สำเร็จ</span></div>`
           : (r.lastRunOutcome ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunOutcome.headline)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;cursor:pointer" onclick="Page.view('${Layout.jsArg(r.id)}')">ℹ️ มีเรื่องต้องทำต่อ</span></div>` : '')}${r.autoSendEmailWarning
@@ -668,7 +719,35 @@ const Page = {
       </tr>`).join('');
       const totalPages = res.data?.totalPages || 1;
       document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.gotoPage');
+      this._loadLevels(items);
     } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  /** รอบ 251 (WP-07 ข้อ 1 · AUTOPILOT §4.6): ระดับ Autopilot ต่อแถว — เซิร์ฟเวอร์ตัดสิน (ตัวตัดสินเดียวกับแผงความพร้อม) · หน้านี้แสดงอย่างเดียว ·
+   *  ตรวจไม่สำเร็จ = บอกเหตุในช่อง (ไม่ใช่ช่องว่าง) · คำตอบเก่าห้ามทับตารางใหม่ */
+  async _loadLevels(items) {
+    const api = Layout.api(); if (!api) return;
+    const ids = (items || []).filter(r => r.status !== 'Completed').map(r => r.id);
+    const seq = (this._levelSeq = (this._levelSeq || 0) + 1);
+    if (!ids.length) return;
+    const cell = id => Array.from(document.querySelectorAll('#tableBody td[data-ap-level]')).find(td => td.dataset.apLevel === String(id));
+    try {
+      const res = await api.getRecurringAutopilotLevels(ids);
+      if (seq !== this._levelSeq) return;
+      const byId = {};
+      (res.data || []).forEach(x => { byId[x.id] = x; });
+      ids.forEach(id => { const td = cell(id); if (td) td.innerHTML = this._renderLevel(byId[id], id); });
+    } catch (e) {
+      if (seq !== this._levelSeq) return;
+      ids.forEach(id => { const td = cell(id); if (td) td.innerHTML = `<span style="color:#b91c1c;font-size:11px">ตรวจไม่สำเร็จ: ${Layout.esc(e.message || '')}</span>`; });
+    }
+  },
+  _renderLevel(x, id) {
+    if (!x) return '<span style="color:#94a3b8;font-size:11px" title="ไม่มีสิทธิ์ดูความพร้อมของเอกสารชนิดนี้">—</span>';
+    if (x.error) return `<span style="color:#b91c1c;font-size:11px" title="${Layout.esc(x.error)}">ตรวจไม่สำเร็จ</span>`;
+    const icon = x.level === 'Full' ? '🟢' : x.level === 'Partial' ? '🟡' : '🔴';
+    const counts = (x.failCount ? ' ❌' + Number(x.failCount) : '') + (x.warnCount ? ' ⚠️' + Number(x.warnCount) : '');
+    return `<span style="cursor:pointer;font-size:12px;white-space:nowrap" title="${Layout.esc((x.levelLabel || '') + (x.topIssue ? ' — ' + x.topIssue : ''))}" onclick="Page.view('${Layout.jsArg(id)}')">${icon /* text — อีโมจิคงที่ */}${counts /* text — ตัวเลข */}</span>`;
   },
 
   gotoPage(p) { Page.page = p; Page.load(); },
@@ -816,6 +895,8 @@ const Page = {
     document.getElementById('fAutoWht').checked = true;
     document.getElementById('fWhtCertType').value = 'Withhold';
     document.getElementById('fAutoSendEmail').checked = false;
+    document.getElementById('fNotifyBeforeRun').checked = false;   // ฝ่ายค้าน H2: ค่าตั้งต้นไม่ติ๊ก
+    document.getElementById('fNotifyDaysBefore').value = '1';
     this._editingTd = null;
     this._editingPolicy = null;
     this._setExtraLines([]);
@@ -830,6 +911,7 @@ const Page = {
     this.onDocTypeChange();
     await this._hydrateAutopilot({ paymentMode: null, payLinkChannels: null, autoApprovePolicy: null, postPayEmailReceipt: 'Inherit', postPayIncludePartial: 'Inherit' });
     this._snapshotForm();
+    this._resetDryRun();
     this.goStep(1);
     Layout.openModal('formModal');
     const vp = document.getElementById('varPanel'); if (vp) vp.style.display = 'none';
@@ -1015,12 +1097,14 @@ const Page = {
     });
   },
   /** บรรทัดที่ 2..n สำหรับคำขอ — ทับเฉพาะช่องของตาราง บนบรรทัดเดิมตำแหน่งเดียวกัน (คีย์อื่นที่ตั้งผ่าน API คงอยู่) */
-  _collectExtraLines(prevLines) {
+  _collectExtraLines(prevLines, forCheck) {
     this._readExtraLines();
     const prev = Array.isArray(prevLines) ? prevLines.slice(1) : [];
     const out = [];
     for (let i = 0; i < this._extraLines.length; i++) {
       const l = this._extraLines[i];
+      // รอบ 251 (WP-07 ข้อ 6 · D §1.9): โหมดตรวจ (แผงความพร้อม/ทดลองรัน) ข้ามบรรทัดที่ยังว่างทั้งแถว — ไม่ฟ้องระหว่างกรอก · บันทึกจริงยังบังคับกรอก
+      if (forCheck && !String(l.description || '').trim() && !(Number(l.unitPrice) > 0)) continue;
       if (!String(l.description || '').trim()) return { error: `บรรทัดที่ ${i + 2}: กรอกรายละเอียด (หรือกด ✕ ลบบรรทัด)` };
       if (!(l.quantity > 0)) return { error: `บรรทัดที่ ${i + 2}: จำนวนต้องมากกว่า 0` };
       if (l.unitPrice < 0) return { error: `บรรทัดที่ ${i + 2}: ราคาต่อหน่วยต้องไม่ติดลบ` };
@@ -1121,7 +1205,8 @@ const Page = {
   },
 
   /** รอบ 248: ประกอบคำขอจากฟอร์ม (ตัวเดียวทั้งบันทึก · ตรวจความพร้อม · ทดลองรัน) — คืน {data} หรือ {error} */
-  _buildPayload() {
+  _buildPayload(opts) {
+    const forCheck = !!(opts && opts.forCheck);
     const id = document.getElementById('fId').value;
     const name = document.getElementById('fName').value.trim();
     const startDate = document.getElementById('fStartDate').value;
@@ -1149,7 +1234,7 @@ const Page = {
     const payeeDiffers = payerSide && document.getElementById('fWhtPayeeDiffers')?.checked;
     const payeeId = payeeDiffers ? (document.getElementById('fWhtPayeeContactId')?.value || '') : '';
     if (payeeDiffers && !payeeId) return { error: 'เลือกผู้ถูกหักภาษีจากรายชื่อผู้ติดต่อ (หรือเอาเครื่องหมายถูกออก)' };
-    const extra = this._collectExtraLines(prevTd.lines);
+    const extra = this._collectExtraLines(prevTd.lines, forCheck);
     if (extra.error) return { error: extra.error };
     const autoWht = document.getElementById('fAutoWht').checked;
     const templateData = JSON.stringify(Object.assign(prevTd, {
@@ -1198,8 +1283,9 @@ const Page = {
       templateData,
       autoApprove: document.getElementById('fAutoApprove').checked,
       autoSendEmail: document.getElementById('fAutoSendEmail').checked,
-      notifyBeforeRun: true,
-      notifyDaysBefore: 1,
+      notifyBeforeRun: !!document.getElementById('fNotifyBeforeRun')?.checked,
+      // ไม่ clamp เงียบ — ค่านอก 0–30 ให้เซิร์ฟเวอร์ปฏิเสธพร้อมเหตุ (RecurringUpcomingNotice.RangeError)
+      notifyDaysBefore: (() => { const n = parseInt(document.getElementById('fNotifyDaysBefore')?.value, 10); return Number.isFinite(n) ? n : 1; })(),
       // รอบ 248: ช่องทางรับเงินต่อรายการ — แก้ไข: "" = ล้าง (ตามผู้ติดต่อ › บริษัท) · [] = ล้างช่องทาง (เซิร์ฟเวอร์ตรวจชื่อเอง)
       // รอบ 250 WP-03 (D §1.1): ตัวเลือกโหลดไม่สำเร็จ ⇒ ส่ง null (= ไม่แก้) — เดิมส่ง ''/[] ⇒ เซิร์ฟเวอร์ล้างค่าที่ตั้งไว้เงียบ ๆ
       paymentMode: !this._apOpts ? null : (document.getElementById('fPaymentMode')?.value || (id ? '' : null)),
@@ -1263,6 +1349,7 @@ const Page = {
       document.getElementById('detailFooter').innerHTML = `
         <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
         <button class="btn btn-secondary" onclick="Page.dryRunSaved('${Layout.jsArg(r.id)}')">ทดลองรัน 🔍</button>
+        <button class="btn btn-secondary" onclick="Page.sendTest('${Layout.jsArg(r.id)}')">📨 ส่งทดสอบถึงอีเมลฉัน</button>
         <button class="btn btn-danger" onclick="Page.del('${Layout.jsArg(r.id)}')" data-i18n="common.delete">ลบ</button>
         <button class="btn btn-primary" onclick="Page.editFromDetail('${Layout.jsArg(r.id)}')" data-i18n="common.edit">แก้ไข</button>`;
       Layout.openModal('detailModal');
@@ -1306,6 +1393,8 @@ const Page = {
       document.getElementById('fDescription').value = r.description || '';
       document.getElementById('fAutoApprove').checked = r.autoApprove || false;
       document.getElementById('fAutoSendEmail').checked = r.autoSendEmail || false;
+      document.getElementById('fNotifyBeforeRun').checked = r.notifyBeforeRun === true;
+      document.getElementById('fNotifyDaysBefore').value = String(r.notifyDaysBefore ?? 1);
       this.onAutoFlagChange();
       this.loadEmailStatus();
 
@@ -1366,6 +1455,7 @@ const Page = {
       this.onDocTypeChange();
       await this._hydrateAutopilot(r);
       this._snapshotForm();
+      this._resetDryRun();
       this.goStep(1);
       Layout.openModal('formModal');
       this.refreshReadiness(true);

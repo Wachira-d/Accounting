@@ -21,6 +21,8 @@ public class RecurringTransactionService : IRecurringTransactionService
     private readonly IEmailScheduleService? _emailSchedule;
     private readonly INotificationEngine? _notify;
     private readonly IPermissionService? _permissions;
+    /// <summary>รอบ 250 WP-08: "ผู้ติดต่อรับอีเมลเอกสารได้ไหม" = ตัวหาผู้รับเดียวกับผู้ส่งจริง (เรื่อง "เอกสาร") — ไม่อ่าน Contact.Email ตรง</summary>
+    private readonly IContactRecipientResolver _recipients;
 
     public RecurringTransactionService(
         AccountingDbContext db,
@@ -30,7 +32,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         IErrorLogService errorLogService,
         IEmailScheduleService? emailSchedule = null,
         INotificationEngine? notify = null,
-        IPermissionService? permissions = null)
+        IPermissionService? permissions = null,
+        IContactRecipientResolver? recipients = null)
     {
         _db = db;
         _documentService = documentService;
@@ -39,6 +42,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         _errorLogService = errorLogService;
         _emailSchedule = emailSchedule;
         _notify = notify;
+        _recipients = recipients ?? ContactRecipientResolver.EmailOnly(db);
         _permissions = permissions;   // รอบ 248: ผู้ตั้งนโยบายอนุมัติยังมีสิทธิ์อนุมัติไหม (null ในเทสต์ = ตรวจแค่สมาชิกภาพ)
     }
 
@@ -78,6 +82,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         await ValidateTemplateAsync(companyId, request.TemplateType, request.TemplateData, request.ContactId, atSave: true);
         var (payMode, payChannels) = PaymentSettingsFrom(request.PaymentMode, request.PayLinkChannels);
         CheckPostPaySettings(request.PostPayEmailReceipt, request.PostPayIncludePartial);
+        if (RecurringUpcomingNotice.RangeError(request.NotifyDaysBefore) is string notifyErr)
+            throw new BusinessRuleException(notifyErr, RecurringTemplate.RuleCode);
         // วันสิ้นสุดก่อนวันเริ่ม = รายการที่ไม่มีวันรันเลย (เดิมบันทึกได้แล้วค้าง "ใช้งาน" เงียบ ๆ ตลอดไป)
         if (request.EndDate.HasValue && !RecurringSchedule.WithinEnd(request.StartDate, request.EndDate))
             throw new BusinessRuleException("วันสิ้นสุดอยู่ก่อนวันเริ่มต้น — แก้วันสิ้นสุด (หรือเว้นว่างถ้าไม่มีกำหนด) แล้วบันทึกอีกครั้ง",
@@ -208,6 +214,8 @@ public class RecurringTransactionService : IRecurringTransactionService
                 request.ContactId ?? recurring.ContactId, atSave: true);
         if (request.ContactId.HasValue) recurring.ContactId = request.ContactId.Value;
         if (request.TemplateData != null) recurring.TemplateData = request.TemplateData;
+        if (RecurringUpcomingNotice.RangeError(request.NotifyDaysBefore) is string notifyErr)
+            throw new BusinessRuleException(notifyErr, RecurringTemplate.RuleCode);
         if (request.NotifyBeforeRun.HasValue) recurring.NotifyBeforeRun = request.NotifyBeforeRun.Value;
         if (request.NotifyDaysBefore.HasValue) recurring.NotifyDaysBefore = request.NotifyDaysBefore.Value;
         if (request.AutoApprove.HasValue) recurring.AutoApprove = request.AutoApprove.Value;
@@ -356,6 +364,14 @@ public class RecurringTransactionService : IRecurringTransactionService
     public async Task ProcessDueRecurringTransactionsAsync()
     {
         var now = DateTime.UtcNow;
+        // รอบ 250 WP-04 ต่อยอด: แจ้งเตือนก่อนรอบรัน (ค่าตั้ง NotifyBeforeRun/NotifyDaysBefore ของรายการ) — ล้มไม่ขวางการสร้างเอกสาร
+        try { await NotifyUpcomingRunsAsync(now); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Recurring upcoming-run notifications failed");
+            try { await _errorLogService.LogErrorAsync(ex, "RecurringTransaction.NotifyUpcoming"); }
+            catch (Exception lex) when (lex is not OperationCanceledException) { _logger.LogError(lex, "Failed to record upcoming-run failure"); }
+        }
         var dueCutoff = RecurringSchedule.DueCutoffUtc(now);   // งวดของ "วันนี้ตามปฏิทินไทย" ถึงกำหนดตั้งแต่ 00:00 น. เวลาไทย
         // อ่านแค่รหัส — แต่ละรายการโหลดใหม่ภายใต้ล็อก (ไม่ถือ entity ข้ามรอบ: ของค้างจากรายการที่ล้มห้ามไหลไปกับการบันทึกของรายการถัดไป) ·
         // ไม่กรองวันสิ้นสุดที่นี่ — รายการที่เลยวันสิ้นสุดถูกปิดเป็น "เสร็จสิ้น" ในลูป (เดิมค้าง "ใช้งาน" ตลอดไป และงวดที่ตรงวันสิ้นสุดถูกตัดทิ้ง)
@@ -409,6 +425,54 @@ public class RecurringTransactionService : IRecurringTransactionService
                 }
             }
         }
+    }
+
+    /// <summary>รอบ 250 WP-04 ต่อยอด: แจ้งเตือนผู้สร้างรายการ N วันก่อนรอบสร้างเอกสาร (ตัวตัดสิน <see cref="RecurringUpcomingNotice.ShouldNotify"/>) ·
+    /// รอบเดียวกันแจ้งครั้งเดียว: ประทับ <c>UpcomingRunNotifiedFor</c> แบบ compare-and-set (UPDATE … WHERE ยังไม่ประทับรอบนี้) ⇒ หลายเครื่องรันพร้อมกันได้แจ้งครั้งเดียว ·
+    /// ไม่มีเครื่องแจ้งเตือน ⇒ ไม่ประทับ (ห้ามบอกว่าแจ้งแล้วทั้งที่ไม่ได้แจ้ง) · คืนจำนวนที่แจ้ง</summary>
+    internal async Task<int> NotifyUpcomingRunsAsync(DateTime nowUtc)
+    {
+        if (_notify == null) return 0;
+        var today = ThaiDate.CalendarDateUtc(nowUtc).Date;
+        var horizon = today.AddDays(RecurringUpcomingNotice.MaxDaysBefore + 1);
+        var candidates = await _db.RecurringTransactions.AsNoTracking()
+            .Where(r => r.Status == RecurringStatus.Active && r.NotifyBeforeRun && r.NotifyDaysBefore > 0
+                && r.NextRunDate > today && r.NextRunDate < horizon)
+            .Select(r => new { r.Id, r.CompanyId, r.Name, r.CreatedBy, r.NextRunDate, r.NotifyDaysBefore, r.UpcomingRunNotifiedFor,
+                r.Frequency, r.EndDate, r.TotalRuns, r.MaxRuns })
+            .ToListAsync();
+        var sent = 0;
+        foreach (var r in candidates)
+        {
+            // ฝ่ายค้าน H2/M1: รายวันไม่แจ้ง · รอบที่เลยวันสิ้นสุด/ครบจำนวนครั้ง (จะไม่รัน) ไม่แจ้ง
+            if (!RecurringUpcomingNotice.ShouldNotify(true, r.NotifyDaysBefore, true, r.Frequency, r.NextRunDate, r.EndDate, r.TotalRuns, r.MaxRuns,
+                    today, r.UpcomingRunNotifiedFor)) continue;
+            var runDate = r.NextRunDate;
+            var claimed = await _db.RecurringTransactions
+                .Where(x => x.Id == r.Id && x.CompanyId == r.CompanyId && x.NextRunDate == runDate
+                    && (x.UpcomingRunNotifiedFor == null || x.UpcomingRunNotifiedFor != runDate))
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.UpcomingRunNotifiedFor, (DateTime?)runDate));
+            if (claimed == 0) continue;   // อีกเครื่องแจ้งไปแล้ว / รอบเลื่อนแล้ว
+            // ประทับก่อนส่ง = อย่างมากครั้งเดียว (DispatchAsync กลืนข้อผิดพลาดเองไม่คืนผล — ส่งล้ม = รอบนั้นไม่ได้กระดิ่ง · L3)
+            var days = RecurringUpcomingNotice.DaysUntil(runDate, today);
+            // ฝ่ายค้าน H2: ผู้รับ = ผู้สร้างที่ยังเป็นสมาชิกที่ใช้งานของบริษัทนี้ · ไม่งั้น null ⇒ ค่าตั้งต้นของคีย์ (กระดิ่งเจ้าของ)
+            Guid? recipient = null;
+            if (Guid.TryParse(r.CreatedBy, out var creatorId)
+                && await _db.CompanyUsers.AsNoTracking().AnyAsync(cu => cu.CompanyId == r.CompanyId && cu.UserId == creatorId
+                    && cu.User.Status == UserStatus.Active))
+                recipient = creatorId;
+            await _notify.DispatchAsync(r.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringUpcomingRun, new NotificationContext
+            {
+                Title = $"รายการประจำ \"{r.Name}\" จะสร้างเอกสารในอีก {days} วัน",
+                Message = $"รอบถัดไปวันที่ {runDate.ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture)} — ตรวจยอด/ผู้ติดต่อ/ช่องทางรับเงินได้ที่หน้ารายการประจำ (กด \"ทดลองรัน\" เพื่อดูใบที่จะออก)",
+                ActionUrl = "/pages/recurring.html",
+                EntityType = "RecurringTransaction",
+                EntityId = r.Id,
+                RecipientUserId = recipient,
+            });
+            sent++;
+        }
+        return sent;
     }
 
     /// <summary>ฝ่ายค้าน 2026-10-14 P0: รายการประจำชนิด<b>เอกสาร</b>ล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน) ⇒ NextRunDate ค้างงวดแรก ·
@@ -520,12 +584,10 @@ public class RecurringTransactionService : IRecurringTransactionService
                 .ToListAsync())
                 .ToDictionary(d => d.Id, d => new RecurringRunDoc(d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate));
         var contactIds = rows.Where(r => r.ContactId.HasValue).Select(r => r.ContactId!.Value).Distinct().ToList();
-        var emails = contactIds.Count == 0 ? new Dictionary<Guid, string?>()
-            : (await _db.Contacts.AsNoTracking()
-                .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
-                .Select(c => new { c.Id, c.Email })
-                .ToListAsync())
-                .ToDictionary(c => c.Id, c => c.Email);
+        // รอบ 250 WP-08: อีเมลที่ส่งได้ของเรื่อง "เอกสาร" (ตัวหาผู้รับเดียวกับผู้ส่งจริง) — ต่อผู้ติดต่อที่ไม่ซ้ำในหน้านี้
+        var emails = new Dictionary<Guid, string?>();
+        foreach (var cid in contactIds)
+            emails[cid] = await DocumentEmailToAsync(companyId, cid);
         // กฎ "เมื่ออนุมัติเอกสาร" — ผู้ส่งจริงคือ EmailScheduleService.OnDocumentApprovedAsync (เงื่อนไขเดียวกัน: เปิดใช้ · ไม่ถูกลบ · ชนิดตรงหรือว่าง)
         var approvedRuleTypes = await _db.EmailScheduleRules.AsNoTracking()
             .Where(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == "DocumentApproved")
@@ -558,14 +620,20 @@ public class RecurringTransactionService : IRecurringTransactionService
     /// <summary>รอบ 247: ฟอร์มรายการประจำถาม "ผู้ติดต่อนี้รับอีเมลได้ไหม" ตอนเลือกผู้ติดต่อ — ตัวตัดสินเดียวกับผู้ส่งจริง (RecurringEmailReadiness)</summary>
     public async Task<RecurringEmailReadinessResponse> GetEmailReadinessAsync(Guid companyId, Guid contactId)
     {
-        var contact = await _db.Contacts.AsNoTracking()
-            .Where(c => c.Id == contactId && c.CompanyId == companyId)
-            .Select(c => new { c.Email })
-            .FirstOrDefaultAsync()
-            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
-        var ready = RecurringEmailReadiness.HasDeliverableEmail(contact.Email);
-        return new RecurringEmailReadinessResponse(ready, ready ? null : RecurringEmailReadiness.NoEmailReason,
+        if (!await _db.Contacts.AsNoTracking().AnyAsync(c => c.Id == contactId && c.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        // รอบ 250 WP-08: ตัวหาผู้รับเดียวกับผู้ส่งจริง — ยกเลิกรับเรื่อง "เอกสาร" ทุกปลายทาง ⇒ ไม่พร้อม พร้อมเหตุจากตัวตัดสิน (ไม่ใช่ "ไม่มีอีเมล")
+        var delivery = ContactRecipientRule.ForEmail(await _recipients.ResolveAsync(companyId, contactId, NotifyTopic.Document));
+        var ready = RecurringEmailReadiness.HasDeliverableEmail(delivery.To);
+        return new RecurringEmailReadinessResponse(ready, ready ? null : delivery.OptOutReason ?? RecurringEmailReadiness.NoEmailReason,
             RecurringEmailReadiness.ContactUrl(contactId));
+    }
+
+    /// <summary>รอบ 250 WP-08: ผู้รับเรื่อง "เอกสาร" ของผู้ติดต่อ (คั่น ", ") — ตัวเดียวของไฟล์นี้ · null = ส่งไม่ได้</summary>
+    private async Task<string?> DocumentEmailToAsync(Guid companyId, Guid contactId)
+    {
+        var set = await _recipients.ResolveAsync(companyId, contactId, NotifyTopic.Document);
+        return ContactRecipientRule.ForEmail(set).To;
     }
 
     /// <summary>รอบล้ม ⇒ เหตุผล (ไทย · บอกช่อง + ทางแก้) ลงแถว + ErrorLog/แจ้งผู้ตั้งรายการ <b>เฉพาะครั้งแรก/เมื่อสาเหตุเปลี่ยน</b>
@@ -971,9 +1039,8 @@ public class RecurringTransactionService : IRecurringTransactionService
                         facts = facts with { EmailHeldForDraft = true };
                     }
                     // ตัวตัดสินเดียวกับผู้ส่งจริง (EnqueueDocumentAsync ส่งไปที่ Contact.Email) — ห้ามข้ามเงียบ
-                    else if (!RecurringEmailReadiness.HasDeliverableEmail(await _db.Contacts.AsNoTracking()
-                                 .Where(c => c.Id == contactId && c.CompanyId == recurring.CompanyId)
-                                 .Select(c => c.Email).FirstOrDefaultAsync()))
+                    else if (facts.EmailNotSentReason == null
+                             && !RecurringEmailReadiness.HasDeliverableEmail(await DocumentEmailToAsync(recurring.CompanyId, contactId)))
                     {
                         notices.Add(RecurringEmailReadiness.NotSentNoEmail + " — เพิ่มอีเมลที่หน้าผู้ติดต่อ แล้วส่งเอกสารนี้จากหน้าเอกสาร");
                         facts = facts with { EmailSkippedNoContactEmail = true };

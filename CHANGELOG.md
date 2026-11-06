@@ -6657,3 +6657,89 @@ documents ratchet 387 · แก้ XSS ที่พบเพิ่ม (`${c.phon
 (L4) ตัวนับแท็บล้มไม่ล้มรายการ. (L5) legal ถามก่อนทับร่างอังกฤษ. (L7) ลองใหม่คิวอีเมลได้เฉพาะสถานะ Failed. raw fetch: contacts 4→2 · organization 2→0 · petty-cash 2→0.
 เทสต์ `EmailScheduleRuleRangeTests` · `DuplicateSubjectCode` · Db พอร์ทัล 4 เคส · R250W3 +7 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 697718ef_
 
+_รอบ 250 WP-04 — เทสต์/กติกาที่ขาด (AUDIT_249 §WP-04 ข้อ 1–6 + งานค้างจาก WP-02) (2026-11-06):
+(1) `PaymentQrMigration` คีย์ล็อก `hashtext` (int4 32 บิต) → `AdvisoryLockKey.For(OneShotDataFix, MarkerKey)` · ตาราง `OneShotDataFixes` ย้ายไป
+`DatabaseMigrationHelper.OneShotDataFixesTableSql` ตัวเดียว (ถอดจาก Statements ของรอบ 245/246 · `PortalSlipPending` ใช้ค่าคงที่เดียวกัน) · `advisory_lock_key_check`
+baseline hashtext = 0 · Db test 4 ทิศ + กติกา R250W4 (ล็อกก่อนอ่าน · ห้าม hashtext · Program.cs เรียกหลัง ApplyMissingColumns).
+(2) `PaymentQrPolicy.IsBankQrDocument`/`ShowBankQr` รับ `cnDnPurchaseSideOverride` + ผู้ติดต่อผู้ขายอย่างเดียว (เดิม null/false ตายตัว) ⇒ ใบเพิ่มหนี้ที่ย้ายฝั่งได้ QR ตามฝั่งเดียวกับ JE/ลิงก์ชำระ ·
+`PaymentQrService.ResolveCoreAsync` โหลดข้อเท็จจริงของผู้ติดต่อ (กรองบริษัท) · ผู้เรียกฝั่งเทมเพลตส่ง `null,false` โดยเจตนา.
+(3) `DbTestDatabase` ตั้งรูป FK production (RESTRICT) + ตาราง marker ครั้งเดียวตอนสร้างฐาน — `DocumentPurgeDbTests` ไม่ ALTER TABLE ระหว่างเทสต์ขนาน (E M-4).
+(4) Db test ด่านสินทรัพย์ผ่านเส้นจริงสองทิศ: ลบถาวร · ย้ายฝั่ง CN/DN · สลับบริการต่างประเทศ · แก้ผังบรรทัด · resync · OCR ลงทะเบียนจากสแกน · กลับ/แก้ JE โอนต้นทุน ·
+`Void_while_linking_holds_key_first` (ดู `pg_locks`) · `WhtWriteOffJournalLock` 409 + ทิศตรงข้าม · `SettleYearEnd_locks_in_id_order` · MED-5 enqueue→send สองทิศ.
+(5) `GateOppositeDirectionRound250Tests` — 8 ฟังก์ชันที่ matrix ของทีม E นับว่าไม่มีทิศตรงข้าม + `Releases` เรียกตรง + `BindingHash` (ผัง/ราคา/ผู้ติดต่อเปลี่ยน · คำอธิบายไม่เปลี่ยน).
+ยังไม่ทำ (WP-04 ข้อ 7–13): XML e-Tax · ตาราง PaymentNotification ทุกชนิด · `PostJe`/`AgingDays` · checker 4 ตัว. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 0cb7ff24_
+
+
+_รอบ 251 WP-07 — งานค้างรอบ 248 Autopilot (2026-11-06 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-07 · A B-12/B-16/B-17/F-06/B-18/B-19 · D §1.8–1.9):
+แผงความพร้อม/ทดลองรันบอกความจริงครบ — รหัสใหม่ `ETAX`/`ETAX-SENDER`/`ETAX-RECIPIENT` (`EtaxAutoIssueScope.Judge` → `EtaxDeliveryRouter.Decide` → `EtaxByEmailSenderGate.Refusal` ·
+`EtaxByEmailFormat.Recipients`) · `PAY-QR` (`PaymentQrService.PickDocumentAccountAsync` → `PaymentQrPolicy`) · `QUOTA` (`PlatformEmailQuota` → `SignEmailThrottle` — **ใช้ตัวจำกัดจริง
+ไม่ใช่ `NotifyQuotaPolicy`**: อีเมลเอกสารผ่าน NextAcc ไม่ตัดโควตาข้อความแจ้งเตือน · แสดงตัวเลขโควตาข้อความ = ตัวเลขที่แต่งขึ้น) · `PERIOD` (`ClosedPeriodRanges.Build` + ตัวช่วยใหม่ `Covers` ·
+งวดปิด = สร้างเอกสารไม่ได้ ⇒ ระดับต่ำสุด) · `POSTPAY` (`PostPaymentAutomationPolicy.EffectiveLayers` — ไม่ใช่ `Effective` สองชั้นตามใบสั่งงาน เพราะรายการ/ผู้ติดต่อเป็นชั้นจริงตั้งแต่ WP-02) ·
+ใบ e-Tax by Email ไม่ออกข้อ SMTP/QUOTA ("ส่งผ่าน NextAcc" ไม่จริงสำหรับใบที่ห้ามถอย) · ทดลองรัน `EtaxPlan` + `EmailPlan` บอก "จะล้มที่ด่านผู้ส่ง" · คอลัมน์ "ระดับ Autopilot" จาก
+`GET recurring/autopilot/levels` (endpoint แยกจาก list — แต่ละแถวเดินตัวรวบรวมข้อเท็จจริงทั้งชุด ไม่ให้หน้ารายการช้าลง) · `POST recurring/{id}/send-test` ถึงผู้ใช้ที่กดเท่านั้น
+(ไม่บันทึก `DocumentEmailLog` · ไม่นับเพดาน · audit · เพดาน 10/วัน) · ผลทดลองรันกล่องแยก · บรรทัดว่างไม่ฟ้องระหว่างกรอก · แท็บช่องทางแจ้งเตือนเตือนกติกาผู้รับ e-Tax ·
+Db MED-5 ผ่าน `RecheckDocumentAtSendAsync` ตัวจริง · R251 +7 กติกา + เคส R251a–g · owner R251-K4 · ไม่ได้ทำ: ราคาแปรผัน/ทุก N เดือน/สร้างล่วงหน้า (ไม่อยู่ในใบสั่งงาน WP-07) ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 847041d2_
+
+
+_รอบ 250 WP-08 (AUDIT_249 §4 WP-08 · คำตัดสิน 250-24…29 · LINE_MULTICHANNEL_DESIGN §8 L1 · ASSET §6 Q1/Q5): **L1 ต่อสาย** — ผู้รับอีเมลของทุกเส้นส่งถึงผู้ติดต่อ
+(ตารางส่ง/ทวงชำระ · ใบแจ้งยอด · 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น · ความพร้อมของรายการประจำ) มาจาก `IContactRecipientResolver` + `ContactRecipientRule.ForEmail`
+ตัวเดียว (เรื่องจาก `NotifyTopics.ForTrigger`) · อีเมลเพิ่มเติม/เรื่องที่เลือกมีผลจริง · ยกเลิกรับ ⇒ ไม่ส่ง + แถวคิว "ข้าม" พร้อมเหตุ · ไม่ตั้ง ⇒ Contact.Email เดิม · LINE ยังปิด
+(`LineDeliveryOpen=false` · §10 Q1(b)/Q7 เป็นงาน L2) · ToEmail หลายผู้รับแยกรายตัวตอนส่ง. **ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ"** `Contact.AutoSendDisabled` (migration DEFAULT false ·
+`AutopilotSettingsResolver.AutoSendBlock`/`ContactPostPayEmailReceipt` — ไม่สร้าง resolver ตัวที่สอง) ชนะกฎบริษัททุกเส้นอัตโนมัติ · echo/hydrate ใน contacts.html + recurring.html.
+**สินทรัพย์ P2**: `PATCH …/contract-price` + `PATCH …/available-date` (Asset.Manage · audit chain) · จุดตั้งต้นค่าเสื่อมตัวเดียว `DepreciationSchedule.StartDate` (แผน/GL/ไล่ตาม/ทบทวนอายุ) ·
+ฟอร์มล็อกช่องพร้อมเหตุจาก `AvailableDateLockReason` · confirmPlaceInService ตรวจอายุ > 0 + วันตั้งต้นตามปฏิทินผู้ใช้. เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests`
+(7) · `AssetEditsRound250DbTests` (4) · R250L1/R250FA (+9 เคสฝ่ายค้าน) · settings_reader เพิ่ม ContactNotifyEndpoint.TopicsJson/Contact.AutoSendDisabled · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 31479320_
+
+_รอบ 250 WP-04 ข้อ 7–13 + แก้ผลฝ่ายค้าน WP-04 (2026-11-06):
+(7) `Helpers/EtaxPartyTaxIdGuard` ด่านเลขผู้ขาย/ผู้ซื้อตัวเดียว (ย้ายจาก GenerateAsync · ข้อความเดิม) · `BuildEtaxXml` เป็น internal static · `EtaxXmlRound250Tests` ฟิลด์ ETDA สองทิศ.
+(8) ตาราง PaymentNotification ทุก DocumentType × ฝั่ง จาก CashFlowDirection. (9) `PostJe` ไม่ถอยเป็นวันนี้เงียบ · AgingDays จาก DueDate.
+(10) `settings_reader_check` +4 entity — พบ 4 ช่องไม่มีผู้อ่านอยู่ก่อนแล้ว (EmailScheduleRule.AudienceFilter/RepeatEveryDays · RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore)
+⇒ baseline พร้อมหมายเหตุ · **ส่งเจ้าของตัดสินต่อสาย/ลบ** (ใบสั่งงานคาดว่า "baseline ว่าง" — ไม่จริง). (11) deep link `#k=`. (12) contact_picker R2 ตามพฤติกรรม.
+(13) `form_label_for_check` (ratchet 1,154 จุด/80 ไฟล์) · `modal_table_container_check` (ratchet 1 จุด).
+ฝ่ายค้าน: (2) ทิศ "ผ่านด่าน" ได้ผลที่คาดจริง · (3) **โค้ด**: ยกเลิก/ลบถาวรเรียกตัวปลดแถวผูกต้นทุนเฉพาะชนิดที่อาจเป็นต้นทุน — เดิมใบขายถือคีย์ผู้เขียนต้นทุน
+หลัง FOR UPDATE แถวเอกสาร (ลำดับกลับด้าน) ⇒ ยกเลิกใบขายรอการผูกต้นทุนของบริษัท · (4) ปิดปีแถวกลับด้านกับ uuid · (5) ตาราง marker ในธุรกรรมของงานย้าย + เทสต์ใช้ค่าคงที่ ·
+(6) **หมายเหตุ**: เปลี่ยนคีย์ล็อกของ `PaymentQrMigration` (hashtext → 64 บิต) ไม่มีผลกับฐานที่บูตแล้ว — marker `r246-template-promptpay-to-bank` มีแล้ว งานจบที่ "marker มีแล้ว" ·
+(7) เทสต์ DDL ตอนบูต = ฐานเทสต์ · (8) MED-5 เรียก RecheckDocumentAtSendAsync (internal) ตรง. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 26a06169_
+
+_รอบ 251 WP-07 แก้ผลฝ่ายค้าน (2026-11-06 · ข้อ 1 CS7036 ผู้ประสานงานแก้แล้วที่ a280bf11): (2 HIGH) ส่งทดสอบ: ต้องยืนยันอีเมลแล้ว · เส้น NextAcc ห่อหัวเปิดเผย 240-9 +
+เคารพเพดานแพลตฟอร์ม/ต่อผู้รับ · เพดาน 10/ผู้ใช้/บริษัท/วัน (เดิมต่อรายการ ⇒ N×10) ใต้ xact lock ต่อผู้ใช้ ครอบ นับ→ส่ง→audit · `AuditAction.SendEmail` (ใหม่ · ไม่ใช่ Export) ·
+ปิดบังอีเมลลูกค้าในเนื้อทดสอบ · (3) ETAX* ประเมินเมื่อใบจะถูกส่งจริง (กฎในตารางส่ง) + แผนอีเมลบอกเส้นที่ส่ง · (4) ใบเสร็จหลังรับชำระที่ต้องไป e-Tax by Email แต่ด่านผู้ส่งไม่ผ่าน ⇒ ⚠️ ·
+(5) `EtaxAutoIssueScope.PredictForUnissued` — ชนิดที่รูปแบบใบเสร็จตัดสินตอนอนุมัติ = ⓘ "ตรวจตอนอนุมัติ" (ไม่แดงหลอก) · (6) ตารางระดับถามสิทธิ์ก่อนรวบรวม + โหลดข้อเท็จจริงบริษัทครั้งเดียว ·
+(7) ด่านงวดปิดตอนสร้างเอกสารเทียบวันไทย (เดิมเวลาดิบ — บ่ายวันสุดท้ายของงวดปิดหลุด) · (8) PAY-QR ใช้ `ShowBankQr` · (9) สำเนาลับจากกฎที่ส่งจริง ·
+R251 +2 กติกา (LoadSharedFactsAsync · CreateDocumentAsync) + เคส R251h–o · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3c8c2c3d_
+
+_รอบ 250 WP-04 ต่อยอด (ฝ่ายค้าน 26a06169 · 2026-11-06):
+(1) **ต่อสาย** `EmailScheduleRule.RepeatEveryDays` — ทวงเกินกำหนดส่งซ้ำทุก N วัน (`Helpers/OverdueReminderSchedule` · กุญแจครั้งแรกเดิม · ครั้งซ้ำมีวันที่) · 0 = เหมือนเดิม.
+(2) **ต่อสาย** `RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore` — กระดิ่งผู้สร้างรายการ N วันก่อนรอบ (`recurring.upcoming_run` · คอลัมน์ใหม่ `UpcomingRunNotifiedFor`
+compare-and-set) + ช่องบน recurring.html (เดิมส่ง true/1 ตายตัว) · ⚠️ รายการเดิมทุกตัวเก็บ true/1 ไว้ (UI เดิมตายตัว) ⇒ จะเริ่มได้กระดิ่ง 1 วันก่อนรอบ — ปิดได้ที่รายการ ·
+`AudienceFilter` เลิกใช้ (ไม่รับค่า · baseline หมายเหตุ deprecated).
+(3) `EtaxPartyTaxIdGuard.Buyer(name, taxId, contactType, branchCode)` — ชนิด · checksum · สาขาของเลข 18 หลัก · บุคคลไม่มีเลข = OTHR · TXID ใช้สาขาของผู้ติดต่อ ·
+วันที่ใบเดิมของ CN/DN = วันไทย (สอดคล้อง +07:00). (4) `MayBeCostSource` ครอบทุกฝั่ง + Db test ลบถาวรใบขาย. (5) checker 5 จุด (ดู TEST_PLAN).
+(6) CN/DN ≥ 17:00Z. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 74a2d1f6_
+
+_รอบ 250 WP-08 แก้ตามฝ่ายค้าน (merge 93d43ce3): **HIGH-1** e-Tax by Email ส่งถึงอีเมลหลักเท่านั้น (`ContactRecipientRule.ForChannel` · อีเมลหลักก่อนเสมอ `EmailDelivery.PrimaryEmails`) —
+อีเมลเสริมไม่ได้รับสำเนาธรรมดา แต่บันทึกว่าไม่ได้ส่ง (หมายเหตุคงไว้หลังส่ง) · อีเมลหลักปิดรับ ⇒ ไม่ส่งพร้อมเหตุ · คิว/งานหลังรับชำระ/ทดลองรันใช้ตัวเดียว.
+**HIGH-2/MED-4** "ไม่ส่งอัตโนมัติ" ออกจากชั้นค่าตั้งของงานหลังรับชำระ (เดิมทำให้ไม่ออกใบเสร็จเงียบ) → `Facts.AutoSendBlockedReason` ตัดเฉพาะขั้นส่งอีเมล ชนะทุกชั้น · ลบ `ContactPostPayEmailReceipt`.
+**MED-1** ลิงก์เซ็นอัตโนมัติกรองตามเรื่องเซ็น. **MED-2** ผู้ติดต่อถูกลบ ⇒ เหตุ `ContactDeletedReason`. **MED-3** ตัดผู้รับตอนเข้าคิว (`CapForSender` · ≤5 NextAcc · ≤500 ตัวอักษร) ·
+`EMAIL-PLATFORM-CAP` หยุดไม่ลองซ้ำ · บันทึกแถวคิวล้มไม่ลากแบตช์. **MED-5** วันพร้อมใช้ล็อกเมื่อไม่ใช่สถานะใช้งาน/ยอดยกมา/ทบทวนอายุ · คิดค่าเสื่อมล็อกแถวสินทรัพย์.
+**MED-6** แถว "ข้าม" ไม่นับว่ากฎเมื่ออนุมัติครอบ. LOW: กันซ้ำก่อนหาผู้รับ · คำตอบ PATCH ราคาสัญญามีเหตุล็อก · doc comment `FromRequest` · แฮชอีเมลใน audit · วันไทยใน hint.
+R250L1-6…9 · Db +6 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2ab57d65_
+
+_รอบ 251 แก้ CI 42232967230 (merge WP-02b/WP-04/WP-07/WP-08 บน 7eb0be00): (1) ตาราง marker `OneShotDataFixes` — `LicenseLapseMigration.Statements()`
+ยังสร้างตารางเองซ้ำกับ `DatabaseMigrationHelper.OneShotDataFixesTableSql` (สองตัวตั้งของ schema เดียว) ⇒ ถอดออก เหลือตัวตั้งเดียว (ตารางกลางอยู่ก่อนบล็อกเสมอ · ฐานเทสต์สร้างตอนเริ่ม).
+(2) `PartnerSecurityRound250DbTests` — ฐานเทสต์ไม่มีตาราง `ChatRateBuckets` (สร้างด้วย SQL ตอนบูต ไม่อยู่ในโมเดล) ⇒ ด่านเชิญ fail-closed ตอบ 429 ทุกครั้ง ·
+production ถูก (ตารางมีตอนบูต) · เทสต์สร้างตารางจาก `ChatRateBucketStatements()` ตัวเดียวกับ `AuthRateLimitSharedDbTests` · เพดาน 20/วันไม่แตะ.
+(3) e-Tax หลังรับชำระ — ใบเสร็จของ "ใบกำกับภาษี" ไม่ใช่ใบกำกับซ้ำ (`EtaxAutoIssueScope` ReceiptSettlesTaxInvoice) ⇒ อีเมลธรรมดาถึงทุกผู้รับถูกตามกฎ · เทสต์เปลี่ยนใบต้นทางเป็นใบแจ้งหนี้.
+(4) ทดลองรันรายการประจำ — seed มี [AR-OVERDUE] ค้างรับทราบ ⇒ "ใบยังเป็นร่าง" ถูกต้อง · เทสต์ล็อกทิศนั้น แล้วตั้งนโยบายปล่อยก่อนตรวจด่านผู้ส่ง e-Tax.
+(5) ลิงก์เซ็นอัตโนมัติ/อีเมลเตือน — `SignAutomationRecipients` เดิมตัดผู้รับที่ผู้ใช้พิมพ์เอง (ไม่ใช่อีเมลของผู้ติดต่อ) แล้วบันทึกเหตุ "ไม่ได้เลือกรับเรื่องลิงก์เซ็น" ซึ่งไม่จริง ·
+อีเมลเตือนรอบ 240 ไม่ถึงผู้รับลิงก์เดิม ⇒ ตัดเฉพาะอีเมลที่ช่องทางของผู้ติดต่อปฏิเสธ (`EmailDelivery.DeclinedEmails`) · ผู้ติดต่อถูกลบ ⇒ ไม่ส่ง · เทสต์ pure สองทิศ._
+
+_รอบ 250 WP-04 แก้ผลฝ่ายค้าน 74a2d1f6 (2026-11-06): (H1) ส่งซ้ำเกินกำหนด: เพดาน 6 ครั้ง/180 วัน · `EmailScheduleRules.RepeatActivatedAt` (ประทับเมื่อเปิด ·
+แถวที่ตั้งไว้ก่อน deploy ประทับ = วัน deploy) ⇒ ส่งซ้ำเฉพาะใบที่ครบเตือนครั้งแรกหลังวันเปิด (กันอีเมลถล่มตอน deploy). (H2) แจ้งก่อนรอบรายการประจำ = กระดิ่งเท่านั้น
+(`NotificationAudiencePolicy.BellOnlyKeys` — เส้นค่าตั้งต้นและเส้นผู้รับที่ระบุไม่ส่งอีเมล) · ผู้รับต้องเป็นสมาชิกที่ใช้งาน ไม่งั้นเจ้าของ · รายวันไม่แจ้ง ·
+**แถวเดิมทั้งหมด `NotifyBeforeRun = false` ครั้งเดียว** (marker `r250-recurring-notify-off`) + ค่าตั้งต้นใหม่ = ปิด (แทนคำเตือนในรอบก่อนที่ว่ารายการเดิมจะเริ่มได้กระดิ่ง).
+(M1) รอบที่เลยวันสิ้นสุด/ครบครั้งไม่แจ้ง. (M2) ส่งซ้ำเฉพาะกฎเกินกำหนด (400 + ซ่อนช่อง). (M3) ทวง/เตือนครบกำหนดเฉพาะเอกสารลูกหนี้. (M4) แถวข้ามเฉพาะครั้งแรก.
+(M5) แถว e-Tax ไม่มีเลขผู้ซื้อมีคำเตือน §86/4. (M6) "-"/"N/A" ของบุคคล = ไม่มีเลข · ข้อความทางไปต่อ. (M7) `ComposeTxId`/ผู้ขายใช้ `TaxBranchCode.Normalize` (เกิน 5 หลัก = 5 หลักท้าย).
+(L3) คอมเมนต์ประทับก่อนส่ง = อย่างมากครั้งเดียว · (L4) ช่อง 0–30 ตรงเซิร์ฟเวอร์ · (L5) คอมเมนต์ migration อยู่กับคำสั่งของมัน · (L6) negative test form_label กับหน้าจริง ·
+(L1) คง modulo (เพดานทำให้ "ครั้งล่าสุด ≥ N วัน" ไม่จำเป็น). ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit d5257214_

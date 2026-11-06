@@ -93,8 +93,19 @@ public record FixedAssetResponse(
     bool IsUnderAcquisition = false,
     /// <summary>รอบ 249: วันที่พร้อมใช้งาน (จุดเริ่มค่าเสื่อม) · null = สินทรัพย์ใบเดียวแบบเดิม</summary>
     DateTime? AvailableForUseDate = null,
-    /// <summary>รอบ 249 (ฝ่ายค้าน H3): ราคาตามสัญญาที่ระบุตอนสร้าง — ใช้เตือนเมื่อต้นทุนรวมเกิน</summary>
-    decimal? ContractPrice = null);
+    /// <summary>รอบ 249 (ฝ่ายค้าน H3): ราคาตามสัญญาที่ระบุตอนสร้าง — ใช้เตือนเมื่อต้นทุนรวมเกิน · รอบ 250 WP-08: แก้ได้ที่ <c>PATCH …/contract-price</c></summary>
+    decimal? ContractPrice = null,
+    /// <summary>รอบ 250 WP-08: เหตุที่ช่อง "วันที่พร้อมใช้งาน" แก้ไม่ได้ (null = แก้ได้ · คำนวณเฉพาะคำตอบรายตัว — รายการรวมเป็น null) ·
+    /// ตัวตัดสินเดียวกับ <c>PATCH …/available-date</c> (<c>FixedAssetValuationEdit.AvailableDateProblem</c>)</summary>
+    string? AvailableDateLockReason = null,
+    /// <summary>รอบ 250 WP-08: จุดตั้งต้นค่าเสื่อม (วันพร้อมใช้ ?? วันที่ซื้อ · <c>DepreciationSchedule.StartDate</c>) — หน้าแสดง ไม่คำนวณเอง</summary>
+    DateTime? DepreciationStartDate = null);
+
+/// <summary>รอบ 250 WP-08 (คำตัดสิน 250-27): แก้ราคาตามสัญญา — null/0 = ล้าง (ไม่เตือนอีก) · ติดลบ = ปฏิเสธ</summary>
+public record PatchContractPriceRequest(decimal? ContractPrice);
+
+/// <summary>รอบ 250 WP-08 (คำตัดสิน 250-26): วันที่พร้อมใช้งานของสินทรัพย์ใบเดียว — null = ล้าง (เริ่มค่าเสื่อมที่วันที่เอกสาร)</summary>
+public record PatchAvailableDateRequest(DateTime? AvailableForUseDate);
 
 public record DepreciationResponse(
     Guid Id,

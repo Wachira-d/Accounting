@@ -65,4 +65,8 @@ public interface IFixedAssetService
     Task<AssetCostSourcesResponse> ReleaseCostSourceAsync(Guid companyId, Guid assetId, Guid sourceId, ReleaseCostSourceRequest request, string actor);
     /// <summary>โอนเป็นสินทรัพย์พร้อมใช้: JE Dr ผังสินทรัพย์ / Cr ผังต้นทาง · ค่าเสื่อมเริ่มจากวันพร้อมใช้</summary>
     Task<FixedAssetResponse> PlaceInServiceAsync(Guid companyId, Guid assetId, PlaceInServiceRequest request, string actor);
+    /// <summary>รอบ 250 WP-08: แก้ราคาตามสัญญา (audit chain · คำเตือนไม่บล็อก)</summary>
+    Task<FixedAssetResponse> SetContractPriceAsync(Guid companyId, Guid assetId, decimal? contractPrice, string actor);
+    /// <summary>รอบ 250 WP-08: ตั้ง/ล้างวันที่พร้อมใช้งานของสินทรัพย์ใบเดียว — ก่อนมีค่าเสื่อมลงบัญชี · สร้างแผนค่าเสื่อมใหม่ · audit chain</summary>
+    Task<FixedAssetResponse> SetAvailableForUseDateAsync(Guid companyId, Guid assetId, DateTime? availableForUseDate, string actor);
 }
