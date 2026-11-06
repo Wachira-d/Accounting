@@ -1,3 +1,5 @@
+using Accounting.Filters;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.OpenBanking;
 using Accounting.Services.Interfaces;
@@ -15,6 +17,7 @@ public class OpenBankingController : ControllerBase
     public OpenBankingController(IOpenBankingService service) => _service = service;
 
     [HttpPost("connections")]
+    [RequirePermission(PermissionKeys.BankReconcile)]   // ฝ่ายค้าน WP-12A รอบสอง H-B: เขียนการเชื่อมต่อ/รายการธนาคาร = สิทธิ์เขียนธนาคาร
     public async Task<ActionResult<ApiResponse<BankConnectionResponse>>> CreateConnection(Guid companyId, [FromBody] CreateBankConnectionRequest request)
         => StatusCode(201, new ApiResponse<BankConnectionResponse>(true, await _service.CreateConnectionAsync(companyId, request)));
 
@@ -23,14 +26,17 @@ public class OpenBankingController : ControllerBase
         => Ok(new ApiResponse<List<BankConnectionResponse>>(true, await _service.GetConnectionsAsync(companyId)));
 
     [HttpPut("connections/{connectionId:guid}")]
+    [RequirePermission(PermissionKeys.BankReconcile)]   // ฝ่ายค้าน WP-12A รอบสอง H-B: เขียนการเชื่อมต่อ/รายการธนาคาร = สิทธิ์เขียนธนาคาร
     public async Task<ActionResult<ApiResponse<BankConnectionResponse>>> UpdateConnection(Guid companyId, Guid connectionId, [FromBody] UpdateBankConnectionRequest request)
         => Ok(new ApiResponse<BankConnectionResponse>(true, await _service.UpdateConnectionAsync(companyId, connectionId, request)));
 
     [HttpDelete("connections/{connectionId:guid}")]
+    [RequirePermission(PermissionKeys.BankReconcile)]   // ฝ่ายค้าน WP-12A รอบสอง H-B: เขียนการเชื่อมต่อ/รายการธนาคาร = สิทธิ์เขียนธนาคาร
     public async Task<ActionResult<ApiResponse<bool>>> DeleteConnection(Guid companyId, Guid connectionId)
     { await _service.DeleteConnectionAsync(companyId, connectionId); return NoContent(); }
 
     [HttpPost("connections/{connectionId:guid}/sync")]
+    [RequirePermission(PermissionKeys.BankReconcile)]   // ฝ่ายค้าน WP-12A รอบสอง H-B: เขียนการเชื่อมต่อ/รายการธนาคาร = สิทธิ์เขียนธนาคาร
     public async Task<ActionResult<ApiResponse<BankFeedImportResponse>>> Sync(Guid companyId, Guid connectionId, [FromQuery] DateTime? fromDate, [FromQuery] DateTime? toDate)
         => Ok(new ApiResponse<BankFeedImportResponse>(true, await _service.SyncTransactionsAsync(companyId, connectionId, fromDate, toDate)));
 
@@ -39,6 +45,7 @@ public class OpenBankingController : ControllerBase
         => Ok(new ApiResponse<List<BankFeedImportResponse>>(true, await _service.GetImportHistoryAsync(companyId, connectionId)));
 
     [HttpPost("import-file")]
+    [RequirePermission(PermissionKeys.BankReconcile)]   // ฝ่ายค้าน WP-12A รอบสอง H-B: เขียนการเชื่อมต่อ/รายการธนาคาร = สิทธิ์เขียนธนาคาร
     public async Task<ActionResult<ApiResponse<BankFeedImportResponse>>> ImportFile(Guid companyId, [FromQuery] Guid bankAccountId, [FromQuery] string fileFormat, [FromBody] string base64Content)
         => Ok(new ApiResponse<BankFeedImportResponse>(true, await _service.ImportFileAsync(companyId, bankAccountId, fileFormat, base64Content)));
 }

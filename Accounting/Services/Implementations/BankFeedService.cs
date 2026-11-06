@@ -79,15 +79,6 @@ public class BankFeedService : IBankFeedService
         return MapToResponse(conn);
     }
 
-    /// <summary>ฝ่ายค้าน WP-12A H1(b): ปลายทางของการเชื่อมต่อตรงกับที่ระบบรู้จักของธนาคารนั้น ⇒ Feed · อื่น ๆ (ผู้ใช้ตั้ง URL เอง) ⇒ FeedCustom</summary>
-    internal static string FeedSource(BankConnection conn)
-    {
-        var known = BankApiEndpoints.GetValueOrDefault((conn.BankCode ?? "").ToUpperInvariant());
-        return !string.IsNullOrEmpty(known) && string.Equals((conn.ApiEndpoint ?? known).Trim().TrimEnd('/'), known.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)
-            ? Accounting.Helpers.BankReceiptAutoSettle.SourceFeed
-            : Accounting.Helpers.BankReceiptAutoSettle.SourceFeedCustom;
-    }
-
     public async Task<BankFeedSyncResult> SyncAsync(Guid companyId, Guid connectionId, Guid? triggeredByUserId = null)
     {
         var conn = await _db.BankConnections
@@ -110,11 +101,33 @@ public class BankFeedService : IBankFeedService
                 .Where(r => r != null)
                 .ToListAsync();
 
+            // ฝ่ายค้านรอบสอง M-C: บรรทัดไม่มีเลขอ้างอิง ⇒ กันซ้ำด้วย (วัน · ยอด · ทิศ · คำอธิบายที่ปรับรูป) — กุญแจตัวเดียว Helpers/BankFeedDedupe
+            var noRefKeys = new HashSet<string>(StringComparer.Ordinal);
+            if (transactions.Any(t => string.IsNullOrEmpty(t.Reference)))
+            {
+                var minDate = transactions.Min(t => t.Date).Date;
+                var maxDate = transactions.Max(t => t.Date).Date.AddDays(1);
+                var existingNoRef = await _db.BankTransactions.AsNoTracking()
+                    .Where(t => t.CompanyId == companyId && t.BankAccountId == conn.LinkedBankAccountId && !t.IsDeleted
+                        && (t.Reference == null || t.Reference == "") && t.TransactionDate >= minDate && t.TransactionDate < maxDate)
+                    .Select(t => new { t.TransactionDate, t.Amount, t.TransactionType, t.Description })
+                    .ToListAsync();
+                foreach (var e in existingNoRef)
+                    noRefKeys.Add(Accounting.Helpers.BankFeedDedupe.NoReferenceKey(e.TransactionDate.Date, e.Amount,
+                        e.TransactionType == Models.Enums.BankTransactionType.Deposit, e.Description));
+            }
+
             int newCount = 0, duplicateCount = 0, autoMatched = 0;
 
             foreach (var txn in transactions)
             {
                 if (!string.IsNullOrEmpty(txn.Reference) && existingRefs.Contains(txn.Reference))
+                {
+                    duplicateCount++;
+                    continue;
+                }
+                if (string.IsNullOrEmpty(txn.Reference)
+                    && !noRefKeys.Add(Accounting.Helpers.BankFeedDedupe.NoReferenceKey(txn.Date.Date, txn.Amount, txn.Amount >= 0, txn.Description)))
                 {
                     duplicateCount++;
                     continue;
@@ -132,8 +145,8 @@ public class BankFeedService : IBankFeedService
                     Description = txn.Description,
                     Reference = txn.Reference,
                     ReconciliationStatus = Models.Enums.ReconciliationStatus.Unmatched,
-                    // รอบ 252 WP-12A + ฝ่ายค้าน H1(b): ปลายทางที่ระบบรู้จัก = Feed · ปลายทางที่ผู้ใช้ตั้งเอง = FeedCustom (ปิดเองได้เฉพาะเมื่อผู้สั่งดึงมีสิทธิ์อนุมัติ)
-                    EntrySource = FeedSource(conn),
+                    // รอบ 252 WP-12A ฝ่ายค้านรอบสอง H-A (DECISIONS 252-WP12A-6): feed ทุกปลายทาง (รวม sandbox ที่ตั้งไว้ในระบบ) = เสนอเท่านั้น จนกว่ามีการเชื่อมธนาคารจริงที่ตรวจแล้ว
+                    EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceFeed,
                     CreatedByUserId = triggeredByUserId
                 };
 

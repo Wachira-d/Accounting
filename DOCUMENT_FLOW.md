@@ -3193,8 +3193,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ซ้ำในบริษัท (ไฟล์เดิม/เลขเดิม) ⇒ 409 `SLIP-DUP` **ก่อน**สร้างรายการ · เก็บบน `PaymentIntent.SlipFileSha256/SlipBankRef` (รายการเดียวกับที่คนยืนยัน — ไม่มีตารางที่สอง) ·
   แจ้งทีม E-06 · สลิปไม่ปิดหนี้เอง — เลขอ้างอิงเป็นตัวระบุตัวให้ `BankReceiptAutoSettle` เมื่อเงินเข้าจริง · ยังไม่ทำ: OCR สลิป · หน้า pay-document แจ้งโอน (WP-12 ข้อ 1)
 - **แก้ผลฝ่ายค้าน WP-12A (H1–H4 · M1–M7 · LOW)** — สถานะปัจจุบัน:
-  - **แหล่งของบรรทัด (H1 · คำตัดสินผู้ประสานงาน: statement ที่ผู้ใช้อัปโหลด/พิมพ์เองไม่ใช่หลักฐานให้ปิดหนี้โดยไม่มีคน)**: `Feed` (ปลายทางที่ระบบรู้จัก) = ปิดเองได้ ·
-    `Statement` (ไฟล์หน้าบัญชีธนาคาร + ผู้อัปโหลด `BankTransaction.CreatedByUserId`) และ `FeedCustom` (ผู้ใช้ตั้ง `ApiEndpoint` เอง · ผู้สั่ง sync) = ปิดเองได้เฉพาะเมื่อผู้นำเข้า
+  - **แหล่งของบรรทัด (H1 + ฝ่ายค้านรอบสอง H-A/M-A · คำตัดสิน 252-WP12A-5/6)**: **feed ทุกปลายทาง (`Feed` · `FeedCustom` แถวเก่า) = เสนอเท่านั้น** จนกว่าจะมี API ธนาคารจริงที่ผูก
+    เลขบัญชีได้ (SCB sandbox ไม่ใช่หลักฐาน · ตัวเขียน feed ประทับ `Feed` + ผู้สั่งดึงเสมอ) · ปิดเองได้ทางเดียว = `Statement` (ไฟล์หน้าบัญชีธนาคาร + ผู้อัปโหลด `BankTransaction.CreatedByUserId`
+    · Overwrite ก็ประทับแหล่ง/ผู้อัปโหลดใหม่) เมื่อผู้อัปโหลด
     **มีสิทธิ์อนุมัติเอกสารชนิดนั้น ณ ตอนตัดสิน** (`DocumentPermissionHelper.CanApproveAsync`) ไม่งั้นเสนอพร้อมเหตุ · `UserFile` (ศูนย์นำเข้า · นำเข้า-ส่งออก · Open Banking ไฟล์ ·
     ค่าตั้งต้นของตัวเขียน statement เมื่อทางเข้าไม่ระบุ) · `Api` (API v1) · `Manual` · null (แถวเก่า) = เสนอเท่านั้นเสมอ · audit การปิดหนี้บันทึกผู้นำเข้าบรรทัด ·
     `import-statement` + feed สร้าง/สั่งดึง/ลบ ต้องมี Bank.Reconcile · ผลจำลองนับแถวไม่ทราบแหล่ง/ไฟล์-API แยก
@@ -3206,6 +3207,12 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     ผลรอบของงาน = ล้ม (ใบเสนอราคาที่ล้มนอกด่าน = Failed + ปุ่มลองใหม่)
   - LOW: บรรทัด Applying กู้ได้ทุกอายุ · ผู้จ่ายเป็นผู้ขายด้วย = เสนอ · เลขเอกสารตามขอบคำ · สรุปประจำวันกรองเวลาใน SQL และไม่นับโหมด "Off" · หมายเหตุการชำระมีเลขอ้างอิงธนาคาร
     (เลขอ้างอิงของการชำระคง `BANK:{lineId}` เป็นกุญแจกันซ้ำ) · Last verified `commit 80ee6cf4`
+  - **ฝ่ายค้านรอบสอง** — **H-B** Open Banking สร้าง/แก้/ลบ/สั่งดึง/นำเข้าไฟล์ ต้องมี Bank.Reconcile (`write_permission_gate_check` เฝ้า `OpenBankingController` + `BankFeedController`) ·
+    **M-C** feed ที่ไม่มีเลขอ้างอิง กันซ้ำด้วย (บัญชี · วัน · ยอด · ทิศ · คำอธิบายที่ปรับรูป) `Helpers/BankFeedDedupe` · **M-D** `AutoMatchAsync` ข้ามบรรทัด Applying ·
+    **M-E** นับใบยอดตรงใน SQL — ≤ 8 ใบ หรือรายการอ้างเลขใบ = โหลดข้อเท็จจริงต่อใบ · เกิน 8 และไม่อ้าง = เสนอ "ใบยอดเท่ากันจำนวนมาก" ไม่เลือกใบ (ตัวเลือกในคิว = ใบยอดตรงล่าสุด ≤ 30) ·
+    LOW: การชำระ `BANK:{lineId}` ที่มีอยู่แล้วต้องยอด/บัญชีตรง ไม่งั้นประทับล้ม + แจ้ง · คนยืนยัน = `MatchRuleCode` `BANK-CONFIRM-SUGGEST` + audit `bank-confirm-suggest` ·
+    บรรทัดล้มติดกัน 3 ครั้ง (`AutoSettleFailCount`) = `Held` (ขึ้นในคิว/เรื่องที่ทำต่อไม่ได้ · ไม่หยิบซ้ำ) · แถวที่ไม่เคยประเมินก่อน · สกุลว่าง = บาท ตัวเดียว `DocumentPayLinkPolicy.IsThb` (งาน · ยืนยัน · ผลจำลอง) ·
+    `SlipBankRef` เดิมที่ไม่ผ่านกติกาใหม่ถูกล้างใน migration · ใบเสนอราคา: ประทับล้มหลังแปลงสำเร็จ ⇒ ตรวจใบลูก `autopilot` แล้วประทับ Converted · Last verified `commit WP12AFIX2SHA`
 - ล็อก: `Accounting.Tests/AutopilotRound252Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/AutopilotRound252DbTests.cs` · `tools/required_call_site_check.py` (R252) ·
   `write_permission_gate_check` เฝ้า `AutopilotController` · `html_interpolation_escape_check` เฝ้า `autopilot.html` · Last verified `commit 81641769`
 
@@ -8125,5 +8132,6 @@ _Last verified against codebase: 2026-11-06 (รอบ 250 WP-02 — §2.12g ง
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-13 — UX เก็บกวาด: สินทรัพย์สร้างเองรหัสว่าง = ออก FA-yyyyMM-#### (§ขึ้นทะเบียนสินทรัพย์) · ลบเอกสารถาวรเหลือหน้าต่างเดียว (แผน/planToken/needsReason จาก purgePreview เดิม — ไม่เปลี่ยนสิ่งที่ส่ง) · ไม่เปลี่ยน flow เงิน/ภาษี — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e021629c · 1929f9f4 · c2129b14 · 8ff9c7f5 · 09371cea · 30405fc4 · f8e7d5dd)_
 _Last verified against codebase: 2026-11-06 (รอบ 251 WP-07 — §2.7 รหัสความพร้อมครบชุด (ETAX/ETAX-SENDER/ETAX-RECIPIENT · PAY-QR · QUOTA · PERIOD · POSTPAY) จากผู้อ่านเดิม · คอลัมน์ระดับ Autopilot · ส่งทดสอบถึงอีเมลผู้ใช้ (ไม่บันทึกการส่ง · ไม่นับเพดาน · audit) · ผลทดลองรันกล่องแยก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 847041d2)_
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-12A — §2.12j Autopilot ส่วน A: อีเมลสถานะ E-01…E-15 (ล้ม = ทันที · สำเร็จ = สรุป 08:40) · หน้า Autopilot (read model `AutopilotStage`) · ใบเสนอราคาแปลงอัตโนมัติ (ตั้งต่อใบ · ค่าตั้งต้นไม่แปลง · `ConvertDocumentAsync`) · เงินโอนปิดหนี้ `BankReceiptAutoSettle` (ค่าตั้งต้นปิด · source BankAutoSettle) · สลิปกันซ้ำ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81641769)_
-_Last verified against codebase: 2026-11-06 (รอบ 252 WP-12A แก้ผลฝ่ายค้าน — §2.12k (เลขใหม่ — เดิม §2.12j ชนกับ WP-09): แหล่งบรรทัด UserFile/Api เสนอเท่านั้น · Statement/FeedCustom ต้องมีผู้นำเข้าที่มีสิทธิ์อนุมัติ · กู้การชำระ BANK:{lineId} · ผู้สมัครตาม IssueRefusal · THB · ผูกธุรกรรมเดียว · จับคู่มือกัน Applying — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 80ee6cf4)_
+_Last verified against codebase: 2026-11-06 (รอบ 252 WP-12A ฝ่ายค้านรอบสอง — §2.12k: feed ทุกปลายทางเสนอเท่านั้น · Open Banking ต้องมี Bank.Reconcile · feed ไม่มีเลขอ้างอิงกันซ้ำ · ใบยอดเท่ากันเกิน 8 = เสนอ · Held หลังล้ม 3 ครั้ง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit WP12AFIX2SHA)_
+_Last verified (ก่อนหน้า): 2026-11-06 (รอบ 252 WP-12A แก้ผลฝ่ายค้าน — §2.12k (เลขใหม่ — เดิม §2.12j ชนกับ WP-09): แหล่งบรรทัด UserFile/Api เสนอเท่านั้น · Statement/FeedCustom ต้องมีผู้นำเข้าที่มีสิทธิ์อนุมัติ · กู้การชำระ BANK:{lineId} · ผู้สมัครตาม IssueRefusal · THB · ผูกธุรกรรมเดียว · จับคู่มือกัน Applying — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 80ee6cf4)_
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-09 ฝ่ายค้าน — §2.12j 50 ทวิ ขาเข้า: H1 กันซ้ำกับทะเบียน 409 · H2 คนละรอบบัญชีลงรวมแถวไม่ได้ · M1 ตัดสูญเฉพาะส่วนขาดใบ · M2 กันลบต้นทางที่ได้ใบบางส่วน · M3 GL ลด ⇒ ลดยอด · M4 ด่านความมั่นใจ/ยอด · M5 รายการใหม่ต้องมีเหตุผล + เตือน ภ.ง.ด.50 · M6 สอนเฉพาะดูใบแล้ว · L1–L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2681a9fb)_

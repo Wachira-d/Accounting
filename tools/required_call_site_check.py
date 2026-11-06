@@ -16557,14 +16557,30 @@ RULES += [
          must=["t.AutoSettleEvaluatedAt != null", "throw new InvalidOperationException("],
          why=_R252F_WHY + "M7 ไม่เคยประเมินก่อน · ล้ม = ประทับ + ผลรอบล้ม"),
     dict(file="Services/Implementations/BankService.StatementImport.cs", method="ImportParsedStatementRowsAsync",
-         must=["options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceUserFile", "CreatedByUserId = options.UploadedByUserId"],
+         must=["options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceUserFile", "CreatedByUserId = options.UploadedByUserId",
+               "EntrySource = entrySource,", "existingEntity.EntrySource = entrySource;", "existingEntity.CreatedByUserId = options.UploadedByUserId;"],
          why=_R252F_WHY + "H1 แหล่งตั้งต้นของไฟล์ = UserFile (เสนอเท่านั้น) · ผู้อัปโหลดอยู่บนบรรทัด"),
     dict(file="Services/Implementations/BankService.cs", method="ReconcileAsync", must=["BankReceiptAutoSettle.ManualMatchBlock("],
          why=_R252F_WHY + "M5 จับคู่มือห้ามแตะบรรทัดที่ระบบกำลังบันทึกรับชำระ"),
     dict(file="Controllers/AutopilotController.cs", method="ConfirmBank", must=["DocumentPermissionHelper.CanApproveAsync("],
          why=_R252F_WHY + "M4 ยืนยัน = บันทึกรับชำระ ⇒ สิทธิ์อนุมัติชนิดเอกสาร"),
-    dict(file=_R252_QT, method="RunOnceAsync", must=["StampAsync(", "throw new InvalidOperationException("],
-         why=_R252F_WHY + "M7 ล้มนอกด่าน ⇒ ประทับ Failed + ผลรอบล้ม"),
+    dict(file=_R252_QT, method="RunOnceAsync", must=["StampAsync(", "throw new InvalidOperationException(", "AutopilotChildAsync("],
+         why=_R252F_WHY + "M7 ล้มนอกด่าน ⇒ ประทับ Failed + ผลรอบล้ม · รอบสอง: แปลงแล้วแต่ประทับล้ม ⇒ ตรวจใบลูกก่อน"),
+    # ── ฝ่ายค้านรอบสอง ──
+    dict(file=_R252_BANK, method="CandidatesAsync",
+         must=["await open.CountAsync(d => d.BalanceDue == amount, ct)", "BankReceiptAutoSettle.MaxExactForFacts", "BankReceiptAutoSettle.TooManyEqualReason"],
+         why=_R252F_WHY + "รอบสอง M-E ยอดตรงนับใน SQL ก่อนโหลดข้อเท็จจริงต่อใบ · เกิน 8 ไม่อ้างเลข = เสนอ"),
+    dict(file=_R252_BANK, method="EvaluatePendingAsync",
+         must=["t.AutoSettleFailCount + 1", "BankReceiptAutoSettle.PoisonFailures", "BankReceiptAutoSettle.Stamps.Held"],
+         why=_R252F_WHY + "รอบสอง M7 บรรทัดล้มซ้ำ = Held ไม่วนหัวคิว"),
+    dict(file=_R252_BANK, method="ConfirmAsync", must=["BankReceiptAutoSettle.RuleConfirm"],
+         why=_R252F_WHY + "รอบสอง LOW คนยืนยัน ≠ ระบบปิดเอง (รหัสกฎแยก)"),
+    dict(file="Services/Implementations/BankFeedService.cs", method="SyncAsync",
+         must=["BankFeedDedupe.NoReferenceKey(", "EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceFeed,", "CreatedByUserId = triggeredByUserId"],
+         why=_R252F_WHY + "รอบสอง H-A feed = เสนอเท่านั้น (แหล่งเดียว Feed) · M-C feed ไม่มีเลขอ้างอิงกันซ้ำ"),
+    dict(file="Services/Implementations/BankService.cs", method="AutoMatchAsync",
+         must=["BankReceiptAutoSettle.Stamps.Applying"],
+         why=_R252F_WHY + "รอบสอง M-D จับคู่อัตโนมัติห้ามแตะบรรทัด Applying"),
 ]
 REVIEWER_CASES += [
     # H3: ถอดตัวตัดสินลิงก์ชำระออกจากผู้สมัคร ⇒ ใบแจ้งหนี้ที่มีใบกำกับแล้วถูกปิดหนี้ซ้ำ ⇒ ต้องฟ้อง
@@ -16577,6 +16593,10 @@ REVIEWER_CASES += [
     # H1: แหล่งตั้งต้นของไฟล์กลับเป็น Statement ⇒ ต้องฟ้อง
     ("R252F-3", "ImportParsedStatementRowsAsync",
      "options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceUserFile", "options.EntrySource ?? Accounting.Helpers.BankReceiptAutoSettle.SourceStatement", True),
+    # รอบสอง M-E: ไม่นับยอดตรงใน SQL (โหลดทุกใบ) ⇒ ต้องฟ้อง
+    ("R252F-4", "CandidatesAsync", "await open.CountAsync(d => d.BalanceDue == amount, ct)", "0", True),
+    # รอบสอง H-A: feed กลับไปตั้งแหล่งตามปลายทาง ⇒ ต้องฟ้อง
+    ("R252F-5", "SyncAsync", "EntrySource = Accounting.Helpers.BankReceiptAutoSettle.SourceFeed,", "EntrySource = FeedSource(connection),", True),
 ]
 
 
