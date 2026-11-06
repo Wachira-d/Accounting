@@ -405,7 +405,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         {
             var template = await PdfGenerationService.ResolveDocumentTemplateAsync(_db, companyId,
                 new Document { CompanyId = companyId, DocumentType = docType, VatAmount = vatTotal, Currency = currency }, null);
-            bankQrApplies = template.ShowPaymentQr && PaymentQrPolicy.IsBankQrDocument(docType, null);
+            bankQrApplies = template.ShowPaymentQr && PaymentQrPolicy.IsBankQrDocument(docType, null, null, false);   // เทมเพลตยังไม่มีเอกสาร ⇒ ไม่รู้ฝั่ง (ใบเพิ่มหนี้ = ไม่มี QR) — เหมือน PaymentQrService ฝั่งเทมเพลต
             if (bankQrApplies)
             {
                 var (qrAccount, qrPick) = await PaymentQrService.PickDocumentAccountAsync(_db, _storage.Locator.AttachmentsRoot, companyId,
