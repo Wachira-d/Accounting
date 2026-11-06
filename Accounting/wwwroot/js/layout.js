@@ -2833,6 +2833,18 @@ const Layout = {
   _focusFirstIn(root) {
     if (!root || !root.classList.contains('active')) return;
     if (root.contains(document.activeElement) && document.activeElement !== root) return;   // ผู้เรียกตั้ง focus เองแล้ว
+    // มือถือ/จอสัมผัส (ฝ่ายค้าน LOW-11): โฟกัสช่องกรอก = คีย์บอร์ดเด้งบังครึ่งจอ + ช่องค้นหา/ที่อยู่เปิดรายการแนะนำเอง ⇒ โฟกัสหัว modal แทน
+    // (screen reader ยังอ่านชื่อหน้าต่าง · ผู้ใช้แตะช่องที่ต้องการเอง)
+    let coarse = false;
+    try { coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); } catch (_) { coarse = false; }
+    if (coarse && !root.querySelector('[autofocus]')) {
+      const head = root.querySelector('.modal-title') || root.querySelector('.modal');
+      if (head) {
+        if (!head.hasAttribute('tabindex')) head.setAttribute('tabindex', '-1');
+        try { head.focus({ preventScroll: true }); } catch (_) { head.focus(); }
+        return;
+      }
+    }
     const visible = n => n && !n.disabled && n.offsetParent !== null && n.type !== 'hidden';
     const pick = [...root.querySelectorAll('[autofocus]')].find(visible)
       || [...root.querySelectorAll('.modal-body input, .modal-body select, .modal-body textarea')].find(visible)
@@ -3062,7 +3074,8 @@ const Layout = {
       wrap.querySelector('#dcClose').onclick = () => cleanup(false);
       input.onkeydown = e => {
         if (e.key === 'Enter') { e.preventDefault(); tryConfirm(); }
-        if (e.key === 'Escape') cleanup(false);
+        // stopPropagation: ตัวฟังกลางของ modal ต้องไม่ปิด modal ที่อยู่ข้างใต้ต่ออีกชั้น (ฝ่ายค้าน LOW-6)
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cleanup(false); }
       };
     });
   },
@@ -3131,9 +3144,15 @@ const Layout = {
       err.textContent = '';
       if (withField) {
         $('#laLabel').textContent = opts.label || '';
+        // ตั้งชนิดก่อนค่า (ฝ่ายค้าน LOW-4): เปลี่ยน type หลังใส่ value ทำให้ค่าที่ไม่ตรงชนิดเดิม (เช่น 2026-11 ในช่อง date ของรอบก่อน) ถูกล้างเงียบ ๆ
+        if (!multi) {
+          input.type = opts.inputType || 'text';
+          if (opts.min != null) input.min = String(opts.min); else input.removeAttribute('min');
+          if (opts.max != null) input.max = String(opts.max); else input.removeAttribute('max');
+        }
+        input.required = !!opts.required;
         input.value = opts.value != null ? String(opts.value) : '';
         input.placeholder = opts.placeholder || '';
-        if (!multi) input.type = opts.inputType || 'text';
       }
       let done = false;
       const finish = val => {
@@ -3156,8 +3175,11 @@ const Layout = {
       };
       ok.onclick = accept;
       $('#laCancel').onclick = () => finish(withField ? null : false);
-      $('#laClose').onclick = () => finish(withField ? null : false);
-      wrap._onDismiss = () => finish(withField ? null : false);   // Escape (ตัวฟังกลาง) = ยกเลิก ไม่ปล่อยผู้เรียกค้างรอ
+      // × / Escape: ค่าเดียวกับ "ยกเลิก" — ยกเว้นกล่องสองทาง (ปุ่มยกเลิก = ทางเลือกที่สอง เช่น "คงผังเดิม") ตั้ง opts.dismissValue
+      // (มัก null = "ไม่ทำต่อเลย") แยกจากปุ่มยกเลิก (ฝ่ายค้าน LOW-7)
+      const dismissed = withField ? null : (opts.dismissValue !== undefined ? opts.dismissValue : false);
+      $('#laClose').onclick = () => finish(dismissed);
+      wrap._onDismiss = () => finish(dismissed);   // Escape (ตัวฟังกลาง) = ยกเลิก ไม่ปล่อยผู้เรียกค้างรอ
       input.onkeydown = e => { if (e.key === 'Enter' && !multi && !e.isComposing) { e.preventDefault(); e.stopPropagation(); accept(); } };
       this.openModal('layoutAskModal');
       setTimeout(() => (withField ? input : ok).focus(), 40);
@@ -3165,7 +3187,8 @@ const Layout = {
   },
 
   /** ยืนยันการกระทำทั่วไป (แทน `confirm()`) → Promise<boolean>
-   *  @param opts {title, message | messageHtml, okText, cancelText, danger} — ส่งสตริงตรง ๆ = message */
+   *  @param opts {title, message | messageHtml, okText, cancelText, danger, dismissValue} — ส่งสตริงตรง ๆ = message ·
+   *  dismissValue = ค่าที่คืนเมื่อปิดด้วย × / Escape (ค่าตั้งต้น false = เหมือนปุ่มยกเลิก · กล่องสองทางส่ง null = "ไม่ทำต่อ") */
   confirm(opts) {
     return this._ask(typeof opts === 'string' ? { message: opts } : (opts || {}), false);
   },
@@ -3186,8 +3209,10 @@ const Layout = {
   /** ตัวโหลดสำหรับช่องค้นหา/ตัวกรอง (รอบ 252 WP-13 A · D §11 A) — debounce + seq-guard ในตัวเดียว
    *
    *  ที่มา: `oninput="Page.load()"` ยิงทุกตัวอักษร · คำตอบของคำค้นเก่ากลับมาทีหลังทับผลของคำค้นใหม่ ("ใครมาก่อนชนะ" กฎ #4 A)
-   *  ใช้: `this._searchLoad = Layout.debouncedLoader(isCurrent => this.load(isCurrent), 300)` แล้ว `oninput="Page._searchLoad()"`
-   *  · `fn(isCurrent)` — ก่อนเขียนผลลงจอให้เช็ก `if (!isCurrent()) return;` · `.now()` = รอบใหม่ทันทีไม่รอ */
+   *  ใช้: `this._searchLoad = Layout.debouncedLoader(() => this.load(), 300)` แล้ว `oninput="Page._searchLoad()"`
+   *  · ตัวนี้ "debounce" ให้ · ลำดับคำตอบ: fn ได้ `isCurrent()` (จริง = ยังเป็นรอบล่าสุดของตัวโหลดนี้) — แต่ถ้า load() ถูกเรียกจากทางอื่นด้วย
+   *  (เปลี่ยนหน้า · ตัวกรอง · หลังบันทึก) ให้กันใน load() เองด้วย seq ของหน้า (แบบ recurring/fixed-assets `_loadSeq`) ซึ่งครอบทุกผู้เรียก ·
+   *  `.now()` = รอบใหม่ทันทีไม่รอ */
   debouncedLoader(fn, ms = 300) {
     let timer = null, seq = 0;
     const run = () => { const my = ++seq; return fn(() => my === seq); };

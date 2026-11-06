@@ -96,6 +96,10 @@ def _js_strings(js):
     return " ".join(out)
 
 
+# เส้นทาง/URL ในสตริง (`/line-invite` · `/api/x/push`) ไม่ใช่ข้อความถึงผู้ใช้ — ตัดทิ้งก่อนนับ (ฝ่ายค้าน WP-13: เดิมฟ้องผิด contacts.html)
+PATH_RE = re.compile(r"(?:https?:)?[\w.\-]*(?:/[\w.\-{}$:?=&]+)+/?")
+
+
 def visible_text(html):
     scripts = []
 
@@ -104,7 +108,7 @@ def visible_text(html):
         return " "
     markup = SCRIPT_RE.sub(keep, html)
     # สตริงใน JS มักมี HTML ข้างใน ⇒ ส่งผ่านตัวแยก markup อีกชั้น (ตัดแท็ก/คอมเมนต์ · เก็บ title/placeholder)
-    return _markup_text(markup) + " " + " ".join(_markup_text(_js_strings(s)) for s in scripts)
+    return PATH_RE.sub(" ", _markup_text(markup) + " " + " ".join(_markup_text(_js_strings(s)) for s in scripts))
 
 
 def count(html):
@@ -159,6 +163,8 @@ def self_test():
             fails.append(f"ไม่จับ: {c}")
     if count('<script>x = `${ "fallback" }`;</script>') != 0:
         fails.append("นิพจน์ ${…} ใน template ถูกนับ")
+    if count("<script>API.post(this._u('/line-invite'), {}); fetch('/api/x/push');</script>") != 0:
+        fails.append("เส้นทาง URL ในสตริงถูกนับ (/line-invite · /api/x/push)")
     if count('<!-- fallback --><p>ส่งสำเนาลับ (BCC)</p>') != 0:
         fails.append("คอมเมนต์ HTML / คำที่อนุญาตถูกนับ")
     # ฉีดลงไฟล์จริงต้องเพิ่ม

@@ -3532,6 +3532,11 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
    - **สร้างเองจากหน้าทะเบียน (รอบ 252 WP-13):** รหัสว่าง ⇒ `FixedAssetService.CreateAsync` ออก `FA-yyyyMM-####` ด้วย
      `AssetCodeGenerator.NextAsync` ตัวเดียวกัน · กรอกเอง = Trim แล้วตรวจซ้ำเหมือนเดิม (validator ไม่บังคับรหัสแล้ว) ·
      นำเข้า CSV ยังบังคับรหัสต่อแถว (ไม่เปลี่ยน)
+     · ฝ่ายค้าน WP-13: ออกรหัส + INSERT อยู่ในธุรกรรมเดียว (ผู้เรียกมีธุรกรรมแล้วใช้ของเขา) · unique ชน ⇒ 409 `FA-CODE-DUPLICATE` ·
+     หน้าส่งครั้งเดียว (`SubmitOnce` + Idempotency-Key ต่อการเปิดฟอร์ม)
+   - **คำนวณค่าเสื่อม (`CalculateDepreciationAsync` — ปุ่มและงานรายเดือน):** งวดต้องเป็นเดือน 1–12 และไม่เกินเดือนปัจจุบันตามเวลาไทย
+     (`Helpers/DepreciationPeriodPolicy` · `FA-DEP-PERIOD`) · วิธียอดลดลงห้ามลงงวดที่เก่ากว่างวดที่ลงแล้ว ⇒ ปฏิเสธทั้งรอบพร้อมรหัสสินทรัพย์ (`FA-DEP-ORDER`) ·
+     เส้นตรงลงย้อนหลังได้
    - `Status = Active, NeedsReview = true` พร้อม suggested `UsefulLifeMonths`
      + depreciation method (`StraightLine` default, ที่ดิน → `None`)
    - **Delete guard** (`FixedAssetService.DeleteAsync`):

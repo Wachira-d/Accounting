@@ -6766,3 +6766,10 @@ Db `LineQueueRound254DbTests` · ล็อก R254 (24 กติกา + เค�
 `NextAccOaQuotaWatch` · ชั่วโมงเงียบ · `DocumentViewLink` · LINE ของใบแจ้งยอด/50 ทวิ/ใบเสร็จ/ลิงก์เซ็น · ทดลองหน่วยนับกลุ่มบน OA จริง (WP-11 ข้อ 3).
 ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit cee44a3c_
 
+_รอบ 252 WP-13 แก้ผลฝ่ายค้าน (2026-11-06): MED-HIGH-1 สร้างสินทรัพย์ส่งครั้งเดียว (`SubmitOnce.run` + Idempotency-Key ต่อการเปิดฟอร์ม · `api.createAsset(d, idemKey)`) ·
+MED-2 `FixedAssetService.CreateAsync` ออกรหัส+INSERT ในธุรกรรมเดียว · unique ชน ⇒ `BusinessRuleException` 409 ไทย · MED-3 `DepreciationPeriodPolicy`
+(เดือน 1–12 · ไม่เกินเดือนปัจจุบันเวลาไทย · ยอดลดลงต้องเรียงงวด) + หน้า max = เดือนปัจจุบัน · LOW: promptText ตั้งชนิดก่อนค่า/min/max/required ·
+วันที่กลับรายการบังคับ + แสดง พ.ศ. · confirmDanger Escape ไม่ทะลุ · กล่องสองทางปิดด้วย ×/Escape = ไม่บันทึก (`dismissValue`) · `(j && j.message)` ·
+doc ของ debouncedLoader · quotation-accept ไม่เติมชื่อผู้ยอมรับ (placeholder) · มือถือ openModal โฟกัสหัว modal · window.confirm ใบเสร็จ →
+Layout.confirm · html_interpolation documents 387→386 · ui_glossary_check ไม่นับเส้นทาง URL (เดิมฟ้องผิด `/line-invite`) baseline 56→53.
+ลบบริษัท: เซิร์ฟเวอร์ trim ทั้งสองฝั่งอยู่แล้ว (`CompanyService.DeleteCompanyAsync`) — ไม่ต้องแก้. ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ce0e274c_

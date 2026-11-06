@@ -176,7 +176,7 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+          <button class="btn btn-primary" id="faSaveBtn" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -398,6 +398,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/submit-once.js"></script>
   <script src="/js/export.js"></script>
   <script>
     const methodMap = { StraightLine:'เส้นตรง', DecliningBalance:'ยอดลดลง', DoubleDecliningBalance:'ยอดลดลงทวีคูณ', None:'ไม่คิดค่าเสื่อม' };
@@ -688,6 +689,7 @@
         document.getElementById('fTypeHint').innerHTML = hints[t] || hints.Tangible;
       },
       openCreate() {
+        SubmitOnce.reset(document.getElementById('formModal'));   // เปิดฟอร์มใหม่ = คีย์ส่งใหม่ (MED-HIGH-1)
         document.getElementById('formTitle').textContent = 'เพิ่มสินทรัพย์';
         document.getElementById('fId').value = '';
         document.getElementById('fAssetType').value = this.currentType || 'Tangible';
@@ -862,7 +864,12 @@
           hint.textContent = locked ? '🔒 ราคาทุน · วันที่ซื้อ · ประเภทสินทรัพย์ · ข้อมูลสัญญาเช่า ผูกกับรายการบัญชีตอนซื้อ — แก้ที่เอกสารต้นทาง หรือจำหน่าย/ลบรายการที่ลงทะเบียนผิดแล้วลงทะเบียนใหม่ · อายุใช้งาน/มูลค่าซาก/วิธีคิดค่าเสื่อม แก้ได้ก่อนมีค่าเสื่อมลงบัญชี' : '';
         }
       },
-      async save() {
+      /** รอบ 252 WP-13 ฝ่ายค้าน MED-HIGH-1: ส่งครั้งเดียว — ปุ่มล็อกระหว่างส่ง (คลิกซ้ำ/Enter ซ้ำ = ไม่ส่งซ้ำ · ล้มแล้วปลดล็อก) ·
+       *  เดิมรหัสที่ผู้ใช้พิมพ์ช่วยให้ครั้งที่สองชน "รหัสซ้ำ" — พอรหัสออกอัตโนมัติ กดซ้ำ = สินทรัพย์ 2 ตัว + รายการบัญชีตอนซื้อ 2 ชุด */
+      save() {
+        return SubmitOnce.run(document.getElementById('faSaveBtn'), () => this._saveCore());
+      },
+      async _saveCore() {
         const api = Layout.api(); if (!api) return;
         const id = document.getElementById('fId').value;
         const postAcq = document.getElementById('fPostAcq').checked;
@@ -936,7 +943,9 @@
             || (id ? '00000000-0000-0000-0000-000000000000' : null),
         };
         try {
-          if (id) { await api.updateAsset(id, data); } else { await api.createAsset(data); }
+          // สร้างใหม่: คีย์เดียวต่อการเปิดฟอร์ม (ลองใหม่หลังเน็ตหลุด = คีย์เดิม ⇒ เซิร์ฟเวอร์คืนผลเดิม ไม่ได้สินทรัพย์ + JE ชุดที่สอง)
+          const formEl = document.getElementById('formModal');
+          if (id) { await api.updateAsset(id, data); } else { await api.createAsset(data, SubmitOnce.key(formEl)); SubmitOnce.reset(formEl); }
           Layout.closeModal('formModal');
           Layout.toast(id ? 'แก้ไขสำเร็จ' : (postAcq ? 'เพิ่มสินทรัพย์และบันทึกบัญชีสำเร็จ' : 'เพิ่มสินทรัพย์สำเร็จ'));
           await this.load();
@@ -1349,11 +1358,14 @@
         // เลือกงวดได้ (WP-13 · D §2 — เดิม confirm() เดือนปัจจุบันเท่านั้น ⇒ งวดที่ลืมรันย้อนหลังทำไม่ได้จากหน้านี้) ·
         // เซิร์ฟเวอร์ตัดสินว่างวดนั้นรันได้ไหม (งวดปิด/ซ้ำ) — หน้านี้ส่ง year/month อย่างเดียว
         const now = new Date();
-        const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        // เดือนปัจจุบันตามเวลาไทย (ตรงกับเซิร์ฟเวอร์ DepreciationPeriodPolicy — เครื่องผู้ใช้ต่างโซนไม่เลื่อนงวด)
+        const cur = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(now).slice(0, 7);
         const ym = await Layout.promptText({ title: 'คำนวณค่าเสื่อมราคา', okText: 'คำนวณ', inputType: 'month', value: cur, required: true,
           message: 'คำนวณค่าเสื่อมราคาของสินทรัพย์ที่ใช้งานทั้งหมดสำหรับงวดที่เลือก (ค่าตั้งต้น = เดือนนี้ · เลือกงวดย้อนหลังที่ยังไม่ได้รันได้)',
           label: 'งวด (ปี-เดือน)', placeholder: 'YYYY-MM',
-          validate: v => /^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? null : 'รูปแบบงวดต้องเป็น ปี-เดือน เช่น ' + cur });
+          max: cur,   // ฝ่ายค้าน MED-3: ห้ามเลือกงวดอนาคต (เซิร์ฟเวอร์ปฏิเสธซ้ำ — DepreciationPeriodPolicy)
+          validate: v => !/^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? 'รูปแบบงวดต้องเป็น ปี-เดือน เช่น ' + cur
+            : v > cur ? 'ลงค่าเสื่อมล่วงหน้าไม่ได้ — เลือกได้ถึงเดือนปัจจุบัน (' + cur + ')' : null });
         if (ym == null) return;
         const year = +ym.slice(0, 4), month = +ym.slice(5, 7);
         const api = Layout.api(); if (!api) return;

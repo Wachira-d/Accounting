@@ -5807,7 +5807,8 @@
           message: `หมวดค่าใช้จ่ายบนหัวเอกสารคือ ${code} (${acc.accountName})\n`
           + `แต่ ${mismatched.length} บรรทัดใช้ผังอื่น:\n${sample}${mismatched.length > 3 ? '\n• …' : ''}\n\n`
           + 'รายการบัญชีลงตาม "ผังของบรรทัด" ไม่ใช่หัวเอกสาร',
-          okText: `ใช้ ${code} กับทุกบรรทัด`, cancelText: 'คงผังรายบรรทัดตามเดิม' }));
+          okText: `ใช้ ${code} กับทุกบรรทัด`, cancelText: 'คงผังรายบรรทัดตามเดิม', dismissValue: null }));
+        if (useHeader === null) return false;   // ปิดด้วย × / Escape = ไม่บันทึก (ฝ่ายค้าน LOW-7)
         if (useHeader) {
           mismatched.forEach(r => {
             const inp = r.querySelector('[data-f="accountCode"]');
@@ -9752,7 +9753,8 @@
               + 'แต่ทุกบรรทัดถูกตั้งเป็น "ไม่เคลม VAT" (🚫) — ขัดกันเอง\n\n'
               + '"เคลมภาษีซื้อ" = เปิด ✓ ให้ทุกบรรทัด (ใบกำกับเต็มรูปเคลมได้)\n'
               + '"คงไม่เคลม" = VAT รวมเป็นต้นทุนค่าใช้จ่าย ไม่ขึ้น ภ.พ.30',
-              okText: 'เคลมภาษีซื้อ', cancelText: 'คงไม่เคลม' }));
+              okText: 'เคลมภาษีซื้อ', cancelText: 'คงไม่เคลม', dismissValue: null }));
+            if (doClaim === null) return;   // ปิดด้วย × / Escape = ยังไม่ตัดสิน ⇒ ไม่บันทึก (ฝ่ายค้าน LOW-7 · เดิมเท่ากับ "คงไม่เคลม")
             if (doClaim) {
               vatRows.forEach(r => {
                 const c = r.querySelector('[data-f="vatClaim"]');
@@ -12171,18 +12173,17 @@
         if (hasJe) {
           const input = (await Layout.promptText({ title: 'วันที่ลงรายการกลับบัญชี', inputType: 'date', label: 'วันที่ลงรายการกลับบัญชี', okText: 'ไปต่อ',
             message: `ค่าเริ่มต้น = วันที่ของเอกสาร (${docDate}) เพื่อให้รายการกลับอยู่งวดเดียวกัน\n` +
-            'เปลี่ยนได้ถ้าต้องการลงงวดอื่น (เช่น งวดเดิมปิดแล้ว)', value: docDate }));
-          if (input === null) return;                 // กด Cancel = ไม่ยกเลิกเอกสาร
-          revDate = (input || '').trim() || docDate;
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(revDate)) {
-            Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)', 'error');
-            return;
-          }
+            'เปลี่ยนได้ถ้าต้องการลงงวดอื่น (เช่น งวดเดิมปิดแล้ว)', value: docDate,
+            // ฝ่ายค้าน LOW-5: บังคับ + ตรวจรูปในกล่อง (เดิมว่าง = ถอยไปวันที่เอกสารเงียบ ๆ / ผิดรูป = toast แล้วยกเลิกทั้งขั้นตอน)
+            required: true, requiredMessage: 'กรุณาเลือกวันที่ลงรายการกลับบัญชี',
+            validate: v => /^\d{4}-\d{2}-\d{2}$/.test(v) ? null : 'รูปแบบวันที่ไม่ถูกต้อง' }));
+          if (input === null) return;                 // กด ยกเลิก/Escape = ไม่ยกเลิกเอกสาร
+          revDate = input.trim();
         }
         if (!(await Layout.confirmDanger({
           title: 'ยกเลิกเอกสาร',
           message: (hasJe
-              ? `ระบบจะสร้างรายการกลับบัญชี (Reversal JE) ลงวันที่ <strong>${Layout.esc(revDate)}</strong> `
+              ? `ระบบจะสร้างรายการกลับบัญชี (Reversal JE) ลงวันที่ <strong>${Layout.esc(Layout.date(revDate))}</strong> `
               : 'เอกสารนี้ยังไม่ได้ลงบัญชี — ยกเลิกได้โดยไม่กระทบสมุดบัญชี ')
             + 'เก็บเอกสารเดิมไว้ในระบบเพื่อการตรวจสอบ (audit trail)' + extra,
           mode: 'math'
@@ -12491,7 +12492,7 @@
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
           const j = await API.post(`/api/companies/${cid}/document/${encodeURIComponent(docId)}/delivery-sign-link`, {});   // WP-13 H
-          if (!j || !j.success) throw new Error(j.message || 'สร้างลิงก์ไม่สำเร็จ');
+          if (!j || !j.success) throw new Error((j && j.message) || 'สร้างลิงก์ไม่สำเร็จ');
           const url = j.data.url;
           try { await navigator.clipboard.writeText(url); } catch {}
           if (j.data.signedAt) {
@@ -12508,7 +12509,7 @@
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
           const j = await API.post(`/api/companies/${cid}/document/${encodeURIComponent(docId)}/quotation-accept-link`, {});   // WP-13 H
-          if (!j || !j.success) throw new Error(j.message || 'สร้างลิงก์ไม่สำเร็จ');
+          if (!j || !j.success) throw new Error((j && j.message) || 'สร้างลิงก์ไม่สำเร็จ');
           const url = j.data.url;
           try { await navigator.clipboard.writeText(url); } catch {}
           if (j.data.acceptedAt) {
@@ -13174,7 +13175,7 @@
        *  → Receipt อ้างอิงเอกสารเดิม. VAT รับรู้ที่ใบกำกับแล้ว ไม่คิดซ้ำ. */
       async _offerIssueReceipt(docId, dt) {
         const label = dt === 'TaxInvoice' ? 'ใบกำกับภาษี' : 'ใบแจ้งหนี้';
-        if (!window.confirm(`${label}นี้ชำระครบแล้ว\n\nต้องการออก “ใบเสร็จรับเงิน” ให้ลูกค้าเลยไหม?\n(ระบบจะสร้าง Receipt อ้างอิงเอกสารนี้ — VAT รับรู้แล้วที่ใบเดิม ไม่คิดซ้ำ)`)) return;
+        if (!(await Layout.confirm({ title: 'ออกใบเสร็จรับเงิน', okText: 'ออกใบเสร็จ', message: `${label}นี้ชำระครบแล้ว\n\nต้องการออก “ใบเสร็จรับเงิน” ให้ลูกค้าเลยไหม?\n(ระบบจะสร้าง Receipt อ้างอิงเอกสารนี้ — VAT รับรู้แล้วที่ใบเดิม ไม่คิดซ้ำ)` }))) return;
         const api = Layout.api(); if (!api) return;
         try {
           const r = await api.convertDocument(docId, 'Receipt');
