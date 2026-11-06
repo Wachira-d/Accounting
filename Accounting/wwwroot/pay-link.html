@@ -57,7 +57,7 @@
         <div class="card">
           <h1>ชำระค่าบริการ ${esc(v.sellerName)}</h1>
           <div class="muted">ผู้ชำระ: ${esc(v.buyerName)}</div>
-          <div class="muted">ใบแจ้งหนี้ ${esc(v.invoiceNumber)} · ลงวันที่ ${date(v.invoiceDate)} · ครบกำหนด ${date(v.dueDate)}</div>
+          <div class="muted">ใบแจ้งหนี้ ${esc(v.invoiceNumber)} · ลงวันที่ ${esc(date(v.invoiceDate))} · ครบกำหนด ${esc(date(v.dueDate))}</div>
           ${v.message ? `<div class="note ${v.state === 'Paid' ? 'ok' : (v.canPay ? '' : 'bad')}">${esc(v.message)}</div>` : ''}
           ${v.canPay ? `<div class="amt">฿${money(v.amountDue)}</div>
             ${(v.lines || []).length ? `<div class="muted">${v.lines.map(esc).join('<br>')}</div>` : ''}` : ''}
@@ -76,7 +76,7 @@
               value="${v.suggestedWithholdingTaxAmount != null ? esc(Number(v.suggestedWithholdingTaxAmount).toFixed(2)) : ''}"></label>
             <label>หมายเหตุ<input type="text" name="customerNotes" maxlength="500"></label>
           </form>
-          <div id="pol" style="margin:10px 0">${PolicyAccept.html(po.policy)}</div>
+          <div id="pol" style="margin:10px 0">${PolicyAccept.html(po.policy) /* html — policy-accept.js หนีภายใน */}</div>
           <button type="button" id="send" onclick="sendSlip()">ส่งสลิปแจ้งชำระ</button>
           ${po.online ? `<button type="button" style="margin-top:8px;background:#0f766e" onclick="payOnline()">ชำระออนไลน์</button>` : ''}
           <div id="online"></div>
@@ -136,7 +136,7 @@
         document.getElementById('online').innerHTML = `<div class="note">สแกนจ่ายด้วยแอปธนาคาร (PromptPay) ยอด ฿${money(j.data.amount)}
           ${qrOk ? `<div style="text-align:center;margin-top:8px"><img src="${esc(qrSrc)}" alt="QR พร้อมเพย์สำหรับชำระเงิน" style="width:230px;height:230px;object-fit:contain;border:1px solid #e2e8f0;border-radius:10px"></div>`
             : '<div style="margin-top:6px">ยังไม่ได้รับรูป QR จากระบบชำระเงิน — กด “ตรวจสถานะการชำระ” หรือเริ่มใหม่อีกครั้ง</div>'}
-          <button type="button" style="margin-top:8px" onclick="checkIntent('${String(j.data.id || '').replace(/[^0-9a-fA-F-]/g, '')}')">ตรวจสถานะการชำระ</button></div>`;
+          <button type="button" style="margin-top:8px" onclick="checkIntent('${String(j.data.id || '').replace(/[^0-9a-fA-F-]/g, '') /* text — กรองเหลือ hex/ขีดเท่านั้น */}')">ตรวจสถานะการชำระ</button></div>`;
       } catch (e) { alert(e.message); }
     }
     async function checkIntent(id) {

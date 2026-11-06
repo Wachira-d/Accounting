@@ -3041,6 +3041,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ลบ TLV builder ใน `portal.html` + ไม่มี `api.qrserver.com` ใน `wwwroot/` (checker `external_qr_check`) · หน้าเว็บรับเฉพาะ `data:image/png;base64,` ·
   `pay-link.html` (ค่าบริการแพลตฟอร์ม) แสดง**รูป** QR จาก `qrPayload` ของผู้ให้บริการชำระเงิน (data URI/https — แบบเดียวกับ `pay-widget.js`) แทนข้อความดิบ ·
   payment-options แบบไม่ระบุใบ (anonymous) คงเดิม (ไม่มี QR) · ล็อก R250W3
+  - **ฝ่ายค้าน H1/M2 (หลัง merge)**: พอร์ทัลไม่ประกอบ QR เอง — เรียก `IDocumentPayLinkService.TransferForDocumentAsync` (กติกา `IssueRefusal` ตัวเดียวกับลิงก์ชำระ:
+    ฝั่งขายเท่านั้น · THB · ออกแล้ว · ยอดค้าง > 0 · ใบแจ้งหนี้ที่มีใบกำกับอ้าง) ⇒ ยอดโอน = `AmountsAsync().Net` (หลัง WHT) · บัญชี = ของใบก่อน (`PickDocumentAccountAsync`) ·
+    กล่องโอนตัวเดียว `TransferBlockAsync` ใช้ร่วมกับ pay-document · เจ้าของใบตรวจผ่าน `PortalDocuments` · ปุ่ม "ชำระ" ตาม `PortalDocumentResponse.CanPay`
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 

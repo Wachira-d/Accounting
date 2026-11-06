@@ -6622,3 +6622,14 @@ _รอบ 250 WP-01 (AUDIT_249 · 2026-11-06): job `dotnet test` รันท�
 ไม่มีเทสต์ใดถูก skip · checker: `doc_commit_sha_check` รู้จัก clone ตื้น (unshallow ก่อน · ไม่ได้ = เชื่อผล CI) + กติกาอายุ placeholder ≤ 1 คอมมิต (ของเก่า 98 แถวใน baseline ratchet — WP-05 เติม) +
 ไม่นับ ✅ เลขผู้เสียภาษี 13 หลัก (checksum) + `--self-test` · `advisory_lock_key_check` ฟ้อง `pg_advisory_*lock(hashtext(` (+ self-test · baseline PaymentQrMigration 1 จุด — WP-04) ·
 `namespace_shadow_check` ตัด bin/obj/node_modules/.claude ก่อนเดิน · baseline write_permission_gate −4 · dead_helper −4 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 407e342a_
+
+_รอบ 250 WP-03 แก้ผลฝ่ายค้าน (2026-11-06): (H1) QR/โอนบนพอร์ทัลใช้ตัวเดียวกับหน้าชำระ — `DocumentPayLinkService.TransferForDocumentAsync` (IssueRefusal · ยอดสุทธิหลัง WHT · บัญชีของใบ) ·
+แยก `TransferBlockAsync` ให้ pay-document กับพอร์ทัลใช้ร่วม · ปุ่มชำระตาม `PortalDocumentResponse.CanPay` (ใบซื้อ/USD/ยกเลิก/ชำระครบไม่มีปุ่ม) · Db test ทิศตรงข้าม 4 แบบ + WHT.
+(M2) เจ้าของใบผ่าน `PortalDocuments`. (H2) fixed-assets โหลดผัง/โครงการล้ม ⇒ ส่ง null (= คงเดิม) · ค่าที่บันทึกไว้ที่ไม่อยู่ในรายการคืนเป็นตัวเลือก.
+(M1) `html_interpolation_escape_check` เป็น denylist (ทุก `${}` ในบริบท HTML ต้องหนี/มี pragma `/* html|text */` · regex literal · ternary ซ้อน) · 7 หน้า = 0 ·
+documents ratchet 387 · แก้ XSS ที่พบเพิ่ม (`${c.phone}` · `${d.certificateReason}` · ป้ายชนิดเอกสาร/วันที่/onclick id ฯลฯ). (M3) `Layout.suggestGlAccount` ตัวเดียวแทนสำเนา 4 ชุด
+(contacts/organization/petty-cash/recurring) + credit-limit `usedAi=false` + ratchet `ai_label_literal_check`. (M4) กฎส่งอีเมลค่านอกช่วง = 400 (`RuleRangeError`) ไม่ clamp เงียบ.
+(L1) PUT รหัสหัวเรื่อง: คีย์ที่ไม่ส่ง = คงเดิม · รหัสซ้ำข้ามชนิด = 400 · DELETE คืนค่าตั้งต้น. (L2) contacts flush การติ๊กค้างตอนออกจากหน้า. (L3) หมวดสินทรัพย์จากคำแนะนำอัปเดตตามชื่อ.
+(L4) ตัวนับแท็บล้มไม่ล้มรายการ. (L5) legal ถามก่อนทับร่างอังกฤษ. (L7) ลองใหม่คิวอีเมลได้เฉพาะสถานะ Failed. raw fetch: contacts 4→2 · organization 2→0 · petty-cash 2→0.
+เทสต์ `EmailScheduleRuleRangeTests` · `DuplicateSubjectCode` · Db พอร์ทัล 4 เคส · R250W3 +7 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+

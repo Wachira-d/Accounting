@@ -432,7 +432,7 @@ const Page = {
       .map(n => `• ${Layout.esc(n.label)} — ${Layout.esc(n.why || '')}`).join('<br>'));
     if (meta) {
       const who = p => p ? `ตั้งไว้${p.setAt ? 'เมื่อ ' + Layout.date(p.setAt) : ''} · ปล่อย: ${Layout.esc((p.passCodes || []).join(', ') || 'ไม่ปล่อย (หยุดรอคนทุกข้อ)')}` : 'ยังไม่ได้ตั้ง';
-      meta.innerHTML = `รายการนี้: ${own && own.inheritContact ? 'รับรองให้ใช้นโยบายของผู้ติดต่อ' + (own.setAt ? ' เมื่อ ' + Layout.date(own.setAt) : '') : who(own)}<br>ผู้ติดต่อ: ${who(contactPol)}<br>`
+      meta.innerHTML = `รายการนี้: ${own && own.inheritContact ? 'รับรองให้ใช้นโยบายของผู้ติดต่อ' + (own.setAt ? ' เมื่อ ' + Layout.date(own.setAt) : '') : who(own) /* html — who() หนีด้วย Layout.esc */}<br>ผู้ติดต่อ: ${who(contactPol) /* html — who() หนีแล้ว */}<br>`
         + 'ผู้ตั้ง/ผู้รับรองต้องมีสิทธิ์อนุมัติเอกสาร · ผู้ตั้งออกจากบริษัท หรือแก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติของรายการหลังตั้ง ⇒ นโยบายหยุดมีผลจนกว่าจะตั้ง/รับรองใหม่ · ทุกครั้งที่ปล่อยลงหมายเหตุบนใบ + บันทึกตรวจสอบ';
     }
   },
@@ -536,8 +536,8 @@ const Page = {
       if (it.fixUrl === '#step-pay') return ` <a href="#" style="color:#2563eb" onclick="Page.goStep(4);return false">${Layout.esc(it.fixLabel || 'แก้')}</a>`;
       return ` <a href="${Layout.esc(it.fixUrl)}" target="_blank" style="color:#2563eb">${Layout.esc(it.fixLabel || 'แก้')} ↗</a>`;
     };
-    return `<div style="font-weight:600;color:${levelColor};margin-bottom:6px">${Layout.esc(r.levelLabel)}</div>`
-      + (r.items || []).map(it => `<div style="margin:4px 0">${icon(it.verdict)} <span style="color:#64748b">[${Layout.esc(it.stage)}]</span> ${Layout.esc(it.title)}${fix(it)}`
+    return `<div style="font-weight:600;color:${levelColor /* text — สีคงที่ */};margin-bottom:6px">${Layout.esc(r.levelLabel)}</div>`
+      + (r.items || []).map(it => `<div style="margin:4px 0">${icon(it.verdict) /* text — อีโมจิคงที่ */} <span style="color:#64748b">[${Layout.esc(it.stage)}]</span> ${Layout.esc(it.title)}${fix(it) /* html — fix() หนีด้วย Layout.esc */}`
         + (it.why ? `<div style="font-size:11px;color:#64748b;margin-left:18px">${Layout.esc(it.why)}</div>` : '') + '</div>').join('');
   },
 
@@ -563,19 +563,19 @@ const Page = {
       </tbody></table>
       <div style="margin-top:4px">รวม ${Layout.money(d.totalAmount)} · หัก ณ ที่จ่าย ${Layout.money(d.withholdingTaxAmount)} · ยอดรับสุทธิ ${Layout.money(d.expectedNetReceipt)}</div>
       <div style="margin-top:6px"><strong>อนุมัติ:</strong> ${Layout.esc(d.approvalOutcome)}</div>
-      ${(d.approvalBlocking || []).length ? `<div style="color:#991b1b">หยุดเพราะ:<ul style="margin:2px 0 0 16px">${list(d.approvalBlocking)}</ul></div>` : ''}
-      ${(d.approvalReleased || []).length ? `<div style="color:#92400e">นโยบายปล่อย:<ul style="margin:2px 0 0 16px">${list(d.approvalReleased)}</ul></div>` : ''}
+      ${(d.approvalBlocking || []).length ? `<div style="color:#991b1b">หยุดเพราะ:<ul style="margin:2px 0 0 16px">${list(d.approvalBlocking) /* html — list() หนีแต่ละข้อ */}</ul></div>` : ''}
+      ${(d.approvalReleased || []).length ? `<div style="color:#92400e">นโยบายปล่อย:<ul style="margin:2px 0 0 16px">${list(d.approvalReleased) /* html */}</ul></div>` : ''}
       <div style="margin-top:4px"><strong>อีเมล:</strong> ${Layout.esc(d.emailPlan)}</div>
       <div><strong>ลิงก์ชำระ:</strong> ${Layout.esc(d.payLinkPlan)}</div>
-      ${(d.notes || []).length ? `<ul style="margin:6px 0 0 16px;font-size:11px;color:#64748b">${list(d.notes)}</ul>` : ''}
-      <hr style="margin:8px 0;border:none;border-top:1px solid #e2e8f0">${this._renderReadiness(d.readiness)}`;
+      ${(d.notes || []).length ? `<ul style="margin:6px 0 0 16px;font-size:11px;color:#64748b">${list(d.notes) /* html */}</ul>` : ''}
+      <hr style="margin:8px 0;border:none;border-top:1px solid #e2e8f0">${this._renderReadiness(d.readiness) /* html — หนีภายใน */}`;
   },
   async dryRunSaved(id) {
     const api = Layout.api(); if (!api) return;
     const box = document.getElementById('detailDryRun');
     try {
       const res = await api.dryRunRecurring(id);
-      if (box) box.innerHTML = `<div style="margin-top:12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:12px">${this._renderDryRun(res.data)}</div>`;
+      if (box) box.innerHTML = `<div style="margin-top:12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;font-size:12px">${this._renderDryRun(res.data) /* html — หนีภายใน */}</div>`;
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
@@ -595,7 +595,7 @@ const Page = {
     if (!sel) return;
     sel.innerHTML = '<option value="">-- ไม่หักภาษี ณ ที่จ่าย --</option>' +
       this._incomeTypes.map(x =>
-        `<option value="${Layout.esc(x.code)}" data-rate="${x.defaultRate ?? ''}" data-note="${Layout.esc(x.note || '')}">${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`
+        `<option value="${Layout.esc(x.code)}" data-rate="${Layout.esc(x.defaultRate ?? '')}" data-note="${Layout.esc(x.note || '')}">${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`
       ).join('');
   },
 
@@ -650,20 +650,20 @@ const Page = {
       if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ</td></tr>'; return; }
       tbody.innerHTML = items.map(r => `<tr>
         <td><span class="font-medium">${Layout.esc(r.name || '-')}</span></td>
-        <td>${Layout.docTypeLabel(r.documentType || '-')}</td>
-        <td>${freqMap[r.frequency] || Layout.esc(r.frequency || '-')}</td>
+        <td>${Layout.esc(Layout.docTypeLabel(r.documentType || '-'))}</td>
+        <td>${Layout.esc(freqMap[r.frequency] || r.frequency || '-')}</td>
         <td>${Layout.esc(r.contactName || '-')}</td>
         <td class="text-right">${Layout.money(r.amount)}</td>
         <td>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</td>
         <td>${Layout.statusBadge(r.status || 'Active')}${r.lastRunError
-          ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunError)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${r.id}')">⚠️ สร้างเอกสารไม่สำเร็จ</span></div>`
-          : (r.lastRunOutcome ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunOutcome.headline)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;cursor:pointer" onclick="Page.view('${r.id}')">ℹ️ มีเรื่องต้องทำต่อ</span></div>` : '')}${r.autoSendEmailWarning
-          ? `<div style="margin-top:4px"><span title="${Layout.esc(r.autoSendEmailWarning)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${r.id}')">📧 ผู้ติดต่อไม่มีอีเมล</span></div>` : ''}</td>
+          ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunError)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${Layout.jsArg(r.id)}')">⚠️ สร้างเอกสารไม่สำเร็จ</span></div>`
+          : (r.lastRunOutcome ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunOutcome.headline)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;cursor:pointer" onclick="Page.view('${Layout.jsArg(r.id)}')">ℹ️ มีเรื่องต้องทำต่อ</span></div>` : '')}${r.autoSendEmailWarning
+          ? `<div style="margin-top:4px"><span title="${Layout.esc(r.autoSendEmailWarning)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${Layout.jsArg(r.id)}')">📧 ผู้ติดต่อไม่มีอีเมล</span></div>` : ''}</td>
         <td>
-          <button class="btn btn-sm btn-secondary" onclick="Page.view('${r.id}')" data-i18n="common.view">ดู</button>
-          ${r.status === 'Active' ? `<button class="btn btn-sm btn-warning" onclick="Page.pause('${r.id}')">หยุด</button>` : ''}
-          ${r.status === 'Paused' ? `<button class="btn btn-sm btn-success" onclick="Page.resume('${r.id}')">เริ่มต่อ</button>` : ''}
-          ${r.status === 'Active' ? `<button class="btn btn-sm btn-primary" onclick="Page.runNow('${r.id}')">สร้างทันที</button>` : ''}
+          <button class="btn btn-sm btn-secondary" onclick="Page.view('${Layout.jsArg(r.id)}')" data-i18n="common.view">ดู</button>
+          ${r.status === 'Active' ? `<button class="btn btn-sm btn-warning" onclick="Page.pause('${Layout.jsArg(r.id)}')">หยุด</button>` : ''}
+          ${r.status === 'Paused' ? `<button class="btn btn-sm btn-success" onclick="Page.resume('${Layout.jsArg(r.id)}')">เริ่มต่อ</button>` : ''}
+          ${r.status === 'Active' ? `<button class="btn btn-sm btn-primary" onclick="Page.runNow('${Layout.jsArg(r.id)}')">สร้างทันที</button>` : ''}
         </td>
       </tr>`).join('');
       const totalPages = res.data?.totalPages || 1;
@@ -865,9 +865,9 @@ const Page = {
     if (!show) return;
     const chips = document.getElementById('varChips');
     chips.innerHTML = this._varValues().map(([tok, val, label]) =>
-      `<button type="button" onclick="Page.insertVar('&lt;&lt;${tok}&gt;&gt;')" title="${label} → ${val}"
+      `<button type="button" onclick="Page.insertVar('&lt;&lt;${Layout.jsArg(tok)}&gt;&gt;')" title="${Layout.esc(label)} → ${Layout.esc(val)}"
         style="border:1px solid #7dd3fc;background:#fff;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;color:#0369a1">
-        &lt;&lt;${tok}&gt;&gt; <span style="color:#94a3b8">= ${val}</span></button>`).join('');
+        &lt;&lt;${Layout.esc(tok)}&gt;&gt; <span style="color:#94a3b8">= ${Layout.esc(val)}</span></button>`).join('');
     this._updateVarPreview();
   },
   insertVar(token) {
@@ -885,39 +885,13 @@ const Page = {
     if (!prev || !ta) return;
     let out = ta.value || '';
     for (const [tok, val] of this._varValues())
-      out = out.replace(new RegExp(`(?:<<|\\{\\{)\\s*${tok}\\s*(?:>>|\\}\\})`, 'gi'), val);
-    prev.innerHTML = out.trim() ? `ตัวอย่างงวดนี้: <b style="color:#0f172a">${out.replace(/</g,'&lt;')}</b>` : '';
+      out = out.replace(new RegExp(`(?:<<|\\{\\{)\\s*${tok /* text — RegExp ไม่ใช่ HTML */}\\s*(?:>>|\\}\\})`, 'gi'), val);
+    prev.innerHTML = out.trim() ? `ตัวอย่างงวดนี้: <b style="color:#0f172a">${Layout.esc(out)}</b>` : '';
   },
 
   async aiSuggestAccount(slot, selectId, hintId) {
-    const hint = hintId ? document.getElementById(hintId) : null;
-    try {
-      const cid = Layout.getCompanyId();
-      // รอบ 250 WP-03 (D §1.5): API.* แทน fetch ดิบ · ป้าย "🤖 AI แนะนำ" เฉพาะเมื่อเซิร์ฟเวอร์บอก usedAi (ตอนนี้ตอบจากประวัติ ⇒ "⚙️ ระบบแนะนำ")
-      const j = await API.get(`/api/companies/${cid}/ai/gl-account/suggest?slot=${encodeURIComponent(slot)}`);
-      const d = j?.data;
-      const sel = document.getElementById(selectId);
-      const label = Layout.suggestLabel(d);
-      if (!d || !d.accountId) { if (hint) hint.textContent = `${label}: ${d?.reasoning || 'ยังไม่มีข้อมูลพอจะแนะนำ'}`; return; }
-      if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
-        const opt = document.createElement('option');
-        opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
-        sel.appendChild(opt);
-      }
-      if (sel) sel.value = d.accountId;
-      if (hint) hint.textContent = `${label}: ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
-      if (sel && d.feedbackId) {
-        sel.addEventListener('change', () => {
-          // event `change` ของดรอปดาวน์บัญชี = ผู้ใช้เลือกเอง ⇒ Explicit (รอบ 181 D7-3) · ปิด loop เบื้องหลัง
-          API.post(`/api/companies/${cid}/ai-feedback/record`,
-            { feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId, source: 'Explicit' })
-            .catch(e => console.warn('บันทึกคำตอบผู้ใช้ไม่สำเร็จ', e));
-        }, { once: true });
-      }
-    } catch (e) {
-      // ล้มดัง (เดิมกลืนทั้งหมด) — คำแนะนำไม่ใช่งานหลัก จึงบอกในช่องคำใบ้ ไม่ขวางการบันทึก
-      if (hint) hint.textContent = '⚠️ โหลดคำแนะนำไม่สำเร็จ — เลือกบัญชีเองได้ (' + (e?.message || 'ข้อผิดพลาด') + ')';
-    }
+    // รอบ 250 WP-03 (ฝ่ายค้าน M3): ตัวกลางเดียว Layout.suggestGlAccount (API.* · ป้ายตาม usedAi · ปิด loop · ล้มดังในช่องคำใบ้)
+    return Layout.suggestGlAccount({ slot, selectId, hintId });
   },
   async loadFormData() {
     const api = Layout.api(); if (!api) return;
@@ -941,13 +915,13 @@ const Page = {
       const activeBanks = this.bankAccounts.filter(a => a.isActive !== false);
       if (activeBanks.length) {
         sel.innerHTML += '<optgroup label="บัญชีธนาคาร">' +
-          activeBanks.map(a => `<option value="bank:${a.id}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('') +
+          activeBanks.map(a => `<option value="bank:${Layout.esc(a.id)}">${Layout.esc(a.accountName)} (${Layout.esc(a.bankName)} ${Layout.esc(a.accountNumber)})</option>`).join('') +
           '</optgroup>';
       }
       const nonBankAccounts = this.paymentChannels.filter(a => !(a.accountCode || '').startsWith('1112'));
       if (nonBankAccounts.length) {
         sel.innerHTML += '<optgroup label="เงินสด / อื่นๆ">' +
-          nonBankAccounts.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') +
+          nonBankAccounts.map(a => `<option value="account:${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') +
           '</optgroup>';
       }
     }
@@ -1020,13 +994,13 @@ const Page = {
     const incomeOpts = sel => '<option value="">ไม่หัก</option>' + (this._incomeTypes || []).map(x =>
       `<option value="${Layout.esc(x.code)}"${String(x.code) === String(sel) ? ' selected' : ''}>${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`).join('');
     box.innerHTML = `<table class="rec-line-table"><thead><tr><th style="width:4%">#</th><th>รายละเอียด</th><th style="width:10%">จำนวน</th><th style="width:14%">ราคาต่อหน่วย</th><th style="width:9%">VAT %</th><th style="width:18%">ประเภทเงินได้</th><th style="width:9%">หัก %</th><th style="width:5%"></th></tr></thead><tbody>`
-      + this._extraLines.map((l, i) => `<tr data-i="${i}">
-        <td>${i + 2}</td>
+      + this._extraLines.map((l, i) => `<tr data-i="${Number(i)}">
+        <td>${Number(i + 2)}</td>
         <td><input type="text" data-k="description" value="${Layout.esc(l.description)}"></td>
         <td><input type="number" step="0.01" min="0" data-k="quantity" value="${Layout.esc(String(l.quantity))}"></td>
         <td><input type="number" step="0.01" min="0" data-k="unitPrice" value="${Layout.esc(String(l.unitPrice))}"></td>
         <td><input type="number" step="0.01" data-k="vatRate" value="${Layout.esc(String(l.vatRate))}"></td>
-        <td><select data-k="incomeTypeCode">${incomeOpts(l.incomeTypeCode)}</select></td>
+        <td><select data-k="incomeTypeCode">${incomeOpts(l.incomeTypeCode) /* html — หนีภายใน */}</select></td>
         <td><input type="number" step="0.01" min="0" max="100" data-k="withholdingTaxRate" value="${Layout.esc(String(l.withholdingTaxRate))}"></td>
         <td><button type="button" class="btn btn-sm btn-ghost" title="ลบบรรทัด" onclick="Page.removeExtraLine('${Layout.jsArg(i)}')">✕</button></td>
       </tr>`).join('') + '</tbody></table>';
@@ -1264,8 +1238,8 @@ const Page = {
       } catch {}
       document.getElementById('detailContent').innerHTML = `
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <div><span class="text-gray-500 text-sm">ประเภทเอกสาร:</span><br><strong>${tdCombined ? 'ใบแจ้งหนี้/ใบกำกับภาษี (ใบเดียว หัวรวม)' : Layout.docTypeLabel(r.documentType||r.type)}</strong></div>
-          <div><span class="text-gray-500 text-sm">ความถี่:</span><br><strong>${freqMap[r.frequency]||r.frequency}</strong></div>
+          <div><span class="text-gray-500 text-sm">ประเภทเอกสาร:</span><br><strong>${Layout.esc(tdCombined ? 'ใบแจ้งหนี้/ใบกำกับภาษี (ใบเดียว หัวรวม)' : Layout.docTypeLabel(r.documentType||r.type))}</strong></div>
+          <div><span class="text-gray-500 text-sm">ความถี่:</span><br><strong>${Layout.esc(freqMap[r.frequency]||r.frequency)}</strong></div>
           <div><span class="text-gray-500 text-sm">วันเริ่มต้น:</span><br><strong>${Layout.date(r.startDate)}</strong></div>
           <div><span class="text-gray-500 text-sm">วันสิ้นสุด:</span><br><strong>${r.endDate ? Layout.date(r.endDate) : 'ไม่กำหนด'}</strong></div>
           <div><span class="text-gray-500 text-sm">ผู้ติดต่อ:</span><br><strong>${Layout.esc(r.contactName||'-')}</strong></div>
@@ -1274,7 +1248,7 @@ const Page = {
           <div><span class="text-gray-500 text-sm">หมวดหมู่ค่าใช้จ่าย:</span><br><strong>${Layout.esc(tdExpenseName)}</strong></div>
           <div><span class="text-gray-500 text-sm">สถานะ:</span><br>${Layout.statusBadge(r.status)}</div>
           <div><span class="text-gray-500 text-sm">ครั้งถัดไป:</span><br><strong>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</strong></div>
-          <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${r.totalRuns || 0} ครั้ง${r.maxRuns ? ' จาก ' + r.maxRuns : ''}</strong>${r.lastRunDate ? `<div style="font-size:11px;color:#64748b">ล่าสุด ${Layout.date(r.lastRunDate)}${r.lastDocumentId ? ` · <a href="/pages/documents.html?openDoc=${encodeURIComponent(r.lastDocumentId)}" style="color:#2563eb">เปิดเอกสารล่าสุด</a>` : ''}</div>` : ''}</div>
+          <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${Number(r.totalRuns) || 0} ครั้ง${r.maxRuns ? ' จาก ' + r.maxRuns : ''}</strong>${r.lastRunDate ? `<div style="font-size:11px;color:#64748b">ล่าสุด ${Layout.date(r.lastRunDate)}${r.lastDocumentId ? ` · <a href="/pages/documents.html?openDoc=${encodeURIComponent(r.lastDocumentId)}" style="color:#2563eb">เปิดเอกสารล่าสุด</a>` : ''}</div>` : ''}</div>
           <div><span class="text-gray-500 text-sm">อนุมัติอัตโนมัติ:</span><br><strong>${r.autoApprove ? 'ใช่' : 'ไม่'}</strong></div>
           <div><span class="text-gray-500 text-sm">ส่งอีเมลอัตโนมัติ:</span><br><strong>${r.autoSendEmail ? '📧 ส่งให้ผู้ติดต่อทันที (แนบ PDF)' : 'ไม่'}</strong></div>
         </div>
@@ -1284,13 +1258,13 @@ const Page = {
           <div style="margin-top:6px;font-size:12px;color:#7f1d1d">แก้ตามข้อความข้างบน (ปุ่ม "แก้ไข") แล้วกด "สร้างทันที" ในตาราง — หรือรอรอบอัตโนมัติถัดไป ระบบลองใหม่ให้เองทุกรอบ</div></div>` : ''}
         ${r.autoSendEmailWarning ? `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:13px">
           📧 ${Layout.esc(r.autoSendEmailWarning)}${r.autoSendEmailFixUrl ? ` <a href="${Layout.esc(r.autoSendEmailFixUrl)}" target="_blank" style="color:#2563eb;text-decoration:underline">เปิดหน้าผู้ติดต่อเพื่อเพิ่มอีเมล</a>` : ''}</div>` : ''}
-        ${this._renderOutcome(r)}
+        ${this._renderOutcome(r) /* html — หนีภายใน */}
         <div id="detailDryRun"></div>`;
       document.getElementById('detailFooter').innerHTML = `
         <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
         <button class="btn btn-secondary" onclick="Page.dryRunSaved('${Layout.jsArg(r.id)}')">ทดลองรัน 🔍</button>
-        <button class="btn btn-danger" onclick="Page.del('${r.id}')" data-i18n="common.delete">ลบ</button>
-        <button class="btn btn-primary" onclick="Page.editFromDetail('${r.id}')" data-i18n="common.edit">แก้ไข</button>`;
+        <button class="btn btn-danger" onclick="Page.del('${Layout.jsArg(r.id)}')" data-i18n="common.delete">ลบ</button>
+        <button class="btn btn-primary" onclick="Page.editFromDetail('${Layout.jsArg(r.id)}')" data-i18n="common.edit">แก้ไข</button>`;
       Layout.openModal('detailModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
@@ -1306,8 +1280,8 @@ const Page = {
     const actions = (o.actions || []).map(btn).join(' ');
     return `<div style="margin-top:12px;padding:12px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#78350f;font-size:13px;line-height:1.6">
       <div style="font-weight:600;font-size:14px">ℹ️ ${Layout.esc(o.headline)}</div>
-      ${steps ? `<div style="margin-top:8px;font-weight:600">สิ่งที่ต้องทำ</div><ol style="margin:2px 0 0 20px;padding:0;list-style:decimal">${steps}</ol>` : ''}
-      ${actions ? `<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">${actions}</div>` : ''}
+      ${steps ? `<div style="margin-top:8px;font-weight:600">สิ่งที่ต้องทำ</div><ol style="margin:2px 0 0 20px;padding:0;list-style:decimal">${steps /* html — li หนีแล้ว */}</ol>` : ''}
+      ${actions ? `<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">${actions /* html — ปุ่มหนีแล้ว */}</div>` : ''}
       ${o.autoApproveNote ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:#fff;border:1px dashed #fcd34d;font-size:12px">✅ ${Layout.esc(o.autoApproveNote)}</div>` : ''}
       ${(o.legalNote || o.rawNotice) ? `<details style="margin-top:8px;font-size:12px;color:#92400e"><summary style="cursor:pointer">รายละเอียดเพิ่มเติม</summary>
         ${o.legalNote ? `<div style="margin-top:4px">${Layout.esc(o.legalNote)}</div>` : ''}

@@ -414,21 +414,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
 
         PublicTransferInfo? transfer = null;
         if (allowed.Contains(DocumentPayLinkPolicy.BankTransferCode, StringComparer.OrdinalIgnoreCase) && Refusal(d) == null)
-        {
-            // รอบ 246 QR (ฝ่ายค้าน S2): บัญชีของใบก่อน — ตัวเลือกบัญชีเดียวกับกระดาษ (PaymentQrService.PickDocumentAccountAsync) · ไม่มี ⇒ บัญชีรับโอนของเว็บ (เดิม)
-            transfer = await DocumentAccountTransferAsync(companyId, d.Id, amounts.Net, ct);
-            var gw = transfer != null ? null
-                : await SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, null).FirstOrDefaultAsync(ct);
-            if (gw != null)
-            {
-                // รอบ 246 QR: QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดสุทธิของลิงก์ · data URI จากไบต์ที่สร้างเอง) — เลขที่ใช้ไม่ได้ ⇒ ไม่มี QR (ข้อความเดิม)
-                string? qr = null;
-                var ppId = PaymentQrPolicy.NormalizePromptPayId(gw.PromptPayId).Id;
-                if (ppId != null && amounts.Net > 0.005m)
-                    qr = "data:image/png;base64," + Convert.ToBase64String(new PromptPayService().GenerateQrImage(ppId, amounts.Net, size: 330));
-                transfer = new PublicTransferInfo(gw.BankName, gw.BankAccountNumber, gw.BankAccountName, gw.PromptPayId, qr);
-            }
-        }
+            transfer = await TransferBlockAsync(companyId, d.Id, amounts.Net, ct);
 
         var title = heading.Title;
         var target = new PublicPayTarget(PaymentSourceKind.Document, d.Id, Guid.Empty, blocked == null ? amounts.Net : 0m,
@@ -446,6 +432,37 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             Card: blocked == null ? card : null,
             IsTestMode: cfg?.Mode == PaymentProviderMode.Test)
         { Target = target };
+    }
+
+    /// <summary>กล่อง "โอนเข้าบัญชี" ของใบ (ตัวเดียว — หน้าชำระสาธารณะ + พอร์ทัลลูกค้า · รอบ 250 WP-03 ฝ่ายค้าน H1):
+    /// บัญชีของใบก่อน (ตัวเลือกบัญชีเดียวกับกระดาษ <c>PaymentQrService.PickDocumentAccountAsync</c>) · ไม่มี ⇒ บัญชีรับโอนของเว็บ ·
+    /// QR พร้อมเพย์ฝังยอดสุทธิ <paramref name="net"/> (หลัง WHT ที่ผู้ซื้อจะหัก — ผู้เรียกต้องส่ง <c>AmountsAsync().Net</c>)</summary>
+    private async Task<PublicTransferInfo?> TransferBlockAsync(Guid companyId, Guid documentId, decimal net, CancellationToken ct)
+    {
+        // รอบ 246 QR (ฝ่ายค้าน S2): บัญชีของใบก่อน — ตัวเลือกบัญชีเดียวกับกระดาษ (PaymentQrService.PickDocumentAccountAsync) · ไม่มี ⇒ บัญชีรับโอนของเว็บ (เดิม)
+        var transfer = await DocumentAccountTransferAsync(companyId, documentId, net, ct);
+        if (transfer != null) return transfer;
+        var gw = await SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, null).FirstOrDefaultAsync(ct);
+        if (gw == null) return null;
+        // รอบ 246 QR: QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดสุทธิของลิงก์ · data URI จากไบต์ที่สร้างเอง) — เลขที่ใช้ไม่ได้ ⇒ ไม่มี QR (ข้อความเดิม)
+        string? qr = null;
+        var ppId = PaymentQrPolicy.NormalizePromptPayId(gw.PromptPayId).Id;
+        if (ppId != null && net > 0.005m)
+            qr = "data:image/png;base64," + Convert.ToBase64String(new PromptPayService().GenerateQrImage(ppId, net, size: 330));
+        return new PublicTransferInfo(gw.BankName, gw.BankAccountNumber, gw.BankAccountName, gw.PromptPayId, qr);
+    }
+
+    /// <summary>รอบ 250 WP-03 (ฝ่ายค้าน H1): ตัวเลือกโอน/QR ของใบสำหรับพอร์ทัลลูกค้า — <b>กติกาเดียวกับหน้าชำระ</b>:
+    /// <see cref="DocumentPayLinkPolicy.IssueRefusal"/> (ฝั่งขาย · THB · ออกแล้ว · ยอดค้าง &gt; 0 · ใบกำกับอ้างแล้ว) แล้วจึงประกอบกล่องโอนด้วยยอดสุทธิหลัง WHT ·
+    /// ผู้เรียกต้องตรวจความเป็นเจ้าของใบก่อน (พอร์ทัล = <c>PortalDocuments</c>) · null = ไม่พบใบ</summary>
+    public async Task<DocumentTransferView?> TransferForDocumentAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+    {
+        var d = await LoadDocAsync(companyId, documentId, null, ct);
+        if (d == null) return null;
+        if (Refusal(d) is { } refusal) return new DocumentTransferView(refusal, 0m, 0m, 0m, null);
+        var (amounts, _) = await AmountsAsync(companyId, d, ct);
+        return new DocumentTransferView(null, amounts.Gross, amounts.Wht, amounts.Net,
+            await TransferBlockAsync(companyId, d.Id, amounts.Net, ct));
     }
 
     /// <summary>รอบ 246 QR (ฝ่ายค้าน S2) — บัญชีรับโอนของใบนี้จากตัวเลือกบัญชีเดียวกับกระดาษ (แหล่งเงินของใบ → บัญชีของใบ → เทมเพลต → บัญชีเดียวที่ตั้ง QR) +

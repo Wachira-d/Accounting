@@ -2538,6 +2538,7 @@ public class AiSuggestionController : ControllerBase
                 _ => "ลูกค้าใหม่ของบริษัท — ใช้ค่าเริ่มต้น 50,000 บาท (ปรับได้ภายหลัง)",
             },
             feedbackId,
+            usedAi = false,   // รอบ 250 WP-03 (ฝ่ายค้าน M3): สถิติยอดค้างของบริษัท — ไม่เรียก provider (ป้าย "⚙️ ระบบแนะนำ")
         }));
     }
 

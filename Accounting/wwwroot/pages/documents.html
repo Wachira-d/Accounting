@@ -2752,12 +2752,12 @@
             <td>${esc(l.description)}${l.isAuxiliary ? ' <span style="font-size:10px;color:#64748b">(ค่าประกอบ — เฉลี่ยเข้าสินทรัพย์หลัก)</span>' : ''}</td>
             <td style="font-family:ui-monospace,monospace">${esc(l.accountCode)}</td>
             <td class="text-right">${Layout.money(l.amount)}</td>
-            <td>${(l.links || []).length || !l.isAssetAccount ? multiCell(l) : l.assetId
+            <td>${(l.links || []).length || !l.isAssetAccount ? multiCell(l) /* html — หนีภายใน */ : l.assetId
               ? `<a class="btn btn-sm btn-ghost" href="/pages/fixed-assets.html?assetId=${esc(l.assetId)}">${esc(l.assetCode)}${l.assetNeedsReview ? ' ⚠️ รอตรวจ' : ''} →</a>`
               : l.isAuxiliary ? '<span style="color:#94a3b8;font-size:12px">—</span>'
               : approved
                 ? `<button class="btn btn-sm btn-warning" onclick="Page.registerAssetFromLine('${Layout.jsArg(docId)}','${Layout.jsArg(l.lineId)}')">➕ ขึ้นทะเบียนจากบรรทัดนี้</button>`
-                : '<span style="color:#92400e;font-size:12px">จะสร้างให้เมื่ออนุมัติ</span>'}${(l.links || []).length || !l.isAssetAccount ? '' : multiCell(l)}</td>
+                : '<span style="color:#92400e;font-size:12px">จะสร้างให้เมื่ออนุมัติ</span>'}${(l.links || []).length || !l.isAssetAccount ? '' : multiCell(l) /* html — หนีภายใน */}</td>
           </tr>`).join('');
 
         const pending = list.filter(a => a.needsReview).length;
@@ -2772,12 +2772,12 @@
             <button class="btn btn-sm btn-warning" style="margin-left:4px" onclick="Page.registerAssetFromLine('${Layout.jsArg(docId)}', null)">➕ ขึ้นทะเบียนทั้งหมด</button>
           </div>` : ''}
           ${pending ? `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;font-size:12px;color:#78350f;margin-bottom:8px">
-            มี ${pending} รายการที่ระบบสร้างให้อัตโนมัติและ<b>ยังไม่ผ่านการยืนยัน</b> —
+            มี ${Number(pending)} รายการที่ระบบสร้างให้อัตโนมัติและ<b>ยังไม่ผ่านการยืนยัน</b> —
             ค่าเสื่อมจะคำนวณถูกต้องก็ต่อเมื่อตรวจอายุการใช้งาน/วิธีคิดค่าเสื่อมแล้ว
           </div>` : ''}
           <table class="table" style="font-size:12px">
             <thead><tr><th>บรรทัด</th><th>ผัง</th><th class="text-right">ยอด</th><th>ทะเบียนสินทรัพย์</th></tr></thead>
-            <tbody>${lineRows}</tbody>
+            <tbody>${lineRows /* html — แถวหนีแล้ว */}</tbody>
           </table>`;
       },
 
@@ -11197,7 +11197,7 @@
             ${d.documentType === 'CertificateInLieu' ? `
             <div style="margin-top:12px;padding:12px;background:#fffbeb;border:1px solid #f59e0b;border-radius:8px">
               <div style="font-weight:600;color:#92400e;font-size:13px;margin-bottom:8px">ข้อมูลใบรับรองแทนใบเสร็จ</div>
-              ${d.certificateReason ? `<div class="text-sm"><strong>เหตุผล:</strong> ${d.certificateReason}</div>` : ''}
+              ${d.certificateReason ? `<div class="text-sm"><strong>เหตุผล:</strong> ${this.escapeHtml(d.certificateReason)}</div>` : ''}
               ${d.paymentDate ? `<div class="text-sm"><strong>วันที่จ่ายเงิน:</strong> ${Layout.date(d.paymentDate)}</div>` : ''}
               <div style="display:flex;gap:40px;margin-top:8px">
                 <div>${d.certifierName ? `<div class="text-sm"><strong>ผู้รับรอง:</strong> ${this.escapeHtml(d.certifierName)}</div>` : ''}${d.certifierPosition ? `<div class="text-sm"><strong>ตำแหน่ง:</strong> ${this.escapeHtml(d.certifierPosition)}</div>` : ''}</div>
@@ -13242,7 +13242,7 @@
             <button class="btn btn-sm btn-secondary" data-autosend-issue="1">${s.url ? 'คัดลอก/ใช้ลิงก์เดิม' : 'สร้างลิงก์ชำระเงิน'}</button>
             ${s.url ? '<button class="btn btn-sm btn-danger-outline" data-autosend-revoke="1">ยกเลิกลิงก์</button>' : ''}
           </div>`}
-          ${runs ? `<table class="table" style="font-size:12px;margin-top:8px"><thead><tr><th>วันที่</th><th>สถานะ</th><th>รายละเอียด</th><th></th></tr></thead><tbody>${runs}</tbody></table>` : ''}`;
+          ${runs ? `<table class="table" style="font-size:12px;margin-top:8px"><thead><tr><th>วันที่</th><th>สถานะ</th><th>รายละเอียด</th><th></th></tr></thead><tbody>${runs /* html — แถวหนีแล้ว */}</tbody></table>` : ''}`;
         const issue = host.querySelector('[data-autosend-issue]');
         if (issue) issue.addEventListener('click', async () => {
           try {

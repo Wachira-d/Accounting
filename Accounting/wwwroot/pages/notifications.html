@@ -156,7 +156,7 @@
         // รอบ 232 (232-Notify): ช่องที่ 4 "กลุ่ม LINE ของบริษัท" (OA ของร้าน · หนึ่งครั้งต่อเหตุการณ์ · ไม่ขึ้นกับบทบาท) — เซิร์ฟเวอร์ส่งแถวค่าตั้งต้น (isDefault) มาให้
         // สำหรับเหตุการณ์ที่ย้ายจากประกาศกลุ่ม LINE เดิม · หน้านี้ไม่มีสำเนากติกา (กติกาอยู่ NotificationAudiencePolicy)
         let html = '<table class="matrix-table"><thead><tr><th class="event">เหตุการณ์</th>';
-        roles.forEach(r => { html += `<th class="role" colspan="3">${roleLabels[r] || r}</th>`; });
+        roles.forEach(r => { html += `<th class="role" colspan="3">${Layout.esc(roleLabels[r] || r)}</th>`; });
         html += '<th class="role">กลุ่ม LINE<br>ของบริษัท</th></tr><tr><th></th>';
         roles.forEach(() => { html += '<th class="role" style="font-size:10px;font-weight:400">Sys / Email / LINE</th>'; });
         html += '<th class="role" style="font-size:10px;font-weight:400">OA ของร้าน</th></tr></thead><tbody>';

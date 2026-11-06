@@ -351,11 +351,14 @@
       async startFromBuiltIn() {
         const d = this.doc; if (!d) return;
         const body = document.getElementById('dBody');
-        if (body.value.trim() && !confirm('แทนที่เนื้อความในร่างด้วยฉบับตั้งต้นของระบบ?')) return;
+        const bodyEn = document.getElementById('dBodyEn');
+        // ฝ่ายค้าน L5: ถามก่อนทับทั้งร่างไทยและร่างอังกฤษ (เดิมถามเฉพาะไทย ⇒ คำแปลที่แก้ไว้หายเงียบ)
+        const filled = [body.value.trim() ? 'ร่างไทย' : null, bodyEn.value.trim() ? 'ร่างอังกฤษ' : null].filter(Boolean);
+        if (filled.length && !confirm(`แทนที่${filled.join(' และ ')}ด้วยฉบับตั้งต้นของระบบ? (สิ่งที่แก้ไว้ในร่างจะหาย)`)) return;
         try {
           const res = await AdminAPI.get(`${this.base}/${this.kind}/builtin`);
           body.value = (res && res.data && res.data.bodyMarkdown) || '';
-          document.getElementById('dBodyEn').value = (res && res.data && res.data.bodyMarkdownEn) || '';
+          bodyEn.value = (res && res.data && res.data.bodyMarkdownEn) || '';
         } catch (e) { alert('โหลดฉบับตั้งต้นไม่สำเร็จ: ' + e.message); return; }
         const src = d.upcoming || d.current;
         const parts = String(src.version).split('.').map(Number);
