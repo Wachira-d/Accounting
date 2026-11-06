@@ -1198,6 +1198,11 @@
         const lines = (o.endpoints || []).filter(e => e.kind !== 'Email');
         const soon = (o.comingSoon || []).map(s => `<div style="margin-bottom:6px"><button type="button" class="btn btn-sm btn-secondary" disabled title="${esc(s.reason)}">${esc(s.label)} — เร็ว ๆ นี้</button>
             <div style="font-size:11px;color:#64748b;margin-top:2px">${esc(s.reason)}</div></div>`).join('');
+        // รอบ 254 WP-11 L2 (คำตอบเจ้าของ Q6 ทางลัด): ปุ่มลิงก์/QR ผูก LINE — กดได้/เหตุมาจากเซิร์ฟเวอร์ (lineBind)
+        const bind = o.lineBind ? `<div style="margin-bottom:8px">
+            <button type="button" class="btn btn-sm btn-primary" ${o.lineBind.available ? '' : 'disabled'} onclick="Page.createLineInvite()">🔗 ลิงก์/QR ผูก LINE (ผู้รับกดยินยอมบนมือถือ)</button>
+            ${o.lineBind.reason ? `<div style="font-size:11px;color:#64748b;margin-top:2px">${esc(o.lineBind.reason)}</div>` : ''}
+            <div id="notifyLineInviteOut" style="margin-top:6px"></div></div>` : '';
         const topicOpts = (o.topics || []).map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('');
         panel.innerHTML = `
           <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:8px 10px;font-size:12px;margin-bottom:10px">${esc(o.note)}</div>
@@ -1211,6 +1216,7 @@
           </div>` : `<div style="font-size:12px;color:#64748b;margin-bottom:12px">🔒 ${esc(o.readOnlyReason || 'ดูได้อย่างเดียว')}</div>`}
           <div style="font-weight:600;margin:6px 0">LINE</div>
           ${lines.length ? lines.map(row).join('') : '<div style="font-size:12px;color:#64748b;margin-bottom:6px">ยังไม่มีปลายทาง LINE</div>'}
+          ${bind /* html — หนีแล้ว */}
           ${soon /* html — หนีแล้ว */}
           <div id="notifyAutoSendBox" style="margin:12px 0 6px;font-size:12px;color:#64748b">กำลังโหลดค่าตั้ง "ส่งอัตโนมัติ"…</div>
           <div style="font-weight:600;margin:12px 0 6px">ดูว่าใครจะได้รับอีเมล (ตัวหาผู้รับเดียวกับการส่งจริง)</div>
@@ -1251,6 +1257,29 @@
           Layout.toast(el.checked ? 'ตั้ง "ไม่ส่งอีเมลอัตโนมัติ" แล้ว' : 'กลับมาส่งอีเมลอัตโนมัติตามค่าตั้งปกติแล้ว');
         } catch (e) { el.checked = !el.checked; Layout.toast(e.message, 'error'); }
         finally { el.disabled = false; }
+      },
+      /** รอบ 254 WP-11 L2: สร้างลิงก์/QR ผูก LINE (token แสดงครั้งเดียว — ไม่เก็บในหน้า) · ไม่ได้ตั้ง URL ของระบบ ⇒ ประกอบจากโดเมนที่เปิดอยู่ */
+      async createLineInvite() {
+        const out = document.getElementById('notifyLineInviteOut'); if (!out) return;
+        const esc = Layout.esc;
+        try {
+          const res = await API.post(this._notifyUrl('/line-invite'), {});
+          if (!res || !res.success) { Layout.toast(res?.message || 'สร้างลิงก์ไม่สำเร็จ', 'error'); return; }
+          const d = res.data || {};
+          const link = d.url || (window.location.origin + (d.path || ''));
+          const qr = typeof d.qrDataUri === 'string' && d.qrDataUri.startsWith('data:image/png;base64,') ? d.qrDataUri : '';
+          out.innerHTML = `<div style="border:1px dashed #94a3b8;border-radius:6px;padding:8px;font-size:12px">
+              ${qr ? `<img src="${esc(qr)}" alt="QR ผูก LINE" style="width:160px;height:160px;display:block;margin-bottom:6px">` : ''}
+              <div style="word-break:break-all;font-family:monospace">${esc(link)}</div>
+              <button type="button" class="btn btn-sm btn-secondary" style="margin-top:4px" id="notifyLineInviteCopy">คัดลอกลิงก์</button>
+              <div style="color:#64748b;margin-top:4px">หมดอายุ ${esc(new Date(d.expiresAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }))} · ${esc(d.note || '')}</div>
+            </div>`;
+          const btn = document.getElementById('notifyLineInviteCopy');
+          if (btn) btn.addEventListener('click', async () => {
+            try { await navigator.clipboard.writeText(link); Layout.toast('คัดลอกลิงก์แล้ว'); }
+            catch (_) { Layout.toast('คัดลอกไม่ได้ — เลือกข้อความแล้วคัดลอกเอง', 'error'); }
+          });
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       _notifyEndpoint(key) {
         return (this._notify?.endpoints || []).find(e => (e.id || 'primary') === key);

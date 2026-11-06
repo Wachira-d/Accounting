@@ -83,6 +83,16 @@ public class EmailScheduleRule : TenantEntity
     public bool? PostPayEmailReceipt { get; set; }
     /// <summary>ส่งทุกงวดที่รับ (ไม่ใช่เฉพาะชำระครบ)</summary>
     public bool? PostPayIncludePartial { get; set; }
+
+    // ── รอบ 254 WP-11 L2: ติ๊กช่องทางต่อกฎ (LINE_MULTICHANNEL_DESIGN §3.d · คำตอบเจ้าของ Q7) — ตัวตัดสิน Helpers/ContactLineChannel ──
+    /// <summary>ส่งอีเมล (ค่าตั้งต้น true = พฤติกรรมเดิมของกฎทุกแถว)</summary>
+    public bool ChannelEmail { get; set; } = true;
+    /// <summary>ส่งการ์ด LINE ถึงผู้ใช้ LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</summary>
+    public bool ChannelLineUser { get; set; }
+    /// <summary>ส่งการ์ด LINE เข้ากลุ่ม LINE ของผู้ติดต่อที่ผูกด้วยรหัส (ผ่าน LINE OA ของบริษัท · กลุ่มกลางของแอดมินไม่มีวันเป็นปลายทาง — Q1(b))</summary>
+    public bool ChannelLineGroup { get; set; }
+    /// <summary>LINE ส่งไม่ได้ (ไม่มีปลายทาง · บล็อก · ข้อความ OA หมด) ⇒ ส่งอีเมลแทน — ค่าตั้งต้น <b>true</b> (Q7 "อัตโนมัติ") · มีผลเฉพาะกฎที่ไม่ได้ติ๊กอีเมล</summary>
+    public bool LineFallbackToEmail { get; set; } = true;
 }
 
 /// <summary>

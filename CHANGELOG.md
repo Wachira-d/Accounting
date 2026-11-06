@@ -6743,3 +6743,17 @@ _รอบ 250 WP-04 แก้ผลฝ่ายค้าน 74a2d1f6 (2026-11-0
 (M5) แถว e-Tax ไม่มีเลขผู้ซื้อมีคำเตือน §86/4. (M6) "-"/"N/A" ของบุคคล = ไม่มีเลข · ข้อความทางไปต่อ. (M7) `ComposeTxId`/ผู้ขายใช้ `TaxBranchCode.Normalize` (เกิน 5 หลัก = 5 หลักท้าย).
 (L3) คอมเมนต์ประทับก่อนส่ง = อย่างมากครั้งเดียว · (L4) ช่อง 0–30 ตรงเซิร์ฟเวอร์ · (L5) คอมเมนต์ migration อยู่กับคำสั่งของมัน · (L6) negative test form_label กับหน้าจริง ·
 (L1) คง modulo (เพดานทำให้ "ครั้งล่าสุด ≥ N วัน" ไม่จำเป็น). ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit d5257214_
+
+_รอบ 254 WP-11 L2 (2026-11-06 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-11 ข้อ 1–2 · LINE_MULTICHANNEL_DESIGN §3.b–§3.f · คำตอบเจ้าของ §10 Q1(b)/Q5/Q6/Q7 ·
+คำตัดสิน N8 · DECISIONS 254-WP11-1…6): **LINE ถึงผู้ติดต่อผ่าน LINE OA ของบริษัท**. (1) `X-Line-Retry-Key` ทุก push (`LineNotifyService.PushCoreAsync` · คืนสถานะ HTTP +
+`x-line-request-id`) · ข้อความผ่าน OA กลางของ `BookingNotifier` มีป้าย "ในนาม {ร้าน} · ผ่าน NextAcc" + ช่องทางยกเลิก (`Helpers/LineOnBehalfText` · C2/C5).
+(2) ติ๊กช่องทางต่อกฎตารางส่ง (`ChannelEmail` true · `ChannelLineUser` · `ChannelLineGroup` · `LineFallbackToEmail` true — migration `ContactLineDeliveryMigration` ค่าตั้งต้น =
+พฤติกรรมเดิม) + ด่านบันทึก (`ContactLineChannel.RuleProblem`). (3) คิว `LineQueues` (SKIP LOCKED · retry key คงที่ · ไม่เก็บ LINE id) เข้าจาก `EnqueueDocumentAsync` ·
+ผู้ส่ง `ContactLineQueueService` (ใบซ้ำตอนส่ง → ปลายทางผ่านตัวหาผู้รับเดียว → การ์ด `LineDocumentCard` → `TryPushContactAsync` → `LinePushOutcome`) · ล้มถาวร ⇒ ถอยไปอีเมลครั้งเดียว.
+(4) ช่อง LINE ต่อขอบเขต OA (`ContactRecipientRule.LineGate` · `CompanyLineReadiness`) — `LineDeliveryOpen` เปิด · OA กลางยังปิด · กลุ่มกลางของแอดมินกันสองชั้น.
+(5) หลักฐานการส่งนับ LINE ที่ LINE ตอบรับ (`DocumentDeliveryEvidence` · G8). (6) ลิงก์/QR ผูก LINE ผู้ติดต่อ (`ContactLineBindingService` · `contact-line-join.html` · ยินยอมก่อนรหัส ·
+"หยุด" ปลด + ถอนยินยอม · PDPA erase ยกเลิกคำเชิญค้าง). (7) หน้า `email-schedule.html` ช่องทาง + คิว LINE · `contacts.html` ปุ่มลิงก์/QR. เทสต์ `LineDeliveryRound254Tests` ·
+Db `LineQueueRound254DbTests` · ล็อก R254 (24 กติกา + เคส R254a–j) · R245 ปรับตามพารามิเตอร์ใหม่. **ยังไม่ทำ**: L3 กลุ่ม `#HeyNextAcc` · L4 โควตาแยกช่อง/แพ็ก/แอดมิน/
+`NextAccOaQuotaWatch` · ชั่วโมงเงียบ · `DocumentViewLink` · LINE ของใบแจ้งยอด/50 ทวิ/ใบเสร็จ/ลิงก์เซ็น · ทดลองหน่วยนับกลุ่มบน OA จริง (WP-11 ข้อ 3).
+ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit (เติมในคอมมิตตามหลัง)_
+

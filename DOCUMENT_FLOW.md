@@ -3082,7 +3082,34 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     `EmailDelivery.DeclinedEmails`) · ผู้รับที่ผู้ใช้พิมพ์เองและไม่ใช่อีเมลใดของผู้ติดต่อ ⇒ คงไว้ (ไม่มีค่าตั้งที่บอกว่าเขาไม่รับ · แก้ CI 42232967230) · ผู้ติดต่อถูกลบ ⇒ ไม่ส่ง ·
     ไม่เหลือใคร ⇒ ไม่ส่ง + บันทึกการส่ง Failed พร้อมเหตุ (`SIGN-AUTO-OPTOUT`) · ส่งด้วยมือ: ผู้รับที่พิมพ์ชนะ
   - **กฎ "เมื่ออนุมัติเอกสาร" ครอบรายการประจำ** นับเฉพาะแถวคิวที่ไม่ใช่ "ข้าม" (ฝ่ายค้าน MED-6)
-  - **LINE ยังไม่ส่ง** (คำตอบเจ้าของ §10: Q1(b) ห้ามกลุ่มกลางของแอดมิน · Q7 ติ๊กต่อกฎ/ค่าตั้งต้นถอยไปอีเมล — งานเฟส L2 WP-11) ⇒ `LineDeliveryOpen = false` คงเดิม · อีเมลเป็นทางหลัก
+  - ~~LINE ยังไม่ส่ง~~ ⇒ **เปิดแล้วในรอบ 254 WP-11 L2** (ดูหัวข้อ "LINE ส่งจริง" ข้างล่าง)
+- **LINE ส่งจริง — รอบ 254 WP-11 L2 (ผ่าน LINE OA ของบริษัทเท่านั้น · คำตัดสิน N8 · คำตอบเจ้าของ Q1(b)/Q5/Q6/Q7)**:
+  - **ติ๊กช่องทางต่อกฎ** (`EmailScheduleRule.ChannelEmail` ค่าตั้งต้น true = พฤติกรรมเดิม · `ChannelLineUser` · `ChannelLineGroup` · `LineFallbackToEmail` ค่าตั้งต้น **true** — Q7) ·
+    ตัวตัดสินเดียว `Helpers/ContactLineChannel` · ด่านตอนบันทึก (`UpsertRuleAsync` → `ContactLineChannel.RuleProblem`): ต้องมีอย่างน้อย 1 ช่อง · LINE เฉพาะ trigger
+    อนุมัติเอกสาร/ใกล้-เกินกำหนด/รายการประจำ (สลิป = ห้ามเข้า LINE ผู้ติดต่อ · ใบแจ้งยอด/50 ทวิ = ยังไม่รองรับ ⇒ 400 พร้อมเหตุ ไม่ใช่เก็บเงียบ) · ไม่มี OA บริษัทพร้อม ⇒ ปฏิเสธพร้อมทางไปต่อ ·
+    echo กลับผ่าน entity ที่ `GET rules` คืน + hydrate ใน `email-schedule.html` (ฟอร์มใหม่ = อีเมลอย่างเดียว + ถอยเปิด)
+  - **เข้าคิว** (`EmailScheduleService.EnqueueLineAsync` · เรียกจาก `EnqueueDocumentAsync` ก่อนเส้นอีเมล): ปลายทางจากตัวหาผู้รับเดียว — ช่อง LINE เปิดต่อขอบเขต OA
+    (`ContactRecipientRule.LineGate`: OA บริษัทเปิด + token/secret ถอดได้ (`CompanyLineReadiness`) + บอทเดิม · ผูกกับ OA กลาง ⇒ "ยังไม่เปิด" จน L4) · หนึ่งแถว `LineQueues`
+    ต่อปลายทาง (ไม่เก็บ LINE id · `RetryKey` = UUID จาก hash(บริษัท+เหตุการณ์+ผู้รับ)) · ไม่มีปลายทาง ⇒ แถว "ข้าม" พร้อมเหตุ + **ถอยไปอีเมล** ถ้ากฎไม่ได้ติ๊กอีเมลและเปิดถอย ·
+    ติ๊กทั้งอีเมลและ LINE ⇒ ส่งทั้งสองทาง (Q7) · ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ชนะทุกช่อง
+  - **ส่ง** (`ContactLineQueueService.ProcessPendingAsync` · `EmailScheduleWorker` ทุก 1 นาที · SKIP LOCKED · แถวค้าง "กำลังส่ง" > 10 นาที กลับมาลองใหม่ด้วย key เดิม):
+    ตรวจใบซ้ำตอนส่ง (`ScheduledEmailSendCheck.SkipReason` ตัวเดียวกับอีเมล) → ปลายทางยังใช้ได้ (ตัวหาผู้รับเดียว) → การ์ด `Helpers/LineDocumentCard` (ภาษา/หัวเดียวกับ PDF ·
+    ป้าย `DocumentLabels` · ไม่มีเลขผู้เสียภาษี/ที่อยู่ · ซ่อนยอดต่อกลุ่ม Q5 · ปุ่มชำระจาก `DocumentPayLinkService` เท่านั้น · ช่องทางยกเลิกทุกการ์ด) →
+    `ILineNotifyService.TryPushContactAsync` (OA ที่ปลายทางผูก · **ทุก push ส่ง `X-Line-Retry-Key`**) → จำแนก `Helpers/LinePushOutcome` (200/409 = ส่งแล้ว · 5xx/เครือข่าย/429 อื่น = ลองใหม่
+    1/5/30 นาที key เดิม · 400 ไม่ได้เป็นเพื่อน = ล้ม + บล็อกปลายทาง · 401/403 = ช่องเสีย · 429 monthly limit = ล้ม) · ล้มถาวร ⇒ ถอยไปอีเมลครั้งเดียว
+    (`EnqueueLineFallbackEmailAsync` · กุญแจ `…:line-fallback` · เส้นอีเมลเดิมทั้งชุด) เมื่อไม่มีปลายทาง LINE อื่นของใบเดียวกันที่ส่งแล้ว/รอส่ง
+  - **กลุ่มกลางของแอดมินไม่มีวันเป็นปลายทาง (Q1(b))**: ชั้นแรก `ContactRecipientRule.GroupProblem` (ทุกแหล่ง) · ชั้นที่สอง `TryPushContactAsync` เทียบกับ `PlatformGroupIdsAsync` ก่อนยิง ·
+    กลุ่มของผู้ติดต่อผ่าน OA กลาง ⇒ `NotificationAudiencePolicy` ปฏิเสธ (`NOTIFY-CENTRAL-OA-GROUP-OFF`) จนแอดมินเปิดสวิตช์ (L3/L4 — ยังไม่มีคอลัมน์สวิตช์ในรอบนี้)
+  - **หลักฐานการส่ง (G8)**: แถว `LineQueues` สถานะ Sent (LINE ตอบรับจริงเท่านั้น · เก็บ `x-line-request-id`) นับใน `DocumentDeliveryEvidence.DeliveredAsync` ·
+    **ไม่ใช่การส่ง e-Tax by Email** (ตัวตัดสินคนละตัว)
+  - **ผูก LINE ของผู้ติดต่อ — ลิงก์/QR (Q6 ทางลัด)**: แท็บช่องทางแจ้งเตือน › "ลิงก์/QR ผูก LINE" (`POST …/notify-endpoints/line-invite` · `Contact.Edit` · OA บริษัทต้องพร้อม) ⇒
+    `ContactLineInvites` (token เก็บ hash · 7 วัน · ใช้ครั้งเดียว) ⇒ หน้า public `contact-line-join.html` (`api/public/contact-line-join/{cid}/view|consent` · token ใน body ·
+    จำกัดความถี่ต่อ IP) ⇒ ผู้รับกดยินยอม (`PdpaConsentRecord` purpose `contact-line-notify` · hash หลักฐาน) ⇒ รหัส `ผูก LN-…` (รูปแบบเดียวกับลูกค้าเว็บ · 30 นาที) ⇒ ส่งในแชต OA บริษัท ⇒
+    webhook บริษัท (`CustomerLineWebhookController` ก่อนเส้นลูกค้าเว็บ) สร้างปลายทาง LineUser (scope company · userId เข้ารหัส · ล็อกต่อผู้ติดต่อ · audit chain) ·
+    **ยกเลิก**: ผู้รับพิมพ์ "หยุด"/stop ⇒ ปลดเฉพาะบริษัทนั้น + ถอนความยินยอม + ล้าง id · unfollow ⇒ บล็อก · follow ⇒ ปลดบล็อก · PDPA erase ⇒ ยกเลิกคำเชิญที่ค้าง
+  - **ยังไม่ทำ (บอกตรง ๆ)**: กลุ่ม `#HeyNextAcc` + webhook กลุ่ม (L3) · ส่งผ่าน OA กลาง + โควตา LINE/อีเมลแยกช่อง + แพ็ก ฿290/฿190 + `NextAccOaQuotaWatch` (L4) ·
+    ชั่วโมงเงียบ · ลิงก์ดูเอกสาร (`DocumentViewLink`) · LINE ของใบแจ้งยอด/50 ทวิ/ใบเสร็จหลังรับชำระ/ลิงก์เซ็น (L6) · กระดิ่งเมื่อล้มซ้ำ ·
+    เทสต์ `LineDeliveryRound254Tests` · Db `LineQueueRound254DbTests` · ล็อก R254 (+ เคส R254a–j) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit (เติมในคอมมิตตามหลัง)
   - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·
     แจ้งเตือนจองคิว/บริการ (`BookingNotifier` — ลูกค้าเว็บ ไม่ใช่ปลายทางผู้ติดต่อ) · พอร์ทัล/ใบเสนอราคาสาธารณะ (ผู้รับเปิดเอง)
 - **ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" (`Contact.AutoSendDisabled` · คำตัดสิน 250-29 · ตัวตัดสินเดียว `AutopilotSettingsResolver.AutoSendBlock`)** — ชนะกฎบริษัททุกเส้นอัตโนมัติ:
@@ -3100,7 +3127,8 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   เขียนทุกตัว `Contact.Edit` + ปฏิเสธคีย์ API · ผู้เขียนเดียว `ContactNotifyEndpointService`: ล็อก `AdvisoryLockKey.ContactNotifyEndpoint` ต่อผู้ติดต่อ · tenant 404 · อีเมลผ่าน
   `ContactRecipientRule.ValidateNewEmail` (ตัวแยกเดียวกับฝั่งส่ง · ซ้ำอีเมลหลัก/ซ้ำแถว 409 · ≤ 10 อีเมลเพิ่มเติม) · audit chain `ContactNotifyEndpoint.Change` (EntityId = ผู้ติดต่อ)
 - **หน้าจอ** `contacts.html` แท็บ "ข้อมูลทั่วไป | ช่องทางแจ้งเตือน" (เฉพาะผู้ติดต่อที่บันทึกแล้ว): รายการอีเมล (★ อีเมลหลัก) + ติ๊กเรื่องต่อแถว · เพิ่มอีเมล/ป้าย · ยกเลิก ·
-  ฐาน/ความยินยอมต่อแถว · ปลายทาง LINE (แถว legacy แสดง "ต้องผูกใหม่") · ปุ่ม "เชิญผู้ใช้ผูก LINE / QR" และ "เพิ่มกลุ่ม LINE (#HeyNextAcc)" = **ปิดไว้ "เร็ว ๆ นี้" พร้อมเหตุจากเซิร์ฟเวอร์** (L5/L3) · "ดูว่าใครจะได้รับ"
+  ฐาน/ความยินยอมต่อแถว · ปลายทาง LINE (แถว legacy แสดง "ต้องผูกใหม่") · ปุ่ม "เชิญผู้ใช้ผูก LINE (สมัครก่อน)" และ "เพิ่มกลุ่ม LINE (#HeyNextAcc)" = **ปิดไว้ "เร็ว ๆ นี้" พร้อมเหตุจากเซิร์ฟเวอร์** (L5/L3) · ปุ่ม **"ลิงก์/QR ผูก LINE"** เปิดแล้ว (รอบ 254 ·
+  กดได้/เหตุจากเซิร์ฟเวอร์ `lineBind`) · "ดูว่าใครจะได้รับ"
 - **ข้อมูลเดิม**: `Contact.LineUserId` (ไม่มีโค้ดเขียน) ⇒ one-shot ตอนบูต `ContactNotifyEndpointMigration.MigrateLegacyLineUserIdsAsync` (marker `r245-contact-line-legacy` ใน `OneShotDataFixes` ·
   `pg_advisory_xact_lock` ทั้งระบบ) ⇒ แถว `LineUser` legacy (`OaScope=unknown` · ไม่ใช้ส่ง · เข้ารหัส) + ล้างคอลัมน์ด้วย SQL ตรง (ค่าไม่เข้า audit) · ผู้ติดต่อที่ลบแล้ว = ล้างอย่างเดียว ·
   `Contact.Email` ไม่ย้าย · ไม่มี unique index (การรวมผู้ติดต่อย้าย `*ContactId` แบบ generic — `MergeContactsAsync` ย้ายแถวปลายทางตามให้เอง)

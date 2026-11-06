@@ -267,6 +267,9 @@ READ_ONLY_POSTS_IN_FILE = {
     # รอบ 214: ตัวอย่างหน้านโยบาย/ข้อกำหนดของร้าน — แปลง markdown คืน HTML (CmsRenderingService.PreviewLegalPageAsync ไม่มี SaveChanges ·
     # AsNoTracking · ตรวจด้วยตาตอนเพิ่ม) · การเก็บจริงผ่าน PUT {siteId} เส้นเดิม
     ("CmsSiteController.cs", "LegalPreview"),
+    # รอบ 254 WP-11 L2: หน้าเชิญผูก LINE (public · สิทธิ์ = token) — GetJoinViewAsync อ่านอย่างเดียว (ไม่มี SaveChanges · ตรวจด้วยตาตอนเพิ่ม) ·
+    # POST เพื่อไม่ให้ token อยู่ใน URL ของ API/log
+    ("ContactLineJoinController.cs", "View"),
 }
 
 # POST ที่เป็น "งานของผู้ใช้เอง" (ไม่มีข้อมูลของคนอื่นให้แตะ) — ระบุเป็น (ไฟล์, เมธอด) ไม่ใช่ชื่อเมธอดลอย ๆ
@@ -290,6 +293,10 @@ SELF_SERVICE_POSTS = {
     # รอบ 216 (คำตัดสินข้อ 174): สมาชิกหน้าร้านแก้ข้อมูลส่วนตัวของตัวเอง — ไม่มีผู้ใช้ ERP ให้ตรวจสิทธิ์ (โทเคนหน้าร้าน) ·
     # ด่าน = Me(companyId, siteId) (โทเคนของเว็บนี้ + ลูกค้ายังใช้งาน) แล้วเขียนเฉพาะ id ในโทเคน (required_call_site_check ล็อก)
     ("CmsStorefrontCustomerController.cs", "UpdateMyProfile"),
+    # รอบ 254 WP-11 L2: ผู้รับฝั่งผู้ติดต่อกดยินยอมรับเอกสารทาง LINE ของ**ตัวเอง** (PDPA ม.19) — ไม่มีผู้ใช้ ERP ให้ตรวจสิทธิ์ · ด่าน = token ของคำเชิญ
+    # (สุ่ม 32 ไบต์ · hash · ใช้ครั้งเดียว · หมดอายุ) + จำกัดความถี่ต่อ IP (DB) · เขียนแค่หลักฐานยินยอม + hash รหัสผูกของคำเชิญนั้น
+    # (required_call_site_check R254 ConsentAsync ล็อกลำดับ limiter → คำเชิญ → หลักฐาน)
+    ("ContactLineJoinController.cs", "Consent"),
 }
 
 ACTION_RE = re.compile(r'^\s*\[Http(Get|Post|Put|Delete|Patch)(\("([^"]*)"\))?\]')

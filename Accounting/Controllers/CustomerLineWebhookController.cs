@@ -28,11 +28,13 @@ public class CustomerLineWebhookController : ControllerBase
     private readonly ICustomerLineLinkService _links;
     private readonly ILogger<CustomerLineWebhookController> _logger;
     private readonly ICustomerRelinkInviteService? _relink;
+    /// <summary>รอบ 254 WP-11 L2: ผูก/หยุด/บล็อก LINE ของ<b>ผู้ติดต่อ</b> (ลิงก์/QR ผูก LINE ผ่าน OA ของบริษัท) — ก่อนเส้นลูกค้าเว็บ</summary>
+    private readonly IContactLineBindingService? _contactLine;
 
     public CustomerLineWebhookController(AccountingDbContext db, ISecretProtector secrets, ICustomerLineLinkService links,
-        ILogger<CustomerLineWebhookController> logger, ICustomerRelinkInviteService? relink = null)
+        ILogger<CustomerLineWebhookController> logger, ICustomerRelinkInviteService? relink = null, IContactLineBindingService? contactLine = null)
     {
-        _db = db; _secrets = secrets; _links = links; _logger = logger; _relink = relink;
+        _db = db; _secrets = secrets; _links = links; _logger = logger; _relink = relink; _contactLine = contactLine;
     }
 
     /// <summary>body ของ LINE webhook เล็ก (event ไม่กี่ตัว) — จำกัด 256 KB กันยิง body ใหญ่ใส่ทางเข้าสาธารณะ (ฝ่ายค้าน ข้อ 6)</summary>
@@ -79,15 +81,23 @@ public class CustomerLineWebhookController : ControllerBase
                 {
                     case "message":
                         if (ev.TryGetProperty("message", out var msg) && msg.TryGetProperty("type", out var mt) && mt.GetString() == "text")
-                            reply = await _links.TryRedeemAsync(CustomerNotifyChannel.ScopeCompany, companyId, destination, userId,
-                                msg.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "", ct);
+                        {
+                            var text = msg.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "";
+                            // รอบ 254 WP-11 L2: รหัสของลิงก์ผูก LINE ผู้ติดต่อ / "หยุด" ก่อน — ไม่ใช่ของผู้ติดต่อ (null) ⇒ เส้นลูกค้าเว็บเดิม
+                            if (_contactLine != null)
+                                reply = await _contactLine.TryRedeemAsync(companyId, destination, userId, text, ct)
+                                    ?? await _contactLine.TryStopAsync(companyId, destination, userId, text, ct);
+                            reply ??= await _links.TryRedeemAsync(CustomerNotifyChannel.ScopeCompany, companyId, destination, userId, text, ct);
+                        }
                         break;
                     case "follow":
                         var restored = await _links.SetBlockedAsync(CustomerNotifyChannel.ScopeCompany, companyId, userId, blocked: false, ct);
+                        if (_contactLine != null) restored += await _contactLine.SetBlockedAsync(companyId, destination, userId, blocked: false, ct);
                         reply = restored > 0 ? CustomerLineLinkRule.Replies.WelcomeBack : CustomerLineLinkRule.Replies.FollowHint;
                         break;
                     case "unfollow":
                         await _links.SetBlockedAsync(CustomerNotifyChannel.ScopeCompany, companyId, userId, blocked: true, ct);
+                        if (_contactLine != null) await _contactLine.SetBlockedAsync(companyId, destination, userId, blocked: true, ct);
                         break;
                 }
                 if (!string.IsNullOrEmpty(reply) && !string.IsNullOrEmpty(replyToken))

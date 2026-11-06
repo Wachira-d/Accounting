@@ -135,7 +135,10 @@ public class BookingNotifier : IBookingNotifier
                 else if (request.LineViaNextAcc)
                 {
                     // OA เดิมของลูกค้า = OA กลาง (ระบุชัด ไม่เลือกตามค่าตั้งบริษัท — บริษัทเปลี่ยนไปใช้ OA ของตัวเองแล้ว)
-                    var pushed = await _line.TryPushViaNextAccAsync(line!.Trim(), new[] { request.Text });
+                    // รอบ 254 WP-11 ข้อ 1 (LINE_OA C2/C5): ผ่าน OA กลาง ⇒ ป้าย "ในนาม {ร้าน} · ผ่าน NextAcc" + ช่องทางยกเลิก (ตัวประกอบเดียว LineOnBehalfText)
+                    var shopName = _db == null ? null
+                        : await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
+                    var pushed = await _line.TryPushViaNextAccAsync(line!.Trim(), new[] { LineOnBehalfText.ForNextAcc(shopName, request.Text) });
                     sent = pushed.Ok;
                     stepError = sent ? null : $"LINE (OA ของ NextAcc): {pushed.Error ?? "ส่งไม่สำเร็จ"}";
                 }

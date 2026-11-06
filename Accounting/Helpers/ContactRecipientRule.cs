@@ -10,7 +10,8 @@ namespace Accounting.Helpers;
 /// <c>Line:GroupId</c> แยกกัน · ฝ่ายค้าน S2) — <b>ห้าม</b>เป็นปลายทางของผู้ติดต่อ ⇒ <see cref="GroupProblem"/> ปฏิเสธเสมอ (ทั้งตอนส่งและตอนผูก) ·
 /// groupId ที่อ่านไม่ได้ (ถอดรหัสไม่ออก/ว่าง) = ใช้ไม่ได้ (ไม่ผ่านด่านเพราะ "ไม่รู้ว่าเป็นกลุ่มอะไร")</para>
 /// <para><b>Q2</b>: กลุ่มที่ผูกได้ ≤ <see cref="MaxGroupMembers"/> คน · <b>PDPA</b>: ปลายทาง LINE ต้องมีหลักฐานความยินยอมที่ยังไม่ถอน · อีเมลใช้ฐานสัญญา (ม.24(3))</para>
-/// <para>L1: ส่งทาง LINE ยังไม่เปิด (<c>lineDeliveryOpen = false</c>) ⇒ ปลายทาง LINE แสดงได้ แต่ไม่อยู่ในชุดผู้รับ พร้อมเหตุ (ไม่ใช่หายเงียบ)</para>
+/// <para>L1: ส่งทาง LINE ยังไม่เปิด ⇒ ปลายทาง LINE แสดงได้ แต่ไม่อยู่ในชุดผู้รับ พร้อมเหตุ (ไม่ใช่หายเงียบ) · รอบ 254 WP-11 L2: เปิดต่อขอบเขต OA ด้วย <see cref="LineOpenness"/>
+/// (OA ของบริษัทพร้อม ⇒ ส่งได้ · OA กลาง ⇒ ยังปิดจน L4 — คำตัดสิน N8)</para>
 /// <para>แถวอีเมลหลักหลายแถว (หลังรวมผู้ติดต่อ — ฝ่ายค้าน S4) ⇒ เลือกด้วย <see cref="PickPrimary"/> ตัวเดียว (ผูกก่อนชนะ · ไม่เลือกตาม Guid) ·
 /// การรวมผู้ติดต่อยกเลิกแถวที่ซ้ำด้วย <see cref="MergeUnlinks"/></para>
 /// </summary>
@@ -63,7 +64,11 @@ public static class ContactRecipientRule
         string? LineGroupIdPlain, string OaScope, string? GroupName, int? MemberCount,
         string? TopicsJson, bool ShowAmounts, bool IsPrimary, bool Verified, string Source,
         Guid? ConsentRecordId, DateTime? ConsentWithdrawnAt,
-        DateTime? BlockedAt, DateTime? UnlinkedAt, string? UnlinkReason, bool IsDeleted, DateTime LinkedAt);
+        DateTime? BlockedAt, DateTime? UnlinkedAt, string? UnlinkReason, bool IsDeleted, DateTime LinkedAt)
+    {
+        /// <summary>รอบ 254 WP-11 L2: บอทของ OA ที่รับการผูก (เทียบกับบอทของ OA บริษัทปัจจุบัน — <see cref="OaChanged"/>) · null = ไม่รู้</summary>
+        public string? OaDestination { get; init; }
+    }
 
     /// <summary>สถานะของแถว (ไม่ขึ้นกับเรื่อง) — <paramref name="Code"/> เป็นค่าคงที่ให้เทสต์/หน้าใช้จัดสี · ป้าย/เหตุเป็นภาษาไทยที่หน้าแสดงตรงตัว</summary>
     public sealed record EndpointStatus(bool Usable, string Code, string Label, string? Reason, string? RuleCode);
@@ -199,8 +204,9 @@ public static class ContactRecipientRule
         return null;
     }
 
-    /// <summary>สถานะของแถว — ลำดับ: ยกเลิก → กลุ่มอ่านไม่ได้/กลุ่มกลาง/เกินเพดาน → OA ไม่รู้ → บล็อก → ความยินยอม → ยังไม่ยืนยัน → LINE ยังไม่เปิด</summary>
-    public static EndpointStatus Status(EndpointFacts e, IReadOnlyCollection<string> platformGroupIds, bool lineDeliveryOpen)
+    /// <summary>สถานะของแถว — ลำดับ: ยกเลิก → กลุ่มอ่านไม่ได้/กลุ่มกลาง/เกินเพดาน → OA ไม่รู้ → บล็อก → ความยินยอม → ยังไม่ยืนยัน → ช่อง LINE ของ OA นั้นยังไม่เปิด
+    /// (รอบ 254 WP-11 L2: <see cref="LineGate"/> ตัดสินต่อขอบเขต OA — OA ของบริษัทพร้อม ⇒ เปิด · OA กลาง ⇒ ยังไม่เปิดจน L4 (คำตัดสิน N8))</summary>
+    public static EndpointStatus Status(EndpointFacts e, IReadOnlyCollection<string> platformGroupIds, LineOpenness line)
     {
         if (e.UnlinkedAt != null)
             return new(false, "unlinked", "ยกเลิกแล้ว", $"ยกเลิกการผูกแล้ว — {NotifyEndpointKind.UnlinkReasonLabel(e.UnlinkReason)}", null);
@@ -231,10 +237,61 @@ public static class ContactRecipientRule
             return new(false, "consent-withdrawn", "ถอนความยินยอม", "เจ้าของข้อมูลถอนความยินยอมแล้ว — ส่งไม่ได้", RuleCodeConsent);
         if (e.Kind == NotifyEndpointKind.LineGroup && !e.Verified)
             return new(false, "unverified", "ยังไม่ยืนยัน", "กลุ่มยังไม่ยืนยันด้วยรหัสผูก (#HeyNextAcc) — ส่งไม่ได้", null);
-        if (!lineDeliveryOpen)
+        if (LineGate(e, line) is { } gate) return gate;
+        return new(true, "ok", "ใช้งาน", null, null);
+    }
+
+    /// <summary>L1 (ก่อนรอบ 254) — <paramref name="lineDeliveryOpen"/> = false ⇒ ทุกช่อง LINE ปิด · true ⇒ ไม่กั้นด้วยความพร้อมของช่อง (เทสต์ตัวตัดสินแถว)</summary>
+    public static EndpointStatus Status(EndpointFacts e, IReadOnlyCollection<string> platformGroupIds, bool lineDeliveryOpen)
+        => Status(e, platformGroupIds, lineDeliveryOpen ? LineOpenness.Unrestricted : LineOpenness.Closed);
+
+    public const string RuleCodeNextAccNotOpen = "NOTIFY-CONTACT-NEXTACC-NOT-OPEN";
+    public const string RuleCodeCompanyOaNotReady = "NOTIFY-CONTACT-COMPANY-OA-NOT-READY";
+    public const string RuleCodeOaChanged = "NOTIFY-CONTACT-OA-CHANGED";
+
+    /// <summary>รอบ 254 WP-11 L2 — ช่อง LINE ที่เปิดส่งถึงผู้ติดต่อจริง ต่อขอบเขต OA (ผู้อ่านข้อเท็จจริง: <c>ContactRecipientResolver</c>) ·
+    /// <paramref name="Open"/> = ระบบเปิดส่ง LINE ถึงผู้ติดต่อ (L2 = true · ผู้หาผู้รับแบบอีเมลอย่างเดียว = false) ·
+    /// <paramref name="CompanyOaReady"/> = บริษัทเปิด LINE + token/secret ถอดได้ · <paramref name="CompanyOaDestination"/> = บอทของ OA บริษัทที่จำไว้ (เทียบกับบอทที่ผูกปลายทาง) ·
+    /// <paramref name="NextAccOpen"/> = ส่งถึงผู้ติดต่อผ่าน OA กลาง (คำตัดสิน N8: <b>ปิด</b>จนมีโควตา LINE แยกช่อง L4)</summary>
+    public sealed record LineOpenness(bool Open, bool CompanyOaReady, string? CompanyOaDestination, string? CompanyOaProblem, bool NextAccOpen)
+    {
+        public static LineOpenness Closed { get; } = new(false, false, null, null, false);
+        /// <summary>ไม่กั้นด้วยความพร้อมของช่อง — ใช้กับ overload แบบ bool (ตัวตัดสินแถวของ L1) เท่านั้น</summary>
+        public static LineOpenness Unrestricted { get; } = new(true, true, null, null, true);
+    }
+
+    /// <summary>ประโยคเมื่อปลายทางผูกกับ OA กลาง (L2 ยังไม่ส่งผ่าน OA กลาง — คำตัดสิน N8)</summary>
+    public const string NextAccNotOpenReason =
+        "ปลายทางนี้ผูกกับ LINE OA กลางของ NextAcc — การส่งถึงผู้ติดต่อผ่าน OA กลางยังไม่เปิด (เปิดพร้อมโควตา LINE แยกช่อง) · ตอนนี้ส่งได้เฉพาะผ่าน LINE OA ของบริษัท";
+
+    /// <summary>ช่อง LINE ของปลายทางนี้ส่งได้ไหม (null = ได้) — ตัวเดียวทั้งชุดผู้รับ (<see cref="Resolve"/>) และหน้าแท็บช่องทางแจ้งเตือน</summary>
+    internal static EndpointStatus? LineGate(EndpointFacts e, LineOpenness line)
+    {
+        if (!line.Open)
             return new(false, "line-not-open", "ยังไม่เปิดส่ง",
                 "ระบบยังไม่ส่งข้อความทาง LINE ถึงผู้ติดต่อ (เปิดในเฟส L2/L3) — ปลายทางนี้ถูกเก็บไว้แล้ว", null);
-        return new(true, "ok", "ใช้งาน", null, null);
+        if (e.OaScope == NotifyEndpointKind.ScopeNextAcc)
+            return line.NextAccOpen ? null : new EndpointStatus(false, "line-not-open", "ยังไม่เปิดส่ง", NextAccNotOpenReason, RuleCodeNextAccNotOpen);
+        if (e.OaScope == NotifyEndpointKind.ScopeCompany)
+        {
+            if (!line.CompanyOaReady)
+                return new(false, "company-oa-not-ready", "OA ของบริษัทยังไม่พร้อม",
+                    "LINE OA ของบริษัทยังไม่พร้อมส่ง (ปิดอยู่ หรือ token/secret ใช้ไม่ได้)"
+                    + (string.IsNullOrWhiteSpace(line.CompanyOaProblem) ? "" : " — " + line.CompanyOaProblem)
+                    + " · แก้ที่ ตั้งค่า → แจ้งเตือนทาง LINE", RuleCodeCompanyOaNotReady);
+            if (OaChanged(e.OaDestination, line.CompanyOaDestination))
+                return new(false, "oa-changed", "ต้องผูกใหม่",
+                    "บริษัทเปลี่ยน LINE OA แล้ว — LINE userId/groupId ใช้ได้เฉพาะ OA ที่ผูกไว้ ⇒ ให้ผู้รับผูกใหม่กับ OA ปัจจุบัน", RuleCodeOaChanged);
+        }
+        return null;
+    }
+
+    /// <summary>บอทที่ผูกปลายทาง ≠ บอทของ OA บริษัทที่จำไว้ (ทั้งคู่ต้องมีค่า · ไม่รู้ข้างใดข้างหนึ่ง = ไม่ตัดสินว่าเปลี่ยน)</summary>
+    public static bool OaChanged(string? endpointDestination, string? companyDestination)
+    {
+        var a = (endpointDestination ?? "").Trim();
+        var b = (companyDestination ?? "").Trim();
+        return a.Length > 0 && b.Length > 0 && !string.Equals(a, b, StringComparison.Ordinal);
     }
 
     /// <summary>ป้ายฐานกฎหมาย/ความยินยอมของแถว (หน้าแสดงตรงตัว)</summary>
@@ -288,7 +345,7 @@ public static class ContactRecipientRule
 
     /// <summary>ผู้รับของเรื่อง <paramref name="topic"/> — ทุกปลายทางที่เห็นได้ พร้อม Available/เหตุ · ใช้ส่งจริงอ่าน <see cref="RecipientSet.Emails"/> ฯลฯ</summary>
     public static RecipientSet Resolve(Guid companyId, ContactFacts? contact, IEnumerable<EndpointFacts> endpoints, NotifyTopic topic,
-        IReadOnlyCollection<string> platformGroupIds, bool lineDeliveryOpen)
+        IReadOnlyCollection<string> platformGroupIds, LineOpenness line)
     {
         var options = new List<RecipientOption>();
         // ฝ่ายค้าน MED-2: ผู้ติดต่อของบริษัทนี้ที่ถูกลบ ⇒ ชุดว่างพร้อมธง (ForEmail บอกเหตุ) · บริษัทอื่น/ไม่พบ ⇒ ชุดว่างเฉย ๆ (ไม่เปิดเผยอะไร)
@@ -314,7 +371,7 @@ public static class ContactRecipientRule
         // ── ปลายทางอื่น (แถวหลักที่ไม่ได้เลือก = ไม่ใช้) ──
         foreach (var e in rows.Where(e => !(e.IsPrimary && e.Kind == NotifyEndpointKind.Email)).OrderBy(e => e.Kind).ThenBy(e => e.LinkedAt))
         {
-            var st = Status(e, platformGroupIds, lineDeliveryOpen);
+            var st = Status(e, platformGroupIds, line);
             var display = e.Kind == NotifyEndpointKind.Email
                 ? (e.Email ?? "").Trim()
                 : !string.IsNullOrWhiteSpace(e.Label) ? e.Label!.Trim()
@@ -327,6 +384,11 @@ public static class ContactRecipientRule
         }
         return new RecipientSet(topic, options);
     }
+
+    /// <summary>L1 (ก่อนรอบ 254) — overload แบบ bool (ดู <see cref="Status(EndpointFacts, IReadOnlyCollection{string}, bool)"/>)</summary>
+    public static RecipientSet Resolve(Guid companyId, ContactFacts? contact, IEnumerable<EndpointFacts> endpoints, NotifyTopic topic,
+        IReadOnlyCollection<string> platformGroupIds, bool lineDeliveryOpen)
+        => Resolve(companyId, contact, endpoints, topic, platformGroupIds, lineDeliveryOpen ? LineOpenness.Unrestricted : LineOpenness.Closed);
 
     private static RecipientOption WithTopic(RecipientOption o, IReadOnlyList<NotifyTopic>? topics, NotifyTopic topic, string topicLabel)
     {

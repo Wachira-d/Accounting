@@ -1,8 +1,10 @@
 namespace Accounting.Services.Interfaces;
 
 /// <summary>ผล push ที่บอกเหตุ (รอบ 212 C) — <see cref="Error"/> ไม่มี LINE userId เต็ม (ปิดบังแล้ว) · ใช้ประทับบนแถว/ตอบผู้กด ·
-/// รอบ 232: <see cref="RuleCode"/> = กติกาของ <c>Helpers/NotificationAudiencePolicy</c> ที่ตัดสินเส้นทาง (null = ไม่ได้ถูกนโยบายกั้น)</summary>
-public sealed record LinePushResult(bool Ok, string? Error, string? RuleCode = null)
+/// รอบ 232: <see cref="RuleCode"/> = กติกาของ <c>Helpers/NotificationAudiencePolicy</c> ที่ตัดสินเส้นทาง (null = ไม่ได้ถูกนโยบายกั้น) ·
+/// รอบ 254 WP-11: <see cref="HttpStatus"/> = สถานะ HTTP ที่ LINE ตอบ (null = ไม่ได้ยิง/เครือข่ายล้ม) · <see cref="TransportError"/> = เครือข่าย/timeout (ลองใหม่ได้) ·
+/// <see cref="LineRequestId"/> = <c>x-line-request-id</c> ของคำขอที่ LINE รับ (หลักฐานการส่ง) — ผู้จำแนกผลตัวเดียว <c>Helpers/LinePushOutcome</c></summary>
+public sealed record LinePushResult(bool Ok, string? Error, string? RuleCode = null, int? HttpStatus = null, string? LineRequestId = null, bool TransportError = false)
 {
     public static LinePushResult Success { get; } = new(true, null);
     public static LinePushResult Fail(string error) => new(false, error);
@@ -43,6 +45,13 @@ public interface ILineNotifyService
     /// <summary>รอบ 212 D: Flex ถึง<b>พนักงาน</b>ผ่าน OA กลางแบบระบุชัด (คู่ของ <see cref="TryPushViaNextAccAsync"/>) — สลิปเงินเดือนของพนักงานที่ผูก
     /// "สลิป 123456" กับ OA กลาง · คืนเหตุเมื่อล้ม (ไม่กลืน) · ไม่ตั้ง token กลาง ⇒ ล้มพร้อมเหตุ (ไม่ถอยไป OA ร้าน)</summary>
     Task<LinePushResult> TryPushFlexViaNextAccAsync(string lineUserId, string altText, object flexContents);
+
+    /// <summary>รอบ 254 WP-11 L2 — การ์ด Flex ถึง<b>ปลายทางของผู้ติดต่อ</b> (ผู้ใช้ LINE หรือกลุ่มที่ผูกด้วยรหัส) ผ่าน OA ที่ปลายทางผูกไว้ <b>แบบระบุชัด</b>:
+    /// <paramref name="oaScope"/> = <c>company</c> ⇒ OA ของบริษัทเท่านั้น (ไม่มี/ปิด ⇒ ปฏิเสธ — ไม่ถอยไป OA กลาง เพราะ userId ผูกกับ OA) ·
+    /// <c>nextacc</c> ⇒ ปฏิเสธ (คำตัดสิน N8 — เปิดพร้อมโควตา LINE แยกช่อง) · ปลายทางเป็นกลุ่มกลางของแอดมิน (ทุกแหล่ง) ⇒ <b>ปฏิเสธเสมอ</b> (คำตอบเจ้าของ Q1(b)) ·
+    /// ทุกครั้งส่ง <c>X-Line-Retry-Key</c> = <paramref name="retryKey"/> (ลองใหม่ด้วย key เดิม ⇒ LINE ไม่ส่งซ้ำ)</summary>
+    Task<LinePushResult> TryPushContactAsync(Guid companyId, string oaScope, Accounting.Helpers.LineTargetKind target, string to,
+        string altText, object flexContents, Guid retryKey);
 
     /// <summary>ปุ่ม "ทดสอบ" ของหน้าตั้งค่าบริษัท — ใช้ <b>token ของบริษัทเท่านั้น</b> (รอบ 232: เดิมทดสอบด้วย token ของ OA กลางเมื่อบริษัทยังไม่ตั้ง ⇒ "สำเร็จ" ทั้งที่ OA ของร้านยังไม่มี) ·
     /// Returns (success, message) suitable for echoing to the admin UI.</summary>

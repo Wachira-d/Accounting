@@ -13,7 +13,22 @@ namespace Accounting.Controllers;
 public class EmailScheduleController : ControllerBase
 {
     private readonly IEmailScheduleService _svc;
-    public EmailScheduleController(IEmailScheduleService svc) { _svc = svc; }
+    /// <summary>รอบ 254 WP-11 L2: คิว LINE ถึงผู้ติดต่อ (หน้าเดียวกับคิวอีเมล)</summary>
+    private readonly IContactLineQueueService? _lineQueue;
+    /// <summary>รอบ 254 WP-11 L2: ด่านเขียนของคิว LINE (ส่งอีกครั้ง = ส่งข้อความในนามบริษัท) — CompanySettings.Edit · ไม่มีบริการ = ปฏิเสธ (ปิดทางปลอดภัย)</summary>
+    private readonly IPermissionService? _permissions;
+    public EmailScheduleController(IEmailScheduleService svc, IContactLineQueueService? lineQueue = null, IPermissionService? permissions = null)
+    {
+        _svc = svc; _lineQueue = lineQueue; _permissions = permissions;
+    }
+
+    /// <summary>รอบ 254 WP-11 L2: ด่านสิทธิ์ของคำสั่งคิว LINE — null = ผ่าน</summary>
+    private async Task<ActionResult?> RequireSettingsAsync(Guid companyId)
+    {
+        var allowed = _permissions != null && await _permissions.HasPermissionAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit);
+        return allowed ? null : StatusCode(403, new ApiResponse<object>(false, null, "ไม่มีสิทธิ์จัดการคิว LINE (ต้องการ CompanySettings.Edit)"));
+    }
 
     public sealed record RuleRequest(
         Guid Id, string Trigger, bool IsActive, string? DocumentType,
@@ -22,7 +37,9 @@ public class EmailScheduleController : ControllerBase
         int DayOfMonth = 5,
         // รอบ 241: ส่งเอกสารอัตโนมัติ — null = ตามค่าบริษัท · ช่องทาง null/ว่าง = ตามค่าบริษัท
         bool? AttachPayLink = null, List<string>? PayLinkChannels = null,
-        bool? PostPayEmailReceipt = null, bool? PostPayIncludePartial = null);
+        bool? PostPayEmailReceipt = null, bool? PostPayIncludePartial = null,
+        // รอบ 254 WP-11 L2: ช่องทางต่อกฎ (ไม่ส่ง = พฤติกรรมเดิม: อีเมลอย่างเดียว · ถอยไปอีเมลค่าตั้งต้นเปิด — Q7)
+        bool ChannelEmail = true, bool ChannelLineUser = false, bool ChannelLineGroup = false, bool LineFallbackToEmail = true);
 
     /// <summary>ช่วงที่รับของกฎส่งอีเมล (ตัวเดียว — หน้าเว็บตรวจช่วงเดียวกันก่อนส่ง) · null = ผ่าน</summary>
     internal static string? RuleRangeError(int sendAtHour, int dayOfMonth, int repeatEveryDays)
@@ -63,6 +80,10 @@ public class EmailScheduleController : ControllerBase
             PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(req.PayLinkChannels),
             PostPayEmailReceipt = req.PostPayEmailReceipt,
             PostPayIncludePartial = req.PostPayIncludePartial,
+            ChannelEmail = req.ChannelEmail,
+            ChannelLineUser = req.ChannelLineUser,
+            ChannelLineGroup = req.ChannelLineGroup,
+            LineFallbackToEmail = req.LineFallbackToEmail,
         };
         var saved = await _svc.UpsertRuleAsync(companyId, rule,
             User.Identity?.Name ?? JwtHelper.GetUserIdFromClaims(User).ToString());
@@ -100,6 +121,29 @@ public class EmailScheduleController : ControllerBase
     {
         await _svc.RetryFailedAsync(companyId, queueId);
         return Ok(new ApiResponse<object>(true, null, "พักไว้ในคิวรอบใหม่"));
+    }
+
+    /// <summary>รอบ 254 WP-11 L2: คิว LINE (ป้ายสถานะ/ชนิดจากเซิร์ฟเวอร์ · ไม่มี LINE id)</summary>
+    [HttpGet("line-queue")]
+    public async Task<ActionResult<ApiResponse<List<LineQueueItemDto>>>> GetLineQueue(Guid companyId, [FromQuery] int take = 50, CancellationToken ct = default)
+        => Ok(new ApiResponse<List<LineQueueItemDto>>(true, _lineQueue == null ? new List<LineQueueItemDto>() : await _lineQueue.GetRecentAsync(companyId, take, ct)));
+
+    [HttpPost("line-queue/{queueId:guid}/retry")]
+    public async Task<ActionResult<ApiResponse<object>>> RetryLine(Guid companyId, Guid queueId, CancellationToken ct)
+    {
+        if (await RequireSettingsAsync(companyId) is { } deny) return deny;
+        if (_lineQueue == null) return StatusCode(503, new ApiResponse<object>(false, null, "คิว LINE ยังไม่พร้อม"));
+        await _lineQueue.RetryFailedAsync(companyId, queueId, ct);
+        return Ok(new ApiResponse<object>(true, null, "พักไว้ในคิว LINE รอบใหม่ (ส่งอีกครั้ง)"));
+    }
+
+    [HttpPost("line-queue/{queueId:guid}/cancel")]
+    public async Task<ActionResult<ApiResponse<object>>> CancelLine(Guid companyId, Guid queueId, CancellationToken ct)
+    {
+        if (await RequireSettingsAsync(companyId) is { } deny) return deny;
+        if (_lineQueue == null) return StatusCode(503, new ApiResponse<object>(false, null, "คิว LINE ยังไม่พร้อม"));
+        await _lineQueue.CancelPendingAsync(companyId, queueId, ct);
+        return Ok(new ApiResponse<object>(true, null, "ยกเลิกคิว LINE แล้ว"));
     }
 
     [HttpPost("queue/{queueId:guid}/cancel")]

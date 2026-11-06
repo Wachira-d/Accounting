@@ -38,6 +38,10 @@ public interface IEmailScheduleService
     /// คืนจำนวนที่ส่งสำเร็จ.</summary>
     Task<int> ProcessPendingQueueAsync(CancellationToken ct = default);
 
+    /// <summary>รอบ 254 WP-11 L2 (คำตอบเจ้าของ Q7): LINE ของใบนี้ล้มถาวร ⇒ เข้าคิว<b>อีเมล</b>แทนหนึ่งครั้ง (เส้นเข้าคิวอีเมลเดิมทั้งชุด: ผู้รับตามเรื่อง ·
+    /// ไม่ส่งอัตโนมัติ · e-Tax · เพดานผู้รับ) · กุญแจ = กุญแจเหตุการณ์เดิม + ":line-fallback" (ถอยซ้ำไม่ได้) · คืน null = เข้าคิวแล้ว/มีอยู่แล้ว · ข้อความ = เหตุที่ถอยไม่ได้</summary>
+    Task<string?> EnqueueLineFallbackEmailAsync(Guid companyId, Guid? ruleId, Guid documentId, string baseKey, string trigger, CancellationToken ct = default);
+
     // CRUD rules
     Task<List<EmailScheduleRule>> GetRulesAsync(Guid companyId);
     Task<EmailScheduleRule> UpsertRuleAsync(Guid companyId, EmailScheduleRule rule, string actor);
