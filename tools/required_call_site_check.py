@@ -15037,6 +15037,107 @@ def cascade_writer_self_test() -> list:
         fails.append("self-test R238: migration ที่อ่านประวัติ CascadeExpiredFromLicense ถูกฟ้องผิด")
     return fails
 
+# ── รอบ 248 (AUTOPILOT_BILLING_DESIGN §4.3–§4.5 · §5.1): นโยบายอนุมัติข้ามคำเตือน · ทดลองรันไม่เขียนอะไร · ช่องทางรับเงินเป็นชั้น ──
+_R248_WHY = "รอบ 248 (AUTOPILOT_BILLING_DESIGN §12): "
+_R248_AP = "Services/Implementations/RecurringAutopilotService.cs"
+_R248_LOADER = "Services/Implementations/RecurringApprovePolicyLoader.cs"
+_R248_CTRL = "Controllers/RecurringController.cs"
+_R248_EMAIL = "Services/Implementations/EmailScheduleService.cs"
+RULES += [
+    dict(file=RECURRING, method="CreateDocumentFromTemplateAsync",
+         must=["RecurringApprovePolicyLoader.LoadAsync(", "ApprovalAckSource.UnattendedWithPolicy", "autoApprovePolicy: policyLoad.Policy"],
+         forbid=["autoApprovePolicy: null", "AutoApprovePolicy.Parse("],
+         why=_R248_WHY + "ใบประจำอนุมัติด้วยแหล่ง UnattendedWithPolicy + นโยบายจากตัวโหลดเดียว (รายการ › ผู้ติดต่อ · ผู้ตั้งยังเป็นสมาชิก) — ห้ามอ่าน JSON เอง"),
+    dict(file=DOC, method="ApproveDocumentAsync#2",
+         must=["ApprovalAcknowledgement.Unacknowledged(ackSource, warnings, autoApprovePolicy)", "AutoApprovePolicy.Released(", "AutoApprovePolicy.NoteLine("],
+         why=_R248_WHY + "ตัวตัดสินเดียวว่าข้อไหนหยุด (ชุดห้ามปล่อยหยุดเสมอ) · คำเตือนที่นโยบายปล่อยลงหมายเหตุ + audit (หลักการ #10)"),
+    dict(file=DOC, method="PreviewApprovalWarningsForUnsavedAsync",
+         must=["CollectApprovalWarningsAsync(companyId, draft)", "EntityState.Detached", "draft.CompanyId != companyId"],
+         forbid=["SaveChangesAsync(", "_db.Documents.Add(", "_db.Attach("],
+         why=_R248_WHY + "คำเตือนของใบจำลองใช้ตัวรวบรวมเดียวกับการอนุมัติจริง · ไม่บันทึก · ถอดแถวที่ตัวรวบรวมเพิ่มลง context"),
+    dict(file=DOC, method="CollectApprovalWarningsAsync",
+         must=["ArOverdueApprovalWarning.Message("], forbid_lit=["ตรวจวงเงินเครดิตก่อนอนุมัติเอกสารใหม่"],
+         why=_R248_WHY + "คำเตือนค้างชำระต้องมีป้าย [AR-OVERDUE] จากตัวประกอบเดียว (นโยบายอ่านป้าย ไม่อ่านข้อความไทย)"),
+    dict(file=_R248_AP, method="BuildAsync",
+         must=["AutopilotReadiness.Evaluate(", "ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.UnattendedWithPolicy", "AutoApprovePolicy.Released(",
+               "DocumentPayLinkPolicy.AmountsFor(", "AutopilotSettingsResolver.Resolve(", "_docs.PreviewApprovalWarningsForUnsavedAsync(",
+               "RecurringApprovePolicyLoader.LoadAsync(", "TaxInvoiceCompletenessChecker.BuyerBlockingFields(", "RecurringEmailReadiness.HasDeliverableEmail("],
+         forbid=["SaveChangesAsync(", "EnsureLinkAsync(", "SendDocumentRoutedAsync(", "SendEtaxByEmailAsync(", "EnqueueAsync(", "AddChainedAuditLog(",
+                 "ApproveDocumentAsync(", "CreateDocumentAsync(", "_db.Documents.Add(", "_db.Add(", "OnRecurringDocumentCreatedAsync("],
+         why=_R248_WHY + "ทดลองรัน/ความพร้อม: ถามตัวตัดสินเดิมทุกตัวแบบอ่านอย่างเดียว — ห้ามบันทึก/ออกลิงก์/ส่ง/อนุมัติ/สูตรของตัวเอง (Db test นับแถวก่อน-หลัง)"),
+    dict(file=_R248_AP, method="FromDraftAsync",
+         must=["r.CompanyId == companyId"], forbid=["SaveChangesAsync(", "_db.RecurringTransactions.Add("],
+         why=_R248_WHY + "ร่างในฟอร์มเป็นแถวในหน่วยความจำ — ห้ามบันทึก · นโยบายที่ตั้งไว้อ่านแบบกรองบริษัท"),
+    dict(file=_R248_AP, method="PolicyJsonFrom",
+         must=["AutoApprovePolicy.Validate(", "AutoApprovePolicy.Create("],
+         why=_R248_WHY + "รหัสห้ามปล่อย (§86/4 · [Σ-GAP] · VAT ไม่อยู่บนกระดาษ) / ไม่รู้จัก ⇒ ปฏิเสธพร้อมเหตุ ห้ามเก็บเงียบ"),
+    dict(file=_R248_AP, method="SetRecurringPolicyAsync",
+         must=["PolicyJsonFrom(request, userId, r.ContactId,", "AuditPolicy(", "x.CompanyId == companyId"],
+         why=_R248_WHY + "ตั้งนโยบาย = ร่องรอยใน hash chain · tenant · ผูกผู้ติดต่อ/ชนิดเอกสารตอนตั้ง (ฝ่ายค้าน)"),
+    dict(file=_R248_AP, method="SetContactPolicyAsync",
+         must=["PolicyJsonFrom(request, userId,", "AuditPolicy(", "x.CompanyId == companyId"],
+         why=_R248_WHY + "ตั้งนโยบายระดับผู้ติดต่อ = ร่องรอยใน hash chain · tenant"),
+    dict(file=_R248_AP, method="AuditPolicy",
+         must=["_db.AddChainedAuditLog(new AuditLog"], forbid=["_db.AuditLogs.Add("],
+         why=_R248_WHY + "audit ผ่าน chain เท่านั้น (กฎ M)"),
+    dict(file=_R248_LOADER, method="LoadAsync",
+         must=["AutoApprovePolicy.Effective(", "AutoApprovePolicy.MatchesBinding(", "CompanyMembership.IsActiveMemberAsync(", "DocumentPermissionHelper.CanApproveAsync(", "c.CompanyId == companyId"],
+         why=_R248_WHY + "ผู้ตั้งออกจากบริษัท/หมดสิทธิ์อนุมัติ ⇒ นโยบายหยุดมีผล (ตัวโหลดเดียวของเส้นจริงและแผงความพร้อม)"),
+    dict(file=_R248_CTRL, method="SetApprovePolicy",
+         must=["DocumentPermissionHelper.CanApproveAsync(", "Forbid403<"],
+         before=[("DocumentPermissionHelper.CanApproveAsync(", "_autopilot.SetRecurringPolicyAsync(")],
+         why=_R248_WHY + "ผู้ไม่มีสิทธิ์อนุมัติห้ามตั้งให้ระบบอนุมัติแทน"),
+    dict(file=_R248_CTRL, method="SetContactApprovePolicy",
+         must=["DocumentPermissionHelper.CanApproveAsync(", "Forbid403<"],
+         before=[("DocumentPermissionHelper.CanApproveAsync(", "_autopilot.SetContactPolicyAsync(")],
+         why=_R248_WHY + "นโยบายระดับผู้ติดต่อต้องมีสิทธิ์อนุมัติเอกสารขาย"),
+    dict(file=_R248_CTRL, method="UpdateContactAutopilot",
+         must=["PermissionKeys.ContactEdit", "Forbid403<"],
+         before=[("PermissionKeys.ContactEdit", "_autopilot.UpdateContactPaymentAsync(")],
+         why=_R248_WHY + "แก้ช่องทางรับเงินของผู้ติดต่อต้องมีสิทธิ์แก้ผู้ติดต่อ"),
+    dict(file=_R241_LINK, method="EnsureLinkAsync",
+         must=["ContactPayLayerAsync(companyId, d.ContactId, all, ct)", "AutopilotSettingsResolver.Resolve("],
+         forbid=["Allowed(all, scheduleChannels"],
+         why=_R248_WHY + "ช่องทาง = ตารางส่ง › ผู้ติดต่อ › บริษัท ผ่านตัวต่อชั้นเดียว"),
+    dict(file=_R241_LINK, method="ForScheduledEmailAsync",
+         must=["ContactPayLayerAsync(", "AutopilotSettingsResolver.Resolve("], forbid=["rule.AttachPayLink ?? companyAttach"],
+         why=_R248_WHY + "แนบลิงก์ไหม = ตารางส่ง(+รายการประจำ) › ผู้ติดต่อ › บริษัท ผ่านตัวต่อชั้นเดียว"),
+    dict(file=_R241_LINK, method="ContactPayLayerAsync",
+         must=["x.CompanyId == companyId", "AutopilotSettingsResolver.FromMode("],
+         why=_R248_WHY + "ชั้นผู้ติดต่อ: tenant + ตัวแปลงโหมดเดียว"),
+    dict(file=_R248_EMAIL, method="OnRecurringDocumentCreatedAsync",
+         must=["RecurringPayLayerAsync(companyId, recurringId, ct)", "WithRecurringPayLayer(", "AttachPayLink = recurringLayer?.Attach"],
+         why=_R248_WHY + "ช่องทางรับเงินของรายการประจำเป็นชั้นใต้ตารางส่ง (กฎ #4 A เอกสารลูกสืบทอด)"),
+    dict(file=_R248_EMAIL, method="RecurringPayLayerAsync",
+         must=["r.CompanyId == companyId", "AutopilotSettingsResolver.FromMode("],
+         why=_R248_WHY + "ชั้นรายการประจำ: tenant + ตัวแปลงโหมดเดียว"),
+]
+
+REVIEWER_CASES += [
+    # ใบประจำกลับไปใช้แหล่ง Unattended (ลืมนโยบาย) ⇒ ต้องฟ้อง
+    ("R248a", "CreateDocumentFromTemplateAsync", "Accounting.Helpers.ApprovalAckSource.UnattendedWithPolicy, withAiHints: false, passed,",
+     "Accounting.Helpers.ApprovalAckSource.Unattended, withAiHints: false, passed,", True),
+    # ตัวตัดสินไม่รับนโยบาย ⇒ ต้องฟ้อง
+    ("R248b", "ApproveDocumentAsync#2", "Unacknowledged(ackSource, warnings, autoApprovePolicy)", "Unacknowledged(ackSource, warnings)", True),
+    # ทดลองรันเผลอบันทึก ⇒ ต้องฟ้อง
+    ("R248c", "BuildAsync", "        var notes = new List<string>();", "        var notes = new List<string>(); await _db.SaveChangesAsync(ct);", True),
+    # ทดลองรันคิดเองว่าอะไรหยุด (ข้ามตัวตัดสิน) ⇒ ต้องฟ้อง
+    ("R248d", "BuildAsync", "ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.UnattendedWithPolicy, warnings, policy.Policy)", "warnings", True),
+    # ถอดด่านสิทธิ์อนุมัติของการตั้งนโยบาย ⇒ ต้องฟ้อง
+    ("R248e", "SetApprovePolicy", "if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, item.DocumentType ?? DocumentType.Invoice))",
+     "if (false)", True),
+    # ไม่ตรวจสมาชิกภาพของผู้ตั้ง ⇒ ต้องฟ้อง
+    ("R248f", "LoadAsync", "&& await CompanyMembership.IsActiveMemberAsync(db, companyId, setter, ct);", ";", True),
+    # ลิงก์ชำระกลับไปข้ามชั้นผู้ติดต่อ ⇒ ต้องฟ้อง
+    ("R248g", "EnsureLinkAsync", "var allowed = DocumentPayLinkPolicy.Allowed(all, choice.Channels, null);",
+     "var allowed = DocumentPayLinkPolicy.Allowed(all, scheduleChannels, companyDefault);", True),
+    # คอมเมนต์ที่เอ่ยถึง SaveChangesAsync( ในทดลองรัน = โค้ดถูก ⇒ ต้องไม่ฟ้อง
+    ("R248h", "BuildAsync", "        var notes = new List<string>();", "        var notes = new List<string>(); // ห้าม SaveChangesAsync( ที่นี่", False),
+    # ข้อความค้างชำระกลับเป็นข้อความล้วนไม่มีป้าย ⇒ ต้องฟ้อง
+    ("R248i", "CollectApprovalWarningsAsync", "warnings.Add(Accounting.Helpers.ArOverdueApprovalWarning.Message(overdue.Count, total));",
+     'warnings.Add($"ผู้ติดต่อนี้ยังค้างชำระ {overdue.Count} ใบ รวม {total:N2} THB — ตรวจวงเงินเครดิตก่อนอนุมัติเอกสารใหม่");', True),
+]
+
 def wht_credit_ioe_errors(text: str) -> list:
     """รอบ 243a (DESIGN G-10 · กฎ #4 E): WhtCreditService ทั้งไฟล์ห้ามโยน InvalidOperationException — ข้อความไทยถึงผู้ใช้ต้องเป็น BusinessRuleException
     (EF/framework ก็โยน InvalidOperationException ⇒ middleware แยกไม่ออก) · ตรวจบนโค้ดที่ตัดคอมเมนต์+สตริงแล้ว"""

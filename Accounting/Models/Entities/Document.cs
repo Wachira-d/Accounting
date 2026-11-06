@@ -1096,6 +1096,13 @@ public class Contact : TenantEntity
     /// <summary>ป้ายเครดิตเทอม (เช่น "Net 30", "เงินสด", "60 วัน") — free-text
     /// override; ถ้าว่างระบบสร้างจาก PaymentDueDays ("Net {n}").</summary>
     public string? PaymentTerms { get; set; }
+    /// <summary>รอบ 248 (AUTOPILOT_BILLING_DESIGN §5.1): โหมดรับเงินของลูกค้ารายนี้ (ชื่อใน <c>AutopilotSettingsResolver.Modes</c>) — null = ตามบริษัท ·
+    /// ผู้อ่าน: <c>DocumentPayLinkService</c> (ลิงก์ชำระ/อีเมลตามตาราง) ผ่าน <c>AutopilotSettingsResolver</c> · ตั้งที่ <c>PUT …/recurring/contacts/{id}/autopilot</c></summary>
+    public string? PaymentMode { get; set; }
+    /// <summary>ช่องทางชำระของลูกค้ารายนี้ (JSON ชื่อ enum · <c>DocumentPayLinkPolicy.ParseChannels</c>) · null = ทุกช่องตามโหมด</summary>
+    public string? PayLinkChannelsJson { get; set; }
+    /// <summary>นโยบายอนุมัติข้ามคำเตือนระดับผู้ติดต่อ (JSON <c>AutoApprovePolicy</c>) — ใช้เมื่อรายการประจำไม่ได้ตั้งเอง · null = ไม่ปล่อย (ค่าตั้งต้น)</summary>
+    public string? AutoApprovePolicyJson { get; set; }
 
     /// <summary>ภาษาเอกสารเริ่มต้นของผู้ติดต่อรายนี้ ("th"/"en") — null = ตามค่า
     /// บริษัท. semantic = "ค่าตั้งต้นตอนสร้างใบ": ประทับลง Document.DocumentLanguage

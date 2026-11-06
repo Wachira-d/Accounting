@@ -2266,7 +2266,30 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (กำหนดที่ผ่านไปแล้วเริ่มวันนี้)
 - **ฟอร์ม** `recurring.html`: ค่าที่บันทึกไว้ (ช่องทางรับ/จ่าย · หมวดค่าใช้จ่าย) ที่ไม่อยู่ในดรอปดาวน์แล้ว (ปิด/ลบ) ⇒ ใส่กลับเป็นตัวเลือก "⚠️ ชื่อ"
   + ข้อความใต้ช่อง (เดิมตกเป็น "เงินสด" เงียบ ๆ แล้วบันทึกทับ ⇒ ใบทุกงวดลงเงินสด) · โหลดตัวเลือกไม่สำเร็จ = toast + ห้ามบันทึก ·
-  เทมเพลตหลายบรรทัด (API) ล็อกช่องรายบรรทัด ไม่บันทึกทับ · ล้างวันสิ้นสุดตอนแก้ไขได้จริง (เดิมอ่าน `this.editingId` ที่ไม่มีใครตั้ง)
+  ~~เทมเพลตหลายบรรทัด (API) ล็อกช่องรายบรรทัด~~ (รอบ 248: แก้ได้ทุกบรรทัด — ดูข้อถัดไป) · ล้างวันสิ้นสุดตอนแก้ไขได้จริง (เดิมอ่าน `this.editingId` ที่ไม่มีใครตั้ง)
+- **รอบ 248 — Autopilot** (`erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §4–§5.1 · §12 รอบ 248 · Last verified commit <เติมในคอมมิตตามหลัง>):
+  - **ฟอร์มเป็น wizard 5 ขั้น** (① เอกสาร&รอบ ② รายการ&ราคา ③ ภาษี&บัญชี ④ ส่ง&รับเงิน ⑤ อนุมัติ) + แผงความพร้อมด้านขวา · **หลายบรรทัด**:
+    บรรทัดที่ 1 = ช่องยอดเดิม · บรรทัดที่ 2..n = ตาราง "บรรทัดเพิ่มเติม" (คีย์อื่นของบรรทัดเดิมที่ตั้งผ่าน API ไม่ถูกทับ — ทับเฉพาะช่องของตาราง ตำแหน่งเดียวกัน)
+  - **ช่องทางรับเงินเป็นชั้น** (`Helpers/AutopilotSettingsResolver` — ตัวต่อชั้นเดียว): ตารางส่ง › **รายการประจำ** (`RecurringTransaction.PaymentMode/PayLinkChannelsJson`)
+    › **ผู้ติดต่อ** (`Contact.PaymentMode/PayLinkChannelsJson` · `PUT recurring/contacts/{id}/autopilot` · `Contact.Edit`) › บริษัท ·
+    โหมด `Inherit|Online|TransferOnly|Both|None` · ชั้นที่ไม่ตั้ง = เท่าเดิม (241-1) · ผู้อ่าน: `EmailScheduleService.OnRecurringDocumentCreatedAsync` (เติมชั้นรายการลงกฎ
+    ที่ช่องว่าง/กฎเสมือน) · `DocumentPayLinkService.ForScheduledEmailAsync` (แนบไหม) · `EnsureLinkAsync` (ช่องทาง) · **`TransferOnly` = ไม่แนบลิงก์ gateway**
+    (ลูกค้าโอนตามบัญชี/QR บนเอกสาร) — หน้าเว็บที่มีแต่เลขบัญชีเป็นงานรอบ 250 (คำตัดสิน 241-2 "ลิงก์ต้องมีช่องทางออนไลน์" ยังมีผล)
+  - **นโยบายอนุมัติข้ามคำเตือน** (`Helpers/AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy`): คำเตือนค้างชำระมีป้าย `[AR-OVERDUE]`
+    (`Helpers/ArOverdueApprovalWarning` — เดิมข้อความล้วน) · ตั้งต่อรายการ (`PUT recurring/{id}/approve-policy`) และต่อผู้ติดต่อ
+    (`PUT recurring/contacts/{id}/approve-policy`) — **ต้องมีสิทธิ์อนุมัติเอกสาร** · รายการ (รวมตั้งว่าง = หยุดรอคน) ชนะผู้ติดต่อ · ไม่มีระดับบริษัท ·
+    ค่าตั้งต้น = ไม่ตั้ง (พฤติกรรมรอบ 247 เป๊ะ) · ⚠️ **รอเจ้าของยืนยัน Q3** · ตอนรัน `RecurringApprovePolicyLoader` ตรวจผู้ตั้งยังเป็นสมาชิก (`CompanyMembership`)
+    + ยังมีสิทธิ์อนุมัติ ⇒ ไม่ใช่ = ไม่ปล่อย + เรื่องต้องทำต่อบนแถว · ปล่อยได้เฉพาะรหัสใน `AutoApprovePolicy.Catalogue` (ตอนนี้ `AR-OVERDUE` ตัวเดียว) ·
+    **ปล่อยไม่ได้เสมอ**: ผู้ซื้อ §86/4 ไม่ครบ (ไม่มีป้าย ⇒ ปล่อยไม่ได้โดยโครงสร้าง) · `[Σ-GAP]` · VAT ไม่อยู่บนกระดาษ · งวดปิด · วงเงินอนุมัติ (ด่านรองไม่ถูก override —
+    `acknowledgeWarnings` ของ ApproveDocumentAsync ยังเป็น false) · ตั้งนโยบายปล่อยรหัสเหล่านี้ ⇒ 400 พร้อมเหตุ · ปล่อยจริง ⇒ หมายเหตุภายในบนใบ
+    (`AutoApprovePolicy.NoteLine`) + audit `APPROVE-UNATTENDED-POLICY` (`policyReleased` · `policyScope` · `policySetBy/At`) · ตั้ง/ล้างนโยบาย ⇒ audit `SetAutoApprovePolicy`
+  - **ตรวจความพร้อม** `Helpers/AutopilotReadiness.Evaluate` (pure · ระดับ Full/Partial/DraftOnly · ข้อ `TEMPLATE·CONTACT·BUYER-TAX·APPROVE·OWNER-POLICY·RECIPIENT·SMTP·GATEWAY·THB`
+    พร้อมลิงก์แก้) ← `RecurringAutopilotService` รวบรวมข้อเท็จจริงครั้งเดียว · `GET recurring/{id}/readiness` · `POST recurring/readiness` (ร่างในฟอร์ม)
+  - **ทดลองรัน** `POST recurring/{id}/dry-run` · `POST recurring/dry-run` (ร่าง) — **ไม่เขียนอะไรเลย** (ไม่ออกเลข · ไม่สร้างลิงก์ · ไม่ส่ง · ไม่อนุมัติ):
+    ใบจำลองในหน่วยความจำ → `DocumentService.PreviewApprovalWarningsForUnsavedAsync` (ตัวรวบรวมเดียวกับอนุมัติจริง · ถอดแถวที่ตัวรวบรวมเพิ่มลง context) →
+    `ApprovalAcknowledgement.Unacknowledged(UnattendedWithPolicy, …, policy)` · ยอดในลิงก์ `DocumentPayLinkPolicy.AmountsFor` · ยอดเป็นประมาณการจากเทมเพลต (บอกในผล) ·
+    ล็อกด้วย Db test `RecurringAutopilotRound248DbTests` (นับแถวก่อน-หลัง) + `tools/required_call_site_check.py` (R248)
+  - ยังไม่ทำในรอบนี้: คอลัมน์ "ระดับ Autopilot" ในตารางรายการ · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`) · LINE/คู่ค้าในขั้นส่ง · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน
 
 ### 2.7b ใบวางบิลรวมใบค้างชำระ (compose — ไม่ใช่ convert)
 - **ทางเข้า**: ฟอร์มสร้างเอกสาร → ประเภท "ใบวางบิล" + เลือกลูกค้า → กล่อง
@@ -7701,3 +7724,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 242 OCR — §OCR ตา�
 _Last verified against codebase: 2026-11-06 (รอบ 242 เอกสาร — §6.3 ลบถาวร: ลำดับลบแถวลูก `Helpers/DocumentPurgeOrder` (แก้ 500 · 23001 `FK_DocumentSignatures_Approvals`) + ลบพร้อมเอกสารที่เกี่ยวข้อง `Helpers/DocumentCascadePurgePolicy` (ข้อ 242-A) + แผน `purge-preview` · §2.4a ป้ายสัดส่วน "ครบตามยอดรวมทั้งใบ" `DocumentConversionProgress.SoleChildMatchesTotal` (ข้อ 242-B) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 246 QR — §2.12i QR ชำระเงินบนเอกสาร: QR ของบัญชีธนาคาร (อัปโหลด/พร้อมเพย์ · `PaymentQrPolicy`/`PaymentQrImageValidator`/`PaymentQrService`) · ตัวเรนเดอร์ทั้งสองวาดจาก `PaymentQrBlock` ตัวเดียว · QR หน้าชำระเฉพาะลิงก์ที่ใช้ได้ (ไม่มีในไฟล์ e-Tax) · QR พร้อมเพย์บน `pay-document.html` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง `DocumentPayLinkService`/`DocumentPayLinkPolicy` (ช่องทาง = บริษัทเปิดจริง ∩ ตาราง · ยอดสุทธิหลังหัก ณ ที่จ่าย · hash ของ token + เวลาคงที่ · ตัดสินสดทุกครั้ง) · `public-pay/documents/{token}` + `pay-document.html` · `DocumentPaymentHandler` บันทึก WHT ที่เหลือเมื่อเงินเข้ายอดสุทธิ · งานหลังรับชำระ `PostPaymentAutomationService` (1 แถวต่อการชำระ · ออกใบเสร็จด้วย `IssueReceiptForPaymentAsync` · ส่งด้วย `SendDocumentEmailAsync` · หยุดเมื่อข้อมูลไม่ครบ + แจ้งเตือน · ตรวจแถวรอ 50 ทวิ ไม่สร้างเอง) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

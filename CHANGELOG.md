@@ -6490,3 +6490,18 @@ _รอบ 247 UX รายการประจำ (2026-11-06 · คำร้�
 เพราะคิวอีเมลเอกสารยังไม่อ่านชุดผู้รับ L1) · `GET recurring/email-readiness?contactId=` ⇒ ฟอร์มปิดช่องส่งอีเมล + เหตุผล + ลิงก์ `contacts.html?id=` (ติ๊กไว้แล้วคงให้เอาออกได้ + คำเตือนแดง) ·
 บันทึกได้แต่คืน `SaveWarnings` · หน้ารายละเอียด/ตารางขึ้นป้าย `AutoSendEmailWarning` · ผลรอบ "ไม่ได้ส่งอีเมล เพราะผู้ติดต่อไม่มีอีเมล" · เทสต์ `RecurringRunOutcomeTests` + Db `RecurringTransactionDbTests` (2 จุด) —
 ไม่แตะกติกาการอนุมัติ/เครดิต · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 248 รายการประจำ Autopilot (2026-11-06 · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §12 รอบ 248 · ช่องว่าง A-1/A-2/A-3):
+(1) **นโยบายอนุมัติข้ามคำเตือน** — คำเตือน "ลูกค้าค้างชำระเกิน 30 วัน" ได้ป้าย `[AR-OVERDUE]` (`Helpers/ArOverdueApprovalWarning`) · ตัวตัดสินเดียว
+`Helpers/AutoApprovePolicy` + แหล่งใหม่ `ApprovalAckSource.UnattendedWithPolicy` ใน `ApprovalAcknowledgement` (ไม่มีนโยบาย = Unattended เดิม) ·
+`DocumentService.ApproveDocumentAsync` รับ `autoApprovePolicy` · ปล่อยจริง ⇒ หมายเหตุบนใบ + audit `APPROVE-UNATTENDED-POLICY` · ตั้งต่อรายการ/ต่อผู้ติดต่อ
+(ต้องมีสิทธิ์อนุมัติ · audit `SetAutoApprovePolicy`) · ผู้ตั้งออกจากบริษัท/หมดสิทธิ์ ⇒ ไม่ปล่อย (`RecurringApprovePolicyLoader`) · ปล่อยไม่ได้เสมอ: §86/4 ผู้ซื้อ ·
+[Σ-GAP] · VAT ไม่อยู่บนกระดาษ · งวดปิด · วงเงินอนุมัติ · ⚠️ ค่าตั้งต้น Q3 (ต่อรายการ + ต่อผู้ติดต่อ · ไม่มีระดับบริษัท · ปิด) รอเจ้าของยืนยัน.
+(2) **ช่องทางรับเงินต่อรายการ/ต่อผู้ติดต่อ** — `Helpers/AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · คอลัมน์ใหม่ `PaymentMode/PayLinkChannelsJson`
+(+ `AutoApprovePolicyJson`) บน `RecurringTransactions`/`Contacts` (NULL = เดิม) · ผู้อ่าน 3 จุด: `OnRecurringDocumentCreatedAsync` · `ForScheduledEmailAsync` · `EnsureLinkAsync` ·
+`TransferOnly` = ไม่แนบลิงก์ gateway (หน้าเลขบัญชีอย่างเดียว = รอบ 250).
+(3) **แผงความพร้อม** `Helpers/AutopilotReadiness` + **ทดลองรัน** (ไม่เขียนอะไรเลย · `PreviewApprovalWarningsForUnsavedAsync` บนใบจำลอง) — `RecurringAutopilotService` ·
+`GET/POST recurring/…/readiness` · `POST recurring/…/dry-run`.
+(4) **ฟอร์ม wizard 5 ขั้น** + หลายบรรทัด (เลิกล็อกเทมเพลตหลายบรรทัดของรอบ 247 · คีย์ที่ตั้งผ่าน API ไม่ถูกทับ) · ผลรอบตัดป้ายรหัสออกจากหัวเรื่อง + ชี้ทางตั้งนโยบาย.
+เทสต์ `AutopilotRound248Tests` + Db `RecurringAutopilotRound248DbTests` · กติกา R248 ใน `required_call_site_check` · ยังไม่ทำ: คอลัมน์ระดับในตาราง · หลังรับเงินต่อรายการ ·
+LINE/คู่ค้า · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

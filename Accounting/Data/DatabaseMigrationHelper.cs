@@ -611,6 +611,13 @@ public static class DatabaseMigrationHelper
             // รอบ 247 (UX รายการประจำ): เรื่องที่ต้องทำต่อแบบโครงสร้าง (JSON) — หัวเรื่อง/ขั้นตอน/ปุ่มประกอบที่เซิร์ฟเวอร์
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunOutcome" text NULL;""",
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastDocumentId" uuid NULL;""",
+            // รอบ 248 (AUTOPILOT_BILLING_DESIGN §11.1): ช่องทางรับเงิน + นโยบายอนุมัติข้ามคำเตือน ต่อรายการประจำ/ต่อผู้ติดต่อ · NULL = พฤติกรรมเดิม (ไม่มีค่าเก่าต้องซ่อม)
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "PaymentMode" varchar(20) NULL;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "PayLinkChannelsJson" varchar(500) NULL;""",
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "AutoApprovePolicyJson" text NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PaymentMode" varchar(20) NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PayLinkChannelsJson" varchar(500) NULL;""",
+            """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "AutoApprovePolicyJson" text NULL;""",
 
             // ===== ใบวางบิลรวมใบแจ้งหนี้: บรรทัด "แทนทั้งใบ" ชี้เอกสารต้นทาง =====
             """ALTER TABLE "DocumentLines" ADD COLUMN IF NOT EXISTS "SourceDocumentId" uuid NULL;""",

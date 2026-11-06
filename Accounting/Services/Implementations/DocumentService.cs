@@ -6567,13 +6567,39 @@ public partial class DocumentService : IDocumentService
         return await CollectApprovalWarningsAsync(companyId, doc);
     }
 
+    /// <summary>รอบ 248 (ทดลองรันรายการประจำ): คำเตือนก่อนอนุมัติของ <b>ใบจำลองที่ไม่ได้อยู่ในฐานข้อมูล</b> — ตัวรวบรวมเดียวกับการอนุมัติจริง
+    /// (<c>CollectApprovalWarningsAsync</c> อ่านอย่างเดียว) · ไม่บันทึก ไม่เรียก AI · ใบที่ถูกติดตามโดย context ⇒ ปฏิเสธ (กันเผลอบันทึกใบจำลอง)</summary>
+    public async Task<IReadOnlyList<string>> PreviewApprovalWarningsForUnsavedAsync(Guid companyId, Document draft)
+    {
+        if (draft.CompanyId != companyId)
+            throw new BusinessRuleException("ใบจำลองไม่ใช่ของบริษัทนี้", Accounting.Helpers.AutopilotReadiness.RuleCode);
+        if (_db.Entry(draft).State != EntityState.Detached)
+            throw new BusinessRuleException("ใบจำลองต้องไม่ถูกติดตามโดยฐานข้อมูล (ทดลองรันห้ามบันทึก)", Accounting.Helpers.AutopilotReadiness.RuleCode);
+        // ตัวรวบรวมคำเตือนบางเส้นทิ้งร่องรอยลง context (เช่น RecordWhtSilence → AddChainedAuditLog) — ใบจำลองต้องไม่ทิ้งอะไรไว้เลย:
+        // แถวที่ "เพิ่งถูกเพิ่ม" ระหว่างการถามถูกถอดออกจาก context ก่อนคืน (กันคำสั่ง SaveChanges ถัดไปของคำขอเดียวกันบันทึกตาม)
+        var addedBefore = _db.ChangeTracker.Entries().Where(e => e.State == EntityState.Added)
+            .Select(e => e.Entity).ToHashSet(ReferenceEqualityComparer.Instance);
+        try
+        {
+            return await CollectApprovalWarningsAsync(companyId, draft);
+        }
+        finally
+        {
+            foreach (var e in _db.ChangeTracker.Entries().Where(e => e.State == EntityState.Added && !addedBefore.Contains(e.Entity)).ToList())
+                e.State = EntityState.Detached;
+        }
+    }
+
     /// <param name="ackSource">ใคร "ผ่าน" คำเตือน — ตัวตัดสิน Helpers/ApprovalAcknowledgement (ห้ามระบบประทับรับทราบแทนคน)</param>
     /// <param name="withAiHints">เสริมคำเตือนด้วย AI ตอนหยุด — false สำหรับทางเข้าที่ไม่มีหน้าจอแสดงคำแนะนำ (API) ⇒ ไม่เรียก AI
     /// แล้วโยนคำตอบทิ้ง (กฎเหล็ก #1)</param>
     /// <param name="passedWarnings">ฝ่ายค้านรอบ 201 รอบสาม P2-2: ที่รับคำเตือนที่ "ผ่าน" ในการอนุมัติครั้งนี้ (ชุดเดียวกับที่ลงร่องรอย) — ทางเข้าที่มีคนอยู่หน้าจอ/แชท
     /// แต่ใช้แหล่ง Unattended (OCR สร้าง+อนุมัติ · LINE · จ่ายใบเบิก) เอาไปคืนให้คนเห็นผ่าน <c>Section65TerApprovalWarnings.PassedNotice</c> · null = ไม่เก็บ</param>
+    /// <param name="autoApprovePolicy">รอบ 248: นโยบายอนุมัติข้ามคำเตือนที่เจ้าของตั้ง (ใบประจำ) — มีผลเฉพาะแหล่ง <c>UnattendedWithPolicy</c> ·
+    /// null = ไม่มีนโยบาย (เหมือน Unattended) · ตัวตัดสินเดียว <c>ApprovalAcknowledgement.Unacknowledged(source, warnings, policy)</c></param>
     public async Task<DocumentResponse> ApproveDocumentAsync(Guid companyId, Guid documentId, string approvedBy,
-        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints, ICollection<string>? passedWarnings = null)
+        Accounting.Helpers.ApprovalAckSource ackSource, bool withAiHints, ICollection<string>? passedWarnings = null,
+        Accounting.Helpers.AutoApprovePolicy? autoApprovePolicy = null)
     {
         // ด่านรอง (งบประมาณ Block · วางบิลเกิน · วงเงินเครดิต) ยอมให้ "ผู้ใช้/ระบบที่ส่งผ่านคำเตือน" override ได้ตามเดิม
         // แต่ API ไม่ได้รับทราบอะไรนอกจาก [Σ-GAP] ⇒ ไม่ override ด่านพวกนั้น
@@ -6651,7 +6677,7 @@ public partial class DocumentService : IDocumentService
         // typed exception the controller turns into a 422 with the list
         // so the UI can prompt for explicit confirmation.
         var warnings = await CollectApprovalWarningsAsync(companyId, doc);
-        var unacknowledged = Accounting.Helpers.ApprovalAcknowledgement.Unacknowledged(ackSource, warnings);
+        var unacknowledged = Accounting.Helpers.ApprovalAcknowledgement.Unacknowledged(ackSource, warnings, autoApprovePolicy);
         if (unacknowledged.Count > 0)
         {
             warnings = unacknowledged.ToList();
@@ -6718,6 +6744,12 @@ public partial class DocumentService : IDocumentService
             // โผล่บนใบที่ส่งให้ลูกค้า
             // รอบ 193 (ฝ่ายค้าน C5): ข้อความ/รหัสกฎแยก "ผู้ใช้รับทราบ" ออกจาก "ระบบ workflow/API ส่งผ่าน" — Helpers/ApprovalAcknowledgement
             var ackNote = Accounting.Helpers.ApprovalAcknowledgement.Note(ackSource, warnings, approvedBy, DateTime.UtcNow);
+            // รอบ 248: คำเตือนที่ "นโยบายของเจ้าของ" ปล่อย (ไม่ใช่ชุดที่ผ่านโดยไม่มีคนอยู่แล้ว) — บอกบนใบว่าปล่อยตามนโยบายของใคร ระดับไหน
+            var policyReleased = ackSource == Accounting.Helpers.ApprovalAckSource.UnattendedWithPolicy && autoApprovePolicy != null
+                ? Accounting.Helpers.AutoApprovePolicy.Released(autoApprovePolicy, warnings)
+                : (IReadOnlyList<string>)Array.Empty<string>();
+            if (policyReleased.Count > 0)
+                ackNote += "\n" + Accounting.Helpers.AutoApprovePolicy.NoteLine(autoApprovePolicy!, policyReleased);
             AppendInternalNote(doc, ackNote);
 
             _db.AddChainedAuditLog(new AuditLog
@@ -6738,6 +6770,11 @@ public partial class DocumentService : IDocumentService
                     ruleCode = Accounting.Helpers.ApprovalAcknowledgement.RuleCode(ackSource),
                     // ฝ่ายค้านรอบ 201 รอบสาม P2-4 (กฎ M): อ้างมาตราของชุดคำเตือนที่ผ่านจริง — เดิมตายตัว "RD-86 / RD-82/5(1)" แม้ทางเข้าอัตโนมัติ/API ผ่านได้แค่ชุด §65 ตรี
                     legalReference = Accounting.Helpers.ApprovalAcknowledgement.LegalReference(warnings),
+                    // รอบ 248 (หลักการ #10): นโยบายที่ปล่อย — รายการคำเตือน + ระดับ + ผู้ตั้ง/เมื่อไร (ว่าง = ไม่ได้ใช้นโยบาย)
+                    policyReleased,
+                    policyScope = policyReleased.Count > 0 ? autoApprovePolicy!.Scope : null,
+                    policySetBy = policyReleased.Count > 0 ? autoApprovePolicy!.SetBy : null,
+                    policySetAt = policyReleased.Count > 0 ? autoApprovePolicy!.SetAt : null,
                 }),
             });
             if (passedWarnings != null)
@@ -22646,7 +22683,8 @@ public partial class DocumentService : IDocumentService
             if (overdue.Count > 0)
             {
                 var total = overdue.Sum(d => d.BalanceDue);
-                warnings.Add($"ผู้ติดต่อนี้ยังค้างชำระ {overdue.Count} ใบ รวม {total:N2} THB — ตรวจวงเงินเครดิตก่อนอนุมัติเอกสารใหม่");
+                // รอบ 248: ป้ายรหัส [AR-OVERDUE] — นโยบายอนุมัติของใบประจำ (AutoApprovePolicy) ปล่อยได้ด้วยป้าย ไม่ใช่ข้อความไทย
+                warnings.Add(Accounting.Helpers.ArOverdueApprovalWarning.Message(overdue.Count, total));
             }
         }
 
