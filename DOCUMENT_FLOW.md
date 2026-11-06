@@ -3176,7 +3176,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 แผงไทม์ไลน์บนหน้าเอกสาร (§6.6 — รอบนี้มีชิป/ป้ายในรายการ + ข้อมูลใน `DocumentResponse`) · เมทริกซ์ `GET auto-send/matrix` · WHT ของส่วนเสริม `CompanyFeature` (WP-09 ข้อ 5 — backlog) ·
 `PostPaymentAutomationService` ยังตรวจแค่ "มีแถวทะเบียน" (ไม่ข้ามขั้นขอ 50 ทวิ เมื่อได้ใบแล้ว) · feedback รายช่องของ OCR ตอนผู้ใช้แก้ค่าบนฟอร์มยืนยัน (บันทึกใน audit `before` เท่านั้น)
 
-เทสต์ `WhtCertIntakeStatusTests` · `WhtCreditableAmountTests` · `WhtCertMatchPolicyTests` · `Db/WhtCertIntakeRound252DbTests` · Last verified 2026-11-06 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>
+เทสต์ `WhtCertIntakeStatusTests` · `WhtCreditableAmountTests` · `WhtCertMatchPolicyTests` · `Db/WhtCertIntakeRound252DbTests` · Last verified 2026-11-06 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8557ac36
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 

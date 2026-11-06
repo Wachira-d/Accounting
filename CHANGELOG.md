@@ -6754,4 +6754,4 @@ _รอบ 252 (2026-11-06 · WP-09 · AUTO_SEND_WHT_DESIGN §9 เฟส 243 + 
 รายงานปลายปี "50 ทวิ ที่ยังขาด" + Excel · การ์ดแดชบอร์ด/ผู้ติดต่อ · `OcrService.EnsureWhtCreditFromCertAsync` ย้ายเข้าประตูเดียว (ไม่สร้างแถวเครดิตเอง) · R252 (+ ห้าม
 `WhtCreditsReceived.Add(` นอก 2 จุด · `ReceivedAmount` ผู้เขียนเดียว) · `attachment_gate_check`/`write_permission_gate_check` เฝ้าคอนโทรลเลอร์ใหม่ · เทสต์ `WhtCertIntakeStatusTests` ·
 `WhtCreditableAmountTests` · `WhtCertMatchPolicyTests` · `Db/WhtCertIntakeRound252DbTests` · ไม่ทำรอบนี้: ลิงก์อัปโหลด/ทวง/"ไม่หัก" (WP-10) · WHT ส่วนเสริม CompanyFeature (WP-09 ข้อ 5 backlog) ·
-เมทริกซ์ auto-send · แผงไทม์ไลน์หน้าเอกสาร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+เมทริกซ์ auto-send · แผงไทม์ไลน์หน้าเอกสาร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8557ac36_
