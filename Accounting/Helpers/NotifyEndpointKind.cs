@@ -52,6 +52,28 @@ public static class NotifyEndpointKind
 
     public static bool IsLine(string? kind) => kind == LineUser || kind == LineGroup;
 
+    /// <summary>ฝ่ายค้าน fix2 M3: ป้ายของแถวนี้มาจาก LINE (ชื่อโปรไฟล์ผู้รับ · ชื่อกลุ่ม) ไม่ใช่ผู้ดูแลพิมพ์เอง ⇒ ล้างเมื่อยกเลิก</summary>
+    private static bool LabelFromLine(string? source) => source is ContactLineBindRule.SourceLineInvite or LineGroupBindRule.SourceGroupCode;
+
+    /// <summary>
+    /// ฝ่ายค้าน fix2 M3 (PDPA ม.22 — เก็บให้น้อยที่สุด): <b>ยกเลิกปลายทาง — ตัวเดียวทุกเส้น</b> (หยุด/unfollow · ผู้ดูแลยกเลิก · ผูกใหม่แทน · บอทถูกเตะ ·
+    /// #ByeNextAcc · รวมผู้ติดต่อ) — ประทับเวลา/เหตุครั้งแรก · ล้าง id ที่เข้ารหัส · ล้างป้ายที่มาจาก LINE + ชื่อกลุ่ม (คงแฮชเป็นร่องรอยว่าเคยผูก)
+    /// </summary>
+    public static void MarkUnlinked(Accounting.Models.Entities.ContactNotifyEndpoint e, string reason, DateTime nowUtc, string? actor = null)
+    {
+        if (e.UnlinkedAt == null)
+        {
+            e.UnlinkedAt = nowUtc;
+            e.UnlinkReason = reason;
+        }
+        e.LineUserId = null;
+        e.LineGroupId = null;
+        if (LabelFromLine(e.Source)) e.Label = null;
+        e.GroupNameSnapshot = null;
+        e.UpdatedAt = nowUtc;
+        if (actor != null) e.UpdatedBy = actor;
+    }
+
     public static string Label(string? kind) => kind switch
     {
         Email => "อีเมล",

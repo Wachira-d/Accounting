@@ -14307,12 +14307,7 @@ public partial class DocumentService : IDocumentService
                 endpointRows.Select(e => new Accounting.Helpers.ContactRecipientRule.MergeRow(e.Id, e.Kind, e.IsPrimary, e.Email, e.LineIdHash,
                     loserEndpointIds.Contains(e.Id), e.LinkedAt)), keep.Email).ToHashSet();
             foreach (var ep in endpointRows.Where(r => endpointUnlinks.Contains(r.Id)))
-            {
-                ep.UnlinkedAt = DateTime.UtcNow;
-                ep.UnlinkReason = Accounting.Helpers.NotifyEndpointKind.UnlinkMerge;
-                ep.UpdatedAt = DateTime.UtcNow;
-                ep.UpdatedBy = performedBy;
-            }
+                Accounting.Helpers.NotifyEndpointKind.MarkUnlinked(ep, Accounting.Helpers.NotifyEndpointKind.UnlinkMerge, DateTime.UtcNow, performedBy);   // ฝ่ายค้าน fix2 M3
             keep.UpdatedAt = DateTime.UtcNow;
             keep.UpdatedBy = performedBy;
             _db.AddChainedAuditLog(new AuditLog

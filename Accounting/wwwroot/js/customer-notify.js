@@ -189,10 +189,12 @@
       if (!confirm('ซื้อแพ็ก' + what + 'เพิ่ม ' + Number(packSize).toLocaleString('th-TH') + ' ราคา '
         + Number(packPrice).toLocaleString('th-TH', { minimumFractionDigits: 2 }) + ' บาท? ค่าใช้จ่ายจะเข้าบิลรอบถัดไป')) return;
       btn.disabled = true;
+      // ฝ่ายค้าน fix2 L6: คีย์กันซ้ำต่อการกดหนึ่งครั้ง (ลอก quota-ui.js) — คำขอซ้ำ/ลองใหม่ของการกดนี้ = ซื้อครั้งเดียว
+      var idemKey = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
       try {
         // ฝ่ายค้านรอบ 213 S4: ส่งข้อเสนอที่เห็นไปด้วย — เซิร์ฟเวอร์เทียบใต้ล็อก ไม่ตรง ⇒ 409 (ยังไม่คิดเงิน)
-        var res = await API.post('/api/companies/' + opts.companyId + '/metering/notify-quota/topup',
-          { packs: 1, expectedPackSize: packSize, expectedPackPrice: packPrice, channel: channel });
+        var res = await API.request('POST', '/api/companies/' + opts.companyId + '/metering/notify-quota/topup',
+          { packs: 1, expectedPackSize: packSize, expectedPackPrice: packPrice, channel: channel }, false, null, { 'Idempotency-Key': idemKey });
         if (res && res.data) renderQuota(el, res.data, opts, true);
         if (window.Layout && Layout.toast) Layout.toast((res && res.message) || 'เพิ่มข้อความแล้ว', 'success');
         // ฝ่ายค้านรอบ 213 (f): ข้อความค้างส่งบนหน้าเดียวกันต้องเห็นโควตาใหม่

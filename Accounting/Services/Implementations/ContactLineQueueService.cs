@@ -96,11 +96,20 @@ public class ContactLineQueueService : IContactLineQueueService
             {
                 // ล้มดัง: แถวนี้กลับไปรอส่ง (ครบครั้ง = ล้ม) พร้อมเหตุบนคิว — ไม่ใช่กลืนเงียบ
                 _logger.LogWarning(ex, "LineQueue send failed Id={Id}", item.Id);
+                // ฝ่ายค้าน fix2 L4: LINE รับไปแล้ว (Sent) ⇒ ข้อผิดพลาดหลังจากนั้น (เช่นอัปเดตปลายทาง) ห้ามลดสถานะกลับไปรอส่ง — จดเหตุไว้เท่านั้น
+                if (item.Status == ContactLineChannel.StatusSent)
+                {
+                    item.ErrorMessage = Trunc(SaveFailureOutcome.SentButNotSavedPrefix + ex.Message, 2000);
+                    item.UpdatedAt = DateTime.UtcNow;
+                }
+                else
+                {
                 item.RetryCount++;
                 item.Status = item.RetryCount >= LinePushOutcome.MaxAttempts ? ContactLineChannel.StatusFailed : ContactLineChannel.StatusPending;
                 item.ScheduledFor = DateTime.UtcNow + LinePushOutcome.Backoff(item.RetryCount);
                 item.ErrorMessage = Trunc("ส่งไม่สำเร็จ: " + ex.Message, 2000);
                 item.UpdatedAt = DateTime.UtcNow;
+                }
             }
             try { await _db.SaveChangesAsync(ct); }
             catch (Exception saveEx) when (saveEx is not OperationCanceledException)
@@ -306,10 +315,11 @@ public class ContactLineQueueService : IContactLineQueueService
 
     public async Task CancelPendingAsync(Guid companyId, Guid id, CancellationToken ct = default)
     {
-        var q = await _db.LineQueues.FirstOrDefaultAsync(x => x.Id == id && x.CompanyId == companyId && x.Status == ContactLineChannel.StatusPending, ct)
-            ?? throw new KeyNotFoundException("ไม่พบคิว LINE ที่ยกเลิกได้");
-        q.Status = ContactLineChannel.StatusCancelled;
-        q.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(ct);
+        // ฝ่ายค้าน fix2 L3: ยกเลิกแบบมีเงื่อนไขคำสั่งเดียว — ตัวส่งจองแถวไป (Sending) ระหว่างอ่าน-เขียน ⇒ ไม่ทับสถานะ (0 แถว = ยกเลิกไม่ได้แล้ว)
+        var now = DateTime.UtcNow;
+        var n = await _db.LineQueues
+            .Where(x => x.Id == id && x.CompanyId == companyId && x.Status == ContactLineChannel.StatusPending)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, ContactLineChannel.StatusCancelled).SetProperty(x => x.UpdatedAt, (DateTime?)now), ct);
+        if (n != 1) throw new KeyNotFoundException("ไม่พบคิว LINE ที่ยกเลิกได้ (อาจกำลังส่งหรือส่งไปแล้ว)");
     }
 }

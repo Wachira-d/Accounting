@@ -82,7 +82,9 @@ public class AdminNotifyQuotaController : ControllerBase
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted, ct);
         if (sub == null) return NotFound(new ApiResponse<object>(false, null, "บริษัทนี้ยังไม่มีแพ็กเกจ"));
         // รอบ 254 WP-11 L4 (N9): ช่องที่ตั้ง — ตัวตัดสินชื่อช่องเดียว NotifyQuotaPolicy.NormalizeChannel (ค่าอื่น = ก้อนรวม)
-        var channel = NotifyQuotaPolicy.NormalizeChannel(req.Channel);
+        // ฝ่ายค้าน fix2 L5: ช่องที่ไม่รู้จัก ⇒ 400 (เดิมกลายเป็นก้อนรวมเงียบ ๆ)
+        if (!NotifyQuotaPolicy.TryParseChannel(req.Channel, out var channel))
+            return BadRequest(new ApiResponse<object>(false, null, NotifyQuotaPolicy.UnknownChannelMessage));
         int? before;
         switch (channel)
         {

@@ -26,11 +26,20 @@ public static class NextAccOaUsage
     }
 
     /// <summary>บันทึกยอดล่าสุดที่ LINE รายงาน (ทับค่า — ไม่ใช่การบวก) + เพดาน</summary>
-    public static Task SetAsync(AccountingDbContext db, string period, string kind, long count, long? limit, CancellationToken ct = default)
-        => db.Database.ExecuteSqlRawAsync("""
-            INSERT INTO "NextAccOaUsageCounters" ("Period","Kind","Count","Limit","UpdatedAt") VALUES ({0}, {1}, {2}, {3}, now())
-            ON CONFLICT ("Period","Kind") DO UPDATE SET "Count" = {2}, "Limit" = {3}, "UpdatedAt" = now();
-            """, new object[] { period, kind, count, limit.HasValue ? limit.Value : DBNull.Value }, ct);
+    /// <para>ผลตรวจ CI (fix2): ค่า null ต้องเป็นพารามิเตอร์ชนิดชัด — EF ไม่มี store type ของ <c>DBNull</c> ที่ส่งเป็นค่าดิบ (InvalidOperationException ใน prod ทุกเดือนที่ LINE ตอบ "ไม่จำกัด")</para>
+    public static async Task SetAsync(AccountingDbContext db, string period, string kind, long count, long? limit, CancellationToken ct = default)
+    {
+        await db.Database.ExecuteSqlRawAsync("""
+            INSERT INTO "NextAccOaUsageCounters" ("Period","Kind","Count","Limit","UpdatedAt") VALUES (@period, @kind, @count, @limit, now())
+            ON CONFLICT ("Period","Kind") DO UPDATE SET "Count" = @count, "Limit" = @limit, "UpdatedAt" = now();
+            """, new object[]
+            {
+                new Npgsql.NpgsqlParameter("period", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = period },
+                new Npgsql.NpgsqlParameter("kind", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = kind },
+                new Npgsql.NpgsqlParameter("count", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = count },
+                new Npgsql.NpgsqlParameter("limit", NpgsqlTypes.NpgsqlDbType.Bigint) { Value = limit.HasValue ? (object)limit.Value : DBNull.Value },
+            }, ct);
+    }
 
     /// <summary>ประทับ "เตือนแล้ว" ครั้งเดียวต่อชนิดต่องวด — คืน true เฉพาะคำขอที่ประทับได้ (ผู้ส่งคำเตือน)</summary>
     public static async Task<bool> TryMarkWarnedAsync(AccountingDbContext db, string period, string kind, CancellationToken ct = default)

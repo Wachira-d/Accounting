@@ -699,49 +699,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **838 ไฟล์ · 8,954 `[Fact]` + 1,329 `[Theory]` (6,246 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-| ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
+| เทสต์ที่มี | **838 ไฟล์ · 8,961 `[Fact]` + 1,330 `[Theory]` (6,253 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
 | CI | ✅ `.github/workflows/ci.yml` — static check → restore → build → test; รันบน PR/push เข้า main/master + `workflow_dispatch` (branch `claude/**` ปิดไว้ กัน mail spam ระหว่างพัฒนา) |
@@ -8227,4 +8185,16 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | Db: ตัวนับ reply บวก atomic (5 พร้อมกัน) · reply ถึงเกณฑ์ฟรี ⇒ เตือน | Db `…reply_นับแบบ_atomic_*` |
 | จุดเรียก N8 (เคส R254u–v) | (checker) |
 | ยังไม่มีเทสต์ (บอกตรง ๆ): ต่อสายอีเมลเอกสาร/คิว/ขอเซ็นเต็มรายเดือนแบบครบเส้น (ล็อกด้วย checker เท่านั้น) · หน้าแอดมิน/การ์ดลูกค้า (คนตรวจ) · เรียก LINE quota จริง | — |
+
+## รอบ 254 WP-11 ฝ่ายค้าน fix2 (H1 · M1–M3 · L1–L9)
+
+| กรณี | เทสต์ |
+| --- | --- |
+| H1 แพ็กของช่องขายได้เฉพาะช่องที่แยก · ข้อความบอกให้ซื้อแพ็กรวม | `NotifyChannelQuotaRound254Tests.H1_*` · Db `NotifyChannelQuotaDbTests.H1_*` (409 ไม่คิดเงิน · ไม่มีราคา ↔ แยกแล้วขายได้) |
+| M1 อีเมลแพลตฟอร์มไม่ใช้แพ็กรวม ↔ อีเมลแจ้งลูกค้าใช้ได้ | `…M1_*` · Db `…M1_*` |
+| M2 อีเมลแพลตฟอร์มไม่มีส่วนเกิน ↔ ข้อความแจ้งลูกค้าใช้ส่วนเกินได้ | `…M2_*` · Db `…M2_*` |
+| M3 ยกเลิกปลายทางล้างป้ายจาก LINE + ชื่อกลุ่ม · ป้ายที่ผู้ดูแลพิมพ์คงไว้ · ประทับครั้งแรกคงไว้ | `…M3_*` |
+| L5 ช่องที่ไม่รู้จัก ⇒ ไม่ผ่าน (7 เคส) | `…L5_*` |
+| จุดเรียก L1/L3/L4/L7/L8 + ตัวยกเลิกเดียว (เคส R254w–z) | (checker) |
+| ยังไม่มีเทสต์ (บอกตรง ๆ): webhook ล้มแล้ว LINE ส่งซ้ำจริง · ยกเลิกคิวชนกับตัวส่งพร้อมกัน (ล็อกด้วย checker) | — |
 
