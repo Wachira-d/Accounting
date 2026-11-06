@@ -333,12 +333,12 @@ public partial class FixedAssetService
     }
 
     /// <summary>ด่านยกเลิกใบต้นทาง (DocumentService.VoidDocumentAsync) — แถวที่โอนแล้ว ⇒ ข้อความ (409) · null = ยกเลิกได้</summary>
-    public static async Task<string?> CostSourceVoidBlockAsync(AccountingDbContext db, Guid companyId, Guid documentId, string documentNumber)
+    public static async Task<string?> CostSourceVoidBlockAsync(AccountingDbContext db, Guid companyId, Guid documentId, string documentNumber, string verb = "ยกเลิก")
     {
         var codes = await db.FixedAssetCostSources.AsNoTracking()
             .Where(s => s.CompanyId == companyId && s.DocumentId == documentId && s.ReleasedAt == null && s.CapitalizedAt != null)
             .Select(s => s.FixedAsset.AssetCode).Distinct().ToListAsync();
-        return Accounting.Helpers.AssetCostSourceRules.VoidBlock(documentNumber, codes);
+        return Accounting.Helpers.AssetCostSourceRules.VoidBlock(documentNumber, codes, verb);
     }
 
     /// <summary>ยกเลิกใบต้นทาง: ปลดแถวที่ยังไม่โอน + คิดต้นทุนสะสมใหม่ — <b>ไม่ SaveChanges</b> (อยู่ในธุรกรรมของการยกเลิก) ·
