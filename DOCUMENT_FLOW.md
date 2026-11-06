@@ -2333,7 +2333,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ผู้ใช้ไม่มีอีเมล ⇒ 409 · ส่งล้ม ⇒ 502 · ปุ่มในขั้น ④ (ฟอร์มที่ยังไม่บันทึก = บอกให้บันทึกก่อน) + หน้ารายละเอียด
   - **UX**: ผลทดลองรันอยู่กล่องของตัวเองใต้แผงความพร้อม (แผงตรวจใหม่ทุก 600ms ไม่ทับ · ฟอร์มเปลี่ยน ⇒ ป้าย "กดทดลองรันใหม่") · บรรทัดเพิ่มที่ยังว่างทั้งแถวไม่ทำให้แผงฟ้องระหว่างกรอก
     (บันทึกจริงยังบังคับกรอก) · แท็บ "ช่องทางแจ้งเตือน" ของผู้ติดต่อเตือนกติกาผู้รับใบกำกับ 1 อีเมลเมื่อบริษัทโหมด e-Tax by Email (`EtaxByEmailFormat.ContactRecipientsNote`)
-  - **แก้ผลฝ่ายค้าน WP-07** (ยังไม่ได้คอมไพล์ในเครื่องนี้): (2) ส่งทดสอบต้อง `User.EmailVerified` (409) · เส้น NextAcc ห่อ `SignRequestEmailText.WrapPlatformDocumentEmail`
+  - **แก้ผลฝ่ายค้าน WP-07** (Last verified `commit 3c8c2c3d` · ยังไม่ได้คอมไพล์ในเครื่องนี้): (2) ส่งทดสอบต้อง `User.EmailVerified` (409) · เส้น NextAcc ห่อ `SignRequestEmailText.WrapPlatformDocumentEmail`
     (คำตัดสิน 240-9) + เคารพ `PlatformEmailQuota`/`SignEmailThrottle.Refusal` (429) · เพดาน 10 ฉบับ/**ผู้ใช้/บริษัท/วัน** (ทุกรายการรวมกัน) นับจากแถว audit
     `AuditAction.SendEmail` (ค่า enum ใหม่ 13) ใต้ `pg_advisory_xact_lock(AdvisoryLockKey.RecurringSendTest · ผู้ใช้)` ครอบ นับ → ส่ง → audit · อีเมลลูกค้าในเนื้อถูกปิดบัง
     (`RecurringTestEmail.MaskEmails`) · (3) ข้อ ETAX* ประเมินเมื่อใบ**จะถูกส่งจริง** (`AutopilotReadiness.WillEmail` = กฎ "เมื่ออนุมัติเอกสาร" หรือ อนุมัติตอนสร้าง +
