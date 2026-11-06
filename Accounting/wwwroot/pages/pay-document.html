@@ -24,6 +24,12 @@
     .transfer { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-top: 14px; font-size: 14px; line-height: 1.7; }
     .err { text-align: center; color: #b91c1c; padding: 40px 10px; }
     .done { text-align: center; padding: 26px 10px; }
+    .copy { border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-family: inherit; cursor: pointer; margin-left: 6px; }
+    .slip { border-top: 1px dashed #e2e8f0; margin-top: 10px; padding-top: 10px; }
+    .slip label { display: block; font-size: 13px; margin: 6px 0 3px; }
+    .slip input[type=text], .slip input[type=file] { width: 100%; font-family: inherit; font-size: 13px; padding: 7px; border: 1px solid #cbd5e1; border-radius: 8px; }
+    .msg { border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
+    .msg.ok { background: #dcfce7; color: #166534; } .msg.bad { background: #fee2e2; color: #991b1b; }
   </style>
 </head>
 <body>
@@ -80,12 +86,52 @@
         <table>${rows.join('')}</table>
         ${v.blockedNote ? `<div class="note">${esc(v.blockedNote)}</div>` : ''}
         ${v.canPayOnline ? methods.map((m, i) => `<button class="btn" data-pay-index="${i}">ชำระด้วย ${esc(m.label)}</button>`).join('') : ''}
-        ${t ? `<div class="transfer"><b>หรือโอนเข้าบัญชี</b><br>
-          ${t.bankName ? esc(t.bankName) + '<br>' : ''}${t.accountNumber ? 'เลขที่บัญชี ' + esc(t.accountNumber) + '<br>' : ''}
+        ${t ? `<div class="transfer"><b>${v.canPayOnline ? 'หรือโอนเข้าบัญชี' : 'โอนเข้าบัญชี'}</b><br>
+          ${t.bankName ? esc(t.bankName) + '<br>' : ''}${t.accountNumber ? 'เลขที่บัญชี <b>' + esc(t.accountNumber) + '</b><button type="button" class="copy" data-copy="account" aria-label="คัดลอกเลขบัญชี">คัดลอกเลขบัญชี</button><br>' : ''}
           ${t.accountName ? 'ชื่อบัญชี ' + esc(t.accountName) + '<br>' : ''}${t.promptPayId ? 'พร้อมเพย์ ' + esc(t.promptPayId) + '<br>' : ''}
           ${qrImg(t.promptPayQrDataUri)}
-          <span style="font-size:12px;color:#64748b">โอนแล้วกรุณาส่งหลักฐานการโอนถึงผู้ขาย (ตอบกลับอีเมลที่ได้รับ) — ระบบยืนยันยอดโอนให้อัตโนมัติไม่ได้</span></div>` : ''}`;
+          <span style="font-size:12px;color:#64748b">โปรดระบุเลขที่ ${esc(v.documentNumber)} ในบันทึกการโอน (ถ้าแอปธนาคารให้กรอก)</span>
+          ${v.canSubmitSlip ? `<form class="slip" id="slipForm">
+            <b>โอนแล้ว? แจ้งโอนพร้อมแนบสลิป</b>
+            <label for="slipFile">ไฟล์สลิป (รูปภาพหรือ PDF · ไม่เกิน 10 MB)</label>
+            <input type="file" id="slipFile" accept="image/jpeg,image/png,image/webp,application/pdf" required>
+            <label for="slipRef">เลขอ้างอิงการโอน (ถ้ามี — ช่วยให้ผู้ขายจับคู่ยอดได้เร็วขึ้น)</label>
+            <input type="text" id="slipRef" maxlength="64" autocomplete="off">
+            <button type="submit" class="btn" id="slipBtn">ส่งสลิปให้ผู้ขาย</button>
+            <div style="font-size:12px;color:#64748b;margin-top:6px">ผู้ขายจะตรวจยอดแล้วยืนยันการชำระ — สถานะเปลี่ยนเป็น "ชำระแล้ว" เมื่อผู้ขายยืนยันเท่านั้น</div>
+            <div id="slipMsg" role="status"></div>
+          </form>` : '<span style="font-size:12px;color:#64748b">โอนแล้วกรุณาส่งหลักฐานการโอนถึงผู้ขาย (ตอบกลับอีเมลที่ได้รับ)</span>'}</div>` : ''}`;
       card.querySelectorAll('[data-pay-index]').forEach(b => b.addEventListener('click', () => pay(methods[Number(b.dataset.payIndex)].code)));
+      const copyBtn = card.querySelector('[data-copy="account"]');
+      if (copyBtn && t && t.accountNumber) copyBtn.addEventListener('click', () => copyText(String(t.accountNumber).replace(/[^0-9]/g, ''), copyBtn));
+      const form = document.getElementById('slipForm');
+      if (form) form.addEventListener('submit', (e) => { e.preventDefault(); submitSlip(); });
+    }
+
+    // รอบ 255 WP-12B ข้อ 1 — คัดลอกเลขบัญชี (ตัวเลขล้วน วางในแอปธนาคารได้ทันที) · เบราว์เซอร์ที่ไม่มี clipboard API ⇒ บอกให้คัดลอกเอง
+    async function copyText(text, btn) {
+      try { await navigator.clipboard.writeText(text); btn.textContent = 'คัดลอกแล้ว ✓'; }
+      catch { btn.textContent = 'คัดลอกไม่ได้ — กดค้างที่เลขบัญชีเพื่อคัดลอก'; }
+      setTimeout(() => { btn.textContent = 'คัดลอกเลขบัญชี'; }, 2500);
+    }
+
+    // รอบ 255 WP-12B ข้อ 1 — แจ้งโอน: ยอด/ชนิดไฟล์/สิทธิ์ ตัดสินที่เซิร์ฟเวอร์ (SlipEvidenceService) · หน้านี้ส่งแค่ไฟล์ + เลขอ้างอิง
+    async function submitSlip() {
+      const f = document.getElementById('slipFile').files[0];
+      const msg = document.getElementById('slipMsg');
+      const btn = document.getElementById('slipBtn');
+      if (!f) { msg.className = 'msg bad'; msg.textContent = 'กรุณาเลือกไฟล์สลิป'; return; }
+      const fd = new FormData();
+      fd.append('file', f);
+      fd.append('bankRef', document.getElementById('slipRef').value || '');
+      btn.disabled = true; msg.className = 'msg'; msg.textContent = 'กำลังส่ง...';
+      let r, j = null;
+      try { r = await fetch(base() + '/slip', { method: 'POST', body: fd }); j = await r.json().catch(() => null); }
+      catch { msg.className = 'msg bad'; msg.textContent = 'เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง'; btn.disabled = false; return; }
+      if (!r.ok || !j || !j.success) {
+        msg.className = 'msg bad'; msg.textContent = (j && j.message) || 'ส่งสลิปไม่สำเร็จ — ลองใหม่ หรือติดต่อผู้ขาย'; btn.disabled = false; return;
+      }
+      load(j.message || 'ได้รับสลิปแล้ว — รอผู้ขายยืนยัน');
     }
 
     function pay(method) {

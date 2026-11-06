@@ -100,4 +100,13 @@ public class RecurringTransaction : TenantEntity
     public bool? PostPayEmailReceipt { get; set; }
     /// <summary>รอบ 250 (WP-02 B-13): ส่งทุกงวดที่รับ (false = เฉพาะงวดที่ชำระครบ) — null = ตามผู้ติดต่อ › บริษัท</summary>
     public bool? PostPayIncludePartial { get; set; }
+
+    // ── รอบ 255 WP-12B ข้อ 2 (AUTOPILOT §4.2 ② · A B-14) ──
+
+    /// <summary>ทุก N เดือน (1–60) — ตั้งแล้ว<b>แทน</b> <see cref="Frequency"/> ในการเลื่อนงวด (ยึดวันที่ของเดือนเดิมแบบรายเดือน) · null = ตามความถี่เดิม ·
+    /// ผู้อ่าน: <c>RecurringSchedule.Next</c> ผ่าน <c>RecurringTransactionService.GetNextRunDate</c> · <c>CatchUp</c> · ทดลองรัน (<c>RecurringAutopilotService</c>)</summary>
+    public int? IntervalMonths { get; set; }
+    /// <summary>สร้างเอกสารล่วงหน้า N วันก่อนวันของงวด (0–28 · สั้นกว่าหนึ่งงวด — <c>RecurringSchedule.LeadDaysError</c>) · 0 = สร้างในวันของงวด (เดิม) ·
+    /// เอกสารลงวันที่วันที่สร้าง (ไม่ลงวันล่วงหน้า §86/4) · ตัวแปร &lt;&lt;month&gt;&gt; = เดือนของงวด · ผู้อ่าน: <c>RecurringSchedule.IsDue</c> (cron · สร้างทันที · ข้ามงวดค้าง)</summary>
+    public int LeadDays { get; set; }
 }

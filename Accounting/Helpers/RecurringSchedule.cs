@@ -14,6 +14,44 @@ namespace Accounting.Helpers;
 public static class RecurringSchedule
 {
     /// <summary>กำหนดรันถัดไปจากกำหนดปัจจุบัน — รายเดือนขึ้นไปยึด "วันที่ของเดือน" เดิม (31 ⇒ 28/29 ก.พ. ⇒ 31 มี.ค. ไม่ไหล)</summary>
+    /// <summary>รอบ 255 WP-12B ข้อ 2: เพดาน "ทุก N เดือน" (5 ปี)</summary>
+    public const int MaxIntervalMonths = 60;
+    /// <summary>รอบ 255 WP-12B ข้อ 2: เพดาน "สร้างล่วงหน้า N วัน" — ต้องสั้นกว่าหนึ่งงวดรายเดือน (ไม่งั้นงวดถัดไปถึงกำหนดทันทีหลังรัน ⇒ ออกใบรวดเดียวหลายงวด)</summary>
+    public const int MaxLeadDays = 28;
+
+    /// <summary>ค่า "ทุก N เดือน" ที่ผู้ใช้ส่งมา — null = ใช้ได้ · ข้อความ = ปฏิเสธ (ไม่ clamp เงียบ)</summary>
+    public static string? IntervalError(int? intervalMonths)
+        => intervalMonths is int n && (n < 1 || n > MaxIntervalMonths)
+            ? $"ทุกกี่เดือน ต้องอยู่ระหว่าง 1–{MaxIntervalMonths} (ได้ {n}) — เว้นว่างถ้าใช้ความถี่ปกติ"
+            : null;
+
+    /// <summary>ความยาวขั้นต่ำของหนึ่งงวด (วัน) — ใช้ตัดสินว่าสร้างล่วงหน้าได้กี่วัน</summary>
+    private static int MinPeriodDays(RecurringFrequency frequency, int? intervalMonths) => intervalMonths is >= 1 ? 28 : frequency switch
+    {
+        RecurringFrequency.Daily => 1,
+        RecurringFrequency.Weekly => 7,
+        RecurringFrequency.BiWeekly => 14,
+        _ => 28,
+    };
+
+    /// <summary>ค่า "สร้างล่วงหน้า N วัน" — ต้อง 0 ≤ N &lt; ความยาวหนึ่งงวด และ ≤ <see cref="MaxLeadDays"/> · null = ใช้ได้</summary>
+    public static string? LeadDaysError(int leadDays, RecurringFrequency frequency, int? intervalMonths)
+    {
+        if (leadDays < 0) return $"สร้างล่วงหน้า (วัน) ต้องไม่ติดลบ (ได้ {leadDays})";
+        var limit = Math.Min(MaxLeadDays, MinPeriodDays(frequency, intervalMonths) - 1);
+        return leadDays > limit
+            ? $"สร้างล่วงหน้าได้ไม่เกิน {limit} วันสำหรับความถี่นี้ (ได้ {leadDays}) — ต้องสั้นกว่าหนึ่งงวด ไม่งั้นงวดถัดไปจะถูกสร้างต่อทันที"
+            : null;
+    }
+
+    /// <summary>วันที่ระบบสร้างเอกสารของงวด = วันของงวด − สร้างล่วงหน้า (ค่าติดลบ/เกินเพดานในแถวเก่าถูกตัดเข้าช่วง)</summary>
+    public static DateTime CreateAt(DateTime periodDate, int leadDays) => periodDate.AddDays(-Math.Clamp(leadDays, 0, MaxLeadDays));
+
+    public static DateTime Next(RecurringFrequency frequency, DateTime current, int? preferredDay, DateTime startDate, int? intervalMonths)
+        => intervalMonths is int n && n >= 1 && n <= MaxIntervalMonths
+            ? AdvanceMonths(current, n, preferredDay ?? startDate.Day)
+            : Next(frequency, current, preferredDay, startDate);
+
     public static DateTime Next(RecurringFrequency frequency, DateTime current, int? preferredDay, DateTime startDate) => frequency switch
     {
         RecurringFrequency.Daily => current.AddDays(1),
@@ -46,6 +84,9 @@ public static class RecurringSchedule
     /// <summary>งวดนี้ถึงกำหนดแล้ว (วันตามปฏิทินไทยของกำหนด ≤ วันนี้ตามปฏิทินไทย) — ตัวตัดสินเดียวของ cron · สร้างทันที · ข้ามงวดค้าง · วันฐานตัวแปร</summary>
     public static bool IsDue(DateTime nextRunDate, DateTime nowUtc) => nextRunDate < DueCutoffUtc(nowUtc);
 
+    /// <summary>รอบ 255 WP-12B ข้อ 2: ถึงเวลาสร้างแล้ว (นับสร้างล่วงหน้า) — วันสร้าง (<see cref="CreateAt"/>) ≤ วันนี้ตามปฏิทินไทย</summary>
+    public static bool IsDue(DateTime nextRunDate, DateTime nowUtc, int leadDays) => CreateAt(nextRunDate, leadDays) < DueCutoffUtc(nowUtc);
+
     /// <summary>รายการจบแล้ว (ครบจำนวนครั้ง หรือกำหนดถัดไปเลยวันสิ้นสุด) ⇒ สถานะ "เสร็จสิ้น" · แก้วันสิ้นสุด/จำนวนครั้งให้ไปต่อได้ ⇒ กลับมาใช้งาน</summary>
     public static bool IsFinished(DateTime nextRunDate, DateTime? endDate, int totalRuns, int? maxRuns)
         => (maxRuns.HasValue && totalRuns >= maxRuns.Value) || !WithinEnd(nextRunDate, endDate);
@@ -55,14 +96,14 @@ public static class RecurringSchedule
     /// · ฝ่ายค้าน 2026-10-14 P0: เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน) ⇒ NextRunDate ค้างงวดแรกทุกแถว
     /// · ไม่ค้าง ⇒ (nextRunDate, 0) เดิม · <paramref name="maxSteps"/> กันลูปไม่จบ</summary>
     public static (DateTime LatestDue, int Skipped) CatchUp(RecurringFrequency frequency, DateTime nextRunDate, int? preferredDay,
-        DateTime startDate, DateTime nowUtc, int maxSteps = 5000)
+        DateTime startDate, DateTime nowUtc, int maxSteps = 5000, int? intervalMonths = null, int leadDays = 0)
     {
         var latest = nextRunDate;
         var skipped = 0;
         for (var i = 0; i < maxSteps; i++)
         {
-            var next = Next(frequency, latest, preferredDay, startDate);
-            if (!IsDue(next, nowUtc) || next <= latest) break;
+            var next = Next(frequency, latest, preferredDay, startDate, intervalMonths);
+            if (!IsDue(next, nowUtc, leadDays) || next <= latest) break;
             latest = next;
             skipped++;
         }
@@ -72,5 +113,9 @@ public static class RecurringSchedule
     /// <summary>วันฐานของตัวแปร &lt;&lt;month&gt;&gt;/&lt;&lt;year&gt;&gt; — รอบที่ "ใช้งวด" (cron · สร้างทันทีเมื่อถึงกำหนด) ใช้วันของงวดนั้น
     /// (ใบตามหลังได้เดือนของงวดตัวเอง) · รอบพิเศษก่อนกำหนด (ไม่เลื่อนงวด) ใช้วันนี้ตามเดิม · คืนวันตามปฏิทินไทย</summary>
     public static DateTime PlaceholderBaseDate(DateTime nextRunDate, DateTime nowUtc, bool consumesPeriod)
-        => ThaiDate.CalendarDateUtc(consumesPeriod && IsDue(nextRunDate, nowUtc) ? nextRunDate : nowUtc);
+        => PlaceholderBaseDate(nextRunDate, nowUtc, consumesPeriod, 0);
+
+    /// <summary>รอบ 255: สร้างล่วงหน้า ⇒ งวดที่ถึงเวลาสร้างแล้วใช้วันของงวด (ใบเดือน ธ.ค. ที่สร้าง 25 พ.ย. เขียน "ธันวาคม")</summary>
+    public static DateTime PlaceholderBaseDate(DateTime nextRunDate, DateTime nowUtc, bool consumesPeriod, int leadDays)
+        => ThaiDate.CalendarDateUtc(consumesPeriod && IsDue(nextRunDate, nowUtc, leadDays) ? nextRunDate : nowUtc);
 }

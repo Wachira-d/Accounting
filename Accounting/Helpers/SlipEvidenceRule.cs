@@ -44,6 +44,34 @@ public static class SlipEvidenceRule
 
     private static string NormalizeAll(string? s) => new string((s ?? "").Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
 
+    // ═══ รอบ 255 WP-12B ข้อ 1 — แจ้งโอนจากหน้าชำระของเอกสาร (ทางเข้าที่ไม่ล็อกอิน · โทเคนลิงก์ชำระพิสูจน์สิทธิ์) ═══
+
+    /// <summary>เพดานการแจ้งโอนต่อเอกสารต่อชั่วโมง (นับในฐาน) — ทางเข้าที่ไม่ล็อกอินต้องมีเพดาน</summary>
+    public const int PayLinkMaxPerHour = 5;
+    /// <summary>ขนาดไฟล์สูงสุดของสลิปจากหน้าชำระ</summary>
+    public const int PayLinkMaxBytes = 10 * 1024 * 1024;
+
+    /// <summary>ชนิดไฟล์จากไบต์จริง (ไม่เชื่อ Content-Type ที่ client ส่ง) — JPEG/PNG/WEBP (<see cref="ImageMagicBytes"/>) หรือ PDF (<c>%PDF-</c>) · อื่น ๆ = null</summary>
+    public static string? DetectPublicType(ReadOnlySpan<byte> head)
+    {
+        if (ImageMagicBytes.Detect(head) is string img) return img;
+        if (head.Length >= 5 && head[0] == (byte)'%' && head[1] == (byte)'P' && head[2] == (byte)'D' && head[3] == (byte)'F' && head[4] == (byte)'-')
+            return "application/pdf";
+        return null;
+    }
+
+    /// <summary>หน้าชำระแสดงฟอร์มแจ้งโอนไหม — มีกล่องโอน (ใบรับโอนได้ + มีบัญชีรับโอน) และยอดสุทธิ &gt; 0</summary>
+    public static bool PayLinkSlipAllowed(bool hasTransferBox, decimal net) => hasTransferBox && net > 0.005m;
+
+    /// <summary>ด่านของการแจ้งโอนจากหน้าชำระ · null = รับได้ · ข้อความไทยถึงลูกค้า (ไม่มีข้อมูลของใบอื่น)</summary>
+    public static string? PayLinkSlipProblem(bool allowed, bool hasPendingSlip, int submittedLastHour)
+    {
+        if (!allowed) return "เอกสารนี้แจ้งโอนผ่านหน้านี้ไม่ได้ — กรุณาติดต่อผู้ขาย";
+        if (hasPendingSlip) return "ได้รับสลิปของเอกสารนี้แล้ว — รอผู้ขายตรวจและยืนยัน (ไม่ต้องแนบซ้ำ) · ถ้าแนบผิดใบ ติดต่อผู้ขาย";
+        if (submittedLastHour >= PayLinkMaxPerHour) return "แจ้งโอนถี่เกินไป — กรุณารอสักครู่แล้วลองใหม่ หรือติดต่อผู้ขาย";
+        return null;
+    }
+
     /// <summary>ข้อความถึงลูกค้าเมื่อสลิปซ้ำ (ไม่บอกเลขเอกสารอื่น — ไม่รั่วข้อมูลใบของลูกค้าอื่น)</summary>
     public static string? DuplicateProblem(bool sameFileSeen, bool sameRefSeen)
     {

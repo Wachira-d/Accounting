@@ -116,7 +116,7 @@
         <div class="form-row">
           <div class="form-group"><label class="form-label">เลขที่หนังสือรับรอง</label>
             <input class="form-input" id="mCertNo" placeholder="เลขที่บนใบของผู้จ่าย">
-            <div class="form-help">เว้นว่าง = ยังไม่ได้รับใบ (จะยังเครดิตไม่ได้)</div>
+            <div class="form-help" id="mCertHelp">เว้นว่าง = ยังไม่ได้รับใบ (จะยังเครดิตไม่ได้)</div>
           </div>
           <div class="form-group"><label class="form-label">วันที่บนหนังสือ</label><input type="date" class="form-input" id="mCertDate"></div>
         </div>
@@ -695,7 +695,7 @@
                   ? `<button class="btn btn-sm btn-secondary" disabled title="ตัดสูญพร้อมรายการบัญชีแล้ว — แก้ไข/ลบไม่ได้ · ได้ใบภายหลังให้กด &quot;ได้รับใบแล้ว&quot;">แก้ไข 🔒</button>
                      <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="Page.openLate('${r.id}')">ได้รับใบแล้ว</button>`
                   : `<button class="btn btn-sm btn-secondary" onclick="Page.openEdit('${r.id}')">แก้ไข</button>`}
-              ${(r.status === 'Pending' || r.status === 'Received') ? `<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="Page.expire('${r.id}')">ตัดสูญ</button>` : ''}
+              ${r.canWriteOff ? `<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="Page.expire('${r.id}')">ตัดสูญ</button>` : ''}
             </td>
           </tr>`).join('');
       },
@@ -720,6 +720,7 @@
         document.getElementById('mTitle').textContent = 'บันทึกหนังสือรับรอง';
         ['mCertNo','mCertDate','mPayer','mPayerTax','mBase','mRate','mAmt','mNotes'].forEach(id => document.getElementById(id).value = '');
         this._hydrateIncomeType({});   // ล้างค่า + ตัวเลือก "(ค่าเดิม)" ของใบก่อน
+        this._lockCert(null);
         document.getElementById('mForm').value = '53';
         document.getElementById('mYear').value = this._year();
         document.getElementById('mFile').value = '';
@@ -729,6 +730,14 @@
         Layout.openModal('editModal');
       },
 
+      // ฝ่ายค้าน WP-09 รอบสอง H-B: เซิร์ฟเวอร์ล็อกเลขที่/วันที่ใบแรกของแถวที่ได้ใบผ่านกล่องรับแล้ว — หน้าล็อกช่องพร้อมเหตุผลจากเซิร์ฟเวอร์ (ไม่ให้กดบันทึกแล้วถูกปฏิเสธเงียบ ๆ)
+      _lockCert(reason) {
+        const no = document.getElementById('mCertNo'), help = document.getElementById('mCertHelp');
+        no.disabled = !!reason;
+        help.textContent = reason || 'เว้นว่าง = ยังไม่ได้รับใบ (จะยังเครดิตไม่ได้)';
+        help.style.color = reason ? '#b45309' : '';
+      },
+
       openEdit(id) {
         const r = this.rows.find(x => x.id === id); if (!r) return;
         this.editingId = id;
@@ -736,6 +745,7 @@
         document.getElementById('mYear').value = r.taxYear;
         document.getElementById('mCertNo').value = r.certificateNumber || '';
         document.getElementById('mCertDate').value = r.certificateDate ? Layout.dateInput(r.certificateDate) : '';
+        this._lockCert(r.certificateLockReason || null);
         document.getElementById('mPayer').value = r.payerName || '';
         document.getElementById('mPayerTax').value = r.payerTaxId || '';
         this._hydrateIncomeType(r);

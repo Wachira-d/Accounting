@@ -179,6 +179,19 @@ public partial class DocumentService : IDocumentService
             // แถวที่ GL สร้างเองไม่เคยมีเลขที่ใบรับรอง จึงใช้เป็นตัวแยกได้
             if (existing != null && !string.IsNullOrWhiteSpace(existing.CertificateNumber))
             {
+                // ฝ่ายค้าน WP-09 รอบสอง M-C: แถวที่มีใบแต่ "ตัดสูญพร้อม JE ที่ยังมีผล" (ตัดสูญส่วนที่ขาดใบ) แล้ว GL ต้นทางลด (ยกเลิก/แก้ใบ) ⇒ ต้องกลับ JE ตัดสูญ
+                // (ไม่งั้น 11910 ติดลบ) — "ใบจริงชนะ" ใช้กับยอดที่ได้ใบ ไม่ใช่กับ JE ตัดสูญ · ตัวตัดสินเดียว WhtCreditableAmount.AfterSourceGlDrop · เส้นเดียว UndoWriteOffAsync
+                var drop = WhtCreditableAmount.AfterSourceGlDrop(
+                    WhtCreditWriteOff.NeedsReversal(existing.Status, existing.WriteOffJournalEntryId, existing.WriteOffReversalJournalEntryId),
+                    existing.WhtAmount, existing.ReceivedAmount, amount);
+                if (drop.UndoWriteOff)
+                {
+                    undoingWriteOff = true;
+                    await new WhtCreditService(_db, Microsoft.Extensions.Logging.Abstractions.NullLogger<WhtCreditService>.Instance)
+                        .UndoWriteOffAsync(companyId, existing.Id, $"ยอดภาษีถูกหักของใบต้นทาง {doc.DocumentNumber} ลดลง/ถูกยกเลิก — กลับรายการตัดสูญ",
+                            drop.Remaining, removeRow: drop.RemoveRow, "system");
+                    return;
+                }
                 // รอบ 252 (WP-09 · AUTO_SEND §7.1): แถวที่ได้ใบผ่านกล่องรับ (ReceivedAmount = Σ allocation ที่ยืนยัน) แล้ว GL ถูกหักเพิ่ม (ผ่อนงวดถัดไป) ⇒
                 // ขยายยอดถูกหักตาม GL และกลับเป็น "รอใบส่วนที่เหลือ" (เครดิตยังนับเฉพาะส่วนที่ได้ใบ — Helpers/WhtCreditableAmount) · ห้ามแตะ ReceivedAmount/allocation ·
                 // GL ลดลงจนต่ำกว่ายอดที่ได้ใบ ⇒ ไม่ลบแถว/ไม่ลดยอด (ใบจริงชนะ) แต่ติดหมายเหตุให้เห็น (ไม่หายเงียบ)

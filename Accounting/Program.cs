@@ -638,6 +638,7 @@ builder.Services.AddScoped<Accounting.Services.Implementations.CrossTenantWorkfl
 builder.Services.AddSingleton<Accounting.Services.Implementations.Ocr.EmbeddedTesseractOcrService>();
 builder.Services.AddScoped<IReportBuilderService, ReportBuilderService>();
 builder.Services.AddScoped<IPortalService, PortalService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.SlipEvidenceService>();   // รอบ 255 WP-12B ข้อ 1 — ประตูเดียวของการแจ้งโอน (พอร์ทัล + หน้าชำระของเอกสาร)
 
 // Phase 5: World-Class
 builder.Services.AddScoped<IFpaService, FpaService>();
@@ -2146,6 +2147,18 @@ try
     catch (Exception ex)
     {
         app.Logger.LogError(ex, "รอบ 245: ย้าย Contact.LineUserId เป็นปลายทาง legacy ไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
+    }
+
+    // รอบ 252 ฝ่ายค้าน WP-09 รอบสอง L7: ล้างเลขบุคคลธรรมดาใน feedback ตรวจของจริง 50 ทวิ ที่เก็บก่อนรอบนี้ (ครั้งเดียว · marker OneShotDataFixes) ·
+    // ล้ม = ธุรกรรมย้อน + ไม่มี marker ⇒ บูตถัดไปทำใหม่ · log Error (ไม่ล้มทั้งแอป — คำขอใหม่ปิดบังแล้วตั้งแต่รอบนี้)
+    try
+    {
+        var scrubbed = await Accounting.Helpers.WhtCertFeedbackPiiMigration.RunAsync(db);
+        if (scrubbed > 0) app.Logger.LogInformation("รอบ 252: ล้างเลขบุคคลใน feedback ตรวจของจริง 50 ทวิ {Count} แถว", scrubbed);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "รอบ 252: ล้างเลขบุคคลใน feedback ตรวจของจริง 50 ทวิ ไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
     }
 
     // รอบ 246 QR (ฝ่ายค้าน N3): ย้ายเลขพร้อมเพย์เดิมของเทมเพลต → บัญชีธนาคาร ครั้งเดียว (เฉพาะบริษัทที่ชัดเจน · audit ทุกบริษัท) · ล้ม = ย้อน + บูตถัดไปทำใหม่

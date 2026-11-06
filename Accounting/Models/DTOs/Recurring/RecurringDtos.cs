@@ -23,7 +23,10 @@ public record CreateRecurringTransactionRequest(
     List<string>? PayLinkChannels = null,
     // รอบ 250 (WP-02 B-13): หลังลูกค้าชำระ ส่งใบเสร็จอัตโนมัติ / ส่งทุกงวด — ชื่อ Inherit|On|Off (null/Inherit = ตามผู้ติดต่อ › บริษัท)
     string? PostPayEmailReceipt = null,
-    string? PostPayIncludePartial = null);
+    string? PostPayIncludePartial = null,
+    // รอบ 255 WP-12B ข้อ 2: ทุก N เดือน (null = ตามความถี่) · สร้างล่วงหน้า N วัน (null/0 = วันของงวด)
+    int? IntervalMonths = null,
+    int? LeadDays = null);
 
 public record UpdateRecurringTransactionRequest(
     string? Name,
@@ -48,7 +51,11 @@ public record UpdateRecurringTransactionRequest(
     List<string>? PayLinkChannels = null,
     /// <summary>รอบ 250 (WP-02 B-13): null = ไม่แก้ · "Inherit"/"" = ล้าง (ตามผู้ติดต่อ › บริษัท) · On/Off</summary>
     string? PostPayEmailReceipt = null,
-    string? PostPayIncludePartial = null);
+    string? PostPayIncludePartial = null,
+    /// <summary>รอบ 255 WP-12B ข้อ 2: null = ไม่แก้ · 0 = ล้าง (ตามความถี่) · 1–60 = ทุก N เดือน</summary>
+    int? IntervalMonths = null,
+    /// <summary>รอบ 255 WP-12B ข้อ 2: null = ไม่แก้ · 0–28 (สั้นกว่าหนึ่งงวด)</summary>
+    int? LeadDays = null);
 
 public record RecurringTransactionResponse(
     Guid Id,
@@ -92,7 +99,10 @@ public record RecurringTransactionResponse(
     AutoApprovePolicyView? AutoApprovePolicy = null,
     // รอบ 250 (WP-02 B-13): echo ค่าตั้งงานหลังรับชำระของรายการ (ชื่อ Inherit|On|Off — hydrate ฟอร์ม)
     string PostPayEmailReceipt = "Inherit",
-    string PostPayIncludePartial = "Inherit");
+    string PostPayIncludePartial = "Inherit",
+    // รอบ 255 WP-12B ข้อ 2: echo ทุก N เดือน + สร้างล่วงหน้า (hydrate ฟอร์ม)
+    int? IntervalMonths = null,
+    int LeadDays = 0);
 
 /// <summary>รอบ 248: นโยบายอนุมัติข้ามคำเตือนที่หน้าแสดง — รหัสที่ปล่อย · ผู้ตั้ง/เมื่อไร · ระดับ (Recurring/Contact)</summary>
 public record AutoApprovePolicyView(IReadOnlyList<string> PassCodes, string? SetBy, DateTime? SetAt, string? Scope, bool InheritContact = false);

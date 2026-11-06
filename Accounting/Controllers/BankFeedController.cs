@@ -71,6 +71,7 @@ public class BankFeedController : ControllerBase
     }
 
     [HttpPost("connections/{connectionId}/test")]
+    [RequirePermission(PermissionKeys.BankReconcile)]
     public async Task<IActionResult> TestConnection(Guid companyId, Guid connectionId)
     {
         var result = await _service.TestConnectionAsync(companyId, connectionId);

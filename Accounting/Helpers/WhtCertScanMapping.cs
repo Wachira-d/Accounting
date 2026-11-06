@@ -56,9 +56,10 @@ public static class WhtCertScanMapping
         catch (System.Text.Json.JsonException) { return null; }
     }
 
-    /// <summary>ค่าเดี่ยว (ไม่มีบริบทสเกล): ≥ 1 ⇒ สเกล 0–100 (1 = 1% — ฝ่ายค้าน WP-09 M4: เดิม 1 กลายเป็น 100%) · ≤ 0 = null (ไม่รู้)</summary>
+    /// <summary>ค่าเดี่ยว (ไม่มีบริบทสเกล): &gt; 1 ⇒ สเกล 0–100 · 1.0 = 100% (ฝ่ายค้าน WP-09 รอบสอง — ตัวอ่าน OCR ส่ง 1.0 = มั่นใจเต็ม;
+    /// รอบแรกตีความ 1 = 1% ซึ่งผิดทาง) · ≤ 0 = null (ไม่รู้)</summary>
     private static decimal? NormalizeSingle(decimal v)
-        => v <= 0m ? null : Clamp(v >= 1m ? v / 100m : v);
+        => v <= 0m ? null : Clamp(v > 1m ? v / 100m : v);
 
     private static decimal Clamp(decimal x) => Math.Round(Math.Max(0m, Math.Min(1m, x)), 4, MidpointRounding.AwayFromZero);
 }

@@ -118,6 +118,20 @@ public static class WhtCertIntakeVerdict
     public static bool ShouldTeachGenuine(bool viewedFile, string? authenticityAnswer)
         => viewedFile && authenticityAnswer != Suspect;
 
+    /// <summary>ฝ่ายค้าน WP-09 รอบสอง H-B (ตัวเดียวของ H2): ใบใหม่ลงวันที่คนละรอบบัญชีกับใบแรกของแถว ⇒ ลงรวมแถว/แก้วันที่ข้ามรอบไม่ได้
+    /// (<c>CitCalculation.CreditableInPeriod</c> นับงวดตามวันที่ใบแรกของแถว) · แถวยังไม่มีใบ (null) = ไม่ข้าม · ผู้เรียก: กล่องรับ (ยืนยัน/ยืนยันอัตโนมัติ/ทางรายการใหม่)
+    /// และ <c>WhtCreditService.UpdateAsync</c></summary>
+    public static bool CrossesCreditPeriod(DateTime? existingCertDate, DateTime newCertDate, int fiscalStartMonth)
+        => existingCertDate is DateTime first && FiscalYearOf(first, fiscalStartMonth) != FiscalYearOf(newCertDate, fiscalStartMonth);
+
+    /// <summary>ฝ่ายค้าน WP-09 รอบสอง M-D: ปีของใบสำหรับกันซ้ำ — รอบบัญชีของวันที่บนใบ · ไม่มีวันที่ ⇒ ปีภาษีของแถว (ถ้ามี) · ไม่รู้ทั้งคู่ = null</summary>
+    public static int? CertYear(DateTime? certDate, int? taxYear, int fiscalStartMonth)
+        => certDate is DateTime d ? FiscalYearOf(d, fiscalStartMonth) : taxYear is > 0 ? taxYear : null;
+
+    /// <summary>ฝ่ายค้าน WP-09 รอบสอง M-D: เลขที่ใบเดียวกันของผู้จ่ายเดียวกัน "ซ้ำ" เฉพาะเมื่ออยู่ปีเดียวกัน (เลขที่ใบของผู้จ่ายเริ่มนับใหม่ทุกปีได้) ·
+    /// ไม่รู้ปีฝั่งใดฝั่งหนึ่ง ⇒ ถือว่าซ้ำ (ทางปลอดภัย — ไม่ให้เครดิตสองครั้ง)</summary>
+    public static bool SameCertYear(int? a, int? b) => a is null || b is null || a == b;
+
     /// <summary>ปีภาษี (รอบบัญชีของบริษัท) ของวันที่ — กติกาเดียวกับ <c>SyncWhtCreditReceivedAsync</c> (เดือนเริ่มรอบ 1–12)</summary>
     public static int FiscalYearOf(DateTime date, int fiscalStartMonth)
     {

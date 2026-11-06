@@ -18,15 +18,18 @@ public static class BankReceiptAutoSettle
     public const string RuleAuto = "BANK-AUTO-SETTLE";
     public const string RuleSuggest = "BANK-AUTO-SUGGEST";
     public const string RuleNone = "BANK-AUTO-NONE";
+    /// <summary>ฝ่ายค้านรอบสอง LOW: คนกดยืนยันข้อเสนอ (ไม่ใช่ระบบปิดเอง) — รหัสกติกาบนบรรทัดแยกจาก <see cref="RuleAuto"/></summary>
+    public const string RuleConfirm = "BANK-CONFIRM-SUGGEST";
 
     // ── แหล่งของบรรทัด (BankTransaction.EntrySource) ──
     // ฝ่ายค้าน WP-12A H1 (คำตัดสินผู้ประสานงาน): statement ที่ผู้ใช้อัปโหลด/พิมพ์เอง ไม่ใช่หลักฐานให้ระบบปิดหนี้โดยไม่มีคน — เสนอได้อย่างเดียว
     // ยกเว้นผู้นำเข้าเองมีสิทธิ์อนุมัติใบชนิดนั้น ณ ตอนลงมือ (เท่ากับคนอนุมัติ) — ต่อไฟล์หน้าธนาคาร/feed ที่ปลายทางผู้ใช้ตั้งเอง
     /// <summary>ไฟล์ statement ที่อัปโหลดที่หน้าบัญชีธนาคาร (มีผู้อัปโหลด <c>CreatedByUserId</c>) — ปิดเองได้เมื่อผู้อัปโหลดมีสิทธิ์อนุมัติใบชนิดนั้น</summary>
     public const string SourceStatement = "Statement";
-    /// <summary>ดึงจากธนาคารผ่านปลายทางที่ระบบรู้จัก (ไม่ใช่ URL ที่ผู้ใช้ตั้ง) — หลักฐานธนาคาร</summary>
+    /// <summary>ดึงจากธนาคารผ่านการเชื่อมต่อ feed — <b>เสนอเท่านั้น</b> (ฝ่ายค้านรอบสอง H-A · DECISIONS 252-WP12A-6: ยังไม่มีการเชื่อมธนาคารจริงที่ตรวจแล้ว ·
+    /// ปลายทาง/บัญชีผูกกับเลขบัญชีไม่ได้ ⇒ ทบทวนเมื่อทำสัญญา API ธนาคารจริง)</summary>
     public const string SourceFeed = "Feed";
-    /// <summary>ดึงผ่านปลายทาง (ApiEndpoint) ที่ผู้ใช้ตั้งเอง — เหมือน Statement: ปิดเองได้เมื่อผู้สั่งดึงมีสิทธิ์อนุมัติ</summary>
+    /// <summary>ค่าเดิมของรอบก่อน (feed ที่ผู้ใช้ตั้ง URL) — ไม่มีผู้เขียนแล้ว · แถวที่มีค่านี้ = เสนอเท่านั้นเหมือน Feed</summary>
     public const string SourceFeedCustom = "FeedCustom";
     /// <summary>ไฟล์จากศูนย์นำเข้า/นำเข้า-ส่งออก/Open Banking (ไฟล์) — เสนอเท่านั้น</summary>
     public const string SourceUserFile = "UserFile";
@@ -38,9 +41,11 @@ public static class BankReceiptAutoSettle
     /// <paramref name="creatorMayApprove"/> = ผู้นำเข้า/ผู้สั่งดึงบรรทัดนี้มีสิทธิ์อนุมัติใบชนิดนั้น ณ ตอนนี้ (ไม่รู้ผู้นำเข้า = false)</summary>
     private static string? SourceProblem(string? entrySource, bool creatorMayApprove) => entrySource switch
     {
-        SourceFeed => null,
-        SourceStatement or SourceFeedCustom => creatorMayApprove ? null
+        // DECISIONS 252-WP12A-6: ปิดเองได้ทางเดียว = ไฟล์ statement หน้าบัญชีธนาคารที่ผู้อัปโหลดมีสิทธิ์อนุมัติ
+        SourceStatement => creatorMayApprove ? null
             : "รายการนี้นำเข้าโดยผู้ใช้ที่ไม่มีสิทธิ์อนุมัติใบชนิดนี้ (หรือไม่ทราบผู้นำเข้า) — ระบบไม่ปิดหนี้เอง ให้ผู้มีสิทธิ์ยืนยัน",
+        SourceFeed or SourceFeedCustom =>
+            "รายการนี้มาจากการเชื่อมต่อธนาคาร (feed) ที่ยังไม่ได้ตรวจยืนยันกับธนาคารจริง — ระบบไม่ปิดหนี้เอง ให้ผู้มีสิทธิ์ยืนยัน",
         _ => "รายการนี้ไม่ได้มาจากธนาคาร (พิมพ์มือ · ไฟล์/API ที่ผู้ใช้ส่งเอง · หรือไม่ทราบแหล่ง) — ระบบไม่ปิดหนี้เอง",
     };
 
@@ -60,7 +65,15 @@ public static class BankReceiptAutoSettle
         public const string Settled = "Settled";
         public const string Failed = "Failed";
         public const string Rejected = "Rejected";
+        /// <summary>ฝ่ายค้านรอบสอง M7: ประเมินล้มซ้ำครบ <see cref="PoisonFailures"/> ครั้ง — พักไว้ให้คนดู (อยู่ในคิว · ไม่ประเมินซ้ำอัตโนมัติ)</summary>
+        public const string Held = "Held";
     }
+
+    /// <summary>ประเมินล้มกี่ครั้งแล้วพักบรรทัด (<see cref="Stamps.Held"/>)</summary>
+    public const int PoisonFailures = 3;
+    /// <summary>ฝ่ายค้านรอบสอง M-E: ใบค้างยอดตรงเกินจำนวนนี้ และรายการไม่อ้างเลขเอกสาร ⇒ เสนอโดยไม่โหลดข้อเท็จจริงทุกใบ (คงขอบเขตงาน)</summary>
+    public const int MaxExactForFacts = 8;
+    public const string TooManyEqualReason = "มีใบค้างยอดเท่ากันจำนวนมากและรายการไม่อ้างเลขเอกสาร — เลือกใบเองในคิว";
 
     /// <summary>ทนยอด "ขาด/เกิน" ที่ยังเสนอให้คนดู (ค่าธรรมเนียมโอน/ส่วนต่าง WHT) — ไม่ใช่เกณฑ์ปิดหนี้</summary>
     public const decimal NearAbsolute = 50m;
