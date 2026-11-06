@@ -79,7 +79,7 @@ public static class ContactNotifyEndpointMigration
         """CREATE INDEX IF NOT EXISTS "IX_ContactNotifyEndpoints_Company_Contact" ON "ContactNotifyEndpoints" ("CompanyId", "ContactId") WHERE "UnlinkedAt" IS NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_ContactNotifyEndpoints_LineIdHash" ON "ContactNotifyEndpoints" ("LineIdHash");""",
         """CREATE INDEX IF NOT EXISTS "IX_ContactNotifyEndpoints_ContactId" ON "ContactNotifyEndpoints" ("ContactId");""",
-        """CREATE TABLE IF NOT EXISTS "OneShotDataFixes" ("Key" varchar(100) PRIMARY KEY, "AppliedAt" timestamp NOT NULL);""",
+        // ตาราง marker "OneShotDataFixes" สร้างที่ DatabaseMigrationHelper.OneShotDataFixesTableSql ตัวเดียว (รอบ 250 WP-04)
     };
 
     /// <summary>ย้าย <c>Contact.LineUserId</c> → แถว legacy (ไม่ใช้ส่ง) ครั้งเดียว · marker มีแล้ว = (0, 0) · ล้มกลางทาง ⇒ โยนต่อ (ผู้เรียก log Error) หลังล้าง ChangeTracker</summary>

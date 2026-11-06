@@ -6657,3 +6657,14 @@ documents ratchet 387 · แก้ XSS ที่พบเพิ่ม (`${c.phon
 (L4) ตัวนับแท็บล้มไม่ล้มรายการ. (L5) legal ถามก่อนทับร่างอังกฤษ. (L7) ลองใหม่คิวอีเมลได้เฉพาะสถานะ Failed. raw fetch: contacts 4→2 · organization 2→0 · petty-cash 2→0.
 เทสต์ `EmailScheduleRuleRangeTests` · `DuplicateSubjectCode` · Db พอร์ทัล 4 เคส · R250W3 +7 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 697718ef_
 
+_รอบ 250 WP-04 — เทสต์/กติกาที่ขาด (AUDIT_249 §WP-04 ข้อ 1–6 + งานค้างจาก WP-02) (2026-11-06):
+(1) `PaymentQrMigration` คีย์ล็อก `hashtext` (int4 32 บิต) → `AdvisoryLockKey.For(OneShotDataFix, MarkerKey)` · ตาราง `OneShotDataFixes` ย้ายไป
+`DatabaseMigrationHelper.OneShotDataFixesTableSql` ตัวเดียว (ถอดจาก Statements ของรอบ 245/246 · `PortalSlipPending` ใช้ค่าคงที่เดียวกัน) · `advisory_lock_key_check`
+baseline hashtext = 0 · Db test 4 ทิศ + กติกา R250W4 (ล็อกก่อนอ่าน · ห้าม hashtext · Program.cs เรียกหลัง ApplyMissingColumns).
+(2) `PaymentQrPolicy.IsBankQrDocument`/`ShowBankQr` รับ `cnDnPurchaseSideOverride` + ผู้ติดต่อผู้ขายอย่างเดียว (เดิม null/false ตายตัว) ⇒ ใบเพิ่มหนี้ที่ย้ายฝั่งได้ QR ตามฝั่งเดียวกับ JE/ลิงก์ชำระ ·
+`PaymentQrService.ResolveCoreAsync` โหลดข้อเท็จจริงของผู้ติดต่อ (กรองบริษัท) · ผู้เรียกฝั่งเทมเพลตส่ง `null,false` โดยเจตนา.
+(3) `DbTestDatabase` ตั้งรูป FK production (RESTRICT) + ตาราง marker ครั้งเดียวตอนสร้างฐาน — `DocumentPurgeDbTests` ไม่ ALTER TABLE ระหว่างเทสต์ขนาน (E M-4).
+(4) Db test ด่านสินทรัพย์ผ่านเส้นจริงสองทิศ: ลบถาวร · ย้ายฝั่ง CN/DN · สลับบริการต่างประเทศ · แก้ผังบรรทัด · resync · OCR ลงทะเบียนจากสแกน · กลับ/แก้ JE โอนต้นทุน ·
+`Void_while_linking_holds_key_first` (ดู `pg_locks`) · `WhtWriteOffJournalLock` 409 + ทิศตรงข้าม · `SettleYearEnd_locks_in_id_order` · MED-5 enqueue→send สองทิศ.
+(5) `GateOppositeDirectionRound250Tests` — 8 ฟังก์ชันที่ matrix ของทีม E นับว่าไม่มีทิศตรงข้าม + `Releases` เรียกตรง + `BindingHash` (ผัง/ราคา/ผู้ติดต่อเปลี่ยน · คำอธิบายไม่เปลี่ยน).
+ยังไม่ทำ (WP-04 ข้อ 7–13): XML e-Tax · ตาราง PaymentNotification ทุกชนิด · `PostJe`/`AgingDays` · checker 4 ตัว. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 0cb7ff24_

@@ -15792,6 +15792,72 @@ REVIEWER_CASES += [
 ]
 
 
+# ── รอบ 250 WP-04 (AUDIT_249 §WP-04 ข้อ 1 · E M-3): งานย้าย QR ตอนบูต — คีย์ล็อก 64 บิตจากตัวตั้งเดียว · ตาราง marker จาก DatabaseMigrationHelper ตัวเดียว ──
+# + QR บนใบเพิ่มหนี้ใช้ข้อเท็จจริงฝั่งเดียวกับ JE/ลิงก์ชำระ (เดิม IsBankQrDocument ส่ง null/false ตายตัว)
+_R250W4_WHY = "รอบ 250 WP-04: "
+RULES += [
+    dict(file="Helpers/PaymentQrMigration.cs", method="MoveCoreAsync",
+         must=["AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey)", "db.AddChainedAuditLog(", "tx.CommitAsync("],
+         before=[("AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey)", "db.DocumentTemplates")],
+         forbid=["hashtext("],
+         why=_R250W4_WHY + "R246-MIG ล็อกงานย้ายครั้งเดียวด้วยคีย์ 64 บิต (AdvisoryLockKey) ก่อนอ่านเทมเพลต · audit chain · ธุรกรรมเดียว"),
+    dict(file="Helpers/PaymentQrMigration.cs", method="MoveLegacyTemplatePromptPayAsync",
+         must=["MoveCoreAsync("], must_re=[r"finally\s*\{\s*db\s*\.\s*ChangeTracker\s*\.\s*Clear\s*\(\s*\)"],
+         why=_R250W4_WHY + "R246-MIG context ตอนบูตไม่พาแถวค้างไปบันทึกต่อ"),
+    dict(file="Services/Implementations/PaymentQrService.cs", method="ResolveCoreAsync",
+         must=["doc.CnDnPurchaseSideOverride", "c.IsSupplier && !c.IsCustomer", "c.CompanyId == cid"],
+         call_args=[("PaymentQrPolicy.ShowBankQr(", "contactSupplierOnly")],
+         why=_R250W4_WHY + "QR บนใบเพิ่มหนี้ตัดสินฝั่งด้วยข้อเท็จจริงเดียวกับ JE/ลิงก์ชำระ (ผู้ใช้สั่งย้ายฝั่ง · ผู้ติดต่อผู้ขายอย่างเดียว) · ผู้ติดต่อของบริษัทนี้เท่านั้น"),
+]
+REVIEWER_CASES += [
+    # คีย์ล็อกกลับไปเป็น hashtext (32 บิต) ⇒ ต้องฟ้อง
+    ("R250W4-1", "MoveCoreAsync",
+     "new object[] { AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey) }",
+     "new object[] { $\"SELECT hashtext({MarkerKey})\" }", True),
+    # QR กลับไปตัดสินใบเพิ่มหนี้โดยไม่รู้ว่าผู้ใช้ย้ายฝั่ง ⇒ ต้องฟ้อง
+    ("R250W4-2", "ResolveCoreAsync",
+     "doc.CnDnPurchaseSideOverride, contactSupplierOnly, doc.Status",
+     "null, false, doc.Status", True),
+    # จัดบรรทัดใหม่ ⇒ ต้องไม่ฟ้อง
+    ("R250W4-2fp", "ResolveCoreAsync",
+     "doc.CnDnPurchaseSideOverride, contactSupplierOnly, doc.Status",
+     "doc.CnDnPurchaseSideOverride,\n            contactSupplierOnly, doc.Status", False),
+]
+
+
+def program_boot_migrations_errors(text: str) -> list:
+    """รอบ 250 WP-04 (R246-MIG · Program.cs top-level): งานย้าย QR ครั้งเดียวต้องถูกเรียกตอนบูต <b>หลัง</b> ApplyMissingColumns
+    (ตาราง marker + คอลัมน์ต้องมีก่อน) — มี ≠ ถูกเรียก (F2 ข้อ 2)"""
+    errs = []
+    code = mask(text)
+    apply = code.find("DatabaseMigrationHelper.ApplyMissingColumns(")
+    move = code.find("PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db)")
+    if move < 0:
+        errs.append("Program.cs ไม่เรียก PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db) ตอนบูต — " + _R250W4_WHY
+                    + "งานย้ายเลขพร้อมเพย์ของเทมเพลตไม่มีผู้เรียก = ไม่มีงานย้าย")
+    elif apply < 0 or move < apply:
+        errs.append("Program.cs เรียก PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db) ก่อน DatabaseMigrationHelper.ApplyMissingColumns( — "
+                    + _R250W4_WHY + "ตาราง marker/คอลัมน์ต้องมีก่อน")
+    return errs
+
+
+def program_boot_migrations_self_test() -> list:
+    good = ("DatabaseMigrationHelper.ApplyMissingColumns(db, logger);\n"
+            "var r246 = await Accounting.Helpers.PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db);\n")
+    fails = []
+    if program_boot_migrations_errors(good):
+        fails.append("self-test program_boot_migrations: ฟ้องผิดกับลำดับที่ถูก")
+    if not program_boot_migrations_errors("DatabaseMigrationHelper.ApplyMissingColumns(db, logger);\n"):
+        fails.append("self-test program_boot_migrations: ไม่เรียกงานย้ายแล้วไม่ฟ้อง")
+    if not program_boot_migrations_errors("DatabaseMigrationHelper.ApplyMissingColumns(db, logger);\n// PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db);\n"):
+        fails.append("self-test program_boot_migrations: นับคอมเมนต์เป็นการเรียก")
+    swapped = ("var r246 = await Accounting.Helpers.PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db);\n"
+               "DatabaseMigrationHelper.ApplyMissingColumns(db, logger);\n")
+    if not program_boot_migrations_errors(swapped):
+        fails.append("self-test program_boot_migrations: เรียกก่อน ApplyMissingColumns แล้วไม่ฟ้อง")
+    return fails
+
+
 def doc_inline_vat_formula_errors(text: str) -> list:
     """รอบ 250 (WP-02 §2.2 ข้อ 4 · คำตัดสิน §2 #6): ยอด Dr ของบรรทัดซื้อ (ฐาน + VAT ต้องห้าม) ต้องผ่าน Helpers/PurchaseLineGlAmount ตัวเดียว —
     ห้ามประกอบ `Amount + x.VatAmount` เองใน DocumentService (allowlist = ยอดรวมที่ไม่ใช่ยอด GL ของบรรทัด: ยอดค่ารับรอง §65 ตรี · ยอดรวมบรรทัดของใบ) ·
@@ -15872,10 +15938,11 @@ def main() -> int:
     errs += wht_credit_ioe_errors((SRC / _R243A_WHT).read_text(encoding="utf-8"))   # รอบ 243a (G-10)
     errs += doc_inline_vat_formula_errors((SRC / DOC).read_text(encoding="utf-8"))   # รอบ 250 WP-02 §2.2/§2.4 ข้อ 5
     errs += wht_writeoff_lock_key_errors((SRC / _R243A_WHT).read_text(encoding="utf-8"))   # รอบ 250 WP-02 §2.4 ข้อ 9
+    errs += program_boot_migrations_errors((SRC / "Program.cs").read_text(encoding="utf-8"))   # รอบ 250 WP-04 R246-MIG
     st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
           + notes_marker_self_test(marker_files) + line_config_self_test(marker_files) + line_push_self_test(marker_files)
           + cascade_writer_self_test() + program_outbound_clients_self_test() + wht_credit_ioe_self_test()
-          + doc_inline_vat_formula_self_test() + wht_writeoff_lock_key_self_test())
+          + doc_inline_vat_formula_self_test() + wht_writeoff_lock_key_self_test() + program_boot_migrations_self_test())
     for e in errs + st:
         print("❌ " + e)
     if errs or st:

@@ -283,7 +283,12 @@ public class PaymentQrService : IPaymentQrService
         var relatedType = doc.RelatedDocumentId is Guid rid
             ? await _db.Documents.AsNoTracking().Where(r => r.Id == rid && r.CompanyId == cid).Select(r => (DocumentType?)r.DocumentType).FirstOrDefaultAsync(ct)
             : null;
-        var wantBank = PaymentQrPolicy.ShowBankQr(template.ShowPaymentQr, doc.DocumentType, relatedType, doc.Status, doc.BalanceDue, doc.Currency);
+        // รอบ 250 WP-04: ฝั่งของใบเพิ่มหนี้จากข้อเท็จจริงเดียวกับ JE/ลิงก์ชำระ (DocumentPayLinkService.LoadDocAsync) — ผู้ใช้สั่งย้ายฝั่ง + ผู้ติดต่อผู้ขายอย่างเดียว
+        var contactSupplierOnly = doc.DocumentType == DocumentType.DebitNote
+            && await _db.Contacts.IgnoreQueryFilters().AsNoTracking()
+                .Where(c => c.Id == doc.ContactId && c.CompanyId == cid).Select(c => c.IsSupplier && !c.IsCustomer).FirstOrDefaultAsync(ct);
+        var wantBank = PaymentQrPolicy.ShowBankQr(template.ShowPaymentQr, doc.DocumentType, relatedType,
+            doc.CnDnPurchaseSideOverride, contactSupplierOnly, doc.Status, doc.BalanceDue, doc.Currency);
         var superseded = await SupersededByTaxInvoiceAsync(_db, cid, doc, ct);
         if (superseded && wantBank) warnings.Add(NoteSupersededByTaxInvoice);
         // ข้อเท็จจริงของลิงก์ (ยอดสุทธิ + ลิงก์ที่ยังใช้ได้) — ใบที่ยังไม่อยู่ในฐาน (ตัวอย่าง) ไม่มี
@@ -333,7 +338,7 @@ public class PaymentQrService : IPaymentQrService
     public async Task<PaymentQrDiagnosis> DiagnoseTemplateAsync(Guid companyId, DocumentTemplate template, CancellationToken ct = default)
     {
         var warnings = new List<string>();
-        if (!template.ShowPaymentQr || !PaymentQrPolicy.IsBankQrDocument(template.DocumentType, null))
+        if (!template.ShowPaymentQr || !PaymentQrPolicy.IsBankQrDocument(template.DocumentType, null, null, false))
             return new PaymentQrDiagnosis(null, null, null, null, warnings);
         var (acct, pick) = await PickDocumentAccountAsync(_db, Root, companyId, null, null, template.PaymentQrBankAccountId, ct);
         string? label = acct == null ? null : AccountLabel(acct);
@@ -345,7 +350,7 @@ public class PaymentQrService : IPaymentQrService
 
     public async Task<PaymentQrBlock?> SampleForTemplateAsync(Guid companyId, DocumentTemplate template, CancellationToken ct = default)
     {
-        if (!template.ShowPaymentQr || !PaymentQrPolicy.IsBankQrDocument(template.DocumentType, null)) return null;
+        if (!template.ShowPaymentQr || !PaymentQrPolicy.IsBankQrDocument(template.DocumentType, null, null, false)) return null;
         var (acct, _) = await PickDocumentAccountAsync(_db, Root, companyId, null, null, template.PaymentQrBankAccountId, ct);
         if (acct == null) return null;
         var bank = await BuildAccountQrAsync(_storage, _promptPay, _logger, companyId, acct, acct.PromptPayId, acct.PaymentQrSource, null, ct);

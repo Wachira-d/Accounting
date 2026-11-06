@@ -17,7 +17,7 @@ process** (Marvin hash) ⇒ instance A กับ instance B ได้คีย�
 
 รอบ 250 (AUDIT_249 WP-01 ข้อ 8 · E M-3): `pg_advisory(_xact)_lock(hashtext(...))` ใน SQL ตรง — hashtext คืน int4 (32 บิต)
 ไม่ผ่าน `AdvisoryLockKey.For` (64 บิต · มี scope) ⇒ ชนคีย์ของทรัพยากรอื่นได้ และหลุดจากตัวตั้งเดียวของคีย์ ⇒ ฟ้อง ·
-จุดเดิมที่รู้อยู่ (`Helpers/PaymentQrMigration.cs` — แก้โค้ดใน WP-04) อยู่ใน HASHTEXT_BASELINE (ratchet: เพิ่มไม่ได้ · แก้แล้วลบแถว)
+จุดเดิมที่รู้อยู่ (`Helpers/PaymentQrMigration.cs`) แก้แล้วใน WP-04 ⇒ HASHTEXT_BASELINE ว่าง (ratchet: เพิ่มไม่ได้ · ไฟล์ใหม่ที่ใช้ hashtext ในล็อก = ฟ้อง)
 `--self-test` = negative test (ไฟล์สังเคราะห์ต้องถูกฟ้อง · AdvisoryLockKey.For/คอมเมนต์/hashtext นอกการล็อกไม่ฟ้อง)
 """
 import os
@@ -33,7 +33,7 @@ BAD_RHS = re.compile(r'HashCode\.Combine|\.GetHashCode\s*\(')
 HASHTEXT_IN_LOCK = re.compile(r'pg_(?:try_)?advisory(?:_xact)?_lock(?:_shared)?\s*\(\s*hashtext\s*\(', re.I)
 # ratchet: ไฟล์ → จำนวนจุดที่รู้อยู่ก่อนกติกา (แก้แล้วลดตัวเลข/ลบแถว — เกินตัวเลข = ฟ้อง)
 HASHTEXT_BASELINE = {
-    "Accounting/Helpers/PaymentQrMigration.cs": 1,   # WP-04 แก้เป็น AdvisoryLockKey.For
+    # รอบ 250 WP-04: Helpers/PaymentQrMigration.cs แก้เป็น AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey) แล้ว ⇒ ลบแถว (ratchet = 0 จุด)
 }
 
 

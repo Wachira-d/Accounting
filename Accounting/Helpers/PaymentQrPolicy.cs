@@ -135,17 +135,23 @@ public static class PaymentQrPolicy
     }
 
     /// <summary>ชนิดเอกสารที่ "ลูกค้าจ่ายเรา" และพิมพ์ QR บัญชีรับเงินได้ — ใบเสนอราคา · ใบแจ้งหนี้ · ใบกำกับภาษี · ใบวางบิล · ใบเพิ่มหนี้ฝั่งขาย ·
-    /// ใบเสร็จ/ใบลดหนี้/เอกสารฝั่งซื้อ = ไม่พิมพ์ (QR บัญชีเราบนใบสั่งซื้อที่ส่งผู้ขาย = เชิญคนผิดฝั่งโอนเงิน)</summary>
-    public static bool IsBankQrDocument(DocumentType type, DocumentType? relatedType)
+    /// ใบเสร็จ/ใบลดหนี้/เอกสารฝั่งซื้อ = ไม่พิมพ์ (QR บัญชีเราบนใบสั่งซื้อที่ส่งผู้ขาย = เชิญคนผิดฝั่งโอนเงิน)
+    /// <para>รอบ 250 WP-04: ฝั่งของใบเพิ่มหนี้ใช้ข้อเท็จจริงชุดเดียวกับ JE รับชำระ/ลิงก์ชำระ (<see cref="DocumentPayLinkPolicy.IsSaleSide"/> —
+    /// ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ติดต่อเป็นผู้ขายอย่างเดียว) · เดิมส่ง <c>null/false</c> ตายตัว ⇒ ใบเพิ่มหนี้ที่ผู้ใช้ย้ายเป็นฝั่งขาย (ไม่มีใบต้นทาง)
+    /// ไม่ได้ QR ทั้งที่ลิงก์ชำระออกได้ และใบที่ย้ายเป็นฝั่งซื้อแต่ต้นทางเป็นใบขายได้ QR บัญชีเราไปเชิญผู้ขายโอน · ผู้เรียกที่ไม่มีเอกสาร (เทมเพลต) ส่ง
+    /// <c>null, false</c> โดยเจตนา (ไม่รู้ฝั่ง ⇒ ไม่พิมพ์)</para></summary>
+    public static bool IsBankQrDocument(DocumentType type, DocumentType? relatedType, bool? cnDnPurchaseSideOverride, bool contactIsSupplierOnly)
         => type is DocumentType.Quotation or DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.BillingNote
-           // ไม่มีข้อเท็จจริงผู้ใช้สั่งย้ายฝั่ง/ผู้ขายอย่างเดียวที่นี่ ⇒ ตัดสินจากใบต้นทาง · ใบเพิ่มหนี้ไม่รู้ฝั่ง ⇒ ไม่พิมพ์ QR (รับชำระไม่ได้จนกว่าจะเลือกฝั่ง)
-           || (type == DocumentType.DebitNote && DocumentPayLinkPolicy.IsSaleSide(type, relatedType, null, false));
+           // ใบเพิ่มหนี้ไม่รู้ฝั่ง ⇒ ไม่พิมพ์ QR (รับชำระไม่ได้จนกว่าจะเลือกฝั่ง — JE ปฏิเสธเช่นกัน)
+           || (type == DocumentType.DebitNote
+               && DocumentPayLinkPolicy.IsSaleSide(type, relatedType, cnDnPurchaseSideOverride, contactIsSupplierOnly));
 
     /// <summary>พิมพ์ QR บัญชีบนใบนี้ไหม — ปิดในเทมเพลต · ชนิดไม่เข้า · ยกเลิก · ไม่ใช่เงินบาท (พร้อมเพย์รับแต่บาท) · ใบตั้งหนี้ที่ชำระครบแล้ว ⇒ ไม่พิมพ์ ·
     /// ใบเสนอราคา/ใบวางบิล/ร่าง ยังไม่มียอดค้างที่เชื่อได้ ⇒ พิมพ์ได้ (QR ไม่ฝังยอด — <see cref="EmbedAmount"/>)</summary>
-    public static bool ShowBankQr(bool templateToggle, DocumentType type, DocumentType? relatedType, DocumentStatus status, decimal balanceDue, string? currency)
+    public static bool ShowBankQr(bool templateToggle, DocumentType type, DocumentType? relatedType,
+        bool? cnDnPurchaseSideOverride, bool contactIsSupplierOnly, DocumentStatus status, decimal balanceDue, string? currency)
     {
-        if (!templateToggle || !IsBankQrDocument(type, relatedType)) return false;
+        if (!templateToggle || !IsBankQrDocument(type, relatedType, cnDnPurchaseSideOverride, contactIsSupplierOnly)) return false;
         if (status == DocumentStatus.Voided) return false;
         if (!IsThb(currency)) return false;
         var receivable = type is DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.DebitNote;
