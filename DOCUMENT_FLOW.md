@@ -3227,7 +3227,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   แจ้งเตือนก่อนรอบ (นับจากวันสร้าง) · **เอกสารลงวันที่วันที่สร้าง** (ไม่ลงวันล่วงหน้า §86/4 · ครบกำหนดนับจากวันสร้างตามเดิม) · ค่าผิดช่วง = ปฏิเสธพร้อมเหตุ (ไม่ clamp) ·
   echo + hydrate ฟอร์ม `recurring.html` (ว่าง = ตามความถี่ · แก้ไขส่ง 0 = ล้าง) · ราคาแปรผัน/มิเตอร์ = backlog (DECISIONS 255-WP12B-9)
 - ล็อก: `Accounting.Tests/AutopilotRound255Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/AutopilotRound255DbTests.cs` (สลิป = รอยืนยัน · บริษัทอื่นใช้รหัสใบไม่ได้) ·
-  `Db/RecurringTransactionDbTests.R255_*` · `tools/required_call_site_check.py` (R255) · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  `Db/RecurringTransactionDbTests.R255_*` · `tools/required_call_site_check.py` (R255) · Last verified `commit 67407644`
 
 ### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
 
@@ -8147,4 +8147,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 251 WP-07 — §2.7 ร�
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-12A — §2.12j Autopilot ส่วน A: อีเมลสถานะ E-01…E-15 (ล้ม = ทันที · สำเร็จ = สรุป 08:40) · หน้า Autopilot (read model `AutopilotStage`) · ใบเสนอราคาแปลงอัตโนมัติ (ตั้งต่อใบ · ค่าตั้งต้นไม่แปลง · `ConvertDocumentAsync`) · เงินโอนปิดหนี้ `BankReceiptAutoSettle` (ค่าตั้งต้นปิด · source BankAutoSettle) · สลิปกันซ้ำ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81641769)_
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-12A แก้ผลฝ่ายค้าน — §2.12k (เลขใหม่ — เดิม §2.12j ชนกับ WP-09): แหล่งบรรทัด UserFile/Api เสนอเท่านั้น · Statement/FeedCustom ต้องมีผู้นำเข้าที่มีสิทธิ์อนุมัติ · กู้การชำระ BANK:{lineId} · ผู้สมัครตาม IssueRefusal · THB · ผูกธุรกรรมเดียว · จับคู่มือกัน Applying — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 80ee6cf4)_
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-09 ฝ่ายค้าน — §2.12j 50 ทวิ ขาเข้า: H1 กันซ้ำกับทะเบียน 409 · H2 คนละรอบบัญชีลงรวมแถวไม่ได้ · M1 ตัดสูญเฉพาะส่วนขาดใบ · M2 กันลบต้นทางที่ได้ใบบางส่วน · M3 GL ลด ⇒ ลดยอด · M4 ด่านความมั่นใจ/ยอด · M5 รายการใหม่ต้องมีเหตุผล + เตือน ภ.ง.ด.50 · M6 สอนเฉพาะดูใบแล้ว · L1–L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2681a9fb)_
-_Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 1–2 — §2.12l: แจ้งโอนจากหน้าชำระ (โทเคนลิงก์ชำระ · ไบต์จริง · สลิปรอตรวจ/เพดานต่อชั่วโมง · ยอดจากเซิร์ฟเวอร์) ผ่านประตูเดียว `SlipEvidenceService` (พอร์ทัลย้ายมาด้วย) · ปุ่มคัดลอกเลขบัญชี · รายการประจำ `IntervalMonths`/`LeadDays` ผ่าน `RecurringSchedule` ทุกจุด — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 1–2 — §2.12l: แจ้งโอนจากหน้าชำระ (โทเคนลิงก์ชำระ · ไบต์จริง · สลิปรอตรวจ/เพดานต่อชั่วโมง · ยอดจากเซิร์ฟเวอร์) ผ่านประตูเดียว `SlipEvidenceService` (พอร์ทัลย้ายมาด้วย) · ปุ่มคัดลอกเลขบัญชี · รายการประจำ `IntervalMonths`/`LeadDays` ผ่าน `RecurringSchedule` ทุกจุด — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 67407644)_

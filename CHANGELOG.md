@@ -6830,3 +6830,4 @@ _รอบ 255 WP-12B ข้อ 1–2 (AUDIT_249 §WP-12 · DECISIONS 255-WP12B-
 (พอร์ทัลย้ายมาใช้ด้วย — ด่านยอดค้าง · กันซ้ำ 252 · ที่เก็บกลาง · `ManualSlip` รอยืนยัน · แจ้งทีม E-06 · ไม่มีแถว Payment) · **รายการประจำทุก N เดือน + สร้างล่วงหน้า**
 (`IntervalMonths`/`LeadDays` · ตัวตัดสินเดียว `RecurringSchedule` — cron/สร้างทันที/ข้ามงวดค้าง/ทดลองรัน/แจ้งก่อนรอบ · เอกสารลงวันที่วันสร้าง · ค่าผิดช่วงปฏิเสธ) ·
 migration `Helpers/AutopilotPartnerMigration` · DOCUMENT_FLOW §2.12l · TEST_PLAN AP255-1…7 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_รอบ 255 WP-12B ข้อ 1–2 เติม sha: commit 67407644 (DOCUMENT_FLOW §2.12l + Last verified · DECISIONS 255-WP12B-1/2) — doc-only คอมมิตตามหลัง ไม่ amend_
