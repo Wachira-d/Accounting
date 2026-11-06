@@ -15143,6 +15143,40 @@ RULES += [
          must=["LineOnBehalfText.ForNextAcc("],
          why=_R254_WHY + "WP-11 ข้อ 1 (LINE_OA C2/C5): ข้อความผ่าน OA กลางมีป้าย \"ในนาม {ร้าน} · ผ่าน NextAcc\" + ช่องทางยกเลิก"),
 ]
+_R254F_WHY = "รอบ 254 ฝ่ายค้าน L2 (M1–M4 · L1–L9): "
+RULES += [
+    dict(file=_R254_QUEUE, method="ProcessPendingAsync",
+         must=["SaveFailureOutcome.For(", "_db.ChangeTracker.Clear()", "q.Id == id && q.Status == ContactLineChannel.StatusSending",
+               "LinePushOutcome.MaxAttempts", "StaleFailedReason"],
+         before=[("q.Id == id && q.Status == ContactLineChannel.StatusSending", "SendOneAsync(")],
+         why=_R254F_WHY + "M1 บันทึกล้มหลัง LINE รับแล้ว = ส่งแล้ว (ไม่ใช่ล้ม) · ทีละแถวด้วย context สะอาด · M2 ยืนยันการจองต่อแถวก่อนยิง · ค้างนับครั้ง + เพดาน"),
+    dict(file=_R254_ESS, method="ProcessPendingQueueAsync",
+         must=["SaveFailureOutcome.For(", "_db.EmailQueues.Attach(item)"],
+         why=_R254F_WHY + "M1 คิวอีเมล: ส่งแล้วแต่บันทึกล้ม = ส่งแล้ว · แถวที่เหลือของแบตช์ผูกกลับหลังล้าง context"),
+    dict(file=_R254_LINE, method="PushCoreAsync", must=["client.Timeout = PushTimeout"], must_lit=["x-line-accepted-request-id"],
+         why=_R254F_WHY + "M2 เพดานเวลาต่อคำขอ · L2 หลักฐาน 409 = คำขอที่ LINE รับไว้"),
+    dict(file=_R254_ESS, method="EnqueueDocumentAsync", must=["etaxByEmail: etaxForced", "ContactLineChannel.EtaxForcedEmailNote"],
+         why=_R254F_WHY + "M3 ใบ e-Tax by Email ส่งอีเมลเสมอแม้ติ๊ก LINE อย่างเดียว + หมายเหตุบนคิว"),
+    dict(file="Helpers/DocumentDeliveryEvidence.cs", method="DeliveredAsync",
+         must=["EtaxDeliveryRouter.ByEmailActive("], before=[("EtaxDeliveryRouter.ByEmailActive(", "db.LineQueues")],
+         why=_R254F_WHY + "M3 การ์ด LINE ไม่นับเป็นการส่งใบกำกับของบริษัทโหมด e-Tax by Email"),
+    dict(file=_R254_BIND, method="CreateInviteAsync",
+         must=["i.UsedAt == null && i.RevokedAt == null", "EnsureRopaAsync("],
+         before=[("i.RevokedAt == null", "_db.ContactLineInvites.Add(")],
+         why=_R254F_WHY + "M4 ลิงก์ใหม่ยกเลิกลิงก์เดิมที่ยังเปิด · L7 RoPA ของกิจกรรมส่งข้อมูลให้ LINE"),
+    dict(file=_R254_BIND, method="RevokeInvitesAsync",
+         must=["c.Id == contactId && c.CompanyId == companyId", "i.CompanyId == companyId && i.ContactId == contactId", "_db.AddChainedAuditLog("],
+         why=_R254F_WHY + "M4 ยกเลิกลิงก์: tenant + audit chain"),
+    dict(file=_R254_BIND, method="TryRedeemAsync",
+         must=["TryGetCompanyOaProfileNameAsync(", "ContactLineBindRule.MaskName("],
+         before=[("_limiter.TryConsumeAsync(", "i.CompanyId == companyId && i.CodeHash == hash")],
+         why=_R254F_WHY + "L1 จำกัดความถี่ก่อนค้นรหัส · M4 ชื่อโปรไฟล์เป็นป้าย + ปิดบังใน audit"),
+    dict(file=_R254_BIND, method="GetJoinViewAsync", must=["_limiter.TryConsumeAsync("], before=[("_limiter.TryConsumeAsync(", "LoadInviteAsync(")],
+         why=_R254F_WHY + "L3 หน้าสาธารณะจำกัดความถี่ต่อ IP"),
+    dict(file="Controllers/ContactNotifyEndpointsController.cs", method="RevokeLineInvites",
+         must=["DenyKeyAsync("], before=[("DenyKeyAsync(", "_lineBinding.RevokeInvitesAsync(")],
+         why=_R254F_WHY + "M4 ยกเลิกลิงก์ = เขียนช่องทางของผู้ติดต่อ ⇒ Contact.Edit ก่อน"),
+]
 REVIEWER_CASES += [
     # Q1(b): ถอดด่านกลุ่มกลางของแอดมินที่ตัวส่ง ⇒ ต้องฟ้อง
     ("R254a", "TryPushContactAsync", "if (ContactRecipientRule.IsPlatformCentralGroup(to, await _nextAcc.PlatformGroupIdsAsync()))",
@@ -15165,6 +15199,13 @@ REVIEWER_CASES += [
     ("R254i", "UpsertRuleAsync", "if (ContactLineChannel.RuleProblem(", "if (NoRuleProblem(", True),
     # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .TryPushContactAsync( ⇒ ต้องไม่ฟ้อง
     ("R254j", "SendOneAsync", "var result = await _line.TryPushContactAsync(", "var result = await _line\n            .TryPushContactAsync(", False),
+    # ฝ่ายค้าน M1: บันทึกล้มแล้วประทับล้มทุกกรณี ⇒ ต้องฟ้อง
+    ("R254k", "ProcessPendingAsync", "var outcome = SaveFailureOutcome.For(item.Status, item.SentAt, item.LineRequestId, saveEx.GetBaseException().Message);",
+     "var outcome = new SaveFailureOutcome(\"Failed\", \"x\", null, null);", True),
+    # ฝ่ายค้าน M3: ไม่บังคับอีเมลให้ใบ e-Tax ⇒ ต้องฟ้อง
+    ("R254l", "EnqueueDocumentAsync", "forceEmail, etaxByEmail: etaxForced))", "forceEmail))", True),
+    # ฝ่ายค้าน L1: ถอดตัวจำกัดก่อนค้นรหัส ⇒ ต้องฟ้อง
+    ("R254m", "TryRedeemAsync", "if (!await _limiter.TryConsumeAsync(\"contactline:\" + lineUserId.Trim(), RedeemPerMinute, RedeemPerDay, ct, failClosed: true))\n            return CustomerLineLinkRule.Replies.Throttled;", "", True),
 ]
 
 

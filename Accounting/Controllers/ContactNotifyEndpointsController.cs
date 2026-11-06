@@ -93,7 +93,7 @@ public class ContactNotifyEndpointsController : ControllerBase
     }
 
     /// <summary>รอบ 254 WP-11 L2 (คำตอบเจ้าของ Q6 ทางลัด): สร้างลิงก์/QR ผูก LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท · ผู้รับยินยอมบนมือถือ) — ด่าน Contact.Edit</summary>
-    [HttpPost("line-invite")]
+    [HttpPost("line-link")]
     [RejectApiKey("สร้างลิงก์ผูก LINE ของผู้ติดต่อ")]
     public async Task<ActionResult<ApiResponse<ContactLineInviteResponse>>> CreateLineInvite(Guid companyId, Guid contactId, CancellationToken ct)
     {
@@ -104,6 +104,20 @@ public class ContactNotifyEndpointsController : ControllerBase
         var actor = Actor();
         var r = await _lineBinding.CreateInviteAsync(companyId, contactId, actor.UserId, actor.Email, ct);
         return StatusCode(201, new ApiResponse<ContactLineInviteResponse>(true, r, "สร้างลิงก์ผูก LINE แล้ว"));
+    }
+
+    /// <summary>รอบ 254 ฝ่ายค้าน M4: ยกเลิกลิงก์/QR ผูก LINE ที่ยังเปิดของผู้ติดต่อ (ลิงก์หลุด/ส่งผิดคน) — ด่าน Contact.Edit · audit chain</summary>
+    [HttpDelete("line-link")]
+    [RejectApiKey("ยกเลิกลิงก์ผูก LINE ของผู้ติดต่อ")]
+    public async Task<ActionResult<ApiResponse<ContactNotifyOverviewResponse>>> RevokeLineInvites(Guid companyId, Guid contactId, CancellationToken ct)
+    {
+        if (await DenyKeyAsync(companyId, "ยกเลิกลิงก์ผูก LINE ของผู้ติดต่อ") is { } deny) return Forbid403(deny);
+        if (_lineBinding == null)
+            return StatusCode(503, new ApiResponse<ContactNotifyOverviewResponse>(false, null, "บริการผูก LINE ของผู้ติดต่อยังไม่พร้อม"));
+        var actor = Actor();
+        var n = await _lineBinding.RevokeInvitesAsync(companyId, contactId, actor.UserId, actor.Email, ct);
+        var overview = await _resolver.GetOverviewAsync(companyId, contactId, true, ct);
+        return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, overview, $"ยกเลิกลิงก์ผูก LINE ที่ยังเปิดแล้ว {n} ลิงก์"));
     }
 
     private async Task<string?> DenyKeyAsync(Guid companyId, string verb)

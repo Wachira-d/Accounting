@@ -26,10 +26,9 @@ public class ContactLineJoinController : ControllerBase
     [HttpPost("view")]
     public async Task<ActionResult<ApiResponse<ContactLineJoinView>>> View(Guid companyId, [FromBody] JoinRequest request, CancellationToken ct)
     {
-        var v = await _binding.GetJoinViewAsync(companyId, request?.Token, ct);
-        return v.Problem != null
-            ? NotFound(new ApiResponse<ContactLineJoinView>(false, v, v.Problem))
-            : Ok(new ApiResponse<ContactLineJoinView>(true, v));
+        // ฝ่ายค้าน L3: ลิงก์ใช้ไม่ได้ ⇒ 200 + success=false พร้อมเหตุ (ไม่ใช่ 404 ที่ log เป็นข้อผิดพลาดทุกครั้งที่บอทสแกน)
+        var v = await _binding.GetJoinViewAsync(companyId, request?.Token, HttpContext.Connection.RemoteIpAddress?.ToString(), ct);
+        return Ok(new ApiResponse<ContactLineJoinView>(v.Problem == null, v, v.Problem));
     }
 
     [HttpPost("consent")]

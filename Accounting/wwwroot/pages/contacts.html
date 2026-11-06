@@ -1200,6 +1200,7 @@
         const bind = o.lineBind ? `<div style="margin-bottom:8px">
             <button type="button" class="btn btn-sm btn-primary" ${o.lineBind.available ? '' : 'disabled'} onclick="Page.createLineInvite()">🔗 ลิงก์/QR ผูก LINE (ผู้รับกดยินยอมบนมือถือ)</button>
             ${o.lineBind.reason ? `<div style="font-size:11px;color:#64748b;margin-top:2px">${esc(o.lineBind.reason)}</div>` : ''}
+            ${o.lineBind.openInvites > 0 ? `<button type="button" class="btn btn-sm btn-ghost text-red" style="margin-left:6px" onclick="Page.revokeLineInvites()">ยกเลิกลิงก์ที่ยังเปิด (${Number(o.lineBind.openInvites)})</button>` : ''}
             <div id="notifyLineInviteOut" style="margin-top:6px"></div></div>` : '';
         const topicOpts = (o.topics || []).map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('');
         panel.innerHTML = `
@@ -1261,7 +1262,7 @@
         const out = document.getElementById('notifyLineInviteOut'); if (!out) return;
         const esc = Layout.esc;
         try {
-          const res = await API.post(this._notifyUrl('/line-invite'), {});
+          const res = await API.post(this._notifyUrl('/line-link'), {});
           if (!res || !res.success) { Layout.toast(res?.message || 'สร้างลิงก์ไม่สำเร็จ', 'error'); return; }
           const d = res.data || {};
           const link = d.url || (window.location.origin + (d.path || ''));
@@ -1278,6 +1279,11 @@
             catch (_) { Layout.toast('คัดลอกไม่ได้ — เลือกข้อความแล้วคัดลอกเอง', 'error'); }
           });
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      /** รอบ 254 ฝ่ายค้าน M4: ยกเลิกลิงก์ผูก LINE ที่ยังเปิด (ลิงก์หลุด/ส่งผิดคน) — วาดใหม่จากคำตอบเซิร์ฟเวอร์ */
+      async revokeLineInvites() {
+        if (!confirm('ยกเลิกลิงก์ผูก LINE ที่ยังเปิดของผู้ติดต่อนี้? (คนที่ได้ลิงก์ไปจะผูกไม่ได้)')) return;
+        await this._notifySend('DELETE', '/line-link', null, 'ยกเลิกลิงก์แล้ว');
       },
       _notifyEndpoint(key) {
         return (this._notify?.endpoints || []).find(e => (e.id || 'primary') === key);

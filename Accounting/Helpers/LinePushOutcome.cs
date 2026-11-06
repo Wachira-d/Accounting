@@ -30,6 +30,7 @@ public static class LinePushOutcome
     public const string CodeAlreadyAccepted = "already-accepted";
     public const string CodeDenied = "policy-denied";
     public const string CodeNotFriend = "not-friend";
+    public const string CodeRecipientInvalid = "recipient-invalid";
     public const string CodeBadRequest = "bad-request";
     public const string CodeAuth = "auth";
     public const string CodeMonthlyLimit = "line-oa-monthly-limit";
@@ -57,9 +58,13 @@ public static class LinePushOutcome
             case null:
                 return new(LinePushVerdict.Failed, CodeNoChannel, why, false, true, true);
             case 400:
-                return lower.Contains("friend") || lower.Contains("not found") || lower.Contains("invalid to") || lower.Contains("blocked")
-                    ? new LinePushClass(LinePushVerdict.Failed, CodeNotFriend, "ผู้รับไม่ได้เป็นเพื่อนกับ LINE OA หรือบล็อกไว้ — " + why, true, false, true)
-                    : new LinePushClass(LinePushVerdict.Failed, CodeBadRequest, why, false, false, true);
+                // ฝ่ายค้าน L5: "ไม่พบผู้รับ/ปลายทางไม่ถูกต้อง" มักเกิดจาก OA เปลี่ยน (userId ใช้ได้เฉพาะ OA ที่ออก) — ไม่ใช่การบล็อกของผู้รับ ⇒ ไม่ประทับ "ผู้รับบล็อก"
+                if (lower.Contains("friend") || lower.Contains("blocked"))
+                    return new LinePushClass(LinePushVerdict.Failed, CodeNotFriend, "ผู้รับไม่ได้เป็นเพื่อนกับ LINE OA หรือบล็อกไว้ — " + why, true, false, true);
+                if (lower.Contains("not found") || lower.Contains("invalid to") || lower.Contains("invalid user"))
+                    return new LinePushClass(LinePushVerdict.Failed, CodeRecipientInvalid,
+                        "ปลายทางนี้ใช้กับ LINE OA ปัจจุบันไม่ได้ (บริษัทอาจเปลี่ยน OA) — ให้ผู้รับผูกใหม่ · " + why, false, false, true);
+                return new LinePushClass(LinePushVerdict.Failed, CodeBadRequest, why, false, false, true);
             case 401:
             case 403:
                 return new(LinePushVerdict.Failed, CodeAuth, "Token ของ LINE OA ใช้ไม่ได้หรือถูกเพิกถอน — ตั้งค่า LINE ของบริษัทใหม่ · " + why, false, true, true);

@@ -34,6 +34,10 @@ public static class DocumentDeliveryEvidence
         var delivered = rows.Where(r => IsDeliveryEvidence(r.Status)).Select(r => r.DocumentId).ToHashSet();
         // รอบ 254 WP-11 L2 (DESIGN §1.5 G8 · §4.2): การ์ดเอกสารทาง LINE ที่ LINE <b>ตอบรับจริง</b> (สถานะ Sent ประทับเฉพาะเมื่อ LINE ตอบ 200/409) = หลักฐานการส่งด้วย ·
         // ไม่ใช่การส่ง e-Tax by Email (ตัวตัดสินคนละตัว — EtaxDeliveryRouter)
+        // ฝ่ายค้าน M3: บริษัทโหมด e-Tax by Email ⇒ การ์ด LINE ไม่นับเป็นหลักฐาน (ใบกำกับต้องถึงผู้ซื้อทาง e-Tax — การแจ้งทาง LINE ไม่ใช่การส่งใบกำกับ)
+        var etax = await db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
+            .Select(x => new { x.EtaxEnabled, x.EtaxMode }).FirstOrDefaultAsync(ct);
+        if (etax != null && EtaxDeliveryRouter.ByEmailActive(etax.EtaxEnabled, etax.EtaxMode)) return delivered;
         var lineSent = await db.LineQueues.AsNoTracking()
             .Where(q => q.CompanyId == companyId && !q.IsDeleted && q.EntityType == "Document" && ids.Contains(q.EntityId)
                 && q.Status == ContactLineChannel.StatusSent)

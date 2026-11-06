@@ -53,6 +53,9 @@ public interface ILineNotifyService
     Task<LinePushResult> TryPushContactAsync(Guid companyId, string oaScope, Accounting.Helpers.LineTargetKind target, string to,
         string altText, object flexContents, Guid retryKey);
 
+    /// <summary>รอบ 254 ฝ่ายค้าน M4: ชื่อแสดงของผู้ใช้ LINE ตามที่ <b>OA ของบริษัท</b>เห็น (GET profile) — ให้พนักงานเห็นว่าใครผูก · ไม่มี OA/ล้ม ⇒ null (ไม่ล้มการผูก)</summary>
+    Task<string?> TryGetCompanyOaProfileNameAsync(Guid companyId, string lineUserId);
+
     /// <summary>ปุ่ม "ทดสอบ" ของหน้าตั้งค่าบริษัท — ใช้ <b>token ของบริษัทเท่านั้น</b> (รอบ 232: เดิมทดสอบด้วย token ของ OA กลางเมื่อบริษัทยังไม่ตั้ง ⇒ "สำเร็จ" ทั้งที่ OA ของร้านยังไม่มี) ·
     /// Returns (success, message) suitable for echoing to the admin UI.</summary>
     Task<(bool ok, string message)> TestConfigAsync(Guid companyId, string toLineId);

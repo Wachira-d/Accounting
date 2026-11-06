@@ -3102,7 +3102,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     กลุ่มของผู้ติดต่อผ่าน OA กลาง ⇒ `NotificationAudiencePolicy` ปฏิเสธ (`NOTIFY-CENTRAL-OA-GROUP-OFF`) จนแอดมินเปิดสวิตช์ (L3/L4 — ยังไม่มีคอลัมน์สวิตช์ในรอบนี้)
   - **หลักฐานการส่ง (G8)**: แถว `LineQueues` สถานะ Sent (LINE ตอบรับจริงเท่านั้น · เก็บ `x-line-request-id`) นับใน `DocumentDeliveryEvidence.DeliveredAsync` ·
     **ไม่ใช่การส่ง e-Tax by Email** (ตัวตัดสินคนละตัว)
-  - **ผูก LINE ของผู้ติดต่อ — ลิงก์/QR (Q6 ทางลัด)**: แท็บช่องทางแจ้งเตือน › "ลิงก์/QR ผูก LINE" (`POST …/notify-endpoints/line-invite` · `Contact.Edit` · OA บริษัทต้องพร้อม) ⇒
+  - **ผูก LINE ของผู้ติดต่อ — ลิงก์/QR (Q6 ทางลัด)**: แท็บช่องทางแจ้งเตือน › "ลิงก์/QR ผูก LINE" (`POST …/notify-endpoints/line-link` · `Contact.Edit` · OA บริษัทต้องพร้อม) ⇒
     `ContactLineInvites` (token เก็บ hash · 7 วัน · ใช้ครั้งเดียว) ⇒ หน้า public `contact-line-join.html` (`api/public/contact-line-join/{cid}/view|consent` · token ใน body ·
     จำกัดความถี่ต่อ IP) ⇒ ผู้รับกดยินยอม (`PdpaConsentRecord` purpose `contact-line-notify` · hash หลักฐาน) ⇒ รหัส `ผูก LN-…` (รูปแบบเดียวกับลูกค้าเว็บ · 30 นาที) ⇒ ส่งในแชต OA บริษัท ⇒
     webhook บริษัท (`CustomerLineWebhookController` ก่อนเส้นลูกค้าเว็บ) สร้างปลายทาง LineUser (scope company · userId เข้ารหัส · ล็อกต่อผู้ติดต่อ · audit chain) ·

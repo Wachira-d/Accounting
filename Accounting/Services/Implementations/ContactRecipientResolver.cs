@@ -117,19 +117,23 @@ public class ContactRecipientResolver : IContactRecipientResolver
             canEdit,
             canEdit ? null : $"ดูได้อย่างเดียว — แก้ช่องทางแจ้งเตือนต้องมีสิทธิ์ {Accounting.Models.Constants.PermissionKeys.ContactEdit.Replace("perm:", "")}",
             EtaxByEmailNote: etaxNote,
-            LineBind: await LineBindOfferAsync(companyId, canEdit, ct));
+            LineBind: await LineBindOfferAsync(companyId, contact.Id, canEdit, ct));
     }
 
     /// <summary>รอบ 254 WP-11 L2 (คำตอบเจ้าของ Q6 ทางลัด): ปุ่ม "ลิงก์/QR ผูก LINE" — กดได้เมื่อมีสิทธิ์แก้ + OA ของบริษัทพร้อม (ตัวตัดสินเดียว CompanyLineReadiness) ·
     /// ไม่พร้อม ⇒ ปุ่มปิดพร้อมเหตุ (server computes · page displays)</summary>
-    private async Task<ContactLineBindOffer> LineBindOfferAsync(Guid companyId, bool canEdit, CancellationToken ct)
+    private async Task<ContactLineBindOffer> LineBindOfferAsync(Guid companyId, Guid contactId, bool canEdit, CancellationToken ct)
     {
         var line = await LoadLineAsync(companyId, ct);
         if (!canEdit) return new ContactLineBindOffer(false, "ต้องมีสิทธิ์แก้ผู้ติดต่อ");
+        // ฝ่ายค้าน M4: ลิงก์ที่ยังเปิด (ปุ่มยกเลิกบนหน้า)
+        var now = DateTime.UtcNow;
+        var open = await _db.ContactLineInvites.AsNoTracking()
+            .CountAsync(i => i.CompanyId == companyId && i.ContactId == contactId && i.UsedAt == null && i.RevokedAt == null && i.ExpiresAt > now, ct);
         if (!line.CompanyOaReady)
             return new ContactLineBindOffer(false, (line.CompanyOaProblem ?? "LINE OA ของบริษัทยังไม่พร้อม")
-                + " — ผูก LINE ของผู้ติดต่อได้ผ่าน LINE OA ของบริษัทเท่านั้น (OA กลางของ NextAcc ยังไม่เปิดสำหรับผู้ติดต่อ)");
-        return new ContactLineBindOffer(true, null);
+                + " — ผูก LINE ของผู้ติดต่อได้ผ่าน LINE OA ของบริษัทเท่านั้น (OA กลางของ NextAcc ยังไม่เปิดสำหรับผู้ติดต่อ)", open);
+        return new ContactLineBindOffer(true, null, open);
     }
 
     /// <summary>รอบ 250 WP-08: ประโยคบนแท็บ (เซิร์ฟเวอร์ส่ง · หน้าแสดงตรงตัว) — เส้นส่งที่อ่านค่าตั้งนี้แล้วจริง (ล็อกด้วย required_call_site_check R250L1)</summary>

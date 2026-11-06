@@ -78,6 +78,7 @@ public class LineNotifyService : ILineNotifyService
         try
         {
             var client = _httpClientFactory.CreateClient();
+            client.Timeout = PushTimeout;   // ฝ่ายค้าน M2: เพดานต่อคำขอ ⇒ แบตช์คิวจบก่อนเกณฑ์ "ค้างกำลังส่ง" เสมอ
             using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.line.me/v2/bot/message/push")
             {
                 Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
@@ -86,6 +87,9 @@ public class LineNotifyService : ILineNotifyService
             req.Headers.TryAddWithoutValidation(LineRetryKeyHeader, (retryKey ?? Guid.NewGuid()).ToString("D"));
             using var resp = await client.SendAsync(req);
             var requestId = resp.Headers.TryGetValues("x-line-request-id", out var ids) ? ids.FirstOrDefault() : null;
+            // ฝ่ายค้าน L2: 409 (retry key เดิม) ⇒ หลักฐานคือคำขอที่ LINE รับไว้ก่อน (x-line-accepted-request-id) ไม่ใช่คำขอซ้ำนี้
+            if ((int)resp.StatusCode == 409 && resp.Headers.TryGetValues("x-line-accepted-request-id", out var accepted))
+                requestId = accepted.FirstOrDefault() ?? requestId;
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync();
@@ -105,6 +109,9 @@ public class LineNotifyService : ILineNotifyService
 
     /// <summary>ชื่อ header กันส่งซ้ำของ LINE Messaging API (UUID · ⚠ DESIGN §7.4 ยืนยันกับเอกสารทางการ)</summary>
     internal const string LineRetryKeyHeader = "X-Line-Retry-Key";
+
+    /// <summary>เพดานเวลาต่อคำขอ LINE (ฝ่ายค้าน M2) — <c>ContactLineQueueService.StaleSending</c> ต้องมากกว่า BatchSize × ค่านี้</summary>
+    internal static readonly TimeSpan PushTimeout = TimeSpan.FromSeconds(15);
 
     private static object TextPayload(string to, string text)
         => new { to, messages = new[] { new { type = "text", text } } };
@@ -174,6 +181,33 @@ public class LineNotifyService : ILineNotifyService
         if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
         return await PushCoreAsync(oa.Token, FlexPayload(to.Trim(), altText, flexContents),
             $"contact {(target == LineTargetKind.ContactGroup ? "group" : "user")} {CustomerLineLinkRule.Mask(to)}", retryKey);
+    }
+
+    public async Task<string?> TryGetCompanyOaProfileNameAsync(Guid companyId, string lineUserId)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId)) return null;
+        var oa = await ResolveCompanyOaAsync(companyId);
+        if (!oa.Configured || string.IsNullOrWhiteSpace(oa.Token)) return null;
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = PushTimeout;
+            using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.line.me/v2/bot/profile/" + Uri.EscapeDataString(lineUserId.Trim()));
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", oa.Token);
+            using var resp = await client.SendAsync(req);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("LINE profile ({User}) ตอบ {Status}", CustomerLineLinkRule.Mask(lineUserId), (int)resp.StatusCode);
+                return null;
+            }
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            return doc.RootElement.TryGetProperty("displayName", out var n) ? n.GetString() : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || ex is TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "อ่านโปรไฟล์ LINE ({User}) ไม่สำเร็จ", CustomerLineLinkRule.Mask(lineUserId));
+            return null;
+        }
     }
 
     public async Task<(bool ok, string message)> TestConfigAsync(Guid companyId, string toLineId)
