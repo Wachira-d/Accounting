@@ -6561,3 +6561,8 @@ DBD ยื่นงบ (ม.11) ไม่แตะ · รหัสกฎ `ACC-AC
 ข้อ LINE ในนามท่าน (LINE_OA_TERMS_CHECK C9) รวมกับข้อ "ส่งอีเมลในนามท่าน" (รอบ 240) — **ยังไม่เผยแพร่** (มือเจ้าของ · `/admin/legal.html`).
 เทสต์ `LegalReferenceTests` (ใหม่) + แก้ assert `PlatformPriceOverrideRound231Tests` (ม.14 · ทิศตรงข้าม DoesNotContain ม.10/ท.ป.4) · `AdversarialExportRound5Tests` ×2 + Db `AdversarialExportRound5DbTests` (ม.10 · DoesNotContain ม.11) ·
 checker ratchet ใหม่ `tools/legal_citation_check.py` (baseline 0 · `--self-test` ใน check_all) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 66677bea`_
+
+_รอบ 250 WP-05 — เอกสาร/ประวัติ (2026-11-06): เติม sha ค้าง 103 จุด (DOCUMENT_FLOW 34 · CHANGELOG 61 · ACCOUNT_STRUCTURE 8 — clone เต็มหลัง `fetch --unshallow` · ค่าตั้งต้น = git blame ·
+ทับเมื่อ blame ชี้คอมมิตย้าย hunk/แก้ CI) · sha `0a829110` มีจริง (คำตัดสิน 250-3 แก้) · `doc_commit_sha_check` ข้ามเลข 13 หลัก · DECISIONS 247-1…250-* + 243-AS + Y/N ·
+REVIEWS_INDEX erp-review 2026-10-01…11-06 รายไฟล์ + BACKLOG_REGISTER 24 แถวเปิด (ไม่มีแถวที่ปิดแล้วแต่ไม่ติ๊ก) · AUTO_SEND §1.1/G-8/§7.1/§9 → `TradingPartnership` ·
+doc ล้าสมัยติ๊กพร้อมหลักฐาน (DataProtection ใน DB · ค่าส่ง POS · overage ⏳ · G-16) · `git notes` 369bc403 · บทเรียน 7 เรื่อง — doc ล้วน ไม่มี C# — commit 534d6efb_
