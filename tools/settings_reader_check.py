@@ -79,6 +79,14 @@ ENTITIES = {
     'StaffDailySummaryConfig': ('Accounting/Models/Entities/StaffDailySummary.cs',
                                 {'Enabled', 'SendAtLocal', 'Sections', 'RecipientUserIds', 'RecipientRoles'},
                                 ['Accounting/wwwroot/pages/settings.html', 'Accounting/wwwroot/js/staff-daily-summary.js']),
+    # รอบ 250 WP-08 (L1 ต่อสาย · AUDIT_249 §5 แถว 38): เรื่องที่ปลายทางของผู้ติดต่อรับ — ผู้อ่าน = ContactRecipientRule.Resolve (ตัวหาผู้รับของทุกเส้นส่ง) ·
+    # ShowAmounts ยังไม่อยู่ในขอบเขต (มีผลเมื่อ LINE เปิดส่ง เฟส L2/L3)
+    'ContactNotifyEndpoint': ('Accounting/Models/Entities/ContactNotifyEndpoint.cs', {'TopicsJson'},
+                              ['Accounting/wwwroot/pages/contacts.html']),
+    # รอบ 250 WP-08 (คำตัดสิน 250-29): ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" — ผู้อ่าน = EmailScheduleService/PostPaymentAutomationService/SignRequestService
+    # ผ่าน AutopilotSettingsResolver (class Contact อยู่ใน Document.cs)
+    'Contact': ('Accounting/Models/Entities/Document.cs', {'AutoSendDisabled'},
+                ['Accounting/wwwroot/pages/contacts.html', 'Accounting/wwwroot/pages/recurring.html']),
 }
 
 # property ที่ไม่ใช่ "ค่าตั้ง" ของทุก entity (กุญแจ · audit · navigation)

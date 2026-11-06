@@ -120,7 +120,9 @@ public static class PostPaymentAutomationPolicy
         bool WhtCreditRegistered,
         // รอบ 250 (WP-02): ทางเข้าที่บันทึกการชำระ (ชื่อในแถวงาน) · เลขใบกำกับภาษีที่อ้างใบแจ้งหนี้นี้และยังมีผล (null = ไม่มี) — ไม่มีค่าเริ่มต้น
         PaymentEntrySource Source,
-        string? SupersedingTaxInvoiceNumber);
+        string? SupersedingTaxInvoiceNumber,
+        // รอบ 250 WP-08: ผู้ติดต่อมีอีเมลแต่ไม่รับเรื่อง "ใบเสร็จ" (ContactRecipientRule.ForEmail) — บอกเหตุนี้แทน "ไม่มีอีเมล" · null = ไม่ได้ติดที่ค่าตั้งนี้
+        string? EmailOptOutReason = null);
 
     /// <summary>ผล — ขั้นที่ทำ + เหตุที่ต้องหยุด (ข้อความไทยพร้อมทางไปต่อ · ส่งเข้าการแจ้งเตือน) · <paramref name="Notes"/> = ข้อสังเกตที่ไม่หยุดงาน ·
     /// <paramref name="Skipped"/> = ไม่มีอะไรต้องทำ (ไม่ใช่ความผิดพลาด)</summary>
@@ -156,7 +158,9 @@ public static class PostPaymentAutomationPolicy
             return new Plan(steps, blocked, notes, notes.Count == 0 ? "ยังชำระไม่ครบ — ตั้งให้ส่งเฉพาะงวดที่ชำระครบ" : null);
 
         if (!OnBehalfEmailSender.IsPlausibleEmail(f.CustomerEmail))
-            blocked.Add("ลูกค้าไม่มีอีเมลที่ใช้ได้ — ยังไม่ได้ส่งใบเสร็จ · เติมอีเมลที่ผู้ติดต่อแล้วกด \"ลองใหม่\" หรือส่งอีเมลที่ใบเสร็จ");
+            blocked.Add(f.EmailOptOutReason != null
+                ? "ยังไม่ได้ส่งใบเสร็จ — " + f.EmailOptOutReason + " · แก้แล้วกด \"ลองใหม่\" หรือส่งอีเมลที่ใบเสร็จ"
+                : "ลูกค้าไม่มีอีเมลที่ใช้ได้ — ยังไม่ได้ส่งใบเสร็จ · เติมอีเมลที่ผู้ติดต่อแล้วกด \"ลองใหม่\" หรือส่งอีเมลที่ใบเสร็จ");
         else if (f.AllocationCount > 0)
             blocked.Add("การชำระนี้กระจายไปหลายเอกสาร — ระบบไม่ออก/ส่งใบเสร็จอัตโนมัติ (ยอดต่อใบเป็นการจัดสรร) · ออกใบเสร็จที่เอกสารแต่ละใบแล้วส่งเอง");
         else if (f.HasReceipt)

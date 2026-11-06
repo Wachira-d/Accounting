@@ -23,15 +23,18 @@ public class SignRequestService : ISignRequestService
     private readonly ISecretProtector _secrets;
     private readonly IConfiguration? _config;
     private readonly ILogger<SignRequestService> _logger;
+    /// <summary>รอบ 250 WP-08 (L1 ต่อสาย · DESIGN §3.g): ผู้รับตั้งต้นของลิงก์เซ็น = ตัวหาผู้รับเดียว เรื่อง "ลิงก์เซ็น" (ช่องที่ผู้ใช้กรอกเอง/ครั้งก่อนยังชนะ)</summary>
+    private readonly IContactRecipientResolver _recipients;
 
     public SignRequestService(AccountingDbContext db, IEmailSenderFactory senders, ISecretProtector secrets,
-        ILogger<SignRequestService> logger, IConfiguration? config = null)
+        ILogger<SignRequestService> logger, IConfiguration? config = null, IContactRecipientResolver? recipients = null)
     {
         _db = db;
         _senders = senders;
         _secrets = secrets;
         _logger = logger;
         _config = config;
+        _recipients = recipients ?? ContactRecipientResolver.EmailOnly(db);
     }
 
 
@@ -92,12 +95,14 @@ public class SignRequestService : ISignRequestService
         return ToResult(doc, origin, now);
     }
 
-    private static IReadOnlyList<string> SuggestRecipients(Document doc)
+    /// <summary>ผู้รับตั้งต้น: ผู้รับที่ผู้ใช้กรอกครั้งก่อน (ทับ) › ปลายทางของผู้ติดต่อที่รับเรื่อง "ลิงก์เซ็น" (ตัวหาผู้รับเดียว · ไม่ตั้ง = Contact.Email เดิม) ·
+    /// คืนเหตุเมื่อผู้ติดต่อมีอีเมลแต่ยกเลิกรับเรื่องนี้ทุกปลายทาง (ผู้เรียกบอกผู้ใช้ — ไม่ใช่ "ไม่มีอีเมล")</summary>
+    private async Task<(IReadOnlyList<string> To, string? OptOut)> SuggestRecipientsAsync(Document doc, CancellationToken ct)
     {
         var (fromLast, _) = SignEmailThrottle.ParseRecipients(new[] { doc.Contact?.SignLinkLastRecipients });
-        if (fromLast.Count > 0) return fromLast;
-        var (fromContact, _) = SignEmailThrottle.ParseRecipients(new[] { doc.Contact?.Email });
-        return fromContact;
+        if (fromLast.Count > 0) return (fromLast, null);
+        var delivery = ContactRecipientRule.ForEmail(await _recipients.ResolveAsync(doc.CompanyId, doc.ContactId, NotifyTopic.Sign, ct));
+        return (delivery.Emails, delivery.OptOutReason);
     }
 
     private async Task<SignRequestEmailText.Output> ComposeAsync(Document doc, string url, string? message, bool reminder,
@@ -126,7 +131,7 @@ public class SignRequestService : ISignRequestService
         var text = await ComposeAsync(doc, url, message, reminder: false, plan, origin, ct);
         var quota = await PlatformEmailQuota.ForCompanyAsync(_db, _config, companyId, now, ct);
         return new SignEmailPreview(doc.Id, url, text.Subject, text.Html, plan.Mode, plan.FromAddress, plan.FromName, plan.ReplyTo,
-            SuggestRecipients(doc), quota.SentToday, quota.Cap, SignRequestKinds.Status(doc, now));
+            (await SuggestRecipientsAsync(doc, ct)).To, quota.SentToday, quota.Cap, SignRequestKinds.Status(doc, now));
     }
 
     public async Task<SignEmailResult> SendEmailAsync(Guid companyId, Guid documentId, SendSignEmailOptions options, string origin, string actor, CancellationToken ct = default)
@@ -140,9 +145,16 @@ public class SignRequestService : ISignRequestService
         var purpose = SignRequestPurposes.IsKnown(options.Purpose) ? options.Purpose : SignRequestPurposes.Manual;
         var reminder = purpose == SignRequestPurposes.Reminder;
 
-        var (valid, invalid) = SignEmailThrottle.ParseRecipients(options.To is { Count: > 0 } ? options.To : SuggestRecipients(doc));
+        // รอบ 250 WP-08: ผู้รับที่ผู้ใช้กรอกตอนส่งชนะเสมอ · ว่าง ⇒ ตัวหาผู้รับเดียว (เรื่อง "ลิงก์เซ็น")
+        IReadOnlyList<string> toList;
+        string? optOut = null;
+        if (options.To is { Count: > 0 } typed) toList = typed;
+        else (toList, optOut) = await SuggestRecipientsAsync(doc, ct);
+        var (valid, invalid) = SignEmailThrottle.ParseRecipients(toList);
         if (invalid.Count > 0) throw new BusinessRuleException($"อีเมลผู้รับไม่ถูกต้อง: {string.Join(", ", invalid.Take(3))}", "SIGN-EMAIL-TO");
-        if (valid.Count == 0) throw new BusinessRuleException("ไม่มีอีเมลผู้รับ — ใส่อีเมลลูกค้า (หรือเพิ่มอีเมลในผู้ติดต่อ) แล้วส่งใหม่", "SIGN-EMAIL-TO");
+        if (valid.Count == 0) throw new BusinessRuleException(optOut != null
+            ? optOut + " — ใส่อีเมลผู้รับเองแล้วส่งใหม่"
+            : "ไม่มีอีเมลผู้รับ — ใส่อีเมลลูกค้า (หรือเพิ่มอีเมลในผู้ติดต่อ) แล้วส่งใหม่", "SIGN-EMAIL-TO");
         if (valid.Count > SignEmailThrottle.MaxRecipients)
             throw new BusinessRuleException($"ส่งได้ครั้งละไม่เกิน {SignEmailThrottle.MaxRecipients} ผู้รับ", "SIGN-EMAIL-TO");
 
@@ -421,6 +433,13 @@ public class SignRequestService : ISignRequestService
     {
         try
         {
+            // รอบ 250 WP-08 (คำตัดสิน 250-29): ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ⇒ งานอัตโนมัติไม่ส่ง (โยนเหตุ ⇒ บันทึกการส่ง Failed พร้อมเหตุข้างล่าง · ส่งเองได้)
+            var autoOff = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == documentId && d.CompanyId == companyId)
+                .Join(_db.Contacts.IgnoreQueryFilters().Where(c => c.CompanyId == companyId), d => d.ContactId, c => c.Id, (d, c) => c.AutoSendDisabled)
+                .FirstOrDefaultAsync(ct);
+            if (AutopilotSettingsResolver.AutoSendBlock(autoOff) is { } autoSendOff)
+                throw new BusinessRuleException(autoSendOff, AutopilotSettingsResolver.AutoSendRuleCode);
             var r = await SendEmailAsync(companyId, documentId,
                 new SendSignEmailOptions(to == null ? null : new[] { to }, null, purpose), origin, "system:sign-automation", ct);
             return r.AnySent;

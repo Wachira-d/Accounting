@@ -217,6 +217,9 @@
               <select class="form-select" id="fCustPostPayEmail" aria-label="หลังชำระ: ส่งใบเสร็จ (ผู้ติดต่อ)"></select>
               <select class="form-select" id="fCustPostPayPartial" aria-label="หลังชำระ: ส่งทุกงวด (ผู้ติดต่อ)"></select>
             </div>
+            <!-- รอบ 250 WP-08 (คำตัดสิน 250-29): ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" — ชนะกฎบริษัท/รายการนี้ (บันทึกด้วยปุ่ม "บันทึกที่ผู้ติดต่อ") -->
+            <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:12px;font-weight:normal">
+              <input type="checkbox" id="fCustAutoSendOff"> ไม่ส่งอีเมลอัตโนมัติถึงผู้ติดต่อรายนี้ (ทุกเส้น — ส่งเองจากหน้าเอกสารยังได้)</label>
           </div>
           </div>
           <div class="rec-step" data-step="5" style="display:none" id="step-approve">
@@ -394,6 +397,7 @@ const Page = {
     if (cpm) cpm.value = (this._contactAp && this._contactAp.paymentMode) || '';
     const cpe = document.getElementById('fCustPostPayEmail'); if (cpe) cpe.value = (this._contactAp && this._contactAp.postPayEmailReceipt) || 'Inherit';
     const cpp = document.getElementById('fCustPostPayPartial'); if (cpp) cpp.value = (this._contactAp && this._contactAp.postPayIncludePartial) || 'Inherit';
+    const cao = document.getElementById('fCustAutoSendOff'); if (cao) { cao.checked = !!(this._contactAp && this._contactAp.autoSendDisabled); cao.disabled = !this._contactAp; }
     this._renderPolicy();
   },
   async saveContactPayMode() {
@@ -403,8 +407,11 @@ const Page = {
     try {
       const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null,
         postPayEmailReceipt: !this._apOpts ? null : (document.getElementById('fCustPostPayEmail')?.value || 'Inherit'),
-        postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fCustPostPayPartial')?.value || 'Inherit') });
+        postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fCustPostPayPartial')?.value || 'Inherit'),
+        // รอบ 250 WP-08: ไม่ได้โหลดค่าตั้งผู้ติดต่อ ⇒ null (= เซิร์ฟเวอร์คงเดิม · ไม่ล้างเงียบ)
+        autoSendDisabled: !this._contactAp ? null : !!document.getElementById('fCustAutoSendOff')?.checked });
       this._contactAp = res.data || this._contactAp;
+      const caoAfter = document.getElementById('fCustAutoSendOff'); if (caoAfter) caoAfter.checked = !!(this._contactAp && this._contactAp.autoSendDisabled);
       Layout.toast((res && res.message) || 'บันทึกแล้ว');
       this.refreshReadiness(true);
     } catch (err) { Layout.toast(err.message, 'error'); }

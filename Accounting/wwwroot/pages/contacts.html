@@ -1212,12 +1212,45 @@
           <div style="font-weight:600;margin:6px 0">LINE</div>
           ${lines.length ? lines.map(row).join('') : '<div style="font-size:12px;color:#64748b;margin-bottom:6px">ยังไม่มีปลายทาง LINE</div>'}
           ${soon /* html — หนีแล้ว */}
-          <div style="font-weight:600;margin:12px 0 6px">ดูว่าใครจะได้รับ (เมื่อเส้นส่งต่อสาย L2)</div>
+          <div id="notifyAutoSendBox" style="margin:12px 0 6px;font-size:12px;color:#64748b">กำลังโหลดค่าตั้ง "ส่งอัตโนมัติ"…</div>
+          <div style="font-weight:600;margin:12px 0 6px">ดูว่าใครจะได้รับอีเมล (ตัวหาผู้รับเดียวกับการส่งจริง)</div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <select class="form-input" id="notifyPreviewTopic" style="max-width:220px">${topicOpts /* html — หนีแล้ว */}</select>
             <button type="button" class="btn btn-sm btn-secondary" onclick="Page.previewNotifyRecipients()">ตรวจ</button>
           </div>
           <div id="notifyPreviewOut" style="font-size:12px;margin-top:6px"></div>`;
+        this._loadAutoSendToggle();
+      },
+      /** รอบ 250 WP-08 (คำตัดสิน 250-29): ชั้นผู้ติดต่อ "ไม่ส่งอีเมลอัตโนมัติ" — อ่าน/เขียนผ่านค่าตั้ง autopilot ของผู้ติดต่อ (ค่าจากเซิร์ฟเวอร์ · echo กลับ)
+       *  โหลดไม่ได้ (ไม่มีสิทธิ์ดู) ⇒ บอกเหตุ ไม่แสดงช่องที่กดแล้วไม่มีผล */
+      async _loadAutoSendToggle() {
+        const box = document.getElementById('notifyAutoSendBox'); if (!box) return;
+        const cid = document.getElementById('editId').value;
+        const api = Layout.api(); if (!api || !cid) { box.textContent = ''; return; }
+        try {
+          const res = await api.getContactAutopilot(cid);
+          if (document.getElementById('editId').value !== cid) return;   // เปลี่ยนผู้ติดต่อระหว่างรอ — คำตอบเก่าห้ามทับ
+          const on = !!(res && res.data && res.data.autoSendDisabled);
+          const canEdit = !!(this._notify && this._notify.canEdit);
+          box.innerHTML = `<label style="display:inline-flex;gap:6px;align-items:center;font-size:13px;color:#0f172a">
+              <input type="checkbox" id="notifyAutoSendOff" ${on ? 'checked' : ''} ${canEdit ? '' : 'disabled'} onchange="Page.saveAutoSendToggle(this)">
+              <b>ไม่ส่งอีเมลอัตโนมัติถึงผู้ติดต่อรายนี้</b></label>
+            <div style="margin-top:2px">ติ๊กแล้ว ระบบไม่ส่งเองทุกเส้น (ตารางส่งอีเมล · รายการประจำ · ทวงชำระ/ใบแจ้งยอด · 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็นอัตโนมัติ) และบอกเหตุบนคิว — ส่งเองจากหน้าเอกสารยังได้</div>`;
+        } catch (e) {
+          if (document.getElementById('editId').value !== cid) return;
+          box.textContent = 'ดูค่าตั้ง "ส่งอัตโนมัติ" ไม่ได้: ' + (e.message || 'ไม่มีสิทธิ์');
+        }
+      },
+      async saveAutoSendToggle(el) {
+        const cid = document.getElementById('editId').value;
+        const api = Layout.api(); if (!api || !cid) return;
+        el.disabled = true;
+        try {
+          const res = await api.updateContactAutopilot(cid, { paymentMode: null, payLinkChannels: null, autoSendDisabled: !!el.checked });
+          el.checked = !!(res && res.data && res.data.autoSendDisabled);   // ค่าจริงจากเซิร์ฟเวอร์
+          Layout.toast(el.checked ? 'ตั้ง "ไม่ส่งอีเมลอัตโนมัติ" แล้ว' : 'กลับมาส่งอีเมลอัตโนมัติตามค่าตั้งปกติแล้ว');
+        } catch (e) { el.checked = !el.checked; Layout.toast(e.message, 'error'); }
+        finally { el.disabled = false; }
       },
       _notifyEndpoint(key) {
         return (this._notify?.endpoints || []).find(e => (e.id || 'primary') === key);
@@ -1311,7 +1344,7 @@
           const res = await API.get(this._notifyUrl('/recipients?topic=' + encodeURIComponent(topic)));
           if (!res || !res.success) { out.innerHTML = `<span class="text-red">${Layout.esc(res?.message || 'ตรวจไม่สำเร็จ')}</span>`; return; }
           const d = res.data;
-          out.innerHTML = `<div><b>${Layout.esc(d.topicLabel)}</b> — เมื่อเส้นส่งต่อสาย (L2) จะส่งถึง: ${d.emails.length ? d.emails.map(x => Layout.esc(x)).join(', ') : '<span class="text-red">ไม่มีผู้รับ</span>'}</div>`
+          out.innerHTML = `<div><b>${Layout.esc(d.topicLabel)}</b> — ส่งอีเมลถึง: ${d.emails.length ? d.emails.map(x => Layout.esc(x)).join(', ') : '<span class="text-red">ไม่มีผู้รับ</span>'}</div>`
             + d.options.filter(x => !x.available).map(x => `<div style="color:#64748b">✕ ${Layout.esc(x.display)} (${Layout.esc(x.kindLabel)}) — ${Layout.esc(x.reason || '')}</div>`).join('');
         } catch (e) { out.innerHTML = `<span class="text-red">${Layout.esc(e.message)}</span>`; }
       },

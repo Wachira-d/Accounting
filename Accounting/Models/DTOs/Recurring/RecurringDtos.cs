@@ -107,12 +107,16 @@ public record ContactAutopilotSettingsResponse(Guid ContactId, string ContactNam
     AutoApprovePolicyView? AutoApprovePolicy,
     // รอบ 250 (WP-02 B-13): ค่าตั้งงานหลังรับชำระของผู้ติดต่อ (ชื่อ Inherit|On|Off)
     string PostPayEmailReceipt = "Inherit",
-    string PostPayIncludePartial = "Inherit");
+    string PostPayIncludePartial = "Inherit",
+    // รอบ 250 WP-08 (คำตัดสิน 250-29): ไม่ส่งอีเมลอัตโนมัติถึงผู้ติดต่อรายนี้ (echo กลับ · ฟอร์ม hydrate)
+    bool AutoSendDisabled = false);
 
 /// <summary>รอบ 248: แก้ช่องทางรับเงินของผู้ติดต่อ — PaymentMode null = ไม่แก้ · "" / "Inherit" = ล้าง · PayLinkChannels null = ไม่แก้ · [] = ล้าง</summary>
 public record UpdateContactAutopilotRequest(string? PaymentMode, List<string>? PayLinkChannels,
     // รอบ 250 (WP-02 B-13): null = ไม่แก้ · "Inherit"/"" = ล้าง · On/Off
-    string? PostPayEmailReceipt = null, string? PostPayIncludePartial = null);
+    string? PostPayEmailReceipt = null, string? PostPayIncludePartial = null,
+    // รอบ 250 WP-08: null = ไม่แก้ · true/false = ตั้ง
+    bool? AutoSendDisabled = null);
 
 /// <summary>รอบ 248: รายการตัวเลือกที่หน้าแสดง (เซิร์ฟเวอร์คำนวณ) — โหมดรับเงิน · ช่องทางที่บริษัทเปิด · คำเตือนที่ปล่อยได้/ไม่ได้</summary>
 public record AutopilotOptionsResponse(

@@ -32,9 +32,12 @@ public class RecurringAutopilotService : IRecurringAutopilotService
     /// <summary>รอบ 251 (WP-07 ข้อ 4): ผู้ส่งอีเมลของ "ส่งทดสอบถึงอีเมลฉัน" (null = ส่งทดสอบไม่ได้ — 503 พร้อมเหตุ)</summary>
     private readonly IEmailSenderFactory? _senders;
 
+    /// <summary>รอบ 250 WP-08: อีเมลที่ "จะส่งถึง" ในการทดลองรัน/แผงความพร้อม = ตัวหาผู้รับเดียวกับผู้ส่งจริง (เรื่อง "เอกสาร")</summary>
+    private readonly IContactRecipientResolver _recipients;
+
     public RecurringAutopilotService(AccountingDbContext db, IDocumentService docs,
         IDocumentPayLinkService? payLinks = null, IPermissionService? permissions = null, IConfiguration? config = null,
-        IFileStorage? storage = null, IEmailSenderFactory? senders = null)
+        IFileStorage? storage = null, IEmailSenderFactory? senders = null, IContactRecipientResolver? recipients = null)
     {
         _db = db;
         _docs = docs;
@@ -43,6 +46,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         _config = config;
         _storage = storage;
         _senders = senders;
+        _recipients = recipients ?? ContactRecipientResolver.EmailOnly(db);
     }
 
     // ═══════════════ ตัวเลือก ═══════════════
@@ -233,6 +237,10 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         Contact? contact = null;
         if (r.ContactId is { } cid)
             contact = await _db.Contacts.AsNoTracking().FirstOrDefaultAsync(c => c.Id == cid && c.CompanyId == companyId, ct);
+        // รอบ 250 WP-08: ผู้รับเรื่อง "เอกสาร" จากตัวหาผู้รับเดียว (ไม่อ่าน Contact.Email ตรง) · ไม่มีผู้ติดต่อ = ไม่มีผู้รับ
+        var docDelivery = contact == null
+            ? new ContactRecipientRule.EmailDelivery(Array.Empty<string>(), null)
+            : ContactRecipientRule.ForEmail(await _recipients.ResolveAsync(companyId, contact.Id, NotifyTopic.Document, ct));
 
         // ── บรรทัด (ตัวอ่านเดียวกับตอนสร้าง: RecurringTemplate · ตัวแทนค่าเดียวกัน: ApplyRecurringPlaceholders) ──
         string? templateError = null;
@@ -383,7 +391,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         if (etaxActive && etaxRoute.Channel == EtaxEmailChannel.EtaxByEmail)
         {
             etaxSenderRefusal = EtaxByEmailSenderGate.Refusal(EtaxByEmailSenderGate.From(settings!, hasTenantSender));
-            if (RecurringEmailReadiness.HasDeliverableEmail(contact?.Email))
+            if (RecurringEmailReadiness.HasDeliverableEmail(docDelivery.To))
             {
                 // ตารางที่จะส่งใบนี้จริง: อนุมัติอัตโนมัติ + กฎ "เมื่ออนุมัติเอกสาร" ครอบ ⇒ กฎนั้น · ไม่งั้นกฎ "เมื่อรายการประจำสร้างเอกสาร" · ไม่มีกฎ = ไม่มีสำเนาลับ
                 var sendTrigger = (r.AutoApprove || r.AutoSendEmail) && hasApprovedRule ? "DocumentApproved" : "RecurringInvoiceCreated";
@@ -391,9 +399,9 @@ public class RecurringAutopilotService : IRecurringAutopilotService
                     .Where(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == sendTrigger
                         && (x.DocumentType == null || x.DocumentType == docType.ToString()) && x.BccEmails != null && x.BccEmails != "")
                     .Select(x => x.BccEmails).FirstOrDefaultAsync(ct);
-                var contactProblem = EtaxByEmailFormat.Recipients(contact!.Email, null, null, true, true, false, false).Problem;
+                var contactProblem = EtaxByEmailFormat.Recipients(docDelivery.To, null, null, true, true, false, false).Problem;
                 etaxRecipientProblem = contactProblem
-                    ?? EtaxByEmailFormat.Recipients(contact.Email, null, scheduleBcc, true, true, false, false).Problem;
+                    ?? EtaxByEmailFormat.Recipients(docDelivery.To, null, scheduleBcc, true, true, false, false).Problem;
                 etaxRecipientFromSchedule = contactProblem == null && etaxRecipientProblem != null;
             }
         }
@@ -457,7 +465,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             AutoSendEmail = r.AutoSendEmail,
             ContactId = r.ContactId,
             ContactUsable = contact != null,
-            ContactEmail = contact?.Email,
+            ContactEmail = docDelivery.To,
             BuyerBlockingFields = buyerBlock,
             CompanySenderVerified = senderVerified,
             SaleSide = saleSide,
@@ -504,13 +512,15 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             : "จะอนุมัติ (ได้เลขที่จริงตอนอนุมัติ)";
         var etaxByEmail = etaxActive && etaxRoute.Channel == EtaxEmailChannel.EtaxByEmail;
         var emailPlan = !r.AutoSendEmail ? "ไม่ส่งอีเมลอัตโนมัติ"
-            : !RecurringEmailReadiness.HasDeliverableEmail(contact?.Email) ? RecurringEmailReadiness.NotSentNoEmail
+            : AutopilotSettingsResolver.AutoSendBlock(contact?.AutoSendDisabled == true) is { } autoOff ? autoOff
+            : docDelivery.OptOutReason is { } optOut && !docDelivery.Deliverable ? optOut
+            : !RecurringEmailReadiness.HasDeliverableEmail(docDelivery.To) ? RecurringEmailReadiness.NotSentNoEmail
             : blocking.Count > 0 ? "ไม่ส่ง — ใบยังเป็นร่าง (เลขที่จริงออกตอนอนุมัติ §86/4)"
             // รอบ 251 (WP-07 · DoD): ใบ e-Tax by Email ไม่มีทางถอยไปอีเมลของ NextAcc — บอกตามจริงว่าจะล้มที่ด่านไหน
             : etaxByEmail && etaxSenderRefusal != null ? "จะล้มที่ด่านผู้ส่ง e-Tax by Email — อีเมลไม่ถูกส่ง: " + etaxSenderRefusal
             : etaxByEmail && etaxRecipientProblem != null ? "จะล้มตอนส่ง (ผู้รับ e-Tax by Email): " + etaxRecipientProblem
-            : etaxByEmail ? "ส่งแบบ e-Tax by Email จากอีเมลบริษัทที่ลงทะเบียนกับกรมสรรพากร ถึง " + contact!.Email!.Trim() + " (สำเนาถึง ETDA เพื่อประทับเวลา)"
-            : (senderVerified ? "ส่งจากอีเมลบริษัท" : "ส่งผ่านอีเมลของ NextAcc ในนามบริษัท") + " ถึง " + contact!.Email!.Trim();
+            : etaxByEmail ? "ส่งแบบ e-Tax by Email จากอีเมลบริษัทที่ลงทะเบียนกับกรมสรรพากร ถึง " + docDelivery.To + " (สำเนาถึง ETDA เพื่อประทับเวลา)"
+            : (senderVerified ? "ส่งจากอีเมลบริษัท" : "ส่งผ่านอีเมลของ NextAcc ในนามบริษัท") + " ถึง " + docDelivery.To;
         var payPlan = !saleSide ? "ไม่มีลิงก์ชำระ (ไม่ใช่เอกสารเรียกเก็บเงิน)"
             : !choice.Attach ? $"ไม่แนบลิงก์ชำระ (ตาม{choice.Source})"
             : DocumentPayLinkPolicy.OnlineOnly(allowed).Count == 0 ? "ตั้งให้แนบ แต่ไม่มีช่องทางออนไลน์ที่บริษัทเปิด — จะไม่แนบ"
@@ -526,7 +536,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             "เลขที่จริงออกตอนอนุมัติเท่านั้น (§86/4) — ก่อนอนุมัติเป็น DRAFT-…",
             lines, subTotal, vatTotal, total, expectedWht, amounts.Net,
             approvalOutcome, warnings ?? Array.Empty<string>(), released, blocking,
-            contact?.Email, emailPlan, payPlan, notes,
+            docDelivery.To, emailPlan, payPlan, notes,
             EtaxPlan: isDocument ? etaxRoute.Reason : null);
     }
 
@@ -623,12 +633,14 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             throw new BusinessRuleException(badCh, AutopilotSettingsResolver.RuleCode);
         if ((AutopilotSettingsResolver.ValidateTriState(request.PostPayEmailReceipt) ?? AutopilotSettingsResolver.ValidateTriState(request.PostPayIncludePartial)) is { } badTri)
             throw new BusinessRuleException(badTri, AutopilotSettingsResolver.RuleCode);
-        var before = new { c.PaymentMode, c.PayLinkChannelsJson, c.PostPayEmailReceipt, c.PostPayIncludePartial };
+        var before = new { c.PaymentMode, c.PayLinkChannelsJson, c.PostPayEmailReceipt, c.PostPayIncludePartial, c.AutoSendDisabled };
         if (request.PaymentMode != null) c.PaymentMode = AutopilotSettingsResolver.Normalize(request.PaymentMode);
         if (request.PayLinkChannels != null) c.PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(request.PayLinkChannels);
         // รอบ 250 (WP-02 B-13): ชั้นผู้ติดต่อของงานหลังรับชำระ (ผู้อ่าน PostPaymentAutomationService.SettingsForAsync) · null = ไม่แก้
         if (request.PostPayEmailReceipt != null) c.PostPayEmailReceipt = AutopilotSettingsResolver.ParseTriState(request.PostPayEmailReceipt);
         if (request.PostPayIncludePartial != null) c.PostPayIncludePartial = AutopilotSettingsResolver.ParseTriState(request.PostPayIncludePartial);
+        // รอบ 250 WP-08 (คำตัดสิน 250-29): ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" (ผู้อ่าน: EmailScheduleService · PostPaymentAutomationService · SignRequestService ผ่าน AutopilotSettingsResolver)
+        if (request.AutoSendDisabled is bool autoOff) c.AutoSendDisabled = autoOff;
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId,
@@ -638,7 +650,8 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             EntityId = c.Id.ToString(),
             OldValues = JsonSerializer.Serialize(before),
             NewValues = JsonSerializer.Serialize(new { action = "SetContactPaymentMode", c.PaymentMode, c.PayLinkChannelsJson,
-                c.PostPayEmailReceipt, c.PostPayIncludePartial, ruleCode = AutopilotSettingsResolver.RuleCode }),
+                c.PostPayEmailReceipt, c.PostPayIncludePartial, c.AutoSendDisabled, ruleCode = AutopilotSettingsResolver.RuleCode,
+                autoSendRuleCode = before.AutoSendDisabled != c.AutoSendDisabled ? AutopilotSettingsResolver.AutoSendRuleCode : null }),
         });
         await _db.SaveChangesAsync(ct);
         return ContactView(c);
@@ -647,5 +660,6 @@ public class RecurringAutopilotService : IRecurringAutopilotService
     private static ContactAutopilotSettingsResponse ContactView(Contact c)
         => new(c.Id, c.Name, c.PaymentMode, DocumentPayLinkPolicy.ParseChannels(c.PayLinkChannelsJson),
             RecurringApprovePolicyLoader.View(AutoApprovePolicy.Parse(c.AutoApprovePolicyJson, AutoApprovePolicy.ScopeContact)),
-            AutopilotSettingsResolver.TriStateName(c.PostPayEmailReceipt), AutopilotSettingsResolver.TriStateName(c.PostPayIncludePartial));
+            AutopilotSettingsResolver.TriStateName(c.PostPayEmailReceipt), AutopilotSettingsResolver.TriStateName(c.PostPayIncludePartial),
+            c.AutoSendDisabled);
 }

@@ -6680,3 +6680,13 @@ _รอบ 251 WP-07 — งานค้างรอบ 248 Autopilot (2026-11-0
 (ไม่บันทึก `DocumentEmailLog` · ไม่นับเพดาน · audit · เพดาน 10/วัน) · ผลทดลองรันกล่องแยก · บรรทัดว่างไม่ฟ้องระหว่างกรอก · แท็บช่องทางแจ้งเตือนเตือนกติกาผู้รับ e-Tax ·
 Db MED-5 ผ่าน `RecheckDocumentAtSendAsync` ตัวจริง · R251 +7 กติกา + เคส R251a–g · owner R251-K4 · ไม่ได้ทำ: ราคาแปรผัน/ทุก N เดือน/สร้างล่วงหน้า (ไม่อยู่ในใบสั่งงาน WP-07) ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 847041d2_
+
+
+_รอบ 250 WP-08 (AUDIT_249 §4 WP-08 · คำตัดสิน 250-24…29 · LINE_MULTICHANNEL_DESIGN §8 L1 · ASSET §6 Q1/Q5): **L1 ต่อสาย** — ผู้รับอีเมลของทุกเส้นส่งถึงผู้ติดต่อ
+(ตารางส่ง/ทวงชำระ · ใบแจ้งยอด · 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น · ความพร้อมของรายการประจำ) มาจาก `IContactRecipientResolver` + `ContactRecipientRule.ForEmail`
+ตัวเดียว (เรื่องจาก `NotifyTopics.ForTrigger`) · อีเมลเพิ่มเติม/เรื่องที่เลือกมีผลจริง · ยกเลิกรับ ⇒ ไม่ส่ง + แถวคิว "ข้าม" พร้อมเหตุ · ไม่ตั้ง ⇒ Contact.Email เดิม · LINE ยังปิด
+(`LineDeliveryOpen=false` · §10 Q1(b)/Q7 เป็นงาน L2) · ToEmail หลายผู้รับแยกรายตัวตอนส่ง. **ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ"** `Contact.AutoSendDisabled` (migration DEFAULT false ·
+`AutopilotSettingsResolver.AutoSendBlock`/`ContactPostPayEmailReceipt` — ไม่สร้าง resolver ตัวที่สอง) ชนะกฎบริษัททุกเส้นอัตโนมัติ · echo/hydrate ใน contacts.html + recurring.html.
+**สินทรัพย์ P2**: `PATCH …/contract-price` + `PATCH …/available-date` (Asset.Manage · audit chain) · จุดตั้งต้นค่าเสื่อมตัวเดียว `DepreciationSchedule.StartDate` (แผน/GL/ไล่ตาม/ทบทวนอายุ) ·
+ฟอร์มล็อกช่องพร้อมเหตุจาก `AvailableDateLockReason` · confirmPlaceInService ตรวจอายุ > 0 + วันตั้งต้นตามปฏิทินผู้ใช้. เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests`
+(7) · `AssetEditsRound250DbTests` (4) · R250L1/R250FA (+9 เคสฝ่ายค้าน) · settings_reader เพิ่ม ContactNotifyEndpoint.TopicsJson/Contact.AutoSendDisabled · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 31479320_

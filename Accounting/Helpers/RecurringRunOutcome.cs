@@ -18,6 +18,9 @@ public sealed record RecurringRunFacts
     public bool EmailSkippedNoContactEmail { get; init; }
     /// <summary>เข้าคิวส่งอีเมลไม่สำเร็จ</summary>
     public bool EmailEnqueueFailed { get; init; }
+    /// <summary>รอบ 250 WP-08: ไม่ส่งเพราะค่าตั้งของผู้ติดต่อ (ยกเลิกรับเรื่อง "เอกสาร" ทุกปลายทาง · "ไม่ส่งอัตโนมัติ") — เหตุจากตัวตัดสินเดียว
+    /// (<c>ContactRecipientRule.ForEmail</c> / <c>AutopilotSettingsResolver.AutoSendBlock</c>) · null = ไม่ได้ติดที่ค่าตั้งผู้ติดต่อ</summary>
+    public string? EmailNotSentReason { get; init; }
     /// <summary>ขั้นหลังสร้างใบล้ม (ข้อความกลางของ <see cref="RecurringRunFailure.AfterCreateNotice"/>)</summary>
     public string? FollowUpError { get; init; }
     /// <summary>จำนวนงวดที่ระบบข้าม (ระบบสร้างเอกสารไม่ได้ช่วงหนึ่ง) · 0 = ไม่ได้ข้าม</summary>
@@ -26,7 +29,7 @@ public sealed record RecurringRunFacts
 
     [JsonIgnore]
     public bool IsEmpty => ApproveBlockedReason == null && !EmailHeldForDraft && !EmailSkippedNoContactEmail && !EmailEnqueueFailed
-        && FollowUpError == null && SkippedPeriods <= 0;
+        && EmailNotSentReason == null && FollowUpError == null && SkippedPeriods <= 0;
 }
 
 /// <summary>สถานะ "ตอนนี้" ของเอกสารล่าสุดที่รอบสร้าง — อ่านจากฐานข้อมูลทุกครั้งที่เปิดดู (ผู้ใช้อนุมัติเองแล้ว ⇒ ขั้นอนุมัติหายไปเอง)</summary>
@@ -44,8 +47,9 @@ public sealed record RecurringRunOutcomeView(
     string? LegalNote,
     string? RawNotice);
 
-/// <summary>ตัวตัดสิน "ผู้ติดต่อรับอีเมลเอกสารได้ไหม" ตัวเดียว — กติกาเดียวกับผู้ส่งจริง (<c>EmailScheduleService.EnqueueDocumentAsync</c>
-/// ส่งไปที่ <c>Contact.Email</c> เท่านั้น · ว่าง ⇒ ไม่เข้าคิว) · ใช้ทั้งฟอร์ม (ปิดช่องติ๊ก) · คำเตือนตอนบันทึก · หน้ารายละเอียด · ผลรอบ</summary>
+/// <summary>ตัวตัดสิน "ผู้ติดต่อรับอีเมลเอกสารได้ไหม" ตัวเดียว — กติกาเดียวกับผู้ส่งจริง (<c>EmailScheduleService.EnqueueDocumentAsync</c>) ·
+/// รอบ 250 WP-08: ผู้อ่านทุกตัวส่ง <see cref="ContactRecipientRule.EmailDelivery.To"/> ของเรื่อง "เอกสาร" (จาก <c>IContactRecipientResolver</c>) เข้ามา —
+/// ไม่ใช่ <c>Contact.Email</c> ตรง (อีเมลเพิ่มเติม/เรื่องที่ยกเลิกรับมีผลแล้ว) · ว่าง ⇒ ไม่เข้าคิว · ใช้ทั้งฟอร์ม (ปิดช่องติ๊ก) · คำเตือนตอนบันทึก · หน้ารายละเอียด · ผลรอบ</summary>
 public static class RecurringEmailReadiness
 {
     public const string NoEmailReason = "ผู้ติดต่อนี้ยังไม่มีอีเมล — เพิ่มอีเมลที่หน้าผู้ติดต่อก่อน";
@@ -190,6 +194,15 @@ public static class RecurringRunOutcome
                         : "อีเมล: ระบบยังไม่ได้ส่งเอกสารนี้ให้ลูกค้า — ถ้ายังไม่ได้ส่งเอง เปิดเอกสาร แล้วกด \"ส่งอีเมล\"");
                 OpenDoc(isDraft ? "เปิดใบร่างเพื่ออนุมัติ" : "เปิดเอกสารเพื่อส่งอีเมล");
             }
+        }
+
+        // ── 2b) รอบ 250 WP-08: ไม่ส่งเพราะค่าตั้งของผู้ติดต่อ (ช่องทางแจ้งเตือน/ไม่ส่งอัตโนมัติ) — บอกเหตุตรงตัว + ทางไปต่อ (แก้ที่ผู้ติดต่อ หรือส่งเองจากหน้าเอกสาร) ──
+        if (facts.EmailNotSentReason != null)
+        {
+            steps.Add("อีเมล: " + facts.EmailNotSentReason + " — ถ้าต้องการส่งงวดนี้ เปิดเอกสารแล้วกด \"ส่งอีเมล\" เอง");
+            if (contactId != null && actions.All(a => a.Kind != "openContact"))
+                actions.Add(new RecurringRunAction("openContact", "เปิดหน้าผู้ติดต่อ", RecurringEmailReadiness.ContactUrl(contactId.Value)));
+            OpenDoc(isDraft ? "เปิดใบร่างเพื่ออนุมัติ" : "เปิดเอกสารเพื่อส่งอีเมล");
         }
 
         // ── 3) ขั้นหลังสร้างใบล้ม ──

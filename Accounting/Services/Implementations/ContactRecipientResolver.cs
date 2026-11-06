@@ -16,13 +16,22 @@ public class ContactRecipientResolver : IContactRecipientResolver
     public const bool LineDeliveryOpen = false;
 
     private readonly AccountingDbContext _db;
-    private readonly ISecretProtector _secrets;
-    private readonly INextAccLineConfig _nextAccLine;
+    private readonly ISecretProtector? _secrets;
+    private readonly INextAccLineConfig? _nextAccLine;
 
     public ContactRecipientResolver(AccountingDbContext db, ISecretProtector secrets, INextAccLineConfig nextAccLine)
     {
         _db = db; _secrets = secrets; _nextAccLine = nextAccLine;
     }
+
+    private ContactRecipientResolver(AccountingDbContext db)
+    {
+        _db = db; _secrets = null; _nextAccLine = null;
+    }
+
+    /// <summary>รอบ 250 WP-08: ตัวหาผู้รับสำหรับบริการที่ถูกสร้างนอก DI (เทสต์/ผู้เรียกเก่าที่ไม่ส่ง resolver) — ตัวตัดสินเดียวกัน ·
+    /// ถอด groupId ไม่ได้ ⇒ ปลายทางกลุ่ม "อ่านไม่ได้ = ใช้ไม่ได้" (ปิดทางปลอดภัย · L1 LINE ยังไม่เปิดส่งอยู่แล้ว) · อีเมลได้ผลเท่าตัวเต็ม</summary>
+    internal static ContactRecipientResolver EmailOnly(AccountingDbContext db) => new(db);
 
     public async Task<ContactRecipientRule.RecipientSet> ResolveAsync(Guid companyId, Guid contactId, NotifyTopic topic, CancellationToken ct = default)
     {
@@ -99,12 +108,17 @@ public class ContactRecipientResolver : IContactRecipientResolver
                     $"เร็ว ๆ นี้ (เฟส L3) — เชิญบอทเข้ากลุ่ม พิมพ์ #HeyNextAcc แล้วนำรหัสผูกมาใส่ที่นี่ (ใช้ groupId อย่างเดียวผูกไม่ได้) · กลุ่มไม่เกิน {ContactRecipientRule.MaxGroupMembers} คน · "
                     + "แสดงยอดเงินเป็นค่าตั้งต้นและปิดได้รายกลุ่ม · กลุ่ม LINE กลางของระบบใช้เป็นปลายทางไม่ได้ (คำตอบเจ้าของ Q1(b)/Q2/Q5)"),
             },
-            "ปลายทางที่ตั้งที่นี่ใช้ได้กับทุกการแจ้งเตือนถึงผู้ติดต่อรายนี้ (ตัวหาผู้รับตัวเดียว) · ⚠️ ตอนนี้เส้นส่งอัตโนมัติ (ตารางส่งอีเมล · ทวงชำระ · ใบเสร็จหลังรับชำระ · "
-            + "ลิงก์เซ็น) ยังส่งถึงอีเมลหลักเท่านั้น — อีเมลเพิ่มเติมและเรื่องที่เลือกจะเริ่มมีผลเมื่อเส้นส่งต่อสาย (เฟส L2) · อีเมลหลักแก้ที่แท็บข้อมูลทั่วไป",
+            DeliveryNote,
             canEdit,
             canEdit ? null : $"ดูได้อย่างเดียว — แก้ช่องทางแจ้งเตือนต้องมีสิทธิ์ {Accounting.Models.Constants.PermissionKeys.ContactEdit.Replace("perm:", "")}",
             EtaxByEmailNote: etaxNote);
     }
+
+    /// <summary>รอบ 250 WP-08: ประโยคบนแท็บ (เซิร์ฟเวอร์ส่ง · หน้าแสดงตรงตัว) — เส้นส่งที่อ่านค่าตั้งนี้แล้วจริง (ล็อกด้วย required_call_site_check R250L1)</summary>
+    internal const string DeliveryNote =
+        "ปลายทางที่ตั้งที่นี่มีผลกับการส่งอีเมลถึงผู้ติดต่อรายนี้แล้ว (ตัวหาผู้รับตัวเดียว): ตารางส่งอีเมล (เมื่ออนุมัติ/รายการประจำ) · ทวงชำระ/ใบแจ้งยอด · "
+        + "ส่ง 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น — เรื่องที่ไม่ได้เลือกจะไม่ถูกส่งไปปลายทางนั้น และถ้าไม่มีปลายทางใดรับเรื่องนั้นเลย ระบบไม่ส่งพร้อมบันทึกเหตุบนคิว · "
+        + "ช่องผู้รับที่ผู้ใช้กรอกเองตอนส่ง (เช่นลิงก์เซ็นครั้งก่อน) ยังชนะ · LINE ยังไม่ส่ง (เปิดเฟส L2/L3 · อีเมลเป็นทางหลัก) · อีเมลหลักแก้ที่แท็บข้อมูลทั่วไป";
 
     private sealed record RowMeta(DateTime LinkedAt, DateTime? LastSentAt, string? LastFailure);
 
@@ -130,7 +144,7 @@ public class ContactRecipientResolver : IContactRecipientResolver
                 .ToDictionaryAsync(r => r.Id, r => r.WithdrawnAt, ct);
         // กลุ่มกลางของระบบ (คำตอบเจ้าของ Q1(b) · ฝ่ายค้าน S2) — ทั้งค่าหน้าแอดมินและ config แยกกัน (ไม่ใช่ผล Merge) · อ่านเฉพาะเมื่อมีปลายทางกลุ่ม
         IReadOnlyList<string> platformGroups = Array.Empty<string>();
-        if (rows.Any(r => r.Kind == NotifyEndpointKind.LineGroup))
+        if (rows.Any(r => r.Kind == NotifyEndpointKind.LineGroup) && _nextAccLine != null)
             platformGroups = await _nextAccLine.PlatformGroupIdsAsync(ct);
 
         var facts = rows.Select(r => ToFacts(r, consents)).ToList();
@@ -144,7 +158,7 @@ public class ContactRecipientResolver : IContactRecipientResolver
         Guid? consentId = r.ConsentRecordId is Guid id && consents.ContainsKey(id) ? id : null;
         var withdrawn = consentId is Guid cid ? consents[cid] : null;
         // ฝ่ายค้าน S2: ถอดไม่ออก ⇒ Unprotect คืน "" ⇒ ตัวตัดสินถือว่า "อ่านไม่ได้ = ใช้ไม่ได้" (ไม่ผ่านด่านกลุ่มกลางเพราะเทียบไม่ได้)
-        var groupPlain = r.Kind == NotifyEndpointKind.LineGroup ? _secrets.Unprotect(r.LineGroupId) : null;
+        var groupPlain = r.Kind == NotifyEndpointKind.LineGroup ? _secrets?.Unprotect(r.LineGroupId) : null;
         return new ContactRecipientRule.EndpointFacts(r.Id, r.CompanyId, r.ContactId, r.Kind, r.Label, r.Email, groupPlain, r.OaScope,
             r.GroupNameSnapshot, r.MemberCountSnapshot, r.TopicsJson, r.ShowAmounts, r.IsPrimary, r.Verified, r.Source,
             consentId, withdrawn, r.BlockedAt, r.UnlinkedAt, r.UnlinkReason, r.IsDeleted, r.LinkedAt);

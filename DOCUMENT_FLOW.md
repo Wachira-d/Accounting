@@ -3022,7 +3022,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 
 ### 2.12h ช่องทางแจ้งเตือนของผู้ติดต่อ — ผู้ติดต่อเป็นเจ้าของปลายทาง (รอบ 245 เฟส L1 · `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` · คำตัดสิน 245-L1-1…245-L1-7)
 
-**สถานะปัจจุบัน (L1 — ตัวหาผู้รับ + ปลายทางอีเมล · ยังไม่ต่อสายเส้นส่ง):**
+**สถานะปัจจุบัน (L1 — ตัวหาผู้รับ + ปลายทางอีเมล · ต่อสายเส้นส่งอีเมลแล้วรอบ 250 WP-08 · LINE ยังไม่ส่ง):**
 - **ตาราง `ContactNotifyEndpoints`** (`Models/Entities/ContactNotifyEndpoint` · schema `Helpers/ContactNotifyEndpointMigration.Statements`) — ชนิด `Email`/`LineUser`/`LineGroup`
   (ตัวตั้ง `Helpers/NotifyEndpointKind`) · เรื่องที่รับต่อแถว `TopicsJson` = ชื่อ `NotifyTopic` (`Document` เอกสาร · `Dunning` ทวงชำระ/ใบแจ้งยอด · `Receipt` ใบเสร็จ ·
   `Wht` 50 ทวิ · `Sign` ลิงก์เซ็น · `Other`) ผ่านตัวอ่าน/เขียนเดียว `NotifyTopics` · ความยินยอม `ConsentRecordId` · `UnlinkedAt/UnlinkReason/BlockedAt` ·
@@ -3033,8 +3033,30 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   LINE: ไม่มีความยินยอม/ถอนแล้ว ⇒ ไม่ได้ (PDPA) · OA ไม่รู้ (`unknown`) ⇒ ไม่ได้ · กลุ่มยังไม่ยืนยันด้วยรหัส ⇒ ไม่ได้ · **groupId กลางของระบบ (ค่าตั้งหน้าแอดมิน
   `SiteSettings.LineMessagingGroupId`/config `Line:GroupId` ผ่าน `NextAccLineConfig`) ⇒ ไม่เป็นปลายทางเสมอ** (`NOTIFY-CONTACT-PLATFORM-GROUP` · คำตอบเจ้าของ Q1(b)) ·
   กลุ่ม > 200 คน ⇒ ไม่ได้ (`NOTIFY-CONTACT-GROUP-CAP` · Q2) · **L1 ยังไม่ส่งทาง LINE** (`ContactRecipientResolver.LineDeliveryOpen = false` ⇒ ปลายทาง LINE แสดงพร้อมเหตุ ไม่อยู่ในชุดผู้รับ)
-- **⚠️ ยังไม่มีเส้นส่งใดเรียก Resolver** (ตารางส่ง/ทวงชำระ/ใบแจ้งยอด · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น ยังอ่าน `Contact.Email` ตามเดิม — ต่อสายในเฟส L2 หลังรอบ 244 merge) ⇒
-  หน้าแท็บแสดงคำเตือนนี้ตรง ๆ (ไม่ให้ผู้ใช้คิดว่าอีเมลที่เพิ่มได้รับเอกสารแล้ว)
+- **ต่อสายเส้นส่งแล้ว (รอบ 250 WP-08 · คำตัดสิน 250-L1 · DESIGN §3.e/§3.g)** — ทุกเส้นส่งอีเมลถึงผู้ติดต่อถาม `IContactRecipientResolver.ResolveAsync` แล้วตัดสินด้วย
+  `ContactRecipientRule.ForEmail` ตัวเดียว (อีเมลที่ส่งได้ + เหตุไม่ส่ง) · เรื่องจาก trigger ผ่าน `NotifyTopics.ForTrigger` ตัวเดียว:
+  ตารางส่ง `EmailScheduleService.EnqueueDocumentAsync` (เมื่ออนุมัติ/รายการประจำ = `Document` · ใกล้/เกินกำหนด = `Dunning`) · ใบแจ้งยอด `ScanMonthlyStatementsAsync` (`Dunning`) ·
+  ส่ง 50 ทวิ `OnWhtCertIssuedAsync` (`Wht`) · ใบเสร็จหลังรับชำระ `PostPaymentAutomationService.ExecuteAsync` (`Receipt`) · ลิงก์เซ็น `SignRequestService.SuggestRecipientsAsync`
+  (`Sign` · ผู้รับที่ผู้ใช้กรอกครั้งก่อน `SignLinkLastRecipients`/ช่องที่กรอกตอนส่งยังชนะ) · ความพร้อมของรายการประจำ (`RecurringEmailReadiness` ทุกผู้อ่าน:
+  ฟอร์ม · หน้ารายการ · ทดลองรัน/แผงความพร้อม) อ่านผลเรื่อง `Document` ตัวเดียวกัน
+  - **หลายผู้รับ**: `EmailQueue.ToEmail` คั่น ", " (≤ 500 ตัวอักษร · ≤ 11 อีเมล/ผู้ติดต่อ) · ผู้ส่งคิวแยกรายตัว (`SignEmailThrottle.ParseRecipients`) — เส้นแพลตฟอร์มยังนับ
+    To+Cc+Bcc ≤ 5 (เกิน ⇒ ปฏิเสธพร้อมเหตุบนคิว · ทางไปต่อ: ตั้ง SMTP ของบริษัท หรือลดปลายทางที่รับเรื่องนั้น)
+  - **ยกเลิกรับ (มีอีเมลแต่ไม่มีปลายทางใดรับเรื่องนั้น) ⇒ ไม่ส่ง + แถวคิวสถานะ "ข้าม" พร้อมเหตุ** (`ToEmail` ว่าง · ผู้ส่งคิวหยิบเฉพาะ Pending · กุญแจกันซ้ำเดิม ⇒
+    สแกนรอบถัดไปไม่เขียนซ้ำ) · รายการประจำ ⇒ `EmailEnqueueOutcome.NotSent` ⇒ `RecurringRunFacts.EmailNotSentReason` (หน้ารายการบอกเหตุ + ปุ่มเปิดผู้ติดต่อ) ·
+    ใบเสร็จหลังรับชำระ ⇒ งานหยุดพร้อมเหตุ (`PostPaymentAutomationPolicy.Facts.EmailOptOutReason` — ไม่ใช่ "ไม่มีอีเมล") · ลิงก์เซ็น ⇒ 400 พร้อมเหตุ (ใส่ผู้รับเองได้)
+  - **ไม่ถดถอย**: ผู้ติดต่อที่ไม่มีแถวปลายทาง ⇒ `Contact.Email` ทุกเรื่องเหมือนเดิม · ไม่มีอีเมลเลย ⇒ ไม่เข้าคิว (เดิม) · ⚠️ ผู้ติดต่อที่ถูกลบ ⇒ ชุดผู้รับว่าง
+    (ตัวตัดสิน 245 — เดิม `HydrateContactAsync` ยังส่งถึงอีเมลของผู้ติดต่อที่ลบแล้ว) = ไม่ส่งเงียบเหมือน "ไม่มีอีเมล" (ตั้งใจ · ผู้ติดต่อที่ลบไม่ควรได้รับอีเมลอัตโนมัติ)
+  - **LINE ยังไม่ส่ง** (คำตอบเจ้าของ §10: Q1(b) ห้ามกลุ่มกลางของแอดมิน · Q7 ติ๊กต่อกฎ/ค่าตั้งต้นถอยไปอีเมล — งานเฟส L2 WP-11) ⇒ `LineDeliveryOpen = false` คงเดิม · อีเมลเป็นทางหลัก
+  - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·
+    แจ้งเตือนจองคิว/บริการ (`BookingNotifier` — ลูกค้าเว็บ ไม่ใช่ปลายทางผู้ติดต่อ) · พอร์ทัล/ใบเสนอราคาสาธารณะ (ผู้รับเปิดเอง)
+- **ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" (`Contact.AutoSendDisabled` · คำตัดสิน 250-29 · ตัวตัดสินเดียว `AutopilotSettingsResolver.AutoSendBlock`)** — ชนะกฎบริษัททุกเส้นอัตโนมัติ:
+  ตารางส่งทุก trigger + ใบแจ้งยอด + 50 ทวิ (แถว "ข้าม" พร้อมเหตุ) · รายการประจำ (ตรวจก่อนด่าน "กฎเมื่ออนุมัติครอบแล้ว" · บอกเหตุที่หน้ารายการ) ·
+  ลิงก์เซ็นอัตโนมัติ/อีเมลเตือน (บันทึกการส่ง Failed พร้อมเหตุ ไม่ลองซ้ำ) · ใบเสร็จหลังรับชำระ = ชั้นผู้ติดต่อ Off (`ContactPostPayEmailReceipt` — ตาราง/รายการประจำที่ตั้งช่องนี้เองยังชนะ
+  "ตารางชนะผู้ติดต่อเฉพาะช่องที่ตั้ง" AUTO_SEND §9) · การส่งที่ผู้ใช้กดเองไม่ถูกกัน · ตั้งที่ `PUT …/recurring/contacts/{id}/autopilot` (`Contact.Edit` · audit chain) ·
+  echo กลับ + hydrate ใน `contacts.html` แท็บช่องทางแจ้งเตือน และ `recurring.html` ขั้นช่องทางรับเงิน (โหลดค่าผู้ติดต่อไม่ได้ ⇒ ส่ง null = คงเดิม) · migration
+  `DocumentAutoSendMigration` (`NOT NULL DEFAULT false` = พฤติกรรมเดิมทุกแถว)
+- เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests` · ล็อก R250L1 (+ เคส R250L1-1…5) · `settings_reader_check` (`ContactNotifyEndpoint.TopicsJson` ·
+  `Contact.AutoSendDisabled`) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 31479320
 - **ทางเข้า HTTP** `ContactNotifyEndpointsController` (`api/companies/{cid}/contacts/{id}/notify-endpoints`): `GET` (สมาชิกบริษัท) · `GET recipients?topic=` (ดูว่าใครจะได้รับ — ตัวหาผู้รับตัวเดียวกัน) ·
   `POST email` · `PUT primary` · `PUT {eid}` (ป้าย · เรื่อง · แสดงยอด = กลุ่มเท่านั้น ชนิดอื่นปฏิเสธ 400) · `DELETE {eid}` (ยกเลิก · ล้าง LINE id · อีเมลหลักยกเลิกไม่ได้) —
   เขียนทุกตัว `Contact.Edit` + ปฏิเสธคีย์ API · ผู้เขียนเดียว `ContactNotifyEndpointService`: ล็อก `AdvisoryLockKey.ContactNotifyEndpoint` ต่อผู้ติดต่อ · tenant 404 · อีเมลผ่าน
@@ -3054,7 +3076,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - รวมผู้ติดต่อ (`MergeContactsAsync`) ใต้ล็อก `AdvisoryLockKey.ContactNotifyEndpoint` ของทุกรายที่เกี่ยว ⇒ ยกเลิก (เหตุ `merge`) แถวอีเมลหลักของผู้ถูกรวม + อีเมลรองที่ซ้ำกัน/ซ้ำอีเมลหลักของผู้ที่เก็บไว้ +
     LINE ซ้ำ (`ContactRecipientRule.MergeUnlinks`) · แถวหลักเลือกด้วย `ContactRecipientRule.PickPrimary` (ผูกก่อนชนะ · ไม่ใช่ตาม Guid) ทั้งตัวหาผู้รับและ `UpdatePrimaryAsync` (แถวเกิน ⇒ ยกเลิก)
   - งานย้ายข้อมูลล้มกลางทาง ⇒ ล้าง ChangeTracker (catch + finally) — แถวที่ค้างไม่หลุดลงฐานกับ SaveChanges ถัดไป · ค่าที่ `Protect` ปฏิเสธ ⇒ ข้าม (ไม่ล้างคอลัมน์) นับลง audit + log ครั้งเดียว
-  - หน้าแท็บ: ปุ่มที่กดได้ตามสิทธิ์จริง (`canEdit` ด่านเดียวกับ write) · พรีวิว "เมื่อเส้นส่งต่อสาย (L2) จะส่งถึง"
+  - หน้าแท็บ: ปุ่มที่กดได้ตามสิทธิ์จริง (`canEdit` ด่านเดียวกับ write) · พรีวิว "ส่งอีเมลถึง" (รอบ 250 WP-08: ต่อสายแล้ว — ประโยคเดิม "เมื่อเส้นส่งต่อสาย (L2)" ถูกลบ)
 - เทสต์ `ContactRecipientRuleTests` · Db `ContactNotifyEndpointRound245DbTests` · ล็อก `tools/required_call_site_check.py` R245 (+ เคส R245a–n) · `write_permission_gate_check` WATCHED — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
@@ -3512,6 +3534,18 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
         `AssetCostSource` **เสมอ**เมื่อชนิดใบอาจเป็นต้นทุน (`AssetCostSourceRules.MayBeCostSource` — ไม่ตรวจ "ผูกอยู่ไหม" นอกล็อก) ก่อน `FOR UPDATE` แถวเอกสาร ·
         ทะเบียนเกิน GL อยู่ก่อน ⇒ problem row ในแท็บเอกสารต้นทุน · สินทรัพย์ระหว่างจัดหาไม่นับในกระทบยอดยกมา · ไฟล์ส่งออกติดป้าย "ระหว่างจัดหา"/"วันที่ซื้อ = วันพร้อมใช้" ·
         Last verified `commit a40c91e5` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+      • **รอบ 250 WP-08 (สินทรัพย์ P2 · คำตัดสิน 250-24…28 · ASSET §6 Q1–Q5)**:
+        **ราคาตามสัญญาแก้ได้หลังสร้าง** (`PATCH fixedasset/{id}/contract-price` · สิทธิ์ `Asset.Manage` · audit chain `contract-price-updated` · ค่าผ่าน
+        `AssetCostSourceRules.NormalizeContractPrice` — null/0 = ล้าง · ติดลบ = 400) · ยังเป็น**คำเตือน** `ContractPriceWarning` ไม่บล็อก · ช่องในฟอร์มแก้ไข (`fContractPrice`) ·
+        **วันที่พร้อมใช้งานของสินทรัพย์ใบเดียว** (`PATCH …/available-date` · `Asset.Manage` · audit `available-for-use-date-updated`) — ตั้ง/ล้างได้จนกว่ามีค่าเสื่อมลงบัญชี
+        (`FixedAssetValuationEdit.AvailableDateProblem`: ระหว่างจัดหา/สินทรัพย์หลายใบ (ตั้งตอนโอน)/ลงค่าเสื่อมแล้ว/ก่อนวันที่ซื้อ/เกิน 1 ปีจากวันนี้ ⇒ 409 พร้อมทางไปต่อ) ·
+        ล็อกแถวสินทรัพย์ก่อนตรวจ · แผนที่ยังไม่ลงบัญชีสร้างใหม่ · **วันที่ซื้อไม่ถูกแตะ** · ว่าง = วันที่เอกสาร (ไม่ถดถอย) · **จุดตั้งต้นค่าเสื่อมตัวเดียว**
+        `DepreciationSchedule.StartDate(PurchaseDate, AvailableForUseDate)` ทั้งแผน (`BuildScheduleRows`) · ยอดลง GL (`CalculateDepreciationAsync`) · ไล่ตามตอนจำหน่าย ·
+        ทบทวนอายุ · ผูกหลังโอน (สินทรัพย์หลายใบ: ทั้งสองค่าเท่ากันหลังโอน ⇒ ผลเดิม) · ฟอร์มได้ `AvailableDateLockReason`/`DepreciationStartDate` จาก `GET {id}` ⇒ ล็อกช่องพร้อมเหตุ
+        (ไม่ใช่กดแล้วถูกปฏิเสธ) · `confirmPlaceInService`: อายุใช้งาน ≤ 0 กับวิธีที่คิดค่าเสื่อม ⇒ บอกก่อนยิง · วันตั้งต้น `Layout.toDateInput(new Date())` ·
+        **ตั้งใจ (ไม่ทำรอบนี้)**: ค่าเสื่อมงวดแรก = เดือนถัดจากพร้อมใช้ (250-24 · ธรรมเนียมทั้งระบบ) · ดอกเบี้ยระหว่างก่อสร้างไม่รวมเป็นต้นทุน (250-25/N6 — ผูกบรรทัด JE ในผัง 12280
+        ด้วยมือได้) · ริบมัดจำ/ใบซื้ออ้าง GRN/ปลดแถวที่โอนแล้ว/กู้คืนไม่ผูกกลับ/แผงไม่แสดงบน CN ซื้อ (250-28 · P3 ทำเมื่อผู้ใช้ขอ) · เทสต์ `Round250Wp08Tests` ·
+        Db `AssetEditsRound250DbTests` · ล็อก R250FA (+ R250FA-1…3) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 31479320
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด

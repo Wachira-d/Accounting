@@ -302,6 +302,15 @@ public static class AssetCostSourceRules
     }
 
     /// <summary>ต้นทุนรวมเกินราคาตามสัญญา (คำถามเจ้าของ §6 ข้อ 1 · ข้อเสนอ) — เตือน ไม่บล็อก · null = ไม่เกิน/ไม่ได้ระบุ</summary>
+    /// <summary>รอบ 250 WP-08 (คำตัดสิน 250-27): ค่าราคาตามสัญญาที่จะเก็บ — null/0 = ล้าง · ติดลบ/เกินเพดาน = ปฏิเสธ (ไม่ตัดเงียบ) · ปัด 2 ตำแหน่ง AwayFromZero</summary>
+    public static (decimal? Value, string? Problem) NormalizeContractPrice(decimal? raw)
+    {
+        if (raw is not decimal v || v == 0m) return (null, null);
+        if (v < 0m) return (null, "ราคาตามสัญญาต้องไม่ติดลบ — เว้นว่างถ้าไม่ต้องการให้ระบบเตือน");
+        if (v > 999_999_999_999m) return (null, "ราคาตามสัญญาสูงเกินจริง — ตรวจจำนวนหลักอีกครั้ง");
+        return (Math.Round(v, 2, MidpointRounding.AwayFromZero), null);
+    }
+
     public static string? ContractPriceWarning(decimal? contractPrice, decimal cost)
     {
         if (contractPrice is not decimal cp || cp <= 0m) return null;

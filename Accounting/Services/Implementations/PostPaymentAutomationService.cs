@@ -37,7 +37,7 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
 
     public PostPaymentAutomationService(AccountingDbContext db, IDocumentService docs, IDocumentEmailService email,
         IEmailSenderFactory senderFactory, ILogger<PostPaymentAutomationService> logger, INotificationEngine? notify = null,
-        IEnumerable<IReceiptEmailSectionProvider>? sections = null)
+        IEnumerable<IReceiptEmailSectionProvider>? sections = null, IContactRecipientResolver? recipients = null)
     {
         _db = db;
         _docs = docs;
@@ -46,7 +46,11 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         _logger = logger;
         _notify = notify;
         _sections = sections ?? Array.Empty<IReceiptEmailSectionProvider>();
+        _recipients = recipients ?? ContactRecipientResolver.EmailOnly(db);
     }
+
+    /// <summary>รอบ 250 WP-08 (L1 ต่อสาย · DESIGN §3.g): ผู้รับใบเสร็จ = ตัวหาผู้รับเดียว เรื่อง "ใบเสร็จ" — ไม่อ่าน Contact.Email ตรง (R250L1)</summary>
+    private readonly IContactRecipientResolver _recipients;
 
     /// <summary>ค่าที่มีผลของเอกสารนี้ — ชั้น (เฉพาะเจาะจงชนะ ทีละช่อง): ตารางส่งเอกสารที่ส่งใบนี้ (<c>Document.AutoSendRuleId</c>) ›
     /// รายการประจำที่สร้างใบนี้ (<c>Document.RecurringTransactionId</c> · รอบ 250 B-13) › ผู้ติดต่อของใบ › บริษัท — ตัวต่อชั้นเดียว
@@ -72,10 +76,13 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
                 .Where(r => r.Id == recId && r.CompanyId == companyId)
                 .Select(r => new PostPaymentAutomationPolicy.Overrides(r.PostPayEmailReceipt, r.PostPayIncludePartial))
                 .FirstOrDefaultAsync(ct);
-        contact = await db.Contacts.AsNoTracking().IgnoreQueryFilters()
+        // รอบ 250 WP-08 (คำตัดสิน 250-29): ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ⇒ ชั้นผู้ติดต่อของ "ส่งใบเสร็จ" = ปิด (ตาราง/รายการประจำที่ตั้งเองยังชนะ) — ตัวตัดสิน AutopilotSettingsResolver
+        var contactRow = await db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
-            .Select(c => new PostPaymentAutomationPolicy.Overrides(c.PostPayEmailReceipt, c.PostPayIncludePartial))
+            .Select(c => new { c.PostPayEmailReceipt, c.PostPayIncludePartial, c.AutoSendDisabled })
             .FirstOrDefaultAsync(ct);
+        contact = contactRow == null ? null : new PostPaymentAutomationPolicy.Overrides(
+            AutopilotSettingsResolver.ContactPostPayEmailReceipt(contactRow.PostPayEmailReceipt, contactRow.AutoSendDisabled), contactRow.PostPayIncludePartial);
         return PostPaymentAutomationPolicy.EffectiveLayers(s, schedule, recurring, contact);
     }
 
@@ -281,6 +288,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         // ประมาณแบบระวัง (ไม่รู้ว่ามีใบเสร็จถือ VAT ที่ยังมีผลไหม ⇒ ถือว่าอาจถือ VAT) — ขาดข้อมูลผู้ซื้อ = ไม่ออกเอง แล้วบอกคน
         var mayCarryVat = SettlementReceiptPolicy.CarriesTaxInvoiceRole(doc.DocumentType, doc.VatAmount,
             fullyPaid && paymentCount == 1, liveVatReceiptExists: false);
+        // รอบ 250 WP-08: ผู้รับเรื่อง "ใบเสร็จ" จากตัวหาผู้รับเดียว (ปลายทางของผู้ติดต่อ · ไม่ตั้ง = Contact.Email เดิม)
+        var receiptDelivery = ContactRecipientRule.ForEmail(await _recipients.ResolveAsync(cid, doc.ContactId, NotifyTopic.Receipt, ct));
         var buyerBlock = Tax.TaxInvoiceCompletenessChecker.BuyerBlockingFields(true, doc.VatAmount, contact,
             isDeferredVatDeposit: false, buyerDeclinedTaxInvoice: doc.BuyerDeclinedTaxInvoice);
 
@@ -295,16 +304,17 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             ReceiptIsDraft: receipt != null && receipt.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval,
             ReceiptCarriesVat: receipt != null && (receipt.IsTaxInvoiceByLaw == true || receipt.VatAmount > 0m),
             SourceServesAsReceipt: servesAsReceipt, MayCarryVatIfIssued: mayCarryVat,
-            CustomerEmail: contact?.Email?.Trim(), BuyerBlockingFields: buyerBlock,
+            CustomerEmail: receiptDelivery.First, BuyerBlockingFields: buyerBlock,
             PaymentWht: payment.WithholdingTaxAmount, WhtCreditRegistered: whtRegistered,
-            Source: PostPaymentAutomationPolicy.ParseSource(run.Source), SupersedingTaxInvoiceNumber: supersedingTaxInvoice));
+            Source: PostPaymentAutomationPolicy.ParseSource(run.Source), SupersedingTaxInvoiceNumber: supersedingTaxInvoice,
+            EmailOptOutReason: receiptDelivery.OptOutReason));
         if (plan.Skipped != null)
             return new RunResult(PostPaymentAutomationPolicy.StatusSkipped, plan.Skipped, doc.DocumentNumber, receipt?.Id);
 
         var done = new List<string>();
         var blocked = new List<string>(plan.Blocked);
         var receiptId = receipt?.Id ?? run.ReceiptDocumentId;
-        var to = contact?.Email?.Trim();
+        var to = receiptDelivery.To;
         var halt = false;
         foreach (var step in plan.Steps)
         {

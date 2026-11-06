@@ -689,7 +689,7 @@ public partial class FixedAssetService
             .Select(d => new { d.Year, d.Month })
             .FirstOrDefaultAsync();
         var elapsed = lastPosted == null ? 0
-            : Accounting.Helpers.DepreciationSchedule.MonthIndexFor(asset.PurchaseDate, lastPosted.Year, lastPosted.Month) + 1;
+            : Accounting.Helpers.DepreciationSchedule.MonthIndexFor(Accounting.Helpers.DepreciationSchedule.StartDate(asset.PurchaseDate, asset.AvailableForUseDate), lastPosted.Year, lastPosted.Month) + 1;
         var problem = Accounting.Helpers.AssetCostSourceRules.AdjustmentProblem(
             asset.NetBookValue, delta, asset.SalvageValue, asset.DepreciationMethod, asset.UsefulLifeMonths, elapsed);
         if (problem != null)
