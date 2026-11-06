@@ -7699,7 +7699,8 @@ public partial class DocumentService : IDocumentService
         // ส่งเข้ากล่องคู่ค้า (คู่ Accepted · จับคู่เลขภาษี+สาขา) — ไม่ย้อนการอนุมัติ แต่ห้ามเงียบ (รอบ 250 WP-02b P-6 · F2 ข้อ 7):
         // ล้ม ⇒ ป้าย [PARTNER-ROUTE-FAILED] บนเอกสาร (response ธง PartnerRoutingFailed + แถบเตือน/ปุ่มส่งใหม่) + LogError ในตัว ·
         // เดิม try { OnDocumentSentAsync } catch { LogWarning } — required_call_site_check ห้ามรูปนั้นกลับมา
-        await _crossTenantWorkflow.RouteSentDocumentAsync(doc);
+        // (ตัวสร้างแบบเทสต์/เครื่องมือที่ไม่ผูกงานคู่ค้า = null — ไม่มีคู่ค้าให้ส่ง; production ผ่าน DI เสมอ)
+        if (_crossTenantWorkflow != null) await _crossTenantWorkflow.RouteSentDocumentAsync(doc);
 
         // Best-effort auto-generate e-Tax record for eligible types when the
         // company has e-Tax enabled. Runs OUTSIDE the approval transaction so

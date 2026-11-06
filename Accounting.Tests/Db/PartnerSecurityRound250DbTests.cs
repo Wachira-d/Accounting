@@ -132,7 +132,8 @@ public class PartnerSecurityRound250DbTests
         Assert.Equal(Status(known), Status(self));
         Assert.Equal(Body(known), Body(unknown));                      // ไม่มี id/สถานะ/ข้อความ "ไม่พบ" ที่บอกสมาชิกภาพ
         Assert.Equal(Body(known), Body(self));
-        Assert.Contains(PartnerCompanyMatch.InviteAckMessage, Body(known));
+        // ข้อความไทยใน JSON ถูก escape (\uXXXX) — อ่านค่า message จาก JSON ก่อนเทียบ (บทเรียน CI: JSON-escaped Thai)
+        Assert.Contains(PartnerCompanyMatch.InviteAckMessage, JsonDocument.Parse(Body(known)).RootElement.GetProperty("message").GetString());
 
         using var check = DbTestDatabase.TryCreateContext()!;
         var rows = await check.TradingPartnerships.AsNoTracking()
@@ -444,7 +445,7 @@ public class PartnerSecurityRound250DbTests
         Assert.False(await check.PaymentIntents.AnyAsync(i => i.CompanyId == shop.Id && i.SourceId == doc.Id));                   // ไม่มีอะไรให้กดยืนยันซ้ำ
         Assert.Contains(await check.AuditLogs.AsNoTracking()
                 .Where(a => a.CompanyId == shop.Id && a.EntityId == legacy.Id.ToString()).Select(a => a.NewValues!).ToListAsync(),
-            v => v.Contains("PortalSlipLegacyNeedsReview") && v.Contains("ตั้งแต่วันแนบสลิป"));
+            v => v.Contains("PortalSlipLegacyNeedsReview") && System.Text.RegularExpressions.Regex.Unescape(v).Contains("ตั้งแต่วันแนบสลิป"));   // NewValues เป็น JSON — ไทยถูก escape
     }
 
     [Fact]

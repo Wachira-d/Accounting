@@ -118,7 +118,8 @@ public class PartnerSecurityRound250Tests
 
     // ───────── M-2 ─────────
 
-    private static Payment Pay(string? notes, Guid? intent = null) => new() { Notes = notes, PaymentIntentId = intent, PaymentNumber = "PAY-1", Amount = 100m };
+    private static Payment Pay(string? notes, Guid? intent = null, string? createdBy = PortalSlipPending.LegacyCreatedBy)
+        => new() { Notes = notes, PaymentIntentId = intent, PaymentNumber = "PAY-1", Amount = 100m, CreatedBy = createdBy };
 
     [Fact]
     public void สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจ_ไม่นับเป็นเงินรับ_แถวปกตินับตามเดิม()
@@ -132,6 +133,8 @@ public class PartnerSecurityRound250Tests
         Assert.True(counts(Pay("รับชำระเงินสด")));
         Assert.True(counts(Pay("หมายเหตุ [PENDING-VERIFY] อยู่กลางข้อความ")));             // ป้ายต้องขึ้นต้นเท่านั้น
         Assert.True(counts(Pay("[PENDING-VERIFY] …", Guid.NewGuid())));                    // ผูก intent = ผ่านการยืนยันแล้ว
+        // (ฝ่ายค้าน L1) ป้ายเดียวกันแต่ผู้สร้างไม่ใช่พอร์ทัล (พิมพ์เอง/นำเข้า CSV) = แถวรับชำระจริง ⇒ นับ
+        Assert.True(counts(Pay("[PENDING-VERIFY] พิมพ์เองโดยพนักงาน", createdBy: "staff@x")));
     }
 
     [Fact]
