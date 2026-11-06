@@ -7771,6 +7771,8 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "WhtRoyaltyPnd2From" timestamp with time zone NULL;""",
         """ALTER TABLE "WithholdingTaxCertLines" ADD COLUMN IF NOT EXISTS "DividendSubRow" character varying(8) NULL;""",
         """ALTER TABLE "WithholdingTaxCertLines" ADD COLUMN IF NOT EXISTS "DividendCreditRate" numeric(5,2) NULL;""",
+        // รอบ 250 ฝ่ายค้าน H3 (คำตัดสิน AUTOPILOT ข้อ 3): บริษัทยินยอมให้คู่ค้าค้นเจอ/ส่งคำเชิญถึง — ตั้งต้นปิด (บริษัทเดิมทุกแถว = ปิด)
+        """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "PartnerDiscoverable" boolean NOT NULL DEFAULT false;""",
     };
 
     // ═══ รอบ 205 T0 — ศูนย์นำเข้าข้อมูล (Import Hub / ETL · IMPORT_ETL_REVIEW §2.2 · คำตัดสินข้อ 151) ═══

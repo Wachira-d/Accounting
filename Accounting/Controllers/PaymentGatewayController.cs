@@ -149,6 +149,7 @@ public class PaymentGatewayController : ControllerBase
             {
                 i.Id, i.ProviderCode, SourceKindValue = i.SourceKind, sourceKind = i.SourceKind.ToString(), i.SourceId,
                 i.Amount, StatusValue = i.Status, status = i.Status.ToString(), method = i.MethodKind.ToString(),
+                MethodValue = i.MethodKind,
                 IsTestModeStamped = i.IsTestMode,
                 i.ProviderRef, i.FailureMessage, i.ConfirmedAt, i.ConfirmedBy,
                 i.FeeActual, i.SettledAt, i.CreatedAt,
@@ -198,6 +199,9 @@ public class PaymentGatewayController : ControllerBase
                 sourceKindLabel = PaymentIntentPolicy.SourceKindLabel(r.SourceKindValue),
                 isStuck = PaymentIntentPolicy.IsStuck(r.StatusValue, r.CreatedAt, nowUtc),
                 canCheckLive = PaymentIntentPolicy.IsOpen(r.StatusValue),
+                // รอบ 250 ฝ่ายค้าน H1/M4: สลิปโอนของเอกสาร — ปุ่ม "ปฏิเสธสลิป" + ถามวันรับเงินตอนยืนยัน (เซิร์ฟเวอร์ตัดสินชนิด)
+                isDocumentSlip = DocumentSlipIntents.IsDocumentSlip(r.SourceKindValue, r.MethodValue),
+                canRejectSlip = DocumentSlipIntents.IsDocumentSlip(r.SourceKindValue, r.MethodValue) && PaymentIntentPolicy.IsOpen(r.StatusValue),
                 // ปุ่มคืนเงิน = ด่านเดียวกับ service (GatewayRefundMath.Check ยอดเต็มที่เหลือ) — ผลไม่แน่ชัดมีปุ่มของตัวเอง
                 canRefund = GatewayRefundMath.Check(r.StatusValue, r.Amount, r.RefundedAmount, null,
                     r.RefundOutcomeUnknownSince != null).Ok,
@@ -340,7 +344,11 @@ public class PaymentGatewayController : ControllerBase
         return result;
     }
 
-    public sealed record ManualConfirmRequest(string Reason);
+    /// <param name="ReceivedDate">รอบ 250 ฝ่ายค้าน M4: วันที่เงินเข้าจริง (วันไทย) — ใช้กับสลิปโอนของเอกสาร · ว่าง = วันที่ลูกค้าแนบสลิป · อื่น ๆ ไม่ใช้</param>
+    public sealed record ManualConfirmRequest(string Reason, DateTime? ReceivedDate = null);
+
+    /// <summary>รอบ 250 ฝ่ายค้าน H1: ปฏิเสธสลิปโอนของเอกสาร (เหตุผลบังคับ)</summary>
+    public sealed record RejectSlipRequest(string Reason);
     public sealed record RefundRequest(decimal? Amount, string? Reason);
 
     /// <summary>**ยืนยันด้วยมือ** — เงินเข้าจริงแล้ว (เห็นในบัญชีธนาคาร/แดชบอร์ดผู้ให้บริการ)
@@ -381,18 +389,69 @@ public class PaymentGatewayController : ControllerBase
                 && intent.ProviderCode == Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code) is string slipProblem)
             return Conflict(new ApiResponse<IntentResponse>(false, null, slipProblem));
 
+        // รอบ 250 ฝ่ายค้าน H1/M4: สลิปโอนของเอกสาร (พอร์ทัล) — ยอดสลิปเกินยอดค้างตอนนี้ ⇒ บล็อก (เงินก้อนอื่นบันทึกไปแล้ว · ยืนยัน = รับซ้ำ หรือ
+        // "สำเร็จแต่ไม่มีการรับชำระ" เพราะ CreatePaymentAsync ปฏิเสธจ่ายเกิน) · วันรับเงิน = วันเงินเข้าตามหลักฐาน (ค่าตั้งต้น วันแนบสลิป · §78/1) ไม่ใช่วันกดยืนยัน
+        DateTime? slipPaidAt = null;
+        if (DocumentSlipIntents.IsDocumentSlip(intent.SourceKind, intent.MethodKind))
+        {
+            var balance = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == intent.SourceId && d.CompanyId == companyId && !d.IsDeleted)
+                .Select(d => (decimal?)d.BalanceDue)
+                .FirstOrDefaultAsync(ct);
+            if (balance == null)
+                return NotFound(new ApiResponse<IntentResponse>(false, null, "ไม่พบเอกสารของสลิปนี้ — ปฏิเสธสลิปแล้วบันทึกรับชำระที่เอกสารที่ถูกต้อง"));
+            if (DocumentSlipIntents.ExceedsBalance(intent.Amount, balance.Value))
+                return Conflict(new ApiResponse<IntentResponse>(false, null, DocumentSlipIntents.ConfirmBlockedMessage(intent.Amount, balance.Value)));
+            var (paidAt, dateProblem) = DocumentSlipIntents.ReceivedDate(req.ReceivedDate, intent.CreatedAt, DateTime.UtcNow);
+            if (dateProblem != null)
+                return BadRequest(new ApiResponse<IntentResponse>(false, null, dateProblem));
+            slipPaidAt = paidAt;
+        }
+
         var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
         var updated = await _intents.ApplyChargeAsync(intentId,
             new ProviderCharge(
                 ProviderRef: intent.ProviderRef ?? $"manual:{intentId:N}",
                 Status: PaymentIntentStatus.Succeeded,
                 RawStatus: "manual_confirm",
-                Amount: intent.Amount),
+                Amount: intent.Amount,
+                PaidAtUtc: slipPaidAt),
             PaymentEventSource.Manual, $"{actor} · {req.Reason.Trim()}", ct);
 
         return Ok(new ApiResponse<IntentResponse>(true,
             Map(updated, await IsTestModeAsync(updated, ct)),
             "ยืนยันการรับเงินแล้ว — ระบบดำเนินการต่อให้ต้นทางเรียบร้อย"));
+    }
+
+    /// <summary>รอบ 250 ฝ่ายค้าน H1: <b>ปฏิเสธสลิปโอนของเอกสาร</b> (สลิปปลอม/ซ้ำ/ถูกแทนด้วยเงินก้อนอื่น) — เดินผ่าน <c>ApplyChargeAsync(Failed)</c>
+    /// เส้นเดียวกับทุกการเปลี่ยนสถานะ (ประวัติ + ผู้กด + เหตุผล) · เฉพาะรายการสลิปของเอกสารที่ยังเปิด · ไม่มีเงิน/JE ให้ถอย (ยังไม่เคยบันทึกรับชำระ)</summary>
+    [HttpPost("intents/{intentId:guid}/reject-slip")]
+    [Accounting.Filters.RejectApiKey("ปฏิเสธสลิปโอน")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.ConfirmManually)]
+    public async Task<ActionResult<ApiResponse<IntentResponse>>> RejectSlip(
+        Guid companyId, Guid intentId, [FromBody] RejectSlipRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Reason))
+            return BadRequest(new ApiResponse<IntentResponse>(false, null, "กรุณาระบุเหตุผลที่ปฏิเสธสลิป (บันทึกลงประวัติ)"));
+        var intent = await _intents.FindAsync(companyId, intentId, ct);
+        if (intent == null)
+            return NotFound(new ApiResponse<IntentResponse>(false, null, "ไม่พบรายการชำระเงิน"));
+        if (!DocumentSlipIntents.IsDocumentSlip(intent.SourceKind, intent.MethodKind))
+            return Conflict(new ApiResponse<IntentResponse>(false, null, "ปฏิเสธได้เฉพาะสลิปโอนของเอกสาร"));
+        if (!PaymentIntentPolicy.IsOpen(intent.Status))
+            return Conflict(new ApiResponse<IntentResponse>(false, null, "รายการนี้ไม่ได้รอตรวจแล้ว — รีเฟรชหน้า"));
+        var reason = req.Reason.Trim();
+        var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
+        var updated = await _intents.ApplyChargeAsync(intentId,
+            new ProviderCharge(
+                ProviderRef: intent.ProviderRef ?? $"slip:{intentId:N}",
+                Status: PaymentIntentStatus.Failed,
+                RawStatus: "slip_rejected",
+                Amount: intent.Amount,
+                FailureCode: "slip_rejected",
+                FailureMessage: reason.Length > 300 ? reason[..300] : reason),
+            PaymentEventSource.Manual, $"{actor} · {reason}", ct);
+        return Ok(new ApiResponse<IntentResponse>(true, Map(updated, await IsTestModeAsync(updated, ct)), "ปฏิเสธสลิปแล้ว"));
     }
 
     /// <summary>รอบ 235 (คำตัดสิน 235-X3 + ฝ่ายค้าน B1/S5): <b>เงินโหมดทดสอบที่ลงบัญชีไปแล้วก่อนรอบ 232</b> — รายงานอ่านอย่างเดียวบนหน้า "รายการรับชำระออนไลน์" ·

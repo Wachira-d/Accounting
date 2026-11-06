@@ -317,6 +317,7 @@ public partial class CommissionService : ICommissionService
                 // Sum actual payments received, filtered by employee if assigned
                 var paymentQuery = _db.Payments
                     .Include(p => p.Document)
+                    .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ
                     .Where(p => p.CompanyId == companyId
                         && p.PaymentDate >= periodStart
                         && p.PaymentDate <= periodEnd);

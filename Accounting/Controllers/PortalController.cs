@@ -141,6 +141,8 @@ public class PortalPublicController : ControllerBase
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<PortalSlipUploadResponse>(false, null!, ex.Message)); }
         catch (ArgumentException ex) { return BadRequest(new ApiResponse<PortalSlipUploadResponse>(false, null!, ex.Message)); }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<PortalSlipUploadResponse>(false, null!, ex.Message)); }
+        // รอบ 250 ฝ่ายค้าน L4: ข้อผิดพลาดเชิงกฎ (ชำระครบแล้ว · ยอดเกินยอดค้าง · บันทึกไม่สำเร็จ) — สถานะ + ข้อความไทยจากตัวตัดสิน
+        catch (Accounting.Helpers.BusinessRuleException ex) { return StatusCode(ex.StatusCode, new ApiResponse<PortalSlipUploadResponse>(false, null!, ex.Message)); }
     }
 
     private Guid? GetContactIdFromToken()

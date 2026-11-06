@@ -9,6 +9,10 @@ public class Company : BaseEntity
     public string TaxId { get; set; } = null!;          // เลขผู้เสียภาษี 13 หลัก
     public string? BranchCode { get; set; } = "00000";  // รหัสสาขา (00000 = สำนักงานใหญ่)
     public string? BranchName { get; set; }              // ชื่อสาขา
+    /// <summary>รอบ 250 ฝ่ายค้าน H3 (คำตัดสิน AUTOPILOT ข้อ 3): บริษัทยินยอมให้คู่ค้าที่ใช้ NextAcc ส่งคำเชิญเชื่อมระบบถึง (ค้นเจอด้วยเลขภาษี+สาขา) ·
+    /// ตั้งต้นปิด — เลขภาษีของบริษัทไม่ได้ยืนยันกับทะเบียน (ใครก็ตั้งเลขของคนอื่นได้) ⇒ บริษัทที่ไม่เปิดไม่รับคำเชิญ และไม่นับในการตัดสิน "กำกวม"
+    /// (ไม่เช่นนั้นผู้ไม่หวังดีที่ตั้งเลขเหยื่อจะรู้ว่าเลขนั้นมีผู้ใช้จริงจากผลกำกวม) · ตั้งที่ PUT workflow-automation (CompanySettings.Edit)</summary>
+    public bool PartnerDiscoverable { get; set; }
     public BusinessType BusinessType { get; set; }
     public IndustryType IndustryType { get; set; } = IndustryType.General;  // ลักษณะธุรกิจ
     public CompanyStatus Status { get; set; } = CompanyStatus.Active;

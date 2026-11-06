@@ -2153,12 +2153,12 @@ try
     {
         var r250 = await Accounting.Helpers.PortalSlipLegacyMigration.MigrateAsync(db);
         if (r250.Moved + r250.NeedsReview > 0)
-            app.Logger.LogWarning("รอบ 250: สลิปพอร์ทัลรุ่นเก่า ย้ายเป็นรายการรอยืนยัน {Moved} แถว · ต้องให้คนตรวจ {Review} แถว (เหตุใน audit {Entity})",
+            app.Logger.LogWarning("รอบ 250: สลิปพอร์ทัลรุ่นเก่า ย้ายเป็นรายการรอยืนยัน {Moved} แถว · ต้องให้คนตรวจ {Review} แถว (เหตุใน audit {Entity} · รายการที่หน้ารายงานตรวจข้อมูล)",
                 r250.Moved, r250.NeedsReview, Accounting.Helpers.PortalSlipLegacyMigration.AuditEntityType);
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "รอบ 250: ย้ายสลิปพอร์ทัลรุ่นเก่าเป็นรายการรอยืนยันไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป (ระหว่างนี้ใบแจ้งยอด/จับคู่ธนาคารไม่นับแถวเหล่านี้)");
+        app.Logger.LogError(ex, "รอบ 250: ย้ายสลิปพอร์ทัลรุ่นเก่าเป็นรายการรอยืนยันไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป (ระหว่างนี้ผู้อ่านยอดที่ใช้ PortalSlipPending.CountsAsReceived — ใบแจ้งยอด · จับคู่ธนาคาร · รายงาน/พยากรณ์ — ไม่นับแถวเหล่านี้ · รายการอยู่ที่รายงานตรวจข้อมูล)");
     }
 
     // PostgreSQL full-text search: pg_trgm GIN indexes for fast LIKE/ILIKE searches

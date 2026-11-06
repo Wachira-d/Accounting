@@ -94,7 +94,8 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
 
         await _docs.CreatePaymentAsync(intent.CompanyId, new Models.DTOs.Document.CreatePaymentRequest(
             DocumentId: doc.Id,
-            PaymentDate: intent.ConfirmedAt ?? DateTime.UtcNow,
+            // รอบ 250 ฝ่ายค้าน M4: วันเงินเข้าตามหลักฐาน (สลิป — คนยืนยันระบุ/ค่าตั้งต้นวันแนบ) ก่อนวันกดยืนยัน (tax point §78/1)
+            PaymentDate: intent.PaidAt ?? intent.ConfirmedAt ?? DateTime.UtcNow,
             Amount: intent.Amount,
             PaymentMethod: PaymentMethod.BankTransfer,
             Reference: reference,

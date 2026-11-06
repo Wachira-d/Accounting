@@ -29,10 +29,23 @@ public static class PortalSlipPending
 
     public const string RuleCode = "PORTAL-SLIP-PENDING";
 
-    /// <summary>แถว Payment นี้เป็น "เงินรับจริง" ไหม — แถวสลิปพอร์ทัลรุ่นเก่าที่ยังไม่ถูกยืนยัน (ไม่ผูก intent) = ไม่ใช่ ·
-    /// ใช้ใน <c>Where(...)</c> ของทุกผู้อ่านที่รวมยอดรับชำระต่อลูกค้า/จับคู่ธนาคาร (EF แปลเป็น SQL ได้)</summary>
+    /// <summary>แถว Payment นี้เป็น "เงินรับจริง" ไหม — แถวสลิปพอร์ทัลรุ่นเก่าที่ยังไม่ถูกยืนยัน (ไม่ผูก intent · ผู้สร้าง portal-customer ·
+    /// หมายเหตุขึ้นต้นป้าย) = ไม่ใช่ · ฝ่ายค้าน L1: ต้องตรงผู้สร้างด้วย — หมายเหตุที่ผู้ใช้พิมพ์ขึ้นต้นป้ายเองไม่ทำให้เงินจริงหายจากยอด ·
+    /// ใช้ใน <c>Where(...)</c> ของทุกผู้อ่านที่รวมยอดรับชำระ/จับคู่ธนาคาร (EF แปลเป็น SQL ได้) · ผู้ยกเลิกการชำระใช้ตัวเดียวกัน (ไม่ถอย PaidAmount ที่ไม่เคยบวก)</summary>
     public static readonly Expression<Func<Payment, bool>> CountsAsReceived =
-        p => p.PaymentIntentId != null || p.Notes == null || !p.Notes.StartsWith(LegacyMarker);
+        p => p.PaymentIntentId != null || p.Notes == null || !p.Notes.StartsWith(LegacyMarker)
+             || p.CreatedBy == null || p.CreatedBy != LegacyCreatedBy;
+
+    /// <summary>กลับด้านของ <see cref="CountsAsReceived"/> (สร้างจากตัวเดียวกัน — ไม่มีสำเนาเงื่อนไข) — แถวสลิปรุ่นเก่าที่ยังไม่ตรวจ ·
+    /// ผู้ใช้: รายงานตรวจข้อมูล (การ์ด "ต้องให้คนตัดสิน" · ฝ่ายค้าน M3)</summary>
+    public static readonly Expression<Func<Payment, bool>> UnverifiedLegacy =
+        Expression.Lambda<Func<Payment, bool>>(Expression.Not(CountsAsReceived.Body), CountsAsReceived.Parameters);
+
+    /// <summary>รูปเดียวกับ <see cref="CountsAsReceived"/> สำหรับแถวที่โหลดแล้ว (ผู้ยกเลิกการชำระ — ฝ่ายค้าน M3)</summary>
+    private static readonly Func<Payment, bool> CountsCompiled = CountsAsReceived.Compile();
+
+    /// <summary>แถวนี้เคยถูกนับเป็นเงินรับ (บวก PaidAmount/ลง JE) ไหม — false = แถวสลิปรุ่นเก่าที่ยังไม่ตรวจ ⇒ ยกเลิกแล้วห้ามถอยยอดเอกสาร</summary>
+    public static bool WasCountedAsReceived(Payment p) => CountsCompiled(p);
 
     /// <summary>คำอธิบายบนรายการรอยืนยัน (หน้ารายการรับชำระของพนักงาน) — เลขเอกสาร + ที่อยู่ไฟล์สลิป</summary>
     public static string IntentDescription(string documentNumber, string slipUrl)
@@ -58,6 +71,9 @@ public static class PortalSlipLegacyMigration
     public const string MarkerKey = "r250-portal-slip-pending-to-intent";
     public const string Actor = "migration:r250-portal-slip";
     public const string AuditEntityType = "Payment";
+
+    /// <summary>ตัวกรอง "เงินรับจริง" ตัวเดียวกับผู้อ่านยอด (อ้างผ่านตัวแปรเพื่อใช้ใน Where ของ migration)</summary>
+    private static System.Linq.Expressions.Expression<Func<Payment, bool>> CountsAsReceivedForMigration => PortalSlipPending.CountsAsReceived;
 
     public sealed record Result(int Moved, int NeedsReview);
 
@@ -108,11 +124,36 @@ public static class PortalSlipLegacyMigration
                 reasons.Add("มีรายการบัญชีอ้างเลขที่การชำระนี้");
             if (await db.BankTransactions.IgnoreQueryFilters().AnyAsync(t => t.CompanyId == cid && !t.IsDeleted && t.MatchedPaymentId == p.Id, ct))
                 reasons.Add("ถูกจับคู่กับรายการเดินบัญชีธนาคารแล้ว");
+            // ฝ่ายค้าน M1: ทุกที่ที่อ้างแถว Payment ได้ — มีผู้อ้าง = มีคนใช้แถวนี้ไปแล้ว ห้ามย้ายเอง
+            var pid = p.Id;
+            if (await db.ReconciliationGroupItems.IgnoreQueryFilters().AnyAsync(r => !r.IsDeleted && r.ItemType == ReconciliationItemType.Payment && r.ItemId == pid, ct))
+                reasons.Add("อยู่ในกลุ่มกระทบยอดธนาคาร");
+            if (await db.PaymentAllocations.IgnoreQueryFilters().AnyAsync(a => a.CompanyId == cid && !a.IsDeleted && a.PaymentId == pid, ct))
+                reasons.Add("มีการจัดสรรหลายใบ");
+            if (await db.WhtCreditsReceived.IgnoreQueryFilters().AnyAsync(w => w.CompanyId == cid && !w.IsDeleted && w.PaymentId == pid, ct))
+                reasons.Add("ผูกทะเบียนภาษีถูกหัก ณ ที่จ่าย");
+            if (await db.WithholdingTaxCerts.IgnoreQueryFilters().AnyAsync(w => w.CompanyId == cid && !w.IsDeleted && w.SourcePaymentId == pid, ct))
+                reasons.Add("ผูกหนังสือรับรอง 50 ทวิ");
+            if (await db.Cheques.IgnoreQueryFilters().AnyAsync(c => c.CompanyId == cid && !c.IsDeleted && c.PaymentId == pid, ct))
+                reasons.Add("ผูกเช็ค");
+            if (await db.Documents.IgnoreQueryFilters().AnyAsync(d => d.CompanyId == cid && !d.IsDeleted && d.SettlementPaymentId == pid, ct))
+                reasons.Add("เป็นการชำระของใบเสร็จรับเงิน");
             var doc = await db.Documents.IgnoreQueryFilters().AsNoTracking()
                 .Where(d => d.Id == p.DocumentId && d.CompanyId == cid)
-                .Select(d => new { d.Id, d.DocumentNumber, d.ContactId, d.IsDeleted })
+                .Select(d => new { d.Id, d.DocumentNumber, d.ContactId, d.IsDeleted, d.BalanceDue })
                 .FirstOrDefaultAsync(ct);
             if (doc == null || doc.IsDeleted) reasons.Add("เอกสารต้นทางไม่อยู่แล้ว");
+            else
+            {
+                // ฝ่ายค้าน H1: ส่วนใหญ่ร้านบันทึกรับเงินจริงแยกไปแล้ว — มีการรับชำระจริง (นับเป็นเงินรับ · ไม่ลบ) ตั้งแต่วันแนบสลิป หรือยอดค้างน้อยกว่ายอดสลิป
+                // ⇒ ยืนยันสลิปนี้ = รับเงินซ้ำ ⇒ ให้คนตัดสิน (ไม่สร้างรายการรอยืนยัน)
+                var slipDate = p.PaymentDate;
+                if (await db.Payments.Where(CountsAsReceivedForMigration)
+                        .AnyAsync(x => x.CompanyId == cid && x.DocumentId == doc.Id && x.Id != pid && x.PaymentDate >= slipDate, ct))
+                    reasons.Add("มีการรับชำระจริงของเอกสารนี้ตั้งแต่วันแนบสลิป (อาจเป็นเงินก้อนเดียวกัน)");
+                if (DocumentSlipIntents.ExceedsBalance(p.Amount, doc.BalanceDue))
+                    reasons.Add($"ยอดค้างของเอกสาร ({doc.BalanceDue:#,##0.00}) น้อยกว่ายอดสลิป");
+            }
 
             if (reasons.Count > 0)
             {
@@ -142,7 +183,9 @@ public static class PortalSlipLegacyMigration
                 SourceId = doc!.Id,
                 ContactId = doc.ContactId,
                 Amount = p.Amount,
-                Description = $"สลิปจากพอร์ทัลลูกค้า (รอตรวจ · ย้ายจากรายการ {p.PaymentNumber} รุ่นเก่า) — {doc.DocumentNumber}",
+                // ฝ่ายค้าน M6: ที่อยู่ไฟล์สลิปจากหมายเหตุเดิม (ไฟล์แนบของเอกสารยังอยู่ — แถว FileAttachment เดิมไม่ถูกแตะ)
+                Description = $"สลิปจากพอร์ทัลลูกค้า (รอตรวจ · ย้ายจากรายการ {p.PaymentNumber} รุ่นเก่า) — {doc.DocumentNumber}"
+                    + (DocumentSlipIntents.SlipUrlFromLegacyNotes(p.Notes) is string slipUrl ? $" · ไฟล์: {slipUrl}" : " · ไฟล์: ดูไฟล์แนบของเอกสาร"),
                 MethodKind = PaymentMethodKind.ManualSlip,
                 Status = PaymentIntentStatus.Pending,
                 ProviderStatusRaw = "awaiting_slip",

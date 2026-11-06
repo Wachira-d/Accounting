@@ -28,12 +28,14 @@ public class CrossTenantWorkflowController : ControllerBase
     private readonly CrossTenantWorkflowService _service;
     private readonly AccountingDbContext _db;
     private readonly IPermissionService _perms;
+    private readonly IChatRateLimiter _limiter;
 
-    public CrossTenantWorkflowController(CrossTenantWorkflowService service, AccountingDbContext db, IPermissionService perms)
+    public CrossTenantWorkflowController(CrossTenantWorkflowService service, AccountingDbContext db, IPermissionService perms, IChatRateLimiter limiter)
     {
         _service = service;
         _db = db;
         _perms = perms;
+        _limiter = limiter;
     }
 
     /// <summary>403 พร้อมข้อความบอกทางไปต่อ (ตัวสร้างข้อความตัวเดียว <see cref="PermissionKeys.DeniedMessage"/>)</summary>
@@ -91,6 +93,12 @@ public class CrossTenantWorkflowController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         if (userId == Guid.Empty) return Unauthorized();
+        // ฝ่ายค้าน H3: เพดานคำเชิญต่อบริษัทต่อวัน (นับในฐาน — หลายเครื่องใช้ตัวนับเดียว) · ตารางนับพัง = ปฏิเสธ (กันไล่/สแปม) ·
+        // คำตอบไม่ขึ้นกับปลายทาง ⇒ ไม่รั่วสมาชิกภาพ
+        if (!await _limiter.TryConsumeAsync($"xt-invite:{companyId:N}", CrossTenantWorkflowService.InvitesPerCompanyPerDay,
+                CrossTenantWorkflowService.InvitesPerCompanyPerDay, failClosed: true))
+            return StatusCode(429, new ApiResponse<object>(false, null,
+                $"ส่งคำเชิญครบ {CrossTenantWorkflowService.InvitesPerCompanyPerDay} ครั้งของวันนี้แล้ว — ลองใหม่พรุ่งนี้"));
         await _service.InvitePartnerAsync(companyId, req.PartnerTaxId, req.PartnerBranchCode, userId, req.Message);
         return StatusCode(202, new ApiResponse<object>(true, null, PartnerCompanyMatch.InviteAckMessage));
     }
@@ -121,14 +129,18 @@ public class CrossTenantWorkflowController : ControllerBase
     // ═══════════════════════════════════════════════════════════════════
 
     [HttpGet("workflow-automation")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.CompanySettingsEdit)]   // ฝ่ายค้าน L2: ค่าตั้งผู้ลงนามในนามบริษัท = ชุดสิทธิ์เดียวกับการแก้
     public async Task<ActionResult<ApiResponse<object>>> GetConfig(Guid companyId)
     {
-        var c = await _service.GetOrCreateConfigAsync(companyId);
+        // ฝ่ายค้าน L2: GET ห้ามสร้างแถว — ไม่มี = ค่าตั้งต้นที่ยังไม่บันทึก
+        var c = await _service.GetConfigReadOnlyAsync(companyId);
+        var discoverable = await _db.Companies.AsNoTracking().Where(x => x.Id == companyId).Select(x => x.PartnerDiscoverable).FirstOrDefaultAsync();
         // ID#10 (รอบ 2026-10-14 ทีม F4): ผู้อนุมัติเริ่มต้นออกจากบริษัทแล้ว ⇒ ระบบหยุดอนุมัติ/ลงนามอัตโนมัติ — หน้าจอต้องเห็นเหตุและทางไปต่อ
         var defaultApproverNotice = await _service.GetDefaultApproverNoticeAsync(c);
         return Ok(new ApiResponse<object>(true, new
         {
             DefaultApproverNotice = defaultApproverNotice,
+            PartnerDiscoverable = discoverable,
             c.AutoApproveIncomingQuotations,
             c.AutoApproveMinAmount,
             c.AutoApproveMaxAmount,
@@ -156,7 +168,9 @@ public class CrossTenantWorkflowController : ControllerBase
         // ID#10: ต้องเป็นลายเซ็นของผู้อนุมัติเริ่มต้นคนนั้น · Guid ว่าง = ล้างค่า
         Guid? DefaultSignatureId,
         bool? NotifyOnIncomingDocument,
-        string? NotifyEmail);
+        string? NotifyEmail,
+        // ฝ่ายค้าน H3 (คำตัดสิน AUTOPILOT ข้อ 3): เปิดให้คู่ค้าที่ใช้ NextAcc ส่งคำเชิญถึงบริษัทนี้ · null = ไม่แก้ · ตั้งต้นปิด
+        bool? PartnerDiscoverable = null);
 
     // ID#10: ค่าตั้งนี้คุมการอนุมัติอัตโนมัติ + ผู้ลงนามในนามบริษัท = ด่านควบคุมภายในชุดเดียวกับกฎการอนุมัติ (สิทธิ์ตั้งค่าบริษัท · ไม่รับ API key)
     [HttpPut("workflow-automation")]
@@ -177,6 +191,12 @@ public class CrossTenantWorkflowController : ControllerBase
             await _service.ApplyDefaultSignerAsync(c, req.DefaultApproverUserId, req.DefaultSignatureId);
         if (req.NotifyOnIncomingDocument.HasValue) c.NotifyOnIncomingDocument = req.NotifyOnIncomingDocument.Value;
         if (req.NotifyEmail != null) c.NotifyEmail = req.NotifyEmail;
+        if (req.PartnerDiscoverable.HasValue)
+        {
+            var company = await _db.Companies.FirstOrDefaultAsync(x => x.Id == companyId)
+                ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+            company.PartnerDiscoverable = req.PartnerDiscoverable.Value;
+        }
         c.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return Ok(new ApiResponse<object>(true, null, "บันทึก workflow automation config เรียบร้อย"));
@@ -351,6 +371,9 @@ public class CrossTenantWorkflowController : ControllerBase
         Guid companyId,
         [FromQuery] CrossTenantLinkStatus? status = null)
     {
+        // ฝ่ายค้าน L2: เอกสารที่เราส่งให้คู่ค้า = ฝั่งขายเป็นหลัก — ผู้ที่ถูกจำกัดให้เห็นเฉพาะฝั่งซื้อไม่เห็นตัวติดตามนี้
+        if (!(await DocumentPermissionHelper.VisibleDirectionsAsync(_perms, companyId, JwtHelper.GetUserIdFromClaims(User))).Revenue)
+            return Denied(PermissionKeys.DocumentRevenueView);
         var query = _db.CrossTenantDocumentLinks.AsNoTracking()
             .Include(l => l.SourceDocument)
             .Where(l => l.SourceCompanyId == companyId);

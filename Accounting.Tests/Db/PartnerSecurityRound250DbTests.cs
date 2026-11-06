@@ -52,7 +52,8 @@ public class PartnerSecurityRound250DbTests
 
     private static CrossTenantWorkflowController Controller(AccountingDbContext db, Guid userId)
     {
-        var ctl = new CrossTenantWorkflowController(Svc(db), db, new PermissionService(db));
+        var ctl = new CrossTenantWorkflowController(Svc(db), db, new PermissionService(db),
+            new ChatRateLimiter(db, NullLogger<ChatRateLimiter>.Instance));
         ctl.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -76,9 +77,10 @@ public class PartnerSecurityRound250DbTests
     private static int DataCount<T>(ActionResult<T> r)
         => JsonDocument.Parse(Body(r)).RootElement.GetProperty("data").GetArrayLength();
 
-    private static async Task<Company> CompanyAsync(AccountingDbContext db, string taxId, string? branch, string name)
+    /// <param name="discoverable">ฝ่ายค้าน H3: รับคำเชิญได้เฉพาะบริษัทที่เปิด PartnerDiscoverable — เทสต์เชิญตั้งค่าเปิดเป็นค่าตั้งต้น</param>
+    private static async Task<Company> CompanyAsync(AccountingDbContext db, string taxId, string? branch, string name, bool discoverable = true)
     {
-        var c = new Company { Name = name, TaxId = taxId, BranchCode = branch };
+        var c = new Company { Name = name, TaxId = taxId, BranchCode = branch, PartnerDiscoverable = discoverable };
         db.Companies.Add(c);
         await db.SaveChangesAsync();
         return c;
@@ -311,13 +313,14 @@ public class PartnerSecurityRound250DbTests
         var doc = await InvoiceAsync(db, shop.Id, RandTax(), null);
 
         var res = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 500m);
-        var again = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 500m);   // ยอดเดิม ⇒ รายการเดิม (ไม่ซ้อน)
+        var again = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 500m);   // ฝ่ายค้าน H2: สลิปใหม่ = รายการใหม่ (คนละก้อน)
         Assert.True(res.AwaitingReview);
-        Assert.Equal(res.PaymentIntentId, again.PaymentIntentId);
+        Assert.NotEqual(res.PaymentIntentId, again.PaymentIntentId);
 
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.False(await check.Payments.IgnoreQueryFilters().AnyAsync(p => p.DocumentId == doc.Id));   // ไม่มีเงินรับก่อนตรวจ
-        var intent = await check.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == shop.Id && i.SourceId == doc.Id);
+        var intent = await check.PaymentIntents.AsNoTracking().SingleAsync(i => i.Id == res.PaymentIntentId);
+        Assert.Equal(2, await check.PaymentIntents.CountAsync(i => i.CompanyId == shop.Id && i.SourceId == doc.Id));
         Assert.Equal(PaymentSourceKind.Document, intent.SourceKind);
         Assert.Equal(ManualSlipPaymentProvider.Code, intent.ProviderCode);
         Assert.Equal(PaymentMethodKind.ManualSlip, intent.MethodKind);
@@ -364,9 +367,10 @@ public class PartnerSecurityRound250DbTests
         };
         var movable = Legacy(doc.Id, 400m);
         var review = Legacy(goneDoc.Id, 250m);
+        var otherDoc = await InvoiceAsync(db, shop.Id, RandTax(), null);
         var real = new Payment
         {
-            CompanyId = shop.Id, DocumentId = doc.Id, PaymentNumber = "PAY-R250X-" + Guid.NewGuid().ToString("N")[..6], PaymentDate = DateTime.UtcNow.Date,
+            CompanyId = shop.Id, DocumentId = otherDoc.Id, PaymentNumber = "PAY-R250X-" + Guid.NewGuid().ToString("N")[..6], PaymentDate = DateTime.UtcNow.Date,
             PaymentMethod = PaymentMethod.BankTransfer, Amount = 100m, Notes = "รับชำระจริง", CreatedBy = "user",
         };
         db.Payments.AddRange(movable, review, real);
@@ -404,5 +408,177 @@ public class PartnerSecurityRound250DbTests
         var again = await PortalSlipLegacyMigration.MigrateAsync(check);
         Assert.Equal(new PortalSlipLegacyMigration.Result(0, 0), again);
         Assert.Equal(1, await check.PaymentIntents.CountAsync(i => i.CompanyId == shop.Id && i.SourceId == doc.Id));
+    }
+
+    // ───── ฝ่ายค้านรอบ 250 (H1 · H2 · H3 · M3 · M5) ─────
+
+    [Fact]
+    public async Task H1_migration_สลิปเก่าที่มีเงินจริงบันทึกทีหลัง_ต้องให้คนตัดสิน_ไม่สร้างรายการรอยืนยัน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var shop = await CompanyAsync(db, RandTax(), "00000", "ร้าน H1 250");
+        var doc = await InvoiceAsync(db, shop.Id, RandTax(), null);
+        var slipDay = DateTime.UtcNow.Date.AddDays(-3);
+        var legacy = new Payment
+        {
+            CompanyId = shop.Id, DocumentId = doc.Id, PaymentNumber = "PAY-R250H1-" + Guid.NewGuid().ToString("N")[..6], PaymentDate = slipDay,
+            PaymentMethod = PaymentMethod.BankTransfer, Amount = 1_070m, Notes = PortalSlipPending.LegacyMarker + " แนบสลิปจาก Portal ลูกค้า · ไฟล์: /u/h1.jpg",
+            CreatedBy = PortalSlipPending.LegacyCreatedBy,
+        };
+        // ร้านบันทึกรับเงินจริงทีหลัง (เงินก้อนเดียวกันกับสลิป)
+        var real = new Payment
+        {
+            CompanyId = shop.Id, DocumentId = doc.Id, PaymentNumber = "PAY-R250H1R-" + Guid.NewGuid().ToString("N")[..6], PaymentDate = slipDay.AddDays(1),
+            PaymentMethod = PaymentMethod.BankTransfer, Amount = 1_070m, Notes = "รับชำระโอน", CreatedBy = "user",
+        };
+        db.Payments.AddRange(legacy, real);
+        await db.SaveChangesAsync();
+
+        await db.Database.ExecuteSqlRawAsync("""CREATE TABLE IF NOT EXISTS "OneShotDataFixes" ("Key" varchar(100) PRIMARY KEY, "AppliedAt" timestamp NOT NULL);""");
+        await db.Database.ExecuteSqlRawAsync("""DELETE FROM "OneShotDataFixes" WHERE "Key" = {0}""", PortalSlipLegacyMigration.MarkerKey);
+        await PortalSlipLegacyMigration.MigrateAsync(db);
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.False((await check.Payments.IgnoreQueryFilters().AsNoTracking().SingleAsync(p => p.Id == legacy.Id)).IsDeleted);   // ไม่แตะ
+        Assert.False(await check.PaymentIntents.AnyAsync(i => i.CompanyId == shop.Id && i.SourceId == doc.Id));                   // ไม่มีอะไรให้กดยืนยันซ้ำ
+        Assert.Contains(await check.AuditLogs.AsNoTracking()
+                .Where(a => a.CompanyId == shop.Id && a.EntityId == legacy.Id.ToString()).Select(a => a.NewValues!).ToListAsync(),
+            v => v.Contains("PortalSlipLegacyNeedsReview") && v.Contains("ตั้งแต่วันแนบสลิป"));
+    }
+
+    [Fact]
+    public async Task H1_รับชำระก้อนอื่นแล้ว_สลิปรอตรวจที่ยอดเกินยอดค้างถูกติดธง_สลิปที่ยังพอดีไม่ถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var shop = await CompanyAsync(db, RandTax(), "00000", "ร้านธงสลิป 250");
+        var doc = await InvoiceAsync(db, shop.Id, RandTax(), null);
+        var big = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 1_000m);
+        var small = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 70m);
+        // เงินก้อนอื่นบันทึกแล้ว ⇒ ยอดค้างเหลือ 70
+        await db.Documents.Where(d => d.Id == doc.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.PaidAmount, 1_000m).SetProperty(d => d.BalanceDue, 70m));
+
+        Assert.Equal(1, await DocumentSlipIntents.FlagSupersededAsync(db, shop.Id, doc.Id));
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var b = await check.PaymentIntents.AsNoTracking().SingleAsync(i => i.Id == big.PaymentIntentId);
+        var s2 = await check.PaymentIntents.AsNoTracking().SingleAsync(i => i.Id == small.PaymentIntentId);
+        Assert.Equal(DocumentSlipIntents.SupersededCode, b.FailureCode);
+        Assert.Equal(PaymentIntentStatus.Pending, b.Status);              // ไม่เปลี่ยนสถานะเอง — คนปฏิเสธ
+        Assert.Null(s2.FailureCode);                                      // ทิศตรงข้าม: สลิปที่ยังพอดียอดค้างไม่ถูกแตะ
+        Assert.Equal(0, await DocumentSlipIntents.FlagSupersededAsync(check, shop.Id, doc.Id));   // เรียกซ้ำไม่ติดธงซ้ำ
+    }
+
+    [Fact]
+    public async Task H2_งวดแรกยืนยันแล้ว_สลิปงวดสองรับได้_เกินยอดค้างหรือชำระครบ_ปฏิเสธ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var shop = await CompanyAsync(db, RandTax(), "00000", "ร้านงวด 250");
+        var doc = await InvoiceAsync(db, shop.Id, RandTax(), null);
+        var first = await Portal(db).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 500m);
+        // งวด 1 ยืนยันแล้ว (สถานะสำเร็จ + ยอดเอกสารลด — แทนผลของ handler)
+        await db.PaymentIntents.Where(i => i.Id == first.PaymentIntentId)
+            .ExecuteUpdateAsync(x => x.SetProperty(i => i.Status, PaymentIntentStatus.Succeeded));
+        await db.Documents.Where(d => d.Id == doc.Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(d => d.PaidAmount, 500m).SetProperty(d => d.BalanceDue, 570m).SetProperty(d => d.Status, DocumentStatus.PartiallyPaid));
+
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var second = await Portal(c2).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 570m);   // เดิม: "ชำระเรียบร้อยแล้ว"
+        Assert.NotEqual(first.PaymentIntentId, second.PaymentIntentId);
+        var over = await Assert.ThrowsAsync<BusinessRuleException>(() => Portal(c2).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), 600m));
+        Assert.Equal(DocumentSlipIntents.RuleCode, over.RuleCode);
+
+        await c2.Documents.Where(d => d.Id == doc.Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(d => d.PaidAmount, 1_070m).SetProperty(d => d.BalanceDue, 0m).SetProperty(d => d.Status, DocumentStatus.Paid));
+        using var c3 = DbTestDatabase.TryCreateContext()!;
+        await Assert.ThrowsAsync<BusinessRuleException>(() => Portal(c3).UploadDocumentSlipAsync(shop.Id, doc.ContactId, doc.Id, Slip(), null));
+    }
+
+    [Fact]
+    public async Task H3_ปลายทางไม่เปิดให้ค้นเจอ_ไม่ได้คำเชิญ_บริษัทปลอมที่ไม่เปิดไม่ทำให้กำกวม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var hiddenTax = RandTax();
+        var hidden = await CompanyAsync(db, hiddenTax, "00000", "ไม่เปิด 250", discoverable: false);
+        var victimTax = RandTax();
+        var victim = await CompanyAsync(db, victimTax, "00000", "เหยื่อ 250", discoverable: true);
+        var fake = await CompanyAsync(db, victimTax, "00000", "บริษัทปลอมตั้งเลขเหยื่อ 250", discoverable: false);
+        var inviter = await CompanyAsync(db, RandTax(), "00000", "ผู้เชิญ H3 250");
+        var uid = await OwnerAsync(db, inviter.Id);
+
+        var r1 = await Controller(db, uid).Invite(inviter.Id, new CrossTenantWorkflowController.InviteRequest(hiddenTax, null));
+        var r2 = await Controller(db, uid).Invite(inviter.Id, new CrossTenantWorkflowController.InviteRequest(victimTax, null));
+        Assert.Equal(Body(r1), Body(r2));
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var rows = await check.TradingPartnerships.AsNoTracking().Where(p => p.CompanyAId == inviter.Id || p.CompanyBId == inviter.Id).ToListAsync();
+        var row = Assert.Single(rows);                                    // ถึงเหยื่อ (เปิด) เท่านั้น · ไม่ถึงบริษัทที่ไม่เปิด
+        Assert.Contains(victim.Id, new[] { row.CompanyAId, row.CompanyBId });
+        Assert.DoesNotContain(hidden.Id, new[] { row.CompanyAId, row.CompanyBId });
+        Assert.DoesNotContain(fake.Id, new[] { row.CompanyAId, row.CompanyBId });
+    }
+
+    [Fact]
+    public async Task H3_เชิญเกิน20ครั้งต่อวัน_429_ไม่ขึ้นกับปลายทาง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var inviter = await CompanyAsync(db, RandTax(), "00000", "ผู้เชิญรัว 250");
+        var uid = await OwnerAsync(db, inviter.Id);
+        for (var i = 0; i < CrossTenantWorkflowService.InvitesPerCompanyPerDay; i++)
+            Assert.Equal(202, Status(await Controller(db, uid).Invite(inviter.Id, new CrossTenantWorkflowController.InviteRequest(RandTax(), null))));
+        Assert.Equal(429, Status(await Controller(db, uid).Invite(inviter.Id, new CrossTenantWorkflowController.InviteRequest(RandTax(), null))));
+    }
+
+    [Fact]
+    public async Task M5_คู่เชื่อมแล้วเลขตรงแต่สาขาไม่ตรง_ไม่เงียบ_ติดป้ายพร้อมเหตุ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var tax = RandTax();
+        var seller = await CompanyAsync(db, RandTax(), "00000", "ผู้ขาย M5 250");
+        var buyer = await CompanyAsync(db, tax, "00001", "ผู้ซื้อสาขา 1 M5 250");
+        await AcceptedAsync(db, seller.Id, buyer.Id);
+        var doc = await InvoiceAsync(db, seller.Id, tax, "00000");   // ผู้ติดต่อระบุสำนักงานใหญ่ แต่คู่ค้ามีแต่สาขา 1
+
+        var r = await Svc(db).RouteSentDocumentAsync(doc);
+        Assert.False(r.Routed);
+        Assert.Equal(PartnerCompanyMatch.BranchMismatchRouteMessage(tax, "00000"), r.FailureReason);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.True(PartnerRoutingFailedNote.Has((await check.Documents.AsNoTracking().SingleAsync(d => d.Id == doc.Id)).InternalNotes));
+    }
+
+    private static DocumentService DocSvc(AccountingDbContext db)
+        => new(db, new AccountingService(db), null!, null!, null!, NullLogger<DocumentService>.Instance, null!, null!, null!);
+
+    [Fact]
+    public async Task M3_ยกเลิกแถวสลิปเก่าที่ไม่เคยนับ_ไม่ถอยยอดเอกสาร()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var shop = await CompanyAsync(db, RandTax(), "00000", "ร้าน M3 250");
+        var doc = await InvoiceAsync(db, shop.Id, RandTax(), null);
+        await db.Documents.Where(d => d.Id == doc.Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(d => d.PaidAmount, 500m).SetProperty(d => d.BalanceDue, 570m).SetProperty(d => d.Status, DocumentStatus.PartiallyPaid));
+        var legacy = new Payment
+        {
+            CompanyId = shop.Id, DocumentId = doc.Id, PaymentNumber = "PAY-R250M3-" + Guid.NewGuid().ToString("N")[..6], PaymentDate = DateTime.UtcNow.Date,
+            PaymentMethod = PaymentMethod.BankTransfer, Amount = 300m, Notes = PortalSlipPending.LegacyMarker + " แนบสลิปจาก Portal ลูกค้า",
+            CreatedBy = PortalSlipPending.LegacyCreatedBy,
+        };
+        db.Payments.Add(legacy);
+        await db.SaveChangesAsync();
+
+        using var svcDb = DbTestDatabase.TryCreateContext()!;
+        await DocSvc(svcDb).VoidPaymentAsync(shop.Id, legacy.Id);
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var d = await check.Documents.AsNoTracking().SingleAsync(x => x.Id == doc.Id);
+        Assert.Equal(500m, d.PaidAmount);                                   // เดิม: 500 − 300 = 200 (หักยอดที่ไม่เคยบวก)
+        Assert.Equal(570m, d.BalanceDue);
+        Assert.True((await check.Payments.IgnoreQueryFilters().AsNoTracking().SingleAsync(p => p.Id == legacy.Id)).IsDeleted);
     }
 }

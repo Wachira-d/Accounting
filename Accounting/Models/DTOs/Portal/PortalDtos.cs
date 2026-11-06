@@ -8,7 +8,8 @@ public record PortalLoginRequest(string Email, string Password, Guid CompanyId);
 public record PortalLoginResponse(string AccessToken, string RefreshToken, Guid ContactId, string ContactName, Guid CompanyId, string CompanyName);
 public record PortalRefreshRequest(string RefreshToken);
 
-public record PortalDocumentResponse(Guid Id, string DocumentNumber, string DocumentType, DateTime DocumentDate, DateTime? DueDate, decimal TotalAmount, decimal PaidAmount, decimal BalanceDue, string Status);
+/// <param name="SlipPendingAmount">รอบ 250 ฝ่ายค้าน L4: ยอดสลิปที่ลูกค้าแนบแล้วรอผู้ขายตรวจ (เซิร์ฟเวอร์รวมจากรายการรอยืนยัน) · 0 = ไม่มี — ไม่ลดยอดค้างจนผู้ขายยืนยัน</param>
+public record PortalDocumentResponse(Guid Id, string DocumentNumber, string DocumentType, DateTime DocumentDate, DateTime? DueDate, decimal TotalAmount, decimal PaidAmount, decimal BalanceDue, string Status, decimal SlipPendingAmount = 0m);
 public record PortalStatementResponse(DateTime FromDate, DateTime ToDate, decimal OpeningBalance, decimal TotalCharged, decimal TotalPaid, decimal ClosingBalance, List<PortalStatementLine> Lines);
 public record PortalStatementLine(DateTime Date, string DocumentNumber, string Description, decimal Amount, decimal Balance);
 public record PortalPaymentResponse(Guid Id, DateTime PaymentDate, decimal Amount, string PaymentMethod, string? Reference, string DocumentNumber);

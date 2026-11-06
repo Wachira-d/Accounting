@@ -46,6 +46,11 @@ public static class PartnerCompanyMatch
     public static string AmbiguousRouteMessage(string taxId)
         => $"พบคู่ค้าที่ใช้ NextAcc มากกว่าหนึ่งบริษัทของเลขผู้เสียภาษี {taxId} — ระบุรหัสสาขาของผู้ติดต่อ (5 หลัก) ให้ตรงสาขาของคู่ค้า แล้วกดส่งใหม่";
 
+    /// <summary>ฝ่ายค้าน M5: คู่ค้าที่เชื่อมแล้วมีเลขภาษีตรง แต่ไม่มีสาขาที่ผู้ติดต่อระบุ — เดิม (ไม่ดูสาขา) ส่งได้ · ตอนนี้ไม่ส่ง แต่ต้องดัง</summary>
+    public static string BranchMismatchRouteMessage(string taxId, string? contactBranch)
+        => $"คู่ค้าที่เชื่อมระบบไว้ (เลขผู้เสียภาษี {taxId}) ไม่มีสาขา {TaxBranchCode.Normalize(contactBranch)} ตามที่ผู้ติดต่อระบุ — "
+           + "แก้รหัสสาขาของผู้ติดต่อให้ตรงสาขาของคู่ค้า (หรือให้สาขานั้นเชื่อมระบบ) แล้วกดส่งใหม่";
+
     /// <summary>เลขภาษีรูปแบบมาตรฐาน (ตัวเลข ASCII 13 หลัก) · ไม่ใช่ 13 หลัก = <c>null</c> (ไม่จับคู่ — ค่า "-" ของบริษัทที่ยังไม่กรอกเลขต้องไม่ชนกัน)</summary>
     public static string? NormalizeTaxId(string? raw)
     {
