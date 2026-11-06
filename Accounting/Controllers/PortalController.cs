@@ -103,6 +103,23 @@ public class PortalPublicController : ControllerBase
     public async Task<ActionResult<ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>>> GetPaymentOptions(Guid companyId)
         => Ok(new ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>(true, await _service.GetCompanyPaymentOptionsAsync(companyId)));
 
+    /// <summary>รอบ 250 WP-03 (A G-01 · D §9.1): ตัวเลือกชำระของใบนี้ + QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (data URI · ฝังยอดค้างของใบจากฐาน)
+    /// — ต้องมีโทเค็นพอร์ทัล และใบต้องเป็นของผู้ติดต่อในโทเค็น (ยอดค้างเป็นข้อมูลของลูกค้ารายนั้น)</summary>
+    [HttpGet("{companyId:guid}/documents/{documentId:guid}/payment-options")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>>> GetDocumentPaymentOptions(
+        Guid companyId, Guid documentId, CancellationToken ct)
+    {
+        var contactId = GetContactIdFromToken();
+        if (contactId == null) return Unauthorized(new ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>(false, null, "Invalid portal token"));
+        try
+        {
+            return Ok(new ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>(true,
+                await _service.GetDocumentPaymentOptionsAsync(companyId, contactId.Value, documentId, ct)));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>(false, null, ex.Message)); }
+    }
+
     /// <summary>Customer uploads a payment slip for one of their
     /// outstanding invoices. Server enforces the ownership check —
     /// the document's ContactId must match the JWT's contact id, so

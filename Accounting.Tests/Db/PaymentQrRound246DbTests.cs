@@ -345,4 +345,49 @@ public class PaymentQrRound246DbTests
         Assert.Equal("1234567890", view.Transfer!.AccountNumber);          // บัญชีของใบ ไม่ใช่บัญชีของเว็บ
         Assert.StartsWith("data:image/png;base64,", view.Transfer.PromptPayQrDataUri);
     }
+    // ═════════════ รอบ 250 WP-03 (A G-01 · D §9.1): QR พอร์ทัลลูกค้าสร้างที่เซิร์ฟเวอร์ — ไม่ส่งเลขพร้อมเพย์/ยอดไปบริการภายนอก ═════════════
+
+    private static async Task<(Guid SiteId, PortalService Portal)> PortalWithGatewayAsync(Accounting.Data.AccountingDbContext db, Seed s, string? promptPayId, string? qrUrl)
+    {
+        var tag = "p250-" + Guid.NewGuid().ToString("N")[..8];
+        var site = new Site { CompanyId = s.CompanyId, Name = "เว็บ 250", Slug = tag, Subdomain = tag, Status = SiteStatus.Published };
+        db.Sites.Add(site);
+        await db.SaveChangesAsync();
+        db.Set<SitePaymentGateway>().Add(new SitePaymentGateway
+        {
+            CompanyId = s.CompanyId, SiteId = site.Id, GatewayType = PaymentGatewayType.PromptPay, Name = "พร้อมเพย์", BankName = "ธนาคารเว็บ",
+            BankAccountNumber = "0000000000", BankAccountName = "เว็บ", PromptPayId = promptPayId, PromptPayQrUrl = qrUrl, IsActive = true,
+        });
+        await db.SaveChangesAsync();
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Portal:SigningKey"] = "portal-250-test-signing-key-0123456789" }).Build();
+        return (site.Id, new PortalService(db, cfg));
+    }
+
+    [Fact]
+    public async Task พอร์ทัล_paymentoptions_คืนdataUri_ไม่มีURLภายนอก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "portal " + Guid.NewGuid().ToString("N")[..6]);
+        var (_, portal) = await PortalWithGatewayAsync(db, s, "0812345678", "javascript:alert(1)");
+        var o = await portal.GetDocumentPaymentOptionsAsync(s.CompanyId, s.Invoice.ContactId, s.Invoice.Id);
+        Assert.StartsWith("data:image/png;base64,", o.PromptPayQrDataUri);
+        Assert.Null(o.PromptPayQrUrl);   // รูปที่ไม่ใช่ URL ภายใน/https ไม่ถูกส่งต่อ
+        Assert.DoesNotContain("qrserver", o.PromptPayQrDataUri!, StringComparison.OrdinalIgnoreCase);
+        // ใบของลูกค้าคนอื่น (ผู้ติดต่อในโทเค็นไม่ตรง) ⇒ ไม่พบ — ยอดค้างเป็นข้อมูลของลูกค้ารายนั้น
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => portal.GetDocumentPaymentOptionsAsync(s.CompanyId, Guid.NewGuid(), s.Invoice.Id));
+    }
+
+    [Fact]
+    public async Task พอร์ทัล_paymentoptions_ไม่มีพร้อมเพย์_ไม่มีQR_ไม่มีURL()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "portal-none " + Guid.NewGuid().ToString("N")[..6]);
+        var (_, portal) = await PortalWithGatewayAsync(db, s, null, null);
+        var o = await portal.GetDocumentPaymentOptionsAsync(s.CompanyId, s.Invoice.ContactId, s.Invoice.Id);
+        Assert.Null(o.PromptPayQrDataUri);
+        Assert.Null(o.PromptPayQrUrl);
+        Assert.True(o.HasPaymentMethod);   // ยังโอนเข้าบัญชีได้ (เลขบัญชีของเว็บ)
+    }
 }

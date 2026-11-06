@@ -503,6 +503,30 @@ public class PortalService : IPortalService
         };
     }
 
+    /// <summary>รอบ 250 WP-03 (A G-01 · D §9.1 · คำตัดสิน §2 #15) — ตัวเลือกชำระของใบนี้ + QR พร้อมเพย์ที่<b>เซิร์ฟเวอร์สร้าง</b>
+    ///
+    /// <para>เดิมพอร์ทัลประกอบ payload EMVCo ใน JS แล้วส่งเลขพร้อมเพย์+ยอดไป <c>api.qrserver.com</c> (บุคคลที่สาม — ข้อมูลการเงินของลูกค้าไหลออก ·
+    /// สำเนา TLV builder ชุดที่สอง) · ตอนนี้ใช้ <c>PromptPayService</c> ตัวเดียวกับ pay-document (รอบ 246) · ยอดที่ฝัง = ยอดค้างของใบจากฐาน
+    /// (ไม่รับยอดจากหน้าเว็บ) · ใบแจ้งหนี้ที่มีใบกำกับภาษีอ้างแล้ว = ไม่ฝังยอด (<c>PaymentQrPolicy.EmbedAmount</c>) · เลขพร้อมเพย์ใช้ไม่ได้ = ไม่มี QR</para></summary>
+    public async Task<StorefrontPaymentOptions> GetDocumentPaymentOptionsAsync(Guid companyId, Guid contactId, Guid documentId, CancellationToken ct = default)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted, ct)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        var opts = await GetCompanyPaymentOptionsAsync(companyId);
+        // รูป QR ที่ร้านอัปโหลดเอง — รับเฉพาะ URL ภายในระบบ/https (ตัวตรวจเดียวกับหน้าร้าน) · อย่างอื่นไม่ส่ง
+        if (!BookingPaymentChannels.QrImageUrlAcceptable(opts.PromptPayQrUrl)) opts.PromptPayQrUrl = null;
+        var ppId = PaymentQrPolicy.NormalizePromptPayId(opts.PromptPayId).Id;
+        if (ppId != null)
+        {
+            var superseded = await PaymentQrService.SupersededByTaxInvoiceAsync(_db, companyId, doc, ct);
+            var amount = PaymentQrPolicy.EmbedAmount(null, doc.BalanceDue, superseded) ?? 0m;   // 0 = QR ไม่ฝังยอด (ลูกค้ากรอกยอดเอง)
+            opts.PromptPayQrDataUri = "data:image/png;base64,"
+                + Convert.ToBase64String(new PromptPayService().GenerateQrImage(ppId, amount, size: 330));
+        }
+        return opts;
+    }
+
     /// <summary>ลูกค้าแนบสลิปโอนของใบแจ้งหนี้/ใบกำกับ — <b>"แจ้งโอน" ไม่ใช่ "รับชำระแล้ว"</b> (รอบ 250 WP-02b · M-2/G-T7)
     /// <para>สร้าง <c>PaymentIntent(ManualSlip)</c> สถานะรอ ผ่าน <c>ManualSlipPaymentProvider</c> (ยอดซ้ำ + ยังเปิดอยู่ = ใบเดิม) + ไฟล์สลิปผูกเอกสาร ·
     /// <b>ไม่สร้างแถว Payment</b> (เดิมเพิ่ม Payment "[PENDING-VERIFY]" ทันที ⇒ ใบแจ้งยอด/จับคู่ธนาคารนับเป็นจ่ายแล้วก่อนมีใครตรวจ) ·

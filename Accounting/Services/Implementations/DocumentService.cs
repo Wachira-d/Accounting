@@ -21284,7 +21284,10 @@ public partial class DocumentService : IDocumentService
         ExchangeRateSourceLabel: Accounting.Helpers.DocumentFx.SourceLabel(d.ExchangeRateSource),
         WhtByIncomeType: d.WithholdingTaxAmount != 0m
             ? Accounting.Helpers.PerLineWht.GroupsOf(d)?.Select(g => new WhtIncomeGroupDto(g.IncomeTypeCode, g.RatePercent, g.IncomeThb, g.WhtThb, g.LineCount)).ToList()
-            : null);
+            : null,
+        // รอบ 250 WP-03 (D §3.4 · F2 ข้อ 5): หน้าเว็บวาดแผงสินทรัพย์ตามค่านี้ (เดิมเขียนกติกาชนิด/prefix 12·118 เองใน JS)
+        HasAssetCandidateLines: FixedAssetService.HasAssetCandidateLines(d.DocumentType,
+            d.Lines.Where(l => !l.IsDeleted).Select(l => l.Account != null ? l.Account.AccountCode : null)));
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)

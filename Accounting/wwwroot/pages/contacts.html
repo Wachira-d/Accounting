@@ -506,7 +506,7 @@
             // Mark the system-default option with a star so user knows
             // which one fires when "(ใช้ค่าเริ่มต้นของระบบ)" is chosen.
             const sysDef = candidates.find(a => (a.accountCode || '').startsWith(defaultPrefix) && (a.level || 0) >= 4);
-            const sysDefLabel = sysDef ? ` — ระบบจะใช้ ${sysDef.accountCode} ${sysDef.accountName}` : '';
+            const sysDefLabel = sysDef ? ` — ระบบจะใช้ ${Layout.esc(sysDef.accountCode)} ${Layout.esc(sysDef.accountName)}` : '';
             sel.innerHTML = `<option value="">(ใช้ค่าเริ่มต้นของระบบ${sysDefLabel})</option>` +
               candidates.map(a => `<option value="${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('');
           };
@@ -560,7 +560,7 @@
             <td>${Layout.esc(c.taxId || '-')}${c.branchLabel ? ` <span class="text-gray-400 text-xs">(${Layout.esc(c.branchLabel)} · ${Layout.esc(c.branchCode || '00000')})</span>` : ''}</td>
             <td><span class="badge ${ctCode(c)===2?'badge-info':ctCode(c)===3?'badge-warning':ctCode(c)===0?'badge-warning':'badge-gray'}" ${ctCode(c)===0?'title="ชนิดผู้ติดต่อตัดสินแบบยื่น ภ.ง.ด.3/53 และ scheme ของ e-Tax — กดแก้ไขเพื่อเลือก"':''}>${ctLabel(ctCode(c))}</span> ${[c.isCustomer && 'ลูกค้า', c.isSupplier && 'ผู้จำหน่าย'].filter(Boolean).join(', ')}</td>
             <td>${c.phone || '-'}</td>
-            <td>${c.email || '-'}</td>
+            <td>${Layout.esc(c.email || '-')}</td>
             <td>${c.isActive ? '<span class="badge badge-success">ใช้งาน</span>' : '<span class="badge badge-gray" data-i18n="common.close">ปิด</span>'}</td>
             <td><button class="btn btn-sm btn-ghost" onclick="Page.openEdit('${c.id}')" data-i18n="common.edit">แก้ไข</button> <a class="btn btn-sm btn-ghost" href="/pages/documents.html?contactId=${c.id}" title="ดูเอกสารทั้งหมดของผู้ติดต่อ">เอกสาร</a> <button class="btn btn-sm btn-ghost text-red" onclick="Page.deleteContact('${c.id}')">ลบ</button></td>
           </tr>`).join('');
@@ -1257,31 +1257,56 @@
       _notifyEndpoint(key) {
         return (this._notify?.endpoints || []).find(e => (e.id || 'primary') === key);
       },
+      // รอบ 250 WP-03 (D §6.1 "ห้ามใครมาก่อนชนะ"): ทุกคำขอมีเลขลำดับ — วาดใหม่เฉพาะคำตอบของคำขอล่าสุด และเมื่อไม่มีการติ๊กค้างรอส่ง
+      // (เดิมติ๊ก 3 ช่องติดกัน = 3 PUT ซ้อน แล้วคำตอบที่มาช้ากว่าแต่เก่ากว่าทับสถานะใหม่ ⇒ ช่องเด้งกลับ)
+      _notifySeq: 0, _notifyPending: {}, _notifyTimers: {},
+      _notifyHasPending() { return Object.keys(this._notifyTimers).length > 0; },
       async _notifySend(method, suffix, body, okMsg) {
+        const seq = ++this._notifySeq;
+        // suffix ขึ้นต้น /api/ = URL เต็มที่จับไว้ตอนติ๊ก (ผู้ติดต่อที่ถูกต้อง แม้ผู้ใช้เปิดผู้ติดต่ออื่นระหว่างรอ 400ms)
+        const url = suffix && suffix.startsWith('/api/') ? suffix : this._notifyUrl(suffix);
+        const contactAtSend = url.split('/contacts/')[1]?.split('/')[0];
+        const stale = () => seq !== this._notifySeq || this._notifyHasPending()
+          || encodeURIComponent(document.getElementById('editId').value) !== contactAtSend;
         try {
-          const res = method === 'POST' ? await API.post(this._notifyUrl(suffix), body)
-            : method === 'PUT' ? await API.put(this._notifyUrl(suffix), body)
-            : await API.del(this._notifyUrl(suffix));
-          if (!res || !res.success) { Layout.toast(res?.message || 'บันทึกไม่สำเร็จ', 'error'); await this.loadNotify(); return; }
-          this._renderNotify(res.data);
+          const res = method === 'POST' ? await API.post(url, body)
+            : method === 'PUT' ? await API.put(url, body)
+            : await API.del(url);
+          if (!res || !res.success) { Layout.toast(res?.message || 'บันทึกไม่สำเร็จ', 'error'); if (!stale()) await this.loadNotify(); return; }
+          if (!stale()) this._renderNotify(res.data);
           if (okMsg) Layout.toast(res.message || okMsg);
-        } catch (e) { Layout.toast(e.message, 'error'); await this.loadNotify(); }
+        } catch (e) { Layout.toast(e.message, 'error'); if (!stale()) await this.loadNotify(); }
       },
       async addNotifyEmail() {
-        const email = (document.getElementById('notifyNewEmail').value || '').trim();
+        const input = document.getElementById('notifyNewEmail');
+        const email = (input.value || '').trim();
         const label = (document.getElementById('notifyNewLabel').value || '').trim();
-        if (!email) { Layout.toast('กรอกอีเมลก่อน', 'error'); return; }
+        if (!email) { Layout.toast('กรอกอีเมลก่อน', 'error'); input.focus(); return; }
+        // รอบ 250 WP-03 (D §6.2): ช่อง type=email ตรวจรูปแบบก่อนยิง (เดิมตรวจแค่ไม่ว่าง)
+        if (!input.checkValidity()) { input.reportValidity(); return; }
         await this._notifySend('POST', '/email', { email, label: label || null, topics: null }, 'เพิ่มอีเมลแล้ว');
       },
-      async onNotifyTopic(el) {
+      /** รวมการติ๊กต่อปลายทางภายใน 400ms เป็น PUT เดียว (ค่าที่ส่ง = สถานะช่องตอนติ๊กล่าสุด) */
+      _queueNotifyChange(key, patch) {
+        const tkey = this._notifyUrl('') + '|' + key;   // คีย์ต่อ (ผู้ติดต่อ, ปลายทาง) — URL ตรึงตอนติ๊ก
+        this._notifyPending[tkey] = Object.assign(this._notifyPending[tkey] || { base: this._notifyUrl(''), key }, patch);
+        clearTimeout(this._notifyTimers[tkey]);
+        this._notifyTimers[tkey] = setTimeout(() => {
+          delete this._notifyTimers[tkey];
+          const p = this._notifyPending[tkey] || {}; delete this._notifyPending[tkey];
+          if (p.key === 'primary') this._notifySend('PUT', p.base + '/primary', { topics: p.topics || [] }, 'บันทึกแล้ว');
+          else this._notifySend('PUT', p.base + '/' + encodeURIComponent(p.key),
+            { label: null, topics: p.topics ?? null, showAmounts: p.showAmounts ?? null }, 'บันทึกแล้ว');
+        }, 400);
+      },
+      onNotifyTopic(el) {
         const key = el.dataset.ep;
         const boxes = document.querySelectorAll(`#contactNotifyPanel input[data-topic][data-ep="${CSS.escape(key)}"]`);
         const topics = Array.from(boxes).filter(b => b.checked).map(b => b.dataset.topic);
-        if (key === 'primary') await this._notifySend('PUT', '/primary', { topics }, 'บันทึกแล้ว');
-        else await this._notifySend('PUT', '/' + encodeURIComponent(key), { label: null, topics, showAmounts: null }, 'บันทึกแล้ว');
+        this._queueNotifyChange(key, { topics });
       },
-      async onNotifyShowAmounts(el) {
-        await this._notifySend('PUT', '/' + encodeURIComponent(el.dataset.ep), { label: null, topics: null, showAmounts: !!el.checked }, 'บันทึกแล้ว');
+      onNotifyShowAmounts(el) {
+        this._queueNotifyChange(el.dataset.ep, { showAmounts: !!el.checked });
       },
       async editNotifyLabel(el) {
         const ep = this._notifyEndpoint(el.dataset.ep); if (!ep) return;

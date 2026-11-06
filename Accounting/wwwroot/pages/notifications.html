@@ -43,8 +43,9 @@
         แถวที่ติดป้าย "ค่าตั้งต้นของระบบ" คือค่าที่ระบบใช้อยู่จนกว่าคุณจะบันทึกเอง
       </div>
       <div id="matrixContainer" style="overflow-x:auto;background:#fff;border-radius:6px"></div>
-      <div style="display:flex;justify-content:flex-end;margin-top:12px">
-        <button class="btn btn-primary" onclick="Page.saveMatrix()">💾 บันทึกตั้งค่าทั้งหมด</button>
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px">
+        <span id="matrixDirty" role="status" style="display:none;font-size:12px;color:#b45309">● มีการเปลี่ยนแปลงที่ยังไม่บันทึก</span>
+        <button class="btn btn-primary" id="btnSaveMatrix" onclick="Page.saveMatrix()" disabled>💾 บันทึกตั้งค่าทั้งหมด</button>
       </div>
     </div>
 
@@ -54,8 +55,9 @@
         ที่นี่คุณ <strong>ปิด</strong> ช่องทางแจ้งเตือนของตัวเองได้ (เช่น "ไม่อยากรับ Email สำหรับเหตุการณ์ลา ใช้ LINE อย่างเดียวพอ"). ไม่สามารถ <em>เปิด</em> ช่องที่บริษัทยังไม่ได้เปิดให้ — ติดต่อ Admin
       </div>
       <div id="prefsContainer"></div>
-      <div style="display:flex;justify-content:flex-end;margin-top:12px">
-        <button class="btn btn-primary" onclick="Page.savePrefs()">💾 บันทึกการตั้งค่าส่วนตัว</button>
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px">
+        <span id="prefsDirty" role="status" style="display:none;font-size:12px;color:#b45309">● มีการเปลี่ยนแปลงที่ยังไม่บันทึก</span>
+        <button class="btn btn-primary" id="btnSavePrefs" onclick="Page.savePrefs()" disabled>💾 บันทึกการตั้งค่าส่วนตัว</button>
       </div>
     </div>
 
@@ -93,10 +95,23 @@
 
     const Page = {
       _catalog: null, _matrix: {}, _prefs: {},
+      // รอบ 250 WP-03 (D §4.1–4.2): ปุ่มบันทึกใช้ได้เฉพาะเมื่อเมทริกซ์โหลดสำเร็จ (เดิมโหลดล้มแล้วกดบันทึก = ส่ง {settings: []} — "บันทึกสำเร็จ" ปลอม)
+      _matrixLoaded: false, _prefsLoaded: false, _matrixDirty: false, _prefsDirty: false,
       async init() {
         if (!Layout.init('notifications')) return;
         Layout.setTitle('การแจ้งเตือน (Notification Engine)');
+        // dirty tracking — ติ๊กแล้วสลับหน้า/ปิดแท็บ ต้องถูกเตือน (เดิมหายเงียบ)
+        document.getElementById('matrixContainer').addEventListener('change', () => this._setDirty('matrix', true));
+        document.getElementById('prefsContainer').addEventListener('change', () => this._setDirty('prefs', true));
+        window.addEventListener('beforeunload', (e) => {
+          if (this._matrixDirty || this._prefsDirty) { e.preventDefault(); e.returnValue = ''; }
+        });
         await Promise.all([this.loadMatrix(), this.loadLine()]);
+      },
+      _setDirty(which, on) {
+        this['_' + which + 'Dirty'] = !!on;
+        const el = document.getElementById(which + 'Dirty');
+        if (el) el.style.display = on ? '' : 'none';
       },
       switchTab(t) {
         ['matrix', 'prefs', 'line'].forEach(x => {
@@ -114,13 +129,24 @@
             api.getNotificationCatalog(),
             api.getNotificationSettings(),
           ]);
+          if (!cat || !cat.data || !Array.isArray(cat.data.events)) throw new Error((cat && cat.message) || 'ไม่ได้รับรายการเหตุการณ์จากเซิร์ฟเวอร์');
+          // ค่าที่ตั้งไว้ต้องโหลดได้จริง — ถ้าตอบ success:false แล้ววาดเมทริกซ์ว่าง กดบันทึก = ทับค่าเดิมด้วยค่าว่าง
+          if (!settings || settings.success === false) throw new Error((settings && settings.message) || 'ไม่ได้รับค่าที่ตั้งไว้จากเซิร์ฟเวอร์');
           this._catalog = cat.data;
           this._matrix = {};
           (settings.data || []).forEach(s => {
             this._matrix[s.eventKey + '|' + s.recipientRole] = s;
           });
           this.renderMatrix();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+          this._matrixLoaded = true;
+          this._setDirty('matrix', false);
+        } catch (e) {
+          this._matrixLoaded = false;
+          Layout.panelError('matrixContainer', 'โหลดตั้งค่าการแจ้งเตือนไม่สำเร็จ — ปุ่มบันทึกถูกปิดไว้ (กันการบันทึกค่าว่างทับของเดิม)',
+            () => this.loadMatrix(), e && e.message);
+        }
+        const btn = document.getElementById('btnSaveMatrix');
+        if (btn) btn.disabled = !this._matrixLoaded;
       },
       renderMatrix() {
         const cat = this._catalog; if (!cat) return;
@@ -144,9 +170,9 @@
               const key = ev.key + '|' + role;
               const s = this._matrix[key] || { enableSystem: false, enableEmail: false, enableLine: false };
               html += `<td><div class="channel-cell">
-                <label><input type="checkbox" data-k="${key}" data-c="sys" ${s.enableSystem ? 'checked' : ''}>Sys</label>
-                <label><input type="checkbox" data-k="${key}" data-c="email" ${s.enableEmail ? 'checked' : ''}>Mail</label>
-                <label><input type="checkbox" data-k="${key}" data-c="line" ${s.enableLine ? 'checked' : ''}>LINE</label>
+                <label><input type="checkbox" data-k="${Layout.esc(key)}" data-c="sys" ${s.enableSystem ? 'checked' : ''}>Sys</label>
+                <label><input type="checkbox" data-k="${Layout.esc(key)}" data-c="email" ${s.enableEmail ? 'checked' : ''}>Mail</label>
+                <label><input type="checkbox" data-k="${Layout.esc(key)}" data-c="line" ${s.enableLine ? 'checked' : ''}>LINE</label>
               </div></td>`;
             });
             html += `<td><div class="channel-cell"><label><input type="checkbox" data-g="${Layout.esc(ev.key)}" ${anyGroup ? 'checked' : ''}>กลุ่ม</label></div></td>`;
@@ -158,6 +184,9 @@
       },
       async saveMatrix() {
         const api = Layout.api(); if (!api) return;
+        if (!this._matrixLoaded || !document.querySelector('#matrixContainer input[type=checkbox][data-k]')) {
+          Layout.toast('ตั้งค่ายังโหลดไม่สำเร็จ — กด “ลองใหม่” ก่อนบันทึก', 'error'); return;
+        }
         const settings = [];
         document.querySelectorAll('#matrixContainer input[type=checkbox][data-k]').forEach(cb => {
           const [eventKey, role] = cb.dataset.k.split('|');
@@ -174,6 +203,7 @@
         try {
           await api.bulkUpsertNotificationSettings({ settings });
           Layout.toast('บันทึกสำเร็จ');
+          this._setDirty('matrix', false);
           await this.loadMatrix();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -190,7 +220,14 @@
           this._prefs = {};
           (prefs.data || []).forEach(p => { this._prefs[p.eventKey] = p; });
           this.renderPrefs();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+          this._prefsLoaded = true;
+          this._setDirty('prefs', false);
+        } catch (e) {
+          this._prefsLoaded = false;
+          Layout.panelError('prefsContainer', 'โหลดการตั้งค่าส่วนตัวไม่สำเร็จ — ปุ่มบันทึกถูกปิดไว้', () => this.loadPrefs(), e && e.message);
+        }
+        const btn = document.getElementById('btnSavePrefs');
+        if (btn) btn.disabled = !this._prefsLoaded;
       },
       renderPrefs() {
         const groups = {};
@@ -201,9 +238,9 @@
           groups[domain].forEach(ev => {
             const p = this._prefs[ev.key] || { suppressSystem: false, suppressEmail: false, suppressLine: false };
             html += `<tr><td class="event">${Layout.esc(ev.label)}<div style="font-size:10px;color:#94a3b8">${Layout.esc(ev.key)}</div></td>
-              <td><input type="checkbox" data-pe="${ev.key}" data-pc="sys" ${p.suppressSystem ? 'checked' : ''}></td>
-              <td><input type="checkbox" data-pe="${ev.key}" data-pc="email" ${p.suppressEmail ? 'checked' : ''}></td>
-              <td><input type="checkbox" data-pe="${ev.key}" data-pc="line" ${p.suppressLine ? 'checked' : ''}></td>
+              <td><input type="checkbox" data-pe="${Layout.esc(ev.key)}" data-pc="sys" ${p.suppressSystem ? 'checked' : ''}></td>
+              <td><input type="checkbox" data-pe="${Layout.esc(ev.key)}" data-pc="email" ${p.suppressEmail ? 'checked' : ''}></td>
+              <td><input type="checkbox" data-pe="${Layout.esc(ev.key)}" data-pc="line" ${p.suppressLine ? 'checked' : ''}></td>
             </tr>`;
           });
         });
@@ -212,6 +249,7 @@
       },
       async savePrefs() {
         const api = Layout.api(); if (!api) return;
+        if (!this._prefsLoaded) { Layout.toast('การตั้งค่ายังโหลดไม่สำเร็จ — กด “ลองใหม่” ก่อนบันทึก', 'error'); return; }
         const preferences = [];
         document.querySelectorAll('#prefsContainer input[type=checkbox]').forEach(cb => {
           const eventKey = cb.dataset.pe;
@@ -224,6 +262,7 @@
         try {
           await api.upsertMyNotificationPreferences({ preferences });
           Layout.toast('บันทึกสำเร็จ');
+          this._setDirty('prefs', false);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -237,7 +276,10 @@
           document.getElementById('lineStatus').innerHTML = d.isBound
             ? '<span style="color:#059669">✓ เชื่อมต่อ LINE แล้ว — ระบบจะ push เข้า LINE ส่วนตัวของคุณ</span>'
             : '<span style="color:#94a3b8">ยังไม่ได้เชื่อมต่อ — ระบบจะ fallback ไป System / Email</span>';
-        } catch (_) { /* ignore */ }
+        } catch (e) {
+          // รอบ 250 WP-03 (D §4.5): ล้มดัง (เดิม /* ignore */ — ช่องว่างดูเหมือน "ยังไม่ผูก")
+          Layout.panelError('lineStatus', 'โหลดสถานะการเชื่อมต่อ LINE ไม่สำเร็จ — สถานะจริงอาจผูกอยู่แล้ว', () => this.loadLine(), e && e.message);
+        }
       },
       async saveLine() {
         const api = Layout.api(); if (!api) return;

@@ -901,6 +901,7 @@
         <input type="checkbox" id="sEtaxEnabled"><label for="sEtaxEnabled" style="font-weight:600">เปิดใช้งาน e-Tax Invoice สำหรับบริษัทนี้</label>
       </div>
 
+      <div id="etaxLoadError" style="margin-bottom:12px"></div>
       <div id="etaxConfigSection" style="display:none">
         <!-- Mode selection -->
         <div style="margin-bottom:20px;padding:16px;background:#eff6ff;border-radius:8px;border:1px solid #bfdbfe">
@@ -950,12 +951,13 @@
           </div>
           <!-- ฝ่ายค้านรอบ 244 B1: ธงทดสอบของ by Email แยกจาก "โหมดทดสอบ" ของระบบเต็ม (ค่าเริ่มต้นปิด = production) -->
           <div class="form-group form-checkbox" style="margin-top:8px">
-            <input type="checkbox" id="sEtaxByEmailUseUat"><label for="sEtaxByEmailUseUat">ทดสอบ e-Tax by Email (ส่งไป UAT — <code>csemail@uat.etax.teda.th</code> · ใบที่ส่งจะไม่ถูกประทับเวลาจริง)</label>
+            <input type="checkbox" id="sEtaxByEmailUseUat"><label for="sEtaxByEmailUseUat">ทดสอบ e-Tax by Email (UAT) — ส่งไป <code>csemail@uat.etax.teda.th</code> · ใบที่ส่งจะไม่ถูกประทับเวลาจริง</label>
+            <div style="font-size:11px;color:#64748b;margin-top:2px">ธงนี้คุมเฉพาะ e-Tax by Email · คนละธงกับ “โหมดทดสอบ (e-Tax ระบบเต็ม)” ด้านล่างซึ่งคุมการยิง XML เข้า RD API (คำตัดสิน §2 #20)</div>
           </div>
           <!-- รอบ 244 (คำตัดสิน 244-4): ลบช่อง "ฝัง XML" (PDF/A-3 ฝัง XML เสมอ) และ "ส่งอัตโนมัติเมื่ออนุมัติ" (ใช้ตารางส่งอีเมล ทริกเกอร์อนุมัติ — เดินทาง e-Tax ให้เอง) -->
           <div style="font-size:12px;color:#166534;margin-top:8px;line-height:1.6">
             ระบบส่งใบกำกับภาษี/ใบเพิ่มหนี้/ใบลดหนี้แบบ e-Tax by Email ให้เองทุกช่องทาง (ปุ่มส่งอีเมล · ตารางส่งอีเมล · ส่งหลังรับชำระ) —
-            ต้องตั้ง <b>อีเมลของบริษัทเอง</b> (ตั้งค่า &gt; อีเมล) ให้ส่งออกจากอีเมลที่ลงทะเบียนข้างบนและทดสอบผ่าน · ส่งอัตโนมัติตอนอนุมัติ = ตั้งที่ “ตารางส่งอีเมล”
+            ต้องตั้ง <b>อีเมลของบริษัทเอง</b> (<a href="#" style="color:#0369a1" onclick="event.preventDefault();Page.gotoTab('email')">ตั้งค่า &gt; อีเมล ↗</a>) ให้ส่งออกจากอีเมลที่ลงทะเบียนข้างบนและทดสอบผ่าน · ส่งอัตโนมัติตอนอนุมัติ = ตั้งที่ <a href="/pages/email-schedule.html" style="color:#0369a1">“ตารางส่งอีเมล” ↗</a>
           </div>
         </div>
 
@@ -981,7 +983,8 @@
 
         <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
           <div class="form-group form-checkbox" style="padding:12px;background:#fffbeb;border-radius:8px;border:1px solid #fde68a">
-            <input type="checkbox" id="sEtaxTestMode" checked><label for="sEtaxTestMode">โหมดทดสอบ (Test Mode)</label>
+            <input type="checkbox" id="sEtaxTestMode" checked><label for="sEtaxTestMode">โหมดทดสอบ (e-Tax ระบบเต็ม)</label>
+            <div style="font-size:11px;color:#64748b;margin-top:2px">คุมการยิง XML เข้า RD API (Direct) · ไม่เกี่ยวกับ e-Tax by Email — ทดสอบ by Email ใช้ธง “ทดสอบ e-Tax by Email (UAT)” ในกล่องสีเขียว</div>
           </div>
           <div class="form-group form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
             <input type="checkbox" id="sEtaxAutoSign"><label for="sEtaxAutoSign">ลงนามอัตโนมัติ</label>
@@ -1392,7 +1395,29 @@
           document.getElementById('srSenderInfo').textContent = s.senderModeNow === 'company'
             ? 'อีเมลขอเซ็นส่งจากอีเมลของบริษัท (ตั้งค่า → อีเมล ทดสอบผ่านแล้ว)'
             : `ยังไม่ได้ตั้ง/ทดสอบอีเมลของบริษัท — อีเมลขอเซ็นจะส่งด้วยอีเมลของระบบ NextAcc ในนามบริษัท (ระบุชื่อบริษัท · ลูกค้าตอบกลับถึงบริษัท) · เพดาน ${Number(s.platformDailyCap)} ฉบับ/วัน`;
-        } catch (e) { /* ไม่มีสิทธิ์อ่าน/ล้ม — ส่วนนี้ว่างไว้ ไม่ขวางหน้าตั้งค่า */ }
+          this._lockCard('signRequestCard', null);
+        } catch (e) { this._cardLoadFailed('signRequestCard', e, () => this.loadSignRequestSettings()); }
+      },
+      /** รอบ 250 WP-03 (D §5.5 · ห้าม silent no-op): การ์ดที่โหลดไม่ได้ (403 = ไม่ใช่เจ้าของ · อื่น ๆ = ล้ม) ⇒ ล็อกทุกช่อง/ปุ่ม + บอกเหตุผล
+       *  (เดิมกลืน error ⇒ ผู้ไม่ใช่เจ้าของเห็นช่องว่างให้ติ๊ก กดบันทึกแล้วค่อยเจอ 403) */
+      _cardLoadFailed(cardId, e, retry) {
+        const reason = e && e.status === 403
+          ? 'เฉพาะเจ้าของบริษัทแก้ส่วนนี้ได้' + (e.message ? ' — ' + e.message : '')
+          : 'โหลดค่าตั้งส่วนนี้ไม่สำเร็จ — ช่องถูกล็อกไว้ (กันบันทึกค่าว่างทับของเดิม)' + (e && e.message ? ' · ' + e.message : '');
+        this._lockCard(cardId, reason, e && e.status === 403 ? null : retry);
+      },
+      _lockCard(cardId, reason, retry) {
+        const card = document.getElementById(cardId); if (!card) return;
+        card.querySelectorAll('input, select, textarea, button').forEach(el => {
+          if (el.dataset.lockNote) return;
+          if (reason) { if (el.dataset.lockedPrev == null) el.dataset.lockedPrev = el.disabled ? '1' : '0'; el.disabled = true; }
+          else if (el.dataset.lockedPrev != null) { el.disabled = el.dataset.lockedPrev === '1'; delete el.dataset.lockedPrev; }
+        });
+        let note = card.querySelector('[data-lock-note-box]');
+        if (!reason) { if (note) note.remove(); return; }
+        if (!note) { note = document.createElement('div'); note.setAttribute('data-lock-note-box', '1'); card.insertBefore(note, card.children[1] || null); }
+        Layout.panelError(note, '🔒 ' + reason, retry || null);
+        note.querySelectorAll('button').forEach(b => { b.dataset.lockNote = '1'; });
       },
       async saveSignRequestSettings() {
         const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
@@ -1431,7 +1456,10 @@
           document.getElementById('asEmailReceipt').checked = !!s.postPayEmailReceipt;
           document.getElementById('asIncludePartial').checked = !!s.postPayIncludePartial;
           document.getElementById('asSenderInfo').textContent = s.senderNote || '';
-        } catch (e) { /* ไม่มีสิทธิ์อ่าน/ล้ม — ส่วนนี้ว่างไว้ ไม่ขวางหน้าตั้งค่า */ }
+          this._lockCard('autoSendCard', null);
+          // ปลดล็อกแล้วคืนสถานะปิดของช่องลิงก์ชำระที่เซิร์ฟเวอร์ตัดสิน
+          pay.disabled = !s.payLinkAvailable && !s.payLinkDefaultEnabled;
+        } catch (e) { this._cardLoadFailed('autoSendCard', e, () => this.loadAutoSendSettings()); }
       },
       async saveAutoSendSettings() {
         const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
@@ -2113,10 +2141,9 @@
         const cid = Layout.getCompanyId();
         if (!cid) return;
         try {
-          const r = await fetch(`/api/companies/${cid}/line-config`, {
-            headers: { 'Authorization': 'Bearer ' + API.token }
-          });
-          const j = await r.json();
+          // รอบ 250 WP-03 (D §5.6): API.* แทน fetch ดิบ (ApiBusy กันกดซ้ำ · 401/403 กลาง)
+          const j = await API.get(`/api/companies/${cid}/line-config`);
+          if (j && j.success === false) throw new Error(j.message || 'โหลดไม่สำเร็จ');
           const c = j.data || {};
           document.getElementById('lineEnabled').checked = !!c.enabled;
           { const adv = document.getElementById('lineAdvanced'); if (adv) adv.open = !!c.enabled; }   // รอบ 228 แพ็ก F: ร้านที่ใช้ OA ของตัวเอง ⇒ เปิดส่วนขั้นสูงไว้
@@ -2142,7 +2169,7 @@
             document.getElementById('lineTestResult').innerHTML +=
               `<div style="font-size:12px;color:#92400e;margin-top:4px">${Layout.esc(c.secretHint)}</div>`;
           }
-        } catch (e) { Layout.toast('โหลดการตั้งค่า LINE ไม่สำเร็จ', 'error'); }
+        } catch (e) { Layout.toast('โหลดการตั้งค่า LINE ไม่สำเร็จ: ' + (e.message || ''), 'error'); }
       },
       // รอบ 211: แสดงผลที่เซิร์ฟเวอร์ตัดสิน (OA ที่ใช้ · ผูกได้ไหม · URL webhook ต่อบริษัท · จำนวนลิงก์) — ไม่มีกติกาฝั่งหน้าเว็บ
       // รอบ 212 แพ็ก B: "เชิญผูกใหม่: ส่งแล้ว N/M" — ป้ายทั้งก้อนเซิร์ฟเวอร์ประกอบ (CustomerRelinkInvitePlan.ProgressLabel) · หน้านี้แสดงอย่างเดียว
@@ -2181,13 +2208,8 @@
           oaBasicId: document.getElementById('lineOaBasicId').value || null,
         };
         try {
-          const r = await fetch(`/api/companies/${cid}/line-config`, {
-            method: 'PUT',
-            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-          });
-          const j = await r.json();
-          if (!j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+          const j = await API.put(`/api/companies/${cid}/line-config`, body);
+          if (!j || !j.success) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
           Layout.toast(j.message || 'บันทึก LINE config สำเร็จ');   // รอบ 212 แพ็ก B: ข้อความจากเซิร์ฟเวอร์บอกเมื่อเปลี่ยน OA แล้วจะเชิญลูกค้าผูกใหม่
           await this.loadLineConfig();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -2200,15 +2222,10 @@
         const out = document.getElementById('lineTestResult');
         out.innerHTML = '<div style="font-size:12px;color:#64748b">กำลังส่ง…</div>';
         try {
-          const r = await fetch(`/api/companies/${cid}/line-config/test`, {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ toLineId: to })
-          });
-          const j = await r.json();
-          out.innerHTML = `<div style="font-size:13px;color:${j.success ? '#16a34a' : '#dc2626'}">
-            ${j.success ? '✅' : '❌'} ${j.message || ''}</div>`;
-        } catch (e) { out.innerHTML = `<div style="color:#dc2626">${e.message}</div>`; }
+          const j = await API.post(`/api/companies/${cid}/line-config/test`, { toLineId: to });
+          out.innerHTML = `<div style="font-size:13px;color:${j && j.success ? '#16a34a' : '#dc2626'}">
+            ${j && j.success ? '✅' : '❌'} ${Layout.esc((j && j.message) || '')}</div>`;
+        } catch (e) { out.innerHTML = `<div style="color:#dc2626">❌ ${Layout.esc(e.message)}</div>`; }
       },
 
       // ===== Notification Matrix =====
@@ -2452,14 +2469,44 @@
           document.getElementById('sEtaxByEmailRdCc').value = c.byEmailRdTimestampAddress || '';
           document.getElementById('sEtaxByEmailUseUat').checked = c.byEmailUseUat === true;
           // รอบ 244: ตรวจ "อีเมลที่ลงทะเบียน = กล่องที่ส่งออกจริง + ทดสอบผ่าน" ที่เซิร์ฟเวอร์ (EtaxByEmailSenderGate) — ผลมากับ c.warnings ข้างบน
-        } catch (e) { /* graceful */ }
-        // Hook radio buttons to toggler
-        document.querySelectorAll('input[name="etaxMode"]').forEach(r =>
-          r.addEventListener('change', () => this.toggleEtaxMode()));
+          this._etaxLoaded = true;
+          document.getElementById('etaxLoadError').innerHTML = '';
+        } catch (e) {
+          // รอบ 250 WP-03 (D §5.1): ล้มดัง (เดิม /* graceful */) — และห้ามบันทึกฟอร์มว่างทับค่าที่ตั้งไว้ (saveEtaxConfig ตรวจธงนี้)
+          this._etaxLoaded = false;
+          Layout.panelError('etaxLoadError', 'โหลดการตั้งค่า e-Tax ไม่สำเร็จ — ส่วน e-Tax จะไม่ถูกบันทึกจนกว่าจะโหลดได้', () => this.loadEtaxConfig(), e && e.message);
+        }
+        // Hook radio buttons to toggler (ครั้งเดียว — โหลดซ้ำหลังบันทึกต้องไม่ผูกซ้ำ)
+        if (!this._etaxRadioHooked) {
+          this._etaxRadioHooked = true;
+          document.querySelectorAll('input[name="etaxMode"]').forEach(r =>
+            r.addEventListener('change', () => this.toggleEtaxMode()));
+        }
       },
+      /** เปิดแท็บตามชื่อจากลิงก์ในหน้า (หาแท็บจาก onclick ของแถบแท็บ) */
+      gotoTab(tab) {
+        const el = Array.from(document.querySelectorAll('.tab')).find(t => (t.getAttribute('onclick') || '').includes(`'${tab}'`));
+        if (el) this.showTab(tab, el);
+      },
+      /** คืน true = บันทึกสำเร็จ · false = ไม่ได้บันทึก (ผู้เรียกต้องไม่ประกาศ "สำเร็จ" ทั้งหน้า) */
       async saveEtaxConfig() {
-        const api = Layout.api(); if (!api) return;
+        const api = Layout.api(); if (!api) return false;
+        if (!this._etaxLoaded) {
+          Layout.toast('ยังไม่ได้บันทึกส่วน e-Tax — โหลดค่าเดิมไม่สำเร็จ (กด “ลองใหม่” ในแท็บ e-Tax ก่อน)', 'error', 9000);
+          return false;
+        }
         const mode = document.querySelector('input[name="etaxMode"]:checked')?.value;
+        // รอบ 250 WP-03 (D §5.2): "อีเมลผู้ส่งที่ลงทะเบียน *" ตรวจก่อนส่ง (โหมด by Email) — เดิมส่งว่าง/รูปแบบผิดไปเงียบ ๆ
+        const senderEl = document.getElementById('sEtaxByEmailSender');
+        if (senderEl && (mode === 'ByEmail' || mode === 'Both')) {
+          senderEl.required = true;
+          if (!senderEl.value.trim() || !senderEl.checkValidity()) {
+            // ไม่สลับแท็บให้ (showTab('etax') โหลดค่าจากเซิร์ฟเวอร์ทับสิ่งที่ผู้ใช้พิมพ์ค้างไว้) — ชี้ช่องถ้ามองเห็น + บอกใน toast
+            if (senderEl.offsetParent !== null) senderEl.reportValidity();
+            Layout.toast('ยังไม่ได้บันทึกส่วน e-Tax — ระบุ “อีเมลผู้ส่งที่ลงทะเบียน” (แท็บ e-Tax) ให้ถูกรูปแบบ (ตรงกับที่แจ้งสรรพากร)', 'error', 9000);
+            return false;
+          }
+        } else if (senderEl) senderEl.required = false;
         const modeNum = { 'None': 0, 'ByEmail': 1, 'Direct': 2, 'Both': 3 }[mode || 'None'];
         const data = {
           mode: modeNum,
@@ -2476,7 +2523,10 @@
         };
         // รอบ 244: ปฏิเสธ (เช่น เลือก "ทั้งสองระบบ" ใหม่) ต้องเห็น — เดิมกลืน error เงียบ
         try { await api.updateEtaxConfig(data); }
-        catch (e) { Layout.toast('บันทึกการตั้งค่า e-Tax ไม่สำเร็จ: ' + (e.message || ''), 'error', 9000); }
+        catch (e) { Layout.toast('บันทึกการตั้งค่า e-Tax ไม่สำเร็จ: ' + (e.message || ''), 'error', 9000); return false; }
+        // รอบ 250 WP-03 (D §5.1): สำเร็จแล้วโหลดใหม่ — คำเตือนจากเซิร์ฟเวอร์ (ผู้ส่งยังไม่พร้อม · UAT) คำนวณใหม่ทันที ไม่ต้องรีเฟรช
+        await this.loadEtaxConfig();
+        return true;
       },
       /** ผู้ใช้แตะช่องจด VAT (แท็บใดก็ได้ — สองช่องสะท้อนกัน) = ตอบคำถาม VAT แล้ว (R2-C8) */
       markVatTouched() { this._vatTouched = true; },
@@ -3399,12 +3449,15 @@
             maxApiKeys: parseInt(document.getElementById('sMaxApiKeys').value) || 5,
           });
           // Save eTax mode + ByEmail config (separate endpoint)
+          let etaxOk = true;
           if (document.querySelector('input[name="etaxMode"]:checked')) {
-            await this.saveEtaxConfig();
+            etaxOk = await this.saveEtaxConfig();
           }
           if (this._vatLoaded && this._vatTouched) this._vatConfirmedSaved();
           this.loadDepositKinds();   // โหมดของประเภท "ตามค่าตั้งบริษัท" เปลี่ยนตามค่าที่เพิ่งบันทึก
-          Layout.toast('บันทึกการตั้งค่าสำเร็จ');
+          // รอบ 250 WP-03: ส่วน e-Tax ไม่ผ่าน = ห้ามประกาศ "สำเร็จ" ทั้งหน้า (ข้อความโกหก)
+          if (etaxOk) Layout.toast('บันทึกการตั้งค่าสำเร็จ');
+          else Layout.toast('บันทึกการตั้งค่าอื่นแล้ว — แต่ส่วน e-Tax ยังไม่ถูกบันทึก (ดูข้อความด้านบน)', 'warning', 9000);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 

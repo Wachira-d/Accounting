@@ -2297,6 +2297,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     นโยบายไม่ได้ปล่อยอะไร = ไม่ประทับ "ตามนโยบาย") · ใบจำลองของทดลองรัน/ความพร้อม**ไม่ถาม AI** (`CollectApprovalWarningsAsync(noAi: true)` — ไม่จ่าย token · ไม่เขียน feedback) ·
     ตอนส่งคิว (`RecheckDocumentAtSendAsync`) ต่อชั้นรายการประจำจากกุญแจกันซ้ำ (`ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey`) — TransferOnly/None ไม่ถูกแนบลิงก์ตอนส่ง ·
     อ่านความพร้อม/ทดลองรัน/ค่าตั้งผู้ติดต่อต้องมีสิทธิ์สร้างเอกสาร · แจ้ง "นโยบายหยุดมีผล" เฉพาะรอบที่มีคำเตือนซึ่งนโยบายจะปล่อยได้
+  - **รอบ 250 WP-03 (D §1.1–1.2 · B F-6)**: (ก) โหลด `/recurring/autopilot/options` ไม่สำเร็จ ⇒ หน้าเว็บส่ง `paymentMode: null` · `payLinkChannels: null`
+    (= ไม่แก้ · `RecurringTransactionService` คงเดิม) ไม่ใช่ `""`/`[]` (= ล้าง) · ขั้น ④ ล็อกพร้อมเหตุ · ค่าที่บันทึกไว้ที่ไม่อยู่ในตัวเลือกถูกคืนเป็นตัวเลือก (`_restoreSavedOption`)
+    (ข) **นโยบายอนุมัติบันทึกกับฟอร์ม**: เปลี่ยนนโยบายในขั้น ⑤ แล้วกด "บันทึก" ⇒ บันทึกรายการก่อน (ได้ id) แล้วเรียก `PUT recurring/{id}/approve-policy` ต่อ
+    (นโยบายรับรองค่าที่บันทึกแล้ว — ลำดับนี้กันการรับรองค่าที่ยังไม่บันทึก) · นโยบายล้ม = แจ้งดังว่า "รายการบันทึกแล้วแต่นโยบายไม่ผ่าน" ·
+    ปุ่ม "บันทึกนโยบายของรายการนี้" ปิดตอนสร้างใหม่ และปิดเมื่อฟอร์มแก้ไขยังไม่บันทึก ("บันทึกรายการก่อน")
   - ยังไม่ทำในรอบนี้: คอลัมน์ "ระดับ Autopilot" ในตารางรายการ · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`) · LINE/คู่ค้าในขั้นส่ง · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน
 
 ### 2.7b ใบวางบิลรวมใบค้างชำระ (compose — ไม่ใช่ convert)
@@ -2998,6 +3003,13 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **ยังไม่ทำ (งานต่อ)**: สวิตช์ต่อใบ (246-QR-7) · บล็อกลิงก์ในอีเมล (ไฟล์ของรอบ 244 — PDF แนบมี QR แล้ว) · รวมบัญชีรับโอนของเว็บ (`SitePaymentGateway`) กับ `BankAccount` · `portal.html` ส่ง payload ไปสร้างรูปที่ `api.qrserver.com` + สำเนา EMVCo ฝั่ง JS
 - เทสต์ `PaymentQrRound246Tests` (payload EMVCo ทุกไบต์ · ตัวตรวจ · ตัวตัดสิน · HTML + QuestPDF มี/ไม่มี QR) · Db `PaymentQrRound246DbTests` (tenant · audit · ยอดสุทธิ · เพิกถอนแล้วไม่มี QR) ·
   ล็อก `tools/required_call_site_check.py` R246 (+ เคส R246a–h) — ยังไม่ได้คอมไพล์ในเครื่องนี้
+- **รอบ 250 WP-03 — QR พอร์ทัล/pay-link ผ่านเซิร์ฟเวอร์ (A G-01 · คำตัดสิน §2 #15)**: พอร์ทัลลูกค้าเรียก
+  `GET api/portal/{cid}/documents/{docId}/payment-options` (โทเค็นพอร์ทัล · ใบต้องเป็นของผู้ติดต่อในโทเค็น) ⇒ `PortalService.GetDocumentPaymentOptionsAsync`
+  สร้าง `PromptPayQrDataUri` ด้วย `PromptPayService.GenerateQrImage` (ตัวเดียวกับ pay-document) ฝัง `Document.BalanceDue` จากฐาน ·
+  ใบแจ้งหนี้ที่มีใบกำกับอ้างแล้ว = ไม่ฝังยอด (`PaymentQrPolicy.EmbedAmount`) · รูปที่ร้านอัปโหลดส่งต่อเฉพาะ URL ภายใน/https (`BookingPaymentChannels.QrImageUrlAcceptable`) ·
+  ลบ TLV builder ใน `portal.html` + ไม่มี `api.qrserver.com` ใน `wwwroot/` (checker `external_qr_check`) · หน้าเว็บรับเฉพาะ `data:image/png;base64,` ·
+  `pay-link.html` (ค่าบริการแพลตฟอร์ม) แสดง**รูป** QR จาก `qrPayload` ของผู้ให้บริการชำระเงิน (data URI/https — แบบเดียวกับ `pay-widget.js`) แทนข้อความดิบ ·
+  payment-options แบบไม่ระบุใบ (anonymous) คงเดิม (ไม่มี QR) · ล็อก R250W3
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -7806,3 +7818,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่ง
 _Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit 8304ce95` (+ ฝ่ายค้าน `29d6730f` · `ca10f623`))_
 _Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — `commit ecc6710f`)_
 _Last verified against codebase: 2026-11-06 (รอบ 250 WP-02b — §2.12g2: สลิปพอร์ทัล = PaymentIntent รอยืนยัน (ไม่สร้าง Payment) + ผู้อ่านยอด/จับคู่ธนาคารตัดแถว "[PENDING-VERIFY]" + migration ครั้งเดียว · workflow ข้ามบริษัท: คำตอบเชิญเหมือนกันทุกกรณี · จับคู่เลขภาษี+สาขา · ด่านสิทธิ์ + RejectApiKey · ส่งเข้าคู่ค้าล้มประทับป้ายบนเอกสาร + ส่งใหม่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4e3eef3c)_
+_Last verified against codebase: 2026-11-06 (รอบ 250 WP-03 — §2.12i QR พอร์ทัลลูกค้าสร้างที่เซิร์ฟเวอร์ (`PortalService.GetDocumentPaymentOptionsAsync` · ไม่มีบริการ QR ภายนอกใน wwwroot) · §2.7 นโยบายอนุมัติบันทึกกับฟอร์ม + payload null เมื่อโหลดตัวเลือกล้ม · แผงสินทรัพย์บนหน้าเอกสารตาม `DocumentResponse.HasAssetCandidateLines` · ปลดผังสินทรัพย์ตอนแก้ไขถูกปฏิเสธ · รหัสหัวเรื่อง e-Tax by Email ทับได้ที่ค่าตั้งแพลตฟอร์ม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 125f30a9)_

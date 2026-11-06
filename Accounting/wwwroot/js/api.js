@@ -1261,6 +1261,8 @@ const API = {
       // Fixed Assets
       getAssets: (q = '') => API.get(`${base}/fixedasset${q}`),
       getAsset: (id) => API.get(`${base}/fixedasset/${id}`),
+      // รอบ 250 WP-03: ตัวนับแท็บชนิด/รอตรวจ (นับทั้งฐาน — ตารางแบ่งหน้าที่เซิร์ฟเวอร์แล้ว)
+      getAssetCounts: (q = '') => API.get(`${base}/fixedasset/counts${q}`),
       // สินทรัพย์ที่ระบบสร้างอัตโนมัติจาก PV/PI และยังไม่ผ่านการ "ยืนยัน"
       // (NeedsReview=true) — UI ใช้เป็น badge เตือนผู้ใช้
       getAssetsNeedsReview: () => API.get(`${base}/fixedasset/needs-review`),

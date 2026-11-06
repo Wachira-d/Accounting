@@ -50,6 +50,8 @@
 
     <div class="admin-card">
       <div class="admin-card-header"><span class="admin-card-title" id="docTitle">กำลังโหลด...</span><span id="docStatus"></span></div>
+      <!-- รอบ 250 WP-03 (A H-01 · คำตัดสิน Y6): ฉบับตั้งต้นมีข้อใหม่ที่ฉบับเผยแพร่ยังไม่มี — เซิร์ฟเวอร์เทียบ (LegalDocumentClauseDiff) · การกดเผยแพร่เป็นของเจ้าของ -->
+      <div id="newClausesBanner" role="status" style="display:none;margin:8px 0;padding:10px 12px;background:#fef3c7;border:1px solid #fcd34d;border-left:4px solid #f59e0b;border-radius:8px;font-size:13px;color:#78350f;line-height:1.6"></div>
       <div class="url-row">
         <span>🔗 URL สาธารณะ:</span>
         <code id="publicUrl">-</code>
@@ -255,6 +257,7 @@
         document.getElementById('docStatus').innerHTML =
           `<span class="pill pill-green">ฉบับปัจจุบัน ${esc(d.current.version)} · มีผล ${esc(this.thaiDate(d.current.effectiveDate))}</span> `
           + (d.current.source === 'builtin' ? '<span class="pill">ฉบับตั้งต้นของระบบ</span>' : '');
+        this.renderNewClausesBanner();
         document.getElementById('publicUrl').textContent = d.publicUrl;
         document.getElementById('openUrlBtn').href = d.publicUrl;
         // รอบ 232: ฉบับอังกฤษ = URL เดียวกัน + ?lang=en · สถานะมาจากเซิร์ฟเวอร์ (englishAvailable) ไม่เดาจากช่องร่าง
@@ -311,6 +314,57 @@
         if (!url) return;
         try { await navigator.clipboard.writeText(url); AdminLayout.toast('คัดลอก URL แล้ว'); }
         catch (_) { prompt('คัดลอก URL นี้', url); }
+      },
+
+      /** แบนเนอร์ "ฉบับตั้งต้นมีข้อใหม่ที่ฉบับเผยแพร่ยังไม่มี" — รายการข้อจากเซิร์ฟเวอร์ (หน้าเว็บไม่เทียบเอง) · สร้างด้วย DOM/textContent */
+      renderNewClausesBanner() {
+        const box = document.getElementById('newClausesBanner');
+        const list = (this.doc && this.doc.builtInNewClauses) || [];
+        box.textContent = '';
+        if (!list.length) { box.style.display = 'none'; return; }
+        box.style.display = '';
+        const head = document.createElement('div');
+        head.style.fontWeight = '700';
+        head.textContent = `⚠️ ฉบับตั้งต้นของระบบมี ${list.length} ข้อที่ฉบับเผยแพร่ยังไม่มี — ลูกค้ายังไม่ได้ยอมรับข้อเหล่านี้`;
+        box.appendChild(head);
+        const ul = document.createElement('ul');
+        ul.style.cssText = 'margin:4px 0 4px 18px;padding:0';
+        list.forEach(c => { const li = document.createElement('li'); li.textContent = c; ul.appendChild(li); });
+        box.appendChild(ul);
+        const tail = document.createElement('div');
+        tail.textContent = this.doc.draftCoversBuiltInNewClauses
+          ? 'ร่างที่บันทึกไว้มีครบแล้ว — ตรวจเนื้อความ/ฉบับอังกฤษ แล้วกด “เผยแพร่” (การยอมรับของลูกค้าเริ่มนับจากฉบับที่เผยแพร่ — ระบบเผยแพร่แทนไม่ได้)'
+          : 'กด “เริ่มจากฉบับตั้งต้น” เพื่อคัดลอกฉบับตั้งต้นมาเป็นร่าง (หรือเพิ่มข้อเหล่านี้ในร่างเอง) ตรวจแล้วกด “เผยแพร่” — ระบบเผยแพร่แทนไม่ได้';
+        box.appendChild(tail);
+        if (!this.doc.draftCoversBuiltInNewClauses) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'admin-btn admin-btn-outline admin-btn-sm';
+          btn.style.marginTop = '6px';
+          btn.textContent = 'เริ่มจากฉบับตั้งต้น';
+          btn.addEventListener('click', () => this.startFromBuiltIn());
+          box.appendChild(btn);
+        }
+      },
+
+      /** คัดลอกฉบับตั้งต้นของระบบมาเป็นร่าง (ไทย + คำแปลตั้งต้น) + เสนอเลขฉบับถัดไป — ใช้ endpoint builtin-en เดิมสำหรับอังกฤษ */
+      async startFromBuiltIn() {
+        const d = this.doc; if (!d) return;
+        const body = document.getElementById('dBody');
+        if (body.value.trim() && !confirm('แทนที่เนื้อความในร่างด้วยฉบับตั้งต้นของระบบ?')) return;
+        try {
+          const res = await AdminAPI.get(`${this.base}/${this.kind}/builtin`);
+          body.value = (res && res.data && res.data.bodyMarkdown) || '';
+          document.getElementById('dBodyEn').value = (res && res.data && res.data.bodyMarkdownEn) || '';
+        } catch (e) { alert('โหลดฉบับตั้งต้นไม่สำเร็จ: ' + e.message); return; }
+        const src = d.upcoming || d.current;
+        const parts = String(src.version).split('.').map(Number);
+        parts[1] = (parts[1] || 0) + 1;
+        document.getElementById('dVersion').value = `${parts[0] || 1}.${parts[1]}`;
+        document.getElementById('dEffective').value = d.today;
+        this._dirty = true;
+        document.getElementById('publishBtn').disabled = true;
+        body.scrollIntoView({ behavior: 'smooth', block: 'center' });
       },
 
       /** คัดลอกฉบับปัจจุบันมาเป็นร่าง + เสนอเลขฉบับถัดไป (เซิร์ฟเวอร์ตรวจอีกครั้งตอนเผยแพร่) */

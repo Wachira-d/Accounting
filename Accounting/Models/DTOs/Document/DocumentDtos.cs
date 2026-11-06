@@ -1096,7 +1096,11 @@ public record DocumentResponse(
     IReadOnlyList<PaymentSourceLineDto>? PaymentSources = null,
     /// <summary>รอบ 250 WP-02b (P-6): มีป้าย "ส่งเอกสารเข้าระบบคู่ค้าไม่สำเร็จ" ค้างอยู่ (<c>Helpers/PartnerRoutingFailedNote</c>) — เซิร์ฟเวอร์ตัดสิน ·
     /// หน้าเอกสารแสดงแถบเตือน + ปุ่ม "ส่งให้คู่ค้าอีกครั้ง" · ป้ายถูกล้างเมื่อส่งสำเร็จ (ล้มดัง — เดิมกลืนด้วย LogWarning)</summary>
-    bool PartnerRoutingFailed = false);
+    bool PartnerRoutingFailed = false,
+    /// <summary>รอบ 250 WP-03 (D §3.4 · server computes): ใบนี้ควรแสดงแผง "สินทรัพย์ถาวร" ไหม — ชนิดฝั่งซื้อที่ลงทะเบียนอัตโนมัติได้
+    /// (<c>FixedAssetService.SupportsAutoRegister</c>) + มีบรรทัดผังสินทรัพย์ (12xxx) หรือมัดจำ (118xx) · บรรทัดไหนผูกได้จริงยังตัดสินที่
+    /// <c>GetDocumentAssetLinesAsync</c> · เดิมหน้าเว็บถือกติกาเอง ⇒ เพิ่มผังใหม่ที่เซิร์ฟเวอร์เมื่อไรแผงหายเงียบ</summary>
+    bool HasAssetCandidateLines = false);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);

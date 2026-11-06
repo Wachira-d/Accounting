@@ -8,7 +8,15 @@ public interface IFixedAssetService
 {
     Task<FixedAssetResponse> CreateAsync(Guid companyId, CreateFixedAssetRequest request, string createdBy);
     Task<FixedAssetResponse> GetByIdAsync(Guid companyId, Guid assetId);
-    Task<PagedResponse<FixedAssetResponse>> GetAllAsync(Guid companyId, PagedRequest request);
+    /// <summary>รอบ 250 WP-03 (D §2.5): กรองชนิด/สถานะ/รอตรวจที่เซิร์ฟเวอร์ + แบ่งหน้าจริง — เดิมหน้าเว็บดึง 200 แถวแล้วกรองเอง ⇒ บริษัทที่มี
+    /// สินทรัพย์ &gt; 200 รายการเห็นไม่ครบเงียบ ๆ · null = ไม่กรอง</summary>
+    Task<PagedResponse<FixedAssetResponse>> GetAllAsync(Guid companyId, PagedRequest request,
+        global::Accounting.Models.Enums.AssetType? assetType = null,
+        global::Accounting.Models.Enums.AssetStatus? status = null,
+        bool? needsReview = null);
+    /// <summary>รอบ 250 WP-03: ตัวนับบนแท็บชนิด (นับทั้งฐานตามคำค้น/สถานะ ไม่ใช่เฉพาะหน้าที่โหลด) + จำนวนรอตรวจ</summary>
+    Task<FixedAssetTypeCounts> GetTypeCountsAsync(Guid companyId, string? search,
+        global::Accounting.Models.Enums.AssetStatus? status = null);
     /// <summary>สินทรัพย์ที่ระบบสร้างอัตโนมัติจาก PV/PI ที่ผู้ใช้ยังไม่ "ยืนยัน"
     /// (NeedsReview=true) — บังคับให้ผู้ใช้เติมรายละเอียดก่อนใช้งานจริง.</summary>
     Task<List<FixedAssetResponse>> GetNeedsReviewAsync(Guid companyId);
