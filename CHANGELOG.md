@@ -6770,3 +6770,8 @@ _รอบ 254 WP-11 L2 แก้ตามฝ่ายค้าน (DECISIONS 25
 เกณฑ์ค้าง 30 นาที นับครั้ง · M3 ใบ e-Tax by Email ส่งอีเมลเสมอ + ไม่นับการ์ด LINE เป็นหลักฐานของบริษัทโหมดนี้ · M4 ลิงก์ใหม่ยกเลิกลิงก์เดิม + ยกเลิกลิงก์ + ชื่อโปรไฟล์ LINE ·
 L1–L7 (ตัวจำกัด · accepted request id · 200+เหตุ · ทะเบียน LineGroupId · ไม่พบผู้รับ≠บล็อก · บรรทัดยกเลิกไม่หาย · RoPA) · L9 "หยุด" = หยุดเฉพาะ LINE. ยังไม่ได้คอมไพล์ในเครื่องนี้_
 
+_รอบ 254 WP-11 L3 (กลุ่ม LINE ของผู้ติดต่อผ่าน OA บริษัท · Q1(b)/Q2/Q5/Q8 · DECISIONS 254-WP11-9): `LineGroupBindRule` (คำสั่ง #HeyNextAcc/#ByeNextAcc · รหัส GB-) ·
+`ContactLineGroupService` (webhook กลุ่ม: join/leave/สมาชิก/คำสั่ง · preview/confirm ผูกด้วยรหัส + หลักฐานรับรองสิทธิ์ · บอทออกเมื่อไม่เหลือการผูก) ·
+`LineGroupBindCodes` + `LineWebhookEventsSeen` (กัน webhook ซ้ำ · ลบในงาน PDPA รายคืน) · `LineNotifyService` ข้อความ text ถึงผู้ติดต่อ/ข้อมูลกลุ่ม/ออกจากกลุ่ม (ด่านเดียวกับการ์ด ·
+ไม่มีวันออก/ส่งเข้ากลุ่มกลางของแอดมิน) · ทะเบียน SecretReprotectJob + `LineGroupBindCodes.GroupIdProtected` · หน้า contacts ฟอร์มผูกกลุ่ม. ยังไม่ได้คอมไพล์ในเครื่องนี้_
+

@@ -16,7 +16,9 @@ public class AccountingDbContext : DbContext
     public DbSet<CustomerLineLink> CustomerLineLinks => Set<CustomerLineLink>();   // รอบ 211
     public DbSet<CustomerLineLinkCode> CustomerLineLinkCodes => Set<CustomerLineLinkCode>();   // รอบ 211
     public DbSet<LineQueue> LineQueues => Set<LineQueue>();   // รอบ 254 WP-11 L2 — คิวส่ง LINE ถึงผู้ติดต่อ (Helpers/ContactLineDeliveryMigration)
-    public DbSet<ContactLineInvite> ContactLineInvites => Set<ContactLineInvite>();   // รอบ 254 WP-11 L2 — ลิงก์/QR ผูก LINE ของผู้ติดต่อ (ผ่าน OA บริษัท)
+    public DbSet<ContactLineInvite> ContactLineInvites => Set<ContactLineInvite>();
+    public DbSet<LineGroupBindCode> LineGroupBindCodes => Set<LineGroupBindCode>();   // รอบ 254 WP-11 L3 — รหัสผูกกลุ่ม #HeyNextAcc
+    public DbSet<LineWebhookEventSeen> LineWebhookEventsSeen => Set<LineWebhookEventSeen>();   // รอบ 254 WP-11 L3 — กัน webhook ซ้ำ   // รอบ 254 WP-11 L2 — ลิงก์/QR ผูก LINE ของผู้ติดต่อ (ผ่าน OA บริษัท)
     public DbSet<ContactNotifyEndpoint> ContactNotifyEndpoints => Set<ContactNotifyEndpoint>();   // รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (Helpers/ContactNotifyEndpointMigration)
     public DbSet<StaffDailySummaryConfig> StaffDailySummaryConfigs => Set<StaffDailySummaryConfig>();   // รอบ 212 C
     public DbSet<StaffDailySummaryDelivery> StaffDailySummaryDeliveries => Set<StaffDailySummaryDelivery>();   // รอบ 212 C
@@ -3701,6 +3703,22 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => x.TokenHash).IsUnique().HasDatabaseName("IX_ContactLineInvites_TokenHash");
             e.HasIndex(x => new { x.CompanyId, x.CodeHash }).HasDatabaseName("IX_ContactLineInvites_Company_CodeHash");
             e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<LineGroupBindCode>(e =>
+        {
+            e.Property(x => x.CodeHash).HasMaxLength(64);
+            e.Property(x => x.GroupIdHash).HasMaxLength(64);
+            e.Property(x => x.OaScope).HasMaxLength(16);
+            e.Property(x => x.OaDestination).HasMaxLength(64);
+            e.Property(x => x.GroupName).HasMaxLength(200);
+            e.HasIndex(x => x.CodeHash).IsUnique().HasDatabaseName("IX_LineGroupBindCodes_CodeHash");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<LineWebhookEventSeen>(e =>
+        {
+            e.ToTable("LineWebhookEventsSeen");
+            e.HasKey(x => x.WebhookEventId);
+            e.Property(x => x.WebhookEventId).HasMaxLength(100);
         });
         // รอบ 245 L1 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactNotifyEndpointMigration (ไม่มี unique โดยตั้งใจ — ดูเหตุในไฟล์นั้น)
         modelBuilder.Entity<ContactNotifyEndpoint>(e =>

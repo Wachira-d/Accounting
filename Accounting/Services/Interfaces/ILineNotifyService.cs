@@ -4,6 +4,9 @@ namespace Accounting.Services.Interfaces;
 /// รอบ 232: <see cref="RuleCode"/> = กติกาของ <c>Helpers/NotificationAudiencePolicy</c> ที่ตัดสินเส้นทาง (null = ไม่ได้ถูกนโยบายกั้น) ·
 /// รอบ 254 WP-11: <see cref="HttpStatus"/> = สถานะ HTTP ที่ LINE ตอบ (null = ไม่ได้ยิง/เครือข่ายล้ม) · <see cref="TransportError"/> = เครือข่าย/timeout (ลองใหม่ได้) ·
 /// <see cref="LineRequestId"/> = <c>x-line-request-id</c> ของคำขอที่ LINE รับ (หลักฐานการส่ง) — ผู้จำแนกผลตัวเดียว <c>Helpers/LinePushOutcome</c></summary>
+/// <summary>รอบ 254 WP-11 L3: ชื่อ/จำนวนสมาชิกของกลุ่มตามที่ OA ของบริษัทเห็น (null = ไม่รู้)</summary>
+public sealed record LineGroupSummary(string? Name, int? MemberCount);
+
 public sealed record LinePushResult(bool Ok, string? Error, string? RuleCode = null, int? HttpStatus = null, string? LineRequestId = null, bool TransportError = false)
 {
     public static LinePushResult Success { get; } = new(true, null);
@@ -52,6 +55,16 @@ public interface ILineNotifyService
     /// ทุกครั้งส่ง <c>X-Line-Retry-Key</c> = <paramref name="retryKey"/> (ลองใหม่ด้วย key เดิม ⇒ LINE ไม่ส่งซ้ำ)</summary>
     Task<LinePushResult> TryPushContactAsync(Guid companyId, string oaScope, Accounting.Helpers.LineTargetKind target, string to,
         string altText, object flexContents, Guid retryKey);
+
+    /// <summary>รอบ 254 WP-11 L3: ข้อความ text ถึงปลายทางของผู้ติดต่อ (ประกาศผูกกลุ่ม) — ด่านเดียวกับ <see cref="TryPushContactAsync"/> ·
+    /// กลุ่มกลางของแอดมินปฏิเสธเสมอ · OA กลางยังปิด (N8)</summary>
+    Task<LinePushResult> TryPushContactTextAsync(Guid companyId, string oaScope, Accounting.Helpers.LineTargetKind target, string to, string text, Guid retryKey);
+
+    /// <summary>รอบ 254 WP-11 L3: ชื่อกลุ่ม + จำนวนสมาชิก (GET group summary / members count) ผ่าน OA ของบริษัท — ล้ม ⇒ null (ผู้เรียกปฏิเสธการออกรหัสเมื่อไม่รู้จำนวน)</summary>
+    Task<LineGroupSummary?> TryGetCompanyGroupSummaryAsync(Guid companyId, string groupId);
+
+    /// <summary>รอบ 254 WP-11 L3 (คำตอบเจ้าของ Q8): บอทออกจากกลุ่ม (POST group leave) ผ่าน OA ของบริษัท · ไม่ใช่กลุ่มกลางของแอดมินเท่านั้น</summary>
+    Task<bool> TryLeaveCompanyGroupAsync(Guid companyId, string groupId);
 
     /// <summary>รอบ 254 ฝ่ายค้าน M4: ชื่อแสดงของผู้ใช้ LINE ตามที่ <b>OA ของบริษัท</b>เห็น (GET profile) — ให้พนักงานเห็นว่าใครผูก · ไม่มี OA/ล้ม ⇒ null (ไม่ล้มการผูก)</summary>
     Task<string?> TryGetCompanyOaProfileNameAsync(Guid companyId, string lineUserId);

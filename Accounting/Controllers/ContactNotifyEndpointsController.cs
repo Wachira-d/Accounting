@@ -22,11 +22,37 @@ public class ContactNotifyEndpointsController : ControllerBase
     private readonly IContactNotifyEndpointService _endpoints;
     private readonly IPermissionService _permissions;
     private readonly IContactLineBindingService? _lineBinding;
+    private readonly IContactLineGroupService? _groups;
 
     public ContactNotifyEndpointsController(IContactRecipientResolver resolver, IContactNotifyEndpointService endpoints, IPermissionService permissions,
-        IContactLineBindingService? lineBinding = null)
+        IContactLineBindingService? lineBinding = null, IContactLineGroupService? groups = null)
     {
-        _resolver = resolver; _endpoints = endpoints; _permissions = permissions; _lineBinding = lineBinding;
+        _resolver = resolver; _endpoints = endpoints; _permissions = permissions; _lineBinding = lineBinding; _groups = groups;
+    }
+
+    /// <summary>รอบ 254 WP-11 L3: ตรวจรหัสผูกกลุ่ม (GB-…) ก่อนผูก — ชื่อ/จำนวนสมาชิก/ข้อความรับรอง · ผูกไม่ได้ = 200 + เหตุ (Problem) · ด่าน Contact.Edit</summary>
+    [HttpPost("line-group/preview")]
+    [RejectApiKey("ตรวจรหัสผูกกลุ่ม LINE")]
+    public async Task<ActionResult<ApiResponse<ContactLineGroupPreview>>> PreviewLineGroup(Guid companyId, Guid contactId,
+        [FromBody] ConfirmContactLineGroupRequest request, CancellationToken ct)
+    {
+        if (await DenyKeyAsync(companyId, "ผูกกลุ่ม LINE ของผู้ติดต่อ") is { } deny)
+            return StatusCode(403, new ApiResponse<ContactLineGroupPreview>(false, null, deny));
+        if (_groups == null) return StatusCode(503, new ApiResponse<ContactLineGroupPreview>(false, null, "บริการกลุ่ม LINE ยังไม่พร้อม"));
+        var p = await _groups.PreviewAsync(companyId, contactId, request?.Code, Actor().UserId, ct);
+        return Ok(new ApiResponse<ContactLineGroupPreview>(p.Problem == null, p, p.Problem));
+    }
+
+    /// <summary>รอบ 254 WP-11 L3: ผูกกลุ่มกับผู้ติดต่อ (รหัสใช้ครั้งเดียว · รับรองสิทธิ์ของสมาชิก · บอทประกาศในกลุ่ม) — ด่าน Contact.Edit</summary>
+    [HttpPost("line-group/confirm")]
+    [RejectApiKey("ผูกกลุ่ม LINE ของผู้ติดต่อ")]
+    public async Task<ActionResult<ApiResponse<ContactNotifyOverviewResponse>>> ConfirmLineGroup(Guid companyId, Guid contactId,
+        [FromBody] ConfirmContactLineGroupRequest request, CancellationToken ct)
+    {
+        if (await DenyKeyAsync(companyId, "ผูกกลุ่ม LINE ของผู้ติดต่อ") is { } deny) return Forbid403(deny);
+        if (_groups == null) return StatusCode(503, new ApiResponse<ContactNotifyOverviewResponse>(false, null, "บริการกลุ่ม LINE ยังไม่พร้อม"));
+        var r = await _groups.ConfirmAsync(companyId, contactId, request, Actor(), ct);
+        return StatusCode(201, new ApiResponse<ContactNotifyOverviewResponse>(true, r, "ผูกกลุ่ม LINE แล้ว — บอทประกาศในกลุ่มแล้ว"));
     }
 
     [HttpGet]

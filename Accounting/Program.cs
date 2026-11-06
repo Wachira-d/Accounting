@@ -745,7 +745,8 @@ builder.Services.AddScoped<IPosService, PosService>();
 builder.Services.AddScoped<IContactRecipientResolver, ContactRecipientResolver>();   // รอบ 245 L1 — ผู้อ่านเดียวของปลายทางแจ้งเตือนของผู้ติดต่อ
 builder.Services.AddScoped<IContactNotifyEndpointService, ContactNotifyEndpointService>();   // รอบ 245 L1 — ผู้เขียนเดียว (แท็บช่องทางแจ้งเตือน)
 builder.Services.AddScoped<IContactLineBindingService, ContactLineBindingService>();   // รอบ 254 WP-11 L2 — ลิงก์/QR ผูก LINE ของผู้ติดต่อ (OA บริษัท · ยินยอมบนมือถือ)
-builder.Services.AddScoped<IContactLineQueueService, ContactLineQueueService>();   // รอบ 254 WP-11 L2 — ผู้ส่งคิว LINE ถึงผู้ติดต่อ (EmailScheduleWorker เรียก)
+builder.Services.AddScoped<IContactLineQueueService, ContactLineQueueService>();
+builder.Services.AddScoped<IContactLineGroupService, ContactLineGroupService>();   // รอบ 254 WP-11 L3 — กลุ่ม LINE ของผู้ติดต่อ (#HeyNextAcc · OA บริษัท)   // รอบ 254 WP-11 L2 — ผู้ส่งคิว LINE ถึงผู้ติดต่อ (EmailScheduleWorker เรียก)
 builder.Services.AddScoped<INextAccLineConfig, NextAccLineConfig>();   // รอบ 212 D — ค่าตั้ง LINE OA กลาง: หน้าแอดมินก่อน · config Line:* fallback (ผู้อ่านตัวเดียว)
 builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
 // รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน (push ผ่าน OA กลาง) · มิเตอร์ช่องกลาง = no-op จนกว่าโควตาแพ็ก A เข้า (ผู้ประสานงานต่อสายตอน merge)

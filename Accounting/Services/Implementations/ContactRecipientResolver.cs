@@ -109,9 +109,6 @@ public class ContactRecipientResolver : IContactRecipientResolver
             {
                 new(NotifyEndpointKind.LineUser, "เชิญผู้ใช้ให้ผูก LINE (สมัครผู้ใช้พอร์ทัลก่อน)",
                     "เร็ว ๆ นี้ (เฟส L5) — ทางลัด \"ลิงก์/QR ผูก LINE\" ใช้ได้แล้ว (ผู้รับกดยินยอมบนมือถือของตัวเอง · ผ่าน LINE OA ของบริษัท · คำตอบเจ้าของ Q6)"),
-                new(NotifyEndpointKind.LineGroup, "เพิ่มกลุ่ม LINE (#HeyNextAcc)",
-                    $"เร็ว ๆ นี้ (เฟส L3) — เชิญบอทเข้ากลุ่ม พิมพ์ #HeyNextAcc แล้วนำรหัสผูกมาใส่ที่นี่ (ใช้ groupId อย่างเดียวผูกไม่ได้) · กลุ่มไม่เกิน {ContactRecipientRule.MaxGroupMembers} คน · "
-                    + "แสดงยอดเงินเป็นค่าตั้งต้นและปิดได้รายกลุ่ม · กลุ่ม LINE กลางของระบบใช้เป็นปลายทางไม่ได้ (คำตอบเจ้าของ Q1(b)/Q2/Q5)"),
             },
             DeliveryNote,
             canEdit,

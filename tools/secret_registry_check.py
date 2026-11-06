@@ -36,7 +36,7 @@ INDIRECT = {
         ["GoogleClientSecret", "FacebookAppSecret", "LineLoginChannelSecret"],
 }
 # อยู่ในทะเบียนได้แม้ไม่มีผู้เขียนในเรพ — ถอดด้วย SecretProtector (CmsWebhookController) · ค่าเดิมในฐานต้องย้ายคีย์
-READ_ONLY_REGISTERED = {"WebhookSecret", "LineGroupId"}   # LineGroupId: รอบ 254 ฝ่ายค้าน L4 — ลงทะเบียนก่อนเส้นผูกกลุ่ม (L3) มีผู้เขียน · เอาออกเมื่อมีผู้เขียน
+READ_ONLY_REGISTERED = {"WebhookSecret"}
 
 CALL = re.compile(r"\b(?:_secrets|secrets|_secretProtector|_secretsProtector)\.Protect\(|\bEncryptionHelper\.Encrypt\(")
 ASSIGN = re.compile(r"(\w+)\s*=(?![=>])")

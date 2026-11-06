@@ -1202,6 +1202,14 @@
             ${o.lineBind.reason ? `<div style="font-size:11px;color:#64748b;margin-top:2px">${esc(o.lineBind.reason)}</div>` : ''}
             ${o.lineBind.openInvites > 0 ? `<button type="button" class="btn btn-sm btn-ghost text-red" style="margin-left:6px" onclick="Page.revokeLineInvites()">ยกเลิกลิงก์ที่ยังเปิด (${Number(o.lineBind.openInvites)})</button>` : ''}
             <div id="notifyLineInviteOut" style="margin-top:6px"></div></div>` : '';
+        // รอบ 254 WP-11 L3: ผูกกลุ่ม LINE ด้วยรหัสที่บอทตอบเมื่อพิมพ์ #HeyNextAcc ในกลุ่ม (เงื่อนไขเดียวกับลิงก์ผูก — OA ของบริษัทพร้อม · สิทธิ์แก้)
+        const groupBind = o.lineBind && o.lineBind.available ? `<div style="margin:8px 0;border:1px dashed #cbd5e1;border-radius:6px;padding:8px">
+            <div style="font-size:12px;color:#334155;margin-bottom:4px">เพิ่มกลุ่ม LINE: เชิญ LINE OA ของบริษัทเข้ากลุ่ม → พิมพ์ <b>#HeyNextAcc</b> ในกลุ่ม → ใส่รหัสที่บอทตอบ</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <input type="text" class="form-input" id="notifyGroupCode" placeholder="GB-XXXXXXXX" maxlength="20" style="max-width:180px" aria-label="รหัสผูกกลุ่ม">
+              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.previewLineGroup()">ตรวจรหัส</button>
+            </div>
+            <div id="notifyGroupPreview" style="margin-top:6px"></div></div>` : '';
         const topicOpts = (o.topics || []).map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('');
         panel.innerHTML = `
           <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:8px 10px;font-size:12px;margin-bottom:10px">${esc(o.note)}</div>
@@ -1216,6 +1224,7 @@
           <div style="font-weight:600;margin:6px 0">LINE</div>
           ${lines.length ? lines.map(row).join('') : '<div style="font-size:12px;color:#64748b;margin-bottom:6px">ยังไม่มีปลายทาง LINE</div>'}
           ${bind /* html — หนีแล้ว */}
+          ${groupBind /* html — หนีแล้ว */}
           ${soon /* html — หนีแล้ว */}
           <div id="notifyAutoSendBox" style="margin:12px 0 6px;font-size:12px;color:#64748b">กำลังโหลดค่าตั้ง "ส่งอัตโนมัติ"…</div>
           <div style="font-weight:600;margin:12px 0 6px">ดูว่าใครจะได้รับอีเมล (ตัวหาผู้รับเดียวกับการส่งจริง)</div>
@@ -1279,6 +1288,32 @@
             catch (_) { Layout.toast('คัดลอกไม่ได้ — เลือกข้อความแล้วคัดลอกเอง', 'error'); }
           });
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      /** รอบ 254 WP-11 L3: ตรวจรหัสผูกกลุ่ม — ชื่อ/จำนวนสมาชิก/ข้อความรับรองมาจากเซิร์ฟเวอร์ · ผูกไม่ได้ = แสดงเหตุ */
+      async previewLineGroup() {
+        const out = document.getElementById('notifyGroupPreview'); if (!out) return;
+        const esc = Layout.esc;
+        const code = (document.getElementById('notifyGroupCode').value || '').trim();
+        if (!code) { Layout.toast('ใส่รหัสที่บอทตอบในกลุ่มก่อน', 'error'); return; }
+        try {
+          const res = await API.post(this._notifyUrl('/line-group/preview'), { code, topics: null, showAmounts: null, acceptResponsibility: false });
+          const p = res && res.data;
+          if (!res || !res.success || !p) { out.innerHTML = `<div class="text-red" style="font-size:12px">${esc((res && res.message) || 'ผูกไม่ได้')}</div>`; return; }
+          const topicBoxes = (this._notify?.topics || []).map(t => `<label style="font-size:12px;margin-right:8px"><input type="checkbox" data-group-topic="${esc(t.key)}" ${t.key === 'Document' || t.key === 'Dunning' ? 'checked' : ''}> ${esc(t.label)}</label>`).join('');
+          out.innerHTML = `<div style="font-size:13px"><b>${esc(p.groupName || 'กลุ่ม LINE')}</b> · ${Number(p.memberCount || 0)} คน · ผูกกับผู้ติดต่อ <b>${esc(p.contactName)}</b></div>
+            <div style="margin-top:4px">${topicBoxes /* html — หนีแล้ว */}</div>
+            <label style="font-size:12px;display:block;margin-top:4px"><input type="checkbox" id="notifyGroupAmounts" checked> แสดงยอดเงินในกลุ่ม</label>
+            <label style="font-size:12px;display:block;margin-top:4px"><input type="checkbox" id="notifyGroupAttest"> ${esc(p.attestText)}</label>
+            <button type="button" class="btn btn-sm btn-primary" style="margin-top:6px" onclick="Page.confirmLineGroup()">ยืนยันผูกกลุ่ม</button>`;
+        } catch (e) { out.innerHTML = `<div class="text-red" style="font-size:12px">${esc(e.message)}</div>`; }
+      },
+      async confirmLineGroup() {
+        const attest = document.getElementById('notifyGroupAttest');
+        if (!attest || !attest.checked) { Layout.toast('ติ๊กยืนยันสิทธิ์ของสมาชิกกลุ่มก่อน', 'error'); return; }
+        const code = (document.getElementById('notifyGroupCode').value || '').trim();
+        const topics = Array.from(document.querySelectorAll('#notifyGroupPreview input[data-group-topic]')).filter(cb => cb.checked).map(cb => cb.dataset.groupTopic);
+        const showAmounts = !!document.getElementById('notifyGroupAmounts')?.checked;
+        await this._notifySend('POST', '/line-group/confirm', { code, topics, showAmounts, acceptResponsibility: true }, 'ผูกกลุ่ม LINE แล้ว');
       },
       /** รอบ 254 ฝ่ายค้าน M4: ยกเลิกลิงก์ผูก LINE ที่ยังเปิด (ลิงก์หลุด/ส่งผิดคน) — วาดใหม่จากคำตอบเซิร์ฟเวอร์ */
       async revokeLineInvites() {

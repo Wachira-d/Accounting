@@ -112,6 +112,32 @@ public class LineDeliveryRound254Tests
         Assert.Contains("อีเมล", ContactLineBindRule.Replies.Stopped("ร้าน"));   // L9: หยุดเฉพาะ LINE
     }
 
+    // ───── L3 กลุ่ม: คำสั่ง + รหัส ─────
+
+    [Theory]
+    [InlineData("#HeyNextAcc", LineGroupCommand.HeyNextAcc)]
+    [InlineData("  #heynextacc ", LineGroupCommand.HeyNextAcc)]
+    [InlineData("＃HeyNextAcc", LineGroupCommand.HeyNextAcc)]
+    [InlineData("# HeyNextAcc", LineGroupCommand.HeyNextAcc)]
+    [InlineData("#ByeNextAcc", LineGroupCommand.ByeNextAcc)]
+    [InlineData("HeyNextAcc", LineGroupCommand.None)]
+    [InlineData("#HeyNextAccX", LineGroupCommand.None)]
+    [InlineData("ส่งใบเสนอราคา #HeyNextAcc", LineGroupCommand.None)]
+    [InlineData("", LineGroupCommand.None)]
+    public void คำสั่งกลุ่ม_รับเฉพาะรูปที่กำหนด(string text, LineGroupCommand expected) => Assert.Equal(expected, LineGroupBindRule.Parse(text));
+
+    [Fact]
+    public void รหัสผูกกลุ่ม_อ่านได้ทั้งมีและไม่มีคำนำหน้า_ตัวนอกชุดปฏิเสธ()
+    {
+        Assert.Equal("ABCDEFGH", LineGroupBindRule.TryParseCode("gb-abcdefgh"));
+        Assert.Equal("ABCDEFGH", LineGroupBindRule.TryParseCode("ABCDEFGH"));
+        Assert.Null(LineGroupBindRule.TryParseCode("GB-ABCDEFG0"));   // 0 ไม่อยู่ในชุด
+        Assert.Null(LineGroupBindRule.TryParseCode("C1234567890abcdef1234567890abcdef"));   // groupId อย่างเดียวผูกไม่ได้
+        Assert.Equal(LineGroupBindRule.Hash("abcdefgh"), LineGroupBindRule.Hash("ABCDEFGH"));
+        Assert.NotEqual(LineGroupBindRule.Hash("ABCDEFGH"), CustomerLineLinkRule.Hash("ABCDEFGH"));   // คนละคำนำหน้า ⇒ คนละ hash
+        Assert.Contains("GB-ABCDEFGH", LineGroupBindRule.Replies.Code("ABCDEFGH", "กลุ่ม", DateTime.UtcNow));
+    }
+
     [Fact]
     public void Outcome_เครือข่ายล้ม_ลองใหม่_ส่วนไม่มี_token_ล้มถาวร()
     {

@@ -83,5 +83,30 @@ public static class ContactLineDeliveryMigration
         """,
         """CREATE UNIQUE INDEX IF NOT EXISTS "IX_ContactLineInvites_TokenHash" ON "ContactLineInvites" ("TokenHash");""",
         """CREATE INDEX IF NOT EXISTS "IX_ContactLineInvites_Company_CodeHash" ON "ContactLineInvites" ("CompanyId", "CodeHash");""",
+        // รอบ 254 WP-11 L3: รหัสผูกกลุ่ม (ระดับแพลตฟอร์ม — ไม่มี CompanyId) + กัน webhook ซ้ำ
+        """
+        CREATE TABLE IF NOT EXISTS "LineGroupBindCodes" (
+            "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+            "CodeHash" varchar(64) NOT NULL,
+            "GroupIdProtected" text NOT NULL DEFAULT '',
+            "GroupIdHash" varchar(64) NOT NULL DEFAULT '',
+            "OaScope" varchar(16) NOT NULL DEFAULT '',
+            "OaDestination" varchar(64) NULL,
+            "CompanyIdHint" uuid NULL,
+            "GroupName" varchar(200) NULL,
+            "MemberCount" integer NULL,
+            "ExpiresAt" timestamp without time zone NOT NULL,
+            "UsedAt" timestamp without time zone NULL,
+            "UsedByCompanyId" uuid NULL,
+            "EndpointId" uuid NULL,
+            "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'),
+            "CreatedBy" text NULL,
+            "UpdatedAt" timestamp without time zone NULL,
+            "UpdatedBy" text NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT false
+        );
+        """,
+        """CREATE UNIQUE INDEX IF NOT EXISTS "IX_LineGroupBindCodes_CodeHash" ON "LineGroupBindCodes" ("CodeHash");""",
+        """CREATE TABLE IF NOT EXISTS "LineWebhookEventsSeen" ("WebhookEventId" varchar(100) NOT NULL PRIMARY KEY, "SeenAt" timestamp without time zone NOT NULL);""",
     };
 }
