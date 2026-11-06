@@ -118,7 +118,7 @@ public static class NotifyQuotaPolicy
     /// <c>notify.topup</c>) ชนะ · null/นอกช่วง ⇒ ค่าตั้งต้น <see cref="Models.Constants.AddOnCodes.MessagesPerNotifyTopUpPack"/> / <see cref="Models.Constants.AddOnCodes.TopUpValidDays"/>
     /// (<c>documents.topup</c> ไม่อ่านค่านี้ — คงพฤติกรรมเดิม) · มีผลกับการซื้อครั้งถัดไปเท่านั้น · อายุนับจากวันซื้อ และโบนัสคงเหลือทั้งก้อนใช้ได้ถึง
     /// <b>วันหมดอายุที่ช้ากว่า</b> (GREATEST ของเดิมกับใหม่ — ไม่หดอายุของที่ซื้อไว้แล้ว · ฝ่ายค้านรอบ 213 (e))</summary>
-    public static NotifyTopUpPack TopUpPack(int? packSize, int? validDays)
+    private static NotifyTopUpPack TopUpPack(int? packSize, int? validDays)
         => new(packSize is int s && s >= MinPackSize && s <= MaxPackSize ? s : Models.Constants.AddOnCodes.MessagesPerNotifyTopUpPack,
                validDays is int d && d >= MinPackValidDays && d <= MaxPackValidDays ? d : Models.Constants.AddOnCodes.TopUpValidDays);
 
@@ -273,7 +273,7 @@ public sealed record NotifyChannelQuotaStatus(
     string Channel, string Label, bool OwnLimit, int Used, int PlanLimit, int BonusRemaining, DateTime? BonusExpiresAt,
     int EffectiveLimit, int Remaining, int WarnLevel, string? Message, string TopUpCode, int PackSize, decimal? PackPrice, int PackValidDays);
 
-/// <summary>ขนาด/อายุแพ็ก <c>notify.topup</c> ที่มีผล (<see cref="NotifyQuotaPolicy.TopUpPack"/>)</summary>
+/// <summary>ขนาด/อายุแพ็ก <c>notify.topup</c> ที่มีผล (<see cref="NotifyQuotaPolicy.TopUpPackFor"/>)</summary>
 public sealed record NotifyTopUpPack(int Size, int ValidDays);
 
 /// <summary>ผลตัดสินโควตาต่อข้อความ</summary>
