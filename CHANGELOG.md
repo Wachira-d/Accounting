@@ -6755,5 +6755,5 @@ _รอบ 254 WP-11 L2 (2026-11-06 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS
 "หยุด" ปลด + ถอนยินยอม · PDPA erase ยกเลิกคำเชิญค้าง). (7) หน้า `email-schedule.html` ช่องทาง + คิว LINE · `contacts.html` ปุ่มลิงก์/QR. เทสต์ `LineDeliveryRound254Tests` ·
 Db `LineQueueRound254DbTests` · ล็อก R254 (24 กติกา + เคส R254a–j) · R245 ปรับตามพารามิเตอร์ใหม่. **ยังไม่ทำ**: L3 กลุ่ม `#HeyNextAcc` · L4 โควตาแยกช่อง/แพ็ก/แอดมิน/
 `NextAccOaQuotaWatch` · ชั่วโมงเงียบ · `DocumentViewLink` · LINE ของใบแจ้งยอด/50 ทวิ/ใบเสร็จ/ลิงก์เซ็น · ทดลองหน่วยนับกลุ่มบน OA จริง (WP-11 ข้อ 3).
-ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit (เติมในคอมมิตตามหลัง)_
+ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit cee44a3c_
 

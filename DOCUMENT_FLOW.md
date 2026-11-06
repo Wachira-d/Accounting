@@ -3109,7 +3109,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     **ยกเลิก**: ผู้รับพิมพ์ "หยุด"/stop ⇒ ปลดเฉพาะบริษัทนั้น + ถอนความยินยอม + ล้าง id · unfollow ⇒ บล็อก · follow ⇒ ปลดบล็อก · PDPA erase ⇒ ยกเลิกคำเชิญที่ค้าง
   - **ยังไม่ทำ (บอกตรง ๆ)**: กลุ่ม `#HeyNextAcc` + webhook กลุ่ม (L3) · ส่งผ่าน OA กลาง + โควตา LINE/อีเมลแยกช่อง + แพ็ก ฿290/฿190 + `NextAccOaQuotaWatch` (L4) ·
     ชั่วโมงเงียบ · ลิงก์ดูเอกสาร (`DocumentViewLink`) · LINE ของใบแจ้งยอด/50 ทวิ/ใบเสร็จหลังรับชำระ/ลิงก์เซ็น (L6) · กระดิ่งเมื่อล้มซ้ำ ·
-    เทสต์ `LineDeliveryRound254Tests` · Db `LineQueueRound254DbTests` · ล็อก R254 (+ เคส R254a–j) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit (เติมในคอมมิตตามหลัง)
+    เทสต์ `LineDeliveryRound254Tests` · Db `LineQueueRound254DbTests` · ล็อก R254 (+ เคส R254a–j) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit cee44a3c
   - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·
     แจ้งเตือนจองคิว/บริการ (`BookingNotifier` — ลูกค้าเว็บ ไม่ใช่ปลายทางผู้ติดต่อ) · พอร์ทัล/ใบเสนอราคาสาธารณะ (ผู้รับเปิดเอง)
 - **ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" (`Contact.AutoSendDisabled` · คำตัดสิน 250-29 · ตัวตัดสินเดียว `AutopilotSettingsResolver.AutoSendBlock`)** — ชนะกฎบริษัททุกเส้นอัตโนมัติ:
