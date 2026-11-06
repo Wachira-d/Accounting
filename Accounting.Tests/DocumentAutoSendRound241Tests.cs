@@ -157,6 +157,8 @@ public class DocumentAutoSendRound241Tests
         Assert.DoesNotContain("<b>'", html);
         Assert.Contains("1,040.00", html);
         Assert.Contains("ยอดก่อนหักภาษี ณ ที่จ่าย 1,070.00", html);
+        // รอบ 250 WP-01 (เทสต์นี้เพิ่งรันครั้งแรก): ข้อความอีเมลไม่เคยมีคำว่า "50 ทวิ" — เติมในตัวสร้าง (ชื่อเดียวกับหน้า pay-document.html
+        // และ PlatformPurchaseEmailText) แทนการลดเทสต์
         Assert.Contains("50 ทวิ", html);
         var noWht = DocumentPayLinkPolicy.EmailBlock("https://x", DocumentPayLinkPolicy.AmountsFor(1070m, 0m, 0m), isEnglish: true);
         Assert.DoesNotContain("withholding", noWht);

@@ -37,6 +37,10 @@ public class PlatformPayMethodsPickRound232Tests
     {
         var opts = PlatformPayMethods.Options(Enabled);
         Assert.Equal(2, opts.Count);
-        Assert.Contains(PlatformPayMethods.Label(PaymentMethodKind.Card), System.Text.Json.JsonSerializer.Serialize(opts));
+        // รอบ 250 WP-01: JsonSerializer ค่าตั้งต้นหนีอักษรไทยเป็น \uXXXX (เบราว์เซอร์ถอดกลับเอง) — เทียบข้อความด้วย encoder ที่ไม่หนี
+        var json = System.Text.Json.JsonSerializer.Serialize(opts,
+            new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        Assert.Contains(PlatformPayMethods.Label(PaymentMethodKind.Card), json);
+        Assert.Contains(PlatformPayMethods.Label(PaymentMethodKind.PromptPay), json);
     }
 }

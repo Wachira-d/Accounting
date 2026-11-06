@@ -224,7 +224,10 @@ public class CmsRound209P2Tests
         Assert.Contains(bad.Errors, e => e.Contains("ยอมรับ"));
         // มารับเอง ⇒ ช่องเฉพาะจัดส่งไม่บังคับ
         Assert.Equal(new[] { "cake_text", "size", "agree" }, OrderFormFields.ApplicableFields(cfg, FulfillmentMethod.Pickup).Select(f => f.Key));
-        var ok = OrderFormFields.Check(cfg, Input(custom: new() { ["cake_text"] = "HBD", ["size"] = "2 ปอนด์", ["agree"] = "true" }), FulfillmentMethod.Pickup);
+        // รอบ 250 WP-01 (เทสต์นี้เพิ่งรันครั้งแรก): ค่าตั้งที่ตั้งแล้วมี Email = Required เป็นค่าตั้งต้น (OrderFormFieldsConfig · คอมมิตเดียวกับเทสต์ 70fa41a8)
+        // ⇒ ใบที่ "ผ่าน" ต้องกรอกอีเมลด้วย — เดิมไม่ได้กรอกจึงได้ "กรุณากรอกอีเมล" ซึ่งไม่เกี่ยวกับช่องเพิ่มเองที่เทสต์นี้ตรวจ
+        Assert.Contains("กรุณากรอกอีเมล", OrderFormFields.Check(cfg, Input(custom: new() { ["cake_text"] = "HBD", ["size"] = "2 ปอนด์", ["agree"] = "true" }), FulfillmentMethod.Pickup).Errors);
+        var ok = OrderFormFields.Check(cfg, Input(email: "a@example.com", custom: new() { ["cake_text"] = "HBD", ["size"] = "2 ปอนด์", ["agree"] = "true" }), FulfillmentMethod.Pickup);
         Assert.Empty(ok.Errors);
         var answers = OrderFormFields.ParseAnswers(ok.Values.CustomFieldsJson);
         Assert.Contains(answers, a => a.Label == "ข้อความบนเค้ก" && a.Value == "HBD");

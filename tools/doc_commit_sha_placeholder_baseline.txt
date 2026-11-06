@@ -1,0 +1,101 @@
+# baseline ratchet ของ tools/doc_commit_sha_check.py (ข) — placeholder "เติมในคอมมิตตามหลัง" ที่ค้างอยู่ก่อนกติกาอายุ (รอบ 250 WP-01 · ณ 790a6182)
+# รูป: <ไฟล์>\t<sha1 ของบรรทัดหลัง strip 16 ตัว>\t<ตัวอย่างข้อความ> · เติม sha แล้วแถวนั้นหมดความหมาย (ลบได้ · ไม่ฟ้อง) · ห้ามเพิ่มแถวใหม่ — เติม sha แทน
+# งานเติม sha ของแถวเหล่านี้ = AUDIT_249 WP-05 §5.1
+DOCUMENT_FLOW.md	ba351c874264ce38	DOCUMENT_FLOW.md:1915 poll/คืนเงิน/webhook ใช้คีย์ของโหมดที่รายการถูกสร้าง · ผู้เช่าเห็นเฉพาะวิธีที่หน
+DOCUMENT_FLOW.md	af4282e171c0ee9a	DOCUMENT_FLOW.md:2270 - **รอบ 248 — Autopilot** (`erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §
+DOCUMENT_FLOW.md	9a571a193afa2aaa	DOCUMENT_FLOW.md:2752 - เทสต์ `PlatformRound235Tests` · `PlatformRound235DbTests` · `PublicCheckoutRou
+DOCUMENT_FLOW.md	d06c20fae80275e1	DOCUMENT_FLOW.md:3466 Last verified 2026-11-06 (รอบ 244 · ยังไม่ได้คอมไพล์ในเครื่องนี้) — commit <เติม
+DOCUMENT_FLOW.md	a86bb075c996d6e5	DOCUMENT_FLOW.md:7552 _Last verified against codebase: 2026-10-14 (ทีม F4 · PAYMENT_CHANNEL_AUDIT ส่วน
+DOCUMENT_FLOW.md	dd1ad80dcfe791e8	DOCUMENT_FLOW.md:7557 โอนผู้อนุมัติขั้นสุดท้ายที่ไม่มีสิทธิ์ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติม
+DOCUMENT_FLOW.md	e9bed26b566b3d1e	DOCUMENT_FLOW.md:7584 `Db/FinanceExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหล
+DOCUMENT_FLOW.md	6c16cf8d881bd19a	DOCUMENT_FLOW.md:7588 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
+DOCUMENT_FLOW.md	6c16cf8d881bd19a	DOCUMENT_FLOW.md:7593 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง)_
+DOCUMENT_FLOW.md	6e171b54d65665ca	DOCUMENT_FLOW.md:7597 รอบ 4 = `commit eec6947d` · เทสต์ `AdversarialExportRound5Tests` · `Db/Adversari
+DOCUMENT_FLOW.md	a08175842fd800f8	DOCUMENT_FLOW.md:7600 `OcrReplayLineGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — sha เติมในคอมม
+DOCUMENT_FLOW.md	c1403780ba401b0a	DOCUMENT_FLOW.md:7704 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Omise — §2.6b ขั้นถัดไป
+DOCUMENT_FLOW.md	737cef258b867ab9	DOCUMENT_FLOW.md:7752 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — §9.9 นโยบายผู้
+DOCUMENT_FLOW.md	a260a0ac37bc28d1	DOCUMENT_FLOW.md:7753 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม SourceLine — §2.4a ป้าย
+DOCUMENT_FLOW.md	a647edae510b1aac	DOCUMENT_FLOW.md:7755 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout + นโยบา
+DOCUMENT_FLOW.md	73909f54012f27e8	DOCUMENT_FLOW.md:7756 _Last verified against codebase: 2026-11-03 (รอบ 232 ต่อ — คำแปลอังกฤษตั้งต้นของ
+DOCUMENT_FLOW.md	4526cb461da5732b	DOCUMENT_FLOW.md:7758 _Last verified against codebase: 2026-11-04 (รอบ 234 ทีมหัก ณ ที่จ่ายอัตโนมัติ —
+DOCUMENT_FLOW.md	7b690cba525fa0c3	DOCUMENT_FLOW.md:7759 _Last verified against codebase: 2026-11-04 (รอบ 235 ทีมปิดงานค้างนอกเส้นบิล + ฝ
+DOCUMENT_FLOW.md	4b704c1ae8e039d6	DOCUMENT_FLOW.md:7760 _Last verified against codebase: 2026-11-04 (รอบ 236 — §2.12d บริษัทใต้ License:
+DOCUMENT_FLOW.md	92f5829dc9063ce7	DOCUMENT_FLOW.md:7761 _Last verified against codebase: 2026-11-04 (รอบ 237 — §2.12e อัปเกรดกลางรอบ 2 แ
+DOCUMENT_FLOW.md	8db932aed3f52233	DOCUMENT_FLOW.md:7762 _Last verified against codebase: 2026-11-04 (รอบ 238 — §2.12d License หมดอายุ/ระ
+DOCUMENT_FLOW.md	21ed661de3971b26	DOCUMENT_FLOW.md:7764 _Last verified against codebase: 2026-11-05 (รอบ 240 — §2.12f ลิงก์ให้ลูกค้าเซ็น
+DOCUMENT_FLOW.md	e034d4136ed09af0	DOCUMENT_FLOW.md:7765 _Last verified against codebase: 2026-11-06 (รอบ 243a — §ภาษีถูกหัก ณ ที่จ่าย → 
+DOCUMENT_FLOW.md	ff8e9e7471ce5c15	DOCUMENT_FLOW.md:7766 _Last verified against codebase: 2026-11-06 (รอบ 242 OCR — §OCR ตาราง ภ.พ. แบบอั
+DOCUMENT_FLOW.md	4febcfcb1d71c4ce	DOCUMENT_FLOW.md:7767 _Last verified against codebase: 2026-11-06 (รอบ 242 เอกสาร — §6.3 ลบถาวร: ลำดับ
+DOCUMENT_FLOW.md	4fd9cb5018b2a329	DOCUMENT_FLOW.md:7768 _Last verified against codebase: 2026-11-06 (รอบ 246 QR — §2.12i QR ชำระเงินบนเอ
+DOCUMENT_FLOW.md	b345f49fd3737f3f	DOCUMENT_FLOW.md:7769 _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่งเอกสารอัตโนมัติ
+DOCUMENT_FLOW.md	6e98f62cdaf8346b	DOCUMENT_FLOW.md:7770 _Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilo
+DOCUMENT_FLOW.md	f9c68b0ead192241	DOCUMENT_FLOW.md:7771 _Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คี
+CHANGELOG.md	3abbdbc4458a1d0c	CHANGELOG.md:5 > ท้ายไฟล์นี้ **และ** แทนบล็อกล่าสุดใน DOCUMENT_FLOW §10 ในคอมมิตเดียวกัน · sha 
+CHANGELOG.md	30e97edf879ca988	CHANGELOG.md:4843 มือถือกดซ้ำหลังลำดับครบแต่อนุมัติเอกสารล้ม ⇒ 409 พร้อมทางไปต่อ · เตือนผู้ขอ "ผู้
+CHANGELOG.md	0e6d3bcd55937576	CHANGELOG.md:4885 FK "ยังถูกอ้างอิงโดย<ตารางที่อ้าง>" — เทสต์ `AdversarialRound1DbTests` · `Advers
+CHANGELOG.md	e9bed26b566b3d1e	CHANGELOG.md:5002 `Db/FinanceExportDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหล
+CHANGELOG.md	516aca95b59bce04	CHANGELOG.md:5010 `Db/AdversarialExportRound3DbTests` · `AccountingReportSheetsTests` — ยังไม่ได้ค
+CHANGELOG.md	1ef15fac40155231	CHANGELOG.md:5018 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — sha เติมในคอมมิตตามหลัง_
+CHANGELOG.md	e6b4652982b7a3fe	CHANGELOG.md:5025 TransferredAmount ≠ งบกำไรขาดทุนเท่าผังที่ลบ — เทสต์ `AdversarialExportRound5Tes
+CHANGELOG.md	7931d040bd6de1cd	CHANGELOG.md:5987 ค่าตั้ง `PettyCashTopUpEvidenceRequired` (`Helpers/PettyCashEvidence`) — ยังไม่ไ
+CHANGELOG.md	ef79d2e44233050b	CHANGELOG.md:5993 เทสต์ `BookingPaymentStepTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในค
+CHANGELOG.md	4d8e1387d157077b	CHANGELOG.md:6004 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+CHANGELOG.md	54a86c78b89c0c5e	CHANGELOG.md:6012 `required_call_site_check` บล็อก "รอบ 226" · แก้จำนวนแคตตาล็อกข้อความในเทสต์รอบ 
+CHANGELOG.md	74489e21766506c7	CHANGELOG.md:6021 ไม่สร้าง (ดีไซน์ §5): ช่องกรอกบัตร/3DS · ตัดบัตรอัตโนมัติ · ดึงรอบโอน · ข้อพิพาท
+CHANGELOG.md	922df9b51d9601ed	CHANGELOG.md:6025 บิล POS มีบรรทัดค่าจัดส่ง · PDPA export ที่อยู่จัดส่ง · คำเตือนพนักงานเฉพาะรอยืน
+CHANGELOG.md	438d57e08d109787	CHANGELOG.md:6031 หน้า: ปล่อยบันทึกอัตโนมัติก่อนดึง · ป้ายเลือกทั้งหมด N จาก M · เหตุผลไทยก่อน · D
+CHANGELOG.md	4d8e1387d157077b	CHANGELOG.md:6036 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+CHANGELOG.md	4d8e1387d157077b	CHANGELOG.md:6040 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+CHANGELOG.md	18524f0d3b8f44e3	CHANGELOG.md:6049 ล็อกจุดเรียก `required_call_site_check` บล็อก "รอบ 228" — ยังไม่ได้คอมไพล์ในเครื
+CHANGELOG.md	5f6bb444688c705e	CHANGELOG.md:6056 เทสต์ `Round228TaxRemittanceTests` · ล็อกจุดเรียก `required_call_site_check` บล็
+CHANGELOG.md	717f35fc97ff8c3c	CHANGELOG.md:6059 ลบใบสำคัญ (เดี่ยว/หลายใบ) ตรวจงวดจากวันที่ + migration เติม `FiscalPeriodId` จาก
+CHANGELOG.md	4d8e1387d157077b	CHANGELOG.md:6066 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+CHANGELOG.md	05842a6f62f7569b	CHANGELOG.md:6068 _ทีม FS 2026-11-02 — ที่เก็บไฟล์กลาง (กฎเหล็ก #4 D): `Services/Storage/IFileStor
+CHANGELOG.md	6c1d2de7a9916392	CHANGELOG.md:6072 N1–N4 · เส้นร้าน (ใบลดหนี้ด้วยมือหลังคืนเงิน gateway ลง Cr เงินสด) ยืนยันว่าเกิด
+CHANGELOG.md	4d8e1387d157077b	CHANGELOG.md:6079 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+CHANGELOG.md	b24331c60e1bc8ce	CHANGELOG.md:6082 `Helpers/GatewayRefundCreditNoteCounter` + hunk เดียวใน `DocumentService.AutoPos
+CHANGELOG.md	78384430d0126b6e	CHANGELOG.md:6090 **แพ็ก 6** เมนูเหลือ "แพ็กเกจและการชำระเงิน" + `js/quota-ui.js` · เทสต์ `QuotaAd
+CHANGELOG.md	d6971f70aaf437e9	CHANGELOG.md:6095 deploy: ถอยโค้ดก่อนรอบ 228 ต้องจัดการแถวซ้ำก่อน `_v2` (N1) · Db test `Round228Ta
+CHANGELOG.md	c87042f078f87cb3	CHANGELOG.md:6100 **F** ช่องเวลาตัวเลข+หน่วย (`CmsDuration`) · หน้า LINE เริ่มด้วยสถานะ · ป้ายตามอ
+CHANGELOG.md	c2edf64de1ff2551	CHANGELOG.md:6106 ใบเสร็จ = เงินรับจริง/วันโอน · เพิกถอน · ส่งมอบบริษัทผ่านด่านที่นั่ง) · `Helpers
+CHANGELOG.md	c4473f9c83a183d0	CHANGELOG.md:6128 sim `tools/cms_settings_hub_sim.js` (13 negative) · `settings_reader_check` หน้า
+CHANGELOG.md	4d8e1387d157077b	CHANGELOG.md:6139 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+CHANGELOG.md	4d8e1387d157077b	CHANGELOG.md:6147 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+CHANGELOG.md	3769d3ed7e7d7bff	CHANGELOG.md:6160 วิธีชำระ = บัตร · ไม่ตัดใบที่แจ้งภาษีหักไว้ · TEST_PLAN PB230-15..20 — ยังไม่ได้
+CHANGELOG.md	e0f0fedd52153544	CHANGELOG.md:6168 ประวัติล้างการเปลี่ยนที่รอ · โปรโมชันทดลองใช้ใน hub · ส่วนลดบนใบเมื่อรับเกิน · เ
+CHANGELOG.md	40b2f3b5bbacd758	CHANGELOG.md:6281 ส่วนเสริม/โควตาเสริมยังไม่หัก (backlog) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 
+CHANGELOG.md	c6fd09e3833ccc1e	CHANGELOG.md:6285 ประเภทผู้ซื้อมีผลจริง (`PUT billing-center/payer-profile`) · ทวงแบบจองในฐาน — ยั
+CHANGELOG.md	47be747c2521fc53	CHANGELOG.md:6295 audit chain) · ชนิดอื่นลิงก์ไปเส้นยกเลิกของต้นทาง · แอดมินนับร้าน/รายการ (อ่านอย
+CHANGELOG.md	556e5daca374bce7	CHANGELOG.md:6303 (10) บันทึกบัตรใน checkout ผ่าน `PlatformSavedCardStart` ตัวเดียวกับ platform-pa
+CHANGELOG.md	4ac079fc58ac43ba	CHANGELOG.md:6309 **N4** ตารางนับใช้ไม่ได้ = 503 ข้อความกลาง (`IChatRateLimiter.ConsumeAsync` คืนส
+CHANGELOG.md	bfb3bb6e4b9f2d44	CHANGELOG.md:6323 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+CHANGELOG.md	9c48b3cb29496362	CHANGELOG.md:6328 N1 ป้ายสถานะจากเซิร์ฟเวอร์ (แอดมิน) · ดรอปดาวน์ checkout ติดป้ายเหตุ · แบนเนอร์ 
+CHANGELOG.md	a6887b785a39c63f	CHANGELOG.md:6337 `required_call_site_check.py` (+ negative test 4 เคส) — ยังไม่ได้คอมไพล์ในเครื่อ
+CHANGELOG.md	bfb3bb6e4b9f2d44	CHANGELOG.md:6343 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+CHANGELOG.md	4f654cf3fac39e43	CHANGELOG.md:6353 เทสต์ `LicenseLapseRound238Tests` · Db `LicenseLapseRound238DbTests` — ยังไม่ได้
+CHANGELOG.md	5697b3f19dc8eb3e	CHANGELOG.md:6358 กติกา R238 เพิ่ม (marker · auto-attach · IDOR · ธงอ่านอย่างเดียว · ตั้งสถานะตอนถ
+CHANGELOG.md	97cf879aaffbcfb9	CHANGELOG.md:6366 `Db/QuotationAcceptanceRound239DbTests` · ล็อกจุดเรียก `_R239_*` (8 กติกา + เคสฝ
+CHANGELOG.md	d41adbebd0b83308	CHANGELOG.md:6371 เทสต์ race/SignDelivery/S1/S3 สองทิศ · ระงับบริษัทไม่ปิดเส้นสาธารณะ (239-7) · UA
+CHANGELOG.md	c07409f7e1e82747	CHANGELOG.md:6380 (TH+EN — **เจ้าของต้องเผยแพร่ฉบับใหม่ในหน้าเอกสารกฎหมาย**) — ยังไม่ได้คอมไพล์ในเ
+CHANGELOG.md	27355687898ea9a2	CHANGELOG.md:6387 ช่องใหม่ของ Document อยู่ในรายการไม่ตามไปใบแทน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — 
+CHANGELOG.md	152fa6310f707864	CHANGELOG.md:6397 (ตัวสร้างบรรทัด + ด่านความมั่นใจ) · N แถวรวมแยกถัง/word boundary/"ยกเว้น" ที่ `N
+CHANGELOG.md	d726de2c1d1878f0	CHANGELOG.md:6411 commit <เติมในคอมมิตตามหลัง>_
+CHANGELOG.md	bfb3bb6e4b9f2d44	CHANGELOG.md:6423 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+CHANGELOG.md	bfb3bb6e4b9f2d44	CHANGELOG.md:6432 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+CHANGELOG.md	e4d45641982e39c2	CHANGELOG.md:6438 **N7** Db test ภ.ง.ด.50 จริง · **N8** ป้าย KPI · เทสต์เพิ่มใน `WhtCreditWriteOff
+CHANGELOG.md	6c1da821c888bb00	CHANGELOG.md:6450 (5) เทสต์ `SingleAsync` นับแถว audit Create ของ seed ด้วย ⇒ กรอง Delete · (6–8) 
+CHANGELOG.md	bfb3bb6e4b9f2d44	CHANGELOG.md:6458 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+CHANGELOG.md	bfb3bb6e4b9f2d44	CHANGELOG.md:6471 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+CHANGELOG.md	bfb3bb6e4b9f2d44	CHANGELOG.md:6481 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+CHANGELOG.md	4078789b2cf14b32	CHANGELOG.md:6492 ไม่แตะกติกาการอนุมัติ/เครดิต · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมม
+CHANGELOG.md	f181c8fb5a0deeb0	CHANGELOG.md:6507 LINE/คู่ค้า · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน · ยังไม่ได้คอมไพล์ใน
+CHANGELOG.md	2e887491194012fd	CHANGELOG.md:6521 เทสต์ `PaymentNotificationRound249Tests` + Db `PaymentNotificationRound249DbTest
+CHANGELOG.md	bfb3bb6e4b9f2d44	CHANGELOG.md:6527 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+ACCOUNT_STRUCTURE.md	be0c46020f8b2173	ACCOUNT_STRUCTURE.md:1208 _Last verified against codebase: 2026-10-15 (rev 46 · ฝ่ายค้านรอบส่งออก รอบ 2 — 
+ACCOUNT_STRUCTURE.md	2859db3fd4ca25ad	ACCOUNT_STRUCTURE.md:1211 _Last verified against codebase: 2026-10-15 (rev 49 · ฝ่ายค้านรอบส่งออก รอบ 5 — 
+ACCOUNT_STRUCTURE.md	2da6f6184c47bb74	ACCOUNT_STRUCTURE.md:1397 _Last verified against codebase: 2026-10-22 (rev 49 · รอบ 205 ทีม I — **§3.1g** 
+ACCOUNT_STRUCTURE.md	87f89caaac7dba6c	ACCOUNT_STRUCTURE.md:1398 _Last verified against codebase: 2026-10-22 (rev 50 · รอบ 205 ทีม I ฝ่ายค้าน — *
+ACCOUNT_STRUCTURE.md	d4492cec32eadf2e	ACCOUNT_STRUCTURE.md:1420 _Last verified against codebase: 2026-11-02 (ทีม FS — ที่เก็บไฟล์กลาง Local | S3
+ACCOUNT_STRUCTURE.md	e629cc7a3a47c9bf	ACCOUNT_STRUCTURE.md:1422 _Last verified against codebase: 2026-11-03 (รอบ 230 Omise — §6.2d บัตรที่บันทึก
+ACCOUNT_STRUCTURE.md	f9d15e4be840c78e	ACCOUNT_STRUCTURE.md:1424 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — แถว LINE OA กล
+ACCOUNT_STRUCTURE.md	67876d41fe82bf40	ACCOUNT_STRUCTURE.md:1478 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout — §6.2i

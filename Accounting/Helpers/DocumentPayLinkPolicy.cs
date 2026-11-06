@@ -244,7 +244,7 @@ public static class DocumentPayLinkPolicy
         var whtRow = a.Wht > 0.005m
             ? (isEnglish
                 ? $"<br>Less withholding tax you will withhold: THB {a.Wht:N2} (please send us the withholding tax certificate)<br>Amount to pay: <strong>THB {a.Net:N2}</strong>"
-                : $"<br>หักภาษี ณ ที่จ่ายที่ท่านหักไว้ {a.Wht:N2} บาท (กรุณาส่งหนังสือรับรองการหักภาษี ณ ที่จ่าย ให้เรา)<br>ยอดที่ต้องชำระ <strong>{a.Net:N2} บาท</strong>")
+                : $"<br>หักภาษี ณ ที่จ่ายที่ท่านหักไว้ {a.Wht:N2} บาท (กรุณาส่งหนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ) ให้เรา)<br>ยอดที่ต้องชำระ <strong>{a.Net:N2} บาท</strong>")
             : "";
         // รอบ 244: Gross = ยอดก่อนหัก ณ ที่จ่าย (ยอดค้างของเอกสารเป็นยอดสุทธิแล้ว — ดู AmountsFor)
         var head = a.Wht > 0.005m

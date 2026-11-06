@@ -140,7 +140,12 @@ public static class DocumentConversionProgress
             // ยังไม่ครบ ⇒ ห้ามโชว์ 100 (ปัดขึ้นจาก 99.96)
             return new Progress(Math.Min(pct, 99.9m), ConversionProgressState.Partial);
         }
-        return new Progress(0m, hasActiveLinkedChild ? ConversionProgressState.Partial : ConversionProgressState.None);
+        // รอบ 250 WP-01 (เทสต์รอบ 232/242 เพิ่งรันครั้งแรก): มีใบลูกผูกหัวแต่ไม่มีแถวจับคู่ ⇒ "ไม่ทราบสัดส่วน" = null ไม่ใช่ 0 —
+        // เดิมคืน 0 ⇒ ป้ายข้อความถูก (PercentText ถือ ≤ 0 เป็นไม่ทราบ) แต่ ConversionCompletionPercent ใน API = 0 ⇒ หน้ารายละเอียดขึ้น "แปลง 0%"
+        // (ตัวเลขที่แต่งขึ้น · CLAUDE.md F2 ข้อ 5 undefined ≠ 0) · ไม่มีใบลูกเลย ⇒ 0 + None เดิม
+        return hasActiveLinkedChild
+            ? new Progress(null, ConversionProgressState.Partial)
+            : new Progress(0m, ConversionProgressState.None);
     }
 
     /// <summary>

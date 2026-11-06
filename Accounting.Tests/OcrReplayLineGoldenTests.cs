@@ -660,7 +660,10 @@ public class OcrReplayLineGoldenTests
         foreach (var p in OcrReplayHarness.Corpus)
         {
             var mode = all.Single(a => a.Paper == p.Name && a.Field == "LineMode").Value;
-            Assert.Contains(mode, new[] { "Items", "VatGroups", "VatGroupsInsteadOfItems", "Summary" });
+            // รอบ 250 WP-01: "Items+Bill:{ส่วนลดท้ายบิล}" = Items + BillDiscountAmount ตามกระดาษ (คำตัดสินข้อ 159 · harness ตั้งแต่ bea4651f) —
+            // ชุดค่าที่ยอมเดิมเขียนก่อนข้อ 159 · ใบที่ใช้รูปนี้ได้ถูกจำกัดไว้ที่ใบเดียวโดย R34_… (ทิศตรงข้าม)
+            Assert.True(new[] { "Items", "VatGroups", "VatGroupsInsteadOfItems", "Summary" }.Contains(mode)
+                        || (mode is not null && mode.StartsWith("Items+Bill:", StringComparison.Ordinal)), $"{p.Name}: LineMode {mode}");
             var lines = all.Single(a => a.Paper == p.Name && a.Field == "Lines").Value!;
             Assert.NotEmpty(lines);
             foreach (var row in lines.Split(';'))

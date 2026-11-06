@@ -115,7 +115,9 @@ public class LegalDocumentTests
     public void StashMarker_FromUserText_CannotForgeLinks()
     {
         var html = LegalMarkdown.Render("a\u00010\u0001b [x](https://ok.example)");
-        Assert.DoesNotContain("\u0001", html);
+        // รอบ 250 WP-01: Assert.DoesNotContain(string,string) เทียบแบบ CurrentCulture — ICU ถือ U+0001 เป็นอักขระที่ข้ามได้ ⇒ "พบ" ที่ตำแหน่ง 0 เสมอ
+        Assert.DoesNotContain("\u0001", html, StringComparison.Ordinal);
+        Assert.Equal(-1, html.IndexOf('\u0001'));
         Assert.Single(System.Text.RegularExpressions.Regex.Matches(html, "<a "));
     }
 

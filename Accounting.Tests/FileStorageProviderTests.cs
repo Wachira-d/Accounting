@@ -249,9 +249,13 @@ public sealed class FileStorageProviderTests : IDisposable
         var s3 = S3(new FakeS3Handler(), fallback: false);
         await s3.WriteAsync(Path.Combine(_base, "wwwroot", "uploads", "help-media", "v.mp4"), new byte[] { 1, 2, 3, 4, 5 });
         var full = await GetUploads(s3, "/uploads/help-media/v.mp4");
-        Assert.Equal((200, new byte[] { 1, 2, 3, 4, 5 }, false), (full.Status, full.Body, full.NextCalled));
+        // รอบ 250 WP-01: tuple ที่มี byte[] เทียบ array ด้วย reference (ValueTuple.Equals) — ล้มทั้งที่ค่าตรงกัน ⇒ เทียบทีละช่อง (array เทียบตามสมาชิก)
+        Assert.Equal(200, full.Status);
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, full.Body);
+        Assert.False(full.NextCalled);
         var part = await GetUploads(s3, "/uploads/help-media/v.mp4", "bytes=1-2");
-        Assert.Equal((206, new byte[] { 2, 3 }), (part.Status, part.Body));
+        Assert.Equal(206, part.Status);
+        Assert.Equal(new byte[] { 2, 3 }, part.Body);
         Assert.Equal("bytes 1-2/5", part.ContentRange);
     }
 

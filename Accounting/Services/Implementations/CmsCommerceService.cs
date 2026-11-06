@@ -1943,7 +1943,7 @@ public partial class CmsCommerceService : ICmsCommerceService
             DocumentService.PreviewTotals(lines, true, 0m, depositPlan.BaseDeducted).Total);
         if (roundingDelta != 0m)
             order.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(order.InternalNotes,
-                $"ปัดเศษ VAT รายใบ: ใบมัดจำ + ใบขายส่วนที่เหลือ รวม{(roundingDelta > 0 ? "มากกว่า" : "น้อยกว่า")}ยอดเต็ม {Math.Abs(roundingDelta):N2} (ส่วนต่างอยู่ที่ VAT · ตามกฎ VAT คิดรายใบ)");
+                $"ปัดเศษ VAT รายใบ: ใบมัดจำ + ใบขายส่วนที่เหลือ รวม{(roundingDelta > 0 ? "มากกว่า" : "น้อยกว่า")}ยอดเต็ม {Math.Abs(roundingDelta):N2} (ปัดเศษรายใบ — ส่วนต่างอาจอยู่ที่ฐานหรือ VAT · ตามกฎ VAT คิดรายใบ)");   // รอบ 250 WP-01: เดิมอ้างว่าอยู่ที่ VAT — SiteOrderDepositInvoicingTests พบฐานต่าง 0.02 VAT ตรง
         var depositBranchId = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == deposits[0].Id && d.CompanyId == companyId)
             .Select(d => d.BranchId).FirstOrDefaultAsync();

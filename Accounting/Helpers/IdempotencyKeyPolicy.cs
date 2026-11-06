@@ -62,8 +62,10 @@ public static class IdempotencyKeyPolicy
             if (p.Contains(seg, StringComparison.Ordinal)) return true;
         return false;
     }
+    // รอบ 250 WP-01 (เทสต์ S6 เพิ่งรันครั้งแรก): "password" ไม่มี "/" นำหน้า — เส้นจริงคือ /api/auth/reset-password · forgot-password ·
+    // change-password ("/password" ไม่เคยตรง ⇒ เนื้อคำขอที่ถือรหัสผ่านใหม่ + โทเคนรีเซ็ตเข้าระบบคีย์/ลายนิ้วมือ ขัดคำตัดสินฝ่ายค้าน S6)
     private static readonly string[] CredentialSegments =
-        { "/login", "/register", "/password", "/refresh", "/token", "/signup", "/sso", "/otp", "/2fa", "/mfa" };
+        { "/login", "/register", "password", "/refresh", "/token", "/signup", "/sso", "/otp", "/2fa", "/mfa" };
 
     /// <summary>namespace ของผู้เรียก — กันคนอื่นที่บังเอิญ/ตั้งใจใช้คีย์เดียวกันเห็นผลของเรา:
     /// บริษัทจาก claim (API key) → ชื่อผู้ใช้ → <b>แฮชของ credential header</b> (Authorization / X-Storefront-Token — มิดเดิลแวร์อยู่ก่อน

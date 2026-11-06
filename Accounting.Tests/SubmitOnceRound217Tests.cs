@@ -104,6 +104,8 @@ public class SubmitOnceRound217Tests
     [InlineData("/api/companies/x/cms/sites/y/portal/login", true)]
     [InlineData("/api/auth/refresh", true)]
     [InlineData("/api/auth/reset-password", true)]
+    [InlineData("/api/auth/forgot-password", true)]   // รอบ 250 WP-01: "/password" เดิมไม่ตรงเส้นจริงทั้งสาม
+    [InlineData("/api/auth/change-password", true)]
     [InlineData("/api/companies/x/cms/sites/y/booking/bookings", false)]
     [InlineData("/api/companies/x/cms/sites/y/booking/bookings/by-token/abc/cancel", false)]
     [InlineData("/api/companies/x/cms/sites/y/lodging/reservations/abc/slip", false)]

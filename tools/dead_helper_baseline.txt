@@ -32,9 +32,6 @@ OcrPredecessorMatcher.cs NormalizeForReference
 OcrPredecessorMatcher.cs ReferenceAppears
 OcrScanPii.cs UndecidedTextFields
 PayrollRunFilingScope.cs CanRemit
-PndTextFileFormat.cs DetailRow
-PndTextFileFormat.cs SplitName
-Pp30SalesClassifier.cs ShouldReport
 ReceiptIssuePolicy.cs AllowsCashReceiptPapers
 SettlementReceiptPolicy.cs IsReceivableSource
 SsoIdentityPolicy.cs ProvidesEmailVerification
@@ -42,7 +39,6 @@ SsoRateSchedule.cs GetMaxContribution
 SsoRateSchedule.cs RangesOverlap
 StockMovementSign.cs OutboundMagnitude
 ThaiPitCalculator.cs EstimateAnnualIncome
-ThaiPitCalculator.cs ExpenseDeduction
 ThaiPitCalculator.cs WithholdingForPeriod
 ThaiTaxId.cs HasValidEan13Checksum
 UploadFileType.cs SniffAsync

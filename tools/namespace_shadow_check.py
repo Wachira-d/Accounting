@@ -17,6 +17,7 @@ C# จึงหยุดที่ชั้นใกล้ที่สุดท�
 namespace ที่ชนะ **ไม่มี** ชนิดชื่อนั้น แต่ผู้สมัครชั้นนอกกว่า**มี** = ตรงกับ
 เคส CS0234 เป๊ะ (ถ้าชั้นใกล้มีชนิดนั้นจริง โค้ดก็ทำงานถูก — ไม่ฟ้อง)
 """
+import os
 import re
 import sys
 from pathlib import Path
@@ -177,11 +178,21 @@ def check_file(path: Path, namespaces: set, types: dict):
     return problems
 
 
+# รอบ 250 (AUDIT_249 WP-01 ข้อ 9): ตัดโฟลเดอร์ทิ้ง "ก่อนเดิน" (os.walk prune) — เดิม rglob เดินลง bin/obj/node_modules ก่อนกรอง
+# (สแกน 64,707 ไฟล์) · .claude = worktree ของ agent (สำเนาเรพทั้งก้อน ⇒ ดัชนี namespace/ชนิดซ้ำ)
+SKIP_DIRS = {"bin", "obj", "node_modules", ".git", ".claude"}
+
+
+def source_files():
+    out = []
+    for base, dirs, names in os.walk(ROOT):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        out.extend(Path(base) / n for n in names if n.endswith(".cs"))
+    return sorted(out)
+
+
 def main():
-    files = sorted(
-        p for p in ROOT.rglob("*.cs")
-        if not any(part in {"bin", "obj", ".git"} for part in p.parts)
-    )
+    files = source_files()
     namespaces, types = build_index(files)
 
     targets = [Path(a) for a in sys.argv[1:]] or files

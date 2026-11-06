@@ -118,10 +118,21 @@ public static class OcrLineVatMarks
         @"(?<![\d.,])(?<amt>" + Money + @")[ \t]*(?<code>(?<![A-Za-z])[A-Z](?![A-Za-z])|[*#])[ \t]*$", RegexOptions.CultureInvariant);
 
     // ป้ายยอดแยกภาษี — ตรวจฝั่ง "ไม่ต้องเสีย" ก่อนเสมอ ("ไม่ต้องเสียภาษี" มีคำว่า "ต้องเสียภาษี" อยู่ข้างใน)
-    // รอบ 242 ฝ่ายค้าน N: "ยกเว้น" คำเดียว (ป้ายแถวตารางอัตรา "ยกเว้น 0%") รวมไว้ที่นี่ที่เดียว — เดิม "ยกเว้นภาษี/ยกเว้น vat" · สแกนข้อความกระดาษทุกไฟล์เทสต์:
-    // ไม่มีบรรทัดนอกแถวสินค้าที่มี "ยกเว้น" คำเดียว + ยอดเงิน ⇒ ยอดไม่ต้องเสียภาษีของใบเดิมเท่าเดิม
+    // รอบ 242 ฝ่ายค้าน N: "ยกเว้น" คำเดียว (ป้ายแถวตารางอัตรา "ยกเว้น 0%") รวมไว้ที่นี่ที่เดียว — เดิม "ยกเว้นภาษี/ยกเว้น vat" · (ข้ออ้างเดิม "ไม่มีบรรทัดนอกแถวสินค้า
+    // ที่มี 'ยกเว้น' คำเดียว + ยอดเงิน" ผิด — ข้อความ Tesseract Makro 2/2 มี · ด่าน MoneyBelongsToOtherLabel ข้างล่าง · รอบ 250 WP-01)
     private static readonly Regex NonTaxableLabel = new(
         @"ไม่ต้องเสียภาษี|ไม่เสียภาษี|ไม่มีภาษี|ยกเว้น|non[- \t]?vat(?:able)?|vat[ \t]*exempt|exempt|non[- \t]?taxable", Opt);
+    /// <summary>ป้ายยอดรวม/สุทธิ — ปรากฏ<b>หลัง</b>ป้าย "ยกเว้น" ตัวสุดท้ายในบรรทัดเดียวกัน ⇒ ยอดท้ายบรรทัดเป็นของคอลัมน์ยอดรวม ไม่ใช่ยอดยกเว้น
+    /// (รอบ 250 WP-01: Tesseract ต่อคำอธิบายรหัส "1«สินค้าได้รับการยกเว้นภาษิ…" กับ "…รวมสุทธิ/ AMOUNT 10,980.00" เป็นบรรทัดเดียว ⇒ ยอดยกเว้นกลายเป็นยอดทั้งใบ —
+    /// ถดถอยจาก 26ec41b4 ที่ขยายป้ายเป็น "ยกเว้น" คำเดียว · เดิม "ยกเว้นภาษี" ไม่ติดเพราะ OCR สะกด "ภาษิ")</summary>
+    private static readonly Regex OtherTotalLabel = new(@"รวม|สุทธิ|\b(?:total|grand)\b", Opt);
+
+    private static bool MoneyBelongsToOtherLabel(string line)
+    {
+        var last = NonTaxableLabel.Matches(line).LastOrDefault();
+        return last != null && OtherTotalLabel.IsMatch(line[(last.Index + last.Length)..]);
+    }
+
     private static readonly Regex TaxableLabel = new(
         @"ต้องเสียภาษี|ที่เสียภาษี|มีภาษี|vat[ \t]*able|vatable|taxable[ \t]*(?:amount|sales)?", Opt);
     private static readonly Regex MoneyToken = new(@"(?<![\d.,])(" + Money + @")(?![\d])", Opt);
@@ -161,7 +172,7 @@ public static class OcrLineVatMarks
             // ยอดแยกภาษีท้ายใบ (ต้องอยู่บรรทัดเดียวกับป้าย) — ข้ามแถวรายการที่มีสัญลักษณ์ท้าย
             // ("ผักกาด (ยกเว้นภาษี) 30.00 N" ไม่ใช่ยอดสรุป) และเอาตัว**สุดท้าย** (แถวสรุปอยู่ท้ายใบ)
             var isItemRow = MarkedLine.IsMatch(line);
-            if (!isItemRow && NonTaxableLabel.IsMatch(line) && LastMoney(line) is decimal nt)
+            if (!isItemRow && NonTaxableLabel.IsMatch(line) && !MoneyBelongsToOtherLabel(line) && LastMoney(line) is decimal nt)
                 nonTaxable = nt;
             else if (!isItemRow && TaxableLabel.IsMatch(line) && LastMoney(line) is decimal tx)
                 taxable = tx;
