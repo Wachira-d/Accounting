@@ -834,6 +834,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.UndueInputVatEx
 // กวาดสแกน OCR ที่ค้าง Processing (process ถูกฆ่ากลางทาง) + คืนโควตาที่หักไปแล้ว
 builder.Services.AddHostedService<Accounting.Services.Background.OcrStuckScanSweepJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.NextAccOaQuotaWatch>();   // รอบ 254 WP-11 L4 (N8) — เฝ้าต้นทุน OA กลาง (push/reply) ทุกชั่วโมง · JobLock
 builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
 // 2026-10-19: ตรวจวันหมดอายุใบรับรอง SSL ของโดเมนแพลตฟอร์ม วันละครั้ง — เตือนผู้ดูแลระบบล่วงหน้า 30/14/7/1 วัน (หน้าเว็บ + อีเมล)
 builder.Services.AddHostedService<Accounting.Services.Background.TlsCertificateMonitorJob>();

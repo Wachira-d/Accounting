@@ -20,6 +20,8 @@ public class DocumentEmailService : IDocumentEmailService
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
     /// <summary>รอบ 240: เพดานอีเมลของแพลตฟอร์ม (<c>SignRequestEmail:PlatformDailyCapPerCompany</c>) + URL ของระบบ (ลิงก์แจ้งใช้ผิด) · null = ค่าเริ่มต้น</summary>
     private readonly IConfiguration? _config;
+    /// <summary>รอบ 254 WP-11 L4 (Q4): โควตาอีเมลรายเดือนของเส้น SMTP ของ NextAcc (ต่อจากเพดานรายวัน) · null (สร้างนอก DI) ⇒ ไม่นับรายเดือน</summary>
+    private readonly INotifyQuotaService? _notifyQuota;
 
     public DocumentEmailService(
         AccountingDbContext db,
@@ -28,9 +30,11 @@ public class DocumentEmailService : IDocumentEmailService
         ILogger<DocumentEmailService> logger,
         IPdfGenerationService? pdf = null,
         Accounting.Services.Storage.IFileStorage? storage = null,
-        IConfiguration? config = null)
+        IConfiguration? config = null,
+        INotifyQuotaService? notifyQuota = null)
     {
         _config = config;
+        _notifyQuota = notifyQuota;
         _storage = storage;
         _db = db;
         _senderFactory = senderFactory;
@@ -162,7 +166,34 @@ public class DocumentEmailService : IDocumentEmailService
             }
         }
 
-        var result = await sender.SendAsync(msg);
+        // รอบ 254 WP-11 L4 (Q4): เส้นแพลตฟอร์มตัดโควตาอีเมลรายเดือน (จองหลังทุกด่าน · ก่อนเรียกผู้ให้บริการ) — เต็ม ⇒ แถว Failed + 429 พร้อมทางไปต่อ ·
+        // ส่งล้ม/โยน ⇒ คืนหน่วย (ไม่นับอีเมลที่ไม่ได้ส่ง)
+        NotifyReservation? monthly = null;
+        if (plan.OnBehalf && _notifyQuota != null)
+        {
+            monthly = await _notifyQuota.ReservePlatformEmailAsync(companyId);
+            if (!monthly.Ok)
+            {
+                var full = NotifyQuotaPolicy.EmailMonthlyFullReason(monthly.Limit);
+                log.Status = EmailLogStatus.Failed;
+                log.ErrorMessage = full;
+                _db.DocumentEmailLogs.Add(log);
+                await _db.SaveChangesAsync();
+                throw new BusinessRuleException(full, "EMAIL-PLATFORM-MONTHLY", 429);
+            }
+        }
+        EmailSendResult result;
+        try { result = await sender.SendAsync(msg); }
+        catch (Exception) when (monthly != null)
+        {
+            await _notifyQuota!.ReleaseAsync(companyId, monthly);
+            throw;
+        }
+        if (monthly != null)
+        {
+            if (result.Success) await _notifyQuota!.AlertIfCrossedAsync(companyId, monthly);
+            else await _notifyQuota!.ReleaseAsync(companyId, monthly);
+        }
         log.Status = result.Success ? EmailLogStatus.Sent : EmailLogStatus.Failed;
         log.SentAt = result.Success ? DateTime.UtcNow : null;
         log.ErrorMessage = result.ErrorMessage;

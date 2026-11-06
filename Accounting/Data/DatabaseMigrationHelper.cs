@@ -264,6 +264,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.ContactNotifyEndpointMigration.Statements());   // รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (ย้าย Contact.LineUserId ทำในโค้ดตอนบูต — ต้องเข้ารหัส)
         list.AddRange(Accounting.Helpers.ContactLineDeliveryMigration.Statements());   // รอบ 254 WP-11 L2 — ช่องทางต่อกฎตารางส่ง + คิว LINE + คำเชิญผูก LINE ของผู้ติดต่อ
         list.AddRange(Accounting.Helpers.PaymentQrMigration.Statements());   // รอบ 246 QR — QR ชำระเงินของบัญชีธนาคาร (อัปโหลด/พร้อมเพย์) + ธงแสดง QR ของเทมเพลต
+        list.AddRange(Accounting.Helpers.NotifyChannelQuotaMigration.Statements());   // รอบ 254 WP-11 L4 — ตัวนับ/เพดาน/โบนัส/แพ็กแยกช่อง LINE·อีเมล (หลังบล็อกรอบ 212/213 ที่สร้างตาราง)
         return list;
     }
 

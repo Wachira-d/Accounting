@@ -28,6 +28,7 @@ public class AccountingDbContext : DbContext
     public DbSet<SignEventOutboxEntry> SignEventOutbox => Set<SignEventOutboxEntry>();   // รอบ 240 — outbox เหตุการณ์ลูกค้าเซ็น (ตาราง/index ตรงกับ Helpers/SignRequestMigration)
     public DbSet<DeferredNotification> DeferredNotifications => Set<DeferredNotification>();   // รอบ 217 — แจ้งเตือนตามหลัง (Helpers/DeferredNotifyPolicy)
     public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
+    public DbSet<NextAccOaUsageCounter> NextAccOaUsageCounters => Set<NextAccOaUsageCounter>();   // รอบ 254 WP-11 L4 — ต้นทุน OA กลาง (Helpers/NotifyChannelQuotaMigration)
     // รอบ 229 — โควตาเสริม (ตาราง/index ต้องตรงกับ Helpers/QuotaAddOnMigration)
     public DbSet<PlanQuotaAllowance> PlanQuotaAllowances => Set<PlanQuotaAllowance>();
     public DbSet<CompanyQuotaOverride> CompanyQuotaOverrides => Set<CompanyQuotaOverride>();
@@ -3838,8 +3839,15 @@ public class AccountingDbContext : DbContext
         });
         modelBuilder.Entity<NotifyUsageCounter>(e =>
         {
-            e.HasKey(x => new { x.CompanyId, x.Period });
+            e.HasKey(x => new { x.CompanyId, x.Period, x.Channel });   // รอบ 254 WP-11 L4 — ต้องตรงกับ Helpers/NotifyChannelQuotaMigration
             e.Property(x => x.Period).HasMaxLength(7);
+            e.Property(x => x.Channel).HasMaxLength(8);
+        });
+        modelBuilder.Entity<NextAccOaUsageCounter>(e =>
+        {
+            e.HasKey(x => new { x.Period, x.Kind });   // รอบ 254 WP-11 L4 — ต้องตรงกับ Helpers/NotifyChannelQuotaMigration
+            e.Property(x => x.Period).HasMaxLength(7);
+            e.Property(x => x.Kind).HasMaxLength(16);
         });
         // รอบ 231 — ส่วนเกินโควตา + ประวัติการใช้งาน (ตาราง/index ต้องตรงกับ Helpers/OverageMigration)
         modelBuilder.Entity<OverageRate>(e =>

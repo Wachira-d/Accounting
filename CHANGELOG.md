@@ -6775,3 +6775,11 @@ _รอบ 254 WP-11 L3 (กลุ่ม LINE ของผู้ติดต่�
 `LineGroupBindCodes` + `LineWebhookEventsSeen` (กัน webhook ซ้ำ · ลบในงาน PDPA รายคืน) · `LineNotifyService` ข้อความ text ถึงผู้ติดต่อ/ข้อมูลกลุ่ม/ออกจากกลุ่ม (ด่านเดียวกับการ์ด ·
 ไม่มีวันออก/ส่งเข้ากลุ่มกลางของแอดมิน) · ทะเบียน SecretReprotectJob + `LineGroupBindCodes.GroupIdProtected` · หน้า contacts ฟอร์มผูกกลุ่ม. ยังไม่ได้คอมไพล์ในเครื่องนี้_
 
+_รอบ 254 WP-11 L4 ส่วนโควตา (Q3/Q4 · N7/N9 · DECISIONS 254-WP11-10): `NotifyUsageCounters.Channel` (PK ใหม่ · แถวเดิม = ก้อนรวม) · เพดานแยก LINE/อีเมลบนแพ็กเกจ/บริษัท
+(ว่าง = ไม่แยก · migration ไม่จำกัดใคร) · โบนัส/แพ็กแยกช่อง `notify.topup.line` ฿290/1,000 · `notify.topup.email` ฿190/5,000 · อีเมลเอกสาร/ตารางส่ง/ขอเซ็นผ่าน SMTP ของ NextAcc
+ตัดโควตาอีเมลรายเดือน (ไม่กินก้อนรวม · ต่อจากเพดานรายวัน) · `BookingNotifier` บอกช่อง · หน้าแอดมิน plans/บริษัท + การ์ดลูกค้าแสดง/ซื้อต่อช่อง. ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_รอบ 254 WP-11 L4 ส่วน OA กลาง (N8 · DECISIONS 254-WP11-11): `NextAccOaQuotaWatch` (รายชั่วโมง · JobLock) อ่านยอด push/โควตาของ OA กลางจาก LINE + ตัวนับ reply ต่อเดือน
+(`NextAccOaUsageCounters` · นับที่ `CustomerLineLinkService.ReplyAsync`) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% ครั้งเดียวต่องวด · ไม่ตัดโควตาผู้เช่า · สวิตช์ `CentralOaGroupDeliveryEnabled`
+เลื่อนไปทำพร้อมเส้นกลุ่มผ่าน OA กลาง (สวิตช์ที่ไม่มีผู้อ่าน = ค่าตั้งไม่มีผล). ยังไม่ได้คอมไพล์ในเครื่องนี้_
+

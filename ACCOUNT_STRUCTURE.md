@@ -465,9 +465,26 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
   (`NotifyQuotaPolicy.IsMetered` เดิม — OA ของร้านเองไม่นับ · LINE คิดเงินบริษัทเองตามแผน OA) · ข้อความ OA บริษัทหมด (429 monthly limit) ⇒ แถวคิว LINE ล้มพร้อมเหตุ +
   ถอยไปอีเมลถ้ากฎตั้งไว้ (Q7 — อีเมลผ่าน SMTP ของ NextAcc ยังอยู่ใต้เพดานรายวัน `PlatformEmailQuota` เดิม) · ความพร้อม "OA ของบริษัท" = เปิด LINE + token + secret ถอดได้
   (`Helpers/CompanyLineReadiness` — ไม่มี secret ⇒ webhook ตรวจลายเซ็นไม่ได้ ⇒ ผูก/หยุดรับไม่ได้ ⇒ ไม่พร้อม) · ส่งผ่าน OA กลางถึงผู้ติดต่อ = **ปิด** (`ContactRecipientResolver.NextAccTenantDeliveryOpen`)
-  **ยังไม่ทำ (L4 · บอกตรง ๆ)**: `NotifyUsageCounter.Channel` · `PlanTemplate.MaxSharedLineMessagesPerMonth/MaxSharedEmailsPerMonth` · `notify.topup.line` ฿290/1,000 · `notify.topup.email` ฿190/5,000
-  (N7 — ค่าตั้งต้นในหน้าแอดมิน แก้ได้โดยไม่ deploy) · อีเมลผ่าน SMTP NextAcc ตัดโควตารายเดือน (Q4 · ไม่ตั้งเพดานรวม `MaxSharedEmailsPerMonth` ระดับแพลตฟอร์ม — N9) ·
-  สวิตช์แอดมิน `CentralOaGroupDeliveryEnabled` (ค่าตั้งต้นปิด · N8) · ตัวนับ reply/เดือนใน `NextAccOaQuotaWatch` · ปิดขาย `notify.topup` ก้อนรวม (โบนัสเดิมใช้ได้ทั้งสองช่อง)
+  **รอบ 254 WP-11 L4 — โควตาแยกช่อง LINE / อีเมล (คำตอบเจ้าของ Q3/Q4 · AUDIT_249 §3.3 N7/N9 · DECISIONS 254-WP11-10)** 🔨 *(ยังไม่ได้คอมไพล์)*:
+  - ตัวนับ `NotifyUsageCounters` PK (CompanyId, Period, **Channel**) — `all` = ก้อนรวมเดิม (แถวเดิมทั้งหมด) · `line` · `email` (`Helpers/NotifyChannelQuotaMigration` เปลี่ยน PK ครั้งเดียว)
+  - เพดานแยกช่อง `PlanTemplate.MaxSharedLineMessagesPerMonth`/`MaxSharedEmailsPerMonth` (+ Trial) และทับรายบริษัท `Subscription.MaxSharedLineMessagesPerMonth`/`MaxSharedEmailsPerMonth`
+    (ตัวตัดสิน `NotifyQuotaPolicy.ChannelPlanLimit` · **ว่างทุกชั้น = ไม่แยก ⇒ นับรวมก้อนเดิม** — migration ไม่ตั้งตัวเลข · ค่าแนะนำ LINE 100/300/1,000/5,000 · อีเมล 300/1,500/6,000/ไม่จำกัด
+    แสดงเป็นคำใบ้ที่ /admin/plans.html · อีเมลตั้งจริงหลังรัน SQL NOTIFY §4 — N9 ไม่มีเพดานรวมระดับแพลตฟอร์ม · บริษัทที่เกิน ⇒ ทับรายบริษัทที่ /admin/customers.html)
+  - ลำดับเมื่อเต็ม (แถวของช่อง): แพ็กของช่อง (`Subscription.NotifyBonusLine*`/`NotifyBonusEmail*`) ⇒ แพ็กรวมเดิม `NotifyBonusQuota` (ใช้ได้ทั้งสองช่องจนหมด) ⇒ ข้อความจำเป็น ⇒ ส่วนเกิน ⇒ เต็ม ·
+    เตือน 80%/100% ครั้งเดียวต่องวด**ต่อช่อง** (ข้อความนำหน้าด้วยชื่อช่อง) · คืนหน่วยเข้าถังที่หักไป
+  - แพ็ก `notify.topup.line` (1,000 ข้อความ ฿290) · `notify.topup.email` (5,000 ฉบับ ฿190) อายุ 60 วัน — N7 · ขนาด/อายุ/ราคาแก้ที่ /admin/addons.html (ไม่ deploy · ผู้ให้บริการอีเมลแพง ⇒ 2,000/฿190) ·
+    มิเตอร์ระบบ (`AddOnCodes.SystemMeters`) · ซื้อผ่าน `POST …/metering/notify-quota/topup` `{channel}` (ล็อกเดียวกับแพ็กรวม · คิดเงินก่อนให้ของ · audit) · `notify.topup` ก้อนรวมยังขายจนแอดมินปิด (design §5.2)
+  - **อีเมลผ่าน SMTP ของ NextAcc ตัดโควตาอีเมลรายเดือน (Q4)**: อีเมลเอกสาร · คิวตารางส่ง · อีเมลขอเซ็น — แถวช่องอีเมลเสมอ (**ไม่กินก้อนรวม**ของข้อความแจ้งลูกค้า) · ต้องผ่านเพดานรายวัน
+    `PlatformEmailQuota` ด้วย · เต็ม ⇒ ไม่ส่ง + เหตุ + ทางไปต่อ (DOCUMENT_FLOW §อีเมลเอกสาร) · ข้อความแจ้งลูกค้า (`BookingNotifier`) บอกช่องของขั้นส่ง ⇒ ช่องที่แยกนับแถวของช่อง
+  - สถานะ `GET …/metering/notify-quota` มี `channels[]` (เซิร์ฟเวอร์คำนวณ) · แอดมินบริษัทเห็นสรุปต่อช่อง + ตั้งเพดานต่อช่อง (`PUT …/notify-quota` `{channel}` · ประวัติ + audit)
+  - ประวัติการใช้งาน (`UsageSnapshotService`) รวมทุกช่องต่องวด
+  - **เฝ้าต้นทุน OA กลาง (N8)**: งาน `Services/Background/NextAccOaQuotaWatch` (ทุกชั่วโมง · `JobLock`) — อ่านยอด push/โควตาของ OA กลางจาก LINE
+    (`ILineNotifyService.TryReadNextAccQuotaAsync`) + **ตัวนับ reply ต่อเดือน** (นับที่ `CustomerLineLinkService.ReplyAsync` เมื่อเป็น OA กลาง · ตาราง `NextAccOaUsageCounters`
+    ระดับแพลตฟอร์ม) · ถึง 90% (push เทียบโควตาของ LINE · reply เทียบ 25,000 ฟรีตามประกาศที่ยังไม่ยืนยัน) ⇒ เตือนกลุ่มผู้ดูแลแพลตฟอร์มครั้งเดียวต่องวด ·
+    ส่งเตือนไม่สำเร็จ ⇒ ไม่ประทับ (รอบหน้าลองใหม่) · **ไม่ตัดโควตาผู้เช่า**
+  **ยังไม่ทำ (บอกตรง ๆ · DECISIONS 254-WP11-11)**: สวิตช์แอดมิน `CentralOaGroupDeliveryEnabled` — ยังไม่สร้างเพราะเส้นกลุ่มผ่าน OA กลาง (รหัสจาก webhook กลาง ·
+  ผูกปลายทาง scope กลาง · ส่งด้วย token กลาง + ตัดโควตา LINE ตามสมาชิก · ออกจากกลุ่มด้วย token กลาง) ยังไม่มี ⇒ สวิตช์ที่เปิดแล้วไม่มีผล = ค่าตั้งไม่มีผู้อ่าน (F2 ข้อ 2) ·
+  ทำพร้อมเส้นนั้นหลังได้หนังสือจาก LINE · หน่วยนับกลุ่มตามสมาชิก (รอทดสอบบน OA จริง — AUDIT_249 ข้อ 35) · ปิดขาย `notify.topup` ก้อนรวม (มือแอดมิน)
 
 ### 5.1 โควตาของเว็บ CMS (หน้า · สินค้า · พื้นที่) ✅ *(บังคับจริงตั้งแต่รอบ 159)*
 

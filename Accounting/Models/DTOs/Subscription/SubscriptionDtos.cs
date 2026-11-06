@@ -266,7 +266,12 @@ public record CreatePlanTemplateRequest(
     bool IsPermanentFree = false,
     // รอบ 212: เพดานข้อความช่องกลาง/เดือน (null/-1 = ไม่จำกัด · ไม่ตั้งให้อัตโนมัติ)
     int? MaxSharedMessagesPerMonth = null,
-    int? TrialMaxSharedMessagesPerMonth = null);
+    int? TrialMaxSharedMessagesPerMonth = null,
+    // รอบ 254 WP-11 L4 (Q3): เพดานแยกช่อง (null/-1 = ไม่แยก — นับรวมก้อนเดิม)
+    int? MaxSharedLineMessagesPerMonth = null,
+    int? TrialMaxSharedLineMessagesPerMonth = null,
+    int? MaxSharedEmailsPerMonth = null,
+    int? TrialMaxSharedEmailsPerMonth = null);
 
 public record UpdatePlanTemplateRequest(
     string? Name,
@@ -305,7 +310,12 @@ public record UpdatePlanTemplateRequest(
     int? TrialMaxOcrPagesPerMonth = null,
     // รอบ 212 (คำตัดสินข้อ 171): เพดานข้อความช่องกลาง/เดือน (-1 = ไม่จำกัด · null = ไม่แตะ)
     int? MaxSharedMessagesPerMonth = null,
-    int? TrialMaxSharedMessagesPerMonth = null);
+    int? TrialMaxSharedMessagesPerMonth = null,
+    // รอบ 254 WP-11 L4 (Q3): เพดานแยกช่อง (-1 = ไม่แยก/ล้าง · null = ไม่แตะ)
+    int? MaxSharedLineMessagesPerMonth = null,
+    int? TrialMaxSharedLineMessagesPerMonth = null,
+    int? MaxSharedEmailsPerMonth = null,
+    int? TrialMaxSharedEmailsPerMonth = null);
 
 public record PlanTemplateResponse(
     Guid Id,
@@ -350,7 +360,15 @@ public record PlanTemplateResponse(
     int? SuggestedTrialSharedMessagesPerMonth = null,
     // รอบ 231 (P0 จ): ข้อความ/ธง "ไม่จำกัด" ของแพ็กเกจจากเซิร์ฟเวอร์ (UsageBarRule.LimitTexts) — หน้าแรก/สมัคร/License/แพ็กเกจ อ่านค่านี้แทนเกณฑ์ใน JS
     Dictionary<string, string>? LimitTexts = null,
-    Dictionary<string, bool>? Unlimited = null);
+    Dictionary<string, bool>? Unlimited = null,
+    // รอบ 254 WP-11 L4 (Q3): เพดานแยกช่อง + ค่าแนะนำ (echo ให้หน้าแอดมิน hydrate)
+    PlanNotifyChannelLimits? NotifyChannels = null);
+
+/// <summary>รอบ 254 WP-11 L4: เพดานแยกช่อง LINE/อีเมลของแม่แบบ (null = ไม่แยก) + ค่าแนะนำจากเซิร์ฟเวอร์ (<c>NotifyQuotaPolicy.SuggestedChannelLimit</c> — คำใบ้ ไม่ตั้งให้อัตโนมัติ)</summary>
+public record PlanNotifyChannelLimits(
+    int? MaxSharedLineMessagesPerMonth, int? TrialMaxSharedLineMessagesPerMonth,
+    int? MaxSharedEmailsPerMonth, int? TrialMaxSharedEmailsPerMonth,
+    int? SuggestedLine, int SuggestedTrialLine, int? SuggestedEmail, int SuggestedTrialEmail);
 
 /// <summary>1 ฟีเจอร์ในแคตตาล็อก — ป้ายไทย/อังกฤษ + หมวด + คำอธิบาย (จาก <c>Helpers/FeatureCatalog</c>)</summary>
 public record FeatureFlagInfo(string Name, string Category, string LabelTh, string LabelEn = "", string Description = "");

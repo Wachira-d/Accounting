@@ -27,6 +27,10 @@ public interface ILineNotifyService
     /// ปิดได้ที่หน้าแอดมิน (LINE OA กลาง → "ส่งเรื่องของระบบเข้ากลุ่มกลาง") · <b>ห้าม</b>ใช้กับเหตุการณ์ของผู้เช่า</summary>
     Task<LinePushResult> TryPushPlatformOpsAsync(string message);
 
+    /// <summary>รอบ 254 WP-11 L4 (N8): โควตา/ยอดใช้ข้อความ push ของ OA กลางเดือนนี้จาก LINE (<c>GET /v2/bot/message/quota</c> + <c>/consumption</c>) ·
+    /// null = ยังไม่ตั้ง token / LINE ไม่ตอบ (ผู้เรียก log แล้วรอรอบหน้า) · Limit null = ไม่จำกัด</summary>
+    Task<NextAccOaQuotaReading?> TryReadNextAccQuotaAsync(CancellationToken ct = default);
+
     /// <summary>รอบ 232: ข้อความธุรกิจของบริษัท (TenantBusiness) เข้า<b>กลุ่ม LINE ของบริษัทนั้น</b> (<c>CompanySettings.LineDefaultGroupId</c>) ผ่าน OA ของบริษัท ·
     /// ไม่มี OA/กลุ่ม ⇒ <c>Fail</c> พร้อมเหตุ + <c>RuleCode</c> (ไม่ถอยไป OA กลาง) · ผู้เรียกหลัก = <c>NotificationEngine</c> ช่อง "กลุ่ม LINE"</summary>
     Task<LinePushResult> TryPushCompanyGroupAsync(Guid companyId, string message);
@@ -73,3 +77,6 @@ public interface ILineNotifyService
     /// Returns (success, message) suitable for echoing to the admin UI.</summary>
     Task<(bool ok, string message)> TestConfigAsync(Guid companyId, string toLineId);
 }
+
+/// <summary>รอบ 254 WP-11 L4: ยอด push ของ OA กลางที่ LINE รายงาน (Limit null = ไม่จำกัด)</summary>
+public sealed record NextAccOaQuotaReading(long? Limit, long Used);

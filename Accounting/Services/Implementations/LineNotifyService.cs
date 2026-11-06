@@ -354,6 +354,33 @@ public class LineNotifyService : ILineNotifyService
         return await PushCoreAsync(nx.AccessToken, TextPayload(nx.GroupId, LineMessageLimits.Truncate(message, 5000)), "platform-ops");
     }
 
+    public async Task<NextAccOaQuotaReading?> TryReadNextAccQuotaAsync(CancellationToken ct = default)
+    {
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = PushTimeout;
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            using var quotaResp = await client.GetAsync("https://api.line.me/v2/bot/message/quota", ct);
+            using var usedResp = await client.GetAsync("https://api.line.me/v2/bot/message/quota/consumption", ct);
+            if (!quotaResp.IsSuccessStatusCode || !usedResp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("อ่านโควตา OA กลางไม่สำเร็จ (quota {Q} · consumption {C})", (int)quotaResp.StatusCode, (int)usedResp.StatusCode);
+                return null;
+            }
+            var used = NextAccOaQuotaRule.ParseConsumption(await usedResp.Content.ReadAsStringAsync(ct));
+            if (used is not long u) return null;
+            return new NextAccOaQuotaReading(NextAccOaQuotaRule.ParseQuota(await quotaResp.Content.ReadAsStringAsync(ct)), u);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "อ่านโควตา OA กลางไม่สำเร็จ");
+            return null;
+        }
+    }
+
     /// <summary>token ของ OA กลาง (NextAcc) — ผ่าน resolver ตัวเดียว (รอบ 212 D)</summary>
     private async Task<string?> NextAccTokenAsync() => (await _nextAcc.GetAsync()).AccessToken;
 

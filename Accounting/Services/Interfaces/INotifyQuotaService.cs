@@ -9,7 +9,11 @@ public sealed record NotifyClaim(bool Claimed, bool AlreadySent, Guid? LogId, st
 
 /// <summary>ผลจองหน่วยโควตา 1 หน่วยก่อนส่งทางช่องกลาง — <c>Ok</c> = ส่งได้ · <c>Kind</c> = plan/bonus/essential (ใช้คืนหน่วยเมื่อส่งล้ม) ·
 /// <c>CrossedLevel</c> = ระดับเตือนที่เพิ่งข้าม (0/1/2) · <c>Limit</c> = เพดานรวมที่ใช้ตัดสิน (ข้อความถึงผู้ใช้)</summary>
-public sealed record NotifyReservation(bool Ok, string Kind, string Period, int Limit, int CrossedLevel, int UsedAfter);
+public sealed record NotifyReservation(bool Ok, string Kind, string Period, int Limit, int CrossedLevel, int UsedAfter)
+{
+    /// <summary>รอบ 254 WP-11 L4: แถวตัวนับที่จองไป (<c>all</c>/<c>line</c>/<c>email</c>) — ใช้คืนหน่วย/ประทับคำเตือนให้ถูกแถว</summary>
+    public string Channel { get; init; } = Accounting.Helpers.NotifyQuotaPolicy.ChannelAll;
+}
 
 /// <summary>สถานะโควตาข้อความช่องกลางของบริษัท (เซิร์ฟเวอร์คำนวณ · หน้าเว็บแสดงอย่างเดียว)</summary>
 public sealed record NotifyQuotaStatus(
@@ -31,6 +35,10 @@ public sealed record NotifyQuotaStatus(
 {
     /// <summary>ฝ่ายค้านรอบ 213 S4: จำนวนข้อความที่การซื้อครั้งนี้ให้จริง (ขนาดแพ็ก ณ ตอนซื้อ × จำนวนแพ็ก) · null = ไม่ใช่ผลของการซื้อ/คำขอซ้ำ</summary>
     public int? Granted { get; init; }
+    /// <summary>รอบ 254 WP-11 L4: ช่องของแพ็กที่ซื้อครั้งนี้ (all/line/email) · null = ไม่ใช่ผลของการซื้อ</summary>
+    public string? GrantedChannel { get; init; }
+    /// <summary>รอบ 254 WP-11 L4: สถานะแยกช่อง LINE / อีเมล (เซิร์ฟเวอร์คำนวณ)</summary>
+    public IReadOnlyList<Accounting.Helpers.NotifyChannelQuotaStatus> Channels { get; init; } = Array.Empty<Accounting.Helpers.NotifyChannelQuotaStatus>();
 }
 
 /// <summary>
@@ -44,7 +52,12 @@ public interface INotifyQuotaService
     Task<NotifyClaim> ClaimAsync(Guid companyId, string? messageKey, string eventKey, string? targetKind, Guid? targetId, CancellationToken ct = default);
 
     /// <summary>จอง 1 หน่วยก่อนส่งทางช่องกลาง (UPDATE … RETURNING แบบ R-05) · เต็ม ⇒ <c>Ok=false</c> (ข้อความจำเป็นนับเกินได้)</summary>
-    Task<NotifyReservation> TryReserveAsync(Guid companyId, bool essential, CancellationToken ct = default);
+    /// รอบ 254 WP-11 L4: <paramref name="channel"/> (<c>line</c>/<c>email</c>) ⇒ แถวของช่องเมื่อช่องนั้นมีเพดานแยก · ไม่มี ⇒ ก้อนรวมเดิม (<paramref name="combinedFallback"/>)
+    /// หรือแถวของช่องแบบไม่จำกัด (false — เส้นที่เพิ่งเริ่มนับ ห้ามกินก้อนรวม)
+    Task<NotifyReservation> TryReserveAsync(Guid companyId, bool essential, CancellationToken ct = default, string? channel = null, bool combinedFallback = true);
+
+    /// <summary>รอบ 254 WP-11 L4 (Q4): จอง 1 อีเมลผ่าน SMTP ของ NextAcc ในโควตาอีเมลรายเดือน (ต่อจากเพดานรายวัน) · เต็ม ⇒ แจ้งเจ้าของแล้วคืน <c>Ok=false</c></summary>
+    Task<NotifyReservation> ReservePlatformEmailAsync(Guid companyId, CancellationToken ct = default);
 
     /// <summary>คืนหน่วยเมื่อส่งล้ม (ตามชนิดที่จองไว้)</summary>
     Task ReleaseAsync(Guid companyId, NotifyReservation reservation, CancellationToken ct = default);
@@ -61,8 +74,9 @@ public interface INotifyQuotaService
 
     /// <summary>ซื้อแพ็กข้อความเพิ่ม (<paramref name="idempotencyKey"/> = header Idempotency-Key — ส่งซ้ำได้ผลเดิม) — ลอก <c>QuotaService.PurchaseTopUpAsync</c>: ล็อกต่อบริษัท → UsageEvent <c>notify.topup</c> ก่อนให้ของ → โบนัส + อายุ → audit chain</summary>
     /// ฝ่ายค้านรอบ 213 S4: <paramref name="expectedPackSize"/>/<paramref name="expectedPackPrice"/> = ข้อเสนอที่ผู้ซื้อเห็น — ไม่ตรงของจริงใต้ล็อก ⇒ <see cref="NotifyTopUpOfferChangedException"/> (ไม่คิดเงิน)
+    /// รอบ 254 WP-11 L4: <paramref name="channel"/> = <c>line</c>/<c>email</c> ⇒ แพ็กของช่อง (<c>notify.topup.line</c>/<c>.email</c>) · null ⇒ แพ็กรวมเดิม
     Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null,
-        int? expectedPackSize = null, decimal? expectedPackPrice = null);
+        int? expectedPackSize = null, decimal? expectedPackPrice = null, string? channel = null);
 }
 
 /// <summary>ฝ่ายค้านรอบ 213 S4: ขนาด/ราคาแพ็กข้อความเปลี่ยนระหว่างที่ผู้ซื้อดูหน้าจอ — ยังไม่คิดเงิน · คอนโทรลเลอร์ตอบ 409 พร้อมสถานะใหม่</summary>

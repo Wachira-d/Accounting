@@ -118,7 +118,8 @@ public class BookingNotifier : IBookingNotifier
             NotifyReservation? reservation = null;
             if (step.Metered && _quota != null)
             {
-                reservation = await _quota.TryReserveAsync(companyId, essential, ct);
+                // รอบ 254 WP-11 L4: บอกช่องของขั้นนี้ — ช่องที่มีเพดานแยก (Q3) นับแถวของช่อง · ไม่แยก ⇒ ก้อนรวมเดิม (พฤติกรรมเดิม)
+                reservation = await _quota.TryReserveAsync(companyId, essential, ct, NotifyQuotaPolicy.ChannelOfStep(step.Channel));
                 if (!reservation.Ok)
                 {
                     quotaFullLimit = reservation.Limit;

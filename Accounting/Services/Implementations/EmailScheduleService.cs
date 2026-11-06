@@ -22,12 +22,16 @@ public class EmailScheduleService : IEmailScheduleService
     /// <summary>รอบ 250 WP-08 (L1 ต่อสาย · DESIGN §3.e/§3.g): ผู้รับของทุกเส้นในไฟล์นี้มาจากตัวหาผู้รับเดียว (ปลายทางของผู้ติดต่อ + เรื่องที่รับ) —
     /// ห้ามอ่าน <c>Contact.Email</c> เป็นผู้รับเอง (required_call_site_check R250L1) · null (สร้างนอก DI) ⇒ ตัวเดียวกันแบบไม่ถอด LINE</summary>
     private readonly IContactRecipientResolver _recipients;
+    /// <summary>รอบ 254 WP-11 L4 (Q4): โควตาอีเมลรายเดือนของเส้น SMTP ของ NextAcc · null (สร้างนอก DI) ⇒ ไม่นับรายเดือน</summary>
+    private readonly INotifyQuotaService? _notifyQuota;
 
     public EmailScheduleService(AccountingDbContext db, IEmailSenderFactory senderFactory,
         IPdfGenerationService pdf, ILogger<EmailScheduleService> logger, IDocumentPayLinkService? payLinks = null,
-        IConfiguration? config = null, IDocumentEmailService? docEmail = null, IContactRecipientResolver? recipients = null)
+        IConfiguration? config = null, IDocumentEmailService? docEmail = null, IContactRecipientResolver? recipients = null,
+        INotifyQuotaService? notifyQuota = null)
     {
         _db = db;
+        _notifyQuota = notifyQuota;
         _senderFactory = senderFactory;
         _pdf = pdf;
         _logger = logger;
@@ -705,7 +709,37 @@ public class EmailScheduleService : IEmailScheduleService
                     if (att != null) msg.Attachments.Add(att);
                 }
 
-                var result = await sender.SendAsync(msg, ct);
+                // รอบ 254 WP-11 L4 (Q4): เส้นแพลตฟอร์ม (log != null) ตัดโควตาอีเมลรายเดือน — เต็ม ⇒ ล้มพร้อมเหตุบนคิว (ซื้อแพ็กแล้วกด "ลองใหม่") ไม่เรียกผู้ให้บริการ ·
+                // ส่งล้ม/โยน ⇒ คืนหน่วย
+                NotifyReservation? monthly = null;
+                if (log != null && _notifyQuota != null)
+                {
+                    monthly = await _notifyQuota.ReservePlatformEmailAsync(item.CompanyId, ct);
+                    if (!monthly.Ok)
+                    {
+                        var full = NotifyQuotaPolicy.EmailMonthlyFullReason(monthly.Limit);
+                        item.Status = "Failed";
+                        item.ErrorMessage = full;
+                        item.UpdatedAt = DateTime.UtcNow;
+                        log.Status = EmailLogStatus.Failed;
+                        log.ErrorMessage = full;
+                        _db.DocumentEmailLogs.Add(log);
+                        await _db.SaveChangesAsync(ct);
+                        continue;
+                    }
+                }
+                EmailSendResult result;
+                try { result = await sender.SendAsync(msg, ct); }
+                catch (Exception) when (monthly != null)
+                {
+                    await _notifyQuota!.ReleaseAsync(item.CompanyId, monthly, ct);
+                    throw;
+                }
+                if (monthly != null)
+                {
+                    if (result.Success) await _notifyQuota!.AlertIfCrossedAsync(item.CompanyId, monthly, ct);
+                    else await _notifyQuota!.ReleaseAsync(item.CompanyId, monthly, ct);
+                }
                 if (log != null)
                 {
                     // เส้นแพลตฟอร์ม: ทุกฉบับลงบันทึก (ฐานนับเพดานรายวัน PlatformEmailQuota) · เนื้อในบันทึกคง {PayLink} (ไม่มี token ตรง — ฝ่ายค้าน S1)

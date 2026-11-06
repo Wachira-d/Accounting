@@ -165,7 +165,113 @@ public static class NotifyQuotaPolicy
     }
 
     private static string N(int v) => v.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+
+    // ───────── รอบ 254 WP-11 L4 (คำตอบเจ้าของ Q3/Q4 · AUDIT_249 §3.3 N7/N9): โควตาแยกช่อง LINE / อีเมล ─────────
+
+    /// <summary>แถวตัวนับก้อนรวมเดิม (รอบ 212) — ช่องที่ยังไม่ได้ตั้งเพดานแยกนับที่นี่ (ไม่เปลี่ยนพฤติกรรมลูกค้าเดิม)</summary>
+    public const string ChannelAll = "all";
+    public const string ChannelLine = "line";
+    public const string ChannelEmail = "email";
+
+    /// <summary>ชื่อช่องที่รู้จัก — ค่าอื่น/null ⇒ ก้อนรวม</summary>
+    public static string NormalizeChannel(string? channel) => channel switch
+    {
+        ChannelLine => ChannelLine,
+        ChannelEmail => ChannelEmail,
+        _ => ChannelAll,
+    };
+
+    /// <summary>ช่องของขั้นส่งลูกค้า (<see cref="CustomerNotifyChannel.ChannelLine"/>/<see cref="CustomerNotifyChannel.ChannelEmail"/>) → ช่องของโควตา</summary>
+    public static string ChannelOfStep(string? stepChannel)
+        => stepChannel == CustomerNotifyChannel.ChannelLine ? ChannelLine : stepChannel == CustomerNotifyChannel.ChannelEmail ? ChannelEmail : ChannelAll;
+
+    /// <summary>เพดานแยกของช่อง (design §5.2 <c>PlanLimitFor</c>) — <b>null = ช่องนี้ยังไม่ได้ตั้งเพดานแยก</b> (ไม่มีค่าเฉพาะบริษัทและแพ็กเกจว่าง) ⇒ ผู้เรียกใช้ก้อนรวมเดิม ·
+    /// มีค่า ⇒ กติกาเดียวกับ <see cref="PlanLimit"/> (-1 = ไม่จำกัด · ค่าเฉพาะบริษัทชนะ · ทดลองใช้ ⇒ ค่าทดลอง ?? ค่าแพ็กเกจ)</summary>
+    public static int? ChannelPlanLimit(int? subscriptionOverride, int? templateLimit, int? templateTrialLimit, bool isTrial)
+    {
+        if (subscriptionOverride == null && (isTrial ? (templateTrialLimit ?? templateLimit) : templateLimit) == null) return null;
+        return PlanLimit(subscriptionOverride, templateLimit, templateTrialLimit, isTrial);
+    }
+
+    /// <summary>แถวตัวนับที่ข้อความนี้ใช้: ช่องที่มีเพดานแยก ⇒ แถวของช่อง · ไม่มี ⇒ ก้อนรวม (<paramref name="combinedFallback"/>) หรือแถวของช่องแบบไม่จำกัด
+    /// (เส้นที่เพิ่งเริ่มนับ เช่นอีเมลเอกสารผ่าน SMTP ของ NextAcc — ห้ามไปกินก้อนรวมของข้อความแจ้งลูกค้าเดิม · "ลูกค้าเดิมสะดุด")</summary>
+    public static string CounterChannel(string channel, int? channelLimit, bool combinedFallback)
+        => channel == ChannelAll ? ChannelAll : channelLimit != null || !combinedFallback ? channel : ChannelAll;
+
+    /// <summary>ลำดับโบนัสที่ใช้เมื่อเกินเพดาน: แถวของช่อง ⇒ แพ็กของช่องก่อน แล้วแพ็กรวมเดิม (โบนัสเดิมใช้ได้ทั้งสองช่องจนหมด — NOTIFY §5 ข้อ 6) · ก้อนรวม ⇒ แพ็กรวม</summary>
+    public static IReadOnlyList<string> BonusOrder(string counterChannel)
+        => counterChannel == ChannelAll ? new[] { ChannelAll } : new[] { counterChannel, ChannelAll };
+
+    /// <summary>ตัวเลขแนะนำต่อช่อง (NOTIFY §3.1/§5 ข้อ 2–3) — คำใบ้ในหน้าแอดมินเท่านั้น ไม่ถูกตั้งให้อัตโนมัติ · อีเมล Enterprise = ไม่แนะนำเพดาน (-1 · เพดานรายวันคุม) ·
+    /// อีเมลเป็น "ค่าก่อนวัด" — ตั้งจริงหลังรัน SQL §4 (N9)</summary>
+    public static int? SuggestedChannelLimit(Accounting.Models.Enums.SubscriptionPlan plan, string channel)
+        => NormalizeChannel(channel) switch
+        {
+            ChannelEmail => plan switch
+            {
+                Accounting.Models.Enums.SubscriptionPlan.FreeTrial => 300,
+                Accounting.Models.Enums.SubscriptionPlan.Basic => 1500,
+                Accounting.Models.Enums.SubscriptionPlan.Pro => 6000,
+                Accounting.Models.Enums.SubscriptionPlan.Enterprise => Unlimited,
+                _ => null,
+            },
+            _ => SuggestedLimit(plan),
+        };
+
+    public static int SuggestedTrialChannelLimit(string channel) => NormalizeChannel(channel) == ChannelEmail ? 300 : SuggestedTrialLimit;
+
+    public static string ChannelLabel(string channel) => NormalizeChannel(channel) switch
+    {
+        ChannelLine => "LINE",
+        ChannelEmail => "อีเมล",
+        _ => "LINE/อีเมล (ก้อนรวม)",
+    };
+
+    /// <summary>รหัสแพ็กซื้อเพิ่มของช่อง — ก้อนรวม = <c>notify.topup</c> เดิม</summary>
+    public static string TopUpCodeFor(string channel) => NormalizeChannel(channel) switch
+    {
+        ChannelLine => Models.Constants.AddOnCodes.NotifyTopUpLine,
+        ChannelEmail => Models.Constants.AddOnCodes.NotifyTopUpEmail,
+        _ => Models.Constants.AddOnCodes.NotifyTopUp,
+    };
+
+    /// <summary>ช่องของรหัสแพ็ก (ย้อนของ <see cref="TopUpCodeFor"/>) · null = ไม่ใช่แพ็กข้อความ</summary>
+    public static string? ChannelOfTopUpCode(string? code) => code switch
+    {
+        Models.Constants.AddOnCodes.NotifyTopUp => ChannelAll,
+        Models.Constants.AddOnCodes.NotifyTopUpLine => ChannelLine,
+        Models.Constants.AddOnCodes.NotifyTopUpEmail => ChannelEmail,
+        _ => null,
+    };
+
+    /// <summary>ขนาด/อายุแพ็กของช่อง — ค่าที่แอดมินตั้งชนะ (ช่วงเดียวกับ <see cref="TopUpPack"/>) · ไม่ได้ตั้ง ⇒ LINE 1,000 · อีเมล 5,000 · รวม 500 · อายุ 60 วัน (N7)</summary>
+    public static NotifyTopUpPack TopUpPackFor(string channel, int? packSize, int? validDays)
+    {
+        var ch = NormalizeChannel(channel);
+        var basis = TopUpPack(packSize, validDays);
+        if (ch == ChannelAll) return basis;
+        var fallback = ch == ChannelLine ? Models.Constants.AddOnCodes.MessagesPerNotifyTopUpLinePack : Models.Constants.AddOnCodes.MessagesPerNotifyTopUpEmailPack;
+        return new(packSize is int s && s >= MinPackSize && s <= MaxPackSize ? basis.Size : fallback, basis.ValidDays);
+    }
+
+    /// <summary>หน่วยบนใบแจ้งหนี้ของแพ็กแต่ละช่อง (ประกอบจากขนาดเสมอ)</summary>
+    public static string PackUnitLabelFor(string channel, int packSize) => NormalizeChannel(channel) switch
+    {
+        ChannelLine => $"แพ็ก {N(packSize)} ข้อความ LINE",
+        ChannelEmail => $"แพ็ก {N(packSize)} อีเมล",
+        _ => PackUnitLabel(packSize),
+    };
+
+    /// <summary>เหตุที่อีเมลเอกสาร/ขอเซ็นผ่าน SMTP ของ NextAcc ไม่ถูกส่งเพราะโควตาอีเมลรายเดือนเต็ม — บอกทางไปต่อ (F2 #8)</summary>
+    public static string EmailMonthlyFullReason(int limit)
+        => $"โควตาอีเมลที่ส่งผ่าน NextAcc เดือนนี้ครบแล้ว ({N(Math.Max(0, limit))} ฉบับ) — ยังไม่ส่ง · ซื้อแพ็กอีเมลเพิ่มที่ \"ส่วนเสริม\" แล้วกดลองใหม่ "
+           + "หรือตั้งผู้ส่งอีเมลของบริษัทเอง (ไม่นับโควตา)";
 }
+
+/// <summary>รอบ 254 WP-11 L4: สถานะโควตาของหนึ่งช่อง (เซิร์ฟเวอร์คำนวณ · หน้าเว็บแสดงอย่างเดียว) — <c>OwnLimit=false</c> = ช่องนี้ยังนับรวมกับก้อนรวม</summary>
+public sealed record NotifyChannelQuotaStatus(
+    string Channel, string Label, bool OwnLimit, int Used, int PlanLimit, int BonusRemaining, DateTime? BonusExpiresAt,
+    int EffectiveLimit, int Remaining, int WarnLevel, string? Message, string TopUpCode, int PackSize, decimal? PackPrice, int PackValidDays);
 
 /// <summary>ขนาด/อายุแพ็ก <c>notify.topup</c> ที่มีผล (<see cref="NotifyQuotaPolicy.TopUpPack"/>)</summary>
 public sealed record NotifyTopUpPack(int Size, int ValidDays);
