@@ -2917,7 +2917,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - `RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore` (เดิม UI ส่ง true/1 ตายตัวและไม่มีผล): งานพื้นหลังเดิมของรายการประจำแจ้งกระดิ่งผู้สร้างรายการ
   (`recurring.upcoming_run`) 1…N วันก่อนรอบ · รอบละครั้ง (`UpcomingRunNotifiedFor` compare-and-set) · ช่องบน `recurring.html` ขั้นที่ 4 · N นอก 0–30 = 400
 - `EmailScheduleRule.AudienceFilter` เลิกใช้ (ไม่มีหน้า/API/ผู้อ่าน · คอลัมน์คงไว้)
-- Last verified: commit (เติมในคอมมิตตามหลัง)
+- Last verified: commit 74a2d1f6
 
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 

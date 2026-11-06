@@ -6709,4 +6709,4 @@ compare-and-set) + ช่องบน recurring.html (เดิมส่ง true
 `AudienceFilter` เลิกใช้ (ไม่รับค่า · baseline หมายเหตุ deprecated).
 (3) `EtaxPartyTaxIdGuard.Buyer(name, taxId, contactType, branchCode)` — ชนิด · checksum · สาขาของเลข 18 หลัก · บุคคลไม่มีเลข = OTHR · TXID ใช้สาขาของผู้ติดต่อ ·
 วันที่ใบเดิมของ CN/DN = วันไทย (สอดคล้อง +07:00). (4) `MayBeCostSource` ครอบทุกฝั่ง + Db test ลบถาวรใบขาย. (5) checker 5 จุด (ดู TEST_PLAN).
-(6) CN/DN ≥ 17:00Z. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK)_
+(6) CN/DN ≥ 17:00Z. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 74a2d1f6_
