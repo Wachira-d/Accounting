@@ -50,7 +50,7 @@
     <div id="needsReviewBanner" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-left:4px solid #f59e0b;border-radius:10px;padding:14px 16px;margin-bottom:14px"></div>
 
     <div class="toolbar">
-      <input type="text" class="search-input" placeholder="ค้นหาสินทรัพย์..." id="searchInput" oninput="Page.page=1;Page.load()">
+      <input type="text" class="search-input" placeholder="ค้นหาสินทรัพย์..." id="searchInput" aria-label="ค้นหาสินทรัพย์" oninput="Page._searchLoad()">
       <select class="filter-select" id="statusFilter" onchange="Page.page=1;Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Active">ใช้งาน</option>
@@ -78,7 +78,7 @@
                fields show. Default Tangible keeps the form identical to the
                old PPE-only flow. -->
           <div class="form-group">
-            <label class="form-label">ประเภทสินทรัพย์ *</label>
+            <label for="fAssetType" class="form-label">ประเภทสินทรัพย์ *</label>
             <select class="form-select" id="fAssetType" onchange="Page.onAssetTypeChange(this.value)">
               <option value="Tangible">🏢 PPE — ที่ดิน อาคาร อุปกรณ์ (ค่าเสื่อมราคา)</option>
               <option value="Intangible">📱 ไม่มีตัวตน — Software / Patent (ค่าตัดจำหน่าย)</option>
@@ -95,24 +95,24 @@
           <div id="fLeaseBlock" style="display:none;background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:12px 14px;margin-bottom:12px">
             <div style="font-weight:700;font-size:13px;color:#78350f;margin-bottom:8px">🔑 ข้อมูลสัญญาเช่า (TFRS 16)</div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">ผู้ให้เช่า</label><input type="text" class="form-input" id="fLessor" placeholder="ชื่อบริษัทผู้ให้เช่า"></div>
-              <div class="form-group"><label class="form-label">ระยะเวลาเช่า (เดือน)</label><input type="number" class="form-input" id="fLeaseTerm" min="1" max="600" placeholder="เช่น 36"></div>
+              <div class="form-group"><label for="fLessor" class="form-label">ผู้ให้เช่า</label><input type="text" class="form-input" id="fLessor" placeholder="ชื่อบริษัทผู้ให้เช่า"></div>
+              <div class="form-group"><label for="fLeaseTerm" class="form-label">ระยะเวลาเช่า (เดือน)</label><input type="number" class="form-input" id="fLeaseTerm" min="1" max="600" placeholder="เช่น 36"></div>
             </div>
-            <div class="form-group"><label class="form-label">ค่าเช่าต่อเดือน (บาท)</label><input type="number" class="form-input" id="fLeasePmt" step="0.01" placeholder="0.00"></div>
+            <div class="form-group"><label for="fLeasePmt" class="form-label">ค่าเช่าต่อเดือน (บาท)</label><input type="number" class="form-input" id="fLeasePmt" step="0.01" placeholder="0.00"></div>
             <div style="font-size:11px;color:#78350f">💡 อายุการใช้งานจะใช้ระยะเวลาเช่า ถ้าไม่ระบุอายุการใช้งานเอง</div>
           </div>
 
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-help="รหัสภายในใช้ติดป้าย/สแกน — ตัวอย่าง LAP-001, PRT-A4-002 (ออกอัตโนมัติได้ ถ้าตั้ง Number Series)">รหัสสินทรัพย์ *</label><input type="text" class="form-input" id="fCode"></div>
-            <div class="form-group"><label class="form-label" data-help="ชื่อทรัพย์สิน — ใช้บนทะเบียนสินทรัพย์ + JE ค่าเสื่อม (รวมยี่ห้อ/รุ่นได้)">ชื่อ *</label><input type="text" class="form-input" id="fName"></div>
+            <div class="form-group"><label for="fCode" class="form-label" data-help="รหัสภายในใช้ติดป้าย/สแกน — ตัวอย่าง LAP-001, PRT-A4-002 (ว่างไว้ = ระบบออกรหัส FA-ปีเดือน-#### ให้ตอนบันทึก)">รหัสสินทรัพย์</label><input type="text" class="form-input" id="fCode" placeholder="ว่าง = ออกให้อัตโนมัติ"></div>
+            <div class="form-group"><label for="fName" class="form-label" data-help="ชื่อทรัพย์สิน — ใช้บนทะเบียนสินทรัพย์ + JE ค่าเสื่อม (รวมยี่ห้อ/รุ่นได้)">ชื่อ *</label><input type="text" class="form-input" id="fName"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-help="หมวดสำหรับ filter/รายงาน — เช่น อุปกรณ์สำนักงาน, ยานพาหนะ, อาคาร">หมวดหมู่</label><input type="text" class="form-input" id="fCategory" placeholder="เช่น อุปกรณ์สำนักงาน"></div>
-            <div class="form-group"><label class="form-label" data-help="ห้อง/อาคาร/สาขาที่จัดเก็บ — ใช้สำหรับ stock-take สินทรัพย์">ที่ตั้ง</label><input type="text" class="form-input" id="fLocation"></div>
+            <div class="form-group"><label for="fCategory" class="form-label" data-help="หมวดสำหรับ filter/รายงาน — เช่น อุปกรณ์สำนักงาน, ยานพาหนะ, อาคาร">หมวดหมู่</label><input type="text" class="form-input" id="fCategory" placeholder="เช่น อุปกรณ์สำนักงาน"></div>
+            <div class="form-group"><label for="fLocation" class="form-label" data-help="ห้อง/อาคาร/สาขาที่จัดเก็บ — ใช้สำหรับ stock-take สินทรัพย์">ที่ตั้ง</label><input type="text" class="form-input" id="fLocation"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-help="วันที่ได้มา (TFRS บทที่ 10) — ระบบใช้คำนวณค่าเสื่อมเริ่มเดือนถัดไป">วันที่ซื้อ *</label><input type="date" class="form-input" id="fPurchaseDate"></div>
-            <div class="form-group"><label class="form-label" data-help="ราคาทุน + ค่าใช้จ่ายที่ทำให้พร้อมใช้ (ค่าขนส่ง/ติดตั้ง/อบรม) ตาม TFRS บทที่ 10 ย่อหน้า 17">ราคาทุน *</label><input type="number" class="form-input" id="fCost" step="0.01"></div>
+            <div class="form-group"><label for="fPurchaseDate" class="form-label" data-help="วันที่ได้มา (TFRS บทที่ 10) — ระบบใช้คำนวณค่าเสื่อมเริ่มเดือนถัดไป">วันที่ซื้อ *</label><input type="date" class="form-input" id="fPurchaseDate"></div>
+            <div class="form-group"><label for="fCost" class="form-label" data-help="ราคาทุน + ค่าใช้จ่ายที่ทำให้พร้อมใช้ (ค่าขนส่ง/ติดตั้ง/อบรม) ตาม TFRS บทที่ 10 ย่อหน้า 17">ราคาทุน *</label><input type="number" class="form-input" id="fCost" step="0.01"></div>
           </div>
           <div id="fLockHint" style="display:none;margin:-4px 0 10px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e"></div>
           <!-- รอบ 250 WP-08 (คำตัดสิน 250-26/27): ช่องที่แก้ได้เฉพาะตอนแก้ไข — บันทึกผ่าน PATCH แยก (สิทธิ์ Asset.Manage · audit) · ล็อก + บอกเหตุเมื่อเซิร์ฟเวอร์ไม่รับ -->
@@ -124,11 +124,11 @@
               <input type="number" step="0.01" class="form-input" id="fContractPrice" placeholder="ไม่บังคับ"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-help="มูลค่าซาก (residual) = ราคาคาดว่าจะขายได้ตอนสิ้นอายุใช้งาน — 0 = คิดค่าเสื่อมเต็มมูลค่า">มูลค่าซาก</label><input type="number" class="form-input" id="fSalvage" step="0.01" value="0"></div>
-            <div class="form-group"><label class="form-label" data-help="อายุการใช้งานที่คาดการณ์ในหน่วย 'เดือน' — ตัวอย่าง 5 ปี = 60 เดือน • สรรพากรกำหนดอย่างน้อย: เครื่องจักร 5 ปี, รถ 5 ปี, คอม 3 ปี (สามารถยาวกว่านี้ได้ ตามอายุจริง)">อายุใช้งาน (เดือน) *</label><input type="number" class="form-input" id="fLife" value="60"></div>
+            <div class="form-group"><label for="fSalvage" class="form-label" data-help="มูลค่าซาก (residual) = ราคาคาดว่าจะขายได้ตอนสิ้นอายุใช้งาน — 0 = คิดค่าเสื่อมเต็มมูลค่า">มูลค่าซาก</label><input type="number" class="form-input" id="fSalvage" step="0.01" value="0"></div>
+            <div class="form-group"><label for="fLife" class="form-label" data-help="อายุการใช้งานที่คาดการณ์ในหน่วย 'เดือน' — ตัวอย่าง 5 ปี = 60 เดือน • สรรพากรกำหนดอย่างน้อย: เครื่องจักร 5 ปี, รถ 5 ปี, คอม 3 ปี (สามารถยาวกว่านี้ได้ ตามอายุจริง)">อายุใช้งาน (เดือน) *</label><input type="number" class="form-input" id="fLife" value="60"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-help="เส้นตรง = ค่าเสื่อมเท่ากันทุกเดือน (มาตรฐาน SME) • ยอดลดลง = หนักช่วงต้น (เหมาะกับสินทรัพย์ที่เสื่อมเร็ว เช่น คอม) • TFRS NPAEs บทที่ 10 ย่อหน้า 26: ที่ดิน = ไม่คิดค่าเสื่อม">วิธีคิดค่าเสื่อม</label>
+            <div class="form-group"><label for="fMethod" class="form-label" data-help="เส้นตรง = ค่าเสื่อมเท่ากันทุกเดือน (มาตรฐาน SME) • ยอดลดลง = หนักช่วงต้น (เหมาะกับสินทรัพย์ที่เสื่อมเร็ว เช่น คอม) • TFRS NPAEs บทที่ 10 ย่อหน้า 26: ที่ดิน = ไม่คิดค่าเสื่อม">วิธีคิดค่าเสื่อม</label>
               <select class="form-select" id="fMethod">
                 <option value="StraightLine">เส้นตรง (Straight Line)</option>
                 <option value="DecliningBalance">ยอดลดลง (Declining Balance)</option>
@@ -136,7 +136,7 @@
                 <option value="None">ไม่คิดค่าเสื่อม (ที่ดิน / งานระหว่างก่อสร้าง)</option>
               </select>
             </div>
-            <div class="form-group"><label class="form-label">หมายเลขเครื่อง</label><input type="text" class="form-input" id="fSerial"></div>
+            <div class="form-group"><label for="fSerial" class="form-label">หมายเลขเครื่อง</label><input type="text" class="form-input" id="fSerial"></div>
           </div>
           <div style="border-top:1px solid var(--gray-200);margin:10px 0 4px;padding-top:10px">
             <div class="text-xs text-gray-500" style="margin-bottom:8px;font-weight:600">การบันทึกบัญชี (ผังบัญชี)
@@ -145,27 +145,27 @@
             <div id="assetAcctHint" style="font-size:11px;color:#64748b;margin-bottom:6px"></div>
             <div id="assetLoadError" style="margin-bottom:6px"></div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label" data-help="ผังบัญชีฝั่งสินทรัพย์ (asset) — เช่น 12200 อุปกรณ์สำนักงาน, 12300 ยานพาหนะ. ขึ้น Dr ตอนซื้อ • ไม่ลดด้วยค่าเสื่อมโดยตรง (ลดผ่านบัญชีค่าเสื่อมสะสม)">บัญชีสินทรัพย์</label>
+              <div class="form-group"><label for="fAssetAcct" class="form-label" data-help="ผังบัญชีฝั่งสินทรัพย์ (asset) — เช่น 12200 อุปกรณ์สำนักงาน, 12300 ยานพาหนะ. ขึ้น Dr ตอนซื้อ • ไม่ลดด้วยค่าเสื่อมโดยตรง (ลดผ่านบัญชีค่าเสื่อมสะสม)">บัญชีสินทรัพย์</label>
                 <select class="form-select" id="fAssetAcct"><option value="">-- เลือกบัญชี --</option></select>
                 <div id="fAssetAcctLockHint" style="display:none;font-size:11px;color:#92400e;margin-top:4px">🔒 ตอนแก้ไขปลดบัญชีสินทรัพย์ออกไม่ได้ (ค่าเสื่อม/จำหน่ายต้องลงบัญชีนี้) — ถ้าผังผิดให้เลือกบัญชีอื่นแทน</div></div>
-              <div class="form-group"><label class="form-label" data-help="ผังค่าใช้จ่าย (5xxx) — เช่น 5601 ค่าเสื่อมราคา • ระบบโพสต์ Dr ทุกเดือนตามอายุใช้งาน">บัญชีค่าเสื่อมราคา (ค่าใช้จ่าย)</label>
+              <div class="form-group"><label for="fDepExpAcct" class="form-label" data-help="ผังค่าใช้จ่าย (5xxx) — เช่น 5601 ค่าเสื่อมราคา • ระบบโพสต์ Dr ทุกเดือนตามอายุใช้งาน">บัญชีค่าเสื่อมราคา (ค่าใช้จ่าย)</label>
                 <select class="form-select" id="fDepExpAcct"><option value="">-- เลือกบัญชี --</option></select></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label" data-help="ผัง contra-asset (1xx9x) — เช่น 12290 ค่าเสื่อมสะสม-อุปกรณ์ • รับ Cr ทุกเดือน หักออกจากบัญชีสินทรัพย์เพื่อแสดง NBV ในงบ">บัญชีค่าเสื่อมราคาสะสม</label>
+              <div class="form-group"><label for="fAccumAcct" class="form-label" data-help="ผัง contra-asset (1xx9x) — เช่น 12290 ค่าเสื่อมสะสม-อุปกรณ์ • รับ Cr ทุกเดือน หักออกจากบัญชีสินทรัพย์เพื่อแสดง NBV ในงบ">บัญชีค่าเสื่อมราคาสะสม</label>
                 <select class="form-select" id="fAccumAcct"><option value="">-- เลือกบัญชี --</option></select></div>
-              <div class="form-group"><label class="form-label">&nbsp;</label>
+              <div class="form-group"><div class="form-label" aria-hidden="true">&nbsp;</div>
                 <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-top:8px">
                   <input type="checkbox" id="fPostAcq" onchange="Page.toggleAcqRow()"> บันทึกบัญชีตอนซื้อ (Dr สินทรัพย์ / Cr เงินสด-เจ้าหนี้)
                 </label></div>
             </div>
             <div class="form-row" id="fCreditAcctRow" style="display:none">
-              <div class="form-group"><label class="form-label">บัญชีเครดิต — เงินสด / เจ้าหนี้ *</label>
+              <div class="form-group"><label for="fCreditAcct" class="form-label">บัญชีเครดิต — เงินสด / เจ้าหนี้ <span style="color:#dc2626">*</span> <span style="font-weight:normal;font-size:11px;color:#64748b">(บังคับเมื่อติ๊ก "บันทึกบัญชีตอนซื้อ")</span></label>
                 <select class="form-select" id="fCreditAcct"><option value="">-- เลือกบัญชี --</option></select></div>
               <div class="form-group"></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">โครงการ (optional)</label>
+              <div class="form-group"><label for="fProject" class="form-label">โครงการ (ไม่บังคับ)</label>
                 <select class="form-select" id="fProject"><option value="">— ไม่ระบุ —</option></select>
                 <div id="projectLoadError" style="margin-top:4px"></div>
                 <div style="font-size:11px;color:#64748b;margin-top:4px">📁 ถ้าระบุ JE ค่าเสื่อมรายเดือนจะตามไปกับโครงการนี้</div>
@@ -188,9 +188,9 @@
         <div class="modal-body">
           <input type="hidden" id="naAssetId">
           <div id="naSummary" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.6;margin-bottom:12px"></div>
-          <div class="form-group"><label class="form-label">ผังค่าใช้จ่ายที่ถูกต้อง *</label>
+          <div class="form-group"><label for="naAccount" class="form-label">ผังค่าใช้จ่ายที่ถูกต้อง *</label>
             <select class="form-select" id="naAccount"><option value="">-- เลือกบัญชีค่าใช้จ่าย --</option></select></div>
-          <div class="form-group"><label class="form-label">เหตุผล</label>
+          <div class="form-group"><label for="naReason" class="form-label">เหตุผล</label>
             <input class="form-input" id="naReason" placeholder="เช่น ของใช้สิ้นเปลือง ราคาต่ำ ไม่ได้ใช้เกิน 1 ปี"></div>
           <div style="font-size:12px;color:#64748b;line-height:1.6">
             ระบบลง <b>ใบปรับปรุงย้ายผัง</b> (Dr ค่าใช้จ่าย / Cr ผังสินทรัพย์) อ้างเอกสารต้นทาง ลงงวดเดิม — เอกสารเดิมและการจ่ายเงินไม่ถูกแก้ ·
@@ -211,7 +211,7 @@
         <div class="modal-body">
           <div id="detailInfo" style="margin-bottom:16px"></div>
           <div id="costSourcesContent" style="margin-bottom:16px"></div>
-          <div style="display:flex;gap:8px;margin-bottom:12px">
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.showDepHistory()" id="btnDepHist" style="font-weight:600">ประวัติค่าเสื่อม</button>
             <button class="btn btn-sm btn-ghost" onclick="Page.showDepSchedule()" id="btnDepSched">ตารางค่าเสื่อม (Forecast)</button>
             <button class="btn btn-sm btn-ghost" onclick="Page.exportDepSchedule('xlsx')" title="ตารางค่าเสื่อมของสินทรัพย์นี้ทั้งอายุ — Excel">📊 Excel ตารางค่าเสื่อม</button>
@@ -233,23 +233,23 @@
           </div>
           <div id="srcNewFields">
             <div class="form-row">
-              <div class="form-group"><label class="form-label">ชื่อสินทรัพย์ *</label><input type="text" class="form-input" id="srcName" placeholder="เช่น เครื่องจักร CNC รุ่น X"></div>
-              <div class="form-group"><label class="form-label" data-help="ผังที่จะโอนเข้าเมื่อพร้อมใช้ (เช่น 12260 เครื่องจักร) — ระหว่างจัดหายอดยังอยู่ผังเดิมของแต่ละใบ">ผังสินทรัพย์ที่ตั้งใจ</label>
+              <div class="form-group"><label for="srcName" class="form-label">ชื่อสินทรัพย์ *</label><input type="text" class="form-input" id="srcName" placeholder="เช่น เครื่องจักร CNC รุ่น X"></div>
+              <div class="form-group"><label for="srcAssetAcct" class="form-label" data-help="ผังที่จะโอนเข้าเมื่อพร้อมใช้ (เช่น 12260 เครื่องจักร) — ระหว่างจัดหายอดยังอยู่ผังเดิมของแต่ละใบ">ผังสินทรัพย์ที่ตั้งใจ</label>
                 <select class="form-select" id="srcAssetAcct"><option value="">-- เลือกบัญชี --</option></select></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label" data-help="ราคาเครื่อง/งานตามสัญญา (ไม่รวม VAT) — ระบบเตือนเมื่อต้นทุนรวมจากใบที่ผูกเกินราคานี้ (เช่นใบสุดท้ายลงเต็มราคาทั้งที่ผูกมัดจำแล้ว) · ไม่บังคับ">ราคาตามสัญญา (ไม่บังคับ)</label>
+              <div class="form-group"><label for="srcContractPrice" class="form-label" data-help="ราคาเครื่อง/งานตามสัญญา (ไม่รวม VAT) — ระบบเตือนเมื่อต้นทุนรวมจากใบที่ผูกเกินราคานี้ (เช่นใบสุดท้ายลงเต็มราคาทั้งที่ผูกมัดจำแล้ว) · ไม่บังคับ">ราคาตามสัญญา (ไม่บังคับ)</label>
                 <input type="number" step="0.01" class="form-input" id="srcContractPrice" placeholder="เช่น 1000000" oninput="Page._renderSourceSummary()"></div>
               <div class="form-group"></div>
             </div>
           </div>
           <div id="srcEntryDateRow" style="display:none" class="form-row">
-            <div class="form-group"><label class="form-label" data-help="ใช้เมื่อผูกเข้าสินทรัพย์ที่โอนแล้ว: วันลงรายการโอน/ปรับต้นทุน · ว่าง = วันที่ของใบล่าสุด (ไม่ก่อนวันพร้อมใช้) · ถ้าวันนั้นอยู่ในงวดที่ปิดแล้ว ให้ระบุวันในงวดที่เปิด">วันลงรายการ (ถ้าสินทรัพย์โอนแล้ว)</label>
+            <div class="form-group"><label for="srcEntryDate" class="form-label" data-help="ใช้เมื่อผูกเข้าสินทรัพย์ที่โอนแล้ว: วันลงรายการโอน/ปรับต้นทุน · ว่าง = วันที่ของใบล่าสุด (ไม่ก่อนวันพร้อมใช้) · ถ้าวันนั้นอยู่ในงวดที่ปิดแล้ว ให้ระบุวันในงวดที่เปิด">วันลงรายการ (ถ้าสินทรัพย์โอนแล้ว)</label>
               <input type="date" class="form-input" id="srcEntryDate"></div>
             <div class="form-group"></div>
           </div>
           <div id="srcTargetInfo" style="display:none;font-size:13px;margin-bottom:8px"></div>
-          <div style="display:flex;gap:8px;margin:8px 0">
+          <div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap">
             <input type="text" class="form-input" id="srcSearch" placeholder="ค้นเลขเอกสาร / ชื่อผู้ขาย / รายการ" onkeydown="if(event.key==='Enter')Page.searchSourceLines()">
             <button class="btn btn-secondary" onclick="Page.searchSourceLines()">ค้นหา</button>
           </div>
@@ -270,12 +270,12 @@
         <div class="modal-body">
           <div id="placeSummary" style="font-size:13px;margin-bottom:10px"></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-help="TFRS for NPAEs บทที่ 10 — เริ่มคิดค่าเสื่อมเมื่อพร้อมใช้งาน (ไม่ใช่วันที่จ่ายมัดจำ) · งวดแรก = เดือนถัดไป">วันที่พร้อมใช้งาน *</label><input type="date" class="form-input" id="placeDate"></div>
-            <div class="form-group"><label class="form-label">ผังสินทรัพย์ *</label><select class="form-select" id="placeAssetAcct"><option value="">-- เลือกบัญชี --</option></select></div>
+            <div class="form-group"><label for="placeDate" class="form-label" data-help="TFRS for NPAEs บทที่ 10 — เริ่มคิดค่าเสื่อมเมื่อพร้อมใช้งาน (ไม่ใช่วันที่จ่ายมัดจำ) · งวดแรก = เดือนถัดไป">วันที่พร้อมใช้งาน *</label><input type="date" class="form-input" id="placeDate"></div>
+            <div class="form-group"><label for="placeAssetAcct" class="form-label">ผังสินทรัพย์ *</label><select class="form-select" id="placeAssetAcct"><option value="">-- เลือกบัญชี --</option></select></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">อายุใช้งาน (เดือน) *</label><input type="number" class="form-input" id="placeLife" value="60"></div>
-            <div class="form-group"><label class="form-label">วิธีคิดค่าเสื่อม</label>
+            <div class="form-group"><label for="placeLife" class="form-label">อายุใช้งาน (เดือน) *</label><input type="number" class="form-input" id="placeLife" value="60"></div>
+            <div class="form-group"><label for="placeMethod" class="form-label">วิธีคิดค่าเสื่อม</label>
               <select class="form-select" id="placeMethod">
                 <option value="StraightLine">เส้นตรง (Straight Line)</option>
                 <option value="DecliningBalance">ยอดลดลง (Declining Balance)</option>
@@ -284,12 +284,12 @@
               </select></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">มูลค่าซาก</label><input type="number" class="form-input" id="placeSalvage" step="0.01" value="0"></div>
+            <div class="form-group"><label for="placeSalvage" class="form-label">มูลค่าซาก</label><input type="number" class="form-input" id="placeSalvage" step="0.01" value="0"></div>
             <div class="form-group"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-help="ว่าง = ระบบเลือกตามประเภทผังสินทรัพย์">บัญชีค่าเสื่อมราคา</label><select class="form-select" id="placeDepExp"><option value="">-- ตามประเภทผัง --</option></select></div>
-            <div class="form-group"><label class="form-label" data-help="ว่าง = ระบบเลือกตามประเภทผังสินทรัพย์">บัญชีค่าเสื่อมราคาสะสม</label><select class="form-select" id="placeAccum"><option value="">-- ตามประเภทผัง --</option></select></div>
+            <div class="form-group"><label for="placeDepExp" class="form-label" data-help="ว่าง = ระบบเลือกตามประเภทผังสินทรัพย์">บัญชีค่าเสื่อมราคา</label><select class="form-select" id="placeDepExp"><option value="">-- ตามประเภทผัง --</option></select></div>
+            <div class="form-group"><label for="placeAccum" class="form-label" data-help="ว่าง = ระบบเลือกตามประเภทผังสินทรัพย์">บัญชีค่าเสื่อมราคาสะสม</label><select class="form-select" id="placeAccum"><option value="">-- ตามประเภทผัง --</option></select></div>
           </div>
           <div style="font-size:12px;color:#64748b">ระบบลงรายการโอน Dr ผังสินทรัพย์ / Cr ผังมัดจำ·งานระหว่างก่อสร้างของแต่ละใบ (ใบที่ลงผังสินทรัพย์เดียวกันอยู่แล้วไม่ต้องโอน) ลงวันที่พร้อมใช้งาน</div>
         </div>
@@ -306,9 +306,9 @@
         <div class="modal-header"><h3 class="modal-title">ตีราคาสินทรัพย์ใหม่</h3><button class="modal-close" onclick="Layout.closeModal('revalueModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="rvId">
-          <div class="form-group"><label class="form-label">มูลค่าใหม่ *</label><input type="number" class="form-input" id="rvNewValue" step="0.01"></div>
-          <div class="form-group"><label class="form-label">วันที่ตีราคา *</label><input type="date" class="form-input" id="rvDate"></div>
-          <div class="form-group"><label class="form-label">เหตุผล</label><input type="text" class="form-input" id="rvReason" placeholder="เช่น ตีราคาตามราคาตลาด"></div>
+          <div class="form-group"><label for="rvNewValue" class="form-label">มูลค่าใหม่ *</label><input type="number" class="form-input" id="rvNewValue" step="0.01"></div>
+          <div class="form-group"><label for="rvDate" class="form-label">วันที่ตีราคา *</label><input type="date" class="form-input" id="rvDate"></div>
+          <div class="form-group"><label for="rvReason" class="form-label">เหตุผล</label><input type="text" class="form-input" id="rvReason" placeholder="เช่น ตีราคาตามราคาตลาด"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('revalueModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -323,9 +323,9 @@
         <div class="modal-header"><h3 class="modal-title">จำหน่ายสินทรัพย์</h3><button class="modal-close" onclick="Layout.closeModal('disposeModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="dId">
-          <div class="form-group"><label class="form-label">วันที่จำหน่าย *</label><input type="date" class="form-input" id="dDate"></div>
-          <div class="form-group"><label class="form-label">ราคาขาย</label><input type="number" class="form-input" id="dPrice" step="0.01" value="0"></div>
-          <div class="form-group"><label class="form-label">เหตุผล</label><input type="text" class="form-input" id="dReason" placeholder="เช่น ขาย, ชำรุด, บริจาค"></div>
+          <div class="form-group"><label for="dDate" class="form-label">วันที่จำหน่าย *</label><input type="date" class="form-input" id="dDate"></div>
+          <div class="form-group"><label for="dPrice" class="form-label">ราคาขาย</label><input type="number" class="form-input" id="dPrice" step="0.01" value="0"></div>
+          <div class="form-group"><label for="dReason" class="form-label">เหตุผล</label><input type="text" class="form-input" id="dReason" placeholder="เช่น ขาย, ชำรุด, บริจาค"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('disposeModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -341,8 +341,8 @@
         <div class="modal-body">
           <input type="hidden" id="woId">
           <p style="color:var(--danger);margin-bottom:12px">ตัดจำหน่ายจะทำให้มูลค่าสุทธิเป็น 0 และบันทึกขาดทุนจากการตัดจำหน่าย</p>
-          <div class="form-group"><label class="form-label">วันที่ตัดจำหน่าย *</label><input type="date" class="form-input" id="woDate"></div>
-          <div class="form-group"><label class="form-label">เหตุผล</label><input type="text" class="form-input" id="woReason" placeholder="เช่น ชำรุดไม่สามารถซ่อมได้"></div>
+          <div class="form-group"><label for="woDate" class="form-label">วันที่ตัดจำหน่าย *</label><input type="date" class="form-input" id="woDate"></div>
+          <div class="form-group"><label for="woReason" class="form-label">เหตุผล</label><input type="text" class="form-input" id="woReason" placeholder="เช่น ชำรุดไม่สามารถซ่อมได้"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('writeOffModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -358,9 +358,9 @@
         <div class="modal-body">
           <input type="hidden" id="alId">
           <p style="font-size:12px;color:#64748b;margin-bottom:8px">มีผลตั้งแต่งวดถัดจากงวดที่ลงบัญชีล่าสุด (งวดที่ลงแล้วไม่ถูกแตะ · TFRS for NPAEs บทที่ 10) · ไม่เปลี่ยนค่าใดแล้วกดบันทึก = บันทึกว่าทบทวนแล้วสิ้นรอบบัญชี</p>
-          <div class="form-group"><label class="form-label">อายุใช้งานใหม่ (เดือน) *</label><input type="number" class="form-input" id="alLife" min="1"></div>
-          <div class="form-group"><label class="form-label">มูลค่าซากใหม่</label><input type="number" class="form-input" id="alSalvage" step="0.01" placeholder="ไม่เปลี่ยนแปลง"></div>
-          <div class="form-group"><label class="form-label">วิธีคิดค่าเสื่อม</label>
+          <div class="form-group"><label for="alLife" class="form-label">อายุใช้งานใหม่ (เดือน) *</label><input type="number" class="form-input" id="alLife" min="1"></div>
+          <div class="form-group"><label for="alSalvage" class="form-label">มูลค่าซากใหม่</label><input type="number" class="form-input" id="alSalvage" step="0.01" placeholder="ไม่เปลี่ยนแปลง"></div>
+          <div class="form-group"><label for="alMethod" class="form-label">วิธีคิดค่าเสื่อม</label>
             <select class="form-select" id="alMethod">
               <option value="">— คงวิธีเดิม —</option>
               <option value="StraightLine">เส้นตรง</option>
@@ -368,7 +368,7 @@
               <option value="DoubleDecliningBalance">ยอดลดลงสองเท่า</option>
             </select>
           </div>
-          <div class="form-group"><label class="form-label">เหตุผล / หลักฐานการทบทวน</label><input type="text" class="form-input" id="alReason" placeholder="เช่น ทบทวนสิ้นปี 2569 สภาพใช้งานตามแผนเดิม"></div>
+          <div class="form-group"><label for="alReason" class="form-label">เหตุผล / หลักฐานการทบทวน</label><input type="text" class="form-input" id="alReason" placeholder="เช่น ทบทวนสิ้นปี 2569 สภาพใช้งานตามแผนเดิม"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('adjustLifeModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -411,6 +411,8 @@
       async init() {
         if (!Layout.init('fixed-assets')) return;
         Layout.setTitle('ทะเบียนสินทรัพย์');
+        // ช่องค้นหา debounce 300ms (WP-13 A) — ลำดับคำตอบกันด้วย _loadSeq ใน load() อยู่แล้ว
+        this._searchLoad = Layout.debouncedLoader(() => { this.page = 1; return this.load(); }, 300);
         await Promise.all([this.load(), this.loadAccounts(), this.loadProjects()]);
         // AI auto-suggest category + useful life + dep method ตอน blur ของชื่อ
         const nameEl = document.getElementById('fName');
@@ -633,7 +635,14 @@
           }
           const tbody = document.getElementById('tableBody');
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, data?.totalPages || 1, 'Page.goPage');
-          if (!items.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px" data-i18n="common.noItems">ไม่มีรายการ</td></tr>'; return; }
+          if (!items.length) {
+            // ว่างเพราะตัวกรอง ≠ ยังไม่มีสินทรัพย์ (WP-13 · D §2) — บอกเหตุ + ทางไปต่อ
+            const filtered = !!(search || status || this.currentType || this.showOnlyNeedsReview);
+            tbody.innerHTML = filtered
+              ? '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่พบสินทรัพย์ตามตัวกรอง/แท็บที่เลือก — <button type="button" class="btn btn-sm btn-ghost" onclick="Page.clearFilters()">ล้างตัวกรอง</button></td></tr>'
+              : '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสินทรัพย์ — <button type="button" class="btn btn-sm btn-primary" onclick="Page.openCreate()">+ เพิ่มสินทรัพย์</button> หรือขึ้นทะเบียนจากใบซื้อในหน้าเอกสาร</td></tr>';
+            return;
+          }
           tbody.innerHTML = items.map(a => `<tr${a.needsReview ? ' style="background:#fffbeb"' : ''}>
             <td class="font-medium">${Layout.esc(a.assetCode)}${a.needsReview ? ' <span title="ระบบสร้างให้อัตโนมัติ — กรุณาตรวจสอบรายละเอียดก่อนใช้งาน" style="background:#fbbf24;color:#78350f;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-left:4px">⚠️ รอตรวจ</span>' : ''}
               ${String(a.assetCode || '').startsWith('DRAFT-')
@@ -655,8 +664,16 @@
           </tr>`).join('');
         } catch (e) {
           if (seq !== this._loadSeq) return;
-          Layout.toast(e.message, 'error');
+          // เดิม toast อย่างเดียว ⇒ ตารางค้าง "กำลังโหลด..." (WP-13 L)
+          Layout.tableError('tableBody', 9, 'โหลดทะเบียนสินทรัพย์ไม่สำเร็จ', () => this.load(), e && e.message);
         }
+      },
+      clearFilters() {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('statusFilter').value = '';
+        this.showOnlyNeedsReview = false;
+        if (this.currentType && typeof this.setType === 'function') { this.setType(''); return; }
+        this.page = 1; this.load();
       },
       goPage(p) { Page.page = p; Page.load(); },
       onAssetTypeChange(t) {
@@ -700,7 +717,8 @@
         Layout.openModal('formModal');
       },
       async deleteAsset(id, name) {
-        if (!confirm(`ลบสินทรัพย์ "${name}"?\n\nใช้เฉพาะกรณีลงทะเบียนผิด/ซ้ำ (ยังไม่คิดค่าเสื่อม) — ไม่กระทบบัญชี เพราะต้นทุนมาจากเอกสารต้นทาง.\nถ้าต้องการเลิกใช้สินทรัพย์ที่ใช้งานจริง ให้ใช้ "จำหน่าย/ตัดจำหน่าย" แทน`)) return;
+        if (!(await Layout.confirm({ title: 'ลบสินทรัพย์', danger: true, okText: 'ลบสินทรัพย์',
+          message: `ลบสินทรัพย์ "${name}"?\n\nใช้เฉพาะกรณีลงทะเบียนผิด/ซ้ำ (ยังไม่คิดค่าเสื่อม) — ไม่กระทบบัญชี เพราะต้นทุนมาจากเอกสารต้นทาง.\nถ้าต้องการเลิกใช้สินทรัพย์ที่ใช้งานจริง ให้ใช้ "จำหน่าย/ตัดจำหน่าย" แทน` }))) return;
         const api = Layout.api(); if (!api) return;
         try { await api.deleteAsset(id); Layout.toast('ลบสินทรัพย์สำเร็จ'); await this.load(); }
         catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
@@ -850,16 +868,19 @@
         const postAcq = document.getElementById('fPostAcq').checked;
         const assetAcct = document.getElementById('fAssetAcct').value || null;
         const creditAcct = document.getElementById('fCreditAcct').value || null;
+        // ช่องที่ขาด ⇒ toast + โฟกัสช่องนั้น (WP-13 · D §2 — เดิม toast อย่างเดียว ผู้ใช้ต้องหาช่องเอง)
+        const miss = (fid, msg) => { Layout.toast(msg, 'error'); const el = document.getElementById(fid); if (el && !el.disabled) { el.scrollIntoView({ block: 'center' }); el.focus(); } };
         if (!id && postAcq && (!assetAcct || !creditAcct)) {
-          Layout.toast('ต้องเลือกบัญชีสินทรัพย์และบัญชีเครดิตเพื่อบันทึกบัญชีตอนซื้อ', 'error');
+          miss(!assetAcct ? 'fAssetAcct' : 'fCreditAcct', 'ต้องเลือกบัญชีสินทรัพย์และบัญชีเครดิตเพื่อบันทึกบัญชีตอนซื้อ');
           return;
         }
         // รอบ 200 (E-05): ช่องตัวเลขว่าง = บอกเป็นไทย (เดิม NaN → null → decimal/int แปลงไม่ได้ ⇒ ทิ้ง body ทั้งก้อน)
         const method = document.getElementById('fMethod').value;
         const cost = Layout.numOrNull('fCost');
         const life = Layout.intOrNull('fLife');
-        if (!id && (cost == null || cost <= 0)) { Layout.toast('กรุณาระบุราคาทุน (มากกว่า 0)', 'error'); return; }
-        if (method !== 'None' && (life == null || life <= 0)) { Layout.toast('กรุณาระบุอายุใช้งาน (เดือน) มากกว่า 0 — หรือเลือก “ไม่คิดค่าเสื่อม”', 'error'); return; }
+        if (!document.getElementById('fName').value.trim()) { miss('fName', 'กรุณาระบุชื่อสินทรัพย์'); return; }
+        if (!id && (cost == null || cost <= 0)) { miss('fCost', 'กรุณาระบุราคาทุน (มากกว่า 0)'); return; }
+        if (method !== 'None' && (life == null || life <= 0)) { miss('fLife', 'กรุณาระบุอายุใช้งาน (เดือน) มากกว่า 0 — หรือเลือก “ไม่คิดค่าเสื่อม”'); return; }
         if (id) {
           // แก้ไข: ส่งเฉพาะช่องที่เซิร์ฟเวอร์รับ (UpdateFixedAssetRequest)
           const upd = {
@@ -888,7 +909,7 @@
           return;
         }
         const data = {
-          assetCode: document.getElementById('fCode').value,
+          assetCode: document.getElementById('fCode').value.trim(),   // ว่าง = เซิร์ฟเวอร์ออก FA-yyyyMM-#### (FixedAssetService.CreateAsync)
           name: document.getElementById('fName').value,
           category: document.getElementById('fCategory').value || null,
           location: document.getElementById('fLocation').value || null,
@@ -1055,14 +1076,14 @@
         const host = document.getElementById('srcResults');
         const lines = this._src.lines || [];
         if (!lines.length) { host.innerHTML = '<div class="text-center text-gray-400" style="padding:16px">ไม่พบบรรทัดที่เป็นต้นทุนสินทรัพย์ได้ (ผังมัดจำ 118xx · งานระหว่างก่อสร้าง · ผังสินทรัพย์)</div>'; return; }
-        host.innerHTML = `<table class="table" style="font-size:12px"><thead><tr>
-            <th></th><th>เอกสาร</th><th>รายการ</th><th>ชนิด</th><th class="text-right">ต้นทุนของบรรทัด</th><th class="text-right">ผูกแล้ว</th><th class="text-right">ยอดที่จะผูก</th></tr></thead><tbody>
+        host.innerHTML = `<div class="table-container"><table class="table" style="font-size:12px"><thead><tr>
+            <th aria-label="เลือก"></th><th>เอกสาร</th><th>รายการ</th><th>ชนิด</th><th class="text-right">ต้นทุนของบรรทัด</th><th class="text-right">ผูกแล้ว</th><th class="text-right">ยอดที่จะผูก</th></tr></thead><tbody>
           ${lines.map(l => {
             const id = l.documentLineId;
             const sel = Object.prototype.hasOwnProperty.call(this._src.selected, id);
             const dis = !!l.problem;
             return `<tr${dis ? ' style="opacity:.6"' : ''}>
-              <td><input type="checkbox" data-src-line="${Layout.esc(id)}" ${sel ? 'checked' : ''} ${dis ? 'disabled' : ''} onchange="Page.toggleSourceLine('${Layout.jsArg(id)}', this.checked)"></td>
+              <td><input type="checkbox" aria-label="เลือกบรรทัด ${Layout.esc(l.documentNumber || '')} ${Layout.esc(l.description || '')}" data-src-line="${Layout.esc(id)}" ${sel ? 'checked' : ''} ${dis ? 'disabled' : ''} onchange="Page.toggleSourceLine('${Layout.jsArg(id)}', this.checked)"></td>
               <td>${Layout.esc(l.documentNumber)}<div style="font-size:10px;color:#64748b">${Layout.date(l.documentDate)} · ${Layout.esc(l.contactName || '')}</div></td>
               <td>${Layout.esc(l.description || '')}<div style="font-size:10px;color:#64748b">ผัง ${Layout.esc(l.accountCode || '-')}${l.registeredAssetCode ? ` · ทะเบียนเดี่ยว ${Layout.esc(l.registeredAssetCode)}${l.registeredAssetAbsorbable ? ' (ร่าง — จะรวมเข้า)' : ''}` : ''}</div>
                 ${dis ? `<div style="font-size:11px;color:#b45309">${Layout.esc(l.problem)}</div>` : ''}</td>
@@ -1071,7 +1092,7 @@
               <td class="text-right">${Layout.money(l.linkedAmount)}</td>
               <td class="text-right">${dis ? '-' : `<input type="number" step="0.01" class="form-input" style="width:120px;text-align:right" value="${Number(sel && this._src.selected[id] != null ? this._src.selected[id] : l.remainingToLink) || 0}" oninput="Page.setSourceAmount('${Layout.jsArg(id)}', this.value)" title="ค่าว่าง = ยอดที่เหลือทั้งหมด · ผูกบางส่วนได้ (เช่นมัดจำก้อนเดียวของของ 2 ชิ้น)">`}</td>
             </tr>`;
-          }).join('')}</tbody></table>`;
+          }).join('')}</tbody></table></div>`;
         this._renderSourceSummary();
       },
       /** รอบ 250 WP-03 (D §2.7): สรุปที่เลือกก่อนกดบันทึก — "เลือก n บรรทัด · รวม X / ราคาตามสัญญา Y" (เดิมเตือนหลังบันทึกแล้วเท่านั้น) */
@@ -1150,7 +1171,7 @@
           <h4 style="font-size:14px;margin-bottom:6px">🧩 เอกสารต้นทุน ${r.isUnderAcquisition ? '<span style="font-size:11px;color:#075985">(ระหว่างจัดหา — ยังไม่คิดค่าเสื่อม)</span>' : (r.availableForUseDate ? `<span style="font-size:11px;color:#166534">พร้อมใช้ ${Layout.date(r.availableForUseDate)}</span>` : '')}</h4>
           ${(r.problems || []).map(p => `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:6px 10px;font-size:12px;color:#991b1b;margin-bottom:6px">${Layout.esc(p)}</div>`).join('')}
           ${r.purchaseDateNote ? `<div style="font-size:11px;color:#475569;margin-bottom:6px">ℹ️ ${Layout.esc(r.purchaseDateNote)}</div>` : ''}
-          <table class="table" style="font-size:12px"><thead><tr><th>เอกสาร</th><th>รายการ</th><th>ชนิด</th><th>ผัง</th><th class="text-right">ต้นทุน</th><th>สถานะ</th><th></th></tr></thead><tbody>
+          <div class="table-container"><table class="table" style="font-size:12px"><thead><tr><th>เอกสาร</th><th>รายการ</th><th>ชนิด</th><th>ผัง</th><th class="text-right">ต้นทุน</th><th>สถานะ</th><th></th></tr></thead><tbody>
           ${(r.sources || []).map(x => `<tr${x.status === 'Released' ? ' style="opacity:.55"' : ''}>
             <td><a href="/pages/documents.html?openDoc=${Layout.esc(x.documentId)}" style="color:var(--primary)">${Layout.esc(x.documentNumber)}</a><div style="font-size:10px;color:#64748b">${Layout.date(x.documentDate)}${x.sourceDocumentVoided ? ' · <b style="color:#dc2626">ใบถูกยกเลิก</b>' : ''}</div></td>
             <td>${Layout.esc(x.lineDescription || '')}${x.nonClaimableVatIncluded ? `<div style="font-size:10px;color:#92400e">รวม VAT ต้องห้าม ${Layout.money(x.nonClaimableVatIncluded)}</div>` : ''}</td>
@@ -1160,10 +1181,12 @@
             <td>${Layout.esc(statusLabel[x.status] || x.status)}${x.releasedReason ? `<div style="font-size:10px;color:#64748b">${Layout.esc(x.releasedReason)}</div>` : ''}</td>
             <td>${x.status === 'Held' ? `<button class="btn btn-sm btn-ghost" style="color:#b45309" onclick="Page.releaseCostSource('${Layout.jsArg(assetId)}','${Layout.jsArg(x.id)}')">ปลดออก</button>` : ''}</td>
           </tr>`).join('')}</tbody>
-          <tfoot><tr><td colspan="4" class="text-right">${r.isUnderAcquisition ? 'ต้นทุนสะสม (ถือไว้)' : 'โอนแล้ว'}</td><td class="text-right font-semibold">${Layout.money(r.isUnderAcquisition ? r.heldCost : r.capitalizedCost)}</td><td colspan="2"></td></tr></tfoot></table>`;
+          <tfoot><tr><td colspan="4" class="text-right">${r.isUnderAcquisition ? 'ต้นทุนสะสม (ถือไว้)' : 'โอนแล้ว'}</td><td class="text-right font-semibold">${Layout.money(r.isUnderAcquisition ? r.heldCost : r.capitalizedCost)}</td><td colspan="2"></td></tr></tfoot></table></div>`;
       },
       async releaseCostSource(assetId, sourceId) {
-        const reason = prompt('เหตุผลที่ปลดใบนี้ออกจากสินทรัพย์ (เก็บลงประวัติ):');
+        const reason = await Layout.promptText({ title: 'ปลดเอกสารออกจากสินทรัพย์', okText: 'ปลดออก',
+          message: 'ต้นทุนสะสมของสินทรัพย์จะคิดใหม่โดยไม่รวมใบนี้ · เอกสารเดิมไม่ถูกแก้',
+          label: 'เหตุผลที่ปลด (เก็บลงประวัติ)', multiline: true });
         if (reason == null) return;
         const api = Layout.api(); if (!api) return;
         try {
@@ -1323,9 +1346,16 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async runDepreciation() {
+        // เลือกงวดได้ (WP-13 · D §2 — เดิม confirm() เดือนปัจจุบันเท่านั้น ⇒ งวดที่ลืมรันย้อนหลังทำไม่ได้จากหน้านี้) ·
+        // เซิร์ฟเวอร์ตัดสินว่างวดนั้นรันได้ไหม (งวดปิด/ซ้ำ) — หน้านี้ส่ง year/month อย่างเดียว
         const now = new Date();
-        const year = now.getFullYear(), month = now.getMonth() + 1;
-        if (!confirm(`คำนวณค่าเสื่อมราคาเดือน ${month}/${year} สำหรับสินทรัพย์ที่ใช้งานทั้งหมด?`)) return;
+        const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const ym = await Layout.promptText({ title: 'คำนวณค่าเสื่อมราคา', okText: 'คำนวณ', inputType: 'month', value: cur, required: true,
+          message: 'คำนวณค่าเสื่อมราคาของสินทรัพย์ที่ใช้งานทั้งหมดสำหรับงวดที่เลือก (ค่าตั้งต้น = เดือนนี้ · เลือกงวดย้อนหลังที่ยังไม่ได้รันได้)',
+          label: 'งวด (ปี-เดือน)', placeholder: 'YYYY-MM',
+          validate: v => /^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? null : 'รูปแบบงวดต้องเป็น ปี-เดือน เช่น ' + cur });
+        if (ym == null) return;
+        const year = +ym.slice(0, 4), month = +ym.slice(5, 7);
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.runDepreciation({ year, month });

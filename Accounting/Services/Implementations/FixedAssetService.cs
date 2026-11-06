@@ -22,6 +22,11 @@ public partial class FixedAssetService : IFixedAssetService
 
     public async Task<FixedAssetResponse> CreateAsync(Guid companyId, CreateFixedAssetRequest request, string createdBy)
     {
+        // รหัสว่าง ⇒ ออก FA-yyyyMM-#### ด้วยตัวออกรหัสตัวเดียว (รอบ 252 WP-13 · D §2: ฟอร์มบอก "ว่าง = ออกให้อัตโนมัติ" —
+        // เดิม validator บังคับกรอก ทั้งที่ระบบมีตัวออกรหัสอยู่แล้วสำหรับใบที่ขึ้นทะเบียนจากเอกสาร) · กรอกเอง = ใช้ตามที่กรอก (ตรวจซ้ำเหมือนเดิม)
+        request = string.IsNullOrWhiteSpace(request.AssetCode)
+            ? request with { AssetCode = await GenerateAssetCodeAsync(companyId) }
+            : request with { AssetCode = request.AssetCode.Trim() };
         var existing = await _db.FixedAssets.AnyAsync(a => a.CompanyId == companyId && a.AssetCode == request.AssetCode);
         if (existing)
             throw new InvalidOperationException($"รหัสสินทรัพย์ {request.AssetCode} ซ้ำ");

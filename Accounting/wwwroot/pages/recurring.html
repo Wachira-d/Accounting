@@ -15,8 +15,8 @@
       <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างรายการประจำ</button></div>
     </div>
     <div class="toolbar">
-      <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput" oninput="Page.load()">
-      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+      <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput" aria-label="ค้นหารายการประจำ" oninput="Page._searchLoad()">
+      <select class="filter-select" id="statusFilter" aria-label="กรองตามสถานะ" onchange="Page.page = 1; Page.load()">
         <option value="">ทุกสถานะ</option>
         <option value="Active">ใช้งาน</option>
         <option value="Paused">หยุดชั่วคราว</option>
@@ -44,7 +44,7 @@
       .rec-line-table input, .rec-line-table select { width:100%; font-size:12px; padding:3px 4px; }
       @media (max-width: 860px) { #recWizard { grid-template-columns:minmax(0,1fr); } #readinessPanel { position:static; max-height:none; } }
     </style>
-    <div class="modal-overlay" id="formModal">
+    <div class="modal-overlay" id="formModal" data-enter-target="[data-wizard-next]">
       <div class="modal" style="max-width:1120px;width:calc(100% - 32px)">
         <div class="modal-header"><h3 class="modal-title" id="formTitle">สร้างรายการประจำ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
@@ -59,9 +59,9 @@
           <div id="recWizard">
           <div>
           <div class="rec-step" data-step="1">
-          <div class="form-group"><label class="form-label">ชื่อรายการ *</label><input type="text" class="form-input" id="fName" placeholder="เช่น ค่าเช่าสำนักงาน"></div>
+          <div class="form-group"><label for="fName" class="form-label">ชื่อรายการ *</label><input type="text" class="form-input" id="fName" placeholder="เช่น ค่าเช่าสำนักงาน"></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ประเภทเอกสาร *</label>
+            <div class="form-group"><label for="fDocType" class="form-label">ประเภทเอกสาร *</label>
               <select class="form-select" id="fDocType" onchange="Page.onDocTypeChange()">
                 <option value="Invoice">ใบแจ้งหนี้</option>
                 <option value="TaxInvoice">ใบกำกับภาษี</option>
@@ -77,7 +77,7 @@
                 <option value="ReceiptVoucher">ใบสำคัญรับ</option>
               </select>
             </div>
-            <div class="form-group"><label class="form-label">ความถี่ *</label>
+            <div class="form-group"><label for="fFrequency" class="form-label">ความถี่ *</label>
               <select class="form-select" id="fFrequency">
                 <option value="Daily">รายวัน</option>
                 <option value="Weekly">รายสัปดาห์</option>
@@ -90,37 +90,37 @@
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">วันเริ่มต้น *</label><input type="date" class="form-input" id="fStartDate"></div>
-            <div class="form-group"><label class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="fEndDate"></div>
+            <div class="form-group"><label for="fStartDate" class="form-label">วันเริ่มต้น *</label><input type="date" class="form-input" id="fStartDate"></div>
+            <div class="form-group"><label for="fEndDate" class="form-label">วันสิ้นสุด</label><input type="date" class="form-input" id="fEndDate"></div>
           </div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContact"></div>
+            <div class="form-group"><label for="fContact" class="form-label">ผู้ติดต่อ</label><input type="hidden" id="fContactId"><input type="text" class="form-input" id="fContact" placeholder="พิมพ์ชื่อ / เลขผู้เสียภาษี เพื่อค้นหา"></div>
           </div>
           </div>
           <div class="rec-step" data-step="2" style="display:none">
           <div class="form-row">
-            <div class="form-group"><label class="form-label">ยอดเงิน (บรรทัดที่ 1) *</label><input type="number" class="form-input" id="fAmount" step="0.01" min="0"></div>
+            <div class="form-group"><label for="fAmount" class="form-label">ยอดเงิน (บรรทัดที่ 1) *</label><input type="number" class="form-input" id="fAmount" step="0.01" min="0"></div>
           </div>
           <!-- เทมเพลตหลายบรรทัด (ตั้งผ่าน API) — ฟอร์มนี้แก้ได้แค่บรรทัดเดียว: ล็อกช่องยอด/รายละเอียด/ภาษีพร้อมเหตุผล และไม่บันทึกทับบรรทัด -->
           <div id="fMultiLineHint" style="display:none"></div>
           <div class="form-row">
-            <div class="form-group"><label class="form-label">VAT (%)</label><input type="number" class="form-input" id="fVatRate" step="0.01" value="7"></div>
+            <div class="form-group"><label for="fVatRate" class="form-label">VAT (%)</label><input type="number" class="form-input" id="fVatRate" step="0.01" value="7"></div>
             <!-- ประเภทเงินได้มาก่อน แล้ว "อัตรา" เติมตามกฎหมายให้เอง —
                  ตารางมาจาก /api/reference/income-types (Helpers/ThaiWhtRateTable)
                  ห้ามพิมพ์อัตราซ้ำใน HTML (ตารางกฎหมายที่คัดลอกไปเขียนใหม่
                  = เตือน/คิดผิดตลอดไป) -->
-            <div class="form-group"><label class="form-label">ประเภทเงินได้ (ม.40)</label>
+            <div class="form-group"><label for="fIncomeType" class="form-label">ประเภทเงินได้ (ม.40)</label>
               <select class="form-select" id="fIncomeType" onchange="Page.onIncomeTypeChange()">
                 <option value="">-- ไม่หักภาษี ณ ที่จ่าย --</option>
               </select>
             </div>
-            <div class="form-group"><label class="form-label">หักภาษี ณ ที่จ่าย (%)</label>
+            <div class="form-group"><label for="fWhtRate" class="form-label">หักภาษี ณ ที่จ่าย (%)</label>
               <input type="number" class="form-input" id="fWhtRate" step="0.01" value="0" min="0" max="100">
               <div id="fWhtRateHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+            <label for="fDescription" class="form-label" style="display:flex;align-items:center;justify-content:space-between">
               <span data-i18n="common.detail">รายละเอียด</span>
               <button type="button" class="btn btn-sm btn-secondary" style="font-size:11px;padding:2px 8px" onclick="Page.toggleVarPanel()">🏷️ แทรกตัวแปร</button>
             </label>
@@ -133,20 +133,20 @@
           </div>
           <!-- รอบ 248: หลายบรรทัด — บรรทัดที่ 1 = ช่องข้างบน · บรรทัดที่ 2..n แก้ที่ตารางนี้ (คีย์อื่นของบรรทัดเดิมที่ตั้งผ่าน API ถูกเก็บไว้ ไม่ถูกบันทึกทับ) -->
           <div class="form-group">
-            <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+            <div class="form-label" style="display:flex;align-items:center;justify-content:space-between">
               <span>บรรทัดเพิ่มเติม</span>
               <button type="button" class="btn btn-sm btn-secondary" style="font-size:11px;padding:2px 8px" onclick="Page.addExtraLine()">+ เพิ่มบรรทัด</button>
-            </label>
+            </div>
             <div id="fExtraLines"></div>
           </div>
           </div>
           <div class="rec-step" data-step="3" style="display:none">
           <div class="form-row">
-            <div class="form-group"><label class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
+            <div class="form-group"><label for="fPaymentChannel" class="form-label">แหล่งเงิน / ช่องทางชำระ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(เงินเข้า/ออกจากไหน)</span></label>
               <select class="form-select" id="fPaymentChannel"><option value="">— เงินสด (ค่าเริ่มต้น) —</option></select>
               <div id="fPaymentChannelHint" style="display:none;font-size:11px;margin-top:4px;color:#b45309"></div>
             </div>
-            <div class="form-group" id="fExpenseCategoryGroup"><label class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span>
+            <div class="form-group" id="fExpenseCategoryGroup"><label for="fExpenseCategory" class="form-label">หมวดหมู่ค่าใช้จ่าย <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(ผังบัญชี)</span>
               <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.aiSuggestAccount('RecurringExpense','fExpenseCategory','fExpenseCatHint')" aria-label="แนะนำบัญชีค่าใช้จ่าย" title="แนะนำบัญชีจากประวัติของบริษัท">⚙️ แนะนำ</button>
             </label>
               <select class="form-select" id="fExpenseCategory"><option value="">— ไม่ระบุ —</option></select>
@@ -233,7 +233,7 @@
           </div>
           <div class="rec-step" data-step="5" style="display:none" id="step-approve">
             <div class="form-group">
-              <label class="form-label" id="fAutoApproveLabel"><input type="checkbox" id="fAutoApprove" onchange="Page.onAutoFlagChange()"> อนุมัติอัตโนมัติ (สร้างเป็น Approved ทันที)</label>
+              <label class="form-label" id="fAutoApproveLabel"><input type="checkbox" id="fAutoApprove" onchange="Page.onAutoFlagChange()"> อนุมัติอัตโนมัติ (สร้างเป็นใบอนุมัติแล้วทันที — ได้เลขที่จริง)</label>
               <!-- รอบ 247: อธิบายช่องที่ถูกล็อก + ขอบเขตของการอนุมัติอัตโนมัติ (เจ้าของถามว่า "ต้องไปติ๊กที่ไหนถึงจะอนุมัติได้") -->
               <div id="autoApproveHint" style="margin-top:4px;font-size:11px;line-height:1.6;color:#64748b"></div>
             </div>
@@ -264,7 +264,7 @@
           </aside>
           </div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-secondary" onclick="Page.stepNav(-1)">◀ ก่อนหน้า</button><button class="btn btn-secondary" onclick="Page.stepNav(1)">ถัดไป ▶</button><button class="btn btn-secondary" onclick="Page.dryRunDraft()">ทดลองรัน 🔍</button><button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-secondary" onclick="Page.stepNav(-1)">◀ ก่อนหน้า</button><button class="btn btn-secondary" data-wizard-next onclick="Page.stepNav(1)">ถัดไป ▶</button><button class="btn btn-secondary" onclick="Page.dryRunDraft()">ทดลองรัน 🔍</button><button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button></div>
       </div>
     </div>
 
@@ -292,6 +292,8 @@ const Page = {
 
   async init() {
     if (!Layout.init('recurring')) return;
+    // ช่องค้นหา: debounce 300ms (WP-13 A) — ลำดับคำตอบกันด้วย _loadSeq ใน load() (ครอบทุกผู้เรียก ไม่ใช่แค่ช่องค้นหา)
+    this._searchLoad = Layout.debouncedLoader(() => { this.page = 1; return this.load(); }, 300);
     const recEx = document.getElementById('recExportSlot');
     if (recEx && window.ExportUtil) recEx.innerHTML = ExportUtil.renderMenu([
       { label: '📊 Excel — ตามตัวกรอง', onclick: "Page.exportList('xlsx')" },
@@ -334,9 +336,30 @@ const Page = {
   goStep(n) {
     this._step = n;
     document.querySelectorAll('#formModal .rec-step').forEach(el => { el.style.display = String(el.dataset.step) === String(n) ? '' : 'none'; });
-    document.querySelectorAll('#recSteps button').forEach(b => b.classList.toggle('active', String(b.dataset.step) === String(n)));
+    document.querySelectorAll('#recSteps button').forEach(b => {
+      const on = String(b.dataset.step) === String(n);
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+    });
   },
   stepNav(d) { this.goStep(Math.min(5, Math.max(1, (this._step || 1) + d))); },
+
+  /** ช่องบังคับที่ว่าง ⇒ พาไปขั้นที่มีช่องนั้น + โฟกัส + ป้าย "ขาด n ช่อง" บน chip (WP-13 · D §1 — เดิม toast อย่างเดียว
+   *  ทั้งที่ช่องอยู่คนละขั้นของ wizard ⇒ ผู้ใช้ไม่รู้ว่าต้องไปขั้นไหน) · ส่ง [] = ล้างป้าย */
+  _markMissing(ids) {
+    const perStep = {};
+    ids.forEach(id => { const st = document.getElementById(id)?.closest('.rec-step')?.dataset.step; if (st) perStep[st] = (perStep[st] || 0) + 1; });
+    document.querySelectorAll('#recSteps button').forEach(b => {
+      b.querySelector('.rec-miss')?.remove();
+      const n = perStep[b.dataset.step];
+      if (n) { const t = document.createElement('span'); t.className = 'rec-miss'; t.style.cssText = 'margin-left:4px;color:#b91c1c;font-weight:600'; t.textContent = `· ขาด ${n} ช่อง`; b.appendChild(t); }
+    });
+    if (!ids.length) return;
+    const first = document.getElementById(ids[0]);
+    const st = first?.closest('.rec-step')?.dataset.step;
+    if (st) this.goStep(+st);
+    setTimeout(() => first?.focus(), 30);
+  },
 
   /** hydrate ช่องทางรับเงิน + นโยบายของรายการ (ฟอร์มใหม่ = ว่าง · แก้ไข = ค่าที่บันทึกไว้ — ห้ามค้างค่าของรายการก่อน) */
   async _hydrateAutopilot(r) {
@@ -688,16 +711,25 @@ const Page = {
     const api = Layout.api(); if (!api) return;
     const search = document.getElementById('searchInput')?.value || '';
     const status = document.getElementById('statusFilter')?.value || '';
+    const my = this._loadSeq = (this._loadSeq || 0) + 1;   // คำตอบของคำค้นเก่าห้ามทับผลใหม่ (กฎ #4 A · WP-13 A)
     try {
       let q = `?page=${this.page}&pageSize=20`;
       if (search) q += '&search=' + encodeURIComponent(search);
       if (status) q += '&status=' + status;
       const res = await api.getRecurring(q);
+      if (my !== this._loadSeq) return;
       const items = res.data?.items || res.data || [];
       this.items = items;
       const tbody = document.getElementById('tableBody');
       const freqMap = {Daily:'รายวัน',Weekly:'รายสัปดาห์',BiWeekly:'ราย 2 สัปดาห์',Monthly:'รายเดือน',Quarterly:'รายไตรมาส',SemiAnnual:'ราย 6 เดือน',Annual:'รายปี'}; // ชื่อ = สมาชิก enum RecurringFrequency จริง (เดิม 'Yearly' ⇒ 400 ทุกครั้ง · ERP_REVIEW I-01)
-      if (items.length === 0) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ</td></tr>'; return; }
+      if (items.length === 0) {
+        // ว่างเพราะตัวกรอง ≠ ยังไม่มีรายการเลย (WP-13 · D §1) — บอกทางไปต่อทั้งสองแบบ
+        tbody.innerHTML = (search || status)
+          ? '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ไม่พบรายการตามตัวกรอง — <button type="button" class="btn btn-sm btn-ghost" onclick="Page.clearFilters()">ล้างตัวกรอง</button></td></tr>'
+          : '<tr><td colspan="9" class="text-center text-gray-400" style="padding:40px">ยังไม่มีรายการประจำ — <button type="button" class="btn btn-sm btn-primary" onclick="Page.openCreate()">+ สร้างรายการประจำ</button></td></tr>';
+        document.getElementById('pagination').innerHTML = '';
+        return;
+      }
       tbody.innerHTML = items.map(r => `<tr>
         <td><span class="font-medium">${Layout.esc(r.name || '-')}</span></td>
         <td>${Layout.esc(Layout.docTypeLabel(r.documentType || '-'))}</td>
@@ -720,7 +752,17 @@ const Page = {
       const totalPages = res.data?.totalPages || 1;
       document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.gotoPage');
       this._loadLevels(items);
-    } catch (err) { Layout.toast(err.message, 'error'); }
+    } catch (err) {
+      if (my !== this._loadSeq) return;
+      // เดิม toast อย่างเดียว ⇒ ตารางค้าง "กำลังโหลด..." ตลอด (WP-13 L)
+      Layout.tableError('tableBody', 9, 'โหลดรายการประจำไม่สำเร็จ', () => this.load(), err && err.message);
+    }
+  },
+
+  clearFilters() {
+    const s = document.getElementById('searchInput'); if (s) s.value = '';
+    const f = document.getElementById('statusFilter'); if (f) f.value = '';
+    this.page = 1; this.load();
   },
 
   /** รอบ 251 (WP-07 ข้อ 1 · AUTOPILOT §4.6): ระดับ Autopilot ต่อแถว — เซิร์ฟเวอร์ตัดสิน (ตัวตัดสินเดียวกับแผงความพร้อม) · หน้านี้แสดงอย่างเดียว ·
@@ -902,6 +944,8 @@ const Page = {
     this._setExtraLines([]);
     this._setSavedRefWarning('fPaymentChannelHint', '');
     this._setSavedRefWarning('fExpenseCatWarn', '');
+    // คำใบ้จากใบก่อนห้ามค้างในฟอร์มใหม่ (WP-13 · D §1 — "⚙️ ระบบแนะนำ…" ของรายการที่เปิดก่อนหน้ายังโชว์) · ตัวเติมข้างล่างเติมใหม่เอง
+    ['fExpenseCatHint', 'fWhtRateHint', 'fPayModeHint'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; });
     await this._hydrateWhtPayee(null);
     this.onAutoFlagChange();
     this.loadEmailStatus();
@@ -912,7 +956,7 @@ const Page = {
     await this._hydrateAutopilot({ paymentMode: null, payLinkChannels: null, autoApprovePolicy: null, postPayEmailReceipt: 'Inherit', postPayIncludePartial: 'Inherit' });
     this._snapshotForm();
     this._resetDryRun();
-    this.goStep(1);
+    this._markMissing([]); this.goStep(1);
     Layout.openModal('formModal');
     const vp = document.getElementById('varPanel'); if (vp) vp.style.display = 'none';
     this.refreshReadiness(true);
@@ -1075,7 +1119,7 @@ const Page = {
     if (!this._extraLines.length) { box.innerHTML = '<div style="font-size:11px;color:#64748b">มีบรรทัดเดียว (บรรทัดที่ 1 ข้างบน) — กด "+ เพิ่มบรรทัด" ถ้าใบนี้มีหลายรายการ</div>'; return; }
     const incomeOpts = sel => '<option value="">ไม่หัก</option>' + (this._incomeTypes || []).map(x =>
       `<option value="${Layout.esc(x.code)}"${String(x.code) === String(sel) ? ' selected' : ''}>${Layout.esc(x.taxSection)} ${Layout.esc(x.name)}</option>`).join('');
-    box.innerHTML = `<table class="rec-line-table"><thead><tr><th style="width:4%">#</th><th>รายละเอียด</th><th style="width:10%">จำนวน</th><th style="width:14%">ราคาต่อหน่วย</th><th style="width:9%">VAT %</th><th style="width:18%">ประเภทเงินได้</th><th style="width:9%">หัก %</th><th style="width:5%"></th></tr></thead><tbody>`
+    box.innerHTML = `<div class="table-container"><table class="rec-line-table"><thead><tr><th style="width:4%">#</th><th>รายละเอียด</th><th style="width:10%">จำนวน</th><th style="width:14%">ราคาต่อหน่วย</th><th style="width:9%">VAT %</th><th style="width:18%">ประเภทเงินได้</th><th style="width:9%">หัก %</th><th style="width:5%"></th></tr></thead><tbody>`
       + this._extraLines.map((l, i) => `<tr data-i="${Number(i)}">
         <td>${Number(i + 2)}</td>
         <td><input type="text" data-k="description" value="${Layout.esc(l.description)}"></td>
@@ -1084,8 +1128,8 @@ const Page = {
         <td><input type="number" step="0.01" data-k="vatRate" value="${Layout.esc(String(l.vatRate))}"></td>
         <td><select data-k="incomeTypeCode">${incomeOpts(l.incomeTypeCode) /* html — หนีภายใน */}</select></td>
         <td><input type="number" step="0.01" min="0" max="100" data-k="withholdingTaxRate" value="${Layout.esc(String(l.withholdingTaxRate))}"></td>
-        <td><button type="button" class="btn btn-sm btn-ghost" title="ลบบรรทัด" onclick="Page.removeExtraLine('${Layout.jsArg(i)}')">✕</button></td>
-      </tr>`).join('') + '</tbody></table>';
+        <td><button type="button" class="btn btn-sm btn-ghost" title="ลบบรรทัด" aria-label="ลบบรรทัดที่ ${Number(i + 2)}" onclick="Page.removeExtraLine('${Layout.jsArg(i)}')">✕</button></td>
+      </tr>`).join('') + '</tbody></table></div>';
   },
   _readExtraLines() {
     document.querySelectorAll('#fExtraLines tr[data-i]').forEach(tr => {
@@ -1168,7 +1212,9 @@ const Page = {
     const name = document.getElementById('fName').value.trim();
     const startDate = document.getElementById('fStartDate').value;
     const amount = parseFloat(document.getElementById('fAmount').value) || 0;
-    if (!name || !startDate || !amount) { Layout.toast('กรุณากรอกชื่อ, วันเริ่มต้น และยอดเงิน (บรรทัดที่ 1)', 'error'); return; }
+    const missing = [!name && 'fName', !startDate && 'fStartDate', !amount && 'fAmount'].filter(Boolean);
+    this._markMissing(missing);
+    if (missing.length) { Layout.toast('กรุณากรอกชื่อ, วันเริ่มต้น และยอดเงิน (บรรทัดที่ 1)', 'error'); return; }
     if (amount < 0) { Layout.toast('ยอดเงินต้องไม่ติดลบ — ถ้าต้องการลดหนี้ ให้ออกใบลดหนี้แยก', 'error'); return; }
     if ((this._formDataErrors || []).length) {
       Layout.toast('ตัวเลือกในฟอร์มโหลดไม่ครบ — รีเฟรชหน้าแล้วลองใหม่ (กันช่องทางรับ/จ่ายถูกบันทึกเป็นเงินสดโดยไม่ตั้งใจ)', 'error', 7000);
@@ -1456,7 +1502,7 @@ const Page = {
       await this._hydrateAutopilot(r);
       this._snapshotForm();
       this._resetDryRun();
-      this.goStep(1);
+      this._markMissing([]); this.goStep(1);
       Layout.openModal('formModal');
       this.refreshReadiness(true);
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -1473,7 +1519,7 @@ const Page = {
   },
 
   async runNow(id) {
-    if (!confirm('สร้างเอกสารจากรายการนี้ทันที?')) return;
+    if (!(await Layout.confirm({ title: 'สร้างเอกสารทันที', message: 'สร้างเอกสารจากรายการนี้ทันที (นอกรอบปกติ)?', okText: 'สร้างเอกสาร' }))) return;
     const api = Layout.api(); if (!api) return;
     try {
       await api.runRecurringNow(id); Layout.toast('สร้างเอกสารสำเร็จ'); this.load();

@@ -134,7 +134,8 @@ public class CreateFixedAssetRequestValidator : AbstractValidator<CreateFixedAss
 {
     public CreateFixedAssetRequestValidator()
     {
-        RuleFor(x => x.AssetCode).NotEmpty().MaximumLength(50).WithMessage("กรุณากรอกรหัสสินทรัพย์");
+        // รหัสว่าง = ระบบออก FA-yyyyMM-#### ให้ใน FixedAssetService.CreateAsync (รอบ 252 WP-13)
+        RuleFor(x => x.AssetCode).MaximumLength(50).WithMessage("รหัสสินทรัพย์ยาวเกิน 50 ตัวอักษร");
         RuleFor(x => x.Name).NotEmpty().MaximumLength(300).WithMessage("กรุณากรอกชื่อสินทรัพย์");
         RuleFor(x => x.PurchaseCost).GreaterThan(0).WithMessage("ราคาซื้อต้องมากกว่า 0");
         RuleFor(x => x.SalvageValue).GreaterThanOrEqualTo(0).WithMessage("มูลค่าซาก​ต้องไม่น้อยกว่า 0");
