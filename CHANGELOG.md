@@ -6631,5 +6631,5 @@ documents ratchet 387 · แก้ XSS ที่พบเพิ่ม (`${c.phon
 (contacts/organization/petty-cash/recurring) + credit-limit `usedAi=false` + ratchet `ai_label_literal_check`. (M4) กฎส่งอีเมลค่านอกช่วง = 400 (`RuleRangeError`) ไม่ clamp เงียบ.
 (L1) PUT รหัสหัวเรื่อง: คีย์ที่ไม่ส่ง = คงเดิม · รหัสซ้ำข้ามชนิด = 400 · DELETE คืนค่าตั้งต้น. (L2) contacts flush การติ๊กค้างตอนออกจากหน้า. (L3) หมวดสินทรัพย์จากคำแนะนำอัปเดตตามชื่อ.
 (L4) ตัวนับแท็บล้มไม่ล้มรายการ. (L5) legal ถามก่อนทับร่างอังกฤษ. (L7) ลองใหม่คิวอีเมลได้เฉพาะสถานะ Failed. raw fetch: contacts 4→2 · organization 2→0 · petty-cash 2→0.
-เทสต์ `EmailScheduleRuleRangeTests` · `DuplicateSubjectCode` · Db พอร์ทัล 4 เคส · R250W3 +7 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+เทสต์ `EmailScheduleRuleRangeTests` · `DuplicateSubjectCode` · Db พอร์ทัล 4 เคส · R250W3 +7 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 697718ef_
 
