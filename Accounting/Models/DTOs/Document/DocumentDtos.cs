@@ -1093,7 +1093,10 @@ public record DocumentResponse(
     /// <summary>ยอดที่ต้องชำระ = ยอดรวมทั้งสิ้น − หักหลัง VAT (เซิร์ฟเวอร์คำนวณ — <c>PostVatDeduction.AmountDue</c>) · null เมื่อไม่มีหัก</summary>
     decimal? AmountDueAfterPostVatDeduction = null,
     /// <summary>ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง" ที่เก็บไว้ — null = ไม่ได้ติ๊ก</summary>
-    IReadOnlyList<PaymentSourceLineDto>? PaymentSources = null);
+    IReadOnlyList<PaymentSourceLineDto>? PaymentSources = null,
+    /// <summary>รอบ 250 WP-02b (P-6): มีป้าย "ส่งเอกสารเข้าระบบคู่ค้าไม่สำเร็จ" ค้างอยู่ (<c>Helpers/PartnerRoutingFailedNote</c>) — เซิร์ฟเวอร์ตัดสิน ·
+    /// หน้าเอกสารแสดงแถบเตือน + ปุ่ม "ส่งให้คู่ค้าอีกครั้ง" · ป้ายถูกล้างเมื่อส่งสำเร็จ (ล้มดัง — เดิมกลืนด้วย LogWarning)</summary>
+    bool PartnerRoutingFailed = false);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);

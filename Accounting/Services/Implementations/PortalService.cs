@@ -23,10 +23,14 @@ public class PortalService : IPortalService
     /// <summary>ที่เก็บไฟล์กลาง (ทีม FS 2026-11-02) — นอก DI ⇒ FileStorageDefaults.Local</summary>
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
 
+    /// <summary>รอบ 250 WP-02b (M-2): สลิปพอร์ทัล = <c>PaymentIntent(ManualSlip)</c> รอยืนยัน — ทางเดียวกับเส้นสลิป/gateway อื่น (null = สร้างนอก DI ⇒ แนบสลิปไม่ได้ ไม่ถอยไปสร้าง Payment)</summary>
+    private readonly Accounting.Services.Payments.IPaymentIntentService? _intents;
+
     public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null, IImageProcessingService? images = null,
-        Accounting.Services.Storage.IFileStorage? storage = null)
+        Accounting.Services.Storage.IFileStorage? storage = null, Accounting.Services.Payments.IPaymentIntentService? intents = null)
     {
         _storage = storage;
+        _intents = intents;
         _db = db;
         _pdfService = pdfService;
         _images = images;
@@ -308,9 +312,10 @@ public class PortalService : IPortalService
                     doc.TotalAmount, runningBalance));
             }
 
-            // Add payments against this document
+            // Add payments against this document — สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ (รอบ 250 M-2 · ตัวตั้งเดียว PortalSlipPending)
             var payments = await _db.Payments
-                .Where(p => p.DocumentId == doc.Id && p.PaymentDate >= fromDate && p.PaymentDate <= toDate)
+                .Where(PortalSlipPending.CountsAsReceived)
+                .Where(p => p.CompanyId == companyId && p.DocumentId == doc.Id && p.PaymentDate >= fromDate && p.PaymentDate <= toDate)
                 .OrderBy(p => p.PaymentDate)
                 .ToListAsync();
 
@@ -334,6 +339,7 @@ public class PortalService : IPortalService
     {
         return await _db.Payments
             .Include(p => p.Document)
+            .Where(PortalSlipPending.CountsAsReceived)   // รอบ 250 M-2: สลิปที่ยังไม่ตรวจไม่ใช่ "การชำระของฉัน"
             .Where(p => p.CompanyId == companyId && p.Document.ContactId == contactId)
             .OrderByDescending(p => p.PaymentDate)
             .Select(p => new PortalPaymentResponse(
@@ -497,13 +503,11 @@ public class PortalService : IPortalService
         };
     }
 
-    /// <summary>Portal customer uploads a slip against a specific
-    /// invoice/tax-invoice. Creates a Payment row tied to the document
-    /// in status=Pending, with the slip stored as a FileAttachment.
-    /// Owner confirms via /pages/documents (existing Payment workflow).
-    /// Strict ownership check: document.ContactId must match the
-    /// portal user's contact id — prevents one customer from uploading
-    /// to another customer's invoice.</summary>
+    /// <summary>ลูกค้าแนบสลิปโอนของใบแจ้งหนี้/ใบกำกับ — <b>"แจ้งโอน" ไม่ใช่ "รับชำระแล้ว"</b> (รอบ 250 WP-02b · M-2/G-T7)
+    /// <para>สร้าง <c>PaymentIntent(ManualSlip)</c> สถานะรอ ผ่าน <c>ManualSlipPaymentProvider</c> (ยอดซ้ำ + ยังเปิดอยู่ = ใบเดิม) + ไฟล์สลิปผูกเอกสาร ·
+    /// <b>ไม่สร้างแถว Payment</b> (เดิมเพิ่ม Payment "[PENDING-VERIFY]" ทันที ⇒ ใบแจ้งยอด/จับคู่ธนาคารนับเป็นจ่ายแล้วก่อนมีใครตรวจ) ·
+    /// พนักงานตรวจแล้วกดยืนยันที่หน้ารายการรับชำระ ⇒ <c>DocumentPaymentHandler</c> ⇒ <c>CreatePaymentAsync</c> (JE · ตัดหนี้ · ใบเสร็จ)</para>
+    /// ตรวจความเป็นเจ้าของ: document.ContactId ต้องตรงผู้ติดต่อของโทเคนพอร์ทัล</summary>
     public async Task<PortalSlipUploadResponse> UploadDocumentSlipAsync(
         Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount)
     {
@@ -515,6 +519,10 @@ public class PortalService : IPortalService
         var doc = await _db.Documents
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        if (doc.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Voided or DocumentStatus.Rejected)
+            throw new InvalidOperationException("เอกสารนี้ยังไม่พร้อมรับชำระ — ติดต่อผู้ขาย");
+        if (_intents == null)
+            throw new InvalidOperationException("ระบบรับสลิปยังไม่พร้อม — กรุณาติดต่อผู้ขาย");
 
         var balance = doc.TotalAmount - doc.PaidAmount;
         var pay = amount ?? balance;
@@ -547,6 +555,14 @@ public class PortalService : IPortalService
             relUrl = "/" + relDir + "/" + storedName;
         }
 
+        // ความจริงเรื่องเงิน = PaymentIntent (manual-slip) รอยืนยัน — ยอดซ้ำ + ยังเปิด ⇒ StartAsync คืนใบเดิม (ไม่ซ้อน) ·
+        // รายการนี้ชำระสำเร็จไปแล้วผ่านระบบ ⇒ StartAsync ปฏิเสธพร้อมข้อความ (ส่งต่อถึงลูกค้าเป็น 400)
+        var intent = await _intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
+            PaymentSourceKind.Document, doc.Id, pay, PaymentMethodKind.ManualSlip,
+            Description: PortalSlipPending.IntentDescription(doc.DocumentNumber, relUrl),
+            ContactId: contactId),
+            providerCode: Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code);
+
         _db.Set<FileAttachment>().Add(new FileAttachment
         {
             CompanyId = companyId,
@@ -560,38 +576,8 @@ public class PortalService : IPortalService
             CreatedBy = "portal-customer"
         });
 
-        // Payment entity has no Status field — owner confirms by
-        // posting a JE / marking the Document. We leave Notes with
-        // a clear "[PENDING-VERIFY]" prefix so the existing payments
-        // list shows it as awaiting owner confirmation.
-        var payment = new Payment
-        {
-            CompanyId = companyId,
-            PaymentNumber = await NextPaymentNumberAsync(companyId),
-            PaymentDate = DateTime.UtcNow.Date,
-            PaymentMethod = PaymentMethod.BankTransfer,
-            DocumentId = doc.Id,
-            Amount = pay,
-            Reference = $"slip-{file.FileName}",
-            Notes = $"[PENDING-VERIFY] แนบสลิปจาก Portal ลูกค้า · ไฟล์: {relUrl}",
-            CreatedBy = "portal-customer"
-        };
-        _db.Payments.Add(payment);
         await _db.SaveChangesAsync();
 
-        return new PortalSlipUploadResponse(payment.Id, doc.Id, relUrl, pay, payment.CreatedAt);
-    }
-
-    private async Task<string> NextPaymentNumberAsync(Guid companyId)
-    {
-        var prefix = $"PAY-{DateTime.UtcNow:yyyyMM}-";
-        var last = await _db.Payments
-            .Where(p => p.CompanyId == companyId && p.PaymentNumber.StartsWith(prefix))
-            .Select(p => p.PaymentNumber)
-            .OrderByDescending(n => n)
-            .FirstOrDefaultAsync();
-        var seq = 1;
-        if (last != null && int.TryParse(last.AsSpan(prefix.Length), out var n)) seq = n + 1;
-        return $"{prefix}{seq:D4}";
+        return new PortalSlipUploadResponse(intent.Id, doc.Id, relUrl, intent.Amount, DateTime.UtcNow, AwaitingReview: true);
     }
 }

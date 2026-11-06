@@ -790,6 +790,8 @@ public partial class BankService : IBankService
             // ตัวให้คะแนนกลางตัดสินจากยอด/วัน/ชื่อผู้โอน/เลขอ้างอิงแทน
             var payments = await _db.Payments
                 .Include(p => p.Document)
+                // รอบ 250 M-2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจ ห้ามถูกจับคู่กับเงินเข้าจริง (เดิมสลิปปลอมยอดเท่ากันจับคู่ได้)
+                .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)
                 .Where(p => p.CompanyId == companyId && !p.IsDeleted
                     && p.Document.Status != DocumentStatus.Voided)
                 .ToListAsync();

@@ -2147,6 +2147,20 @@ try
         app.Logger.LogError(ex, "รอบ 246: ย้ายพร้อมเพย์ของเทมเพลตไปบัญชีธนาคารไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
     }
 
+    // รอบ 250 WP-02b (M-2 · F2 ข้อ 9): แถว Payment "[PENDING-VERIFY]" ของสลิปพอร์ทัลรุ่นเก่า (นับเป็นจ่ายก่อนตรวจ) ⇒ รายการรอยืนยัน ครั้งเดียว ·
+    // แถวที่ผูกธนาคาร/JE/ใบเสร็จแล้ว = ไม่แตะ + audit "ต้องตรวจ" (ผู้อ่านยอดตัดออกด้วย PortalSlipPending.CountsAsReceived) · ล้ม = ย้อน + บูตถัดไปทำใหม่
+    try
+    {
+        var r250 = await Accounting.Helpers.PortalSlipLegacyMigration.MigrateAsync(db);
+        if (r250.Moved + r250.NeedsReview > 0)
+            app.Logger.LogWarning("รอบ 250: สลิปพอร์ทัลรุ่นเก่า ย้ายเป็นรายการรอยืนยัน {Moved} แถว · ต้องให้คนตรวจ {Review} แถว (เหตุใน audit {Entity})",
+                r250.Moved, r250.NeedsReview, Accounting.Helpers.PortalSlipLegacyMigration.AuditEntityType);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "รอบ 250: ย้ายสลิปพอร์ทัลรุ่นเก่าเป็นรายการรอยืนยันไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป (ระหว่างนี้ใบแจ้งยอด/จับคู่ธนาคารไม่นับแถวเหล่านี้)");
+    }
+
     // PostgreSQL full-text search: pg_trgm GIN indexes for fast LIKE/ILIKE searches
     DatabaseMigrationHelper.ApplyFullTextSearchIndexes(db, app.Services.GetRequiredService<ILogger<Program>>());
 

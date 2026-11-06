@@ -257,12 +257,6 @@ Accounting/Controllers/ConsolidationController.cs	DeleteGroup	1
 Accounting/Controllers/ConsolidationController.cs	RemoveMember	1
 Accounting/Controllers/ConsolidationController.cs	UpdateGroup	1
 Accounting/Controllers/ContactInquiryController.cs	SubmitInquiry	1
-Accounting/Controllers/CrossTenantWorkflowController.cs	Accept	1
-Accounting/Controllers/CrossTenantWorkflowController.cs	ApproveIncoming	1
-Accounting/Controllers/CrossTenantWorkflowController.cs	Invite	1
-Accounting/Controllers/CrossTenantWorkflowController.cs	Reject	1
-Accounting/Controllers/CrossTenantWorkflowController.cs	RejectIncoming	1
-Accounting/Controllers/CrossTenantWorkflowController.cs	UpdateConfig	1
 Accounting/Controllers/CurrencyController.cs	AddCurrency	1
 Accounting/Controllers/CurrencyController.cs	AddRate	1
 Accounting/Controllers/CurrencyController.cs	DeleteCurrency	1

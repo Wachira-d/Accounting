@@ -40,6 +40,7 @@ public partial class BankService
         var payments = await _db.Payments
             // ไม่ ThenInclude Contact (INNER JOIN ตัด payment ที่ contact ถูกลบ) — hydrate แยก
             .Include(p => p.Document)
+            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 M-2: สลิปพอร์ทัลที่ยังไม่ตรวจไม่ใช่ผู้สมัครจับคู่
             .Where(p => p.CompanyId == companyId
                 && (p.PaymentMethod == PaymentMethod.BankTransfer
                     || p.PaymentMethod == PaymentMethod.PromptPay

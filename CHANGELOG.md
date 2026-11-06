@@ -6566,3 +6566,13 @@ _รอบ 250 WP-05 — เอกสาร/ประวัติ (2026-11-06): 
 ทับเมื่อ blame ชี้คอมมิตย้าย hunk/แก้ CI) · sha `0a829110` มีจริง (คำตัดสิน 250-3 แก้) · `doc_commit_sha_check` ข้ามเลข 13 หลัก · DECISIONS 247-1…250-* + 243-AS + Y/N ·
 REVIEWS_INDEX erp-review 2026-10-01…11-06 รายไฟล์ + BACKLOG_REGISTER 24 แถวเปิด (ไม่มีแถวที่ปิดแล้วแต่ไม่ติ๊ก) · AUTO_SEND §1.1/G-8/§7.1/§9 → `TradingPartnership` ·
 doc ล้าสมัยติ๊กพร้อมหลักฐาน (DataProtection ใน DB · ค่าส่ง POS · overage ⏳ · G-16) · `git notes` 369bc403 · บทเรียน 7 เรื่อง — doc ล้วน ไม่มี C# — commit 534d6efb_
+
+_รอบ 250 WP-02b — บั๊กความปลอดภัยคู่ค้า + สลิปพอร์ทัล (AUDIT_249_COVERAGE M-1/M-2 · AUTOPILOT_BILLING_DESIGN §6.1 P-1/P-2/P-3/P-6 · G-T7) (2026-11-06):
+(P-1) เชิญคู่ค้าตอบ 202 ข้อความเดียวทุกกรณี (เดิม 404 "ไม่พบบริษัท…" ⇒ ไล่เลขภาษีหาสมาชิก NextAcc ได้) · ผู้เชิญไม่เห็นแถวที่ยังไม่ตอบรับ · audit รูปเดียว · ปฏิเสธไม่ถึง 7 วันไม่เปิดซ้ำ.
+(P-2) `Helpers/PartnerCompanyMatch` เลขภาษี + สาขา (กำกวม ⇒ ไม่เดา) ทั้งเชิญและส่งเอกสาร · ส่งเลือกเฉพาะคู่ Accepted.
+(P-3) Invite/Accept/Reject/UpdateConfig = CompanySettings.Edit + RejectApiKey · Approve/RejectIncoming = สิทธิ์อนุมัติฝั่งซื้อ + RejectApiKey · กล่องเอกสารเข้า = เห็นฝั่งซื้อ ·
+ถอด baseline 6 แถว + ย้ายไฟล์เข้า WATCHED · owner_action_wiring R250.
+(P-6) `RouteSentDocumentAsync` ทางเข้าเดียว: ล้ม ⇒ ป้าย `[PARTNER-ROUTE-FAILED]` + `DocumentResponse.PartnerRoutingFailed` + แถบเตือน/ปุ่มส่งใหม่ + LogError · `POST documents/{id}/partner-routing/retry`.
+(M-2) สลิปพอร์ทัล ⇒ `PaymentIntent(manual-slip)` รอยืนยัน (ไม่สร้าง Payment) · ยืนยันที่ ConfirmManually ⇒ CreatePaymentAsync · ผู้อ่านยอด 6 จุดตัดแถว "[PENDING-VERIFY]" ที่ยังไม่ตรวจ ·
+migration ครั้งเดียว `PortalSlipLegacyMigration` (แถวสะอาด ⇒ intent รอยืนยัน + soft-delete แถวเดิม · แถวที่ผูกธนาคาร/JE/ใบเสร็จ/เอกสารหาย ⇒ ไม่แตะ + audit ต้องตรวจ).
+เทสต์ `PartnerSecurityRound250Tests` + Db `PartnerSecurityRound250DbTests` (ทิศตรงข้าม: คู่เดิมไม่กรอกสาขายังส่งได้ · แถวรับชำระจริงยังลดยอด · ใบไม่มีป้ายไม่ถูกแตะ · ผู้รับเชิญยอมรับได้) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4e3eef3c_
