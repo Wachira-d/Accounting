@@ -6,6 +6,7 @@ using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using Xunit.Abstractions;
