@@ -27,8 +27,13 @@ public static class FixedAssetValuationEdit
     /// <paramref name="newDate"/> null = ล้าง (กลับไปเริ่มค่าเสื่อมที่วันที่เอกสาร) · แก้ได้จนกว่ามีค่าเสื่อมลงบัญชี (งวดที่ลงแล้วคิดจากวันเดิม — แก้ย้อนหลังไม่ได้)
     /// </summary>
     public static string? AvailableDateProblem(bool isUnderAcquisition, bool hasCostSources, bool hasPostedDepreciation,
-        DateTime purchaseDate, DateTime? newDate, DateTime todayBangkok)
+        DateTime purchaseDate, DateTime? newDate, DateTime todayBangkok,
+        AssetStatus status, decimal accumulatedDepreciation, bool hasLifeReview)
     {
+        // ฝ่ายค้าน WP-08 MED-5: สินทรัพย์ที่ไม่อยู่ในสถานะใช้งาน (จำหน่าย/ตัดจำหน่าย/คิดค่าเสื่อมครบ) · มีค่าเสื่อมสะสมยกมา (นำเข้า) · ทบทวนอายุแล้ว
+        // (ดัชนีงวดของการทบทวนผูกกับจุดตั้งต้นเดิม) ⇒ เปลี่ยนจุดตั้งต้นไม่ได้ — ตัวเลขที่ลง/ยกมาแล้วคิดจากวันเดิม
+        if (status != AssetStatus.Active)
+            return "สินทรัพย์นี้ไม่อยู่ในสถานะใช้งาน (จำหน่าย/ตัดจำหน่าย/คิดค่าเสื่อมครบแล้ว) — เปลี่ยนวันที่พร้อมใช้งานไม่ได้";
         if (isUnderAcquisition)
             return "สินทรัพย์ระหว่างจัดหา — ตั้งวันที่พร้อมใช้งานตอนกด “โอนเป็นสินทรัพย์พร้อมใช้” (ค่าเสื่อมเริ่มจากวันนั้น)";
         if (hasCostSources)
@@ -36,6 +41,10 @@ public static class FixedAssetValuationEdit
         if (hasPostedDepreciation)
             return "สินทรัพย์นี้มีค่าเสื่อมราคาที่ลงบัญชีแล้ว — เปลี่ยนวันที่พร้อมใช้งานย้อนหลังไม่ได้ (งวดที่ลงแล้วคิดจากวันเดิม) · "
                 + "ถ้าวันผิดจริง ให้กลับรายการค่าเสื่อมที่ลงแล้วก่อน หรือแจ้งนักบัญชีบันทึกปรับปรุง";
+        if (accumulatedDepreciation > 0m)
+            return "สินทรัพย์นี้มีค่าเสื่อมราคาสะสมยกมาแล้ว — จุดเริ่มคิดค่าเสื่อมผูกกับยอดยกมา เปลี่ยนวันที่พร้อมใช้งานไม่ได้ · ถ้ายอดยกมาผิด ให้แก้ด้วยรายการปรับปรุง";
+        if (hasLifeReview)
+            return "สินทรัพย์นี้ทบทวนอายุการใช้งานแล้ว (งวดที่การทบทวนมีผลนับจากจุดตั้งต้นเดิม) — เปลี่ยนวันที่พร้อมใช้งานไม่ได้";
         if (newDate is not DateTime d) return null;
         if (d.Date < purchaseDate.Date)
             return $"วันที่พร้อมใช้งานต้องไม่ก่อนวันที่ซื้อ ({purchaseDate:dd/MM/yyyy}) — ซื้อมาแล้วจึงพร้อมใช้";

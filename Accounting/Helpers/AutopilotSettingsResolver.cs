@@ -123,14 +123,9 @@ public static class AutopilotSettingsResolver
     public const string AutoSendDisabledReason =
         "ผู้ติดต่อนี้ตั้ง \"ไม่ส่งเอกสารอัตโนมัติ\" ไว้ — ระบบไม่ส่งอีเมลอัตโนมัติถึงผู้ติดต่อรายนี้ (ส่งเองได้ที่หน้าเอกสาร · ปิดค่านี้ที่หน้าผู้ติดต่อ/รายการประจำ)";
 
-    /// <summary>ผู้ติดต่อปิดส่งอัตโนมัติ ⇒ ชนะกฎบริษัท (ตารางส่งทุก trigger · รายการประจำ · ใบแจ้งยอด · 50 ทวิ · ลิงก์เซ็นอัตโนมัติ) · null = ส่งได้ ·
-    /// การส่งที่ผู้ใช้กดเองไม่ผ่านตัวนี้ (ตั้งใจ — "อัตโนมัติ" เท่านั้น)</summary>
+    /// <summary>ผู้ติดต่อปิดส่งอัตโนมัติ ⇒ ชนะ<b>ทุกชั้น</b> (ตารางส่งทุก trigger · รายการประจำ · ใบแจ้งยอด · 50 ทวิ · ลิงก์เซ็นอัตโนมัติ · ขั้นส่งอีเมลของงานหลังรับชำระ
+    /// แม้ตาราง/รายการประจำตั้ง On — ฝ่ายค้าน MED-4) · ห้ามเฉพาะการ<b>ส่งอีเมล</b> ไม่ห้ามการออกเอกสาร (HIGH-2) · null = ส่งได้ · การส่งที่ผู้ใช้กดเองไม่ผ่านตัวนี้</summary>
     public static string? AutoSendBlock(bool contactAutoSendDisabled) => contactAutoSendDisabled ? AutoSendDisabledReason : null;
-
-    /// <summary>ชั้นผู้ติดต่อของ "ส่งใบเสร็จหลังรับชำระ" — ปิดส่งอัตโนมัติ ⇒ Off (ชนะค่า PostPayEmailReceipt ของผู้ติดต่อเอง) ·
-    /// ตาราง/รายการประจำที่ตั้งช่องนี้เองยังชนะ (ชั้นเฉพาะกว่า — "ตารางชนะผู้ติดต่อเฉพาะช่องที่ตั้ง") · ไม่ปิด ⇒ ค่าเดิมของผู้ติดต่อ</summary>
-    public static bool? ContactPostPayEmailReceipt(bool? contactSetting, bool contactAutoSendDisabled)
-        => contactAutoSendDisabled ? false : contactSetting;
 
     /// <summary>ต่อชั้น — แต่ละเรื่องเลือกจากชั้นเฉพาะที่สุดที่ตอบ</summary>
     public static PayLinkChoice Resolve(Layer? schedule, Layer? recurring, Layer? contact, bool companyAttach, IReadOnlyList<string>? companyChannels)

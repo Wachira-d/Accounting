@@ -42,7 +42,7 @@ public class ContactRecipientResolver : IContactRecipientResolver
     public async Task<ContactNotifyOverviewResponse?> GetOverviewAsync(Guid companyId, Guid contactId, bool canEdit, CancellationToken ct = default)
     {
         var facts = await LoadFactsAsync(companyId, contactId, ct);
-        if (facts.Contact == null) return null;
+        if (facts.Contact == null || facts.Contact.IsDeleted) return null;   // ผู้ติดต่อที่ลบ ⇒ ไม่มีแท็บ (404 เหมือนเดิม)
         var contact = facts.Contact;
         var rows = facts.Endpoints;
         var list = new List<ContactNotifyEndpointResponse>();
@@ -127,7 +127,8 @@ public class ContactRecipientResolver : IContactRecipientResolver
 
     private async Task<Facts> LoadFactsAsync(Guid companyId, Guid contactId, CancellationToken ct)
     {
-        var c = await _db.Contacts.AsNoTracking()
+        // ฝ่ายค้าน MED-2: อ่านผู้ติดต่อที่ถูกลบด้วย (ใบเก่ายังอ้าง) ⇒ ตัวตัดสินบอกเหตุ "ผู้ติดต่อถูกลบ" แทนการหายเงียบ · tenant ยังกรองเอง
+        var c = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(x => x.Id == contactId && x.CompanyId == companyId)
             .Select(x => new { x.Id, x.CompanyId, x.Email, x.Name, x.IsDeleted })
             .FirstOrDefaultAsync(ct);

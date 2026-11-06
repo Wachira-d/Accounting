@@ -786,7 +786,7 @@
         this._editOnlyLoaded = a ? { availableForUseDate: ad.value, contractPrice: cp.value } : null;
         if (hint) hint.textContent = !a ? '' : a.availableDateLockReason
           ? '🔒 ' + a.availableDateLockReason
-          : (a.depreciationStartDate ? 'ค่าเสื่อมเริ่มเดือนถัดจาก ' + Layout.dateInput(a.depreciationStartDate) + ' · ว่าง = วันที่ซื้อ' : 'ว่าง = วันที่ซื้อ');
+          : (a.depreciationStartDate ? 'ค่าเสื่อมเริ่มเดือนถัดจาก ' + Layout.date(a.depreciationStartDate) + ' · ว่าง = วันที่ซื้อ' : 'ว่าง = วันที่ซื้อ');
       },
       /** บันทึกช่องเฉพาะตอนแก้ไขที่เปลี่ยนจากค่าที่โหลด (PATCH แยก) — คืน true เมื่อสำเร็จทั้งหมด · ล้ม ⇒ toast เหตุ (ไม่กลืน) */
       async _saveEditOnly(api, id) {

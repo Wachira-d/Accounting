@@ -59,7 +59,9 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
             _db.ContactNotifyEndpoints.Add(row);
             // ฝ่ายค้าน S3 (PDPA): audit append-only ⇒ ไม่ใส่อีเมล/ป้ายเปล่า — อ้าง endpointId (ค่าอยู่ในแถวปลายทางที่ลบตามคำขอได้)
             Audit(companyId, contactId, actor, AuditAction.Create, "add-email", null,
-                new { endpointId = row.Id, kind = row.Kind, hasLabel = label != null, topics = topics.Select(t => t.ToString()) });
+                // ฝ่ายค้าน WP-08 LOW: แฮชของที่อยู่ (ผูกบริษัท) — พิสูจน์ได้ภายหลังว่าเพิ่มอีเมลใด (เทียบแฮช) โดยไม่เก็บอีเมลเปล่าใน audit ที่ลบไม่ได้
+                new { endpointId = row.Id, kind = row.Kind, hasLabel = label != null, topics = topics.Select(t => t.ToString()),
+                      emailHash = ContactRecipientRule.EmailAuditHash(companyId, email!) });
             await _db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
         }

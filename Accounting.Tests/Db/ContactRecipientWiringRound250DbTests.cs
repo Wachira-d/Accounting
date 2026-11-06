@@ -292,4 +292,264 @@ public class ContactRecipientWiringRound250DbTests
         Assert.Contains("acct@buyer250.co.th", msg.To);
         Assert.DoesNotContain("ap@buyer250.co.th", msg.To);
     }
+
+    // ═══ ฝ่ายค้าน WP-08 (HIGH-1/HIGH-2/MED-2/MED-6) ═══
+
+    /// <summary>บริษัทใช้ e-Tax by Email (SMTP บริษัทผ่าน) + ผู้ซื้อนิติบุคคลครบข้อมูล + ใบกำกับภาษีอนุมัติแล้ว</summary>
+    private static async Task<Seed> SeedEtaxAsync(AccountingDbContext db, string tag)
+    {
+        var company = new Company { Name = "บริษัท WP08 e-Tax " + tag, TaxId = "0105556000007", Email = "office@seller250.co.th" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        db.CompanySettings.Add(new CompanySettings
+        {
+            CompanyId = company.Id, EtaxEnabled = true, EtaxMode = EtaxMode.ByEmail,
+            EtaxByEmailRdRegistered = true, EtaxByEmailSenderEmail = "etax@seller250.co.th",
+            EmailProvider = EmailProvider.Smtp, EmailSmtpHost = "smtp.seller250.co.th", EmailSmtpUsername = "etax@seller250.co.th",
+            EmailFromAddress = "etax@seller250.co.th", EmailConfigured = true, PostPayEmailReceipt = true,
+        });
+        var contact = new Contact
+        {
+            CompanyId = company.Id, Name = "บริษัท ลูกค้า e-Tax 250 จำกัด", IsCustomer = true, ContactType = ContactType.JuristicPerson,
+            TaxId = "0107537000017", Email = "ap@buyer250.co.th", Address = "1 ถนนสุขุมวิท กรุงเทพฯ",
+        };
+        db.Contacts.Add(contact);
+        await db.SaveChangesAsync();
+        var doc = new Document
+        {
+            CompanyId = company.Id, ContactId = contact.Id, DocumentType = DocumentType.TaxInvoice,
+            DocumentNumber = "IV250W8-" + Random.Shared.Next(100000, 999999), Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date,
+            SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, BalanceDue = 1_070m, Currency = "THB", IsTaxInvoiceByLaw = true,
+        };
+        doc.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7m, VatAmount = 70m });
+        db.Documents.Add(doc);
+        db.EmailScheduleRules.Add(new EmailScheduleRule { CompanyId = company.Id, Trigger = "DocumentApproved", OffsetDays = 0, SendAtHour = 9, IsActive = true });
+        await db.SaveChangesAsync();
+        return new Seed(company.Id, contact.Id, doc.Id);
+    }
+
+    [Fact]
+    public async Task eTax_คิวส่งถึงอีเมลหลักเท่านั้น_อีเมลเสริมบันทึกว่าไม่ได้ส่ง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedEtaxAsync(db, "queue " + Guid.NewGuid().ToString("N")[..6]);
+        await Endpoints(db).AddEmailAsync(s.CompanyId, s.ContactId,
+            new AddContactNotifyEmailRequest("finance@buyer250.co.th", null, new List<string> { nameof(NotifyTopic.Document) }), Actor);
+        db.ChangeTracker.Clear();
+
+        await Sched(db, new FakeSender()).OnDocumentApprovedAsync(s.CompanyId, s.InvoiceId);
+
+        var row = Assert.Single(await QueueRowsAsync(db, s));
+        Assert.Equal("Pending", row.Status);
+        Assert.Equal("ap@buyer250.co.th", row.ToEmail);                        // ผ่านตัวตรวจผู้รับ e-Tax (To 1 อีเมล)
+        Assert.StartsWith(ContactRecipientRule.EtaxPrimaryOnlyPrefix, row.ErrorMessage);
+        Assert.Contains("finance@buyer250.co.th", row.ErrorMessage);
+        Assert.NotNull(EmailScheduleService.AfterSentNote(row.ErrorMessage));  // หมายเหตุคงไว้หลังส่ง
+    }
+
+    [Fact]
+    public async Task eTax_อีเมลหลักปิดรับเอกสาร_อีเมลเสริมรับ_ไม่ส่งใบกำกับพร้อมเหตุ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedEtaxAsync(db, "primary-off " + Guid.NewGuid().ToString("N")[..6]);
+        var ep = Endpoints(db);
+        await ep.UpdatePrimaryAsync(s.CompanyId, s.ContactId, new UpdateContactNotifyPrimaryRequest(new List<string> { nameof(NotifyTopic.Receipt) }), Actor);
+        await ep.AddEmailAsync(s.CompanyId, s.ContactId,
+            new AddContactNotifyEmailRequest("finance@buyer250.co.th", null, new List<string> { nameof(NotifyTopic.Document) }), Actor);
+        db.ChangeTracker.Clear();
+
+        await Sched(db, new FakeSender()).OnDocumentApprovedAsync(s.CompanyId, s.InvoiceId);
+
+        var row = Assert.Single(await QueueRowsAsync(db, s));
+        Assert.Equal(ScheduledEmailSendCheck.SkippedStatus, row.Status);
+        Assert.Contains("อีเมลหลัก", row.ErrorMessage);
+        Assert.Contains("finance@buyer250.co.th", row.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task eTax_หลังรับชำระส่งใบเสร็จถึงอีเมลหลักเท่านั้น_บันทึกอีเมลเสริมในงาน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedEtaxAsync(db, "postpay " + Guid.NewGuid().ToString("N")[..6]);
+        var (pay, _) = await AddPaymentWithReceiptAsync(db, s, etaxRow: true);
+        await Endpoints(db).AddEmailAsync(s.CompanyId, s.ContactId,
+            new AddContactNotifyEmailRequest("acct@buyer250.co.th", null, new List<string> { nameof(NotifyTopic.Receipt) }), Actor);
+        db.ChangeTracker.Clear();
+
+        var sender = new FakeSender();
+        var (svc, _) = PostPay(db, sender);
+        Assert.True(await svc.EnqueueAsync(s.CompanyId, pay.Id, PaymentEntrySource.Manual, null));
+        var runId = (await db.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.CompanyId == s.CompanyId && r.PaymentId == pay.Id)).Id;
+        await svc.ProcessRunAsync(runId, default);
+        db.ChangeTracker.Clear();
+
+        var run = await db.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.Id == runId);
+        Assert.Equal(PostPaymentAutomationPolicy.StatusDone, run.Status);
+        var msg = Assert.Single(sender.Sent);
+        Assert.Equal(new[] { "ap@buyer250.co.th" }, msg.To);
+        Assert.Contains("csemail@etax.teda.th", msg.Cc);
+        Assert.Contains(ContactRecipientRule.EtaxPrimaryOnlyPrefix, run.Message);
+        Assert.Contains("acct@buyer250.co.th", run.Message);
+    }
+
+    [Fact]
+    public async Task ผู้ติดต่อปิดส่งอัตโนมัติ_ยังได้ใบเสร็จออก_ไม่ได้อีเมล_ทิศตรงข้ามเปิดส่งได้อีเมล()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        foreach (var off in new[] { true, false })
+        {
+            var s = await SeedAsync(db, "postpay-auto " + off + " " + Guid.NewGuid().ToString("N")[..6], autoSendDisabled: off, dueSoonRule: false);
+            await db.CompanySettings.Where(x => x.CompanyId == s.CompanyId).ExecuteUpdateAsync(x => x.SetProperty(c => c.PostPayEmailReceipt, true));
+            await db.Documents.Where(d => d.Id == s.InvoiceId).ExecuteUpdateAsync(x => x
+                .SetProperty(d => d.Status, DocumentStatus.Paid).SetProperty(d => d.BalanceDue, 0m).SetProperty(d => d.PaidAmount, 1_070m)
+                .SetProperty(d => d.VatAmount, 0m).SetProperty(d => d.TotalAmount, 1_000m));
+            db.ChangeTracker.Clear();
+            var pay = new Payment
+            {
+                CompanyId = s.CompanyId, PaymentNumber = "PAY250W8-" + Random.Shared.Next(100000, 999999), DocumentId = s.InvoiceId,
+                PaymentDate = DateTime.UtcNow.Date, Amount = 1_000m, PaymentMethod = PaymentMethod.BankTransfer,
+            };
+            db.Payments.Add(pay);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+
+            var calls = new List<string>();
+            var sender = new FakeSender();
+            var (svc, _) = PostPay(db, sender, IssuingDocs(calls, s, pay));
+            Assert.True(await svc.EnqueueAsync(s.CompanyId, pay.Id, PaymentEntrySource.Manual, null));
+            var runId = (await db.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.CompanyId == s.CompanyId && r.PaymentId == pay.Id)).Id;
+            await svc.ProcessRunAsync(runId, default);
+            db.ChangeTracker.Clear();
+            var run = await db.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.Id == runId);
+
+            Assert.Contains(nameof(IDocumentService.IssueReceiptForPaymentAsync), calls);   // ออกใบเสร็จทั้งสองทิศ
+            if (off)
+            {
+                Assert.Equal(PostPaymentAutomationPolicy.StatusBlocked, run.Status);
+                Assert.Contains(AutopilotSettingsResolver.AutoSendDisabledReason, run.Message);
+                Assert.Empty(sender.Sent);
+            }
+            else
+            {
+                Assert.Equal(PostPaymentAutomationPolicy.StatusDone, run.Status);
+                Assert.Single(sender.Sent);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ผู้ติดต่อถูกลบ_ทวงชำระเป็นแถวข้ามพร้อมเหตุ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "deleted " + Guid.NewGuid().ToString("N")[..6]);
+        await db.Contacts.IgnoreQueryFilters().Where(c => c.Id == s.ContactId).ExecuteUpdateAsync(x => x.SetProperty(c => c.IsDeleted, true));
+        db.ChangeTracker.Clear();
+
+        await Sched(db, new FakeSender()).ScanDueSoonAndOverdueAsync();
+
+        var row = Assert.Single(await QueueRowsAsync(db, s));
+        Assert.Equal(ScheduledEmailSendCheck.SkippedStatus, row.Status);
+        Assert.Equal(ContactRecipientRule.ContactDeletedReason, row.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task แถวกฎเมื่ออนุมัติที่ข้าม_ไม่นับว่าครอบแล้ว_ทิศตรงข้ามแถวรอส่งนับ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        foreach (var status in new[] { ScheduledEmailSendCheck.SkippedStatus, "Pending" })
+        {
+            var s = await SeedAsync(db, "covered " + status + " " + Guid.NewGuid().ToString("N")[..6], dueSoonRule: false);
+            db.EmailScheduleRules.Add(new EmailScheduleRule { CompanyId = s.CompanyId, Trigger = "DocumentApproved", OffsetDays = 0, SendAtHour = 9, IsActive = true });
+            db.EmailQueues.Add(new EmailQueue
+            {
+                CompanyId = s.CompanyId, EntityType = "Document", EntityId = s.InvoiceId, ToEmail = "", Subject = "x", Body = "",
+                ScheduledFor = DateTime.UtcNow, Status = status, IdempotencyKey = EmailScheduleService.DocumentQueueKey(s.InvoiceId, "DocumentApproved", "approved"),
+            });
+            var rec = new RecurringTransaction
+            {
+                CompanyId = s.CompanyId, Name = "รายการประจำ MED-6", ContactId = s.ContactId, AutoSendEmail = true,
+                Frequency = RecurringFrequency.Monthly, DocumentType = DocumentType.Invoice,
+                TemplateType = "Document", TemplateData = "{}", StartDate = DateTime.UtcNow.Date, NextRunDate = DateTime.UtcNow.Date.AddMonths(1),
+            };
+            db.RecurringTransactions.Add(rec);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+
+            var outcome = await Sched(db, new FakeSender()).OnRecurringDocumentCreatedAsync(s.CompanyId, s.InvoiceId, rec.Id);
+            if (status == ScheduledEmailSendCheck.SkippedStatus)
+                Assert.Equal(EmailEnqueueKind.Enqueued, outcome.Kind);   // แถวข้ามไม่ใช่การส่ง ⇒ รายการประจำส่งเอง
+            else
+                Assert.Equal(EmailEnqueueOutcome.CoveredByApprovedRule, outcome.Reason);
+        }
+    }
+
+    private static async Task<(Payment Pay, Document Receipt)> AddPaymentWithReceiptAsync(AccountingDbContext db, Seed s, bool etaxRow)
+    {
+        await db.Documents.Where(d => d.Id == s.InvoiceId).ExecuteUpdateAsync(x => x
+            .SetProperty(d => d.Status, DocumentStatus.Paid).SetProperty(d => d.BalanceDue, 0m).SetProperty(d => d.PaidAmount, 1_070m));
+        db.ChangeTracker.Clear();
+        var pay = new Payment
+        {
+            CompanyId = s.CompanyId, PaymentNumber = "PAY250W8-" + Random.Shared.Next(100000, 999999), DocumentId = s.InvoiceId,
+            PaymentDate = DateTime.UtcNow.Date, Amount = 1_070m, PaymentMethod = PaymentMethod.BankTransfer,
+        };
+        db.Payments.Add(pay);
+        await db.SaveChangesAsync();
+        var rec = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.Receipt,
+            DocumentNumber = "RE250W8-" + Random.Shared.Next(100000, 999999), Status = DocumentStatus.Paid, DocumentDate = pay.PaymentDate,
+            SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, PaidAmount = 1_070m, Currency = "THB",
+            RelatedDocumentId = s.InvoiceId, IsSettlementReceipt = true, SettlementPaymentId = pay.Id, IsTaxInvoiceByLaw = true,
+        };
+        db.Documents.Add(rec);
+        await db.SaveChangesAsync();
+        pay.ReceiptDocumentId = rec.Id;
+        if (etaxRow)
+            db.EtaxInvoices.Add(new EtaxInvoice
+            {
+                CompanyId = s.CompanyId, DocumentId = rec.Id, EtaxRefNumber = rec.DocumentNumber, XmlContent = "<x/>", Status = EtaxStatus.Generated,
+                SellerName = "ผู้ขาย", SellerTaxId = "0105556000007", BuyerName = "ผู้ซื้อ",
+            });
+        await db.SaveChangesAsync();
+        return (pay, rec);
+    }
+
+    /// <summary>IDocumentService ปลอม — ออกใบเสร็จ = เขียนใบจริงลงฐาน (เส้นเดิมมีเทสต์ของตัวเองแล้ว)</summary>
+    private static IDocumentService IssuingDocs(List<string> calls, Seed s, Payment pay)
+        => F4Proxy<IDocumentService>.Create((m, _) =>
+        {
+            calls.Add(m);
+            return m == nameof(IDocumentService.IssueReceiptForPaymentAsync) ? IssueAsync(s, pay) : null;
+        });
+
+    private static async Task<Accounting.Models.DTOs.Document.IssuedReceiptResult> IssueAsync(Seed s, Payment pay)
+    {
+        using var other = DbTestDatabase.TryCreateContext()!;
+        var rec = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.Receipt,
+            DocumentNumber = "RE250W8-" + Random.Shared.Next(100000, 999999), Status = DocumentStatus.Paid, DocumentDate = pay.PaymentDate,
+            SubTotal = 1_000m, TotalAmount = 1_000m, PaidAmount = 1_000m, Currency = "THB",
+            RelatedDocumentId = s.InvoiceId, IsSettlementReceipt = true, SettlementPaymentId = pay.Id, IsTaxInvoiceByLaw = false,
+        };
+        other.Documents.Add(rec);
+        await other.SaveChangesAsync();
+        await other.Payments.Where(p => p.Id == pay.Id).ExecuteUpdateAsync(x => x.SetProperty(p => p.ReceiptDocumentId, (Guid?)rec.Id));
+        return new Accounting.Models.DTOs.Document.IssuedReceiptResult(rec.Id, rec.DocumentNumber, rec.DocumentDate, IsDraft: false, AlreadyExisted: false);
+    }
+
+    private static (PostPaymentAutomationService Svc, DocumentEmailService Email) PostPay(AccountingDbContext db, FakeSender sender, IDocumentService? docs = null)
+    {
+        var etax = F4Proxy<IEtaxInvoiceService>.Create((m, _) => m == nameof(IEtaxInvoiceService.GeneratePdfA3Async) ? (new byte[20_000], "etax.pdf") : null);
+        var email = new DocumentEmailService(db, Factory(sender), etax, NullLogger<DocumentEmailService>.Instance, pdf: null, storage: null, config: Config());
+        return (new PostPaymentAutomationService(db, docs ?? F4Proxy<IDocumentService>.Create((_, _) => null), email, Factory(sender),
+            NullLogger<PostPaymentAutomationService>.Instance, recipients: Resolver(db)), email);
+    }
 }

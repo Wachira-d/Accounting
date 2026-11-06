@@ -110,22 +110,40 @@ public class Round250Wp08Tests
         Assert.Null(AutopilotSettingsResolver.AutoSendBlock(false));
     }
 
-    [Theory]
-    [InlineData(true, null, false)]    // ปิดอัตโนมัติ ⇒ Off แม้ไม่ได้ตั้ง
-    [InlineData(true, true, false)]    // ปิดอัตโนมัติชนะค่า On ของผู้ติดต่อเอง
-    [InlineData(false, true, true)]    // ทิศตรงข้าม: ไม่ปิด ⇒ ค่าเดิม
-    [InlineData(false, null, null)]    // ไม่ปิด + ไม่ตั้ง ⇒ ตามบริษัท
-    public void ชั้นผู้ติดต่อของใบเสร็จหลังรับชำระ(bool disabled, bool? setting, bool? expected)
-        => Assert.Equal(expected, AutopilotSettingsResolver.ContactPostPayEmailReceipt(setting, disabled));
+    private static PostPaymentAutomationPolicy.Facts PayFacts(bool hasReceipt, string? email, string? autoOff)
+        => new(true, DocumentStatus.Paid, false, true, 0, hasReceipt, false, false, false, false, email, null, 0m, true,
+            PaymentEntrySource.Manual, null, AutoSendBlockedReason: autoOff);
 
     [Fact]
-    public void ตารางส่งที่ตั้งเอง_ยังชนะชั้นผู้ติดต่อที่ปิดอัตโนมัติ()
+    public void ไม่ส่งอัตโนมัติ_ยังออกใบเสร็จ_แต่หยุดขั้นส่งอีเมลพร้อมเหตุ_ทิศตรงข้ามส่งตามเดิม()
     {
-        var company = new PostPaymentAutomationPolicy.Settings(EmailReceipt: true, IncludePartial: false);
-        var contact = new PostPaymentAutomationPolicy.Overrides(AutopilotSettingsResolver.ContactPostPayEmailReceipt(null, true), null);
-        Assert.False(PostPaymentAutomationPolicy.EffectiveLayers(company, null, null, contact).EmailReceipt);
+        // ฝ่ายค้าน HIGH-2 (Option 1): ห้ามแค่ "ส่งอีเมล" ไม่ห้าม "ออกเอกสาร" · แม้ไม่มีอีเมลก็ยังออกใบเสร็จ (เหตุคือค่าตั้ง ไม่ใช่ "ไม่มีอีเมล")
+        var on = new PostPaymentAutomationPolicy.Settings(EmailReceipt: true, IncludePartial: false);
+        var off = PostPaymentAutomationPolicy.Decide(on, PayFacts(false, null, AutopilotSettingsResolver.AutoSendDisabledReason));
+        Assert.Equal(new[] { PostPaymentAutomationPolicy.Step.IssueReceipt }, off.Steps);
+        Assert.Contains(off.Blocked, b => b.StartsWith(PostPaymentAutomationPolicy.AutoSendBlockedPrefix) && b.Contains("ไม่ส่งเอกสารอัตโนมัติ"));
+        Assert.DoesNotContain(off.Blocked, b => b.StartsWith("ลูกค้าไม่มีอีเมล"));
+        // มีใบเสร็จแล้ว ⇒ ไม่มีขั้นใดเหลือ แต่ยังบอกเหตุ (ไม่เงียบ)
+        var hasRec = PostPaymentAutomationPolicy.Decide(on, PayFacts(true, "ap@buyer.co.th", AutopilotSettingsResolver.AutoSendDisabledReason));
+        Assert.Empty(hasRec.Steps);
+        Assert.Single(hasRec.Blocked);
+        // ทิศตรงข้าม: ไม่ปิด ⇒ ออก + ส่ง
+        var normal = PostPaymentAutomationPolicy.Decide(on, PayFacts(false, "ap@buyer.co.th", null));
+        Assert.Equal(new[] { PostPaymentAutomationPolicy.Step.IssueReceipt, PostPaymentAutomationPolicy.Step.EmailReceipt }, normal.Steps);
+        Assert.Empty(normal.Blocked);
+    }
+
+    [Fact]
+    public void ไม่ส่งอัตโนมัติ_ชนะแม้ตารางส่งตั้งส่งใบเสร็จOn()
+    {
+        // ฝ่ายค้าน MED-4: ค่าตั้งที่มีผล (ตาราง On) ไม่ช่วยให้ส่ง — ด่านอยู่ที่ขั้นส่งอีเมล ไม่ใช่ในชั้นค่าตั้ง
+        var company = new PostPaymentAutomationPolicy.Settings(EmailReceipt: false, IncludePartial: false);
         var schedule = new PostPaymentAutomationPolicy.Overrides(true, null);
-        Assert.True(PostPaymentAutomationPolicy.EffectiveLayers(company, schedule, null, contact).EmailReceipt);
+        var effective = PostPaymentAutomationPolicy.EffectiveLayers(company, schedule, null, null);
+        Assert.True(effective.EmailReceipt);
+        var plan = PostPaymentAutomationPolicy.Decide(effective, PayFacts(true, "ap@buyer.co.th", AutopilotSettingsResolver.AutoSendDisabledReason));
+        Assert.DoesNotContain(PostPaymentAutomationPolicy.Step.EmailReceipt, plan.Steps);
+        Assert.Contains(plan.Blocked, b => b.StartsWith(PostPaymentAutomationPolicy.AutoSendBlockedPrefix));
     }
 
     [Fact]
@@ -167,15 +185,15 @@ public class Round250Wp08Tests
     {
         var bought = new DateTime(2026, 1, 15);
         var today = new DateTime(2026, 11, 6);
-        Assert.Null(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, new DateTime(2026, 2, 1), today));
-        Assert.Null(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, null, today));   // ล้าง = วันที่เอกสาร
-        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, true, bought, new DateTime(2026, 2, 1), today));
-        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, true, bought, null, today));
-        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(true, true, false, bought, new DateTime(2026, 2, 1), today));   // ระหว่างจัดหา
-        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, true, false, bought, new DateTime(2026, 2, 1), today));  // หลายใบ
-        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, new DateTime(2026, 1, 14), today)); // ก่อนวันซื้อ
-        Assert.Null(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, new DateTime(2026, 1, 15), today));   // วันเดียวกันได้
-        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, new DateTime(2028, 1, 1), today));  // ปีผิด
+        Assert.Null(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, new DateTime(2026, 2, 1), today, AssetStatus.Active, 0m, false));
+        Assert.Null(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, null, today, AssetStatus.Active, 0m, false));   // ล้าง = วันที่เอกสาร
+        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, true, bought, new DateTime(2026, 2, 1), today, AssetStatus.Active, 0m, false));
+        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, true, bought, null, today, AssetStatus.Active, 0m, false));
+        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(true, true, false, bought, new DateTime(2026, 2, 1), today, AssetStatus.Active, 0m, false));   // ระหว่างจัดหา
+        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, true, false, bought, new DateTime(2026, 2, 1), today, AssetStatus.Active, 0m, false));  // หลายใบ
+        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, new DateTime(2026, 1, 14), today, AssetStatus.Active, 0m, false)); // ก่อนวันซื้อ
+        Assert.Null(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, new DateTime(2026, 1, 15), today, AssetStatus.Active, 0m, false));   // วันเดียวกันได้
+        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, new DateTime(2028, 1, 1), today, AssetStatus.Active, 0m, false));  // ปีผิด
     }
 
     [Theory]
@@ -198,5 +216,122 @@ public class Round250Wp08Tests
         Assert.NotNull(AssetCostSourceRules.ContractPriceWarning(1_000_000m, 1_300_000m));
         Assert.Null(AssetCostSourceRules.ContractPriceWarning(1_300_000m, 1_300_000m));   // แก้ราคาแล้วเงียบ
         Assert.Null(AssetCostSourceRules.ContractPriceWarning(null, 1_300_000m));          // ล้างแล้วเงียบ
+    }
+
+    // ═══ ฝ่ายค้าน WP-08 (HIGH-1 · MED-1/2/3/5) ═══
+
+    private static ContactRecipientRule.RecipientOption Opt(string email, bool primary, bool available = true)
+        => new(Guid.NewGuid(), NotifyEndpointKind.Email, email, email, available, available ? null : "ไม่ได้เลือกรับ", null, true, primary);
+
+    [Fact]
+    public void อีเมลหลักมาก่อนเสมอ_ไม่พึ่งลำดับOptions()
+    {
+        var set = new ContactRecipientRule.RecipientSet(NotifyTopic.Document, new[] { Opt("extra@b.co.th", false), Opt("main@b.co.th", true) });
+        var d = ContactRecipientRule.ForEmail(set);
+        Assert.Equal(new[] { "main@b.co.th", "extra@b.co.th" }, d.Emails);
+        Assert.Equal(new[] { "main@b.co.th" }, d.PrimaryEmails);
+        Assert.Equal("main@b.co.th", d.First);
+    }
+
+    [Fact]
+    public void eTax_ส่งถึงอีเมลหลักเท่านั้น_อีเมลเสริมบันทึกว่าไม่ได้ส่ง_ทิศตรงข้ามอีเมลธรรมดาได้ครบ()
+    {
+        var d = ContactRecipientRule.ForEmail(new ContactRecipientRule.RecipientSet(NotifyTopic.Document,
+            new[] { Opt("main@b.co.th", true), Opt("extra@b.co.th", false) }));
+        var etax = ContactRecipientRule.ForChannel(d, etaxByEmail: true);
+        Assert.Equal("main@b.co.th", etax.To);
+        Assert.Equal(new[] { "extra@b.co.th" }, etax.NotSent);
+        Assert.StartsWith(ContactRecipientRule.EtaxPrimaryOnlyPrefix, etax.Note);
+        Assert.Contains("extra@b.co.th", etax.Note);
+        Assert.Null(EtaxByEmailFormat.Recipients(etax.To, null, null, true, true, false, false).Problem);   // ผ่านตัวตรวจผู้รับ e-Tax
+        var plain = ContactRecipientRule.ForChannel(d, etaxByEmail: false);
+        Assert.Equal("main@b.co.th, extra@b.co.th", plain.To);
+        Assert.Null(plain.Note);
+        // อีเมลหลักคนเดียว ⇒ ไม่มีหมายเหตุ
+        var only = ContactRecipientRule.ForChannel(ContactRecipientRule.ForEmail(new ContactRecipientRule.RecipientSet(NotifyTopic.Document,
+            new[] { Opt("main@b.co.th", true) })), etaxByEmail: true);
+        Assert.Equal("main@b.co.th", only.To);
+        Assert.Null(only.Note);
+    }
+
+    [Fact]
+    public void eTax_อีเมลหลักปิดรับแต่อีเมลเสริมรับ_ไม่ส่งพร้อมเหตุตรงกับคำเตือนในแท็บ()
+    {
+        var d = ContactRecipientRule.ForEmail(new ContactRecipientRule.RecipientSet(NotifyTopic.Document,
+            new[] { Opt("main@b.co.th", true, available: false), Opt("extra@b.co.th", false) }));
+        Assert.True(d.Deliverable);
+        Assert.Empty(d.PrimaryEmails);
+        var etax = ContactRecipientRule.ForChannel(d, etaxByEmail: true);
+        Assert.Null(etax.To);
+        Assert.Contains("อีเมลหลัก", etax.Problem);
+        Assert.Contains("extra@b.co.th", etax.Problem);
+        // ทิศตรงข้าม: เส้นอีเมลธรรมดาส่งถึงอีเมลเสริมได้
+        Assert.Equal("extra@b.co.th", ContactRecipientRule.ForChannel(d, etaxByEmail: false).To);
+    }
+
+    [Fact]
+    public void ผู้ติดต่อถูกลบ_มีเหตุ_ทิศตรงข้ามบริษัทอื่นเงียบ()
+    {
+        var deleted = new ContactRecipientRule.ContactFacts(Ct, Co, "ap@buyer.co.th", true);
+        var d = ContactRecipientRule.ForEmail(ContactRecipientRule.Resolve(Co, deleted, Array.Empty<ContactRecipientRule.EndpointFacts>(),
+            NotifyTopic.Dunning, Array.Empty<string>(), false));
+        Assert.False(d.Deliverable);
+        Assert.Equal(ContactRecipientRule.ContactDeletedReason, d.OptOutReason);
+        var other = ContactRecipientRule.ForEmail(ContactRecipientRule.Resolve(Guid.NewGuid(), deleted,
+            Array.Empty<ContactRecipientRule.EndpointFacts>(), NotifyTopic.Dunning, Array.Empty<string>(), false));
+        Assert.Null(other.OptOutReason);   // ไม่เปิดเผยผู้ติดต่อของบริษัทอื่น
+    }
+
+    [Fact]
+    public void เพดานผู้รับNextAcc_ตัดตอนเข้าคิวพร้อมหมายเหตุ_ทิศตรงข้ามSMTPบริษัทส่งครบ()
+    {
+        var to = string.Join(", ", Enumerable.Range(1, 7).Select(i => $"u{i}@b.co.th"));
+        var (capped, note) = ContactRecipientRule.CapForSender(to, platformSender: true, otherRecipients: 1, maxRecipients: 5, maxLength: 500);
+        Assert.Equal(4, capped.Split(", ").Length);
+        Assert.StartsWith("u1@b.co.th", capped);
+        Assert.StartsWith(ContactRecipientRule.CappedPrefix, note);
+        Assert.Contains("u7@b.co.th", note);
+        var (all, none) = ContactRecipientRule.CapForSender(to, platformSender: false, otherRecipients: 1, maxRecipients: 5, maxLength: 500);
+        Assert.Equal(7, all.Split(", ").Length);
+        Assert.Null(none);
+        // ความยาวช่องเก็บ ⇒ ตัดพร้อมหมายเหตุ (SMTP บริษัทก็ตัด)
+        var (shortTo, lenNote) = ContactRecipientRule.CapForSender(to, platformSender: false, otherRecipients: 0, maxRecipients: 5, maxLength: 30);
+        Assert.True(shortTo.Length <= 30);
+        Assert.NotNull(lenNote);
+    }
+
+    [Fact]
+    public void หมายเหตุส่งไม่ครบ_คงไว้หลังส่ง_ข้อความผิดพลาดอื่นถูกล้าง()
+    {
+        Assert.NotNull(Accounting.Services.Implementations.EmailScheduleService.AfterSentNote(ContactRecipientRule.EtaxPrimaryOnlyPrefix + "x"));
+        Assert.NotNull(Accounting.Services.Implementations.EmailScheduleService.AfterSentNote(ContactRecipientRule.CappedPrefix + "x"));
+        Assert.Null(Accounting.Services.Implementations.EmailScheduleService.AfterSentNote("SMTP 451"));
+        Assert.Null(Accounting.Services.Implementations.EmailScheduleService.JoinNotes(null, " "));
+        Assert.Equal("a · b", Accounting.Services.Implementations.EmailScheduleService.JoinNotes("a", null, "b"));
+    }
+
+    [Fact]
+    public void ลิงก์เซ็นอัตโนมัติ_ส่งเฉพาะผู้ที่ยังรับเรื่องเซ็น_ทิศตรงข้ามไม่มีผู้รับเดิมใช้ช่องทางทั้งหมด()
+    {
+        var sign = ContactRecipientRule.ForEmail(new ContactRecipientRule.RecipientSet(NotifyTopic.Sign,
+            new[] { Opt("main@b.co.th", true, available: false), Opt("buy@b.co.th", false) }));
+        Assert.Equal(new[] { "buy@b.co.th" },
+            Accounting.Services.Implementations.SignRequestService.SignAutomationRecipients(new[] { "main@b.co.th", "buy@b.co.th" }, sign));
+        Assert.Empty(Accounting.Services.Implementations.SignRequestService.SignAutomationRecipients(new[] { "main@b.co.th" }, sign));
+        Assert.Equal(new[] { "buy@b.co.th" },
+            Accounting.Services.Implementations.SignRequestService.SignAutomationRecipients(Array.Empty<string>(), sign));
+    }
+
+    [Fact]
+    public void วันพร้อมใช้_ล็อกเมื่อไม่ใช่สถานะใช้งาน_มียอดยกมา_หรือทบทวนอายุแล้ว()
+    {
+        var bought = new DateTime(2026, 1, 15);
+        var today = new DateTime(2026, 11, 6);
+        var d = new DateTime(2026, 2, 1);
+        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, d, today, AssetStatus.Disposed, 0m, false));
+        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, d, today, AssetStatus.FullyDepreciated, 0m, false));
+        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, d, today, AssetStatus.Active, 5_000m, false));
+        Assert.NotNull(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, d, today, AssetStatus.Active, 0m, true));
+        Assert.Null(FixedAssetValuationEdit.AvailableDateProblem(false, false, false, bought, d, today, AssetStatus.Active, 0m, false));   // ทิศตรงข้าม
     }
 }

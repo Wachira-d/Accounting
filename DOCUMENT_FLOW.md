@@ -3058,24 +3058,37 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ส่ง 50 ทวิ `OnWhtCertIssuedAsync` (`Wht`) · ใบเสร็จหลังรับชำระ `PostPaymentAutomationService.ExecuteAsync` (`Receipt`) · ลิงก์เซ็น `SignRequestService.SuggestRecipientsAsync`
   (`Sign` · ผู้รับที่ผู้ใช้กรอกครั้งก่อน `SignLinkLastRecipients`/ช่องที่กรอกตอนส่งยังชนะ) · ความพร้อมของรายการประจำ (`RecurringEmailReadiness` ทุกผู้อ่าน:
   ฟอร์ม · หน้ารายการ · ทดลองรัน/แผงความพร้อม) อ่านผลเรื่อง `Document` ตัวเดียวกัน
-  - **หลายผู้รับ**: `EmailQueue.ToEmail` คั่น ", " (≤ 500 ตัวอักษร · ≤ 11 อีเมล/ผู้ติดต่อ) · ผู้ส่งคิวแยกรายตัว (`SignEmailThrottle.ParseRecipients`) — เส้นแพลตฟอร์มยังนับ
-    To+Cc+Bcc ≤ 5 (เกิน ⇒ ปฏิเสธพร้อมเหตุบนคิว · ทางไปต่อ: ตั้ง SMTP ของบริษัท หรือลดปลายทางที่รับเรื่องนั้น)
+  - **หลายผู้รับ**: `EmailQueue.ToEmail` คั่น ", " — **อีเมลหลักก่อนเสมอ** (`EmailDelivery.PrimaryEmails` แยกไว้ · ไม่พึ่งลำดับ Options) · ผู้ส่งคิวแยกรายตัว ·
+    **ตัดตอนเข้าคิว** (ฝ่ายค้าน MED-3 · `ContactRecipientRule.CapForSender`): อีเมลผ่าน NextAcc ⇒ To+Bcc ≤ 5 · ทุกผู้ส่ง ⇒ ช่องยาว ≤ 500 (คอลัมน์คิว/บันทึก) ·
+    ปลายทางที่ถูกตัดบันทึกเป็นหมายเหตุ "ส่งไม่ครบทุกปลายทาง: …" ที่คงไว้หลังส่ง · งานหลังรับชำระ: เพดานปฏิเสธ (`EMAIL-PLATFORM-CAP`) ⇒ หยุดพร้อมเหตุ ไม่ลองซ้ำอัตโนมัติ ·
+    บันทึกผลแถวคิวล้ม ⇒ แถวนั้น Failed พร้อมเหตุ (คำสั่งตรง) แบตช์เดินต่อ
+  - **e-Tax by Email (ฝ่ายค้าน HIGH-1 · `ContactRecipientRule.ForChannel`)**: ใบที่ `RouteForAsync` = EtaxByEmail ⇒ ส่งถึง**อีเมลหลักเท่านั้น** (To 1 อีเมล ไม่มีสำเนา —
+    ตรงกับคำเตือน `EtaxByEmailFormat.ContactRecipientsNote`) · อีเมลเพิ่มเติมที่รับเรื่องนั้น**ไม่ได้รับสำเนาแบบอีเมลธรรมดา** (PDF/A-3 ที่ไม่ผ่าน ETDA ไม่ใช่ทางที่กฎหมายรับ ·
+    ตัวตรวจผู้รับปฏิเสธสำเนาอยู่แล้ว) แต่**บันทึกว่าไม่ได้ส่ง** ("ส่งใบกำกับ e-Tax ถึงอีเมลหลักเท่านั้น: ไม่ได้ส่งถึง …" บนแถวคิว/ข้อความงาน) · อีเมลหลักปิดรับเรื่องนั้น
+    (อีเมลเพิ่มเติมรับ) ⇒ **ไม่ส่งใบกำกับ** + แถว "ข้าม"/งานหยุดพร้อมเหตุ (ไม่ย้ายไปอีเมลเพิ่มเติม) · ทั้งคิว (`EnqueueDocumentAsync`) · งานหลังรับชำระ (`SendReceiptAsync`) ·
+    ทดลองรันรายการประจำ (`BuildAsync`) ใช้ตัวตัดสินเดียวกัน · อีเมลหลักหลายอีเมลในช่องเดียว ⇒ ตัวตรวจผู้รับ e-Tax ปฏิเสธ (ตามคำเตือนเดิม)
   - **ยกเลิกรับ (มีอีเมลแต่ไม่มีปลายทางใดรับเรื่องนั้น) ⇒ ไม่ส่ง + แถวคิวสถานะ "ข้าม" พร้อมเหตุ** (`ToEmail` ว่าง · ผู้ส่งคิวหยิบเฉพาะ Pending · กุญแจกันซ้ำเดิม ⇒
     สแกนรอบถัดไปไม่เขียนซ้ำ) · รายการประจำ ⇒ `EmailEnqueueOutcome.NotSent` ⇒ `RecurringRunFacts.EmailNotSentReason` (หน้ารายการบอกเหตุ + ปุ่มเปิดผู้ติดต่อ) ·
     ใบเสร็จหลังรับชำระ ⇒ งานหยุดพร้อมเหตุ (`PostPaymentAutomationPolicy.Facts.EmailOptOutReason` — ไม่ใช่ "ไม่มีอีเมล") · ลิงก์เซ็น ⇒ 400 พร้อมเหตุ (ใส่ผู้รับเองได้)
-  - **ไม่ถดถอย**: ผู้ติดต่อที่ไม่มีแถวปลายทาง ⇒ `Contact.Email` ทุกเรื่องเหมือนเดิม · ไม่มีอีเมลเลย ⇒ ไม่เข้าคิว (เดิม) · ⚠️ ผู้ติดต่อที่ถูกลบ ⇒ ชุดผู้รับว่าง
-    (ตัวตัดสิน 245 — เดิม `HydrateContactAsync` ยังส่งถึงอีเมลของผู้ติดต่อที่ลบแล้ว) = ไม่ส่งเงียบเหมือน "ไม่มีอีเมล" (ตั้งใจ · ผู้ติดต่อที่ลบไม่ควรได้รับอีเมลอัตโนมัติ)
+  - **ไม่ถดถอย**: ผู้ติดต่อที่ไม่มีแถวปลายทาง ⇒ `Contact.Email` ทุกเรื่องเหมือนเดิม · ไม่มีอีเมลเลย ⇒ ไม่เข้าคิว (เดิม) · ⚠️ ผู้ติดต่อที่ถูกลบ ⇒ ไม่ส่ง
+    **พร้อมเหตุ** `ContactRecipientRule.ContactDeletedReason` (ฝ่ายค้าน MED-2 — ตัวหาผู้รับอ่านผู้ติดต่อที่ลบด้วย `IgnoreQueryFilters` · แถว "ข้าม"/งานหลังรับชำระ/หน้ารายการประจำบอกเหตุ ·
+    เดิม `HydrateContactAsync` ยังส่งถึงอีเมลของผู้ติดต่อที่ลบแล้ว) · แท็บช่องทางแจ้งเตือนของผู้ติดต่อที่ลบยัง 404
+  - **ลิงก์เซ็นอัตโนมัติ/อีเมลเตือน (ฝ่ายค้าน MED-1)**: ส่งเฉพาะผู้รับตั้งต้น (ครั้งก่อน/ที่อีเมลแรกส่งถึง) **ที่ยังรับเรื่อง "ลิงก์เซ็น"** (`SignRequestService.SignAutomationRecipients`) ·
+    ไม่เหลือใคร ⇒ ไม่ส่ง + บันทึกการส่ง Failed พร้อมเหตุ (`SIGN-AUTO-OPTOUT`) · ส่งด้วยมือ: ผู้รับที่พิมพ์ชนะ
+  - **กฎ "เมื่ออนุมัติเอกสาร" ครอบรายการประจำ** นับเฉพาะแถวคิวที่ไม่ใช่ "ข้าม" (ฝ่ายค้าน MED-6)
   - **LINE ยังไม่ส่ง** (คำตอบเจ้าของ §10: Q1(b) ห้ามกลุ่มกลางของแอดมิน · Q7 ติ๊กต่อกฎ/ค่าตั้งต้นถอยไปอีเมล — งานเฟส L2 WP-11) ⇒ `LineDeliveryOpen = false` คงเดิม · อีเมลเป็นทางหลัก
   - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·
     แจ้งเตือนจองคิว/บริการ (`BookingNotifier` — ลูกค้าเว็บ ไม่ใช่ปลายทางผู้ติดต่อ) · พอร์ทัล/ใบเสนอราคาสาธารณะ (ผู้รับเปิดเอง)
 - **ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" (`Contact.AutoSendDisabled` · คำตัดสิน 250-29 · ตัวตัดสินเดียว `AutopilotSettingsResolver.AutoSendBlock`)** — ชนะกฎบริษัททุกเส้นอัตโนมัติ:
   ตารางส่งทุก trigger + ใบแจ้งยอด + 50 ทวิ (แถว "ข้าม" พร้อมเหตุ) · รายการประจำ (ตรวจก่อนด่าน "กฎเมื่ออนุมัติครอบแล้ว" · บอกเหตุที่หน้ารายการ) ·
-  ลิงก์เซ็นอัตโนมัติ/อีเมลเตือน (บันทึกการส่ง Failed พร้อมเหตุ ไม่ลองซ้ำ) · ใบเสร็จหลังรับชำระ = ชั้นผู้ติดต่อ Off (`ContactPostPayEmailReceipt` — ตาราง/รายการประจำที่ตั้งช่องนี้เองยังชนะ
-  "ตารางชนะผู้ติดต่อเฉพาะช่องที่ตั้ง" AUTO_SEND §9) · การส่งที่ผู้ใช้กดเองไม่ถูกกัน · ตั้งที่ `PUT …/recurring/contacts/{id}/autopilot` (`Contact.Edit` · audit chain) ·
+  ลิงก์เซ็นอัตโนมัติ/อีเมลเตือน (บันทึกการส่ง Failed พร้อมเหตุ ไม่ลองซ้ำ) · **งานหลังรับชำระ (ฝ่ายค้าน HIGH-2/MED-4 · Option 1)**: ห้ามแค่ "ส่งอีเมล" ไม่ห้าม "ออกเอกสาร" —
+  ใบเสร็จยังออกตามค่าตั้งเดิม แล้วขั้นส่งอีเมลถูกตัดและงานหยุด (Blocked) พร้อมเหตุ "ไม่ส่งอีเมลใบเสร็จ — …" บนเอกสาร (`PostPaymentAutomationPolicy.Facts.AutoSendBlockedReason`) ·
+  ชนะทุกชั้นรวมตาราง/รายการประจำที่ตั้งส่งใบเสร็จ On (ไม่อยู่ในชั้นค่าตั้ง `SettingsForAsync` — R250L1 ห้าม) · การส่งที่ผู้ใช้กดเองไม่ถูกกัน · ตั้งที่ `PUT …/recurring/contacts/{id}/autopilot` (`Contact.Edit` · audit chain) ·
   echo กลับ + hydrate ใน `contacts.html` แท็บช่องทางแจ้งเตือน และ `recurring.html` ขั้นช่องทางรับเงิน (โหลดค่าผู้ติดต่อไม่ได้ ⇒ ส่ง null = คงเดิม) · migration
   `DocumentAutoSendMigration` (`NOT NULL DEFAULT false` = พฤติกรรมเดิมทุกแถว)
-- เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests` · ล็อก R250L1 (+ เคส R250L1-1…5) · `settings_reader_check` (`ContactNotifyEndpoint.TopicsJson` ·
-  `Contact.AutoSendDisabled`) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 31479320
+- เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests` · ล็อก R250L1 (+ เคส R250L1-1…9) · `settings_reader_check` (`ContactNotifyEndpoint.TopicsJson` ·
+  `Contact.AutoSendDisabled`) · audit การเพิ่มอีเมลเพิ่มเติมเก็บแฮชที่อยู่ (`ContactRecipientRule.EmailAuditHash` ผูกบริษัท) — ยังไม่ได้คอมไพล์ในเครื่องนี้ ·
+  Last verified commit 31479320 (+ แก้ตามฝ่ายค้าน commit 2ab57d65)
 - **ทางเข้า HTTP** `ContactNotifyEndpointsController` (`api/companies/{cid}/contacts/{id}/notify-endpoints`): `GET` (สมาชิกบริษัท) · `GET recipients?topic=` (ดูว่าใครจะได้รับ — ตัวหาผู้รับตัวเดียวกัน) ·
   `POST email` · `PUT primary` · `PUT {eid}` (ป้าย · เรื่อง · แสดงยอด = กลุ่มเท่านั้น ชนิดอื่นปฏิเสธ 400) · `DELETE {eid}` (ยกเลิก · ล้าง LINE id · อีเมลหลักยกเลิกไม่ได้) —
   เขียนทุกตัว `Contact.Edit` + ปฏิเสธคีย์ API · ผู้เขียนเดียว `ContactNotifyEndpointService`: ล็อก `AdvisoryLockKey.ContactNotifyEndpoint` ต่อผู้ติดต่อ · tenant 404 · อีเมลผ่าน
@@ -3557,7 +3570,8 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
         **ราคาตามสัญญาแก้ได้หลังสร้าง** (`PATCH fixedasset/{id}/contract-price` · สิทธิ์ `Asset.Manage` · audit chain `contract-price-updated` · ค่าผ่าน
         `AssetCostSourceRules.NormalizeContractPrice` — null/0 = ล้าง · ติดลบ = 400) · ยังเป็น**คำเตือน** `ContractPriceWarning` ไม่บล็อก · ช่องในฟอร์มแก้ไข (`fContractPrice`) ·
         **วันที่พร้อมใช้งานของสินทรัพย์ใบเดียว** (`PATCH …/available-date` · `Asset.Manage` · audit `available-for-use-date-updated`) — ตั้ง/ล้างได้จนกว่ามีค่าเสื่อมลงบัญชี
-        (`FixedAssetValuationEdit.AvailableDateProblem`: ระหว่างจัดหา/สินทรัพย์หลายใบ (ตั้งตอนโอน)/ลงค่าเสื่อมแล้ว/ก่อนวันที่ซื้อ/เกิน 1 ปีจากวันนี้ ⇒ 409 พร้อมทางไปต่อ) ·
+        (`FixedAssetValuationEdit.AvailableDateProblem`: ระหว่างจัดหา/สินทรัพย์หลายใบ (ตั้งตอนโอน)/ลงค่าเสื่อมแล้ว/ก่อนวันที่ซื้อ/เกิน 1 ปีจากวันนี้ ·
+        ฝ่ายค้าน MED-5: ไม่ใช่สถานะใช้งาน/มีค่าเสื่อมสะสมยกมา/ทบทวนอายุแล้ว ⇒ 409 พร้อมทางไปต่อ) · `CalculateDepreciationAsync` ล็อกแถวสินทรัพย์ของบริษัท (เรียง Id) ก่อนอ่านจุดตั้งต้น ·
         ล็อกแถวสินทรัพย์ก่อนตรวจ · แผนที่ยังไม่ลงบัญชีสร้างใหม่ · **วันที่ซื้อไม่ถูกแตะ** · ว่าง = วันที่เอกสาร (ไม่ถดถอย) · **จุดตั้งต้นค่าเสื่อมตัวเดียว**
         `DepreciationSchedule.StartDate(PurchaseDate, AvailableForUseDate)` ทั้งแผน (`BuildScheduleRows`) · ยอดลง GL (`CalculateDepreciationAsync`) · ไล่ตามตอนจำหน่าย ·
         ทบทวนอายุ · ผูกหลังโอน (สินทรัพย์หลายใบ: ทั้งสองค่าเท่ากันหลังโอน ⇒ ผลเดิม) · ฟอร์มได้ `AvailableDateLockReason`/`DepreciationStartDate` จาก `GET {id}` ⇒ ล็อกช่องพร้อมเหตุ

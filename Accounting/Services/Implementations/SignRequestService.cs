@@ -429,19 +429,32 @@ public class SignRequestService : ISignRequestService
     }
 
     /// <summary>ส่งหนึ่งใบจากงานอัตโนมัติ — ล้ม ⇒ บันทึกการส่งของเอกสารเป็น Failed (ไม่ลองซ้ำอัตโนมัติ · ผู้ใช้เห็นบนหน้าเอกสารแล้วส่งเองได้) · ไม่โยน</summary>
+    /// <summary>ฝ่ายค้าน MED-1: ผู้รับของเส้นอัตโนมัติ = ผู้รับตั้งต้น (ครั้งก่อน/อีเมลเตือน) ∩ ผู้ที่ยังรับเรื่องลิงก์เซ็น · ไม่มีผู้รับตั้งต้น ⇒ ตามช่องทางของผู้ติดต่อทั้งหมด</summary>
+    internal static IReadOnlyList<string> SignAutomationRecipients(IReadOnlyList<string> candidates, ContactRecipientRule.EmailDelivery signDelivery)
+        => candidates.Count == 0 ? signDelivery.Emails : candidates.Where(c => signDelivery.Emails.Contains(c)).ToList();
+
     private async Task<bool> TryAutomationSendAsync(Guid companyId, Guid documentId, string? to, string purpose, string origin, CancellationToken ct)
     {
         try
         {
             // รอบ 250 WP-08 (คำตัดสิน 250-29): ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ⇒ งานอัตโนมัติไม่ส่ง (โยนเหตุ ⇒ บันทึกการส่ง Failed พร้อมเหตุข้างล่าง · ส่งเองได้)
-            var autoOff = await _db.Documents.AsNoTracking()
+            var who = await _db.Documents.AsNoTracking()
                 .Where(d => d.Id == documentId && d.CompanyId == companyId)
-                .Join(_db.Contacts.IgnoreQueryFilters().Where(c => c.CompanyId == companyId), d => d.ContactId, c => c.Id, (d, c) => c.AutoSendDisabled)
+                .Join(_db.Contacts.IgnoreQueryFilters().Where(c => c.CompanyId == companyId), d => d.ContactId, c => c.Id,
+                    (d, c) => new { c.Id, c.AutoSendDisabled, c.SignLinkLastRecipients })
                 .FirstOrDefaultAsync(ct);
-            if (AutopilotSettingsResolver.AutoSendBlock(autoOff) is { } autoSendOff)
+            if (AutopilotSettingsResolver.AutoSendBlock(who?.AutoSendDisabled == true) is { } autoSendOff)
                 throw new BusinessRuleException(autoSendOff, AutopilotSettingsResolver.AutoSendRuleCode);
+            // ฝ่ายค้าน MED-1: เส้นอัตโนมัติ/อีเมลเตือน — ส่งเฉพาะผู้รับที่ "ยังรับเรื่องลิงก์เซ็น" ตามช่องทางของผู้ติดต่อ (ตัดกับ ForEmail(Sign)) ·
+            // ผู้รับที่พิมพ์เองตอนส่งด้วยมือยังชนะ (เส้นมือไม่ผ่านตรงนี้) · ไม่เหลือใคร ⇒ ไม่ส่ง + บันทึกเหตุ
+            var signDelivery = ContactRecipientRule.ForEmail(await _recipients.ResolveAsync(companyId, who?.Id ?? Guid.Empty, NotifyTopic.Sign, ct));
+            var candidates = SignEmailThrottle.ParseRecipients(new[] { to ?? who?.SignLinkLastRecipients }).Valid;
+            var allowed = SignAutomationRecipients(candidates, signDelivery);
+            if (allowed.Count == 0)
+                throw new BusinessRuleException(signDelivery.OptOutReason
+                    ?? "ผู้รับลิงก์เซ็นเดิมไม่ได้เลือกรับเรื่อง \"ลิงก์เซ็น\" ในช่องทางแจ้งเตือนของผู้ติดต่อแล้ว — ไม่ส่งอัตโนมัติ (ส่งเองจากหน้าเอกสารได้)", "SIGN-AUTO-OPTOUT");
             var r = await SendEmailAsync(companyId, documentId,
-                new SendSignEmailOptions(to == null ? null : new[] { to }, null, purpose), origin, "system:sign-automation", ct);
+                new SendSignEmailOptions(allowed, null, purpose), origin, "system:sign-automation", ct);
             return r.AnySent;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
