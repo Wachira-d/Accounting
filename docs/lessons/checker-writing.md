@@ -111,11 +111,13 @@ python3 tools/string_quote_close_check.py # CS1002 `"` ASCII ในสตริ�
 python3 tools/comment_line_break_check.py # CS1519/CS1010 คอมเมนต์ `//`/`///` ถูกตัดบรรทัดกลางข้อความ (ยกข้อความกระดาษที่มีขึ้นบรรทัด) ⇒ ครึ่งหลังเป็นโค้ด (รอบ 199)
 python3 tools/onclick_js_string_check.py # esc() ใน JS string ของ onclick → เบราว์เซอร์ decode entity ก่อน JS อ่าน ⇒ ปิด string ได้อยู่ดี ทั้งหน้าตาย
 python3 tools/sequence_lock_check.py # ออกเลขรันเองด้วยการเรียงแบบข้อความ → ไม่มีล็อก และ "9999" ชนะ "10000" เลขวนกลับทับของเดิม
-python3 tools/deep_link_param_check.py # ลิงก์ส่ง query param ชื่อที่หน้าปลายทางไม่เคยอ่าน → กดแล้วตกที่ลิสต์เปล่า (dead_link_check ดูแค่ว่าไฟล์มีอยู่)
+python3 tools/deep_link_param_check.py # ลิงก์ส่ง query param ชื่อที่หน้าปลายทางไม่เคยอ่าน → กดแล้วตกที่ลิสต์เปล่า (dead_link_check ดูแค่ว่าไฟล์มีอยู่) · รอบ 250 WP-04: ลิงก์ hash `#k=` ⇒ ปลายทางต้องอ่าน location.hash + มีชื่อ k · `--self-test`
+python3 tools/form_label_for_check.py # (รอบ 250 WP-04) label ใน .form-group ไม่ผูกช่อง (ไม่มี for / for ชี้ id ที่ไม่มี / ไม่ห่อช่อง) — ratchet ต่อไฟล์ `tools/form_label_for_baseline.json` · `--self-test`
+python3 tools/modal_table_container_check.py # (รอบ 250 WP-04) ตาราง ≥ 5 คอลัมน์ใน .modal-body ไม่ห่อ .table-container — ratchet ต่อไฟล์ · `--self-test`
 python3 tools/flag_field_overwrite_check.py # เขียนทับช่องข้อความที่เป็นที่สะสม**และ**มีด่านอ่านธงจากมัน → ธงของด่านหายเงียบ
 python3 tools/ocr_helper_test_check.py # ตัวตัดสิน OCR (Helpers/Ocr*.cs) ที่ไม่มีเทสต์อ้างถึง → แก้แล้วใบที่เคยถูกกลับมาผิดโดยไม่มีอะไรฟ้อง
 python3 tools/ocr_golden_corpus_check.py # กระดาษตัวอย่าง OCR (OcrPaperSamples / EtaxFixtures) ที่ไม่มี golden row ใน replay harness → "มีเคสใหม่ = ต้องเพิ่ม golden row" · ใบใน Corpus ที่ไม่มี Assert · `--self-test` ไฟล์สังเคราะห์ (2026-10-09)
-python3 tools/contact_picker_check.py # ช่องเลือกผู้ติดต่อที่ไม่ใช้ตัวกลาง Layout.contactPicker: ชื่อเก่า contactAutocomplete · <select> ผู้ติดต่อ · อ่านรายชื่อตรงเกินโควตาต่อไฟล์ (ratchet) · id ที่ picker อ้างไม่มีในหน้า · layout.js ถอดปุ่มสร้าง/การตรวจผล/escape — `--self-test` ฉีดบั๊ก 10 แบบลงสำเนาไฟล์จริง (2026-10-14)
+python3 tools/contact_picker_check.py # ช่องเลือกผู้ติดต่อที่ไม่ใช้ตัวกลาง Layout.contactPicker: ชื่อเก่า contactAutocomplete · <select> ผู้ติดต่อ · อ่านรายชื่อตรงเกินโควตาต่อไฟล์ (ratchet) · id ที่ picker อ้างไม่มีในหน้า · layout.js ถอดปุ่มสร้าง/การตรวจผล/escape — `--self-test` ฉีดบั๊ก 10 แบบลงสำเนาไฟล์จริง (2026-10-14) · รอบ 250 WP-04: R2 ตัดสินด้วยพฤติกรรม (select ที่มีตัวเลือกคงที่ = ค่าตั้ง ไม่ใช่ตัวเลือกผู้ติดต่อ)
 node tools/contact_picker_sim.js   # หน้าต่างเพิ่มผู้ติดต่อด่วน: ค่าที่พิมพ์ค้าง → เลขภาษี/ชื่อ · ฝั่งตั้งต้น · สิทธิ์ · payload (สาขา/ชนิด "ให้ระบบตัดสิน") · ผลเซิร์ฟเวอร์ (รายเดิม/ปิดใช้งาน) — โค้ดจริง + negative 7 แบบ (2026-10-14)
 python3 tools/posting_level_check.py # ตัดสิน "ผังลงรายการได้" ด้วยระดับผัง (`Level < 4` · `Level >= 4` · `MinPostingLevel` · JS `level >= 4`) → ผังระดับ 2–3 ของบริษัทใช้ไม่ได้ · 11122 ที่มีผังย่อยผ่านทางหนึ่งไม่ผ่านอีกทาง — ใช้ `PostingAccountRule` / `PostingAccountGuard.WhereNotControlAccount` / `hasChildAccounts` · negative test ฉีดบรรทัดเก่าลงสำเนาไฟล์จริงทุกครั้งที่รัน (รอบ 206)
 python3 tools/tuple_name_merge_check.py # ternary ที่สองสาขาเป็น tuple ชื่อไม่ตรงกัน → C# ทิ้งชื่อ แล้ว CS1061 ไปโผล่ไกลจากจุดที่ผิด
@@ -171,3 +173,10 @@ awk brace-balance                      # ทุก .cs ที่แก้
 - clone ใน env agent เป็นแบบตื้น (446 คอมมิต) ⇒ sha ที่มีจริงบน GitHub (`0a829110` · `2560776c` · `825f5c0e` · `a4dfa177`) ถูกฟ้องว่า "ไม่มีในเรพ" และทีม E ตัดสินว่า `0a829110` ตาย —
   หลัง `git fetch --unshallow` ทุกตัวมีจริง (รอบ 250 WP-05) · กติกา: checker/ผู้ตรวจที่ตัดสินจากประวัติ git ต้องตรวจ `git rev-parse --is-shallow-repository` ก่อน ·
   และ pattern `✅ <hex>` จับเลขผู้เสียภาษี 13 หลักในตารางเทสต์ด้วย ⇒ ข้ามตัวเลขล้วน 13 หลัก
+
+### 2026-11-06 · รอบ 250 WP-04 — ขยาย checker ต้องคาดว่าจะเจอของเดิม ไม่ใช่ "baseline ว่าง"
+- ใบสั่งงานเขียนว่า "ขยาย `settings_reader_check` ไป RecurringTransaction/Contact/EmailScheduleRule/BankAccount · baseline ว่าง (ทุกตัวมีผู้อ่านแล้ว)" —
+  รันจริงพบ 4 ช่องไม่มีผู้อ่าน (`EmailScheduleRule.AudienceFilter`/`RepeatEveryDays` · `RecurringTransaction.NotifyBeforeRun`/`NotifyDaysBefore`) ⇒ คำกล่าวของใบสั่งงานผิด (F2 ข้อ 10:
+  ผลตรวจต้อง verify) · ของที่มีก่อนวันขยายเข้า baseline พร้อมหมายเหตุ + ส่งเจ้าของตัดสิน "ต่อสาย หรือ ลบ" — ไม่ใช่ตัดออกจากขอบเขตเงียบ ๆ
+- defect class "checker ตัดสินด้วยชื่อ id" (contact_picker R2): แก้ที่ต้นเหตุด้วยพฤติกรรม (ตัวเลือกคงที่ vs รายการจากข้อมูล) + negative case ทั้งสองทิศ ไม่ใช่เปลี่ยน id หน้าเว็บให้หลบ
+- checker UI ใหม่ที่ของเดิมมีมาก (label ไม่ผูกช่อง 1,154 จุด) ⇒ ratchet ต่อไฟล์ตั้งแต่วันแรก (ห้ามเพิ่ม) แทนการปล่อยให้แดงหรือไม่เขียน

@@ -629,7 +629,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **822 ไฟล์ · 8,737 `[Fact]` + 1,298 `[Theory]` (6,078 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **823 ไฟล์ · 8,743 `[Fact]` + 1,304 `[Theory]` (6,116 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 
@@ -8043,7 +8043,14 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | QR บนใบเพิ่มหนี้ใช้ข้อเท็จจริงฝั่งเดียวกับ JE/ลิงก์ชำระ: ย้ายเป็นฝั่งซื้อ ⇒ ไม่พิมพ์ · ย้ายเป็นฝั่งขาย (ไม่มีต้นทาง) ⇒ พิมพ์ · ตรงกับ `IsSaleSide` ทุกชุดข้อเท็จจริง | `PaymentQrRound246Tests.R250_ใบเพิ่มหนี้ย้ายฝั่ง_QRตามฝั่งที่ผู้ใช้สั่ง_ทั้งสองทิศ` |
 | `AutoApprovePolicy.Releases` เรียกตรง · `BindingHash` เปลี่ยนเมื่อแก้ราคา/ผัง/ผู้ติดต่อ ไม่เปลี่ยนเมื่อแก้คำอธิบาย · `EtaxByEmailFormat.UatWarning`/`Stage` · `EtaxDeliveryRouter.Decide` (ไม่ใช่ by Email ⇒ ธรรมดาทุกกรณี) · `PostPaymentAutomationPolicy.Effective`/`IdempotencyKey` · `DocumentPayLinkPolicy.Allowed`/`OnlineOnly` · `PaymentQrPolicy.Pick`/`PromptPayUsable` · `AssetCostSourceRules.PlaceInServiceProblem` ขอบทุกด่าน | `GateOppositeDirectionRound250Tests` (13 Fact/Theory · ทุกข้อสองทิศ) |
 | จุดเรียก (R250W4 · `tools/required_call_site_check.py`): `MoveCoreAsync` ล็อกด้วย `AdvisoryLockKey.For(OneShotDataFix, MarkerKey)` ก่อนอ่านเทมเพลต (ห้าม `hashtext(`) · Program.cs เรียกงานย้ายหลัง `ApplyMissingColumns` · `ResolveCoreAsync` ส่ง `CnDnPurchaseSideOverride`/ผู้ขายอย่างเดียวให้ `ShowBankQr` · `advisory_lock_key_check` baseline hashtext = 0 | negative test ในตัว (R250W4-1 · R250W4-2 · R250W4-2fp · `program_boot_migrations_self_test`) |
-| ยังไม่ทำใน WP-04 รอบนี้ (บอกตรง ๆ): ข้อ 7 XML e-Tax (`EtaxXmlRound250Tests`) · ข้อ 8 ตาราง `PaymentNotificationRound249Tests` ทุก `DocumentType` · ข้อ 9 `PostJe` fallback/`AgingDays` · ข้อ 10–13 checker (settings_reader · deep_link `#hash` · contact_picker ตามพฤติกรรม · checker UI ใหม่ 2 ตัว) | — |
+| (ข้อ 7) XML e-Tax ตาม ETDA: TypeCode/ชื่อ/schema ต่อชนิด (388/T02/T03/80/81) · IssueDateTime +07:00 (20:30 UTC = วันถัดไปของไทย) · TXID 13+สาขา 5 หลัก (สาขา "1" ⇒ 00001 · ไม่ระบุ ⇒ 00000) · บุคคลธรรมดา NIDN · Grand = ฐาน+VAT ไม่หัก WHT · InvoiceCurrencyCode (ว่าง ⇒ THB · USD คงเดิม) · ใบลดหนี้อ้างเลขที่+วันที่ใบเดิม / ใบกำกับไม่อ้าง · ด่านเลขผู้ขาย 13 / ผู้ซื้อ 13 หรือ 18 (สั้นกว่า ⇒ บล็อก ไม่เติมศูนย์) | `EtaxXmlRound250Tests` (8 Fact/Theory) |
+| (ข้อ 8) แจ้งเตือนรับ/จ่ายชำระ: ทุก `DocumentType` × ฝั่ง (override · ต้นทาง · ผู้ขายอย่างเดียว) คีย์/หัวข้อ/จาก-ให้ ตาม `CashFlowDirection` ตัวเดียว · ตารางที่ระบุ 15 แถวสองทิศ · ไม่รู้ฝั่ง ⇒ ไม่มีข้อความ | `PaymentNotificationRound249Tests.R250_ทุกDocumentTypeทุกฝั่ง_…` · `R250_ตารางทิศเงินที่ระบุ_สองทิศ` · `R250_ใบลดเพิ่มหนี้ไม่รู้ฝั่ง_…` |
+| (ข้อ 9) `AssetMultiDocumentDbTests.PostJe` เอกสารไม่อยู่ใน context ⇒ โยน (ไม่ถอยเป็นวันนี้เงียบ) · `RecurringAutopilotRound248DbTests` AgingDays คำนวณจาก DueDate | (ตัวช่วย seed — ทุกเทสต์ในสองคลาส) |
+| (ข้อ 10–13) checker: `settings_reader_check` ขยาย 4 entity (+negative จริง BankAccount.PaymentQrSource) · `deep_link_param_check` ลิงก์ `#k=` · `contact_picker_check` R2 ตามพฤติกรรม · `form_label_for_check` + `modal_table_container_check` (ratchet ใหม่) | `--self-test` ของแต่ละตัว (รันใน check_all §1a) |
+| (ฝ่ายค้าน WP-04 ข้อ 2) ทิศ "ผ่านด่าน" ต้องได้ผลที่คาดจริง: CN/DN ⇒ ด่าน "ฝั่งนี้อยู่แล้ว" · บริการต่างประเทศ ⇒ ด่าน "ราคารวมภาษี" · แก้ผังบรรทัด ⇒ สำเร็จ + AccountId = 12260 | Db `CnDn_…` · `Foreign_…` · `Reclassify_…` |
+| (ฝ่ายค้าน WP-04 ข้อ 3) ระหว่างถือคีย์ผู้เขียนต้นทุน ยกเลิกใบขายจบเอง + ไม่มีใครรอคีย์ (โค้ด: ตัวปลดแถวผูกเฉพาะชนิดที่อาจเป็นต้นทุน) | Db `Void_while_linking_holds_key_first` |
+| (ฝ่ายค้าน WP-04 ข้อ 4) ปิดปี: แถวใส่กลับด้านกับ uuid ⇒ ถอด OrderBy แล้วล้มทุกครั้ง | Db `SettleYearEnd_locks_in_id_order` |
+| (ฝ่ายค้าน WP-04 ข้อ 7) DDL ตอนบูต (Program.cs) กับฐานเทสต์ FK RESTRICT ตรงกัน 3 FK | `GateOppositeDirectionRound250Tests.ฐานเทสต์รูปFKเดียวกับDDLตอนบูต_ONDELETERESTRICT` |
 
 ## รอบ 251 WP-07 — งานค้างรอบ 248 Autopilot (`erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-07 · A B-12/B-16/B-17/F-06/B-18/B-19)
 

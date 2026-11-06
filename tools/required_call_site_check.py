@@ -15990,6 +15990,26 @@ REVIEWER_CASES += [
      "doc.CnDnPurchaseSideOverride,\n            contactSupplierOnly, doc.Status", False),
 ]
 
+# ── รอบ 250 WP-04 ข้อ 7–13 + ฝ่ายค้าน WP-04 ──
+RULES += [
+    dict(file="Services/Implementations/EtaxInvoiceService.cs", method="GenerateAsync",
+         must=["EtaxPartyTaxIdGuard.Seller(company.TaxId)", "EtaxPartyTaxIdGuard.Buyer(document.Contact.Name, document.Contact.TaxId)"],
+         before=[("EtaxPartyTaxIdGuard.Buyer(", "BuildEtaxXml(")],
+         why=_R250W4_WHY + "ข้อ 7 เลขผู้ขาย/ผู้ซื้อผ่านด่านเดียวก่อนสร้าง XML (ตัวประกอบ TXID เติมศูนย์แต่งเลข — ห้ามถึงกรมสรรพากร)"),
+    dict(file=DOC, method="VoidDocumentAsync",
+         must=["AssetCostSourceRules.MayBeCostSource(doc.DocumentType)"],
+         before=[("AssetCostSourceRules.MayBeCostSource(doc.DocumentType)", "FixedAssetService.ReleaseCostSourcesForVoidAsync(")],
+         why=_R250W4_WHY + "ฝ่ายค้านข้อ 3 ใบขายไม่ถือคีย์ผู้เขียนต้นทุนหลังล็อกแถว (ลำดับกลับด้าน · รอการผูกโดยไม่มีเหตุ)"),
+    dict(file=DOC, method="PurgeOneDocumentCoreAsync",
+         must=["AssetCostSourceRules.MayBeCostSource(doc.DocumentType)"],
+         before=[("AssetCostSourceRules.MayBeCostSource(doc.DocumentType)", "FixedAssetService.ReleaseCostSourcesForVoidAsync(")],
+         why=_R250W4_WHY + "ฝ่ายค้านข้อ 3 (ลบถาวร) เหมือนยกเลิก"),
+    dict(file="Helpers/PaymentQrMigration.cs", method="MoveCoreAsync", must=["DatabaseMigrationHelper.OneShotDataFixesTableSql"],
+         why=_R250W4_WHY + "ฝ่ายค้านข้อ 5 ตาราง marker จากตัวตั้งเดียวในธุรกรรมของงานย้าย"),
+    dict(file="Helpers/ContactNotifyEndpointMigration.cs", method="MigrateCoreAsync", must=["DatabaseMigrationHelper.OneShotDataFixesTableSql"],
+         why=_R250W4_WHY + "ฝ่ายค้านข้อ 5 ตาราง marker จากตัวตั้งเดียวในธุรกรรมของงานย้าย"),
+]
+
 
 def program_boot_migrations_errors(text: str) -> list:
     """รอบ 250 WP-04 (R246-MIG · Program.cs top-level): งานย้าย QR ครั้งเดียวต้องถูกเรียกตอนบูต <b>หลัง</b> ApplyMissingColumns

@@ -10350,7 +10350,10 @@ public partial class DocumentService : IDocumentService
                 }
 
                 // 7-asset0) รอบ 249: ปลดใบนี้ออกจากสินทรัพย์หลายใบที่ยังระหว่างจัดหา + คิดต้นทุนสะสมใหม่ (แถวยังอยู่เป็นประวัติ · audit chain)
-                await FixedAssetService.ReleaseCostSourcesForVoidAsync(_db, companyId, documentId, doc.DocumentNumber);
+                // รอบ 250 WP-04 (ฝ่ายค้านข้อ 3): เฉพาะชนิดที่อาจเป็นต้นทุน (ชุดเดียวกับ LockCostSourcesForTypesAsync ต้นธุรกรรม) — ใบขายไม่มีแถวผูกได้เลย
+                // แต่ตัวปลดถือคีย์ผู้เขียนต้นทุน "หลัง" FOR UPDATE แถวเอกสาร (ลำดับกลับด้าน) ⇒ ยกเลิกใบขายต้องรอการผูกต้นทุนของบริษัทโดยไม่มีเหตุ
+                if (Accounting.Helpers.AssetCostSourceRules.MayBeCostSource(doc.DocumentType))
+                    await FixedAssetService.ReleaseCostSourcesForVoidAsync(_db, companyId, documentId, doc.DocumentNumber);
 
                 // 7-asset) Cascade FixedAsset ที่ AutoRegister มาจาก doc นี้:
                 //   • ยังไม่ยืนยัน (NeedsReview=true) + ไม่มี posted dep → ลบ
@@ -11248,7 +11251,9 @@ public partial class DocumentService : IDocumentService
         // แถวที่ยังถือไว้ ⇒ ปลดในธุรกรรมเดียวกัน (คิดต้นทุนสะสมใหม่ · แถวยังอยู่เป็นประวัติ)
         if (await FixedAssetService.CostSourceVoidBlockAsync(_db, companyId, documentId, doc.DocumentNumber, "ลบถาวร") is string purgeAssetBlock)
             throw new BusinessRuleException(purgeAssetBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
-        if (await FixedAssetService.ReleaseCostSourcesForVoidAsync(_db, companyId, documentId, doc.DocumentNumber) > 0)
+        // รอบ 250 WP-04 (ฝ่ายค้านข้อ 3): เฉพาะชนิดที่อาจเป็นต้นทุน — คีย์ถูกถือไว้แล้วต้นธุรกรรม (LockCostSourcesForTypesAsync) ไม่ต้องถือซ้ำหลังล็อกแถวสำหรับใบขาย
+        if (Accounting.Helpers.AssetCostSourceRules.MayBeCostSource(doc.DocumentType)
+            && await FixedAssetService.ReleaseCostSourcesForVoidAsync(_db, companyId, documentId, doc.DocumentNumber) > 0)
             await _db.SaveChangesAsync();
 
         {

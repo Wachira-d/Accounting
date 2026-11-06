@@ -379,7 +379,7 @@ public class PartnerSecurityRound250DbTests
         goneDoc.IsDeleted = true;   // เอกสารต้นทางถูกลบ ⇒ ระบบไม่ย้ายเอง (ต้องให้คนตัดสิน)
         await db.SaveChangesAsync();
 
-        await db.Database.ExecuteSqlRawAsync("""CREATE TABLE IF NOT EXISTS "OneShotDataFixes" ("Key" varchar(100) PRIMARY KEY, "AppliedAt" timestamp NOT NULL);""");
+        await db.Database.ExecuteSqlRawAsync(Accounting.Data.DatabaseMigrationHelper.OneShotDataFixesTableSql);
         await db.Database.ExecuteSqlRawAsync("""DELETE FROM "OneShotDataFixes" WHERE "Key" = {0}""", PortalSlipLegacyMigration.MarkerKey);
         var r = await PortalSlipLegacyMigration.MigrateAsync(db);
         Assert.True(r.Moved >= 1);
@@ -436,7 +436,7 @@ public class PartnerSecurityRound250DbTests
         db.Payments.AddRange(legacy, real);
         await db.SaveChangesAsync();
 
-        await db.Database.ExecuteSqlRawAsync("""CREATE TABLE IF NOT EXISTS "OneShotDataFixes" ("Key" varchar(100) PRIMARY KEY, "AppliedAt" timestamp NOT NULL);""");
+        await db.Database.ExecuteSqlRawAsync(Accounting.Data.DatabaseMigrationHelper.OneShotDataFixesTableSql);
         await db.Database.ExecuteSqlRawAsync("""DELETE FROM "OneShotDataFixes" WHERE "Key" = {0}""", PortalSlipLegacyMigration.MarkerKey);
         await PortalSlipLegacyMigration.MigrateAsync(db);
 

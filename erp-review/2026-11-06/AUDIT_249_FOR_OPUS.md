@@ -260,7 +260,7 @@
 
 > **สถานะ (รอบ 250):** ข้อ 1–6 ✅ 0cb7ff24 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — รอ CI) + งานค้างจาก WP-02 (Db `Void_while_linking_holds_key_first` ·
 > `SettleYearEnd_locks_in_id_order` · `R248_MED5_*` สองทิศ) + `PaymentQrPolicy.IsBankQrDocument` รับข้อเท็จจริงฝั่งจริง · ข้อ 4 ส่วน "R249FA ขยาย 7 จุด" มีกติกาอยู่แล้ว
-> (`required_call_site_check` `_R249FA_DOC` — ตรวจแล้ว ไม่ต้องเพิ่ม) · **ยังไม่ทำ:** ข้อ 7 (XML e-Tax) · 8 (ตาราง PaymentNotification) · 9 (`PostJe`/`AgingDays`) · 10–13 (checker)
+> (`required_call_site_check` `_R249FA_DOC` — ตรวจแล้ว ไม่ต้องเพิ่ม) · ข้อ 7–13 ✅ 26a06169 — ข้อ 10 พบ 4 ค่าตั้งไม่มีผู้อ่าน (ส่งเจ้าของ) · แก้ผลฝ่ายค้าน WP-04 ข้อ 2–8 แล้ว
 
 **เป้าหมาย:** ด่านทุกตัวของรอบ 241–249 มีเทสต์สองทิศผ่านเส้นจริง + กติกา call-site · งานย้ายข้อมูลตอนบูตมีเทสต์ · ฐานเทสต์ไม่ถูก ALTER ขณะขนาน
 

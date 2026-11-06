@@ -6690,3 +6690,14 @@ _รอบ 250 WP-08 (AUDIT_249 §4 WP-08 · คำตัดสิน 250-24…2
 **สินทรัพย์ P2**: `PATCH …/contract-price` + `PATCH …/available-date` (Asset.Manage · audit chain) · จุดตั้งต้นค่าเสื่อมตัวเดียว `DepreciationSchedule.StartDate` (แผน/GL/ไล่ตาม/ทบทวนอายุ) ·
 ฟอร์มล็อกช่องพร้อมเหตุจาก `AvailableDateLockReason` · confirmPlaceInService ตรวจอายุ > 0 + วันตั้งต้นตามปฏิทินผู้ใช้. เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests`
 (7) · `AssetEditsRound250DbTests` (4) · R250L1/R250FA (+9 เคสฝ่ายค้าน) · settings_reader เพิ่ม ContactNotifyEndpoint.TopicsJson/Contact.AutoSendDisabled · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 31479320_
+
+_รอบ 250 WP-04 ข้อ 7–13 + แก้ผลฝ่ายค้าน WP-04 (2026-11-06):
+(7) `Helpers/EtaxPartyTaxIdGuard` ด่านเลขผู้ขาย/ผู้ซื้อตัวเดียว (ย้ายจาก GenerateAsync · ข้อความเดิม) · `BuildEtaxXml` เป็น internal static · `EtaxXmlRound250Tests` ฟิลด์ ETDA สองทิศ.
+(8) ตาราง PaymentNotification ทุก DocumentType × ฝั่ง จาก CashFlowDirection. (9) `PostJe` ไม่ถอยเป็นวันนี้เงียบ · AgingDays จาก DueDate.
+(10) `settings_reader_check` +4 entity — พบ 4 ช่องไม่มีผู้อ่านอยู่ก่อนแล้ว (EmailScheduleRule.AudienceFilter/RepeatEveryDays · RecurringTransaction.NotifyBeforeRun/NotifyDaysBefore)
+⇒ baseline พร้อมหมายเหตุ · **ส่งเจ้าของตัดสินต่อสาย/ลบ** (ใบสั่งงานคาดว่า "baseline ว่าง" — ไม่จริง). (11) deep link `#k=`. (12) contact_picker R2 ตามพฤติกรรม.
+(13) `form_label_for_check` (ratchet 1,154 จุด/80 ไฟล์) · `modal_table_container_check` (ratchet 1 จุด).
+ฝ่ายค้าน: (2) ทิศ "ผ่านด่าน" ได้ผลที่คาดจริง · (3) **โค้ด**: ยกเลิก/ลบถาวรเรียกตัวปลดแถวผูกต้นทุนเฉพาะชนิดที่อาจเป็นต้นทุน — เดิมใบขายถือคีย์ผู้เขียนต้นทุน
+หลัง FOR UPDATE แถวเอกสาร (ลำดับกลับด้าน) ⇒ ยกเลิกใบขายรอการผูกต้นทุนของบริษัท · (4) ปิดปีแถวกลับด้านกับ uuid · (5) ตาราง marker ในธุรกรรมของงานย้าย + เทสต์ใช้ค่าคงที่ ·
+(6) **หมายเหตุ**: เปลี่ยนคีย์ล็อกของ `PaymentQrMigration` (hashtext → 64 บิต) ไม่มีผลกับฐานที่บูตแล้ว — marker `r246-template-promptpay-to-bank` มีแล้ว งานจบที่ "marker มีแล้ว" ·
+(7) เทสต์ DDL ตอนบูต = ฐานเทสต์ · (8) MED-5 เรียก RecheckDocumentAtSendAsync (internal) ตรง. ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) — commit 26a06169_

@@ -457,22 +457,27 @@ public class WhtCreditWriteOffDbTests
         more.Lines.Add(new JournalEntryLine { AccountId = wht.Id, DebitAmount = 600m, LineOrder = 1 });
         more.Lines.Add(new JournalEntryLine { AccountId = ar.Id, CreditAmount = 600m, LineOrder = 2 });
         db.JournalEntries.Add(more);
-        var extra = new[] { 100m, 200m, 300m }.Select((amt, i) => new WhtCreditReceived
+        // ฝ่ายค้าน WP-04 ข้อ 4: Id กำหนดเอง + บันทึกทีละแถว "เรียงกลับด้านกับลำดับ uuid" ⇒ ถ้าตัวปิดปีถอด OrderBy(Id) ออก ฐานคืนตามลำดับที่ใส่ (กลับด้าน)
+        // แล้วเทสต์ล้มทุกครั้ง (ไม่ขึ้นกับดวงของ Guid สุ่ม) · แถวของ SeedAsync (1,000) ไม่อยู่ในชุดที่ปิดปี (Id สุ่ม คุมลำดับไม่ได้)
+        var ids = Enumerable.Range(0, 3).Select(_ => Guid.NewGuid()).OrderBy(i => i.ToString("D"), StringComparer.Ordinal).ToList();
+        var expectedOrder = ids;   // ลำดับ uuid ของ PostgreSQL = ลำดับสตริงตัวพิมพ์เล็ก
+        var amounts = new[] { 100m, 200m, 300m };
+        for (var i = ids.Count - 1; i >= 0; i--)
         {
-            CompanyId = s.CompanyId, TaxYear = s.TaxYear, PayerName = $"ลูกค้าไม่ส่งใบ {i + 2} จำกัด", IncomeAmount = amt / 0.03m,
-            WhtRate = 3m, WhtAmount = amt, Status = WhtCreditStatus.Pending,
-        }).ToList();
-        db.WhtCreditsReceived.AddRange(extra);
-        await db.SaveChangesAsync();
-        var ids = extra.Select(e => e.Id).Append(s.CreditId).ToList();
-        // ส่งรายการเรียงกลับด้าน (ลำดับที่ผู้ใช้เลือก) — ตัวปิดปีต้องเรียงตาม Id เอง (ลำดับ uuid ของ PostgreSQL = ลำดับสตริงตัวพิมพ์เล็ก)
-        var expectedOrder = ids.OrderBy(i => i.ToString("D"), StringComparer.Ordinal).ToList();
+            db.WhtCreditsReceived.Add(new WhtCreditReceived
+            {
+                Id = ids[i], CompanyId = s.CompanyId, TaxYear = s.TaxYear, PayerName = $"ลูกค้าไม่ส่งใบ {i + 2} จำกัด", IncomeAmount = amounts[i] / 0.03m,
+                WhtRate = 3m, WhtAmount = amounts[i], Status = WhtCreditStatus.Pending,
+            });
+            await db.SaveChangesAsync();   // ทีละแถว ⇒ ลำดับการใส่ = กลับด้านกับ uuid
+        }
+        // ส่งรายการตามลำดับที่ใส่ (กลับด้าน) — ตัวปิดปีต้องเรียงตาม Id เอง
         var requested = expectedOrder.AsEnumerable().Reverse().ToArray();
 
         string numbers;
         using (var req = DbTestDatabase.TryCreateContext()!)
             numbers = await Svc(req).SettleYearEndAsync(s.CompanyId,
-                new WhtCreditService.SettleRequest(s.TaxYear, 0m, 0m, 1_600m, Reason, requested), "ทดสอบ");
+                new WhtCreditService.SettleRequest(s.TaxYear, 0m, 0m, 600m, Reason, requested), "ทดสอบ");
 
         using var check = DbTestDatabase.TryCreateContext()!;
         var rows = await check.WhtCreditsReceived.AsNoTracking().Where(w => ids.Contains(w.Id)).ToListAsync();
@@ -485,6 +490,6 @@ public class WhtCreditWriteOffDbTests
         // ผลที่คืน = เลข JE ตามลำดับที่ลงจริง (ไม่มี JE ก้อนปิดปี — ช่องหักกับภาษี/ขอคืนเป็น 0) ⇒ ต้องตรงลำดับ Id ไม่ใช่ลำดับที่ส่งมา
         Assert.Equal(expectedOrder.Select(i => byCredit[i]).ToArray(), numbers.Split(" · "));
         Assert.NotEqual(requested.Select(i => byCredit[i]).ToArray(), numbers.Split(" · "));
-        Assert.Equal(0m, await Gl11910Async(check, s.CompanyId));
+        Assert.Equal(1_000m, await Gl11910Async(check, s.CompanyId));   // เหลือเฉพาะแถวของ SeedAsync ที่ไม่ได้เลือก
     }
 }

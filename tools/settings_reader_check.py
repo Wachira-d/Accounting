@@ -76,6 +76,27 @@ ENTITIES = {
                                 {'RenewalInvoiceLeadDays', 'ReminderDaysBeforeDue', 'ReminderDaysAfterDue', 'SuspendGraceDays',
                                  'AutoSuspendEnabled', 'PaymentLinkExpiryDays', 'ReminderEmailEnabled', 'ReminderLineEnabled'},
                                 ['Accounting/wwwroot/admin/platform-billing.html']),
+    # รอบ 250 WP-04 ข้อ 10 (AUDIT_249 B F-7): ค่าตั้งต่อรายการประจำ/ผู้ติดต่อ/ตารางส่งอีเมล/บัญชีธนาคาร — เฉพาะ property ที่เป็น "ค่าตั้ง"
+    # (ข้อมูลทะเบียน/สถานะที่ระบบเขียนเอง/ตารางเวลารัน ไม่นับ) · หน้าแก้ = recurring.html / contacts.html / email-schedule.html / bank.html ·
+    # ตอนขยายพบ 4 ช่องที่ไม่มีผู้อ่านอยู่ก่อนแล้ว (ไม่ใช่ช่องใหม่ — เข้า baseline พร้อมหมายเหตุ · ส่งเจ้าของตัดสินต่อสาย/ลบ): EmailScheduleRule.AudienceFilter ·
+    # RepeatEveryDays · RecurringTransaction.NotifyBeforeRun · NotifyDaysBefore — ช่องอื่นทุกช่องมีผู้อ่านแล้ว · ช่องใหม่ที่ไม่ต่อสาย = ฟ้อง
+    'RecurringTransaction': ('Accounting/Models/Entities/RecurringTransaction.cs',
+                             {'NotifyBeforeRun', 'NotifyDaysBefore', 'AutoApprove', 'AutoSendEmail', 'LateFeeEnabled', 'LateFeeRatePerDay',
+                              'LateFeeGraceDays', 'LateFeeMaxPercent', 'PaymentMode', 'PayLinkChannelsJson', 'AutoApprovePolicyJson',
+                              'PostPayEmailReceipt', 'PostPayIncludePartial', 'PreferredDay', 'MaxRuns'},
+                             ['Accounting/wwwroot/pages/recurring.html']),
+    'Contact': ('Accounting/Models/Entities/Document.cs',
+                {'DefaultArAccountId', 'DefaultApAccountId', 'DefaultIrGrAccountId', 'DefaultIssueTaxInvoice', 'WhtBorneByContractDefault',
+                 'PaymentDueDays', 'PaymentMode', 'PayLinkChannelsJson', 'AutoApprovePolicyJson', 'PostPayEmailReceipt',
+                 'PostPayIncludePartial', 'DocumentLanguage', 'CreditLimit'},
+                ['Accounting/wwwroot/pages/contacts.html']),
+    'EmailScheduleRule': ('Accounting/Models/Entities/EmailSchedule.cs',
+                          {'IsActive', 'OffsetDays', 'SendAtHour', 'RepeatEveryDays', 'SubjectTemplate', 'BodyTemplate', 'BccEmails',
+                           'DayOfMonth', 'AudienceFilter', 'AttachPayLink', 'PayLinkChannelsJson', 'PostPayEmailReceipt', 'PostPayIncludePartial'},
+                          ['Accounting/wwwroot/pages/email-schedule.html']),
+    'BankAccount': ('Accounting/Models/Entities/BankAccount.cs',
+                    {'PromptPayId', 'PaymentQrSource', 'PaymentQrImagePath', 'LinkedAccountId', 'IsActive', 'Currency'},
+                    ['Accounting/wwwroot/pages/bank.html']),
     'StaffDailySummaryConfig': ('Accounting/Models/Entities/StaffDailySummary.cs',
                                 {'Enabled', 'SendAtLocal', 'Sections', 'RecipientUserIds', 'RecipientRoles'},
                                 ['Accounting/wwwroot/pages/settings.html', 'Accounting/wwwroot/js/staff-daily-summary.js']),
@@ -499,6 +520,17 @@ def real_negative_test(root):
            for k, v in cs.items()}
     if 'LodgingProperty.EarlyCheckInHours' not in analyse(root, cs3, web):
         print('❌ negative test: ถอดผู้อ่านของ LodgingProperty.EarlyCheckInHours แล้วไม่ฟ้อง (ตัวรับค่า `d.` ใน Apply ถูกนับเป็นผู้อ่าน?)')
+        return False
+    # รอบ 250 WP-04 ข้อ 10: entity ที่ขยายเข้ามาต้องถูกตรวจจริง — ถอดผู้อ่านของ BankAccount.PaymentQrSource (ตัวเลือก QR) แล้วต้องฟ้อง ·
+    # ทิศตรงข้าม: ในเรพจริงมีผู้อ่าน ⇒ ไม่ฟ้อง
+    if 'BankAccount.PaymentQrSource' in analyse(root, cs, web):
+        print('❌ negative test: BankAccount.PaymentQrSource ควรมีผู้อ่าน (PaymentQrService) แต่ไม่พบ')
+        return False
+    cs4 = {k: re.sub(r'\.\s*PaymentQrSource\b', '.Removed_QrSource', v) if 'Services/' in k or 'Helpers/' in k or 'Controllers/' in k else v
+           for k, v in cs.items()}
+    web4 = {k: v.replace('.paymentQrSource', '.removed') for k, v in web.items()}
+    if 'BankAccount.PaymentQrSource' not in analyse(root, cs4, web4):
+        print('❌ negative test: ถอดผู้อ่านของ BankAccount.PaymentQrSource แล้วไม่ฟ้อง (ขอบเขต WP-04 ข้อ 10 ไม่ทำงาน)')
         return False
     return True
 
