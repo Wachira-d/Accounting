@@ -75,6 +75,42 @@ public static class AutopilotReadiness
         public bool ApprovedEmailRuleCovers { get; init; }
         /// <summary>มีกฎ "เมื่อรายการประจำสร้างเอกสาร" ครอบชนิดเอกสารนี้</summary>
         public bool RecurringEmailRuleExists { get; init; }
+
+        // ── รอบ 251 (WP-07 · A B-17/B-18): ข้อเท็จจริงจากผู้อ่านเดิม — null = ผู้เรียกไม่ได้ตรวจ ⇒ ไม่ออกข้อ (ผู้เรียก/เทสต์เดิมไม่ถดถอย) ──
+
+        /// <summary>ช่องทางส่งอีเมลของใบรอบหน้า (ผล <see cref="EtaxDeliveryRouter.Decide"/>) · null = บริษัทไม่ได้ใช้ e-Tax by Email / ไม่ได้ตรวจ</summary>
+        public EtaxEmailChannel? EtaxChannel { get; init; }
+        /// <summary>เหตุผลของช่องทาง (ข้อความจากตัวตัดสิน)</summary>
+        public string? EtaxRouteReason { get; init; }
+        /// <summary>เหตุที่ด่านผู้ส่ง e-Tax by Email จะปฏิเสธตอนส่ง (<see cref="EtaxByEmailSenderGate.Refusal"/>) · null = ผ่าน</summary>
+        public string? EtaxSenderRefusal { get; init; }
+        /// <summary>เหตุที่ผู้รับของ e-Tax by Email จะถูกปฏิเสธตอนส่ง (<see cref="EtaxByEmailFormat.Recipients"/>) · null = ผ่าน</summary>
+        public string? EtaxRecipientProblem { get; init; }
+        /// <summary>ปัญหาผู้รับมาจากสำเนาลับ (BCC) ของตารางส่ง ⇒ ทางแก้ = หน้าตารางส่ง · false = จากอีเมลของผู้ติดต่อ</summary>
+        public bool EtaxRecipientFromSchedule { get; init; }
+
+        /// <summary>เอกสารชนิดนี้พิมพ์ QR บัญชีธนาคาร (เทมเพลตเปิด + ชนิดเข้า — <c>PaymentQrPolicy.IsBankQrDocument</c>) · false = ไม่ออกข้อ PAY-QR</summary>
+        public bool BankQrApplies { get; init; }
+        /// <summary>บัญชีที่จะพิมพ์ QR (ผลตัวเลือกบัญชีเดียวกับกระดาษ) · null = ไม่พิมพ์</summary>
+        public string? BankQrAccount { get; init; }
+        /// <summary>เหตุที่ไม่พิมพ์ QR (เลือกบัญชีไว้แต่ไม่มี QR · หลายบัญชีไม่เดา) · null = ไม่มีอะไรต้องบอก</summary>
+        public string? BankQrProblem { get; init; }
+
+        /// <summary>เพดานอีเมลผ่าน NextAcc ต่อวันของบริษัทนี้ (<c>PlatformEmailQuota</c> → <see cref="SignEmailThrottle"/>) · null = ไม่ได้ตรวจ/ส่งจากอีเมลบริษัท</summary>
+        public int? PlatformDailyCap { get; init; }
+        public int PlatformSentToday { get; init; }
+        public bool PlatformIdentityVerified { get; init; } = true;
+
+        /// <summary>วันที่เอกสารของรอบหน้า (รอบค้าง = วันที่รันจริง)</summary>
+        public DateTime? NextDocumentDate { get; init; }
+        /// <summary>วันที่นั้นอยู่ในงวดบัญชีที่ปิดแล้ว (<see cref="ClosedPeriodRanges.Covers"/>) · null = ไม่ได้ตรวจ</summary>
+        public bool? NextPeriodClosed { get; init; }
+        /// <summary>รอบถัด ๆ ไป (ไม่นับรอบหน้า) ที่ตกในงวดที่ปิดแล้ว</summary>
+        public IReadOnlyList<DateTime> LaterClosedRunDates { get; init; } = Array.Empty<DateTime>();
+
+        /// <summary>หลังรับชำระส่งใบเสร็จอัตโนมัติไหม (<see cref="PostPaymentAutomationPolicy.EffectiveLayers"/>) · null = ไม่ได้ตรวจ</summary>
+        public bool? PostPayEmailReceipt { get; init; }
+        public bool PostPayIncludePartial { get; init; }
     }
 
     public sealed record Item(string Code, string Stage, string Verdict, string Title, string? Why, string? FixUrl, string? FixLabel);
@@ -90,6 +126,13 @@ public static class AutopilotReadiness
     /// <summary>ทางไปต่อภายในฟอร์ม — หน้ารายการประจำเปิดขั้น "อนุมัติ" ของ wizard</summary>
     public const string PolicyStepUrl = "#step-approve";
     public const string PaymentStepUrl = "#step-pay";
+    /// <summary>รอบ 251 (WP-07): ทางแก้ของรหัสใหม่</summary>
+    public const string EtaxSettingsUrl = "/pages/settings.html#etax";
+    public const string BankAccountsUrl = "/pages/bank.html";
+    public const string FiscalPeriodUrl = "/pages/fiscal.html";
+    public const string EtaxSenderFailTitle = "e-Tax by Email: จะล้มที่ด่านผู้ส่งตอนส่ง — ใบกำกับของรอบนี้จะไม่ถูกส่ง";
+
+    private static string D(DateTime? d) => d is { } v ? ThaiDate.ToThaiDisplayString(v) : "-";
 
     public static string LevelLabel(string level) => level switch
     {
@@ -162,6 +205,20 @@ public static class AutopilotReadiness
                 f.PolicyInactiveReason ?? "ให้ผู้มีสิทธิ์อนุมัติเอกสารตั้งนโยบายใหม่ (ระบบจะไม่ปล่อยคำเตือนตามนโยบายที่ผู้ตั้งไม่มีสิทธิ์แล้ว)", PolicyStepUrl, "ตั้งนโยบายใหม่");
         }
 
+        // ── รอบ 251 (WP-07 · PERIOD): งวดบัญชีของวันที่เอกสารรอบหน้า (กติกางวดปิดเดียวกับ ClosedPeriodRanges) ──
+        if (f.NextPeriodClosed == true)
+        {
+            approveFails = true;   // ตัวสร้างเอกสารปฏิเสธวันที่ในงวดที่ปิดตั้งแต่ตอนสร้าง ⇒ รอบนี้ไม่ได้แม้แต่ใบร่าง
+            Add("PERIOD", "อนุมัติ", Fail, $"วันที่เอกสารรอบหน้า ({D(f.NextDocumentDate)}) อยู่ในงวดบัญชีที่ปิดแล้ว — รอบนี้จะสร้างเอกสารไม่ได้",
+                "ระบบไม่ให้สร้าง/อนุมัติเอกสารที่มีวันที่ในงวดที่ปิด (รอบจะล้มและแจ้งในผลรอบล่าสุด) — เปิดงวดที่หน้างวดบัญชี (ต้องมีสิทธิ์) หรือเลื่อนวันรันครั้งถัดไป",
+                FiscalPeriodUrl, "เปิดหน้างวดบัญชี");
+        }
+        else if (f.NextPeriodClosed == false && f.LaterClosedRunDates.Count > 0)
+            Add("PERIOD", "อนุมัติ", Warn, "รอบถัด ๆ ไปบางรอบตกในงวดบัญชีที่ปิดแล้ว: " + string.Join(", ", f.LaterClosedRunDates.Select(x => D(x))),
+                "รอบเหล่านั้นจะสร้างเอกสารไม่ได้ถ้างวดยังปิดอยู่ตอนถึงรอบ", FiscalPeriodUrl, "เปิดหน้างวดบัญชี");
+        else if (f.NextPeriodClosed == false)
+            Add("PERIOD", "อนุมัติ", Ok, $"งวดบัญชีของรอบหน้า ({D(f.NextDocumentDate)}) เปิดอยู่");
+
         // ── ส่ง ──
         if (!f.AutoSendEmail)
             Add("RECIPIENT", "ส่ง", Info, "ไม่ได้เปิดส่งอีเมลอัตโนมัติ — ต้องกดส่งเองทุกงวด");
@@ -171,10 +228,48 @@ public static class AutopilotReadiness
         else
             Add("RECIPIENT", "ส่ง", Ok, "ส่งถึง " + f.ContactEmail!.Trim());
 
-        if (f.AutoSendEmail)
+        // รอบ 251 (WP-07 · B-17/F-06): ใบที่ต้องส่งแบบ e-Tax by Email ไม่มีทางถอยไปอีเมลของ NextAcc (ด่าน EtaxByEmailSenderGate) ⇒ ข้อ SMTP แบบเดิมไม่จริงสำหรับใบนี้ —
+        // ผู้ส่งตัดสินที่ข้อ ETAX-SENDER แทน
+        var etaxEmail = f.EtaxChannel == EtaxEmailChannel.EtaxByEmail;
+        if (f.AutoSendEmail && !etaxEmail)
             Add("SMTP", "ส่ง", f.CompanySenderVerified ? Ok : Warn,
                 f.CompanySenderVerified ? "ส่งจากอีเมลของบริษัท (ทดสอบผ่านแล้ว)" : "ยังไม่ได้ตั้ง/ทดสอบอีเมลบริษัท — ระบบส่งผ่านอีเมลของ NextAcc ในนามบริษัท (มีเพดานต่อวัน)",
                 null, f.CompanySenderVerified ? null : EmailSettingsUrl, f.CompanySenderVerified ? null : "ตั้งค่าอีเมลบริษัท");
+
+        if (f.AutoSendEmail && f.EtaxChannel is { } channel)
+        {
+            if (channel == EtaxEmailChannel.EtaxByEmail)
+            {
+                Add("ETAX", "ส่ง", Ok, "ใบของรอบนี้ส่งแบบ e-Tax by Email (สำเนาถึง ETDA เพื่อประทับเวลา)", f.EtaxRouteReason);
+                if (f.EtaxSenderRefusal != null)
+                    Add("ETAX-SENDER", "ส่ง", Fail, EtaxSenderFailTitle, f.EtaxSenderRefusal, EtaxSettingsUrl, "ตั้งค่า e-Tax / อีเมลบริษัท");
+                else
+                    Add("ETAX-SENDER", "ส่ง", Ok, "ผู้ส่ง e-Tax by Email พร้อม — ส่งจากอีเมลที่ลงทะเบียนกับกรมสรรพากร (ทดสอบผ่านแล้ว)");
+                if (f.EtaxRecipientProblem != null)
+                    Add("ETAX-RECIPIENT", "ส่ง", Fail, "e-Tax by Email: ผู้รับไม่ตรงกติกา — อีเมลของรอบนี้จะล้มตอนส่ง", f.EtaxRecipientProblem,
+                        f.EtaxRecipientFromSchedule ? EmailScheduleUrl : f.ContactId is { } rcid ? RecurringEmailReadiness.ContactUrl(rcid) : null,
+                        f.EtaxRecipientFromSchedule ? "แก้สำเนาลับในตารางส่ง" : "แก้อีเมลที่หน้าผู้ติดต่อ");
+                else if (RecurringEmailReadiness.HasDeliverableEmail(f.ContactEmail))
+                    Add("ETAX-RECIPIENT", "ส่ง", Ok, "ผู้รับ e-Tax by Email: ผู้ซื้อ 1 อีเมล + สำเนาประทับเวลาของ ETDA (ระบบใส่ให้)");
+            }
+            else
+                Add("ETAX", "ส่ง", Ok, "ใบของรอบนี้ส่งเป็นอีเมลเอกสารธรรมดา (บริษัทใช้ e-Tax by Email แต่ใบนี้อยู่นอกขอบเขต)", f.EtaxRouteReason);
+        }
+
+        // รอบ 251 (WP-07 · QUOTA): ตัวจำกัดจริงของอีเมลเอกสารที่ส่งผ่าน NextAcc = เพดานรายวัน (SignEmailThrottle ผ่าน PlatformEmailQuota) —
+        // อีเมลเอกสารไม่ตัดโควตาข้อความแจ้งเตือน (NotifyQuotaPolicy นับเฉพาะ LINE OA/อีเมลระบบของการแจ้งเตือนลูกค้า) ⇒ ไม่บอกตัวเลขที่ไม่ใช่ตัวจำกัด
+        if (f.AutoSendEmail && !etaxEmail && !f.CompanySenderVerified && f.PlatformDailyCap is int cap)
+        {
+            const string QuotaWhy = "เพดานนับใหม่ทุกวัน (เวลาไทย) · อีเมลเอกสารไม่ตัดโควตาข้อความแจ้งเตือน · ตั้งอีเมลบริษัทแล้วทดสอบผ่าน = ไม่มีเพดานนี้";
+            if (f.PlatformSentToday >= cap)
+                Add("QUOTA", "ส่ง", Warn, $"วันนี้ส่งอีเมลผ่าน NextAcc ครบเพดาน {cap} ฉบับแล้ว — ถ้ารอบถึงวันนี้ อีเมลจะส่งไม่ได้จนถึงพรุ่งนี้", QuotaWhy,
+                    EmailSettingsUrl, "ตั้งค่าอีเมลบริษัท");
+            else if (!f.PlatformIdentityVerified)
+                Add("QUOTA", "ส่ง", Warn, $"บริษัทยังไม่ยืนยันตัวตน — เพดานอีเมลผ่าน NextAcc {cap} ฉบับ/วัน (วันนี้ใช้ไป {f.PlatformSentToday})",
+                    "ยืนยันตัวตน = เลขผู้เสียภาษีของบริษัทถูกต้อง + เคยชำระค่าบริการ NextAcc · " + QuotaWhy, EmailSettingsUrl, "ตั้งค่าอีเมลบริษัท");
+            else
+                Add("QUOTA", "ส่ง", Ok, $"เพดานอีเมลผ่าน NextAcc {cap} ฉบับ/วัน (วันนี้ใช้ไป {f.PlatformSentToday})", QuotaWhy);
+        }
 
         // รอบ 250 (WP-02 §2.4 ข้อ 3 · คำตัดสิน §2 #10): สองกฎครอบใบเดียวกัน — ระบบส่งตามกฎ "เมื่ออนุมัติเอกสาร" ฉบับเดียว (ข้ามฝั่งรายการประจำ) · บอกให้รู้ว่าค่าไหนมีผล
         if (f.AutoApprove && (f.AutoSendEmail || f.RecurringEmailRuleExists) && f.ApprovedEmailRuleCovers)
@@ -207,6 +302,29 @@ public static class AutopilotReadiness
                 PaymentSettingsUrl, "ตรวจช่องทางที่เปิด");
         else
             Add("GATEWAY", "รับเงิน", Ok, "แนบลิงก์ชำระ: " + string.Join(" · ", f.PayLinkAllowed.Select(DocumentPayLinkPolicy.Label)));
+
+        // ── รอบ 251 (WP-07 · PAY-QR): QR บัญชีธนาคารบนเอกสาร (ตัวเลือกบัญชีเดียวกับกระดาษ — PaymentQrService.DiagnoseTemplateAsync → PaymentQrPolicy) ──
+        var thb = string.Equals(f.Currency, "THB", StringComparison.OrdinalIgnoreCase);
+        if (f.SaleSide && thb && f.BankQrApplies)
+        {
+            if (f.BankQrAccount != null)
+                Add("PAY-QR", "รับเงิน", Ok, "QR ชำระเงินบนเอกสาร: " + f.BankQrAccount);
+            else if (f.BankQrProblem != null)
+                Add("PAY-QR", "รับเงิน", Warn, "QR ชำระเงินบนเอกสารจะไม่ถูกพิมพ์", f.BankQrProblem, BankAccountsUrl, "ตั้ง QR ที่บัญชีธนาคาร");
+            else if (!f.PayLinkAttach)
+                Add("PAY-QR", "รับเงิน", Warn, "ยังไม่มีบัญชีธนาคารที่ตั้ง QR — ลูกค้าที่โอนต้องพิมพ์เลขบัญชีเอง",
+                    "ตั้งเลขพร้อมเพย์หรืออัปโหลดรูป QR ที่บัญชีธนาคาร แล้วเอกสารจะพิมพ์ QR ให้เอง", BankAccountsUrl, "ตั้งพร้อมเพย์/QR");
+            else
+                Add("PAY-QR", "รับเงิน", Ok, "ลูกค้าชำระผ่านลิงก์ชำระได้ — ยังไม่มี QR บัญชีธนาคารบนเอกสาร (ไม่บังคับ)", null, BankAccountsUrl, "ตั้งพร้อมเพย์/QR");
+        }
+
+        // ── รอบ 251 (WP-07 · POSTPAY): หลังรับชำระ (ชั้น ตาราง › รายการ › ผู้ติดต่อ › บริษัท — PostPaymentAutomationPolicy.EffectiveLayers) · ปิด ⇒ ⓘ (ระดับบางส่วน) ──
+        if (f.SaleSide && f.PostPayEmailReceipt is bool postPay)
+            Add("POSTPAY", "หลังรับเงิน", postPay ? Ok : Info,
+                postPay
+                    ? "หลังรับชำระ ระบบออก/ส่งใบเสร็จถึงลูกค้าอัตโนมัติ — " + (f.PostPayIncludePartial ? "ทุกงวดที่รับ (รวมชำระบางส่วน)" : "เฉพาะงวดที่ชำระครบ")
+                    : "หลังรับชำระ ไม่ส่งใบเสร็จอัตโนมัติ — ต้องมีคนออก/ส่งใบเสร็จเอง",
+                null, postPay ? null : PaymentStepUrl, postPay ? null : "ตั้งงานหลังรับชำระ");
 
         return Finish(items, f, forceDraftOnly: !f.AutoApprove || approveFails
             || items.Any(i => i.Verdict == Fail && i.Code is "TEMPLATE" or "CONTACT"));

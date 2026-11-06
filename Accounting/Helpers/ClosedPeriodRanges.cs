@@ -48,6 +48,16 @@ public static class ClosedPeriodRanges
         return merged;
     }
 
+    /// <summary>รอบ 251 (WP-07 · รหัสความพร้อม <c>PERIOD</c>): วันที่นี้ (ระดับวัน) อยู่ในช่วงงวดที่ปิดไหม — กติกาเดียวกับ <see cref="NotInClosed{T}"/>
+    /// (ครึ่งเปิด [Start, EndExclusive)) สำหรับค่าในหน่วยความจำ</summary>
+    public static bool Covers(IReadOnlyList<ClosedDateRange> closed, DateTime date)
+    {
+        var d = date.Date;
+        foreach (var r in closed)
+            if (d >= r.Start && d < r.EndExclusive) return true;
+        return false;
+    }
+
     /// <summary>ตัวกรอง "ไม่อยู่ในงวดที่ปิด" สำหรับ <c>IQueryable.Where</c> — <paramref name="dateOf"/> ต้องเป็นนิพจน์ที่ EF แปลได้
     /// (เช่น <c>r =&gt; r.ExtractedDate ?? r.ProcessedAt ?? r.CreatedAt</c>) · ไม่มีงวดปิด ⇒ ผ่านทุกแถว</summary>
     public static Expression<Func<T, bool>> NotInClosed<T>(

@@ -2311,7 +2311,30 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     (ข) **นโยบายอนุมัติบันทึกกับฟอร์ม**: เปลี่ยนนโยบายในขั้น ⑤ แล้วกด "บันทึก" ⇒ บันทึกรายการก่อน (ได้ id) แล้วเรียก `PUT recurring/{id}/approve-policy` ต่อ
     (นโยบายรับรองค่าที่บันทึกแล้ว — ลำดับนี้กันการรับรองค่าที่ยังไม่บันทึก) · นโยบายล้ม = แจ้งดังว่า "รายการบันทึกแล้วแต่นโยบายไม่ผ่าน" ·
     ปุ่ม "บันทึกนโยบายของรายการนี้" ปิดตอนสร้างใหม่ และปิดเมื่อฟอร์มแก้ไขยังไม่บันทึก ("บันทึกรายการก่อน")
-  - ยังไม่ทำในรอบนี้: คอลัมน์ "ระดับ Autopilot" ในตารางรายการ · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`) · LINE/คู่ค้าในขั้นส่ง · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน
+  - ~~ยังไม่ทำในรอบนี้: คอลัมน์ "ระดับ Autopilot" ในตารางรายการ · หลังรับเงินต่อรายการ (`PostPayEmailReceipt`) · LINE/คู่ค้าในขั้นส่ง · ส่งทดสอบถึงอีเมลฉัน · เส้น e-Tax ในผลทดลองรัน~~
+    → ปิดใน WP-02 (หลังรับเงินต่อรายการ) + **รอบ 251 WP-07** ด้านล่าง · ที่ยังค้าง: LINE/คู่ค้าในขั้นส่ง · ราคาแปรผัน/ทุก N เดือน/สร้างล่วงหน้า (ไม่อยู่ใน WP-07)
+- **รอบ 251 WP-07 — งานค้าง 248** (`erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §WP-07 · ยังไม่ได้คอมไพล์ในเครื่องนี้):
+  - **รหัสความพร้อมครบชุด** (`Helpers/AutopilotReadiness.Evaluate` · ทุกข้อมีลิงก์แก้): `TEMPLATE · CONTACT · BUYER-TAX · APPROVE · OWNER-POLICY · PERIOD · RECIPIENT · SMTP ·
+    QUOTA · EMAIL-RULES · ETAX · ETAX-SENDER · ETAX-RECIPIENT · GATEWAY · THB · PAY-QR · POSTPAY` — ข้อเท็จจริงใหม่ทุกตัวรวบรวมใน `RecurringAutopilotService.BuildAsync`
+    จาก**ผู้อ่านเดิม** (ไม่มีสูตรของตัวเอง): `ETAX` = `EtaxAutoIssueScope.Judge` (ใบจำลองสถานะอนุมัติ · `TaxService.NotFullTaxInvoiceByDesign`) → `EtaxDeliveryRouter.Decide` ·
+    `ETAX-SENDER` = `EtaxByEmailSenderGate.Refusal` (บริษัทโหมด ByEmail ที่ SMTP ยังไม่ทดสอบ ⇒ ❌ "จะล้มที่ด่านผู้ส่ง" · ใบนี้**ไม่ออกข้อ SMTP/QUOTA** เพราะไม่มีทางถอยไป NextAcc) ·
+    `ETAX-RECIPIENT` = `EtaxByEmailFormat.Recipients` (ผู้ติดต่อหลายอีเมล / BCC ของตารางส่งที่จะส่งใบนี้ ⇒ ❌) · `PAY-QR` = `PaymentQrService.PickDocumentAccountAsync`
+    (ตัวเลือกบัญชีเดียวกับกระดาษ → `PaymentQrPolicy.Pick`) · `QUOTA` = `PlatformEmailQuota.ForCompanyAsync` → `SignEmailThrottle` (**ตัวจำกัดจริงของอีเมลเอกสารผ่าน NextAcc** —
+    อีเมลเอกสารไม่ตัดโควตาข้อความแจ้งเตือน `NotifyQuotaPolicy` จึงไม่แสดงตัวเลขนั้น) · `PERIOD` = `ClosedPeriodRanges.Build` + `Covers` (วันที่เอกสาร = รอบหน้า หรือวันนี้ถ้ารอบค้าง ·
+    งวดปิด ⇒ ❌ + ระดับต่ำสุด เพราะ `CreateDocumentAsync` ปฏิเสธวันที่ในงวดปิดตั้งแต่ตอนสร้าง) · `POSTPAY` = `PostPaymentAutomationPolicy.EffectiveLayers`
+    (ตาราง (เมื่อมีกฎเดียว) › รายการ › ผู้ติดต่อ › บริษัท · ปิด ⇒ ⓘ ระดับบางส่วน) · ข้อเท็จจริงที่ไม่ได้ตรวจ (null) ⇒ ไม่ออกข้อ (ผู้เรียกเดิมไม่ถดถอย)
+  - **ทดลองรัน**: `RecurringDryRunResponse.EtaxPlan` (เหตุผลจาก `EtaxDeliveryRouter.Decide`) · `EmailPlan` ของใบ e-Tax by Email บอกด่านที่จะล้มตามจริง · งวดปิด ⇒ "จะสร้างเอกสารไม่ได้" ·
+    ยังไม่ถาม AI · ไม่ออก e-Tax · ไม่จองโควตา (R251 ใน `required_call_site_check`) · ร่างในฟอร์มส่งค่าหลังรับชำระ (null = คงค่าที่บันทึก — WP-03)
+  - **ตารางรายการประจำ**: คอลัมน์ "ระดับ Autopilot" 🟢/🟡/🔴 + จำนวน ❌/⚠️ จาก `GET recurring/autopilot/levels?ids=` (`RecurringAutopilotService.LevelsAsync` — ตัวตัดสินเดียวกับแผง ·
+    ≤ 50 แถว/คำขอ · ข้ามแถวเสร็จสิ้น · แถวที่ตรวจล้มบอกเหตุในช่อง · ส่งเฉพาะชนิดเอกสารที่ผู้เรียกมีสิทธิ์สร้าง)
+  - **ส่งทดสอบถึงอีเมลฉัน** `POST recurring/{id}/send-test` (`[RejectApiKey]` · สิทธิ์สร้างเอกสารชนิดนั้น): ผู้รับ = อีเมลของผู้ใช้ที่กด**เท่านั้น** (ไม่รับที่อยู่จากคำขอ · ไม่มีสำเนา) ·
+    ผู้ส่งจากตัวตัดสินเดียว `OnBehalfEmailSender` (`DocumentEmailService.ResolveOnBehalfSenderAsync`) · เนื้อ `Helpers/RecurringTestEmail` (หัว "[ทดสอบ]" · สรุปผลทดลองรัน ·
+    หนี HTML · ไม่มีเลข/ลิงก์ชำระจริง) · **ไม่บันทึก `DocumentEmailLog` ไม่นับเพดานอีเมลเอกสาร** · audit chain ทุกครั้ง (สำเร็จ/ล้ม) + เพดาน 10 ฉบับ/ผู้ใช้/รายการ/วัน (429) ·
+    ผู้ใช้ไม่มีอีเมล ⇒ 409 · ส่งล้ม ⇒ 502 · ปุ่มในขั้น ④ (ฟอร์มที่ยังไม่บันทึก = บอกให้บันทึกก่อน) + หน้ารายละเอียด
+  - **UX**: ผลทดลองรันอยู่กล่องของตัวเองใต้แผงความพร้อม (แผงตรวจใหม่ทุก 600ms ไม่ทับ · ฟอร์มเปลี่ยน ⇒ ป้าย "กดทดลองรันใหม่") · บรรทัดเพิ่มที่ยังว่างทั้งแถวไม่ทำให้แผงฟ้องระหว่างกรอก
+    (บันทึกจริงยังบังคับกรอก) · แท็บ "ช่องทางแจ้งเตือน" ของผู้ติดต่อเตือนกติกาผู้รับใบกำกับ 1 อีเมลเมื่อบริษัทโหมด e-Tax by Email (`EtaxByEmailFormat.ContactRecipientsNote`)
+  - Db test `RecurringAutopilotRound248DbTests`: MED-5 เส้นเข้าคิว→ตรวจซ้ำตอนส่ง (`RecheckDocumentAtSendAsync` เปิดเป็น internal) `TransferOnly` ⇒ ไม่แนบ · ทิศตรงข้าม Inherit ⇒ ตามบริษัท ·
+    ส่งทดสอบถึงผู้ใช้เท่านั้น/ไม่สร้างบันทึกการส่ง/ไม่นับเพดาน + ทิศตรงข้ามผู้ใช้ไม่มีอีเมล ⇒ 409 · ทดลองรันบริษัท ByEmail ⇒ `ETAX-SENDER` ❌ ไม่เขียนอะไร
 
 ### 2.7b ใบวางบิลรวมใบค้างชำระ (compose — ไม่ใช่ convert)
 - **ทางเข้า**: ฟอร์มสร้างเอกสาร → ประเภท "ใบวางบิล" + เลือกลูกค้า → กล่อง
@@ -7894,3 +7917,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่ง
 _Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 250 WP-02 — §2.12g งานหลังรับชำระทุกทางเข้า (`CreatePaymentAsync(…, source)` · `PaymentEntrySource` · integration `AfterPaymentRecordedAsync`) · ชั้นค่าตั้ง รายการประจำ/ผู้ติดต่อ · ลิงก์ชำระของใบแจ้งหนี้ที่มีใบกำกับ · §2.7 `EmailEnqueueOutcome` + ข้ามกฎซ้ำ · §6 GL สูตรเดียว/ลำดับล็อกสินทรัพย์ · แจ้งเตือนที่ระบุผู้รับเคารพแถวปิด · ทิศเงิน `CashFlowDirection` · การ์ด go-live แอดมิน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a40c91e5)_
+_Last verified against codebase: 2026-11-06 (รอบ 251 WP-07 — §2.7 รหัสความพร้อมครบชุด (ETAX/ETAX-SENDER/ETAX-RECIPIENT · PAY-QR · QUOTA · PERIOD · POSTPAY) จากผู้อ่านเดิม · คอลัมน์ระดับ Autopilot · ส่งทดสอบถึงอีเมลผู้ใช้ (ไม่บันทึกการส่ง · ไม่นับเพดาน · audit) · ผลทดลองรันกล่องแยก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

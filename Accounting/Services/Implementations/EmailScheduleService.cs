@@ -871,7 +871,8 @@ public class EmailScheduleService : IEmailScheduleService
 
     /// <summary>ID#12 (รอบ 2026-10-14 ทีม F4): ตรวจเอกสารซ้ำตอนส่ง — ยกเลิก/กลับเป็นร่าง/ลบ ⇒ ข้าม · ชำระครบ ⇒ ไม่ทวง ·
     /// ส่งได้ + มีกฎจริง ⇒ เขียนหัวเรื่อง/เนื้อใหม่ด้วยค่า ณ เวลาส่ง (ยอดค้างชำระปัจจุบัน ไม่ใช่ยอดตอนเข้าคิว) · คืนเหตุผลที่ข้าม หรือ null</summary>
-    private async Task<string?> RecheckDocumentAtSendAsync(EmailQueue item, CancellationToken ct)
+    // รอบ 251 (WP-07 ข้อ 5): internal ให้ Db test MED-5 เรียกเส้น "ตรวจซ้ำตอนส่ง" ตัวจริงได้โดยไม่ต้องรันคิวทั้งระบบ
+    internal async Task<string?> RecheckDocumentAtSendAsync(EmailQueue item, CancellationToken ct)
     {
         var doc = await _db.Documents.AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == item.EntityId && d.CompanyId == item.CompanyId && !d.IsDeleted, ct);

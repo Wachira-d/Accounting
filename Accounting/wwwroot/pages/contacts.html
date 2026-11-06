@@ -1201,6 +1201,7 @@
         const topicOpts = (o.topics || []).map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('');
         panel.innerHTML = `
           <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:8px 10px;font-size:12px;margin-bottom:10px">${esc(o.note)}</div>
+          ${o.etaxByEmailNote ? `<div style="background:#eff6ff;border-left:4px solid #2563eb;padding:8px 10px;font-size:12px;margin-bottom:10px">🧾 ${esc(o.etaxByEmailNote)}</div>` : ''}
           <div style="font-weight:600;margin:6px 0">อีเมล</div>
           ${emails.map(row).join('')}
           ${o.canEdit ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">

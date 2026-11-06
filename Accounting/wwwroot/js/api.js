@@ -1554,6 +1554,9 @@ const API = {
       recurringReadinessDraft: (d, id) => API.post(`${base}/recurring/readiness${id ? '?recurringId=' + encodeURIComponent(id) : ''}`, d),
       dryRunRecurring: (id) => API.post(`${base}/recurring/${id}/dry-run`),
       dryRunRecurringDraft: (d, id) => API.post(`${base}/recurring/dry-run${id ? '?recurringId=' + encodeURIComponent(id) : ''}`, d),
+      // รอบ 251 (WP-07): ระดับ Autopilot ต่อแถว · ส่งทดสอบถึงอีเมลผู้ใช้
+      getRecurringAutopilotLevels: (ids) => API.get(`${base}/recurring/autopilot/levels?ids=${encodeURIComponent((ids || []).join(','))}`),
+      sendRecurringTest: (id) => API.post(`${base}/recurring/${encodeURIComponent(id)}/send-test`),
       setRecurringApprovePolicy: (id, d) => API.put(`${base}/recurring/${id}/approve-policy`, d),
       getContactAutopilot: (contactId) => API.get(`${base}/recurring/contacts/${encodeURIComponent(contactId)}/autopilot`),
       updateContactAutopilot: (contactId, d) => API.put(`${base}/recurring/contacts/${encodeURIComponent(contactId)}/autopilot`, d),

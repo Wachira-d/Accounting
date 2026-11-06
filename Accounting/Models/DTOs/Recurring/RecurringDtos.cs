@@ -150,7 +150,17 @@ public record RecurringDryRunResponse(
     string? EmailTo,
     string EmailPlan,
     string PayLinkPlan,
-    IReadOnlyList<string> Notes);
+    IReadOnlyList<string> Notes,
+    // รอบ 251 (WP-07 · A B-17): ช่องทาง e-Tax ของใบรอบหน้า (ข้อความจาก EtaxDeliveryRouter.Decide) — null = ไม่ใช่เอกสาร
+    string? EtaxPlan = null);
+
+/// <summary>รอบ 251 (WP-07 ข้อ 1 · §4.6): ระดับ Autopilot ต่อแถวของตารางรายการประจำ — เซิร์ฟเวอร์คำนวณด้วยตัวตัดสินเดียวกับแผงความพร้อม ·
+/// <c>Error</c> ไม่ว่าง = ตรวจแถวนี้ไม่สำเร็จ (หน้าแสดงเหตุ ไม่ใช่ช่องว่าง)</summary>
+public record RecurringAutopilotLevelRow(Guid Id, global::Accounting.Models.Enums.DocumentType? DocumentType, string? Level, string? LevelLabel,
+    int WarnCount, int FailCount, string? TopIssue, string? Error);
+
+/// <summary>รอบ 251 (WP-07 ข้อ 4): ผลส่งอีเมลทดสอบ — ส่งถึงผู้ใช้ที่กดเท่านั้น</summary>
+public record RecurringSendTestResponse(string To, string SenderNote, string Subject, string Note);
 
 public record RecurringDryRunLine(string Description, decimal Quantity, decimal UnitPrice, decimal VatRate, decimal Amount, decimal VatAmount,
     decimal WithholdingTaxRate, decimal WithholdingTaxAmount);
