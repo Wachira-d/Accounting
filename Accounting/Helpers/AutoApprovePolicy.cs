@@ -48,6 +48,14 @@ public sealed record AutoApprovePolicy
     public const string RuleCode = "APPROVE-UNATTENDED-POLICY";
     public const string ScopeRecurring = "Recurring";
     public const string ScopeContact = "Contact";
+    /// <summary>รอบ 256 (คำตัดสินเจ้าของ 2026-11-09: "ใบเก่ายังไม่อนุมัติ/ค้างชำระ ไม่ควรกันใบงวดใหม่ของรายการประจำ") — ค่าตั้งต้นของรายการประจำที่ไม่ได้ตั้งนโยบาย</summary>
+    public const string ScopeDefault = "Default";
+
+    /// <summary>รอบ 256 — ค่าตั้งต้นของรายการประจำที่อนุมัติอัตโนมัติแต่ไม่ได้ตั้งนโยบาย: ปล่อย "ลูกค้าค้างชำระ" (AR-OVERDUE) ต่อ + หมายเหตุบนใบ + audit ·
+    /// เดิม (รอบ 248 · Y1) ค่าตั้งต้น = หยุดรอคน ⇒ ใบงวดใหม่ค้างเป็นร่างทุกงวดเมื่อลูกค้ามีใบค้าง ทั้งที่เป็นค่าบริการตามสัญญา (เจ้าของกลับคำตัดสิน) ·
+    /// ผู้รับผิดชอบ = ผู้สร้างรายการ (ต้องยังมีสิทธิ์อนุมัติ — ตรวจที่ <c>RecurringApprovePolicyLoader</c>) · อยากให้หยุด ⇒ ตั้งนโยบายของรายการเป็น "หยุดรอคน"</summary>
+    public static AutoApprovePolicy RecurringDefault(string? createdBy)
+        => new() { PassCodes = new[] { ArOverdueApprovalWarning.Code }, SetBy = createdBy, Scope = ScopeDefault };
 
     /// <summary>คำเตือนที่ปล่อยได้ — รหัส · ชื่อ · ตัวจับ (ป้าย) · คำอธิบาย (หน้าแสดงจากตรงนี้ — ไม่มีตารางใน JS)</summary>
     public sealed record Releasable(string Code, string Title, Func<string, bool> Matches, string Why);
@@ -191,7 +199,10 @@ public sealed record AutoApprovePolicy
 
     /// <summary>หมายเหตุบนเอกสาร (ต่อท้ายหมายเหตุอนุมัติ) — บอกว่าปล่อยตามนโยบายของใคร ระดับไหน</summary>
     public static string NoteLine(AutoApprovePolicy policy, IReadOnlyList<string> released)
-        => $"ปล่อยตามนโยบายอนุมัติ ({(policy.Scope == ScopeContact ? "ของผู้ติดต่อ" : "ของรายการประจำ")}"
+        => policy.Scope == ScopeDefault
+            ? $"อนุมัติต่อตามค่าตั้งต้นของรายการประจำ (ผู้สร้างรายการ {policy.SetBy ?? "-"} · ตั้งเป็น \"หยุดรอคน\" ได้ที่รายการประจำ): "
+              + string.Join(", ", released.Select(w => CodeOf(w) ?? "?").Distinct())
+            : $"ปล่อยตามนโยบายอนุมัติ ({(policy.Scope == ScopeContact ? "ของผู้ติดต่อ" : "ของรายการประจำ")}"
            + $" · ตั้งโดย {policy.SetBy ?? "-"}"
            + (policy.SetAt is { } at ? $" เมื่อ {at.AddHours(7):yyyy-MM-dd HH:mm} น." : "")
            + $"): {string.Join(", ", released.Select(w => CodeOf(w) ?? "?").Distinct())}";

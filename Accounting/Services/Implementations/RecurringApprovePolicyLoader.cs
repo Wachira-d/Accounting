@@ -19,6 +19,7 @@ internal static class RecurringApprovePolicyLoader
     internal sealed record Loaded(AutoApprovePolicy? Policy, AutoApprovePolicy? Stored, bool? SetterActive, string? InactiveReason = null);
 
     internal const string BindingChangedReason = "ค่าของรายการ (ผู้ติดต่อ · ชนิดเอกสาร · ยอด/บรรทัด · อนุมัติ/ส่งอีเมลอัตโนมัติ) เปลี่ยนหลังผู้มีสิทธิ์ตั้ง/รับรองนโยบาย — ให้ผู้มีสิทธิ์อนุมัติตั้ง/รับรองใหม่สำหรับค่าปัจจุบัน";
+    internal const string DefaultSetterGoneReason = "ผู้สร้างรายการประจำไม่ได้เป็นสมาชิก/ไม่มีสิทธิ์อนุมัติเอกสารชนิดนี้แล้ว — ใบงวดใหม่ที่ลูกค้ามีใบค้างจะหยุดรอคน · ให้ผู้มีสิทธิ์อนุมัติตั้งนโยบายของรายการ";
     internal const string SetterGoneReason = "ผู้ตั้ง/รับรองนโยบายไม่ได้เป็นสมาชิกของบริษัท/ไม่มีสิทธิ์อนุมัติเอกสารชนิดนี้แล้ว — ให้ผู้มีสิทธิ์ตั้งนโยบายใหม่";
 
     /// <summary>ลายนิ้วมือของค่าปัจจุบันของรายการ (ตัวเดียวทั้งตอนตั้ง/รับรองและตอนตรวจ)</summary>
@@ -32,7 +33,15 @@ internal static class RecurringApprovePolicyLoader
     {
         var docType = r.DocumentType ?? DocumentType.Invoice;
         var cert = AutoApprovePolicy.Parse(r.AutoApprovePolicyJson, AutoApprovePolicy.ScopeRecurring);
-        if (cert == null) return new Loaded(null, null, null);
+        if (cert == null)
+        {
+            // รอบ 256 (คำตัดสินเจ้าของ): ไม่ได้ตั้งนโยบาย ⇒ ค่าตั้งต้นของรายการประจำ = ปล่อย "ลูกค้าค้างชำระ" ต่อ (ใบงวดใหม่ไม่ค้างเพราะใบเก่า) ·
+            // เฉพาะรายการที่อนุมัติอัตโนมัติ + ผู้สร้างยังเป็นสมาชิกที่มีสิทธิ์อนุมัติชนิดนี้ (ไม่มี ⇒ หยุดรอคนตามเดิม พร้อมเหตุ)
+            if (!r.AutoApprove) return new Loaded(null, null, null);
+            if (!await CanStillApproveAsync(db, permissions, companyId, r.CreatedBy, docType, ct))
+                return new Loaded(null, null, false, DefaultSetterGoneReason);
+            return new Loaded(AutoApprovePolicy.RecurringDefault(r.CreatedBy), null, true);
+        }
         string? contactJson = null;
         if (cert.InheritContact && r.ContactId is { } cid)
             contactJson = await db.Contacts.AsNoTracking()

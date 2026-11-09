@@ -47,7 +47,7 @@ public class RecurringAutopilotRound248DbTests
     private static int AgingOf(DateTime due) => (int)(DateTime.UtcNow.Date - due.Date).TotalDays;
 
     /// <summary>บริษัท + ผังพื้นฐาน + ลูกค้านิติบุคคลครบ §86/4 + ใบค้างชำระเกิน 30 วัน (ทำให้เกิด [AR-OVERDUE]) + ผู้ตั้งนโยบาย (สมาชิก) + รายการประจำอนุมัติอัตโนมัติ</summary>
-    private static async Task<Seed> SeedAsync(AccountingDbContext db, bool setterIsMember = true)
+    private static async Task<Seed> SeedAsync(AccountingDbContext db, bool setterIsMember = true, bool creatorIsSetter = false)
     {
         var co = new Company { Name = "บริษัททดสอบ Autopilot", TaxId = "0105556000025", IsVatRegistered = true };
         db.Companies.Add(co);
@@ -86,7 +86,7 @@ public class RecurringAutopilotRound248DbTests
             CompanyId = co.Id, Name = "ค่าบริการรายเดือน", Frequency = RecurringFrequency.Monthly, Status = RecurringStatus.Active,
             StartDate = ThaiDate.CalendarDateUtc(DateTime.UtcNow), NextRunDate = ThaiDate.CalendarDateUtc(DateTime.UtcNow),
             PreferredDay = ThaiDate.CalendarDateUtc(DateTime.UtcNow).Day, TemplateType = "Document", DocumentType = DocumentType.Invoice,
-            ContactId = contact.Id, AutoApprove = true, CreatedBy = "tester",
+            ContactId = contact.Id, AutoApprove = true, CreatedBy = creatorIsSetter ? setter.Id.ToString() : "tester",   // รอบ 256: ผู้สร้างที่เป็นสมาชิก ⇒ ค่าตั้งต้นปล่อยค้างชำระ
             TemplateData = JsonSerializer.Serialize(new
             {
                 lines = new object[]
@@ -146,7 +146,7 @@ public class RecurringAutopilotRound248DbTests
     }
 
     [Fact]
-    public async Task R248_ทิศตรงข้าม_ไม่ตั้งนโยบาย_ใบประจำค้างร่างเพราะค้างชำระ_เหมือนรอบ247()
+    public async Task R248_ทิศตรงข้าม_ไม่ตั้งนโยบาย_ใบประจำค้างร่างเพราะค้างชำระ_เหมือนรอบ247()   // รอบ 256: ยังจริงเมื่อผู้สร้างไม่ใช่สมาชิกที่อนุมัติได้ (seed CreatedBy="tester")
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
@@ -159,6 +159,37 @@ public class RecurringAutopilotRound248DbTests
         var rec = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId);
         Assert.Contains(ArOverdueApprovalWarning.Prefix, rec.LastRunOutcome ?? "");
         Assert.False(await check.AuditLogs.AnyAsync(a => a.CompanyId == s.CompanyId && a.NewValues!.Contains(AutoApprovePolicy.RuleCode)));
+    }
+
+    [Fact]
+    public async Task R256_ไม่ตั้งนโยบาย_ผู้สร้างยังเป็นสมาชิก_ลูกค้าค้างชำระ_ใบงวดใหม่อนุมัติต่อ_หมายเหตุ_audit()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, creatorIsSetter: true);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var doc = await check.Documents.AsNoTracking().SingleAsync(d => d.CompanyId == s.CompanyId && d.DocumentNumber != "INV-OLD-0001");
+        Assert.NotEqual(DocumentStatus.Draft, doc.Status);
+        Assert.Contains("ค่าตั้งต้นของรายการประจำ", doc.InternalNotes ?? "");
+        var audits = await check.AuditLogs.AsNoTracking().Where(a => a.CompanyId == s.CompanyId && a.EntityId == doc.Id.ToString()).ToListAsync();
+        Assert.Contains(audits, a => (a.NewValues ?? "").Contains(AutoApprovePolicy.RuleCode) && (a.NewValues ?? "").Contains(ArOverdueApprovalWarning.Code));
+    }
+
+    [Fact]
+    public async Task R256_ทิศตรงข้าม_ตั้งนโยบายของรายการเป็นหยุดรอคน_ใบค้างร่างแม้ผู้สร้างเป็นสมาชิก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, creatorIsSetter: true);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetRecurringPolicyAsync(s.CompanyId, s.RecurringId, new SetAutoApprovePolicyRequest(new List<string>()), s.SetterId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var doc = await check.Documents.AsNoTracking().SingleAsync(d => d.CompanyId == s.CompanyId && d.DocumentNumber != "INV-OLD-0001");
+        Assert.Equal(DocumentStatus.Draft, doc.Status);
     }
 
     [Fact]
