@@ -186,8 +186,9 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
             await tx.CommitAsync(ct);
         }
         // Q8: ไม่เหลือการผูกของกลุ่มนี้กับบริษัทนี้ ⇒ บอทออกจากกลุ่ม (หลัง commit — ออกไม่สำเร็จไม่ย้อนการยกเลิก)
-        if (_groups != null && groupHash != null) await _groups.LeaveIfUnboundAsync(companyId, groupProtected, groupHash, ct, groupScope);
-        return await OverviewAsync(companyId, contactId, ct);
+        var leaveNote = _groups != null && groupHash != null ? await _groups.LeaveIfUnboundAsync(companyId, groupProtected, groupHash, ct, groupScope) : null;
+        var overview = await OverviewAsync(companyId, contactId, ct);
+        return leaveNote == null ? overview : overview with { ActionNote = leaveNote };   // รอบ 256-2 L2: บอทกลางยังอยู่ในกลุ่ม ⇒ บอกทางเอาออก (ไม่เงียบ)
     }
 
     private IQueryable<ContactNotifyEndpoint> ActiveRows(Guid companyId, Guid contactId)

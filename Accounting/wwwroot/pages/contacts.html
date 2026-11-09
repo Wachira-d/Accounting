@@ -1371,7 +1371,8 @@
             : await API.del(url);
           if (!res || !res.success) { Layout.toast(res?.message || 'บันทึกไม่สำเร็จ', 'error'); if (!stale()) await this.loadNotify(); return; }
           if (!stale()) this._renderNotify(res.data);
-          if (okMsg) Layout.toast(res.message || okMsg);
+          if (res.data && res.data.actionNote) Layout.toast(res.data.actionNote, 'warning');   // รอบ 256-2: ต้องทำต่อเอง (เซิร์ฟเวอร์บอก)
+          else if (okMsg) Layout.toast(res.message || okMsg);
         } catch (e) { Layout.toast(e.message, 'error'); if (!stale()) await this.loadNotify(); }
       },
       async addNotifyEmail() {

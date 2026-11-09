@@ -118,6 +118,15 @@ public class ContactRecipientResolver : IContactRecipientResolver
             LineGroupBind: await LineGroupBindOfferAsync(companyId, canEdit, ct));
     }
 
+    public async Task<string?> CentralGroupProblemAsync(Guid companyId, CancellationToken ct = default)
+    {
+        if (!LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct)))
+            return ContactRecipientRule.CentralGroupNotPlatformReason;
+        if (_nextAccLine == null) return LineGroupBindRule.Replies.CentralOaNotConfigured;
+        var nx = await _nextAccLine.GetAsync(ct);
+        return nx.HasToken ? null : nx.Problem ?? LineGroupBindRule.Replies.CentralOaNotConfigured;
+    }
+
     /// <summary>รอบ 256 (คำตัดสิน 256-2): กล่อง "เพิ่มกลุ่ม LINE" — server computes · page displays ·
     /// บริษัทผู้ให้บริการ ⇒ ผ่าน LINE OA กลาง (ข้อความบอก Basic ID ของ OA กลางจากค่าตั้ง) · บริษัทอื่น ⇒ OA ของบริษัทเท่านั้น (N8 คงเดิม)</summary>
     private async Task<ContactLineGroupBindOffer> LineGroupBindOfferAsync(Guid companyId, bool canEdit, CancellationToken ct)
@@ -129,9 +138,10 @@ public class ContactRecipientResolver : IContactRecipientResolver
             var oa = string.IsNullOrWhiteSpace(nx.BasicId) ? "LINE OA กลางของ NextAcc" : $"LINE OA กลางของ NextAcc ({nx.BasicId!.Trim()})";
             var instruction = $"เพิ่มกลุ่ม LINE: เชิญ {oa} เข้ากลุ่ม → พิมพ์ #HeyNextAcc ในกลุ่ม → ใส่รหัสที่บอทตอบ (ไม่ต้องหา Group ID เอง)";
             if (!canEdit) return new ContactLineGroupBindOffer(false, "ต้องมีสิทธิ์แก้ผู้ติดต่อ", instruction, true);
-            return nx.HasToken
+            var problem = await CentralGroupProblemAsync(companyId, ct);
+            return problem == null
                 ? new ContactLineGroupBindOffer(true, null, instruction, true)
-                : new ContactLineGroupBindOffer(false, nx.Problem ?? LineGroupBindRule.Replies.CentralOaNotConfigured, instruction, true);
+                : new ContactLineGroupBindOffer(false, problem, instruction, true);
         }
         const string own = "เพิ่มกลุ่ม LINE: เชิญ LINE OA ของบริษัทเข้ากลุ่ม → พิมพ์ #HeyNextAcc ในกลุ่ม → ใส่รหัสที่บอทตอบ (ไม่ต้องหา Group ID เอง)";
         if (!canEdit) return new ContactLineGroupBindOffer(false, "ต้องมีสิทธิ์แก้ผู้ติดต่อ", own, false);

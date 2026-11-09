@@ -18,4 +18,8 @@ public interface IContactRecipientResolver
     /// <summary>รอบ 254 WP-11 L2: ความพร้อมของช่อง LINE ของบริษัท (ตัวเดียวกับที่ตัดสินสถานะปลายทาง) — ด่านบันทึกกฎตารางส่ง · ปุ่มผูก LINE ·
     /// ตัวหาผู้รับแบบอีเมลอย่างเดียว (นอก DI) ⇒ ปิด</summary>
     Task<ContactRecipientRule.LineOpenness> LineChannelAsync(Guid companyId, CancellationToken ct = default);
+
+    /// <summary>รอบ 256-2 (ฝ่ายค้าน L6): ช่อง "กลุ่มของผู้ติดต่อผ่าน LINE OA กลาง" ของบริษัทนี้พร้อมไหม — null = พร้อม (เป็นบริษัทผู้ให้บริการ + มี token ของ OA กลาง) ·
+    /// ไม่พร้อม ⇒ เหตุ · ตัวเดียวของกล่องผูกกลุ่มบนหน้าผู้ติดต่อและด่านบันทึกกฎตารางส่ง</summary>
+    Task<string?> CentralGroupProblemAsync(Guid companyId, CancellationToken ct = default);
 }

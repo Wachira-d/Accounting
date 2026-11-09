@@ -119,16 +119,22 @@ public class LineWebhookController : ControllerBase
         return Ok();
     }
 
-    /// <summary>รอบ 256 (คำตัดสิน 256-2) — event กลุ่ม/ห้องของ OA กลาง: กัน webhook ซ้ำก่อน (ตารางเดียวกับ webhook OA บริษัท · G10) → ตัวจัดการกลุ่มเดียว
-    /// (<see cref="IContactLineGroupService.HandleCentralGroupEventAsync"/>) → ตอบ (reply ฟรี · นับ reply OA กลาง) → บอทออกหลังตอบ #ByeNextAcc (Q8) ·
-    /// ล้ม ⇒ ถอนการประทับ + log Error (webhook กลางตอบ 200 เสมอ — event 1:1 ในชุดเดียวกันไม่มีตัวกันซ้ำ จึงไม่ขอให้ LINE ส่งทั้งชุดซ้ำ)</summary>
+    /// <summary>รอบ 256 (คำตัดสิน 256-2) — event กลุ่ม/ห้องของ OA กลาง:
+    /// <list type="bullet">
+    /// <item>เฉพาะ event ที่ต้องทำอะไร (<see cref="Accounting.Helpers.LineGroupBindRule.CentralGroupEventActionable"/>: คำสั่ง · leave · สมาชิกเข้า/ออก) —
+    /// คุยกันในกลุ่มไม่แตะฐานเลย (ไม่ประทับกันซ้ำ ไม่อ่านบริษัทผู้ให้บริการ · ฝ่ายค้าน M2)</item>
+    /// <item>ใน try ต่อ event: ประทับกันซ้ำ (ตารางเดียวกับ webhook OA บริษัท · G10) → ตัวจัดการกลุ่มเดียว → ตอบ (reply · นับ reply OA กลาง) → บอทออกหลังตอบ #ByeNextAcc (Q8)</item>
+    /// <item>ล้ม ⇒ log Error + ถอนการประทับ · webhook กลางตอบ 200 เสมอ (event 1:1 ในชุดเดียวกันไม่มีตัวกันซ้ำ) ⇒ LINE <b>ไม่</b>ส่งซ้ำเอง —
+    /// การถอนประทับมีผลเฉพาะเมื่อมีคนสั่งส่งซ้ำเอง (Redelivery ใน LINE Developers Console) เท่านั้น (ฝ่ายค้าน L1)</item>
+    /// </list></summary>
     private async Task HandleGroupEventAsync(JsonElement ev, JsonElement src, string? type, string? destination)
     {
+        var groupText = type == "message" && ev.TryGetProperty("message", out var gm) && gm.TryGetProperty("type", out var gmt)
+            && gmt.GetString() == "text" && gm.TryGetProperty("text", out var gtx) ? gtx.GetString() : null;
+        if (!Accounting.Helpers.LineGroupBindRule.CentralGroupEventActionable(type, groupText)) return;
         if (_groups == null)
         {
             // ไม่มีตัวจัดการกลุ่ม (เทสต์/ประกอบบางส่วน) ⇒ พฤติกรรมรอบ 256 เดิม: ตอบเหตุเฉพาะคำสั่ง
-            var groupText = type == "message" && ev.TryGetProperty("message", out var gm) && gm.TryGetProperty("type", out var gmt)
-                && gmt.GetString() == "text" && gm.TryGetProperty("text", out var gtx) ? gtx.GetString() : null;
             var legacyReply = Accounting.Helpers.LineGroupBindRule.CentralOaGroupReply(type, groupText);
             var legacyToken = ev.TryGetProperty("replyToken", out var lrt) ? lrt.GetString() : null;
             if (legacyReply != null && !string.IsNullOrEmpty(legacyToken) && _customerLinks != null)
@@ -136,9 +142,11 @@ public class LineWebhookController : ControllerBase
             return;
         }
         var eventId = ev.TryGetProperty("webhookEventId", out var we) ? we.GetString() : null;
-        if (!await _groups.MarkEventSeenAsync(eventId)) return;
+        var marked = false;
         try
         {
+            if (!await _groups.MarkEventSeenAsync(eventId)) return;
+            marked = true;
             var outcome = await _groups.HandleCentralGroupEventAsync(destination, ev);
             var replyToken = ev.TryGetProperty("replyToken", out var grt) ? grt.GetString() : null;
             if (!string.IsNullOrEmpty(outcome.Reply) && !string.IsNullOrEmpty(replyToken) && _customerLinks != null)
@@ -148,8 +156,8 @@ public class LineWebhookController : ControllerBase
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogError(ex, "LINE webhook OA กลาง: ประมวลเหตุการณ์กลุ่ม {EventId} ล้ม — ถอนการประทับ", eventId);
-            await _groups.UnmarkEventSeenAsync(eventId, CancellationToken.None);
+            _logger.LogError(ex, "LINE webhook OA กลาง: ประมวลเหตุการณ์กลุ่ม {EventId} ล้ม — ถอนการประทับ (ส่งซ้ำได้เฉพาะสั่ง Redelivery เอง)", eventId);
+            if (marked) await _groups.UnmarkEventSeenAsync(eventId, CancellationToken.None);
         }
     }
 

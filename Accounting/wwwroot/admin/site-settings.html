@@ -562,6 +562,7 @@
             <label style="font-weight:400;margin-top:6px"><input type="checkbox" id="lnOpsAlerts" style="width:auto"> ส่ง "เรื่องของระบบ" เข้ากลุ่มนี้ (ฟอร์มติดต่อ · ลูกค้าขอคุยกับเจ้าหน้าที่)</label>
           </div>
         </div>
+        <div id="lnUsage" class="help-text" style="margin-top:8px"></div>
         <div id="lnTestResult" class="help-text" style="margin-top:8px"></div>
         <div id="lnFill" style="display:none;margin-top:8px"></div>
       </div>
@@ -1126,6 +1127,7 @@
       document.getElementById('lnGroupId').value = d.groupId || '';
       document.getElementById('lnOpsAlerts').checked = d.opsAlertsToGroup !== false;
       document.getElementById('lnGroupPolicy').textContent = d.groupPolicyNote || '';
+      { const u = document.getElementById('lnUsage'); if (u) u.textContent = d.usageNote || ''; }   // รอบ 256-2: ยอดใช้ OA กลาง (เซิร์ฟเวอร์ประกอบ)
       const src = lnSourceLabel[d.effectiveSource] || (d.effectiveSource || '');
       document.getElementById('lnStatus').innerHTML = 'ระบบใช้อยู่ตอนนี้: <strong>' + AdminLayout.esc(src) + '</strong>'
         + (d.configHasToken ? ' · เซิร์ฟเวอร์มี Line:ChannelAccessToken ใน config ด้วย' : '')

@@ -52,7 +52,9 @@ public record ContactNotifyOverviewResponse(
     // รอบ 254 WP-11 L2: ปุ่ม "ลิงก์/QR ผูก LINE" (ผ่าน OA ของบริษัท · ผู้รับยินยอมบนมือถือ — Q6) · null = ไม่แสดง
     ContactLineBindOffer? LineBind = null,
     // รอบ 256 (คำตัดสิน 256-2): กล่อง "เพิ่มกลุ่ม LINE" แยกจากลิงก์ผูก 1:1 (บริษัทผู้ให้บริการผูกกลุ่มผ่าน OA กลางได้ แต่ลิงก์ 1:1 ยังผ่าน OA บริษัทเท่านั้น) · null = ไม่แสดง
-    ContactLineGroupBindOffer? LineGroupBind = null);
+    ContactLineGroupBindOffer? LineGroupBind = null,
+    // รอบ 256-2 (ฝ่ายค้าน L2): ผลข้างเคียงของคำสั่งล่าสุดที่ผู้ใช้ต้องทำต่อเอง (เช่น บอท OA กลางยังอยู่ในกลุ่ม) · null = ไม่มี
+    string? ActionNote = null);
 
 public record ContactNotifyComingSoon(string Key, string Label, string Reason);
 

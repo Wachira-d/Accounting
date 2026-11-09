@@ -115,7 +115,7 @@ public class ContactNotifyEndpointsController : ControllerBase
     {
         if (await DenyKeyAsync(companyId, "ยกเลิกช่องทางแจ้งเตือนของผู้ติดต่อ") is { } deny) return Forbid403(deny);
         var r = await _endpoints.UnlinkAsync(companyId, contactId, endpointId, Actor(), ct);
-        return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, r, "ยกเลิกปลายทางแล้ว"));
+        return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, r, r.ActionNote ?? "ยกเลิกปลายทางแล้ว"));
     }
 
     /// <summary>รอบ 254 WP-11 L2 (คำตอบเจ้าของ Q6 ทางลัด): สร้างลิงก์/QR ผูก LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท · ผู้รับยินยอมบนมือถือ) — ด่าน Contact.Edit</summary>

@@ -30,6 +30,28 @@ public class LineCentralGroupPlatformRound256Tests
         Assert.False(LineGroupBindRule.CentralScopeAllowed(Platform, Guid.Empty));
     }
 
+    [Theory]
+    [InlineData("message", "#HeyNextAcc", true)]
+    [InlineData("message", "#ByeNextAcc", true)]
+    [InlineData("leave", null, true)]
+    [InlineData("memberJoined", null, true)]
+    [InlineData("memberLeft", null, true)]
+    [InlineData("message", "ส่งใบเสนอราคาให้หน่อย", false)]   // คุยกันในกลุ่ม ⇒ ไม่แตะฐาน (ฝ่ายค้าน M2)
+    [InlineData("message", null, false)]
+    [InlineData("join", null, false)]
+    [InlineData("unsend", null, false)]
+    public void event_กลุ่มของ_OA_กลางที่ต้องทำอะไร_สองทิศ(string type, string? text, bool expected)
+        => Assert.Equal(expected, LineGroupBindRule.CentralGroupEventActionable(type, text));
+
+    [Fact]
+    public void ยอดใช้_OA_กลาง_แสดง_group_push_และยังไม่อ่าน_push()
+    {
+        var note = NextAccOaQuotaRule.UsageSummary("2026-11", null, null, 12, 3);
+        Assert.Contains("ยังไม่ได้อ่านจาก LINE", note);
+        Assert.Contains("บริษัทผู้ให้บริการ 3", note);
+        Assert.Contains("/ 1,000", NextAccOaQuotaRule.UsageSummary("2026-11", 10, 1000, 0, 0));
+    }
+
     private static ContactRecipientRule.EndpointFacts Ep(string kind, string groupOrNull = "C256group000000000000000000000001")
         => new(Guid.NewGuid(), Platform, Guid.NewGuid(), kind, null, null, kind == NotifyEndpointKind.LineGroup ? groupOrNull : null,
             NotifyEndpointKind.ScopeNextAcc, null, 5, NotifyTopics.Serialize(NotifyTopics.All), true, false, true, LineGroupBindRule.SourceGroupCode,

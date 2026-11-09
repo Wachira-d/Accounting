@@ -94,6 +94,9 @@ public static class LineGroupBindRule
             + "แล้วเชิญ OA ของบริษัทเข้ากลุ่มนี้และพิมพ์ #HeyNextAcc ใหม่";
         /// <summary>รอบ 256 (คำตัดสิน 256-2): ผู้ดูแลบริษัทที่<b>ไม่ใช่</b>บริษัทผู้ให้บริการใส่รหัสที่ OA กลางออก ⇒ ปฏิเสธด้วยประโยคเดิม (N8 · 254-WP11-11 คงอยู่)</summary>
         public const string CentralCodeRefused = "รหัสนี้มาจาก LINE OA กลางของ NextAcc — การส่งเข้ากลุ่มผ่าน OA กลางยังไม่เปิด · เชิญ LINE OA ของบริษัทเข้ากลุ่มแทนแล้วพิมพ์ #HeyNextAcc ใหม่";
+        /// <summary>รอบ 256-2 (ฝ่ายค้าน L2): ยกเลิกกลุ่มที่ผูกผ่าน OA กลางจากบริษัทที่ไม่ใช่ (หรือไม่ใช่แล้ว) บริษัทผู้ให้บริการ — สั่งบอทกลางออกไม่ได้ ⇒ บอกทางเอาออกเอง</summary>
+        public const string CentralBotStays = "ยกเลิกปลายทางแล้ว — แต่บอท LINE OA กลางของ NextAcc ยังอยู่ในกลุ่ม (บริษัทนี้สั่งบอทกลางออกไม่ได้) · "
+            + "เอาออกได้โดยพิมพ์ #ByeNextAcc ในกลุ่ม หรือให้แอดมินกลุ่มลบบอทออกจากกลุ่ม";
         /// <summary>รอบ 256-2: บริษัทผู้ให้บริการ แต่ผู้ดูแลระบบยังไม่ได้ตั้ง token ของ OA กลาง</summary>
         public const string CentralOaNotConfigured = "LINE OA กลางของ NextAcc ยังไม่ได้ตั้งค่า (ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์ → LINE OA กลาง)";
     }
@@ -103,6 +106,15 @@ public static class LineGroupBindRule
     /// ตัวหาผู้รับ (<c>LineGate</c>) · ตอนส่ง (<c>LineNotifyService</c>) · กล่องผูกกลุ่มบนหน้าผู้ติดต่อ · บันทึกกฎ</summary>
     public static bool CentralScopeAllowed(Guid companyId, Guid? platformCompanyId)
         => companyId != Guid.Empty && platformCompanyId is Guid p && p != Guid.Empty && p == companyId;
+
+    /// <summary>รอบ 256-2 (ฝ่ายค้าน M2) — event กลุ่มของ OA กลางที่ต้องทำอะไร (pure): คำสั่ง #HeyNextAcc/#ByeNextAcc · บอทถูกเตะ (leave) · สมาชิกเข้า/ออก ·
+    /// นอกนั้น (คุยกันในกลุ่ม · join · อื่น ๆ) ⇒ false = ไม่แตะฐาน ไม่ประทับกันซ้ำ ไม่อ่านบริษัทผู้ให้บริการ (เหมือนก่อนรอบนี้)</summary>
+    public static bool CentralGroupEventActionable(string? eventType, string? text) => eventType switch
+    {
+        "leave" or "memberJoined" or "memberLeft" => true,
+        "message" => Parse(text) != LineGroupCommand.None,
+        _ => false,
+    };
 
     /// <summary>รอบ 256 — คำตอบของ OA กลางต่อ event ในกลุ่ม/ห้อง<b>เมื่อยังไม่ได้ตั้งบริษัทผู้ให้บริการ</b> (pure): ตอบเฉพาะคำสั่ง #HeyNextAcc/#ByeNextAcc · ข้อความอื่น/เข้ากลุ่ม ⇒ null
     /// (ไม่ทักทายตอนเข้ากลุ่ม — OA กลางอยู่ในกลุ่มทีมของแอดมินด้วย · ไม่อ่าน/ไม่เก็บข้อความกลุ่ม PDPA ม.22) · มีบริษัทผู้ให้บริการ ⇒ <c>ContactLineGroupService.HandleCentralGroupEventAsync</c> (256-2)</summary>

@@ -210,7 +210,8 @@ public class LineCentralGroupRound256DbTests
             Assert.False(string.IsNullOrEmpty(code), hey.Reply);
             Assert.Contains("summary:central", log);   // จำนวนสมาชิกอ่านด้วย OA กลาง
             Assert.DoesNotContain("summary:company", log);
-            var codeRow = await db.LineGroupBindCodes.AsNoTracking().SingleAsync(r => r.CodeHash == LineGroupBindRule.Hash(code[3..]));
+            var codeHash = LineGroupBindRule.Hash(code.Substring(3));   // นอก lambda ของ EF (expression tree ห้าม range — CS8790)
+            var codeRow = await db.LineGroupBindCodes.AsNoTracking().SingleAsync(r => r.CodeHash == codeHash);
             Assert.Equal(NotifyEndpointKind.ScopeNextAcc, codeRow.OaScope);
             Assert.Equal(s.CompanyId, codeRow.CompanyIdHint);
 
@@ -287,7 +288,8 @@ public class LineCentralGroupRound256DbTests
             Assert.Equal(LineGroupBindRule.Replies.CentralCodeRefused, ex.Message);
             Assert.False(await db.ContactNotifyEndpoints.AnyAsync(e => e.CompanyId == other.CompanyId && e.Kind == NotifyEndpointKind.LineGroup));
             // รหัสยังไม่ถูกใช้ — บริษัทผู้ให้บริการยังยืนยันได้
-            Assert.Null((await db.LineGroupBindCodes.AsNoTracking().SingleAsync(r => r.CodeHash == LineGroupBindRule.Hash(code[3..]))).UsedAt);
+            var codeHash = LineGroupBindRule.Hash(code.Substring(3));   // นอก lambda ของ EF (CS8790)
+            Assert.Null((await db.LineGroupBindCodes.AsNoTracking().SingleAsync(r => r.CodeHash == codeHash)).UsedAt);
             // หน้าผู้ติดต่อของบริษัทอื่น: กล่องผูกกลุ่มยังเป็นเส้น OA ของบริษัท (N8)
             var overview = await Resolver(db).GetOverviewAsync(other.CompanyId, other.ContactId, canEdit: true);
             Assert.False(overview!.LineGroupBind!.ViaCentralOa);
@@ -332,25 +334,33 @@ public class LineCentralGroupRound256DbTests
         });
     }
 
+    private static ContactNotifyEndpoint GroupEp(Seed s, string scope, string group) => new()
+    {
+        CompanyId = s.CompanyId, ContactId = s.ContactId, Kind = NotifyEndpointKind.LineGroup, OaScope = scope, OaDestination = CentralBot,
+        LineGroupId = Secrets.Protect(group), LineIdHash = NotifyEndpointKind.LineIdHash(CentralBot, group), MemberCountSnapshot = 7, Verified = true,
+        Source = LineGroupBindRule.SourceGroupCode, TopicsJson = NotifyTopics.Serialize(NotifyTopics.All), LinkedAt = DateTime.UtcNow,
+    };
+
+    private static Task<DateTime?> UnlinkedAtAsync(AccountingDbContext db, Guid id)
+        => db.ContactNotifyEndpoints.AsNoTracking().Where(e => e.Id == id).Select(e => e.UnlinkedAt).SingleAsync();
+
+    /// <summary>ฝ่ายค้าน M1 (PDPA ม.22): #ByeNextAcc = กลุ่มขอเลิก ⇒ ปลดปลายทาง nextacc ของกลุ่มนี้<b>ทุกบริษัท</b> แล้วบอทกลางออก ·
+    /// ทิศตรงข้าม: ปลายทาง scope company ที่ hash ชนกัน + กลุ่มอื่น (ทั้งของบริษัทเดียวกันและบริษัทอื่น) ไม่ถูกแตะ</summary>
     [Fact]
-    public async Task ByeNextAcc_บน_OA_กลาง_ปลดเฉพาะปลายทาง_nextacc_ของบริษัทผู้ให้บริการ_แล้วบอทกลางออก()
+    public async Task ByeNextAcc_บน_OA_กลาง_ปลดปลายทาง_nextacc_ของกลุ่มนี้ทุกบริษัท_แล้วบอทกลางออก()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
         var platform = await SeedAsync(db, "bye " + Guid.NewGuid().ToString("N")[..6]);
         var other = await SeedAsync(db, "bye-other " + Guid.NewGuid().ToString("N")[..6], companyOa: true);
         var group = "C256c" + Guid.NewGuid().ToString("N")[..27];
-        var hash = NotifyEndpointKind.LineIdHash(CentralBot, group);
-        ContactNotifyEndpoint Ep(Seed s, string scope) => new()
-        {
-            CompanyId = s.CompanyId, ContactId = s.ContactId, Kind = NotifyEndpointKind.LineGroup, OaScope = scope, OaDestination = CentralBot,
-            LineGroupId = Secrets.Protect(group), LineIdHash = hash, MemberCountSnapshot = 7, Verified = true, Source = LineGroupBindRule.SourceGroupCode,
-            TopicsJson = NotifyTopics.Serialize(NotifyTopics.All), LinkedAt = DateTime.UtcNow,
-        };
-        var central = Ep(platform, NotifyEndpointKind.ScopeNextAcc);
-        var sameCompanyOtherScope = Ep(platform, NotifyEndpointKind.ScopeCompany);   // แถวผิดรูปที่ hash ชนกัน — ห้ามถูกแตะ
-        var otherCompany = Ep(other, NotifyEndpointKind.ScopeNextAcc);              // บริษัทอื่น — ห้ามถูกแตะ
-        db.ContactNotifyEndpoints.AddRange(central, sameCompanyOtherScope, otherCompany);
+        var otherGroup = "C256d" + Guid.NewGuid().ToString("N")[..27];
+        var central = GroupEp(platform, NotifyEndpointKind.ScopeNextAcc, group);
+        var sameCompanyOtherScope = GroupEp(platform, NotifyEndpointKind.ScopeCompany, group);   // แถวผิดรูปที่ hash ชนกัน — ห้ามถูกแตะ
+        var otherCompany = GroupEp(other, NotifyEndpointKind.ScopeNextAcc, group);              // บริษัทอื่น กลุ่มเดียวกัน — กลุ่มขอเลิก ⇒ ปลดด้วย
+        var platformOtherGroup = GroupEp(platform, NotifyEndpointKind.ScopeNextAcc, otherGroup); // กลุ่มอื่น — ห้ามถูกแตะ
+        var otherCompanyOtherGroup = GroupEp(other, NotifyEndpointKind.ScopeNextAcc, otherGroup);
+        db.ContactNotifyEndpoints.AddRange(central, sameCompanyOtherScope, otherCompany, platformOtherGroup, otherCompanyOtherGroup);
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
         var log = new List<string>();
@@ -363,12 +373,70 @@ public class LineCentralGroupRound256DbTests
             Assert.Contains("leave:central:" + group, log);
             Assert.DoesNotContain(log, l => l.StartsWith("leave:company:"));
             db.ChangeTracker.Clear();
-            Assert.NotNull((await db.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == central.Id)).UnlinkedAt);
-            Assert.Null((await db.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == sameCompanyOtherScope.Id)).UnlinkedAt);
-            Assert.Null((await db.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == otherCompany.Id)).UnlinkedAt);
+            Assert.NotNull(await UnlinkedAtAsync(db, central.Id));
+            Assert.NotNull(await UnlinkedAtAsync(db, otherCompany.Id));
+            Assert.Null(await UnlinkedAtAsync(db, sameCompanyOtherScope.Id));
+            Assert.Null(await UnlinkedAtAsync(db, platformOtherGroup.Id));
+            Assert.Null(await UnlinkedAtAsync(db, otherCompanyOtherGroup.Id));
+            Assert.DoesNotContain("leave:central:" + otherGroup, log);
             // ไม่เหลือการผูก nextacc ⇒ #ByeNextAcc ซ้ำตอบว่ายังไม่ได้ผูก
             Assert.Equal(LineGroupBindRule.Replies.ByeNothing,
                 (await Groups(db, log).HandleCentralGroupEventAsync(CentralBot, Ev("message", group, "#ByeNextAcc"))).Reply);
+        });
+    }
+
+    /// <summary>ฝ่ายค้าน M1: บอทกลางถูกเตะ (leave) ⇒ ปลดทุกบริษัท แม้ไม่ได้ตั้งบริษัทผู้ให้บริการ (ไม่ใช่การออกรหัส — ไม่ติดด่าน) · กลุ่มอื่นไม่ถูกแตะ</summary>
+    [Fact]
+    public async Task บอทกลางถูกเตะ_ปลดทุกบริษัทแม้ไม่ได้ตั้งบริษัทผู้ให้บริการ_กลุ่มอื่นไม่ถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var a = await SeedAsync(db, "kick-a " + Guid.NewGuid().ToString("N")[..6]);
+        var group = "C256e" + Guid.NewGuid().ToString("N")[..27];
+        var otherGroup = "C256f" + Guid.NewGuid().ToString("N")[..27];
+        var kicked = GroupEp(a, NotifyEndpointKind.ScopeNextAcc, group);
+        var untouched = GroupEp(a, NotifyEndpointKind.ScopeNextAcc, otherGroup);
+        db.ContactNotifyEndpoints.AddRange(kicked, untouched);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        await WithPlatformAsync(db, null, async () =>
+        {
+            var r = await Groups(db, new List<string>()).HandleCentralGroupEventAsync(CentralBot, Ev("leave", group));
+            Assert.Null(r.Reply);
+            db.ChangeTracker.Clear();
+            Assert.NotNull(await UnlinkedAtAsync(db, kicked.Id));
+            Assert.Null(await UnlinkedAtAsync(db, untouched.Id));
+        });
+    }
+
+    /// <summary>ฝ่ายค้าน L2: บริษัทที่ไม่ใช่ (แล้ว) บริษัทผู้ให้บริการยกเลิกกลุ่ม nextacc ⇒ บอทกลางไม่ออก + ได้ประโยคบอกทางเอาออก ·
+    /// บริษัทผู้ให้บริการยกเลิกขณะบริษัทอื่นยังผูกกลุ่มเดียวกัน ⇒ บอทไม่ออก (นับทุกบริษัท)</summary>
+    [Fact]
+    public async Task ยกเลิกกลุ่ม_nextacc_จากบริษัทที่ไม่ใช่ผู้ให้บริการ_บอกทางเอาบอทออก_และนับการผูกทุกบริษัทก่อนออก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var platform = await SeedAsync(db, "ul-p " + Guid.NewGuid().ToString("N")[..6]);
+        var formerPlatform = await SeedAsync(db, "ul-f " + Guid.NewGuid().ToString("N")[..6]);
+        var group = "C256g" + Guid.NewGuid().ToString("N")[..27];
+        var shared = "C256h" + Guid.NewGuid().ToString("N")[..27];
+        var former = GroupEp(formerPlatform, NotifyEndpointKind.ScopeNextAcc, group);
+        var platformShared = GroupEp(platform, NotifyEndpointKind.ScopeNextAcc, shared);
+        var formerShared = GroupEp(formerPlatform, NotifyEndpointKind.ScopeNextAcc, shared);
+        db.ContactNotifyEndpoints.AddRange(former, platformShared, formerShared);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var log = new List<string>();
+        await WithPlatformAsync(db, platform.CompanyId, async () =>
+        {
+            var o = await new ContactNotifyEndpointService(db, Resolver(db), Groups(db, log))
+                .UnlinkAsync(formerPlatform.CompanyId, formerPlatform.ContactId, former.Id, Actor);
+            Assert.Equal(LineGroupBindRule.Replies.CentralBotStays, o.ActionNote);
+            Assert.DoesNotContain(log, l => l.StartsWith("leave:"));
+
+            await new ContactNotifyEndpointService(db, Resolver(db), Groups(db, log))
+                .UnlinkAsync(platform.CompanyId, platform.ContactId, platformShared.Id, Actor);
+            Assert.DoesNotContain("leave:central:" + shared, log);   // บริษัทอื่นยังผูกกลุ่มนี้
         });
     }
 }

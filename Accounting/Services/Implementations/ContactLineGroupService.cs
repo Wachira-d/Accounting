@@ -94,12 +94,14 @@ public class ContactLineGroupService : IContactLineGroupService
         return LineGroupEventOutcome.Nothing;
     }
 
-    /// <summary>รอบ 256 (คำตัดสินเจ้าของ 256-2) — event กลุ่ม/ห้องที่ส่งถึง <b>LINE OA กลางของ NextAcc</b> (webhook <c>/api/line-webhook</c>):
+    /// <summary>รอบ 256 (คำตัดสินเจ้าของ 256-2) — event กลุ่ม/ห้องที่ส่งถึง <b>LINE OA กลางของ NextAcc</b> (webhook <c>/api/line-webhook</c>) ·
+    /// ผู้เรียกส่งเฉพาะ event ที่ <see cref="LineGroupBindRule.CentralGroupEventActionable"/> (ข้อความอื่นในกลุ่มไม่แตะฐานเลย):
     /// <list type="bullet">
-    /// <item>ไม่ได้ตั้งบริษัทผู้ให้บริการ ⇒ พฤติกรรมเดิม (ตอบ <see cref="LineGroupBindRule.Replies.CentralOaNotSupported"/> เฉพาะคำสั่ง · N8/254-WP11-11)</item>
-    /// <item>ตั้งแล้ว ⇒ #HeyNextAcc ออกรหัส scope <c>nextacc</c> + <c>CompanyIdHint</c> = บริษัทผู้ให้บริการ (ใช้ได้กับบริษัทนั้นเท่านั้น) · กลุ่มกลางของแอดมิน/เกิน 200 คน ⇒ ปฏิเสธ
-    /// (ตัวเดียวกับเส้น OA บริษัท) · #ByeNextAcc/leave/สมาชิกเข้าออก ⇒ แตะเฉพาะปลายทาง scope <c>nextacc</c> ของบริษัทผู้ให้บริการ</item>
-    /// <item>เข้ากลุ่ม (join) ⇒ ไม่ทัก (OA กลางอยู่ในกลุ่มทีมของแอดมิน) · ข้อความอื่นไม่ประมวล/ไม่เก็บ (PDPA ม.22)</item>
+    /// <item><c>#ByeNextAcc</c> / บอทถูกเตะ (<c>leave</c>) = <b>กลุ่มขอเลิก</b> (PDPA ม.22) ⇒ ปลดทุกปลายทาง scope <c>nextacc</c> ของกลุ่มนี้<b>ทุกบริษัท</b>
+    /// (ไม่ขึ้นกับว่าตั้งบริษัทผู้ให้บริการไว้ไหม — ฝ่ายค้าน M1)</item>
+    /// <item><c>#HeyNextAcc</c> (ออกรหัส) + สมาชิกเข้า/ออก ⇒ เฉพาะเมื่อตั้งบริษัทผู้ให้บริการ (รหัสผูกกับบริษัทนั้น) · ไม่ได้ตั้ง ⇒ ตอบ
+    /// <see cref="LineGroupBindRule.Replies.CentralOaNotSupported"/> เฉพาะคำสั่ง (N8/254-WP11-11)</item>
+    /// <item>เข้ากลุ่ม (join) ⇒ ไม่ทัก (OA กลางอยู่ในกลุ่มทีมของแอดมิน)</item>
     /// </list></summary>
     public async Task<LineGroupEventOutcome> HandleCentralGroupEventAsync(string? destination, JsonElement ev, CancellationToken ct = default)
     {
@@ -108,6 +110,21 @@ public class ContactLineGroupService : IContactLineGroupService
         var srcType = src.TryGetProperty("type", out var st) ? st.GetString() : null;
         var text = type == "message" && ev.TryGetProperty("message", out var msg) && msg.TryGetProperty("type", out var mt) && mt.GetString() == "text"
             && msg.TryGetProperty("text", out var tx) ? tx.GetString() : null;
+        if (!LineGroupBindRule.CentralGroupEventActionable(type, text)) return LineGroupEventOutcome.Nothing;
+        var command = LineGroupBindRule.Parse(text);
+        var groupId = srcType == "group" && src.TryGetProperty("groupId", out var g) ? (g.GetString() ?? "").Trim() : "";
+        var dest = string.IsNullOrWhiteSpace(destination) ? null : destination.Trim();
+        const string scope = NotifyEndpointKind.ScopeNextAcc;
+
+        // กลุ่มขอเลิก (PDPA ม.22) — ก่อนด่านบริษัทผู้ให้บริการ: ปลดทุกบริษัท
+        if (groupId.Length > 0 && (type == "leave" || (type == "message" && command == LineGroupCommand.ByeNextAcc)))
+        {
+            var idHashBye = NotifyEndpointKind.LineIdHash(dest, groupId);
+            var unbound = await UnbindCentralGroupAsync(idHashBye, type == "leave" ? LineGroupBindRule.UnlinkBotRemoved : LineGroupBindRule.UnlinkGroupBye, ct);
+            if (type == "leave") return LineGroupEventOutcome.Nothing;
+            if (unbound > 0) return new LineGroupEventOutcome(LineGroupBindRule.Replies.Bye, true);
+        }
+
         var platformId = await PlatformCompanyLookup.IdAsync(_db, ct);
         if (platformId is not Guid companyId || !LineGroupBindRule.CentralScopeAllowed(companyId, platformId))
         {
@@ -115,37 +132,48 @@ public class ContactLineGroupService : IContactLineGroupService
             return legacy == null ? LineGroupEventOutcome.Nothing : new LineGroupEventOutcome(legacy, false);
         }
         if (srcType == "room")
-            return LineGroupBindRule.Parse(text) == LineGroupCommand.None ? LineGroupEventOutcome.Nothing
+            return command == LineGroupCommand.None ? LineGroupEventOutcome.Nothing
                 : new LineGroupEventOutcome("รองรับเฉพาะกลุ่ม LINE (ห้องแชตหลายคนแบบเก่าผูกไม่ได้) — สร้างกลุ่มแล้วเชิญบอทเข้ากลุ่มแทน", false);
-        if (srcType != "group") return LineGroupEventOutcome.Nothing;
-        var groupId = src.TryGetProperty("groupId", out var g) ? (g.GetString() ?? "").Trim() : "";
-        if (groupId.Length == 0) return LineGroupEventOutcome.Nothing;
-        var dest = string.IsNullOrWhiteSpace(destination) ? null : destination.Trim();
+        if (srcType != "group" || groupId.Length == 0) return LineGroupEventOutcome.Nothing;
         var idHash = NotifyEndpointKind.LineIdHash(dest, groupId);
-        const string scope = NotifyEndpointKind.ScopeNextAcc;
 
         switch (type)
         {
-            case "leave":
-                await UnbindGroupAsync(companyId, idHash, LineGroupBindRule.UnlinkBotRemoved, scope, ct);
-                return LineGroupEventOutcome.Nothing;
             case "memberJoined":
             case "memberLeft":
                 await RefreshMemberCountAsync(companyId, scope, groupId, idHash, ct);
                 return LineGroupEventOutcome.Nothing;
             case "message":
-                switch (LineGroupBindRule.Parse(text))
+                switch (command)
                 {
                     case LineGroupCommand.HeyNextAcc:
                         return new LineGroupEventOutcome(await IssueCodeAsync(companyId, scope, dest, groupId, idHash, ct), false);
                     case LineGroupCommand.ByeNextAcc:
-                        var n = await UnbindGroupAsync(companyId, idHash, LineGroupBindRule.UnlinkGroupBye, scope, ct);
-                        return n > 0 ? new LineGroupEventOutcome(LineGroupBindRule.Replies.Bye, true)
-                            : new LineGroupEventOutcome(LineGroupBindRule.Replies.ByeNothing, false);
+                        return new LineGroupEventOutcome(LineGroupBindRule.Replies.ByeNothing, false);   // ปลดแล้วข้างบน (ไม่เหลือแถว)
                 }
                 return LineGroupEventOutcome.Nothing;
         }
         return LineGroupEventOutcome.Nothing;
+    }
+
+    /// <summary>ฝ่ายค้าน M1 (PDPA ม.22): กลุ่มขอเลิก/เตะบอทกลาง ⇒ ปลดทุกปลายทาง scope <c>nextacc</c> ของกลุ่มนี้<b>ทุกบริษัท</b> — การค้นหาบริษัทข้ามผู้เช่าโดยตั้งใจ
+    /// (ผู้ขอคือเจ้าของกลุ่ม ไม่ใช่บริษัท · groupId+บอทเดียวกัน = กลุ่มเดียวกัน) · การปลดจริงทีละบริษัทผ่าน <see cref="UnbindGroupAsync"/> ตัวเดียว (คิว · audit ต่อบริษัท)</summary>
+    private async Task<int> UnbindCentralGroupAsync(string idHash, string reason, CancellationToken ct)
+    {
+        var companies = await _db.ContactNotifyEndpoints.AsNoTracking()
+            .Where(e => e.Kind == NotifyEndpointKind.LineGroup && e.LineIdHash == idHash && e.UnlinkedAt == null && e.OaScope == NotifyEndpointKind.ScopeNextAcc)
+            .Select(e => e.CompanyId).Distinct().ToListAsync(ct);
+        var n = 0;
+        foreach (var companyId in companies)
+            n += await UnbindGroupAsync(companyId, idHash, reason, NotifyEndpointKind.ScopeNextAcc, ct);
+        return n;
+    }
+
+    /// <summary>ยังมีปลายทาง scope <c>nextacc</c> ที่ใช้งานของกลุ่มนี้ในบริษัทใดไหม (ก่อนสั่งบอทกลางออก — ฝ่ายค้าน L2)</summary>
+    private async Task<bool> CentralGroupStillBoundAsync(string idHash, CancellationToken ct)
+    {
+        return await _db.ContactNotifyEndpoints.AsNoTracking()
+            .AnyAsync(e => e.Kind == NotifyEndpointKind.LineGroup && e.LineIdHash == idHash && e.UnlinkedAt == null && e.OaScope == NotifyEndpointKind.ScopeNextAcc, ct);
     }
 
     /// <summary>ชื่อ/จำนวนสมาชิกตาม OA ที่ผูก (scope) — ตัวเลือก OA เดียวของบริการนี้</summary>
@@ -226,35 +254,35 @@ public class ContactLineGroupService : IContactLineGroupService
         if (!still) await _line.TryLeaveCompanyGroupAsync(companyId, groupId.Trim());
     }
 
-    /// <summary>รอบ 256-2: หลังตอบ #ByeNextAcc บน OA กลาง — ไม่เหลือการผูก (scope nextacc) ของบริษัทผู้ให้บริการกับกลุ่มนี้ ⇒ บอทกลางออก (Q8) ·
-    /// ไม่ได้ตั้งบริษัทผู้ให้บริการ ⇒ ไม่ทำอะไร · กลุ่มกลางของแอดมินถูกกันที่ <c>TryLeaveNextAccGroupAsync</c></summary>
+    /// <summary>รอบ 256-2: หลังตอบ #ByeNextAcc บน OA กลาง — ไม่เหลือปลายทาง scope nextacc ของกลุ่มนี้ในบริษัทใดเลย ⇒ บอทกลางออก (Q8 · กลุ่มขอเลิกเอง
+    /// จึงไม่ขึ้นกับบริษัทผู้ให้บริการ) · กลุ่มกลางของแอดมินถูกกันที่ <c>TryLeaveNextAccGroupAsync</c></summary>
     public async Task LeaveCentralGroupIfUnboundAsync(string? destination, string groupId, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(groupId)) return;
-        var platformId = await PlatformCompanyLookup.IdAsync(_db, ct);
-        if (platformId is not Guid companyId || !LineGroupBindRule.CentralScopeAllowed(companyId, platformId)) return;
         var idHash = NotifyEndpointKind.LineIdHash(string.IsNullOrWhiteSpace(destination) ? null : destination.Trim(), groupId.Trim());
-        var still = await _db.ContactNotifyEndpoints.AsNoTracking()
-            .AnyAsync(e => e.CompanyId == companyId && e.Kind == NotifyEndpointKind.LineGroup && e.LineIdHash == idHash && e.UnlinkedAt == null
-                && e.OaScope == NotifyEndpointKind.ScopeNextAcc, ct);
-        if (!still) await _line.TryLeaveNextAccGroupAsync(groupId.Trim());
+        if (!await CentralGroupStillBoundAsync(idHash, ct)) await _line.TryLeaveNextAccGroupAsync(groupId.Trim());
     }
 
-    public async Task LeaveIfUnboundAsync(Guid companyId, string? protectedGroupId, string? lineIdHash, CancellationToken ct = default, string? oaScope = null)
+    public async Task<string?> LeaveIfUnboundAsync(Guid companyId, string? protectedGroupId, string? lineIdHash, CancellationToken ct = default, string? oaScope = null)
     {
-        if (string.IsNullOrWhiteSpace(lineIdHash) || string.IsNullOrWhiteSpace(protectedGroupId)) return;
-        var still = await _db.ContactNotifyEndpoints.AsNoTracking()
-            .AnyAsync(e => e.CompanyId == companyId && e.Kind == NotifyEndpointKind.LineGroup && e.LineIdHash == lineIdHash && e.UnlinkedAt == null, ct);
-        if (still) return;
-        var plain = _secrets.Unprotect(protectedGroupId);
-        if (string.IsNullOrWhiteSpace(plain)) return;
-        // รอบ 256-2: ปลายทางที่ผูกผ่าน OA กลาง ⇒ บอทกลางออก (เฉพาะบริษัทผู้ให้บริการ — บริษัทอื่นสั่งบอทกลางไม่ได้) · นอกนั้น OA ของบริษัท
+        if (string.IsNullOrWhiteSpace(lineIdHash) || string.IsNullOrWhiteSpace(protectedGroupId)) return null;
+        // รอบ 256-2: ปลายทางที่ผูกผ่าน OA กลาง ⇒ นับปลายทาง nextacc ของกลุ่มนี้<b>ทุกบริษัท</b>ก่อนสั่งบอทกลางออก (ฝ่ายค้าน L2) ·
+        // สั่งได้เฉพาะบริษัทผู้ให้บริการ — บริษัทอื่น (หรือไม่ใช่แล้ว) ⇒ บอทยังอยู่ ⇒ คืนประโยคบอกทางเอาบอทออกเอง (ไม่เงียบ)
         if (oaScope == NotifyEndpointKind.ScopeNextAcc)
         {
-            if (LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct))) await _line.TryLeaveNextAccGroupAsync(plain);
-            return;
+            if (await CentralGroupStillBoundAsync(lineIdHash, ct)) return null;
+            var platformId = await PlatformCompanyLookup.IdAsync(_db, ct);
+            if (!LineGroupBindRule.CentralScopeAllowed(companyId, platformId)) return LineGroupBindRule.Replies.CentralBotStays;
+            var centralPlain = _secrets.Unprotect(protectedGroupId);
+            if (!string.IsNullOrWhiteSpace(centralPlain)) await _line.TryLeaveNextAccGroupAsync(centralPlain);
+            return null;
         }
-        await _line.TryLeaveCompanyGroupAsync(companyId, plain);
+        var still = await _db.ContactNotifyEndpoints.AsNoTracking()
+            .AnyAsync(e => e.CompanyId == companyId && e.Kind == NotifyEndpointKind.LineGroup && e.LineIdHash == lineIdHash && e.UnlinkedAt == null, ct);
+        if (still) return null;
+        var plain = _secrets.Unprotect(protectedGroupId);
+        if (!string.IsNullOrWhiteSpace(plain)) await _line.TryLeaveCompanyGroupAsync(companyId, plain);
+        return null;
     }
 
     // ───────────── ผู้ดูแลบริษัท ─────────────
