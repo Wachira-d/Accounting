@@ -164,40 +164,71 @@ public class LineNotifyService : ILineNotifyService
     public async Task<LinePushResult> TryPushContactAsync(Guid companyId, string oaScope, LineTargetKind target, string to,
         string altText, object flexContents, Guid retryKey)
     {
-        var (denied, token) = await ContactRouteAsync(companyId, oaScope, target, to);
+        var (denied, token, central) = await ContactRouteAsync(companyId, oaScope, target, to);
         if (denied != null) return denied;
-        return await PushCoreAsync(token, FlexPayload(to.Trim(), altText, flexContents),
+        var result = await PushCoreAsync(token, FlexPayload(to.Trim(), altText, flexContents),
             $"contact {(target == LineTargetKind.ContactGroup ? "group" : "user")} {CustomerLineLinkRule.Mask(to)}", retryKey);
+        if (result.Ok && central) await CountCentralGroupPushAsync();
+        return result;
     }
 
     public async Task<LinePushResult> TryPushContactTextAsync(Guid companyId, string oaScope, LineTargetKind target, string to, string text, Guid retryKey)
     {
         if (string.IsNullOrWhiteSpace(text)) return LinePushResult.Fail("ไม่มีข้อความให้ส่ง");
-        var (denied, token) = await ContactRouteAsync(companyId, oaScope, target, to);
+        var (denied, token, central) = await ContactRouteAsync(companyId, oaScope, target, to);
         if (denied != null) return denied;
-        return await PushCoreAsync(token, TextPayload(to.Trim(), LineMessageLimits.Truncate(text, 5000)),
+        var result = await PushCoreAsync(token, TextPayload(to.Trim(), LineMessageLimits.Truncate(text, 5000)),
             $"contact-text {CustomerLineLinkRule.Mask(to)}", retryKey);
+        if (result.Ok && central) await CountCentralGroupPushAsync();
+        return result;
     }
 
-    /// <summary>ด่านเดียวของปลายทางผู้ติดต่อ (flex + text): กลุ่มกลางของแอดมินปฏิเสธเสมอ (Q1(b)) · OA กลางยังปิด (N8) · OA ของบริษัทเท่านั้น</summary>
-    private async Task<(LinePushResult? Denied, string? Token)> ContactRouteAsync(Guid companyId, string oaScope, LineTargetKind target, string to)
+    /// <summary>รอบ 256-2: push เข้ากลุ่มของผู้ติดต่อผ่าน OA กลางสำเร็จ ⇒ +1 ในตัวนับต้นทุน OA กลาง (ล้ม ⇒ log Error ไม่ล้มการส่ง)</summary>
+    private async Task CountCentralGroupPushAsync()
     {
-        if (string.IsNullOrWhiteSpace(to)) return (LinePushResult.Fail("ปลายทาง LINE ไม่มีค่า (ถอดรหัสไม่ได้หรือถูกล้างแล้ว)"), null);
+        if (_db == null) return;
+        await NextAccOaUsage.IncrementAsync(_db, NextAccOaQuotaRule.KindGroupPush, _logger);
+    }
+
+    /// <summary>ด่านเดียวของปลายทางผู้ติดต่อ (flex + text): กลุ่มกลางของแอดมินปฏิเสธเสมอ (Q1(b)) · OA กลางยังปิด (N8) ยกเว้นกลุ่มของบริษัทผู้ให้บริการ
+    /// (<see cref="CentralGroupRouteAsync"/> · คำตัดสิน 256-2) · นอกนั้น OA ของบริษัทเท่านั้น</summary>
+    private async Task<(LinePushResult? Denied, string? Token, bool Central)> ContactRouteAsync(Guid companyId, string oaScope, LineTargetKind target, string to)
+    {
+        if (string.IsNullOrWhiteSpace(to)) return (LinePushResult.Fail("ปลายทาง LINE ไม่มีค่า (ถอดรหัสไม่ได้หรือถูกล้างแล้ว)"), null, false);
         if (target is not (LineTargetKind.TenantMember or LineTargetKind.ContactGroup))
-            return (LinePushResult.Denied(NotificationAudiencePolicy.RuleTenantNotPlatform, NotificationAudiencePolicy.TenantNotPlatformMessage), null);
+            return (LinePushResult.Denied(NotificationAudiencePolicy.RuleTenantNotPlatform, NotificationAudiencePolicy.TenantNotPlatformMessage), null, false);
         // คำตอบเจ้าของ Q1(b): groupId กลางของแอดมิน (ทุกแหล่ง — หน้าแอดมิน + config) ห้ามเป็นปลายทางของผู้ติดต่อ <b>ไม่ว่าผ่าน OA ใด</b> — ด่านชั้นที่สอง
         // (ชั้นแรกคือ ContactRecipientRule.GroupProblem ตอนหาผู้รับ) · กันค่าที่หลุดมาทางอื่น (แถวที่ถูกแก้ในฐาน/ผูกก่อนแอดมินตั้งกลุ่มกลาง)
         if (ContactRecipientRule.IsPlatformCentralGroup(to, await _nextAcc.PlatformGroupIdsAsync()))
             return (LinePushResult.Denied(ContactRecipientRule.RuleCodePlatformGroup,
-                "ปลายทางนี้คือกลุ่ม LINE กลางของระบบ NextAcc (รับเฉพาะเรื่องของระบบ) — ไม่ส่งเรื่องของบริษัท/ผู้ติดต่อเข้ากลุ่มนี้ (คำตัดสินเจ้าของ Q1(b))"), null);
+                "ปลายทางนี้คือกลุ่ม LINE กลางของระบบ NextAcc (รับเฉพาะเรื่องของระบบ) — ไม่ส่งเรื่องของบริษัท/ผู้ติดต่อเข้ากลุ่มนี้ (คำตัดสินเจ้าของ Q1(b))"), null, false);
+        if (oaScope == NotifyEndpointKind.ScopeNextAcc && target == LineTargetKind.ContactGroup)
+        {
+            var (centralDenied, centralToken) = await CentralGroupRouteAsync(companyId);
+            return (centralDenied, centralToken, centralDenied == null);
+        }
         if (oaScope != NotifyEndpointKind.ScopeCompany)
             return (oaScope == NotifyEndpointKind.ScopeNextAcc
                 ? LinePushResult.Denied(ContactRecipientRule.RuleCodeNextAccNotOpen, ContactRecipientRule.NextAccNotOpenReason)
-                : LinePushResult.Fail("ไม่รู้ว่าปลายทางนี้ผูกกับ LINE OA ใด — ไม่ส่ง (ให้ผู้รับผูกใหม่)"), null);
+                : LinePushResult.Fail("ไม่รู้ว่าปลายทางนี้ผูกกับ LINE OA ใด — ไม่ส่ง (ให้ผู้รับผูกใหม่)"), null, false);
         var oa = await ResolveCompanyOaAsync(companyId);
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, target, oa.Configured);
-        if (!route.Allowed) return (LinePushResult.Denied(route.RuleCode, route.Reason!), null);
-        return (null, oa.Token);
+        if (!route.Allowed) return (LinePushResult.Denied(route.RuleCode, route.Reason!), null, false);
+        return (null, oa.Token, false);
+    }
+
+    /// <summary>รอบ 256 (คำตัดสินเจ้าของ 256-2) — กลุ่มของผู้ติดต่อผ่าน <b>OA กลาง</b>: ตรวจบริษัทผู้ให้บริการ<b>ใหม่ตอนส่ง</b> (เปลี่ยนแล้ว ⇒ ปฏิเสธพร้อมเหตุ) ผ่านด่านเดียว
+    /// <see cref="LineGroupBindRule.CentralScopeAllowed"/> → นโยบายเส้นทาง (สวิตช์กลุ่มผ่าน OA กลาง) → token ของ OA กลาง · db null (เทสต์ที่สร้างตรง) = ไม่มีบริษัทผู้ให้บริการ</summary>
+    private async Task<(LinePushResult? Denied, string? Token)> CentralGroupRouteAsync(Guid companyId)
+    {
+        var platformId = _db == null ? null : await PlatformCompanyLookup.IdAsync(_db);
+        var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.NextAccOa, LineTargetKind.ContactGroup, companyOaConfigured: false,
+            centralOaGroupDeliveryEnabled: LineGroupBindRule.CentralScopeAllowed(companyId, platformId));
+        if (!route.Allowed)
+            return (LinePushResult.Denied(ContactRecipientRule.RuleCodeNextAccNotOpen, ContactRecipientRule.CentralGroupNotPlatformReason), null);
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return (LinePushResult.Fail(NextAccLineConfigRule.NotConfiguredMessage), null);
+        return (null, token);
     }
 
     public async Task<LineGroupSummary?> TryGetCompanyGroupSummaryAsync(Guid companyId, string groupId)
@@ -205,6 +236,20 @@ public class LineNotifyService : ILineNotifyService
         if (string.IsNullOrWhiteSpace(groupId)) return null;
         var oa = await ResolveCompanyOaAsync(companyId);
         if (!oa.Configured || string.IsNullOrWhiteSpace(oa.Token)) return null;
+        return await GroupSummaryCoreAsync(oa.Token!, groupId);
+    }
+
+    public async Task<LineGroupSummary?> TryGetNextAccGroupSummaryAsync(string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId)) return null;
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        return await GroupSummaryCoreAsync(token, groupId);
+    }
+
+    /// <summary>ตัวอ่านชื่อ/จำนวนสมาชิกกลุ่มตัวเดียว (OA ตาม token ที่ผู้เรียกเลือก)</summary>
+    private async Task<LineGroupSummary?> GroupSummaryCoreAsync(string token, string groupId)
+    {
         var id = Uri.EscapeDataString(groupId.Trim());
         string? name = null;
         int? count = null;
@@ -214,7 +259,7 @@ public class LineNotifyService : ILineNotifyService
             client.Timeout = PushTimeout;
             using (var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.line.me/v2/bot/group/{id}/summary"))
             {
-                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", oa.Token);
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 using var resp = await client.SendAsync(req);
                 if (resp.IsSuccessStatusCode)
                 {
@@ -224,7 +269,7 @@ public class LineNotifyService : ILineNotifyService
             }
             using (var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.line.me/v2/bot/group/{id}/members/count"))
             {
-                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", oa.Token);
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 using var resp = await client.SendAsync(req);
                 if (resp.IsSuccessStatusCode)
                 {
@@ -246,12 +291,28 @@ public class LineNotifyService : ILineNotifyService
         if (ContactRecipientRule.IsPlatformCentralGroup(groupId, await _nextAcc.PlatformGroupIdsAsync())) return false;
         var oa = await ResolveCompanyOaAsync(companyId);
         if (!oa.Configured || string.IsNullOrWhiteSpace(oa.Token)) return false;
+        return await LeaveGroupCoreAsync(oa.Token!, groupId);
+    }
+
+    public async Task<bool> TryLeaveNextAccGroupAsync(string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId)) return false;
+        // Q1(b): บอทกลางไม่มีวันออกจากกลุ่มกลางของแอดมิน (ทุกแหล่ง)
+        if (ContactRecipientRule.IsPlatformCentralGroup(groupId, await _nextAcc.PlatformGroupIdsAsync())) return false;
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return false;
+        return await LeaveGroupCoreAsync(token, groupId);
+    }
+
+    /// <summary>ตัวสั่งบอทออกจากกลุ่มตัวเดียว (OA ตาม token ที่ผู้เรียกเลือก — ผู้เรียกตรวจกลุ่มกลางของแอดมินแล้ว)</summary>
+    private async Task<bool> LeaveGroupCoreAsync(string token, string groupId)
+    {
         try
         {
             var client = _httpClientFactory.CreateClient();
             client.Timeout = PushTimeout;
             using var req = new HttpRequestMessage(HttpMethod.Post, $"https://api.line.me/v2/bot/group/{Uri.EscapeDataString(groupId.Trim())}/leave");
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", oa.Token);
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
             using var resp = await client.SendAsync(req);
             if (!resp.IsSuccessStatusCode)
                 _logger.LogWarning("บอทออกจากกลุ่ม LINE ({Group}) ไม่สำเร็จ: {Status}", CustomerLineLinkRule.Mask(groupId), (int)resp.StatusCode);

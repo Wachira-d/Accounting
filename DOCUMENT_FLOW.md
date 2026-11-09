@@ -3117,7 +3117,18 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     ตรวจ (`POST …/line-group/preview`) › ติ๊กรับรองสิทธิ์ของสมาชิก + เรื่อง + แสดงยอด (Q5 ค่าตั้งต้นแสดง) › ยืนยัน (`…/line-group/confirm` · Contact.Edit · หลักฐาน PDPA ·
     รหัสใช้ครั้งเดียวใต้ล็อก · audit) ⇒ บอทประกาศในกลุ่ม · `#ByeNextAcc`/บอทถูกเตะ (`leave`) ⇒ ปลด + ล้าง id + คิวค้างข้าม · ไม่เหลือการผูก ⇒ บอทออก (Q8 · ทั้งจากกลุ่มและจากหน้าผู้ติดต่อ) ·
     สมาชิกเข้า/ออก ⇒ อัปเดตจำนวน (เกิน 200 ⇒ ตัวตัดสินฝั่งส่งหยุดเอง) · ข้อความอื่นในกลุ่มไม่ประมวล/ไม่เก็บ · webhook ซ้ำข้าม (`LineWebhookEventsSeen` · ลบ 7 วัน) ·
-    OA กลาง: webhook กลางยังไม่รับเหตุการณ์กลุ่ม + รหัสจาก OA กลางผูกไม่ได้ (รอสวิตช์ L4 + หนังสือจาก LINE — N8)
+    OA กลาง: บริษัทอื่นนอกจากบริษัทผู้ให้บริการ — รหัสจาก OA กลางผูกไม่ได้ (N8 · ตอบ `CentralOaNotSupported` ในกลุ่ม · ยืนยันรหัสกลางได้ประโยคปฏิเสธเดิม)
+  - **กลุ่ม LINE ผ่าน OA กลาง — บริษัทผู้ให้บริการเท่านั้น (รอบ 256 · DECISIONS 256-2)**: บริษัท `SiteSettings.PlatformCompanyId` ไม่มี OA ของตัวเอง (OA หนึ่งตัวมี webhook เดียว = `/api/line-webhook`)
+    ⇒ `LineWebhookController` ส่ง event กลุ่ม/ห้องทุกชนิดเข้า `ContactLineGroupService.HandleCentralGroupEventAsync` (กันซ้ำด้วย `LineWebhookEventsSeen` ก่อน) ·
+    ไม่ได้ตั้งบริษัทผู้ให้บริการ ⇒ ตอบ `CentralOaNotSupported` เฉพาะคำสั่ง (เดิม) · ตั้งแล้ว ⇒ `#HeyNextAcc` ออกรหัส scope `nextacc` + `CompanyIdHint` = บริษัทผู้ให้บริการ
+    (กลุ่มกลางของแอดมิน/เกิน 200 คน/อ่านจำนวนไม่ได้ ⇒ ไม่ออก · จำนวนสมาชิก/ชื่อกลุ่มอ่านด้วย token กลาง `TryGetNextAccGroupSummaryAsync`) · `#ByeNextAcc`/`leave`/สมาชิกเข้าออก
+    แตะเฉพาะปลายทาง scope `nextacc` ของบริษัทผู้ให้บริการ · บอทกลางออกเมื่อไม่เหลือการผูก (`TryLeaveNextAccGroupAsync` · ไม่ออกจากกลุ่มกลางของแอดมิน) ·
+    ยืนยัน: ด่านเดียว `LineGroupBindRule.CentralScopeAllowed` ทั้งตอนตรวจ (`CheckAsync`) และใต้ล็อกก่อน CAS จองรหัส · ปลายทาง `OaScope = nextacc` + ประกาศผ่าน OA กลาง ·
+    ส่ง: ตัวหาผู้รับเปิดเฉพาะ**กลุ่ม** scope `nextacc` เมื่อบริษัทเป็นบริษัทผู้ให้บริการ (`LineOpenness.NextAccGroupOpen` · 1:1 ผ่าน OA กลางยังปิด) ·
+    `LineNotifyService.CentralGroupRouteAsync` ตรวจบริษัทผู้ให้บริการใหม่ตอนส่ง (เปลี่ยนแล้ว ⇒ คิวข้ามพร้อมเหตุ `CentralGroupNotPlatformReason`) → token กลาง ·
+    push ที่ LINE รับ ⇒ `NextAccOaUsageCounters` kind `group-push` +1 · บันทึกกฎ: ติ๊ก "กลุ่ม LINE" อย่างเดียวได้โดยไม่มี OA บริษัท (`RuleProblem(centralGroupOpen)`) ·
+    หน้าผู้ติดต่อ: กล่องผูกกลุ่มใช้ `lineGroupBind` (เซิร์ฟเวอร์บอกให้เชิญ OA กลาง + Basic ID จากค่าตั้ง) แยกจากลิงก์ 1:1 (`lineBind` — ยังผ่าน OA บริษัทเท่านั้น) ·
+    เทสต์ `LineCentralGroupPlatformRound256Tests` · Db `LineCentralGroupRound256DbTests` · ล็อก `_R256C` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 1dd21fd7
   - **ฝ่ายค้าน fix2 (รอบ 254 · DECISIONS 254-WP11-12)**: ยกเลิกปลายทางทุกเส้น (หยุด/ผู้ดูแลยกเลิก/ผูกใหม่แทน/บอทถูกเตะ/#ByeNextAcc/รวมผู้ติดต่อ) ผ่านตัวเดียว
     `NotifyEndpointKind.MarkUnlinked` — ล้าง id + ป้ายที่มาจาก LINE (ชื่อโปรไฟล์/ชื่อกลุ่ม) + `GroupNameSnapshot` (ป้ายที่ผู้ดูแลพิมพ์เองคงไว้) · webhook OA บริษัท: ประมวลเหตุการณ์ล้ม ⇒
     ถอนการประทับ "เห็นแล้ว" + ตอบ 500 ให้ LINE ส่งซ้ำ · ยกเลิกคิว LINE/อีเมลเป็นคำสั่งเดียวแบบมีเงื่อนไข (แถวที่ตัวส่งจองไปไม่ถูกทับ) · แถวที่ผู้ให้บริการรับแล้ว (Sent) ไม่ถูกลดสถานะ
@@ -3125,7 +3136,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - **โควตาแยกช่อง — รอบ 254 L4**: ตัวนับ `NotifyUsageCounters` ต่อ (บริษัท·งวด·ช่อง) · เพดานแยก LINE/อีเมลบนแพ็กเกจ/บริษัท (ว่าง = ไม่แยก ⇒ ก้อนรวมเดิม) ·
     แพ็ก `notify.topup.line` ฿290/1,000 · `notify.topup.email` ฿190/5,000 · อีเมลเอกสารผ่าน SMTP ของ NextAcc ตัดโควตารายเดือน (ด้านบน · ACCOUNT_STRUCTURE §5)
   - **เฝ้าต้นทุน OA กลาง — รอบ 254 L4 (N8)**: `NextAccOaQuotaWatch` รายชั่วโมง (push จาก LINE + ตัวนับ reply ต่อเดือน) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% · ไม่ตัดโควตาผู้เช่า
-  - **ยังไม่ทำ (บอกตรง ๆ)**: กลุ่ม/ส่งผ่าน OA กลาง + สวิตช์ `CentralOaGroupDeliveryEnabled` (ทำพร้อมกัน — DECISIONS 254-WP11-11) ·
+  - **ยังไม่ทำ (บอกตรง ๆ)**: กลุ่ม/ส่งผ่าน OA กลางของบริษัท**อื่น** + สวิตช์ `CentralOaGroupDeliveryEnabled` (ทำพร้อมกัน — DECISIONS 254-WP11-11 · บริษัทผู้ให้บริการเปิดแล้วตาม 256-2) ·
     ชั่วโมงเงียบ · ลิงก์ดูเอกสาร (`DocumentViewLink`) · LINE ของใบแจ้งยอด/50 ทวิ/ใบเสร็จหลังรับชำระ/ลิงก์เซ็น (L6) · กระดิ่งเมื่อล้มซ้ำ ·
     เทสต์ `LineDeliveryRound254Tests` · Db `LineQueueRound254DbTests` · ล็อก R254 (+ เคส R254a–j) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit cee44a3c
   - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·

@@ -55,7 +55,8 @@ public interface ILineNotifyService
 
     /// <summary>รอบ 254 WP-11 L2 — การ์ด Flex ถึง<b>ปลายทางของผู้ติดต่อ</b> (ผู้ใช้ LINE หรือกลุ่มที่ผูกด้วยรหัส) ผ่าน OA ที่ปลายทางผูกไว้ <b>แบบระบุชัด</b>:
     /// <paramref name="oaScope"/> = <c>company</c> ⇒ OA ของบริษัทเท่านั้น (ไม่มี/ปิด ⇒ ปฏิเสธ — ไม่ถอยไป OA กลาง เพราะ userId ผูกกับ OA) ·
-    /// <c>nextacc</c> ⇒ ปฏิเสธ (คำตัดสิน N8 — เปิดพร้อมโควตา LINE แยกช่อง) · ปลายทางเป็นกลุ่มกลางของแอดมิน (ทุกแหล่ง) ⇒ <b>ปฏิเสธเสมอ</b> (คำตอบเจ้าของ Q1(b)) ·
+    /// <c>nextacc</c> ⇒ ปฏิเสธ (คำตัดสิน N8 — เปิดพร้อมโควตา LINE แยกช่อง) <b>ยกเว้น</b>กลุ่มของผู้ติดต่อของบริษัทผู้ให้บริการ (รอบ 256 คำตัดสิน 256-2 — token ของ OA กลาง ·
+    /// ตรวจบริษัทผู้ให้บริการใหม่ทุกครั้งที่ส่ง · นับใน <c>NextAccOaUsageCounters</c>) · ปลายทางเป็นกลุ่มกลางของแอดมิน (ทุกแหล่ง) ⇒ <b>ปฏิเสธเสมอ</b> (คำตอบเจ้าของ Q1(b)) ·
     /// ทุกครั้งส่ง <c>X-Line-Retry-Key</c> = <paramref name="retryKey"/> (ลองใหม่ด้วย key เดิม ⇒ LINE ไม่ส่งซ้ำ)</summary>
     Task<LinePushResult> TryPushContactAsync(Guid companyId, string oaScope, Accounting.Helpers.LineTargetKind target, string to,
         string altText, object flexContents, Guid retryKey);
@@ -69,6 +70,12 @@ public interface ILineNotifyService
 
     /// <summary>รอบ 254 WP-11 L3 (คำตอบเจ้าของ Q8): บอทออกจากกลุ่ม (POST group leave) ผ่าน OA ของบริษัท · ไม่ใช่กลุ่มกลางของแอดมินเท่านั้น</summary>
     Task<bool> TryLeaveCompanyGroupAsync(Guid companyId, string groupId);
+
+    /// <summary>รอบ 256 (คำตัดสิน 256-2): ชื่อกลุ่ม + จำนวนสมาชิกตามที่ <b>OA กลางของ NextAcc</b> เห็น (กลุ่มของผู้ติดต่อของบริษัทผู้ให้บริการ) — ล้ม/ไม่ตั้ง token ⇒ null</summary>
+    Task<LineGroupSummary?> TryGetNextAccGroupSummaryAsync(string groupId);
+
+    /// <summary>รอบ 256 (คำตัดสิน 256-2): บอทกลางออกจากกลุ่มของผู้ติดต่อ (Q8) · <b>ไม่มีวัน</b>สั่งออกจากกลุ่มกลางของแอดมิน</summary>
+    Task<bool> TryLeaveNextAccGroupAsync(string groupId);
 
     /// <summary>รอบ 254 ฝ่ายค้าน M4: ชื่อแสดงของผู้ใช้ LINE ตามที่ <b>OA ของบริษัท</b>เห็น (GET profile) — ให้พนักงานเห็นว่าใครผูก · ไม่มี OA/ล้ม ⇒ null (ไม่ล้มการผูก)</summary>
     Task<string?> TryGetCompanyOaProfileNameAsync(Guid companyId, string lineUserId);

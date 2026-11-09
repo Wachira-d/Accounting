@@ -21,11 +21,13 @@ public class LineWebhookController : ControllerBase
     private readonly ILogger<LineWebhookController> _logger;
     private readonly ICustomerLineLinkService? _customerLinks;
     private readonly ICustomerRelinkInviteService? _relink;
+    /// <summary>รอบ 256 (คำตัดสิน 256-2): กลุ่ม LINE ของผู้ติดต่อของบริษัทผู้ให้บริการผ่าน OA กลาง (#HeyNextAcc/#ByeNextAcc · leave · สมาชิก) + กัน webhook ซ้ำ</summary>
+    private readonly IContactLineGroupService? _groups;
 
     public LineWebhookController(ILineBotService bot, ILogger<LineWebhookController> logger, ICustomerLineLinkService? customerLinks = null,
-        ICustomerRelinkInviteService? relink = null)
+        ICustomerRelinkInviteService? relink = null, IContactLineGroupService? groups = null)
     {
-        _bot = bot; _logger = logger; _customerLinks = customerLinks; _relink = relink;
+        _bot = bot; _logger = logger; _customerLinks = customerLinks; _relink = relink; _groups = groups;
     }
 
     [HttpPost]
@@ -61,21 +63,17 @@ public class LineWebhookController : ControllerBase
                     await _customerLinks.SetBlockedAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, fu.GetString()!, blocked: type == "unfollow");
                     continue;
                 }
-                if (type is not ("message" or "postback")) continue;
-                var src = ev.GetProperty("source");
+                if (!ev.TryGetProperty("source", out var src)) continue;
                 var srcType = src.TryGetProperty("type", out var stp) ? stp.GetString() : null;
                 if (srcType is "group" or "room")
                 {
                     // รอบ 256: เดิมทิ้ง event กลุ่มเงียบ ⇒ ผู้ใช้เชิญ OA กลางเข้ากลุ่มลูกค้าแล้วพิมพ์ #HeyNextAcc ไม่มีอะไรตอบ ·
-                    // ตอบเหตุ + ทางไปต่อเฉพาะคำสั่ง (reply ฟรี · ไม่ผูก/ไม่เก็บอะไร — ส่งกลุ่มผ่าน OA กลางยังปิดตาม N8)
-                    var groupText = type == "message" && ev.TryGetProperty("message", out var gm) && gm.TryGetProperty("type", out var gmt)
-                        && gmt.GetString() == "text" && gm.TryGetProperty("text", out var gtx) ? gtx.GetString() : null;
-                    var groupReply = Accounting.Helpers.LineGroupBindRule.CentralOaGroupReply(type, groupText);
-                    var groupToken = ev.TryGetProperty("replyToken", out var grt) ? grt.GetString() : null;
-                    if (groupReply != null && !string.IsNullOrEmpty(groupToken) && _customerLinks != null)
-                        await _customerLinks.ReplyAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, groupToken, groupReply);
+                    // รอบ 256 (คำตัดสิน 256-2): ทุกชนิด event กลุ่ม (ข้อความ · leave · สมาชิกเข้า/ออก) เดินตัวจัดการเดียว — บริษัทผู้ให้บริการผูก/ปลดกลุ่มผ่าน OA กลาง ·
+                    // ไม่ได้ตั้งบริษัทผู้ให้บริการ ⇒ ตอบเหตุ + ทางไปต่อเฉพาะคำสั่ง (เดิม) · ข้อความอื่นในกลุ่มไม่ประมวล/ไม่เก็บ
+                    await HandleGroupEventAsync(ev, src, type, destination);
                     continue;
                 }
+                if (type is not ("message" or "postback")) continue;
                 if (srcType != "user") continue;
                 var userId = src.GetProperty("userId").GetString() ?? "";
 
@@ -119,6 +117,40 @@ public class LineWebhookController : ControllerBase
             // would loop forever. Log and move on.
         }
         return Ok();
+    }
+
+    /// <summary>รอบ 256 (คำตัดสิน 256-2) — event กลุ่ม/ห้องของ OA กลาง: กัน webhook ซ้ำก่อน (ตารางเดียวกับ webhook OA บริษัท · G10) → ตัวจัดการกลุ่มเดียว
+    /// (<see cref="IContactLineGroupService.HandleCentralGroupEventAsync"/>) → ตอบ (reply ฟรี · นับ reply OA กลาง) → บอทออกหลังตอบ #ByeNextAcc (Q8) ·
+    /// ล้ม ⇒ ถอนการประทับ + log Error (webhook กลางตอบ 200 เสมอ — event 1:1 ในชุดเดียวกันไม่มีตัวกันซ้ำ จึงไม่ขอให้ LINE ส่งทั้งชุดซ้ำ)</summary>
+    private async Task HandleGroupEventAsync(JsonElement ev, JsonElement src, string? type, string? destination)
+    {
+        if (_groups == null)
+        {
+            // ไม่มีตัวจัดการกลุ่ม (เทสต์/ประกอบบางส่วน) ⇒ พฤติกรรมรอบ 256 เดิม: ตอบเหตุเฉพาะคำสั่ง
+            var groupText = type == "message" && ev.TryGetProperty("message", out var gm) && gm.TryGetProperty("type", out var gmt)
+                && gmt.GetString() == "text" && gm.TryGetProperty("text", out var gtx) ? gtx.GetString() : null;
+            var legacyReply = Accounting.Helpers.LineGroupBindRule.CentralOaGroupReply(type, groupText);
+            var legacyToken = ev.TryGetProperty("replyToken", out var lrt) ? lrt.GetString() : null;
+            if (legacyReply != null && !string.IsNullOrEmpty(legacyToken) && _customerLinks != null)
+                await _customerLinks.ReplyAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, legacyToken, legacyReply);
+            return;
+        }
+        var eventId = ev.TryGetProperty("webhookEventId", out var we) ? we.GetString() : null;
+        if (!await _groups.MarkEventSeenAsync(eventId)) return;
+        try
+        {
+            var outcome = await _groups.HandleCentralGroupEventAsync(destination, ev);
+            var replyToken = ev.TryGetProperty("replyToken", out var grt) ? grt.GetString() : null;
+            if (!string.IsNullOrEmpty(outcome.Reply) && !string.IsNullOrEmpty(replyToken) && _customerLinks != null)
+                await _customerLinks.ReplyAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, replyToken, outcome.Reply);
+            if (outcome.LeaveAfterReply && src.TryGetProperty("groupId", out var leaveGroup))
+                await _groups.LeaveCentralGroupIfUnboundAsync(destination, leaveGroup.GetString() ?? "");   // Q8 หลังตอบ
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "LINE webhook OA กลาง: ประมวลเหตุการณ์กลุ่ม {EventId} ล้ม — ถอนการประทับ", eventId);
+            await _groups.UnmarkEventSeenAsync(eventId, CancellationToken.None);
+        }
     }
 
     // NOTE: the authenticated "issue-bind-code" endpoint lives in

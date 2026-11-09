@@ -50,12 +50,18 @@ public record ContactNotifyOverviewResponse(
     // รอบ 251 (WP-07 · F-06): บริษัทใช้ e-Tax by Email ⇒ คำเตือนเรื่องผู้รับใบกำกับ 1 อีเมล (Helpers/EtaxByEmailFormat.ContactRecipientsNote) · null = ไม่ใช่โหมดนี้
     string? EtaxByEmailNote = null,
     // รอบ 254 WP-11 L2: ปุ่ม "ลิงก์/QR ผูก LINE" (ผ่าน OA ของบริษัท · ผู้รับยินยอมบนมือถือ — Q6) · null = ไม่แสดง
-    ContactLineBindOffer? LineBind = null);
+    ContactLineBindOffer? LineBind = null,
+    // รอบ 256 (คำตัดสิน 256-2): กล่อง "เพิ่มกลุ่ม LINE" แยกจากลิงก์ผูก 1:1 (บริษัทผู้ให้บริการผูกกลุ่มผ่าน OA กลางได้ แต่ลิงก์ 1:1 ยังผ่าน OA บริษัทเท่านั้น) · null = ไม่แสดง
+    ContactLineGroupBindOffer? LineGroupBind = null);
 
 public record ContactNotifyComingSoon(string Key, string Label, string Reason);
 
 /// <summary>รอบ 254 WP-11 L2 — <paramref name="Available"/> false ⇒ ปุ่มปิดพร้อม <paramref name="Reason"/></summary>
 public record ContactLineBindOffer(bool Available, string? Reason, int OpenInvites = 0);
+
+/// <summary>รอบ 256 (คำตัดสิน 256-2) — กล่องผูกกลุ่มด้วยรหัส #HeyNextAcc · <paramref name="Instruction"/> = ขั้นตอน (บอกว่าเชิญ OA ตัวไหน) ·
+/// <paramref name="ViaCentralOa"/> = ผ่าน LINE OA กลาง (บริษัทผู้ให้บริการเท่านั้น — หน้าไม่ชี้ไปตั้ง OA ของบริษัท) · <paramref name="Available"/> false ⇒ ล็อกพร้อม <paramref name="Reason"/></summary>
+public record ContactLineGroupBindOffer(bool Available, string? Reason, string Instruction, bool ViaCentralOa);
 
 /// <summary>รอบ 254 WP-11 L2 — ลิงก์ให้ผู้รับเปิดบนมือถือ (หน้า <c>contact-line-join.html</c>) · token แสดงครั้งเดียว (เก็บเฉพาะ hash) · หมดอายุ <paramref name="ExpiresAt"/> ·
 /// <paramref name="Url"/>/<paramref name="QrDataUri"/> null = ยังไม่ได้ตั้ง URL ของระบบ (หน้าเว็บประกอบจาก <paramref name="Path"/> + โดเมนที่เปิดอยู่ และบอกให้ตั้ง)</summary>

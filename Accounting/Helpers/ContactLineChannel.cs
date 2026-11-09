@@ -36,7 +36,10 @@ public static class ContactLineChannel
     public static bool WantsLine(bool lineUser, bool lineGroup) => lineUser || lineGroup;
 
     /// <summary>ด่านตอนบันทึกกฎ — null = ผ่าน · <paramref name="companyOaReady"/> = OA ของบริษัทพร้อมส่ง (เปิด + token/secret ถอดได้)</summary>
-    public static string? RuleProblem(string? trigger, bool email, bool lineUser, bool lineGroup, bool companyOaReady, string? companyOaProblem)
+    /// <param name="centralGroupOpen">รอบ 256 (คำตัดสิน 256-2): บริษัทผู้ให้บริการส่งเข้ากลุ่มของผู้ติดต่อผ่าน LINE OA กลางได้ ⇒ ติ๊ก "กลุ่ม LINE" อย่างเดียวไม่ต้องมี OA ของบริษัท
+    /// (LINE ผู้ใช้ 1:1 ยังต้องมี OA ของบริษัท)</param>
+    public static string? RuleProblem(string? trigger, bool email, bool lineUser, bool lineGroup, bool companyOaReady, string? companyOaProblem,
+        bool centralGroupOpen = false)
     {
         if (!email && !WantsLine(lineUser, lineGroup))
             return "เลือกช่องทางอย่างน้อย 1 ช่อง (อีเมล · LINE ผู้ใช้ของผู้ติดต่อ · กลุ่ม LINE ของผู้ติดต่อ)";
@@ -45,7 +48,7 @@ public static class ContactLineChannel
             return "สลิปเงินเดือนส่งทาง LINE ของผู้ติดต่อไม่ได้ (ข้อมูลส่วนบุคคลของพนักงาน — ส่งได้เฉพาะ 1:1 ถึงพนักงานตามเส้นสลิปเดิม)";
         if (!SupportsLine(trigger))
             return "เรื่องนี้ยังส่งทาง LINE ไม่ได้ (รองรับ: เมื่ออนุมัติเอกสาร · ใกล้/เกินกำหนด · รายการประจำ) — ใบแจ้งยอด/50 ทวิ ทาง LINE อยู่ในเฟสถัดไป · ติ๊กเฉพาะอีเมล";
-        if (!companyOaReady)
+        if (!companyOaReady && !(centralGroupOpen && !lineUser))
             return "ยังไม่มีช่อง LINE ของบริษัท — ตั้ง LINE OA ของบริษัทให้พร้อม (เปิดใช้ + Channel Access Token + Channel Secret) ที่ ตั้งค่า → แจ้งเตือนทาง LINE"
                    + (string.IsNullOrWhiteSpace(companyOaProblem) ? "" : " · " + companyOaProblem)
                    + " (ส่งถึงผู้ติดต่อผ่าน LINE OA กลางของ NextAcc ยังไม่เปิด — รอโควตา LINE แยกช่อง)";

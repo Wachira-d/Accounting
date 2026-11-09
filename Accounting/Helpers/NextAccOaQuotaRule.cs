@@ -17,6 +17,9 @@ public static class NextAccOaQuotaRule
 {
     public const string KindReply = "reply";
     public const string KindPush = "push";
+    /// <summary>รอบ 256 (คำตัดสิน 256-2): push เข้ากลุ่มของผู้ติดต่อของบริษัทผู้ให้บริการผ่าน OA กลาง (ตัวนับของเรา +1 ต่อ push ที่ LINE รับ —
+    /// ยอด push รวมจริงยังมาจาก LINE ใน <see cref="KindPush"/>) · ≤ 16 ตัว (คอลัมน์ Kind varchar(16))</summary>
+    public const string KindGroupPush = "group-push";
 
     /// <summary>เกณฑ์เตือน reply ฟรีต่อเดือน (ยังไม่ยืนยันกับ LINE โดยตรง — NOTIFY §1.3 ⚠) · เปลี่ยนเมื่อได้ตัวเลขทางการ</summary>
     public const int AssumedFreeRepliesPerMonth = 25_000;

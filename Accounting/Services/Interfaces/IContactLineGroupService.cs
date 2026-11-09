@@ -19,6 +19,13 @@ public interface IContactLineGroupService
     /// <summary>หลังตอบ #ByeNextAcc: ไม่เหลือการผูกของกลุ่มนี้กับบริษัทนี้ ⇒ บอทออกจากกลุ่ม (Q8)</summary>
     Task LeaveGroupIfUnboundAsync(Guid companyId, string? destination, string groupId, CancellationToken ct = default);
 
+    /// <summary>รอบ 256 (คำตัดสิน 256-2): webhook <b>OA กลาง</b> — event กลุ่ม/ห้อง · บริษัทผู้ให้บริการผูก/ปลดกลุ่มผ่าน OA กลาง (scope nextacc) ·
+    /// ไม่ได้ตั้งบริษัทผู้ให้บริการ ⇒ ตอบ CentralOaNotSupported เฉพาะคำสั่ง (เดิม)</summary>
+    Task<LineGroupEventOutcome> HandleCentralGroupEventAsync(string? destination, JsonElement ev, CancellationToken ct = default);
+
+    /// <summary>รอบ 256-2: หลังตอบ #ByeNextAcc บน OA กลาง — ไม่เหลือการผูกของบริษัทผู้ให้บริการ ⇒ บอทกลางออก (Q8 · ไม่ออกจากกลุ่มกลางของแอดมิน)</summary>
+    Task LeaveCentralGroupIfUnboundAsync(string? destination, string groupId, CancellationToken ct = default);
+
     /// <summary>กันประมวล webhook ซ้ำ — true = ครั้งแรก (ประมวลได้) · ไม่มี id = true</summary>
     Task<bool> MarkEventSeenAsync(string? webhookEventId, CancellationToken ct = default);
 
@@ -31,6 +38,7 @@ public interface IContactLineGroupService
     /// <summary>ผูกกลุ่มกับผู้ติดต่อ — รหัสใช้ครั้งเดียว · ต้องรับรองสิทธิ์ของสมาชิก · บอทประกาศในกลุ่ม</summary>
     Task<ContactNotifyOverviewResponse> ConfirmAsync(Guid companyId, Guid contactId, ConfirmContactLineGroupRequest request, ContactNotifyActor actor, CancellationToken ct = default);
 
-    /// <summary>หลังยกเลิกปลายทางกลุ่ม: ไม่เหลือการผูกของกลุ่มนี้ (แฮช) กับบริษัทนี้ ⇒ บอทออกจากกลุ่ม (Q8) · <paramref name="protectedGroupId"/> = ค่าเข้ารหัสก่อนถูกล้าง</summary>
-    Task LeaveIfUnboundAsync(Guid companyId, string? protectedGroupId, string? lineIdHash, CancellationToken ct = default);
+    /// <summary>หลังยกเลิกปลายทางกลุ่ม: ไม่เหลือการผูกของกลุ่มนี้ (แฮช) กับบริษัทนี้ ⇒ บอทออกจากกลุ่ม (Q8) · <paramref name="protectedGroupId"/> = ค่าเข้ารหัสก่อนถูกล้าง ·
+    /// รอบ 256-2: <paramref name="oaScope"/> = OA ที่ปลายทางผูก (nextacc ⇒ บอทกลางออก · เฉพาะบริษัทผู้ให้บริการ)</summary>
+    Task LeaveIfUnboundAsync(Guid companyId, string? protectedGroupId, string? lineIdHash, CancellationToken ct = default, string? oaScope = null);
 }

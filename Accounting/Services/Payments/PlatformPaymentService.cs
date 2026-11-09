@@ -53,7 +53,7 @@ public class PlatformPaymentService : IPlatformPaymentService
     { _db = db; _intents = intents; _addons = addons; _providers = providers; }
 
     public Task<Guid?> PlatformCompanyIdAsync(CancellationToken ct = default)
-        => _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.PlatformCompanyId).FirstOrDefaultAsync(ct);
+        => Accounting.Helpers.PlatformCompanyLookup.IdAsync(_db, ct);
 
     public async Task<PaymentProviderConfig?> PlatformConfigAsync(CancellationToken ct = default)
     {

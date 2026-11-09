@@ -1331,7 +1331,8 @@ public class EmailScheduleService : IEmailScheduleService
             ? await _recipients.LineChannelAsync(companyId)
             : ContactRecipientRule.LineOpenness.Closed;
         if (ContactLineChannel.RuleProblem(rule.Trigger, rule.ChannelEmail, rule.ChannelLineUser, rule.ChannelLineGroup,
-                lineChannel.Open && lineChannel.CompanyOaReady, lineChannel.CompanyOaProblem) is string channelErr)
+                lineChannel.Open && lineChannel.CompanyOaReady, lineChannel.CompanyOaProblem,
+                centralGroupOpen: lineChannel.Open && lineChannel.NextAccGroupOpen) is string channelErr)
             throw new BusinessRuleException(channelErr, ContactLineChannel.RuleCode);
         if (rule.Id == Guid.Empty)
         {

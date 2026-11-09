@@ -252,8 +252,10 @@ public static class ContactRecipientRule
     /// <summary>รอบ 254 WP-11 L2 — ช่อง LINE ที่เปิดส่งถึงผู้ติดต่อจริง ต่อขอบเขต OA (ผู้อ่านข้อเท็จจริง: <c>ContactRecipientResolver</c>) ·
     /// <paramref name="Open"/> = ระบบเปิดส่ง LINE ถึงผู้ติดต่อ (L2 = true · ผู้หาผู้รับแบบอีเมลอย่างเดียว = false) ·
     /// <paramref name="CompanyOaReady"/> = บริษัทเปิด LINE + token/secret ถอดได้ · <paramref name="CompanyOaDestination"/> = บอทของ OA บริษัทที่จำไว้ (เทียบกับบอทที่ผูกปลายทาง) ·
-    /// <paramref name="NextAccOpen"/> = ส่งถึงผู้ติดต่อผ่าน OA กลาง (คำตัดสิน N8: <b>ปิด</b>จนมีโควตา LINE แยกช่อง L4)</summary>
-    public sealed record LineOpenness(bool Open, bool CompanyOaReady, string? CompanyOaDestination, string? CompanyOaProblem, bool NextAccOpen)
+    /// <paramref name="NextAccOpen"/> = ส่งถึงผู้ติดต่อผ่าน OA กลาง (คำตัดสิน N8: <b>ปิด</b>จนมีโควตา LINE แยกช่อง L4) ·
+    /// <paramref name="NextAccGroupOpen"/> = รอบ 256 (คำตัดสิน 256-2): <b>กลุ่ม</b>ของผู้ติดต่อผ่าน OA กลาง เปิดเฉพาะบริษัทผู้ให้บริการ (<c>LineGroupBindRule.CentralScopeAllowed</c>)</summary>
+    public sealed record LineOpenness(bool Open, bool CompanyOaReady, string? CompanyOaDestination, string? CompanyOaProblem, bool NextAccOpen,
+        bool NextAccGroupOpen = false)
     {
         public static LineOpenness Closed { get; } = new(false, false, null, null, false);
         /// <summary>ไม่กั้นด้วยความพร้อมของช่อง — ใช้กับ overload แบบ bool (ตัวตัดสินแถวของ L1) เท่านั้น</summary>
@@ -264,6 +266,10 @@ public static class ContactRecipientRule
     public const string NextAccNotOpenReason =
         "ปลายทางนี้ผูกกับ LINE OA กลางของ NextAcc — การส่งถึงผู้ติดต่อผ่าน OA กลางยังไม่เปิด (เปิดพร้อมโควตา LINE แยกช่อง) · ตอนนี้ส่งได้เฉพาะผ่าน LINE OA ของบริษัท";
 
+    /// <summary>รอบ 256 (คำตัดสิน 256-2): กลุ่มที่ผูกผ่าน OA กลาง แต่บริษัทนี้ไม่ใช่ (หรือไม่ใช่แล้ว) บริษัทผู้ให้บริการ — ตัวหาผู้รับ + ด่านตอนส่ง (<c>LineNotifyService</c>) ใช้ประโยคเดียวกัน</summary>
+    public const string CentralGroupNotPlatformReason =
+        "ปลายทางกลุ่มนี้ผูกผ่าน LINE OA กลางของ NextAcc — ส่งได้เฉพาะบริษัทผู้ให้บริการ (คำตัดสิน 256-2) · บริษัทนี้ไม่ใช่บริษัทผู้ให้บริการ ⇒ ไม่ส่ง · ผูกกลุ่มใหม่ผ่าน LINE OA ของบริษัท";
+
     /// <summary>ช่อง LINE ของปลายทางนี้ส่งได้ไหม (null = ได้) — ตัวเดียวทั้งชุดผู้รับ (<see cref="Resolve"/>) และหน้าแท็บช่องทางแจ้งเตือน</summary>
     internal static EndpointStatus? LineGate(EndpointFacts e, LineOpenness line)
     {
@@ -271,7 +277,12 @@ public static class ContactRecipientRule
             return new(false, "line-not-open", "ยังไม่เปิดส่ง",
                 "ระบบยังไม่ส่งข้อความทาง LINE ถึงผู้ติดต่อ (เปิดในเฟส L2/L3) — ปลายทางนี้ถูกเก็บไว้แล้ว", null);
         if (e.OaScope == NotifyEndpointKind.ScopeNextAcc)
-            return line.NextAccOpen ? null : new EndpointStatus(false, "line-not-open", "ยังไม่เปิดส่ง", NextAccNotOpenReason, RuleCodeNextAccNotOpen);
+        {
+            // รอบ 256 (คำตัดสิน 256-2): กลุ่มที่ผูกผ่าน OA กลาง ⇒ ส่งได้เฉพาะเมื่อบริษัทนี้เป็นบริษัทผู้ให้บริการ (ตรวจใหม่ทุกครั้ง — เปลี่ยนบริษัทผู้ให้บริการแล้วหยุดส่ง)
+            if (e.Kind == NotifyEndpointKind.LineGroup && line.NextAccGroupOpen) return null;
+            return line.NextAccOpen ? null : new EndpointStatus(false, "line-not-open", "ยังไม่เปิดส่ง",
+                e.Kind == NotifyEndpointKind.LineGroup ? CentralGroupNotPlatformReason : NextAccNotOpenReason, RuleCodeNextAccNotOpen);
+        }
         if (e.OaScope == NotifyEndpointKind.ScopeCompany)
         {
             if (!line.CompanyOaReady)

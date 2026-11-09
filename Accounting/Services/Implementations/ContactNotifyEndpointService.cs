@@ -164,7 +164,7 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
 
     public async Task<ContactNotifyOverviewResponse> UnlinkAsync(Guid companyId, Guid contactId, Guid endpointId, ContactNotifyActor actor, CancellationToken ct = default)
     {
-        string? groupProtected = null, groupHash = null;
+        string? groupProtected = null, groupHash = null, groupScope = null;
         await using (var tx = await _db.Database.BeginTransactionAsync(ct))
         {
             await LockContactAsync(companyId, contactId, ct);
@@ -177,7 +177,7 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
             if (row.UnlinkedAt != null)
                 throw new BusinessRuleException("ปลายทางนี้ยกเลิกไปแล้ว", "NOTIFY-CONTACT-UNLINKED", 409);
             var now = DateTime.UtcNow;
-            if (row.Kind == NotifyEndpointKind.LineGroup) { groupProtected = row.LineGroupId; groupHash = row.LineIdHash; }
+            if (row.Kind == NotifyEndpointKind.LineGroup) { groupProtected = row.LineGroupId; groupHash = row.LineIdHash; groupScope = row.OaScope; }
             // ส่งให้น้อยที่สุด (PDPA ม.22): ยกเลิกแล้วไม่ใช้ id อีก ⇒ ล้างค่าที่เข้ารหัส + ป้ายจาก LINE + ชื่อกลุ่ม (คงแฮชไว้เป็นร่องรอยว่าเคยผูก) — ตัวยกเลิกเดียว
             NotifyEndpointKind.MarkUnlinked(row, NotifyEndpointKind.UnlinkCompany, now, actor.Email);
             Audit(companyId, contactId, actor, AuditAction.Delete, "unlink", null,
@@ -186,7 +186,7 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
             await tx.CommitAsync(ct);
         }
         // Q8: ไม่เหลือการผูกของกลุ่มนี้กับบริษัทนี้ ⇒ บอทออกจากกลุ่ม (หลัง commit — ออกไม่สำเร็จไม่ย้อนการยกเลิก)
-        if (_groups != null && groupHash != null) await _groups.LeaveIfUnboundAsync(companyId, groupProtected, groupHash, ct);
+        if (_groups != null && groupHash != null) await _groups.LeaveIfUnboundAsync(companyId, groupProtected, groupHash, ct, groupScope);
         return await OverviewAsync(companyId, contactId, ct);
     }
 
