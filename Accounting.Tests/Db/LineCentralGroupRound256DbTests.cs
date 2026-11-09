@@ -191,10 +191,13 @@ public class LineCentralGroupRound256DbTests
         await db.LineQueues.Where(q => q.CompanyId == companyId).ExecuteUpdateAsync(x => x.SetProperty(q => q.ScheduledFor, DateTime.UtcNow.AddMinutes(-1)));
     }
 
-    private static Task<long> GroupPushCountAsync(AccountingDbContext db)
-        => db.NextAccOaUsageCounters.AsNoTracking()
-            .Where(c => c.Period == NextAccOaQuotaRule.PeriodOf(DateTime.UtcNow) && c.Kind == NextAccOaQuotaRule.KindGroupPush)
-            .Select(c => (long?)c.Count).FirstOrDefaultAsync().ContinueWith(t => t.Result ?? 0);
+    private static async Task<long> GroupPushCountAsync(AccountingDbContext db)
+    {
+        var period = NextAccOaQuotaRule.PeriodOf(DateTime.UtcNow);   // คำนวณนอก query — EF แปลเมธอดของเราเป็น SQL ไม่ได้
+        return await db.NextAccOaUsageCounters.AsNoTracking()
+            .Where(c => c.Period == period && c.Kind == NextAccOaQuotaRule.KindGroupPush)
+            .Select(c => (long?)c.Count).FirstOrDefaultAsync() ?? 0;
+    }
 
     [Fact]
     public async Task บริษัทผู้ให้บริการ_HeyNextAcc_บน_OA_กลาง_ได้รหัส_ยืนยันผูก_คิวส่งด้วย_token_กลาง_และนับต้นทุน()
