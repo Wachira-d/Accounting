@@ -175,6 +175,7 @@ public class LineCentralGroupRound256DbTests
         db.ChangeTracker.Clear();
         await Sched(db).UpsertRuleAsync(s.CompanyId, new EmailScheduleRule
         {
+            Id = Guid.Empty,   // BaseEntity สุ่ม Id ⇒ service ถือเป็นการแก้กฎเดิม ("ไม่พบกฎ") — controller ส่ง req.Id เช่นกัน
             CompanyId = s.CompanyId, Trigger = "DocumentDueSoon", OffsetDays = -3, SendAtHour = 0, IsActive = true,
             DocumentType = DocumentType.Invoice.ToString(),
             ChannelEmail = false, ChannelLineUser = false, ChannelLineGroup = true, LineFallbackToEmail = false,
