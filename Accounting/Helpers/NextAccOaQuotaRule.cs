@@ -17,10 +17,20 @@ public static class NextAccOaQuotaRule
 {
     public const string KindReply = "reply";
     public const string KindPush = "push";
+    /// <summary>รอบ 256 (คำตัดสิน 256-2): push เข้ากลุ่มของผู้ติดต่อของบริษัทผู้ให้บริการผ่าน OA กลาง (ตัวนับของเรา +1 ต่อ push ที่ LINE รับ —
+    /// ยอด push รวมจริงยังมาจาก LINE ใน <see cref="KindPush"/>) · ≤ 16 ตัว (คอลัมน์ Kind varchar(16))</summary>
+    public const string KindGroupPush = "group-push";
 
     /// <summary>เกณฑ์เตือน reply ฟรีต่อเดือน (ยังไม่ยืนยันกับ LINE โดยตรง — NOTIFY §1.3 ⚠) · เปลี่ยนเมื่อได้ตัวเลขทางการ</summary>
     public const int AssumedFreeRepliesPerMonth = 25_000;
     public const int WarnPercent = 90;
+
+    /// <summary>รอบ 256-2 (ฝ่ายค้าน L5): ประโยคยอดใช้ OA กลางเดือนนี้บนการ์ด "LINE OA กลาง" ของแอดมิน (server computes · page displays) ·
+    /// push = ยอดที่ LINE รายงาน (null = ยังไม่มีรอบอ่าน) · group-push = push เข้ากลุ่มผู้ติดต่อของบริษัทผู้ให้บริการ (ตัวนับของเรา · ต้นทุนแพลตฟอร์ม ไม่ตัดโควตาผู้เช่า)</summary>
+    public static string UsageSummary(string period, long? push, long? pushLimit, long reply, long groupPush)
+        => $"ยอดใช้ OA กลางเดือน {period}: push {(push is long p ? p.ToString("N0") : "ยังไม่ได้อ่านจาก LINE")}"
+           + (pushLimit is long l ? $" / {l:N0}" : "")
+           + $" · reply {reply:N0} · push เข้ากลุ่มผู้ติดต่อของบริษัทผู้ให้บริการ {groupPush:N0}";
 
     /// <summary>งวด "yyyy-MM" ตามเวลาไทย (ตัวเดียวกับตัวนับโควตาผู้เช่า)</summary>
     public static string PeriodOf(DateTime utc) => AddOnBilling.PeriodOf(utc);

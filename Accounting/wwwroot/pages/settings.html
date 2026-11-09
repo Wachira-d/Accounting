@@ -1121,6 +1121,18 @@
           <span id="lineSecretStatus">—</span>
         </div>
       </div>
+      <!-- ผูก LINE ผู้ติดต่อ/กลุ่มต้องให้ LINE ส่งเหตุการณ์มาที่ webhook ของบริษัท (CustomerLineWebhookController) — เดิมไม่มีที่ไหนบอก URL ⇒ ผูกไม่ได้เงียบ ๆ -->
+      <div class="form-group">
+        <label for="lineWebhookUrl" class="form-label">Webhook URL <span class="text-gray-400" style="font-size:12px">(คัดลอกไปวางใน LINE Developers Console)</span></label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <input type="text" class="form-input" id="lineWebhookUrl" readonly style="flex:1;min-width:240px" />
+          <button type="button" class="btn btn-sm btn-secondary" onclick="Page.copyLineWebhookUrl()">คัดลอก</button>
+        </div>
+        <div class="text-gray-400" style="font-size:11px;margin-top:4px">
+          ที่ Messaging API channel → Webhook settings: วาง URL นี้ · เปิด <b>Use webhook</b> · กด Verify ·
+          ถ้าจะผูก<b>กลุ่ม LINE</b> ของผู้ติดต่อ ให้เปิด <b>Allow bot to join group chats</b> (LINE Official Account Manager → ตั้งค่าการตอบกลับ/บัญชี) ด้วย
+        </div>
+      </div>
 
       <div class="form-group">
         <label for="lineGroupId" class="form-label">LINE กลุ่มของทีม <span class="text-gray-400" style="font-size:12px">(ไม่บังคับ · Group/Room ID — สำหรับแจ้งเตือนกลุ่ม เช่น "ทีมบัญชี")</span></label>
@@ -1481,6 +1493,13 @@
           await this.loadAutoSendSettings();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      async copyLineWebhookUrl() {
+        const el = document.getElementById('lineWebhookUrl');
+        if (!el || !el.value) return;
+        try { await navigator.clipboard.writeText(el.value); Layout.toast('คัดลอก Webhook URL แล้ว'); }
+        catch (_) { el.select(); Layout.toast('กด Ctrl+C เพื่อคัดลอก', 'warning'); }
+      },
+
       async rotateSignSecret() {
         const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
         if (!(await Layout.confirm('ออกรหัสลับใหม่? รหัสเดิมจะใช้ตรวจลายเซ็น webhook ไม่ได้ทันที — ระบบปลายทางต้องเปลี่ยนตาม'))) return;
@@ -2148,7 +2167,7 @@
           if (j && j.success === false) throw new Error(j.message || 'โหลดไม่สำเร็จ');
           const c = j.data || {};
           document.getElementById('lineEnabled').checked = !!c.enabled;
-          { const adv = document.getElementById('lineAdvanced'); if (adv) adv.open = !!c.enabled; }   // รอบ 228 แพ็ก F: ร้านที่ใช้ OA ของตัวเอง ⇒ เปิดส่วนขั้นสูงไว้
+          { const adv = document.getElementById('lineAdvanced'); if (adv) { adv.open = !!c.enabled || location.hash === '#lineAdvanced'; if (location.hash === '#lineAdvanced') adv.scrollIntoView({ block: 'start' }); } }   // รอบ 228 แพ็ก F: ร้านที่ใช้ OA ของตัวเอง ⇒ เปิดส่วนขั้นสูงไว้
           document.getElementById('lineGroupId').value = c.defaultGroupId || '';
           document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
           this._renderLineCustomerChannel(c.customerChannel);
@@ -2159,7 +2178,9 @@
           document.getElementById('lineTokenStatus').textContent = c.hasAccessToken
             ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '⚠️ ยังไม่มีค่า — ใส่เพื่อเปิดใช้';
           document.getElementById('lineSecretStatus').textContent = c.hasChannelSecret
-            ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '— (จำเป็นเฉพาะถ้าจะใช้ webhook)';
+            ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '⚠️ ยังไม่มีค่า — จำเป็นสำหรับผูก LINE/กลุ่ม LINE ของผู้ติดต่อ (ตรวจว่า webhook มาจาก LINE จริง)';
+          { const w = document.getElementById('lineWebhookUrl'); const cid = Layout.getCompanyId();
+            if (w && cid) w.value = `${location.origin}/api/line/webhook/c/${encodeURIComponent(cid)}`; }
           if (c.lastTestedAt) {
             document.getElementById('lineTestResult').innerHTML =
               `<div style="font-size:12px;color:${c.configured ? '#16a34a' : '#dc2626'}">

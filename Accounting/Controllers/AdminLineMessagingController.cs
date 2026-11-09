@@ -14,7 +14,7 @@ namespace Accounting.Controllers;
 /// <param name="OpsAlertsToGroup">รอบ 232 (232-Notify): กลุ่มกลางรับ "เรื่องของระบบ" (ฟอร์มติดต่อ/แชทหน้าเว็บ NextAcc) ไหม — กลุ่มกลาง<b>ไม่</b>รับเหตุการณ์ธุรกิจของผู้เช่าไม่ว่าค่านี้เป็นอะไร</param>
 public record NextAccLineAdminDto(bool HasAccessToken, bool HasChannelSecret, string? BasicId, string? BotUserId, string? GroupId,
     string EffectiveSource, bool ConfigHasToken, string WebhookUrl, string? AddFriendUrl, IReadOnlyList<string> Warnings, bool OpsAlertsToGroup = true,
-    string? GroupPolicyNote = null);
+    string? GroupPolicyNote = null, string? UsageNote = null);
 
 /// <summary>บันทึก — ช่องลับว่าง = คงค่าเดิม (ล้างต้องติ๊ก Clear*) · ช่องไม่ลับ null = คงค่าเดิม · "" = ล้าง · <paramref name="OpsAlertsToGroup"/> null = คงค่าเดิม</summary>
 public record UpdateNextAccLineRequest(string? ChannelAccessToken, string? ChannelSecret, bool ClearAccessToken, bool ClearChannelSecret,
@@ -87,11 +87,18 @@ public class AdminLineMessagingController : ControllerBase
             warnings.Add("ยังไม่มี Basic ID — ปุ่มเพิ่มเพื่อน/ลิงก์ผูก LINE ของลูกค้าและพนักงานแสดงไม่ได้");
         if (!eff.HasToken) warnings.Add(eff.Problem ?? NextAccLineConfigRule.NotConfiguredMessage);
         var baseUrl = await _db.SiteSettings.AsNoTracking().Select(x => x.AppBaseUrl).FirstOrDefaultAsync(ct);
+        // รอบ 256-2 (ฝ่ายค้าน L5): ตัวนับต้นทุน OA กลางเดือนนี้ (ตารางระดับแพลตฟอร์ม — ไม่มีข้อมูลผู้เช่า)
+        var period = NextAccOaQuotaRule.PeriodOf(DateTime.UtcNow);
+        var usage = await _db.NextAccOaUsageCounters.AsNoTracking().Where(c => c.Period == period).ToListAsync(ct);
+        var pushRow = usage.FirstOrDefault(c => c.Kind == NextAccOaQuotaRule.KindPush);
+        var usageNote = NextAccOaQuotaRule.UsageSummary(period, pushRow?.Count, pushRow?.Limit,
+            usage.FirstOrDefault(c => c.Kind == NextAccOaQuotaRule.KindReply)?.Count ?? 0,
+            usage.FirstOrDefault(c => c.Kind == NextAccOaQuotaRule.KindGroupPush)?.Count ?? 0);
         return new NextAccLineAdminDto(hasToken, hasSecret, s.LineMessagingBasicId, s.LineMessagingBotUserId, s.LineMessagingGroupId,
             eff.Source, !string.IsNullOrWhiteSpace(cfg.AccessToken), NextAccLineConfigRule.WebhookUrl(baseUrl ?? _config["App:BaseUrl"]),
             CustomerLineLinkRule.AddFriendUrl(eff.BasicId), warnings, s.LineMessagingOpsAlertsToGroup,
             // รอบ 232: ป้ายนโยบายจากเซิร์ฟเวอร์ — กลุ่มกลางรับเฉพาะเรื่องของระบบ · เหตุการณ์ของผู้เช่าถูกกั้นด้วย NotificationAudiencePolicy เสมอ
-            NotificationAudiencePolicy.TenantNotPlatformMessage);
+            NotificationAudiencePolicy.TenantNotPlatformMessage, usageNote);
     }
 
     [HttpGet]

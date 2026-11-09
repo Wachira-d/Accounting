@@ -114,7 +114,40 @@ public class ContactRecipientResolver : IContactRecipientResolver
             canEdit,
             canEdit ? null : $"ดูได้อย่างเดียว — แก้ช่องทางแจ้งเตือนต้องมีสิทธิ์ {Accounting.Models.Constants.PermissionKeys.ContactEdit.Replace("perm:", "")}",
             EtaxByEmailNote: etaxNote,
-            LineBind: await LineBindOfferAsync(companyId, contact.Id, canEdit, ct));
+            LineBind: await LineBindOfferAsync(companyId, contact.Id, canEdit, ct),
+            LineGroupBind: await LineGroupBindOfferAsync(companyId, canEdit, ct));
+    }
+
+    public async Task<string?> CentralGroupProblemAsync(Guid companyId, CancellationToken ct = default)
+    {
+        if (!LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct)))
+            return ContactRecipientRule.CentralGroupNotPlatformReason;
+        if (_nextAccLine == null) return LineGroupBindRule.Replies.CentralOaNotConfigured;
+        var nx = await _nextAccLine.GetAsync(ct);
+        return nx.HasToken ? null : nx.Problem ?? LineGroupBindRule.Replies.CentralOaNotConfigured;
+    }
+
+    /// <summary>รอบ 256 (คำตัดสิน 256-2): กล่อง "เพิ่มกลุ่ม LINE" — server computes · page displays ·
+    /// บริษัทผู้ให้บริการ ⇒ ผ่าน LINE OA กลาง (ข้อความบอก Basic ID ของ OA กลางจากค่าตั้ง) · บริษัทอื่น ⇒ OA ของบริษัทเท่านั้น (N8 คงเดิม)</summary>
+    private async Task<ContactLineGroupBindOffer> LineGroupBindOfferAsync(Guid companyId, bool canEdit, CancellationToken ct)
+    {
+        var line = await LoadLineAsync(companyId, ct);
+        if (line.NextAccGroupOpen && _nextAccLine != null)
+        {
+            var nx = await _nextAccLine.GetAsync(ct);
+            var oa = string.IsNullOrWhiteSpace(nx.BasicId) ? "LINE OA กลางของ NextAcc" : $"LINE OA กลางของ NextAcc ({nx.BasicId!.Trim()})";
+            var instruction = $"เพิ่มกลุ่ม LINE: เชิญ {oa} เข้ากลุ่ม → พิมพ์ #HeyNextAcc ในกลุ่ม → ใส่รหัสที่บอทตอบ (ไม่ต้องหา Group ID เอง)";
+            if (!canEdit) return new ContactLineGroupBindOffer(false, "ต้องมีสิทธิ์แก้ผู้ติดต่อ", instruction, true);
+            var problem = await CentralGroupProblemAsync(companyId, ct);
+            return problem == null
+                ? new ContactLineGroupBindOffer(true, null, instruction, true)
+                : new ContactLineGroupBindOffer(false, problem, instruction, true);
+        }
+        const string own = "เพิ่มกลุ่ม LINE: เชิญ LINE OA ของบริษัทเข้ากลุ่ม → พิมพ์ #HeyNextAcc ในกลุ่ม → ใส่รหัสที่บอทตอบ (ไม่ต้องหา Group ID เอง)";
+        if (!canEdit) return new ContactLineGroupBindOffer(false, "ต้องมีสิทธิ์แก้ผู้ติดต่อ", own, false);
+        return line.CompanyOaReady
+            ? new ContactLineGroupBindOffer(true, null, own, false)
+            : new ContactLineGroupBindOffer(false, line.CompanyOaProblem ?? "LINE OA ของบริษัทยังไม่พร้อม", own, false);
     }
 
     /// <summary>รอบ 254 WP-11 L2 (คำตอบเจ้าของ Q6 ทางลัด): ปุ่ม "ลิงก์/QR ผูก LINE" — กดได้เมื่อมีสิทธิ์แก้ + OA ของบริษัทพร้อม (ตัวตัดสินเดียว CompanyLineReadiness) ·
@@ -187,7 +220,10 @@ public class ContactRecipientResolver : IContactRecipientResolver
             .FirstOrDefaultAsync(ct);
         var ready = CompanyLineReadiness.Evaluate(s?.LineEnabled ?? false,
             s != null && _secrets.IsUsable(s.LineChannelAccessToken), s != null && _secrets.IsUsable(s.LineChannelSecret));
-        return new ContactRecipientRule.LineOpenness(LineDeliveryOpen, ready.Ready, s?.LineOaDestination, ready.Problem, NextAccTenantDeliveryOpen);
+        // รอบ 256 (คำตัดสิน 256-2): กลุ่มของผู้ติดต่อผ่าน OA กลาง ⇒ เฉพาะบริษัทผู้ให้บริการ (ตัวตัดสินเดียว LineGroupBindRule.CentralScopeAllowed · อ่านใหม่ทุกครั้ง)
+        var centralGroups = LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct));
+        return new ContactRecipientRule.LineOpenness(LineDeliveryOpen, ready.Ready, s?.LineOaDestination, ready.Problem, NextAccTenantDeliveryOpen,
+            NextAccGroupOpen: centralGroups);
     }
 
     private ContactRecipientRule.EndpointFacts ToFacts(ContactNotifyEndpoint r, IReadOnlyDictionary<Guid, DateTime?> consents)

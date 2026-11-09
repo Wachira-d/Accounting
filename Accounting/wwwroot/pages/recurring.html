@@ -470,7 +470,7 @@ const Page = {
     const effective = scope === 'own' ? own : contactPol;
     rows.innerHTML = `<div style="margin-bottom:6px"><label style="font-size:12px">นโยบายของรายการนี้:
         <select class="form-select" id="fPolicyScope" style="display:inline-block;width:auto;margin-left:4px">
-          <option value="clear"${scope === 'clear' ? ' selected' : ''}>ไม่ใช้นโยบาย (หยุดรอคนทุกข้อ — ค่าเริ่มต้น)</option>
+          <option value="clear"${scope === 'clear' ? ' selected' : ''}>ค่าเริ่มต้น (ลูกค้าค้างชำระ ⇒ อนุมัติต่อ + บันทึก · ข้ออื่นหยุดรอคน)</option>
           <option value="inherit"${scope === 'inherit' ? ' selected' : ''}>รับรองให้ใช้นโยบายของผู้ติดต่อ</option>
           <option value="own"${scope === 'own' ? ' selected' : ''}>ตั้งเองสำหรับรายการนี้</option>
         </select></label></div>`
@@ -486,7 +486,7 @@ const Page = {
     if (never) never.innerHTML = '<strong>ปล่อยผ่านไม่ได้ (กฎหมาย/ความถูกต้อง) — หยุดเสมอ:</strong><br>' + (((this._apOpts && this._apOpts.neverReleasable) || [])
       .map(n => `• ${Layout.esc(n.label)} — ${Layout.esc(n.why || '')}`).join('<br>'));
     if (meta) {
-      const who = p => p ? `ตั้งไว้${p.setAt ? 'เมื่อ ' + Layout.date(p.setAt) : ''} · ปล่อย: ${Layout.esc((p.passCodes || []).join(', ') || 'ไม่ปล่อย (หยุดรอคนทุกข้อ)')}` : 'ยังไม่ได้ตั้ง';
+      const who = p => p ? `ตั้งไว้${p.setAt ? 'เมื่อ ' + Layout.date(p.setAt) : ''} · ปล่อย: ${Layout.esc((p.passCodes || []).join(', ') || 'ไม่ปล่อย (หยุดรอคนทุกข้อ)')}` : 'ยังไม่ได้ตั้ง (ใช้ค่าเริ่มต้น: ลูกค้าค้างชำระ ⇒ อนุมัติต่อ + บันทึก)';
       meta.innerHTML = `รายการนี้: ${own && own.inheritContact ? 'รับรองให้ใช้นโยบายของผู้ติดต่อ' + (own.setAt ? ' เมื่อ ' + Layout.date(own.setAt) : '') : who(own) /* html — who() หนีด้วย Layout.esc */}<br>ผู้ติดต่อ: ${who(contactPol) /* html — who() หนีแล้ว */}<br>`
         + 'ผู้ตั้ง/ผู้รับรองต้องมีสิทธิ์อนุมัติเอกสาร · ผู้ตั้งออกจากบริษัท หรือแก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติของรายการหลังตั้ง ⇒ นโยบายหยุดมีผลจนกว่าจะตั้ง/รับรองใหม่ · ทุกครั้งที่ปล่อยลงหมายเหตุบนใบ + บันทึกตรวจสอบ';
     }

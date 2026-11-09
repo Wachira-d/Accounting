@@ -218,7 +218,13 @@ public class ContactLineQueueService : IContactLineQueueService
         await _db.ContactNotifyEndpoints.Where(e => e.Id == ep.Id && e.CompanyId == item.CompanyId)
             .ExecuteUpdateAsync(s => s.SetProperty(e => e.LastFailure, failure), ct);
         if (cls.ChannelBroken)
-            _logger.LogWarning("LINE OA ของบริษัท {Company} ส่งไม่ได้ ({Code}) — แถวคิว {Id}", item.CompanyId, cls.Code, item.Id);
+        {
+            // รอบ 256-2 (ฝ่ายค้าน L7): ปลายทางผ่าน OA กลาง ⇒ บอกว่าเป็น OA กลาง (ผู้ดูแลระบบแก้ token กลาง ไม่ใช่บริษัท)
+            if (ep.OaScope == NotifyEndpointKind.ScopeNextAcc)
+                _logger.LogWarning("LINE OA กลางของ NextAcc ส่งเข้ากลุ่มของบริษัท {Company} ไม่ได้ ({Code}) — แถวคิว {Id}", item.CompanyId, cls.Code, item.Id);
+            else
+                _logger.LogWarning("LINE OA ของบริษัท {Company} ส่งไม่ได้ ({Code}) — แถวคิว {Id}", item.CompanyId, cls.Code, item.Id);
+        }
         await FallbackAsync(item, cls.FallbackEligible, ct);
         return false;
     }

@@ -15237,6 +15237,99 @@ RULES += [
          why=_R254G_WHY + "Q8 ยกเลิกกลุ่มที่หน้าผู้ติดต่อ ⇒ บอทออกเมื่อไม่เหลือการผูก (หลัง commit)"),
 ] + [dict(file="Controllers/ContactNotifyEndpointsController.cs", method=m, must=["DenyKeyAsync("], before=[("DenyKeyAsync(", "_groups.")],
           why=_R254G_WHY + "ตรวจ/ผูกกลุ่ม = เขียนช่องทางของผู้ติดต่อ ⇒ Contact.Edit ก่อน") for m in ["PreviewLineGroup", "ConfirmLineGroup"]]
+# ── รอบ 256 (คำตัดสินเจ้าของ 256-2 · 2026-11-09): บริษัทผู้ให้บริการผูก/ส่งกลุ่ม LINE ของผู้ติดต่อผ่าน OA กลาง — ด่านบริษัทผู้ให้บริการตอนยืนยัน + ตอนส่ง ──
+_R256C_WHY = "รอบ 256 (คำตัดสิน 256-2 · กลุ่มผ่าน OA กลางเฉพาะบริษัทผู้ให้บริการ · บริษัทอื่นคง N8): "
+RULES += [
+    dict(file=_R254_GROUP, method="CheckAsync",
+         must=["row.OaScope == NotifyEndpointKind.ScopeNextAcc", "LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct))",
+               "LineGroupBindRule.Replies.CentralCodeRefused", "ContactRecipientRule.GroupProblem(centralGroupId, row.MemberCount, await _nextAcc.PlatformGroupIdsAsync(ct))"],
+         before=[("LineGroupBindRule.CentralScopeAllowed(", "return new(row, centralGroupId"), ("LineGroupBindRule.CentralScopeAllowed(", "row.CompanyIdHint != companyId")],
+         why=_R256C_WHY + "ยืนยันรหัสจาก OA กลาง: บริษัทอื่นได้ประโยคปฏิเสธเดิม · กลุ่มกลางของแอดมิน/เกิน 200 คนตรวจซ้ำตอนผูก"),
+    dict(file=_R254_GROUP, method="ConfirmAsync",
+         must=["LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct))", "r.OaScope == row.OaScope",
+               "OaScope = endpointScope", "_line.TryPushContactTextAsync(companyId, endpointScope"],
+         before=[("BeginTransactionAsync(", "LineGroupBindRule.CentralScopeAllowed("), ("LineGroupBindRule.CentralScopeAllowed(", "r.UsedAt == null && r.CompanyIdHint == companyId")],
+         why=_R256C_WHY + "ตรวจบริษัทผู้ให้บริการซ้ำใต้ล็อกก่อนจองรหัส (CAS เดิม) · ปลายทาง/ประกาศผูกกับ OA ที่ออกรหัส"),
+    dict(file=_R254_GROUP, method="HandleCentralGroupEventAsync",
+         must=["LineGroupBindRule.CentralGroupEventActionable(type, text)", "UnbindCentralGroupAsync(idHashBye", "PlatformCompanyLookup.IdAsync(_db, ct)",
+               "LineGroupBindRule.CentralScopeAllowed(companyId, platformId)", "LineGroupBindRule.CentralOaGroupReply(", "IssueCodeAsync(companyId, scope",
+               "RefreshMemberCountAsync(companyId, scope", "LineGroupBindRule.Parse(text)"],
+         before=[("CentralGroupEventActionable(", "UnbindCentralGroupAsync("), ("UnbindCentralGroupAsync(", "PlatformCompanyLookup.IdAsync("),
+                 ("LineGroupBindRule.CentralScopeAllowed(", "IssueCodeAsync(")],
+         forbid=["_db.Add(", "SaveChangesAsync(", "_line.TryGetCompanyGroupSummaryAsync("],
+         why=_R256C_WHY + "webhook กลาง: กลุ่มขอเลิก (#ByeNextAcc/leave) ปลดทุกบริษัทก่อนด่าน (PDPA ม.22 · ฝ่ายค้าน M1) · ออกรหัสเฉพาะบริษัทผู้ให้บริการ · ข้อความอื่นไม่แตะฐาน"),
+    dict(file=_R254_GROUP, method="UnbindCentralGroupAsync",
+         must=["e.OaScope == NotifyEndpointKind.ScopeNextAcc", "e.Kind == NotifyEndpointKind.LineGroup && e.LineIdHash == idHash",
+               "UnbindGroupAsync(companyId, idHash, reason, NotifyEndpointKind.ScopeNextAcc"],
+         why=_R256C_WHY + "M1: ค้นข้ามบริษัทเฉพาะ scope nextacc ของกลุ่มนี้ แล้วปลดทีละบริษัทผ่านตัวปลดเดียว (คิว · audit ต่อบริษัท)"),
+    dict(file=_R254_GROUP, method="IssueCodeAsync", must=["SummaryAsync(companyId, scope, groupId)", "OaScope = scope"],
+         why=_R256C_WHY + "อ่านจำนวนสมาชิกด้วย OA ที่ออกรหัส (OA กลาง ⇒ token กลาง) · รหัสบันทึก scope ของ OA นั้น"),
+    dict(file=_R254_GROUP, method="UnbindGroupAsync", must=["(scope == null || e.OaScope == scope)"],
+         why=_R256C_WHY + "#ByeNextAcc/leave บน OA กลางปลดเฉพาะปลายทาง scope nextacc"),
+    dict(file=_R254_GROUP, method="CentralGroupStillBoundAsync",
+         must=["e.OaScope == NotifyEndpointKind.ScopeNextAcc", "e.UnlinkedAt == null", "e.LineIdHash == idHash"],
+         why=_R256C_WHY + "L2: นับปลายทาง nextacc ที่ใช้งานของกลุ่มนี้ทุกบริษัทก่อนสั่งบอทกลางออก"),
+    dict(file=_R254_GROUP, method="LeaveCentralGroupIfUnboundAsync",
+         must=["CentralGroupStillBoundAsync(idHash", "_line.TryLeaveNextAccGroupAsync("],
+         before=[("CentralGroupStillBoundAsync(", "_line.TryLeaveNextAccGroupAsync(")],
+         forbid=["TryLeaveCompanyGroupAsync("],
+         why=_R256C_WHY + "Q8 บอทกลางออกเมื่อไม่เหลือการผูก nextacc ของกลุ่มนี้ในบริษัทใดเลย"),
+    dict(file=_R254_GROUP, method="LeaveIfUnboundAsync",
+         must=["oaScope == NotifyEndpointKind.ScopeNextAcc", "CentralGroupStillBoundAsync(lineIdHash", "LineGroupBindRule.CentralScopeAllowed(companyId, platformId)",
+               "LineGroupBindRule.Replies.CentralBotStays"],
+         before=[("CentralGroupStillBoundAsync(", "LineGroupBindRule.CentralScopeAllowed("), ("LineGroupBindRule.CentralScopeAllowed(", "_line.TryLeaveNextAccGroupAsync(")],
+         why=_R256C_WHY + "บริษัทอื่นสั่งบอทกลางออกไม่ได้ ⇒ บอกทางเอาออกเอง (L2) · นับการผูกทุกบริษัทก่อนออก"),
+    dict(file="Services/Implementations/ContactNotifyEndpointService.cs", method="UnlinkAsync",
+         must=["groupScope = row.OaScope", "_groups.LeaveIfUnboundAsync(companyId, groupProtected, groupHash, ct, groupScope)", "ActionNote = leaveNote"],
+         why=_R256C_WHY + "ยกเลิกกลุ่มที่หน้าผู้ติดต่อ ⇒ บอทของ OA ที่ผูก (กลาง/บริษัท) ออก"),
+    dict(file=_R254_LINE, method="ContactRouteAsync",
+         must=["CentralGroupRouteAsync(companyId)", "oaScope == NotifyEndpointKind.ScopeNextAcc && target == LineTargetKind.ContactGroup"],
+         before=[("IsPlatformCentralGroup(", "CentralGroupRouteAsync(")],
+         why=_R256C_WHY + "กลุ่มกลางของแอดมินถูกกันก่อนเส้น OA กลาง · เฉพาะกลุ่ม (1:1 ผ่าน OA กลางยังปิดตาม N8)"),
+    dict(file=_R254_LINE, method="CentralGroupRouteAsync",
+         must=["PlatformCompanyLookup.IdAsync(_db)", "LineGroupBindRule.CentralScopeAllowed(companyId, platformId)", "centralOaGroupDeliveryEnabled:",
+               "NotificationAudiencePolicy.LineRoute(", "NextAccTokenAsync("],
+         before=[("LineGroupBindRule.CentralScopeAllowed(", "NextAccTokenAsync("), ("PlatformCompanyLookup.IdAsync(", "LineGroupBindRule.CentralScopeAllowed(")],
+         forbid=["ResolveCompanyOaAsync("],
+         why=_R256C_WHY + "ตอนส่ง: ตรวจบริษัทผู้ให้บริการใหม่ทุกครั้ง (เปลี่ยนแล้ว ⇒ ไม่ส่งพร้อมเหตุ) ก่อนหยิบ token ของ OA กลาง"),
+] + [dict(file=_R254_LINE, method=m, must=["CountCentralGroupPushAsync()", "result.Ok && central"],
+          before=[("PushCoreAsync(", "CountCentralGroupPushAsync(")],
+          why=_R256C_WHY + "push เข้ากลุ่มผ่าน OA กลางที่ LINE รับ ⇒ นับในตัวนับต้นทุน OA กลาง") for m in ["TryPushContactAsync", "TryPushContactTextAsync"]] + [
+    dict(file=_R254_LINE, method="CountCentralGroupPushAsync", must=["NextAccOaUsage.IncrementAsync(_db, NextAccOaQuotaRule.KindGroupPush"],
+         why=_R256C_WHY + "ตัวนับ atomic ตัวเดียวของ OA กลาง"),
+    dict(file=_R254_LINE, method="TryLeaveNextAccGroupAsync", must=["ContactRecipientRule.IsPlatformCentralGroup(groupId", "NextAccTokenAsync("],
+         before=[("IsPlatformCentralGroup(", "LeaveGroupCoreAsync(")],
+         why=_R256C_WHY + "บอทกลางไม่มีวันออกจากกลุ่มกลางของแอดมิน"),
+    dict(file="Services/Implementations/ContactRecipientResolver.cs", method="LoadLineAsync",
+         must=["LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct))", "NextAccGroupOpen: centralGroups"],
+         why=_R256C_WHY + "ตัวหาผู้รับเปิดกลุ่มผ่าน OA กลางเฉพาะบริษัทผู้ให้บริการ (อ่านใหม่ทุกครั้ง)"),
+    dict(file="Services/Implementations/ContactRecipientResolver.cs", method="LineGroupBindOfferAsync",
+         must=["line.NextAccGroupOpen", "_nextAccLine.GetAsync(ct)", "nx.BasicId", "line.CompanyOaReady", "CentralGroupProblemAsync(companyId, ct)"],
+         why=_R256C_WHY + "กล่องผูกกลุ่ม: server computes — บริษัทผู้ให้บริการเห็นขั้นตอนเชิญ OA กลาง (Basic ID จากค่าตั้ง)"),
+    dict(file="Helpers/ContactRecipientRule.cs", method="LineGate",
+         must=["e.Kind == NotifyEndpointKind.LineGroup && line.NextAccGroupOpen", "CentralGroupNotPlatformReason"],
+         why=_R256C_WHY + "กลุ่มผ่าน OA กลางส่งได้เมื่อบริษัทเป็นบริษัทผู้ให้บริการ · 1:1 ผ่าน OA กลางยังปิด"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="UpsertRuleAsync",
+         must=["centralGroupOpen: lineChannel.Open && lineChannel.NextAccGroupOpen", "_recipients.CentralGroupProblemAsync(companyId)"],
+         why=_R256C_WHY + "บริษัทผู้ให้บริการติ๊ก 'กลุ่ม LINE' ได้โดยไม่มี OA ของบริษัท (ห้ามเก็บกฎที่ส่งไม่ได้)"),
+    dict(file="Controllers/LineWebhookController.cs", method="Receive",
+         must=["HandleGroupEventAsync(ev, src, type, destination)"],
+         before=[("HandleGroupEventAsync(", "_bot.HandleMessageAsync(")],
+         why=_R256C_WHY + "event กลุ่มทุกชนิดของ OA กลางเดินตัวจัดการเดียว (ก่อนกรองชนิดข้อความ 1:1)"),
+    dict(file="Controllers/LineWebhookController.cs", method="HandleGroupEventAsync",
+         must=["_groups.MarkEventSeenAsync(", "_groups.HandleCentralGroupEventAsync(destination, ev", "_groups.LeaveCentralGroupIfUnboundAsync(",
+               "_groups.UnmarkEventSeenAsync(", "LineGroupBindRule.CentralOaGroupReply(", "LineGroupBindRule.CentralGroupEventActionable(type, groupText)"],
+         must_re=[r"try\s*\{\s*if\s*\(\s*!\s*await\s+_groups\.MarkEventSeenAsync\("],
+         before=[("CentralGroupEventActionable(", "_groups.MarkEventSeenAsync("), ("_groups.MarkEventSeenAsync(", "_groups.HandleCentralGroupEventAsync("),
+                 ("_groups.HandleCentralGroupEventAsync(", "_groups.LeaveCentralGroupIfUnboundAsync(")],
+         why=_R256C_WHY + "เฉพาะ event ที่ต้องทำอะไร (M2) · ประทับกันซ้ำใน try ต่อ event (G10) · บอทออกหลังตอบ (Q8)"),
+    dict(file="Services/Implementations/ContactRecipientResolver.cs", method="CentralGroupProblemAsync",
+         must=["LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct))", "nx.HasToken"],
+         why=_R256C_WHY + "L6: ช่องกลุ่มผ่าน OA กลางพร้อม = บริษัทผู้ให้บริการ + token กลาง (ตัวเดียวของกล่องผูกกลุ่ม + ด่านบันทึกกฎ)"),
+    dict(file="Controllers/AdminLineMessagingController.cs", method="BuildAsync",
+         must=["NextAccOaQuotaRule.UsageSummary(", "NextAccOaQuotaRule.KindGroupPush"],
+         why=_R256C_WHY + "L5: ตัวนับ group-push อ่านได้บนการ์ด LINE OA กลางของแอดมิน"),
+]
 _R254Q_WHY = "รอบ 254 WP-11 L4 (โควตาแยกช่อง · Q3/Q4 · N7/N9): "
 _R254_QUOTA = "Services/Implementations/NotifyQuotaService.cs"
 RULES += [
@@ -15349,6 +15442,26 @@ RULES += [
 ]
 
 REVIEWER_CASES += [
+    # รอบ 256-2: ถอดด่านบริษัทผู้ให้บริการใต้ล็อกตอนยืนยัน ⇒ ต้องฟ้อง
+    ("R256a", "ConfirmAsync", "&& !LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct)))", "&& false)", True),
+    # รอบ 256-2: เปิดกลุ่มผ่าน OA กลางให้ทุกบริษัทตอนส่ง ⇒ ต้องฟ้อง
+    ("R256b", "CentralGroupRouteAsync", "centralOaGroupDeliveryEnabled: LineGroupBindRule.CentralScopeAllowed(companyId, platformId));",
+     "centralOaGroupDeliveryEnabled: true);", True),
+    # รอบ 256-2: ถอดด่านตอนตรวจรหัสกลาง ⇒ ต้องฟ้อง
+    ("R256c", "CheckAsync", "if (!LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct)))", "if (false)", True),
+    # รอบ 256-2: เปิด LINE 1:1 ผ่าน OA กลางไปด้วย (ไม่ใช่เฉพาะกลุ่ม) ⇒ ต้องฟ้อง
+    ("R256d", "LineGate", "if (e.Kind == NotifyEndpointKind.LineGroup && line.NextAccGroupOpen) return null;", "if (line.NextAccGroupOpen) return null;", True),
+    # รอบ 256-2: #ByeNextAcc บน OA กลางปลดทุก scope ⇒ ต้องฟ้อง
+    ("R256e", "UnbindGroupAsync", "&& (scope == null || e.OaScope == scope))", ")", True),
+    # ฝ่ายค้าน L2: สั่งบอทกลางออกโดยไม่นับการผูกของบริษัทอื่น ⇒ ต้องฟ้อง
+    ("R256g", "LeaveIfUnboundAsync", "if (await CentralGroupStillBoundAsync(lineIdHash, ct)) return null;", "", True),
+    # ฝ่ายค้าน M2: ทุก event กลุ่มแตะฐาน (ประทับ/อ่านบริษัทผู้ให้บริการ) ⇒ ต้องฟ้อง
+    ("R256h", "HandleGroupEventAsync", "if (!Accounting.Helpers.LineGroupBindRule.CentralGroupEventActionable(type, groupText)) return;", "", True),
+    # ฝ่ายค้าน M1: #ByeNextAcc ปลดเฉพาะบริษัทผู้ให้บริการ (ข้ามการปลดทุกบริษัท) ⇒ ต้องฟ้อง
+    ("R256i", "HandleCentralGroupEventAsync", "var unbound = await UnbindCentralGroupAsync(", "var unbound = await NoUnbindAsync(", True),
+    # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .CentralScopeAllowed( ⇒ ต้องไม่ฟ้อง
+    ("R256f", "CentralGroupRouteAsync", "LineGroupBindRule.CentralScopeAllowed(companyId, platformId));",
+     "LineGroupBindRule\n                .CentralScopeAllowed(companyId, platformId));", False),
     # Q1(b): ถอดด่านกลุ่มกลางของแอดมินที่ตัวส่ง ⇒ ต้องฟ้อง
     ("R254a", "ContactRouteAsync", "if (ContactRecipientRule.IsPlatformCentralGroup(to, await _nextAcc.PlatformGroupIdsAsync()))",
      "if (false)", True),
@@ -15363,7 +15476,7 @@ REVIEWER_CASES += [
     # ผูกโดยไม่ตรวจบอท ⇒ ต้องฟ้อง
     ("R254f", "TryRedeemAsync", "if (ContactRecipientRule.OaChanged(invite.OaDestination, destination))", "if (false)", True),
     # เปิด OA กลางให้ผู้ติดต่อเงียบ ๆ ⇒ ต้องฟ้อง
-    ("R254g", "LoadLineAsync", "ready.Problem, NextAccTenantDeliveryOpen);", "ready.Problem, true);", True),
+    ("R254g", "LoadLineAsync", "ready.Problem, NextAccTenantDeliveryOpen,", "ready.Problem, true,", True),
     # เก็บ userId ดิบ ⇒ ต้องฟ้อง
     ("R254h", "TryRedeemAsync", "LineUserId = _secrets.Protect(uid),", "LineUserId = uid,", True),
     # ถอดด่านบันทึกกฎ ⇒ ต้องฟ้อง
