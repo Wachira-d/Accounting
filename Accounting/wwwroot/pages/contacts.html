@@ -1230,12 +1230,15 @@
             ${o.lineBind.openInvites > 0 ? `<button type="button" class="btn btn-sm btn-ghost text-red" style="margin-left:6px" onclick="Page.revokeLineInvites()">ยกเลิกลิงก์ที่ยังเปิด (${Number(o.lineBind.openInvites)})</button>` : ''}
             <div id="notifyLineInviteOut" style="margin-top:6px"></div></div>` : '';
         // รอบ 254 WP-11 L3: ผูกกลุ่ม LINE ด้วยรหัสที่บอทตอบเมื่อพิมพ์ #HeyNextAcc ในกลุ่ม (เงื่อนไขเดียวกับลิงก์ผูก — OA ของบริษัทพร้อม · สิทธิ์แก้)
-        const groupBind = o.lineBind && o.lineBind.available ? `<div style="margin:8px 0;border:1px dashed #cbd5e1;border-radius:6px;padding:8px">
-            <div style="font-size:12px;color:#334155;margin-bottom:4px">เพิ่มกลุ่ม LINE: เชิญ LINE OA ของบริษัทเข้ากลุ่ม → พิมพ์ <b>#HeyNextAcc</b> ในกลุ่ม → ใส่รหัสที่บอทตอบ</div>
+        // เดิมซ่อนทั้งกล่องเมื่อ OA ยังไม่พร้อม ⇒ ผู้ใช้ไม่รู้ว่ามีทางผูกกลุ่ม — แสดงเสมอ แต่ล็อก + บอกเหตุ (จากเซิร์ฟเวอร์) + ทางไปต่อ (CLAUDE.md §A ห้าม silent no-op)
+        const groupReady = !!(o.lineBind && o.lineBind.available);
+        const groupBind = o.lineBind ? `<div style="margin:8px 0;border:1px dashed #cbd5e1;border-radius:6px;padding:8px">
+            <div style="font-size:12px;color:#334155;margin-bottom:4px">เพิ่มกลุ่ม LINE: เชิญ LINE OA ของบริษัทเข้ากลุ่ม → พิมพ์ <b>#HeyNextAcc</b> ในกลุ่ม → ใส่รหัสที่บอทตอบ (ไม่ต้องหา Group ID เอง)</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap">
-              <input type="text" class="form-input" id="notifyGroupCode" placeholder="GB-XXXXXXXX" maxlength="20" style="max-width:180px" aria-label="รหัสผูกกลุ่ม">
-              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.previewLineGroup()">ตรวจรหัส</button>
+              <input type="text" class="form-input" id="notifyGroupCode" placeholder="GB-XXXXXXXX" maxlength="20" style="max-width:180px" aria-label="รหัสผูกกลุ่ม" ${groupReady ? '' : 'disabled'}>
+              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.previewLineGroup()" ${groupReady ? '' : 'disabled'}>ตรวจรหัส</button>
             </div>
+            ${groupReady ? '' : `<div style="font-size:11px;color:#64748b;margin-top:4px">${esc(o.lineBind.reason || 'LINE OA ของบริษัทยังไม่พร้อม')} — ตั้งที่ <a href="/pages/settings.html#lineAdvanced" style="color:#0369a1">ตั้งค่า → LINE → ตั้งค่าขั้นสูง</a> (รหัสเชื่อม · รหัสลับ · Webhook URL)</div>`}
             <div id="notifyGroupPreview" style="margin-top:6px"></div></div>` : '';
         const topicOpts = (o.topics || []).map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('');
         panel.innerHTML = `
