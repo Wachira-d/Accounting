@@ -63,7 +63,20 @@ public class LineWebhookController : ControllerBase
                 }
                 if (type is not ("message" or "postback")) continue;
                 var src = ev.GetProperty("source");
-                if (src.GetProperty("type").GetString() != "user") continue; // ignore group/room for now
+                var srcType = src.TryGetProperty("type", out var stp) ? stp.GetString() : null;
+                if (srcType is "group" or "room")
+                {
+                    // รอบ 256: เดิมทิ้ง event กลุ่มเงียบ ⇒ ผู้ใช้เชิญ OA กลางเข้ากลุ่มลูกค้าแล้วพิมพ์ #HeyNextAcc ไม่มีอะไรตอบ ·
+                    // ตอบเหตุ + ทางไปต่อเฉพาะคำสั่ง (reply ฟรี · ไม่ผูก/ไม่เก็บอะไร — ส่งกลุ่มผ่าน OA กลางยังปิดตาม N8)
+                    var groupText = type == "message" && ev.TryGetProperty("message", out var gm) && gm.TryGetProperty("type", out var gmt)
+                        && gmt.GetString() == "text" && gm.TryGetProperty("text", out var gtx) ? gtx.GetString() : null;
+                    var groupReply = Accounting.Helpers.LineGroupBindRule.CentralOaGroupReply(type, groupText);
+                    var groupToken = ev.TryGetProperty("replyToken", out var grt) ? grt.GetString() : null;
+                    if (groupReply != null && !string.IsNullOrEmpty(groupToken) && _customerLinks != null)
+                        await _customerLinks.ReplyAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, groupToken, groupReply);
+                    continue;
+                }
+                if (srcType != "user") continue;
                 var userId = src.GetProperty("userId").GetString() ?? "";
 
                 string? reply = null;

@@ -87,5 +87,15 @@ public static class LineGroupBindRule
                + $"เรื่องที่ส่ง: {string.Join(", ", topics)} · พิมพ์ #ByeNextAcc เพื่อยกเลิก";
         public const string Bye = "ยกเลิกการผูกกลุ่มนี้แล้ว — บอทจะไม่ส่งการแจ้งเอกสารเข้ากลุ่มนี้อีกและจะออกจากกลุ่ม";
         public const string ByeNothing = "กลุ่มนี้ยังไม่ได้ผูกกับผู้ติดต่อใด";
+        /// <summary>รอบ 256: คำสั่งกลุ่มที่ส่งถึง LINE OA กลางของ NextAcc — เดิม webhook กลางทิ้ง event กลุ่มเงียบ ⇒ ผู้ใช้พิมพ์แล้วไม่มีอะไรตอบ ·
+        /// การส่งเข้ากลุ่มผ่าน OA กลางยังไม่เปิด (คำตัดสิน N8 · 254-WP11-11) ⇒ บอกเหตุ + ทางไปต่อ</summary>
+        public const string CentralOaNotSupported = "ℹ️ บอทนี้คือ LINE OA กลางของ NextAcc — ยังผูกกลุ่มผ่าน OA กลางไม่ได้\n"
+            + "ทางที่ใช้ได้: ผู้ขายตั้ง LINE OA ของบริษัทเอง (NextAcc › ตั้งค่า › LINE › ตั้งค่าขั้นสูง: รหัสเชื่อม · รหัสลับ · Webhook URL) "
+            + "แล้วเชิญ OA ของบริษัทเข้ากลุ่มนี้และพิมพ์ #HeyNextAcc ใหม่";
     }
+
+    /// <summary>รอบ 256 — คำตอบของ OA กลางต่อ event ในกลุ่ม/ห้อง (pure): ตอบเฉพาะคำสั่ง #HeyNextAcc/#ByeNextAcc · ข้อความอื่น/เข้ากลุ่ม ⇒ null
+    /// (ไม่ทักทายตอนเข้ากลุ่ม — OA กลางอยู่ในกลุ่มทีมของแอดมินด้วย · ไม่อ่าน/ไม่เก็บข้อความกลุ่ม PDPA ม.22)</summary>
+    public static string? CentralOaGroupReply(string? eventType, string? text)
+        => eventType == "message" && Parse(text) != LineGroupCommand.None ? Replies.CentralOaNotSupported : null;
 }
