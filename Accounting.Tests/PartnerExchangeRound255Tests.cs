@@ -82,7 +82,8 @@ public class PartnerExchangeRound255Tests
         // ไฟล์ที่ลงลายมือชื่อไม่ถึงผู้รับ = ผู้รับไม่มีต้นฉบับ ⇒ ต้องใช้กระดาษ
         Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.Of(true, true, signedFileDelivered: false));
         Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.Of(true, false, false));
-        Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.Of(sourceIsTaxInvoice: false, true, true));
+        // รอบ 257 ชุด 3 (D-H4): ต้นทางไม่ใช่ใบกำกับ ⇒ "รอใบกำกับ" (เดิม PaperRequired ⇒ กดยืนยันต้นฉบับของใบแจ้งหนี้ได้)
+        Assert.Equal(PartnerInputVatEvidence.AwaitingTaxInvoice, PartnerInputVatEvidence.Of(sourceIsTaxInvoice: false, true, true));
         foreach (var a in new[] { true, false }) foreach (var b in new[] { true, false }) foreach (var c in new[] { true, false })
             Assert.True(PartnerInputVatEvidence.BlocksClaim(PartnerInputVatEvidence.Of(a, b, c)));
         // ค่าที่ปลดด่านมาจากผู้รับยืนยันเท่านั้น

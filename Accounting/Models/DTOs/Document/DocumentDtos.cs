@@ -1114,7 +1114,10 @@ public record DocumentResponse(
     /// null = ไม่ใช่ใบจากคู่ค้า</summary>
     string? PartnerInputVatEvidence = null,
     /// <summary>ป้ายไทยของ <see cref="PartnerInputVatEvidence"/> (server computes)</summary>
-    string? PartnerInputVatEvidenceLabel = null);
+    string? PartnerInputVatEvidenceLabel = null,
+    /// <summary>รอบ 257 ชุด 3 (D-M5): ใบนี้รอผู้รับกด "ได้รับต้นฉบับแล้ว" ไหม (ตัวตัดสินเดียว <c>PartnerInputVatEvidence.ConfirmProblem</c> == null) ·
+    /// null = ไม่ใช่ใบจากคู่ค้า · หน้าเอกสารแสดงลิงก์ไปปุ่มยืนยัน (หน้าคู่ค้า) ตามค่านี้</summary>
+    bool? PartnerNeedsOriginal = null);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);

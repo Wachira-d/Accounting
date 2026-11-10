@@ -26,7 +26,9 @@
 
     <div class="pt-card">
       <h3>🤝 ส่งคำขอเชื่อม</h3>
-      <p class="pt-muted">ระบบตอบ "ส่งคำขอแล้ว" ทุกกรณี (ไม่บอกว่าเลขภาษีนี้ใช้ NextAcc หรือไม่) — คู่ค้าจะเห็นคำขอเมื่อเขาเปิดให้คู่ค้าค้นเจอ</p>
+      <p class="pt-muted">ระบบตอบ "ส่งคำขอแล้ว" ทุกกรณี (ไม่บอกว่าเลขภาษีนี้ใช้ NextAcc หรือไม่) · <strong>คู่ค้าต้องเปิด "ให้คู่ค้าค้นเจอ" ในหน้านี้ของเขาก่อน</strong>
+        (ค่าตั้งต้นปิด) — ถ้ายังไม่เปิด คำขอจะ<strong>ไม่ถูกเก็บไว้</strong> และเขาจะไม่เห็นภายหลัง ⇒ แจ้งคู่ค้าให้เปิดก่อน แล้วส่งคำขออีกครั้ง ·
+        คำขอที่ถึงจริงจะแจ้งเตือนเจ้าของบริษัทปลายทาง</p>
       <div class="pt-grid2">
         <div><label for="ptTax" class="form-label">เลขประจำตัวผู้เสียภาษีของคู่ค้า (13 หลัก)</label><input id="ptTax" class="form-input" maxlength="17" autocomplete="off"></div>
         <div><label for="ptBranch" class="form-label">รหัสสาขา (5 หลัก · ว่าง = ไม่ระบุ)</label><input id="ptBranch" class="form-input" maxlength="5" autocomplete="off"></div>
@@ -112,7 +114,9 @@ const Page = {
         <td>${Layout.esc(limit)}</td>
         <td>${pending ? `<button class="btn btn-primary btn-sm" data-act="accept" data-id="${Layout.esc(p.id)}">ยอมรับ</button>
            <button class="btn btn-secondary btn-sm" data-act="reject" data-id="${Layout.esc(p.id)}">ปฏิเสธ</button>` : ''}
-          ${p.status === 'Accepted' ? `<button class="btn btn-secondary btn-sm" data-act="limit" data-id="${Layout.esc(p.id)}">ตั้งเพดาน</button>` : ''}</td></tr>`;
+          ${p.status === 'Accepted' ? `<button class="btn btn-secondary btn-sm" data-act="limit" data-id="${Layout.esc(p.id)}">ตั้งเพดาน</button>
+           <button class="btn btn-danger btn-sm" data-act="suspend" data-id="${Layout.esc(p.id)}">ระงับการเชื่อม</button>` : ''}
+          ${p.status === 'Suspended' ? `<span class="pt-muted">เชื่อมใหม่: ส่งคำขอเชื่อมด้านบนอีกครั้ง</span>` : ''}</td></tr>`;
     });
     document.getElementById('ptBody').innerHTML = rows.length ? rows.join('')
       : '<tr><td colspan="4" class="text-center text-gray-400">ยังไม่มีคู่ค้าที่เชื่อม</td></tr>';
@@ -128,10 +132,11 @@ const Page = {
         <td>${Layout.esc(d.supplierInvoiceNumber || '-')}</td>
         <td class="text-right">${Layout.esc(Layout.money(d.totalAmount))}</td>
         <td>${Layout.esc(d.statusLabel || d.status)}</td>
-        <td><span class="pt-badge ${d.needsOriginal ? 'pt-warn' : 'pt-ok'}">${Layout.esc(d.inputVatEvidenceLabel || '')}</span></td>
+        <td><span class="pt-badge ${d.inputVatBlocked ? 'pt-warn' : 'pt-ok'}">${Layout.esc(d.inputVatEvidenceLabel || '')}</span></td>
         <td><a class="btn btn-secondary btn-sm" href="/pages/documents.html?openDoc=${encodeURIComponent(d.id)}">เปิด</a>
           ${d.needsOriginal ? `<button class="btn btn-primary btn-sm" data-orig="${Layout.esc(d.id)}" data-kind="Paper">ได้รับต้นฉบับกระดาษแล้ว</button>` : ''}
-          ${d.needsOriginal && d.inputVatEvidence === 'AwaitingTimestamp' ? `<button class="btn btn-secondary btn-sm" data-orig="${Layout.esc(d.id)}" data-kind="StampedEtax">ได้ e-Tax ที่ประทับเวลาแล้ว</button>` : ''}</td></tr>`).join('');
+          ${d.needsOriginal && d.canConfirmStampedEtax ? `<button class="btn btn-secondary btn-sm" data-orig="${Layout.esc(d.id)}" data-kind="StampedEtax">ได้ e-Tax ที่ประทับเวลาแล้ว</button>` : ''}
+          ${!d.needsOriginal && d.confirmBlockedReason ? `<div class="pt-muted">${Layout.esc(d.confirmBlockedReason)}</div>` : ''}</td></tr>`).join('');
       dBody.querySelectorAll('[data-orig]').forEach(b => b.addEventListener('click', () => this.confirmOriginal(b.dataset.orig, b.dataset.kind)));
     }
 
@@ -168,6 +173,15 @@ const Page = {
         const reason = await Layout.promptText({ title: 'ปฏิเสธคำขอเชื่อม', label: 'เหตุผล (ไม่บังคับ)' });
         if (reason === null) return;
         await api.rejectPartner(id, reason);
+      } else if (act === 'suspend') {
+        // รอบ 257 ชุด 3 (D-H5): ระงับ = หยุดเส้นอัตโนมัติทุกเส้น · ทางกลับ = ส่งคำเชิญใหม่ · ข้อความผลมาจากเซิร์ฟเวอร์
+        const reason = await Layout.promptText({ title: 'ระงับการเชื่อมกับคู่ค้ารายนี้',
+          label: 'เหตุผล (ไม่บังคับ) — หยุดส่ง/รับเอกสาร ใบซื้อร่าง และ 50 ทวิ ผ่านระบบ · เอกสารที่ส่งไปแล้วยังอยู่' });
+        if (reason === null) return;
+        const r = await api.suspendPartner(id, reason);
+        Layout.toast((r && r.message) || 'ระงับแล้ว', 'success');
+        await this.load();
+        return;
       } else if (act === 'limit') {
         const v = await Layout.promptText({ title: 'เพดานยอดใบซื้อร่างจากคู่ค้ารายนี้', label: 'ยอดสูงสุดต่อใบ (บาท · ว่าง = ไม่จำกัด)' });
         if (v === null) return;

@@ -21485,7 +21485,9 @@ public partial class DocumentService : IDocumentService
             d.Lines.Where(l => !l.IsDeleted).Select(l => l.Account != null ? l.Account.AccountCode : null)),
         // รอบ 255 ฝ่ายค้าน M1: echo หลักฐานภาษีซื้อของใบจากคู่ค้า + ป้ายไทยตัวเดียว
         PartnerInputVatEvidence: d.PartnerInputVatEvidence,
-        PartnerInputVatEvidenceLabel: d.PartnerInputVatEvidence == null ? null : Accounting.Helpers.PartnerInputVatEvidence.Label(d.PartnerInputVatEvidence));
+        PartnerInputVatEvidenceLabel: d.PartnerInputVatEvidence == null ? null : Accounting.Helpers.PartnerInputVatEvidence.Label(d.PartnerInputVatEvidence),
+        // รอบ 257 ชุด 3 (D-M5): ป้าย + ทางไปปุ่ม "ได้รับต้นฉบับแล้ว" บนหน้าเอกสาร (ตัวตัดสินเดียวกับปุ่มบนหน้าคู่ค้า)
+        PartnerNeedsOriginal: d.PartnerInputVatEvidence == null ? null : Accounting.Helpers.PartnerInputVatEvidence.ConfirmProblem(d.PartnerInputVatEvidence) == null);
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)
