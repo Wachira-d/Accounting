@@ -64,6 +64,26 @@ public static class RecurringSchedule
             : null;
     }
 
+    /// <summary>รอบ 257 ชุด 4 (A-H3 · คำตัดสิน 257-4-1): เทมเพลตสมุดรายวันห้ามสร้างล่วงหน้า — ใบสำคัญลงวันที่วันที่สร้าง ⇒ สร้างล่วงหน้า = ลงงวดบัญชีผิด
+    /// (TFRS for NPAEs: บันทึกในงวดที่เกิดรายการ) · null = ใช้ได้ · ข้อความ = ปฏิเสธ (ไม่ตัดเป็น 0 เงียบ)</summary>
+    public static string? JournalLeadDaysError(string? templateType, int leadDays)
+        => leadDays > 0 && string.Equals(templateType, "journal", StringComparison.OrdinalIgnoreCase)
+            ? $"รายการสมุดรายวันสร้างล่วงหน้าไม่ได้ (ได้ {leadDays} วัน) — ใบสำคัญลงวันที่วันที่สร้าง จะลงงวดบัญชีก่อนวันของงวด · ตั้งเป็น 0"
+            : null;
+
+    /// <summary>รอบ 257 ชุด 4 (A-M9): วันที่ของเอกสาร/ใบสำคัญที่รายการประจำสร้าง = วันนี้ตามปฏิทินไทย (00:00 UTC ของวันไทย) —
+    /// เดิมส่ง <c>DateTime.UtcNow</c> ⇒ รันช่วง 00:00–07:00 น. วันที่ 1 ได้วันที่ของเดือนก่อน (ใบสำคัญลงงวดก่อน · ใบกำกับย้ายเดือนภาษี)</summary>
+    public static DateTime DocumentDateUtc(DateTime nowUtc) => ThaiDate.CalendarDateUtc(nowUtc);
+
+    /// <summary>รอบ 257 ชุด 4 (A L13): สร้างล่วงหน้าทำให้วันที่เอกสาร (= วันที่สร้าง) อยู่คนละเดือนกับวันของงวดไหม — ใบกำกับภาษีลงเดือนภาษีตามวันที่ออก (§78/§78/1)
+    /// ⇒ ภาษีขายย้ายไปเดือนก่อน · ผู้ใช้ต้องรู้ก่อนเปิด (แผงความพร้อมเตือน ไม่บล็อก)</summary>
+    public static bool LeadDaysMovesVatMonth(DateTime periodDate, int leadDays)
+    {
+        if (leadDays <= 0) return false;
+        var created = CreateAt(periodDate, leadDays);
+        return created.Year != periodDate.Year || created.Month != periodDate.Month;
+    }
+
     /// <summary>วันที่ระบบสร้างเอกสารของงวด = วันของงวด − สร้างล่วงหน้า (ค่าติดลบ/เกินเพดานในแถวเก่าถูกตัดเข้าช่วง)</summary>
     public static DateTime CreateAt(DateTime periodDate, int leadDays) => periodDate.AddDays(-Math.Clamp(leadDays, 0, MaxLeadDays));
 

@@ -414,6 +414,8 @@ public class Round250Wp02Tests
         PublicCheckoutEnabled = true, SellablePlanCount = 2, PrivacyPublished = true, TermsPublished = true, RefundPublished = true,
         EnglishForAllPublished = true, ContactInfoSet = true, SystemEmailConfigured = true, SelfTestPaid = true, LiveConfirmed = true,
         OutboundCheckOk = true, OutboundCheckMessage = "HTTP 404", OutboundCheckAt = DateTime.UtcNow,
+        // รอบ 257 ชุด 4 (E-H1): ข้อ LINE OA กลาง
+        PlatformCompanySet = true, PlatformCompanyName = "บริษัทผู้ให้บริการ", CentralOaHasToken = true, CentralOaHasSecret = true, CentralOaHasBasicId = true,
     };
 
     [Fact]
@@ -423,7 +425,7 @@ public class Round250Wp02Tests
         Assert.Equal(0, r.FailCount);
         Assert.Equal(PlatformGoLiveChecklist.Manual, Assert.Single(r.Items, i => i.Code == "SEND-URLS").Status);
         Assert.Contains("https://acc.example.th/pricing.html", Assert.Single(r.Items, i => i.Code == "SEND-URLS").Why);
-        Assert.Equal(11, r.Items.Count);
+        Assert.Equal(15, r.Items.Count);   // รอบ 257 ชุด 4 (E-H1): + LINE 4 ข้อ
     }
 
     [Fact]

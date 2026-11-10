@@ -77,6 +77,19 @@ public static class LinePushOutcome
         return new(LinePushVerdict.Failed, CodeUnknown, why, false, false, true);
     }
 
+    /// <summary>รอบ 257 ชุด 4 (C LOW): กระดิ่ง "ข้อความ LINE OA ของเดือนหมด" — ป้ายแถวแจ้งเตือน (กันซ้ำต่อเดือน) + ข้อความ</summary>
+    public const string MonthlyLimitAlertEntity = "LineOaMonthlyLimit";
+    public const string MonthlyLimitAlertTitle = "LINE OA ของบริษัทใช้ข้อความของเดือนนี้หมดแล้ว";
+    public const string MonthlyLimitAlertMessage = "LINE ปฏิเสธการส่งเพราะ OA ของบริษัทใช้โควตาข้อความของเดือนนี้ครบ — การ์ดเอกสารถึงผู้ติดต่อทาง LINE จะล้ม "
+        + "(ถอยไปอีเมลตามกฎที่ตั้งไว้) จนถึงต้นเดือนหน้า · เพิ่มโควตาได้ที่ LINE Official Account Manager (แพ็กเกจของ OA) · แจ้งครั้งเดียวต่อเดือน";
+
+    /// <summary>ต้นเดือนตามปฏิทินไทยของ <paramref name="nowUtc"/> เป็นเวลาจริง (UTC) — ขอบกันซ้ำ "ครั้งเดียวต่อเดือน" (วันที่ 1 เวลา 00:00 น. ไทย = 17:00 UTC ของวันก่อน)</summary>
+    public static DateTime AlertMonthStartUtc(DateTime nowUtc)
+    {
+        var th = DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc).AddHours(7);
+        return new DateTime(th.Year, th.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddHours(-7);
+    }
+
     /// <summary>หน่วงก่อนลองใหม่ครั้งที่ <paramref name="attempt"/> (1 = ครั้งแรกที่ล้ม): 1 → 5 → 30 นาที</summary>
     public static TimeSpan Backoff(int attempt) => attempt switch
     {

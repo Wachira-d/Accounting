@@ -56,6 +56,12 @@ public static class BankReceiptAutoSettle
     public enum Verdict { None, Suggest, AutoSettle }
 
     /// <summary>ค่าที่ประทับใน <c>BankTransaction.AutoSettleVerdict</c> (คำตัดสิน + ผลหลังลงมือ)</summary>
+    /// <summary>รอบ 257 ชุด 4 (A L12): ข้อความใต้สวิตช์ "ปิดหนี้อัตโนมัติ" — เปิดแล้วรอบถัดไปไล่บรรทัดเงินเข้าที่ยังไม่จับคู่<b>ย้อนหลัง</b> <paramref name="lookbackDays"/> วัน
+    /// (รวมที่เคยเป็น "เสนอ" ไว้) ⇒ ใบที่เข้าเกณฑ์ถูกบันทึกรับชำระ — เดิมเปิดแล้วระบบปิดย้อนหลังโดยไม่บอก</summary>
+    public static string EnableNote(int lookbackDays)
+        => $"เปิดแล้ว รอบถัดไประบบจะไล่บรรทัดเงินเข้าที่ยังไม่จับคู่ย้อนหลัง {lookbackDays} วัน (รวมรายการที่เคยเสนอให้ยืนยันไว้) "
+           + "และบันทึกรับชำระใบที่เข้าเกณฑ์ทันที — ดูผลจำลองก่อนเปิด";
+
     public static class Stamps
     {
         public const string None = "None";

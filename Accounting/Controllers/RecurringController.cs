@@ -114,7 +114,8 @@ public class RecurringController : ControllerBase
         if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, item.DocumentType ?? DocumentType.Invoice))
             return Forbid403<AutoApprovePolicyView?>("ตั้งนโยบายอนุมัติได้เฉพาะผู้มีสิทธิ์อนุมัติเอกสารชนิดนี้ (Document.Approve) — ขอผู้ดูแลบริษัทเพิ่มสิทธิ์ หรือให้ผู้มีสิทธิ์ตั้งแทน");
         var result = await _autopilot.SetRecurringPolicyAsync(companyId, id, request, userId);
-        return Ok(new ApiResponse<AutoApprovePolicyView?>(true, result, request.Clear ? "ล้างนโยบายแล้ว — รายการนี้ไม่ปล่อยคำเตือนใด ๆ"
+        // รอบ 257 ชุด 4 (A-H2): "ค่าเริ่มต้น" หลังรอบ 256 = ปล่อยลูกค้าค้างชำระ (เดิม toast บอก "ไม่ปล่อยคำเตือนใด ๆ" ผิด) — ข้อความจากตัวโหลดเดียว
+        return Ok(new ApiResponse<AutoApprovePolicyView?>(true, result, request.Clear ? Accounting.Services.Implementations.RecurringApprovePolicyLoader.DefaultConfirmedMessage
             : request.Inherit ? "รับรองแล้ว — รายการนี้ใช้นโยบายของผู้ติดต่อ (แก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติภายหลัง ต้องรับรองใหม่)" : "บันทึกนโยบายอนุมัติแล้ว"));
     }
 

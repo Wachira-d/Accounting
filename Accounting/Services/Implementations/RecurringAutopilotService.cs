@@ -64,7 +64,12 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             PostPayEmailOptions: AutopilotSettingsResolver.TriStates.Select(s => new AutopilotOption(s,
                 AutopilotSettingsResolver.TriStateLabel(s, "ส่งใบเสร็จถึงลูกค้าอัตโนมัติหลังรับชำระ", "ไม่ส่งใบเสร็จอัตโนมัติ"))).ToList(),
             PostPayPartialOptions: AutopilotSettingsResolver.TriStates.Select(s => new AutopilotOption(s,
-                AutopilotSettingsResolver.TriStateLabel(s, "ส่งทุกงวดที่รับ (รวมชำระบางส่วน)", "ส่งเฉพาะงวดที่ชำระครบ"))).ToList());
+                AutopilotSettingsResolver.TriStateLabel(s, "ส่งทุกงวดที่รับ (รวมชำระบางส่วน)", "ส่งเฉพาะงวดที่ชำระครบ"))).ToList(),
+            // รอบ 257 ชุด 4 (A-H2 · E-M3): ค่าตั้งต้นจากตัวตัดสินเดียว (AutoApprovePolicy.RecurringDefault) — หน้าไม่มีสำเนารหัส
+            RecurringDefaultPassCodes: AutoApprovePolicy.RecurringDefault(null).PassCodes,
+            RecurringDefaultNote: RecurringApprovePolicyLoader.DefaultNote,
+            DefaultChangeNotice: RecurringApprovePolicyLoader.DefaultChangeNotice,
+            DefaultChangeNoticeKey: RecurringApprovePolicyLoader.DefaultChangeNoticeKey);
     }
 
     // ═══════════════ ความพร้อม / ทดลองรัน ═══════════════
@@ -223,14 +228,17 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         if ((AutopilotSettingsResolver.ValidateTriState(d.PostPayEmailReceipt) ?? AutopilotSettingsResolver.ValidateTriState(d.PostPayIncludePartial)) is { } badTri)
             throw new BusinessRuleException(badTri, AutopilotSettingsResolver.RuleCode);
         string? storedPolicy = null;
+        // รอบ 257 ชุด 4 (A-M4): ร่างของรายการเดิม ⇒ ลายนิ้วมือของค่าตั้งต้นที่ประทับไว้ (แผงบอกล่วงหน้าว่าแก้แล้วต้องรับรองใหม่) · ร่างใหม่ = null (ประทับตอนสร้าง)
+        string? storedDefaultHash = null;
         bool? storedPostPayEmail = null, storedPostPayPartial = null;
         if (recurringId is { } rid)
         {
             var stored = await _db.RecurringTransactions.AsNoTracking()
                 .Where(r => r.Id == rid && r.CompanyId == companyId)
-                .Select(r => new { r.AutoApprovePolicyJson, r.PostPayEmailReceipt, r.PostPayIncludePartial })
+                .Select(r => new { r.AutoApprovePolicyJson, r.PostPayEmailReceipt, r.PostPayIncludePartial, r.DefaultPolicyBindingHash })
                 .FirstOrDefaultAsync(ct);
             storedPolicy = stored?.AutoApprovePolicyJson;
+            storedDefaultHash = stored?.DefaultPolicyBindingHash;
             storedPostPayEmail = stored?.PostPayEmailReceipt;
             storedPostPayPartial = stored?.PostPayIncludePartial;
         }
@@ -254,6 +262,10 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             PaymentMode = AutopilotSettingsResolver.Normalize(d.PaymentMode),
             PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(d.PayLinkChannels),
             AutoApprovePolicyJson = storedPolicy,
+            DefaultPolicyBindingHash = storedDefaultHash,
+            // รอบ 257 ชุด 4 (A L13): ร่างในฟอร์มส่งสร้างล่วงหน้า/ทุก N เดือน มาด้วย — แผงตรวจวันที่เอกสาร/เดือนภาษีจากค่าในฟอร์ม
+            LeadDays = d.LeadDays ?? 0,
+            IntervalMonths = d.IntervalMonths is > 0 ? d.IntervalMonths : null,
             PostPayEmailReceipt = d.PostPayEmailReceipt == null ? storedPostPayEmail : AutopilotSettingsResolver.ParseTriState(d.PostPayEmailReceipt),
             PostPayIncludePartial = d.PostPayIncludePartial == null ? storedPostPayPartial : AutopilotSettingsResolver.ParseTriState(d.PostPayIncludePartial),
         };
@@ -512,9 +524,11 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         // ── รอบ 251 (WP-07 · PERIOD): งวดบัญชีของวันที่เอกสาร (รอบค้าง ⇒ วันที่รันจริง = วันนี้) · กติกางวดปิดเดียว ClosedPeriodRanges ──
         var closedRanges = cf.ClosedRanges;
         var todayTh = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
-        DateTime? nextDocDate = nextDates.Count > 0 ? (nextDates[0].Date < todayTh.Date ? todayTh.Date : nextDates[0].Date) : null;
+        // รอบ 257 ชุด 4 (A L13): สร้างล่วงหน้า ⇒ เอกสารลงวันที่วันที่สร้าง (วันของงวด − LeadDays · ตัวเดียว RecurringSchedule.CreateAt) — เดิมตรวจงวดที่วันของงวด
+        var nextCreateAt = nextDates.Count > 0 ? RecurringSchedule.CreateAt(nextDates[0], r.LeadDays).Date : (DateTime?)null;
+        DateTime? nextDocDate = nextCreateAt is { } nca ? (nca < todayTh.Date ? todayTh.Date : nca) : null;
         bool? nextPeriodClosed = nextDocDate is { } ndd ? ClosedPeriodRanges.Covers(closedRanges, ndd) : null;
-        var laterClosed = nextDates.Skip(1).Where(x => ClosedPeriodRanges.Covers(closedRanges, x)).ToList();
+        var laterClosed = nextDates.Skip(1).Where(x => ClosedPeriodRanges.Covers(closedRanges, RecurringSchedule.CreateAt(x, r.LeadDays))).ToList();
 
         // ── รอบ 251 (WP-07 · POSTPAY): ค่าหลังรับชำระที่มีผล — ชั้นเดียวกับ PostPaymentAutomationService.SettingsForAsync (ตาราง › รายการ › ผู้ติดต่อ › บริษัท) ──
         PostPaymentAutomationPolicy.Overrides? postPaySchedule = null;
@@ -573,6 +587,9 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             PlatformSentToday = platformQuota?.SentToday ?? 0,
             PlatformIdentityVerified = platformQuota?.IdentityVerified ?? true,
             NextDocumentDate = nextDocDate,
+            // รอบ 257 ชุด 4 (A L13): ใบกำกับภาษีที่สร้างล่วงหน้าข้ามเดือน ⇒ เดือนภาษีย้าย (ตัวตัดสิน RecurringSchedule.LeadDaysMovesVatMonth)
+            LeadDays = r.LeadDays,
+            NextPeriodDate = nextDates.Count > 0 ? nextDates[0] : null,
             NextPeriodClosed = isDocument ? nextPeriodClosed : null,
             LaterClosedRunDates = laterClosed,
             PostPayEmailReceipt = isDocument && saleSide ? postPay.EmailReceipt : null,
@@ -657,6 +674,9 @@ public class RecurringAutopilotService : IRecurringAutopilotService
                 ? AutoApprovePolicy.Serialize(AutoApprovePolicy.Create(Array.Empty<string>(), userId.ToString(), DateTime.UtcNow,
                     RecurringApprovePolicyLoader.CurrentBindingHash(r), inheritContact: true))
                 : PolicyJsonFrom(request, userId, RecurringApprovePolicyLoader.CurrentBindingHash(r));
+        // รอบ 257 ชุด 4 (A-M4 · H2): ผู้มีสิทธิ์อนุมัติบันทึกขั้นอนุมัติ (endpoint นี้ต้องมี Document.Approve) ⇒ ประทับลายนิ้วมือของค่าตั้งต้นใหม่ —
+        // "ค่าเริ่มต้น" (Clear) จึงไม่ใช่ no-op แล้ว: = รับรองว่าค่าปัจจุบันของรายการใช้ค่าตั้งต้นรอบ 256 ได้
+        r.DefaultPolicyBindingHash = RecurringApprovePolicyLoader.CurrentBindingHash(r);
         AuditPolicy(companyId, "RecurringTransaction", r.Id, before, r.AutoApprovePolicyJson, userId);
         await _db.SaveChangesAsync(ct);
         return RecurringApprovePolicyLoader.View(AutoApprovePolicy.Parse(r.AutoApprovePolicyJson, AutoApprovePolicy.ScopeRecurring));
