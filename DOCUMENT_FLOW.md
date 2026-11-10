@@ -2219,7 +2219,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `write_permission_gate_check` เฝ้าไฟล์นี้แล้ว (ถอด 6 แถวจาก baseline) · เทสต์ `PermissionsPortalRound257Tests` (AH1_*) · Last verified `commit a73aaf91`
 - **รอบ 257 ชุด 1 ฝ่ายค้าน (L3/L4 · DECISIONS 257-1-10/257-1-11)**: คีย์ API ตั้ง/คง/เปิดต่อ/สร้างทันทีรายการที่ระบบอนุมัติ/ส่งแทนคนไม่ได้ (`RecurringWriteGate.ApiKeyMessage` · ปิดธงแล้วใช้คีย์ได้) ·
   ตอนรัน: ผู้อนุมัติของรายการ (ผู้ตั้ง/รับรองนโยบายระดับรายการที่ยังมีผล มิฉะนั้นผู้สร้าง) ต้องยังเป็นสมาชิก + มีสิทธิ์อนุมัติ (`RecurringApprovePolicyLoader.AutoApproverRefusalAsync`) —
-  ไม่มี ⇒ ใบค้างร่าง + เหตุบนใบ/แถว (เส้นล้มเดิม) · สมุดรายวัน: ผู้สร้างต้องมี `Journal.Manage` (`AutoPostRefusalAsync`) ไม่มี ⇒ ค้างร่าง + เหตุบนแถว · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  ไม่มี ⇒ ใบค้างร่าง + เหตุบนใบ/แถว (เส้นล้มเดิม) · สมุดรายวัน: ผู้สร้างต้องมี `Journal.Manage` (`AutoPostRefusalAsync`) ไม่มี ⇒ ค้างร่าง + เหตุบนแถว · Last verified `commit d3bf2d56`
 - **รอบ 257 ชุด 4 (READINESS_257 · team-A H2/H3/M4/M5/M6/M8/M9 · คำตัดสิน 257-4-1…257-4-6)**:
   - **ค่าตั้งต้นรอบ 256 ผูกลายนิ้วมือ** — `RecurringTransaction.DefaultPolicyBindingHash` ประทับตอนสร้าง (`CreateAsync`) และทุกครั้งที่ผู้มีสิทธิ์อนุมัติบันทึกขั้นอนุมัติ
     (`SetRecurringPolicyAsync` รวม "ค่าเริ่มต้น" = Clear — เดิม no-op) · ไม่ตรง ⇒ ไม่ปล่อย + `BindingChangedReason` (ตัวโหลดเดียว `RecurringApprovePolicyLoader`) ·
@@ -3011,7 +3011,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **รอบ 257 ชุด 1 ฝ่ายค้าน (M2/L1/L2/L5/L8 · DECISIONS 257-1-9/257-1-12/257-1-13)**: ใบแจ้งยอดพอร์ทัล — ยอดยกมาและบรรทัดในงวดใช้เครื่องหมายเดียว
   `DocumentPayLinkPolicy.StatementSigned` (ใบที่ลูกค้าจ่ายเรา `IsSaleSide` = + · ใบลดหนี้ฝั่งขาย = − · ใบเสนอราคา/ใบวางบิล/ใบเสร็จ/ฝั่งซื้อ = 0 · เดิมยอดยกมารวมยอดค้างทุกชนิด) ·
   ใบลดหนี้/ใบเพิ่มหนี้ไม่มีใบต้นทางของผู้ติดต่อที่เป็น**ลูกค้าอย่างเดียว** = ฝั่งขาย (`IsSaleSideAdjustment`) · `GET portal/access` = Contact.Edit ·
-  สร้างสิทธิ์โดยไม่เปิดธงใดเลย = 400 · `PortalDocumentResponse.CanDownloadPdf` (เซิร์ฟเวอร์) ⇒ หน้าซ่อนปุ่ม PDF · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  สร้างสิทธิ์โดยไม่เปิดธงใดเลย = 400 · `PortalDocumentResponse.CanDownloadPdf` (เซิร์ฟเวอร์) ⇒ หน้าซ่อนปุ่ม PDF · Last verified `commit d3bf2d56`
 
 **สลิปพอร์ทัลลูกค้า** (`PortalService.UploadDocumentSlipAsync` · `POST api/portal/{cid}/documents/{docId}/upload-slip`):
 แนบ ⇒ `PaymentIntent(SourceKind=Document, manual-slip, ManualSlip)` สถานะ Pending ผ่าน `IPaymentIntentService.StartAsync` (ยอดเท่าเดิม + ยังเปิด ⇒ รายการเดิม · ชำระสำเร็จแล้ว ⇒ 400) + ไฟล์ผูกเอกสาร ·
@@ -3094,7 +3094,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   Webhook URL บนหน้ามาจาก `customerChannel.companyWebhookUrl` (SystemBaseUrl) ไม่ใช่ `location.origin` · Last verified `commit a73aaf91`
 - **รอบ 257 ชุด 1 ฝ่ายค้าน (M1/L6/L7 · DECISIONS 257-1-14)**: บริษัทผู้ให้บริการที่ยังมี token/secret ค้าง ⇒ `LineConfigResponse.PlatformLegacyOwnOaNotice` + ปุ่มล้าง (นอกส่วนที่ซ่อน) ·
   token/secret ช่องว่างล้วน = ล้าง (`LineOwnOaGuard.Classify`) · ถาม LINE ไม่ได้ว่า token เป็นบอทไหน ⇒ ไม่บันทึก (`UnverifiedMessage`) ·
-  Basic ID / Group ID ทีมที่ตรงค่าของ OA กลาง (`INextAccLineConfig.BasicId` · `PlatformGroupIdsAsync`) ⇒ ปฏิเสธ **ทุกบริษัท** · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  Basic ID / Group ID ทีมที่ตรงค่าของ OA กลาง (`INextAccLineConfig.BasicId` · `PlatformGroupIdsAsync`) ⇒ ปฏิเสธ **ทุกบริษัท** · Last verified `commit d3bf2d56`
 
 **สถานะปัจจุบัน (L1 — ตัวหาผู้รับ + ปลายทางอีเมล · ต่อสายเส้นส่งอีเมลแล้วรอบ 250 WP-08 · LINE ยังไม่ส่ง):**
 - **ตาราง `ContactNotifyEndpoints`** (`Models/Entities/ContactNotifyEndpoint` · schema `Helpers/ContactNotifyEndpointMigration.Statements`) — ชนิด `Email`/`LineUser`/`LineGroup`
@@ -8341,4 +8341,4 @@ migration ครั้งเดียว `r257-portal-flags` · รหัสผ�
 
 _Last verified against codebase: 2026-11-10 (รอบ 257 ชุด 1 แก้ผลฝ่ายค้านของ a73aaf91 (ไม่มี HIGH) — §2.7 คีย์ API กับรายการอนุมัติ/ส่งอัตโนมัติ + ผู้อนุมัติของรายการตรวจซ้ำตอนรัน (ค้างร่าง + เหตุ) ·
 §2.12g2 ยอดยกมาใบแจ้งยอดตัวตัดสินเดียวกับบรรทัด (StatementSigned) · ใบลดหนี้ของลูกค้าอย่างเดียว = ฝั่งขาย · GET portal/access Contact.Edit · ไม่มีธง = 400 · ปุ่ม PDF ตามธงเซิร์ฟเวอร์ ·
-§2.12h token ค้างของบริษัทผู้ให้บริการล้างได้ · ช่องว่าง = ล้าง · ตรวจ LINE ไม่ได้ = ไม่บันทึก · Basic ID/Group ID ของ OA กลางห้าม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+§2.12h token ค้างของบริษัทผู้ให้บริการล้างได้ · ช่องว่าง = ล้าง · ตรวจ LINE ไม่ได้ = ไม่บันทึก · Basic ID/Group ID ของ OA กลางห้าม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d3bf2d56)_
