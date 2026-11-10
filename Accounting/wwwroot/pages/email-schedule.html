@@ -170,8 +170,10 @@
           <div class="form-group" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px">
             <div style="font-weight:600;font-size:13px;margin-bottom:6px">ช่องทาง</div>
             <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChEmail" checked> อีเมล</label>
-            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineUser"> LINE ผู้ใช้ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</label>
-            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineGroup"> กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</label>
+            <!-- รอบ 257 ชุด 4 (C-M5): ป้าย LINE จากเซิร์ฟเวอร์ (…/email-schedule/line-labels · บริษัทผู้ให้บริการส่งเข้ากลุ่มผ่าน OA กลางได้) — ข้อความในวงเล็บเป็นค่าตั้งต้นเมื่อโหลดไม่ได้ -->
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineUser"> <span id="rChLineUserLabel">LINE ผู้ใช้ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</span></label>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineGroup"> <span id="rChLineGroupLabel">กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</span></label>
+            <div id="rChLineNote" style="font-size:11px;color:#64748b;margin-left:22px"></div>
             <label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:4px"><input type="checkbox" id="rLineFallback" checked> ถ้า LINE ส่งไม่ได้ ให้ส่งอีเมลแทน (มีผลเมื่อไม่ได้ติ๊กอีเมล)</label>
             <p class="form-help">การ์ด LINE มีชื่อเอกสาร เลขที่ ยอด วันครบกำหนด และลิงก์ชำระ (ไม่แนบไฟล์ · ไม่ใช่การส่งใบกำกับภาษีอิเล็กทรอนิกส์) · ผูก LINE ของผู้รับที่หน้าผู้ติดต่อ แท็บช่องทางแจ้งเตือน ·
               ถ้าบริษัทใช้ e-Tax by Email ใบกำกับจะถูกส่งทางอีเมลด้วยเสมอแม้ติ๊ก LINE อย่างเดียว (คิวอีเมลบอกเหตุไว้) · ผู้รับพิมพ์ "หยุด" = หยุดเฉพาะ LINE</p>
@@ -219,7 +221,7 @@
         // เพราะ getCompanyId เป็น null. ทุกหน้าอื่นเรียก Layout.init เหมือนกัน.
         if (!Layout.init('email-schedule')) return;
         Layout.setTitle('ส่งอีเมลอัตโนมัติ');
-        await Promise.all([this.loadRules(), this._loadAutoSend()]);
+        await Promise.all([this.loadRules(), this._loadAutoSend(), this._loadLineLabels()]);
       },
 
       switchTab(t) {
@@ -318,6 +320,16 @@
         const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
         try { const r = await api.get(`/api/companies/${cid}/document-auto-send/settings`); this._autoSend = r && r.data; }
         catch (_) { this._autoSend = null; }
+      },
+      /** รอบ 257 ชุด 4 (C-M5): ป้ายช่องทาง LINE จากเซิร์ฟเวอร์ — โหลดไม่ได้ = คงป้ายตั้งต้น (ไม่อ้างว่า OA กลางเปิด) */
+      async _loadLineLabels() {
+        const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
+        try {
+          const r = await api.get(`/api/companies/${cid}/email-schedule/line-labels`);
+          const d = r && r.data; if (!d) return;
+          const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.textContent = v; };
+          set('rChLineUserLabel', d.lineUser); set('rChLineGroupLabel', d.lineGroup); set('rChLineNote', d.note);
+        } catch (_) { /* คงป้ายตั้งต้น */ }
       },
       _renderChannels(selected) {
         const s = this._autoSend;
@@ -480,7 +492,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async cancelLine(id) {
-        if (!confirm('ยกเลิกคิว LINE นี้?')) return;
+        if (!(await Layout.confirm({ title: 'ยกเลิกคิว LINE', message: 'ยกเลิกคิว LINE นี้? (ข้อความนี้จะไม่ถูกส่ง)', okText: 'ยกเลิกคิว', cancelText: 'ไม่ยกเลิก', danger: true }))) return;
         const cid = Layout.getCompanyId();
         try {
           const j = await API.post(`/api/companies/${cid}/email-schedule/line-queue/${encodeURIComponent(id)}/cancel`, {});

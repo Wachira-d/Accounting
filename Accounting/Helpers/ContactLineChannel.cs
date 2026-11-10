@@ -59,6 +59,28 @@ public static class ContactLineChannel
     public static bool EmailWanted(bool channelEmail, bool fallbackNow, bool forceEmail, bool etaxByEmail = false)
         => forceEmail || channelEmail || fallbackNow || etaxByEmail;
 
+    /// <summary>รอบ 257 ชุด 4 (C-M5 · server computes): ประโยคเรื่อง LINE OA กลางของ NextAcc — บริษัทผู้ให้บริการ (<c>NextAccGroupOpen</c> · 256-2) ส่งเข้า<b>กลุ่ม</b>
+    /// ของผู้ติดต่อผ่าน OA กลางได้แล้ว · บริษัทอื่น/ผู้ใช้ 1:1 ยังไม่เปิด (N8 · 254-WP11-11) — ตัวเดียวของแท็บผู้ติดต่อ · ป้ายตารางส่ง · DOCUMENT_FLOW §2.12h</summary>
+    public static string CentralOaSentence(bool nextAccGroupOpen) => nextAccGroupOpen
+        ? "กลุ่ม LINE ของผู้ติดต่อผ่าน LINE OA กลางของ NextAcc เปิดแล้วสำหรับบริษัทนี้ (บริษัทผู้ให้บริการ · รอบ 256) · ผู้ใช้ LINE 1:1 ผ่าน OA กลางยังไม่เปิด"
+        : "ผ่าน LINE OA กลางของ NextAcc ยังไม่เปิด (ใช้ LINE OA ของบริษัทเอง)";
+
+    /// <summary>รอบ 257 ชุด 4 (C-M5): ป้ายช่องทาง LINE ของฟอร์มกฎตารางส่ง (email-schedule.html) — เซิร์ฟเวอร์ส่ง หน้าแสดงตรงตัว</summary>
+    public sealed record RuleChannelLabels(string LineUser, string LineGroup, string Note);
+
+    public static RuleChannelLabels ChannelLabels(bool nextAccGroupOpen) => new(
+        "LINE ผู้ใช้ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)",
+        nextAccGroupOpen ? "กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท หรือ LINE OA กลางของ NextAcc)" : "กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)",
+        CentralOaSentence(nextAccGroupOpen));
+
+    /// <summary>รอบ 257 ชุด 4 (C-M3): แถว LINE ถอยไปอีเมลตอนล้มถาวรไหม — เฉพาะกฎที่ติ๊กถอย + ไม่ได้ติ๊กอีเมล (ติ๊กอีเมล = อีเมลออกอยู่แล้ว) +
+    /// อีเมลไม่ได้ถูกบังคับด้วย e-Tax by Email (บังคับ = อีเมลหลักออกอยู่แล้ว ⇒ ถอยอีก = ลูกค้าได้สองฉบับ + โควตาอีเมลนับสองครั้ง)</summary>
+    public static bool LineFallbackAtSend(bool channelEmail, bool lineFallbackToEmail, bool etaxForcesEmail)
+        => lineFallbackToEmail && !channelEmail && !etaxForcesEmail;
+
+    /// <summary>รอบ 257 ชุด 4 (C-M3): ต้องถามเส้น e-Tax ก่อนเข้าคิว LINE ไหม — เฉพาะเมื่อแถว LINE อาจถอยไปอีเมล (ไม่เพิ่มคำค้นให้กฎอื่น)</summary>
+    public static bool LineFallbackMayDuplicate(bool channelEmail, bool lineFallbackToEmail) => LineFallbackAtSend(channelEmail, lineFallbackToEmail, false);
+
     /// <summary>ฝ่ายค้าน M3: หมายเหตุบนแถวคิวอีเมลเมื่อกฎติ๊ก LINE อย่างเดียวแต่ใบต้องส่งแบบ e-Tax by Email (คงไว้หลังส่ง)</summary>
     public const string EtaxForcedEmailNote =
         "ส่งอีเมลด้วยแม้กฎติ๊ก LINE อย่างเดียว: ใบกำกับของบริษัทโหมด e-Tax by Email ต้องส่งทางอีเมล (การ์ด LINE เป็นการแจ้ง ไม่ใช่การส่งใบกำกับภาษีอิเล็กทรอนิกส์)";

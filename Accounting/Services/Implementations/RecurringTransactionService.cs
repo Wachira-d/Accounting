@@ -79,6 +79,9 @@ public class RecurringTransactionService : IRecurringTransactionService
 
     public async Task<RecurringTransactionResponse> CreateAsync(Guid companyId, CreateRecurringTransactionRequest request, string createdBy)
     {
+        // รอบ 257 ชุด 4 (A-H3 · คำตัดสิน 257-4-1): สมุดรายวันห้ามสร้างล่วงหน้า — ตรวจก่อนเทมเพลต (เหตุตรงตัว ไม่ถูกบังด้วยข้อผิดของบรรทัด)
+        if (RecurringSchedule.JournalLeadDaysError(request.TemplateType, request.LeadDays ?? 0) is string journalLeadErr)
+            throw new BusinessRuleException(journalLeadErr, RecurringTemplate.RuleCode);
         await ValidateTemplateAsync(companyId, request.TemplateType, request.TemplateData, request.ContactId, atSave: true);
         var (payMode, payChannels) = PaymentSettingsFrom(request.PaymentMode, request.PayLinkChannels);
         CheckPostPaySettings(request.PostPayEmailReceipt, request.PostPayIncludePartial);
@@ -131,6 +134,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             LeadDays = request.LeadDays ?? 0,
             CreatedBy = createdBy
         };
+        // รอบ 257 ชุด 4 (A-M4): ค่าตั้งต้น "ลูกค้าค้างชำระ ⇒ อนุมัติต่อ" ผูกค่าที่ผู้สร้างเห็นตอนสร้าง (ตัวเดียวกับใบรับรองนโยบาย) — แก้ภายหลังต้องรับรองใหม่
+        recurring.DefaultPolicyBindingHash = RecurringApprovePolicyLoader.CurrentBindingHash(recurring);
 
         _db.RecurringTransactions.Add(recurring);
         await _db.SaveChangesAsync();
@@ -203,7 +208,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             if (recurring.IntervalMonths != wanted) { recurring.IntervalMonths = wanted; scheduleChanged = true; }
         }
         if (request.LeadDays.HasValue) recurring.LeadDays = request.LeadDays.Value;
-        if (RecurringSchedule.LeadDaysError(recurring.LeadDays, recurring.Frequency, recurring.IntervalMonths) is string leadErr)
+        if ((RecurringSchedule.LeadDaysError(recurring.LeadDays, recurring.Frequency, recurring.IntervalMonths)
+             ?? RecurringSchedule.JournalLeadDaysError(recurring.TemplateType, recurring.LeadDays)) is string leadErr)   // รอบ 257 ชุด 4 (A-H3)
             throw new BusinessRuleException(leadErr, RecurringTemplate.RuleCode);
         if (scheduleChanged)
         {
@@ -849,9 +855,11 @@ public class RecurringTransactionService : IRecurringTransactionService
             Guid? paymentAccountId = RecurringTemplate.ReadGuid(root, "paymentAccountId", 0);
             Guid? expenseCategoryId = RecurringTemplate.ReadGuid(root, "expenseCategoryId", 0);
 
+            // รอบ 257 ชุด 4 (A-M9): วันที่ตามปฏิทินไทย (ตัวเดียว RecurringSchedule.DocumentDateUtc) — รัน 00:00–07:00 น. วันที่ 1 ไม่ได้วันที่ของเดือนก่อน
+            var docDateUtc = RecurringSchedule.DocumentDateUtc(DateTime.UtcNow);
             var request = new Models.DTOs.Document.CreateDocumentRequest(
                 DocumentType: docType,
-                DocumentDate: DateTime.UtcNow,
+                DocumentDate: docDateUtc,
                 // dueDays ระบุใน template = ใช้ตามนั้น (พร้อม CreditDays ให้
                 // สองช่องสอดคล้องกัน) · ไม่ระบุ = ปล่อยให้ DocumentService เติม
                 // จากเครดิตของคู่ค้า — เดิม fallback แข็ง +30 วันเสมอ ขณะที่
@@ -859,7 +867,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // ทุกเดือนพิมพ์ "เครดิต 45 วัน" คู่กับครบกำหนด +30 วัน =
                 // เอกสารขัดกันเอง + ระบบทวงหนี้เร็วไป 15 วันทุกรอบ
                 DueDate: root.TryGetProperty("dueDays", out var dd) && dd.ValueKind == JsonValueKind.Number && dd.TryGetInt32(out var ddDays)
-                    ? DateTime.UtcNow.AddDays(ddDays) : null,
+                    ? docDateUtc.AddDays(ddDays) : null,
                 CreditDays: root.TryGetProperty("dueDays", out var dd2) && dd2.ValueKind == JsonValueKind.Number && dd2.TryGetInt32(out var ddCredit)
                     ? ddCredit : null,
                 ContactId: contactId,
@@ -969,7 +977,8 @@ public class RecurringTransactionService : IRecurringTransactionService
                         // คำตัดสินข้อ 114 Q1: ข้อสังเกต §65 ตรีที่การอนุมัติอัตโนมัติผ่านไป (ไม่บล็อก — ข้อ 110) ต้องถึงคน — เก็บรายการที่ผ่านแล้วแจ้งผู้ตั้งรายการประจำ
                         var passed = new List<string>();
                         // รอบ 248 (AUTOPILOT §4.3): นโยบายอนุมัติข้ามคำเตือนของเจ้าของ (รายการ › ผู้ติดต่อ) — ผู้ตั้งออกจากบริษัท/หมดสิทธิ์ ⇒ ไม่ปล่อย ·
-                        // ไม่ตั้งนโยบาย = Unattended เดิมทุกประการ (ใบค้างร่างเหมือนรอบ 247) · ชุดห้ามปล่อยหยุดเสมอ (ตัวตัดสินเดียว ApprovalAcknowledgement)
+                        // ไม่ตั้งนโยบาย = ค่าตั้งต้นรอบ 256 (ปล่อย "ลูกค้าค้างชำระ" เมื่อผู้สร้างยังมีสิทธิ์อนุมัติ · รอบ 257: ลายนิ้วมือตรง + ผู้ติดต่อไม่ได้ตั้ง "หยุดรอคน")
+                        // — ไม่มีผล ⇒ Unattended เดิม (ใบค้างร่าง) · ชุดห้ามปล่อยหยุดเสมอ (ตัวตัดสินเดียว ApprovalAcknowledgement)
                         var policyLoad = await RecurringApprovePolicyLoader.LoadAsync(_db, _permissions, recurring.CompanyId, recurring);
                         stoppedPolicyReason = policyLoad.SetterActive == false ? policyLoad.InactiveReason : null;
                         // ฝ่ายค้าน MED-3: ไม่มีนโยบายที่มีผล ⇒ แหล่ง Unattended เดิม (ร่องรอยเดิม APPROVE-UNATTENDED-PASSED-S65)
@@ -1126,7 +1135,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             }
 
             var request = new Models.DTOs.Accounting.CreateJournalEntryRequest(
-                EntryDate: DateTime.UtcNow,
+                EntryDate: RecurringSchedule.DocumentDateUtc(DateTime.UtcNow),   // รอบ 257 ชุด 4 (A-M9): วันตามปฏิทินไทย (ใบสำคัญไม่ลงงวดก่อนช่วง 00:00–07:00 น.)
                 Description: Sub(RecurringTemplate.Text(root, "description") ?? recurring.Name) ?? recurring.Name,
                 Reference: $"AUTO-{recurring.Name}",
                 Lines: lines

@@ -88,7 +88,8 @@
           <label style="display:flex;gap:8px;margin-top:4px"><input type="radio" name="whtChoice" value="nowht" ${noWht ? 'checked' : ''}>
             <span>ไม่หัก ณ ที่จ่าย — ชำระยอดเต็ม ${money(v.noWhtAmount)} บาท</span></label>
           ${noWht && v.noWhtWarn ? `<div class="note">${esc(v.noWhtNotice)}</div>
-            <label style="display:flex;gap:8px;font-size:13px"><input type="checkbox" id="noWhtAccept"><span>ข้าพเจ้าได้อ่านคำเตือนและยืนยันว่าไม่หักภาษี ณ ที่จ่าย</span></label>
+            <label style="display:flex;gap:8px;font-size:13px"><input type="checkbox" id="noWhtAccept" onchange="document.getElementById('noWhtAcceptMsg').hidden=true"><span>ข้าพเจ้าได้อ่านคำเตือนและยืนยันว่าไม่หักภาษี ณ ที่จ่าย</span></label>
+            <div id="noWhtAcceptMsg" class="msg bad" role="alert" hidden>กรุณาอ่านคำเตือนแล้วติ๊กยืนยันก่อนเลือก "ไม่หัก ณ ที่จ่าย"</div>
             <input id="noWhtName" maxlength="100" placeholder="ชื่อผู้ยืนยัน (ไม่บังคับ)" style="width:100%;margin-top:6px;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-family:inherit">` : ''}
         </div>` : '';
       card.innerHTML = `
@@ -112,6 +113,7 @@
             <input type="file" id="slipFile" accept="image/jpeg,image/png,image/webp,application/pdf" required>
             <label for="slipRef">เลขอ้างอิงการโอน (ถ้ามี — ช่วยให้ผู้ขายจับคู่ยอดได้เร็วขึ้น)</label>
             <input type="text" id="slipRef" maxlength="64" autocomplete="off">
+            ${v.slipAmountNote ? `<div style="font-size:12px;color:#92400e;margin-top:6px">${esc(v.slipAmountNote)}</div>` : ''}
             <button type="submit" class="btn" id="slipBtn">ส่งสลิปให้ผู้ขาย</button>
             <div style="font-size:12px;color:#64748b;margin-top:6px">ผู้ขายจะตรวจยอดแล้วยืนยันการชำระ — สถานะเปลี่ยนเป็น "ชำระแล้ว" เมื่อผู้ขายยืนยันเท่านั้น</div>
             <div id="slipMsg" role="status"></div>
@@ -155,7 +157,13 @@
       let extraBody;
       if (noWht) {
         const acc = document.getElementById('noWhtAccept');
-        if (view.noWhtWarn && !(acc && acc.checked)) { alert('กรุณาอ่านคำเตือนแล้วติ๊กยืนยันก่อนเลือก "ไม่หัก ณ ที่จ่าย"'); return; }
+        // รอบ 257 ชุด 4 (E-M2): ข้อความในหน้า (role=alert) แทน alert() — LINE in-app browser บล็อกกล่อง native ⇒ เดิมกดแล้วเงียบ
+        if (view.noWhtWarn && !(acc && acc.checked)) {
+          const m = document.getElementById('noWhtAcceptMsg');
+          if (m) { m.hidden = false; m.scrollIntoView({ block: 'center' }); }
+          if (acc) acc.focus();
+          return;
+        }
         extraBody = { noWithholding: true, noWhtAccepted: true, noWhtNoticeVersion: view.noWhtNoticeVersion,
           payerName: (document.getElementById('noWhtName')?.value || '').trim() || null };
       }

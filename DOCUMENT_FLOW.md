@@ -2212,6 +2212,19 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ### 2.7 Recurring
 
+- **รอบ 257 ชุด 4 (READINESS_257 · team-A H2/H3/M4/M5/M6/M8/M9 · คำตัดสิน 257-4-1…257-4-6)**:
+  - **ค่าตั้งต้นรอบ 256 ผูกลายนิ้วมือ** — `RecurringTransaction.DefaultPolicyBindingHash` ประทับตอนสร้าง (`CreateAsync`) และทุกครั้งที่ผู้มีสิทธิ์อนุมัติบันทึกขั้นอนุมัติ
+    (`SetRecurringPolicyAsync` รวม "ค่าเริ่มต้น" = Clear — เดิม no-op) · ไม่ตรง ⇒ ไม่ปล่อย + `BindingChangedReason` (ตัวโหลดเดียว `RecurringApprovePolicyLoader`) ·
+    null (รายการก่อนรอบ 257) = ถือว่าตรง (`AutoApprovePolicy.MatchesDefaultBinding` — คงคำตัดสินรอบ 256)
+  - **ผู้ติดต่อตั้ง "หยุดรอคน"** (นโยบายรหัสว่าง) ⇒ ทับค่าตั้งต้นของทุกรายการของผู้ติดต่อนั้น (`AutoApprovePolicy.StopsRecurringDefault`) — ใบค้างร่างเหมือนรอบ 247
+  - แผงความพร้อม: ค่าตั้งต้นไม่มีผล ⇒ ข้อ `OWNER-POLICY` (⚠️) บอกเหตุ `DefaultSetterGoneReason`/`BindingChangedReason` · ใบกำกับภาษีที่สร้างล่วงหน้าข้ามเดือน ⇒ `LEAD-VAT-MONTH`
+    (`RecurringSchedule.LeadDaysMovesVatMonth`) · ตรวจงวดปิดที่วันที่สร้างจริง (`CreateAt`) ไม่ใช่วันของงวด
+  - **สมุดรายวันห้ามสร้างล่วงหน้า** (`RecurringSchedule.JournalLeadDaysError` — สร้าง/แก้ไข ⇒ 400) · migration ตั้ง `LeadDays = 0` ให้แถวสมุดรายวันเดิม
+  - วันที่ใบ/ใบสำคัญ/ครบกำหนด = `RecurringSchedule.DocumentDateUtc` (วันตามปฏิทินไทย — รัน 00:00–07:00 น. ไม่ได้วันของเดือนก่อน)
+  - หน้า `recurring.html`: ขอบเขต "ค่าเริ่มต้น" แสดงแถวจาก `RecurringDefaultPassCodes` ของเซิร์ฟเวอร์ + หมายเหตุ · เปลี่ยนแถว ⇒ สลับเป็น "ตั้งเอง" (ไม่ส่ง clear เงียบ) ·
+    ประกาศครั้งเดียว `DefaultChangeNotice` (ปิดแล้วจำต่อผู้ใช้ใน localStorage) · toast ของ Clear = `DefaultConfirmedMessage`
+  - เทสต์ `Round257Pack4Tests` · Db `RecurringAutopilotRound248DbTests.R257_*` · `required_call_site_check` R257P4 · Last verified `commit 8918f558` (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
+
 - **งวดค้างหลายงวด (ฝ่ายค้าน 2026-10-14 P0)** — เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน · แก้ใน f696f418) ⇒ `NextRunDate` ค้างงวดแรก · รอบอัตโนมัติ/ปุ่มสร้างทันทีเรียก `SkipOverduePeriodsAsync` → `RecurringSchedule.CatchUp` เลื่อนไปงวดล่าสุดที่ถึงกำหนดแล้วออก **งวดเดียว** + `LastRunNotice` "ข้าม N งวด … กด สร้างทันที" (ไม่ไล่ออกใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที) · สมุดรายวันไม่แตะ (ไม่เคยค้าง)
 - **รอบ 250 (WP-02 §2.4 ข้อ 1/3 · คำตัดสิน §2 #8/#10)**: `OnRecurringDocumentCreatedAsync` คืน `EmailEnqueueOutcome` (Enqueued/Skipped(เหตุ)/Failed(เหตุ)) — ไม่กลืนเป็น
   `LogWarning` ⇒ ธง `EmailEnqueueFailed` + เรื่องที่ต้องทำต่อตั้งจากผล (`EmailEnqueueOutcome.Apply`) · มีกฎ "เมื่ออนุมัติเอกสาร" ครอบชนิดนี้และใบอนุมัติแล้ว ⇒ **ข้าม**กฎ "เมื่อรายการประจำสร้างเอกสาร"/กฎเสมือน
@@ -3179,6 +3192,13 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - หน้าแท็บ: ปุ่มที่กดได้ตามสิทธิ์จริง (`canEdit` ด่านเดียวกับ write) · พรีวิว "ส่งอีเมลถึง" (รอบ 250 WP-08: ต่อสายแล้ว — ประโยคเดิม "เมื่อเส้นส่งต่อสาย (L2)" ถูกลบ)
 - เทสต์ `ContactRecipientRuleTests` · Db `ContactNotifyEndpointRound245DbTests` · ล็อก `tools/required_call_site_check.py` R245 (+ เคส R245a–n) · `write_permission_gate_check` WATCHED — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+- **รอบ 257 ชุด 4 (team-C M3/M4/M5 · C LOW)**: กฎตารางส่งติ๊ก LINE อย่างเดียว + ใบต้องไป e-Tax by Email ⇒ อีเมลออกเสมอ (เดิม) และแถว LINE ได้ `FallbackToEmail=false`
+  (`ContactLineChannel.LineFallbackAtSend`) · เส้นถอยตอนส่ง (`EnqueueLineFallbackEmailAsync`) ไม่เข้าคิวซ้ำเมื่ออีเมลหลักของใบ (กุญแจ = baseKey) มีอยู่แล้ว ⇒ ลูกค้าได้ฉบับเดียว ·
+  ประโยค OA กลางขึ้นกับ `NextAccGroupOpen` (`ContactLineChannel.CentralOaSentence` — แท็บผู้ติดต่อ `ContactRecipientResolver.DeliveryNoteFor` · ป้ายฟอร์มกฎ `GET …/email-schedule/line-labels`):
+  บริษัทผู้ให้บริการ = กลุ่มผ่าน OA กลางเปิดแล้ว (`NOTIFY-CENTRAL-OA-GROUP-OFF` ยังใช้กับบริษัทอื่น) · `#HeyNextAcc` กับ OA กลางตอบชื่อบริษัทผู้ให้บริการ + "บริษัทอื่นใช้ OA ของตัวเอง"
+  (`LineGroupBindRule.Replies.CentralCode`) · บริษัทยกเลิกปลายทาง ⇒ ประทับ `PdpaConsentRecords.WithdrawnAt` (`company-unlink` · migration ซ่อมแถวเก่า) ·
+  OA บริษัทตอบ 429 monthly limit ⇒ กระดิ่งเจ้าของครั้งเดียวต่อเดือนปฏิทินไทย (`LinePushOutcome.AlertMonthStartUtc`) · Last verified `commit 8918f558` (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
+
 ### 2.12k Autopilot ส่วน A — อีเมลสถานะ/สรุปประจำวัน · หน้า Autopilot · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ (เดิมอ้างเป็น §2.12j — ชนเลขกับ 50 ทวิ ขาเข้า WP-09 · รอบ 252 WP-12A · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §5/§7/§10/§11.4 · AUDIT_249 §WP-12 · คำตัดสิน §2 #36)
 
 - **อีเมล/แจ้งเตือนสถานะถึงทีมเรา (A-5 · Q7)**: แค็ตตาล็อก E-01…E-15 + ข้อความทุกฉบับที่ `Helpers/AutopilotNotice` ตัวเดียว (เซิร์ฟเวอร์ประกอบ · ไม่อ้างมาตรา N10) ·
@@ -3237,6 +3257,11 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     `SlipBankRef` เดิมที่ไม่ผ่านกติกาใหม่ถูกล้างใน migration · ใบเสนอราคา: ประทับล้มหลังแปลงสำเร็จ ⇒ ตรวจใบลูก `autopilot` แล้วประทับ Converted · Last verified `commit 09c4cc6a`
 - ล็อก: `Accounting.Tests/AutopilotRound252Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/AutopilotRound252DbTests.cs` · `tools/required_call_site_check.py` (R252) ·
   `write_permission_gate_check` เฝ้า `AutopilotController` · `html_interpolation_escape_check` เฝ้า `autopilot.html` · Last verified `commit 81641769`
+
+- **รอบ 257 ชุด 4 (team-A M8 · L11/L12/L14 · team-C M2)**: สลิปกันซ้ำนับเฉพาะรายการที่รอตรวจ/รับเงินแล้ว (`SlipEvidenceRule.DuplicateStatuses`) — สลิปที่ผู้ขายปฏิเสธ/หมดอายุ ส่งไฟล์/เลขเดิมใหม่ได้ ·
+  หน้าชำระบอกยอดที่สลิปถูกบันทึก (`SlipAmountNote` = ยอดสุทธิของลิงก์) + คำเตือน "ไม่หัก ณ ที่จ่าย" เป็นข้อความในหน้า (`role=alert` แทน `alert()`) ·
+  สรุปประจำวันนับ "เงินเข้ารอยืนยัน" เกณฑ์เดียวกับคิว (รวมคำแนะนำหลายใบยอดเท่ากัน) · ใต้สวิตช์ปิดหนี้อัตโนมัติบอกว่าเปิดแล้วไล่ย้อน 14 วัน (`BankReceiptAutoSettle.EnableNote`) ·
+  โควตาข้อความไม่จำกัด (ก้อนรวม/ช่อง -1) ⇒ ไม่มีราคาแพ็ก + ซื้อ 409 ก่อนคิดเงิน (`NotifyQuotaPolicy.CombinedPackSellable` · `ChannelPackSellable`) · Last verified `commit 8918f558` (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
 
 ### 2.12l Autopilot ส่วน B — แจ้งโอนจากหน้าชำระ · รายการประจำทุก N เดือน/สร้างล่วงหน้า (รอบ 255 WP-12B · AUDIT_249 §WP-12 ข้อ 1–2 · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §4.2 ② · §5.6 · คำตัดสิน 255-WP12B-*)
 

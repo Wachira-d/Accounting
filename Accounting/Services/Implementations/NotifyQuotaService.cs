@@ -527,7 +527,8 @@ public class NotifyQuotaService : INotifyQuotaService
         var bonusAlive = NotifyQuotaPolicy.BonusAlive(bonusRemaining, bonusExp, now);
         var limit = NotifyQuotaPolicy.EffectiveLimit(planLimit, bonusUsed, bonusRemaining, bonusExp, now);
         var pack = await LoadPackAsync(_db, NotifyQuotaPolicy.ChannelAll, ct);
-        var price = await PackPriceAsync(companyId, NotifyQuotaPolicy.ChannelAll, ct);
+        // รอบ 257 ชุด 4 (C-M2): ก้อนรวมไม่จำกัด ⇒ แพ็กไม่มีผล ⇒ ไม่มีราคา (หน้าเว็บไม่แสดงปุ่ม) · ตัวตัดสินเดียว NotifyQuotaPolicy.CombinedPackSellable
+        var price = NotifyQuotaPolicy.CombinedPackSellable(planLimit) ? await PackPriceAsync(companyId, NotifyQuotaPolicy.ChannelAll, ct) : null;
 
         // รอบ 254 WP-11 L4: สถานะต่อช่อง — ช่องที่ยังไม่แยก (OwnLimit=false) แสดงยอดที่นับแถวของช่อง (ถ้ามี · เช่นอีเมลเอกสาร) โดยไม่มีเพดาน
         var channels = new List<NotifyChannelQuotaStatus>();
@@ -609,9 +610,17 @@ public class NotifyQuotaService : INotifyQuotaService
         var ch = NotifyQuotaPolicy.NormalizeChannel(channel);
         var code = NotifyQuotaPolicy.TopUpCodeFor(ch);
         // ฝ่ายค้าน fix2 H1: แพ็กของช่องที่ยังไม่แยกเพดาน = จ่ายแล้วไม่มีผล (ข้อความยังนับก้อนรวม) ⇒ ปฏิเสธ 409 ก่อนคิดเงิน · บอกให้ซื้อแพ็กรวมแทน
-        if (ch != NotifyQuotaPolicy.ChannelAll
-            && !NotifyQuotaPolicy.ChannelPackSellable((await LoadLimitsAsync(_db, companyId, ct)).LimitFor(ch)))
-            throw new BusinessRuleException(NotifyQuotaPolicy.ChannelPackNotSellableMessage(ch), "NOTIFY-TOPUP-CHANNEL-NOT-SPLIT", 409);
+        // รอบ 257 ชุด 4 (C-M2): เพดานไม่จำกัด (ก้อนรวมหรือช่อง) ⇒ แพ็กไม่มีผล ⇒ 409 ก่อนคิดเงิน (เดิมช่อง -1 ขายได้ · ก้อนรวมไม่จำกัดขายได้)
+        var sellLimits = await LoadLimitsAsync(_db, companyId, ct);
+        if (ch == NotifyQuotaPolicy.ChannelAll)
+        {
+            if (!NotifyQuotaPolicy.CombinedPackSellable(sellLimits.PlanLimit))
+                throw new BusinessRuleException(NotifyQuotaPolicy.UnlimitedPackNotSellableMessage(ch), "NOTIFY-TOPUP-UNLIMITED", 409);
+        }
+        else if (!NotifyQuotaPolicy.ChannelPackSellable(sellLimits.LimitFor(ch)))
+            throw sellLimits.LimitFor(ch) is int chl && chl < 0
+                ? new BusinessRuleException(NotifyQuotaPolicy.UnlimitedPackNotSellableMessage(ch), "NOTIFY-TOPUP-UNLIMITED", 409)
+                : new BusinessRuleException(NotifyQuotaPolicy.ChannelPackNotSellableMessage(ch), "NOTIFY-TOPUP-CHANNEL-NOT-SPLIT", 409);
 
         // ล็อกต่อบริษัท (ตัวเรียกเดียวกับ QuotaService.PurchaseTopUpAsync) **ก่อน**อ่านอะไรทั้งนั้น — ลำดับการซื้อในงวดเป็นส่วนของคีย์กันซ้ำ ·
         // pg_advisory_xact_lock ต้องอยู่ในธุรกรรม ไม่งั้นหลุดทันที · ทุกช่องใช้ล็อกเดียวกัน (ถังโบนัสอยู่แถว Subscription เดียวกัน)

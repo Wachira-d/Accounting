@@ -17514,6 +17514,56 @@ def wht_credit_add_self_test() -> list:
     return fails
 
 
+# ── รอบ 257 ชุด 4 (รายการประจำ + LINE/โควตา + UX · erp-review/2026-11-10 team-A/C/E) ──
+_R257P4_WHY = "รอบ 257 ชุด 4 (READINESS_257): "
+RULES += [
+    dict(file=_R248_LOADER, method="LoadAsync",
+         must=["AutoApprovePolicy.StopsRecurringDefault(", "AutoApprovePolicy.MatchesDefaultBinding(r.DefaultPolicyBindingHash, CurrentBindingHash(r))",
+               "AutoApprovePolicy.RecurringDefault(r.CreatedBy)"],
+         before=[("AutoApprovePolicy.StopsRecurringDefault(", "AutoApprovePolicy.RecurringDefault(r.CreatedBy)"),
+                 ("AutoApprovePolicy.MatchesDefaultBinding(", "AutoApprovePolicy.RecurringDefault(r.CreatedBy)")],
+         why=_R257P4_WHY + "A-M4/M5: ค่าตั้งต้นรอบ 256 ไม่ปล่อยเมื่อผู้ติดต่อตั้งหยุดรอคน หรือค่ารายการเปลี่ยนหลังสร้าง/รับรอง (หลวมกว่านโยบายที่ตั้งเองไม่ได้)"),
+    dict(file=RECURRING, method="CreateAsync",
+         must=["recurring.DefaultPolicyBindingHash = RecurringApprovePolicyLoader.CurrentBindingHash(recurring)", "RecurringSchedule.JournalLeadDaysError("],
+         before=[("recurring.DefaultPolicyBindingHash =", "_db.RecurringTransactions.Add(")],
+         why=_R257P4_WHY + "A-M4 ประทับลายนิ้วมือตอนสร้าง · A-H3 สมุดรายวันห้ามสร้างล่วงหน้า"),
+    dict(file=RECURRING, method="UpdateAsync", must=["RecurringSchedule.JournalLeadDaysError("],
+         why=_R257P4_WHY + "A-H3 ทางแก้ไขเดินด่านเดียวกับตอนสร้าง"),
+    dict(file=RECURRING, method="CreateDocumentFromTemplateAsync", must=["RecurringSchedule.DocumentDateUtc(", "DocumentDate: docDateUtc"],
+         forbid=["DocumentDate: DateTime.UtcNow", "DateTime.UtcNow.AddDays(ddDays)"],
+         why=_R257P4_WHY + "A-M9 วันที่เอกสารตามปฏิทินไทย (00:00–07:00 น. ไม่ได้วันที่ของวันก่อน)"),
+    dict(file=RECURRING, method="CreateJournalFromTemplateAsync", must=["EntryDate: RecurringSchedule.DocumentDateUtc(DateTime.UtcNow)"],
+         forbid=["EntryDate: DateTime.UtcNow"],
+         why=_R257P4_WHY + "A-M9 ใบสำคัญลงวันตามปฏิทินไทย"),
+    dict(file=_R248_AP, method="SetRecurringPolicyAsync", must=["r.DefaultPolicyBindingHash = RecurringApprovePolicyLoader.CurrentBindingHash(r)"],
+         before=[("r.DefaultPolicyBindingHash =", "await _db.SaveChangesAsync(ct)")],
+         why=_R257P4_WHY + "A-M4/H2 ผู้มีสิทธิ์บันทึกขั้นอนุมัติ = รับรองค่าตั้งต้นของค่าปัจจุบัน (ค่าเริ่มต้นไม่ใช่ no-op)"),
+    dict(file=_R248_EMAIL, method="EnqueueDocumentAsync", must=["ContactLineChannel.LineFallbackMayDuplicate(", "etaxForcesEmail"],
+         why=_R257P4_WHY + "C-M3 อีเมลถูกบังคับด้วย e-Tax ⇒ แถว LINE ไม่ถอยไปอีเมล (ลูกค้าไม่ได้สองฉบับ)"),
+    dict(file=_R248_EMAIL, method="EnqueueLineAsync", must=["ContactLineChannel.LineFallbackAtSend(rule.ChannelEmail, rule.LineFallbackToEmail, etaxForcesEmail)"],
+         forbid=["rule.LineFallbackToEmail && !rule.ChannelEmail"],
+         why=_R257P4_WHY + "C-M3 ตัวตัดสินเดียวของธงถอย"),
+    dict(file=_R248_EMAIL, method="EnqueueLineFallbackEmailAsync", must=["q.IdempotencyKey == baseKey"],
+         before=[("q.IdempotencyKey == baseKey", "EnqueueDocumentAsync(")],
+         why=_R257P4_WHY + "C-M3 แถวคิวเดิมที่ถือธงถอย: อีเมลหลักเข้าคิวแล้ว ⇒ ไม่ถอยซ้ำ"),
+    dict(file=_R254_QUOTA, method="GetStatusAsync", must=["NotifyQuotaPolicy.CombinedPackSellable(planLimit)"],
+         why=_R257P4_WHY + "C-M2 ก้อนรวมไม่จำกัด ⇒ ไม่มีราคาแพ็ก"),
+    dict(file=_R254_QUOTA, method="PurchaseTopUpAsync", must=["NotifyQuotaPolicy.CombinedPackSellable(", "NotifyQuotaPolicy.UnlimitedPackNotSellableMessage(ch)"],
+         before=[("NotifyQuotaPolicy.CombinedPackSellable(", "_metering.RecordAsync(")],
+         why=_R257P4_WHY + "C-M2 เพดานไม่จำกัด ⇒ 409 ก่อนคิดเงิน"),
+    dict(file="Services/Implementations/SlipEvidenceService.cs", method="SubmitAsync", must=["SlipEvidenceRule.DuplicateStatuses", "dupStatuses.Contains(i.Status)"],
+         why=_R257P4_WHY + "A-M8 สลิปที่ถูกปฏิเสธ/หมดอายุส่งใหม่ได้ (กันซ้ำเฉพาะรอตรวจ/รับเงินแล้ว)"),
+    dict(file="Services/Implementations/ContactNotifyEndpointService.cs", method="UnlinkAsync",
+         must=["NotifyEndpointKind.ConsentWithdrawnByCompany", "c.CompanyId == companyId"],
+         why=_R257P4_WHY + "C LOW บริษัทยกเลิกปลายทาง ⇒ ถอนความยินยอม (PDPA ม.19)"),
+    dict(file="Services/Implementations/ContactLineQueueService.cs", method="AlertMonthlyLimitAsync",
+         must=["LinePushOutcome.AlertMonthStartUtc(", "n.CompanyId == companyId", "cu.CompanyId == companyId"],
+         why=_R257P4_WHY + "C LOW 429 monthly limit ⇒ กระดิ่งเจ้าของครั้งเดียวต่อเดือน (tenant)"),
+    dict(file="Controllers/AdminGoLiveController.cs", method="FactsAsync",
+         must=["_nextAccLine.GetAsync(", "PlatformCompanySet =", "CentralOaHasBasicId ="],
+         why=_R257P4_WHY + "E-H1 ข้อ LINE ของการ์ด go-live จากผู้อ่านค่าตั้ง OA กลางตัวเดียว"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

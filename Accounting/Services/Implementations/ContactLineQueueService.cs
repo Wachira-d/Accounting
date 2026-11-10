@@ -33,10 +33,37 @@ public class ContactLineQueueService : IContactLineQueueService
     internal static readonly TimeSpan StaleSending = TimeSpan.FromMinutes(30);   // > BatchSize × LineNotifyService.PushTimeout (50 × 15 วินาที = 12.5 นาที)
     private const int BatchSize = 50;
 
+    /// <summary>รอบ 257 ชุด 4 (C LOW): กระดิ่งถึงเจ้าของเมื่อ OA ของบริษัทใช้ข้อความของเดือนหมด (429 monthly limit) · null = ไม่แจ้ง (เทสต์เดิม)</summary>
+    private readonly INotificationService? _notifications;
+
     public ContactLineQueueService(AccountingDbContext db, ILineNotifyService line, IContactRecipientResolver recipients, ISecretProtector secrets,
-        IEmailScheduleService emailSchedule, ILogger<ContactLineQueueService> logger, IDocumentPayLinkService? payLinks = null)
+        IEmailScheduleService emailSchedule, ILogger<ContactLineQueueService> logger, IDocumentPayLinkService? payLinks = null,
+        INotificationService? notifications = null)
     {
         _db = db; _line = line; _recipients = recipients; _secrets = secrets; _emailSchedule = emailSchedule; _logger = logger; _payLinks = payLinks;
+        _notifications = notifications;
+    }
+
+    /// <summary>รอบ 257 ชุด 4 (C LOW): OA ของบริษัทใช้ข้อความฟรีของเดือนหมด (LINE ตอบ 429 monthly limit) ⇒ กระดิ่งถึงเจ้าของ<b>ครั้งเดียวต่อเดือน (ปฏิทินไทย)</b> —
+    /// เดิมรู้ได้เฉพาะจากคิว LINE ว่าล้มทีละแถว · OA กลางของ NextAcc ไม่แจ้งบริษัท (ผู้ดูแลระบบเฝ้าเอง) · ล้ม ⇒ LogError (แถวคิวบอกเหตุอยู่แล้ว ไม่ย้อนผลส่ง)</summary>
+    private async Task AlertMonthlyLimitAsync(Guid companyId, CancellationToken ct)
+    {
+        if (_notifications == null) return;
+        try
+        {
+            var since = LinePushOutcome.AlertMonthStartUtc(DateTime.UtcNow);
+            if (await _db.Notifications.AnyAsync(n => n.CompanyId == companyId && n.EntityType == LinePushOutcome.MonthlyLimitAlertEntity && n.CreatedAt >= since, ct))
+                return;
+            var owners = await _db.CompanyUsers.AsNoTracking()
+                .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner).Select(cu => cu.UserId).ToListAsync(ct);
+            foreach (var u in owners)
+                await _notifications.SendAsync(u, companyId, NotificationType.System, LinePushOutcome.MonthlyLimitAlertTitle, LinePushOutcome.MonthlyLimitAlertMessage,
+                    "/pages/email-schedule.html", LinePushOutcome.MonthlyLimitAlertEntity, null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งเจ้าของบริษัท {Company} เรื่องข้อความ LINE OA ของเดือนหมดไม่สำเร็จ — แถวคิว LINE บอกเหตุแล้ว", companyId);
+        }
     }
 
     public async Task<int> ProcessPendingAsync(CancellationToken ct = default)
@@ -225,6 +252,8 @@ public class ContactLineQueueService : IContactLineQueueService
             else
                 _logger.LogWarning("LINE OA ของบริษัท {Company} ส่งไม่ได้ ({Code}) — แถวคิว {Id}", item.CompanyId, cls.Code, item.Id);
         }
+        if (cls.Code == LinePushOutcome.CodeMonthlyLimit && ep.OaScope != NotifyEndpointKind.ScopeNextAcc)
+            await AlertMonthlyLimitAsync(item.CompanyId, ct);
         await FallbackAsync(item, cls.FallbackEligible, ct);
         return false;
     }

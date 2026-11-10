@@ -1,7 +1,8 @@
 namespace Accounting.Helpers;
 
 /// <summary>
-/// รอบ 250 (WP-02 · คำตัดสินเจ้าของมอบให้ทีม §3.3 Y7 · Y8 · N11 · OMISE_READINESS §3) — <b>รายการตรวจ go-live 10 ข้อของการรับเงินจริงผ่าน Omise</b> บนแดชบอร์ดแอดมิน (pure)
+/// รอบ 250 (WP-02 · คำตัดสินเจ้าของมอบให้ทีม §3.3 Y7 · Y8 · N11 · OMISE_READINESS §3) — <b>รายการตรวจ go-live ของแพลตฟอร์ม</b> บนแดชบอร์ดแอดมิน (pure) ·
+/// 10 ข้อของการรับเงินจริงผ่าน Omise + รอบ 257 ชุด 4 (E-H1) ข้อ LINE OA กลาง 4 ข้อ (บริษัทผู้ให้บริการ · token/secret/Basic ID · webhook · เข้ากลุ่มได้)
 ///
 /// <para>ทุกข้อตรวจจากข้อมูลจริงในฐาน (ผู้เรียก <c>AdminGoLiveController</c> รวบรวมข้อเท็จจริง) · ข้อที่ระบบตรวจเองไม่ได้ (ส่ง URL ให้ Omise) ติดป้าย
 /// "ทำเอง" ตามจริง — ไม่ประทับ ✅ แทนเจ้าของ (F2 ข้อ 3) · URL ของระบบ: ไม่เดาโดเมน (Y7 — ค่าที่มากับซอร์ส ≠ ตั้งแล้ว) ·
@@ -43,11 +44,27 @@ public static class PlatformGoLiveChecklist
         public DateTime? OutboundCheckAt { get; init; }
         public bool? OutboundCheckOk { get; init; }
         public string? OutboundCheckMessage { get; init; }
+
+        // ── รอบ 257 ชุด 4 (E-H1): LINE OA กลาง — การ์ดนี้คือรายการ go-live ตัวเดียวของแพลตฟอร์ม (เดิมไม่มีข้อ LINE ⇒ ขึ้นระบบแล้วกลุ่ม/ลิงก์ลูกค้าเงียบ) ──
+        /// <summary><c>SiteSettings.PlatformCompanyId</c> ตั้งแล้วและชี้บริษัทที่มีอยู่ (ผู้ส่งกลุ่มผ่าน OA กลาง · 256-2)</summary>
+        public bool PlatformCompanySet { get; init; }
+        public string? PlatformCompanyName { get; init; }
+        /// <summary>ค่าตั้ง OA กลางที่ใช้จริง (<c>INextAccLineConfig.GetAsync</c> — หน้าแอดมิน › config)</summary>
+        public bool CentralOaHasToken { get; init; }
+        public bool CentralOaHasSecret { get; init; }
+        public bool CentralOaHasBasicId { get; init; }
+        /// <summary>เหตุที่ค่าของหน้าแอดมินใช้ไม่ได้ (ถอดรหัสไม่ได้ ฯลฯ) · null = ไม่มี</summary>
+        public string? CentralOaProblem { get; init; }
     }
+
+    /// <summary>รอบ 257 ชุด 4 (E-H1): ชื่อการ์ด (server computes) — รายการ go-live ตัวเดียวของแพลตฟอร์ม ไม่ใช่เฉพาะ Omise</summary>
+    public const string CardTitle = "รายการตรวจ go-live ของแพลตฟอร์ม (รับเงินจริง · LINE OA กลาง)";
+    /// <summary>ปลายทาง webhook ของ LINE OA กลาง (ตั้งใน LINE Developers Console ของ OA กลาง)</summary>
+    public const string CentralWebhookPath = "/api/line-webhook";
 
     public sealed record Item(int No, string Code, string Status, string Title, string? Why, string? FixUrl, string? FixLabel);
 
-    public sealed record Report(IReadOnlyList<Item> Items, int DoneCount, int FailCount, string BankFeedNote);
+    public sealed record Report(IReadOnlyList<Item> Items, int DoneCount, int FailCount, string BankFeedNote, string Title = CardTitle);
 
     public static Report Evaluate(Facts f)
     {
@@ -96,6 +113,26 @@ public static class PlatformGoLiveChecklist
         Add("LIVE", f.LiveConfirmed ? Ok : Fail,
             f.LiveConfirmed ? "เปิดรับเงินจริงแล้ว (ผ่านด่าน PaymentLiveGate)" : "ยังไม่ได้เปิดรับเงินจริง — หลัง Omise อนุมัติ ใส่คีย์ live แล้วผ่านด่านในหน้าช่องทาง Omise",
             null, "/admin/platform-gateway.html", "เปิดรับเงินจริง");
+        // ── รอบ 257 ชุด 4 (E-H1): LINE OA กลาง (READINESS_257 ข้อ 2) ──
+        Add("LINE-PLATFORM-COMPANY", f.PlatformCompanySet ? Ok : Fail,
+            f.PlatformCompanySet ? $"ตั้งบริษัทผู้ให้บริการแล้ว: {f.PlatformCompanyName ?? "-"}"
+                : "ยังไม่ได้ตั้งบริษัทผู้ให้บริการ (PlatformCompanyId) — ผูก/ส่งเข้ากลุ่ม LINE ของลูกค้าผ่าน OA กลางไม่ได้ · คำสั่ง #HeyNextAcc ตอบว่ายังไม่เปิด",
+            "บริษัทผู้ให้บริการคือบริษัทเดียวที่ส่งเอกสารเข้ากลุ่ม LINE ของลูกค้าผ่าน OA กลางได้ (คำตัดสิน 256-2)", "/admin/site-settings.html", "ตั้งบริษัทผู้ให้บริการ");
+        var oaMissing = new List<string>();
+        if (!f.CentralOaHasToken) oaMissing.Add("Channel Access Token");
+        if (!f.CentralOaHasSecret) oaMissing.Add("Channel Secret");
+        if (!f.CentralOaHasBasicId) oaMissing.Add("Basic ID (@…)");
+        Add("LINE-CENTRAL-OA", oaMissing.Count == 0 && f.CentralOaProblem == null ? Ok : Fail,
+            oaMissing.Count == 0 && f.CentralOaProblem == null ? "ตั้ง LINE OA กลางครบ (token · secret · Basic ID)"
+                : oaMissing.Count > 0 ? "LINE OA กลางยังขาด: " + string.Join(" · ", oaMissing) : "ค่าตั้ง LINE OA กลางใช้ไม่ได้",
+            f.CentralOaProblem ?? "ขาด token/secret ⇒ webhook กลางตรวจลายเซ็นไม่ได้และส่งข้อความไม่ได้ · ขาด Basic ID ⇒ ปุ่มเพิ่มเพื่อน/ลิงก์ผูกของลูกค้าใช้ไม่ได้",
+            "/admin/site-settings.html", "ตั้ง LINE OA กลาง");
+        Add("LINE-WEBHOOK", Manual, "ตั้ง Webhook URL ของ LINE OA กลางใน LINE Developers Console (ระบบตรวจเองไม่ได้)",
+            (f.SystemBaseUrlConfigured ? (f.SystemBaseUrl ?? "").TrimEnd('/') + CentralWebhookPath : "ตั้ง URL ของระบบก่อน แล้ว URL จะเป็น <URL ของระบบ>" + CentralWebhookPath)
+                + " · เปิด \"Use webhook\" · ห้ามวาง URL นี้ใน OA ของบริษัทใด และห้ามวาง URL ของบริษัทใน OA กลาง",
+            null, null);
+        Add("LINE-JOIN-GROUPS", Manual, "เปิด \"Allow bot to join group chats\" ของ LINE OA กลาง (ระบบตรวจเองไม่ได้)",
+            "LINE Official Account Manager › ตั้งค่า › บัญชี — ปิดอยู่ ⇒ เชิญบอทเข้ากลุ่มไม่ได้ และอ่านจำนวนสมาชิกตอนออกรหัสไม่ได้", null, null);
         // Y8: การเชื่อมต่อขาออก (ข้อเสริม — ไม่นับใน 10 ข้อของ OMISE_READINESS แต่เป็นเงื่อนไขของ webhook/คีย์)
         var outbound = f.OutboundCheckOk switch
         {

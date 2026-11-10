@@ -113,6 +113,10 @@ public static class AutopilotReadiness
         /// <summary>รอบถัด ๆ ไป (ไม่นับรอบหน้า) ที่ตกในงวดที่ปิดแล้ว</summary>
         public IReadOnlyList<DateTime> LaterClosedRunDates { get; init; } = Array.Empty<DateTime>();
 
+        /// <summary>รอบ 257 ชุด 4 (A L13): สร้างล่วงหน้า (วัน) + วันของงวดถัดไป — ใบกำกับภาษีที่สร้างข้ามเดือน ⇒ เดือนภาษีย้าย (เตือน)</summary>
+        public int LeadDays { get; init; }
+        public DateTime? NextPeriodDate { get; init; }
+
         /// <summary>หลังรับชำระส่งใบเสร็จอัตโนมัติไหม (<see cref="PostPaymentAutomationPolicy.EffectiveLayers"/>) · null = ไม่ได้ตรวจ</summary>
         public bool? PostPayEmailReceipt { get; init; }
         public bool PostPayIncludePartial { get; init; }
@@ -213,6 +217,18 @@ public static class AutopilotReadiness
             Add("OWNER-POLICY", "อนุมัติ", Fail, "นโยบายอนุมัติข้ามคำเตือนหยุดมีผล",
                 f.PolicyInactiveReason ?? "ให้ผู้มีสิทธิ์อนุมัติเอกสารตั้งนโยบายใหม่ (ระบบจะไม่ปล่อยคำเตือนตามนโยบายที่ผู้ตั้งไม่มีสิทธิ์แล้ว)", PolicyStepUrl, "ตั้งนโยบายใหม่");
         }
+        // รอบ 257 ชุด 4 (A-M6): ค่าตั้งต้นรอบ 256 ไม่มีผล (ผู้สร้างหมดสิทธิ์ · ค่ารายการเปลี่ยนหลังสร้าง/รับรอง) — เดิมไม่มีนโยบายที่ตั้ง ⇒ แผงเงียบ ·
+        // บอกเหตุจากตัวโหลด (DefaultSetterGoneReason / BindingChangedReason) · Warn ไม่ใช่ Fail: ใบยังสร้างได้ แค่ "ลูกค้าค้างชำระ" จะหยุดรอคน
+        else if (f.Policy == null && f.AutoApprove && f.PolicySetterActive == false && f.PolicyInactiveReason != null)
+            Add("OWNER-POLICY", "อนุมัติ", Warn, "ค่าเริ่มต้น (ลูกค้าค้างชำระ ⇒ อนุมัติต่อ) ไม่มีผลกับรายการนี้", f.PolicyInactiveReason, PolicyStepUrl, "ตั้ง/รับรองนโยบาย");
+
+        // ── รอบ 257 ชุด 4 (A L13): ใบกำกับภาษีสร้างล่วงหน้าข้ามเดือน ⇒ เดือนภาษีของใบ = เดือนที่สร้าง (ไม่ใช่เดือนของงวด) ──
+        if (f.DocumentType == Accounting.Models.Enums.DocumentType.TaxInvoice && f.NextPeriodDate is { } np
+            && RecurringSchedule.LeadDaysMovesVatMonth(np, f.LeadDays))
+            Add("LEAD-VAT-MONTH", "ภาษี", Warn,
+                $"สร้างล่วงหน้า {f.LeadDays} วัน ⇒ ใบกำกับภาษีของงวด {D(np)} ลงวันที่ {D(RecurringSchedule.CreateAt(np, f.LeadDays))} — ภาษีขายเข้าเดือนก่อนเดือนของงวด",
+                "ใบกำกับภาษีลงเดือนภาษีตามวันที่ออก (ป.รัษฎากร §78/§78/1 · ภ.พ.30 ของเดือนที่สร้าง) — ถ้าต้องการให้อยู่เดือนของงวด ลดวันสร้างล่วงหน้า หรือใช้ใบแจ้งหนี้แล้วออกใบกำกับตอนรับชำระ",
+                null, null);
 
         // ── รอบ 251 (WP-07 · PERIOD): งวดบัญชีของวันที่เอกสารรอบหน้า (กติกางวดปิดเดียวกับ ClosedPeriodRanges) ──
         if (f.NextPeriodClosed == true)
