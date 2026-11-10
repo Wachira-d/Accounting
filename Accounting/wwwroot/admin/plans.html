@@ -63,7 +63,7 @@
       if (res === null) return '<div style="color:#b91c1c;font-size:12px">โหลดโควตา CMS/ที่พักไม่สำเร็จ — ช่องถูกล็อก กันบันทึกทับค่าเดิมด้วยค่าว่าง (รีเฟรชแล้วลองใหม่)</div>';
       return `<div class="admin-grid-3">${res.map((r, i) => { const a = quotaAllowanceOf(planId, r.key);
         return `<div class="admin-form-group">
-          <label class="admin-label">${AdminLayout.esc(r.label)} <span style="font-weight:400;color:#94a3b8;font-size:11px">(${AdminLayout.esc(r.unit)})${r.perSite ? ' — ต่อเว็บ' : ''}</span></label>
+          <label class="admin-label" for="ep_q_${i}">${AdminLayout.esc(r.label)} <span style="font-weight:400;color:#94a3b8;font-size:11px">(${AdminLayout.esc(r.unit)})${r.perSite ? ' — ต่อเว็บ' : ''}</span></label>
           <input type="number" min="-1" class="admin-input" id="ep_q_${i}" data-quota-key="${AdminLayout.esc(r.key)}" value="${a.included ?? ''}" placeholder="ว่าง = ไม่ตั้ง · -1 = ไม่จำกัด" oninput="syncQuotaTrialField(${i})">
           <input type="number" min="-1" class="admin-input" id="ep_qt_${i}" value="${a.trialIncluded ?? ''}" placeholder="ระหว่างทดลองใช้ (ว่าง = ใช้ค่าปกติ)" style="margin-top:4px" ${a.included == null ? 'disabled' : ''} title="ตั้งได้เมื่อช่องปกติมีค่า (ฝ่ายค้าน S2)">
           <div style="font-size:11px;color:#64748b;margin-top:4px">${AdminLayout.esc(r.legacyNote || '')}</div>
@@ -180,7 +180,8 @@
     // รอบ 254 WP-11 L4: คำใบ้ค่าแนะนำจากเซิร์ฟเวอร์ (NotifyQuotaPolicy.SuggestedChannelLimit — หน้าเว็บไม่มีสำเนาตัวเลข) · -1 = แนะนำไม่จำกัด
     function suggestHint(v) {
       if (v == null) return '';
-      return ' · แนะนำ ' + (v < 0 ? 'ไม่จำกัด (เว้นว่าง)' : Number(v).toLocaleString());
+      // รอบ 257 ชุด 4 (C LOW): ช่องแยก LINE/อีเมล "ว่าง" = ไม่แยกช่อง (นับรวมก้อนบน) ไม่ใช่ "ไม่จำกัด" — เดิมป้ายบอก "ไม่จำกัด (เว้นว่าง)" ชวนเข้าใจผิด
+      return ' · แนะนำ ' + (v < 0 ? 'ไม่ตั้งเพดานแยก (เว้นว่าง = ไม่แยกช่อง)' : Number(v).toLocaleString());
     }
     // ช่องว่าง = -1 (เซิร์ฟเวอร์ล้างเป็น "ไม่แยก") · ตัวเลข = เพดาน
     function limitOrClear(id) {
@@ -347,7 +348,7 @@
                   <input type="number" min="0" class="admin-input" id="ep_journals" value="${p.maxJournalEntriesPerMonth || 0}">
                 </div>
                 <div class="admin-form-group">
-                  <label class="admin-label">ข้อความแจ้งเตือนช่องกลาง/เดือน</label>
+                  <label class="admin-label" for="ep_shared_msgs">ข้อความแจ้งเตือนช่องกลาง/เดือน</label>
                   <input type="number" min="0" class="admin-input" id="ep_shared_msgs" value="${p.maxSharedMessagesPerMonth ?? ''}" placeholder="ว่าง = ไม่จำกัด">
                   <div style="font-size:11px;color:#64748b;margin-top:4px">LINE OA/อีเมลของ NextAcc ถึงลูกค้าของร้าน · ว่าง = ไม่จำกัด (ค่าเริ่มต้น) · OA/อีเมลของร้านเองไม่นับ${p.suggestedSharedMessagesPerMonth != null ? ' · แนะนำ ' + p.suggestedSharedMessagesPerMonth.toLocaleString() : ''}</div>
                 </div>
@@ -357,12 +358,12 @@
                   <div style="font-size:11px;color:#64748b;margin-top:4px">ว่าง = ไม่จำกัด (ค่าเริ่มต้น — ทุกแพ็กเกจเชื่อมคู่ค้าได้ไม่จำกัด) · ตรวจตอนยอมรับคู่ ทั้งสองบริษัท</div>
                 </div>
                 <div class="admin-form-group">
-                  <label class="admin-label">ข้อความ LINE ช่องกลาง/เดือน (แยกช่อง)</label>
+                  <label class="admin-label" for="ep_shared_line">ข้อความ LINE ช่องกลาง/เดือน (แยกช่อง)</label>
                   <input type="number" min="0" class="admin-input" id="ep_shared_line" value="${(p.notifyChannels || {}).maxSharedLineMessagesPerMonth ?? ''}" placeholder="ว่าง = ไม่แยก (นับรวมก้อนบน)">
                   <div style="font-size:11px;color:#64748b;margin-top:4px">ตั้งแล้ว LINE ผ่าน OA ของ NextAcc นับแยกจากก้อนรวม · ว่าง = ไม่แยก${suggestHint((p.notifyChannels || {}).suggestedLine)}</div>
                 </div>
                 <div class="admin-form-group">
-                  <label class="admin-label">อีเมลช่องกลาง/เดือน (แยกช่อง)</label>
+                  <label class="admin-label" for="ep_shared_email">อีเมลช่องกลาง/เดือน (แยกช่อง)</label>
                   <input type="number" min="0" class="admin-input" id="ep_shared_email" value="${(p.notifyChannels || {}).maxSharedEmailsPerMonth ?? ''}" placeholder="ว่าง = ไม่แยก (นับอย่างเดียว)">
                   <div style="font-size:11px;color:#64748b;margin-top:4px">อีเมลเอกสาร/ขอเซ็นผ่าน SMTP ของ NextAcc · ว่าง = นับอย่างเดียวไม่จำกัด (เพดานรายวันยังคุม) · ตั้งตัวเลขหลังวัดยอดจริง (SQL NOTIFY §4)${suggestHint((p.notifyChannels || {}).suggestedEmail)}</div>
                 </div>
@@ -441,17 +442,17 @@
                   <input type="number" min="0" class="admin-input" id="ep_trial_docs" value="${p.trialMaxDocumentsPerMonth || 0}">
                 </div>
                 <div class="admin-form-group">
-                  <label class="admin-label">ข้อความแจ้งเตือนช่องกลาง/เดือน (Trial)</label>
+                  <label class="admin-label" for="ep_trial_shared_msgs">ข้อความแจ้งเตือนช่องกลาง/เดือน (Trial)</label>
                   <input type="number" min="0" class="admin-input" id="ep_trial_shared_msgs" value="${p.trialMaxSharedMessagesPerMonth ?? ''}" placeholder="ว่าง = ตามแพ็กเกจ">
                   <div style="font-size:11px;color:#64748b;margin-top:4px">ว่าง = ใช้ค่าของแพ็กเกจ${p.suggestedTrialSharedMessagesPerMonth != null ? ' · แนะนำ ' + p.suggestedTrialSharedMessagesPerMonth.toLocaleString() : ''}</div>
                 </div>
                 <div class="admin-form-group">
-                  <label class="admin-label">ข้อความ LINE ช่องกลาง/เดือน (Trial)</label>
+                  <label class="admin-label" for="ep_trial_shared_line">ข้อความ LINE ช่องกลาง/เดือน (Trial)</label>
                   <input type="number" min="0" class="admin-input" id="ep_trial_shared_line" value="${(p.notifyChannels || {}).trialMaxSharedLineMessagesPerMonth ?? ''}" placeholder="ว่าง = ตามแพ็กเกจ">
                   <div style="font-size:11px;color:#64748b;margin-top:4px">ว่าง = ใช้ค่าของแพ็กเกจ${suggestHint((p.notifyChannels || {}).suggestedTrialLine)}</div>
                 </div>
                 <div class="admin-form-group">
-                  <label class="admin-label">อีเมลช่องกลาง/เดือน (Trial)</label>
+                  <label class="admin-label" for="ep_trial_shared_email">อีเมลช่องกลาง/เดือน (Trial)</label>
                   <input type="number" min="0" class="admin-input" id="ep_trial_shared_email" value="${(p.notifyChannels || {}).trialMaxSharedEmailsPerMonth ?? ''}" placeholder="ว่าง = ตามแพ็กเกจ">
                   <div style="font-size:11px;color:#64748b;margin-top:4px">ว่าง = ใช้ค่าของแพ็กเกจ${suggestHint((p.notifyChannels || {}).suggestedTrialEmail)}</div>
                 </div>

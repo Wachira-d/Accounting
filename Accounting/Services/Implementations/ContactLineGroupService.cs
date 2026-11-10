@@ -202,6 +202,12 @@ public class ContactLineGroupService : IContactLineGroupService
         };
         _db.LineGroupBindCodes.Add(row);
         await _db.SaveChangesAsync(ct);
+        // รอบ 257 ชุด 4 (C-M4): รหัสจาก OA กลาง ⇒ บอกว่าใช้ได้เฉพาะบริษัทผู้ให้บริการ (ชื่อ) + บริษัทอื่นใช้ OA ของตัวเอง (ไม่ต้องรอรู้ตอนยืนยัน)
+        if (scope == NotifyEndpointKind.ScopeNextAcc)
+        {
+            var platformName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
+            return LineGroupBindRule.Replies.CentralCode(code, row.GroupName, row.ExpiresAt, platformName);
+        }
         return LineGroupBindRule.Replies.Code(code, row.GroupName, row.ExpiresAt);
     }
 

@@ -83,6 +83,7 @@
         <div>
           <label for="apBankAuto"><input type="checkbox" id="apBankAuto"> ปิดหนี้อัตโนมัติจากเงินโอนเข้า (ยอดตรงเป๊ะ + ตัวระบุตัว + ยอดไม่ซ้ำ + มาจากธนาคาร)</label>
           <p class="ap-muted">ค่าตั้งต้นปิด — ดูผลจำลองย้อนหลังก่อนเปิด · ปิดอยู่ = ระบบเสนอให้คนยืนยันเท่านั้น</p>
+          <p class="ap-muted" id="apBankAutoNote" style="color:#92400e"></p>
           <button class="btn btn-secondary btn-sm" onclick="Page.simulate()">ดูผลจำลอง 30 วัน</button>
           <div id="apSim" class="ap-muted" style="margin-top:6px"></div>
         </div>
@@ -276,6 +277,8 @@ const Page = {
     document.getElementById('apBankAuto').checked = !!st.bankAutoSettleEnabled;
     // รอบ 257 A-M7: จำค่าที่โหลด — บันทึกส่งธงปิดหนี้อัตโนมัติเฉพาะเมื่อเปลี่ยนจริง (ผู้ไม่มี Bank.Reconcile บันทึกเวลาสรุป/ใบเสนอราคาได้)
     this._bankAutoLoaded = !!st.bankAutoSettleEnabled;
+    const bankNote = document.getElementById('apBankAutoNote');   // รอบ 257 ชุด 4 (A L12): ข้อความจากเซิร์ฟเวอร์
+    if (bankNote) bankNote.textContent = st.bankAutoSettleEnableNote || '';
     const sel = document.getElementById('apQtDefault');
     sel.innerHTML = (st.quotationModes || []).map(m => `<option value="${Layout.esc(m.code)}">${Layout.esc(m.label)}</option>`).join('');
     sel.value = st.quotationAcceptAutopilotDefault || 'Off';

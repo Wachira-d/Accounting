@@ -161,7 +161,9 @@ public class NotifyChannelQuotaRound254Tests
     {
         Assert.False(NotifyQuotaPolicy.ChannelPackSellable(null));
         Assert.True(NotifyQuotaPolicy.ChannelPackSellable(300));
-        Assert.True(NotifyQuotaPolicy.ChannelPackSellable(NotifyQuotaPolicy.Unlimited));
+        // รอบ 257 ชุด 4 (C-M2): ไม่จำกัด ⇒ แพ็กไม่มีผล ⇒ ขายไม่ได้ (เดิม true) · 0 = เพดานจริง ขายได้
+        Assert.False(NotifyQuotaPolicy.ChannelPackSellable(NotifyQuotaPolicy.Unlimited));
+        Assert.True(NotifyQuotaPolicy.ChannelPackSellable(0));
         var msg = NotifyQuotaPolicy.ChannelPackNotSellableMessage("line");
         Assert.Contains("ก้อนรวม", msg);
         Assert.Contains("ยังไม่ได้คิดเงิน", msg);

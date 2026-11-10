@@ -1003,13 +1003,17 @@ public class EmailScheduleService : IEmailScheduleService
         var idem = DocumentQueueKey(doc.Id, rule.Trigger, suffix);
         // รอบ 254 WP-11 L2 (DESIGN §3.d/§3.e · Q7): ช่องทางต่อกฎ — เข้าคิว LINE ก่อน (ปลายทางจากตัวหาผู้รับเดียว) แล้วตัดสินว่าอีเมลยังต้องส่งไหม
         // (ติ๊กอีเมล · หรือถอยมาจาก LINE เพราะไม่มีปลายทาง) · forceEmail = เส้นถอยไปอีเมลตอนส่ง (ไม่เข้าคิว LINE ซ้ำ)
-        var line = forceEmail ? LineEnqueueResult.None
-            : await EnqueueLineAsync(rule, doc, idem, overrideSendUtc ?? ScheduledUtc(BangkokNow().Date.AddDays(daysOffset), rule.SendAtHour), recordNotSent, ct);
-        DocQueueResult Merge(DocQueueResult r) => line.Queued > 0 ? r with { Queued = true, NotSent = null } : r;
         // ฝ่ายค้าน M3: ใบที่ต้องส่งแบบ e-Tax by Email ⇒ เส้นอีเมลเดินเสมอแม้กฎติ๊ก LINE อย่างเดียว (การ์ด LINE ไม่ใช่การส่งใบกำกับภาษีอิเล็กทรอนิกส์ ·
-        // ปิดอีเมล = ใบกำกับไม่ถึงผู้ซื้อตามกฎหมาย) · ถามเส้น e-Tax เฉพาะเมื่ออีเมลจะไม่ถูกส่ง (ไม่เพิ่มคำค้นให้กฎเดิม)
-        var etaxForced = !ContactLineChannel.EmailWanted(rule.ChannelEmail, line.FallbackToEmail, forceEmail)
-            && (await DocumentEmailService.RouteForAsync(_db, doc.CompanyId, doc.Id, ct)).Channel == EtaxEmailChannel.EtaxByEmail;
+        // ปิดอีเมล = ใบกำกับไม่ถึงผู้ซื้อตามกฎหมาย) · ถามเส้น e-Tax เฉพาะเมื่ออีเมลอาจไม่ถูกส่ง (ไม่เพิ่มคำค้นให้กฎเดิม · ถามครั้งเดียวต่อใบ)
+        bool? etaxRoute = null;
+        async Task<bool> EtaxByEmailAsync() => etaxRoute ??= (await DocumentEmailService.RouteForAsync(_db, doc.CompanyId, doc.Id, ct)).Channel == EtaxEmailChannel.EtaxByEmail;
+        // รอบ 257 ชุด 4 (C-M3): อีเมลถูกบังคับด้วย e-Tax by Email อยู่แล้ว ⇒ แถว LINE ห้ามถอยไปอีเมลตอนล้ม (เดิม FallbackToEmail=true ⇒ ลูกค้าได้อีเมลสองฉบับ + นับโควตาสองครั้ง)
+        var etaxForcesEmail = !forceEmail && ContactLineChannel.LineFallbackMayDuplicate(rule.ChannelEmail, rule.LineFallbackToEmail) && await EtaxByEmailAsync();
+        var line = forceEmail ? LineEnqueueResult.None
+            : await EnqueueLineAsync(rule, doc, idem, overrideSendUtc ?? ScheduledUtc(BangkokNow().Date.AddDays(daysOffset), rule.SendAtHour), recordNotSent, ct,
+                etaxForcesEmail);
+        DocQueueResult Merge(DocQueueResult r) => line.Queued > 0 ? r with { Queued = true, NotSent = null } : r;
+        var etaxForced = !ContactLineChannel.EmailWanted(rule.ChannelEmail, line.FallbackToEmail, forceEmail) && await EtaxByEmailAsync();
         if (!ContactLineChannel.EmailWanted(rule.ChannelEmail, line.FallbackToEmail, forceEmail, etaxByEmail: etaxForced))
             return new DocQueueResult(line.Queued > 0, line.Duplicate, line.Queued > 0 ? null : line.NotSent);
 
@@ -1087,7 +1091,7 @@ public class EmailScheduleService : IEmailScheduleService
     /// ไม่เก็บ LINE id ในคิว (อ้าง EndpointId · ถอดรหัสตอนส่ง)
     /// </summary>
     private async Task<LineEnqueueResult> EnqueueLineAsync(EmailScheduleRule rule, Document doc, string baseKey, DateTime sendUtc,
-        bool recordNotSent, CancellationToken ct)
+        bool recordNotSent, CancellationToken ct, bool etaxForcesEmail = false)
     {
         if (!ContactLineChannel.WantsLine(rule.ChannelLineUser, rule.ChannelLineGroup) || !ContactLineChannel.SupportsLine(rule.Trigger))
             return LineEnqueueResult.None;
@@ -1115,7 +1119,8 @@ public class EmailScheduleService : IEmailScheduleService
             return new LineEnqueueResult(0, false, plan.FallbackNow, plan.NotSent);
         }
         // ถอยไปอีเมลตอนส่ง (ล้มถาวร) — เฉพาะกฎที่ไม่ได้ติ๊กอีเมล (ติ๊กอีเมล = อีเมลออกอยู่แล้ว)
-        var fallbackAtSend = rule.LineFallbackToEmail && !rule.ChannelEmail;
+        // รอบ 257 ชุด 4 (C-M3): อีเมลถูกบังคับด้วย e-Tax by Email ⇒ ไม่ถอย (ตัวตัดสินเดียว ContactLineChannel.LineFallbackAtSend)
+        var fallbackAtSend = ContactLineChannel.LineFallbackAtSend(rule.ChannelEmail, rule.LineFallbackToEmail, etaxForcesEmail);
         foreach (var ep in plan.Endpoints)
         {
             var key = ContactLineChannel.QueueKey(baseKey, ep.EndpointId);
@@ -1144,6 +1149,10 @@ public class EmailScheduleService : IEmailScheduleService
         rule ??= new EmailScheduleRule { Id = Guid.Empty, CompanyId = companyId, Trigger = trigger, SendAtHour = 9 };
         var suffix = ContactLineChannel.FallbackSuffix(baseKey, doc.Id, rule.Trigger);
         if (suffix == null) return "กุญแจคิว LINE ไม่ตรงกับเอกสาร — ไม่ถอยไปอีเมล";
+        // รอบ 257 ชุด 4 (C-M3 · แถว LINE ที่เข้าคิวก่อนแก้ยังถือ FallbackToEmail=true): อีเมลหลักของใบนี้ (กุญแจเดียวกับ baseKey) เข้าคิวแล้ว
+        // (เช่น e-Tax by Email บังคับอีเมล) ⇒ ไม่ถอยซ้ำ — ลูกค้าไม่ได้อีเมลสองฉบับ ไม่นับโควตาซ้ำ
+        if (await _db.EmailQueues.AnyAsync(q => q.CompanyId == companyId && q.IdempotencyKey == baseKey && !q.IsDeleted, ct))
+            return null;
         if (ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey(baseKey) is { } recurringId)
             rule = WithRecurringPayLayer(rule, await RecurringPayLayerAsync(companyId, recurringId, ct));
         var r = await EnqueueDocumentAsync(rule, doc, daysOffset: 0, suffix: suffix, ct, overrideSendUtc: DateTime.UtcNow, recordNotSent: true, forceEmail: true);

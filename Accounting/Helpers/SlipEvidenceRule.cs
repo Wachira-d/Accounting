@@ -85,6 +85,17 @@ public static class SlipEvidenceRule
         return null;
     }
 
+    /// <summary>รอบ 257 ชุด 4 (A L14): สลิปจากหน้าชำระบันทึกเป็นยอดสุทธิของลิงก์เสมอ (หลังหัก ณ ที่จ่าย ถ้ามี · หน้าไม่ส่งยอด) — บอกลูกค้าตรง ๆ</summary>
+    public static string PayLinkSlipAmountNote(decimal net)
+        => $"สลิปที่แนบจะถูกบันทึกเป็นยอด {net.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} บาท (ยอดที่ต้องชำระของลิงก์นี้) — ถ้าโอนยอดอื่น (เช่น ไม่หัก ณ ที่จ่าย หรือโอนบางส่วน) ให้แจ้งผู้ขายพร้อมสลิป";
+
+    /// <summary>รอบ 257 ชุด 4 (A-M8): สถานะของรายการเดิมที่นับว่า "สลิปนี้แนบแล้ว" — รอตรวจ (เปิดอยู่ · <see cref="PaymentIntentPolicy.IsOpen"/>) หรือรับเงินแล้ว
+    /// (<see cref="PaymentIntentPolicy.IsSettledPositive"/>) · ผู้ขาย<b>ปฏิเสธ</b> (Failed) / หมดอายุ (Expired) ⇒ ไม่นับ ⇒ ลูกค้าส่งสลิปเดิมใหม่ได้
+    /// (เดิมนับทุกสถานะ ⇒ ปฏิเสธผิดแล้วลูกค้าแนบใหม่ไม่ได้ = ทางตัน) · อาร์เรย์ให้ EF แปลเป็น IN (...) ได้</summary>
+    public static readonly Accounting.Models.Enums.PaymentIntentStatus[] DuplicateStatuses =
+        Enum.GetValues<Accounting.Models.Enums.PaymentIntentStatus>()
+            .Where(s => PaymentIntentPolicy.IsOpen(s) || PaymentIntentPolicy.IsSettledPositive(s)).ToArray();
+
     /// <summary>ข้อความถึงลูกค้าเมื่อสลิปซ้ำ (ไม่บอกเลขเอกสารอื่น — ไม่รั่วข้อมูลใบของลูกค้าอื่น)</summary>
     public static string? DuplicateProblem(bool sameFileSeen, bool sameRefSeen)
     {

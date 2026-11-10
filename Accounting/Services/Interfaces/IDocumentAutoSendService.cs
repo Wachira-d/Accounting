@@ -158,6 +158,10 @@ public sealed record PublicDocumentPayView(
     /// ใช้ได้ทั้งโหมดโอนอย่างเดียว (ไม่มีช่องทางออนไลน์) — ไม่ผูกกับ <see cref="CanPayOnline"/></summary>
     public bool CanSubmitSlip { get; init; }
 
+    /// <summary>รอบ 257 ชุด 4 (A L14 · server computes): บอกลูกค้าว่าสลิปจากหน้านี้บันทึกเป็นยอดเท่าไร (ยอดสุทธิของลิงก์เสมอ) — เดิมไม่บอก ⇒ โอนยอดเต็มแล้วงง ·
+    /// null = ไม่มีฟอร์มสลิป</summary>
+    public string? SlipAmountNote { get; init; }
+
     /// <summary>ยอดที่สลิปจากหน้านี้แทน (ยอดสุทธิของลิงก์ — ไม่รับยอดจากหน้าเว็บ) · ไม่ส่งออกใน JSON</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public decimal SlipAmount { get; init; }
