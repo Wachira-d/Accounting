@@ -36,8 +36,8 @@
 
     <div class="table-container">
       <table class="table">
-        <thead><tr><th>ลูกค้า</th><th>อีเมลเข้าถึง</th><th>สร้างเมื่อ</th><th>เข้าใช้ล่าสุด</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
-        <tbody id="tableBody"><tr><td colspan="6" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
+        <thead><tr><th>ลูกค้า</th><th>อีเมลเข้าถึง</th><th>สร้างเมื่อ</th><th>เข้าใช้ล่าสุด</th><th>สิทธิ์</th><th data-i18n="common.status">สถานะ</th><th data-i18n="common.manage">จัดการ</th></tr></thead>
+        <tbody id="tableBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px" data-i18n="common.loading">กำลังโหลด...</td></tr></tbody>
       </table>
     </div>
 
@@ -60,13 +60,16 @@
             <input type="hidden" id="accessContactId"><input type="text" class="form-input" id="accessContact">
           </div>
           <div class="form-group"><label class="form-label">อีเมลสำหรับเข้าถึง *</label><input type="email" class="form-input" id="accessEmail" placeholder="อีเมลที่ลูกค้าจะใช้ login"></div>
-          <div class="form-group"><label class="form-label">รหัสผ่านเริ่มต้น *</label><input type="text" class="form-input" id="accessPassword" placeholder="รหัสผ่านเริ่มต้น"></div>
+          <!-- รอบ 257 D-M3: รหัสผ่านไม่บังคับ — เว้นว่าง = ลูกค้าเข้าด้วย "ลิงก์ทางอีเมล" อย่างเดียว (ขอลิงก์ได้ที่หน้าเข้าสู่ระบบพอร์ทัล · 15 นาที ใช้ครั้งเดียว) -->
+          <div class="form-group"><label class="form-label">รหัสผ่านเริ่มต้น <span class="text-gray-400" style="font-size:12px">(ไม่บังคับ)</span></label><input type="text" class="form-input" id="accessPassword" placeholder="เว้นว่างได้ — ลูกค้าเข้าด้วยลิงก์ทางอีเมล">
+            <div class="text-gray-400" style="font-size:12px;margin-top:4px">ไม่ตั้งรหัสผ่าน = ลูกค้ากด "ส่งลิงก์เข้าสู่ระบบทางอีเมล" ที่หน้าพอร์ทัล แล้วเข้าได้ทันทีจากอีเมลที่ระบุด้านบน (ลิงก์ใช้ได้ 15 นาที ครั้งเดียว) — ไม่ต้องส่งรหัสผ่านให้ลูกค้า · ตั้งรหัสผ่านเมื่อลูกค้าต้องการเข้าด้วยรหัสผ่านด้วย</div></div>
           <div class="form-group">
             <label class="form-label">สิทธิ์การเข้าถึง</label>
             <div style="display:flex;flex-direction:column;gap:8px">
               <label><input type="checkbox" id="permDocs" checked> ดูเอกสาร</label>
               <label><input type="checkbox" id="permPdf" checked> ดาวน์โหลด PDF</label>
-              <label><input type="checkbox" id="permStatement" checked> ดู Statement</label>
+              <label><input type="checkbox" id="permStatement" checked> ดูใบแจ้งยอด / ประวัติชำระ</label>
+              <label><input type="checkbox" id="permPay" checked> ชำระเงิน / แนบสลิปโอน</label>
             </div>
           </div>
         </div>
@@ -113,19 +116,23 @@ const Page = {
   renderTable(items) {
     const tbody = document.getElementById('tableBody');
     if (items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสิทธิ์เข้าถึง Portal</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสิทธิ์เข้าถึง Portal</td></tr>';
       return;
     }
+    const esc = (v) => Layout.esc(v == null ? '' : String(v));
+    // รอบ 257 D-H3: ธงสิทธิ์ที่เซิร์ฟเวอร์บังคับจริง — ติ๊ก/เอาออกแล้วบันทึกทันที (เซิร์ฟเวอร์คืนค่าที่เก็บ ⇒ โหลดใหม่)
+    const flag = (a, key, label) => `<label style="display:block;font-size:12px;white-space:nowrap"><input type="checkbox" ${a[key] ? 'checked' : ''} onchange="Page.setFlag('${Layout.jsArg(a.id)}','${key}',this.checked)"> ${label}</label>`;
     tbody.innerHTML = items.map(a => `<tr>
-      <td><span class="font-medium">${a.contactName || a.customerName || '-'}</span></td>
-      <td>${a.email || '-'}</td>
+      <td><span class="font-medium">${esc(a.contactName || a.customerName || '-')}</span></td>
+      <td>${esc(a.email || '-')}</td>
       <td>${Layout.date(a.createdAt || a.createdDate)}</td>
       <td>${a.lastLoginAt ? Layout.date(a.lastLoginAt) : 'ยังไม่เคยเข้า'}</td>
+      <td>${flag(a, 'canViewInvoices', 'ดูเอกสาร')}${flag(a, 'canDownloadPdf', 'ดาวน์โหลด PDF')}${flag(a, 'canViewStatements', 'ใบแจ้งยอด')}${flag(a, 'canMakePayment', 'ชำระ/แนบสลิป')}</td>
       <td>${Layout.statusBadge(a.isActive !== false && a.status !== 'Inactive' ? 'Active' : 'Inactive')}</td>
       <td>
         ${a.isActive !== false && a.status !== 'Inactive'
-          ? `<button class="btn btn-sm btn-danger" onclick="Page.deactivate('${a.id}')">ปิดใช้งาน</button>`
-          : `<button class="btn btn-sm btn-success" onclick="Page.activate('${a.id}')">เปิดใช้งาน</button>`
+          ? `<button class="btn btn-sm btn-danger" onclick="Page.deactivate('${Layout.jsArg(a.id)}')">ปิดใช้งาน</button>`
+          : `<button class="btn btn-sm btn-success" onclick="Page.activate('${Layout.jsArg(a.id)}')">เปิดใช้งาน</button>`
         }
       </td>
     </tr>`).join('');
@@ -157,6 +164,7 @@ const Page = {
     emailEl.value = '';
     delete emailEl.dataset.userTouched; delete emailEl.dataset.autoSrc;
     document.getElementById('accessPassword').value = '';
+    ['permDocs', 'permPdf', 'permStatement', 'permPay'].forEach(id => { document.getElementById(id).checked = true; });   // ฟอร์มใหม่ห้ามค้างค่าใบก่อน
     Layout.openModal('createModal');
   },
 
@@ -165,16 +173,17 @@ const Page = {
     const contactId = document.getElementById('accessContactId').value;
     const email = document.getElementById('accessEmail').value;
     const password = document.getElementById('accessPassword').value;
-    if (!contactId || !email || !password) { Layout.toast('กรุณากรอกข้อมูลให้ครบ', 'error'); return; }
+    // รอบ 257 D-M3: รหัสผ่านไม่บังคับ (ว่าง = ลิงก์ทางอีเมลอย่างเดียว)
+    if (!contactId || !email) { Layout.toast('กรุณาเลือกลูกค้าและกรอกอีเมล', 'error'); return; }
+    // รอบ 257 D-H3: ธงแบน ๆ ตรงสัญญา CreatePortalAccessRequest (เดิมส่ง permissions:{…} ที่เซิร์ฟเวอร์ไม่ bind ⇒ เก็บ false ทั้งหมด)
     const data = {
       contactId,
       email,
-      password,
-      permissions: {
-        viewDocuments: document.getElementById('permDocs').checked,
-        downloadPdf: document.getElementById('permPdf').checked,
-        viewStatement: document.getElementById('permStatement').checked,
-      }
+      password: password || null,
+      canViewInvoices: document.getElementById('permDocs').checked,
+      canDownloadPdf: document.getElementById('permPdf').checked,
+      canViewStatements: document.getElementById('permStatement').checked,
+      canMakePayment: document.getElementById('permPay').checked,
     };
     try {
       await api.createPortalAccess(data);
@@ -192,6 +201,15 @@ const Page = {
       Layout.toast('ปิดใช้งานสำเร็จ');
       this.load();
     } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  async setFlag(id, key, value) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      await api.updatePortalAccess(id, { [key]: !!value });
+      Layout.toast('บันทึกสิทธิ์แล้ว');
+    } catch (err) { Layout.toast(err.message, 'error'); }
+    this.load();
   },
 
   async activate(id) {

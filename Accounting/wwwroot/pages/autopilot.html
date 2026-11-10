@@ -274,6 +274,8 @@ const Page = {
 
   renderSettings(st) {
     document.getElementById('apBankAuto').checked = !!st.bankAutoSettleEnabled;
+    // รอบ 257 A-M7: จำค่าที่โหลด — บันทึกส่งธงปิดหนี้อัตโนมัติเฉพาะเมื่อเปลี่ยนจริง (ผู้ไม่มี Bank.Reconcile บันทึกเวลาสรุป/ใบเสนอราคาได้)
+    this._bankAutoLoaded = !!st.bankAutoSettleEnabled;
     const sel = document.getElementById('apQtDefault');
     sel.innerHTML = (st.quotationModes || []).map(m => `<option value="${Layout.esc(m.code)}">${Layout.esc(m.label)}</option>`).join('');
     sel.value = st.quotationAcceptAutopilotDefault || 'Off';
@@ -286,11 +288,13 @@ const Page = {
     const api = Layout.api(); if (!api) return;
     const btn = document.getElementById('apSaveBtn'); btn.disabled = true;
     try {
-      const res = await api.updateAutopilotSettings({
-        bankAutoSettleEnabled: document.getElementById('apBankAuto').checked,
+      const bankAuto = document.getElementById('apBankAuto').checked;
+      const body = {
         quotationAcceptAutopilotDefault: document.getElementById('apQtDefault').value || 'Off',
         digestLocalTime: document.getElementById('apDigest').value || '',
-      });
+      };
+      if (bankAuto !== this._bankAutoLoaded) body.bankAutoSettleEnabled = bankAuto;   // ไม่ส่ง = ไม่แก้ (เซิร์ฟเวอร์ตรวจ Bank.Reconcile เฉพาะเมื่อเปลี่ยน)
+      const res = await api.updateAutopilotSettings(body);
       Layout.toast((res && res.message) || 'บันทึกแล้ว');
       await this.load();
     } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); await this.load(); }

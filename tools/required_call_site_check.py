@@ -17359,6 +17359,93 @@ REVIEWER_CASES += [
     ("R253f", "HandleSucceededAsync", "var paymentWht = noWht ? 0m : buyerWithholds == false ? 0m", "var paymentWht = buyerWithholds == false ? 0m", True),
 ]
 
+# ── รอบ 257 ชุด 1 (สิทธิ์ + พอร์ทัล · erp-review/2026-11-10/READINESS_257.md): ด่านใหม่ต้องถูกเรียกก่อนเขียน และผลต้องถูกใช้ ──
+_R257_WHY = "รอบ 257 ชุด 1 (DECISIONS 257-1-*): "
+_R257_REC = "Controllers/RecurringController.cs"
+_R257_PORTAL = "Controllers/PortalController.cs"
+_R257_PSVC = "Services/Implementations/PortalService.cs"
+_R257_LINE = "Controllers/LineConfigController.cs"
+_R257_DENY_RE = r"is\s*\{\s*\}\s*deny\w*\s*\)\s*return\s+Forbid"
+RULES += [
+    dict(file=_R257_REC, method="DenyRecurringWriteAsync", must=["RecurringWriteGate.DenyAsync(_permissions"],
+         why=_R257_WHY + "A-H1 ด่านเขียนรายการประจำมีตัวตัดสินเดียว (Helpers/RecurringWriteGate)"),
+    dict(file=_R257_REC, method="Create",
+         must=["DenyRecurringWriteAsync(", "RecurringWriteGate.NeedsApprove(request.TemplateType, request.AutoApprove, request.AutoSendEmail)"],
+         must_re=[_R257_DENY_RE], before=[("DenyRecurringWriteAsync(", "_recurringService.CreateAsync(")],
+         why=_R257_WHY + "A-H1 สร้าง = Document.Create · อนุมัติ/ส่งอัตโนมัติ = Document.Approve ก่อนบันทึก"),
+    dict(file=_R257_REC, method="Update",
+         must=["RecurringWriteGate.AfterUpdate(item.TemplateType, item.AutoApprove, item.AutoSendEmail, request.AutoApprove, request.AutoSendEmail)",
+               "RecurringWriteGate.NeedsApprove(item.TemplateType, after.AutoApprove, after.AutoSendEmail)", "DenyRecurringWriteAsync(companyId, item.TemplateType, newType"],
+         must_re=[_R257_DENY_RE], before=[("DenyRecurringWriteAsync(", "_recurringService.UpdateAsync(")],
+         why=_R257_WHY + "A-H1 แก้ไข: ธงหลังแก้ที่ยังเปิด (ตั้งใหม่/คงไว้) ต้องมีสิทธิ์อนุมัติ · เปลี่ยนชนิดตรวจชนิดใหม่ด้วย"),
+    dict(file=_R257_REC, method="Delete", must=["DenyRecurringWriteAsync("], must_re=[_R257_DENY_RE],
+         before=[("DenyRecurringWriteAsync(", "_recurringService.DeleteAsync(")], why=_R257_WHY + "A-H1 ลบ = Document.Create"),
+    dict(file=_R257_REC, method="Pause", must=["DenyRecurringWriteAsync("], must_re=[_R257_DENY_RE],
+         before=[("DenyRecurringWriteAsync(", "_recurringService.PauseAsync(")], why=_R257_WHY + "A-H1 หยุด = Document.Create"),
+    dict(file=_R257_REC, method="Resume",
+         must=["DenyRecurringWriteAsync(", "RecurringWriteGate.NeedsApprove(item.TemplateType, item.AutoApprove, item.AutoSendEmail)"], must_re=[_R257_DENY_RE],
+         before=[("DenyRecurringWriteAsync(", "_recurringService.ResumeAsync(")], why=_R257_WHY + "A-H1 เปิดต่อรายการอนุมัติอัตโนมัติ = Document.Approve"),
+    dict(file=_R257_REC, method="RunNow",
+         must=["DenyRecurringWriteAsync(", "RecurringWriteGate.NeedsApprove(item.TemplateType, item.AutoApprove, item.AutoSendEmail)"], must_re=[_R257_DENY_RE],
+         before=[("DenyRecurringWriteAsync(", "_recurringService.RunNowAsync(")], why=_R257_WHY + "A-H1 สร้างทันทีของรายการอนุมัติ/ส่งอัตโนมัติ = Document.Approve"),
+    dict(file="Helpers/RecurringWriteGate.cs", method="DenyAsync",
+         must=["DocumentPermissionHelper.CanCreateAsync(", "DocumentPermissionHelper.CanApproveAsync(", "PermissionKeys.JournalManage"],
+         forbid=["PermissionKeys.DocumentCreate", "PermissionKeys.DocumentApprove"],
+         why=_R257_WHY + "A-H1 ใช้ helper เดียวกับหน้าเอกสาร (คีย์รวม + คีย์แยกฝั่ง) — ห้ามถามคีย์เอง"),
+    dict(file="Controllers/AutopilotController.cs", method="UpdateSettings",
+         must=["AutopilotBankSettleToggle.IsChange(", "BankAutoSettleEnabled = null"],
+         before=[("AutopilotBankSettleToggle.IsChange(", "PermissionKeys.BankReconcile")],
+         why=_R257_WHY + "A-M7 ตรวจ Bank.Reconcile เฉพาะเมื่อธงเปลี่ยนจริง · ค่าเดิมถูกถอดจากคำขอ (ไม่เขียนทับ)"),
+    dict(file=_R257_LINE, method="Update",
+         must=["LineOwnOaGuard.Refusal(", "PlatformCompanyLookup.IdAsync(", "_nextAcc.GetAsync("],
+         before=[("LineOwnOaGuard.Refusal(", "_secrets.Protect(req.ChannelAccessToken)"), ("LineOwnOaGuard.Refusal(", "SaveChangesAsync(")],
+         why=_R257_WHY + "C-H1 token/secret ของ OA กลางห้ามเป็น OA ของร้าน · บริษัทผู้ให้บริการตั้ง OA ของตัวเองไม่ได้ — ก่อนแก้อะไร"),
+    dict(file=_R257_LINE, method="BuildAsync",
+         must=["LineOwnOaGuard.PlatformNotice(isPlatform)", "IsPlatformCompany = isPlatform", "PlatformCompanyLookup.IdAsync("],
+         why=_R257_WHY + "C-H1 server computes: หน้าเว็บซ่อนส่วน OA ของร้านตามธงจากเซิร์ฟเวอร์"),
+    dict(file=_R257_PORTAL, method="DenyPortalAsync",
+         must=["_service.GetAccessFlagsAsync(", "PortalAccessPermissions.Refusal(flags, Accounting.Helpers.PortalAccessPermissions.Route(route))",
+               "GetAccessIdFromToken("],
+         why=_R257_WHY + "D-H3 ธงของสิทธิ์ในโทเคน (อ่านจากฐาน) ตามตารางเส้นเดียว"),
+    dict(file=_R257_PSVC, method="GetAccessFlagsAsync", must=["p.CompanyId == companyId", "p.IsActive", "!p.IsDeleted"],
+         why=_R257_WHY + "D-H3 ธงของบริษัทนี้ · สิทธิ์ที่ปิด/ลบ = ไม่พบ (fail-closed)"),
+    dict(file=_R257_PSVC, method="CustomerFacingIdsAsync", must=["DocumentPayLinkPolicy.IsCustomerFacing("],
+         forbid=["DocumentType.PurchaseInvoice", "DocumentType.Invoice"],
+         why=_R257_WHY + "D-H2 ตัวตัดสินเดียว (ต่อยอด IsSaleSide) — ห้ามเขียนรายการชนิดเอง"),
+    dict(file=_R257_PSVC, method="GetMyDocumentsAsync", must=["DocumentPayLinkPolicy.IsCustomerFacing("],
+         why=_R257_WHY + "D-H2 รายการเอกสารพอร์ทัลเฉพาะฝั่งขาย"),
+    dict(file=_R257_PSVC, method="AuditAccess", must=["_db.AddChainedAuditLog("], forbid=["AuditLogs.Add("],
+         why=_R257_WHY + "D-H1 ให้/แก้/ปิดสิทธิ์พอร์ทัลลง audit chain"),
+] + [
+    dict(file=_R257_PSVC, method=m, must=["IsPortalVisibleAsync("], before=[("IsPortalVisibleAsync(", after)],
+         why=_R257_WHY + "D-H2 ใบเดี่ยวของพอร์ทัลต้องเป็นใบที่ลูกค้าเห็นได้ ก่อนอ่าน/สร้างอะไร")
+    for m, after in [("GetDocumentAsync", "SlipPendingByDocumentAsync("), ("DownloadDocumentPdfAsync", "HydrateContactAsync("),
+                     ("GetDocumentPaymentOptionsAsync", "TransferForDocumentAsync("), ("UploadDocumentSlipAsync", "SubmitAsync(")]
+] + [
+    dict(file=_R257_PSVC, method=m, must=["CustomerFacingIdsAsync("], why=_R257_WHY + "D-H2 ใบแจ้งยอด/ประวัติชำระ/ส่งออก เฉพาะใบที่ลูกค้าเห็นได้")
+    for m in ["GetMyStatementAsync", "GetMyPaymentsAsync", "ExportAccountantLedgerAsync"]
+] + [
+    dict(file=_R257_PSVC, method=m, must=["AuditAccess(companyId, actorUserId"], why=_R257_WHY + "D-H1 ทุกการให้/แก้/ปิดสิทธิ์มีผู้ทำใน audit")
+    for m in ["CreateAccessAsync", "UpdateAccessAsync", "DeactivateAccessAsync"]
+] + [
+    dict(file=_R257_PORTAL, method=m, must_lit=[f'DenyPortalAsync(companyId, "{route}"'], must_re=[r"is\s*\{\s*\}\s*deny\s*\)\s*return\s+Forbidden<"],
+         before=[("DenyPortalAsync(", call)], why=_R257_WHY + f"D-H3 เส้น {route} ต้องผ่านธงสิทธิ์ก่อนเรียก service")
+    for m, route, call in [("GetDocuments", "documents", "_service.GetMyDocumentsAsync("), ("GetDocument", "document", "_service.GetDocumentAsync("),
+                           ("DownloadPdf", "pdf", "_service.DownloadDocumentPdfAsync("), ("GetStatement", "statement", "_service.GetMyStatementAsync("),
+                           ("GetPayments", "payments", "_service.GetMyPaymentsAsync("), ("GetDocumentPaymentOptions", "pay", "_service.GetDocumentPaymentOptionsAsync("),
+                           ("UploadDocumentSlip", "slip", "_service.UploadDocumentSlipAsync("), ("ExportAccountant", "export", "_service.ExportAccountantLedgerAsync(")]
+]
+REVIEWER_CASES += [
+    # ถอดธงอนุมัติออกจากตอนสร้าง (สิทธิ์สร้างอย่างเดียวตั้ง AutoApprove ได้อีก) ⇒ ต้องฟ้อง
+    ("R257a", "Create", "RecurringWriteGate.NeedsApprove(request.TemplateType, request.AutoApprove, request.AutoSendEmail)", "false", True),
+    # ด่านพอร์ทัลถามธงผิดเส้น (PDF ถาม documents) ⇒ ต้องฟ้อง
+    ("R257c", "DownloadPdf", 'DenyPortalAsync(companyId, "pdf")', 'DenyPortalAsync(companyId, "documents")', True),
+    # OA กลางไม่ถูกกันก่อนบันทึก ⇒ ต้องฟ้อง
+    ("R257d", "Update", "LineOwnOaGuard.Refusal(isPlatform", "NoRefusal(isPlatform", True),
+    # เส้นใบเดี่ยวไม่ตรวจฝั่ง ⇒ ต้องฟ้อง
+    ("R257e", "GetDocumentAsync", "if (!await IsPortalVisibleAsync(companyId, contactId, documentId))", "if (false)", True),
+]
+
 def wht_credit_add_errors() -> list:
     """รอบ 252 (AUTO_SEND §3.0 / เฟส 244 R243): ห้าม `WhtCreditsReceived.Add(` นอก DocumentService.SyncWhtCreditReceivedAsync + WhtCreditService.CreateAsync
     (ล็อกจำนวนจุด = 2) — ทุกทางเข้าของใบ 50 ทวิ เข้าประตูเดียว WhtCertIntakeService · `ReceivedAmount` เขียนได้ที่กล่องรับเท่านั้น ·
