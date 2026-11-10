@@ -1093,6 +1093,8 @@
       </div>
       <!-- รอบ 232 (232-Notify): สถานะ "แจ้งเตือนธุรกิจของบริษัททาง LINE (กลุ่มทีม)" — เซิร์ฟเวอร์ตัดสิน (tenantLineNotice) · ไม่มี OA ของร้าน = ไปกระดิ่ง/อีเมล ไม่ผ่าน OA กลาง -->
       <div id="lineTenantNotice" style="border:1px solid #fde68a;background:#fffbeb;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px;display:none"></div>
+      <!-- รอบ 257 C-H1: บริษัทผู้ให้บริการใช้ OA กลางอยู่แล้ว — เซิร์ฟเวอร์ส่ง isPlatformCompany + platformOaNotice ⇒ ซ่อนส่วนขั้นสูงทั้งก้อน แสดงคำอธิบายแทน -->
+      <div id="linePlatformNotice" style="border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px;display:none"></div>
       <details id="lineAdvanced" style="margin-bottom:12px"><summary style="cursor:pointer;font-weight:600;font-size:14px">ตั้งค่าขั้นสูง — ใช้ LINE OA ของร้านเอง (รหัสเชื่อมจาก LINE Developers)</summary>
       <p class="text-gray-400" style="margin:8px 0 16px;font-size:13px">
         ใส่ "รหัสเชื่อม LINE OA ของร้าน" แล้วแจ้งเตือนจะส่งในชื่อร้าน (แยกการเรียกเก็บ + แบรนด์) · สมัครได้ที่
@@ -1112,6 +1114,8 @@
                placeholder="ใส่ใหม่เพื่อแทนค่าเดิม / เว้นว่าง = ใช้ค่าเดิม" autocomplete="off" />
         <div class="text-gray-400" style="font-size:11px;margin-top:4px">
           <span id="lineTokenStatus">—</span>
+          <!-- รอบ 257 C-M1: ล้างรหัสเชื่อม/รหัสลับที่บันทึกไว้ (ส่ง "" = ล้าง · เว้นช่องว่าง = คงเดิม) -->
+          <button type="button" class="btn btn-sm btn-outline" id="lineClearSecretsBtn" style="margin-left:8px;display:none" onclick="Page.clearLineSecrets()">ล้างรหัสเชื่อมและรหัสลับที่บันทึกไว้</button>
         </div>
       </div>
 
@@ -2170,6 +2174,11 @@
           const c = j.data || {};
           document.getElementById('lineEnabled').checked = !!c.enabled;
           { const adv = document.getElementById('lineAdvanced'); if (adv) { adv.open = !!c.enabled || location.hash === '#lineAdvanced'; if (location.hash === '#lineAdvanced') adv.scrollIntoView({ block: 'start' }); } }   // รอบ 228 แพ็ก F: ร้านที่ใช้ OA ของตัวเอง ⇒ เปิดส่วนขั้นสูงไว้
+          // รอบ 257 C-H1: บริษัทผู้ให้บริการ ⇒ ซ่อนส่วน "OA ของร้านเอง" (รวม Webhook URL ของบริษัท) + คำอธิบายจากเซิร์ฟเวอร์ — ห้ามเปลี่ยน webhook ของ OA กลาง
+          { const adv = document.getElementById('lineAdvanced'); const pn = document.getElementById('linePlatformNotice');
+            if (adv) adv.style.display = c.isPlatformCompany ? 'none' : '';
+            if (pn) { pn.style.display = c.platformOaNotice ? '' : 'none'; pn.textContent = c.platformOaNotice ? 'ℹ️ ' + c.platformOaNotice : ''; } }
+          { const clr = document.getElementById('lineClearSecretsBtn'); if (clr) clr.style.display = (c.hasAccessToken || c.hasChannelSecret) ? '' : 'none'; }
           document.getElementById('lineGroupId').value = c.defaultGroupId || '';
           document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
           this._renderLineCustomerChannel(c.customerChannel);
@@ -2181,8 +2190,9 @@
             ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '⚠️ ยังไม่มีค่า — ใส่เพื่อเปิดใช้';
           document.getElementById('lineSecretStatus').textContent = c.hasChannelSecret
             ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '⚠️ ยังไม่มีค่า — จำเป็นสำหรับผูก LINE/กลุ่ม LINE ของผู้ติดต่อ (ตรวจว่า webhook มาจาก LINE จริง)';
-          { const w = document.getElementById('lineWebhookUrl'); const cid = Layout.getCompanyId();
-            if (w && cid) w.value = `${location.origin}/api/line/webhook/c/${encodeURIComponent(cid)}`; }
+          // รอบ 257 (team-C LOW · team-E L3): URL จากเซิร์ฟเวอร์ (SystemBaseUrl — แหล่งเดียวกับกล่องช่องทางลูกค้า) ไม่ใช่ location.origin
+          { const w = document.getElementById('lineWebhookUrl'); const url = (c.customerChannel && c.customerChannel.companyWebhookUrl) || '';
+            if (w) { w.value = url; w.placeholder = url ? '' : 'ยังไม่ได้ตั้ง URL ของระบบ — ให้ผู้ดูแลระบบตั้ง URL ระบบก่อน แล้วโหลดหน้านี้ใหม่'; } }
           if (c.lastTestedAt) {
             document.getElementById('lineTestResult').innerHTML =
               `<div style="font-size:12px;color:${c.configured ? '#16a34a' : '#dc2626'}">
@@ -2227,15 +2237,34 @@
         if (!cid) return;
         const body = {
           enabled: document.getElementById('lineEnabled').checked,
+          // token/secret ไม่เคยถูกส่งกลับมาที่ช่อง ⇒ ช่องว่าง = คงเดิม (null) · ล้างใช้ปุ่ม "ล้างรหัสเชื่อม…" (ส่ง "")
           channelAccessToken: document.getElementById('lineToken').value || null,
           channelSecret: document.getElementById('lineSecret').value || null,
-          defaultGroupId: document.getElementById('lineGroupId').value || null,
-          oaBasicId: document.getElementById('lineOaBasicId').value || null,
+          // รอบ 257 C-M1: ช่องที่ hydrate จากค่าเดิม — ว่าง = ล้าง ("") ไม่ใช่ null (เดิมล้างแล้วบันทึกไม่มีผลเงียบ ๆ)
+          defaultGroupId: document.getElementById('lineGroupId').value.trim(),
+          oaBasicId: document.getElementById('lineOaBasicId').value.trim(),
         };
         try {
           const j = await API.put(`/api/companies/${cid}/line-config`, body);
           if (!j || !j.success) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
           Layout.toast(j.message || 'บันทึก LINE config สำเร็จ');   // รอบ 212 แพ็ก B: ข้อความจากเซิร์ฟเวอร์บอกเมื่อเปลี่ยน OA แล้วจะเชิญลูกค้าผูกใหม่
+          await this.loadLineConfig();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // รอบ 257 C-M1: ล้าง token + secret ที่บันทึกไว้ (ส่ง "" ทั้งคู่ + ปิดการส่งผ่าน OA ของร้าน) — แจ้งเตือนกลับไปใช้ LINE ของ NextAcc
+      async clearLineSecrets() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        if (!confirm('ล้างรหัสเชื่อมและรหัสลับของ LINE OA ของร้าน? แจ้งเตือนจะกลับไปส่งผ่าน LINE ของ NextAcc')) return;
+        const body = {
+          enabled: false, channelAccessToken: '', channelSecret: '',
+          defaultGroupId: document.getElementById('lineGroupId').value.trim(),
+          oaBasicId: document.getElementById('lineOaBasicId').value.trim(),
+        };
+        try {
+          const j = await API.put(`/api/companies/${cid}/line-config`, body);
+          if (!j || !j.success) throw new Error((j && j.message) || 'ล้างไม่สำเร็จ');
+          Layout.toast(j.message || 'ล้างรหัสเชื่อม LINE แล้ว');
           await this.loadLineConfig();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

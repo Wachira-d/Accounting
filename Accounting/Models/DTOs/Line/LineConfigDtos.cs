@@ -22,7 +22,11 @@ public record LineConfigResponse(
     string? SecretHint = null,
     /// <summary>รอบ 232 (232-Notify): ป้ายสถานะ "แจ้งเตือนธุรกิจของบริษัททาง LINE" จากตัวตัดสินเดียว (<c>NotificationAudiencePolicy.CompanyGroupNotice</c>) —
     /// ไม่มี OA ของร้าน ⇒ บอกว่าไปกระดิ่ง/อีเมลแทน และ<b>ไม่</b>ส่งผ่าน OA กลาง · หน้าเว็บแสดงอย่างเดียว</summary>
-    string? TenantLineNotice = null);
+    string? TenantLineNotice = null,
+    /// <summary>รอบ 257 C-H1: บริษัทนี้คือบริษัทผู้ให้บริการ (<c>SiteSettings.PlatformCompanyId</c>) — หน้าเว็บซ่อนส่วน "ใช้ LINE OA ของร้านเอง"</summary>
+    bool IsPlatformCompany = false,
+    /// <summary>รอบ 257 C-H1: คำอธิบายของบริษัทผู้ให้บริการ (ใช้ OA กลางอยู่แล้ว · ห้ามเปลี่ยน webhook ของ OA กลาง) จาก <c>LineOwnOaGuard.PlatformNotice</c> · บริษัทอื่น = null</summary>
+    string? PlatformOaNotice = null);
 
 /// <summary>รอบ 212 แพ็ก B: สถานะคำเชิญผูกใหม่ของการเปลี่ยน OA ล่าสุด — <c>Label</c> = ข้อความที่หน้าเว็บแสดงตรง ๆ (ไม่มีกติกาฝั่ง JS)</summary>
 public record CustomerRelinkProgress(
@@ -43,14 +47,13 @@ public record CustomerRelinkProgress(
 
 public record UpdateLineConfigRequest(
     bool Enabled,
-    /// <summary>Channel Access Token (long-lived) จาก LINE Developers
-    /// Console. Empty/null = ไม่แก้ค่าเดิม. ถ้าต้องการล้างให้ส่ง "" + Enabled=false.</summary>
+    /// <summary>Channel Access Token (long-lived) จาก LINE Developers Console · รอบ 257 C-M1: null = ไม่แก้ค่าเดิม · "" = ล้าง · ค่า = ตั้งใหม่</summary>
     string? ChannelAccessToken,
-    /// <summary>Channel Secret — ใช้ตรวจ webhook signature.</summary>
+    /// <summary>Channel Secret — ใช้ตรวจ webhook signature · null = ไม่แก้ · "" = ล้าง</summary>
     string? ChannelSecret,
-    /// <summary>LINE Group/Room ID สำหรับส่งแจ้งเตือนกลุ่ม (optional).</summary>
+    /// <summary>LINE Group/Room ID สำหรับส่งแจ้งเตือนกลุ่ม (optional) · null = ไม่แก้ · "" = ล้าง</summary>
     string? DefaultGroupId,
-    /// <summary>LINE OA basic id (@xxx) — สำหรับปุ่ม/QR เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิป.</summary>
+    /// <summary>LINE OA basic id (@xxx) — สำหรับปุ่ม/QR เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิป · null = ไม่แก้ · "" = ล้าง</summary>
     string? OaBasicId = null);
 
 public record TestLineConfigRequest(string ToLineId);

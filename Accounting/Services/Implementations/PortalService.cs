@@ -54,7 +54,7 @@ public class PortalService : IPortalService
 
     // ===== Portal Access Management =====
 
-    public async Task<PortalAccessResponse> CreateAccessAsync(Guid companyId, CreatePortalAccessRequest request)
+    public async Task<PortalAccessResponse> CreateAccessAsync(Guid companyId, CreatePortalAccessRequest request, Guid actorUserId)
     {
         var contact = await _db.Contacts
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == request.ContactId)
@@ -82,6 +82,7 @@ public class PortalService : IPortalService
         };
 
         _db.Set<PortalAccess>().Add(access);
+        AuditAccess(companyId, actorUserId, AuditAction.Create, access, null);   // รอบ 257 D-H1
         await _db.SaveChangesAsync();
 
         return MapToAccessResponse(access, contact.Name);
@@ -110,7 +111,7 @@ public class PortalService : IPortalService
             .ToList();
     }
 
-    public async Task<PortalAccessResponse> UpdateAccessAsync(Guid companyId, Guid accessId, UpdatePortalAccessRequest request)
+    public async Task<PortalAccessResponse> UpdateAccessAsync(Guid companyId, Guid accessId, UpdatePortalAccessRequest request, Guid actorUserId)
     {
         var access = await _db.Set<PortalAccess>()
             .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Id == accessId)
@@ -120,25 +121,55 @@ public class PortalService : IPortalService
         access.Contact = (await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == access.ContactId))!;
 
+        var before = AuditSnapshot(access);
         if (request.CanViewInvoices.HasValue) access.CanViewInvoices = request.CanViewInvoices.Value;
         if (request.CanViewStatements.HasValue) access.CanViewStatements = request.CanViewStatements.Value;
         if (request.CanDownloadPdf.HasValue) access.CanDownloadPdf = request.CanDownloadPdf.Value;
         if (request.CanMakePayment.HasValue) access.CanMakePayment = request.CanMakePayment.Value;
         if (request.IsActive.HasValue) access.IsActive = request.IsActive.Value;
+        AuditAccess(companyId, actorUserId, AuditAction.Update, access, before);   // รอบ 257 D-H1
 
         await _db.SaveChangesAsync();
 
         return MapToAccessResponse(access, access.Contact?.Name ?? access.DisplayName ?? access.Email);
     }
 
-    public async Task DeactivateAccessAsync(Guid companyId, Guid accessId)
+    public async Task DeactivateAccessAsync(Guid companyId, Guid accessId, Guid actorUserId)
     {
         var access = await _db.Set<PortalAccess>()
             .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Id == accessId)
             ?? throw new InvalidOperationException("Portal access not found.");
 
+        var before = AuditSnapshot(access);
         access.IsActive = false;
+        AuditAccess(companyId, actorUserId, AuditAction.Update, access, before);   // รอบ 257 D-H1
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>รอบ 257 D-H1: ภาพของสิทธิ์พอร์ทัลใน audit (ไม่มีรหัสผ่าน/แฮช)</summary>
+    private static object AuditSnapshot(PortalAccess a) => new
+    {
+        a.ContactId, a.Email, a.IsActive, a.CanViewInvoices, a.CanViewStatements, a.CanDownloadPdf, a.CanMakePayment,
+        MagicLinkOnly = string.IsNullOrEmpty(a.PasswordHash),
+    };
+
+    /// <summary>รอบ 257 D-H1: ให้/แก้/ปิดสิทธิ์พอร์ทัลลง audit chain (ผู้ทำ · ก่อน/หลัง) — บันทึกพร้อมแถวในคำสั่ง SaveChanges เดียวกัน</summary>
+    private void AuditAccess(Guid companyId, Guid actorUserId, AuditAction action, PortalAccess after, object? before)
+    {
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = actorUserId, Action = action, EntityType = "PortalAccess", EntityId = after.Id.ToString(),
+            OldValues = before == null ? null : System.Text.Json.JsonSerializer.Serialize(before),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(AuditSnapshot(after)),
+        });
+    }
+
+    public async Task<PortalAccessFlags?> GetAccessFlagsAsync(Guid companyId, Guid portalAccessId, CancellationToken ct = default)
+    {
+        return await _db.Set<PortalAccess>().AsNoTracking().IgnoreQueryFilters()
+            .Where(p => p.Id == portalAccessId && p.CompanyId == companyId && p.IsActive && !p.IsDeleted)
+            .Select(p => new PortalAccessFlags(p.CanViewInvoices, p.CanViewStatements, p.CanDownloadPdf, p.CanMakePayment))
+            .FirstOrDefaultAsync(ct);
     }
 
     // ===== Portal Auth =====
@@ -230,6 +261,27 @@ public class PortalService : IPortalService
         => _db.Documents.Where(d => d.CompanyId == companyId && d.ContactId == contactId
             && !DocumentStatusRules.NotIssued.Contains(d.Status));
 
+    /// <summary>รอบ 257 D-H2: id ของใบใน <paramref name="query"/> ที่ "ลูกค้าเห็นได้" (<see cref="DocumentPayLinkPolicy.IsCustomerFacing"/> — ตัวตัดสินเดียว ·
+    /// ต่อยอด IsSaleSide) · ข้อเท็จจริงฝั่ง (ใบต้นทาง · ผู้ติดต่อเป็นผู้ขายอย่างเดียว · ผู้ใช้สั่งย้ายฝั่ง) อ่านจากฐาน แล้วตัดสินในหน่วยความจำ ·
+    /// ผู้ติดต่อที่เป็นทั้งลูกค้าและผู้ขายไม่เห็นใบซื้อ/PO/ค่าใช้จ่าย/ใบลดหนี้จากผู้ขาย (เดิมเห็น + ดาวน์โหลด PDF ได้)</summary>
+    private async Task<List<Guid>> CustomerFacingIdsAsync(Guid companyId, IQueryable<Document> query, CancellationToken ct = default)
+    {
+        var facts = await query.AsNoTracking()
+            .Select(d => new
+            {
+                d.Id, d.DocumentType, d.CnDnPurchaseSideOverride,
+                RelatedType = _db.Documents.Where(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId).Select(r => (DocumentType?)r.DocumentType).FirstOrDefault(),
+                ContactSupplierOnly = _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsSupplier && !c.IsCustomer).FirstOrDefault(),
+            })
+            .ToListAsync(ct);
+        return facts.Where(f => DocumentPayLinkPolicy.IsCustomerFacing(f.DocumentType, f.RelatedType, f.CnDnPurchaseSideOverride, f.ContactSupplierOnly))
+            .Select(f => f.Id).ToList();   // List (ไม่ใช่ HashSet) — EF แปล List.Contains เป็น IN/ANY ได้แน่นอน
+    }
+
+    /// <summary>รอบ 257 D-H2: ใบนี้เป็นของผู้ติดต่อในโทเคน · ออกแล้ว · ลูกค้าเห็นได้ (ด่านเดียวของเส้นใบเดี่ยว: รายละเอียด · PDF · ตัวเลือกชำระ · แนบสลิป)</summary>
+    private async Task<bool> IsPortalVisibleAsync(Guid companyId, Guid contactId, Guid documentId, CancellationToken ct = default)
+        => (await CustomerFacingIdsAsync(companyId, PortalDocuments(companyId, contactId).Where(d => d.Id == documentId), ct)).Contains(documentId);
+
     public async Task<List<PortalDocumentResponse>> GetMyDocumentsAsync(Guid companyId, Guid contactId, string? documentType = null)
     {
         var query = PortalDocuments(companyId, contactId);
@@ -248,6 +300,8 @@ public class PortalService : IPortalService
                 ContactSupplierOnly = _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsSupplier && !c.IsCustomer).FirstOrDefault(),
             })
             .ToListAsync();
+        // รอบ 257 D-H2: เฉพาะใบที่ลูกค้าเห็นได้ (ตัวตัดสินเดียว — ข้อเท็จจริงฝั่งอยู่ในแถวที่ฉายแล้ว)
+        rows = rows.Where(d => DocumentPayLinkPolicy.IsCustomerFacing(d.DocumentType, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly)).ToList();
         var pending = await SlipPendingByDocumentAsync(companyId, rows.Select(r => r.Id).ToList());   // รอบ 250 ฝ่ายค้าน L4 (WP-02b)
         // รอบ 250 WP-03 (ฝ่ายค้าน H1): ปุ่ม "ชำระ" ตามกติกาเดียวกับลิงก์ชำระ (DocumentPayLinkPolicy.IssueRefusal — ฝั่งขาย · THB · ยอดค้าง > 0 · ออกแล้ว)
         // · ใบกำกับที่อ้างใบแจ้งหนี้ตรวจตอนเปิดหน้าต่างชำระ (TransferForDocumentAsync) — หน้าเว็บไม่ตัดสินชนิดเอง
@@ -276,6 +330,7 @@ public class PortalService : IPortalService
 
     public async Task<PortalDocumentResponse> GetDocumentAsync(Guid companyId, Guid contactId, Guid documentId)
     {
+        if (!await IsPortalVisibleAsync(companyId, contactId, documentId)) throw new InvalidOperationException("Document not found.");   // รอบ 257 D-H2
         var doc = await PortalDocuments(companyId, contactId)
             .FirstOrDefaultAsync(d => d.Id == documentId)
             ?? throw new InvalidOperationException("Document not found.");
@@ -289,6 +344,7 @@ public class PortalService : IPortalService
 
     public async Task<byte[]> DownloadDocumentPdfAsync(Guid companyId, Guid contactId, Guid documentId)
     {
+        if (!await IsPortalVisibleAsync(companyId, contactId, documentId)) throw new InvalidOperationException("Document not found.");   // รอบ 257 D-H2
         var doc = await PortalDocuments(companyId, contactId)
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == documentId)
@@ -329,19 +385,19 @@ public class PortalService : IPortalService
 
     public async Task<PortalStatementResponse> GetMyStatementAsync(Guid companyId, Guid contactId, DateTime fromDate, DateTime toDate)
     {
-        var documents = await _db.Documents
-            .Where(d => d.CompanyId == companyId
-                     && d.ContactId == contactId
-                     && d.DocumentDate >= fromDate
-                     && d.DocumentDate <= toDate)
+        // รอบ 257 D-H2: ใบแจ้งยอดนับเฉพาะใบที่ออกแล้วและลูกค้าเห็นได้ (เดิมรวมใบร่าง + ยอดค้างของใบซื้อจากผู้ติดต่อที่เป็นผู้ขายด้วย)
+        var inPeriod = PortalDocuments(companyId, contactId).Where(d => d.DocumentDate >= fromDate && d.DocumentDate <= toDate);
+        var inPeriodIds = await CustomerFacingIdsAsync(companyId, inPeriod);
+        var documents = await inPeriod
+            .Where(d => inPeriodIds.Contains(d.Id))
             .OrderBy(d => d.DocumentDate)
             .ToListAsync();
 
         // Calculate opening balance from documents before the period
-        var openingBalance = await _db.Documents
-            .Where(d => d.CompanyId == companyId
-                     && d.ContactId == contactId
-                     && d.DocumentDate < fromDate)
+        var before = PortalDocuments(companyId, contactId).Where(d => d.DocumentDate < fromDate);
+        var beforeIds = await CustomerFacingIdsAsync(companyId, before);
+        var openingBalance = await before
+            .Where(d => beforeIds.Contains(d.Id))
             .SumAsync(d => d.BalanceDue);
 
         var lines = new List<PortalStatementLine>();
@@ -383,10 +439,12 @@ public class PortalService : IPortalService
 
     public async Task<List<PortalPaymentResponse>> GetMyPaymentsAsync(Guid companyId, Guid contactId)
     {
+        // รอบ 257 D-H2: การชำระของใบที่ลูกค้าเห็นได้เท่านั้น (ไม่ใช่เงินที่เราจ่ายผู้ติดต่อในฐานะผู้ขาย)
+        var visible = await CustomerFacingIdsAsync(companyId, PortalDocuments(companyId, contactId));
         return await _db.Payments
             .Include(p => p.Document)
             .Where(PortalSlipPending.CountsAsReceived)   // รอบ 250 M-2: สลิปที่ยังไม่ตรวจไม่ใช่ "การชำระของฉัน"
-            .Where(p => p.CompanyId == companyId && p.Document.ContactId == contactId)
+            .Where(p => p.CompanyId == companyId && p.Document.ContactId == contactId && visible.Contains(p.DocumentId))
             .OrderByDescending(p => p.PaymentDate)
             .Select(p => new PortalPaymentResponse(
                 p.Id, p.PaymentDate, p.Amount, p.PaymentMethod.ToString(),
@@ -585,7 +643,8 @@ public class PortalService : IPortalService
     {
         // ฝ่ายค้าน M2: ความเป็นเจ้าของ + "ออกแล้ว" ผ่านด่านเดียวของพอร์ทัล (PortalDocuments) — ไม่เขียน query เอง
         var exists = await PortalDocuments(companyId, contactId).AsNoTracking().AnyAsync(d => d.Id == documentId, ct);
-        if (!exists) throw new KeyNotFoundException("ไม่พบเอกสาร");
+        // รอบ 257 D-H2: + ลูกค้าเห็นได้ (ตัวตัดสินเดียว IsCustomerFacing — ใบซื้อของผู้ติดต่อที่เป็นผู้ขาย = ไม่พบ)
+        if (!exists || !await IsPortalVisibleAsync(companyId, contactId, documentId, ct)) throw new KeyNotFoundException("ไม่พบเอกสาร");
         // ฝ่ายค้าน H1: กติกา/ยอด/บัญชีเดียวกับหน้าชำระ (pay-document) — ฝั่งขาย · THB · ยอดค้าง > 0 · ใบกำกับอ้างแล้ว ⇒ ปฏิเสธพร้อมเหตุ ·
         // QR ฝังยอดสุทธิหลัง WHT · บัญชีของใบก่อน (ตัวเลือกเดียวกับกระดาษ) แล้วจึงบัญชีรับโอนของเว็บ
         if (_payLinks == null) throw new InvalidOperationException("ระบบลิงก์ชำระยังไม่พร้อม — ติดต่อผู้ดูแลระบบ");
@@ -618,6 +677,8 @@ public class PortalService : IPortalService
     {
         if (file == null || file.Length == 0)
             throw new ArgumentException("กรุณาเลือกไฟล์สลิป");
+        // รอบ 257 D-H2: แนบสลิปได้เฉพาะใบที่ลูกค้าเห็นได้ในพอร์ทัล (ใบซื้อของผู้ติดต่อที่เป็นผู้ขาย = ไม่พบ)
+        if (!await IsPortalVisibleAsync(companyId, contactId, documentId)) throw new KeyNotFoundException("ไม่พบเอกสาร");
         if (!file.ContentType.StartsWith("image/") && file.ContentType != "application/pdf")
             throw new ArgumentException("รองรับเฉพาะรูปภาพหรือ PDF");
 
@@ -745,8 +806,11 @@ public class PortalService : IPortalService
             .Select(c => new { c.Name, c.TaxId, c.BranchCode }).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
         var to = toDate.Date.AddDays(1);
-        var raw = await PortalDocuments(companyId, contactId).AsNoTracking()
-            .Where(d => d.DocumentDate >= fromDate.Date && d.DocumentDate < to && PortalAccountantExport.Types.Contains(d.DocumentType))
+        var range = PortalDocuments(companyId, contactId)
+            .Where(d => d.DocumentDate >= fromDate.Date && d.DocumentDate < to && PortalAccountantExport.Types.Contains(d.DocumentType));
+        var visible = await CustomerFacingIdsAsync(companyId, range, ct);   // รอบ 257 D-H2
+        var raw = await range.AsNoTracking()
+            .Where(d => visible.Contains(d.Id))
             .OrderBy(d => d.DocumentDate).ThenBy(d => d.DocumentNumber)
             .Select(d => new
             {

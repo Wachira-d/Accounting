@@ -51,8 +51,15 @@ public class AutopilotController : ControllerBase
     public async Task<ActionResult<ApiResponse<AutopilotSettingsDto>>> UpdateSettings(Guid companyId, [FromBody] UpdateAutopilotSettingsRequest request)
     {
         if (await DenyKeyAsync<AutopilotSettingsDto>(companyId, PermissionKeys.CompanySettingsEdit, "ตั้งค่า Autopilot") is { } deny) return deny;
-        if (request.BankAutoSettleEnabled != null
-            && await DenyKeyAsync<AutopilotSettingsDto>(companyId, PermissionKeys.BankReconcile, "เปิด/ปิดการปิดหนี้อัตโนมัติจากเงินโอน") is { } denyBank) return denyBank;
+        // รอบ 257 A-M7: ตรวจ Bank.Reconcile เฉพาะเมื่อธงเปลี่ยนจริง (ส่งค่าเดิมมา = ไม่ใช่การเปิด/ปิด) — ผู้ตั้งเวลาสรุป/ใบเสนอราคาไม่ติด 403
+        // ค่าเดิม ⇒ ถอดออกจากคำขอ (ไม่เขียนทับ — กันคำขอค้างพลิกค่าที่ผู้มีสิทธิ์เพิ่งเปลี่ยน)
+        if (request.BankAutoSettleEnabled != null)
+        {
+            if (!AutopilotBankSettleToggle.IsChange(request.BankAutoSettleEnabled, (await _autopilot.SettingsAsync(companyId)).BankAutoSettleEnabled))
+                request = request with { BankAutoSettleEnabled = null };
+            else if (await DenyKeyAsync<AutopilotSettingsDto>(companyId, PermissionKeys.BankReconcile, "เปิด/ปิดการปิดหนี้อัตโนมัติจากเงินโอน") is { } denyBank)
+                return denyBank;
+        }
         var result = await _autopilot.UpdateSettingsAsync(companyId, request, UserId);
         return Ok(new ApiResponse<AutopilotSettingsDto>(true, result, "บันทึกค่าตั้ง Autopilot แล้ว"));
     }

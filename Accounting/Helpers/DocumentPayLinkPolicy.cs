@@ -135,6 +135,19 @@ public static class DocumentPayLinkPolicy
         return !r.SideUnknown && r.IsInflow;
     }
 
+    /// <summary>รอบ 257 D-H2 — เอกสารนี้ "ลูกค้าเห็นได้" ไหม (พอร์ทัลลูกค้า: รายการ · PDF · ใบแจ้งยอด · ประวัติชำระ · ส่งออก · ชำระ/แนบสลิป) ·
+    /// ต่อยอดจาก <see cref="IsSaleSide"/> (ตัวตัดสินฝั่งเดียวกับลิงก์ชำระ) — ใบที่ลูกค้าจ่ายเรา = ใช่ · ชนิดฝั่งขายอื่น (ใบเสนอราคา · ใบเสร็จ · ใบวางบิล · ใบส่งของ)
+    /// ตามชุดของ <see cref="DocumentPermissionHelper.IsRevenue"/> (ไม่ทำรายการชนิดสำเนาที่สอง) · ใบลดหนี้/ใบเพิ่มหนี้ = ฝั่งขายตามตัวตัดสินฝั่งเดียวกับ JE
+    /// (<see cref="AdjustmentNoteAccount.ResolvePostedSide"/>) · <b>ไม่รู้ฝั่ง/ฝั่งซื้อ = ไม่ใช่</b> (ผู้ติดต่อที่เป็นทั้งลูกค้าและผู้ขายต้องไม่เห็นใบซื้อ/PO/ค่าใช้จ่าย/ใบลดหนี้จากผู้ขาย)</summary>
+    public static bool IsCustomerFacing(DocumentType type, DocumentType? relatedType, bool? cnDnPurchaseSideOverride, bool contactIsSupplierOnly)
+    {
+        if (IsSaleSide(type, relatedType, cnDnPurchaseSideOverride, contactIsSupplierOnly)) return true;
+        if (!DocumentPermissionHelper.IsRevenue(type)) return false;
+        if (!CashFlowDirection.NeedsSideFacts(type)) return true;
+        var side = AdjustmentNoteAccount.ResolvePostedSide(cnDnPurchaseSideOverride, relatedType, null, contactIsSupplierOnly);
+        return !side.Unknown && !side.IsPurchase;
+    }
+
     /// <summary>ผู้ซื้อมีหน้าที่หักภาษี ณ ที่จ่ายไหม (ฝ่ายค้าน S3) — นิติบุคคล/หน่วยงานรัฐ = มี (ท.ป.4/2528) · บุคคลธรรมดา = ไม่มี ·
     /// ชนิดไม่รู้ ⇒ ใช้รูปเลขผู้เสียภาษี (<see cref="ContactTypeResolver.FromTaxId"/> ตัวเดิม) · ยังไม่รู้ ⇒ <c>null</c> (ผู้เรียกเชื่อยอดที่ผู้ใช้ตั้งบนใบ)</summary>
     public static bool? BuyerWithholds(ContactType? declared, string? taxId)
