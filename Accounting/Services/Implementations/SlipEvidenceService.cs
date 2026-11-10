@@ -78,8 +78,12 @@ public class SlipEvidenceService
             // รอบ 252 WP-12A (G-T5): กันซ้ำด้วยแฮชไฟล์ต้นฉบับ (ก่อนย่อรูป) + เลขอ้างอิงโอน — ทั้งบริษัท (สลิปเดียวจ่ายสองใบไม่ได้) · ก่อนเขียนไฟล์/สร้างรายการ
             var slipSha = SlipEvidenceRule.Sha256Hex(file.Bytes);
             var slipRef = SlipEvidenceRule.NormalizeRef(bankRef);
-            var sameFile = await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipFileSha256 == slipSha, ct);
-            var sameRef = slipRef != null && await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipBankRef == slipRef, ct);
+            // รอบ 257 ชุด 4 (A-M8): นับเฉพาะรายการที่รอตรวจ/รับเงินแล้ว (SlipEvidenceRule.DuplicateStatuses) — สลิปที่ผู้ขายปฏิเสธ/หมดอายุ ส่งใหม่ได้
+            var dupStatuses = SlipEvidenceRule.DuplicateStatuses;
+            var sameFile = await _db.PaymentIntents.AsNoTracking()
+                .AnyAsync(i => i.CompanyId == companyId && i.SlipFileSha256 == slipSha && dupStatuses.Contains(i.Status), ct);
+            var sameRef = slipRef != null && await _db.PaymentIntents.AsNoTracking()
+                .AnyAsync(i => i.CompanyId == companyId && i.SlipBankRef == slipRef && dupStatuses.Contains(i.Status), ct);
             if (SlipEvidenceRule.DuplicateProblem(sameFile, sameRef) is string dupProblem)
                 throw new BusinessRuleException(dupProblem, SlipEvidenceRule.RuleDuplicate, 409);
 

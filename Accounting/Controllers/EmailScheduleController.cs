@@ -17,9 +17,20 @@ public class EmailScheduleController : ControllerBase
     private readonly IContactLineQueueService? _lineQueue;
     /// <summary>รอบ 254 WP-11 L2: ด่านเขียนของคิว LINE (ส่งอีกครั้ง = ส่งข้อความในนามบริษัท) — CompanySettings.Edit · ไม่มีบริการ = ปฏิเสธ (ปิดทางปลอดภัย)</summary>
     private readonly IPermissionService? _permissions;
-    public EmailScheduleController(IEmailScheduleService svc, IContactLineQueueService? lineQueue = null, IPermissionService? permissions = null)
+    /// <summary>รอบ 257 ชุด 4 (C-M5): ป้ายช่องทาง LINE ตามบริษัท (กลุ่มผ่าน OA กลางของบริษัทผู้ให้บริการ)</summary>
+    private readonly IContactRecipientResolver? _recipients;
+    public EmailScheduleController(IEmailScheduleService svc, IContactLineQueueService? lineQueue = null, IPermissionService? permissions = null,
+        IContactRecipientResolver? recipients = null)
     {
-        _svc = svc; _lineQueue = lineQueue; _permissions = permissions;
+        _svc = svc; _lineQueue = lineQueue; _permissions = permissions; _recipients = recipients;
+    }
+
+    /// <summary>รอบ 257 ชุด 4 (C-M5 · server computes): ป้ายช่องทาง LINE ของฟอร์มกฎ — บริษัทผู้ให้บริการส่งเข้ากลุ่มผ่าน OA กลางได้ (256-2) · อ่านอย่างเดียว</summary>
+    [HttpGet("line-labels")]
+    public async Task<ActionResult<ApiResponse<ContactLineChannel.RuleChannelLabels>>> LineLabels(Guid companyId)
+    {
+        var open = _recipients != null && (await _recipients.LineChannelAsync(companyId)).NextAccGroupOpen;
+        return Ok(new ApiResponse<ContactLineChannel.RuleChannelLabels>(true, ContactLineChannel.ChannelLabels(open)));
     }
 
     /// <summary>รอบ 254 WP-11 L2: ด่านสิทธิ์ของคำสั่งคิว LINE — null = ผ่าน</summary>

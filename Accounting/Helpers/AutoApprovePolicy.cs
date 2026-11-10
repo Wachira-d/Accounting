@@ -197,6 +197,16 @@ public sealed record AutoApprovePolicy
     public static bool MatchesBinding(AutoApprovePolicy recurringPolicy, string currentHash)
         => recurringPolicy.BindingHashValue != null && string.Equals(recurringPolicy.BindingHashValue, currentHash, StringComparison.Ordinal);
 
+    /// <summary>รอบ 257 ชุด 4 (A-M4 · คำตัดสิน 257-4-2): ค่าตั้งต้นของรายการประจำผูกลายนิ้วมือ (<see cref="BindingHash"/>) ที่ประทับตอนสร้าง
+    /// หรือตอนผู้มีสิทธิ์อนุมัติ "ใช้ค่าเริ่มต้น" ที่ขั้นอนุมัติ — แก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติภายหลัง ⇒ ไม่ตรง ⇒ ค่าตั้งต้นไม่มีผล (เท่ากับนโยบาย "ปล่อย" ที่ตั้งเอง) ·
+    /// <paramref name="stampedHash"/> null = รายการที่สร้างก่อนรอบ 257 (ไม่เคยประทับ) ⇒ ถือว่าตรง (คงคำตัดสินรอบ 256 ของเจ้าของ · ประทับเมื่อผู้มีสิทธิ์บันทึกขั้นอนุมัติ)</summary>
+    public static bool MatchesDefaultBinding(string? stampedHash, string currentHash)
+        => stampedHash == null || string.Equals(stampedHash, currentHash, StringComparison.Ordinal);
+
+    /// <summary>รอบ 257 ชุด 4 (A-M5): นโยบายของผู้ติดต่อที่ตั้งเป็น "หยุดรอคน" (ตั้งไว้แต่ไม่ปล่อยรหัสใด) ทับค่าตั้งต้นของรายการประจำของผู้ติดต่อนั้น —
+    /// ผู้ติดต่อไม่ได้ตั้ง / ตั้งปล่อย = ไม่ทับ (ค่าตั้งต้นมีผล · การปล่อยของผู้ติดต่อยังต้องมีใบรับรองระดับรายการ)</summary>
+    public static bool StopsRecurringDefault(AutoApprovePolicy? contactPolicy) => contactPolicy is { PassCodes.Count: 0 };
+
     /// <summary>หมายเหตุบนเอกสาร (ต่อท้ายหมายเหตุอนุมัติ) — บอกว่าปล่อยตามนโยบายของใคร ระดับไหน</summary>
     public static string NoteLine(AutoApprovePolicy policy, IReadOnlyList<string> released)
         => policy.Scope == ScopeDefault

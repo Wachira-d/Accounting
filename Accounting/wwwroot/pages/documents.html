@@ -1411,8 +1411,9 @@
           </div>
           <div class="form-group">
             <label class="form-label">รายการ (แก้ได้เฉพาะคำบรรยาย — ยอด/จำนวน/อัตรา VAT ต้องเท่าเดิม)</label>
-            <table class="table" style="font-size:12px"><thead><tr><th style="width:40px">#</th><th>คำบรรยาย</th><th style="text-align:right">จำนวน × ราคา</th><th style="text-align:right">จำนวนเงิน</th></tr></thead>
-              <tbody id="rsLines"></tbody></table>
+            <!-- รอบ 257 ชุด 4 (E LOW): ตารางใน modal เลื่อนแนวนอนในกรอบ (จอมือถือไม่ดันทั้งหน้า) -->
+            <div class="table-container" style="overflow-x:auto;-webkit-overflow-scrolling:touch"><table class="table" style="font-size:12px"><thead><tr><th style="width:40px">#</th><th>คำบรรยาย</th><th style="text-align:right">จำนวน × ราคา</th><th style="text-align:right">จำนวนเงิน</th></tr></thead>
+              <tbody id="rsLines"></tbody></table></div>
           </div>
           <div class="form-group">
             <label for="rsNotes" class="form-label">หมายเหตุ (พิมพ์บนใบใหม่ — ระบบต่อท้ายด้วยข้อความอ้างใบเดิมให้เอง)</label>

@@ -180,6 +180,12 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
             if (row.Kind == NotifyEndpointKind.LineGroup) { groupProtected = row.LineGroupId; groupHash = row.LineIdHash; groupScope = row.OaScope; }
             // ส่งให้น้อยที่สุด (PDPA ม.22): ยกเลิกแล้วไม่ใช้ id อีก ⇒ ล้างค่าที่เข้ารหัส + ป้ายจาก LINE + ชื่อกลุ่ม (คงแฮชไว้เป็นร่องรอยว่าเคยผูก) — ตัวยกเลิกเดียว
             NotifyEndpointKind.MarkUnlinked(row, NotifyEndpointKind.UnlinkCompany, now, actor.Email);
+            // รอบ 257 ชุด 4 (C LOW · PDPA ม.19 วรรคห้า): ยกเลิกปลายทางจากบริษัท ⇒ ความยินยอมของปลายทางนี้หมดการใช้ ⇒ ประทับ WithdrawnAt (เดิมค้าง "ยังยินยอม" ·
+            // เส้น "หยุด" ของผู้รับประทับอยู่แล้ว ContactLineBindingService) · ความยินยอมที่ปลายทางอื่นที่ยังใช้งานอ้างอยู่ไม่แตะ
+            if (row.ConsentRecordId is Guid consentId
+                && !await _db.ContactNotifyEndpoints.AnyAsync(e => e.CompanyId == companyId && e.Id != row.Id && e.ConsentRecordId == consentId && e.UnlinkedAt == null, ct))
+                await _db.PdpaConsentRecords.Where(c => c.CompanyId == companyId && c.Id == consentId && c.WithdrawnAt == null)
+                    .ExecuteUpdateAsync(x => x.SetProperty(c => c.WithdrawnAt, (DateTime?)now).SetProperty(c => c.WithdrawnReason, NotifyEndpointKind.ConsentWithdrawnByCompany), ct);
             Audit(companyId, contactId, actor, AuditAction.Delete, "unlink", null,
                 new { endpointId = row.Id, kind = row.Kind, reason = row.UnlinkReason });
             await _db.SaveChangesAsync(ct);

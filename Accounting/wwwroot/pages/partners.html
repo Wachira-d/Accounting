@@ -67,6 +67,7 @@
         <label for="ptWht"><input type="checkbox" id="ptWht"> ส่งหนังสือรับรอง 50 ทวิ ที่เราออกให้คู่ค้าเข้าระบบของเขาอัตโนมัติ (เฉพาะใบที่ออกหลังเปิด · ค่าตั้งต้นปิด)</label>
       </div>
       <div style="margin-top:10px"><button class="btn btn-primary" id="ptSaveBtn" onclick="Page.saveSettings()">บันทึกค่าตั้ง</button></div>
+      <div id="ptCfgErr" role="alert" style="display:none;margin-top:6px;font-size:12px;color:#b91c1c"></div>
     </div>
   </div>
 
@@ -96,6 +97,7 @@ const Page = {
       this.partners = (p && p.data) || [];
       this.drafts = d && d.data ? d.data : null;
       this.cfg = (c && c.data) || null;
+      this.cfgErr = c && c._err ? (c._err.message || 'ไม่ทราบสาเหตุ') : null;   // รอบ 257 ชุด 4 (E LOW): บอกเหตุที่ช่องว่าง/ปุ่มปิด
     } catch (e) {
       document.getElementById('ptBody').innerHTML = `<tr><td colspan="4" class="text-center">${Layout.esc('โหลดไม่สำเร็จ: ' + (e.message || ''))}</td></tr>`;
       return;
@@ -143,6 +145,8 @@ const Page = {
     document.getElementById('ptDrafts').checked = !!c.createPurchaseDraftsFromPartners;
     document.getElementById('ptWht').checked = !!c.sendWhtCertsToPartners;
     document.getElementById('ptSaveBtn').disabled = !this.cfg;   // โหลดค่าตั้งไม่ได้ ⇒ ห้ามบันทึกทับ (ไม่ silent no-op)
+    const cfgErr = document.getElementById('ptCfgErr');
+    if (cfgErr) { cfgErr.style.display = this.cfg ? 'none' : ''; cfgErr.textContent = this.cfg ? '' : 'โหลดค่าตั้งไม่สำเร็จ' + (this.cfgErr ? ': ' + this.cfgErr : '') + ' — ช่องด้านบนอาจไม่ใช่ค่าจริง ปุ่มบันทึกถูกปิดไว้ (รีเฟรชแล้วลองใหม่)'; }
   },
 
   async invite() {

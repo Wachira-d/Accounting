@@ -1375,7 +1375,7 @@
       },
       /** รอบ 254 ฝ่ายค้าน M4: ยกเลิกลิงก์ผูก LINE ที่ยังเปิด (ลิงก์หลุด/ส่งผิดคน) — วาดใหม่จากคำตอบเซิร์ฟเวอร์ */
       async revokeLineInvites() {
-        if (!confirm('ยกเลิกลิงก์ผูก LINE ที่ยังเปิดของผู้ติดต่อนี้? (คนที่ได้ลิงก์ไปจะผูกไม่ได้)')) return;
+        if (!(await Layout.confirm({ title: 'ยกเลิกลิงก์ผูก LINE', message: 'ยกเลิกลิงก์ผูก LINE ที่ยังเปิดของผู้ติดต่อนี้? (คนที่ได้ลิงก์ไปจะผูกไม่ได้)', okText: 'ยกเลิกลิงก์', cancelText: 'ไม่ยกเลิก', danger: true }))) return;
         await this._notifySend('DELETE', '/line-link', null, 'ยกเลิกลิงก์แล้ว');
       },
       _notifyEndpoint(key) {

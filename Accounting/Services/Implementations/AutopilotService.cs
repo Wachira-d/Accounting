@@ -321,7 +321,8 @@ public class AutopilotService : IAutopilotService
                     AutopilotDelivery.Immediate => "แจ้งทันที",
                     AutopilotDelivery.Digest => "รวมในสรุปประจำวัน",
                     _ => "ไม่แจ้ง",
-                }, e.Wired)).ToList());
+                }, e.Wired)).ToList(),
+            BankAutoSettleEnableNote: BankReceiptAutoSettle.EnableNote(BankReceiptSettleService.LookbackDays));
     }
 
     public async Task<AutopilotSettingsDto> UpdateSettingsAsync(Guid companyId, UpdateAutopilotSettingsRequest request, Guid userId, CancellationToken ct = default)
@@ -380,11 +381,12 @@ public class AutopilotService : IAutopilotService
         var bankSettled = await _db.BankTransactions.AsNoTracking()
             .CountAsync(t => t.CompanyId == companyId && t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Settled
                 && t.ReconciledBy == BankMatchAttribution.BankAutoSettle && t.ReconciledAt >= fromUtc && t.ReconciledAt < toUtc, ct);
+        // รอบ 257 ชุด 4 (A L11): นับเกณฑ์เดียวกับคิว "เงินเข้าที่รอยืนยัน" (BankReceiptSettleService.QueueAsync) — รวมคำแนะนำที่มีหลายใบยอดเท่ากัน
+        // (ไม่มีใบเดียวให้ชี้ ⇒ AutoSettleDocumentId = null · เดิมถูกตัดทิ้ง ⇒ สรุปบอก 0 ทั้งที่คิวมีรายการรอ)
         var bankWaiting = await _db.BankTransactions.AsNoTracking()
             .CountAsync(t => t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
                 && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed
-                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held)
-                && t.AutoSettleDocumentId != null, ct);
+                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held), ct);
         var issues = await IssuesAsync(companyId, toUtc, ct);
         return new AutopilotNotice.DigestFacts(emailed, pays.Count, pays.Sum(), receipts, quotations, bankSettled, bankWaiting,
             issues.Count, issues.Take(5).Select(i => i.Title).ToList());

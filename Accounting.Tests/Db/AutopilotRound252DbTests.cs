@@ -656,6 +656,33 @@ public class AutopilotRound252DbTests
         Assert.Equal(2, notify.Calls.Count);
     }
 
+    /// <summary>รอบ 257 ชุด 4 (A-M8): สลิปที่ผู้ขายปฏิเสธ (Failed) / หมดอายุ ⇒ ส่งไฟล์เดิม/เลขเดิมใหม่ได้ · ทิศตรงข้าม: รายการที่รับเงินแล้ว (Succeeded) ยังกันซ้ำ</summary>
+    [Fact]
+    public async Task R257_สลิปที่ถูกปฏิเสธ_ส่งไฟล์เดิมใหม่ได้_ทิศตรงข้าม_รับเงินแล้วยังกันซ้ำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedBankAsync(db, enabled: false, balance: 1_070m, wht: 0m);
+        var notify = new FakeNotify();
+        var bytes = System.Text.Encoding.UTF8.GetBytes("%PDF-1.4 slip257 " + Guid.NewGuid());
+        var first = await PortalWith(db, notify).UploadDocumentSlipAsync(s.CompanyId, s.ContactId, s.InvoiceId, File(bytes), 500m, "R257-REF-0001");
+        using (var upd = DbTestDatabase.TryCreateContext()!)
+            await upd.PaymentIntents.Where(i => i.Id == first.PaymentIntentId)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.Status, PaymentIntentStatus.Failed));
+        using (var db2 = DbTestDatabase.TryCreateContext()!)
+        {
+            var again = await PortalWith(db2, notify).UploadDocumentSlipAsync(s.CompanyId, s.ContactId, s.InvoiceId, File(bytes), 500m, "R257-REF-0001");
+            Assert.NotEqual(first.PaymentIntentId, again.PaymentIntentId);
+            using (var upd = DbTestDatabase.TryCreateContext()!)
+                await upd.PaymentIntents.Where(i => i.Id == again.PaymentIntentId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(i => i.Status, PaymentIntentStatus.Succeeded));
+        }
+        using var db3 = DbTestDatabase.TryCreateContext()!;
+        var dup = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            PortalWith(db3, notify).UploadDocumentSlipAsync(s.CompanyId, s.ContactId, s.InvoiceId, File(bytes), 500m, null));
+        Assert.Equal(SlipEvidenceRule.RuleDuplicate, dup.RuleCode);
+    }
+
     private static Microsoft.AspNetCore.Http.IFormFile File(byte[] bytes)
         => new Microsoft.AspNetCore.Http.FormFile(new MemoryStream(bytes), 0, bytes.Length, "file", "slip.pdf")
         {

@@ -194,6 +194,34 @@ public class NotifyChannelQuotaDbTests
         Assert.Equal(AddOnCodes.NotifyTopUpLine, Assert.Single(recorded).FeatureCode);
     }
 
+    /// <summary>รอบ 257 ชุด 4 (C-M2): เพดานไม่จำกัด (-1) ⇒ แพ็กไม่มีผล — ก้อนรวมและช่อง: ไม่มีราคาในสถานะ · ซื้อ ⇒ 409 ก่อนคิดเงิน ·
+    /// ทิศตรงข้าม: เพดานจริง (0) ก้อนรวมมีราคา ซื้อได้</summary>
+    [Fact]
+    public async Task R257_ไม่จำกัด_แพ็กรวมและแพ็กช่อง_ไม่มีราคา_ซื้อ409ไม่คิดเงิน_ทิศตรงข้ามเพดานจริงขายได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var unlimited = await SeedAsync(db, combined: null, line: -1, email: null);
+        var recorded = new List<UsageRecordRequest>();
+        var st = await Svc(db, PricedMeter(recorded)).GetStatusAsync(unlimited);
+        Assert.True(st.Unlimited);
+        Assert.Null(st.PackPrice);
+        Assert.Null(Assert.Single(st.Channels, c => c.Channel == NotifyQuotaPolicy.ChannelLine).PackPrice);
+        var exAll = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db, PricedMeter(recorded)).PurchaseTopUpAsync(unlimited, 1, "tester"));
+        Assert.Equal(409, exAll.StatusCode);
+        var exLine = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            Svc(db, PricedMeter(recorded)).PurchaseTopUpAsync(unlimited, 1, "tester", channel: NotifyQuotaPolicy.ChannelLine));
+        Assert.Equal(409, exLine.StatusCode);
+        Assert.Contains("ไม่จำกัด", exLine.Message);
+        Assert.Empty(recorded);
+
+        var capped = await SeedAsync(db, combined: 0, line: null, email: null);
+        var st2 = await Svc(db, PricedMeter(recorded)).GetStatusAsync(capped);
+        Assert.Equal(290m, st2.PackPrice);
+        await Svc(db, PricedMeter(recorded)).PurchaseTopUpAsync(capped, 1, "tester");
+        Assert.Single(recorded);
+    }
+
     [Fact]
     public async Task M1_อีเมลแพลตฟอร์มเต็ม_ไม่หักแพ็กรวม_แต่อีเมลแจ้งลูกค้ายังใช้แพ็กรวมได้()
     {

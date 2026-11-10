@@ -275,6 +275,92 @@ public class RecurringAutopilotRound248DbTests
         Assert.Contains("หยุดมีผล", after.LastRunNotice ?? "");
     }
 
+    private static async Task<List<Document>> NewDocsAsync(AccountingDbContext check, Guid companyId, Guid contactId)
+        => await check.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.ContactId == contactId && !d.DocumentNumber.StartsWith("INV-OLD"))
+            .OrderBy(d => d.CreatedAt).ToListAsync();
+
+    /// <summary>รอบ 257 ชุด 4 (A-M4): ค่าตั้งต้นรอบ 256 ผูกลายนิ้วมือที่ประทับตอนสร้าง — แก้ยอดภายหลัง ⇒ ไม่ปล่อย + เหตุ ·
+    /// ทิศตรงข้าม: ผู้มีสิทธิ์อนุมัติ "ใช้ค่าเริ่มต้น" (Clear) ที่ขั้นอนุมัติ ⇒ ประทับใหม่ ⇒ งวดถัดไปปล่อย</summary>
+    [Fact]
+    public async Task R257_ค่าตั้งต้น_แก้ยอดหลังสร้าง_ไม่ปล่อย_ผู้มีสิทธิ์รับรองค่าเริ่มต้นแล้วปล่อย()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, creatorIsSetter: true);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var rec = await req.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
+            rec.DefaultPolicyBindingHash = RecurringApprovePolicyLoader.CurrentBindingHash(rec);   // = สิ่งที่ CreateAsync ประทับ
+            await req.SaveChangesAsync();
+        }
+        // สมาชิกที่ไม่มีสิทธิ์อนุมัติแก้ยอดเป็น 900,000 หลังสร้าง
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var rec = await req.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
+            rec.TemplateData = rec.TemplateData.Replace("5000", "900000");
+            await req.SaveChangesAsync();
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(DocumentStatus.Draft, (await NewDocAsync(check, s.CompanyId, s.ContactId)).Status);
+            var notice = (await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId)).LastRunNotice ?? "";
+            Assert.Contains(RecurringApprovePolicyLoader.BindingChangedReason, notice);
+            using var rq = DbTestDatabase.TryCreateContext()!;
+            var ready = await Autopilot(rq).ReadinessAsync(s.CompanyId, s.RecurringId);
+            Assert.Contains(ready.Items, i => i.Code == "OWNER-POLICY" && i.Why == RecurringApprovePolicyLoader.BindingChangedReason);   // A-M6
+        }
+        // ผู้มีสิทธิ์อนุมัติเลือก "ค่าเริ่มต้น" ⇒ ประทับลายนิ้วมือของค่าปัจจุบัน
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetRecurringPolicyAsync(s.CompanyId, s.RecurringId, new SetAutoApprovePolicyRequest(null, Clear: true), s.SetterId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using var check2 = DbTestDatabase.TryCreateContext()!;
+        var docs = await NewDocsAsync(check2, s.CompanyId, s.ContactId);
+        Assert.Equal(2, docs.Count);
+        Assert.NotEqual(DocumentStatus.Draft, docs[1].Status);
+        Assert.Contains("ค่าตั้งต้นของรายการประจำ", docs[1].InternalNotes ?? "");
+    }
+
+    /// <summary>รอบ 257 ชุด 4 (A-M5): ผู้ติดต่อตั้ง "หยุดรอคน" (รหัสว่าง) ⇒ ทับค่าตั้งต้นของรายการของผู้ติดต่อนั้น ⇒ ใบค้างร่าง ·
+    /// ทิศตรงข้าม (ผู้ติดต่อไม่ได้ตั้ง ⇒ ปล่อย) อยู่ที่ R256_ไม่ตั้งนโยบาย_ผู้สร้างยังเป็นสมาชิก…</summary>
+    [Fact]
+    public async Task R257_ผู้ติดต่อตั้งหยุดรอคน_ทับค่าตั้งต้น_ใบค้างร่าง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, creatorIsSetter: true);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetContactPolicyAsync(s.CompanyId, s.ContactId, new SetAutoApprovePolicyRequest(new List<string>()), s.SetterId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(DocumentStatus.Draft, (await NewDocAsync(check, s.CompanyId, s.ContactId)).Status);
+        Assert.False(await check.AuditLogs.AnyAsync(a => a.CompanyId == s.CompanyId && a.EntityType != "Contact"
+            && a.NewValues!.Contains(AutoApprovePolicy.RuleCode) && a.NewValues!.Contains(ArOverdueApprovalWarning.Code)));
+    }
+
+    /// <summary>รอบ 257 ชุด 4 (A-H3): เทมเพลตสมุดรายวันที่ตั้งสร้างล่วงหน้า ⇒ ปฏิเสธพร้อมเหตุ ไม่บันทึก</summary>
+    [Fact]
+    public async Task R257_สมุดรายวันสร้างล่วงหน้า_ปฏิเสธ_ไม่บันทึก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var before = await db.RecurringTransactions.CountAsync(r => r.CompanyId == s.CompanyId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Recurring(req).CreateAsync(s.CompanyId,
+                new CreateRecurringTransactionRequest("ค่าเสื่อมรายเดือน", null, RecurringFrequency.Monthly, ThaiDate.CalendarDateUtc(DateTime.UtcNow),
+                    null, null, "journal", null, null, "{\"lines\":[]}", LeadDays: 3), "tester"));
+            Assert.Contains("สมุดรายวัน", ex.Message);
+        }
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(before, await check.RecurringTransactions.CountAsync(r => r.CompanyId == s.CompanyId));
+    }
+
     private static async Task<Document> NewDocAsync(AccountingDbContext check, Guid companyId, Guid contactId)
         => await check.Documents.AsNoTracking().SingleAsync(d => d.CompanyId == companyId && d.ContactId == contactId && !d.DocumentNumber.StartsWith("INV-OLD"));
 
