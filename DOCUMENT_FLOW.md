@@ -2223,7 +2223,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - วันที่ใบ/ใบสำคัญ/ครบกำหนด = `RecurringSchedule.DocumentDateUtc` (วันตามปฏิทินไทย — รัน 00:00–07:00 น. ไม่ได้วันของเดือนก่อน)
   - หน้า `recurring.html`: ขอบเขต "ค่าเริ่มต้น" แสดงแถวจาก `RecurringDefaultPassCodes` ของเซิร์ฟเวอร์ + หมายเหตุ · เปลี่ยนแถว ⇒ สลับเป็น "ตั้งเอง" (ไม่ส่ง clear เงียบ) ·
     ประกาศครั้งเดียว `DefaultChangeNotice` (ปิดแล้วจำต่อผู้ใช้ใน localStorage) · toast ของ Clear = `DefaultConfirmedMessage`
-  - เทสต์ `Round257Pack4Tests` · Db `RecurringAutopilotRound248DbTests.R257_*` · `required_call_site_check` R257P4 · Last verified — รอบ 257 ชุด 4 (sha เติมในคอมมิตตามหลัง · ยังไม่ได้คอมไพล์ในเครื่องนี้)
+  - เทสต์ `Round257Pack4Tests` · Db `RecurringAutopilotRound248DbTests.R257_*` · `required_call_site_check` R257P4 · Last verified `commit 8918f558` (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
 
 - **งวดค้างหลายงวด (ฝ่ายค้าน 2026-10-14 P0)** — เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน · แก้ใน f696f418) ⇒ `NextRunDate` ค้างงวดแรก · รอบอัตโนมัติ/ปุ่มสร้างทันทีเรียก `SkipOverduePeriodsAsync` → `RecurringSchedule.CatchUp` เลื่อนไปงวดล่าสุดที่ถึงกำหนดแล้วออก **งวดเดียว** + `LastRunNotice` "ข้าม N งวด … กด สร้างทันที" (ไม่ไล่ออกใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที) · สมุดรายวันไม่แตะ (ไม่เคยค้าง)
 - **รอบ 250 (WP-02 §2.4 ข้อ 1/3 · คำตัดสิน §2 #8/#10)**: `OnRecurringDocumentCreatedAsync` คืน `EmailEnqueueOutcome` (Enqueued/Skipped(เหตุ)/Failed(เหตุ)) — ไม่กลืนเป็น
@@ -3197,7 +3197,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ประโยค OA กลางขึ้นกับ `NextAccGroupOpen` (`ContactLineChannel.CentralOaSentence` — แท็บผู้ติดต่อ `ContactRecipientResolver.DeliveryNoteFor` · ป้ายฟอร์มกฎ `GET …/email-schedule/line-labels`):
   บริษัทผู้ให้บริการ = กลุ่มผ่าน OA กลางเปิดแล้ว (`NOTIFY-CENTRAL-OA-GROUP-OFF` ยังใช้กับบริษัทอื่น) · `#HeyNextAcc` กับ OA กลางตอบชื่อบริษัทผู้ให้บริการ + "บริษัทอื่นใช้ OA ของตัวเอง"
   (`LineGroupBindRule.Replies.CentralCode`) · บริษัทยกเลิกปลายทาง ⇒ ประทับ `PdpaConsentRecords.WithdrawnAt` (`company-unlink` · migration ซ่อมแถวเก่า) ·
-  OA บริษัทตอบ 429 monthly limit ⇒ กระดิ่งเจ้าของครั้งเดียวต่อเดือนปฏิทินไทย (`LinePushOutcome.AlertMonthStartUtc`) · Last verified — รอบ 257 ชุด 4 (sha เติมในคอมมิตตามหลัง · ยังไม่ได้คอมไพล์ในเครื่องนี้)
+  OA บริษัทตอบ 429 monthly limit ⇒ กระดิ่งเจ้าของครั้งเดียวต่อเดือนปฏิทินไทย (`LinePushOutcome.AlertMonthStartUtc`) · Last verified `commit 8918f558` (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
 
 ### 2.12k Autopilot ส่วน A — อีเมลสถานะ/สรุปประจำวัน · หน้า Autopilot · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ (เดิมอ้างเป็น §2.12j — ชนเลขกับ 50 ทวิ ขาเข้า WP-09 · รอบ 252 WP-12A · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §5/§7/§10/§11.4 · AUDIT_249 §WP-12 · คำตัดสิน §2 #36)
 
@@ -3261,7 +3261,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **รอบ 257 ชุด 4 (team-A M8 · L11/L12/L14 · team-C M2)**: สลิปกันซ้ำนับเฉพาะรายการที่รอตรวจ/รับเงินแล้ว (`SlipEvidenceRule.DuplicateStatuses`) — สลิปที่ผู้ขายปฏิเสธ/หมดอายุ ส่งไฟล์/เลขเดิมใหม่ได้ ·
   หน้าชำระบอกยอดที่สลิปถูกบันทึก (`SlipAmountNote` = ยอดสุทธิของลิงก์) + คำเตือน "ไม่หัก ณ ที่จ่าย" เป็นข้อความในหน้า (`role=alert` แทน `alert()`) ·
   สรุปประจำวันนับ "เงินเข้ารอยืนยัน" เกณฑ์เดียวกับคิว (รวมคำแนะนำหลายใบยอดเท่ากัน) · ใต้สวิตช์ปิดหนี้อัตโนมัติบอกว่าเปิดแล้วไล่ย้อน 14 วัน (`BankReceiptAutoSettle.EnableNote`) ·
-  โควตาข้อความไม่จำกัด (ก้อนรวม/ช่อง -1) ⇒ ไม่มีราคาแพ็ก + ซื้อ 409 ก่อนคิดเงิน (`NotifyQuotaPolicy.CombinedPackSellable` · `ChannelPackSellable`) · Last verified — รอบ 257 ชุด 4 (sha เติมในคอมมิตตามหลัง · ยังไม่ได้คอมไพล์ในเครื่องนี้)
+  โควตาข้อความไม่จำกัด (ก้อนรวม/ช่อง -1) ⇒ ไม่มีราคาแพ็ก + ซื้อ 409 ก่อนคิดเงิน (`NotifyQuotaPolicy.CombinedPackSellable` · `ChannelPackSellable`) · Last verified `commit 8918f558` (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
 
 ### 2.12l Autopilot ส่วน B — แจ้งโอนจากหน้าชำระ · รายการประจำทุก N เดือน/สร้างล่วงหน้า (รอบ 255 WP-12B · AUDIT_249 §WP-12 ข้อ 1–2 · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §4.2 ② · §5.6 · คำตัดสิน 255-WP12B-*)
 
