@@ -3343,7 +3343,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - **(LOW) e-Tax ตรวจแล้ว**: กลุ่ม "ส่งอีเมลพร้อมสำเนา ETDA แล้ว" บันทึกได้เฉพาะ "ยกเลิกที่กรมสรรพากรแล้ว" + เลขอ้างอิง (`EtaxReissueReview.AllowedOutcomes`/`OutcomeForGroupProblem` ·
     `EtaxReviewEtaxRow.AllowedOutcomes` ⇒ หน้าเว็บซ่อนตัวเลือก "ถูกปฏิเสธ/ไม่เคยได้รับ") · กลุ่มอื่นเลือกได้ทั้งสองตามเดิม
   - ล็อก: `Accounting.Tests/PartnerExchangeRound257Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/PartnerExchangeRound257DbTests.cs` (H4 สองทิศ · ใบเสร็จที่เป็นใบกำกับ · M2 ส่วนลดท้ายบิล/ยอดไม่รวมเท่า ·
-    H5 ระงับ/เชิญใหม่/คนนอก · M1 แจ้งเจ้าของ/ไม่เก็บ · PO ร่าง/คู่ระงับ) · `tools/required_call_site_check.py` (R257-3) · Last verified `commit <เติมในคอมมิตตามหลัง>`
+    H5 ระงับ/เชิญใหม่/คนนอก · M1 แจ้งเจ้าของ/ไม่เก็บ · PO ร่าง/คู่ระงับ) · `tools/required_call_site_check.py` (R257-3) · Last verified `commit 2b94b71a`
 
 ### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
 
