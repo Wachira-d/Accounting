@@ -3400,7 +3400,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   (`WhtCertIntakeStatus.CanMarkEWhtPending`) ⇒ `EvidenceKind = EWithholding` ⇒ ป้าย "e-WHT · รอหลักฐาน" + ตัวกรอง "ewht" ไปถึงจริง · **ไม่เพิ่มเครดิต** (หลักฐานจริงแนบเข้ากล่องรับแบบ e-WHT) · ยกเลิกได้ ·
   ปุ่ม "หักผ่าน e-WHT" แสดงตามธง `CanMarkEWht` · audit chain
 
-เทสต์ `WhtCertRound257Tests` · `Db/WhtCertRound257DbTests` · `Db/PartnerExchangeRound255DbTests` (L4) · Last verified 2026-11-10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>
+เทสต์ `WhtCertRound257Tests` · `Db/WhtCertRound257DbTests` · `Db/PartnerExchangeRound255DbTests` (L4) · Last verified 2026-11-10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e104a7bb
 
 ### 2.12m 50 ทวิ ขาเข้า — ลิงก์อัปโหลด · ทวงอัตโนมัติ · "ไม่หัก" บนหน้าชำระ · หลักฐาน e-WHT ขั้นแรก (รอบ 253 · WP-10 · `erp-review/2026-11-06/AUTO_SEND_WHT_DESIGN.md` §3.2 · §4.3 · §6.3–6.5 · §9 เฟส 244b + 245 · คำตัดสินเจ้าของ §11 ข้อ 3–4 · AUDIT_249 §3.3 N4)
 
@@ -3439,7 +3439,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   หน้า 50 ทวิ ของผู้จ่ายแสดงป้าย `PartnerDeliveryLabel` (`PartnerExchangeRules.WhtDeliveryLabel`) ใต้สถานะ · รับไว้/รอตรวจ/ซ้ำ ⇒ ส่งแล้วตามเดิม
 - B-M2 ลิงก์อัปโหลด: ประตูเดียวตอบ "ใบเดิม" ⇒ ลบไฟล์ที่เพิ่งเก็บ (`DeleteOrphanAsync`) · B-M3 ทางเข้า e-WHT รอหลักฐาน ดู §2.12j
 
-เทสต์ `WhtCertRound257Tests` · `Db/WhtCertRound253DbTests` (`R257_L2_…`) · `Db/PartnerExchangeRound255DbTests` (`R257_L4_…`) · Last verified 2026-11-10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>
+เทสต์ `WhtCertRound257Tests` · `Db/WhtCertRound253DbTests` (`R257_L2_…`) · `Db/PartnerExchangeRound255DbTests` (`R257_L4_…`) · Last verified 2026-11-10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e104a7bb
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -8308,4 +8308,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 253 WP-10 ฝ่ายค
 
 _Last verified against codebase: 2026-11-09 (รอบ 256 — §2.7 รายการประจำ: ค่าตั้งต้นของรายการที่อนุมัติอัตโนมัติไม่ได้ตั้งนโยบาย ⇒ ลูกค้าค้างชำระ [AR-OVERDUE] ไม่กันใบงวดใหม่ (`AutoApprovePolicy.RecurringDefault` ผ่าน `RecurringApprovePolicyLoader` · ผู้สร้างต้องยังมีสิทธิ์อนุมัติ · หมายเหตุ+audit) · ตั้ง "หยุดรอคน" ต่อรายการได้ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1dd21fd7)_
 
-_Last verified against codebase: 2026-11-10 (รอบ 257 ชุด 2 — §2.12j/§2.12m 50 ทวิ ขาเข้า: B-H1 ได้ใบบางส่วน+ตัดสูญส่วนที่เหลือ ⇒ ใบถัดไปเข้ากล่องรับ (กลับ JE ตัดสูญ · Journal.Manage) · B-H2 ถอนการยืนยัน · B-M1 ยื่น ภ.ง.ด.50 ประทับ Claimed / ปลดล็อกถอน · B-M2 ไม่รู้ผู้จ่าย ≠ ซ้ำ (ด่านอาจซ้ำ) · B-M3 แจ้ง e-WHT รอหลักฐาน · B-L1 ข้อความตัดสูญ · B-L2 ทวงที่ข้ามลองใหม่ · B-L3 OCR ล้ม = รอตรวจ · B-L4 ตีกลับ ≠ ส่งแล้ว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-10 (รอบ 257 ชุด 2 — §2.12j/§2.12m 50 ทวิ ขาเข้า: B-H1 ได้ใบบางส่วน+ตัดสูญส่วนที่เหลือ ⇒ ใบถัดไปเข้ากล่องรับ (กลับ JE ตัดสูญ · Journal.Manage) · B-H2 ถอนการยืนยัน · B-M1 ยื่น ภ.ง.ด.50 ประทับ Claimed / ปลดล็อกถอน · B-M2 ไม่รู้ผู้จ่าย ≠ ซ้ำ (ด่านอาจซ้ำ) · B-M3 แจ้ง e-WHT รอหลักฐาน · B-L1 ข้อความตัดสูญ · B-L2 ทวงที่ข้ามลองใหม่ · B-L3 OCR ล้ม = รอตรวจ · B-L4 ตีกลับ ≠ ส่งแล้ว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e104a7bb)_
