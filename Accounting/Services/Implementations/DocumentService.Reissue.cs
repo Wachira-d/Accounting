@@ -1127,7 +1127,9 @@ public partial class DocumentService
                     etaxRowsEmailed.Add(new EtaxReviewEtaxRow(x.Id, x.DocumentId, x.DocumentNumber, x.EtaxRefNumber, x.SubmittedAt, x.VoidedAt, x.VoidReason,
                         $"เอกสาร {x.DocumentNumber} ส่ง e-Tax by Email พร้อมสำเนาถึงที่อยู่ประทับเวลาของ ETDA แล้ว แต่แถว e-Tax {x.EtaxRefNumber} ถูกยกเลิกในระบบนี้ "
                         + "(ก่อนรอบ V1I บันทึกว่า “ก่อนส่งถึงกรมสรรพากร”) — ใบนี้ยังมีผลที่กรมสรรพากร · ถ้าต้องการยกเลิกจริง ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากร "
-                        + "· ระบบไม่แก้อัตโนมัติ"));
+                        + "· ระบบไม่แก้อัตโนมัติ",
+                        // รอบ 257 ชุด 3: ถึงผู้ประทับเวลาแล้ว ⇒ บันทึก "ตรวจแล้ว" ได้เฉพาะ "ยกเลิกที่กรมสรรพากรแล้ว" + เลขอ้างอิง
+                        EtaxReissueReview.AllowedOutcomes(EtaxReissueReview.GroupEmailedWithRdTimestamp)));
             }
         }
 
@@ -1198,6 +1200,9 @@ public partial class DocumentService
         if (group == null)
             throw new BusinessRuleException("แถว e-Tax นี้ไม่อยู่ในรายการที่ต้องตรวจแล้ว (อาจบันทึกยกเลิกทาง e-Tax พร้อมหลักฐานไปแล้ว) — ไม่ต้องบันทึกว่าตรวจแล้ว",
                 EtaxReissueReview.AcknowledgedRuleCode);
+        // รอบ 257 ชุด 3 (LOW): กลุ่มที่ส่งอีเมลพร้อมสำเนา ETDA แล้ว เลือก "ถูกปฏิเสธ/ไม่เคยได้รับ" ไม่ได้ (ตัวตัดสินเดียวกับตัวเลือกบนหน้าเว็บ)
+        if (EtaxReissueReview.OutcomeForGroupProblem(group, request.Outcome) is string groupProblem)
+            throw new BusinessRuleException(groupProblem, EtaxReissueReview.AcknowledgedRuleCode);
 
         var label = EtaxReissueReview.AcknowledgementOutcomeLabel(request.Outcome)!;
         var rdReference = string.IsNullOrWhiteSpace(request.RdReference) ? null : EtaxReissueReview.OneLine(request.RdReference).Trim();

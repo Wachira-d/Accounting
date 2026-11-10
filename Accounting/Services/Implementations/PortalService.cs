@@ -745,12 +745,32 @@ public class PortalService : IPortalService
             .Select(c => new { c.Name, c.TaxId, c.BranchCode }).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
         var to = toDate.Date.AddDays(1);
-        var docs = await PortalDocuments(companyId, contactId).AsNoTracking()
+        var raw = await PortalDocuments(companyId, contactId).AsNoTracking()
             .Where(d => d.DocumentDate >= fromDate.Date && d.DocumentDate < to && PortalAccountantExport.Types.Contains(d.DocumentType))
             .OrderBy(d => d.DocumentDate).ThenBy(d => d.DocumentNumber)
-            .Select(d => new PortalAccountantExport.Row(d.DocumentDate, d.DocumentNumber, d.DocumentType, d.SubTotal, d.VatAmount, d.TotalAmount,
-                d.WithholdingTaxAmount, d.Status == DocumentStatus.Voided))
+            .Select(d => new
+            {
+                d.DocumentDate, d.DocumentNumber, d.DocumentType, d.SubTotal, d.VatAmount, d.TotalAmount, d.WithholdingTaxAmount,
+                Voided = d.Status == DocumentStatus.Voided, d.IssuerBranchCode, d.BranchId, d.RelatedDocumentId, d.Reference, d.IsTaxInvoiceByLaw,
+            })
             .ToListAsync(ct);
+        // รอบ 257 ชุด 3 (D-M4): เลขที่ใบต้นทาง (บริษัทเดียวกันเท่านั้น) + สาขาที่ออกใบ (ตัวตัดสินเดียว DocumentIssuerBranch — snapshot ชนะทะเบียน ชนะค่าบริษัท)
+        var relatedIds = raw.Where(r => r.RelatedDocumentId != null).Select(r => r.RelatedDocumentId!.Value).Distinct().ToList();
+        var relatedNumbers = relatedIds.Count == 0 ? new Dictionary<Guid, string>()
+            : await _db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && relatedIds.Contains(d.Id))
+                .ToDictionaryAsync(d => d.Id, d => d.DocumentNumber, ct);
+        var branchIds = raw.Where(r => r.BranchId != null).Select(r => r.BranchId!.Value).Distinct().ToList();
+        var branchCodes = branchIds.Count == 0 ? new Dictionary<Guid, string?>()
+            : await _db.Branches.AsNoTracking().IgnoreQueryFilters().Where(b => b.CompanyId == companyId && branchIds.Contains(b.Id))
+                .ToDictionaryAsync(b => b.Id, b => b.TaxBranchCode, ct);
+        var docs = raw.Select(d => new PortalAccountantExport.Row(d.DocumentDate, d.DocumentNumber, d.DocumentType, d.SubTotal, d.VatAmount, d.TotalAmount,
+                d.WithholdingTaxAmount, d.Voided,
+                SellerBranch: DocumentIssuerBranch.ResolveCode(d.IssuerBranchCode,
+                    d.BranchId is Guid bid ? branchCodes.GetValueOrDefault(bid) : null, seller.BranchCode),
+                Reference: PortalAccountantExport.ReferenceText(
+                    d.RelatedDocumentId is Guid rid ? relatedNumbers.GetValueOrDefault(rid) : null, d.Reference),
+                IsTaxInvoiceByLaw: d.IsTaxInvoiceByLaw))
+            .ToList();
         var rows = PortalAccountantExport.Build(docs, seller.Name, seller.TaxId, seller.BranchCode);
         using var ms = new System.IO.MemoryStream();
         MiniExcelLibs.MiniExcel.SaveAs(ms, rows, sheetName: "เอกสารจากผู้ขาย");

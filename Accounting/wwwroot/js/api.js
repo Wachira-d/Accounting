@@ -1559,6 +1559,7 @@ const API = {
       invitePartner: (d) => API.post(`${base}/trading-partners/invite`, d),
       acceptPartner: (id) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/accept`),
       rejectPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/reject`, { reason: reason || null }),
+      suspendPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/suspend`, { reason: reason || null }),
       setPartnerDraftLimit: (id, limit) => API.put(`${base}/trading-partners/${encodeURIComponent(id)}/purchase-draft-limit`, { limit }),
       getWorkflowAutomation: () => API.get(`${base}/workflow-automation`),
       updateWorkflowAutomation: (d) => API.put(`${base}/workflow-automation`, d),

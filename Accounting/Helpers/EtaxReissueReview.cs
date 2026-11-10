@@ -144,6 +144,22 @@ public static class EtaxReissueReview
         return null;
     }
 
+    /// <summary>ชื่อกลุ่มแถว e-Tax ของใบที่ส่ง e-Tax by Email พร้อมสำเนาถึงที่อยู่ประทับเวลาของ ETDA (ชื่อคุณสมบัติในรายงาน — ตัวตั้งเดียวของฝั่งเขียน/ตรวจ)</summary>
+    public const string GroupEmailedWithRdTimestamp = nameof(EtaxReissueReviewReport.EmailedEtaxVoidedInSystem);
+
+    /// <summary>รอบ 257 ชุด 3 (LOW): ผลตรวจที่เลือกได้ต่อกลุ่ม — ใบที่ถึงผู้ประทับเวลาของกรมสรรพากรแล้ว (ส่งอีเมลพร้อมสำเนา ETDA) "ถูกปฏิเสธ/ไม่เคยได้รับ"
+    /// ไม่ใช่คำตอบที่เป็นไปได้ ⇒ เลือกได้แค่ "ยกเลิกที่กรมสรรพากรแล้ว" (ต้องมีเลขอ้างอิง) · กลุ่มอื่นเลือกได้ทั้งสอง · หน้าเว็บวาดตัวเลือกตามค่านี้ (server computes)</summary>
+    public static IReadOnlyList<string> AllowedOutcomes(string? group) => group == GroupEmailedWithRdTimestamp
+        ? new[] { OutcomeCancelledAtRd }
+        : new[] { OutcomeRejectedOrNotReceived, OutcomeCancelledAtRd };
+
+    /// <summary>ผลตรวจนี้ใช้กับกลุ่มนี้ได้ไหม · null = ได้ · pure</summary>
+    public static string? OutcomeForGroupProblem(string? group, string? outcome)
+        => AllowedOutcomes(group).Contains(outcome ?? "")
+            ? null
+            : "ใบนี้ส่ง e-Tax by Email พร้อมสำเนาถึงผู้ประทับเวลาของกรมสรรพากรแล้ว — กรมสรรพากรได้รับใบนี้แน่นอน เลือก “ถูกปฏิเสธ/ไม่เคยได้รับ” ไม่ได้ · "
+              + "ถ้ายกเลิกที่กรมสรรพากรแล้ว ให้เลือก “ยกเลิกที่กรมสรรพากรแล้ว” พร้อมเลขอ้างอิง · ถ้ายังไม่ยกเลิก ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากรก่อน";
+
     /// <summary>audit แถวนี้เป็น audit "ตรวจแล้ว" ไหม (JSON ที่ <c>System.Text.Json</c> เขียน: <c>"action":"etax-review-acknowledged"</c>) · pure</summary>
     internal static bool IsAcknowledgementAudit(string? newValuesJson)
         => !string.IsNullOrEmpty(newValuesJson)
@@ -230,8 +246,9 @@ public sealed record EtaxReviewDocumentRow(Guid DocumentId, string DocumentNumbe
     string Finding);
 
 /// <summary>แถว e-Tax 1 แถวที่ถูกยกเลิกในระบบนี้ทั้งที่ถึงกรมสรรพากรแล้ว (รอบ 201 ทีม DV · ข้อ 62 · 66)</summary>
+/// <param name="AllowedOutcomes">รอบ 257 ชุด 3: ผลตรวจที่เลือกได้ของแถวนี้ (<see cref="EtaxReissueReview.AllowedOutcomes"/>) · null = ไม่ได้คำนวณ (ทุกตัวเลือก)</param>
 public sealed record EtaxReviewEtaxRow(Guid EtaxId, Guid DocumentId, string DocumentNumber, string? EtaxRefNumber, DateTime? SubmittedAt,
-    DateTime? VoidedAt, string? VoidReason, string Finding);
+    DateTime? VoidedAt, string? VoidReason, string Finding, IReadOnlyList<string>? AllowedOutcomes = null);
 
 /// <summary>รายงานอ่านอย่างเดียว (ข้อ 44 · ข้อ 53 · รอบ 201 ข้อ 62/66) — ไม่มีอะไรถูกแก้ · นักบัญชีตัดสินรายใบ</summary>
 public sealed record EtaxReissueReviewReport(IReadOnlyList<EtaxReviewReceiptRow> FlaggedReceiptsVatUndone,
