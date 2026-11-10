@@ -1151,8 +1151,12 @@ public class EmailScheduleService : IEmailScheduleService
         if (suffix == null) return "กุญแจคิว LINE ไม่ตรงกับเอกสาร — ไม่ถอยไปอีเมล";
         // รอบ 257 ชุด 4 (C-M3 · แถว LINE ที่เข้าคิวก่อนแก้ยังถือ FallbackToEmail=true): อีเมลหลักของใบนี้ (กุญแจเดียวกับ baseKey) เข้าคิวแล้ว
         // (เช่น e-Tax by Email บังคับอีเมล) ⇒ ไม่ถอยซ้ำ — ลูกค้าไม่ได้อีเมลสองฉบับ ไม่นับโควตาซ้ำ
-        if (await _db.EmailQueues.AnyAsync(q => q.CompanyId == companyId && q.IdempotencyKey == baseKey && !q.IsDeleted, ct))
-            return null;
+        // ฝ่ายค้าน LOW-2: แถวหลักที่ "ข้าม/ยกเลิก/ล้ม" ไม่ใช่การส่ง ⇒ ตอบเหตุ (ห้ามรายงานว่าเข้าคิวแล้ว) · ไม่ถอยเพิ่ม (ตัวตัดสินเดียว ContactLineChannel.MainEmailFallbackOutcome)
+        var mainEmail = await _db.EmailQueues.AsNoTracking()
+            .Where(q => q.CompanyId == companyId && q.IdempotencyKey == baseKey && !q.IsDeleted)
+            .Select(q => new { q.Status, q.ErrorMessage }).FirstOrDefaultAsync(ct);
+        if (mainEmail != null)
+            return ContactLineChannel.MainEmailFallbackOutcome(mainEmail.Status, mainEmail.ErrorMessage);
         if (ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey(baseKey) is { } recurringId)
             rule = WithRecurringPayLayer(rule, await RecurringPayLayerAsync(companyId, recurringId, ct));
         var r = await EnqueueDocumentAsync(rule, doc, daysOffset: 0, suffix: suffix, ct, overrideSendUtc: DateTime.UtcNow, recordNotSent: true, forceEmail: true);

@@ -2223,6 +2223,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - วันที่ใบ/ใบสำคัญ/ครบกำหนด = `RecurringSchedule.DocumentDateUtc` (วันตามปฏิทินไทย — รัน 00:00–07:00 น. ไม่ได้วันของเดือนก่อน)
   - หน้า `recurring.html`: ขอบเขต "ค่าเริ่มต้น" แสดงแถวจาก `RecurringDefaultPassCodes` ของเซิร์ฟเวอร์ + หมายเหตุ · เปลี่ยนแถว ⇒ สลับเป็น "ตั้งเอง" (ไม่ส่ง clear เงียบ) ·
     ประกาศครั้งเดียว `DefaultChangeNotice` (ปิดแล้วจำต่อผู้ใช้ใน localStorage) · toast ของ Clear = `DefaultConfirmedMessage`
+  - **ฝ่ายค้าน 8918f558 (คำตัดสิน 257-4-7…257-4-9)**: `UpdateAsync` เรียก `RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit` **ก่อนแก้ค่าใด** — แถวที่ยังไม่ประทับ ⇒ ประทับค่าก่อนแก้
+    (แก้ผู้ติดต่อ/ยอด/ธงแล้วไม่ปล่อย · แก้ชื่อยังปล่อย) · ค่าที่ประทับรุ่น 1 ที่ยังตรง ⇒ ยกเป็นรุ่น 2 (ทั้งค่าตั้งต้นและใบรับรอง) · ลายนิ้วมือรุ่น 2 (`v2:` · `AutoApprovePolicy.BindingHashV2`)
+    รวมความถี่ · ทุก N เดือน · สร้างล่วงหน้า · วันสิ้นสุด · จำนวนครั้ง — ตรวจตามรุ่นที่ประทับ (`MatchesStamp`) · ผู้รับผิดชอบค่าตั้งต้น = `DefaultPolicyStampedBy` (ผู้มีสิทธิ์ที่เลือก
+    "ค่าเริ่มต้น" ล่าสุด) › ผู้สร้าง — ตรวจสิทธิ์และลงชื่อบนหมายเหตุด้วยคนเดียวกัน · ทดลองรันของร่างประทับ/ยกรุ่นแบบเดียวกัน (ในหน่วยความจำ) · Last verified — รอบ 257 ชุด 4 ฝ่ายค้าน (sha เติมในคอมมิตตามหลัง · ยังไม่ได้คอมไพล์ในเครื่องนี้)
   - เทสต์ `Round257Pack4Tests` · Db `RecurringAutopilotRound248DbTests.R257_*` · `required_call_site_check` R257P4 · Last verified `commit 8918f558` (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
 
 - **งวดค้างหลายงวด (ฝ่ายค้าน 2026-10-14 P0)** — เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน · แก้ใน f696f418) ⇒ `NextRunDate` ค้างงวดแรก · รอบอัตโนมัติ/ปุ่มสร้างทันทีเรียก `SkipOverduePeriodsAsync` → `RecurringSchedule.CatchUp` เลื่อนไปงวดล่าสุดที่ถึงกำหนดแล้วออก **งวดเดียว** + `LastRunNotice` "ข้าม N งวด … กด สร้างทันที" (ไม่ไล่ออกใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที) · สมุดรายวันไม่แตะ (ไม่เคยค้าง)
@@ -3197,7 +3201,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ประโยค OA กลางขึ้นกับ `NextAccGroupOpen` (`ContactLineChannel.CentralOaSentence` — แท็บผู้ติดต่อ `ContactRecipientResolver.DeliveryNoteFor` · ป้ายฟอร์มกฎ `GET …/email-schedule/line-labels`):
   บริษัทผู้ให้บริการ = กลุ่มผ่าน OA กลางเปิดแล้ว (`NOTIFY-CENTRAL-OA-GROUP-OFF` ยังใช้กับบริษัทอื่น) · `#HeyNextAcc` กับ OA กลางตอบชื่อบริษัทผู้ให้บริการ + "บริษัทอื่นใช้ OA ของตัวเอง"
   (`LineGroupBindRule.Replies.CentralCode`) · บริษัทยกเลิกปลายทาง ⇒ ประทับ `PdpaConsentRecords.WithdrawnAt` (`company-unlink` · migration ซ่อมแถวเก่า) ·
-  OA บริษัทตอบ 429 monthly limit ⇒ กระดิ่งเจ้าของครั้งเดียวต่อเดือนปฏิทินไทย (`LinePushOutcome.AlertMonthStartUtc`) · Last verified `commit 8918f558` (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
+  OA บริษัทตอบ 429 monthly limit ⇒ กระดิ่งเจ้าของครั้งเดียวต่อเดือนปฏิทินไทย (`LinePushOutcome.AlertMonthStartUtc`) · Last verified `commit 8918f558`
+  · ฝ่ายค้าน: เส้นถอยเจออีเมลหลักที่ข้าม/ยกเลิก/ล้ม ⇒ ตอบเหตุ (`ContactLineChannel.MainEmailFallbackOutcome` — ไม่รายงานว่าเข้าคิว) · กระดิ่ง 429 ส่งใน DI scope แยก
+  ถึงเจ้าของที่ยังใช้งานอยู่ (`CompanyMembership.ActiveMemberIdsAsync`) · ยกเลิกปลายทาง + ถอนความยินยอมอยู่ในธุรกรรมเดียว · `Replies.CentralCode` ประกอบข้อความตรง · Last verified — รอบ 257 ชุด 4 ฝ่ายค้าน (sha เติมในคอมมิตตามหลัง · ยังไม่ได้คอมไพล์ในเครื่องนี้) (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
 
 ### 2.12k Autopilot ส่วน A — อีเมลสถานะ/สรุปประจำวัน · หน้า Autopilot · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ (เดิมอ้างเป็น §2.12j — ชนเลขกับ 50 ทวิ ขาเข้า WP-09 · รอบ 252 WP-12A · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §5/§7/§10/§11.4 · AUDIT_249 §WP-12 · คำตัดสิน §2 #36)
 
