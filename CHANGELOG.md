@@ -6884,4 +6884,4 @@ _รอบ 257 ชุด 1 — สิทธิ์ + พอร์ทัล (erp-r
 D-H1 ผู้ให้สิทธิ์พอร์ทัล Contact.Edit + RejectApiKey + audit chain · D-H2 พอร์ทัลเห็นเฉพาะใบฝั่งขาย (`DocumentPayLinkPolicy.IsCustomerFacing` ต่อยอด IsSaleSide) ทุกเส้น รวมใบแจ้งยอด/ประวัติชำระ/ส่งออก/สลิป ·
 D-H3 ธงสิทธิ์พอร์ทัลมีผู้อ่านทุกเส้น (`PortalAccessPermissions` · 403 ไทย) + หน้าส่งธงแบน + migration ครั้งเดียวคืนธงที่หน้าเดิมบันทึก false ทั้งหมด · D-M3 รหัสผ่านไม่บังคับ (ลิงก์วิเศษ) ·
 C-H1 token/secret ของ OA กลางห้ามเป็น OA ของร้าน + บริษัทผู้ให้บริการซ่อนส่วน OA ของร้าน · C-M1 "" = ล้าง (Group ID · Basic ID · token/secret) · webhook URL จากเซิร์ฟเวอร์ ·
-เทสต์ `PermissionsPortalRound257Tests` · `Db/PortalPermissionsRound257DbTests` · required_call_site_check R257 (38 กติกา + 4 เคสฝ่ายค้าน) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+เทสต์ `PermissionsPortalRound257Tests` · `Db/PortalPermissionsRound257DbTests` · required_call_site_check R257 (38 กติกา + 4 เคสฝ่ายค้าน) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a73aaf91_

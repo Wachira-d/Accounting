@@ -2216,7 +2216,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   Create · Update · Delete · Pause · Resume · RunNow — เดิมมีแค่ `[Authorize]`): ทุกการเขียน = `DocumentPermissionHelper.CanCreateAsync` ของชนิด ·
   ระบบอนุมัติ/ส่งแทนคน (`AutoApprove` หรือ `AutoSendEmail` — ตั้งใหม่ · **คงไว้ตอนแก้ไข** · เปิดต่อ · สร้างทันที) = `CanApproveAsync` ด้วย · เปลี่ยนชนิดตอนแก้ ⇒ ตรวจชนิดใหม่ด้วย ·
   สมุดรายวัน = `Journal.Manage` · หยุด/ลบ = สิทธิ์สร้างพอ · ไม่ผ่าน = 403 ข้อความไทยบอกทางไปต่อ (ปิดธงอัตโนมัติ ⇒ เป็นร่างให้ผู้มีสิทธิ์อนุมัติเอง) ·
-  `write_permission_gate_check` เฝ้าไฟล์นี้แล้ว (ถอด 6 แถวจาก baseline) · เทสต์ `PermissionsPortalRound257Tests` (AH1_*) · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  `write_permission_gate_check` เฝ้าไฟล์นี้แล้ว (ถอด 6 แถวจาก baseline) · เทสต์ `PermissionsPortalRound257Tests` (AH1_*) · Last verified `commit a73aaf91`
 
 - **งวดค้างหลายงวด (ฝ่ายค้าน 2026-10-14 P0)** — เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน · แก้ใน f696f418) ⇒ `NextRunDate` ค้างงวดแรก · รอบอัตโนมัติ/ปุ่มสร้างทันทีเรียก `SkipOverduePeriodsAsync` → `RecurringSchedule.CatchUp` เลื่อนไปงวดล่าสุดที่ถึงกำหนดแล้วออก **งวดเดียว** + `LastRunNotice` "ข้าม N งวด … กด สร้างทันที" (ไม่ไล่ออกใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที) · สมุดรายวันไม่แตะ (ไม่เคยค้าง)
 - **รอบ 250 (WP-02 §2.4 ข้อ 1/3 · คำตัดสิน §2 #8/#10)**: `OnRecurringDocumentCreatedAsync` คืน `EmailEnqueueOutcome` (Enqueued/Skipped(เหตุ)/Failed(เหตุ)) — ไม่กลืนเป็น
@@ -2992,7 +2992,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ตามตารางเส้นเดียว `Helpers/PortalAccessPermissions.Route` (เอกสาร/ใบเดี่ยว/ส่งออก = ดูเอกสาร · PDF = ดูเอกสาร+PDF · ใบแจ้งยอด/ประวัติชำระ = ใบแจ้งยอด · ชำระ/สลิป = ดูเอกสาร+ชำระ) ·
   ไม่ผ่าน 403 ข้อความไทย (หน้า portal แสดงข้อความแทน "ไม่มีเอกสาร") · `CanPay` ปิดตามธงชำระ · หน้า customer-portal ส่งธงแบน ๆ (เดิม `permissions:{…}` ไม่ bind ⇒ false ทั้งหมด) +
   ติ๊ก/เอาออกรายแถวได้ · **migration ครั้งเดียว** `r257-portal-flags`: แถวที่ false ทั้ง 4 (ลายเซ็นของบั๊กหน้าเดิม) ⇒ คืนทั้ง 4 (ลูกค้าใช้ได้ทุกอย่างอยู่แล้วก่อนด่านเปิด) ·
-  ④ รหัสผ่านไม่บังคับตอนสร้าง (ลิงก์วิเศษอย่างเดียว + คำอธิบายบนฟอร์ม) · เทสต์ `PermissionsPortalRound257Tests` (DH*) + `Db/PortalPermissionsRound257DbTests` · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  ④ รหัสผ่านไม่บังคับตอนสร้าง (ลิงก์วิเศษอย่างเดียว + คำอธิบายบนฟอร์ม) · เทสต์ `PermissionsPortalRound257Tests` (DH*) + `Db/PortalPermissionsRound257DbTests` · Last verified `commit a73aaf91`
 
 **สลิปพอร์ทัลลูกค้า** (`PortalService.UploadDocumentSlipAsync` · `POST api/portal/{cid}/documents/{docId}/upload-slip`):
 แนบ ⇒ `PaymentIntent(SourceKind=Document, manual-slip, ManualSlip)` สถานะ Pending ผ่าน `IPaymentIntentService.StartAsync` (ยอดเท่าเดิม + ยังเปิด ⇒ รายการเดิม · ชำระสำเร็จแล้ว ⇒ 400) + ไฟล์ผูกเอกสาร ·
@@ -3072,7 +3072,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   (bot userId ตรง `INextAccLineConfig.BotUserId` — ไม่มีค่าตั้ง ⇒ ถามจาก token กลาง) หรือ token/secret ตรงค่าตั้ง OA กลาง (ทุกบริษัท) · บริษัทผู้ให้บริการ (`PlatformCompanyLookup`) ตั้ง token/secret ใหม่ไม่ได้ (ล้างได้) ·
   ตัวตัดสินเดียว `Helpers/LineOwnOaGuard` · `LineConfigResponse.IsPlatformCompany` + `PlatformOaNotice` ⇒ หน้า settings ซ่อนส่วน "ใช้ LINE OA ของร้านเอง" ทั้งก้อน (รวม Webhook URL) + คำอธิบาย
   "ใช้ OA กลางอยู่แล้ว · ห้ามเปลี่ยน webhook ของ OA กลาง" · ล้างค่าได้จริง: null = คงเดิม · `""` = ล้าง (Group ID ทีม · Basic ID · token/secret ผ่านปุ่ม "ล้างรหัสเชื่อม…") ·
-  Webhook URL บนหน้ามาจาก `customerChannel.companyWebhookUrl` (SystemBaseUrl) ไม่ใช่ `location.origin` · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  Webhook URL บนหน้ามาจาก `customerChannel.companyWebhookUrl` (SystemBaseUrl) ไม่ใช่ `location.origin` · Last verified `commit a73aaf91`
 
 **สถานะปัจจุบัน (L1 — ตัวหาผู้รับ + ปลายทางอีเมล · ต่อสายเส้นส่งอีเมลแล้วรอบ 250 WP-08 · LINE ยังไม่ส่ง):**
 - **ตาราง `ContactNotifyEndpoints`** (`Models/Entities/ContactNotifyEndpoint` · schema `Helpers/ContactNotifyEndpointMigration.Statements`) — ชนิด `Email`/`LineUser`/`LineGroup`
@@ -3205,7 +3205,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 ### 2.12k Autopilot ส่วน A — อีเมลสถานะ/สรุปประจำวัน · หน้า Autopilot · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ (เดิมอ้างเป็น §2.12j — ชนเลขกับ 50 ทวิ ขาเข้า WP-09 · รอบ 252 WP-12A · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §5/§7/§10/§11.4 · AUDIT_249 §WP-12 · คำตัดสิน §2 #36)
 
 - **รอบ 257 ชุด 1 (A-M7)**: หน้า Autopilot ส่ง `bankAutoSettleEnabled` เฉพาะเมื่อเปลี่ยนจากค่าที่โหลด · `AutopilotController.UpdateSettings` ตรวจ `Bank.Reconcile`
-  เฉพาะเมื่อธงเปลี่ยนจริง (`Helpers/AutopilotBankSettleToggle.IsChange`) · ส่งค่าเดิม ⇒ ถอดออกจากคำขอ (ไม่เขียนทับ) — ผู้มีแค่ CompanySettings.Edit บันทึกเวลาสรุป/ค่าใบเสนอราคาได้ · Last verified `commit <เติมในคอมมิตตามหลัง>`
+  เฉพาะเมื่อธงเปลี่ยนจริง (`Helpers/AutopilotBankSettleToggle.IsChange`) · ส่งค่าเดิม ⇒ ถอดออกจากคำขอ (ไม่เขียนทับ) — ผู้มีแค่ CompanySettings.Edit บันทึกเวลาสรุป/ค่าใบเสนอราคาได้ · Last verified `commit a73aaf91`
 
 - **อีเมล/แจ้งเตือนสถานะถึงทีมเรา (A-5 · Q7)**: แค็ตตาล็อก E-01…E-15 + ข้อความทุกฉบับที่ `Helpers/AutopilotNotice` ตัวเดียว (เซิร์ฟเวอร์ประกอบ · ไม่อ้างมาตรา N10) ·
   **ล้ม/ติด = ทันที** ผ่าน `INotificationEngine` คีย์ใหม่ `autopilot.quotation_blocked` (E-01c) · `autopilot.slip_submitted` (E-06) · `autopilot.bank_settle_failed` (E-14b)
@@ -8303,4 +8303,4 @@ _Last verified against codebase: 2026-11-09 (รอบ 256 — §2.7 ราย�
 _Last verified against codebase: 2026-11-10 (รอบ 257 ชุด 1 สิทธิ์ + พอร์ทัล — §2.7 ด่านเขียนรายการประจำ `RecurringWriteGate` (สร้าง/อนุมัติ/Journal.Manage) ·
 §2.12g2 พอร์ทัล: ผู้ให้สิทธิ์ Contact.Edit + RejectApiKey + audit · ใบที่ลูกค้าเห็นได้ `DocumentPayLinkPolicy.IsCustomerFacing` · ธงสิทธิ์มีผู้อ่านทุกเส้น (`PortalAccessPermissions`) +
 migration ครั้งเดียว `r257-portal-flags` · รหัสผ่านไม่บังคับ · §2.12h OA กลางห้ามเป็น OA ของร้าน (`LineOwnOaGuard`) + บริษัทผู้ให้บริการซ่อนส่วน OA ของร้าน + "" = ล้าง + webhook URL จากเซิร์ฟเวอร์ ·
-§2.12k ธงปิดหนี้อัตโนมัติตรวจ Bank.Reconcile เฉพาะเมื่อเปลี่ยน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+§2.12k ธงปิดหนี้อัตโนมัติตรวจ Bank.Reconcile เฉพาะเมื่อเปลี่ยน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a73aaf91)_
