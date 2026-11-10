@@ -2096,7 +2096,7 @@ RULES += [
     dict(file=OCR, method="SanitizeVatSplitArtifacts",
          must=["OcrDuplicateLineGuard.Decide(", "OcrDuplicateLineGuard.EffectiveAmount("],
          # ฝ่ายค้านข้อ 1: ส่วนลดท้ายบิลของสแกนต้องถึงตัวตัดสิน (ใบมีส่วนลด Σ บรรทัด = หัวใบ + ส่วนลด) · ข้อ 4: EffAmt ใช้สูตรเดียวกับ helper
-         call_args=[("OcrDuplicateLineGuard.Decide(", "data.SubTotal"), ("OcrDuplicateLineGuard.Decide(", "data.DiscountAmount")],
+         call_args=[("OcrDuplicateLineGuard.Decide(", "data.SubTotal"), ("OcrDuplicateLineGuard.Decide(", "data.DiscountAmount"), ("OcrDuplicateLineGuard.Decide(", "copyEvidence")],   # รอบ 257: ใบรายการเดียวมีหน้าสำเนา
          before=[("OcrDuplicateLineGuard.Decide(", "seen.TryGetValue(key, out var existing)")],
          why="2026-10-09 BS2026100001: ตัดแถวที่ถูกอ่านซ้ำด้วยยอดหัวใบ+ส่วนลดจริง ก่อนขั้นยุบชื่อ+ราคาที่บวกจำนวน · ยอดบรรทัดสูตรเดียว"),
     # ฝ่ายค้านข้อ 2: [DUP-ROWS] จาก trace ต้องถึง ProcessingNotes (ผู้อ่าน = OcrPostingReadiness) หลัง Sanitize — ไม่งั้นเอกสารที่ระบบตัดแถวเองอนุมัติเองได้

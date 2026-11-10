@@ -4809,8 +4809,11 @@ public class OcrService : IOcrService
                 .ToList();
             // ส่วนลดท้ายบิลที่อ่านได้ (EnrichFromRawText เติมก่อนถึงที่นี่ · ส่วนลดหลังใบกำกับถูกล้างเป็น null แล้ว) — ใบที่มีส่วนลด
             // Σ บรรทัด = หัวใบ + ส่วนลด ไม่งั้นใบต้นฉบับ+สำเนาที่มีส่วนลดจะ "ไม่ตรงทั้งสองทาง" แล้วหลุดไปขั้น 4 เป็น ×2 เงียบ (ฝ่ายค้านข้อ 1)
+            // รอบ 257: ใบรายการเดียวที่มีหน้าสำเนา (BS2026100012 · 54 → 108) — หลักฐานหน้าสำเนาจากข้อความกระดาษ ให้ตัวตัดสินยอมเทียบหัวใบได้
+            var copyEvidence = dupRows.Count >= 2 && dupRows.Select(r => (r.Description ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1
+                && Accounting.Helpers.OcrDuplicateLineGuard.PageCopyEvidence(paperText, dupRows[0].Description, dupRows.Count);
             var dup = Accounting.Helpers.OcrDuplicateLineGuard.Decide(
-                dupRows, data.SubTotal, data.VatAmount, data.TotalAmount, data.DiscountAmount ?? 0m);
+                dupRows, data.SubTotal, data.VatAmount, data.TotalAmount, data.DiscountAmount ?? 0m, copyEvidence);
             if (dup.Deduped)
             {
                 var keepIdx = new HashSet<int>(dup.KeepIndexes);
