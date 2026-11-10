@@ -32,8 +32,18 @@ public interface IWhtCertIntakeService
 
     Task<List<WhtCertCandidateDto>> CandidatesAsync(Guid companyId, Guid intakeId, CancellationToken ct = default);
 
+    /// <param name="journalActor">รอบ 257 ชุด 2 (B-H1): ผู้ถือ Journal.Manage — ใบที่ครอบแถวตัดสูญส่วนที่เหลือแล้ว (ยืนยัน = กลับรายการตัดสูญ) · null ⇒ 403</param>
     Task<WhtCertIntakeDto> ConfirmAsync(Guid companyId, Guid intakeId, WhtCertConfirmRequest request, Guid userId, string userName,
-        bool holdsTaxFile, CancellationToken ct = default);
+        bool holdsTaxFile, CancellationToken ct = default, Accounting.Services.Implementations.WhtCreditService.WriteOffActor? journalActor = null);
+
+    /// <summary>รอบ 257 ชุด 2 (B-H2): ถอนการยืนยันใบที่ลงเครดิตแล้ว — กลับการจัดสรร · ลดยอดที่ได้ใบ · สถานะใหม่ · audit · แถวที่ใช้เครดิตในแบบที่ยื่นแล้ว (Claimed) ⇒ 409</summary>
+    Task<WhtCertIntakeDto> UnconfirmAsync(Guid companyId, Guid intakeId, WhtCertUnconfirmRequest request, Guid userId, string userName,
+        CancellationToken ct = default, Accounting.Services.Implementations.WhtCreditService.WriteOffActor? journalActor = null);
+
+    /// <summary>รอบ 257 ชุด 2 (B-L3): OCR ล้ม ⇒ เข้าประตูเดียวแบบรอคนตรวจจากไฟล์ (ไม่มีค่าที่อ่านได้ · ไม่ยืนยันอัตโนมัติ) — ไม่ตอบ error ดิบ ไม่ทิ้งไฟล์</summary>
+    Task<WhtCertSubmitResult> SubmitUnreadableAsync(Guid companyId, WhtCertIntakeChannel channel, Guid fileAttachmentId, string? fileSha256,
+        IReadOnlyList<Guid>? documentHints, string submittedBy, Guid? submittedByUserId, CancellationToken ct = default,
+        Guid? expectedPayerContactId = null, WhtEvidenceKind evidenceKind = WhtEvidenceKind.PaperCertificate, string? evidenceReference = null);
 
     Task<WhtCertIntakeDto> RejectAsync(Guid companyId, Guid intakeId, WhtCertRejectRequest request, Guid userId, string userName,
         CancellationToken ct = default);

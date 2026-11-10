@@ -294,11 +294,11 @@ public class RecurringAutopilotRound248DbTests
             rec.DefaultPolicyBindingHash = RecurringApprovePolicyLoader.CurrentBindingHash(rec);   // = สิ่งที่ CreateAsync ประทับ
             await req.SaveChangesAsync();
         }
-        // สมาชิกที่ไม่มีสิทธิ์อนุมัติแก้ยอดเป็น 900,000 หลังสร้าง
+        // สมาชิกที่ไม่มีสิทธิ์อนุมัติแก้ยอด 5,000 → 5,500 หลังสร้าง (ห้ามใช้ยอด ≥ 500,000: ด่าน "จำนวนเงินสูงผิดปกติ" หยุดเองซึ่งค่าตั้งต้นปล่อยไม่ได้ — CI 85410eb0 ล้มเพราะเหตุนี้)
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
             var rec = await req.RecurringTransactions.SingleAsync(r => r.Id == s.RecurringId);
-            rec.TemplateData = rec.TemplateData.Replace("5000", "900000");
+            rec.TemplateData = rec.TemplateData.Replace("5000", "5500");
             await req.SaveChangesAsync();
         }
         using (var req = DbTestDatabase.TryCreateContext()!)
@@ -322,6 +322,78 @@ public class RecurringAutopilotRound248DbTests
         Assert.Equal(2, docs.Count);
         Assert.NotEqual(DocumentStatus.Draft, docs[1].Status);
         Assert.Contains("ค่าตั้งต้นของรายการประจำ", docs[1].InternalNotes ?? "");
+    }
+
+    private static UpdateRecurringTransactionRequest Upd(string? name = null, string? templateData = null)
+        => new(name, null, null, null, null, null, null, templateData, null, null, null, null);
+
+    /// <summary>รอบ 257 ชุด 4 ฝ่ายค้าน MED-1: แถวเดิม (ไม่เคยประทับ) ถูกแก้ยอดผ่าน UpdateAsync ⇒ ประทับค่าก่อนแก้ ⇒ ไม่ปล่อย</summary>
+    [Fact]
+    public async Task R257F_แถวเดิมไม่เคยประทับ_แก้ยอดผ่านUpdate_หยุดปล่อย()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, creatorIsSetter: true);   // DefaultPolicyBindingHash = null (แถวก่อนรอบ 257)
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var tpl = (await req.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId)).TemplateData;
+            await Recurring(req).UpdateAsync(s.CompanyId, s.RecurringId, Upd(templateData: tpl.Replace("5000", "5500")));
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(DocumentStatus.Draft, (await NewDocAsync(check, s.CompanyId, s.ContactId)).Status);
+        var rec = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId);
+        Assert.StartsWith(AutoApprovePolicy.BindingV2Prefix, rec.DefaultPolicyBindingHash);
+        Assert.Contains(RecurringApprovePolicyLoader.BindingChangedReason, rec.LastRunNotice ?? "");
+    }
+
+    /// <summary>ทิศตรงข้าม MED-1: แถวเดิมแก้เฉพาะชื่อ (ไม่อยู่ในลายนิ้วมือ) ⇒ ยังปล่อยตามค่าตั้งต้นรอบ 256</summary>
+    [Fact]
+    public async Task R257F_แถวเดิมแก้เฉพาะชื่อ_ยังปล่อย()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, creatorIsSetter: true);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).UpdateAsync(s.CompanyId, s.RecurringId, Upd(name: "ค่าบริการรายเดือน (แก้ชื่อ)"));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.NotEqual(DocumentStatus.Draft, (await NewDocAsync(check, s.CompanyId, s.ContactId)).Status);
+    }
+
+    /// <summary>รอบ 257 ชุด 4 ฝ่ายค้าน MED-2: ผู้สร้างไม่ใช่สมาชิก แต่ผู้มีสิทธิ์อนุมัติเลือก "ค่าเริ่มต้น" ⇒ ปล่อย และลงชื่อผู้นั้นบนหมายเหตุ ·
+    /// ทิศตรงข้าม: ผู้ที่ประทับออกจากบริษัท ⇒ หยุดรอคน + DefaultSetterGoneReason</summary>
+    [Fact]
+    public async Task R257F_ผู้มีสิทธิ์เลือกค่าเริ่มต้น_ปล่อยแม้ผู้สร้างหมดสิทธิ์_ทิศตรงข้ามผู้ประทับออกแล้วหยุด()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);   // CreatedBy = "tester" (ไม่ใช่สมาชิก) ⇒ เดิมค่าตั้งต้นไม่มีผลแม้ผู้มีสิทธิ์เลือก "ค่าเริ่มต้น"
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetRecurringPolicyAsync(s.CompanyId, s.RecurringId, new SetAutoApprovePolicyRequest(null, Clear: true), s.SetterId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var doc = await NewDocAsync(check, s.CompanyId, s.ContactId);
+            Assert.NotEqual(DocumentStatus.Draft, doc.Status);
+            Assert.Contains(s.SetterId.ToString(), doc.InternalNotes ?? "");
+            Assert.Equal(s.SetterId.ToString(),
+                (await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId)).DefaultPolicyStampedBy);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            await req.CompanyUsers.Where(cu => cu.CompanyId == s.CompanyId && cu.UserId == s.SetterId).ExecuteDeleteAsync();
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        }
+        using var check2 = DbTestDatabase.TryCreateContext()!;
+        var docs = await NewDocsAsync(check2, s.CompanyId, s.ContactId);
+        Assert.Equal(2, docs.Count);
+        Assert.Equal(DocumentStatus.Draft, docs[1].Status);
+        Assert.Contains(RecurringApprovePolicyLoader.DefaultSetterGoneReason,
+            (await check2.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId)).LastRunNotice ?? "");
     }
 
     /// <summary>รอบ 257 ชุด 4 (A-M5): ผู้ติดต่อตั้ง "หยุดรอคน" (รหัสว่าง) ⇒ ทับค่าตั้งต้นของรายการของผู้ติดต่อนั้น ⇒ ใบค้างร่าง ·

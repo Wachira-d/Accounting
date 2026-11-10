@@ -44,7 +44,12 @@ public class WhtCreditService
         string? WhtCertState = null, string? WhtCertLabel = null, string? WhtCertTone = null, int? WhtCertDaysWaiting = null,
         // ฝ่ายค้าน WP-09 รอบสอง: ปุ่ม "ตัดสูญ" แสดงเฉพาะแถวที่ยังมียอดขาดใบ (WhtCreditWriteOff.AmountOf > 0) · เลขที่/วันที่ใบแรกถูกล็อกเมื่อได้ใบผ่านกล่องรับแล้ว
         // (H-B — ใบถัดไปเข้ากล่องรับ) — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแสดง
-        bool CanWriteOff = false, string? CertificateLockReason = null);
+        bool CanWriteOff = false, string? CertificateLockReason = null,
+        // รอบ 257 ชุด 2 (B-H1): ปุ่ม "ได้รับใบแล้ว" ใช้ได้ไหม (WhtCreditWriteOff.CanMarkReceived — ตัวเดียวกับด่านใน MarkReceivedAsync) ·
+        // แถวตัดสูญที่ได้ใบบางส่วนแล้ว ⇒ false (ใบถัดไปเข้ากล่องรับ — ระบบกลับรายการตัดสูญให้) — หน้าไม่แสดงปุ่มที่ถูกปฏิเสธเสมอ
+        bool CanMarkReceived = false,
+        // รอบ 257 ชุด 2 (B-M3): ผู้ขายแจ้ง "ผู้จ่ายหักผ่าน e-WHT · รอหลักฐาน" ได้ไหม (WhtCertIntakeStatus.CanMarkEWhtPending) · แจ้งไว้แล้วหรือยัง
+        bool CanMarkEWht = false, bool EWhtPending = false);
 
     public record WhtCreditSummary(
         int TaxYear,
@@ -143,7 +148,7 @@ public class WhtCreditService
                 w.IncomeTypeCode, w.IncomeAmount, w.WhtRate, w.WhtAmount, w.Status,
                 w.DocumentId, DocNo = w.Document != null ? w.Document.DocumentNumber : null,
                 w.AttachmentId, w.ClaimedInTaxReportId, w.ClaimedAt, w.CarriedFromTaxYear, w.Notes,
-                w.WriteOffJournalEntryId, w.WrittenOffAt, w.WriteOffReason, w.WriteOffReversalJournalEntryId, w.ReceivedAmount,
+                w.WriteOffJournalEntryId, w.WrittenOffAt, w.WriteOffReason, w.WriteOffReversalJournalEntryId, w.ReceivedAmount, w.EvidenceKind,
                 WriteOffNo = w.WriteOffJournalEntryId == null ? null
                     : _db.JournalEntries.Where(j => j.Id == w.WriteOffJournalEntryId && j.CompanyId == companyId).Select(j => j.EntryNumber).FirstOrDefault(),
             })
@@ -173,7 +178,10 @@ public class WhtCreditService
             tracking.TryGetValue(w.Id, out var v4) ? v4.DaysWaiting : null,
             w.Status is WhtCreditStatus.Pending or WhtCreditStatus.Received
                 && WhtCreditWriteOff.AmountOf(w.Status, w.WhtAmount, w.ReceivedAmount) > 0.005m,
-            w.ReceivedAmount > 0.005m ? CertificateLockedMessage : null)).ToList();
+            w.ReceivedAmount > 0.005m ? CertificateLockedMessage : null,
+            WhtCreditWriteOff.CanMarkReceived(w.Status, w.WriteOffJournalEntryId, w.WriteOffReversalJournalEntryId, w.ReceivedAmount),
+            WhtCertIntakeStatus.CanMarkEWhtPending(w.Status, w.ReceivedAmount),
+            w.EvidenceKind == WhtEvidenceKind.EWithholding && w.Status == WhtCreditStatus.Pending)).ToList();
     }
 
     /// <summary>สรุปยอดต่อปีภาษี + กระทบกับยอดบัญชี 11910 จริง
@@ -460,6 +468,46 @@ public class WhtCreditService
         });
     }
 
+    /// <summary>
+    /// รอบ 257 ชุด 2 (B-M3 · คำตัดสิน 257-2-3) — ผู้ขายแจ้งว่าผู้จ่ายหักผ่านระบบ e-Withholding Tax (ไม่มีกระดาษ 50 ทวิ) · หลักฐานยังไม่มา ⇒
+    /// แถวรอใบติดป้าย "e-WHT · รอหลักฐาน" (<see cref="WhtCertIntakeStatus.State.EWhtAwaitingEvidence"/> · ตัวกรอง "ewht") · <paramref name="eWithholding"/> false = ยกเลิกการแจ้ง ·
+    /// <b>ไม่ใช่หลักฐาน — ไม่เพิ่มเครดิต</b> (ยังเป็น Pending · หลักฐานจริงแนบเข้ากล่องรับแบบ e-WHT) · เฉพาะแถวรอใบที่ยังไม่ได้ใบเลย
+    /// (<see cref="WhtCertIntakeStatus.CanMarkEWhtPending"/>) ไม่งั้น 409 · ล็อกแถว · audit chain
+    /// </summary>
+    public async Task SetEWhtPendingAsync(Guid companyId, Guid id, bool eWithholding, Guid? userId, string actorName)
+    {
+        await InTxAsync(async () =>
+        {
+            await LockCreditAsync(companyId, id);
+            var e = await LoadFresh(companyId, id);
+            if (!WhtCertIntakeStatus.CanMarkEWhtPending(e.Status, e.ReceivedAmount))
+                throw new BusinessRuleException("แจ้ง e-WHT ได้เฉพาะรายการที่ยังรอ 50 ทวิ และยังไม่ได้ใบเลย — รายการนี้ได้ใบแล้ว/ตัดสูญ/ใช้เครดิตแล้ว", EWhtRuleCode, 409);
+            var want = eWithholding ? WhtEvidenceKind.EWithholding : WhtEvidenceKind.PaperCertificate;
+            if (e.EvidenceKind == want) return true;   // กดซ้ำ = ผลเดิม
+            var before = e.EvidenceKind.ToString();
+            e.EvidenceKind = want;
+            e.Notes = AppendNote(e.Notes, eWithholding ? "ผู้จ่ายแจ้งหักผ่าน e-WHT — รอหลักฐาน" : "ยกเลิกการแจ้ง e-WHT — รอ 50 ทวิ ตามปกติ");
+            e.UpdatedAt = DateTime.UtcNow;
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = userId, UserEmail = actorName,
+                EntityType = nameof(WhtCreditReceived), EntityId = e.Id.ToString(), Action = AuditAction.Update,
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new { evidenceKind = before }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = eWithholding ? "wht-credit-ewht-pending" : "wht-credit-ewht-cleared", ruleCode = EWhtRuleCode,
+                    legalReference = "ป.รัษฎากร ม.50 ทวิ · ม.69 ทวิ (e-Withholding Tax — หลักฐานแทนหนังสือรับรอง)",
+                    evidenceKind = want.ToString(),
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+            return true;
+        });
+    }
+
+    public const string EWhtRuleCode = "RD-50BIS-EWHT-PENDING";
+
     /// <summary>ข้อความเมื่อแถวตัดสูญพร้อม JE ถูกยืนยันใบโดยผู้ไม่ถือ Journal.Manage — ใช้ร่วมกับเส้นแอดมินแพลตฟอร์ม (N4) ให้บอกทางไปต่อเดียวกัน</summary>
     public const string WrittenOffNeedsJournalManageMessage =
         "รายการนี้ตัดสูญพร้อมรายการบัญชีแล้ว — การรับใบภายหลังต้องกลับรายการบัญชีตัดสูญ จึงต้องให้ผู้มีสิทธิ์จัดการใบสำคัญ (Journal.Manage) "
@@ -468,7 +516,8 @@ public class WhtCreditService
     /// <summary>ฝ่ายค้าน WP-09 รอบสอง H-B: แถวที่ได้ใบบางส่วนผ่านกล่องรับ — เลขที่/วันที่ใบแรกล็อก · ใบถัดไปเข้ากล่องรับ</summary>
     public const string CertificateLockedMessage =
         "รายการนี้ได้หนังสือรับรองผ่านกล่องรับแล้ว (บางส่วนหรือทั้งหมด) — เลขที่/วันที่ใบแรกแก้ที่นี่ไม่ได้ และ \"ได้รับใบแล้ว\" ใช้กับรายการนี้ไม่ได้ · "
-        + "ใบถัดไป (เช่น งวดที่เหลือ) ให้อัปโหลดเข้ากล่องรับ 50 ทวิ ระบบจะจัดสรรส่วนที่เหลือพร้อมวันที่ของใบนั้น";
+        + "ใบถัดไป (เช่น งวดที่เหลือ) ให้อัปโหลดเข้ากล่องรับ 50 ทวิ ระบบจะจัดสรรส่วนที่เหลือพร้อมวันที่ของใบนั้น "
+        + "(รายการที่ตัดสูญส่วนที่เหลือไปแล้ว: ยืนยันใบในกล่องรับ ระบบกลับรายการตัดสูญให้ — ต้องมีสิทธิ์จัดการใบสำคัญ Journal.Manage)";
 
     /// <summary>ฝ่ายค้าน WP-09 รอบสอง L4</summary>
     public const string CertificateDateRequiredMessage =
@@ -579,6 +628,40 @@ public class WhtCreditService
         var rev = await new AccountingService(_db).ReverseJournalEntryAsync(companyId, jeId, today,
             $"กลับรายการตัดสูญภาษีถูกหัก ณ ที่จ่าย {je.EntryNumber} — {why}", systemTriggered: true);
         return (rev.Id, rev.EntryNumber, je.EntryNumber);
+    }
+
+    /// <summary>
+    /// รอบ 257 ชุด 2 (B-H1) — แถวที่ได้ใบบางส่วนแล้ว<b>ตัดสูญส่วนที่เหลือ</b>พร้อม JE ได้ใบถัดไปผ่านกล่องรับ ⇒ กลับรายการ JE ตัดสูญ
+    /// (<see cref="ReverseWriteOffJournalCoreAsync"/> ตัวเดียวของทุกทาง) แล้วคืนสถานะ "รอใบ" ให้กล่องรับลงใบต่อ (<c>WhtCertIntakeService.ConfirmAsync</c>) ·
+    /// ผู้เรียกถือล็อกแถว (<see cref="AdvisoryLockKey.WhtCreditWriteOff"/>) + อยู่ในธุรกรรมแล้ว · ไม่แตะ <c>ReceivedAmount</c> (กล่องรับเป็นผู้เขียนเดียว) ·
+    /// สิทธิ์ลงบัญชี (Journal.Manage) ตรวจที่ผู้เรียก (<paramref name="actor"/> ต้องไม่ null) · audit chain
+    /// </summary>
+    /// <param name="why">เหตุ (ลง JE กลับรายการ + หมายเหตุ + audit) — เช่น "ได้รับหนังสือรับรอง X ผ่านกล่องรับ" · "ถอนการยืนยันใบ X"</param>
+    public async Task<(string ReversalNo, string WriteOffNo)> ReopenWrittenOffAsync(Guid companyId, WhtCreditReceived e, string why, WriteOffActor actor)
+    {
+        if (!WhtCreditWriteOff.ReopensForLateCertificate(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId, e.WhtAmount, e.ReceivedAmount))
+            throw new BusinessRuleException("รายการนี้ไม่ได้ตัดสูญส่วนที่เหลือพร้อมรายการบัญชี — ไม่มีอะไรให้กลับรายการ", WhtCreditWriteOff.ReversalRuleCode, 409);
+        var before = new { status = e.Status.ToString(), e.WriteOffJournalEntryId, e.WhtAmount, e.ReceivedAmount };
+        var (reversalId, reversalNo, writeOffNo) = await ReverseWriteOffJournalCoreAsync(companyId, e, why);
+        e.WriteOffReversalJournalEntryId = reversalId;
+        e.Status = WhtCreditStatus.Pending;   // กล่องรับตัดสินสถานะสุดท้ายหลังลงใบ/ถอนใบ (StatusForReceived / StatusAfterUnconfirm)
+        e.Notes = AppendNote(e.Notes, $"{why} — กลับรายการตัดสูญ {writeOffNo} ด้วย {reversalNo}");
+        e.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserEmail = actor.Name, UserId = actor.UserId,
+            EntityType = nameof(WhtCreditReceived), EntityId = e.Id.ToString(), Action = AuditAction.Update,
+            OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "wht-credit-writeoff-reversed-intake", ruleCode = WhtCreditWriteOff.ReversalRuleCode,
+                legalReference = WhtCreditWriteOff.ReversalLegalReference,
+                status = e.Status.ToString(), reason = why, writeOffJournal = writeOffNo, reversalJournal = reversalNo,
+                reversalJournalEntryId = reversalId,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        return (reversalNo, writeOffNo);
     }
 
     /// <summary>
@@ -1139,8 +1222,12 @@ public class WhtCreditService
         // รอบ 243a: แก้/ลบแถวที่ตัดสูญพร้อม JE = ทะเบียนเปลี่ยนแต่ GL ไม่ขยับ (แก้เลขที่ใบ ⇒ "ได้รับแล้ว" ทั้งที่ 11910 ถูกล้างไปแล้ว)
         if (WhtCreditWriteOff.NeedsReversal(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId))
             throw new BusinessRuleException(
-                "รายการนี้ตัดสูญพร้อมรายการบัญชีแล้ว — แก้ไข/ลบไม่ได้ · ถ้าได้รับหนังสือรับรองภายหลัง ให้กด \"ได้รับใบแล้ว\" "
-                + "(ระบบกลับรายการบัญชีตัดสูญและคืนเครดิตให้)", WhtCreditWriteOff.RuleCode);
+                // รอบ 257 ชุด 2 (B-H1): แถวที่ได้ใบบางส่วนแล้ว "ได้รับใบแล้ว" ใช้ไม่ได้ — บอกทางที่ใช้ได้จริง (กล่องรับ)
+                e.ReceivedAmount > 0.005m
+                    ? "รายการนี้ตัดสูญส่วนที่เหลือพร้อมรายการบัญชีแล้ว — แก้ไข/ลบไม่ได้ · ถ้าได้รับหนังสือรับรองส่วนที่เหลือภายหลัง ให้อัปโหลดเข้ากล่องรับ 50 ทวิ "
+                      + "แล้วกดยืนยัน (ระบบกลับรายการบัญชีตัดสูญและคืนเครดิตให้ · ต้องมีสิทธิ์จัดการใบสำคัญ)"
+                    : "รายการนี้ตัดสูญพร้อมรายการบัญชีแล้ว — แก้ไข/ลบไม่ได้ · ถ้าได้รับหนังสือรับรองภายหลัง ให้กด \"ได้รับใบแล้ว\" "
+                      + "(ระบบกลับรายการบัญชีตัดสูญและคืนเครดิตให้)", WhtCreditWriteOff.RuleCode);
     }
 
     private static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

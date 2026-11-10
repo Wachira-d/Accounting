@@ -2228,6 +2228,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - วันที่ใบ/ใบสำคัญ/ครบกำหนด = `RecurringSchedule.DocumentDateUtc` (วันตามปฏิทินไทย — รัน 00:00–07:00 น. ไม่ได้วันของเดือนก่อน)
   - หน้า `recurring.html`: ขอบเขต "ค่าเริ่มต้น" แสดงแถวจาก `RecurringDefaultPassCodes` ของเซิร์ฟเวอร์ + หมายเหตุ · เปลี่ยนแถว ⇒ สลับเป็น "ตั้งเอง" (ไม่ส่ง clear เงียบ) ·
     ประกาศครั้งเดียว `DefaultChangeNotice` (ปิดแล้วจำต่อผู้ใช้ใน localStorage) · toast ของ Clear = `DefaultConfirmedMessage`
+  - **ฝ่ายค้าน 8918f558 (คำตัดสิน 257-4-7…257-4-9)**: `UpdateAsync` เรียก `RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit` **ก่อนแก้ค่าใด** — แถวที่ยังไม่ประทับ ⇒ ประทับค่าก่อนแก้
+    (แก้ผู้ติดต่อ/ยอด/ธงแล้วไม่ปล่อย · แก้ชื่อยังปล่อย) · ค่าที่ประทับรุ่น 1 ที่ยังตรง ⇒ ยกเป็นรุ่น 2 (ทั้งค่าตั้งต้นและใบรับรอง) · ลายนิ้วมือรุ่น 2 (`v2:` · `AutoApprovePolicy.BindingHashV2`)
+    รวมความถี่ · ทุก N เดือน · สร้างล่วงหน้า · วันสิ้นสุด · จำนวนครั้ง — ตรวจตามรุ่นที่ประทับ (`MatchesStamp`) · ผู้รับผิดชอบค่าตั้งต้น = `DefaultPolicyStampedBy` (ผู้มีสิทธิ์ที่เลือก
+    "ค่าเริ่มต้น" ล่าสุด) › ผู้สร้าง — ตรวจสิทธิ์และลงชื่อบนหมายเหตุด้วยคนเดียวกัน · ทดลองรันของร่างประทับ/ยกรุ่นแบบเดียวกัน (ในหน่วยความจำ) · Last verified `commit 84ec2fe7` (รอบ 257 ชุด 4 ฝ่ายค้าน · ยังไม่ได้คอมไพล์ในเครื่องนี้)
   - เทสต์ `Round257Pack4Tests` · Db `RecurringAutopilotRound248DbTests.R257_*` · `required_call_site_check` R257P4 · Last verified `commit 8918f558` (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
 
 - **งวดค้างหลายงวด (ฝ่ายค้าน 2026-10-14 P0)** — เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน · แก้ใน f696f418) ⇒ `NextRunDate` ค้างงวดแรก · รอบอัตโนมัติ/ปุ่มสร้างทันทีเรียก `SkipOverduePeriodsAsync` → `RecurringSchedule.CatchUp` เลื่อนไปงวดล่าสุดที่ถึงกำหนดแล้วออก **งวดเดียว** + `LastRunNotice` "ข้าม N งวด … กด สร้างทันที" (ไม่ไล่ออกใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที) · สมุดรายวันไม่แตะ (ไม่เคยค้าง)
@@ -3219,7 +3223,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ประโยค OA กลางขึ้นกับ `NextAccGroupOpen` (`ContactLineChannel.CentralOaSentence` — แท็บผู้ติดต่อ `ContactRecipientResolver.DeliveryNoteFor` · ป้ายฟอร์มกฎ `GET …/email-schedule/line-labels`):
   บริษัทผู้ให้บริการ = กลุ่มผ่าน OA กลางเปิดแล้ว (`NOTIFY-CENTRAL-OA-GROUP-OFF` ยังใช้กับบริษัทอื่น) · `#HeyNextAcc` กับ OA กลางตอบชื่อบริษัทผู้ให้บริการ + "บริษัทอื่นใช้ OA ของตัวเอง"
   (`LineGroupBindRule.Replies.CentralCode`) · บริษัทยกเลิกปลายทาง ⇒ ประทับ `PdpaConsentRecords.WithdrawnAt` (`company-unlink` · migration ซ่อมแถวเก่า) ·
-  OA บริษัทตอบ 429 monthly limit ⇒ กระดิ่งเจ้าของครั้งเดียวต่อเดือนปฏิทินไทย (`LinePushOutcome.AlertMonthStartUtc`) · Last verified `commit 8918f558` (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
+  OA บริษัทตอบ 429 monthly limit ⇒ กระดิ่งเจ้าของครั้งเดียวต่อเดือนปฏิทินไทย (`LinePushOutcome.AlertMonthStartUtc`) · Last verified `commit 8918f558`
+  · ฝ่ายค้าน: เส้นถอยเจออีเมลหลักที่ข้าม/ยกเลิก/ล้ม ⇒ ตอบเหตุ (`ContactLineChannel.MainEmailFallbackOutcome` — ไม่รายงานว่าเข้าคิว) · กระดิ่ง 429 ส่งใน DI scope แยก
+  ถึงเจ้าของที่ยังใช้งานอยู่ (`CompanyMembership.ActiveMemberIdsAsync`) · ยกเลิกปลายทาง + ถอนความยินยอมอยู่ในธุรกรรมเดียว · `Replies.CentralCode` ประกอบข้อความตรง · Last verified `commit 84ec2fe7` (รอบ 257 ชุด 4 ฝ่ายค้าน · ยังไม่ได้คอมไพล์ในเครื่องนี้) (รอบ 257 ชุด 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
 
 ### 2.12k Autopilot ส่วน A — อีเมลสถานะ/สรุปประจำวัน · หน้า Autopilot · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ (เดิมอ้างเป็น §2.12j — ชนเลขกับ 50 ทวิ ขาเข้า WP-09 · รอบ 252 WP-12A · `erp-review/2026-11-06/AUTOPILOT_BILLING_DESIGN.md` §5/§7/§10/§11.4 · AUDIT_249 §WP-12 · คำตัดสิน §2 #36)
 
@@ -3462,7 +3468,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 | จับคู่ | K0 ผู้ถูกหักไม่ใช่เรา ⇒ ตีกลับทันที · K1 ผู้จ่ายเลขผู้เสียภาษีตรงเป๊ะ (ไม่มี fuzzy) · K2 เอกสารที่ระบุก่อน · K3 ยอดเดี่ยว ±฿1 (หลายแถวยอดเท่ากัน ⇒ กำกวม + เสนอแถวที่วันที่ใกล้สุด 1 แถว ไม่ auto · L1) · K4 ใบรวมหลายใบแจ้งหนี้ (subset ≤ 12 แถว · หลายชุด ⇒ กำกวม ไม่เลือกเอง) · K5 บางส่วน (ผ่อนงวด) · K6 เกินยอดค้าง | `Helpers/WhtCertMatchPolicy` (pure · ห้ามถาม AI) |
 | ยืนยันอัตโนมัติ | ด่านเชิงกำหนดก่อนเสมอ (เลขที่+วันที่ · checksum เลขผู้จ่าย mod-11 · ผู้ถูกหัก = เรา · ภาษี = เงินได้ × อัตรา · ยอดภาษีอ่านได้ตรงจากใบ (ไม่ใช่คำนวณย้อน/อ่านไม่ได้ · M4) · จับคู่ Exact · OCR ช่องเงิน/เลข/เลขที่/วันที่ ≥ 0.85 (ไม่มีค่าความมั่นใจ = 0 · สเกล 0–100 หารด้วย 100 · M4) · ปีภาษีของใบ = ของแถว) — ไม่ผ่าน ⇒ **ไม่ถาม AI** · ผ่านครบ ⇒ ตรวจของจริง `AiFeatureKey.WhtCertAuthenticity` ผ่าน `IAiOrchestrator.AskAsync` (นักเรียน `GenericFeedbackDistillationModel` ก่อน · AI เป็นครู) ⇒ "Genuine" ความมั่นใจ ≥ 0.85 ⇒ ยืนยันอัตโนมัติ · อื่น ๆ (รวมปิด provider ทุกตัว) ⇒ รอผู้ใช้กดยืนยัน (ฟอร์มเติมครบ · ความมั่นใจต่ำ = พื้นเหลือง) | `Helpers/WhtCertIntakeVerdict` · `Services/Ai/Prompts/WhtCertAuthenticityPrompt` |
 | ลงเครดิต | ยืนยันต้องมีวันที่บนใบ (L4) · ส่งทั้งรายการและ "รายการใหม่" = 400 · รายการของผู้จ่ายอื่น ⇒ 409 เว้นแต่ติ๊ก "ยืนยันว่าเป็นผู้จ่ายเดียวกัน" (L3) · แถวที่ใบแรกอยู่คนละรอบบัญชีกับใบนี้ ⇒ 409 + ทางไปต่อ "รายการเครดิตใหม่" (H2 — ระบบนับงวดตามวันที่ใบแรกของแถว · การลงวันที่รายใบ = backlog DECISIONS 252-WP09-5) · allocation ที่ยืนยัน ⇒ `WhtCreditReceived.ReceivedAmount += ยอด` · ครบยอด ⇒ Received · ขาดไม่เกิน ฿1 ⇒ Received + หมายเหตุ เครดิต = ยอดใบ (L2 · `WhtCreditableAmount.StatusForReceived`) · ไม่ครบ ⇒ คง Pending แต่เครดิตได้เฉพาะส่วนที่ได้ใบ · รายการใหม่ทั้งที่ผู้จ่ายมีรายการรอใบ ⇒ ต้องมีเหตุผล ≥ 10 ตัวอักษร (ยกเว้นกรณี H2 · M5) และ ภ.ง.ด.50 มีแถวเตือน `WHT_OVER_GL` เมื่อทะเบียนเกินบัญชี 11910 · ใต้ล็อกแถวเดียวกับการตัดสูญ · audit chain (`RD-50BIS-INTAKE` · ม.50 ทวิ/ม.69 ทวิ) · ไม่มีรายการรอใบที่ตรง ⇒ ผู้ใช้เลือก "บันทึกเป็นรายการเครดิตใหม่" (ผ่าน `WhtCreditService.CreateAsync` — ทางเดิมของการสแกนใบที่ไม่มีการรับชำระในระบบ) | `ApplyToCredit` · `ConfirmAsync` |
-| ผู้อ่านเครดิต | ภ.ง.ด.50 (`TaxService.GenerateCitReport`) · เครื่องคำนวณหน้าบริหารการเงิน · ทะเบียน (`CreditableAmountAsync` · `SummaryAsync`) รวมยอดผ่าน `CreditableInPeriod(...).CreditableSumAsync()` → `WhtCreditableAmount.Of` ตัวเดียว (Received/Claimed เต็มแถว · Pending เฉพาะ `ReceivedAmount` · ตัดสูญ 0) — ผ่อน 3 งวดได้ใบงวดแรก ⇒ เครดิตงวดแรก | `Helpers/WhtCreditableAmount` · `Helpers/CitCalculation` |
+| ผู้อ่านเครดิต | ภ.ง.ด.50 (`TaxService.GenerateCitReport`) · เครื่องคำนวณหน้าบริหารการเงิน · ทะเบียน (`CreditableAmountAsync` · `SummaryAsync`) รวมยอดผ่าน `CreditableInPeriod(...).CreditableSumAsync()` → `WhtCreditableAmount.Of` ตัวเดียว (Received/Claimed เต็มแถว — ได้ใบผ่านกล่องรับ ⇒ ไม่เกินยอดบนใบ · Pending เฉพาะ `ReceivedAmount` · **ตัดสูญ (Expired) = ส่วนที่ได้ใบแล้ว (`ReceivedAmount`)** — ตัดสูญทั้งแถว/แถวรุ่นเก่า/หมดสิทธิ์เพราะต้นทางหายหรือคืนเงิน (ReceivedAmount ถูกตั้ง 0) = 0 · รอบ 257 B-L1 แก้ข้อความเดิม "ตัดสูญ 0") — ผ่อน 3 งวดได้ใบงวดแรก ⇒ เครดิตงวดแรก | `Helpers/WhtCreditableAmount` · `Helpers/CitCalculation` |
 | ทะเบียนจาก GL (ผ่อนงวดถัดไป) | แถวที่ได้ใบผ่านกล่องรับแล้ว GL ถูกหักเพิ่ม ⇒ `SyncWhtCreditReceivedAsync` ขยาย `WhtAmount` + กลับเป็น Pending (ส่วนที่เหลือรอใบ) · GL ลดแต่ไม่ต่ำกว่ายอดที่ได้ใบ ⇒ ลด `WhtAmount` ตาม GL (+ ได้ครบ ⇒ Received · M3) · GL ต่ำกว่ายอดที่ได้ใบ ⇒ ไม่ลด + หมายเหตุ "ยอดใบเกินยอดที่ถูกหัก" · ตัวตัดสินเดียว `WhtCreditableAmount.ResyncWithGl` · ไม่แตะ `ReceivedAmount` · แถวใหม่ประทับ `FirstWithheldAt` | `DocumentService.SyncWhtCreditReceivedAsync` |
 | ป้าย 10 สถานะ | NotApplicable · NotYetPaid (คาดว่าจะถูกหัก/ตั้ง 11910 ตอนออกใบแต่ยังไม่รับเงิน — ไม่ใช่การค้าง) · AwaitingCert · Submitted · PartiallyReceived · Received · EWhtAwaitingEvidence · Rejected · Claimed · WrittenOff · เกินกำหนด = เกิน 30 วันหลังถูกหัก (สถานะที่รอลูกค้า) | `Helpers/WhtCertIntakeStatus.Of` ← ตัวโหลดเดียว `Helpers/WhtCertTracking` |
 | ที่แสดง | รายการเอกสาร: ชิป + ตัวกรอง "50 ทวิ" (`?whtCert=` awaiting · overdue · submitted · received · ewht · กรองก่อนแบ่งหน้า · ตัวเลือกจาก `GET wht-certs/filter-options`) · ใบเสร็จที่ไม่มีแถวของตัวเองแสดงสถานะใบต้นทาง · `DocumentResponse.WhtCert*` (รายการ + รายละเอียด) · ทะเบียน `wht-credit.html`: กล่องรับ (อัปโหลดหลายไฟล์ · ตรวจและยืนยัน · ตีกลับพร้อมเหตุ) + รายงานปลายปี "50 ทวิ ที่ยังขาด" + Excel (MiniExcel) · แดชบอร์ด `app.html` การ์ด "50 ทวิ ที่ต้องตามจากลูกค้า" · ผู้ติดต่อ (แท็บช่องทางแจ้งเตือน) การ์ดของลูกค้ารายนั้น | `WhtCertIntakeController` (`api/companies/{cid}/wht-certs/*` · Tax.File) |
@@ -3478,6 +3484,29 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 **ฝ่ายค้าน WP-09 (รอบ 252 ต่อ)** — ตัดสูญ/ปิดปี/รายการเสนอสิ้นรอบ ใช้เฉพาะยอดที่ขาดใบ (`WhtCreditWriteOff.AmountOf` · `WhtCreditableAmount.Missing` · M1 — ตัดสูญบางส่วนแล้วส่วนที่ได้ใบยังเป็นเครดิต: `Of(Expired) = ReceivedAmount`) · ลบเอกสารต้นทางถูกกันเมื่อแถวเครดิตได้ใบแล้วแม้บางส่วน (`DocumentPurgeOrder` ลบเฉพาะ Pending + ReceivedAmount = 0 · M2) · สรุปทะเบียน/รายงานใช้กติกางวด ภ.ง.ด.50 ตัวเดียว (`CreditableAmountAsync` → `CreditableInPeriod` · ลบ `ClaimAsync`/`UnclaimAsync` ที่ไม่มีผู้เรียก · L9) · การ์ด/ตัวกรองจำกัดปีภาษีและสถานะ (L8) · สแกนเอกสารส่งเข้ากล่องรับผ่าน scope แยก + ผลจริงลงหมายเหตุสแกน `[WHT-CERT]` (L6) · เลข 13 หลักของบุคคลธรรมดาถูกปิดบังก่อนส่ง AI (`MaskIndividualIds` · L7)
 
 เทสต์ `WhtCertIntakeStatusTests` · `WhtCreditableAmountTests` · `WhtCertMatchPolicyTests` · `Db/WhtCertIntakeRound252DbTests` · Last verified 2026-11-06 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2681a9fb
+
+**รอบ 257 ชุด 2 (`erp-review/2026-11-10/team-B.md` · คำตัดสิน 257-2-1…257-2-4 — ทับแถวข้างบนเมื่อขัดกัน):**
+- **B-H1 ได้ใบบางส่วนแล้วตัดสูญส่วนที่เหลือ ⇒ รับใบถัดไปได้** — กล่องรับเสนอแถว Expired ที่มี JE ตัดสูญที่ยังมีผล + `ReceivedAmount > 0` (`LoadCandidatesAsync` · ตัวตัดสิน `WhtCreditWriteOff.ReopensForLateCertificate`) ·
+  `ConfirmAsync` ใต้ล็อกแถว: ด่านทุกข้อผ่าน ⇒ กลับ JE ตัดสูญผ่าน `WhtCreditService.ReopenWrittenOffAsync` → `ReverseWriteOffJournalCoreAsync` ตัวเดียว (งวดวันนี้ต้องเปิด · audit
+  `wht-credit-writeoff-reversed-intake`) → รอใบ → ลงใบ (`ApplyToCredit` ตัดสินสถานะ) · ผู้กดไม่ถือ Journal.Manage ⇒ **403** ข้อความไทย · ยืนยันอัตโนมัติไม่ได้ (ด่าน "ต้องให้ผู้ลงบัญชียืนยัน") ·
+  คำตอบมี `FollowUpNote` (กลับรายการ JE เลขที่ไหน + ยังขาดใบเท่าไร ⇒ เสนอกด "ตัดสูญ" เฉพาะส่วนที่ขาด — ไม่ตัดเอง) · ทะเบียน = GL 11910 ทุกขั้น (Db `H1_…`) ·
+  หน้า wht-credit: ปุ่ม "ได้รับใบแล้ว" แสดงตามธง `CanMarkReceived` (`WhtCreditWriteOff.CanMarkReceived` — ตัวเดียวกับด่านของ `MarkReceivedAsync`) · แถวที่ได้ใบบางส่วนแล้ว ⇒ ป้าย "ได้ใบส่วนที่เหลือ ⇒ อัปโหลดเข้ากล่องรับ"
+- **B-H2 ถอนการยืนยัน** — `POST wht-certs/inbox/{id}/unconfirm` (Tax.File · เหตุผล ≥ 5) → `UnconfirmAsync`: ล็อกใบ + แถว · ถอนการจัดสรรที่ยืนยัน · ลด `ReceivedAmount` · สถานะจาก
+  `WhtCreditableAmount.StatusAfterUnconfirm` (ไม่เหลือใบ ⇒ Pending เสมอ) · เลขที่/วันที่/ไฟล์ของแถว = ของใบแรกที่ยังเหลือ (ไม่เหลือ ⇒ ล้าง — ส่งใบที่ถูกต้องเลขเดิมได้) ·
+  แถว "บันทึกเป็นรายการใหม่" จากใบนี้ (ไม่มี 11910 รองรับ) ⇒ ถอดแถว · แถวตัดสูญส่วนที่เหลือ ⇒ กลับ JE ก่อน (Journal.Manage) · **แถว Claimed ⇒ 409** (ปลด ภ.ง.ด.50 กลับเป็นร่างก่อน) ·
+  ใบกลายเป็น Rejected ("ถอนการยืนยัน: …") · audit `wht-cert-intake-unconfirmed` · ไม่สอนนักเรียน · ข้อความแจ้งผู้ขายเมื่อผู้จ่ายยกเลิกใบผ่านคู่ค้า (`NotifyVoidedAsync`) ชี้ปุ่มนี้
+- **B-M1 Claimed ถูกประทับจริง (ทางเลือก a)** — ยื่น ภ.ง.ด.50 (`TaxService.FileTaxReportAsync` รายงาน CorporateIncomeTax · Submitted หรือ Filed) ⇒ `Helpers/WhtCreditClaimStamp.StampAsync`:
+  แถว **Received** ที่เครดิตเข้ารอบ (`CreditableInPeriod` ชุดเดียวกับที่รายงานรวม) ⇒ Claimed + `ClaimedInTaxReportId` + `ClaimedAt` ใน SaveChanges เดียวกับการยื่น · "ปลดล็อก/กลับเป็นร่าง" และ
+  Reject & Reverse ⇒ `ReleaseAsync` (เฉพาะแถวของรายงานนั้น → Received) · แถว Pending/Expired ที่ได้ใบบางส่วนไม่ประทับ (ส่วนที่ขาดยังตาม/ตัดสูญได้) · ภ.ง.ด.51 ไม่มีรายงานในระบบ ⇒ ไม่ประทับ ·
+  ด่านเดิมที่เคย "ตาย" ทำงานแล้ว: แก้/ลบ/ได้รับใบแล้ว (`GuardEditable`) · ตัดสูญ (`WhtCreditWriteOff.Decide`) · ยืนยันใบเข้าแถว (ไม่ใช่ Pending) · ถอนการยืนยัน · คอลัมน์ "ใช้เครดิตแล้ว" ไม่เป็น 0 อีก
+- **B-M2 ใบเลขเดียวกันเมื่ออ่านเลขผู้จ่ายไม่ได้** — `FindLiveByCertAsync` ตัดสินผู้จ่ายด้วยกุญแจ `WhtCertIntakeVerdict.SameCertPayer` (เลขผู้จ่าย 13 หลัก → ผู้ติดต่อที่จับคู่ได้/ลูกค้าของลิงก์) ·
+  ไม่รู้ทั้งคู่ ⇒ **ไม่คืนใบเดิม** (เดิมกลืนใบ "001" ของลูกค้าอื่นเป็น "ได้รับแล้ว") — สร้างใบใหม่พร้อมด่าน "อาจเป็นใบซ้ำ" (ไม่ถาม AI · ไม่ยืนยันอัตโนมัติ) · ยืนยันใบที่ยังไม่รู้ผู้จ่ายขณะมีใบเลขเดียวกัน ⇒ 409
+  ขอเลขผู้จ่าย · ผู้จ่ายเดียวกัน (เลขอ่านได้) ยังเป็นใบเดิมตามเดิม · ลิงก์อัปโหลดที่ประตูเดียวตอบ "ใบเดิม" ⇒ ลบไฟล์ที่เพิ่งเก็บ (ไม่มีไฟล์กำพร้า)
+- **B-M3 e-WHT รอหลักฐาน (ทางเลือก: เพิ่มทางเข้า)** — `POST wht-credits/{id}/ewht-pending` (Tax.File) → `WhtCreditService.SetEWhtPendingAsync`: เฉพาะแถวรอใบที่ยังไม่ได้ใบเลย
+  (`WhtCertIntakeStatus.CanMarkEWhtPending`) ⇒ `EvidenceKind = EWithholding` ⇒ ป้าย "e-WHT · รอหลักฐาน" + ตัวกรอง "ewht" ไปถึงจริง · **ไม่เพิ่มเครดิต** (หลักฐานจริงแนบเข้ากล่องรับแบบ e-WHT) · ยกเลิกได้ ·
+  ปุ่ม "หักผ่าน e-WHT" แสดงตามธง `CanMarkEWht` · audit chain
+
+เทสต์ `WhtCertRound257Tests` · `Db/WhtCertRound257DbTests` · `Db/PartnerExchangeRound255DbTests` (L4) · Last verified 2026-11-10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e104a7bb
 
 ### 2.12m 50 ทวิ ขาเข้า — ลิงก์อัปโหลด · ทวงอัตโนมัติ · "ไม่หัก" บนหน้าชำระ · หลักฐาน e-WHT ขั้นแรก (รอบ 253 · WP-10 · `erp-review/2026-11-06/AUTO_SEND_WHT_DESIGN.md` §3.2 · §4.3 · §6.3–6.5 · §9 เฟส 244b + 245 · คำตัดสินเจ้าของ §11 ข้อ 3–4 · AUDIT_249 §3.3 N4)
 
@@ -3506,6 +3535,17 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **L6** อีเมลทวงทุกฉบับมีข้อความเลิกรับ (ตอบกลับอีเมล ⇒ ผู้ขายปิดที่ผู้ติดต่อ)
 
 เทสต์ `WhtCertUploadRound253Tests` · `Db/WhtCertRound253DbTests` · Last verified 2026-11-06 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1f5a7f6c
+
+**รอบ 257 ชุด 2 (`erp-review/2026-11-10/team-B.md`):**
+- **B-L2 ทวงขั้นที่ "ข้าม"** (ผู้ติดต่อไม่มีอีเมล/ไม่รับ) — ยังส่งไม่ได้ ⇒ ไม่บันทึกซ้ำทุกวัน (เดิม) · **ส่งได้แล้ว (เพิ่มอีเมล) ⇒ ลองใหม่ครั้งเดียว**: ถอดแถว "ข้าม" เดิม (unique ขั้น/ลูกค้า/วันถูกหัก
+  นับเฉพาะแถวที่ไม่ถูกลบ) แล้วเข้าคิวตามปกติ · ตัวตัดสิน `WhtCertReminderCadence.RetrySkippedStep` (ตัดสินหลังถามตัวหาผู้รับ) — เดิมข้ามถาวร
+- **B-L3 OCR ล้มตอนอัปโหลดเอง** (ผู้ให้บริการล่ม · ไฟล์อ่านไม่ได้ · โควตา) ⇒ ไม่ใช่ error ดิบ — เข้ากล่องรับแบบรอคนตรวจจากไฟล์ผ่าน `IWhtCertIntakeService.SubmitUnreadableAsync`
+  (ตัวเดียวกับลิงก์อัปโหลด · ไม่มีค่าที่อ่านได้ · ไม่ยืนยันอัตโนมัติ)
+- **B-L4 ส่ง 50 ทวิ ผ่านคู่ค้าที่กล่องรับของผู้ขายตีกลับ** ⇒ **ไม่ประทับ "ส่งแล้ว"** — เหตุ (`PartnerExchangeRules.IntakeRejectedReason`) บนใบ + จำนวนครั้งเต็มเพดาน (ผลเชิงกำหนด ไม่ส่งซ้ำ) ·
+  หน้า 50 ทวิ ของผู้จ่ายแสดงป้าย `PartnerDeliveryLabel` (`PartnerExchangeRules.WhtDeliveryLabel`) ใต้สถานะ · รับไว้/รอตรวจ/ซ้ำ ⇒ ส่งแล้วตามเดิม
+- B-M2 ลิงก์อัปโหลด: ประตูเดียวตอบ "ใบเดิม" ⇒ ลบไฟล์ที่เพิ่งเก็บ (`DeleteOrphanAsync`) · B-M3 ทางเข้า e-WHT รอหลักฐาน ดู §2.12j
+
+เทสต์ `WhtCertRound257Tests` · `Db/WhtCertRound253DbTests` (`R257_L2_…`) · `Db/PartnerExchangeRound255DbTests` (`R257_L4_…`) · Last verified 2026-11-10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e104a7bb
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -8374,6 +8414,7 @@ _Last verified against codebase: 2026-11-06 (รอบ 253 WP-10 ฝ่ายค
 
 _Last verified against codebase: 2026-11-09 (รอบ 256 — §2.7 รายการประจำ: ค่าตั้งต้นของรายการที่อนุมัติอัตโนมัติไม่ได้ตั้งนโยบาย ⇒ ลูกค้าค้างชำระ [AR-OVERDUE] ไม่กันใบงวดใหม่ (`AutoApprovePolicy.RecurringDefault` ผ่าน `RecurringApprovePolicyLoader` · ผู้สร้างต้องยังมีสิทธิ์อนุมัติ · หมายเหตุ+audit) · ตั้ง "หยุดรอคน" ต่อรายการได้ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1dd21fd7)_
 
+_Last verified against codebase: 2026-11-10 (รอบ 257 ชุด 2 — §2.12j/§2.12m 50 ทวิ ขาเข้า: B-H1 ได้ใบบางส่วน+ตัดสูญส่วนที่เหลือ ⇒ ใบถัดไปเข้ากล่องรับ (กลับ JE ตัดสูญ · Journal.Manage) · B-H2 ถอนการยืนยัน · B-M1 ยื่น ภ.ง.ด.50 ประทับ Claimed / ปลดล็อกถอน · B-M2 ไม่รู้ผู้จ่าย ≠ ซ้ำ (ด่านอาจซ้ำ) · B-M3 แจ้ง e-WHT รอหลักฐาน · B-L1 ข้อความตัดสูญ · B-L2 ทวงที่ข้ามลองใหม่ · B-L3 OCR ล้ม = รอตรวจ · B-L4 ตีกลับ ≠ ส่งแล้ว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e104a7bb)_
 _Last verified against codebase: 2026-11-10 (รอบ 257 ชุด 1 สิทธิ์ + พอร์ทัล — §2.7 ด่านเขียนรายการประจำ `RecurringWriteGate` (สร้าง/อนุมัติ/Journal.Manage) ·
 §2.12g2 พอร์ทัล: ผู้ให้สิทธิ์ Contact.Edit + RejectApiKey + audit · ใบที่ลูกค้าเห็นได้ `DocumentPayLinkPolicy.IsCustomerFacing` · ธงสิทธิ์มีผู้อ่านทุกเส้น (`PortalAccessPermissions`) +
 migration ครั้งเดียว `r257-portal-flags` · รหัสผ่านไม่บังคับ · §2.12h OA กลางห้ามเป็น OA ของร้าน (`LineOwnOaGuard`) + บริษัทผู้ให้บริการซ่อนส่วน OA ของร้าน + "" = ล้าง + webhook URL จากเซิร์ฟเวอร์ ·

@@ -260,12 +260,15 @@ public class PartnerExchangeRound255DbTests
     {
         public List<(Guid CompanyId, WhtCertSubmission S)> Calls { get; } = new();
         public Exception? Throw { get; set; }
+        /// <summary>รอบ 257 ชุด 2 (B-L4): สถานะที่กล่องรับของผู้ขายตอบ (Rejected = ตีกลับ)</summary>
+        public string Status { get; set; } = "Pending";
         public IWhtCertIntakeService Proxy() => F4Proxy<IWhtCertIntakeService>.Create((name, args) =>
         {
             if (name != nameof(IWhtCertIntakeService.SubmitAsync)) return null;
             Calls.Add(((Guid)args[0]!, (WhtCertSubmission)args[1]!));
             if (Throw != null) return Task.FromException<WhtCertSubmitResult>(Throw);
-            return Task.FromResult(new WhtCertSubmitResult(Guid.NewGuid(), "Pending", false, false, "ได้รับแล้ว"));
+            return Task.FromResult(new WhtCertSubmitResult(Guid.NewGuid(), Status, false, false,
+                Status == "Rejected" ? "ใบนี้ไม่ได้ออกให้บริษัทเรา — บริษัทเราอยู่ช่องผู้มีหน้าที่หักภาษี ไม่ใช่ผู้ถูกหัก" : "ได้รับแล้ว"));
         });
     }
 
@@ -348,6 +351,38 @@ public class PartnerExchangeRound255DbTests
         Assert.Null(cert.PartnerDeliveredAt);   // ภายนอกไม่ได้รับ ⇒ ไม่ประทับ "ส่งแล้ว"
         Assert.Equal(1, cert.PartnerDeliveryAttempts);
         Assert.Contains("ทะเบียน", cert.PartnerDeliveryError);
+    }
+
+    [Fact]
+    public async Task R257_L4_กล่องรับของผู้ขายตีกลับ_ไม่ประทับส่งแล้ว_เหตุบนใบ_ไม่ส่งซ้ำ_ทิศตรงข้ามรับแล้วยังประทับ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var since = DateTime.UtcNow.AddDays(-2);
+        var rejected = await SeedWhtAsync(db, since, DateTime.UtcNow.AddDays(-1));
+        var fake = new FakeIntake { Status = "Rejected" };
+        var svc = new PartnerWhtCertExchangeService(db, fake.Proxy(), NullLogger<PartnerWhtCertExchangeService>.Instance);
+        Assert.Equal(0, await svc.DeliverForPayerAsync(rejected.PayerId, since, DateTime.UtcNow));
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var cert = await check.WithholdingTaxCerts.AsNoTracking().SingleAsync(w => w.Id == rejected.CertId && w.CompanyId == rejected.PayerId);
+            Assert.Null(cert.PartnerDeliveredAt);                       // ผู้ขายไม่ได้ใบ ⇒ ไม่ใช่ "ส่งแล้ว"
+            Assert.Null(cert.PartnerIntakeId);
+            Assert.Contains("ตีกลับ", cert.PartnerDeliveryError);       // เหตุถึงผู้จ่าย
+            Assert.Equal(PartnerExchangeRules.MaxWhtDeliveryAttempts, cert.PartnerDeliveryAttempts);   // ผลเชิงกำหนด ⇒ ไม่ลองซ้ำ
+            Assert.StartsWith("ส่งผ่านคู่ค้าไม่สำเร็จ", PartnerExchangeRules.WhtDeliveryLabel(cert.PartnerDeliveredAt, cert.PartnerDeliveryError));
+        }
+        Assert.Equal(0, await svc.DeliverForPayerAsync(rejected.PayerId, since, DateTime.UtcNow));
+        Assert.Single(fake.Calls);                                      // ไม่สร้างใบตีกลับซ้ำในกล่องรับของผู้ขาย
+
+        // ทิศตรงข้าม: กล่องรับรับไว้ (รอตรวจ) ⇒ ยังประทับ "ส่งแล้ว" ตามเดิม
+        var ok = await SeedWhtAsync(db, since, DateTime.UtcNow.AddDays(-1));
+        fake.Status = "AwaitingConfirm";
+        Assert.Equal(1, await svc.DeliverForPayerAsync(ok.PayerId, since, DateTime.UtcNow));
+        using var check2 = DbTestDatabase.TryCreateContext()!;
+        var okCert = await check2.WithholdingTaxCerts.AsNoTracking().SingleAsync(w => w.Id == ok.CertId && w.CompanyId == ok.PayerId);
+        Assert.NotNull(okCert.PartnerDeliveredAt);
+        Assert.Equal("ส่งเข้ากล่องรับของคู่ค้าแล้ว", PartnerExchangeRules.WhtDeliveryLabel(okCert.PartnerDeliveredAt, okCert.PartnerDeliveryError));
     }
 
     // ═══════════ ข้อ 8: ลิงก์วิเศษพอร์ทัล ═══════════

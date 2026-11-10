@@ -115,4 +115,8 @@ public class RecurringTransaction : TenantEntity
     /// ไม่ตรงค่าปัจจุบัน ⇒ ค่าตั้งต้นไม่มีผล (<c>BindingChangedReason</c>) · null = รายการก่อนรอบ 257 (ถือว่าตรง — <c>AutoApprovePolicy.MatchesDefaultBinding</c>) ·
     /// ผู้อ่าน: <c>RecurringApprovePolicyLoader.LoadAsync</c></summary>
     public string? DefaultPolicyBindingHash { get; set; }
+
+    /// <summary>รอบ 257 ชุด 4 ฝ่ายค้าน MED-2: ผู้ประทับ <see cref="DefaultPolicyBindingHash"/> ล่าสุด (ผู้สร้างตอนสร้าง · ผู้มีสิทธิ์อนุมัติที่บันทึกขั้นอนุมัติ) =
+    /// ผู้รับผิดชอบค่าตั้งต้น — ตัวโหลดตรวจสิทธิ์และลงชื่อบนหมายเหตุด้วยคนนี้ (<c>RecurringApprovePolicyLoader.DefaultResponsible</c>) · null = ผู้สร้าง (แถวเดิม)</summary>
+    public string? DefaultPolicyStampedBy { get; set; }
 }

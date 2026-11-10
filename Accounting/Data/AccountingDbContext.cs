@@ -1400,7 +1400,8 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<RecurringTransaction>(e =>
         {
             e.Property(r => r.Name).HasMaxLength(256);
-            e.Property(r => r.DefaultPolicyBindingHash).HasMaxLength(64);   // รอบ 257 ชุด 4 (A-M4) · SHA-256 hex
+            e.Property(r => r.DefaultPolicyBindingHash).HasMaxLength(80);   // รอบ 257 ชุด 4 (A-M4) · "v2:" + SHA-256 hex (ฝ่ายค้าน LOW-1)
+            e.Property(r => r.DefaultPolicyStampedBy).HasMaxLength(100);   // ฝ่ายค้าน MED-2
             e.HasIndex(r => new { r.CompanyId, r.Status, r.NextRunDate })
                 .HasDatabaseName("IX_RecurringTransactions_CompanyId_Status_NextRunDate");
             e.HasQueryFilter(r => !r.IsDeleted);

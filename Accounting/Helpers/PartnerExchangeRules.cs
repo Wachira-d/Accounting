@@ -85,6 +85,21 @@ public static class PartnerExchangeRules
     /// <summary>เพดานการลองส่งใบ 50 ทวิ ต่อใบ (ล้มเกินนี้ = ค้างพร้อมเหตุบนใบ ให้คนส่งเอง)</summary>
     public const int MaxWhtDeliveryAttempts = 8;
 
+    /// <summary>รอบ 257 ชุด 2 (B-L4): กล่องรับของผู้ขายตอบว่า "ตีกลับ" (เช่น ผู้ถูกหักบนใบไม่ใช่ผู้ขาย) ⇒ <b>ไม่ใช่ "ส่งแล้ว"</b> — เหตุของการตีกลับบนใบ ·
+    /// ไม่ลองส่งซ้ำ (ผลเชิงกำหนด — ส่งซ้ำได้ใบตีกลับซ้ำ) จนกว่าผู้จ่ายแก้แล้วออกใบใหม่ · อื่น ๆ (รับแล้ว/รอตรวจ/ซ้ำ) = ส่งแล้ว</summary>
+    public static bool IntakeRejected(string? intakeStatus) => intakeStatus == nameof(WhtCertIntakeRecordStatus.Rejected);
+
+    /// <summary>B-L4: เหตุบนใบของผู้จ่ายเมื่อกล่องรับของผู้ขายตีกลับ (ข้อความจากกล่องรับ · ไม่มี ⇒ ข้อความกลาง)</summary>
+    public static string IntakeRejectedReason(string? intakeMessage)
+        => "กล่องรับ 50 ทวิ ของผู้ขายตีกลับใบนี้: " + (string.IsNullOrWhiteSpace(intakeMessage) ? "ข้อมูลบนใบไม่ตรงกับผู้ขาย" : intakeMessage.Trim())
+           + " — แก้ข้อมูลผู้ถูกหักแล้วออกใบใหม่ หรือส่งหนังสือรับรองให้ผู้ขายทางเดิม";
+
+    /// <summary>B-L4: ป้ายสถานะการส่งผ่านคู่ค้าบนรายการ 50 ทวิ ของผู้จ่าย (หน้าแสดงอย่างเดียว) · null = ไม่ใช่งานของเส้นนี้ (ยังไม่ส่ง/ไม่ใช่คู่ค้า)</summary>
+    public static string? WhtDeliveryLabel(DateTime? deliveredAt, string? deliveryError)
+        => deliveredAt != null ? "ส่งเข้ากล่องรับของคู่ค้าแล้ว"
+            : !string.IsNullOrWhiteSpace(deliveryError) ? "ส่งผ่านคู่ค้าไม่สำเร็จ: " + deliveryError.Trim()
+            : null;
+
     /// <summary>อัตราบนใบ (ถ้าทุกบรรทัดอัตราเดียว ใช้อัตรานั้น · ไม่งั้นคิดจากยอดรวม ปัด 2 ตำแหน่ง)</summary>
     public static decimal CertRate(IReadOnlyCollection<decimal> lineRates, decimal income, decimal tax)
     {

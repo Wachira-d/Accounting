@@ -67,9 +67,73 @@ public class Round257Pack4Tests
         var cid = Guid.NewGuid();
         var h1 = AutoApprovePolicy.BindingHash(cid, "Invoice", "{\"lines\":[{\"quantity\":1,\"unitPrice\":5000}]}", true, false);
         var h2 = AutoApprovePolicy.BindingHash(cid, "Invoice", "{\"lines\":[{\"quantity\":1,\"unitPrice\":900000}]}", true, false);
-        Assert.True(AutoApprovePolicy.MatchesDefaultBinding(h1, h1));
-        Assert.False(AutoApprovePolicy.MatchesDefaultBinding(h1, h2));
-        Assert.True(AutoApprovePolicy.MatchesDefaultBinding(null, h2));   // รายการก่อนรอบ 257 — คงคำตัดสินรอบ 256
+        var v2a = AutoApprovePolicy.BindingHashV2(cid, "Invoice", "{\"lines\":[{\"quantity\":1,\"unitPrice\":5000}]}", true, false, "Monthly", null, 0, null, null);
+        Assert.True(AutoApprovePolicy.MatchesDefaultBinding(h1, h1, v2a));      // ประทับรุ่น 1 — เทียบรุ่น 1
+        Assert.False(AutoApprovePolicy.MatchesDefaultBinding(h1, h2, v2a));
+        Assert.True(AutoApprovePolicy.MatchesDefaultBinding(v2a, h2, v2a));     // ประทับรุ่น 2 — เทียบรุ่น 2
+        Assert.True(AutoApprovePolicy.MatchesDefaultBinding(null, h2, v2a));    // ไม่เคยประทับ (ประทับก่อนแก้ใน UpdateAsync — ฝ่ายค้าน MED-1)
+    }
+
+    /// <summary>ฝ่ายค้าน LOW-1: ลายนิ้วมือรุ่น 2 จับการเปลี่ยนตารางเวลา · รุ่น 1 ไม่เปลี่ยน (ค่าที่ประทับไว้ยังตรวจได้)</summary>
+    [Fact]
+    public void LOW1_ลายนิ้วมือรุ่น2_จับความถี่_วันสิ้นสุด_จำนวนครั้ง_ล่วงหน้า_ทุกNเดือน()
+    {
+        var c = Guid.NewGuid();
+        const string tpl = "{\"lines\":[{\"quantity\":1,\"unitPrice\":5000}]}";
+        string V2(string f = "Monthly", int? im = null, int ld = 0, DateTime? ed = null, int? mr = null)
+            => AutoApprovePolicy.BindingHashV2(c, "Invoice", tpl, true, false, f, im, ld, ed, mr);
+        var h = V2();
+        Assert.StartsWith(AutoApprovePolicy.BindingV2Prefix, h);
+        Assert.Equal(h, V2());
+        Assert.NotEqual(h, V2(f: "Daily"));
+        Assert.NotEqual(h, V2(im: 2));
+        Assert.NotEqual(h, V2(ld: 3));
+        Assert.NotEqual(h, V2(ed: new DateTime(2030, 1, 1)));
+        Assert.NotEqual(h, V2(mr: 12));
+        var v1 = AutoApprovePolicy.BindingHash(c, "Invoice", tpl, true, false);
+        Assert.True(AutoApprovePolicy.MatchesDefaultBinding(v1, v1, V2(f: "Daily")));     // รุ่น 1 มองไม่เห็นตารางเวลา (ยกรุ่นก่อนแก้ครั้งถัดไป)
+        Assert.False(AutoApprovePolicy.MatchesDefaultBinding(h, v1, V2(f: "Daily")));
+        var cert = AutoApprovePolicy.Create(new[] { ArOverdueApprovalWarning.Code }, "u", DateTime.UtcNow, h);
+        Assert.True(AutoApprovePolicy.MatchesBinding(cert, v1, h));
+        Assert.False(AutoApprovePolicy.MatchesBinding(cert, v1, V2(mr: 12)));
+        Assert.False(AutoApprovePolicy.MatchesBinding(cert with { BindingHashValue = null }, v1, h));
+    }
+
+    /// <summary>ฝ่ายค้าน MED-1/LOW-1: ก่อนแก้ — ไม่เคยประทับ ⇒ ประทับรุ่น 2 · รุ่น 1 ที่ยังตรง ⇒ ยกเป็นรุ่น 2 (รวมใบรับรอง) · รุ่น 1 ที่ไม่ตรงแล้ว ⇒ ไม่แตะ</summary>
+    [Fact]
+    public void MED1_ยกรุ่นก่อนแก้_ไม่เคยประทับประทับ_รุ่น1ตรงยก_ไม่ตรงไม่แตะ()
+    {
+        var r = new Accounting.Models.Entities.RecurringTransaction
+        {
+            ContactId = Guid.NewGuid(), DocumentType = DocumentType.Invoice, TemplateData = "{\"lines\":[{\"quantity\":1,\"unitPrice\":5000}]}",
+            AutoApprove = true, Frequency = RecurringFrequency.Monthly,
+        };
+        RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit(r);
+        Assert.Equal(RecurringApprovePolicyLoader.CurrentBindingHash(r), r.DefaultPolicyBindingHash);
+
+        var v1 = RecurringApprovePolicyLoader.CurrentBindingHashV1(r);
+        r.DefaultPolicyBindingHash = v1;
+        r.AutoApprovePolicyJson = AutoApprovePolicy.Serialize(AutoApprovePolicy.Create(new[] { ArOverdueApprovalWarning.Code }, "u", DateTime.UtcNow, v1));
+        RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit(r);
+        Assert.Equal(RecurringApprovePolicyLoader.CurrentBindingHash(r), r.DefaultPolicyBindingHash);
+        Assert.Equal(RecurringApprovePolicyLoader.CurrentBindingHash(r), AutoApprovePolicy.Parse(r.AutoApprovePolicyJson)!.BindingHashValue);
+
+        r.DefaultPolicyBindingHash = "STALE-V1";   // รุ่น 1 ที่ไม่ตรงแล้ว
+        RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit(r);
+        Assert.Equal("STALE-V1", r.DefaultPolicyBindingHash);
+    }
+
+    /// <summary>ฝ่ายค้าน LOW-2: อีเมลหลักมีแถวแต่ไม่ได้ส่ง ⇒ เส้นถอยตอบเหตุ (ไม่ใช่ "เข้าคิวแล้ว") · ออก/กำลังออก ⇒ null</summary>
+    [Fact]
+    public void LOW2_อีเมลหลักข้ามหรือล้ม_ตอบเหตุ_ออกแล้วไม่ตอบ()
+    {
+        Assert.Null(ContactLineChannel.MainEmailFallbackOutcome("Pending", null));
+        Assert.Null(ContactLineChannel.MainEmailFallbackOutcome("Sent", null));
+        Assert.Null(ContactLineChannel.MainEmailFallbackOutcome("Sending", null));
+        Assert.Contains("ไม่ได้ส่ง", ContactLineChannel.MainEmailFallbackOutcome("Skipped", "ผู้ติดต่อไม่รับเรื่องนี้")!);
+        Assert.Contains("ผู้ติดต่อไม่รับเรื่องนี้", ContactLineChannel.MainEmailFallbackOutcome("Skipped", "ผู้ติดต่อไม่รับเรื่องนี้")!);
+        Assert.NotNull(ContactLineChannel.MainEmailFallbackOutcome("Failed", null));
+        Assert.NotNull(ContactLineChannel.MainEmailFallbackOutcome("Cancelled", null));
     }
 
     [Fact]
@@ -146,6 +210,8 @@ public class Round257Pack4Tests
         Assert.Contains("บริษัท ผู้ให้บริการ จำกัด", r);
         Assert.Contains("บริษัทอื่น", r);
         Assert.Contains("LINE OA ของบริษัทตัวเอง", r);
+        Assert.Contains("ผู้ดูแลบริษัทนั้นเปิด", r);   // ฝ่ายค้าน LOW-6: ประกอบตรง ไม่พึ่ง Replace
+        Assert.Contains("หมดอายุ", r);
         // ทิศตรงข้าม: รหัสของ OA บริษัทไม่มีประโยคเรื่อง OA กลาง
         Assert.DoesNotContain("บริษัทอื่น", LineGroupBindRule.Replies.Code("ABCDEFGH", "กลุ่ม", DateTime.UtcNow));
     }
