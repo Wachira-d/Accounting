@@ -157,6 +157,9 @@ WATCHED = [
     # รอบ 252 WP-12A ฝ่ายค้านรอบสอง H-B — การเชื่อมต่อธนาคาร/ดึงรายการ/นำเข้าไฟล์ = เขียนหลักฐานเงินเข้า (Bank.Reconcile ทุก write · ใส่ตอนเขียว)
     "Accounting/Controllers/OpenBankingController.cs",
     "Accounting/Controllers/BankFeedController.cs",
+    # รอบ 257 A-H1 (team-A H1) — สร้าง/แก้/ลบ/หยุด/เปิดต่อ/สร้างทันที ของรายการประจำ เดิมมีแค่ [Authorize] และอยู่ใน baseline 6 แถว ⇒ ปิดด่านครบ
+    # (RecurringWriteGate: Document.Create ของชนิด · Document.Approve เมื่อระบบอนุมัติ/ส่งแทนคน · Journal.Manage ของสมุดรายวัน) ⇒ ถอดจาก baseline + ย้ายเข้า WATCHED ตอนเขียว
+    "Accounting/Controllers/RecurringController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -223,6 +226,12 @@ GATE_MARKERS = (
     # เพิ่มเส้น sign-link คั่นกลางแล้วความบังเอิญหาย ⇒ นับชื่อด่านตรง ๆ (จุดเรียกล็อกด้วย required_call_site_check R240)
     "CheckApprovePermissionAsync(",
     "CheckCreatePermissionAsync(",
+    # รอบ 257 A-H1 — ด่านเขียนรายการประจำ (RecurringController → Helpers/RecurringWriteGate.DenyAsync → DocumentPermissionHelper) ·
+    # จุดเรียก/การใช้ผลต่อ action ล็อกด้วย required_call_site_check (กติกา R257)
+    "DenyRecurringWriteAsync(",
+    # รอบ 257 D-H3 — ด่านธงสิทธิ์พอร์ทัลลูกค้า (PortalPublicController → Helpers/PortalAccessPermissions ตามตารางเส้น) · โทเคนพอร์ทัล ไม่ใช่ผู้ใช้ภายใน ·
+    # เส้นต่อธงล็อกด้วย required_call_site_check (R257)
+    "DenyPortalAsync(",
 )
 
 # ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก

@@ -7,6 +7,9 @@ using Microsoft.AspNetCore.Mvc;
 namespace Accounting.Controllers;
 
 // Admin endpoints
+/// <summary>รอบ 257 D-H1: ให้/แก้/ปิดสิทธิ์พอร์ทัล = เปิดเอกสารทั้งหมดของผู้ติดต่อให้อีเมลภายนอก ⇒ ต้องมีสิทธิ์แก้ผู้ติดต่อ (Contact.Edit) ·
+/// คีย์ API ห้าม (ไม่มีผู้ใช้ให้ประทับใน audit) · ทุกการเขียนลง audit chain (ผู้ทำ · ธงก่อน/หลัง) ใน service — เดิมมีแค่ [Authorize] ⇒ สมาชิกคนไหนก็
+/// ให้สิทธิ์พอร์ทัลของผู้ติดต่อใดก็ได้ถึงอีเมลตัวเองแล้วดาวน์โหลดเอกสารทั้งหมด</summary>
 [ApiController]
 [Route("api/companies/{companyId:guid}/portal")]
 [Authorize]
@@ -15,21 +18,29 @@ public class PortalAdminController : ControllerBase
     private readonly IPortalService _service;
     public PortalAdminController(IPortalService service) => _service = service;
 
+    private Guid ActorId => Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User);
+
     [HttpPost("access")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    [Accounting.Filters.RejectApiKey("ให้สิทธิ์พอร์ทัลลูกค้า")]
     public async Task<ActionResult<ApiResponse<PortalAccessResponse>>> CreateAccess(Guid companyId, [FromBody] CreatePortalAccessRequest request)
-        => StatusCode(201, new ApiResponse<PortalAccessResponse>(true, await _service.CreateAccessAsync(companyId, request)));
+        => StatusCode(201, new ApiResponse<PortalAccessResponse>(true, await _service.CreateAccessAsync(companyId, request, ActorId)));
 
     [HttpGet("access")]
     public async Task<ActionResult<ApiResponse<List<PortalAccessResponse>>>> GetAccesses(Guid companyId)
         => Ok(new ApiResponse<List<PortalAccessResponse>>(true, await _service.GetAccessesAsync(companyId)));
 
     [HttpPut("access/{accessId:guid}")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    [Accounting.Filters.RejectApiKey("แก้สิทธิ์พอร์ทัลลูกค้า")]
     public async Task<ActionResult<ApiResponse<PortalAccessResponse>>> UpdateAccess(Guid companyId, Guid accessId, [FromBody] UpdatePortalAccessRequest request)
-        => Ok(new ApiResponse<PortalAccessResponse>(true, await _service.UpdateAccessAsync(companyId, accessId, request)));
+        => Ok(new ApiResponse<PortalAccessResponse>(true, await _service.UpdateAccessAsync(companyId, accessId, request, ActorId)));
 
     [HttpPost("access/{accessId:guid}/deactivate")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    [Accounting.Filters.RejectApiKey("ปิดสิทธิ์พอร์ทัลลูกค้า")]
     public async Task<ActionResult<ApiResponse<bool>>> Deactivate(Guid companyId, Guid accessId)
-    { await _service.DeactivateAccessAsync(companyId, accessId); return Ok(new ApiResponse<bool>(true, true)); }
+    { await _service.DeactivateAccessAsync(companyId, accessId, ActorId); return Ok(new ApiResponse<bool>(true, true)); }
 }
 
 // Public portal endpoints
@@ -107,6 +118,7 @@ public class PortalPublicController : ControllerBase
     {
         var contactId = GetContactIdFromToken();
         if (contactId == null) return Unauthorized();
+        if (await DenyPortalAsync(companyId, "export", ct) is { } deny) return Forbidden<object>(deny);
         try
         {
             var bytes = await _service.ExportAccountantLedgerAsync(companyId, contactId.Value, fromDate, toDate, ct);
@@ -131,6 +143,7 @@ public class PortalPublicController : ControllerBase
     {
         var contactId = GetContactIdFromToken();
         if (contactId == null) return Unauthorized(new ApiResponse<List<PortalPaymentResponse>>(false, null!, "Invalid portal token"));
+        if (await DenyPortalAsync(companyId, "payments") is { } deny) return Forbidden<List<PortalPaymentResponse>>(deny);
         return Ok(new ApiResponse<List<PortalPaymentResponse>>(true, await _service.GetMyPaymentsAsync(companyId, contactId.Value)));
     }
 
@@ -140,7 +153,11 @@ public class PortalPublicController : ControllerBase
     {
         var contactId = GetContactIdFromToken();
         if (contactId == null) return Unauthorized(new ApiResponse<List<PortalDocumentResponse>>(false, null!, "Invalid portal token"));
-        return Ok(new ApiResponse<List<PortalDocumentResponse>>(true, await _service.GetMyDocumentsAsync(companyId, contactId.Value, type)));
+        if (await DenyPortalAsync(companyId, "documents") is { } deny) return Forbidden<List<PortalDocumentResponse>>(deny);
+        var docs = await _service.GetMyDocumentsAsync(companyId, contactId.Value, type);
+        // ปุ่ม "ชำระ" ต้องตรงธงชำระของสิทธิ์นี้ด้วย (ไม่โชว์ปุ่มที่กดแล้วได้ 403)
+        if (await DenyPortalAsync(companyId, "pay") != null) docs = docs.Select(d => d with { CanPay = false }).ToList();
+        return Ok(new ApiResponse<List<PortalDocumentResponse>>(true, docs));
     }
 
     [HttpGet("{companyId:guid}/documents/{documentId:guid}")]
@@ -149,6 +166,7 @@ public class PortalPublicController : ControllerBase
     {
         var contactId = GetContactIdFromToken();
         if (contactId == null) return Unauthorized(new ApiResponse<PortalDocumentResponse>(false, null!, "Invalid portal token"));
+        if (await DenyPortalAsync(companyId, "document") is { } deny) return Forbidden<PortalDocumentResponse>(deny);
         return Ok(new ApiResponse<PortalDocumentResponse>(true, await _service.GetDocumentAsync(companyId, contactId.Value, documentId)));
     }
 
@@ -158,6 +176,7 @@ public class PortalPublicController : ControllerBase
     {
         var contactId = GetContactIdFromToken();
         if (contactId == null) return Unauthorized();
+        if (await DenyPortalAsync(companyId, "pdf") is { } deny) return Forbidden<object>(deny);
         var pdf = await _service.DownloadDocumentPdfAsync(companyId, contactId.Value, documentId);
         return File(pdf, "application/pdf");
     }
@@ -168,6 +187,7 @@ public class PortalPublicController : ControllerBase
     {
         var contactId = GetContactIdFromToken();
         if (contactId == null) return Unauthorized(new ApiResponse<PortalStatementResponse>(false, null!, "Invalid portal token"));
+        if (await DenyPortalAsync(companyId, "statement") is { } deny) return Forbidden<PortalStatementResponse>(deny);
         return Ok(new ApiResponse<PortalStatementResponse>(true, await _service.GetMyStatementAsync(companyId, contactId.Value, fromDate, toDate)));
     }
 
@@ -189,6 +209,7 @@ public class PortalPublicController : ControllerBase
     {
         var contactId = GetContactIdFromToken();
         if (contactId == null) return Unauthorized(new ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>(false, null, "Invalid portal token"));
+        if (await DenyPortalAsync(companyId, "pay", ct) is { } deny) return Forbidden<Models.DTOs.Cms.StorefrontPaymentOptions>(deny);
         try
         {
             return Ok(new ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>(true,
@@ -209,6 +230,7 @@ public class PortalPublicController : ControllerBase
     {
         var contactId = GetContactIdFromToken();
         if (contactId == null) return Unauthorized(new ApiResponse<PortalSlipUploadResponse>(false, null!, "Invalid portal token"));
+        if (await DenyPortalAsync(companyId, "slip") is { } deny) return Forbidden<PortalSlipUploadResponse>(deny);
         if (file == null) return BadRequest(new ApiResponse<PortalSlipUploadResponse>(false, null!, "กรุณาเลือกไฟล์สลิป"));
         try
         {
@@ -225,4 +247,18 @@ public class PortalPublicController : ControllerBase
     /// <summary>รอบ 255 WP-12B ฝ่ายค้าน H1: ตัวตนจาก scheme "Portal" (PortalAuthenticationHandler ตรวจโทเคน access · สิทธิ์ยังเปิด · บริษัทในเส้นทางตรงโทเคนแล้ว)</summary>
     private Guid? GetContactIdFromToken()
         => Guid.TryParse(User.FindFirst(Accounting.Helpers.PortalTokenPolicy.ClaimContactId)?.Value, out var id) ? id : null;
+
+    private Guid? GetAccessIdFromToken()
+        => Guid.TryParse(User.FindFirst(Accounting.Helpers.PortalTokenPolicy.ClaimAccessId)?.Value, out var id) ? id : null;
+
+    /// <summary>รอบ 257 D-H3: ธงสิทธิ์ของ<b>สิทธิ์พอร์ทัลในโทเคน</b> (อ่านจากฐานทุกคำขอ) ตามตารางเส้นเดียว <c>PortalAccessPermissions.Route</c> ·
+    /// null = ผ่าน · ข้อความ = ปฏิเสธ 403 · ไม่พบสิทธิ์ = ปฏิเสธ (fail-closed)</summary>
+    private async Task<string?> DenyPortalAsync(Guid companyId, string route, CancellationToken ct = default)
+    {
+        var accessId = GetAccessIdFromToken();
+        var flags = accessId is Guid a ? await _service.GetAccessFlagsAsync(companyId, a, ct) : null;
+        return Accounting.Helpers.PortalAccessPermissions.Refusal(flags, Accounting.Helpers.PortalAccessPermissions.Route(route));
+    }
+
+    private ObjectResult Forbidden<T>(string message) => StatusCode(403, new ApiResponse<T>(false, default, message));
 }

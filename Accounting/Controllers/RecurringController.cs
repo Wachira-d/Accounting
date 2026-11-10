@@ -177,19 +177,37 @@ public class RecurringController : ControllerBase
         return Ok(new ApiResponse<RecurringTransactionResponse>(true, result));
     }
 
+    /// <summary>รอบ 257 A-H1: ด่านเขียนรายการประจำตัวเดียว (<see cref="RecurringWriteGate"/> — สร้างเอกสารชนิดนั้น · อนุมัติเมื่อระบบอนุมัติ/ส่งแทนคน) · null = ผ่าน</summary>
+    private Task<string?> DenyRecurringWriteAsync(Guid companyId, string? templateType, DocumentType? type, bool needsApprove)
+    {
+        return RecurringWriteGate.DenyAsync(_permissions, companyId, JwtHelper.GetUserIdFromClaims(User), templateType, type, needsApprove);
+    }
+
     [HttpPost]
     public async Task<ActionResult<ApiResponse<RecurringTransactionResponse>>> Create(
         Guid companyId, [FromBody] CreateRecurringTransactionRequest request)
     {
+        if (await DenyRecurringWriteAsync(companyId, request.TemplateType, request.DocumentType,
+                RecurringWriteGate.NeedsApprove(request.TemplateType, request.AutoApprove, request.AutoSendEmail)) is { } deny)
+            return Forbid403<RecurringTransactionResponse>(deny);
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _recurringService.CreateAsync(companyId, request, userId);
         return StatusCode(201, new ApiResponse<RecurringTransactionResponse>(true, result, "สร้างรายการที่เกิดซ้ำสำเร็จ"));
     }
 
+    /// <summary>แก้ไข — สิทธิ์สร้างของชนิดเดิม<b>และ</b>ชนิดใหม่ (ถ้าเปลี่ยน) · ธงอนุมัติ/ส่งอัตโนมัติ "หลังแก้" ยังเปิด (ตั้งใหม่หรือคงไว้) ⇒ ต้องมีสิทธิ์อนุมัติ</summary>
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<ApiResponse<RecurringTransactionResponse>>> Update(
         Guid companyId, Guid id, [FromBody] UpdateRecurringTransactionRequest request)
     {
+        var item = await _recurringService.GetByIdAsync(companyId, id);
+        var after = RecurringWriteGate.AfterUpdate(item.TemplateType, item.AutoApprove, item.AutoSendEmail, request.AutoApprove, request.AutoSendEmail);
+        var needsApprove = RecurringWriteGate.NeedsApprove(item.TemplateType, after.AutoApprove, after.AutoSendEmail);
+        if (await DenyRecurringWriteAsync(companyId, item.TemplateType, item.DocumentType, needsApprove) is { } deny)
+            return Forbid403<RecurringTransactionResponse>(deny);
+        if (request.DocumentType is { } newType && newType != item.DocumentType
+            && await DenyRecurringWriteAsync(companyId, item.TemplateType, newType, needsApprove) is { } denyNew)
+            return Forbid403<RecurringTransactionResponse>(denyNew);
         var result = await _recurringService.UpdateAsync(companyId, id, request);
         return Ok(new ApiResponse<RecurringTransactionResponse>(true, result));
     }
@@ -197,20 +215,32 @@ public class RecurringController : ControllerBase
     [HttpDelete("{id:guid}")]
     public async Task<ActionResult<ApiResponse<string>>> Delete(Guid companyId, Guid id)
     {
+        var item = await _recurringService.GetByIdAsync(companyId, id);
+        if (await DenyRecurringWriteAsync(companyId, item.TemplateType, item.DocumentType, needsApprove: false) is { } deny)
+            return Forbid403<string>(deny);
         await _recurringService.DeleteAsync(companyId, id);
         return NoContent();
     }
 
+    /// <summary>หยุดชั่วคราว = ลดสิ่งที่ระบบทำแทนคน ⇒ สิทธิ์สร้างพอ</summary>
     [HttpPost("{id:guid}/pause")]
     public async Task<ActionResult<ApiResponse<RecurringTransactionResponse>>> Pause(Guid companyId, Guid id)
     {
+        var item = await _recurringService.GetByIdAsync(companyId, id);
+        if (await DenyRecurringWriteAsync(companyId, item.TemplateType, item.DocumentType, needsApprove: false) is { } deny)
+            return Forbid403<RecurringTransactionResponse>(deny);
         var result = await _recurringService.PauseAsync(companyId, id);
         return Ok(new ApiResponse<RecurringTransactionResponse>(true, result, "หยุดชั่วคราวสำเร็จ"));
     }
 
+    /// <summary>เปิดต่อ = ระบบกลับมาออกเอกสารตามรอบ ⇒ รายการอนุมัติ/ส่งอัตโนมัติต้องมีสิทธิ์อนุมัติ (DECISIONS 257-1-2)</summary>
     [HttpPost("{id:guid}/resume")]
     public async Task<ActionResult<ApiResponse<RecurringTransactionResponse>>> Resume(Guid companyId, Guid id)
     {
+        var item = await _recurringService.GetByIdAsync(companyId, id);
+        if (await DenyRecurringWriteAsync(companyId, item.TemplateType, item.DocumentType,
+                RecurringWriteGate.NeedsApprove(item.TemplateType, item.AutoApprove, item.AutoSendEmail)) is { } deny)
+            return Forbid403<RecurringTransactionResponse>(deny);
         var result = await _recurringService.ResumeAsync(companyId, id);
         return Ok(new ApiResponse<RecurringTransactionResponse>(true, result, "เปิดใช้งานอีกครั้งสำเร็จ"));
     }
@@ -218,6 +248,11 @@ public class RecurringController : ControllerBase
     [HttpPost("{id:guid}/run-now")]
     public async Task<ActionResult<ApiResponse<RecurringTransactionResponse>>> RunNow(Guid companyId, Guid id)
     {
+        // รอบ 257 A-H1: สร้างทันที = ออกเอกสารตอนนี้ · รายการอนุมัติ/ส่งอัตโนมัติ = ออกเลขจริง + ส่งถึงลูกค้า ⇒ ต้องมีสิทธิ์อนุมัติ
+        var item = await _recurringService.GetByIdAsync(companyId, id);
+        if (await DenyRecurringWriteAsync(companyId, item.TemplateType, item.DocumentType,
+                RecurringWriteGate.NeedsApprove(item.TemplateType, item.AutoApprove, item.AutoSendEmail)) is { } deny)
+            return Forbid403<RecurringTransactionResponse>(deny);
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _recurringService.RunNowAsync(companyId, id, userId);
         return Ok(new ApiResponse<RecurringTransactionResponse>(true, result, "ดำเนินการสำเร็จ"));
