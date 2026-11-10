@@ -17142,7 +17142,7 @@ RULES += [
          must=["PartnerExchangeRules.DraftProblem(", "CreatePurchaseDraftsFromPartners", "PartnerExchangeRules.ReceiverLimit(",
                "DocumentStatus.Draft", "PartnerInputVatEvidence.Of(", "CompanyId = link.TargetCompanyId", "d.CompanyId == link.SourceCompanyId",
                "DetachPendingCrossTenantWrites(", "AddChainedAuditLog(", "ExistingPurchaseForChainAsync(", "BeginTransactionAsync(",
-               "PartnerInputVatEvidence.Merge("],
+               "PartnerInputVatEvidence.OnNewSource("],   # รอบ 257 ชุด 3: Merge ผ่าน OnNewSource (ตั้งใหม่เมื่อใบกำกับมาถึงใบที่เคยเป็นใบแจ้งหนี้)
          before=[("PartnerExchangeRules.DraftProblem(", "_db.Documents.Add(draft)"), ("ExistingPurchaseForChainAsync(", "_db.Documents.Add(draft)")],
          forbid=["ApproveDocumentAsync(", "DocumentStatus.Approved", "InputVatBecameClaimableAt", "PaperConfirmed", "PartnerInputVatEvidence.EtaxVerified"],
          why=_R255_WHY + "ข้อ 7 N3 ร่างเสมอ (ไม่อนุมัติ/ไม่ลงภาษีซื้อเอง) · สำเนาเป็นแถวของผู้รับ · ล้มแล้วทิ้งแถวครึ่งทาง"),
@@ -17237,6 +17237,64 @@ RULES += [
     dict(file="Services/Implementations/PortalService.cs", method="ExportAccountantLedgerAsync",
          must=["PortalDocuments(companyId, contactId)", "PortalAccountantExport.Build(", "MiniExcelLibs.MiniExcel.SaveAs("],
          why=_R255_WHY + "ข้อ 8 ส่งออกนักบัญชี: ด่านเอกสารของพอร์ทัลตัวเดียว · MiniExcel เท่านั้น"),
+]
+
+# ── รอบ 257 ชุด 3 (erp-review/2026-11-10/team-D.md · DECISIONS 257-3-*): คู่ค้า · ใบซื้อร่าง · ส่งออกนักบัญชี ──
+_R257_3_WHY = "รอบ 257 ชุด 3: "
+RULES += [
+    # D-H4 + LOW ใบเสร็จที่เป็นใบกำกับ + D-M2 คัดลอกครบ — ตัวตัดสินเดียวต่อเรื่อง
+    dict(file=_R255X, method="TryCreatePurchaseDraftAsync",
+         must=["PartnerExchangeRules.IsTaxInvoiceCarrier(", "ChainHasTaxInvoiceAsync(", "PartnerInputVatEvidence.OnNewSource(",
+               "PartnerExchangeRules.CopyProblem(", "DocumentIssuerBranch.ResolveCode(", "PartnerExchangeRules.ReceiptNoChainMessage",
+               "WithholdingTaxAmount = src.WithholdingTaxAmount", "BillDiscountAmount = src.BillDiscountAmount", "Unit = line.Unit"],
+         before=[("PartnerExchangeRules.CopyProblem(", "_db.Documents.Add(draft)"), ("ChainHasTaxInvoiceAsync(", "PartnerInputVatEvidence.OnNewSource("),
+                 ("PartnerExchangeRules.ReceiptNoChainMessage", "_db.Documents.Add(draft)")],
+         why=_R257_3_WHY + "D-H4 คำยืนยันของใบแจ้งหนี้ไม่ติดไปกับใบกำกับ · ใบเสร็จที่เป็นใบกำกับไม่สร้างใบใหม่ · D-M2 คัดลอกครบหรือไม่สร้าง"),
+    dict(file=_R255X, method="ChainHasTaxInvoiceAsync",
+         must=["l.TargetCompanyId == targetCompanyId", "l.SourceCompanyId == sellerCompanyId", "d.CompanyId == sellerCompanyId",
+               "PartnerExchangeRules.IsTaxInvoiceCarrier("],
+         why=_R257_3_WHY + "D-H4 ใบที่ผูกไว้ก่อนหน้า (แถวกล่องเข้าของผู้รับ + เอกสารของผู้ขายรายเดียว)"),
+    dict(file=_R255X, method="PartnerSourceCheckAsync", must=["PartnerExchangeRules.IsTaxInvoiceCarrier("],
+         why=_R257_3_WHY + "เลข/วันที่ใบกำกับล่าสุดในสายรวมใบเสร็จที่เป็นใบกำกับ (ตัวตัดสินเดียวกับตอนแนบ)"),
+    dict(file=_R255X, method="IncomingPurchaseDraftsAsync",
+         must=["PartnerInputVatEvidence.ConfirmProblem(", "PartnerInputVatEvidence.CanConfirmStampedEtax("],
+         why=_R257_3_WHY + "D-H4 ปุ่มยืนยัน + เหตุที่กดไม่ได้จากตัวตัดสินเดียว (หน้าเว็บไม่เทียบสตริง)"),
+    # D-H5 ระงับการเชื่อม — ด่าน · tenant · audit · เส้นปลายทางหยุด
+    dict(file=_R255X, method="SuspendPartnershipAsync",
+         must=["PartnerExchangeRules.SuspendProblem(", "TradingPartnershipStatus.Suspended", "AddChainedAuditLog(",
+               "x.CompanyAId == companyId || x.CompanyBId == companyId"],
+         before=[("PartnerExchangeRules.SuspendProblem(", "TradingPartnershipStatus.Suspended")],
+         why=_R257_3_WHY + "D-H5 ระงับได้เฉพาะคู่ที่เชื่อม · เฉพาะสมาชิกของคู่ · audit"),
+    dict(file="Controllers/CrossTenantWorkflowController.cs", method="Suspend", must=["_service.SuspendPartnershipAsync("],
+         why=_R257_3_WHY + "D-H5 เส้นระงับเดินผ่าน service ตัวเดียว"),
+    dict(file=XTENANT, method="TryChainDownstreamAsync",
+         must=["TradingPartnershipStatus.Accepted", "p.Id == link.TradingPartnershipId"],
+         before=[("TradingPartnershipStatus.Accepted", "CreateDownstreamPoAsync(")],
+         why=_R257_3_WHY + "D-H5 คู่ที่ถูกระงับ ⇒ ไม่สร้างเอกสารปลายทางในระบบอีกฝ่าย"),
+    # LOW ใบสั่งซื้อปลายทางเป็นร่างเสมอ · ไม่ส่งใบร่างย้อนเข้าระบบผู้ขาย
+    dict(file=XTENANT, method="CreateDownstreamPoAsync",
+         must=["DocumentStatus.Draft"], must_lit=['"DRAFT-'],
+         forbid=["DocumentStatus.Approved", "CrossTenantLinkType.PoFlow", "CreateDownstreamInvoiceAsync("],
+         why=_R257_3_WHY + "LOW N3 เอกสารที่ระบบสร้างในฝั่งผู้รับเป็นร่างเสมอ (ข้อกำหนดฉบับใหม่)"),
+    # D-M1 คำเชิญจริงแจ้งเจ้าของปลายทางในธุรกรรมเดียว (ก่อนเติมเวลาคงที่)
+    dict(file=XTENANT, method="InvitePartnerAsync",
+         must=["UserRole.Owner", "NotificationChannel.InApp", "c.PartnerDiscoverable"],
+         before=[("NotificationChannel.InApp", "await _db.SaveChangesAsync()"), ("await _db.SaveChangesAsync()", "InviteMinimumDuration - sw.Elapsed")],
+         forbid=["_notify.DispatchAsync("],
+         why=_R257_3_WHY + "D-M1 แจ้งเจ้าของปลายทางเฉพาะคำเชิญจริง · ไม่ผ่านช่องภายนอก (เวลาตอบเท่ากัน)"),
+    # D-M4 ส่งออกนักบัญชี — สาขาตามใบ · อ้างอิง · บทบาทใบกำกับ
+    dict(file="Services/Implementations/PortalService.cs", method="ExportAccountantLedgerAsync",
+         must=["DocumentIssuerBranch.ResolveCode(", "PortalAccountantExport.ReferenceText(", "d.CompanyId == companyId", "b.CompanyId == companyId",
+               "IsTaxInvoiceByLaw: d.IsTaxInvoiceByLaw"],
+         why=_R257_3_WHY + "D-M4 สาขาที่ออกใบ · เลขที่ใบต้นทาง (บริษัทเดียวกัน) · แถวไหนเป็นใบกำกับ"),
+    # D-M5 · LOW e-Tax ตรวจแล้ว
+    dict(file="Services/Implementations/DocumentService.cs", method="MapDocumentToResponse",
+         must=["PartnerNeedsOriginal:", "PartnerInputVatEvidence.ConfirmProblem("],
+         why=_R257_3_WHY + "D-M5 ป้าย/ทางไปปุ่มยืนยันต้นฉบับบนหน้าเอกสารจากตัวตัดสินเดียว"),
+    dict(file="Services/Implementations/DocumentService.Reissue.cs", method="AcknowledgeEtaxReviewRowAsync",
+         must=["EtaxReissueReview.OutcomeForGroupProblem("],
+         before=[("EtaxReissueReview.OutcomeForGroupProblem(", "AddChainedAuditLog(")],
+         why=_R257_3_WHY + "LOW กลุ่มส่งอีเมลพร้อมสำเนา ETDA เลือก 'ถูกปฏิเสธ/ไม่เคยได้รับ' ไม่ได้"),
 ]
 
 
