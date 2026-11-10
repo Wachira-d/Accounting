@@ -78,6 +78,14 @@ public static class ContactLineChannel
     public static bool LineFallbackAtSend(bool channelEmail, bool lineFallbackToEmail, bool etaxForcesEmail)
         => lineFallbackToEmail && !channelEmail && !etaxForcesEmail;
 
+    /// <summary>รอบ 257 ชุด 4 ฝ่ายค้าน LOW-2: แถว LINE ล้มแล้ว แต่อีเมลหลักของใบ (กุญแจเดียวกัน) มีแถวอยู่แล้ว ⇒ ไม่ถอยซ้ำ · คำตอบของเส้นถอย:
+    /// null = อีเมลหลักออก/กำลังออก (Pending · Sending · Sent) · ข้อความ = อีเมลหลัก<b>ไม่ได้</b>ส่ง (Skipped · Cancelled · Failed) — บอกเหตุ ไม่รายงานว่าเข้าคิว</summary>
+    public static string? MainEmailFallbackOutcome(string? mainStatus, string? mainError)
+        => mainStatus is "Pending" or "Sending" or "Sent"
+            ? null
+            : $"ไม่ถอยไปอีเมล — อีเมลหลักของใบนี้มีอยู่แล้วแต่ไม่ได้ส่ง (สถานะ {ScheduledEmailSendCheck.StatusLabel(mainStatus)})"
+              + (string.IsNullOrWhiteSpace(mainError) ? "" : ": " + mainError!.Trim());
+
     /// <summary>รอบ 257 ชุด 4 (C-M3): ต้องถามเส้น e-Tax ก่อนเข้าคิว LINE ไหม — เฉพาะเมื่อแถว LINE อาจถอยไปอีเมล (ไม่เพิ่มคำค้นให้กฎอื่น)</summary>
     public static bool LineFallbackMayDuplicate(bool channelEmail, bool lineFallbackToEmail) => LineFallbackAtSend(channelEmail, lineFallbackToEmail, false);
 

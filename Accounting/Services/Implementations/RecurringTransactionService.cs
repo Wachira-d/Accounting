@@ -136,6 +136,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         };
         // รอบ 257 ชุด 4 (A-M4): ค่าตั้งต้น "ลูกค้าค้างชำระ ⇒ อนุมัติต่อ" ผูกค่าที่ผู้สร้างเห็นตอนสร้าง (ตัวเดียวกับใบรับรองนโยบาย) — แก้ภายหลังต้องรับรองใหม่
         recurring.DefaultPolicyBindingHash = RecurringApprovePolicyLoader.CurrentBindingHash(recurring);
+        recurring.DefaultPolicyStampedBy = createdBy;   // ฝ่ายค้าน MED-2: ผู้รับผิดชอบค่าตั้งต้น = ผู้สร้าง (จนผู้มีสิทธิ์อนุมัติบันทึกขั้นอนุมัติ)
 
         _db.RecurringTransactions.Add(recurring);
         await _db.SaveChangesAsync();
@@ -180,6 +181,10 @@ public class RecurringTransactionService : IRecurringTransactionService
             .Include(r => r.Contact)
             .FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
+
+        // รอบ 257 ชุด 4 ฝ่ายค้าน MED-1/LOW-1: ก่อนแก้ค่าใด — แถวเดิมที่ยังไม่ประทับค่าตั้งต้น ⇒ ประทับด้วยค่าก่อนแก้ (แก้แล้วไม่ตรง ⇒ ไม่ปล่อย) ·
+        // ค่าที่ประทับรุ่น 1 ที่ยังตรง ⇒ ยกเป็นรุ่น 2 (ตารางเวลาเข้าลายนิ้วมือ) — ตัวเดียว RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit
+        RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit(recurring);
 
         if (request.Name != null) recurring.Name = request.Name;
         if (request.Description != null) recurring.Description = request.Description;

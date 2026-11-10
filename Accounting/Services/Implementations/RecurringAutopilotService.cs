@@ -229,16 +229,19 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             throw new BusinessRuleException(badTri, AutopilotSettingsResolver.RuleCode);
         string? storedPolicy = null;
         // รอบ 257 ชุด 4 (A-M4): ร่างของรายการเดิม ⇒ ลายนิ้วมือของค่าตั้งต้นที่ประทับไว้ (แผงบอกล่วงหน้าว่าแก้แล้วต้องรับรองใหม่) · ร่างใหม่ = null (ประทับตอนสร้าง)
-        string? storedDefaultHash = null;
+        string? storedDefaultHash = null, storedStampedBy = null, storedCreatedBy = null;
         bool? storedPostPayEmail = null, storedPostPayPartial = null;
         if (recurringId is { } rid)
         {
             var stored = await _db.RecurringTransactions.AsNoTracking()
                 .Where(r => r.Id == rid && r.CompanyId == companyId)
-                .Select(r => new { r.AutoApprovePolicyJson, r.PostPayEmailReceipt, r.PostPayIncludePartial, r.DefaultPolicyBindingHash })
                 .FirstOrDefaultAsync(ct);
+            // ฝ่ายค้าน MED-1/LOW-1: ประทับ/ยกรุ่นแบบเดียวกับที่ UpdateAsync จะทำก่อนแก้ (แถวในหน่วยความจำ AsNoTracking — ไม่บันทึก) ⇒ แผงทำนายผลหลังบันทึกตรงของจริง
+            if (stored != null) RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit(stored);
             storedPolicy = stored?.AutoApprovePolicyJson;
             storedDefaultHash = stored?.DefaultPolicyBindingHash;
+            storedStampedBy = stored?.DefaultPolicyStampedBy;
+            storedCreatedBy = stored?.CreatedBy;
             storedPostPayEmail = stored?.PostPayEmailReceipt;
             storedPostPayPartial = stored?.PostPayIncludePartial;
         }
@@ -263,6 +266,8 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(d.PayLinkChannels),
             AutoApprovePolicyJson = storedPolicy,
             DefaultPolicyBindingHash = storedDefaultHash,
+            DefaultPolicyStampedBy = storedStampedBy,
+            CreatedBy = storedCreatedBy,   // ผู้รับผิดชอบค่าตั้งต้นของรายการเดิม (ฝ่ายค้าน MED-2 · ร่างใหม่ = null เหมือนเดิม)
             // รอบ 257 ชุด 4 (A L13): ร่างในฟอร์มส่งสร้างล่วงหน้า/ทุก N เดือน มาด้วย — แผงตรวจวันที่เอกสาร/เดือนภาษีจากค่าในฟอร์ม
             LeadDays = d.LeadDays ?? 0,
             IntervalMonths = d.IntervalMonths is > 0 ? d.IntervalMonths : null,
@@ -677,6 +682,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
         // รอบ 257 ชุด 4 (A-M4 · H2): ผู้มีสิทธิ์อนุมัติบันทึกขั้นอนุมัติ (endpoint นี้ต้องมี Document.Approve) ⇒ ประทับลายนิ้วมือของค่าตั้งต้นใหม่ —
         // "ค่าเริ่มต้น" (Clear) จึงไม่ใช่ no-op แล้ว: = รับรองว่าค่าปัจจุบันของรายการใช้ค่าตั้งต้นรอบ 256 ได้
         r.DefaultPolicyBindingHash = RecurringApprovePolicyLoader.CurrentBindingHash(r);
+        r.DefaultPolicyStampedBy = userId.ToString();   // ฝ่ายค้าน MED-2: ผู้มีสิทธิ์ที่เลือก/บันทึก = ผู้รับผิดชอบค่าตั้งต้น (เดิมยังตรวจผู้สร้าง ⇒ "ค่าเริ่มต้น" ไม่มีผลเมื่อผู้สร้างหมดสิทธิ์)
         AuditPolicy(companyId, "RecurringTransaction", r.Id, before, r.AutoApprovePolicyJson, userId);
         await _db.SaveChangesAsync(ct);
         return RecurringApprovePolicyLoader.View(AutoApprovePolicy.Parse(r.AutoApprovePolicyJson, AutoApprovePolicy.ScopeRecurring));

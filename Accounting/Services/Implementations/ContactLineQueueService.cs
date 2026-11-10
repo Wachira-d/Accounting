@@ -4,6 +4,7 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Accounting.Services.Implementations;
 
@@ -33,31 +34,38 @@ public class ContactLineQueueService : IContactLineQueueService
     internal static readonly TimeSpan StaleSending = TimeSpan.FromMinutes(30);   // > BatchSize × LineNotifyService.PushTimeout (50 × 15 วินาที = 12.5 นาที)
     private const int BatchSize = 50;
 
-    /// <summary>รอบ 257 ชุด 4 (C LOW): กระดิ่งถึงเจ้าของเมื่อ OA ของบริษัทใช้ข้อความของเดือนหมด (429 monthly limit) · null = ไม่แจ้ง (เทสต์เดิม)</summary>
-    private readonly INotificationService? _notifications;
+    /// <summary>รอบ 257 ชุด 4 (C LOW): กระดิ่งถึงเจ้าของเมื่อ OA ของบริษัทใช้ข้อความของเดือนหมด (429 monthly limit) · null = ไม่แจ้ง (เทสต์เดิม) ·
+    /// ฝ่ายค้าน LOW-3: ส่งใน DI scope แยก (context ของตัวเอง — <c>NotificationService.SendAsync</c> เรียก SaveChanges ⇒ ไม่บันทึกแถวคิวที่กำลังส่งกลางทาง)</summary>
+    private readonly IServiceScopeFactory? _scopes;
 
     public ContactLineQueueService(AccountingDbContext db, ILineNotifyService line, IContactRecipientResolver recipients, ISecretProtector secrets,
         IEmailScheduleService emailSchedule, ILogger<ContactLineQueueService> logger, IDocumentPayLinkService? payLinks = null,
-        INotificationService? notifications = null)
+        IServiceScopeFactory? scopes = null)
     {
         _db = db; _line = line; _recipients = recipients; _secrets = secrets; _emailSchedule = emailSchedule; _logger = logger; _payLinks = payLinks;
-        _notifications = notifications;
+        _scopes = scopes;
     }
 
-    /// <summary>รอบ 257 ชุด 4 (C LOW): OA ของบริษัทใช้ข้อความฟรีของเดือนหมด (LINE ตอบ 429 monthly limit) ⇒ กระดิ่งถึงเจ้าของ<b>ครั้งเดียวต่อเดือน (ปฏิทินไทย)</b> —
-    /// เดิมรู้ได้เฉพาะจากคิว LINE ว่าล้มทีละแถว · OA กลางของ NextAcc ไม่แจ้งบริษัท (ผู้ดูแลระบบเฝ้าเอง) · ล้ม ⇒ LogError (แถวคิวบอกเหตุอยู่แล้ว ไม่ย้อนผลส่ง)</summary>
+    /// <summary>รอบ 257 ชุด 4 (C LOW): OA ของบริษัทใช้ข้อความฟรีของเดือนหมด (LINE ตอบ 429 monthly limit) ⇒ กระดิ่งถึงเจ้าของ<b>ที่ยังใช้งานอยู่</b>
+    /// (ตัวตัดสินสมาชิกเดียว <see cref="CompanyMembership.ActiveMemberIdsAsync"/>) <b>ครั้งเดียวต่อเดือน (ปฏิทินไทย)</b> · OA กลางของ NextAcc ไม่แจ้งบริษัท ·
+    /// scope แยก (ฝ่ายค้าน LOW-3) · ล้ม ⇒ LogError (แถวคิวบอกเหตุอยู่แล้ว ไม่ย้อนผลส่ง)</summary>
     private async Task AlertMonthlyLimitAsync(Guid companyId, CancellationToken ct)
     {
-        if (_notifications == null) return;
+        if (_scopes == null) return;
         try
         {
+            using var scope = _scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+            var notifications = scope.ServiceProvider.GetService<INotificationService>();
+            if (notifications == null) return;
             var since = LinePushOutcome.AlertMonthStartUtc(DateTime.UtcNow);
-            if (await _db.Notifications.AnyAsync(n => n.CompanyId == companyId && n.EntityType == LinePushOutcome.MonthlyLimitAlertEntity && n.CreatedAt >= since, ct))
+            if (await db.Notifications.AnyAsync(n => n.CompanyId == companyId && n.EntityType == LinePushOutcome.MonthlyLimitAlertEntity && n.CreatedAt >= since, ct))
                 return;
-            var owners = await _db.CompanyUsers.AsNoTracking()
+            var ownerIds = await db.CompanyUsers.AsNoTracking()
                 .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner).Select(cu => cu.UserId).ToListAsync(ct);
-            foreach (var u in owners)
-                await _notifications.SendAsync(u, companyId, NotificationType.System, LinePushOutcome.MonthlyLimitAlertTitle, LinePushOutcome.MonthlyLimitAlertMessage,
+            var active = await CompanyMembership.ActiveMemberIdsAsync(db, companyId, ownerIds, ct);
+            foreach (var u in ownerIds.Where(active.Contains))
+                await notifications.SendAsync(u, companyId, NotificationType.System, LinePushOutcome.MonthlyLimitAlertTitle, LinePushOutcome.MonthlyLimitAlertMessage,
                     "/pages/email-schedule.html", LinePushOutcome.MonthlyLimitAlertEntity, null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

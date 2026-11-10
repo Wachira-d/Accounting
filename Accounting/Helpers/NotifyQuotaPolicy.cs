@@ -209,7 +209,7 @@ public static class NotifyQuotaPolicy
     /// <summary>ฝ่ายค้าน fix2 M2: ส่วนเกิน (คิดเงินต่อข้อความ) ใช้ได้เฉพาะข้อความแจ้งลูกค้า — เส้นอีเมลแพลตฟอร์มเต็ม = ไม่ส่ง (ไม่คิดเงินแทนการหยุด)</summary>
     public static bool OverageAllowed(bool combinedFallback) => combinedFallback;
 
-    /// <summary>ฝ่ายค้าน fix2 H1: แพ็กของช่องขายได้ไหม — เฉพาะช่องที่มีเพดานแยก (<see cref="ChannelPlanLimit"/> ไม่ใช่ null) · ไม่แยก ⇒ ข้อความนับก้อนรวม แพ็กของช่องไม่มีผล
+    /// <summary>ฝ่ายค้าน fix2 H1: แพ็กของช่องขายได้ไหม — เฉพาะช่องที่มีเพดานแยก<b>เป็นตัวเลข ≥ 0</b> (<see cref="ChannelPlanLimit"/>) · ไม่แยก (null) ⇒ ข้อความนับก้อนรวม แพ็กของช่องไม่มีผล
     /// · รอบ 257 ชุด 4 (C-M2): เพดานติดลบ (= <see cref="Unlimited"/> ไม่จำกัด) ⇒ แพ็กไม่มีผล ⇒ ขายไม่ได้ (เดิมคืน true เมื่อ -1 ⇒ จ่ายแล้วได้แต่ตัวเลข)</summary>
     public static bool ChannelPackSellable(int? channelPlanLimit) => channelPlanLimit is int l && l >= 0;
 

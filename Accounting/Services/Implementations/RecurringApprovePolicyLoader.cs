@@ -19,7 +19,7 @@ internal static class RecurringApprovePolicyLoader
     internal sealed record Loaded(AutoApprovePolicy? Policy, AutoApprovePolicy? Stored, bool? SetterActive, string? InactiveReason = null);
 
     internal const string BindingChangedReason = "ค่าของรายการ (ผู้ติดต่อ · ชนิดเอกสาร · ยอด/บรรทัด · อนุมัติ/ส่งอีเมลอัตโนมัติ) เปลี่ยนหลังผู้มีสิทธิ์ตั้ง/รับรองนโยบาย — ให้ผู้มีสิทธิ์อนุมัติตั้ง/รับรองใหม่สำหรับค่าปัจจุบัน";
-    internal const string DefaultSetterGoneReason = "ผู้สร้างรายการประจำไม่ได้เป็นสมาชิก/ไม่มีสิทธิ์อนุมัติเอกสารชนิดนี้แล้ว — ใบงวดใหม่ที่ลูกค้ามีใบค้างจะหยุดรอคน · ให้ผู้มีสิทธิ์อนุมัติตั้งนโยบายของรายการ";
+    internal const string DefaultSetterGoneReason = "ผู้รับผิดชอบค่าเริ่มต้น (ผู้มีสิทธิ์ที่เลือก \"ค่าเริ่มต้น\" ล่าสุด หรือผู้สร้างรายการประจำ) ไม่ได้เป็นสมาชิก/ไม่มีสิทธิ์อนุมัติเอกสารชนิดนี้แล้ว — ใบงวดใหม่ที่ลูกค้ามีใบค้างจะหยุดรอคน · ให้ผู้มีสิทธิ์อนุมัติตั้งนโยบายของรายการ";
     /// <summary>รอบ 257 ชุด 4 (A-H2 · server computes): คำอธิบายค่าเริ่มต้นของหน้านโยบาย · ข้อความหลังผู้มีสิทธิ์เลือก "ค่าเริ่มต้น" (เดิม toast บอก "ไม่ปล่อยคำเตือนใด ๆ" ผิดหลังรอบ 256)</summary>
     internal const string DefaultNote = "ค่าเริ่มต้นของรายการประจำ (รอบ 256): ลูกค้าค้างชำระ ⇒ อนุมัติใบงวดใหม่ต่อ + หมายเหตุบนใบ + บันทึกตรวจสอบ · ข้ออื่นหยุดรอคน · มีผลเฉพาะรายการที่อนุมัติอัตโนมัติ ผู้สร้างยังมีสิทธิ์อนุมัติ และค่าของรายการไม่เปลี่ยนหลังสร้าง/รับรอง · ผู้ติดต่อตั้ง \"หยุดรอคน\" ⇒ หยุดรอคน · อยากเปลี่ยนแถวใด เลือก \"ตั้งเองสำหรับรายการนี้\"";
     /// <summary>รอบ 257 ชุด 4 (E-M3): ประกาศครั้งเดียวบนหน้ารายการประจำ — ค่าตั้งต้นเปลี่ยนในรอบ 256 (1dd21fd7) โดยเจ้าของบริษัทไม่ถูกแจ้ง · คีย์ = รุ่นของประกาศ</summary>
@@ -30,10 +30,35 @@ internal static class RecurringApprovePolicyLoader
     internal const string DefaultConfirmedMessage = "ใช้ค่าเริ่มต้นแล้ว — ลูกค้าค้างชำระ ⇒ อนุมัติใบงวดใหม่ต่อ (ผูกกับค่าปัจจุบันของรายการ · แก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติภายหลังต้องรับรองใหม่) · อยากให้หยุด เลือก \"ตั้งเองสำหรับรายการนี้\" แล้วตั้ง \"หยุดรอคน\"";
     internal const string SetterGoneReason = "ผู้ตั้ง/รับรองนโยบายไม่ได้เป็นสมาชิกของบริษัท/ไม่มีสิทธิ์อนุมัติเอกสารชนิดนี้แล้ว — ให้ผู้มีสิทธิ์ตั้งนโยบายใหม่";
 
-    /// <summary>ลายนิ้วมือของค่าปัจจุบันของรายการ (ตัวเดียวทั้งตอนตั้ง/รับรองและตอนตรวจ)</summary>
+    /// <summary>ลายนิ้วมือของค่าปัจจุบันของรายการ (ตัวเดียวทั้งตอนตั้ง/รับรองและตอนตรวจ) — รอบ 257 ชุด 4 ฝ่ายค้าน LOW-1: รุ่น 2 (+ ตารางเวลา) ·
+    /// ค่าที่ประทับใหม่ทุกตัวใช้ตัวนี้ · ตรวจผ่าน <c>AutoApprovePolicy.MatchesStamp</c> (เทียบตามรุ่นที่ประทับ)</summary>
     internal static string CurrentBindingHash(RecurringTransaction r)
+        => AutoApprovePolicy.BindingHashV2(r.ContactId, (r.DocumentType ?? DocumentType.Invoice).ToString(), r.TemplateData,
+            r.AutoApprove || r.AutoSendEmail, r.AutoSendEmail,
+            r.Frequency.ToString(), r.IntervalMonths, r.LeadDays, r.EndDate, r.MaxRuns);
+
+    /// <summary>รุ่น 1 (ก่อนรอบ 257 ฝ่ายค้าน) — ใช้ตรวจค่าที่ประทับไว้ก่อนหน้าเท่านั้น ห้ามใช้ประทับใหม่</summary>
+    internal static string CurrentBindingHashV1(RecurringTransaction r)
         => AutoApprovePolicy.BindingHash(r.ContactId, (r.DocumentType ?? DocumentType.Invoice).ToString(), r.TemplateData,
             r.AutoApprove || r.AutoSendEmail, r.AutoSendEmail);
+
+    /// <summary>ผู้รับผิดชอบค่าตั้งต้น — ผู้มีสิทธิ์ที่ประทับล่าสุด (ฝ่ายค้าน MED-2) ไม่งั้นผู้สร้างรายการ</summary>
+    internal static string? DefaultResponsible(RecurringTransaction r) => r.DefaultPolicyStampedBy ?? r.CreatedBy;
+
+    /// <summary>รอบ 257 ชุด 4 ฝ่ายค้าน MED-1/LOW-1 — เรียก<b>ก่อน</b>แก้ค่าใดของรายการ (<c>RecurringTransactionService.UpdateAsync</c>):
+    /// (1) ค่าตั้งต้นที่ยังไม่เคยประทับ (แถวก่อนรอบ 257) ⇒ ประทับด้วยค่าก่อนแก้ — แก้ผู้ติดต่อ/ยอด/ธงแล้วไม่ตรง ⇒ หยุดรอคน (เดิม null = ตรงตลอดไป) ·
+    /// (2) ค่าที่ประทับรุ่น 1 ที่ยังตรง ⇒ ยกเป็นรุ่น 2 (รวมตารางเวลา) ทั้งค่าตั้งต้นและใบรับรองนโยบาย — ไม่ตรงแล้วไม่แตะ (ยังไม่ตรงต่อไป) ·
+    /// ไม่เปลี่ยนผู้รับผิดชอบ/ผู้ตั้ง (ไม่มีผู้มีสิทธิ์อนุมัติในเส้นนี้)</summary>
+    internal static void UpgradeStampsBeforeEdit(RecurringTransaction r)
+    {
+        var v1 = CurrentBindingHashV1(r);
+        var v2 = CurrentBindingHash(r);
+        if (r.DefaultPolicyBindingHash == null || string.Equals(r.DefaultPolicyBindingHash, v1, StringComparison.Ordinal))
+            r.DefaultPolicyBindingHash = v2;
+        var cert = AutoApprovePolicy.Parse(r.AutoApprovePolicyJson);
+        if (cert?.BindingHashValue != null && string.Equals(cert.BindingHashValue, v1, StringComparison.Ordinal))
+            r.AutoApprovePolicyJson = AutoApprovePolicy.Serialize(cert with { BindingHashValue = v2 });
+    }
 
     /// <summary>นโยบายที่มีผลของรายการ — ไม่มีใบรับรองระดับรายการ = ไม่ปล่อย (แม้ผู้ติดต่อมีนโยบาย) · ลายนิ้วมือไม่ตรง/ผู้ตั้งหรือผู้รับรองหมดสิทธิ์ = ไม่ปล่อย</summary>
     internal static async Task<Loaded> LoadAsync(AccountingDbContext db, IPermissionService? permissions, Guid companyId,
@@ -56,11 +81,13 @@ internal static class RecurringApprovePolicyLoader
                 if (AutoApprovePolicy.StopsRecurringDefault(contactPolicy)) return new Loaded(null, contactPolicy, null);
             }
             // รอบ 257 ชุด 4 (A-M4): ค่าตั้งต้นผูกลายนิ้วมือที่ประทับตอนสร้าง/ตอนผู้มีสิทธิ์ใช้ค่าเริ่มต้น — แก้ยอด/ผู้ติดต่อ/ธงภายหลัง ⇒ ไม่ปล่อย
-            if (!AutoApprovePolicy.MatchesDefaultBinding(r.DefaultPolicyBindingHash, CurrentBindingHash(r)))
+            if (!AutoApprovePolicy.MatchesDefaultBinding(r.DefaultPolicyBindingHash, CurrentBindingHashV1(r), CurrentBindingHash(r)))
                 return new Loaded(null, null, false, BindingChangedReason);
-            if (!await CanStillApproveAsync(db, permissions, companyId, r.CreatedBy, docType, ct))
+            // ฝ่ายค้าน MED-2: ผู้รับผิดชอบ = ผู้มีสิทธิ์ที่เลือก "ค่าเริ่มต้น" ล่าสุด › ผู้สร้าง (ตรวจและลงชื่อบนหมายเหตุด้วยคนเดียวกัน)
+            var responsible = DefaultResponsible(r);
+            if (!await CanStillApproveAsync(db, permissions, companyId, responsible, docType, ct))
                 return new Loaded(null, null, false, DefaultSetterGoneReason);
-            return new Loaded(AutoApprovePolicy.RecurringDefault(r.CreatedBy), null, true);
+            return new Loaded(AutoApprovePolicy.RecurringDefault(responsible), null, true);
         }
         string? contactJson = null;
         if (cert.InheritContact && r.ContactId is { } cid)
@@ -72,7 +99,7 @@ internal static class RecurringApprovePolicyLoader
         if (stored is not { PassCodes.Count: > 0 }) return new Loaded(stored, stored, null);
 
         // ฝ่ายค้าน HIGH/MED-2: ใบรับรองผูกลายนิ้วมือของค่าที่ผู้มีสิทธิ์เห็นตอนตั้ง — แก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติภายหลัง ⇒ ไม่ปล่อย
-        if (!AutoApprovePolicy.MatchesBinding(cert, CurrentBindingHash(r)))
+        if (!AutoApprovePolicy.MatchesBinding(cert, CurrentBindingHashV1(r), CurrentBindingHash(r)))   // รอบ 257 ฝ่ายค้าน LOW-1: ตามรุ่นที่ประทับ
             return new Loaded(null, stored, false, BindingChangedReason);
         // ผู้ตั้ง (และผู้รับรองระดับรายการ เมื่อใช้นโยบายของผู้ติดต่อ) ต้องยังเป็นสมาชิก + มีสิทธิ์อนุมัติชนิดนี้ (ตัวตัดสินเดียว CompanyMembership)
         foreach (var who in new[] { stored.SetBy, cert.SetBy }.Distinct())
