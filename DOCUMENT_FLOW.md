@@ -3412,7 +3412,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     e-Tax ตรวจแล้ว: แถวกลุ่ม "ส่งแล้วไม่มีหลักฐาน" ที่เอกสารเข้าเงื่อนไขอีเมลพร้อมสำเนา ETDA จำกัด "ยกเลิกที่กรมฯ" เหมือนกัน (`AllowedOutcomes(group, emailed)` · ฝั่งบันทึกใช้ชุดของแถว) ·
     PO/ใบแจ้งหนี้ปลายทางใช้ตัวตรวจ/ตัวคัดลอกเดียวกับใบซื้อร่าง (`PartnerCopyProblem` · `CopyPartnerMoney` — ไม่คัดลอกผังบัญชี/รหัสสินค้า/ผู้ถูกหักของอีกบริษัท)
   - ล็อก: `PartnerExchangeRound257Tests.R257F_*` · `Db/PartnerExchangeRound257DbTests.R257F_*` (M1 · M2 ตัวหา · M3 · ใบแทน · e-Tax ประทับเวลา 409 · ช่วงพักเชิญซ้ำ · PO ร่าง) ·
-    `tools/required_call_site_check.py` (R257-3 ฝ่ายค้าน + Program.cs งานซ่อมหลัง ApplyMissingColumns) · Last verified `commit <เติมในคอมมิตตามหลัง>`
+    `tools/required_call_site_check.py` (R257-3 ฝ่ายค้าน + Program.cs งานซ่อมหลัง ApplyMissingColumns) · Last verified `commit 5e9bc6d6`
 
 ### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
 
