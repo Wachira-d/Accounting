@@ -149,16 +149,20 @@ public static class EtaxReissueReview
 
     /// <summary>รอบ 257 ชุด 3 (LOW): ผลตรวจที่เลือกได้ต่อกลุ่ม — ใบที่ถึงผู้ประทับเวลาของกรมสรรพากรแล้ว (ส่งอีเมลพร้อมสำเนา ETDA) "ถูกปฏิเสธ/ไม่เคยได้รับ"
     /// ไม่ใช่คำตอบที่เป็นไปได้ ⇒ เลือกได้แค่ "ยกเลิกที่กรมสรรพากรแล้ว" (ต้องมีเลขอ้างอิง) · กลุ่มอื่นเลือกได้ทั้งสอง · หน้าเว็บวาดตัวเลือกตามค่านี้ (server computes)</summary>
-    public static IReadOnlyList<string> AllowedOutcomes(string? group) => group == GroupEmailedWithRdTimestamp
-        ? new[] { OutcomeCancelledAtRd }
-        : new[] { OutcomeRejectedOrNotReceived, OutcomeCancelledAtRd };
+    /// <param name="emailedWithRdTimestamp">ฝ่ายค้าน LOW (รอบ 257 ชุด 3): เอกสารของแถวนี้เข้าเงื่อนไข "ส่งอีเมลพร้อมสำเนาถึงผู้ประทับเวลาของกรมสรรพากร" —
+    /// จำกัดเหมือนกลุ่มอีเมลแม้แถวอยู่กลุ่ม "ส่งแล้วไม่มีหลักฐาน"</param>
+    public static IReadOnlyList<string> AllowedOutcomes(string? group, bool emailedWithRdTimestamp = false)
+        => group == GroupEmailedWithRdTimestamp || emailedWithRdTimestamp
+            ? new[] { OutcomeCancelledAtRd }
+            : new[] { OutcomeRejectedOrNotReceived, OutcomeCancelledAtRd };
 
-    /// <summary>ผลตรวจนี้ใช้กับกลุ่มนี้ได้ไหม · null = ได้ · pure</summary>
-    public static string? OutcomeForGroupProblem(string? group, string? outcome)
-        => AllowedOutcomes(group).Contains(outcome ?? "")
-            ? null
-            : "ใบนี้ส่ง e-Tax by Email พร้อมสำเนาถึงผู้ประทับเวลาของกรมสรรพากรแล้ว — กรมสรรพากรได้รับใบนี้แน่นอน เลือก “ถูกปฏิเสธ/ไม่เคยได้รับ” ไม่ได้ · "
-              + "ถ้ายกเลิกที่กรมสรรพากรแล้ว ให้เลือก “ยกเลิกที่กรมสรรพากรแล้ว” พร้อมเลขอ้างอิง · ถ้ายังไม่ยกเลิก ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากรก่อน";
+    public const string EmailedOutcomeMessage =
+        "ใบนี้ส่ง e-Tax by Email พร้อมสำเนาถึงผู้ประทับเวลาของกรมสรรพากรแล้ว — กรมสรรพากรได้รับใบนี้แน่นอน เลือก “ถูกปฏิเสธ/ไม่เคยได้รับ” ไม่ได้ · "
+        + "ถ้ายกเลิกที่กรมสรรพากรแล้ว ให้เลือก “ยกเลิกที่กรมสรรพากรแล้ว” พร้อมเลขอ้างอิง · ถ้ายังไม่ยกเลิก ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากรก่อน";
+
+    /// <summary>ผลตรวจนี้อยู่ในชุดที่เลือกได้ของแถวไหม · null = ได้ · pure (ตัวตัดสินเดียวของฝั่งบันทึก — ชุดมาจาก <see cref="AllowedOutcomes"/>)</summary>
+    public static string? OutcomeAllowedProblem(IReadOnlyList<string> allowed, string? outcome)
+        => allowed.Contains(outcome ?? "") ? null : EmailedOutcomeMessage;
 
     /// <summary>audit แถวนี้เป็น audit "ตรวจแล้ว" ไหม (JSON ที่ <c>System.Text.Json</c> เขียน: <c>"action":"etax-review-acknowledged"</c>) · pure</summary>
     internal static bool IsAcknowledgementAudit(string? newValuesJson)

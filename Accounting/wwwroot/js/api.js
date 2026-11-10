@@ -1565,6 +1565,7 @@ const API = {
       updateWorkflowAutomation: (d) => API.put(`${base}/workflow-automation`, d),
       getPartnerPurchaseDrafts: () => API.get(`${base}/partner-purchase-drafts`),
       confirmPartnerOriginal: (id, kind) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-original`, { kind: kind || 'Paper' }),
+      confirmPartnerExternalTaxInvoice: (id, d) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-external-tax-invoice`, d),
       getContactPartnerStatus: (contactId) => API.get(`${base}/contacts/${encodeURIComponent(contactId)}/partner-status`),
       updateAutopilotSettings: (d) => API.put(`${base}/autopilot/settings`, d),
       setQuotationAutopilotMode: (id, mode) => API.put(`${base}/autopilot/quotations/${encodeURIComponent(id)}/mode`, { mode }),

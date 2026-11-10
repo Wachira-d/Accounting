@@ -3390,10 +3390,29 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     ผู้ซื้ออนุมัติแล้วส่ง ⇒ เส้นส่งเดิม (PurchaseOrder ⇒ PoFlow) ⇒ ผู้ขายอนุมัติ ⇒ ใบแจ้งหนี้ร่างตามค่าตั้งเดิม · ฝั่งผู้รับจึงได้ร่างเสมอ (ข้อกำหนดฉบับใหม่ถูกต้อง)
   - **(LOW) ข้อกำหนดฉบับใหม่ (ร่าง)**: ข้อ e-Tax ตรงโค้ด — ลงภาษีซื้อได้เมื่อต้นทางเป็นใบกำกับ **และผู้รับยืนยันต้นฉบับ** (ไฟล์ที่ประทับเวลา ETDA ที่ผู้รับตรวจแล้ว หรือกระดาษ) · ระบบไม่ตรวจกับ ETDA แทน ·
     ด่านเผยแพร่ (`NextDraftPublishGate`) ปรับเป็น "ผู้ตรวจรอบถัดไปยืนยัน WP-12 + C5" — **ยังห้ามเผยแพร่**
-  - **(LOW) e-Tax ตรวจแล้ว**: กลุ่ม "ส่งอีเมลพร้อมสำเนา ETDA แล้ว" บันทึกได้เฉพาะ "ยกเลิกที่กรมสรรพากรแล้ว" + เลขอ้างอิง (`EtaxReissueReview.AllowedOutcomes`/`OutcomeForGroupProblem` ·
+  - **(LOW) e-Tax ตรวจแล้ว**: กลุ่ม "ส่งอีเมลพร้อมสำเนา ETDA แล้ว" บันทึกได้เฉพาะ "ยกเลิกที่กรมสรรพากรแล้ว" + เลขอ้างอิง (`EtaxReissueReview.AllowedOutcomes`/`OutcomeAllowedProblem` ·
     `EtaxReviewEtaxRow.AllowedOutcomes` ⇒ หน้าเว็บซ่อนตัวเลือก "ถูกปฏิเสธ/ไม่เคยได้รับ") · กลุ่มอื่นเลือกได้ทั้งสองตามเดิม
   - ล็อก: `Accounting.Tests/PartnerExchangeRound257Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/PartnerExchangeRound257DbTests.cs` (H4 สองทิศ · ใบเสร็จที่เป็นใบกำกับ · M2 ส่วนลดท้ายบิล/ยอดไม่รวมเท่า ·
     H5 ระงับ/เชิญใหม่/คนนอก · M1 แจ้งเจ้าของ/ไม่เก็บ · PO ร่าง/คู่ระงับ) · `tools/required_call_site_check.py` (R257-3) · Last verified `commit 2b94b71a`
+- **แก้ผลฝ่ายค้านของ 2b94b71a (รอบ 257 ชุด 3 · ไม่มี HIGH · DECISIONS 257-3-9…257-3-14):**
+  - **(M1) ทางออกของคนจาก "รอใบกำกับ"**: `POST …/partner-purchase-drafts/{id}/confirm-external-tax-invoice {kind: Paper|StampedEtax, supplierInvoiceNumber, supplierTaxInvoiceDate}`
+    (Document.Purchase.Approve · ไม่รับ API key) — เฉพาะ `AwaitingTaxInvoice` + เลขที่/วันที่ใบกำกับ (`PartnerInputVatEvidence.ExternalTaxInvoiceProblem`) ⇒ `PaperConfirmed`/`EtaxVerified` ·
+    ร่าง ⇒ เติมเลข/วันที่/`HasTaxInvoiceReference` บนใบ · อนุมัติแล้ว ⇒ `CompleteSupplierTaxInvoiceAsync` ในธุรกรรมเดียว (ทางเดียวกับ "ได้รับต้นฉบับแล้ว") · ตรวจต้นทางสด · audit
+    `PartnerExternalTaxInvoiceConfirmed` · ปุ่ม "ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ" (กระดาษ / e-Tax) บน `partners.html` ตาม `CanConfirmExternalTaxInvoice` · ข้อความ `AwaitingTaxInvoiceMessage` ชี้ทางนี้
+  - **(M2) ซ่อมค่าที่ persist**: `Helpers/PartnerEvidenceRepair` — ใบซื้อจากคู่ค้าที่ `PaperConfirmed`/`EtaxVerified` โดย audit การยืนยัน (ค่าเดิม + ruleCode · ไม่นับทางนอกระบบ) เกิดก่อนแถวกล่องเข้า
+    ของใบที่ทำหน้าที่ใบกำกับแถวแรก · ยังไม่อนุมัติ ⇒ งานครั้งเดียวตอนบูต (marker `r257-3-partner-evidence-reset` + `pg_advisory_xact_lock` `OneShotDataFix`) ตั้งกลับ `PaperRequired` +
+    หมายเหตุภายใน + audit + กระดิ่งเจ้าของ · อนุมัติแล้ว ⇒ **ไม่กลับรายการ** — หมวด `PartnerConfirmedBeforeTaxInvoice` ในรายงานตรวจข้อมูล (ตัวหาเดียวกัน) · ไม่มี audit = ไม่แตะ
+  - **(M3) VAT ไม่ตรง**: ใบกำกับที่มาถึงใบซื้อเดิมแต่ |VAT ใบกำกับ − VAT ใบซื้อ| > 0.005 (`PartnerInputVatEvidence.VatMatches`) ⇒ `OnNewSource(…, vatMatches:false)` = `AwaitingTaxInvoice`
+    (ไม่ตั้งหลักฐานที่ปลดได้ · ไม่เติมเลขใบกำกับบนร่าง) + เหตุบนแถว (`VatMismatchMessage`) + แจ้ง · ผู้รับแก้ VAT ให้ตรงแล้วใช้ทาง M1
+  - **(M4) ราคารวม VAT**: `CopyPartnerMoney` คัดลอก `PricesIncludeVat` · `CopyProblem` (บรรทัด `CopyLine`) ปฏิเสธใบราคารวม VAT ที่ จำนวน × ราคา − ส่วนลด ≠ ฐาน + VAT (ไม่มีส่วนลดท้ายบิล)
+  - **(M5) PO ร่าง**: แถวกล่องเข้าของใบเสนอราคาได้ `DownstreamPoDraftComment` ("PO เป็นร่าง — อนุมัติและส่งเพื่อให้ผู้ขายออกใบต่อ" · ต่อท้ายความเห็นผู้อนุมัติ) + แจ้งทั้งผู้ซื้อและผู้ขาย
+  - **(LOW)** ยืนยันแบบ "ได้ e-Tax ที่ประทับเวลา" ผ่านทางปกติเฉพาะ `AwaitingTimestamp` (`StampedEtaxProblem` · 409) · ใบแทน (สาย `ReplacesDocumentId`) ของต้นทางที่ถูกยกเลิก ⇒
+    ล้าง `SourceVoided` แล้วตัดสินใหม่ — ตัวตัดสินเดียว `PartnerExchangeRules.AnyUnreplacedVoided` ทั้งเส้นแนบและ `PartnerSourceCheckAsync` (ต้นทางยกเลิกที่มีใบแทนที่มีผลไม่ติดธง) ·
+    `PortalAccountantExport.TaxInvoiceRole` ใช้ `IsTaxInvoiceCarrier` · เชิญซ้ำหลังระงับต้องพ้น 7 วันเหมือนถูกปฏิเสธ (`TradingPartnership.SuspendedAt` · `ReinviteAllowed`) ·
+    e-Tax ตรวจแล้ว: แถวกลุ่ม "ส่งแล้วไม่มีหลักฐาน" ที่เอกสารเข้าเงื่อนไขอีเมลพร้อมสำเนา ETDA จำกัด "ยกเลิกที่กรมฯ" เหมือนกัน (`AllowedOutcomes(group, emailed)` · ฝั่งบันทึกใช้ชุดของแถว) ·
+    PO/ใบแจ้งหนี้ปลายทางใช้ตัวตรวจ/ตัวคัดลอกเดียวกับใบซื้อร่าง (`PartnerCopyProblem` · `CopyPartnerMoney` — ไม่คัดลอกผังบัญชี/รหัสสินค้า/ผู้ถูกหักของอีกบริษัท)
+  - ล็อก: `PartnerExchangeRound257Tests.R257F_*` · `Db/PartnerExchangeRound257DbTests.R257F_*` (M1 · M2 ตัวหา · M3 · ใบแทน · e-Tax ประทับเวลา 409 · ช่วงพักเชิญซ้ำ · PO ร่าง) ·
+    `tools/required_call_site_check.py` (R257-3 ฝ่ายค้าน + Program.cs งานซ่อมหลัง ApplyMissingColumns) · Last verified `commit <เติมในคอมมิตตามหลัง>`
 
 ### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
 

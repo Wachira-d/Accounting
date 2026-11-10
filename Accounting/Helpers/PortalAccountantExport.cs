@@ -41,11 +41,10 @@ public static class PortalAccountantExport
     internal static string TaxInvoiceRole(DocumentType type, bool? isTaxInvoiceByLaw, decimal vat)
     {
         if (type is DocumentType.DebitNote or DocumentType.CreditNote) return vat != 0m ? RoleAdjustment : RoleNotTaxInvoice;
-        if (type is not (DocumentType.TaxInvoice or DocumentType.Receipt)) return RoleNotTaxInvoice;
-        if (isTaxInvoiceByLaw == true) return vat > 0m ? RoleTaxInvoice : RoleNotTaxInvoice;
-        if (isTaxInvoiceByLaw == false) return RoleNotTaxInvoice;
         if (vat <= 0m) return RoleNotTaxInvoice;
-        return type == DocumentType.TaxInvoice ? RoleTaxInvoice : RoleUnknown;
+        // ฝ่ายค้าน LOW (รอบ 257 ชุด 3): "ใบนี้เป็นใบกำกับไหม" ตัวตัดสินเดียวกับเส้นคู่ค้า (PartnerExchangeRules.IsTaxInvoiceCarrier)
+        if (PartnerExchangeRules.IsTaxInvoiceCarrier(type, isTaxInvoiceByLaw, vat)) return RoleTaxInvoice;
+        return type == DocumentType.Receipt && isTaxInvoiceByLaw == null ? RoleUnknown : RoleNotTaxInvoice;
     }
 
     /// <summary>ข้อความ "อ้างอิงเอกสาร" — เลขที่ใบต้นทาง (ใบที่แปลงมา/ที่รับชำระ) ก่อน แล้วอ้างอิงบนใบ · ว่างทั้งคู่ = ""</summary>

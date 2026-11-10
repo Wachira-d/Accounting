@@ -40,6 +40,9 @@ public class TradingPartnership : BaseEntity
     public Guid? AcceptedByUserId { get; set; }
     public DateTime? RejectedAt { get; set; }
     public string? RejectionReason { get; set; }
+    /// <summary>รอบ 257 ชุด 3 (ฝ่ายค้าน LOW): เวลาที่ถูกระงับล่าสุด — ช่วงพักก่อนเชิญซ้ำ (<c>PartnerExchangeRules.ReinviteAllowed</c>) · null = ไม่เคย/แถวเก่า ·
+    /// ช่องแยกจาก <see cref="RejectedAt"/> (คนละเหตุการณ์ — ห้ามยืม)</summary>
+    public DateTime? SuspendedAt { get; set; }
 
     /// <summary>Optional credit limit — when set, incoming docs from this
     /// partner above the limit require manual approval even if the
