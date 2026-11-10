@@ -223,6 +223,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                 {
                     CompanyId = companyId, IntakeId = intake.Id, WhtCreditId = a.CreditId, Amount = R(a.Amount),
                     Status = outcome == WhtCertIntakeVerdict.Outcome.AutoConfirm ? WhtCertAllocationStatus.Confirmed : WhtCertAllocationStatus.Proposed,
+                    PriorEvidenceKind = rows.TryGetValue(a.CreditId, out var priorRow) ? priorRow.EvidenceKind : null,
                 });
             if (outcome == WhtCertIntakeVerdict.Outcome.AutoConfirm)
             {
@@ -375,6 +376,8 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         Guid? feedbackId = null; string? aiAnswer = null; var learn = false; string? followUp = null;
         await InTxAsync(async () =>
         {
+            // รอบ 257 ชุด 2 ฝ่ายค้าน M1: ล็อกระดับบริษัทก่อนล็อกใบ (ตัวเดียวกับยื่น/ปลดล็อก ภ.ง.ด.50 · ถอนใบ · ตัดสูญ) — ลำดับเดียวทุกทาง
+            await WhtCreditFiledYearGuard.LockCompanyAsync(_db, companyId, ct);
             await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
                 new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.WhtCreditWriteOff, "intake-" + intakeId.ToString("N")) }, ct);
             var intake = await _db.WhtCertIntakes.FirstOrDefaultAsync(i => i.Id == intakeId && i.CompanyId == companyId, ct)
@@ -419,9 +422,10 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             if (live.Duplicate is not null)
                 throw new BusinessRuleException($"หนังสือรับรองเลขที่ {certNo} ของผู้จ่ายรายนี้อยู่ในกล่องรับอีกใบแล้ว (ปีเดียวกัน) — ตีกลับใบนี้ หรือตรวจเลขที่อีกครั้ง", RuleCode, 409);
             // B-M2: ตัดสินผู้จ่ายไม่ได้ ⇒ ขอเลขผู้จ่ายก่อน (ไม่ลงเครดิตซ้ำ และไม่กลืนใบของลูกค้าอีกราย)
-            if (live.UnknownPayerSameNumber)
-                throw new BusinessRuleException($"หนังสือรับรองเลขที่ {certNo} (ปีเดียวกัน) อยู่ในกล่องรับอีกใบแล้ว และใบนี้ไม่มีเลขผู้เสียภาษีของผู้จ่าย — "
-                    + "กรอกเลขผู้จ่ายตามใบแล้วกดยืนยันอีกครั้ง (ระบบใช้เลขผู้จ่ายแยกใบเลขเดียวกันของลูกค้าต่างราย) · ถ้าเป็นใบซ้ำ ให้ตีกลับ", RuleCode, 409);
+            // ฝ่ายค้าน L5: อีกใบไม่มีเลขผู้จ่าย (ใบนี้มี) ⇒ ทางไปต่อ = ติ๊ก "ยืนยันว่าไม่ใช่ใบซ้ำ" (บันทึกใน audit) — ใบนี้ต้องมีเลขผู้จ่ายที่ถูกต้อง
+            if (live.UnknownPayerSameNumber && !(req.NotDuplicate && ThaiTaxId.IsValid(intake.PayerTaxId)))
+                throw new BusinessRuleException($"หนังสือรับรองเลขที่ {certNo} (ปีเดียวกัน) อยู่ในกล่องรับอีกใบแล้ว แต่แยกไม่ได้ว่าเป็นผู้จ่ายรายเดียวกัน "
+                    + "(ใบใดใบหนึ่งไม่มีเลขผู้เสียภาษีของผู้จ่าย) — กรอกเลขผู้จ่ายตามใบ แล้วติ๊ก \"ยืนยันว่าไม่ใช่ใบซ้ำ\" และกดยืนยันอีกครั้ง · ถ้าเป็นใบซ้ำ ให้ตีกลับ", RuleCode, 409);
 
             var existing = await _db.WhtCertAllocations.Where(a => a.CompanyId == companyId && a.IntakeId == intakeId).ToListAsync(ct);
             // แก้ CI รอบ 252 (Db H2_…): "บันทึกเป็นรายการใหม่" = ไม่จัดสรรเข้าแถวใดเลย — เดิม Allocations = null ไหลไปใช้ข้อเสนอของระบบ (Proposed) ⇒
@@ -497,6 +501,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                 created.Status = WhtCreditStatus.Pending;   // ApplyToCredit ตั้ง Received เมื่อครบ — แหล่งเดียวของสถานะจากใบ
                 created.ReceivedAmount = 0m;
                 created.FirstWithheldAt ??= intake.CertificateDate ?? DateTime.UtcNow;
+                created.CreatedFromIntakeId = intakeId;   // ฝ่ายค้าน L2: ถอนใบนี้ ⇒ ถอดแถวนี้ (ตัดสินจากคอลัมน์ ไม่ใช่หมายเหตุ)
                 rows.Add((created, intake.WhtAmount));
             }
 
@@ -515,6 +520,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                 }
                 alloc.Amount = R(amount);
                 alloc.Status = WhtCertAllocationStatus.Confirmed;
+                alloc.PriorEvidenceKind = row.EvidenceKind;   // ฝ่ายค้าน L7: ถอนใบ ⇒ คืนชนิดหลักฐานเดิม
                 alloc.UpdatedAt = DateTime.UtcNow;
                 ApplyToCredit(row, R(amount), intake);
             }
@@ -529,7 +535,8 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                 WhtCreditableAmount.Missing(x.Row.Status, x.Row.WhtAmount, x.Row.ReceivedAmount))).ToList());
             Audit(companyId, userId, userName, intake, "wht-cert-intake-confirmed",
                 new { before, allocations = rows.Select(r => new { r.Row.Id, r.Amount }).ToList(), req.AllowOtherPayer, standaloneReason = Trim(req.StandaloneReason),
-                    viewedFile = req.ViewedFile, writeOffReversed = reopened.Select(x => new { x.Row.Id, x.WriteOffNo, x.ReversalNo }).ToList() });
+                    viewedFile = req.ViewedFile, notDuplicate = req.NotDuplicate,
+                    writeOffReversed = reopened.Select(x => new { x.Row.Id, x.WriteOffNo, x.ReversalNo }).ToList() });
             await _db.SaveChangesAsync(ct);
             feedbackId = intake.WhtCertAuthenticityAiFeedbackId;
             aiAnswer = intake.AuthenticityAnswer;
@@ -574,6 +581,8 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             throw new BusinessRuleException("ระบุเหตุผลที่ถอนการยืนยันอย่างน้อย 5 ตัวอักษร (เช่น ผู้จ่ายยกเลิกใบนี้ · ยืนยันผิดใบ) — เก็บเป็นหลักฐานในประวัติ", RuleCode);
         await InTxAsync(async () =>
         {
+            // ฝ่ายค้าน M1: ล็อกระดับบริษัทก่อน (ตัวเดียวกับยื่น/ปลดล็อก ภ.ง.ด.50) → ใบ → แถว
+            await WhtCreditFiledYearGuard.LockCompanyAsync(_db, companyId, ct);
             await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
                 new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.WhtCreditWriteOff, "intake-" + intakeId.ToString("N")) }, ct);
             var intake = await _db.WhtCertIntakes.FirstOrDefaultAsync(i => i.Id == intakeId && i.CompanyId == companyId, ct)
@@ -586,21 +595,22 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             var allocs = await _db.WhtCertAllocations
                 .Where(a => a.CompanyId == companyId && a.IntakeId == intakeId && a.Status == WhtCertAllocationStatus.Confirmed)
                 .OrderBy(a => a.WhtCreditId).ToListAsync(ct);
-            var changes = new List<object>();
+
+            // ฝ่ายค้าน L3: ตรวจทุกแถวก่อนแก้อะไรเลย (ล็อกแถวตามลำดับ Id) — ใช้เครดิตแล้ว / ปีที่ยื่น ภ.ง.ด.50 แล้ว / ต้องกลับตัดสูญ
+            var plan = new List<(WhtCertAllocation Alloc, WhtCreditReceived? Row)>();
             foreach (var a in allocs)
             {
                 await LockCreditAsync(companyId, a.WhtCreditId, ct);
                 var row = await LoadFreshAsync(companyId, a.WhtCreditId, ct);
-                a.Status = WhtCertAllocationStatus.Reversed;
-                a.UpdatedAt = DateTime.UtcNow;
+                plan.Add((a, row));
                 if (row == null) continue;   // แถวถูกถอดไปแล้ว (ต้นทางยกเลิก) — ไม่มีเครดิตให้ลด
                 if (row.Status == WhtCreditStatus.Claimed)
                     throw new BusinessRuleException($"รายการ {row.PayerName} {row.WhtAmount:N2} ใช้เป็นเครดิตในแบบ ภ.ง.ด.50 ที่ยื่นแล้ว — ถอนการยืนยันใบไม่ได้ · "
                         + "ถ้าต้องถอนจริง ให้ \"ปลดล็อก/กลับเป็นร่าง\" แบบ ภ.ง.ด.50 นั้นก่อน (แล้วยื่นเพิ่มเติมตามยอดใหม่)", WhtCreditClaimStamp.RuleCode, 409);
-                var rowBefore = new { row.Id, status = row.Status.ToString(), row.ReceivedAmount, row.CertificateNumber, row.CertificateDate };
+                // ฝ่ายค้าน H1: ล็อกตามปีภาษี (ไม่ใช่ตามสถานะแถว) — แถวได้ใบบางส่วนในปีที่ยื่นแล้วก็ถอนไม่ได้
+                await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, $"ถอนการยืนยันใบ (รายการ {row.PayerName})", ct, row.CertificateDate, intake.CertificateDate);
                 if (WhtCreditWriteOff.NeedsReversal(row.Status, row.WriteOffJournalEntryId, row.WriteOffReversalJournalEntryId))
                 {
-                    // ตัดสูญส่วนที่เหลือไว้แล้ว — ยอด JE ตัดสูญผูกกับยอดที่ได้ใบเดิม ⇒ กลับรายการก่อน (ผู้ทำบัญชีตัดสูญใหม่ตามยอดใหม่ได้)
                     if (journalActor == null)
                         throw new BusinessRuleException("รายการ " + row.PayerName + " ตัดสูญส่วนที่เหลือพร้อมรายการบัญชีแล้ว — ถอนใบต้องกลับรายการบัญชีตัดสูญ "
                             + "จึงต้องให้ผู้มีสิทธิ์จัดการใบสำคัญ (Journal.Manage) ทำ", WhtCreditWriteOff.ReversalRuleCode, 403);
@@ -608,19 +618,32 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                             row.WhtAmount, row.ReceivedAmount))
                         throw new BusinessRuleException("รายการ " + row.PayerName + " ตัดสูญทั้งแถวไว้แล้ว — ถอนใบของแถวนี้ไม่ได้ (ตรวจสมุดรายวันก่อน)",
                             WhtCreditWriteOff.ReversalRuleCode, 409);
-                    await _credits.ReopenWrittenOffAsync(companyId, row, $"ถอนการยืนยันหนังสือรับรอง {intake.CertificateNumber}", journalActor);
                 }
-                var take = Math.Min(Math.Max(0m, a.Amount), Math.Max(0m, row.ReceivedAmount));
-                row.ReceivedAmount = R(row.ReceivedAmount - take);
-                if (row.Status is WhtCreditStatus.Pending or WhtCreditStatus.Received)
-                    row.Status = WhtCreditableAmount.StatusAfterUnconfirm(row.WhtAmount, row.ReceivedAmount);
-                // เลขที่/วันที่/ไฟล์ของแถว = ของใบแรกที่ยังเหลือ (CreditableInPeriod นับงวดตามวันที่ใบแรก · กันซ้ำดูเลขที่ของแถว)
+            }
+
+            var changes = new List<object>();
+            var affected = new List<Guid>();
+            foreach (var (a, row) in plan)
+            {
+                a.Status = WhtCertAllocationStatus.Reversed;
+                a.UpdatedAt = DateTime.UtcNow;
+                if (row == null) continue;
+                affected.Add(row.Id);
+                var rowBefore = new { row.Id, status = row.Status.ToString(), row.ReceivedAmount, row.CertificateNumber, row.CertificateDate, evidence = row.EvidenceKind.ToString() };
+                if (WhtCreditWriteOff.NeedsReversal(row.Status, row.WriteOffJournalEntryId, row.WriteOffReversalJournalEntryId))
+                    await _credits.ReopenWrittenOffAsync(companyId, row, $"ถอนการยืนยันหนังสือรับรอง {intake.CertificateNumber}", journalActor!);
+                // ใบอื่นที่ยังลงแถวนี้ (ยืนยันแล้ว) — เลขที่/วันที่/ไฟล์ของแถว = ของใบแรกที่ยังเหลือ · ยอดของใบอื่นไม่ถูกลด (ฝ่ายค้าน L4)
                 var others = await (from x in _db.WhtCertAllocations.AsNoTracking()
                                     join i in _db.WhtCertIntakes.AsNoTracking() on x.IntakeId equals i.Id
                                     where x.CompanyId == companyId && i.CompanyId == companyId && x.WhtCreditId == row.Id && x.IntakeId != intakeId
                                           && x.Status == WhtCertAllocationStatus.Confirmed && i.Status == WhtCertIntakeRecordStatus.Confirmed
                                     orderby i.CertificateDate, i.ConfirmedAt
-                                    select new { i.CertificateNumber, i.CertificateDate, i.FileAttachmentId, i.EvidenceKind }).ToListAsync(ct);
+                                    select new { x.Amount, i.CertificateNumber, i.CertificateDate, i.FileAttachmentId, i.EvidenceKind }).ToListAsync(ct);
+                // ฝ่ายค้าน L4: ถอนเฉพาะยอดที่ใบนี้ลง — ไม่เกิน (ยอดที่ได้ใบตอนนี้ − ยอดของใบอื่นที่ยังลงแถวนี้)
+                var take = WhtCreditableAmount.UnconfirmTake(a.Amount, row.ReceivedAmount, others.Sum(o => o.Amount));
+                row.ReceivedAmount = R(row.ReceivedAmount - take);
+                if (row.Status is WhtCreditStatus.Pending or WhtCreditStatus.Received)
+                    row.Status = WhtCreditableAmount.StatusAfterUnconfirm(row.WhtAmount, row.ReceivedAmount);
                 var first = others.FirstOrDefault();
                 if (row.CertificateNumber == intake.CertificateNumber)
                 {
@@ -629,16 +652,19 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                 }
                 if (intake.FileAttachmentId != null && row.AttachmentId == intake.FileAttachmentId)
                     row.AttachmentId = others.Select(o => o.FileAttachmentId).FirstOrDefault(f => f != null);
-                row.EvidenceKind = first?.EvidenceKind ?? WhtEvidenceKind.PaperCertificate;
-                var standalone = (row.Notes ?? "").StartsWith(StandaloneNotePrefix, StringComparison.Ordinal);
+                // ฝ่ายค้าน L7: ไม่เหลือใบ ⇒ ชนิดหลักฐานก่อนใบนี้ลง (ไม่รู้ ⇒ กระดาษ) · ยังเหลือ ⇒ ของใบแรกที่เหลือ
+                row.EvidenceKind = first?.EvidenceKind ?? a.PriorEvidenceKind ?? WhtEvidenceKind.PaperCertificate;
                 row.Notes = string.IsNullOrWhiteSpace(row.Notes) ? $"ถอนการยืนยันใบ 50 ทวิ {intake.CertificateNumber} ({take:N2}): {reason}"
                     : $"{row.Notes} | ถอนการยืนยันใบ 50 ทวิ {intake.CertificateNumber} ({take:N2}): {reason}";
-                // แถวที่ "บันทึกเป็นรายการใหม่" จากใบนี้ — ไม่มี 11910 รองรับ · ไม่เหลือใบ ⇒ ถอดแถว (ไม่ทิ้งยอดรอใบที่ไม่มีอยู่จริง)
-                if (standalone && others.Count == 0 && row.ReceivedAmount <= 0.005m && row.DocumentId == null && row.PaymentId == null)
+                // ฝ่ายค้าน L2: แถวที่ "บันทึกเป็นรายการใหม่" จากใบนี้ (คอลัมน์ CreatedFromIntakeId เท่านั้น) — ไม่มี 11910 รองรับ · ไม่เหลือใบ ⇒ ถอดแถว
+                if (row.CreatedFromIntakeId == intakeId && others.Count == 0 && row.ReceivedAmount <= 0.005m)
                     row.IsDeleted = true;
                 row.UpdatedAt = DateTime.UtcNow;
-                changes.Add(new { before = rowBefore, after = new { status = row.Status.ToString(), row.ReceivedAmount, row.CertificateNumber, removed = row.IsDeleted }, take });
+                changes.Add(new { before = rowBefore, after = new { status = row.Status.ToString(), row.ReceivedAmount, row.CertificateNumber, removed = row.IsDeleted,
+                    evidence = row.EvidenceKind.ToString() }, take });
             }
+            // ฝ่ายค้าน L7: ไฟล์ที่ใบนี้ผูกเข้าแถว (จากถังก่อนบันทึก) ⇒ ถอดกลับเข้าถัง (ไม่เป็นหลักฐานของเครดิตที่ถอนแล้ว)
+            await DetachBucketFileAsync(companyId, intake.FileAttachmentId, affected, ct);
             intake.Status = WhtCertIntakeRecordStatus.Rejected;
             intake.RejectedReason = "ถอนการยืนยัน: " + reason;
             intake.RejectedByUserId = userId;
@@ -876,6 +902,18 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         if (file == null || file.EntityId != Guid.Empty
             || AttachmentPermissionScope.WhtCreditFileLink(file.EntityType, file.EntityId, creditId) != WhtCreditFileLinkKind.AdoptFromBucket) return;
         file.EntityId = creditId;
+        file.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>ฝ่ายค้าน L7 (คู่ของ <see cref="AdoptBucketFileAsync"/>): ไฟล์ที่ผูกเข้าแถวเครดิตของใบที่ถูกถอน ⇒ กลับเข้าถังก่อนบันทึก (WhtCredit/0000…) ·
+    /// ไฟล์ชนิดอื่น/ของแถวอื่นไม่แตะ</summary>
+    private async Task DetachBucketFileAsync(Guid companyId, Guid? fileId, IReadOnlyCollection<Guid> creditIds, CancellationToken ct)
+    {
+        if (fileId is not Guid id || creditIds.Count == 0) return;
+        var file = await _db.FileAttachments.FirstOrDefaultAsync(f => f.Id == id && f.CompanyId == companyId, ct);
+        if (file == null || !creditIds.Contains(file.EntityId)
+            || AttachmentPermissionScope.WhtCreditFileLink(file.EntityType, file.EntityId, file.EntityId) != WhtCreditFileLinkKind.AlreadyThis) return;
+        file.EntityId = Guid.Empty;
         file.UpdatedAt = DateTime.UtcNow;
     }
 

@@ -42,6 +42,12 @@ public static class WhtCreditableAmount
     public static WhtCreditStatus StatusAfterUnconfirm(decimal whtAmount, decimal remainingReceived)
         => remainingReceived > 0.005m ? StatusForReceived(whtAmount, remainingReceived) : WhtCreditStatus.Pending;
 
+    /// <summary>รอบ 257 ชุด 2 ฝ่ายค้าน L4: ยอดที่ถอนออกจากแถวเมื่อถอนการยืนยันใบหนึ่งใบ = ยอดที่ใบนี้จัดสรร แต่ไม่เกิน
+    /// (ยอดที่ได้ใบตอนนี้ − ยอดของใบอื่นที่ยังลงแถวนี้) · ไม่ติดลบ — ใบอื่นไม่ถูกลดตามใบที่ถอน</summary>
+    public static decimal UnconfirmTake(decimal allocationAmount, decimal rowReceived, decimal otherAllocations)
+        => Math.Round(Math.Max(0m, Math.Min(Math.Max(0m, allocationAmount), Math.Max(0m, rowReceived) - Math.Max(0m, otherAllocations))),
+            2, MidpointRounding.AwayFromZero);
+
     public enum GlResyncKind { None, Grow, Shrink, OverGl }
 
     /// <summary>ฝ่ายค้าน WP-09 M3 — แถวที่ได้ใบผ่านกล่องรับแล้ว (ReceivedAmount &gt; 0) เมื่อยอด Dr 11910 ตาม GL เปลี่ยน:

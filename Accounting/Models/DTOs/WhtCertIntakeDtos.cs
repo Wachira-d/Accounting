@@ -81,7 +81,9 @@ public sealed record WhtCertConfirmRequest(
     string? IncomeTypeCode = null, decimal? IncomeAmount = null, decimal? WhtRate = null, decimal? WhtAmount = null,
     IReadOnlyList<WhtCertAllocationInput>? Allocations = null,
     bool CreateStandalone = false, int? TaxYear = null,
-    string? StandaloneReason = null, bool AllowOtherPayer = false, bool ViewedFile = false);
+    string? StandaloneReason = null, bool AllowOtherPayer = false, bool ViewedFile = false,
+    // รอบ 257 ชุด 2 ฝ่ายค้าน L5: ยืนยันว่าไม่ใช่ใบซ้ำของใบเลขเดียวกันที่ตัดสินผู้จ่ายไม่ได้ (ใบนี้ต้องมีเลขผู้จ่ายที่ถูกต้อง · บันทึกใน audit)
+    bool NotDuplicate = false);
 
 /// <summary>รอบ 257 ชุด 2 (B-H2): ถอนการยืนยันใบที่ลงเครดิตแล้ว — เหตุผล ≥ 5 ตัวอักษร (เก็บใน audit + เหตุที่ตีกลับของใบ)</summary>
 public sealed record WhtCertUnconfirmRequest(string? Reason);

@@ -237,6 +237,9 @@
           <input type="checkbox" id="icAllowOtherPayer"> ยืนยันว่ารายการที่เลือกเป็นผู้จ่ายเดียวกับบนใบ (เช่น ผู้จ่ายเปลี่ยนชื่อ/สาขา)
         </label>
         <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-top:6px">
+          <input type="checkbox" id="icNotDuplicate"> ยืนยันว่าไม่ใช่ใบซ้ำ (ใบเลขที่เดียวกันในกล่องรับเป็นของผู้จ่ายอีกราย — ต้องกรอกเลขผู้จ่ายของใบนี้)
+        </label>
+        <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-top:6px">
           <input type="checkbox" id="icStandalone"> ไม่มีรายการที่ตรง — บันทึกเป็นรายการเครดิตใหม่ (เช่น รับชำระนอกระบบ)
         </label>
         <div class="form-group" style="margin-top:6px">
@@ -470,6 +473,7 @@
         this._icId = id;
         document.getElementById('icViewBtn').style.display = it.fileAttachmentId ? '' : 'none';
         document.getElementById('icAllowOtherPayer').checked = false;
+        document.getElementById('icNotDuplicate').checked = false;
         document.getElementById('icStandaloneReason').value = '';
         const set = (k, v) => { document.getElementById(k).value = v == null ? '' : v; };
         set('icNo', it.certificateNumber); set('icDate', it.certificateDate ? Layout.dateInput(it.certificateDate) : '');
@@ -524,6 +528,7 @@
           createStandalone: standalone,
           standaloneReason: document.getElementById('icStandaloneReason').value.trim() || null,
           allowOtherPayer: document.getElementById('icAllowOtherPayer').checked,
+          notDuplicate: document.getElementById('icNotDuplicate').checked,
           viewedFile: !!this._viewed[this._icId],
         };
         const btn = document.getElementById('icSave');

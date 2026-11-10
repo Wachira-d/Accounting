@@ -81,4 +81,6 @@ public class WhtCertAllocation : TenantEntity
     public Guid WhtCreditId { get; set; }
     public decimal Amount { get; set; }
     public WhtCertAllocationStatus Status { get; set; } = WhtCertAllocationStatus.Proposed;
+    /// <summary>รอบ 257 ชุด 2 ฝ่ายค้าน L7: ชนิดหลักฐานของแถวเครดิตก่อนใบนี้ลง — ถอนการยืนยัน (ไม่เหลือใบอื่น) ⇒ คืนค่านี้ · null = ไม่รู้ (ใบก่อนรอบนี้) ⇒ กระดาษ</summary>
+    public WhtEvidenceKind? PriorEvidenceKind { get; set; }
 }

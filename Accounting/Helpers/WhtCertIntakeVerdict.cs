@@ -141,8 +141,11 @@ public static class WhtCertIntakeVerdict
     public static CertPayerMatch SameCertPayer(string? payerTaxId, Guid? payerContactId, string? otherPayerTaxId, Guid? otherPayerContactId)
     {
         var mine = ThaiTaxId.Normalize(payerTaxId);
-        if (mine.Length == 13)
-            return ThaiTaxId.Normalize(otherPayerTaxId) == mine ? CertPayerMatch.Same : CertPayerMatch.Different;
+        var other = ThaiTaxId.Normalize(otherPayerTaxId);
+        if (mine.Length == 13 && other.Length == 13)
+            return other == mine ? CertPayerMatch.Same : CertPayerMatch.Different;
+        // ฝ่ายค้าน L5: ฝั่งหนึ่งมีเลข อีกฝั่งไม่มี ⇒ ไม่รู้ (ด่าน "อาจซ้ำ") — เดิมนับเป็น "ต่างผู้จ่าย" ⇒ ใบเดิมที่อ่านเลขไม่ได้กับใบใหม่ที่อ่านได้ลงซ้ำ
+        if (mine.Length == 13 || other.Length == 13) return CertPayerMatch.Unknown;
         if (payerContactId is Guid c)
             return otherPayerContactId == c ? CertPayerMatch.Same
                 : otherPayerContactId != null ? CertPayerMatch.Different : CertPayerMatch.Unknown;   // อีกใบไม่รู้ผู้ติดต่อ ⇒ ไม่รู้ (ไม่เดา)
