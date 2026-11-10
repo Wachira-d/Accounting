@@ -94,6 +94,19 @@ public class WhtCreditController : ControllerBase
         return Ok(new ApiResponse<bool>(true, true, "บันทึกหนังสือรับรองแล้ว — ใช้เป็นเครดิตได้"));
     }
 
+    /// <summary>รอบ 257 ชุด 2 (B-M3): ผู้จ่ายหักผ่าน e-WHT · รอหลักฐาน (true) / ยกเลิกการแจ้ง (false) — ไม่เพิ่มเครดิต (ป้าย + ตัวกรอง "e-WHT")</summary>
+    public record EWhtBody(bool EWithholding);
+
+    [HttpPost("{id:guid}/ewht-pending")]
+    [RequirePermission(PermissionKeys.TaxFile)]
+    public async Task<ActionResult<ApiResponse<bool>>> EWhtPending(Guid companyId, Guid id, [FromBody] EWhtBody b)
+    {
+        await _service.SetEWhtPendingAsync(companyId, id, b.EWithholding, JwtHelper.GetUserIdFromClaims(User), User?.Identity?.Name ?? "user");
+        return Ok(new ApiResponse<bool>(true, true, b.EWithholding
+            ? "บันทึกแล้ว — ผู้จ่ายหักผ่าน e-WHT (รอหลักฐาน · ยังไม่เป็นเครดิตจนกว่าจะแนบหลักฐานเข้ากล่องรับ)"
+            : "ยกเลิกการแจ้ง e-WHT แล้ว — รายการกลับไปรอ 50 ทวิ"));
+    }
+
     /// <summary>ตัดสูญ (รอบ 243a · DESIGN G-9) — ลง JE Dr 58010 / Cr 11910 ทั้งยอดของแถว · สิทธิ์ลงใบสำคัญ (Journal.Manage) · กดซ้ำ = ผลเดิม</summary>
     [HttpPost("{id:guid}/expire")]
     [RequirePermission(PermissionKeys.JournalManage)]

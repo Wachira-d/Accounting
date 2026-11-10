@@ -59,11 +59,15 @@ public sealed record WhtCertIntakeDto(
     string? RejectedReason, DateTime? RejectedAt,
     IReadOnlyList<WhtCertAllocationDto> Allocations,
     string? EvidenceReference = null,
-    string? EvidenceLabel = null);
+    string? EvidenceLabel = null,
+    // รอบ 257 ชุด 2 (B-H1): ข้อความหลังยืนยัน (กลับรายการตัดสูญแล้ว + ส่วนที่ยังขาดใบ เสนอตัดสูญได้) · null = ไม่มี
+    string? FollowUpNote = null);
 
 /// <summary>แถวเครดิตที่ใบนี้ครอบได้ (ตัวเลือกบนฟอร์มยืนยัน) — Pending ของผู้จ่ายรายนี้ (ไม่รู้ผู้จ่าย ⇒ ทุกราย)</summary>
 public sealed record WhtCertCandidateDto(Guid WhtCreditId, Guid? DocumentId, string? DocumentNumber, DateTime? DocumentDate,
-    string PayerName, string? PayerTaxId, int TaxYear, decimal WhtAmount, decimal ReceivedAmount, decimal Outstanding, bool Proposed);
+    string PayerName, string? PayerTaxId, int TaxYear, decimal WhtAmount, decimal ReceivedAmount, decimal Outstanding, bool Proposed,
+    // รอบ 257 ชุด 2 (B-H1): แถวนี้ตัดสูญส่วนที่เหลือแล้ว — ยืนยันใบ = กลับรายการตัดสูญ (ต้องมีสิทธิ์ Journal.Manage)
+    bool WrittenOff = false);
 
 public sealed record WhtCertAllocationInput(Guid WhtCreditId, decimal Amount);
 
@@ -78,6 +82,9 @@ public sealed record WhtCertConfirmRequest(
     IReadOnlyList<WhtCertAllocationInput>? Allocations = null,
     bool CreateStandalone = false, int? TaxYear = null,
     string? StandaloneReason = null, bool AllowOtherPayer = false, bool ViewedFile = false);
+
+/// <summary>รอบ 257 ชุด 2 (B-H2): ถอนการยืนยันใบที่ลงเครดิตแล้ว — เหตุผล ≥ 5 ตัวอักษร (เก็บใน audit + เหตุที่ตีกลับของใบ)</summary>
+public sealed record WhtCertUnconfirmRequest(string? Reason);
 
 /// <param name="NotGenuine">ผู้ใช้ตีกลับเพราะ "ไม่ใช่ของจริง" — สอนนักเรียน (Suspect) · false = เหตุอื่น (ไม่ใช่ใบของเรา/อ่านไม่ได้) ไม่สอน</param>
 public sealed record WhtCertRejectRequest(string? Reason, bool NotGenuine = false);

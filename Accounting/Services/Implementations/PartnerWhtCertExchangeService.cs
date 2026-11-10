@@ -138,6 +138,12 @@ public class PartnerWhtCertExchangeService
             try
             {
                 var r = await _intake.SubmitAsync(payeeCompanyId, submission, ct);
+                // รอบ 257 ชุด 2 (B-L4): กล่องรับตอบ "ตีกลับ" ⇒ ไม่ใช่ "ส่งแล้ว" — เหตุบนใบของผู้จ่าย + หยุดลองซ้ำ (ผลเชิงกำหนด) · เดิมประทับส่งแล้วทั้งที่ผู้ขายไม่ได้ใบ
+                if (PartnerExchangeRules.IntakeRejected(r.Status))
+                {
+                    await StampFailureAsync(payerId, cert.Id, PartnerExchangeRules.IntakeRejectedReason(r.Message), ct, giveUp: true);
+                    continue;
+                }
                 // ภายนอก (กล่องรับของผู้ขาย) ตอบผลจริงแล้วเท่านั้นจึงประทับ "ส่งแล้ว" · compare-and-set (หลายเครื่อง = ครั้งเดียว)
                 var n = await _db.WithholdingTaxCerts
                     .Where(w => w.Id == cert.Id && w.CompanyId == payerId && w.PartnerDeliveredAt == null)
@@ -159,11 +165,19 @@ public class PartnerWhtCertExchangeService
         return sent;
     }
 
-    private async Task StampFailureAsync(Guid payerId, Guid certId, string reason, CancellationToken ct)
-        => await _db.WithholdingTaxCerts.Where(w => w.Id == certId && w.CompanyId == payerId && w.PartnerDeliveredAt == null)
-            .ExecuteUpdateAsync(s => s
+    /// <param name="giveUp">รอบ 257 ชุด 2 (B-L4): ผลเชิงกำหนด (กล่องรับตีกลับ) ⇒ ตั้งจำนวนครั้งเต็มเพดาน (ไม่ส่งซ้ำ) · false = ล้มชั่วคราว นับ +1</param>
+    private async Task StampFailureAsync(Guid payerId, Guid certId, string reason, CancellationToken ct, bool giveUp = false)
+    {
+        var q = _db.WithholdingTaxCerts.Where(w => w.Id == certId && w.CompanyId == payerId && w.PartnerDeliveredAt == null);
+        if (giveUp)
+            await q.ExecuteUpdateAsync(s => s
+                .SetProperty(w => w.PartnerDeliveryError, reason)
+                .SetProperty(w => w.PartnerDeliveryAttempts, PartnerExchangeRules.MaxWhtDeliveryAttempts), ct);
+        else
+            await q.ExecuteUpdateAsync(s => s
                 .SetProperty(w => w.PartnerDeliveryError, reason)
                 .SetProperty(w => w.PartnerDeliveryAttempts, w => w.PartnerDeliveryAttempts + 1), ct);
+    }
 
     /// <summary>ผู้จ่ายยกเลิกใบที่ส่งเข้ากล่องรับของผู้ขายแล้ว ⇒ แจ้งผู้ขายครั้งเดียว (ประทับก่อนแจ้ง · ไม่แก้รายการของผู้ขายเอง)</summary>
     public async Task<int> NotifyVoidedAsync(Guid payerId, CancellationToken ct = default)
@@ -188,7 +202,9 @@ public class PartnerWhtCertExchangeService
                 await _notify.DispatchAsync(payee, Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange, new NotificationContext
                 {
                     Title = $"คู่ค้า {payerName} ยกเลิกหนังสือรับรอง 50 ทวิ เลขที่ {v.CertificateNumber}",
-                    Message = "ใบนี้เคยส่งเข้ากล่องรับ 50 ทวิ ของท่านผ่าน NextAcc — ตรวจรายการในกล่องรับ (ตีกลับ/รอใบใหม่) ก่อนใช้เป็นเครดิตภาษี",
+                    // รอบ 257 ชุด 2 (B-H2): ชี้ทางที่ทำได้จริง — ยืนยันแล้ว ⇒ "ถอนการยืนยัน" (UnconfirmAsync) · ยังรอยืนยัน ⇒ "ตีกลับ"
+                    Message = "ใบนี้เคยส่งเข้ากล่องรับ 50 ทวิ ของท่านผ่าน NextAcc — เปิดหน้า \"ภาษีถูกหัก ณ ที่จ่าย\" ที่ใบนี้ในกล่องรับ: ถ้ายืนยันแล้ว กด \"ถอนการยืนยัน\" "
+                        + "(ระบบถอนเครดิตจากใบนี้ออกจากทะเบียน) · ถ้ายังรอยืนยัน กด \"ตีกลับ\" · แล้วขอใบใหม่จากผู้จ่าย ก่อนใช้เป็นเครดิตภาษี",
                     ActionUrl = "/pages/wht-credit.html", EntityType = "WhtCertIntake", EntityId = v.PartnerIntakeId,
                 });
             n++;

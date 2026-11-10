@@ -72,6 +72,14 @@ public static class WhtCertReminderCadence
         return new Decision(true, step, $"ค้าง {days} วัน — ทวงขั้น {step} วัน");
     }
 
+    /// <summary>ผลของแถวบันทึกทวง (<c>WhtCertReminderLog.Outcome</c>)</summary>
+    public const string OutcomeQueued = "Queued", OutcomeSkipped = "Skipped";
+
+    /// <summary>รอบ 257 ชุด 2 (B-L2): ขั้นที่เคยบันทึกไว้แล้ว (ลูกค้า + ขั้น + วันถูกหักเดียวกัน) — "ข้าม" (ไม่มีอีเมล/ไม่รับ) และตอนนี้ส่งได้ ⇒ ลองใหม่ครั้งเดียว
+    /// (แทนแถว "ข้าม" เดิม) · เข้าคิวแล้ว หรือยังส่งไม่ได้ ⇒ ไม่ทำซ้ำ (ไม่บันทึกซ้ำทุกวัน) — เดิมข้ามถาวรแม้เพิ่มอีเมลแล้ว</summary>
+    public static bool RetrySkippedStep(string? existingOutcome, bool deliverableNow)
+        => existingOutcome == OutcomeSkipped && deliverableNow;
+
     /// <summary>กุญแจกันซ้ำของคิวอีเมล — ลูกค้า + ขั้น + วันถูกหักของรายการเก่าสุด (สองเครื่อง/สองรอบได้แถวเดียว)</summary>
     public static string QueueKey(Guid contactId, int step, DateTime anchorUtc) => $"whtrem:{contactId:N}:{step}:{anchorUtc:yyyyMMdd}";
 

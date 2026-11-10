@@ -110,6 +110,12 @@ public static class WhtCertIntakeStatus
         };
     }
 
+    /// <summary>รอบ 257 ชุด 2 (B-M3 · คำตัดสิน 257-2-3): ผู้ขายแจ้งว่า "ผู้จ่ายหักผ่าน e-WHT · รอหลักฐาน" ได้เฉพาะแถวรอใบที่ยังไม่ได้ใบเลย
+    /// (ได้ใบบางส่วนแล้ว ⇒ ป้าย "ได้บางส่วน" ชนะอยู่แล้ว — สถานะ <see cref="State.EWhtAwaitingEvidence"/> จะไม่ปรากฏ) · ผู้เรียก: <c>WhtCreditService.SetEWhtPendingAsync</c>
+    /// + ธงปุ่มบนทะเบียน (หน้าไม่ประกอบเงื่อนไขเอง) — เดิมไม่มีทางเข้าใดตั้ง EvidenceKind = EWithholding บนแถวรอใบ ⇒ สถานะ/ตัวกรอง "ewht" ไปไม่ถึง</summary>
+    public static bool CanMarkEWhtPending(WhtCreditStatus status, decimal receivedAmount)
+        => status == WhtCreditStatus.Pending && receivedAmount <= 0.005m;
+
     /// <summary>แสดงชิปบนรายการเอกสารไหม — ไม่มี WHT / ยังไม่รับชำระ ⇒ ไม่มีชิป (ไม่ใช่การค้าง · กันคำเตือนฟ้องใบถูก)</summary>
     public static bool ShowsChip(State s) => s is not (State.NotApplicable or State.NotYetPaid);
 

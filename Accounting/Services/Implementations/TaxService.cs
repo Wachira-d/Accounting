@@ -3028,6 +3028,16 @@ public partial class TaxService : ITaxService
         if (judgement.LockPeriod)
             report.FilingLockedAt = DateTime.UtcNow;
 
+        // รอบ 257 ชุด 2 (B-M1 · คำตัดสิน 257-2-1): ยื่น ภ.ง.ด.50 ⇒ เครดิตภาษีถูกหักที่ได้ใบครบของรอบนี้ = "ใช้เครดิตแล้ว" (Claimed + ผูกรายงาน) —
+        // ชุดเดียวกับที่ GenerateCitReport รวม (CreditableInPeriod) · ด่านกันแก้/ตัดสูญ/ถอนใบของเครดิตที่ยื่นแล้วทำงานจริง · SaveChanges เดียวกับการยื่น
+        if (report.TaxType == TaxType.CorporateIncomeTax)
+        {
+            var fyStartMonth = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+                .Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
+            var fy = Accounting.Helpers.FiscalYear.RangeFor(report.Year, fyStartMonth);
+            await Accounting.Helpers.WhtCreditClaimStamp.StampAsync(_db, companyId, report.Id, fy.Start, fy.EndInclusive, DateTime.UtcNow);
+        }
+
         // เครดิตภาษีซื้อยกไปงวดถัดไป (ร่าง) — บันทึกพร้อมการยื่นใน SaveChanges เดียว (ดู SyncNextPeriodVatCreditAsync)
         await SyncNextPeriodVatCreditAsync(companyId, report);
         await _db.SaveChangesAsync();
