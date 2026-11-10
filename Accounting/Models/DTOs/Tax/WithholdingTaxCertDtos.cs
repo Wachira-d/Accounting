@@ -79,7 +79,9 @@ public record WithholdingTaxCertResponse(
     string? PayeeNameLine = null,
     // 2026-10-14: "รวมเงินภาษีที่หักนำส่ง (ตัวอักษร)" จากตัวตั้งเดียว ThaiBahtText.Format — ตัวเดียวกับ PDF ทั้งสอง ·
     // หน้าพิมพ์ wht.html แสดงอย่างเดียว (เดิมมีสำเนาสูตร JS ที่ใช้ units[pos % 7] ⇒ ยอด ≥ 10 ล้านพิมพ์ผิด)
-    string? TotalTaxAmountInWords = null);
+    string? TotalTaxAmountInWords = null,
+    // รอบ 257 ชุด 2 (B-L4): สถานะส่งใบนี้เข้ากล่องรับของผู้ขายที่เป็นคู่ค้า NextAcc (PartnerExchangeRules.WhtDeliveryLabel — ตีกลับ = เหตุ ไม่ใช่ "ส่งแล้ว") · null = ไม่ใช่งานของเส้นนี้
+    string? PartnerDeliveryLabel = null);
 
 public record WithholdingTaxCertLineResponse(
     Guid Id,

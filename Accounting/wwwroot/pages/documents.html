@@ -8234,6 +8234,13 @@
               const whtColor = whtTones[d.whtCertTone] || '#64748b';
               whtCertBadge = `<span title="หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) — ดู/ยืนยันที่หน้า ภาษีถูกหัก ณ ที่จ่าย" style="margin-left:6px;padding:1px 6px;background:${Layout.esc(whtColor)};color:#fff;border-radius:6px;font-size:10px;font-weight:600">${Layout.esc(d.whtCertLabel)}</span>`;
             }
+            // รอบ 257 ชุด 3 (D-M5): หลักฐานภาษีซื้อของใบจากคู่ค้า NextAcc — ป้าย/ทางไปปุ่ม "ได้รับต้นฉบับแล้ว" จากเซิร์ฟเวอร์ (partnerNeedsOriginal · ตัวตัดสินเดียว)
+            let partnerBadge = '';
+            if (d.partnerInputVatEvidence) {
+              const pnBg = d.partnerNeedsOriginal ? '#d97706' : '#64748b';
+              partnerBadge = `<span title="${Layout.esc(d.partnerInputVatEvidenceLabel || '')}" style="margin-left:6px;padding:1px 6px;background:${Layout.esc(pnBg)};color:#fff;border-radius:6px;font-size:10px;font-weight:600">🤝 ${Layout.esc(d.partnerInputVatEvidenceLabel || 'ใบจากคู่ค้า')}</span>`
+                + (d.partnerNeedsOriginal ? ` <a href="/pages/partners.html#ptDraftBody" onclick="event.stopPropagation()" style="font-size:11px;color:#b45309;text-decoration:underline" title="ยืนยันว่าได้รับต้นฉบับใบกำกับแล้ว (หน้าคู่ค้า)">ยืนยันต้นฉบับ</a>` : '');
+            }
             // ป้ายเคลมภาษีซื้อ (ฝั่งซื้อ) — บอกใน list ทันทีว่าใบไหนเคลม ภ.พ.30 ได้
             // (รายละเอียด "เคลมแล้วงวดไหน" ดูใน modal ซึ่งอ่านจากรายงานจริง)
             let vatClaimBadge = '';
@@ -8256,7 +8263,7 @@
               : '';
             return `<tr>
             <td><input type="checkbox" class="doc-check" data-id="${d.id}" ${this.selectedDocs?.has(d.id) ? 'checked' : ''} onchange="Page.onDocCheck(this)"></td>
-            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${revBadge}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}${whtCertBadge /* html */}${vatClaimBadge}</td>
+            <td class="font-medium">${(d.documentNumber || '').startsWith('DRAFT-') ? '<span class="text-gray-400" title="เลขจริงจะออกตอนอนุมัติ">— ยังไม่ออกเลข —</span>' : d.documentNumber}${revBadge}${settlementBadge}${lifecycleBadge}${etaxBadge}${projectBadge}${pceBadge}${agingBadge}${staleBadge}${rdBadge}${undueVatBadge}${whtCertBadge /* html */}${partnerBadge /* html */}${vatClaimBadge}</td>
             <td>${Layout.docHeaderBadge(d)}</td>
             <td>${Layout.date(d.documentDate)}</td>
             <td>${Layout.esc(d.contact?.name || '-')}</td>
@@ -13579,14 +13586,19 @@
             // รอบ 255 (ETR-ACK): ปุ่ม "ตรวจแล้ว" ต่อแถว e-Tax (ทางไปต่อ — เดิมแถบค้างตลอดไป) · เซิร์ฟเวอร์ตัดสินทั้งหมด
             + etaxRows.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')} `
               + `<button type="button" class="btn btn-sm btn-secondary" style="padding:1px 8px;font-size:12px" `
-              + `onclick="Page.openEtaxReviewAck('${Layout.jsArg(x.etaxId)}','${Layout.jsArg(x.etaxRefNumber || '')}','${Layout.jsArg(x.documentNumber || '')}')">✓ ตรวจแล้ว</button></div>`).join('') + more(etaxRows);
+              + `onclick="Page.openEtaxReviewAck('${Layout.jsArg(x.etaxId)}','${Layout.jsArg(x.etaxRefNumber || '')}','${Layout.jsArg(x.documentNumber || '')}','${Layout.jsArg((x.allowedOutcomes || []).join(','))}')">✓ ตรวจแล้ว</button></div>`).join('') + more(etaxRows);
           el.style.display = '';
         } catch (e) { el.style.display = 'none'; }
       },
-      openEtaxReviewAck(etaxId, etaxRef, docNo) {
+      openEtaxReviewAck(etaxId, etaxRef, docNo, allowedCsv) {
         document.getElementById('eraEtaxId').value = etaxId;
         document.getElementById('eraRowInfo').innerHTML = `แถว e-Tax <b>${Layout.esc(etaxRef || '-')}</b> ของเอกสาร <b>${Layout.esc(docNo || '-')}</b>`;
-        document.querySelectorAll('input[name="eraOutcome"]').forEach(r => { r.checked = r.value === 'RejectedOrNotReceived'; });
+        // รอบ 257 ชุด 3: ตัวเลือกที่ใช้ได้ของแถวนี้มาจากเซิร์ฟเวอร์ (กลุ่มส่งอีเมลพร้อมสำเนา ETDA = "ยกเลิกที่กรมสรรพากรแล้ว" เท่านั้น) · ว่าง = ทุกตัวเลือก
+        const allowed = String(allowedCsv || '').split(',').filter(Boolean);
+        const radios = Array.from(document.querySelectorAll('input[name="eraOutcome"]'));
+        radios.forEach(r => { const ok = !allowed.length || allowed.includes(r.value); r.disabled = !ok; r.closest('label').style.display = ok ? 'block' : 'none'; });
+        const first = radios.find(r => !r.disabled);
+        radios.forEach(r => { r.checked = r === first; });
         document.getElementById('eraRdReference').value = '';
         document.getElementById('eraNote').value = '';
         document.getElementById('eraSubmitBtn').disabled = false;

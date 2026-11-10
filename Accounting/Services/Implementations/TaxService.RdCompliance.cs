@@ -92,6 +92,9 @@ public partial class TaxService
         report.Notes = (report.Notes ?? "") + $"\n[UNLOCK by {userId} @ {DateTime.UtcNow:u}] {reason}";
         // กลับเป็นร่าง ⇒ เครดิตยกไปงวดถัดไป (ร่าง) ต้องถูกถอน — ยื่นใหม่แล้วค่อยยกตามยอดใหม่
         await SyncNextPeriodVatCreditAsync(companyId, report);
+        // รอบ 257 ชุด 2 (B-M1): ภ.ง.ด.50 กลับเป็นร่าง ⇒ เครดิตภาษีถูกหักที่รายงานนี้ประทับ "ใช้แล้ว" กลับเป็น "ได้รับใบแล้ว" (ยื่นใหม่ค่อยประทับใหม่)
+        if (report.TaxType == TaxType.CorporateIncomeTax)
+            await Accounting.Helpers.WhtCreditClaimStamp.ReleaseAsync(_db, companyId, report.Id, DateTime.UtcNow);
         await _db.SaveChangesAsync();
     }
 
@@ -205,6 +208,9 @@ public partial class TaxService
             report.FilingLockedAt = null;
             report.Status = TaxReportStatus.Draft;
             await SyncNextPeriodVatCreditAsync(companyId, report);   // ถูกปฏิเสธ ⇒ ถอนเครดิตที่ยกไปงวดถัดไป (ร่าง)
+            // รอบ 257 ชุด 2 (B-M1): ภ.ง.ด.50 ถูกปฏิเสธ/กลับรายการ ⇒ ถอน "ใช้เครดิตแล้ว" ของรายงานนี้
+            if (report.TaxType == TaxType.CorporateIncomeTax)
+                await Accounting.Helpers.WhtCreditClaimStamp.ReleaseAsync(_db, companyId, report.Id, DateTime.UtcNow);
 
             await _db.SaveChangesAsync();
             await tx.CommitAsync();

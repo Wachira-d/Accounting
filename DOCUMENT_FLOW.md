@@ -3341,7 +3341,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **พอร์ทัลลูกค้าไม่ต้องจำรหัสผ่าน (ข้อ 8 · AUTOPILOT §8.1)**: `POST api/portal/magic-link {companyId, email}` — ส่งเฉพาะอีเมลที่ผู้ขายเปิด `PortalAccess` ไว้ (ใช้งานอยู่) ·
   **คำตอบเดียวทุกกรณี** (`PortalMagicLinkPolicy.AckMessage` · 202) · เพดานต่ออีเมล 1/นาที 5/วัน + ต่อบริษัท 10/นาที 200/วัน (ตัวนับในฐาน fail-closed) · เวลาตอบขั้นต่ำคงที่ ·
   โทเคนสุ่ม 32 ไบต์ เก็บ SHA-256 ใน `PortalMagicLinks` · อายุ 15 นาที · ใช้ครั้งเดียว (compare-and-set `UsedAt`) · ไม่มี URL ของระบบ/SMTP ⇒ ไม่ส่ง (log error · ไม่แต่งโดเมน) ·
-  `POST api/portal/magic-link/redeem {companyId, token}` (เพดานต่อบริษัท) ⇒ เซสชันพอร์ทัลเดิม (โทเคนลงนามแบบเดียวกับล็อกอินรหัสผ่าน) + กิจกรรม `MagicLogin` · รหัสผ่านเดิมยังใช้ได้ ·
+  `POST api/portal/magic-link/redeem {companyId, token}` (เพดานต่อ IP 10/นาที 200/วัน + ต่อโทเคน 3/นาที 10/วัน — `PortalMagicLinkPolicy.RedeemPer*` · ไม่มีถังรวมต่อบริษัท · แก้ข้อความรอบ 257 ชุด 3) ⇒ เซสชันพอร์ทัลเดิม (โทเคนลงนามแบบเดียวกับล็อกอินรหัสผ่าน) + กิจกรรม `MagicLogin` · รหัสผ่านเดิมยังใช้ได้ ·
   สร้างสิทธิ์พอร์ทัลแบบไม่มีรหัสผ่านได้ (รหัสว่าง = ล็อกอินด้วยรหัสไม่ได้ ใช้ลิงก์วิเศษเท่านั้น) · `portal.html` ปุ่ม "ส่งลิงก์เข้าสู่ระบบทางอีเมล" + แลก `?magic=` แล้วลบออกจาก URL ·
   **ส่งออก Excel ให้นักบัญชี** `GET api/portal/{cid}/export/accountant?fromDate&toDate` (โทเคนพอร์ทัล · ด่านเอกสารพอร์ทัลเดียว · ≤ 1 ปี) — `Helpers/PortalAccountantExport` รูปแบบ**ทั่วไป**
   (วันที่ · เลขที่ · ชนิด · ผู้ขาย/เลขภาษี/สาขา · มูลค่า · VAT · ยอดรวม · WHT · สถานะ) ผ่าน MiniExcel · ปุ่มในแท็บใบแจ้งยอด · PEAK/FlowAccount/Express + อีเมลขาเข้า ETDA + ราคาแปรผัน = backlog (255-WP12B-9)
@@ -3373,6 +3373,37 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - อื่น ๆ: ป้ายความถี่รายการประจำจากเซิร์ฟเวอร์ (`RecurringSchedule.FrequencyLabel` · "ทุก N เดือน" ชนะความถี่) + แจ้งล่วงหน้าใช้รอบจริง · `ApiScopePolicy` "write ครอบ read" เฉพาะหมวด documents
   - ล็อก: `PartnerExchangeRound255Tests` (H2/H3 Merge/M1/M4/M6/M7/LOW) · `Db/PortalAuthRound255DbTests` (handler ตรง: 200 ×2 · JWT พนักงาน/refresh/ปิดสิทธิ์/ผิดบริษัท/แก้ไบต์ = ไม่ผ่าน) ·
     `Db/PartnerExchangeRound255DbTests` (H3 สายเอกสาร = ใบเดียว · ใบไม่เกี่ยว = ใบใหม่ · M2 ต้นทางยกเลิก · M6 คิวลิงก์วิเศษ) · `tools/required_call_site_check.py` (R255 ฝ่ายค้าน) · Last verified `commit f53b6847`
+- **แก้ผลตรวจรอบ 257 ชุด 3 (ทีม D · `erp-review/2026-11-10/team-D.md` · DECISIONS 257-3-1…257-3-8):**
+  - **(D-H4) หลักฐานไม่ข้ามการแปลงใบแจ้งหนี้ ⇒ ใบกำกับ**: ต้นทางที่ไม่ใช่ใบกำกับ ⇒ `PartnerInputVatEvidence.AwaitingTaxInvoice` (ใหม่ · เดิม `PaperRequired`) —
+    ห้ามลงภาษีซื้อ · **ยืนยันต้นฉบับไม่ได้** (`ConfirmProblem` ตัวเดียว ⇒ เซิร์ฟเวอร์ 409 + หน้าคู่ค้าซ่อนปุ่มแล้วแสดงเหตุ `ConfirmBlockedReason` · ปุ่ม "e-Tax ที่ประทับเวลา" จาก `CanConfirmStampedEtax`) ·
+    ใบที่ทำหน้าที่ใบกำกับมาถึงใบซื้อเดิม ขณะที่ทุกใบที่ผูกไว้ก่อนหน้าไม่ใช่ใบกำกับ ⇒ **ตั้งหลักฐานใหม่ด้วย `Of(...)`** (`PartnerInputVatEvidence.OnNewSource` · คำยืนยันเดิมของใบแจ้งหนี้ไม่ติดไปเป็นคำยืนยันใบกำกับ) ·
+    ทิศตรงข้าม: ยืนยันใบกำกับไว้แล้ว ใบที่ออกแทนมาถึง ⇒ คงค่าที่ยืนยัน · ข้อความทางตันเดิม ("ไม่ได้รอต้นฉบับ") ⇒ ยืนยันแล้วบอกทางเติมใบกำกับ (`AlreadyConfirmedMessage`) ·
+    แจ้งผู้รับเมื่อแนบหลักฐานเข้าใบเดิมแยกใบร่าง/ใบที่อนุมัติแล้ว · migration (`AutopilotPartnerMigration`): ใบที่ทุกต้นทางไม่ใช่ใบกำกับแต่ติด `PaperRequired` ⇒ `AwaitingTaxInvoice`
+  - **ใบที่ทำหน้าที่ใบกำกับ (คำตัดสิน 257-3-5)**: ตัวตัดสินเดียว `PartnerExchangeRules.IsTaxInvoiceCarrier` — ใบกำกับ (เว้นที่ตรึง `IsTaxInvoiceByLaw = false`) · ใบเสร็จที่ตรึงว่าเป็นใบกำกับและมี VAT ·
+    ใบเสร็จที่ไม่ได้ตรึง = ไม่นับ · **ใบเสร็จที่เป็นใบกำกับไม่สร้างใบซื้อร่างใบใหม่** — แถวกล่องเข้า ReceiptFlow แนบหลักฐานเข้าใบซื้อเดิมของการขายครั้งเดียวกัน (สาย `RelatedDocumentId`) ·
+    ขายเงินสด (ไม่มีใบซื้อเดิม) ⇒ เหตุบนแถว `ReceiptNoChainMessage` · ใบเสร็จที่ไม่ใช่ใบกำกับ = ไม่แตะ · `PartnerSourceCheckAsync` คืนเลข/วันที่ของใบเสร็จที่เป็นใบกำกับด้วย
+  - **(D-H5) ระงับการเชื่อม** `POST …/trading-partners/{id}/suspend {reason}` (CompanySettings.Edit · ไม่รับ API key · ฝ่ายใดของคู่ก็ได้ · เฉพาะ Accepted — `SuspendProblem`) ⇒
+    `Status = Suspended` + audit chain `TradingPartnershipSuspended` + แจ้งอีกฝ่าย · เส้นอัตโนมัติหยุดเองเพราะทุกเส้นตรวจ Accepted (ส่งเอกสาร `OnDocumentSentAsync` · ใบซื้อร่าง · 50 ทวิ ·
+    **เอกสารปลายทาง** — `TryChainDownstreamAsync` ใหม่: คู่ไม่ Accepted ⇒ อนุมัติเอกสารค้างในกล่องได้แต่ไม่สร้าง PO/ใบแจ้งหนี้ในระบบอีกฝ่าย + เหตุบนแถว) · ปุ่ม "ระงับการเชื่อม" บนแถว Accepted
+    ของ `partners.html` · ทางกลับ = เชิญใหม่ (เส้นเชิญเปิดแถว Suspended เป็น Pending — ปลายทางต้องเปิดค้นเจออยู่)
+  - **(D-M1) คำเชิญที่หายเงียบ**: ข้อความ `partners.html` + `PartnerCompanyMatch.InviteAckMessage` บอกว่า "ปลายทางต้องเปิด 'ให้คู่ค้าค้นเจอ' ก่อน — ไม่งั้นคำเชิญไม่ถูกเก็บ" ·
+    คำเชิญจริง (สร้าง/เปิดใหม่) ⇒ กระดิ่งถึงเจ้าของบริษัทปลายทางในธุรกรรมเดียวกัน (ไม่ใส่ข้อความเชิญ · ไม่ผ่านอีเมล/LINE ⇒ เวลาตอบเติมถึงเพดานเดิม) ·
+    **ไม่เก็บคำเชิญถึงบริษัทที่ไม่เปิดค้นเจอ** (คำตัดสิน 257-3-3)
+  - **(D-M2) ใบซื้อร่างตามต้นฉบับ**: คัดลอกส่วนลดรายบรรทัด/ท้ายบิล (`DiscountAmount` · `BillDiscountPercent/Amount`) · ผลต่างปัดเศษ · ภาษีหัก ณ ที่จ่ายหัวใบ + บรรทัด · หน่วย · % ส่วนลด ·
+    ประเภทเงินได้ · ข้ามบรรทัดที่ลบ · สาขาผู้ขาย = สาขาที่ออกใบ (`DocumentIssuerBranch.ResolveCode`) · คัดลอกครบไม่ได้ ⇒ **ไม่สร้าง + เหตุบนแถวกล่องเข้า** (`PartnerExchangeRules.CopyProblem`:
+    Σ บรรทัด + ปัดเศษ ≠ ฐาน · Σ ภาษีหักบรรทัด ≠ หัวใบ · ยอดรวม ≠ ฐาน + VAT − ภาษีหัก · หักมัดจำที่ออกใบกำกับแล้ว · ผู้จ่ายออกภาษีแทน · ส่วนลดหลัง VAT · ไม่มีบรรทัด)
+  - **(D-M4) ส่งออกนักบัญชี**: คอลัมน์ "อ้างอิงเอกสาร" (เลขที่ใบต้นทางในบริษัทเดียวกัน + อ้างอิงบนใบ · `PortalAccountantExport.ReferenceText`) · "ใบกำกับภาษี (ใช้ลงภาษีซื้อ)"
+    (`PortalAccountantExport.TaxInvoiceRole` — ใบแจ้งหนี้ = ไม่ใช่ · ตามที่ตรึง · ใบเสร็จที่ไม่ตรึง = ไม่ทราบ) · สาขาผู้ขาย = สาขาที่ออกใบนั้น (ไม่ใช่สาขาของบริษัททุกแถว)
+  - **(D-M5) หน้าเอกสาร**: ป้าย "🤝 หลักฐานภาษีซื้อ" + ลิงก์ "ยืนยันต้นฉบับ" (ไปหน้าคู่ค้า) ตาม `DocumentResponse.PartnerNeedsOriginal` (ตัวตัดสินเดียวกับปุ่มหน้าคู่ค้า)
+  - **(D-M6)** `GET …/contacts/{id}/partner-status` ต่อสายแล้ว — ฟอร์มแก้ไขผู้ติดต่อ (`contacts.html` · ไม่มีสิทธิ์ = ไม่แสดง · ล้างค่าตอนสร้างใหม่)
+  - **(LOW) ใบสั่งซื้อปลายทางเป็นร่าง** (คำตัดสิน 257-3-6): `CreateDownstreamPoAsync` สร้าง `PurchaseOrder(Draft, DRAFT-…)` (เดิม Approved + เลขสุ่ม `PO-yyyyMMdd-…`) และ**ไม่ส่งใบร่างย้อนเข้าระบบผู้ขาย** ·
+    ผู้ซื้ออนุมัติแล้วส่ง ⇒ เส้นส่งเดิม (PurchaseOrder ⇒ PoFlow) ⇒ ผู้ขายอนุมัติ ⇒ ใบแจ้งหนี้ร่างตามค่าตั้งเดิม · ฝั่งผู้รับจึงได้ร่างเสมอ (ข้อกำหนดฉบับใหม่ถูกต้อง)
+  - **(LOW) ข้อกำหนดฉบับใหม่ (ร่าง)**: ข้อ e-Tax ตรงโค้ด — ลงภาษีซื้อได้เมื่อต้นทางเป็นใบกำกับ **และผู้รับยืนยันต้นฉบับ** (ไฟล์ที่ประทับเวลา ETDA ที่ผู้รับตรวจแล้ว หรือกระดาษ) · ระบบไม่ตรวจกับ ETDA แทน ·
+    ด่านเผยแพร่ (`NextDraftPublishGate`) ปรับเป็น "ผู้ตรวจรอบถัดไปยืนยัน WP-12 + C5" — **ยังห้ามเผยแพร่**
+  - **(LOW) e-Tax ตรวจแล้ว**: กลุ่ม "ส่งอีเมลพร้อมสำเนา ETDA แล้ว" บันทึกได้เฉพาะ "ยกเลิกที่กรมสรรพากรแล้ว" + เลขอ้างอิง (`EtaxReissueReview.AllowedOutcomes`/`OutcomeForGroupProblem` ·
+    `EtaxReviewEtaxRow.AllowedOutcomes` ⇒ หน้าเว็บซ่อนตัวเลือก "ถูกปฏิเสธ/ไม่เคยได้รับ") · กลุ่มอื่นเลือกได้ทั้งสองตามเดิม
+  - ล็อก: `Accounting.Tests/PartnerExchangeRound257Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/PartnerExchangeRound257DbTests.cs` (H4 สองทิศ · ใบเสร็จที่เป็นใบกำกับ · M2 ส่วนลดท้ายบิล/ยอดไม่รวมเท่า ·
+    H5 ระงับ/เชิญใหม่/คนนอก · M1 แจ้งเจ้าของ/ไม่เก็บ · PO ร่าง/คู่ระงับ) · `tools/required_call_site_check.py` (R257-3) · Last verified `commit 2b94b71a`
 
 ### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
 
@@ -3422,7 +3453,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 | จับคู่ | K0 ผู้ถูกหักไม่ใช่เรา ⇒ ตีกลับทันที · K1 ผู้จ่ายเลขผู้เสียภาษีตรงเป๊ะ (ไม่มี fuzzy) · K2 เอกสารที่ระบุก่อน · K3 ยอดเดี่ยว ±฿1 (หลายแถวยอดเท่ากัน ⇒ กำกวม + เสนอแถวที่วันที่ใกล้สุด 1 แถว ไม่ auto · L1) · K4 ใบรวมหลายใบแจ้งหนี้ (subset ≤ 12 แถว · หลายชุด ⇒ กำกวม ไม่เลือกเอง) · K5 บางส่วน (ผ่อนงวด) · K6 เกินยอดค้าง | `Helpers/WhtCertMatchPolicy` (pure · ห้ามถาม AI) |
 | ยืนยันอัตโนมัติ | ด่านเชิงกำหนดก่อนเสมอ (เลขที่+วันที่ · checksum เลขผู้จ่าย mod-11 · ผู้ถูกหัก = เรา · ภาษี = เงินได้ × อัตรา · ยอดภาษีอ่านได้ตรงจากใบ (ไม่ใช่คำนวณย้อน/อ่านไม่ได้ · M4) · จับคู่ Exact · OCR ช่องเงิน/เลข/เลขที่/วันที่ ≥ 0.85 (ไม่มีค่าความมั่นใจ = 0 · สเกล 0–100 หารด้วย 100 · M4) · ปีภาษีของใบ = ของแถว) — ไม่ผ่าน ⇒ **ไม่ถาม AI** · ผ่านครบ ⇒ ตรวจของจริง `AiFeatureKey.WhtCertAuthenticity` ผ่าน `IAiOrchestrator.AskAsync` (นักเรียน `GenericFeedbackDistillationModel` ก่อน · AI เป็นครู) ⇒ "Genuine" ความมั่นใจ ≥ 0.85 ⇒ ยืนยันอัตโนมัติ · อื่น ๆ (รวมปิด provider ทุกตัว) ⇒ รอผู้ใช้กดยืนยัน (ฟอร์มเติมครบ · ความมั่นใจต่ำ = พื้นเหลือง) | `Helpers/WhtCertIntakeVerdict` · `Services/Ai/Prompts/WhtCertAuthenticityPrompt` |
 | ลงเครดิต | ยืนยันต้องมีวันที่บนใบ (L4) · ส่งทั้งรายการและ "รายการใหม่" = 400 · รายการของผู้จ่ายอื่น ⇒ 409 เว้นแต่ติ๊ก "ยืนยันว่าเป็นผู้จ่ายเดียวกัน" (L3) · แถวที่ใบแรกอยู่คนละรอบบัญชีกับใบนี้ ⇒ 409 + ทางไปต่อ "รายการเครดิตใหม่" (H2 — ระบบนับงวดตามวันที่ใบแรกของแถว · การลงวันที่รายใบ = backlog DECISIONS 252-WP09-5) · allocation ที่ยืนยัน ⇒ `WhtCreditReceived.ReceivedAmount += ยอด` · ครบยอด ⇒ Received · ขาดไม่เกิน ฿1 ⇒ Received + หมายเหตุ เครดิต = ยอดใบ (L2 · `WhtCreditableAmount.StatusForReceived`) · ไม่ครบ ⇒ คง Pending แต่เครดิตได้เฉพาะส่วนที่ได้ใบ · รายการใหม่ทั้งที่ผู้จ่ายมีรายการรอใบ ⇒ ต้องมีเหตุผล ≥ 10 ตัวอักษร (ยกเว้นกรณี H2 · M5) และ ภ.ง.ด.50 มีแถวเตือน `WHT_OVER_GL` เมื่อทะเบียนเกินบัญชี 11910 · ใต้ล็อกแถวเดียวกับการตัดสูญ · audit chain (`RD-50BIS-INTAKE` · ม.50 ทวิ/ม.69 ทวิ) · ไม่มีรายการรอใบที่ตรง ⇒ ผู้ใช้เลือก "บันทึกเป็นรายการเครดิตใหม่" (ผ่าน `WhtCreditService.CreateAsync` — ทางเดิมของการสแกนใบที่ไม่มีการรับชำระในระบบ) | `ApplyToCredit` · `ConfirmAsync` |
-| ผู้อ่านเครดิต | ภ.ง.ด.50 (`TaxService.GenerateCitReport`) · เครื่องคำนวณหน้าบริหารการเงิน · ทะเบียน (`CreditableAmountAsync` · `SummaryAsync`) รวมยอดผ่าน `CreditableInPeriod(...).CreditableSumAsync()` → `WhtCreditableAmount.Of` ตัวเดียว (Received/Claimed เต็มแถว · Pending เฉพาะ `ReceivedAmount` · ตัดสูญ 0) — ผ่อน 3 งวดได้ใบงวดแรก ⇒ เครดิตงวดแรก | `Helpers/WhtCreditableAmount` · `Helpers/CitCalculation` |
+| ผู้อ่านเครดิต | ภ.ง.ด.50 (`TaxService.GenerateCitReport`) · เครื่องคำนวณหน้าบริหารการเงิน · ทะเบียน (`CreditableAmountAsync` · `SummaryAsync`) รวมยอดผ่าน `CreditableInPeriod(...).CreditableSumAsync()` → `WhtCreditableAmount.Of` ตัวเดียว (Received/Claimed เต็มแถว — ได้ใบผ่านกล่องรับ ⇒ ไม่เกินยอดบนใบ · Pending เฉพาะ `ReceivedAmount` · **ตัดสูญ (Expired) = ส่วนที่ได้ใบแล้ว (`ReceivedAmount`)** — ตัดสูญทั้งแถว/แถวรุ่นเก่า/หมดสิทธิ์เพราะต้นทางหายหรือคืนเงิน (ReceivedAmount ถูกตั้ง 0) = 0 · รอบ 257 B-L1 แก้ข้อความเดิม "ตัดสูญ 0") — ผ่อน 3 งวดได้ใบงวดแรก ⇒ เครดิตงวดแรก | `Helpers/WhtCreditableAmount` · `Helpers/CitCalculation` |
 | ทะเบียนจาก GL (ผ่อนงวดถัดไป) | แถวที่ได้ใบผ่านกล่องรับแล้ว GL ถูกหักเพิ่ม ⇒ `SyncWhtCreditReceivedAsync` ขยาย `WhtAmount` + กลับเป็น Pending (ส่วนที่เหลือรอใบ) · GL ลดแต่ไม่ต่ำกว่ายอดที่ได้ใบ ⇒ ลด `WhtAmount` ตาม GL (+ ได้ครบ ⇒ Received · M3) · GL ต่ำกว่ายอดที่ได้ใบ ⇒ ไม่ลด + หมายเหตุ "ยอดใบเกินยอดที่ถูกหัก" · ตัวตัดสินเดียว `WhtCreditableAmount.ResyncWithGl` · ไม่แตะ `ReceivedAmount` · แถวใหม่ประทับ `FirstWithheldAt` | `DocumentService.SyncWhtCreditReceivedAsync` |
 | ป้าย 10 สถานะ | NotApplicable · NotYetPaid (คาดว่าจะถูกหัก/ตั้ง 11910 ตอนออกใบแต่ยังไม่รับเงิน — ไม่ใช่การค้าง) · AwaitingCert · Submitted · PartiallyReceived · Received · EWhtAwaitingEvidence · Rejected · Claimed · WrittenOff · เกินกำหนด = เกิน 30 วันหลังถูกหัก (สถานะที่รอลูกค้า) | `Helpers/WhtCertIntakeStatus.Of` ← ตัวโหลดเดียว `Helpers/WhtCertTracking` |
 | ที่แสดง | รายการเอกสาร: ชิป + ตัวกรอง "50 ทวิ" (`?whtCert=` awaiting · overdue · submitted · received · ewht · กรองก่อนแบ่งหน้า · ตัวเลือกจาก `GET wht-certs/filter-options`) · ใบเสร็จที่ไม่มีแถวของตัวเองแสดงสถานะใบต้นทาง · `DocumentResponse.WhtCert*` (รายการ + รายละเอียด) · ทะเบียน `wht-credit.html`: กล่องรับ (อัปโหลดหลายไฟล์ · ตรวจและยืนยัน · ตีกลับพร้อมเหตุ) + รายงานปลายปี "50 ทวิ ที่ยังขาด" + Excel (MiniExcel) · แดชบอร์ด `app.html` การ์ด "50 ทวิ ที่ต้องตามจากลูกค้า" · ผู้ติดต่อ (แท็บช่องทางแจ้งเตือน) การ์ดของลูกค้ารายนั้น | `WhtCertIntakeController` (`api/companies/{cid}/wht-certs/*` · Tax.File) |
@@ -3438,6 +3469,29 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 **ฝ่ายค้าน WP-09 (รอบ 252 ต่อ)** — ตัดสูญ/ปิดปี/รายการเสนอสิ้นรอบ ใช้เฉพาะยอดที่ขาดใบ (`WhtCreditWriteOff.AmountOf` · `WhtCreditableAmount.Missing` · M1 — ตัดสูญบางส่วนแล้วส่วนที่ได้ใบยังเป็นเครดิต: `Of(Expired) = ReceivedAmount`) · ลบเอกสารต้นทางถูกกันเมื่อแถวเครดิตได้ใบแล้วแม้บางส่วน (`DocumentPurgeOrder` ลบเฉพาะ Pending + ReceivedAmount = 0 · M2) · สรุปทะเบียน/รายงานใช้กติกางวด ภ.ง.ด.50 ตัวเดียว (`CreditableAmountAsync` → `CreditableInPeriod` · ลบ `ClaimAsync`/`UnclaimAsync` ที่ไม่มีผู้เรียก · L9) · การ์ด/ตัวกรองจำกัดปีภาษีและสถานะ (L8) · สแกนเอกสารส่งเข้ากล่องรับผ่าน scope แยก + ผลจริงลงหมายเหตุสแกน `[WHT-CERT]` (L6) · เลข 13 หลักของบุคคลธรรมดาถูกปิดบังก่อนส่ง AI (`MaskIndividualIds` · L7)
 
 เทสต์ `WhtCertIntakeStatusTests` · `WhtCreditableAmountTests` · `WhtCertMatchPolicyTests` · `Db/WhtCertIntakeRound252DbTests` · Last verified 2026-11-06 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2681a9fb
+
+**รอบ 257 ชุด 2 (`erp-review/2026-11-10/team-B.md` · คำตัดสิน 257-2-1…257-2-4 — ทับแถวข้างบนเมื่อขัดกัน):**
+- **B-H1 ได้ใบบางส่วนแล้วตัดสูญส่วนที่เหลือ ⇒ รับใบถัดไปได้** — กล่องรับเสนอแถว Expired ที่มี JE ตัดสูญที่ยังมีผล + `ReceivedAmount > 0` (`LoadCandidatesAsync` · ตัวตัดสิน `WhtCreditWriteOff.ReopensForLateCertificate`) ·
+  `ConfirmAsync` ใต้ล็อกแถว: ด่านทุกข้อผ่าน ⇒ กลับ JE ตัดสูญผ่าน `WhtCreditService.ReopenWrittenOffAsync` → `ReverseWriteOffJournalCoreAsync` ตัวเดียว (งวดวันนี้ต้องเปิด · audit
+  `wht-credit-writeoff-reversed-intake`) → รอใบ → ลงใบ (`ApplyToCredit` ตัดสินสถานะ) · ผู้กดไม่ถือ Journal.Manage ⇒ **403** ข้อความไทย · ยืนยันอัตโนมัติไม่ได้ (ด่าน "ต้องให้ผู้ลงบัญชียืนยัน") ·
+  คำตอบมี `FollowUpNote` (กลับรายการ JE เลขที่ไหน + ยังขาดใบเท่าไร ⇒ เสนอกด "ตัดสูญ" เฉพาะส่วนที่ขาด — ไม่ตัดเอง) · ทะเบียน = GL 11910 ทุกขั้น (Db `H1_…`) ·
+  หน้า wht-credit: ปุ่ม "ได้รับใบแล้ว" แสดงตามธง `CanMarkReceived` (`WhtCreditWriteOff.CanMarkReceived` — ตัวเดียวกับด่านของ `MarkReceivedAsync`) · แถวที่ได้ใบบางส่วนแล้ว ⇒ ป้าย "ได้ใบส่วนที่เหลือ ⇒ อัปโหลดเข้ากล่องรับ"
+- **B-H2 ถอนการยืนยัน** — `POST wht-certs/inbox/{id}/unconfirm` (Tax.File · เหตุผล ≥ 5) → `UnconfirmAsync`: ล็อกใบ + แถว · ถอนการจัดสรรที่ยืนยัน · ลด `ReceivedAmount` · สถานะจาก
+  `WhtCreditableAmount.StatusAfterUnconfirm` (ไม่เหลือใบ ⇒ Pending เสมอ) · เลขที่/วันที่/ไฟล์ของแถว = ของใบแรกที่ยังเหลือ (ไม่เหลือ ⇒ ล้าง — ส่งใบที่ถูกต้องเลขเดิมได้) ·
+  แถว "บันทึกเป็นรายการใหม่" จากใบนี้ (ไม่มี 11910 รองรับ) ⇒ ถอดแถว · แถวตัดสูญส่วนที่เหลือ ⇒ กลับ JE ก่อน (Journal.Manage) · **แถว Claimed ⇒ 409** (ปลด ภ.ง.ด.50 กลับเป็นร่างก่อน) ·
+  ใบกลายเป็น Rejected ("ถอนการยืนยัน: …") · audit `wht-cert-intake-unconfirmed` · ไม่สอนนักเรียน · ข้อความแจ้งผู้ขายเมื่อผู้จ่ายยกเลิกใบผ่านคู่ค้า (`NotifyVoidedAsync`) ชี้ปุ่มนี้
+- **B-M1 Claimed ถูกประทับจริง (ทางเลือก a)** — ยื่น ภ.ง.ด.50 (`TaxService.FileTaxReportAsync` รายงาน CorporateIncomeTax · Submitted หรือ Filed) ⇒ `Helpers/WhtCreditClaimStamp.StampAsync`:
+  แถว **Received** ที่เครดิตเข้ารอบ (`CreditableInPeriod` ชุดเดียวกับที่รายงานรวม) ⇒ Claimed + `ClaimedInTaxReportId` + `ClaimedAt` ใน SaveChanges เดียวกับการยื่น · "ปลดล็อก/กลับเป็นร่าง" และ
+  Reject & Reverse ⇒ `ReleaseAsync` (เฉพาะแถวของรายงานนั้น → Received) · แถว Pending/Expired ที่ได้ใบบางส่วนไม่ประทับ (ส่วนที่ขาดยังตาม/ตัดสูญได้) · ภ.ง.ด.51 ไม่มีรายงานในระบบ ⇒ ไม่ประทับ ·
+  ด่านเดิมที่เคย "ตาย" ทำงานแล้ว: แก้/ลบ/ได้รับใบแล้ว (`GuardEditable`) · ตัดสูญ (`WhtCreditWriteOff.Decide`) · ยืนยันใบเข้าแถว (ไม่ใช่ Pending) · ถอนการยืนยัน · คอลัมน์ "ใช้เครดิตแล้ว" ไม่เป็น 0 อีก
+- **B-M2 ใบเลขเดียวกันเมื่ออ่านเลขผู้จ่ายไม่ได้** — `FindLiveByCertAsync` ตัดสินผู้จ่ายด้วยกุญแจ `WhtCertIntakeVerdict.SameCertPayer` (เลขผู้จ่าย 13 หลัก → ผู้ติดต่อที่จับคู่ได้/ลูกค้าของลิงก์) ·
+  ไม่รู้ทั้งคู่ ⇒ **ไม่คืนใบเดิม** (เดิมกลืนใบ "001" ของลูกค้าอื่นเป็น "ได้รับแล้ว") — สร้างใบใหม่พร้อมด่าน "อาจเป็นใบซ้ำ" (ไม่ถาม AI · ไม่ยืนยันอัตโนมัติ) · ยืนยันใบที่ยังไม่รู้ผู้จ่ายขณะมีใบเลขเดียวกัน ⇒ 409
+  ขอเลขผู้จ่าย · ผู้จ่ายเดียวกัน (เลขอ่านได้) ยังเป็นใบเดิมตามเดิม · ลิงก์อัปโหลดที่ประตูเดียวตอบ "ใบเดิม" ⇒ ลบไฟล์ที่เพิ่งเก็บ (ไม่มีไฟล์กำพร้า)
+- **B-M3 e-WHT รอหลักฐาน (ทางเลือก: เพิ่มทางเข้า)** — `POST wht-credits/{id}/ewht-pending` (Tax.File) → `WhtCreditService.SetEWhtPendingAsync`: เฉพาะแถวรอใบที่ยังไม่ได้ใบเลย
+  (`WhtCertIntakeStatus.CanMarkEWhtPending`) ⇒ `EvidenceKind = EWithholding` ⇒ ป้าย "e-WHT · รอหลักฐาน" + ตัวกรอง "ewht" ไปถึงจริง · **ไม่เพิ่มเครดิต** (หลักฐานจริงแนบเข้ากล่องรับแบบ e-WHT) · ยกเลิกได้ ·
+  ปุ่ม "หักผ่าน e-WHT" แสดงตามธง `CanMarkEWht` · audit chain
+
+เทสต์ `WhtCertRound257Tests` · `Db/WhtCertRound257DbTests` · `Db/PartnerExchangeRound255DbTests` (L4) · Last verified 2026-11-10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e104a7bb
 
 ### 2.12m 50 ทวิ ขาเข้า — ลิงก์อัปโหลด · ทวงอัตโนมัติ · "ไม่หัก" บนหน้าชำระ · หลักฐาน e-WHT ขั้นแรก (รอบ 253 · WP-10 · `erp-review/2026-11-06/AUTO_SEND_WHT_DESIGN.md` §3.2 · §4.3 · §6.3–6.5 · §9 เฟส 244b + 245 · คำตัดสินเจ้าของ §11 ข้อ 3–4 · AUDIT_249 §3.3 N4)
 
@@ -3466,6 +3520,17 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **L6** อีเมลทวงทุกฉบับมีข้อความเลิกรับ (ตอบกลับอีเมล ⇒ ผู้ขายปิดที่ผู้ติดต่อ)
 
 เทสต์ `WhtCertUploadRound253Tests` · `Db/WhtCertRound253DbTests` · Last verified 2026-11-06 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1f5a7f6c
+
+**รอบ 257 ชุด 2 (`erp-review/2026-11-10/team-B.md`):**
+- **B-L2 ทวงขั้นที่ "ข้าม"** (ผู้ติดต่อไม่มีอีเมล/ไม่รับ) — ยังส่งไม่ได้ ⇒ ไม่บันทึกซ้ำทุกวัน (เดิม) · **ส่งได้แล้ว (เพิ่มอีเมล) ⇒ ลองใหม่ครั้งเดียว**: ถอดแถว "ข้าม" เดิม (unique ขั้น/ลูกค้า/วันถูกหัก
+  นับเฉพาะแถวที่ไม่ถูกลบ) แล้วเข้าคิวตามปกติ · ตัวตัดสิน `WhtCertReminderCadence.RetrySkippedStep` (ตัดสินหลังถามตัวหาผู้รับ) — เดิมข้ามถาวร
+- **B-L3 OCR ล้มตอนอัปโหลดเอง** (ผู้ให้บริการล่ม · ไฟล์อ่านไม่ได้ · โควตา) ⇒ ไม่ใช่ error ดิบ — เข้ากล่องรับแบบรอคนตรวจจากไฟล์ผ่าน `IWhtCertIntakeService.SubmitUnreadableAsync`
+  (ตัวเดียวกับลิงก์อัปโหลด · ไม่มีค่าที่อ่านได้ · ไม่ยืนยันอัตโนมัติ)
+- **B-L4 ส่ง 50 ทวิ ผ่านคู่ค้าที่กล่องรับของผู้ขายตีกลับ** ⇒ **ไม่ประทับ "ส่งแล้ว"** — เหตุ (`PartnerExchangeRules.IntakeRejectedReason`) บนใบ + จำนวนครั้งเต็มเพดาน (ผลเชิงกำหนด ไม่ส่งซ้ำ) ·
+  หน้า 50 ทวิ ของผู้จ่ายแสดงป้าย `PartnerDeliveryLabel` (`PartnerExchangeRules.WhtDeliveryLabel`) ใต้สถานะ · รับไว้/รอตรวจ/ซ้ำ ⇒ ส่งแล้วตามเดิม
+- B-M2 ลิงก์อัปโหลด: ประตูเดียวตอบ "ใบเดิม" ⇒ ลบไฟล์ที่เพิ่งเก็บ (`DeleteOrphanAsync`) · B-M3 ทางเข้า e-WHT รอหลักฐาน ดู §2.12j
+
+เทสต์ `WhtCertRound257Tests` · `Db/WhtCertRound253DbTests` (`R257_L2_…`) · `Db/PartnerExchangeRound255DbTests` (`R257_L4_…`) · Last verified 2026-11-10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e104a7bb
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -8334,6 +8399,7 @@ _Last verified against codebase: 2026-11-06 (รอบ 253 WP-10 ฝ่ายค
 
 _Last verified against codebase: 2026-11-09 (รอบ 256 — §2.7 รายการประจำ: ค่าตั้งต้นของรายการที่อนุมัติอัตโนมัติไม่ได้ตั้งนโยบาย ⇒ ลูกค้าค้างชำระ [AR-OVERDUE] ไม่กันใบงวดใหม่ (`AutoApprovePolicy.RecurringDefault` ผ่าน `RecurringApprovePolicyLoader` · ผู้สร้างต้องยังมีสิทธิ์อนุมัติ · หมายเหตุ+audit) · ตั้ง "หยุดรอคน" ต่อรายการได้ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1dd21fd7)_
 
+_Last verified against codebase: 2026-11-10 (รอบ 257 ชุด 2 — §2.12j/§2.12m 50 ทวิ ขาเข้า: B-H1 ได้ใบบางส่วน+ตัดสูญส่วนที่เหลือ ⇒ ใบถัดไปเข้ากล่องรับ (กลับ JE ตัดสูญ · Journal.Manage) · B-H2 ถอนการยืนยัน · B-M1 ยื่น ภ.ง.ด.50 ประทับ Claimed / ปลดล็อกถอน · B-M2 ไม่รู้ผู้จ่าย ≠ ซ้ำ (ด่านอาจซ้ำ) · B-M3 แจ้ง e-WHT รอหลักฐาน · B-L1 ข้อความตัดสูญ · B-L2 ทวงที่ข้ามลองใหม่ · B-L3 OCR ล้ม = รอตรวจ · B-L4 ตีกลับ ≠ ส่งแล้ว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e104a7bb)_
 _Last verified against codebase: 2026-11-10 (รอบ 257 ชุด 1 สิทธิ์ + พอร์ทัล — §2.7 ด่านเขียนรายการประจำ `RecurringWriteGate` (สร้าง/อนุมัติ/Journal.Manage) ·
 §2.12g2 พอร์ทัล: ผู้ให้สิทธิ์ Contact.Edit + RejectApiKey + audit · ใบที่ลูกค้าเห็นได้ `DocumentPayLinkPolicy.IsCustomerFacing` · ธงสิทธิ์มีผู้อ่านทุกเส้น (`PortalAccessPermissions`) +
 migration ครั้งเดียว `r257-portal-flags` · รหัสผ่านไม่บังคับ · §2.12h OA กลางห้ามเป็น OA ของร้าน (`LineOwnOaGuard`) + บริษัทผู้ให้บริการซ่อนส่วน OA ของร้าน + "" = ล้าง + webhook URL จากเซิร์ฟเวอร์ ·
