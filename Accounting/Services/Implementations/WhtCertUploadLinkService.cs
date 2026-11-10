@@ -225,12 +225,9 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
                 r = await _intake.SubmitFromScanAsync(companyId, sid, WhtCertIntakeChannel.UploadLink, hints,
                     WhtCertUploadLinkPolicy.SubmittedBy(name), null, ct, fileSha256: sha, expectedPayerContactId: link.ContactId);
             else
-                r = await _intake.SubmitAsync(companyId, new WhtCertSubmission(
-                    WhtCertIntakeChannel.UploadLink, WhtEvidenceKind.PaperCertificate, null, null, null, null, null, link.ContactId, null, null,
-                    null, 0m, 0m, 0m, WhtPayerFormType.Pnd53, 0m, saved.Id, sha, null, hints, null,
-                    WhtCertUploadLinkPolicy.SubmittedBy(name), null,
-                    "อ่านไฟล์อัตโนมัติไม่สำเร็จ — เปิดดูไฟล์แล้วกรอกข้อมูลตามหนังสือรับรอง", AmountNeedsReview: true,
-                    ExpectedPayerContactId: link.ContactId), ct);
+                // รอบ 257 ชุด 2 (B-L3): ตัวเดียวกับอัปโหลดเอง (ประตูเดียว · ไม่มีค่าที่อ่านได้ · รอคนตรวจ)
+                r = await _intake.SubmitUnreadableAsync(companyId, WhtCertIntakeChannel.UploadLink, saved.Id, sha, hints,
+                    WhtCertUploadLinkPolicy.SubmittedBy(name), null, ct, expectedPayerContactId: link.ContactId);
         }
         catch (BusinessRuleException ex) when (ex.StatusCode == 409)
         {
@@ -242,6 +239,9 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
             }
             return new WhtUploadPublicResult(true, true, "Duplicate", PublicMessage(new WhtCertSubmitResult(Guid.Empty, "Duplicate", false, true, ""), null));
         }
+        // รอบ 257 ชุด 2 (B-M2): ประตูเดียวคืน "ใบเดิม" (ไฟล์/ใบเดียวกันของผู้จ่ายรายนี้) ⇒ ไฟล์ที่เพิ่งเก็บไม่มีแถวใดอ้าง — ลบ (เดิมค้างเป็นไฟล์กำพร้าในถัง)
+        if (r.Duplicate)
+            await DeleteOrphanAsync(companyId, saved.Id);
 
         await _db.WhtCertUploadLinks.Where(l => l.Id == link.Id && l.CompanyId == companyId)
             .ExecuteUpdateAsync(x => x.SetProperty(l => l.LastUsedAt, (DateTime?)DateTime.UtcNow)
@@ -249,6 +249,15 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
 
         var ourName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
         return new WhtUploadPublicResult(true, r.Duplicate, r.Status, PublicMessage(r, ourName));
+    }
+
+    private async Task DeleteOrphanAsync(Guid companyId, Guid fileId)
+    {
+        try { await _files.DeleteAsync(companyId, fileId); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "ลบไฟล์สำเนา 50 ทวิ {File} ที่ลูกค้าส่งซ้ำไม่ได้", fileId);
+        }
     }
 
     /// <summary>ข้อความถึงลูกค้าตามสถานะ (คงที่ — ไม่สะท้อนเหตุผลภายใน/ชื่อรายอื่น) · ตีกลับ = ใบไม่ได้ออกในนามเรา (เหตุเดียวที่ประตูเดียวตีกลับทันที)</summary>

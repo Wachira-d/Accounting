@@ -83,6 +83,21 @@ public static class WhtCreditWriteOff
     public static bool NeedsReversal(WhtCreditStatus status, Guid? writeOffJournalEntryId, Guid? writeOffReversalJournalEntryId)
         => status == WhtCreditStatus.Expired && writeOffJournalEntryId.HasValue && !writeOffReversalJournalEntryId.HasValue;
 
+    /// <summary>รอบ 257 ชุด 2 (B-H1): แถวที่ได้ใบบางส่วนผ่านกล่องรับแล้วตัดสูญ<b>ส่วนที่เหลือ</b>พร้อม JE ที่ยังมีผล ⇒ ใบถัดไปเข้ากล่องรับได้
+    /// (ยืนยันใบ = กลับ JE ตัดสูญ → รอใบ → ลงใบ · ต้องมีผู้ลงบัญชี) — เดิมกล่องรับเสนอ/รับเฉพาะ Pending และ "ได้รับใบแล้ว" ปฏิเสธแถวที่ได้ใบแล้ว ⇒ ทางตัน</summary>
+    public static bool ReopensForLateCertificate(WhtCreditStatus status, Guid? writeOffJournalEntryId, Guid? writeOffReversalJournalEntryId,
+        decimal whtAmount, decimal receivedAmount)
+        => NeedsReversal(status, writeOffJournalEntryId, writeOffReversalJournalEntryId)
+           && receivedAmount > 0.005m && Math.Round(whtAmount - receivedAmount, 2, MidpointRounding.AwayFromZero) > 0.005m;
+
+    /// <summary>รอบ 257 ชุด 2 (B-H1): ปุ่ม "ได้รับใบแล้ว" บนทะเบียน (<c>WhtCreditService.MarkReceivedAsync</c>) ใช้ได้ไหม — ตัวตัดสินเดียวกับด่านในเมธอดนั้น ·
+    /// แถวที่ได้ใบผ่านกล่องรับแล้ว (ReceivedAmount &gt; 0) ⇒ ไม่ได้ (ใบถัดไปเข้ากล่องรับ) · ใช้เครดิตแล้ว (Claimed) ⇒ ไม่ได้ ·
+    /// หน้าเว็บซ่อนปุ่มตามค่านี้ (เดิมแสดงปุ่มที่เซิร์ฟเวอร์ปฏิเสธเสมอ)</summary>
+    public static bool CanMarkReceived(WhtCreditStatus status, Guid? writeOffJournalEntryId, Guid? writeOffReversalJournalEntryId, decimal receivedAmount)
+        => receivedAmount <= 0.005m
+           && (status is WhtCreditStatus.Pending or WhtCreditStatus.Received
+               || NeedsReversal(status, writeOffJournalEntryId, writeOffReversalJournalEntryId));
+
     /// <summary>ฝ่ายค้าน S3 (ตาข่ายชั้นสอง): JE ตัดสูญยังมีผลใน GL ไหม — ด่าน <see cref="WhtWriteOffJournalLock"/> กันเส้นทั่วไปแล้ว ·
     /// ตัวนี้กันกรณีหลุด (ข้อมูลเก่า/ทางที่ยังไม่รู้จัก) ไม่ให้ทะเบียนนับยอดตัดสูญที่ GL กลับไปแล้ว</summary>
     public static bool JournalStillLive(JournalEntryStatus status, Guid? reversedByEntryId, bool isDeleted)

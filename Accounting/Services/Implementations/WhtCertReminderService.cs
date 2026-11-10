@@ -82,13 +82,14 @@ public class WhtCertReminderService
             var anchor = DateTime.SpecifyKind(g.Min(r => r.WithheldSince!.Value).Date, DateTimeKind.Utc);
             var logs = await _db.WhtCertReminderLogs.AsNoTracking()
                 .Where(l => l.CompanyId == companyId && l.ContactId == contactId)
-                .Select(l => new { l.Step, l.AnchorDate, l.CreatedAt, l.Outcome }).ToListAsync(ct);
+                .Select(l => new { l.Id, l.Step, l.AnchorDate, l.CreatedAt, l.Outcome }).ToListAsync(ct);
             var history = logs.Where(l => l.Outcome == "Queued")
                 .Select(l => new WhtCertReminderCadence.Sent(l.Step, l.AnchorDate, l.CreatedAt)).ToList();
             var d = WhtCertReminderCadence.Decide(true, anchor, history, nowUtc);
             if (!d.Send || d.Step is not int step) continue;
-            // ขั้นนี้เคยตัดสินแล้ว (ข้ามเพราะไม่รับ) ⇒ ไม่บันทึกซ้ำทุกวัน
-            if (logs.Any(l => l.Step == step && l.AnchorDate.Date == anchor.Date)) continue;
+            var existing = logs.FirstOrDefault(l => l.Step == step && l.AnchorDate.Date == anchor.Date);
+            // ขั้นนี้เข้าคิวแล้ว ⇒ ไม่ทำซ้ำ (ไม่ต้องถามผู้รับ)
+            if (existing != null && existing.Outcome != WhtCertReminderCadence.OutcomeSkipped) continue;
 
             var contact = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
                 .Where(c => c.Id == contactId && c.CompanyId == companyId)
@@ -96,6 +97,19 @@ public class WhtCertReminderService
             var delivery = ContactRecipientRule.ForEmail(await _recipients.ResolveAsync(companyId, contactId, NotifyTopic.Wht, ct));
             var optOut = AutopilotSettingsResolver.AutoSendBlock(contact?.AutoSendDisabled == true) ?? delivery.OptOutReason
                 ?? (delivery.Deliverable ? null : "ผู้ติดต่อไม่มีอีเมล — ทวง 50 ทวิ อัตโนมัติไม่ได้ (เพิ่มอีเมลที่หน้าผู้ติดต่อ หรือส่งลิงก์อัปโหลดเอง)");
+            if (existing != null)
+            {
+                // รอบ 257 ชุด 2 (B-L2): ขั้นนี้เคย "ข้าม" (ไม่มีอีเมล/ไม่รับ) — ยังส่งไม่ได้ ⇒ ไม่บันทึกซ้ำทุกวัน · ตอนนี้ส่งได้ (เพิ่มอีเมลแล้ว) ⇒ ลองใหม่ครั้งเดียว:
+                // ถอดแถว "ข้าม" เดิม (unique ขั้น/ลูกค้า/วันถูกหัก นับเฉพาะแถวที่ไม่ถูกลบ) แล้วเข้าคิวตามปกติ (เดิมข้ามถาวร)
+                if (!WhtCertReminderCadence.RetrySkippedStep(existing.Outcome, optOut == null)) continue;
+                var stale = await _db.WhtCertReminderLogs.FirstOrDefaultAsync(l => l.Id == existing.Id && l.CompanyId == companyId, ct);
+                if (stale != null)
+                {
+                    stale.IsDeleted = true;
+                    stale.UpdatedAt = nowUtc;
+                    await _db.SaveChangesAsync(ct);
+                }
+            }
             var missing = Math.Round(g.Sum(r => WhtCreditableAmount.Missing(r.Status, r.WhtAmount, r.ReceivedAmount)), 2, MidpointRounding.AwayFromZero);
             var log = new WhtCertReminderLog
             {
@@ -104,7 +118,7 @@ public class WhtCertReminderService
             };
             if (optOut != null)
             {
-                log.Outcome = "Skipped";
+                log.Outcome = WhtCertReminderCadence.OutcomeSkipped;
                 log.Reason = optOut;
                 skipped++;
             }

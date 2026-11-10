@@ -37,6 +37,11 @@ public static class WhtCreditableAmount
         => Math.Round(whtAmount - receivedAmount, 2, MidpointRounding.AwayFromZero) <= WhtCertMatchPolicy.Tolerance
             ? WhtCreditStatus.Received : WhtCreditStatus.Pending;
 
+    /// <summary>รอบ 257 ชุด 2 (B-H2): สถานะของแถวหลังถอนการยืนยันใบ (ลด <c>ReceivedAmount</c>) — ยังมีใบอื่นเหลือ ⇒ <see cref="StatusForReceived"/> ·
+    /// ไม่เหลือใบเลย ⇒ รอใบ (Pending) เสมอ (ไม่ใช่ <see cref="StatusForReceived"/>(wht, 0) ซึ่งคืน Received เมื่อยอดถูกหัก ≤ ฿1)</summary>
+    public static WhtCreditStatus StatusAfterUnconfirm(decimal whtAmount, decimal remainingReceived)
+        => remainingReceived > 0.005m ? StatusForReceived(whtAmount, remainingReceived) : WhtCreditStatus.Pending;
+
     public enum GlResyncKind { None, Grow, Shrink, OverGl }
 
     /// <summary>ฝ่ายค้าน WP-09 M3 — แถวที่ได้ใบผ่านกล่องรับแล้ว (ReceivedAmount &gt; 0) เมื่อยอด Dr 11910 ตาม GL เปลี่ยน:
