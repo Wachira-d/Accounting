@@ -385,7 +385,7 @@
                   <td><span class="pill ${cls /* text — ชื่อคลาสคงที่ */}">${esc(lbl)}</span>${Number(d.slipPendingAmount || 0) > 0 ? `<div style="font-size:11.5px;color:#92400E;margin-top:2px" title="ผู้ขายจะตรวจสลิปแล้วยืนยัน — ยอดค้างลดเมื่อยืนยันแล้ว">⏳ สลิปรอตรวจ ฿${money(d.slipPendingAmount)}</div>` : ''}</td>
                   <td>
                     <button class="btn btn-ghost btn-sm" onclick="Portal.viewDocument('${jsArg(d.id)}')">ดู</button>
-                    <button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">PDF</button>
+                    ${d.canDownloadPdf ? `<button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">PDF</button>` : ''}
                     ${payable ? `<button class="btn btn-sm" style="background:#059669;color:#fff" onclick="Portal.openPay('${jsArg(d.id)}', ${Number(d.balanceDue) || 0}, '${jsArg(d.documentNumber)}')">💳 ชำระ</button>` : ''}
                   </td>
                 </tr>`;
@@ -418,7 +418,7 @@
           </div>`;
         document.getElementById('modalFooter').innerHTML = `
           <button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>
-          <button class="btn btn-primary" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>
+          ${d.canDownloadPdf ? `<button class="btn btn-primary" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>` : ''}
         `;
         this._openModal();
       } catch (e) { toast(e.message, 'err'); }

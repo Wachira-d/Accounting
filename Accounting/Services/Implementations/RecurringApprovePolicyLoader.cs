@@ -81,6 +81,35 @@ internal static class RecurringApprovePolicyLoader
         return new Loaded(stored, stored, true);
     }
 
+    /// <summary>รอบ 257 ฝ่ายค้าน L4: รหัสกติกาของ "ผู้อนุมัติของรายการหมดสิทธิ์" (ใบค้างร่าง)</summary>
+    internal const string AutoApproverRuleCode = "RECURRING-APPROVER-GONE";
+    internal const string AutoApproverGoneReason =
+        "ผู้สร้างรายการประจำ (ผู้อนุมัติของรายการ) ไม่ได้เป็นสมาชิก/ไม่มีสิทธิ์อนุมัติเอกสารชนิดนี้แล้ว — ระบบสร้างใบเป็นร่างรออนุมัติแทน · "
+        + "ให้ผู้มีสิทธิ์อนุมัติตรวจแล้วอนุมัติใบเอง · อยากให้อนุมัติอัตโนมัติต่อ: ผู้มีสิทธิ์อนุมัติตั้งนโยบายของรายการ (ขั้น “อนุมัติ”) หรือสร้างรายการใหม่";
+    internal const string AutoPostGoneReason =
+        "ผู้สร้างรายการประจำของสมุดรายวันไม่ได้เป็นสมาชิก/ไม่มีสิทธิ์จัดการใบสำคัญ (Journal.Manage) แล้ว — สมุดรายวันค้างเป็นร่าง ให้ผู้มีสิทธิ์ตรวจแล้วลงบัญชีเอง";
+
+    /// <summary>รอบ 257 ฝ่ายค้าน L4 — ตอนรัน: การอนุมัติอัตโนมัติต้องมี "ผู้อนุมัติของรายการ" ที่ยังมีสิทธิ์อยู่จริง (ด่านตอนบันทึก A-H1 ตรวจผู้กด ณ ตอนนั้น
+    /// แต่ผู้ออกจากบริษัท/ถูกถอดสิทธิ์ภายหลังรายการยังอนุมัติต่อทุกเดือน) · ผู้อนุมัติ = ผู้ตั้ง/รับรองนโยบายระดับรายการที่ยังมีผล (ตรวจแล้วใน
+    /// <see cref="LoadAsync"/>) มิฉะนั้นผู้สร้างรายการ · null = อนุมัติได้ · ข้อความ = ไม่อนุมัติ (ใบค้างร่าง + เหตุบนใบ/แถวรายการ)</summary>
+    internal static async Task<string?> AutoApproverRefusalAsync(AccountingDbContext db, IPermissionService? permissions, Guid companyId,
+        RecurringTransaction r, Loaded load, CancellationToken ct = default)
+    {
+        if (!r.AutoApprove) return null;
+        if (load.Stored != null && load.SetterActive == true) return null;
+        return await CanStillApproveAsync(db, permissions, companyId, r.CreatedBy, r.DocumentType ?? DocumentType.Invoice, ct) ? null : AutoApproverGoneReason;
+    }
+
+    /// <summary>รอบ 257 ฝ่ายค้าน L4 — สมุดรายวัน: post อัตโนมัติต้องมีผู้สร้างที่ยังเป็นสมาชิก + Journal.Manage · null = post ได้</summary>
+    internal static async Task<string?> AutoPostRefusalAsync(AccountingDbContext db, IPermissionService? permissions, Guid companyId,
+        RecurringTransaction r, CancellationToken ct = default)
+    {
+        if (!r.AutoApprove) return null;
+        if (!Guid.TryParse(r.CreatedBy, out var uid) || !await CompanyMembership.IsActiveMemberAsync(db, companyId, uid, ct)) return AutoPostGoneReason;
+        return permissions == null || await permissions.HasPermissionAsync(companyId, uid, Accounting.Models.Constants.PermissionKeys.JournalManage)
+            ? null : AutoPostGoneReason;
+    }
+
     private static async Task<bool> CanStillApproveAsync(AccountingDbContext db, IPermissionService? permissions, Guid companyId,
         string? userId, DocumentType docType, CancellationToken ct)
     {

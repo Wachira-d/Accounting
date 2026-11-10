@@ -26,7 +26,9 @@ public class PortalAdminController : ControllerBase
     public async Task<ActionResult<ApiResponse<PortalAccessResponse>>> CreateAccess(Guid companyId, [FromBody] CreatePortalAccessRequest request)
         => StatusCode(201, new ApiResponse<PortalAccessResponse>(true, await _service.CreateAccessAsync(companyId, request, ActorId)));
 
+    /// <summary>รอบ 257 ฝ่ายค้าน L2: รายการสิทธิ์ (อีเมลภายนอก + ผู้ติดต่อ = ข้อมูลส่วนบุคคล) — ไม่มีคีย์ Contact.View ในระบบ ⇒ Contact.Edit (DECISIONS 257-1-9)</summary>
     [HttpGet("access")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
     public async Task<ActionResult<ApiResponse<List<PortalAccessResponse>>>> GetAccesses(Guid companyId)
         => Ok(new ApiResponse<List<PortalAccessResponse>>(true, await _service.GetAccessesAsync(companyId)));
 
@@ -155,8 +157,10 @@ public class PortalPublicController : ControllerBase
         if (contactId == null) return Unauthorized(new ApiResponse<List<PortalDocumentResponse>>(false, null!, "Invalid portal token"));
         if (await DenyPortalAsync(companyId, "documents") is { } deny) return Forbidden<List<PortalDocumentResponse>>(deny);
         var docs = await _service.GetMyDocumentsAsync(companyId, contactId.Value, type);
-        // ปุ่ม "ชำระ" ต้องตรงธงชำระของสิทธิ์นี้ด้วย (ไม่โชว์ปุ่มที่กดแล้วได้ 403)
-        if (await DenyPortalAsync(companyId, "pay") != null) docs = docs.Select(d => d with { CanPay = false }).ToList();
+        // ปุ่ม "ชำระ" ต้องตรงธงชำระของสิทธิ์นี้ด้วย (ไม่โชว์ปุ่มที่กดแล้วได้ 403) · รอบ 257 L8: ปุ่ม PDF ตามธง PDF
+        var payOk = await DenyPortalAsync(companyId, "pay") == null;
+        var pdfOk = await DenyPortalAsync(companyId, "pdf") == null;
+        docs = docs.Select(d => d with { CanPay = d.CanPay && payOk, CanDownloadPdf = pdfOk }).ToList();
         return Ok(new ApiResponse<List<PortalDocumentResponse>>(true, docs));
     }
 
@@ -167,7 +171,8 @@ public class PortalPublicController : ControllerBase
         var contactId = GetContactIdFromToken();
         if (contactId == null) return Unauthorized(new ApiResponse<PortalDocumentResponse>(false, null!, "Invalid portal token"));
         if (await DenyPortalAsync(companyId, "document") is { } deny) return Forbidden<PortalDocumentResponse>(deny);
-        return Ok(new ApiResponse<PortalDocumentResponse>(true, await _service.GetDocumentAsync(companyId, contactId.Value, documentId)));
+        var doc = await _service.GetDocumentAsync(companyId, contactId.Value, documentId);
+        return Ok(new ApiResponse<PortalDocumentResponse>(true, doc with { CanDownloadPdf = await DenyPortalAsync(companyId, "pdf") == null }));   // รอบ 257 L8
     }
 
     [HttpGet("{companyId:guid}/documents/{documentId:guid}/pdf")]

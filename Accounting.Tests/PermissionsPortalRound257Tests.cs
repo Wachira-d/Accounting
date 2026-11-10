@@ -202,6 +202,36 @@ public class PermissionsPortalRound257Tests
     }
 
     [Fact]
+    public void L6_ช่องว่างล้วน_เท่ากับล้าง()
+    {
+        Assert.Equal(LineOwnOaGuard.InputKind.Keep, LineOwnOaGuard.Classify(null));
+        Assert.Equal(LineOwnOaGuard.InputKind.Clear, LineOwnOaGuard.Classify(""));
+        Assert.Equal(LineOwnOaGuard.InputKind.Clear, LineOwnOaGuard.Classify("   \t"));
+        Assert.Equal(LineOwnOaGuard.InputKind.Set, LineOwnOaGuard.Classify(" tok "));
+        Assert.Null(LineOwnOaGuard.Refusal(true, "   ", "  ", null, "Ucentral", "tok-central", "sec-central"));   // ล้างของบริษัทผู้ให้บริการผ่าน
+    }
+
+    [Fact]
+    public void L7_ถามLINEไม่ได้_ไม่บันทึกtoken_และค่าBasicIdหรือGroupIdของOAกลางถูกปฏิเสธ()
+    {
+        Assert.Equal(LineOwnOaGuard.UnverifiedMessage, LineOwnOaGuard.Refusal(false, "tok-shop", null, fetchedBotUserId: null, "Ucentral", "tok-central", null));
+        Assert.Null(LineOwnOaGuard.Refusal(false, null, "sec-shop", null, "Ucentral", null, null));   // เปลี่ยนแค่ secret ไม่ต้องถามบอท
+        Assert.Equal(LineOwnOaGuard.CentralValueMessage, LineOwnOaGuard.CentralValueRefusal("@810PAMNC", null, "@810pamnc", null));
+        Assert.Equal(LineOwnOaGuard.CentralValueMessage, LineOwnOaGuard.CentralValueRefusal(null, "Cgroup1", null, new[] { "Cgroup1" }));
+        Assert.Null(LineOwnOaGuard.CentralValueRefusal("@myshop", "Cmine", "@810pamnc", new[] { "Cgroup1" }));
+        Assert.Null(LineOwnOaGuard.CentralValueRefusal(null, "", "@810pamnc", new[] { "Cgroup1" }));   // ล้างค่าได้เสมอ
+    }
+
+    [Fact]
+    public void M1_บริษัทผู้ให้บริการมีtokenค้าง_แสดงสถานะและทางล้าง_ทิศตรงข้ามไม่แสดง()
+    {
+        Assert.Contains("ล้างรหัสเชื่อม", LineOwnOaGuard.PlatformLegacyNotice(true, true, false));
+        Assert.Contains("รหัสลับ", LineOwnOaGuard.PlatformLegacyNotice(true, false, true));
+        Assert.Null(LineOwnOaGuard.PlatformLegacyNotice(true, false, false));
+        Assert.Null(LineOwnOaGuard.PlatformLegacyNotice(false, true, true));   // บริษัทอื่นเห็นส่วน OA ของร้านตามปกติ
+    }
+
+    [Fact]
     public void CH1_ทิศตรงข้าม_OAของร้านเองผ่าน_ล้างค่าผ่าน_บริษัทผู้ให้บริการตั้งไม่ได้()
     {
         Assert.Null(LineOwnOaGuard.Refusal(false, "tok-shop", "sec-shop", "Ushop", "Ucentral", "tok-central", "sec-central"));
@@ -217,6 +247,49 @@ public class PermissionsPortalRound257Tests
     }
 
     // ═══════════════ D-H1 ═══════════════
+
+    [Fact]
+    public void L2_รายการสิทธิ์พอร์ทัล_ต้องมีContactEdit()
+    {
+        var m = typeof(PortalAdminController).GetMethod(nameof(PortalAdminController.GetAccesses))!;
+        var perm = m.GetCustomAttributes<RequirePermissionAttribute>().SingleOrDefault();
+        Assert.NotNull(perm);
+        Assert.Equal(PermissionKeys.ContactEdit,
+            (string)typeof(RequirePermissionAttribute).GetField("_key", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(perm)!);
+    }
+
+    // ═══════════════ L3 · คีย์ API กับรายการที่ระบบอนุมัติ/ส่งแทนคน ═══════════════
+
+    private static RecurringController ApiKeyController(string[] keys, RecurringTransactionResponse item, Calls calls)
+    {
+        var c = Controller(keys, item, calls);
+        c.ControllerContext.HttpContext.Items["IsApiKeyAuth"] = true;
+        return c;
+    }
+
+    [Fact]
+    public async Task L3_คีย์API_ตั้งหรือคงอนุมัติอัตโนมัติ_403_แม้มีสิทธิ์อนุมัติ()
+    {
+        var calls = new Calls();
+        Assert.Equal(403, Code(await ApiKeyController(Approver, Item(false), calls).Create(Company, CreateReq(autoApprove: true))));
+        Assert.Equal(403, Code(await ApiKeyController(Approver, Item(true), calls).Update(Company, Guid.NewGuid(), UpdateReq())));
+        Assert.Equal(403, Code(await ApiKeyController(Approver, Item(true), calls).Resume(Company, Guid.NewGuid())));
+        Assert.Equal(403, Code(await ApiKeyController(Approver, Item(false, autoSend: true), calls).RunNow(Company, Guid.NewGuid())));
+        Assert.DoesNotContain(nameof(IRecurringTransactionService.CreateAsync), calls.Names);
+        Assert.DoesNotContain(nameof(IRecurringTransactionService.UpdateAsync), calls.Names);
+        Assert.DoesNotContain(nameof(IRecurringTransactionService.RunNowAsync), calls.Names);
+    }
+
+    [Fact]
+    public async Task L3_ทิศตรงข้าม_คีย์APIสร้างหรือสร้างทันทีรายการร่างได้_ปิดธงได้()
+    {
+        Assert.Equal(201, Code(await ApiKeyController(Approver, Item(false), new Calls()).Create(Company, CreateReq(autoApprove: false))));
+        Assert.Equal(200, Code(await ApiKeyController(Approver, Item(false), new Calls()).RunNow(Company, Guid.NewGuid())));
+        Assert.Equal(200, Code(await ApiKeyController(Approver, Item(true), new Calls()).Update(Company, Guid.NewGuid(), UpdateReq(false, false))));
+        Assert.Equal(200, Code(await ApiKeyController(Approver, Item(true), new Calls()).Pause(Company, Guid.NewGuid())));
+        Assert.Equal(RecurringWriteGate.ApiKeyMessage,
+            await RecurringWriteGate.DenyAsync(Perms(Approver), Company, User, "Document", DocumentType.Invoice, true, isApiKeyRequest: true));
+    }
 
     [Theory]
     [InlineData(nameof(PortalAdminController.CreateAccess))]
@@ -250,6 +323,41 @@ public class PermissionsPortalRound257Tests
     [InlineData(DocumentType.DebitNote, DocumentType.PurchaseInvoice, false)]
     public void DH2_ใบที่ลูกค้าเห็นได้(DocumentType type, DocumentType? related, bool expected)
         => Assert.Equal(expected, DocumentPayLinkPolicy.IsCustomerFacing(type, related, null, contactIsSupplierOnly: false));
+
+    [Fact]
+    public void L1_ใบลดหนี้ไม่มีใบต้นทาง_ผู้ติดต่อเป็นลูกค้าอย่างเดียว_เห็น_ทิศตรงข้ามไม่เห็น()
+    {
+        Assert.True(DocumentPayLinkPolicy.IsCustomerFacing(DocumentType.CreditNote, null, null, contactIsSupplierOnly: false, contactIsCustomerOnly: true));
+        Assert.True(DocumentPayLinkPolicy.IsCustomerFacing(DocumentType.DebitNote, null, null, false, contactIsCustomerOnly: true));
+        // เป็นทั้งลูกค้าและผู้ขาย / ไม่ระบุ ⇒ ยังไม่รู้ฝั่ง = ไม่เห็น
+        Assert.False(DocumentPayLinkPolicy.IsCustomerFacing(DocumentType.CreditNote, null, null, false, contactIsCustomerOnly: false));
+        // ผู้ขายอย่างเดียว ⇒ ฝั่งซื้อ (ธงลูกค้าอย่างเดียวขัดกันไม่ชนะ)
+        Assert.False(DocumentPayLinkPolicy.IsCustomerFacing(DocumentType.CreditNote, null, null, contactIsSupplierOnly: true, contactIsCustomerOnly: true));
+        // ผู้ใช้สั่งฝั่งซื้อชนะ
+        Assert.False(DocumentPayLinkPolicy.IsCustomerFacing(DocumentType.CreditNote, null, cnDnPurchaseSideOverride: true, false, contactIsCustomerOnly: true));
+    }
+
+    [Theory]
+    [InlineData(DocumentType.Invoice, null, false, 1070)]
+    [InlineData(DocumentType.TaxInvoice, null, false, 1070)]
+    [InlineData(DocumentType.BillingNote, null, false, 0)]
+    [InlineData(DocumentType.Quotation, null, false, 0)]
+    [InlineData(DocumentType.Receipt, null, false, 0)]
+    [InlineData(DocumentType.PurchaseInvoice, null, false, 0)]
+    [InlineData(DocumentType.CreditNote, DocumentType.Invoice, false, -1070)]
+    [InlineData(DocumentType.CreditNote, DocumentType.PurchaseInvoice, false, 0)]
+    [InlineData(DocumentType.CreditNote, null, true, -1070)]
+    [InlineData(DocumentType.CreditNote, null, false, 0)]
+    public void M2_ยอดในใบแจ้งยอด_ตั้งหนี้บวก_ใบลดหนี้ฝั่งขายลบ_อื่นศูนย์(DocumentType type, DocumentType? related, bool customerOnly, int expected)
+        => Assert.Equal((decimal)expected, DocumentPayLinkPolicy.StatementSigned(type, related, null, false, customerOnly, 1070m));
+
+    [Fact]
+    public void L5_สร้างสิทธิ์โดยไม่เปิดธงใดเลย_ปฏิเสธ_เปิดอย่างน้อยหนึ่งผ่าน()
+    {
+        Assert.Contains("อย่างน้อย 1", PortalAccessPermissions.CreateRefusal(false, false, false, false));
+        Assert.Null(PortalAccessPermissions.CreateRefusal(true, false, false, false));
+        Assert.Null(PortalAccessPermissions.CreateRefusal(false, false, false, true));
+    }
 
     [Fact]
     public void DH2_ใบลดหนี้ไม่รู้ฝั่ง_ไม่ให้เห็น_ผู้ใช้สั่งฝั่งขาย_เห็น()

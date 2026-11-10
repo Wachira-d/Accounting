@@ -50,6 +50,13 @@ public static class PortalAccessPermissions
         _ => NoAccessMessage,
     };
 
+    /// <summary>รอบ 257 ฝ่ายค้าน L5: สร้างสิทธิ์ที่ไม่เปิดอะไรเลย = ลูกค้าเข้าแล้วใช้ไม่ได้สักเส้น (และเป็นลายเซ็นของหน้าเก่าที่แคชไว้ซึ่งส่ง
+    /// <c>permissions:{…}</c> ที่ไม่ bind) ⇒ ปฏิเสธ 400 พร้อมทางไปต่อ · null = ผ่าน</summary>
+    public static string? CreateRefusal(bool canViewInvoices, bool canViewStatements, bool canDownloadPdf, bool canMakePayment)
+        => canViewInvoices || canViewStatements || canDownloadPdf || canMakePayment
+            ? null
+            : "เลือกสิทธิ์อย่างน้อย 1 อย่าง (ดูเอกสาร · ดาวน์โหลด PDF · ใบแจ้งยอด · ชำระเงิน) — ถ้าหน้านี้ไม่มีช่องให้ติ๊ก กรุณาโหลดหน้าใหม่ (Ctrl+F5) แล้วสร้างอีกครั้ง";
+
     /// <summary>null = ผ่าน · ข้อความ = ปฏิเสธ (403) · <paramref name="flags"/> null = ไม่พบสิทธิ์ ⇒ ปฏิเสธ</summary>
     public static string? Refusal(PortalAccessFlags? flags, IEnumerable<PortalPermission> needs)
     {

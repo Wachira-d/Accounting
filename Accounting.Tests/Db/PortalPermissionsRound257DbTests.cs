@@ -160,6 +160,47 @@ public class PortalPermissionsRound257DbTests
     }
 
     [Fact]
+    public async Task R257_M2_ยอดยกมา_นับเฉพาะใบแจ้งหนี้_ไม่นับใบวางบิลของใบเดียวกันและใบเสนอราคา()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var svc = new PortalService(db, Config());
+        var s = await SeedAsync(db, svc);
+        var old = DateTime.UtcNow.Date.AddDays(-40);
+        // ย้ายใบแจ้งหนี้ + ใบซื้อของ seed ไปก่อนช่วง · เพิ่มใบวางบิลที่ครอบใบแจ้งหนี้ใบเดียวกัน + ใบเสนอราคา (ยอดค้างเท่ากัน)
+        await db.Documents.Where(d => d.Id == s.Invoice.Id || d.Id == s.Purchase.Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(d => d.DocumentDate, old));
+        Document Extra(DocumentType t, string prefix) => new()
+        {
+            CompanyId = s.Shop.Id, ContactId = s.Contact.Id, DocumentType = t, DocumentNumber = prefix + Guid.NewGuid().ToString("N")[..8],
+            Status = DocumentStatus.Approved, DocumentDate = old, SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m,
+            BalanceDue = 1_070m, Currency = "THB", RelatedDocumentId = t == DocumentType.BillingNote ? s.Invoice.Id : null,
+        };
+        db.Documents.AddRange(Extra(DocumentType.BillingNote, "BN-"), Extra(DocumentType.Quotation, "QT-"));
+        await db.SaveChangesAsync();
+
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var today = DateTime.UtcNow.Date;
+        var st = await new PortalService(c2, Config()).GetMyStatementAsync(s.Shop.Id, s.Contact.Id, today.AddDays(-7), today.AddDays(1));
+        Assert.Equal(1_070m, st.OpeningBalance);   // เดิม 4,280 (ใบแจ้งหนี้ + ใบวางบิล + ใบเสนอราคา + ใบซื้อ)
+        Assert.Equal(1_070m, st.ClosingBalance);
+        Assert.Empty(st.Lines);
+    }
+
+    [Fact]
+    public async Task R257_L5_สร้างสิทธิ์โดยไม่เปิดธงใดเลย_400()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var svc = new PortalService(db, Config());
+        var s = await SeedAsync(db, svc);
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.CreateAccessAsync(s.Shop.Id,
+            new CreatePortalAccessRequest(s.Contact.Id, $"none-{Guid.NewGuid():N}@cust.test", null, null, false, false, false, false), Guid.NewGuid()));
+        Assert.Equal(400, ex.StatusCode);
+        Assert.False(await db.PortalAccesses.IgnoreQueryFilters().AnyAsync(a => a.CompanyId == s.Shop.Id && a.Email.StartsWith("none-")));
+    }
+
+    [Fact]
     public async Task R257_DH3_ทุกธงครบ_ทุกเส้นผ่าน()
     {
         using var db = DbTestDatabase.TryCreateContext();

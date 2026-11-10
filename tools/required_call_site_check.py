@@ -17398,7 +17398,7 @@ RULES += [
          why=_R257_WHY + "A-M7 ตรวจ Bank.Reconcile เฉพาะเมื่อธงเปลี่ยนจริง · ค่าเดิมถูกถอดจากคำขอ (ไม่เขียนทับ)"),
     dict(file=_R257_LINE, method="Update",
          must=["LineOwnOaGuard.Refusal(", "PlatformCompanyLookup.IdAsync(", "_nextAcc.GetAsync("],
-         before=[("LineOwnOaGuard.Refusal(", "_secrets.Protect(req.ChannelAccessToken)"), ("LineOwnOaGuard.Refusal(", "SaveChangesAsync(")],
+         before=[("LineOwnOaGuard.Refusal(", "_secrets.Protect(req.ChannelAccessToken!.Trim())"), ("LineOwnOaGuard.Refusal(", "SaveChangesAsync(")],
          why=_R257_WHY + "C-H1 token/secret ของ OA กลางห้ามเป็น OA ของร้าน · บริษัทผู้ให้บริการตั้ง OA ของตัวเองไม่ได้ — ก่อนแก้อะไร"),
     dict(file=_R257_LINE, method="BuildAsync",
          must=["LineOwnOaGuard.PlatformNotice(isPlatform)", "IsPlatformCompany = isPlatform", "PlatformCompanyLookup.IdAsync("],
@@ -17422,8 +17422,37 @@ RULES += [
     for m, after in [("GetDocumentAsync", "SlipPendingByDocumentAsync("), ("DownloadDocumentPdfAsync", "HydrateContactAsync("),
                      ("GetDocumentPaymentOptionsAsync", "TransferForDocumentAsync("), ("UploadDocumentSlipAsync", "SubmitAsync(")]
 ] + [
-    dict(file=_R257_PSVC, method=m, must=["CustomerFacingIdsAsync("], why=_R257_WHY + "D-H2 ใบแจ้งยอด/ประวัติชำระ/ส่งออก เฉพาะใบที่ลูกค้าเห็นได้")
-    for m in ["GetMyStatementAsync", "GetMyPaymentsAsync", "ExportAccountantLedgerAsync"]
+    dict(file=_R257_PSVC, method=m, must=["CustomerFacingIdsAsync("], why=_R257_WHY + "D-H2 ประวัติชำระ/ส่งออก เฉพาะใบที่ลูกค้าเห็นได้")
+    for m in ["GetMyPaymentsAsync", "ExportAccountantLedgerAsync"]
+] + [
+    # ── ฝ่ายค้านของ a73aaf91 (ไม่มี HIGH · M1/M2/L1–L8) ──
+    dict(file=_R257_PSVC, method="GetMyStatementAsync", must=["StatementSignsAsync(companyId, inPeriod)", "StatementSignsAsync(companyId, beforeQuery)"],
+         forbid=["SumAsync(d => d.BalanceDue)", "doc.DocumentType == DocumentType.Invoice"],
+         why=_R257_WHY + "M2 ยอดยกมากับบรรทัดในงวดใช้เครื่องหมายจากตัวตัดสินเดียว (ห้ามรวมยอดค้างทุกชนิด)"),
+    dict(file=_R257_PSVC, method="StatementSignsAsync", must=["DocumentPayLinkPolicy.StatementSigned("],
+         why=_R257_WHY + "M2 ตั้งหนี้ = IsSaleSide · ใบลดหนี้ฝั่งขาย = ลบ · อื่น 0"),
+    dict(file=_R257_PSVC, method="CreateAccessAsync", must=["PortalAccessPermissions.CreateRefusal("],
+         before=[("PortalAccessPermissions.CreateRefusal(", "_db.Set<PortalAccess>().Add(")],
+         why=_R257_WHY + "L5 ไม่เปิดธงใดเลย ⇒ 400 ก่อนสร้างแถว"),
+    dict(file=_R257_LINE, method="Update",
+         must=["LineOwnOaGuard.CentralValueRefusal(", "LineOwnOaGuard.Classify(req.ChannelAccessToken)", "LineOwnOaGuard.Classify(req.ChannelSecret)"],
+         before=[("LineOwnOaGuard.CentralValueRefusal(", "SaveChangesAsync(")],
+         forbid=["!string.IsNullOrEmpty(req.ChannelAccessToken)", "!string.IsNullOrEmpty(req.ChannelSecret)"],
+         why=_R257_WHY + "L6/L7 ช่องว่างล้วน = ล้าง · Basic ID/Group ID ของ OA กลางห้ามตั้งเป็นของบริษัท"),
+    dict(file=_R257_LINE, method="BuildAsync", must=["LineOwnOaGuard.PlatformLegacyNotice("],
+         why=_R257_WHY + "M1 บริษัทผู้ให้บริการที่มี token ค้างเห็นสถานะ + ปุ่มล้าง"),
+    dict(file=_R257_REC, method="DenyRecurringWriteAsync", must=["isApiKeyRequest: OwnerActionGuard.IsApiKeyRequest(HttpContext)"],
+         why=_R257_WHY + "L3 คีย์ API ตั้ง/คง/เปิดต่อ/สร้างทันทีรายการอนุมัติ/ส่งอัตโนมัติไม่ได้"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateDocumentFromTemplateAsync",
+         must=["RecurringApprovePolicyLoader.AutoApproverRefusalAsync("],
+         before=[("RecurringApprovePolicyLoader.AutoApproverRefusalAsync(", "_documentService.ApproveDocumentAsync(")],
+         why=_R257_WHY + "L4 ตอนรัน ผู้อนุมัติของรายการต้องยังมีสิทธิ์ — ไม่มี ⇒ ใบค้างร่าง + เหตุ"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateJournalFromTemplateAsync",
+         must=["RecurringApprovePolicyLoader.AutoPostRefusalAsync("],
+         before=[("RecurringApprovePolicyLoader.AutoPostRefusalAsync(", "PostJournalEntryAsync(")],
+         why=_R257_WHY + "L4 post สมุดรายวันอัตโนมัติต้องมีผู้สร้างที่ยังมี Journal.Manage"),
+    dict(file=_R257_PORTAL, method="GetDocuments", must_lit=['DenyPortalAsync(companyId, "pdf")'],
+         why=_R257_WHY + "L8 ปุ่ม PDF ตามธงจากเซิร์ฟเวอร์"),
 ] + [
     dict(file=_R257_PSVC, method=m, must=["AuditAccess(companyId, actorUserId"], why=_R257_WHY + "D-H1 ทุกการให้/แก้/ปิดสิทธิ์มีผู้ทำใน audit")
     for m in ["CreateAccessAsync", "UpdateAccessAsync", "DeactivateAccessAsync"]
@@ -17439,9 +17468,13 @@ REVIEWER_CASES += [
     # ถอดธงอนุมัติออกจากตอนสร้าง (สิทธิ์สร้างอย่างเดียวตั้ง AutoApprove ได้อีก) ⇒ ต้องฟ้อง
     ("R257a", "Create", "RecurringWriteGate.NeedsApprove(request.TemplateType, request.AutoApprove, request.AutoSendEmail)", "false", True),
     # ด่านพอร์ทัลถามธงผิดเส้น (PDF ถาม documents) ⇒ ต้องฟ้อง
-    ("R257c", "DownloadPdf", 'DenyPortalAsync(companyId, "pdf")', 'DenyPortalAsync(companyId, "documents")', True),
+    ("R257c", "DownloadPdf", 'DenyPortalAsync(companyId, "pdf") is { } deny', 'DenyPortalAsync(companyId, "documents") is { } deny', True),
     # OA กลางไม่ถูกกันก่อนบันทึก ⇒ ต้องฟ้อง
     ("R257d", "Update", "LineOwnOaGuard.Refusal(isPlatform", "NoRefusal(isPlatform", True),
+    # ยอดยกมากลับไปรวมยอดค้างทุกชนิด ⇒ ต้องฟ้อง (M2)
+    ("R257f", "GetMyStatementAsync", "var beforeSigns = await StatementSignsAsync(companyId, beforeQuery);", "var beforeSigns = new Dictionary<Guid, decimal>();", True),
+    # ผู้อนุมัติหมดสิทธิ์แต่ยังอนุมัติต่อ ⇒ ต้องฟ้อง (L4)
+    ("R257g", "CreateDocumentFromTemplateAsync", "await RecurringApprovePolicyLoader.AutoApproverRefusalAsync(", "await NoRefusal(", True),
     # เส้นใบเดี่ยวไม่ตรวจฝั่ง ⇒ ต้องฟ้อง
     ("R257e", "GetDocumentAsync", "if (!await IsPortalVisibleAsync(companyId, contactId, documentId))", "if (false)", True),
 ]

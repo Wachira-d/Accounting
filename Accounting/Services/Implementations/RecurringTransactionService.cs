@@ -981,6 +981,9 @@ public class RecurringTransactionService : IRecurringTransactionService
                         // — ไม่มีผล ⇒ Unattended เดิม (ใบค้างร่าง) · ชุดห้ามปล่อยหยุดเสมอ (ตัวตัดสินเดียว ApprovalAcknowledgement)
                         var policyLoad = await RecurringApprovePolicyLoader.LoadAsync(_db, _permissions, recurring.CompanyId, recurring);
                         stoppedPolicyReason = policyLoad.SetterActive == false ? policyLoad.InactiveReason : null;
+                        // รอบ 257 ฝ่ายค้าน L4: ผู้อนุมัติของรายการต้องยังมีสิทธิ์ ณ ตอนรัน — ไม่มี ⇒ ใบค้างร่าง + เหตุ (เส้นล้มเดิมข้างล่าง: หมายเหตุบนใบ + แถวรายการ)
+                        if (await RecurringApprovePolicyLoader.AutoApproverRefusalAsync(_db, _permissions, recurring.CompanyId, recurring, policyLoad) is string approverGone)
+                            throw new Accounting.Helpers.BusinessRuleException(approverGone, RecurringApprovePolicyLoader.AutoApproverRuleCode);
                         // ฝ่ายค้าน MED-3: ไม่มีนโยบายที่มีผล ⇒ แหล่ง Unattended เดิม (ร่องรอยเดิม APPROVE-UNATTENDED-PASSED-S65)
                         var approvedDoc = await _documentService.ApproveDocumentAsync(recurring.CompanyId, result.Id, performedBy,
                             policyLoad.Policy != null ? Accounting.Helpers.ApprovalAckSource.UnattendedWithPolicy : Accounting.Helpers.ApprovalAckSource.Unattended,
@@ -1029,8 +1032,9 @@ public class RecurringTransactionService : IRecurringTransactionService
                             };
                         await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoApprove/{result.Id}");
                         // ฝ่ายค้าน LOW-8: บอก "นโยบายหยุดมีผล" เฉพาะรอบที่มีคำเตือนซึ่งนโยบายจะปล่อยได้จริง (ไม่ใช่ทุกรอบ)
-                        if (stoppedPolicyReason != null && ex is DocumentApprovalWarningsException stopAw
-                            && stopAw.Warnings.Any(w => Accounting.Helpers.AutoApprovePolicy.CodeOf(w) != null))
+                        if (stoppedPolicyReason != null && (ex is DocumentApprovalWarningsException stopAw
+                                ? stopAw.Warnings.Any(w => Accounting.Helpers.AutoApprovePolicy.CodeOf(w) != null)
+                                : ex is Accounting.Helpers.BusinessRuleException { RuleCode: RecurringApprovePolicyLoader.AutoApproverRuleCode }))
                             notices.Add("นโยบายอนุมัติข้ามคำเตือนของรายการนี้หยุดมีผล — " + stoppedPolicyReason + " (ขั้น \"อนุมัติ\" ของรายการประจำ)");
                     }
                 }
@@ -1144,8 +1148,12 @@ public class RecurringTransactionService : IRecurringTransactionService
             var result = await _accountingService.CreateJournalEntryAsync(recurring.CompanyId, request, performedBy);
             await MarkRunAsync(recurring, consumesPeriod, documentId: null);
 
-            // Auto-post if configured
-            if (recurring.AutoApprove && result != null)
+            // Auto-post if configured · รอบ 257 ฝ่ายค้าน L4: ผู้สร้างต้องยังมี Journal.Manage ณ ตอนรัน (ไม่มี ⇒ ค้างร่าง + เหตุบนแถว)
+            var autoPostGone = recurring.AutoApprove && result != null
+                ? await RecurringApprovePolicyLoader.AutoPostRefusalAsync(_db, _permissions, recurring.CompanyId, recurring) : null;
+            if (autoPostGone != null)
+                await SetRunNoticeAsync(recurring, new List<string> { $"สมุดรายวัน {result!.EntryNumber} ไม่ได้ลงบัญชีอัตโนมัติ: {autoPostGone}" });
+            else if (recurring.AutoApprove && result != null)
             {
                 try
                 {

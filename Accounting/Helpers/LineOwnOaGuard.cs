@@ -26,6 +26,41 @@ public static class LineOwnOaGuard
 
     public static bool IsPlatformCompany(Guid companyId, Guid? platformCompanyId) => platformCompanyId is Guid p && p == companyId;
 
+    /// <summary>ค่าที่ส่งมาในช่อง token/secret หมายถึงอะไร (รอบ 257 ฝ่ายค้าน L6 — ช่องว่างล้วน = ล้าง เหมือน "")</summary>
+    public enum InputKind { Keep, Clear, Set }
+
+    public static InputKind Classify(string? value)
+        => value == null ? InputKind.Keep : string.IsNullOrWhiteSpace(value) ? InputKind.Clear : InputKind.Set;
+
+    public const string UnverifiedMessage =
+        "ตรวจรหัสเชื่อมกับ LINE ไม่ได้ (LINE ไม่ตอบ หรือรหัสเชื่อมไม่ถูกต้อง) — ยังไม่ได้บันทึก กรุณาตรวจรหัสเชื่อมแล้วลองใหม่";
+
+    public const string CentralValueMessage =
+        "Basic ID / Group ID นี้เป็นของ LINE OA กลางของ NextAcc — ใช้เป็นค่าของบริษัทไม่ได้ (ปุ่มเพิ่มเพื่อนของลูกค้าและแจ้งเตือนทีมจะไปที่ OA กลางแทน) · "
+        + "ใส่ค่าจาก LINE OA ของร้านเอง หรือเว้นว่าง";
+
+    /// <summary>รอบ 257 ฝ่ายค้าน L7: Basic ID / Group ID ทีมที่จะตั้ง ห้ามเป็นค่าของ OA กลาง (ทุกบริษัท) · null = ผ่าน · ค่าว่าง/null = ไม่ได้ตั้งค่าใหม่</summary>
+    public static string? CentralValueRefusal(string? normalizedBasicId, string? groupId, string? centralBasicId, IEnumerable<string>? centralGroupIds)
+    {
+        if (!string.IsNullOrWhiteSpace(normalizedBasicId) && !string.IsNullOrWhiteSpace(centralBasicId)
+            && string.Equals(normalizedBasicId.Trim().TrimStart('@'), centralBasicId.Trim().TrimStart('@'), StringComparison.OrdinalIgnoreCase))
+            return CentralValueMessage;
+        if (!string.IsNullOrWhiteSpace(groupId) && centralGroupIds != null
+            && centralGroupIds.Any(g => string.Equals(g?.Trim(), groupId.Trim(), StringComparison.Ordinal)))
+            return CentralValueMessage;
+        return null;
+    }
+
+    /// <summary>รอบ 257 ฝ่ายค้าน M1: บริษัทผู้ให้บริการที่ยังมี token/secret ค้างจากก่อนรอบนี้ — หน้าซ่อนส่วน OA ของร้าน แต่ต้องยังเห็นสถานะ + ปุ่มล้าง ·
+    /// null = ไม่มีอะไรค้าง/ไม่ใช่บริษัทผู้ให้บริการ</summary>
+    public static string? PlatformLegacyNotice(bool isPlatformCompany, bool hasAccessToken, bool hasChannelSecret)
+        => isPlatformCompany && (hasAccessToken || hasChannelSecret)
+            ? "⚠️ บริษัทนี้ยังมีรหัสเชื่อม/รหัสลับ “OA ของร้านเอง” ที่บันทึกไว้ก่อนหน้า ("
+              + (hasAccessToken && hasChannelSecret ? "รหัสเชื่อม + รหัสลับ" : hasAccessToken ? "รหัสเชื่อม" : "รหัสลับ")
+              + ") — บริษัทผู้ให้บริการต้องไม่ใช้ OA กลางเป็น OA ของตัวเอง กรุณากด “ล้างรหัสเชื่อมและรหัสลับที่บันทึกไว้” "
+              + "แล้วตรวจใน LINE Developers ว่า Webhook ของ OA กลางยังชี้ /api/line-webhook"
+            : null;
+
     /// <summary>ตัดสินคำขอแก้ token/secret · null = ผ่าน · <paramref name="newToken"/>/<paramref name="newSecret"/> = ค่าที่จะตั้ง (null/ว่าง = ไม่ได้ตั้งค่าใหม่)</summary>
     public static string? Refusal(bool isPlatformCompany, string? newToken, string? newSecret,
         string? fetchedBotUserId, string? centralBotUserId, string? centralToken, string? centralSecret)
@@ -37,6 +72,8 @@ public static class LineOwnOaGuard
         if (setsToken && Same(newToken, centralToken)) return CentralOaMessage;
         if (setsSecret && Same(newSecret, centralSecret)) return CentralOaMessage;
         if (isPlatformCompany) return PlatformCompanyMessage;
+        // รอบ 257 ฝ่ายค้าน L7: ถาม LINE ไม่ได้ว่าเป็นบอทไหน ⇒ ไม่บันทึก token ที่ยังไม่ได้ตรวจ (อาจเป็นบอทกลาง)
+        if (setsToken && string.IsNullOrWhiteSpace(fetchedBotUserId)) return UnverifiedMessage;
         return null;
     }
 
