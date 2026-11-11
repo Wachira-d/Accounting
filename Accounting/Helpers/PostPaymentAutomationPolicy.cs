@@ -166,7 +166,8 @@ public static class PostPaymentAutomationPolicy
 
         var autoOff = f.AutoSendBlockedReason;
         // รอบ 258-3 (F-H1): ช่องทางส่งใบเสร็จ = อีเมล (ตัวหาผู้รับเดียว) และ/หรือ LINE (ปลายทางที่ติ๊ก "ใบเสร็จ") — ไม่มีอีเมลแต่มี LINE ⇒ ออก+ส่งทาง LINE (เดิมหยุด)
-        var emailOk = OnBehalfEmailSender.IsPlausibleEmail(f.CustomerEmail);
+        // ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ⇒ ถือว่ามีขั้นส่ง (แล้วตัดออกพร้อมเหตุข้างล่าง — ฝ่ายค้าน WP-08 HIGH-2: เหตุคือค่าตั้ง ไม่ใช่ "ไม่มีอีเมล")
+        var emailOk = autoOff != null || OnBehalfEmailSender.IsPlausibleEmail(f.CustomerEmail);
         var lineOk = f.LineReceiptEndpoints > 0;
         if (autoOff == null && !emailOk && !lineOk)
             blocked.Add(f.EmailOptOutReason != null
