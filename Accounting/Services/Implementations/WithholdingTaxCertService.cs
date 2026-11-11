@@ -1619,5 +1619,6 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(w.PayeeContact.TitleTh, w.PayeeContact.Name, w.PayeeContact.TaxId,
             w.PayeeContact.BranchCode, w.PayeeContact.BranchName),
         TotalTaxAmountInWords: Accounting.Helpers.ThaiBahtText.Format(w.TotalTaxAmount),
-        ExchangeRateUsed: w.ExchangeRateUsed, ExchangeRateBasis: w.ExchangeRateBasis);
+        ExchangeRateUsed: w.ExchangeRateUsed, ExchangeRateBasis: w.ExchangeRateBasis,
+        PartnerDeliveryLabel: Accounting.Helpers.PartnerExchangeRules.WhtDeliveryLabel(w.PartnerDeliveredAt, w.PartnerDeliveryError));
 }

@@ -267,6 +267,12 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.AutopilotMigration.Statements());   // รอบ 252 WP-12A — Autopilot: สรุปประจำวัน · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ
         list.AddRange(Accounting.Helpers.NotifyChannelQuotaMigration.Statements());   // รอบ 254 WP-11 L4 — ตัวนับ/เพดาน/โบนัส/แพ็กแยกช่อง LINE·อีเมล (หลังบล็อกรอบ 212/213 ที่สร้างตาราง)
         list.AddRange(Accounting.Helpers.AutopilotPartnerMigration.Statements());   // รอบ 255 WP-12B — รายการประจำทุก N เดือน/ล่วงหน้า · คู่ค้า NextAcc · ใบซื้อร่าง · 50 ทวิ ผ่านคู่ค้า · พอร์ทัลลิงก์วิเศษ
+        list.AddRange(Accounting.Helpers.PartnerPaymentNoticeMigration.Statements());   // รอบ 258-3 F-H3 — การแจ้ง "ผู้ขายคู่ค้ารับเงินแล้ว" ในบริษัทผู้ซื้อ
+        list.AddRange(Accounting.Helpers.PortalAccessPermissions.MigrationStatements());   // รอบ 257 D-H3 — คืนธงสิทธิ์พอร์ทัลที่หน้าเดิมบันทึกเป็น false ทั้งหมด (ครั้งเดียว · ก่อนเปิดด่านธง)
+        list.AddRange(Accounting.Helpers.Round257Pack4Migration.Statements());   // รอบ 257 ชุด 4 — ลายนิ้วมือค่าตั้งต้นรายการประจำ · ใบสำคัญไม่สร้างล่วงหน้า · ถอนความยินยอมเมื่อบริษัทยกเลิกปลายทาง (หลังบล็อกที่สร้างตาราง)
+        list.AddRange(Accounting.Helpers.CustomerCreditMigration.Statements());   // รอบ 258 — เงินรอจัดสรร: คอลัมน์ Payments/PaymentAllocations · ผัง 21630 · backfill ครั้งเดียว (หลัง OneShotDataFixesTableSql)
+        // ฝ่ายค้านรอบ 258 M4 — หลัง backfill: แถวที่ backfill รุ่นแรกประทับไปแล้ว (ผังพักไม่ใช่ 21630) ติดธง "ต้องตรวจ" ครั้งเดียวใต้ marker
+        list.Add(Accounting.Helpers.CustomerCreditMigration.LegacyReviewSql());
         return list;
     }
 
@@ -279,6 +285,12 @@ public static class DatabaseMigrationHelper
     {
         """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "UpcomingRunNotifiedFor" timestamp NULL;""",
         """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "RepeatActivatedAt" timestamp NULL;""",
+        // รอบ 258 (B-M7): ลายน้ำสแกนตามวันต่อกฎ + บันทึกการส่งย้อนหลัง (Helpers/ScheduleCatchUp)
+        """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "LastDayScanBkk" timestamp NULL;""",
+        """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "LastCatchUpNote" text NULL;""",
+        // รอบ 258 ฝ่ายค้าน R-M3: แยก "จองแล้วยังไม่เคยลองส่ง" ออกจาก "เริ่มส่งแล้วตาย" + โทเคนผู้จอง (Helpers/EmailQueueStaleSending)
+        """ALTER TABLE "EmailQueues" ADD COLUMN IF NOT EXISTS "SendStartedAt" timestamp NULL;""",
+        """ALTER TABLE "EmailQueues" ADD COLUMN IF NOT EXISTS "ClaimToken" uuid NULL;""",
         """UPDATE "EmailScheduleRules" SET "RepeatActivatedAt" = (now() at time zone 'utc') WHERE "RepeatEveryDays" > 0 AND "RepeatActivatedAt" IS NULL;""",
         """
         DO $$
@@ -6344,6 +6356,19 @@ public static class DatabaseMigrationHelper
             """,
             // ── รอบ 253 (WP-10 · AUTO_SEND_WHT_DESIGN §3.2/§4.3/§6.3 · N4): ลิงก์อัปโหลด 50 ทวิ · ทวงอัตโนมัติ · ยอมรับ "ไม่หัก" · เลขอ้างอิง e-WHT ──
             """ALTER TABLE "WhtCertIntakes" ADD COLUMN IF NOT EXISTS "EvidenceReference" varchar(100) NULL;""",
+            // ── รอบ 257 ชุด 2 ฝ่ายค้าน (L2/L7): แถวเครดิตที่ "บันทึกเป็นรายการใหม่" จากใบในกล่องรับ (ถอนใบ ⇒ ถอดแถวด้วยคอลัมน์นี้เท่านั้น) ·
+            // ชนิดหลักฐานของแถวก่อนใบนี้ลง (ถอนใบ ⇒ คืนค่าเดิม) · เติมย้อนหลังจากหมายเหตุที่ระบบเขียนเอง ("สร้างจากใบ 50 ทวิ ในกล่องรับ") + การจัดสรรที่ยืนยันแรกสุด (บริษัทเดียวกัน · รันซ้ำได้)
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "CreatedFromIntakeId" uuid NULL;""",
+            """ALTER TABLE "WhtCertAllocations" ADD COLUMN IF NOT EXISTS "PriorEvidenceKind" integer NULL;""",
+            """
+            UPDATE "WhtCreditsReceived" w SET "CreatedFromIntakeId" = x."IntakeId"
+              FROM (SELECT DISTINCT ON (a."WhtCreditId") a."WhtCreditId", a."IntakeId", a."CompanyId"
+                      FROM "WhtCertAllocations" a
+                     WHERE a."Status" = 1 AND a."IsDeleted" = false
+                     ORDER BY a."WhtCreditId", a."CreatedAt") x
+             WHERE x."WhtCreditId" = w."Id" AND x."CompanyId" = w."CompanyId" AND w."CreatedFromIntakeId" IS NULL
+               AND w."DocumentId" IS NULL AND w."PaymentId" IS NULL AND w."Notes" LIKE 'สร้างจากใบ 50 ทวิ ในกล่องรับ%';
+            """,
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WhtCertReminderEnabled" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WhtCertReminderLastRunAt" timestamptz NULL;""",
             """

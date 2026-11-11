@@ -4809,8 +4809,11 @@ public class OcrService : IOcrService
                 .ToList();
             // ส่วนลดท้ายบิลที่อ่านได้ (EnrichFromRawText เติมก่อนถึงที่นี่ · ส่วนลดหลังใบกำกับถูกล้างเป็น null แล้ว) — ใบที่มีส่วนลด
             // Σ บรรทัด = หัวใบ + ส่วนลด ไม่งั้นใบต้นฉบับ+สำเนาที่มีส่วนลดจะ "ไม่ตรงทั้งสองทาง" แล้วหลุดไปขั้น 4 เป็น ×2 เงียบ (ฝ่ายค้านข้อ 1)
+            // รอบ 257: ใบรายการเดียวที่มีหน้าสำเนา (BS2026100012 · 54 → 108) — หลักฐานหน้าสำเนาจากข้อความกระดาษ ให้ตัวตัดสินยอมเทียบหัวใบได้
+            var copyEvidence = dupRows.Count >= 2 && dupRows.Select(r => (r.Description ?? "").Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1
+                && Accounting.Helpers.OcrDuplicateLineGuard.PageCopyEvidence(paperText, dupRows[0].Description, dupRows.Count);
             var dup = Accounting.Helpers.OcrDuplicateLineGuard.Decide(
-                dupRows, data.SubTotal, data.VatAmount, data.TotalAmount, data.DiscountAmount ?? 0m);
+                dupRows, data.SubTotal, data.VatAmount, data.TotalAmount, data.DiscountAmount ?? 0m, copyEvidence);
             if (dup.Deduped)
             {
                 var keepIdx = new HashSet<int>(dup.KeepIndexes);
@@ -10664,6 +10667,23 @@ public class OcrService : IOcrService
             {
                 ComplianceIssues = Ocr.OcrScanComplianceEvaluator.Evaluate(x, ourTaxId),
                 DocumentSideMap = sideMap,
+            })
+            // รอบ 258 (C-H2): ธง "อนุมัติรวดได้ไหม" ตัดสินที่เซิร์ฟเวอร์จากผลตรวจข้างบน (ตัวเดียว OcrPostingReadiness.EvaluateUnseen)
+            .Select(x =>
+            {
+                var verdict = Accounting.Helpers.OcrPostingReadiness.EvaluateUnseen(
+                    x.ScanStatus, x.CreatedDocumentId.HasValue, x.IsDuplicate, x.HasHandwriting, x.HasPotentialFixedAsset,
+                    !string.IsNullOrWhiteSpace(x.ExtractedVendorName), x.ExtractedTotalAmount != null,
+                    x.ProcessingNotes, x.ExtractedDate != null, x.ComplianceIssues?.Select(i => i.Severity), x.Quality?.Letter);
+                // รอบ 258 ฝ่ายค้าน R-L2: ธงของปุ่ม "สร้าง + อนุมัติ" ในหน้าตรวจ (ด่านเดียวกับ endpoint)
+                var reviewed = Accounting.Helpers.OcrPostingReadiness.EvaluateReviewed(
+                    x.ScanStatus, x.CreatedDocumentId.HasValue, x.ProcessingNotes, x.ExtractedDate != null,
+                    x.ComplianceIssues?.Select(i => i.Severity), x.Quality?.Letter);
+                return x with
+                {
+                    CanAutoApprove = verdict.CanAutoApprove, AutoApproveBlockedReason = verdict.Reason,
+                    CanCreateAndApprove = reviewed?.CanAutoApprove, CreateAndApproveBlockedReason = reviewed?.Reason,
+                };
             })
             .ToList();
     }

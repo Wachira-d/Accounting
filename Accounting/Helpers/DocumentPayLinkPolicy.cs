@@ -135,6 +135,49 @@ public static class DocumentPayLinkPolicy
         return !r.SideUnknown && r.IsInflow;
     }
 
+    /// <summary>รอบ 257 D-H2 — เอกสารนี้ "ลูกค้าเห็นได้" ไหม (พอร์ทัลลูกค้า: รายการ · PDF · ใบแจ้งยอด · ประวัติชำระ · ส่งออก · ชำระ/แนบสลิป) ·
+    /// ต่อยอดจาก <see cref="IsSaleSide"/> (ตัวตัดสินฝั่งเดียวกับลิงก์ชำระ) — ใบที่ลูกค้าจ่ายเรา = ใช่ · ชนิดฝั่งขายอื่น (ใบเสนอราคา · ใบเสร็จ · ใบวางบิล · ใบส่งของ)
+    /// ตามชุดของ <see cref="DocumentPermissionHelper.IsRevenue"/> (ไม่ทำรายการชนิดสำเนาที่สอง) · ใบลดหนี้/ใบเพิ่มหนี้ = ฝั่งขายตามตัวตัดสินฝั่งเดียวกับ JE
+    /// (<see cref="AdjustmentNoteAccount.ResolvePostedSide"/>) · <b>ไม่รู้ฝั่ง/ฝั่งซื้อ = ไม่ใช่</b> (ผู้ติดต่อที่เป็นทั้งลูกค้าและผู้ขายต้องไม่เห็นใบซื้อ/PO/ค่าใช้จ่าย/ใบลดหนี้จากผู้ขาย)</summary>
+    public static bool IsCustomerFacing(DocumentType type, DocumentType? relatedType, bool? cnDnPurchaseSideOverride, bool contactIsSupplierOnly,
+        bool contactIsCustomerOnly = false)
+    {
+        if (IsSaleSide(type, relatedType, cnDnPurchaseSideOverride, contactIsSupplierOnly)) return true;
+        if (!DocumentPermissionHelper.IsRevenue(type)) return false;
+        if (!CashFlowDirection.NeedsSideFacts(type)) return true;
+        return IsSaleSideAdjustment(relatedType, cnDnPurchaseSideOverride, contactIsSupplierOnly, contactIsCustomerOnly);
+    }
+
+    /// <summary>รอบ 257 ฝ่ายค้าน L1: ใบลดหนี้/ใบเพิ่มหนี้เป็นฝั่งขายไหม — ตัวตัดสินฝั่งเดียวกับ JE (<see cref="AdjustmentNoteAccount.ResolvePostedSide"/>) ·
+    /// ไม่มีใบต้นทาง/ไม่ได้สั่งฝั่ง แต่ผู้ติดต่อเป็น<b>ลูกค้าอย่างเดียว</b> (ไม่ใช่ผู้ขาย) ⇒ ฝั่งขาย (ด้านกลับของ "ผู้ขายอย่างเดียว ⇒ ฝั่งซื้อ") ·
+    /// ผู้ติดต่อเป็นทั้งสองอย่าง/ไม่ระบุ ⇒ ยังไม่รู้ = ไม่ใช่ฝั่งขาย</summary>
+    private static bool IsSaleSideAdjustment(DocumentType? relatedType, bool? cnDnPurchaseSideOverride, bool contactIsSupplierOnly, bool contactIsCustomerOnly)
+    {
+        var side = AdjustmentNoteAccount.ResolvePostedSide(cnDnPurchaseSideOverride, relatedType, null, contactIsSupplierOnly);
+        if (side.Unknown) return contactIsCustomerOnly && !contactIsSupplierOnly;
+        return !side.IsPurchase;
+    }
+
+    /// <summary>รอบ 257 ฝ่ายค้าน M2 — ยอดของใบหนึ่งใบใน "ยอดยกมา" ของใบแจ้งยอดพอร์ทัล (ตัวเดียวกับบรรทัดในงวด):
+    /// ใบที่ลูกค้าจ่ายเรา (<see cref="IsSaleSide"/>) = +ยอดค้าง · ใบลดหนี้ฝั่งขาย = −ยอดค้าง · อื่น ๆ (ใบเสนอราคา · ใบวางบิล · ใบเสร็จ · ใบส่งของ) = 0
+    /// — ใบวางบิลครอบใบแจ้งหนี้ที่ตั้งหนี้ไว้แล้ว (นับซ้ำ) · ใบเสนอราคายังไม่เป็นหนี้ (เหตุผลเดียวกับ <see cref="ArApScope"/>)</summary>
+    public static decimal StatementSigned(DocumentType type, DocumentType? relatedType, bool? cnDnPurchaseSideOverride, bool contactIsSupplierOnly,
+        bool contactIsCustomerOnly, decimal amount)
+    {
+        if (IsSaleSide(type, relatedType, cnDnPurchaseSideOverride, contactIsSupplierOnly)) return amount;
+        if (type == DocumentType.CreditNote && IsSaleSideAdjustment(relatedType, cnDnPurchaseSideOverride, contactIsSupplierOnly, contactIsCustomerOnly))
+            return -amount;
+        return 0m;
+    }
+
+    /// <summary>รอบ 257 ปิดท้าย LOW — ใบลดหนี้ฝั่งขายยัง "ลดยอด" ในใบแจ้งยอดพอร์ทัลเองไหม ·
+    /// ใบลดหนี้ที่อ้างใบต้นทาง ถูกนำไปลดยอดค้างของใบต้นทางแล้วตอนอนุมัติ (<c>ApplySourceDocumentAdjustmentsAsync</c>: PaidAmount ของใบต้นทางเพิ่ม ⇒ BalanceDue ลด)
+    /// หรือคืนเป็นเงินสดแล้ว (ใบต้นทางชำระครบ) ⇒ <b>ยอดยกมา</b> (ซึ่งอ่าน BalanceDue ของใบต้นทาง) หักไปแล้ว — หักซ้ำด้วยตัวใบลดหนี้ = ยอดลูกค้าต่ำเกินจริง ·
+    /// นับเองเฉพาะ (ก) ใบลดหนี้ที่ไม่มีใบต้นทาง (เครดิตลอย) (ข) ใบลดหนี้ในงวดที่ใบต้นทางก็อยู่ในงวด (ใบต้นทางขึ้นบรรทัดด้วยยอดเต็ม) · pure</summary>
+    /// <param name="hasSource">ใบลดหนี้อ้างใบต้นทางที่มีอยู่ในบริษัท</param>
+    /// <param name="sourceListedInPeriod">ใบต้นทางลงวันที่ในงวดของใบแจ้งยอด (ขึ้นบรรทัดด้วยยอดเต็ม) — ใบลดหนี้ก่อนงวดส่ง false</param>
+    public static bool StatementCreditNoteReduces(bool hasSource, bool sourceListedInPeriod) => !hasSource || sourceListedInPeriod;
+
     /// <summary>ผู้ซื้อมีหน้าที่หักภาษี ณ ที่จ่ายไหม (ฝ่ายค้าน S3) — นิติบุคคล/หน่วยงานรัฐ = มี (ท.ป.4/2528) · บุคคลธรรมดา = ไม่มี ·
     /// ชนิดไม่รู้ ⇒ ใช้รูปเลขผู้เสียภาษี (<see cref="ContactTypeResolver.FromTaxId"/> ตัวเดิม) · ยังไม่รู้ ⇒ <c>null</c> (ผู้เรียกเชื่อยอดที่ผู้ใช้ตั้งบนใบ)</summary>
     public static bool? BuyerWithholds(ContactType? declared, string? taxId)

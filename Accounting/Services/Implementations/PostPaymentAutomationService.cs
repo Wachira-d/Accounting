@@ -288,7 +288,10 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         var mayCarryVat = SettlementReceiptPolicy.CarriesTaxInvoiceRole(doc.DocumentType, doc.VatAmount,
             fullyPaid && paymentCount == 1, liveVatReceiptExists: false);
         // รอบ 250 WP-08: ผู้รับเรื่อง "ใบเสร็จ" จากตัวหาผู้รับเดียว (ปลายทางของผู้ติดต่อ · ไม่ตั้ง = Contact.Email เดิม)
-        var receiptDelivery = ContactRecipientRule.ForEmail(await _recipients.ResolveAsync(cid, doc.ContactId, NotifyTopic.Receipt, ct));
+        var receiptSet = await _recipients.ResolveAsync(cid, doc.ContactId, NotifyTopic.Receipt, ct);
+        var receiptDelivery = ContactRecipientRule.ForEmail(receiptSet);
+        // รอบ 258-3 (F-H1 · A-M4): ปลายทาง LINE ที่ติ๊ก "ใบเสร็จ" (ค่าตั้งต้นของผู้ใช้ LINE ติ๊กให้แล้ว — NotifyTopics.DefaultsFor) · ตัวกรองเดียว ContactLineChannel.LineEndpoints
+        var lineEndpoints = ContactLineChannel.LineEndpoints(receiptSet.Options);
         var buyerBlock = Tax.TaxInvoiceCompletenessChecker.BuyerBlockingFields(true, doc.VatAmount, contact,
             isDeferredVatDeposit: false, buyerDeclinedTaxInvoice: doc.BuyerDeclinedTaxInvoice);
 
@@ -296,6 +299,12 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         var whtRegistered = payment.WithholdingTaxAmount <= 0.005m || await _db.WhtCreditsReceived.AsNoTracking()
             .AnyAsync(w => w.CompanyId == cid && !w.IsDeleted && (w.PaymentId == payment.Id || w.DocumentId == doc.Id), ct);
 
+        // รอบ 258-3 ฝ่ายค้าน M2: บริษัทโหมด e-Tax by Email + ใบที่จะส่งอาจเป็นใบกำกับ (ประมาณแบบระวังเหมือน mayCarryVat) ⇒ อีเมล e-Tax ก่อน · LINE อย่างเดียวไม่พอ
+        var etaxCfg = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == cid)
+            .Select(x => new { x.EtaxEnabled, x.EtaxMode }).FirstOrDefaultAsync(ct);
+        var etaxEmailRequired = etaxCfg != null && EtaxDeliveryRouter.ByEmailActive(etaxCfg.EtaxEnabled, etaxCfg.EtaxMode)
+            && (receipt != null ? (receipt.IsTaxInvoiceByLaw == true || receipt.VatAmount > 0m)
+                : servesAsReceipt ? doc.VatAmount > 0m : mayCarryVat);
         var plan = PostPaymentAutomationPolicy.Decide(settings, new PostPaymentAutomationPolicy.Facts(
             SaleSide: saleSide, SourceStatus: doc.Status, PaymentVoided: payment.IsDeleted,
             FullyPaid: fullyPaid, AllocationCount: allocations,
@@ -308,7 +317,9 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             Source: PostPaymentAutomationPolicy.ParseSource(run.Source), SupersedingTaxInvoiceNumber: supersedingTaxInvoice,
             EmailOptOutReason: receiptDelivery.OptOutReason,
             // ฝ่ายค้าน HIGH-2/MED-4: ไม่ส่งอัตโนมัติชนะทุกชั้น (รวมตาราง/รายการประจำที่ตั้ง On) แต่ห้ามแค่ขั้นส่งอีเมล — ออกใบเสร็จยังเดินตามค่าตั้ง
-            AutoSendBlockedReason: AutopilotSettingsResolver.AutoSendBlock(contact?.AutoSendDisabled == true)));
+            AutoSendBlockedReason: AutopilotSettingsResolver.AutoSendBlock(contact?.AutoSendDisabled == true),
+            LineReceiptEndpoints: lineEndpoints.Count,
+            EtaxEmailRequired: etaxEmailRequired));
         if (plan.Skipped != null)
             return new RunResult(PostPaymentAutomationPolicy.StatusSkipped, plan.Skipped, doc.DocumentNumber, receipt?.Id);
 
@@ -359,6 +370,14 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
                     done.Add("ส่งใบเสร็จถึง " + sentR.To);
                     if (sentR.Note != null) done.Add(sentR.Note);
                     break;
+                case PostPaymentAutomationPolicy.Step.LineReceipt:
+                    // ใบเสร็จของการชำระนี้ (ออกในขั้นก่อน/มีอยู่แล้ว) หรือใบต้นทางที่เป็นใบเสร็จอยู่แล้ว
+                    var lineTarget = receiptId ?? (servesAsReceipt ? doc.Id : (Guid?)null);
+                    if (lineTarget is not Guid lt) { blocked.Add("ไม่พบใบเสร็จของการชำระนี้ — ยังไม่ได้ส่งทาง LINE"); break; }
+                    var queuedLine = await EnqueueReceiptLineAsync(cid, lt, doc.ContactId, lineEndpoints, ct);
+                    run = await MarkDoneAsync(run.Id, step, receiptId, ct);
+                    done.Add(queuedLine > 0 ? $"เข้าคิวส่งใบเสร็จทาง LINE {queuedLine} ปลายทาง (สถานะการส่งดูที่ ตารางส่ง › คิว LINE)" : "ใบเสร็จนี้เข้าคิว LINE ไปแล้ว (ไม่ส่งซ้ำ)");
+                    break;
                 case PostPaymentAutomationPolicy.Step.EmailSourceAsReceipt:
                     var sentS = await SendReceiptAsync(cid, doc.Id, payment.Id, receiptDelivery, ct);
                     if (sentS.Refusal is { } etaxBlockS)
@@ -378,6 +397,35 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         return blocked.Count > 0
             ? new RunResult(PostPaymentAutomationPolicy.StatusBlocked, msg, doc.DocumentNumber, receiptId)
             : new RunResult(PostPaymentAutomationPolicy.StatusDone, msg.Length == 0 ? "ทำครบแล้ว" : msg, doc.DocumentNumber, receiptId);
+    }
+
+    /// <summary>รอบ 258-3 (F-H1): เข้าคิวการ์ด LINE ของใบเสร็จ — หนึ่งแถวต่อปลายทาง (กุญแจ <see cref="ContactLineChannel.ReceiptBaseKey"/> +
+    /// <see cref="ContactLineChannel.QueueKey"/> ⇒ เอกสาร+ปลายทางเดียวกันไม่เข้าคิวซ้ำ แม้งานลองใหม่) · ไม่ถอยไปอีเมล (ขั้นอีเมลของงานนี้ตัดสินอีเมลเอง) ·
+    /// ผู้ส่ง = <see cref="ContactLineQueueService"/> ตัวเดิม (ตรวจปลายทาง/ความยินยอมซ้ำตอนส่ง · ล้ม = สถานะ+เหตุบนแถวคิว + แถว Autopilot "LINE ส่งไม่ออก")</summary>
+    private async Task<int> EnqueueReceiptLineAsync(Guid companyId, Guid receiptId, Guid contactId,
+        IReadOnlyList<ContactRecipientRule.RecipientOption> endpoints, CancellationToken ct)
+    {
+        var baseKey = ContactLineChannel.ReceiptBaseKey(receiptId);
+        var existing = await _db.LineQueues.AsNoTracking()
+            .Where(q => q.CompanyId == companyId && q.BaseKey == baseKey && !q.IsDeleted)
+            .Select(q => q.IdempotencyKey).ToListAsync(ct);
+        var now = DateTime.UtcNow;
+        var added = 0;
+        foreach (var ep in endpoints)
+        {
+            var key = ContactLineChannel.QueueKey(baseKey, ep.EndpointId);
+            if (existing.Contains(key)) continue;
+            _db.LineQueues.Add(new LineQueue
+            {
+                CompanyId = companyId, RuleId = null, EntityType = "Document", EntityId = receiptId, ContactId = contactId,
+                EndpointId = ep.EndpointId, EndpointKind = ep.Kind, Topic = NotifyTopic.Receipt.ToString(), Trigger = ContactLineChannel.ReceiptTrigger,
+                ScheduledFor = now, Status = ContactLineChannel.StatusPending, RetryKey = ContactLineChannel.RetryKey(companyId, key),
+                IdempotencyKey = key, BaseKey = baseKey, FallbackToEmail = false, CreatedBy = SystemActor,
+            });
+            added++;
+        }
+        if (added > 0) await _db.SaveChangesAsync(ct);
+        return added;
     }
 
     /// <summary>ส่งใบเสร็จผ่านทางเข้าเดียวของอีเมลเอกสาร (<c>SendDocumentRoutedAsync</c> — รอบ 244: ใบกำกับของบริษัทโหมด e-Tax by Email ไปทาง e-Tax) ·

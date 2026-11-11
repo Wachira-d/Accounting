@@ -277,10 +277,6 @@ Accounting/Controllers/ECommerceController.cs	SyncOrders	1
 Accounting/Controllers/ECommerceController.cs	TestConnection	1
 Accounting/Controllers/EarlyPaymentDiscountController.cs	Create	1
 Accounting/Controllers/EarlyPaymentDiscountController.cs	Update	1
-Accounting/Controllers/EmailScheduleController.cs	Cancel	1
-Accounting/Controllers/EmailScheduleController.cs	DeleteRule	1
-Accounting/Controllers/EmailScheduleController.cs	Retry	1
-Accounting/Controllers/EmailScheduleController.cs	UpsertRule	1
 Accounting/Controllers/GovernmentServiceController.cs	GetShippingRates	1
 Accounting/Controllers/GovernmentServiceController.cs	RequestTimestamp	1
 Accounting/Controllers/GovernmentServiceController.cs	SyncBotRates	1
@@ -317,10 +313,6 @@ Accounting/Controllers/MobileController.cs	QuickApprove	1
 Accounting/Controllers/MobileController.cs	RegisterDevice	1
 Accounting/Controllers/MobileController.cs	Sync	1
 Accounting/Controllers/MobileController.cs	UnregisterDevice	1
-Accounting/Controllers/NotificationConfigController.cs	BulkUpsertSettings	1
-Accounting/Controllers/NotificationConfigController.cs	ClearMyLineBinding	1
-Accounting/Controllers/NotificationConfigController.cs	SetMyLineBinding	1
-Accounting/Controllers/NotificationConfigController.cs	UpsertMyPreferences	1
 Accounting/Controllers/NotificationController.cs	MarkAllAsRead	1
 Accounting/Controllers/NotificationController.cs	MarkAsRead	1
 Accounting/Controllers/OcrController.cs	PurchaseCredits	1
@@ -331,16 +323,12 @@ Accounting/Controllers/OrganizationController.cs	DeleteDepartment	1
 Accounting/Controllers/OrganizationController.cs	DeletePosition	1
 Accounting/Controllers/OrganizationController.cs	UpdateDepartment	1
 Accounting/Controllers/OrganizationController.cs	UpdatePosition	1
-Accounting/Controllers/PortalController.cs	CreateAccess	1
-Accounting/Controllers/PortalController.cs	Deactivate	1
 Accounting/Controllers/PortalController.cs	Login	1
 Accounting/Controllers/PortalController.cs	Refresh	1
 # รอบ 255 WP-12B ข้อ 8: ลิงก์วิเศษพอร์ทัล — ทางเข้าสาธารณะโดยตั้งใจ (คู่กับ Login): ขอ = คำตอบเดียวทุกกรณี + เพดานต่ออีเมล/บริษัท fail-closed + เวลาตอบขั้นต่ำ ·
 # แลก = โทเคน 256 บิต (hash) 15 นาที ใช้ครั้งเดียว + เพดานต่อบริษัท · ส่งเฉพาะอีเมลที่ผู้ขายเปิด PortalAccess — ล็อก R255
 Accounting/Controllers/PortalController.cs	RedeemMagicLink	1
 Accounting/Controllers/PortalController.cs	RequestMagicLink	1
-Accounting/Controllers/PortalController.cs	UpdateAccess	1
-Accounting/Controllers/PortalController.cs	UploadDocumentSlip	1
 Accounting/Controllers/PosFloorPlanController.cs	BulkSave	1
 Accounting/Controllers/PosFloorPlanController.cs	Create	1
 Accounting/Controllers/PosFloorPlanController.cs	CreateTable	1
@@ -412,12 +400,6 @@ Accounting/Controllers/PublicQuotationController.cs	Accept	1
 Accounting/Controllers/PublicQuotationController.cs	SignDelivery	1
 Accounting/Controllers/PublicReservationController.cs	Cancel	1
 Accounting/Controllers/PublicReservationController.cs	Create	1
-Accounting/Controllers/RecurringController.cs	Create	1
-Accounting/Controllers/RecurringController.cs	Delete	1
-Accounting/Controllers/RecurringController.cs	Pause	1
-Accounting/Controllers/RecurringController.cs	Resume	1
-Accounting/Controllers/RecurringController.cs	RunNow	1
-Accounting/Controllers/RecurringController.cs	Update	1
 Accounting/Controllers/ReportBuilderController.cs	Create	1
 Accounting/Controllers/ReportBuilderController.cs	Delete	1
 Accounting/Controllers/ReportBuilderController.cs	Duplicate	1

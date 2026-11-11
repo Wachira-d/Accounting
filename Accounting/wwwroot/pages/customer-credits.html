@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เงินรอจัดสรร - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">เงินรอจัดสรร</h2>
+        <p class="page-subtitle">เงินที่รับจากลูกค้าแล้วแต่ยังไม่ผูกกับใบแจ้งหนี้ (เช่น ลูกค้าโอนก้อนเดียวปิดสองยอด แต่ออกใบไว้ใบเดียว) — ออกใบแล้วกด “จัดสรรให้ใบ”</p>
+      </div>
+      <button class="btn btn-secondary" onclick="Page.load(true)">โหลดใหม่</button>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">
+        <div><div class="text-xs text-gray-500">เงินรอจัดสรรคงเหลือรวม</div><div class="font-bold" style="font-size:22px" id="ccTotal">-</div></div>
+        <div><div class="text-xs text-gray-500">ยอดผัง 21630 ในบัญชีแยกประเภท</div><div class="font-semibold" id="ccGl">-</div></div>
+        <div id="ccContactFilter" class="text-sm" style="display:none"></div>
+        <label class="text-sm" style="margin-left:auto;display:flex;gap:6px;align-items:center">
+          <input type="checkbox" id="ccIncludeResolved" onchange="Page.load()"> แสดงรายการที่จัดสรรครบแล้ว
+        </label>
+      </div>
+      <div id="ccGlNote" class="text-sm" style="display:none;padding:0 16px 12px;color:#92400e"></div>
+    </div>
+
+    <div class="card" id="ccReceiptPending" style="display:none;margin-bottom:12px"></div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr>
+          <th>ลูกค้า</th><th>วันรับเงิน</th><th>เลขการรับชำระ</th>
+          <th class="text-right">ยอดรับ</th><th class="text-right">คงเหลือรอจัดสรร</th>
+          <th>เหตุผล</th><th class="text-right">อายุ (วัน)</th><th>จัดการ</th>
+        </tr></thead>
+        <tbody id="ccBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- จัดสรรให้ใบ -->
+    <div class="modal-overlay" id="ccAllocModal">
+      <div class="modal" style="max-width:760px">
+        <div class="modal-header">
+          <h3 class="modal-title">จัดสรรเงินรอจัดสรรให้ใบ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('ccAllocModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="ccAllocInfo" class="text-sm" style="margin-bottom:10px"></div>
+          <div class="form-group" style="max-width:220px">
+            <label class="form-label" for="ccAllocDate">วันที่จัดสรร</label>
+            <input type="date" class="form-input" id="ccAllocDate">
+          </div>
+          <div class="table-container" style="border:none">
+            <table class="table" style="font-size:13px">
+              <thead><tr><th>เลขที่ใบ</th><th>วันที่</th><th>ครบกำหนด</th><th class="text-right">ยอดค้าง</th><th class="text-right">จัดสรร</th><th></th></tr></thead>
+              <tbody id="ccAllocBody"></tbody>
+            </table>
+          </div>
+          <div class="text-xs text-gray-500" style="margin-top:8px">ลงบัญชี: เดบิต เงินรับจากลูกค้ารอจัดสรร / เครดิต ลูกหนี้ของใบ · ใบค่าบริการที่ยังพักภาษีขาย ระบบย้ายภาษีเข้างวดของวันรับเงินให้ (ถ้างวดนั้นยังไม่ยื่น)</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('ccAllocModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // รอบ 258 — หน้านี้แสดงตามที่เซิร์ฟเวอร์ตอบเท่านั้น (ยอด · ป้ายเหตุผล · ใบที่จัดสรรได้ · เหตุที่จัดสรรไม่ได้) ไม่มีสำเนากติกา
+    const Page = {
+      contactId: null,
+      rows: [],
+      _allocPaymentId: null,
+      _allocUnapplied: null,
+      _busy: false,
+      receiptPending: [],
+      _targets: [],
+      async init() {
+        if (!Layout.init('customer-credits')) return;
+        Layout.setTitle('เงินรอจัดสรร');
+        const params = new URLSearchParams(location.search);
+        this.contactId = params.get('contactId') || null;
+        await this.load();
+      },
+      async load(manual) {
+        const api = Layout.api(); if (!api) return;
+        const body = document.getElementById('ccBody');
+        try {
+          const q = [];
+          if (this.contactId) q.push('contactId=' + encodeURIComponent(this.contactId));
+          if (document.getElementById('ccIncludeResolved').checked) q.push('includeResolved=true');
+          const res = await api.getCustomerCredits(q.length ? '?' + q.join('&') : '');
+          const d = res.data || {};
+          this.rows = d.items || [];
+          this.receiptPending = d.receiptPending || [];
+          this.renderReceiptPending();
+          document.getElementById('ccTotal').textContent = Layout.money(d.totalUnapplied || 0);
+          document.getElementById('ccGl').textContent = this.contactId ? 'ดูได้เมื่อไม่กรองลูกค้า'
+            : (d.glBalance === null || d.glBalance === undefined ? 'ยังไม่มีผังนี้' : Layout.money(d.glBalance));
+          const note = document.getElementById('ccGlNote');
+          note.style.display = d.glNote ? 'block' : 'none';
+          note.textContent = d.glNote || '';
+          const filter = document.getElementById('ccContactFilter');
+          filter.style.display = this.contactId ? 'block' : 'none';
+          filter.innerHTML = this.contactId
+            ? `กำลังแสดงเฉพาะลูกค้าที่เลือก · <a href="/pages/customer-credits.html" style="color:var(--primary)">แสดงทุกราย</a>` : '';
+          this.render();
+          if (manual) Layout.toast('โหลดข้อมูลล่าสุดแล้ว');
+        } catch (e) {
+          body.innerHTML = `<tr><td colspan="8" class="text-center text-danger" style="padding:40px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</td></tr>`;
+        }
+      },
+      render() {
+        const body = document.getElementById('ccBody');
+        if (!this.rows.length) {
+          body.innerHTML = `<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีเงินรอจัดสรร — เงินที่รับเกินยอดค้างของใบจะมาอยู่ที่นี่เมื่อบันทึกรับชำระแล้วเลือก “เก็บเป็นเงินรอจัดสรร”</td></tr>`;
+          return;
+        }
+        body.innerHTML = this.rows.map((r, i) => {
+          const allocs = (r.allocations || []).map((a, j) => `<tr>
+              <td style="padding-left:34px"><a href="/pages/documents.html?openDoc=${encodeURIComponent(a.documentId)}" style="color:var(--primary)">${Layout.esc(a.documentNumber)}</a></td>
+              <td>${a.isLate ? 'จัดสรรทีหลัง ' + (a.appliedAt ? Layout.date(a.appliedAt) : '') : 'จัดสรรพร้อมรับเงิน'}</td>
+              <td class="text-right">${Layout.money(a.allocatedAmount)}</td>
+              <td>${a.canUndo ? `<button class="btn btn-sm btn-secondary" onclick="Page.undo(${i}, ${j})">ยกเลิกการจัดสรร</button>` : ''}</td>
+            </tr>`).join('');
+          return `<tr>
+            <td class="font-medium">${Layout.esc(r.contactName || '(ไม่ทราบลูกค้า)')}</td>
+            <td>${Layout.date(r.paymentDate)}</td>
+            <td>${Layout.esc(r.paymentNumber)}${r.reference ? `<div class="text-xs text-gray-500">อ้างอิง ${Layout.esc(r.reference)}</div>` : ''}</td>
+            <td class="text-right">${Layout.money(r.amount)}</td>
+            <td class="text-right font-bold">${Layout.money(r.unappliedAmount)}</td>
+            <td>${Layout.esc(r.reasonLabel || '')}${r.note ? `<div class="text-xs text-gray-500">${Layout.esc(r.note)}</div>` : ''}</td>
+            <td class="text-right">${Number(r.ageDays || 0)}</td>
+            <td>
+              ${r.needsReview
+                ? `<span class="pill pill-warning" title="รายการก่อนรอบ 258 — ระบบไม่รู้ว่าเงินส่วนเกินนี้ถูกล้างด้วยสมุดรายวันไปแล้วหรือยัง จึงยังไม่นับเป็นเงินรอจัดสรร">ต้องตรวจ</span>
+                   <button class="btn btn-sm btn-primary" onclick="Page.confirmLegacy(${i})">ยืนยันว่ายังค้างจริง</button>
+                   <button class="btn btn-sm btn-secondary" onclick="Page.closeLegacy(${i})">ปิดรายการ</button>`
+                : (r.unappliedAmount > 0 ? `<button class="btn btn-sm btn-primary" onclick="Page.openAllocate(${i})">จัดสรรให้ใบ</button>` : '<span class="text-gray-400">จัดสรรครบแล้ว</span>')}
+              ${allocs ? `<button class="btn btn-sm btn-secondary" onclick="Page.toggle(${i})">ใบที่ผูกแล้ว (${(r.allocations || []).length})</button>` : ''}
+            </td>
+          </tr>
+          <tr id="ccAllocs_${i}" style="display:none;background:var(--gray-50)"><td colspan="8" style="padding:0">
+            <table class="table" style="margin:0;font-size:12.5px"><tbody>${allocs}</tbody></table>
+          </td></tr>`;
+        }).join('');
+      },
+      renderReceiptPending() {
+        const host = document.getElementById('ccReceiptPending');
+        if (!host) return;
+        const rows = this.receiptPending || [];
+        host.style.display = rows.length ? 'block' : 'none';
+        if (!rows.length) { host.innerHTML = ''; return; }
+        host.innerHTML = `<div class="card-header"><h3 class="card-title">ใบที่ปิดยอดแล้วแต่ยังไม่ได้ออกใบเสร็จรับเงิน/ใบกำกับภาษี (${rows.length})</h3></div>
+          <div class="table-container" style="border:none"><table class="table" style="font-size:13px">
+            <thead><tr><th>เลขที่ใบ</th><th>ลูกค้า</th><th>การรับชำระ</th><th class="text-right">ยอดที่จัดสรร</th><th></th></tr></thead>
+            <tbody>${rows.map((x, k) => `<tr>
+              <td><a href="/pages/documents.html?openDoc=${encodeURIComponent(x.documentId)}" style="color:var(--primary)">${Layout.esc(x.documentNumber)}</a></td>
+              <td>${Layout.esc(x.contactName || '')}</td>
+              <td>${Layout.esc(x.paymentNumber)}</td>
+              <td class="text-right">${Layout.money(x.amount)}</td>
+              <td><button class="btn btn-sm btn-primary" onclick="Page.issueReceipt(${Number(k)})">🧾 ออกใบเสร็จ</button></td>
+            </tr>`).join('')}</tbody></table></div>`;
+      },
+      toggle(i) {
+        const el = document.getElementById('ccAllocs_' + i);
+        if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+      },
+      async openAllocate(i) {
+        const r = this.rows[i]; if (!r) return;
+        const api = Layout.api(); if (!api) return;
+        this._allocPaymentId = r.paymentId;
+        this._allocUnapplied = r.unappliedAmount;
+        document.getElementById('ccAllocInfo').innerHTML =
+          `${Layout.esc(r.contactName || '')} · การรับชำระ <b>${Layout.esc(r.paymentNumber)}</b> วันที่ ${Layout.date(r.paymentDate)} · คงเหลือรอจัดสรร <b>${Layout.money(r.unappliedAmount)}</b>`;
+        document.getElementById('ccAllocDate').value = Layout.dateInput(new Date());
+        const body = document.getElementById('ccAllocBody');
+        body.innerHTML = `<tr><td colspan="6" class="text-center text-gray-400" style="padding:24px">กำลังโหลดใบค้างของลูกค้า...</td></tr>`;
+        Layout.openModal('ccAllocModal');
+        try {
+          const res = await api.getCustomerCreditTargets(r.paymentId);
+          const targets = res.data || [];
+          this._targets = targets;
+          if (!targets.length) {
+            body.innerHTML = `<tr><td colspan="6" class="text-center text-gray-400" style="padding:24px">ลูกค้ารายนี้ยังไม่มีใบแจ้งหนี้/ใบกำกับที่ค้างชำระ — ออกใบและอนุมัติก่อน แล้วกลับมาจัดสรร</td></tr>`;
+            return;
+          }
+          body.innerHTML = targets.map((t, k) => `<tr>
+              <td><a href="/pages/documents.html?openDoc=${encodeURIComponent(t.documentId)}" style="color:var(--primary)">${Layout.esc(t.documentNumber)}</a></td>
+              <td>${Layout.date(t.documentDate)}</td>
+              <td>${t.dueDate ? Layout.date(t.dueDate) : '-'}</td>
+              <td class="text-right">${Layout.money(t.balanceDue)}</td>
+              <td class="text-right">${t.blockedReason ? '' : `<input type="number" step="0.01" min="0" class="form-input" style="width:120px;text-align:right" id="ccAllocAmt_${k}" value="${Number(t.suggested || 0).toFixed(2)}" aria-label="ยอดที่จัดสรรให้ ${Layout.esc(t.documentNumber)}">`}</td>
+              <td>${t.blockedReason
+                ? `<span class="text-xs text-danger">${Layout.esc(t.blockedReason)}</span>`
+                : `<button class="btn btn-sm btn-primary" onclick="Page.allocate(${k})">จัดสรร</button>`}</td>
+            </tr>`).join('');
+        } catch (e) {
+          body.innerHTML = `<tr><td colspan="6" class="text-center text-danger" style="padding:24px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</td></tr>`;
+        }
+      },
+      async allocate(k) {
+        const api = Layout.api(); if (!api) return;
+        const documentId = (this._targets || [])[k]?.documentId; if (!documentId) return;
+        const amount = parseFloat(document.getElementById('ccAllocAmt_' + k)?.value || '');
+        if (isNaN(amount) || amount <= 0) { Layout.toast('ใส่ยอดที่จะจัดสรรให้ใบนี้', 'error'); return; }
+        if (this._busy) return;   // ฝ่ายค้าน M7: กันกดซ้ำระหว่างรอคำตอบ
+        this._busy = true;
+        document.querySelectorAll('#ccAllocModal button').forEach(b => { b.disabled = true; });
+        try {
+          const res = await api.allocateCustomerCredit(this._allocPaymentId, {
+            documentId, amount, applyDate: document.getElementById('ccAllocDate').value || null,
+            expectedUnappliedBefore: this._allocUnapplied,   // M7: ยอดที่หน้าจอเห็น — เซิร์ฟเวอร์เทียบใต้ล็อก
+          });
+          const notices = res?.data?.notices || [];
+          Layout.toast(res?.message || 'จัดสรรแล้ว', notices.length ? 'warning' : 'success', notices.length ? 15000 : 5000);
+          Layout.closeModal('ccAllocModal');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'จัดสรรไม่สำเร็จ', 'error', 10000); }
+        finally {
+          this._busy = false;
+          document.querySelectorAll('#ccAllocModal button').forEach(b => { b.disabled = false; });
+        }
+      },
+      // ฝ่ายค้าน M4: รายการก่อนรอบ 258 ที่ต้องตรวจ — ยืนยันว่ายังค้างจริง หรือปิดรายการพร้อมเหตุผล (เซิร์ฟเวอร์ตรวจสิทธิ์ + audit)
+      async confirmLegacy(i) {
+        const r = this.rows[i]; if (!r || this._busy) return;
+        const api = Layout.api(); if (!api) return;
+        const ok = await Layout.confirm({
+          title: 'ยืนยันว่ายังค้างจริง',
+          message: 'ยืนยันว่าเงินส่วนเกินของรายการนี้ยังค้างอยู่จริง (ยังไม่ถูกล้างด้วยสมุดรายวัน/คืนลูกค้า)? หลังยืนยันจะจัดสรรให้ใบได้และถูกนับเป็นเงินรอจัดสรร',
+          okText: 'ยืนยัน' });
+        if (!ok) return;
+        this._busy = true;
+        try {
+          const res = await api.confirmLegacyCustomerCredit(r.paymentId);
+          Layout.toast(res?.message || 'ยืนยันแล้ว', 'success', 6000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ยืนยันไม่สำเร็จ', 'error', 10000); }
+        finally { this._busy = false; }
+      },
+      async closeLegacy(i) {
+        const r = this.rows[i]; if (!r || this._busy) return;
+        const api = Layout.api(); if (!api) return;
+        const reason = await Layout.promptText({
+          title: 'ปิดรายการเงินส่วนเกินเดิม',
+          message: 'ใช้เมื่อเงินส่วนนี้ถูกจัดการในบัญชีไปแล้ว (เช่น ล้างด้วยสมุดรายวัน หรือคืนลูกค้าแล้ว) — ระบบจะไม่ลงบัญชีเพิ่ม และบันทึกเหตุผลไว้ในประวัติการแก้ไข',
+          label: 'เหตุผล (เช่น เลขสมุดรายวันที่ล้างยอดนี้)', required: true, okText: 'ปิดรายการ' });
+        if (reason === null) return;
+        this._busy = true;
+        try {
+          const res = await api.closeLegacyCustomerCredit(r.paymentId, reason);
+          Layout.toast(res?.message || 'ปิดรายการแล้ว', 'success', 6000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ปิดรายการไม่สำเร็จ', 'error', 10000); }
+        finally { this._busy = false; }
+      },
+      // ฝ่ายค้าน H2: ออกใบเสร็จ/ใบกำกับของใบที่ปิดยอดแล้วแต่ยังไม่มีใบเสร็จ (คิวงาน) — เส้นเดียวกับปุ่ม "ออกใบเสร็จ" บนใบ
+      async issueReceipt(k) {
+        const row = (this.receiptPending || [])[k]; if (!row || this._busy) return;
+        const api = Layout.api(); if (!api) return;
+        this._busy = true;
+        try {
+          const res = await api.issueReceiptForPayment(row.paymentId, row.documentId);
+          Layout.toast(res?.message || 'ออกใบเสร็จแล้ว', 'success', 8000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ออกใบเสร็จไม่สำเร็จ', 'error', 10000); }
+        finally { this._busy = false; }
+      },
+      async undo(i, j) {
+        const r = this.rows[i]; if (!r) return;
+        const allocationId = (r.allocations || [])[j]?.id; if (!allocationId) return;
+        const api = Layout.api(); if (!api) return;
+        const ok = await Layout.confirm({
+          title: 'ยกเลิกการจัดสรร',
+          message: 'ยกเลิกการจัดสรรนี้? ระบบจะกลับรายการบัญชีของการจัดสรร คืนยอดค้างให้ใบ และคืนเงินเข้าเงินรอจัดสรร',
+          okText: 'ยกเลิกการจัดสรร', danger: true });
+        if (!ok) return;
+        try {
+          const res = await api.undoCustomerCreditAllocation(r.paymentId, allocationId);
+          Layout.toast(res?.message || 'ยกเลิกการจัดสรรแล้ว', 'success', 6000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error', 10000); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

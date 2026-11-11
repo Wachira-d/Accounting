@@ -17,7 +17,8 @@
     <!-- รอบ 250 (WP-02 · คำตัดสิน Y7/Y8/N11): รายการตรวจ go-live — แต่ละข้อตรวจจากข้อมูลจริง (เซิร์ฟเวอร์ตัดสิน · หน้าแสดงอย่างเดียว) -->
     <div class="admin-card" id="goLiveCard">
       <div class="admin-card-header">
-        <div class="admin-card-title">รายการตรวจ go-live (รับเงินจริงผ่าน Omise)</div>
+        <!-- รอบ 257 ชุด 4 (E-H1): ชื่อการ์ดจากเซิร์ฟเวอร์ (PlatformGoLiveChecklist.CardTitle) — รายการ go-live ตัวเดียว (Omise + LINE OA กลาง) -->
+        <div class="admin-card-title" id="goLiveTitle">รายการตรวจ go-live ของแพลตฟอร์ม</div>
         <button class="admin-btn admin-btn-outline admin-btn-sm" id="outboundBtn" onclick="runOutboundCheck()">ทดสอบการเชื่อมต่อขาออก</button>
       </div>
       <div id="goLiveList">กำลังโหลด...</div>
@@ -222,6 +223,8 @@
         <div style="font-size:13px;margin-bottom:6px">ผ่าน ${AdminLayout.esc(r.doneCount)} ข้อ · ยังไม่ผ่าน <b style="color:#b91c1c">${AdminLayout.esc(r.failCount)}</b> ข้อ</div>
         ${rows}
         <div style="font-size:12px;color:#475569;margin-top:8px">ℹ️ ${AdminLayout.esc(r.bankFeedNote || '')}</div>`;
+      const ttl = document.getElementById('goLiveTitle');
+      if (ttl && r.title) ttl.textContent = r.title;
       const card = document.getElementById('goLiveCard');
       if (card) card.style.borderLeft = (r.failCount || 0) > 0 ? '4px solid #ef4444' : '4px solid #22c55e';
     }

@@ -275,7 +275,7 @@ public partial class TaxService
                 // ยึด "บรรทัดของรายงาน" เป็นแหล่งเดียว เหมือนที่อื่นในไฟล์นี้
                 var citBefore = Round2(report.CitAmount ?? report.TotalTaxWithheld);
                 var whtCredit = Round2(-(report.Lines
-                    ?.Where(l => l.IncomeTypeCode == "WHT_CREDIT" && !l.IsExcluded)
+                    ?.Where(l => l.IncomeTypeCode == WhtCreditLineCode && !l.IsExcluded)
                     .Sum(l => l.TaxAmount) ?? 0m));
                 rows.Add(Row(W, "รายได้รวมทั้งปี", Round2(report.TotalIncome)));
                 rows.Add(Row(W, "กำไรสุทธิก่อนภาษี", Round2(report.NetVat)));

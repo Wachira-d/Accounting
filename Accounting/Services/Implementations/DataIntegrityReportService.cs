@@ -48,7 +48,11 @@ public sealed record DataIntegrityReport(
     // ทีม U 2026-10-26 (PV-202610-0040: ฐาน 402.93 · VAT 35.07) — เอกสารฝั่งซื้อที่ลงบัญชีแล้วซึ่ง VAT ไม่สอดคล้องกับฐาน × อัตรา (ฐานถูกบีบตามยอดชำระ) · อ่านอย่างเดียว
     List<DataIntegritySuspect>? PurchaseVatInconsistentWithBase = null,
     // รอบ 250 ฝ่ายค้าน M3 — แถวรับชำระ "[PENDING-VERIFY]" ของสลิปพอร์ทัลรุ่นเก่าที่ระบบไม่ย้ายเอง (ต้องให้คนตัดสิน) · อ่านอย่างเดียว
-    List<DataIntegritySuspect>? PortalSlipLegacyNeedsReview = null)
+    List<DataIntegritySuspect>? PortalSlipLegacyNeedsReview = null,
+    // รอบ 257 ชุด 3 ฝ่ายค้าน M2 — ใบซื้อจากคู่ค้าที่อนุมัติแล้ว ซึ่งยืนยันต้นฉบับก่อนผู้ขายส่งใบกำกับ (คำยืนยันเป็นของใบแจ้งหนี้) · อ่านอย่างเดียว (ไม่กลับรายการเอง)
+    List<DataIntegritySuspect>? PartnerConfirmedBeforeTaxInvoice = null,
+    // ฝ่ายค้านรอบ 258 M4 — เงินส่วนเกินของการรับ/จ่ายชำระก่อนรอบ 258 ที่ต้องให้คนตรวจ (ฝั่งรับ: ธงต้องตรวจ · ฝั่งจ่าย: ลงผังกลุ่ม 114 เช่น 11400) · อ่านอย่างเดียว
+    List<DataIntegritySuspect>? LegacyPaymentExcess = null)
 {
     /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
     /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
@@ -63,7 +67,8 @@ public sealed record DataIntegrityReport(
         + (DebitNotesCashPostedTwice?.Count ?? 0)
         + (ApiJournalDepositDrawnWithoutBookingRef?.Count ?? 0)
         + (PurchaseVatInconsistentWithBase?.Count ?? 0)
-        + (PortalSlipLegacyNeedsReview?.Count ?? 0);
+        + (PortalSlipLegacyNeedsReview?.Count ?? 0)
+        + (PartnerConfirmedBeforeTaxInvoice?.Count ?? 0) + (LegacyPaymentExcess?.Count ?? 0);
 }
 
 /// <summary>
@@ -195,9 +200,25 @@ public class DataIntegrityReportService
         var apiNoRef = await LoadApiJournalDepositDrawnWithoutBookingRefAsync(companyId);
         var vatBase = await LoadPurchaseVatInconsistentAsync(companyId);
         var slipReview = await LoadPortalSlipLegacyNeedsReviewAsync(companyId);
+        // รอบ 257 ชุด 3 ฝ่ายค้าน M2: ตัวหาเดียวกับงานครั้งเดียว (PartnerEvidenceRepair.FindAsync) — เฉพาะใบที่อนุมัติแล้ว (ใบที่ยังไม่อนุมัติ งานครั้งเดียวตั้งกลับให้แล้ว)
+        var partnerEarly = (await Accounting.Helpers.PartnerEvidenceRepair.FindAsync(_db, companyId))
+            .Where(x => !Accounting.Helpers.PartnerEvidenceRepair.NotApproved(x.Status))
+            .Select(x => new DataIntegritySuspect("PartnerConfirmedBeforeTaxInvoice", x.DocumentId, x.Number, x.Date,
+                $"ยืนยันต้นฉบับ {x.ConfirmedAt.AddHours(7):dd/MM/yyyy HH:mm} ก่อนผู้ขายส่งใบกำกับภาษี {x.FirstTaxInvoiceAt.AddHours(7):dd/MM/yyyy HH:mm} — "
+                + "คำยืนยันเป็นของใบแจ้งหนี้ · ตรวจต้นฉบับใบกำกับ ถ้าไม่มี ให้กลับรายการภาษีซื้อ (ระบบไม่ทำให้)",
+                x.VatAmount, null, $"/pages/documents.html?openDoc={x.DocumentId}", "เปิดเอกสาร"))
+            .ToList();
+        // รอบ 257 ปิดท้าย MED-5: ยืนยันแล้วแต่สายไม่มีใบกำกับของผู้ขายเลย (อนุมัติแล้ว) — หมวดเดียวกัน · ตัวหาเดียวกับงานครั้งเดียว
+        partnerEarly.AddRange((await Accounting.Helpers.PartnerEvidenceRepair.FindNoCarrierAsync(_db, companyId))
+            .Where(x => !Accounting.Helpers.PartnerEvidenceRepair.NotApproved(x.Status))
+            .Select(x => new DataIntegritySuspect("PartnerConfirmedBeforeTaxInvoice", x.DocumentId, x.Number, x.Date,
+                "ยืนยันต้นฉบับแล้ว แต่ผู้ขายยังไม่เคยส่งใบกำกับภาษีของการขายนี้ผ่านระบบ (ต้นทางเป็นใบแจ้งหนี้) — คำยืนยันเป็นของใบแจ้งหนี้ · "
+                + "ตรวจว่ามีต้นฉบับใบกำกับจริงไหม ถ้าไม่มี ให้กลับรายการภาษีซื้อ (ระบบไม่ทำให้)",
+                x.VatAmount, null, $"/pages/documents.html?openDoc={x.DocumentId}", "เปิดเอกสาร")));
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
             ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, dnCashTwice, apiNoRef, vatBase,
-            slipReview);
+            slipReview, partnerEarly,
+            await Accounting.Helpers.CustomerCreditQuery.LegacyExcessSuspectsAsync(_db, companyId));
     }
 
     /// <summary>รอบ 250 ฝ่ายค้าน M3 — แถวสลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจและยังไม่ถูกลบ (= migration ไม่ย้ายเอง: ผูกธนาคาร/JE/ใบเสร็จ/มีเงินจริงแยกแล้ว ·

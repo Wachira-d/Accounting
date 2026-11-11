@@ -139,7 +139,13 @@ public record AutopilotOptionsResponse(
     string? PayLinkUnavailableReason,
     // รอบ 250 (WP-02 B-13): ตัวเลือกค่าตั้งงานหลังรับชำระ (ส่งใบเสร็จ · ส่งทุกงวด) — ป้ายจากเซิร์ฟเวอร์
     IReadOnlyList<AutopilotOption>? PostPayEmailOptions = null,
-    IReadOnlyList<AutopilotOption>? PostPayPartialOptions = null);
+    IReadOnlyList<AutopilotOption>? PostPayPartialOptions = null,
+    // รอบ 257 ชุด 4 (A-H2 · E-M3 · server computes): ค่าตั้งต้นของรายการประจำ (รหัสที่ปล่อย + คำอธิบาย) ให้หน้าแสดงในขอบเขต "ค่าเริ่มต้น" ·
+    // ประกาศครั้งเดียวว่าค่าตั้งต้นเปลี่ยนในรอบ 256 (คีย์ = รุ่นของประกาศ — หน้าเก็บ "ปิดแล้ว" ต่อผู้ใช้)
+    IReadOnlyList<string>? RecurringDefaultPassCodes = null,
+    string? RecurringDefaultNote = null,
+    string? DefaultChangeNotice = null,
+    string? DefaultChangeNoticeKey = null);
 
 public record AutopilotOption(string Code, string Label, string? Why = null);
 

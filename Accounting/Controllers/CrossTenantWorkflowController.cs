@@ -132,6 +132,26 @@ public class CrossTenantWorkflowController : ControllerBase
         return Ok(new ApiResponse<object>(true, new { p.Id, Status = p.Status.ToString() }, "ปฏิเสธความเป็นพาร์ทเนอร์เรียบร้อย"));
     }
 
+    public record SuspendRequest(string? Reason);
+
+    /// <summary>รอบ 257 ชุด 3 (D-H5): ระงับการเชื่อม (คู่ที่เชื่อมแล้ว · ฝ่ายใดก็ได้) — หยุดเส้นอัตโนมัติทุกเส้น · audit · ทางกลับ = เชิญใหม่ ·
+    /// สิทธิ์ตั้งค่าบริษัท + ไม่รับ API key (การตัดการเชื่อมกับบริษัทอื่นคือการตัดสินใจของคน — ชุดเดียวกับเชิญ/ยอมรับ)</summary>
+    [HttpPost("trading-partners/{partnershipId:guid}/suspend")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ระงับการเชื่อมคู่ค้า")]
+    public async Task<ActionResult<ApiResponse<object>>> Suspend(Guid companyId, Guid partnershipId, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] SuspendRequest? req)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (userId == Guid.Empty) return Unauthorized();
+        try
+        {
+            var p = await _service.SuspendPartnershipAsync(companyId, partnershipId, userId, req?.Reason);
+            return Ok(new ApiResponse<object>(true, new { p.Id, Status = p.Status.ToString() }, PartnerExchangeRules.SuspendedMessage));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (BusinessRuleException ex) { return StatusCode(ex.StatusCode, new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // WORKFLOW AUTOMATION CONFIG
     // ═══════════════════════════════════════════════════════════════════

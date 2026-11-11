@@ -105,7 +105,9 @@ public static class NotifyQuotaPolicy
             _ => null,
         };
 
-    public const string MeteredChannelsNote = "นับเฉพาะข้อความที่ส่งผ่าน LINE OA ของ NextAcc และอีเมลของระบบ NextAcc — LINE OA / ผู้ส่งอีเมลของร้านเองไม่นับ";
+    /// <summary>รอบ 257 ชุด 4 (C LOW): ส่งเข้ากลุ่ม LINE นับ 1 ข้อความต่อการส่ง (ไม่ใช่ต่อสมาชิก) — LINE คิดโควตาฟรีของ OA ต่อสมาชิกที่ได้รับ บอกไว้ให้เทียบกับหน้า LINE ได้</summary>
+    public const string MeteredChannelsNote = "นับเฉพาะข้อความที่ส่งผ่าน LINE OA ของ NextAcc และอีเมลของระบบ NextAcc — LINE OA / ผู้ส่งอีเมลของร้านเองไม่นับ · "
+        + "ส่งเข้ากลุ่ม LINE นับ 1 ข้อความต่อการส่ง (ไม่ใช่ต่อสมาชิก — ฝั่ง LINE คิดโควตาของ OA ต่อสมาชิกที่ได้รับ)";
 
     // ───────── รอบ 213 (คำตัดสินข้อ 172): แพ็ก notify.topup ตั้งได้ที่หน้าแอดมิน + เพดานเฉพาะบริษัท ─────────
 
@@ -207,8 +209,17 @@ public static class NotifyQuotaPolicy
     /// <summary>ฝ่ายค้าน fix2 M2: ส่วนเกิน (คิดเงินต่อข้อความ) ใช้ได้เฉพาะข้อความแจ้งลูกค้า — เส้นอีเมลแพลตฟอร์มเต็ม = ไม่ส่ง (ไม่คิดเงินแทนการหยุด)</summary>
     public static bool OverageAllowed(bool combinedFallback) => combinedFallback;
 
-    /// <summary>ฝ่ายค้าน fix2 H1: แพ็กของช่องขายได้ไหม — เฉพาะช่องที่มีเพดานแยก (<see cref="ChannelPlanLimit"/> ไม่ใช่ null) · ไม่แยก ⇒ ข้อความนับก้อนรวม แพ็กของช่องไม่มีผล</summary>
-    public static bool ChannelPackSellable(int? channelPlanLimit) => channelPlanLimit != null;
+    /// <summary>ฝ่ายค้าน fix2 H1: แพ็กของช่องขายได้ไหม — เฉพาะช่องที่มีเพดานแยก<b>เป็นตัวเลข ≥ 0</b> (<see cref="ChannelPlanLimit"/>) · ไม่แยก (null) ⇒ ข้อความนับก้อนรวม แพ็กของช่องไม่มีผล
+    /// · รอบ 257 ชุด 4 (C-M2): เพดานติดลบ (= <see cref="Unlimited"/> ไม่จำกัด) ⇒ แพ็กไม่มีผล ⇒ ขายไม่ได้ (เดิมคืน true เมื่อ -1 ⇒ จ่ายแล้วได้แต่ตัวเลข)</summary>
+    public static bool ChannelPackSellable(int? channelPlanLimit) => channelPlanLimit is int l && l >= 0;
+
+    /// <summary>รอบ 257 ชุด 4 (C-M2): แพ็กก้อนรวมขายได้ไหม — เพดานก้อนรวมไม่จำกัด (ติดลบ) ⇒ ไม่ขาย (ราคา null · ซื้อ ⇒ 409 ก่อนคิดเงิน)</summary>
+    public static bool CombinedPackSellable(int planLimit) => planLimit >= 0;
+
+    /// <summary>รอบ 257 ชุด 4 (C-M2): ข้อความปฏิเสธเมื่อเพดานไม่จำกัด (ก้อนรวม/ช่อง)</summary>
+    public static string UnlimitedPackNotSellableMessage(string channel)
+        => (channel == ChannelAll ? "ข้อความแจ้งเตือนของบริษัทนี้" : $"ช่อง{ChannelLabel(channel)}ของบริษัทนี้")
+           + "ไม่จำกัดจำนวนอยู่แล้ว — ไม่ต้องซื้อแพ็กเพิ่ม (ยังไม่ได้คิดเงิน)";
 
     public static string ChannelPackNotSellableMessage(string channel)
         => $"ช่อง{ChannelLabel(channel)}ของบริษัทนี้ยังไม่แยกเพดาน — ข้อความยังนับรวมกับโควตาก้อนรวม ⇒ ซื้อ \"แพ็กข้อความแจ้งเตือน\" (ก้อนรวม) แทน (ยังไม่ได้คิดเงิน)";

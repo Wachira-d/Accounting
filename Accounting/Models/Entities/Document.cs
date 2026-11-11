@@ -834,6 +834,9 @@ public class Document : TenantEntity
     /// ส่งซ้ำในรอบเดียวกัน. NULL = ไม่เคยส่ง. job ส่ง 3 ระดับตาม aging:
     /// 30d (Reminder) → 60d (First Notice) → 90d (Final Notice).</summary>
     public DateTime? LastDunningSentAt { get; set; }
+    /// <summary>รอบ 258 (ฝ่ายค้าน L2): เวลาที่แจ้งทีม "มีเงินรอจัดสรรพอปิดใบนี้" แทนการทวง (<c>OverdueDunningJob</c>) — แจ้งครั้งเดียวต่อช่วงที่ใบถูกระงับ ·
+    /// null = ยังไม่แจ้ง/กลับมาทวงตามปกติแล้ว · ภายในระบบ (ไม่ใช่ช่องฟอร์ม/ไม่อยู่ใน DTO) — แยกจาก <see cref="LastDunningSentAt"/> (ไม่ใช่การส่งทวง)</summary>
+    public DateTime? CreditCoverNoticeAt { get; set; }
 
     /// <summary>ระดับ dunning ล่าสุด (1/2/3). เมื่อ AgingDays ข้ามขั้นถัดไป
     /// และ ≥ 7 วัน นับจาก LastDunningSentAt → ส่งใหม่</summary>

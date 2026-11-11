@@ -276,6 +276,19 @@ public class EmailScheduleService : IEmailScheduleService
         catch (Exception ex) { _logger.LogWarning(ex, "OnWhtCertIssued enqueue failed Cert={Cert}", certId); }
     }
 
+    /// <summary>รอบ 258 (A-M1 ข): เอกสารนี้มีแถวคิว LINE ถึงผู้ติดต่อที่ไม่ใช่ "ข้าม" ไหม (ทุกกฎ) — รายการประจำใช้ตัดสินว่ายังต้องเตือน "ไม่มีอีเมล" ไหม</summary>
+    public Task<bool> DocumentLineQueuedAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+        => LineRowQueuedAsync(companyId, documentId, null, ct);
+
+    /// <summary>รอบ 258 (A-M1): แถวคิว LINE ของเอกสาร (ไม่ใช่ "ข้าม") — <paramref name="baseKey"/> ระบุ = เฉพาะกุญแจนั้น (กฎหนึ่ง) · กรองบริษัทเสมอ</summary>
+    private async Task<bool> LineRowQueuedAsync(Guid companyId, Guid documentId, string? baseKey, CancellationToken ct)
+    {
+        return await _db.LineQueues.AsNoTracking().AnyAsync(q => q.CompanyId == companyId && !q.IsDeleted
+            && q.EntityType == "Document" && q.EntityId == documentId
+            && (baseKey == null || q.BaseKey == baseKey)
+            && q.Status != ContactLineChannel.StatusSkipped, ct);
+    }
+
     public async Task<EmailEnqueueOutcome> OnRecurringDocumentCreatedAsync(Guid companyId, Guid documentId, Guid recurringId, CancellationToken ct = default)
     {
         try
@@ -316,6 +329,9 @@ public class EmailScheduleService : IEmailScheduleService
                 .AnyAsync(q => q.CompanyId == companyId && q.IdempotencyKey == approvedKey && !q.IsDeleted
                     // ฝ่ายค้าน MED-6: แถว "ข้าม" (ไม่ส่งเพราะค่าตั้งผู้ติดต่อ/ใบเปลี่ยน) ไม่ใช่การส่ง ⇒ ไม่นับว่ากฎนั้นครอบแล้ว
                     && q.Status != ScheduledEmailSendCheck.SkippedStatus, ct);
+            // รอบ 258 (A-M1 ก): กฎเมื่ออนุมัติที่ติ๊ก LINE อย่างเดียวมีแถวใน LineQueues (ไม่มีแถวอีเมล) ⇒ นับด้วย — ไม่งั้นลูกค้าได้การ์ด LINE สองใบ/LINE + อีเมล
+            approvedQueued = approvedRuleCovers && EmailEnqueueOutcome.ApprovedRuleDelivered(approvedQueued,
+                await LineRowQueuedAsync(companyId, doc.Id, approvedKey, ct));
             if (EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCovers, documentApproved: true, approvedQueued))
                 return EmailEnqueueOutcome.Skipped(EmailEnqueueOutcome.CoveredByApprovedRule);
 
@@ -355,7 +371,11 @@ public class EmailScheduleService : IEmailScheduleService
             // รอบ 250 WP-08: ผู้รับจากตัวหาผู้รับเดียว (ไม่อ่าน Contact.Email ตรง) — ไม่มีอีเมลเลย ⇒ ผู้เรียกแจ้งด้วย RecurringEmailReadiness (EmailSkippedNoContactEmail) ·
             // มีอีเมลแต่ไม่รับเรื่อง "เอกสาร" ⇒ แถวคิว "ข้าม" (เขียนใน EnqueueDocumentAsync) + คืนเหตุให้ผู้เรียกแสดง (EmailNotSentReason)
             var inlineDelivery = await EmailForAsync(companyId, doc.ContactId, NotifyTopics.ForTrigger("RecurringInvoiceCreated"), ct);
-            if (!inlineDelivery.Deliverable && inlineDelivery.OptOutReason == null)
+            // รอบ 258-3 (F-H1): ธงส่งของรายการประจำ ⇒ LINE ตามปลายทางของผู้ติดต่อที่รับเรื่อง "เอกสาร" (ตัวหาผู้รับเดียว · ตัวตัดสิน ContactLineChannel.InlineChannels) —
+            // เส้นเข้าคิวเดียวกับกฎตารางส่ง (EnqueueDocumentAsync → EnqueueLineAsync) ไม่มีสำเนากติกา · ผู้ติดต่อที่มีแต่ LINE ⇒ ไม่หยุดที่ "ไม่มีอีเมล"
+            var inlineLine = ContactLineChannel.InlineChannels(
+                (await _recipients.ResolveAsync(companyId, doc.ContactId, NotifyTopics.ForTrigger("RecurringInvoiceCreated"), ct)).Options);
+            if (!inlineDelivery.Deliverable && inlineDelivery.OptOutReason == null && !inlineLine.LineUser && !inlineLine.LineGroup)
                 return EmailEnqueueOutcome.Skipped(RecurringEmailReadiness.NotSentNoEmail);
 
             // rule เสมือน (ไม่บันทึกลง DB) — EmailQueue.RuleId เป็น null ได้
@@ -371,6 +391,8 @@ public class EmailScheduleService : IEmailScheduleService
                 // รอบ 248: ชั้นรายการประจำ (null = ตามผู้ติดต่อ › บริษัท — พฤติกรรมเดิม)
                 AttachPayLink = recurringLayer?.Attach,
                 PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(recurringLayer?.Channels),
+                ChannelLineUser = inlineLine.LineUser,
+                ChannelLineGroup = inlineLine.LineGroup,
             };
             // ส่งทันที ไม่รอ 09:00 ของวัน — เจตนาคือ "ออกเอกสารแล้วส่งเลย"
             var inlineResult = await EnqueueDocumentAsync(inlineRule, doc, daysOffset: 0,
@@ -421,12 +443,16 @@ public class EmailScheduleService : IEmailScheduleService
             .ToListAsync(ct);
         if (rules.Count == 0) return 0;
 
+        var scannedRules = new List<(EmailScheduleRule Rule, string? CatchUpNote)>();
         int enqueued = 0, notSentRows = 0;
         foreach (var rule in rules)
         {
             // ส่งเฉพาะวันที่ DayOfMonth ของเดือนปัจจุบัน
             var sendDay = Math.Clamp(rule.DayOfMonth <= 0 ? 5 : rule.DayOfMonth, 1, 28);
-            if (todayBkk.Day != sendDay) continue;
+            // รอบ 258 (B-M7): ระบบไม่ได้ทำงานในวันที่ตั้งไว้ ⇒ ส่งย้อนหลังได้ไม่เกิน 3 วันในเดือนเดียวกัน (หลักฐาน = ลายน้ำต่อกฎ · กุญแจกันซ้ำเดิม)
+            var monthlyPlan = ScheduleCatchUp.Monthly(todayBkk, sendDay, rule.LastDayScanBkk);
+            scannedRules.Add((rule, monthlyPlan.Late ? ScheduleCatchUp.MonthlyNote(monthlyPlan.TargetDay, todayBkk) : null));
+            if (!monthlyPlan.Send) continue;
 
             // ยอดเดือนที่แล้ว
             var prevMonthStart = new DateTime(todayBkk.Year, todayBkk.Month, 1).AddMonths(-1);
@@ -547,21 +573,63 @@ public class EmailScheduleService : IEmailScheduleService
             }
         }
         if (enqueued > 0 || notSentRows > 0) await _db.SaveChangesAsync(ct);
+        await StampScanDayAsync(scannedRules, todayBkk, ct);   // รอบ 258 (B-M7): หลังบันทึกคิวสำเร็จเท่านั้น (ล้มกลางทาง = รอบถัดไปย้อนเก็บใหม่)
         return enqueued;
+    }
+
+    /// <summary>รอบ 258 (B-M7): ประทับลายน้ำ "สแกนกฎนี้ของวันนี้แล้ว" (วันที่ไทย) + บันทึกที่ผู้ใช้เห็นเมื่อมีการย้อนเก็บ — วันละครั้งต่อกฎ ·
+    /// tenant: กรองด้วย CompanyId ของกฎ · ผู้อ่าน: <see cref="ScheduleCatchUp"/> (รอบถัดไป) + หน้าตารางส่ง (บรรทัด "ส่งย้อนหลัง")</summary>
+    private async Task StampScanDayAsync(IEnumerable<(EmailScheduleRule Rule, string? CatchUpNote)> scanned, DateTime todayBkk, CancellationToken ct)
+    {
+        var stamp = todayBkk.Date;
+        foreach (var (rule, note) in scanned)
+        {
+            if (rule.LastDayScanBkk?.Date == stamp && note == null) continue;
+            var ruleId = rule.Id;
+            var companyId = rule.CompanyId;
+            if (note == null)
+                await _db.EmailScheduleRules.Where(r => r.Id == ruleId && r.CompanyId == companyId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(r => r.LastDayScanBkk, (DateTime?)stamp), ct);
+            else
+                await _db.EmailScheduleRules.Where(r => r.Id == ruleId && r.CompanyId == companyId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(r => r.LastDayScanBkk, (DateTime?)stamp)
+                        .SetProperty(r => r.LastCatchUpNote, note), ct);
+            rule.LastDayScanBkk = stamp;
+        }
     }
 
     public async Task<int> ScanDueSoonAndOverdueAsync(CancellationToken ct = default)
     {
-        var today = BangkokNow().Date;
+        var realToday = BangkokNow().Date;
         var rules = await _db.EmailScheduleRules.AsNoTracking()
             .Where(r => r.IsActive && !r.IsDeleted
                 && (r.Trigger == "DocumentDueSoon" || r.Trigger == "DocumentOverdue"))
             .ToListAsync(ct);
         if (rules.Count == 0) return 0;
 
+        // รอบ 258 (B-M7): วันที่ระบบไม่ได้สแกน (ลายน้ำต่อกฎ · ย้อนไม่เกิน 3 วัน) เก็บก่อน แล้วค่อยสแกนวันนี้ — ตัวตัดสินเดียว ScheduleCatchUp
+        var total = 0;
+        var missedDays = rules.SelectMany(r => ScheduleCatchUp.MissedDays(realToday, r.LastDayScanBkk)).Distinct().OrderBy(d => d).ToList();
+        foreach (var day in missedDays) total += await ScanDayAsync(day);
+        total += await ScanDayAsync(realToday);
+        await StampScanDayAsync(rules.Select(r => (r, ScheduleCatchUp.Note(
+            ScheduleCatchUp.MissedDays(realToday, r.LastDayScanBkk)
+                .Where(d => ScheduleCatchUp.DueRuleCatchesUp(r.Trigger, r.OffsetDays, r.RepeatEveryDays, d, realToday, r.LastDayScanBkk)).ToList(),
+            realToday))).ToList(), realToday, ct);
+        return total;
+
+        // สแกนของ "วัน today" · today ≠ realToday = ย้อนเก็บวันที่พลาด (เฉพาะกฎที่ ScheduleCatchUp.DueRuleCatchesUp ตอบใช่ · ทวงเฉพาะครั้งแรกของใบ ·
+        // เวลาส่งตามวันนี้จริง) · local function โดยตั้งใจ: ลูปเดิมอยู่ในเมธอดชื่อเดิม (กติกา call-site เดิมผูกชื่อนี้) และเยื้องเท่าเดิม (ลด diff กับงานที่แก้ลูปนี้พร้อมกัน)
+        async Task<int> ScanDayAsync(DateTime today)
+        {
+        var catchUp = today != realToday;
         int enqueued = 0, notSentRows = 0;
+        // รอบ 258 (DECISIONS 258-1-9): เงินรอจัดสรรต่อลูกค้า โหลดครั้งเดียวต่อบริษัท · กุญแจแถว "ข้าม" ที่เพิ่มในรอบสแกนนี้ (สองกฎของใบเดียวกันห้ามเพิ่มซ้ำ — ดัชนี unique)
+        var creditHoldsByCompany = new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>();
+        var creditHoldKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var rule in rules)
         {
+            if (catchUp && !ScheduleCatchUp.DueRuleCatchesUp(rule.Trigger, rule.OffsetDays, rule.RepeatEveryDays, today, realToday, rule.LastDayScanBkk)) continue;
             // DueSoon: OffsetDays ติดลบ — เช่น -3 = ส่งล่วงหน้า 3 วัน
             // → DueDate ของเอกสารต้องเท่ากับ today + |OffsetDays|.
             // Overdue: OffsetDays บวก — DueDate เท่ากับ today − OffsetDays.
@@ -570,7 +638,7 @@ public class EmailScheduleService : IEmailScheduleService
                 : today.AddDays(-rule.OffsetDays);
             // รอบ 250 WP-04 ต่อยอด: "เกินกำหนด" + ส่งซ้ำทุก N วัน ⇒ ใบที่เกินกำหนดครบ Offset แล้วทุกใบ แล้วคัดด้วยตัวตัดสินเดียว (OverdueReminderSchedule) ·
             // ไม่ตั้งส่งซ้ำ (0) ⇒ เท่ากับวันเป้าหมายตามเดิม
-            var repeating = rule.Trigger == "DocumentOverdue" && rule.RepeatEveryDays > 0;
+            var repeating = !catchUp && rule.Trigger == "DocumentOverdue" && rule.RepeatEveryDays > 0;   // รอบ 258: ย้อนเก็บ = เฉพาะครั้งแรกของใบ
 
             // ฝ่ายค้าน H1: ครั้งซ้ำไม่เกิน MaxOverdueDays ⇒ ไม่ดึงใบเก่ากว่านั้น
             var oldest = today.AddDays(-Math.Max(Accounting.Helpers.OverdueReminderSchedule.MaxOverdueDays, rule.OffsetDays));
@@ -597,10 +665,53 @@ public class EmailScheduleService : IEmailScheduleService
                     d.DueDate.Value.Date.AddDays(rule.OffsetDays), activatedOn)).ToList();
             }
             await _db.HydrateContactsAsync(rule.CompanyId, docs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
-            var sendUtc = ScheduledUtc(today, rule.SendAtHour);
+            var sendUtc = ScheduledUtc(realToday, rule.SendAtHour);   // รอบ 258: ย้อนเก็บส่งตามชั่วโมงของวันนี้จริง (เลยชั่วโมงแล้ว = รอบถัดไป)
+            // ฝ่ายค้านรอบ 258 M1: ใบที่ถูกระงับ = แผนหักเงินสะสมเก่าสุดก่อน (เงินแต่ละบาทนับครั้งเดียว · เฉพาะใบที่จัดสรรได้จริง) — ตัวอ่านเดียว DunningHoldsAsync
+            if (!creditHoldsByCompany.TryGetValue(rule.CompanyId, out var creditHolds))
+                creditHoldsByCompany[rule.CompanyId] = creditHolds =
+                    await Accounting.Helpers.CustomerCreditQuery.DunningHoldsAsync(_db, rule.CompanyId, ct);
+            var creditHoldSuffix = $"credit-hold-{rule.Id:N}";
+            // M1 (การเตือนแบบตรงวันไม่หาย): ใบที่กฎนี้เคยระงับไว้ และตอนนี้ไม่ถูกระงับแล้วแต่ยังค้าง ⇒ ส่งการเตือนที่ถูกข้ามไป (ครั้งเดียว) แล้วปิดแถวระงับ
+            if (!catchUp)
+            {
+                var heldRows = await _db.EmailQueues
+                    .Where(q => q.CompanyId == rule.CompanyId && !q.IsDeleted && q.EntityType == "Document"
+                        && q.IdempotencyKey != null && q.IdempotencyKey.EndsWith(":" + creditHoldSuffix))
+                    .ToListAsync(ct);
+                foreach (var heldRow in heldRows.Where(r => !creditHolds.ContainsKey(r.EntityId)))
+                {
+                    heldRow.IsDeleted = true;
+                    heldRow.UpdatedAt = DateTime.UtcNow;
+                    notSentRows++;
+                    if (docs.Any(d => d.Id == heldRow.EntityId)) continue;   // วันนี้กฎนี้หยิบใบนี้เองอยู่แล้ว
+                    var released = await _db.Documents.AsNoTracking()
+                        .FirstOrDefaultAsync(d => d.Id == heldRow.EntityId && d.CompanyId == rule.CompanyId && !d.IsDeleted
+                            && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft && d.BalanceDue > 0 && d.DueDate != null, ct);
+                    if (released == null) continue;
+                    if (rule.Trigger == "DocumentDueSoon" && released.DueDate!.Value.Date < today) continue;   // เลยกำหนดแล้ว — "ใกล้ครบกำหนด" ไม่มีความหมาย
+                    await _db.HydrateContactsAsync(rule.CompanyId, new List<Document> { released });
+                    var late = await EnqueueDocumentAsync(rule, released, daysOffset: 0, suffix: "credit-release", ct, overrideSendUtc: sendUtc);
+                    if (late.Queued) enqueued++;
+                    else if (late.NotSent != null) notSentRows++;
+                }
+            }
             foreach (var doc in docs)
             {
                 var overdueDays = (today - doc.DueDate!.Value.Date).Days;
+                // รอบ 258: ลูกค้ามีเงินรอจัดสรรพอปิดใบนี้ (โอนมาแล้วแต่ยังไม่ได้ผูกกับใบ) ⇒ ไม่เตือน/ทวงลูกค้า (อีเมลและ LINE) ·
+                // แถว "ข้าม" พร้อมเหตุครั้งเดียวต่อใบต่อ trigger (ทีมงานเห็นในประวัติการส่ง + OverdueDunningJob แจ้งทีมให้จัดสรร)
+                if (creditHolds.TryGetValue(doc.Id, out var creditHoldReason))
+                {
+                    var holdKey = DocumentQueueKey(doc.Id, rule.Trigger, creditHoldSuffix);
+                    if (creditHoldKeys.Add(holdKey)
+                        && !await _db.EmailQueues.AnyAsync(q => q.CompanyId == doc.CompanyId && q.IdempotencyKey == holdKey && !q.IsDeleted, ct))
+                    {
+                        AddNotSentRow(doc.CompanyId, rule.Id, "Document", doc.Id, $"แจ้งเตือนการชำระ {doc.DocumentNumber}", sendUtc, holdKey,
+                            creditHoldReason);
+                        notSentRows++;
+                    }
+                    continue;
+                }
                 var queued = await EnqueueDocumentAsync(rule, doc, daysOffset: 0,
                     suffix: rule.Trigger == "DocumentDueSoon" ? $"due-{rule.OffsetDays}"
                         : Accounting.Helpers.OverdueReminderSchedule.Suffix(rule.OffsetDays, overdueDays, today),
@@ -614,11 +725,40 @@ public class EmailScheduleService : IEmailScheduleService
         // แถว "ข้าม" (ยกเลิกรับเรื่องทวงชำระ) ต้องถูกบันทึกด้วย — ไม่งั้นเหตุหาย
         if (enqueued > 0 || notSentRows > 0) await _db.SaveChangesAsync(ct);
         return enqueued;
+        }
+    }
+
+    /// <summary>รอบ 258 (B-H2): แถวที่ค้าง "กำลังส่ง" เกิน <see cref="EmailQueueStaleSending.StaleAfter"/> (ระบบหยุด/ deploy กลางแบตช์) ⇒ <b>Failed พร้อมเหตุ</b> —
+    /// ไม่คืนเป็น Pending เอง (ผู้ให้บริการอาจรับอีเมลไปแล้ว = ส่งซ้ำ) · คนกด "ลองใหม่"/"ยกเลิก" ได้ และโผล่ในเรื่องค้างของ Autopilot ·
+    /// งานเบื้องหลังข้ามบริษัท (เหมือนการจองคิวด้านล่าง) — คำสั่งเดียวแบบมีเงื่อนไข ปลอดภัยเมื่อหลายเครื่องรันพร้อมกัน · คืนจำนวนแถวที่กู้</summary>
+    internal async Task<int> RecoverStaleSendingAsync(DateTime nowUtc, CancellationToken ct = default)
+    {
+        var cutoff = EmailQueueStaleSending.Cutoff(nowUtc);
+        // รอบ 258 ฝ่ายค้าน R-M3 (เส้นแบ่ง "ค้าง" = EmailQueueStaleSending.Cutoff): (ก) จองแล้วแต่ยังไม่เคยเริ่มส่ง (SendStartedAt ว่าง) ⇒ คืนเข้าคิว —
+        // ระบบรู้แน่ว่าไม่เคยเรียกผู้ให้บริการ จึงไม่มีทางส่งซ้ำ · ล้างโทเคนผู้จอง (เครื่องเดิมที่ยังถือแถวนี้ในหน่วยความจำจะไม่ผ่านด่านเริ่มส่ง)
+        var requeued = await _db.EmailQueues
+            .Where(q => q.Status == EmailQueueStaleSending.StatusSending && q.SendStartedAt == null && (q.UpdatedAt ?? q.CreatedAt) < cutoff)
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.Status, EmailQueueStaleSending.StatusPending)
+                .SetProperty(q => q.ClaimToken, (Guid?)null)
+                .SetProperty(q => q.UpdatedAt, (DateTime?)nowUtc), ct);
+        // (ข) เริ่มส่งแล้วตาย ⇒ Failed พร้อมเหตุ — ไม่รู้ว่าส่งถึงหรือไม่ คนตรวจแล้วลองใหม่/ยกเลิก (คำตัดสิน 258-2-4)
+        var n = await _db.EmailQueues
+            .Where(q => q.Status == EmailQueueStaleSending.StatusSending && q.SendStartedAt != null && (q.UpdatedAt ?? q.CreatedAt) < cutoff)
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.Status, EmailQueueStaleSending.StatusFailed)
+                .SetProperty(q => q.ErrorMessage, EmailQueueStaleSending.StaleReason)
+                .SetProperty(q => q.ClaimToken, (Guid?)null)
+                .SetProperty(q => q.UpdatedAt, (DateTime?)nowUtc), ct);
+        if (requeued > 0) _logger.LogWarning("EmailQueue: คืน {Count} แถวที่จองไว้แต่ยังไม่เคยเริ่มส่งกลับเข้าคิว (ตัวส่งหยุดกลางแบตช์)", requeued);
+        if (n > 0) _logger.LogError("EmailQueue: พบ {Count} แถวที่เริ่มส่งแล้วค้างเกิน {Minutes} นาที — ประทับล้มพร้อมเหตุ (รอคนตรวจแล้วลองใหม่/ยกเลิก)",
+            n, (int)EmailQueueStaleSending.StaleAfter.TotalMinutes);
+        return n + requeued;
     }
 
     public async Task<int> ProcessPendingQueueAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+        await RecoverStaleSendingAsync(now, ct);   // รอบ 258 (B-H2): ก่อนจองรอบใหม่
+        var claimToken = Guid.NewGuid();   // รอบ 258 ฝ่ายค้าน R-M3: ผู้จองรอบนี้ — ด่านเริ่มส่งต่อแถวเทียบโทเคนนี้
 
         // Atomic claim with SKIP LOCKED — required for multi-instance correctness.
         // Without this, two pods read the same top-50 "Pending" rows, both flip to
@@ -635,7 +775,7 @@ public class EmailScheduleService : IEmailScheduleService
                 FOR UPDATE SKIP LOCKED
               )
               UPDATE ""EmailQueues"" q
-              SET ""Status"" = 'Sending', ""UpdatedAt"" = {now}
+              SET ""Status"" = 'Sending', ""UpdatedAt"" = {now}, ""SendStartedAt"" = NULL, ""ClaimToken"" = {claimToken}
               FROM claimed
               WHERE q.""Id"" = claimed.""Id""
               RETURNING q.""Id""").ToListAsync(ct);
@@ -655,6 +795,16 @@ public class EmailScheduleService : IEmailScheduleService
         {
             // รอบ 254 ฝ่ายค้าน M1(ข): แถวก่อนหน้าบันทึกล้มแล้วล้าง context ⇒ แถวที่เหลือของแบตช์หลุดการติดตาม (แก้แล้วไม่ถูกบันทึก ค้าง "กำลังส่ง") ⇒ ผูกกลับก่อนแตะ
             if (_db.Entry(item).State == EntityState.Detached) _db.EmailQueues.Attach(item);
+            // รอบ 258 (B-H2): ประทับเวลาก่อนส่งแถวนี้ (เส้นแบ่ง "ค้าง" นับจากแถว ไม่ใช่จากตอนจองทั้งแบตช์) แบบมีเงื่อนไข —
+            // แถวที่ตัวกู้ประทับล้มไปแล้ว/ถูกยกเลิก (แบตช์ช้าเกินเส้นแบ่ง) ไม่ถูกส่ง: คนอาจกดลองใหม่ไปแล้ว = ส่งซ้ำ
+            var heartbeatId = item.Id;
+            var stillMine = await _db.EmailQueues
+                // รอบ 258 ฝ่ายค้าน R-M3: เงื่อนไขเจ้าของ (โทเคนของรอบจองนี้) — แถวที่ถูกกู้แล้วเครื่องอื่นจองใหม่ยังเป็น Sending แต่ไม่ใช่ของเรา ⇒ ไม่ส่ง ·
+                // ประทับ SendStartedAt = "เริ่มส่งแล้ว" (ตัวกู้ใช้แยกแถวที่ไม่เคยลองส่งออกจากแถวที่ไม่รู้ผล)
+                .Where(q => q.Id == heartbeatId && q.Status == EmailQueueStaleSending.StatusSending && q.ClaimToken == claimToken)
+                .ExecuteUpdateAsync(s => s.SetProperty(q => q.UpdatedAt, (DateTime?)DateTime.UtcNow)
+                    .SetProperty(q => q.SendStartedAt, (DateTime?)DateTime.UtcNow), ct);
+            if (stillMine != 1) { _db.Entry(item).State = EntityState.Detached; continue; }
             try
             {
                 // ID#12: เอกสารเปลี่ยนไปหลังเข้าคิว (ยกเลิก · กลับเป็นร่าง · ชำระครบ) ⇒ ข้ามพร้อมเหตุผลบนคิว — ไม่ส่งใบที่ไม่มีผลแล้วถึงลูกค้า
@@ -1003,13 +1153,17 @@ public class EmailScheduleService : IEmailScheduleService
         var idem = DocumentQueueKey(doc.Id, rule.Trigger, suffix);
         // รอบ 254 WP-11 L2 (DESIGN §3.d/§3.e · Q7): ช่องทางต่อกฎ — เข้าคิว LINE ก่อน (ปลายทางจากตัวหาผู้รับเดียว) แล้วตัดสินว่าอีเมลยังต้องส่งไหม
         // (ติ๊กอีเมล · หรือถอยมาจาก LINE เพราะไม่มีปลายทาง) · forceEmail = เส้นถอยไปอีเมลตอนส่ง (ไม่เข้าคิว LINE ซ้ำ)
-        var line = forceEmail ? LineEnqueueResult.None
-            : await EnqueueLineAsync(rule, doc, idem, overrideSendUtc ?? ScheduledUtc(BangkokNow().Date.AddDays(daysOffset), rule.SendAtHour), recordNotSent, ct);
-        DocQueueResult Merge(DocQueueResult r) => line.Queued > 0 ? r with { Queued = true, NotSent = null } : r;
         // ฝ่ายค้าน M3: ใบที่ต้องส่งแบบ e-Tax by Email ⇒ เส้นอีเมลเดินเสมอแม้กฎติ๊ก LINE อย่างเดียว (การ์ด LINE ไม่ใช่การส่งใบกำกับภาษีอิเล็กทรอนิกส์ ·
-        // ปิดอีเมล = ใบกำกับไม่ถึงผู้ซื้อตามกฎหมาย) · ถามเส้น e-Tax เฉพาะเมื่ออีเมลจะไม่ถูกส่ง (ไม่เพิ่มคำค้นให้กฎเดิม)
-        var etaxForced = !ContactLineChannel.EmailWanted(rule.ChannelEmail, line.FallbackToEmail, forceEmail)
-            && (await DocumentEmailService.RouteForAsync(_db, doc.CompanyId, doc.Id, ct)).Channel == EtaxEmailChannel.EtaxByEmail;
+        // ปิดอีเมล = ใบกำกับไม่ถึงผู้ซื้อตามกฎหมาย) · ถามเส้น e-Tax เฉพาะเมื่ออีเมลอาจไม่ถูกส่ง (ไม่เพิ่มคำค้นให้กฎเดิม · ถามครั้งเดียวต่อใบ)
+        bool? etaxRoute = null;
+        async Task<bool> EtaxByEmailAsync() => etaxRoute ??= (await DocumentEmailService.RouteForAsync(_db, doc.CompanyId, doc.Id, ct)).Channel == EtaxEmailChannel.EtaxByEmail;
+        // รอบ 257 ชุด 4 (C-M3): อีเมลถูกบังคับด้วย e-Tax by Email อยู่แล้ว ⇒ แถว LINE ห้ามถอยไปอีเมลตอนล้ม (เดิม FallbackToEmail=true ⇒ ลูกค้าได้อีเมลสองฉบับ + นับโควตาสองครั้ง)
+        var etaxForcesEmail = !forceEmail && ContactLineChannel.LineFallbackMayDuplicate(rule.ChannelEmail, rule.LineFallbackToEmail) && await EtaxByEmailAsync();
+        var line = forceEmail ? LineEnqueueResult.None
+            : await EnqueueLineAsync(rule, doc, idem, overrideSendUtc ?? ScheduledUtc(BangkokNow().Date.AddDays(daysOffset), rule.SendAtHour), recordNotSent, ct,
+                etaxForcesEmail);
+        DocQueueResult Merge(DocQueueResult r) => line.Queued > 0 ? r with { Queued = true, NotSent = null } : r;
+        var etaxForced = !ContactLineChannel.EmailWanted(rule.ChannelEmail, line.FallbackToEmail, forceEmail) && await EtaxByEmailAsync();
         if (!ContactLineChannel.EmailWanted(rule.ChannelEmail, line.FallbackToEmail, forceEmail, etaxByEmail: etaxForced))
             return new DocQueueResult(line.Queued > 0, line.Duplicate, line.Queued > 0 ? null : line.NotSent);
 
@@ -1087,7 +1241,7 @@ public class EmailScheduleService : IEmailScheduleService
     /// ไม่เก็บ LINE id ในคิว (อ้าง EndpointId · ถอดรหัสตอนส่ง)
     /// </summary>
     private async Task<LineEnqueueResult> EnqueueLineAsync(EmailScheduleRule rule, Document doc, string baseKey, DateTime sendUtc,
-        bool recordNotSent, CancellationToken ct)
+        bool recordNotSent, CancellationToken ct, bool etaxForcesEmail = false)
     {
         if (!ContactLineChannel.WantsLine(rule.ChannelLineUser, rule.ChannelLineGroup) || !ContactLineChannel.SupportsLine(rule.Trigger))
             return LineEnqueueResult.None;
@@ -1115,7 +1269,8 @@ public class EmailScheduleService : IEmailScheduleService
             return new LineEnqueueResult(0, false, plan.FallbackNow, plan.NotSent);
         }
         // ถอยไปอีเมลตอนส่ง (ล้มถาวร) — เฉพาะกฎที่ไม่ได้ติ๊กอีเมล (ติ๊กอีเมล = อีเมลออกอยู่แล้ว)
-        var fallbackAtSend = rule.LineFallbackToEmail && !rule.ChannelEmail;
+        // รอบ 257 ชุด 4 (C-M3): อีเมลถูกบังคับด้วย e-Tax by Email ⇒ ไม่ถอย (ตัวตัดสินเดียว ContactLineChannel.LineFallbackAtSend)
+        var fallbackAtSend = ContactLineChannel.LineFallbackAtSend(rule.ChannelEmail, rule.LineFallbackToEmail, etaxForcesEmail);
         foreach (var ep in plan.Endpoints)
         {
             var key = ContactLineChannel.QueueKey(baseKey, ep.EndpointId);
@@ -1144,6 +1299,14 @@ public class EmailScheduleService : IEmailScheduleService
         rule ??= new EmailScheduleRule { Id = Guid.Empty, CompanyId = companyId, Trigger = trigger, SendAtHour = 9 };
         var suffix = ContactLineChannel.FallbackSuffix(baseKey, doc.Id, rule.Trigger);
         if (suffix == null) return "กุญแจคิว LINE ไม่ตรงกับเอกสาร — ไม่ถอยไปอีเมล";
+        // รอบ 257 ชุด 4 (C-M3 · แถว LINE ที่เข้าคิวก่อนแก้ยังถือ FallbackToEmail=true): อีเมลหลักของใบนี้ (กุญแจเดียวกับ baseKey) เข้าคิวแล้ว
+        // (เช่น e-Tax by Email บังคับอีเมล) ⇒ ไม่ถอยซ้ำ — ลูกค้าไม่ได้อีเมลสองฉบับ ไม่นับโควตาซ้ำ
+        // ฝ่ายค้าน LOW-2: แถวหลักที่ "ข้าม/ยกเลิก/ล้ม" ไม่ใช่การส่ง ⇒ ตอบเหตุ (ห้ามรายงานว่าเข้าคิวแล้ว) · ไม่ถอยเพิ่ม (ตัวตัดสินเดียว ContactLineChannel.MainEmailFallbackOutcome)
+        var mainEmail = await _db.EmailQueues.AsNoTracking()
+            .Where(q => q.CompanyId == companyId && q.IdempotencyKey == baseKey && !q.IsDeleted)
+            .Select(q => new { q.Status, q.ErrorMessage }).FirstOrDefaultAsync(ct);
+        if (mainEmail != null)
+            return ContactLineChannel.MainEmailFallbackOutcome(mainEmail.Status, mainEmail.ErrorMessage);
         if (ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey(baseKey) is { } recurringId)
             rule = WithRecurringPayLayer(rule, await RecurringPayLayerAsync(companyId, recurringId, ct));
         var r = await EnqueueDocumentAsync(rule, doc, daysOffset: 0, suffix: suffix, ct, overrideSendUtc: DateTime.UtcNow, recordNotSent: true, forceEmail: true);
@@ -1347,6 +1510,9 @@ public class EmailScheduleService : IEmailScheduleService
             var existing = await _db.EmailScheduleRules
                 .FirstOrDefaultAsync(r => r.Id == rule.Id && r.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("ไม่พบกฎ");
+            // รอบ 258 (B-M7): เปิดกฎที่ปิดไว้/เปลี่ยนตาราง ⇒ ล้างลายน้ำ (ไม่ย้อนเก็บตามตารางเก่าหรือช่วงที่ตั้งใจปิด)
+            existing.LastDayScanBkk = ScheduleCatchUp.WatermarkAfterEdit(existing.LastDayScanBkk, existing.IsActive, rule.IsActive,
+                existing.Trigger, rule.Trigger, existing.OffsetDays, rule.OffsetDays, existing.DayOfMonth, rule.DayOfMonth);
             existing.Trigger = rule.Trigger;
             existing.IsActive = rule.IsActive;
             existing.DocumentType = rule.DocumentType;
@@ -1412,10 +1578,13 @@ public class EmailScheduleService : IEmailScheduleService
             ?? throw new KeyNotFoundException("ไม่พบคิว");
         // รอบ 250 WP-03 (ฝ่ายค้าน L7): ลองใหม่ได้เฉพาะแถวที่ล้ม — เดิมรีเซ็ตทุกสถานะ ⇒ แถวที่ส่งแล้ว (Sent) กลับเป็น Pending = ลูกค้าได้อีเมลซ้ำ ·
         // แถวที่ยกเลิก/กำลังรอ ไม่ต้องลองใหม่ (ยกเลิกแล้ว = ตั้งกฎ/ส่งใหม่ที่เอกสาร)
-        if (!string.Equals(q.Status, "Failed", StringComparison.Ordinal))
+        // รอบ 258 (B-H2): รับแถวที่ค้าง "กำลังส่ง" ด้วย (ตัวตัดสินเดียว EmailQueueStaleSending) — แถวที่กำลังส่งจริง/ส่งแล้ว/รอส่ง ยังไม่รับ
+        if (!EmailQueueStaleSending.CanRetry(q.Status, q.UpdatedAt, q.CreatedAt, DateTime.UtcNow))
             throw new Accounting.Helpers.BusinessRuleException(
                 $"ลองส่งใหม่ได้เฉพาะคิวที่ล้ม (สถานะตอนนี้: {q.Status}) — คิวที่ส่งแล้วจะไม่ถูกส่งซ้ำ", "EMAIL-QUEUE-RETRY-FAILED-ONLY", 409);
         q.Status = "Pending";
+        q.SendStartedAt = null;   // รอบ 258 ฝ่ายค้าน R-M3: รอบจองใหม่เริ่มจาก "ยังไม่เคยลองส่ง" + ไม่มีผู้จอง
+        q.ClaimToken = null;
         q.RetryCount = 0;
         q.ScheduledFor = DateTime.UtcNow;
         q.ErrorMessage = null;
@@ -1425,8 +1594,12 @@ public class EmailScheduleService : IEmailScheduleService
     public async Task CancelPendingAsync(Guid companyId, Guid queueId)
     {
         // ฝ่ายค้าน fix2 L3: คำสั่งเดียวแบบมีเงื่อนไข — แถวที่ตัวส่งจองไปแล้ว (Sending) ไม่ถูกทับเป็นยกเลิก
+        // รอบ 258 (B-H2): แถวที่ค้าง "กำลังส่ง" เกินเส้นแบ่ง (ตัวส่งตายกลางคัน) ยกเลิกได้ — เดิมไม่มีทางออกของคน
+        var staleCutoff = EmailQueueStaleSending.Cutoff(DateTime.UtcNow);
         var n = await _db.EmailQueues
-            .Where(x => x.Id == queueId && x.CompanyId == companyId && x.Status == "Pending")
+            .Where(x => (x.Id == queueId && x.CompanyId == companyId && x.Status == EmailQueueStaleSending.StatusPending)
+                || (x.Id == queueId && x.CompanyId == companyId && x.Status == EmailQueueStaleSending.StatusSending
+                    && (x.UpdatedAt ?? x.CreatedAt) < staleCutoff))
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, "Cancelled").SetProperty(x => x.UpdatedAt, (DateTime?)DateTime.UtcNow));
         if (n != 1) throw new KeyNotFoundException("ไม่พบคิวที่ยกเลิกได้ (อาจกำลังส่งหรือส่งไปแล้ว)");
     }

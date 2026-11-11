@@ -29,11 +29,13 @@ public class AdminGoLiveController : ControllerBase
     private readonly IHttpClientFactory _http;
     private readonly ILogger<AdminGoLiveController> _logger;
     private readonly IConfiguration? _config;
+    /// <summary>รอบ 257 ชุด 4 (E-H1): ค่าตั้ง LINE OA กลางที่ใช้จริง (ผู้อ่านตัวเดียว) · null = ถือว่ายังไม่ได้ตั้ง (ไม่ประทับ ✅)</summary>
+    private readonly INextAccLineConfig? _nextAccLine;
 
     public AdminGoLiveController(AccountingDbContext db, IPlatformPaymentService platform, ILegalDocumentService legal,
-        IHttpClientFactory http, ILogger<AdminGoLiveController> logger, IConfiguration? config = null)
+        IHttpClientFactory http, ILogger<AdminGoLiveController> logger, IConfiguration? config = null, INextAccLineConfig? nextAccLine = null)
     {
-        _db = db; _platform = platform; _legal = legal; _http = http; _logger = logger; _config = config;
+        _db = db; _platform = platform; _legal = legal; _http = http; _logger = logger; _config = config; _nextAccLine = nextAccLine;
     }
 
     [HttpGet]
@@ -54,8 +56,19 @@ public class AdminGoLiveController : ControllerBase
             var v = await _legal.GetCurrentAsync(kind, ct);
             published[kind] = (v.Source == "published", !string.IsNullOrWhiteSpace(v.BodyMarkdownEn));
         }
+        // รอบ 257 ชุด 4 (E-H1): บริษัทผู้ให้บริการ + LINE OA กลาง (ผู้อ่านเดียว INextAccLineConfig — ค่าในหน้าแอดมิน › config)
+        var platformName = s?.PlatformCompanyId is Guid pcid
+            ? await _db.Companies.AsNoTracking().Where(c => c.Id == pcid).Select(c => c.Name).FirstOrDefaultAsync(ct)
+            : null;
+        var centralOa = _nextAccLine == null ? null : await _nextAccLine.GetAsync(ct);
         return new PlatformGoLiveChecklist.Facts
         {
+            PlatformCompanySet = platformName != null,
+            PlatformCompanyName = platformName,
+            CentralOaHasToken = centralOa?.HasToken == true,
+            CentralOaHasSecret = centralOa?.HasSecret == true,
+            CentralOaHasBasicId = !string.IsNullOrWhiteSpace(centralOa?.BasicId),
+            CentralOaProblem = centralOa?.Problem,
             SystemBaseUrlConfigured = baseUrlConfigured,
             SystemBaseUrl = baseUrlConfigured ? SystemBaseUrl.Pick(s?.AppBaseUrl, _config?["App:BaseUrl"]) : null,
             PlatformGatewayConfigured = cfg != null,

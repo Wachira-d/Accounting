@@ -45,6 +45,8 @@ public static class NotifyEndpointKind
 
     /// <summary>ผู้ดูแลบริษัทกดยกเลิก</summary>
     public const string UnlinkCompany = "company";
+    /// <summary>รอบ 257 ชุด 4 (C LOW): เหตุถอนความยินยอมเมื่อผู้ดูแลบริษัทยกเลิกปลายทาง (คู่กับ "line-stop" ของผู้รับ)</summary>
+    public const string ConsentWithdrawnByCompany = "company-unlink";
     /// <summary>ลบตามคำขอเจ้าของข้อมูล (DSR)</summary>
     public const string UnlinkErase = "erase";
     /// <summary>รวมผู้ติดต่อแล้วซ้ำ (แถวหลักของผู้ถูกรวม · อีเมล/LINE ซ้ำ) — ฝ่ายค้าน S4</summary>
@@ -161,6 +163,7 @@ public static class NotifyTopics
         "DocumentApproved" or "RecurringInvoiceCreated" => NotifyTopic.Document,
         "DocumentDueSoon" or "DocumentOverdue" or "MonthlyStatement" => NotifyTopic.Dunning,
         "WhtCertIssued" => NotifyTopic.Wht,
+        ContactLineChannel.ReceiptTrigger => NotifyTopic.Receipt,
         _ => NotifyTopic.Other,
     };
 

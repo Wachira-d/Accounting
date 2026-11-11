@@ -69,7 +69,7 @@ public static class OcrDuplicateLineGuard
     /// = ยอดหัวใบ + ส่วนลด (เคส C/E/DiscountOnTotal ของ <see cref="OcrLineReconciler"/>)</param>
     public static OcrDuplicateRowDecision Decide(
         IReadOnlyList<OcrCandidateRow> rows, decimal? headerSubTotal, decimal? headerVat, decimal? headerTotal,
-        decimal headerDiscount = 0m)
+        decimal headerDiscount = 0m, bool pageCopyEvidence = false)
     {
         var all = Enumerable.Range(0, rows.Count).ToList();
         if (rows.Count < 2)
@@ -95,7 +95,10 @@ public static class OcrDuplicateLineGuard
         // รูปแบบ "สำเนาทั้งหน้า": ทุกชุดซ้ำ k ครั้งเท่ากัน (k ≥ 2) และมีแถวต่างกัน ≥ 2 ชุด — นอกรูปนี้ไม่ตัด (ให้คนดู)
         var repeatCounts = countBySignature.Values.Distinct().ToList();
         var uniformRepeat = repeatCounts.Count == 1 && repeatCounts[0] >= 2;
-        if (!uniformRepeat || keep.Count < 2)
+        // รอบ 257 (ผู้ใช้รายงาน 2026-11-10 · BS2026100012 หจก.แอม แฮปปี้เนส — ผู้ขายเดียวกับ BS2026100001): ใบที่มี<b>รายการเดียว</b>
+        // ต้นฉบับ+สำเนา ⇒ แถวเดียวซ้ำ 2 ครั้ง ⇒ เดิมเข้าเงื่อนไข "ไม่มีแถวอื่นเทียบ" ⇒ ขั้นยุบบวกจำนวน 54 → 108 · ยอมให้ชุดเดียวผ่านไปเทียบหัวใบ
+        // <b>เฉพาะเมื่อมีหลักฐานว่าไฟล์มีหน้าสำเนา</b> (<see cref="PageCopyEvidence"/>) — กันเคส "น้ำดื่ม × 3 แถว" ที่หัวใบอ่านเพี้ยน (ข้อ 2 เดิม)
+        if (!uniformRepeat || (keep.Count < 2 && !pageCopyEvidence))
             return new(false, all, 0, sumAll, sumDistinct,
                 keep.Count < 2
                     ? $"พบแถวเดียวกัน {rows.Count} แถว แต่ไม่มีแถวอื่นเทียบ (ไม่ใช่รูปแบบสำเนาทั้งหน้า) — คงทุกแถวให้คนดู"
@@ -120,6 +123,25 @@ public static class OcrDuplicateLineGuard
 
         return new(false, all, 0, sumAll, sumDistinct,
             $"พบแถวที่เหมือนกันทุกช่อง {dropped} แถว แต่ Σ ไม่ตรงยอดหัวใบทั้งก่อนตัด ({sumAll:N2}) และหลังตัด ({sumDistinct:N2}) — ไม่เดา คงทุกแถวให้ด่าน Σ ฟ้อง");
+    }
+
+    private static readonly Regex CopyMarker = new(@"สำเนา|(?<![A-Za-z])COPY(?![A-Za-z])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex TaxId13 = new(@"(?<!\d)\d{13}(?!\d)", RegexOptions.CultureInvariant);
+
+    /// <summary>รอบ 257 — หลักฐานว่าไฟล์มี "หน้าสำเนา" ของใบเดียวกัน (pure): คำอธิบายของแถวที่ซ้ำปรากฏบนข้อความกระดาษ ≥ k ครั้ง <b>และ</b>
+    /// (มีคำ สำเนา/COPY <b>หรือ</b> เลข 13 หลักตัวเดียวกันปรากฏ ≥ k ครั้ง = หัวใบถูกพิมพ์ซ้ำ) · ไม่มีข้อความ = ไม่มีหลักฐาน (ไม่เดา)</summary>
+    public static bool PageCopyEvidence(string? paperText, string? description, int repeat)
+    {
+        if (string.IsNullOrWhiteSpace(paperText) || string.IsNullOrWhiteSpace(description) || repeat < 2) return false;
+        var norm = Spaces.Replace(paperText, " ");
+        var desc = Spaces.Replace(description.Trim(), " ");
+        if (desc.Length < 3) return false;
+        var occ = 0;
+        for (var at = norm.IndexOf(desc, StringComparison.OrdinalIgnoreCase); at >= 0; at = norm.IndexOf(desc, at + desc.Length, StringComparison.OrdinalIgnoreCase))
+            occ++;
+        if (occ < repeat) return false;
+        if (CopyMarker.IsMatch(paperText)) return true;
+        return TaxId13.Matches(paperText).GroupBy(m => m.Value).Any(g => g.Count() >= repeat);
     }
 
     /// <summary>ยอดบรรทัดที่เชื่อถือได้ — ยอดที่พิมพ์ถ้า &gt; 0 ไม่งั้น ราคา × จำนวน (เผื่อ engine ส่งแต่ราคา+จำนวน) · <b>สูตรเดียว</b>ของ

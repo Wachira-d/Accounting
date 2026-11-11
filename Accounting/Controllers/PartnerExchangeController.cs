@@ -64,11 +64,51 @@ public class PartnerExchangeController : ControllerBase
     {
         if (!(await DocumentPermissionHelper.VisibleDirectionsAsync(_perms, companyId, JwtHelper.GetUserIdFromClaims(User))).Purchase)
             return Denied(PermissionKeys.DocumentPurchaseView);
-        return Ok(new ApiResponse<List<object>>(true, await _service.IncomingPurchaseDraftsAsync(companyId, ct)));
+        // รอบ 257 ปิดท้าย LOW: ธงปุ่ม "ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ" ตามสิทธิ์อนุมัติเอกสารซื้อของผู้เรียก (ตัวเดียวกับด่านของเส้นยืนยัน)
+        var mayConfirm = await _perms.HasPermissionAsync(companyId, JwtHelper.GetUserIdFromClaims(User), PermissionKeys.DocumentPurchaseApprove);
+        return Ok(new ApiResponse<List<object>>(true, await _service.IncomingPurchaseDraftsAsync(companyId, ct, mayConfirmTaxInvoice: mayConfirm)));
     }
 
     /// <summary>ชนิดต้นฉบับที่ผู้รับยืนยัน — <c>Paper</c> (ตั้งต้น) = ใบกำกับกระดาษ ⇒ PaperConfirmed · <c>StampedEtax</c> = ไฟล์ e-Tax ที่ประทับเวลา ETDA ⇒ EtaxVerified</summary>
     public record ConfirmOriginalRequest(string? Kind);
+
+    /// <summary>ฝ่ายค้าน M1 (รอบ 257 ชุด 3): คำขอ "ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ" — เลขที่ + วันที่ใบกำกับของผู้ขาย + ชนิดต้นฉบับ (Paper | StampedEtax)</summary>
+    public record ExternalTaxInvoiceRequest(string? Kind, string? SupplierInvoiceNumber, DateTime? SupplierTaxInvoiceDate);
+
+    /// <summary>ฝ่ายค้าน M1: ทางออกของคนจาก "รอใบกำกับจากผู้ขาย" — สิทธิ์อนุมัติเอกสารซื้อ · ไม่รับ API key · ยืนยัน + ย้าย VAT (ใบที่อนุมัติแล้ว) ในธุรกรรมเดียว
+    /// ผ่าน <c>CompleteSupplierTaxInvoiceAsync</c> เดิม (ตัวตรวจ §86/4 ตัวเดียว)</summary>
+    [HttpPost("partner-purchase-drafts/{documentId:guid}/confirm-external-tax-invoice")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.DocumentPurchaseApprove)]
+    [Accounting.Filters.RejectApiKey("ยืนยันใบกำกับจากผู้ขายนอกระบบ")]
+    public async Task<ActionResult<ApiResponse<object>>> ConfirmExternalTaxInvoice(Guid companyId, Guid documentId, [FromBody] ExternalTaxInvoiceRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var stampedEtax = string.Equals(request?.Kind, "StampedEtax", StringComparison.OrdinalIgnoreCase);
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
+            var outcome = await _service.ConfirmExternalTaxInvoiceAsync(companyId, documentId, userId, stampedEtax,
+                request?.SupplierInvoiceNumber, request?.SupplierTaxInvoiceDate);
+            if (outcome.Approved)
+                await _docs.CompleteSupplierTaxInvoiceAsync(companyId, documentId,
+                    new Accounting.Models.DTOs.Document.CompleteSupplierTaxInvoiceRequest(
+                        SupplierInvoiceNumber: outcome.SupplierInvoiceNumber, SupplierTaxInvoiceDate: outcome.SupplierTaxInvoiceDate),
+                    userId.ToString());
+            if (ownTx != null) await ownTx.CommitAsync();
+            return Ok(new ApiResponse<object>(true, new { inputVatEvidence = outcome.Evidence, inputVatEvidenceLabel = PartnerInputVatEvidence.Label(outcome.Evidence) },
+                outcome.Approved ? "บันทึกใบกำกับจากผู้ขายแล้ว — ระบบย้ายภาษีซื้อเข้างวดที่เคลมได้ (ถ้าใบครบ §86/4 และอยู่ในกรอบ 6 เดือน)"
+                    : "บันทึกใบกำกับจากผู้ขายแล้ว — ภาษีซื้อจะลงตามปกติเมื่ออนุมัติใบนี้"));
+        }
+        catch (KeyNotFoundException ex) { if (ownTx != null) await ownTx.RollbackAsync(); return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (BusinessRuleException ex)
+        {
+            if (ownTx != null) await ownTx.RollbackAsync();
+            if (ex.Message == PartnerInputVatEvidence.SourceVoidedMessage) await _service.MarkSourceVoidedAsync(companyId, documentId);
+            return StatusCode(ex.StatusCode, new ApiResponse<object>(false, null, ex.Message));
+        }
+        catch (InvalidOperationException ex) { if (ownTx != null) await ownTx.RollbackAsync(); return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+        finally { if (ownTx != null) await ownTx.DisposeAsync(); }
+    }
 
     /// <summary>ยืนยัน "ได้ต้นฉบับใบกำกับแล้ว" (N3 · ฝ่ายค้าน H2: ค่าที่ปลดด่านภาษีซื้อมาจากทางนี้ทางเดียว) — สิทธิ์อนุมัติเอกสารซื้อ ·
     /// ใบอนุมัติแล้วที่ VAT พัก 11640 ⇒ ย้ายเข้า 11610 ผ่านเส้นเติมใบกำกับเดิม (ตัวตรวจ §86/4 ตัวเดียว) ·

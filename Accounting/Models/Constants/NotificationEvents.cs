@@ -102,7 +102,8 @@ public static class NotificationEvents
     public const string AutopilotBankSettleFailed = "autopilot.bank_settle_failed";
     /// <summary>E-15: สรุป Autopilot ประจำวัน (ส่งแล้ว · รับเงิน · ใบเสร็จ · แปลงใบเสนอราคา · เงินโอนจับคู่ · เรื่องที่ระบบทำต่อไม่ได้) — วันละครั้งตามเวลาที่บริษัทตั้ง (ค่าตั้งต้น 08:40)</summary>
     public const string AutopilotDailyDigest = "autopilot.daily_digest";
-    /// <summary>E-11 (รอบ 255 WP-12B ข้อ 8): คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ากล่องรับของเราแล้ว — ต้องตรวจก่อนใช้เป็นเครดิต</summary>
+    /// <summary>E-11 (รอบ 255 WP-12B ข้อ 8): คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ากล่องรับของเราแล้ว — ต้องตรวจก่อนใช้เป็นเครดิต ·
+    /// รอบ 258-3: + 50 ทวิ เข้ากล่องรับแล้วรอคนยืนยัน (F-M4) · ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ บันทึกจ่ายใบซื้อ (F-H3)</summary>
     public const string AutopilotPartnerExchange = "autopilot.partner_exchange";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
@@ -114,6 +115,9 @@ public static class NotificationEvents
     public const string OverdueDunningReminder  = "ar.dunning.reminder";   // 30d
     public const string OverdueDunningFirst     = "ar.dunning.first";      // 60d
     public const string OverdueDunningFinal     = "ar.dunning.final";      // 90d
+    /// <summary>รอบ 258 (DECISIONS 258-1-9): ใบค้างที่ถึงเกณฑ์ทวง แต่ลูกค้ามี "เงินรอจัดสรร" พอปิดใบ ⇒ ไม่ทวงลูกค้า แจ้งทีมให้จัดสรรแทน
+    /// (<c>OverdueDunningJob</c> · ตัวตัดสิน <c>Helpers/DunningSuppression</c>) · ซ้ำได้ทุก 7 วันจนกว่าจะจัดสรร</summary>
+    public const string CustomerCreditCoversInvoice = "ar.credit.covers_invoice";
 
     // ===== Approval workflow (multi-step) =====
     /// <summary>มีรายการรอการอนุมัติของผู้รับ — recipient = ApproverUserId
@@ -197,6 +201,7 @@ public static class NotificationEvents
         ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),
         ("Accounting", OverdueDunningFirst, "AR เกิน 60 วัน — ส่งหนังสือทวงหนี้รอบที่ 2"),
         ("Accounting", OverdueDunningFinal, "AR เกิน 90 วัน — ส่งหนังสือทวงหนี้ครั้งสุดท้าย"),
+        ("Accounting", CustomerCreditCoversInvoice, "ใบค้างชำระที่ลูกค้ามีเงินรอจัดสรรพอปิด — ไม่ทวงลูกค้า แจ้งให้จัดสรร"),
         ("Approval", ApprovalRequired, "มีรายการรอการอนุมัติ"),
         ("Approval", ApprovalGranted, "อนุมัติคำขอแล้ว"),
         ("Approval", ApprovalRejected, "ปฏิเสธคำขอ"),
@@ -229,5 +234,17 @@ public static class NotificationRecipientRoles
     public static readonly IReadOnlyList<string> All = new[]
     {
         Requester, DirectManager, DepartmentHead, HrAdmin, Accounting, Owner
+    };
+
+    /// <summary>รอบ 258 (E-H1 · F2 ข้อ 5): ป้ายไทยของบทบาทผู้รับ — ตัวตั้งตัวเดียว ส่งให้หน้าเว็บผ่านแคตตาล็อก
+    /// (เดิมหน้า settings/notifications มีสำเนาใน JS สองชุดที่คำไม่ตรงกัน)</summary>
+    public static readonly IReadOnlyDictionary<string, string> Labels = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [Requester] = "ผู้ขอ",
+        [DirectManager] = "หัวหน้าตรง",
+        [DepartmentHead] = "หัวหน้าแผนก",
+        [HrAdmin] = "ฝ่ายบุคคล",
+        [Accounting] = "ฝ่ายบัญชี",
+        [Owner] = "เจ้าของบริษัท",
     };
 }

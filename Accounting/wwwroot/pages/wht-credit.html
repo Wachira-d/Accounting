@@ -237,6 +237,9 @@
           <input type="checkbox" id="icAllowOtherPayer"> ยืนยันว่ารายการที่เลือกเป็นผู้จ่ายเดียวกับบนใบ (เช่น ผู้จ่ายเปลี่ยนชื่อ/สาขา)
         </label>
         <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-top:6px">
+          <input type="checkbox" id="icNotDuplicate"> ยืนยันว่าไม่ใช่ใบซ้ำ (ใบเลขที่เดียวกันในกล่องรับเป็นของผู้จ่ายอีกราย — ต้องกรอกเลขผู้จ่ายของใบนี้)
+        </label>
+        <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-top:6px">
           <input type="checkbox" id="icStandalone"> ไม่มีรายการที่ตรง — บันทึกเป็นรายการเครดิตใหม่ (เช่น รับชำระนอกระบบ)
         </label>
         <div class="form-group" style="margin-top:6px">
@@ -421,6 +424,7 @@
             <div style="white-space:nowrap">
               ${i.fileAttachmentId ? `<button class="btn btn-sm btn-secondary" onclick="Page.viewIntakeFile('${Layout.jsArg(i.id)}')">📎 ดูใบ</button>` : ''}
               ${i.status === 'AwaitingConfirm' ? `<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="Page.openIntake('${Layout.jsArg(i.id)}')">ตรวจและยืนยัน</button>` : ''}
+              ${i.status === 'Confirmed' ? `<button class="btn btn-sm btn-secondary" style="margin-left:4px" title="ยืนยันผิดใบ หรือผู้จ่ายยกเลิกใบนี้ — ถอนเครดิตจากใบนี้ออกจากทะเบียน (ใช้เครดิตในแบบที่ยื่นแล้ว = ถอนไม่ได้)" onclick="Page.unconfirmIntake('${Layout.jsArg(i.id)}')">ถอนการยืนยัน</button>` : ''}
             </div>
           </div>`;
         }).join('');
@@ -469,6 +473,7 @@
         this._icId = id;
         document.getElementById('icViewBtn').style.display = it.fileAttachmentId ? '' : 'none';
         document.getElementById('icAllowOtherPayer').checked = false;
+        document.getElementById('icNotDuplicate').checked = false;
         document.getElementById('icStandaloneReason').value = '';
         const set = (k, v) => { document.getElementById(k).value = v == null ? '' : v; };
         set('icNo', it.certificateNumber); set('icDate', it.certificateDate ? Layout.dateInput(it.certificateDate) : '');
@@ -494,7 +499,7 @@
           tb.innerHTML = cands.length ? cands.map(c => `<tr>
               <td><input type="checkbox" class="ic-pick" data-id="${Layout.esc(c.whtCreditId)}" aria-label="เลือกรายการ" ${proposed[c.whtCreditId] != null ? 'checked' : ''}></td>
               <td>${Layout.esc(c.documentNumber || '—')}${c.documentDate ? '<div style="font-size:11px;color:#64748b">' + Layout.date(c.documentDate) + '</div>' : ''}</td>
-              <td>${Layout.esc(c.payerName || '—')}</td>
+              <td>${Layout.esc(c.payerName || '—')}${c.writtenOff ? '<div style="font-size:11px;color:#b45309">ตัดสูญส่วนที่เหลือแล้ว — ยืนยัน = กลับรายการตัดสูญ (ต้องมีสิทธิ์จัดการใบสำคัญ)</div>' : ''}</td>
               <td class="text-right">${Layout.money(c.whtAmount)}</td>
               <td class="text-right">${Layout.money(c.outstanding)}</td>
               <td class="text-right"><input type="number" step="0.01" class="form-input ic-amt" data-id="${Layout.esc(c.whtCreditId)}" aria-label="ยอดที่จัดสรร" style="width:110px;text-align:right"
@@ -523,6 +528,7 @@
           createStandalone: standalone,
           standaloneReason: document.getElementById('icStandaloneReason').value.trim() || null,
           allowOtherPayer: document.getElementById('icAllowOtherPayer').checked,
+          notDuplicate: document.getElementById('icNotDuplicate').checked,
           viewedFile: !!this._viewed[this._icId],
         };
         const btn = document.getElementById('icSave');
@@ -530,10 +536,34 @@
         try {
           const res = await API.post(`/api/companies/${Layout.getCompanyId()}/wht-certs/inbox/${encodeURIComponent(this._icId)}/confirm`, body);
           Layout.closeModal('icModal');
-          Layout.toast(res?.message || 'ยืนยันแล้ว', 'success');
+          Layout.toast(res?.message || 'ยืนยันแล้ว', 'success', res?.data?.followUpNote ? 15000 : undefined);
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error', 12000); }
         finally { btn.disabled = false; }
+      },
+
+      // รอบ 257 ชุด 2 (B-H2): ถอนการยืนยันใบที่ลงเครดิตแล้ว — เซิร์ฟเวอร์ตัดสินทุกเงื่อนไข (ใช้เครดิตในแบบที่ยื่นแล้ว = 409 · ต้องกลับตัดสูญ = 403)
+      async unconfirmIntake(id) {
+        const reason = await Layout.promptText({
+          title: 'ถอนการยืนยันใบ 50 ทวิ', label: 'เหตุผล (อย่างน้อย 5 ตัวอักษร)', placeholder: 'เช่น ผู้จ่ายยกเลิกใบนี้ · ยืนยันผิดใบ',
+          required: true, multiline: true, okText: 'ถอนการยืนยัน',
+          validate: v => (v || '').trim().length < 5 ? 'ระบุเหตุผลอย่างน้อย 5 ตัวอักษร' : null,
+        });
+        if (reason == null) return;
+        try {
+          const res = await API.post(`/api/companies/${Layout.getCompanyId()}/wht-certs/inbox/${encodeURIComponent(id)}/unconfirm`, { reason: reason.trim() });
+          Layout.toast(res?.message || 'ถอนการยืนยันแล้ว', 'success', 9000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error', 12000); }
+      },
+
+      // รอบ 257 ชุด 2 (B-M3): ผู้จ่ายหักผ่าน e-WHT · รอหลักฐาน (ไม่เพิ่มเครดิต) — ปุ่มแสดงตามธงจากเซิร์ฟเวอร์ (canMarkEWht)
+      async setEWht(id, on) {
+        try {
+          const res = await API.post(`/api/companies/${Layout.getCompanyId()}/wht-credits/${encodeURIComponent(id)}/ewht-pending`, { eWithholding: !!on });
+          Layout.toast(res?.message || 'บันทึกแล้ว', 'success', 7000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error', 9000); }
       },
 
       openReject() {
@@ -715,9 +745,12 @@
               ${r.attachmentId ? `<button class="btn btn-sm btn-secondary" style="margin-right:4px" title="หนังสือรับรอง 50 ทวิ ที่แนบ" onclick="Page.openFile('${String(r.attachmentId).replace(/[^0-9a-fA-F-]/g, '')}')">📎 ดูไฟล์</button>` : ''}
               ${r.status === 'Claimed' ? ''
                 : r.writtenOffWithJournal
-                  ? `<button class="btn btn-sm btn-secondary" disabled title="ตัดสูญพร้อมรายการบัญชีแล้ว — แก้ไข/ลบไม่ได้ · ได้ใบภายหลังให้กด &quot;ได้รับใบแล้ว&quot;">แก้ไข 🔒</button>
-                     <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="Page.openLate('${r.id}')">ได้รับใบแล้ว</button>`
+                  ? `<button class="btn btn-sm btn-secondary" disabled title="ตัดสูญพร้อมรายการบัญชีแล้ว — แก้ไข/ลบไม่ได้">แก้ไข 🔒</button>
+                     ${r.canMarkReceived
+                        ? `<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="Page.openLate('${r.id}')">ได้รับใบแล้ว</button>`
+                        : `<span style="margin-left:4px;font-size:11px;color:#475569" title="${Layout.esc(r.certificateLockReason || '')}">ได้ใบส่วนที่เหลือ ⇒ อัปโหลดเข้ากล่องรับ</span>`}`
                   : `<button class="btn btn-sm btn-secondary" onclick="Page.openEdit('${r.id}')">แก้ไข</button>`}
+              ${r.canMarkEWht ? `<button class="btn btn-sm btn-secondary" style="margin-left:4px" title="ผู้จ่ายหักผ่านระบบ e-Withholding Tax (ไม่มีกระดาษ 50 ทวิ) — ไม่เพิ่มเครดิตจนกว่าจะแนบหลักฐานเข้ากล่องรับ" onclick="Page.setEWht('${r.id}', ${r.eWhtPending ? 'false' : 'true'})">${r.eWhtPending ? 'ยกเลิก e-WHT' : 'หักผ่าน e-WHT'}</button>` : ''}
               ${r.canWriteOff ? `<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="Page.expire('${r.id}')">ตัดสูญ</button>` : ''}
             </td>
           </tr>`).join('');

@@ -1,0 +1,31 @@
+# ฝ่ายค้าน รอบ 258-3 "เส้นบิลอัตโนมัติจนจบ" — 4e9efbc4 · c2fe3f35 · a8b4f4fb · c868cda4 · 83bd95ef
+
+อ่านจาก `FETCH_HEAD` (claude/booking-service-features-sdemob) · อ่านอย่างเดียว · ไม่ได้คอมไพล์/รันเทสต์
+
+## ผลรวม: merge ได้ แต่ต้องตามแก้ (MED 6 ข้อ · ไม่มี HIGH)
+
+## ข้อที่พบ
+
+| # | ระดับ | ที่ | ปัญหา | วิธีแก้ขั้นต่ำ |
+|---|---|---|---|---|
+| M1 | MED | `ContactLineQueueService.BuildCard…` (`ViewUrl: await ViewUrlAsync(item, ct)` ใส่ทุกครั้ง) | กลุ่ม LINE ที่ตั้ง "ซ่อนยอด" (`showAmounts=false`) ยังได้ปุ่มดู PDF ซึ่งแสดงยอด เลขภาษี และที่อยู่ครบ ⇒ ค่าตั้งความเป็นส่วนตัวที่ตั้งไว้ชัด ๆ ถูกข้าม และลิงก์ยังส่งต่อได้ 400 วัน | ไม่ใส่ ViewUrl เมื่อ `!showAmounts` (หรือเมื่อเป็นกลุ่ม เว้นแต่มีค่าตั้งเปิดไว้) + เทสต์ |
+| M2 | MED | `PostPaymentAutomationPolicy.AddSends` / ขั้น `LineReceipt` | บริษัทโหมด e-Tax by Email กับใบเสร็จที่มี VAT: (ก) ผู้ติดต่อที่มีแต่ LINE เดิมงานหยุดพร้อมแจ้งคน ตอนนี้จบเป็น Done พร้อมแค่ `LineOnlyNote` ⇒ ใบกำกับไม่เคยผ่าน ETDA (ไม่ได้ cc csemail@etax.teda.th · ไม่มี timestamp) และไม่มีใครถูกแจ้ง (ทิศตรงข้ามถดถอย) (ข) LINE ทำก่อนอีเมล ⇒ เมื่อเส้น e-Tax ปฏิเสธขั้นอีเมล ลูกค้าได้ PDF ธรรมดาของใบกำกับไปแล้ว ส่วนตัวที่ตามกฎหมายต้องส่งยังไม่ออก ข้อดีคือไม่มีจุดไหนประทับสถานะ e-Tax เอง | เมื่อบริษัทเป็นโหมด e-Tax by Email และใบเป็นใบกำกับ ⇒ ให้ LINE-only เป็น blocked (ไม่ใช่ note) และ/หรือ ข้าม LINE เมื่อขั้น e-Tax ถูกปฏิเสธ · เทสต์ policy |
+| M3 | MED | `PartnerPaymentNoticeRule.For` (กิ่ง `cash == balance` ⇒ `Wht=0`) | ใบซื้อมีภาษีหักค้าง (ตามกติกาผู้ซื้อ) แต่จ่ายเต็มผ่านลิงก์ ⇒ บันทึกไปเงียบ ๆ ด้วย WHT 0 · ไม่ออก 50 ทวิ และไม่มีคำเตือนว่าหน้าที่หักตาม ม.50/§3 เตรส ยังอยู่ (ผู้จ่ายรับผิดร่วมตาม ม.54) · เทสต์ `full` ล็อกกรณีนี้ไว้แค่ที่ wht=0 | `wht>0 && cash==balance` ⇒ คืน Plan พร้อม Note/คำเตือน (หรือ Problem ให้บันทึกเองแล้วเลือก "ภาษีออกแทน") + เทสต์ |
+| M4 | MED | `PartnerPaymentNoticeService.RecordAsync` + `partners.html recordNotice` | `PaymentMethod.BankTransfer` ใส่ตายตัว และหน้าเว็บไม่ส่ง `bankAccountId` ⇒ JE ของผู้ซื้อตัดบัญชีธนาคารตั้งต้นเสมอ แม้จ่ายผ่าน gateway ด้วยบัตร หรือ PromptPay จากบัญชี/คนอื่น · กล่องยืนยันไม่บอกว่าใช้บัญชีไหน | เพิ่มตัวเลือกบัญชีเงินในกล่องยืนยัน (ค่าตั้งต้นตามวิธีจ่ายของ intent) + แสดงบัญชีในข้อความ |
+| M5 | MED | `NotifySellerReceivedAsync` (ข้อมูลที่ผู้ขายคุม) | สลิปที่ผู้ขายยืนยันผิดใบ/ผิดลูกค้า (หรือยอดที่พิมพ์เอง) ⇒ ฝั่งผู้ซื้อได้การแจ้งที่ยอด "พอดี" ยอดค้าง ⇒ กดครั้งเดียวก็บันทึกจ่ายที่ไม่เคยเกิดขึ้น · ขอบเขตจำกัดอยู่ที่ยอดค้าง (Rule กันไว้) แต่ไม่มีอะไรผูกกับรายการเดินบัญชีของผู้ซื้อ | ในข้อความยืนยันบอกว่ามาจากสลิปที่ผู้ขายยืนยัน/gateway + "ตรวจรายการเดินบัญชีก่อน" · ทางที่ดีกว่า: แนะนำให้จับคู่กับรายการธนาคาร |
+| M6 | MED | ไม่มีเทสต์ `Category=Db` สำหรับการแจ้ง/การส่งคู่ค้า | เส้นเงินข้ามบริษัท: ถ้าถอดด่าน Accepted/IsPurchase/กันซ้ำ เทสต์ pure ยังผ่านทั้งหมด (`required_call_site_check` ล็อกแค่ข้อความ ไม่ได้ล็อกพฤติกรรม) · กิ่ง 23505, การ seal audit 2 บริษัทใน SaveChanges เดียว และการกดบันทึกซ้ำ ไม่มีเทสต์ไหนแตะ | Db test 1 ชุด: partnership Revoked ⇒ 0 แถว · webhook ซ้ำ ⇒ 1 แถว · Record ×2 ⇒ 1 payment · ตรวจ chain ของทั้งสองบริษัทด้วย `AuditHashChain.Analyze` |
+| L1 | LOW | `NotifySellerReceivedAsync` กิ่ง 23505 `_db.ChangeTracker.Clear()` | ล้างทั้ง scope ที่ใช้ร่วมกับ `PaymentIntentService` (intent ที่ track ไว้ / event redispatch ที่จะ SaveChanges ต่อหลัง handler) · กิ่ง catch-all ไม่ detach แถว notice/audit ที่ Add ค้างไว้ ⇒ SaveChanges ถัดไปของผู้เรียกจะเขียนซ้ำหรือล้ม | detach เฉพาะแถวของตัวเอง (notice + audit ที่เพิ่ง Add) ทั้งสองกิ่ง |
+| L2 | LOW | `RecordAsync` race | สองคนกดพร้อมกัน: ตัวที่สองชน `FOR UPDATE`/ยอดเกิน แล้วล้มด้วย `InvalidOperationException` ซึ่ง controller ไม่ได้ catch ⇒ 500 · เงินไม่ผิด · งวดปิดแล้ว/วันที่ในอนาคตก็ได้ 500 แบบเดียวกัน | ล็อกแถว notice (`FOR UPDATE`) หรือเช็ก Status แบบ conditional update · map ข้อผิดพลาดเป็น 409 |
+| L3 | LOW | `PartnerPaymentNoticeController` | ใช้สิทธิ์ `CanApprove(PurchaseInvoice)` ตายตัว (ใบปลายทางอาจเป็น Expense) · ไม่มี `DenySensitiveAsync` เหมือนเส้นชำระปกติ · `List` ไม่ตรวจสิทธิ์ใด ๆ (สมาชิกทุกคนเห็นยอดใบซื้อ) | ใช้ `DenyDocAsync` ตามชนิดใบจริง + ตรวจความลับ · ให้ List ต้องมีสิทธิ์ดูใบซื้อ |
+| L4 | LOW | `LineDocumentViewController` | การเพิกถอนผูกกับแถวคิวเท่านั้น: ลบปลายทาง/เลิกผูก LINE ของผู้ติดต่อแล้วลิงก์ยังใช้ได้ 400 วัน · เพดานต่อ IP ทำให้ผู้ใช้หลัง CGNAT มือถือโดนรวมกัน · เปลี่ยน JWT_SECRET ⇒ ลิงก์ทั้งหมดตาย (โดยตั้งใจ แต่ยังไม่มี doc) | ตรวจด้วยว่าปลายทางยังอยู่/ยังใช้งาน · จดผลของการหมุน secret |
+| L5 | LOW | `Audit(sellerCompanyId, …)` | แถว audit ของผู้ขายเก็บ `targetDocumentId` (id ใบซื้อภายในของผู้ซื้อ) และ `buyerCompanyId` ⇒ ข้อมูลภายในของผู้ซื้อไปอยู่ใน log ที่ผู้ขายเปิดอ่านได้ | ตัดฟิลด์ฝั่งผู้ซื้อออกจากแถวของผู้ขาย |
+| L6 | LOW | `PartnerExchangeRules.IsTaxInvoiceCarrier` | ไม่ดู `ReceiptForm.ReceiptTaxInvoiceAbbreviated` · รอบนี้ใบเสร็จ settlement เริ่มส่งถึงคู่ค้าแล้ว ⇒ ใบอย่างย่อ (บริษัทขายปลีกที่เลือกหัวนี้) อาจถูกเสนอเป็นหลักฐานภาษีซื้อ (§82/5(2)) · ผู้ซื้อยังต้องกด "ได้รับต้นฉบับแล้ว" อยู่ | คืน false เมื่อฟอร์มเป็นอย่างย่อ + เทสต์ |
+
+## ตรวจแล้ว ไม่ใช่บั๊ก
+
+- token ดู PDF: ใช้ HMAC ตัวเดียวทั้งฝั่งเซ็นและฝั่งตรวจ (`LineDocumentViewLink.Token/Matches`, FixedTimeEquals) · ตรวจ token ก่อนแตะฐาน (สุ่มเดาไม่ได้ · PDF ไม่ถูกสร้างก่อนผ่าน) · แถวต้องเป็นของบริษัทใน URL + `EntityType=="Document"` ⇒ สลิปเงินเดือน/50 ทวิ เข้าไม่ถึง · ใบยกเลิก/ร่าง ⇒ 404 ข้อความเดียว · `no-store` + `noindex` · ชื่อไฟล์กรองแล้ว · production ปฏิเสธ secret ว่าง (Program.cs JWT_SECRET)
+- audit 2 บริษัทใน SaveChanges เดียว: `AuditChainLockKeys` เรียงแล้วล็อกทุกบริษัท (ไม่ deadlock · chain แยกต่อบริษัทถูกต้อง)
+- ข้ามบริษัท: Record/Dismiss/List กรอง `CompanyId == companyId` · CreatePaymentAsync ผูกบริษัทผู้ซื้อ · notice ต้องมีคู่ค้า Accepted + ใบปลายทางเป็นใบซื้อของผู้ซื้อ · กันซ้ำด้วย unique `(CompanyId, PaymentIntentId)` + Reference แบบ canonical
+- ใบซื้อร่างซ้ำฝั่งผู้รับ: ReceiptFlow ไม่สร้างใบใหม่ (แนบเข้าใบเดิมผ่าน `ExistingPurchaseForChainAsync`) · ใบเสร็จที่ไม่ใช่ใบกำกับ ⇒ มีแค่แถวกล่องเข้า
+- migration: `CREATE TABLE/INDEX IF NOT EXISTS` (idempotent) · query ใหม่ใน AutopilotService ผูก CompanyId ทุกตัว · ไม่มี BackgroundService ใหม่
+- ส่ง LINE ซ้ำ: กุญแจต่อใบ+ปลายทาง (`ReceiptBaseKey` + `QueueKey`) · ใบเสร็จ settlement ไม่ผ่าน `OnDocumentApprovedAsync` ⇒ ไม่ชนกฎตารางส่ง

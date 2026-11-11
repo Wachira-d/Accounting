@@ -17,17 +17,29 @@ public class EmailScheduleController : ControllerBase
     private readonly IContactLineQueueService? _lineQueue;
     /// <summary>รอบ 254 WP-11 L2: ด่านเขียนของคิว LINE (ส่งอีกครั้ง = ส่งข้อความในนามบริษัท) — CompanySettings.Edit · ไม่มีบริการ = ปฏิเสธ (ปิดทางปลอดภัย)</summary>
     private readonly IPermissionService? _permissions;
-    public EmailScheduleController(IEmailScheduleService svc, IContactLineQueueService? lineQueue = null, IPermissionService? permissions = null)
+    /// <summary>รอบ 257 ชุด 4 (C-M5): ป้ายช่องทาง LINE ตามบริษัท (กลุ่มผ่าน OA กลางของบริษัทผู้ให้บริการ)</summary>
+    private readonly IContactRecipientResolver? _recipients;
+    public EmailScheduleController(IEmailScheduleService svc, IContactLineQueueService? lineQueue = null, IPermissionService? permissions = null,
+        IContactRecipientResolver? recipients = null)
     {
-        _svc = svc; _lineQueue = lineQueue; _permissions = permissions;
+        _svc = svc; _lineQueue = lineQueue; _permissions = permissions; _recipients = recipients;
     }
 
-    /// <summary>รอบ 254 WP-11 L2: ด่านสิทธิ์ของคำสั่งคิว LINE — null = ผ่าน</summary>
-    private async Task<ActionResult?> RequireSettingsAsync(Guid companyId)
+    /// <summary>รอบ 257 ชุด 4 (C-M5 · server computes): ป้ายช่องทาง LINE ของฟอร์มกฎ — บริษัทผู้ให้บริการส่งเข้ากลุ่มผ่าน OA กลางได้ (256-2) · อ่านอย่างเดียว</summary>
+    [HttpGet("line-labels")]
+    public async Task<ActionResult<ApiResponse<ContactLineChannel.RuleChannelLabels>>> LineLabels(Guid companyId)
     {
-        var allowed = _permissions != null && await _permissions.HasPermissionAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
-            Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit);
-        return allowed ? null : StatusCode(403, new ApiResponse<object>(false, null, "ไม่มีสิทธิ์จัดการคิว LINE (ต้องการ CompanySettings.Edit)"));
+        var open = _recipients != null && (await _recipients.LineChannelAsync(companyId)).NextAccGroupOpen;
+        return Ok(new ApiResponse<ContactLineChannel.RuleChannelLabels>(true, ContactLineChannel.ChannelLabels(open)));
+    }
+
+    /// <summary>รอบ 254 WP-11 L2 → รอบ 258 (A-H1/B-H1): ด่านเขียนของหน้าตารางส่งทั้งหน้า — กฎ (สร้าง/แก้/ลบ) + คิวอีเมล + คิว LINE ·
+    /// ตัวตัดสินเดียว <see cref="SettingsWriteGate"/> (CompanySettings.Edit · งานตั้งกฎห้ามใช้ API key) · null = ผ่าน · ไม่มีบริการสิทธิ์ = ปฏิเสธ</summary>
+    private async Task<ActionResult?> RequireSettingsAsync(Guid companyId, string verb = "จัดการคิว LINE", bool rejectApiKey = false)
+    {
+        var decision = await SettingsWriteGate.EvaluateAsync(_permissions, HttpContext, companyId, verb, rejectApiKey);
+        return decision.Allowed ? null
+            : StatusCode(403, new ApiResponse<object>(false, new { ruleCode = decision.RuleCode }, decision.Message));
     }
 
     public sealed record RuleRequest(
@@ -52,12 +64,33 @@ public class EmailScheduleController : ControllerBase
 
     [HttpGet("rules")]
     public async Task<ActionResult<ApiResponse<List<EmailScheduleRule>>>> GetRules(Guid companyId)
-        => Ok(new ApiResponse<List<EmailScheduleRule>>(true, await _svc.GetRulesAsync(companyId)));
+    {
+        // รอบ 258 ฝ่ายค้าน R-L4: ไม่ถือ CompanySettings.Edit ⇒ ไม่เห็นผู้รับสำเนา/เนื้อเทมเพลต (ตัวตั้งเดียว ScheduleReadView · แถวจาก AsNoTracking)
+        var canManage = await CanManageAsync(companyId);
+        var rules = await _svc.GetRulesAsync(companyId);
+        return Ok(new ApiResponse<List<EmailScheduleRule>>(true, rules.Select(r => ScheduleReadView.Rule(r, canManage)).ToList()));
+    }
+
+    /// <summary>รอบ 258 ฝ่ายค้าน R-L5 (server computes): ผู้ใช้นี้จัดการตารางส่งได้ไหม — หน้าเว็บล็อกปุ่มแก้/ลบ/ลองใหม่/ยกเลิกตามธงนี้ + แสดงเหตุ (ไม่ปล่อยให้กดแล้ว 403)</summary>
+    [HttpGet("access")]
+    public async Task<ActionResult<ApiResponse<object>>> Access(Guid companyId)
+    {
+        var canManage = await CanManageAsync(companyId);
+        return Ok(new ApiResponse<object>(true, new { canManage, notice = canManage ? null : ScheduleReadView.ReadOnlyNotice }));
+    }
+
+    /// <summary>ผู้เรียกถือสิทธิ์จัดการตารางส่งไหม (ตัวตัดสินเดียวกับด่านเขียน <see cref="SettingsWriteGate"/> — ไม่มีบริการสิทธิ์ = ไม่ได้)</summary>
+    private async Task<bool> CanManageAsync(Guid companyId)
+    {
+        return (await SettingsWriteGate.EvaluateAsync(_permissions, HttpContext, companyId, null, rejectApiKey: false)).Allowed;
+    }
 
     [HttpPut("rules")]
     public async Task<ActionResult<ApiResponse<EmailScheduleRule>>> UpsertRule(
         Guid companyId, [FromBody] RuleRequest req)
     {
+        // รอบ 258 (A-H1/B-H1): กฎ = ใครได้สำเนา (Bcc) · เนื้ออีเมล · ช่องทาง LINE ⇒ ต้องถือ CompanySettings.Edit และห้ามใช้ API key
+        if (await RequireSettingsAsync(companyId, "แก้กฎตารางส่ง", rejectApiKey: true) is { } deny) return deny;
         // รอบ 250 WP-03 (ฝ่ายค้าน M4): ค่านอกช่วงตอบ 400 พร้อมช่วง (ช่วงเดียวกับหน้าเว็บ) — เดิม Math.Clamp เงียบ ⇒ ส่งผิดเวลา/ผิดวันโดยผู้ใช้ไม่รู้
         var rangeError = RuleRangeError(req.SendAtHour, req.DayOfMonth, req.RepeatEveryDays)
             ?? Accounting.Helpers.OverdueReminderSchedule.RepeatProblem(req.Trigger, req.RepeatEveryDays);   // ฝ่ายค้าน M2
@@ -93,6 +126,7 @@ public class EmailScheduleController : ControllerBase
     [HttpDelete("rules/{ruleId:guid}")]
     public async Task<ActionResult<ApiResponse<object>>> DeleteRule(Guid companyId, Guid ruleId)
     {
+        if (await RequireSettingsAsync(companyId, "ลบกฎตารางส่ง", rejectApiKey: true) is { } deny) return deny;
         await _svc.DeleteRuleAsync(companyId, ruleId);
         return Ok(new ApiResponse<object>(true, null, "ลบกฎแล้ว"));
     }
@@ -102,16 +136,27 @@ public class EmailScheduleController : ControllerBase
     {
         var (pending, sent, failed) = await _svc.GetQueueStatsAsync(companyId);
         var recent = await _svc.GetRecentQueueAsync(companyId, take);
+        var canManage = await CanManageAsync(companyId);   // รอบ 258 ฝ่ายค้าน R-L4/R-L5
+        var nowUtc = DateTime.UtcNow;   // รอบ 258 (B-H2): ปุ่มที่กดได้ตัดสินที่เซิร์ฟเวอร์ (รวมแถวค้าง "กำลังส่ง") — หน้าเว็บแสดงอย่างเดียว
         return Ok(new ApiResponse<object>(true, new
         {
             stats = new { pending, sent, failed },
+            canManage,
             items = recent.Select(q => new
             {
-                q.Id, q.EntityType, q.EntityId, q.ToEmail, q.Subject,
+                q.Id, q.EntityType, q.EntityId,
+                // รอบ 258 ฝ่ายค้าน R-L4: ผู้รับ/หัวเรื่องของสลิปเงินเดือน · 50 ทวิ ซ่อนจากผู้ที่ไม่ถือสิทธิ์ (ตัวตั้งเดียว ScheduleReadView)
+                ToEmail = ScheduleReadView.Recipient(q.ToEmail, q.EntityType, canManage),
+                Subject = ScheduleReadView.Subject(q.Subject, q.EntityType, canManage),
                 q.Status, q.RetryCount, q.ScheduledFor, q.SentAt,
                 // ID#12: ป้ายไทยจากเซิร์ฟเวอร์ (รวม "ข้าม (ไม่ส่ง)" ของใบที่ถูกยกเลิก/ชำระครบหลังเข้าคิว) — หน้าเว็บแสดงอย่างเดียว
                 StatusLabel = Accounting.Helpers.ScheduledEmailSendCheck.StatusLabel(q.Status),
-                q.ErrorMessage, q.CreatedAt,
+                ErrorMessage = q.ErrorMessage
+                    ?? (EmailQueueStaleSending.IsStale(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc) ? EmailQueueStaleSending.StaleReason : null),
+                q.CreatedAt,
+                // รอบ 258 ฝ่ายค้าน R-L5: ปุ่ม = สถานะรับได้ **และ** ผู้ใช้มีสิทธิ์ (เดิมเห็นปุ่มแล้วได้ 403)
+                CanRetry = canManage && EmailQueueStaleSending.CanRetry(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc),
+                CanCancel = canManage && EmailQueueStaleSending.CanCancel(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc),
             }),
         }));
     }
@@ -119,6 +164,8 @@ public class EmailScheduleController : ControllerBase
     [HttpPost("queue/{queueId:guid}/retry")]
     public async Task<ActionResult<ApiResponse<object>>> Retry(Guid companyId, Guid queueId)
     {
+        // รอบ 258 (A-H1/B-H1): ส่งอีกครั้ง = ส่งอีเมลในนามบริษัท — ด่านเดียวกับคิว LINE
+        if (await RequireSettingsAsync(companyId, "ส่งอีเมลในคิวอีกครั้ง") is { } deny) return deny;
         await _svc.RetryFailedAsync(companyId, queueId);
         return Ok(new ApiResponse<object>(true, null, "พักไว้ในคิวรอบใหม่"));
     }
@@ -149,6 +196,7 @@ public class EmailScheduleController : ControllerBase
     [HttpPost("queue/{queueId:guid}/cancel")]
     public async Task<ActionResult<ApiResponse<object>>> Cancel(Guid companyId, Guid queueId)
     {
+        if (await RequireSettingsAsync(companyId, "ยกเลิกอีเมลในคิว") is { } deny) return deny;
         await _svc.CancelPendingAsync(companyId, queueId);
         return Ok(new ApiResponse<object>(true, null, "ยกเลิกคิวแล้ว"));
     }

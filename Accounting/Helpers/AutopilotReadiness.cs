@@ -66,6 +66,9 @@ public static class AutopilotReadiness
         public bool? PolicySetterActive { get; init; }
         /// <summary>เหตุที่นโยบายหยุดมีผล (ผู้ตั้งออก/หมดสิทธิ์ · ผู้ติดต่อ/ชนิดเอกสารเปลี่ยนหลังตั้ง) — null = มีผล/ไม่มีนโยบาย</summary>
         public string? PolicyInactiveReason { get; init; }
+        /// <summary>รอบ 258 (B-M2): เหตุที่ "ผู้รับผิดชอบการอนุมัติของรายการ" อนุมัติไม่ได้แล้ว ณ ตอนนี้ (ตัวเดียวกับรอบรันจริง
+        /// <c>RecurringApprovePolicyLoader.AutoApproverRefusalAsync</c>) · null = อนุมัติได้/ไม่ได้ตรวจ (ร่างใหม่ที่ยังไม่บันทึก)</summary>
+        public string? AutoApproverRefusal { get; init; }
         /// <summary>เหตุผลที่สร้างเอกสารไม่ได้เลย (ตัวตรวจเทมเพลตเดิม) · null = สร้างได้</summary>
         public string? TemplateError { get; init; }
         /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 2 · คำตัดสิน §2 #9/Y7): ตั้ง URL ของระบบแล้วจริงไหม (<see cref="SystemBaseUrl.IsConfigured"/> — ค่าที่มากับซอร์ส ≠ ตั้งแล้ว) ·
@@ -113,10 +116,31 @@ public static class AutopilotReadiness
         /// <summary>รอบถัด ๆ ไป (ไม่นับรอบหน้า) ที่ตกในงวดที่ปิดแล้ว</summary>
         public IReadOnlyList<DateTime> LaterClosedRunDates { get; init; } = Array.Empty<DateTime>();
 
+        /// <summary>รอบ 257 ชุด 4 (A L13): สร้างล่วงหน้า (วัน) + วันของงวดถัดไป — ใบกำกับภาษีที่สร้างข้ามเดือน ⇒ เดือนภาษีย้าย (เตือน)</summary>
+        public int LeadDays { get; init; }
+        public DateTime? NextPeriodDate { get; init; }
+
         /// <summary>หลังรับชำระส่งใบเสร็จอัตโนมัติไหม (<see cref="PostPaymentAutomationPolicy.EffectiveLayers"/>) · null = ไม่ได้ตรวจ</summary>
         public bool? PostPayEmailReceipt { get; init; }
         public bool PostPayIncludePartial { get; init; }
+
+        // ── รอบ 258-3 (F-M1): ความพร้อมทั้งเส้น — LINE · gateway · คู่ค้า (null = ไม่ได้ตรวจ ⇒ ไม่มีแถว) ──
+        /// <summary>ปลายทาง LINE ของผู้ติดต่อที่รับเรื่อง "เอกสาร" และส่งได้ (<see cref="ContactLineChannel.LineEndpoints"/>)</summary>
+        public int? LineDocumentEndpoints { get; init; }
+        /// <summary>ปลายทาง LINE ที่รับเรื่อง "ใบเสร็จ" และส่งได้</summary>
+        public int? LineReceiptEndpoints { get; init; }
+        /// <summary>ช่อง LINE ของบริษัทยังไม่พร้อม (เหตุ) · null = พร้อม/ไม่ได้ตรวจ</summary>
+        public string? LineOaProblem { get; init; }
+        /// <summary>ผู้ให้บริการรับชำระอยู่โหมดเงินจริง</summary>
+        public bool? GatewayLive { get; init; }
+        /// <summary>ผู้ติดต่อเป็นบริษัทคู่ค้า NextAcc (Accepted) — ใบไหลเข้าระบบของเขา</summary>
+        public bool? PartnerLinked { get; init; }
     }
+
+    /// <summary>รอบ 258-3 (F-M1): แถวข้อมูลประกอบของเส้นทั้งเส้น — ไม่กดระดับ "อัตโนมัติเต็ม" (ⓘ ไม่ใช่ข้อบกพร่องของรายการ)</summary>
+    public static readonly IReadOnlySet<string> ChainInfoCodes = new HashSet<string>(StringComparer.Ordinal) { "LINE-DOC", "LINE-RECEIPT", "PAY-LIVE", "PARTNER" };
+    public const string ContactsUrl = "/pages/contacts.html";
+    public const string PartnersUrl = "/pages/partners.html";
 
     public sealed record Item(string Code, string Stage, string Verdict, string Title, string? Why, string? FixUrl, string? FixLabel);
 
@@ -180,6 +204,14 @@ public static class AutopilotReadiness
 
         // ── อนุมัติ ──
         var approveFails = false;
+        // รอบ 258 (B-M2): ผู้รับผิดชอบการอนุมัติของรายการหมดสิทธิ์/ออกจากบริษัท ⇒ ทุกรอบค้างร่าง (RECURRING-APPROVER-GONE) — เดิมแผงยังเขียว ·
+        // เป็นข้อเพิ่ม (ข้อคำเตือนก่อนอนุมัติด้านล่างยังแสดงตามเดิม) — แต่ไม่ขึ้นข้อ "อนุมัติอัตโนมัติจะผ่าน" ขัดกัน
+        if (f.AutoApprove && f.AutoApproverRefusal != null)
+        {
+            approveFails = true;
+            Add("APPROVER-GONE", "อนุมัติ", Fail, "ถ้ารันตอนนี้ ใบจะค้างเป็นร่าง — ผู้รับผิดชอบการอนุมัติของรายการไม่มีสิทธิ์แล้ว",
+                f.AutoApproverRefusal, PolicyStepUrl, "ไปขั้นอนุมัติ");
+        }
         if (!f.AutoApprove)
         {
             Add("APPROVE", "อนุมัติ", Info, "ไม่ได้เปิดอนุมัติอัตโนมัติ — ทุกงวดได้ใบร่าง ต้องมีคนอนุมัติก่อนส่ง",
@@ -199,7 +231,7 @@ public static class AutopilotReadiness
                     + (releasable.Count > 0 ? " — คำเตือนที่มีรหัส (เช่น ลูกค้าค้างชำระ) เลือกให้ระบบอนุมัติต่อพร้อมบันทึกได้ที่ขั้น \"อนุมัติ\"" : ""),
                 releasable.Count > 0 ? PolicyStepUrl : null, releasable.Count > 0 ? "ตั้งนโยบายอนุมัติ" : null);
         }
-        else
+        else if (f.AutoApproverRefusal == null)
         {
             Add("APPROVE", "อนุมัติ", Ok, f.ApprovalReleased.Count > 0
                 ? $"อนุมัติอัตโนมัติจะผ่าน — นโยบายปล่อยคำเตือน {f.ApprovalReleased.Count} ข้อ (ลงหมายเหตุ + บันทึกตรวจสอบ)"
@@ -213,6 +245,18 @@ public static class AutopilotReadiness
             Add("OWNER-POLICY", "อนุมัติ", Fail, "นโยบายอนุมัติข้ามคำเตือนหยุดมีผล",
                 f.PolicyInactiveReason ?? "ให้ผู้มีสิทธิ์อนุมัติเอกสารตั้งนโยบายใหม่ (ระบบจะไม่ปล่อยคำเตือนตามนโยบายที่ผู้ตั้งไม่มีสิทธิ์แล้ว)", PolicyStepUrl, "ตั้งนโยบายใหม่");
         }
+        // รอบ 257 ชุด 4 (A-M6): ค่าตั้งต้นรอบ 256 ไม่มีผล (ผู้สร้างหมดสิทธิ์ · ค่ารายการเปลี่ยนหลังสร้าง/รับรอง) — เดิมไม่มีนโยบายที่ตั้ง ⇒ แผงเงียบ ·
+        // บอกเหตุจากตัวโหลด (DefaultSetterGoneReason / BindingChangedReason) · Warn ไม่ใช่ Fail: ใบยังสร้างได้ แค่ "ลูกค้าค้างชำระ" จะหยุดรอคน
+        else if (f.Policy == null && f.AutoApprove && f.PolicySetterActive == false && f.PolicyInactiveReason != null)
+            Add("OWNER-POLICY", "อนุมัติ", Warn, "ค่าเริ่มต้น (ลูกค้าค้างชำระ ⇒ อนุมัติต่อ) ไม่มีผลกับรายการนี้", f.PolicyInactiveReason, PolicyStepUrl, "ตั้ง/รับรองนโยบาย");
+
+        // ── รอบ 257 ชุด 4 (A L13): ใบกำกับภาษีสร้างล่วงหน้าข้ามเดือน ⇒ เดือนภาษีของใบ = เดือนที่สร้าง (ไม่ใช่เดือนของงวด) ──
+        if (f.DocumentType == Accounting.Models.Enums.DocumentType.TaxInvoice && f.NextPeriodDate is { } np
+            && RecurringSchedule.LeadDaysMovesVatMonth(np, f.LeadDays))
+            Add("LEAD-VAT-MONTH", "ภาษี", Warn,
+                $"สร้างล่วงหน้า {f.LeadDays} วัน ⇒ ใบกำกับภาษีของงวด {D(np)} ลงวันที่ {D(RecurringSchedule.CreateAt(np, f.LeadDays))} — ภาษีขายเข้าเดือนก่อนเดือนของงวด",
+                "ใบกำกับภาษีลงเดือนภาษีตามวันที่ออก (ป.รัษฎากร §78/§78/1 · ภ.พ.30 ของเดือนที่สร้าง) — ถ้าต้องการให้อยู่เดือนของงวด ลดวันสร้างล่วงหน้า หรือใช้ใบแจ้งหนี้แล้วออกใบกำกับตอนรับชำระ",
+                null, null);
 
         // ── รอบ 251 (WP-07 · PERIOD): งวดบัญชีของวันที่เอกสารรอบหน้า (กติกางวดปิดเดียวกับ ClosedPeriodRanges) ──
         if (f.NextPeriodClosed == true)
@@ -349,6 +393,26 @@ public static class AutopilotReadiness
                     : "หลังรับชำระ ไม่ส่งใบเสร็จอัตโนมัติ — ต้องมีคนออก/ส่งใบเสร็จเอง",
                 null, postPay ? null : PaymentStepUrl, postPay ? null : "ตั้งงานหลังรับชำระ");
 
+        // ── รอบ 258-3 (F-M1): ความพร้อมทั้งเส้น (บิล → LINE → รับเงินจริง → ใบเสร็จ → คู่ค้า) ──
+        if (f.SaleSide && f.LineDocumentEndpoints is int lineDoc)
+            Add("LINE-DOC", "ส่ง", lineDoc > 0 ? Ok : Info,
+                lineDoc > 0
+                    ? $"ผู้ติดต่อผูก LINE ที่รับเรื่องเอกสาร {lineDoc} ปลายทาง — ติ๊กส่งเอกสารแล้วการ์ด LINE ไปด้วย (ถ้ามีกฎในตารางส่ง ต้องติ๊ก LINE ในกฎเอง)"
+                    : "ผู้ติดต่อยังไม่มี LINE ที่รับเรื่องเอกสาร — ส่งทางอีเมลอย่างเดียว",
+                f.LineOaProblem, ContactsUrl, lineDoc > 0 ? null : "ผูก LINE ที่ผู้ติดต่อ");
+        if (f.SaleSide && f.PostPayEmailReceipt == true && f.LineReceiptEndpoints is int lineRc)
+            Add("LINE-RECEIPT", "หลังรับเงิน", lineRc > 0 ? Ok : Info,
+                lineRc > 0 ? $"ใบเสร็จหลังรับชำระไปทาง LINE ด้วย ({lineRc} ปลายทางที่ติ๊ก “ใบเสร็จ”)" : "ใบเสร็จหลังรับชำระไปทางอีเมลอย่างเดียว (ไม่มี LINE ที่ติ๊ก “ใบเสร็จ”)",
+                null, ContactsUrl, lineRc > 0 ? null : "ตั้งช่องทางแจ้งเตือนของผู้ติดต่อ");
+        if (f.SaleSide && f.GatewayLive is bool live)
+            Add("PAY-LIVE", "รับเงิน", live ? Ok : Info,
+                live ? "รับชำระออนไลน์โหมดเงินจริงแล้ว — เงินเข้าลงรับชำระ/ออกใบเสร็จเอง" : "รับชำระออนไลน์ยังเป็นโหมดทดสอบ/ยังไม่ตั้ง — เงินโหมดทดสอบไม่มีผลทางบัญชี",
+                null, PaymentSettingsUrl, live ? null : "ตั้งรับชำระออนไลน์");
+        if (f.SaleSide && f.PartnerLinked == true)
+            Add("PARTNER", "คู่ค้า", Ok,
+                "ผู้ติดต่อเป็นคู่ค้า NextAcc — ใบแจ้งหนี้และใบเสร็จ/ใบกำกับ ณ วันรับเงินเข้าระบบของเขา · จ่ายผ่านลิงก์แล้วเขาได้รับแจ้งให้กดบันทึกจ่าย",
+                null, PartnersUrl, "หน้าคู่ค้า");
+
         return Finish(items, f, forceDraftOnly: !f.AutoApprove || approveFails
             || items.Any(i => i.Verdict == Fail && i.Code is "TEMPLATE" or "CONTACT"));
     }
@@ -359,7 +423,7 @@ public static class AutopilotReadiness
         var warns = items.Count(i => i.Verdict == Warn);
         string level;
         if (forceDraftOnly) level = LevelDraftOnly;
-        else if (f.AutoSendEmail && f.PayLinkAttach && items.All(i => i.Verdict == Ok))
+        else if (f.AutoSendEmail && f.PayLinkAttach && items.Where(i => !ChainInfoCodes.Contains(i.Code)).All(i => i.Verdict == Ok))
             level = LevelFull;
         else level = LevelPartial;
         return new Report(level, LevelLabel(level), items, warns, fails);

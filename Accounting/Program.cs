@@ -343,6 +343,8 @@ builder.Services.AddScoped<IUsageMeteringService, UsageMeteringService>();
 builder.Services.AddSingleton<IJobRunRecorder, JobRunRecorder>();
 builder.Services.AddScoped<ISlipOcrAssistService, SlipOcrAssistService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
+// รอบ 258 — เงินรอจัดสรร (เงินรับจากลูกค้าที่ยังไม่ผูกกับใบ · ผัง 21630): รายการ · จัดสรรทีหลัง · ยกเลิกการจัดสรร (ขั้นภาษีผ่าน IDocumentService)
+builder.Services.AddScoped<ICustomerCreditService, CustomerCreditService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 // ทะเบียนภาษีที่เราถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.51/50 (WHT_CREDIT_PLAN.md)
 builder.Services.AddScoped<Accounting.Services.Implementations.WhtCreditService>();
@@ -892,6 +894,7 @@ builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินต่อเอกสาร (ไม่พึ่ง IDocumentService — EmailScheduleService ใช้ได้) + งานหลังรับชำระ (ออก/ส่งใบเสร็จ)
 builder.Services.AddScoped<IDocumentPayLinkService, DocumentPayLinkService>();
 builder.Services.AddScoped<IPostPaymentAutomationService, PostPaymentAutomationService>();
+builder.Services.AddScoped<PartnerPaymentNoticeService>();   // รอบ 258-3 F-H3 — แจ้งผู้ซื้อคู่ค้าว่าผู้ขายรับเงินแล้ว (ผู้ซื้อกดบันทึกจ่ายเอง)
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
 builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();
 
@@ -2175,6 +2178,18 @@ try
     catch (Exception ex)
     {
         app.Logger.LogError(ex, "รอบ 252: ล้างเลขบุคคลใน feedback ตรวจของจริง 50 ทวิ ไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
+    }
+
+    // รอบ 257 ชุด 3 ฝ่ายค้าน M2: ใบซื้อร่างจากคู่ค้าที่ยืนยันต้นฉบับก่อนผู้ขายส่งใบกำกับ ⇒ กลับ "ต้องได้ต้นฉบับ" (ครั้งเดียว · marker OneShotDataFixes) ·
+    // ใบที่อนุมัติแล้วไม่แตะ (ลิสต์ในรายงานตรวจข้อมูล) · ล้ม = ย้อน + บูตถัดไปทำใหม่ · log Error
+    try
+    {
+        var reset257 = await Accounting.Helpers.PartnerEvidenceRepair.RunAsync(db);
+        if (reset257 > 0) app.Logger.LogInformation("รอบ 257: ตั้งหลักฐานใบซื้อจากคู่ค้ากลับเป็นต้องได้ต้นฉบับ {Count} ใบ", reset257);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "รอบ 257: ซ่อมหลักฐานใบซื้อจากคู่ค้าไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
     }
 
     // รอบ 246 QR (ฝ่ายค้าน N3): ย้ายเลขพร้อมเพย์เดิมของเทมเพลต → บัญชีธนาคาร ครั้งเดียว (เฉพาะบริษัทที่ชัดเจน · audit ทุกบริษัท) · ล้ม = ย้อน + บูตถัดไปทำใหม่

@@ -1399,18 +1399,23 @@
       /** ใบนี้ปลอดภัยพอจะอนุมัติแบบไม่เปิดดูหรือไม่ — เกณฑ์ตั้งใจให้เข้ม
        *  เพราะการอนุมัติรวดข้ามขั้นตรวจของคน ถ้าปล่อยใบที่มีข้อสงสัยผ่าน
        *  ผู้ใช้จะเลิกเชื่อทั้งฟีเจอร์ */
+      // รอบ 258 ฝ่ายค้าน R-L2: ปุ่ม "สร้าง + อนุมัติ" ในหน้าตรวจตามธงเซิร์ฟเวอร์ (canCreateAndApprove — ด่านเดียวกับ endpoint) · false = กดแล้วจะได้ใบร่าง
+      // ⇒ ปิดปุ่ม + บอกเหตุและทางไปต่อ · undefined/null = ยังไม่ได้ประเมิน ⇒ ไม่ปิด (เซิร์ฟเวอร์ตัดสินตอนกดอยู่แล้ว) · สแกนที่สร้างเอกสารแล้วไม่แตะ (ปิดจากที่อื่น)
+      _syncApproveBtn(scan) {
+        const ab = document.getElementById('reviewCreateApproveBtn');
+        if (!ab || !scan || scan.createdDocumentId) return;
+        const blocked = scan.canCreateAndApprove === false;
+        ab.disabled = blocked;
+        ab.title = blocked
+          ? 'ยังอนุมัติรวดไม่ได้: ' + (scan.createAndApproveBlockedReason || 'เปิดใบร่างตรวจแล้วอนุมัติเอง')
+            + ' — แก้ในหน้านี้แล้วกด "บันทึก" (ระบบตรวจใหม่) หรือกด "สร้างเอกสาร" เป็นร่างแล้วอนุมัติที่ตัวเอกสาร'
+          : 'ยืนยันข้อมูลตามที่เห็น → สร้างและอนุมัติเอกสารทันที';
+      },
+
       _isBatchApprovable(s) {
-        if (s.scanStatus !== 'Completed' || s.createdDocumentId) return false;
-        if (s.isDuplicate || s.hasHandwriting || s.hasPotentialFixedAsset) return false;
-        // complianceIssues = undefined แปลว่า "เซิร์ฟเวอร์ยังไม่ได้ประเมิน"
-        // → ไม่ใช่ "ไม่มีปัญหา" จึงไม่ปล่อยผ่าน (สัญญาเดียวกับตอนวาดคำเตือน)
-        if (!Array.isArray(s.complianceIssues)) return false;
-        if (s.complianceIssues.some(i => i.severity === 'error')) return false;
-        // ต้องมีข้อมูลครบพอจะลงบัญชีได้จริง
-        if (!s.extractedVendorName || s.extractedTotalAmount == null || !s.extractedDate) return false;
-        // เกรดคุณภาพ D = ควรถ่ายใหม่ ไม่ควรอนุมัติรวด
-        if (s.quality?.letter === 'D') return false;
-        return true;
+        // รอบ 258 (C-H2): เซิร์ฟเวอร์ตัดสิน (OcrPostingReadiness.EvaluateUnseen → s.canAutoApprove) — หน้านี้ไม่ถือกติกาเอง ·
+        // undefined/null = "ยังไม่ได้ประเมิน" ≠ "ได้" จึงไม่ปล่อยผ่าน · เส้น create-document?approve=true ตรวจซ้ำที่เซิร์ฟเวอร์ด้วยด่านเดียวกับ LINE
+        return s.canAutoApprove === true;
       },
 
       toggleSelectAll(on) {
@@ -3038,6 +3043,10 @@
             createBtn.textContent = 'สร้างเอกสาร';
             createBtn.disabled = false;
             createBtn.className = 'btn btn-primary';
+            // รอบ 258 ฝ่ายค้าน R-L2: ปุ่ม "สร้าง + อนุมัติ" ตามธงเซิร์ฟเวอร์ (canCreateAndApprove — ด่านเดียวกับ endpoint) · false = กดแล้วจะได้ใบร่าง
+            // ⇒ ปิดปุ่ม + บอกเหตุและทางไปต่อ (แก้ในหน้านี้แล้วกด "บันทึก" ธงจะประเมินใหม่ หรือกด "สร้างเอกสาร" เป็นร่างแล้วอนุมัติที่ตัวเอกสาร) ·
+            // undefined/null = ยังไม่ได้ประเมิน ⇒ ไม่ปิด (เซิร์ฟเวอร์ตัดสินตอนกดอยู่แล้ว)
+            this._syncApproveBtn(scan);
           } else {
             createBtn.textContent = 'สร้างเอกสาร';
             createBtn.disabled = true;
@@ -3772,6 +3781,11 @@
           btn.textContent = '✅ บันทึกและสอนแล้ว';
           btn.className = 'btn btn-success';
           this.loadScans();
+          // รอบ 258 ฝ่ายค้าน R-L2: แก้แล้ว ⇒ ถามธง "สร้าง + อนุมัติได้ไหม" ใหม่จากเซิร์ฟเวอร์ (ไม่ค้างปุ่มปิดหลังผู้ใช้แก้เหตุแล้ว)
+          try {
+            const fresh = await api.getOcrResult(this._reviewScan.id);
+            if (fresh && fresh.data) this._syncApproveBtn(fresh.data);
+          } catch (e) { /* ธงเดิมคงไว้ — เซิร์ฟเวอร์ตัดสินตอนกดอยู่แล้ว */ }
         } catch (err) {
           Layout.toast('บันทึกไม่สำเร็จ: ' + err.message, 'error');
           btn.disabled = false;

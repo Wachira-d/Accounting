@@ -1508,6 +1508,9 @@ const Layout = {
       description: 'เชื่อมระบบกับคู่ค้า · ใบซื้อร่างจากเอกสารของคู่ค้า · ส่ง 50 ทวิ กลับอัตโนมัติ (ค่าตั้งต้นปิดทั้งหมด)' },
     { id: 'deposits', label: 'เงินมัดจำ/รับล่วงหน้า', icon: '🤝', href: '/pages/deposit-center.html', feature: 'DocumentEngine',
       description: 'มัดจำ/รับล่วงหน้าคงค้าง — ภาษีขายถึงกำหนดทันที (§78) รายได้รอรับรู้ (217xx) จนส่งมอบ · รับรู้รายได้บางส่วนได้' },
+    // รอบ 258: เงินที่รับจากลูกค้าแล้วแต่ยังไม่ผูกกับใบ (ลูกค้าโอนก้อนเดียวปิดหลายยอด/โอนเกิน) — จัดสรรให้ใบที่ออกทีหลัง
+    { id: 'customer-credits', label: 'เงินรอจัดสรร', icon: '🧩', href: '/pages/customer-credits.html', feature: 'DocumentEngine',
+      description: 'เงินที่รับจากลูกค้าแล้วแต่ยังไม่ผูกกับใบแจ้งหนี้ — จัดสรรให้ใบที่ออกทีหลัง · เทียบยอดกับบัญชี 21630' },
     { id: 'mobile-receipt', label: 'รับเงินสดด่วน (มือถือ)', icon: '📱', href: '/pages/mobile-receipt.html', feature: 'AdvancedReporting',
       description: 'หน้าจอ mobile-first สำหรับร้านค้า — numpad + วิธีรับเงิน + พิมพ์ใบเสร็จ 1 click' },
     { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html', feature: 'RevenueRecognition', _i18nKey: 'nav.revenueRecognition',

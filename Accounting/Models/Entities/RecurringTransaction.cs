@@ -109,4 +109,14 @@ public class RecurringTransaction : TenantEntity
     /// <summary>สร้างเอกสารล่วงหน้า N วันก่อนวันของงวด (0–28 · สั้นกว่าหนึ่งงวด — <c>RecurringSchedule.LeadDaysError</c>) · 0 = สร้างในวันของงวด (เดิม) ·
     /// เอกสารลงวันที่วันที่สร้าง (ไม่ลงวันล่วงหน้า §86/4) · ตัวแปร &lt;&lt;month&gt;&gt; = เดือนของงวด · ผู้อ่าน: <c>RecurringSchedule.IsDue</c> (cron · สร้างทันที · ข้ามงวดค้าง)</summary>
     public int LeadDays { get; set; }
+
+    /// <summary>รอบ 257 ชุด 4 (A-M4): ลายนิ้วมือของค่ารายการ (<c>RecurringApprovePolicyLoader.CurrentBindingHash</c>) ตอนที่ค่าตั้งต้นของรายการประจำ
+    /// ("ลูกค้าค้างชำระ ⇒ อนุมัติต่อ") ได้รับการยอมรับ — ประทับตอนสร้าง (<c>CreateAsync</c>) และตอนผู้มีสิทธิ์อนุมัติบันทึกขั้นอนุมัติ (<c>SetRecurringPolicyAsync</c>) ·
+    /// ไม่ตรงค่าปัจจุบัน ⇒ ค่าตั้งต้นไม่มีผล (<c>BindingChangedReason</c>) · null = รายการก่อนรอบ 257 (ถือว่าตรง — <c>AutoApprovePolicy.MatchesDefaultBinding</c>) ·
+    /// ผู้อ่าน: <c>RecurringApprovePolicyLoader.LoadAsync</c></summary>
+    public string? DefaultPolicyBindingHash { get; set; }
+
+    /// <summary>รอบ 257 ชุด 4 ฝ่ายค้าน MED-2: ผู้ประทับ <see cref="DefaultPolicyBindingHash"/> ล่าสุด (ผู้สร้างตอนสร้าง · ผู้มีสิทธิ์อนุมัติที่บันทึกขั้นอนุมัติ) =
+    /// ผู้รับผิดชอบค่าตั้งต้น — ตัวโหลดตรวจสิทธิ์และลงชื่อบนหมายเหตุด้วยคนนี้ (<c>RecurringApprovePolicyLoader.DefaultResponsible</c>) · null = ผู้สร้าง (แถวเดิม)</summary>
+    public string? DefaultPolicyStampedBy { get; set; }
 }

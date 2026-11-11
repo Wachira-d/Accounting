@@ -26,8 +26,12 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
     // รอบ 250 (WP-02 §2.1): งานส่งเอกสารหลังรับชำระย้ายเข้าแกน DocumentService.CreatePaymentAsync (source: Gateway) — handler ไม่เรียกเองแล้ว
 
     public DocumentPaymentHandler(AccountingDbContext db, IDocumentService docs,
-        IGatewayAccountResolver accounts, ILogger<DocumentPaymentHandler> logger)
-    { _db = db; _docs = docs; _accounts = accounts; _logger = logger; }
+        IGatewayAccountResolver accounts, ILogger<DocumentPaymentHandler> logger,
+        Accounting.Services.Implementations.PartnerPaymentNoticeService? partnerNotices = null)
+    { _db = db; _docs = docs; _accounts = accounts; _logger = logger; _partnerNotices = partnerNotices; }
+
+    /// <summary>รอบ 258-3 (F-H3): แจ้งผู้ซื้อที่เป็นคู่ค้า NextAcc ว่าผู้ขายรับเงินแล้ว (ไม่บันทึกแทน) · null = เทสต์/เครื่องมือ</summary>
+    private readonly Accounting.Services.Implementations.PartnerPaymentNoticeService? _partnerNotices;
 
     public PaymentSourceKind SourceKind => PaymentSourceKind.Document;
 
@@ -110,6 +114,10 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
             OverridePaymentAccountId: moneyIn,
             WithholdingTaxAmount: paymentWht
         ), intent.ConfirmedBy ?? "payment-gateway", source: Accounting.Helpers.PaymentEntrySource.Gateway);
+        // รอบ 258-3 (F-H3): ใบนี้ส่งเข้าระบบคู่ค้า (InvoiceFlow → ใบซื้อของผู้ซื้อ) ⇒ แจ้งผู้ซื้อให้กดบันทึกจ่ายครั้งเดียว — ไม่โยน (เงินบันทึกแล้ว)
+        if (_partnerNotices != null)
+            await _partnerNotices.NotifySellerReceivedAsync(intent.CompanyId, intent.Id, doc.Id, intent.Amount, reference,
+                intent.PaidAt ?? intent.ConfirmedAt ?? DateTime.UtcNow, intent.MethodKind, ct);
         // รอบ 250 (WP-02 §2.1): งานส่งเอกสารหลังรับชำระเข้าคิวในแกน CreatePaymentAsync (หลัง commit · แถวเดียวต่อการชำระ — webhook ซ้ำไม่เพิ่ม)
     }
 }

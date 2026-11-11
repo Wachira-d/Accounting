@@ -452,6 +452,7 @@ public class AccountingDbContext : DbContext
     // ===== Cross-tenant B2B workflow =====
     public DbSet<TradingPartnership> TradingPartnerships => Set<TradingPartnership>();
     public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
+    public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
     public DbSet<WorkflowAutomationConfig> WorkflowAutomationConfigs => Set<WorkflowAutomationConfig>();
 
     // ===== CMS & Multi-Site =====
@@ -1030,6 +1031,8 @@ public class AccountingDbContext : DbContext
             e.HasIndex(p => new { p.CompanyId, p.PaymentNumber }).IsUnique();
             e.Property(p => p.PaymentNumber).HasMaxLength(50);
             e.Property(p => p.Amount).HasPrecision(18, 2);
+            e.Property(p => p.UnappliedAmount).HasPrecision(18, 2);   // รอบ 258 เงินรอจัดสรร
+            e.Property(p => p.UnappliedReason).HasMaxLength(40);
             e.HasOne(p => p.Document).WithMany(d => d.Payments).HasForeignKey(p => p.DocumentId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(p => p.BankAccountEntity).WithMany().HasForeignKey(p => p.BankAccountId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(p => !p.IsDeleted);
@@ -1400,6 +1403,8 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<RecurringTransaction>(e =>
         {
             e.Property(r => r.Name).HasMaxLength(256);
+            e.Property(r => r.DefaultPolicyBindingHash).HasMaxLength(80);   // รอบ 257 ชุด 4 (A-M4) · "v2:" + SHA-256 hex (ฝ่ายค้าน LOW-1)
+            e.Property(r => r.DefaultPolicyStampedBy).HasMaxLength(100);   // ฝ่ายค้าน MED-2
             e.HasIndex(r => new { r.CompanyId, r.Status, r.NextRunDate })
                 .HasDatabaseName("IX_RecurringTransactions_CompanyId_Status_NextRunDate");
             e.HasQueryFilter(r => !r.IsDeleted);
@@ -3747,6 +3752,20 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.UnlinkReason).HasMaxLength(32);
             e.HasIndex(x => new { x.CompanyId, x.TargetKind, x.TargetId }).HasDatabaseName("IX_CustomerLineLinks_Company_Target");
             e.HasIndex(x => x.LineUserId).HasDatabaseName("IX_CustomerLineLinks_LineUser");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 258-3 F-H3 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerPaymentNoticeMigration
+        modelBuilder.Entity<PartnerPaymentNotice>(e =>
+        {
+            e.Property(x => x.SourceDocumentNumber).HasMaxLength(60);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.ResolvedBy).HasMaxLength(200);
+            e.Property(x => x.Note).HasMaxLength(1000);
+            e.Property(x => x.SourceChannel).HasMaxLength(32);
+            e.Property(x => x.CashAmount).HasPrecision(18, 2);
+            e.Property(x => x.SellerRecordedWht).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.PaymentIntentId }).IsUnique().HasDatabaseName("IX_PartnerPaymentNotices_Company_Intent");
+            e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_PartnerPaymentNotices_Company_Status");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 254 WP-11 L2 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactLineDeliveryMigration

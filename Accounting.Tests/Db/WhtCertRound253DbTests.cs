@@ -286,6 +286,33 @@ public class WhtCertRound253DbTests
     }
 
     [Fact]
+    public async Task R257_L2_ขั้นที่ข้ามเพราะไม่มีอีเมล_เพิ่มอีเมลแล้วลองใหม่ครั้งเดียว_ทิศตรงข้ามยังไม่มีไม่บันทึกซ้ำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "retry " + Guid.NewGuid().ToString("N")[..6], daysAgo: 8, reminders: true);
+        var noEmail = Recipients(available: false, reason: "ผู้ติดต่อไม่มีอีเมล");
+        var r1 = await Reminder(db, noEmail).RunCompanyAsync(s.CompanyId, DateTime.UtcNow);
+        Assert.Equal((0, 1), (r1.Queued, r1.SkippedOptOut));
+        // ยังไม่มีอีเมล ⇒ ไม่บันทึกซ้ำทุกวัน (ทิศตรงข้าม)
+        var r2 = await Reminder(db, noEmail).RunCompanyAsync(s.CompanyId, DateTime.UtcNow.AddMinutes(1));
+        Assert.Equal((0, 0), (r2.Queued, r2.SkippedOptOut));
+        Assert.Equal(1, await db.WhtCertReminderLogs.CountAsync(l => l.CompanyId == s.CompanyId));
+
+        // เพิ่มอีเมลแล้ว ⇒ ขั้นเดิมลองใหม่ (เดิมข้ามถาวร) — แถว "ข้าม" ถูกถอด · แถว "เข้าคิว" ใหม่ 1 แถว · คิวอีเมล 1 ฉบับ
+        var r3 = await Reminder(db).RunCompanyAsync(s.CompanyId, DateTime.UtcNow.AddMinutes(2));
+        Assert.Equal(1, r3.Queued);
+        var logs = await db.WhtCertReminderLogs.AsNoTracking().IgnoreQueryFilters().Where(l => l.CompanyId == s.CompanyId).ToListAsync();
+        Assert.Equal(2, logs.Count);
+        Assert.Contains(logs, l => l.Outcome == WhtCertReminderCadence.OutcomeSkipped && l.IsDeleted);
+        Assert.Contains(logs, l => l.Outcome == WhtCertReminderCadence.OutcomeQueued && !l.IsDeleted && l.EmailQueueId != null);
+        Assert.Equal(1, await db.EmailQueues.CountAsync(x => x.CompanyId == s.CompanyId));
+        // ครั้งเดียว: รอบถัดไปไม่เข้าคิวซ้ำ
+        Assert.Equal(0, (await Reminder(db).RunCompanyAsync(s.CompanyId, DateTime.UtcNow.AddMinutes(3))).Queued);
+        Assert.Equal(1, await db.EmailQueues.CountAsync(x => x.CompanyId == s.CompanyId));
+    }
+
+    [Fact]
     public async Task ปิดค่าตั้ง_ยังไม่ถึงวันที่_7_หรือได้ใบแล้ว_ไม่ทวง()
     {
         using var db = DbTestDatabase.TryCreateContext();

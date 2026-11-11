@@ -167,4 +167,126 @@ public class ScheduledEmailRecheckDbTests
         Assert.Null(after.SentAt);
         Assert.Empty(box.Sent.Where(m => m.To.Contains("customer@test.local") && m.Subject == "หัวเรื่องตอนเข้าคิว"));
     }
+
+    // ───── รอบ 258 (B-H2): แถวค้าง "กำลังส่ง" — อยู่คลาสนี้เพราะใช้ตัว claim/ตัวกู้ที่ทำทั้งฐาน (รันทีละเทสต์) ─────
+
+    /// <param name="started">true = ตัวส่งเริ่มส่งแถวนี้แล้ว (SendStartedAt มีค่า) · false = จองแล้วแต่ยังไม่ถึงคิว (รอบ 258 ฝ่ายค้าน R-M3)</param>
+    private static async Task MarkSendingAsync(Accounting.Data.AccountingDbContext db, Guid queueId, int minutesAgo, bool started = true)
+    {
+        var at = DateTime.UtcNow.AddMinutes(-minutesAgo);
+        await db.EmailQueues.Where(q => q.Id == queueId)
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.Status, "Sending").SetProperty(q => q.UpdatedAt, (DateTime?)at)
+                .SetProperty(q => q.SendStartedAt, started ? (DateTime?)at : null).SetProperty(q => q.ClaimToken, (Guid?)Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task แบตช์ตายกลางทาง_แถวที่ยังไม่เคยเริ่มส่งกลับเข้าคิวแล้วถูกส่งเอง_แถวที่เริ่มส่งแล้วล้มรอคน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var doc = await DocAsync(db, s, DocumentStatus.Approved, 1_000m);
+        var started = await QueueAsync(db, s, doc, "DocumentApproved");
+        var neverA = await QueueAsync(db, s, doc, "DocumentApproved");
+        var neverB = await QueueAsync(db, s, doc, "DocumentApproved");
+        var liveNever = await QueueAsync(db, s, doc, "DocumentApproved");
+        await MarkSendingAsync(db, started.Id, 40, started: true);
+        await MarkSendingAsync(db, neverA.Id, 40, started: false);
+        await MarkSendingAsync(db, neverB.Id, 40, started: false);
+        await MarkSendingAsync(db, liveNever.Id, 3, started: false);   // เครื่องอื่นเพิ่งจอง ยังไม่ถึงคิว — ห้ามแตะ
+        db.ChangeTracker.Clear();
+        var box = new Outbox();
+
+        await Svc(db, box).ProcessPendingQueueAsync();
+
+        // เริ่มส่งแล้วตาย ⇒ ไม่รู้ว่าถึงหรือไม่ ⇒ Failed รอคน (ไม่ส่งซ้ำเอง)
+        var startedAfter = await ReloadAsync(started.Id);
+        Assert.Equal("Failed", startedAfter.Status);
+        Assert.Equal(EmailQueueStaleSending.StaleReason, startedAfter.ErrorMessage);
+        // ยังไม่เคยเริ่มส่ง ⇒ กลับเข้าคิวและถูกส่งในรอบเดียวกัน ไม่ต้องให้คนกดทีละแถว
+        foreach (var id in new[] { neverA.Id, neverB.Id })
+        {
+            var row = await ReloadAsync(id);
+            Assert.Equal("Sent", row.Status);
+            Assert.NotNull(row.SendStartedAt);
+        }
+        // ทิศตรงข้าม: แถวที่เครื่องอื่นเพิ่งจอง (ยังไม่ค้าง) ไม่ถูกแตะ
+        var live = await ReloadAsync(liveNever.Id);
+        Assert.Equal("Sending", live.Status);
+        Assert.Null(live.SendStartedAt);
+        await db.EmailQueues.Where(q => q.Id == liveNever.Id).ExecuteUpdateAsync(x => x.SetProperty(q => q.Status, "Cancelled"));
+    }
+
+    [Fact]
+    public async Task แถวค้างกำลังส่งเกิน30นาที_ถูกประทับล้มพร้อมเหตุ_ไม่ถูกส่งซ้ำเอง_แถวที่กำลังส่งจริงไม่ถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var doc = await DocAsync(db, s, DocumentStatus.Approved, 1_000m);
+        var stale = await QueueAsync(db, s, doc, "DocumentApproved");
+        var live = await QueueAsync(db, s, doc, "DocumentApproved");
+        await MarkSendingAsync(db, stale.Id, minutesAgo: 31);
+        await MarkSendingAsync(db, live.Id, minutesAgo: 5);
+        db.ChangeTracker.Clear();
+        var box = new Outbox();
+
+        await Svc(db, box).ProcessPendingQueueAsync();
+
+        var staleAfter = await ReloadAsync(stale.Id);
+        Assert.Equal("Failed", staleAfter.Status);
+        Assert.Equal(EmailQueueStaleSending.StaleReason, staleAfter.ErrorMessage);
+        Assert.Null(staleAfter.SentAt);
+        // ทิศตรงข้าม: แถวที่ตัวส่งอื่นกำลังส่งอยู่จริงไม่ถูกแตะ
+        Assert.Equal("Sending", (await ReloadAsync(live.Id)).Status);
+        // รอบถัดไปไม่หยิบแถวที่ล้มกลับไปส่งเอง
+        await Svc(db, box).ProcessPendingQueueAsync();
+        Assert.Equal("Failed", (await ReloadAsync(stale.Id)).Status);
+
+        // คนกดลองใหม่ ⇒ กลับเข้าคิว แล้วรอบถัดไปส่งจริง
+        db.ChangeTracker.Clear();
+        await Svc(db, box).RetryFailedAsync(s.CompanyId, stale.Id);
+        Assert.Equal("Pending", (await ReloadAsync(stale.Id)).Status);
+        db.ChangeTracker.Clear();
+        await Svc(db, box).ProcessPendingQueueAsync();
+        Assert.Equal("Sent", (await ReloadAsync(stale.Id)).Status);
+        // เก็บกวาด: แถวที่ "กำลังส่งจริง" ของเทสต์นี้ไม่ทิ้งไว้ให้เทสต์อื่น
+        await db.EmailQueues.Where(q => q.Id == live.Id).ExecuteUpdateAsync(x => x.SetProperty(q => q.Status, "Cancelled"));
+    }
+
+    [Fact]
+    public async Task แถวค้างกำลังส่ง_ลองใหม่และยกเลิกได้ทันที_แถวที่กำลังส่งจริงถูกปฏิเสธ_และบริษัทอื่นแตะไม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var other = await SeedAsync(db);
+        var doc = await DocAsync(db, s, DocumentStatus.Approved, 1_000m);
+        var staleRetry = await QueueAsync(db, s, doc, "DocumentApproved");
+        var staleCancel = await QueueAsync(db, s, doc, "DocumentApproved");
+        var live = await QueueAsync(db, s, doc, "DocumentApproved");
+        await MarkSendingAsync(db, staleRetry.Id, 45);
+        await MarkSendingAsync(db, staleCancel.Id, 45);
+        await MarkSendingAsync(db, live.Id, 2);
+        db.ChangeTracker.Clear();
+        var svc = Svc(db, new Outbox());
+
+        // tenant: บริษัทอื่นสั่งแถวนี้ไม่ได้
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.RetryFailedAsync(other.CompanyId, staleRetry.Id));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.CancelPendingAsync(other.CompanyId, staleCancel.Id));
+
+        // แถวที่กำลังส่งจริง: ลองใหม่/ยกเลิกไม่ได้ (กันส่งซ้ำ/ทับแถวที่ตัวส่งถืออยู่)
+        await Assert.ThrowsAsync<BusinessRuleException>(() => svc.RetryFailedAsync(s.CompanyId, live.Id));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.CancelPendingAsync(s.CompanyId, live.Id));
+        Assert.Equal("Sending", (await ReloadAsync(live.Id)).Status);
+
+        // แถวค้าง: ลองใหม่ ⇒ Pending · ยกเลิก ⇒ Cancelled
+        db.ChangeTracker.Clear();
+        await svc.RetryFailedAsync(s.CompanyId, staleRetry.Id);
+        await svc.CancelPendingAsync(s.CompanyId, staleCancel.Id);
+        Assert.Equal("Pending", (await ReloadAsync(staleRetry.Id)).Status);
+        Assert.Equal("Cancelled", (await ReloadAsync(staleCancel.Id)).Status);
+        // เก็บกวาด (แถว Pending/Sending ของเทสต์นี้ไม่ทิ้งไว้ให้ตัว claim ของเทสต์อื่น)
+        await db.EmailQueues.Where(q => q.Id == live.Id || q.Id == staleRetry.Id).ExecuteUpdateAsync(x => x.SetProperty(q => q.Status, "Cancelled"));
+    }
 }

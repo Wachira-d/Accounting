@@ -75,39 +75,7 @@ public class LineWebhookController : ControllerBase
                 }
                 if (type is not ("message" or "postback")) continue;
                 if (srcType != "user") continue;
-                var userId = src.GetProperty("userId").GetString() ?? "";
-
-                string? reply = null;
-                if (type == "postback")
-                {
-                    // ปุ่มกดใน Flex card (เช่น "✅ อนุมัติเลย")
-                    var data = ev.TryGetProperty("postback", out var pb)
-                        && pb.TryGetProperty("data", out var pd) ? pd.GetString() : null;
-                    if (!string.IsNullOrEmpty(data))
-                        reply = await _bot.HandlePostbackAsync(userId, data);
-                }
-                else
-                {
-                    var msg = ev.GetProperty("message");
-                    var msgType = msg.GetProperty("type").GetString();
-                    if (msgType == "text")
-                    {
-                        reply = await _bot.HandleMessageAsync(userId, msg.GetProperty("text").GetString() ?? "", destination);
-                    }
-                    else if (msgType is "image" or "file")
-                    {
-                        // "โยนบิลเข้าไลน์" — รูปถ่ายใบเสร็จ หรือไฟล์ PDF → OCR →
-                        // สร้างเอกสารให้ทันที (เดิม path นี้ถูก drop เงียบ ๆ ผู้ใช้
-                        // ส่งรูปมาแล้วไม่มีอะไรตอบกลับเลย). อัลบั้มหลายรูป = LINE
-                        // ส่งทีละ event → วน loop นี้ประมวลผลครบทุกใบอยู่แล้ว
-                        var messageId = msg.TryGetProperty("id", out var mid) ? mid.GetString() : null;
-                        var fileName = msg.TryGetProperty("fileName", out var fn) ? fn.GetString() : null;
-                        if (!string.IsNullOrEmpty(messageId))
-                            reply = await _bot.HandleImageAsync(userId, messageId, fileName);
-                    }
-                }
-                if (!string.IsNullOrEmpty(reply))
-                    await _bot.ReplyAsync(userId, reply);
+                await HandleOneToOneEventAsync(ev, src, type, destination);
             }
         }
         catch (Exception ex)
@@ -117,7 +85,76 @@ public class LineWebhookController : ControllerBase
             // would loop forever. Log and move on.
         }
         return Ok();
+
+        // local function โดยตั้งใจ: ตัวจัดการ 1:1 อยู่ในเมธอด Receive (กติกา call-site รอบ 211/256 ผูกลำดับ/รูปการเรียกไว้กับชื่อนี้)
+        // รอบ 258 (A-M2 · A-M3) — event 1:1 ของ OA กลาง (ข้อความ/รูป/ไฟล์/ปุ่มกด):
+        // กันซ้ำด้วย webhookEventId (ตาราง LineWebhookEventsSeen เดียวกับเส้นกลุ่มและ webhook OA บริษัท — upsert ในฐาน · หลายเครื่องเห็นร่วมกัน) —
+        // เดิม event ที่ LINE ส่งซ้ำ (Redelivery/คำขอช้า) ทำให้ "จ่าย เซเว่น 250" ลงค่าใช้จ่ายอนุมัติแล้วสองใบ
+        // ตอบด้วย reply token (ไม่กินโควตา push) — <see cref="ILineBotService.ReplyAsync"/> ถอยไป push เฉพาะผู้ส่งที่ผูกบัญชีแล้ว
+        // try ต่อ event: event หนึ่งล้มไม่ลาก event ที่เหลือในชุดเดียวกัน · ล้ม ⇒ log Error + ถอนการประทับ (webhook ตอบ 200 เสมอ ⇒ LINE ไม่ส่งซ้ำเอง —
+        // ถอนประทับมีผลเมื่อสั่ง Redelivery เอง)
+        async Task HandleOneToOneEventAsync(JsonElement ev, JsonElement src, string? type, string? destination)
+        {
+            var eventId = ev.TryGetProperty("webhookEventId", out var we) ? we.GetString() : null;
+            var marked = false;
+            // รอบ 258 ฝ่ายค้าน R-L6: เข้าตัวจัดการแล้ว = อาจเกิดผลข้างเคียงแล้ว (เอกสารสร้าง/อนุมัติ) ⇒ ห้ามถอนประทับ — ไม่งั้น Redelivery สร้างใบที่สอง ·
+            // ถอนได้เฉพาะเมื่อล้มก่อนถึงตัวจัดการ (ยังไม่มีอะไรเกิดขึ้น)
+            var entered = false;
+            try
+            {
+                if (_groups != null)
+                {
+                    if (!await _groups.MarkEventSeenAsync(eventId)) return;   // เห็นแล้ว ⇒ ไม่ประมวลซ้ำ
+                    marked = true;
+                }
+                var userId = src.TryGetProperty("userId", out var uid) ? uid.GetString() ?? "" : "";
+                if (userId.Length == 0) return;
+                var replyToken = ev.TryGetProperty("replyToken", out var rt) ? rt.GetString() : null;
+
+                string? reply = null;
+                if (type == "postback")
+                {
+                    // ปุ่มกดใน Flex card (เช่น "✅ อนุมัติเลย")
+                    var data = ev.TryGetProperty("postback", out var pb)
+                        && pb.TryGetProperty("data", out var pd) ? pd.GetString() : null;
+                    if (!string.IsNullOrEmpty(data))
+                    {
+                        entered = true;
+                        reply = await _bot.HandlePostbackAsync(userId, data);
+                    }
+                }
+                else
+                {
+                    var msg = ev.GetProperty("message");
+                    var msgType = msg.GetProperty("type").GetString();
+                    if (msgType == "text")
+                    {
+                        entered = true;
+                        reply = await _bot.HandleMessageAsync(userId, msg.GetProperty("text").GetString() ?? "", destination);
+                    }
+                    else if (msgType is "image" or "file")
+                    {
+                        // "โยนบิลเข้าไลน์" — รูปถ่ายใบเสร็จ หรือไฟล์ PDF → OCR → สร้างเอกสารให้ทันที · อัลบั้มหลายรูป = LINE ส่งทีละ event
+                        var messageId = msg.TryGetProperty("id", out var mid) ? mid.GetString() : null;
+                        var fileName = msg.TryGetProperty("fileName", out var fn) ? fn.GetString() : null;
+                        if (!string.IsNullOrEmpty(messageId))
+                        {
+                            entered = true;
+                            reply = await _bot.HandleImageAsync(userId, messageId, fileName);
+                        }
+                    }
+                }
+                if (!string.IsNullOrEmpty(reply))
+                    await _bot.ReplyAsync(userId, reply, replyToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "LINE webhook OA กลาง: ประมวลเหตุการณ์ 1:1 {EventId} ล้ม (เข้าตัวจัดการแล้ว = {Entered} — ถอนการประทับเฉพาะเมื่อยังไม่เข้า)", eventId, entered);
+                if (marked && !entered && _groups != null) await _groups.UnmarkEventSeenAsync(eventId, CancellationToken.None);
+            }
+        }
     }
+
 
     /// <summary>รอบ 256 (คำตัดสิน 256-2) — event กลุ่ม/ห้องของ OA กลาง:
     /// <list type="bullet">
@@ -180,15 +217,29 @@ public class LineWebhookController : ControllerBase
 public class LineBotBindController : ControllerBase
 {
     private readonly ILineBotService _bot;
-    public LineBotBindController(ILineBotService bot) => _bot = bot;
-
-    [HttpPost("issue-bind-code")]
-    public async Task<ActionResult<ApiResponse<object>>> IssueBindCode()
+    /// <summary>รอบ 258 (A-M9): ค่าตั้ง OA กลาง (ผู้อ่านตัวเดียว) — ชื่อบอท/ลิงก์เพิ่มเพื่อนบนหน้าผูกมาจากที่นี่ ไม่ฝังในหน้าเว็บ</summary>
+    private readonly INextAccLineConfig? _nextAcc;
+    public LineBotBindController(ILineBotService bot, INextAccLineConfig? nextAcc = null)
     {
+        _bot = bot; _nextAcc = nextAcc;
+    }
+
+    // รอบ 258 ฝ่ายค้าน R-H1: คีย์ API ถือตัวตนผู้ออกคีย์ (เจ้าของ) และ route นี้ไม่มี companyId (ไม่ผ่าน TenantGuard) ⇒ ผู้ถือคีย์ออกรหัสแล้วผูก LINE
+    // ของตัวเองเป็น "เจ้าของ" ได้ทุกบริษัท — ต้องเป็นคนที่ล็อกอินบนเว็บเท่านั้น
+    [HttpPost("issue-bind-code")]
+    public async Task<ActionResult<ApiResponse<object>>> IssueBindCode(CancellationToken ct = default)
+    {
+        // ด่านตัวเดียวกับ [RejectApiKey] (Helpers/OwnerActionGuard) — เรียกในตัวเมธอดเพื่อให้กติกา call-site ล็อกลำดับ "ด่านก่อนออกรหัส" ได้
+        if (Accounting.Helpers.OwnerActionGuard.DenyResult(HttpContext, "ออกรหัสผูก LINE") is { } keyDenied) return keyDenied;
         var userId = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User);
+        // รอบ 258 (A-M9): บอทกลางยังไม่พร้อมรับข้อความ (ไม่มี token/secret) ⇒ บอกเหตุแทนการออกรหัสที่ส่งไปแล้วเงียบ
+        var central = _nextAcc == null ? null : await _nextAcc.GetAsync(ct);
+        var view = Accounting.Helpers.StaffLineBindView.From(central?.HasToken == true && central.HasSecret, central?.BasicId);
+        if (!view.BotReady)
+            return Ok(new ApiResponse<object>(false, new { view.BotReady, view.BasicId, view.AddFriendUrl, view.Notice }, view.Notice));
         var code = await _bot.IssueBindCodeAsync(userId);
         return Ok(new ApiResponse<object>(true,
-            new { code, expiresInMinutes = 10 },
+            new { code, expiresInMinutes = 10, view.BotReady, view.BasicId, view.AddFriendUrl, view.Notice },
             "ส่งข้อความ 'ผูก " + code + "' ให้บอทใน LINE ภายใน 10 นาที"));
     }
 }

@@ -58,6 +58,7 @@ public class AccountingReportExportService
         var name = payables ? "อายุเจ้าหนี้" : "อายุลูกหนี้";
         var title = await TitleAsync(companyId, name, "ณ วันที่ " + ThaiDate.ToThaiDisplayString(r.AsOfDate), projectId, null, null);
         if (contactId.HasValue) title.Add("เฉพาะผู้ติดต่อที่เลือก");
+        if (r.UnappliedCreditNote != null) title.Add(r.UnappliedCreditNote);   // รอบ 258: บรรทัดเงินรอจัดสรร — ข้อความเดียวกับหน้า
         var byContact = AccountingReportSheets.AgingByContact(r, title);
         var byDoc = AccountingReportSheets.AgingByDocument(r, title);
         if (format == TabularFormat.Csv)

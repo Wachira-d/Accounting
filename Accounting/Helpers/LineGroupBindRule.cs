@@ -80,6 +80,15 @@ public static class LineGroupBindRule
             => $"🔗 รหัสผูกกลุ่ม \"{(string.IsNullOrWhiteSpace(groupName) ? "กลุ่มนี้" : groupName)}\": {Display(code)}\n"
                + $"หมดอายุ {expiresUtc.AddHours(7):HH:mm} น. (ใช้ได้ครั้งเดียว)\n"
                + "ขั้นต่อไป: ผู้ดูแลบริษัทเปิด ผู้ติดต่อ › ช่องทางแจ้งเตือน › เพิ่มกลุ่ม LINE › ใส่รหัสนี้";
+        /// <summary>รอบ 257 ชุด 4 (C-M4): คำตอบ <c>#HeyNextAcc</c> ของ <b>LINE OA กลาง</b> — รหัสผูกได้เฉพาะบริษัทผู้ให้บริการ (256-2) ⇒ บอกชื่อบริษัทนั้น
+        /// + ทางของบริษัทอื่น (เชิญ OA ของบริษัทตัวเอง) ตั้งแต่ตอนออกรหัส (เดิมตอบเหมือน OA บริษัท ⇒ บริษัทอื่นรู้ว่าใช้ไม่ได้ตอนยืนยันเท่านั้น) ·
+        /// ฝ่ายค้าน LOW-6: ประกอบข้อความตรง ๆ (ไม่พึ่งการแทนที่ข้อความของ <see cref="Code"/>) — บรรทัดรหัส/หมดอายุใช้รูปเดียวกับ OA บริษัท</summary>
+        public static string CentralCode(string code, string? groupName, DateTime expiresUtc, string? platformCompanyName)
+            => $"🔗 รหัสผูกกลุ่ม \"{(string.IsNullOrWhiteSpace(groupName) ? "กลุ่มนี้" : groupName)}\": {Display(code)}\n"
+               + $"หมดอายุ {expiresUtc.AddHours(7):HH:mm} น. (ใช้ได้ครั้งเดียว)\n"
+               + $"ใช้ได้เฉพาะ {(string.IsNullOrWhiteSpace(platformCompanyName) ? "บริษัทผู้ให้บริการ NextAcc" : platformCompanyName!.Trim())} (บอทนี้คือ LINE OA กลางของ NextAcc)\n"
+               + "ขั้นต่อไป: ผู้ดูแลบริษัทนั้นเปิด ผู้ติดต่อ › ช่องทางแจ้งเตือน › เพิ่มกลุ่ม LINE › ใส่รหัสนี้\n"
+               + "บริษัทอื่น: รหัสนี้ใช้ไม่ได้ — เชิญ LINE OA ของบริษัทตัวเองเข้ากลุ่มแล้วพิมพ์ #HeyNextAcc ใหม่";
         public static string Refused(string problem) => "❌ ผูกกลุ่มนี้ไม่ได้ — " + problem;
         public const string Throttled = "⛔ ขอรหัสบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่";
         public static string Bound(string? companyName, string? contactName, IEnumerable<string> topics)

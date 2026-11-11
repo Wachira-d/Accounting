@@ -51,6 +51,13 @@ public class EmailScheduleRule : TenantEntity
     /// ระบบประทับเอง (<c>OverdueReminderSchedule.NextActivatedAt</c>) · null = ไม่เปิด/ไม่รู้ ⇒ ไม่ส่งซ้ำ</summary>
     public DateTime? RepeatActivatedAt { get; set; }
 
+    /// <summary>รอบ 258 (B-M7): ลายน้ำ "วันที่ไทยที่ตัวสแกนตามวันสแกนกฎนี้ครั้งล่าสุด" (เที่ยงคืนของวันนั้น) — ระบบเขียนเอง ·
+    /// null = ยังไม่เคยสแกน/เพิ่งแก้ตาราง (ไม่ย้อนเก็บ) · ผู้อ่าน: <c>Helpers/ScheduleCatchUp</c></summary>
+    public DateTime? LastDayScanBkk { get; set; }
+
+    /// <summary>รอบ 258 (B-M7): บันทึกการส่งย้อนหลังครั้งล่าสุด (ระบบไม่ได้ทำงานในวันที่ตั้งไว้) — ระบบเขียนเอง · หน้าตารางส่งแสดงใต้กฎ</summary>
+    public string? LastCatchUpNote { get; set; }
+
     /// <summary>หัวเรื่องเทมเพลต — รองรับ placeholder
     /// {DocNumber} {DueDate} {ContactName} {Amount} {CompanyName}.
     /// null = ใช้ default ของ DocumentEmailService.</summary>
@@ -137,4 +144,12 @@ public class EmailQueue : TenantEntity
 
     /// <summary>idempotency key ใช้กับ unique index เพื่อกัน enqueue ซ้ำ.</summary>
     public string? IdempotencyKey { get; set; }
+
+    /// <summary>รอบ 258 ฝ่ายค้าน R-M3: เวลาที่ตัวส่ง<b>เริ่มส่งแถวนี้</b> (ประทับก่อนเรียกผู้ให้บริการ · ตัวจองล้าง) — ระบบเขียนเอง ·
+    /// null ขณะ <c>Sending</c> = จองแล้วแต่ยังไม่เคยลองส่ง (ตัวกู้คืนเป็น Pending ได้อย่างปลอดภัย) · มีค่า = ไม่รู้ว่าส่งถึงหรือไม่ (ตัวกู้ประทับ Failed)</summary>
+    public DateTime? SendStartedAt { get; set; }
+
+    /// <summary>รอบ 258 ฝ่ายค้าน R-M3: ผู้จองรอบปัจจุบัน (สุ่มต่อรอบจอง · ระบบเขียนเอง) — ตัวส่งเริ่มส่งได้เฉพาะแถวที่ยังถือโทเคนของตัวเอง
+    /// (แถวที่ถูกกู้แล้วเครื่องอื่นจองใหม่ ไม่ถูกเครื่องเดิมส่งซ้ำ)</summary>
+    public Guid? ClaimToken { get; set; }
 }

@@ -26,7 +26,9 @@
 
     <div class="pt-card">
       <h3>🤝 ส่งคำขอเชื่อม</h3>
-      <p class="pt-muted">ระบบตอบ "ส่งคำขอแล้ว" ทุกกรณี (ไม่บอกว่าเลขภาษีนี้ใช้ NextAcc หรือไม่) — คู่ค้าจะเห็นคำขอเมื่อเขาเปิดให้คู่ค้าค้นเจอ</p>
+      <p class="pt-muted">ระบบตอบ "ส่งคำขอแล้ว" ทุกกรณี (ไม่บอกว่าเลขภาษีนี้ใช้ NextAcc หรือไม่) · <strong>คู่ค้าต้องเปิด "ให้คู่ค้าค้นเจอ" ในหน้านี้ของเขาก่อน</strong>
+        (ค่าตั้งต้นปิด) — ถ้ายังไม่เปิด คำขอจะ<strong>ไม่ถูกเก็บไว้</strong> และเขาจะไม่เห็นภายหลัง ⇒ แจ้งคู่ค้าให้เปิดก่อน แล้วส่งคำขออีกครั้ง ·
+        คำขอที่ถึงจริงจะแจ้งเตือนเจ้าของบริษัทปลายทาง</p>
       <div class="pt-grid2">
         <div><label for="ptTax" class="form-label">เลขประจำตัวผู้เสียภาษีของคู่ค้า (13 หลัก)</label><input id="ptTax" class="form-input" maxlength="17" autocomplete="off"></div>
         <div><label for="ptBranch" class="form-label">รหัสสาขา (5 หลัก · ว่าง = ไม่ระบุ)</label><input id="ptBranch" class="form-input" maxlength="5" autocomplete="off"></div>
@@ -57,6 +59,19 @@
       </div>
     </div>
 
+    <!-- รอบ 258-3 (F-H3): ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ เรากดบันทึกจ่ายใบซื้อของเราเอง (ยอด/ภาษีหักจากเซิร์ฟเวอร์ตามกติกาของเรา) -->
+    <div class="pt-card" id="partner-paid">
+      <h3>💳 ผู้ขายแจ้งว่ารับเงินแล้ว</h3>
+      <p class="pt-muted">เมื่อเราจ่ายใบแจ้งหนี้ผ่านลิงก์ชำระของผู้ขายที่ใช้ NextAcc ระบบของผู้ขายแจ้งมาที่นี่ — ระบบ<b>ไม่บันทึกจ่ายแทน</b>: กด “บันทึกจ่ายตามที่ผู้ขายรับแล้ว”
+        เพื่อบันทึกจ่ายใบซื้อของเรา (ภาษีหัก ณ ที่จ่ายตามกติกาของเรา · 50 ทวิ ออกตามค่าตั้งของเรา) · ใบซื้อที่ยังเป็นร่างต้องอนุมัติก่อน</p>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>วันที่รับเงิน</th><th>ผู้ขาย / ใบของผู้ขาย</th><th>ใบซื้อของเรา</th><th class="text-right">ผู้ขายรับ</th><th class="text-right">จะบันทึก (จ่าย + ภาษีหัก)</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="ptPaidBody"><tr><td colspan="7" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="pt-card">
       <h3>⚙️ ค่าตั้งของเรา</h3>
       <div class="pt-grid2">
@@ -65,6 +80,7 @@
         <label for="ptWht"><input type="checkbox" id="ptWht"> ส่งหนังสือรับรอง 50 ทวิ ที่เราออกให้คู่ค้าเข้าระบบของเขาอัตโนมัติ (เฉพาะใบที่ออกหลังเปิด · ค่าตั้งต้นปิด)</label>
       </div>
       <div style="margin-top:10px"><button class="btn btn-primary" id="ptSaveBtn" onclick="Page.saveSettings()">บันทึกค่าตั้ง</button></div>
+      <div id="ptCfgErr" role="alert" style="display:none;margin-top:6px;font-size:12px;color:#b91c1c"></div>
     </div>
   </div>
 
@@ -86,14 +102,18 @@ const Page = {
   async load() {
     const api = Layout.api(); if (!api) return;
     try {
-      const [p, d, c] = await Promise.all([
+      const [p, d, c, n] = await Promise.all([
         api.getTradingPartners(),
         api.getPartnerPurchaseDrafts().catch(e => ({ data: null, _err: e })),
         api.getWorkflowAutomation().catch(e => ({ data: null, _err: e })),
+        api.getPartnerPaymentNotices().catch(e => ({ data: null, _err: e })),
       ]);
+      this.notices = n && n.data ? n.data : null;
+      this.noticesErr = n && n._err ? (n._err.message || 'ไม่ทราบสาเหตุ') : null;
       this.partners = (p && p.data) || [];
       this.drafts = d && d.data ? d.data : null;
       this.cfg = (c && c.data) || null;
+      this.cfgErr = c && c._err ? (c._err.message || 'ไม่ทราบสาเหตุ') : null;   // รอบ 257 ชุด 4 (E LOW): บอกเหตุที่ช่องว่าง/ปุ่มปิด
     } catch (e) {
       document.getElementById('ptBody').innerHTML = `<tr><td colspan="4" class="text-center">${Layout.esc('โหลดไม่สำเร็จ: ' + (e.message || ''))}</td></tr>`;
       return;
@@ -110,7 +130,9 @@ const Page = {
         <td>${Layout.esc(limit)}</td>
         <td>${pending ? `<button class="btn btn-primary btn-sm" data-act="accept" data-id="${Layout.esc(p.id)}">ยอมรับ</button>
            <button class="btn btn-secondary btn-sm" data-act="reject" data-id="${Layout.esc(p.id)}">ปฏิเสธ</button>` : ''}
-          ${p.status === 'Accepted' ? `<button class="btn btn-secondary btn-sm" data-act="limit" data-id="${Layout.esc(p.id)}">ตั้งเพดาน</button>` : ''}</td></tr>`;
+          ${p.status === 'Accepted' ? `<button class="btn btn-secondary btn-sm" data-act="limit" data-id="${Layout.esc(p.id)}">ตั้งเพดาน</button>
+           <button class="btn btn-danger btn-sm" data-act="suspend" data-id="${Layout.esc(p.id)}">ระงับการเชื่อม</button>` : ''}
+          ${p.status === 'Suspended' ? `<span class="pt-muted">เชื่อมใหม่: ส่งคำขอเชื่อมด้านบนอีกครั้ง</span>` : ''}</td></tr>`;
     });
     document.getElementById('ptBody').innerHTML = rows.length ? rows.join('')
       : '<tr><td colspan="4" class="text-center text-gray-400">ยังไม่มีคู่ค้าที่เชื่อม</td></tr>';
@@ -126,18 +148,99 @@ const Page = {
         <td>${Layout.esc(d.supplierInvoiceNumber || '-')}</td>
         <td class="text-right">${Layout.esc(Layout.money(d.totalAmount))}</td>
         <td>${Layout.esc(d.statusLabel || d.status)}</td>
-        <td><span class="pt-badge ${d.needsOriginal ? 'pt-warn' : 'pt-ok'}">${Layout.esc(d.inputVatEvidenceLabel || '')}</span></td>
+        <td><span class="pt-badge ${d.inputVatBlocked ? 'pt-warn' : 'pt-ok'}">${Layout.esc(d.inputVatEvidenceLabel || '')}</span></td>
         <td><a class="btn btn-secondary btn-sm" href="/pages/documents.html?openDoc=${encodeURIComponent(d.id)}">เปิด</a>
           ${d.needsOriginal ? `<button class="btn btn-primary btn-sm" data-orig="${Layout.esc(d.id)}" data-kind="Paper">ได้รับต้นฉบับกระดาษแล้ว</button>` : ''}
-          ${d.needsOriginal && d.inputVatEvidence === 'AwaitingTimestamp' ? `<button class="btn btn-secondary btn-sm" data-orig="${Layout.esc(d.id)}" data-kind="StampedEtax">ได้ e-Tax ที่ประทับเวลาแล้ว</button>` : ''}</td></tr>`).join('');
+          ${d.needsOriginal && d.canConfirmStampedEtax ? `<button class="btn btn-secondary btn-sm" data-orig="${Layout.esc(d.id)}" data-kind="StampedEtax">ได้ e-Tax ที่ประทับเวลาแล้ว</button>` : ''}
+          ${d.canConfirmExternalTaxInvoice ? `<button class="btn btn-secondary btn-sm" data-ext="${Layout.esc(d.id)}" data-kind="Paper">ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ</button>` : ''}
+          ${!d.needsOriginal && d.confirmBlockedReason ? `<div class="pt-muted">${Layout.esc(d.confirmBlockedReason)}</div>` : ''}</td></tr>`).join('');
       dBody.querySelectorAll('[data-orig]').forEach(b => b.addEventListener('click', () => this.confirmOriginal(b.dataset.orig, b.dataset.kind)));
+      dBody.querySelectorAll('[data-ext]').forEach(b => b.addEventListener('click', () => this.confirmExternal(b.dataset.ext, b.dataset.kind)));
     }
 
+    this.renderNotices();
     const c = this.cfg || {};
     document.getElementById('ptDiscoverable').checked = !!c.partnerDiscoverable;
     document.getElementById('ptDrafts').checked = !!c.createPurchaseDraftsFromPartners;
     document.getElementById('ptWht').checked = !!c.sendWhtCertsToPartners;
     document.getElementById('ptSaveBtn').disabled = !this.cfg;   // โหลดค่าตั้งไม่ได้ ⇒ ห้ามบันทึกทับ (ไม่ silent no-op)
+    const cfgErr = document.getElementById('ptCfgErr');
+    if (cfgErr) { cfgErr.style.display = this.cfg ? 'none' : ''; cfgErr.textContent = this.cfg ? '' : 'โหลดค่าตั้งไม่สำเร็จ' + (this.cfgErr ? ': ' + this.cfgErr : '') + ' — ช่องด้านบนอาจไม่ใช่ค่าจริง ปุ่มบันทึกถูกปิดไว้ (รีเฟรชแล้วลองใหม่)'; }
+  },
+
+  // รอบ 258-3 (F-H3): ตารางการแจ้ง — ยอดที่จะบันทึก/เหตุที่บันทึกไม่ได้มาจากเซิร์ฟเวอร์ (PartnerPaymentNoticeRule)
+  renderNotices() {
+    const body = document.getElementById('ptPaidBody'); if (!body) return;
+    if (!this.notices) {
+      body.innerHTML = `<tr><td colspan="7" class="text-center">${Layout.esc('โหลดการแจ้งไม่สำเร็จ' + (this.noticesErr ? ': ' + this.noticesErr : ''))}</td></tr>`;
+      return;
+    }
+    if (this.notices.length === 0) { body.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่มีการแจ้ง</td></tr>'; return; }
+    body.innerHTML = this.notices.map(n => {
+      const open = n.status === 'Open';
+      const planned = n.plannedAmount != null ? `${Layout.money(n.plannedAmount)} + ${Layout.money(n.plannedWht || 0)}` : '-';
+      return `<tr><td>${Layout.esc(Layout.date ? Layout.date(n.paidAt) : String(n.paidAt || '').slice(0, 10))}</td>
+        <td>${Layout.esc(n.sellerName)}<div class="pt-muted">${Layout.esc(n.sourceDocumentNumber)}</div></td>
+        <td><a href="/pages/documents.html?id=${encodeURIComponent(n.targetDocumentId)}">${Layout.esc(n.targetDocumentNumber || 'เปิดใบซื้อ')}</a></td>
+        <td class="text-right">${Layout.esc(Layout.money(n.cashAmount))}<div class="pt-muted">ผู้ขายบันทึกภาษีหัก ${Layout.esc(Layout.money(n.sellerRecordedWht))}</div></td>
+        <td class="text-right">${Layout.esc(planned)}</td>
+        <td><span class="pt-badge">${Layout.esc(n.statusLabel || n.status)}</span>${n.note ? `<div class="pt-muted">${Layout.esc(n.note)}</div>` : ''}</td>
+        <td>${open && !n.problem ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">
+            <select class="form-select" data-acct="${Layout.esc(n.id)}" aria-label="บัญชีที่จ่าย"></select>
+            <select class="form-select" data-method="${Layout.esc(n.id)}" aria-label="วิธีจ่าย"></select></div>
+            <button class="btn btn-primary btn-sm" data-paid="${Layout.esc(n.id)}">บันทึกจ่ายตามที่ผู้ขายรับแล้ว</button>` : ''}
+          ${open && n.plannedWarning ? `<div class="pt-muted" style="color:#b45309">${Layout.esc(n.plannedWarning)}</div>` : ''}
+          ${open ? `<button class="btn btn-secondary btn-sm" data-dismiss="${Layout.esc(n.id)}">ปิดการแจ้ง</button>` : ''}
+          ${open && n.problem ? `<div class="pt-muted">${Layout.esc(n.problem)}</div>` : ''}</td></tr>`;
+    }).join('');
+    this.fillPayControls(body);
+    body.querySelectorAll('[data-paid]').forEach(b => b.addEventListener('click', () => this.recordNotice(b.dataset.paid)));
+    body.querySelectorAll('[data-dismiss]').forEach(b => b.addEventListener('click', () => this.dismissNotice(b.dataset.dismiss)));
+  },
+
+  // ฝ่ายค้าน M4: บัญชีเงิน/วิธีจ่ายเลือกได้ (ตัวเลือก + ค่าตั้งต้นจากเซิร์ฟเวอร์ · เซิร์ฟเวอร์ตรวจว่าบัญชีเป็นของบริษัทเรา)
+  // ฝ่ายค้าน M4: ตัวเลือกบัญชีเงิน/วิธีจ่ายเติมด้วย DOM หลังวาดแถว — ไม่ต่อสตริง HTML จากข้อมูล
+  fillPayControls(body) {
+    const fill = (el, list, cur) => (list || []).forEach(o => el.add(new Option(o.label, o.value, false, String(o.value) === String(cur || ''))));
+    (this.notices || []).forEach(n => {
+      const a = body.querySelector(`[data-acct="${CSS.escape(n.id)}"]`); if (a) fill(a, n.accounts, n.defaultBankAccountId);
+      const m = body.querySelector(`[data-method="${CSS.escape(n.id)}"]`); if (m) fill(m, n.methods, n.defaultMethod);
+    });
+  },
+
+  async recordNotice(id) {
+    const api = Layout.api(); if (!api) return;
+    const n = (this.notices || []).find(x => x.id === id);
+    if (!n) return;
+    const acctEl = document.querySelector(`[data-acct="${CSS.escape(id)}"]`);
+    const methodEl = document.querySelector(`[data-method="${CSS.escape(id)}"]`);
+    const acctLabel = acctEl && acctEl.selectedOptions[0] ? acctEl.selectedOptions[0].textContent : '-';
+    const methodLabel = methodEl && methodEl.selectedOptions[0] ? methodEl.selectedOptions[0].textContent : '-';
+    const paidAt = Layout.date ? Layout.date(n.paidAt) : String(n.paidAt || '').slice(0, 10);
+    // ฝ่ายค้าน M5: บอกแหล่งของข้อมูล (ผู้ขายเป็นผู้แจ้ง) + ให้ตรวจรายการเดินบัญชีของเราก่อน · M3: คำเตือนภาษีหักจากเซิร์ฟเวอร์
+    const ok = await Layout.confirm({ title: 'บันทึกจ่ายใบซื้อ', okText: 'บันทึกจ่าย',
+      message: `ผู้ขาย ${n.sellerName} แจ้งว่ารับเงินของ ${n.sourceDocumentNumber} ผ่าน${n.sourceChannelLabel || 'ลิงก์ชำระของผู้ขาย'} เมื่อ ${paidAt} — ยอด ${Layout.money(n.cashAmount)} บาท\n`
+        + `ตรวจรายการเดินบัญชีของท่านก่อนกด (ข้อมูลนี้มาจากระบบของผู้ขาย)\n\n`
+        + `บันทึกจ่าย ${n.targetDocumentNumber || 'ใบซื้อ'}: จ่าย ${Layout.money(n.plannedAmount)} บาท + ภาษีหัก ณ ที่จ่าย ${Layout.money(n.plannedWht || 0)} บาท`
+        + ` · จาก ${acctLabel} · ${methodLabel} · ลงวันที่ผู้ขายรับเงิน`
+        + (n.plannedWarning ? `\n\n⚠️ ${n.plannedWarning}` : '') });
+    if (!ok) return;
+    try {
+      const r = await api.recordPartnerPaymentNotice(id, { bankAccountId: acctEl && acctEl.value ? acctEl.value : null, paymentMethod: methodEl ? methodEl.value : null });
+      Layout.toast((r && r.message) || 'บันทึกจ่ายแล้ว', 'success');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'บันทึกจ่ายไม่สำเร็จ', 'error'); }
+  },
+
+  async dismissNotice(id) {
+    const api = Layout.api(); if (!api) return;
+    const reason = await Layout.promptText({ title: 'ปิดการแจ้ง', label: 'เหตุผล (ไม่บังคับ) — เช่น บันทึกจ่ายเองแล้ว · ไม่ใช่การจ่ายของเรา' });
+    if (reason === null) return;
+    try {
+      await api.dismissPartnerPaymentNotice(id, reason);
+      Layout.toast('ปิดการแจ้งแล้ว', 'success');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
   },
 
   async invite() {
@@ -164,6 +267,15 @@ const Page = {
         const reason = await Layout.promptText({ title: 'ปฏิเสธคำขอเชื่อม', label: 'เหตุผล (ไม่บังคับ)' });
         if (reason === null) return;
         await api.rejectPartner(id, reason);
+      } else if (act === 'suspend') {
+        // รอบ 257 ชุด 3 (D-H5): ระงับ = หยุดเส้นอัตโนมัติทุกเส้น · ทางกลับ = ส่งคำเชิญใหม่ · ข้อความผลมาจากเซิร์ฟเวอร์
+        const reason = await Layout.promptText({ title: 'ระงับการเชื่อมกับคู่ค้ารายนี้',
+          label: 'เหตุผล (ไม่บังคับ) — หยุดส่ง/รับเอกสาร ใบซื้อร่าง และ 50 ทวิ ผ่านระบบ · เอกสารที่ส่งไปแล้วยังอยู่' });
+        if (reason === null) return;
+        const r = await api.suspendPartner(id, reason);
+        Layout.toast((r && r.message) || 'ระงับแล้ว', 'success');
+        await this.load();
+        return;
       } else if (act === 'limit') {
         const v = await Layout.promptText({ title: 'เพดานยอดใบซื้อร่างจากคู่ค้ารายนี้', label: 'ยอดสูงสุดต่อใบ (บาท · ว่าง = ไม่จำกัด)' });
         if (v === null) return;
@@ -185,6 +297,31 @@ const Page = {
     if (!ok) return;
     try {
       const r = await api.confirmPartnerOriginal(id, kind || 'Paper');
+      Layout.toast((r && r.message) || 'บันทึกแล้ว', 'success');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+  },
+
+  // รอบ 257 ชุด 3 (ฝ่ายค้าน M1): ทางออกของคนจาก "รอใบกำกับจากผู้ขาย" — เลขที่ + วันที่ใบกำกับ · ตรวจทุกช่องที่เซิร์ฟเวอร์ (ข้อความผิดมาจากเซิร์ฟเวอร์)
+  async confirmExternal(id, kind) {
+    const api = Layout.api(); if (!api) return;
+    // รอบ 257 ปิดท้าย LOW: ช่องวันที่เป็นตัวเลือกวันที่จริง (เดิมพิมพ์ข้อความอิสระ — พิมพ์ผิดรูปได้ข้อความผิดพลาดภาษาอังกฤษจากตัวอ่าน JSON) ·
+    // ช่องว่าง = ข้อความไทยที่กล่องเลย · กติกา (ไม่อยู่ในอนาคต ฯลฯ) ยังตรวจที่เซิร์ฟเวอร์
+    const no = await Layout.promptText({ title: 'ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ', label: 'เลขที่ใบกำกับภาษีของผู้ขาย',
+      required: true, requiredMessage: 'กรุณากรอกเลขที่ใบกำกับภาษีของผู้ขาย' });
+    if (no === null) return;
+    const dt = await Layout.promptText({ title: 'ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ', label: 'วันที่บนใบกำกับภาษี', inputType: 'date',
+      required: true, requiredMessage: 'กรุณาเลือกวันที่บนใบกำกับภาษี',
+      validate: v => /^\d{4}-\d{2}-\d{2}$/.test(v) ? null : 'วันที่ไม่ถูกต้อง — เลือกวันที่จากปฏิทิน' });
+    if (dt === null) return;
+    const ok = await Layout.confirm({ title: 'ยืนยันว่าได้รับใบกำกับภาษีตัวจริงแล้ว',
+      message: kind === 'StampedEtax'   // เซิร์ฟเวอร์ปฏิเสธชนิดนี้บนทางนอกระบบ (ไม่มีไฟล์ e-Tax ที่ลงลายมือชื่อถึงผู้รับ) — หน้าไม่แสดงปุ่มแล้ว
+        ? 'ยืนยันเมื่อตรวจแล้วว่าไฟล์ e-Tax ของผู้ขายลงลายมือชื่อและประทับเวลา ETDA ถูกต้อง และยอด VAT ตรงกับใบซื้อนี้ (ระบบไม่ได้ตรวจกับ ETDA ให้)'
+        : 'ยืนยันเมื่อมีใบกำกับภาษีตัวจริง (กระดาษ) อยู่ในมือ และยอด VAT ตรงกับใบซื้อนี้แล้วเท่านั้น' });
+    if (!ok) return;
+    try {
+      const r = await api.confirmPartnerExternalTaxInvoice(id, { kind: kind || 'Paper', supplierInvoiceNumber: String(no).trim() || null,
+        supplierTaxInvoiceDate: String(dt).trim() || null });
       Layout.toast((r && r.message) || 'บันทึกแล้ว', 'success');
       await this.load();
     } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }

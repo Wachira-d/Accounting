@@ -102,9 +102,8 @@ public partial class CrossTenantWorkflowService
                 });
                 outcome = "Created";
             }
-            else if ((existing.Status == TradingPartnershipStatus.Rejected
-                      && (existing.RejectedAt == null || existing.RejectedAt <= now.AddDays(-RejectedReinviteCooldownDays)))
-                     || existing.Status == TradingPartnershipStatus.Suspended)
+            // รอบ 257 ชุด 3 (ฝ่ายค้าน LOW): ระงับแล้วต้องพ้นช่วงพัก 7 วันเหมือนถูกปฏิเสธ (ตัวตัดสินเดียว ReinviteAllowed) — คำตอบยังเหมือนเดิมทุกกรณี
+            else if (Accounting.Helpers.PartnerExchangeRules.ReinviteAllowed(existing.Status, existing.RejectedAt, existing.SuspendedAt, now, RejectedReinviteCooldownDays))
             {
                 // เชิญซ้ำหลังถูกปฏิเสธ (พ้นช่วงพัก) / ถูกระงับ — เปิดใหม่ให้ปลายทางเห็นคำเชิญสด
                 // (รอบ 255 ฝ่ายค้าน M4: ยอมรับได้จาก Pending เท่านั้น ⇒ ทางกลับของแถวที่ถูกระงับคือเชิญใหม่ทางนี้)
@@ -114,10 +113,29 @@ public partial class CrossTenantWorkflowService
                 existing.InvitationMessage = message;
                 existing.RejectedAt = null;
                 existing.RejectionReason = null;
+                existing.SuspendedAt = null;
                 existing.UpdatedAt = now;
                 outcome = "Reopened";
             }
             else outcome = "Unchanged:" + existing.Status;
+
+            // รอบ 257 ชุด 3 (D-M1 · คำตัดสิน 257-3-3): คำเชิญจริง (สร้าง/เปิดใหม่) ⇒ กระดิ่งถึงเจ้าของบริษัทปลายทาง — แถวในธุรกรรมเดียวกับคำเชิญ
+            // (ไม่ผ่านช่องอีเมล/LINE ภายนอก ⇒ เวลาตอบไม่ต่างจนวัดได้ · ถูกเติมถึงเพดานคงที่เหมือนเดิม) · ไม่ใส่ข้อความเชิญ (ช่องฟิชชิง — เปิดดูที่หน้าคู่ค้า)
+            if (outcome is "Created" or "Reopened")
+            {
+                var owners = await _db.CompanyUsers.AsNoTracking()
+                    .Where(cu => cu.CompanyId == partnerId && cu.Role == UserRole.Owner)
+                    .Select(cu => cu.UserId)
+                    .ToListAsync();
+                foreach (var ownerId in owners.Distinct())
+                    _db.Set<Notification>().Add(new Notification
+                    {
+                        UserId = ownerId, CompanyId = partnerId, Type = NotificationType.System, Channel = NotificationChannel.InApp,
+                        Title = "มีคำขอเชื่อมระบบจากคู่ค้าที่ใช้ NextAcc",
+                        Message = "ตรวจชื่อ/เลขภาษีของผู้ขอที่หน้า \"คู่ค้าที่ใช้ NextAcc\" แล้วกดยอมรับหรือปฏิเสธ — ยังไม่มีเอกสารใดถูกส่งจนกว่าท่านจะยอมรับ",
+                        ActionUrl = "/pages/partners.html", EntityType = "TradingPartnership",
+                    });
+            }
         }
 
         // audit ของผู้เชิญ — เนื้อหาเหมือนกันทุกกรณี (ผู้ดูแลของบริษัทผู้เชิญอ่าน audit ได้ ⇒ ห้ามมีผลการค้น)
@@ -586,6 +604,19 @@ public partial class CrossTenantWorkflowService
     private async Task TryChainDownstreamAsync(CrossTenantDocumentLink link, WorkflowAutomationConfig targetCfg,
         bool? overrideAutoCreatePo, Guid actingUserId)
     {
+        // รอบ 257 ชุด 3 (D-H5): คู่ที่ถูกระงับแล้ว ⇒ ไม่สร้างเอกสารปลายทางในระบบของอีกฝ่าย (อนุมัติเอกสารที่ค้างในกล่องได้ แต่ไม่ต่อสาย) · เหตุบนแถว (ไม่เงียบ)
+        var partnershipStatus = await _db.TradingPartnerships.AsNoTracking()
+            .Where(p => p.Id == link.TradingPartnershipId).Select(p => (TradingPartnershipStatus?)p.Status).FirstOrDefaultAsync();
+        if (partnershipStatus != TradingPartnershipStatus.Accepted)
+        {
+            if (link.LinkType is CrossTenantLinkType.QuotationFlow or CrossTenantLinkType.PoFlow)
+            {
+                link.Comment = "อนุมัติแล้ว แต่ไม่ได้สร้างเอกสารปลายทาง — การเชื่อมกับคู่ค้ารายนี้ถูกระงับ";
+                link.UpdatedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+            }
+            return;
+        }
         if (link.LinkType == CrossTenantLinkType.QuotationFlow)
         {
             var shouldCreatePo = overrideAutoCreatePo ?? targetCfg.AutoCreatePoOnQuotationApproval;
@@ -603,6 +634,9 @@ public partial class CrossTenantWorkflowService
         }
     }
 
+    /// <summary>ฝ่ายค้าน M5 (รอบ 257 ชุด 3): ข้อความบนแถวกล่องเข้าเมื่อสร้าง PO ปลายทางเป็นร่าง</summary>
+    public const string DownstreamPoDraftComment = "PO เป็นร่าง — อนุมัติและส่งเพื่อให้ผู้ขายออกใบต่อ";
+
     private async Task CreateDownstreamPoAsync(CrossTenantDocumentLink approvedQuoteLink, Guid actingUserId)
     {
         // Build a PO at the BUYER side (= target of the quotation link)
@@ -611,6 +645,14 @@ public partial class CrossTenantWorkflowService
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == approvedQuoteLink.SourceDocumentId);
         if (quote == null) return;
+        // ฝ่ายค้าน LOW (รอบ 257 ชุด 3): ตัวตรวจ/ตัวคัดลอกเดียวกับใบซื้อร่าง — คัดลอกครบไม่ได้ ⇒ ไม่สร้าง + เหตุบนแถว (ไม่สร้าง PO ที่บรรทัดไม่ตรงใบเสนอราคา)
+        if (PartnerCopyProblem(quote) is string copyProblem)
+        {
+            approvedQuoteLink.Comment = copyProblem;
+            approvedQuoteLink.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return;
+        }
 
         // The buyer needs a Contact for the supplier. Find by TaxId of the
         // supplier company. If no contact exists yet, create one.
@@ -633,59 +675,47 @@ public partial class CrossTenantWorkflowService
         var po = new Document
         {
             CompanyId = approvedQuoteLink.TargetCompanyId,
-            DocumentNumber = $"PO-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid().ToString()[..6].ToUpper()}",
+            // รอบ 257 ชุด 3 (LOW · คำตัดสิน 257-3-6): ใบที่ระบบสร้างในฝั่งผู้รับเป็น<b>ร่างเสมอ</b> (N3 · ข้อกำหนดฉบับใหม่) — เดิมประทับ Approved + เลขสุ่ม
+            // "PO-yyyyMMdd-XXXXXX" ที่ไม่อยู่ในชุดเลขเอกสาร · ร่าง ⇒ เลข DRAFT- ออกเลขจริงตอนผู้ซื้ออนุมัติ (เส้นอนุมัติเดิม)
+            DocumentNumber = $"DRAFT-{Guid.NewGuid()}",
             DocumentType = DocumentType.PurchaseOrder,
-            Status = DocumentStatus.Approved,
+            Status = DocumentStatus.Draft,
             DocumentDate = DateTime.UtcNow.Date,
             ContactId = supplierContact.Id,
-            SubTotal = quote.SubTotal,
-            VatAmount = quote.VatAmount,
-            TotalAmount = quote.TotalAmount,
-            BalanceDue = quote.TotalAmount,
             Reference = $"Quotation {quote.DocumentNumber}",
             Notes = $"Auto-created from approved Quotation (cross-tenant link {approvedQuoteLink.Id})",
             CreatedBy = "cross-tenant-chain",
         };
-        int order = 1;
-        foreach (var line in quote.Lines)
-        {
-            po.Lines.Add(new DocumentLine
-            {
-                LineOrder = order++,
-                Description = line.Description,
-                Quantity = line.Quantity,
-                UnitPrice = line.UnitPrice,
-                Amount = line.Amount,
-                VatRate = line.VatRate,
-                VatAmount = line.VatAmount,
-            });
-        }
+        CopyPartnerMoney(quote, po);
         _db.Documents.Add(po);
         await _db.SaveChangesAsync();
 
         approvedQuoteLink.TargetDocumentId = po.Id;
         approvedQuoteLink.Status = CrossTenantLinkStatus.AutoChained;
-
-        // Create the reverse routing link — PO back to supplier (A's side)
-        var poLink = new CrossTenantDocumentLink
-        {
-            TradingPartnershipId = approvedQuoteLink.TradingPartnershipId,
-            SourceCompanyId = po.CompanyId,
-            SourceDocumentId = po.Id,
-            TargetCompanyId = approvedQuoteLink.SourceCompanyId,
-            LinkType = CrossTenantLinkType.PoFlow,
-            Status = CrossTenantLinkStatus.PendingApproval,
-            CreatedBy = "cross-tenant-chain",
-        };
-        _db.CrossTenantDocumentLinks.Add(poLink);
+        // ฝ่ายค้าน M5: บอกบนแถวว่า PO เป็นร่าง (ต่อท้ายความเห็นของผู้อนุมัติ — ไม่ทับ) + แจ้งทั้งสองฝ่าย
+        approvedQuoteLink.Comment = string.IsNullOrWhiteSpace(approvedQuoteLink.Comment)
+            ? DownstreamPoDraftComment : approvedQuoteLink.Comment + " · " + DownstreamPoDraftComment;
+        approvedQuoteLink.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        if (_notify != null)
+        {
+            await _notify.DispatchAsync(po.CompanyId, Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange, new Accounting.Services.Interfaces.NotificationContext
+            {
+                Title = $"สร้างใบสั่งซื้อร่างจากใบเสนอราคา {quote.DocumentNumber}",
+                Message = DownstreamPoDraftComment, ActionUrl = "/pages/documents.html", EntityType = "Document", EntityId = po.Id,
+            });
+            await _notify.DispatchAsync(approvedQuoteLink.SourceCompanyId, Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange, new Accounting.Services.Interfaces.NotificationContext
+            {
+                Title = $"คู่ค้าอนุมัติใบเสนอราคา {quote.DocumentNumber} แล้ว",
+                Message = "ใบสั่งซื้อในระบบของคู่ค้ายังเป็นร่าง — เมื่อคู่ค้าอนุมัติและส่ง ใบสั่งซื้อจะเข้ากล่องเอกสารเข้าของท่าน", ActionUrl = "/pages/partners.html",
+                EntityType = "Document", EntityId = quote.Id,
+            });
+        }
 
-        // The supplier's config may auto-chain to invoice — re-enter the
-        // chain logic with the PO as the trigger.
-        var sourceCfg = await _db.WorkflowAutomationConfigs.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.CompanyId == approvedQuoteLink.SourceCompanyId);
-        if (sourceCfg?.AutoCreateInvoiceFromIncomingPo == true)
-            await CreateDownstreamInvoiceAsync(poLink, actingUserId);
+        // รอบ 257 ชุด 3 (คำตัดสิน 257-3-6): ไม่ส่งใบสั่งซื้อ<b>ร่าง</b>ย้อนเข้าระบบผู้ขาย และไม่ให้ผู้ขายสร้างใบแจ้งหนี้จากใบที่ผู้ซื้อยังไม่อนุมัติ —
+        // เมื่อผู้ซื้ออนุมัติแล้วส่ง เส้นส่งเดิม (OnDocumentSentAsync · PurchaseOrder ⇒ PoFlow) สร้างแถวกล่องเข้าของผู้ขาย ⇒ ผู้ขายอนุมัติ ⇒
+        // TryChainDownstreamAsync (PoFlow) สร้างใบแจ้งหนี้ร่างตามค่าตั้งของผู้ขายเหมือนเดิม
+        _ = actingUserId;
     }
 
     /// <summary>ผู้ติดต่อที่แทน "บริษัทคู่ค้าในระบบเดียวกัน" ในผังผู้ติดต่อของ <paramref name="ownerCompanyId"/> —
@@ -783,6 +813,14 @@ public partial class CrossTenantWorkflowService
             .Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == poLink.SourceDocumentId);
         if (po == null) return;
+        // ฝ่ายค้าน LOW (รอบ 257 ชุด 3): ตัวตรวจ/ตัวคัดลอกเดียวกับใบซื้อร่าง
+        if (PartnerCopyProblem(po) is string copyProblem)
+        {
+            poLink.Comment = copyProblem;
+            poLink.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return;
+        }
 
         // The supplier (target of the PO) creates an Invoice back to the buyer
         var buyer = await _db.Companies.AsNoTracking()
@@ -813,28 +851,11 @@ public partial class CrossTenantWorkflowService
             Status = DocumentStatus.Draft,   // Invoice is Draft so AR team reviews before sending
             DocumentDate = DateTime.UtcNow.Date,
             ContactId = buyerContact.Id,
-            SubTotal = po.SubTotal,
-            VatAmount = po.VatAmount,
-            TotalAmount = po.TotalAmount,
-            BalanceDue = po.TotalAmount,
             Reference = $"PO {po.DocumentNumber}",
             Notes = $"Auto-created from incoming PO (cross-tenant link {poLink.Id})",
             CreatedBy = "cross-tenant-chain",
         };
-        int order = 1;
-        foreach (var line in po.Lines)
-        {
-            inv.Lines.Add(new DocumentLine
-            {
-                LineOrder = order++,
-                Description = line.Description,
-                Quantity = line.Quantity,
-                UnitPrice = line.UnitPrice,
-                Amount = line.Amount,
-                VatRate = line.VatRate,
-                VatAmount = line.VatAmount,
-            });
-        }
+        CopyPartnerMoney(po, inv);
         _db.Documents.Add(inv);
         await _db.SaveChangesAsync();
 

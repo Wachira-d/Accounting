@@ -796,7 +796,9 @@ const API = {
         API.get(`${base}/document/${id}/purge-preview${cascade ? '?cascade=true' : ''}`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
       // ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (แถวที่มี JE แต่ไม่มีเอกสารคู่)
-      issueReceiptForPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/receipt`),
+      // documentId (รอบ 258 H2) = ออกใบเสร็จ "รายใบ" ของการรับชำระที่จัดสรรหลายใบ/จากเงินรอจัดสรร — ไม่ส่ง = ใบหลักของการรับชำระ (เดิม)
+      issueReceiptForPayment: (paymentId, documentId) =>
+        API.post(`${base}/document/payments/${paymentId}/receipt${documentId ? `?documentId=${encodeURIComponent(documentId)}` : ''}`),
       convertDocument: (id, t) => API.post(`${base}/document/${id}/convert/${t}`),
       // ใบวางบิลรวมใบค้างชำระหลายใบ (ลูกค้ารายเดียว)
       getBillingOutstanding: (contactId) => API.get(`${base}/document/billing-note/outstanding?contactId=${contactId}`),
@@ -839,6 +841,17 @@ const API = {
       // Payments
       getPayments: (q = '') => API.get(`${base}/document/payments${q}`),
       createPayment: (d) => API.post(`${base}/document/payments`, d),
+      // รอบ 258 — เงินรอจัดสรร (เงินรับจากลูกค้าที่ยังไม่ผูกกับใบ): รายการ · ใบที่จัดสรรได้ · แผนเงินเกินของหน้ารับชำระ · จัดสรร/ยกเลิกการจัดสรร
+      getCustomerCredits: (q = '') => API.get(`${base}/customer-credits${q}`),
+      getCustomerCreditTargets: (paymentId) => API.get(`${base}/customer-credits/${paymentId}/targets`),
+      getCustomerCreditsForDocument: (documentId) => API.get(`${base}/customer-credits/for-document/${documentId}`),
+      getPaymentExcessPlan: (documentId, amount, fee, hasAdjustments) =>
+        API.get(`${base}/customer-credits/excess-plan?documentId=${documentId}&amount=${encodeURIComponent(amount)}&fee=${encodeURIComponent(fee || 0)}&hasAdjustments=${hasAdjustments ? 'true' : 'false'}`),
+      confirmLegacyCustomerCredit: (paymentId) => API.post(`${base}/customer-credits/${paymentId}/legacy/confirm`),
+      closeLegacyCustomerCredit: (paymentId, reason) => API.post(`${base}/customer-credits/${paymentId}/legacy/close`, { reason }),
+      allocateCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/allocate`, d),
+      undoCustomerCreditAllocation: (paymentId, allocationId) =>
+        API.post(`${base}/customer-credits/${paymentId}/allocations/${allocationId}/undo`),
       // Products
       getProducts: (q = '') => API.get(`${base}/product${q}`),
       // ส่งออกรายการเอกสาร (ทีม X2 · 2026-10-14 · Controllers/TradeListExportController) — q = ตัวกรองชุดเดียวกับ list + format · ใช้ API.download ตรง
@@ -1534,7 +1547,6 @@ const API = {
       getMyNotificationPreferences: () => API.get(`${base}/notifications/config/preferences/me`),
       upsertMyNotificationPreferences: (d) => API.put(`${base}/notifications/config/preferences/me`, d),
       getMyLineBinding: () => API.get(`${base}/notifications/config/line-binding/me`),
-      setMyLineBinding: (d) => API.put(`${base}/notifications/config/line-binding/me`, d),
       clearMyLineBinding: () => API.del(`${base}/notifications/config/line-binding/me`),
       // Tax Calendar
       getTaxEvents: (q = '') => API.get(`${base}/tax-calendar${q}`),
@@ -1559,11 +1571,17 @@ const API = {
       invitePartner: (d) => API.post(`${base}/trading-partners/invite`, d),
       acceptPartner: (id) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/accept`),
       rejectPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/reject`, { reason: reason || null }),
+      suspendPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/suspend`, { reason: reason || null }),
       setPartnerDraftLimit: (id, limit) => API.put(`${base}/trading-partners/${encodeURIComponent(id)}/purchase-draft-limit`, { limit }),
       getWorkflowAutomation: () => API.get(`${base}/workflow-automation`),
       updateWorkflowAutomation: (d) => API.put(`${base}/workflow-automation`, d),
       getPartnerPurchaseDrafts: () => API.get(`${base}/partner-purchase-drafts`),
+      // รอบ 258-3 F-H3: ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ ผู้ซื้อกดบันทึกจ่ายเอง
+      getPartnerPaymentNotices: () => API.get(`${base}/partner-payment-notices`),
+      recordPartnerPaymentNotice: (id, d) => API.post(`${base}/partner-payment-notices/${encodeURIComponent(id)}/record`, d || {}),
+      dismissPartnerPaymentNotice: (id, reason) => API.post(`${base}/partner-payment-notices/${encodeURIComponent(id)}/dismiss`, { reason: reason || null }),
       confirmPartnerOriginal: (id, kind) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-original`, { kind: kind || 'Paper' }),
+      confirmPartnerExternalTaxInvoice: (id, d) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-external-tax-invoice`, d),
       getContactPartnerStatus: (contactId) => API.get(`${base}/contacts/${encodeURIComponent(contactId)}/partner-status`),
       updateAutopilotSettings: (d) => API.put(`${base}/autopilot/settings`, d),
       setQuotationAutopilotMode: (id, mode) => API.put(`${base}/autopilot/quotations/${encodeURIComponent(id)}/mode`, { mode }),

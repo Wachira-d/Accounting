@@ -132,6 +132,26 @@ public static class WhtCertIntakeVerdict
     /// ไม่รู้ปีฝั่งใดฝั่งหนึ่ง ⇒ ถือว่าซ้ำ (ทางปลอดภัย — ไม่ให้เครดิตสองครั้ง)</summary>
     public static bool SameCertYear(int? a, int? b) => a is null || b is null || a == b;
 
+    public enum CertPayerMatch { Same, Different, Unknown }
+
+    /// <summary>รอบ 257 ชุด 2 (B-M2): ใบเลขที่เดียวกันในกล่องรับเป็น "ผู้จ่ายเดียวกัน" ไหม — กุญแจ ไม่ใช่ความคล้ายชื่อ:
+    /// เลขผู้เสียภาษีผู้จ่ายของใบใหม่อ่านได้ (13 หลัก) ⇒ ตัดสินด้วยเลขอย่างเดียว · อ่านไม่ได้ ⇒ ผู้ติดต่อ (ผู้ติดต่อที่จับคู่ได้ / ลูกค้าของลิงก์) ·
+    /// ไม่รู้ทั้งสองอย่าง ⇒ <see cref="CertPayerMatch.Unknown"/> (เดิมถือว่าซ้ำ ⇒ ใบเลข "001" ของลูกค้าอื่นถูกกลืนเป็น "ได้รับแล้ว") —
+    /// ผู้เรียกสร้างใบใหม่พร้อมด่าน "อาจซ้ำ" (ส่ง) หรือขอเลขผู้จ่ายก่อนยืนยัน (ยืนยัน)</summary>
+    public static CertPayerMatch SameCertPayer(string? payerTaxId, Guid? payerContactId, string? otherPayerTaxId, Guid? otherPayerContactId)
+    {
+        var mine = ThaiTaxId.Normalize(payerTaxId);
+        var other = ThaiTaxId.Normalize(otherPayerTaxId);
+        if (mine.Length == 13 && other.Length == 13)
+            return other == mine ? CertPayerMatch.Same : CertPayerMatch.Different;
+        // ฝ่ายค้าน L5: ฝั่งหนึ่งมีเลข อีกฝั่งไม่มี ⇒ ไม่รู้ (ด่าน "อาจซ้ำ") — เดิมนับเป็น "ต่างผู้จ่าย" ⇒ ใบเดิมที่อ่านเลขไม่ได้กับใบใหม่ที่อ่านได้ลงซ้ำ
+        if (mine.Length == 13 || other.Length == 13) return CertPayerMatch.Unknown;
+        if (payerContactId is Guid c)
+            return otherPayerContactId == c ? CertPayerMatch.Same
+                : otherPayerContactId != null ? CertPayerMatch.Different : CertPayerMatch.Unknown;   // อีกใบไม่รู้ผู้ติดต่อ ⇒ ไม่รู้ (ไม่เดา)
+        return CertPayerMatch.Unknown;
+    }
+
     /// <summary>ปีภาษี (รอบบัญชีของบริษัท) ของวันที่ — กติกาเดียวกับ <c>SyncWhtCreditReceivedAsync</c> (เดือนเริ่มรอบ 1–12)</summary>
     public static int FiscalYearOf(DateTime date, int fiscalStartMonth)
     {

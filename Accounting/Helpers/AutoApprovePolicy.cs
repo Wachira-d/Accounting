@@ -53,7 +53,7 @@ public sealed record AutoApprovePolicy
 
     /// <summary>รอบ 256 — ค่าตั้งต้นของรายการประจำที่อนุมัติอัตโนมัติแต่ไม่ได้ตั้งนโยบาย: ปล่อย "ลูกค้าค้างชำระ" (AR-OVERDUE) ต่อ + หมายเหตุบนใบ + audit ·
     /// เดิม (รอบ 248 · Y1) ค่าตั้งต้น = หยุดรอคน ⇒ ใบงวดใหม่ค้างเป็นร่างทุกงวดเมื่อลูกค้ามีใบค้าง ทั้งที่เป็นค่าบริการตามสัญญา (เจ้าของกลับคำตัดสิน) ·
-    /// ผู้รับผิดชอบ = ผู้สร้างรายการ (ต้องยังมีสิทธิ์อนุมัติ — ตรวจที่ <c>RecurringApprovePolicyLoader</c>) · อยากให้หยุด ⇒ ตั้งนโยบายของรายการเป็น "หยุดรอคน"</summary>
+    /// ผู้รับผิดชอบ = ผู้มีสิทธิ์ที่เลือก "ค่าเริ่มต้น" ล่าสุด › ผู้สร้างรายการ (รอบ 257 ฝ่ายค้าน MED-2 · ต้องยังมีสิทธิ์อนุมัติ — ตรวจที่ <c>RecurringApprovePolicyLoader</c>) · อยากให้หยุด ⇒ ตั้งนโยบายของรายการเป็น "หยุดรอคน"</summary>
     public static AutoApprovePolicy RecurringDefault(string? createdBy)
         => new() { PassCodes = new[] { ArOverdueApprovalWarning.Code }, SetBy = createdBy, Scope = ScopeDefault };
 
@@ -158,6 +158,32 @@ public sealed record AutoApprovePolicy
     /// <summary>ลายนิ้วมือของค่าที่ผู้ตั้งอนุมัติให้ (SHA-256 · canonical ตัวเดียวทั้งฝั่งเขียน/ฝั่งตรวจ — กฎ #4 C) · เฉพาะช่องที่กระทบเงิน/การส่ง —
     /// คำอธิบายบรรทัดไม่นับ (ตัวแปร &lt;&lt;month&gt;&gt; เปลี่ยนทุกงวดอยู่แล้ว) · เทมเพลตอ่านไม่ได้ = ค่าเฉพาะที่ไม่ตรงกับอะไร</summary>
     public static string BindingHash(Guid? contactId, string? documentType, string? templateData, bool autoApprove, bool autoSendEmail)
+        => Sha(BindingCanonical(contactId, documentType, templateData, autoApprove, autoSendEmail));
+
+    /// <summary>รอบ 257 ชุด 4 ฝ่ายค้าน LOW-1: คำนำหน้าของลายนิ้วมือรุ่น 2 (รุ่น 1 = hex ล้วน 64 ตัว — แยกรุ่นได้จากค่าที่ประทับ)</summary>
+    public const string BindingV2Prefix = "v2:";
+
+    /// <summary>รอบ 257 ชุด 4 ฝ่ายค้าน LOW-1 (คำตัดสิน 257-4-8): ลายนิ้วมือรุ่น 2 = รุ่น 1 + ตารางเวลา (ความถี่ · ทุก N เดือน · สร้างล่วงหน้า · วันสิ้นสุด · จำนวนครั้ง) —
+    /// เดิมผู้ไม่มีสิทธิ์อนุมัติเปลี่ยนรายเดือน → รายวัน / ยืดวันสิ้นสุด ได้โดยนโยบายยังมีผล · ค่าที่ประทับใหม่ทุกตัวเป็นรุ่นนี้</summary>
+    public static string BindingHashV2(Guid? contactId, string? documentType, string? templateData, bool autoApprove, bool autoSendEmail,
+        string? frequency, int? intervalMonths, int leadDays, DateTime? endDate, int? maxRuns)
+        => BindingV2Prefix + Sha(BindingCanonical(contactId, documentType, templateData, autoApprove, autoSendEmail)
+            + "|f=" + (frequency ?? "-") + "|im=" + (intervalMonths?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-")
+            + "|ld=" + leadDays.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + "|ed=" + (endDate is DateTime ed ? ed.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture) : "-")
+            + "|mr=" + (maxRuns?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"));
+
+    /// <summary>รอบ 257 ชุด 4 ฝ่ายค้าน LOW-1: ค่าที่ประทับตรงค่าปัจจุบันไหม — เทียบกับ<b>รุ่นที่ประทับ</b> (v2 ⇒ รุ่น 2 · hex ล้วน ⇒ รุ่น 1 ของแถวที่ประทับก่อนรอบนี้ ·
+    /// ถูกยกเป็นรุ่น 2 ก่อนการแก้ไขครั้งถัดไปเมื่อยังตรง — <c>RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit</c>) · null = ไม่ตรง</summary>
+    private static bool MatchesStamp(string? stamped, string currentV1, string currentV2)
+        => stamped != null && (stamped.StartsWith(BindingV2Prefix, StringComparison.Ordinal)
+            ? string.Equals(stamped, currentV2, StringComparison.Ordinal)
+            : string.Equals(stamped, currentV1, StringComparison.Ordinal));
+
+    private static string Sha(string canonical)
+        => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
+
+    private static string BindingCanonical(Guid? contactId, string? documentType, string? templateData, bool autoApprove, bool autoSendEmail)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("v1|c=").Append(contactId?.ToString("D") ?? "-").Append("|t=").Append(documentType ?? "-")
@@ -190,17 +216,29 @@ public sealed record AutoApprovePolicy
                 }
         }
         catch (JsonException) { sb.Append("|unreadable"); }
-        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sb.ToString())));
+        return sb.ToString();
     }
 
-    /// <summary>ใบรับรองยังตรงกับค่าปัจจุบันของรายการไหม — ไม่มีลายนิ้วมือ (นโยบายที่ตั้งก่อนมีการผูก) = ไม่ตรง (ระวังไว้ก่อน)</summary>
-    public static bool MatchesBinding(AutoApprovePolicy recurringPolicy, string currentHash)
-        => recurringPolicy.BindingHashValue != null && string.Equals(recurringPolicy.BindingHashValue, currentHash, StringComparison.Ordinal);
+    /// <summary>ใบรับรองยังตรงกับค่าปัจจุบันของรายการไหม — ไม่มีลายนิ้วมือ (นโยบายที่ตั้งก่อนมีการผูก) = ไม่ตรง (ระวังไว้ก่อน) ·
+    /// รอบ 257 ฝ่ายค้าน LOW-1: เทียบตามรุ่นที่ประทับ (<see cref="MatchesStamp"/> — รุ่น 1 กับ <paramref name="currentV1"/> · รุ่น 2 กับ <paramref name="currentV2"/>)</summary>
+    public static bool MatchesBinding(AutoApprovePolicy recurringPolicy, string currentV1, string currentV2)
+        => MatchesStamp(recurringPolicy.BindingHashValue, currentV1, currentV2);
+
+    /// <summary>รอบ 257 ชุด 4 (A-M4 · คำตัดสิน 257-4-2): ค่าตั้งต้นของรายการประจำผูกลายนิ้วมือ (<see cref="BindingHash"/>) ที่ประทับตอนสร้าง
+    /// หรือตอนผู้มีสิทธิ์อนุมัติ "ใช้ค่าเริ่มต้น" ที่ขั้นอนุมัติ — แก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติภายหลัง ⇒ ไม่ตรง ⇒ ค่าตั้งต้นไม่มีผล (เท่ากับนโยบาย "ปล่อย" ที่ตั้งเอง) ·
+    /// <paramref name="stampedHash"/> null = รายการที่สร้างก่อนรอบ 257 (ไม่เคยประทับ) ⇒ ถือว่าตรง (คงคำตัดสินรอบ 256 ของเจ้าของ · ประทับเมื่อผู้มีสิทธิ์บันทึกขั้นอนุมัติ)
+    /// · ฝ่ายค้าน MED-1: แถวเดิม (null) ถูกประทับด้วยค่าก่อนแก้ตอนแก้ไขครั้งแรก (<c>UpdateAsync</c>) ⇒ แก้แล้วไม่ตรง · ฝ่ายค้าน LOW-1: เทียบตามรุ่นที่ประทับ (<see cref="MatchesStamp"/>)</summary>
+    public static bool MatchesDefaultBinding(string? stampedHash, string currentV1, string currentV2)
+        => stampedHash == null || MatchesStamp(stampedHash, currentV1, currentV2);
+
+    /// <summary>รอบ 257 ชุด 4 (A-M5): นโยบายของผู้ติดต่อที่ตั้งเป็น "หยุดรอคน" (ตั้งไว้แต่ไม่ปล่อยรหัสใด) ทับค่าตั้งต้นของรายการประจำของผู้ติดต่อนั้น —
+    /// ผู้ติดต่อไม่ได้ตั้ง / ตั้งปล่อย = ไม่ทับ (ค่าตั้งต้นมีผล · การปล่อยของผู้ติดต่อยังต้องมีใบรับรองระดับรายการ)</summary>
+    public static bool StopsRecurringDefault(AutoApprovePolicy? contactPolicy) => contactPolicy is { PassCodes.Count: 0 };
 
     /// <summary>หมายเหตุบนเอกสาร (ต่อท้ายหมายเหตุอนุมัติ) — บอกว่าปล่อยตามนโยบายของใคร ระดับไหน</summary>
     public static string NoteLine(AutoApprovePolicy policy, IReadOnlyList<string> released)
         => policy.Scope == ScopeDefault
-            ? $"อนุมัติต่อตามค่าตั้งต้นของรายการประจำ (ผู้สร้างรายการ {policy.SetBy ?? "-"} · ตั้งเป็น \"หยุดรอคน\" ได้ที่รายการประจำ): "
+            ? $"อนุมัติต่อตามค่าตั้งต้นของรายการประจำ (ผู้รับผิดชอบ {policy.SetBy ?? "-"} · ตั้งเป็น \"หยุดรอคน\" ได้ที่รายการประจำ): "
               + string.Join(", ", released.Select(w => CodeOf(w) ?? "?").Distinct())
             : $"ปล่อยตามนโยบายอนุมัติ ({(policy.Scope == ScopeContact ? "ของผู้ติดต่อ" : "ของรายการประจำ")}"
            + $" · ตั้งโดย {policy.SetBy ?? "-"}"

@@ -16,7 +16,9 @@ public class NotificationConfigService : INotificationConfigService
 
     public NotificationCatalogResponse GetCatalog() => new(
         NotificationEvents.All.Select(e => new NotificationEventCatalogItem(e.Domain, e.Key, e.Label)).ToList(),
-        NotificationRecipientRoles.All.ToList());
+        NotificationRecipientRoles.All.ToList(),
+        // รอบ 258 (E-H1): ป้ายบทบาทจากเซิร์ฟเวอร์ (ตัวตั้งตัวเดียว NotificationRecipientRoles.Labels)
+        NotificationRecipientRoles.All.ToDictionary(r => r, r => NotificationRecipientRoles.Labels.TryGetValue(r, out var l) ? l : r));
 
     // ===== Company settings (admin matrix) =====
 
@@ -50,16 +52,43 @@ public class NotificationConfigService : INotificationConfigService
             .Where(s => s.CompanyId == companyId)
             .ToListAsync();
         var existingMap = existing.ToDictionary(s => (s.EventKey, s.RecipientRole));
+        // รอบ 258 (A-H3 · E-H1): ช่อง "กลุ่ม LINE ของบริษัท" ที่ผู้เรียกไม่ได้ส่ง (null) = คงค่าที่ระบบใช้อยู่ — ตัวตัดสินเดียว NotificationSettingMerge ·
+        // ค่าที่ใช้อยู่ของเหตุการณ์ = แถวที่บันทึกไว้ (ก่อนคำขอนี้) หรือค่าตั้งต้นของระบบเมื่อยังไม่เคยตั้ง (ตัวเดียวกับที่ NotificationEngine ใช้)
+        var storedGroupByEvent = existing.GroupBy(s => s.EventKey, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Any(s => s.EnableLineGroup), StringComparer.Ordinal);
+        var line = await _db.Set<CompanySettings>().AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => new { s.LineEnabled, s.LineChannelAccessToken, s.LineDefaultGroupId }).FirstOrDefaultAsync();
+        var groupConfigured = line != null && NotificationAudiencePolicy.CompanyLineGroupConfigured(line.LineEnabled, line.LineChannelAccessToken, line.LineDefaultGroupId);
+
+        // รอบ 258 ฝ่ายค้าน R-L3: ค่ากลุ่มที่คำขอระบุชัด ตัดสินต่อเหตุการณ์ (เครื่องแจ้งเตือนอ่านต่อเหตุการณ์) แล้วเขียนลงทุกแถวที่เก็บไว้ของเหตุการณ์นั้น
+        var explicitByEvent = request.Settings
+            .Where(d => d != null && !string.IsNullOrWhiteSpace(d.EventKey))
+            .GroupBy(d => d.EventKey, StringComparer.Ordinal)
+            .Select(g => new { g.Key, Value = NotificationSettingMerge.EventValue(g.Select(d => d.EnableLineGroup)) })
+            .Where(x => x.Value != null)
+            .ToDictionary(x => x.Key, x => x.Value!.Value, StringComparer.Ordinal);
+        foreach (var stored in existing)
+            if (explicitByEvent.TryGetValue(stored.EventKey, out var eventValue) && stored.EnableLineGroup != eventValue)
+            {
+                stored.EnableLineGroup = eventValue;
+                stored.UpdatedAt = DateTime.UtcNow;
+                stored.UpdatedBy = updatedBy;
+            }
 
         foreach (var dto in request.Settings)
         {
-            if (string.IsNullOrWhiteSpace(dto.EventKey) || string.IsNullOrWhiteSpace(dto.RecipientRole)) continue;
+            if (dto == null || string.IsNullOrWhiteSpace(dto.EventKey) || string.IsNullOrWhiteSpace(dto.RecipientRole)) continue;
+            var eventHasRows = storedGroupByEvent.TryGetValue(dto.EventKey, out var anyStoredOn);
+            // ค่าที่ระบุชัดของเหตุการณ์ (ถ้ามี) ชนะค่าของแถว — ทุกแถวของเหตุการณ์ได้ค่าเดียวกัน
+            var requestedGroup = explicitByEvent.TryGetValue(dto.EventKey, out var explicitValue) ? explicitValue : dto.EnableLineGroup;
+            var systemDefaultOn = !eventHasRows
+                && NotificationAudiencePolicy.DefaultMatrix(dto.EventKey, groupConfigured).Any(d => d.EnableLineGroup);
             if (existingMap.TryGetValue((dto.EventKey, dto.RecipientRole), out var row))
             {
                 row.EnableSystem = dto.EnableSystem;
                 row.EnableEmail = dto.EnableEmail;
                 row.EnableLine = dto.EnableLine;
-                row.EnableLineGroup = dto.EnableLineGroup;
+                row.EnableLineGroup = NotificationSettingMerge.LineGroup(requestedGroup, row.EnableLineGroup, eventHasRows, anyStoredOn, systemDefaultOn);
                 row.UpdatedAt = DateTime.UtcNow;
                 row.UpdatedBy = updatedBy;
             }
@@ -73,7 +102,7 @@ public class NotificationConfigService : INotificationConfigService
                     EnableSystem = dto.EnableSystem,
                     EnableEmail = dto.EnableEmail,
                     EnableLine = dto.EnableLine,
-                    EnableLineGroup = dto.EnableLineGroup,
+                    EnableLineGroup = NotificationSettingMerge.LineGroup(requestedGroup, null, eventHasRows, anyStoredOn, systemDefaultOn),
                     CreatedBy = updatedBy,
                 });
             }
@@ -138,34 +167,44 @@ public class NotificationConfigService : INotificationConfigService
 
     // ===== LINE binding =====
 
+    /// <summary>ท้าย 6 ตัวของ LINE userId (ห้ามส่ง/จด id เต็ม — เป็นตัวระบุตัวบุคคลฝั่ง LINE และกุญแจยืนยันตัวของบอท)</summary>
+    private static string? Tail(string? lineUserId)
+        => string.IsNullOrEmpty(lineUserId) ? null : (lineUserId.Length > 6 ? lineUserId[^6..] : lineUserId);
+
     public async Task<LineBindingResponse> GetLineBindingAsync(Guid userId)
     {
         var lid = await _db.Users.AsNoTracking()
             .Where(u => u.Id == userId)
             .Select(u => u.LineUserId)
             .FirstOrDefaultAsync();
-        return new LineBindingResponse(lid, !string.IsNullOrEmpty(lid));
+        return new LineBindingResponse(!string.IsNullOrEmpty(lid), Tail(lid));
     }
 
-    public async Task<LineBindingResponse> SetLineBindingAsync(Guid userId, LineBindingRequest request)
-    {
-        if (string.IsNullOrWhiteSpace(request.LineUserId))
-            throw new InvalidOperationException("กรุณาระบุ LINE User ID");
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId)
-            ?? throw new KeyNotFoundException("ไม่พบบัญชีผู้ใช้");
-        user.LineUserId = request.LineUserId.Trim();
-        user.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-        return new LineBindingResponse(user.LineUserId, true);
-    }
+    // รอบ 258 (A-H2): SetLineBindingAsync (ผูกด้วยการพิมพ์ LINE userId ดิบ) ถูกถอด — User.LineUserId คือกุญแจยืนยันตัวของบอทกลาง
+    // (สร้างเอกสาร · อนุมัติ · ดูยอด) ทางนั้นข้ามทุกด่านของทางผูกด้วยรหัส (จำกัดความถี่ · audit · อีเมลแจ้งเจ้าของบัญชี) ·
+    // ทางผูกเดียวที่เหลือ = รหัส 6 หลัก (LineBotService.HandleMessageAsync "ผูก 123456")
 
-    public async Task<LineBindingResponse> ClearLineBindingAsync(Guid userId)
+    public async Task<LineBindingResponse> ClearLineBindingAsync(Guid userId, Guid? companyId = null, string? ipAddress = null)
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId)
             ?? throw new KeyNotFoundException("ไม่พบบัญชีผู้ใช้");
+        var tail = Tail(user.LineUserId);
         user.LineUserId = null;
         user.UpdatedAt = DateTime.UtcNow;
+        // การเปลี่ยนแปลงที่กระทบ "ใครสั่งบอทในนามบัญชีนี้ได้" ห้ามเงียบ (คู่กับ audit ตอนผูกใน LineBotService) — ไม่มีอะไรให้ถอด = ไม่จด
+        if (tail != null)
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = userId,
+                UserEmail = user.Email,
+                Action = Models.Enums.AuditAction.Update,
+                EntityType = "LineBindCode",
+                EntityId = userId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { Bound = false, LineUserIdTail = tail }),
+                IpAddress = ipAddress,
+            });
         await _db.SaveChangesAsync();
-        return new LineBindingResponse(null, false);
+        return new LineBindingResponse(false, null);
     }
 }

@@ -107,6 +107,8 @@
             <div class="form-group" id="branchCodeGroup" style="flex:1;min-width:130px"><label for="fBranch" class="form-label">รหัสสาขา <span style="font-weight:normal;color:#64748b;font-size:11px">(00000 = สำนักงานใหญ่)</span></label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
             <div class="form-group" style="flex:1;min-width:150px"><label for="fBranchName" class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
           </div>
+          <!-- รอบ 257 ชุด 3 (D-M6): สถานะการเชื่อม NextAcc ของผู้ติดต่อนี้ (GET contacts/{id}/partner-status · ไม่รั่วสมาชิกภาพ · ไม่มีสิทธิ์ = ไม่แสดง) -->
+          <div id="contactPartnerStatus" style="display:none;font-size:12px;color:#334155;margin:-4px 0 10px"></div>
           <!-- ฟิลด์เฉพาะนิติบุคคล -->
           <div id="juristicFields" style="margin-bottom:12px">
             <div class="form-row">
@@ -792,6 +794,7 @@
         document.getElementById('contactNotifyPanel').innerHTML = '';
         document.getElementById('contactTabs').style.display = 'none';
         document.getElementById('contactNotifyLaterHint').style.display = '';   // WP-13: บอกเหตุที่ไม่มีแท็บตอนสร้างใหม่
+        { const ps = document.getElementById('contactPartnerStatus'); if (ps) { ps.style.display = 'none'; ps.innerHTML = ''; } }   // 257-3 D-M6: ห้ามค้างของรายก่อน
         this.showContactTab('general');
         this._allFieldIds.forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
         const cl = document.getElementById('fCreditLimit'); if (cl) cl.value = '';
@@ -971,8 +974,32 @@
         document.getElementById('fRegisteredCapital').value = '';
         document.getElementById('fDbdStatus').value = '';
         this.onContactTypeChange();
+        this.loadPartnerStatus(c.id);
         Layout.openModal('formModal');
         setTimeout(() => { this._enhanceAddress(); this._attachDbd(); }, 100);
+      },
+      // รอบ 257 ชุด 3 (D-M6): สถานะการเชื่อมคู่ค้า NextAcc — ป้าย/สถานะจากเซิร์ฟเวอร์ทั้งหมด · 403 (ไม่มีสิทธิ์ตั้งค่าบริษัท) = ไม่แสดง (ไม่ใช่ข้อผิดพลาด) ·
+      // ล้มอื่น = บอกสั้น ๆ (ไม่เงียบ) · เปลี่ยนผู้ติดต่อระหว่างโหลด = ทิ้งผล
+      async loadPartnerStatus(id) {
+        const box = document.getElementById('contactPartnerStatus');
+        if (!box) return;
+        box.style.display = 'none'; box.innerHTML = '';
+        const api = Layout.api();
+        if (!api || !id || typeof api.getContactPartnerStatus !== 'function') return;
+        try {
+          const r = await api.getContactPartnerStatus(id);
+          if (document.getElementById('editId').value !== id) return;
+          const s = r && r.data; if (!s) return;
+          box.innerHTML = `🤝 คู่ค้า NextAcc: <b>${Layout.esc(s.stateLabel || '')}</b>`
+            + (s.discoverable ? ' · ผู้ติดต่อนี้เปิดให้คู่ค้า NextAcc ค้นเจอ — ส่งคำขอเชื่อมได้' : '')
+            + ' · <a href="/pages/partners.html" style="color:#2563eb;text-decoration:underline">หน้าคู่ค้า</a>';
+          box.style.display = '';
+        } catch (e) {
+          if (document.getElementById('editId').value !== id) return;
+          if (e && e.status === 403) return;
+          box.textContent = 'โหลดสถานะการเชื่อมคู่ค้าไม่สำเร็จ: ' + (e && e.message ? e.message : '');
+          box.style.display = '';
+        }
       },
       async parseFromPaste() {
         const text = document.getElementById('fAddressPaste').value;
@@ -1348,7 +1375,7 @@
       },
       /** รอบ 254 ฝ่ายค้าน M4: ยกเลิกลิงก์ผูก LINE ที่ยังเปิด (ลิงก์หลุด/ส่งผิดคน) — วาดใหม่จากคำตอบเซิร์ฟเวอร์ */
       async revokeLineInvites() {
-        if (!confirm('ยกเลิกลิงก์ผูก LINE ที่ยังเปิดของผู้ติดต่อนี้? (คนที่ได้ลิงก์ไปจะผูกไม่ได้)')) return;
+        if (!(await Layout.confirm({ title: 'ยกเลิกลิงก์ผูก LINE', message: 'ยกเลิกลิงก์ผูก LINE ที่ยังเปิดของผู้ติดต่อนี้? (คนที่ได้ลิงก์ไปจะผูกไม่ได้)', okText: 'ยกเลิกลิงก์', cancelText: 'ไม่ยกเลิก', danger: true }))) return;
         await this._notifySend('DELETE', '/line-link', null, 'ยกเลิกลิงก์แล้ว');
       },
       _notifyEndpoint(key) {

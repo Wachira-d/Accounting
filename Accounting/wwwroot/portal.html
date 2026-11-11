@@ -312,6 +312,12 @@
         this.logout();
         throw new Error('หมดเวลาการเข้าสู่ระบบ — กรุณาเข้าสู่ระบบใหม่');
       }
+      // รอบ 257 D-H3: ผู้ขายไม่ได้เปิดสิทธิ์ส่วนนี้ ⇒ ข้อความจากเซิร์ฟเวอร์ (ไม่แสดงเป็น "ไม่มีเอกสาร" เงียบ ๆ)
+      if (r.status === 403) {
+        let m = '';
+        try { m = (await r.clone().json())?.message || ''; } catch (_) {}
+        throw new Error(m || 'ผู้ขายไม่ได้เปิดสิทธิ์ส่วนนี้ให้บัญชีพอร์ทัลของท่าน');
+      }
       return r;
     },
 
@@ -320,7 +326,11 @@
         if (this.activeTab === 'documents') await this.loadDocuments();
         else if (this.activeTab === 'payments') await this.loadPayments();
         else if (this.activeTab === 'statement') await this.loadStatement();
-      } catch (e) { toast(e.message || 'โหลดไม่สำเร็จ', 'err'); }
+      } catch (e) {
+        toast(e.message || 'โหลดไม่สำเร็จ', 'err');
+        const box = document.getElementById('tabContent');
+        if (box) box.innerHTML = `<div class="empty" style="padding:32px;text-align:center;color:var(--gray-500)">${esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+      }
     },
 
     // ───────── Documents tab ─────────
@@ -375,7 +385,7 @@
                   <td><span class="pill ${cls /* text — ชื่อคลาสคงที่ */}">${esc(lbl)}</span>${Number(d.slipPendingAmount || 0) > 0 ? `<div style="font-size:11.5px;color:#92400E;margin-top:2px" title="ผู้ขายจะตรวจสลิปแล้วยืนยัน — ยอดค้างลดเมื่อยืนยันแล้ว">⏳ สลิปรอตรวจ ฿${money(d.slipPendingAmount)}</div>` : ''}</td>
                   <td>
                     <button class="btn btn-ghost btn-sm" onclick="Portal.viewDocument('${jsArg(d.id)}')">ดู</button>
-                    <button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">PDF</button>
+                    ${d.canDownloadPdf ? `<button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">PDF</button>` : ''}
                     ${payable ? `<button class="btn btn-sm" style="background:#059669;color:#fff" onclick="Portal.openPay('${jsArg(d.id)}', ${Number(d.balanceDue) || 0}, '${jsArg(d.documentNumber)}')">💳 ชำระ</button>` : ''}
                   </td>
                 </tr>`;
@@ -408,7 +418,7 @@
           </div>`;
         document.getElementById('modalFooter').innerHTML = `
           <button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>
-          <button class="btn btn-primary" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>
+          ${d.canDownloadPdf ? `<button class="btn btn-primary" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>` : ''}
         `;
         this._openModal();
       } catch (e) { toast(e.message, 'err'); }

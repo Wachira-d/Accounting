@@ -1114,7 +1114,10 @@ public record DocumentResponse(
     /// null = ไม่ใช่ใบจากคู่ค้า</summary>
     string? PartnerInputVatEvidence = null,
     /// <summary>ป้ายไทยของ <see cref="PartnerInputVatEvidence"/> (server computes)</summary>
-    string? PartnerInputVatEvidenceLabel = null);
+    string? PartnerInputVatEvidenceLabel = null,
+    /// <summary>รอบ 257 ชุด 3 (D-M5): ใบนี้รอผู้รับกด "ได้รับต้นฉบับแล้ว" ไหม (ตัวตัดสินเดียว <c>PartnerInputVatEvidence.ConfirmProblem</c> == null) ·
+    /// null = ไม่ใช่ใบจากคู่ค้า · หน้าเอกสารแสดงลิงก์ไปปุ่มยืนยัน (หน้าคู่ค้า) ตามค่านี้</summary>
+    bool? PartnerNeedsOriginal = null);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);
@@ -1734,7 +1737,15 @@ public record CreatePaymentRequest(
     /// ฝั่งซื้อ (ใบแจ้งหนี้ซื้อ/ค่าใช้จ่าย) · <c>Amount</c> = เงินที่จ่ายจริง · ยอดหนี้ที่ปิด = Amount − Σ บรรทัดปรับ
     /// (Shopee: จ่าย 438 · 51120 +37 ค่าส่ง · 51150 −135 คูปอง ⇒ ปิดหนี้ 536) · ตัวตรวจ Helpers/PaymentSettlementAdjustment ·
     /// null/ว่าง = พฤติกรรมเดิม</summary>
-    List<PaymentSettlementAdjustmentRequest>? SettlementAdjustments = null);
+    List<PaymentSettlementAdjustmentRequest>? SettlementAdjustments = null,
+    /// <summary>รอบ 258 "เงินรอจัดสรร" (DECISIONS 258-1-2): เหตุผลของเงินส่วนเกิน — <b>บังคับ</b>เมื่อยอดรับมากกว่าผลรวมที่จัดสรรให้เอกสาร
+    /// (เส้น <c>Allocations</c>) · ตัวตัดสินเดียว <c>Helpers/PaymentExcessPlan.RefuseExcess</c> · ไม่มีเงินเกิน = ไม่ใช้</summary>
+    UnappliedReason? ExcessReason = null,
+    /// <summary>รอบ 258: หมายเหตุของเงินส่วนเกิน (เช่น "ค่าติดตั้งงวด 2 ยังไม่ออกใบ") — แสดงในรายการ "เงินรอจัดสรร"</summary>
+    string? ExcessNote = null,
+    /// <summary>ฝ่ายค้านรอบ 258 M2: เงินส่วนเกินที่หน้าจอแสดงให้ผู้ใช้ยืนยัน — เซิร์ฟเวอร์คิดใหม่จากคำขอแล้วต้องตรงกัน ไม่งั้นปฏิเสธ
+    /// (<c>PaymentExcessPlan.ExpectedExcessMismatch</c>) · null = ไม่ตรวจ (API เดิม)</summary>
+    decimal? ExpectedExcess = null);
 
 /// <summary>บรรทัดปรับหนึ่งบรรทัดของการชำระ — <c>Amount</c> มีเครื่องหมาย: + = จ่ายเกินยอดหนี้ด้วยรายการนี้ (Dr ผังนี้) ·
 /// − = ปิดหนี้โดยไม่ต้องจ่ายเงิน (Cr ผังนี้)</summary>
@@ -1814,7 +1825,10 @@ public record PaymentResponse(
     string? WhtCertNotice = null,
     /// <summary>ทีม A (2a · 2026-10-13): คำเตือนของการบันทึกจ่ายที่รับตามที่ผู้ใช้ระบุ (เช่น ภาษีหักงวดนี้สูงกว่ายอดที่เหลือหลังใบลดหนี้ —
     /// <c>WhtPaymentSuggestion.AboveNetWarning</c> + audit) · null = ไม่มี · มีเฉพาะในคำตอบของการบันทึกจ่าย</summary>
-    IReadOnlyList<string>? Warnings = null);
+    IReadOnlyList<string>? Warnings = null,
+    /// <summary>รอบ 258: ยอดของการรับชำระนี้ที่จัดสรรให้<b>เอกสารที่ถาม</b> (<c>GET payments?documentId=</c>) — มีค่าเมื่อการรับชำระจัดสรรหลายใบ/จัดสรรทีหลัง
+    /// (<c>Amount</c> คือยอดเงินทั้งก้อน) · null = การชำระใบเดียว (ยอดของใบ = <c>Amount</c>)</summary>
+    decimal? AllocatedToDocument = null);
 
 /// <summary>
 /// ทีม A (2a · 2026-10-13): ภาษีหัก ณ ที่จ่ายที่ระบบแนะนำสำหรับการจ่ายงวดนี้ (<c>GET document/{id}/payment-wht-suggestion</c>) —

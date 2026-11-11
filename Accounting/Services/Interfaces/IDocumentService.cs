@@ -332,6 +332,23 @@ public interface IDocumentService
     /// <summary>รอบ 250 (WP-02 · AUDIT_249_COVERAGE M-3): ขั้นหลัง commit ตัวเดียวกับ <see cref="CreatePaymentAsync"/> สำหรับทางเข้าที่บันทึกการชำระเอง
     /// (integration) — sync ทะเบียนเครดิตภาษีถูกหัก (50 ทวิ) ของใบ แล้วเข้าคิวงานหลังรับชำระ · โยนเมื่อ sync ทะเบียนล้ม (ผู้เรียกต้องบอกผู้ใช้)</summary>
     Task AfterPaymentRecordedAsync(Guid companyId, Guid paymentId, Accounting.Helpers.PaymentEntrySource source, string? actor);
+
+    // ── รอบ 258 "เงินรอจัดสรร" — จุดต่อของ CustomerCreditService กับขั้นภาษีเดิมของเอกสาร (DocumentService.CustomerCredit.cs) ──
+    /// <summary>ขั้นหลัง commit ของการจัดสรรเงินรอจัดสรรให้ใบขาย: ย้ายภาษีขายที่พัก (21913 → 21911) ด้วยงวดของ<b>วันรับเงิน</b>ถ้ายังยื่นทัน
+    /// (<c>LateReceiptTaxPoint</c>) · ภาษีถูกหัก ณ ที่จ่ายเมื่อปิดยอดครบ · ทะเบียนเครดิตภาษี · ธงสลิปที่ถูกแทน — คืนข้อความที่ผู้ใช้ต้องรู้ (ธงภาษีล่าช้า)</summary>
+    Task<IReadOnlyList<string>> ApplyCreditAllocationTaxStepsAsync(Guid companyId, Guid documentId, string? creditReason, DateTime receiptDate,
+        DateTime applyDate, string journalReference, string actor);
+    /// <summary>ฝ่ายค้านรอบ 258 H2/M6 — ขั้นหลัง commit ของการจัดสรร: ธงสลิปที่ถูกแทน + ออกใบเสร็จรับเงิน/ใบกำกับภาษี "รายใบ" ตามนโยบายเดียวกับรับชำระใบเดียว ·
+    /// ออกไม่ได้ = ป้ายบนใบ (คิวงาน) + ข้อความ — ไม่ throw</summary>
+    Task<IReadOnlyList<string>> AfterCreditAllocationCommittedAsync(Guid companyId, Guid paymentId, Guid documentId, string actor);
+    /// <summary>ภายในธุรกรรมของการยกเลิกการจัดสรร (หลังคืนยอดของใบแล้ว): ถอยภาษีขายถึงกำหนดถ้าใบไม่เหลือเงินรับ — ตัวเดียวกับการยกเลิกการรับชำระ ·
+    /// งวดปิด/ยื่นแล้ว = <c>BusinessRuleException</c> (ผู้เรียก rollback) · คืนข้อความธง (null = ไม่มี)</summary>
+    Task<string?> UndoCreditAllocationTaxEffectsAsync(Guid companyId, Guid paymentId, Guid documentId, string paymentNumber);
+    /// <summary>ขั้นหลัง commit ของการยกเลิกการจัดสรร: ปรับทะเบียนเครดิตภาษีถูกหักให้ตรง GL (JE ภาษีถูกหักของการจัดสรรถูกกลับแล้ว)</summary>
+    Task SyncWhtCreditAfterCreditUndoAsync(Guid companyId, Guid documentId);
+    /// <summary>เหตุที่ "ลงรายการภาษีขายในวันนั้นไม่ได้" (งวดบัญชีปิด หรือ ภ.พ.30 เดือนนั้นยื่น/ประกาศว่ายื่น/ล็อก) — ตัวเดียวกับด่านถอย/ย้ายภาษีขาย ·
+    /// ผู้จัดสรรเงินรอจัดสรรใช้ตรวจวันที่จัดสรรของใบที่ยังพักภาษีขาย (null = ลงได้)</summary>
+    Task<string?> CreditAllocationVatLockReasonAsync(Guid companyId, DateTime date);
     /// <summary>Multi-document payment — one Payment row that settles
     /// many Documents pro-rata to caller-supplied AllocatedAmount per
     /// row. Use when one cheque / transfer covers multiple invoices.
@@ -376,5 +393,5 @@ public interface IDocumentService
     /// <summary>ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (ย้อนหลัง) — ทางไปต่อ
     /// ของแถวที่มี JE รับเงินแต่ไม่มีเอกสารคู่ (ดูรายละเอียดที่ implementation).
     /// idempotent: มีใบอยู่แล้วคืนใบเดิมพร้อม <c>AlreadyExisted=true</c></summary>
-    Task<IssuedReceiptResult> IssueReceiptForPaymentAsync(Guid companyId, Guid paymentId, string createdBy);
+    Task<IssuedReceiptResult> IssueReceiptForPaymentAsync(Guid companyId, Guid paymentId, string createdBy, Guid? forDocumentId = null);
 }

@@ -28,6 +28,9 @@ public interface IEmailScheduleService
     /// ครบกำหนดใน N วัน / เกินกำหนด N วัน แล้ว enqueue.</summary>
     Task<int> ScanDueSoonAndOverdueAsync(CancellationToken ct = default);
 
+    /// <summary>รอบ 258 (A-M1 ข): เอกสารนี้มีแถวคิว LINE ถึงผู้ติดต่อที่ไม่ใช่ "ข้าม" ไหม — ผู้เรียก (รายการประจำ) ใช้ตัดสินว่ายังต้องเตือน "ไม่มีอีเมล" ไหม</summary>
+    Task<bool> DocumentLineQueuedAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
+
     /// <summary>ใช้โดย background service ทุกชั่วโมง — สแกนกฎ
     /// MonthlyStatement และส่งสรุปรายการลูกค้าของเดือนที่แล้วในวันที่
     /// (DayOfMonth + SendAtHour) ของเดือนปัจจุบัน. คืนจำนวน statement

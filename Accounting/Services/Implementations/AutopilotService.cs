@@ -160,14 +160,18 @@ public class AutopilotService : IAutopilotService
             $"document-auto-send/post-payment-runs/{r.Id}/retry", "เปิดเอกสาร", DocHref(r.DocumentId))));
 
         // (4) อีเมลเอกสารส่งไม่สำเร็จ (คิว)
+        var staleSendingCutoff = EmailQueueStaleSending.Cutoff(DateTime.UtcNow);
         var failedMail = await _db.EmailQueues.AsNoTracking()
-            .Where(q => q.CompanyId == companyId && q.Status == "Failed" && q.EntityType == "Document" && q.CreatedAt >= window)
+            // รอบ 258 (B-H2): รวมแถวที่ค้าง "กำลังส่ง" เกินเส้นแบ่ง (ตัวกู้จะประทับล้มในรอบถัดไป — ระหว่างนั้นก็ต้องเห็น)
+            .Where(q => q.CompanyId == companyId && q.EntityType == "Document" && q.CreatedAt >= window
+                && (q.Status == EmailQueueStaleSending.StatusFailed
+                    || (q.Status == EmailQueueStaleSending.StatusSending && (q.UpdatedAt ?? q.CreatedAt) < staleSendingCutoff)))
             .OrderByDescending(q => q.CreatedAt).Take(50)
-            .Select(q => new { q.EntityId, q.ToEmail, q.ErrorMessage, q.CreatedAt,
+            .Select(q => new { q.EntityId, q.ToEmail, q.ErrorMessage, q.CreatedAt, q.Status,
                 Number = _db.Documents.Where(d => d.Id == q.EntityId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefault() })
             .ToListAsync(ct);
         list.AddRange(failedMail.Select(m => new AutopilotIssueDto("EmailFailed", $"{m.Number ?? "เอกสาร"}: ส่งอีเมลถึง {m.ToEmail} ไม่สำเร็จ",
-            m.ErrorMessage ?? "ส่งไม่สำเร็จครบรอบ", m.CreatedAt, m.EntityId, "เปิดเอกสารแล้วส่งใหม่", DocHref(m.EntityId), null, null, null)));
+            m.ErrorMessage ?? (m.Status == EmailQueueStaleSending.StatusSending ? EmailQueueStaleSending.StaleReason : "ส่งไม่สำเร็จครบรอบ"), m.CreatedAt, m.EntityId, "เปิดเอกสารแล้วส่งใหม่", DocHref(m.EntityId), null, null, null)));
 
         // (5) ใบเสนอราคาที่ลูกค้ายอมรับแต่แปลงอัตโนมัติไม่ได้
         var held = new[] { nameof(QuotationAcceptAutopilot.Outcome.Held), nameof(QuotationAcceptAutopilot.Outcome.Failed) };
@@ -196,8 +200,69 @@ public class AutopilotService : IAutopilotService
             t.AutoSettleReason ?? "", t.TransactionDate, t.AutoSettleDocumentId,
             "ไปที่คิวเงินเข้าที่รอยืนยัน (ด้านล่าง)", null, null, "เปิดหน้ากระทบยอดธนาคาร", "/pages/bank.html")));
 
+        // รอบ 258-3 (F-M2 · F-M3): ช่วงที่เส้นบิลอัตโนมัติขาดแล้วเดิมไม่มีใครเห็นนอกหน้าย่อย
+        list.AddRange(await BillingChainIssuesAsync(companyId, window, nowUtc, ct));
+
         return list.OrderByDescending(i => i.At).ToList();
     }
+
+    /// <summary>รอบ 258-3 (F-M2 · F-M3) — (7) ออกใบเสร็จตอนรับชำระล้ม (ป้าย <see cref="SettlementReceiptFailedNote"/>) · (8) การ์ด LINE ถึงผู้ติดต่อส่งไม่ออก ·
+    /// (9) เงินออนไลน์เข้าแล้วแต่ยังไม่บันทึกรับชำระ (รายการชำระของเอกสารที่สำเร็จแต่ไม่มีการชำระอ้าง intent) · (10) ส่งเอกสารเข้าระบบคู่ค้าล้ม (ป้าย
+    /// <see cref="PartnerRoutingFailedNote"/>) — อ่านอย่างเดียว · ทุก query ผูก CompanyId</summary>
+    private async Task<List<AutopilotIssueDto>> BillingChainIssuesAsync(Guid companyId, DateTime window, DateTime nowUtc, CancellationToken ct)
+    {
+        var list = new List<AutopilotIssueDto>();
+        var receiptMarker = SettlementReceiptFailedNote.Marker;
+        var routeMarker = PartnerRoutingFailedNote.Marker;
+        var flagged = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.InternalNotes != null
+                && (d.InternalNotes.Contains(receiptMarker) || d.InternalNotes.Contains(routeMarker)))
+            .OrderByDescending(d => d.UpdatedAt ?? d.CreatedAt).Take(50)
+            .Select(d => new { d.Id, d.DocumentNumber, d.InternalNotes, At = d.UpdatedAt ?? d.CreatedAt }).ToListAsync(ct);
+        foreach (var d in flagged)
+        {
+            if (SettlementReceiptFailedNote.Has(d.InternalNotes))
+                list.Add(new AutopilotIssueDto("ReceiptIssueFailed", $"{d.DocumentNumber}: รับชำระแล้วแต่ออกใบเสร็จ/ใบกำกับไม่สำเร็จ",
+                    NoteLine(d.InternalNotes, receiptMarker), d.At, d.Id, "เปิดเอกสารแล้วกดออกใบเสร็จ", DocHref(d.Id), null, null, null));
+            if (PartnerRoutingFailedNote.Has(d.InternalNotes))
+                list.Add(new AutopilotIssueDto("PartnerRouteFailed", $"{d.DocumentNumber}: ส่งเข้าระบบคู่ค้าไม่สำเร็จ",
+                    NoteLine(d.InternalNotes, routeMarker), d.At, d.Id, "เปิดเอกสารแล้วกดส่งให้คู่ค้าอีกครั้ง", DocHref(d.Id), null, null, null));
+        }
+
+        var lineFailed = await _db.LineQueues.AsNoTracking()
+            .Where(q => q.CompanyId == companyId && !q.IsDeleted && q.CreatedAt >= window && q.Status == ContactLineChannel.StatusFailed)
+            .OrderByDescending(q => q.CreatedAt).Take(50)
+            .Select(q => new { q.EntityId, q.ErrorMessage, q.CreatedAt, q.EndpointKind,
+                Number = _db.Documents.Where(d => d.Id == q.EntityId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefault() })
+            .ToListAsync(ct);
+        list.AddRange(lineFailed.Select(q => new AutopilotIssueDto("LineFailed",
+            $"{q.Number ?? "เอกสาร"}: ส่งทาง {NotifyEndpointKind.Label(q.EndpointKind)} ไม่สำเร็จ",
+            q.ErrorMessage ?? "LINE ไม่รับข้อความ", q.CreatedAt, q.EntityId, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html", null, "เปิดเอกสาร", DocHref(q.EntityId))));
+
+        // เงินเข้าแล้วแต่ยังไม่มีการชำระที่อ้างรายการนี้ (ผู้บันทึกล้ม/ค้าง) — เผื่อเวลา 15 นาทีให้ webhook/งานกระทบยอดทำงาน
+        var settledBefore = nowUtc.AddMinutes(-15);
+        var intents = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && !i.IsDeleted && i.SourceKind == PaymentSourceKind.Document && i.Status == PaymentIntentStatus.Succeeded
+                && i.IsTestMode != true && i.CreatedAt >= window && (i.PaidAt ?? i.CreatedAt) < settledBefore)
+            .OrderByDescending(i => i.CreatedAt).Take(100)
+            .Select(i => new { i.Id, i.SourceId, i.Amount, i.Description, At = i.PaidAt ?? i.CreatedAt }).ToListAsync(ct);
+        if (intents.Count > 0)
+        {
+            var refs = intents.Select(i => GatewayPaymentRecord.Reference(i.Id)).ToList();
+            var posted = await _db.Payments.AsNoTracking()
+                .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Reference != null && refs.Contains(p.Reference))
+                .Select(p => p.Reference!).ToListAsync(ct);
+            list.AddRange(intents.Where(i => !posted.Contains(GatewayPaymentRecord.Reference(i.Id))).Select(i => new AutopilotIssueDto("GatewayUnposted",
+                $"เงินออนไลน์ {i.Amount:N2} บาท เข้าแล้วแต่ยังไม่บันทึกรับชำระ",
+                (i.Description ?? "") + " — ตรวจที่หน้ารายการรับชำระออนไลน์ แล้วกดดำเนินการต่อ/บันทึกรับเงินด้วยมือ", i.At, i.SourceId,
+                "เปิดรายการรับชำระออนไลน์", "/pages/payment-intents.html", null, "เปิดเอกสาร", DocHref(i.SourceId))));
+        }
+        return list;
+    }
+
+    /// <summary>ย่อหน้าของป้ายบนหมายเหตุภายใน (ข้อความถึงผู้ใช้ — ไม่ต้องถอดป้าย)</summary>
+    private static string NoteLine(string? notes, string marker)
+        => (notes ?? "").Replace("\r\n", "\n").Split("\n\n").FirstOrDefault(p => p.TrimStart().StartsWith(marker, StringComparison.Ordinal))?.Trim() ?? "";
 
     // ═══════════════ ใบเสนอราคา ═══════════════
 
@@ -321,7 +386,8 @@ public class AutopilotService : IAutopilotService
                     AutopilotDelivery.Immediate => "แจ้งทันที",
                     AutopilotDelivery.Digest => "รวมในสรุปประจำวัน",
                     _ => "ไม่แจ้ง",
-                }, e.Wired)).ToList());
+                }, e.Wired)).ToList(),
+            BankAutoSettleEnableNote: BankReceiptAutoSettle.EnableNote(BankReceiptSettleService.LookbackDays));
     }
 
     public async Task<AutopilotSettingsDto> UpdateSettingsAsync(Guid companyId, UpdateAutopilotSettingsRequest request, Guid userId, CancellationToken ct = default)
@@ -380,11 +446,12 @@ public class AutopilotService : IAutopilotService
         var bankSettled = await _db.BankTransactions.AsNoTracking()
             .CountAsync(t => t.CompanyId == companyId && t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Settled
                 && t.ReconciledBy == BankMatchAttribution.BankAutoSettle && t.ReconciledAt >= fromUtc && t.ReconciledAt < toUtc, ct);
+        // รอบ 257 ชุด 4 (A L11): นับเกณฑ์เดียวกับคิว "เงินเข้าที่รอยืนยัน" (BankReceiptSettleService.QueueAsync) — รวมคำแนะนำที่มีหลายใบยอดเท่ากัน
+        // (ไม่มีใบเดียวให้ชี้ ⇒ AutoSettleDocumentId = null · เดิมถูกตัดทิ้ง ⇒ สรุปบอก 0 ทั้งที่คิวมีรายการรอ)
         var bankWaiting = await _db.BankTransactions.AsNoTracking()
             .CountAsync(t => t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
                 && (t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Suggest || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Failed
-                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held)
-                && t.AutoSettleDocumentId != null, ct);
+                    || t.AutoSettleVerdict == BankReceiptAutoSettle.Stamps.Held), ct);
         var issues = await IssuesAsync(companyId, toUtc, ct);
         return new AutopilotNotice.DigestFacts(emailed, pays.Count, pays.Sum(), receipts, quotations, bankSettled, bankWaiting,
             issues.Count, issues.Take(5).Select(i => i.Title).ToList());

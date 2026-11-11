@@ -1087,10 +1087,19 @@
       <!-- รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก F · §1 ข้อ 13): เปิดด้วยสถานะ ไม่ใช่ศัพท์นักพัฒนา — ส่งผ่าน LINE ของ NextAcc ได้ทันทีโดยไม่ต้องตั้งอะไร -->
       <h3 class="card-title" style="margin-bottom:4px">💬 แจ้งเตือนทาง LINE</h3>
       <div style="border:1px solid #d1fae5;background:#f0fdf4;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px">
-        ✅ <b>ส่งแจ้งเตือนลูกค้าทาง LINE ได้แล้ว</b> — ระบบส่งผ่าน LINE ของ NextAcc ให้โดยไม่ต้องตั้งค่า · ส่วนด้านล่างใช้เฉพาะเมื่อต้องการส่งในชื่อ <b>LINE ของร้านเอง</b>
+        <!-- รอบ 257 ชุด 4 (C-M6): แยกสองเรื่อง — เดิมประโยคเดียว "ส่งได้แล้ว ไม่ต้องตั้งค่า" จริงเฉพาะลูกค้าจอง/สั่งซื้อ ไม่ใช่เอกสารถึงผู้ติดต่อ -->
+        ✅ <b>ลูกค้าที่จอง/สั่งซื้อผ่านเว็บ</b> — แจ้งเตือนทาง LINE ได้แล้ว ระบบส่งผ่าน LINE ของ NextAcc ให้โดยไม่ต้องตั้งค่า<br>
+        ⚙️ <b>ส่งเอกสารถึงผู้ติดต่อทาง LINE</b> (ใบแจ้งหนี้ · ทวงชำระ · รายการประจำ ตามตารางส่ง) — ต้องใช้ <b>LINE OA ของร้านเอง</b> (ตั้งที่ "ตั้งค่าขั้นสูง" ด้านล่าง)
       </div>
       <!-- รอบ 232 (232-Notify): สถานะ "แจ้งเตือนธุรกิจของบริษัททาง LINE (กลุ่มทีม)" — เซิร์ฟเวอร์ตัดสิน (tenantLineNotice) · ไม่มี OA ของร้าน = ไปกระดิ่ง/อีเมล ไม่ผ่าน OA กลาง -->
       <div id="lineTenantNotice" style="border:1px solid #fde68a;background:#fffbeb;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px;display:none"></div>
+      <!-- รอบ 257 C-H1: บริษัทผู้ให้บริการใช้ OA กลางอยู่แล้ว — เซิร์ฟเวอร์ส่ง isPlatformCompany + platformOaNotice ⇒ ซ่อนส่วนขั้นสูงทั้งก้อน แสดงคำอธิบายแทน -->
+      <div id="linePlatformNotice" style="border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px;display:none"></div>
+      <!-- รอบ 257 ฝ่ายค้าน M1: บริษัทผู้ให้บริการที่ยังมี token/secret ค้าง — สถานะ + ปุ่มล้าง อยู่นอกส่วนที่ถูกซ่อน (ข้อความจากเซิร์ฟเวอร์) -->
+      <div id="linePlatformLegacy" style="border:1px solid #fecaca;background:#fef2f2;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px;display:none">
+        <div id="linePlatformLegacyText"></div>
+        <button type="button" class="btn btn-sm btn-outline" style="margin-top:6px" onclick="Page.clearLineSecrets()">ล้างรหัสเชื่อมและรหัสลับที่บันทึกไว้</button>
+      </div>
       <details id="lineAdvanced" style="margin-bottom:12px"><summary style="cursor:pointer;font-weight:600;font-size:14px">ตั้งค่าขั้นสูง — ใช้ LINE OA ของร้านเอง (รหัสเชื่อมจาก LINE Developers)</summary>
       <p class="text-gray-400" style="margin:8px 0 16px;font-size:13px">
         ใส่ "รหัสเชื่อม LINE OA ของร้าน" แล้วแจ้งเตือนจะส่งในชื่อร้าน (แยกการเรียกเก็บ + แบรนด์) · สมัครได้ที่
@@ -1110,6 +1119,8 @@
                placeholder="ใส่ใหม่เพื่อแทนค่าเดิม / เว้นว่าง = ใช้ค่าเดิม" autocomplete="off" />
         <div class="text-gray-400" style="font-size:11px;margin-top:4px">
           <span id="lineTokenStatus">—</span>
+          <!-- รอบ 257 C-M1: ล้างรหัสเชื่อม/รหัสลับที่บันทึกไว้ (ส่ง "" = ล้าง · เว้นช่องว่าง = คงเดิม) -->
+          <button type="button" class="btn btn-sm btn-outline" id="lineClearSecretsBtn" style="margin-left:8px;display:none" onclick="Page.clearLineSecrets()">ล้างรหัสเชื่อมและรหัสลับที่บันทึกไว้</button>
         </div>
       </div>
 
@@ -1175,16 +1186,14 @@
     <!-- ===== Notification Matrix Tab ===== -->
     <div id="tabNotify" class="card hidden">
       <h3 class="card-title" style="margin-bottom:4px">🔔 ตั้งค่าการแจ้งเตือน</h3>
-      <p class="text-gray-400" style="margin:0 0 16px;font-size:13px">
-        เลือกว่า <strong>เหตุการณ์ใด</strong> จะแจ้งใคร (Role) ผ่านช่องทาง
-        ใดบ้าง — กระดิ่งในแอป / อีเมล / LINE. ปิดทุกช่อง = ไม่แจ้ง.
-        การส่งสลิป PDF ทาง Email + แนบไฟล์เป็นค่าตั้งของกฎ EmailSchedule (แท็บอีเมลกำหนด).
-      </p>
-      <div id="notifyMatrixWrap">
-        <div class="text-gray-400 text-center" style="padding:30px">กำลังโหลด…</div>
-      </div>
-      <div style="display:flex;justify-content:flex-end;margin-top:16px">
-        <button class="btn btn-primary" onclick="Page.saveNotifyMatrix()">บันทึก</button>
+      <!-- รอบ 258 (A-H3 · E-H1): ตารางแจ้งเตือนของทีมมีบ้านเดียวคือหน้า "การแจ้งเตือน" — ตารางสำเนาที่เคยอยู่ตรงนี้ถูกถอด
+           (มันไม่มีช่อง "กลุ่ม LINE ของบริษัท" ⇒ กดบันทึกแล้วปิดประกาศเข้ากลุ่มทีมทุกเหตุการณ์เงียบ ๆ) -->
+      <div style="border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:8px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div style="flex:1;min-width:240px;font-size:13px;color:#475569">
+          เลือกว่า <strong>เหตุการณ์ใด</strong> แจ้งใคร ทางกระดิ่งในระบบ / อีเมล / LINE ส่วนตัว / กลุ่ม LINE ของบริษัท —
+          ตั้งได้ที่หน้า <strong>การแจ้งเตือน</strong> (ที่เดียว)
+        </div>
+        <a class="btn btn-primary" href="/pages/notifications.html">ไปหน้าการแจ้งเตือน →</a>
       </div>
 
       <!-- รอบ 212 C: สรุปรายวันทาง LINE ถึงพนักงาน (js/staff-daily-summary.js · ข้อมูล/ป้ายจากเซิร์ฟเวอร์) -->
@@ -1633,7 +1642,6 @@
         if (tab === 'license') this.loadLicenseTab();
         if (tab === 'line') this.loadLineConfig();
         if (tab === 'notify') {
-          this.loadNotifyMatrix();
           const cid = Layout.getCompanyId();
           if (cid && window.CustomerNotify) {
             CustomerNotify.mountQuota(document.getElementById('notifyQuotaCard'), { companyId: cid });
@@ -2168,6 +2176,13 @@
           const c = j.data || {};
           document.getElementById('lineEnabled').checked = !!c.enabled;
           { const adv = document.getElementById('lineAdvanced'); if (adv) { adv.open = !!c.enabled || location.hash === '#lineAdvanced'; if (location.hash === '#lineAdvanced') adv.scrollIntoView({ block: 'start' }); } }   // รอบ 228 แพ็ก F: ร้านที่ใช้ OA ของตัวเอง ⇒ เปิดส่วนขั้นสูงไว้
+          // รอบ 257 C-H1: บริษัทผู้ให้บริการ ⇒ ซ่อนส่วน "OA ของร้านเอง" (รวม Webhook URL ของบริษัท) + คำอธิบายจากเซิร์ฟเวอร์ — ห้ามเปลี่ยน webhook ของ OA กลาง
+          { const adv = document.getElementById('lineAdvanced'); const pn = document.getElementById('linePlatformNotice');
+            if (adv) adv.style.display = c.isPlatformCompany ? 'none' : '';
+            if (pn) { pn.style.display = c.platformOaNotice ? '' : 'none'; pn.textContent = c.platformOaNotice ? 'ℹ️ ' + c.platformOaNotice : ''; }
+            const lg = document.getElementById('linePlatformLegacy'); const lgt = document.getElementById('linePlatformLegacyText');
+            if (lg && lgt) { lg.style.display = c.platformLegacyOwnOaNotice ? '' : 'none'; lgt.textContent = c.platformLegacyOwnOaNotice || ''; } }
+          { const clr = document.getElementById('lineClearSecretsBtn'); if (clr) clr.style.display = (c.hasAccessToken || c.hasChannelSecret) ? '' : 'none'; }
           document.getElementById('lineGroupId').value = c.defaultGroupId || '';
           document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
           this._renderLineCustomerChannel(c.customerChannel);
@@ -2179,8 +2194,9 @@
             ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '⚠️ ยังไม่มีค่า — ใส่เพื่อเปิดใช้';
           document.getElementById('lineSecretStatus').textContent = c.hasChannelSecret
             ? '✅ มีค่าที่บันทึกไว้แล้ว (เข้ารหัส)' : '⚠️ ยังไม่มีค่า — จำเป็นสำหรับผูก LINE/กลุ่ม LINE ของผู้ติดต่อ (ตรวจว่า webhook มาจาก LINE จริง)';
-          { const w = document.getElementById('lineWebhookUrl'); const cid = Layout.getCompanyId();
-            if (w && cid) w.value = `${location.origin}/api/line/webhook/c/${encodeURIComponent(cid)}`; }
+          // รอบ 257 (team-C LOW · team-E L3): URL จากเซิร์ฟเวอร์ (SystemBaseUrl — แหล่งเดียวกับกล่องช่องทางลูกค้า) ไม่ใช่ location.origin
+          { const w = document.getElementById('lineWebhookUrl'); const url = (c.customerChannel && c.customerChannel.companyWebhookUrl) || '';
+            if (w) { w.value = url; w.placeholder = url ? '' : 'ยังไม่ได้ตั้ง URL ของระบบ — ให้ผู้ดูแลระบบตั้ง URL ระบบก่อน แล้วโหลดหน้านี้ใหม่'; } }
           if (c.lastTestedAt) {
             document.getElementById('lineTestResult').innerHTML =
               `<div style="font-size:12px;color:${c.configured ? '#16a34a' : '#dc2626'}">
@@ -2225,15 +2241,36 @@
         if (!cid) return;
         const body = {
           enabled: document.getElementById('lineEnabled').checked,
+          // token/secret ไม่เคยถูกส่งกลับมาที่ช่อง ⇒ ช่องว่าง = คงเดิม (null) · ล้างใช้ปุ่ม "ล้างรหัสเชื่อม…" (ส่ง "")
           channelAccessToken: document.getElementById('lineToken').value || null,
           channelSecret: document.getElementById('lineSecret').value || null,
-          defaultGroupId: document.getElementById('lineGroupId').value || null,
-          oaBasicId: document.getElementById('lineOaBasicId').value || null,
+          // รอบ 257 C-M1: ช่องที่ hydrate จากค่าเดิม — ว่าง = ล้าง ("") ไม่ใช่ null (เดิมล้างแล้วบันทึกไม่มีผลเงียบ ๆ)
+          defaultGroupId: document.getElementById('lineGroupId').value.trim(),
+          oaBasicId: document.getElementById('lineOaBasicId').value.trim(),
         };
         try {
           const j = await API.put(`/api/companies/${cid}/line-config`, body);
           if (!j || !j.success) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
           Layout.toast(j.message || 'บันทึก LINE config สำเร็จ');   // รอบ 212 แพ็ก B: ข้อความจากเซิร์ฟเวอร์บอกเมื่อเปลี่ยน OA แล้วจะเชิญลูกค้าผูกใหม่
+          await this.loadLineConfig();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // รอบ 257 C-M1: ล้าง token + secret ที่บันทึกไว้ (ส่ง "" ทั้งคู่ + ปิดการส่งผ่าน OA ของร้าน) — แจ้งเตือนกลับไปใช้ LINE ของ NextAcc
+      async clearLineSecrets() {
+        const cid = Layout.getCompanyId();
+        if (!cid) return;
+        if (!confirm('ล้างรหัสเชื่อมและรหัสลับของ LINE OA ของร้าน? แจ้งเตือนจะกลับไปส่งผ่าน LINE ของ NextAcc')) return;
+        const body = {
+          enabled: false, channelAccessToken: '', channelSecret: '',
+          // รอบ 257 ปิดท้าย MED-6: ปุ่มนี้ล้างเฉพาะรหัสเชื่อม/รหัสลับ — Group ID / Basic ID ส่ง null (= คงเดิม) ไม่ส่งค่าในช่องกลับไป
+          // (เดิมบริษัทผู้ให้บริการที่มีค่าของ OA กลางค้างอยู่ ถูกด่านค่ากลางปฏิเสธทั้งคำขอ ⇒ ล้างไม่ได้)
+          defaultGroupId: null,
+          oaBasicId: null,
+        };
+        try {
+          const j = await API.put(`/api/companies/${cid}/line-config`, body);
+          if (!j || !j.success) throw new Error((j && j.message) || 'ล้างไม่สำเร็จ');
+          Layout.toast(j.message || 'ล้างรหัสเชื่อม LINE แล้ว');
           await this.loadLineConfig();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -2249,87 +2286,6 @@
           out.innerHTML = `<div style="font-size:13px;color:${j && j.success ? '#16a34a' : '#dc2626'}">
             ${j && j.success ? '✅' : '❌'} ${Layout.esc((j && j.message) || '')}</div>`;
         } catch (e) { out.innerHTML = `<div style="color:#dc2626">❌ ${Layout.esc(e.message)}</div>`; }
-      },
-
-      // ===== Notification Matrix =====
-      _notifyCatalog: null,
-      _notifySettings: [],
-      async loadNotifyMatrix() {
-        const cid = Layout.getCompanyId();
-        if (!cid) return;
-        const wrap = document.getElementById('notifyMatrixWrap');
-        try {
-          this._notifyCatalog = null;   // โหลดไม่ครบ = ห้ามบันทึก (เดิมส่ง settings: [] ทับค่าที่ตั้งไว้ทั้งหมด — แบบเดียวกับ notifications.html WP-03 ข้อ 7)
-          const [catRes, setRes] = await Promise.all([
-            API.get(`/api/companies/${cid}/notifications/config/catalog`),
-            API.get(`/api/companies/${cid}/notifications/config/settings`),
-          ]);
-          if (!catRes?.success || !setRes?.success) throw new Error((catRes && catRes.message) || (setRes && setRes.message) || 'เซิร์ฟเวอร์ไม่ตอบข้อมูล');
-          this._notifySettings = setRes.data || [];
-          this._notifyCatalog = catRes.data || { events: [], recipientRoles: [] };
-          this._renderNotifyMatrix();
-        } catch (e) {
-          // ล้มดัง + ลองใหม่ (WP-13 I) · ข้อความ error ผ่าน textContent (เดิมต่อ e.message ดิบเข้า innerHTML)
-          Layout.panelError(wrap, 'โหลดตารางแจ้งเตือนไม่สำเร็จ — ยังบันทึกไม่ได้', () => this.loadNotifyMatrix(), e && e.message);
-        }
-      },
-      _renderNotifyMatrix() {
-        const cat = this._notifyCatalog;
-        if (!cat) return;
-        const map = new Map();
-        for (const s of this._notifySettings)
-          map.set(`${s.eventKey}|${s.recipientRole}`, s);
-        const events = cat.events || [];
-        const roles = cat.recipientRoles || cat.roles || [];
-        const roleLabel = { Requester: 'พนักงาน', DirectManager: 'หัวหน้างาน', DepartmentHead: 'หัวหน้าแผนก',
-          HR_Admin: 'HR', Accounting: 'บัญชี', Owner: 'เจ้าของบริษัท' };
-        let html = `<div style="overflow-x:auto"><table class="table" style="font-size:13px;min-width:780px">
-          <thead><tr>
-            <th style="text-align:left;width:30%">เหตุการณ์</th>
-            <th style="text-align:left">ผู้รับ</th>
-            <th style="text-align:center">🔔 กระดิ่ง</th>
-            <th style="text-align:center">✉️ อีเมล</th>
-            <th style="text-align:center">💬 LINE</th>
-          </tr></thead><tbody>`;
-        for (const ev of events) {
-          for (const role of roles) {
-            const key = `${ev.key}|${role}`;
-            const s = map.get(key) || { enableSystem: false, enableEmail: false, enableLine: false };
-            html += `<tr>
-              <td><div><strong>${Layout.esc(ev.label)}</strong></div></td>
-              <td>${Layout.esc(roleLabel[role] || role)}</td>
-              <td style="text-align:center"><input type="checkbox" aria-label="${Layout.esc(ev.label)} · ${Layout.esc(roleLabel[role] || role)} · กระดิ่ง" data-ev="${Layout.esc(ev.key)}" data-role="${Layout.esc(role)}" data-ch="sys" ${s.enableSystem ? 'checked' : ''}></td>
-              <td style="text-align:center"><input type="checkbox" aria-label="${Layout.esc(ev.label)} · ${Layout.esc(roleLabel[role] || role)} · อีเมล" data-ev="${Layout.esc(ev.key)}" data-role="${Layout.esc(role)}" data-ch="email" ${s.enableEmail ? 'checked' : ''}></td>
-              <td style="text-align:center"><input type="checkbox" aria-label="${Layout.esc(ev.label)} · ${Layout.esc(roleLabel[role] || role)} · LINE" data-ev="${Layout.esc(ev.key)}" data-role="${Layout.esc(role)}" data-ch="line" ${s.enableLine ? 'checked' : ''}></td>
-            </tr>`;
-          }
-        }
-        html += `</tbody></table></div>`;
-        document.getElementById('notifyMatrixWrap').innerHTML = html;
-      },
-      async saveNotifyMatrix() {
-        const cid = Layout.getCompanyId();
-        if (!cid) return;
-        if (!this._notifyCatalog) { Layout.toast('ตารางแจ้งเตือนยังโหลดไม่สำเร็จ — กด "ลองใหม่" ก่อนบันทึก (กันค่าที่ตั้งไว้ถูกล้าง)', 'error', 6000); return; }
-        const rowsMap = new Map();
-        document.querySelectorAll('#notifyMatrixWrap input[type=checkbox]').forEach(cb => {
-          const k = `${cb.dataset.ev}|${cb.dataset.role}`;
-          if (!rowsMap.has(k)) rowsMap.set(k, {
-            eventKey: cb.dataset.ev, recipientRole: cb.dataset.role,
-            enableSystem: false, enableEmail: false, enableLine: false
-          });
-          const r = rowsMap.get(k);
-          if (cb.dataset.ch === 'sys') r.enableSystem = cb.checked;
-          if (cb.dataset.ch === 'email') r.enableEmail = cb.checked;
-          if (cb.dataset.ch === 'line') r.enableLine = cb.checked;
-        });
-        // ส่งทุก row — backend จัด upsert/delete ให้
-        const settings = Array.from(rowsMap.values());
-        try {
-          const j = await API.put(`/api/companies/${cid}/notifications/config/settings`, { settings });
-          if (!j || !j.success) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
-          Layout.toast('บันทึกการตั้งค่าแจ้งเตือนเรียบร้อย');
-        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       // ===== Email Config =====

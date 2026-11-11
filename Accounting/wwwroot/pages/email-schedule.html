@@ -170,8 +170,10 @@
           <div class="form-group" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px">
             <div style="font-weight:600;font-size:13px;margin-bottom:6px">ช่องทาง</div>
             <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChEmail" checked> อีเมล</label>
-            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineUser"> LINE ผู้ใช้ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</label>
-            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineGroup"> กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</label>
+            <!-- รอบ 257 ชุด 4 (C-M5): ป้าย LINE จากเซิร์ฟเวอร์ (…/email-schedule/line-labels · บริษัทผู้ให้บริการส่งเข้ากลุ่มผ่าน OA กลางได้) — ข้อความในวงเล็บเป็นค่าตั้งต้นเมื่อโหลดไม่ได้ -->
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineUser"> <span id="rChLineUserLabel">LINE ผู้ใช้ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</span></label>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineGroup"> <span id="rChLineGroupLabel">กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</span></label>
+            <div id="rChLineNote" style="font-size:11px;color:#64748b;margin-left:22px"></div>
             <label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:4px"><input type="checkbox" id="rLineFallback" checked> ถ้า LINE ส่งไม่ได้ ให้ส่งอีเมลแทน (มีผลเมื่อไม่ได้ติ๊กอีเมล)</label>
             <p class="form-help">การ์ด LINE มีชื่อเอกสาร เลขที่ ยอด วันครบกำหนด และลิงก์ชำระ (ไม่แนบไฟล์ · ไม่ใช่การส่งใบกำกับภาษีอิเล็กทรอนิกส์) · ผูก LINE ของผู้รับที่หน้าผู้ติดต่อ แท็บช่องทางแจ้งเตือน ·
               ถ้าบริษัทใช้ e-Tax by Email ใบกำกับจะถูกส่งทางอีเมลด้วยเสมอแม้ติ๊ก LINE อย่างเดียว (คิวอีเมลบอกเหตุไว้) · ผู้รับพิมพ์ "หยุด" = หยุดเฉพาะ LINE</p>
@@ -219,7 +221,8 @@
         // เพราะ getCompanyId เป็น null. ทุกหน้าอื่นเรียก Layout.init เหมือนกัน.
         if (!Layout.init('email-schedule')) return;
         Layout.setTitle('ส่งอีเมลอัตโนมัติ');
-        await Promise.all([this.loadRules(), this._loadAutoSend()]);
+        await this._loadAccess();   // รอบ 258 ฝ่ายค้าน R-L5: ก่อนวาดกฎ (ปุ่มแก้/ลบตามสิทธิ์จากเซิร์ฟเวอร์)
+        await Promise.all([this.loadRules(), this._loadAutoSend(), this._loadLineLabels()]);
       },
 
       switchTab(t) {
@@ -229,6 +232,17 @@
         document.getElementById('tab-rules').style.display = t === 'rules' ? '' : 'none';
         document.getElementById('tab-queue').style.display = t === 'queue' ? '' : 'none';
         if (t === 'queue') this.loadQueue();
+      },
+
+      // รอบ 258 ฝ่ายค้าน R-L5: สิทธิ์จัดการตารางส่ง — เซิร์ฟเวอร์ตัดสิน (canManage + ข้อความ) · โหลดไม่ได้ = ถือว่ายังไม่รู้ (ไม่ล็อก — เซิร์ฟเวอร์กันอยู่แล้ว)
+      _canManage: undefined, _accessNotice: null,
+      async _loadAccess() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const j = await API.get(`/api/companies/${cid}/email-schedule/access`);
+          this._canManage = j && j.data ? j.data.canManage === true : undefined;
+          this._accessNotice = (j && j.data && j.data.notice) || null;
+        } catch (e) { this._canManage = undefined; this._accessNotice = null; }
       },
 
       async loadRules() {
@@ -262,7 +276,10 @@
           PayrollPaid: '💰 จ่ายเงินเดือน → สลิป',
           WhtCertIssued: '📜 ออกใบ 50 ทวิ',
         }[t] || t);
-        box.innerHTML = this._rules.map(r => `
+        const locked = this._canManage === false;
+        const lockNote = locked && this._accessNotice
+          ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:#78350f">🔒 ${Layout.esc(this._accessNotice)}</div>` : '';
+        box.innerHTML = lockNote + this._rules.map(r => `
           <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px;margin-bottom:8px;${r.isActive ? '' : 'opacity:.55'}">
             <div style="flex:1">
               <div style="font-weight:600">${Layout.esc(labelTrigger(r.trigger))} ${r.documentType ? ` · ${Layout.esc(this._docTypeText(r.documentType))}` : ''}</div>
@@ -273,10 +290,11 @@
                 · ${[r.channelEmail !== false ? 'อีเมล' : '', r.channelLineUser ? 'LINE ผู้ใช้' : '', r.channelLineGroup ? 'กลุ่ม LINE' : ''].filter(Boolean).map(x => Layout.esc(x)).join(' + ')}
               </div>
               ${r.subjectTemplate ? `<div style="font-size:12px;color:#475569;margin-top:4px">หัวเรื่อง: ${Layout.esc(r.subjectTemplate)}</div>` : ''}
+              ${r.lastCatchUpNote ? `<div style="font-size:12px;color:#b45309;margin-top:4px">⏱ ส่งย้อนหลัง: ${Layout.esc(r.lastCatchUpNote)}</div>` : ''}
             </div>
             <div style="display:flex;gap:6px">
-              <button class="btn btn-sm btn-outline" onclick="Page.openRule('${Layout.jsArg(r.id)}')">แก้ไข</button>
-              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteRule('${Layout.jsArg(r.id)}')">ลบ</button>
+              ${locked ? '' : `<button class="btn btn-sm btn-outline" onclick="Page.openRule('${Layout.jsArg(r.id)}')">แก้ไข</button>
+              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteRule('${Layout.jsArg(r.id)}')">ลบ</button>`}
             </div>
           </div>`).join('');
       },
@@ -318,6 +336,16 @@
         const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
         try { const r = await api.get(`/api/companies/${cid}/document-auto-send/settings`); this._autoSend = r && r.data; }
         catch (_) { this._autoSend = null; }
+      },
+      /** รอบ 257 ชุด 4 (C-M5): ป้ายช่องทาง LINE จากเซิร์ฟเวอร์ — โหลดไม่ได้ = คงป้ายตั้งต้น (ไม่อ้างว่า OA กลางเปิด) */
+      async _loadLineLabels() {
+        const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
+        try {
+          const r = await api.get(`/api/companies/${cid}/email-schedule/line-labels`);
+          const d = r && r.data; if (!d) return;
+          const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.textContent = v; };
+          set('rChLineUserLabel', d.lineUser); set('rChLineGroupLabel', d.lineGroup); set('rChLineNote', d.note);
+        } catch (_) { /* คงป้ายตั้งต้น */ }
       },
       _renderChannels(selected) {
         const s = this._autoSend;
@@ -429,10 +457,9 @@
           tb.innerHTML = data.items.map(q => {
             const pill = q.status === 'Sent' ? 'pill-success' : q.status === 'Failed' ? 'pill-danger'
               : q.status === 'Pending' ? 'pill-info' : 'pill-gray';
-            const actions = q.status === 'Failed'
-              ? `<button class="btn btn-sm btn-outline" onclick="Page.retry('${Layout.jsArg(q.id)}')">↻ ลองใหม่</button>`
-              : q.status === 'Pending'
-              ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.cancel('${Layout.jsArg(q.id)}')">ยกเลิก</button>` : '';
+            // รอบ 258 (B-H2): ปุ่มตามธงจากเซิร์ฟเวอร์ (canRetry/canCancel — รวมแถวที่ค้าง "กำลังส่ง") · หน้านี้ไม่ตัดสินจากสถานะเอง
+            const actions = (q.canRetry ? `<button class="btn btn-sm btn-outline" onclick="Page.retry('${Layout.jsArg(q.id)}')">↻ ลองใหม่</button> ` : '')
+              + (q.canCancel ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.cancel('${Layout.jsArg(q.id)}')">ยกเลิก</button>` : '');
             return `<tr>
               <td data-label="สถานะ"><span class="pill ${pill /* text — ชื่อคลาสคงที่ของหน้า */}">${Layout.esc(q.statusLabel || q.status)}</span></td>
               <td data-label="ผู้รับ" style="font-family:monospace;font-size:12px">${Layout.esc(q.toEmail)}</td>
@@ -480,7 +507,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async cancelLine(id) {
-        if (!confirm('ยกเลิกคิว LINE นี้?')) return;
+        if (!(await Layout.confirm({ title: 'ยกเลิกคิว LINE', message: 'ยกเลิกคิว LINE นี้? (ข้อความนี้จะไม่ถูกส่ง)', okText: 'ยกเลิกคิว', cancelText: 'ไม่ยกเลิก', danger: true }))) return;
         const cid = Layout.getCompanyId();
         try {
           const j = await API.post(`/api/companies/${cid}/email-schedule/line-queue/${encodeURIComponent(id)}/cancel`, {});

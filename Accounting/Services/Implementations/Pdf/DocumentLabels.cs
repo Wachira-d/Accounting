@@ -148,6 +148,9 @@ public sealed class DocumentLabels
     public string LineCardAmountDue => this["line_card_amount_due"];
     public string LineCardTo => this["line_card_to"];
     public string LineCardPay => this["line_card_pay"];
+    /// <summary>รอบ 258-3 (F-H1): ปุ่มดู/ดาวน์โหลด PDF + บรรทัดยืนยันรับเงินบนการ์ดใบเสร็จ</summary>
+    public string LineCardViewPdf => this["line_card_view_pdf"];
+    public string LineCardPaymentReceived => this["line_card_payment_received"];
     public string LineCardStopUser => this["line_card_stop_user"];
     public string LineCardStopGroup => this["line_card_stop_group"];
     public string LineCardFrom(string company) => string.Format(this["line_card_from"], company);
@@ -340,6 +343,8 @@ public sealed class DocumentLabels
         ["line_card_from"] = "จาก {0}",
         ["line_card_on_behalf"] = "ในนาม {0} · ผ่าน NextAcc",
         ["line_card_pay"] = "ชำระเงินออนไลน์",
+        ["line_card_view_pdf"] = "ดู/ดาวน์โหลด PDF",
+        ["line_card_payment_received"] = "ได้รับชำระเงินแล้ว ขอบคุณค่ะ",
         ["line_card_stop_user"] = "ไม่ต้องการรับทาง LINE? พิมพ์ \"หยุด\" ในแชตนี้",
         ["line_card_stop_group"] = "ไม่ต้องการรับในกลุ่มนี้? แจ้งผู้ส่งเพื่อยกเลิกการผูกกลุ่ม",
         ["terms"] = "เงื่อนไข",
@@ -464,6 +469,8 @@ public sealed class DocumentLabels
         ["line_card_from"] = "From {0}",
         ["line_card_on_behalf"] = "On behalf of {0} · via NextAcc",
         ["line_card_pay"] = "Pay online",
+        ["line_card_view_pdf"] = "View / download PDF",
+        ["line_card_payment_received"] = "Payment received — thank you",
         ["line_card_stop_user"] = "Don't want these on LINE? Reply STOP in this chat",
         ["line_card_stop_group"] = "Don't want these in this group? Ask the sender to unlink it",
         ["terms"] = "Terms",

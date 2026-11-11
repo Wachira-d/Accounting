@@ -20,7 +20,9 @@ public record AutopilotOptionDto(string Code, string Label);
 public record AutopilotCatalogueDto(string Code, string Label, string Delivery, string DeliveryLabel, bool Wired);
 
 public record AutopilotSettingsDto(bool BankAutoSettleEnabled, string QuotationAcceptAutopilotDefault,
-    string DigestLocalTime, IReadOnlyList<AutopilotOptionDto> QuotationModes, IReadOnlyList<AutopilotCatalogueDto> Catalogue);
+    string DigestLocalTime, IReadOnlyList<AutopilotOptionDto> QuotationModes, IReadOnlyList<AutopilotCatalogueDto> Catalogue,
+    // รอบ 257 ชุด 4 (A L12): บอกก่อนเปิดว่ารอบถัดไปไล่บรรทัดเงินเข้าย้อนหลัง N วัน (server computes)
+    string? BankAutoSettleEnableNote = null);
 
 public record UpdateAutopilotSettingsRequest(bool? BankAutoSettleEnabled, string? QuotationAcceptAutopilotDefault, string? DigestLocalTime);
 

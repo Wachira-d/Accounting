@@ -16,6 +16,7 @@ public class MobileController : ControllerBase
     public MobileController(IMobileApiService service) => _service = service;
 
     [HttpPost("devices")]
+    [Accounting.Filters.RejectApiKey("ลงทะเบียนอุปกรณ์รับแจ้งเตือน")]   // รอบ 258 ฝ่ายค้าน R-H1 (กวาด): อุปกรณ์ของผู้ถือคีย์จะได้แจ้งเตือนของเจ้าของ
     public async Task<ActionResult<ApiResponse<DeviceRegistrationResponse>>> RegisterDevice([FromBody] RegisterDeviceRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);

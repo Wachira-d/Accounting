@@ -14,6 +14,11 @@
       <div style="display:flex;gap:8px"><span id="recExportSlot"></span>
       <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างรายการประจำ</button></div>
     </div>
+    <!-- รอบ 257 ชุด 4 (E-M3): ประกาศครั้งเดียวว่าค่าเริ่มต้นเปลี่ยนในรอบ 256 — ข้อความ/คีย์จากเซิร์ฟเวอร์ (autopilot/options) · ปิดแล้วจำต่อผู้ใช้ (localStorage · try/catch) -->
+    <div id="recDefaultNotice" role="status" style="display:none;border:1px solid #fde68a;background:#fffbeb;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px;line-height:1.6">
+      <span id="recDefaultNoticeText"></span>
+      <button type="button" class="btn btn-sm btn-secondary" style="margin-left:8px" onclick="Page.dismissDefaultNotice()">รับทราบ ไม่ต้องแสดงอีก</button>
+    </div>
     <div class="toolbar">
       <input type="text" class="search-input" placeholder="ค้นหา..." id="searchInput" aria-label="ค้นหารายการประจำ" oninput="Page._searchLoad()">
       <select class="filter-select" id="statusFilter" aria-label="กรองตามสถานะ" onchange="Page.page = 1; Page.load()">
@@ -199,7 +204,14 @@
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label"><input type="checkbox" id="fAutoSendEmail" onchange="Page.onAutoFlagChange()"> 📧 ส่งอีเมลเอกสาร (แนบ PDF) ให้ผู้ติดต่อทันทีที่ระบบสร้างเอกสาร</label>
+            <label class="form-label"><input type="checkbox" id="fAutoSendEmail" onchange="Page.onAutoFlagChange()"> 📧 ส่งเอกสารให้ผู้ติดต่อทันทีที่ระบบสร้างเอกสาร (อีเมลแนบ PDF · การ์ด LINE ถ้าผู้ติดต่อผูก LINE)</label>
+            <!-- รอบ 258-3 (F-H1 · F-M1): บอกตรง ๆ ว่าอะไรไปทาง LINE และตั้งที่ไหน -->
+            <div id="autoLineNote" style="margin-top:6px;padding:8px 10px;border-radius:8px;font-size:11px;line-height:1.6;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534">
+              💬 <b>LINE:</b> ติ๊กช่องนี้แล้ว ระบบส่ง<b>การ์ด LINE</b> ของเอกสาร (ปุ่มชำระเงิน + ดู/ดาวน์โหลด PDF) ด้วย เมื่อผู้ติดต่อผูก LINE และปลายทางนั้นติ๊กเรื่อง “เอกสาร”
+              (ตั้งที่ <a href="/pages/contacts.html" style="text-decoration:underline">ผู้ติดต่อ › ช่องทางแจ้งเตือน</a> · บริษัทต้องตั้ง LINE OA ให้พร้อมก่อน) ·
+              ถ้ามีกฎ “เมื่อรายการประจำสร้างเอกสาร” ใน <a href="/pages/email-schedule.html" style="text-decoration:underline">ตารางส่ง</a> กฎนั้นชนะช่องนี้ (ติ๊ก LINE ในกฎเอง) ·
+              หลังลูกค้าชำระ ใบเสร็จไปทาง LINE ถึงปลายทางที่ติ๊กเรื่อง “ใบเสร็จ” เมื่อเปิด “ส่งใบเสร็จหลังชำระ” ด้านล่าง
+            </div>
             <div id="autoEmailHint" style="margin-top:6px;padding:8px 10px;border-radius:8px;font-size:11px;line-height:1.6;background:#f8fafc;border:1px solid #e2e8f0;color:#475569">
               กำลังตรวจการตั้งค่าอีเมลของบริษัท…
             </div>
@@ -333,11 +345,35 @@ const Page = {
     const cpm = document.getElementById('fCustPayMode');
     if (cpm) { cpm.innerHTML = modeOpts || '<option value="">ตามค่าชั้นถัดไป</option>'; cpm.disabled = !this._apOpts; }
     for (const id of ['fPolicySaveBtn', 'fPolicyContactBtn']) { const b = document.getElementById(id); if (b && !this._apOpts) b.disabled = true; }
+    this._renderDefaultNotice();
     // รอบ 250 (WP-02 B-13): ตัวเลือกงานหลังรับชำระ (ชื่อ Inherit|On|Off · ป้ายจากเซิร์ฟเวอร์)
     const triOpts = list => (list || []).map(o => `<option value="${Layout.esc(o.code)}">${Layout.esc(o.label)}</option>`).join('')
       || '<option value="Inherit">ตามค่าชั้นถัดไป</option>';
     ['fPostPayEmail', 'fCustPostPayEmail'].forEach(id => { const el = document.getElementById(id); if (el) { el.innerHTML = triOpts(this._apOpts && this._apOpts.postPayEmailOptions); el.disabled = !this._apOpts; } });
     ['fPostPayPartial', 'fCustPostPayPartial'].forEach(id => { const el = document.getElementById(id); if (el) { el.innerHTML = triOpts(this._apOpts && this._apOpts.postPayPartialOptions); el.disabled = !this._apOpts; } });
+  },
+
+  /** รอบ 257 ชุด 4 (E-M3): ประกาศค่าเริ่มต้นเปลี่ยน — แสดงจนกว่าผู้ใช้กดรับทราบ (จำในเบราว์เซอร์ต่อผู้ใช้ · อ่าน/เขียนไม่ได้ = แสดงต่อ ไม่พัง) */
+  _defaultNoticeStoreKey() {
+    const o = this._apOpts; if (!o || !o.defaultChangeNoticeKey) return null;
+    let uid = '';
+    try { const u = Layout.user || JSON.parse(window.localStorage.getItem('user') || 'null'); uid = (u && (u.id || u.email)) || ''; } catch (_) { uid = ''; }
+    return 'recNoticeDismissed:' + o.defaultChangeNoticeKey + ':' + uid;
+  },
+  _renderDefaultNotice() {
+    const box = document.getElementById('recDefaultNotice'); const txt = document.getElementById('recDefaultNoticeText');
+    if (!box || !txt) return;
+    const o = this._apOpts; const key = this._defaultNoticeStoreKey();
+    let dismissed = false;
+    try { dismissed = !!(key && window.localStorage.getItem(key)); } catch (_) { dismissed = false; }
+    if (!o || !o.defaultChangeNotice || dismissed) { box.style.display = 'none'; return; }
+    txt.textContent = o.defaultChangeNotice;
+    box.style.display = '';
+  },
+  dismissDefaultNotice() {
+    const key = this._defaultNoticeStoreKey();
+    try { if (key) window.localStorage.setItem(key, new Date().toISOString()); } catch (_) { /* เบราว์เซอร์ไม่ให้เก็บ — ซ่อนเฉพาะครั้งนี้ */ }
+    const box = document.getElementById('recDefaultNotice'); if (box) box.style.display = 'none';
   },
 
   goStep(n) {
@@ -386,6 +422,7 @@ const Page = {
     this._renderPayChannels(r.payLinkChannels || []);
     this._editingPolicy = r.autoApprovePolicy || null;
     this._policyDirty = false;
+    this._policyScopeOverride = null; this._policyRowsSeed = null;   // รอบ 257 ชุด 4: ไม่ค้างขอบเขตที่เลือกจากรายการก่อน
     this._renderPolicy();
     this.onAutopilotChange();
   },
@@ -466,8 +503,11 @@ const Page = {
     const own = this._editingPolicy;
     const contactPol = this._contactAp && this._contactAp.autoApprovePolicy;
     // ฝ่ายค้าน HIGH/MED-2: นโยบายของผู้ติดต่อมีผลเฉพาะรายการที่ผู้มีสิทธิ์อนุมัติ "รับรอง" · แก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติแล้วต้องรับรองใหม่ (แผงความพร้อมบอก)
-    const scope = !own ? 'clear' : own.inheritContact ? 'inherit' : 'own';
-    const effective = scope === 'own' ? own : contactPol;
+    // รอบ 257 ชุด 4 (A-H2): ขอบเขตที่ผู้ใช้เลือกค้างไว้ (ยังไม่บันทึก) ชนะค่าที่โหลด — เปลี่ยนแถวในขอบเขต "ค่าเริ่มต้น" ⇒ สลับเป็น "ตั้งเอง" (ไม่ส่ง clear:true แล้วหายเงียบ)
+    const scope = this._policyScopeOverride || (!own ? 'clear' : own.inheritContact ? 'inherit' : 'own');
+    // "ค่าเริ่มต้น" ⇒ แถวจากค่าตั้งต้นของเซิร์ฟเวอร์ (recurringDefaultPassCodes) · อ่านอย่างเดียว — เดิมแสดงตามนโยบายผู้ติดต่อ (ขัดของจริง)
+    const defaultPol = { passCodes: (this._apOpts && this._apOpts.recurringDefaultPassCodes) || [] };
+    const effective = scope === 'own' ? (own && !own.inheritContact ? own : (this._policyRowsSeed || defaultPol)) : scope === 'clear' ? defaultPol : contactPol;
     rows.innerHTML = `<div style="margin-bottom:6px"><label style="font-size:12px">นโยบายของรายการนี้:
         <select class="form-select" id="fPolicyScope" style="display:inline-block;width:auto;margin-left:4px">
           <option value="clear"${scope === 'clear' ? ' selected' : ''}>ค่าเริ่มต้น (ลูกค้าค้างชำระ ⇒ อนุมัติต่อ + บันทึก · ข้ออื่นหยุดรอคน)</option>
@@ -478,16 +518,30 @@ const Page = {
         const on = !!(effective && (effective.passCodes || []).includes(c.code));
         return `<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:4px 0;border-top:1px dashed #e2e8f0">
           <div style="font-size:12px"><strong>${Layout.esc(c.label)}</strong> <span style="color:#64748b">(${Layout.esc(c.code)})</span><div style="font-size:11px;color:#64748b">${Layout.esc(c.why || '')}</div></div>
-          <select class="form-select fPolicyCode" data-code="${Layout.esc(c.code)}" style="width:auto">
+          <select class="form-select fPolicyCode" data-code="${Layout.esc(c.code)}" style="width:auto" aria-label="${Layout.esc(c.label)}">
             <option value="stop"${on ? '' : ' selected'}>หยุดรอคน</option>
             <option value="release"${on ? ' selected' : ''}>อนุมัติต่อ + บันทึก</option>
           </select></div>`;
-      }).join('');
+      }).join('')
+      + (scope === 'clear' ? `<div id="fPolicyDefaultNote" style="font-size:11px;color:#92400e;margin-top:4px">${Layout.esc((this._apOpts && this._apOpts.recurringDefaultNote) || 'ค่าเริ่มต้นของระบบ — เปลี่ยนแถวใด ระบบสลับเป็น "ตั้งเองสำหรับรายการนี้"')}</div>` : '');
+    // ขอบเขต "ค่าเริ่มต้น": แถวแสดงค่าตั้งต้น (อ่านอย่างเดียว) — เปลี่ยนแถวใด ⇒ สลับเป็น "ตั้งเอง" โดยคงค่าที่เลือกไว้ · เปลี่ยนขอบเขตเอง ⇒ วาดใหม่ตามขอบเขต
+    const scopeSel = document.getElementById('fPolicyScope');
+    if (scopeSel) scopeSel.addEventListener('change', () => {
+      this._policyScopeOverride = scopeSel.value; this._policyRowsSeed = null; this._renderPolicy();
+    });
+    rows.querySelectorAll('.fPolicyCode').forEach(sel => sel.addEventListener('change', () => {
+      const cur = document.getElementById('fPolicyScope');
+      if (!cur || cur.value !== 'clear') return;
+      this._policyRowsSeed = { passCodes: Array.from(rows.querySelectorAll('.fPolicyCode')).filter(el => el.value === 'release').map(el => el.dataset.code) };
+      this._policyScopeOverride = 'own';
+      this._renderPolicy();
+      Layout.toast('เปลี่ยนเป็น "ตั้งเองสำหรับรายการนี้" แล้ว — กดบันทึกนโยบายเพื่อให้มีผล', 'info', 5000);
+    }));
     if (never) never.innerHTML = '<strong>ปล่อยผ่านไม่ได้ (กฎหมาย/ความถูกต้อง) — หยุดเสมอ:</strong><br>' + (((this._apOpts && this._apOpts.neverReleasable) || [])
       .map(n => `• ${Layout.esc(n.label)} — ${Layout.esc(n.why || '')}`).join('<br>'));
     if (meta) {
-      const who = p => p ? `ตั้งไว้${p.setAt ? 'เมื่อ ' + Layout.date(p.setAt) : ''} · ปล่อย: ${Layout.esc((p.passCodes || []).join(', ') || 'ไม่ปล่อย (หยุดรอคนทุกข้อ)')}` : 'ยังไม่ได้ตั้ง (ใช้ค่าเริ่มต้น: ลูกค้าค้างชำระ ⇒ อนุมัติต่อ + บันทึก)';
-      meta.innerHTML = `รายการนี้: ${own && own.inheritContact ? 'รับรองให้ใช้นโยบายของผู้ติดต่อ' + (own.setAt ? ' เมื่อ ' + Layout.date(own.setAt) : '') : who(own) /* html — who() หนีด้วย Layout.esc */}<br>ผู้ติดต่อ: ${who(contactPol) /* html — who() หนีแล้ว */}<br>`
+      const who = p => p ? `ตั้งไว้${p.setAt ? 'เมื่อ ' + Layout.date(p.setAt) : ''} · ปล่อย: ${Layout.esc((p.passCodes || []).join(', ') || 'ไม่ปล่อย (หยุดรอคนทุกข้อ)')}` : 'ยังไม่ได้ตั้ง';
+      meta.innerHTML = `รายการนี้: ${own && own.inheritContact ? 'รับรองให้ใช้นโยบายของผู้ติดต่อ' + (own.setAt ? ' เมื่อ ' + Layout.date(own.setAt) : '') : own ? who(own) : 'ใช้ค่าเริ่มต้น (ลูกค้าค้างชำระ ⇒ อนุมัติต่อ + บันทึก)' /* html — who() หนีด้วย Layout.esc */}<br>ผู้ติดต่อ: ${who(contactPol) /* html — who() หนีแล้ว */}${contactPol && !(contactPol.passCodes || []).length ? ' — ตั้ง "หยุดรอคน" ⇒ ทับค่าเริ่มต้นของรายการของผู้ติดต่อนี้' : ''}<br>`
         + 'ผู้ตั้ง/ผู้รับรองต้องมีสิทธิ์อนุมัติเอกสาร · ผู้ตั้งออกจากบริษัท หรือแก้ยอด/ผู้ติดต่อ/ธงอัตโนมัติของรายการหลังตั้ง ⇒ นโยบายหยุดมีผลจนกว่าจะตั้ง/รับรองใหม่ · ทุกครั้งที่ปล่อยลงหมายเหตุบนใบ + บันทึกตรวจสอบ';
     }
   },
@@ -521,6 +575,7 @@ const Page = {
     const res = await api.setRecurringApprovePolicy(id, { passCodes, inherit: sc === 'inherit', clear: sc === 'clear' });
     this._editingPolicy = res.data || null;
     this._policyDirty = false;
+    this._policyScopeOverride = null; this._policyRowsSeed = null;   // รอบ 257 ชุด 4: บันทึกแล้ว ⇒ วาดตามค่าที่เซิร์ฟเวอร์คืน
     return res;
   },
   /** ฟอร์มต่างจากค่าที่โหลดไว้ไหม (ลายเซ็นของ _buildPayload ตัวเดียวกับตอนบันทึก) */
@@ -937,6 +992,7 @@ const Page = {
     document.getElementById('fFrequency').value = 'Monthly';
     document.getElementById('fIntervalMonths').value = '';
     document.getElementById('fLeadDays').value = '0';
+    document.getElementById('fLeadDays').disabled = false; document.getElementById('fLeadDays').title = '';   // รอบ 257: ฟอร์มใหม่ไม่ค้างล็อกจากรายการสมุดรายวัน
     document.getElementById('fDocType').value = 'Invoice';
     document.getElementById('fVatRate').value = '7';
     document.getElementById('fWhtRate').value = '0';
@@ -950,6 +1006,7 @@ const Page = {
     document.getElementById('fNotifyDaysBefore').value = '1';
     this._editingTd = null;
     this._editingPolicy = null;
+    this._policyScopeOverride = null; this._policyRowsSeed = null;
     this._setExtraLines([]);
     this._setSavedRefWarning('fPaymentChannelHint', '');
     this._setSavedRefWarning('fExpenseCatWarn', '');
@@ -1447,6 +1504,9 @@ const Page = {
       document.getElementById('fFrequency').value = r.frequency || 'Monthly';
       document.getElementById('fIntervalMonths').value = r.intervalMonths ? String(r.intervalMonths) : '';
       document.getElementById('fLeadDays').value = String(r.leadDays ?? 0);
+      // รอบ 257 ชุด 4 (A-H3): รายการสมุดรายวันสร้างล่วงหน้าไม่ได้ (เซิร์ฟเวอร์ปฏิเสธ RecurringSchedule.JournalLeadDaysError) — ล็อกช่อง + บอกเหตุ (ไม่ silent no-op)
+      { const ld = document.getElementById('fLeadDays'); const isJournal = String(r.templateType || '').toLowerCase() === 'journal';
+        ld.disabled = isJournal; ld.title = isJournal ? 'รายการสมุดรายวันสร้างล่วงหน้าไม่ได้ — ใบสำคัญลงวันที่วันที่สร้าง จะลงงวดบัญชีก่อนวันของงวด' : ''; }
       document.getElementById('fStartDate').value = Layout.dateInput(r.startDate);
       document.getElementById('fEndDate').value = Layout.dateInput(r.endDate);
       document.getElementById('fAmount').value = r.amount || '';

@@ -59,22 +59,27 @@ public class OcrV1Controller : PublicApiControllerBase
 
             var result = await _ocr.ScanAsync(ctx.CompanyId, attachmentId.Value);
 
-            // คิดเงิน **หลังงานสำเร็จเท่านั้น** — สแกนล้มแล้วเก็บเงินคือสิ่งที่
-            // ลูกค้าให้อภัยยากที่สุด
-            var usage = await MeterAsync(ctx, Feature, 1, "OcrScanResult", result.Id, ct);
+            // คิดเงิน **หลังงานสำเร็จเท่านั้น** — สแกนล้มแล้วเก็บเงินคือสิ่งที่ลูกค้าให้อภัยยากที่สุด ·
+            // รอบ 258 (C-H3): ScanAsync ไม่ throw เมื่อเครื่องอ่านล้ม (คืน ScanStatus = Failed) และไฟล์ซ้ำ/e-Tax XML ไม่ได้ใช้เครื่องอ่าน —
+            // เดิมคิดเงินทุกกรณี · ตัวตัดสินเดียวกับเส้นเว็บ/LINE (Helpers/OcrQuotaRefundRule)
+            var notBilled = Accounting.Helpers.OcrQuotaRefundRule.NotBilledReason(result.ScanStatus, result.OcrEngine);
+            var usage = notBilled == null ? await MeterAsync(ctx, Feature, 1, "OcrScanResult", result.Id, ct) : null;
 
             return Ok(new ApiResponse<object>(true, new
             {
                 scanId = result.Id,
+                scanStatus = result.ScanStatus,   // ผู้เรียกต้องดูค่านี้ — "Failed" = อ่านไม่สำเร็จ (HTTP 200 ไม่ได้แปลว่าอ่านได้)
                 data = result,
                 // §7.3 ข้อ 1 — ลูกค้าต้องได้ feedbackId ไปส่งคืนตอนยืนยัน
                 billing = new
                 {
-                    charged = usage.ChargedAmount,
-                    coveredByFreeQuota = usage.CoveredByFreeQuota,
-                    duplicate = usage.Duplicate,
+                    charged = usage?.ChargedAmount ?? 0m,
+                    coveredByFreeQuota = usage?.CoveredByFreeQuota ?? false,
+                    duplicate = usage?.Duplicate ?? false,
+                    billed = notBilled == null,
+                    notBilledReason = notBilled,
                 },
-            }));
+            }, notBilled));
         }
         catch (Exception ex)
         {

@@ -455,7 +455,10 @@ public partial class DocumentService
         // ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — หลัง commit และนอก execution strategy · ล้ม = ป้ายบนเอกสาร ไม่ย้อนการออกใบ
         await _issuedHooks.RunAsync(companyId, outcome.Neo);
         foreach (var nr in outcome.Receipts)
+        {
             await _issuedHooks.RunAsync(companyId, nr);
+            await AfterSettlementReceiptIssuedAsync(companyId, nr);   // รอบ 258-3 F-H2: ใบกำกับ ณ วันรับเงินฉบับใหม่ → ระบบคู่ค้า
+        }
         return await GetDocumentAsync(companyId, outcome.Neo.Id);
     }
 
@@ -951,7 +954,10 @@ public partial class DocumentService
         });
         // ใบกำกับ ณ วันรับเงินที่เพิ่งออก — e-Tax อัตโนมัติหลัง commit และนอก execution strategy (เหมือนเส้นรับชำระ/ออกใบแทน)
         if (issuedReceipt != null)
+        {
             await _issuedHooks.RunAsync(companyId, issuedReceipt);
+            await AfterSettlementReceiptIssuedAsync(companyId, issuedReceipt);   // รอบ 258-3 F-H2
+        }
         return new EtaxCancellationResult(sourceId is Guid sid ? await GetDocumentAsync(companyId, sid) : null, message);
     }
 
@@ -1121,13 +1127,17 @@ public partial class DocumentService
                     etaxRowsSubmitted.Add(new EtaxReviewEtaxRow(x.Id, x.DocumentId, x.DocumentNumber, x.EtaxRefNumber, x.SubmittedAt, x.VoidedAt, x.VoidReason,
                         $"แถว e-Tax {x.EtaxRefNumber} ส่งไปกรมสรรพากร/ผู้ให้บริการแล้ว ({x.SubmittedAt:dd/MM/yyyy}) แต่ถูกยกเลิกในระบบนี้โดยไม่มีไฟล์หลักฐานการยกเลิก "
                         + "(ก่อนคำตัดสินข้อ 51) — ตรวจที่ระบบ e-Tax ของกรมสรรพากรว่าใบนี้ถูกตอบรับ/ยกเลิก/ปฏิเสธ · ถ้ากรมสรรพากรยังถือใบนี้ ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากร "
-                        + "· ถ้าถูกปฏิเสธไปแล้ว ไม่ต้องทำอะไร · ระบบไม่แก้อัตโนมัติ"));
+                        + "· ถ้าถูกปฏิเสธไปแล้ว ไม่ต้องทำอะไร · ระบบไม่แก้อัตโนมัติ",
+                        // รอบ 257 ชุด 3 ฝ่ายค้าน LOW: เอกสารที่ส่งอีเมลพร้อมสำเนา ETDA แล้ว ⇒ เลือกได้แค่ "ยกเลิกที่กรมฯ" แม้อยู่กลุ่มนี้
+                        EtaxReissueReview.AllowedOutcomes(nameof(EtaxReissueReviewReport.SubmittedEtaxVoidedWithoutEvidence), emailed.Contains(x.DocumentId))));
                 else if (EtaxReissueReview.EmailedEtaxVoidedInSystem(x.Status, emailed.Contains(x.DocumentId), docCancelled,
                              evidencedVoid.Contains(x.Id.ToString())))
                     etaxRowsEmailed.Add(new EtaxReviewEtaxRow(x.Id, x.DocumentId, x.DocumentNumber, x.EtaxRefNumber, x.SubmittedAt, x.VoidedAt, x.VoidReason,
                         $"เอกสาร {x.DocumentNumber} ส่ง e-Tax by Email พร้อมสำเนาถึงที่อยู่ประทับเวลาของ ETDA แล้ว แต่แถว e-Tax {x.EtaxRefNumber} ถูกยกเลิกในระบบนี้ "
                         + "(ก่อนรอบ V1I บันทึกว่า “ก่อนส่งถึงกรมสรรพากร”) — ใบนี้ยังมีผลที่กรมสรรพากร · ถ้าต้องการยกเลิกจริง ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากร "
-                        + "· ระบบไม่แก้อัตโนมัติ"));
+                        + "· ระบบไม่แก้อัตโนมัติ",
+                        // รอบ 257 ชุด 3: ถึงผู้ประทับเวลาแล้ว ⇒ บันทึก "ตรวจแล้ว" ได้เฉพาะ "ยกเลิกที่กรมสรรพากรแล้ว" + เลขอ้างอิง
+                        EtaxReissueReview.AllowedOutcomes(EtaxReissueReview.GroupEmailedWithRdTimestamp)));
             }
         }
 
@@ -1192,12 +1202,17 @@ public partial class DocumentService
                 EtaxReissueReview.AcknowledgedRuleCode, 409);
 
         var report = await GetEtaxReissueReviewAsync(companyId);
+        var reviewRow = report.SubmittedEtaxVoidedWithoutEvidence.FirstOrDefault(r => r.EtaxId == etax.Id)
+            ?? report.EmailedEtaxVoidedInSystem.FirstOrDefault(r => r.EtaxId == etax.Id);
         var group = report.SubmittedEtaxVoidedWithoutEvidence.Any(r => r.EtaxId == etax.Id) ? nameof(EtaxReissueReviewReport.SubmittedEtaxVoidedWithoutEvidence)
             : report.EmailedEtaxVoidedInSystem.Any(r => r.EtaxId == etax.Id) ? nameof(EtaxReissueReviewReport.EmailedEtaxVoidedInSystem)
             : null;
         if (group == null)
             throw new BusinessRuleException("แถว e-Tax นี้ไม่อยู่ในรายการที่ต้องตรวจแล้ว (อาจบันทึกยกเลิกทาง e-Tax พร้อมหลักฐานไปแล้ว) — ไม่ต้องบันทึกว่าตรวจแล้ว",
                 EtaxReissueReview.AcknowledgedRuleCode);
+        // รอบ 257 ชุด 3 (LOW): กลุ่มที่ส่งอีเมลพร้อมสำเนา ETDA แล้ว เลือก "ถูกปฏิเสธ/ไม่เคยได้รับ" ไม่ได้ (ตัวตัดสินเดียวกับตัวเลือกบนหน้าเว็บ)
+        if (EtaxReissueReview.OutcomeAllowedProblem(reviewRow?.AllowedOutcomes ?? EtaxReissueReview.AllowedOutcomes(group), request.Outcome) is string groupProblem)
+            throw new BusinessRuleException(groupProblem, EtaxReissueReview.AcknowledgedRuleCode);
 
         var label = EtaxReissueReview.AcknowledgementOutcomeLabel(request.Outcome)!;
         var rdReference = string.IsNullOrWhiteSpace(request.RdReference) ? null : EtaxReissueReview.OneLine(request.RdReference).Trim();

@@ -15,6 +15,9 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class SettlementReceiptPolicy
 {
+    /// <summary>คำขึ้นต้นของเหตุ "ใบต้นทางเป็นใบเสร็จของการรับเงินนี้อยู่แล้ว" (ไม่ใช่ความล้มเหลว — ผู้ออกใบเสร็จอัตโนมัติรายใบข้ามเงียบได้ · รอบ 258 H2)</summary>
+    public const string ServedBySourcePrefix = "ใบต้นทางรับเงินครบในวันเดียวกับวันที่บนใบ";
+
     /// <summary>ชนิดเอกสารต้นทางที่ "รับเงินจากลูกค้า" แล้วออกใบเสร็จให้ได้</summary>
     public static bool IsReceivableSource(DocumentType type)
         => type is DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.DebitNote;
@@ -65,7 +68,7 @@ public static class SettlementReceiptPolicy
         // ⇒ กดแล้วได้กระดาษใบที่สองที่อ้างการรับเงินก้อนเดียวกัน = ใบรับซ้ำ ซึ่งเป็น
         // สิ่งที่ ReceiptIssuePolicy ทั้งไฟล์เขียนขึ้นมาเพื่อกัน
         if (sourceServesAsReceipt)
-            return "ใบต้นทางรับเงินครบในวันเดียวกับวันที่บนใบ ระบบจึงพิมพ์หัวเป็น "
+            return ServedBySourcePrefix + " ระบบจึงพิมพ์หัวเป็น "
                 + "\"ใบกำกับภาษี/ใบเสร็จรับเงิน\" — ตัวใบเองเป็นใบเสร็จของการรับเงินนี้แล้ว "
                 + "ออกอีกใบจะมีกระดาษ 2 ใบที่อ้างการรับเงินก้อนเดียวกัน. "
                 + "ถ้าต้องการแยกใบเสร็จออกมาทุกครั้ง ให้ตั้งค่าบริษัทเป็น "

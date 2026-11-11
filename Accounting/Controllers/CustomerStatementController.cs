@@ -34,7 +34,9 @@ public class CustomerStatementController : ControllerBase
         decimal TotalDebit, decimal TotalCredit,
         // Aging snapshot
         decimal Current, decimal D1to30, decimal D31to60, decimal D61to90, decimal Over90,
-        IReadOnlyList<StatementLine> Lines);
+        IReadOnlyList<StatementLine> Lines,
+        // รอบ 258: เงินรอจัดสรรของลูกค้า (รับแล้วยังไม่ผูกกับใบ · ยอด ณ ปัจจุบัน) — แสดงแยกบรรทัด ไม่หักจากยอดคงค้าง/อายุหนี้ (เฉพาะฝั่งลูกหนี้)
+        decimal UnappliedCredit = 0m);
 
     /// <summary>คืนใบแจ้งยอดของ contact ใน period. AR side ใช้ DocumentTypes
     /// ฝั่งขาย (Invoice/TaxInvoice/CreditNote/Receipt). AP side ใช้ฝั่งซื้อ.
@@ -136,7 +138,8 @@ public class CustomerStatementController : ControllerBase
             ClosingBalance: running,
             TotalDebit: totalDebit, TotalCredit: totalCredit,
             Current: cur, D1to30: d30, D31to60: d60, D61to90: d90, Over90: over90,
-            Lines: lines);
+            Lines: lines,
+            UnappliedCredit: side == "AP" ? 0m : await CustomerCreditQuery.UnappliedForContactAsync(_db, companyId, contactId));
 
         return Ok(new ApiResponse<ContactStatement>(true, statement));
     }
@@ -188,6 +191,9 @@ public class CustomerStatementController : ControllerBase
             new(null, null, null, "อายุหนี้: 61-90 วัน", null, null, null, d.D61to90),
             new(null, null, null, "อายุหนี้: เกิน 90 วัน", null, null, null, d.Over90),
         };
+        // รอบ 258: บรรทัดแยก (ไม่หักเงียบ ๆ) — เฉพาะเมื่อมีเงินรอจัดสรร · ตัวเลขเดียวกับหน้า
+        if (d.UnappliedCredit > UnappliedCreditBalance.Tolerance)
+            footer.Add(new(null, null, null, "เงินรอจัดสรร (รับแล้วยังไม่ผูกกับใบ · ยังไม่หักจากยอดคงค้าง)", null, null, null, d.UnappliedCredit));
         var sideTh = side == "AP" ? "เจ้าหนี้" : "ลูกหนี้";
         var title = new List<string>
         {

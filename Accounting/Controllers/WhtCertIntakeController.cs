@@ -57,7 +57,7 @@ public class WhtCertIntakeController : ControllerBase
     [HttpPost("inbox")]
     [RequirePermission(PermissionKeys.TaxFile)]
     public async Task<ActionResult<ApiResponse<WhtCertSubmitResult>>> Upload(Guid companyId, [FromBody] UploadBody body,
-        [FromServices] IAttachmentAccessGate gate, CancellationToken ct)
+        [FromServices] IAttachmentAccessGate gate, [FromServices] ILogger<WhtCertIntakeController> log, CancellationToken ct)
     {
         var uid = JwtHelper.GetUserIdFromClaims(User);
         // ด่านไฟล์แนบกลาง — ไฟล์ในถัง "ภาษีถูกหัก" ก่อนบันทึก: ผู้อัปโหลดเอง หรือผู้ถือ Tax.File (ก่อนอ่าน/สแกนไฟล์ใด ๆ)
@@ -81,20 +81,52 @@ public class WhtCertIntakeController : ControllerBase
         // ไฟล์เดิมเคยส่งแล้ว ⇒ คืนแถวเดิมก่อนเสียโควตา OCR (SubmitAsync กันซ้ำอีกชั้นด้วย hash เดียวกัน)
         if (await _intake.FindDuplicateFileAsync(companyId, body.FileAttachmentId, ct) is { } dup)
             return Ok(new ApiResponse<WhtCertSubmitResult>(true, dup, dup.Message));
-        var scan = await _ocr.ScanAsync(companyId, body.FileAttachmentId, actingUserId: uid);
-        var r = await _intake.SubmitFromScanAsync(companyId, scan.Id, WhtCertIntakeChannel.Manual,
-            body.DocumentId is Guid d ? new[] { d } : null, name, uid, ct,
-            WhtEvidenceReference.KindFor(body.EWithholding), body.EvidenceReference);
+        var hints = body.DocumentId is Guid d ? new[] { d } : null;
+        var kind = WhtEvidenceReference.KindFor(body.EWithholding);
+        Guid? scanId = null;
+        try { scanId = (await _ocr.ScanAsync(companyId, body.FileAttachmentId, actingUserId: uid)).Id; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // รอบ 257 ชุด 2 (B-L3): OCR ล้ม (ผู้ให้บริการล่ม · ไฟล์อ่านไม่ได้ · โควตา) — เดิม error ดิบถึงผู้ใช้และไฟล์ค้างในถัง ⇒ เข้ากล่องรับแบบรอตรวจจากไฟล์
+            log.LogWarning(ex, "สแกนใบ 50 ทวิ ที่อัปโหลดเองไม่สำเร็จ ไฟล์ {File} บริษัท {Company} — เข้ากล่องรับแบบรอตรวจ", body.FileAttachmentId, companyId);
+        }
+        var r = scanId is Guid sid
+            ? await _intake.SubmitFromScanAsync(companyId, sid, WhtCertIntakeChannel.Manual, hints, name, uid, ct, kind, body.EvidenceReference)
+            : await _intake.SubmitUnreadableAsync(companyId, WhtCertIntakeChannel.Manual, body.FileAttachmentId, null, hints, name, uid, ct,
+                evidenceKind: kind, evidenceReference: body.EvidenceReference);
         return StatusCode(r.Duplicate ? 200 : 201, new ApiResponse<WhtCertSubmitResult>(true, r, r.Message));
     }
 
     [HttpPost("inbox/{id:guid}/confirm")]
     [RequirePermission(PermissionKeys.TaxFile)]
-    public async Task<ActionResult<ApiResponse<WhtCertIntakeDto>>> Confirm(Guid companyId, Guid id, [FromBody] WhtCertConfirmRequest? body, CancellationToken ct)
+    [RejectApiKey("ยืนยันหนังสือรับรอง 50 ทวิ (อาจกลับรายการบัญชีตัดสูญ)")]   // รอบ 257 ชุด 2 ฝ่ายค้าน L6
+    public async Task<ActionResult<ApiResponse<WhtCertIntakeDto>>> Confirm(Guid companyId, Guid id, [FromBody] WhtCertConfirmRequest? body,
+        [FromServices] IPermissionService perms, CancellationToken ct)
     {
         var uid = JwtHelper.GetUserIdFromClaims(User);
-        var r = await _intake.ConfirmAsync(companyId, id, body ?? new WhtCertConfirmRequest(), uid, User?.Identity?.Name ?? "user", holdsTaxFile: true, ct);
-        return Ok(new ApiResponse<WhtCertIntakeDto>(true, r, "ยืนยันหนังสือรับรองแล้ว — ใช้เป็นเครดิตได้ตามยอดที่จัดสรร"));
+        var r = await _intake.ConfirmAsync(companyId, id, body ?? new WhtCertConfirmRequest(), uid, User?.Identity?.Name ?? "user", holdsTaxFile: true, ct,
+            await JournalActorAsync(companyId, uid, perms));
+        return Ok(new ApiResponse<WhtCertIntakeDto>(true, r,
+            r.FollowUpNote is string note ? "ยืนยันหนังสือรับรองแล้ว — " + note : "ยืนยันหนังสือรับรองแล้ว — ใช้เป็นเครดิตได้ตามยอดที่จัดสรร"));
+    }
+
+    /// <summary>รอบ 257 ชุด 2 (B-L3/B-H1): ผู้ลงบัญชี — ส่งเฉพาะผู้ถือ Journal.Manage (ไม่ถือ + ต้องกลับรายการตัดสูญ ⇒ service ปฏิเสธ 403 พร้อมเหตุ)</summary>
+    private async Task<Accounting.Services.Implementations.WhtCreditService.WriteOffActor?> JournalActorAsync(Guid companyId, Guid uid, IPermissionService perms)
+    {
+        return await perms.HasPermissionAsync(companyId, uid, PermissionKeys.JournalManage)
+            ? new Accounting.Services.Implementations.WhtCreditService.WriteOffActor(uid, User?.Identity?.Name ?? "user") : null;
+    }
+
+    /// <summary>รอบ 257 ชุด 2 (B-H2): ถอนการยืนยันใบที่ลงเครดิตแล้ว (ยืนยันผิด · ผู้จ่ายยกเลิกใบ) — ใช้เครดิตในแบบที่ยื่นแล้ว ⇒ 409 · ต้องกลับตัดสูญ ⇒ ต้องมี Journal.Manage</summary>
+    [HttpPost("inbox/{id:guid}/unconfirm")]
+    [RequirePermission(PermissionKeys.TaxFile)]
+    [RejectApiKey("ถอนการยืนยันหนังสือรับรอง 50 ทวิ")]   // รอบ 257 ชุด 2 ฝ่ายค้าน L6
+    public async Task<ActionResult<ApiResponse<WhtCertIntakeDto>>> Unconfirm(Guid companyId, Guid id, [FromBody] WhtCertUnconfirmRequest body,
+        [FromServices] IPermissionService perms, CancellationToken ct)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        var r = await _intake.UnconfirmAsync(companyId, id, body, uid, User?.Identity?.Name ?? "user", ct, await JournalActorAsync(companyId, uid, perms));
+        return Ok(new ApiResponse<WhtCertIntakeDto>(true, r, "ถอนการยืนยันแล้ว — ยอดเครดิตจากใบนี้ถูกถอนออกจากทะเบียน (รายการกลับไปรอใบ)"));
     }
 
     [HttpPost("inbox/{id:guid}/reject")]

@@ -394,6 +394,12 @@ const Page = {
   },
 
   // ===== OCR =====
+  // ป้ายสถานะสแกนตามจริง (ข้อความคงที่ ไม่มีค่าจากผู้ใช้) — ล้มต้องบอกว่าล้ม ไม่ใช่ "กำลังประมวลผล"/"สำเร็จ"
+  _ocrStatusHtml(status) {
+    if (status === 'Completed') return '<span class="text-success">สแกนสำเร็จ</span>';
+    if (status === 'Failed') return '<span class="text-danger">สแกนไม่สำเร็จ</span>';
+    return '<span class="text-warning">กำลังประมวลผล</span>';
+  },
   async loadOcrResults() {
     const api = Layout.api(); if (!api) return;
     try {
@@ -401,11 +407,13 @@ const Page = {
       const items = res.data?.items || res.data || [];
       const content = document.getElementById('ocrResults');
       if (!items.length) { content.innerHTML = '<p class="text-gray-400 text-center">ยังไม่มีผลสแกน</p>'; return; }
+      // รอบ 258 (C-M3): ชื่อช่องตาม DTO จริง (scanStatus / originalFileName / extracted*) · ทุกค่าจากกระดาษผ่าน Layout.esc (ข้อความที่ผู้ส่งเอกสารคุมได้) ·
+      // สถานะตามจริง (ล้ม = บอกว่าล้ม) · สร้างเอกสารทำที่หน้าสแกนเอกสาร (มีหน้าตรวจ + คำเตือนใบซ้ำ) — หน้านี้ไม่สร้างเอง
       content.innerHTML = `<div style="max-height:400px;overflow-y:auto">${items.slice(0,10).map(r => `<div style="padding:12px 0;border-bottom:1px solid var(--gray-100)">
-        <div class="text-sm font-medium">${r.fileName || r.documentType || 'เอกสาร'}</div>
-        <div class="text-xs text-gray-500">วันที่: ${Layout.date(r.scannedAt || r.createdAt)} | ${r.status === 'Completed' ? '<span class="text-success">สแกนสำเร็จ</span>' : '<span class="text-warning">กำลังประมวลผล</span>'}</div>
-        ${r.extractedData ? `<div class="text-xs" style="margin-top:4px">ยอด: ${Layout.money(r.extractedData.totalAmount || r.extractedData.amount)} | ผู้ขาย: ${r.extractedData.vendorName || '-'}</div>` : ''}
-        ${r.status === 'Completed' ? `<button class="btn btn-sm btn-primary" style="margin-top:4px" onclick="Page.createDocFromOcr('${r.id}')">สร้างเอกสาร</button>` : ''}
+        <div class="text-sm font-medium">${Layout.esc(r.originalFileName || r.documentType || 'เอกสาร')}</div>
+        <div class="text-xs text-gray-500">วันที่: ${Layout.esc(Layout.date(r.processedAt))} | ${Page._ocrStatusHtml(r.scanStatus)}</div>
+        ${r.scanStatus === 'Completed' ? `<div class="text-xs" style="margin-top:4px">ยอด: ${Layout.esc(Layout.money(r.extractedTotalAmount))} | ผู้ขาย: ${Layout.esc(r.extractedVendorName || '-')}</div>` : ''}
+        ${r.scanStatus === 'Completed' && !r.createdDocumentId ? `<a class="btn btn-sm btn-primary" style="margin-top:4px" href="/pages/document-scan.html">ตรวจและสร้างเอกสารที่หน้าสแกน →</a>` : ''}
       </div>`).join('')}</div>`;
     } catch (err) { document.getElementById('ocrResults').innerHTML = `<p class="text-danger text-sm">${Layout.esc(err.message)}</p>`; }
   },
@@ -422,27 +430,28 @@ const Page = {
       const scanRes = await api.ocrUploadAndScan(formData);
       const d = scanRes.data || {};
       if (d.id) {
-        result.innerHTML = `<div class="card" style="padding:16px;background:var(--gray-50)">
-          <div class="text-sm font-medium text-success">สแกนสำเร็จ! (ความเชื่อมั่น ${((d.confidence || 0) * 100).toFixed(0)}%)</div>
+        // รอบ 258 (C-M3): สแกนล้ม (scanStatus ≠ Completed) ต้องไม่ขึ้น "สแกนสำเร็จ!" · ค่าจากกระดาษผ่าน Layout.esc ทุกช่อง
+        const ok = d.scanStatus === 'Completed';
+        result.innerHTML = ok ? `<div class="card" style="padding:16px;background:var(--gray-50)">
+          <div class="text-sm font-medium text-success">สแกนสำเร็จ (ความเชื่อมั่น ${Number(((d.confidence || 0) * 100).toFixed(0))}%)</div>
           <div class="text-sm" style="margin-top:8px">
-            <div><strong>ประเภท:</strong> ${d.documentType || '-'}</div>
-            <div><strong>ผู้ขาย:</strong> ${d.extractedVendorName || '-'}</div>
-            <div><strong>เลขผู้เสียภาษี:</strong> ${d.extractedVendorTaxId || '-'}</div>
-            <div><strong>เลขที่เอกสาร:</strong> ${d.extractedDocumentNumber || '-'}</div>
-            <div><strong>ยอดรวม:</strong> ${Layout.money(d.extractedTotalAmount)}</div>
-            <div><strong>VAT:</strong> ${Layout.money(d.extractedVatAmount)}</div>
-            <div><strong>วันที่:</strong> ${d.extractedDate ? new Date(d.extractedDate).toLocaleDateString('th-TH') : '-'}</div>
+            <div><strong>ประเภท:</strong> ${Layout.esc(d.documentType || '-')}</div>
+            <div><strong>ผู้ขาย:</strong> ${Layout.esc(d.extractedVendorName || '-')}</div>
+            <div><strong>เลขผู้เสียภาษี:</strong> ${Layout.esc(d.extractedVendorTaxId || '-')}</div>
+            <div><strong>เลขที่เอกสาร:</strong> ${Layout.esc(d.extractedDocumentNumber || '-')}</div>
+            <div><strong>ยอดรวม:</strong> ${Layout.esc(Layout.money(d.extractedTotalAmount))}</div>
+            <div><strong>VAT:</strong> ${Layout.esc(Layout.money(d.extractedVatAmount))}</div>
+            <div><strong>วันที่:</strong> ${d.extractedDate ? Layout.esc(new Date(d.extractedDate).toLocaleDateString('th-TH')) : '-'}</div>
           </div>
-          <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="Page.createDocFromOcr('${d.id}')">สร้างเอกสาร</button>
+          <a class="btn btn-sm btn-primary" style="margin-top:8px" href="/pages/document-scan.html">ตรวจและสร้างเอกสารที่หน้าสแกน →</a>
+        </div>` : `<div class="card" style="padding:16px;background:#fef2f2;border:1px solid #fecaca">
+          <div class="text-sm font-medium text-danger">สแกนไม่สำเร็จ — ระบบอ่านไฟล์นี้ไม่ได้ (ไม่เสียโควตา)</div>
+          <div class="text-sm" style="margin-top:6px">${Layout.esc(d.processingNotes || 'ลองถ่ายใหม่ให้ชัดขึ้น หรืออัปโหลดเป็น PDF แล้วสแกนอีกครั้ง')}</div>
+          <a class="btn btn-sm btn-outline" style="margin-top:8px" href="/pages/document-scan.html">ไปหน้าสแกนเอกสาร →</a>
         </div>`;
         this.loadOcrResults();
       }
     } catch (err) { result.innerHTML = `<p class="text-danger text-sm">${Layout.esc(err.message)}</p>`; }
-  },
-
-  async createDocFromOcr(id) {
-    const api = Layout.api(); if (!api) return;
-    try { await api.ocrCreateDocument(id); Layout.toast('สร้างเอกสารจาก OCR สำเร็จ'); } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
   // ===== Forecast =====

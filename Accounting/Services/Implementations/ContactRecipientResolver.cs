@@ -110,7 +110,7 @@ public class ContactRecipientResolver : IContactRecipientResolver
                 new(NotifyEndpointKind.LineUser, "เชิญผู้ใช้ให้ผูก LINE (สมัครผู้ใช้พอร์ทัลก่อน)",
                     "เร็ว ๆ นี้ (เฟส L5) — ทางลัด \"ลิงก์/QR ผูก LINE\" ใช้ได้แล้ว (ผู้รับกดยินยอมบนมือถือของตัวเอง · ผ่าน LINE OA ของบริษัท · คำตอบเจ้าของ Q6)"),
             },
-            DeliveryNote,
+            DeliveryNoteFor(LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct))),
             canEdit,
             canEdit ? null : $"ดูได้อย่างเดียว — แก้ช่องทางแจ้งเตือนต้องมีสิทธิ์ {Accounting.Models.Constants.PermissionKeys.ContactEdit.Replace("perm:", "")}",
             EtaxByEmailNote: etaxNote,
@@ -166,13 +166,14 @@ public class ContactRecipientResolver : IContactRecipientResolver
         return new ContactLineBindOffer(true, null, open);
     }
 
-    /// <summary>รอบ 250 WP-08: ประโยคบนแท็บ (เซิร์ฟเวอร์ส่ง · หน้าแสดงตรงตัว) — เส้นส่งที่อ่านค่าตั้งนี้แล้วจริง (ล็อกด้วย required_call_site_check R250L1)</summary>
-    internal const string DeliveryNote =
+    /// <summary>รอบ 250 WP-08: ประโยคบนแท็บ (เซิร์ฟเวอร์ส่ง · หน้าแสดงตรงตัว) — เส้นส่งที่อ่านค่าตั้งนี้แล้วจริง (ล็อกด้วย required_call_site_check R250L1)
+    /// · รอบ 257 ชุด 4 (C-M5): ประโยค LINE ขึ้นกับ <c>NextAccGroupOpen</c> (บริษัทผู้ให้บริการ ⇒ กลุ่มผ่าน OA กลางเปิดแล้ว ตั้งแต่รอบ 256) — เดิมบอก "ยังไม่เปิด" กับทุกบริษัท</summary>
+    internal static string DeliveryNoteFor(bool nextAccGroupOpen) =>
         "ปลายทางที่ตั้งที่นี่มีผลกับการส่งอีเมลถึงผู้ติดต่อรายนี้แล้ว (ตัวหาผู้รับตัวเดียว): ตารางส่งอีเมล (เมื่ออนุมัติ/รายการประจำ) · ทวงชำระ/ใบแจ้งยอด · "
         + "ส่ง 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น — เรื่องที่ไม่ได้เลือกจะไม่ถูกส่งไปปลายทางนั้น และถ้าไม่มีปลายทางใดรับเรื่องนั้นเลย ระบบไม่ส่งพร้อมบันทึกเหตุบนคิว · "
         + "ช่องผู้รับที่ผู้ใช้กรอกเองตอนส่ง (เช่นลิงก์เซ็นครั้งก่อน) ยังชนะ · อีเมลหลักแก้ที่แท็บข้อมูลทั่วไป · "
         + "LINE (รอบ 254): ส่งการ์ดเอกสารถึงผู้ใช้ LINE ที่ผูกผ่าน LINE OA ของบริษัทเมื่อกฎในตารางส่งติ๊กช่อง LINE (เมื่ออนุมัติ · ใกล้/เกินกำหนด · รายการประจำ) · "
-        + "ผ่าน LINE OA กลางของ NextAcc ยังไม่เปิด";
+        + ContactLineChannel.CentralOaSentence(nextAccGroupOpen);
 
     private sealed record RowMeta(DateTime LinkedAt, DateTime? LastSentAt, string? LastFailure);
 
