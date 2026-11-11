@@ -112,6 +112,11 @@ public class CustomerCreditDbTests
     private static DocumentService Docs(Accounting.Data.AccountingDbContext db)
         => new(db, new AccountingService(db), null!, null!, null!, NullLogger<DocumentService>.Instance, null!, null!, null!);
 
+    /// <summary>ตัวที่แปลงเอกสารได้ (เส้นสร้างเอกสารถามโควตาแพ็กเกจ) — แพ็กเกจอนุญาตทุกอย่าง</summary>
+    private static DocumentService DocsForConvert(Accounting.Data.AccountingDbContext db)
+        => new(db, new AccountingService(db), RecurringTransactionDbTests.AllowAll<ISubscriptionService>.Create(), null!, null!,
+            NullLogger<DocumentService>.Instance, null!, null!, null!);
+
     private static CustomerCreditService Credits(Accounting.Data.AccountingDbContext db)
         => new(db, Docs(db), new AccountingService(db), NullLogger<CustomerCreditService>.Instance);
 
@@ -926,7 +931,7 @@ public class CustomerCreditDbTests
             Assert.Equal(Today, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == inv.Id)).PaymentDate?.Date);   // ระบบประทับ
         DocumentResponse child;
         using (var req = DbTestDatabase.TryCreateContext()!)
-            child = await Docs(req).ConvertDocumentAsync(s.CompanyId, inv.Id, DocumentType.TaxInvoice, "tester");
+            child = await DocsForConvert(req).ConvertDocumentAsync(s.CompanyId, inv.Id, DocumentType.TaxInvoice, "tester");
         using (var check = DbTestDatabase.TryCreateContext()!)
             Assert.Null((await check.Documents.AsNoTracking().SingleAsync(d => d.Id == child.Id)).PaymentDate);
     }
@@ -939,10 +944,16 @@ public class CustomerCreditDbTests
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
         var s = await SeedAsync(db);
+        // โหมดค้าปลีก: ไม่ออกใบเสร็จแยกอัตโนมัติ ⇒ ใบไม่มีเอกสารลูก — ด่านเอกสารลูกเดิมไม่ช่วย ต้องเป็นด่านของเงินรอจัดสรรที่กัน
+        // (โหมดตั้งต้น: ใบเสร็จของการรับชำระเป็นเอกสารลูก ⇒ ด่าน "ยกเลิกเอกสารลูกก่อน" เดิมกันไว้ก่อนอยู่แล้ว — ทิศเดียวกัน)
+        db.CompanySettings.Add(new CompanySettings { CompanyId = s.CompanyId, ReceiptIssueMode = ReceiptIssueMode.RetailReceipt });
+        await db.SaveChangesAsync();
         var inv = await InvoiceAsync(db, s, s.CustomerId, 1_000m, 0m);
         PaymentResponse pay;
         using (var req = DbTestDatabase.TryCreateContext()!)
             pay = await Docs(req).CreateMultiDocPaymentAsync(s.CompanyId, Receive(1_500m, UnappliedReason.Overpaid, (inv.Id, 1_000m)), "tester");
+        using (var check = DbTestDatabase.TryCreateContext()!)
+            Assert.Null(await ReceiptOfAsync(check, s.CompanyId, pay.Id, inv.Id));
         // CC-VOID-DOC-CREDIT: ยกเลิกใบ = cascade ยกเลิกการรับชำระ = เงินรอจัดสรร 500 หายเงียบ ⇒ ปฏิเสธ + ทางไปต่อ
         using (var req = DbTestDatabase.TryCreateContext()!)
         {

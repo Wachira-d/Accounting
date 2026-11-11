@@ -52,7 +52,7 @@ public static class ScheduleCatchUp
 
     /// <summary>กฎเกินกำหนดที่ส่งซ้ำทุก <paramref name="repeatEveryDays"/> วัน: ใบที่ถึงครั้งแรกใน "วัน <paramref name="day"/>" จะถึงครั้งซ้ำใน "วันนี้" ไหม
     /// (ระยะห่างเป็นจำนวนเท่าของรอบ) · ไม่ส่งซ้ำ (≤ 0) = ไม่</summary>
-    public static bool RepeatCoversToday(int repeatEveryDays, DateTime day, DateTime todayBkk)
+    private static bool RepeatCoversToday(int repeatEveryDays, DateTime day, DateTime todayBkk)
     {
         if (repeatEveryDays <= 0) return false;
         var gap = (todayBkk.Date - day.Date).Days;
