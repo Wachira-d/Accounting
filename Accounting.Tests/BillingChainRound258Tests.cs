@@ -192,4 +192,34 @@ public class BillingChainRound258Tests
         Assert.Contains("ระบบไม่เดา", mismatch.Problem);
         Assert.Equal("PARTNER-PAID-" + Guid.Empty.ToString("N"), PartnerPaymentNoticeRule.PaymentReference(Guid.Empty));
     }
+
+    // ───── F-M1 ความพร้อมทั้งเส้น ─────
+
+    [Fact]
+    public void ความพร้อมทั้งเส้น_แถว_LINE_gateway_คู่ค้า_ตามข้อเท็จจริง_ไม่ตรวจไม่มีแถว()
+    {
+        AutopilotReadiness.Item? Row(AutopilotReadiness.Report r, string code) => r.Items.FirstOrDefault(i => i.Code == code);
+        var on = AutopilotReadiness.Evaluate(new AutopilotReadiness.Facts
+        {
+            SaleSide = true, DocumentType = DocumentType.Invoice, PostPayEmailReceipt = true,
+            LineDocumentEndpoints = 1, LineReceiptEndpoints = 1, GatewayLive = true, PartnerLinked = true,
+        });
+        Assert.Equal(AutopilotReadiness.Ok, Row(on, "LINE-DOC")!.Verdict);
+        Assert.Equal(AutopilotReadiness.Ok, Row(on, "LINE-RECEIPT")!.Verdict);
+        Assert.Equal(AutopilotReadiness.Ok, Row(on, "GATEWAY")!.Verdict);
+        Assert.Equal(AutopilotReadiness.Ok, Row(on, "PARTNER")!.Verdict);
+        var off = AutopilotReadiness.Evaluate(new AutopilotReadiness.Facts
+        {
+            SaleSide = true, DocumentType = DocumentType.Invoice, PostPayEmailReceipt = true,
+            LineDocumentEndpoints = 0, LineReceiptEndpoints = 0, GatewayLive = false, PartnerLinked = false, LineOaProblem = "ยังไม่ได้ตั้ง LINE OA",
+        });
+        Assert.Equal(AutopilotReadiness.Info, Row(off, "LINE-DOC")!.Verdict);
+        Assert.Equal("ยังไม่ได้ตั้ง LINE OA", Row(off, "LINE-DOC")!.Why);
+        Assert.Equal(AutopilotReadiness.Info, Row(off, "GATEWAY")!.Verdict);
+        Assert.Null(Row(off, "PARTNER"));
+        // ทิศตรงข้าม: ไม่ได้ตรวจ (null) ⇒ ไม่มีแถวใหม่ · แถวข้อมูลประกอบไม่นับเป็นคำเตือน
+        var unchecked_ = AutopilotReadiness.Evaluate(new AutopilotReadiness.Facts { SaleSide = true, DocumentType = DocumentType.Invoice });
+        Assert.DoesNotContain(unchecked_.Items, i => AutopilotReadiness.ChainInfoCodes.Contains(i.Code));
+        Assert.Equal(unchecked_.WarnCount, off.WarnCount);
+    }
 }

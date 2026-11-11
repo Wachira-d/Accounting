@@ -123,7 +123,24 @@ public static class AutopilotReadiness
         /// <summary>หลังรับชำระส่งใบเสร็จอัตโนมัติไหม (<see cref="PostPaymentAutomationPolicy.EffectiveLayers"/>) · null = ไม่ได้ตรวจ</summary>
         public bool? PostPayEmailReceipt { get; init; }
         public bool PostPayIncludePartial { get; init; }
+
+        // ── รอบ 258-3 (F-M1): ความพร้อมทั้งเส้น — LINE · gateway · คู่ค้า (null = ไม่ได้ตรวจ ⇒ ไม่มีแถว) ──
+        /// <summary>ปลายทาง LINE ของผู้ติดต่อที่รับเรื่อง "เอกสาร" และส่งได้ (<see cref="ContactLineChannel.LineEndpoints"/>)</summary>
+        public int? LineDocumentEndpoints { get; init; }
+        /// <summary>ปลายทาง LINE ที่รับเรื่อง "ใบเสร็จ" และส่งได้</summary>
+        public int? LineReceiptEndpoints { get; init; }
+        /// <summary>ช่อง LINE ของบริษัทยังไม่พร้อม (เหตุ) · null = พร้อม/ไม่ได้ตรวจ</summary>
+        public string? LineOaProblem { get; init; }
+        /// <summary>ผู้ให้บริการรับชำระอยู่โหมดเงินจริง</summary>
+        public bool? GatewayLive { get; init; }
+        /// <summary>ผู้ติดต่อเป็นบริษัทคู่ค้า NextAcc (Accepted) — ใบไหลเข้าระบบของเขา</summary>
+        public bool? PartnerLinked { get; init; }
     }
+
+    /// <summary>รอบ 258-3 (F-M1): แถวข้อมูลประกอบของเส้นทั้งเส้น — ไม่กดระดับ "อัตโนมัติเต็ม" (ⓘ ไม่ใช่ข้อบกพร่องของรายการ)</summary>
+    public static readonly IReadOnlySet<string> ChainInfoCodes = new HashSet<string>(StringComparer.Ordinal) { "LINE-DOC", "LINE-RECEIPT", "GATEWAY", "PARTNER" };
+    public const string ContactsUrl = "/pages/contacts.html";
+    public const string PartnersUrl = "/pages/partners.html";
 
     public sealed record Item(string Code, string Stage, string Verdict, string Title, string? Why, string? FixUrl, string? FixLabel);
 
@@ -376,6 +393,26 @@ public static class AutopilotReadiness
                     : "หลังรับชำระ ไม่ส่งใบเสร็จอัตโนมัติ — ต้องมีคนออก/ส่งใบเสร็จเอง",
                 null, postPay ? null : PaymentStepUrl, postPay ? null : "ตั้งงานหลังรับชำระ");
 
+        // ── รอบ 258-3 (F-M1): ความพร้อมทั้งเส้น (บิล → LINE → รับเงินจริง → ใบเสร็จ → คู่ค้า) ──
+        if (f.SaleSide && f.LineDocumentEndpoints is int lineDoc)
+            Add("LINE-DOC", "ส่ง", lineDoc > 0 ? Ok : Info,
+                lineDoc > 0
+                    ? $"ผู้ติดต่อผูก LINE ที่รับเรื่องเอกสาร {lineDoc} ปลายทาง — ติ๊กส่งเอกสารแล้วการ์ด LINE ไปด้วย (ถ้ามีกฎในตารางส่ง ต้องติ๊ก LINE ในกฎเอง)"
+                    : "ผู้ติดต่อยังไม่มี LINE ที่รับเรื่องเอกสาร — ส่งทางอีเมลอย่างเดียว",
+                f.LineOaProblem, ContactsUrl, lineDoc > 0 ? null : "ผูก LINE ที่ผู้ติดต่อ");
+        if (f.SaleSide && f.PostPayEmailReceipt == true && f.LineReceiptEndpoints is int lineRc)
+            Add("LINE-RECEIPT", "หลังรับเงิน", lineRc > 0 ? Ok : Info,
+                lineRc > 0 ? $"ใบเสร็จหลังรับชำระไปทาง LINE ด้วย ({lineRc} ปลายทางที่ติ๊ก “ใบเสร็จ”)" : "ใบเสร็จหลังรับชำระไปทางอีเมลอย่างเดียว (ไม่มี LINE ที่ติ๊ก “ใบเสร็จ”)",
+                null, ContactsUrl, lineRc > 0 ? null : "ตั้งช่องทางแจ้งเตือนของผู้ติดต่อ");
+        if (f.SaleSide && f.GatewayLive is bool live)
+            Add("GATEWAY", "รับเงิน", live ? Ok : Info,
+                live ? "รับชำระออนไลน์โหมดเงินจริงแล้ว — เงินเข้าลงรับชำระ/ออกใบเสร็จเอง" : "รับชำระออนไลน์ยังเป็นโหมดทดสอบ/ยังไม่ตั้ง — เงินโหมดทดสอบไม่มีผลทางบัญชี",
+                null, PaymentSettingsUrl, live ? null : "ตั้งรับชำระออนไลน์");
+        if (f.SaleSide && f.PartnerLinked == true)
+            Add("PARTNER", "คู่ค้า", Ok,
+                "ผู้ติดต่อเป็นคู่ค้า NextAcc — ใบแจ้งหนี้และใบเสร็จ/ใบกำกับ ณ วันรับเงินเข้าระบบของเขา · จ่ายผ่านลิงก์แล้วเขาได้รับแจ้งให้กดบันทึกจ่าย",
+                null, PartnersUrl, "หน้าคู่ค้า");
+
         return Finish(items, f, forceDraftOnly: !f.AutoApprove || approveFails
             || items.Any(i => i.Verdict == Fail && i.Code is "TEMPLATE" or "CONTACT"));
     }
@@ -386,7 +423,7 @@ public static class AutopilotReadiness
         var warns = items.Count(i => i.Verdict == Warn);
         string level;
         if (forceDraftOnly) level = LevelDraftOnly;
-        else if (f.AutoSendEmail && f.PayLinkAttach && items.All(i => i.Verdict == Ok))
+        else if (f.AutoSendEmail && f.PayLinkAttach && items.Where(i => !ChainInfoCodes.Contains(i.Code)).All(i => i.Verdict == Ok))
             level = LevelFull;
         else level = LevelPartial;
         return new Report(level, LevelLabel(level), items, warns, fails);

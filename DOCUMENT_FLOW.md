@@ -2215,7 +2215,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **รอบ 258-3 (F-H1 · DECISIONS 258-3-1)**: ธง "📧 ส่งเอกสาร" ของรายการประจำ (กฎเสมือน · ไม่มีกฎ "เมื่อรายการประจำสร้างเอกสาร") ⇒ ติ๊ก LINE ผู้ใช้/กลุ่ม
   ตามปลายทางของผู้ติดต่อที่รับเรื่อง "เอกสาร" และใช้ได้จริง (`ContactLineChannel.InlineChannels` ← ตัวหาผู้รับเดียว) แล้วเข้าคิวเส้นเดียวกับกฎ
   (`EnqueueDocumentAsync → EnqueueLineAsync`) · ผู้ติดต่อที่มีแต่ LINE ไม่หยุดที่ "ไม่มีอีเมล" · ไม่มีปลายทาง LINE ⇒ ไม่ติ๊ก (ไม่มีแถว "ข้าม" ทุกใบ) ·
-  กฎในตารางส่งยังชนะธง · หน้า recurring.html บอกตรง ๆ ว่าอะไรไปทาง LINE + ลิงก์ไปผู้ติดต่อ/ตารางส่ง · Last verified `commit เติมในคอมมิตตามหลัง`
+  กฎในตารางส่งยังชนะธง · หน้า recurring.html บอกตรง ๆ ว่าอะไรไปทาง LINE + ลิงก์ไปผู้ติดต่อ/ตารางส่ง · Last verified `commit 4e9efbc4`
 - **รอบ 257 ชุด 1 (A-H1 · DECISIONS 257-1-1/257-1-2)**: ด่านเขียนรายการประจำตัวเดียว `Helpers/RecurringWriteGate` (ผู้เรียก `RecurringController`
   Create · Update · Delete · Pause · Resume · RunNow — เดิมมีแค่ `[Authorize]`): ทุกการเขียน = `DocumentPermissionHelper.CanCreateAsync` ของชนิด ·
   ระบบอนุมัติ/ส่งแทนคน (`AutoApprove` หรือ `AutoSendEmail` — ตั้งใหม่ · **คงไว้ตอนแก้ไข** · เปิดต่อ · สร้างทันที) = `CanApproveAsync` ด้วย · เปลี่ยนชนิดตอนแก้ ⇒ ตรวจชนิดใหม่ด้วย ·
@@ -3066,6 +3066,9 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **Autopilot เห็นทั้งเส้น (F-M3)**: แถวใหม่ `ReceiptIssueFailed` · `LineFailed` (คิว LINE ล้ม 30 วัน) · `GatewayUnposted` (รายการชำระของเอกสารสำเร็จ > 15 นาที
   แต่ไม่มีการชำระอ้าง `PAY-INTENT-…`) · `PartnerRouteFailed` (ป้ายส่งคู่ค้าล้ม) — อ่านอย่างเดียว ผูก CompanyId
 - **50 ทวิ เข้ากล่องรับแล้วรอคน (F-M4)**: `WhtCertIntakeService.SubmitAsync` ผล AwaitUser ⇒ แจ้งทีม `AutopilotPartnerExchange` (E-11 ขยายขอบเขต) · ยืนยันเอง/ปฏิเสธ ⇒ ไม่แจ้ง
+- **ความพร้อมทั้งเส้นบนรายการประจำ (F-M1 · 258-3-9)**: แผงความพร้อมเดิม (`AutopilotReadiness.Evaluate` ← `RecurringAutopilotService`) เพิ่มแถว `LINE-DOC`
+  (ปลายทาง LINE ที่รับเรื่องเอกสาร + เหตุ OA ไม่พร้อม) · `LINE-RECEIPT` (เมื่อเปิดส่งใบเสร็จหลังชำระ) · `GATEWAY` (โหมดเงินจริง) · `PARTNER` (ผู้ติดต่อเป็นคู่ค้า Accepted) —
+  ✓/ⓘ เท่านั้น ไม่กดระดับ "อัตโนมัติเต็ม" (`ChainInfoCodes`) · ไม่ได้ตรวจ (null) = ไม่มีแถว
 - **ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ ผู้ซื้อกดบันทึกจ่ายครั้งเดียว (F-H3 · 258-3-7)**: `DocumentPaymentHandler` (gateway/สลิปที่ยืนยัน) หลังบันทึกรับชำระ ⇒
   `PartnerPaymentNoticeService.NotifySellerReceivedAsync` — ลิงก์ InvoiceFlow ที่มีใบซื้อปลายทาง + คู่ค้า Accepted ⇒ แถว `PartnerPaymentNotices` ใน**บริษัทผู้ซื้อ**
   (unique ต่อรายการชำระ · audit ทั้งสองฝั่ง) + แจ้ง `AutopilotPartnerExchange` (กระดิ่ง/กลุ่ม LINE ตามค่าตั้งของผู้ซื้อ) · **ไม่บันทึกบัญชีแทน** ·
@@ -3073,7 +3076,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   `CreatePaymentAsync` ของผู้ซื้อเอง: ยอด/ภาษีหักจาก `Helpers/PartnerPaymentNoticeRule.For` (เงินที่ผู้ขายรับ + ภาษีหักที่เหลือตามตัวคิดของผู้ซื้อ = ยอดค้าง ⇒ จ่ายครบพร้อมหัก ·
   = ยอดค้าง ⇒ ไม่หัก · อื่น ๆ ⇒ ไม่เดา บอกยอดสองข้าง) · ใบซื้อร่าง ⇒ ให้อนุมัติก่อน · เลขอ้างอิง `PARTNER-PAID-{intent}` กันซ้ำ · 50 ทวิ ออกตามค่าตั้งของผู้ซื้อ (เส้นจ่ายเดิม) ·
   "ปิดการแจ้ง" ไม่แตะบัญชี · migration `Helpers/PartnerPaymentNoticeMigration`
-- ยังไม่ทำในแพ็กนี้: ค่าตั้ง `WorkflowAutomationConfig.AutoCreateReceiptFromIncomingPayment` ยังไม่มีผู้อ่าน (คงใน baseline settings_reader — 258-3-8) · การ์ดความพร้อมทั้งเส้น (F-M1) · ทวง 50 ทวิ ทาง LINE (การ์ดของผู้ติดต่อ + ลิงก์อัปโหลดต่อแถวคิว — ผู้ส่งคิว LINE ยังรองรับเฉพาะการ์ดเอกสาร) · Last verified `commit เติมในคอมมิตตามหลัง`
+- ยังไม่ทำในแพ็กนี้: ค่าตั้ง `WorkflowAutomationConfig.AutoCreateReceiptFromIncomingPayment` ยังไม่มีผู้อ่าน (คงใน baseline settings_reader — 258-3-8) · การ์ดความพร้อมบนหน้า payment-settings (F-M1 ส่วนบริษัท) · ทวง 50 ทวิ ทาง LINE (การ์ดของผู้ติดต่อ + ลิงก์อัปโหลดต่อแถวคิว — ผู้ส่งคิว LINE ยังรองรับเฉพาะการ์ดเอกสาร) · Last verified `commit 4e9efbc4`
 
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 
@@ -8678,4 +8681,4 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิ�
 
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 9: แก้ผลฝ่ายค้าน R-H1 · R-M1…3 · R-L2…L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2be3e30c)_
 
-_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส้นบิลอัตโนมัติจนจบ — §2.12g-258c ชุด 1: ใบเสร็จทาง LINE · ลิงก์ดู PDF · ใบกำกับ ณ วันรับเงินถึงคู่ค้า · ล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส้นบิลอัตโนมัติจนจบ — §2.12g-258c ชุด 1: ใบเสร็จทาง LINE · ลิงก์ดู PDF · ใบกำกับ ณ วันรับเงินถึงคู่ค้า · ล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4e9efbc4)_

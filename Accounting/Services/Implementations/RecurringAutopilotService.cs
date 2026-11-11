@@ -555,8 +555,35 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             new PostPaymentAutomationPolicy.Overrides(r.PostPayEmailReceipt, r.PostPayIncludePartial),
             contact == null ? null : new PostPaymentAutomationPolicy.Overrides(contact.PostPayEmailReceipt, contact.PostPayIncludePartial));
 
+        // ── รอบ 258-3 (F-M1): ความพร้อมทั้งเส้น — LINE (ตัวหาผู้รับเดียว · ตัวกรองเดียว ContactLineChannel.LineEndpoints) · gateway · คู่ค้า ──
+        int? lineDocEps = null, lineRcEps = null;
+        string? lineOaProblem = null;
+        bool? gatewayLive = null, partnerLinked = null;
+        if (isDocument && saleSide)
+        {
+            if (contact != null)
+            {
+                lineDocEps = ContactLineChannel.LineEndpoints((await _recipients.ResolveAsync(companyId, contact.Id, NotifyTopic.Document, ct)).Options).Count;
+                lineRcEps = ContactLineChannel.LineEndpoints((await _recipients.ResolveAsync(companyId, contact.Id, NotifyTopic.Receipt, ct)).Options).Count;
+                var chainOa = await _recipients.LineChannelAsync(companyId, ct);
+                lineOaProblem = chainOa.CompanyOaReady ? null : (chainOa.CompanyOaProblem ?? "ยังไม่ได้ตั้ง LINE OA ของบริษัท (ตั้งค่า → แจ้งเตือนทาง LINE)");
+                var chainTaxId = PartnerCompanyMatch.NormalizeTaxId(contact.TaxId);
+                partnerLinked = chainTaxId != null && await _db.TradingPartnerships.AsNoTracking()
+                    .Where(tp => (tp.CompanyAId == companyId || tp.CompanyBId == companyId) && tp.Status == TradingPartnershipStatus.Accepted)
+                    .Select(tp => tp.CompanyAId == companyId ? tp.CompanyBId : tp.CompanyAId)
+                    .AnyAsync(otherId => _db.Companies.Any(co => co.Id == otherId && !co.IsDeleted && co.TaxId == chainTaxId), ct);
+            }
+            gatewayLive = await _db.PaymentProviderConfigs.AsNoTracking()
+                .AnyAsync(pc => pc.CompanyId == companyId && !pc.IsDeleted && pc.Mode == PaymentProviderMode.Live, ct);
+        }
+
         var facts = new AutopilotReadiness.Facts
         {
+            LineDocumentEndpoints = lineDocEps,
+            LineReceiptEndpoints = lineRcEps,
+            LineOaProblem = lineOaProblem,
+            GatewayLive = gatewayLive,
+            PartnerLinked = partnerLinked,
             IsDocumentTemplate = isDocument,
             DocumentType = docType,
             AutoApprove = r.AutoApprove || r.AutoSendEmail,
