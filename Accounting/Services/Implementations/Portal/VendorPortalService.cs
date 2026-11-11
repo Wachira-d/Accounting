@@ -185,7 +185,7 @@ public class VendorPortalService : IVendorPortalService
         var contactName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.CompanyId == companyId && c.Id == stored.ContactId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
         // กฎ #4 C: ทุกค่าที่ผู้ใช้คุมได้ต่อเข้า HTML ผ่าน HtmlEncode
-        var enc = System.Net.WebUtility.HtmlEncode;
+        static string enc(string? v) => System.Net.WebUtility.HtmlEncode(v ?? "");
         var body = $"<p>เรียน {enc(contactName)}</p>"
             + $"<p>{enc(companyName)} เปิดพอร์ทัลผู้ขายให้ท่านดูใบสั่งซื้อ · ใบแจ้งหนี้ · สถานะการจ่ายเงิน และส่งใบแจ้งหนี้ใหม่ได้โดยไม่ต้องมีบัญชีผู้ใช้</p>"
             + $"<p><a href=\"{enc(absoluteUrl)}\">เปิดพอร์ทัลผู้ขาย</a></p>"
