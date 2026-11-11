@@ -3086,7 +3086,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (L1) ไม่ล้าง scope ของผู้เรียก — ถอดเฉพาะแถวของตัวเอง · (L2) จองแถวแจ้งแบบมีเงื่อนไข (`Recording`) + ข้อผิดพลาดเส้นจ่าย ⇒ 409 ไทย ·
   (L3) สิทธิ์ = อนุมัติเอกสารตามชนิดใบซื้อจริง + ชั้นความลับ (ด่านเดียวกับบันทึกการชำระ) · รายการต้องเห็นเอกสารฝั่งซื้อ · (L5) audit ฝั่งผู้ขายไม่มี id ภายในของผู้ซื้อ ·
   (L6) `PartnerExchangeRules.IsTaxInvoiceCarrier` ใบเสร็จรับเงิน/ใบกำกับอย่างย่อ ⇒ ไม่ใช่หลักฐานภาษีซื้อ (§82/5(2) · ผู้เรียกเส้นคู่ค้า 3 จุดส่งรูปแบบ — `PortalAccountantExport`/`PartnerEvidenceRepair` ยังไม่ส่ง) ·
-  Db test `BillingChainRound258DbTests` · Last verified `commit เติมในคอมมิตตามหลัง`
+  Db test `BillingChainRound258DbTests` · Last verified `commit 1139bb5f`
 - ยังไม่ทำในแพ็กนี้: ค่าตั้ง `WorkflowAutomationConfig.AutoCreateReceiptFromIncomingPayment` ยังไม่มีผู้อ่าน (คงใน baseline settings_reader — 258-3-8) · การ์ดความพร้อมบนหน้า payment-settings (F-M1 ส่วนบริษัท) · ทวง 50 ทวิ ทาง LINE (การ์ดของผู้ติดต่อ + ลิงก์อัปโหลดต่อแถวคิว — ผู้ส่งคิว LINE ยังรองรับเฉพาะการ์ดเอกสาร) · Last verified `commit 4e9efbc4`
 
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
