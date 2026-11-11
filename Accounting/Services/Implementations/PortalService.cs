@@ -121,9 +121,11 @@ public class PortalService : IPortalService
             .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Id == accessId)
             ?? throw new InvalidOperationException("Portal access not found.");
 
-        // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach เอง
-        access.Contact = (await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == access.ContactId))!;
+        // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ) — อ่านชื่อแยก · รอบ 257 ปิดท้าย: ไม่แขวนผู้ติดต่อที่ไม่ได้ติดตาม (AsNoTracking) บนแถวที่ติดตามอยู่
+        // ก่อน SaveChanges — context ที่ติดตามผู้ติดต่อคนนี้อยู่แล้วจะชน "another instance with the same key is already being tracked"
+        // (เทสต์ Db R257_DH1 ล้มทันทีที่คลาสถูกรันบน PostgreSQL จริงครั้งแรก)
+        var contactName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && c.Id == access.ContactId).Select(c => c.Name).FirstOrDefaultAsync();
 
         var before = AuditSnapshot(access);
         if (request.CanViewInvoices.HasValue) access.CanViewInvoices = request.CanViewInvoices.Value;
@@ -135,7 +137,7 @@ public class PortalService : IPortalService
 
         await _db.SaveChangesAsync();
 
-        return MapToAccessResponse(access, access.Contact?.Name ?? access.DisplayName ?? access.Email);
+        return MapToAccessResponse(access, contactName ?? access.DisplayName ?? access.Email);
     }
 
     public async Task DeactivateAccessAsync(Guid companyId, Guid accessId, Guid actorUserId)
