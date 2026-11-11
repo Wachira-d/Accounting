@@ -10,7 +10,7 @@
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">บัญชีธนาคาร</h2><p class="page-subtitle">จัดการบัญชีธนาคารและกระทบยอด</p></div>
+      <div><h2 class="page-title">บัญชีธนาคาร</h2><p class="page-subtitle">จัดการบัญชีธนาคารและกระทบยอด · เงินเข้าที่ระบบเสนอปิดหนี้: <a href="/pages/autopilot.html#bankQueue">คิวเงินโอนรอยืนยันที่ Autopilot</a> · สลิปลูกค้า: <a href="/pages/payment-intents.html?status=Pending">ยืนยันสลิปที่หน้ารายการรับชำระออนไลน์</a></p></div>
       <div class="flex gap-2">
         <button class="btn btn-secondary" onclick="Page.openImport()"
                 data-tour-step="2"
@@ -982,10 +982,49 @@
             ${(t.reconciliationStatus === 'Matched' || t.reconciliationStatus === 'Suggested') ? `<button class="btn btn-sm btn-ghost" onclick="Page.showMatchInfo('${t.id}')" title="ดูว่าจับคู่/เสนอกับเอกสาร-JE อะไร">🔍 ดูคู่</button>` : ''}
             ${t.reconciliationStatus === 'Matched' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" data-i18n="common.cancel">ยกเลิก</button>` : `<button class="btn btn-sm btn-ghost" onclick="Page.openReconcileOne('${t.id}')">จับคู่</button>${t.reconciliationStatus !== 'Suggested' ? `<button class="btn btn-sm btn-ghost" onclick="Page.askAiBankMatch(event, '${t.id}')" title="ขอความเห็น AI">🤖</button>` : ''}`}
             ${t.reconciliationStatus === 'Suggested' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.unmatchTxn('${t.id}')" title="ไม่ใช่คู่นี้ — ล้างข้อเสนอทิ้ง">ไม่ใช่</button>` : ''}
+            ${t.transactionType === 'Deposit' && (t.reconciliationStatus || 'Unmatched') === 'Unmatched' ? `<button class="btn btn-sm btn-ghost" onclick="Page.openCreditSuggest('${t.id}')" title="ดูข้อเสนอ: เงินก้อนนี้ปิดใบค้างหลายใบ / ใบเดียว + ส่วนเกิน แล้วเปิดหน้ารับชำระที่เติมยอดไว้ (ระบบไม่ลงบัญชีเอง)">👥 รับเงินลูกค้า</button>` : ''}
             <button class="btn btn-sm btn-ghost text-danger" onclick="Page.deleteOneTransaction('${t.id}')" title="ลบรายการ">🗑️</button>
           </td>
         </tr>`).join('');
         this.updateBulkBar();
+      },
+
+      // รอบ 259 P5 — ข้อเสนอของบรรทัดเงินเข้าที่ยังไม่จับคู่ (แบ่งหลายใบ / ใบเดียว + ส่วนเกิน) จากเซิร์ฟเวอร์ · เสนอเท่านั้น
+      // ปุ่ม "บันทึกเป็นรับเงินลูกค้า" = ลิงก์ที่เซิร์ฟเวอร์ประกอบ (เปิดหน้ารับชำระที่เติมยอด/วันที่ไว้ — ผู้ใช้กดบันทึกเอง)
+      async openCreditSuggest(txnId) {
+        let m = document.getElementById('creditSuggestModal');
+        if (!m) {
+          m = document.createElement('div');
+          m.id = 'creditSuggestModal';
+          m.className = 'modal-overlay';
+          m.innerHTML = `<div class="modal" style="max-width:720px">
+              <div class="modal-header"><h3 class="modal-title">รับเงินลูกค้าจากรายการนี้</h3>
+                <button class="modal-close" onclick="Layout.closeModal('creditSuggestModal')">&times;</button></div>
+              <div class="modal-body" id="creditSuggestBody"></div>
+              <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('creditSuggestModal')">ปิด</button></div>
+            </div>`;
+          document.body.appendChild(m);
+        }
+        const body = document.getElementById('creditSuggestBody');
+        body.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8">กำลังหาใบค้างที่ตรง…</div>';
+        Layout.openModal('creditSuggestModal');
+        const api = Layout.api(); if (!api || !api.getBankLineCreditSuggestions) return;
+        try {
+          const d = (await api.getBankLineCreditSuggestions(txnId))?.data || {};
+          const rows = d.suggestions || [];
+          const head = `<div class="text-sm" style="margin-bottom:10px">เงินเข้า <b>${Layout.money(d.amount)}</b> วันที่ ${Layout.date(d.transactionDate)}${d.description ? ' · ' + Layout.esc(d.description) : ''}</div>`;
+          const cards = rows.map(x => `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:10px;margin-bottom:10px">
+              <div class="font-medium">${Layout.esc(x.contactName || '')} — ${x.kind === 'Split' ? 'ปิดหลายใบ' : 'ปิดใบเดียว + ส่วนเกิน'}</div>
+              <div class="text-xs text-gray-500" style="margin:4px 0">${Layout.esc(x.reason)}</div>
+              <table class="table" style="font-size:12.5px;margin:0"><tbody>${(x.allocations || []).map(a => `<tr><td>${Layout.esc(a.documentNumber)}</td><td class="text-right">${Layout.money(a.amount)}</td></tr>`).join('')}
+                ${x.excess > 0 ? `<tr><td>ส่วนเกิน (เก็บเป็นเงินรอจัดสรร)</td><td class="text-right">${Layout.money(x.excess)}</td></tr>` : ''}</tbody></table>
+              <div style="margin-top:8px"><a class="btn btn-sm btn-primary" href="${Layout.esc(x.payHref)}">บันทึกเป็นรับเงินลูกค้า</a></div>
+            </div>`).join('');
+          body.innerHTML = head + (cards || '') + (d.note ? `<div class="text-sm text-gray-500">${Layout.esc(d.note)}</div>` : '')
+            + '<div class="text-xs text-gray-400" style="margin-top:8px">ระบบเสนอเท่านั้น — ปิดหนี้อัตโนมัติมีเฉพาะยอดตรงใบเดียวตามการตั้งค่า Autopilot</div>';
+        } catch (e) {
+          body.innerHTML = `<div class="text-danger" style="padding:20px">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+        }
       },
 
       // Per-row "what did this match to?" popup.

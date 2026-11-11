@@ -17,14 +17,22 @@ namespace Accounting.Controllers;
 public class VendorPortalController : ControllerBase
 {
     private readonly IVendorPortalService _svc;
+    private readonly Accounting.Data.AccountingDbContext _db;
+    private readonly Microsoft.Extensions.Configuration.IConfiguration _config;
 
-    public VendorPortalController(IVendorPortalService svc) { _svc = svc; }
+    public VendorPortalController(IVendorPortalService svc, Accounting.Data.AccountingDbContext db,
+        Microsoft.Extensions.Configuration.IConfiguration config)
+    { _svc = svc; _db = db; _config = config; }
 
     // ── Admin surface (authorized) ───────────────────────────────────
     public sealed record IssueTokenRequest(Guid ContactId, string Role, int? ValidDays,
         string? RecipientEmail);
 
+    /// <summary>รอบ 259-3 ฝ่ายค้าน M3: ออกลิงก์ = เปิดใบสั่งซื้อ/ใบแจ้งหนี้ของผู้ติดต่อให้คนนอก + ส่งอีเมลในนามบริษัท ⇒ สิทธิ์แก้ผู้ติดต่อ (Contact.Edit ·
+    /// ระดับเดียวกับให้สิทธิ์พอร์ทัลลูกค้า) · คีย์ API ห้าม · อีเมลเข้าคิว (โควตา) ไม่ส่งตรงจากคำขอ</summary>
     [Authorize]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    [Accounting.Filters.RejectApiKey("ออกลิงก์พอร์ทัลผู้ขาย")]
     [HttpPost("api/companies/{companyId:guid}/vendor-portal/tokens")]
     public async Task<ActionResult<ApiResponse<object>>> Issue(
         Guid companyId, [FromBody] IssueTokenRequest req, CancellationToken ct)
@@ -34,29 +42,57 @@ public class VendorPortalController : ControllerBase
             var userId = Helpers.JwtHelper.GetUserIdFromClaims(User);
             var (raw, stored) = await _svc.IssueAsync(companyId, req.ContactId,
                 req.Role, req.ValidDays, req.RecipientEmail, userId, ct);
+            // รอบ 259-3 (E-H2 · E 4.6): ลิงก์เต็มจาก URL ของระบบ (SystemBaseUrl ตัวเดียว) — หน้าเว็บไม่ประกอบจาก location.origin
+            var origin = await Helpers.SystemBaseUrl.OriginForRequestAsync(_db, _config, Request.Scheme, Request.Host.ToString(), ct);
+            var url = $"{origin}/vendor-portal.html?t={raw}";
+            // ช่องอีเมลผู้รับ = เข้าคิวส่งจริง (เดิมเก็บอย่างเดียว · silent no-op) · ลิงก์ในอีเมลเป็นของผู้รับ (ออกตอนส่ง) · ผลคืนให้หน้าแสดง
+            var invite = await _svc.QueueInviteAsync(companyId, stored, ct);
             return Ok(new ApiResponse<object>(true, new
             {
                 tokenId = stored.Id,
                 rawToken = raw,            // shown ONCE — admin must copy/send
                 expiresAt = stored.ExpiresAt,
-                portalUrl = $"/vendor-portal.html?t={raw}",
+                portalUrl = url,
                 stored.Role,
-            }, "ออก token แล้ว — คัดลอกลิงก์ส่งให้ vendor (จะไม่แสดงอีก)"));
+                inviteRequested = invite.Requested,
+                inviteQueued = invite.Queued,
+                inviteNote = invite.Note,
+            }, "ออกลิงก์แล้ว — ลิงก์แสดงครั้งเดียว · " + invite.Note));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
-    public sealed record RevokeTokenRequest(string Reason);
+    /// <summary>รอบ 259-3 (E-H2): ลิงก์ที่ออกแล้ว (ผู้ติดต่อ · หมดอายุ · ใช้ล่าสุด · สถานะ · เพิกถอนได้ไหม) — ไม่มี token ดิบ</summary>
+    [Authorize]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    [HttpGet("api/companies/{companyId:guid}/vendor-portal/tokens")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<VendorPortalTokenRow>>>> List(Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<IReadOnlyList<VendorPortalTokenRow>>(true, await _svc.ListAsync(companyId, ct)));
+
+    public sealed record RevokeTokenRequest(string? Reason);
+
+    /// <summary>รอบ 259-3 ฝ่ายค้าน L6: เพิกถอนลิงก์บทบาทลูกค้าเดิม (ก่อนรอบ 259) ทั้งหมด — ปิดประตูที่สองของลูกค้าก่อนหมดอายุ</summary>
+    [Authorize]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    [Accounting.Filters.RejectApiKey("เพิกถอนลิงก์พอร์ทัล")]
+    [HttpPost("api/companies/{companyId:guid}/vendor-portal/tokens/revoke-legacy-customer")]
+    public async Task<ActionResult<ApiResponse<object>>> RevokeLegacyCustomer(Guid companyId, CancellationToken ct)
+    {
+        var n = await _svc.RevokeLegacyCustomerAsync(companyId, "", ct);
+        return Ok(new ApiResponse<object>(true, new { revoked = n }, n > 0 ? $"เพิกถอนลิงก์ลูกค้าเดิม {n} รายการแล้ว" : "ไม่มีลิงก์ลูกค้าเดิมที่ยังใช้ได้"));
+    }
 
     [Authorize]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    [Accounting.Filters.RejectApiKey("เพิกถอนลิงก์พอร์ทัล")]
     [HttpPost("api/companies/{companyId:guid}/vendor-portal/tokens/{tokenId:guid}/revoke")]
     public async Task<ActionResult<ApiResponse<object>>> Revoke(
-        Guid companyId, Guid tokenId, [FromBody] RevokeTokenRequest req, CancellationToken ct)
+        Guid companyId, Guid tokenId, [FromBody] RevokeTokenRequest? req, CancellationToken ct)
     {
         try
         {
-            await _svc.RevokeAsync(companyId, tokenId, req.Reason, ct);
-            return Ok(new ApiResponse<object>(true, new { revoked = true }, "ยกเลิก token แล้ว"));
+            await _svc.RevokeAsync(companyId, tokenId, req?.Reason ?? "", ct);
+            return Ok(new ApiResponse<object>(true, new { revoked = true }, "เพิกถอนลิงก์แล้ว — ผู้ขายเปิดลิงก์นี้ไม่ได้อีก"));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }

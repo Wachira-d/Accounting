@@ -35,4 +35,30 @@ public interface ICustomerCreditService
     /// <summary>ยกเลิกการจัดสรรทีหลัง: กลับ JE · คืนยอดค้างของใบ · คืนเงินรอจัดสรร · ถอยภาษีขายถ้าใบไม่เหลือเงินรับ</summary>
     Task<CustomerCreditAllocationResult> UndoAllocationAsync(Guid companyId, Guid paymentId, Guid allocationId, string actor,
         CancellationToken ct = default);
+
+    // ───────── รอบ 259 P4/P5 (DECISIONS 259-1-x) ─────────
+
+    /// <summary>คืนเงินลูกค้า: Dr ผังพัก / Cr ธนาคาร + ยอดธนาคาร + หลักฐานการจ่าย · audit</summary>
+    Task<CustomerCreditMovementResult> RefundAsync(Guid companyId, Guid paymentId, CustomerCreditRefundRequest request, string actor, CancellationToken ct = default);
+
+    /// <summary>ตัดเศษคงเหลือทั้งหมด (≤ เพดานของบริษัท): Dr ผังพัก / Cr ผลต่างจากการปัดเศษ</summary>
+    Task<CustomerCreditMovementResult> WriteOffAsync(Guid companyId, Guid paymentId, CustomerCreditWriteOffRequest request, string actor, CancellationToken ct = default);
+
+    /// <summary>ย้ายเป็นเงินมัดจำ: ออกใบมัดจำ (ระบบมัดจำเดิม · ขาเงินเข้า = ผังพัก) และอนุมัติให้ · ล้ม = ถอยครบ</summary>
+    Task<CustomerCreditMovementResult> ToDepositAsync(Guid companyId, Guid paymentId, CustomerCreditToDepositRequest request, string actor, CancellationToken ct = default);
+
+    /// <summary>ออกใบแจ้งหนี้ส่วนที่ขาด: สร้างร่างของลูกค้ารายเดียวกัน + จองเงินไว้ (อนุมัติแล้วจัดสรรเอง — <see cref="AfterDocumentApprovedAsync"/>)</summary>
+    Task<CustomerCreditMovementResult> IssueInvoiceAsync(Guid companyId, Guid paymentId, CustomerCreditIssueInvoiceRequest request, string actor, CancellationToken ct = default);
+
+    /// <summary>ยกเลิกขาออก (คืนเงิน/ตัดเศษ: กลับ JE · การจอง: ปล่อย) — ใบมัดจำยกเลิกที่หน้าเอกสาร</summary>
+    Task<CustomerCreditMovementResult> UndoMovementAsync(Guid companyId, Guid paymentId, Guid movementId, string? reason, string actor, CancellationToken ct = default);
+
+    /// <summary>หลังอนุมัติใบ: ใบที่ออกจากเงินรอจัดสรรได้รับการจัดสรรอัตโนมัติ · คืนข้อความถึงผู้ใช้ (ว่าง = ไม่มีอะไร)</summary>
+    Task<IReadOnlyList<string>> AfterDocumentApprovedAsync(Guid companyId, Guid documentId, string actor, CancellationToken ct = default);
+
+    /// <summary>ข้อเสนอของบรรทัดเงินเข้าที่ยังไม่จับคู่ (แบ่งหลายใบ / ใบเดียว + ส่วนเกิน) — เสนอเท่านั้น ไม่ลงบัญชี</summary>
+    Task<BankLineCreditSuggestionResponse> BankLineSuggestionsAsync(Guid companyId, Guid lineId, CancellationToken ct = default);
+
+    /// <summary>ตั้งเพดานตัดเศษของบริษัท · audit</summary>
+    Task<decimal> SetWriteOffCapAsync(Guid companyId, decimal cap, string actor, CancellationToken ct = default);
 }

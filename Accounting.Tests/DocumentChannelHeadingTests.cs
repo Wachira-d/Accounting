@@ -11,7 +11,7 @@ namespace Accounting.Tests;
 /// <summary>
 /// **ภาษาและชื่อเอกสารในอีเมล/LINE/อีเมลตั้งเวลา ต้องตรงกับ PDF ที่แนบ** (ผลตรวจ S-12 · รอบ 193)
 ///
-/// <para>═══ บั๊กที่ล็อกไว้ ═══ <c>DocumentEmailService</c> · <c>DocumentLineDeliveryService</c> · <c>EmailScheduleService</c>
+/// <para>═══ บั๊กที่ล็อกไว้ ═══ <c>DocumentEmailService</c> · <c>ContactLineQueueService</c> (การ์ด LINE) · <c>EmailScheduleService</c>
 /// หาภาษาเองด้วย <c>doc.DocumentLanguage ?? settings.DocumentLanguage</c> (ข้ามภาษาของเทมเพลต) และมีตารางชื่อชนิด
 /// เอกสาร 6 ชนิดของตัวเอง (ไม่รู้จัก <c>DocumentTitleOverridesJson</c> · <c>CustomTitle</c> · หัวรวม) ⇒ อีเมล "ใบแจ้งหนี้"
 /// ครอบ PDF หัว "ใบแจ้งหนี้/ใบวางบิล" หรือ PDF ภาษาอังกฤษ</para>

@@ -49,6 +49,10 @@ public interface IPortalService
     Task<byte[]> ExportAccountantLedgerAsync(Guid companyId, Guid contactId, DateTime fromDate, DateTime toDate, CancellationToken ct = default);
     Task<PortalSlipUploadResponse> UploadDocumentSlipAsync(
         Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount, string? bankRef = null);
+    /// <summary>รอบ 259-3 (E-M1 · คำตัดสิน 259-3-2): ปุ่ม "ชำระ" ในพอร์ทัล = หน้าชำระของเอกสาร (pay-document · ช่องทางออนไลน์ + โอน/สลิป + ไม่หัก ณ ที่จ่าย
+    /// ตัวเดียวกับลิงก์ในอีเมล) — ออก/ใช้ลิงก์เดิมของใบผ่าน <c>IDocumentPayLinkService.EnsureLinkAsync</c> · บริษัทไม่มีช่องทางออนไลน์ ⇒ <c>Url</c> null +
+    /// เหตุ + <c>SlipFallback</c> (พอร์ทัลแสดงกล่องโอน/สลิปด้วยยอดจากเซิร์ฟเวอร์) · ใบที่ลูกค้าไม่เห็น = <see cref="KeyNotFoundException"/></summary>
+    Task<PortalPayLinkResponse> GetDocumentPayLinkAsync(Guid companyId, Guid contactId, Guid documentId, CancellationToken ct = default);
 }
 
 /// <summary>รอบ 255 WP-12B: ตัวตนจากโทเคนพอร์ทัลที่ผ่านการตรวจ</summary>

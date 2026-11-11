@@ -18,7 +18,10 @@ public interface IDocumentPayLinkService
 
     /// <summary>ออก/ใช้ลิงก์เดิมของใบ (หนึ่งลิงก์ต่อใบ · หมดอายุ/เพิกถอน ⇒ ออกใหม่) · <paramref name="scheduleChannels"/> = ช่องทางที่ตารางเลือก (null = ค่าบริษัท) ·
     /// คืนลิงก์ หรือเหตุที่ออกไม่ได้ (ไม่โยน)</summary>
-    Task<PayLinkResult> EnsureLinkAsync(Guid companyId, Guid documentId, IReadOnlyCollection<string>? scheduleChannels, CancellationToken ct = default);
+    /// <param name="allowReissueRevoked">รอบ 259 (259-2-8): ลิงก์ที่ถูกเพิกถอน ⇒ ออกใหม่ได้เฉพาะผู้เรียกที่ตั้งใจ (ปุ่มออกลิงก์ของพนักงาน · อีเมลตามตาราง) ·
+    /// false (หน้าต่างส่งเอง · พอร์ทัล) ⇒ โยน <see cref="Accounting.Helpers.PayLinkRevokedException"/> · ลิงก์ที่ยังใช้ได้ไม่ถูกเขียนทับช่องทาง · ออกใหม่แทนลิงก์เดิม = audit</param>
+    Task<PayLinkResult> EnsureLinkAsync(Guid companyId, Guid documentId, IReadOnlyCollection<string>? scheduleChannels, CancellationToken ct = default,
+        bool allowReissueRevoked = false, string? actor = null);
 
     /// <summary>บล็อกลิงก์ชำระเงินสำหรับอีเมลตามตาราง — null เมื่อไม่แนบ (ปิด · ใบไม่เข้าเงื่อนไข · บริษัทยังไม่ตั้งรับชำระออนไลน์)</summary>
     Task<PayLinkResult?> ForScheduledEmailAsync(EmailScheduleRule rule, Document doc, CancellationToken ct = default);
@@ -81,7 +84,9 @@ public sealed record DocumentAutoSendSettingsDto(
     bool PostPayIncludePartial,
     string SenderNote,
     // รอบ 253 (WP-10): ทวง 50 ทวิ อัตโนมัติ (ค่าตั้งต้นปิด)
-    bool WhtCertReminderEnabled = false);
+    bool WhtCertReminderEnabled = false,
+    // รอบ 259-3 ฝ่ายค้าน L5: ผู้เรียกแก้ค่าชุดนี้ได้ไหม (PUT = เจ้าของบริษัท) — หน้าที่แสดงสวิตช์ล็อกช่อง + บอกเหตุ · null = ไม่ได้ตรวจ
+    bool? CanEdit = null);
 
 /// <summary>null = ไม่แตะช่องนั้น · <see cref="PayLinkDefaultChannels"/> ว่าง = ล้าง (ทุกช่องทางที่บริษัทเปิด)</summary>
 public sealed record UpdateDocumentAutoSendSettings(

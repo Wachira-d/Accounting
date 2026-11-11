@@ -341,7 +341,8 @@
       const docs = j?.data || [];
 
       const outstanding = docs.reduce((s, d) => s + Math.max(0, d.balanceDue || 0), 0);
-      const overdue = docs.filter(d => d.balanceDue > 0 && d.dueDate && new Date(d.dueDate) < new Date()).length;
+      // รอบ 259-3 (E 4.2): "เกินกำหนด" ตัดสินที่เซิร์ฟเวอร์ (PortalDocumentStatus — วันที่ไทย) — หน้าแค่นับธง
+      const overdue = docs.filter(d => d.isOverdue === true).length;
 
       document.getElementById('tabContent').innerHTML = `
         <div class="kpi-grid">
@@ -372,7 +373,7 @@
                 const voided = d.status === 'Voided';   // ป้ายสถานะ: docStatusText (ตัวเดียวกับหน้าต่างรายละเอียด)
                 // รอบ 250 WP-03 (ฝ่ายค้าน H1): เซิร์ฟเวอร์ตัดสินว่าใบนี้ชำระที่นี่ได้ไหม (ฝั่งขาย · THB · ยอดค้าง > 0) — หน้าเว็บไม่ตัดสินชนิดเอง
                 const payable = !voided && d.canPay === true;
-                const overdue = payable && d.dueDate && new Date(d.dueDate) < new Date();
+                const overdue = payable && d.isOverdue === true;
                 const cls = voided ? 'pill-void' : (d.balanceDue <= 0 ? 'pill-paid' : (overdue ? 'pill-overdue' : 'pill-due'));
                 const lbl = docStatusText(d);
                 return `<tr>
@@ -400,7 +401,7 @@
         const d = j?.data;
         if (!d) return;
         document.getElementById('modalTitle').textContent = `${docTypeLabel(d.documentType)} ${d.documentNumber}`;
-        const overdue = d.balanceDue > 0 && d.dueDate && new Date(d.dueDate) < new Date();
+        const overdue = d.isOverdue === true;   // รอบ 259-3: เซิร์ฟเวอร์ตัดสิน
         document.getElementById('modalBody').innerHTML = `
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;margin-bottom:14px">
             <div><div style="font-size:11px;color:var(--gray-500)">ประเภท</div><div>${esc(docTypeLabel(d.documentType))}</div></div>
@@ -554,7 +555,7 @@
     // ============================================================
 
     /**
-     * Open the slip-upload modal pre-filled for the given document.
+     * รอบ 259-3: เปิดหน้าชำระของเอกสาร (pay-document) ถ้าออกลิงก์ได้ · ไม่งั้น slip-upload modal (ยอดจากเซิร์ฟเวอร์).
      * Fetches the company's payment-options (PromptPay + bank) and
      * renders QR + transfer instructions + amount field + file picker
      * + confirm button. Form submit POSTs multipart to
@@ -568,6 +569,32 @@
       bodyEl.innerHTML = '<div class="empty">กำลังโหลดวิธีรับเงิน...</div>';
       footerEl.innerHTML = '<button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>';
       this._openModal();
+
+      // รอบ 259-3 (E-M1 · คำตัดสิน 259-3-2): บ้านเดียวของการชำระ = หน้าชำระของเอกสาร (ลิงก์เดียวกับอีเมล — ออนไลน์ + โอน/สลิป + "ไม่หัก ณ ที่จ่าย")
+      // เซิร์ฟเวอร์ตัดสินว่าออกลิงก์ได้ไหม · ไม่มีช่องทางออนไลน์ ⇒ กล่องโอน/สลิปด้านล่าง (ยอดจากเซิร์ฟเวอร์ · ลูกค้าแก้ยอดไม่ได้)
+      let link = null, linkErr = null;
+      try {
+        const r = await fetch(`/api/portal/${encodeURIComponent(this.companyId)}/documents/${encodeURIComponent(documentId)}/pay-link`,
+          { method: 'POST', headers: { 'Authorization': `Bearer ${this.auth.accessToken}` }, cache: 'no-store' });
+        const j = await r.json().catch(() => null);
+        if (r.ok && j?.success) link = j.data; else linkErr = j?.message || `HTTP ${r.status}`;
+      } catch (e) { linkErr = e.message || 'เชื่อมต่อไม่ได้'; }
+      if (linkErr) {
+        bodyEl.innerHTML = `<div class="empty" style="background:#FEF2F2;color:#991b1b;border-radius:8px">เปิดหน้าชำระเงินไม่สำเร็จ — ${esc(linkErr)}
+          <div style="margin-top:8px"><button class="btn btn-ghost" onclick="Portal.openPay('${jsArg(documentId)}', ${Number(balanceDue) || 0}, '${jsArg(docNumber)}')">🔄 ลองใหม่</button></div></div>`;
+        return;
+      }
+      if (link && link.url) {
+        bodyEl.innerHTML = `
+          <div style="font-size:14px;line-height:1.6;margin-bottom:14px">ชำระเอกสาร <strong>${esc(docNumber)}</strong> ที่หน้าชำระเงินของร้าน —
+            เลือกได้ทั้งชำระออนไลน์ โอนเข้าบัญชี/สแกน QR แล้วแนบสลิป · ยอดที่ต้องชำระ (รวมภาษีหัก ณ ที่จ่าย ถ้ามี) คำนวณให้แล้ว</div>
+          <a class="btn btn-primary" style="display:inline-block;text-decoration:none" href="${esc(link.url)}" target="_blank" rel="noopener">💳 ไปหน้าชำระเงิน</a>`;
+        return;
+      }
+      if (link && !link.slipFallback) {
+        bodyEl.innerHTML = `<div class="empty" style="background:#FEF2F2;color:#991b1b;border-radius:8px">${esc(link.refusal || 'เอกสารนี้ชำระผ่านพอร์ทัลไม่ได้ — กรุณาติดต่อร้าน')}</div>`;
+        return;
+      }
 
       // รอบ 250 WP-03 (A G-01 · D §9.1): QR พร้อมเพย์สร้างที่เซิร์ฟเวอร์ (PromptPayService ตัวเดียวกับ pay-document) ฝังยอดค้างของใบจากฐาน
       // — เดิมประกอบ payload ใน JS แล้วส่งเลขพร้อมเพย์+ยอดไปบริการสร้าง QR ภายนอก (บุคคลที่สาม) · โหลดล้ม = บอกตรง ๆ ไม่ใช่ "ร้านยังไม่ตั้งค่า"
@@ -619,8 +646,9 @@
           </div>` : ''}
         <form id="paySlipForm" onsubmit="Portal.uploadSlip(event, '${jsArg(documentId)}', '${jsArg(docNumber)}')" style="display:grid;gap:10px">
           <div class="field" style="margin-bottom:0">
-            <label>จำนวนที่โอน (บาท)</label>
-            <input type="number" step="0.01" min="0.01" name="amount" value="${Number(net||0).toFixed(2)}" required>
+            <label>ยอดที่ต้องโอน (บาท)</label>
+            <div style="font-size:18px;font-weight:700">฿${money(net)}</div>
+            <div style="font-size:12px;color:var(--gray-500)">ยอดคำนวณจากใบนี้ (หลังหัก ณ ที่จ่าย ถ้ามี) — ระบบบันทึกยอดนี้กับสลิป</div>
           </div>
           <div class="field" style="margin-bottom:0">
             <label>แนบสลิป (รูปภาพ/PDF)</label>
@@ -698,9 +726,8 @@
   /** ป้ายสถานะเอกสาร — ตัวเดียวของหน้านี้ (ตาราง + หน้าต่างรายละเอียด · เดิมหน้าต่างแสดง enum ดิบ "Approved") ·
    *  ยอดค้าง/สถานะยกเลิกมาจากเซิร์ฟเวอร์ (หน้านี้แค่เลือกคำ) */
   function docStatusText(d) {
-    if (d.status === 'Voided') return 'ยกเลิก';
-    if (d.balanceDue <= 0) return 'ชำระแล้ว';
-    return d.dueDate && new Date(d.dueDate) < new Date() ? 'เกินกำหนด' : 'รอชำระ';
+    // รอบ 259-3 (E 4.2): ป้ายจากเซิร์ฟเวอร์ (PortalDocumentStatus) — ไม่มีสำเนากติกาในหน้า
+    return d.statusLabel || d.status || '';
   }
 
   function toast(msg, kind = 'ok') {

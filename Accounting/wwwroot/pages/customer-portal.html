@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Portal ลูกค้า - Next Acc</title>
+  <title>พอร์ทัลลูกค้า - Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">Portal ลูกค้า</h2><p class="page-subtitle">จัดการการเข้าถึง Portal สำหรับลูกค้า ให้ลูกค้าดูเอกสารและดาวน์โหลด PDF ได้เอง</p></div>
+      <div><h2 class="page-title">พอร์ทัลลูกค้า</h2><p class="page-subtitle">ให้ลูกค้าเข้าดูเอกสาร · ดาวน์โหลด PDF · ดูใบแจ้งยอด · ชำระเงิน (ผ่านหน้าชำระเงินของเอกสาร) ได้เอง — ผู้ขายใช้ <a href="/pages/vendor-portal-admin.html">พอร์ทัลผู้ขาย</a></p></div>
       <button class="btn btn-primary" onclick="Page.openCreate()">+ สร้างสิทธิ์เข้าถึง</button>
     </div>
 
@@ -43,8 +43,8 @@
 
     <!-- Portal Link Info -->
     <div class="card" style="padding:24px;margin-top:24px">
-      <h3 style="margin-bottom:12px">ลิงก์ Portal ลูกค้า</h3>
-      <p class="text-sm text-gray-500" style="margin-bottom:12px">ส่งลิงก์นี้ให้ลูกค้าเพื่อเข้าถึง Portal ดูเอกสารและดาวน์โหลด PDF</p>
+      <h3 style="margin-bottom:12px">ลิงก์พอร์ทัลลูกค้า</h3>
+      <p class="text-sm text-gray-500" style="margin-bottom:12px">ส่งลิงก์นี้ให้ลูกค้าเพื่อเข้าพอร์ทัล ดูเอกสารและดาวน์โหลด PDF</p>
       <div style="display:flex;gap:8px;align-items:center">
         <input type="text" class="form-input" id="portalUrl" readonly style="font-family:monospace;font-size:13px">
         <button class="btn btn-secondary" onclick="Page.copyPortalUrl()">คัดลอก</button>
@@ -54,7 +54,7 @@
     <!-- Create Access Modal -->
     <div class="modal-overlay" id="createModal">
       <div class="modal" style="max-width:550px">
-        <div class="modal-header"><h3 class="modal-title">สร้างสิทธิ์เข้าถึง Portal</h3><button class="modal-close" onclick="Layout.closeModal('createModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title">สร้างสิทธิ์เข้าพอร์ทัลลูกค้า</h3><button class="modal-close" onclick="Layout.closeModal('createModal')">&times;</button></div>
         <div class="modal-body">
           <div class="form-group"><label class="form-label">ลูกค้า (ผู้ติดต่อ) *</label>
             <input type="hidden" id="accessContactId"><input type="text" class="form-input" id="accessContact">
@@ -88,13 +88,19 @@ const Page = {
 
   init() {
     if (!Layout.init('customer-portal')) return;
-    Layout.setTitle('Portal ลูกค้า');
-    // Customer-facing entry point — pre-filled with the company id
-    // so the owner can copy-paste a ready-to-share link.
-    const cid = Layout.getCompanyId();
-    document.getElementById('portalUrl').value =
-      window.location.origin + '/portal.html' + (cid ? `?company=${cid}` : '');
+    Layout.setTitle('พอร์ทัลลูกค้า');
+    // รอบ 259-3 (E 4.6): ลิงก์จากเซิร์ฟเวอร์ (URL ของระบบ — SystemBaseUrl) ไม่ใช่ location.origin ของหน้าพนักงาน
+    this.loadLink();
     this.load();
+  },
+
+  async loadLink() {
+    const api = Layout.api(); if (!api) return;
+    const el = document.getElementById('portalUrl');
+    try {
+      const r = await api.getPortalLink();
+      el.value = (r && r.data && r.data.url) || '';
+    } catch (e) { el.value = ''; el.placeholder = 'โหลดลิงก์ไม่สำเร็จ: ' + (e.message || ''); }
   },
 
   async load() {
@@ -110,13 +116,16 @@ const Page = {
       document.getElementById('inactiveAccess').textContent = items.length - active;
 
       this.renderTable(items);
-    } catch (err) { Layout.toast(err.message, 'error'); }
+    } catch (err) {
+      // รอบ 259-3 (E 4.5): ล้ม = แถวบอกเหตุ + ลองใหม่ (เดิมค้าง "กำลังโหลด..." ตลอดไป)
+      Layout.tableError('tableBody', 7, 'โหลดรายการสิทธิ์ไม่สำเร็จ', () => this.load(), err.message);
+    }
   },
 
   renderTable(items) {
     const tbody = document.getElementById('tableBody');
     if (items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสิทธิ์เข้าถึง Portal</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีสิทธิ์เข้าพอร์ทัล</td></tr>';
       return;
     }
     const esc = (v) => Layout.esc(v == null ? '' : String(v));
@@ -187,14 +196,14 @@ const Page = {
     };
     try {
       await api.createPortalAccess(data);
-      Layout.toast('สร้างสิทธิ์เข้าถึง Portal สำเร็จ');
+      Layout.toast('สร้างสิทธิ์เข้าพอร์ทัลสำเร็จ');
       Layout.closeModal('createModal');
       this.load();
     } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
   async deactivate(id) {
-    if (!confirm('ปิดใช้งานสิทธิ์นี้?')) return;
+    if (!await Layout.confirm({ title: 'ปิดใช้งานสิทธิ์', message: 'ลูกค้าจะเข้าพอร์ทัลด้วยอีเมลนี้ไม่ได้จนกว่าจะเปิดใช้งานอีกครั้ง', okText: 'ปิดใช้งาน', danger: true })) return;
     const api = Layout.api(); if (!api) return;
     try {
       await api.deactivatePortalAccess(id);
@@ -222,10 +231,9 @@ const Page = {
   },
 
   copyPortalUrl() {
-    const input = document.getElementById('portalUrl');
-    input.select();
-    document.execCommand('copy');
-    Layout.toast('คัดลอกลิงก์แล้ว');
+    const v = document.getElementById('portalUrl').value;
+    if (!v) { Layout.toast('ยังไม่มีลิงก์ — โหลดหน้าใหม่', 'error'); return; }
+    navigator.clipboard.writeText(v).then(() => Layout.toast('คัดลอกลิงก์แล้ว'), () => Layout.toast('คัดลอกไม่สำเร็จ — เลือกข้อความแล้วคัดลอกเอง', 'error'));
   },
 };
 

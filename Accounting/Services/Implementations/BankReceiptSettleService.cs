@@ -304,7 +304,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
         var (result, _) = await DecideAsync(companyId, line, companyEnabled, ct);
         if (result.Kind == BankReceiptAutoSettle.Verdict.AutoSettle && result.DocumentId is Guid docId)
         {
-            var (ok, error) = await ApplyAsync(companyId, line, docId, "bank-auto-settle", BankMatchAttribution.BankAutoSettle, BankReceiptAutoSettle.RuleAuto,
+            var (ok, error) = await ApplyAsync(companyId, line, docId, Accounting.Helpers.SystemActor.BankAutoSettle, BankMatchAttribution.BankAutoSettle, BankReceiptAutoSettle.RuleAuto,
                 result.Reason, null, nowUtc, ct);
             // error null = อีกทางกำลังบันทึก/จับคู่ไปแล้ว (ไม่ใช่ความล้มเหลว — ไม่แจ้ง)
             if (!ok && error != null) await NotifyFailedAsync(companyId, line, docId, error, ct);

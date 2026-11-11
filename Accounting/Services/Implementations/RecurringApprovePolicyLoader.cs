@@ -141,6 +141,29 @@ internal static class RecurringApprovePolicyLoader
             ? null : AutoPostGoneReason;
     }
 
+    /// <summary>รอบ 259 (B-M3): ชื่อผู้ที่เปิดค่าเริ่มต้น/นโยบายคืนได้ (สมาชิกที่ใช้งาน + มีสิทธิ์อนุมัติชนิดนี้) — ข้อความ "ใครเปิดคืนได้" หลังหยุดมีผล ·
+    /// ไม่มีตัวตรวจสิทธิ์ (เทสต์) = ว่าง (ข้อความบอกสิทธิ์ที่ต้องมีแทน) · กรองบริษัทเสมอ · ตรวจไม่เกิน 50 คน</summary>
+    internal static async Task<IReadOnlyList<string>> ApproverNamesAsync(AccountingDbContext db, IPermissionService? permissions, Guid companyId,
+        DocumentType docType, int max = 3, CancellationToken ct = default)
+    {
+        if (permissions == null) return Array.Empty<string>();
+        var members = await (from cu in db.CompanyUsers.AsNoTracking()
+                             join u in db.Users.AsNoTracking() on cu.UserId equals u.Id
+                             where cu.CompanyId == companyId && !u.IsDeleted
+                             orderby u.FullName
+                             select new { u.Id, u.FullName, u.Status })
+            .Take(50).ToListAsync(ct);
+        var names = new List<string>();
+        foreach (var m in members)
+        {
+            if (!CompanyMembership.CanAct(m.Status)) continue;
+            if (!await DocumentPermissionHelper.CanApproveAsync(permissions, companyId, m.Id, docType)) continue;
+            names.Add(string.IsNullOrWhiteSpace(m.FullName) ? "(ไม่มีชื่อ)" : m.FullName);
+            if (names.Count >= max) break;
+        }
+        return names;
+    }
+
     private static async Task<bool> CanStillApproveAsync(AccountingDbContext db, IPermissionService? permissions, Guid companyId,
         string? userId, DocumentType docType, CancellationToken ct)
     {

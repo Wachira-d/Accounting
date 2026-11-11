@@ -150,8 +150,8 @@ public class CompanySettings : TenantEntity
     public int MaxApiKeys { get; set; } = 5;
 
     // Closing Settings
-    public bool AutoCloseMonthEnd { get; set; } = false;
-    public int MonthEndClosingDay { get; set; } = 15;    // วันสุดท้ายที่บันทึกเดือนก่อนได้
+    // รอบ 259 (B-L11 · คำตัดสิน 259-4-5): AutoCloseMonthEnd/MonthEndClosingDay ถูกลบ (ไม่ต่อสาย) — ปิดงวดอัตโนมัติตามวันที่ = ระบบประทับ "ปิดงวด"
+    // เองโดยไม่มีคนตรวจ (F2 ข้อ 3) · ช่องบนหน้าล็อก "ยังไม่รองรับ" มาตั้งแต่รอบ 193 · คอลัมน์เดิมในฐานคงไว้ (ตั้งค่า DEFAULT ให้ INSERT ใหม่ไม่ล้ม — Round259AutopilotMigration)
     public bool PreventPostToClosedPeriod { get; set; } = true;
 
     /// <summary>แนบ PDF หนังสือรับรองหัก ณ ที่จ่าย (50ทวิ) เข้าใบสำคัญจ่าย
@@ -254,6 +254,9 @@ public class CompanySettings : TenantEntity
     /// secret ยังเป็นของ OA อื่น · ระบบไม่ทับค่าที่จำไว้ + ไม่บันทึกการสลับ · หน้า ตั้งค่า → LINE แสดงปัญหา · ล้างเมื่อเปลี่ยน token/secret หรือ webhook ตรงกลับมา</summary>
     public string? LineWebhookDestinationMismatch { get; set; }
     public bool LineConfigured { get; set; } = false;
+    /// <summary>รอบ 259 (A-M5): เวลาที่ webhook ของ OA บริษัทได้รับคำขอจาก LINE ที่ลายเซ็นผ่าน + บอทตรงล่าสุด (ระบบประทับเอง · ขยับไม่ถี่กว่า
+    /// <c>LineWebhookHealth.StampEvery</c>) · null = ยังไม่เคย ⇒ ความพร้อมบอก "ยังไม่เคยได้รับ event จาก LINE" (ผูก/หยุด/บล็อกทำงานไม่ได้)</summary>
+    public DateTime? LineLastWebhookAt { get; set; }
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }
 
@@ -384,6 +387,10 @@ public class CompanySettings : TenantEntity
     // ⇒ tenant ที่มีอยู่ไม่กระทบแม้แต่ใบเดียว. กติกาทั้งหมดอยู่ที่
     // Helpers/ReceiptIssuePolicy ตัวเดียว ห้ามเช็ค enum เองในแต่ละไฟล์
     public ReceiptIssueMode ReceiptIssueMode { get; set; } = ReceiptIssueMode.Combined;
+
+    // รอบ 259 P4 (DECISIONS 259-1-4): เพดาน "ตัดเศษเงินรอจัดสรร" ต่อรายการ (บาท) — เศษคงเหลือ ≤ ค่านี้ตัดเข้าผลต่างจากการปัดเศษได้ ·
+    // ผู้อ่าน: Helpers/CustomerCreditMovementRules.Check (ผ่าน CustomerCreditService.WriteOffAsync) · แก้ที่หน้า "เงินรอจัดสรร" · ค่าตั้งต้น 1.00
+    public decimal CustomerCreditWriteOffCap { get; set; } = 1.00m;
 
     // ── รูปแบบกระดาษหลักฐานรับเงินต่อกรณี (รอบ 203 · คำถามเจ้าของ 2026-10-09) ──
     // แกนที่สาม: ReceiptIssueMode คุม "ออกกี่ใบ" · UnifyTaxInvoiceNumberSeries คุม "เลขชุดไหน" · อันนี้คุม

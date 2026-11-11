@@ -381,6 +381,10 @@ public class OcrScanResult : TenantEntity
     /// · ตัวชี้วัด <c>&lt;Feature&gt;UsedAi</c> ที่ต้องลดลงเมื่อนักเรียนโต (กฎเหล็ก #1 ข้อ 6)</summary>
     public bool VatCodeUsedAi { get; set; }
 
+    /// <summary>รอบ 259 (C-L1): ผู้ติดต่อที่จับคู่ให้มาจาก provider จริง (ไม่ใช่นักเรียน/ตัวจับคู่ในเครื่อง) — ป้าย "🤖 AI แนะนำ" vs "⚙️ ระบบแนะนำ" ·
+    /// ตัวชี้วัด <c>&lt;Feature&gt;UsedAi</c> (กฎเหล็ก #1 ข้อ 6)</summary>
+    public bool VendorMatchUsedAi { get; set; }
+
     /// <summary>เวลาที่สแกนนี้ถูก "นำเข้าสต็อก" สำเร็จแล้ว (UTC) — กันกดซ้ำ
     ///
     /// <para>⚠️ <c>POST /ocr/{id}/import-stock</c> เดิม<b>ไม่มี guard ใด ๆ เลย</b>

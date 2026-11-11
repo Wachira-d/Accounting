@@ -81,8 +81,10 @@ public partial class DocumentService : IDocumentService
         IStockLedger? stock = null,
         IIssuedDocumentHooks? issuedHooks = null,
         Accounting.Services.Storage.IFileStorage? fileStorage = null,
-        IOverageService? overage = null)
+        IOverageService? overage = null,
+        IServiceProvider? services = null)
     {
+        _services = services;   // รอบ 259 ฝ่ายค้าน M4: หาตัวจัดสรรเงินรอจัดสรรตอนใช้ (ICustomerCreditService พึ่ง IDocumentService — ฉีดตรงไม่ได้)
         _fileStorage = fileStorage;
         _overage = overage;
         // ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — จุดเดียวกับ POS/Integration/CMS (S-02) ·
@@ -1138,7 +1140,7 @@ public partial class DocumentService : IDocumentService
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
         string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null,
         string? autoApproveBy = null, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null,
-        bool isDepositForfeitInvoice = false)
+        bool isDepositForfeitInvoice = false, Accounting.Helpers.RecurringRunOrigin? recurringRun = null)
     {
         // ── ธง "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" ต้องมาคู่กับชนิด TaxInvoice ──
         // เดิมชนิดไม่ตรง = **ดรอปธงเงียบ ๆ** ⇒ integration/recurring ที่ส่ง
@@ -1210,7 +1212,12 @@ public partial class DocumentService : IDocumentService
 
         // Check feature access
         if (!await _subscriptionService.CheckFeatureAccessAsync(companyId, FeatureFlags.DocumentEngine))
-            throw new InvalidOperationException("ไม่มีสิทธิ์ใช้ระบบเอกสาร");
+        {
+            // รอบ 259 (B-L1): บอกสาเหตุจริง (หมดอายุ/ระงับ ⇒ ต่ออายุ · แพ็กเกจไม่มีฟีเจอร์ ⇒ อัปเกรด) — สถานะจากด่านแพ็กเกจตัวเดียวกับ middleware
+            var gate = await _subscriptionService.GetGateStateAsync(companyId);
+            var (denyMessage, denyCode) = Accounting.Helpers.DocumentFeatureDenial.Describe(gate?.Status, gate?.InactiveReadOnly == true);
+            throw new BusinessRuleException(denyMessage, denyCode);
+        }
 
         // Validate ContactId exists and has correct type for document
         var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.ContactId && c.CompanyId == companyId);
@@ -1542,6 +1549,9 @@ public partial class DocumentService : IDocumentService
                 // แทน CreatedBy user (เหมือน integration PV/invoice)
                 PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
                 PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim(),
+                // รอบ 259 (B-L2/L3): รายการประจำ + กุญแจงวด ใน INSERT เดียวกับใบ (unique ต่อบริษัท) — ระบบล้มก่อนประทับรอบ ⇒ รอบถัดไปเจอใบนี้ ไม่ออกซ้ำ
+                RecurringTransactionId = recurringRun?.RecurringTransactionId,
+                RecurringRunKey = recurringRun?.RunKey,
                 CreatedBy = createdBy
             };
 
@@ -7942,6 +7952,8 @@ public partial class DocumentService : IDocumentService
             catch (Exception ex) { _logger.LogWarning(ex, "Email schedule enqueue failed Doc={Doc}", documentId); }
         }
 
+        // รอบ 259 ฝ่ายค้าน M4: ใบที่ออกจากเงินรอจัดสรร (จองไว้) ⇒ จัดสรรเองหลังอนุมัติ — จุดเดียวของทุกทางอนุมัติ (เว็บ · หลายใบ · workflow · ลายเซ็น · LINE)
+        approved = await AllocateCreditHoldsAfterApproveAsync(companyId, documentId, approvedBy, approved);
         return approved;
     }
 
@@ -10054,6 +10066,16 @@ public partial class DocumentService : IDocumentService
                 new[] { doc.BookingNumber, doc.Reference, doc.Notes }, $"ยกเลิกเอกสาร {doc.DocumentNumber}") is string drawnBlock)
             throw new BusinessRuleException(drawnBlock, BookingDepositDrawdown.RemovalRuleCode, 409);
 
+        // รอบ 259 ฝ่ายค้าน H1 (ผล CI): ตรวจขาออกของเงินรอจัดสรร "ก่อน" ด่านเอกสารลูก — ใบที่ปิดด้วยการรับชำระหลายใบมีใบเสร็จรายใบเป็นลูก ⇒ ถ้าตรวจลูกก่อน
+        // ผู้ใช้จะได้เหตุผิด (ยกเลิกใบเสร็จก่อน) แล้วค่อยเจอด่านนี้ · ตรวจซ้ำในธุรกรรมอีกชั้น (กันคำขอซ้อน)
+        var preVoidPaymentIds = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.DocumentId == documentId).Select(p => p.Id)
+            .Union(_db.PaymentAllocations.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.DocumentId == documentId).Select(a => a.PaymentId))
+            .ToListAsync();
+        if (await Accounting.Helpers.CustomerCreditLedger.VoidBlockForPaymentsAsync(_db, companyId, preVoidPaymentIds) is string preMovedBlock)
+            throw new BusinessRuleException(preMovedBlock, Accounting.Helpers.CustomerCreditMovementRules.VoidBlockRuleCode, 409);
+
         // กันยกเลิกเอกสารต้นทางที่มี "เอกสารลูก" active อ้างอยู่ (แปลงไปแล้ว เช่น
         // Invoice→TaxInvoice/Receipt) — ยกเลิกต้นทางจะทำให้ลูกลอย (orphan): ภพ.30/
         // e-Tax/ลูกหนี้อ้างเอกสารที่หายไป (รวมถึงเคสลูกมี e-Tax ยื่น RD แล้ว) · และ
@@ -10127,6 +10149,9 @@ public partial class DocumentService : IDocumentService
                         && p.UnappliedAmount > Accounting.Helpers.UnappliedCreditBalance.Tolerance)
                     .Select(p => p.PaymentNumber)
                     .FirstOrDefaultAsync();
+                // ฝ่ายค้านรอบ 259 H1: เงินรอจัดสรรของการรับชำระที่จะถูก cascade ยกเลิกถูกคืน/ย้ายเป็นมัดจำ/ตัดเศษแล้ว ⇒ ยกเลิกขานั้นก่อน (ไม่งั้น 21630 ติดลบ)
+                if (await Accounting.Helpers.CustomerCreditLedger.VoidBlockForPaymentsAsync(_db, companyId, cascadePaymentIds) is string movedBlock)
+                    throw new BusinessRuleException(movedBlock, Accounting.Helpers.CustomerCreditMovementRules.VoidBlockRuleCode, 409);
                 if (creditHeldBy != null)
                     throw new BusinessRuleException(
                         $"ยกเลิกใบนี้ไม่ได้ — การรับชำระ {creditHeldBy} ของใบนี้ยังมีเงินรอจัดสรรค้างอยู่ · "
@@ -10600,6 +10625,8 @@ public partial class DocumentService : IDocumentService
                 }
 
                 await _db.SaveChangesAsync();
+                // รอบ 259 P4: ใบมัดจำที่ย้ายจากเงินรอจัดสรร (ขาเงินเข้า = ผังพัก) ถูกยกเลิก ⇒ JE ถูกกลับแล้ว เงินกลับเป็นเงินรอจัดสรร (ในธุรกรรมเดียวกัน)
+                await Accounting.Helpers.CustomerCreditLedger.ReleaseForVoidedDocumentAsync(_db, companyId, doc.Id, doc.UpdatedBy);
                 await transaction.CommitAsync();
             }
             catch
@@ -11734,6 +11761,9 @@ public partial class DocumentService : IDocumentService
         if (await SettlementArtifactGuard.CheckAsync(_db, companyId, payment.SettlementBatchId)
                 is string settlementBlock)
             throw new BusinessRuleException(settlementBlock, "SETTLEMENT-ARTIFACT-VOID", 409);
+        // รอบ 259 P4: เงินรอจัดสรรของการชำระนี้ถูกคืนลูกค้า/ย้ายเป็นมัดจำ/ตัดเศษไปแล้ว ⇒ ยกเลิกขานั้นก่อน (กลับพร้อมกันเงียบ ๆ ไม่ได้)
+        if (await Accounting.Helpers.CustomerCreditLedger.VoidBlockAsync(_db, companyId, payment.Id, payment.PaymentNumber) is string creditMovedBlock)
+            throw new BusinessRuleException(creditMovedBlock, Accounting.Helpers.CustomerCreditMovementRules.VoidBlockRuleCode, 409);
 
         var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == payment.DocumentId
             && d.CompanyId == companyId)
@@ -15127,6 +15157,21 @@ public partial class DocumentService : IDocumentService
                     .FirstOrDefaultAsync(r => r.CompanyId == companyId && !r.IsDeleted
                         && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
                         && (r.Id == payment.ReceiptDocumentId || r.SettlementPaymentId == paymentId));
+            // ฝ่ายค้านรอบ 259 M5: ใบเสร็จ/ใบกำกับที่ผู้ใช้ออกเองให้ใบนี้แล้ว (ไม่ผูกการชำระ) = มีแล้ว — ไม่ออกเอกสาร ม.86/4 ซ้ำ (ตัวตัดสินเดียว ManualReceiptCoverage)
+            if (existing == null && perDocument)
+            {
+                var manualTypes = Accounting.Helpers.ManualReceiptCoverage.Types.ToList();
+                var allocatedHere = allocRows.Where(a => a.DocumentId == targetDocId).Sum(a => a.AllocatedAmount);
+                var targetTotal = await _db.Documents.AsNoTracking().Where(d => d.Id == targetDocId && d.CompanyId == companyId)
+                    .Select(d => d.TotalAmount).FirstOrDefaultAsync();
+                var manualReceipts = await _db.Documents.AsNoTracking()
+                    .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.RelatedDocumentId == targetDocId && r.SettlementPaymentId == null
+                        && manualTypes.Contains(r.DocumentType) && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
+                        && r.Status != DocumentStatus.Draft && r.Status != DocumentStatus.WaitingApproval
+                        && (payment.ReceiptDocumentId == null || r.Id != payment.ReceiptDocumentId))
+                    .ToListAsync();
+                existing = manualReceipts.FirstOrDefault(r => Accounting.Helpers.ManualReceiptCoverage.Covers(r.TotalAmount, allocatedHere, targetTotal));
+            }
             if (existing != null)
             {
                 // ซ่อมสายที่ขาดไปด้วยเลย — ครั้งหน้าปุ่มจะไม่โผล่มาให้กดอีก (เฉพาะใบเสร็จของใบหลัก)

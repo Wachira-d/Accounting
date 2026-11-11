@@ -38,7 +38,14 @@ public class DocumentAutoSendController : ControllerBase
 
     [HttpGet("settings")]
     public async Task<ActionResult<ApiResponse<DocumentAutoSendSettingsDto>>> GetSettings(Guid companyId)
-        => Ok(new ApiResponse<DocumentAutoSendSettingsDto>(true, await _links.GetSettingsAsync(companyId)));
+    {
+        // รอบ 259-3 ฝ่ายค้าน L5: บอกหน้าว่าแก้ได้ไหม (ด่านเดียวกับ PUT — EnsureOwnerAccessAsync) · ไม่ใช่เจ้าของ/คีย์ API = อ่านอย่างเดียว
+        var canEdit = true;
+        try { await _companies.EnsureOwnerAccessAsync(companyId, JwtHelper.GetUserIdFromClaims(User)); }
+        catch (BusinessRuleException) { canEdit = false; }
+        var dto = await _links.GetSettingsAsync(companyId);
+        return Ok(new ApiResponse<DocumentAutoSendSettingsDto>(true, dto with { CanEdit = canEdit }));
+    }
 
     [HttpPut("settings")]
     public async Task<ActionResult<ApiResponse<DocumentAutoSendSettingsDto>>> UpdateSettings(Guid companyId,
@@ -73,7 +80,9 @@ public class DocumentAutoSendController : ControllerBase
         if (t == null) return NotFound(new ApiResponse<DocumentPayLinkStatusDto>(false, null, "ไม่พบเอกสาร"));
         if (!await DocumentPermissionHelper.CanCreateAsync(_perms, companyId, JwtHelper.GetUserIdFromClaims(User), t.Value))
             return StatusCode(403, new ApiResponse<DocumentPayLinkStatusDto>(false, null, "ไม่มีสิทธิ์ออกลิงก์ชำระเงินของเอกสารชนิดนี้"));
-        var r = await _links.EnsureLinkAsync(companyId, documentId, null);
+        // 259-2-8: ปุ่มออกลิงก์ของพนักงาน (ด่าน Document.Create) = ออกใหม่แทนลิงก์ที่ถูกเพิกถอนได้ (ตั้งใจ · audit ในตัวออกลิงก์)
+        var r = await _links.EnsureLinkAsync(companyId, documentId, null, default, allowReissueRevoked: true,
+            actor: User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? JwtHelper.GetUserIdFromClaims(User).ToString());
         if (!r.Ok) return BadRequest(new ApiResponse<DocumentPayLinkStatusDto>(false, null, r.Refusal));
         return Ok(new ApiResponse<DocumentPayLinkStatusDto>(true, await _links.StatusAsync(companyId, documentId), "ลิงก์ชำระเงินพร้อมใช้"));
     }

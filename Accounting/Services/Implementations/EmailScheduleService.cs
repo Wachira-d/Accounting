@@ -723,7 +723,10 @@ public class EmailScheduleService : IEmailScheduleService
             }
         }
         // แถว "ข้าม" (ยกเลิกรับเรื่องทวงชำระ) ต้องถูกบันทึกด้วย — ไม่งั้นเหตุหาย
-        if (enqueued > 0 || notSentRows > 0) await _db.SaveChangesAsync(ct);
+        // รอบ 259 (259-2-7): บันทึกแบบ idempotent — ผู้สแกนอีกตัวบันทึกกุญแจเดียวกันไปก่อน / สองกฎ-สองวันได้กุญแจเดียวกันในรอบนี้
+        // ⇒ ถอดแถวซ้ำ (ผลเดียวกับที่ต้องการ) แทนที่ทั้งรอบจะล้ม (เดิม: 23505 ⇒ แถวของทุกใบในรอบหาย + ลายน้ำไม่ขยับ ⇒ ล้มซ้ำทุกนาที)
+        if (enqueued > 0 || notSentRows > 0 || _db.ChangeTracker.HasChanges())
+            await QueueRowSave.SaveSkippingExistingKeysAsync(_db, ct);
         return enqueued;
         }
     }
@@ -817,6 +820,9 @@ public class EmailScheduleService : IEmailScheduleService
                     // รอบ 255 ฝ่ายค้าน M6: ลิงก์วิเศษพอร์ทัล — สิทธิ์ถูกปิด/คำขอค้างนานเกิน ⇒ ข้ามพร้อมเหตุ
                     : item.EntityType == Accounting.Helpers.PortalMagicLinkPolicy.QueueEntityType
                         ? await PortalService.MagicLinkSkipReasonAsync(_db, item, ct)
+                    // รอบ 259-3 ฝ่ายค้าน M3: คำเชิญพอร์ทัลผู้ขาย — ลิงก์ต้นทางถูกเพิกถอน/หมดอายุระหว่างรอ ⇒ ข้ามพร้อมเหตุ
+                    : item.EntityType == Accounting.Helpers.VendorPortalTokenRules.QueueEntityType
+                        ? await Accounting.Services.Implementations.Portal.VendorPortalService.InviteSkipReasonAsync(_db, item, ct)
                     : null;
                 if (skipReason != null)
                 {
@@ -967,7 +973,7 @@ public class EmailScheduleService : IEmailScheduleService
         {
             var log = await _docEmail.SendDocumentRoutedAsync(item.CompanyId, item.EntityId,
                 new Models.DTOs.Email.SendDocumentEmailRequest(item.ToEmail, item.CcEmail, item.BccEmail, null, body, AttachPdf: item.AttachPdf),
-                "email-schedule");
+                Accounting.Helpers.SystemActor.EmailSchedule);   // รอบ 259 (B-L4)
             if (log.Status == EmailLogStatus.Sent)
             {
                 item.Status = "Sent";
@@ -1048,7 +1054,7 @@ public class EmailScheduleService : IEmailScheduleService
                 DocumentId = item.EntityType == "Document" ? item.EntityId : null,
                 ToEmail = item.ToEmail, CcEmail = item.CcEmail, BccEmail = item.BccEmail,
                 AttachedPdf = item.AttachPdf, Provider = sender.Provider, SenderMode = plan.Mode,
-                Purpose = "scheduled", CreatedBy = "email-schedule",
+                Purpose = "scheduled", CreatedBy = Accounting.Helpers.SystemActor.EmailSchedule,
             };
             if (refusal != null)
             {
@@ -1107,6 +1113,15 @@ public class EmailScheduleService : IEmailScheduleService
             if (magic.Url == null) return new QueueCompose(null, null, null, magic.Problem ?? "สร้างลิงก์เข้าพอร์ทัลไม่ได้");
             msg.HtmlBody = msg.HtmlBody.Replace(Accounting.Helpers.PortalMagicLinkPolicy.LinkPlaceholder,
                 System.Net.WebUtility.HtmlEncode(magic.Url), StringComparison.Ordinal);
+        }
+        // รอบ 259-3 ฝ่ายค้าน M3: คำเชิญพอร์ทัลผู้ขาย — token ออกตอนส่ง (คิว/บันทึกเก็บที่หมาย ไม่เก็บ token ดิบ) · ไม่มีที่อยู่เว็บ ⇒ ไม่ส่ง
+        if (item.EntityType == Accounting.Helpers.VendorPortalTokenRules.QueueEntityType
+            && msg.HtmlBody.Contains(Accounting.Helpers.VendorPortalTokenRules.LinkPlaceholder, StringComparison.Ordinal))
+        {
+            var invite = await Accounting.Services.Implementations.Portal.VendorPortalService.IssueInviteUrlAsync(_db, _config, item, ct);
+            if (invite.Url == null) return new QueueCompose(null, null, null, invite.Problem ?? "สร้างลิงก์พอร์ทัลผู้ขายไม่ได้");
+            msg.HtmlBody = msg.HtmlBody.Replace(Accounting.Helpers.VendorPortalTokenRules.LinkPlaceholder,
+                System.Net.WebUtility.HtmlEncode(invite.Url), StringComparison.Ordinal);
         }
         return new QueueCompose(msg, sender, log, null);
     }
@@ -1246,6 +1261,9 @@ public class EmailScheduleService : IEmailScheduleService
         if (!ContactLineChannel.WantsLine(rule.ChannelLineUser, rule.ChannelLineGroup) || !ContactLineChannel.SupportsLine(rule.Trigger))
             return LineEnqueueResult.None;
         if (await _db.LineQueues.AnyAsync(q => q.CompanyId == doc.CompanyId && q.BaseKey == baseKey && !q.IsDeleted, ct))
+            return new LineEnqueueResult(0, true, false, null);
+        // รอบ 259 (259-2-7): แถวของเหตุการณ์เดียวกันที่เพิ่มในรอบนี้แต่ยังไม่บันทึก (สองกฎ trigger/offset เดียวกัน · วันย้อนเก็บที่ได้กุญแจเดียวกัน) ⇒ มีแล้ว
+        if (_db.LineQueues.Local.Any(q => q.CompanyId == doc.CompanyId && q.BaseKey == baseKey && !q.IsDeleted))
             return new LineEnqueueResult(0, true, false, null);
 
         var topic = NotifyTopics.ForTrigger(rule.Trigger);

@@ -365,13 +365,8 @@
         <div class="form-group"><label for="sPaymentTerms" class="form-label">เงื่อนไขชำระเงินเริ่มต้น</label><input type="text" class="form-input" id="sPaymentTerms" placeholder="30 วัน"></div>
         <div class="form-group"><label for="sPaymentDueDays" class="form-label">จำนวนวันครบกำหนด</label><input type="number" class="form-input" id="sPaymentDueDays" value="30"></div>
       </div>
-      <div class="form-row">
-        <!-- S-06 (รอบ 193): ไม่มี job ปิดงวดอัตโนมัติ และไม่มีผู้อ่านค่าสองช่องนี้ ⇒ ล็อกช่อง + บอกเหตุผล (กฎ #4 A ห้าม silent no-op)
-             ไม่ส่งสองค่านี้ตอนบันทึก (ค่าเดิมคงอยู่ · ห้ามลบฟิลด์ — รอเจ้าของตัดสิน Q3 "ต่อสาย หรือ ลบ") -->
-        <div class="form-group form-checkbox"><input type="checkbox" id="sAutoClose" disabled><label for="sAutoClose" style="color:#94a3b8">ปิดงวดอัตโนมัติ</label><span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></div>
-        <div class="form-group"><label for="sCloseDay" class="form-label" style="color:#94a3b8">วันปิดงวด<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><input type="number" class="form-input" id="sCloseDay" value="5" min="1" max="28" disabled></div>
-      </div>
-      <div class="text-xs text-gray-500" style="margin:-6px 0 12px">ปิดงวดบัญชีทำได้ที่หน้าผังบัญชี/งวดบัญชี (ปิดงวด · ปิดปี) — ระบบยังไม่มีการปิดงวดอัตโนมัติตามวันที่</div>
+      <!-- รอบ 259 (B-L11 · คำตัดสิน 259-4-5): ช่อง "ปิดงวดอัตโนมัติ/วันปิดงวด" ถูกลบ (ไม่ต่อสาย — ปิดงวดต้องมีคนตรวจ) -->
+      <div class="text-xs text-gray-500" style="margin:-6px 0 12px">ปิดงวดบัญชีทำได้ที่หน้าผังบัญชี/งวดบัญชี (ปิดงวด · ปิดปี) — ระบบไม่ปิดงวดอัตโนมัติตามวันที่ (ปิดงวดต้องให้ผู้มีสิทธิ์ตรวจก่อน)</div>
 
       <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ปรับเมนูที่แสดง</h4>
       <p style="color:#64748b;margin-bottom:12px;font-size:13px">ติ๊กเมนูที่ไม่ได้ใช้งานเพื่อซ่อนจาก sidebar (เก็บเป็นการตั้งค่าส่วนตัวของบริษัทนี้บนเครื่องนี้)</p>
@@ -1168,9 +1163,14 @@
         <div id="lineRelinkInvite" style="font-size:13px;margin-top:6px;display:none"></div>
       </div>
 
+      <!-- รอบ 259 (A-M5 · A-L3): ความพร้อมของ LINE OA ของบริษัท — แถวจากเซิร์ฟเวอร์ (LineOaHealth.Rows · webhook เข้าจริงไหม · Basic ID · ผลทดสอบ) -->
+      <div class="form-group" id="lineHealth" style="display:none;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:13px"></div>
+
       <div class="form-group">
-        <label for="lineTestId" class="form-label">📨 ทดสอบส่งข้อความ — LINE User ID / Group ID</label>
-        <input type="text" class="form-input" id="lineTestId" placeholder="U... หรือ C... ของผู้รับ" />
+        <label for="lineTestId" class="form-label">📨 ทดสอบส่งข้อความ</label>
+        <!-- รอบ 259 (A-M6): เลือกปลายทางที่ระบบรู้จัก (ไม่ต้องหา C…) หรือพิมพ์ ID เอง -->
+        <select class="form-input" id="lineTestTarget" style="margin-bottom:6px;display:none" onchange="document.getElementById('lineTestId').style.display = this.value ? 'none' : ''"></select>
+        <input type="text" class="form-input" id="lineTestId" placeholder="U... (ผู้ใช้) หรือ C... (กลุ่ม) ของผู้รับ" />
         <div class="text-gray-400" style="font-size:11px;margin-top:4px">
           พนักงาน/ผู้ใช้ต้อง add Official Account ของคุณเป็นเพื่อนก่อน ระบบจึงจะส่งข้อความหาได้
         </div>
@@ -1476,7 +1476,8 @@
             lab.appendChild(cb); lab.appendChild(document.createTextNode(c.label));
             box.appendChild(lab);
           });
-          if (!(s.companyChannels || []).length) box.textContent = 'ยังไม่มีช่องทางที่เปิด';
+          // รอบ 259-3 (ทีม E-M2): บอกทางไปต่อ (ลิงก์คงที่ · ไม่มีข้อมูลผู้ใช้)
+          if (!(s.companyChannels || []).length) box.innerHTML = 'ยังไม่มีช่องทางที่เปิด — ตั้ง <a href="/pages/payment-settings.html">รับชำระเงินออนไลน์</a> หรือบัญชีรับโอน/QR ที่ <a href="/pages/bank.html">หน้าบัญชีธนาคาร</a>';
           document.getElementById('asEmailReceipt').checked = !!s.postPayEmailReceipt;
           document.getElementById('asIncludePartial').checked = !!s.postPayIncludePartial;
           document.getElementById('asWhtReminder').checked = !!s.whtCertReminderEnabled;
@@ -2197,12 +2198,15 @@
           // รอบ 257 (team-C LOW · team-E L3): URL จากเซิร์ฟเวอร์ (SystemBaseUrl — แหล่งเดียวกับกล่องช่องทางลูกค้า) ไม่ใช่ location.origin
           { const w = document.getElementById('lineWebhookUrl'); const url = (c.customerChannel && c.customerChannel.companyWebhookUrl) || '';
             if (w) { w.value = url; w.placeholder = url ? '' : 'ยังไม่ได้ตั้ง URL ของระบบ — ให้ผู้ดูแลระบบตั้ง URL ระบบก่อน แล้วโหลดหน้านี้ใหม่'; } }
-          if (c.lastTestedAt) {
-            document.getElementById('lineTestResult').innerHTML =
-              `<div style="font-size:12px;color:${c.configured ? '#16a34a' : '#dc2626'}">
-                 ทดสอบล่าสุด: ${new Date(c.lastTestedAt).toLocaleString()} — ${c.lastTestStatus || ''}
-               </div>`;
-          }
+          // รอบ 259 (A-M5 · A-L3): ความพร้อมจากเซิร์ฟเวอร์ (ผลทดสอบล่าสุดอยู่ในแถว "test" — เดิมสีตามธงที่รีเซ็ตตอนบันทึก ⇒ ผ่านแล้วแดง)
+          document.getElementById('lineTestResult').innerHTML = '';
+          this._renderLineHealth(c.health);
+          { const sel = document.getElementById('lineTestTarget'); const ts = c.testTargets || [];
+            sel.innerHTML = ts.map(t => `<option value="${Layout.esc(t.key)}">${Layout.esc(t.label)}</option>`).join('')
+              + '<option value="">พิมพ์ LINE ID เอง…</option>';
+            sel.style.display = ts.length ? '' : 'none';
+            sel.value = ts.length ? ts[0].key : '';
+            document.getElementById('lineTestId').style.display = sel.value ? 'none' : ''; }
           // รอบ 231 S1: คำใบ้ค่ากำกวม (เซิร์ฟเวอร์ประกอบ — ไม่ใช่ข้อผิดพลาด)
           if (c.secretHint) {
             document.getElementById('lineTestResult').innerHTML +=
@@ -2212,6 +2216,17 @@
       },
       // รอบ 211: แสดงผลที่เซิร์ฟเวอร์ตัดสิน (OA ที่ใช้ · ผูกได้ไหม · URL webhook ต่อบริษัท · จำนวนลิงก์) — ไม่มีกติกาฝั่งหน้าเว็บ
       // รอบ 212 แพ็ก B: "เชิญผูกใหม่: ส่งแล้ว N/M" — ป้ายทั้งก้อนเซิร์ฟเวอร์ประกอบ (CustomerRelinkInvitePlan.ProgressLabel) · หน้านี้แสดงอย่างเดียว
+      _renderLineHealth(rows) {
+        const box = document.getElementById('lineHealth');
+        if (!box) return;
+        if (!rows || !rows.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+        const icon = { ok: '✅', warn: '⚠️', error: '❌' };
+        const color = { ok: '#166534', warn: '#92400e', error: '#b91c1c' };
+        box.innerHTML = '<div style="font-weight:600;margin-bottom:4px">ความพร้อมของ LINE OA ของบริษัท</div>' + rows.map(r =>
+          `<div style="margin:3px 0;color:${color[r.level] || '#334155' /* text — สีคงที่ของหน้าตามระดับจากเซิร์ฟเวอร์ */}">${icon[r.level] || '•'} ${Layout.esc(r.label)}`
+          + (r.detail ? `<div style="font-size:12px;color:#475569;margin-left:22px">${Layout.esc(r.detail)}</div>` : '') + '</div>').join('');
+        box.style.display = '';
+      },
       _renderLineRelinkInvite(p, webhookProblem) {
         const box = document.getElementById('lineRelinkInvite');
         if (!box) return;
@@ -2233,8 +2248,8 @@
         const who = ch.scope === 'company' ? 'LINE OA ของบริษัท' : 'LINE OA ของ NextAcc (ค่าเริ่มต้น)';
         box.innerHTML = `<div>ช่องที่ใช้ตอนนี้: <b>${esc(who)}</b>${ch.oaBasicId ? ' · ' + esc(ch.oaBasicId) : ''}</div>
           <div style="margin-top:4px">${ch.canLink ? '✅ ลูกค้าผูก LINE จากหน้าเว็บได้' : '⚠️ ลูกค้ายังผูกไม่ได้: ' + esc(ch.problem || '')}</div>
-          <div style="margin-top:4px">ลูกค้าที่ผูกไว้และใช้ได้: <b>${esc(ch.activeLinks)}</b>${Number(ch.staleLinks) > 0 ? ` · ผูกกับ OA เดิม (ต้องผูกใหม่): <b>${esc(ch.staleLinks)}</b>` : ''}</div>
-          ${ch.scope === 'company' && ch.companyWebhookUrl ? `<div style="margin-top:6px">Webhook URL (ใส่ใน LINE Developers → Messaging API → Webhook settings แล้วเปิด "Use webhook"):<br><code style="user-select:all;word-break:break-all">${esc(ch.companyWebhookUrl)}</code></div>` : ''}`;
+          <div style="margin-top:4px">ลูกค้าที่ผูกไว้และใช้ได้: <b>${esc(ch.activeLinks)}</b>${Number(ch.staleLinks) > 0 ? ` · ผูกกับ OA เดิม (ต้องผูกใหม่): <b>${esc(ch.staleLinks)}</b>` : ''}</div>`;
+        // รอบ 259 (A-L2): Webhook URL แสดงที่ช่อง "Webhook URL" ด้านบนที่เดียว (เดิมซ้ำสองที่ในแท็บเดียว)
       },
       async saveLineConfig() {
         const cid = Layout.getCompanyId();
@@ -2259,7 +2274,8 @@
       async clearLineSecrets() {
         const cid = Layout.getCompanyId();
         if (!cid) return;
-        if (!confirm('ล้างรหัสเชื่อมและรหัสลับของ LINE OA ของร้าน? แจ้งเตือนจะกลับไปส่งผ่าน LINE ของ NextAcc')) return;
+        // รอบ 259 (A-L4): บอกผลจริงทั้งสองเส้น — การจอง/คำสั่งซื้อกลับไป OA ของ NextAcc แต่เอกสารถึงผู้ติดต่อทาง LINE (ผ่าน OA ของบริษัทเท่านั้น) จะหยุด
+        if (!confirm('ล้างรหัสเชื่อมและรหัสลับของ LINE OA ของร้าน?\n\n• แจ้งลูกค้าเรื่องการจอง/คำสั่งซื้อ: กลับไปส่งผ่าน LINE ของ NextAcc\n• เอกสาร/ทวงชำระ/ใบเสร็จ/50 ทวิ ถึงผู้ติดต่อทาง LINE: หยุดส่ง (ถอยไปอีเมลตามกฎที่ตั้งไว้) จนกว่าจะตั้ง OA ใหม่')) return;
         const body = {
           enabled: false, channelAccessToken: '', channelSecret: '',
           // รอบ 257 ปิดท้าย MED-6: ปุ่มนี้ล้างเฉพาะรหัสเชื่อม/รหัสลับ — Group ID / Basic ID ส่ง null (= คงเดิม) ไม่ส่งค่าในช่องกลับไป
@@ -2277,12 +2293,14 @@
       async testLineConfig() {
         const cid = Layout.getCompanyId();
         if (!cid) return;
-        const to = document.getElementById('lineTestId').value.trim();
-        if (!to) { Layout.toast('กรุณาระบุ LINE User ID หรือ Group ID ปลายทาง', 'error'); return; }
+        const targetKey = document.getElementById('lineTestTarget').value || null;
+        const to = targetKey ? null : document.getElementById('lineTestId').value.trim();
+        if (!targetKey && !to) { Layout.toast('กรุณาเลือกปลายทาง หรือระบุ LINE User ID / Group ID', 'error'); return; }
         const out = document.getElementById('lineTestResult');
         out.innerHTML = '<div style="font-size:12px;color:#64748b">กำลังส่ง…</div>';
         try {
-          const j = await API.post(`/api/companies/${cid}/line-config/test`, { toLineId: to });
+          const j = await API.post(`/api/companies/${cid}/line-config/test`, { toLineId: to, targetKey });
+          await this.loadLineConfig();   // แถว "ทดสอบล่าสุด" ในความพร้อม (โหลดก่อนเขียนผล — โหลดล้างกล่องผล)
           out.innerHTML = `<div style="font-size:13px;color:${j && j.success ? '#16a34a' : '#dc2626'}">
             ${j && j.success ? '✅' : '❌'} ${Layout.esc((j && j.message) || '')}</div>`;
         } catch (e) { out.innerHTML = `<div style="color:#dc2626">❌ ${Layout.esc(e.message)}</div>`; }
@@ -2951,8 +2969,6 @@
           if (s.secondaryColor) document.getElementById('sSecondaryColor').value = s.secondaryColor;
           document.getElementById('sPaymentTerms').value = s.defaultPaymentTerms || '';
           document.getElementById('sPaymentDueDays').value = s.defaultPaymentDueDays || 30;
-          document.getElementById('sAutoClose').checked = s.autoCloseMonthEnd || false;
-          document.getElementById('sCloseDay').value = s.monthEndClosingDay || 5;
           // Document notes
           document.getElementById('sInvoiceNotes').value = s.invoiceNotes || '';
           document.getElementById('sReceiptNotes').value = s.receiptNotes || '';
@@ -3324,7 +3340,7 @@
             // ทำให้ลบแล้วกดบันทึก ค่าเดิมยังอยู่เงียบ ๆ (กฎ #4 A)
             defaultPaymentTerms: document.getElementById('sPaymentTerms').value,
             defaultPaymentDueDays: parseInt(document.getElementById('sPaymentDueDays').value),
-            // S-06: autoCloseMonthEnd/monthEndClosingDay · หมายเหตุ/ข้อความท้าย 5 ช่อง · หัว/เนื้ออีเมลใบแจ้งหนี้ ไม่ส่ง —
+            // S-06: หมายเหตุ/ข้อความท้าย 5 ช่อง · หัว/เนื้ออีเมลใบแจ้งหนี้ ไม่ส่ง —
             // ช่องถูกล็อกเพราะค่ายังไม่มีผลกับระบบ (ค่าเดิมในฐานคงอยู่ ไม่ถูกล้าง)
             showGlEntryOnDocument: document.getElementById('sShowGlEntryOnDocument').checked,
             documentLanguage: document.getElementById('sDocumentLanguage').value,

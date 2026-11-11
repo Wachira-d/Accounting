@@ -173,7 +173,10 @@ public class ContactLineQueueService : IContactLineQueueService
     /// <summary>ส่งแถวเดียว — คืน true เมื่อ LINE รับแล้ว · ทุกทางที่ไม่ส่งประทับสถานะ + เหตุบนแถว</summary>
     private async Task<bool> SendOneAsync(LineQueue item, CancellationToken ct)
     {
-        // รอบ 258-3: trigger ที่ผู้ส่งรู้จัก = กฎตารางส่ง + ใบเสร็จหลังรับชำระ (ContactLineChannel.SenderSupports ตัวเดียว)
+        // รอบ 259 (258-3-6): การ์ดทวง 50 ทวิ (ต่อผู้ติดต่อ — ไม่ใช่เอกสาร) ⇒ เส้นของตัวเอง
+        if (item.EntityType == LineWhtCertCard.QueueEntityType && item.Trigger == LineWhtCertCard.QueueTrigger && item.EndpointId is Guid whtEndpoint)
+            return await SendWhtCertRequestAsync(item, whtEndpoint, ct);
+        // รอบ 258-3: trigger ที่ผู้ส่งรู้จัก = กฎตารางส่ง + ใบเสร็จหลังรับชำระ + ส่งเองจากหน้าเอกสาร (ContactLineChannel.SenderSupports ตัวเดียว)
         if (item.EntityType != "Document" || item.EndpointId is not Guid endpointId || !ContactLineChannel.SenderSupports(item.Trigger))
         {
             Finish(item, ContactLineChannel.StatusFailed, "แถวคิว LINE ชนิดนี้ส่งไม่ได้ (รองรับเฉพาะการ์ดเอกสารที่มีปลายทาง)", null);
@@ -217,10 +220,81 @@ public class ContactLineQueueService : IContactLineQueueService
             return false;
         }
 
+        // ฝ่ายค้าน 259 L2: ผู้ใช้ติ๊กลิงก์ชำระ (ส่งเอง) แต่ตอนส่งลิงก์ใช้ไม่ได้แล้ว ⇒ ไม่ส่ง (ไม่ใช่การ์ดไม่มีปุ่มแล้วขึ้น "ส่งแล้ว")
+        if (item.IncludePayLink == true && doc.BalanceDue > 0 && DocumentLineSendRule.PayLinkAllowed(ep.Kind, ep.ShowAmounts)
+            && (_payLinks == null || await _payLinks.CurrentUrlAsync(item.CompanyId, doc.Id, ct) == null))
+        {
+            Finish(item, ContactLineChannel.StatusSkipped, DocumentLineSendRule.PayLinkGoneAtSend, DocumentLineSendRule.RuleCode);
+            return false;
+        }
         // 3) การ์ด (ภาษา/หัวเดียวกับ PDF · ยอดซ่อนได้ต่อกลุ่ม — Q5)
         var card = await BuildCardAsync(item, doc, showAmounts: !isGroup || ep.ShowAmounts, isGroup,
             viaNextAcc: ep.OaScope == NotifyEndpointKind.ScopeNextAcc, ct);
+        return await PushAsync(item, ep, isGroup, to, card, ct);
+    }
 
+    /// <summary>รอบ 259 (258-3-6): ส่งการ์ดทวง 50 ทวิ หนึ่งแถว — ด่านตอนส่งตัวเดียวกับอีเมลทวง (ปิดทวง · ผู้ติดต่อถูกลบ · ไม่ส่งอัตโนมัติ · ส่งใบครบแล้ว) ·
+    /// ปลายทางยังรับเรื่อง 50 ทวิ (ตัวหาผู้รับเดียว) · ลิงก์อัปโหลดอ่านอย่างเดียว (สร้างพร้อมแถวคิว) — ไม่มีแถวลิงก์ ⇒ ไม่ส่ง (ไม่ส่งลิงก์เสีย) ·
+    /// เนื้อการ์ดจากรายการที่ค้าง ณ ตอนส่ง · ผลส่งจำแนกตัวเดียวกับการ์ดเอกสาร (<see cref="PushAsync"/>) · ไม่ถอยไปอีเมล (อีเมลของขั้นเดียวกันเข้าคิวเองแล้วถ้ามี)</summary>
+    private async Task<bool> SendWhtCertRequestAsync(LineQueue item, Guid endpointId, CancellationToken ct)
+    {
+        if (await WhtCertReminderService.CompanyContactSkipReasonAsync(_db, item.CompanyId, item.ContactId, ct) is string pre)
+        {
+            Finish(item, ContactLineChannel.StatusSkipped, pre, LineWhtCertCard.RuleCode);
+            return false;
+        }
+        var items = await WhtCertReminderService.AwaitingItemsAsync(_db, item.CompanyId, item.ContactId, ct);
+        if (items.Count == 0)
+        {
+            Finish(item, ContactLineChannel.StatusSkipped, "ลูกค้าส่งหนังสือรับรองครบแล้ว (หรือส่งแล้วรอตรวจ) — ไม่ส่งการ์ดทวง", LineWhtCertCard.RuleCode);
+            return false;
+        }
+        var set = await _recipients.ResolveAsync(item.CompanyId, item.ContactId, NotifyTopic.Wht, ct);
+        var option = set.Options.FirstOrDefault(o => o.EndpointId == endpointId);
+        if (option == null || !option.Available)
+        {
+            Finish(item, ContactLineChannel.StatusSkipped,
+                "ไม่ส่งทาง LINE — " + (option?.Reason ?? "ปลายทางนี้ถูกลบหรือไม่ใช่ของผู้ติดต่อนี้แล้ว"), option?.RuleCode);
+            return false;
+        }
+        var ep = await _db.ContactNotifyEndpoints.AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Id == endpointId && e.CompanyId == item.CompanyId && e.ContactId == item.ContactId, ct);
+        if (ep == null)
+        {
+            Finish(item, ContactLineChannel.StatusSkipped, "ไม่ส่งทาง LINE — ปลายทางนี้ถูกลบแล้ว", null);
+            return false;
+        }
+        var isGroup = ep.Kind == NotifyEndpointKind.LineGroup;
+        var to = _secrets.Unprotect(isGroup ? ep.LineGroupId : ep.LineUserId);
+        if (string.IsNullOrWhiteSpace(to))
+        {
+            Finish(item, ContactLineChannel.StatusFailed, "ถอดรหัส LINE id ของปลายทางไม่ได้ (คีย์เปลี่ยน/ค่าเสียหาย) — ให้ผู้รับผูกใหม่", null);
+            return false;
+        }
+        string? uploadUrl = null;
+        if (LineWhtCertCard.UploadLinkAllowed(isGroup, ep.ShowAmounts))
+        {
+            var (url, problem) = await WhtCertUploadLinkService.LineReminderUrlAsync(_db, _config, item.CompanyId, item.Id, ct);
+            if (url == null)
+            {
+                Finish(item, ContactLineChannel.StatusFailed, problem ?? "สร้างลิงก์อัปโหลดไม่ได้", LineWhtCertCard.RuleCode);
+                return false;
+            }
+            uploadUrl = url;
+        }
+        var co = await _db.Companies.AsNoTracking().Where(c => c.Id == item.CompanyId)
+            .Select(c => new { c.Name, c.TaxId, c.BranchCode }).FirstOrDefaultAsync(ct);
+        var contactName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.Id == item.ContactId && c.CompanyId == item.CompanyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
+        var card = LineWhtCertCard.Build(new LineWhtCertCard.Input(co?.Name ?? "", co?.TaxId, TaxBranchCode.Label(co?.BranchCode), contactName,
+            WhtCertReminderCadence.StepFromQueueKey(item.BaseKey) ?? WhtCertReminderCadence.InitialSteps[0], items,
+            ShowAmounts: !isGroup || ep.ShowAmounts, uploadUrl, isGroup));
+        return await PushAsync(item, ep, isGroup, to, card, ct);
+    }
+
+    /// <summary>push + จำแนกผล + ประทับแถว/ปลายทาง — ตัวเดียวของการ์ดทุกชนิด (เอกสาร · ใบเสร็จ · ทวง 50 ทวิ)</summary>
+    private async Task<bool> PushAsync(LineQueue item, ContactNotifyEndpoint ep, bool isGroup, string to, LineDocumentCard.Card card, CancellationToken ct)
+    {
         // 4) push (OA ที่ปลายทางผูก · retry key ของแถว) → จำแนกผลตัวเดียว
         var target = isGroup ? LineTargetKind.ContactGroup : LineTargetKind.TenantMember;
         var result = await _line.TryPushContactAsync(item.CompanyId, ep.OaScope, target, to, card.AltText, card.Contents, item.RetryKey);
@@ -280,7 +354,9 @@ public class ContactLineQueueService : IContactLineQueueService
         var contactName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.Id == doc.ContactId && c.CompanyId == item.CompanyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
         var outstanding = doc.BalanceDue > 0;
-        var payUrl = outstanding ? await PayUrlAsync(item, doc, ct) : null;
+        // ฝ่ายค้าน 259 M1: กลุ่มซ่อนยอดไม่ได้ปุ่มชำระ (หน้าชำระแสดงยอด/รายการ/ชื่อผู้ซื้อ) — ตัวตัดสินเดียวกับปุ่มดู PDF
+        var payUrl = outstanding && DocumentLineSendRule.PayLinkAllowed(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts)
+            ? await PayUrlAsync(item, doc, ct) : null;
         return LineDocumentCard.Build(new LineDocumentCard.Input(companyName, viaNextAcc, heading.Language, heading.Title, doc.DocumentNumber,
             showAmounts ? (outstanding ? doc.BalanceDue : doc.TotalAmount) : null, doc.Currency, outstanding ? doc.DueDate : null,
             contactName, payUrl, isGroup, outstanding,
@@ -311,6 +387,8 @@ public class ContactLineQueueService : IContactLineQueueService
     private async Task<string?> PayUrlAsync(LineQueue item, Document doc, CancellationToken ct)
     {
         if (_payLinks == null) return null;
+        // รอบ 259 (E-H3): ส่งเองจากหน้าเอกสาร — ผู้ใช้เลือกเอง (ติ๊ก = ลิงก์ออกไว้แล้วตอนกด · ไม่ติ๊ก = ไม่มีปุ่ม)
+        if (item.IncludePayLink is bool manual) return manual ? await _payLinks.CurrentUrlAsync(item.CompanyId, doc.Id, ct) : null;
         if (item.RuleId is Guid rid)
         {
             var rule = await _db.EmailScheduleRules.AsNoTracking()
@@ -353,16 +431,30 @@ public class ContactLineQueueService : IContactLineQueueService
         var rows = await _db.LineQueues.AsNoTracking()
             .Where(q => q.CompanyId == companyId && !q.IsDeleted)
             .OrderByDescending(q => q.CreatedAt).Take(take).ToListAsync(ct);
-        var docIds = rows.Select(r => r.EntityId).Distinct().ToList();
+        var docIds = rows.Where(r => r.EntityType == "Document").Select(r => r.EntityId).Distinct().ToList();
         var numbers = docIds.Count == 0 ? new Dictionary<Guid, string>()
             : await _db.Documents.AsNoTracking().IgnoreQueryFilters()
                 .Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
                 .ToDictionaryAsync(d => d.Id, d => d.DocumentNumber, ct);
-        return rows.Select(r => new LineQueueItemDto(r.Id, r.EntityId, numbers.TryGetValue(r.EntityId, out var n) ? n : null, r.Trigger,
-            r.EndpointKind, string.IsNullOrEmpty(r.EndpointKind) ? "LINE (ไม่มีปลายทาง)" : NotifyEndpointKind.Label(r.EndpointKind),
-            r.Status, ContactLineChannel.StatusLabel(r.Status), r.ScheduledFor, r.SentAt, r.RetryCount, r.ErrorMessage, r.RuleCode,
-            CanRetry: r.Status == ContactLineChannel.StatusFailed && r.EndpointId != null,
-            CanCancel: r.Status == ContactLineChannel.StatusPending)).ToList();
+        var contactIds = rows.Where(r => r.EntityType == LineWhtCertCard.QueueEntityType).Select(r => r.ContactId).Distinct().ToList();
+        var contactNames = contactIds.Count == 0 ? new Dictionary<Guid, string>()
+            : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+                .ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+        return rows.Select(r =>
+        {
+            var number = r.EntityType == "Document" && numbers.TryGetValue(r.EntityId, out var n) ? n : null;
+            var subject = r.EntityType == LineWhtCertCard.QueueEntityType
+                ? "ทวง 50 ทวิ · " + (contactNames.TryGetValue(r.ContactId, out var cn) ? cn : "ผู้ติดต่อ")
+                : r.Trigger == ContactLineChannel.ManualTrigger ? "ส่งเอง · " + (number ?? "-") : number;
+            return new LineQueueItemDto(r.Id, r.EntityId, number, r.Trigger,
+                r.EndpointKind, string.IsNullOrEmpty(r.EndpointKind) ? "LINE (ไม่มีปลายทาง)" : NotifyEndpointKind.Label(r.EndpointKind),
+                r.Status, ContactLineChannel.StatusLabel(r.Status), r.ScheduledFor, r.SentAt, r.RetryCount, r.ErrorMessage, r.RuleCode,
+                CanRetry: r.Status == ContactLineChannel.StatusFailed && r.EndpointId != null,
+                CanCancel: r.Status == ContactLineChannel.StatusPending,
+                SubjectLabel: subject,
+                RetryNote: ContactLineChannel.RetryNote(r.FallbackQueuedAt));
+        }).ToList();
     }
 
     public async Task RetryFailedAsync(Guid companyId, Guid id, CancellationToken ct = default)

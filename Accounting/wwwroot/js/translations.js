@@ -48,7 +48,7 @@ nav: {
   aging: 'อายุลูกหนี้/เจ้าหนี้', arapAnalysis: 'วิเคราะห์ AR/AP', fpa: 'วิเคราะห์การเงิน',
   projects: 'โครงการ', timeBilling: 'บันทึกเวลา', dimensions: 'สาขาและมิติ',
   intercompany: 'ระหว่างบริษัท', consolidation: 'งบการเงินรวม',
-  importExport: 'นำเข้า/ส่งออก', importHub: 'ศูนย์นำเข้าข้อมูล', customerPortal: 'Portal ลูกค้า', aiTools: 'AI อัจฉริยะ',
+  importExport: 'นำเข้า/ส่งออก', importHub: 'ศูนย์นำเข้าข้อมูล', customerPortal: 'พอร์ทัลลูกค้า', aiTools: 'AI อัจฉริยะ',
   team: 'จัดการทีม', settings: 'ตั้งค่าบริษัท', approval: 'กฎอนุมัติตามวงเงิน (Workflow)',
   signatures: 'ลายเซ็น & ส่งเซ็นอนุมัติ', integrations: 'เชื่อมต่อระบบ',
   apiDeveloper: 'API Developer', webhooks: 'Webhooks & API',

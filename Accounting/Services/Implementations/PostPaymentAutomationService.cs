@@ -33,7 +33,7 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
     private readonly INotificationEngine? _notify;
     private readonly IEnumerable<IReceiptEmailSectionProvider> _sections;
 
-    public const string SystemActor = "ระบบ (ส่งอัตโนมัติหลังรับชำระ)";
+    public const string SystemActor = Accounting.Helpers.SystemActor.PostPayment;   // รอบ 259 (B-L4): ตัวตั้งเดียว (เดิม "ระบบ (ส่งอัตโนมัติหลังรับชำระ)" — ป้ายไทยอยู่ที่ SystemActor.Display)
 
     public PostPaymentAutomationService(AccountingDbContext db, IDocumentService docs, IDocumentEmailService email,
         IEmailSenderFactory senderFactory, ILogger<PostPaymentAutomationService> logger, INotificationEngine? notify = null,

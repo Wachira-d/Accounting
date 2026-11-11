@@ -587,7 +587,10 @@
       async voidRemittance(id) {
         const r = (this._data.recentHistory || []).find(x => x.id === id);
         const label = r ? `${r.formCode} ${this.periodOf(r)}` : '';
-        const reason = prompt(`ยกเลิกการนำส่ง ${label}\n\nระบบจะกลับรายการบัญชีของการนำส่ง (ลงวันนี้) และปลดสถานะ "นำส่งแล้ว" ของรอบเงินเดือน/ใบที่ผูก — ต้องนำส่งใหม่ภายหลัง\n\nเหตุผล (บังคับ):`);
+        // รอบ 259-3 (ทีม E §4.1): กล่องของระบบแทน prompt() (LINE in-app browser บล็อก native)
+        const reason = await Layout.promptText({ title: `ยกเลิกการนำส่ง ${label}`, okText: 'ยกเลิกการนำส่ง', danger: true, required: true,
+          message: 'ระบบจะกลับรายการบัญชีของการนำส่ง (ลงวันนี้) และปลดสถานะ "นำส่งแล้ว" ของรอบเงินเดือน/ใบที่ผูก — ต้องนำส่งใหม่ภายหลัง',
+          label: 'เหตุผล (บังคับ)', multiline: true });
         if (reason === null) return;
         if (!reason.trim()) { Layout.toast('ต้องระบุเหตุผล', 'error'); return; }
         try {
@@ -750,26 +753,18 @@
         const hist = (this._data?.recentHistory || []).find(r =>
           r.remittanceType === 'VatPp36' && (remittanceId ? r.id === remittanceId : (r.periodYear === year && r.periodMonth === month)));
         // §86/14 — เลขใบเสร็จ RD จะกลายเป็น "เลขที่ใบกำกับ" ของภาษีซื้อก้อนนี้ในรายงาน ภ.พ.30
-        const no = prompt(`รับรู้ภาษีซื้อ ภ.พ.36 งวด ${String(month).padStart(2, '0')}/${year}\n\n`
-          + 'เลขที่ใบเสร็จกรมสรรพากร (บังคับ — ไม่มีหลักฐาน = เคลมไม่ได้):', (hist && hist.filingNumber) || '');
-        if (no === null) return;
-        if (!no.trim()) { Layout.toast('ต้องกรอกเลขที่ใบเสร็จกรมสรรพากร', 'error'); return; }
         const payDay = hist && hist.payDate ? Layout.toDateInput(new Date(hist.payDate)) : '';
-        const rd = prompt('วันที่ในใบเสร็จกรมสรรพากร (YYYY-MM-DD) — วันที่ชำระ ภ.พ.36:', payDay);
-        if (rd === null) return;
-        // วันที่ใบเสร็จบังคับ (คำตัดสินข้อ 136 · ฝ่ายค้าน P2-2) — ค่าตั้งต้นคือวันที่จ่ายตอนนำส่ง แต่ต้องยืนยันตามใบเสร็จจริง
-        if (!rd.trim()) { Layout.toast('ต้องกรอกวันที่ในใบเสร็จกรมสรรพากร', 'error'); return; }
-        if (isNaN(new Date(rd.trim()).getTime())) { Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ใช้ YYYY-MM-DD)', 'error'); return; }
-        const dateStr = prompt(
-          'วันเคลมภาษีซื้อ (งวด ภ.พ.30 ที่จะเข้า)\n\n'
-          + '• เว้นว่าง = วันที่ใบเสร็จกรมสรรพากร (ค่าเริ่มต้น — เดือนที่ชำระ ภ.พ.36)\n'
-          + '• หรือระบุวันที่ (YYYY-MM-DD) ที่ไม่ก่อนวันที่ใบเสร็จ:', '');
-        if (dateStr === null) return;
-        let recognizeDate = null;
-        if (dateStr.trim()) {
-          if (isNaN(new Date(dateStr.trim()).getTime())) { Layout.toast('รูปแบบวันที่ไม่ถูกต้อง (ใช้ YYYY-MM-DD)', 'error'); return; }
-          recognizeDate = dateStr.trim();
-        }
+        // รอบ 259-3 (ทีม E 3ง-2 · §4.1): หน้าต่างเดียว + ช่องเลือกวัน แทน prompt() 3 กล่องที่ต้องพิมพ์ YYYY-MM-DD เอง · กติกา (วันเคลมไม่ก่อนวันใบเสร็จ) ตรวจที่เซิร์ฟเวอร์
+        const form = await Layout.formDialog({ title: `รับรู้ภาษีซื้อ ภ.พ.36 งวด ${String(month).padStart(2, '0')}/${year}`, okText: 'รับรู้ภาษีซื้อ', fields: [
+          { key: 'no', label: 'เลขที่ใบเสร็จกรมสรรพากร (ไม่มีหลักฐาน = เคลมไม่ได้)', type: 'text', required: true, value: (hist && hist.filingNumber) || '' },
+          // วันที่ใบเสร็จบังคับ (คำตัดสินข้อ 136 · ฝ่ายค้าน P2-2) — ค่าตั้งต้นคือวันที่จ่ายตอนนำส่ง แต่ต้องยืนยันตามใบเสร็จจริง
+          { key: 'rd', label: 'วันที่ในใบเสร็จกรมสรรพากร (วันที่ชำระ ภ.พ.36)', type: 'date', required: true, value: payDay },
+          { key: 'recognize', label: 'วันเคลมภาษีซื้อ (งวด ภ.พ.30 ที่จะเข้า)', type: 'date',
+            hint: 'เว้นว่าง = วันที่ใบเสร็จกรมสรรพากร (เดือนที่ชำระ ภ.พ.36) · ระบุได้เฉพาะวันที่ไม่ก่อนวันที่ใบเสร็จ' },
+        ] });
+        if (!form) return;
+        const no = form.no, rd = form.rd;
+        const recognizeDate = form.recognize || null;
         try {
           const cid = Layout.getCompanyId();
           const res = await API.post(`/api/companies/${cid}/remittances/pp36/recognize`,
@@ -883,7 +878,8 @@
       /** รอบ 228 ฝ่ายค้าน S3: ผูกใบสำคัญที่ลงเองกับงวด (เซิร์ฟเวอร์ตรวจใบ/ยอด/ผัง + audit) — หน้าแค่ถามเลขที่ */
       async settleOutside() {
         const r = this._sel; if (!r) return;
-        const no = prompt(`ผูกใบสำคัญที่ใช้ชำระ ${r.formCode} ${this.periodOf(r)}\n\nกรอกเลขที่ใบสำคัญ (JV) ที่ Dr ผังหนี้ไว้แล้ว — ระบบไม่ลงบัญชีใหม่:`);
+        const no = await Layout.promptText({ title: `ผูกใบสำคัญที่ใช้ชำระ ${r.formCode} ${this.periodOf(r)}`, required: true, okText: 'ผูกใบสำคัญ',
+          message: 'กรอกเลขที่ใบสำคัญ (JV) ที่ Dr ผังหนี้ไว้แล้ว — ระบบไม่ลงบัญชีใหม่', label: 'เลขที่ใบสำคัญ' });
         if (!no || !no.trim()) return;
         try {
           const res = await Layout.api().remitSettledOutside({ remittanceType: r.remittanceType, periodYear: r.periodYear, periodMonth: r.periodMonth, journalEntryNumber: no.trim() });

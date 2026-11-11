@@ -852,6 +852,16 @@ const API = {
       allocateCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/allocate`, d),
       undoCustomerCreditAllocation: (paymentId, allocationId) =>
         API.post(`${base}/customer-credits/${paymentId}/allocations/${allocationId}/undo`),
+      // รอบ 259 P4/P5/P6 — ขาออกของเงินรอจัดสรร (คืนเงิน · ตัดเศษ · ย้ายเป็นมัดจำ · ออกใบส่วนที่ขาด) · ข้อเสนอบรรทัดธนาคาร · ส่งออก
+      refundCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/refund`, d),
+      writeOffCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/write-off`, d),
+      customerCreditToDeposit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/to-deposit`, d),
+      customerCreditIssueInvoice: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/issue-invoice`, d),
+      undoCustomerCreditMovement: (paymentId, movementId, reason) =>
+        API.post(`${base}/customer-credits/${paymentId}/movements/${movementId}/undo`, { reason: reason || null }),
+      updateCustomerCreditSettings: (d) => API.put(`${base}/customer-credits/settings`, d),
+      getBankLineCreditSuggestions: (lineId) => API.get(`${base}/customer-credits/bank-line/${lineId}/suggestions`),
+      exportCustomerCredits: (format) => API.download(`${base}/customer-credits/export?format=${encodeURIComponent(format || 'xlsx')}`, 'เงินรอจัดสรร.xlsx'),
       // Products
       getProducts: (q = '') => API.get(`${base}/product${q}`),
       // ส่งออกรายการเอกสาร (ทีม X2 · 2026-10-14 · Controllers/TradeListExportController) — q = ตัวกรองชุดเดียวกับ list + format · ใช้ API.download ตรง
@@ -1563,7 +1573,7 @@ const API = {
       deleteRecurring: (id) => API.del(`${base}/recurring/${id}`),
       pauseRecurring: (id) => API.post(`${base}/recurring/${id}/pause`),
       resumeRecurring: (id) => API.post(`${base}/recurring/${id}/resume`),
-      runRecurringNow: (id) => API.post(`${base}/recurring/${id}/run-now`),
+      runRecurringNow: (id, confirmExtra) => API.post(`${base}/recurring/${id}/run-now${confirmExtra ? '?confirmExtra=true' : ''}`),
       // รอบ 252 WP-12A: หน้า Autopilot — ภาพรวม/เรื่องที่ติด/ค่าตั้ง/ใบเสนอราคาแปลงอัตโนมัติ/คิวเงินโอนเข้า (ทุกป้าย/ปุ่มจากเซิร์ฟเวอร์)
       getAutopilotOverview: (days = 30) => API.get(`${base}/autopilot/overview?days=${encodeURIComponent(days)}`),
       // รอบ 255 WP-12B ข้อ 6–8: หน้า "คู่ค้าที่ใช้ NextAcc" (ต่อยอด trading-partners/workflow-automation เดิม)
@@ -1661,6 +1671,7 @@ const API = {
       getPortalAccess: () => API.get(`${base}/portal/access`),
       updatePortalAccess: (id, d) => API.put(`${base}/portal/access/${id}`, d),
       deactivatePortalAccess: (id) => API.post(`${base}/portal/access/${id}/deactivate`),
+      getPortalLink: () => API.get(`${base}/portal/link`),   // รอบ 259-3: ลิงก์เข้าพอร์ทัลจาก URL ของระบบ (เซิร์ฟเวอร์)
       // Dimensions & Branches
       getDimensions: () => API.get(`${base}/dimensions`),
       getDimension: (id) => API.get(`${base}/dimensions/${id}`),

@@ -48,7 +48,7 @@ public static class BankMatchAttribution
     public const string OpenBankingSuggested = "OpenBanking (เสนอ รอยืนยัน)";
     public const string ApiV1 = "api:v1";
     /// <summary>รอบ 252 WP-12A: ระบบปิดหนี้จากเงินโอนเอง (<c>BankReceiptSettleService</c> — ตัวตัดสินเชิงกำหนด ไม่มี AI) · ป้าย "⚙️ ระบบ (จับคู่อัตโนมัติ)" ผ่านสาขา <c>system:</c></summary>
-    public const string BankAutoSettle = "system:bank-auto-settle";
+    public const string BankAutoSettle = SystemActor.BankAutoSettle;   // รอบ 259 (B-L4): ตัวตั้งเดียว
 
     /// <summary>คำต่อท้ายที่บอกว่า "คนกดยืนยัน **คำแนะนำของ AI**" — ต่างจาก
     /// "คนเลือกเอง" เพราะเป็นข้อมูลของวงจรเรียนรู้ (ใครยอมรับคำตอบ AI บ้าง)</summary>

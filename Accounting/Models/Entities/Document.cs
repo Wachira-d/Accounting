@@ -266,6 +266,9 @@ public class Document : TenantEntity
     /// ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c> (ชั้น "รายการประจำ" ของค่าตั้งงานหลังรับชำระ) · null = ใบที่ไม่ได้มาจากรายการประจำ/ใบเก่า
     /// (migration เติมจาก <c>RecurringTransactions.LastDocumentId</c> ได้เฉพาะใบล่าสุดของแต่ละรายการ)</summary>
     public Guid? RecurringTransactionId { get; set; }
+    /// <summary>รอบ 259 (B-L2/L3): กุญแจกันซ้ำ "รายการประจำ + งวด" (<c>Helpers/RecurringRunKey</c>) — ประทับใน INSERT เดียวกับใบ · unique ต่อบริษัท ·
+    /// ไม่สืบทอดไปใบลูก · null = ใบที่ไม่ได้มาจากรอบรายการประจำ/ใบก่อนรอบ 259/รอบพิเศษที่ผู้ใช้ยืนยันออกเพิ่ม</summary>
+    public string? RecurringRunKey { get; set; }
 
     // ── รอบ 252 WP-12A (AUTOPILOT §7 · คำตัดสิน §2 #36 Q5): ใบเสนอราคาที่ลูกค้ายอมรับออนไลน์ → แปลงอัตโนมัติ (ตั้งต่อใบ · ค่าตั้งต้น "ไม่แปลง") ──
     /// <summary>โหมดแปลงเมื่อลูกค้ายอมรับ (ชื่อใน <c>Helpers/QuotationAcceptAutopilot.Modes</c>: Off · ToInvoice · ToTaxInvoice) · null = ตามค่าบริษัท

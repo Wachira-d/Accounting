@@ -87,6 +87,8 @@ public class AccountingDbContext : DbContext
     public DbSet<Contact> Contacts => Set<Contact>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentAllocation> PaymentAllocations => Set<PaymentAllocation>();
+    /// <summary>รอบ 259 P4 — ขาออกของเงินรอจัดสรร (คืนเงิน · ย้ายเป็นมัดจำ · ตัดเศษ · จองให้ใบ)</summary>
+    public DbSet<PaymentCreditMovement> PaymentCreditMovements => Set<PaymentCreditMovement>();
 
     // Tax
     public DbSet<TaxReport> TaxReports => Set<TaxReport>();
@@ -2667,6 +2669,9 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => new { x.CompanyId, x.ContactId }).HasDatabaseName("IX_WhtCertUploadLinks_Contact");
             e.HasIndex(x => new { x.CompanyId, x.EmailQueueId }).IsUnique()
                 .HasFilter("\"EmailQueueId\" IS NOT NULL").HasDatabaseName("UX_WhtCertUploadLinks_Queue");
+            // รอบ 259 (258-3-6): หนึ่งลิงก์ต่อการ์ด LINE ทวง (Helpers/Round259LineMigration)
+            e.HasIndex(x => new { x.CompanyId, x.LineQueueId }).IsUnique()
+                .HasFilter("\"LineQueueId\" IS NOT NULL").HasDatabaseName("UX_WhtCertUploadLinks_LineQueue");
             e.Property(x => x.TokenHash).HasMaxLength(64);
             e.Property(x => x.Source).HasMaxLength(30);
             e.HasQueryFilter(x => !x.IsDeleted);
@@ -4391,6 +4396,16 @@ public class AccountingDbContext : DbContext
         //       and Employee.CompensationProfile would surface soft-
         //       deleted rows.
         modelBuilder.Entity<PaymentAllocation>().HasQueryFilter(e => !e.IsDeleted);
+        // รอบ 259 P4 — ตารางสร้างด้วย SQL (CustomerCreditMigration) · ค่าเงิน numeric(18,2) · กุญแจกันกดซ้ำ unique ต่อบริษัท
+        modelBuilder.Entity<PaymentCreditMovement>(e =>
+        {
+            e.Property(m => m.Amount).HasPrecision(18, 2);
+            e.Property(m => m.Kind).HasMaxLength(20);
+            e.Property(m => m.IdempotencyKey).HasMaxLength(80);
+            e.HasIndex(m => new { m.CompanyId, m.PaymentId });
+            e.HasIndex(m => new { m.CompanyId, m.IdempotencyKey }).IsUnique().HasFilter("\"IdempotencyKey\" IS NOT NULL");
+            e.HasQueryFilter(m => !m.IsDeleted);
+        });
         modelBuilder.Entity<EmployeeProjectTime>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<EmployeeCompensationProfile>().HasQueryFilter(e => !e.IsDeleted);
         modelBuilder.Entity<CompanyCompensationDefaults>().HasQueryFilter(e => !e.IsDeleted);

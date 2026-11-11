@@ -33,11 +33,14 @@ public class CustomerLineWebhookController : ControllerBase
     /// <summary>รอบ 254 WP-11 L3: กลุ่ม LINE ของผู้ติดต่อ + กัน webhook ซ้ำ</summary>
     private readonly IContactLineGroupService? _groups;
 
+    /// <summary>รอบ 259 (A-M8): เพดานคำตอบต่อผู้ใช้ LINE (ตารางกลาง — หลายเครื่องใช้ตัวนับเดียวกัน)</summary>
+    private readonly IChatRateLimiter? _limiter;
+
     public CustomerLineWebhookController(AccountingDbContext db, ISecretProtector secrets, ICustomerLineLinkService links,
         ILogger<CustomerLineWebhookController> logger, ICustomerRelinkInviteService? relink = null, IContactLineBindingService? contactLine = null,
-        IContactLineGroupService? groups = null)
+        IContactLineGroupService? groups = null, IChatRateLimiter? limiter = null)
     {
-        _db = db; _secrets = secrets; _links = links; _logger = logger; _relink = relink; _contactLine = contactLine; _groups = groups;
+        _db = db; _secrets = secrets; _links = links; _logger = logger; _relink = relink; _contactLine = contactLine; _groups = groups; _limiter = limiter;
     }
 
     /// <summary>body ของ LINE webhook เล็ก (event ไม่กี่ตัว) — จำกัด 256 KB กันยิง body ใหญ่ใส่ทางเข้าสาธารณะ (ฝ่ายค้าน ข้อ 6)</summary>
@@ -72,6 +75,20 @@ public class CustomerLineWebhookController : ControllerBase
             // ปิดความเสี่ยงค้างของฝ่ายค้าน (B+D) ข้อ 2: เหตุการณ์จากบอทที่ไม่ตรง (secret ของ OA อื่น) ห้ามผูก/ปลดลูกค้า —
             // userId ของ OA นั้นส่งด้วย token ปัจจุบันไม่ได้ ⇒ ไม่ประมวลผล (หน้า LINE ตั้งค่าแสดงปัญหาให้ร้านแก้ secret แล้ว)
             if (!destinationAccepted) return Ok();
+            // รอบ 259 (A-M5): หลักฐานว่า LINE เรียก webhook ของบริษัทถึงจริง (ลายเซ็นผ่าน + บอทตรง — รวมปุ่ม Verify ที่ส่ง events ว่าง) ⇒ ความพร้อมแท็บ LINE ·
+            // ขยับไม่ถี่กว่า LineOaHealth.StampEvery (คำสั่งเดียวแบบมีเงื่อนไข) · ล้ม ⇒ LogError แต่ไม่ขวางการประมวลผล event
+            try
+            {
+                var now = DateTime.UtcNow;
+                var cutoff = now - LineOaHealth.StampEvery;
+                await _db.CompanySettings
+                    .Where(s => s.CompanyId == companyId && (s.LineLastWebhookAt == null || s.LineLastWebhookAt < cutoff))
+                    .ExecuteUpdateAsync(x => x.SetProperty(s => s.LineLastWebhookAt, (DateTime?)now), ct);
+            }
+            catch (Exception stampEx) when (stampEx is not OperationCanceledException)
+            {
+                _logger.LogError(stampEx, "LINE webhook ของบริษัท {CompanyId}: ประทับเวลา webhook ล่าสุดไม่สำเร็จ", companyId);
+            }
             if (!doc.RootElement.TryGetProperty("events", out var events)) return Ok();
             var anyFailed = false;
             foreach (var ev in events.EnumerateArray())
@@ -113,6 +130,12 @@ public class CustomerLineWebhookController : ControllerBase
                                     ?? await _contactLine.TryStopAsync(companyId, destination, userId, text, ct);
                             reply ??= await _links.TryRedeemAsync(CustomerNotifyChannel.ScopeCompany, companyId, destination, userId, text, ct);
                         }
+                        // รอบ 259 (A-M8): รูป/ไฟล์ (เช่นสลิป) — เดิมเงียบ ⇒ ตอบรับพร้อมทางไปต่อ · จำกัดต่อผู้ใช้ (ไม่มีตัวนับ = ไม่ตอบ — ทางเข้าสาธารณะ ปิดไว้ก่อน)
+                        else if (ev.TryGetProperty("message", out var media) && media.TryGetProperty("type", out var mediaType)
+                                 && LineOaHealth.IsChatMedia(mediaType.GetString()) && !string.IsNullOrEmpty(userId) && _limiter != null
+                                 && await _limiter.TryConsumeAsync(LineOaHealth.ChatMediaRateKey(destination, userId),
+                                     LineOaHealth.ChatMediaPerMinute, LineOaHealth.ChatMediaPerDay, ct, failClosed: true))
+                            reply = LineOaHealth.ChatMediaReply;
                         break;
                     case "follow":
                         var restored = await _links.SetBlockedAsync(CustomerNotifyChannel.ScopeCompany, companyId, userId, blocked: false, ct);

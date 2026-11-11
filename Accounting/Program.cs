@@ -850,6 +850,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.DeferredNotifyD
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.WhtCertReminderJob>();   // รอบ 253 (WP-10) — ทวง 50 ทวิ 7/21/45 + รายเดือน (JobLock · watermark ต่อบริษัท)
+builder.Services.AddHostedService<Accounting.Services.Background.EtaxRdSubmissionJob>();   // รอบ 259 (B-M6) — นำส่ง e-Tax เดือนก่อนต่อกรมสรรพากร (โหมดส่งตรง) วันที่ 1–15 · คิวเว้นช่วง (JobLock)
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.CourseCreditExpiryJob>();   // ทีม L — ปิดบัตรคอร์สหมดอายุ (breakage)
@@ -887,8 +888,8 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnified
     Accounting.Services.Implementations.Payments.UnifiedPaymentQueryService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payroll.ITipPayoutService,
     Accounting.Services.Implementations.Payroll.TipPayoutService>();
-builder.Services.AddScoped<Accounting.Services.Implementations.IDocumentLineDeliveryService,
-    Accounting.Services.Implementations.DocumentLineDeliveryService>();
+// รอบ 259 (A-L1): DocumentLineDeliveryService ถูกลบ (ไม่มีผู้เรียก · อ่าน Contact.LineUserId ที่ย้ายออกแล้ว) — ส่งเอกสารทาง LINE เองจากหน้าเอกสาร = DocumentLineSendService
+builder.Services.AddScoped<IDocumentLineSendService, DocumentLineSendService>();
 builder.Services.AddScoped<IPayslipLineDeliveryService, PayslipLineDeliveryService>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินต่อเอกสาร (ไม่พึ่ง IDocumentService — EmailScheduleService ใช้ได้) + งานหลังรับชำระ (ออก/ส่งใบเสร็จ)

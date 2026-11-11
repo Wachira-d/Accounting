@@ -22,11 +22,14 @@ public class AutopilotService : IAutopilotService
 
     private readonly AccountingDbContext _db;
     private readonly IBankReceiptSettleService _bank;
+    /// <summary>รอบ 259-3 (E-M2): ข้อเท็จจริงช่องทางรับเงินของบริษัทสำหรับการ์ดศูนย์รวมค่าตั้ง (ตัวเดียวกับลิงก์ชำระ) · null (สร้างนอก DI) = การ์ดบอก "ตรวจไม่ได้"</summary>
+    private readonly IDocumentPayLinkService? _payLinks;
 
-    public AutopilotService(AccountingDbContext db, IBankReceiptSettleService bank)
+    public AutopilotService(AccountingDbContext db, IBankReceiptSettleService bank, IDocumentPayLinkService? payLinks = null)
     {
         _db = db;
         _bank = bank;
+        _payLinks = payLinks;
     }
 
     private static readonly DocumentType[] SaleTypes = { DocumentType.Invoice, DocumentType.TaxInvoice };
@@ -120,7 +123,9 @@ public class AutopilotService : IAutopilotService
             rows.Count(r => r.Overall == AutopilotStage.OverallDone),
             rows.Count(r => r.Overall == AutopilotStage.OverallRunning),
             rows.Count(r => r.Overall == AutopilotStage.OverallStuck),
-            issues.Count, queue.Count);
+            issues.Count, queue.Count,
+            // รอบ 259-3 (E-M4): KPI สลิปรอยืนยัน (ทั้งหมด ไม่ตัดที่ 50) + ลิงก์คิวเจ้าของเดียว
+            SlipAwaitingConfirm: await SlipPendingQuery(companyId).CountAsync(ct), SlipQueueHref: SlipQueueHref);
         return new AutopilotOverviewResponse(summary, rows, issues, await QuotationsAsync(companyId, ct), queue, await SettingsAsync(companyId, ct));
     }
 
@@ -203,6 +208,12 @@ public class AutopilotService : IAutopilotService
         // รอบ 258-3 (F-M2 · F-M3): ช่วงที่เส้นบิลอัตโนมัติขาดแล้วเดิมไม่มีใครเห็นนอกหน้าย่อย
         list.AddRange(await BillingChainIssuesAsync(companyId, window, nowUtc, ct));
 
+        // รอบ 259-3 (ทีม E-M4 · คำตัดสิน 259-3-3): (11) สลิปลูกค้ารอพนักงานยืนยัน — คิวเจ้าของเดียวคือหน้ารายการรับชำระออนไลน์ (payment-intents) ·
+        // ที่นี่ชี้ไปที่นั่น ไม่มีปุ่มยืนยันซ้ำ (ยืนยันต้องเห็นรูปสลิป + วันที่เงินเข้า)
+        list.AddRange(await SlipPendingIssuesAsync(companyId, ct));
+        // รอบ 259 P6: ใบที่ต้องออกใบเสร็จ ([RECEIPT-PENDING]) · เงินรอจัดสรรค้างเกิน 30 วัน — ตัวอ่านเดียวกับหน้า "เงินรอจัดสรร"
+        list.AddRange(await CustomerCreditWorkQueue.AutopilotIssuesAsync(_db, companyId, nowUtc, ct));
+
         return list.OrderByDescending(i => i.At).ToList();
     }
 
@@ -232,12 +243,41 @@ public class AutopilotService : IAutopilotService
         var lineFailed = await _db.LineQueues.AsNoTracking()
             .Where(q => q.CompanyId == companyId && !q.IsDeleted && q.CreatedAt >= window && q.Status == ContactLineChannel.StatusFailed)
             .OrderByDescending(q => q.CreatedAt).Take(50)
-            .Select(q => new { q.EntityId, q.ErrorMessage, q.CreatedAt, q.EndpointKind,
+            .Select(q => new { q.EntityId, q.EntityType, q.ErrorMessage, q.CreatedAt, q.EndpointKind,
                 Number = _db.Documents.Where(d => d.Id == q.EntityId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefault() })
             .ToListAsync(ct);
-        list.AddRange(lineFailed.Select(q => new AutopilotIssueDto("LineFailed",
+        // รอบ 259 (258-3-6): แถวการ์ดทวง 50 ทวิ (EntityId = ผู้ติดต่อ — ไม่ใช่เอกสาร) ⇒ ป้ายของตัวเอง ไม่มีปุ่ม "เปิดเอกสาร"
+        list.AddRange(lineFailed.Select(q => q.EntityType == LineWhtCertCard.QueueEntityType
+            ? new AutopilotIssueDto("LineFailed", $"ทวง 50 ทวิ: ส่งทาง {NotifyEndpointKind.Label(q.EndpointKind)} ไม่สำเร็จ",
+                q.ErrorMessage ?? "LINE ไม่รับข้อความ", q.CreatedAt, null, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html", null, null, null)
+            : new AutopilotIssueDto("LineFailed",
             $"{q.Number ?? "เอกสาร"}: ส่งทาง {NotifyEndpointKind.Label(q.EndpointKind)} ไม่สำเร็จ",
             q.ErrorMessage ?? "LINE ไม่รับข้อความ", q.CreatedAt, q.EntityId, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html", null, "เปิดเอกสาร", DocHref(q.EntityId))));
+
+        // รอบ 259 (B-M6): e-Tax โหมดส่งตรง — นำส่งกรมล้ม/กรมปฏิเสธ · ลงนามแล้วแต่ใบเดือนก่อนยังไม่ส่ง (กำหนดวันที่ 15) — ตัวตัดสิน Helpers/EtaxRdSubmission
+        var etaxDirect = await _db.CompanySettings.AsNoTracking()
+            .AnyAsync(s => s.CompanyId == companyId && s.EtaxEnabled && s.EtaxMode == EtaxMode.Direct, ct);
+        if (etaxDirect)
+        {
+            var monthStart = EtaxRdSubmission.CurrentMonthStart(nowUtc);
+            // ฝ่ายค้าน 259-D M3: เดือนภาษี/กำหนดส่ง = วันที่เอกสาร (ตัวเดียว EtaxRdSubmission.FilingMonthOf/DeadlineLabel) · M4: ป้าย "เลยกำหนดส่งแล้ว"
+            var etaxRows = await (from e in _db.EtaxInvoices.AsNoTracking()
+                                  join d in _db.Documents.AsNoTracking() on e.DocumentId equals d.Id
+                                  where e.CompanyId == companyId && d.CompanyId == companyId && e.SubmittedAt == null
+                                        && (e.Status == EtaxStatus.Rejected
+                                            || (e.Status == EtaxStatus.Error && e.SignedAt != null)
+                                            || (e.Status == EtaxStatus.Signed && d.DocumentDate < monthStart))
+                                  orderby d.DocumentDate
+                                  select new { e.DocumentId, e.Status, e.ErrorMessage, e.CreatedAt, e.RdLastAttemptAt, d.DocumentDate, Number = d.DocumentNumber })
+                .Take(50).ToListAsync(ct);
+            list.AddRange(etaxRows.Select(e => new AutopilotIssueDto("EtaxRdFailed",
+                $"{e.Number ?? "เอกสาร"}: e-Tax " + (e.Status == EtaxStatus.Signed ? "ลงนามแล้วยังไม่ได้นำส่งกรมสรรพากร" : "นำส่งกรมสรรพากรไม่สำเร็จ")
+                    + (EtaxRdSubmission.IsOverdue(e.DocumentDate, nowUtc) ? " (เลยกำหนดส่ง)" : ""),
+                (e.ErrorMessage ?? "ยังไม่ได้นำส่ง") + $" — เดือนภาษี {EtaxRdSubmission.FilingMonthOf(e.DocumentDate):MM}/{EtaxRdSubmission.FilingMonthOf(e.DocumentDate).Year + 543} · "
+                    + EtaxRdSubmission.DeadlineLabel(e.DocumentDate, nowUtc)
+                    + (e.Status == EtaxStatus.Rejected ? " · กรมปฏิเสธ: แก้ข้อมูล/ออกใบใหม่" : " · ระบบลองส่งให้อัตโนมัติ (วันที่ 1–15 ทุก 3 ชม. · เลยกำหนดแล้ววันละครั้ง) หรือกดส่งเองที่หน้า e-Tax"),
+                e.RdLastAttemptAt ?? e.CreatedAt, e.DocumentId, "เปิดหน้า e-Tax", "/pages/etax.html", null, "เปิดเอกสาร", DocHref(e.DocumentId))));
+        }
 
         // เงินเข้าแล้วแต่ยังไม่มีการชำระที่อ้างรายการนี้ (ผู้บันทึกล้ม/ค้าง) — เผื่อเวลา 15 นาทีให้ webhook/งานกระทบยอดทำงาน
         var settledBefore = nowUtc.AddMinutes(-15);
@@ -258,6 +298,27 @@ public class AutopilotService : IAutopilotService
                 "เปิดรายการรับชำระออนไลน์", "/pages/payment-intents.html", null, "เปิดเอกสาร", DocHref(i.SourceId))));
         }
         return list;
+    }
+
+    /// <summary>รอบ 259-3 (E-M4): ลิงก์คิวสลิปที่หน้ารายการรับชำระออนไลน์ (ตัวกรองสถานะรอ) — ตัวเดียวของ issue + การ์ด KPI + หน้าอื่นที่ชี้มา</summary>
+    public const string SlipQueueHref = "/pages/payment-intents.html?status=Pending";
+
+    private IQueryable<PaymentIntent> SlipPendingQuery(Guid companyId)
+        => _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && !i.IsDeleted && i.SourceKind == PaymentSourceKind.Document
+                && i.MethodKind == PaymentMethodKind.ManualSlip && PaymentIntentPolicy.OpenStatuses.Contains(i.Status));
+
+    private async Task<List<AutopilotIssueDto>> SlipPendingIssuesAsync(Guid companyId, CancellationToken ct)
+    {
+        var rows = await SlipPendingQuery(companyId)
+            .OrderBy(i => i.CreatedAt).Take(50)
+            .Select(i => new { i.SourceId, i.Amount, i.CreatedAt,
+                Number = _db.Documents.Where(d => d.Id == i.SourceId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefault() })
+            .ToListAsync(ct);
+        return rows.Select(i => new AutopilotIssueDto("SlipPending",
+            $"{i.Number ?? "เอกสาร"}: สลิปลูกค้า {i.Amount:N2} บาท รอยืนยัน",
+            "ลูกค้าแนบสลิปแล้ว — ระบบไม่ปิดหนี้จากสลิปเอง · ตรวจรูปสลิปกับรายการเดินบัญชี แล้วกดยืนยัน/ปฏิเสธที่หน้ารายการรับชำระออนไลน์",
+            i.CreatedAt, i.SourceId, "ไปยืนยันสลิป", SlipQueueHref, null, "เปิดเอกสาร", DocHref(i.SourceId))).ToList();
     }
 
     /// <summary>ย่อหน้าของป้ายบนหมายเหตุภายใน (ข้อความถึงผู้ใช้ — ไม่ต้องถอดป้าย)</summary>
@@ -373,8 +434,16 @@ public class AutopilotService : IAutopilotService
     public async Task<AutopilotSettingsDto> SettingsAsync(Guid companyId, CancellationToken ct = default)
     {
         var s = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
-            .Select(x => new { x.BankAutoSettleEnabled, x.QuotationAcceptAutopilotDefault, x.AutopilotDigestLocalTime })
+            .Select(x => new { x.BankAutoSettleEnabled, x.QuotationAcceptAutopilotDefault, x.AutopilotDigestLocalTime,
+                x.PayLinkDefaultEnabled, x.PostPayEmailReceipt, x.WhtCertReminderEnabled })
             .FirstOrDefaultAsync(ct);
+        // รอบ 259-3 (E-M2 · คำตัดสิน 259-3-4): ศูนย์รวมค่าตั้งที่อยู่หน้าอื่น — สถานะอ่านอย่างเดียว + ลิงก์บ้านของค่า (AutopilotSettingsHub ตัวเดียว)
+        var payFacts = _payLinks == null ? null : await _payLinks.CompanyFactsAsync(companyId, ct);
+        if (payFacts is { BankTransfer: false } && await GettingStartedChecklist.TransferAccounts(_db.BankAccounts.AsNoTracking(), companyId).AnyAsync(ct))
+            payFacts = payFacts with { BankTransfer = true };   // บัญชีของใบ (ธนาคาร) ก็รับโอน/สลิปได้ — ตัวนับเดียวกับเช็กลิสต์เริ่มต้น
+        var activeRules = await _db.EmailScheduleRules.AsNoTracking().CountAsync(r => r.CompanyId == companyId && !r.IsDeleted && r.IsActive, ct);
+        var hub = AutopilotSettingsHub.Build(new AutopilotSettingsHub.Facts(s?.PayLinkDefaultEnabled ?? false, s?.PostPayEmailReceipt ?? false,
+            s?.WhtCertReminderEnabled ?? false, payFacts, activeRules, await SlipPendingQuery(companyId).CountAsync(ct), SlipQueueHref));
         return new AutopilotSettingsDto(
             s?.BankAutoSettleEnabled ?? false,
             (QuotationAcceptAutopilot.Parse(s?.QuotationAcceptAutopilotDefault) ?? QuotationAcceptMode.Off).ToString(),
@@ -387,7 +456,8 @@ public class AutopilotService : IAutopilotService
                     AutopilotDelivery.Digest => "รวมในสรุปประจำวัน",
                     _ => "ไม่แจ้ง",
                 }, e.Wired)).ToList(),
-            BankAutoSettleEnableNote: BankReceiptAutoSettle.EnableNote(BankReceiptSettleService.LookbackDays));
+            BankAutoSettleEnableNote: BankReceiptAutoSettle.EnableNote(BankReceiptSettleService.LookbackDays),
+            Hub: hub);
     }
 
     public async Task<AutopilotSettingsDto> UpdateSettingsAsync(Guid companyId, UpdateAutopilotSettingsRequest request, Guid userId, CancellationToken ct = default)

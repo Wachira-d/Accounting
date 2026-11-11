@@ -1479,42 +1479,6 @@
       </div>
     </div>
 
-    <!-- รอบ 255 (ETR-ACK) — บันทึก "ตรวจแล้ว" ของแถว e-Tax ในรายงานข้อ 44 (ทางไปต่อของแถบเตือน · เซิร์ฟเวอร์ตัดสินว่าแถวอยู่ในกลุ่ม/บันทึกซ้ำ/สิทธิ์) -->
-    <div class="modal-overlay" id="etaxReviewAckModal">
-      <div class="modal" style="max-width:600px">
-        <div class="modal-header">
-          <h3 class="modal-title">บันทึกผลตรวจแถว e-Tax ที่กรมสรรพากร</h3>
-          <button class="modal-close" onclick="Layout.closeModal('etaxReviewAckModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-          <input type="hidden" id="eraEtaxId">
-          <div id="eraRowInfo" style="font-size:13px;margin-bottom:10px;color:#374151"></div>
-          <div class="form-group">
-            <label for="eraOutcomeRejected" class="form-label">ผลที่ตรวจพบในระบบ e-Tax ของกรมสรรพากร/ผู้ให้บริการ</label>
-            <label style="display:block;font-size:13px;margin-bottom:4px"><input type="radio" id="eraOutcomeRejected" name="eraOutcome" value="RejectedOrNotReceived" checked onchange="Page.etaxReviewAckOutcomeChanged()">
-              ถูกปฏิเสธ หรือกรมสรรพากร/ผู้ให้บริการไม่เคยได้รับใบนี้ — ไม่ต้องทำอะไรเพิ่ม</label>
-            <label style="display:block;font-size:13px"><input type="radio" name="eraOutcome" value="CancelledAtRd" onchange="Page.etaxReviewAckOutcomeChanged()">
-              ใบนี้ถูกยกเลิกที่กรมสรรพากรแล้ว (ต้องระบุเลขอ้างอิงการยกเลิก)</label>
-            <div class="text-xs text-gray-500" style="margin-top:6px">ถ้ากรมสรรพากรยังถือใบนี้อยู่ (ยังมีผล) — ห้ามบันทึกที่นี่ ต้องยกเลิกหรือออกใบลดหนี้ทางกรมสรรพากร
-              แล้วบันทึกผ่าน “ยกเลิกทาง e-Tax”/ใบลดหนี้ของเอกสารนั้น</div>
-          </div>
-          <div class="form-group" id="eraRefGroup" style="display:none">
-            <label for="eraRdReference" class="form-label">เลขอ้างอิงการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ</label>
-            <input class="form-input" id="eraRdReference" maxlength="200">
-          </div>
-          <div class="form-group">
-            <label for="eraNote" class="form-label">บันทึกสิ่งที่ตรวจ (บังคับ อย่างน้อย 5 ตัวอักษร — เก็บใน audit ให้ผู้สอบบัญชี)</label>
-            <textarea class="form-input" id="eraNote" rows="3" maxlength="1000" placeholder="เช่น ตรวจที่ระบบ e-Tax ของกรมสรรพากรวันที่ … สถานะ “ปฏิเสธ”"></textarea>
-          </div>
-          <div class="text-xs text-gray-500">ระบบเก็บเป็นบันทึกการตรวจเท่านั้น — ไม่เปลี่ยนสถานะแถว e-Tax เอกสาร หรือภาษี</div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('etaxReviewAckModal')">ยกเลิก</button>
-          <button class="btn btn-primary" id="eraSubmitBtn" onclick="Page.submitEtaxReviewAck()">บันทึกว่าตรวจแล้ว</button>
-        </div>
-      </div>
-    </div>
-
     <div class="modal-overlay" id="redateReversalModal">
       <div class="modal" style="max-width:720px">
         <div class="modal-header">
@@ -1838,6 +1802,8 @@
         this._depositKindsReady = this._loadDepositKinds();
         // รอบ 203 — ตารางประเภทเงินได้ ม.40 จากเซิร์ฟเวอร์ (ไม่ await — ล้ม = ช่องเหลือ "ไม่ระบุ" + ค่าที่เก็บไว้ไม่หาย)
         this._loadWhtIncomeTypes();
+        // รอบ 259 (E-H3): ชนิดที่ส่งถึงคู่ค้าเองได้ (📧/💬) จากเซิร์ฟเวอร์ — ไม่มีสำเนารายการในหน้า · ล้ม = ไม่แสดงปุ่มส่ง (ส่งได้จากหน้าเอกสารเมื่อโหลดได้)
+        this._sendTypesReady = this._loadSendTypes();
         // "เปิดฟอร์มเต็ม" (แท็บผู้ติดต่อส่ง contact-created กลับ) — ตัวรับกลางอยู่ใน Layout.contactPicker (เลือกให้ + เรียก onSelect)
 
         // Detect page context: sidebar links use ?side= param, also support expense-docs nav id
@@ -2074,7 +2040,12 @@
         const hashDoc = (window.location.hash.match(/^#doc=([0-9a-fA-F-]{36})$/) || [])[1];
         const openDocId = params.get('openDoc') || params.get('id') || params.get('view') || hashDoc;
         if (openDocId) {
-          try { await this.detail(openDocId); }
+          try {
+            await this.detail(openDocId);
+            // รอบ 259 P5: ลิงก์ "บันทึกเป็นรับเงินลูกค้า" จากหน้าธนาคาร (เซิร์ฟเวอร์ประกอบลิงก์) — เปิดหน้ารับชำระที่เติมยอด/วันที่/อ้างอิง/บัญชี
+            // ของบรรทัดเงินเข้าไว้ ผู้ใช้ตรวจแล้วกดบันทึกเอง (ไม่มีการลงบัญชีอัตโนมัติ)
+            if (params.get('pay') === '1') await this._openPayFromLink(openDocId, params);
+          }
           catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }
         }
 
@@ -10630,7 +10601,7 @@
           const ok = await api.approveDocument(docId, { acknowledgeWarnings: false });
           // คำขอเจ้าของ 2026-10-12: ออก 50 ทวิ อัตโนมัติไม่สำเร็จ ⇒ บอกทันที (ทางอนุมัติทุกปุ่มของหน้านี้ผ่านตรงนี้)
           this._toastWhtCertFailed?.(ok);
-          return { approved: true };
+          return { approved: true, message: ok?.message };   // รอบ 259: ข้อความเซิร์ฟเวอร์ (เช่น จัดสรรเงินรอจัดสรรให้ใบที่ออกจากเงินก้อนนั้นแล้ว)
         } catch (e) {
           const data = e && e.status === 422 && e.body && e.body.data;
           if (!data || !Array.isArray(data.warnings) || !data.warnings.length) throw e;
@@ -10640,7 +10611,7 @@
                 try {
                   const ok2 = await api.approveDocument(docId, { acknowledgeWarnings: true });
                   this._toastWhtCertFailed?.(ok2);
-                  resolve({ approved: true });
+                  resolve({ approved: true, message: ok2?.message });
                 } catch (e2) { reject(e2); }
               },
               () => resolve({ approved: false, cancelled: true, warnings: data.warnings }));
@@ -10709,6 +10680,8 @@
       async detail(id, _skipRdRecheck) {
         const api = Layout.api(); if (!api) return;
         try {
+          // รอบ 259: ปุ่มส่ง (📧/💬) ต้องรู้ชนิดที่ส่งได้จากเซิร์ฟเวอร์ก่อนประกอบ (ล้ม = รายการว่าง ไม่ค้าง)
+          if (this._sendTypesReady) { try { await this._sendTypesReady; } catch (e) { /* _loadSendTypes ตั้งรายการว่างเองแล้ว */ } }
           const res = await api.getDocument(id);
           const d = res.data;
           this._currentDoc = d;
@@ -11457,14 +11430,14 @@
           // ส่งอีเมล — เปิดหน้าต่างกรอก ผู้รับ/CC/หัวข้อ/ข้อความ + ติ๊กส่งแบบ e-Tax ได้.
           // เอกสารฝั่งขายที่อนุมัติแล้วเท่านั้น (กันส่ง Draft). e-Tax option แสดง
           // เมื่อชนิดเอกสารออก e-Tax ได้ (§86) — ติ๊กแล้วระบบสร้าง e-Tax + แนบ XML ให้
-          const salesEmailTypes = ['Invoice', 'TaxInvoice', 'Receipt', 'ReceiptVoucher',
-            'Quotation', 'BillingNote', 'CreditNote', 'DebitNote', 'DeliveryNote'];
-          // รวม PurchaseOrder — ส่ง PO ให้ vendor เป็นงานปกติที่เดิมทำไม่ได้
-          salesEmailTypes.push('PurchaseOrder');
+          // รอบ 259 (E-H3): ชนิดที่ส่งได้มาจากเซิร์ฟเวอร์ (DocumentLineSendRule.SendableTypes · GET document/send-types) — เดิมเป็นรายการในหน้า
+          const salesEmailTypes = this._sendTypes || [];
           const _approvedForEmail = _postedStates.includes(d.status);
           if (salesEmailTypes.includes(d.documentType) && _approvedForEmail) {
             // รอบ 244: ช่องทาง (อีเมลธรรมดา / e-Tax by Email) เซิร์ฟเวอร์ตัดสินในหน้าต่าง (email-route) — ไม่มีช่องติ๊กเลือกเอง
             actions += ` <button data-g="primary" class="btn btn-secondary" onclick="Page.openSendEmailModal('${d.id}')" title="ส่งเอกสารให้ลูกค้าทางอีเมล — ใบกำกับของบริษัทที่ใช้ e-Tax by Email ส่งแบบ e-Tax ให้เอง">📧 ส่งอีเมล</button>`;
+            // รอบ 259 (E-H3): ส่งทาง LINE เอง — ปลายทาง/เหตุ/ลิงก์ชำระจากเซิร์ฟเวอร์ (GET document/{id}/line-send)
+            actions += ` <button data-g="primary" class="btn btn-secondary" onclick="Page.openSendLineModal('${Layout.jsArg(d.id)}')" title="ส่งการ์ดเอกสารถึง LINE ผู้ใช้/กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท) — มีปุ่มดู PDF และเลือกใส่ลิงก์ชำระได้">💬 ส่งทาง LINE</button>`;
           }
           // PDF/A-3 (ฝัง XML สรรพากร) เป็น default download ของทุก
           // เอกสาร e-Tax อยู่แล้ว — กดปุ่ม "PDF" ในตาราง action
@@ -11623,7 +11596,9 @@
             const r = await this._approveConfirmingWarnings(api, id);
             if (!r.approved) return;
             Layout.closeModal('detailModal');
-            Layout.toast('อนุมัติเอกสารสำเร็จ');
+            Layout.toast(r.message || 'อนุมัติเอกสารสำเร็จ', /—/.test(r.message || '') ? 'warning' : 'success', /—/.test(r.message || '') ? 12000 : 4000);
+            // รอบ 259: ลูกค้ามีเงินรอจัดสรรที่ใช้กับใบนี้ได้ ⇒ ถาม (ยอดมาจากเซิร์ฟเวอร์ — หน้าไม่มีสำเนากติกา)
+            await this._offerCustomerCredit(id);
             // ถ้าเอกสารฝั่งซื้อ (PV/PI/Expense) ที่มีบรรทัดลงผัง PPE → ระบบ
             // auto-register สินทรัพย์ NeedsReview=true. เด้ง modal ถามผู้ใช้
             // ให้เปิดไปเติมรายละเอียดทันที (กฎเหล็ก #2 + TFRS for NPAEs บทที่ 10).
@@ -11930,6 +11905,7 @@
                 <div class="form-group" style="margin:0"><label class="form-label">ข้อความ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(รูปแบบ HTML — แก้ได้เฉพาะข้อความระหว่างแท็ก &lt;…&gt; · ไม่แก้ = ระบบส่งข้อความตามภาษาของ PDF)</span></label>
                   <textarea id="seBody" class="form-input" rows="5" style="resize:vertical"></textarea></div>
                 <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="seAttachPdf" checked> แนบไฟล์ PDF</label>
+                <label id="sePayLinkRow" style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="sePayLink"> ใส่ลิงก์ชำระเงินออนไลน์ (ระบบออกลิงก์ของใบนี้ให้ · ออกไม่ได้จะแจ้งเหตุก่อนส่ง)</label>
                 <div id="seEtaxRow" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.6"></div>
                 <label id="seResendRow" style="display:none;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="seEtaxResend"> ส่ง e-Tax by Email ซ้ำ (ETDA จะประทับเวลาเลขเดิมอีกครั้ง)</label>
                 <div id="seError" style="display:none;color:#dc2626;font-size:12px"></div>
@@ -11954,6 +11930,8 @@
         wrap.querySelector('#seEtaxRow').style.display = 'none';
         wrap.querySelector('#seResendRow').style.display = 'none';
         wrap.querySelector('#seEtaxResend').checked = false;
+        wrap.querySelector('#sePayLink').checked = false;
+        wrap.querySelector('#sePayLinkRow').style.display = 'flex';
         this._seRoute = null;
         wrap.querySelector('#seError').style.display = 'none';
         wrap.querySelector('#seSendBtn').disabled = false;
@@ -11995,9 +11973,18 @@
           wrap.querySelector('#seAttachPdf').disabled = true;
           if (!wrap.querySelector('#seTo').value && r.defaultTo) wrap.querySelector('#seTo').value = r.defaultTo;
           wrap.querySelector('#seSendBtn').disabled = (r.problems || []).length > 0;
+          // e-Tax by Email: เนื้ออีเมลตามรูปแบบสรรพากร — ไม่มีช่องลิงก์ชำระ (ห้ามติ๊กแล้วไม่มีผล)
+          wrap.querySelector('#sePayLink').checked = false;
+          wrap.querySelector('#sePayLinkRow').style.display = 'none';
         } else {
           box.innerHTML = `<div style="color:#334155">${esc(r.reason)}</div><div>${esc(r.stageLabel)}</div>` + list(r.warnings, '#92400e');
           wrap.querySelector('#seResendRow').style.display = 'flex';
+          // ฝ่ายค้าน 259 L1: ติ๊กส่ง e-Tax ซ้ำ = ไปทาง e-Tax (ไม่มีลิงก์ชำระ) ⇒ ซ่อน/ล้างช่องลิงก์ชำระ (เซิร์ฟเวอร์ปฏิเสธถ้ายังส่งมา)
+          const resend = wrap.querySelector('#seEtaxResend');
+          resend.onchange = () => {
+            const row = wrap.querySelector('#sePayLinkRow');
+            if (resend.checked) { wrap.querySelector('#sePayLink').checked = false; row.style.display = 'none'; } else row.style.display = 'flex';
+          };
         }
         box.style.display = 'block';
       },
@@ -12060,7 +12047,8 @@
           btn.disabled = false; return;
         }
         const req = { to, cc: etaxRoute ? null : cc, subject: etaxRoute ? null : subject, body, attachPdf: etaxRoute ? true : attachPdf,
-          attachXml: false, confirmEtaxResend: !!wrap.querySelector('#seEtaxResend')?.checked };
+          attachXml: false, confirmEtaxResend: !!wrap.querySelector('#seEtaxResend')?.checked,
+          includePayLink: !etaxRoute && !wrap.querySelector('#seEtaxResend')?.checked && !!wrap.querySelector('#sePayLink')?.checked };
         const send = async (r) => {
           const res = await api.sendDocumentEmail(id, r);
           // HTTP 200 + success:false = ผู้ให้บริการอีเมลไม่รับ (E9 — เดิมขึ้น "สำเร็จ" ทั้งที่ส่งไม่ผ่าน)
@@ -12085,6 +12073,79 @@
         } catch (e) {
           err.textContent = 'ส่งไม่สำเร็จ: ' + (e.message || ''); err.style.display = 'block';
         } finally { btn.disabled = false; }
+      },
+      async _loadSendTypes() {
+        try {
+          const j = await API.get(`/api/companies/${Layout.getCompanyId()}/document/send-types`);
+          this._sendTypes = (j && j.success !== false && Array.isArray(j.data)) ? j.data : [];
+        } catch (e) { this._sendTypes = []; }
+      },
+      /** รอบ 259 (E-H3): หน้าต่าง "ส่งทาง LINE" — ปลายทาง/เหตุ/ลิงก์ชำระคำนวณที่เซิร์ฟเวอร์ (หน้าแสดงอย่างเดียว) · ผลจริงดูที่คิว LINE */
+      async openSendLineModal(id) {
+        let wrap = document.getElementById('sendLineModal');
+        if (!wrap) {
+          wrap = document.createElement('div');
+          wrap.id = 'sendLineModal';
+          wrap.className = 'modal-overlay';
+          wrap.innerHTML = `
+            <div class="modal" style="max-width:520px">
+              <div class="modal-header">
+                <h3 class="modal-title">💬 ส่งเอกสารทาง LINE</h3>
+                <button class="modal-close" onclick="document.getElementById('sendLineModal').classList.remove('active')">&times;</button>
+              </div>
+              <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
+                <div id="slBody" style="font-size:13px">กำลังโหลด...</div>
+                <label id="slPayRow" style="display:none;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="slPay"> ใส่ปุ่มชำระเงินออนไลน์บนการ์ด</label>
+                <div id="slPayNote" style="display:none;font-size:12px;color:#64748b"></div>
+                <div id="slError" style="display:none;color:#dc2626;font-size:12px"></div>
+              </div>
+              <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn btn-outline" onclick="document.getElementById('sendLineModal').classList.remove('active')">ยกเลิก</button>
+                <button data-g="primary" class="btn btn-primary" id="slSendBtn" disabled>ส่งทาง LINE</button>
+              </div>
+            </div>`;
+          document.body.appendChild(wrap);
+        }
+        const esc = Layout.esc;
+        const body = wrap.querySelector('#slBody');
+        const err = wrap.querySelector('#slError');
+        const btn = wrap.querySelector('#slSendBtn');
+        body.textContent = 'กำลังโหลด...';
+        err.style.display = 'none';
+        btn.disabled = true;
+        wrap.querySelector('#slPay').checked = false;
+        wrap.querySelector('#slPayRow').style.display = 'none';
+        wrap.querySelector('#slPayNote').style.display = 'none';
+        wrap.classList.add('active');
+        const seq = (this._slSeq = (this._slSeq || 0) + 1);
+        let o = null;
+        try {
+          const j = await API.get(`/api/companies/${Layout.getCompanyId()}/document/${encodeURIComponent(id)}/line-send`);
+          if (j && j.success === false) throw new Error(j.message || 'โหลดปลายทาง LINE ไม่สำเร็จ');
+          o = j && j.data;
+        } catch (e) { if (seq === this._slSeq) body.innerHTML = `<div style="color:#dc2626">${esc(e.message)}</div>`; return; }
+        if (seq !== this._slSeq || !o) return;
+        const rows = (o.targets || []).map(t => `<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #f1f5f9;${t.available ? '' : 'color:#94a3b8'}">
+            <input type="checkbox" data-sl-ep="${esc(t.endpointId)}" ${t.available ? '' : 'disabled'}>
+            <span><b>${esc(t.display)}</b> <span style="font-size:11px;color:#64748b">· ${esc(t.kindLabel)}${t.showAmounts ? '' : ' · ซ่อนยอด'}${t.pdfLink ? ' · มีปุ่มดู PDF' : ''}${t.payLink ? '' : ' · ไม่มีปุ่มชำระ'}</span>
+            ${t.reason ? `<div style="font-size:11px;color:#b45309">${esc(t.reason)}</div>` : ''}</span></label>`).join('');
+        body.innerHTML = (o.problem ? `<div style="color:#b45309;margin-bottom:6px">${esc(o.problem)}</div>` : '') + rows;
+        if (o.payLinkOffered) wrap.querySelector('#slPayRow').style.display = 'flex';
+        else if (o.payLinkNote) { const n = wrap.querySelector('#slPayNote'); n.textContent = o.payLinkNote; n.style.display = 'block'; }
+        const sync = () => { btn.disabled = !wrap.querySelector('input[data-sl-ep]:checked'); };
+        body.querySelectorAll('input[data-sl-ep]').forEach(cb => cb.addEventListener('change', sync));
+        sync();
+        btn.onclick = async () => {
+          const endpointIds = Array.from(body.querySelectorAll('input[data-sl-ep]:checked')).map(cb => cb.dataset.slEp);
+          btn.disabled = true; err.style.display = 'none';
+          try {
+            const j = await API.post(`/api/companies/${Layout.getCompanyId()}/document/${encodeURIComponent(id)}/line-send`,
+              { endpointIds, includePayLink: !!wrap.querySelector('#slPay').checked });
+            if (!j || j.success === false) throw new Error((j && j.message) || 'ส่งทาง LINE ไม่สำเร็จ');
+            Layout.toast(j.message || 'เข้าคิว LINE แล้ว', 'success', 8000);
+            wrap.classList.remove('active');
+          } catch (e) { err.textContent = e.message || 'ส่งทาง LINE ไม่สำเร็จ'; err.style.display = 'block'; sync(); }
+        };
       },
       async generateEtax(id) {
         if (!(await Layout.confirm('สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) สำหรับเอกสารนี้?\n\nหลังจากสร้างแล้วจะสามารถดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัวได้'))) return;
@@ -13350,6 +13411,44 @@
           if (!/สิทธิ์/.test(e.message || '')) slot.innerHTML = ` <span class="text-xs text-gray-500" title="${Layout.esc(e.message || '')}">ตรวจเงินรอจัดสรรของลูกค้าไม่สำเร็จ</span>`;
         }
       },
+      /** รอบ 259 — หลังอนุมัติใบขาย: เซิร์ฟเวอร์ตอบว่าลูกค้ามีเงินรอจัดสรรที่ใช้กับใบนี้ได้เท่าไร (0 = ไม่ถาม) */
+      async _offerCustomerCredit(docId) {
+        const api = Layout.api(); if (!api || !api.getCustomerCreditsForDocument) return;
+        let c = null;
+        try { c = (await api.getCustomerCreditsForDocument(docId))?.data; }
+        catch (e) {
+          if (!/สิทธิ์/.test(e.message || '')) Layout.toast('ตรวจเงินรอจัดสรรของลูกค้าไม่สำเร็จ: ' + (e.message || ''), 'warning', 7000);
+          return;
+        }
+        if (!c || !(c.totalUsable > 0)) return;
+        const ok = await Layout.confirm({ title: 'ลูกค้ามีเงินรอจัดสรร',
+          message: `ลูกค้ามีเงินรอจัดสรร ${Layout.money(c.totalUsable)} บาท — ใช้ตัดใบ ${c.documentNumber} นี้?`, okText: 'ใช้ตัดใบนี้' });
+        if (!ok) return;
+        this._ccForDoc = c;
+        this.openUseCredit();
+      },
+      /** รอบ 259 P5 — เปิดหน้ารับชำระของใบที่เปิดอยู่แล้วเติมค่าจากลิงก์ (ยอด · วันที่ · อ้างอิง · บัญชีธนาคาร) · ค่าที่เติม = ค่าของผู้ใช้ (userTouched) */
+      async _openPayFromLink(docId, params) {
+        const d = this._currentDoc;
+        if (!d || String(d.id) !== String(docId)) return;
+        await this.recordPayment(d.id, Number(d.balanceDue ?? 0), Number(d.withholdingTaxAmount ?? 0),
+          Number(d.payeeAmount ?? d.totalAmount ?? 0), d.currency || 'THB', Number(d.exchangeRate ?? 1),
+          d.documentType, Number(d.vatAmount ?? 0));
+        const set = (id, v) => {
+          const el = document.getElementById(id);
+          if (!el || v === null || v === undefined || v === '') return;
+          el.value = v;
+          el.dataset.userTouched = '1';
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        set('rpDate', params.get('payDate'));
+        set('rpRef', params.get('payRef'));
+        const bank = document.getElementById('rpBankOverride');
+        if (bank && params.get('payBank') && [...bank.options].some(o => o.value === params.get('payBank'))) set('rpBankOverride', params.get('payBank'));
+        set('rpAmount', params.get('payAmount'));
+        Layout.toast('เติมยอด/วันที่จากรายการเดินบัญชีแล้ว — ตรวจแล้วกดบันทึก (เงินเกินยอดค้าง ระบบให้เลือกผูกใบอื่น/เก็บเป็นเงินรอจัดสรร)', 'info', 9000);
+      },
       openUseCredit() {
         const c = this._ccForDoc; if (!c) return;
         let m = document.getElementById('ccUseModal');
@@ -13797,53 +13896,14 @@
             + revs.slice(0, 20).map(x => `<div>• ${link(x.sourceId, x.sourceNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(revs)
             + stuck.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(stuck)
             + keptLost.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(keptLost)
-            // รอบ 255 (ETR-ACK): ปุ่ม "ตรวจแล้ว" ต่อแถว e-Tax (ทางไปต่อ — เดิมแถบค้างตลอดไป) · เซิร์ฟเวอร์ตัดสินทั้งหมด
-            + etaxRows.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')} `
-              + `<button type="button" class="btn btn-sm btn-secondary" style="padding:1px 8px;font-size:12px" `
-              + `onclick="Page.openEtaxReviewAck('${Layout.jsArg(x.etaxId)}','${Layout.jsArg(x.etaxRefNumber || '')}','${Layout.jsArg(x.documentNumber || '')}','${Layout.jsArg((x.allowedOutcomes || []).join(','))}')">✓ ตรวจแล้ว</button></div>`).join('') + more(etaxRows);
+            // รอบ 259-3 (ทีม E-M7 · คำตัดสิน 259-3-6): แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร ย้ายไปบ้านเดียวที่หน้า e-Tax (พร้อมปุ่ม "ตรวจแล้ว") — ที่นี่เหลือลิงก์
+            // ฝ่ายค้าน L7: ลิงก์ตามสิทธิ์เมนู e-Tax — ผู้ที่เข้าหน้า e-Tax ไม่ได้เห็นทางไปต่อที่ทำได้จริง (ไม่ใช่ลิงก์ที่เปิดแล้วถูกปฏิเสธ)
+            + (etaxRows.length ? `<div>• แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร ${Number(etaxRows.length)} รายการ — ${Layout.hasMenuAccess('etax')
+                ? '<a href="/pages/etax.html#etaxRdReview" style="color:#92400e;text-decoration:underline">ตรวจที่หน้า e-Tax</a>'
+                : 'แจ้งผู้ที่มีสิทธิ์เมนู e-Tax ให้ตรวจและบันทึกที่หน้า e-Tax'}</div>` : '');
           el.style.display = '';
         } catch (e) { el.style.display = 'none'; }
       },
-      openEtaxReviewAck(etaxId, etaxRef, docNo, allowedCsv) {
-        document.getElementById('eraEtaxId').value = etaxId;
-        document.getElementById('eraRowInfo').innerHTML = `แถว e-Tax <b>${Layout.esc(etaxRef || '-')}</b> ของเอกสาร <b>${Layout.esc(docNo || '-')}</b>`;
-        // รอบ 257 ชุด 3: ตัวเลือกที่ใช้ได้ของแถวนี้มาจากเซิร์ฟเวอร์ (กลุ่มส่งอีเมลพร้อมสำเนา ETDA = "ยกเลิกที่กรมสรรพากรแล้ว" เท่านั้น) · ว่าง = ทุกตัวเลือก
-        const allowed = String(allowedCsv || '').split(',').filter(Boolean);
-        const radios = Array.from(document.querySelectorAll('input[name="eraOutcome"]'));
-        radios.forEach(r => { const ok = !allowed.length || allowed.includes(r.value); r.disabled = !ok; r.closest('label').style.display = ok ? 'block' : 'none'; });
-        const first = radios.find(r => !r.disabled);
-        radios.forEach(r => { r.checked = r === first; });
-        document.getElementById('eraRdReference').value = '';
-        document.getElementById('eraNote').value = '';
-        document.getElementById('eraSubmitBtn').disabled = false;
-        this.etaxReviewAckOutcomeChanged();
-        Layout.openModal('etaxReviewAckModal');
-      },
-      etaxReviewAckOutcomeChanged() {
-        const v = document.querySelector('input[name="eraOutcome"]:checked')?.value;
-        document.getElementById('eraRefGroup').style.display = v === 'CancelledAtRd' ? '' : 'none';
-      },
-      async submitEtaxReviewAck() {
-        const api = Layout.api(); if (!api) return;
-        const id = document.getElementById('eraEtaxId').value;
-        const outcome = document.querySelector('input[name="eraOutcome"]:checked')?.value || null;
-        const payload = {
-          outcome,
-          rdReference: outcome === 'CancelledAtRd' ? (document.getElementById('eraRdReference').value || null) : null,
-          note: document.getElementById('eraNote').value,
-        };
-        const btn = document.getElementById('eraSubmitBtn');
-        btn.disabled = true;
-        try {
-          const res = await api.acknowledgeEtaxReviewRow(id, payload);
-          Layout.closeModal('etaxReviewAckModal');
-          Layout.toast(res?.message || 'บันทึกว่าตรวจแล้ว', 'success', 10000);
-          await this.loadEtaxReissueReview();
-        } catch (e) {
-          Layout.toast(e.message || 'บันทึกผลตรวจไม่สำเร็จ', 'error', 12000);
-        } finally { btn.disabled = false; }
-      },
-
       async voidPayment(paymentId) {
         const api = Layout.api(); if (!api) return;
         if (!(await Layout.confirmDanger({

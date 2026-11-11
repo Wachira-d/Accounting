@@ -232,8 +232,6 @@ public class SettingsService : ISettingsService
         if (request.ApprovalThresholdAmount.HasValue) settings.ApprovalThresholdAmount = request.ApprovalThresholdAmount.Value;
         if (request.EnableApiAccess.HasValue) settings.EnableApiAccess = request.EnableApiAccess.Value;
         if (request.MaxApiKeys.HasValue) settings.MaxApiKeys = request.MaxApiKeys.Value;
-        if (request.AutoCloseMonthEnd.HasValue) settings.AutoCloseMonthEnd = request.AutoCloseMonthEnd.Value;
-        if (request.MonthEndClosingDay.HasValue) settings.MonthEndClosingDay = request.MonthEndClosingDay.Value;
         if (request.PreventPostToClosedPeriod.HasValue) settings.PreventPostToClosedPeriod = request.PreventPostToClosedPeriod.Value;
         if (request.SodBlockSelfApproval.HasValue) settings.SodBlockSelfApproval = request.SodBlockSelfApproval.Value;
         if (request.BudgetCommitmentMode != null && request.BudgetCommitmentMode is "Off" or "Warn" or "Block")
@@ -746,7 +744,7 @@ public class SettingsService : ISettingsService
         s.RequireApprovalForDocuments, s.ApprovalThresholdAmount,
         s.EnableApiAccess, s.MaxApiKeys,
         // Closing
-        s.AutoCloseMonthEnd, s.MonthEndClosingDay, s.PreventPostToClosedPeriod,
+        s.PreventPostToClosedPeriod,
         // e-Tax
         s.EtaxEnabled, s.EtaxTestMode, s.EtaxAutoSign, s.EtaxAutoSubmit,
         s.EtaxServiceProvider,

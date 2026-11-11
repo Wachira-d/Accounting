@@ -715,6 +715,27 @@ public class PortalService : IPortalService
         return opts;
     }
 
+    public async Task<PortalPayLinkResponse> GetDocumentPayLinkAsync(Guid companyId, Guid contactId, Guid documentId, CancellationToken ct = default)
+    {
+        // ความเป็นเจ้าของ + ลูกค้าเห็นได้ ผ่านด่านเดียวกับตัวเลือกชำระ (PortalDocuments + IsPortalVisibleAsync)
+        var exists = await PortalDocuments(companyId, contactId).AsNoTracking().AnyAsync(d => d.Id == documentId, ct);
+        if (!exists || !await IsPortalVisibleAsync(companyId, contactId, documentId, ct)) throw new KeyNotFoundException("ไม่พบเอกสาร");
+        var docFacts = await _db.Documents.AsNoTracking().Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => new { d.Status, d.BalanceDue }).FirstAsync(ct);
+        // ฝ่ายค้าน L1: ข้อความถึงลูกค้าเท่านั้น (เหตุภายในของร้านไม่หลุดถึงลูกค้า) · L2: ระบบลิงก์ไม่พร้อม = คำตอบปกติ ไม่โยนข้อผิดพลาดทั่วไป
+        var customerRefusal = PortalDocumentStatus.PayRefusalForCustomer(docFacts.Status.ToString(), docFacts.BalanceDue);
+        if (_payLinks == null) return new PortalPayLinkResponse(null, PortalDocumentStatus.ContactShopMessage, false);
+        PayLinkResult link;
+        // ฝ่ายค้าน M1 (แพ็ก B · 259-2-8): ร้านเพิกถอนลิงก์ไว้ ⇒ ตัวออกลิงก์ไม่ออกใหม่จากพอร์ทัล (โยน) — ลูกค้าได้ข้อความถึงลูกค้า ไม่มีกล่องโอน (ร้านตั้งใจหยุดรับทางนี้)
+        try { link = await _payLinks.EnsureLinkAsync(companyId, documentId, null, ct); }
+        catch (PayLinkRevokedException) { return new PortalPayLinkResponse(null, PayLinkRevokedException.CustomerMessage, false); }
+        if (link.Ok) return new PortalPayLinkResponse(link.Url, null, false);
+        // ออกลิงก์ไม่ได้: ใบชำระไม่ได้ (เหตุเดียวกับหน้าชำระ) · บริษัทยังไม่มีช่องทางออนไลน์ · ลิงก์ถูกร้านเพิกถอน ⇒ โอน/สลิปของพอร์ทัล (ยอดจากเซิร์ฟเวอร์) ถ้าใบรับโอนได้
+        var transfer = await _payLinks.TransferForDocumentAsync(companyId, documentId, ct);
+        var fallback = transfer is { Refusal: null, Transfer: not null };
+        return new PortalPayLinkResponse(null, fallback ? null : customerRefusal, fallback);
+    }
+
     /// <summary>ลูกค้าแนบสลิปโอนของใบแจ้งหนี้/ใบกำกับ — <b>"แจ้งโอน" ไม่ใช่ "รับชำระแล้ว"</b> (รอบ 250 WP-02b · M-2/G-T7)
     /// <para>สร้าง <c>PaymentIntent(ManualSlip)</c> สถานะรอ ผ่าน <c>ManualSlipPaymentProvider</c> (ยอดซ้ำ + ยังเปิดอยู่ = ใบเดิม) + ไฟล์สลิปผูกเอกสาร ·
     /// <b>ไม่สร้างแถว Payment</b> (เดิมเพิ่ม Payment "[PENDING-VERIFY]" ทันที ⇒ ใบแจ้งยอด/จับคู่ธนาคารนับเป็นจ่ายแล้วก่อนมีใครตรวจ) ·
@@ -729,6 +750,11 @@ public class PortalService : IPortalService
         if (!await IsPortalVisibleAsync(companyId, contactId, documentId)) throw new KeyNotFoundException("ไม่พบเอกสาร");
         if (!file.ContentType.StartsWith("image/") && file.ContentType != "application/pdf")
             throw new ArgumentException("รองรับเฉพาะรูปภาพหรือ PDF");
+        // รอบ 259-3 (E-M1 · คำตัดสิน 259-3-2): พอร์ทัลไม่มีช่องให้ลูกค้าพิมพ์ยอดแล้ว — ไม่ส่งยอด ⇒ ยอดโอนหลังหัก ณ ที่จ่าย จากตัวคิดเดียวกับหน้าชำระ
+        // (TransferForDocumentAsync · เดิม null = ยอดค้างเต็ม ⇒ ลูกค้าที่หักภาษีโอนขาดเท่า WHT แล้วสลิปไม่ตรงยอด) · ส่งยอดมาเอง (งวด) ยังผ่านด่านยอดค้างเดิม
+        if (amount == null && _payLinks != null
+            && await _payLinks.TransferForDocumentAsync(companyId, documentId) is { Refusal: null } transferView)
+            amount = transferView.Net;
 
         byte[] slipBytes;
         await using (var hs = file.OpenReadStream())

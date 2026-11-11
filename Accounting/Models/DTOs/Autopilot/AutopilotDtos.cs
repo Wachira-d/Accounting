@@ -3,7 +3,9 @@ namespace Accounting.Models.DTOs.Autopilot;
 // รอบ 252 WP-12A — หน้า Autopilot (autopilot.html) · ทุกป้าย/สถานะ/ปุ่มประกอบที่เซิร์ฟเวอร์ (Helpers/AutopilotStage · AutopilotNotice ·
 // QuotationAcceptAutopilot · BankReceiptAutoSettle) — หน้าเว็บแสดงอย่างเดียว · enum ออกเป็นชื่อ (string)
 
-public record AutopilotSummaryDto(int Days, int Done, int Running, int Stuck, int OpenIssues, int BankAwaitingConfirm);
+public record AutopilotSummaryDto(int Days, int Done, int Running, int Stuck, int OpenIssues, int BankAwaitingConfirm,
+    // รอบ 259-3 (E-M4): สลิปลูกค้ารอยืนยัน + ลิงก์คิวเจ้าของเดียว (payment-intents) — เซิร์ฟเวอร์ส่ง หน้าไม่ประกอบ URL เอง
+    int SlipAwaitingConfirm = 0, string? SlipQueueHref = null);
 
 public record AutopilotStepDto(string Key, string Label, string State, string? Note);
 
@@ -22,7 +24,9 @@ public record AutopilotCatalogueDto(string Code, string Label, string Delivery, 
 public record AutopilotSettingsDto(bool BankAutoSettleEnabled, string QuotationAcceptAutopilotDefault,
     string DigestLocalTime, IReadOnlyList<AutopilotOptionDto> QuotationModes, IReadOnlyList<AutopilotCatalogueDto> Catalogue,
     // รอบ 257 ชุด 4 (A L12): บอกก่อนเปิดว่ารอบถัดไปไล่บรรทัดเงินเข้าย้อนหลัง N วัน (server computes)
-    string? BankAutoSettleEnableNote = null);
+    string? BankAutoSettleEnableNote = null,
+    // รอบ 259-3 (E-M2): การ์ดศูนย์รวมค่าตั้งที่อยู่หน้าอื่น (สถานะ + ลิงก์ · อ่านอย่างเดียว) — ตัวประกอบเดียว Helpers/AutopilotSettingsHub
+    IReadOnlyList<global::Accounting.Helpers.AutopilotSettingsHub.Item>? Hub = null);
 
 public record UpdateAutopilotSettingsRequest(bool? BankAutoSettleEnabled, string? QuotationAcceptAutopilotDefault, string? DigestLocalTime);
 

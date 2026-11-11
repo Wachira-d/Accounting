@@ -3,41 +3,51 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vendor Portal — Admin — Next Acc</title>
+  <title>พอร์ทัลผู้ขาย — Next Acc</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .vp-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin-top:14px; }
+    .vp-muted { color:#64748b; font-size:13px; }
+    .vp-url { background:#fff; padding:10px 14px; border-radius:6px; font-family:monospace; font-size:13px; word-break:break-all; border:1px solid #bbf7d0; }
+  </style>
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div>
-        <h2 class="page-title">Vendor Portal — ออก magic-link</h2>
-        <p class="page-subtitle">AP ส่ง link ให้ vendor / customer เข้าดู PO + invoice + payment status — ไม่ต้องสร้าง user</p>
+        <h2 class="page-title">พอร์ทัลผู้ขาย</h2>
+        <p class="page-subtitle">ส่งลิงก์ให้ผู้ขายเข้าดูใบสั่งซื้อ · ใบแจ้งหนี้ · สถานะการจ่ายเงิน และส่งใบแจ้งหนี้ใหม่ได้เอง — ไม่ต้องสร้างบัญชีผู้ใช้ ·
+          ลูกค้าใช้ <a href="/pages/customer-portal.html">พอร์ทัลลูกค้า</a> (เปิด/ปิดสิทธิ์ได้ทีละเรื่อง · ชำระเงินได้)</p>
       </div>
     </div>
 
     <div class="card">
-      <h3>ออก token ใหม่</h3>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px;max-width:760px">
-        <div><label>Contact (ผู้ติดต่อ)</label><input type="hidden" id="contactId"><input type="text" id="contactName" class="form-input"></div>
-        <div><label>บทบาท</label>
-          <select id="role" class="form-input">
-            <option value="Vendor">Vendor — เห็น PO + invoice</option>
-            <option value="Customer">Customer — เห็น invoice + receipts</option>
-          </select>
-        </div>
-        <div><label>อายุ (วัน)</label><input id="validDays" type="number" class="form-input" value="90"></div>
-        <div><label>อีเมลผู้รับ (optional)</label><input id="recipientEmail" type="email" class="form-input"></div>
+      <h3>ออกลิงก์ใหม่ให้ผู้ขาย</h3>
+      <div class="vp-grid">
+        <div><label for="contactName">ผู้ขาย (ผู้ติดต่อ)</label><input type="hidden" id="contactId"><input type="text" id="contactName" class="form-input"></div>
+        <div><label for="validDays">อายุลิงก์ (วัน)</label><input id="validDays" type="number" min="1" max="365" class="form-input" value="90"></div>
+        <div><label for="recipientEmail">ส่งลิงก์ทางอีเมลถึง (ไม่บังคับ)</label><input id="recipientEmail" type="email" class="form-input" placeholder="อีเมลเดียว · เว้นว่าง = คัดลอกลิงก์ส่งเอง"></div>
       </div>
       <div style="margin-top:14px">
-        <button class="btn btn-primary" onclick="Page.issue()">ออก link</button>
+        <button class="btn btn-primary" id="issueBtn" onclick="Page.issue()">ออกลิงก์</button>
       </div>
       <div id="result" style="margin-top:16px"></div>
+      <div style="background:#fef3c7;border-left:4px solid #d97706;border-radius:6px;padding:10px 14px;font-size:13px;color:#92400e;margin-top:14px">
+        ⚠️ <b>ลิงก์แสดงครั้งเดียว</b> — ระบบไม่เก็บลิงก์ตัวจริง (เก็บเฉพาะรหัสตรวจสอบ) · ลิงก์หาย/ส่งผิดคน = กด "เพิกถอน" ในตารางด้านล่าง แล้วออกลิงก์ใหม่
+      </div>
     </div>
 
     <div class="card" style="margin-top:14px">
-      <div style="background:#fef3c7;border-left:4px solid #d97706;border-radius:6px;padding:10px 14px;font-size:13px;color:#92400e">
-        ⚠️ <b>raw token แสดงครั้งเดียวเท่านั้น</b> — ระบบเก็บเป็น SHA-256 hash. คัดลอกแล้วส่งให้ vendor ทันที (ผ่าน email/LINE) ถ้าหายต้องออกใหม่.
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h3>ลิงก์ที่ออกแล้ว</h3>
+        <button class="btn btn-sm btn-danger" id="revokeLegacyBtn" style="display:none" onclick="Page.revokeLegacy()">เพิกถอนลิงก์ลูกค้าเดิมทั้งหมด</button>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>ผู้ติดต่อ</th><th>บทบาท</th><th>ออกเมื่อ</th><th>หมดอายุ</th><th>ใช้ล่าสุด</th><th>อีเมลผู้รับ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="tokenBody"><tr><td colspan="8" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -45,41 +55,105 @@
   <script src="/js/api.js"></script><script src="/js/translations.js"></script><script src="/js/i18n.js"></script><script src="/js/layout.js"></script>
   <script>
     const Page = {
+      rows: [],
       async init() {
         if (!Layout.init('vendor-portal-admin')) return;
-        Layout.setTitle('Vendor Portal — Admin');
-        // ผู้ติดต่อ — ตัวเลือกกลาง (เดิมต้องพิมพ์ GUID เอง) · บทบาท Vendor = ผู้ขาย · Customer = ลูกค้า
+        Layout.setTitle('พอร์ทัลผู้ขาย');
+        // ผู้ติดต่อ — ตัวเลือกกลาง · ฝั่งผู้ขายเท่านั้น (รอบ 259-3: ลูกค้ามีบ้านเดียว = พอร์ทัลลูกค้า)
         const emailEl = document.getElementById('recipientEmail');
         emailEl.addEventListener('input', () => { emailEl.dataset.userTouched = '1'; });
         Layout.contactPicker('contactName', 'contactId', {
-          side: () => (document.getElementById('role').value === 'Customer' ? 'customer' : 'supplier'),
+          side: 'supplier',
           onSelect: (c) => {
             if (c && c.email && emailEl.dataset.userTouched !== '1') { emailEl.value = c.email; emailEl.dataset.autoSrc = 'contact'; }
           },
         });
+        await this.load();
       },
+
+      async load() {
+        const cid = Layout.getCompanyId();
+        const body = document.getElementById('tokenBody');
+        try {
+          const r = await API.get(`/api/companies/${encodeURIComponent(cid)}/vendor-portal/tokens`);
+          this.rows = (r && r.data) || [];
+        } catch (e) {
+          Layout.tableError(body, 8, 'โหลดรายการลิงก์ไม่สำเร็จ', () => this.load(), e.message);
+          return;
+        }
+        // ลิงก์บทบาทลูกค้าเดิม (ก่อนรอบ 259) ที่ยังใช้ได้ = ประตูที่สองของลูกค้า — ปุ่มปิดทีเดียว
+        document.getElementById('revokeLegacyBtn').style.display = this.rows.some(t => t.role === 'Customer' && t.canRevoke) ? '' : 'none';
+        if (!this.rows.length) { body.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400">ยังไม่เคยออกลิงก์</td></tr>'; return; }
+        const esc = Layout.esc;
+        // สถานะ/ป้าย/เพิกถอนได้ไหม มาจากเซิร์ฟเวอร์ (VendorPortalTokenRules) — หน้านี้แสดงอย่างเดียว
+        body.innerHTML = this.rows.map(t => `<tr>
+          <td>${esc(t.contactName || '-')}</td>
+          <td>${esc(t.roleLabel)}</td>
+          <td>${esc(Layout.date(t.issuedAt))}</td>
+          <td>${esc(Layout.date(t.expiresAt))}</td>
+          <td>${t.lastUsedAt ? esc(Layout.dateTime(t.lastUsedAt)) : '<span class="vp-muted">ยังไม่เคยเปิด</span>'}</td>
+          <td>${esc(t.recipientEmail || '-')}</td>
+          <td>${esc(t.statusLabel)}${t.revokedReason ? `<div class="vp-muted">${esc(t.revokedReason)}</div>` : ''}</td>
+          <td>${t.canRevoke ? `<button class="btn btn-sm btn-danger" onclick="Page.revoke('${Layout.jsArg(t.id)}')">เพิกถอน</button>` : ''}</td>
+        </tr>`).join('');
+      },
+
       async issue() {
         const cid = Layout.getCompanyId();
-        if (!document.getElementById('contactId').value) { Layout.toast('กรุณาเลือกผู้ติดต่อจากรายการ', 'error'); return; }
+        if (!document.getElementById('contactId').value) { Layout.toast('กรุณาเลือกผู้ขายจากรายการ', 'error'); return; }
+        const btn = document.getElementById('issueBtn'); btn.disabled = true;
         try {
-          const r = await API.post(`/api/companies/${cid}/vendor-portal/tokens`, {
+          const r = await API.post(`/api/companies/${encodeURIComponent(cid)}/vendor-portal/tokens`, {
             contactId: document.getElementById('contactId').value,
-            role: document.getElementById('role').value,
+            role: 'Vendor',
             validDays: +document.getElementById('validDays').value,
             recipientEmail: document.getElementById('recipientEmail').value || null,
           });
-          const d = r.data;
-          const url = window.location.origin + d.portalUrl;
+          const d = (r && r.data) || {};
+          // ลิงก์เต็มจากเซิร์ฟเวอร์ (URL ของระบบ) · ผลส่งอีเมลจริงจากเซิร์ฟเวอร์ (inviteNote)
+          const url = d.portalUrl || '';
+          const esc = Layout.esc;
           document.getElementById('result').innerHTML = `
             <div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:8px;padding:14px 18px">
-              <div style="font-weight:700;color:#15803d;margin-bottom:8px">✅ ${r.message}</div>
-              <div style="font-size:12px;color:#475569;margin-bottom:6px">Token id: ${d.tokenId} · หมดอายุ ${new Date(d.expiresAt).toLocaleDateString('th-TH')}</div>
-              <div style="background:#fff;padding:10px 14px;border-radius:6px;font-family:monospace;font-size:13px;word-break:break-all;border:1px solid #bbf7d0">
-                ${url}
-              </div>
-              <button class="btn btn-sm btn-success" style="margin-top:10px" onclick="navigator.clipboard.writeText('${url}').then(() => Layout.toast('คัดลอกแล้ว'))">📋 คัดลอก link</button>
+              <div style="font-weight:700;color:#15803d;margin-bottom:8px">✅ ออกลิงก์แล้ว · หมดอายุ ${esc(Layout.date(d.expiresAt))}</div>
+              <div style="font-size:13px;color:${d.inviteQueued ? '#15803d' : '#92400e'};margin-bottom:8px">${d.inviteQueued ? '📧' : 'ℹ️'} ${esc(d.inviteNote || '')}</div>
+              <div class="vp-url" id="issuedUrl">${esc(url)}</div>
+              <button class="btn btn-sm btn-success" style="margin-top:10px" onclick="Page.copyUrl()">📋 คัดลอกลิงก์</button>
             </div>`;
+          this._lastUrl = url;
+          await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; }
+      },
+
+      copyUrl() {
+        if (!this._lastUrl) return;
+        navigator.clipboard.writeText(this._lastUrl).then(() => Layout.toast('คัดลอกแล้ว'), () => Layout.toast('คัดลอกไม่สำเร็จ — เลือกข้อความแล้วคัดลอกเอง', 'error'));
+      },
+
+      async revokeLegacy() {
+        if (!await Layout.confirm({ title: 'เพิกถอนลิงก์ลูกค้าเดิมทั้งหมด', danger: true, okText: 'เพิกถอนทั้งหมด',
+          message: 'ลูกค้าที่ใช้ลิงก์เหล่านี้จะเปิดไม่ได้ทันที — ให้สิทธิ์ที่หน้าพอร์ทัลลูกค้าแทน (เปิด/ปิดสิทธิ์ทีละเรื่องได้)' })) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await API.post(`/api/companies/${encodeURIComponent(cid)}/vendor-portal/tokens/revoke-legacy-customer`, {});
+          Layout.toast((r && r.message) || 'เพิกถอนแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        await this.load();
+      },
+
+      async revoke(id) {
+        const reason = await Layout.promptText({
+          title: 'เพิกถอนลิงก์', message: 'ผู้ขายจะเปิดลิงก์นี้ไม่ได้ทันที (ย้อนกลับไม่ได้ — ออกลิงก์ใหม่ได้)',
+          label: 'เหตุผล', value: 'ลิงก์หลุด/ส่งผิดคน', okText: 'เพิกถอน', danger: true,
+        });
+        if (reason == null) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await API.post(`/api/companies/${encodeURIComponent(cid)}/vendor-portal/tokens/${encodeURIComponent(id)}/revoke`, { reason });
+          Layout.toast((r && r.message) || 'เพิกถอนแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        await this.load();
       },
     };
     Page.init();

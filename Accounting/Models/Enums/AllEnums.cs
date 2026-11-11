@@ -2897,3 +2897,17 @@ public enum UnappliedReason
     /// <summary>ลูกค้าโอนเกิน — รอคืนเงิน</summary>
     Overpaid = 3,
 }
+
+/// <summary>รอบ 259 (P4 · DECISIONS 259-1-x): ชนิดของขาออกของเงินรอจัดสรรที่ไม่ใช่การตัดใบ — เก็บเป็นชื่อใน <c>PaymentCreditMovement.Kind</c> ·
+/// กติกา (ตัดยอดคงเหลือ · ยังมีผล · เลขอ้างอิง) อยู่ที่ <c>Helpers/CustomerCreditMovementRules</c> ตัวเดียว</summary>
+public enum PaymentCreditMovementKind
+{
+    /// <summary>คืนเงินลูกค้า — Dr ผังพัก / Cr ธนาคาร</summary>
+    Refund = 1,
+    /// <summary>ย้ายเป็นเงินมัดจำ — ใบมัดจำที่ขาเงินเข้า = ผังพัก (Dr 21630)</summary>
+    ToDeposit = 2,
+    /// <summary>ตัดเศษคงเหลือ ≤ เพดานของบริษัท — Dr ผังพัก / Cr ผลต่างจากการปัดเศษ</summary>
+    WriteOff = 3,
+    /// <summary>จองให้ใบแจ้งหนี้ที่ออกจากเงินก้อนนี้ (ยังเป็นร่าง) — ไม่ใช่เงินออก: ไม่ตัดยอดคงเหลือ แต่ลด "ยอดที่ใช้ได้" จนใบถูกอนุมัติ/ลบ</summary>
+    ToInvoice = 4,
+}

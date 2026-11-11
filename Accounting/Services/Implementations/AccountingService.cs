@@ -352,16 +352,17 @@ public partial class AccountingService : IAccountingService
         }
     }
 
-    public async Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy)
+    public async Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy,
+        string? recurringRunKey = null)
     {
-        var entryId = await CreateJournalEntryCoreAsync(companyId, request, createdBy, null);
+        var entryId = await CreateJournalEntryCoreAsync(companyId, request, createdBy, null, recurringRunKey);
         return await GetJournalEntryAsync(companyId, entryId);
     }
 
     /// <summary>ตัวสร้างใบสำคัญ (คืน Id) · <paramref name="allowDeletedAccountIds"/> = ผังที่ถูกลบซึ่งใบปิดปีต้องล้าง (รอบ 4 P2-b — ผู้เรียกเดียว
     /// <c>YearEndCloseAsync</c> · ผู้เรียกอื่นส่ง null) · ไม่ map คำตอบ (บรรทัดของผังที่ลบไม่มี Account ให้ map)</summary>
     private async Task<Guid> CreateJournalEntryCoreAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy,
-        IReadOnlyCollection<Guid>? allowDeletedAccountIds)
+        IReadOnlyCollection<Guid>? allowDeletedAccountIds, string? recurringRunKey = null)
     {
         // Validate at least 2 lines (double-entry)
         if (request.Lines.Count < 2)
@@ -481,7 +482,9 @@ public partial class AccountingService : IAccountingService
                 DimensionId = request.DimensionId,
                 Note = request.Note,
                 Tags = request.Tags,
-                SourceDocumentId = sourceDocId
+                SourceDocumentId = sourceDocId,
+                // ฝ่ายค้าน 259-D M2: กุญแจ "รายการประจำ + งวด" ใน INSERT เดียวกับใบสำคัญ (unique ต่อบริษัท) — ล่มก่อนประทับรอบ ⇒ รอบถัดไปไม่ลงซ้ำ
+                RecurringRunKey = recurringRunKey,
             };
 
             // Validate project belongs to company (if provided)
@@ -1035,6 +1038,9 @@ public partial class AccountingService : IAccountingService
         // รอบ 243a S3: JE ตัดสูญภาษีถูกหัก — ผู้ใช้กลับจากสมุดรายวันไม่ได้ · เส้นระบบ (ได้รับใบแล้ว/ยกเลิกต้นทาง) กลับแบบ systemTriggered พร้อมเปลี่ยนสถานะทะเบียน
         if (!systemTriggered)
             await Accounting.Helpers.WhtWriteOffJournalLock.EnsureNotWriteOffEntriesAsync(_db, companyId, new[] { original.Id }, "กลับรายการ");
+        // ฝ่ายค้านรอบ 259 M3: JE คืนเงิน/ตัดเศษของเงินรอจัดสรร — กลับได้เฉพาะ "ยกเลิกรายการ" ที่หน้าเงินรอจัดสรร (ระบบกลับแบบ systemTriggered)
+        if (!systemTriggered && await Accounting.Helpers.CustomerCreditLedger.ManualReverseBlockAsync(_db, companyId, original.Id) is string creditMoveBlock)
+            throw new Accounting.Helpers.BusinessRuleException(creditMoveBlock, Accounting.Helpers.CustomerCreditMovementRules.UndoRuleCode, 409);
         // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน L3): JE โอนต้นทุนสินทรัพย์ — ทะเบียนอ้างรายการนี้ (ทุกทาง รวม systemTriggered)
         await FixedAssetService.EnsureNotAssetCostTransferAsync(_db, companyId, original.Id, "กลับ");
 
@@ -2862,39 +2868,11 @@ public partial class AccountingService : IAccountingService
             throw new InvalidOperationException("สามารถปิดได้เฉพาะงวดบัญชีที่เปิดอยู่เท่านั้น");
 
         // ===== Pre-closing checklist =====
-        var issues = new List<string>();
-
-        // 1. Draft journal entries
-        var draftCount = await _db.JournalEntries.CountAsync(j =>
-            j.FiscalPeriodId == periodId && j.Status == JournalEntryStatus.Draft);
-        if (draftCount > 0)
-            issues.Add($"ยังมีใบสำคัญ Draft {draftCount} รายการ (ต้อง Post หรือ Void ก่อน)");
-
-        // 2. Draft documents in this period
-        var draftDocs = await _db.Documents.CountAsync(d =>
-            d.CompanyId == companyId && !d.IsDeleted
-            && d.DocumentDate >= period.StartDate && d.DocumentDate <= period.EndDate
-            && d.Status == DocumentStatus.Draft);
-        if (draftDocs > 0)
-            issues.Add($"ยังมีเอกสาร Draft {draftDocs} ฉบับในงวดนี้");
-
-        // 3. Unbalanced journal entries (Dr != Cr)
-        var unbalanced = await _db.JournalEntries.CountAsync(j =>
-            j.FiscalPeriodId == periodId
-            && j.Status == JournalEntryStatus.Posted
-            && Math.Abs(j.TotalDebit - j.TotalCredit) > 0.01m);
-        if (unbalanced > 0)
-            issues.Add($"พบใบสำคัญไม่สมดุล (เดบิต≠เครดิต) {unbalanced} รายการ");
-
-        // 4. Unreconciled bank transactions
-        var unreconciledBank = await _db.BankTransactions.CountAsync(t =>
-            t.CompanyId == companyId
-            && t.TransactionDate >= period.StartDate && t.TransactionDate <= period.EndDate
-            && t.ReconciliationStatus == ReconciliationStatus.Unmatched);
-        if (unreconciledBank > 0)
-            issues.Add($"ยังมีรายการธนาคารที่ยังไม่กระทบยอด {unreconciledBank} รายการ (แนะนำให้กระทบยอดก่อน)");
-
-        if (issues.Count > 0)
+        // รอบ 259-3 (ฝ่ายค้าน M2 · คำตัดสิน 259-3-8): ชุดเดียวกับหน้าปิดงวด/เครื่องมือนักบัญชี (PreCloseChecklistService) — "พร้อมปิด" ⇔ ปิดได้
+        // เดิมเขียนกติกาชุดที่สองที่นี่ (ร่าง · ธนาคาร · สมดุล) ซึ่งต่างจากหน้า ⇒ หน้าขึ้นเขียวแต่ปุ่มปฏิเสธ
+        var check = await new PreCloseChecklistService(_db).RunForPeriodAsync(companyId, period);
+        var issues = check.Items.Where(i => !i.Passed && i.Severity == "Error").Select(i => i.Message).ToList();
+        if (!check.ReadyToClose)
             throw new InvalidOperationException(
                 "ไม่สามารถปิดงวดได้ — พบปัญหาที่ต้องแก้ไข:\n• " + string.Join("\n• ", issues));
 
