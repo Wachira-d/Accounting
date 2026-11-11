@@ -123,8 +123,11 @@ internal static class RecurringApprovePolicyLoader
         RecurringTransaction r, Loaded load, CancellationToken ct = default)
     {
         if (!r.AutoApprove) return null;
+        // นโยบายที่มีผล (ของรายการ/ผู้ติดต่อ หรือค่าเริ่มต้นรอบ 256) ตรวจผู้ตั้ง/ผู้ประทับแล้วใน LoadAsync ⇒ ไม่ตรวจซ้ำกับผู้สร้าง
+        // (รวมเคสค่าเริ่มต้นที่ผู้อนุมัติประทับเอง DefaultPolicyStampedBy — รวมชุด 1 L4 กับชุด 4 MED-2)
+        if (load.Policy != null && load.SetterActive == true) return null;
         if (load.Stored != null && load.SetterActive == true) return null;
-        return await CanStillApproveAsync(db, permissions, companyId, r.CreatedBy, r.DocumentType ?? DocumentType.Invoice, ct) ? null : AutoApproverGoneReason;
+        return await CanStillApproveAsync(db, permissions, companyId, DefaultResponsible(r), r.DocumentType ?? DocumentType.Invoice, ct) ? null : AutoApproverGoneReason;
     }
 
     /// <summary>รอบ 257 ฝ่ายค้าน L4 — สมุดรายวัน: post อัตโนมัติต้องมีผู้สร้างที่ยังเป็นสมาชิก + Journal.Manage · null = post ได้</summary>

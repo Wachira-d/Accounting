@@ -157,7 +157,8 @@ public class RecurringAutopilotRound248DbTests
         var doc = await check.Documents.AsNoTracking().SingleAsync(d => d.CompanyId == s.CompanyId && d.DocumentNumber != "INV-OLD-0001");
         Assert.Equal(DocumentStatus.Draft, doc.Status);
         var rec = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId);
-        Assert.Contains(ArOverdueApprovalWarning.Prefix, rec.LastRunOutcome ?? "");
+        // รอบ 257 (ชุด 1 L4): ผู้สร้าง "tester" ไม่ใช่สมาชิกที่อนุมัติได้ ⇒ หยุดก่อนถึงคำเตือนค้างชำระ (ผู้อนุมัติหมดสิทธิ์ ณ ตอนรัน) — ใบยังค้างร่างเหมือนรอบ 247
+        Assert.Contains("ApproveBlockedReason", rec.LastRunOutcome ?? "");
         Assert.False(await check.AuditLogs.AnyAsync(a => a.CompanyId == s.CompanyId && a.NewValues!.Contains(AutoApprovePolicy.RuleCode)));
     }
 
