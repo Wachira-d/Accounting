@@ -3067,7 +3067,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   แต่ไม่มีการชำระอ้าง `PAY-INTENT-…`) · `PartnerRouteFailed` (ป้ายส่งคู่ค้าล้ม) — อ่านอย่างเดียว ผูก CompanyId
 - **50 ทวิ เข้ากล่องรับแล้วรอคน (F-M4)**: `WhtCertIntakeService.SubmitAsync` ผล AwaitUser ⇒ แจ้งทีม `AutopilotPartnerExchange` (E-11 ขยายขอบเขต) · ยืนยันเอง/ปฏิเสธ ⇒ ไม่แจ้ง
 - **ความพร้อมทั้งเส้นบนรายการประจำ (F-M1 · 258-3-9)**: แผงความพร้อมเดิม (`AutopilotReadiness.Evaluate` ← `RecurringAutopilotService`) เพิ่มแถว `LINE-DOC`
-  (ปลายทาง LINE ที่รับเรื่องเอกสาร + เหตุ OA ไม่พร้อม) · `LINE-RECEIPT` (เมื่อเปิดส่งใบเสร็จหลังชำระ) · `GATEWAY` (โหมดเงินจริง) · `PARTNER` (ผู้ติดต่อเป็นคู่ค้า Accepted) —
+  (ปลายทาง LINE ที่รับเรื่องเอกสาร + เหตุ OA ไม่พร้อม) · `LINE-RECEIPT` (เมื่อเปิดส่งใบเสร็จหลังชำระ) · `PAY-LIVE` (โหมดเงินจริง — ไม่ใช่ `GATEWAY` เดิมของลิงก์ชำระ) · `PARTNER` (ผู้ติดต่อเป็นคู่ค้า Accepted) —
   ✓/ⓘ เท่านั้น ไม่กดระดับ "อัตโนมัติเต็ม" (`ChainInfoCodes`) · ไม่ได้ตรวจ (null) = ไม่มีแถว
 - **ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ ผู้ซื้อกดบันทึกจ่ายครั้งเดียว (F-H3 · 258-3-7)**: `DocumentPaymentHandler` (gateway/สลิปที่ยืนยัน) หลังบันทึกรับชำระ ⇒
   `PartnerPaymentNoticeService.NotifySellerReceivedAsync` — ลิงก์ InvoiceFlow ที่มีใบซื้อปลายทาง + คู่ค้า Accepted ⇒ แถว `PartnerPaymentNotices` ใน**บริษัทผู้ซื้อ**

@@ -206,7 +206,7 @@ public class BillingChainRound258Tests
         });
         Assert.Equal(AutopilotReadiness.Ok, Row(on, "LINE-DOC")!.Verdict);
         Assert.Equal(AutopilotReadiness.Ok, Row(on, "LINE-RECEIPT")!.Verdict);
-        Assert.Equal(AutopilotReadiness.Ok, Row(on, "GATEWAY")!.Verdict);
+        Assert.Equal(AutopilotReadiness.Ok, Row(on, "PAY-LIVE")!.Verdict);
         Assert.Equal(AutopilotReadiness.Ok, Row(on, "PARTNER")!.Verdict);
         var off = AutopilotReadiness.Evaluate(new AutopilotReadiness.Facts
         {
@@ -215,7 +215,7 @@ public class BillingChainRound258Tests
         });
         Assert.Equal(AutopilotReadiness.Info, Row(off, "LINE-DOC")!.Verdict);
         Assert.Equal("ยังไม่ได้ตั้ง LINE OA", Row(off, "LINE-DOC")!.Why);
-        Assert.Equal(AutopilotReadiness.Info, Row(off, "GATEWAY")!.Verdict);
+        Assert.Equal(AutopilotReadiness.Info, Row(off, "PAY-LIVE")!.Verdict);
         Assert.Null(Row(off, "PARTNER"));
         // ทิศตรงข้าม: ไม่ได้ตรวจ (null) ⇒ ไม่มีแถวใหม่ · แถวข้อมูลประกอบไม่นับเป็นคำเตือน
         var unchecked_ = AutopilotReadiness.Evaluate(new AutopilotReadiness.Facts { SaleSide = true, DocumentType = DocumentType.Invoice });

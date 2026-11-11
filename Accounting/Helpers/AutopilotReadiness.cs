@@ -138,7 +138,7 @@ public static class AutopilotReadiness
     }
 
     /// <summary>รอบ 258-3 (F-M1): แถวข้อมูลประกอบของเส้นทั้งเส้น — ไม่กดระดับ "อัตโนมัติเต็ม" (ⓘ ไม่ใช่ข้อบกพร่องของรายการ)</summary>
-    public static readonly IReadOnlySet<string> ChainInfoCodes = new HashSet<string>(StringComparer.Ordinal) { "LINE-DOC", "LINE-RECEIPT", "GATEWAY", "PARTNER" };
+    public static readonly IReadOnlySet<string> ChainInfoCodes = new HashSet<string>(StringComparer.Ordinal) { "LINE-DOC", "LINE-RECEIPT", "PAY-LIVE", "PARTNER" };
     public const string ContactsUrl = "/pages/contacts.html";
     public const string PartnersUrl = "/pages/partners.html";
 
@@ -405,7 +405,7 @@ public static class AutopilotReadiness
                 lineRc > 0 ? $"ใบเสร็จหลังรับชำระไปทาง LINE ด้วย ({lineRc} ปลายทางที่ติ๊ก “ใบเสร็จ”)" : "ใบเสร็จหลังรับชำระไปทางอีเมลอย่างเดียว (ไม่มี LINE ที่ติ๊ก “ใบเสร็จ”)",
                 null, ContactsUrl, lineRc > 0 ? null : "ตั้งช่องทางแจ้งเตือนของผู้ติดต่อ");
         if (f.SaleSide && f.GatewayLive is bool live)
-            Add("GATEWAY", "รับเงิน", live ? Ok : Info,
+            Add("PAY-LIVE", "รับเงิน", live ? Ok : Info,
                 live ? "รับชำระออนไลน์โหมดเงินจริงแล้ว — เงินเข้าลงรับชำระ/ออกใบเสร็จเอง" : "รับชำระออนไลน์ยังเป็นโหมดทดสอบ/ยังไม่ตั้ง — เงินโหมดทดสอบไม่มีผลทางบัญชี",
                 null, PaymentSettingsUrl, live ? null : "ตั้งรับชำระออนไลน์");
         if (f.SaleSide && f.PartnerLinked == true)
