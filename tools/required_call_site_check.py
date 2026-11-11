@@ -313,7 +313,7 @@ RULES += [
          must=["AddNewChild(", "DeclaredOrFiled(", "RecalcVatTotals("], forbid=["Lines.Add("],
          must_re=[r"r\.CompanyId\s*==\s*companyId", r"r\.Status\s*==\s*TaxReportStatus\.Draft"],
          why="ฝ่ายค้านรอบสาม: เครดิตยกไปต้องตามยอด/สถานะงวดนี้เสมอ (แก้ยอด · ถอนเมื่อปลดล็อก) · แตะเฉพาะงวดถัดไปที่ยังร่าง"),
-    dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="UnlockTaxFilingAsync",
+    dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="UnlockTaxFilingCoreAsync",
          must=["SyncNextPeriodVatCreditAsync("], before=[("SyncNextPeriodVatCreditAsync(", "_db.SaveChangesAsync(")],
          why="ปลดล็อกงวด ⇒ ถอนเครดิตที่ยกไปงวดถัดไป (มิฉะนั้นยื่นใหม่ด้วยยอดใหม่แล้วงวดถัดไปค้างเครดิตเก่า)"),
     dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="RejectAndReverseTaxReportAsync",
@@ -17441,10 +17441,15 @@ RULES += [
          why=_R257B_WHY + "B-M2 ผู้จ่ายตัดสินด้วยกุญแจ (เลขผู้จ่าย → ผู้ติดต่อ) — ไม่รู้ทั้งคู่ ≠ ซ้ำ (เดิมกลืนใบเลขเดียวกันของลูกค้าอื่น)"),
     dict(file=_R252_SVC, method="UnconfirmAsync",
          must=["WhtCreditStatus.Claimed", "WhtCreditableAmount.StatusAfterUnconfirm(", "WhtCertAllocationStatus.Reversed", "_credits.ReopenWrittenOffAsync(",
-               "LockCreditAsync(", "a.CompanyId == companyId", "i.CompanyId == companyId", "StandaloneNotePrefix", "WhtCertIntakeRecordStatus.Rejected"],
+               "LockCreditAsync(", "a.CompanyId == companyId", "i.CompanyId == companyId", "row.CreatedFromIntakeId == intakeId", "WhtCertIntakeRecordStatus.Rejected",
+               "WhtCreditFiledYearGuard.LockCompanyAsync(", "WhtCreditFiledYearGuard.EnsureNotFiledAsync(", "WhtCreditableAmount.UnconfirmTake(", "DetachBucketFileAsync(",
+               "a.PriorEvidenceKind"],   # ฝ่ายค้าน e104a7bb: H1 ปีที่ยื่น · M1 ล็อกบริษัท · L2 คอลัมน์ · L4 ยอดของใบนี้ · L7 ไฟล์/หลักฐานเดิม
          must_re=[r"\bAudit\s*\(\s*companyId", r"row\s*\.\s*ReceivedAmount\s*=\s*R\s*\(\s*row\s*\.\s*ReceivedAmount\s*-\s*take"],
          before=[("LockCreditAsync(", "WhtCreditStatus.Claimed"), ("WhtCreditStatus.Claimed", "WhtCreditableAmount.StatusAfterUnconfirm("),
-                 ("_credits.ReopenWrittenOffAsync(", "WhtCreditableAmount.StatusAfterUnconfirm(")],
+                 ("_credits.ReopenWrittenOffAsync(", "WhtCreditableAmount.StatusAfterUnconfirm("),
+                 ("WhtCreditFiledYearGuard.LockCompanyAsync(", "_db.WhtCertIntakes.FirstOrDefaultAsync("),
+                 ("WhtCreditFiledYearGuard.EnsureNotFiledAsync(", "a.Status = WhtCertAllocationStatus.Reversed"),   # L3 ตรวจทุกแถวก่อนแก้
+                 ("WhtCreditStatus.Claimed", "a.Status = WhtCertAllocationStatus.Reversed")],
          forbid=["_feedback.RecordUserChoiceAsync(", "WhtCreditsReceived.Add("],
          why=_R257B_WHY + "B-H2 ถอนการยืนยัน: ใต้ล็อกแถว · ใช้เครดิตในแบบที่ยื่นแล้ว ⇒ 409 · ตัดสูญ ⇒ กลับ JE ก่อน · สถานะจากตัวตัดสินเดียว · audit chain · ไม่สอนนักเรียน"),
     dict(file=_R252_SVC, method="SubmitUnreadableAsync",
@@ -17483,7 +17488,9 @@ RULES += [
          must=["WhtCreditClaimStamp.StampAsync(", "TaxType.CorporateIncomeTax"],
          before=[("WhtCreditClaimStamp.StampAsync(", "_db.SaveChangesAsync(")],
          why=_R257B_WHY + "B-M1 (a) ยื่น ภ.ง.ด.50 ⇒ เครดิตที่ใช้ = Claimed ใน SaveChanges เดียวกับการยื่น"),
-    dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="UnlockTaxFilingAsync", must=["WhtCreditClaimStamp.ReleaseAsync("],
+    dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="UnlockTaxFilingAsync", must=["WithWhtCreditLockAsync(", "UnlockTaxFilingCoreAsync("],
+         why=_R257B_WHY + "ฝ่ายค้าน M1 ปลดล็อก ภ.ง.ด.50 ใต้ล็อกเครดิตระดับบริษัท"),
+    dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="UnlockTaxFilingCoreAsync", must=["WhtCreditClaimStamp.ReleaseAsync("],
          why=_R257B_WHY + "B-M1 กลับเป็นร่าง ⇒ ถอน Claimed ของรายงานนั้น"),
     dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="RejectAndReverseTaxReportAsync", must=["WhtCreditClaimStamp.ReleaseAsync("],
          why=_R257B_WHY + "B-M1 ถูกปฏิเสธ/กลับรายการ ⇒ ถอน Claimed ของรายงานนั้น"),
@@ -17630,6 +17637,59 @@ REVIEWER_CASES += [
     ("R257g", "CreateDocumentFromTemplateAsync", "await RecurringApprovePolicyLoader.AutoApproverRefusalAsync(", "await NoRefusal(", True),
     # เส้นใบเดี่ยวไม่ตรวจฝั่ง ⇒ ต้องฟ้อง
     ("R257e", "GetDocumentAsync", "if (!await IsPortalVisibleAsync(companyId, contactId, documentId))", "if (false)", True),
+]
+
+# ── รอบ 257 ชุด 2 ฝ่ายค้านของ e104a7bb (คำตัดสิน 257-2-5…257-2-7): H1 ล็อกตามปีภาษีที่ยื่น ภ.ง.ด.50 · M1 ล็อกระดับบริษัท · M2 ยอดรายงานตอนยื่น · L1–L7 ──
+_R257BF_WHY = "รอบ 257 ชุด 2 ฝ่ายค้าน (คำตัดสิน 257-2-5…7): "
+_R257BF_GUARD = "Helpers/WhtCreditFiledYearGuard.cs"
+RULES += [
+    dict(file=_R257BF_GUARD, method="FiledYearsAsync",
+         must=["t.CompanyId == companyId", "TaxType.CorporateIncomeTax", "TaxFilingLockPolicy.DeclaredOrFiledStatuses"],
+         why=_R257BF_WHY + "H1 ปีที่ยื่น/บันทึกว่ายื่น ภ.ง.ด.50 แล้ว (tenant)"),
+    dict(file=_R257BF_GUARD, method="EnsureNotFiledAsync", must=["LockedYear(", "FiledYearsAsync(", "RuleCode, 409"],
+         why=_R257BF_WHY + "H1 ตัวตัดสินเดียว ⇒ 409"),
+    dict(file=_R252_SVC, method="ConfirmAsync", must=["WhtCreditFiledYearGuard.LockCompanyAsync(", "req.NotDuplicate", "created.CreatedFromIntakeId = intakeId",
+                                                  "alloc.PriorEvidenceKind = row.EvidenceKind"],
+         before=[("WhtCreditFiledYearGuard.LockCompanyAsync(", "_db.WhtCertIntakes.FirstOrDefaultAsync(")],
+         why=_R257BF_WHY + "M1 ล็อกบริษัทก่อนล็อกใบ · L5 ทางไปต่อของใบที่ตัดสินผู้จ่ายไม่ได้ · L2 คอลัมน์ต้นทาง · L7 หลักฐานเดิม"),
+    dict(file=_R243A_WHT, method="ReopenWrittenOffAsync", must=["WhtCreditFiledYearGuard.EnsureNotFiledAsync("],
+         before=[("WhtCreditFiledYearGuard.EnsureNotFiledAsync(", "ReverseWriteOffJournalCoreAsync(")],
+         why=_R257BF_WHY + "H1 กลับรายการตัดสูญของปีที่ยื่นแล้ว ⇒ 409 ก่อนลง JE"),
+    dict(file=_R243A_WHT, method="ExpireCoreAsync", must=["WhtCreditFiledYearGuard.LockCompanyAsync(", "WhtCreditFiledYearGuard.EnsureNotFiledAsync("],
+         before=[("WhtCreditFiledYearGuard.LockCompanyAsync(", "LockCreditAsync("), ("WhtCreditFiledYearGuard.EnsureNotFiledAsync(", "JournalEntryBuilder.For(")],
+         why=_R257BF_WHY + "H1/M1 ตัดสูญ (รายแถว + ปิดปี) ของปีที่ยื่นแล้ว ⇒ 409 · ล็อกบริษัทก่อนแถว"),
+    dict(file=_R243A_WHT, method="UpdateAsync", must=["WhtCreditFiledYearGuard.LockCompanyAsync(", "WhtCreditFiledYearGuard.EnsureNotFiledAsync("],
+         before=[("WhtCreditFiledYearGuard.LockCompanyAsync(", "LockCreditAsync("), ("WhtCreditFiledYearGuard.EnsureNotFiledAsync(", "_db.SaveChangesAsync(")],
+         why=_R257BF_WHY + "H1 แก้เลขที่/วันที่ใบของปีที่ยื่นแล้ว ⇒ 409"),
+    dict(file=_R243A_WHT, method="DeleteAsync", must=["WhtCreditFiledYearGuard.LockCompanyAsync(", "WhtCreditFiledYearGuard.EnsureNotFiledAsync("],
+         before=[("WhtCreditFiledYearGuard.EnsureNotFiledAsync(", "e.IsDeleted = true")],
+         why=_R257BF_WHY + "H1 ลบแถวที่มีเครดิตในปีที่ยื่นแล้ว ⇒ 409"),
+    dict(file=_R243A_WHT, method="MarkReceivedAsync", must=["WhtCreditFiledYearGuard.LockCompanyAsync(", "WhtCreditFiledYearGuard.EnsureNotFiledAsync("],
+         before=[("WhtCreditFiledYearGuard.EnsureNotFiledAsync(", "ApplyCertificate(")],
+         why=_R257BF_WHY + "H1 ได้รับใบแล้วเข้าปีที่ยื่นแล้ว ⇒ 409"),
+    dict(file="Helpers/WhtCreditClaimStamp.cs", method="StampAsync",
+         must=["WhtCreditFiledYearGuard.LockCompanyAsync(", "ReloadAsync(", "WhtCreditableAmount.Missing("],
+         before=[("WhtCreditFiledYearGuard.LockCompanyAsync(", "CreditableInPeriod(")],
+         why=_R257BF_WHY + "M1 ล็อกบริษัทแล้วอ่านแถวใหม่ · L1 ประทับเฉพาะแถวที่ไม่เหลือส่วนขาด"),
+    dict(file="Helpers/WhtCreditClaimStamp.cs", method="ReleaseAsync", must=["WhtCreditFiledYearGuard.LockCompanyAsync(", "ReloadAsync("],
+         why=_R257BF_WHY + "M1 ถอนใต้ล็อกบริษัท"),
+    dict(file="Services/Implementations/TaxService.cs", method="FileTaxReportAsync", must=["WithWhtCreditLockAsync(", "WithVatReportLockAsync("],
+         why=_R257BF_WHY + "M1 ยื่นแบบถือล็อกเครดิตภาษีถูกหักระดับบริษัท"),
+    dict(file="Services/Implementations/TaxService.cs", method="FileTaxReportUnlockedAsync",
+         must=["WhtCreditClaimStamp.ReportOutOfDate(", "CreditableSumAsync(", "WhtCreditLineCode"],
+         before=[("WhtCreditClaimStamp.ReportOutOfDate(", "WhtCreditClaimStamp.StampAsync(")],
+         why=_R257BF_WHY + "M2 ยอดเครดิตในรายงานต้องเท่าทะเบียนตอนยื่น — ไม่เท่า ⇒ ให้สร้างรายงานใหม่ก่อน"),
+    dict(file="Services/Implementations/TaxService.RdCompliance.cs", method="RejectAndReverseTaxReportAsync",
+         must=["WhtCreditFiledYearGuard.LockCompanyAsync("], before=[("WhtCreditFiledYearGuard.LockCompanyAsync(", "WhtCreditClaimStamp.ReleaseAsync(")],
+         why=_R257BF_WHY + "M1 ถอน Claimed ใต้ล็อกบริษัท"),
+]
+REVIEWER_CASES += [
+    # ตัดสูญแถวได้ใบบางส่วนของปีที่ยื่นแล้ว ⇒ ต้องฟ้อง
+    ("R257BF-a", "ExpireCoreAsync", 'await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "ตัดสูญ", default, e.CertificateDate);', "", True),
+    # ถอนใบลดยอดของใบอื่นด้วย ⇒ ต้องฟ้อง
+    ("R257BF-b", "UnconfirmAsync", "WhtCreditableAmount.UnconfirmTake(a.Amount, row.ReceivedAmount, others.Sum(o => o.Amount))", "Math.Min(a.Amount, row.ReceivedAmount)", True),
+    # ยื่นแบบโดยไม่เทียบยอดเครดิตกับทะเบียน ⇒ ต้องฟ้อง
+    ("R257BF-c", "FileTaxReportUnlockedAsync", "if (Accounting.Helpers.WhtCreditClaimStamp.ReportOutOfDate(creditInReport, creditNow))", "if (false)", True),
 ]
 
 def wht_credit_add_errors() -> list:

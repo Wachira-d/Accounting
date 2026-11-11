@@ -99,6 +99,7 @@ public class WhtCertIntakeController : ControllerBase
 
     [HttpPost("inbox/{id:guid}/confirm")]
     [RequirePermission(PermissionKeys.TaxFile)]
+    [RejectApiKey("ยืนยันหนังสือรับรอง 50 ทวิ (อาจกลับรายการบัญชีตัดสูญ)")]   // รอบ 257 ชุด 2 ฝ่ายค้าน L6
     public async Task<ActionResult<ApiResponse<WhtCertIntakeDto>>> Confirm(Guid companyId, Guid id, [FromBody] WhtCertConfirmRequest? body,
         [FromServices] IPermissionService perms, CancellationToken ct)
     {
@@ -119,6 +120,7 @@ public class WhtCertIntakeController : ControllerBase
     /// <summary>รอบ 257 ชุด 2 (B-H2): ถอนการยืนยันใบที่ลงเครดิตแล้ว (ยืนยันผิด · ผู้จ่ายยกเลิกใบ) — ใช้เครดิตในแบบที่ยื่นแล้ว ⇒ 409 · ต้องกลับตัดสูญ ⇒ ต้องมี Journal.Manage</summary>
     [HttpPost("inbox/{id:guid}/unconfirm")]
     [RequirePermission(PermissionKeys.TaxFile)]
+    [RejectApiKey("ถอนการยืนยันหนังสือรับรอง 50 ทวิ")]   // รอบ 257 ชุด 2 ฝ่ายค้าน L6
     public async Task<ActionResult<ApiResponse<WhtCertIntakeDto>>> Unconfirm(Guid companyId, Guid id, [FromBody] WhtCertUnconfirmRequest body,
         [FromServices] IPermissionService perms, CancellationToken ct)
     {

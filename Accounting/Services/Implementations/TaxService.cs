@@ -2135,6 +2135,9 @@ public partial class TaxService : ITaxService
         return addBack;
     }
 
+    /// <summary>รหัสบรรทัด "หัก: ภาษีถูกหัก ณ ที่จ่าย" ของรายงาน ภ.ง.ด.50 — ผู้เขียน <see cref="GenerateCitReport"/> · ผู้อ่าน ด่านยอดตอนยื่น (ฝ่ายค้าน M2)</summary>
+    internal const string WhtCreditLineCode = "WHT_CREDIT";
+
     private async Task GenerateCitReport(Guid companyId, int year, TaxReport report)
     {
         // Honour Company.FiscalYearStartMonth — a Jul–Jun FY (start=7) for
@@ -2395,7 +2398,7 @@ public partial class TaxService : ITaxService
                 Description = "หัก: ภาษีถูกหัก ณ ที่จ่าย (มีหนังสือรับรอง)",
                 IncomeAmount = whtCredit,
                 TaxAmount = -whtCredit,
-                IncomeTypeCode = "WHT_CREDIT"
+                IncomeTypeCode = WhtCreditLineCode
             });
         }
         // เตือนยอดที่ "ยังไม่ได้ใบรับรอง" — เครดิตไม่ได้ตามกฎหมาย ต้องรีบทวงลูกค้า
@@ -2950,7 +2953,17 @@ public partial class TaxService : ITaxService
     /// <summary>ยื่น — ใต้ล็อกงานเขียน ภ.พ.30 ของบริษัท (รอบ 225 S1: ยื่นขณะมีคนกดดึงเอกสารเข้างวดเดียวกัน = ยอดที่ยื่นไม่ตรงบรรทัด)</summary>
     public Task<TaxReportResponse> FileTaxReportAsync(Guid companyId, Guid reportId)
     {
-        return WithVatReportLockAsync(companyId, () => FileTaxReportUnlockedAsync(companyId, reportId));
+        // รอบ 257 ชุด 2 ฝ่ายค้าน M1: ล็อกเครดิตภาษีถูกหักระดับบริษัทด้วย (ตัวเดียวกับถอนใบ/ตัดสูญ/ยืนยันใบ) — ตรวจยอดเครดิต + ประทับ Claimed ไม่ชนการขยับทะเบียนกลางทาง
+        return WithVatReportLockAsync(companyId, () => WithWhtCreditLockAsync(companyId, () => FileTaxReportUnlockedAsync(companyId, reportId)));
+    }
+
+    /// <summary>ล็อกระดับบริษัทของเครดิตภาษีถูกหัก (<see cref="Accounting.Helpers.WhtCreditFiledYearGuard.CompanyLockKey"/>) แบบ session — ชนกับ xact lock คีย์เดียวกันของทะเบียน/กล่องรับ ·
+    /// ไม่ใช่ฐานเชิงสัมพันธ์ (เทสต์) = ไม่ล็อก</summary>
+    private Task<T> WithWhtCreditLockAsync<T>(Guid companyId, Func<Task<T>> work)
+    {
+        return _db.Database.IsRelational()
+            ? SessionAdvisoryLock.RunAsync(_db, Accounting.Helpers.WhtCreditFiledYearGuard.CompanyLockKey(companyId), work)
+            : work();
     }
 
     private async Task<TaxReportResponse> FileTaxReportUnlockedAsync(Guid companyId, Guid reportId)
@@ -3035,6 +3048,13 @@ public partial class TaxService : ITaxService
             var fyStartMonth = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
                 .Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
             var fy = Accounting.Helpers.FiscalYear.RangeFor(report.Year, fyStartMonth);
+            // ฝ่ายค้าน M2: ยอดเครดิตในรายงาน (บรรทัด WHT_CREDIT ตอนสร้าง) ต้องเท่าทะเบียนตอนนี้ — ทะเบียนขยับหลังสร้างรายงาน ⇒ ยื่นยอดเก่า = ไม่ตรงกับที่ประทับ
+            var creditNow = await _db.WhtCreditsReceived.AsNoTracking().CreditableInPeriod(companyId, fy.Start, fy.EndInclusive).CreditableSumAsync();
+            var creditInReport = report.Lines.Where(l => !l.IsDeleted && !l.IsExcluded && l.IncomeTypeCode == WhtCreditLineCode).Sum(l => l.IncomeAmount);
+            if (Accounting.Helpers.WhtCreditClaimStamp.ReportOutOfDate(creditInReport, creditNow))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"ยอดเครดิตภาษีถูกหัก ณ ที่จ่ายในรายงานนี้ ({creditInReport:N2}) ไม่ตรงกับทะเบียนตอนนี้ ({creditNow:N2}) — "
+                    + "ทะเบียนเปลี่ยนหลังสร้างรายงาน · กด \"สร้างรายงานใหม่\" ก่อนยื่น", Accounting.Helpers.WhtCreditClaimStamp.RuleCode, 409);
             await Accounting.Helpers.WhtCreditClaimStamp.StampAsync(_db, companyId, report.Id, fy.Start, fy.EndInclusive, DateTime.UtcNow);
         }
 

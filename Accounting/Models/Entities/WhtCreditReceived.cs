@@ -95,4 +95,8 @@ public class WhtCreditReceived : TenantEntity
 
     /// <summary>วันที่ถูกหักครั้งแรก (ฐานนับ "วันค้าง" ของป้าย 50 ทวิ · <c>Helpers/WhtCertIntakeStatus</c>) · null = แถวรุ่นเก่า ⇒ ใช้ CreatedAt</summary>
     public DateTime? FirstWithheldAt { get; set; }
+
+    /// <summary>รอบ 257 ชุด 2 ฝ่ายค้าน L2: แถวนี้ถูกสร้างจากใบในกล่องรับใบไหน ("บันทึกเป็นรายการเครดิตใหม่" — ไม่มี 11910 รองรับ) ·
+    /// ถอนการยืนยันใบนั้นแล้วไม่เหลือใบ ⇒ ถอดแถว (ตัดสินจากคอลัมน์นี้เท่านั้น ไม่ใช่ข้อความหมายเหตุ) · null = แถวจากเอกสาร/กรอกมือ</summary>
+    public Guid? CreatedFromIntakeId { get; set; }
 }

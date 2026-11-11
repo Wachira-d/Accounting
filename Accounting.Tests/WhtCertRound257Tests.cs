@@ -65,6 +65,37 @@ public class WhtCertRound257Tests
     public void H2_สถานะหลังถอนการยืนยัน(double wht, double remaining, WhtCreditStatus expected)
         => Assert.Equal(expected, WhtCreditableAmount.StatusAfterUnconfirm((decimal)wht, (decimal)remaining));
 
+    [Theory]
+    [InlineData(600, 1_000, 400, 600)]    // ใบนี้ 600 · อีกใบ 400 ⇒ ถอน 600
+    [InlineData(600, 900, 400, 500)]      // ยอดแถวถูกลดไปแล้ว (เช่น GL ลด) ⇒ ถอนไม่เกินส่วนที่เหลือของใบนี้ — ใบอื่นไม่ถูกลด (ฝ่ายค้าน L4)
+    [InlineData(600, 300, 400, 0)]        // ไม่เหลือส่วนของใบนี้ ⇒ 0 (ไม่ติดลบ)
+    [InlineData(1_000, 1_000, 0, 1_000)]
+    public void H2_L4_ถอนเฉพาะยอดของใบนี้(double alloc, double received, double others, double expected)
+        => Assert.Equal((decimal)expected, WhtCreditableAmount.UnconfirmTake((decimal)alloc, (decimal)received, (decimal)others));
+
+    [Fact]
+    public void H1_ล็อกตามปีภาษีที่ยื่นแล้ว_ทิศตรงข้ามปีที่ยังไม่ยื่น()
+    {
+        var filed = new[] { 2025 };
+        Assert.Equal(2025, WhtCreditFiledYearGuard.LockedYear(new DateTime(2025, 6, 1), 1, filed));
+        Assert.Null(WhtCreditFiledYearGuard.LockedYear(new DateTime(2026, 6, 1), 1, filed));     // ปีที่ยังไม่ยื่น ⇒ ทำได้
+        Assert.Null(WhtCreditFiledYearGuard.LockedYear(null, 1, filed));                         // ยังไม่มีใบ ⇒ ไม่มีเครดิตในแบบใด
+        Assert.Equal(2025, WhtCreditFiledYearGuard.LockedYear(new DateTime(2026, 3, 1), 7, filed));   // รอบ ก.ค.–มิ.ย. ⇒ มี.ค. 2026 อยู่ปี 2025
+        var msg = WhtCreditFiledYearGuard.Message(2025, "ตัดสูญ");
+        Assert.Contains("2568", msg);
+        Assert.Contains("ปลดล็อก", msg);
+        Assert.Contains("ปีถัดไป", msg);
+    }
+
+    [Fact]
+    public void M1_M2_ยอดเครดิตในรายงานไม่ตรงทะเบียน_ต้องสร้างใหม่_ทิศตรงข้ามตรงหรือต่างไม่เกินหนึ่งสตางค์ยื่นได้()
+    {
+        Assert.True(WhtCreditClaimStamp.ReportOutOfDate(1_000m, 1_400m));
+        Assert.True(WhtCreditClaimStamp.ReportOutOfDate(0m, 300m));     // สร้างรายงานตอนยังไม่มีใบ แล้วได้ใบภายหลัง
+        Assert.False(WhtCreditClaimStamp.ReportOutOfDate(1_000m, 1_000m));
+        Assert.False(WhtCreditClaimStamp.ReportOutOfDate(1_000m, 1_000.01m));
+    }
+
     [Fact]
     public void H2_ทิศตรงข้าม_StatusForReceived_เดิมไม่เปลี่ยน()
         => Assert.Equal(WhtCreditStatus.Received, WhtCreditableAmount.StatusForReceived(0.50m, 0m));
@@ -85,7 +116,18 @@ public class WhtCertRound257Tests
     {
         Assert.Equal(WhtCertIntakeVerdict.CertPayerMatch.Same, WhtCertIntakeVerdict.SameCertPayer(T1, null, T1, null));
         Assert.Equal(WhtCertIntakeVerdict.CertPayerMatch.Different, WhtCertIntakeVerdict.SameCertPayer(T1, null, T2, null));
-        Assert.Equal(WhtCertIntakeVerdict.CertPayerMatch.Different, WhtCertIntakeVerdict.SameCertPayer(T1, C1, null, C1));   // เลขชนะผู้ติดต่อ (ทางเดิม)
+    }
+
+    [Fact]
+    public void M2_L5_ฝั่งหนึ่งมีเลขผู้จ่าย_อีกฝั่งไม่มี_ไม่รู้_ด่านอาจซ้ำ()
+    {
+        // ฝ่ายค้าน L5: เดิม "มีเลข vs ไม่มีเลข" = ต่างผู้จ่าย ⇒ ใบเดิมที่อ่านเลขไม่ได้กับใบใหม่ที่อ่านได้ลงซ้ำ
+        Assert.Equal(WhtCertIntakeVerdict.CertPayerMatch.Unknown, WhtCertIntakeVerdict.SameCertPayer(T1, null, null, null));
+        Assert.Equal(WhtCertIntakeVerdict.CertPayerMatch.Unknown, WhtCertIntakeVerdict.SameCertPayer(T1, C1, null, C1));
+        Assert.Equal(WhtCertIntakeVerdict.CertPayerMatch.Unknown, WhtCertIntakeVerdict.SameCertPayer(null, null, T1, null));
+        // ทิศตรงข้าม: มีเลขทั้งสองฝั่ง ⇒ ตัดสินด้วยเลขตามเดิม
+        Assert.Equal(WhtCertIntakeVerdict.CertPayerMatch.Same, WhtCertIntakeVerdict.SameCertPayer(T1, null, T1, C2));
+        Assert.Equal(WhtCertIntakeVerdict.CertPayerMatch.Different, WhtCertIntakeVerdict.SameCertPayer(T1, C1, T2, C1));
     }
 
     [Fact]

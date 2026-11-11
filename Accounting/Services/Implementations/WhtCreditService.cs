@@ -336,6 +336,8 @@ public class WhtCreditService
         // ฝ่ายค้าน S5: ทุกทางเขียนแถวถือล็อกเดียวกับการตัดสูญ + อ่านค่าล่าสุด (แก้ไขชนกับตัดสูญ = ทะเบียน "ได้รับแล้ว" ทั้งที่ 11910 ถูกล้าง)
         await InTxAsync(async () =>
             {
+                // รอบ 257 ชุด 2 ฝ่ายค้าน M1: ล็อกระดับบริษัทก่อน (ตัวเดียวกับการยื่น/ปลดล็อก ภ.ง.ด.50) → เลขที่ใบ + ผู้จ่าย → แถว — ลำดับเดียวทุกทาง (ไม่ deadlock)
+                await WhtCreditFiledYearGuard.LockCompanyAsync(_db, companyId);
                 // ลำดับล็อกเดียวกับกล่องรับ (เลขที่ใบ + ผู้จ่าย ก่อนแถว) — ไม่ให้สองทางรอกันเอง (deadlock)
                 if (Trim(r.CertificateNumber) is string lockNo) await LockCertificateAsync(companyId, lockNo, r.PayerTaxId, r.PayerContactId);
                 await LockCreditAsync(companyId, id);
@@ -344,6 +346,9 @@ public class WhtCreditService
                 var certNo = Trim(r.CertificateNumber);
                 var certChanged = !string.Equals(certNo, e.CertificateNumber, StringComparison.Ordinal);
                 var dateChanged = r.CertificateDate != e.CertificateDate;
+                // ฝ่ายค้าน H1: แก้เลขที่/วันที่ใบของแถวที่เครดิตอยู่ในปีที่ยื่น ภ.ง.ด.50 แล้ว (ค่าเดิมหรือค่าใหม่) ⇒ 409
+                if (certChanged || dateChanged)
+                    await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "แก้เลขที่/วันที่บนหนังสือรับรอง", default, e.CertificateDate, r.CertificateDate);
                 // ฝ่ายค้าน WP-09 รอบสอง H-A/H-B: แถวที่ได้ใบบางส่วนผ่านกล่องรับ (ReceivedAmount > 0) — เลขที่ใบแรกแก้ไม่ได้ · วันที่แก้ได้เฉพาะในรอบเดียวกัน
                 // (ตัวตัดสินเดียวกับกล่องรับ H2) · ยอดถูกหักต่ำกว่ายอดที่ได้ใบไม่ได้ · สถานะ/ยอดที่ได้ใบไม่ถูกเปลี่ยนเพราะ "มีเลขที่ใบ" (ใบถัดไปเข้ากล่องรับ)
                 var partCertified = e.ReceivedAmount > 0.005m;
@@ -416,10 +421,13 @@ public class WhtCreditService
             .Select(w => new { w.PayerTaxId, w.PayerContactId }).FirstOrDefaultAsync();
         await InTxAsync(async () =>
         {
+            await WhtCreditFiledYearGuard.LockCompanyAsync(_db, companyId);   // ฝ่ายค้าน M1: ลำดับ บริษัท → เลขที่ใบ → แถว
             // ลำดับล็อกเดียวกับกล่องรับ (เลขที่ใบ + ผู้จ่าย ก่อนแถว)
             if (payerPre != null) await LockCertificateAsync(companyId, certNo, payerPre.PayerTaxId, payerPre.PayerContactId);
             await LockCreditAsync(companyId, id);
             var e = await LoadFresh(companyId, id);
+            // ฝ่ายค้าน H1: ประกาศได้ใบเข้าปีที่ยื่น ภ.ง.ด.50 แล้ว ⇒ 409 (เครดิตของปีนั้นเปลี่ยนหลังยื่น)
+            await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "บันทึกได้รับหนังสือรับรอง", default, e.CertificateDate, certificateDate);
             // ฝ่ายค้าน WP-09 รอบสอง H-B: แถวที่ได้ใบบางส่วนผ่านกล่องรับ ⇒ ใบถัดไปต้องเข้ากล่องรับ (จัดสรรส่วนที่เหลือพร้อมวันที่ของใบนั้น) —
             // "ได้รับใบแล้ว" ทับเลขที่/วันที่ใบแรกและประกาศครบทั้งแถวไม่ได้ (เดิม MarkFullyCertified ⇒ เครดิตเต็มแถวด้วยใบเดียว)
             if (e.ReceivedAmount > 0.005m)
@@ -641,6 +649,8 @@ public class WhtCreditService
     {
         if (!WhtCreditWriteOff.ReopensForLateCertificate(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId, e.WhtAmount, e.ReceivedAmount))
             throw new BusinessRuleException("รายการนี้ไม่ได้ตัดสูญส่วนที่เหลือพร้อมรายการบัญชี — ไม่มีอะไรให้กลับรายการ", WhtCreditWriteOff.ReversalRuleCode, 409);
+        // ฝ่ายค้าน H1: ปีของใบแรกยื่น ภ.ง.ด.50 แล้ว ⇒ 409 (ผู้เรียกถือล็อกระดับบริษัทแล้ว)
+        await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "กลับรายการตัดสูญของรายการนี้", default, e.CertificateDate);
         var before = new { status = e.Status.ToString(), e.WriteOffJournalEntryId, e.WhtAmount, e.ReceivedAmount };
         var (reversalId, reversalNo, writeOffNo) = await ReverseWriteOffJournalCoreAsync(companyId, e, why);
         e.WriteOffReversalJournalEntryId = reversalId;
@@ -765,9 +775,11 @@ public class WhtCreditService
     {
         await InTxAsync(async () =>
             {
+                await WhtCreditFiledYearGuard.LockCompanyAsync(_db, companyId);
                 await LockCreditAsync(companyId, id);
                 var e = await LoadFresh(companyId, id);
                 GuardEditable(e);
+                await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "ลบรายการภาษีถูกหัก", default, e.CertificateDate);   // ฝ่ายค้าน H1
                 e.IsDeleted = true;
                 e.UpdatedAt = DateTime.UtcNow;
                 await _db.SaveChangesAsync();
@@ -808,8 +820,11 @@ public class WhtCreditService
     /// <summary>แกนของการตัดสูญหนึ่งแถว — ผู้เรียกอยู่ในธุรกรรมแล้ว (<see cref="ExpireAsync"/> · <see cref="SettleYearEndAsync"/>)</summary>
     private async Task<WriteOffResult> ExpireCoreAsync(Guid companyId, Guid id, string? reason, DateTime date, DateTime today, WriteOffActor actor)
     {
+        await WhtCreditFiledYearGuard.LockCompanyAsync(_db, companyId);   // ฝ่ายค้าน M1: ตัวเดียวกับการยื่น/ปลดล็อก ภ.ง.ด.50 (re-entrant ในปิดปี)
         await LockCreditAsync(companyId, id);
         var e = await LoadFresh(companyId, id);   // ไม่พบในบริษัทนี้ = 404 ก่อนสร้างผังใด ๆ
+        // ฝ่ายค้าน H1: แถวที่ได้ใบบางส่วนในปีที่ยื่น ภ.ง.ด.50 แล้ว ⇒ 409 (แถวที่ยังไม่มีใบ — ไม่มีวันที่ — ตัดสูญได้ตามเดิม)
+        await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "ตัดสูญ", default, e.CertificateDate);
         var expense = await WriteOffExpenseAccountAsync(companyId);
         var wht = await FindAccountAsync(companyId, WhtCreditWriteOff.WhtAssetAccountCode)
             ?? throw new BusinessRuleException("ไม่พบผัง 11910 ภาษีถูกหัก ณ ที่จ่าย — ตรวจผังบัญชีก่อนตัดสูญ", WhtCreditWriteOff.RuleCode);
@@ -920,6 +935,11 @@ public class WhtCreditService
             _ => null,
         };
         if (blocked == null && whtName == null) blocked = "ไม่พบผัง 11910 ภาษีถูกหัก ณ ที่จ่าย — ตรวจผังบัญชีก่อนตัดสูญ";
+        // ฝ่ายค้าน H1: หน้ายืนยันบอกเหตุเดียวกับด่าน (ไม่ให้กดแล้วถูกปฏิเสธ)
+        if (blocked == null && e.CertificateDate != null
+            && WhtCreditFiledYearGuard.LockedYear(e.CertificateDate, await FiscalStartMonthAsync(companyId),
+                await WhtCreditFiledYearGuard.FiledYearsAsync(_db, companyId)) is int filedFy)
+            blocked = WhtCreditFiledYearGuard.Message(filedFy, "ตัดสูญ");
         if (blocked == null && exp != null && !WhtCreditWriteOff.IsNonDeductibleAccount(exp.AccountCode, exp.AccountType, exp.Parent))
             blocked = NotTaxGroupMessage;
         var nonDeductible = exp == null

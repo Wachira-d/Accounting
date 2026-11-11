@@ -366,14 +366,157 @@ public class WhtCertRound257DbTests
             dup = await Intake(c).SubmitAsync(s.CompanyId, Sub(300m, "001", s.PaidOn));
         Assert.True(dup.Duplicate);
         Assert.Equal(a.IntakeId, dup.IntakeId);
-        // ผู้จ่ายอื่น (เลขอ่านได้ ต่างกัน) ⇒ ใบใหม่ ไม่มีด่านอาจซ้ำ
+        // ผู้จ่ายอื่น (เลขอ่านได้ ต่างกัน) ⇒ ใบใหม่ · ฝ่ายค้าน L5: ใบ b ไม่มีเลขผู้จ่าย ⇒ แยกไม่ได้ ⇒ ยังมีด่านอาจซ้ำ
+        WhtCertSubmitResult o;
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
-            var o = await Intake(c).SubmitAsync(s.CompanyId, Sub(300m, "001", s.PaidOn, payer: OtherPayer));
+            o = await Intake(c).SubmitAsync(s.CompanyId, Sub(300m, "001", s.PaidOn, payer: OtherPayer));
             Assert.False(o.Duplicate);
             var oDto = (await Intake(c).ListInboxAsync(s.CompanyId, null)).Single(i => i.Id == o.IntakeId);
-            Assert.DoesNotContain(oDto.GateProblems, g => g.Contains("อาจเป็นใบซ้ำ"));
+            Assert.Contains(oDto.GateProblems, g => g.Contains("อาจเป็นใบซ้ำ"));
         }
+        // ยืนยัน o โดยไม่ติ๊ก "ไม่ใช่ใบซ้ำ" ⇒ 409 · ติ๊กแล้ว (ใบนี้มีเลขผู้จ่ายถูกต้อง) ⇒ ไปต่อได้ (ทางไปต่อของผู้ใช้)
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Intake(c).ConfirmAsync(s.CompanyId, o.IntakeId,
+                new WhtCertConfirmRequest(CreateStandalone: true, StandaloneReason: "รับชำระนอกระบบจากลูกค้าอีกราย"), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true));
+            Assert.Equal(409, ex.StatusCode);
+        }
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal("Confirmed", (await Intake(c).ConfirmAsync(s.CompanyId, o.IntakeId,
+                new WhtCertConfirmRequest(CreateStandalone: true, StandaloneReason: "รับชำระนอกระบบจากลูกค้าอีกราย", NotDuplicate: true),
+                Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true)).Status);
+    }
+
+    // ═══════════ ฝ่ายค้าน H1 · L2 · L7 ═══════════
+
+    private static async Task FileCitAsync(Guid companyId, int year, TaxReportStatus status = TaxReportStatus.Submitted)
+    {
+        using var c = DbTestDatabase.TryCreateContext()!;
+        c.TaxReports.Add(new TaxReport { CompanyId = companyId, TaxType = TaxType.CorporateIncomeTax, Year = year, Month = 12, Status = status });
+        await c.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task H1fix_แถวได้ใบบางส่วนในปีที่ยื่น_ภงด50_แล้ว_ถอนใบ_ตัดสูญ_แก้_ได้รับใบ_409_ทิศตรงข้ามปีที่ยังไม่ยื่นทำได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var filed = await SeedAsync(db);
+        var open = await SeedAsync(db);
+        var fDto = await SubmitConfirmAsync(filed, 400m, "2569/FY-1");
+        var oDto = await SubmitConfirmAsync(open, 400m, "2569/FY-2");
+        await FileCitAsync(filed.CompanyId, filed.TaxYear);              // ยื่นแล้ว (รอเลขรับ) ⇒ ล็อกปี · แถวยัง Pending (ไม่มี Claimed)
+        Assert.Equal(WhtCreditStatus.Pending, (await RowAsync(filed.CompanyId, filed.CreditId)).Status);
+
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Intake(c).UnconfirmAsync(filed.CompanyId, fDto.Id, new WhtCertUnconfirmRequest("ผู้จ่ายยกเลิกใบนี้แล้ว"), Guid.NewGuid(), "ผู้ทำบัญชี"));
+            Assert.Equal((409, WhtCreditFiledYearGuard.RuleCode), (ex.StatusCode, ex.RuleCode));
+            Assert.Contains("ปลดล็อก", ex.Message);
+        }
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Credits(c).ExpireAsync(filed.CompanyId, filed.CreditId, Reason, null, Actor))).StatusCode);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.NotNull((await Credits(c).WriteOffPreviewAsync(filed.CompanyId, filed.CreditId)).BlockedReason);
+        var row = await RowAsync(filed.CompanyId, filed.CreditId);
+        Assert.Equal((WhtCreditStatus.Pending, 400m, "2569/FY-1"), (row.Status, row.ReceivedAmount, row.CertificateNumber));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(WhtCertIntakeRecordStatus.Confirmed, (await c.WhtCertIntakes.AsNoTracking().SingleAsync(i => i.Id == fDto.Id && i.CompanyId == filed.CompanyId)).Status);
+
+        // ทิศตรงข้าม: แถวเดียวกันแบบในบริษัทที่ยังไม่ยื่นปีนั้น ⇒ ถอนได้ แล้วตัดสูญได้
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal("Rejected", (await Intake(c).UnconfirmAsync(open.CompanyId, oDto.Id, new WhtCertUnconfirmRequest("ยืนยันผิดใบ"),
+                Guid.NewGuid(), "ผู้ทำบัญชี")).Status);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(1_000m, (await Credits(c).ExpireAsync(open.CompanyId, open.CreditId, Reason, null, Actor)).Amount);
+
+        // ปลดล็อก (กลับเป็นร่าง) ⇒ ปีนั้นทำได้อีก
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            await c.TaxReports.Where(t => t.CompanyId == filed.CompanyId).ExecuteUpdateAsync(x => x.SetProperty(t => t.Status, TaxReportStatus.Draft));
+            Assert.Equal(600m, (await Credits(c).ExpireAsync(filed.CompanyId, filed.CreditId, Reason, null, Actor)).Amount);
+        }
+    }
+
+    [Fact]
+    public async Task H1fix_กลับรายการตัดสูญตอนยืนยันใบในปีที่ยื่นแล้ว_409_แถวไม่ขยับ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        await SubmitConfirmAsync(s, 400m, "2569/FYR-1");
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Credits(c).ExpireAsync(s.CompanyId, s.CreditId, Reason, null, Actor);
+        await FileCitAsync(s.CompanyId, s.TaxYear, TaxReportStatus.Filed);
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => SubmitConfirmAsync(s, 600m, "2569/FYR-2", Actor));
+        Assert.Equal(409, ex.StatusCode);
+        var row = await RowAsync(s.CompanyId, s.CreditId);
+        Assert.Equal(WhtCreditStatus.Expired, row.Status);
+        Assert.Null(row.WriteOffReversalJournalEntryId);
+        Assert.Equal(0m, (await SummaryAsync(s)).Difference);
+    }
+
+    [Fact]
+    public async Task L2_L7_ถอนใบที่สร้างรายการใหม่_ถอดแถวตามคอลัมน์_ไฟล์กลับเข้าถัง_ชนิดหลักฐานคืน_ทิศตรงข้ามหมายเหตุอย่างเดียวไม่ถอด()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        // ทิศตรงข้าม L2: แถวกรอกมือที่บังเอิญมีหมายเหตุขึ้นต้นเหมือนกัน (ไม่มี CreatedFromIntakeId) ⇒ ไม่ถูกถอด
+        var manual = new WhtCreditReceived { CompanyId = s.CompanyId, TaxYear = s.TaxYear, PayerName = "ลูกค้าผู้หัก จำกัด", PayerTaxId = Payer,
+            WhtAmount = 300m, IncomeAmount = 10_000m, WhtRate = 3m, Status = WhtCreditStatus.Pending, FirstWithheldAt = s.PaidOn,
+            Notes = WhtCertIntakeService.StandaloneNotePrefix + " (กรอกมือ)" };
+        var file = new FileAttachment { CompanyId = s.CompanyId, EntityType = "WhtCredit", EntityId = Guid.Empty, FileName = "f", OriginalFileName = "50tawi.pdf",
+            ContentType = "application/pdf", FileSize = 10, StoragePath = "mem/" + Guid.NewGuid() };
+        db.WhtCreditsReceived.Add(manual);
+        db.FileAttachments.Add(file);
+        await db.SaveChangesAsync();
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Credits(c).SetEWhtPendingAsync(s.CompanyId, manual.Id, true, null, "ผู้ทำบัญชี");   // หลักฐานเดิม = e-WHT
+
+        // ใบที่ "บันทึกเป็นรายการใหม่" + มีไฟล์จากถัง
+        WhtCertSubmitResult r;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            r = await Intake(c).SubmitAsync(s.CompanyId, Sub(250m, "2569/L2-1", s.PaidOn) with { FileAttachmentId = file.Id });
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Intake(c).ConfirmAsync(s.CompanyId, r.IntakeId, new WhtCertConfirmRequest(CreateStandalone: true,
+                StandaloneReason: "รับชำระนอกระบบจากสาขาต่างจังหวัด"), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
+        Guid createdId;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var created = await c.WhtCreditsReceived.AsNoTracking().SingleAsync(w => w.CompanyId == s.CompanyId && w.CreatedFromIntakeId == r.IntakeId);
+            createdId = created.Id;
+            Assert.Equal(createdId, (await c.FileAttachments.AsNoTracking().SingleAsync(f => f.Id == file.Id)).EntityId);   // ผูกแล้ว
+        }
+        // ใบที่ลงแถวกรอกมือ (e-WHT เดิม)
+        var m = await SubmitConfirmToAsync(s, manual.Id, 300m, "2569/L7-1");
+        Assert.Equal(WhtEvidenceKind.PaperCertificate, (await RowAsync(s.CompanyId, manual.Id)).EvidenceKind);
+
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Intake(c).UnconfirmAsync(s.CompanyId, r.IntakeId, new WhtCertUnconfirmRequest("ยืนยันผิดใบ"), Guid.NewGuid(), "ผู้ทำบัญชี");
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Intake(c).UnconfirmAsync(s.CompanyId, m.Id, new WhtCertUnconfirmRequest("ยืนยันผิดใบ"), Guid.NewGuid(), "ผู้ทำบัญชี");
+
+        Assert.True((await RowAsync(s.CompanyId, createdId)).IsDeleted);                  // L2: ตามคอลัมน์
+        var man = await RowAsync(s.CompanyId, manual.Id);
+        Assert.False(man.IsDeleted);                                                         // ทิศตรงข้าม: หมายเหตุอย่างเดียวไม่ถอด
+        Assert.Equal(WhtEvidenceKind.EWithholding, man.EvidenceKind);                       // L7: คืนชนิดหลักฐานเดิม
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(Guid.Empty, (await c.FileAttachments.AsNoTracking().SingleAsync(f => f.Id == file.Id)).EntityId);   // L7: กลับเข้าถัง
+    }
+
+    /// <summary>ส่งใบแล้วยืนยันจัดสรรเข้าแถวที่ระบุ</summary>
+    private static async Task<WhtCertIntakeDto> SubmitConfirmToAsync(Seed s, Guid creditId, decimal tax, string certNo)
+    {
+        WhtCertSubmitResult r;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            r = await Intake(c).SubmitAsync(s.CompanyId, Sub(tax, certNo, s.PaidOn));
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        return await Intake(c2).ConfirmAsync(s.CompanyId, r.IntakeId,
+            new WhtCertConfirmRequest(Allocations: new[] { new WhtCertAllocationInput(creditId, tax) }), Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
     }
 
     // ═══════════ B-M3 ═══════════
