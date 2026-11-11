@@ -728,7 +728,7 @@ public class EmailScheduleService : IEmailScheduleService
     internal async Task<int> RecoverStaleSendingAsync(DateTime nowUtc, CancellationToken ct = default)
     {
         var cutoff = EmailQueueStaleSending.Cutoff(nowUtc);
-        // รอบ 258 ฝ่ายค้าน R-M3 (ตัวตัดสิน EmailQueueStaleSending.RecoveryStatus): (ก) จองแล้วแต่ยังไม่เคยเริ่มส่ง (SendStartedAt ว่าง) ⇒ คืนเข้าคิว —
+        // รอบ 258 ฝ่ายค้าน R-M3 (เส้นแบ่ง "ค้าง" = EmailQueueStaleSending.Cutoff): (ก) จองแล้วแต่ยังไม่เคยเริ่มส่ง (SendStartedAt ว่าง) ⇒ คืนเข้าคิว —
         // ระบบรู้แน่ว่าไม่เคยเรียกผู้ให้บริการ จึงไม่มีทางส่งซ้ำ · ล้างโทเคนผู้จอง (เครื่องเดิมที่ยังถือแถวนี้ในหน่วยความจำจะไม่ผ่านด่านเริ่มส่ง)
         var requeued = await _db.EmailQueues
             .Where(q => q.Status == EmailQueueStaleSending.StatusSending && q.SendStartedAt == null && (q.UpdatedAt ?? q.CreatedAt) < cutoff)

@@ -135,9 +135,8 @@ public class ReviewFixRound258Tests
         Assert.DoesNotContain("(", draft, StringComparison.Ordinal);
         Assert.Contains("ค่าเช่า", draft, StringComparison.Ordinal);
         Assert.Contains("(INV-2026-0001)", RecurringStaffNotice.StuckDraftTitle("ค่าเช่า", "INV-2026-0001"), StringComparison.Ordinal);
-        Assert.Null(RecurringStaffNotice.ReadableNumber(null));
-        Assert.Null(RecurringStaffNotice.ReadableNumber("draft-abc"));
-        Assert.Equal("INV-1", RecurringStaffNotice.ReadableNumber(" INV-1 "));
+        Assert.DoesNotContain("draft-abc", RecurringStaffNotice.StuckDraftTitle("ค่าเช่า", "draft-abc"), StringComparison.Ordinal);
+        Assert.EndsWith("(INV-1)", RecurringStaffNotice.StuckDraftTitle("ค่าเช่า", " INV-1 "), StringComparison.Ordinal);
     }
 
     // ───── R-L3 ─────
