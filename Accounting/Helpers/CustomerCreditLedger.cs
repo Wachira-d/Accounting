@@ -19,7 +19,7 @@ public static class CustomerCreditLedger
     private static readonly string ToDepositKind = nameof(PaymentCreditMovementKind.ToDeposit);
 
     /// <summary>Σ ขาออกที่มีผลซึ่งตัดยอดของการชำระนี้</summary>
-    public static async Task<decimal> LiveReducingSumAsync(AccountingDbContext db, Guid companyId, Guid paymentId, CancellationToken ct = default)
+    private static async Task<decimal> LiveReducingSumAsync(AccountingDbContext db, Guid companyId, Guid paymentId, CancellationToken ct = default)
         => await db.PaymentCreditMovements.AsNoTracking()
             .Where(m => m.CompanyId == companyId && m.PaymentId == paymentId && !m.IsDeleted && m.ReleasedAt == null
                 && ReducingKinds.Contains(m.Kind))
@@ -65,6 +65,35 @@ public static class CustomerCreditLedger
         if (kinds.Count == 0) return null;
         return CustomerCreditMovementRules.VoidBlockMessage(paymentNumber,
             kinds.Select(CustomerCreditMovementRules.Parse).Where(k => k != null).Select(k => k!.Value));
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 259 H1 — ด่านของ <c>VoidDocumentAsync</c> ก่อน cascade ยกเลิกการรับชำระของใบ: การชำระใดยังมีขาออกที่ตัดยอด ⇒ ข้อความปฏิเสธ (ตัวเดียวกับ
+    /// <see cref="VoidBlockAsync"/>) · null = ผ่าน · tenant</summary>
+    public static async Task<string?> VoidBlockForPaymentsAsync(AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> paymentIds,
+        CancellationToken ct = default)
+    {
+        if (paymentIds.Count == 0) return null;
+        var ids = paymentIds.Distinct().ToList();
+        var hit = await (
+            from m in db.PaymentCreditMovements.AsNoTracking()
+            join p in db.Payments.AsNoTracking().IgnoreQueryFilters() on m.PaymentId equals p.Id
+            where m.CompanyId == companyId && p.CompanyId == companyId && ids.Contains(m.PaymentId)
+                  && !m.IsDeleted && m.ReleasedAt == null && ReducingKinds.Contains(m.Kind)
+            orderby p.PaymentNumber
+            select new { m.PaymentId, p.PaymentNumber }).FirstOrDefaultAsync(ct);
+        return hit == null ? null : await VoidBlockAsync(db, companyId, hit.PaymentId, hit.PaymentNumber, ct);
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 259 M3 — กลับ JE ของขาออก (คืนเงิน/ตัดเศษ) ด้วยมือที่หน้าสมุดรายวัน = ปฏิเสธพร้อมทางไปต่อ (ยอดคงเหลือ/ยอดธนาคารต้องกลับพร้อมกัน) · null = ไม่ใช่ JE ของขาออกที่มีผล</summary>
+    public static async Task<string?> ManualReverseBlockAsync(AccountingDbContext db, Guid companyId, Guid journalEntryId, CancellationToken ct = default)
+    {
+        var hit = await db.PaymentCreditMovements.AsNoTracking()
+            .Where(m => m.CompanyId == companyId && m.JournalEntryId == journalEntryId && !m.IsDeleted && m.ReleasedAt == null)
+            .Select(m => m.Kind).FirstOrDefaultAsync(ct);
+        if (hit == null) return null;
+        var label = CustomerCreditMovementRules.Parse(hit) is { } k ? CustomerCreditMovementRules.LabelOf(k) : hit;
+        return $"รายการบัญชีนี้เป็น “{label}” ของเงินรอจัดสรร — กลับรายการที่หน้าสมุดรายวันไม่ได้ (ยอดคงเหลือ/ยอดธนาคารต้องกลับพร้อมกัน) · "
+            + "ไปที่หน้า “เงินรอจัดสรร” แล้วกด “ยกเลิกรายการ”";
     }
 
     /// <summary>

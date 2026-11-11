@@ -111,11 +111,12 @@ public partial class CustomerCreditService
     private async Task<CustomerCreditMovementResult?> ExistingByKeyAsync(Guid companyId, string? key, Guid paymentId, PaymentCreditMovementKind kind,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(key)) return null;
-        var k = key.Trim();
+        var k = NormKey(key);   // ฝ่ายค้านรอบ 259 L5: ตัวทำคีย์เดียวกับตอนบันทึก
+        if (k == null) return null;
         var m = await _db.PaymentCreditMovements.AsNoTracking().IgnoreQueryFilters()
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.IdempotencyKey == k, ct);
         if (m == null) return null;
+        if (m.ReleasedAt != null && m.TargetDocumentId == null && m.JournalEntryId == null) return null;   // M2: รายการที่ล้มแล้วถูกถอย = ไม่มี
         if (m.PaymentId != paymentId || m.Kind != kind.ToString())
             throw new BusinessRuleException("กุญแจกันกดซ้ำนี้ถูกใช้กับรายการอื่นแล้ว — ปิดหน้าต่างแล้วเปิดใหม่", CustomerCreditMovementRules.UndoRuleCode, 409);
         var p = await _db.Payments.AsNoTracking().FirstAsync(x => x.Id == paymentId && x.CompanyId == companyId, ct);
@@ -250,10 +251,11 @@ public partial class CustomerCreditService
 
     // ───────────────────────── ยกเลิกขาออก ─────────────────────────
 
-    public async Task<CustomerCreditMovementResult> UndoMovementAsync(Guid companyId, Guid paymentId, Guid movementId, string actor,
+    public async Task<CustomerCreditMovementResult> UndoMovementAsync(Guid companyId, Guid paymentId, Guid movementId, string? reason, string actor,
         CancellationToken ct = default)
     {
         var today = Today();
+        var why = (reason ?? "").Trim();
         Payment? payment = null;
         PaymentCreditMovement? movement = null;
         var strategy = _db.Database.CreateExecutionStrategy();
@@ -273,10 +275,41 @@ public partial class CustomerCreditService
                 throw new BusinessRuleException("รายการนี้ถูกยกเลิก/ปล่อยไปแล้ว", CustomerCreditMovementRules.UndoRuleCode, 409);
             var kind = CustomerCreditMovementRules.Parse(movement.Kind)
                 ?? throw new BusinessRuleException("ชนิดรายการไม่รู้จัก — ให้ผู้ดูแลระบบตรวจ", CustomerCreditMovementRules.UndoRuleCode, 409);
+            // ฝ่ายค้านรอบ 259 L1: ยกเลิกคืนเงิน/ตัดเศษ (กลับ JE + ยอดธนาคาร) ต้องมีเหตุผล
+            if (kind is PaymentCreditMovementKind.Refund or PaymentCreditMovementKind.WriteOff && why.Length < 5)
+                throw new BusinessRuleException("ระบุเหตุผลของการยกเลิก (อย่างน้อย 5 ตัวอักษร) — รายการนี้กลับรายการบัญชี", CustomerCreditMovementRules.UndoRuleCode, 400);
             if (kind == PaymentCreditMovementKind.ToDeposit)
-                throw new BusinessRuleException(
-                    "ยกเลิกการย้ายเป็นมัดจำที่นี่ไม่ได้ — ยกเลิกใบมัดจำที่หน้าเอกสาร (ระบบคืนเงินกลับเป็นเงินรอจัดสรรให้เอง)",
-                    CustomerCreditMovementRules.UndoRuleCode, 409);
+            {
+                // ฝ่ายค้านรอบ 259 M1: ขาออกที่ยังไม่ได้ผูกใบมัดจำ (ล้มกลางทาง) — หาใบมัดจำของเงินก้อนนี้ก่อน: มี = ผูก + ให้ยกเลิกใบนั้น · ไม่มี = ปล่อยได้
+                if (movement.TargetDocumentId != null)
+                    throw new BusinessRuleException(
+                        "ยกเลิกการย้ายเป็นมัดจำที่นี่ไม่ได้ — ยกเลิกใบมัดจำที่หน้าเอกสาร (ระบบคืนเงินกลับเป็นเงินรอจัดสรรให้เอง)",
+                        CustomerCreditMovementRules.UndoRuleCode, 409);
+                var since = movement.CreatedAt.AddMinutes(-5);
+                var orphanDeposit = await _db.Documents.AsNoTracking()
+                    .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.IsDeposit && d.Reference == payment.PaymentNumber
+                        && d.PaymentAccountId == payment.UnappliedAccountId && d.CreatedAt >= since
+                        && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                    .OrderBy(d => d.CreatedAt).Select(d => new { d.Id, d.DocumentNumber, d.Status }).FirstOrDefaultAsync(ct);
+                if (orphanDeposit != null)
+                {
+                    if (CustomerCreditMovementRules.DepositIssued(orphanDeposit.Status))
+                    {
+                        movement.TargetDocumentId = orphanDeposit.Id;
+                        movement.UpdatedAt = DateTime.UtcNow;
+                        AuditMovement(companyId, actor, movement, payment, CustomerCreditMovementRules.ToDepositRuleCode, null,
+                            "ผูกใบมัดจำที่ออกแล้วกับรายการที่ค้าง " + orphanDeposit.DocumentNumber);
+                        await _db.SaveChangesAsync(ct);
+                        await tx.CommitAsync(ct);
+                        throw new BusinessRuleException(
+                            $"ใบมัดจำ {orphanDeposit.DocumentNumber} ของรายการนี้ออกแล้ว — ผูกกับรายการให้แล้ว · ยกเลิกใบมัดจำนั้นที่หน้าเอกสารถ้าต้องการคืนเงินเป็นเงินรอจัดสรร",
+                            CustomerCreditMovementRules.UndoRuleCode, 409);
+                    }
+                    throw new BusinessRuleException(
+                        $"มีร่างใบมัดจำ {orphanDeposit.DocumentNumber} ของรายการนี้ค้างอยู่ — ลบร่างนั้นที่หน้าเอกสารก่อน แล้วกดยกเลิกอีกครั้ง",
+                        CustomerCreditMovementRules.UndoRuleCode, 409);
+                }
+            }
             if (kind != PaymentCreditMovementKind.ToInvoice)
             {
                 if (await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, today, ct) is string closed)
@@ -292,7 +325,12 @@ public partial class CustomerCreditService
                 }
             }
             movement.ReleasedAt = DateTime.UtcNow;
-            movement.ReleaseNote = kind == PaymentCreditMovementKind.ToInvoice ? "ยกเลิกการจองโดยผู้ใช้" : "ยกเลิกโดยผู้ใช้ (กลับรายการบัญชีแล้ว)";
+            movement.ReleaseNote = kind switch
+            {
+                PaymentCreditMovementKind.ToInvoice => "ยกเลิกการจองโดยผู้ใช้",
+                PaymentCreditMovementKind.ToDeposit => "ยกเลิกรายการที่ค้าง (ไม่มีใบมัดจำ)",
+                _ => "ยกเลิกโดยผู้ใช้ (กลับรายการบัญชีแล้ว): " + why,
+            };
             movement.UpdatedAt = DateTime.UtcNow;
             movement.UpdatedBy = actor;
             await _db.SaveChangesAsync(ct);
@@ -357,12 +395,15 @@ public partial class CustomerCreditService
         });
 
         // (2) ใบมัดจำในระบบมัดจำเดิม — ขาเงินเข้า = ผังพักที่รับไว้จริง (Dr 21630 แทน Dr ธนาคาร) · ระบบอนุมัติให้ทันที (ไม่มีช่วงแก้ยอด/แหล่งเงินในร่าง)
+        // ฝ่ายค้านรอบ 259 M1: หลังจองแล้วห้ามถูกยกเลิกกลางทาง (ปิดแท็บ = RequestAborted) — ขั้นออกใบ/ชดเชย/ผูกใบต้องเดินจนจบ
+        var nc = CancellationToken.None;
         Guid? depositId = null;
         string depositNo = "";
+        var notices = new List<string>();
         try
         {
             var vatRate = vatRegistered
-                ? await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId).Select(s => (decimal?)s.DefaultVatRate).FirstOrDefaultAsync(ct) ?? 7m
+                ? await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId).Select(s => (decimal?)s.DefaultVatRate).FirstOrDefaultAsync(nc) ?? 7m
                 : 0m;
             var created = await _documents.CreateDocumentAsync(companyId, new CreateDocumentRequest(
                 DocumentType: DocumentType.Receipt,
@@ -389,35 +430,50 @@ public partial class CustomerCreditService
             var approved = await _documents.ApproveDocumentAsync(companyId, created.Id, actor, ApprovalAckSource.SystemWorkflow, withAiHints: false);
             depositNo = approved.DocumentNumber;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
-            // ล้มดัง + ถอยครบ: ลบร่าง (ถ้ายังเป็นร่าง) + ปล่อยการจอง ⇒ เงินกลับเป็นเงินรอจัดสรร
             _logger.LogWarning(ex, "ย้ายเงินรอจัดสรร {Pay} เป็นมัดจำไม่สำเร็จ", payment!.PaymentNumber);
             _db.ChangeTracker.Clear();
-            if (depositId is Guid did)
+            DocumentStatus? st = null;
+            if (depositId is Guid sid)
+                st = await _db.Documents.AsNoTracking().Where(d => d.Id == sid && d.CompanyId == companyId && !d.IsDeleted)
+                    .Select(d => (DocumentStatus?)d.Status).FirstOrDefaultAsync(nc);
+            if (CustomerCreditMovementRules.DepositIssued(st))
             {
-                var st = await _db.Documents.AsNoTracking().Where(d => d.Id == did && d.CompanyId == companyId).Select(d => (DocumentStatus?)d.Status).FirstOrDefaultAsync(ct);
-                if (st is DocumentStatus.Draft or DocumentStatus.WaitingApproval)
+                // ฝ่ายค้านรอบ 259 H2: ใบมัดจำอนุมัติแล้ว (JE Dr ผังพัก commit แล้ว) แต่ขั้นหลังอนุมัติล้ม ⇒ ห้ามปล่อยการจอง (เงินจะถูกนับสองที่) —
+                // ผูกใบกับรายการตามปกติ แล้วบอกผู้ใช้ว่าขั้นหลังอนุมัติล้ม
+                depositNo = await _db.Documents.AsNoTracking().Where(d => d.Id == depositId!.Value && d.CompanyId == companyId)
+                    .Select(d => d.DocumentNumber).FirstAsync(nc);
+                notices.Add($"ออกใบมัดจำ {depositNo} และอนุมัติแล้ว แต่ขั้นหลังอนุมัติล้ม: {ex.Message} — ตรวจใบมัดจำ (e-Tax/การส่ง) ที่หน้าเอกสาร");
+            }
+            else
+            {
+                // ล้มก่อนอนุมัติ: ลบร่าง (ถ้ามี) + ปล่อยการจอง ⇒ เงินกลับเป็นเงินรอจัดสรร · ลบร่างไม่ได้ = ล้มดัง (ฝ่ายค้าน L4)
+                string? orphan = null;
+                if (depositId is Guid did && st is DocumentStatus.Draft or DocumentStatus.WaitingApproval)
                 {
                     try { await _documents.DeleteDocumentAsync(companyId, did); }
-                    catch (Exception delEx) when (delEx is not OperationCanceledException)
-                    { _logger.LogError(delEx, "ลบใบมัดจำร่าง {Doc} หลังย้ายไม่สำเร็จไม่ได้", did); }
+                    catch (Exception delEx)
+                    {
+                        _logger.LogError(delEx, "ลบใบมัดจำร่าง {Doc} หลังย้ายไม่สำเร็จไม่ได้", did);
+                        _db.ChangeTracker.Clear();
+                        orphan = await MarkOrphanDraftAsync(companyId, did, payment.PaymentNumber, actor);
+                    }
                 }
+                await ReleaseMovementAsync(companyId, payment.Id, movement!.Id, "ออกใบมัดจำไม่สำเร็จ: " + ex.Message, actor, nc);
+                var why = ex is BusinessRuleException or InvalidOperationException or KeyNotFoundException or DocumentApprovalWarningsException
+                    ? ex.Message : "ข้อผิดพลาดของระบบ";
+                throw new BusinessRuleException($"ย้ายเป็นเงินมัดจำไม่สำเร็จ — {why} · เงินยังอยู่ในเงินรอจัดสรรเท่าเดิม" + (orphan == null ? "" : " · " + orphan),
+                    CustomerCreditMovementRules.ToDepositRuleCode, 409);
             }
-            await ReleaseMovementAsync(companyId, payment.Id, movement!.Id, "ออกใบมัดจำไม่สำเร็จ: " + ex.Message, actor, ct);
-            var why = ex is BusinessRuleException or InvalidOperationException or KeyNotFoundException or DocumentApprovalWarningsException
-                ? ex.Message : "ข้อผิดพลาดของระบบ";
-            throw new BusinessRuleException($"ย้ายเป็นเงินมัดจำไม่สำเร็จ — {why} · เงินยังอยู่ในเงินรอจัดสรรเท่าเดิม",
-                CustomerCreditMovementRules.ToDepositRuleCode, 409);
         }
 
-        // (3) ผูกใบมัดจำกับรายการ + ธงภาษีขายล่าช้า (เงินล่วงหน้าตั้งแต่วันรับแต่ออกใบเดือนนี้ — ระบบไม่ย้ายงวดเอง · ม.78/1)
-        var notices = new List<string>();
+        // (3) ผูกใบมัดจำกับรายการ (audit — ฝ่ายค้าน L2) + ธงภาษีขายล่าช้า (เงินล่วงหน้าตั้งแต่วันรับแต่ออกใบเดือนนี้ — ระบบไม่ย้ายงวดเอง · ม.78/1)
         var movementId = movement!.Id;
         var targetId = depositId!.Value;
-        await _db.PaymentCreditMovements.Where(m => m.Id == movementId && m.CompanyId == companyId)
-            .ExecuteUpdateAsync(u => u.SetProperty(m => m.TargetDocumentId, (Guid?)targetId), ct);
-        var dep = await _db.Documents.FirstOrDefaultAsync(d => d.Id == targetId && d.CompanyId == companyId, ct);
+        await StampTargetAsync(companyId, movementId, targetId, depositNo, actor);
+        var ct2 = nc;
+        var dep = await _db.Documents.FirstOrDefaultAsync(d => d.Id == targetId && d.CompanyId == companyId, ct2);
         if (dep != null && CustomerCreditMovementRules.DepositLateVatNote(payment!.UnappliedReason, payment.PaymentDate, dep.DocumentDate,
                 dep.VatAmount, dep.DepositOutputVatDeferred) is string lateNote)
         {
@@ -440,12 +496,61 @@ public partial class CustomerCreditService
                     Message = lateNote,
                 }),
             });
-            await _db.SaveChangesAsync(ct);
+            await _db.SaveChangesAsync(ct2);
             notices.Add(lateNote);
         }
-        var fresh = await _db.Payments.AsNoTracking().FirstAsync(p => p.Id == paymentId && p.CompanyId == companyId, ct);
+        var fresh = await _db.Payments.AsNoTracking().FirstAsync(p => p.Id == paymentId && p.CompanyId == companyId, ct2);
         return new CustomerCreditMovementResult(fresh.Id, fresh.PaymentNumber, movementId, kind.ToString(), amount, fresh.UnappliedAmount,
             targetId, depositNo, notices);
+    }
+
+    /// <summary>ผูกใบปลายทางกับขาออก + audit (ฝ่ายค้านรอบ 259 L2 — ทุกการเขียนลง audit chain)</summary>
+    private async Task StampTargetAsync(Guid companyId, Guid movementId, Guid targetId, string targetNumber, string actor)
+    {
+        var m = await _db.PaymentCreditMovements.FirstAsync(x => x.Id == movementId && x.CompanyId == companyId);
+        m.TargetDocumentId = targetId;
+        m.UpdatedAt = DateTime.UtcNow;
+        m.UpdatedBy = actor;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = Guid.TryParse(actor, out var uid) ? uid : null,
+            Action = AuditAction.Update,
+            EntityType = "PaymentCreditMovement",
+            EntityId = m.Id.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                RuleCode = CustomerCreditMovementRules.ToDepositRuleCode,
+                m.Kind,
+                m.Amount,
+                TargetDocumentId = targetId,
+                TargetDocumentNumber = targetNumber,
+            }),
+        });
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 259 L4: ร่างที่ลบไม่ได้หลังเส้นล้ม — ติดป้ายบนร่าง (ห้ามอนุมัติ — การจองถูกปล่อยแล้ว) · คืนข้อความถึงผู้ใช้</summary>
+    private async Task<string> MarkOrphanDraftAsync(Guid companyId, Guid draftId, string paymentNumber, string actor)
+    {
+        var note = $"{CustomerCreditMovementRules.OrphanDraftMarker} ร่างนี้เหลือจากการทำรายการเงินรอจัดสรร {paymentNumber} ที่ไม่สำเร็จ — ห้ามอนุมัติ ให้ลบทิ้ง";
+        var current = await _db.Documents.AsNoTracking().Where(d => d.Id == draftId && d.CompanyId == companyId)
+            .Select(d => new { d.InternalNotes, d.DocumentNumber }).FirstOrDefaultAsync();
+        if (current == null) return "";
+        var merged = DepositPolicyResolver.AppendNoteOnce(current.InternalNotes, note);
+        await _db.Documents.Where(d => d.Id == draftId && d.CompanyId == companyId)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.InternalNotes, merged));
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = Guid.TryParse(actor, out var uid) ? uid : null,
+            Action = AuditAction.Update,
+            EntityType = "Document",
+            EntityId = draftId.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { RuleCode = CustomerCreditMovementRules.UndoRuleCode, Message = note }),
+        });
+        await _db.SaveChangesAsync();
+        return $"ลบร่าง {current.DocumentNumber} ไม่สำเร็จ — ติดป้ายห้ามอนุมัติไว้แล้ว ให้ลบร่างนั้นที่หน้าเอกสาร";
     }
 
     /// <summary>ปล่อยขาออก (ถอยการจอง) + คิดยอดคงเหลือใหม่ใต้ล็อก · audit</summary>
@@ -462,6 +567,7 @@ public partial class CustomerCreditService
             var m = await _db.PaymentCreditMovements.FirstAsync(x => x.Id == movementId && x.CompanyId == companyId, ct);
             m.ReleasedAt = DateTime.UtcNow;
             m.ReleaseNote = reason.Length > 500 ? reason[..500] : reason;
+            m.IdempotencyKey = null;   // ฝ่ายค้านรอบ 259 M2: เส้นล้มที่ถูกถอย — กดใหม่ด้วยคีย์เดิมต้องทำงานจริง ไม่ใช่ "บันทึกไปแล้ว" ปลอม
             m.UpdatedAt = DateTime.UtcNow;
             m.UpdatedBy = actor;
             await _db.SaveChangesAsync(ct);
@@ -591,8 +697,10 @@ public partial class CustomerCreditService
                 notices.AddRange(r.Notices);
                 release = $"อนุมัติแล้ว — จัดสรร {Money(r.AllocatedAmount)} ให้ใบ";
             }
-            catch (Exception ex) when (ex is BusinessRuleException or KeyNotFoundException or InvalidOperationException)
+            catch (Exception ex) when (ex is not OperationCanceledException)   // ฝ่ายค้าน L3: ทุกความล้มเหลว = ป้ายบนใบ (ใบอนุมัติ commit แล้ว)
             {
+                if (ex is not (BusinessRuleException or KeyNotFoundException or InvalidOperationException))
+                    _logger.LogError(ex, "จัดสรรเงินรอจัดสรรให้ใบ {Doc} หลังอนุมัติไม่สำเร็จ", documentId);
                 _db.ChangeTracker.Clear();
                 var msg = $"[CC-HOLD-FAILED] จัดสรรเงินรอจัดสรรให้ {doc.DocumentNumber} อัตโนมัติไม่สำเร็จ — {ex.Message} · กด “ใช้เงินรอจัดสรร” ที่ใบนี้";
                 notices.Add(msg);
@@ -605,10 +713,17 @@ public partial class CustomerCreditService
             }
             var hid = h.Id;
             var note = release.Length > 500 ? release[..500] : release;
-            await _db.PaymentCreditMovements.Where(m => m.Id == hid && m.CompanyId == companyId && m.ReleasedAt == null)
-                .ExecuteUpdateAsync(u => u
-                    .SetProperty(m => m.ReleasedAt, (DateTime?)DateTime.UtcNow)
-                    .SetProperty(m => m.ReleaseNote, note), ct);
+            var tracked = await _db.PaymentCreditMovements.FirstOrDefaultAsync(m => m.Id == hid && m.CompanyId == companyId && m.ReleasedAt == null, ct);
+            if (tracked != null)
+            {
+                tracked.ReleasedAt = DateTime.UtcNow;
+                tracked.ReleaseNote = note;
+                tracked.UpdatedAt = DateTime.UtcNow;
+                tracked.UpdatedBy = actor;
+                var holder = await _db.Payments.AsNoTracking().IgnoreQueryFilters().FirstAsync(p => p.Id == tracked.PaymentId && p.CompanyId == companyId, ct);
+                AuditMovement(companyId, actor, tracked, holder, CustomerCreditMovementRules.ToInvoiceRuleCode, null, note);   // ฝ่ายค้าน L2
+                await _db.SaveChangesAsync(ct);
+            }
         }
         return notices;
     }
@@ -634,7 +749,7 @@ public partial class CustomerCreditService
         var docs = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted && types.Contains(d.DocumentType) && statuses.Contains(d.Status)
                 && d.BalanceDue > 0.005m && d.DocumentDate < latest)
-            .OrderBy(d => d.DocumentDate).Take(2000)
+            .OrderByDescending(d => d.DocumentDate).Take(2000)   // ฝ่ายค้าน L6: ใบล่าสุดก่อน (บริษัทใบเยอะต้องเห็นใบใหม่)
             .ToListAsync(ct);
         docs = docs.Where(d => CustomerCreditAllocation.IsThbDocument(d.Currency, d.ExchangeRate)).ToList();
         if (docs.Count == 0) return Empty("ไม่มีใบค้างชำระสกุลบาท");
@@ -665,7 +780,8 @@ public partial class CustomerCreditService
         var result = BankReceiptSplitSuggestion.Suggest(amount, groups);
         var rows = result.Suggestions.Select(s => new BankLineCreditSuggestionRow(s.Kind.ToString(), s.ContactId, s.ContactName,
             s.Allocations.Select(a => new BankLineCreditAllocationRow(a.DocumentId, a.DocumentNumber, a.Amount)).ToList(),
-            s.Excess, s.Reason, PayHref(s.Allocations[0].DocumentId, amount, line))).ToList();
+            s.Excess, s.Reason, PayHref(s.Allocations[0].DocumentId,
+                s.Kind == BankReceiptSplitSuggestion.Kind.Split ? s.Allocations[0].Amount : amount, line))).ToList();
         return new BankLineCreditSuggestionResponse(line.Id, line.TransactionDate, amount, line.Description, rows, result.Note);
     }
 

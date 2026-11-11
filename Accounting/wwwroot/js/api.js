@@ -857,8 +857,8 @@ const API = {
       writeOffCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/write-off`, d),
       customerCreditToDeposit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/to-deposit`, d),
       customerCreditIssueInvoice: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/issue-invoice`, d),
-      undoCustomerCreditMovement: (paymentId, movementId) =>
-        API.post(`${base}/customer-credits/${paymentId}/movements/${movementId}/undo`),
+      undoCustomerCreditMovement: (paymentId, movementId, reason) =>
+        API.post(`${base}/customer-credits/${paymentId}/movements/${movementId}/undo`, { reason: reason || null }),
       updateCustomerCreditSettings: (d) => API.put(`${base}/customer-credits/settings`, d),
       getBankLineCreditSuggestions: (lineId) => API.get(`${base}/customer-credits/bank-line/${lineId}/suggestions`),
       exportCustomerCredits: (format) => API.download(`${base}/customer-credits/export?format=${encodeURIComponent(format || 'xlsx')}`, 'เงินรอจัดสรร.xlsx'),

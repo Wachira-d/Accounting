@@ -1035,6 +1035,9 @@ public partial class AccountingService : IAccountingService
         // รอบ 243a S3: JE ตัดสูญภาษีถูกหัก — ผู้ใช้กลับจากสมุดรายวันไม่ได้ · เส้นระบบ (ได้รับใบแล้ว/ยกเลิกต้นทาง) กลับแบบ systemTriggered พร้อมเปลี่ยนสถานะทะเบียน
         if (!systemTriggered)
             await Accounting.Helpers.WhtWriteOffJournalLock.EnsureNotWriteOffEntriesAsync(_db, companyId, new[] { original.Id }, "กลับรายการ");
+        // ฝ่ายค้านรอบ 259 M3: JE คืนเงิน/ตัดเศษของเงินรอจัดสรร — กลับได้เฉพาะ "ยกเลิกรายการ" ที่หน้าเงินรอจัดสรร (ระบบกลับแบบ systemTriggered)
+        if (!systemTriggered && await Accounting.Helpers.CustomerCreditLedger.ManualReverseBlockAsync(_db, companyId, original.Id) is string creditMoveBlock)
+            throw new Accounting.Helpers.BusinessRuleException(creditMoveBlock, Accounting.Helpers.CustomerCreditMovementRules.UndoRuleCode, 409);
         // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน L3): JE โอนต้นทุนสินทรัพย์ — ทะเบียนอ้างรายการนี้ (ทุกทาง รวม systemTriggered)
         await FixedAssetService.EnsureNotAssetCostTransferAsync(_db, companyId, original.Id, "กลับ");
 

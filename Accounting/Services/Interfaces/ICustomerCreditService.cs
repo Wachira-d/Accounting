@@ -51,7 +51,7 @@ public interface ICustomerCreditService
     Task<CustomerCreditMovementResult> IssueInvoiceAsync(Guid companyId, Guid paymentId, CustomerCreditIssueInvoiceRequest request, string actor, CancellationToken ct = default);
 
     /// <summary>ยกเลิกขาออก (คืนเงิน/ตัดเศษ: กลับ JE · การจอง: ปล่อย) — ใบมัดจำยกเลิกที่หน้าเอกสาร</summary>
-    Task<CustomerCreditMovementResult> UndoMovementAsync(Guid companyId, Guid paymentId, Guid movementId, string actor, CancellationToken ct = default);
+    Task<CustomerCreditMovementResult> UndoMovementAsync(Guid companyId, Guid paymentId, Guid movementId, string? reason, string actor, CancellationToken ct = default);
 
     /// <summary>หลังอนุมัติใบ: ใบที่ออกจากเงินรอจัดสรรได้รับการจัดสรรอัตโนมัติ · คืนข้อความถึงผู้ใช้ (ว่าง = ไม่มีอะไร)</summary>
     Task<IReadOnlyList<string>> AfterDocumentApprovedAsync(Guid companyId, Guid documentId, string actor, CancellationToken ct = default);

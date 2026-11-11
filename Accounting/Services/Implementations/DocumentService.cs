@@ -81,8 +81,10 @@ public partial class DocumentService : IDocumentService
         IStockLedger? stock = null,
         IIssuedDocumentHooks? issuedHooks = null,
         Accounting.Services.Storage.IFileStorage? fileStorage = null,
-        IOverageService? overage = null)
+        IOverageService? overage = null,
+        IServiceProvider? services = null)
     {
+        _services = services;   // รอบ 259 ฝ่ายค้าน M4: หาตัวจัดสรรเงินรอจัดสรรตอนใช้ (ICustomerCreditService พึ่ง IDocumentService — ฉีดตรงไม่ได้)
         _fileStorage = fileStorage;
         _overage = overage;
         // ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — จุดเดียวกับ POS/Integration/CMS (S-02) ·
@@ -7950,6 +7952,8 @@ public partial class DocumentService : IDocumentService
             catch (Exception ex) { _logger.LogWarning(ex, "Email schedule enqueue failed Doc={Doc}", documentId); }
         }
 
+        // รอบ 259 ฝ่ายค้าน M4: ใบที่ออกจากเงินรอจัดสรร (จองไว้) ⇒ จัดสรรเองหลังอนุมัติ — จุดเดียวของทุกทางอนุมัติ (เว็บ · หลายใบ · workflow · ลายเซ็น · LINE)
+        approved = await AllocateCreditHoldsAfterApproveAsync(companyId, documentId, approvedBy, approved);
         return approved;
     }
 
@@ -10135,6 +10139,9 @@ public partial class DocumentService : IDocumentService
                         && p.UnappliedAmount > Accounting.Helpers.UnappliedCreditBalance.Tolerance)
                     .Select(p => p.PaymentNumber)
                     .FirstOrDefaultAsync();
+                // ฝ่ายค้านรอบ 259 H1: เงินรอจัดสรรของการรับชำระที่จะถูก cascade ยกเลิกถูกคืน/ย้ายเป็นมัดจำ/ตัดเศษแล้ว ⇒ ยกเลิกขานั้นก่อน (ไม่งั้น 21630 ติดลบ)
+                if (await Accounting.Helpers.CustomerCreditLedger.VoidBlockForPaymentsAsync(_db, companyId, cascadePaymentIds) is string movedBlock)
+                    throw new BusinessRuleException(movedBlock, Accounting.Helpers.CustomerCreditMovementRules.VoidBlockRuleCode, 409);
                 if (creditHeldBy != null)
                     throw new BusinessRuleException(
                         $"ยกเลิกใบนี้ไม่ได้ — การรับชำระ {creditHeldBy} ของใบนี้ยังมีเงินรอจัดสรรค้างอยู่ · "
@@ -15140,6 +15147,21 @@ public partial class DocumentService : IDocumentService
                     .FirstOrDefaultAsync(r => r.CompanyId == companyId && !r.IsDeleted
                         && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
                         && (r.Id == payment.ReceiptDocumentId || r.SettlementPaymentId == paymentId));
+            // ฝ่ายค้านรอบ 259 M5: ใบเสร็จ/ใบกำกับที่ผู้ใช้ออกเองให้ใบนี้แล้ว (ไม่ผูกการชำระ) = มีแล้ว — ไม่ออกเอกสาร ม.86/4 ซ้ำ (ตัวตัดสินเดียว ManualReceiptCoverage)
+            if (existing == null && perDocument)
+            {
+                var manualTypes = Accounting.Helpers.ManualReceiptCoverage.Types.ToList();
+                var allocatedHere = allocRows.Where(a => a.DocumentId == targetDocId).Sum(a => a.AllocatedAmount);
+                var targetTotal = await _db.Documents.AsNoTracking().Where(d => d.Id == targetDocId && d.CompanyId == companyId)
+                    .Select(d => d.TotalAmount).FirstOrDefaultAsync();
+                var manualReceipts = await _db.Documents.AsNoTracking()
+                    .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.RelatedDocumentId == targetDocId && r.SettlementPaymentId == null
+                        && manualTypes.Contains(r.DocumentType) && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
+                        && r.Status != DocumentStatus.Draft && r.Status != DocumentStatus.WaitingApproval
+                        && (payment.ReceiptDocumentId == null || r.Id != payment.ReceiptDocumentId))
+                    .ToListAsync();
+                existing = manualReceipts.FirstOrDefault(r => Accounting.Helpers.ManualReceiptCoverage.Covers(r.TotalAmount, allocatedHere, targetTotal));
+            }
             if (existing != null)
             {
                 // ซ่อมสายที่ขาดไปด้วยเลย — ครั้งหน้าปุ่มจะไม่โผล่มาให้กดอีก (เฉพาะใบเสร็จของใบหลัก)

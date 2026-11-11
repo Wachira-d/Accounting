@@ -488,19 +488,25 @@
             return;
           }
           await this.load();
-        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error', 12000); }
+        } catch (e) {
+          // ฝ่ายค้านรอบ 259 M2: คำขอที่ล้ม = รายการใหม่เมื่อกดอีกครั้ง (คีย์ใหม่) — ยอดที่หน้าจอเห็นยังกันซ้ำใต้ล็อกอยู่
+          if (this._move) this._move.key = this._newKey();
+          Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error', 12000);
+        }
         finally { this._busy = false; btn.disabled = false; }
       },
       async undoMove(i, j) {
         const r = this.rows[i]; if (!r || this._busy) return;
         const mv = (r.movements || [])[j]; if (!mv) return;
         const api = Layout.api(); if (!api) return;
-        const ok = await Layout.confirm({ title: 'ยกเลิกรายการ', message: `ยกเลิก “${mv.kindLabel}” ${Layout.money(mv.amount)} บาท? ระบบกลับรายการบัญชี (ถ้ามี) และคืนยอดเข้าเงินรอจัดสรร`,
-          okText: 'ยกเลิกรายการ', danger: true });
-        if (!ok) return;
+        // ฝ่ายค้านรอบ 259 L1: เหตุผลไปกับคำขอ (เซิร์ฟเวอร์บังคับเมื่อกลับรายการบัญชี)
+        const reason = await Layout.promptText({ title: 'ยกเลิกรายการ',
+          message: `ยกเลิก “${mv.kindLabel}” ${Layout.money(mv.amount)} บาท? ระบบกลับรายการบัญชี (ถ้ามี) และคืนยอดเข้าเงินรอจัดสรร`,
+          label: 'เหตุผล', required: true, okText: 'ยกเลิกรายการ' });
+        if (reason === null) return;
         this._busy = true;
         try {
-          const res = await api.undoCustomerCreditMovement(r.paymentId, mv.id);
+          const res = await api.undoCustomerCreditMovement(r.paymentId, mv.id, reason);
           Layout.toast(res?.message || 'ยกเลิกแล้ว', 'success', 6000);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error', 10000); }

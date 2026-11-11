@@ -76,7 +76,7 @@ public static class BankReceiptSplitSuggestion
             list.Add(new Suggestion(Kind.Split, c.ContactId, c.ContactName,
                 docs.Select(d => new Allocation(d.DocumentId, d.DocumentNumber, R(d.Expected))).ToList(), 0m,
                 $"ยอด {Money(lineAmount)} เท่ากับใบค้าง {docs.Count} ใบของ {c.ContactName ?? "ลูกค้ารายนี้"} รวมกันพอดี ("
-                + string.Join(" + ", docs.Select(d => d.DocumentNumber)) + ") — ตรวจแล้วบันทึกรับเงินครั้งเดียวผูกทุกใบ"));
+                + string.Join(" + ", docs.Select(d => d.DocumentNumber)) + ") — ตรวจแล้วบันทึกรับชำระทีละใบ (ลิงก์เปิดใบแรกด้วยยอดของใบนั้น · ใบถัดไปเปิดจากรายการ)"));
         }
         else if (splits.Count > 1 || exhausted)
             note = "มีหลายชุดใบค้างที่รวมกันได้ยอดนี้ — ระบบไม่เลือกชุดให้ เลือกใบเองในหน้ารับชำระ";
