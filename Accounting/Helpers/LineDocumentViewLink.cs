@@ -53,6 +53,15 @@ public static class LineDocumentViewLink
         return CryptographicOperations.FixedTimeEquals(expected, Encoding.ASCII.GetBytes(token!));
     }
 
+    /// <summary>รอบ 258-3 ฝ่ายค้าน M1/L4 — ปลายทางนี้ได้ปุ่ม/เปิดลิงก์ดู PDF ไหม (ตัวเดียวของตอนส่งการ์ดและตอนเปิดลิงก์):
+    /// ปลายทางยังผูกอยู่ (ไม่ยกเลิก/ไม่ถูกบล็อก) · เป็น LINE · กลุ่มที่ตั้ง "ซ่อนยอด" ⇒ ไม่ได้ (PDF แสดงยอด/เลขภาษี/ที่อยู่ครบ — ค่าตั้งความเป็นส่วนตัวชนะ)</summary>
+    public static bool EndpointAllows(string? kind, bool showAmounts, DateTime? unlinkedAt, DateTime? blockedAt)
+        => unlinkedAt == null && blockedAt == null && NotifyEndpointKind.IsLine(kind) && (kind != NotifyEndpointKind.LineGroup || showAmounts);
+
+    /// <summary>คีย์ตัวนับของการเปิดลิงก์ — ต่อ (token + IP) ไม่ใช่ IP อย่างเดียว (ผู้ใช้หลัง CGNAT มือถือไม่โดนรวมกัน · ฝ่ายค้าน L4) · ไม่เก็บ token ดิบ</summary>
+    public static string RateKey(string? token, string? ip)
+        => $"line-doc-view:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes((token ?? "") + "|" + (ip ?? "unknown"))))[..24]}";
+
     /// <summary>ลิงก์ยังไม่หมดอายุ (นับจากวันเข้าคิว)</summary>
     public static bool Fresh(DateTime queuedAtUtc, DateTime nowUtc) => nowUtc <= queuedAtUtc.AddDays(TtlDays);
 

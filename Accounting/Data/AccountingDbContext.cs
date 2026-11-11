@@ -3761,6 +3761,7 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.Status).HasMaxLength(16);
             e.Property(x => x.ResolvedBy).HasMaxLength(200);
             e.Property(x => x.Note).HasMaxLength(1000);
+            e.Property(x => x.SourceChannel).HasMaxLength(32);
             e.Property(x => x.CashAmount).HasPrecision(18, 2);
             e.Property(x => x.SellerRecordedWht).HasPrecision(18, 2);
             e.HasIndex(x => new { x.CompanyId, x.PaymentIntentId }).IsUnique().HasDatabaseName("IX_PartnerPaymentNotices_Company_Intent");

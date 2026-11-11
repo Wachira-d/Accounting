@@ -299,6 +299,12 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         var whtRegistered = payment.WithholdingTaxAmount <= 0.005m || await _db.WhtCreditsReceived.AsNoTracking()
             .AnyAsync(w => w.CompanyId == cid && !w.IsDeleted && (w.PaymentId == payment.Id || w.DocumentId == doc.Id), ct);
 
+        // รอบ 258-3 ฝ่ายค้าน M2: บริษัทโหมด e-Tax by Email + ใบที่จะส่งอาจเป็นใบกำกับ (ประมาณแบบระวังเหมือน mayCarryVat) ⇒ อีเมล e-Tax ก่อน · LINE อย่างเดียวไม่พอ
+        var etaxCfg = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == cid)
+            .Select(x => new { x.EtaxEnabled, x.EtaxMode }).FirstOrDefaultAsync(ct);
+        var etaxEmailRequired = etaxCfg != null && EtaxDeliveryRouter.ByEmailActive(etaxCfg.EtaxEnabled, etaxCfg.EtaxMode)
+            && (receipt != null ? (receipt.IsTaxInvoiceByLaw == true || receipt.VatAmount > 0m)
+                : servesAsReceipt ? doc.VatAmount > 0m : mayCarryVat);
         var plan = PostPaymentAutomationPolicy.Decide(settings, new PostPaymentAutomationPolicy.Facts(
             SaleSide: saleSide, SourceStatus: doc.Status, PaymentVoided: payment.IsDeleted,
             FullyPaid: fullyPaid, AllocationCount: allocations,
@@ -312,7 +318,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             EmailOptOutReason: receiptDelivery.OptOutReason,
             // ฝ่ายค้าน HIGH-2/MED-4: ไม่ส่งอัตโนมัติชนะทุกชั้น (รวมตาราง/รายการประจำที่ตั้ง On) แต่ห้ามแค่ขั้นส่งอีเมล — ออกใบเสร็จยังเดินตามค่าตั้ง
             AutoSendBlockedReason: AutopilotSettingsResolver.AutoSendBlock(contact?.AutoSendDisabled == true),
-            LineReceiptEndpoints: lineEndpoints.Count));
+            LineReceiptEndpoints: lineEndpoints.Count,
+            EtaxEmailRequired: etaxEmailRequired));
         if (plan.Skipped != null)
             return new RunResult(PostPaymentAutomationPolicy.StatusSkipped, plan.Skipped, doc.DocumentNumber, receipt?.Id);
 

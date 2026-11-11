@@ -165,7 +165,9 @@ public static class PartnerExchangeRules
     /// <summary>เอกสารของผู้ขายใบนี้ "ทำหน้าที่ใบกำกับภาษี" ไหม (ตัวตัดสินเดียวของเส้นคู่ค้า) — ใบกำกับภาษี (เว้นที่ตรึงไว้ว่าไม่ใช่ เช่น VAT 0 ทั้งใบ) ·
     /// ใบเสร็จที่ตรึงตอนออกว่าเป็นใบกำกับ (<c>IsTaxInvoiceByLaw == true</c>) และมี VAT (ใบเสร็จรับเงิน/ใบกำกับภาษีของการขายที่ออกใบแจ้งหนี้ก่อน — §78/1) ·
     /// ใบเสร็จที่ยังไม่ตรึง (null) = ไม่รู้ ⇒ <b>ไม่นับ</b> (ไม่เดาว่าเป็นใบกำกับ — F2 ข้อ 3) · ใบแจ้งหนี้/อื่น ๆ = ไม่ใช่</summary>
-    public static bool IsTaxInvoiceCarrier(DocumentType type, bool? isTaxInvoiceByLaw, decimal vatAmount) => type switch
+    /// <param name="receiptForm">รอบ 258-3 (ฝ่ายค้าน L6 · §82/5(2)): ใบเสร็จรับเงิน/ใบกำกับภาษี<b>อย่างย่อ</b> ⇒ ไม่ใช่หลักฐานภาษีซื้อ (false) · null = ไม่ทราบรูปแบบ (ตามเกณฑ์เดิม)</param>
+    public static bool IsTaxInvoiceCarrier(DocumentType type, bool? isTaxInvoiceByLaw, decimal vatAmount, ReceiptForm? receiptForm = null)
+        => receiptForm != ReceiptForm.ReceiptTaxInvoiceAbbreviated && type switch
     {
         DocumentType.TaxInvoice => isTaxInvoiceByLaw != false,
         DocumentType.Receipt => isTaxInvoiceByLaw == true && vatAmount > 0.005m,

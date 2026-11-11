@@ -284,7 +284,9 @@ public class ContactLineQueueService : IContactLineQueueService
         return LineDocumentCard.Build(new LineDocumentCard.Input(companyName, viaNextAcc, heading.Language, heading.Title, doc.DocumentNumber,
             showAmounts ? (outstanding ? doc.BalanceDue : doc.TotalAmount) : null, doc.Currency, outstanding ? doc.DueDate : null,
             contactName, payUrl, isGroup, outstanding,
-            ViewUrl: await ViewUrlAsync(item, ct),
+            // ฝ่ายค้าน M1: กลุ่ม "ซ่อนยอด" ไม่ได้ปุ่มดู PDF (ตัวตัดสินเดียว LineDocumentViewLink.EndpointAllows — showAmounts = !isGroup || ep.ShowAmounts)
+            ViewUrl: LineDocumentViewLink.EndpointAllows(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts, null, null)
+                ? await ViewUrlAsync(item, ct) : null,
             PaymentReceived: item.Trigger == ContactLineChannel.ReceiptTrigger));
     }
 

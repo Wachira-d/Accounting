@@ -117,7 +117,7 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
         // รอบ 258-3 (F-H3): ใบนี้ส่งเข้าระบบคู่ค้า (InvoiceFlow → ใบซื้อของผู้ซื้อ) ⇒ แจ้งผู้ซื้อให้กดบันทึกจ่ายครั้งเดียว — ไม่โยน (เงินบันทึกแล้ว)
         if (_partnerNotices != null)
             await _partnerNotices.NotifySellerReceivedAsync(intent.CompanyId, intent.Id, doc.Id, intent.Amount, reference,
-                intent.PaidAt ?? intent.ConfirmedAt ?? DateTime.UtcNow, ct);
+                intent.PaidAt ?? intent.ConfirmedAt ?? DateTime.UtcNow, intent.MethodKind, ct);
         // รอบ 250 (WP-02 §2.1): งานส่งเอกสารหลังรับชำระเข้าคิวในแกน CreatePaymentAsync (หลัง commit · แถวเดียวต่อการชำระ — webhook ซ้ำไม่เพิ่ม)
     }
 }

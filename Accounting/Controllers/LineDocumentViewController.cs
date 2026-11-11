@@ -32,7 +32,7 @@ public class LineDocumentViewController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> Pdf(Guid companyId, Guid queueId, string token, CancellationToken ct)
     {
-        if (!await _limiter.TryConsumeAsync($"line-doc-view:{Ip}", LineDocumentViewLink.ViewsPerMinute, LineDocumentViewLink.ViewsPerDay, ct, failClosed: true))
+        if (!await _limiter.TryConsumeAsync(LineDocumentViewLink.RateKey(token, Ip), LineDocumentViewLink.ViewsPerMinute, LineDocumentViewLink.ViewsPerDay, ct, failClosed: true))
             return StatusCode(429, new ApiResponse<object>(false, null, "เปิดเอกสารถี่เกินไป — รอสักครู่แล้วลองใหม่"));
         IActionResult Missing() => NotFound(new ApiResponse<object>(false, null, LineDocumentViewLink.NotFoundMessage));
         if (!LineDocumentViewLink.LooksValid(token)) return Missing();
@@ -43,9 +43,15 @@ public class LineDocumentViewController : ControllerBase
 
         var row = await _db.LineQueues.AsNoTracking()
             .Where(q => q.Id == queueId && q.CompanyId == companyId && !q.IsDeleted && q.EndpointId != null && q.EntityType == "Document")
-            .Select(q => new { q.EntityId, q.Status, q.CreatedAt })
+            .Select(q => new { q.EntityId, q.Status, q.CreatedAt, q.EndpointId, q.ContactId })
             .FirstOrDefaultAsync(ct);
         if (row == null || !LineDocumentViewLink.RowStatusAllows(row.Status) || !LineDocumentViewLink.Fresh(row.CreatedAt, DateTime.UtcNow)) return Missing();
+        // ฝ่ายค้าน L4: ตรวจปลายทางตอนเปิด — ยกเลิกผูก/บล็อก/กลุ่มเปลี่ยนเป็นซ่อนยอด ⇒ ลิงก์ตาย (ตัวตัดสินเดียวกับตอนส่ง)
+        var ep = await _db.ContactNotifyEndpoints.AsNoTracking().IgnoreQueryFilters()
+            .Where(e => e.Id == row.EndpointId && e.CompanyId == companyId && e.ContactId == row.ContactId && !e.IsDeleted)
+            .Select(e => new { e.Kind, e.ShowAmounts, e.UnlinkedAt, e.BlockedAt })
+            .FirstOrDefaultAsync(ct);
+        if (ep == null || !LineDocumentViewLink.EndpointAllows(ep.Kind, ep.ShowAmounts, ep.UnlinkedAt, ep.BlockedAt)) return Missing();
         var doc = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == row.EntityId && d.CompanyId == companyId && !d.IsDeleted)
             .Select(d => new { d.Status })

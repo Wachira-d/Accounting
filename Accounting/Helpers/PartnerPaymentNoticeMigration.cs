@@ -35,5 +35,7 @@ public static class PartnerPaymentNoticeMigration
         """,
         """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartnerPaymentNotices_Company_Intent" ON "PartnerPaymentNotices" ("CompanyId", "PaymentIntentId");""",
         """CREATE INDEX IF NOT EXISTS "IX_PartnerPaymentNotices_Company_Status" ON "PartnerPaymentNotices" ("CompanyId", "Status");""",
+        // ฝ่ายค้าน M5 (ชุดแก้): ช่องทางที่ผู้ขายรับเงิน — ตารางที่สร้างไปแล้วได้คอลัมน์เพิ่ม
+        """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SourceChannel" varchar(32) NULL;""",
     };
 }

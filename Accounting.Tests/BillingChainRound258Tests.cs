@@ -13,11 +13,12 @@ namespace Accounting.Tests;
 public class BillingChainRound258Tests
 {
     private static PostPaymentAutomationPolicy.Facts F(string? email = "ap@buyer.co.th", int line = 0, bool hasReceipt = false, bool receiptDraft = false,
-        bool serves = false, string? autoOff = null)
+        bool serves = false, string? autoOff = null, bool etax = false)
         => new(SaleSide: true, SourceStatus: DocumentStatus.Paid, PaymentVoided: false, FullyPaid: true, AllocationCount: 0,
             HasReceipt: hasReceipt, ReceiptIsDraft: receiptDraft, ReceiptCarriesVat: false, SourceServesAsReceipt: serves, MayCarryVatIfIssued: false,
             CustomerEmail: email, BuyerBlockingFields: null, PaymentWht: 0m, WhtCreditRegistered: true,
-            Source: PaymentEntrySource.Gateway, SupersedingTaxInvoiceNumber: null, AutoSendBlockedReason: autoOff, LineReceiptEndpoints: line);
+            Source: PaymentEntrySource.Gateway, SupersedingTaxInvoiceNumber: null, AutoSendBlockedReason: autoOff, LineReceiptEndpoints: line,
+            EtaxEmailRequired: etax);
 
     private static readonly PostPaymentAutomationPolicy.Settings On = new(EmailReceipt: true, IncludePartial: false);
 
@@ -221,5 +222,79 @@ public class BillingChainRound258Tests
         var unchecked_ = AutopilotReadiness.Evaluate(new AutopilotReadiness.Facts { SaleSide = true, DocumentType = DocumentType.Invoice });
         Assert.DoesNotContain(unchecked_.Items, i => AutopilotReadiness.ChainInfoCodes.Contains(i.Code));
         Assert.Equal(unchecked_.WarnCount, off.WarnCount);
+    }
+
+    // ───── ชุดแก้ฝ่ายค้าน (review-258-billing-chain.md) ─────
+
+    [Fact]
+    public void M2_eTax_by_Email_ผู้ติดต่อมีแต่_LINE_หยุดพร้อมเหตุ_ทิศตรงข้าม_บริษัทไม่ใช่_eTax_ส่ง_LINE_ได้()
+    {
+        var etax = PostPaymentAutomationPolicy.Decide(On, F(email: null, line: 1, etax: true));
+        Assert.Empty(etax.Steps);
+        Assert.Contains(PostPaymentAutomationPolicy.EtaxNeedsEmailBlock, etax.Blocked);
+        Assert.DoesNotContain(PostPaymentAutomationPolicy.LineOnlyNote, etax.Notes);
+        var plain = PostPaymentAutomationPolicy.Decide(On, F(email: null, line: 1, etax: false));
+        Assert.Equal(new[] { PostPaymentAutomationPolicy.Step.IssueReceipt, PostPaymentAutomationPolicy.Step.LineReceipt }, plain.Steps);
+        Assert.Empty(plain.Blocked);
+    }
+
+    [Fact]
+    public void M2_eTax_by_Email_อีเมลก่อน_LINE_ทิศตรงข้าม_ไม่ใช่_eTax_LINE_ก่อน()
+    {
+        Assert.Equal(new[] { PostPaymentAutomationPolicy.Step.IssueReceipt, PostPaymentAutomationPolicy.Step.EmailReceipt, PostPaymentAutomationPolicy.Step.LineReceipt },
+            PostPaymentAutomationPolicy.Decide(On, F(line: 1, etax: true)).Steps);
+        Assert.Equal(new[] { PostPaymentAutomationPolicy.Step.EmailSourceAsReceipt, PostPaymentAutomationPolicy.Step.LineReceipt },
+            PostPaymentAutomationPolicy.Decide(On, F(line: 1, serves: true, etax: true)).Steps);
+        Assert.Equal(new[] { PostPaymentAutomationPolicy.Step.IssueReceipt, PostPaymentAutomationPolicy.Step.LineReceipt, PostPaymentAutomationPolicy.Step.EmailReceipt },
+            PostPaymentAutomationPolicy.Decide(On, F(line: 1, etax: false)).Steps);
+    }
+
+    [Fact]
+    public void M1_L4_ปุ่มดู_PDF_กลุ่มซ่อนยอด_ปลายทางยกเลิก_บล็อก_ไม่ได้_ทิศตรงข้าม_ผู้ใช้และกลุ่มแสดงยอดได้()
+    {
+        Assert.True(LineDocumentViewLink.EndpointAllows(NotifyEndpointKind.LineUser, false, null, null));
+        Assert.True(LineDocumentViewLink.EndpointAllows(NotifyEndpointKind.LineGroup, true, null, null));
+        Assert.False(LineDocumentViewLink.EndpointAllows(NotifyEndpointKind.LineGroup, false, null, null));
+        Assert.False(LineDocumentViewLink.EndpointAllows(NotifyEndpointKind.LineUser, true, DateTime.UtcNow, null));
+        Assert.False(LineDocumentViewLink.EndpointAllows(NotifyEndpointKind.LineUser, true, null, DateTime.UtcNow));
+        Assert.False(LineDocumentViewLink.EndpointAllows(NotifyEndpointKind.Email, true, null, null));
+        // L4: ตัวนับต่อ token+IP — IP เดียวกัน token ต่างกัน = คนละถัง · ไม่มี token ดิบในคีย์
+        var t = new string('a', 64);
+        Assert.NotEqual(LineDocumentViewLink.RateKey(t, "1.1.1.1"), LineDocumentViewLink.RateKey(new string('b', 64), "1.1.1.1"));
+        Assert.NotEqual(LineDocumentViewLink.RateKey(t, "1.1.1.1"), LineDocumentViewLink.RateKey(t, "2.2.2.2"));
+        Assert.DoesNotContain(t, LineDocumentViewLink.RateKey(t, "1.1.1.1"));
+    }
+
+    [Fact]
+    public void M3_ภาษีหักค้างแต่ผู้ขายรับเต็ม_บันทึกได้พร้อมคำเตือน_ม54_ทิศตรงข้าม_ไม่มีภาษีหักค้างไม่มีคำเตือน()
+    {
+        var p = PartnerPaymentNoticeRule.For(DocumentStatus.Approved, 1070m, 30m, 1070m, "PI-9");
+        Assert.Equal(1070m, p.Amount);
+        Assert.Equal(0m, p.Wht);
+        Assert.Null(p.Problem);
+        Assert.Contains("ม.54", p.Warning);
+        Assert.Contains("30.00", p.Warning);
+        Assert.Null(PartnerPaymentNoticeRule.For(DocumentStatus.Approved, 1070m, 0m, 1070m, "PI-9").Warning);
+        Assert.Null(PartnerPaymentNoticeRule.For(DocumentStatus.Approved, 1070m, 30m, 1040m, "PI-9").Warning);
+    }
+
+    [Fact]
+    public void M4_M5_ช่องทางที่ผู้ขายรับ_ป้ายและวิธีจ่ายตั้งต้น()
+    {
+        Assert.Equal(PaymentMethod.CreditCard, PartnerPaymentNoticeRule.DefaultMethod(nameof(PaymentMethodKind.Card)));
+        Assert.Equal(PaymentMethod.PromptPay, PartnerPaymentNoticeRule.DefaultMethod(nameof(PaymentMethodKind.PromptPay)));
+        Assert.Equal(PaymentMethod.BankTransfer, PartnerPaymentNoticeRule.DefaultMethod(nameof(PaymentMethodKind.ManualSlip)));
+        Assert.Equal(PaymentMethod.BankTransfer, PartnerPaymentNoticeRule.DefaultMethod(null));
+        Assert.Contains("สลิป", PartnerPaymentNoticeRule.ChannelLabel(nameof(PaymentMethodKind.ManualSlip)));
+        Assert.Contains(PartnerPaymentNoticeRule.Methods, m => m.Method == PartnerPaymentNoticeRule.DefaultMethod(nameof(PaymentMethodKind.TrueMoney)));
+    }
+
+    [Fact]
+    public void L6_ใบเสร็จรับเงินใบกำกับอย่างย่อ_ไม่ใช่หลักฐานภาษีซื้อ_ทิศตรงข้าม_เต็มรูปและไม่ทราบรูปแบบตามเดิม()
+    {
+        Assert.False(PartnerExchangeRules.IsTaxInvoiceCarrier(DocumentType.Receipt, true, 70m, ReceiptForm.ReceiptTaxInvoiceAbbreviated));
+        Assert.True(PartnerExchangeRules.IsTaxInvoiceCarrier(DocumentType.Receipt, true, 70m, ReceiptForm.ReceiptTaxInvoiceFull));
+        Assert.True(PartnerExchangeRules.IsTaxInvoiceCarrier(DocumentType.Receipt, true, 70m));
+        Assert.True(PartnerExchangeRules.IsTaxInvoiceCarrier(DocumentType.TaxInvoice, null, 70m));
     }
 }

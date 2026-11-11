@@ -163,6 +163,8 @@ public class PartnerPaymentNotice : TenantEntity
     /// <summary>ภาษีหักที่ผู้ขายบันทึกไว้ฝั่งตัวเอง (แสดงเทียบ — ไม่ใช้คำนวณแทนกติกาของผู้ซื้อ)</summary>
     public decimal SellerRecordedWht { get; set; }
     public DateTime PaidAt { get; set; }
+    /// <summary>ฝ่ายค้าน M5: ช่องทางที่ผู้ขายรับเงิน (ชื่อ <c>PaymentMethodKind</c>) · null = แถวก่อนมีคอลัมน์</summary>
+    public string? SourceChannel { get; set; }
     public string Status { get; set; } = "Open";
     public Guid? RecordedPaymentId { get; set; }
     public DateTime? ResolvedAt { get; set; }

@@ -179,7 +179,7 @@ public partial class CrossTenantWorkflowService
         var partnership = await _db.TradingPartnerships.AsNoTracking().FirstOrDefaultAsync(p => p.Id == link.TradingPartnershipId);
         if (partnership == null || partnership.Status != TradingPartnershipStatus.Accepted) return;
         // ใบนี้ทำหน้าที่ใบกำกับไหม (ใบกำกับ · ใบเสร็จที่ตรึงว่าเป็นใบกำกับและมี VAT) — ตัวตัดสินเดียว
-        var isTaxInvoice = PartnerExchangeRules.IsTaxInvoiceCarrier(src.DocumentType, src.IsTaxInvoiceByLaw, src.VatAmount);
+        var isTaxInvoice = PartnerExchangeRules.IsTaxInvoiceCarrier(src.DocumentType, src.IsTaxInvoiceByLaw, src.VatAmount, src.ReceiptForm);
         if (isReceiptFlow)
         {
             // ใบเสร็จที่ไม่ใช่ใบกำกับ (รับชำระใบกำกับที่ออกแล้ว · ไม่มี VAT) = หลักฐานรับเงิน ไม่ใช่หลักฐานภาษีซื้อ ⇒ กล่องเข้าเดิมพอ
@@ -524,9 +524,9 @@ public partial class CrossTenantWorkflowService
         if (sourceIds.Count == 0) return false;
         var sources = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
             .Where(d => sourceIds.Contains(d.Id) && d.CompanyId == sellerCompanyId)
-            .Select(d => new { d.DocumentType, d.IsTaxInvoiceByLaw, d.VatAmount })
+            .Select(d => new { d.DocumentType, d.IsTaxInvoiceByLaw, d.VatAmount, d.ReceiptForm })
             .ToListAsync();
-        return sources.Any(d => PartnerExchangeRules.IsTaxInvoiceCarrier(d.DocumentType, d.IsTaxInvoiceByLaw, d.VatAmount));
+        return sources.Any(d => PartnerExchangeRules.IsTaxInvoiceCarrier(d.DocumentType, d.IsTaxInvoiceByLaw, d.VatAmount, d.ReceiptForm));
     }
 
     /// <summary>รอบ 257 ปิดท้าย MED-4: ใบซื้อนี้เคยถูกยืนยันผ่านทาง "ได้ใบกำกับนอกระบบ" ไหม (audit ของบริษัทผู้รับเอง — tenant) ·
@@ -634,11 +634,11 @@ public partial class CrossTenantWorkflowService
             if (voidedIds.Contains(l.SourceDocumentId)) continue;
             var s = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
                 .Where(d => d.Id == l.SourceDocumentId && d.CompanyId == l.SourceCompanyId)
-                .Select(d => new { d.DocumentType, d.DocumentNumber, d.DocumentDate, d.IsTaxInvoiceByLaw, d.VatAmount })
+                .Select(d => new { d.DocumentType, d.DocumentNumber, d.DocumentDate, d.IsTaxInvoiceByLaw, d.VatAmount, d.ReceiptForm })
                 .FirstOrDefaultAsync();
             if (s == null) continue;
             // รอบ 257 ชุด 3: ใบเสร็จที่เป็นใบกำกับก็เป็นเลข/วันที่ใบกำกับของผู้ขาย (ตัวตัดสินเดียวกับตอนแนบหลักฐาน)
-            if (PartnerExchangeRules.IsTaxInvoiceCarrier(s.DocumentType, s.IsTaxInvoiceByLaw, s.VatAmount)) { latestTaxNo = s.DocumentNumber; latestTaxDate = s.DocumentDate; latestTaxVat = s.VatAmount; }
+            if (PartnerExchangeRules.IsTaxInvoiceCarrier(s.DocumentType, s.IsTaxInvoiceByLaw, s.VatAmount, s.ReceiptForm)) { latestTaxNo = s.DocumentNumber; latestTaxDate = s.DocumentDate; latestTaxVat = s.VatAmount; }
         }
         return new PartnerSourceStatus(false, latestTaxNo, latestTaxDate, latestTaxVat);
     }
