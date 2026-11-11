@@ -43,7 +43,7 @@
     <div class="gs-shell">
       <div class="gs-header">
         <h1>🚀 เริ่มต้นใช้งาน Next Acc</h1>
-        <p>ตรวจสอบและตั้งค่าระบบบัญชีให้พร้อมใช้งานใน 8 ขั้นตอน — ระบบจะเช็คความคืบหน้าให้อัตโนมัติ</p>
+        <p>ตรวจสอบและตั้งค่าระบบบัญชีให้พร้อมใช้งานทีละขั้น — ระบบจะเช็คความคืบหน้าให้อัตโนมัติ</p>
       </div>
 
       <div class="gs-progress" id="gsProgress">
@@ -64,261 +64,46 @@
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
-    // Each step:
-    //   key:    stable identifier
-    //   icon:   emoji
-    //   title:  Thai short
-    //   desc:   what & why
-    //   page:   where to go to do it
-    //   check:  async () => boolean | { done, hint? } — done==true means complete
-    const Steps = [
-      {
-        key: 'company',
-        icon: '🏢',
-        title: 'ข้อมูลบริษัท',
-        desc: 'ชื่อ, เลขผู้เสียภาษี, ที่อยู่, โลโก้ — แสดงบนใบกำกับภาษี/ใบเสร็จทุกใบ',
-        page: '/pages/settings.html',
-        check: async (api, companyId) => {
-          try {
-            const co = await api.getCompany(companyId);
-            const c = co.data || co;
-            return !!(c?.taxId && c?.name && c?.address);
-          } catch { return false; }
-        }
-      },
-      {
-        key: 'fiscal',
-        icon: '📅',
-        title: 'งวดบัญชี (ปีและเดือน)',
-        desc: 'สร้างงวดบัญชีของปีปัจจุบัน — จำเป็นสำหรับการบันทึก JE และปิดงวด',
-        page: '/pages/fiscal.html',
-        check: async (api, companyId) => {
-          try {
-            const periods = await api.getFiscalPeriods?.() ?? { data: [] };
-            return (periods.data || []).length > 0;
-          } catch { return false; }
-        }
-      },
-      {
-        key: 'coa',
-        icon: '📚',
-        title: 'ผังบัญชี (Chart of Accounts)',
-        desc: 'ผังบัญชีถูก seed อัตโนมัติเมื่อสร้างบริษัท — ตรวจสอบและปรับแต่งให้เหมาะกับธุรกิจ',
-        page: '/pages/accounts.html',
-        check: async (api, companyId) => {
-          try {
-            const r = await api.getAccounts();
-            return (r.data || []).length >= 20;
-          } catch { return false; }
-        }
-      },
-      {
-        key: 'vat',
-        icon: '💸',
-        title: 'การจดทะเบียน VAT',
-        desc: 'ระบุว่าบริษัทจด VAT แล้วหรือยัง + อัตรา VAT มาตรฐาน (default 7%)',
-        page: '/pages/settings.html',
-        // ★ เดิมเช็ค `vatRegistered !== undefined` ซึ่ง **เป็นจริงเสมอ** —
-        // `SettingsDtos.VatRegistered` เป็น bool ไม่ nullable ⇒ API ส่ง
-        // true/false มาทุกครั้ง ไม่มีทางเป็น undefined ⇒ ขั้นนี้ติ๊กเขียว
-        // ตั้งแต่วินาทีแรกที่เปิดระบบ (ผลตรวจ B-A12) ⇒ บริษัทที่ต้องจด VAT
-        // ไม่เคยถูกเตือน แล้วออกเอกสารโดยไม่มี VAT ทั้งปี
-        //
-        // เกณฑ์ใหม่ = "จด VAT แล้วและตั้งอัตราไว้" ซึ่งเป็นสิ่งที่ผู้ใช้ทำจริง
-        // ⚠️ บริษัทที่ **ไม่ได้จด** VAT จะเห็นขั้นนี้ค้างเป็นสีเทา — ยอมรับได้
-        // เพราะเช็กลิสต์เป็นคำแนะนำ ไม่ใช่ตัวบล็อก และ "ค้างไว้" ปลอดภัยกว่า
-        // "เขียวทั้งที่ยังไม่ได้ตัดสินใจ" (ระบบยังไม่มีช่องเก็บว่าผู้ใช้ยืนยัน
-        // แล้วว่าไม่จด — ถ้าจะให้ครบต้องเพิ่มฟิลด์ฝั่งเซิร์ฟเวอร์)
-        check: async (api, companyId) => {
-          try {
-            const s = await api.getSettings();
-            const d = s.data || s;
-            return d?.vatRegistered === true && Number(d?.vatRate || 0) > 0;
-          } catch { return false; }
-        }
-      },
-      {
-        key: 'bank',
-        icon: '🏦',
-        title: 'บัญชีธนาคาร',
-        desc: 'เพิ่มบัญชีธนาคารที่ใช้รับ-จ่าย — สำหรับเชื่อมกระแสเงินสดและกระทบยอด',
-        page: '/pages/bank.html',
-        check: async (api, companyId) => {
-          try {
-            const r = await api.getBankAccounts?.() ?? { data: [] };
-            return (r.data || []).length > 0;
-          } catch { return false; }
-        }
-      },
-      {
-        key: 'contact',
-        icon: '👥',
-        title: 'ลูกค้า / ผู้ขาย (อย่างน้อย 1 รายการ)',
-        desc: 'เพิ่มผู้ติดต่อแรกของคุณ — จำเป็นสำหรับสร้างใบเสนอราคา / ใบกำกับภาษี',
-        page: '/pages/contacts.html',
-        check: async (api, companyId) => {
-          try {
-            const r = await api.getContacts?.('?page=1&pageSize=1') ?? { data: { items: [] } };
-            return ((r.data?.items || r.data || [])).length > 0;
-          } catch { return false; }
-        }
-      },
-      {
-        key: 'product',
-        icon: '📦',
-        title: 'สินค้า / บริการ',
-        desc: 'เพิ่มรายการที่จะขายหรือบริการที่ให้ — ไม่บังคับ แต่จะช่วยให้สร้างเอกสารได้เร็วขึ้น',
-        page: '/pages/products.html',
-        check: async (api, companyId) => {
-          try {
-            const r = await api.getProducts?.('?page=1&pageSize=1') ?? { data: { items: [] } };
-            return ((r.data?.items || r.data || [])).length > 0;
-          } catch { return false; }
-        },
-        optional: true
-      },
-      {
-        key: 'firstDoc',
-        icon: '🧾',
-        title: 'สร้างเอกสารใบแรก',
-        desc: 'ลองสร้างใบเสนอราคาหรือใบกำกับภาษีใบแรกเพื่อทดสอบ flow ทั้งหมด',
-        page: '/pages/documents.html?openCreate=revenue&type=Quotation',
-        check: async (api, companyId) => {
-          try {
-            const r = await api.getDocuments?.('?page=1&pageSize=1') ?? { data: { items: [] } };
-            return ((r.data?.items || r.data || [])).length > 0;
-          } catch { return false; }
-        }
-      },
-    ];
-
+    // รอบ 259-3 (ทีม E 3ก-1 · 4.2 · คำตัดสิน 259-3-7): ขั้นตอน + ตัวตัดสิน "เสร็จ/ยัง" + ข้อความ + ลิงก์ มาจากเซิร์ฟเวอร์ (Helpers/GettingStartedChecklist)
+    // — เดิมหน้านี้ถือกติกาทั้งชุดเอง (ผังบัญชี >= 20 · VAT · นับจากหน้าแรกของรายการ) · หน้านี้แสดงอย่างเดียว
     const Page = {
-      // Race a promise against a timeout so a slow / hung endpoint can't
-      // freeze the whole page. 5s per check is plenty for any healthy
-      // API; on timeout the step shows "ตรวจสอบไม่ได้" with a retry.
-      _withTimeout(promise, ms, label) {
-        return Promise.race([
-          promise.then(v => ({ ok: true, value: v })),
-          new Promise(resolve => setTimeout(
-            () => resolve({ ok: false, error: 'timeout', label }), ms))
-        ]);
-      },
-
-      _renderStepRow(idx, r, status) {
-        // status: 'pending' | 'done' | 'todo' | 'error'
-        const icon = status === 'done' ? '✅'
-                   : status === 'error' ? '⚠️'
-                   : status === 'pending' ? '<span class="gs-spinner"></span>'
-                   : '⬜';
-        const cls = status === 'done' ? 'done'
-                  : status === 'error' ? 'error'
-                  : '';
-        const btnText = status === 'done' ? 'ไปดู / แก้ไข'
-                     : status === 'error' ? '🔁 ลองใหม่'
-                     : status === 'pending' ? 'กำลังตรวจสอบ...'
-                     : 'ตั้งค่าเลย →';
-        const btnClass = status === 'done' ? 'btn-secondary' : 'btn-primary';
-        const btnAttr = status === 'error'
-          ? `href="#" onclick="Page.recheck(${idx});return false"`
-          : status === 'pending' ? 'href="#" onclick="return false" style="opacity:.6;pointer-events:none"'
-          : `href="${r.step.page}"`;
-        return `
-          <div class="gs-step ${cls}" id="gsStep${idx}">
-            <div class="check">${icon}</div>
-            <div class="body">
-              <h3>${r.step.icon} ${r.step.title}${r.step.optional ? ' <span class="meta">(ไม่บังคับ)</span>' : ''}</h3>
-              <div class="desc">${r.step.desc}</div>
-              ${status === 'error' ? `<div class="meta" style="color:#dc2626">ตรวจสอบไม่สำเร็จ (timeout หรือ API error) — คลิก "ลองใหม่" หรือเปิดหน้านั้นดูตรงๆ</div>` : ''}
-              <div class="actions">
-                <a class="btn btn-sm ${btnClass}" ${btnAttr}>${btnText}</a>
-                ${status !== 'done' && status !== 'pending' ? `<a class="btn btn-sm btn-ghost" href="${r.step.page}">เปิดหน้าทันที</a>` : ''}
-              </div>
-            </div>
-          </div>`;
-      },
-
-      _updateSummary() {
-        const required = this._results.filter(r => r && !r.step.optional);
-        const settled = required.filter(r => r.status !== 'pending').length;
-        const doneCount = required.filter(r => r.status === 'done').length;
-        const total = required.length;
-        const pct = total > 0 ? Math.round(doneCount / total * 100) : 0;
-
-        document.querySelector('#gsProgress > div').style.width = pct + '%';
-        document.getElementById('gsProgressText').textContent =
-          settled < total
-            ? `กำลังตรวจสอบ ${settled} / ${total} ขั้นตอน...`
-            : `${doneCount} / ${total} (${pct}%)`;
-
-        if (settled < total) return;  // hold summary until all settled
-
-        const summary = document.getElementById('gsSummary');
-        summary.style.display = '';
-        if (pct === 100) {
-          summary.innerHTML = `🎉 <strong>ระบบพร้อมใช้งานครบทุกขั้นตอน</strong> — เปิดใช้ฟีเจอร์ขั้นสูงเช่น POS, OCR สแกนใบเสร็จ, e-Tax Invoice ได้เลย`;
-        } else if (pct >= 60) {
-          summary.innerHTML = `⚙️ <strong>ใกล้พร้อมแล้ว</strong> — เหลืออีก ${total - doneCount} ขั้นตอน. หลังจากนี้คุณจะสามารถออกรายงานการเงินและยื่นภาษีได้`;
-        } else {
-          summary.innerHTML = `📋 <strong>ทำตามลำดับด้านบน</strong> — แต่ละขั้นกินเวลาประมาณ 1-3 นาที. ขั้นแรก ๆ ที่สำคัญสุดคือข้อมูลบริษัทและงวดบัญชี`;
-        }
-      },
-
-      async _runCheck(idx) {
-        const r = this._results[idx];
-        r.status = 'pending';
-        const rowEl = document.getElementById('gsStep' + idx);
-        if (rowEl) rowEl.outerHTML = this._renderStepRow(idx, r, 'pending');
-        this._updateSummary();
-
-        const result = await this._withTimeout(
-          r.step.check(this._api, this._companyId),
-          5000, r.step.title);
-
-        if (!result.ok) {
-          r.status = 'error';
-        } else {
-          r.done = result.value === true;
-          r.status = r.done ? 'done' : 'todo';
-        }
-        const newEl = document.getElementById('gsStep' + idx);
-        if (newEl) newEl.outerHTML = this._renderStepRow(idx, r, r.status);
-        this._updateSummary();
-      },
-
-      async recheck(idx) {
-        await this._runCheck(idx);
-      },
-
       async init() {
-        // ต้องเรียก Layout.init ก่อน — โหลดบริษัท (getCompanyId) + render เมนู;
-        // ไม่งั้น Layout.api()=null → return ทันที (เนื้อหา onboarding + เมนูไม่ขึ้น)
         if (!Layout.init('getting-started')) return;
-        const api = Layout.api(); if (!api) return;
-        const co = JSON.parse(localStorage.getItem('currentCompany') || '{}');
-        if (!co.id) {
-          document.getElementById('gsSteps').innerHTML =
-            '<p class="text-danger" style="padding:20px;">ยังไม่ได้เลือกบริษัท — กรุณาเลือกบริษัทก่อน</p>';
+        const cid = Layout.getCompanyId();
+        const box = document.getElementById('gsSteps');
+        if (!cid) { box.innerHTML = '<p class="text-danger" style="padding:20px;">ยังไม่ได้เลือกบริษัท — กรุณาเลือกบริษัทก่อน</p>'; return; }
+        box.innerHTML = '<p class="text-center text-gray-400" style="padding:40px;">กำลังตรวจสอบสถานะ...</p>';
+        let d;
+        try {
+          const res = await API.get(`/api/companies/${encodeURIComponent(cid)}/getting-started`);
+          d = (res && res.data) || null;
+        } catch (e) {
+          box.innerHTML = `<div class="gs-step error"><div class="check">⚠️</div><div class="body"><h3>ตรวจสอบไม่สำเร็จ</h3>
+            <div class="desc">${Layout.esc(e.message || '')}</div><div class="actions"><a class="btn btn-sm btn-primary" href="#" onclick="Page.init();return false">🔁 ลองใหม่</a></div></div></div>`;
+          document.getElementById('gsProgressText').textContent = '-';
           return;
         }
-
-        this._api = api;
-        this._companyId = co.id;
-        this._results = Steps.map(s => ({ step: s, done: false, status: 'pending' }));
-
-        // Render skeleton IMMEDIATELY — every row shows a spinner so the
-        // user sees the page in <100ms instead of staring at the
-        // top-level "กำลังตรวจสอบ..." until all 8 checks return.
-        document.getElementById('gsSteps').innerHTML = this._results
-          .map((r, i) => this._renderStepRow(i, r, 'pending'))
-          .join('');
-        this._updateSummary();
-
-        // Fire all checks in parallel but update each independently as
-        // it resolves. Per-check 5s timeout ensures one slow endpoint
-        // can't hold the others — its row just flips to "error" and
-        // lets the user retry or open the page directly.
-        this._results.forEach((_, i) => { this._runCheck(i); });
-      }
+        if (!d) return;
+        const esc = Layout.esc;
+        box.innerHTML = (d.steps || []).map(st => `
+          <div class="gs-step ${st.done ? 'done' : ''}">
+            <div class="check">${st.done ? '✅' : '⬜'}</div>
+            <div class="body">
+              <h3>${esc(st.icon)} ${esc(st.title)}${st.optional ? ' <span class="meta">(ไม่บังคับ)</span>' : ''}</h3>
+              <div class="desc">${esc(st.description)}</div>
+              ${st.hint ? `<div class="meta" style="color:#92400e">${esc(st.hint)}</div>` : ''}
+              <div class="actions"><a class="btn btn-sm ${st.done ? 'btn-secondary' : 'btn-primary'}" href="${esc(st.href)}">${st.done ? 'ไปดู / แก้ไข' : 'ตั้งค่าเลย →'}</a></div>
+            </div>
+          </div>`).join('');
+        const pct = Number(d.percent) || 0;
+        document.querySelector('#gsProgress > div').style.width = pct + '%';
+        document.getElementById('gsProgressText').textContent = `${Number(d.requiredDone)} / ${Number(d.requiredTotal)} (${pct}%)`;
+        const summary = document.getElementById('gsSummary');
+        summary.style.display = '';
+        summary.innerHTML = pct === 100
+          ? '🎉 <strong>ระบบพร้อมใช้งานครบทุกขั้นตอน</strong> — เปิดใช้ฟีเจอร์ขั้นสูงเช่น POS, สแกนใบเสร็จ, e-Tax Invoice ได้เลย'
+          : `📋 <strong>เหลืออีก ${Number(d.requiredTotal) - Number(d.requiredDone)} ขั้นตอน</strong> — ทำตามลำดับด้านบน ขั้นแรก ๆ ที่สำคัญสุดคือข้อมูลบริษัทและงวดบัญชี`;
+      },
     };
 
     document.addEventListener('DOMContentLoaded', () => Page.init());

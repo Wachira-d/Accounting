@@ -1284,7 +1284,7 @@
           ${bind /* html — หนีแล้ว */}
           ${groupBind /* html — หนีแล้ว */}
           ${soon /* html — หนีแล้ว */}
-          <div id="notifyAutoSendBox" style="margin:12px 0 6px;font-size:12px;color:#64748b">กำลังโหลดค่าตั้ง "ส่งอัตโนมัติ"…</div>
+          <div id="notifyAutoSendBox" style="margin:12px 0 6px;font-size:12px;color:#64748b">กำลังโหลดค่าตั้งระบบอัตโนมัติ…</div>
           <div style="font-weight:600;margin:12px 0 6px">ดูว่าใครจะได้รับอีเมล (ตัวหาผู้รับเดียวกับการส่งจริง)</div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <select class="form-input" id="notifyPreviewTopic" style="max-width:220px">${topicOpts /* html — หนีแล้ว */}</select>
@@ -1293,36 +1293,65 @@
           <div id="notifyPreviewOut" style="font-size:12px;margin-top:6px"></div>`;
         this._loadAutoSendToggle();
       },
-      /** รอบ 250 WP-08 (คำตัดสิน 250-29): ชั้นผู้ติดต่อ "ไม่ส่งอีเมลอัตโนมัติ" — อ่าน/เขียนผ่านค่าตั้ง autopilot ของผู้ติดต่อ (ค่าจากเซิร์ฟเวอร์ · echo กลับ)
-       *  โหลดไม่ได้ (ไม่มีสิทธิ์ดู) ⇒ บอกเหตุ ไม่แสดงช่องที่กดแล้วไม่มีผล */
+      /** รอบ 259-3 (ทีม E-M6 · คำตัดสิน 259-3-5): แผง "ระบบอัตโนมัติของผู้ติดต่อ" — บ้านของค่าตั้งระดับผู้ติดต่อ (เดิมแก้ได้จากฟอร์มรายการประจำเท่านั้น ⇒
+       *  ผู้ติดต่อที่ไม่มีรายการประจำตั้ง/ดูไม่ได้) · ช่องทางรับเงิน · งานหลังชำระ · ไม่ส่งเอกสารอัตโนมัติ (อีเมล/LINE — รอบ 250 WP-08) ·
+       *  ตัวเลือก/ป้ายจากเซิร์ฟเวอร์ (recurring/autopilot/options) · ค่าจาก/ไป endpoint เดิม (recurring/contacts/{id}/autopilot) · echo ค่าที่บันทึก ·
+       *  นโยบายอนุมัติข้ามคำเตือน: แสดงอย่างเดียว + ลิงก์ (แก้ที่ขั้น ⑤ ของรายการประจำ — ต้องเห็นรายการคำเตือน) ·
+       *  โหลดไม่ได้ ⇒ บอกเหตุ ไม่แสดงช่องที่กดแล้วไม่มีผล */
       async _loadAutoSendToggle() {
         const box = document.getElementById('notifyAutoSendBox'); if (!box) return;
         const cid = document.getElementById('editId').value;
         const api = Layout.api(); if (!api || !cid) { box.textContent = ''; return; }
+        const esc = Layout.esc;
         try {
-          const res = await api.getContactAutopilot(cid);
+          const [res, optRes] = await Promise.all([api.getContactAutopilot(cid), this._apOpts ? Promise.resolve({ data: this._apOpts }) : api.getRecurringAutopilotOptions()]);
           if (document.getElementById('editId').value !== cid) return;   // เปลี่ยนผู้ติดต่อระหว่างรอ — คำตอบเก่าห้ามทับ
-          const on = !!(res && res.data && res.data.autoSendDisabled);
+          this._apOpts = (optRes && optRes.data) || null;
+          const d = (res && res.data) || {};
+          const o = this._apOpts || {};
           const canEdit = !!(this._notify && this._notify.canEdit);
-          box.innerHTML = `<label style="display:inline-flex;gap:6px;align-items:center;font-size:13px;color:#0f172a">
-              <input type="checkbox" id="notifyAutoSendOff" ${on ? 'checked' : ''} ${canEdit ? '' : 'disabled'} onchange="Page.saveAutoSendToggle(this)">
-              <b>ไม่ส่งอีเมลอัตโนมัติถึงผู้ติดต่อรายนี้</b></label>
-            <div style="margin-top:2px">ติ๊กแล้ว ระบบไม่ส่งเองทุกเส้น (ตารางส่งอีเมล · รายการประจำ · ทวงชำระ/ใบแจ้งยอด · 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็นอัตโนมัติ) และบอกเหตุบนคิว — ส่งเองจากหน้าเอกสารยังได้</div>`;
+          const opt = (list, cur, inheritValue) => (list || []).map(m => {
+            const v = m.code === 'Inherit' ? inheritValue : m.code;
+            return `<option value="${esc(v)}" ${String(cur || inheritValue) === String(v) ? 'selected' : ''}>${esc(m.label)}</option>`;
+          }).join('');
+          const pol = d.autoApprovePolicy;
+          const polText = pol ? `ตั้งไว้ — ปล่อย ${Number((pol.passCodes || []).length)} ข้อ${pol.setBy ? ` (โดย ${esc(pol.setBy)})` : ''}` : 'ไม่ได้ตั้ง (หยุดรอคนทุกคำเตือน)';
+          const dis = canEdit ? '' : 'disabled';
+          box.innerHTML = `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;color:#0f172a">
+              <div style="font-weight:600;margin-bottom:6px">⚙️ ระบบอัตโนมัติของผู้ติดต่อรายนี้ <span style="font-weight:normal;color:#64748b">(ใช้กับทุกเอกสารของผู้ติดต่อรายนี้ เมื่อรายการประจำ/ตารางส่งไม่ได้ตั้งเอง)</span></div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">
+                <label style="font-size:12px">ช่องทางรับเงิน<select class="form-input" id="capPayMode" ${dis}>${opt(o.paymentModes, d.paymentMode, '') /* html — หนีแล้ว */}</select></label>
+                <label style="font-size:12px">หลังลูกค้าชำระ: ส่งใบเสร็จ<select class="form-input" id="capPostPayEmail" ${dis}>${opt(o.postPayEmailOptions, d.postPayEmailReceipt, 'Inherit') /* html */}</select></label>
+                <label style="font-size:12px">หลังลูกค้าชำระ: ทุกงวด<select class="form-input" id="capPostPayPartial" ${dis}>${opt(o.postPayPartialOptions, d.postPayIncludePartial, 'Inherit') /* html */}</select></label>
+              </div>
+              <label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:8px">
+                <input type="checkbox" id="notifyAutoSendOff" ${d.autoSendDisabled ? 'checked' : ''} ${dis}>
+                <b>ไม่ส่งเอกสารอัตโนมัติถึงผู้ติดต่อรายนี้ (อีเมล/LINE)</b></label>
+              <div style="font-size:12px;color:#64748b;margin-top:2px">ติ๊กแล้ว ระบบไม่ส่งเองทุกเส้น (ตารางส่ง · รายการประจำ · ทวงชำระ/ใบแจ้งยอด · 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็นอัตโนมัติ) และบอกเหตุบนคิว — ส่งเองจากหน้าเอกสารยังได้</div>
+              <div style="font-size:12px;margin-top:6px">นโยบายอนุมัติข้ามคำเตือน: ${polText /* html — หนีแล้ว */} · <a href="/pages/recurring.html">แก้ที่รายการประจำ (ขั้นอนุมัติ)</a></div>
+              ${canEdit ? '<button type="button" class="btn btn-sm btn-primary" style="margin-top:8px" onclick="Page.saveContactAutopilot()">บันทึกค่าตั้งอัตโนมัติ</button>'
+                : '<div style="font-size:12px;color:#92400e;margin-top:6px">ไม่มีสิทธิ์แก้ผู้ติดต่อ — ดูได้อย่างเดียว</div>'}
+              ${this._apOpts ? '' : '<div style="font-size:12px;color:#92400e;margin-top:6px">โหลดตัวเลือกไม่สำเร็จ — ช่องเลือกอาจไม่ครบ</div>'}
+            </div>`;
         } catch (e) {
           if (document.getElementById('editId').value !== cid) return;
-          box.textContent = 'ดูค่าตั้ง "ส่งอัตโนมัติ" ไม่ได้: ' + (e.message || 'ไม่มีสิทธิ์');
+          box.textContent = 'ดูค่าตั้งระบบอัตโนมัติของผู้ติดต่อไม่ได้: ' + (e.message || 'ไม่มีสิทธิ์');
         }
       },
-      async saveAutoSendToggle(el) {
+      async saveContactAutopilot() {
         const cid = document.getElementById('editId').value;
         const api = Layout.api(); if (!api || !cid) return;
-        el.disabled = true;
+        const v = id => { const el = document.getElementById(id); return el ? el.value : null; };
         try {
-          const res = await api.updateContactAutopilot(cid, { paymentMode: null, payLinkChannels: null, autoSendDisabled: !!el.checked });
-          el.checked = !!(res && res.data && res.data.autoSendDisabled);   // ค่าจริงจากเซิร์ฟเวอร์
-          Layout.toast(el.checked ? 'ตั้ง "ไม่ส่งอีเมลอัตโนมัติ" แล้ว' : 'กลับมาส่งอีเมลอัตโนมัติตามค่าตั้งปกติแล้ว');
-        } catch (e) { el.checked = !el.checked; Layout.toast(e.message, 'error'); }
-        finally { el.disabled = false; }
+          // null = ไม่แตะ (ไม่ได้โหลดตัวเลือก) · "" / "Inherit" = ล้างกลับไปใช้ชั้นถัดไป — สัญญาเดียวกับฟอร์มรายการประจำ
+          const res = await api.updateContactAutopilot(cid, {
+            paymentMode: this._apOpts ? (v('capPayMode') || '') : null, payLinkChannels: null,
+            postPayEmailReceipt: this._apOpts ? (v('capPostPayEmail') || 'Inherit') : null,
+            postPayIncludePartial: this._apOpts ? (v('capPostPayPartial') || 'Inherit') : null,
+            autoSendDisabled: !!document.getElementById('notifyAutoSendOff')?.checked });
+          Layout.toast((res && res.message) || 'บันทึกค่าตั้งอัตโนมัติแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        await this._loadAutoSendToggle();   // echo ค่าที่เซิร์ฟเวอร์เก็บจริง
       },
       /** รอบ 254 WP-11 L2: สร้างลิงก์/QR ผูก LINE (token แสดงครั้งเดียว — ไม่เก็บในหน้า) · ไม่ได้ตั้ง URL ของระบบ ⇒ ประกอบจากโดเมนที่เปิดอยู่ */
       async createLineInvite() {

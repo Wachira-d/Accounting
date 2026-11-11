@@ -36,7 +36,15 @@
     <!-- ต่างจากใบที่ "เราออกให้ผู้อื่น" — กันผู้ใช้เข้าใจผิดว่าเป็นหน้าเดียวกัน -->
     <div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;padding:9px 14px;border-radius:8px;margin-bottom:12px;font-size:12.5px">
       ℹ️ หน้านี้คือใบที่ <b>ลูกค้าหักเราแล้วออกให้เรา</b> (เครดิตภาษีของเรา) ·
-      ส่วนใบที่ <b>เราหักผู้อื่น</b> แล้วต้องนำส่ง ภ.ง.ด.3/53 อยู่ที่เมนู "หนังสือรับรองหัก ณ ที่จ่าย"
+      ส่วนใบที่ <b>เราหักผู้อื่น</b> แล้วต้องนำส่ง ภ.ง.ด.3/53 อยู่ที่เมนู <a href="/pages/wht.html">"หัก ณ ที่จ่าย (ภงด.)"</a>
+    </div>
+
+    <!-- รอบ 259-3 (E-M2): สวิตช์ "ทวง 50 ทวิ อัตโนมัติ" ตัวเดียวกับ ตั้งค่า → เอกสาร (endpoint document-auto-send/settings เดียวกัน · เจ้าของบริษัทแก้ได้) -->
+    <div id="whtReminderBar" style="background:#f8fafc;border:1px solid #e2e8f0;padding:9px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="whtReminderOn" disabled onchange="Page.setWhtReminder(this.checked)">
+        ⏰ ทวงหนังสือรับรอง 50 ทวิ จากลูกค้าอัตโนมัติ (อีเมลถึงลูกค้าที่หักแล้วยังไม่ส่งใบ)</label>
+      <span id="whtReminderNote" style="color:#64748b">กำลังโหลด...</span>
+      <a href="/pages/settings.html?tab=document&focus=autoSendCard">ค่าตั้งส่งเอกสารอัตโนมัติทั้งหมด</a>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-bottom:14px">
@@ -289,7 +297,31 @@
         for (let i = y + 1; i >= y - 5; i--) sel.innerHTML += `<option value="${i}">ปีภาษี ${i + 543}</option>`;
         sel.value = y;
         await this._loadIncomeTypes();
+        this.loadWhtReminder();
         await this.load();
+      },
+
+      /** รอบ 259-3 (E-M2): ค่าที่บันทึกจากเซิร์ฟเวอร์ (echo) — ล้ม = บอกตรง ๆ และล็อกช่อง (ไม่ปล่อยให้กดแล้วไม่มีผล) */
+      async loadWhtReminder() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const cb = document.getElementById('whtReminderOn'), note = document.getElementById('whtReminderNote');
+        try {
+          const r = await API.get(`/api/companies/${encodeURIComponent(cid)}/document-auto-send/settings`);
+          const s = (r && r.data) || {};
+          cb.checked = !!s.whtCertReminderEnabled; cb.disabled = false;
+          note.textContent = s.whtCertReminderEnabled ? 'เปิดอยู่' : 'ปิดอยู่';
+        } catch (e) { cb.disabled = true; note.textContent = 'โหลดค่าตั้งไม่สำเร็จ: ' + (e.message || ''); }
+      },
+
+      async setWhtReminder(on) {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const cb = document.getElementById('whtReminderOn'); cb.disabled = true;
+        try {
+          // ส่งเฉพาะช่องนี้ (null = ไม่แตะค่าอื่น — UpdateDocumentAutoSendSettings)
+          const r = await API.put(`/api/companies/${encodeURIComponent(cid)}/document-auto-send/settings`, { whtCertReminderEnabled: !!on });
+          Layout.toast((r && r.message) || 'บันทึกแล้ว');
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+        await this.loadWhtReminder();
       },
 
       /** ตัวเลือก "ประเภทเงินได้" มาจากเซิร์ฟเวอร์ (Helpers/ThaiWhtRateTable)

@@ -1661,6 +1661,7 @@ const API = {
       getPortalAccess: () => API.get(`${base}/portal/access`),
       updatePortalAccess: (id, d) => API.put(`${base}/portal/access/${id}`, d),
       deactivatePortalAccess: (id) => API.post(`${base}/portal/access/${id}/deactivate`),
+      getPortalLink: () => API.get(`${base}/portal/link`),   // รอบ 259-3: ลิงก์เข้าพอร์ทัลจาก URL ของระบบ (เซิร์ฟเวอร์)
       // Dimensions & Branches
       getDimensions: () => API.get(`${base}/dimensions`),
       getDimension: (id) => API.get(`${base}/dimensions/${id}`),

@@ -47,7 +47,8 @@
 
     <div class="ap-card" id="bankQueue">
       <h3>💰 เงินโอนเข้าที่รอยืนยัน</h3>
-      <p class="ap-muted">ระบบเสนอใบค้างที่ยอดตรง/ใกล้เคียงจากรายการเดินบัญชีจริง (ไม่ใช้ AI) — ยืนยันแล้วบันทึกรับชำระ + ออก/ส่งใบเสร็จตามค่าตั้ง · สลิปจากลูกค้าเป็นแค่ข้อบ่งชี้ ไม่ปิดหนี้เอง</p>
+      <p class="ap-muted">ระบบเสนอใบค้างที่ยอดตรง/ใกล้เคียงจากรายการเดินบัญชีจริง (ไม่ใช้ AI) — ยืนยันแล้วบันทึกรับชำระ + ออก/ส่งใบเสร็จตามค่าตั้ง · สลิปจากลูกค้าเป็นแค่ข้อบ่งชี้ ไม่ปิดหนี้เอง —
+        ยืนยันสลิปที่ <a href="/pages/payment-intents.html?status=Pending" id="apSlipLink">หน้ารายการรับชำระออนไลน์</a> · จับคู่รายการเดินบัญชีอื่น ๆ ที่ <a href="/pages/bank.html">หน้าบัญชีธนาคาร</a></p>
       <div class="table-container">
         <table class="table">
           <thead><tr><th>วันที่</th><th class="text-right">ยอด</th><th>รายการ</th><th>ข้อเสนอ / เหตุผล</th><th>ใบที่จะปิด</th><th>จัดการ</th></tr></thead>
@@ -77,6 +78,18 @@
       </div>
     </div>
 
+    <!-- รอบ 259-3 (E-M2): ศูนย์รวมค่าตั้งที่อยู่หน้าอื่น — สถานะจากเซิร์ฟเวอร์ (AutopilotSettingsHub) + ลิงก์ไปบ้านของค่า (ไม่มีช่องแก้ซ้ำ) -->
+    <div class="ap-card" id="apHubCard">
+      <h3>🧭 ค่าตั้งอัตโนมัติที่อยู่หน้าอื่น</h3>
+      <p class="ap-muted">แต่ละค่ามีบ้านเดียว — กดลิงก์เพื่อแก้ที่หน้านั้น · สถานะด้านล่างอ่านจากระบบตอนโหลดหน้านี้</p>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>เรื่อง</th><th>สถานะตอนนี้</th><th>ตั้งที่</th></tr></thead>
+          <tbody id="apHubBody"><tr><td colspan="3" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="ap-card">
       <h3>⚙️ ค่าตั้ง Autopilot ของบริษัท</h3>
       <div class="ap-grid2">
@@ -93,12 +106,12 @@
           <p class="ap-muted">ใช้กับใบที่ลูกค้ายอมรับ<strong>หลัง</strong>เปลี่ยนค่านี้เท่านั้น (ไม่แปลงย้อนหลัง)</p>
           <label for="apDigest">ส่งสรุป Autopilot ประจำวันเวลา (เวลาไทย)</label>
           <input type="time" id="apDigest" class="filter-select">
-          <p class="ap-muted">ล้ม/ติด = แจ้งทันที · สำเร็จ = รวมในสรุปประจำวัน · ผู้รับ/ช่องทางตั้งได้ที่หน้าแจ้งเตือน</p>
+          <p class="ap-muted">ล้ม/ติด = แจ้งทันที · สำเร็จ = รวมในสรุปประจำวัน · ผู้รับ/ช่องทางตั้งได้ที่ <a href="/pages/notifications.html">หน้าการแจ้งเตือน</a></p>
         </div>
       </div>
       <div style="margin-top:10px"><button class="btn btn-primary" id="apSaveBtn" onclick="Page.saveSettings()">บันทึกค่าตั้ง</button></div>
       <details style="margin-top:10px">
-        <summary class="ap-muted">เหตุการณ์ที่แจ้งทีม (E-01…E-15)</summary>
+        <summary class="ap-muted">เหตุการณ์ที่แจ้งทีม</summary>
         <div id="apCatalogue" class="ap-muted"></div>
       </details>
     </div>
@@ -126,8 +139,15 @@ const Page = {
       this.data = (res && res.data) || null;
     } catch (e) {
       this.data = null;
-      document.getElementById('apIssues').textContent = 'โหลดไม่สำเร็จ: ' + (e.message || '');
-      Layout.toast('โหลดหน้า Autopilot ไม่สำเร็จ: ' + (e.message || ''), 'error');
+      // รอบ 259-3 (E 3ข-4 · 4.5): ล้ม = ทุกกล่องบอกเหตุ + ลองใหม่ (เดิมกล่องแรกบอก อีก 3 ตารางค้าง "กำลังโหลด..." ตลอดไป)
+      const msg = 'โหลดไม่สำเร็จ: ' + (e.message || '');
+      const el = document.getElementById('apIssues');
+      el.innerHTML = `<span style="color:#991b1b">${Layout.esc(msg)}</span> <button class="btn btn-secondary btn-sm" onclick="Page.load()">ลองใหม่</button>`;
+      document.getElementById('apKpis').innerHTML = '';
+      Layout.tableError('apBankBody', 6, 'โหลดไม่สำเร็จ', () => this.load(), e.message);
+      Layout.tableError('apRowsBody', 5, 'โหลดไม่สำเร็จ', () => this.load(), e.message);
+      Layout.tableError('apQtBody', 5, 'โหลดไม่สำเร็จ', () => this.load(), e.message);
+      Layout.tableError('apHubBody', 3, 'โหลดไม่สำเร็จ', () => this.load(), e.message);
       return;
     }
     this.render();
@@ -141,12 +161,27 @@ const Page = {
       <div class="ap-kpi"><div class="ap-muted">กำลังเดิน</div><div class="v">${Number(s.running)}</div></div>
       <div class="ap-kpi"><div class="ap-muted">ติด</div><div class="v" style="color:#dc2626">${Number(s.stuck)}</div></div>
       <div class="ap-kpi"><div class="ap-muted">เรื่องที่ระบบทำต่อไม่ได้</div><div class="v" style="color:#dc2626">${Number(s.openIssues)}</div></div>
-      <div class="ap-kpi"><div class="ap-muted">เงินโอนรอยืนยัน</div><div class="v">${Number(s.bankAwaitingConfirm)}</div></div>`;
+      <div class="ap-kpi"><div class="ap-muted">เงินโอนรอยืนยัน</div><div class="v">${Number(s.bankAwaitingConfirm)}</div></div>
+      <div class="ap-kpi"><div class="ap-muted">สลิปลูกค้ารอยืนยัน</div><div class="v">${Number(s.slipAwaitingConfirm || 0)}</div>
+        ${s.slipQueueHref ? `<a class="ap-muted" href="${Layout.esc(s.slipQueueHref)}">ไปยืนยันสลิป →</a>` : ''}</div>`;
     this.renderIssues(d.issues || []);
     this.renderBank(d.bankQueue || []);
     this.renderRows(d.rows || []);
     this.renderQuotations(d.quotations || [], (d.settings && d.settings.quotationModes) || []);
     this.renderSettings(d.settings || {});
+    this.renderHub((d.settings && d.settings.hub) || []);
+  },
+
+  renderHub(items) {
+    const body = document.getElementById('apHubBody');
+    if (!items.length) { body.innerHTML = '<tr><td colspan="3" class="text-center text-gray-400">-</td></tr>'; return; }
+    const esc = Layout.esc;
+    // สถานะ/ป้าย/ลิงก์ทั้งหมดจากเซิร์ฟเวอร์ — on: true/false/null (ไม่ใช่ค่าเปิดปิด) แค่เลือกสี
+    body.innerHTML = items.map(i => `<tr>
+      <td>${esc(i.label)}</td>
+      <td><span class="ap-step ${i.on === true ? 'ap-Done' : i.on === false ? 'ap-Waiting' : 'ap-NotApplicable'}">${esc(i.statusLabel)}</span></td>
+      <td><a href="${esc(i.href)}">${esc(i.hrefLabel)}</a></td>
+    </tr>`).join('');
   },
 
   renderIssues(list) {
@@ -282,9 +317,9 @@ const Page = {
     const sel = document.getElementById('apQtDefault');
     sel.innerHTML = (st.quotationModes || []).map(m => `<option value="${Layout.esc(m.code)}">${Layout.esc(m.label)}</option>`).join('');
     sel.value = st.quotationAcceptAutopilotDefault || 'Off';
-    document.getElementById('apDigest').value = st.digestLocalTime || '08:40';
+    document.getElementById('apDigest').value = st.digestLocalTime || '';   // รอบ 259-3 (S4): ค่าตั้งต้นมาจากเซิร์ฟเวอร์ (AutopilotNotice.DigestTime) — หน้าไม่แต่งเวลาเอง
     document.getElementById('apCatalogue').innerHTML = (st.catalogue || []).map(c =>
-      `<div>${Layout.esc(c.code)} · ${Layout.esc(c.label)} — ${Layout.esc(c.deliveryLabel)}${c.wired ? '' : ' (ยังไม่มีผู้ส่ง — ส่วน B)'}</div>`).join('');
+      `<div>${Layout.esc(c.label)} — ${Layout.esc(c.deliveryLabel)}${c.wired ? '' : ' (ยังไม่เปิดใช้)'}</div>`).join('');
   },
 
   async saveSettings() {
@@ -294,7 +329,7 @@ const Page = {
       const bankAuto = document.getElementById('apBankAuto').checked;
       const body = {
         quotationAcceptAutopilotDefault: document.getElementById('apQtDefault').value || 'Off',
-        digestLocalTime: document.getElementById('apDigest').value || '',
+        digestLocalTime: document.getElementById('apDigest').value || null,   // ว่าง = ไม่แตะ (ไม่ persist ค่าที่หน้าแต่ง)
       };
       if (bankAuto !== this._bankAutoLoaded) body.bankAutoSettleEnabled = bankAuto;   // ไม่ส่ง = ไม่แก้ (เซิร์ฟเวอร์ตรวจ Bank.Reconcile เฉพาะเมื่อเปลี่ยน)
       const res = await api.updateAutopilotSettings(body);

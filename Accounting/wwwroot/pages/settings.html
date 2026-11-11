@@ -1476,7 +1476,8 @@
             lab.appendChild(cb); lab.appendChild(document.createTextNode(c.label));
             box.appendChild(lab);
           });
-          if (!(s.companyChannels || []).length) box.textContent = 'ยังไม่มีช่องทางที่เปิด';
+          // รอบ 259-3 (ทีม E-M2): บอกทางไปต่อ (ลิงก์คงที่ · ไม่มีข้อมูลผู้ใช้)
+          if (!(s.companyChannels || []).length) box.innerHTML = 'ยังไม่มีช่องทางที่เปิด — ตั้ง <a href="/pages/payment-settings.html">รับชำระเงินออนไลน์</a> หรือบัญชีรับโอน/QR ที่ <a href="/pages/bank.html">หน้าบัญชีธนาคาร</a>';
           document.getElementById('asEmailReceipt').checked = !!s.postPayEmailReceipt;
           document.getElementById('asIncludePartial').checked = !!s.postPayIncludePartial;
           document.getElementById('asWhtReminder').checked = !!s.whtCertReminderEnabled;

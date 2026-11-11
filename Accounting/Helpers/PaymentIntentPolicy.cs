@@ -52,6 +52,9 @@ public static class PaymentIntentPolicy
     public static bool IsOpen(PaymentIntentStatus s)
         => s is PaymentIntentStatus.Created or PaymentIntentStatus.Pending;
 
+    /// <summary>รอบ 259-3: ชุดเดียวกับ <see cref="IsOpen"/> สำหรับ query ฐาน (EF แปล <c>Contains</c> ได้ แปลเมธอดไม่ได้) — เทสต์ล็อกให้ตรงกัน</summary>
+    public static readonly PaymentIntentStatus[] OpenStatuses = { PaymentIntentStatus.Created, PaymentIntentStatus.Pending };
+
     public static Decision Evaluate(PaymentIntentStatus from, PaymentIntentStatus to)
     {
         if (from == to) return Decision.Duplicate();

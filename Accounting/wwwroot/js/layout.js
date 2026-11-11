@@ -1500,12 +1500,10 @@ const Layout = {
     { section: 'ขาย / รายรับ', icon: '📤', description: 'ใบเสนอราคา → ใบแจ้งหนี้/ใบกำกับ → ใบเสร็จ · มัดจำ · รายการเกิดซ้ำ' },
     { id: 'documents', label: 'ขายสินค้า/บริการ', icon: '📄', href: '/pages/documents.html?side=revenue', feature: 'DocumentEngine', _i18nKey: 'nav.documents',
       description: 'ใบเสนอราคา · ใบแจ้งหนี้ · ใบกำกับภาษี · ใบเสร็จ · ใบลดหนี้/เพิ่มหนี้' },
-    { id: 'recurring', label: 'รายการเกิดซ้ำ / ส่งอัตโนมัติ', icon: '🔁', href: '/pages/recurring.html', feature: 'DocumentEngine',
+    { id: 'recurring', label: 'รายการประจำ', icon: '🔁', href: '/pages/recurring.html', feature: 'DocumentEngine',
       description: 'ตั้ง invoice/ค่าใช้จ่ายรายเดือน · อนุมัติ + ส่งอีเมลอัตโนมัติ · ตัวแปร <<month>> <<year>>' },
-    { id: 'autopilot', label: 'Autopilot (ติดตามอัตโนมัติ)', icon: '🛫', href: '/pages/autopilot.html', feature: 'DocumentEngine',
+    { id: 'autopilot', label: 'Autopilot', icon: '🛫', href: '/pages/autopilot.html', feature: 'DocumentEngine',
       description: 'ใบนี้อยู่ขั้นไหน · เรื่องที่ระบบทำต่อไม่ได้ + ปุ่มแก้ · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนเข้าที่รอยืนยัน · สรุปประจำวัน' },
-    { id: 'partners', label: 'คู่ค้าที่ใช้ NextAcc', icon: '🤝', href: '/pages/partners.html', feature: 'DocumentEngine',
-      description: 'เชื่อมระบบกับคู่ค้า · ใบซื้อร่างจากเอกสารของคู่ค้า · ส่ง 50 ทวิ กลับอัตโนมัติ (ค่าตั้งต้นปิดทั้งหมด)' },
     { id: 'deposits', label: 'เงินมัดจำ/รับล่วงหน้า', icon: '🤝', href: '/pages/deposit-center.html', feature: 'DocumentEngine',
       description: 'มัดจำ/รับล่วงหน้าคงค้าง — ภาษีขายถึงกำหนดทันที (§78) รายได้รอรับรู้ (217xx) จนส่งมอบ · รับรู้รายได้บางส่วนได้' },
     // รอบ 258: เงินที่รับจากลูกค้าแล้วแต่ยังไม่ผูกกับใบ (ลูกค้าโอนก้อนเดียวปิดหลายยอด/โอนเกิน) — จัดสรรให้ใบที่ออกทีหลัง
@@ -1516,7 +1514,7 @@ const Layout = {
     { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html', feature: 'RevenueRecognition', _i18nKey: 'nav.revenueRecognition',
       description: 'ASC 606 / TFRS 15 — รับรู้รายได้ตาม performance obligation' },
     // รอบ 215: ย้ายจากหมวดเว็บ — Portal เอกสารบัญชีของลูกค้า ไม่ใช่งานของเว็บไซต์ (CMS_UX_REDESIGN §4.1)
-    { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
+    { id: 'customer-portal', label: 'พอร์ทัลลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
       description: 'ให้ลูกค้าเข้าดูใบแจ้งหนี้ · ชำระเงิน · ดาวน์โหลดเอกสาร' },
 
     { section: 'ซื้อ / รายจ่าย', icon: '📥', description: 'ใบขอซื้อ → สั่งซื้อ → รับสินค้า → ใบแจ้งหนี้ซื้อ → จ่ายเงิน' },
@@ -1527,8 +1525,12 @@ const Layout = {
     { id: 'payments', label: 'ชำระเงิน / รวมจ่าย', icon: '💳', href: '/pages/payments.html', feature: 'DocumentEngine', _i18nKey: 'nav.payments',
       description: 'บันทึกการรับ-จ่ายเงิน · จ่ายชำระหลายบิลในใบเดียว · cheque payment' },
     // รอบ 215: ย้ายจากหมวดเว็บ — portal ผู้ขาย (PO/invoice) ไม่ใช่งานของเว็บไซต์
-    { id: 'vendor-portal-admin', label: 'Vendor Portal — ออก token', icon: '🤝', href: '/pages/vendor-portal-admin.html', feature: 'MultiUser',
-      description: 'AP ออก magic-link ให้ vendor เข้าดู PO + invoice + status + อัปโหลด invoice ใหม่ — ไม่ต้องมี user' },
+    { id: 'vendor-portal-admin', label: 'พอร์ทัลผู้ขาย', icon: '🤝', href: '/pages/vendor-portal-admin.html', feature: 'MultiUser',
+      description: 'ส่งลิงก์ให้ผู้ขายดูใบสั่งซื้อ · ใบแจ้งหนี้ · สถานะจ่าย · ส่งใบแจ้งหนี้ใหม่ — ไม่ต้องมีบัญชีผู้ใช้ · ดู/เพิกถอนลิงก์ที่ออกแล้ว' },
+
+    // รอบ 259-3 (ทีม E-M5): ย้ายจากหมวดขาย — เนื้อหาหลักคือใบซื้อร่างจากคู่ค้า/ส่ง 50 ทวิ กลับ (งานฝั่งซื้อ)
+    { id: 'partners', label: 'คู่ค้าที่ใช้ NextAcc', icon: '🤝', href: '/pages/partners.html', feature: 'DocumentEngine',
+      description: 'เชื่อมระบบกับคู่ค้า · ใบซื้อร่างจากเอกสารของคู่ค้า · ส่ง 50 ทวิ กลับอัตโนมัติ (ค่าตั้งต้นปิดทั้งหมด)' },
 
     { section: 'เงิน & ธนาคาร', icon: '🏦', description: 'บัญชีธนาคาร · กระทบยอด · เช็ค · เงินสดย่อย · เงินกู้ · FX' },
     { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html', feature: 'BankReconciliation', _i18nKey: 'nav.bank',
@@ -1596,8 +1598,8 @@ const Layout = {
       description: 'เอกสารที่ภาษีซื้อพักไว้ 11640 รอใบกำกับครบ §86/4 — เตือนก่อนหมดสิทธิเคลม 6 เดือน (§82/3) · เติมข้อมูลแล้วย้ายเข้า ภ.พ.30' },
     { id: 'wht', label: 'หัก ณ ที่จ่าย (ภงด.)', icon: '📜', href: '/pages/wht.html', feature: 'TaxManagement', _i18nKey: 'nav.wht',
       description: 'ภงด.1/3/53/54 · สร้างหนังสือรับรองหัก ณ ที่จ่าย · Export ยื่นออนไลน์' },
-    { id: 'wht-credit', label: 'ภาษีถูกหัก (เครดิต ภงด.50)', icon: '🧾', href: '/pages/wht-credit.html', feature: 'TaxManagement',
-      description: 'หนังสือรับรอง 50 ทวิ ที่ลูกค้าออกให้เรา · เครดิตใน ภ.ง.ด.51/50 · กระทบยอดบัญชี 11910 · เตือนใบที่ยังไม่ได้รับ' },
+    { id: 'wht-credit', label: 'ภาษีถูกหัก ณ ที่จ่าย', icon: '🧾', href: '/pages/wht-credit.html', feature: 'TaxManagement',
+      description: 'หนังสือรับรอง 50 ทวิ ที่ลูกค้าออกให้เรา (เครดิต ภ.ง.ด.51/50) · กระทบยอดบัญชี 11910 · เตือน/ทวงใบที่ยังไม่ได้รับ' },
     { id: 'tax-remittance', label: 'นำส่งภาษี / ประกันสังคม', icon: '💸', href: '/pages/tax-remittance.html', feature: 'TaxManagement',
       description: 'ยอดรอนำส่งรวม — สปส.1-10 · ภงด.1/3/53 · ภพ.30 · กำหนดชำระ/เลยกำหนด · ทำจ่าย (ลง JE) · แนบใบเสร็จ' },
     { id: 'tax-calendar', label: 'ปฏิทินภาษี', icon: '📆', href: '/pages/tax-calendar.html', feature: 'TaxManagement', _i18nKey: 'nav.taxCalendar',
@@ -1786,7 +1788,7 @@ const Layout = {
       description: 'Approval workflow · Schedule reports · ส่วนลดเงินสด · Stock transfer · Sample data — รวมไว้ที่เดียว' },
     { id: 'email-schedule', label: 'ส่งอีเมลอัตโนมัติ', icon: '📧', href: '/pages/email-schedule.html',
       description: 'ตั้งกฎส่งใบกำกับ/สลิป/ใบ 50ทวิ ตามวันที่กำหนด · เตือนใกล้/เกินกำหนดชำระ · ดูคิว' },
-    { id: 'notifications', label: 'การแจ้งเตือน (Notification Engine)', icon: '🔔', href: '/pages/notifications.html', _i18nKey: 'nav.notifications',
+    { id: 'notifications', label: 'การแจ้งเตือน', icon: '🔔', href: '/pages/notifications.html', _i18nKey: 'nav.notifications',
       description: 'Matrix ตั้งค่าแจ้งเตือนต่อ event/role · System · Email · LINE · per-user preferences' },
     { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team',
       description: 'เชิญสมาชิก · กำหนด role ต่อคน · เปิด/ปิดสิทธิ์' },
@@ -3211,6 +3213,104 @@ const Layout = {
    *  @param opts {title, message, label, value, placeholder, required, requiredMessage, inputType:'text'|'email', multiline, validate(v)→ข้อความผิด|null, okText} */
   promptText(opts) {
     return this._ask(opts || {}, true);
+  },
+
+  /** หลายช่องในหน้าต่างเดียว (แทนลูกโซ่ `prompt()` — รอบ 259-3 ทีม E §4.1) → Promise<object|null> (null = ยกเลิก)
+   *  @param opts {title, message | messageHtml (escape แล้ว), okText, danger, fields:[{key, label, type:'text'|'date'|'number'|'textarea'|'select'|'readonly',
+   *         value, required, options:[{value,label}], min, max, step, placeholder, hint}], validate(values)→ข้อความผิด|null}
+   *  ป้าย/ค่าทุกตัวใส่ด้วย textContent/value (ปลอดภัย) · ช่อง readonly แสดงอย่างเดียวและไม่อยู่ในผลลัพธ์ · number คืนเป็น Number (ว่าง = null) */
+  formDialog(opts) {
+    const o = opts || {};
+    return new Promise(resolve => {
+      let wrap = document.getElementById('layoutFormModal');
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.id = 'layoutFormModal';
+        wrap.className = 'modal-overlay';
+        wrap.setAttribute('role', 'dialog');
+        wrap.setAttribute('aria-modal', 'true');
+        wrap.setAttribute('aria-labelledby', 'lfTitle');
+        wrap.innerHTML = `
+          <div class="modal" style="max-width:520px">
+            <div class="modal-header"><h3 class="modal-title" id="lfTitle"></h3>
+              <button type="button" class="modal-close" id="lfClose" aria-label="ปิด">&times;</button></div>
+            <div class="modal-body"><div id="lfMessage" style="line-height:1.55;white-space:pre-line;margin-bottom:10px"></div>
+              <div id="lfFields"></div>
+              <div id="lfError" role="alert" style="color:var(--danger,#dc2626);font-size:13px;margin-top:6px;min-height:18px"></div></div>
+            <div class="modal-footer"><button type="button" class="btn btn-secondary" id="lfCancel">ยกเลิก</button>
+              <button type="button" class="btn btn-primary" id="lfOk">ตกลง</button></div>
+          </div>`;
+        document.body.appendChild(wrap);
+      }
+      if (wrap !== document.body.lastElementChild) document.body.appendChild(wrap);
+      const $ = s => wrap.querySelector(s);
+      $('#lfTitle').textContent = o.title || 'กรอกข้อมูล';
+      if (o.messageHtml != null) $('#lfMessage').innerHTML = o.messageHtml; else $('#lfMessage').textContent = o.message || '';
+      const ok = $('#lfOk');
+      ok.textContent = o.okText || 'ตกลง';
+      ok.className = 'btn ' + (o.danger ? 'btn-danger' : 'btn-primary');
+      const host = $('#lfFields'); host.innerHTML = '';
+      const err = $('#lfError'); err.textContent = '';
+      const inputs = {};
+      (o.fields || []).forEach((f, i) => {
+        const g = document.createElement('div'); g.className = 'form-group'; g.style.marginBottom = '10px';
+        const id = 'lfF' + i;
+        const lab = document.createElement('label'); lab.className = 'form-label'; lab.htmlFor = id;
+        lab.textContent = (f.label || '') + (f.required ? ' *' : '');
+        g.appendChild(lab);
+        let el;
+        if (f.type === 'readonly') {
+          el = document.createElement('div'); el.style.cssText = 'font-weight:600;padding:6px 0'; el.textContent = f.value == null ? '' : String(f.value);
+        } else if (f.type === 'textarea') {
+          el = document.createElement('textarea'); el.className = 'form-input'; el.rows = 3; el.value = f.value == null ? '' : String(f.value);
+        } else if (f.type === 'select') {
+          el = document.createElement('select'); el.className = 'form-input';
+          (f.options || []).forEach(op => { const x = document.createElement('option'); x.value = op.value; x.textContent = op.label; el.appendChild(x); });
+          if (f.value != null) el.value = String(f.value);
+        } else {
+          el = document.createElement('input'); el.className = 'form-input'; el.type = f.type || 'text';
+          if (f.min != null) el.min = String(f.min);
+          if (f.max != null) el.max = String(f.max);
+          if (f.step != null) el.step = String(f.step);
+          el.value = f.value == null ? '' : String(f.value);
+          el.autocomplete = 'off';
+        }
+        el.id = id;
+        if (f.placeholder && 'placeholder' in el) el.placeholder = f.placeholder;
+        g.appendChild(el);
+        if (f.hint) { const h = document.createElement('div'); h.style.cssText = 'font-size:12px;color:#64748b;margin-top:3px'; h.textContent = f.hint; g.appendChild(h); }
+        host.appendChild(g);
+        if (f.type !== 'readonly') inputs[f.key] = { el, f };
+      });
+      let done = false;
+      const finish = v => {
+        if (done) return; done = true;
+        wrap._onDismiss = null; ok.onclick = null; $('#lfCancel').onclick = null; $('#lfClose').onclick = null;
+        this.closeModal('layoutFormModal');
+        resolve(v);
+      };
+      const accept = () => {
+        const out = {};
+        for (const [k, { el, f }] of Object.entries(inputs)) {
+          const raw = String(el.value == null ? '' : el.value).trim();
+          if (f.required && !raw) { err.textContent = `กรุณากรอก "${f.label || k}"`; el.focus(); return; }
+          if (f.type === 'number') {
+            if (raw === '') { out[k] = null; continue; }
+            const n = Number(raw);
+            if (!Number.isFinite(n)) { err.textContent = `"${f.label || k}" ต้องเป็นตัวเลข`; el.focus(); return; }
+            out[k] = n;
+          } else out[k] = raw;
+        }
+        if (typeof o.validate === 'function') { const m = o.validate(out); if (m) { err.textContent = m; return; } }
+        finish(out);
+      };
+      ok.onclick = accept;
+      $('#lfCancel').onclick = () => finish(null);
+      $('#lfClose').onclick = () => finish(null);
+      wrap._onDismiss = () => finish(null);
+      this.openModal('layoutFormModal');
+      setTimeout(() => { const first = Object.values(inputs)[0]; (first ? first.el : ok).focus(); }, 40);
+    });
   },
 
   /** ตัวโหลดสำหรับช่องค้นหา/ตัวกรอง (รอบ 252 WP-13 A · D §11 A) — debounce + seq-guard ในตัวเดียว

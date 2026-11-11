@@ -12,7 +12,12 @@ public record PortalRefreshRequest(string RefreshToken);
 /// <summary><c>CanPay</c> — รอบ 250 WP-03: พอร์ทัลแสดงปุ่มชำระตามค่านี้ (เซิร์ฟเวอร์ตัดสินด้วย <c>DocumentPayLinkPolicy.IssueRefusal</c>)</summary>
 public record PortalDocumentResponse(Guid Id, string DocumentNumber, string DocumentType, DateTime DocumentDate, DateTime? DueDate, decimal TotalAmount, decimal PaidAmount, decimal BalanceDue, string Status, decimal SlipPendingAmount = 0m, bool CanPay = false,
     /// <summary>รอบ 257 ฝ่ายค้าน L8: ธงดาวน์โหลด PDF ของสิทธิ์ในโทเคน (เซิร์ฟเวอร์ตัดสินด้วยตาราง PortalAccessPermissions.Route("pdf")) — หน้าซ่อนปุ่ม PDF เมื่อ false</summary>
-    bool CanDownloadPdf = false);
+    bool CanDownloadPdf = false)
+{
+    /// <summary>รอบ 259-3 (E 4.2): ป้าย/เกินกำหนดจากตัวตั้งเดียว <c>PortalDocumentStatus</c> (เวลาไทยของเซิร์ฟเวอร์) — หน้าแสดงอย่างเดียว</summary>
+    public bool IsOverdue => global::Accounting.Helpers.PortalDocumentStatus.IsOverdue(Status, BalanceDue, DueDate, DateTime.UtcNow);
+    public string StatusLabel => global::Accounting.Helpers.PortalDocumentStatus.Label(Status, BalanceDue, DueDate, DateTime.UtcNow);
+}
 public record PortalStatementResponse(DateTime FromDate, DateTime ToDate, decimal OpeningBalance, decimal TotalCharged, decimal TotalPaid, decimal ClosingBalance, List<PortalStatementLine> Lines);
 public record PortalStatementLine(DateTime Date, string DocumentNumber, string Description, decimal Amount, decimal Balance);
 public record PortalPaymentResponse(Guid Id, DateTime PaymentDate, decimal Amount, string PaymentMethod, string? Reference, string DocumentNumber)
@@ -24,4 +29,8 @@ public record PortalPaymentResponse(Guid Id, DateTime PaymentDate, decimal Amoun
 
 /// <summary>ผลการแนบสลิปพอร์ทัล — รอบ 250 WP-02b (M-2): ไม่ใช่การรับชำระ · <paramref name="PaymentIntentId"/> = รายการรอยืนยันของผู้ขาย
 /// (เดิม <c>PaymentId</c> ของแถว Payment ที่สร้างก่อนตรวจ) · <paramref name="AwaitingReview"/> = รอพนักงานตรวจสลิปเสมอ</summary>
+/// <summary>รอบ 259-3 (E-M1): <paramref name="Url"/> = หน้าชำระของเอกสาร (null = ออกไม่ได้) · <paramref name="Refusal"/> = เหตุ ·
+/// <paramref name="SlipFallback"/> = ใบนี้ชำระได้ แต่บริษัทยังไม่มีช่องทางออนไลน์ ⇒ ใช้กล่องโอน/สลิปของพอร์ทัล (ยอดจากเซิร์ฟเวอร์)</summary>
+public record PortalPayLinkResponse(string? Url, string? Refusal, bool SlipFallback);
+
 public record PortalSlipUploadResponse(Guid PaymentIntentId, Guid DocumentId, string SlipUrl, decimal Amount, DateTime UploadedAt, bool AwaitingReview = true);
