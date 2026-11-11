@@ -272,4 +272,27 @@ public class CustomerCreditRound259Tests
         Assert.Empty(r.Suggestions);
         Assert.Contains("หลายชุด", r.Note!, StringComparison.Ordinal);
     }
+
+    // ───────── ฝ่ายค้านรอบ 259 ─────────
+
+    [Fact]
+    public void H2_ใบมัดจำออกแล้ว_เฉพาะสถานะหลังอนุมัติ_ร่างปฏิเสธยกเลิกไม่พบ_ไม่ใช่()
+    {
+        Assert.True(CustomerCreditMovementRules.DepositIssued(DocumentStatus.Approved));
+        Assert.True(CustomerCreditMovementRules.DepositIssued(DocumentStatus.Paid));
+        Assert.False(CustomerCreditMovementRules.DepositIssued(DocumentStatus.Draft));
+        Assert.False(CustomerCreditMovementRules.DepositIssued(DocumentStatus.WaitingApproval));
+        Assert.False(CustomerCreditMovementRules.DepositIssued(DocumentStatus.Rejected));
+        Assert.False(CustomerCreditMovementRules.DepositIssued(DocumentStatus.Voided));
+        Assert.False(CustomerCreditMovementRules.DepositIssued(null));
+    }
+
+    [Fact]
+    public void M5_ใบเสร็จที่ออกเอง_นับเมื่อยอดตรงการรับเงินนี้หรือครอบทั้งใบ_งวดอื่นไม่นับ()
+    {
+        Assert.True(ManualReceiptCoverage.Covers(600m, 600m, 900m));
+        Assert.True(ManualReceiptCoverage.Covers(900m, 600m, 900m));
+        Assert.False(ManualReceiptCoverage.Covers(300m, 600m, 900m));
+        Assert.False(ManualReceiptCoverage.Covers(300m, 600m, 0m));
+    }
 }

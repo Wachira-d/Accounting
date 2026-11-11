@@ -1,4 +1,5 @@
 using Accounting.Helpers;
+using Accounting.Models.DTOs.Document;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +14,36 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public partial class DocumentService
 {
+    /// <summary>ตัวหาบริการตอนใช้ (รอบ 259 M4) — null = สร้างนอก container (เทสต์/เครื่องมือ) ⇒ ไม่จัดสรรเงินรอจัดสรรหลังอนุมัติ (การจองหมดผลเองเมื่อใบพ้นร่าง)</summary>
+    private readonly IServiceProvider? _services;
+
+    /// <summary>
+    /// ฝ่ายค้านรอบ 259 M4 — หลังอนุมัติ (ทุกทางเข้าที่ผ่าน <c>ApproveDocumentAsync</c>): ใบที่ออกจากเงินรอจัดสรร ⇒ <c>ICustomerCreditService.AfterDocumentApprovedAsync</c>
+    /// (ด่านจัดสรรเดิม · ล้ม = ป้าย <c>[CC-HOLD-FAILED]</c> บนใบ) · มีการจัดสรร ⇒ คืนสถานะใบล่าสุด · ใบอนุมัติ commit แล้ว — ความล้มเหลวที่หลุดมา = log + ป้ายบนใบ ไม่โยน
+    /// </summary>
+    private async Task<DocumentResponse> AllocateCreditHoldsAfterApproveAsync(Guid companyId, Guid documentId, string actor, DocumentResponse approved)
+    {
+        if (_services?.GetService(typeof(Accounting.Services.Interfaces.ICustomerCreditService)) is not Accounting.Services.Interfaces.ICustomerCreditService credits)
+            return approved;
+        try
+        {
+            var notices = await credits.AfterDocumentApprovedAsync(companyId, documentId, actor);
+            return notices.Count == 0 ? approved : await GetDocumentAsync(companyId, documentId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "จัดสรรเงินรอจัดสรรหลังอนุมัติใบ {Doc} ไม่สำเร็จ", documentId);
+            _db.ChangeTracker.Clear();
+            var note = $"[CC-HOLD-FAILED] จัดสรรเงินรอจัดสรรให้ใบนี้อัตโนมัติไม่สำเร็จ (ข้อผิดพลาดของระบบ) — กด “ใช้เงินรอจัดสรร” ที่ใบนี้";
+            var current = await _db.Documents.AsNoTracking().Where(d => d.Id == documentId && d.CompanyId == companyId)
+                .Select(d => d.InternalNotes).FirstOrDefaultAsync();
+            var merged = DepositPolicyResolver.AppendNoteOnce(current, note);
+            await _db.Documents.Where(d => d.Id == documentId && d.CompanyId == companyId)
+                .ExecuteUpdateAsync(u => u.SetProperty(d => d.InternalNotes, merged));
+            return approved;
+        }
+    }
+
     /// <inheritdoc />
     public async Task<IReadOnlyList<string>> ApplyCreditAllocationTaxStepsAsync(Guid companyId, Guid documentId, string? creditReason,
         DateTime receiptDate, DateTime applyDate, string journalReference, string actor)

@@ -66,7 +66,13 @@ public class WhtCertReminderService
         var settings = await _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId, ct);
         if (settings?.WhtCertReminderEnabled != true) return new WhtCertReminderRunResult(0, 0);
 
-        var rows = (await WhtCertTracking.LoadAsync(_db, companyId, nowUtc, statuses: WhtCertTracking.FollowUpStatuses, ct: ct))
+        var loaded = await WhtCertTracking.LoadAsync(_db, companyId, nowUtc, statuses: WhtCertTracking.FollowUpStatuses, ct: ct);
+        // ฝ่ายค้าน 259 L6: ผู้ติดต่อที่ยังค้างใบ (ทุกแถวที่รอลูกค้า — ไม่กรองวันถูกหัก) ⇒ ลิงก์ทวงของผู้ติดต่ออื่นถูกเพิกถอนท้ายรอบ
+        var awaitingContacts = loaded
+            .Where(r => r.PayerContactId != null && WhtCertUploadLinkService.AwaitsCustomer(r.Verdict.State)
+                && WhtCreditableAmount.Missing(r.Status, r.WhtAmount, r.ReceivedAmount) > 0.005m)
+            .Select(r => r.PayerContactId!.Value).Distinct().ToList();
+        var rows = loaded
             .Where(r => r.PayerContactId != null && r.WithheldSince != null && WhtCertUploadLinkService.AwaitsCustomer(r.Verdict.State)
                 && WhtCreditableAmount.Missing(r.Status, r.WhtAmount, r.ReceivedAmount) > 0.005m)
             .ToList();
@@ -197,6 +203,7 @@ public class WhtCertReminderService
                 if (optOut == null) queued--; else skipped--;
             }
         }
+        await RevokeSettledReminderLinksAsync(_db, companyId, awaitingContacts, nowUtc, ct);
         // watermark ต่อบริษัท — ขยับหลังประมวลผลครบ (ล้มกลางทาง = รอบหน้าทำต่อ · แถวที่เข้าคิวแล้วกันซ้ำด้วยกุญแจ)
         var fresh = await _db.CompanySettings.FirstAsync(s => s.CompanyId == companyId, ct);
         fresh.WhtCertReminderLastRunAt = nowUtc;
@@ -219,6 +226,30 @@ public class WhtCertReminderService
             return "ผู้รับในคิวไม่รับเรื่อง 50 ทวิ แล้ว (ช่องทางแจ้งเตือนของผู้ติดต่อเปลี่ยน) — ไม่ส่ง · รอบหน้าจะเข้าคิวถึงผู้รับปัจจุบัน";
         return (await AwaitingItemsAsync(db, item.CompanyId, item.EntityId, ct)).Count > 0
             ? null : "ลูกค้าส่งหนังสือรับรองครบแล้ว (หรือส่งแล้วรอตรวจ) — ไม่ส่งอีเมลทวง";
+    }
+
+    /// <summary>ฝ่ายค้าน 259 L6: ลิงก์อัปโหลดที่ระบบออกให้ฉบับทวง (อีเมล/การ์ด LINE · <see cref="WhtCertUploadLinkPolicy.ReminderSources"/>) ของผู้ติดต่อที่ไม่ค้างใบแล้ว ⇒
+    /// เพิกถอนรวม (ลิงก์ครอบทั้งผู้ติดต่อ อายุ 180 วัน — ไม่ปล่อยค้างหลายอันหลังได้ใบครบ) · ลิงก์ที่ผู้ใช้ออกเองไม่แตะ · คำสั่งเดียวแบบมีเงื่อนไข + audit · คืนจำนวน</summary>
+    internal static async Task<int> RevokeSettledReminderLinksAsync(AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> awaitingContacts,
+        DateTime nowUtc, CancellationToken ct)
+    {
+        var sources = WhtCertUploadLinkPolicy.ReminderSources.ToList();
+        var awaiting = awaitingContacts.ToList();
+        var n = await db.WhtCertUploadLinks
+            .Where(l => l.CompanyId == companyId && l.RevokedAt == null && l.ExpiresAt > nowUtc && sources.Contains(l.Source) && !awaiting.Contains(l.ContactId))
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.RevokedAt, (DateTime?)nowUtc).SetProperty(l => l.UpdatedAt, (DateTime?)nowUtc), ct);
+        if (n > 0)
+        {
+            db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserEmail = "wht-cert-reminder", Action = Accounting.Models.Enums.AuditAction.Update,
+                EntityType = nameof(WhtCertUploadLink), EntityId = companyId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { @event = "wht-reminder-links-revoked-settled", count = n, ruleCode = WhtCertUploadLinkPolicy.RuleCode }),
+                Timestamp = nowUtc,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+        return n;
     }
 
     /// <summary>รอบ 259 (258-3-6): ด่านร่วมของผู้ส่งทั้งสองช่อง (อีเมล · การ์ด LINE) — บริษัทปิดทวง · ผู้ติดต่อถูกลบ · "ไม่ส่งอัตโนมัติ" ⇒ เหตุ · null = ไปต่อ</summary>

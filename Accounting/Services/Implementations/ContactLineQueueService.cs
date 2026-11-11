@@ -220,6 +220,13 @@ public class ContactLineQueueService : IContactLineQueueService
             return false;
         }
 
+        // ฝ่ายค้าน 259 L2: ผู้ใช้ติ๊กลิงก์ชำระ (ส่งเอง) แต่ตอนส่งลิงก์ใช้ไม่ได้แล้ว ⇒ ไม่ส่ง (ไม่ใช่การ์ดไม่มีปุ่มแล้วขึ้น "ส่งแล้ว")
+        if (item.IncludePayLink == true && doc.BalanceDue > 0 && DocumentLineSendRule.PayLinkAllowed(ep.Kind, ep.ShowAmounts)
+            && (_payLinks == null || await _payLinks.CurrentUrlAsync(item.CompanyId, doc.Id, ct) == null))
+        {
+            Finish(item, ContactLineChannel.StatusSkipped, DocumentLineSendRule.PayLinkGoneAtSend, DocumentLineSendRule.RuleCode);
+            return false;
+        }
         // 3) การ์ด (ภาษา/หัวเดียวกับ PDF · ยอดซ่อนได้ต่อกลุ่ม — Q5)
         var card = await BuildCardAsync(item, doc, showAmounts: !isGroup || ep.ShowAmounts, isGroup,
             viaNextAcc: ep.OaScope == NotifyEndpointKind.ScopeNextAcc, ct);
@@ -347,7 +354,9 @@ public class ContactLineQueueService : IContactLineQueueService
         var contactName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.Id == doc.ContactId && c.CompanyId == item.CompanyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
         var outstanding = doc.BalanceDue > 0;
-        var payUrl = outstanding ? await PayUrlAsync(item, doc, ct) : null;
+        // ฝ่ายค้าน 259 M1: กลุ่มซ่อนยอดไม่ได้ปุ่มชำระ (หน้าชำระแสดงยอด/รายการ/ชื่อผู้ซื้อ) — ตัวตัดสินเดียวกับปุ่มดู PDF
+        var payUrl = outstanding && DocumentLineSendRule.PayLinkAllowed(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts)
+            ? await PayUrlAsync(item, doc, ct) : null;
         return LineDocumentCard.Build(new LineDocumentCard.Input(companyName, viaNextAcc, heading.Language, heading.Title, doc.DocumentNumber,
             showAmounts ? (outstanding ? doc.BalanceDue : doc.TotalAmount) : null, doc.Currency, outstanding ? doc.DueDate : null,
             contactName, payUrl, isGroup, outstanding,

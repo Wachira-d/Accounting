@@ -30,7 +30,7 @@ public class DocumentLineSendService : IDocumentLineSendService
     {
         var doc = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
-            .Select(d => new { d.ContactId, d.DocumentType, d.Status, d.BalanceDue }).FirstOrDefaultAsync(ct);
+            .Select(d => new { d.ContactId, d.DocumentType, d.Status, d.BalanceDue, d.PayLinkRevokedAt }).FirstOrDefaultAsync(ct);
         var problem = DocumentLineSendRule.DocumentProblem(doc != null, doc?.DocumentType ?? default, doc?.Status ?? default);
         if (doc == null || problem != null)
             return new DocumentLineSendOptions(false, problem, Array.Empty<DocumentLineSendRule.Target>(), false, null);
@@ -39,10 +39,10 @@ public class DocumentLineSendService : IDocumentLineSendService
         var none = targets.Count == 0
             ? "ผู้ติดต่อนี้ยังไม่มีปลายทาง LINE — ผูก LINE ผู้ใช้ (ลิงก์/QR) หรือกลุ่ม LINE ได้ที่หน้าผู้ติดต่อ แท็บช่องทางแจ้งเตือน"
             : targets.All(t => !t.Available) ? "ไม่มีปลายทาง LINE ที่ส่งได้ตอนนี้ (ดูเหตุของแต่ละปลายทาง)" : null;
-        // ลิงก์ชำระ: เฉพาะใบที่มียอดค้าง (ตัวออกลิงก์ตัดสินเงื่อนไขเต็มตอนกดส่ง)
-        var payOffered = doc.BalanceDue > 0 && _payLinks != null;
-        return new DocumentLineSendOptions(none == null, none, targets, payOffered,
-            payOffered ? null : "ใบนี้ไม่มียอดค้างชำระ — ไม่มีลิงก์ชำระเงิน");
+        // ฝ่ายค้าน 259 L3: ช่องลิงก์ชำระตัดสินตอนเปิดหน้าต่างด้วยเหตุปฏิเสธตัวเดียวของตัวออกลิงก์ (ชนิด/สกุลเงิน/ใบกำกับแทน) + การเพิกถอน (L5)
+        var refusal = _payLinks != null && doc.BalanceDue > 0 ? (await _payLinks.PayQrFactsAsync(companyId, documentId, ct))?.PayLinkRefusal : null;
+        var (payOffered, payNote) = DocumentLineSendRule.PayLinkOffer(_payLinks != null, doc.BalanceDue, refusal, doc.PayLinkRevokedAt);
+        return new DocumentLineSendOptions(none == null, none, targets, payOffered, payNote);
     }
 
     public async Task<DocumentLineSendResult> SendAsync(Guid companyId, Guid documentId, IReadOnlyCollection<Guid>? endpointIds, bool includePayLink,
@@ -57,42 +57,53 @@ public class DocumentLineSendService : IDocumentLineSendService
         var set = await _recipients.ResolveAsync(companyId, doc.ContactId, DocumentLineSendRule.Topic, ct);
         var (chosen, pickProblem) = DocumentLineSendRule.Pick(set.Options, endpointIds);
         if (pickProblem != null) throw new BusinessRuleException(pickProblem, DocumentLineSendRule.RuleCode, 400);
+        // ฝ่ายค้าน 259 M1: ปุ่มชำระไม่เข้ากลุ่มซ่อนยอด · L5: ไม่ออกลิงก์ใหม่ทับลิงก์ที่ถูกเพิกถอน
+        if (DocumentLineSendRule.PayLinkProblem(includePayLink, chosen) is string hiddenGroup)
+            throw new BusinessRuleException(hiddenGroup, DocumentLineSendRule.RuleCode, 400);
         if (includePayLink)
         {
             if (_payLinks == null) throw new BusinessRuleException("บริการลิงก์ชำระเงินยังไม่พร้อม — ส่งโดยไม่ติ๊กลิงก์ชำระ", DocumentLineSendRule.RuleCode, 503);
-            var link = await _payLinks.EnsureLinkAsync(companyId, documentId, null, ct);
+            // ลิงก์ที่ถูกเพิกถอน ⇒ ตัวออกลิงก์โยน PayLinkRevokedException (409 · 259-2-8) — ไม่ออกใหม่ทับ
+            var link = await _payLinks.EnsureLinkAsync(companyId, documentId, null, ct, allowReissueRevoked: false, actor: actor);
             if (link.Url == null)
                 throw new BusinessRuleException("ใส่ลิงก์ชำระเงินไม่ได้ — " + (link.Refusal ?? "ไม่ทราบเหตุ") + " (เอาติ๊กลิงก์ชำระออกแล้วส่งได้)",
                     DocumentLineSendRule.RuleCode, 409);
         }
         var now = DateTime.UtcNow;
         var baseKey = DocumentLineSendRule.BaseKey(documentId, now);
-        int queued = 0, already = 0;
+        // ฝ่ายค้าน 259 L4: ทีละปลายทาง (บันทึกต่อแถว) — ชนกุญแจของปลายทางหนึ่ง (คำขอพร้อมกัน) ไม่ทิ้งปลายทางอื่น · ผลต่อปลายทางตามจริง
+        var outcomes = new List<DocumentLineSendRule.EndpointOutcome>();
         foreach (var o in chosen)
         {
             var key = ContactLineChannel.QueueKey(baseKey, o.EndpointId);
-            if (await _db.LineQueues.AnyAsync(q => q.CompanyId == companyId && q.IdempotencyKey == key, ct)) { already++; continue; }
-            _db.LineQueues.Add(new LineQueue
+            if (await _db.LineQueues.AnyAsync(q => q.CompanyId == companyId && q.IdempotencyKey == key, ct))
+            {
+                outcomes.Add(new(o.EndpointId!.Value, o.Display, false));
+                continue;
+            }
+            var row = new LineQueue
             {
                 CompanyId = companyId, RuleId = null, EntityType = "Document", EntityId = documentId, ContactId = doc.ContactId,
                 EndpointId = o.EndpointId, EndpointKind = o.Kind, Topic = DocumentLineSendRule.Topic.ToString(), Trigger = ContactLineChannel.ManualTrigger,
                 ScheduledFor = now, Status = ContactLineChannel.StatusPending, RetryKey = ContactLineChannel.RetryKey(companyId, key),
                 IdempotencyKey = key, BaseKey = baseKey, FallbackToEmail = false, IncludePayLink = includePayLink,
                 RequestedByUserId = userId, CreatedBy = actor ?? "document-line-send",
-            });
-            queued++;
-        }
-        if (queued > 0)
-        {
-            try { await _db.SaveChangesAsync(ct); }
+            };
+            _db.LineQueues.Add(row);
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+                outcomes.Add(new(o.EndpointId!.Value, o.Display, true));
+            }
             catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
-                // กดพร้อมกันสองครั้งในนาทีเดียว — อีกคำขอเข้าคิวไปแล้ว (ไม่ส่งซ้ำ)
-                _db.ChangeTracker.Clear();
-                already += queued;
-                queued = 0;
+                // คำขอพร้อมกันเข้าคิวปลายทางนี้ไปก่อน — ถอดเฉพาะแถวนี้ (ไม่ส่งซ้ำ) แล้วไปต่อปลายทางถัดไป
+                _db.Entry(row).State = EntityState.Detached;
+                outcomes.Add(new(o.EndpointId!.Value, o.Display, false));
             }
         }
-        return new DocumentLineSendResult(queued, already, DocumentLineSendRule.QueuedMessage(queued, already));
+        var queued = outcomes.Count(x => x.Queued);
+        var already = outcomes.Count - queued;
+        return new DocumentLineSendResult(queued, already, DocumentLineSendRule.QueuedMessage(queued, already), outcomes);
     }
 }

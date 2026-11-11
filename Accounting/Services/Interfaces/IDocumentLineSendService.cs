@@ -11,7 +11,9 @@ public sealed record DocumentLineSendOptions(bool CanSend, string? Problem, IRea
 public sealed record DocumentLineSendRequest(List<Guid>? EndpointIds, bool IncludePayLink = false);
 
 /// <summary>ผล — จำนวนแถวที่เข้าคิว / ที่เข้าคิวแล้วในนาทีนี้ (ไม่ส่งซ้ำ) · ข้อความถึงผู้ใช้ (ไม่ใช่ "ส่งแล้ว")</summary>
-public sealed record DocumentLineSendResult(int Queued, int AlreadyQueued, string Message);
+/// <param name="Endpoints">ฝ่ายค้าน 259 L4: ผลต่อปลายทาง (เข้าคิว / มีแล้วในนาทีนี้)</param>
+public sealed record DocumentLineSendResult(int Queued, int AlreadyQueued, string Message,
+    IReadOnlyList<DocumentLineSendRule.EndpointOutcome>? Endpoints = null);
 
 public interface IDocumentLineSendService
 {

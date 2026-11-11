@@ -72,7 +72,8 @@ public static class CustomerCreditWorkQueue
                 .ToListAsync(ct);
             if (at.Count > 0) return at[0];
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { /* ไม่มีตาราง marker (ฐานจากโมเดล) — ใช้วันที่ตั้งต้นด้านล่าง */ }
+        // ฝ่ายค้านรอบ 259 M5: กลืนเฉพาะ "ไม่มีตาราง" (ฐานที่สร้างจากโมเดล) — ความผิดพลาดอื่นต้องล้มดัง ไม่ใช้วันตั้งต้นเงียบ ๆ
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P01") { /* ไม่มีตาราง marker — ใช้วันตั้งต้นด้านล่าง */ }
         return Round258FallbackCutoverUtc;
     }
 
@@ -97,6 +98,17 @@ public static class CustomerCreditWorkQueue
             .Select(r => new { r.Id, PaymentId = r.SettlementPaymentId!.Value, DocumentId = r.RelatedDocumentId!.Value })
             .ToListAsync(ct);
         var done = receipts.Select(r => (r.PaymentId, r.DocumentId)).ToHashSet();
+        // ฝ่ายค้านรอบ 259 M5: ใบเสร็จ/ใบกำกับที่ผู้ใช้ออกเอง (ไม่ผูกการชำระ) ที่ครอบการรับเงินนี้ = มีแล้ว (ตัวตัดสินเดียวกับปุ่ม — ManualReceiptCoverage)
+        var manualTypes = ManualReceiptCoverage.Types.ToList();
+        var manual = await db.Documents.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.RelatedDocumentId != null && docIds.Contains(r.RelatedDocumentId.Value)
+                && r.SettlementPaymentId == null && manualTypes.Contains(r.DocumentType)
+                && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
+                && r.Status != DocumentStatus.Draft && r.Status != DocumentStatus.WaitingApproval)
+            .Select(r => new { r.Id, DocumentId = r.RelatedDocumentId!.Value, r.TotalAmount })
+            .ToListAsync(ct);
+        var docTotals = await db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
+            .ToDictionaryAsync(d => d.Id, d => d.TotalAmount, ct);
         var primaryReceiptIds = pairs.Where(x => x.ReceiptDocumentId != null).Select(x => x.ReceiptDocumentId!.Value).Distinct().ToList();
         var primary = primaryReceiptIds.Count == 0 ? new Dictionary<Guid, Guid?>() : await db.Documents.AsNoTracking()
             .Where(r => r.CompanyId == companyId && primaryReceiptIds.Contains(r.Id) && !r.IsDeleted && r.Status != DocumentStatus.Voided)
@@ -108,6 +120,8 @@ public static class CustomerCreditWorkQueue
         var byId = docs.ToDictionary(d => d.Id);
         return pairs.GroupBy(x => (x.PaymentId, x.PaymentNumber, x.DocumentId, x.ReceiptDocumentId))
             .Where(g => !done.Contains((g.Key.PaymentId, g.Key.DocumentId))
+                && !manual.Any(r => r.DocumentId == g.Key.DocumentId && r.Id != g.Key.ReceiptDocumentId
+                    && ManualReceiptCoverage.Covers(r.TotalAmount, g.Sum(x => x.AllocatedAmount), docTotals.GetValueOrDefault(g.Key.DocumentId)))
                 && !(g.Key.ReceiptDocumentId is Guid rid && primary.TryGetValue(rid, out var rel) && rel == g.Key.DocumentId))
             .Select(g =>
             {
@@ -118,7 +132,7 @@ public static class CustomerCreditWorkQueue
     }
 
     /// <summary>เงินรอจัดสรรที่ค้างนานกว่า <see cref="AgingDays"/> วัน (เก่าสุดก่อน)</summary>
-    public static async Task<List<(Guid PaymentId, string PaymentNumber, DateTime PaymentDate, decimal Unapplied, string? Reason)>> AgedAsync(
+    private static async Task<List<(Guid PaymentId, string PaymentNumber, DateTime PaymentDate, decimal Unapplied, string? Reason)>> AgedAsync(
         AccountingDbContext db, Guid companyId, DateTime todayThai, CancellationToken ct = default)
     {
         var cut = todayThai.Date.AddDays(-AgingDays);

@@ -200,12 +200,20 @@ public class CustomerCreditController : ControllerBase
     /// <summary>ยกเลิกขาออก (คืนเงิน/ตัดเศษ/การจอง) — ระดับ Void ฝั่งขาย</summary>
     [HttpPost("{paymentId:guid}/movements/{movementId:guid}/undo")]
     public async Task<ActionResult<ApiResponse<CustomerCreditMovementResult>>> UndoMovement(Guid companyId, Guid paymentId, Guid movementId,
-        CancellationToken ct = default)
+        [FromBody] UndoCustomerCreditMovementRequest? request = null, CancellationToken ct = default)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userId, DocumentType.Invoice))
             return Forbid403<CustomerCreditMovementResult>("ไม่มีสิทธิ์ยกเลิกรายการเงินรอจัดสรร (ต้องการ Document.Void หรือ Document.Revenue.Void)");
-        var r = await _credits.UndoMovementAsync(companyId, paymentId, movementId, userId.ToString(), ct);
+        // ฝ่ายค้านรอบ 259 L1: ยกเลิกคืนเงิน = เงินกลับเข้าธนาคาร/กลับมาใช้ได้ ⇒ สิทธิ์ไม่ต่ำกว่าคืนเงิน (อนุมัติฝั่งขาย + Bank.Reconcile)
+        var kind = await _db.PaymentCreditMovements.AsNoTracking()
+            .Where(m => m.Id == movementId && m.PaymentId == paymentId && m.CompanyId == companyId).Select(m => m.Kind).FirstOrDefaultAsync(ct);
+        if (kind == null) return NotFound(new ApiResponse<CustomerCreditMovementResult>(false, null, "ไม่พบรายการ"));
+        if (kind == nameof(PaymentCreditMovementKind.Refund)
+            && (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, DocumentType.Invoice)
+                || !await _permissions.HasPermissionAsync(companyId, userId, PermissionKeys.BankReconcile)))
+            return Forbid403<CustomerCreditMovementResult>("ไม่มีสิทธิ์ยกเลิกการคืนเงิน (ต้องการสิทธิ์เดียวกับคืนเงิน: Document.Revenue.Approve และ Bank.Reconcile)");
+        var r = await _credits.UndoMovementAsync(companyId, paymentId, movementId, request?.Reason, userId.ToString(), ct);
         return MovementOk(r, $"ยกเลิกรายการของ {r.PaymentNumber} แล้ว (คงเหลือรอจัดสรร {r.RemainingUnapplied:N2})");
     }
 

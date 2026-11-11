@@ -830,12 +830,8 @@ public class DocumentController : ControllerBase
         try
         {
             var result = await _documentService.ApproveDocumentAsync(companyId, documentId, userId, request?.AcknowledgeWarnings ?? false);
-            // รอบ 259 P4: ใบที่ออกจากเงินรอจัดสรร (จองไว้) ⇒ จัดสรรให้เองหลังอนุมัติ (ด่านเดียวกับกดเอง · ล้ม = ข้อความ + ป้ายบนใบ ไม่ล้มการอนุมัติ)
-            var creditNotices = HttpContext?.RequestServices?.GetService(typeof(ICustomerCreditService)) is ICustomerCreditService credits
-                ? await credits.AfterDocumentApprovedAsync(companyId, documentId, userId)
-                : Array.Empty<string>();
-            return Ok(new ApiResponse<object>(true, result,
-                creditNotices.Count == 0 ? "อนุมัติเอกสารสำเร็จ" : "อนุมัติเอกสารสำเร็จ — " + string.Join(" · ", creditNotices)));
+            // รอบ 259: ใบที่ออกจากเงินรอจัดสรรถูกจัดสรรเองใน ApproveDocumentAsync (จุดเดียวของทุกทางอนุมัติ — ฝ่ายค้าน M4)
+            return Ok(new ApiResponse<object>(true, result, "อนุมัติเอกสารสำเร็จ"));
         }
         catch (DocumentApprovalWarningsException ex)
         {

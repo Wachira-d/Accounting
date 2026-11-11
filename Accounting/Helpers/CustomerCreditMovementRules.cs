@@ -29,6 +29,14 @@ public static class CustomerCreditMovementRules
     public const string VoidBlockRuleCode = "CC-VOID-MOVEMENT";
     public const string LegalReference = "ป.รัษฎากร ม.78/1 · ม.86 · พ.ร.บ.การบัญชี 2543 ม.17 (เอกสารประกอบการลงบัญชี)";
 
+    /// <summary>ป้ายบนร่างที่เหลือจากเส้นล้ม (ลบไม่ได้) — ห้ามอนุมัติ (ฝ่ายค้านรอบ 259 L4)</summary>
+    public const string OrphanDraftMarker = "[CC-ORPHAN-DRAFT]";
+
+    /// <summary>ฝ่ายค้านรอบ 259 H2 — ใบมัดจำ "ออกแล้ว" ไหม (อนุมัติแล้ว: JE ตัดผังพัก commit แล้ว ⇒ ห้ามปล่อยการจองแม้ขั้นหลังอนุมัติล้ม) ·
+    /// ไม่พบใบ/ร่าง/รออนุมัติ/ถูกปฏิเสธ/ถูกยกเลิก = ไม่ได้ออก</summary>
+    public static bool DepositIssued(DocumentStatus? status)
+        => status != null && status is not (DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Rejected or DocumentStatus.Voided);
+
     /// <summary>เพดานตัดเศษตั้งต้นของบริษัท (บาท)</summary>
     public const decimal DefaultWriteOffCap = 1.00m;
     /// <summary>เพดานตัดเศษสูงสุดที่ตั้งได้ — เท่าเกณฑ์ผลต่างกระทบยอดธนาคาร (฿20) · มากกว่านี้ไม่ใช่ "เศษ" ต้องคืนเงิน/ออกใบ</summary>
@@ -161,7 +169,7 @@ public static class CustomerCreditMovementRules
 
     /// <summary>วันรับเงินเป็นจุดความรับผิดของใบมัดจำที่ย้ายมาไหม (ม.78/1) — เงินล่วงหน้า/ค้างออกใบ = ใช่ · โอนเกิน/ยังไม่ทราบ = วันที่ตกลงเปลี่ยนเป็นมัดจำ
     /// (หลักเดียวกับ <see cref="LateReceiptTaxPoint.ReceiptDrivesTaxPoint"/> + เงินล่วงหน้า)</summary>
-    public static bool DepositReceiptDrivesTaxPoint(string? storedReason)
+    private static bool DepositReceiptDrivesTaxPoint(string? storedReason)
         => LateReceiptTaxPoint.ReceiptDrivesTaxPoint(storedReason)
            || string.Equals(storedReason, nameof(UnappliedReason.Advance), StringComparison.Ordinal);
 

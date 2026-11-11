@@ -53,6 +53,9 @@ public record CustomerCreditIssueInvoiceRequest(decimal? Amount = null, Document
 public record CustomerCreditMovementResult(Guid PaymentId, string PaymentNumber, Guid MovementId, string Kind, decimal Amount,
     decimal RemainingUnapplied, Guid? TargetDocumentId, string? TargetDocumentNumber, IReadOnlyList<string> Notices);
 
+/// <summary>ยกเลิกขาออก — เหตุผลบังคับเมื่อยกเลิกคืนเงิน/ตัดเศษ (ฝ่ายค้านรอบ 259 L1)</summary>
+public record UndoCustomerCreditMovementRequest(string? Reason);
+
 /// <summary>ตั้งเพดานตัดเศษของบริษัท</summary>
 public record CustomerCreditSettingsRequest(decimal WriteOffCap);
 

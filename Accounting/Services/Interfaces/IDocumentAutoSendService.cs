@@ -18,7 +18,10 @@ public interface IDocumentPayLinkService
 
     /// <summary>ออก/ใช้ลิงก์เดิมของใบ (หนึ่งลิงก์ต่อใบ · หมดอายุ/เพิกถอน ⇒ ออกใหม่) · <paramref name="scheduleChannels"/> = ช่องทางที่ตารางเลือก (null = ค่าบริษัท) ·
     /// คืนลิงก์ หรือเหตุที่ออกไม่ได้ (ไม่โยน)</summary>
-    Task<PayLinkResult> EnsureLinkAsync(Guid companyId, Guid documentId, IReadOnlyCollection<string>? scheduleChannels, CancellationToken ct = default);
+    /// <param name="allowReissueRevoked">รอบ 259 (259-2-8): ลิงก์ที่ถูกเพิกถอน ⇒ ออกใหม่ได้เฉพาะผู้เรียกที่ตั้งใจ (ปุ่มออกลิงก์ของพนักงาน · อีเมลตามตาราง) ·
+    /// false (หน้าต่างส่งเอง · พอร์ทัล) ⇒ โยน <see cref="Accounting.Helpers.PayLinkRevokedException"/> · ลิงก์ที่ยังใช้ได้ไม่ถูกเขียนทับช่องทาง · ออกใหม่แทนลิงก์เดิม = audit</param>
+    Task<PayLinkResult> EnsureLinkAsync(Guid companyId, Guid documentId, IReadOnlyCollection<string>? scheduleChannels, CancellationToken ct = default,
+        bool allowReissueRevoked = false, string? actor = null);
 
     /// <summary>บล็อกลิงก์ชำระเงินสำหรับอีเมลตามตาราง — null เมื่อไม่แนบ (ปิด · ใบไม่เข้าเงื่อนไข · บริษัทยังไม่ตั้งรับชำระออนไลน์)</summary>
     Task<PayLinkResult?> ForScheduledEmailAsync(EmailScheduleRule rule, Document doc, CancellationToken ct = default);
