@@ -40,10 +40,10 @@ public class RecurringNoticeRound258Tests
     [Fact]
     public void ข้อความค้างร่าง_บอกชื่อรายการ_เลขใบ_เหตุ_และทางไปต่อ()
     {
-        var title = RecurringStaffNotice.StuckDraftTitle("ค่าเช่ารายเดือน", "DRAFT-abc");
+        var title = RecurringStaffNotice.StuckDraftTitle("ค่าเช่ารายเดือน", "INV-2026-0042");
         Assert.Contains("ค่าเช่ารายเดือน", title, StringComparison.Ordinal);
         Assert.Contains("ค้างเป็นร่าง", title, StringComparison.Ordinal);
-        Assert.Contains("DRAFT-abc", title, StringComparison.Ordinal);
+        Assert.Contains("INV-2026-0042", title, StringComparison.Ordinal);
         var msg = RecurringStaffNotice.StuckDraftMessage("ลูกค้าเกินวงเงินเครดิต");
         Assert.StartsWith("ลูกค้าเกินวงเงินเครดิต", msg, StringComparison.Ordinal);
         Assert.Contains("อนุมัติเอง", msg, StringComparison.Ordinal);
