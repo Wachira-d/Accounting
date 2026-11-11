@@ -4755,7 +4755,7 @@ RULES += [
     dict(file="Controllers/ProductController.cs", method="StockTotalsCheck",
          before=[("RequireInventoryAsync(", "_stock.FindProductTotalMismatchesAsync(")],
          why="C-5: รายงานยอดสต็อกต้องผ่านด่านสิทธิ์ดูคลัง"),
-    dict(file="Services/Implementations/PreCloseChecklistService.cs", method="RunAsync",
+    dict(file="Services/Implementations/PreCloseChecklistService.cs", method="RunCoreAsync",
          must=["UsefulLifeReview.IsFiscalYearEndMonth(", "UsefulLifeReview.NeedsReview("],
          why="C-6: รายการตรวจปิดปีเตือนสินทรัพย์ที่ยังไม่ทบทวนอายุใช้งาน (ผู้อ่านของ UsefulLifeReviewedAt)"),
     dict(file="Services/Implementations/FixedAssetService.cs", method="AdjustUsefulLifeAsync",
@@ -15997,7 +15997,7 @@ RULES += [
          must=["FixedAssetService.EnsureNotAssetCostTransferAsync("], why=_R249FA_WHY + "L3"),
     dict(file="Services/Implementations/AccountingService.cs", method="CorrectJournalEntryAsync",
          must=["FixedAssetService.EnsureNotAssetCostTransferAsync("], why=_R249FA_WHY + "L3"),
-    dict(file="Services/Implementations/PreCloseChecklistService.cs", method="RunAsync", must=["!a.IsUnderAcquisition"], why=_R249FA_WHY + "L8"),
+    dict(file="Services/Implementations/PreCloseChecklistService.cs", method="RunCoreAsync", must=["!a.IsUnderAcquisition"], why=_R249FA_WHY + "L8"),
     dict(file="Services/Implementations/SubLedgerReconciliationService.cs", method="ReconcileAsync", must=["!a.IsUnderAcquisition"], why=_R249FA_WHY + "L8"),
 ]
 
