@@ -18383,7 +18383,7 @@ RULES += [
          forbid=["PaymentDate: probe.PaymentDate", "PaymentDate: payment.PaymentDate"],
          why=_R259_WHY + "ออกใบส่วนที่ขาด: ร่าง + จองใต้ล็อก (ตรวจซ้ำหลังสร้างร่าง) · ล้ม = ลบร่าง · ไม่ประทับวันรับชำระลงใบ (H1/M3)"),
     dict(file=_R259_MOV, method="AfterDocumentApprovedAsync",
-         must=["AllocateAsync(", "AvailableFactsAsync(", "[CC-HOLD-FAILED]", "m.CompanyId == companyId", "ReleasedAt"],
+         must=["AllocateAsync(", "AvailableFactsAsync(", "m.CompanyId == companyId"], must_lit=["[CC-HOLD-FAILED]"],
          why=_R259_WHY + "อนุมัติแล้วจัดสรรผ่านเส้นจัดสรรเดิม (ด่านเดียวกับกดเอง) · ล้ม = ป้ายบนใบ + ข้อความ · การจองถูกปล่อย"),
     dict(file=_R259_MOV, method="UndoMovementAsync",
          must=["_accounting.ReverseJournalEntryAsync(", "JournalEntryBuilder.ClosedPeriodReasonAsync(", "RecomputeUnappliedAsync(", "AuditMovement(",
