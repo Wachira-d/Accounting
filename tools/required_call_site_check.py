@@ -17985,6 +17985,36 @@ REVIEWER_CASES += [
     ("R258p3", "BulkUpsertSettings", 'if (await RequireSettingsAsync(companyId, "แก้ตารางแจ้งเตือนของบริษัท") is { } deny) return deny;',
      'await RequireSettingsAsync(companyId, "แก้ตารางแจ้งเตือนของบริษัท");', True),
 ]
+_R258P_ESS = "Services/Implementations/EmailScheduleService.cs"
+RULES += [
+    dict(file=_R258P_ESS, method="ProcessPendingQueueAsync", must=["RecoverStaleSendingAsync(", "EmailQueueStaleSending.StatusSending"],
+         why=_R258P_WHY + "B-H2 กู้แถวค้างกำลังส่งก่อนจองรอบใหม่ · ประทับเวลาต่อแถวก่อนส่งแบบมีเงื่อนไข (แถวที่ถูกกู้/ยกเลิกไปแล้วไม่ถูกส่ง)"),
+    dict(file=_R258P_ESS, method="RecoverStaleSendingAsync", must=["EmailQueueStaleSending.Cutoff(", "EmailQueueStaleSending.StatusFailed", "EmailQueueStaleSending.StaleReason"],
+         forbid=["StatusPending"],
+         why=_R258P_WHY + "B-H2 แถวค้าง ⇒ Failed พร้อมเหตุ — ห้ามคืนเป็น Pending เอง (ผู้ให้บริการอาจรับไปแล้ว = ส่งซ้ำ)"),
+    dict(file=_R258P_ESS, method="RetryFailedAsync", must=["EmailQueueStaleSending.CanRetry("],
+         why=_R258P_WHY + "B-H2 ลองใหม่รับ Failed + แถวค้างกำลังส่ง (ตัวตัดสินเดียว) — Sent/กำลังส่งจริงไม่รับ"),
+    dict(file=_R258P_ESS, method="CancelPendingAsync", must=["EmailQueueStaleSending.Cutoff(", "EmailQueueStaleSending.StatusSending"],
+         why=_R258P_WHY + "B-H2 ยกเลิกรับ Pending + แถวค้างกำลังส่ง (คำสั่งเดียวแบบมีเงื่อนไข)"),
+    dict(file=_R258P_ESC, method="GetQueue", must=["EmailQueueStaleSending.CanRetry(", "EmailQueueStaleSending.CanCancel("],
+         why=_R258P_WHY + "B-H2 ปุ่มของคิวตัดสินที่เซิร์ฟเวอร์ (หน้าเว็บไม่ตัดสินจากสถานะเอง)"),
+    dict(file=_R258P_ESS, method="ScanMonthlyStatementsAsync", must=["ScheduleCatchUp.Monthly(", "StampScanDayAsync("], forbid=["todayBkk.Day != sendDay"],
+         why=_R258P_WHY + "B-M7 ใบแจ้งยอดรายเดือน: วันที่ตั้ง/ย้อนหลังตัดสินที่ ScheduleCatchUp + ประทับลายน้ำหลังบันทึกคิว"),
+    dict(file=_R258P_ESS, method="ScanDueSoonAndOverdueAsync", must=["ScheduleCatchUp.MissedDays(", "StampScanDayAsync(", "ScanDueDayAsync("],
+         why=_R258P_WHY + "B-M7 ใกล้ครบ/เกินกำหนด: เก็บวันที่พลาด (ลายน้ำต่อกฎ) ก่อนสแกนวันนี้ แล้วประทับลายน้ำ"),
+    dict(file=_R258P_ESS, method="ScanDueDayAsync", must=["ScheduleCatchUp.DueRuleCatchesUp(", "!catchUp && rule.Trigger"],
+         why=_R258P_WHY + "B-M7 ย้อนเก็บเฉพาะกฎ/วันที่ตัวตัดสินอนุญาต · ทวงเฉพาะครั้งแรกของใบ (ไม่ท่วม)"),
+    dict(file=_R258P_ESS, method="UpsertRuleAsync", must=["ScheduleCatchUp.WatermarkAfterEdit("],
+         before=[("ScheduleCatchUp.WatermarkAfterEdit(", "existing.IsActive = rule.IsActive")],
+         why=_R258P_WHY + "B-M7 เปิดกฎที่ปิดไว้/เปลี่ยนตาราง ⇒ ล้างลายน้ำ (ก่อนเขียนค่าใหม่ทับ)"),
+]
+REVIEWER_CASES += [
+    # ตัวกู้คืนแถวค้างเป็น Pending (ส่งซ้ำเอง) ⇒ ต้องฟ้อง
+    ("R258p4", "RecoverStaleSendingAsync", "SetProperty(q => q.Status, EmailQueueStaleSending.StatusFailed)",
+     "SetProperty(q => q.Status, EmailQueueStaleSending.StatusPending)", True),
+    # ใบแจ้งยอดกลับไปเทียบวันนี้ = วันที่ตั้ง อย่างเดียว ⇒ ต้องฟ้อง
+    ("R258p5", "ScanMonthlyStatementsAsync", "if (!monthlyPlan.Send) continue;", "if (todayBkk.Day != sendDay) continue;", True),
+]
 # ═══ จบ รอบ 258 แพ็ก สิทธิ์+คิวส่ง ═══
 
 

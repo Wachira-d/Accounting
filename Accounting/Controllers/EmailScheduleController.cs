@@ -117,6 +117,7 @@ public class EmailScheduleController : ControllerBase
     {
         var (pending, sent, failed) = await _svc.GetQueueStatsAsync(companyId);
         var recent = await _svc.GetRecentQueueAsync(companyId, take);
+        var nowUtc = DateTime.UtcNow;   // รอบ 258 (B-H2): ปุ่มที่กดได้ตัดสินที่เซิร์ฟเวอร์ (รวมแถวค้าง "กำลังส่ง") — หน้าเว็บแสดงอย่างเดียว
         return Ok(new ApiResponse<object>(true, new
         {
             stats = new { pending, sent, failed },
@@ -126,7 +127,11 @@ public class EmailScheduleController : ControllerBase
                 q.Status, q.RetryCount, q.ScheduledFor, q.SentAt,
                 // ID#12: ป้ายไทยจากเซิร์ฟเวอร์ (รวม "ข้าม (ไม่ส่ง)" ของใบที่ถูกยกเลิก/ชำระครบหลังเข้าคิว) — หน้าเว็บแสดงอย่างเดียว
                 StatusLabel = Accounting.Helpers.ScheduledEmailSendCheck.StatusLabel(q.Status),
-                q.ErrorMessage, q.CreatedAt,
+                ErrorMessage = q.ErrorMessage
+                    ?? (EmailQueueStaleSending.IsStale(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc) ? EmailQueueStaleSending.StaleReason : null),
+                q.CreatedAt,
+                CanRetry = EmailQueueStaleSending.CanRetry(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc),
+                CanCancel = EmailQueueStaleSending.CanCancel(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc),
             }),
         }));
     }
