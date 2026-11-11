@@ -6947,4 +6947,4 @@ _รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 9 (
 R-M2 ย้อนเก็บไม่ซ้อนครั้งซ้ำของวันนี้ · R-M3 `SendStartedAt` + `ClaimToken` (migration 2 คอลัมน์ใน EmailQueues) · R-L2 ธง `canCreateAndApprove` · R-L3 ค่ากลุ่มต่อเหตุการณ์ ·
 R-L4/R-L5 `ScheduleReadView` + `GET email-schedule/access` · R-L6 ถอนประทับเฉพาะก่อนเข้าตัวจัดการ · R-L9 · R-L10 · R-L7 มีงานล้างอยู่แล้ว (PdpaRetentionPurgeJob) ·
 R-L1/R-L8 จดเป็นความเสี่ยงคงค้าง · required_call_site_check +6 ข้อ + 3 เคสกลายพันธุ์_
-_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 9: แก้ผลฝ่ายค้าน R-H1 · R-M1…3 · R-L2…L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 9: แก้ผลฝ่ายค้าน R-H1 · R-M1…3 · R-L2…L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2be3e30c)_
