@@ -96,6 +96,14 @@ public class AgingReportService : IAgingReportService
         // Build contact details with aging (d.Contact ผูกกลับแล้วจาก hydrate — ปลอดภัย)
         var contactGroups = documents.GroupBy(d => new { d.ContactId, d.Contact.Name, d.Contact.TaxId });
 
+        // รอบ 258: เงินรอจัดสรรของลูกค้า (รับแล้วยังไม่ผูกกับใบ) — แสดงแยก ไม่หักจาก bucket (ยอดค้างรายใบยังจริงจนกว่าจะจัดสรร) ·
+        // เฉพาะลูกหนี้ที่ไม่กรองโครงการ (เงินรอจัดสรรไม่มีโครงการ) · ตัวอ่านเดียว CustomerCreditQuery
+        var creditByContact = reportType == AgingReportType.AccountsReceivable && !request.ProjectId.HasValue
+            ? await CustomerCreditQuery.UnappliedByContactAsync(_db, companyId)
+            : new Dictionary<Guid, decimal>();
+        if (request.ContactId is Guid onlyContact)
+            creditByContact = creditByContact.Where(kv => kv.Key == onlyContact).ToDictionary(kv => kv.Key, kv => kv.Value);
+
         var details = new List<AgingContactDetail>();
         foreach (var group in contactGroups)
         {
@@ -128,7 +136,8 @@ public class AgingReportService : IAgingReportService
 
             details.Add(new AgingContactDetail(group.Key.ContactId, group.Key.Name, group.Key.TaxId,
                 current, d1to30, d31to60, d61to90, over90,
-                current + d1to30 + d31to60 + d61to90 + over90, docs.OrderByDescending(d => d.AgingDays).ToList()));
+                current + d1to30 + d31to60 + d61to90 + over90, docs.OrderByDescending(d => d.AgingDays).ToList(),
+                UnappliedCredit: creditByContact.TryGetValue(group.Key.ContactId, out var contactCredit) ? contactCredit : 0m));
         }
 
         var totals = new AgingTotals(
@@ -153,7 +162,12 @@ public class AgingReportService : IAgingReportService
         var meaningful = details.Where(d => Math.Abs(d.TotalBalance) >= 0.01m)
             .OrderByDescending(d => d.TotalBalance).ToList();
 
-        return new AgingReportResponse(reportType, asOfDate, buckets, meaningful, totals);
+        var creditTotal = creditByContact.Values.Sum();
+        var creditNote = creditTotal > UnappliedCreditBalance.Tolerance
+            ? $"เงินรอจัดสรรของลูกค้า (รับเงินแล้วแต่ยังไม่ผูกกับใบ) รวม {creditTotal:N2} บาท ณ ปัจจุบัน — ยอดค้างในรายงานนี้ยังไม่หักเงินส่วนนี้ "
+              + "(จัดสรรที่หน้า “เงินรอจัดสรร” แล้วยอดค้างของใบจึงลดลง)"
+            : null;
+        return new AgingReportResponse(reportType, asOfDate, buckets, meaningful, totals, creditTotal, creditNote);
     }
 
     private static int GetAgingDays(Models.Entities.Document doc, DateTime asOfDate)

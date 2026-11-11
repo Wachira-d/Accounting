@@ -160,6 +160,8 @@ WATCHED = [
     # รอบ 257 A-H1 (team-A H1) — สร้าง/แก้/ลบ/หยุด/เปิดต่อ/สร้างทันที ของรายการประจำ เดิมมีแค่ [Authorize] และอยู่ใน baseline 6 แถว ⇒ ปิดด่านครบ
     # (RecurringWriteGate: Document.Create ของชนิด · Document.Approve เมื่อระบบอนุมัติ/ส่งแทนคน · Journal.Manage ของสมุดรายวัน) ⇒ ถอดจาก baseline + ย้ายเข้า WATCHED ตอนเขียว
     "Accounting/Controllers/RecurringController.cs",
+    # รอบ 258 — เงินรอจัดสรร: จัดสรร = ลง JE + ลดยอดค้าง (ระดับเดียวกับบันทึกรับชำระ) · ยกเลิกการจัดสรร = กลับ JE (ระดับ Void)
+    "Accounting/Controllers/CustomerCreditController.cs",
     # รอบ 258 (A-H1 · B-H1) — กฎตารางส่ง (สร้าง/แก้/ลบ) + คิวอีเมล (ส่งอีกครั้ง/ยกเลิก) เดิมมีแค่ [Authorize] ขณะที่คิว LINE ในไฟล์เดียวกันมีด่าน
     # (คู่สมมาตรที่แก้ฝั่งเดียว) ⇒ Viewer ใส่ Bcc เป็นอีเมลตัวเองแล้วได้สำเนาใบกำกับ/สลิปเงินเดือนทุกใบ · ด่าน = RequireSettingsAsync → Helpers/SettingsWriteGate
     "Accounting/Controllers/EmailScheduleController.cs",

@@ -2883,3 +2883,17 @@ public enum PlatformUpgradeModeOffer
     KeepExpiryOnly = 1,
     RestartCycleOnly = 2,
 }
+
+/// <summary>รอบ 258 "เงินรอจัดสรร" (DECISIONS 258-1-2): เหตุผลที่เงินที่รับแล้วยังไม่ผูกกับใบ — บังคับเลือกเมื่อยอดรับมากกว่ายอดที่จัดสรร ·
+/// เก็บเป็นชื่อใน <c>Payment.UnappliedReason</c> · ป้าย/ลำดับ/ข้อจำกัดอยู่ที่ <c>Helpers/PaymentExcessPlan</c> ตัวเดียว (หน้าเว็บไม่มีสำเนา)</summary>
+public enum UnappliedReason
+{
+    /// <summary>ยังไม่ทราบ — ขึ้นคิวให้คนตัดสิน</summary>
+    Unknown = 0,
+    /// <summary>ค้างออกใบแจ้งหนี้/ใบกำกับ (ส่งของ/ให้บริการแล้ว ยังไม่ได้ออกใบ)</summary>
+    UninvoicedSupply = 1,
+    /// <summary>เงินรับล่วงหน้า/มัดจำ — บริษัทจด VAT ต้องออกใบมัดจำ (ไม่ค้างในเงินรอจัดสรร · 258-1-3)</summary>
+    Advance = 2,
+    /// <summary>ลูกค้าโอนเกิน — รอคืนเงิน</summary>
+    Overpaid = 3,
+}

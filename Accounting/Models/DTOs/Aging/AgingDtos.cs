@@ -7,7 +7,12 @@ public record AgingReportResponse(
     DateTime AsOfDate,
     List<AgingBucket> Buckets,
     List<AgingContactDetail> Details,
-    AgingTotals Totals);
+    AgingTotals Totals,
+    /// <summary>รอบ 258: เงินรอจัดสรรของลูกค้ารวม (รับแล้วยังไม่ผูกกับใบ · ยอด ณ ปัจจุบัน) — <b>ไม่ได้หักออกจากยอดค้าง</b>ในรายงาน (ยอดค้างรายใบยังจริงจนกว่าจะจัดสรร) ·
+    /// เฉพาะรายงานลูกหนี้ที่ไม่กรองโครงการ · 0 = ไม่มี</summary>
+    decimal UnappliedCreditTotal = 0m,
+    /// <summary>รอบ 258: ข้อความอธิบายบรรทัดเงินรอจัดสรร (เซิร์ฟเวอร์เขียน — หน้าเว็บ/ไฟล์ส่งออกแสดงตาม) · null = ไม่มีเงินรอจัดสรร</summary>
+    string? UnappliedCreditNote = null);
 
 public record AgingBucket(
     string Label,
@@ -26,7 +31,9 @@ public record AgingContactDetail(
     decimal Days61To90,
     decimal Over90Days,
     decimal TotalBalance,
-    List<AgingDocumentDetail> Documents);
+    List<AgingDocumentDetail> Documents,
+    /// <summary>รอบ 258: เงินรอจัดสรรของผู้ติดต่อรายนี้ (แสดงแยกบรรทัด — ไม่หักจาก <c>TotalBalance</c>)</summary>
+    decimal UnappliedCredit = 0m);
 
 public record AgingDocumentDetail(
     Guid DocumentId,

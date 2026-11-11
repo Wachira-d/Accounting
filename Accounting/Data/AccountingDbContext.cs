@@ -1030,6 +1030,8 @@ public class AccountingDbContext : DbContext
             e.HasIndex(p => new { p.CompanyId, p.PaymentNumber }).IsUnique();
             e.Property(p => p.PaymentNumber).HasMaxLength(50);
             e.Property(p => p.Amount).HasPrecision(18, 2);
+            e.Property(p => p.UnappliedAmount).HasPrecision(18, 2);   // รอบ 258 เงินรอจัดสรร
+            e.Property(p => p.UnappliedReason).HasMaxLength(40);
             e.HasOne(p => p.Document).WithMany(d => d.Payments).HasForeignKey(p => p.DocumentId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(p => p.BankAccountEntity).WithMany().HasForeignKey(p => p.BankAccountId).OnDelete(DeleteBehavior.SetNull);
             e.HasQueryFilter(p => !p.IsDeleted);

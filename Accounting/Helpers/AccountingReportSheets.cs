@@ -348,7 +348,8 @@ public static class AccountingReportSheets
 
     // ═══ อายุลูกหนี้/เจ้าหนี้ ═══
 
-    private sealed record AgingContactLine(string Contact, string? TaxId, decimal Current, decimal D1, decimal D31, decimal D61, decimal D90, decimal Total);
+    private sealed record AgingContactLine(string Contact, string? TaxId, decimal Current, decimal D1, decimal D31, decimal D61, decimal D90, decimal Total,
+        decimal? Unapplied = null);
 
     /// <summary>สรุปรายผู้ติดต่อ — คอลัมน์เดียวกับตารางหลักของหน้า + เลขผู้เสียภาษี · แถวรวมจาก <see cref="AgingReportResponse.Totals"/></summary>
     public static TabularSheet AgingByContact(AgingReportResponse r, IEnumerable<string> title)
@@ -364,9 +365,15 @@ public static class AccountingReportSheets
             new TabularColumn<AgingContactLine>("เกิน 90 วัน", x => x.D90, TabularCellKind.Money),
             new TabularColumn<AgingContactLine>("รวม", x => x.Total, TabularCellKind.Money),
         };
-        var rows = r.Details.Select(c => new AgingContactLine(c.ContactName, c.TaxId, c.Current, c.Days1To30, c.Days31To60, c.Days61To90, c.Over90Days, c.TotalBalance));
+        // รอบ 258: มีเงินรอจัดสรร ⇒ คอลัมน์แยก "เงินรอจัดสรร (ยังไม่หัก)" — ตัวเลขเดียวกับบรรทัดใต้ชื่อผู้ติดต่อบนหน้า · ไม่มี = คอลัมน์เดิมทุกประการ
+        var hasCredit = r.UnappliedCreditTotal > UnappliedCreditBalance.Tolerance;
+        if (hasCredit)
+            cols = cols.Append(new TabularColumn<AgingContactLine>("เงินรอจัดสรร (ยังไม่หัก)", x => x.Unapplied, TabularCellKind.Money)).ToArray();
+        var rows = r.Details.Select(c => new AgingContactLine(c.ContactName, c.TaxId, c.Current, c.Days1To30, c.Days31To60, c.Days61To90, c.Over90Days, c.TotalBalance,
+            hasCredit ? c.UnappliedCredit : (decimal?)null));
         var t = r.Totals;
-        var footer = new[] { new AgingContactLine("รวมทั้งสิ้น", null, t.Current, t.Days1To30, t.Days31To60, t.Days61To90, t.Over90Days, t.GrandTotal) };
+        var footer = new[] { new AgingContactLine("รวมทั้งสิ้น", null, t.Current, t.Days1To30, t.Days31To60, t.Days61To90, t.Over90Days, t.GrandTotal,
+            hasCredit ? r.Details.Sum(c => c.UnappliedCredit) : (decimal?)null) };
         return TabularExport.Sheet("สรุปรายผู้ติดต่อ", cols, rows, footer, title);
     }
 

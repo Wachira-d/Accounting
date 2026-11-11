@@ -539,6 +539,9 @@
               <tbody><tr style="background:#f8fafc"><td colspan="6">ยอดยกมา</td><td class="text-right font-bold">${Layout.money(s.openingBalance)}</td></tr>${rows}</tbody>
               <tfoot><tr style="background:#f1f5f9"><td colspan="4" class="font-bold">รวม</td><td class="text-right font-bold">${Layout.money(s.totalDebit)}</td><td class="text-right font-bold">${Layout.money(s.totalCredit)}</td><td class="text-right font-bold">${Layout.money(s.closingBalance)}</td></tr></tfoot>
             </table>
+            ${s.unappliedCredit > 0 ? `<div style="margin-top:12px;padding:12px;background:#eff6ff;border-radius:6px;font-size:13px">
+              <strong>เงินรอจัดสรร:</strong> ${Layout.money(s.unappliedCredit)} — รับเงินแล้วแต่ยังไม่ผูกกับใบ (ยังไม่หักจากยอดคงเหลือข้างบน) · <a href="/pages/customer-credits.html?contactId=${encodeURIComponent(s.contactId)}" style="color:var(--primary)">จัดสรรให้ใบ</a>
+            </div>` : ''}
             <div style="margin-top:12px;padding:12px;background:#fff7ed;border-radius:6px;font-size:13px">
               <strong>Aging:</strong> ปัจจุบัน ${Layout.money(s.current)} · 1-30 ${Layout.money(s.d1to30)} · 31-60 ${Layout.money(s.d31to60)} · 61-90 ${Layout.money(s.d61to90)} · &gt;90 <span class="text-danger">${Layout.money(s.over90)}</span>
             </div>`;

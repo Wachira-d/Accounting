@@ -839,6 +839,15 @@ const API = {
       // Payments
       getPayments: (q = '') => API.get(`${base}/document/payments${q}`),
       createPayment: (d) => API.post(`${base}/document/payments`, d),
+      // รอบ 258 — เงินรอจัดสรร (เงินรับจากลูกค้าที่ยังไม่ผูกกับใบ): รายการ · ใบที่จัดสรรได้ · แผนเงินเกินของหน้ารับชำระ · จัดสรร/ยกเลิกการจัดสรร
+      getCustomerCredits: (q = '') => API.get(`${base}/customer-credits${q}`),
+      getCustomerCreditTargets: (paymentId) => API.get(`${base}/customer-credits/${paymentId}/targets`),
+      getCustomerCreditsForDocument: (documentId) => API.get(`${base}/customer-credits/for-document/${documentId}`),
+      getPaymentExcessPlan: (documentId, amount, fee) =>
+        API.get(`${base}/customer-credits/excess-plan?documentId=${documentId}&amount=${encodeURIComponent(amount)}&fee=${encodeURIComponent(fee || 0)}`),
+      allocateCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/allocate`, d),
+      undoCustomerCreditAllocation: (paymentId, allocationId) =>
+        API.post(`${base}/customer-credits/${paymentId}/allocations/${allocationId}/undo`),
       // Products
       getProducts: (q = '') => API.get(`${base}/product${q}`),
       // ส่งออกรายการเอกสาร (ทีม X2 · 2026-10-14 · Controllers/TradeListExportController) — q = ตัวกรองชุดเดียวกับ list + format · ใช้ API.download ตรง

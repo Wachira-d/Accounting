@@ -300,3 +300,8 @@ recurring · payroll · integration · course credit · ที่พัก) ห�
 **R-21** (JE ขา 2191x ใบต่างสกุล `PerLineWht` vs `ToBaht`) ยังเปิดจริง — W7 วิเคราะห์ไม่ merge (`0a74e86b`) · **R-37** golden/replay harness รอผล job เทสต์ pure ที่เปิดใน WP-01 (`010f39b0`) ·
 **R-22 · R-28 · R-29 · R-30 · R-35 · R-36 · R-42 · R-48** (+ R-52 OCR สลิป · R-13 · R-16 บางส่วน) = **ตั้งใจไม่ทำ/รอข้อมูลภายนอก** ตามตาราง §ไม่ทำ ของไฟล์นั้น ·
 **R-66 + M-01…M-14** = ชุดทดสอบด้วยมือ (ต้องคนกด — agent ปิดเองไม่ได้)
+
+**2026-11-11 (รอบ 258)** — `erp-review/2026-11-11/team-D-lump-payment.md` "ลูกค้าโอนก้อนเดียวปิด 2 ยอด แต่ออกใบไว้ใบเดียว" (วิเคราะห์ + ดีไซน์ "เงินรอจัดสรร" §3 · แพ็ก P1–P6) ·
+สร้างแล้ว: P1–P3 + ส่วนระงับทวงของ P6 (DOCUMENT_FLOW §3.4b · DECISIONS 258-1-1…18) · ยังเปิด: P4 (ออกใบที่ขาด/ย้ายเป็นมัดจำ/คืนเงิน/ตัดเศษ) · P5 (คิวเงินโอน/ธนาคาร) · P6 ที่เหลือ ·
+helper กลางที่ทุกเส้นต้องใช้ (ห้ามเขียนสำเนา): `Helpers/PaymentExcessPlan` (เงินเกิน/เหตุผล) · `CustomerCreditAllocation` (จัดสรรได้ไหม) · `UnappliedReceiptAccount` (ผัง 21630) ·
+`UnappliedCreditBalance` (สูตรยอดคงเหลือ) · `CustomerCreditQuery` (ยอดต่อลูกค้า) · `LateReceiptTaxPoint` (งวดภาษีของเงินที่รับก่อนผูกใบ) · `DunningSuppression` (ระงับทวง)
