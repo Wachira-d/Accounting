@@ -291,9 +291,12 @@ public class PortalPermissionsRound257DbTests
         var rows = await db.AuditLogs.AsNoTracking()
             .Where(a => a.CompanyId == s.Shop.Id && a.EntityType == "PortalAccess" && a.EntityId == created.Id.ToString())
             .ToListAsync();
-        Assert.Equal(3, rows.Count);
-        Assert.All(rows, r => Assert.Equal(actor, r.UserId));
-        Assert.Contains(rows, r => r.Action == AuditAction.Create);
+        // รอบ 257 ปิดท้าย (รันบน PostgreSQL จริงครั้งแรก): DbContext เขียนแถว audit อัตโนมัติของการเปลี่ยนแถว (ไม่มีผู้ทำ) คู่กับแถวของ D-H1 ⇒
+        // ข้อที่ต้องจริง = ทุกการให้/แก้/ปิดมีแถวที่ระบุผู้ทำ (ไม่ใช่ "มี 3 แถวพอดี")
+        var withActor = rows.Where(r => r.UserId == actor).ToList();
+        Assert.Equal(3, withActor.Count);
+        Assert.Contains(withActor, r => r.Action == AuditAction.Create);
+        Assert.Equal(2, withActor.Count(r => r.Action == AuditAction.Update));
     }
 
     // ═══════════ รอบ 257 ปิดท้าย LOW: ใบลดหนี้ที่อ้างใบต้นทางไม่ถูกหักซ้ำในใบแจ้งยอด ═══════════
