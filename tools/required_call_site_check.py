@@ -18071,7 +18071,7 @@ RULES += [
          must=["_service.GetResultAsync(companyId, scanId)", "scanBefore?.ComplianceIssues?.Select(", "scanBefore?.Quality?.Letter"],
          before=[("_service.GetResultAsync(companyId, scanId)", "_service.CreateDocumentFromScanAsync(")],
          why=_R258P_WHY + "C-H2 สร้าง+อนุมัติจากเว็บ/คีย์ใช้ด่านเต็มตัวเดียวกับ LINE (ผลตรวจตามสรรพากร + เกรดคุณภาพ) — ไม่ประเมิน = ไม่อนุมัติเอง"),
-    dict(file="Services/Implementations/OcrService.cs", method="WithAutoApproveVerdict", must=["OcrPostingReadiness.EvaluateUnseen("],
+    dict(file="Services/Implementations/OcrService.cs", method="AttachComplianceAsync", must=["OcrPostingReadiness.EvaluateUnseen(", "CanAutoApprove = verdict.CanAutoApprove"],
          why=_R258P_WHY + "C-H2 ธง canAutoApprove ตัดสินที่เซิร์ฟเวอร์ (หน้าเว็บไม่ถือกติกาเอง)"),
     dict(file=_R258P_OCRC, method="OcrQuotaExhaustedAsync", must=["_quota.GetQuotaStatusAsync("],
          why=_R258P_WHY + "C-M4 คำตอบโควต้าหมดตัวเดียวของ /upload และ /scan/{id}"),
