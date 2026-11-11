@@ -55,14 +55,14 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
 
     /// <summary>แถวลิงก์ + audit chain (ไม่บันทึก — ผู้เรียกบันทึกพร้อมงานของตัวเอง) · ผู้สร้างแถวลิงก์ตัวเดียว (ปุ่ม · อีเมลใบเสร็จ · อีเมลทวง)</summary>
     internal static WhtCertUploadLink AddLinkRow(AccountingDbContext db, Guid companyId, Guid contactId, Guid? documentId, string tokenHash,
-        string source, Guid? userId, string actor, Guid? emailQueueId)
+        string source, Guid? userId, string actor, Guid? emailQueueId, Guid? lineQueueId = null)
     {
         var now = DateTime.UtcNow;
         var row = new WhtCertUploadLink
         {
             CompanyId = companyId, ContactId = contactId, DocumentId = documentId, TokenHash = tokenHash,
             ExpiresAt = WhtCertUploadLinkPolicy.ExpiresAt(now), Source = source, CreatedByUserId = userId, CreatedBy = actor,
-            EmailQueueId = emailQueueId,
+            EmailQueueId = emailQueueId, LineQueueId = lineQueueId,
         };
         db.WhtCertUploadLinks.Add(row);
         db.AddChainedAuditLog(new AuditLog
@@ -70,7 +70,7 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
             CompanyId = companyId, UserId = userId, UserEmail = actor, Action = AuditAction.Create,
             EntityType = nameof(WhtCertUploadLink), EntityId = row.Id.ToString(),
             NewValues = System.Text.Json.JsonSerializer.Serialize(new { @event = "wht-upload-link-issued", contactId, documentId, source, row.ExpiresAt,
-                emailQueueId, ruleCode = WhtCertUploadLinkPolicy.RuleCode }),
+                emailQueueId, lineQueueId, ruleCode = WhtCertUploadLinkPolicy.RuleCode }),
             Timestamp = now,
         });
         return row;
@@ -90,6 +90,25 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
             .Select(l => l.TokenHash).FirstOrDefaultAsync(ct);
         if (stored == null || !WhtCertUploadLinkPolicy.TokenMatches(token, stored))
             return (null, "ไม่พบลิงก์อัปโหลดของอีเมลทวงฉบับนี้ (หรือความลับของเซิร์ฟเวอร์เปลี่ยน) — ไม่ส่ง · งานทวงรอบหน้าจะเข้าคิวใหม่");
+        var origin = await SystemBaseUrl.ResolveAsync(db, config, ct);
+        return origin == null
+            ? (null, "ยังไม่ได้ตั้งที่อยู่เว็บของระบบ — สร้าง URL ลิงก์อัปโหลดไม่ได้ (ผู้ดูแลระบบตั้งได้ที่ค่าตั้งระบบ)")
+            : (WhtCertUploadLinkPolicy.Url(origin, companyId, token), null);
+    }
+
+    /// <summary>รอบ 259 (258-3-6): URL ลิงก์อัปโหลดของการ์ด LINE ทวงหนึ่งใบ ณ ตอนส่ง — อ่านอย่างเดียว (คู่ของ <see cref="ReminderUrlAsync"/>) ·
+    /// ไม่มีแถว/ความลับเปลี่ยน/ไม่มีที่อยู่เว็บ ⇒ (null, เหตุ) ⇒ ผู้ส่งคิวไม่ส่ง (ไม่ส่งลิงก์เสีย)</summary>
+    internal static async Task<(string? Url, string? Problem)> LineReminderUrlAsync(AccountingDbContext db, IConfiguration? config, Guid companyId,
+        Guid lineQueueId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(config?["Jwt:Secret"]))
+            return (null, "ไม่ได้ตั้งความลับของเซิร์ฟเวอร์ — สร้างลิงก์อัปโหลดของการ์ด LINE ไม่ได้");
+        var token = WhtCertUploadLinkPolicy.TokenForLineQueue(WhtCertUploadLinkPolicy.DeriveQueueKey(config["Jwt:Secret"]), companyId, lineQueueId);
+        var stored = await db.WhtCertUploadLinks.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && l.LineQueueId == lineQueueId)
+            .Select(l => l.TokenHash).FirstOrDefaultAsync(ct);
+        if (stored == null || !WhtCertUploadLinkPolicy.TokenMatches(token, stored))
+            return (null, "ไม่พบลิงก์อัปโหลดของการ์ด LINE ฉบับนี้ (หรือความลับของเซิร์ฟเวอร์เปลี่ยน) — ไม่ส่ง · งานทวงรอบหน้าจะเข้าคิวใหม่");
         var origin = await SystemBaseUrl.ResolveAsync(db, config, ct);
         return origin == null
             ? (null, "ยังไม่ได้ตั้งที่อยู่เว็บของระบบ — สร้าง URL ลิงก์อัปโหลดไม่ได้ (ผู้ดูแลระบบตั้งได้ที่ค่าตั้งระบบ)")

@@ -125,6 +125,46 @@ public class DocumentController : ControllerBase
             : Ok(new ApiResponse<DocumentEmailLogResponse>(false, dto, log.ErrorMessage ?? "ส่งอีเมลไม่สำเร็จ"));
     }
 
+    // ===== รอบ 259 (E-H3 · 259-2-2): ส่งเอกสารทาง LINE เอง =====
+
+    /// <summary>ชนิดเอกสารที่ส่งถึงคู่ค้าเองได้ (ปุ่ม 📧 ส่งอีเมล / 💬 ส่งทาง LINE) — ตัวเดียว <see cref="DocumentLineSendRule.SendableTypes"/> (หน้าเว็บไม่มีสำเนารายการ)</summary>
+    [HttpGet("send-types")]
+    public ActionResult<ApiResponse<List<string>>> SendTypes()
+        => Ok(new ApiResponse<List<string>>(true, DocumentLineSendRule.SendableTypes.Select(t => t.ToString()).ToList()));
+
+    /// <summary>หน้าต่าง "ส่งทาง LINE": ปลายทาง LINE ของผู้ติดต่อ (ใช้ได้/เหตุ) + ช่องลิงก์ชำระ — ด่านเดียวกับส่งอีเมล (Document.Create ตามชนิด + ชั้นความลับ)</summary>
+    [HttpGet("{documentId:guid}/line-send")]
+    public async Task<ActionResult<ApiResponse<DocumentLineSendOptions>>> LineSendOptions(Guid companyId, Guid documentId, CancellationToken ct)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentLineSendOptions>(false, null, "ไม่พบเอกสาร"));
+        if (await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User), docType.Value, DocPerm.Create, "ส่งทาง LINE") is { } deny)
+            return Forbid403<DocumentLineSendOptions>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ส่งทาง LINE") is { } hidden) return Forbid403<DocumentLineSendOptions>(hidden);
+        if (HttpContext.RequestServices.GetService(typeof(IDocumentLineSendService)) is not IDocumentLineSendService svc)
+            return StatusCode(503, new ApiResponse<DocumentLineSendOptions>(false, null, "บริการส่งทาง LINE ยังไม่พร้อม"));
+        var o = await svc.OptionsAsync(companyId, documentId, ct);
+        return Ok(new ApiResponse<DocumentLineSendOptions>(true, o, o.Problem));
+    }
+
+    /// <summary>เข้าคิว LINE ถึงปลายทางที่เลือก (ผู้ส่งคิวส่งภายใน ~1 นาที · "ส่งแล้ว" = LINE ตอบรับจริง) — ด่านเดียวกับส่งอีเมล</summary>
+    [HttpPost("{documentId:guid}/line-send")]
+    public async Task<ActionResult<ApiResponse<DocumentLineSendResult>>> LineSend(Guid companyId, Guid documentId,
+        [FromBody] DocumentLineSendRequest request, CancellationToken ct)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<DocumentLineSendResult>(false, null, "ไม่พบเอกสาร"));
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await DenyDocAsync(companyId, userId, docType.Value, DocPerm.Create, "ส่งทาง LINE") is { } deny)
+            return Forbid403<DocumentLineSendResult>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ส่งทาง LINE") is { } hidden) return Forbid403<DocumentLineSendResult>(hidden);
+        if (HttpContext.RequestServices.GetService(typeof(IDocumentLineSendService)) is not IDocumentLineSendService svc)
+            return StatusCode(503, new ApiResponse<DocumentLineSendResult>(false, null, "บริการส่งทาง LINE ยังไม่พร้อม"));
+        var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+        var r = await svc.SendAsync(companyId, documentId, request?.EndpointIds, request?.IncludePayLink == true, userId, actor, ct);
+        return Ok(new ApiResponse<DocumentLineSendResult>(true, r, r.Message));
+    }
+
     /// <summary>รอบ 244: ช่องทางส่งอีเมลของใบนี้ + ตัวอย่างอีเมล e-Tax (หัวเรื่อง/ผู้รับ/สำเนา/ผู้ส่ง/เหตุที่ส่งไม่ได้/คำเตือน) ตามที่เซิร์ฟเวอร์จะส่ง —
     /// หน้าต่างส่งอีเมลแสดงอย่างเดียว (ไม่มีสำเนากติกาในหน้า)</summary>
     [HttpGet("{documentId:guid}/email-route")]
@@ -790,7 +830,12 @@ public class DocumentController : ControllerBase
         try
         {
             var result = await _documentService.ApproveDocumentAsync(companyId, documentId, userId, request?.AcknowledgeWarnings ?? false);
-            return Ok(new ApiResponse<object>(true, result, "อนุมัติเอกสารสำเร็จ"));
+            // รอบ 259 P4: ใบที่ออกจากเงินรอจัดสรร (จองไว้) ⇒ จัดสรรให้เองหลังอนุมัติ (ด่านเดียวกับกดเอง · ล้ม = ข้อความ + ป้ายบนใบ ไม่ล้มการอนุมัติ)
+            var creditNotices = HttpContext?.RequestServices?.GetService(typeof(ICustomerCreditService)) is ICustomerCreditService credits
+                ? await credits.AfterDocumentApprovedAsync(companyId, documentId, userId)
+                : Array.Empty<string>();
+            return Ok(new ApiResponse<object>(true, result,
+                creditNotices.Count == 0 ? "อนุมัติเอกสารสำเร็จ" : "อนุมัติเอกสารสำเร็จ — " + string.Join(" · ", creditNotices)));
         }
         catch (DocumentApprovalWarningsException ex)
         {

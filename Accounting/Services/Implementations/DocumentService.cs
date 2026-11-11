@@ -10608,6 +10608,8 @@ public partial class DocumentService : IDocumentService
                 }
 
                 await _db.SaveChangesAsync();
+                // รอบ 259 P4: ใบมัดจำที่ย้ายจากเงินรอจัดสรร (ขาเงินเข้า = ผังพัก) ถูกยกเลิก ⇒ JE ถูกกลับแล้ว เงินกลับเป็นเงินรอจัดสรร (ในธุรกรรมเดียวกัน)
+                await Accounting.Helpers.CustomerCreditLedger.ReleaseForVoidedDocumentAsync(_db, companyId, doc.Id, doc.UpdatedBy);
                 await transaction.CommitAsync();
             }
             catch
@@ -11742,6 +11744,9 @@ public partial class DocumentService : IDocumentService
         if (await SettlementArtifactGuard.CheckAsync(_db, companyId, payment.SettlementBatchId)
                 is string settlementBlock)
             throw new BusinessRuleException(settlementBlock, "SETTLEMENT-ARTIFACT-VOID", 409);
+        // รอบ 259 P4: เงินรอจัดสรรของการชำระนี้ถูกคืนลูกค้า/ย้ายเป็นมัดจำ/ตัดเศษไปแล้ว ⇒ ยกเลิกขานั้นก่อน (กลับพร้อมกันเงียบ ๆ ไม่ได้)
+        if (await Accounting.Helpers.CustomerCreditLedger.VoidBlockAsync(_db, companyId, payment.Id, payment.PaymentNumber) is string creditMovedBlock)
+            throw new BusinessRuleException(creditMovedBlock, Accounting.Helpers.CustomerCreditMovementRules.VoidBlockRuleCode, 409);
 
         var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == payment.DocumentId
             && d.CompanyId == companyId)

@@ -151,7 +151,11 @@ public class LineConfigController : ControllerBase
     public async Task<ActionResult<ApiResponse<LineTestResult>>> Test(
         Guid companyId, [FromBody] TestLineConfigRequest req)
     {
-        var (ok, msg) = await _line.TestConfigAsync(companyId, req.ToLineId);
+        // รอบ 259 (A-M6): เลือกปลายทางที่ระบบรู้จัก (ไม่ต้องพิมพ์ C…) หรือพิมพ์เอง — ตัวตัดสินเดียว LineOaHealth.TestTarget
+        var current = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId).Select(x => x.LineDefaultGroupId).FirstOrDefaultAsync();
+        var (to, targetProblem) = LineOaHealth.TestTarget(req?.TargetKey, req?.ToLineId, current);
+        if (to == null) return BadRequest(new ApiResponse<LineTestResult>(false, new LineTestResult(false, targetProblem!), targetProblem));
+        var (ok, msg) = await _line.TestConfigAsync(companyId, to);
         if (ok)
         {
             var s = await _db.CompanySettings.FirstOrDefaultAsync(x => x.CompanyId == companyId);
@@ -175,6 +179,12 @@ public class LineConfigController : ControllerBase
         }
         return Ok(new ApiResponse<LineTestResult>(ok, new LineTestResult(ok, msg), msg));
     }
+
+    /// <summary>รอบ 259 (A-M6): ปลายทางทดสอบที่ระบบรู้จัก — กลุ่มของทีมที่ตั้งไว้ (ไม่ส่ง id ให้หน้าเว็บ · key เท่านั้น) · ผู้ติดต่อไม่อยู่ในรายการ (ห้ามส่งข้อความทดสอบถึงลูกค้า)</summary>
+    private static IReadOnlyList<LineTestTarget> TestTargets(CompanySettings s)
+        => string.IsNullOrWhiteSpace(s.LineDefaultGroupId)
+            ? Array.Empty<LineTestTarget>()
+            : new[] { new LineTestTarget(LineOaHealth.TeamGroupTargetKey, "กลุ่ม LINE ของทีม (ที่ตั้งไว้ด้านบน)") };
 
     private async Task<CompanySettings> GetOrCreateSettings(Guid companyId)
     {
@@ -204,6 +214,11 @@ public class LineConfigController : ControllerBase
             // รอบ 232 (232-Notify): ไม่มี OA ของร้าน ⇒ แจ้งเตือนธุรกิจไปกระดิ่ง/อีเมล ไม่ถอยไป OA กลาง — บอกผู้ใช้ตรงนี้ (ห้าม fallback เงียบ)
             TenantLineNotice = NotificationAudiencePolicy.CompanyGroupNotice(
                 s.LineEnabled && _secrets.IsUsable(s.LineChannelAccessToken), !string.IsNullOrWhiteSpace(s.LineDefaultGroupId)),
+            // รอบ 259 (A-M5 · A-L3): ความพร้อมจริง (webhook เข้าจริง · Basic ID · ผลทดสอบตามสถานะทดสอบ ไม่ใช่ธงที่รีเซ็ตตอนบันทึก)
+            Health = LineOaHealth.Rows(s.LineEnabled, _secrets.IsUsable(s.LineChannelAccessToken), _secrets.IsUsable(s.LineChannelSecret),
+                s.LineLastWebhookAt, !string.IsNullOrWhiteSpace(s.LineWebhookDestinationMismatch), s.LineOaBasicId,
+                s.LineLastTestedAt, s.LineLastTestStatus, isPlatform),
+            TestTargets = TestTargets(s),
         };
     }
 

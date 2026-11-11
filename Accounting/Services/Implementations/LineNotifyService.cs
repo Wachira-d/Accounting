@@ -61,9 +61,6 @@ public class LineNotifyService : ILineNotifyService
         return new CompanyOa(true, token, string.IsNullOrWhiteSpace(s.LineDefaultGroupId) ? null : s.LineDefaultGroupId.Trim());
     }
 
-    private async Task<bool> PushRawAsync(string? token, object payload, string context)
-        => (await PushCoreAsync(token, payload, context)).Ok;
-
     /// <summary>ตัวยิง push จริงตัวเดียว — คืนผล + <b>เหตุ</b> (รอบ 212 C: ผู้เรียกที่ต้องประทับเหตุบนแถว เช่น สรุปประจำวัน) · log ปิดบัง userId ·
     /// รอบ 254 WP-11 (NOTIFY §5 ข้อ 8 · LINE_OA §7 ข้อ 3): <b>ทุก push</b> ส่ง <c>X-Line-Retry-Key</c> — ผู้เรียกที่มีเหตุการณ์ (คิว LINE) ส่ง key คงที่ต่อ
     /// (เหตุการณ์ + ผู้รับ) ⇒ ลองใหม่หลัง timeout ไม่เกิดสองข้อความ (LINE ตอบ 409 = รับไปแล้ว) · ผู้เรียกอื่นได้ UUID ใหม่ต่อการเรียก (ข้อความเดิมซ้ำโดยตั้งใจยังส่งได้) ·
@@ -360,11 +357,12 @@ public class LineNotifyService : ILineNotifyService
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.TenantMember, oa.Configured);
         if (!route.Allowed)
             return (false, "ยังไม่ได้ตั้งค่า Channel Access Token ของ LINE OA ของร้าน (ติ๊ก \"เปิดใช้งาน\" + ใส่ Token แล้วบันทึกก่อน) — " + route.Reason);
-        var ok = await PushRawAsync(oa.Token, TextPayload(toLineId.Trim(),
+        var r = await PushCoreAsync(oa.Token, TextPayload(toLineId.Trim(),
             $"✅ ทดสอบ LINE Messaging API สำเร็จ\nบริษัท: {companyId}\nเวลา: {NowIct()}"), "test");
-        return ok
+        // รอบ 259 (A-M6): ล้ม ⇒ เหตุจริงจาก LINE (ตัวจำแนกเดียวกับคิว LINE) — เดิม "ดู log" ที่ผู้ใช้เปิดไม่ได้
+        return r.Ok
             ? (true, "ส่งข้อความทดสอบสำเร็จ")
-            : (false, "ส่งไม่สำเร็จ ตรวจสอบ Token และ ID ปลายทาง (ดู log)");
+            : (false, LineOaHealth.TestFailureMessage(r.HttpStatus, r.Error, r.TransportError));
     }
 
     // ───────── เส้น OA กลาง — ระบุชัด ─────────

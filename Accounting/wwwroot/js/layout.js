@@ -1784,8 +1784,9 @@ const Layout = {
     // ตรงผ่าน URL /pages/design-system.html ได้สำหรับทีมพัฒนา).
     { id: 'sme-config', label: 'ตั้งค่าขั้นสูง (อนุมัติ·สต๊อก·กะ)', icon: '⚙️', href: '/pages/sme-config.html', feature: 'AdvancedReporting',
       description: 'Approval workflow · Schedule reports · ส่วนลดเงินสด · Stock transfer · Sample data — รวมไว้ที่เดียว' },
-    { id: 'email-schedule', label: 'ส่งอีเมลอัตโนมัติ', icon: '📧', href: '/pages/email-schedule.html',
-      description: 'ตั้งกฎส่งใบกำกับ/สลิป/ใบ 50ทวิ ตามวันที่กำหนด · เตือนใกล้/เกินกำหนดชำระ · ดูคิว' },
+    // รอบ 259 (E-M6): กฎส่งได้ทั้งอีเมลและ LINE (ติ๊กต่อกฎ) — ชื่อเมนูเดิม "ส่งอีเมลอัตโนมัติ" ทำให้ผู้ใช้ไม่รู้ว่า LINE ตั้งที่นี่
+    { id: 'email-schedule', label: 'ส่งเอกสารอัตโนมัติ (อีเมล/LINE)', icon: '📧', href: '/pages/email-schedule.html',
+      description: 'ตั้งกฎส่งเอกสารทางอีเมล/LINE ตามวันที่กำหนด · เตือนใกล้/เกินกำหนดชำระ · ดูคิวอีเมลและคิว LINE' },
     { id: 'notifications', label: 'การแจ้งเตือน (Notification Engine)', icon: '🔔', href: '/pages/notifications.html', _i18nKey: 'nav.notifications',
       description: 'Matrix ตั้งค่าแจ้งเตือนต่อ event/role · System · Email · LINE · per-user preferences' },
     { id: 'team', label: 'จัดการทีม', icon: '👥', href: '/pages/team.html', feature: 'MultiUser', _i18nKey: 'nav.team',

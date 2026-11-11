@@ -223,7 +223,10 @@ public class ContactLineBindingService : IContactLineBindingService
             CompanyId = companyId, ContactId = invite.ContactId, Kind = NotifyEndpointKind.LineUser,
             LineUserId = _secrets.Protect(uid), LineIdHash = idHash,
             OaScope = NotifyEndpointKind.ScopeCompany, OaDestination = dest,
-            TopicsJson = NotifyTopics.Parse(invite.TopicsJson) != null ? invite.TopicsJson : NotifyTopics.Serialize(NotifyTopics.DefaultsFor(NotifyEndpointKind.LineUser)),
+            // รอบ 259 (A-M4): คำเชิญที่ออกก่อนรอบนี้อาจเก็บ "ลิงก์เซ็น" ไว้ ⇒ ตัดเรื่องที่ LINE ไม่มีเส้นส่ง (ตัวเดียว NotifyTopics.SupportedFor)
+            TopicsJson = NotifyTopics.Parse(invite.TopicsJson) is { } invited
+                ? NotifyTopics.Serialize(NotifyTopics.SupportedFor(NotifyEndpointKind.LineUser, invited))
+                : NotifyTopics.Serialize(NotifyTopics.DefaultsFor(NotifyEndpointKind.LineUser)),
             Label = label, ShowAmounts = true, Verified = true, Source = ContactLineBindRule.SourceLineInvite,
             ConsentRecordId = invite.ConsentRecordId, BoundByUserId = invite.CreatedByUserId, LinkedAt = now, CreatedBy = "line-webhook",
         };

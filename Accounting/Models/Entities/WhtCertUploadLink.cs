@@ -24,6 +24,9 @@ public class WhtCertUploadLink : TenantEntity
     /// <summary>ฝ่ายค้าน WP-10 M3: แถวคิวอีเมลทวงที่ลิงก์นี้เป็นของ (หนึ่งลิงก์ต่อหนึ่งฉบับ · UNIQUE) — token อนุพันธ์จากความลับของเซิร์ฟเวอร์ + id คิว
     /// (<c>WhtCertUploadLinkPolicy.TokenForQueue</c>) ⇒ ส่งซ้ำ/ลองใหม่ได้ URL เดิม ไม่ต้องเขียนฐานกลางทางส่ง · null = ออกจากปุ่ม/อีเมลใบเสร็จ</summary>
     public Guid? EmailQueueId { get; set; }
+    /// <summary>รอบ 259 (คำตัดสิน 258-3-6): แถวคิว LINE ของการ์ดทวงที่ลิงก์นี้เป็นของ (หนึ่งลิงก์ต่อหนึ่งการ์ด · UNIQUE) — token =
+    /// <c>WhtCertUploadLinkPolicy.TokenForLineQueue</c> (คนละป้ายกับอีเมล) · null = ไม่ใช่ของการ์ด LINE</summary>
+    public Guid? LineQueueId { get; set; }
 }
 
 /// <summary>
@@ -41,6 +44,8 @@ public class WhtCertReminderLog : TenantEntity
     public string Outcome { get; set; } = "Queued";
     public string? Reason { get; set; }
     public Guid? EmailQueueId { get; set; }
+    /// <summary>รอบ 259 (258-3-6): จำนวนการ์ด LINE ที่เข้าคิวในขั้นนี้ (ปลายทาง LINE ที่รับเรื่อง 50 ทวิ) · 0 = ไม่ได้ส่งทาง LINE</summary>
+    public int LineQueuedCount { get; set; }
     /// <summary>แถวเครดิตที่อยู่ในอีเมลฉบับนี้ (JSON array ของ id) — ตรวจซ้ำตอนส่ง</summary>
     public string? CreditIdsJson { get; set; }
     public decimal MissingAmount { get; set; }

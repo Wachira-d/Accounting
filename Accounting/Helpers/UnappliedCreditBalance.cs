@@ -13,9 +13,11 @@ public static class UnappliedCreditBalance
     public const decimal Tolerance = DocumentSettlementState.Tolerance;
 
     /// <summary>ยอดคงเหลือ (ปัด 2 ตำแหน่ง AwayFromZero · ไม่ติดลบ)</summary>
-    public static decimal Compute(decimal paymentAmount, decimal liveAllocatedSum)
+    /// <param name="liveMovementSum">รอบ 259 P4: Σ ขาออกที่ยังมีผลซึ่ง "ตัดยอด" (คืนเงิน · ย้ายเป็นมัดจำ · ตัดเศษ — ตัวตัดสินเดียว
+    /// <see cref="CustomerCreditMovementRules.ReducesBalance"/>) · การจองให้ใบร่าง (ToInvoice) ไม่ใช่เงินออก ไม่อยู่ในสูตรนี้</param>
+    public static decimal Compute(decimal paymentAmount, decimal liveAllocatedSum, decimal liveMovementSum = 0m)
     {
-        var raw = Math.Round(paymentAmount - liveAllocatedSum, 2, MidpointRounding.AwayFromZero);
+        var raw = Math.Round(paymentAmount - liveAllocatedSum - liveMovementSum, 2, MidpointRounding.AwayFromZero);
         return raw <= Tolerance ? 0m : raw;
     }
 

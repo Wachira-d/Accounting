@@ -14,13 +14,18 @@
         <h2 class="page-title">เงินรอจัดสรร</h2>
         <p class="page-subtitle">เงินที่รับจากลูกค้าแล้วแต่ยังไม่ผูกกับใบแจ้งหนี้ (เช่น ลูกค้าโอนก้อนเดียวปิดสองยอด แต่ออกใบไว้ใบเดียว) — ออกใบแล้วกด “จัดสรรให้ใบ”</p>
       </div>
-      <button class="btn btn-secondary" onclick="Page.load(true)">โหลดใหม่</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="Page.exportFile()">⬇️ ส่งออก Excel</button>
+        <button class="btn btn-secondary" onclick="Page.load(true)">โหลดใหม่</button>
+      </div>
     </div>
 
     <div class="card" style="margin-bottom:12px">
       <div class="card-body" style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">
         <div><div class="text-xs text-gray-500">เงินรอจัดสรรคงเหลือรวม</div><div class="font-bold" style="font-size:22px" id="ccTotal">-</div></div>
         <div><div class="text-xs text-gray-500">ยอดผัง 21630 ในบัญชีแยกประเภท</div><div class="font-semibold" id="ccGl">-</div></div>
+        <div><div class="text-xs text-gray-500">เพดานตัดเศษต่อรายการ</div><div class="font-semibold"><span id="ccCap">-</span>
+          <button class="btn btn-sm btn-ghost" onclick="Page.editCap()" title="เศษคงเหลือไม่เกินค่านี้ตัดเข้าผลต่างจากการปัดเศษได้ (สูงสุด 20 บาท)">แก้</button></div></div>
         <div id="ccContactFilter" class="text-sm" style="display:none"></div>
         <label class="text-sm" style="margin-left:auto;display:flex;gap:6px;align-items:center">
           <input type="checkbox" id="ccIncludeResolved" onchange="Page.load()"> แสดงรายการที่จัดสรรครบแล้ว
@@ -30,6 +35,7 @@
     </div>
 
     <div class="card" id="ccReceiptPending" style="display:none;margin-bottom:12px"></div>
+    <div class="card" id="ccLegacyReceipts" style="display:none;margin-bottom:12px"></div>
 
     <div class="table-container">
       <table class="table">
@@ -70,6 +76,51 @@
     </div>
   </div>
 
+  <!-- รอบ 259 P4: ขาออกของเงินรอจัดสรร (ช่องที่แสดงขึ้นกับชนิด · ด่านจริงอยู่ที่เซิร์ฟเวอร์) -->
+  <div class="modal-overlay" id="ccMoveModal">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <h3 class="modal-title" id="ccMoveTitle">-</h3>
+        <button class="modal-close" onclick="Layout.closeModal('ccMoveModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="ccMoveInfo" class="text-sm" style="margin-bottom:10px"></div>
+        <div class="form-group" id="ccMoveAmountRow">
+          <label class="form-label" for="ccMoveAmount">ยอด (บาท)</label>
+          <input type="number" step="0.01" min="0" class="form-input" id="ccMoveAmount">
+        </div>
+        <div class="form-group" id="ccMoveTypeRow" style="display:none">
+          <label class="form-label" for="ccMoveDocType">ชนิดเอกสาร</label>
+          <select class="form-select" id="ccMoveDocType">
+            <option value="Invoice">ใบแจ้งหนี้</option>
+            <option value="TaxInvoice">ใบกำกับภาษี/ใบแจ้งหนี้</option>
+          </select>
+        </div>
+        <div class="form-group" id="ccMoveDateRow" style="display:none">
+          <label class="form-label" for="ccMoveDate">วันที่จ่ายคืน</label>
+          <input type="date" class="form-input" id="ccMoveDate">
+        </div>
+        <div class="form-group" id="ccMoveBankRow" style="display:none">
+          <label class="form-label" for="ccMoveBank">บัญชีธนาคารที่จ่ายคืน</label>
+          <select class="form-select" id="ccMoveBank"></select>
+        </div>
+        <div class="form-group" id="ccMoveEvidenceRow" style="display:none">
+          <label class="form-label" for="ccMoveEvidence">หลักฐานการจ่าย (เลขอ้างอิงการโอน/เลขเช็ค)</label>
+          <input type="text" class="form-input" id="ccMoveEvidence" maxlength="120">
+        </div>
+        <div class="form-group" id="ccMoveNoteRow">
+          <label class="form-label" for="ccMoveNote">หมายเหตุ / เหตุผล</label>
+          <input type="text" class="form-input" id="ccMoveNote" maxlength="300">
+        </div>
+        <div class="text-xs text-gray-500" id="ccMoveHint"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('ccMoveModal')">ปิด</button>
+        <button class="btn btn-primary" id="ccMoveSubmit" onclick="Page.submitMove()">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/api.js"></script>
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
@@ -83,6 +134,9 @@
       _allocUnapplied: null,
       _busy: false,
       receiptPending: [],
+      legacyReceipts: [],
+      writeOffCap: 1,
+      _move: null,
       _targets: [],
       async init() {
         if (!Layout.init('customer-credits')) return;
@@ -103,6 +157,10 @@
           this.rows = d.items || [];
           this.receiptPending = d.receiptPending || [];
           this.renderReceiptPending();
+          this.legacyReceipts = d.legacyMissingReceipts || [];
+          this.renderLegacyReceipts();
+          this.writeOffCap = Number(d.writeOffCap ?? 1);
+          document.getElementById('ccCap').textContent = Layout.money(this.writeOffCap);
           document.getElementById('ccTotal').textContent = Layout.money(d.totalUnapplied || 0);
           document.getElementById('ccGl').textContent = this.contactId ? 'ดูได้เมื่อไม่กรองลูกค้า'
             : (d.glBalance === null || d.glBalance === undefined ? 'ยังไม่มีผังนี้' : Layout.money(d.glBalance));
@@ -131,13 +189,28 @@
               <td>${a.isLate ? 'จัดสรรทีหลัง ' + (a.appliedAt ? Layout.date(a.appliedAt) : '') : 'จัดสรรพร้อมรับเงิน'}</td>
               <td class="text-right">${Layout.money(a.allocatedAmount)}</td>
               <td>${a.canUndo ? `<button class="btn btn-sm btn-secondary" onclick="Page.undo(${i}, ${j})">ยกเลิกการจัดสรร</button>` : ''}</td>
+            </tr>`).join('') + (r.movements || []).map((m, j) => `<tr>
+              <td style="padding-left:34px">${Layout.esc(m.kindLabel)}${m.targetDocumentId ? ` · <a href="/pages/documents.html?openDoc=${encodeURIComponent(m.targetDocumentId)}" style="color:var(--primary)">${Layout.esc(m.targetDocumentNumber || 'เปิดเอกสาร')}</a>` : ''}${m.evidence ? `<div class="text-xs text-gray-500">หลักฐาน ${Layout.esc(m.evidence)}</div>` : ''}</td>
+              <td>${Layout.date(m.movedAt)}${m.isLive ? '' : `<div class="text-xs text-gray-500">${Layout.esc(m.releaseNote || 'ไม่มีผลแล้ว')}</div>`}</td>
+              <td class="text-right">${Layout.money(m.amount)}</td>
+              <td>${m.canUndo ? `<button class="btn btn-sm btn-secondary" onclick="Page.undoMove(${i}, ${j})">ยกเลิกรายการ</button>` : ''}</td>
             </tr>`).join('');
+          // รอบ 259 P4: ปุ่มที่กดได้มาจากเซิร์ฟเวอร์ (r.actions) — หน้าไม่มีสำเนาเงื่อนไข
+          const ac = r.actions || {};
+          const actBtns = r.needsReview || !(r.unappliedAmount > 0) ? '' : [
+            ac.canIssueInvoice ? `<button class="btn btn-sm btn-secondary" onclick="Page.openMove(${i}, 'invoice')" title="สร้างใบแจ้งหนี้ร่างของลูกค้ารายนี้ — อนุมัติแล้วระบบจัดสรรเงินก้อนนี้ให้เอง">ออกใบแจ้งหนี้ส่วนที่ขาด</button>` : '',
+            ac.canToDeposit ? `<button class="btn btn-sm btn-secondary" onclick="Page.openMove(${i}, 'deposit')" title="ออกใบมัดจำ (ระบบมัดจำเดิม) จากเงินก้อนนี้">ย้ายเป็นเงินมัดจำ</button>` : '',
+            ac.canRefund ? `<button class="btn btn-sm btn-secondary" onclick="Page.openMove(${i}, 'refund')">คืนเงินลูกค้า</button>` : '',
+            ac.canWriteOff ? `<button class="btn btn-sm btn-secondary" onclick="Page.openMove(${i}, 'writeoff')">ตัดเศษ</button>`
+              : (ac.writeOffBlockedReason ? `<span class="text-xs text-gray-400" title="${Layout.esc(ac.writeOffBlockedReason)}">ตัดเศษไม่ได้</span>` : ''),
+          ].join(' ');
+
           return `<tr>
             <td class="font-medium">${Layout.esc(r.contactName || '(ไม่ทราบลูกค้า)')}</td>
             <td>${Layout.date(r.paymentDate)}</td>
             <td>${Layout.esc(r.paymentNumber)}${r.reference ? `<div class="text-xs text-gray-500">อ้างอิง ${Layout.esc(r.reference)}</div>` : ''}</td>
             <td class="text-right">${Layout.money(r.amount)}</td>
-            <td class="text-right font-bold">${Layout.money(r.unappliedAmount)}</td>
+            <td class="text-right font-bold">${Layout.money(r.unappliedAmount)}${r.available < r.unappliedAmount ? `<div class="text-xs text-gray-500" title="ส่วนต่างจองไว้ให้ใบแจ้งหนี้ร่างที่ออกจากเงินก้อนนี้">ใช้ได้ ${Layout.money(r.available)}</div>` : ''}</td>
             <td>${Layout.esc(r.reasonLabel || '')}${r.note ? `<div class="text-xs text-gray-500">${Layout.esc(r.note)}</div>` : ''}</td>
             <td class="text-right">${Number(r.ageDays || 0)}</td>
             <td>
@@ -146,7 +219,8 @@
                    <button class="btn btn-sm btn-primary" onclick="Page.confirmLegacy(${i})">ยืนยันว่ายังค้างจริง</button>
                    <button class="btn btn-sm btn-secondary" onclick="Page.closeLegacy(${i})">ปิดรายการ</button>`
                 : (r.unappliedAmount > 0 ? `<button class="btn btn-sm btn-primary" onclick="Page.openAllocate(${i})">จัดสรรให้ใบ</button>` : '<span class="text-gray-400">จัดสรรครบแล้ว</span>')}
-              ${allocs ? `<button class="btn btn-sm btn-secondary" onclick="Page.toggle(${i})">ใบที่ผูกแล้ว (${(r.allocations || []).length})</button>` : ''}
+              ${actBtns}
+              ${allocs ? `<button class="btn btn-sm btn-secondary" onclick="Page.toggle(${i})">ใบที่ผูก/รายการ (${(r.allocations || []).length + (r.movements || []).length})</button>` : ''}
             </td>
           </tr>
           <tr id="ccAllocs_${i}" style="display:none;background:var(--gray-50)"><td colspan="8" style="padding:0">
@@ -276,6 +350,163 @@
         } catch (e) { Layout.toast(e.message || 'ออกใบเสร็จไม่สำเร็จ', 'error', 10000); }
         finally { this._busy = false; }
       },
+      // รอบ 259 P6: ใบที่ปิดยอดด้วยการรับหลายใบ/เงินเกินก่อนรอบ 258 และยังไม่มีใบเสร็จ (รายการจากเซิร์ฟเวอร์ · ออกทีละใบผ่านเส้นเดิม)
+      renderLegacyReceipts() {
+        const host = document.getElementById('ccLegacyReceipts');
+        if (!host) return;
+        const rows = this.legacyReceipts || [];
+        host.style.display = rows.length ? 'block' : 'none';
+        if (!rows.length) { host.innerHTML = ''; return; }
+        host.innerHTML = `<div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+            <h3 class="card-title">ใบที่ปิดยอดด้วยการรับหลายใบ/เงินเกินก่อนรอบ 258 และยังไม่มีใบเสร็จ (${rows.length})</h3>
+            <button class="btn btn-sm btn-primary" id="ccLegacyBulkBtn" onclick="Page.issueLegacyAll()">🧾 ออกใบเสร็จทั้งหมด</button>
+          </div>
+          <div class="text-xs text-gray-500" style="padding:0 16px 8px">ก่อนรอบ 258 ระบบยังไม่ออกใบเสร็จรายใบให้การรับเงินที่ปิดหลายใบ — ตรวจแล้วกดออกทีละใบหรือทั้งหมด (ระบบออกทีละใบตามนโยบายใบเสร็จของบริษัท · ใบที่ออกไม่ได้บอกเหตุผลในตาราง)</div>
+          <div class="table-container" style="border:none"><table class="table" style="font-size:13px">
+            <thead><tr><th>เลขที่ใบ</th><th>ลูกค้า</th><th>การรับชำระ</th><th class="text-right">ยอดที่จัดสรร</th><th>ผล</th><th></th></tr></thead>
+            <tbody>${rows.map((x, k) => `<tr>
+              <td><a href="/pages/documents.html?openDoc=${encodeURIComponent(x.documentId)}" style="color:var(--primary)">${Layout.esc(x.documentNumber)}</a></td>
+              <td>${Layout.esc(x.contactName || '')}</td>
+              <td>${Layout.esc(x.paymentNumber)}</td>
+              <td class="text-right">${Layout.money(x.amount)}</td>
+              <td class="text-xs" id="ccLegacyRes_${Number(k)}"></td>
+              <td><button class="btn btn-sm btn-secondary" onclick="Page.issueLegacy(${Number(k)})">🧾 ออกใบเสร็จ</button></td>
+            </tr>`).join('')}</tbody></table></div>`;
+      },
+      async issueLegacy(k, quiet) {
+        const row = (this.legacyReceipts || [])[k]; if (!row) return false;
+        const api = Layout.api(); if (!api) return false;
+        const cell = document.getElementById('ccLegacyRes_' + k);
+        try {
+          const res = await api.issueReceiptForPayment(row.paymentId, row.documentId);
+          if (cell) cell.innerHTML = `<span class="text-success">${Layout.esc(res?.message || 'ออกแล้ว')}</span>`;
+          if (!quiet) Layout.toast(res?.message || 'ออกใบเสร็จแล้ว', 'success', 8000);
+          return true;
+        } catch (e) {
+          if (cell) cell.innerHTML = `<span class="text-danger">${Layout.esc(e.message || 'ออกไม่สำเร็จ')}</span>`;
+          if (!quiet) Layout.toast(e.message || 'ออกใบเสร็จไม่สำเร็จ', 'error', 10000);
+          return false;
+        }
+      },
+      // ออกทีละใบ (คำขอละใบ — เซิร์ฟเวอร์ตัดสินรายใบ) · ไม่โหลดใหม่ระหว่างทางเพื่อให้เห็นผลของทุกแถว
+      async issueLegacyAll() {
+        if (this._busy) return;
+        const rows = this.legacyReceipts || []; if (!rows.length) return;
+        const ok = await Layout.confirm({ title: 'ออกใบเสร็จทั้งหมด', message: `ออกใบเสร็จรับเงิน/ใบกำกับภาษีของ ${rows.length} ใบตามนโยบายใบเสร็จของบริษัท?`, okText: 'ออกใบเสร็จ' });
+        if (!ok) return;
+        this._busy = true;
+        const btn = document.getElementById('ccLegacyBulkBtn'); if (btn) btn.disabled = true;
+        let done = 0;
+        try {
+          for (let k = 0; k < rows.length; k++) if (await this.issueLegacy(k, true)) done++;
+          Layout.toast(`ออกใบเสร็จสำเร็จ ${done} จาก ${rows.length} ใบ — ใบที่ไม่สำเร็จมีเหตุผลในตาราง`, done === rows.length ? 'success' : 'warning', 10000);
+        } finally { this._busy = false; if (btn) btn.disabled = false; }
+      },
+      async exportFile() {
+        const api = Layout.api(); if (!api) return;
+        try { await api.exportCustomerCredits('xlsx'); }
+        catch (e) { Layout.toast(e.message || 'ส่งออกไม่สำเร็จ', 'error', 8000); }
+      },
+      async editCap() {
+        const api = Layout.api(); if (!api) return;
+        const v = await Layout.promptText({ title: 'เพดานตัดเศษเงินรอจัดสรร', message: 'เศษคงเหลือของรายการที่ไม่เกินค่านี้ กด “ตัดเศษ” ลงผลต่างจากการปัดเศษได้ (0.00–20.00 บาท)',
+          label: 'บาท', value: String(this.writeOffCap ?? 1), required: true, okText: 'บันทึก' });
+        if (v === null) return;
+        try {
+          const res = await api.updateCustomerCreditSettings({ writeOffCap: Number(v) });
+          Layout.toast(res?.message || 'บันทึกแล้ว', 'success');
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error', 8000); }
+      },
+      _newKey() {
+        if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+        return Array.from(window.crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+      },
+      // รอบ 259 P4 — เปิดหน้าต่างขาออก · คีย์กันกดซ้ำ 1 คีย์ต่อการเปิด · ด่าน/ยอดที่ใช้ได้ตัดสินที่เซิร์ฟเวอร์
+      async openMove(i, kind) {
+        const r = this.rows[i]; if (!r) return;
+        this._move = { i, kind, paymentId: r.paymentId, unapplied: r.unappliedAmount, key: this._newKey() };
+        const titles = { invoice: 'ออกใบแจ้งหนี้ส่วนที่ขาด', deposit: 'ย้ายเป็นเงินมัดจำ', refund: 'คืนเงินลูกค้า', writeoff: 'ตัดเศษคงเหลือ' };
+        const hints = {
+          invoice: 'สร้างใบแจ้งหนี้ “ร่าง” ของลูกค้ารายนี้ (วันที่วันนี้) แล้วจองเงินก้อนนี้ไว้ — แก้รายการให้ตรงงานจริงแล้วอนุมัติ ระบบจัดสรรให้เองตอนอนุมัติ',
+          deposit: 'ออกใบมัดจำตามโหมด VAT ของระบบมัดจำ ลงวันที่วันนี้ — ขาเงินเข้าตัดจากเงินรับจากลูกค้ารอจัดสรร (ไม่ใช่เงินเข้าธนาคารซ้ำ)',
+          refund: 'ลงบัญชี: เดบิต เงินรับจากลูกค้ารอจัดสรร / เครดิต ธนาคาร · ยอดธนาคารลดตาม · ต้องมีหลักฐานการจ่าย',
+          writeoff: 'ตัดยอดคงเหลือทั้งหมดเข้าผลต่างจากการปัดเศษ — ใช้ได้เฉพาะเศษไม่เกินเพดานของบริษัท · ต้องระบุเหตุผลในช่องหมายเหตุ',
+        };
+        document.getElementById('ccMoveTitle').textContent = titles[kind] || '';
+        document.getElementById('ccMoveHint').textContent = hints[kind] || '';
+        document.getElementById('ccMoveInfo').innerHTML =
+          `${Layout.esc(r.contactName || '')} · การรับชำระ <b>${Layout.esc(r.paymentNumber)}</b> วันที่ ${Layout.date(r.paymentDate)} · ใช้ได้ <b>${Layout.money(r.available ?? r.unappliedAmount)}</b>`;
+        const amt = document.getElementById('ccMoveAmount');
+        amt.value = Number(r.available ?? r.unappliedAmount ?? 0).toFixed(2);
+        amt.disabled = kind === 'writeoff';
+        const show = (id, on) => { document.getElementById(id).style.display = on ? '' : 'none'; };
+        show('ccMoveTypeRow', kind === 'invoice');
+        show('ccMoveDateRow', kind === 'refund');
+        show('ccMoveBankRow', kind === 'refund');
+        show('ccMoveEvidenceRow', kind === 'refund');
+        show('ccMoveNoteRow', kind !== 'invoice');
+        document.getElementById('ccMoveNote').value = '';
+        document.getElementById('ccMoveEvidence').value = '';
+        document.getElementById('ccMoveDate').value = Layout.dateInput(new Date());
+        if (kind === 'refund') {
+          const sel = document.getElementById('ccMoveBank');
+          sel.innerHTML = '<option value="">กำลังโหลด…</option>';
+          try {
+            const banks = (await Layout.api().getBankAccounts({ activeOnly: true }))?.data || [];
+            sel.innerHTML = '<option value="">— เลือกบัญชี —</option>' + banks.map(b =>
+              `<option value="${Layout.esc(b.id)}">${Layout.esc(b.accountName || '')} (${Layout.esc(b.bankName || '')} ${Layout.esc(b.accountNumber || '')})</option>`).join('');
+          } catch (e) { sel.innerHTML = '<option value="">โหลดบัญชีธนาคารไม่สำเร็จ</option>'; }
+        }
+        Layout.openModal('ccMoveModal');
+      },
+      async submitMove() {
+        const m = this._move; if (!m || this._busy) return;
+        const api = Layout.api(); if (!api) return;
+        const amount = parseFloat(document.getElementById('ccMoveAmount').value || '');
+        const note = document.getElementById('ccMoveNote').value || null;
+        const base = { idempotencyKey: m.key, expectedUnappliedBefore: m.unapplied };
+        const btn = document.getElementById('ccMoveSubmit');
+        this._busy = true; btn.disabled = true;
+        try {
+          let res;
+          if (m.kind === 'refund') res = await api.refundCustomerCredit(m.paymentId, Object.assign(base, {
+            amount, note, date: document.getElementById('ccMoveDate').value || null,
+            bankAccountId: document.getElementById('ccMoveBank').value || '00000000-0000-0000-0000-000000000000',
+            evidence: document.getElementById('ccMoveEvidence').value || '' }));
+          else if (m.kind === 'writeoff') res = await api.writeOffCustomerCredit(m.paymentId, Object.assign(base, { amount, note }));
+          else if (m.kind === 'deposit') res = await api.customerCreditToDeposit(m.paymentId, Object.assign(base, { amount, note }));
+          else res = await api.customerCreditIssueInvoice(m.paymentId, Object.assign(base, {
+            amount, documentType: document.getElementById('ccMoveDocType').value }));
+          const notices = res?.data?.notices || [];
+          Layout.toast(res?.message || 'บันทึกแล้ว', notices.length ? 'warning' : 'success', notices.length ? 15000 : 6000);
+          Layout.closeModal('ccMoveModal');
+          this._move = null;
+          const target = res?.data?.targetDocumentId;
+          if (m.kind === 'invoice' && target) {
+            window.location.assign('/pages/documents.html?openDoc=' + encodeURIComponent(target));
+            return;
+          }
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error', 12000); }
+        finally { this._busy = false; btn.disabled = false; }
+      },
+      async undoMove(i, j) {
+        const r = this.rows[i]; if (!r || this._busy) return;
+        const mv = (r.movements || [])[j]; if (!mv) return;
+        const api = Layout.api(); if (!api) return;
+        const ok = await Layout.confirm({ title: 'ยกเลิกรายการ', message: `ยกเลิก “${mv.kindLabel}” ${Layout.money(mv.amount)} บาท? ระบบกลับรายการบัญชี (ถ้ามี) และคืนยอดเข้าเงินรอจัดสรร`,
+          okText: 'ยกเลิกรายการ', danger: true });
+        if (!ok) return;
+        this._busy = true;
+        try {
+          const res = await api.undoCustomerCreditMovement(r.paymentId, mv.id);
+          Layout.toast(res?.message || 'ยกเลิกแล้ว', 'success', 6000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error', 10000); }
+        finally { this._busy = false; }
+      },
+
       async undo(i, j) {
         const r = this.rows[i]; if (!r) return;
         const allocationId = (r.allocations || [])[j]?.id; if (!allocationId) return;

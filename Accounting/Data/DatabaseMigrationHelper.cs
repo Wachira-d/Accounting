@@ -274,6 +274,7 @@ public static class DatabaseMigrationHelper
         // ฝ่ายค้านรอบ 258 M4 — หลัง backfill: แถวที่ backfill รุ่นแรกประทับไปแล้ว (ผังพักไม่ใช่ 21630) ติดธง "ต้องตรวจ" ครั้งเดียวใต้ marker
         list.Add(Accounting.Helpers.CustomerCreditMigration.LegacyReviewSql());
         list.AddRange(Accounting.Helpers.Round259AutopilotMigration.Statements());   // รอบ 259 ชุด D — กุญแจกันซ้ำรอบรายการประจำ · คิวนำส่ง e-Tax ต่อกรมสรรพากร
+        list.AddRange(Accounting.Helpers.Round259LineMigration.Statements());   // รอบ 259 แพ็ก B — LINE: webhook ล่าสุด · การ์ดทวง 50 ทวิ · ส่งเองจากหน้าเอกสาร · ตัดเรื่องที่ LINE ไม่ส่ง
         return list;
     }
 

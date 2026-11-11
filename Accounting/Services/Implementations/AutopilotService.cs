@@ -203,6 +203,9 @@ public class AutopilotService : IAutopilotService
         // รอบ 258-3 (F-M2 · F-M3): ช่วงที่เส้นบิลอัตโนมัติขาดแล้วเดิมไม่มีใครเห็นนอกหน้าย่อย
         list.AddRange(await BillingChainIssuesAsync(companyId, window, nowUtc, ct));
 
+        // รอบ 259 P6: ใบที่ต้องออกใบเสร็จ ([RECEIPT-PENDING]) · เงินรอจัดสรรค้างเกิน 30 วัน — ตัวอ่านเดียวกับหน้า "เงินรอจัดสรร"
+        list.AddRange(await CustomerCreditWorkQueue.AutopilotIssuesAsync(_db, companyId, nowUtc, ct));
+
         return list.OrderByDescending(i => i.At).ToList();
     }
 
@@ -232,10 +235,14 @@ public class AutopilotService : IAutopilotService
         var lineFailed = await _db.LineQueues.AsNoTracking()
             .Where(q => q.CompanyId == companyId && !q.IsDeleted && q.CreatedAt >= window && q.Status == ContactLineChannel.StatusFailed)
             .OrderByDescending(q => q.CreatedAt).Take(50)
-            .Select(q => new { q.EntityId, q.ErrorMessage, q.CreatedAt, q.EndpointKind,
+            .Select(q => new { q.EntityId, q.EntityType, q.ErrorMessage, q.CreatedAt, q.EndpointKind,
                 Number = _db.Documents.Where(d => d.Id == q.EntityId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefault() })
             .ToListAsync(ct);
-        list.AddRange(lineFailed.Select(q => new AutopilotIssueDto("LineFailed",
+        // รอบ 259 (258-3-6): แถวการ์ดทวง 50 ทวิ (EntityId = ผู้ติดต่อ — ไม่ใช่เอกสาร) ⇒ ป้ายของตัวเอง ไม่มีปุ่ม "เปิดเอกสาร"
+        list.AddRange(lineFailed.Select(q => q.EntityType == LineWhtCertCard.QueueEntityType
+            ? new AutopilotIssueDto("LineFailed", $"ทวง 50 ทวิ: ส่งทาง {NotifyEndpointKind.Label(q.EndpointKind)} ไม่สำเร็จ",
+                q.ErrorMessage ?? "LINE ไม่รับข้อความ", q.CreatedAt, null, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html", null, null, null)
+            : new AutopilotIssueDto("LineFailed",
             $"{q.Number ?? "เอกสาร"}: ส่งทาง {NotifyEndpointKind.Label(q.EndpointKind)} ไม่สำเร็จ",
             q.ErrorMessage ?? "LINE ไม่รับข้อความ", q.CreatedAt, q.EntityId, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html", null, "เปิดเอกสาร", DocHref(q.EntityId))));
 

@@ -128,10 +128,25 @@ public static class NotifyTopics
     /// <summary>ค่าตั้งต้นต่อชนิด (DESIGN §4.1): อีเมล = ทุกเรื่อง · ผู้ใช้ LINE = เอกสาร/ทวงชำระ/ใบเสร็จ/ลิงก์เซ็น · กลุ่ม LINE = เอกสาร/ทวงชำระ</summary>
     public static IReadOnlyList<NotifyTopic> DefaultsFor(string? kind) => kind switch
     {
-        NotifyEndpointKind.LineUser => new[] { NotifyTopic.Document, NotifyTopic.Dunning, NotifyTopic.Receipt, NotifyTopic.Sign },
+        // รอบ 259 (A-M4): ลิงก์เซ็นไม่มีเส้นส่งทาง LINE ⇒ ไม่อยู่ในค่าตั้งต้น (ติ๊กไม่ได้ — LineUnsupportedReason) · 50 ทวิ ส่งทาง LINE ได้แล้ว แต่ผู้ใช้เลือกเอง
+        NotifyEndpointKind.LineUser => new[] { NotifyTopic.Document, NotifyTopic.Dunning, NotifyTopic.Receipt },
         NotifyEndpointKind.LineGroup => new[] { NotifyTopic.Document, NotifyTopic.Dunning },
         _ => All,
     };
+
+    /// <summary>รอบ 259 (A-M4 · ห้าม silent no-op): เรื่องที่ติ๊กบนปลายทาง LINE ได้แต่ระบบไม่มีเส้นส่งทาง LINE ⇒ เหตุ (null = LINE ส่งเรื่องนี้ได้) ·
+    /// ตัวเดียวของหน้าเว็บ (ช่องติ๊กล็อกพร้อมเหตุ) · ด่านบันทึก (<see cref="FromRequest"/> ส่งชนิดปลายทาง) · คำตอบบอทในกลุ่ม · เส้นส่ง LINE ที่มีจริง:
+    /// เอกสาร/ทวงชำระ (ตารางส่ง · ส่งเองจากหน้าเอกสาร) · ใบเสร็จ (งานหลังรับชำระ) · 50 ทวิ (ทวงอัตโนมัติ)</summary>
+    public static string? LineUnsupportedReason(NotifyTopic t) => t switch
+    {
+        NotifyTopic.Sign => "ลิงก์เซ็นยังส่งทาง LINE ไม่ได้ (ส่งทางอีเมลเท่านั้น)",
+        NotifyTopic.Other => "ยังไม่มีเรื่องอื่นที่ส่งทาง LINE",
+        _ => null,
+    };
+
+    /// <summary>เรื่องที่ปลายทางชนิดนี้รับได้จริง — LINE ตัดเรื่องที่ไม่มีเส้นส่ง · อีเมลรับทุกเรื่อง (ผู้เรียก: คำเชิญผูก LINE ที่เก็บเรื่องไว้ก่อนรอบ 259 · ข้อความบอท)</summary>
+    public static IReadOnlyList<NotifyTopic> SupportedFor(string? kind, IEnumerable<NotifyTopic> topics)
+        => NotifyEndpointKind.IsLine(kind) ? topics.Where(t => LineUnsupportedReason(t) == null).ToList() : topics.ToList();
 
     /// <summary>JSON array ของชื่อ (เรียงตามค่า enum · ไม่ซ้ำ)</summary>
     public static string Serialize(IEnumerable<NotifyTopic> topics)
@@ -168,7 +183,8 @@ public static class NotifyTopics
     };
 
     /// <summary>รับชื่อเรื่องจากคำขอ — ชื่อที่ไม่รู้จัก/ตัวเลข ⇒ ปฏิเสธ (ไม่ตัดทิ้งเงียบ) · <paramref name="allowEmpty"/> = อีเมลหลักปิดทุกเรื่องได้</summary>
-    public static (IReadOnlyList<NotifyTopic>? Topics, string? Problem) FromRequest(IEnumerable<string>? names, bool allowEmpty)
+    /// <param name="kind">รอบ 259 (A-M4): ชนิดปลายทาง — LINE + เรื่องที่ไม่มีเส้นส่ง ⇒ ปฏิเสธพร้อมเหตุ (ไม่เก็บเรื่องที่ไม่มีวันส่ง) · null = ไม่ตรวจ (อีเมล)</param>
+    public static (IReadOnlyList<NotifyTopic>? Topics, string? Problem) FromRequest(IEnumerable<string>? names, bool allowEmpty, string? kind = null)
     {
         var list = new List<NotifyTopic>();
         foreach (var raw in names ?? Array.Empty<string>())
@@ -176,6 +192,8 @@ public static class NotifyTopics
             var n = (raw ?? "").Trim();
             if (int.TryParse(n, out _) || !Enum.TryParse<NotifyTopic>(n, ignoreCase: true, out var t) || !Enum.IsDefined(t))
                 return (null, $"ไม่รู้จักเรื่อง \"{n}\" — เลือกจาก: {string.Join(" · ", All.Select(Label))}");
+            if (NotifyEndpointKind.IsLine(kind) && LineUnsupportedReason(t) is string why)
+                return (null, $"เรื่อง \"{Label(t)}\" เลือกให้ปลายทาง LINE ไม่ได้ — {why}");
             if (!list.Contains(t)) list.Add(t);
         }
         if (list.Count == 0 && !allowEmpty) return (null, "เลือกเรื่องที่รับอย่างน้อย 1 เรื่อง (ไม่ต้องการรับแล้ว ให้กดยกเลิกปลายทางนี้)");

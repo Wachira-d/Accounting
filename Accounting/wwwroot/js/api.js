@@ -852,6 +852,16 @@ const API = {
       allocateCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/allocate`, d),
       undoCustomerCreditAllocation: (paymentId, allocationId) =>
         API.post(`${base}/customer-credits/${paymentId}/allocations/${allocationId}/undo`),
+      // รอบ 259 P4/P5/P6 — ขาออกของเงินรอจัดสรร (คืนเงิน · ตัดเศษ · ย้ายเป็นมัดจำ · ออกใบส่วนที่ขาด) · ข้อเสนอบรรทัดธนาคาร · ส่งออก
+      refundCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/refund`, d),
+      writeOffCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/write-off`, d),
+      customerCreditToDeposit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/to-deposit`, d),
+      customerCreditIssueInvoice: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/issue-invoice`, d),
+      undoCustomerCreditMovement: (paymentId, movementId) =>
+        API.post(`${base}/customer-credits/${paymentId}/movements/${movementId}/undo`),
+      updateCustomerCreditSettings: (d) => API.put(`${base}/customer-credits/settings`, d),
+      getBankLineCreditSuggestions: (lineId) => API.get(`${base}/customer-credits/bank-line/${lineId}/suggestions`),
+      exportCustomerCredits: (format) => API.download(`${base}/customer-credits/export?format=${encodeURIComponent(format || 'xlsx')}`, 'เงินรอจัดสรร.xlsx'),
       // Products
       getProducts: (q = '') => API.get(`${base}/product${q}`),
       // ส่งออกรายการเอกสาร (ทีม X2 · 2026-10-14 · Controllers/TradeListExportController) — q = ตัวกรองชุดเดียวกับ list + format · ใช้ API.download ตรง
