@@ -194,6 +194,24 @@ public static class OcrPostingReadiness
     /// <summary>หมายเหตุสแกนที่ตัดข้อ <c>[Σ-GAP]</c> "ยอดเอกสารเกินยอดรวมที่กระดาษยืนยัน" (ตัวเลขของบรรทัด<b>ตอนสร้าง</b>) ออก เมื่อผู้เรียก<b>ตรวจสดแล้ว</b>
     /// ว่าบรรทัดตอนนี้ไม่เกิน (<paramref name="overstatedNow"/> = false) — ฝ่ายค้าน 6e56d33d P2-4: ผู้ใช้แก้บรรทัดให้ตรงกระดาษแล้ว หมายเหตุเก่ายังหยุด
     /// การอนุมัติเอง/LINE ตลอดไป · null (ตรวจสดไม่ได้) / true (ยังเกิน) ⇒ คงหมายเหตุเดิม (ปลอดภัย: หยุดต่อ) · [Σ-GAP] ข้ออื่นคงทุกตัวอักษร</summary>
+    /// <summary>รอบ 258 (C-H2): "ใบนี้อนุมัติรวดโดยไม่มีคนเปิดดูได้ไหม" — ตัวตัดสินฝั่งเซิร์ฟเวอร์ของช่องติ๊กอนุมัติรวดบนหน้าสแกน (ธง <c>canAutoApprove</c> ใน DTO) ·
+    /// เดิมกติกานี้เป็นสำเนาใน JS (<c>document-scan.html _isBatchApprovable</c>) และเส้น <c>create-document?approve=true</c> ใช้ด่านอ่อนกว่า LINE
+    /// (ไม่อ่านผลตรวจตามสรรพากร/เกรดคุณภาพ — บั๊กคลาส E-03)
+    /// <para>= ด่านเต็มของ LINE (<see cref="Evaluate(string?, bool, IEnumerable{string}?, string?)"/>: หมายเหตุที่หยุด · วันที่ · ข้อผิดพลาดตามสรรพากร · เกรด D)
+    /// + เงื่อนไขของ "ไม่มีคนเปิดดู": สแกนเสร็จ · ยังไม่ได้สร้างเอกสาร · ไม่ใช่ใบซ้ำ · ไม่มีลายมือ · ไม่มีรายการที่อาจเป็นสินทรัพย์ · มีผู้ขายและยอดรวม</para></summary>
+    public static Verdict EvaluateUnseen(string? scanStatus, bool hasCreatedDocument, bool isDuplicate, bool hasHandwriting, bool hasPotentialFixedAsset,
+        bool hasVendorName, bool hasTotalAmount, string? processingNotes, bool hasUsableDate, IEnumerable<string>? issueSeverities, string? qualityLetter)
+    {
+        if (!string.Equals(scanStatus, OcrQuotaRefundRule.CompletedStatus, StringComparison.Ordinal))
+            return new Verdict(false, "สแกนยังไม่เสร็จ/ไม่สำเร็จ");
+        if (hasCreatedDocument) return new Verdict(false, "สร้างเอกสารจากสแกนนี้แล้ว");
+        if (isDuplicate) return new Verdict(false, "อาจเป็นใบซ้ำ — เปิดตรวจก่อนสร้าง");
+        if (hasHandwriting) return new Verdict(false, "มีลายมือบนกระดาษ — เปิดตรวจตัวเลขก่อนอนุมัติ");
+        if (hasPotentialFixedAsset) return new Verdict(false, "มีรายการที่อาจเป็นสินทรัพย์ — เปิดตรวจว่าจะขึ้นทะเบียนสินทรัพย์หรือไม่");
+        if (!hasVendorName || !hasTotalAmount) return new Verdict(false, "ข้อมูลยังไม่ครบพอจะลงบัญชี (ผู้ขาย/ยอดรวม)");
+        return Evaluate(processingNotes, hasUsableDate, issueSeverities, qualityLetter);
+    }
+
     private static string? WithLiveOverstatement(string? processingNotes, bool? overstatedNow)
     {
         if (overstatedNow != false || string.IsNullOrEmpty(processingNotes)) return processingNotes;

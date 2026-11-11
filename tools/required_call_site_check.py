@@ -18067,6 +18067,27 @@ REVIEWER_CASES += [
     # push โดยไม่ถามว่าผู้ส่งผูกแล้วหรือยัง ⇒ ต้องฟ้อง
     ("R258p9", "ReplyAsync", "if (!LineUnboundSender.PushFallbackAllowed(replied, bound))", "if (false)", True),
 ]
+_R258P_OCRC = "Controllers/OcrController.cs"
+RULES += [
+    dict(file=_R258P_OCRC, method="CreateDocument",
+         must=["_service.GetResultAsync(companyId, scanId)", "scanBefore?.ComplianceIssues?.Select(", "scanBefore?.Quality?.Letter"],
+         before=[("_service.GetResultAsync(companyId, scanId)", "_service.CreateDocumentFromScanAsync(")],
+         why=_R258P_WHY + "C-H2 สร้าง+อนุมัติจากเว็บ/คีย์ใช้ด่านเต็มตัวเดียวกับ LINE (ผลตรวจตามสรรพากร + เกรดคุณภาพ) — ไม่ประเมิน = ไม่อนุมัติเอง"),
+    dict(file="Services/Implementations/OcrService.cs", method="WithAutoApproveVerdict", must=["OcrPostingReadiness.EvaluateUnseen("],
+         why=_R258P_WHY + "C-H2 ธง canAutoApprove ตัดสินที่เซิร์ฟเวอร์ (หน้าเว็บไม่ถือกติกาเอง)"),
+    dict(file=_R258P_OCRC, method="OcrQuotaExhaustedAsync", must=["_quota.GetQuotaStatusAsync("],
+         why=_R258P_WHY + "C-M4 คำตอบโควต้าหมดตัวเดียวของ /upload และ /scan/{id}"),
+    dict(file="Controllers/V1/OcrV1Controller.cs", method="Scan", must=["OcrQuotaRefundRule.NotBilledReason("],
+         before=[("OcrQuotaRefundRule.NotBilledReason(", "MeterAsync(")],
+         why=_R258P_WHY + "C-H3 API v1 ไม่คิดเงินสแกนที่ล้ม/ผลเดิม/e-Tax XML (กติกาเดียวกับเว็บ/LINE) — ตัดสินก่อนคิดเงิน"),
+]
+REVIEWER_CASES += [
+    # คำตอบโควต้าหมดไม่อ่านสถานะโควตา (ข้อความไม่มีตัวเลขใช้ไป/เพดาน) ⇒ ต้องฟ้อง
+    ("R258p10", "OcrQuotaExhaustedAsync", "var status = await _quota.GetQuotaStatusAsync(companyId);", "object? status = null;", True),
+    # API v1 กลับไปคิดเงินทุกกรณี (ไม่ถามกติกาคืนโควตา) ⇒ ต้องฟ้อง
+    ("R258p11", "Scan", "var notBilled = Accounting.Helpers.OcrQuotaRefundRule.NotBilledReason(result.ScanStatus, result.OcrEngine);",
+     "string? notBilled = null;", True),
+]
 # ═══ จบ รอบ 258 แพ็ก สิทธิ์+คิวส่ง ═══
 
 

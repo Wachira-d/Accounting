@@ -193,23 +193,7 @@ public class OcrController : ControllerBase
         // Atomic check-and-decrement — prevents two parallel uploads from both
         // passing the availability check and over-consuming quota.
         if (!await _quota.TryConsumeAsync(companyId))
-        {
-            var status = await _quota.GetQuotaStatusAsync(companyId);
-            // รอบ 231: บอกเหตุที่ส่วนเกินไม่ช่วย (ไม่ได้เปิด/ไม่มีราคา/ถึงเพดาน/ถูกล็อก) — ทางไปต่อทางที่สาม (F2 ข้อ 8) · ไม่มีบริการ = ไม่พูดถึง
-            var overageHint = "";
-            if (HttpContext.RequestServices.GetService(typeof(Accounting.Services.Implementations.IOverageService)) is Accounting.Services.Implementations.IOverageService ovSvc)
-            {
-                var ovd = await ovSvc.DecideAsync(companyId, Accounting.Models.Constants.OverageResources.OcrPages, 1);
-                if (!string.IsNullOrWhiteSpace(ovd.Reason)) overageHint = " · " + ovd.Reason;
-            }
-            // รอบ 229 (QUOTA_ADDON แพ็ก 0(ง)/5 · D-12): ข้อความชี้ทางที่มีจริง — ซื้อหน้า OCR เพิ่มผ่านโควตาเสริม (จ่ายผ่านระบบ + ใบกำกับ) ·
-            // เดิม "กรุณาซื้อเครดิตเพิ่ม" แต่ไม่มีหน้าซื้อ (ทางตัน) · ruleCode ให้หน้าเว็บเปิดหน้าต่างซื้อ
-            return StatusCode(429, new ApiResponse<object>(false,
-                new { ruleCode = Accounting.Models.Constants.QuotaResources.FullRuleCode(Accounting.Models.Constants.QuotaResources.OcrPagesMonth),
-                      buyUrl = Accounting.Models.Constants.QuotaResources.BuyUrl(Accounting.Models.Constants.QuotaResources.OcrPagesMonth) },
-                $"โควต้า OCR หมด — ใช้ไป {status.UsedThisMonth}/{status.MaxPagesPerMonth} หน้าในเดือนนี้ · ซื้อหน้า OCR เพิ่มได้ที่หน้า \"แพ็กเกจและการชำระเงิน\" "
-                + "(ถ้ายังไม่เปิดขาย กรุณาติดต่อผู้ดูแลระบบ) หรือรอรอบเดือนถัดไป" + overageHint));
-        }
+            return await OcrQuotaExhaustedAsync(companyId);
 
         var uploadsDir = Path.Combine(_storage.Locator.RelativeBase, "wwwroot", "uploads", "ocr");
         var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
@@ -283,11 +267,47 @@ public class OcrController : ControllerBase
         // forward partner metadata (amount override / payment source / project)
         // — เหมือน path /upload เพื่อให้ flow 2 ขั้น (upload→scan) เชื่อค่าที่
         // ระบบภายนอกส่งมาได้เหมือนกัน
-        return Ok(new ApiResponse<OcrResultResponse>(true,
-            await _service.ScanAsync(companyId, fileAttachmentId,
+        // รอบ 258 (C-M4): เส้นนี้ใช้เครื่องอ่านจริงเหมือน /upload ⇒ หักโควตาด้วยกติกาเดียวกัน (เดิมสแกนซ้ำได้ไม่จำกัดโดยไม่เสียโควตา) ·
+        // ล้ม/ไม่ได้ใช้เครื่องอ่าน (e-Tax XML · คัดลอกผลเดิม) = คืน — ตัวตัดสินเดียว Helpers/OcrQuotaRefundRule
+        if (!await _quota.TryConsumeAsync(companyId))
+            return await OcrQuotaExhaustedAsync(companyId);
+        OcrResultResponse scanned;
+        try
+        {
+            scanned = await _service.ScanAsync(companyId, fileAttachmentId,
                 preferredEngine: body?.Engine, externalMetadataJson: body?.Metadata,
-                autoCreate: effective)));
+                autoCreate: effective);
+        }
+        catch
+        {
+            await _quota.RefundAsync(companyId);
+            throw;
+        }
+        if (Accounting.Helpers.OcrQuotaRefundRule.ShouldRefund(scanned.ScanStatus, scanned.OcrEngine))
+            await _quota.RefundAsync(companyId);
+        return Ok(new ApiResponse<OcrResultResponse>(true, scanned));
     }
+
+    /// <summary>รอบ 258 (C-M4): คำตอบ 429 "โควต้า OCR หมด" ตัวเดียวของ <c>/upload</c> และ <c>/scan/{fileAttachmentId}</c> (ข้อความ + ทางไปต่อ + เหตุที่ส่วนเกินไม่ช่วย)</summary>
+    private async Task<ObjectResult> OcrQuotaExhaustedAsync(Guid companyId)
+    {
+        var status = await _quota.GetQuotaStatusAsync(companyId);
+        // รอบ 231: บอกเหตุที่ส่วนเกินไม่ช่วย (ไม่ได้เปิด/ไม่มีราคา/ถึงเพดาน/ถูกล็อก) — ทางไปต่อทางที่สาม (F2 ข้อ 8) · ไม่มีบริการ = ไม่พูดถึง
+        var overageHint = "";
+        if (HttpContext.RequestServices.GetService(typeof(Accounting.Services.Implementations.IOverageService)) is Accounting.Services.Implementations.IOverageService ovSvc)
+        {
+            var ovd = await ovSvc.DecideAsync(companyId, Accounting.Models.Constants.OverageResources.OcrPages, 1);
+            if (!string.IsNullOrWhiteSpace(ovd.Reason)) overageHint = " · " + ovd.Reason;
+        }
+        // รอบ 229 (QUOTA_ADDON แพ็ก 0(ง)/5 · D-12): ข้อความชี้ทางที่มีจริง — ซื้อหน้า OCR เพิ่มผ่านโควตาเสริม (จ่ายผ่านระบบ + ใบกำกับ) ·
+        // เดิม "กรุณาซื้อเครดิตเพิ่ม" แต่ไม่มีหน้าซื้อ (ทางตัน) · ruleCode ให้หน้าเว็บเปิดหน้าต่างซื้อ
+        return StatusCode(429, new ApiResponse<object>(false,
+            new { ruleCode = Accounting.Models.Constants.QuotaResources.FullRuleCode(Accounting.Models.Constants.QuotaResources.OcrPagesMonth),
+                  buyUrl = Accounting.Models.Constants.QuotaResources.BuyUrl(Accounting.Models.Constants.QuotaResources.OcrPagesMonth) },
+            $"โควต้า OCR หมด — ใช้ไป {status.UsedThisMonth}/{status.MaxPagesPerMonth} หน้าในเดือนนี้ · ซื้อหน้า OCR เพิ่มได้ที่หน้า \"แพ็กเกจและการชำระเงิน\" "
+            + "(ถ้ายังไม่เปิดขาย กรุณาติดต่อผู้ดูแลระบบ) หรือรอรอบเดือนถัดไป" + overageHint));
+    }
+
 
     private async Task<ObjectResult?> DenyScanSourceAsync(Guid companyId, Guid fileAttachmentId)
     {
@@ -415,6 +435,10 @@ public class OcrController : ControllerBase
                 + (DocumentPermissionHelper.IsRevenue(tType) ? "ฝั่งขาย" : "ฝั่งซื้อ") + "จากเจ้าของบริษัท"));
         }
 
+        // รอบ 258 (C-H2): ผลตรวจตามสรรพากร + เกรดคุณภาพของสแกน (ก่อนสร้าง) — ด่านอนุมัติด้านล่างต้องอ่านเหมือนเส้น LINE
+        // (เดิมเส้นนี้ไม่อ่านเลย ⇒ ใบ "ผู้ซื้อไม่ใช่บริษัทนี้"/เกรด D ถูกอนุมัติรวดผ่านเว็บ/คีย์ได้ — บั๊กคลาส E-03)
+        var scanBefore = approve ? await _service.GetResultAsync(companyId, scanId) : null;
+
         var result = await _service.CreateDocumentFromScanAsync(
             companyId, scanId, userId, targetType, allowDuplicate);
 
@@ -442,7 +466,10 @@ public class OcrController : ControllerBase
             var readiness = Helpers.OcrPostingReadiness.Evaluate(
                 Helpers.OcrLineQuantityGuard.LiveNotes(result.ProcessingNotes, createdLines,
                     createdDoc?.PricesIncludeVat ?? false, checkedLive: createdDoc != null && createdLines.Count > 0),
-                result.ExtractedDate != null);
+                result.ExtractedDate != null,
+                // รอบ 258 (C-H2): ด่านเต็มตัวเดียวกับ LINE — ไม่ได้ประเมิน (null) = ไม่อนุมัติเอง (ไม่ใช่ "ไม่มีปัญหา")
+                scanBefore?.ComplianceIssues?.Select(i => i.Severity),
+                scanBefore?.Quality?.Letter);
             var skipReason = readiness.CanAutoApprove ? null : readiness.Reason;
             // T1-06: ด่านสิทธิ์อนุมัติ — ตัวเดียวกับ DocumentController/ลายเซ็น/LINE/มือถือ
             var createdType = (Models.Enums.DocumentType?)createdDoc?.DocumentType;

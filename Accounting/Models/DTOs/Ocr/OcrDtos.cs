@@ -166,7 +166,12 @@ public record OcrResultResponse(
     /// (<c>Helpers/OcrVatCodeMeaning.ReviewNote</c>) · null = ไม่มีรหัสที่ต้องตัดสิน</summary>
     string? VatCodeMeaningNote = null,
     /// <summary>มีรหัสที่ความหมายมาจากค่าตั้งต้น (ความมั่นใจต่ำ) — หน้าเว็บไฮไลต์เหลือง (กฎเหล็ก #3 ข้อ 3)</summary>
-    bool VatCodeLowConfidence = false);
+    bool VatCodeLowConfidence = false,
+    /// <summary>รอบ 258 (C-H2): ใบนี้อนุมัติรวดโดยไม่มีคนเปิดดูได้ไหม — เซิร์ฟเวอร์ตัดสิน (<c>Helpers/OcrPostingReadiness.EvaluateUnseen</c>) ·
+    /// หน้าเว็บแสดงช่องติ๊กอนุมัติรวดตามธงนี้ (เลิกถือกติกาใน JS) · null = เส้นทางที่ยังไม่ได้ประเมิน (ไม่ใช่ "ได้")</summary>
+    bool? CanAutoApprove = null,
+    /// <summary>เหตุที่อนุมัติรวดไม่ได้ (คู่กับ <c>CanAutoApprove</c> = false)</summary>
+    string? AutoApproveBlockedReason = null);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);

@@ -6921,4 +6921,10 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิ�
 
 _รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 4 (webhook OA กลาง · team-A M2/M3 · คำตัดสิน 258-2-7): event 1:1 กันซ้ำด้วย webhookEventId (ตารางเดิมในฐาน) + try ต่อ event · ตอบด้วย reply token ก่อน
 ถอยไป push เฉพาะผู้ส่งที่ผูกแล้ว · คนที่ยังไม่ผูกจำกัด 3/นาที · 20/วัน (`LineUnboundSender`) · required_call_site_check R258p +6 ข้อ + 2 เคสกลายพันธุ์_
-_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 4: webhook OA กลาง 1:1 — กันซ้ำ · reply token · จำกัดคนที่ยังไม่ผูก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 4: webhook OA กลาง 1:1 — กันซ้ำ · reply token · จำกัดคนที่ยังไม่ผูก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b5724a3c)_
+
+_รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 5 (OCR · team-C H2/H3/M3/M4 · คำตัดสิน 258-2-8): create-document?approve=true ใช้ด่านเต็มตัวเดียวกับ LINE (ผลตรวจตามสรรพากร + เกรดคุณภาพ) ·
+ธง `canAutoApprove`/`autoApproveBlockedReason` จากเซิร์ฟเวอร์แทนกติกา `_isBatchApprovable` ใน JS (`OcrPostingReadiness.EvaluateUnseen`) · scan/{fileAttachmentId} หักโควตา/คืนตามกติกาเดียวกับ /upload ·
+API v1 ไม่คิดเงินสแกนที่ล้ม/ผลเดิม/e-Tax XML (`OcrQuotaRefundRule.NotBilledReason`) + ตอบ scanStatus · ai-tools.html แท็บ OCR: Layout.esc + สถานะตามจริง + เลิกสร้างเอกสารข้ามหน้าตรวจ ·
+required_call_site_check R258p +4 ข้อ + 1 เคสกลายพันธุ์_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 5: สแกนเอกสาร — ด่านอนุมัติรวดฝั่งเซิร์ฟเวอร์ · โควตา/ค่าบริการ · แท็บ OCR ของ ai-tools — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

@@ -24,4 +24,16 @@ public static class OcrQuotaRefundRule
         if (string.Equals(ocrEngine, OcrDuplicateReusePolicy.CachedEngine, StringComparison.Ordinal)) return true;
         return false;
     }
+
+    /// <summary>รอบ 258 (C-H3): เหตุที่ "ไม่คิดค่าบริการ/ไม่เสียโควตา" ของสแกนนี้ (ข้อความถึงผู้เรียก API) · null = ใช้เครื่องอ่านจริงและสำเร็จ ⇒ คิดตามปกติ ·
+    /// ตัดสินด้วย <see cref="ShouldRefund"/> ตัวเดียว (เส้นเว็บ · LINE · API v1 ใช้กติกาเดียวกัน)</summary>
+    public static string? NotBilledReason(string? scanStatus, string? ocrEngine)
+    {
+        if (!ShouldRefund(scanStatus, ocrEngine)) return null;
+        if (!string.Equals(scanStatus, CompletedStatus, StringComparison.Ordinal))
+            return "สแกนไม่สำเร็จ — ไม่มีการคิดค่าบริการ";
+        return string.Equals(ocrEngine, OcrDuplicateReusePolicy.EtaxXmlEngine, StringComparison.Ordinal)
+            ? "อ่านจากไฟล์ e-Tax XML (ไม่ได้ใช้เครื่องอ่าน) — ไม่มีการคิดค่าบริการ"
+            : "ไฟล์นี้เคยสแกนแล้ว (ใช้ผลเดิม) — ไม่มีการคิดค่าบริการ";
+    }
 }
