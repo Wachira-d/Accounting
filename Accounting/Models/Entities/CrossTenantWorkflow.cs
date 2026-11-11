@@ -142,3 +142,30 @@ public class WorkflowAutomationConfig : BaseEntity
     /// <summary>ระบบประทับตอนเปิด <see cref="SendWhtCertsToPartners"/> — ส่งเฉพาะใบที่ออกหลังจากนี้ (ไม่ส่งย้อนหลัง) · ปิดแล้วเปิดใหม่ = ประทับใหม่</summary>
     public DateTime? SendWhtCertsToPartnersSince { get; set; }
 }
+
+/// <summary>
+/// รอบ 258-3 (F-H3 · คำตัดสิน 258-3-7) — <b>การแจ้งในบริษัทผู้ซื้อ</b>: ผู้ขายคู่ค้า (NextAcc) รับเงินของใบแจ้งหนี้ผ่านลิงก์ชำระ/สลิปแล้ว ⇒ ผู้ซื้อกด
+/// "บันทึกจ่ายตามที่ผู้ขายรับแล้ว" ครั้งเดียวที่ใบซื้อของตัวเอง · <see cref="TenantEntity.CompanyId"/> = <b>บริษัทผู้ซื้อ</b> (ผู้รับการแจ้ง · ผู้กระทำ) ·
+/// ระบบไม่บันทึกการจ่ายแทน — ยอด/ภาษีหักตาม <c>Helpers/PartnerPaymentNoticeRule</c> ของผู้ซื้อ · หนึ่งแถวต่อรายการชำระของผู้ขาย (unique)
+/// </summary>
+public class PartnerPaymentNotice : TenantEntity
+{
+    public Guid TradingPartnershipId { get; set; }
+    public Guid LinkId { get; set; }
+    public Guid SourceCompanyId { get; set; }
+    public Guid SourceDocumentId { get; set; }
+    public string SourceDocumentNumber { get; set; } = "";
+    /// <summary>ใบซื้อของผู้ซื้อ (จาก <c>CrossTenantDocumentLink.TargetDocumentId</c>)</summary>
+    public Guid TargetDocumentId { get; set; }
+    public Guid PaymentIntentId { get; set; }
+    /// <summary>เงินที่ผู้ขายรับจริง (หลังผู้ซื้อหัก ณ ที่จ่าย)</summary>
+    public decimal CashAmount { get; set; }
+    /// <summary>ภาษีหักที่ผู้ขายบันทึกไว้ฝั่งตัวเอง (แสดงเทียบ — ไม่ใช้คำนวณแทนกติกาของผู้ซื้อ)</summary>
+    public decimal SellerRecordedWht { get; set; }
+    public DateTime PaidAt { get; set; }
+    public string Status { get; set; } = "Open";
+    public Guid? RecordedPaymentId { get; set; }
+    public DateTime? ResolvedAt { get; set; }
+    public string? ResolvedBy { get; set; }
+    public string? Note { get; set; }
+}

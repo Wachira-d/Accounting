@@ -40,11 +40,15 @@ public class ContactLineQueueService : IContactLineQueueService
 
     public ContactLineQueueService(AccountingDbContext db, ILineNotifyService line, IContactRecipientResolver recipients, ISecretProtector secrets,
         IEmailScheduleService emailSchedule, ILogger<ContactLineQueueService> logger, IDocumentPayLinkService? payLinks = null,
-        IServiceScopeFactory? scopes = null)
+        IServiceScopeFactory? scopes = null, IConfiguration? config = null)
     {
         _db = db; _line = line; _recipients = recipients; _secrets = secrets; _emailSchedule = emailSchedule; _logger = logger; _payLinks = payLinks;
         _scopes = scopes;
+        _config = config;
     }
+
+    /// <summary>รอบ 258-3 (F-H1 · A-L8): ความลับของเซิร์ฟเวอร์ (กุญแจลิงก์ดู PDF — <see cref="LineDocumentViewLink"/>) + URL ของระบบ · null = การ์ดไม่มีปุ่มดู PDF</summary>
+    private readonly IConfiguration? _config;
 
     /// <summary>รอบ 257 ชุด 4 (C LOW): OA ของบริษัทใช้ข้อความฟรีของเดือนหมด (LINE ตอบ 429 monthly limit) ⇒ กระดิ่งถึงเจ้าของ<b>ที่ยังใช้งานอยู่</b>
     /// (ตัวตัดสินสมาชิกเดียว <see cref="CompanyMembership.ActiveMemberIdsAsync"/>) <b>ครั้งเดียวต่อเดือน (ปฏิทินไทย)</b> · OA กลางของ NextAcc ไม่แจ้งบริษัท ·
@@ -169,7 +173,8 @@ public class ContactLineQueueService : IContactLineQueueService
     /// <summary>ส่งแถวเดียว — คืน true เมื่อ LINE รับแล้ว · ทุกทางที่ไม่ส่งประทับสถานะ + เหตุบนแถว</summary>
     private async Task<bool> SendOneAsync(LineQueue item, CancellationToken ct)
     {
-        if (item.EntityType != "Document" || item.EndpointId is not Guid endpointId)
+        // รอบ 258-3: trigger ที่ผู้ส่งรู้จัก = กฎตารางส่ง + ใบเสร็จหลังรับชำระ (ContactLineChannel.SenderSupports ตัวเดียว)
+        if (item.EntityType != "Document" || item.EndpointId is not Guid endpointId || !ContactLineChannel.SenderSupports(item.Trigger))
         {
             Finish(item, ContactLineChannel.StatusFailed, "แถวคิว LINE ชนิดนี้ส่งไม่ได้ (รองรับเฉพาะการ์ดเอกสารที่มีปลายทาง)", null);
             return false;
@@ -278,7 +283,26 @@ public class ContactLineQueueService : IContactLineQueueService
         var payUrl = outstanding ? await PayUrlAsync(item, doc, ct) : null;
         return LineDocumentCard.Build(new LineDocumentCard.Input(companyName, viaNextAcc, heading.Language, heading.Title, doc.DocumentNumber,
             showAmounts ? (outstanding ? doc.BalanceDue : doc.TotalAmount) : null, doc.Currency, outstanding ? doc.DueDate : null,
-            contactName, payUrl, isGroup, outstanding));
+            contactName, payUrl, isGroup, outstanding,
+            ViewUrl: await ViewUrlAsync(item, ct),
+            PaymentReceived: item.Trigger == ContactLineChannel.ReceiptTrigger));
+    }
+
+    /// <summary>รอบ 258-3 (F-H1 · A-L8): ลิงก์ดู/ดาวน์โหลด PDF ของแถวนี้ — token คำนวณซ้ำได้ (ลองใหม่ = URL เดิม) · ไม่มีความลับ/URL ของระบบ ⇒ ไม่มีปุ่ม (ไม่ใช่ลิงก์เสีย)
+    /// · ล้มตรงนี้ไม่กันการส่งการ์ด (LogError)</summary>
+    private async Task<string?> ViewUrlAsync(LineQueue item, CancellationToken ct)
+    {
+        if (_config == null || string.IsNullOrWhiteSpace(_config["Jwt:Secret"])) return null;
+        try
+        {
+            var token = LineDocumentViewLink.Token(LineDocumentViewLink.DeriveKey(_config["Jwt:Secret"]), item.CompanyId, item.Id);
+            return LineDocumentViewLink.Url(await SystemBaseUrl.ResolveAsync(_db, _config, ct), item.CompanyId, item.Id, token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "สร้างลิงก์ดู PDF ของคิว LINE {Id} ไม่สำเร็จ — การ์ดส่งโดยไม่มีปุ่มดู PDF", item.Id);
+            return null;
+        }
     }
 
     /// <summary>ลิงก์ชำระ — ตัวตัดสินเดียวกับอีเมลตามตาราง (ค่าตั้งของกฎ › ผู้ติดต่อ › บริษัท) · กฎหาย ⇒ ลิงก์ที่มีอยู่แล้วเท่านั้น · ไม่มี ⇒ ไม่มีปุ่ม</summary>

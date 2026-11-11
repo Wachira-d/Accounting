@@ -6949,3 +6949,8 @@ R-M2 ย้อนเก็บไม่ซ้อนครั้งซ้ำขอ
 R-L4/R-L5 `ScheduleReadView` + `GET email-schedule/access` · R-L6 ถอนประทับเฉพาะก่อนเข้าตัวจัดการ · R-L9 · R-L10 · R-L7 มีงานล้างอยู่แล้ว (PdpaRetentionPurgeJob) ·
 R-L1/R-L8 จดเป็นความเสี่ยงคงค้าง · required_call_site_check +6 ข้อ + 3 เคสกลายพันธุ์_
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 9: แก้ผลฝ่ายค้าน R-H1 · R-M1…3 · R-L2…L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2be3e30c)_
+
+_รอบ 258 แพ็ก เส้นบิลอัตโนมัติจนจบ (team-F · คำตัดสิน 258-3-1…6): F-H1 ใบเสร็จหลังรับชำระทาง LINE (ขั้น LineReceipt · การ์ด "ได้รับชำระแล้ว" + ปุ่มดู PDF) ·
+ธงส่งของรายการประจำตามปลายทาง LINE · ลิงก์ดู PDF แบบ HMAC ต่อแถวคิว (`LineDocumentViewController`) · F-H2 ใบเสร็จ settlement → `RouteSentDocumentAsync` ทุกเส้น ·
+F-M2 ออกใบเสร็จตอนรับชำระล้ม = ป้าย+แจ้ง+LogError · F-M3 Autopilot +4 ชนิด · F-M4 แจ้ง 50 ทวิ เข้ากล่องรับรอคน · required_call_site_check +7 กติกา_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส้นบิลอัตโนมัติจนจบ — §2.12g-258c ชุด 1 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit เติมในคอมมิตตามหลัง)_

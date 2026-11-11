@@ -59,6 +59,19 @@
       </div>
     </div>
 
+    <!-- รอบ 258-3 (F-H3): ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ เรากดบันทึกจ่ายใบซื้อของเราเอง (ยอด/ภาษีหักจากเซิร์ฟเวอร์ตามกติกาของเรา) -->
+    <div class="pt-card" id="partner-paid">
+      <h3>💳 ผู้ขายแจ้งว่ารับเงินแล้ว</h3>
+      <p class="pt-muted">เมื่อเราจ่ายใบแจ้งหนี้ผ่านลิงก์ชำระของผู้ขายที่ใช้ NextAcc ระบบของผู้ขายแจ้งมาที่นี่ — ระบบ<b>ไม่บันทึกจ่ายแทน</b>: กด “บันทึกจ่ายตามที่ผู้ขายรับแล้ว”
+        เพื่อบันทึกจ่ายใบซื้อของเรา (ภาษีหัก ณ ที่จ่ายตามกติกาของเรา · 50 ทวิ ออกตามค่าตั้งของเรา) · ใบซื้อที่ยังเป็นร่างต้องอนุมัติก่อน</p>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>วันที่รับเงิน</th><th>ผู้ขาย / ใบของผู้ขาย</th><th>ใบซื้อของเรา</th><th class="text-right">ผู้ขายรับ</th><th class="text-right">จะบันทึก (จ่าย + ภาษีหัก)</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+          <tbody id="ptPaidBody"><tr><td colspan="7" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="pt-card">
       <h3>⚙️ ค่าตั้งของเรา</h3>
       <div class="pt-grid2">
@@ -89,11 +102,14 @@ const Page = {
   async load() {
     const api = Layout.api(); if (!api) return;
     try {
-      const [p, d, c] = await Promise.all([
+      const [p, d, c, n] = await Promise.all([
         api.getTradingPartners(),
         api.getPartnerPurchaseDrafts().catch(e => ({ data: null, _err: e })),
         api.getWorkflowAutomation().catch(e => ({ data: null, _err: e })),
+        api.getPartnerPaymentNotices().catch(e => ({ data: null, _err: e })),
       ]);
+      this.notices = n && n.data ? n.data : null;
+      this.noticesErr = n && n._err ? (n._err.message || 'ไม่ทราบสาเหตุ') : null;
       this.partners = (p && p.data) || [];
       this.drafts = d && d.data ? d.data : null;
       this.cfg = (c && c.data) || null;
@@ -142,6 +158,7 @@ const Page = {
       dBody.querySelectorAll('[data-ext]').forEach(b => b.addEventListener('click', () => this.confirmExternal(b.dataset.ext, b.dataset.kind)));
     }
 
+    this.renderNotices();
     const c = this.cfg || {};
     document.getElementById('ptDiscoverable').checked = !!c.partnerDiscoverable;
     document.getElementById('ptDrafts').checked = !!c.createPurchaseDraftsFromPartners;
@@ -149,6 +166,56 @@ const Page = {
     document.getElementById('ptSaveBtn').disabled = !this.cfg;   // โหลดค่าตั้งไม่ได้ ⇒ ห้ามบันทึกทับ (ไม่ silent no-op)
     const cfgErr = document.getElementById('ptCfgErr');
     if (cfgErr) { cfgErr.style.display = this.cfg ? 'none' : ''; cfgErr.textContent = this.cfg ? '' : 'โหลดค่าตั้งไม่สำเร็จ' + (this.cfgErr ? ': ' + this.cfgErr : '') + ' — ช่องด้านบนอาจไม่ใช่ค่าจริง ปุ่มบันทึกถูกปิดไว้ (รีเฟรชแล้วลองใหม่)'; }
+  },
+
+  // รอบ 258-3 (F-H3): ตารางการแจ้ง — ยอดที่จะบันทึก/เหตุที่บันทึกไม่ได้มาจากเซิร์ฟเวอร์ (PartnerPaymentNoticeRule)
+  renderNotices() {
+    const body = document.getElementById('ptPaidBody'); if (!body) return;
+    if (!this.notices) {
+      body.innerHTML = `<tr><td colspan="7" class="text-center">${Layout.esc('โหลดการแจ้งไม่สำเร็จ' + (this.noticesErr ? ': ' + this.noticesErr : ''))}</td></tr>`;
+      return;
+    }
+    if (this.notices.length === 0) { body.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่มีการแจ้ง</td></tr>'; return; }
+    body.innerHTML = this.notices.map(n => {
+      const open = n.status === 'Open';
+      const planned = n.plannedAmount != null ? `${Layout.money(n.plannedAmount)} + ${Layout.money(n.plannedWht || 0)}` : '-';
+      return `<tr><td>${Layout.esc(Layout.date ? Layout.date(n.paidAt) : String(n.paidAt || '').slice(0, 10))}</td>
+        <td>${Layout.esc(n.sellerName)}<div class="pt-muted">${Layout.esc(n.sourceDocumentNumber)}</div></td>
+        <td><a href="/pages/documents.html?id=${encodeURIComponent(n.targetDocumentId)}">${Layout.esc(n.targetDocumentNumber || 'เปิดใบซื้อ')}</a></td>
+        <td class="text-right">${Layout.esc(Layout.money(n.cashAmount))}<div class="pt-muted">ผู้ขายบันทึกภาษีหัก ${Layout.esc(Layout.money(n.sellerRecordedWht))}</div></td>
+        <td class="text-right">${Layout.esc(planned)}</td>
+        <td><span class="pt-badge">${Layout.esc(n.statusLabel || n.status)}</span>${n.note ? `<div class="pt-muted">${Layout.esc(n.note)}</div>` : ''}</td>
+        <td>${open && !n.problem ? `<button class="btn btn-primary btn-sm" data-paid="${Layout.esc(n.id)}">บันทึกจ่ายตามที่ผู้ขายรับแล้ว</button>` : ''}
+          ${open ? `<button class="btn btn-secondary btn-sm" data-dismiss="${Layout.esc(n.id)}">ปิดการแจ้ง</button>` : ''}
+          ${open && n.problem ? `<div class="pt-muted">${Layout.esc(n.problem)}</div>` : ''}</td></tr>`;
+    }).join('');
+    body.querySelectorAll('[data-paid]').forEach(b => b.addEventListener('click', () => this.recordNotice(b.dataset.paid)));
+    body.querySelectorAll('[data-dismiss]').forEach(b => b.addEventListener('click', () => this.dismissNotice(b.dataset.dismiss)));
+  },
+
+  async recordNotice(id) {
+    const api = Layout.api(); if (!api) return;
+    const n = (this.notices || []).find(x => x.id === id);
+    if (!n) return;
+    const ok = await Layout.confirm({ title: 'บันทึกจ่ายใบซื้อ', okText: 'บันทึกจ่าย',
+      message: `บันทึกจ่าย ${n.targetDocumentNumber || 'ใบซื้อ'}: จ่าย ${Layout.money(n.plannedAmount)} บาท + ภาษีหัก ณ ที่จ่าย ${Layout.money(n.plannedWht || 0)} บาท ลงวันที่ผู้ขายรับเงิน?` });
+    if (!ok) return;
+    try {
+      const r = await api.recordPartnerPaymentNotice(id);
+      Layout.toast((r && r.message) || 'บันทึกจ่ายแล้ว', 'success');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'บันทึกจ่ายไม่สำเร็จ', 'error'); }
+  },
+
+  async dismissNotice(id) {
+    const api = Layout.api(); if (!api) return;
+    const reason = await Layout.promptText({ title: 'ปิดการแจ้ง', label: 'เหตุผล (ไม่บังคับ) — เช่น บันทึกจ่ายเองแล้ว · ไม่ใช่การจ่ายของเรา' });
+    if (reason === null) return;
+    try {
+      await api.dismissPartnerPaymentNotice(id, reason);
+      Layout.toast('ปิดการแจ้งแล้ว', 'success');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
   },
 
   async invite() {

@@ -42,7 +42,7 @@ public static class AutopilotNotice
         new Event("E-07", "ได้รับหนังสือรับรอง 50 ทวิ (ส่วน B — WP-09)", AutopilotDelivery.Digest, null, false),
         new Event("E-09", "คู่ค้าปฏิเสธใบซื้อ / ส่งเข้าระบบคู่ค้าล้ม (ส่วน B — รอบ 252–253)", AutopilotDelivery.Immediate, null, false),
         new Event("E-10", "คู่ค้ายอมรับ/เพิกถอนการเชื่อม (ส่วน B)", AutopilotDelivery.Immediate, null, false),
-        new Event("E-11", "คู่ค้ายกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ามาแล้ว (รอบ 255)", AutopilotDelivery.Immediate, NotificationEvents.AutopilotPartnerExchange, true),
+        new Event("E-11", "คู่ค้ายกเลิก 50 ทวิ ที่ส่งเข้ามา · 50 ทวิ เข้ากล่องรับแล้วรอคนยืนยัน · คู่ค้าแจ้งว่าผู้ขายรับเงินผ่านลิงก์แล้ว (รอบ 255 · 258)", AutopilotDelivery.Immediate, NotificationEvents.AutopilotPartnerExchange, true),
         new Event("E-13", "จบกระบวนการ (ชำระครบ + ส่งใบเสร็จแล้ว)", AutopilotDelivery.Digest, null, true),
         new Event("E-14", "เงินโอนเข้าที่ระบบปิดหนี้ให้/รอยืนยัน", AutopilotDelivery.Digest, null, true),
         new Event("E-14b", "เงินโอนตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ", AutopilotDelivery.Immediate, NotificationEvents.AutopilotBankSettleFailed, true),

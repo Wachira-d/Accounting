@@ -1576,6 +1576,10 @@ const API = {
       getWorkflowAutomation: () => API.get(`${base}/workflow-automation`),
       updateWorkflowAutomation: (d) => API.put(`${base}/workflow-automation`, d),
       getPartnerPurchaseDrafts: () => API.get(`${base}/partner-purchase-drafts`),
+      // รอบ 258-3 F-H3: ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ ผู้ซื้อกดบันทึกจ่ายเอง
+      getPartnerPaymentNotices: () => API.get(`${base}/partner-payment-notices`),
+      recordPartnerPaymentNotice: (id) => API.post(`${base}/partner-payment-notices/${encodeURIComponent(id)}/record`, {}),
+      dismissPartnerPaymentNotice: (id, reason) => API.post(`${base}/partner-payment-notices/${encodeURIComponent(id)}/dismiss`, { reason: reason || null }),
       confirmPartnerOriginal: (id, kind) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-original`, { kind: kind || 'Paper' }),
       confirmPartnerExternalTaxInvoice: (id, d) => API.post(`${base}/partner-purchase-drafts/${encodeURIComponent(id)}/confirm-external-tax-invoice`, d),
       getContactPartnerStatus: (contactId) => API.get(`${base}/contacts/${encodeURIComponent(contactId)}/partner-status`),

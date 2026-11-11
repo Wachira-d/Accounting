@@ -24,8 +24,11 @@ public static class LineDocumentCard
     /// <param name="Amount">ยอดที่แสดง (null = ซ่อน — กลุ่มที่ปิดแสดงยอด)</param>
     /// <param name="PayUrl">ลิงก์ชำระ (https เท่านั้น · null = ไม่มีปุ่ม)</param>
     /// <param name="AmountIsOutstanding">true = ยอดค้างชำระ ("ยอดชำระ") · false = ยอดรวมของใบที่ไม่มียอดค้าง ("ยอดรวมทั้งสิ้น")</param>
+    /// <param name="ViewUrl">รอบ 258-3 (F-H1 · A-L8): ลิงก์ดู/ดาวน์โหลด PDF (<see cref="LineDocumentViewLink"/> · https เท่านั้น · null = ไม่มีปุ่ม)</param>
+    /// <param name="PaymentReceived">รอบ 258-3 (F-L2): การ์ดใบเสร็จหลังรับชำระ ⇒ บรรทัด "ได้รับชำระเงินแล้ว ขอบคุณ"</param>
     public sealed record Input(string CompanyName, bool ViaNextAcc, string Language, string Title, string DocNumber,
-        decimal? Amount, string? Currency, DateTime? DueDate, string? ContactName, string? PayUrl, bool IsGroup, bool AmountIsOutstanding = true);
+        decimal? Amount, string? Currency, DateTime? DueDate, string? ContactName, string? PayUrl, bool IsGroup, bool AmountIsOutstanding = true,
+        string? ViewUrl = null, bool PaymentReceived = false);
 
     public sealed record Card(string AltText, object Contents);
 
@@ -45,6 +48,7 @@ public static class LineDocumentCard
             new { type = "text", text = title, weight = "bold", size = "lg", wrap = true },
             new { type = "text", text = number, size = "sm", color = "#334155", wrap = true },
         };
+        if (i.PaymentReceived) body.Add(new { type = "text", text = l.LineCardPaymentReceived, size = "sm", color = "#15803d", weight = "bold", wrap = true });
         if (amount != null) body.Add(Row(i.AmountIsOutstanding ? l.LineCardAmountDue : l.TotalGrand, amount, bold: true));
         if (due != null) body.Add(Row(l.DueDate, due, bold: false));
         if (!string.IsNullOrWhiteSpace(i.ContactName)) body.Add(Row(l.LineCardTo, Clean(i.ContactName!, 120), bold: false));
@@ -52,6 +56,9 @@ public static class LineDocumentCard
         var footer = new List<object>();
         if (SafeUrl(i.PayUrl) is string pay)
             footer.Add(new { type = "button", style = "primary", height = "sm", action = new { type = "uri", label = Clean(l.LineCardPay, MaxButtonLabel), uri = pay } });
+        if (SafeUrl(i.ViewUrl) is string view)
+            footer.Add(new { type = "button", style = footer.Count == 0 ? "primary" : "secondary", height = "sm",
+                action = new { type = "uri", label = Clean(l.LineCardViewPdf, MaxButtonLabel), uri = view } });
         footer.Add(new { type = "text", text = i.IsGroup ? l.LineCardStopGroup : l.LineCardStopUser, size = "xxs", color = "#94a3b8", wrap = true });
 
         var contents = new
@@ -62,6 +69,7 @@ public static class LineDocumentCard
         };
         var alt = new StringBuilder();
         alt.Append(title).Append(' ').Append(number).Append(" — ").Append(brand);
+        if (i.PaymentReceived) alt.Append(" · ").Append(l.LineCardPaymentReceived);
         if (due != null) alt.Append(" · ").Append(l.DueDate).Append(' ').Append(due);
         if (amount != null) alt.Append(" · ").Append(amount);
         return new Card(LineMessageLimits.Truncate(alt.ToString(), MaxAltText), contents);

@@ -15212,6 +15212,7 @@ public partial class DocumentService : IDocumentService
             // ApproveDocumentAsync ⇒ เดิมไม่เคยได้ e-Tax อัตโนมัติ · hook ตัดสินขอบเขตเอง (ใบเสร็จเปล่า/ร่าง = ข้าม)
             // เรียกหลัง commit · ล้ม = ป้ายบนเอกสาร ไม่ย้อนการออกใบ
             await _issuedHooks.RunAsync(companyId, receipt);
+            await AfterSettlementReceiptIssuedAsync(companyId, receipt);   // รอบ 258-3 F-H2: ใบกำกับ ณ วันรับเงิน → ระบบคู่ค้า · ล้างป้าย F-M2
             return new IssuedReceiptResult(receipt.Id, receipt.DocumentNumber,
                 receipt.DocumentDate, receipt.Status == DocumentStatus.Draft, AlreadyExisted: false);
         }
@@ -15254,6 +15255,7 @@ public partial class DocumentService : IDocumentService
         // ใบเสร็จ settlement ที่ออกในรอบนี้ — ส่งให้ผลข้างเคียงหลังออกเอกสาร **หลัง commit** (C-3)
         // (reset ทุกรอบของ execution strategy — รอบที่ rollback ต้องไม่ค้างค่า)
         Document? issuedSettlementReceipt = null;
+        string? receiptIssueFailure = null;   // รอบ 258-3 F-M2
         // Lock document row to prevent concurrent overpayment
         var doc = await _db.Documents
             .FromSqlRaw("SELECT * FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", request.DocumentId, companyId)
@@ -15619,7 +15621,8 @@ public partial class DocumentService : IDocumentService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "ออกใบเสร็จรับเงินหลักฐานไม่สำเร็จ (payment {PaymentNumber}) — ข้ามไปก่อน", payment.PaymentNumber);
+                    // รอบ 258-3 (F-M2): เดิม LogWarning อย่างเดียว ⇒ ล้มดังหลัง commit (ReportSettlementReceiptFailureAsync: ป้าย + Autopilot + แจ้งเตือน + LogError)
+                    receiptIssueFailure = ex.Message;
                 }
             }
 
@@ -15672,7 +15675,12 @@ public partial class DocumentService : IDocumentService
             // ★ รอบ 193 ฝ่ายค้าน C-3 — ใบเสร็จที่เป็นใบกำกับ ณ วันรับเงิน (§78/1) ได้ e-Tax อัตโนมัติเหมือนเส้นอนุมัติ
             // (hook ไม่ throw · ใบเสร็จเปล่า/ร่าง = ข้ามในตัว hook)
             if (issuedSettlementReceipt != null)
+            {
                 await _issuedHooks.RunAsync(companyId, issuedSettlementReceipt);
+                await AfterSettlementReceiptIssuedAsync(companyId, issuedSettlementReceipt);   // รอบ 258-3 F-H2
+            }
+            else if (receiptIssueFailure != null)
+                await ReportSettlementReceiptFailureAsync(companyId, doc, payment, receiptIssueFailure);   // รอบ 258-3 F-M2
 
             // รอบ 232 (232-Notify): "💵 รับชำระเงินแล้ว" เดิมประกาศกลุ่ม LINE แล้วถอยไปกลุ่มกลางของแพลตฟอร์ม ⇒ เดินเครื่องแจ้งเตือนกลาง
             // (ค่าตั้งของบริษัท · ไม่โยนกลับผู้เรียก — engine กลืนเองและ log)

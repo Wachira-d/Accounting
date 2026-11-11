@@ -455,7 +455,10 @@ public partial class DocumentService
         // ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — หลัง commit และนอก execution strategy · ล้ม = ป้ายบนเอกสาร ไม่ย้อนการออกใบ
         await _issuedHooks.RunAsync(companyId, outcome.Neo);
         foreach (var nr in outcome.Receipts)
+        {
             await _issuedHooks.RunAsync(companyId, nr);
+            await AfterSettlementReceiptIssuedAsync(companyId, nr);   // รอบ 258-3 F-H2: ใบกำกับ ณ วันรับเงินฉบับใหม่ → ระบบคู่ค้า
+        }
         return await GetDocumentAsync(companyId, outcome.Neo.Id);
     }
 
@@ -951,7 +954,10 @@ public partial class DocumentService
         });
         // ใบกำกับ ณ วันรับเงินที่เพิ่งออก — e-Tax อัตโนมัติหลัง commit และนอก execution strategy (เหมือนเส้นรับชำระ/ออกใบแทน)
         if (issuedReceipt != null)
+        {
             await _issuedHooks.RunAsync(companyId, issuedReceipt);
+            await AfterSettlementReceiptIssuedAsync(companyId, issuedReceipt);   // รอบ 258-3 F-H2
+        }
         return new EtaxCancellationResult(sourceId is Guid sid ? await GetDocumentAsync(companyId, sid) : null, message);
     }
 

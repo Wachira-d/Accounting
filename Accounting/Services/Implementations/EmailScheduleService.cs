@@ -371,7 +371,11 @@ public class EmailScheduleService : IEmailScheduleService
             // รอบ 250 WP-08: ผู้รับจากตัวหาผู้รับเดียว (ไม่อ่าน Contact.Email ตรง) — ไม่มีอีเมลเลย ⇒ ผู้เรียกแจ้งด้วย RecurringEmailReadiness (EmailSkippedNoContactEmail) ·
             // มีอีเมลแต่ไม่รับเรื่อง "เอกสาร" ⇒ แถวคิว "ข้าม" (เขียนใน EnqueueDocumentAsync) + คืนเหตุให้ผู้เรียกแสดง (EmailNotSentReason)
             var inlineDelivery = await EmailForAsync(companyId, doc.ContactId, NotifyTopics.ForTrigger("RecurringInvoiceCreated"), ct);
-            if (!inlineDelivery.Deliverable && inlineDelivery.OptOutReason == null)
+            // รอบ 258-3 (F-H1): ธงส่งของรายการประจำ ⇒ LINE ตามปลายทางของผู้ติดต่อที่รับเรื่อง "เอกสาร" (ตัวหาผู้รับเดียว · ตัวตัดสิน ContactLineChannel.InlineChannels) —
+            // เส้นเข้าคิวเดียวกับกฎตารางส่ง (EnqueueDocumentAsync → EnqueueLineAsync) ไม่มีสำเนากติกา · ผู้ติดต่อที่มีแต่ LINE ⇒ ไม่หยุดที่ "ไม่มีอีเมล"
+            var inlineLine = ContactLineChannel.InlineChannels(
+                (await _recipients.ResolveAsync(companyId, doc.ContactId, NotifyTopics.ForTrigger("RecurringInvoiceCreated"), ct)).Options);
+            if (!inlineDelivery.Deliverable && inlineDelivery.OptOutReason == null && !inlineLine.LineUser && !inlineLine.LineGroup)
                 return EmailEnqueueOutcome.Skipped(RecurringEmailReadiness.NotSentNoEmail);
 
             // rule เสมือน (ไม่บันทึกลง DB) — EmailQueue.RuleId เป็น null ได้
@@ -387,6 +391,8 @@ public class EmailScheduleService : IEmailScheduleService
                 // รอบ 248: ชั้นรายการประจำ (null = ตามผู้ติดต่อ › บริษัท — พฤติกรรมเดิม)
                 AttachPayLink = recurringLayer?.Attach,
                 PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(recurringLayer?.Channels),
+                ChannelLineUser = inlineLine.LineUser,
+                ChannelLineGroup = inlineLine.LineGroup,
             };
             // ส่งทันที ไม่รอ 09:00 ของวัน — เจตนาคือ "ออกเอกสารแล้วส่งเลย"
             var inlineResult = await EnqueueDocumentAsync(inlineRule, doc, daysOffset: 0,

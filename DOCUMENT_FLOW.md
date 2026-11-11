@@ -2212,6 +2212,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ### 2.7 Recurring
 
+- **รอบ 258-3 (F-H1 · DECISIONS 258-3-1)**: ธง "📧 ส่งเอกสาร" ของรายการประจำ (กฎเสมือน · ไม่มีกฎ "เมื่อรายการประจำสร้างเอกสาร") ⇒ ติ๊ก LINE ผู้ใช้/กลุ่ม
+  ตามปลายทางของผู้ติดต่อที่รับเรื่อง "เอกสาร" และใช้ได้จริง (`ContactLineChannel.InlineChannels` ← ตัวหาผู้รับเดียว) แล้วเข้าคิวเส้นเดียวกับกฎ
+  (`EnqueueDocumentAsync → EnqueueLineAsync`) · ผู้ติดต่อที่มีแต่ LINE ไม่หยุดที่ "ไม่มีอีเมล" · ไม่มีปลายทาง LINE ⇒ ไม่ติ๊ก (ไม่มีแถว "ข้าม" ทุกใบ) ·
+  กฎในตารางส่งยังชนะธง · หน้า recurring.html บอกตรง ๆ ว่าอะไรไปทาง LINE + ลิงก์ไปผู้ติดต่อ/ตารางส่ง · Last verified `commit เติมในคอมมิตตามหลัง`
 - **รอบ 257 ชุด 1 (A-H1 · DECISIONS 257-1-1/257-1-2)**: ด่านเขียนรายการประจำตัวเดียว `Helpers/RecurringWriteGate` (ผู้เรียก `RecurringController`
   Create · Update · Delete · Pause · Resume · RunNow — เดิมมีแค่ `[Authorize]`): ทุกการเขียน = `DocumentPermissionHelper.CanCreateAsync` ของชนิด ·
   ระบบอนุมัติ/ส่งแทนคน (`AutoApprove` หรือ `AutoSendEmail` — ตั้งใหม่ · **คงไว้ตอนแก้ไข** · เปิดต่อ · สร้างทันที) = `CanApproveAsync` ด้วย · เปลี่ยนชนิดตอนแก้ ⇒ ตรวจชนิดใหม่ด้วย ·
@@ -3039,6 +3043,37 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   **การเตือนแบบตรงวันไม่หาย**: รอบถัดไปที่ใบไม่ถูกระงับแล้วแต่ยังค้าง กฎเดิมส่งการเตือนที่ถูกข้ามไปครั้งเดียว (กุญแจ `…:credit-release`) แล้วปิดแถวระงับ · `OverdueDunningJob` แจ้งทีมแทน
   (คีย์ `ar.credit.covers_invoice`) **ครั้งเดียวต่อช่วงที่ใบถูกระงับ** (`Document.CreditCoverNoticeAt` — ไม่ซ้ำทุก 7 วัน · ไม่แตะ `LastDunningSentAt` · ไม่มีช่องแจ้งเตือน = log แล้วลองใหม่รอบถัดไป) ·
   **ไม่ขยับระดับทวง** — เงินหมด/ทวงตามปกติเมื่อไร ล้างธงแล้วทวงต่อจากระดับเดิม · ใบที่เงินไม่พอ/จัดสรรไม่ได้/ไม่มีเงินรอจัดสรร = ทวงตามเดิมทุกประการ · Last verified `commit 78e3f30c`
+
+### 2.12g-258c รอบ 258 แพ็ก "เส้นบิลอัตโนมัติจนจบ" (erp-review/2026-11-11/team-F-billing-chain.md · คำตัดสิน 258-3-*)
+
+- **ใบเสร็จหลังรับชำระทาง LINE (F-H1 · A-M4 · F-L2)**: งานหลังรับชำระ (`PostPaymentAutomationPolicy.Decide`) เพิ่มขั้น `LineReceipt` — ค่าตั้งเดิมตัวเดียว
+  "หลังลูกค้าชำระ: ออกใบเสร็จ…แล้วส่ง" (`PostPayEmailReceipt` + ชั้นตาราง/รายการ/ผู้ติดต่อ) · ปลายทาง = LINE ของผู้ติดต่อที่ติ๊กเรื่อง "ใบเสร็จ"
+  (ค่าตั้งต้นผู้ใช้ LINE ติ๊กให้ · ตัวกรองเดียว `ContactLineChannel.LineEndpoints` ← `IContactRecipientResolver` เรื่อง Receipt) · LINE มาก่อนอีเมล
+  (อีเมลถูกปฏิเสธ/ล้มไม่กันการ์ด) · ไม่มีอีเมลแต่มี LINE ⇒ ออก+ส่งทาง LINE (เดิมหยุด "ไม่มีอีเมล") · ไม่มีทั้งคู่ ⇒ หยุดเหมือนเดิม · ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ⇒ ตัด LINE ด้วย ·
+  เข้าคิว `LineQueues` (trigger `ReceiptIssued` · กุญแจ `ContactLineChannel.ReceiptBaseKey` ต่อเอกสาร+ปลายทาง — ลองใหม่ไม่ส่งซ้ำ · ไม่ถอยไปอีเมล) ·
+  ผู้ส่ง `ContactLineQueueService` ตัวเดิม (ตรวจปลายทาง/ความยินยอมตอนส่ง · ล้ม = สถานะ+เหตุบนแถว + แถว Autopilot `LineFailed`) ·
+  การ์ดใบเสร็จมีบรรทัด "ได้รับชำระเงินแล้ว ขอบคุณ" (`DocumentLabels.LineCardPaymentReceived`) · trigger นี้ไม่อยู่ในฟอร์มกฎตารางส่ง (`LineTriggers` เดิม)
+- **ปุ่ม "ดู/ดาวน์โหลด PDF" บนการ์ด LINE ทุกใบ (A-L8 · 258-3-2)**: `GET api/companies/{c}/line-doc/{queueId}/{token}` (`LineDocumentViewController` · ไม่ล็อกอิน) ·
+  token = HMAC ของ (บริษัท + แถวคิว) จากความลับเซิร์ฟเวอร์ (`Helpers/LineDocumentViewLink` — ไม่เก็บในฐาน · ลองส่งใหม่ URL เดิม) · ใช้ได้เมื่อแถวเป็นของบริษัท
+  มีปลายทาง สถานะรอส่ง/กำลังส่ง/ส่งแล้ว อายุ ≤ 400 วัน และเอกสารยังออกแล้ว+ไม่ถูกยกเลิก · เพดานต่อ IP แบบ DB (failClosed) · ข้อความล้มเดียวทุกเหตุ ·
+  ยกเลิก/ลบแถวคิว = เพิกถอนลิงก์ · ไม่มีความลับ/URL ของระบบ ⇒ การ์ดไม่มีปุ่ม (ไม่ใช่ลิงก์เสีย)
+- **ใบกำกับ ณ วันรับเงินถึงระบบคู่ค้า (F-H2 · 258-3-3)**: ใบเสร็จ settlement ที่ออกเป็น Paid ตรง (รับชำระ · ออกย้อนหลัง/งานหลังรับชำระ · ออกใบแทน · แก้ e-Tax)
+  เดินขั้นหลังออกใบตัวเดียว `DocumentService.AfterSettlementReceiptIssuedAsync` (ไฟล์ `DocumentService.SettlementFollowUp.cs`) ⇒ `RouteSentDocumentAsync`
+  (ทางเข้าเดียวกับเอกสารที่อนุมัติ · ล้ม = ป้าย `[PARTNER-ROUTE-FAILED]`) ⇒ ฝั่งผู้รับ ReceiptFlow: ใบที่ถือ VAT ⇒ แนบหลักฐานใบกำกับเข้าใบซื้อเดิม (ภาษีซื้อไม่ค้าง 11640) ·
+  ใบรับเปล่า ⇒ แถวกล่องเข้าเท่านั้น ไม่สร้างใบซื้อใหม่ · ใบร่าง ⇒ ส่งตอนอนุมัติ (เส้นเดิม) · ล็อกจุดเรียก `required_call_site_check` (5 กติกา)
+- **ออกใบเสร็จตอนรับชำระล้ม = ล้มดัง (F-M2 · 258-3-4)**: เดิม `LogWarning` แล้วข้าม ⇒ ป้าย `[RECEIPT-ISSUE-FAILED]` บนใบต้นทาง (`Helpers/SettlementReceiptFailedNote`) +
+  แจ้งเตือน `PostPaymentAutomationBlocked` + LogError · ออกได้ภายหลัง ⇒ ล้างป้าย · การชำระไม่ย้อน
+- **Autopilot เห็นทั้งเส้น (F-M3)**: แถวใหม่ `ReceiptIssueFailed` · `LineFailed` (คิว LINE ล้ม 30 วัน) · `GatewayUnposted` (รายการชำระของเอกสารสำเร็จ > 15 นาที
+  แต่ไม่มีการชำระอ้าง `PAY-INTENT-…`) · `PartnerRouteFailed` (ป้ายส่งคู่ค้าล้ม) — อ่านอย่างเดียว ผูก CompanyId
+- **50 ทวิ เข้ากล่องรับแล้วรอคน (F-M4)**: `WhtCertIntakeService.SubmitAsync` ผล AwaitUser ⇒ แจ้งทีม `AutopilotPartnerExchange` (E-11 ขยายขอบเขต) · ยืนยันเอง/ปฏิเสธ ⇒ ไม่แจ้ง
+- **ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ ผู้ซื้อกดบันทึกจ่ายครั้งเดียว (F-H3 · 258-3-7)**: `DocumentPaymentHandler` (gateway/สลิปที่ยืนยัน) หลังบันทึกรับชำระ ⇒
+  `PartnerPaymentNoticeService.NotifySellerReceivedAsync` — ลิงก์ InvoiceFlow ที่มีใบซื้อปลายทาง + คู่ค้า Accepted ⇒ แถว `PartnerPaymentNotices` ใน**บริษัทผู้ซื้อ**
+  (unique ต่อรายการชำระ · audit ทั้งสองฝั่ง) + แจ้ง `AutopilotPartnerExchange` (กระดิ่ง/กลุ่ม LINE ตามค่าตั้งของผู้ซื้อ) · **ไม่บันทึกบัญชีแทน** ·
+  ผู้ซื้อกด "บันทึกจ่ายตามที่ผู้ขายรับแล้ว" (partners.html §partner-paid · `POST partner-payment-notices/{id}/record` · สิทธิ์อนุมัติใบซื้อ · ห้าม API key) ⇒
+  `CreatePaymentAsync` ของผู้ซื้อเอง: ยอด/ภาษีหักจาก `Helpers/PartnerPaymentNoticeRule.For` (เงินที่ผู้ขายรับ + ภาษีหักที่เหลือตามตัวคิดของผู้ซื้อ = ยอดค้าง ⇒ จ่ายครบพร้อมหัก ·
+  = ยอดค้าง ⇒ ไม่หัก · อื่น ๆ ⇒ ไม่เดา บอกยอดสองข้าง) · ใบซื้อร่าง ⇒ ให้อนุมัติก่อน · เลขอ้างอิง `PARTNER-PAID-{intent}` กันซ้ำ · 50 ทวิ ออกตามค่าตั้งของผู้ซื้อ (เส้นจ่ายเดิม) ·
+  "ปิดการแจ้ง" ไม่แตะบัญชี · migration `Helpers/PartnerPaymentNoticeMigration`
+- ยังไม่ทำในแพ็กนี้: ค่าตั้ง `WorkflowAutomationConfig.AutoCreateReceiptFromIncomingPayment` ยังไม่มีผู้อ่าน (คงใน baseline settings_reader — 258-3-8) · การ์ดความพร้อมทั้งเส้น (F-M1) · ทวง 50 ทวิ ทาง LINE (การ์ดของผู้ติดต่อ + ลิงก์อัปโหลดต่อแถวคิว — ผู้ส่งคิว LINE ยังรองรับเฉพาะการ์ดเอกสาร) · Last verified `commit เติมในคอมมิตตามหลัง`
 
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 
@@ -8642,3 +8677,5 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิ�
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 6: แก้ผล CI/ตัวตรวจ — โครงเมธอดเดิม · APPROVER-GONE เป็นข้อเพิ่ม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5b1adc42)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 9: แก้ผลฝ่ายค้าน R-H1 · R-M1…3 · R-L2…L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2be3e30c)_
+
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส้นบิลอัตโนมัติจนจบ — §2.12g-258c ชุด 1: ใบเสร็จทาง LINE · ลิงก์ดู PDF · ใบกำกับ ณ วันรับเงินถึงคู่ค้า · ล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit เติมในคอมมิตตามหลัง)_

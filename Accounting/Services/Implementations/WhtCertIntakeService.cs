@@ -30,10 +30,13 @@ public class WhtCertIntakeService : IWhtCertIntakeService
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
 
     public WhtCertIntakeService(AccountingDbContext db, IAiOrchestrator ai, IAiFeedbackRecorder feedback, WhtCreditService credits,
-        ILogger<WhtCertIntakeService> logger, Accounting.Services.Storage.IFileStorage? storage = null)
+        ILogger<WhtCertIntakeService> logger, Accounting.Services.Storage.IFileStorage? storage = null, INotificationEngine? notify = null)
     {
-        _db = db; _ai = ai; _feedback = feedback; _credits = credits; _logger = logger; _storage = storage;
+        _db = db; _ai = ai; _feedback = feedback; _credits = credits; _logger = logger; _storage = storage; _notify = notify;
     }
+
+    /// <summary>รอบ 258-3 (F-M4): แจ้งทีมเมื่อหนังสือรับรองเข้ากล่องรับแล้วต้องให้คนยืนยัน (เดิมค้างเงียบ) · null = ไม่แจ้ง (เทสต์/เครื่องมือ)</summary>
+    private readonly INotificationEngine? _notify;
 
     private const string RuleCode = "RD-50BIS-INTAKE";
     private const string LegalReference = "ป.รัษฎากร ม.50 ทวิ · ม.69 ทวิ (เครดิตภาษีถูกหัก ณ ที่จ่ายต้องมีหนังสือรับรอง)";
@@ -273,7 +276,29 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             WhtCertIntakeVerdict.Outcome.Reject => match.Reason,
             _ => "ได้รับแล้ว — รอตรวจและกดยืนยัน: " + (gates.Count > 0 ? gates[0] : "การตรวจของจริงยังไม่มั่นใจพอจะยืนยันอัตโนมัติ"),
         };
+        if (outcome == WhtCertIntakeVerdict.Outcome.AwaitUser) await NotifyAwaitingAsync(companyId, intake.Id, msg, ct);
         return new(intake.Id, intake.Status.ToString(), intake.AutoConfirmed, false, msg);
+    }
+
+    /// <summary>รอบ 258-3 (F-M4): หนังสือรับรอง 50 ทวิ มาถึงกล่องรับ (ลูกค้าอัปโหลด · คู่ค้าส่งเข้า · สแกน) แต่ยืนยันอัตโนมัติไม่ได้ ⇒ แจ้งทีม
+    /// (คีย์ <c>AutopilotPartnerExchange</c> — ค่าตั้งต้นกระดิ่ง+อีเมลเจ้าของ) · ยืนยันเอง/ปฏิเสธ ⇒ ไม่แจ้ง (ไม่มีอะไรต้องทำ) · แจ้งล้มไม่ย้อนการรับใบ</summary>
+    private async Task NotifyAwaitingAsync(Guid companyId, Guid intakeId, string message, CancellationToken ct)
+    {
+        if (_notify == null) return;
+        try
+        {
+            await _notify.DispatchAsync(companyId, Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange, new NotificationContext
+            {
+                Title = "📄 หนังสือรับรอง 50 ทวิ เข้ากล่องรับแล้ว — รอตรวจและยืนยัน",
+                Message = message,
+                ActionUrl = "/pages/wht-credit.html",
+                EntityType = "WhtCertIntake", EntityId = intakeId,
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งทีมเรื่อง 50 ทวิ เข้ากล่องรับ {Intake} ไม่สำเร็จ", intakeId);
+        }
     }
 
     public async Task<WhtCertSubmitResult?> FindDuplicateFileAsync(Guid companyId, Guid fileAttachmentId, CancellationToken ct = default)

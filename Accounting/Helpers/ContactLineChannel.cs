@@ -33,6 +33,29 @@ public static class ContactLineChannel
 
     public static bool SupportsLine(string? trigger) => trigger != null && LineTriggers.Contains(trigger);
 
+    /// <summary>รอบ 258-3 (F-H1 · A-M4): trigger ของการ์ด "ใบเสร็จหลังรับชำระ" — ผู้เข้าคิว <c>PostPaymentAutomationService</c> ขั้น <c>LineReceipt</c>
+    /// (ไม่ใช่ trigger ของกฎตารางส่ง — ไม่อยู่ใน <see cref="LineTriggers"/> ⇒ ฟอร์มกฎตารางส่งไม่เปิดเรื่องนี้ · ค่าตั้งอยู่ที่ "หลังลูกค้าชำระ: ออกใบเสร็จ…แล้วส่ง")</summary>
+    public const string ReceiptTrigger = "ReceiptIssued";
+
+    /// <summary>trigger ที่ผู้ส่งคิว LINE รับได้ = กฎตารางส่ง + ใบเสร็จหลังรับชำระ</summary>
+    public static bool SenderSupports(string? trigger) => SupportsLine(trigger) || trigger == ReceiptTrigger;
+
+    /// <summary>รอบ 258-3 (F-H1): ปลายทาง LINE ที่ใช้ส่งได้ของชุดผู้รับ (เรื่องตามที่ตัวหาผู้รับเดียวกรองแล้ว — ปลายทางที่ไม่ได้ติ๊กเรื่องนี้ = ไม่ Available) ·
+    /// ตัวเดียวของงานหลังรับชำระ + ธงส่งของรายการประจำ (ห้ามกรองเองในบริการ)</summary>
+    public static IReadOnlyList<ContactRecipientRule.RecipientOption> LineEndpoints(IReadOnlyList<ContactRecipientRule.RecipientOption> options)
+        => options.Where(o => o.Available && o.EndpointId != null && NotifyEndpointKind.IsLine(o.Kind)).ToList();
+
+    /// <summary>รอบ 258-3 (F-H1): ธง "📧 ส่งอีเมลเอกสาร" ของรายการประจำ (กฎเสมือน) ⇒ LINE ตามปลายทางของผู้ติดต่อที่รับเรื่องนี้ — ช่องที่ติ๊ก = ชนิดที่มีปลายทางใช้ได้จริง
+    /// (ไม่มีปลายทาง ⇒ ไม่ติ๊ก ⇒ ไม่มีแถว "ข้าม" ทุกใบของผู้ติดต่อที่ไม่ใช้ LINE)</summary>
+    public static (bool LineUser, bool LineGroup) InlineChannels(IReadOnlyList<ContactRecipientRule.RecipientOption> options)
+    {
+        var eps = LineEndpoints(options);
+        return (eps.Any(o => o.Kind == NotifyEndpointKind.LineUser), eps.Any(o => o.Kind == NotifyEndpointKind.LineGroup));
+    }
+
+    /// <summary>รอบ 258-3 (F-H1): กุญแจเหตุการณ์ของการ์ดใบเสร็จ — หนึ่งใบต่อเอกสาร (กันซ้ำต่อเอกสาร+ปลายทางผ่าน <see cref="QueueKey"/>)</summary>
+    public static string ReceiptBaseKey(Guid receiptDocumentId) => $"doc:{receiptDocumentId}:{ReceiptTrigger}:postpay";
+
     public static bool WantsLine(bool lineUser, bool lineGroup) => lineUser || lineGroup;
 
     /// <summary>ด่านตอนบันทึกกฎ — null = ผ่าน · <paramref name="companyOaReady"/> = OA ของบริษัทพร้อมส่ง (เปิด + token/secret ถอดได้)</summary>

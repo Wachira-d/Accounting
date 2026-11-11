@@ -267,6 +267,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.AutopilotMigration.Statements());   // รอบ 252 WP-12A — Autopilot: สรุปประจำวัน · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนปิดหนี้ · สลิปกันซ้ำ
         list.AddRange(Accounting.Helpers.NotifyChannelQuotaMigration.Statements());   // รอบ 254 WP-11 L4 — ตัวนับ/เพดาน/โบนัส/แพ็กแยกช่อง LINE·อีเมล (หลังบล็อกรอบ 212/213 ที่สร้างตาราง)
         list.AddRange(Accounting.Helpers.AutopilotPartnerMigration.Statements());   // รอบ 255 WP-12B — รายการประจำทุก N เดือน/ล่วงหน้า · คู่ค้า NextAcc · ใบซื้อร่าง · 50 ทวิ ผ่านคู่ค้า · พอร์ทัลลิงก์วิเศษ
+        list.AddRange(Accounting.Helpers.PartnerPaymentNoticeMigration.Statements());   // รอบ 258-3 F-H3 — การแจ้ง "ผู้ขายคู่ค้ารับเงินแล้ว" ในบริษัทผู้ซื้อ
         list.AddRange(Accounting.Helpers.PortalAccessPermissions.MigrationStatements());   // รอบ 257 D-H3 — คืนธงสิทธิ์พอร์ทัลที่หน้าเดิมบันทึกเป็น false ทั้งหมด (ครั้งเดียว · ก่อนเปิดด่านธง)
         list.AddRange(Accounting.Helpers.Round257Pack4Migration.Statements());   // รอบ 257 ชุด 4 — ลายนิ้วมือค่าตั้งต้นรายการประจำ · ใบสำคัญไม่สร้างล่วงหน้า · ถอนความยินยอมเมื่อบริษัทยกเลิกปลายทาง (หลังบล็อกที่สร้างตาราง)
         list.AddRange(Accounting.Helpers.CustomerCreditMigration.Statements());   // รอบ 258 — เงินรอจัดสรร: คอลัมน์ Payments/PaymentAllocations · ผัง 21630 · backfill ครั้งเดียว (หลัง OneShotDataFixesTableSql)

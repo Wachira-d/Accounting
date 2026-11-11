@@ -204,7 +204,14 @@
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label"><input type="checkbox" id="fAutoSendEmail" onchange="Page.onAutoFlagChange()"> 📧 ส่งอีเมลเอกสาร (แนบ PDF) ให้ผู้ติดต่อทันทีที่ระบบสร้างเอกสาร</label>
+            <label class="form-label"><input type="checkbox" id="fAutoSendEmail" onchange="Page.onAutoFlagChange()"> 📧 ส่งเอกสารให้ผู้ติดต่อทันทีที่ระบบสร้างเอกสาร (อีเมลแนบ PDF · การ์ด LINE ถ้าผู้ติดต่อผูก LINE)</label>
+            <!-- รอบ 258-3 (F-H1 · F-M1): บอกตรง ๆ ว่าอะไรไปทาง LINE และตั้งที่ไหน -->
+            <div id="autoLineNote" style="margin-top:6px;padding:8px 10px;border-radius:8px;font-size:11px;line-height:1.6;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534">
+              💬 <b>LINE:</b> ติ๊กช่องนี้แล้ว ระบบส่ง<b>การ์ด LINE</b> ของเอกสาร (ปุ่มชำระเงิน + ดู/ดาวน์โหลด PDF) ด้วย เมื่อผู้ติดต่อผูก LINE และปลายทางนั้นติ๊กเรื่อง “เอกสาร”
+              (ตั้งที่ <a href="/pages/contacts.html" style="text-decoration:underline">ผู้ติดต่อ › ช่องทางแจ้งเตือน</a> · บริษัทต้องตั้ง LINE OA ให้พร้อมก่อน) ·
+              ถ้ามีกฎ “เมื่อรายการประจำสร้างเอกสาร” ใน <a href="/pages/email-schedule.html" style="text-decoration:underline">ตารางส่ง</a> กฎนั้นชนะช่องนี้ (ติ๊ก LINE ในกฎเอง) ·
+              หลังลูกค้าชำระ ใบเสร็จไปทาง LINE ถึงปลายทางที่ติ๊กเรื่อง “ใบเสร็จ” เมื่อเปิด “ส่งใบเสร็จหลังชำระ” ด้านล่าง
+            </div>
             <div id="autoEmailHint" style="margin-top:6px;padding:8px 10px;border-radius:8px;font-size:11px;line-height:1.6;background:#f8fafc;border:1px solid #e2e8f0;color:#475569">
               กำลังตรวจการตั้งค่าอีเมลของบริษัท…
             </div>

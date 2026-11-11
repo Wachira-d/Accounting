@@ -98,6 +98,9 @@ public static class PostPaymentAutomationPolicy
         IssueReceipt,
         /// <summary>ส่งใบเสร็จ (หรือใบเสร็จ/ใบกำกับภาษี) ของการชำระนี้ถึงลูกค้า</summary>
         EmailReceipt,
+        /// <summary>รอบ 258-3 (F-H1 · A-M4): การ์ด LINE ของใบเสร็จ (หรือใบต้นทางที่เป็นใบเสร็จ) ถึงปลายทาง LINE ของผู้ติดต่อที่ติ๊กเรื่อง "ใบเสร็จ" —
+        /// เข้าคิว <c>LineQueues</c> เดิม (ผู้ส่ง <c>ContactLineQueueService</c>) · มาก่อนขั้นอีเมล (อีเมลล้ม/ถูกปฏิเสธไม่กัน LINE)</summary>
+        LineReceipt,
         /// <summary>ใบต้นทางเป็นใบเสร็จของการชำระนี้อยู่แล้ว (หัว "ใบกำกับภาษี/ใบเสร็จรับเงิน") ⇒ ส่งใบต้นทาง</summary>
         EmailSourceAsReceipt,
     }
@@ -124,7 +127,9 @@ public static class PostPaymentAutomationPolicy
         // รอบ 250 WP-08: ผู้ติดต่อมีอีเมลแต่ไม่รับเรื่อง "ใบเสร็จ" (ContactRecipientRule.ForEmail) — บอกเหตุนี้แทน "ไม่มีอีเมล" · null = ไม่ได้ติดที่ค่าตั้งนี้
         string? EmailOptOutReason = null,
         // ฝ่ายค้าน WP-08 HIGH-2/MED-4: ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" (AutopilotSettingsResolver.AutoSendBlock) — ห้ามเฉพาะขั้นส่งอีเมล (ทุกชั้นค่าตั้ง) · การออกใบเสร็จยังเดินตามเดิม
-        string? AutoSendBlockedReason = null);
+        string? AutoSendBlockedReason = null,
+        // รอบ 258-3 (F-H1): จำนวนปลายทาง LINE ของผู้ติดต่อที่รับเรื่อง "ใบเสร็จ" และส่งได้ (ContactLineChannel.LineEndpoints) — 0 = ไม่ส่ง LINE (พฤติกรรมเดิม)
+        int LineReceiptEndpoints = 0);
 
     /// <summary>ผล — ขั้นที่ทำ + เหตุที่ต้องหยุด (ข้อความไทยพร้อมทางไปต่อ · ส่งเข้าการแจ้งเตือน) · <paramref name="Notes"/> = ข้อสังเกตที่ไม่หยุดงาน ·
     /// <paramref name="Skipped"/> = ไม่มีอะไรต้องทำ (ไม่ใช่ความผิดพลาด)</summary>
@@ -160,10 +165,13 @@ public static class PostPaymentAutomationPolicy
             return new Plan(steps, blocked, notes, notes.Count == 0 ? "ยังชำระไม่ครบ — ตั้งให้ส่งเฉพาะงวดที่ชำระครบ" : null);
 
         var autoOff = f.AutoSendBlockedReason;
-        if (autoOff == null && !OnBehalfEmailSender.IsPlausibleEmail(f.CustomerEmail))
+        // รอบ 258-3 (F-H1): ช่องทางส่งใบเสร็จ = อีเมล (ตัวหาผู้รับเดียว) และ/หรือ LINE (ปลายทางที่ติ๊ก "ใบเสร็จ") — ไม่มีอีเมลแต่มี LINE ⇒ ออก+ส่งทาง LINE (เดิมหยุด)
+        var emailOk = OnBehalfEmailSender.IsPlausibleEmail(f.CustomerEmail);
+        var lineOk = f.LineReceiptEndpoints > 0;
+        if (autoOff == null && !emailOk && !lineOk)
             blocked.Add(f.EmailOptOutReason != null
                 ? "ยังไม่ได้ส่งใบเสร็จ — " + f.EmailOptOutReason + " · แก้แล้วกด \"ลองใหม่\" หรือส่งอีเมลที่ใบเสร็จ"
-                : "ลูกค้าไม่มีอีเมลที่ใช้ได้ — ยังไม่ได้ส่งใบเสร็จ · เติมอีเมลที่ผู้ติดต่อแล้วกด \"ลองใหม่\" หรือส่งอีเมลที่ใบเสร็จ");
+                : "ลูกค้าไม่มีอีเมลที่ใช้ได้ — ยังไม่ได้ส่งใบเสร็จ · เติมอีเมลที่ผู้ติดต่อ (หรือผูก LINE ที่แท็บช่องทางแจ้งเตือนแล้วติ๊กเรื่อง “ใบเสร็จ”) แล้วกด \"ลองใหม่\" หรือส่งอีเมลที่ใบเสร็จ");
         else if (f.AllocationCount > 0)
             blocked.Add("การชำระนี้กระจายไปหลายเอกสาร — ระบบไม่ออก/ส่งใบเสร็จอัตโนมัติ (ยอดต่อใบเป็นการจัดสรร) · ออกใบเสร็จที่เอกสารแต่ละใบแล้วส่งเอง");
         else if (f.HasReceipt)
@@ -172,20 +180,31 @@ public static class PostPaymentAutomationPolicy
                 blocked.Add("ใบเสร็จของการชำระนี้ยังเป็นฉบับร่าง (ผู้บันทึกไม่มีสิทธิ์อนุมัติใบเสร็จ) — อนุมัติใบเสร็จก่อน แล้วกด \"ลองใหม่\" (§86/4 ห้ามส่งเลข DRAFT)");
             else if (f.ReceiptCarriesVat && f.BuyerBlockingFields is { Count: > 0 })
                 blocked.Add("ใบเสร็จรับเงิน/ใบกำกับภาษี ขาดข้อมูลผู้ซื้อ (" + string.Join(", ", f.BuyerBlockingFields) + ") — ยังไม่ส่งอัตโนมัติ · แก้ข้อมูลผู้ติดต่อแล้วกด \"ลองใหม่\"");
-            else steps.Add(Step.EmailReceipt);
+            else AddSends(steps, emailOk, lineOk, Step.EmailReceipt);
         }
         else if (f.SourceServesAsReceipt)
-            steps.Add(Step.EmailSourceAsReceipt);
+            AddSends(steps, emailOk, lineOk, Step.EmailSourceAsReceipt);
         else if (f.MayCarryVatIfIssued && f.BuyerBlockingFields is { Count: > 0 })
             blocked.Add("ข้อมูลผู้ซื้อไม่ครบสำหรับใบกำกับภาษี (" + string.Join(", ", f.BuyerBlockingFields) + ") — ระบบไม่ออกใบเสร็จรับเงิน/ใบกำกับภาษีอัตโนมัติ · แก้ข้อมูลผู้ติดต่อแล้วกด \"ลองใหม่\" หรือ \"ออกใบเสร็จ\" ที่การชำระนี้");
-        else { steps.Add(Step.IssueReceipt); steps.Add(Step.EmailReceipt); }
+        else { steps.Add(Step.IssueReceipt); AddSends(steps, emailOk, lineOk, Step.EmailReceipt); }
+        if (autoOff == null && !emailOk && lineOk && steps.Contains(Step.LineReceipt)) notes.Add(LineOnlyNote);
 
         // ฝ่ายค้าน WP-08 HIGH-2 (Option 1): ไม่ส่งอัตโนมัติ ⇒ ตัดเฉพาะขั้นส่งอีเมล แล้วหยุดพร้อมเหตุบนเอกสาร (ใบเสร็จยังออกตามค่าตั้ง — ไม่เงียบ ไม่หายทั้งงาน)
-        if (autoOff != null && steps.RemoveAll(x => x is Step.EmailReceipt or Step.EmailSourceAsReceipt) > 0)
+        if (autoOff != null && steps.RemoveAll(x => x is Step.EmailReceipt or Step.EmailSourceAsReceipt or Step.LineReceipt) > 0)
             blocked.Add(AutoSendBlockedPrefix + autoOff);
 
         return new Plan(steps, blocked, notes, null);
     }
+
+    /// <summary>รอบ 258-3 (F-H1): ขั้นส่งตามช่องทางที่ใช้ได้ — LINE ก่อนอีเมล (อีเมลถูกปฏิเสธ/ล้มแล้วหยุด ⇒ การ์ด LINE ยังออก)</summary>
+    private static void AddSends(List<Step> steps, bool emailOk, bool lineOk, Step emailStep)
+    {
+        if (lineOk) steps.Add(Step.LineReceipt);
+        if (emailOk) steps.Add(emailStep);
+    }
+
+    /// <summary>หมายเหตุเมื่อส่งใบเสร็จทาง LINE อย่างเดียว (ตัวเดียว — เทสต์อ้างได้)</summary>
+    public const string LineOnlyNote = "ผู้ติดต่อไม่มีอีเมลที่รับเรื่องใบเสร็จ — ส่งใบเสร็จทาง LINE อย่างเดียว (การ์ด + ลิงก์ดู/ดาวน์โหลด PDF)";
 
     /// <summary>คำนำของเหตุ "ไม่ส่งอีเมลเพราะผู้ติดต่อปิดส่งอัตโนมัติ" (ตัวเดียว — เทสต์อ้างได้)</summary>
     public const string AutoSendBlockedPrefix = "ไม่ส่งอีเมลใบเสร็จ — ";

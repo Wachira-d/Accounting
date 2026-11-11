@@ -452,6 +452,7 @@ public class AccountingDbContext : DbContext
     // ===== Cross-tenant B2B workflow =====
     public DbSet<TradingPartnership> TradingPartnerships => Set<TradingPartnership>();
     public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
+    public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
     public DbSet<WorkflowAutomationConfig> WorkflowAutomationConfigs => Set<WorkflowAutomationConfig>();
 
     // ===== CMS & Multi-Site =====
@@ -3751,6 +3752,19 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.UnlinkReason).HasMaxLength(32);
             e.HasIndex(x => new { x.CompanyId, x.TargetKind, x.TargetId }).HasDatabaseName("IX_CustomerLineLinks_Company_Target");
             e.HasIndex(x => x.LineUserId).HasDatabaseName("IX_CustomerLineLinks_LineUser");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 258-3 F-H3 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerPaymentNoticeMigration
+        modelBuilder.Entity<PartnerPaymentNotice>(e =>
+        {
+            e.Property(x => x.SourceDocumentNumber).HasMaxLength(60);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.ResolvedBy).HasMaxLength(200);
+            e.Property(x => x.Note).HasMaxLength(1000);
+            e.Property(x => x.CashAmount).HasPrecision(18, 2);
+            e.Property(x => x.SellerRecordedWht).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.PaymentIntentId }).IsUnique().HasDatabaseName("IX_PartnerPaymentNotices_Company_Intent");
+            e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_PartnerPaymentNotices_Company_Status");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 254 WP-11 L2 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactLineDeliveryMigration

@@ -163,6 +163,7 @@ public static class NotifyTopics
         "DocumentApproved" or "RecurringInvoiceCreated" => NotifyTopic.Document,
         "DocumentDueSoon" or "DocumentOverdue" or "MonthlyStatement" => NotifyTopic.Dunning,
         "WhtCertIssued" => NotifyTopic.Wht,
+        ContactLineChannel.ReceiptTrigger => NotifyTopic.Receipt,
         _ => NotifyTopic.Other,
     };
 

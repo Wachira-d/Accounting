@@ -102,7 +102,8 @@ public static class NotificationEvents
     public const string AutopilotBankSettleFailed = "autopilot.bank_settle_failed";
     /// <summary>E-15: สรุป Autopilot ประจำวัน (ส่งแล้ว · รับเงิน · ใบเสร็จ · แปลงใบเสนอราคา · เงินโอนจับคู่ · เรื่องที่ระบบทำต่อไม่ได้) — วันละครั้งตามเวลาที่บริษัทตั้ง (ค่าตั้งต้น 08:40)</summary>
     public const string AutopilotDailyDigest = "autopilot.daily_digest";
-    /// <summary>E-11 (รอบ 255 WP-12B ข้อ 8): คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ากล่องรับของเราแล้ว — ต้องตรวจก่อนใช้เป็นเครดิต</summary>
+    /// <summary>E-11 (รอบ 255 WP-12B ข้อ 8): คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ากล่องรับของเราแล้ว — ต้องตรวจก่อนใช้เป็นเครดิต ·
+    /// รอบ 258-3: + 50 ทวิ เข้ากล่องรับแล้วรอคนยืนยัน (F-M4) · ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ บันทึกจ่ายใบซื้อ (F-H3)</summary>
     public const string AutopilotPartnerExchange = "autopilot.partner_exchange";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
