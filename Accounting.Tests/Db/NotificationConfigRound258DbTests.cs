@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Constants;
 using Accounting.Models.DTOs.Notification;
 using Accounting.Models.Entities;
@@ -138,5 +139,81 @@ public class NotificationConfigRound258DbTests
         Assert.Contains(lineId[^6..], audit.NewValues!, StringComparison.Ordinal);
         Assert.DoesNotContain(lineId, audit.NewValues!, StringComparison.Ordinal);
         Assert.False(string.IsNullOrEmpty(audit.RowHash));
+    }
+
+    // ───── รอบ 258 ฝ่ายค้าน R-L3: ค่ากลุ่ม LINE ตัดสินต่อเหตุการณ์ (ตรงกับเครื่องแจ้งเตือน) ─────
+
+    [Fact]
+    public async Task ส่งfalseแถวเดียว_ทุกแถวที่เก็บไว้ของเหตุการณ์ถูกปิด_เหตุการณ์อื่นไม่ถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var cid = await SeedCompanyAsync(db, groupConfigured: true);
+        NotificationSetting Row(string key, string role) => new()
+        {
+            CompanyId = cid, EventKey = key, RecipientRole = role, EnableSystem = true, EnableLineGroup = true,
+        };
+        db.NotificationSettings.AddRange(
+            Row(NotificationEvents.DocumentApproved, NotificationRecipientRoles.Owner),
+            Row(NotificationEvents.DocumentApproved, NotificationRecipientRoles.Accounting),   // แถวบทบาทที่คำขอไม่ได้ส่ง
+            Row(NotificationEvents.PaymentReceived, NotificationRecipientRoles.Owner));
+        await db.SaveChangesAsync();
+
+        await new NotificationConfigService(db).BulkUpsertCompanySettingsAsync(cid,
+            Req(NotificationEvents.DocumentApproved, NotificationRecipientRoles.Owner, group: false), "tester");
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var approved = await check.NotificationSettings.Where(s => s.CompanyId == cid && s.EventKey == NotificationEvents.DocumentApproved).ToListAsync();
+        Assert.Equal(2, approved.Count);
+        Assert.All(approved, r => Assert.False(r.EnableLineGroup));   // เดิมแถว Accounting ยังเปิด ⇒ กลุ่มยังได้ประกาศทั้งที่หน้าแสดง "ปิด"
+        // ทิศตรงข้าม: เหตุการณ์อื่นไม่ถูกแตะ
+        Assert.True((await check.NotificationSettings.SingleAsync(s => s.CompanyId == cid && s.EventKey == NotificationEvents.PaymentReceived)).EnableLineGroup);
+    }
+
+    // ───── รอบ 258 ฝ่ายค้าน R-M1: รอบรายการประจำล้ม/ค้างร่าง ต้องถึงคนแม้ผู้สร้างออกไปแล้ว ─────
+
+    private static NotificationEngine Engine(AccountingDbContext db)
+    {
+        var line = F4Proxy<Accounting.Services.Interfaces.ILineNotifyService>.Create((_, _) => null);
+        var org = F4Proxy<Accounting.Services.Interfaces.IOrganizationService>.Create((_, _) => null);
+        return new NotificationEngine(db, line, org, Microsoft.Extensions.Logging.Abstractions.NullLogger<NotificationEngine>.Instance,
+            new SecretProtector("db-test-key-258-notify"));
+    }
+
+    private static async Task<Guid> SeedOwnerAsync(AccountingDbContext db, Guid companyId)
+    {
+        var u = new User { Email = $"r258-owner-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "เจ้าของ 258" };
+        db.Users.Add(u);
+        db.CompanyUsers.Add(new CompanyUser { UserId = u.Id, CompanyId = companyId, Role = Accounting.Models.Enums.UserRole.Owner });
+        await db.SaveChangesAsync();
+        return u.Id;
+    }
+
+    [Fact]
+    public async Task รอบรายการประจำล้ม_ผู้สร้างออกแล้ว_บริษัทยังไม่ตั้งคีย์_เจ้าของได้กระดิ่ง_และบริษัทที่ปิดคีย์ไว้ไม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var cid = await SeedCompanyAsync(db, groupConfigured: false);
+        var owner = await SeedOwnerAsync(db, cid);
+        var muted = await SeedCompanyAsync(db, groupConfigured: false);
+        var mutedOwner = await SeedOwnerAsync(db, muted);
+        // บริษัทที่ตั้งคีย์นี้ไว้แล้วแบบปิดทุกช่อง = ตั้งใจไม่รับ
+        db.NotificationSettings.Add(new NotificationSetting
+        {
+            CompanyId = muted, EventKey = NotificationEvents.RecurringRunFailed, RecipientRole = NotificationRecipientRoles.Owner,
+        });
+        await db.SaveChangesAsync();
+        var title = "รายการประจำ \"ค่าเช่า\" สร้างเอกสารแล้วแต่ค้างเป็นร่าง " + Guid.NewGuid().ToString("N")[..8];
+        // ผู้รับระบุตัว = null (ผู้สร้างไม่ใช่สมาชิกแล้ว — RecurringStaffNotice.Recipient)
+        var ctx = new Accounting.Services.Interfaces.NotificationContext { Title = title, Message = "อนุมัติอัตโนมัติไม่ผ่าน", RecipientUserId = null };
+
+        await Engine(db).DispatchAsync(cid, NotificationEvents.RecurringRunFailed, ctx);
+        await Engine(db).DispatchAsync(muted, NotificationEvents.RecurringRunFailed, ctx);
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.True(await check.Notifications.AnyAsync(n => n.CompanyId == cid && n.UserId == owner && n.Title == title));
+        // ทิศตรงข้าม: บริษัทที่ปิดคีย์ไว้เองไม่ถูกแจ้ง
+        Assert.False(await check.Notifications.AnyAsync(n => n.CompanyId == muted && n.UserId == mutedOwner && n.Title == title));
     }
 }

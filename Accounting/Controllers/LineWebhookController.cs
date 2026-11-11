@@ -97,6 +97,9 @@ public class LineWebhookController : ControllerBase
         {
             var eventId = ev.TryGetProperty("webhookEventId", out var we) ? we.GetString() : null;
             var marked = false;
+            // รอบ 258 ฝ่ายค้าน R-L6: เข้าตัวจัดการแล้ว = อาจเกิดผลข้างเคียงแล้ว (เอกสารสร้าง/อนุมัติ) ⇒ ห้ามถอนประทับ — ไม่งั้น Redelivery สร้างใบที่สอง ·
+            // ถอนได้เฉพาะเมื่อล้มก่อนถึงตัวจัดการ (ยังไม่มีอะไรเกิดขึ้น)
+            var entered = false;
             try
             {
                 if (_groups != null)
@@ -115,7 +118,10 @@ public class LineWebhookController : ControllerBase
                     var data = ev.TryGetProperty("postback", out var pb)
                         && pb.TryGetProperty("data", out var pd) ? pd.GetString() : null;
                     if (!string.IsNullOrEmpty(data))
+                    {
+                        entered = true;
                         reply = await _bot.HandlePostbackAsync(userId, data);
+                    }
                 }
                 else
                 {
@@ -123,6 +129,7 @@ public class LineWebhookController : ControllerBase
                     var msgType = msg.GetProperty("type").GetString();
                     if (msgType == "text")
                     {
+                        entered = true;
                         reply = await _bot.HandleMessageAsync(userId, msg.GetProperty("text").GetString() ?? "", destination);
                     }
                     else if (msgType is "image" or "file")
@@ -131,7 +138,10 @@ public class LineWebhookController : ControllerBase
                         var messageId = msg.TryGetProperty("id", out var mid) ? mid.GetString() : null;
                         var fileName = msg.TryGetProperty("fileName", out var fn) ? fn.GetString() : null;
                         if (!string.IsNullOrEmpty(messageId))
+                        {
+                            entered = true;
                             reply = await _bot.HandleImageAsync(userId, messageId, fileName);
+                        }
                     }
                 }
                 if (!string.IsNullOrEmpty(reply))
@@ -139,8 +149,8 @@ public class LineWebhookController : ControllerBase
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogError(ex, "LINE webhook OA กลาง: ประมวลเหตุการณ์ 1:1 {EventId} ล้ม — ถอนการประทับ (ส่งซ้ำได้เฉพาะสั่ง Redelivery เอง)", eventId);
-                if (marked && _groups != null) await _groups.UnmarkEventSeenAsync(eventId, CancellationToken.None);
+                _logger.LogError(ex, "LINE webhook OA กลาง: ประมวลเหตุการณ์ 1:1 {EventId} ล้ม (เข้าตัวจัดการแล้ว = {Entered} — ถอนการประทับเฉพาะเมื่อยังไม่เข้า)", eventId, entered);
+                if (marked && !entered && _groups != null) await _groups.UnmarkEventSeenAsync(eventId, CancellationToken.None);
             }
         }
     }
@@ -214,9 +224,13 @@ public class LineBotBindController : ControllerBase
         _bot = bot; _nextAcc = nextAcc;
     }
 
+    // รอบ 258 ฝ่ายค้าน R-H1: คีย์ API ถือตัวตนผู้ออกคีย์ (เจ้าของ) และ route นี้ไม่มี companyId (ไม่ผ่าน TenantGuard) ⇒ ผู้ถือคีย์ออกรหัสแล้วผูก LINE
+    // ของตัวเองเป็น "เจ้าของ" ได้ทุกบริษัท — ต้องเป็นคนที่ล็อกอินบนเว็บเท่านั้น
     [HttpPost("issue-bind-code")]
     public async Task<ActionResult<ApiResponse<object>>> IssueBindCode(CancellationToken ct = default)
     {
+        // ด่านตัวเดียวกับ [RejectApiKey] (Helpers/OwnerActionGuard) — เรียกในตัวเมธอดเพื่อให้กติกา call-site ล็อกลำดับ "ด่านก่อนออกรหัส" ได้
+        if (Accounting.Helpers.OwnerActionGuard.DenyResult(HttpContext, "ออกรหัสผูก LINE") is { } keyDenied) return keyDenied;
         var userId = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User);
         // รอบ 258 (A-M9): บอทกลางยังไม่พร้อมรับข้อความ (ไม่มี token/secret) ⇒ บอกเหตุแทนการออกรหัสที่ส่งไปแล้วเงียบ
         var central = _nextAcc == null ? null : await _nextAcc.GetAsync(ct);

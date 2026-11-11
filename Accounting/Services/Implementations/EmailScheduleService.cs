@@ -728,20 +728,31 @@ public class EmailScheduleService : IEmailScheduleService
     internal async Task<int> RecoverStaleSendingAsync(DateTime nowUtc, CancellationToken ct = default)
     {
         var cutoff = EmailQueueStaleSending.Cutoff(nowUtc);
+        // รอบ 258 ฝ่ายค้าน R-M3 (ตัวตัดสิน EmailQueueStaleSending.RecoveryStatus): (ก) จองแล้วแต่ยังไม่เคยเริ่มส่ง (SendStartedAt ว่าง) ⇒ คืนเข้าคิว —
+        // ระบบรู้แน่ว่าไม่เคยเรียกผู้ให้บริการ จึงไม่มีทางส่งซ้ำ · ล้างโทเคนผู้จอง (เครื่องเดิมที่ยังถือแถวนี้ในหน่วยความจำจะไม่ผ่านด่านเริ่มส่ง)
+        var requeued = await _db.EmailQueues
+            .Where(q => q.Status == EmailQueueStaleSending.StatusSending && q.SendStartedAt == null && (q.UpdatedAt ?? q.CreatedAt) < cutoff)
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.Status, EmailQueueStaleSending.StatusPending)
+                .SetProperty(q => q.ClaimToken, (Guid?)null)
+                .SetProperty(q => q.UpdatedAt, (DateTime?)nowUtc), ct);
+        // (ข) เริ่มส่งแล้วตาย ⇒ Failed พร้อมเหตุ — ไม่รู้ว่าส่งถึงหรือไม่ คนตรวจแล้วลองใหม่/ยกเลิก (คำตัดสิน 258-2-4)
         var n = await _db.EmailQueues
-            .Where(q => q.Status == EmailQueueStaleSending.StatusSending && (q.UpdatedAt ?? q.CreatedAt) < cutoff)
+            .Where(q => q.Status == EmailQueueStaleSending.StatusSending && q.SendStartedAt != null && (q.UpdatedAt ?? q.CreatedAt) < cutoff)
             .ExecuteUpdateAsync(s => s.SetProperty(q => q.Status, EmailQueueStaleSending.StatusFailed)
                 .SetProperty(q => q.ErrorMessage, EmailQueueStaleSending.StaleReason)
+                .SetProperty(q => q.ClaimToken, (Guid?)null)
                 .SetProperty(q => q.UpdatedAt, (DateTime?)nowUtc), ct);
-        if (n > 0) _logger.LogError("EmailQueue: พบ {Count} แถวค้างสถานะกำลังส่งเกิน {Minutes} นาที — ประทับล้มพร้อมเหตุ (รอคนตรวจแล้วลองใหม่/ยกเลิก)",
+        if (requeued > 0) _logger.LogWarning("EmailQueue: คืน {Count} แถวที่จองไว้แต่ยังไม่เคยเริ่มส่งกลับเข้าคิว (ตัวส่งหยุดกลางแบตช์)", requeued);
+        if (n > 0) _logger.LogError("EmailQueue: พบ {Count} แถวที่เริ่มส่งแล้วค้างเกิน {Minutes} นาที — ประทับล้มพร้อมเหตุ (รอคนตรวจแล้วลองใหม่/ยกเลิก)",
             n, (int)EmailQueueStaleSending.StaleAfter.TotalMinutes);
-        return n;
+        return n + requeued;
     }
 
     public async Task<int> ProcessPendingQueueAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
         await RecoverStaleSendingAsync(now, ct);   // รอบ 258 (B-H2): ก่อนจองรอบใหม่
+        var claimToken = Guid.NewGuid();   // รอบ 258 ฝ่ายค้าน R-M3: ผู้จองรอบนี้ — ด่านเริ่มส่งต่อแถวเทียบโทเคนนี้
 
         // Atomic claim with SKIP LOCKED — required for multi-instance correctness.
         // Without this, two pods read the same top-50 "Pending" rows, both flip to
@@ -758,7 +769,7 @@ public class EmailScheduleService : IEmailScheduleService
                 FOR UPDATE SKIP LOCKED
               )
               UPDATE ""EmailQueues"" q
-              SET ""Status"" = 'Sending', ""UpdatedAt"" = {now}
+              SET ""Status"" = 'Sending', ""UpdatedAt"" = {now}, ""SendStartedAt"" = NULL, ""ClaimToken"" = {claimToken}
               FROM claimed
               WHERE q.""Id"" = claimed.""Id""
               RETURNING q.""Id""").ToListAsync(ct);
@@ -782,8 +793,11 @@ public class EmailScheduleService : IEmailScheduleService
             // แถวที่ตัวกู้ประทับล้มไปแล้ว/ถูกยกเลิก (แบตช์ช้าเกินเส้นแบ่ง) ไม่ถูกส่ง: คนอาจกดลองใหม่ไปแล้ว = ส่งซ้ำ
             var heartbeatId = item.Id;
             var stillMine = await _db.EmailQueues
-                .Where(q => q.Id == heartbeatId && q.Status == EmailQueueStaleSending.StatusSending)
-                .ExecuteUpdateAsync(s => s.SetProperty(q => q.UpdatedAt, (DateTime?)DateTime.UtcNow), ct);
+                // รอบ 258 ฝ่ายค้าน R-M3: เงื่อนไขเจ้าของ (โทเคนของรอบจองนี้) — แถวที่ถูกกู้แล้วเครื่องอื่นจองใหม่ยังเป็น Sending แต่ไม่ใช่ของเรา ⇒ ไม่ส่ง ·
+                // ประทับ SendStartedAt = "เริ่มส่งแล้ว" (ตัวกู้ใช้แยกแถวที่ไม่เคยลองส่งออกจากแถวที่ไม่รู้ผล)
+                .Where(q => q.Id == heartbeatId && q.Status == EmailQueueStaleSending.StatusSending && q.ClaimToken == claimToken)
+                .ExecuteUpdateAsync(s => s.SetProperty(q => q.UpdatedAt, (DateTime?)DateTime.UtcNow)
+                    .SetProperty(q => q.SendStartedAt, (DateTime?)DateTime.UtcNow), ct);
             if (stillMine != 1) { _db.Entry(item).State = EntityState.Detached; continue; }
             try
             {
@@ -1563,6 +1577,8 @@ public class EmailScheduleService : IEmailScheduleService
             throw new Accounting.Helpers.BusinessRuleException(
                 $"ลองส่งใหม่ได้เฉพาะคิวที่ล้ม (สถานะตอนนี้: {q.Status}) — คิวที่ส่งแล้วจะไม่ถูกส่งซ้ำ", "EMAIL-QUEUE-RETRY-FAILED-ONLY", 409);
         q.Status = "Pending";
+        q.SendStartedAt = null;   // รอบ 258 ฝ่ายค้าน R-M3: รอบจองใหม่เริ่มจาก "ยังไม่เคยลองส่ง" + ไม่มีผู้จอง
+        q.ClaimToken = null;
         q.RetryCount = 0;
         q.ScheduledFor = DateTime.UtcNow;
         q.ErrorMessage = null;

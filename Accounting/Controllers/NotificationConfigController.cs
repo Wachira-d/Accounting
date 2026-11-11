@@ -86,6 +86,7 @@ public class NotificationConfigController : ControllerBase
     // (POST api/line-bot/issue-bind-code → ส่ง "ผูก 123456" ให้บอท) ซึ่งมีจำกัดความถี่ · audit · อีเมลแจ้งเจ้าของบัญชี
 
     [HttpDelete("line-binding/me")]
+    [Accounting.Filters.RejectApiKey("ถอดการผูก LINE")]   // รอบ 258 ฝ่ายค้าน R-H1: คู่กับการออกรหัสผูก — ตัวตนของคีย์ = เจ้าของ
     public async Task<ActionResult<ApiResponse<LineBindingResponse>>> ClearMyLineBinding(Guid companyId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);

@@ -24,6 +24,16 @@ public static class EmailQueueStaleSending
     public const string StaleReason =
         "ค้างระหว่างส่ง (ระบบหยุดกลางคัน) — ไม่ทราบว่าอีเมลออกไปแล้วหรือยัง: ตรวจกับผู้รับก่อน แล้วกด “ลองใหม่” (ส่งอีกครั้ง) หรือ “ยกเลิก”";
 
+    /// <summary>รอบ 258 ฝ่ายค้าน R-M3: ผลของตัวกู้ต่อแถว <c>Sending</c> ที่ค้าง — <b>ยังไม่เคยเริ่มส่ง</b> (<c>SendStartedAt</c> ว่าง: ระบบรู้แน่ว่าไม่เคยเรียกผู้ให้บริการ)
+    /// ⇒ คืน <c>Pending</c> (ส่งเองรอบถัดไป ไม่ต้องให้คนกดทีละแถว) · <b>เริ่มส่งแล้ว</b> ⇒ <c>Failed</c> พร้อมเหตุ (ไม่รู้ว่าส่งถึงหรือไม่ — คนตัดสิน) ·
+    /// ไม่ค้าง ⇒ null (ไม่แตะ)</summary>
+    public static string? RecoveryStatus(string? status, DateTime? updatedAt, DateTime createdAt, DateTime? sendStartedAt, DateTime nowUtc)
+        => !IsStale(status, updatedAt, createdAt, nowUtc) ? null : sendStartedAt == null ? StatusPending : StatusFailed;
+
+    /// <summary>ตัวส่งเริ่มส่งแถวนี้ได้ไหม — ต้องยัง <c>Sending</c> และยังถือโทเคนของรอบจองนี้ (ถูกกู้/ยกเลิก/เครื่องอื่นจองใหม่ = ไม่ส่ง)</summary>
+    public static bool MayStartSend(string? status, Guid? rowClaimToken, Guid myClaimToken)
+        => string.Equals(status, StatusSending, StringComparison.Ordinal) && rowClaimToken == myClaimToken;
+
     /// <summary>เส้นแบ่ง: แถว <c>Sending</c> ที่ <c>UpdatedAt</c> ก่อนเวลานี้ = ค้าง</summary>
     public static DateTime Cutoff(DateTime nowUtc) => nowUtc - StaleAfter;
 

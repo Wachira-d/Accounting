@@ -171,7 +171,11 @@ public record OcrResultResponse(
     /// หน้าเว็บแสดงช่องติ๊กอนุมัติรวดตามธงนี้ (เลิกถือกติกาใน JS) · null = เส้นทางที่ยังไม่ได้ประเมิน (ไม่ใช่ "ได้")</summary>
     bool? CanAutoApprove = null,
     /// <summary>เหตุที่อนุมัติรวดไม่ได้ (คู่กับ <c>CanAutoApprove</c> = false)</summary>
-    string? AutoApproveBlockedReason = null);
+    string? AutoApproveBlockedReason = null,
+    /// <summary>รอบ 258 ฝ่ายค้าน R-L2: ปุ่ม "สร้าง + อนุมัติ" ในหน้าตรวจจะอนุมัติได้จริงไหม (ด่านเดียวกับ endpoint — <c>OcrPostingReadiness.EvaluateReviewed</c>) ·
+    /// false = กดแล้วจะได้ใบร่าง ⇒ หน้าเว็บบอกเหตุก่อนกด · null = ไม่ได้ประเมิน (ยังสแกนไม่เสร็จ/สร้างแล้ว)</summary>
+    bool? CanCreateAndApprove = null,
+    string? CreateAndApproveBlockedReason = null);
 
 /// <summary>คำเตือน 1 ข้อบนการ์ดผลสแกน — <c>Severity</c> = "error" | "warn"</summary>
 public record OcrScanIssueDto(string Severity, string Message);

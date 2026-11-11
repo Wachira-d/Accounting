@@ -285,6 +285,9 @@ public static class DatabaseMigrationHelper
         // รอบ 258 (B-M7): ลายน้ำสแกนตามวันต่อกฎ + บันทึกการส่งย้อนหลัง (Helpers/ScheduleCatchUp)
         """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "LastDayScanBkk" timestamp NULL;""",
         """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "LastCatchUpNote" text NULL;""",
+        // รอบ 258 ฝ่ายค้าน R-M3: แยก "จองแล้วยังไม่เคยลองส่ง" ออกจาก "เริ่มส่งแล้วตาย" + โทเคนผู้จอง (Helpers/EmailQueueStaleSending)
+        """ALTER TABLE "EmailQueues" ADD COLUMN IF NOT EXISTS "SendStartedAt" timestamp NULL;""",
+        """ALTER TABLE "EmailQueues" ADD COLUMN IF NOT EXISTS "ClaimToken" uuid NULL;""",
         """UPDATE "EmailScheduleRules" SET "RepeatActivatedAt" = (now() at time zone 'utc') WHERE "RepeatEveryDays" > 0 AND "RepeatActivatedAt" IS NULL;""",
         """
         DO $$

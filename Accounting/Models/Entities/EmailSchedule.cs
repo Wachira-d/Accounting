@@ -144,4 +144,12 @@ public class EmailQueue : TenantEntity
 
     /// <summary>idempotency key ใช้กับ unique index เพื่อกัน enqueue ซ้ำ.</summary>
     public string? IdempotencyKey { get; set; }
+
+    /// <summary>รอบ 258 ฝ่ายค้าน R-M3: เวลาที่ตัวส่ง<b>เริ่มส่งแถวนี้</b> (ประทับก่อนเรียกผู้ให้บริการ · ตัวจองล้าง) — ระบบเขียนเอง ·
+    /// null ขณะ <c>Sending</c> = จองแล้วแต่ยังไม่เคยลองส่ง (ตัวกู้คืนเป็น Pending ได้อย่างปลอดภัย) · มีค่า = ไม่รู้ว่าส่งถึงหรือไม่ (ตัวกู้ประทับ Failed)</summary>
+    public DateTime? SendStartedAt { get; set; }
+
+    /// <summary>รอบ 258 ฝ่ายค้าน R-M3: ผู้จองรอบปัจจุบัน (สุ่มต่อรอบจอง · ระบบเขียนเอง) — ตัวส่งเริ่มส่งได้เฉพาะแถวที่ยังถือโทเคนของตัวเอง
+    /// (แถวที่ถูกกู้แล้วเครื่องอื่นจองใหม่ ไม่ถูกเครื่องเดิมส่งซ้ำ)</summary>
+    public Guid? ClaimToken { get; set; }
 }

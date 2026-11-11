@@ -43,9 +43,20 @@ public static class ScheduleCatchUp
     public static bool DueRuleCatchesUp(string? trigger, int offsetDays, int repeatEveryDays, DateTime day, DateTime todayBkk, DateTime? lastScanDay)
     {
         if (!MissedDays(todayBkk, lastScanDay).Contains(day.Date)) return false;
-        if (trigger == TriggerOverdue) return repeatEveryDays != 1;
+        // รอบ 258 ฝ่ายค้าน R-M2: วันที่พลาดห่างจากวันนี้เป็นจำนวนเท่าของรอบส่งซ้ำ ⇒ ใบที่ครบ "ครั้งแรก" ในวันนั้น ครบ "ครั้งซ้ำ" วันนี้พอดี
+        // (สแกนวันนี้ทวงอยู่แล้ว) — ย้อนเก็บด้วย = ลูกค้าได้ทวงสองฉบับในชั่วโมงเดียวกัน · ทุกวัน (N = 1) เป็นกรณีพิเศษของกติกาเดียวกัน
+        if (trigger == TriggerOverdue) return !RepeatCoversToday(repeatEveryDays, day, todayBkk);
         if (trigger == TriggerDueSoon) return day.Date.AddDays(Math.Abs(offsetDays)) >= todayBkk.Date;   // ใบยังไม่เลยกำหนด
         return false;
+    }
+
+    /// <summary>กฎเกินกำหนดที่ส่งซ้ำทุก <paramref name="repeatEveryDays"/> วัน: ใบที่ถึงครั้งแรกใน "วัน <paramref name="day"/>" จะถึงครั้งซ้ำใน "วันนี้" ไหม
+    /// (ระยะห่างเป็นจำนวนเท่าของรอบ) · ไม่ส่งซ้ำ (≤ 0) = ไม่</summary>
+    public static bool RepeatCoversToday(int repeatEveryDays, DateTime day, DateTime todayBkk)
+    {
+        if (repeatEveryDays <= 0) return false;
+        var gap = (todayBkk.Date - day.Date).Days;
+        return gap > 0 && gap % repeatEveryDays == 0;
     }
 
     /// <param name="Send">รอบนี้ต้องเข้าคิวใบแจ้งยอดไหม</param>

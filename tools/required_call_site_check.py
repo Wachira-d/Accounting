@@ -17987,11 +17987,13 @@ REVIEWER_CASES += [
 ]
 _R258P_ESS = "Services/Implementations/EmailScheduleService.cs"
 RULES += [
-    dict(file=_R258P_ESS, method="ProcessPendingQueueAsync", must=["RecoverStaleSendingAsync(", "EmailQueueStaleSending.StatusSending"],
+    dict(file=_R258P_ESS, method="ProcessPendingQueueAsync",
+         must=["RecoverStaleSendingAsync(", "EmailQueueStaleSending.StatusSending", "q.ClaimToken == claimToken", "SetProperty(q => q.SendStartedAt"],
          why=_R258P_WHY + "B-H2 กู้แถวค้างกำลังส่งก่อนจองรอบใหม่ · ประทับเวลาต่อแถวก่อนส่งแบบมีเงื่อนไข (แถวที่ถูกกู้/ยกเลิกไปแล้วไม่ถูกส่ง)"),
-    dict(file=_R258P_ESS, method="RecoverStaleSendingAsync", must=["EmailQueueStaleSending.Cutoff(", "EmailQueueStaleSending.StatusFailed", "EmailQueueStaleSending.StaleReason"],
-         forbid=["StatusPending"],
-         why=_R258P_WHY + "B-H2 แถวค้าง ⇒ Failed พร้อมเหตุ — ห้ามคืนเป็น Pending เอง (ผู้ให้บริการอาจรับไปแล้ว = ส่งซ้ำ)"),
+    dict(file=_R258P_ESS, method="RecoverStaleSendingAsync",
+         must=["EmailQueueStaleSending.Cutoff(", "EmailQueueStaleSending.StatusFailed", "EmailQueueStaleSending.StaleReason",
+               "q.SendStartedAt == null", "q.SendStartedAt != null"],
+         why=_R258P_WHY + "B-H2/R-M3 แถวค้าง: ยังไม่เคยเริ่มส่ง ⇒ คืน Pending (ปลอดภัย) · เริ่มส่งแล้ว ⇒ Failed พร้อมเหตุ — ห้ามคืน Pending ให้แถวที่เริ่มส่งแล้ว"),
     dict(file=_R258P_ESS, method="RetryFailedAsync", must=["EmailQueueStaleSending.CanRetry("],
          why=_R258P_WHY + "B-H2 ลองใหม่รับ Failed + แถวค้างกำลังส่ง (ตัวตัดสินเดียว) — Sent/กำลังส่งจริงไม่รับ"),
     dict(file=_R258P_ESS, method="CancelPendingAsync", must=["EmailQueueStaleSending.Cutoff(", "EmailQueueStaleSending.StatusSending"],
@@ -18009,8 +18011,7 @@ RULES += [
 ]
 REVIEWER_CASES += [
     # ตัวกู้คืนแถวค้างเป็น Pending (ส่งซ้ำเอง) ⇒ ต้องฟ้อง
-    ("R258p4", "RecoverStaleSendingAsync", "SetProperty(q => q.Status, EmailQueueStaleSending.StatusFailed)",
-     "SetProperty(q => q.Status, EmailQueueStaleSending.StatusPending)", True),
+    ("R258p4", "RecoverStaleSendingAsync", "q.SendStartedAt == null && (q.UpdatedAt ?? q.CreatedAt) < cutoff", "(q.UpdatedAt ?? q.CreatedAt) < cutoff", True),
     # ใบแจ้งยอดกลับไปเทียบวันนี้ = วันที่ตั้ง อย่างเดียว ⇒ ต้องฟ้อง
     ("R258p5", "ScanMonthlyStatementsAsync", "if (!monthlyPlan.Send) continue;", "if (todayBkk.Day != sendDay) continue;", True),
 ]
@@ -18085,6 +18086,33 @@ REVIEWER_CASES += [
     # API v1 กลับไปคิดเงินทุกกรณี (ไม่ถามกติกาคืนโควตา) ⇒ ต้องฟ้อง
     ("R258p11", "Scan", "var notBilled = Accounting.Helpers.OcrQuotaRefundRule.NotBilledReason(result.ScanStatus, result.OcrEngine);",
      "string? notBilled = null;", True),
+]
+# ── แก้ผลฝ่ายค้าน (erp-review/2026-11-11/review-258-perms-queue.md · คำตัดสิน 258-2-10…13) ──
+_R258R_WHY = "รอบ 258 แพ็ก สิทธิ์+คิวส่ง (คำตัดสิน 258-2-*): ฝ่ายค้าน "
+RULES += [
+    dict(file="Controllers/LineWebhookController.cs", method="IssueBindCode", must=["OwnerActionGuard.DenyResult("],
+         before=[("OwnerActionGuard.DenyResult(", "_bot.IssueBindCodeAsync("), ("OwnerActionGuard.DenyResult(", "_nextAcc.GetAsync(")],
+         why=_R258R_WHY + "R-H1 ออกรหัสผูก LINE ห้ามใช้ API key (คีย์ถือตัวตนผู้ออกคีย์ · route ไม่มี companyId) — ด่านก่อนทุกอย่าง"),
+    dict(file=_R258P_ESC, method="GetRules", must=["CanManageAsync(", "ScheduleReadView.Rule("],
+         why=_R258R_WHY + "R-L4 ผู้ไม่ถือสิทธิ์ไม่เห็น Bcc/เทมเพลตของกฎ"),
+    dict(file=_R258P_ESC, method="GetQueue",
+         must=["CanManageAsync(", "ScheduleReadView.Recipient(", "ScheduleReadView.Subject(", "canManage && EmailQueueStaleSending.CanRetry(", "canManage && EmailQueueStaleSending.CanCancel("],
+         why=_R258R_WHY + "R-L4/R-L5 แถวคิวส่วนบุคคลซ่อนผู้รับ/หัวเรื่อง · ปุ่ม = สถานะรับได้และผู้ใช้มีสิทธิ์"),
+    dict(file=_R258P_ESC, method="CanManageAsync", must=["SettingsWriteGate.EvaluateAsync(_permissions"],
+         why=_R258R_WHY + "R-L5 ธงสิทธิ์ของหน้าใช้ตัวตัดสินเดียวกับด่านเขียน"),
+    dict(file=_R258P_NCS, method="BulkUpsertCompanySettingsAsync", must=["NotificationSettingMerge.EventValue("],
+         before=[("NotificationSettingMerge.EventValue(", "NotificationSettingMerge.LineGroup(")],
+         why=_R258R_WHY + "R-L3 ค่ากลุ่ม LINE ตัดสินต่อเหตุการณ์ (ตรงกับเครื่องแจ้งเตือน) แล้วเขียนลงทุกแถวที่เก็บไว้"),
+    dict(file="Services/Implementations/OcrService.cs", method="AttachComplianceAsync", must=["OcrPostingReadiness.EvaluateReviewed("],
+         why=_R258R_WHY + "R-L2 ธงของปุ่มสร้าง+อนุมัติในหน้าตรวจ = ด่านเดียวกับ endpoint"),
+]
+REVIEWER_CASES += [
+    # ถอดด่านคีย์ออกจากการออกรหัสผูก ⇒ ต้องฟ้อง
+    ("R258r1", "IssueBindCode", 'if (Accounting.Helpers.OwnerActionGuard.DenyResult(HttpContext, "ออกรหัสผูก LINE") is { } keyDenied) return keyDenied;', "", True),
+    # ปุ่มลองใหม่ไม่ดูสิทธิ์ ⇒ ต้องฟ้อง
+    ("R258r2", "GetQueue", "CanRetry = canManage && EmailQueueStaleSending.CanRetry(", "CanRetry = EmailQueueStaleSending.CanRetry(", True),
+    # ตัวส่งเริ่มส่งโดยไม่เทียบโทเคนผู้จอง ⇒ ต้องฟ้อง (R-M3 ค)
+    ("R258r3", "ProcessPendingQueueAsync", " && q.ClaimToken == claimToken)", ")", True),
 ]
 # ═══ จบ รอบ 258 แพ็ก สิทธิ์+คิวส่ง ═══
 

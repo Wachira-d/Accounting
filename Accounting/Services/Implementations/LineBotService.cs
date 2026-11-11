@@ -198,7 +198,7 @@ public class LineBotService : ILineBotService
             row.User.LineUserId = lineUserId;
 
             // การเปลี่ยนแปลงที่กระทบ "ใครเข้าบัญชีได้" ห้ามเงียบ (กฎเหล็ก #4)
-            _db.AuditLogs.Add(new AuditLog
+            _db.AddChainedAuditLog(new AuditLog   // รอบ 258 ฝ่ายค้าน R-L10: ทางเดียวกับตอนถอด (NotificationConfigService.ClearLineBindingAsync)
             {
                 UserId = row.UserId,
                 UserEmail = row.User.Email,

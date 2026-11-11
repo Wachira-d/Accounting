@@ -64,7 +64,26 @@ public class EmailScheduleController : ControllerBase
 
     [HttpGet("rules")]
     public async Task<ActionResult<ApiResponse<List<EmailScheduleRule>>>> GetRules(Guid companyId)
-        => Ok(new ApiResponse<List<EmailScheduleRule>>(true, await _svc.GetRulesAsync(companyId)));
+    {
+        // รอบ 258 ฝ่ายค้าน R-L4: ไม่ถือ CompanySettings.Edit ⇒ ไม่เห็นผู้รับสำเนา/เนื้อเทมเพลต (ตัวตั้งเดียว ScheduleReadView · แถวจาก AsNoTracking)
+        var canManage = await CanManageAsync(companyId);
+        var rules = await _svc.GetRulesAsync(companyId);
+        return Ok(new ApiResponse<List<EmailScheduleRule>>(true, rules.Select(r => ScheduleReadView.Rule(r, canManage)).ToList()));
+    }
+
+    /// <summary>รอบ 258 ฝ่ายค้าน R-L5 (server computes): ผู้ใช้นี้จัดการตารางส่งได้ไหม — หน้าเว็บล็อกปุ่มแก้/ลบ/ลองใหม่/ยกเลิกตามธงนี้ + แสดงเหตุ (ไม่ปล่อยให้กดแล้ว 403)</summary>
+    [HttpGet("access")]
+    public async Task<ActionResult<ApiResponse<object>>> Access(Guid companyId)
+    {
+        var canManage = await CanManageAsync(companyId);
+        return Ok(new ApiResponse<object>(true, new { canManage, notice = canManage ? null : ScheduleReadView.ReadOnlyNotice }));
+    }
+
+    /// <summary>ผู้เรียกถือสิทธิ์จัดการตารางส่งไหม (ตัวตัดสินเดียวกับด่านเขียน <see cref="SettingsWriteGate"/> — ไม่มีบริการสิทธิ์ = ไม่ได้)</summary>
+    private async Task<bool> CanManageAsync(Guid companyId)
+    {
+        return (await SettingsWriteGate.EvaluateAsync(_permissions, HttpContext, companyId, null, rejectApiKey: false)).Allowed;
+    }
 
     [HttpPut("rules")]
     public async Task<ActionResult<ApiResponse<EmailScheduleRule>>> UpsertRule(
@@ -117,21 +136,27 @@ public class EmailScheduleController : ControllerBase
     {
         var (pending, sent, failed) = await _svc.GetQueueStatsAsync(companyId);
         var recent = await _svc.GetRecentQueueAsync(companyId, take);
+        var canManage = await CanManageAsync(companyId);   // รอบ 258 ฝ่ายค้าน R-L4/R-L5
         var nowUtc = DateTime.UtcNow;   // รอบ 258 (B-H2): ปุ่มที่กดได้ตัดสินที่เซิร์ฟเวอร์ (รวมแถวค้าง "กำลังส่ง") — หน้าเว็บแสดงอย่างเดียว
         return Ok(new ApiResponse<object>(true, new
         {
             stats = new { pending, sent, failed },
+            canManage,
             items = recent.Select(q => new
             {
-                q.Id, q.EntityType, q.EntityId, q.ToEmail, q.Subject,
+                q.Id, q.EntityType, q.EntityId,
+                // รอบ 258 ฝ่ายค้าน R-L4: ผู้รับ/หัวเรื่องของสลิปเงินเดือน · 50 ทวิ ซ่อนจากผู้ที่ไม่ถือสิทธิ์ (ตัวตั้งเดียว ScheduleReadView)
+                ToEmail = ScheduleReadView.Recipient(q.ToEmail, q.EntityType, canManage),
+                Subject = ScheduleReadView.Subject(q.Subject, q.EntityType, canManage),
                 q.Status, q.RetryCount, q.ScheduledFor, q.SentAt,
                 // ID#12: ป้ายไทยจากเซิร์ฟเวอร์ (รวม "ข้าม (ไม่ส่ง)" ของใบที่ถูกยกเลิก/ชำระครบหลังเข้าคิว) — หน้าเว็บแสดงอย่างเดียว
                 StatusLabel = Accounting.Helpers.ScheduledEmailSendCheck.StatusLabel(q.Status),
                 ErrorMessage = q.ErrorMessage
                     ?? (EmailQueueStaleSending.IsStale(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc) ? EmailQueueStaleSending.StaleReason : null),
                 q.CreatedAt,
-                CanRetry = EmailQueueStaleSending.CanRetry(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc),
-                CanCancel = EmailQueueStaleSending.CanCancel(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc),
+                // รอบ 258 ฝ่ายค้าน R-L5: ปุ่ม = สถานะรับได้ **และ** ผู้ใช้มีสิทธิ์ (เดิมเห็นปุ่มแล้วได้ 403)
+                CanRetry = canManage && EmailQueueStaleSending.CanRetry(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc),
+                CanCancel = canManage && EmailQueueStaleSending.CanCancel(q.Status, q.UpdatedAt, q.CreatedAt, nowUtc),
             }),
         }));
     }

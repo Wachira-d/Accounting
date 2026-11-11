@@ -60,10 +60,27 @@ public class NotificationConfigService : INotificationConfigService
             .Select(s => new { s.LineEnabled, s.LineChannelAccessToken, s.LineDefaultGroupId }).FirstOrDefaultAsync();
         var groupConfigured = line != null && NotificationAudiencePolicy.CompanyLineGroupConfigured(line.LineEnabled, line.LineChannelAccessToken, line.LineDefaultGroupId);
 
+        // รอบ 258 ฝ่ายค้าน R-L3: ค่ากลุ่มที่คำขอระบุชัด ตัดสินต่อเหตุการณ์ (เครื่องแจ้งเตือนอ่านต่อเหตุการณ์) แล้วเขียนลงทุกแถวที่เก็บไว้ของเหตุการณ์นั้น
+        var explicitByEvent = request.Settings
+            .Where(d => d != null && !string.IsNullOrWhiteSpace(d.EventKey))
+            .GroupBy(d => d.EventKey, StringComparer.Ordinal)
+            .Select(g => new { g.Key, Value = NotificationSettingMerge.EventValue(g.Select(d => d.EnableLineGroup)) })
+            .Where(x => x.Value != null)
+            .ToDictionary(x => x.Key, x => x.Value!.Value, StringComparer.Ordinal);
+        foreach (var stored in existing)
+            if (explicitByEvent.TryGetValue(stored.EventKey, out var eventValue) && stored.EnableLineGroup != eventValue)
+            {
+                stored.EnableLineGroup = eventValue;
+                stored.UpdatedAt = DateTime.UtcNow;
+                stored.UpdatedBy = updatedBy;
+            }
+
         foreach (var dto in request.Settings)
         {
-            if (string.IsNullOrWhiteSpace(dto.EventKey) || string.IsNullOrWhiteSpace(dto.RecipientRole)) continue;
+            if (dto == null || string.IsNullOrWhiteSpace(dto.EventKey) || string.IsNullOrWhiteSpace(dto.RecipientRole)) continue;
             var eventHasRows = storedGroupByEvent.TryGetValue(dto.EventKey, out var anyStoredOn);
+            // ค่าที่ระบุชัดของเหตุการณ์ (ถ้ามี) ชนะค่าของแถว — ทุกแถวของเหตุการณ์ได้ค่าเดียวกัน
+            var requestedGroup = explicitByEvent.TryGetValue(dto.EventKey, out var explicitValue) ? explicitValue : dto.EnableLineGroup;
             var systemDefaultOn = !eventHasRows
                 && NotificationAudiencePolicy.DefaultMatrix(dto.EventKey, groupConfigured).Any(d => d.EnableLineGroup);
             if (existingMap.TryGetValue((dto.EventKey, dto.RecipientRole), out var row))
@@ -71,7 +88,7 @@ public class NotificationConfigService : INotificationConfigService
                 row.EnableSystem = dto.EnableSystem;
                 row.EnableEmail = dto.EnableEmail;
                 row.EnableLine = dto.EnableLine;
-                row.EnableLineGroup = NotificationSettingMerge.LineGroup(dto.EnableLineGroup, row.EnableLineGroup, eventHasRows, anyStoredOn, systemDefaultOn);
+                row.EnableLineGroup = NotificationSettingMerge.LineGroup(requestedGroup, row.EnableLineGroup, eventHasRows, anyStoredOn, systemDefaultOn);
                 row.UpdatedAt = DateTime.UtcNow;
                 row.UpdatedBy = updatedBy;
             }
@@ -85,7 +102,7 @@ public class NotificationConfigService : INotificationConfigService
                     EnableSystem = dto.EnableSystem,
                     EnableEmail = dto.EnableEmail,
                     EnableLine = dto.EnableLine,
-                    EnableLineGroup = NotificationSettingMerge.LineGroup(dto.EnableLineGroup, null, eventHasRows, anyStoredOn, systemDefaultOn),
+                    EnableLineGroup = NotificationSettingMerge.LineGroup(requestedGroup, null, eventHasRows, anyStoredOn, systemDefaultOn),
                     CreatedBy = updatedBy,
                 });
             }

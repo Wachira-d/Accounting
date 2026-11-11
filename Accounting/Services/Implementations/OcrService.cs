@@ -10675,7 +10675,15 @@ public class OcrService : IOcrService
                     x.ScanStatus, x.CreatedDocumentId.HasValue, x.IsDuplicate, x.HasHandwriting, x.HasPotentialFixedAsset,
                     !string.IsNullOrWhiteSpace(x.ExtractedVendorName), x.ExtractedTotalAmount != null,
                     x.ProcessingNotes, x.ExtractedDate != null, x.ComplianceIssues?.Select(i => i.Severity), x.Quality?.Letter);
-                return x with { CanAutoApprove = verdict.CanAutoApprove, AutoApproveBlockedReason = verdict.Reason };
+                // รอบ 258 ฝ่ายค้าน R-L2: ธงของปุ่ม "สร้าง + อนุมัติ" ในหน้าตรวจ (ด่านเดียวกับ endpoint)
+                var reviewed = Accounting.Helpers.OcrPostingReadiness.EvaluateReviewed(
+                    x.ScanStatus, x.CreatedDocumentId.HasValue, x.ProcessingNotes, x.ExtractedDate != null,
+                    x.ComplianceIssues?.Select(i => i.Severity), x.Quality?.Letter);
+                return x with
+                {
+                    CanAutoApprove = verdict.CanAutoApprove, AutoApproveBlockedReason = verdict.Reason,
+                    CanCreateAndApprove = reviewed?.CanAutoApprove, CreateAndApproveBlockedReason = reviewed?.Reason,
+                };
             })
             .ToList();
     }

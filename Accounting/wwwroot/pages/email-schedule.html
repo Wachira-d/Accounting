@@ -221,6 +221,7 @@
         // เพราะ getCompanyId เป็น null. ทุกหน้าอื่นเรียก Layout.init เหมือนกัน.
         if (!Layout.init('email-schedule')) return;
         Layout.setTitle('ส่งอีเมลอัตโนมัติ');
+        await this._loadAccess();   // รอบ 258 ฝ่ายค้าน R-L5: ก่อนวาดกฎ (ปุ่มแก้/ลบตามสิทธิ์จากเซิร์ฟเวอร์)
         await Promise.all([this.loadRules(), this._loadAutoSend(), this._loadLineLabels()]);
       },
 
@@ -231,6 +232,17 @@
         document.getElementById('tab-rules').style.display = t === 'rules' ? '' : 'none';
         document.getElementById('tab-queue').style.display = t === 'queue' ? '' : 'none';
         if (t === 'queue') this.loadQueue();
+      },
+
+      // รอบ 258 ฝ่ายค้าน R-L5: สิทธิ์จัดการตารางส่ง — เซิร์ฟเวอร์ตัดสิน (canManage + ข้อความ) · โหลดไม่ได้ = ถือว่ายังไม่รู้ (ไม่ล็อก — เซิร์ฟเวอร์กันอยู่แล้ว)
+      _canManage: undefined, _accessNotice: null,
+      async _loadAccess() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        try {
+          const j = await API.get(`/api/companies/${cid}/email-schedule/access`);
+          this._canManage = j && j.data ? j.data.canManage === true : undefined;
+          this._accessNotice = (j && j.data && j.data.notice) || null;
+        } catch (e) { this._canManage = undefined; this._accessNotice = null; }
       },
 
       async loadRules() {
@@ -264,7 +276,10 @@
           PayrollPaid: '💰 จ่ายเงินเดือน → สลิป',
           WhtCertIssued: '📜 ออกใบ 50 ทวิ',
         }[t] || t);
-        box.innerHTML = this._rules.map(r => `
+        const locked = this._canManage === false;
+        const lockNote = locked && this._accessNotice
+          ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:13px;color:#78350f">🔒 ${Layout.esc(this._accessNotice)}</div>` : '';
+        box.innerHTML = lockNote + this._rules.map(r => `
           <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px;margin-bottom:8px;${r.isActive ? '' : 'opacity:.55'}">
             <div style="flex:1">
               <div style="font-weight:600">${Layout.esc(labelTrigger(r.trigger))} ${r.documentType ? ` · ${Layout.esc(this._docTypeText(r.documentType))}` : ''}</div>
@@ -278,8 +293,8 @@
               ${r.lastCatchUpNote ? `<div style="font-size:12px;color:#b45309;margin-top:4px">⏱ ส่งย้อนหลัง: ${Layout.esc(r.lastCatchUpNote)}</div>` : ''}
             </div>
             <div style="display:flex;gap:6px">
-              <button class="btn btn-sm btn-outline" onclick="Page.openRule('${Layout.jsArg(r.id)}')">แก้ไข</button>
-              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteRule('${Layout.jsArg(r.id)}')">ลบ</button>
+              ${locked ? '' : `<button class="btn btn-sm btn-outline" onclick="Page.openRule('${Layout.jsArg(r.id)}')">แก้ไข</button>
+              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteRule('${Layout.jsArg(r.id)}')">ลบ</button>`}
             </div>
           </div>`).join('');
       },
