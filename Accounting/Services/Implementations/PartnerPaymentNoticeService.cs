@@ -33,11 +33,15 @@ public class PartnerPaymentNoticeService
     /// เรียกโดย <c>DocumentPaymentHandler</c> หลังบันทึกรับชำระของผู้ขายสำเร็จ — ไม่โยน (เงินบันทึกแล้ว · ล้ม = LogError + ไม่มีแถวแจ้ง: ผู้ซื้อยังบันทึกจ่ายเองได้ตามเดิม) ·
     /// คืนจำนวนแถวแจ้งที่สร้าง
     /// </summary>
-    public async Task<int> NotifySellerReceivedAsync(Guid sellerCompanyId, Guid paymentIntentId, Guid sourceDocumentId, decimal cash, decimal sellerWht,
+    /// <param name="sellerPaymentReference">เลขอ้างอิงของการรับชำระฝั่งผู้ขาย (<c>GatewayPaymentRecord.Reference</c>) — อ่านภาษีหักที่ผู้ขายลงจริง (แสดงเทียบเท่านั้น)</param>
+    public async Task<int> NotifySellerReceivedAsync(Guid sellerCompanyId, Guid paymentIntentId, Guid sourceDocumentId, decimal cash, string sellerPaymentReference,
         DateTime paidAtUtc, CancellationToken ct = default)
     {
         try
         {
+            var sellerWht = await _db.Payments.AsNoTracking()
+                .Where(sp => sp.CompanyId == sellerCompanyId && !sp.IsDeleted && sp.Reference == sellerPaymentReference)
+                .Select(sp => sp.WithholdingTaxAmount).FirstOrDefaultAsync(ct);
             var links = await _db.CrossTenantDocumentLinks.AsNoTracking()
                 .Where(l => l.SourceCompanyId == sellerCompanyId && l.SourceDocumentId == sourceDocumentId
                     && l.LinkType == CrossTenantLinkType.InvoiceFlow && l.TargetDocumentId != null && !l.IsDeleted)
