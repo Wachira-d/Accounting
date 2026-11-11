@@ -36,7 +36,6 @@ public static class CustomerCreditMigration
         // ผัง 21630 ให้บริษัทเดิมที่มีกลุ่ม 216 (บริษัทผังกำหนดเอง = สร้างตอนใช้/ล้มดัง — UnappliedReceiptAccount.EnsureAsync)
         UnappliedReceiptAccount.MigrationSeedSql(),
         BackfillSql(),
-        LegacyReviewSql(),
     };
 
     /// <summary>คีย์ marker ของการติดธง "ต้องตรวจ" ให้แถวที่ backfill รุ่นแรกประทับไปแล้ว (ฝ่ายค้านรอบ 258 M4)</summary>
