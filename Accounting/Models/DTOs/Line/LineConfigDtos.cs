@@ -30,7 +30,7 @@ public record LineConfigResponse(
     /// <summary>รอบ 257 ฝ่ายค้าน M1: บริษัทผู้ให้บริการยังมี token/secret ค้าง — หน้าแสดงสถานะ + ปุ่มล้าง (ส่วน OA ของร้านถูกซ่อน) · null = ไม่มี</summary>
     string? PlatformLegacyOwnOaNotice = null,
     /// <summary>รอบ 259 (A-M5 · A-L3): แถวความพร้อมของ OA บริษัท (OA · webhook เข้าจริงไหม · Basic ID · ผลทดสอบ) จาก <c>LineOaHealth.Rows</c> — หน้าแสดงตรงตัว</summary>
-    IReadOnlyList<Accounting.Helpers.LineOaHealth.Row>? Health = null,
+    IReadOnlyList<global::Accounting.Helpers.LineOaHealth.Row>? Health = null,
     /// <summary>รอบ 259 (A-M6): ปลายทางทดสอบที่ระบบรู้จัก (กลุ่ม LINE ของทีมที่ตั้งไว้) — เลือกแทนการพิมพ์ U…/C… · ไม่มี LINE id ใน DTO (ส่งกลับเป็น key)</summary>
     IReadOnlyList<LineTestTarget>? TestTargets = null);
 

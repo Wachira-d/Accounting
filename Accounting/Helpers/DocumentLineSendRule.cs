@@ -26,7 +26,7 @@ public static class DocumentLineSendRule
         DocumentType.BillingNote, DocumentType.CreditNote, DocumentType.DebitNote, DocumentType.DeliveryNote, DocumentType.PurchaseOrder,
     };
 
-    public static bool Sendable(DocumentType t) => SendableTypes.Contains(t);
+    internal static bool Sendable(DocumentType t) => SendableTypes.Contains(t);
 
     /// <summary>ใบนี้ส่งทาง LINE ได้ไหม (ก่อนดูปลายทาง) — null = ได้ · ข้อความ = เหตุถึงผู้ใช้</summary>
     public static string? DocumentProblem(bool found, DocumentType type, DocumentStatus status)
