@@ -306,6 +306,25 @@ public class UxConsolidationRound259DbTests
     }
 
     [Fact]
+    public async Task พอร์ทัล_ร้านเพิกถอนลิงก์ชำระ_ลูกค้ากดชำระ_ไม่ออกลิงก์ใหม่_ข้อความถึงลูกค้า()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await PaySeedAsync(db, online: true);
+        var first = await Portal(db, s).GetDocumentPayLinkAsync(s.CompanyId, s.ContactId, s.Invoice.Id);
+        Assert.NotNull(first.Url);
+        await s.Links.RevokeAsync(s.CompanyId, s.Invoice.Id, "tester");
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var links2 = new DocumentPayLinkService(c2, new[] { Gateway() }, Secrets, Config(), NullLogger<DocumentPayLinkService>.Instance, s.Storage);
+        var r = await Portal(c2, s with { Links = links2 }).GetDocumentPayLinkAsync(s.CompanyId, s.ContactId, s.Invoice.Id);
+        Assert.Null(r.Url);
+        Assert.False(r.SlipFallback);
+        Assert.Equal(PayLinkRevokedException.CustomerMessage, r.Refusal);
+        using var c3 = DbTestDatabase.TryCreateContext()!;
+        Assert.NotNull((await c3.Documents.AsNoTracking().SingleAsync(d => d.Id == s.Invoice.Id)).PayLinkRevokedAt);   // การเพิกถอนไม่ถูกล้าง
+    }
+
+    [Fact]
     public async Task ทิศตรงข้าม_พอร์ทัล_ไม่มีช่องทางออนไลน์_ไม่มีลิงก์_ใช้โอนสลิปของพอร์ทัล()
     {
         using var db = DbTestDatabase.TryCreateContext();
