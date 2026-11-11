@@ -242,7 +242,11 @@ public partial class CrossTenantWorkflowService
                     currentForMerge = null;
                 // ฝ่ายค้าน M3: VAT ของใบกำกับใหม่ไม่เท่า VAT บนใบซื้อ ⇒ ไม่ตั้งหลักฐานที่ปลดภาษีซื้อได้ (คง/ตั้ง AwaitingTaxInvoice) + เหตุบนแถว + แจ้ง
                 var vatMatches = !isTaxInvoice || PartnerInputVatEvidence.VatMatches(src.VatAmount, d1.VatAmount);
-                d1.PartnerInputVatEvidence = PartnerInputVatEvidence.OnNewSource(currentForMerge, offered, isTaxInvoice, priorTaxInvoice, vatMatches);
+                // รอบ 257 ปิดท้าย MED-4: ผู้รับยืนยันใบกำกับใบนี้ไว้แล้วผ่านทาง "ได้ใบกำกับนอกระบบ" (audit ของทางนั้น + เลขที่ตรงกับใบที่มาถึง) ⇒ คงคำยืนยัน
+                // (เดิมตั้งกลับ PaperRequired ทุกครั้งที่ใบกำกับแรกของสายมาถึง — ใบที่ยืนยันถูกแล้วถูกดึงกลับ) · เลขไม่ตรง/VAT ไม่ตรง ⇒ ตั้งกลับ + แจ้งเหมือนเดิม
+                var externalCovers = isTaxInvoice && PartnerInputVatEvidence.ExternalConfirmationCovers(currentForMerge,
+                    await ConfirmedThroughExternalPathAsync(link.TargetCompanyId, d1.Id), d1.SupplierInvoiceNumber, src.DocumentNumber);
+                d1.PartnerInputVatEvidence = PartnerInputVatEvidence.OnNewSource(currentForMerge, offered, isTaxInvoice, priorTaxInvoice, vatMatches, externalCovers);
                 if (d1.Status == DocumentStatus.Draft && isTaxInvoice && vatMatches)
                 {
                     // ร่างยังแก้ได้ ⇒ เลข/วันที่ใบกำกับของผู้ขายตามใบกำกับจริง · อนุมัติแล้ว ⇒ ปิดด้วย "ได้รับต้นฉบับแล้ว" (ส่งเลข/วันที่ผ่านเส้นเติมใบกำกับเดิม)
@@ -263,6 +267,7 @@ public partial class CrossTenantWorkflowService
                     {
                         @event = "PartnerEvidenceAttachedToExisting", linkId = link.Id, supplierDocumentNumber = src.DocumentNumber,
                         inputVatEvidenceBefore = evidenceBefore, inputVatEvidence = d1.PartnerInputVatEvidence, vatMatches,
+                        externalConfirmationKept = externalCovers && vatMatches && !priorTaxInvoice,
                         sourceVoidedCleared = evidenceBefore == PartnerInputVatEvidence.SourceVoided && currentForMerge == null,
                         evidenceReset = evidenceBefore != d1.PartnerInputVatEvidence && !PartnerInputVatEvidence.BlocksClaim(evidenceBefore)
                             && evidenceBefore != null,
@@ -524,6 +529,15 @@ public partial class CrossTenantWorkflowService
         return sources.Any(d => PartnerExchangeRules.IsTaxInvoiceCarrier(d.DocumentType, d.IsTaxInvoiceByLaw, d.VatAmount));
     }
 
+    /// <summary>รอบ 257 ปิดท้าย MED-4: ใบซื้อนี้เคยถูกยืนยันผ่านทาง "ได้ใบกำกับนอกระบบ" ไหม (audit ของบริษัทผู้รับเอง — tenant) ·
+    /// ตัวเขียน audit เดียว <see cref="ConfirmExternalTaxInvoiceAsync"/> · ชื่อเหตุการณ์ตัวเดียว <see cref="PartnerInputVatEvidence.ExternalConfirmedEvent"/></summary>
+    private Task<bool> ConfirmedThroughExternalPathAsync(Guid targetCompanyId, Guid purchaseId)
+    {
+        var idText = purchaseId.ToString();
+        return _db.AuditLogs.AsNoTracking().AnyAsync(a => a.CompanyId == targetCompanyId && a.EntityType == "Document" && a.EntityId == idText
+            && a.NewValues != null && a.NewValues.Contains(PartnerInputVatEvidence.ExternalConfirmedEvent));
+    }
+
     /// <summary>แจ้งผู้รับ (บริษัทคู่ค้า) — คีย์ autopilot.partner_exchange · ไม่มีเครื่องแจ้งเตือน (สร้างนอก DI) = ข้าม</summary>
     private async Task NotifyReceiverAsync(Guid companyId, Guid documentId, string title, string message)
     {
@@ -597,7 +611,8 @@ public partial class CrossTenantWorkflowService
         }
     }
 
-    public sealed record PartnerSourceStatus(bool Voided, string? LatestTaxInvoiceNumber, DateTime? LatestTaxInvoiceDate);
+    /// <param name="LatestTaxInvoiceVat">รอบ 257 ปิดท้าย MED-3: VAT ของใบกำกับล่าสุดที่ยังมีผลในสาย (null = สายนี้ไม่มีใบกำกับผ่านระบบ)</param>
+    public sealed record PartnerSourceStatus(bool Voided, string? LatestTaxInvoiceNumber, DateTime? LatestTaxInvoiceDate, decimal? LatestTaxInvoiceVat = null);
 
     /// <summary>ฝ่ายค้าน M2: ตรวจต้นทางสดของใบซื้อจากคู่ค้า (ทุกแถวกล่องเข้าที่ผูกใบนี้) — ใบของผู้ขายถูกลบ/ยกเลิก หรือ e-Tax ของใบนั้นถูกยกเลิกหมด ⇒ Voided ·
     /// คืนเลข/วันที่ใบกำกับล่าสุดในสาย (ใบกำกับที่มาทีหลังของการขายเดิม · H3) · tenant: แถวกล่องเข้าของผู้รับ + เอกสารของบริษัทผู้ขายตามแถว</summary>
@@ -607,7 +622,7 @@ public partial class CrossTenantWorkflowService
             .Where(l => l.TargetCompanyId == targetCompanyId && l.TargetDocumentId == documentId)
             .Select(l => new { l.SourceCompanyId, l.SourceDocumentId, l.CreatedAt })
             .ToListAsync();
-        string? latestTaxNo = null; DateTime? latestTaxDate = null;
+        string? latestTaxNo = null; DateTime? latestTaxDate = null; decimal? latestTaxVat = null;
         // ฝ่ายค้าน LOW: ต้นทางที่ถูกยกเลิกแต่มีใบแทนที่มีผลในสายเดียวกัน (ReplacesDocumentId) = ไม่ติดธง (ตัวตัดสินเดียว AnyUnreplacedVoided)
         var liveness = new List<PartnerExchangeRules.SourceLiveness>();
         foreach (var sellerId in links.Select(x => x.SourceCompanyId).Distinct())
@@ -623,9 +638,9 @@ public partial class CrossTenantWorkflowService
                 .FirstOrDefaultAsync();
             if (s == null) continue;
             // รอบ 257 ชุด 3: ใบเสร็จที่เป็นใบกำกับก็เป็นเลข/วันที่ใบกำกับของผู้ขาย (ตัวตัดสินเดียวกับตอนแนบหลักฐาน)
-            if (PartnerExchangeRules.IsTaxInvoiceCarrier(s.DocumentType, s.IsTaxInvoiceByLaw, s.VatAmount)) { latestTaxNo = s.DocumentNumber; latestTaxDate = s.DocumentDate; }
+            if (PartnerExchangeRules.IsTaxInvoiceCarrier(s.DocumentType, s.IsTaxInvoiceByLaw, s.VatAmount)) { latestTaxNo = s.DocumentNumber; latestTaxDate = s.DocumentDate; latestTaxVat = s.VatAmount; }
         }
-        return new PartnerSourceStatus(false, latestTaxNo, latestTaxDate);
+        return new PartnerSourceStatus(false, latestTaxNo, latestTaxDate, latestTaxVat);
     }
 
     /// <summary>ตั้ง SourceVoided บนใบซื้อจากคู่ค้าของผู้รับ (ใบที่ไม่ได้มาจากคู่ค้า ไม่แตะ) — ใช้หลังธุรกรรมยืนยันถูกย้อน</summary>
@@ -645,7 +660,9 @@ public partial class CrossTenantWorkflowService
     }
 
     /// <summary>ใบซื้อร่าง/ใบซื้อที่มาจากคู่ค้า NextAcc ของบริษัทนี้ (สำเนาของผู้รับเท่านั้น — ไม่มีข้อมูลของผู้ส่งนอกจากที่อยู่บนใบ)</summary>
-    public async Task<List<object>> IncomingPurchaseDraftsAsync(Guid companyId, CancellationToken ct = default)
+    /// <param name="mayConfirmTaxInvoice">รอบ 257 ปิดท้าย LOW: ผู้เรียกมีสิทธิ์อนุมัติเอกสารซื้อไหม (controller ตัดสิน) — ปุ่ม "ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ"
+    /// แสดงเฉพาะผู้ที่กดแล้วผ่านจริง (server computes — เดิมทุกคนที่เห็นฝั่งซื้อเห็นปุ่มแล้วกดได้ 403)</param>
+    public async Task<List<object>> IncomingPurchaseDraftsAsync(Guid companyId, CancellationToken ct = default, bool mayConfirmTaxInvoice = true)
     {
         var rows = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && d.PartnerSourceLinkId != null && !d.IsDeleted)
@@ -668,7 +685,7 @@ public partial class CrossTenantWorkflowService
             NeedsOriginal = PartnerInputVatEvidence.ConfirmProblem(r.PartnerInputVatEvidence) == null,
             // รอบ 257 ชุด 3 (D-H4 · F2 ข้อ 5): ปุ่ม "ได้ e-Tax ที่ประทับเวลา" + เหตุที่กดไม่ได้ มาจากตัวตัดสินเดียว (หน้าเว็บไม่เทียบสตริงหลักฐานเอง)
             CanConfirmStampedEtax = PartnerInputVatEvidence.CanConfirmStampedEtax(r.PartnerInputVatEvidence),
-            CanConfirmExternalTaxInvoice = PartnerInputVatEvidence.CanConfirmExternalTaxInvoice(r.PartnerInputVatEvidence),   // ฝ่ายค้าน M1
+            CanConfirmExternalTaxInvoice = mayConfirmTaxInvoice && PartnerInputVatEvidence.CanConfirmExternalTaxInvoice(r.PartnerInputVatEvidence),   // ฝ่ายค้าน M1 + สิทธิ์ของผู้เรียก
             InputVatBlocked = PartnerInputVatEvidence.BlocksClaim(r.PartnerInputVatEvidence),   // สีป้าย: ยังลงภาษีซื้อไม่ได้ (รวมรอใบกำกับ · ต้นทางยกเลิก)
             ConfirmBlockedReason = PartnerInputVatEvidence.ConfirmProblem(r.PartnerInputVatEvidence),
             SourceVoided = r.PartnerInputVatEvidence == PartnerInputVatEvidence.SourceVoided,
@@ -734,6 +751,9 @@ public partial class CrossTenantWorkflowService
             ?? throw new KeyNotFoundException("ไม่พบใบซื้อจากคู่ค้า");
         if (PartnerInputVatEvidence.ExternalTaxInvoiceProblem(doc.PartnerInputVatEvidence, supplierInvoiceNumber, supplierTaxInvoiceDate, DateTime.UtcNow) is string problem)
             throw new BusinessRuleException(problem, PartnerExchangeRules.RuleCode, 409);
+        // รอบ 257 ปิดท้าย MED-3: "ได้ e-Tax ที่ประทับเวลา" ต้องมีไฟล์ e-Tax ที่ลงลายมือชื่อของต้นทางถึงผู้รับ (ตัวตัดสินเดียวกับทางปกติ) — ใบที่รอใบกำกับไม่มีไฟล์นั้น ⇒ 409
+        if (stampedEtax && PartnerInputVatEvidence.StampedEtaxProblem(doc.PartnerInputVatEvidence) is string stampedProblem)
+            throw new BusinessRuleException(stampedProblem, PartnerExchangeRules.RuleCode, 409);
         var source = await PartnerSourceCheckAsync(companyId, documentId);
         if (source.Voided)
         {
@@ -741,6 +761,11 @@ public partial class CrossTenantWorkflowService
                 .ExecuteUpdateAsync(x => x.SetProperty(d => d.PartnerInputVatEvidence, PartnerInputVatEvidence.SourceVoided));
             throw new BusinessRuleException(PartnerInputVatEvidence.SourceVoidedMessage, PartnerExchangeRules.RuleCode, 409);
         }
+        // รอบ 257 ปิดท้าย MED-3: สายนี้มีใบกำกับของผู้ขายผ่านระบบแล้ว (ใบรอใบกำกับเพราะ VAT ไม่ตรงตอนแนบ) ⇒ ทางนี้ต้องผ่านกติกา VAT เดียวกับตอนแนบ —
+        // เดิมกดทางนี้ได้เลยโดยไม่แก้ VAT ⇒ ปลดภาษีซื้อบนยอดที่ไม่ตรงใบกำกับ
+        var approvedNow = doc.Status is not (DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Rejected or DocumentStatus.Voided);
+        if (PartnerInputVatEvidence.ExternalVatProblem(source.LatestTaxInvoiceVat, doc.VatAmount, approvedNow) is string vatProblem)
+            throw new BusinessRuleException(vatProblem, PartnerExchangeRules.RuleCode, 409);
         var number = supplierInvoiceNumber!.Trim();
         var date = supplierTaxInvoiceDate!.Value.Date;
         var before = doc.PartnerInputVatEvidence;
@@ -766,7 +791,7 @@ public partial class CrossTenantWorkflowService
             OldValues = JsonSerializer.Serialize(new { inputVatEvidence = before }),
             NewValues = JsonSerializer.Serialize(new
             {
-                @event = "PartnerExternalTaxInvoiceConfirmed", inputVatEvidence = target, supplierInvoiceNumber = number, supplierTaxInvoiceDate = date,
+                @event = PartnerInputVatEvidence.ExternalConfirmedEvent, inputVatEvidence = target, supplierInvoiceNumber = number, supplierTaxInvoiceDate = date,
                 kind = stampedEtax ? "StampedEtax" : "Paper", ruleCode = PartnerExchangeRules.RuleCode, legalReference = PartnerExchangeRules.LegalReference,
             }),
             Timestamp = DateTime.UtcNow,

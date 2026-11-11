@@ -107,6 +107,9 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             };
         }
 
+        // รอบ 257 ปิดท้าย MED-2 (คำตัดสิน 257-5-1): ใบลงวันที่ในปีที่ยื่น ภ.ง.ด.50 แล้ว ⇒ ด่าน (ไม่ถาม AI · ไม่ยืนยันอัตโนมัติ) — รอคนตัดสินพร้อมเหตุ
+        if (await WhtCreditFiledYearGuard.LockedYearAsync(_db, companyId, s.CertificateDate, ct) is int filedFy)
+            gates.Add(WhtCreditFiledYearGuard.IntakeReviewGate(filedFy));
         if (possibleDuplicate) gates.Add(PossibleDuplicateGate(certNo!));   // B-M2: ไม่ยืนยันอัตโนมัติ · คนตรวจว่าใบซ้ำหรือใบของลูกค้าอีกราย
 
         var intake = new WhtCertIntake
@@ -165,6 +168,17 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         {
         raced = await InTxAsync<WhtCertSubmitResult?>(async () =>
         {
+            // รอบ 257 ปิดท้าย MED-2: ทางยืนยันอัตโนมัติถือล็อกระดับบริษัทก่อน (ลำดับ บริษัท → เลขที่ใบ → แถว) แล้วตรวจปีที่ยื่นแล้วซ้ำใต้ล็อก —
+            // ภ.ง.ด.50 ถูกยื่นระหว่างตรวจ ⇒ ไม่ยืนยันอัตโนมัติ (ใบเข้ากล่องรอคน)
+            if (outcome == WhtCertIntakeVerdict.Outcome.AutoConfirm)
+            {
+                await WhtCreditFiledYearGuard.LockCompanyAsync(_db, companyId, ct);
+                if (await WhtCreditFiledYearGuard.LockedYearAsync(_db, companyId, s.CertificateDate, ct) is int filedNow)
+                {
+                    outcome = WhtCertIntakeVerdict.Outcome.AwaitUser;
+                    gates.Add(WhtCreditFiledYearGuard.IntakeReviewGate(filedNow));
+                }
+            }
             // ฝ่ายค้าน WP-09 รอบสอง (races): ตรวจซ้ำใต้ล็อก "เลขที่ใบ + ผู้จ่าย" ตัวเดียวกับการยืนยัน/ทะเบียน — สองคำขอพร้อมกันไม่ผ่านทั้งคู่
             if (certNo != null)
             {
@@ -403,6 +417,9 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             // ฝ่ายค้าน WP-09 L4: วันที่บนใบกำหนดงวดเครดิต ภ.ง.ด.50 (CreditableInPeriod) — ไม่มีวันที่ = เครดิตหาย ⇒ บังคับก่อนยืนยัน
             if (intake.CertificateDate is null)
                 throw new BusinessRuleException("ต้องระบุวันที่บนหนังสือรับรอง — ใช้กำหนดรอบที่นำเครดิตไปใช้ใน ภ.ง.ด.50 (ไม่มีวันที่ = นับเป็นเครดิตไม่ได้)", RuleCode);
+            // รอบ 257 ปิดท้าย MED-2 (คำตัดสิน 257-5-1): ใบลงวันที่ในปีที่ยื่น ภ.ง.ด.50 แล้ว ⇒ ยืนยัน = เพิ่มเครดิตเข้าปีที่ยื่นไปแล้ว ⇒ 409 พร้อมทางไปต่อ
+            // (ปลดล็อกแบบของปีนั้นก่อน · หรือแก้วันที่ตามใบจริง) — ใต้ล็อกระดับบริษัทที่ถือไว้ข้างบน (ไม่ชนกับการยื่นกลางทาง)
+            await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "ยืนยันหนังสือรับรองนี้", ct, intake.CertificateDate);
             if (req.CreateStandalone && req.Allocations is { Count: > 0 })
                 throw new BusinessRuleException("เลือกได้อย่างเดียว: จัดสรรเข้ารายการรอใบ หรือ บันทึกเป็นรายการเครดิตใหม่ — ไม่ใช่ทั้งสองอย่าง", RuleCode, 400);
             if (intake.WhtAmount <= 0m)

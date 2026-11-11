@@ -136,8 +136,7 @@ const Page = {
         <td><a class="btn btn-secondary btn-sm" href="/pages/documents.html?openDoc=${encodeURIComponent(d.id)}">เปิด</a>
           ${d.needsOriginal ? `<button class="btn btn-primary btn-sm" data-orig="${Layout.esc(d.id)}" data-kind="Paper">ได้รับต้นฉบับกระดาษแล้ว</button>` : ''}
           ${d.needsOriginal && d.canConfirmStampedEtax ? `<button class="btn btn-secondary btn-sm" data-orig="${Layout.esc(d.id)}" data-kind="StampedEtax">ได้ e-Tax ที่ประทับเวลาแล้ว</button>` : ''}
-          ${d.canConfirmExternalTaxInvoice ? `<button class="btn btn-secondary btn-sm" data-ext="${Layout.esc(d.id)}" data-kind="Paper">ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ (กระดาษ)</button>
-            <button class="btn btn-secondary btn-sm" data-ext="${Layout.esc(d.id)}" data-kind="StampedEtax">ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ (e-Tax ประทับเวลา)</button>` : ''}
+          ${d.canConfirmExternalTaxInvoice ? `<button class="btn btn-secondary btn-sm" data-ext="${Layout.esc(d.id)}" data-kind="Paper">ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ</button>` : ''}
           ${!d.needsOriginal && d.confirmBlockedReason ? `<div class="pt-muted">${Layout.esc(d.confirmBlockedReason)}</div>` : ''}</td></tr>`).join('');
       dBody.querySelectorAll('[data-orig]').forEach(b => b.addEventListener('click', () => this.confirmOriginal(b.dataset.orig, b.dataset.kind)));
       dBody.querySelectorAll('[data-ext]').forEach(b => b.addEventListener('click', () => this.confirmExternal(b.dataset.ext, b.dataset.kind)));
@@ -214,12 +213,17 @@ const Page = {
   // รอบ 257 ชุด 3 (ฝ่ายค้าน M1): ทางออกของคนจาก "รอใบกำกับจากผู้ขาย" — เลขที่ + วันที่ใบกำกับ · ตรวจทุกช่องที่เซิร์ฟเวอร์ (ข้อความผิดมาจากเซิร์ฟเวอร์)
   async confirmExternal(id, kind) {
     const api = Layout.api(); if (!api) return;
-    const no = await Layout.promptText({ title: 'ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ', label: 'เลขที่ใบกำกับภาษีของผู้ขาย' });
+    // รอบ 257 ปิดท้าย LOW: ช่องวันที่เป็นตัวเลือกวันที่จริง (เดิมพิมพ์ข้อความอิสระ — พิมพ์ผิดรูปได้ข้อความผิดพลาดภาษาอังกฤษจากตัวอ่าน JSON) ·
+    // ช่องว่าง = ข้อความไทยที่กล่องเลย · กติกา (ไม่อยู่ในอนาคต ฯลฯ) ยังตรวจที่เซิร์ฟเวอร์
+    const no = await Layout.promptText({ title: 'ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ', label: 'เลขที่ใบกำกับภาษีของผู้ขาย',
+      required: true, requiredMessage: 'กรุณากรอกเลขที่ใบกำกับภาษีของผู้ขาย' });
     if (no === null) return;
-    const dt = await Layout.promptText({ title: 'ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ', label: 'วันที่บนใบกำกับ (ปปปป-ดด-วว ค.ศ.)' });
+    const dt = await Layout.promptText({ title: 'ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ', label: 'วันที่บนใบกำกับภาษี', inputType: 'date',
+      required: true, requiredMessage: 'กรุณาเลือกวันที่บนใบกำกับภาษี',
+      validate: v => /^\d{4}-\d{2}-\d{2}$/.test(v) ? null : 'วันที่ไม่ถูกต้อง — เลือกวันที่จากปฏิทิน' });
     if (dt === null) return;
     const ok = await Layout.confirm({ title: 'ยืนยันว่าได้รับใบกำกับภาษีตัวจริงแล้ว',
-      message: kind === 'StampedEtax'
+      message: kind === 'StampedEtax'   // เซิร์ฟเวอร์ปฏิเสธชนิดนี้บนทางนอกระบบ (ไม่มีไฟล์ e-Tax ที่ลงลายมือชื่อถึงผู้รับ) — หน้าไม่แสดงปุ่มแล้ว
         ? 'ยืนยันเมื่อตรวจแล้วว่าไฟล์ e-Tax ของผู้ขายลงลายมือชื่อและประทับเวลา ETDA ถูกต้อง และยอด VAT ตรงกับใบซื้อนี้ (ระบบไม่ได้ตรวจกับ ETDA ให้)'
         : 'ยืนยันเมื่อมีใบกำกับภาษีตัวจริง (กระดาษ) อยู่ในมือ และยอด VAT ตรงกับใบซื้อนี้แล้วเท่านั้น' });
     if (!ok) return;

@@ -17855,6 +17855,97 @@ RULES += [
          why=_R257P4_WHY + "E-H1 ข้อ LINE ของการ์ด go-live จากผู้อ่านค่าตั้ง OA กลางตัวเดียว"),
 ]
 
+# ── รอบ 257 ปิดท้าย (ผลตรวจฝ่ายค้านรอบสุดท้าย · คำตัดสิน 257-5-1…257-5-4): ไม่มี HIGH · MED 6 · LOW ──
+# ทุกข้อเป็น "ด่านที่มีแต่บางทางเข้าไม่เดินผ่าน" (F2 ข้อ 1/2): สร้างแถวเครดิต/ยืนยันใบในปีที่ยื่น ภ.ง.ด.50 แล้ว · ทางนอกระบบข้ามกติกา VAT ·
+# คำยืนยันที่ถูกแล้วถูกดึงกลับ · ข้อมูลที่ persist ก่อนแก้ (กลุ่มไม่มีใบกำกับในสาย) · ปุ่มล้างที่ล้างไม่ได้
+_R257Z_WHY = "รอบ 257 ปิดท้าย (คำตัดสิน 257-5-*): "
+RULES += [
+    dict(file=_R243A_WHT, method="CreateAsync",
+         must=["WhtCreditFiledYearGuard.LockCompanyAsync(", "WhtCreditFiledYearGuard.EnsureNotFiledAsync("],
+         before=[("WhtCreditFiledYearGuard.LockCompanyAsync(", "EnsureCertificateNotRecordedAsync("),
+                 ("WhtCreditFiledYearGuard.EnsureNotFiledAsync(", "_db.WhtCreditsReceived.Add(e)")],
+         why=_R257Z_WHY + "MED-1 แถวใหม่ที่วันที่ใบอยู่ในปีที่ยื่น ภ.ง.ด.50 แล้ว ⇒ 409 (ล็อกบริษัทก่อนล็อกเลขที่ใบ)"),
+    dict(file=_R243A_WHT, method="UpdateAsync", must=["WhtCreditFiledYearGuard.AmountChanged("],
+         before=[("WhtCreditFiledYearGuard.AmountChanged(", "e.WhtAmount = r.WhtAmount")],
+         why=_R257Z_WHY + "LOW แก้ยอดภาษีถูกหักของแถวในปีที่ยื่นแล้ว ⇒ 409"),
+    dict(file=_R243A_WHT, method="UndoWriteOffAsync",
+         must=["WhtCreditFiledYearGuard.LockCompanyAsync(", "WhtCreditFiledYearGuard.LockedYearAsync(", "NotifyOwnersFiledYearChangedAsync("],
+         before=[("WhtCreditFiledYearGuard.LockCompanyAsync(", "LockCreditAsync("), ("NotifyOwnersFiledYearChangedAsync(", "_db.SaveChangesAsync()")],
+         forbid=["WhtCreditFiledYearGuard.EnsureNotFiledAsync("],   # คำตัดสิน 257-5-2: ทางระบบขับ — ไม่กัน (ความจริงของต้นทางชนะ) แต่ต้องแจ้ง
+         why=_R257Z_WHY + "LOW ต้นทางหาย ⇒ ล็อกบริษัท + แจ้งเจ้าของเมื่อกระทบปีที่ยื่นแล้ว (ไม่ปฏิเสธ)"),
+    dict(file=_R243A_WHT, method="CancelAfterRefundAsync",
+         must=["WhtCreditFiledYearGuard.LockCompanyAsync(", "WhtCreditFiledYearGuard.LockedYearAsync(", "NotifyOwnersFiledYearChangedAsync("],
+         before=[("WhtCreditFiledYearGuard.LockCompanyAsync(", "LockCreditAsync("), ("NotifyOwnersFiledYearChangedAsync(", "_db.SaveChangesAsync()")],
+         why=_R257Z_WHY + "LOW คืนเงินเต็มจำนวน ⇒ ล็อกบริษัท + แจ้งเจ้าของเมื่อกระทบปีที่ยื่นแล้ว"),
+    dict(file=_R243A_WHT, method="NotifyOwnersFiledYearChangedAsync",
+         must=["cu.CompanyId == companyId", "UserRole.Owner", "WhtCreditFiledYearGuard.SourceChangedFiledYearMessage("],
+         why=_R257Z_WHY + "LOW กระดิ่งถึงเจ้าของของบริษัทนี้เท่านั้น (tenant) · ข้อความตัวเดียว"),
+    dict(file=_R252_SVC, method="ConfirmAsync", must=["WhtCreditFiledYearGuard.EnsureNotFiledAsync("],
+         before=[("WhtCreditFiledYearGuard.EnsureNotFiledAsync(", "_credits.EnsureCertificateNotRecordedAsync("),
+                 ("WhtCreditFiledYearGuard.LockCompanyAsync(", "WhtCreditFiledYearGuard.EnsureNotFiledAsync(")],
+         why=_R257Z_WHY + "MED-2 ยืนยันใบที่ลงวันที่ในปีที่ยื่น ภ.ง.ด.50 แล้ว ⇒ 409 (ใต้ล็อกบริษัท · ก่อนแตะแถว)"),
+    dict(file=_R252_SVC, method="SubmitAsync",
+         must=["WhtCreditFiledYearGuard.LockedYearAsync(", "WhtCreditFiledYearGuard.IntakeReviewGate(", "WhtCreditFiledYearGuard.LockCompanyAsync("],
+         before=[("WhtCreditFiledYearGuard.LockedYearAsync(", "_ai.AskAsync("), ("WhtCreditFiledYearGuard.LockCompanyAsync(", "ApplyToCredit(")],
+         why=_R257Z_WHY + "MED-2 ใบในปีที่ยื่นแล้วไม่ยืนยันอัตโนมัติ (ด่านก่อนถาม AI + ตรวจซ้ำใต้ล็อกบริษัทก่อนลงเครดิต)"),
+    dict(file=_R257BF_GUARD, method="LockedYearAsync", must=["FiledYearsAsync(", "c.Id == companyId", "LockedYear("],
+         why=_R257Z_WHY + "ตัวอ่านปีที่ยื่นแล้วของทางที่ไม่ปฏิเสธ ใช้ตัวตัดสินเดียวกับ EnsureNotFiledAsync"),
+    dict(file=_R255X, method="ConfirmExternalTaxInvoiceAsync",
+         must=["PartnerInputVatEvidence.ExternalVatProblem(", "PartnerInputVatEvidence.StampedEtaxProblem(", "source.LatestTaxInvoiceVat",
+               "PartnerInputVatEvidence.ExternalConfirmedEvent"],
+         before=[("PartnerInputVatEvidence.ExternalVatProblem(", "PartnerInputVatEvidence.Confirmed("),
+                 ("PartnerInputVatEvidence.StampedEtaxProblem(", "PartnerInputVatEvidence.Confirmed(")],
+         why=_R257Z_WHY + "MED-3 ทางนอกระบบ: สายมีใบกำกับผ่านระบบแล้ว ⇒ VAT ต้องตรง (กติกาเดียวกับตอนแนบ) · e-Tax ประทับเวลาต้องมีไฟล์ลงลายมือชื่อ"),
+    dict(file=_R255X, method="PartnerSourceCheckAsync", must=["latestTaxVat = s.VatAmount"],
+         why=_R257Z_WHY + "MED-3 VAT ของใบกำกับล่าสุดที่ยังมีผลในสาย (ตัวอ่านเดียวกับเลข/วันที่ใบกำกับ)"),
+    dict(file=_R255X, method="TryCreatePurchaseDraftAsync",
+         must=["PartnerInputVatEvidence.ExternalConfirmationCovers(", "ConfirmedThroughExternalPathAsync("],
+         before=[("PartnerInputVatEvidence.ExternalConfirmationCovers(", "PartnerInputVatEvidence.OnNewSource(")],
+         call_args=[("PartnerInputVatEvidence.OnNewSource(", "externalCovers"), ("PartnerInputVatEvidence.OnNewSource(", "vatMatches")],
+         why=_R257Z_WHY + "MED-4 คำยืนยันผ่านทางนอกระบบของใบกำกับใบเดียวกัน (เลขตรง + VAT ตรง) คงไว้เมื่อใบกำกับผ่านระบบมาถึง"),
+    dict(file=_R255X, method="ConfirmedThroughExternalPathAsync",
+         must=["a.CompanyId == targetCompanyId", "PartnerInputVatEvidence.ExternalConfirmedEvent"],
+         why=_R257Z_WHY + "MED-4 audit ของบริษัทผู้รับเอง (tenant) · ชื่อเหตุการณ์ตัวเดียว"),
+    dict(file=_R255X, method="IncomingPurchaseDraftsAsync",
+         must=["mayConfirmTaxInvoice && PartnerInputVatEvidence.CanConfirmExternalTaxInvoice("],
+         why=_R257Z_WHY + "LOW ปุ่มได้ใบกำกับนอกระบบแสดงตามสิทธิ์ของผู้เรียก (server computes)"),
+    dict(file="Controllers/PartnerExchangeController.cs", method="PurchaseDrafts",
+         must=["PermissionKeys.DocumentPurchaseApprove", "mayConfirmTaxInvoice: mayConfirm"],
+         why=_R257Z_WHY + "LOW ธงปุ่มใช้สิทธิ์เดียวกับด่านของเส้นยืนยัน"),
+    dict(file="Helpers/PartnerEvidenceRepair.cs", method="RunCoreAsync",
+         must=["FindNoCarrierAsync(", "PartnerInputVatEvidence.AwaitingTaxInvoice", "AddChainedAuditLog(", "MarkerKey"],
+         before=[("FindNoCarrierAsync(", "db.SaveChangesAsync(ct)")],
+         why=_R257Z_WHY + "MED-5 ใบยืนยันแล้วที่สายไม่มีใบกำกับเลย (ยังไม่อนุมัติ) ⇒ รอใบกำกับ + audit ในงานครั้งเดียว"),
+    dict(file="Helpers/PartnerEvidenceRepair.cs", method="FindNoCarrierAsync",
+         must=["ConfirmedWithoutCarrier(", "PartnerExchangeRules.IsTaxInvoiceCarrier(", "PartnerInputVatEvidence.ExternalConfirmedEvent",
+               "s.CompanyId == l.SourceCompanyId"],
+         why=_R257Z_WHY + "MED-5 ตัวหาใช้ตัวตัดสินใบกำกับตัวเดียว · ไม่นับใบที่ยืนยันผ่านทางนอกระบบ · tenant"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="GetAsync",
+         must=["PartnerEvidenceRepair.FindNoCarrierAsync(_db, companyId)"],
+         why=_R257Z_WHY + "MED-5 ใบที่อนุมัติแล้วลิสต์ในหมวดเดียวกันของรายงานตรวจข้อมูล"),
+    dict(file="Helpers/PartnerExchangeRules.cs", method="BlocksClaim",
+         must=["AwaitingTaxInvoice", "SourceVoided", "PaperRequired", "AwaitingTimestamp"],
+         why=_R257Z_WHY + "ใบที่รอใบกำกับจากผู้ขาย (และค่าที่ยังติดด่านอื่น) ห้ามลงภาษีซื้อ — ถอดค่าใดออกจากชุด = ปลดด่าน §86/4"),
+    dict(file=OCR, method="SanitizeVatSplitArtifacts", must=["OcrDuplicateLineGuard.PageCopyEvidence("],
+         before=[("OcrDuplicateLineGuard.PageCopyEvidence(", "OcrDuplicateLineGuard.Decide(")],
+         why=_R257Z_WHY + "หลักฐานหน้าสำเนาต้องมาจากตัวตัดสินเดียว (ส่ง true/false ตายตัว = ใบรายการเดียวถูกตัด/ไม่ตัดผิด) — คู่กับ call_args copyEvidence"),
+    dict(file=_R257_LINE, method="Update", must=["storedBasicId: s.LineOaBasicId", "storedGroupId: s.LineDefaultGroupId"],
+         why=_R257Z_WHY + "MED-6 ด่านค่าของ OA กลางปฏิเสธเฉพาะค่าที่ต่างจากที่เก็บอยู่ (ไม่ขวางการล้างรหัสเชื่อม)"),
+    dict(file=_R257_PSVC, method="GetMyStatementAsync", must=["DocumentPayLinkPolicy.StatementCreditNoteReduces("],
+         why=_R257Z_WHY + "LOW ใบลดหนี้ที่อ้างใบต้นทางลดยอดค้างของใบต้นทางแล้ว — ไม่หักซ้ำในยอดยกมา/ยอดสะสม"),
+]
+REVIEWER_CASES += [
+    # ถอดด่านปีที่ยื่นแล้วออกจากการสร้างแถว ⇒ ต้องฟ้อง (MED-1)
+    ("R257z1", "CreateAsync", 'await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "บันทึกรายการภาษีถูกหักที่มีหนังสือรับรอง", default, r.CertificateDate);', "", True),
+    # ทางนอกระบบไม่ตรวจ VAT กับใบกำกับผ่านระบบ ⇒ ต้องฟ้อง (MED-3)
+    ("R257z3", "ConfirmExternalTaxInvoiceAsync", "PartnerInputVatEvidence.ExternalVatProblem(source.LatestTaxInvoiceVat, doc.VatAmount, approvedNow) is string vatProblem", "false", True),
+    # ใบกำกับมาถึงแล้วไม่ส่งผลของ "คำยืนยันนอกระบบยังใช้ได้" ⇒ ต้องฟ้อง (MED-4)
+    ("R257z4", "TryCreatePurchaseDraftAsync", "isTaxInvoice, priorTaxInvoice, vatMatches, externalCovers);", "isTaxInvoice, priorTaxInvoice, vatMatches);", True),
+    # ปุ่มล้างส่งค่าเดิมกลับแล้วถูกปฏิเสธ (ไม่ส่งค่าที่เก็บอยู่ให้ด่าน) ⇒ ต้องฟ้อง (MED-6)
+    ("R257z6", "Update", "storedBasicId: s.LineOaBasicId, storedGroupId: s.LineDefaultGroupId) is string centralValue", "storedBasicId: null) is string centralValue", True),
+]
+
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

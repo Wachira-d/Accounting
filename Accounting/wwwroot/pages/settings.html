@@ -2265,8 +2265,10 @@
         if (!confirm('ล้างรหัสเชื่อมและรหัสลับของ LINE OA ของร้าน? แจ้งเตือนจะกลับไปส่งผ่าน LINE ของ NextAcc')) return;
         const body = {
           enabled: false, channelAccessToken: '', channelSecret: '',
-          defaultGroupId: document.getElementById('lineGroupId').value.trim(),
-          oaBasicId: document.getElementById('lineOaBasicId').value.trim(),
+          // รอบ 257 ปิดท้าย MED-6: ปุ่มนี้ล้างเฉพาะรหัสเชื่อม/รหัสลับ — Group ID / Basic ID ส่ง null (= คงเดิม) ไม่ส่งค่าในช่องกลับไป
+          // (เดิมบริษัทผู้ให้บริการที่มีค่าของ OA กลางค้างอยู่ ถูกด่านค่ากลางปฏิเสธทั้งคำขอ ⇒ ล้างไม่ได้)
+          defaultGroupId: null,
+          oaBasicId: null,
         };
         try {
           const j = await API.put(`/api/companies/${cid}/line-config`, body);

@@ -252,6 +252,33 @@ public static class PartnerInputVatEvidence
 
     // ═══════════ ฝ่ายค้าน M1: ทางออกของคน — "ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ" ═══════════
 
+    /// <summary>ชื่อเหตุการณ์ใน audit ของทาง "ได้ใบกำกับนอกระบบ" — ตัวเดียวของผู้เขียน (<c>ConfirmExternalTaxInvoiceAsync</c>) และผู้อ่าน
+    /// (ตอนใบกำกับผ่านระบบมาถึงทีหลัง · งานซ่อม <see cref="PartnerEvidenceRepair"/>)</summary>
+    public const string ExternalConfirmedEvent = "PartnerExternalTaxInvoiceConfirmed";
+
+    /// <summary>รอบ 257 ปิดท้าย MED-3: สายนี้มีใบกำกับของผู้ขายผ่านระบบอยู่แล้ว (ใบล่าสุดที่ยังมีผล · VAT = <paramref name="inSystemTaxInvoiceVat"/>) ⇒ ทาง
+    /// "ได้ใบกำกับนอกระบบ" ใช้ได้เฉพาะเมื่อ VAT บนใบซื้อตรงกับใบกำกับนั้น (<see cref="VatMatches"/> — กติกาเดียวกับตอนแนบ) · ไม่ตรง ⇒ ข้อความพร้อมทางไปต่อ ·
+    /// ไม่มีใบกำกับผ่านระบบ (null) ⇒ ไม่ตรวจ (ทิศตรงข้าม: ผู้ขายออกใบกำกับนอกระบบจริง) · null = ได้ · pure</summary>
+    public static string? ExternalVatProblem(decimal? inSystemTaxInvoiceVat, decimal purchaseVat, bool approved)
+    {
+        if (inSystemTaxInvoiceVat is not decimal v || VatMatches(v, purchaseVat)) return null;
+        return $"ผู้ขายส่งใบกำกับภาษีผ่านระบบแล้ว (VAT {v:#,##0.00}) แต่ VAT บนใบซื้อนี้คือ {purchaseVat:#,##0.00} — บันทึก \"ได้รับใบกำกับ\" บนยอดที่ไม่ตรงใบกำกับไม่ได้ (ม.82/5(1) · ม.86/4) · "
+            + (approved
+                ? "ยกเลิกใบซื้อนี้แล้วบันทึกใหม่ด้วย VAT ตามใบกำกับ"
+                : "แก้ยอด/VAT ของใบร่างให้ตรงใบกำกับแล้วกดอีกครั้ง (หรือยกเลิกแล้วบันทึกใหม่)")
+            + " · ถ้าใบกำกับของผู้ขายผิด ให้ผู้ขายยกเลิกแล้วออกใบแทนที่ถูกต้อง";
+    }
+
+    /// <summary>เลขที่ใบกำกับเดียวกันไหม — ตัดช่องว่างหัวท้าย · ไม่สนตัวพิมพ์ · <b>ไม่ fuzzy</b> (เลขเอกสารไม่มีการสะกดผิด — F2 ข้อ 3) · ว่าง = ไม่ตรง</summary>
+    internal static bool SameTaxInvoiceNumber(string? a, string? b)
+        => !string.IsNullOrWhiteSpace(a) && !string.IsNullOrWhiteSpace(b) && string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>รอบ 257 ปิดท้าย MED-4: คำยืนยันผ่านทาง "ได้ใบกำกับนอกระบบ" ยังใช้ได้ไหมเมื่อใบกำกับผ่านระบบมาถึงทีหลัง — ใบยังอยู่ในสถานะที่คนยืนยัน +
+    /// มี audit ของทางนั้น + เลขที่ใบกำกับที่คนบันทึกตรงกับเลขของใบที่มาถึง (VAT ตรวจแยกที่ <see cref="OnNewSource"/>) · pure</summary>
+    public static bool ExternalConfirmationCovers(string? current, bool confirmedThroughExternalPath, string? recordedTaxInvoiceNumber, string? arrivingTaxInvoiceNumber)
+        => (current == EtaxVerified || current == PaperConfirmed) && confirmedThroughExternalPath
+           && SameTaxInvoiceNumber(recordedTaxInvoiceNumber, arrivingTaxInvoiceNumber);
+
     /// <summary>ใช้ทาง "ได้ใบกำกับนอกระบบ" ได้ไหม — เฉพาะใบที่รอใบกำกับ (<see cref="AwaitingTaxInvoice"/>) · ต้องมีเลขที่ (≤ 100 ตัว) + วันที่
     /// (ไม่ก่อน ค.ศ. 2000 · ไม่เกินพรุ่งนี้) · null = ได้</summary>
     public static string? ExternalTaxInvoiceProblem(string? evidence, string? number, DateTime? date, DateTime todayUtc)
@@ -319,11 +346,15 @@ public static class PartnerInputVatEvidence
     /// ต้นทางถูกยกเลิก คงเดิม · อื่น ๆ = <see cref="Merge"/> (ทิศตรงข้าม: ยืนยันใบกำกับไว้แล้ว ใบกำกับที่ออกแทนมาถึง ⇒ คงค่าที่ยืนยัน)</summary>
     /// <param name="vatMatches">ฝ่ายค้าน M3: VAT บนใบกำกับใหม่เท่ากับ VAT บนใบซื้อ (±0.005 — <see cref="VatMatches"/>) · ไม่เท่า ⇒ <see cref="AwaitingTaxInvoice"/>
     /// (ห้ามตั้งหลักฐานที่ปลดภาษีซื้อได้บนยอดที่ไม่ตรงใบกำกับ — ผู้รับแก้ VAT ให้ตรงแล้วใช้ทาง "ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ")</param>
-    public static string OnNewSource(string? current, string offered, bool newSourceIsTaxInvoice, bool priorSourceWasTaxInvoice, bool vatMatches = true)
+    /// <param name="externalConfirmationCovers">รอบ 257 ปิดท้าย MED-4 (<see cref="ExternalConfirmationCovers"/>): ผู้รับยืนยันใบกำกับใบเดียวกันนี้ไว้แล้วผ่านทาง
+    /// "ได้ใบกำกับนอกระบบ" (เลขที่ตรง) ⇒ คำยืนยันเป็นของใบกำกับจริง ไม่ใช่ของใบแจ้งหนี้ ⇒ <b>คงไว้</b> (ไม่ตั้งกลับ PaperRequired) · VAT ไม่ตรง ⇒ ยังตั้งกลับเหมือนเดิม</param>
+    public static string OnNewSource(string? current, string offered, bool newSourceIsTaxInvoice, bool priorSourceWasTaxInvoice, bool vatMatches = true,
+        bool externalConfirmationCovers = false)
     {
         if (current == SourceVoided) return SourceVoided;
         if (newSourceIsTaxInvoice && !vatMatches) return AwaitingTaxInvoice;
-        if (newSourceIsTaxInvoice && !priorSourceWasTaxInvoice) return offered;
+        if (newSourceIsTaxInvoice && !priorSourceWasTaxInvoice)
+            return externalConfirmationCovers && (current == EtaxVerified || current == PaperConfirmed) ? current! : offered;
         return Merge(current, offered);
     }
 
@@ -342,7 +373,11 @@ public static class PartnerInputVatEvidence
                .Select(x => x.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)))));
 
     /// <summary>ห้ามลงภาษีซื้อ (นับเป็น §86/4 ไม่ครบ) — null/ค่าอื่น = ไม่ใช่ใบจากคู่ค้า ⇒ ไม่แตะ (ทิศตรงข้าม: ใบซื้อทั่วไปไม่ถูกกระทบ)</summary>
-    public static bool BlocksClaim(string? evidence) => evidence is AwaitingTimestamp or PaperRequired or SourceVoided or AwaitingTaxInvoice;
+    public static bool BlocksClaim(string? evidence)
+    {
+        // ตัวเมธอดแบบบล็อก (ไม่ใช่ =>) ให้ tools/required_call_site_check.py ล็อกชุดค่าได้ — ถอด AwaitingTaxInvoice ออก = ใบที่ยังไม่มีใบกำกับลงภาษีซื้อได้
+        return evidence is AwaitingTimestamp or PaperRequired or SourceVoided or AwaitingTaxInvoice;
+    }
 
     /// <summary>ข้อความในรายการช่องที่ขาด (ตัวตรวจ §86/4) — บอกทางไปต่อ</summary>
     public static string MissingLabel(string? evidence) => evidence switch

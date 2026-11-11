@@ -170,6 +170,14 @@ public static class DocumentPayLinkPolicy
         return 0m;
     }
 
+    /// <summary>รอบ 257 ปิดท้าย LOW — ใบลดหนี้ฝั่งขายยัง "ลดยอด" ในใบแจ้งยอดพอร์ทัลเองไหม ·
+    /// ใบลดหนี้ที่อ้างใบต้นทาง ถูกนำไปลดยอดค้างของใบต้นทางแล้วตอนอนุมัติ (<c>ApplySourceDocumentAdjustmentsAsync</c>: PaidAmount ของใบต้นทางเพิ่ม ⇒ BalanceDue ลด)
+    /// หรือคืนเป็นเงินสดแล้ว (ใบต้นทางชำระครบ) ⇒ <b>ยอดยกมา</b> (ซึ่งอ่าน BalanceDue ของใบต้นทาง) หักไปแล้ว — หักซ้ำด้วยตัวใบลดหนี้ = ยอดลูกค้าต่ำเกินจริง ·
+    /// นับเองเฉพาะ (ก) ใบลดหนี้ที่ไม่มีใบต้นทาง (เครดิตลอย) (ข) ใบลดหนี้ในงวดที่ใบต้นทางก็อยู่ในงวด (ใบต้นทางขึ้นบรรทัดด้วยยอดเต็ม) · pure</summary>
+    /// <param name="hasSource">ใบลดหนี้อ้างใบต้นทางที่มีอยู่ในบริษัท</param>
+    /// <param name="sourceListedInPeriod">ใบต้นทางลงวันที่ในงวดของใบแจ้งยอด (ขึ้นบรรทัดด้วยยอดเต็ม) — ใบลดหนี้ก่อนงวดส่ง false</param>
+    public static bool StatementCreditNoteReduces(bool hasSource, bool sourceListedInPeriod) => !hasSource || sourceListedInPeriod;
+
     /// <summary>ผู้ซื้อมีหน้าที่หักภาษี ณ ที่จ่ายไหม (ฝ่ายค้าน S3) — นิติบุคคล/หน่วยงานรัฐ = มี (ท.ป.4/2528) · บุคคลธรรมดา = ไม่มี ·
     /// ชนิดไม่รู้ ⇒ ใช้รูปเลขผู้เสียภาษี (<see cref="ContactTypeResolver.FromTaxId"/> ตัวเดิม) · ยังไม่รู้ ⇒ <c>null</c> (ผู้เรียกเชื่อยอดที่ผู้ใช้ตั้งบนใบ)</summary>
     public static bool? BuyerWithholds(ContactType? declared, string? taxId)

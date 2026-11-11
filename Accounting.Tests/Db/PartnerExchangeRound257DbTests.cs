@@ -438,4 +438,121 @@ public class PartnerExchangeRound257DbTests
         Assert.Equal(draft.Id, hit.DocumentId);
         Assert.Empty(await PartnerEvidenceRepair.FindAsync(check, s2.Buyer.Id));
     }
+
+    // ═══════════ รอบ 257 ปิดท้าย (คำตัดสิน 257-5-3): MED-3 · MED-4 · MED-5 ═══════════
+
+    [Fact]
+    public async Task Z_MED3_ทางนอกระบบ_สายมีใบกำกับผ่านระบบVATไม่ตรง_409_แก้VATให้ตรงแล้วผ่าน_eTaxประทับเวลา409()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var inv = await SellerDocAsync(db, s, DocumentType.Invoice);
+        var l1 = await Svc(db).OnDocumentSentAsync(inv);
+        var tivBad = await SellerDocAsync(db, s, DocumentType.TaxInvoice, relatedTo: inv.Id, shape: d =>
+        {
+            d.Lines.Clear();
+            d.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 5m, VatAmount = 50m });
+            d.VatAmount = 50m; d.TotalAmount = 1_050m;
+        });
+        await Svc(db).OnDocumentSentAsync(tivBad);
+        using var c1 = DbTestDatabase.TryCreateContext()!;
+        var draft = await DraftOfAsync(c1, s.Buyer.Id, l1!.Id);
+        Assert.Equal(PartnerInputVatEvidence.AwaitingTaxInvoice, draft.PartnerInputVatEvidence);
+        // เดิม: กดทางนอกระบบได้เลยทั้งที่ VAT บนใบซื้อ (70) ไม่ตรงใบกำกับของผู้ขาย (50) ⇒ ปลดภาษีซื้อบนยอดผิด
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            Svc(c1).ConfirmExternalTaxInvoiceAsync(s.Buyer.Id, draft.Id, Guid.NewGuid(), false, tivBad.DocumentNumber, DateTime.UtcNow.Date));
+        Assert.Equal(409, ex.StatusCode);
+        Assert.Contains("VAT", ex.Message);
+        Assert.Contains("แก้ยอด/VAT", ex.Message);          // ใบร่าง ⇒ ทางไปต่อ = แก้ให้ตรง
+        using (var cx = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(PartnerInputVatEvidence.AwaitingTaxInvoice, await cx.Documents.Where(d => d.Id == draft.Id).Select(d => d.PartnerInputVatEvidence).SingleAsync());
+        // "ได้ e-Tax ที่ประทับเวลา" บนทางนอกระบบ = ไม่มีไฟล์ลงลายมือชื่อถึงผู้รับ ⇒ 409 (ก่อนถึงด่าน VAT)
+        using (var cx = DbTestDatabase.TryCreateContext()!)
+        {
+            var st = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Svc(cx).ConfirmExternalTaxInvoiceAsync(s.Buyer.Id, draft.Id, Guid.NewGuid(), true, tivBad.DocumentNumber, DateTime.UtcNow.Date));
+            Assert.Equal(409, st.StatusCode);
+            Assert.Contains("e-Tax", st.Message);
+        }
+        // ทิศตรงข้าม: แก้ VAT ของใบซื้อให้ตรงใบกำกับ ⇒ ทางนอกระบบผ่าน
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        await c2.Documents.Where(d => d.Id == draft.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.VatAmount, 50m).SetProperty(d => d.TotalAmount, 1_050m));
+        var ok = await Svc(c2).ConfirmExternalTaxInvoiceAsync(s.Buyer.Id, draft.Id, Guid.NewGuid(), false, tivBad.DocumentNumber, DateTime.UtcNow.Date);
+        Assert.Equal(PartnerInputVatEvidence.PaperConfirmed, ok.Evidence);
+    }
+
+    [Fact]
+    public async Task Z_MED4_ยืนยันนอกระบบแล้วใบกำกับเดียวกันมาถึง_คงคำยืนยัน_ทิศตรงข้ามเลขไม่ตรง_ตั้งกลับต้องได้ต้นฉบับ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        async Task<(Pair S, Guid DraftId, string? Evidence)> RunAsync(bool sameNumber)
+        {
+            using var c0 = DbTestDatabase.TryCreateContext()!;
+            var s = await SeedAsync(c0);
+            var inv = await SellerDocAsync(c0, s, DocumentType.Invoice);
+            var l1 = await Svc(c0).OnDocumentSentAsync(inv);
+            var tiv = await SellerDocAsync(c0, s, DocumentType.TaxInvoice, relatedTo: inv.Id);   // ผู้ขายออกแล้วแต่ยังไม่ส่งผ่านระบบ
+            Guid draftId;
+            using (var c1 = DbTestDatabase.TryCreateContext()!)
+            {
+                draftId = (await DraftOfAsync(c1, s.Buyer.Id, l1!.Id)).Id;
+                var outcome = await Svc(c1).ConfirmExternalTaxInvoiceAsync(s.Buyer.Id, draftId, Guid.NewGuid(), false,
+                    sameNumber ? " " + tiv.DocumentNumber.ToLowerInvariant() + " " : "IV-OTHER-999", DateTime.UtcNow.Date);
+                Assert.Equal(PartnerInputVatEvidence.PaperConfirmed, outcome.Evidence);
+            }
+            using (var c2 = DbTestDatabase.TryCreateContext()!)
+                Assert.NotNull(await Svc(c2).OnDocumentSentAsync(await c2.Documents.Include(d => d.Lines).SingleAsync(d => d.Id == tiv.Id)));
+            using var c3 = DbTestDatabase.TryCreateContext()!;
+            var evidence = await c3.Documents.Where(d => d.Id == draftId).Select(d => d.PartnerInputVatEvidence).SingleAsync();
+            Assert.Equal(1, await c3.Documents.CountAsync(d => d.CompanyId == s.Buyer.Id && d.PartnerSourceLinkId != null));   // ไม่สร้างใบที่สอง
+            return (s, draftId, evidence);
+        }
+
+        var kept = await RunAsync(sameNumber: true);
+        Assert.Equal(PartnerInputVatEvidence.PaperConfirmed, kept.Evidence);   // เดิม: ถูกตั้งกลับ PaperRequired ทั้งที่ยืนยันใบกำกับใบนี้ไว้แล้ว
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.True(await c.AuditLogs.AnyAsync(a => a.CompanyId == kept.S.Buyer.Id && a.EntityId == kept.DraftId.ToString()
+                && a.NewValues != null && a.NewValues.Contains("\"externalConfirmationKept\":true")));
+        // ทิศตรงข้าม: เลขที่ใบกำกับที่คนบันทึกไม่ตรงกับใบที่มาถึง ⇒ ตั้งกลับให้ยืนยันต้นฉบับใบกำกับใบนี้ (พฤติกรรมเดิมของ D-H4)
+        var reset = await RunAsync(sameNumber: false);
+        Assert.Equal(PartnerInputVatEvidence.PaperRequired, reset.Evidence);
+    }
+
+    [Fact]
+    public async Task Z_MED5_ยืนยันแล้วแต่สายไม่มีใบกำกับ_ตัวหาเจอ_ทิศตรงข้ามยืนยันผ่านทางนอกระบบ_และสายที่มีใบกำกับ_ไม่เจอ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        // ใบที่ 1 (ข้อมูลรุ่นก่อน D-H4): ต้นทางเป็นใบแจ้งหนี้ · ผู้รับกด "ได้ต้นฉบับ" ไว้ · ใบกำกับไม่เคยมา
+        var s = await SeedAsync(db);
+        var inv = await SellerDocAsync(db, s, DocumentType.Invoice);
+        var l1 = await Svc(db).OnDocumentSentAsync(inv);
+        using var c1 = DbTestDatabase.TryCreateContext()!;
+        var legacy = await DraftOfAsync(c1, s.Buyer.Id, l1!.Id);
+        await c1.Documents.Where(d => d.Id == legacy.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.PartnerInputVatEvidence, PartnerInputVatEvidence.PaperConfirmed));
+        // ใบที่ 2 (ทิศตรงข้าม): ยืนยันผ่านทาง "ได้ใบกำกับนอกระบบ" ⇒ คำยืนยันของใบกำกับจริง
+        var s2 = await SeedAsync(c1);
+        var inv2 = await SellerDocAsync(c1, s2, DocumentType.Invoice);
+        var m1 = await Svc(c1).OnDocumentSentAsync(inv2);
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var external = await DraftOfAsync(c2, s2.Buyer.Id, m1!.Id);
+        await Svc(c2).ConfirmExternalTaxInvoiceAsync(s2.Buyer.Id, external.Id, Guid.NewGuid(), false, "IV-EXT-Z5", DateTime.UtcNow.Date);
+        // ใบที่ 3 (ทิศตรงข้าม): สายมีใบกำกับ + ยืนยันตามปกติ
+        var s3 = await SeedAsync(c2);
+        var tiv3 = await SellerDocAsync(c2, s3, DocumentType.TaxInvoice);
+        var n1 = await Svc(c2).OnDocumentSentAsync(tiv3);
+        using var c3 = DbTestDatabase.TryCreateContext()!;
+        var normal = await DraftOfAsync(c3, s3.Buyer.Id, n1!.Id);
+        await Svc(c3).ConfirmPartnerOriginalAsync(s3.Buyer.Id, normal.Id, Guid.NewGuid());
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var hit = Assert.Single(await PartnerEvidenceRepair.FindNoCarrierAsync(check, s.Buyer.Id));
+        Assert.Equal((legacy.Id, DocumentStatus.Draft), (hit.DocumentId, hit.Status));
+        Assert.True(PartnerEvidenceRepair.NotApproved(hit.Status));
+        Assert.Empty(await PartnerEvidenceRepair.FindNoCarrierAsync(check, s2.Buyer.Id));
+        Assert.Empty(await PartnerEvidenceRepair.FindNoCarrierAsync(check, s3.Buyer.Id));
+        Assert.Empty(await PartnerEvidenceRepair.FindAsync(check, s.Buyer.Id));   // กลุ่มแรก (ต้องมีใบกำกับในสาย) ไม่เจอใบนี้ — เหตุที่ต้องมีกลุ่มที่สอง
+    }
 }
