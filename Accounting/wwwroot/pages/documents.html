@@ -13897,7 +13897,10 @@
             + stuck.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(stuck)
             + keptLost.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(keptLost)
             // รอบ 259-3 (ทีม E-M7 · คำตัดสิน 259-3-6): แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร ย้ายไปบ้านเดียวที่หน้า e-Tax (พร้อมปุ่ม "ตรวจแล้ว") — ที่นี่เหลือลิงก์
-            + (etaxRows.length ? `<div>• แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร ${Number(etaxRows.length)} รายการ — <a href="/pages/etax.html#etaxRdReview" style="color:#92400e;text-decoration:underline">ตรวจที่หน้า e-Tax</a></div>` : '');
+            // ฝ่ายค้าน L7: ลิงก์ตามสิทธิ์เมนู e-Tax — ผู้ที่เข้าหน้า e-Tax ไม่ได้เห็นทางไปต่อที่ทำได้จริง (ไม่ใช่ลิงก์ที่เปิดแล้วถูกปฏิเสธ)
+            + (etaxRows.length ? `<div>• แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร ${Number(etaxRows.length)} รายการ — ${Layout.hasMenuAccess('etax')
+                ? '<a href="/pages/etax.html#etaxRdReview" style="color:#92400e;text-decoration:underline">ตรวจที่หน้า e-Tax</a>'
+                : 'แจ้งผู้ที่มีสิทธิ์เมนู e-Tax ให้ตรวจและบันทึกที่หน้า e-Tax'}</div>` : '');
           el.style.display = '';
         } catch (e) { el.style.display = 'none'; }
       },

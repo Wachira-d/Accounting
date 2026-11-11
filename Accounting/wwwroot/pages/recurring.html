@@ -486,7 +486,8 @@ const Page = {
     const cid = document.getElementById('fContactId')?.value || '';
     if (!cid) throw new Error('เลือกผู้ติดต่อก่อน');
     const api = Layout.api(); if (!api) throw new Error('ยังไม่ได้เลือกบริษัท');
-    const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null,
+    // ฝ่ายค้าน M4: ไม่ได้โหลดตัวเลือก ⇒ null (= ไม่แตะ) — "" แปลว่า "ล้าง" ⇒ ช่องทางของผู้ติดต่อหายเงียบเมื่อโหลดตัวเลือกล้ม (สมมาตรกับแผงใน contacts)
+    const res = await api.updateContactAutopilot(cid, { paymentMode: !this._apOpts ? null : (document.getElementById('fCustPayMode')?.value || ''), payLinkChannels: null,
       postPayEmailReceipt: !this._apOpts ? null : (document.getElementById('fCustPostPayEmail')?.value || 'Inherit'),
       postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fCustPostPayPartial')?.value || 'Inherit'),
       // รอบ 250 WP-08: ไม่ได้โหลดค่าตั้งผู้ติดต่อ ⇒ null (= เซิร์ฟเวอร์คงเดิม · ไม่ล้างเงียบ)

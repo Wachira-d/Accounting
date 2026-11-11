@@ -308,8 +308,10 @@
         try {
           const r = await API.get(`/api/companies/${encodeURIComponent(cid)}/document-auto-send/settings`);
           const s = (r && r.data) || {};
-          cb.checked = !!s.whtCertReminderEnabled; cb.disabled = false;
-          note.textContent = s.whtCertReminderEnabled ? 'เปิดอยู่' : 'ปิดอยู่';
+          cb.checked = !!s.whtCertReminderEnabled;
+          // ฝ่ายค้าน L5: แก้ได้เฉพาะเจ้าของบริษัท (เซิร์ฟเวอร์บอก canEdit) — ล็อกช่อง + บอกเหตุ ไม่ปล่อยให้กดแล้วได้ 403
+          cb.disabled = s.canEdit !== true;
+          note.textContent = (s.whtCertReminderEnabled ? 'เปิดอยู่' : 'ปิดอยู่') + (s.canEdit === true ? '' : ' · เปลี่ยนได้เฉพาะเจ้าของบริษัท');
         } catch (e) { cb.disabled = true; note.textContent = 'โหลดค่าตั้งไม่สำเร็จ: ' + (e.message || ''); }
       },
 

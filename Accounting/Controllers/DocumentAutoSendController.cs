@@ -38,7 +38,14 @@ public class DocumentAutoSendController : ControllerBase
 
     [HttpGet("settings")]
     public async Task<ActionResult<ApiResponse<DocumentAutoSendSettingsDto>>> GetSettings(Guid companyId)
-        => Ok(new ApiResponse<DocumentAutoSendSettingsDto>(true, await _links.GetSettingsAsync(companyId)));
+    {
+        // รอบ 259-3 ฝ่ายค้าน L5: บอกหน้าว่าแก้ได้ไหม (ด่านเดียวกับ PUT — EnsureOwnerAccessAsync) · ไม่ใช่เจ้าของ/คีย์ API = อ่านอย่างเดียว
+        var canEdit = true;
+        try { await _companies.EnsureOwnerAccessAsync(companyId, JwtHelper.GetUserIdFromClaims(User)); }
+        catch (BusinessRuleException) { canEdit = false; }
+        var dto = await _links.GetSettingsAsync(companyId);
+        return Ok(new ApiResponse<DocumentAutoSendSettingsDto>(true, dto with { CanEdit = canEdit }));
+    }
 
     [HttpPut("settings")]
     public async Task<ActionResult<ApiResponse<DocumentAutoSendSettingsDto>>> UpdateSettings(Guid companyId,

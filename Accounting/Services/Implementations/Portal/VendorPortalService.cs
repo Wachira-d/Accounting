@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -33,9 +34,12 @@ public interface IVendorPortalService
     /// <summary>รอบ 259-3 (E-H2): ลิงก์ที่ออกแล้วทั้งหมดของบริษัท (ล่าสุดก่อน) — สถานะ/ป้าย/เพิกถอนได้ไหม จากตัวตัดสินเดียว <see cref="Accounting.Helpers.VendorPortalTokenRules"/></summary>
     Task<IReadOnlyList<VendorPortalTokenRow>> ListAsync(Guid companyId, CancellationToken ct = default);
 
-    /// <summary>รอบ 259-3 (E-H2): ส่งลิงก์ทางอีเมลถึง <c>RecipientEmail</c> ของลิงก์ (ผ่าน <see cref="Accounting.Services.Interfaces.IEmailService.TrySendAsync"/>) —
-    /// คืนผลจริง (ไม่ได้ระบุอีเมล · ระบบยังไม่ตั้งอีเมล · ส่งล้ม · ส่งแล้ว) ไม่โยน</summary>
-    Task<VendorPortalInviteResult> SendInviteAsync(Guid companyId, VendorPortalToken stored, string absoluteUrl, CancellationToken ct = default);
+    /// <summary>รอบ 259-3 ฝ่ายค้าน M3: คำเชิญทางอีเมลเข้าคิว EmailQueue (โควตา/เพดานอีเมล · ผู้ส่งในนามบริษัท) — ลิงก์ในอีเมลออกตอนส่ง
+    /// (<see cref="IssueInviteUrlAsync"/>) · ไม่ได้ระบุอีเมล = ไม่เข้าคิว</summary>
+    Task<VendorPortalInviteResult> QueueInviteAsync(Guid companyId, VendorPortalToken stored, CancellationToken ct = default);
+
+    /// <summary>รอบ 259-3 ฝ่ายค้าน L6: เพิกถอนลิงก์บทบาทลูกค้าเดิมที่ยังใช้ได้ทั้งหมด · คืนจำนวน</summary>
+    Task<int> RevokeLegacyCustomerAsync(Guid companyId, string reason, CancellationToken ct = default);
 
     Task<VendorScopedSummary> GetSummaryAsync(VendorPortalToken token,
         CancellationToken ct = default);
@@ -65,8 +69,8 @@ public sealed record VendorPortalTokenRow(Guid Id, Guid ContactId, string? Conta
     DateTime IssuedAt, DateTime ExpiresAt, DateTime? LastUsedAt, DateTime? RevokedAt, string? RevokedReason, string? RecipientEmail,
     string Status, string StatusLabel, bool CanRevoke);
 
-/// <summary>รอบ 259-3 (E-H2): ผลส่งคำเชิญ — <paramref name="Sent"/> true เฉพาะเมื่อ SMTP รับไปจริง</summary>
-public sealed record VendorPortalInviteResult(bool Requested, bool Sent, string Note);
+/// <summary>รอบ 259-3: ผลคำเชิญ — <paramref name="Queued"/> = เข้าคิวอีเมลแล้ว (ยังไม่ใช่ "ส่งถึงแล้ว")</summary>
+public sealed record VendorPortalInviteResult(bool Requested, bool Queued, string Note);
 
 public sealed record VendorInvoiceDraft(
     Guid DocumentId, string DocumentNumber, string Status);
@@ -75,11 +79,8 @@ public class VendorPortalService : IVendorPortalService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<VendorPortalService> _logger;
-    private readonly Accounting.Services.Interfaces.IEmailService? _email;
-
-    public VendorPortalService(AccountingDbContext db, ILogger<VendorPortalService> logger,
-        Accounting.Services.Interfaces.IEmailService? email = null)
-    { _db = db; _logger = logger; _email = email; }
+    public VendorPortalService(AccountingDbContext db, ILogger<VendorPortalService> logger)
+    { _db = db; _logger = logger; }
 
     public async Task<(string RawToken, VendorPortalToken Stored)> IssueAsync(Guid companyId,
         Guid contactId, string role, int? validDays, string? recipientEmail,
@@ -93,9 +94,10 @@ public class VendorPortalService : IVendorPortalService
         if (Accounting.Helpers.VendorPortalTokenRules.IssueRefusal(role) is string refusal)
             throw new InvalidOperationException(refusal);
 
-        var rawBytes = RandomNumberGenerator.GetBytes(32);
-        var rawToken = Convert.ToBase64String(rawBytes)
-            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        // รอบ 259-3 ฝ่ายค้าน M3: อีเมลผู้รับ = อีเมลเดียว รูปแบบถูก (ก่อนออก token — ปฏิเสธแล้วไม่มีแถว)
+        var (inviteEmail, emailProblem) = VendorPortalTokenRules.InviteEmail(recipientEmail);
+        if (emailProblem != null) throw new InvalidOperationException(emailProblem);
+        var rawToken = NewRawToken();
         var hash = ComputeHash(rawToken);
         var expires = DateTime.UtcNow.AddDays(Math.Clamp(validDays ?? 90, 1, 365));
         var stored = new VendorPortalToken
@@ -107,7 +109,7 @@ public class VendorPortalService : IVendorPortalService
             IssuedAt = DateTime.UtcNow,
             ExpiresAt = expires,
             IssuedByUserId = issuedByUserId,
-            RecipientEmail = string.IsNullOrWhiteSpace(recipientEmail) ? null : recipientEmail.Trim(),
+            RecipientEmail = inviteEmail,
         };
         _db.VendorPortalTokens.Add(stored);
         await _db.SaveChangesAsync(ct);
@@ -153,11 +155,18 @@ public class VendorPortalService : IVendorPortalService
 
     public async Task<IReadOnlyList<VendorPortalTokenRow>> ListAsync(Guid companyId, CancellationToken ct = default)
     {
-        var rows = await _db.VendorPortalTokens.AsNoTracking()
-            .Where(t => t.CompanyId == companyId && !t.IsDeleted)
-            .OrderByDescending(t => t.IssuedAt).Take(500)
+        // ฝ่ายค้าน L6: ลิงก์ที่ยังใช้ได้แสดงครบทุกตัว (ต้องเพิกถอนได้เสมอ) + ลิงก์ที่จบแล้วล่าสุดไม่เกิน 200
+        var nowList = DateTime.UtcNow;
+        var q = _db.VendorPortalTokens.AsNoTracking().Where(t => t.CompanyId == companyId && !t.IsDeleted);
+        var active = await q.Where(t => t.RevokedAt == null && t.ExpiresAt >= nowList)
+            .OrderByDescending(t => t.IssuedAt)
             .Select(t => new { t.Id, t.ContactId, t.Role, t.IssuedAt, t.ExpiresAt, t.LastUsedAt, t.RevokedAt, t.RevokedReason, t.RecipientEmail })
             .ToListAsync(ct);
+        var ended = await q.Where(t => t.RevokedAt != null || t.ExpiresAt < nowList)
+            .OrderByDescending(t => t.IssuedAt).Take(200)
+            .Select(t => new { t.Id, t.ContactId, t.Role, t.IssuedAt, t.ExpiresAt, t.LastUsedAt, t.RevokedAt, t.RevokedReason, t.RecipientEmail })
+            .ToListAsync(ct);
+        var rows = active.Concat(ended).ToList();
         var ids = rows.Select(r => r.ContactId).Distinct().ToList();
         // ชื่อผู้ติดต่อแยก query (รวมที่ถูกลบ) — นำทางใน projection = INNER JOIN ใต้ query filter ⇒ ลิงก์ของผู้ติดต่อที่ถูกลบหายจากรายการ (เพิกถอนไม่ได้)
         var names = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
@@ -173,26 +182,73 @@ public class VendorPortalService : IVendorPortalService
         }).ToList();
     }
 
-    public async Task<VendorPortalInviteResult> SendInviteAsync(Guid companyId, VendorPortalToken stored, string absoluteUrl, CancellationToken ct = default)
+    public async Task<VendorPortalInviteResult> QueueInviteAsync(Guid companyId, VendorPortalToken stored, CancellationToken ct = default)
     {
         var to = stored.RecipientEmail;
         if (string.IsNullOrWhiteSpace(to))
-            return new VendorPortalInviteResult(false, false, Accounting.Helpers.VendorPortalTokenRules.InviteNote(false, false, false));
-        var configured = _email != null && await _email.IsSystemEmailConfiguredAsync();
-        if (!configured)
-            return new VendorPortalInviteResult(true, false, Accounting.Helpers.VendorPortalTokenRules.InviteNote(true, false, false));
+            return new VendorPortalInviteResult(false, false, VendorPortalTokenRules.InviteNote(false, false));
         var companyName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
         var contactName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
             .Where(c => c.CompanyId == companyId && c.Id == stored.ContactId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
-        // กฎ #4 C: ทุกค่าที่ผู้ใช้คุมได้ต่อเข้า HTML ผ่าน HtmlEncode
+        // กฎ #4 C: ทุกค่าที่ผู้ใช้คุมได้ต่อเข้า HTML ผ่าน HtmlEncode · ลิงก์ = ที่หมาย (ออก token ตอนส่ง — คิวไม่เก็บ token ดิบ)
         static string enc(string? v) => System.Net.WebUtility.HtmlEncode(v ?? "");
         var body = $"<p>เรียน {enc(contactName)}</p>"
             + $"<p>{enc(companyName)} เปิดพอร์ทัลผู้ขายให้ท่านดูใบสั่งซื้อ · ใบแจ้งหนี้ · สถานะการจ่ายเงิน และส่งใบแจ้งหนี้ใหม่ได้โดยไม่ต้องมีบัญชีผู้ใช้</p>"
-            + $"<p><a href=\"{enc(absoluteUrl)}\">เปิดพอร์ทัลผู้ขาย</a></p>"
+            + $"<p><a href=\"{VendorPortalTokenRules.LinkPlaceholder}\">เปิดพอร์ทัลผู้ขาย</a></p>"
             + $"<p>ลิงก์ใช้ได้ถึง {enc(stored.ExpiresAt.AddHours(7).ToString("d MMM yyyy", new System.Globalization.CultureInfo("th-TH")))} — กรุณาอย่าส่งต่อลิงก์นี้</p>";
-        var sent = await _email!.TrySendAsync(to, $"พอร์ทัลผู้ขาย — {companyName}", body);
-        return new VendorPortalInviteResult(true, sent, Accounting.Helpers.VendorPortalTokenRules.InviteNote(true, true, sent));
+        _db.EmailQueues.Add(new EmailQueue
+        {
+            CompanyId = companyId, EntityType = VendorPortalTokenRules.QueueEntityType, EntityId = stored.Id,
+            ToEmail = to, Subject = $"พอร์ทัลผู้ขาย — {companyName}", Body = body,
+            AttachPdf = false, ScheduledFor = DateTime.UtcNow, Status = "Pending",
+            IdempotencyKey = $"vendor-portal-invite:{stored.Id:N}", CreatedBy = "vendor-portal-invite",
+        });
+        await _db.SaveChangesAsync(ct);
+        return new VendorPortalInviteResult(true, true, VendorPortalTokenRules.InviteNote(true, true));
     }
+
+    /// <summary>ตอนส่งจากคิว: ลิงก์ต้นทางยังใช้งานได้ไหม (เพิกถอน/หมดอายุระหว่างรอ = ไม่ส่ง)</summary>
+    public static async Task<string?> InviteSkipReasonAsync(AccountingDbContext db, EmailQueue item, CancellationToken ct)
+    {
+        var src = await db.VendorPortalTokens.AsNoTracking()
+            .Where(t => t.Id == item.EntityId && t.CompanyId == item.CompanyId && !t.IsDeleted)
+            .Select(t => new { t.RevokedAt, t.ExpiresAt }).FirstOrDefaultAsync(ct);
+        return VendorPortalTokenRules.InviteSkipReason(src == null ? null : VendorPortalTokenRules.StatusOf(src.RevokedAt, src.ExpiresAt, DateTime.UtcNow));
+    }
+
+    /// <summary>ตอนส่งจากคิว: ออกลิงก์ของผู้รับ (แถว token ใหม่ ผู้ติดต่อ/บทบาท/วันหมดอายุเดียวกับต้นทาง · เพิกถอนแยกได้) — ไม่มี URL ของระบบ ⇒ (null, เหตุ) ไม่ส่งลิงก์เสีย</summary>
+    public static async Task<(string? Url, string? Problem)> IssueInviteUrlAsync(AccountingDbContext db, Microsoft.Extensions.Configuration.IConfiguration? config,
+        EmailQueue item, CancellationToken ct)
+    {
+        var baseUrl = await SystemBaseUrl.ResolveAsync(db, config, ct);
+        if (string.IsNullOrWhiteSpace(baseUrl)) return (null, "ยังไม่ได้ตั้ง URL ของระบบ — ส่งลิงก์พอร์ทัลผู้ขายไม่ได้");
+        var src = await db.VendorPortalTokens.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == item.EntityId && t.CompanyId == item.CompanyId && !t.IsDeleted, ct);
+        if (src == null || VendorPortalTokenRules.StatusOf(src.RevokedAt, src.ExpiresAt, DateTime.UtcNow) != VendorPortalTokenRules.StatusActive)
+            return (null, VendorPortalTokenRules.InviteSkipReason(src == null ? null : VendorPortalTokenRules.StatusOf(src.RevokedAt, src.ExpiresAt, DateTime.UtcNow)));
+        var raw = NewRawToken();
+        db.VendorPortalTokens.Add(new VendorPortalToken
+        {
+            CompanyId = src.CompanyId, TokenHash = ComputeHash(raw), ContactId = src.ContactId, Role = src.Role,
+            IssuedAt = DateTime.UtcNow, ExpiresAt = src.ExpiresAt, IssuedByUserId = src.IssuedByUserId, RecipientEmail = item.ToEmail,
+        });
+        await db.SaveChangesAsync(ct);
+        return ($"{baseUrl.TrimEnd('/')}/vendor-portal.html?t={raw}", null);
+    }
+
+    /// <summary>รอบ 259-3 ฝ่ายค้าน L6: เพิกถอนลิงก์บทบาทลูกค้าเดิมที่ยังใช้ได้ทั้งหมดในคำสั่งเดียว (ปิดประตูที่สองของลูกค้าก่อนหมดอายุ) · คืนจำนวน</summary>
+    public async Task<int> RevokeLegacyCustomerAsync(Guid companyId, string reason, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var role = VendorPortalTokenRules.RoleCustomerLegacy;
+        var why = string.IsNullOrWhiteSpace(reason) ? "ลูกค้าใช้พอร์ทัลลูกค้าแทน" : reason.Trim();
+        return await _db.VendorPortalTokens
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.Role == role && t.RevokedAt == null && t.ExpiresAt >= now)
+            .ExecuteUpdateAsync(u => u.SetProperty(t => t.RevokedAt, (DateTime?)now).SetProperty(t => t.RevokedReason, why), ct);
+    }
+
+    private static string NewRawToken()
+        => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     public async Task<VendorScopedSummary> GetSummaryAsync(VendorPortalToken token,
         CancellationToken ct = default)

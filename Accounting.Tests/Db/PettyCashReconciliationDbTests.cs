@@ -271,7 +271,7 @@ public class PettyCashReconciliationDbTests
             null, null, null, null,
             null, null, null, null,
             null, null, null,
-            null, null, null, null, null, null, null, null, null,
+            null, null, null, null, null, null, null,   // รอบ 259 (B-L11): AutoCloseMonthEnd/MonthEndClosingDay ถูกลบจากคำขอ
             null, null, null, null,
             PettyCashTopUpEvidenceRequired: pettyEvidenceRequired);
 

@@ -84,7 +84,9 @@ public sealed record DocumentAutoSendSettingsDto(
     bool PostPayIncludePartial,
     string SenderNote,
     // รอบ 253 (WP-10): ทวง 50 ทวิ อัตโนมัติ (ค่าตั้งต้นปิด)
-    bool WhtCertReminderEnabled = false);
+    bool WhtCertReminderEnabled = false,
+    // รอบ 259-3 ฝ่ายค้าน L5: ผู้เรียกแก้ค่าชุดนี้ได้ไหม (PUT = เจ้าของบริษัท) — หน้าที่แสดงสวิตช์ล็อกช่อง + บอกเหตุ · null = ไม่ได้ตรวจ
+    bool? CanEdit = null);
 
 /// <summary>null = ไม่แตะช่องนั้น · <see cref="PayLinkDefaultChannels"/> ว่าง = ล้าง (ทุกช่องทางที่บริษัทเปิด)</summary>
 public sealed record UpdateDocumentAutoSendSettings(

@@ -820,6 +820,9 @@ public class EmailScheduleService : IEmailScheduleService
                     // รอบ 255 ฝ่ายค้าน M6: ลิงก์วิเศษพอร์ทัล — สิทธิ์ถูกปิด/คำขอค้างนานเกิน ⇒ ข้ามพร้อมเหตุ
                     : item.EntityType == Accounting.Helpers.PortalMagicLinkPolicy.QueueEntityType
                         ? await PortalService.MagicLinkSkipReasonAsync(_db, item, ct)
+                    // รอบ 259-3 ฝ่ายค้าน M3: คำเชิญพอร์ทัลผู้ขาย — ลิงก์ต้นทางถูกเพิกถอน/หมดอายุระหว่างรอ ⇒ ข้ามพร้อมเหตุ
+                    : item.EntityType == Accounting.Helpers.VendorPortalTokenRules.QueueEntityType
+                        ? await Accounting.Services.Implementations.Portal.VendorPortalService.InviteSkipReasonAsync(_db, item, ct)
                     : null;
                 if (skipReason != null)
                 {
@@ -1110,6 +1113,15 @@ public class EmailScheduleService : IEmailScheduleService
             if (magic.Url == null) return new QueueCompose(null, null, null, magic.Problem ?? "สร้างลิงก์เข้าพอร์ทัลไม่ได้");
             msg.HtmlBody = msg.HtmlBody.Replace(Accounting.Helpers.PortalMagicLinkPolicy.LinkPlaceholder,
                 System.Net.WebUtility.HtmlEncode(magic.Url), StringComparison.Ordinal);
+        }
+        // รอบ 259-3 ฝ่ายค้าน M3: คำเชิญพอร์ทัลผู้ขาย — token ออกตอนส่ง (คิว/บันทึกเก็บที่หมาย ไม่เก็บ token ดิบ) · ไม่มีที่อยู่เว็บ ⇒ ไม่ส่ง
+        if (item.EntityType == Accounting.Helpers.VendorPortalTokenRules.QueueEntityType
+            && msg.HtmlBody.Contains(Accounting.Helpers.VendorPortalTokenRules.LinkPlaceholder, StringComparison.Ordinal))
+        {
+            var invite = await Accounting.Services.Implementations.Portal.VendorPortalService.IssueInviteUrlAsync(_db, _config, item, ct);
+            if (invite.Url == null) return new QueueCompose(null, null, null, invite.Problem ?? "สร้างลิงก์พอร์ทัลผู้ขายไม่ได้");
+            msg.HtmlBody = msg.HtmlBody.Replace(Accounting.Helpers.VendorPortalTokenRules.LinkPlaceholder,
+                System.Net.WebUtility.HtmlEncode(invite.Url), StringComparison.Ordinal);
         }
         return new QueueCompose(msg, sender, log, null);
     }

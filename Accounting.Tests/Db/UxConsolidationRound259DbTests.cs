@@ -43,14 +43,6 @@ public class UxConsolidationRound259DbTests
         return (company.Id, contact.Id);
     }
 
-    private static IEmailService Email(bool configured, bool sendOk, List<string> sent) => F4Proxy<IEmailService>.Create((m, a) =>
-    {
-        if (m == nameof(IEmailService.IsSystemEmailConfiguredAsync)) return configured;
-        if (m != nameof(IEmailService.TrySendAsync)) return null;
-        lock (sent) sent.Add((string)a[0]! + "|" + (string)a[2]!);
-        return sendOk;
-    });
-
     [Fact]
     public async Task พอร์ทัลผู้ขาย_ออกลิงก์ลูกค้าไม่ได้_ลิงก์ลูกค้าเดิมยังใช้ได้และเพิกถอนได้()
     {
@@ -114,42 +106,126 @@ public class UxConsolidationRound259DbTests
     }
 
     [Fact]
-    public async Task พอร์ทัลผู้ขาย_อีเมลผู้รับ_ส่งจริงเมื่อระบบตั้งอีเมล_ไม่ตั้ง_บอกตรงๆไม่ส่ง()
+    public async Task พอร์ทัลผู้ขาย_อีเมลผู้รับ_เข้าคิวไม่เก็บtokenดิบ_ลิงก์ของผู้รับออกตอนส่ง_อีเมลผิดรูปปฏิเสธ()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
         var (cid, contactId) = await VendorSeedAsync(db);
-        var url = "https://app.nextacc.test/vendor-portal.html?t=abc";
+        var svc = new VendorPortalService(db, NullLogger<VendorPortalService>.Instance);
 
-        var sent = new List<string>();
-        var ok = new VendorPortalService(db, NullLogger<VendorPortalService>.Instance, Email(true, true, sent));
-        var (_, withEmail) = await ok.IssueAsync(cid, contactId, "Vendor", 30, "ap@vendor259.test", null);
-        var r = await ok.SendInviteAsync(cid, withEmail, url);
+        // ฝ่ายค้าน M3: อีเมลหลายรายการ/ผิดรูป ⇒ ปฏิเสธก่อนออก token (ไม่มีแถว)
+        await Assert.ThrowsAsync<InvalidOperationException>(() => svc.IssueAsync(cid, contactId, "Vendor", 30, "a@x.test, b@x.test", null));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => svc.IssueAsync(cid, contactId, "Vendor", 30, "not-an-email", null));
+        Assert.False(await db.VendorPortalTokens.AnyAsync(t => t.CompanyId == cid));
+
+        var (raw, withEmail) = await svc.IssueAsync(cid, contactId, "Vendor", 30, "ap@vendor259.test", null);
+        var r = await svc.QueueInviteAsync(cid, withEmail);
         Assert.True(r.Requested);
-        Assert.True(r.Sent);
-        var mail = Assert.Single(sent);
-        Assert.StartsWith("ap@vendor259.test|", mail);
-        Assert.Contains(url, mail);
+        Assert.True(r.Queued);
+        var q = await db.EmailQueues.AsNoTracking().SingleAsync(x => x.CompanyId == cid && x.EntityType == VendorPortalTokenRules.QueueEntityType);
+        Assert.Equal("ap@vendor259.test", q.ToEmail);
+        Assert.Equal(withEmail.Id, q.EntityId);
+        Assert.Contains(VendorPortalTokenRules.LinkPlaceholder, q.Body);
+        Assert.DoesNotContain(raw, q.Body);   // คิวไม่เก็บ token ดิบ
 
-        // ทิศตรงข้าม: ระบบยังไม่ตั้งอีเมล ⇒ ไม่ส่ง ไม่บอกว่าส่งแล้ว
-        var none = new List<string>();
-        var off = new VendorPortalService(db, NullLogger<VendorPortalService>.Instance, Email(false, true, none));
-        var r2 = await off.SendInviteAsync(cid, withEmail, url);
-        Assert.True(r2.Requested);
-        Assert.False(r2.Sent);
-        Assert.Empty(none);
-        Assert.DoesNotContain("ส่งลิงก์ทางอีเมลแล้ว", r2.Note);
+        // ตอนส่ง: ลิงก์ของผู้รับ = token ใหม่ (ผู้ติดต่อ/วันหมดอายุเดียวกัน) ใช้ได้จริง · ต้นทางยังใช้ได้ ⇒ ไม่ข้าม
+        var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["App:BaseUrl"] = "https://app.nextacc.test" }).Build();
+        Assert.Null(await VendorPortalService.InviteSkipReasonAsync(db, q, default));
+        var (url, problem) = await VendorPortalService.IssueInviteUrlAsync(db, cfg, q, default);
+        Assert.Null(problem);
+        var inviteRaw = System.Web.HttpUtility.ParseQueryString(new Uri(url!).Query)["t"]!;
+        Assert.NotEqual(raw, inviteRaw);
+        var resolved = await new VendorPortalService(DbTestDatabase.TryCreateContext()!, NullLogger<VendorPortalService>.Instance).ResolveAsync(inviteRaw);
+        Assert.NotNull(resolved);
+        Assert.Equal(contactId, resolved!.ContactId);
+        Assert.Equal(withEmail.ExpiresAt, resolved.ExpiresAt, TimeSpan.FromSeconds(1));
 
-        // SMTP ปฏิเสธ ⇒ Sent=false
-        var fail = new VendorPortalService(db, NullLogger<VendorPortalService>.Instance, Email(true, false, new List<string>()));
-        Assert.False((await fail.SendInviteAsync(cid, withEmail, url)).Sent);
+        // ทิศตรงข้าม: ต้นทางถูกเพิกถอนก่อนส่ง ⇒ ข้ามพร้อมเหตุ ไม่ออกลิงก์
+        await svc.RevokeAsync(cid, withEmail.Id, "ส่งผิดคน");
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        Assert.NotNull(await VendorPortalService.InviteSkipReasonAsync(c2, q, default));
+        var before = await c2.VendorPortalTokens.CountAsync(t => t.CompanyId == cid);
+        var (url2, problem2) = await VendorPortalService.IssueInviteUrlAsync(c2, cfg, q, default);
+        Assert.Null(url2);
+        Assert.NotNull(problem2);
+        Assert.Equal(before, await c2.VendorPortalTokens.CountAsync(t => t.CompanyId == cid));
 
-        // ไม่ระบุอีเมล ⇒ ไม่เรียกตัวส่ง
-        var (_, noEmail) = await ok.IssueAsync(cid, contactId, "Vendor", 30, "  ", null);
-        Assert.Null(noEmail.RecipientEmail);
-        var r3 = await ok.SendInviteAsync(cid, noEmail, url);
-        Assert.False(r3.Requested);
-        Assert.Single(sent);
+        // ไม่ระบุอีเมล ⇒ ไม่เข้าคิว
+        var (_, noEmail) = await svc.IssueAsync(cid, contactId, "Vendor", 30, "  ", null);
+        Assert.False((await svc.QueueInviteAsync(cid, noEmail)).Requested);
+        Assert.Equal(1, await c2.EmailQueues.CountAsync(x => x.CompanyId == cid && x.EntityType == VendorPortalTokenRules.QueueEntityType));
+    }
+
+    [Fact]
+    public async Task พอร์ทัลผู้ขาย_เพิกถอนลิงก์ลูกค้าเดิมทั้งหมด_ลิงก์ผู้ขายไม่ถูกแตะ_บริษัทอื่นไม่ถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (cid, contactId) = await VendorSeedAsync(db);
+        var (other, otherContact) = await VendorSeedAsync(db);
+        VendorPortalToken Legacy(Guid c, Guid ct) => new() { CompanyId = c, ContactId = ct, Role = "Customer", TokenHash = Guid.NewGuid().ToString("N"), ExpiresAt = DateTime.UtcNow.AddDays(30) };
+        db.VendorPortalTokens.AddRange(Legacy(cid, contactId), Legacy(cid, contactId), Legacy(other, otherContact));
+        await db.SaveChangesAsync();
+        var svc = new VendorPortalService(db, NullLogger<VendorPortalService>.Instance);
+        var (_, vendor) = await svc.IssueAsync(cid, contactId, "Vendor", 30, null, null);
+
+        Assert.Equal(2, await svc.RevokeLegacyCustomerAsync(cid, ""));
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(0, await c2.VendorPortalTokens.CountAsync(t => t.CompanyId == cid && t.Role == "Customer" && t.RevokedAt == null));
+        Assert.Null((await c2.VendorPortalTokens.SingleAsync(t => t.Id == vendor.Id)).RevokedAt);
+        Assert.Equal(1, await c2.VendorPortalTokens.CountAsync(t => t.CompanyId == other && t.RevokedAt == null));
+        Assert.Equal(0, await new VendorPortalService(c2, NullLogger<VendorPortalService>.Instance).RevokeLegacyCustomerAsync(cid, ""));
+    }
+
+    // ═════════════ M2 เช็กลิสต์ปิดงวดชุดเดียว: พร้อมปิด ⇔ ปิดได้ ═════════════
+
+    [Fact]
+    public async Task ปิดงวด_เช็กลิสต์ไม่พร้อม_ปิดไม่ได้_แก้แล้วพร้อม_ปิดได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await PaySeedAsync(db, online: false);
+        var start = new DateTime(2019, 3, 1);
+        var period = new FiscalPeriod { CompanyId = s.CompanyId, Name = "2019/03", Year = 2019, Month = 3, StartDate = start, EndDate = start.AddMonths(1).AddDays(-1), Status = FiscalPeriodStatus.Open };
+        db.FiscalPeriods.Add(period);
+        var draft = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.Quotation, Status = DocumentStatus.Draft,
+            DocumentNumber = "DRAFT-" + Guid.NewGuid().ToString("N"), DocumentDate = start.AddDays(5), TotalAmount = 100m, Currency = "THB",
+        };
+        db.Documents.Add(draft);
+        await db.SaveChangesAsync();
+
+        var check = await new PreCloseChecklistService(db).RunAsync(s.CompanyId, 2019, 3);
+        Assert.False(check.ReadyToClose);
+        Assert.Contains(check.Items, i => i.Code == "DRAFT_DOCS" && !i.Passed && i.Severity == "Error");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new AccountingService(db).CloseFiscalPeriodAsync(s.CompanyId, period.Id));
+
+        // ทิศตรงข้าม: ลบร่างออก ⇒ พร้อม ⇒ ปิดได้ (ผลเดียวกัน)
+        await db.Documents.Where(d => d.Id == draft.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.IsDeleted, true));
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var ready = await new PreCloseChecklistService(c2).RunAsync(s.CompanyId, 2019, 3);
+        Assert.True(ready.ReadyToClose);
+        await new AccountingService(c2).CloseFiscalPeriodAsync(s.CompanyId, period.Id);
+        Assert.Equal(FiscalPeriodStatus.Closed, (await DbTestDatabase.TryCreateContext()!.FiscalPeriods.AsNoTracking().SingleAsync(p => p.Id == period.Id)).Status);
+    }
+
+    [Fact]
+    public async Task ปิดงวด_รายการธนาคารค้างรายการเดียว_เช็กลิสต์และปุ่มปิดบล็อกเหมือนกัน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await PaySeedAsync(db, online: false);
+        var start = new DateTime(2019, 4, 1);
+        var period = new FiscalPeriod { CompanyId = s.CompanyId, Name = "2019/04", Year = 2019, Month = 4, StartDate = start, EndDate = start.AddMonths(1).AddDays(-1), Status = FiscalPeriodStatus.Open };
+        db.FiscalPeriods.Add(period);
+        var bankId = await db.Set<BankAccount>().Where(b => b.CompanyId == s.CompanyId).Select(b => b.Id).FirstAsync();
+        db.BankTransactions.Add(new BankTransaction { CompanyId = s.CompanyId, BankAccountId = bankId, TransactionDate = start.AddDays(3), Amount = 50m,
+            Description = "ค้าง", ReconciliationStatus = ReconciliationStatus.Unmatched });
+        await db.SaveChangesAsync();
+        var check = await new PreCloseChecklistService(db).RunAsync(s.CompanyId, 2019, 4);
+        Assert.False(check.ReadyToClose);   // เดิม 1–4 รายการ = คำเตือน (เขียว) แต่ปุ่มปิดบล็อก
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new AccountingService(db).CloseFiscalPeriodAsync(s.CompanyId, period.Id));
     }
 
     // ═════════════ E-M1 พอร์ทัลลูกค้า → หน้าชำระของเอกสาร ═════════════
@@ -246,7 +322,7 @@ public class UxConsolidationRound259DbTests
             .GetDocumentPayLinkAsync(s.CompanyId, s.ContactId, s.Invoice.Id);
         Assert.Null(paid.Url);
         Assert.False(paid.SlipFallback);
-        Assert.NotNull(paid.Refusal);
+        Assert.Equal("เอกสารนี้ชำระครบแล้ว", paid.Refusal);   // ฝ่ายค้าน L1: ข้อความถึงลูกค้า ไม่ใช่เหตุภายในของร้าน
     }
 
     [Fact]
