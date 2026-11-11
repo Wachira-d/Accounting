@@ -33,6 +33,12 @@ public static class CustomerCreditMigration
         """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "UnappliedNeedsReview" boolean NOT NULL DEFAULT false;""",
         // ฝ่ายค้านรอบ 258 L2: เวลาที่แจ้งทีม "มีเงินรอจัดสรรพอปิดใบนี้" (ภายใน — ไม่ใช่ช่องฟอร์ม) · null = ยังไม่แจ้ง/พ้นช่วงระงับแล้ว
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CreditCoverNoticeAt" timestamp NULL;""",
+        // รอบ 259 P4: ขาออกของเงินรอจัดสรร (คืนเงิน · ย้ายเป็นมัดจำ · ตัดเศษ · จองให้ใบ) + เพดานตัดเศษของบริษัท
+        """CREATE TABLE IF NOT EXISTS "PaymentCreditMovements" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "PaymentId" uuid NOT NULL, "Kind" varchar(20) NOT NULL, "Amount" numeric(18,2) NOT NULL, "MovedAt" timestamp NOT NULL, "JournalEntryId" uuid NULL, "TargetDocumentId" uuid NULL, "BankAccountId" uuid NULL, "Evidence" text NULL, "Note" text NULL, "IdempotencyKey" varchar(80) NULL, "ReleasedAt" timestamp NULL, "ReleaseNote" text NULL, "CreatedAt" timestamp NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
+        """CREATE INDEX IF NOT EXISTS "IX_PaymentCreditMovements_CompanyId_PaymentId" ON "PaymentCreditMovements" ("CompanyId", "PaymentId");""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PaymentCreditMovements_CompanyId_IdempotencyKey" ON "PaymentCreditMovements" ("CompanyId", "IdempotencyKey") WHERE "IdempotencyKey" IS NOT NULL;""",
+        """CREATE INDEX IF NOT EXISTS "IX_PaymentCreditMovements_Target" ON "PaymentCreditMovements" ("CompanyId", "TargetDocumentId") WHERE "TargetDocumentId" IS NOT NULL;""",
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "CustomerCreditWriteOffCap" numeric(18,2) NOT NULL DEFAULT 1.00;""",
         // ผัง 21630 ให้บริษัทเดิมที่มีกลุ่ม 216 (บริษัทผังกำหนดเอง = สร้างตอนใช้/ล้มดัง — UnappliedReceiptAccount.EnsureAsync)
         UnappliedReceiptAccount.MigrationSeedSql(),
         BackfillSql(),

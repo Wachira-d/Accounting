@@ -18,7 +18,53 @@ public record CustomerCreditRow(Guid PaymentId, string PaymentNumber, Guid? Cont
     decimal Amount, decimal UnappliedAmount, string Reason, string ReasonLabel, string? Note, int AgeDays, string? Reference,
     List<CustomerCreditAllocationRow> Allocations,
     // ฝ่ายค้านรอบ 258 M4: รายการก่อนรอบ 258 ที่ต้องตรวจ — ยังจัดสรรไม่ได้/ไม่นับในยอดรวม จนกว่าจะยืนยันหรือปิดรายการ
-    bool NeedsReview = false);
+    bool NeedsReview = false,
+    // รอบ 259 P4: ยอดที่ใช้ได้ (คงเหลือ − ยอดที่จองให้ใบร่าง) · ขาออก (คืนเงิน/มัดจำ/ตัดเศษ/จอง) · ปุ่มที่กดได้ (เซิร์ฟเวอร์ตัดสิน)
+    decimal Available = 0m,
+    List<CustomerCreditMovementRow>? Movements = null,
+    CustomerCreditActions? Actions = null);
+
+/// <summary>รอบ 259 P4: ปุ่มของแถวเงินรอจัดสรรที่กดได้ (เซิร์ฟเวอร์ตัดสิน — หน้าเว็บไม่มีสำเนาเงื่อนไข) · ข้อความ = เหตุที่กดไม่ได้</summary>
+public record CustomerCreditActions(bool CanIssueInvoice, bool CanToDeposit, bool CanRefund, bool CanWriteOff, string? WriteOffBlockedReason);
+
+/// <summary>รอบ 259 P4: ขาออก 1 รายการของเงินรอจัดสรร</summary>
+/// <param name="IsLive">ยังมีผล (ตัดยอด/จองอยู่)</param>
+/// <param name="CanUndo">ยกเลิกได้ที่หน้านี้ (คืนเงิน/ตัดเศษ) — ใบมัดจำยกเลิกที่หน้าเอกสาร</param>
+public record CustomerCreditMovementRow(Guid Id, string Kind, string KindLabel, decimal Amount, DateTime MovedAt,
+    Guid? TargetDocumentId, string? TargetDocumentNumber, string? Evidence, string? Note, bool IsLive, bool CanUndo, string? ReleaseNote);
+
+/// <summary>คืนเงินลูกค้าจากเงินรอจัดสรร — <paramref name="Date"/> null = วันนี้ · <paramref name="IdempotencyKey"/> = ต่อการเปิดหน้าต่าง (กดซ้ำ = ไม่ทำซ้ำ)</summary>
+public record CustomerCreditRefundRequest(decimal Amount, Guid BankAccountId, string Evidence, DateTime? Date = null, string? Note = null,
+    string? IdempotencyKey = null, decimal? ExpectedUnappliedBefore = null);
+
+/// <summary>ตัดเศษคงเหลือ (ยอดทั้งหมดที่เหลือ ≤ เพดานของบริษัท)</summary>
+public record CustomerCreditWriteOffRequest(decimal Amount, DateTime? Date = null, string? Note = null,
+    string? IdempotencyKey = null, decimal? ExpectedUnappliedBefore = null);
+
+/// <summary>ย้ายเป็นเงินมัดจำ — ออกใบมัดจำ (ระบบมัดจำเดิม · ขาเงินเข้า = ผังพัก) ลงวันที่วันนี้</summary>
+public record CustomerCreditToDepositRequest(decimal Amount, Guid? DepositKindId = null, string? Note = null,
+    string? IdempotencyKey = null, decimal? ExpectedUnappliedBefore = null);
+
+/// <summary>ออกใบแจ้งหนี้ส่วนที่ขาด — สร้าง<b>ร่าง</b>ของลูกค้ารายเดียวกัน (ยอด = <paramref name="Amount"/> หรือยอดที่ใช้ได้ทั้งหมด) แล้วจองเงินไว้ให้ใบนั้น</summary>
+public record CustomerCreditIssueInvoiceRequest(decimal? Amount = null, DocumentType? DocumentType = null,
+    string? IdempotencyKey = null, decimal? ExpectedUnappliedBefore = null);
+
+/// <summary>ผลของขาออก</summary>
+public record CustomerCreditMovementResult(Guid PaymentId, string PaymentNumber, Guid MovementId, string Kind, decimal Amount,
+    decimal RemainingUnapplied, Guid? TargetDocumentId, string? TargetDocumentNumber, IReadOnlyList<string> Notices);
+
+/// <summary>ตั้งเพดานตัดเศษของบริษัท</summary>
+public record CustomerCreditSettingsRequest(decimal WriteOffCap);
+
+/// <summary>รอบ 259 P5: ข้อเสนอของบรรทัดเงินเข้าที่ยังไม่จับคู่ — <paramref name="PayHref"/> = ลิงก์เปิดหน้ารับชำระที่เติมยอด/วันที่ไว้ (เซิร์ฟเวอร์ประกอบ)</summary>
+public record BankLineCreditSuggestionRow(string Kind, Guid ContactId, string? ContactName, List<BankLineCreditAllocationRow> Allocations,
+    decimal Excess, string Reason, string PayHref);
+
+public record BankLineCreditAllocationRow(Guid DocumentId, string DocumentNumber, decimal Amount);
+
+/// <param name="Note">ไม่มีข้อเสนอ/กำกวม — ข้อความบอกเหตุ (null = มีข้อเสนอ)</param>
+public record BankLineCreditSuggestionResponse(Guid LineId, DateTime TransactionDate, decimal Amount, string? Description,
+    List<BankLineCreditSuggestionRow> Suggestions, string? Note);
 
 /// <summary>ใบที่ปิดยอดแล้วแต่ยังไม่ได้ออกใบเสร็จรับเงิน/ใบกำกับภาษีของการรับเงินที่จัดสรร (คิวงาน — ฝ่ายค้านรอบ 258 H2)</summary>
 public record CustomerCreditReceiptPendingRow(Guid DocumentId, string DocumentNumber, string? ContactName, Guid PaymentId, string PaymentNumber, decimal Amount);
@@ -33,7 +79,10 @@ public record CloseLegacyCreditRequest(string Reason);
 public record CustomerCreditListResponse(List<CustomerCreditRow> Items, decimal TotalUnapplied, decimal? GlBalance,
     decimal GlDifference, string? GlNote,
     // ฝ่ายค้านรอบ 258 H2: คิว "ใบที่ต้องออกใบเสร็จ/ใบกำกับ" (null = ไม่ได้ขอ — กรองรายลูกค้า)
-    List<CustomerCreditReceiptPendingRow>? ReceiptPending = null);
+    List<CustomerCreditReceiptPendingRow>? ReceiptPending = null,
+    // รอบ 259 P6: ใบที่ปิดยอดด้วยการรับหลายใบ/เงินเกินก่อนรอบ 258 และยังไม่มีใบเสร็จ (ครั้งเดียว) · เพดานตัดเศษของบริษัท
+    List<CustomerCreditReceiptPendingRow>? LegacyMissingReceipts = null,
+    decimal WriteOffCap = 1.00m);
 
 /// <summary>ใบค้างของลูกค้าที่รับการจัดสรรจากเงินก้อนนี้ได้ (หรือเหตุที่ไม่ได้)</summary>
 public record CustomerCreditTargetRow(Guid DocumentId, string DocumentNumber, DocumentType DocumentType, DateTime DocumentDate,
