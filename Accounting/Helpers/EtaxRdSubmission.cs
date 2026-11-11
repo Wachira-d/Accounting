@@ -123,6 +123,7 @@ public static class EtaxRdSubmission
     public static IReadOnlyList<string> LegacyStampRepairSql() => new[]
     {
         $"""UPDATE "EtaxInvoices" SET "Status" = {(int)EtaxStatus.Error}, "SubmittedAt" = NULL, "SubmissionId" = NULL, "ErrorCode" = '{ErrorSubmit}', "ErrorMessage" = 'ระบบเคยประทับว่านำส่งแล้วทั้งที่กรมสรรพากรตอบไม่สำเร็จ (ก่อนรอบ 259) — ล้างสถานะแล้ว รอนำส่งใหม่', "RdNextAttemptAt" = NULL WHERE "Status" = {(int)EtaxStatus.Submitted} AND "SubmissionId" LIKE 'ERR-%';""",
-        """UPDATE "EtaxInvoices" SET "SubmissionId" = NULL WHERE "SubmissionId" ~ '^RD-[0-9]{14}$';""",
+        // ห้ามวงเล็บปีกกาในคำสั่ง (ผู้รันใช้ ExecuteSqlRaw ⇒ ถูกอ่านเป็นตัวแทนค่า) — "RD-" + ตัวเลข 14 หลัก = ยาว 17
+        """UPDATE "EtaxInvoices" SET "SubmissionId" = NULL WHERE "SubmissionId" ~ '^RD-[0-9]+$' AND length("SubmissionId") = 17;""",
     };
 }

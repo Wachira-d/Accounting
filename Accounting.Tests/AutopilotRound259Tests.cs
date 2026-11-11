@@ -260,7 +260,8 @@ public class AutopilotRound259Tests
     {
         var sql = EtaxRdSubmission.LegacyStampRepairSql();
         Assert.Contains(sql, s => s.Contains("LIKE 'ERR-%'") && s.Contains($"\"Status\" = {(int)EtaxStatus.Submitted}") && s.Contains("\"SubmittedAt\" = NULL"));
-        Assert.Contains(sql, s => s.Contains("^RD-[0-9]{14}$") && !s.Contains("\"Status\" ="));
+        Assert.Contains(sql, s => s.Contains("^RD-[0-9]+$") && s.Contains("= 17") && !s.Contains("\"Status\" ="));
+        Assert.All(sql, s => Assert.DoesNotContain("{", s));   // ExecuteSqlRaw อ่านวงเล็บปีกกาเป็นตัวแทนค่า (ล้มตอนบูต)
     }
 
     [Fact]
