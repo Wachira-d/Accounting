@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ตั้งค่าส่งอีเมลอัตโนมัติ — NextAcc</title>
+  <title>ส่งเอกสารอัตโนมัติ (อีเมล/LINE) — NextAcc</title>
   <link rel="stylesheet" href="/css/style.css">
   <script src="/js/layout.js" defer></script>
   <script src="/js/api.js" defer></script>
@@ -13,7 +13,7 @@
   <div id="pageContent">
     <div class="page-header">
       <div>
-        <h1 class="page-title">📧 ตั้งค่าส่งอีเมลอัตโนมัติ</h1>
+        <h1 class="page-title">📧 ส่งเอกสารอัตโนมัติ (อีเมล/LINE)</h1>
         <p class="page-subtitle">ตั้งกฎให้ระบบส่งเอกสาร/สลิป/ใบหัก ณ ที่จ่ายให้ลูกค้าหรือพนักงานตามเวลาที่กำหนด</p>
       </div>
       <button class="btn btn-primary" onclick="Page.openRule()">+ เพิ่มกฎใหม่</button>
@@ -220,7 +220,7 @@
         // (getCompanyId). เดิมหน้านี้เรียกแค่ setTitle → เมนูหาย + โหลดค้าง
         // เพราะ getCompanyId เป็น null. ทุกหน้าอื่นเรียก Layout.init เหมือนกัน.
         if (!Layout.init('email-schedule')) return;
-        Layout.setTitle('ส่งอีเมลอัตโนมัติ');
+        Layout.setTitle('ส่งเอกสารอัตโนมัติ (อีเมล/LINE)');
         await this._loadAccess();   // รอบ 258 ฝ่ายค้าน R-L5: ก่อนวาดกฎ (ปุ่มแก้/ลบตามสิทธิ์จากเซิร์ฟเวอร์)
         await Promise.all([this.loadRules(), this._loadAutoSend(), this._loadLineLabels()]);
       },
@@ -481,6 +481,8 @@
           if (j && j.success === false) throw new Error(j.message || 'โหลดคิว LINE ไม่สำเร็จ');
           const items = (j && j.data) || [];
           if (!items.length) { tb.innerHTML = '<tr><td colspan="5" class="empty-state">ยังไม่มีคิว LINE</td></tr>'; return; }
+          // รอบ 259 (A-L5): หมายเหตุก่อนส่งซ้ำจากเซิร์ฟเวอร์ (อีเมลถอยไปแล้ว ⇒ ลูกค้าจะได้ทั้งสองทาง)
+          this._lineRetryNotes = Object.fromEntries(items.filter(q => q.retryNote).map(q => [q.id, q.retryNote]));
           tb.innerHTML = items.map(q => {
             const pill = q.status === 'Sent' ? 'pill-success' : q.status === 'Failed' ? 'pill-danger'
               : q.status === 'Pending' ? 'pill-info' : 'pill-gray';
@@ -491,7 +493,7 @@
             return `<tr>
               <td data-label="สถานะ"><span class="pill ${pill /* text — ชื่อคลาสคงที่ของหน้า */}">${Layout.esc(q.statusLabel || q.status)}</span></td>
               <td data-label="ปลายทาง" style="font-size:12px">${Layout.esc(q.endpointKindLabel)}</td>
-              <td data-label="เอกสาร">${Layout.esc(q.documentNumber || '-')}${q.errorMessage ? `<div style="font-size:11px;color:#b45309;margin-top:4px">⚠ ${Layout.esc(q.errorMessage)}</div>` : ''}</td>
+              <td data-label="เอกสาร">${Layout.esc(q.subjectLabel || q.documentNumber || '-')}${q.errorMessage ? `<div style="font-size:11px;color:#b45309;margin-top:4px">⚠ ${Layout.esc(q.errorMessage)}</div>` : ''}</td>
               <td data-label="นัดส่ง" style="font-size:12px">${Layout.esc(new Date(q.scheduledFor).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }))}</td>
               <td>${actions /* html — ปุ่มที่ประกอบด้วย jsArg ข้างบน */}</td>
             </tr>`;
@@ -499,6 +501,8 @@
         } catch (e) { tb.innerHTML = `<tr><td colspan="5" class="empty-state">${Layout.esc(e.message)}</td></tr>`; }
       },
       async retryLine(id) {
+        const note = (this._lineRetryNotes || {})[id];
+        if (note && !(await Layout.confirm({ title: 'ส่ง LINE อีกครั้ง', message: note, okText: 'ส่งอีกครั้ง', cancelText: 'ไม่ส่ง' }))) return;
         const cid = Layout.getCompanyId();
         try {
           const j = await API.post(`/api/companies/${cid}/email-schedule/line-queue/${encodeURIComponent(id)}/retry`, {});

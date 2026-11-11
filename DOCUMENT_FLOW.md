@@ -3087,7 +3087,39 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (L3) สิทธิ์ = อนุมัติเอกสารตามชนิดใบซื้อจริง + ชั้นความลับ (ด่านเดียวกับบันทึกการชำระ) · รายการต้องเห็นเอกสารฝั่งซื้อ · (L5) audit ฝั่งผู้ขายไม่มี id ภายในของผู้ซื้อ ·
   (L6) `PartnerExchangeRules.IsTaxInvoiceCarrier` ใบเสร็จรับเงิน/ใบกำกับอย่างย่อ ⇒ ไม่ใช่หลักฐานภาษีซื้อ (§82/5(2) · ผู้เรียกเส้นคู่ค้า 3 จุดส่งรูปแบบ — `PortalAccountantExport`/`PartnerEvidenceRepair` ยังไม่ส่ง) ·
   Db test `BillingChainRound258DbTests` · Last verified `commit 1139bb5f`
-- ยังไม่ทำในแพ็กนี้: ค่าตั้ง `WorkflowAutomationConfig.AutoCreateReceiptFromIncomingPayment` ยังไม่มีผู้อ่าน (คงใน baseline settings_reader — 258-3-8) · การ์ดความพร้อมบนหน้า payment-settings (F-M1 ส่วนบริษัท) · ทวง 50 ทวิ ทาง LINE (การ์ดของผู้ติดต่อ + ลิงก์อัปโหลดต่อแถวคิว — ผู้ส่งคิว LINE ยังรองรับเฉพาะการ์ดเอกสาร) · Last verified `commit 4e9efbc4`
+- ยังไม่ทำในแพ็กนี้: ค่าตั้ง `WorkflowAutomationConfig.AutoCreateReceiptFromIncomingPayment` ยังไม่มีผู้อ่าน (คงใน baseline settings_reader — 258-3-8) · การ์ดความพร้อมบนหน้า payment-settings (F-M1 ส่วนบริษัท) · ~~ทวง 50 ทวิ ทาง LINE~~ (ทำแล้วรอบ 259 — §2.12g-259) · Last verified `commit 4e9efbc4`
+
+### 2.12g-259 รอบ 259 แพ็ก B "ส่งทาง LINE ให้ครบ" (erp-review/2026-11-11/team-A-line.md · team-E-ux.md · คำตัดสิน 259-2-*)
+
+- **ทวง 50 ทวิ ทาง LINE (258-3-6 → 259-2-1)** — `WhtCertReminderService.RunCompanyAsync` ถามตัวหาผู้รับเดียว (เรื่อง 50 ทวิ) ครั้งเดียว ⇒ อีเมล + ปลายทาง LINE ·
+  ตัวตัดสินช่องทาง `LineWhtCertCard.Channels` (ไม่ส่งอัตโนมัติชนะ · ถูกลบ ⇒ ไม่ส่ง · มีอีเมล ⇒ อีเมล · มีปลายทาง LINE ⇒ การ์ดต่อปลายทาง · ไม่มีทั้งสอง ⇒ แถว "ข้าม" พร้อมเหตุ
+  `NoChannelReason` — เดิมไม่มีอีเมล = ข้ามเสมอแม้ผูก LINE) · ค่าตั้งเดิมตัวเดียว `WhtCertReminderEnabled` · จังหวะ/กันซ้ำ = ขั้นเดียวกับอีเมล (บันทึกทวงแถวเดียว +
+  `LineQueuedCount`) · แถวคิว LINE ชนิด `WhtCertRequest` (EntityId = ผู้ติดต่อ · trigger `WhtCertReminder` · ไม่ถอยไปอีเมล) + ลิงก์อัปโหลดต่อแถว
+  (`WhtCertUploadLink.LineQueueId` · token `WhtCertUploadLinkPolicy.TokenForLineQueue` คนละป้ายกับอีเมล) สร้างในธุรกรรมเดียว ·
+  ผู้ส่ง `ContactLineQueueService.SendWhtCertRequestAsync`: ด่านร่วมกับอีเมลทวง (`CompanyContactSkipReasonAsync` · ส่งใบครบแล้ว ⇒ ข้าม) · ปลายทางยังรับเรื่อง 50 ทวิ ·
+  ลิงก์อ่านอย่างเดียว (`LineReminderUrlAsync` — ไม่มีแถว ⇒ ล้มพร้อมเหตุ ไม่ส่งลิงก์เสีย) · เนื้อการ์ดจากรายการที่ค้าง ณ ตอนส่ง (`AwaitingItemsAsync`) ·
+  กลุ่มซ่อนยอด ⇒ ไม่แสดงภาษีที่หัก + ไม่มีปุ่มอัปโหลด (หน้าอัปโหลดแสดงยอด — ตัวตัดสินเดียว `LineDocumentViewLink.EndpointAllows`) · push/จำแนกผลตัวเดียวกับการ์ดเอกสาร
+  (`PushAsync`) · ล้ม ⇒ แถวคิว LINE (หน้า ส่งเอกสารอัตโนมัติ › คิว LINE ป้าย "ทวง 50 ทวิ · ผู้ติดต่อ") + Autopilot `LineFailed` ป้ายของตัวเอง (ไม่มีปุ่มเปิดเอกสาร)
+- **💬 ส่งทาง LINE เองจากหน้าเอกสาร (E-H3 · 259-2-2)** — `GET/POST document/{id}/line-send` (ด่านเดียวกับส่งอีเมล: Document.Create ตามชนิด + ชั้นความลับ) ·
+  `DocumentLineSendService`: ใบต้องออกแล้ว (`DocumentLineSendRule.DocumentProblem`) · ปลายทาง LINE จากตัวหาผู้รับเดียว (เรื่อง "เอกสาร" · ใช้ไม่ได้ = แสดงพร้อมเหตุ เลือกไม่ได้) ·
+  เลือกผิด/ใช้ไม่ได้ ⇒ ปฏิเสธทั้งคำขอ · ติ๊กลิงก์ชำระ ⇒ ออกลิงก์ด้วยตัวออกเดียว (`EnsureLinkAsync`) ก่อนเข้าคิว — ออกไม่ได้ ⇒ ปฏิเสธพร้อมเหตุ · เข้าคิว LINE เดิม
+  (trigger `ManualSend` · `IncludePayLink` ต่อแถว · กดซ้ำนาทีเดียว = แถวเดิม) · ผู้ส่งคิวใช้การ์ดเดียวกับตารางส่ง (ภาษา/หัวเดียวกับ PDF · ปุ่มดู PDF) · ตอบ "เข้าคิวแล้ว" ไม่ใช่ "ส่งแล้ว" ·
+  หน้าต่างส่งอีเมลมีช่อง "ใส่ลิงก์ชำระเงินออนไลน์" (`SendDocumentEmailRequest.IncludePayLink` → บล็อกเดียวกับอีเมลตามตาราง `DocumentPayLinkPolicy.EmailBlock` ·
+  ออกไม่ได้ ⇒ 409 ไม่ส่ง · ทาง e-Tax by Email ซ่อนช่อง) · ชนิดที่ส่งได้จากเซิร์ฟเวอร์ (`GET document/send-types` = `DocumentLineSendRule.SendableTypes` — เดิมรายการใน documents.html)
+- **เรื่องที่ติ๊กได้แต่ LINE ไม่ส่ง (A-M4 · 259-2-3)** — `NotifyTopics.LineUnsupportedReason` (ลิงก์เซ็น · อื่น ๆ) ตัวเดียว: ค่าตั้งต้นผู้ใช้ LINE ไม่มีลิงก์เซ็น ·
+  `FromRequest(…, kind)` ปฏิเสธเรื่องนี้บนปลายทาง LINE · คำเชิญเก่าถูกตัดตอนผูก (`SupportedFor`) · หน้า contacts ล็อกช่อง + เหตุ · migration ตัดค่าที่เก็บไว้
+  (`Round259LineMigration` — ปลายทาง LINE ที่มี "Sign"/"Other")
+- **ความพร้อม LINE OA (A-M5/M6/L3 · 259-2-4)** — webhook OA บริษัทประทับ `CompanySettings.LineLastWebhookAt` (ลายเซ็นผ่าน + บอทตรง · ไม่ถี่กว่า 5 นาที) ·
+  แท็บ LINE แสดงแถวจาก `LineOaHealth.Rows` (OA · "ยังไม่เคยได้รับ event จาก LINE" · Basic ID ว่าง · ผลทดสอบตาม `LineLastTestStatus` ไม่ใช่ธงที่รีเซ็ตตอนบันทึก) ·
+  ทดสอบส่งเลือกกลุ่มทีมที่ตั้งไว้ได้ (`TargetKey`) · ล้ม ⇒ เหตุจริงของ LINE (`LineOaHealth.TestFailureMessage` ผ่าน `LinePushOutcome.Classify` — เดิม "ดู log") ·
+  ผูกกลุ่มแล้วประกาศล้ม ⇒ `ActionNote` + ข้อความตามผลจริง (`LineGroupBindRule.AnnounceOutcome/ConfirmMessage` — A-M7) ·
+  ลูกค้าส่งรูป/ไฟล์ในแชต OA บริษัท ⇒ ตอบรับ + ทางไปต่อ (แนบสลิปที่หน้าชำระ) จำกัด 2/นาที · 10/วัน ต่อผู้ใช้ LINE (ตัวนับกลาง `IChatRateLimiter` · คีย์ hash) — **ยังไม่เก็บสลิปจากแชต** (259-2-5)
+- LOW: ลบ `DocumentLineDeliveryService` (ไม่มีผู้เรียก · A-L1) · Webhook URL ที่เดียว (A-L2) · กล่องยืนยันปุ่มล้างรหัสบอกผลทั้งสองเส้น (A-L4) · ส่งซ้ำแถว LINE ที่ถอยไปอีเมลแล้ว ⇒ ถามยืนยัน
+  (`ContactLineChannel.RetryNote` · A-L5) · ตัวทำงานคิวแยก try ต่อขั้น (คิวอีเมลล้มไม่ลากคิว LINE · A-L7) · ชื่อหน้า/เมนู "ส่งเอกสารอัตโนมัติ (อีเมล/LINE)" + ป้ายผู้ติดต่อ
+  "ไม่ส่งเอกสารอัตโนมัติ (อีเมล/LINE)" (ผู้อ่าน `AutoSendBlock` คุมทั้งสองช่องอยู่แล้ว · E-M6)
+- ยังไม่ทำ: เก็บสลิปจากแชตเป็นรายการรอตรวจ (ผูก PaymentIntent) + แจ้งทีม · ชั่วโมงเงียบ · กระดิ่งเมื่อคิว LINE ล้มซ้ำ · ตัวเลือกกลุ่ม/ผู้ใช้ที่บอทรู้จักนอกจากกลุ่มทีม ·
+  การ์ดความพร้อมบนหน้า payment-settings · L6 (`OnDocumentApprovedAsync` กลืนข้อผิดพลาด) ·
+  เทสต์ `LineRound259Tests` · Db `LineRound259DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 7dc53e0c
 
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 
@@ -3315,7 +3347,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     แพ็ก `notify.topup.line` ฿290/1,000 · `notify.topup.email` ฿190/5,000 · อีเมลเอกสารผ่าน SMTP ของ NextAcc ตัดโควตารายเดือน (ด้านบน · ACCOUNT_STRUCTURE §5)
   - **เฝ้าต้นทุน OA กลาง — รอบ 254 L4 (N8)**: `NextAccOaQuotaWatch` รายชั่วโมง (push จาก LINE + ตัวนับ reply ต่อเดือน) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% · ไม่ตัดโควตาผู้เช่า
   - **ยังไม่ทำ (บอกตรง ๆ)**: กลุ่ม/ส่งผ่าน OA กลางของบริษัท**อื่น** + สวิตช์ `CentralOaGroupDeliveryEnabled` (ทำพร้อมกัน — DECISIONS 254-WP11-11 · บริษัทผู้ให้บริการเปิดแล้วตาม 256-2) ·
-    ชั่วโมงเงียบ · ลิงก์ดูเอกสาร (`DocumentViewLink`) · LINE ของใบแจ้งยอด/50 ทวิ/ใบเสร็จหลังรับชำระ/ลิงก์เซ็น (L6) · กระดิ่งเมื่อล้มซ้ำ ·
+    ชั่วโมงเงียบ · LINE ของใบแจ้งยอด/ลิงก์เซ็น (L6 — ลิงก์ดู PDF · ใบเสร็จหลังรับชำระ ทำแล้วรอบ 258-3 · 50 ทวิ ทำแล้วรอบ 259 §2.12g-259) · กระดิ่งเมื่อล้มซ้ำ ·
     เทสต์ `LineDeliveryRound254Tests` · Db `LineQueueRound254DbTests` · ล็อก R254 (+ เคส R254a–j) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit cee44a3c
   - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·
     แจ้งเตือนจองคิว/บริการ (`BookingNotifier` — ลูกค้าเว็บ ไม่ใช่ปลายทางผู้ติดต่อ) · พอร์ทัล/ใบเสนอราคาสาธารณะ (ผู้รับเปิดเอง)
@@ -8730,3 +8762,5 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิ�
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 9: แก้ผลฝ่ายค้าน R-H1 · R-M1…3 · R-L2…L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2be3e30c)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส้นบิลอัตโนมัติจนจบ — §2.12g-258c ชุด 1: ใบเสร็จทาง LINE · ลิงก์ดู PDF · ใบกำกับ ณ วันรับเงินถึงคู่ค้า · ล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4e9efbc4)_
+
+_Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก B ส่งทาง LINE ให้ครบ — §2.12g-259: ทวง 50 ทวิ ทาง LINE (การ์ด + ลิงก์อัปโหลดต่อแถว) · 💬 ส่งทาง LINE เองจากหน้าเอกสาร + ลิงก์ชำระในอีเมลที่ส่งเอง · เรื่องที่ LINE ไม่ส่งติ๊กไม่ได้ + migration · ความพร้อม OA (webhook เข้าจริง · Basic ID · ผลทดสอบ · เหตุจริงเมื่อทดสอบล้ม) · ประกาศผูกกลุ่มตามผลจริง · ตอบรับรูป/ไฟล์ในแชต · ลบ DocumentLineDeliveryService — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7dc53e0c)_

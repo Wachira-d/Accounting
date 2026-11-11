@@ -52,7 +52,8 @@ public class ContactNotifyEndpointsController : ControllerBase
         if (await DenyKeyAsync(companyId, "ผูกกลุ่ม LINE ของผู้ติดต่อ") is { } deny) return Forbid403(deny);
         if (_groups == null) return StatusCode(503, new ApiResponse<ContactNotifyOverviewResponse>(false, null, "บริการกลุ่ม LINE ยังไม่พร้อม"));
         var r = await _groups.ConfirmAsync(companyId, contactId, request, Actor(), ct);
-        return StatusCode(201, new ApiResponse<ContactNotifyOverviewResponse>(true, r, "ผูกกลุ่ม LINE แล้ว — บอทประกาศในกลุ่มแล้ว"));
+        // รอบ 259 (A-M7): ข้อความตามผลประกาศจริง (ตัวเดียว LineGroupBindRule.ConfirmMessage)
+        return StatusCode(201, new ApiResponse<ContactNotifyOverviewResponse>(true, r, LineGroupBindRule.ConfirmMessage(r.ActionNote)));
     }
 
     [HttpGet]

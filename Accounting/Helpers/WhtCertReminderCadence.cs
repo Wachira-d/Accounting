@@ -83,6 +83,14 @@ public static class WhtCertReminderCadence
     /// <summary>กุญแจกันซ้ำของคิวอีเมล — ลูกค้า + ขั้น + วันถูกหักของรายการเก่าสุด (สองเครื่อง/สองรอบได้แถวเดียว)</summary>
     public static string QueueKey(Guid contactId, int step, DateTime anchorUtc) => $"whtrem:{contactId:N}:{step}:{anchorUtc:yyyyMMdd}";
 
+    /// <summary>รอบ 259 (258-3-6): อ่านขั้นกลับจากกุญแจของ <see cref="QueueKey"/> (การ์ด LINE ใช้กุญแจนี้เป็น BaseKey) · รูปไม่ตรง ⇒ null</summary>
+    public static int? StepFromQueueKey(string? key)
+    {
+        var parts = (key ?? "").Split(':');
+        return parts.Length == 4 && parts[0] == "whtrem" && int.TryParse(parts[2], System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var step) && Steps.Contains(step) ? step : null;
+    }
+
     /// <summary>หัวเรื่องอีเมลทวง (ขั้นที่ 45 วันขึ้นไปบอกว่าบริษัทต้องใช้ยื่น ภ.ง.ด.50 — §4.3)</summary>
     public static string Subject(string companyName, int step)
         => step >= InitialSteps[^1]

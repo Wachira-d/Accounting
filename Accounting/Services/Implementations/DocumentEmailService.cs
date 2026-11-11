@@ -22,6 +22,8 @@ public class DocumentEmailService : IDocumentEmailService
     private readonly IConfiguration? _config;
     /// <summary>รอบ 254 WP-11 L4 (Q4): โควตาอีเมลรายเดือนของเส้น SMTP ของ NextAcc (ต่อจากเพดานรายวัน) · null (สร้างนอก DI) ⇒ ไม่นับรายเดือน</summary>
     private readonly INotifyQuotaService? _notifyQuota;
+    /// <summary>รอบ 259 (E-H3): ลิงก์ชำระของใบ (ตัวออกลิงก์เดียว) — null (นอก DI) ⇒ ติ๊ก "ใส่ลิงก์ชำระ" แล้วปฏิเสธพร้อมเหตุ</summary>
+    private readonly IDocumentPayLinkService? _payLinks;
 
     public DocumentEmailService(
         AccountingDbContext db,
@@ -31,8 +33,10 @@ public class DocumentEmailService : IDocumentEmailService
         IPdfGenerationService? pdf = null,
         Accounting.Services.Storage.IFileStorage? storage = null,
         IConfiguration? config = null,
-        INotifyQuotaService? notifyQuota = null)
+        INotifyQuotaService? notifyQuota = null,
+        IDocumentPayLinkService? payLinks = null)
     {
+        _payLinks = payLinks;
         _config = config;
         _notifyQuota = notifyQuota;
         _storage = storage;
@@ -71,7 +75,9 @@ public class DocumentEmailService : IDocumentEmailService
         var template = BuildDefaultTemplate(doc, heading, isEtaxByEmail: false);
 
         var subject = string.IsNullOrWhiteSpace(req.Subject) ? template.Subject : req.Subject!;
-        var body = string.IsNullOrWhiteSpace(req.Body) ? template.HtmlBody : req.Body!;
+        // รอบ 259 (E-H3): บล็อกลิงก์ชำระที่ผู้ใช้ติ๊ก — ออกก่อนสร้างแถวบันทึก (ออกไม่ได้ ⇒ โยนพร้อมเหตุ · ยังไม่มีอะไรส่ง)
+        var payBlock = req.IncludePayLink ? await ManualPayBlockAsync(companyId, doc.Id, heading.IsEnglish) : "";
+        var body = (string.IsNullOrWhiteSpace(req.Body) ? template.HtmlBody : req.Body!) + payBlock;
 
         var log = new DocumentEmailLog
         {
@@ -121,7 +127,7 @@ public class DocumentEmailService : IDocumentEmailService
             }
             // (2) เนื้อหา = เทมเพลตคงที่: ค่าตั้งต้นของเซิร์ฟเวอร์ (หนีแล้ว) หรือข้อความที่ผู้ใช้พิมพ์เป็นข้อความล้วน (ไม่รับ HTML ดิบ) + หัวเปิดเผย + ท้ายอีเมล
             var co = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => new { c.Name, c.TaxId }).FirstOrDefaultAsync();
-            var inner = string.IsNullOrWhiteSpace(req.Body) ? template.HtmlBody : SignRequestEmailText.PlainTextToHtml(req.Body);
+            var inner = (string.IsNullOrWhiteSpace(req.Body) ? template.HtmlBody : SignRequestEmailText.PlainTextToHtml(req.Body)) + payBlock;
             var origin = await SystemBaseUrl.ResolveAsync(_db, _config);
             body = SignRequestEmailText.WrapPlatformDocumentEmail(heading.IsEnglish, co?.Name, co?.TaxId, plan.ReplyTo, heading.Title,
                 doc.DocumentNumber, inner, origin == null ? null : $"{origin}/contact.html?topic=email-abuse");
@@ -213,6 +219,19 @@ public class DocumentEmailService : IDocumentEmailService
     /// ถาม <see cref="EtaxDeliveryRouter"/>: อีเมลธรรมดา ⇒ <see cref="SendDocumentEmailAsync"/> (พฤติกรรมเดิมทุกตัวอักษร) · e-Tax by Email ⇒ แถว e-Tax
     /// (ออกให้ถ้ายังไม่มี) แล้ว <see cref="SendEtaxByEmailAsync"/> — ด่านปฏิเสธ = โยน <see cref="BusinessRuleException"/> (ล้มดัง · <b>ห้ามถอยเป็นอีเมลธรรมดา</b>) ·
     /// ส่ง e-Tax ไปแล้ว ⇒ สำเนาธรรมดา เว้นแต่ <c>ConfirmEtaxResend</c></summary>
+    /// <summary>รอบ 259 (E-H3): บล็อกลิงก์ชำระของอีเมลที่ส่งเอง — ตัวออกลิงก์เดียว (<see cref="IDocumentPayLinkService.EnsureLinkAsync"/> · ช่องทางตามผู้ติดต่อ › บริษัท) ·
+    /// บล็อก HTML ตัวเดียวกับอีเมลตามตาราง (<see cref="DocumentPayLinkPolicy.EmailBlock"/>) · ออกไม่ได้ ⇒ โยน <see cref="BusinessRuleException"/> พร้อมเหตุ</summary>
+    private async Task<string> ManualPayBlockAsync(Guid companyId, Guid documentId, bool isEnglish)
+    {
+        if (_payLinks == null)
+            throw new BusinessRuleException("บริการลิงก์ชำระเงินยังไม่พร้อม — ส่งโดยไม่ติ๊ก \"ใส่ลิงก์ชำระเงิน\"", "DOC-EMAIL-PAYLINK", 503);
+        var r = await _payLinks.EnsureLinkAsync(companyId, documentId, null);
+        if (r.Url == null || r.Amounts == null)
+            throw new BusinessRuleException("ใส่ลิงก์ชำระเงินไม่ได้ — " + (r.Refusal ?? "ไม่ทราบเหตุ") + " (เอาติ๊ก \"ใส่ลิงก์ชำระเงิน\" ออกแล้วส่งได้)",
+                "DOC-EMAIL-PAYLINK", 409);
+        return DocumentPayLinkPolicy.EmailBlock(r.Url, r.Amounts, isEnglish);
+    }
+
     public async Task<DocumentEmailLog> SendDocumentRoutedAsync(Guid companyId, Guid documentId,
         SendDocumentEmailRequest req, string? actorEmail = null)
     {
