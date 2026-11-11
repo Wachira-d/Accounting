@@ -1102,7 +1102,15 @@ public class RecurringTransactionService : IRecurringTransactionService
                         _logger.LogError(ex2, "Email schedule (recurring) enqueue failed Doc={Doc}", result.Id);
                         enqueueOutcome = Accounting.Helpers.EmailEnqueueOutcome.Failed(ex2.Message);
                     }
-                    lineWentOut = enqueueOutcome.LineQueued;
+                    // รอบ 258 (A-M1 ข): ถามคิว LINE ของเอกสาร (ตรวจไม่ได้ = ถือว่าไม่ออก ⇒ เตือนตามเดิม — ไม่เงียบ)
+                    if (enqueueOutcome.Kind != Accounting.Helpers.EmailEnqueueKind.Failed)
+                    {
+                        try { lineWentOut = await _emailSchedule.DocumentLineQueuedAsync(recurring.CompanyId, result.Id); }
+                        catch (Exception lex) when (lex is not OperationCanceledException)
+                        {
+                            _logger.LogError(lex, "Recurring {Id}: ตรวจคิว LINE ของเอกสาร {Doc} ไม่สำเร็จ", recurring.Id, result.Id);
+                        }
+                    }
                     var (factsAfterEmail, enqueueNotice) = Accounting.Helpers.EmailEnqueueOutcome.Apply(facts, enqueueOutcome, result.DocumentNumber);
                     facts = factsAfterEmail;
                     if (enqueueNotice != null) notices.Add(enqueueNotice);

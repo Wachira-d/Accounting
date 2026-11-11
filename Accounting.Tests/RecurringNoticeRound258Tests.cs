@@ -108,12 +108,4 @@ public class RecurringNoticeRound258Tests
     [InlineData(true, true, false)]
     public void เตือนไม่มีอีเมล_เฉพาะเมื่อไม่ได้ออกทางใดเลย(bool hasEmail, bool lineQueued, bool expected)
         => Assert.Equal(expected, EmailEnqueueOutcome.WarnNoContactEmail(hasEmail, lineQueued));
-
-    [Fact]
-    public void ผลเข้าคิว_ค่าตั้งต้นไม่อ้างว่าออกทางLINE()
-    {
-        Assert.False(EmailEnqueueOutcome.Enqueued().LineQueued);
-        Assert.False(EmailEnqueueOutcome.Skipped("x").LineQueued);
-        Assert.True((EmailEnqueueOutcome.Enqueued() with { LineQueued = true }).LineQueued);
-    }
 }

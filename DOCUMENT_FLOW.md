@@ -2987,7 +2987,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ผู้สร้างที่ยังเป็นสมาชิกที่ใช้งาน ไม่งั้นตามตารางแจ้งเตือน/ค่าตั้งต้นของเหตุการณ์ (`RecurringTransactionService.NoticeRecipientAsync` → `Helpers/RecurringStaffNotice`) ·
   แผงความพร้อม/ทดลองรันเรียกด่านผู้อนุมัติตัวเดียวกับรอบรันจริง (`RecurringApprovePolicyLoader.AutoApproverRefusalAsync`) ⇒ ข้อ Fail `APPROVER-GONE` + ลิงก์ขั้นอนุมัติ
   (ร่างใหม่ที่ยังไม่บันทึกไม่ตรวจ — ผู้กรอกคือผู้รับผิดชอบ) · กฎ "เมื่ออนุมัติเอกสาร" ที่ส่งใบนี้ทาง LINE แล้ว (แถว `LineQueues` กุญแจเดียวกัน ไม่ใช่ "ข้าม")
-  นับว่าครอบแล้ว ⇒ กฎ "รายการประจำสร้างเอกสาร" ไม่ส่งซ้ำ (`EmailEnqueueOutcome.ApprovedRuleDelivered`) · ตัวเข้าคิวคืน `LineQueued` ⇒ LINE ออกแล้วไม่เตือน/ไม่ตั้งธง
+  นับว่าครอบแล้ว ⇒ กฎ "รายการประจำสร้างเอกสาร" ไม่ส่งซ้ำ (`EmailEnqueueOutcome.ApprovedRuleDelivered`) · รายการประจำถามคิว LINE ของเอกสาร (`IEmailScheduleService.DocumentLineQueuedAsync` — แถว `LineQueues` ที่ไม่ใช่ "ข้าม") ⇒ LINE ออกแล้วไม่เตือน/ไม่ตั้งธง
   "ไม่มีอีเมล" (`EmailEnqueueOutcome.WarnNoContactEmail`) · **ยังไม่ทำ (A-M1 ค)**: บรรทัด "ช่องทางที่จะส่ง: อีเมล/LINE" ในการ์ดความพร้อมของรายการประจำ
 
 - **webhook ของ LINE OA กลาง เส้น 1:1 (A-M2 · A-M3)**: event ข้อความ/รูป/ไฟล์/ปุ่มกดจากผู้ใช้ กันซ้ำด้วย `webhookEventId` ก่อนประมวล (ตาราง `LineWebhookEventsSeen` เดียวกับ
@@ -3004,6 +3004,10 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   `POST ocr/scan/{fileAttachmentId}` หักโควตา OCR เหมือน `/upload` (ล้ม/e-Tax XML/คัดลอกผลเดิม = คืน · โควตาหมด = 429 ข้อความเดียวกัน `OcrQuotaExhaustedAsync`) ·
   API v1 `POST v1/ocr/scan` คิดค่าบริการเฉพาะเมื่อใช้เครื่องอ่านจริงและสำเร็จ (`OcrQuotaRefundRule.NotBilledReason` — ตัวเดียวกับกติกาคืนโควตา) และตอบ `scanStatus` + `billing.billed/notBilledReason` ·
   แท็บ OCR ของ `ai-tools.html`: ค่าจากกระดาษผ่าน `Layout.esc` ทุกช่อง · สถานะตามจริง (ล้ม = "สแกนไม่สำเร็จ") · ไม่สร้างเอกสารเอง (ลิงก์ไปหน้าสแกนเอกสารซึ่งมีหน้าตรวจ/คำเตือนใบซ้ำ)
+
+- **แก้ผล CI/ตัวตรวจของชุด 2–3 (โครงสร้างเท่านั้น — พฤติกรรมตามหัวข้อข้างบน)**: ลูปสแกนใกล้ครบ/เกินกำหนดอยู่ในเมธอดชื่อเดิม `ScanDueSoonAndOverdueAsync`
+  (local function `ScanDayAsync`) และตัวเข้าคิวของรายการประจำอยู่ใน `OnRecurringDocumentCreatedAsync` ตามเดิม — กติกา call-site รุ่นก่อน (R248/R250/R254) ผูกกับชื่อเมธอดเหล่านี้ ·
+  ข้อ `APPROVER-GONE` ของแผงความพร้อมเป็น**ข้อเพิ่ม** (ข้อคำเตือนก่อนอนุมัติ `APPROVE` ยังแสดงตามเดิม · แต่ไม่ขึ้น "อนุมัติอัตโนมัติจะผ่าน" ขัดกัน)
 <!-- P258-END -->
 
 ### 2.12g-0 ตารางส่งอีเมล "เกินกำหนด" ส่งซ้ำทุก N วัน · แจ้งเตือนก่อนรอบรายการประจำ (รอบ 250 WP-04 ต่อยอด + ฝ่ายค้าน 74a2d1f6)
@@ -8542,3 +8546,5 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิ�
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 4: webhook OA กลาง 1:1 — กันซ้ำ · reply token · จำกัดคนที่ยังไม่ผูก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b5724a3c)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 5: สแกนเอกสาร — ด่านอนุมัติรวดฝั่งเซิร์ฟเวอร์ · โควตา/ค่าบริการ · แท็บ OCR ของ ai-tools — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e159d198)_
+
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 6: แก้ผล CI/ตัวตรวจ — โครงเมธอดเดิม · APPROVER-GONE เป็นข้อเพิ่ม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

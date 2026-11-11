@@ -198,17 +198,20 @@ public class ScheduleCatchUpRound258DbTests
     }
 
     [Fact]
-    public async Task กฎเมื่ออนุมัติส่งทางLINEแล้ว_กฎรายการประจำไม่ส่งซ้ำ_และบอกผู้เรียกว่าออกทางLINE()
+    public async Task กฎเมื่ออนุมัติส่งทางLINEแล้ว_กฎรายการประจำไม่ส่งซ้ำ_และตัวถามคิวLINEตอบว่าออกแล้ว()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
         var (s, recurringId) = await SeedRecurringCaseAsync(db, ContactLineChannel.StatusPending);
 
-        var outcome = await Sched(db).OnRecurringDocumentCreatedAsync(s.CompanyId, s.TodayInvoiceId, recurringId);
+        var sched = Sched(db);
+        var outcome = await sched.OnRecurringDocumentCreatedAsync(s.CompanyId, s.TodayInvoiceId, recurringId);
 
         Assert.Equal(EmailEnqueueKind.Skipped, outcome.Kind);
         Assert.Equal(EmailEnqueueOutcome.CoveredByApprovedRule, outcome.Reason);
-        Assert.True(outcome.LineQueued);
+        Assert.True(await sched.DocumentLineQueuedAsync(s.CompanyId, s.TodayInvoiceId));
+        // tenant: บริษัทอื่นถามเอกสารนี้ = ไม่เห็นแถว
+        Assert.False(await sched.DocumentLineQueuedAsync(Guid.NewGuid(), s.TodayInvoiceId));
         Assert.Equal(0, await RecurringEmailRowsAsync(s.CompanyId, s.TodayInvoiceId));
     }
 
@@ -219,10 +222,11 @@ public class ScheduleCatchUpRound258DbTests
         if (db == null) { _out.WriteLine(Skip); return; }
         var (s, recurringId) = await SeedRecurringCaseAsync(db, ContactLineChannel.StatusSkipped);
 
-        var outcome = await Sched(db).OnRecurringDocumentCreatedAsync(s.CompanyId, s.TodayInvoiceId, recurringId);
+        var sched = Sched(db);
+        var outcome = await sched.OnRecurringDocumentCreatedAsync(s.CompanyId, s.TodayInvoiceId, recurringId);
 
         Assert.Equal(EmailEnqueueKind.Enqueued, outcome.Kind);
-        Assert.False(outcome.LineQueued);
+        Assert.False(await sched.DocumentLineQueuedAsync(s.CompanyId, s.TodayInvoiceId));
         Assert.Equal(1, await RecurringEmailRowsAsync(s.CompanyId, s.TodayInvoiceId));
     }
 }
