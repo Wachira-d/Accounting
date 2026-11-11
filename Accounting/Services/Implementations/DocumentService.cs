@@ -10066,6 +10066,16 @@ public partial class DocumentService : IDocumentService
                 new[] { doc.BookingNumber, doc.Reference, doc.Notes }, $"ยกเลิกเอกสาร {doc.DocumentNumber}") is string drawnBlock)
             throw new BusinessRuleException(drawnBlock, BookingDepositDrawdown.RemovalRuleCode, 409);
 
+        // รอบ 259 ฝ่ายค้าน H1 (ผล CI): ตรวจขาออกของเงินรอจัดสรร "ก่อน" ด่านเอกสารลูก — ใบที่ปิดด้วยการรับชำระหลายใบมีใบเสร็จรายใบเป็นลูก ⇒ ถ้าตรวจลูกก่อน
+        // ผู้ใช้จะได้เหตุผิด (ยกเลิกใบเสร็จก่อน) แล้วค่อยเจอด่านนี้ · ตรวจซ้ำในธุรกรรมอีกชั้น (กันคำขอซ้อน)
+        var preVoidPaymentIds = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.DocumentId == documentId).Select(p => p.Id)
+            .Union(_db.PaymentAllocations.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.DocumentId == documentId).Select(a => a.PaymentId))
+            .ToListAsync();
+        if (await Accounting.Helpers.CustomerCreditLedger.VoidBlockForPaymentsAsync(_db, companyId, preVoidPaymentIds) is string preMovedBlock)
+            throw new BusinessRuleException(preMovedBlock, Accounting.Helpers.CustomerCreditMovementRules.VoidBlockRuleCode, 409);
+
         // กันยกเลิกเอกสารต้นทางที่มี "เอกสารลูก" active อ้างอยู่ (แปลงไปแล้ว เช่น
         // Invoice→TaxInvoice/Receipt) — ยกเลิกต้นทางจะทำให้ลูกลอย (orphan): ภพ.30/
         // e-Tax/ลูกหนี้อ้างเอกสารที่หายไป (รวมถึงเคสลูกมี e-Tax ยื่น RD แล้ว) · และ

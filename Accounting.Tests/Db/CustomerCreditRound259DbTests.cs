@@ -399,7 +399,7 @@ public class CustomerCreditRound259DbTests
         => new(db, FullDocs(db, hooks), new AccountingService(db), NullLogger<CustomerCreditService>.Instance);
 
     [Fact]
-    public async Task H1_คืนเงินแล้วยกเลิกใบต้นทาง_ถูกปฏิเสธพร้อมเหตุ_ยกเลิกการคืนก่อนแล้วยกเลิกใบได้()
+    public async Task H1_คืนเงินแล้วยกเลิกใบต้นทาง_ถูกปฏิเสธด้วยเหตุขาออกก่อนด่านเอกสารลูก_และเมื่อไม่มีลูก_ยกเลิกการคืนแล้วกลับด่านเดิม()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
@@ -408,26 +408,37 @@ public class CustomerCreditRound259DbTests
         CustomerCreditMovementResult refund;
         using (var req = DbTestDatabase.TryCreateContext()!)
             refund = await Credits(req).RefundAsync(s.CompanyId, pay.Id, new CustomerCreditRefundRequest(500m, s.BankId, "TRX-H1"), "tester");
+        Guid suspense;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            suspense = await SuspenseAsync(c, s.CompanyId);
 
+        // (ก) ลำดับด่านสำคัญ: ใบมีเอกสารลูก (ใบเสร็จรายใบของการรับชำระ) — ด่านลูกก็จะปฏิเสธ แต่ผู้ใช้ต้องได้ "เหตุจริง" (เงินคืนไปแล้ว) ก่อน
+        var hasChild = (await DocumentVoidPreconditions.ChildBlocksAsync(db, s.CompanyId, new[] { pay.DocumentId })).ContainsKey(pay.DocumentId);
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
             var ex = await RefusedAsync(() => Docs(req).VoidDocumentAsync(s.CompanyId, pay.DocumentId), CustomerCreditMovementRules.VoidBlockRuleCode);
             Assert.Contains("คืนเงินลูกค้า", ex.Message, StringComparison.Ordinal);
         }
-        Guid suspense;
+        _out.WriteLine($"ใบมีเอกสารลูก: {hasChild}");
+
+        // (ข) ไม่มีเอกสารลูก (บริษัทที่ไม่ออกใบเสร็จแยก — จำลองโดยถอดใบเสร็จลูก) ⇒ ด่านขาออกยังปฏิเสธ · ไม่มีอะไรถูกกลับ
+        await db.Documents.Where(d => d.CompanyId == s.CompanyId && d.RelatedDocumentId == pay.DocumentId)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.IsDeleted, true));
+        Assert.False((await DocumentVoidPreconditions.ChildBlocksAsync(db, s.CompanyId, new[] { pay.DocumentId })).ContainsKey(pay.DocumentId));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await RefusedAsync(() => Docs(req).VoidDocumentAsync(s.CompanyId, pay.DocumentId), CustomerCreditMovementRules.VoidBlockRuleCode);
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
-            suspense = await SuspenseAsync(c, s.CompanyId);
-            Assert.Equal(0m, await GlCreditNetAsync(c, s.CompanyId, suspense));   // ไม่มีอะไรถูกกลับ
+            Assert.Equal(0m, await GlCreditNetAsync(c, s.CompanyId, suspense));
             Assert.NotEqual(DocumentStatus.Voided, await c.Documents.AsNoTracking().Where(d => d.Id == pay.DocumentId).Select(d => d.Status).SingleAsync());
         }
 
-        // ทิศตรงข้าม: ไม่มีขาออกที่มีผล ⇒ ยกเลิกใบได้ (cascade การรับชำระตามเดิม) — แต่ยังมีเงินรอจัดสรร 500 ⇒ ด่านเดิม CC-VOID-DOC-CREDIT
+        // (ค) ทิศตรงข้าม: ยกเลิกการคืนแล้ว (ไม่มีขาออกที่มีผล) ⇒ ด่านขาออกไม่ขวาง · เหลือด่านเดิมของเงินรอจัดสรรค้าง 500 (CC-VOID-DOC-CREDIT)
         using (var req = DbTestDatabase.TryCreateContext()!)
             await Credits(req).UndoMovementAsync(s.CompanyId, pay.Id, refund.MovementId, "คืนผิดบัญชี ธนาคารตีกลับ", "tester");
         using (var req = DbTestDatabase.TryCreateContext()!)
             await RefusedAsync(() => Docs(req).VoidDocumentAsync(s.CompanyId, pay.DocumentId), "CC-VOID-DOC-CREDIT");
-        // ใบที่ไม่มีการรับชำระที่มีขาออก ⇒ ยกเลิกได้ตามปกติ
+        // (ง) ใบที่ไม่มีการรับชำระที่มีขาออก ⇒ ยกเลิกได้ตามปกติ
         var plain = await InvoiceAsync(db, s, 300m);
         using (var req = DbTestDatabase.TryCreateContext()!)
             await Docs(req).VoidDocumentAsync(s.CompanyId, plain.Id);
