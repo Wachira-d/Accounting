@@ -183,6 +183,42 @@ public class LineRound259Tests
         Assert.DoesNotContain("ส่งแล้ว", DocumentLineSendRule.QueuedMessage(1, 0));   // เข้าคิว ≠ ส่งแล้ว
     }
 
+    // ─────────── ฝ่ายค้าน 259 M1 / L3 / L5 ───────────
+
+    [Fact]
+    public void ปุ่มชำระ_กลุ่มซ่อนยอดไม่ได้_กลุ่มแสดงยอดและผู้ใช้ได้_ติ๊กแล้วเลือกกลุ่มซ่อนยอดปฏิเสธ()
+    {
+        Assert.False(DocumentLineSendRule.PayLinkAllowed(NotifyEndpointKind.LineGroup, showAmounts: false));
+        Assert.True(DocumentLineSendRule.PayLinkAllowed(NotifyEndpointKind.LineGroup, showAmounts: true));
+        Assert.True(DocumentLineSendRule.PayLinkAllowed(NotifyEndpointKind.LineUser, showAmounts: false));
+        var hidden = Opt(Guid.NewGuid(), NotifyEndpointKind.LineGroup, true, showAmounts: false);
+        var user = Opt(Guid.NewGuid(), NotifyEndpointKind.LineUser, true);
+        Assert.Contains("ซ่อนยอด", DocumentLineSendRule.PayLinkProblem(true, new[] { user, hidden }));
+        Assert.Null(DocumentLineSendRule.PayLinkProblem(false, new[] { user, hidden }));   // ไม่ติ๊ก ⇒ ส่งได้ (การ์ดไม่มีปุ่มอยู่แล้ว)
+        Assert.Null(DocumentLineSendRule.PayLinkProblem(true, new[] { user, Opt(Guid.NewGuid(), NotifyEndpointKind.LineGroup, true, showAmounts: true) }));
+        Assert.False(DocumentLineSendRule.Targets(new[] { hidden }).Single().PayLink);
+    }
+
+    [Fact]
+    public void ช่องลิงก์ชำระตัดสินตอนเปิดหน้าต่าง_เหตุปฏิเสธของตัวออกลิงก์_เพิกถอน_ไม่มียอดค้าง()
+    {
+        Assert.Equal((true, (string?)null), DocumentLineSendRule.PayLinkOffer(true, 100m, null, null));
+        Assert.False(DocumentLineSendRule.PayLinkOffer(true, 0m, null, null).Offered);
+        Assert.Equal((false, (string?)"ใบสั่งซื้อไม่มีลิงก์ชำระ"), DocumentLineSendRule.PayLinkOffer(true, 100m, "ใบสั่งซื้อไม่มีลิงก์ชำระ", null));
+        Assert.Equal(PayLinkRevokedException.StaffMessage, DocumentLineSendRule.PayLinkOffer(true, 100m, null, DateTime.UtcNow).Note);
+        Assert.False(DocumentLineSendRule.PayLinkOffer(false, 100m, null, null).Offered);
+        Assert.Equal(409, new PayLinkRevokedException().StatusCode);
+        Assert.DoesNotContain("เพิกถอน", PayLinkRevokedException.CustomerMessage);   // ลูกค้าไม่เห็นรายละเอียดภายใน
+    }
+
+    [Fact]
+    public void ลิงก์อัปโหลดของฉบับทวงใช้ไม่ได้_บอกทางไปต่อจริง_ไม่สัญญาว่ารอบหน้าเข้าคิวใหม่()
+    {
+        Assert.DoesNotContain("รอบหน้าจะเข้าคิวใหม่", WhtCertUploadLinkPolicy.ReminderLinkUnusable);
+        Assert.Contains("หน้า 50 ทวิ", WhtCertUploadLinkPolicy.ReminderLinkUnusable);
+        Assert.Equal(new[] { "reminder-email", "reminder-line" }, WhtCertUploadLinkPolicy.ReminderSources);
+    }
+
     // ─────────── A-M5 / A-M6 / A-L3 ───────────
 
     [Fact]

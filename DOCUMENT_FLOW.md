@@ -3122,6 +3122,11 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **รอบสแกนใกล้ครบ/เกินกำหนดบันทึกแบบ idempotent (259-2-7)** — สองกฎ trigger/offset เดียวกัน (รวมวันย้อนเก็บ) หรือผู้สแกนสองตัวได้กุญแจคิวเดียวกัน ⇒
   ถอดแถวซ้ำ (`QueueRowSave.SaveSkippingExistingKeysAsync` · `EnqueueLineAsync` ตรวจแถวที่ยังไม่บันทึกด้วย) แทนที่ทั้งรอบจะล้ม 23505 · ชน unique อื่นยังโยน ·
   Db `QueueRowSaveRound259DbTests` · Last verified commit 003a683b
+- **ฝ่ายค้าน 259 (259-2-8)** — ปุ่มชำระไม่เข้ากลุ่ม LINE ที่ซ่อนยอด (`DocumentLineSendRule.PayLinkAllowed` ใน `BuildCardAsync` · ติ๊กแล้วเลือกกลุ่มนั้น ⇒ ปฏิเสธ) ·
+  e-Tax by Email + ติ๊กลิงก์ชำระ ⇒ 409 · ตอนส่งลิงก์ที่ติ๊กใช้ไม่ได้ ⇒ แถวข้าม (`PayLinkGoneAtSend`) · ช่องติ๊กตัดสินตอนเปิดหน้าต่าง (`PayLinkOffer`) · เข้าคิวทีละปลายทาง ·
+  `DocumentPayLinkService.EnsureLinkAsync(allowReissueRevoked)`: ลิงก์ที่ถูกเพิกถอน ⇒ ปุ่มพนักงาน/อีเมลตามตารางออกใหม่ได้ (audit `pay-link-reissued`) · หน้าต่างส่งเอง/พอร์ทัล ⇒
+  `PayLinkRevokedException` · ลิงก์ที่ใช้อยู่ไม่ถูกเขียนทับช่องทาง · ลิงก์ทวง 50 ทวิ ตรวจเพิกถอน/หมดอายุตอนส่ง + เพิกถอนรวมเมื่อได้ใบครบ (`RevokeSettledReminderLinksAsync`) ·
+  Last verified commit fa93803d
 - ยังไม่ทำ: เก็บสลิปจากแชตเป็นรายการรอตรวจ (ผูก PaymentIntent) + แจ้งทีม · ชั่วโมงเงียบ · กระดิ่งเมื่อคิว LINE ล้มซ้ำ · ตัวเลือกกลุ่ม/ผู้ใช้ที่บอทรู้จักนอกจากกลุ่มทีม ·
   การ์ดความพร้อมบนหน้า payment-settings · L6 (`OnDocumentApprovedAsync` กลืนข้อผิดพลาด) ·
   เทสต์ `LineRound259Tests` · Db `LineRound259DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 7dc53e0c
@@ -3149,21 +3154,24 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **พอร์ทัลลูกค้ามีบ้านเดียว (E-H2 · 259-3-1)**: ลูกค้า = `customer-portal.html` → `/portal.html` (ธงสิทธิ์ 4 ตัว) · หน้า `vendor-portal-admin.html` = "พอร์ทัลผู้ขาย"
   ออกลิงก์ได้เฉพาะผู้ขาย — `VendorPortalService.IssueAsync` ปฏิเสธบทบาท Customer (`VendorPortalTokenRules.IssueRefusal`) · ลิงก์ลูกค้าที่ออกก่อนรอบนี้ยังเปิดได้จนหมดอายุ ·
   `GET api/companies/{c}/vendor-portal/tokens` (สถานะ/ป้าย/เพิกถอนได้ไหมจากเซิร์ฟเวอร์ · ไม่มี token ดิบ) + `POST …/tokens/{id}/revoke` (เพิกถอนซ้ำ/หมดอายุ = 400 บอกเหตุ) ·
-  อีเมลผู้รับ = `SendInviteAsync` ส่งจริงผ่าน `IEmailService.TrySendAsync` (ไม่ได้ตั้งอีเมลระบบ = ไม่ส่ง + บอก) · ลิงก์เต็มจาก `SystemBaseUrl` ·
+  อีเมลผู้รับ (อีเมลเดียว · `VendorPortalTokenRules.InviteEmail`) = `QueueInviteAsync` เข้าคิว `EmailQueue` (`VendorPortalInvite` · โควตา/เพดานเดิม) — ลิงก์ในอีเมลออกตอนส่ง
+  เป็น token แยกของผู้รับ (`IssueInviteUrlAsync` · คิวเก็บที่หมาย ไม่เก็บ token ดิบ · ต้นทางเพิกถอน/หมดอายุก่อนส่ง = ข้าม) · ฝั่งพนักงานต้องมี `Contact.Edit` + ปฏิเสธคีย์ API ·
+  "เพิกถอนลิงก์ลูกค้าเดิมทั้งหมด" (`…/tokens/revoke-legacy-customer`) · ลิงก์เต็มจาก `SystemBaseUrl` ·
   `customer-portal.html` ลิงก์เข้าพอร์ทัลจาก `GET …/portal/link` (`PortalMagicLinkPolicy.LoginLink`) — `location.origin` เหลือ 0 ในสองหน้านี้
 - **ปุ่ม "ชำระ" ในพอร์ทัล = หน้าชำระของเอกสาร (E-M1 · 259-3-2)**: `POST api/portal/{c}/documents/{d}/pay-link` (สิทธิ์พอร์ทัล "pay" · ใบที่ลูกค้าเห็นได้เท่านั้น) ⇒
   `IDocumentPayLinkService.EnsureLinkAsync` (ลิงก์เดียวกับอีเมล §2.12g — ออนไลน์ + โอน/QR + แจ้งสลิป + "ไม่หัก ณ ที่จ่าย") · ออกลิงก์ไม่ได้เพราะบริษัทไม่มีช่องทางออนไลน์
-  แต่ใบรับโอนได้ ⇒ `SlipFallback` = กล่องโอน/สลิปของพอร์ทัล (ยอดอ่านอย่างเดียว) · `UploadDocumentSlipAsync` ไม่ส่งยอด ⇒ ยอดสุทธิหลังหัก ณ ที่จ่าย (`TransferForDocumentAsync.Net`) ·
+  แต่ใบรับโอนได้ ⇒ `SlipFallback` = กล่องโอน/สลิปของพอร์ทัล (ยอดอ่านอย่างเดียว) · เหตุที่ชำระไม่ได้ถึงลูกค้า = `PortalDocumentStatus.PayRefusalForCustomer` (ไม่ส่งเหตุภายในของร้าน) · `UploadDocumentSlipAsync` ไม่ส่งยอด ⇒ ยอดสุทธิหลังหัก ณ ที่จ่าย (`TransferForDocumentAsync.Net`) ·
   ป้าย/"เกินกำหนด" ของพอร์ทัล = `PortalDocumentStatus` (วันที่ไทย) บน `PortalDocumentResponse`
 - **คิวสลิปเจ้าของเดียว (E-M4 · 259-3-3)**: ยืนยัน/ปฏิเสธสลิป = `payment-intents.html` (`?status=Pending`) · Autopilot issue `SlipPending` + KPI `slipAwaitingConfirm` ชี้ไปคิว
   (ไม่มีปุ่มยืนยันที่ Autopilot) · ยืนยันด้วยมือ = `Layout.formDialog` (ยอดอ่านอย่างเดียว · วันที่เงินเข้าแบบเลือกวัน · เหตุผล) — บัญชีเงินเข้าตามผังรับเงินของช่องทางเหมือนเดิม
 - **ศูนย์รวมค่าตั้ง (E-M2 · 259-3-4)**: `AutopilotSettingsDto.Hub` (`AutopilotSettingsHub`) แสดงสถานะ + ลิงก์บ้านของค่า · wht-credit มีสวิตช์ทวง 50 ทวิ (endpoint เดิม)
 - **ค่าตั้งผู้ติดต่อ (E-M6 · 259-3-5)**: แผงใน contacts.html (endpoint `recurring/contacts/{id}/autopilot` เดิม) · recurring.html ปุ่มบันทึกหลักบันทึกค่าผู้ติดต่อที่แก้ค้าง
-- **ปิดงวด (E-M7 · 259-3-6)**: เช็กลิสต์ใน fiscal.html = `PreCloseChecklistService` (ตัวเดียวกับเครื่องมือนักบัญชี) · แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร + "ตรวจแล้ว" อยู่ที่ etax.html
+- **ปิดงวด (E-M7 · 259-3-6 · ฝ่ายค้าน M2 259-3-8)**: เช็กลิสต์ใน fiscal.html **และด่านของปุ่มปิด** (`AccountingService.CloseFiscalPeriodAsync` → `RunForPeriodAsync`) = `PreCloseChecklistService`
+  ตัวเดียว (ช่วงวันที่ของงวด · ร่างเอกสาร/ร่าง JE/JE ไม่สมดุล/ธนาคารค้างแม้รายการเดียว = Error · เอกสารออกแล้วไม่มี JE = Warning) — "พร้อมปิด" ⇔ ปิดได้ · ปุ่มยืนยันปิดล็อกเมื่อไม่พร้อม · แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร + "ตรวจแล้ว" อยู่ที่ etax.html
 - **อื่น ๆ (259-3-7)**: `GET api/companies/{c}/getting-started` (`GettingStartedChecklist`) · payment-settings แสดงเส้นโอน/สลิป · เมนูคู่ค้าอยู่หมวดซื้อ ·
   native confirm/prompt/alert = 0 ใน payment-intents/etax/tax/tax-remittance/document-scan/fiscal/customer-portal (ใช้ `Layout.confirm/notice/promptText/formDialog`)
 
-_Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก C รวมบ้าน · ไม่ซ้อน — §2.12g-259c — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 95b419a3 · e3e6f40a)_
+_Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก C รวมบ้าน · ไม่ซ้อน — §2.12g-259c — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 95b419a3 · e3e6f40a · ชุดแก้ฝ่ายค้าน commit 0b5c5646)_
 
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 

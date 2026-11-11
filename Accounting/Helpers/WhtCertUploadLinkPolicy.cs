@@ -70,6 +70,14 @@ public static class WhtCertUploadLinkPolicy
     public static string TokenForLineQueue(byte[] key, Guid companyId, Guid lineQueueId)
         => Convert.ToHexString(HMACSHA256.HashData(key, System.Text.Encoding.UTF8.GetBytes($"whtl:{companyId:N}:{lineQueueId:N}"))).ToLowerInvariant();
 
+    /// <summary>ฝ่ายค้าน 259 L6: เหตุเมื่อลิงก์ของฉบับทวง (อีเมล/การ์ด LINE) ใช้ไม่ได้ตอนส่ง — บอกทางไปต่อที่มีจริง
+    /// (เดิมบอก "งานทวงรอบหน้าจะเข้าคิวใหม่" ซึ่งไม่จริง: บันทึกของขั้นนั้นเป็น "เข้าคิวแล้ว")</summary>
+    public const string ReminderLinkUnusable =
+        "ลิงก์อัปโหลดของฉบับทวงนี้ใช้ไม่ได้แล้ว (ถูกเพิกถอน/หมดอายุ/ไม่พบ หรือความลับของเซิร์ฟเวอร์เปลี่ยน) — ไม่ส่ง · ส่งลิงก์อัปโหลดเองจากหน้า 50 ทวิ";
+
+    /// <summary>ฝ่ายค้าน 259 L6: ที่มาของลิงก์ที่ระบบออกให้ฉบับทวง — เพิกถอนรวมเมื่อลูกค้าส่งใบครบ (ลิงก์ที่ผู้ใช้ออกเองไม่แตะ)</summary>
+    public static readonly IReadOnlyList<string> ReminderSources = new[] { "reminder-email", "reminder-line" };
+
     /// <summary>ลิงก์ใช้ได้ไหม (ตัดสินสดทุกครั้ง) — ไม่ถูกเพิกถอน · ยังไม่หมดอายุ</summary>
     public static bool Usable(DateTime expiresAtUtc, DateTime? revokedAtUtc, DateTime nowUtc)
         => revokedAtUtc == null && expiresAtUtc > nowUtc;

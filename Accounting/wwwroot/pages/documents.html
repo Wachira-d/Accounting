@@ -11979,6 +11979,12 @@
         } else {
           box.innerHTML = `<div style="color:#334155">${esc(r.reason)}</div><div>${esc(r.stageLabel)}</div>` + list(r.warnings, '#92400e');
           wrap.querySelector('#seResendRow').style.display = 'flex';
+          // ฝ่ายค้าน 259 L1: ติ๊กส่ง e-Tax ซ้ำ = ไปทาง e-Tax (ไม่มีลิงก์ชำระ) ⇒ ซ่อน/ล้างช่องลิงก์ชำระ (เซิร์ฟเวอร์ปฏิเสธถ้ายังส่งมา)
+          const resend = wrap.querySelector('#seEtaxResend');
+          resend.onchange = () => {
+            const row = wrap.querySelector('#sePayLinkRow');
+            if (resend.checked) { wrap.querySelector('#sePayLink').checked = false; row.style.display = 'none'; } else row.style.display = 'flex';
+          };
         }
         box.style.display = 'block';
       },
@@ -12042,7 +12048,7 @@
         }
         const req = { to, cc: etaxRoute ? null : cc, subject: etaxRoute ? null : subject, body, attachPdf: etaxRoute ? true : attachPdf,
           attachXml: false, confirmEtaxResend: !!wrap.querySelector('#seEtaxResend')?.checked,
-          includePayLink: !etaxRoute && !!wrap.querySelector('#sePayLink')?.checked };
+          includePayLink: !etaxRoute && !wrap.querySelector('#seEtaxResend')?.checked && !!wrap.querySelector('#sePayLink')?.checked };
         const send = async (r) => {
           const res = await api.sendDocumentEmail(id, r);
           // HTTP 200 + success:false = ผู้ให้บริการอีเมลไม่รับ (E9 — เดิมขึ้น "สำเร็จ" ทั้งที่ส่งไม่ผ่าน)
@@ -12121,7 +12127,7 @@
         if (seq !== this._slSeq || !o) return;
         const rows = (o.targets || []).map(t => `<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #f1f5f9;${t.available ? '' : 'color:#94a3b8'}">
             <input type="checkbox" data-sl-ep="${esc(t.endpointId)}" ${t.available ? '' : 'disabled'}>
-            <span><b>${esc(t.display)}</b> <span style="font-size:11px;color:#64748b">· ${esc(t.kindLabel)}${t.showAmounts ? '' : ' · ซ่อนยอด'}${t.pdfLink ? ' · มีปุ่มดู PDF' : ''}</span>
+            <span><b>${esc(t.display)}</b> <span style="font-size:11px;color:#64748b">· ${esc(t.kindLabel)}${t.showAmounts ? '' : ' · ซ่อนยอด'}${t.pdfLink ? ' · มีปุ่มดู PDF' : ''}${t.payLink ? '' : ' · ไม่มีปุ่มชำระ'}</span>
             ${t.reason ? `<div style="font-size:11px;color:#b45309">${esc(t.reason)}</div>` : ''}</span></label>`).join('');
         body.innerHTML = (o.problem ? `<div style="color:#b45309;margin-bottom:6px">${esc(o.problem)}</div>` : '') + rows;
         if (o.payLinkOffered) wrap.querySelector('#slPayRow').style.display = 'flex';
@@ -13891,7 +13897,10 @@
             + stuck.slice(0, 20).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(stuck)
             + keptLost.slice(0, 20).map(x => `<div>• ${link(x.receiptId, x.receiptNumber)}${x.sourceNumber ? ' (ใบต้นทาง ' + Layout.esc(x.sourceNumber) + ')' : ''} — ${Layout.esc(x.finding || '')}</div>`).join('') + more(keptLost)
             // รอบ 259-3 (ทีม E-M7 · คำตัดสิน 259-3-6): แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร ย้ายไปบ้านเดียวที่หน้า e-Tax (พร้อมปุ่ม "ตรวจแล้ว") — ที่นี่เหลือลิงก์
-            + (etaxRows.length ? `<div>• แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร ${Number(etaxRows.length)} รายการ — <a href="/pages/etax.html#etaxRdReview" style="color:#92400e;text-decoration:underline">ตรวจที่หน้า e-Tax</a></div>` : '');
+            // ฝ่ายค้าน L7: ลิงก์ตามสิทธิ์เมนู e-Tax — ผู้ที่เข้าหน้า e-Tax ไม่ได้เห็นทางไปต่อที่ทำได้จริง (ไม่ใช่ลิงก์ที่เปิดแล้วถูกปฏิเสธ)
+            + (etaxRows.length ? `<div>• แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร ${Number(etaxRows.length)} รายการ — ${Layout.hasMenuAccess('etax')
+                ? '<a href="/pages/etax.html#etaxRdReview" style="color:#92400e;text-decoration:underline">ตรวจที่หน้า e-Tax</a>'
+                : 'แจ้งผู้ที่มีสิทธิ์เมนู e-Tax ให้ตรวจและบันทึกที่หน้า e-Tax'}</div>` : '');
           el.style.display = '';
         } catch (e) { el.style.display = 'none'; }
       },

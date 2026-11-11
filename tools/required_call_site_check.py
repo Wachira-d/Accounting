@@ -18074,6 +18074,23 @@ RULES += [
     dict(file=_R258P_ESS, method="ScanDueSoonAndOverdueAsync",
          must=["ScheduleCatchUp.MissedDays(", "StampScanDayAsync(", "ScanDayAsync(realToday)", "ScheduleCatchUp.DueRuleCatchesUp(", "!catchUp && rule.Trigger"],
          why=_R258P_WHY + "B-M7 ใกล้ครบ/เกินกำหนด: เก็บวันที่พลาด (ลายน้ำต่อกฎ) ก่อนสแกนวันนี้ แล้วประทับลายน้ำ · ย้อนเก็บเฉพาะกฎ/วันที่ตัวตัดสินอนุญาต · ทวงเฉพาะครั้งแรกของใบ"),
+    # รอบ 259 ฝ่ายค้าน B-M1/L2: ปุ่มชำระไม่เข้ากลุ่มซ่อนยอด · ลิงก์ที่ผู้ใช้ติ๊กหายตอนส่ง ⇒ ไม่ส่ง
+    dict(file=_R254_QUEUE, method="BuildCardAsync", must=["DocumentLineSendRule.PayLinkAllowed("],
+         before=[("DocumentLineSendRule.PayLinkAllowed(", "PayUrlAsync(")],
+         why="ฝ่ายค้าน 259 M1: กลุ่มซ่อนยอดไม่ได้ปุ่มชำระ (หน้าชำระแสดงยอด/รายการ) — ตัวตัดสินเดียวกับปุ่ม PDF"),
+    dict(file=_R254_QUEUE, method="SendOneAsync", must=["DocumentLineSendRule.PayLinkGoneAtSend"],
+         before=[("DocumentLineSendRule.PayLinkGoneAtSend", "PushAsync(")],
+         why="ฝ่ายค้าน 259 L2: ติ๊กลิงก์ชำระแต่ตอนส่งลิงก์ใช้ไม่ได้ ⇒ ข้ามพร้อมเหตุ ไม่ใช่ \"ส่งแล้ว\" โดยไม่มีปุ่ม"),
+    dict(file="Services/Implementations/DocumentLineSendService.cs", method="SendAsync", must=["DocumentLineSendRule.PayLinkProblem("],
+         before=[("DocumentLineSendRule.PayLinkProblem(", "_payLinks.EnsureLinkAsync(")],
+         why="ฝ่ายค้าน 259 M1: ติ๊กลิงก์ชำระ + กลุ่มซ่อนยอด ⇒ ปฏิเสธก่อนออกลิงก์"),
+    # 259-2-8: ลิงก์ที่ถูกเพิกถอน ออกใหม่ได้เฉพาะผู้เรียกที่ตั้งใจ · ไม่ทับช่องทางของลิงก์ที่ใช้อยู่ · ออกใหม่ = audit
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="EnsureLinkAsync",
+         must=["throw new PayLinkRevokedException()", "!allowReissueRevoked", "wasRevoked = d.PayLinkRevokedAt != null", "AddChainedAuditLog("],
+         forbid=["ExecuteUpdateAsync(s => s.SetProperty(x => x.PayLinkChannelsJson, json), ct)"],
+         why="ฝ่ายค้าน 259 B-L5 · C-M1: พอร์ทัล/หน้าต่างส่งเองไม่ล้างการเพิกถอนเงียบ · ลิงก์ที่ใช้อยู่ไม่ถูกเขียนทับช่องทาง · ออกใหม่มีร่องรอย"),
+    dict(file="Services/Implementations/DocumentEmailService.cs", method="SendDocumentRoutedAsync", must=["req.IncludePayLink", "EtaxPayLinkRefusal"],
+         why="ฝ่ายค้าน 259 L1: ทาง e-Tax by Email ติ๊กลิงก์ชำระ ⇒ ปฏิเสธ ไม่ทิ้งค่าเงียบ"),
     # รอบ 259 (259-2-7): รอบสแกนบันทึกแบบ idempotent (ผู้สแกนสองตัว · สองกฎ/วันย้อนเก็บได้กุญแจเดียวกัน) — ห้ามกลับไป SaveChanges ดิบ
     dict(file=_R258P_ESS, method="ScanDueSoonAndOverdueAsync", must=["QueueRowSave.SaveSkippingExistingKeysAsync(_db, ct)"],
          forbid=["if (enqueued > 0 || notSentRows > 0) await _db.SaveChangesAsync(ct);"],

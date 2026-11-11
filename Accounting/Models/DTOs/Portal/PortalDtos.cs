@@ -27,10 +27,10 @@ public record PortalPaymentResponse(Guid Id, DateTime PaymentDate, decimal Amoun
         ? global::Accounting.Helpers.PaymentMethodNames.Thai(m) : PaymentMethod;
 }
 
-/// <summary>ผลการแนบสลิปพอร์ทัล — รอบ 250 WP-02b (M-2): ไม่ใช่การรับชำระ · <paramref name="PaymentIntentId"/> = รายการรอยืนยันของผู้ขาย
-/// (เดิม <c>PaymentId</c> ของแถว Payment ที่สร้างก่อนตรวจ) · <paramref name="AwaitingReview"/> = รอพนักงานตรวจสลิปเสมอ</summary>
 /// <summary>รอบ 259-3 (E-M1): <paramref name="Url"/> = หน้าชำระของเอกสาร (null = ออกไม่ได้) · <paramref name="Refusal"/> = เหตุ ·
 /// <paramref name="SlipFallback"/> = ใบนี้ชำระได้ แต่บริษัทยังไม่มีช่องทางออนไลน์ ⇒ ใช้กล่องโอน/สลิปของพอร์ทัล (ยอดจากเซิร์ฟเวอร์)</summary>
 public record PortalPayLinkResponse(string? Url, string? Refusal, bool SlipFallback);
 
+/// <summary>ผลการแนบสลิปพอร์ทัล — รอบ 250 WP-02b (M-2): ไม่ใช่การรับชำระ · <paramref name="PaymentIntentId"/> = รายการรอยืนยันของผู้ขาย
+/// (เดิม <c>PaymentId</c> ของแถว Payment ที่สร้างก่อนตรวจ) · <paramref name="AwaitingReview"/> = รอพนักงานตรวจสลิปเสมอ</summary>
 public record PortalSlipUploadResponse(Guid PaymentIntentId, Guid DocumentId, string SlipUrl, decimal Amount, DateTime UploadedAt, bool AwaitingReview = true);

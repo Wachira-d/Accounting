@@ -331,8 +331,10 @@ public class DocumentAutoSendRound241DbTests
         var revoked = (await links.PublicViewAsync(s.CompanyId, token!))!;
         Assert.False(revoked.Target.CanPayNow);
         Assert.Contains("ยกเลิก", revoked.BlockedNote);
-        // อีเมลรอบใหม่หลังเพิกถอน ⇒ ลิงก์ใหม่ (token เดิมยังใช้ไม่ได้)
-        var c = await links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, null);
+        // รอบ 259 (259-2-8): ผู้เรียกที่ไม่ได้ตั้งใจออกใหม่ (หน้าต่างส่งเอง/พอร์ทัล) ⇒ ไม่ออกทับ
+        await Assert.ThrowsAsync<PayLinkRevokedException>(() => links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, null));
+        // อีเมลรอบใหม่หลังเพิกถอน (ตารางส่ง = ผู้เรียกที่ตั้งใจ) ⇒ ลิงก์ใหม่ (token เดิมยังใช้ไม่ได้)
+        var c = await links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, null, default, allowReissueRevoked: true, actor: "tester");
         Assert.NotEqual(a.Url, c.Url);
     }
 
@@ -950,5 +952,36 @@ public class DocumentAutoSendRound241DbTests
         Assert.Contains(DocumentPayLinkPolicy.QueuePlaceholder, atSend.Body);
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.NotNull((await check.Documents.AsNoTracking().SingleAsync(d => d.Id == invoiceId)).PayLinkTokenHash);
+    }
+
+    /// <summary>รอบ 259 (ฝ่ายค้าน 259 B-L5 · C-M1 · คำตัดสิน 259-2-8): ผู้เรียกที่ไม่ได้ตั้งใจออกใหม่ (พอร์ทัล/หน้าต่างส่งเอง — ค่าตั้งต้น) ·
+    /// ไม่เคยออก ⇒ ได้ลิงก์ · ถูกเพิกถอน ⇒ <see cref="PayLinkRevokedException"/> (ไม่ล้างการเพิกถอน) · ปุ่มของพนักงานออกใหม่ได้ + audit ·
+    /// ลิงก์ที่ยังใช้ได้ไม่ถูกเขียนทับช่องทาง</summary>
+    [Fact]
+    public async Task R259_ไม่เคยออกได้ลิงก์_เพิกถอนแล้วผู้เรียกทั่วไปถูกปฏิเสธ_พนักงานออกใหม่ได้พร้อม_audit_ช่องทางลิงก์ที่ใช้อยู่ไม่ถูกทับ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (links, s) = await LinkSeedAsync(db, "r259 " + Guid.NewGuid().ToString("N")[..6]);
+
+        var first = await links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, new[] { "PromptPay" });   // ไม่เคยออก ⇒ ได้ลิงก์ (ทางของพอร์ทัล)
+        Assert.True(first.Ok, first.Refusal);
+        var again = await links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, new[] { "PromptPay", DocumentPayLinkPolicy.BankTransferCode });
+        Assert.Equal(first.Url, again.Url);
+        var stored = await db.Documents.AsNoTracking().Where(d => d.Id == s.Invoice.Id).Select(d => d.PayLinkChannelsJson).SingleAsync();
+        Assert.Equal(new[] { "PromptPay" }, DocumentPayLinkPolicy.ParseChannels(stored));   // ช่องทางของลิงก์ที่ใช้อยู่ไม่ถูกทับ
+
+        await links.RevokeAsync(s.CompanyId, s.Invoice.Id, "tester");
+        db.ChangeTracker.Clear();
+        await Assert.ThrowsAsync<PayLinkRevokedException>(() => links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, null));
+        Assert.NotNull(await db.Documents.AsNoTracking().Where(d => d.Id == s.Invoice.Id).Select(d => d.PayLinkRevokedAt).SingleAsync());   // ไม่ล้างการเพิกถอน
+        Assert.Equal(0, await db.AuditLogs.CountAsync(a => a.CompanyId == s.CompanyId && a.EntityType == "DocumentPayLink"));
+
+        var staff = await links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, null, default, allowReissueRevoked: true, actor: "owner@seller241.co.th");
+        Assert.True(staff.Ok, staff.Refusal);
+        Assert.NotEqual(first.Url, staff.Url);
+        var audit = await db.AuditLogs.AsNoTracking().SingleAsync(a => a.CompanyId == s.CompanyId && a.EntityType == "DocumentPayLink");
+        Assert.Contains("pay-link-reissued", audit.NewValues);
+        Assert.Equal("owner@seller241.co.th", audit.UserEmail);
     }
 }

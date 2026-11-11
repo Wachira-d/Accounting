@@ -85,11 +85,13 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
         Guid emailQueueId, CancellationToken ct)
     {
         var token = WhtCertUploadLinkPolicy.TokenForQueue(WhtCertUploadLinkPolicy.DeriveQueueKey(config?["Jwt:Secret"]), companyId, emailQueueId);
+        // ฝ่ายค้าน 259 L6: ลิงก์ที่ถูกเพิกถอน/หมดอายุ ⇒ ไม่ส่ง (เดิมส่งปุ่มที่ใช้ไม่ได้)
+        var now = DateTime.UtcNow;
         var stored = await db.WhtCertUploadLinks.AsNoTracking()
-            .Where(l => l.CompanyId == companyId && l.EmailQueueId == emailQueueId)
+            .Where(l => l.CompanyId == companyId && l.EmailQueueId == emailQueueId && l.RevokedAt == null && l.ExpiresAt > now)
             .Select(l => l.TokenHash).FirstOrDefaultAsync(ct);
         if (stored == null || !WhtCertUploadLinkPolicy.TokenMatches(token, stored))
-            return (null, "ไม่พบลิงก์อัปโหลดของอีเมลทวงฉบับนี้ (หรือความลับของเซิร์ฟเวอร์เปลี่ยน) — ไม่ส่ง · งานทวงรอบหน้าจะเข้าคิวใหม่");
+            return (null, WhtCertUploadLinkPolicy.ReminderLinkUnusable);
         var origin = await SystemBaseUrl.ResolveAsync(db, config, ct);
         return origin == null
             ? (null, "ยังไม่ได้ตั้งที่อยู่เว็บของระบบ — สร้าง URL ลิงก์อัปโหลดไม่ได้ (ผู้ดูแลระบบตั้งได้ที่ค่าตั้งระบบ)")
@@ -104,11 +106,12 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
         if (string.IsNullOrWhiteSpace(config?["Jwt:Secret"]))
             return (null, "ไม่ได้ตั้งความลับของเซิร์ฟเวอร์ — สร้างลิงก์อัปโหลดของการ์ด LINE ไม่ได้");
         var token = WhtCertUploadLinkPolicy.TokenForLineQueue(WhtCertUploadLinkPolicy.DeriveQueueKey(config["Jwt:Secret"]), companyId, lineQueueId);
+        var now = DateTime.UtcNow;
         var stored = await db.WhtCertUploadLinks.AsNoTracking()
-            .Where(l => l.CompanyId == companyId && l.LineQueueId == lineQueueId)
+            .Where(l => l.CompanyId == companyId && l.LineQueueId == lineQueueId && l.RevokedAt == null && l.ExpiresAt > now)
             .Select(l => l.TokenHash).FirstOrDefaultAsync(ct);
         if (stored == null || !WhtCertUploadLinkPolicy.TokenMatches(token, stored))
-            return (null, "ไม่พบลิงก์อัปโหลดของการ์ด LINE ฉบับนี้ (หรือความลับของเซิร์ฟเวอร์เปลี่ยน) — ไม่ส่ง · งานทวงรอบหน้าจะเข้าคิวใหม่");
+            return (null, WhtCertUploadLinkPolicy.ReminderLinkUnusable);
         var origin = await SystemBaseUrl.ResolveAsync(db, config, ct);
         return origin == null
             ? (null, "ยังไม่ได้ตั้งที่อยู่เว็บของระบบ — สร้าง URL ลิงก์อัปโหลดไม่ได้ (ผู้ดูแลระบบตั้งได้ที่ค่าตั้งระบบ)")

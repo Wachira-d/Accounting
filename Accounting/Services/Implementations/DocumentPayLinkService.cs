@@ -205,11 +205,15 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         return (DocumentPayLinkPolicy.CompanyAvailable(facts), DocumentPayLinkPolicy.ParseChannels(def), DocumentPayLinkPolicy.UnavailableReason(facts));
     }
 
-    public async Task<PayLinkResult> EnsureLinkAsync(Guid companyId, Guid documentId, IReadOnlyCollection<string>? scheduleChannels, CancellationToken ct = default)
+    public async Task<PayLinkResult> EnsureLinkAsync(Guid companyId, Guid documentId, IReadOnlyCollection<string>? scheduleChannels, CancellationToken ct = default,
+        bool allowReissueRevoked = false, string? actor = null)
     {
         var d = await LoadDocAsync(companyId, documentId, null, ct);
         if (d == null) return new PayLinkResult(null, null, Array.Empty<string>(), "ไม่พบเอกสาร");
         if (Refusal(d) is { } no) return new PayLinkResult(null, null, Array.Empty<string>(), no);
+        // ฝ่ายค้าน 259 B-L5 · C-M1 (259-2-8): ลิงก์ที่ผู้มีสิทธิ์เพิกถอนไว้ — ออกใหม่ได้เฉพาะผู้เรียกที่ตั้งใจ (ปุ่มออกลิงก์ของพนักงาน · อีเมลตามตารางที่พนักงานตั้ง)
+        // หน้าต่างส่งเอง/พอร์ทัลลูกค้า ⇒ โยนชนิดเฉพาะ (ไม่ล้างการเพิกถอนเงียบ)
+        if (d.PayLinkRevokedAt != null && !allowReissueRevoked) throw new PayLinkRevokedException();
         var (all, companyDefault, unavailable) = await ChannelsAsync(companyId, ct);
         if (unavailable != null) return new PayLinkResult(null, null, Array.Empty<string>(), unavailable);
         // รอบ 248 (AUTOPILOT §5.1): ช่องทาง = ตารางส่ง › ผู้ติดต่อ › ค่าบริษัท (ตัวต่อชั้นเดียว AutopilotSettingsResolver) — ผู้ติดต่อไม่ได้ตั้ง = เท่าเดิม
@@ -228,9 +232,8 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             ? Recover(d.PayLinkTokenProtected, d.PayLinkTokenHash) : null;
         if (token != null)
         {
-            if (!string.Equals(d.PayLinkChannelsJson, json, StringComparison.Ordinal))
-                await _db.Documents.Where(x => x.Id == d.Id && x.CompanyId == companyId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.PayLinkChannelsJson, json), ct);
+            // ฝ่ายค้าน 259 C-M1: ไม่เขียนทับช่องทางของลิงก์ที่ยังใช้ได้ (ลิงก์ที่ส่งออกไปแล้วต้องเปิดได้ด้วยช่องทางเดิม) ⇒ คืนช่องทางที่ลิงก์ถืออยู่
+            allowed = DocumentPayLinkPolicy.Allowed(all, DocumentPayLinkPolicy.ParseChannels(d.PayLinkChannelsJson), companyDefault);
         }
         else
         {
@@ -250,7 +253,26 @@ public class DocumentPayLinkService : IDocumentPayLinkService
                     .SetProperty(x => x.PayLinkExpiresAt, (DateTime?)exp)
                     .SetProperty(x => x.PayLinkRevokedAt, (DateTime?)null)
                     .SetProperty(x => x.PayLinkChannelsJson, json), ct);
-            if (n > 0) token = fresh;
+            if (n > 0)
+            {
+                token = fresh;
+                // ฝ่ายค้าน 259 C-M1: ออกใหม่แทนลิงก์เดิม (หมดอายุ/ถูกเพิกถอน/ถอด token ไม่ได้) ⇒ audit ทุกครั้ง
+                if (oldHash != null)
+                {
+                    _db.AddChainedAuditLog(new AuditLog
+                    {
+                        CompanyId = companyId, UserEmail = actor ?? "system", Action = AuditAction.Update,
+                        EntityType = "DocumentPayLink", EntityId = d.Id.ToString(),
+                        NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            @event = "pay-link-reissued", wasRevoked = d.PayLinkRevokedAt != null, previousExpiresAt = d.PayLinkExpiresAt,
+                            allowReissueRevoked, channels = json,
+                        }),
+                        Timestamp = now,
+                    });
+                    await _db.SaveChangesAsync(ct);
+                }
+            }
             else
             {
                 var won = await _db.Documents.AsNoTracking().Where(x => x.Id == d.Id && x.CompanyId == companyId)
@@ -293,7 +315,9 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         if (!attach) return null;
         // ชนิดที่ไม่มีลิงก์ชำระเลย (ใบซื้อ/ใบเสร็จ ฯลฯ) ⇒ ไม่มีอะไรต้องบอก (ไม่ใช่ "ไม่แนบเพราะ…" บนทุกแถวคิว)
         if (doc.DocumentType is not (DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.DebitNote)) return null;
-        var r = await EnsureLinkAsync(doc.CompanyId, doc.Id, DocumentPayLinkPolicy.ParseChannels(rule.PayLinkChannelsJson), ct);
+        // 259-2-8: อีเมลตามตารางที่พนักงานตั้ง = ผู้เรียกที่ตั้งใจ (ความหมายเดิมของการเพิกถอน: "อีเมลรอบถัดไปจะได้ลิงก์ใหม่")
+        var r = await EnsureLinkAsync(doc.CompanyId, doc.Id, DocumentPayLinkPolicy.ParseChannels(rule.PayLinkChannelsJson), ct,
+            allowReissueRevoked: true, actor: "email-schedule");
         if (!r.Ok)
         {
             // ไม่ใช่ความผิดพลาดของการส่ง (ใบชำระครบ/บริษัทปิดรับออนไลน์/ยังไม่ตั้ง URL ของระบบ) — อีเมลยังส่งตามปกติโดยไม่มีลิงก์ ·

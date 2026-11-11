@@ -341,13 +341,15 @@
 
           // รอบ 259-3 (ทีม E-M7 · คำตัดสิน 259-3-6): เช็กลิสต์ก่อนปิดงวดชุดเดียวของระบบ = PreCloseChecklistService (เซิร์ฟเวอร์ · ตัวเดียวกับหน้าเครื่องมือนักบัญชี)
           // เดิมหน้านี้คำนวณ 3 ข้อเอง (ค่าคลาด 0.02 · นับร่างเอง) + ติดป้าย 🤖 ให้กฎตายตัว ⇒ ปุ่มปิดงวดจริงใช้ชุดที่อ่อนกว่า
-          const [yy, mm] = pStart.split('-').map(n => parseInt(n, 10));
+          // ฝ่ายค้าน M2: year/month ของงวดเอง (เซิร์ฟเวอร์ใช้ช่วงวันที่ของงวดนั้น — ตัวเดียวกับปุ่มปิด)
+          const yy = Number(period?.year) || parseInt(pStart.slice(0, 4), 10);
+          const mm = Number(period?.month) || parseInt(pStart.slice(5, 7), 10);
           const pcRes = await API.get(`/api/companies/${encodeURIComponent(Layout.getCompanyId())}/accountant/pre-close-checklist?year=${yy}&month=${mm}`);
           const pc = (pcRes && pcRes.data) || { items: [] };
           const checks = (pc.items || []).map(i => ({
             label: i.label, value: !!i.passed, severity: i.severity, detail: i.message || '', actionUrl: i.actionUrl,
           }));
-          const allPassed = pc.readyToClose === true;   // เซิร์ฟเวอร์ตัดสิน (ข้อเตือนไม่บล็อก)
+          const allPassed = pc.readyToClose === true;   // เซิร์ฟเวอร์ตัดสิน (ข้อเตือนไม่บล็อก) · ปุ่มปิดจริงใช้ผลเดียวกัน (CloseFiscalPeriodAsync → RunForPeriodAsync)
 
           content.innerHTML = `
             <p class="text-sm text-gray-500" style="margin-bottom:16px">งวด: <strong>${Layout.esc(pName)}</strong> (${pStart} — ${pEnd})</p>
@@ -363,7 +365,7 @@
                 </div>`).join('') || '<div class="text-gray-400">ไม่มีรายการตรวจ</div>'}
             </div>
             ${allPassed ? '<p class="text-success text-sm" style="margin-top:16px;text-align:center">✓ ผ่านการตรวจสอบทุกรายการ — พร้อมปิดงวด</p>'
-              : '<p class="text-danger text-sm" style="margin-top:16px;text-align:center">⚠ มีรายการที่ต้องแก้ไข (ระบบจะตรวจสอบอีกครั้งเมื่อปิดจริง)</p>'}
+              : '<p class="text-danger text-sm" style="margin-top:16px;text-align:center">⚠ มีข้อสีแดงที่ต้องแก้ก่อนปิดงวด (ข้อสีเหลืองเป็นคำเตือน ไม่บล็อก)</p>'}
             <div style="margin-top:16px;padding:12px;background:var(--gray-50);border-radius:8px;font-size:12px;color:var(--gray-600)">
               <strong>สิ่งที่ระบบจะทำเมื่อปิดงวด:</strong>
               <ul style="margin:4px 0 0 16px;padding:0">
@@ -374,7 +376,8 @@
 
           footer.innerHTML = `
             <button class="btn btn-secondary" onclick="Layout.closeModal('checklistModal')">ยกเลิก</button>
-            <button class="btn btn-warning" onclick="Page.confirmClose()">ยืนยันปิดงวด</button>`;
+            ${allPassed ? '<button class="btn btn-warning" onclick="Page.confirmClose()">ยืนยันปิดงวด</button>'
+              : '<button class="btn btn-warning" disabled title="แก้ข้อที่เป็นสีแดงก่อน — ปุ่มปิดใช้ผลตรวจชุดเดียวกัน">ยืนยันปิดงวด</button>'}`;
         } catch (e) {
           content.innerHTML = `<div class="text-danger text-center" style="padding:20px">${Layout.esc(e.message)}</div>`;
         }
