@@ -723,7 +723,10 @@ public class EmailScheduleService : IEmailScheduleService
             }
         }
         // แถว "ข้าม" (ยกเลิกรับเรื่องทวงชำระ) ต้องถูกบันทึกด้วย — ไม่งั้นเหตุหาย
-        if (enqueued > 0 || notSentRows > 0) await _db.SaveChangesAsync(ct);
+        // รอบ 259 (259-2-7): บันทึกแบบ idempotent — ผู้สแกนอีกตัวบันทึกกุญแจเดียวกันไปก่อน / สองกฎ-สองวันได้กุญแจเดียวกันในรอบนี้
+        // ⇒ ถอดแถวซ้ำ (ผลเดียวกับที่ต้องการ) แทนที่ทั้งรอบจะล้ม (เดิม: 23505 ⇒ แถวของทุกใบในรอบหาย + ลายน้ำไม่ขยับ ⇒ ล้มซ้ำทุกนาที)
+        if (enqueued > 0 || notSentRows > 0 || _db.ChangeTracker.HasChanges())
+            await QueueRowSave.SaveSkippingExistingKeysAsync(_db, ct);
         return enqueued;
         }
     }
@@ -1246,6 +1249,9 @@ public class EmailScheduleService : IEmailScheduleService
         if (!ContactLineChannel.WantsLine(rule.ChannelLineUser, rule.ChannelLineGroup) || !ContactLineChannel.SupportsLine(rule.Trigger))
             return LineEnqueueResult.None;
         if (await _db.LineQueues.AnyAsync(q => q.CompanyId == doc.CompanyId && q.BaseKey == baseKey && !q.IsDeleted, ct))
+            return new LineEnqueueResult(0, true, false, null);
+        // รอบ 259 (259-2-7): แถวของเหตุการณ์เดียวกันที่เพิ่มในรอบนี้แต่ยังไม่บันทึก (สองกฎ trigger/offset เดียวกัน · วันย้อนเก็บที่ได้กุญแจเดียวกัน) ⇒ มีแล้ว
+        if (_db.LineQueues.Local.Any(q => q.CompanyId == doc.CompanyId && q.BaseKey == baseKey && !q.IsDeleted))
             return new LineEnqueueResult(0, true, false, null);
 
         var topic = NotifyTopics.ForTrigger(rule.Trigger);
