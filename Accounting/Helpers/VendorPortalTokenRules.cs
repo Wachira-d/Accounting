@@ -26,7 +26,7 @@ public static class VendorPortalTokenRules
     }
 
     /// <summary>สถานะของลิงก์ ณ เวลา <paramref name="nowUtc"/> — เพิกถอนชนะหมดอายุ</summary>
-    public static string Status(DateTime? revokedAt, DateTime expiresAt, DateTime nowUtc)
+    public static string StatusOf(DateTime? revokedAt, DateTime expiresAt, DateTime nowUtc)
         => revokedAt != null ? StatusRevoked : expiresAt < nowUtc ? StatusExpired : StatusActive;
 
     public static string StatusLabel(string status) => status switch

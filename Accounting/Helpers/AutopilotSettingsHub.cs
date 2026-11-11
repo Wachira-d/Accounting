@@ -3,7 +3,7 @@ namespace Accounting.Helpers;
 /// <summary>รอบ 259-3 (ทีม E-M2 · คำตัดสิน 259-3-4) — <b>การ์ดศูนย์รวมค่าตั้ง Autopilot</b>: ค่าตั้งเชิงอัตโนมัติระดับบริษัทกระจาย 5 หน้า
 /// (ตั้งค่า·แท็บเอกสาร · Autopilot · รับชำระออนไลน์ · ธนาคาร · ตารางส่ง/แจ้งเตือน) โดยไม่มีลิงก์ถึงกัน ⇒ หน้า Autopilot แสดงสถานะ<b>อ่านอย่างเดียว</b>
 /// ของแต่ละเรื่อง + ลิงก์ไปหน้าที่เป็นบ้านของค่านั้น (ไม่มีช่องแก้ซ้ำ — บ้านเดียวของค่าแต่ละตัวคงเดิม)
-/// <para>สถานะประกอบที่นี่ตัวเดียว (server computes · page displays) · <c>On</c> null = ไม่ใช่ค่าเปิด/ปิด หรือตรวจไม่ได้ (ป้ายบอกเอง)</para></summary>
+/// <para>สถานะประกอบที่นี่ตัวเดียว (server computes · page displays) · <c>IsOn</c> null = ไม่ใช่ค่าเปิด/ปิด หรือตรวจไม่ได้ (ป้ายบอกเอง)</para></summary>
 public static class AutopilotSettingsHub
 {
     /// <summary>ลิงก์การ์ด "ส่งเอกสารอัตโนมัติ" ในแท็บเอกสารของหน้าตั้งค่า (deep-link ที่ settings.html รองรับ)</summary>
@@ -13,7 +13,7 @@ public static class AutopilotSettingsHub
     public sealed record Facts(bool PayLinkDefaultEnabled, bool PostPayEmailReceipt, bool WhtCertReminderEnabled,
         DocumentPayLinkPolicy.CompanyFacts? PayFacts, int ActiveScheduleRules, int SlipAwaitingConfirm, string SlipQueueHref);
 
-    public sealed record Item(string Key, string Label, string StatusLabel, bool? On, string Href, string HrefLabel);
+    public sealed record Item(string Key, string Label, string StatusLabel, bool? IsOn, string Href, string HrefLabel);
 
     public static IReadOnlyList<Item> Build(Facts f)
     {

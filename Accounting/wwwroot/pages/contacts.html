@@ -1316,16 +1316,15 @@
           }).join('');
           const pol = d.autoApprovePolicy;
           const polText = pol ? `ตั้งไว้ — ปล่อย ${Number((pol.passCodes || []).length)} ข้อ${pol.setBy ? ` (โดย ${esc(pol.setBy)})` : ''}` : 'ไม่ได้ตั้ง (หยุดรอคนทุกคำเตือน)';
-          const dis = canEdit ? '' : 'disabled';
           box.innerHTML = `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;color:#0f172a">
               <div style="font-weight:600;margin-bottom:6px">⚙️ ระบบอัตโนมัติของผู้ติดต่อรายนี้ <span style="font-weight:normal;color:#64748b">(ใช้กับทุกเอกสารของผู้ติดต่อรายนี้ เมื่อรายการประจำ/ตารางส่งไม่ได้ตั้งเอง)</span></div>
               <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">
-                <label style="font-size:12px">ช่องทางรับเงิน<select class="form-input" id="capPayMode" ${dis}>${opt(o.paymentModes, d.paymentMode, '') /* html — หนีแล้ว */}</select></label>
-                <label style="font-size:12px">หลังลูกค้าชำระ: ส่งใบเสร็จ<select class="form-input" id="capPostPayEmail" ${dis}>${opt(o.postPayEmailOptions, d.postPayEmailReceipt, 'Inherit') /* html */}</select></label>
-                <label style="font-size:12px">หลังลูกค้าชำระ: ทุกงวด<select class="form-input" id="capPostPayPartial" ${dis}>${opt(o.postPayPartialOptions, d.postPayIncludePartial, 'Inherit') /* html */}</select></label>
+                <label style="font-size:12px">ช่องทางรับเงิน<select class="form-input" id="capPayMode" ${canEdit ? '' : 'disabled'}>${opt(o.paymentModes, d.paymentMode, '') /* html — หนีแล้ว */}</select></label>
+                <label style="font-size:12px">หลังลูกค้าชำระ: ส่งใบเสร็จ<select class="form-input" id="capPostPayEmail" ${canEdit ? '' : 'disabled'}>${opt(o.postPayEmailOptions, d.postPayEmailReceipt, 'Inherit') /* html */}</select></label>
+                <label style="font-size:12px">หลังลูกค้าชำระ: ทุกงวด<select class="form-input" id="capPostPayPartial" ${canEdit ? '' : 'disabled'}>${opt(o.postPayPartialOptions, d.postPayIncludePartial, 'Inherit') /* html */}</select></label>
               </div>
               <label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:8px">
-                <input type="checkbox" id="notifyAutoSendOff" ${d.autoSendDisabled ? 'checked' : ''} ${dis}>
+                <input type="checkbox" id="notifyAutoSendOff" ${d.autoSendDisabled ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
                 <b>ไม่ส่งเอกสารอัตโนมัติถึงผู้ติดต่อรายนี้ (อีเมล/LINE)</b></label>
               <div style="font-size:12px;color:#64748b;margin-top:2px">ติ๊กแล้ว ระบบไม่ส่งเองทุกเส้น (ตารางส่ง · รายการประจำ · ทวงชำระ/ใบแจ้งยอด · 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็นอัตโนมัติ) และบอกเหตุบนคิว — ส่งเองจากหน้าเอกสารยังได้</div>
               <div style="font-size:12px;margin-top:6px">นโยบายอนุมัติข้ามคำเตือน: ${polText /* html — หนีแล้ว */} · <a href="/pages/recurring.html">แก้ที่รายการประจำ (ขั้นอนุมัติ)</a></div>

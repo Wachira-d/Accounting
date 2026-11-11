@@ -143,7 +143,7 @@ public class VendorPortalService : IVendorPortalService
             t => t.Id == tokenId && t.CompanyId == companyId, ct);
         if (token == null) throw new InvalidOperationException("ไม่พบลิงก์นี้");
         // รอบ 259-3: เพิกถอนซ้ำ/ลิงก์หมดอายุ = บอกตรง ๆ (ไม่ประทับทับเวลาเดิม)
-        var status = Accounting.Helpers.VendorPortalTokenRules.Status(token.RevokedAt, token.ExpiresAt, DateTime.UtcNow);
+        var status = Accounting.Helpers.VendorPortalTokenRules.StatusOf(token.RevokedAt, token.ExpiresAt, DateTime.UtcNow);
         if (!Accounting.Helpers.VendorPortalTokenRules.CanRevoke(status))
             throw new InvalidOperationException($"ลิงก์นี้{Accounting.Helpers.VendorPortalTokenRules.StatusLabel(status)} — ใช้งานไม่ได้อยู่แล้ว");
         token.RevokedAt = DateTime.UtcNow;
@@ -166,7 +166,7 @@ public class VendorPortalService : IVendorPortalService
         var now = DateTime.UtcNow;
         return rows.Select(r =>
         {
-            var st = Accounting.Helpers.VendorPortalTokenRules.Status(r.RevokedAt, r.ExpiresAt, now);
+            var st = Accounting.Helpers.VendorPortalTokenRules.StatusOf(r.RevokedAt, r.ExpiresAt, now);
             return new VendorPortalTokenRow(r.Id, r.ContactId, names.GetValueOrDefault(r.ContactId), r.Role,
                 Accounting.Helpers.VendorPortalTokenRules.RoleLabel(r.Role), r.IssuedAt, r.ExpiresAt, r.LastUsedAt, r.RevokedAt, r.RevokedReason,
                 r.RecipientEmail, st, Accounting.Helpers.VendorPortalTokenRules.StatusLabel(st), Accounting.Helpers.VendorPortalTokenRules.CanRevoke(st));

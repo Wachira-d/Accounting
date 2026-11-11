@@ -34,9 +34,9 @@ public class UxConsolidationRound259Tests
     [Fact]
     public void สถานะ_ใช้ได้_หมดอายุ_เพิกถอน_เพิกถอนชนะหมดอายุ()
     {
-        Assert.Equal(VendorPortalTokenRules.StatusActive, VendorPortalTokenRules.Status(null, Now.AddDays(1), Now));
-        Assert.Equal(VendorPortalTokenRules.StatusExpired, VendorPortalTokenRules.Status(null, Now.AddDays(-1), Now));
-        Assert.Equal(VendorPortalTokenRules.StatusRevoked, VendorPortalTokenRules.Status(Now.AddDays(-3), Now.AddDays(-1), Now));
+        Assert.Equal(VendorPortalTokenRules.StatusActive, VendorPortalTokenRules.StatusOf(null, Now.AddDays(1), Now));
+        Assert.Equal(VendorPortalTokenRules.StatusExpired, VendorPortalTokenRules.StatusOf(null, Now.AddDays(-1), Now));
+        Assert.Equal(VendorPortalTokenRules.StatusRevoked, VendorPortalTokenRules.StatusOf(Now.AddDays(-3), Now.AddDays(-1), Now));
         Assert.True(VendorPortalTokenRules.CanRevoke(VendorPortalTokenRules.StatusActive));
         Assert.False(VendorPortalTokenRules.CanRevoke(VendorPortalTokenRules.StatusExpired));
         Assert.False(VendorPortalTokenRules.CanRevoke(VendorPortalTokenRules.StatusRevoked));
@@ -91,12 +91,12 @@ public class UxConsolidationRound259Tests
     {
         var items = AutopilotSettingsHub.Build(HubFacts(new DocumentPayLinkPolicy.CompanyFacts(true, new[] { "PromptPay", "Card" }, true), rules: 2, slips: 3, wht: true));
         var byKey = items.ToDictionary(i => i.Key);
-        Assert.True(byKey["payLink"].On);
-        Assert.False(byKey["postPayReceipt"].On);
-        Assert.True(byKey["whtReminder"].On);
+        Assert.True(byKey["payLink"].IsOn);
+        Assert.False(byKey["postPayReceipt"].IsOn);
+        Assert.True(byKey["whtReminder"].IsOn);
         Assert.Equal(AutopilotSettingsHub.AutoSendHref, byKey["whtReminder"].Href);
         Assert.Equal("พร้อม — 2 วิธี", byKey["gateway"].StatusLabel);
-        Assert.True(byKey["bankTransfer"].On);
+        Assert.True(byKey["bankTransfer"].IsOn);
         Assert.Equal("รอยืนยัน 3 รายการ", byKey["slipQueue"].StatusLabel);
         Assert.Equal("/pages/payment-intents.html?status=Pending", byKey["slipQueue"].Href);
         Assert.Equal("เปิดอยู่ 2 กฎ", byKey["schedule"].StatusLabel);
@@ -108,12 +108,12 @@ public class UxConsolidationRound259Tests
     {
         var none = AutopilotSettingsHub.Build(HubFacts(new DocumentPayLinkPolicy.CompanyFacts(false, Array.Empty<string>(), false))).ToDictionary(i => i.Key);
         Assert.Equal("ยังไม่ได้ตั้ง", none["gateway"].StatusLabel);
-        Assert.False(none["gateway"].On);
+        Assert.False(none["gateway"].IsOn);
         Assert.Equal("ยังไม่มีบัญชีรับโอน", none["bankTransfer"].StatusLabel);
         Assert.Equal("ไม่มีสลิปรอ", none["slipQueue"].StatusLabel);
         Assert.Equal("ยังไม่มีกฎที่เปิด", none["schedule"].StatusLabel);
         var unknown = AutopilotSettingsHub.Build(HubFacts(null)).ToDictionary(i => i.Key);
-        Assert.Null(unknown["gateway"].On);
+        Assert.Null(unknown["gateway"].IsOn);
         Assert.Equal("ตรวจไม่ได้", unknown["bankTransfer"].StatusLabel);
     }
 

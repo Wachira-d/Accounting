@@ -176,10 +176,10 @@ const Page = {
     const body = document.getElementById('apHubBody');
     if (!items.length) { body.innerHTML = '<tr><td colspan="3" class="text-center text-gray-400">-</td></tr>'; return; }
     const esc = Layout.esc;
-    // สถานะ/ป้าย/ลิงก์ทั้งหมดจากเซิร์ฟเวอร์ — on: true/false/null (ไม่ใช่ค่าเปิดปิด) แค่เลือกสี
+    // สถานะ/ป้าย/ลิงก์ทั้งหมดจากเซิร์ฟเวอร์ — isOn: true/false/null (ไม่ใช่ค่าเปิดปิด) แค่เลือกสี
     body.innerHTML = items.map(i => `<tr>
       <td>${esc(i.label)}</td>
-      <td><span class="ap-step ${i.on === true ? 'ap-Done' : i.on === false ? 'ap-Waiting' : 'ap-NotApplicable'}">${esc(i.statusLabel)}</span></td>
+      <td><span class="ap-step ${i.isOn === true ? 'ap-Done' : i.isOn === false ? 'ap-Waiting' : 'ap-NotApplicable'}">${esc(i.statusLabel)}</span></td>
       <td><a href="${esc(i.href)}">${esc(i.hrefLabel)}</a></td>
     </tr>`).join('');
   },

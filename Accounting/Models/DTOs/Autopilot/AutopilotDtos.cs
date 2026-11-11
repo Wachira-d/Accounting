@@ -26,7 +26,7 @@ public record AutopilotSettingsDto(bool BankAutoSettleEnabled, string QuotationA
     // รอบ 257 ชุด 4 (A L12): บอกก่อนเปิดว่ารอบถัดไปไล่บรรทัดเงินเข้าย้อนหลัง N วัน (server computes)
     string? BankAutoSettleEnableNote = null,
     // รอบ 259-3 (E-M2): การ์ดศูนย์รวมค่าตั้งที่อยู่หน้าอื่น (สถานะ + ลิงก์ · อ่านอย่างเดียว) — ตัวประกอบเดียว Helpers/AutopilotSettingsHub
-    IReadOnlyList<Accounting.Helpers.AutopilotSettingsHub.Item>? Hub = null);
+    IReadOnlyList<global::Accounting.Helpers.AutopilotSettingsHub.Item>? Hub = null);
 
 public record UpdateAutopilotSettingsRequest(bool? BankAutoSettleEnabled, string? QuotationAcceptAutopilotDefault, string? DigestLocalTime);
 
