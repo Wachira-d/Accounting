@@ -239,6 +239,28 @@ public class AutopilotService : IAutopilotService
             $"{q.Number ?? "เอกสาร"}: ส่งทาง {NotifyEndpointKind.Label(q.EndpointKind)} ไม่สำเร็จ",
             q.ErrorMessage ?? "LINE ไม่รับข้อความ", q.CreatedAt, q.EntityId, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html", null, "เปิดเอกสาร", DocHref(q.EntityId))));
 
+        // รอบ 259 (B-M6): e-Tax โหมดส่งตรง — นำส่งกรมล้ม/กรมปฏิเสธ · ลงนามแล้วแต่ใบเดือนก่อนยังไม่ส่ง (กำหนดวันที่ 15) — ตัวตัดสิน Helpers/EtaxRdSubmission
+        var etaxDirect = await _db.CompanySettings.AsNoTracking()
+            .AnyAsync(s => s.CompanyId == companyId && s.EtaxEnabled && s.EtaxMode == EtaxMode.Direct, ct);
+        if (etaxDirect)
+        {
+            var monthStart = EtaxRdSubmission.CurrentMonthStart(nowUtc);
+            var etaxRows = await _db.EtaxInvoices.AsNoTracking()
+                .Where(e => e.CompanyId == companyId && e.SubmittedAt == null
+                    && (e.Status == EtaxStatus.Rejected
+                        || (e.Status == EtaxStatus.Error && e.SignedAt != null)
+                        || (e.Status == EtaxStatus.Signed && e.CreatedAt < monthStart)))
+                .OrderBy(e => e.CreatedAt).Take(50)
+                .Select(e => new { e.DocumentId, e.Status, e.ErrorMessage, e.CreatedAt, e.RdLastAttemptAt,
+                    Number = _db.Documents.Where(d => d.Id == e.DocumentId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefault() })
+                .ToListAsync(ct);
+            list.AddRange(etaxRows.Select(e => new AutopilotIssueDto("EtaxRdFailed",
+                $"{e.Number ?? "เอกสาร"}: e-Tax " + (e.Status == EtaxStatus.Signed ? "ลงนามแล้วยังไม่ได้นำส่งกรมสรรพากร" : "นำส่งกรมสรรพากรไม่สำเร็จ"),
+                (e.ErrorMessage ?? "ยังไม่ได้นำส่ง") + $" — กำหนดส่ง {EtaxRdSubmission.DeadlineFor(e.CreatedAt):dd/MM/yyyy}"
+                    + (e.Status == EtaxStatus.Rejected ? " · กรมปฏิเสธ: แก้ข้อมูล/ออกใบใหม่" : " · ระบบลองส่งให้วันที่ 1–15 หรือกดส่งเองที่หน้า e-Tax"),
+                e.RdLastAttemptAt ?? e.CreatedAt, e.DocumentId, "เปิดหน้า e-Tax", "/pages/etax.html", null, "เปิดเอกสาร", DocHref(e.DocumentId))));
+        }
+
         // เงินเข้าแล้วแต่ยังไม่มีการชำระที่อ้างรายการนี้ (ผู้บันทึกล้ม/ค้าง) — เผื่อเวลา 15 นาทีให้ webhook/งานกระทบยอดทำงาน
         var settledBefore = nowUtc.AddMinutes(-15);
         var intents = await _db.PaymentIntents.AsNoTracking()

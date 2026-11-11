@@ -87,8 +87,11 @@ public static class DocumentCreationChannelRule
     public const string EcommerceActor = "system-ecommerce";
     /// <summary><c>IntegrationService</c> — "integration-sync"/"integration-resync"</summary>
     public const string IntegrationActorPrefix = "integration-";
-    /// <summary><c>RecurringTransactionService</c> ตอนรันตามรอบ</summary>
+    /// <summary><c>RecurringTransactionService</c> ตอนรันตามรอบ <b>ก่อนรอบ 259</b> (ค่าเดิมในฐาน) — ค่าใหม่ของงานอัตโนมัติทุกตัวขึ้นต้น
+    /// <see cref="SystemActorPrefix"/> (<c>Helpers/SystemActor</c> · B-L4)</summary>
     public const string SystemActor = "System";
+    /// <summary>รอบ 259 (B-L4): คำนำหน้าของผู้กระทำที่เป็นงานอัตโนมัติ (ตรวจหลัง settlement/expense-claim ที่มีช่องทางของตัวเอง)</summary>
+    public const string SystemActorPrefix = Accounting.Helpers.SystemActor.Prefix;
     /// <summary>รูป GUID 36 ตัว (LIKE) — CreatedBy ของผู้ใช้จากหน้าจอคือ userId.ToString()</summary>
     public const string GuidLikePattern = "________-____-____-____-____________";
 

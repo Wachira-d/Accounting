@@ -20,7 +20,7 @@ namespace Accounting.Services.Implementations;
 public class QuotationAcceptAutopilotService
 {
     public const int BatchSize = 50;
-    public const string Actor = "autopilot";
+    public const string Actor = Accounting.Helpers.SystemActor.QuotationAutopilot;   // รอบ 259 (B-L4): ตัวตั้งเดียว (เดิม "autopilot")
 
     private readonly AccountingDbContext _db;
     private readonly IDocumentService _docs;

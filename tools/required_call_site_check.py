@@ -17858,7 +17858,8 @@ RULES += [
     dict(file=RECURRING, method="CreateDocumentFromTemplateAsync", must=["RecurringSchedule.DocumentDateUtc(", "DocumentDate: docDateUtc"],
          forbid=["DocumentDate: DateTime.UtcNow", "DateTime.UtcNow.AddDays(ddDays)"],
          why=_R257P4_WHY + "A-M9 วันที่เอกสารตามปฏิทินไทย (00:00–07:00 น. ไม่ได้วันที่ของวันก่อน)"),
-    dict(file=RECURRING, method="CreateJournalFromTemplateAsync", must=["EntryDate: RecurringSchedule.DocumentDateUtc(DateTime.UtcNow)"],
+    # รอบ 259 (B-M4 · 259-4-2): วันตามปฏิทินไทยยังคง — ผ่าน RecurringSchedule.JournalEntryDateUtc (วันของงวด · รอบพิเศษ = วันนี้ ตามปฏิทินไทย)
+    dict(file=RECURRING, method="CreateJournalFromTemplateAsync", must=["RecurringSchedule.JournalEntryDateUtc(recurring.NextRunDate, DateTime.UtcNow, consumesPeriod)"],
          forbid=["EntryDate: DateTime.UtcNow"],
          why=_R257P4_WHY + "A-M9 ใบสำคัญลงวันตามปฏิทินไทย"),
     dict(file=_R248_AP, method="SetRecurringPolicyAsync", must=["r.DefaultPolicyBindingHash = RecurringApprovePolicyLoader.CurrentBindingHash(r)",
@@ -18316,6 +18317,42 @@ REVIEWER_CASES += [
     ("R258m6", "ApplyCreditAllocationTaxStepsAsync", "taxPoint.TaxPointDate, actor, throwOnFailure: true);", "taxPoint.TaxPointDate, actor);", True),
     # M1: กลับไปเทียบรายใบกับเงินรวม ⇒ ต้องฟ้อง
     ("R258m1", "RunAsync", "if (creditHolds.TryGetValue(c.Id, out var creditHoldReason))", "if (Accounting.Helpers.DunningSuppression.Decide(c.BalanceDue, 0m) is { SuppressCustomerReminder: true, Reason: var creditHoldReason })", True),
+]
+
+# ── รอบ 259 ชุด D (Autopilot + OCR ส่วนที่เหลือ · คำตัดสิน 259-4-*) — ถอดการเรียกออกแล้วเทสต์ pure ยังเขียว ⇒ ล็อกจุดเรียก ──
+_R259D_WHY = "รอบ 259 ชุด D (คำตัดสิน 259-4-*): "
+_R259D_REC = "Services/Implementations/RecurringTransactionService.cs"
+RULES += [
+    dict(file=_R259D_REC, method="UpdateAsync", must=["RecurringRestampSnapshot.Take(", "ApplyPolicyRestampAsync(", "WithSaveWarningsAsync(recurring, restampNotice)"],
+         before=[("RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit(", "RecurringRestampSnapshot.Take(")],
+         why=_R259D_WHY + "B-M3 แก้รายการแล้วประทับนโยบายใหม่ในชื่อผู้แก้ที่มีสิทธิ์ / หยุดมีผลพร้อมบอก (ห้ามดับเงียบ)"),
+    dict(file=_R259D_REC, method="ApplyPolicyRestampAsync", must=["RecurringPolicyRestamp.Decide(", "AddChainedAuditLog(", "RecurringApprovePolicyLoader.ApproverNamesAsync("],
+         why=_R259D_WHY + "B-M3 ตัวตัดสินเดียว + audit + ใครเปิดคืนได้"),
+    dict(file=_R259D_REC, method="CreateJournalFromTemplateAsync", must=["RecurringSchedule.JournalEntryDateUtc(", "JournalEntryBuilder.ClosedPeriodReasonAsync(", "EntryDate: entryDate"],
+         why=_R259D_WHY + "B-M4 ใบสำคัญลงวันที่ของงวด · งวดปิดข้าม (ไม่ลงงวดอื่น)"),
+    dict(file=_R259D_REC, method="CreateDocumentFromTemplateAsync", must=["RecurringRunKey.For(", "d.RecurringRunKey == runKey", "recurringRun: new RecurringRunOrigin("],
+         before=[("RecurringRunKey.For(", "_documentService.CreateDocumentAsync(")],
+         why=_R259D_WHY + "B-L2/L3 กุญแจรายการ+งวดใน INSERT เดียวกับใบ"),
+    dict(file="Controllers/RecurringController.cs", method="Update", must=["DocumentPermissionHelper.CanApproveAsync(", "OwnerActionGuard.IsApiKeyRequest(", "new Accounting.Helpers.RecurringEditor("],
+         why=_R259D_WHY + "B-M3 ผู้แก้ที่มีสิทธิ์อนุมัติ (ไม่ใช่คีย์ API) เท่านั้นที่ประทับนโยบายใหม่"),
+    dict(file="Services/Implementations/EtaxInvoiceService.cs", method="SubmitToRevenueAsync",
+         must=["EtaxRdSubmission.CanSubmit(", "EtaxRdSubmission.Classify(", "EtaxRdSubmission.StatusFor(", "NotifyRdSubmitFailureAsync("],
+         why=_R259D_WHY + "B-M6 ประทับส่งแล้วเฉพาะเมื่อกรมตอบรับจริง · ล้มดัง"),
+    dict(file="Services/Background/EtaxRdSubmissionJob.cs", method="RunOnceAsync", must=["JobLock.RunExclusiveAsync(", "EtaxRdSubmission.InSubmissionWindow(", "EtaxMode.Direct", "SubmitPendingPreviousMonthsAsync("],
+         why=_R259D_WHY + "B-M6 งานนำส่งประจำเดือน ทีละเครื่อง เฉพาะโหมดส่งตรง"),
+    dict(file="Services/Implementations/EtaxInvoiceService.RdQueue.cs", method="SubmitPendingPreviousMonthsAsync", must=["e.CompanyId == companyId", "SubmitToRevenueAsync(companyId, id)", "EtaxRdSubmission.CurrentMonthStart("],
+         why=_R259D_WHY + "B-M6 ทุกฉบับผ่านตัวส่งเดียว · กรองบริษัท"),
+    dict(file="Services/Implementations/DocumentService.cs", method="CreateDocumentAsync", must=["DocumentFeatureDenial.Describe(", "RecurringRunKey = recurringRun?.RunKey"],
+         why=_R259D_WHY + "B-L1 ข้อความแพ็กเกจตามสถานะจริง · B-L2 กุญแจงวดใน INSERT"),
+    dict(file="Services/Implementations/OcrService.cs", method="TrySplitLineItemsAsync", must=["ApplyTextTableFallback(scanResult, data, rawText, provenPaperTotal)"],
+         why=_R259D_WHY + "C-M5 engine คืนตารางไม่ครบ ⇒ ผู้สมัครที่สองจากข้อความ"),
+    dict(file="Services/Implementations/OcrService.cs", method="ApplyTextTableFallback", must=["OcrTextTableFallback.Decide(", "OcrNonItemRow.IsSummaryOrTenderRow("],
+         before=[("OcrTextTableFallback.Decide(", "data.Items.Clear()")],
+         why=_R259D_WHY + "C-M5 ตารางจากข้อความเมื่อ engine คืนไม่ครบ (เฉพาะหัวใบพิสูจน์แล้ว)"),
+    dict(file="Services/Implementations/OcrService.cs", method="SubmitCorrectionAsync", must=["OcrHeaderAmounts.RederiveAfterTotalEdit("],
+         why=_R259D_WHY + "C-M2 แก้เฉพาะยอดรวม ⇒ ถอดฐาน/VAT ใหม่"),
+    dict(file="Services/Implementations/OcrService.cs", method="FindDuplicateDocumentWarningAsync", must=["FindContentDuplicateWarningAsync("],
+         why=_R259D_WHY + "C-L4 อ่านเลขที่ไม่ได้ ⇒ ซ้ำด้วยเนื้อหา"),
 ]
 
 def main() -> int:

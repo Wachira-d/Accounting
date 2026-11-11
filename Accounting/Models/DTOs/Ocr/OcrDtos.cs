@@ -162,6 +162,10 @@ public record OcrResultResponse(
     bool OurRoleUsedAi = false,
     /// <summary>ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก ตัดสินโดย provider จริงไหม (DECISIONS ข้อ 153 ข้อ 2) — ป้าย "🤖 AI แนะนำ" vs "⚙️ ระบบแนะนำ"</summary>
     bool VatCodeUsedAi = false,
+    /// <summary>รอบ 259 (C-L1): ผู้ติดต่อที่จับคู่มาจาก provider จริงไหม — ป้าย "🤖 AI แนะนำ" vs "⚙️ ระบบแนะนำ"</summary>
+    bool VendorMatchUsedAi = false,
+    /// <summary>รอบ 259 (C-L3): ยังไม่รู้คู่ค้า ⇒ ข้อความ "ต้องเลือกผู้ขาย/ผู้ซื้อ" บนการ์ด<b>ก่อน</b>กดสร้าง (null = ไม่ต้องเตือน) — <c>OcrCounterpartyMatch.MissingBeforeCreateNote</c></summary>
+    string? CounterpartyMissingNote = null,
     /// <summary>ข้อความที่หน้ารีวิวแสดงข้างประเภท VAT ของบรรทัด ("รหัส 1 = ยกเว้น VAT — 🤖 AI แนะนำ · มั่นใจ 92%") — เซิร์ฟเวอร์ประกอบ
     /// (<c>Helpers/OcrVatCodeMeaning.ReviewNote</c>) · null = ไม่มีรหัสที่ต้องตัดสิน</summary>
     string? VatCodeMeaningNote = null,

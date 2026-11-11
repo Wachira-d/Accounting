@@ -89,7 +89,8 @@ public partial class AdminCompanyUsageController
             : d.CreatedBy == DocumentCreationChannelRule.PlatformBillingActor ? DocumentCreationChannelRule.MarkerPlatformBilling
             : d.CreatedBy == DocumentCreationChannelRule.EcommerceActor
                 || d.CreatedBy.StartsWith(DocumentCreationChannelRule.IntegrationActorPrefix) ? DocumentCreationChannelRule.MarkerIntegration
-            : d.CreatedBy == DocumentCreationChannelRule.SystemActor ? DocumentCreationChannelRule.MarkerSystem
+            : d.CreatedBy == DocumentCreationChannelRule.SystemActor
+                || d.CreatedBy.StartsWith(DocumentCreationChannelRule.SystemActorPrefix) ? DocumentCreationChannelRule.MarkerSystem   // รอบ 259 (B-L4)
             : EF.Functions.Like(d.CreatedBy, DocumentCreationChannelRule.GuidLikePattern) ? DocumentCreationChannelRule.MarkerUser
             : d.CreatedBy.Contains("@") ? DocumentCreationChannelRule.MarkerEmail
             : DocumentCreationChannelRule.MarkerOther,

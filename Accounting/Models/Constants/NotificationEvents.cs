@@ -109,6 +109,8 @@ public static class NotificationEvents
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
     /// เพื่อสอบ DBA / raw SQL.</summary>
     public const string AuditChainTampered      = "audit.chain_tampered";
+    /// <summary>รอบ 259 (B-M6): นำส่ง e-Tax ต่อกรมสรรพากร (โหมดส่งตรง) ไม่สำเร็จ · สรุปงานนำส่งประจำเดือน — ค่าตั้งต้นถึงเจ้าของ (กระดิ่ง + อีเมล)</summary>
+    public const string EtaxRdSubmitFailed = "etax.rd_submit_failed";
     /// <summary>หนังสือทวงหนี้ AR ที่ใบเกิน 30/60/90 วัน — ส่งผ่าน
     /// OverdueDunningJob ตามลำดับขั้น. กัน spam: ส่งซ้ำได้เฉพาะข้ามขั้น +
     /// ≥7 วันจาก LastDunningSentAt. recipient = Accounting + Owner role</summary>
@@ -198,6 +200,7 @@ public static class NotificationEvents
         ("Accounting", AutopilotDailyDigest, "Autopilot: สรุปประจำวัน (สำเร็จ · รอยืนยัน · เรื่องที่ระบบทำต่อไม่ได้)"),
         ("Accounting", AutopilotPartnerExchange, "Autopilot: คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ามาแล้ว (ตรวจก่อนใช้เครดิต)"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
+        ("Accounting", EtaxRdSubmitFailed, "e-Tax นำส่งกรมสรรพากรไม่สำเร็จ (โหมดส่งตรง) · สรุปงานนำส่งประจำเดือน"),
         ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),
         ("Accounting", OverdueDunningFirst, "AR เกิน 60 วัน — ส่งหนังสือทวงหนี้รอบที่ 2"),
         ("Accounting", OverdueDunningFinal, "AR เกิน 90 วัน — ส่งหนังสือทวงหนี้ครั้งสุดท้าย"),

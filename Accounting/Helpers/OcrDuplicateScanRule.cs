@@ -98,4 +98,34 @@ public static class OcrDuplicateScanRule
         var first = pool.OrderByDescending(c => c.DocumentDate).First();
         return new(OcrDuplicateVerdict.SameNumberDifferentAmount, first, 0m);
     }
+
+    // ═══ รอบ 259 (C-L4 · คำตัดสิน 259-4-9): ซ้ำด้วยเนื้อหาเมื่ออ่านเลขเอกสารไม่ได้ ═══
+
+    /// <summary>รหัสกฎของคำเตือนใบซ้ำ (ทุกแบบ) — หน้าเว็บ/มือถือจับรหัสนี้แล้วถามยืนยัน (ส่ง <c>allowDuplicate</c>) · ข้อความยังมีคำ "ยืนยันสร้างซ้ำ" (หน้าสแกนเดิมจับจากข้อความ)</summary>
+    public const string RuleCode = "OCR-DUPLICATE";
+
+    /// <summary>เอกสารเดิมที่วันที่ + ยอดตรง (ผู้เรียกกรองบริษัท/วันที่/ยอดมาแล้ว)</summary>
+    public sealed record ContentCandidate(Guid DocumentId, string DocumentNumber, DateTime DocumentDate, decimal TotalAmount,
+        Guid ContactId, string ContactTaxIdDigits);
+
+    /// <summary>ใบที่อ่านเลขที่ไม่ได้ (ถ่ายใหม่ = ไฟล์ต่าง ⇒ hash ไม่ช่วย) — ซ้ำเมื่อ <b>ผู้ขายเดียวกัน + วันที่เดียวกัน + ยอดตรง</b> ·
+    /// ต้องรู้ผู้ขาย (ผู้ติดต่อที่จับคู่ได้ หรือเลขผู้เสียภาษี) — ไม่รู้ผู้ขาย = ไม่เตือน (ร้านต่างกันยอดเท่ากันวันเดียวกันเกิดได้ทุกวัน) ·
+    /// ต้องมียอด &gt; 0 และวันที่ · คืนใบที่ตรง หรือ null</summary>
+    public static ContentCandidate? DecideByContent(IReadOnlyList<ContentCandidate>? candidates, decimal? scannedTotal, DateTime? scannedDate,
+        string? scannedVendorTaxIdDigits, Guid? matchedContactId)
+    {
+        if (candidates is not { Count: > 0 } || scannedTotal is not > 0m || scannedDate is not DateTime d) return null;
+        var vendor = (scannedVendorTaxIdDigits ?? "").Trim();
+        if (vendor.Length == 0 && matchedContactId is null) return null;
+        return candidates
+            .Where(c => c.DocumentDate.Date == d.Date && Math.Abs(c.TotalAmount - scannedTotal.Value) <= AmountTolerance)
+            .Where(c => (matchedContactId is Guid m && c.ContactId == m)
+                        || (vendor.Length > 0 && c.ContactTaxIdDigits.Length > 0 && c.ContactTaxIdDigits == vendor))
+            .OrderBy(c => c.DocumentNumber, StringComparer.Ordinal)
+            .FirstOrDefault();
+    }
+
+    public static string ContentDuplicateMessage(ContentCandidate hit)
+        => $"อ่านเลขที่ของใบนี้ไม่ได้ แต่มีเอกสาร {hit.DocumentNumber} ({hit.DocumentDate:dd/MM/yyyy}) ของผู้ขายรายเดียวกัน วันที่เดียวกัน ยอด {hit.TotalAmount:N2} อยู่แล้ว "
+           + "— น่าจะเป็นใบเดียวกันที่ถ่าย/สแกนซ้ำ (สร้างซ้ำ = ค่าใช้จ่าย/ภาษีซื้อเกินจริง) · เปิดใบเดิมแทน หรือกดยืนยันสร้างซ้ำถ้าเป็นคนละใบจริง";
 }

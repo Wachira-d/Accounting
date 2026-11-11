@@ -12,6 +12,8 @@ public interface IEtaxInvoiceService
     Task<PagedResponse<EtaxInvoiceResponse>> GetAllAsync(Guid companyId, EtaxStatus? status, PagedRequest request);
     Task<EtaxInvoiceResponse> SignAsync(Guid companyId, Guid etaxId);
     Task<EtaxInvoiceResponse> SubmitToRevenueAsync(Guid companyId, Guid etaxId);
+    /// <summary>รอบ 259 (B-M6): งานประจำเดือน — นำส่งใบเดือนก่อนที่ค้าง (ผู้เรียก <c>EtaxRdSubmissionJob</c> ใต้ JobLock) · ประทับ "ส่งแล้ว" เฉพาะเมื่อกรมตอบรับจริง</summary>
+    Task<Accounting.Services.Implementations.EtaxRdBatchResult> SubmitPendingPreviousMonthsAsync(Guid companyId, DateTime nowUtc, CancellationToken ct = default);
     Task<string> GetXmlAsync(Guid companyId, Guid etaxId);
     /// <summary>ยกเลิกแถว e-Tax <b>ในระบบนี้</b> (ไม่ได้ส่งคำยกเลิกถึงกรมสรรพากร) — ตัวตัดสิน <c>Helpers/EtaxVoidPolicy</c> · แถว Submitted ต้องมีไฟล์หลักฐาน
     /// การยกเลิกที่แนบเข้าเอกสารของแถวนี้ (รอบ 200 ทีม V1H · คำตัดสินข้อ 51 — controller เดินด่านไฟล์แนบตัวเดียวก่อนถึงที่นี่)</summary>

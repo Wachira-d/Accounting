@@ -1182,7 +1182,7 @@
 | 12 | VAT 0% / ยกเว้น / ผสม | `OcrLineVatMarks` · `OcrVatGroupTable` (ตารางรหัส ภ.พ.) · `ThaiVatTypeRule` · `OcrAmountIntegrity` | Wholesale (V/N) · Makro 3/3 (รหัส 1/2) · **Makro 2/2 (รหัส 1/2 · ยอดหัวสแกนบวก VAT ซ้ำ — 2026-10-16)** · export-zero-rated (inline) | ✅ · ⚠️ ใบส่งออก 0% มีแค่หัวใบใน corpus · ใบผสมที่ไม่มีสัญลักษณ์/ตาราง (Makro 951/49) = บรรทัดสรุป 7% + [Σ-GAP] VatRateMismatch ให้คนแยก (ล็อกแล้ว) · ✅ (2026-10-16) ใบที่ engine คืน**บรรทัดรายการ** + ตารางรหัส ภ.พ. ผสม: อัตรารายบรรทัดตามรหัสบนแถวสินค้า / ทางแบ่งเดียวที่ Σ ต่อกลุ่มลงตาราง · ส่วนลดแบ่งต่อรหัส (`OcrVatCodeLines`) · ไม่ลงตาราง ⇒ [Σ-GAP] ตารางรหัส ภ.พ. (ไม่เดา) · ⚠️ มีส่วนลด + แถวไม่มีรหัส / แถวส่วนลดที่ engine คืนเป็นสินค้า = ฟ้องให้คนแยก · ⚠️ คำอธิบายรหัสที่ Tesseract อ่านเพี้ยน ("1«…") ⇒ รหัส 1 = ไม่รู้ ⇒ บรรทัดสรุปใบเดียว | สูง |
 | 13 | ภาษาอังกฤษ | ป้ายอังกฤษใน `OcrTotalAnchor`/`OcrPaperAmounts`/`OcrBillDiscount`/`PaperWhtReader` | export-zero-rated · บิลอังกฤษ (OcrPriorBalanceTests) | ✅ · ⚠️ "Sub Total/Subtotal" อ่านใน `SmartFieldExtractor`/`ParseThaiDocument` (ไม่ใช่ helper → ไม่มี golden) | กลาง |
 | 14 | ใบต่างสาขา (รหัสสาขา 5 หลัก ผู้ขาย/ผู้ซื้อ) | `BranchCodeExtractor` · `OcrIssuerBranch` · `OcrVendorBranchContact` | BranchCodeExtractorTests · OcrPartyZoneRealPaperTests · Makro 00005 | ✅ (นอก replay corpus — ฝั่งคู่ค้า ไม่ใช่ตัวเลข) | สูง |
-| 15 | ค่าขนส่งแยก / service charge ใต้ตาราง | — (ไม่มีตัวตัดสิน) | — | ⚠️ แถว "ค่าขนส่ง 50 / Service charge 10% 100" ที่ engine ไม่คืนเป็นรายการ ⇒ Σ บรรทัด < ฐาน ⇒ LinesShort [Σ-GAP] (ไม่ลงผิด แต่ผู้ใช้เพิ่มแถวเองทุกใบ) · ข้อเสนอ: helper อ่าน "แถวค่าบริการที่พิมพ์" และยอมเติมบรรทัดเฉพาะเมื่อปิดช่องว่างพอดี (ไม่ใช่บรรทัดผีแบบเดิม) — ต่อสายใน `BuildScanLinesAsync` (ทีม A) | สูง |
+| 15 | ค่าขนส่งแยก / service charge ใต้ตาราง | **รอบ 259: `OcrTextTableFallback`** (ตารางจากข้อความเมื่อ engine คืนไม่ครบ + หัวใบพิสูจน์แล้ว) | `OcrRound259Tests` (ตารางสองแถว · golden ชุดกระดาษจริงไม่ถูกแตะ) | ✅ รอบ 259: ข้อความมีแถวที่ engine ไม่คืน + Σ ตรงยอดที่พิสูจน์ ⇒ ใช้ตารางข้อความ · ⚠️ ที่เหลือ: แถว "ค่าขนส่ง 50 / Service charge 10% 100" ที่ engine ไม่คืนเป็นรายการ ⇒ Σ บรรทัด < ฐาน ⇒ LinesShort [Σ-GAP] (ไม่ลงผิด แต่ผู้ใช้เพิ่มแถวเองทุกใบ) · ข้อเสนอ: helper อ่าน "แถวค่าบริการที่พิมพ์" และยอมเติมบรรทัดเฉพาะเมื่อปิดช่องว่างพอดี (ไม่ใช่บรรทัดผีแบบเดิม) — ต่อสายใน `BuildScanLinesAsync` (ทีม A) | สูง |
 | 16 | เงินทอน / รับเงินสด rows | `OcrTotalAnchor.TenderRow` (ยอดรวม) · **`OcrNonItemRow`** (รายการ) | OcrNonItemRowTests 18/16 แถว | ✅ (รอบนี้) | สูง |
 | 17 | ข้อความล้วน (Tesseract) ไม่มีตารางรายการ | `OcrLineSplitGuard` (ครอบ AI `OcrLineItemSplit`) · บรรทัดสรุปใบเดียว | luckyway · makro-correct ฯลฯ (Summary) | ⚠️ ไม่มีตัวแยกบรรทัดจากข้อความนอกจาก AI ⇒ ปิด AI = ได้บรรทัดสรุปใบเดียว (kill-switch ผ่าน แต่กฎเหล็ก #3 ข้อ 6 "ตารางครบทุกแถว" ยังไม่ถึงบนเส้นนี้) — งาน student model `OcrLineItemSplit` (กฎเหล็ก #1 ข้อ 2) | กลาง |
 
@@ -2092,3 +2092,18 @@ Makro (CP Axtra สาขา 03060 · 405901117163) หน้า 2 จาก 2 �
   (ไม่มีแถว "รวม") เคยถูกส่งเป็น PrintedBase ⇒ `OcrVatGroupTable.NetPrinted` · หัวสแกนได้ Rule 0.80 + ข้อความแยกจากกรณีป้ายรวม VAT · **S3** ถอด VAT ออกจาก
   "ยอดก่อน VAT = ยอดรวม" เฉพาะเมื่อยอดรวมนั้นพิสูจน์แล้ว (`OcrHeaderAmounts.ReconSubTotal(…, paperTotal)`) · **S4** ด่านความมั่นใจตอนสแกนใช้ `ReconSubTotal` ตัวเดียวกัน
   (`ApplyTotalFirst` คืนยอดที่พิสูจน์) · **N** แถว "รวม" ของตารางอัตราเก็บแยกถังจากตารางรหัส · `RateRowNotVat` ใช้ word boundary · "ยกเว้น" รวมไว้ที่ `NonTaxableLabel`
+
+### 2026-11-11 — รอบ 259 ชุด D OCR ส่วนที่เหลือ (team-C-ocr.md C-M2 · C-M5 · C-L1/L3/L4 · คำตัดสิน 259-4-8/9)
+
+- **C-M5 ตารางไม่ครบ**: `TrySplitLineItemsAsync` เดิม `if (Items.Count > 0) return` ⇒ engine คืน 5 จาก 8 แถว = `[Σ-GAP] LinesShort` ให้คนพิมพ์ · ตอนนี้ `Helpers/OcrTextTableFallback.Decide`
+  (pure) ลองตารางจากข้อความเป็นผู้สมัครที่สอง — รับเฉพาะเมื่อยอดหัวใบ **พิสูจน์แล้ว** (`provenPaperTotal` จาก `ApplyTotalFirst`) · Σ engine ต่ำกว่าหัวใบ (เกิน = แถวซ้ำ ไม่ใช่ที่นี่) ·
+  ผ่าน `OcrLineSplitGuard` หลังตัดแถวสรุป/ชำระ · ได้แถวมากกว่า ⇒ ป้าย `[LineSplit] … ตรวจก่อนยืนยัน` · ไม่ครบเงื่อนไข = คงตาราง engine ·
+  golden: ใบในชุด `OcrReplayHarness.Corpus` ที่ตารางลงยอดอยู่แล้วต้องไม่ถูกแตะ และทุกใบที่ถูกแทนต้องได้ Σ ที่ลงยอด · **ยังไม่ทำ** C-H1/C-M1 (ตัวเลือกผู้สมัครระดับบรรทัด — รอกระดาษจริงของเจ้าของ)
+- **ปุ่ม "➕ เพิ่มบรรทัด"**: แถวใหม่ไม่มีจำนวน/ราคา/ยอด (เดิม 1 × 0.00 ไหลเข้าเอกสารเมื่อลืมกรอก) · สร้างเอกสารขณะยังมีแถวว่าง ⇒ `OCR-BLANK-LINE` (`Helpers/OcrBlankLine` — รวมแถว 1×0 ที่ persist ไว้ก่อนรอบนี้)
+- **C-M2 มือถือเบิก**: `/correct` ล้ม = หยุด (เดิม `.catch(() => {})` แล้วสร้างด้วยค่า OCR) · อ่านรูปไม่ได้/โควตาหมด (429)/สแกน Failed = เหตุจริง + ถ่ายใหม่ + ทางระบบหลัก ·
+  ใบซ้ำ = รหัส `OCR-DUPLICATE` + ยืนยัน + `allowDuplicate` · แก้เฉพาะยอดรวม ⇒ `OcrHeaderAmounts.RederiveAfterTotalEdit` (VAT 7% ล้วน ⇒ สูตรเดียว `OcrVatBackCalc.SplitInclusive` ·
+  ไม่มี VAT ⇒ ฐาน = ยอด · ผสมยกเว้น ⇒ คง VAT ไม่เดาสัดส่วน) — 500 → 535 ได้ฐาน 500 · VAT 35
+- **C-L1** `OcrScanResult.VendorMatchUsedAi` + `AiSuggestedContactId` เฉพาะคำตอบของ provider จริง (แบบ GL) ⇒ acceptedAi ไม่นับนักเรียน · **C-L3** DTO `counterpartyMissingNote`
+  (`OcrCounterpartyMatch.MissingBeforeCreateNote` — แบบระวัง) ป้ายบนการ์ดก่อนกดสร้าง · **C-L4** อ่านเลขที่ไม่ได้ ⇒ `OcrDuplicateScanRule.DecideByContent` (ผู้ขายเดียวกัน + วันเดียวกัน + ยอดตรง ·
+  ไม่รู้ผู้ขาย = ไม่เตือน) ผ่านทางยืนยันเดิม
+

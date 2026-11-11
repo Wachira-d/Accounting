@@ -23,10 +23,12 @@ public interface IDocumentService
     /// <param name="carriedMoneyHeader">ฝ่ายค้านรอบ 1 P1 — แหล่งเงิน/หมวดค่าใช้จ่ายที่<b>ยกมาจากต้นทางตรงตัว</b> (แปลง · คัดลอก · ออกใบแทน · รายการประจำ) ·
     /// ช่องที่ค่าเท่ากับต้นทางตรวจแค่ "เป็นของบริษัทนี้" (ต้นทางที่อนุมัติแล้วแก้ไม่ได้ — ธนาคารที่ปิดใช้ทีหลังเคยทำให้แปลงไม่ได้เลย) ·
     /// <b>พารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request</b> (ค่าที่ client คุมได้ห้ามปลดด่าน) · null = ทุกช่องตรวจแบบเพิ่งเลือก</param>
+    /// <param name="recurringRun">รอบ 259 (B-L2/L3) — รายการประจำ + กุญแจกันซ้ำของงวด ประทับใน INSERT เดียวกับใบ (<c>Helpers/RecurringRunKey</c>) ·
+    /// <b>พารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request</b> · null = ไม่ได้มาจากรอบรายการประจำ</param>
     Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
         string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null,
         string? autoApproveBy = null, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null,
-        bool isDepositForfeitInvoice = false);
+        bool isDepositForfeitInvoice = false, Accounting.Helpers.RecurringRunOrigin? recurringRun = null);
     Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>Same as GetDocumentAsync but honors per-user sensitivity rules — when the
     /// caller cannot see the doc, returns a redacted stub instead of throwing.</summary>

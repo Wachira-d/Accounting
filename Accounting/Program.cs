@@ -850,6 +850,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.DeferredNotifyD
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.WhtCertReminderJob>();   // รอบ 253 (WP-10) — ทวง 50 ทวิ 7/21/45 + รายเดือน (JobLock · watermark ต่อบริษัท)
+builder.Services.AddHostedService<Accounting.Services.Background.EtaxRdSubmissionJob>();   // รอบ 259 (B-M6) — นำส่ง e-Tax เดือนก่อนต่อกรมสรรพากร (โหมดส่งตรง) วันที่ 1–15 · คิวเว้นช่วง (JobLock)
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.EclAllowanceJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.CourseCreditExpiryJob>();   // ทีม L — ปิดบัตรคอร์สหมดอายุ (breakage)

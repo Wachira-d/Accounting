@@ -131,10 +131,16 @@
             headers: { 'Authorization': 'Bearer ' + token },
             body: fd,
           });
-          const j = await r.json();
+          const j = await r.json().catch(() => null);
           const d = j?.data;
-          if (!r.ok || !j.success || !d) {
-            res.innerHTML = '<div class="err">อ่านรูปอัตโนมัติไม่สำเร็จ — กรอกเองได้เลย</div>';
+          // รอบ 259 (C-M2): อ่านไม่ได้ = บอกเหตุจริง + ทางไปต่อ (เดิม "กรอกเองได้เลย" แต่ตอนส่งบังคับรูปที่อ่านแล้ว = ทางตัน) ·
+          // โควตาหมด (429) / เครื่องอ่านล้ม / สแกนสถานะล้มเหลว ⇒ ไม่ถือ scanId (ส่งไม่ได้) + ปุ่มถ่ายใหม่ + ทางเบิกผ่านระบบหลัก
+          if (!r.ok || !j || !j.success || !d || d.scanStatus === 'Failed') {
+            this.scanId = null;
+            const why = r.status === 429
+              ? 'โควตาอ่านใบเสร็จอัตโนมัติ (OCR) ของบริษัทเดือนนี้หมดแล้ว' + (j && j.message ? ' — ' + j.message : '')
+              : (d && d.scanStatus === 'Failed' ? 'อ่านรูปนี้ไม่ได้ (ภาพไม่ชัด/ไม่ใช่ใบเสร็จ)' : ((j && j.message) || 'อ่านรูปอัตโนมัติไม่สำเร็จ'));
+            this.showStuck(why, r.status === 429);
             return;
           }
           this.scanId = d.id || null;
@@ -148,8 +154,30 @@
           const pct = Math.round((Number(d.confidence) || 0) * 100);
           res.innerHTML = `<div class="ok">✅ อ่านข้อมูลให้แล้ว (ความมั่นใจ ${pct}%) — ตรวจแล้วกดส่งได้เลย</div>`;
         } catch (e) {
-          res.innerHTML = '<div class="err">อ่านรูปอัตโนมัติไม่สำเร็จ — กรอกเองได้เลย</div>';
+          this.scanId = null;
+          this.showStuck('ส่งรูปไปอ่านไม่สำเร็จ (เครือข่าย)', false);
         }
+      },
+
+      /** รอบ 259 (C-M2): อ่านรูปไม่ได้ ⇒ บอกเหตุ + ทางไปต่อ (ถ่ายใหม่ · เบิกผ่านระบบหลักเมื่อโควตาหมด) — ไม่ปล่อยให้กรอกแล้วกดส่งไม่ได้ */
+      showStuck(why, quota) {
+        const res = document.getElementById('result');
+        const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        res.innerHTML = '<div class="err">' + esc(why) + ' — ส่งเบิกจากหน้านี้ต้องมีรูปที่ระบบอ่านได้'
+          + (quota ? ' · ขอผู้ดูแลบริษัทเพิ่มโควตา หรือบันทึกเบิกด้วยมือที่ระบบหลัก (เมนู เอกสาร › ใบบันทึกค่าใช้จ่าย) แล้วแนบรูป' : ' · ถ่ายใหม่ให้เห็นทั้งใบ คมชัด ไม่เอียง')
+          + '</div><div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">'
+          + '<button type="button" class="btn-retake" onclick="App.retake()" style="padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-size:13px">📷 ถ่ายใหม่</button>'
+          + (quota ? '<a href="/pages/documents.html" style="padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;font-size:13px;text-decoration:none;color:#334155">เปิดระบบหลัก</a>' : '')
+          + '</div>';
+      },
+
+      retake() {
+        this.photo = null; this.photoFile = null; this.scanId = null;
+        document.getElementById('photoPreview').classList.remove('show');
+        document.getElementById('photoArea').style.display = 'block';
+        document.getElementById('result').innerHTML = '';
+        const inp = document.getElementById('photoInput');
+        if (inp) { inp.value = ''; inp.click(); }
       },
 
       async submit() {
@@ -187,7 +215,13 @@
           }
           const H = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
           // ส่งค่าที่ผู้ใช้ยืนยัน/แก้ กลับไปให้ระบบเรียนรู้ด้วย (กฎเหล็ก #1)
-          await fetch(`/api/companies/${companyId}/ocr/${this.scanId}/correct`, {
+          // รอบ 259 (C-M2 · กฎ #4 E): คำแก้ของผู้เบิก (ยอด/ร้าน/วันที่/เหตุผล) ต้องถึงเซิร์ฟเวอร์ก่อนสร้างใบ — เดิม best-effort `.catch(() => {})`
+          // ไม่ดู r.ok ⇒ 403/409 แล้วยังสร้างเอกสารด้วยค่าที่ OCR อ่าน = ยอดที่ผู้เบิกพิมพ์หายเงียบ · ตอนนี้ล้ม = หยุด + บอกเหตุ
+          const fail = (msg) => {
+            res.innerHTML = '<div class="err">' + String(msg || 'ส่งไม่สำเร็จ').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) + '</div>';
+            btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย';
+          };
+          const cr = await fetch(`/api/companies/${companyId}/ocr/${this.scanId}/correct`, {
             method: 'POST', headers: H,
             body: JSON.stringify({
               vendorName: vendor, totalAmount: amount,
@@ -197,15 +231,31 @@
               // เกี่ยวกับกิจการ = รายจ่ายต้องห้าม — ข้อความนี้คือหลักฐานชิ้นแรก
               notes: notes || null,
             }),
-          }).catch(() => { /* best-effort — ไม่ให้ขวางการส่งเบิก */ });
+          }).catch(() => null);
+          if (!cr || !cr.ok) {
+            const cj = cr ? await cr.json().catch(() => null) : null;
+            fail('บันทึกยอด/ร้านค้าที่แก้ไม่สำเร็จ — ยังไม่ได้ส่งเบิก (กันยอดที่พิมพ์หาย) · ' + ((cj && cj.message) || 'ลองกดส่งอีกครั้ง'));
+            return;
+          }
 
-          const r = await fetch(
-            `/api/companies/${companyId}/ocr/${this.scanId}/create-document?targetType=Expense`,
-            { method: 'POST', headers: H });
-          const j = await r.json();
-          if (!r.ok || !j.success) {
-            res.innerHTML = `<div class="err">${j.message || 'ส่งไม่สำเร็จ'}</div>`;
-            btn.disabled = false; btn.textContent = '✅ ส่งเบิกค่าใช้จ่าย'; return;
+          // ใบซ้ำ: เซิร์ฟเวอร์ตอบรหัส OCR-DUPLICATE ⇒ ถามยืนยัน แล้วส่ง allowDuplicate (เดิมมือถือไม่มีทางไปต่อ)
+          const create = async (allowDup) => {
+            const rr = await fetch(
+              `/api/companies/${companyId}/ocr/${this.scanId}/create-document?targetType=Expense${allowDup ? '&allowDuplicate=true' : ''}`,
+              { method: 'POST', headers: H });
+            return { rr, jj: await rr.json().catch(() => null) };
+          };
+          let { rr: r, jj: j } = await create(false);
+          if (!r.ok && j && j.data && j.data.ruleCode === 'OCR-DUPLICATE') {
+            if (!window.confirm((j.message || 'ใบนี้อาจซ้ำกับเอกสารที่มีอยู่แล้ว') + '\n\nกด OK เพื่อยืนยันว่าเป็นคนละใบและส่งเบิกต่อ')) {
+              fail('ยังไม่ได้ส่งเบิก — ใบนี้อาจซ้ำกับเอกสารเดิม (เปิดดูใบเดิมในระบบหลัก)');
+              return;
+            }
+            ({ rr: r, jj: j } = await create(true));
+          }
+          if (!r.ok || !j || !j.success) {
+            fail((j && j.message) || 'ส่งไม่สำเร็จ');
+            return;
           }
           res.innerHTML = '<div class="ok">✅ ส่งเบิกแล้ว — เปิดดูใบได้ในระบบหลัก (เมนู เอกสาร)</div>';
           setTimeout(() => {

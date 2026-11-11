@@ -2212,6 +2212,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ### 2.7 Recurring
 
+> รอบ 259 ชุด D: แก้รายการแล้วประทับนโยบายใหม่/หยุดมีผล · สมุดรายวันลงวันที่ของงวด + งวดปิดข้าม · กุญแจกันใบงวดซ้ำ — ดู §2.12g-259
+
 - **รอบ 258-3 (F-H1 · DECISIONS 258-3-1)**: ธง "📧 ส่งเอกสาร" ของรายการประจำ (กฎเสมือน · ไม่มีกฎ "เมื่อรายการประจำสร้างเอกสาร") ⇒ ติ๊ก LINE ผู้ใช้/กลุ่ม
   ตามปลายทางของผู้ติดต่อที่รับเรื่อง "เอกสาร" และใช้ได้จริง (`ContactLineChannel.InlineChannels` ← ตัวหาผู้รับเดียว) แล้วเข้าคิวเส้นเดียวกับกฎ
   (`EnqueueDocumentAsync → EnqueueLineAsync`) · ผู้ติดต่อที่มีแต่ LINE ไม่หยุดที่ "ไม่มีอีเมล" · ไม่มีปลายทาง LINE ⇒ ไม่ติ๊ก (ไม่มีแถว "ข้าม" ทุกใบ) ·
@@ -3088,6 +3090,25 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (L6) `PartnerExchangeRules.IsTaxInvoiceCarrier` ใบเสร็จรับเงิน/ใบกำกับอย่างย่อ ⇒ ไม่ใช่หลักฐานภาษีซื้อ (§82/5(2) · ผู้เรียกเส้นคู่ค้า 3 จุดส่งรูปแบบ — `PortalAccountantExport`/`PartnerEvidenceRepair` ยังไม่ส่ง) ·
   Db test `BillingChainRound258DbTests` · Last verified `commit 1139bb5f`
 - ยังไม่ทำในแพ็กนี้: ค่าตั้ง `WorkflowAutomationConfig.AutoCreateReceiptFromIncomingPayment` ยังไม่มีผู้อ่าน (คงใน baseline settings_reader — 258-3-8) · การ์ดความพร้อมบนหน้า payment-settings (F-M1 ส่วนบริษัท) · ทวง 50 ทวิ ทาง LINE (การ์ดของผู้ติดต่อ + ลิงก์อัปโหลดต่อแถวคิว — ผู้ส่งคิว LINE ยังรองรับเฉพาะการ์ดเอกสาร) · Last verified `commit 4e9efbc4`
+
+### 2.12g-259 รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
+
+- **แก้รายการประจำแล้วนโยบายอนุมัติไม่ดับเงียบ (B-M3 · 259-4-1 ทับ 257-4-7)**: `PUT recurring/{id}` ส่งผู้แก้ + "มีสิทธิ์อนุมัติชนิดหลังแก้ และไม่ใช่คีย์ API" (`RecurringEditor`) ⇒
+  `UpdateAsync` ถ่ายภาพ "ค่าที่ประทับยังตรง" ก่อนแก้ → หลังแก้ตัวตัดสิน `Helpers/RecurringPolicyRestamp.Decide`: ประทับใหม่ (ค่าเริ่มต้น `DefaultPolicyBindingHash/StampedBy` · ใบรับรอง `bindingHash/setBy`) + audit
+  หรือหยุดมีผล + `saveWarnings` บอกชื่อผู้เปิดคืนได้ (`RecurringApprovePolicyLoader.ApproverNamesAsync`) · ไม่ชุบชีวิตค่าที่ไม่ตรงอยู่ก่อน
+- **สมุดรายวันค้างหลายงวด (B-M4 · 259-4-2)**: ใบสำคัญลงวันที่ของงวด (`RecurringSchedule.JournalEntryDateUtc`) · รอบอัตโนมัติไล่ทุกงวดในรอบเดียว (`CatchUpJournalPeriodsAsync` ≤ 24) ·
+  งวดบัญชีปิด (`JournalEntryBuilder.ClosedPeriodReasonAsync`) ⇒ ข้ามงวด + เหตุบนแถว (`LockedPeriodSkipNote`) + แจ้ง `recurring.run_failed`
+- **กันใบงวดซ้ำ (B-L2/L3 · 259-4-3)**: `Documents.RecurringRunKey` (unique ต่อบริษัท) ประทับใน INSERT ผ่านพารามิเตอร์ `recurringRun` ของ `CreateDocumentAsync` (พร้อม `RecurringTransactionId`) ·
+  พบกุญแจงวด ⇒ ประทับรอบด้วยใบเดิม (`RecoveredNote`) · ใบล่วงหน้ากดซ้ำ ⇒ 409 `RECURRING-RUN-DUP` → `recurring.html` ถามยืนยัน → `run-now?confirmExtra=true`
+- **ข้อความแพ็กเกจหมดอายุ (B-L1 · 259-4-7)**: `DocumentService.CreateDocumentAsync` ด่าน `DocumentEngine` ⇒ `Helpers/DocumentFeatureDenial` (สถานะจาก `GetGateStateAsync`) — รายการประจำเห็นเหตุจริงบนแถว
+- **ผู้กระทำของงานอัตโนมัติ (B-L4 · 259-4-4)**: `Helpers/SystemActor` (`system:recurring` · `system:quotation-autopilot` · `system:bank-auto-settle` · `system:post-payment` · `system:email-schedule`)
+- **ค่าตั้งปิดงวดอัตโนมัติถูกลบ (B-L11 · 259-4-5)** — ไม่มีผู้อ่านตั้งแต่สร้าง · คอลัมน์เดิมคงไว้พร้อม DEFAULT
+- **e-Tax ส่งตรง (B-M6 · 259-4-6)**: `SubmitToRevenueAsync` จัดผลด้วย `Helpers/EtaxRdSubmission.Classify/StatusFor` (SubmittedAt เฉพาะกรมตอบรับ · Rejected · Error + `RdNextAttemptAt`) ·
+  ลองซ้ำได้กับแถวส่งล้มทางเทคนิค (`CanSubmit`) · ล้ม ⇒ แถว e-Tax + Autopilot `EtaxRdFailed` + `etax.rd_submit_failed` · ลงนามสำเร็จแล้วส่งล้มไม่ใช่ "ลงนามล้มเหลว" ·
+  `EtaxRdSubmissionJob` (JobLock) วันที่ 1–15 → `SubmitPendingPreviousMonthsAsync` ต่อบริษัทโหมด Direct
+- **OCR (C-M2/C-M5/C-L1/L3/L4 · 259-4-8/9)** — รายละเอียดอยู่ `docs/lessons/ocr-pipeline.md` §"รอบ 259": ตารางไม่ครบ ⇒ `OcrTextTableFallback` ใน `TrySplitLineItemsAsync` ·
+  แถวที่เพิ่มเป็นแถวว่าง + `OCR-BLANK-LINE` ตอนสร้าง · แก้ยอดรวมอย่างเดียว ⇒ `OcrHeaderAmounts.RederiveAfterTotalEdit` ใน `SubmitCorrectionAsync` · ใบซ้ำรหัส `OCR-DUPLICATE` +
+  ซ้ำด้วยเนื้อหา (`FindContentDuplicateWarningAsync`) · DTO `vendorMatchUsedAi` · `counterpartyMissingNote` · มือถือ `mobile-expense.html` ไม่กลืน error
 
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 
@@ -8693,3 +8714,5 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิ�
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 9: แก้ผลฝ่ายค้าน R-H1 · R-M1…3 · R-L2…L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2be3e30c)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส้นบิลอัตโนมัติจนจบ — §2.12g-258c ชุด 1: ใบเสร็จทาง LINE · ลิงก์ดู PDF · ใบกำกับ ณ วันรับเงินถึงคู่ค้า · ล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4e9efbc4)_
+
+_Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D — §2.12g-259: Autopilot ส่วนที่เหลือ (B-M3/M4/M6 · L1–L4 · L11) + OCR (C-M2/M5 · C-L1/L3/L4) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

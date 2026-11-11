@@ -58,4 +58,12 @@ public class EtaxInvoice : TenantEntity
     /// <summary>ผู้บันทึกการประทับเวลา + เวลาบันทึก (ผู้ใช้ยืนยัน — ระบบไม่ได้ตรวจกับ ETDA เอง)</summary>
     public string? EtdaStampRecordedBy { get; set; }
     public DateTime? EtdaStampRecordedAt { get; set; }
+
+    // ═══ รอบ 259 (B-M6): คิวนำส่งต่อกรมสรรพากร (โหมดส่งตรง) — ตัวตัดสิน Helpers/EtaxRdSubmission ═══
+    /// <summary>จำนวนครั้งที่ระบบลองนำส่ง (ปุ่ม/อัตโนมัติ/งานประจำเดือน) — ใช้คำนวณเวลาลองครั้งถัดไป</summary>
+    public int RdSubmitAttempts { get; set; }
+    /// <summary>ครั้งล่าสุดที่ลองนำส่ง (ไม่ใช่เวลาที่กรมรับ — ตัวนั้นคือ <see cref="SubmittedAt"/> ซึ่งประทับเฉพาะเมื่อกรมตอบกลับจริง)</summary>
+    public DateTime? RdLastAttemptAt { get; set; }
+    /// <summary>งานประจำเดือนลองใหม่ได้ตั้งแต่เวลานี้ (null = ลองได้ทันที)</summary>
+    public DateTime? RdNextAttemptAt { get; set; }
 }

@@ -1688,6 +1688,7 @@
               <span class="icon">&#x1F464;</span>
               <span class="contact-match-name">${Layout.esc(scan.extractedVendorName || 'ผู้ติดต่อที่จับคู่แล้ว')}</span>
               <span class="badge badge-success" style="font-size:10px">จับคู่แล้ว</span>
+              <span style="font-size:10px;color:var(--gray-500)" title="${scan.vendorMatchUsedAi ? 'ผู้ติดต่อนี้ AI จับคู่ให้ (เรียก AI จริง)' : 'ระบบจับคู่เอง (เลขผู้เสียภาษี/ชื่อ/ค่าที่เรียนไว้) — ไม่ได้เรียก AI'}">${Layout.esc(Layout.suggestLabel({ usedAi: scan.vendorMatchUsedAi === true }))}</span>
             </div>`;
         } else if (scan.extractedVendorName) {
           contactHtml = `
@@ -1703,6 +1704,11 @@
               <span class="contact-match-name" style="color:var(--gray-400)">ไม่พบผู้ติดต่อ</span>
               <button class="btn btn-sm btn-outline" onclick="Page.openReview('${Layout.jsArg(scan.id)}')">ค้นหา</button>
             </div>`;
+        }
+
+        // รอบ 259 (C-L3): ยังไม่รู้คู่ค้า ⇒ บอกบนการ์ด<b>ก่อน</b>กดสร้าง (เซิร์ฟเวอร์ตัดสิน counterpartyMissingNote — เดิมรู้ตอนกดสร้างแล้วล้ม OCR-NO-COUNTERPARTY)
+        if (scan.counterpartyMissingNote) {
+          contactHtml += `<div style="margin-top:6px;padding:6px 8px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;font-size:11.5px;color:#92400e">⚠️ ${Layout.esc(scan.counterpartyMissingNote)}</div>`;
         }
 
         // Actions

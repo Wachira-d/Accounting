@@ -160,6 +160,18 @@ public static class OcrCounterpartyMatch
     /// <summary>รหัสกฎของ <see cref="NoCounterpartyMessage"/></summary>
     public const string NoCounterpartyRuleCode = "OCR-NO-COUNTERPARTY";
 
+    /// <summary>รอบ 259 (C-L3 · คำตัดสิน 259-4-9): ป้าย "ต้องเลือกผู้ขาย/ผู้ซื้อ" บนการ์ด<b>ก่อน</b>กดสร้าง — เดิมรู้ตอนกดสร้างแล้วล้มด้วย
+    /// <see cref="NoCounterpartyRuleCode"/> · ประเมินแบบระวัง (เงื่อนไขที่ตัวสร้างหาคู่ค้าไม่ได้แน่นอน): ยังไม่ได้จับคู่ผู้ติดต่อ และ
+    /// ฝั่งซื้อ = ไม่มีชื่อผู้ขาย (สร้างผู้ติดต่อใหม่ต้องมีชื่อ) · ฝั่งขาย = ไม่มีทั้งชื่อและเลขผู้เสียภาษีผู้ซื้อ · null = ไม่ต้องเตือน (ไม่แต่งชื่อ — F2 ข้อ 3)</summary>
+    public static string? MissingBeforeCreateNote(bool salesSide, Guid? matchedContactId, string? vendorName, string? buyerName, string? buyerTaxId)
+    {
+        if (matchedContactId is Guid g && g != Guid.Empty) return null;
+        var missing = salesSide
+            ? string.IsNullOrWhiteSpace(buyerName) && string.IsNullOrWhiteSpace(buyerTaxId)
+            : string.IsNullOrWhiteSpace(vendorName);
+        return missing ? NoCounterpartyMessage(salesSide) : null;
+    }
+
     private static string AmbiguousNote(string? name, int count)
         => $"[BUYER] ชื่อผู้ซื้อ '{name?.Trim()}' ตรงกับลูกค้า {count} ราย — ไม่เดาว่าเป็นรายไหน จึงสร้างลูกค้าใหม่ตามชื่อบนกระดาษ "
            + "(ถ้าเป็นรายเดิม เลือกลูกค้าในเอกสาร แล้วรวมผู้ติดต่อซ้ำที่หน้าผู้ติดต่อ)";

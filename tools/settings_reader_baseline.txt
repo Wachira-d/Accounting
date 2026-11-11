@@ -3,7 +3,6 @@
 # รอบ 250 WP-04 ข้อ 10 + ต่อยอด: EmailScheduleRule.AudienceFilter = deprecated (ไม่มีหน้า/API/ผู้อ่าน · คอลัมน์คงไว้เพราะ schema · ห้ามต่อสายโดยไม่มีคำตัดสิน)
 #   RepeatEveryDays · NotifyBeforeRun · NotifyDaysBefore ต่อสายแล้ว (ตัดออกจาก baseline)
 Company.SocialSecurityAccountNo
-CompanySettings.AutoCloseMonthEnd
 CompanySettings.EmailGmailServiceAccountJson
 CompanySettings.EtaxByEmailRegistrationDate
 CompanySettings.EtaxByEmailRegistrationNumber
@@ -15,7 +14,6 @@ CompanySettings.InvoiceNotes
 CompanySettings.LandingContactEmail
 CompanySettings.LandingContactLine
 CompanySettings.LandingContactPhone
-CompanySettings.MonthEndClosingDay
 CompanySettings.PreventPostToClosedPeriod
 CompanySettings.QuotationNotes
 CompanySettings.ReceiptFooter

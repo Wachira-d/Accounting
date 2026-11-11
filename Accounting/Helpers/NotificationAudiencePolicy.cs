@@ -171,6 +171,8 @@ public static class NotificationAudiencePolicy
         // ผู้สร้างออกจากบริษัทแล้ว + บริษัทยังไม่ตั้งแถวของคีย์ ⇒ เดิมไม่ถึงใครเลย (DefaultMatrix ว่าง) — ต้องถึงเจ้าของ
         Accounting.Models.Constants.NotificationEvents.RecurringRunFailed,
         Accounting.Models.Constants.NotificationEvents.RecurringApprovedWithNotes,
+        // รอบ 259 (B-M6): นำส่ง e-Tax ต่อกรมล้ม — หน้าที่ตามกฎหมาย (กำหนดวันที่ 15) ต้องถึงเจ้าของแม้บริษัทยังไม่ตั้งตาราง
+        Accounting.Models.Constants.NotificationEvents.EtaxRdSubmitFailed,
     };
 
     /// <summary>เส้นผู้รับที่ระบุ (บริษัทยังไม่ตั้งคีย์) ส่งอีเมลด้วยไหม — คีย์กระดิ่งเท่านั้น = ไม่ส่ง · อื่น ๆ = กระดิ่ง + อีเมลเหมือนเดิม</summary>

@@ -365,13 +365,8 @@
         <div class="form-group"><label for="sPaymentTerms" class="form-label">เงื่อนไขชำระเงินเริ่มต้น</label><input type="text" class="form-input" id="sPaymentTerms" placeholder="30 วัน"></div>
         <div class="form-group"><label for="sPaymentDueDays" class="form-label">จำนวนวันครบกำหนด</label><input type="number" class="form-input" id="sPaymentDueDays" value="30"></div>
       </div>
-      <div class="form-row">
-        <!-- S-06 (รอบ 193): ไม่มี job ปิดงวดอัตโนมัติ และไม่มีผู้อ่านค่าสองช่องนี้ ⇒ ล็อกช่อง + บอกเหตุผล (กฎ #4 A ห้าม silent no-op)
-             ไม่ส่งสองค่านี้ตอนบันทึก (ค่าเดิมคงอยู่ · ห้ามลบฟิลด์ — รอเจ้าของตัดสิน Q3 "ต่อสาย หรือ ลบ") -->
-        <div class="form-group form-checkbox"><input type="checkbox" id="sAutoClose" disabled><label for="sAutoClose" style="color:#94a3b8">ปิดงวดอัตโนมัติ</label><span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></div>
-        <div class="form-group"><label for="sCloseDay" class="form-label" style="color:#94a3b8">วันปิดงวด<span class="unsupported-badge" style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span></label><input type="number" class="form-input" id="sCloseDay" value="5" min="1" max="28" disabled></div>
-      </div>
-      <div class="text-xs text-gray-500" style="margin:-6px 0 12px">ปิดงวดบัญชีทำได้ที่หน้าผังบัญชี/งวดบัญชี (ปิดงวด · ปิดปี) — ระบบยังไม่มีการปิดงวดอัตโนมัติตามวันที่</div>
+      <!-- รอบ 259 (B-L11 · คำตัดสิน 259-4-5): ช่อง "ปิดงวดอัตโนมัติ/วันปิดงวด" ถูกลบ (ไม่ต่อสาย — ปิดงวดต้องมีคนตรวจ) -->
+      <div class="text-xs text-gray-500" style="margin:-6px 0 12px">ปิดงวดบัญชีทำได้ที่หน้าผังบัญชี/งวดบัญชี (ปิดงวด · ปิดปี) — ระบบไม่ปิดงวดอัตโนมัติตามวันที่ (ปิดงวดต้องให้ผู้มีสิทธิ์ตรวจก่อน)</div>
 
       <h4 style="margin:20px 0 12px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:15px;font-weight:600;color:#334155">ปรับเมนูที่แสดง</h4>
       <p style="color:#64748b;margin-bottom:12px;font-size:13px">ติ๊กเมนูที่ไม่ได้ใช้งานเพื่อซ่อนจาก sidebar (เก็บเป็นการตั้งค่าส่วนตัวของบริษัทนี้บนเครื่องนี้)</p>
@@ -2951,8 +2946,6 @@
           if (s.secondaryColor) document.getElementById('sSecondaryColor').value = s.secondaryColor;
           document.getElementById('sPaymentTerms').value = s.defaultPaymentTerms || '';
           document.getElementById('sPaymentDueDays').value = s.defaultPaymentDueDays || 30;
-          document.getElementById('sAutoClose').checked = s.autoCloseMonthEnd || false;
-          document.getElementById('sCloseDay').value = s.monthEndClosingDay || 5;
           // Document notes
           document.getElementById('sInvoiceNotes').value = s.invoiceNotes || '';
           document.getElementById('sReceiptNotes').value = s.receiptNotes || '';
@@ -3324,7 +3317,7 @@
             // ทำให้ลบแล้วกดบันทึก ค่าเดิมยังอยู่เงียบ ๆ (กฎ #4 A)
             defaultPaymentTerms: document.getElementById('sPaymentTerms').value,
             defaultPaymentDueDays: parseInt(document.getElementById('sPaymentDueDays').value),
-            // S-06: autoCloseMonthEnd/monthEndClosingDay · หมายเหตุ/ข้อความท้าย 5 ช่อง · หัว/เนื้ออีเมลใบแจ้งหนี้ ไม่ส่ง —
+            // S-06: หมายเหตุ/ข้อความท้าย 5 ช่อง · หัว/เนื้ออีเมลใบแจ้งหนี้ ไม่ส่ง —
             // ช่องถูกล็อกเพราะค่ายังไม่มีผลกับระบบ (ค่าเดิมในฐานคงอยู่ ไม่ถูกล้าง)
             showGlEntryOnDocument: document.getElementById('sShowGlEntryOnDocument').checked,
             documentLanguage: document.getElementById('sDocumentLanguage').value,

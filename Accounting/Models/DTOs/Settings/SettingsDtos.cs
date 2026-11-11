@@ -36,9 +36,7 @@ public record UpdateCompanySettingsRequest(
     bool? EnableApiAccess,
     int? MaxApiKeys,
 
-    // Closing
-    bool? AutoCloseMonthEnd,
-    int? MonthEndClosingDay,
+    // Closing (รอบ 259 B-L11: AutoCloseMonthEnd/MonthEndClosingDay ถูกลบ — ไม่มีผู้อ่าน · ผู้เรียกเก่าที่ส่งมา = ถูกเพิกเฉยโดย JSON binder)
     bool? PreventPostToClosedPeriod,
 
     // e-Tax Invoice
@@ -181,8 +179,6 @@ public record CompanySettingsResponse(
     bool EnableApiAccess,
     int MaxApiKeys,
     // Closing
-    bool AutoCloseMonthEnd,
-    int MonthEndClosingDay,
     bool PreventPostToClosedPeriod,
     // e-Tax
     bool EtaxEnabled,

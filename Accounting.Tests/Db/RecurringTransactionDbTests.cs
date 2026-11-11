@@ -475,4 +475,155 @@ public class RecurringTransactionDbTests
         Assert.Null(old.IntervalMonths);
         Assert.Equal(0, old.LeadDays);
     }
+
+    // ═══════════ รอบ 259 ชุด D — B-M4 (สมุดรายวันค้างหลายงวด) · B-L2/L3 (กุญแจกันซ้ำรายการ + งวด) ═══════════
+
+    private static string JournalTemplate(Seed s) => JsonSerializer.Serialize(new
+    {
+        description = "ค่าทำบัญชีค้างจ่าย <<month>>",
+        lines = new object[]
+        {
+            new { accountId = s.ExpenseGlId, debitAmount = 1000m, creditAmount = 0m, description = "ค่าทำบัญชี" },
+            new { accountId = s.CashGlId, debitAmount = 0m, creditAmount = 1000m, description = "จ่ายค่าทำบัญชี" },
+        },
+    });
+
+    private static async Task<(Guid Id, List<DateTime> Periods)> StuckJournalAsync(Seed s, int monthsBack)
+    {
+        Guid id;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            id = (await Svc(req).CreateAsync(s.CompanyId, new CreateRecurringTransactionRequest("ตั้งค้างจ่ายรายเดือน", null, RecurringFrequency.Monthly,
+                Today, null, null, "Journal", null, null, JournalTemplate(s), AutoApprove: false), "tester")).Id;
+        var stuck = Today.AddMonths(-monthsBack);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await req.RecurringTransactions.Where(r => r.Id == id && r.CompanyId == s.CompanyId)
+                .ExecuteUpdateAsync(u => u.SetProperty(r => r.NextRunDate, stuck).SetProperty(r => r.StartDate, stuck)
+                    .SetProperty(r => r.PreferredDay, (int?)stuck.Day));
+        var periods = new List<DateTime>();
+        for (var d = stuck; RecurringSchedule.IsDue(d, DateTime.UtcNow); d = RecurringSchedule.Next(RecurringFrequency.Monthly, d, stuck.Day, stuck, null))
+            periods.Add(ThaiDate.CalendarDateUtc(d).Date);
+        return (id, periods);
+    }
+
+    [Fact]
+    public async Task R259_BM4_สมุดรายวันค้าง3งวด_รอบเดียวลงครบ_แต่ละใบลงวันที่ของงวดตัวเอง_ไม่ใช่วันนี้ทุกใบ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var (id, periods) = await StuckJournalAsync(s, 3);
+        Assert.True(periods.Count >= 4);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).ProcessDueRecurringTransactionsAsync();
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var dates = await check.JournalEntries.AsNoTracking().Where(j => j.CompanyId == s.CompanyId)
+            .Select(j => j.EntryDate).ToListAsync();
+        Assert.Equal(periods, dates.Select(d => d.Date).OrderBy(d => d).ToList());
+        Assert.Equal(periods.Count, dates.Select(d => (d.Year, d.Month)).Distinct().Count());   // ไม่กองเดือนเดียว
+        var row = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == id && r.CompanyId == s.CompanyId);
+        Assert.Equal(periods.Count, row.TotalRuns);
+        Assert.False(RecurringSchedule.IsDue(row.NextRunDate, DateTime.UtcNow));
+        // รอบซ้ำ (15 นาทีถัดไป) ไม่ลงเพิ่ม
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).ProcessDueRecurringTransactionsAsync();
+        using var check2 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(periods.Count, await check2.JournalEntries.CountAsync(j => j.CompanyId == s.CompanyId));
+    }
+
+    [Fact]
+    public async Task R259_BM4_ทิศตรงข้าม_งวดบัญชีปิด_ข้ามงวดนั้นพร้อมเหตุบนแถว_ไม่ลงงวดอื่นแทน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var (id, periods) = await StuckJournalAsync(s, 3);
+        var locked = periods[1];
+        db.FiscalPeriods.Add(new FiscalPeriod
+        {
+            CompanyId = s.CompanyId, Name = $"{locked.Year + 543}/{locked.Month:00}", Year = locked.Year, Month = locked.Month,
+            StartDate = new DateTime(locked.Year, locked.Month, 1), EndDate = new DateTime(locked.Year, locked.Month, 1).AddMonths(1).AddDays(-1),
+            Status = FiscalPeriodStatus.Closed,
+        });
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).ProcessDueRecurringTransactionsAsync();
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var dates = (await check.JournalEntries.AsNoTracking().Where(j => j.CompanyId == s.CompanyId).Select(j => j.EntryDate).ToListAsync())
+            .Select(d => d.Date).OrderBy(d => d).ToList();
+        Assert.Equal(periods.Where(p => p != locked).ToList(), dates);
+        Assert.DoesNotContain(dates, d => d.Year == locked.Year && d.Month == locked.Month);
+        var row = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == id && r.CompanyId == s.CompanyId);
+        Assert.Contains("ข้ามงวด", row.LastRunNotice ?? "");
+        Assert.Contains("งวดบัญชีปิด", row.LastRunNotice ?? "");
+        Assert.Equal(periods.Count - 1, row.TotalRuns);   // งวดที่ข้ามไม่นับครั้ง
+        Assert.Null(row.LastRunError);
+    }
+
+    [Fact]
+    public async Task R259_BL2_ระบบล้มหลังสร้างใบก่อนประทับรอบ_รอบถัดไปไม่ออกซ้ำ_ประทับด้วยใบเดิม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Guid id;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            id = (await Svc(req).CreateAsync(s.CompanyId, Req(s, DocumentType.Invoice, Template(bankAccountId: s.BankId)), "tester")).Id;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).ProcessDueRecurringTransactionsAsync();
+        Guid docId;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var doc = await c.Documents.AsNoTracking().SingleAsync(d => d.CompanyId == s.CompanyId);
+            docId = doc.Id;
+            Assert.Equal(RecurringRunKey.ForPeriod(id, Today), doc.RecurringRunKey);
+            Assert.Equal(id, doc.RecurringTransactionId);
+        }
+        // จำลอง "ล่มระหว่างสร้างใบกับประทับรอบ": แถวกลับเป็นสภาพก่อนประทับ (ใบอยู่แล้ว)
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await c.RecurringTransactions.Where(r => r.Id == id && r.CompanyId == s.CompanyId)
+                .ExecuteUpdateAsync(u => u.SetProperty(r => r.NextRunDate, Today).SetProperty(r => r.TotalRuns, 0)
+                    .SetProperty(r => r.LastDocumentId, (Guid?)null).SetProperty(r => r.LastRunDate, (DateTime?)null));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).ProcessDueRecurringTransactionsAsync();
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(1, await check.Documents.CountAsync(d => d.CompanyId == s.CompanyId));
+        var row = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == id && r.CompanyId == s.CompanyId);
+        Assert.Equal(1, row.TotalRuns);
+        Assert.Equal(docId, row.LastDocumentId);
+        Assert.True(row.NextRunDate > Today);
+        Assert.Contains("ไม่ออกซ้ำ", row.LastRunNotice ?? "");
+        Assert.Null(row.LastRunError);
+    }
+
+    [Fact]
+    public async Task R259_BL3_สร้างทันทีก่อนกำหนดกดซ้ำ_409ถามยืนยัน_ไม่ลงเหตุล้ม_ยืนยันแล้วออกได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Guid id;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            id = (await Svc(req).CreateAsync(s.CompanyId, Req(s, DocumentType.Invoice, Template(bankAccountId: s.BankId), Today.AddDays(10)), "tester")).Id;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).RunNowAsync(s.CompanyId, id, "tester");   // ใบล่วงหน้าใบแรก — ได้
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).RunNowAsync(s.CompanyId, id, "tester"));
+            Assert.Equal(RecurringRunKey.RuleCode, ex.RuleCode);
+            Assert.Equal(409, ex.StatusCode);
+        }
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(1, await c.Documents.CountAsync(d => d.CompanyId == s.CompanyId));
+            Assert.Null((await c.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == id && r.CompanyId == s.CompanyId)).LastRunError);
+        }
+        // ทางไปต่อ: ยืนยันออกเพิ่ม (เช่น งวดที่ระบบข้าม) ⇒ ได้อีกใบ
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).RunNowAsync(s.CompanyId, id, "tester", confirmExtra: true);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(2, await check.Documents.CountAsync(d => d.CompanyId == s.CompanyId));
+        // ใบล่วงหน้าเป็นรอบพิเศษ ไม่กินงวด (คงคำตัดสินข้อ 150) — กำหนดงวดยังเป็นวันเริ่ม
+        var row = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == id && r.CompanyId == s.CompanyId);
+        Assert.Equal(Today.AddDays(10), row.NextRunDate);
+    }
 }

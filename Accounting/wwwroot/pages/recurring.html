@@ -1596,7 +1596,14 @@ const Page = {
     if (!(await Layout.confirm({ title: 'สร้างเอกสารทันที', message: 'สร้างเอกสารจากรายการนี้ทันที (นอกรอบปกติ)?', okText: 'สร้างเอกสาร' }))) return;
     const api = Layout.api(); if (!api) return;
     try {
-      await api.runRecurringNow(id); Layout.toast('สร้างเอกสารสำเร็จ'); this.load();
+      try { await api.runRecurringNow(id); }
+      catch (err) {
+        // รอบ 259 (B-L3): ใบล่วงหน้าของงวดนี้มีแล้ว — เซิร์ฟเวอร์ถาม (409 RECURRING-RUN-DUP) · ยืนยันแล้วค่อยออกอีกใบ (ไม่ใช่กดซ้ำได้เรื่อย ๆ โดยไม่รู้ตัว)
+        if (!(err && err.status === 409 && err.body && err.body.data && err.body.data.ruleCode === 'RECURRING-RUN-DUP')) throw err;
+        if (!(await Layout.confirm({ title: 'ออกใบเพิ่มอีกใบ?', message: err.message, okText: 'ยืนยันออกอีกใบ' }))) return;
+        await api.runRecurringNow(id, true);
+      }
+      Layout.toast('สร้างเอกสารสำเร็จ'); this.load();
       // กดจากกล่องผลรอบ (ปุ่ม "สร้างงวดที่ข้าม") ⇒ แสดงผลรอบใหม่ทันที
       if (document.getElementById('detailModal')?.classList.contains('active')) this.view(id);
     } catch (err) { Layout.toast(err.message, 'error'); }

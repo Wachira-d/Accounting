@@ -1563,7 +1563,7 @@ const API = {
       deleteRecurring: (id) => API.del(`${base}/recurring/${id}`),
       pauseRecurring: (id) => API.post(`${base}/recurring/${id}/pause`),
       resumeRecurring: (id) => API.post(`${base}/recurring/${id}/resume`),
-      runRecurringNow: (id) => API.post(`${base}/recurring/${id}/run-now`),
+      runRecurringNow: (id, confirmExtra) => API.post(`${base}/recurring/${id}/run-now${confirmExtra ? '?confirmExtra=true' : ''}`),
       // รอบ 252 WP-12A: หน้า Autopilot — ภาพรวม/เรื่องที่ติด/ค่าตั้ง/ใบเสนอราคาแปลงอัตโนมัติ/คิวเงินโอนเข้า (ทุกป้าย/ปุ่มจากเซิร์ฟเวอร์)
       getAutopilotOverview: (days = 30) => API.get(`${base}/autopilot/overview?days=${encodeURIComponent(days)}`),
       // รอบ 255 WP-12B ข้อ 6–8: หน้า "คู่ค้าที่ใช้ NextAcc" (ต่อยอด trading-partners/workflow-automation เดิม)

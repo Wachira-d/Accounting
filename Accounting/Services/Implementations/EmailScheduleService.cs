@@ -967,7 +967,7 @@ public class EmailScheduleService : IEmailScheduleService
         {
             var log = await _docEmail.SendDocumentRoutedAsync(item.CompanyId, item.EntityId,
                 new Models.DTOs.Email.SendDocumentEmailRequest(item.ToEmail, item.CcEmail, item.BccEmail, null, body, AttachPdf: item.AttachPdf),
-                "email-schedule");
+                Accounting.Helpers.SystemActor.EmailSchedule);   // รอบ 259 (B-L4)
             if (log.Status == EmailLogStatus.Sent)
             {
                 item.Status = "Sent";
@@ -1048,7 +1048,7 @@ public class EmailScheduleService : IEmailScheduleService
                 DocumentId = item.EntityType == "Document" ? item.EntityId : null,
                 ToEmail = item.ToEmail, CcEmail = item.CcEmail, BccEmail = item.BccEmail,
                 AttachedPdf = item.AttachPdf, Provider = sender.Provider, SenderMode = plan.Mode,
-                Purpose = "scheduled", CreatedBy = "email-schedule",
+                Purpose = "scheduled", CreatedBy = Accounting.Helpers.SystemActor.EmailSchedule,
             };
             if (refusal != null)
             {

@@ -158,4 +158,18 @@ public static class RecurringSchedule
     /// <summary>รอบ 255: สร้างล่วงหน้า ⇒ งวดที่ถึงเวลาสร้างแล้วใช้วันของงวด (ใบเดือน ธ.ค. ที่สร้าง 25 พ.ย. เขียน "ธันวาคม")</summary>
     public static DateTime PlaceholderBaseDate(DateTime nextRunDate, DateTime nowUtc, bool consumesPeriod, int leadDays)
         => ThaiDate.CalendarDateUtc(consumesPeriod && IsDue(nextRunDate, nowUtc, leadDays) ? nextRunDate : nowUtc);
+
+    /// <summary>รอบ 259 (B-M4 · TFRS for NPAEs เกณฑ์คงค้าง): วันที่ของใบสำคัญจากแม่แบบสมุดรายวัน — รอบที่ "ใช้งวด" (ตามกำหนด/สร้างทันทีเมื่อถึงกำหนด)
+    /// ลงวันที่ของงวดนั้นเอง (ค่าใช้จ่ายค้างจ่าย 3 งวดที่ตามหลัง = 3 เดือน ไม่ใช่เดือนนี้ 3 เท่า) · รอบพิเศษก่อนกำหนดใช้วันนี้ · คืนวันตามปฏิทินไทย
+    /// (ตัวเดียวกับวันฐานของตัวแปร <see cref="PlaceholderBaseDate(DateTime, DateTime, bool, int)"/> — สมุดรายวันไม่มีสร้างล่วงหน้า)</summary>
+    public static DateTime JournalEntryDateUtc(DateTime nextRunDate, DateTime nowUtc, bool consumesPeriod)
+        => PlaceholderBaseDate(nextRunDate, nowUtc, consumesPeriod, 0);
+
+    /// <summary>รอบ 259 (B-M4): จำนวนงวดสูงสุดที่รอบอัตโนมัติไล่ลงสมุดรายวันย้อนหลังในครั้งเดียว (ที่เหลือรอบถัดไป · กันรอบเดียวยาวผิดปกติ)</summary>
+    public const int MaxJournalCatchUpPerRun = 24;
+
+    /// <summary>รอบ 259 (B-M4): ข้อความบนแถวเมื่องวดของใบสำคัญอยู่ในงวดบัญชีที่ปิด — ข้ามงวดนั้น (ห้ามลงงวดอื่นแทน) + บอกทางไปต่อ</summary>
+    public static string LockedPeriodSkipNote(DateTime periodDate, string closedReason)
+        => $"ข้ามงวด {periodDate:dd/MM}/{periodDate.Year + 543} ไม่ลงสมุดรายวัน เพราะงวดบัญชีปิดแล้ว ({closedReason}) — "
+           + "ระบบไม่ลงรายการของงวดนี้ไปไว้งวดอื่น · ถ้ายังต้องบันทึก ให้ผู้มีสิทธิ์เปิดงวดแล้วบันทึกสมุดรายวันของงวดนั้นเอง";
 }

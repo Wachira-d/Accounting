@@ -863,7 +863,7 @@ public class OcrService : IOcrService
             // เส้นทาง Tesseract แบบฝังคืนแต่ข้อความล้วน ⇒ Items ว่างทุกใบ
             // ผลคือเอกสารได้บรรทัดสรุปใบเดียว แยกหมวดค่าใช้จ่ายไม่ได้
             // (ยังลงบัญชีได้ = local path ที่มีอยู่แล้ว ⇒ kill-switch ผ่าน)
-            await TrySplitLineItemsAsync(companyId, scanResult, extractedData, extractedText);
+            await TrySplitLineItemsAsync(companyId, scanResult, extractedData, extractedText, provenPaperTotal);
 
             // ── เชื่อค่าเงินจากระบบภายนอก (override OCR vision) ──
             // พาร์ทเนอร์ที่ยิง OCR ผ่าน API ส่งยอดที่กรอก/คำนวณเองมาใน metadata →
@@ -2937,7 +2937,10 @@ public class OcrService : IOcrService
                         if (verified)
                         {
                             scanResult.MatchedContactId = aiContactId;
-                            scanResult.AiSuggestedContactId = aiContactId;
+                            // รอบ 259 (C-L1): ป้ายซื่อสัตย์ — "AI แนะนำ" เฉพาะเมื่อ provider จริงตอบ (นักเรียนตอบ = ระบบแนะนำ) · acceptedAi ตอนปิดลูปนับเฉพาะคำตอบ AI
+                            // (แบบเดียวกับ GlAccountAiSuggestedCode) — เดิมคำตอบนักเรียนถูกนับเป็น "รับ AI" ⇒ ตัวชี้วัดกฎ #1 ข้อ 6 เพี้ยน
+                            scanResult.VendorMatchUsedAi = aiResult.UsedAi;
+                            scanResult.AiSuggestedContactId = aiResult.UsedAi ? aiContactId : null;
                             scanResult.AiSuggestionFeedbackId = aiResult.FeedbackId;
                             extractedData.ReasoningTrace.Add(
                                 $"[{aiResult.SourceLabel}] vendor canon → contact {aiContactId} ({aiResult.Confidence:P0})"
@@ -5196,7 +5199,21 @@ public class OcrService : IOcrService
         if (correction.DocumentDate.HasValue) result.ExtractedDate = correction.DocumentDate;
         if (correction.SubTotal.HasValue) result.ExtractedSubTotal = correction.SubTotal;
         if (correction.VatAmount.HasValue) result.ExtractedVatAmount = correction.VatAmount;
-        if (correction.TotalAmount.HasValue) result.ExtractedTotalAmount = correction.TotalAmount;
+        if (correction.TotalAmount.HasValue)
+        {
+            // รอบ 259 (C-M2 · คำตัดสิน 259-4-9): แก้เฉพาะยอดรวม (มือถือเบิกค่าใช้จ่าย) ⇒ ถอดฐาน/VAT ใหม่จากยอดที่ผู้ใช้พิมพ์ (ตัวตัดสินเดียว
+            // OcrHeaderAmounts.RederiveAfterTotalEdit → สูตร OcrVatBackCalc.SplitInclusive) · เดิมฐาน/VAT เก่าค้าง ⇒ VAT ไม่ใช่ 7% ของฐาน
+            if (!correction.SubTotal.HasValue && !correction.VatAmount.HasValue)
+            {
+                var (reSub, reVat, reNote) = Accounting.Helpers.OcrHeaderAmounts.RederiveAfterTotalEdit(
+                    result.ExtractedSubTotal, result.ExtractedVatAmount, result.ExtractedTotalAmount, correction.TotalAmount);
+                result.ExtractedSubTotal = reSub;
+                result.ExtractedVatAmount = reVat;
+                if (reNote != null)
+                    result.ProcessingNotes = string.IsNullOrEmpty(result.ProcessingNotes) ? reNote : result.ProcessingNotes + "\n" + reNote;
+            }
+            result.ExtractedTotalAmount = correction.TotalAmount;
+        }
         // Persist remaining user edits back to the scan row — without this
         // the user changes debit/credit account or WHT, clicks save, but
         // the scan-detail panel reopens showing the original suggestions.
@@ -6627,7 +6644,20 @@ public class OcrService : IOcrService
         if (!allowDuplicate)
         {
             var dupMsg = await FindDuplicateDocumentWarningAsync(companyId, result);
-            if (dupMsg != null) throw new Accounting.Helpers.BusinessRuleException(dupMsg);
+            // รอบ 259 (C-M2): รหัสกฎ ⇒ มือถือ/หน้าเว็บจับแล้วถามยืนยัน (ส่ง allowDuplicate) — ข้อความเดิม (หน้าสแกนจับจากข้อความ)
+            if (dupMsg != null) throw new Accounting.Helpers.BusinessRuleException(dupMsg, Accounting.Helpers.OcrDuplicateScanRule.RuleCode);
+        }
+
+        // รอบ 259 (C-M5 · คำตัดสิน 259-4-8): บรรทัดที่ผู้ใช้กด "เพิ่มบรรทัด" แล้วยังไม่ได้กรอก ⇒ หยุดพร้อมทางไปต่อ (เดิม 1 × 0.00 ไหลเข้าเอกสาร)
+        if (!string.IsNullOrWhiteSpace(result.ExtractedItemsJson))
+        {
+            List<OcrExtractedLineItem>? blankCheck = null;
+            try { blankCheck = System.Text.Json.JsonSerializer.Deserialize<List<OcrExtractedLineItem>>(result.ExtractedItemsJson); }
+            catch (System.Text.Json.JsonException) { /* ตัวอ่านข้างล่างรายงานเอง */ }
+            if (blankCheck != null
+                && Accounting.Helpers.OcrBlankLine.Count(blankCheck.Select(i => (i.Description, i.Amount))) is var blanks and > 0)
+                throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.OcrBlankLine.Message(blanks),
+                    Accounting.Helpers.OcrBlankLine.RuleCode);
         }
 
         // ป้ายยอดสลับ (SubTotal ↔ Total) ที่สแกนเก่า persist ไว้ก่อนมีตัวซ่อมในขั้นสกัด —
@@ -9152,7 +9182,7 @@ public class OcrService : IOcrService
         if (!request.AllowDuplicate)
         {
             var jeDupMsg = await FindDuplicateDocumentWarningAsync(companyId, result);
-            if (jeDupMsg != null) throw new Accounting.Helpers.BusinessRuleException(jeDupMsg);
+            if (jeDupMsg != null) throw new Accounting.Helpers.BusinessRuleException(jeDupMsg, Accounting.Helpers.OcrDuplicateScanRule.RuleCode);
         }
 
         // §82/5 — เส้น JE ตรงเดิมข้ามด่านภาษีซื้อทุกด่านที่เส้นเอกสารมี (ผลตรวจ 2026-09-05
@@ -9630,9 +9660,11 @@ public class OcrService : IOcrService
                 // ไม่มีธง ⇒ ทั้งใบหลุดจากราคารวม VAT แล้ว 9 บรรทัดรวม VAT ถูกตีเป็นยอดก่อน VAT (VAT 209.41 → 227.57)
                 var inherit = Accounting.Helpers.OcrEtaxLineNormalizer.InheritForNewLine(
                     items.Select(x => (x.Amount ?? 0m, x.PriceIncludesVat, x.VatRate)).ToList());
+                // รอบ 259 (C-M5): แถวว่างจริง (ไม่มีจำนวน/ราคา/ยอด) ให้ผู้ใช้กรอก — เดิม 1 × 0.00 ไหลเข้าเอกสารเมื่อลืมกรอก ·
+                // สร้างเอกสารตอนยังว่าง = หยุดพร้อมบอกให้กรอก/ลบ (Helpers/OcrBlankLine)
                 items.Add(new OcrExtractedLineItem
                 {
-                    Description = "", Quantity = 1m, UnitPrice = 0m, Amount = 0m,
+                    Description = "", Quantity = null, UnitPrice = null, Amount = null,
                     PriceIncludesVat = inherit.PriceIncludesVat, VatRate = inherit.VatRate,
                     UserEdited = true,   // บรรทัดที่ผู้ใช้เพิ่มเอง — ตัวกันจำนวนระเบิดไม่แก้ (ฝ่ายค้าน 658e3705 P2-6)
                 });
@@ -10519,6 +10551,30 @@ public class OcrService : IOcrService
     /// (ฝั่งซื้อ = เลขใบกำกับผู้ขายซ้ำ ⇒ เคลมภาษีซื้อซ้ำ · ฝั่งขาย = ออกเลข
     /// เอกสารใหม่ให้รายการเดิม ⇒ ยอดขายเกินจริงใน ภ.พ.30)</para>
     /// </summary>
+    /// <summary>รอบ 259 (C-L4): เอกสารเดิมของผู้ขายเดียวกัน วันที่เดียวกัน ยอดตรง — ใช้เมื่ออ่านเลขที่ไม่ได้ · กรองบริษัท · ไม่นับใบยกเลิก/ลบ</summary>
+    private async Task<string?> FindContentDuplicateWarningAsync(Guid companyId, OcrScanResult result, string? vendorDigits)
+    {
+        if (result.ExtractedTotalAmount is not decimal t || t <= 0m || result.ExtractedDate is not DateTime d) return null;
+        if (string.IsNullOrEmpty(vendorDigits) && result.MatchedContactId is null) return null;
+        var day = d.Date;
+        var next = day.AddDays(1);
+        var lo = t - Accounting.Helpers.OcrDuplicateScanRule.AmountTolerance;
+        var hi = t + Accounting.Helpers.OcrDuplicateScanRule.AmountTolerance;
+        var rows = await _db.Documents.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.Status != DocumentStatus.Voided
+                && x.DocumentDate >= day && x.DocumentDate < next && x.TotalAmount >= lo && x.TotalAmount <= hi)
+            .Select(x => new { x.Id, x.DocumentNumber, x.DocumentDate, x.TotalAmount, x.ContactId,
+                Tax = _db.Contacts.Where(c => c.Id == x.ContactId && c.CompanyId == companyId).Select(c => c.TaxId).FirstOrDefault() })
+            .Take(20)
+            .ToListAsync();
+        if (rows.Count == 0) return null;
+        var hit = Accounting.Helpers.OcrDuplicateScanRule.DecideByContent(
+            rows.Select(x => new Accounting.Helpers.OcrDuplicateScanRule.ContentCandidate(x.Id, x.DocumentNumber, x.DocumentDate, x.TotalAmount,
+                x.ContactId, Accounting.Helpers.ThaiTaxId.Normalize(x.Tax) ?? "")).ToList(),
+            t, d, vendorDigits, result.MatchedContactId);
+        return hit == null ? null : Accounting.Helpers.OcrDuplicateScanRule.ContentDuplicateMessage(hit);
+    }
+
     private async Task<string?> FindDuplicateDocumentWarningAsync(Guid companyId, OcrScanResult result)
     {
         if (result.IsDuplicate && result.DuplicateOfScanId.HasValue)
@@ -10554,8 +10610,11 @@ public class OcrService : IOcrService
         // §86/4 บังคับให้เลขใบกำกับ unique ต่อผู้ขาย ⇒ "ผู้ขายเดียวกัน + เลข
         // เดียวกัน" = ใบเดียวกันเสมอ · ตรรกะตัดสินอยู่ใน Helpers/OcrDuplicateScanRule
         var docNo = (result.ExtractedDocumentNumber ?? "").Trim();
-        if (docNo.Length < 3) return null;
         var vendorDigits = Accounting.Helpers.ThaiTaxId.Normalize(result.ExtractedVendorTaxId);
+        // รอบ 259 (C-L4 · คำตัดสิน 259-4-9): อ่านเลขที่ไม่ได้ (ถ่ายใหม่ = ไฟล์ต่าง ⇒ hash ไม่ช่วย) ⇒ ซ้ำด้วยเนื้อหา: ผู้ขายเดียวกัน + วันที่ + ยอด ·
+        // ตัวตัดสินเดียว OcrDuplicateScanRule.DecideByContent (ไม่รู้ผู้ขาย = ไม่เตือน) · เส้นเดิมถาม "ยืนยันสร้างซ้ำ" เหมือนกัน
+        if (docNo.Length < 3)
+            return await FindContentDuplicateWarningAsync(companyId, result, vendorDigits);
 
         // ฝั่งซื้อเก็บเลขใบของผู้ขายไว้ที่ SupplierInvoiceNumber; ฝั่งขายใช้
         // DocumentNumber ของเราเอง — เทียบทั้งสองช่องเพื่อครอบทั้งสองทิศ
@@ -10868,6 +10927,13 @@ public class OcrService : IOcrService
             LineSplitUsedAi: r.LineSplitUsedAi,
             TargetDocTypeUsedAi: r.TargetDocTypeUsedAi,
             OurRoleUsedAi: r.OurRoleUsedAi,
+            // รอบ 259 (C-L1): ผู้ขายที่จับคู่มาจาก AI จริงไหม · (C-L3) ป้าย "ต้องเลือกผู้ขาย/ผู้ซื้อ" ก่อนกดสร้าง (ตัวตัดสินเดียว OcrCounterpartyMatch)
+            VendorMatchUsedAi: r.VendorMatchUsedAi,
+            CounterpartyMissingNote: r.CreatedDocumentId.HasValue || r.ScanStatus != "Completed" ? null
+                : Accounting.Helpers.OcrCounterpartyMatch.MissingBeforeCreateNote(
+                    Accounting.Helpers.DocumentSide.IsSales(Accounting.Helpers.OcrTargetDocumentType.Resolve(null, r.TargetDocumentType, r.DocumentType,
+                        hasLinkedPurchaseOrder: r.LinkedPurchaseOrderId.HasValue).Type, r.OurRole),
+                    r.MatchedContactId, r.ExtractedVendorName, data?.BuyerName ?? r.BuyerName, data?.BuyerTaxId ?? r.BuyerTaxId),
             // DECISIONS ข้อ 153 ข้อ 2 — ป้ายซื่อสัตย์ของความหมายรหัส ภ.พ. (ข้อความจาก helper ตัวเดียว · หน้าเว็บแสดงอย่างเดียว)
             VatCodeUsedAi: r.VatCodeUsedAi,
             VatCodeMeaningNote: Accounting.Helpers.OcrVatCodeMeaning.ReviewNote(Accounting.Helpers.OcrVatCodeMeaning.FromJson(r.VatCodeMeaningsJson)),
@@ -11054,6 +11120,35 @@ public class OcrService : IOcrService
         }
     }
 
+    /// <summary>รอบ 259 (C-M5): engine ให้ตารางมาแต่ไม่ครบ (Σ ต่ำกว่ายอดที่กระดาษพิสูจน์) ⇒ ตารางจากข้อความเป็นผู้สมัครที่สอง — ตัวตัดสินเดียว
+    /// <c>Helpers/OcrTextTableFallback</c> (pure + golden) · ไม่ผ่าน ⇒ คงตาราง engine ([Σ-GAP] เดิมฟ้อง) · ไม่เรียก AI</summary>
+    private void ApplyTextTableFallback(OcrScanResult scanResult, OcrExtractedData data, string? rawText, decimal? provenPaperTotal)
+    {
+        // รอบ 259 (C-M5 · คำตัดสิน 259-4-8): engine ให้ตารางมาแต่ไม่ครบ (Σ ต่ำกว่ายอดที่กระดาษพิสูจน์) ⇒ ลองตารางจากข้อความเป็นผู้สมัครที่สอง ·
+        // รับเฉพาะเมื่อลงยอดที่พิสูจน์แล้ว + ได้แถวมากกว่า (ตัวตัดสินเดียว OcrTextTableFallback — pure + golden) · ไม่ผ่าน ⇒ คงตาราง engine ([Σ-GAP] เดิมฟ้อง)
+        var fallback = Accounting.Helpers.OcrTextTableFallback.Decide(
+            data.Items.Select(i => i.Amount ?? 0m).ToList(), data.SubTotal, provenPaperTotal, rawText);
+        if (fallback.Replace)
+        {
+            data.Items.Clear();
+            foreach (var line in fallback.Lines)
+            {
+                if (Accounting.Helpers.OcrNonItemRow.IsSummaryOrTenderRow(line.Description)) continue;   // ตัวตัดสินกรองแล้ว — กันซ้ำชั้นที่สอง
+                data.Items.Add(new OcrExtractedLineItem
+                {
+                    Description = line.Description,
+                    Quantity = line.Quantity,
+                    UnitPrice = line.UnitPrice,
+                    Amount = line.Amount,
+                    Unit = line.Unit,
+                });
+            }
+            data.ReasoningTrace.Add(fallback.Note!);
+            if (fallback.DedupeNote is string fbDedupe) data.ReasoningTrace.Add(fbDedupe);
+            scanResult.LineSplitUsedAi = false;   // ป้ายซื่อสัตย์: ระบบแตกจากข้อความ ไม่ได้เรียก AI
+        }
+    }
+
     /// <summary>
     /// ให้ AI แตกรายการจากข้อความดิบ เมื่อ engine ไม่คืนตารางรายการมาเลย
     ///
@@ -11073,10 +11168,15 @@ public class OcrService : IOcrService
     /// ไม่ใช่ถูกบันทึก. ก่อนหน้านี้มีแต่ทางแรก และ feature นี้ไม่มี student ⇒ ปิด provider
     /// = เอกสารได้บรรทัดสรุปใบเดียวตลอดกาล (kill-switch ไม่ผ่าน · ผลตรวจ 2026-09-06 T3-02)</para></summary>
     private async Task TrySplitLineItemsAsync(
-        Guid companyId, OcrScanResult scanResult, OcrExtractedData data, string? rawText)
+        Guid companyId, OcrScanResult scanResult, OcrExtractedData data, string? rawText, decimal? provenPaperTotal = null)
     {
         var scanResultId = scanResult.Id;
-        if (data.Items.Count > 0) return;                    // engine ให้รายการมาแล้ว
+        if (data.Items.Count > 0)
+        {
+            // รอบ 259 (C-M5 · คำตัดสิน 259-4-8): engine ให้ตารางมาแต่ไม่ครบ ⇒ ผู้สมัครที่สองจากข้อความ (ApplyTextTableFallback)
+            ApplyTextTableFallback(scanResult, data, rawText, provenPaperTotal);
+            return;
+        }
         if (string.IsNullOrWhiteSpace(rawText)) return;
 
         var sub = data.SubTotal ?? 0m;

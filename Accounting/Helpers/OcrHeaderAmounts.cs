@@ -92,4 +92,25 @@ public static class OcrHeaderAmounts
     public static string SwapNote(decimal subBefore, decimal totalBefore)
         => $"[Σ-SWAP] engine ติดป้าย SubTotal/Total สลับกัน ({subBefore:N2} ↔ {totalBefore:N2}) — "
          + $"สลับกลับเพราะ {totalBefore:N2} + VAT = {subBefore:N2} ลงตัวพอดี";
+
+    /// <summary>
+    /// รอบ 259 (C-M2 · คำตัดสิน 259-4-9): ผู้ใช้แก้<b>เฉพาะยอดรวม</b> (มือถือเบิกค่าใช้จ่าย/หน้ารีวิวส่งแค่ <c>totalAmount</c>) ⇒ ถอดฐาน/VAT ใหม่จากยอดที่ผู้ใช้พิมพ์ ·
+    /// เดิมฐาน/VAT เก่าค้าง ⇒ ฐาน = ยอดใหม่ − VAT เก่า (VAT ไม่ใช่ 7% ของฐาน) · กติกา: (1) ยอดไม่เปลี่ยน/ไม่มียอดใหม่ ⇒ คงเดิม
+    /// (2) ใบเดิมไม่มี VAT ⇒ ฐาน = ยอดใหม่ · VAT 0 (3) ใบเดิม VAT 7% ของฐาน (±0.05) ⇒ ถอด 7/107 ด้วยสูตรตัวเดียว <see cref="OcrVatBackCalc.SplitInclusive"/>
+    /// (4) ใบเดิมไม่ใช่ 7% ล้วน (ผสมยกเว้น/อัตราอื่น) ⇒ คง VAT เดิม ฐาน = ยอดใหม่ − VAT (ไม่เดาสัดส่วน — ด่าน [Σ-GAP] ตอนสร้างฟ้องเมื่อไม่ลง) · pure
+    /// </summary>
+    public static (decimal? SubTotal, decimal? Vat, string? Note) RederiveAfterTotalEdit(decimal? oldSub, decimal? oldVat, decimal? oldTotal, decimal? newTotal)
+    {
+        if (newTotal is not > 0m || (oldTotal is decimal ot && ot == newTotal.Value)) return (oldSub, oldVat, null);
+        var total = newTotal.Value;
+        var vat = oldVat ?? 0m;
+        if (vat == 0m)
+            return (total, 0m, $"[TOTAL-EDIT] ผู้ใช้แก้ยอดรวมเป็น {total:N2} — ใบไม่มี VAT ⇒ ฐาน = ยอดรวม");
+        if (oldSub is decimal os && os > 0m && Math.Abs(Math.Round(os * 0.07m, 2, MidpointRounding.AwayFromZero) - vat) <= 0.05m)
+        {
+            var (sub, v) = OcrVatBackCalc.SplitInclusive(total);
+            return (sub, v, $"[TOTAL-EDIT] ผู้ใช้แก้ยอดรวมเป็น {total:N2} — ถอด VAT 7% ใหม่: ฐาน {sub:N2} · VAT {v:N2}");
+        }
+        return (total - vat, vat, $"[TOTAL-EDIT] ผู้ใช้แก้ยอดรวมเป็น {total:N2} — VAT เดิม {vat:N2} ไม่ใช่ 7% ของฐานล้วน ⇒ คง VAT ฐาน = ยอดรวม − VAT (ตรวจก่อนยืนยัน)");
+    }
 }

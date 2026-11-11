@@ -1138,7 +1138,7 @@ public partial class DocumentService : IDocumentService
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
         string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null,
         string? autoApproveBy = null, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null,
-        bool isDepositForfeitInvoice = false)
+        bool isDepositForfeitInvoice = false, Accounting.Helpers.RecurringRunOrigin? recurringRun = null)
     {
         // ── ธง "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" ต้องมาคู่กับชนิด TaxInvoice ──
         // เดิมชนิดไม่ตรง = **ดรอปธงเงียบ ๆ** ⇒ integration/recurring ที่ส่ง
@@ -1210,7 +1210,12 @@ public partial class DocumentService : IDocumentService
 
         // Check feature access
         if (!await _subscriptionService.CheckFeatureAccessAsync(companyId, FeatureFlags.DocumentEngine))
-            throw new InvalidOperationException("ไม่มีสิทธิ์ใช้ระบบเอกสาร");
+        {
+            // รอบ 259 (B-L1): บอกสาเหตุจริง (หมดอายุ/ระงับ ⇒ ต่ออายุ · แพ็กเกจไม่มีฟีเจอร์ ⇒ อัปเกรด) — สถานะจากด่านแพ็กเกจตัวเดียวกับ middleware
+            var gate = await _subscriptionService.GetGateStateAsync(companyId);
+            var (denyMessage, denyCode) = Accounting.Helpers.DocumentFeatureDenial.Describe(gate?.Status, gate?.InactiveReadOnly == true);
+            throw new BusinessRuleException(denyMessage, denyCode);
+        }
 
         // Validate ContactId exists and has correct type for document
         var contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == request.ContactId && c.CompanyId == companyId);
@@ -1542,6 +1547,9 @@ public partial class DocumentService : IDocumentService
                 // แทน CreatedBy user (เหมือน integration PV/invoice)
                 PreparerName = string.IsNullOrWhiteSpace(request.PreparerName) ? null : request.PreparerName.Trim(),
                 PreparerSignatureBase64 = string.IsNullOrWhiteSpace(request.PreparerSignatureBase64) ? null : request.PreparerSignatureBase64.Trim(),
+                // รอบ 259 (B-L2/L3): รายการประจำ + กุญแจงวด ใน INSERT เดียวกับใบ (unique ต่อบริษัท) — ระบบล้มก่อนประทับรอบ ⇒ รอบถัดไปเจอใบนี้ ไม่ออกซ้ำ
+                RecurringTransactionId = recurringRun?.RecurringTransactionId,
+                RecurringRunKey = recurringRun?.RunKey,
                 CreatedBy = createdBy
             };
 

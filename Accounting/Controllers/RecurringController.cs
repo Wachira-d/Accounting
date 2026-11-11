@@ -209,7 +209,12 @@ public class RecurringController : ControllerBase
         if (request.DocumentType is { } newType && newType != item.DocumentType
             && await DenyRecurringWriteAsync(companyId, item.TemplateType, newType, needsApprove) is { } denyNew)
             return Forbid403<RecurringTransactionResponse>(denyNew);
-        var result = await _recurringService.UpdateAsync(companyId, id, request);
+        // รอบ 259 (B-M3 · คำตัดสิน 259-4-1): ผู้แก้ที่มีสิทธิ์อนุมัติชนิดหลังแก้ (ไม่ใช่คีย์ API) ⇒ ค่าเริ่มต้น/ใบรับรองนโยบายประทับใหม่ในชื่อผู้แก้
+        var editorId = JwtHelper.GetUserIdFromClaims(User);
+        var editorCanApprove = !OwnerActionGuard.IsApiKeyRequest(HttpContext)
+            && await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, editorId, request.DocumentType ?? item.DocumentType ?? DocumentType.Invoice);
+        var result = await _recurringService.UpdateAsync(companyId, id, request,
+            new Accounting.Helpers.RecurringEditor(editorId.ToString(), editorCanApprove));
         return Ok(new ApiResponse<RecurringTransactionResponse>(true, result));
     }
 
@@ -247,7 +252,7 @@ public class RecurringController : ControllerBase
     }
 
     [HttpPost("{id:guid}/run-now")]
-    public async Task<ActionResult<ApiResponse<RecurringTransactionResponse>>> RunNow(Guid companyId, Guid id)
+    public async Task<ActionResult<ApiResponse<RecurringTransactionResponse>>> RunNow(Guid companyId, Guid id, [FromQuery] bool confirmExtra = false)
     {
         // รอบ 257 A-H1: สร้างทันที = ออกเอกสารตอนนี้ · รายการอนุมัติ/ส่งอัตโนมัติ = ออกเลขจริง + ส่งถึงลูกค้า ⇒ ต้องมีสิทธิ์อนุมัติ
         var item = await _recurringService.GetByIdAsync(companyId, id);
@@ -255,7 +260,7 @@ public class RecurringController : ControllerBase
                 RecurringWriteGate.NeedsApprove(item.TemplateType, item.AutoApprove, item.AutoSendEmail)) is { } deny)
             return Forbid403<RecurringTransactionResponse>(deny);
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _recurringService.RunNowAsync(companyId, id, userId);
+        var result = await _recurringService.RunNowAsync(companyId, id, userId, confirmExtra);   // รอบ 259 (B-L3): ใบล่วงหน้าซ้ำต้องยืนยัน
         return Ok(new ApiResponse<RecurringTransactionResponse>(true, result, "ดำเนินการสำเร็จ"));
     }
 }

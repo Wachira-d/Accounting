@@ -175,7 +175,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
 
-    public async Task<RecurringTransactionResponse> UpdateAsync(Guid companyId, Guid id, UpdateRecurringTransactionRequest request)
+    public async Task<RecurringTransactionResponse> UpdateAsync(Guid companyId, Guid id, UpdateRecurringTransactionRequest request,
+        RecurringEditor? editor = null)
     {
         var recurring = await _db.RecurringTransactions
             .Include(r => r.Contact)
@@ -185,6 +186,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         // รอบ 257 ชุด 4 ฝ่ายค้าน MED-1/LOW-1: ก่อนแก้ค่าใด — แถวเดิมที่ยังไม่ประทับค่าตั้งต้น ⇒ ประทับด้วยค่าก่อนแก้ (แก้แล้วไม่ตรง ⇒ ไม่ปล่อย) ·
         // ค่าที่ประทับรุ่น 1 ที่ยังตรง ⇒ ยกเป็นรุ่น 2 (ตารางเวลาเข้าลายนิ้วมือ) — ตัวเดียว RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit
         RecurringApprovePolicyLoader.UpgradeStampsBeforeEdit(recurring);
+        // รอบ 259 (B-M3 · คำตัดสิน 259-4-1 ทับ 257-4-7): จำสถานะ "ค่าที่ประทับยังตรง" ก่อนแก้ — หลังแก้ ผู้แก้ที่มีสิทธิ์อนุมัติประทับใหม่ในชื่อตัวเอง
+        var restampBefore = RecurringRestampSnapshot.Take(recurring);
 
         if (request.Name != null) recurring.Name = request.Name;
         if (request.Description != null) recurring.Description = request.Description;
@@ -288,8 +291,79 @@ public class RecurringTransactionService : IRecurringTransactionService
             }
         }
 
+        var restampNotice = await ApplyPolicyRestampAsync(recurring, restampBefore, editor);
+
         await _db.SaveChangesAsync();
-        return await WithSaveWarningsAsync(recurring);
+        return await WithSaveWarningsAsync(recurring, restampNotice);
+    }
+
+    /// <summary>ค่าที่ประทับของรายการก่อนแก้ (ลายนิ้วมือ · ค่าเริ่มต้นตรงไหม · ใบรับรองตรงไหม)</summary>
+    private sealed record RecurringRestampSnapshot(string HashV2, bool DefaultLive, AutoApprovePolicy? Certificate, bool CertificateLive)
+    {
+        internal static RecurringRestampSnapshot Take(RecurringTransaction r)
+        {
+            var v1 = RecurringApprovePolicyLoader.CurrentBindingHashV1(r);
+            var v2 = RecurringApprovePolicyLoader.CurrentBindingHash(r);
+            var cert = AutoApprovePolicy.Parse(r.AutoApprovePolicyJson, AutoApprovePolicy.ScopeRecurring);
+            return new RecurringRestampSnapshot(v2,
+                AutoApprovePolicy.MatchesDefaultBinding(r.DefaultPolicyBindingHash, v1, v2),
+                cert, cert != null && AutoApprovePolicy.MatchesBinding(cert, v1, v2));
+        }
+    }
+
+    /// <summary>รอบ 259 (B-M3): หลังแก้ — ตัวตัดสินเดียว <see cref="RecurringPolicyRestamp.Decide"/> · ประทับใหม่ = ค่าเริ่มต้น (ผู้รับผิดชอบ = ผู้แก้) และ/หรือ
+    /// ใบรับรอง (ผู้รับรอง = ผู้แก้) + audit · หยุดมีผล = ไม่แตะค่าที่ประทับ (ไม่ตรงอยู่แล้ว) + ข้อความบอกว่าใครเปิดคืนได้ · คืนคำเตือนหลังบันทึก หรือ null</summary>
+    private async Task<string?> ApplyPolicyRestampAsync(RecurringTransaction recurring, RecurringRestampSnapshot before, RecurringEditor? editor)
+    {
+        var after = RecurringApprovePolicyLoader.CurrentBindingHash(recurring);
+        var changed = !string.Equals(after, before.HashV2, StringComparison.Ordinal);
+        var outcome = RecurringPolicyRestamp.Decide(before.DefaultLive || before.CertificateLive, changed, editor?.CanApprove == true);
+        // ค่าที่ไม่มีผลกับการอนุมัติจริง (รายการไม่อนุมัติอัตโนมัติและไม่มีใบรับรอง) ไม่ต้องเตือน
+        var matters = recurring.AutoApprove || before.CertificateLive;
+        switch (outcome)
+        {
+            case RecurringPolicyRestamp.Outcome.Restamp:
+            {
+                var oldDefault = recurring.DefaultPolicyBindingHash;
+                var oldCert = recurring.AutoApprovePolicyJson;
+                if (before.DefaultLive)
+                {
+                    recurring.DefaultPolicyBindingHash = after;
+                    recurring.DefaultPolicyStampedBy = editor!.UserId;
+                }
+                if (before.CertificateLive && before.Certificate != null)
+                    recurring.AutoApprovePolicyJson = AutoApprovePolicy.Serialize(before.Certificate with
+                    {
+                        BindingHashValue = after, SetBy = editor!.UserId, SetAt = DateTime.UtcNow,
+                    });
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = recurring.CompanyId,
+                    UserId = Guid.TryParse(editor!.UserId, out var uid) ? uid : null,
+                    Action = AuditAction.Update,
+                    EntityType = "RecurringTransaction",
+                    EntityId = recurring.Id.ToString(),
+                    OldValues = JsonSerializer.Serialize(new { defaultPolicyBindingHash = oldDefault, autoApprovePolicy = oldCert }),
+                    NewValues = JsonSerializer.Serialize(new
+                    {
+                        action = "RestampAutoApprovePolicyOnEdit",
+                        defaultPolicyBindingHash = recurring.DefaultPolicyBindingHash,
+                        defaultPolicyStampedBy = recurring.DefaultPolicyStampedBy,
+                        autoApprovePolicy = recurring.AutoApprovePolicyJson,
+                        ruleCode = RecurringPolicyRestamp.RuleCode,
+                        legalReference = ArOverdueApprovalWarning.LegalReference,
+                    }),
+                });
+                return matters ? RecurringPolicyRestamp.RestampedNotice(before.CertificateLive) : null;
+            }
+            case RecurringPolicyRestamp.Outcome.Suspend:
+                if (!matters) return null;
+                var names = await RecurringApprovePolicyLoader.ApproverNamesAsync(_db, _permissions, recurring.CompanyId,
+                    recurring.DocumentType ?? DocumentType.Invoice);
+                return RecurringPolicyRestamp.SuspendedNotice(before.CertificateLive, names);
+            default:
+                return null;
+        }
     }
 
     public async Task DeleteAsync(Guid companyId, Guid id)
@@ -336,7 +410,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         return MapToResponse(recurring);
     }
 
-    public async Task<RecurringTransactionResponse> RunNowAsync(Guid companyId, Guid id, string performedBy)
+    public async Task<RecurringTransactionResponse> RunNowAsync(Guid companyId, Guid id, string performedBy, bool confirmExtra = false)
     {
         var recurring = await _db.RecurringTransactions
             .Include(r => r.Contact)
@@ -357,10 +431,13 @@ public class RecurringTransactionService : IRecurringTransactionService
             var consumesPeriod = RecurringSchedule.IsDue(recurring.NextRunDate, DateTime.UtcNow, recurring.LeadDays);
             try
             {
-                await ExecuteRecurringAsync(recurring, performedBy, consumesPeriod);
+                var lockedNote = await ExecuteRecurringAsync(recurring, performedBy, consumesPeriod, confirmExtra);
                 if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
+                if (lockedNote != null) await AppendRunNoticeTextAsync(recurring, lockedNote);   // รอบ 259 (B-M4)
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            // รอบ 259 (B-L3): คำถามยืนยัน "ใบล่วงหน้าของงวดนี้มีแล้ว" ไม่ใช่รอบล้ม — ไม่เขียนเหตุล้มลงแถว (โยนกลับให้หน้าถามผู้ใช้)
+            catch (Exception ex) when (ex is not OperationCanceledException
+                                       && ex is not BusinessRuleException { RuleCode: RecurringRunKey.RuleCode })
             {
                 // ล้มดังทั้งในคำตอบ (โยนต่อ) และบนแถว (เหตุผลในหน้ารายการประจำ) — ไม่แจ้งเตือนซ้ำเพราะผู้ใช้อยู่ตรงนั้น
                 await RecordRunFailureAsync(companyId, recurring.Id, recurring.Name, recurring.CreatedBy, ex, fromSchedule: false);
@@ -431,8 +508,12 @@ public class RecurringTransactionService : IRecurringTransactionService
                             await _db.SaveChangesAsync();
                             return;
                         }
-                        await ExecuteRecurringAsync(recurring, ScheduledActor, consumesPeriod: true);
+                        var lockedNote = await ExecuteRecurringAsync(recurring, ScheduledActor, consumesPeriod: true);
+                        // รอบ 259 (B-M4): สมุดรายวัน — งวดที่เหลือไล่ต่อในรอบนี้ (ลงวันที่ของงวดตัวเอง · งวดปิด = ข้ามพร้อมเหตุ)
+                        if (IsJournalTemplate(recurring.TemplateType))
+                            lockedNote = await CatchUpJournalPeriodsAsync(recurring, ScheduledActor, now, lockedNote);
                         if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
+                        if (lockedNote != null) await AppendRunNoticeTextAsync(recurring, lockedNote);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -541,7 +622,7 @@ public class RecurringTransactionService : IRecurringTransactionService
 
     /// <summary>หนึ่งรอบของรายการประจำ: ตรวจเทมเพลตด้วยตัวตรวจเดียวกับตอนบันทึก → สร้างเอกสาร/สมุดรายวัน → ประทับรอบ (ทันทีหลังสร้าง)
     /// → อนุมัติ/ส่งอีเมล · <paramref name="consumesPeriod"/> = รอบนี้คืองวดตามกำหนด (เลื่อนกำหนดถัดไป)</summary>
-    private async Task ExecuteRecurringAsync(RecurringTransaction recurring, string performedBy, bool consumesPeriod)
+    private async Task<string?> ExecuteRecurringAsync(RecurringTransaction recurring, string performedBy, bool consumesPeriod, bool confirmedExtra = false)
     {
         // เทมเพลตว่าง = เดิม "รัน" สำเร็จ (นับครั้ง + เลื่อนงวด) โดยไม่มีเอกสารสักใบ (silent no-op) ⇒ ตอนนี้ล้มพร้อมทางไปต่อ ·
         // ของที่อ้างไว้ถูกลบ/ปิดหลังบันทึก ⇒ ข้อความบอกช่อง (เดิมไปล้มลึกใน CreateDocumentAsync เป็นข้อความเทคนิค —
@@ -551,17 +632,43 @@ public class RecurringTransactionService : IRecurringTransactionService
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
         if (IsJournalTemplate(recurring.TemplateType))
-            await CreateJournalFromTemplateAsync(recurring, performedBy, jsonOptions, baseDate, consumesPeriod);
-        else
-            await CreateDocumentFromTemplateAsync(recurring, performedBy, jsonOptions, baseDate, consumesPeriod);
+            return await CreateJournalFromTemplateAsync(recurring, performedBy, jsonOptions, baseDate, consumesPeriod);
+        await CreateDocumentFromTemplateAsync(recurring, performedBy, jsonOptions, baseDate, consumesPeriod, confirmedExtra);
+        return null;
+    }
+
+    /// <summary>รอบ 259 (B-M4): สมุดรายวันค้างหลายงวด — รอบอัตโนมัติไล่ลงทีละงวด<b>ในรอบเดียว</b> แต่ละใบลงวันที่ของงวดตัวเอง (ไม่ใช่วันนี้ทุกใบ) ·
+    /// งวดบัญชีปิด ⇒ ข้ามงวดนั้นพร้อมเหตุ (ไม่ลงงวดอื่นแทน) · ข้อความของงวดที่ข้ามรวมไว้ท้ายรอบ (ไม่ถูกล้างโดยงวดถัดไปที่ลงสำเร็จ) · คืนข้อความรวม หรือ null</summary>
+    private async Task<string?> CatchUpJournalPeriodsAsync(RecurringTransaction recurring, string performedBy, DateTime nowUtc, string? firstNote)
+    {
+        var notes = new List<string>();
+        if (firstNote != null) notes.Add(firstNote);
+        for (var i = 1; i < RecurringSchedule.MaxJournalCatchUpPerRun; i++)
+        {
+            if (recurring.Status != RecurringStatus.Active || !RecurringSchedule.IsDue(recurring.NextRunDate, nowUtc, 0)) break;
+            if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns)) break;
+            if (await ExecuteRecurringAsync(recurring, performedBy, consumesPeriod: true) is string note) notes.Add(note);
+        }
+        return notes.Count == 0 ? null : string.Join(" · ", notes);
+    }
+
+    /// <summary>ต่อท้ายข้อความแจ้งบนแถว (ไม่ทับข้อความของรอบ · ข้อเท็จจริงเดิมคงไว้) — รอบ 259 (B-M4) งวดสมุดรายวันที่ข้ามเพราะงวดบัญชีปิด</summary>
+    private async Task AppendRunNoticeTextAsync(RecurringTransaction recurring, string note)
+    {
+        var current = await _db.RecurringTransactions.AsNoTracking()
+            .Where(r => r.Id == recurring.Id && r.CompanyId == recurring.CompanyId)
+            .Select(r => new { r.LastRunNotice, r.LastRunOutcome }).FirstOrDefaultAsync();
+        var text = current?.LastRunNotice;
+        var merged = string.IsNullOrEmpty(text) ? note : text.Contains(note) ? text : text + " · " + note;
+        await SetRunNoticeAsync(recurring, new List<string> { merged }, ReadFacts(recurring.Id, current?.LastRunOutcome));
     }
 
     /// <summary>ประทับ "รอบนี้สร้างแล้ว" ทันทีหลังเอกสาร/สมุดรายวันถูกบันทึก (ก่อนอนุมัติ/ส่งอีเมล) — ช่องว่างที่ระบบล่มแล้วออกใบงวดเดิมซ้ำ
     /// เหลือแค่ระหว่างสองคำสั่งนี้ · ล้างผลล้มของรอบก่อน · ครบจำนวนครั้ง/เลยวันสิ้นสุด ⇒ เสร็จสิ้น</summary>
-    private async Task MarkRunAsync(RecurringTransaction recurring, bool consumesPeriod, Guid? documentId)
+    private async Task MarkRunAsync(RecurringTransaction recurring, bool consumesPeriod, Guid? documentId, bool countRun = true)
     {
         recurring.LastRunDate = DateTime.UtcNow;
-        recurring.TotalRuns++;
+        if (countRun) recurring.TotalRuns++;
         if (consumesPeriod) recurring.NextRunDate = GetNextRunDate(recurring);
         recurring.LastRunError = null;
         recurring.LastRunErrorAt = null;
@@ -637,11 +744,12 @@ public class RecurringTransactionService : IRecurringTransactionService
     }
 
     /// <summary>หลังบันทึก (สร้าง/แก้ไข): บันทึกได้เสมอ แต่ติ๊กส่งอีเมลกับผู้ติดต่อที่ไม่มีอีเมล ⇒ คำเตือนกลับในคำตอบ (ผู้ใช้อาจเพิ่มอีเมลทีหลัง)</summary>
-    private async Task<RecurringTransactionResponse> WithSaveWarningsAsync(RecurringTransaction recurring)
+    private async Task<RecurringTransactionResponse> WithSaveWarningsAsync(RecurringTransaction recurring, string? extraWarning = null)
     {
         var mapped = (await MapWithOutcomeAsync(recurring.CompanyId, new[] { recurring }))[0];
-        return mapped.AutoSendEmailWarning == null ? mapped
-            : mapped with { SaveWarnings = new[] { mapped.AutoSendEmailWarning } };
+        // รอบ 259 (B-M3): ผลประทับนโยบายใหม่/หยุดมีผลตอนแก้ — ขึ้นพร้อมคำเตือนอีเมล (ห้ามหยุดมีผลเงียบ ๆ)
+        var warnings = new[] { mapped.AutoSendEmailWarning, extraWarning }.Where(w => !string.IsNullOrEmpty(w)).Select(w => w!).ToArray();
+        return warnings.Length == 0 ? mapped : mapped with { SaveWarnings = warnings };
     }
 
     /// <summary>รอบ 247: ฟอร์มรายการประจำถาม "ผู้ติดต่อนี้รับอีเมลได้ไหม" ตอนเลือกผู้ติดต่อ — ตัวตัดสินเดียวกับผู้ส่งจริง (RecurringEmailReadiness)</summary>
@@ -666,7 +774,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     /// <summary>รอบล้ม ⇒ เหตุผล (ไทย · บอกช่อง + ทางแก้) ลงแถว + ErrorLog/แจ้งผู้ตั้งรายการ <b>เฉพาะครั้งแรก/เมื่อสาเหตุเปลี่ยน</b>
     /// (เดิม ErrorLog ทุก 15 นาทีตลอดไป และผู้ใช้ไม่เห็นอะไรเลย) · ระบบยังลองใหม่ทุกรอบ — แก้แล้วรอบถัดไปเดินเอง (คำตัดสินข้อ 150)</summary>
     /// <summary>ผู้กระทำของรอบอัตโนมัติ (งานเบื้องหลัง) — ใช้แยก "รอบอัตโนมัติ" ออกจาก "กดสร้างทันที"</summary>
-    private const string ScheduledActor = "System";
+    private const string ScheduledActor = SystemActor.Recurring;   // รอบ 259 (B-L4): ตัวตั้งเดียว (เดิม "System" — แถวเก่ายังอ่านได้ผ่าน SystemActor.IsSystem)
 
     /// <summary>รอบ 258 (B-M5): ผู้รับแบบระบุตัวของแจ้งเตือนรายการประจำ — ผู้สร้างที่ยังเป็นสมาชิกที่ใช้งาน · ไม่งั้น null
     /// (ตามตารางแจ้งเตือน/ค่าตั้งต้นของเหตุการณ์) · ตัวตัดสินเดียว <see cref="Accounting.Helpers.RecurringStaffNotice.Recipient"/></summary>
@@ -696,6 +804,29 @@ public class RecurringTransactionService : IRecurringTransactionService
         catch (Exception nex) when (nex is not OperationCanceledException)
         {
             _logger.LogWarning(nex, "Recurring {Id}: stuck-draft notification dispatch failed for {Doc}", recurring.Id, documentId);
+        }
+    }
+
+    /// <summary>รอบ 259 (B-M4): งวดสมุดรายวันถูกข้ามเพราะงวดบัญชีปิด = เรื่อง "ติด" ⇒ แจ้งด้วยคีย์เดิม <c>recurring.run_failed</c> (258-2-6) ·
+    /// แจ้งล้ม = log (เหตุอยู่บนแถวรายการแล้ว)</summary>
+    private async Task NotifyLockedPeriodSkipAsync(RecurringTransaction recurring, string note)
+    {
+        if (_notify == null) return;
+        try
+        {
+            await _notify.DispatchAsync(recurring.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringRunFailed, new NotificationContext
+            {
+                Title = $"รายการประจำ \"{recurring.Name}\" ข้ามงวดที่ปิดแล้ว",
+                Message = note,
+                ActionUrl = "/pages/recurring.html",
+                EntityType = "RecurringTransaction",
+                EntityId = recurring.Id,
+                RecipientUserId = await NoticeRecipientAsync(recurring.CompanyId, recurring.CreatedBy),
+            });
+        }
+        catch (Exception nex) when (nex is not OperationCanceledException)
+        {
+            _logger.LogWarning(nex, "Recurring {Id}: locked-period notification dispatch failed", recurring.Id);
         }
     }
 
@@ -787,9 +918,37 @@ public class RecurringTransactionService : IRecurringTransactionService
             m => map.TryGetValue(m.Groups[1].Value, out var v) ? v : m.Value);
     }
 
-    private async Task CreateDocumentFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions,
-        DateTime baseDate, bool consumesPeriod)
+    /// <summary>รอบ 259 (B-L2): งวดนี้มีใบแล้ว (ระบบหยุดระหว่างสร้างใบกับประทับรอบในรอบก่อน) ⇒ ประทับรอบด้วยใบเดิม ไม่ออกซ้ำ + ข้อความบนแถว</summary>
+    private async Task StampRecoveredPeriodAsync(RecurringTransaction recurring, Guid documentId, string? documentNumber, string runKey)
     {
+        var periodDate = recurring.NextRunDate;
+        await MarkRunAsync(recurring, consumesPeriod: true, documentId,
+            countRun: RecurringRunKey.CountsAsNewRun(recurring.LastDocumentId, documentId));
+        await SetRunNoticeAsync(recurring, new List<string> { RecurringRunKey.RecoveredNote(documentNumber, periodDate) });
+        _logger.LogWarning("Recurring {Id}: period {Key} already has document {Doc} — stamped run without creating a duplicate",
+            recurring.Id, runKey, documentId);
+    }
+
+    private async Task CreateDocumentFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions,
+        DateTime baseDate, bool consumesPeriod, bool confirmedExtra = false)
+    {
+        // รอบ 259 (B-L2/L3 · คำตัดสิน 259-4-3): กุญแจ "รายการ + งวด" — มีใบของกุญแจนี้แล้ว ⇒ รอบตามกำหนด = ระบบหยุดระหว่างทางรอบก่อน (ประทับรอบด้วยใบเดิม ·
+        // ไม่ออกซ้ำ) · รอบพิเศษก่อนกำหนด = กดซ้ำ ⇒ 409 ถามยืนยัน (ยืนยันแล้วไม่มีกุญแจ) · ตัวตัดสินเดียว RecurringRunKey.For
+        var runKey = RecurringRunKey.For(recurring.Id, recurring.NextRunDate, consumesPeriod, confirmedExtra);
+        if (runKey != null)
+        {
+            var existing = await _db.Documents.IgnoreQueryFilters().AsNoTracking()
+                .Where(d => d.CompanyId == recurring.CompanyId && d.RecurringRunKey == runKey)
+                .Select(d => new { d.Id, d.DocumentNumber }).FirstOrDefaultAsync();
+            if (existing != null)
+            {
+                if (!consumesPeriod)
+                    throw new BusinessRuleException(RecurringRunKey.EarlyAlreadyIssuedMessage(existing.DocumentNumber, recurring.NextRunDate),
+                        RecurringRunKey.RuleCode, 409);
+                await StampRecoveredPeriodAsync(recurring, existing.Id, existing.DocumentNumber, runKey);
+                return;
+            }
+        }
         try
         {
             using var doc = JsonDocument.Parse(recurring.TemplateData!);
@@ -964,7 +1123,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             // ฝ่ายค้านรอบ 1 P1: แหล่งเงิน/หมวดค่าใช้จ่ายของเทมเพลต = ค่าที่ยกมา (ValidateTemplateAsync ตรวจไว้แล้วด้วยข้อความของหน้ารายการประจำ) —
             // CreateDocumentAsync ไม่ตรวจซ้ำแบบ "เพิ่งเลือก" (ธนาคารยังไม่ผูกผังบนใบแจ้งหนี้รายเดือนไม่ใช่เหตุให้ล้มทุกงวด — ตอนลงบัญชีตัดสินเฉพาะใบที่ขยับเงิน)
             var result = await _documentService.CreateDocumentAsync(recurring.CompanyId, request, performedBy,
-                carriedMoneyHeader: new Accounting.Helpers.CarriedMoneyHeader(bankAccountId, paymentAccountId, expenseCategoryId));
+                carriedMoneyHeader: new Accounting.Helpers.CarriedMoneyHeader(bankAccountId, paymentAccountId, expenseCategoryId),
+                recurringRun: new RecurringRunOrigin(recurring.Id, runKey));   // รอบ 259 (B-L2): กุญแจงวดใน INSERT เดียวกับใบ
             // ประทับรอบทันทีหลังเอกสารถูกบันทึก (ก่อนอนุมัติ/ส่งอีเมล) — ขั้นหลังล้มต้องไม่ทำให้รอบถัดไปออกใบงวดเดิมซ้ำ
             await MarkRunAsync(recurring, consumesPeriod, result.Id);
             // เรื่องที่ต้องทำต่อของรอบนี้ ⇒ LastRunNotice บนแถว (หน้ารายการประจำ) — นอกเหนือจากหมายเหตุบนตัวเอกสาร
@@ -1161,9 +1321,24 @@ public class RecurringTransactionService : IRecurringTransactionService
         }
     }
 
-    private async Task CreateJournalFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions,
+    private async Task<string?> CreateJournalFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions,
         DateTime baseDate, bool consumesPeriod)
     {
+        // รอบ 259 (B-M4): ใบสำคัญลงวันที่ของงวด (รอบที่ใช้งวด) — งวดบัญชีของวันนั้นปิด ⇒ ข้ามงวด (เลื่อนกำหนด · ไม่นับครั้ง · ไม่สร้างใบ) พร้อมเหตุบนแถว + แจ้งทีม ·
+        // ห้ามลงวันที่อื่นแทน (ค่าใช้จ่ายจะไปอยู่ผิดงวด) · ตัวตัดสินงวดปิดตัวเดียวกับการลงบัญชีจริง (JournalEntryBuilder.ClosedPeriodReasonAsync)
+        var entryDate = RecurringSchedule.JournalEntryDateUtc(recurring.NextRunDate, DateTime.UtcNow, consumesPeriod);
+        if (consumesPeriod
+            && await Accounting.Services.Implementations.Journal.JournalEntryBuilder.ClosedPeriodReasonAsync(_db, recurring.CompanyId, entryDate) is string closed)
+        {
+            var note = RecurringSchedule.LockedPeriodSkipNote(entryDate, closed);
+            recurring.NextRunDate = GetNextRunDate(recurring);
+            if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
+                recurring.Status = RecurringStatus.Completed;
+            await _db.SaveChangesAsync();
+            await NotifyLockedPeriodSkipAsync(recurring, note);
+            _logger.LogInformation("Recurring journal {Id}: skipped locked period {Date:yyyy-MM-dd}", recurring.Id, entryDate);
+            return note;
+        }
         try
         {
             using var doc = JsonDocument.Parse(recurring.TemplateData!);
@@ -1190,7 +1365,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             }
 
             var request = new Models.DTOs.Accounting.CreateJournalEntryRequest(
-                EntryDate: RecurringSchedule.DocumentDateUtc(DateTime.UtcNow),   // รอบ 257 ชุด 4 (A-M9): วันตามปฏิทินไทย (ใบสำคัญไม่ลงงวดก่อนช่วง 00:00–07:00 น.)
+                // รอบ 259 (B-M4): วันของงวด (รอบที่ใช้งวด) · รอบพิเศษก่อนกำหนด = วันนี้ — ทั้งคู่ตามปฏิทินไทย (คง A-M9)
+                EntryDate: entryDate,
                 Description: Sub(RecurringTemplate.Text(root, "description") ?? recurring.Name) ?? recurring.Name,
                 Reference: $"AUTO-{recurring.Name}",
                 Lines: lines
@@ -1231,6 +1407,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             }
 
             _logger.LogInformation("Created journal entry {EntryNumber} from recurring {RecurringId}", result?.EntryNumber, recurring.Id);
+            return null;
         }
         catch (Exception ex)
         {

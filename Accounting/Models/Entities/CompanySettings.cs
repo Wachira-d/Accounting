@@ -150,8 +150,8 @@ public class CompanySettings : TenantEntity
     public int MaxApiKeys { get; set; } = 5;
 
     // Closing Settings
-    public bool AutoCloseMonthEnd { get; set; } = false;
-    public int MonthEndClosingDay { get; set; } = 15;    // วันสุดท้ายที่บันทึกเดือนก่อนได้
+    // รอบ 259 (B-L11 · คำตัดสิน 259-4-5): AutoCloseMonthEnd/MonthEndClosingDay ถูกลบ (ไม่ต่อสาย) — ปิดงวดอัตโนมัติตามวันที่ = ระบบประทับ "ปิดงวด"
+    // เองโดยไม่มีคนตรวจ (F2 ข้อ 3) · ช่องบนหน้าล็อก "ยังไม่รองรับ" มาตั้งแต่รอบ 193 · คอลัมน์เดิมในฐานคงไว้ (ตั้งค่า DEFAULT ให้ INSERT ใหม่ไม่ล้ม — Round259AutopilotMigration)
     public bool PreventPostToClosedPeriod { get; set; } = true;
 
     /// <summary>แนบ PDF หนังสือรับรองหัก ณ ที่จ่าย (50ทวิ) เข้าใบสำคัญจ่าย

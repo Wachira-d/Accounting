@@ -831,4 +831,105 @@ public class RecurringAutopilotRound248DbTests
         Assert.Contains(withRule.Readiness.Items, i => i.Code == "ETAX-SENDER" && i.Verdict == AutopilotReadiness.Fail);
         Assert.Contains("ตามกฎ", withRule.EmailPlan);
     }
+
+    // ═══════════ รอบ 259 (B-M3 · คำตัดสิน 259-4-1 ทับ 257-4-7) — แก้รายการแล้วประทับใหม่ในชื่อผู้แก้ / หยุดมีผลพร้อมบอกว่าใครเปิดคืนได้ ═══════════
+
+    private static async Task<Guid> AddMemberAsync(AccountingDbContext db, Guid companyId, string name)
+    {
+        var u = new User { Email = $"r259-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = name };
+        db.Users.Add(u);
+        await db.SaveChangesAsync();
+        db.CompanyUsers.Add(new CompanyUser { UserId = u.Id, CompanyId = companyId, Role = UserRole.Staff });
+        await db.SaveChangesAsync();
+        return u.Id;
+    }
+
+    [Fact]
+    public async Task R259_BM3_ผู้แก้มีสิทธิ์อนุมัติ_แก้ยอด_ค่าเริ่มต้นประทับใหม่ในชื่อผู้แก้_ใบงวดใหม่อนุมัติต่อ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, creatorIsSetter: true);
+        var editor = await AddMemberAsync(db, s.CompanyId, "ผู้แก้ราคา");
+        RecurringTransactionResponse saved;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var tpl = (await req.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId)).TemplateData!;
+            saved = await Recurring(req).UpdateAsync(s.CompanyId, s.RecurringId, Upd(templateData: tpl.Replace("5000", "5500")),
+                new RecurringEditor(editor.ToString(), CanApprove: true));
+        }
+        Assert.Contains(saved.SaveWarnings ?? Array.Empty<string>(), w => w == RecurringPolicyRestamp.RestampedNotice(false));
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var rec = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId);
+            Assert.Equal(editor.ToString(), rec.DefaultPolicyStampedBy);
+            Assert.Equal(RecurringApprovePolicyLoader.CurrentBindingHash(rec), rec.DefaultPolicyBindingHash);
+            Assert.True(await check.AuditLogs.AnyAsync(a => a.CompanyId == s.CompanyId && a.EntityId == s.RecurringId.ToString()
+                && a.NewValues!.Contains(RecurringPolicyRestamp.RuleCode)));
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using var check2 = DbTestDatabase.TryCreateContext()!;
+        Assert.NotEqual(DocumentStatus.Draft, (await NewDocAsync(check2, s.CompanyId, s.ContactId)).Status);
+    }
+
+    [Fact]
+    public async Task R259_BM3_ทิศตรงข้าม_ผู้แก้ไม่มีสิทธิ์อนุมัติ_หยุดมีผล_คำเตือนบอกใครเปิดคืนได้_ใบค้างร่าง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, creatorIsSetter: true);
+        var editor = await AddMemberAsync(db, s.CompanyId, "ผู้แก้ไม่มีสิทธิ์");
+        RecurringTransactionResponse saved;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var tpl = (await req.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId)).TemplateData!;
+            saved = await Recurring(req).UpdateAsync(s.CompanyId, s.RecurringId, Upd(templateData: tpl.Replace("5000", "5500")),
+                new RecurringEditor(editor.ToString(), CanApprove: false));
+        }
+        var warn = Assert.Single(saved.SaveWarnings ?? Array.Empty<string>(), w => w.Contains("หยุดมีผล"));
+        Assert.Contains("เปิดคืนได้", warn);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+            Assert.NotEqual(editor.ToString(), (await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId)).DefaultPolicyStampedBy);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Recurring(req).RunNowAsync(s.CompanyId, s.RecurringId, "tester");
+        using var check2 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(DocumentStatus.Draft, (await NewDocAsync(check2, s.CompanyId, s.ContactId)).Status);
+    }
+
+    [Fact]
+    public async Task R259_BM3_ใบรับรองนโยบาย_ผู้แก้มีสิทธิ์_ผูกค่าใหม่และผู้รับรองเป็นผู้แก้_แก้แค่ชื่อไม่แตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db, creatorIsSetter: true);
+        var editor = await AddMemberAsync(db, s.CompanyId, "ผู้แก้ที่มีสิทธิ์");
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetRecurringPolicyAsync(s.CompanyId, s.RecurringId,
+                new SetAutoApprovePolicyRequest(new List<string> { ArOverdueApprovalWarning.Code }), s.SetterId);
+        // ทิศตรงข้าม: แก้เฉพาะชื่อ (ไม่อยู่ในลายนิ้วมือ) ⇒ ใบรับรองไม่ถูกแตะ ไม่มีคำเตือน
+        RecurringTransactionResponse renamed;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            renamed = await Recurring(req).UpdateAsync(s.CompanyId, s.RecurringId, Upd(name: "ค่าบริการ (ชื่อใหม่)"),
+                new RecurringEditor(editor.ToString(), CanApprove: true));
+        Assert.Null(renamed.SaveWarnings);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(s.SetterId.ToString(), AutoApprovePolicy.Parse((await check.RecurringTransactions.AsNoTracking()
+                .SingleAsync(r => r.Id == s.RecurringId)).AutoApprovePolicyJson)!.SetBy);
+        RecurringTransactionResponse saved;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var tpl = (await req.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId)).TemplateData!;
+            saved = await Recurring(req).UpdateAsync(s.CompanyId, s.RecurringId, Upd(templateData: tpl.Replace("5000", "5600")),
+                new RecurringEditor(editor.ToString(), CanApprove: true));
+        }
+        Assert.Contains(saved.SaveWarnings ?? Array.Empty<string>(), w => w == RecurringPolicyRestamp.RestampedNotice(true));
+        using var check2 = DbTestDatabase.TryCreateContext()!;
+        var rec = await check2.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == s.RecurringId);
+        var cert = AutoApprovePolicy.Parse(rec.AutoApprovePolicyJson, AutoApprovePolicy.ScopeRecurring)!;
+        Assert.Equal(editor.ToString(), cert.SetBy);
+        Assert.True(AutoApprovePolicy.MatchesBinding(cert, RecurringApprovePolicyLoader.CurrentBindingHashV1(rec), RecurringApprovePolicyLoader.CurrentBindingHash(rec)));
+        var load = await RecurringApprovePolicyLoader.LoadAsync(check2, null, s.CompanyId, rec);
+        Assert.NotNull(load.Policy);
+    }
 }
