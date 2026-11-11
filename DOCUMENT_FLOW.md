@@ -3126,7 +3126,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   e-Tax by Email + ติ๊กลิงก์ชำระ ⇒ 409 · ตอนส่งลิงก์ที่ติ๊กใช้ไม่ได้ ⇒ แถวข้าม (`PayLinkGoneAtSend`) · ช่องติ๊กตัดสินตอนเปิดหน้าต่าง (`PayLinkOffer`) · เข้าคิวทีละปลายทาง ·
   `DocumentPayLinkService.EnsureLinkAsync(allowReissueRevoked)`: ลิงก์ที่ถูกเพิกถอน ⇒ ปุ่มพนักงาน/อีเมลตามตารางออกใหม่ได้ (audit `pay-link-reissued`) · หน้าต่างส่งเอง/พอร์ทัล ⇒
   `PayLinkRevokedException` · ลิงก์ที่ใช้อยู่ไม่ถูกเขียนทับช่องทาง · ลิงก์ทวง 50 ทวิ ตรวจเพิกถอน/หมดอายุตอนส่ง + เพิกถอนรวมเมื่อได้ใบครบ (`RevokeSettledReminderLinksAsync`) ·
-  Last verified commit <เติมในคอมมิตตามหลัง>
+  Last verified commit fa93803d
 - ยังไม่ทำ: เก็บสลิปจากแชตเป็นรายการรอตรวจ (ผูก PaymentIntent) + แจ้งทีม · ชั่วโมงเงียบ · กระดิ่งเมื่อคิว LINE ล้มซ้ำ · ตัวเลือกกลุ่ม/ผู้ใช้ที่บอทรู้จักนอกจากกลุ่มทีม ·
   การ์ดความพร้อมบนหน้า payment-settings · L6 (`OnDocumentApprovedAsync` กลืนข้อผิดพลาด) ·
   เทสต์ `LineRound259Tests` · Db `LineRound259DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 7dc53e0c
