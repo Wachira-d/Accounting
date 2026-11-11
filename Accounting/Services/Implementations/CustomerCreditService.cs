@@ -53,7 +53,7 @@ public class CustomerCreditService : ICustomerCreditService
             .Select(p => new
             {
                 p.Id, p.PaymentNumber, p.ContactId, p.PaymentDate, p.Amount, p.UnappliedAmount,
-                p.UnappliedReason, p.UnappliedNote, p.Reference,
+                p.UnappliedReason, p.UnappliedNote, p.Reference, p.UnappliedNeedsReview,
             })
             .ToListAsync(ct);
 
@@ -83,11 +83,12 @@ public class CustomerCreditService : ICustomerCreditService
             allocByPayment.TryGetValue(p.Id, out var rows)
                 ? rows.Select(a => new CustomerCreditAllocationRow(a.Id, a.DocumentId, a.DocumentNumber, a.AllocatedAmount,
                     a.IsLateAllocation, a.AppliedAt, CanUndo: a.IsLateAllocation)).ToList()
-                : new List<CustomerCreditAllocationRow>())).ToList();
+                : new List<CustomerCreditAllocationRow>(),
+            NeedsReview: p.UnappliedNeedsReview)).ToList();
 
         // ยอดรวมทั้งบริษัท/ทั้งลูกค้า (ไม่ใช่แค่หน้าที่ตัดด้วยเพดาน)
         var totalQuery = _db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.UnappliedAccountId != null
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.UnappliedAccountId != null && !p.UnappliedNeedsReview
                 && p.UnappliedAmount > UnappliedCreditBalance.Tolerance);
         if (contactId is Guid tc) totalQuery = totalQuery.Where(p => p.ContactId == tc);
         var total = await totalQuery.SumAsync(p => (decimal?)p.UnappliedAmount, ct) ?? 0m;
@@ -118,7 +119,7 @@ public class CustomerCreditService : ICustomerCreditService
                         + $"ต่างกัน {glDifference:N2} — ตรวจสมุดรายวันที่ลงผังนี้ด้วยมือ (ผังนี้ควรถูกลงจากการรับชำระ/การจัดสรรเท่านั้น)";
             }
             var legacy = await _db.Payments.AsNoTracking()
-                .CountAsync(p => p.CompanyId == companyId && !p.IsDeleted && p.UnappliedAccountId != null
+                .CountAsync(p => p.CompanyId == companyId && !p.IsDeleted && p.UnappliedAccountId != null && !p.UnappliedNeedsReview
                     && p.UnappliedAmount > UnappliedCreditBalance.Tolerance
                     && (accountId == null || p.UnappliedAccountId != accountId), ct);
             if (legacy > 0)
@@ -127,7 +128,8 @@ public class CustomerCreditService : ICustomerCreditService
                 glNote = glNote == null ? legacyNote : glNote + " · " + legacyNote;
             }
         }
-        return new CustomerCreditListResponse(items, total, glBalance, glDifference, glNote);
+        return new CustomerCreditListResponse(items, total, glBalance, glDifference, glNote,
+            ReceiptPending: contactId == null ? await ReceiptPendingAsync(companyId, ct) : null);
     }
 
     public async Task<List<CustomerCreditTargetRow>> TargetsAsync(Guid companyId, Guid paymentId, CancellationToken ct = default)
@@ -161,7 +163,7 @@ public class CustomerCreditService : ICustomerCreditService
             || doc.BalanceDue <= UnappliedCreditBalance.Tolerance)
             return empty;
         var payments = await _db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.ContactId == doc.ContactId
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.ContactId == doc.ContactId && !p.UnappliedNeedsReview
                 && p.UnappliedAccountId != null && p.UnappliedAmount > UnappliedCreditBalance.Tolerance)
             .OrderBy(p => p.PaymentDate).ThenBy(p => p.PaymentNumber)
             .Take(ListCap)
@@ -184,7 +186,8 @@ public class CustomerCreditService : ICustomerCreditService
             payments.Sum(p => p.UnappliedAmount), rows.Sum(r => r.Usable), rows);
     }
 
-    public async Task<PaymentExcessPlanResponse> ExcessPlanAsync(Guid companyId, Guid documentId, decimal amount, decimal fee, CancellationToken ct = default)
+    public async Task<PaymentExcessPlanResponse> ExcessPlanAsync(Guid companyId, Guid documentId, decimal amount, decimal fee, bool hasAdjustments,
+        CancellationToken ct = default)
     {
         var doc = await _db.Documents.AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId, ct)
@@ -199,15 +202,20 @@ public class CustomerCreditService : ICustomerCreditService
         var refusal = PaymentExcessPlan.RefuseExcess(
             receivableSide: CustomerCreditAllocation.TargetTypes.Contains(doc.DocumentType),
             isThb: CustomerCreditAllocation.IsThbDocument(doc.Currency, doc.ExchangeRate),
-            hasFee: fee > 0m, vatRegistered: vatRegistered, reason: UnappliedReason.Unknown);
+            hasFee: fee > 0m, vatRegistered: vatRegistered, reason: UnappliedReason.Unknown, hasAdjustments: hasAdjustments);
         var others = new List<PaymentExcessOpenDocument>();
         if (refusal == null)
         {
             var open = await OpenDocumentsAsync(companyId, doc.ContactId, exceptDocumentId: doc.Id, ct);
-            var suggestions = PaymentExcessPlan.SuggestSplit(excess, open.Select(d => (d.Id, d.BalanceDue)))
-                .ToDictionary(r => r.DocumentId, r => r.Suggested);
-            others = open.Select(d => new PaymentExcessOpenDocument(d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.DueDate,
-                d.BalanceDue, suggestions.TryGetValue(d.Id, out var s) ? s : 0m)).ToList();
+            // ยอดเสนอ: เก่าสุดก่อน · ใบแจ้งหนี้ที่มี VAT เสนอเฉพาะเมื่อปิดเต็มใบ (ด่าน M5 — ยอดที่เสนอต้องเป็นยอดที่การบันทึกรับ)
+            var left = excess;
+            foreach (var d in open)
+            {
+                var take = Math.Round(Math.Min(left, d.BalanceDue), 2, MidpointRounding.AwayFromZero);
+                if (take > 0m && VatInvoiceSettlementGate.PartialRefusal(d.DocumentType, d.VatAmount, take, d.BalanceDue, d.DocumentNumber) != null) take = 0m;
+                left -= take;
+                others.Add(new PaymentExcessOpenDocument(d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.DueDate, d.BalanceDue, take));
+            }
         }
         return new PaymentExcessPlanResponse(doc.Id, doc.BalanceDue, excess, PaymentExcessPlan.Headline(excess), refusal,
             refusal == null ? PaymentExcessPlan.ReasonOptions(vatRegistered) : Array.Empty<PaymentExcessOption>(), others);
@@ -229,7 +237,7 @@ public class CustomerCreditService : ICustomerCreditService
     }
 
     private static CustomerCreditTargetFacts TargetFacts(Document d)
-        => new(d.CompanyId, d.ContactId, d.DocumentNumber, d.DocumentType, d.Status, d.DocumentDate, d.BalanceDue, d.Currency, d.ExchangeRate);
+        => new(d.CompanyId, d.ContactId, d.DocumentNumber, d.DocumentType, d.Status, d.DocumentDate, d.BalanceDue, d.Currency, d.ExchangeRate, d.VatAmount);
 
     /// <summary>ข้อเท็จจริงของเงินก้อนนี้สำหรับตัวตัดสิน — สกุลบาท = ใบแรกของการชำระเป็นบาทและไม่มีอัตรา ณ วันชำระ</summary>
     private async Task<CustomerCreditFacts> FactsAsync(Guid companyId, Payment payment, CancellationToken ct)
@@ -241,7 +249,8 @@ public class CustomerCreditService : ICustomerCreditService
         var isThb = (payment.ExchangeRate == null || payment.ExchangeRate == 1m)
             && first != null && CustomerCreditAllocation.IsThbDocument(first.Currency, first.ExchangeRate);
         return new CustomerCreditFacts(payment.CompanyId, payment.ContactId, payment.PaymentNumber, payment.PaymentDate,
-            payment.UnappliedAmount, payment.UnappliedAccountId != null, payment.IsDeleted, payment.SettlementBatchId != null, isThb);
+            payment.UnappliedAmount, payment.UnappliedAccountId != null, payment.IsDeleted, payment.SettlementBatchId != null, isThb,
+            NeedsReview: payment.UnappliedNeedsReview);
     }
 
     // ───────────────────────── เขียน ─────────────────────────
@@ -255,6 +264,7 @@ public class CustomerCreditService : ICustomerCreditService
         Payment? payment = null;
         Document? doc = null;
         var journalReference = "";
+        IReadOnlyList<string> taxNotices = Array.Empty<string>();
 
         var strategy = _db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
@@ -274,6 +284,9 @@ public class CustomerCreditService : ICustomerCreditService
 
             // ── ด่านเดียวของการจัดสรร (ก่อนลง JE) ──
             var credit = await FactsAsync(companyId, payment, ct);
+            // ฝ่ายค้าน M7: ยอดคงเหลือที่หน้าจอเห็นตอนกดต้องตรงกับของจริงใต้ล็อก (กดซ้ำ/สองแท็บ = ครั้งที่สองถูกปฏิเสธ)
+            if (CustomerCreditAllocation.StaleCheck(request.ExpectedUnappliedBefore, payment.UnappliedAmount, payment.PaymentNumber) is { } stale)
+                throw new BusinessRuleException(stale.Message, stale.RuleCode, stale.StatusCode);
             if (CustomerCreditAllocation.Check(credit, TargetFacts(doc), amount, applyDate, today) is { } refusal)
                 throw new BusinessRuleException(refusal.Message, refusal.RuleCode, refusal.StatusCode);
             // งวดบัญชีของวันที่จัดสรรต้องเปิด (ตัวเดียวกับ JournalEntryBuilder.PostAsync — ตรวจก่อนเพื่อให้ข้อความถึงผู้ใช้)
@@ -317,7 +330,9 @@ public class CustomerCreditService : ICustomerCreditService
                 CreatedBy = actor,
             };
             // ใบที่ออกหลังเงินเข้า: วันที่รับชำระของใบ = วันรับเงินจริง (ม.78/1 — ผู้ใช้ไม่ต้องรู้/กรอกเอง) · ไม่ทับค่าที่ผู้ใช้กรอกไว้
-            if (doc.PaymentDate == null && payment.PaymentDate.Date <= doc.DocumentDate.Date)
+            // ฝ่ายค้าน H1: เฉพาะเงิน "ค้างออกใบ" (เงินเป็นค่าของงานนี้ตั้งแต่วันรับ) — เงินโอนเกิน/ล่วงหน้า/ยังไม่ทราบ ไม่ประทับ
+            if (LateReceiptTaxPoint.ReceiptDrivesTaxPoint(payment.UnappliedReason)
+                && doc.PaymentDate == null && payment.PaymentDate.Date <= doc.DocumentDate.Date)
             {
                 doc.PaymentDate = payment.PaymentDate.Date;
                 allocation.StampedDocumentPaymentDate = true;
@@ -360,11 +375,15 @@ public class CustomerCreditService : ICustomerCreditService
                 }),
             });
             await _db.SaveChangesAsync(ct);
+            // ฝ่ายค้าน M6: ขั้นภาษี (ย้ายภาษีขายที่พัก · ภาษีถูกหัก ณ ที่จ่าย · ทะเบียนเครดิตภาษี) อยู่ในธุรกรรมเดียวกับการจัดสรร — ล้ม = ไม่มีอะไรถูกบันทึก
+            taxNotices = await _documents.ApplyCreditAllocationTaxStepsAsync(companyId, doc.Id, payment.UnappliedReason,
+                payment.PaymentDate, applyDate, journalReference, actor);
+            await _db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
         });
 
-        // ขั้นภาษีหลังจัดสรร (หลัง commit — การจัดสรรที่สำเร็จแล้วต้องไม่ถูกย้อนเพราะขั้นนี้ · ล้ม = ป้ายบนตัวเอกสาร ตามเส้นรับชำระเดิม)
-        var notices = await _documents.AfterCreditAllocatedAsync(companyId, doc!.Id, payment!.PaymentDate, applyDate, journalReference, actor);
+        // หลัง commit: ธงสลิปที่ถูกแทน + ใบเสร็จรับเงิน/ใบกำกับภาษีของการจัดสรร (ฝ่ายค้าน H2 — ออกไม่ได้ = ป้ายบนใบ + คิว ไม่ throw)
+        var notices = taxNotices.Concat(await _documents.AfterCreditAllocationCommittedAsync(companyId, payment!.Id, doc!.Id, actor)).ToList();
         _logger.LogInformation("จัดสรรเงินรอจัดสรร {Pay} → {Doc} {Amount:N2} (คงเหลือ {Left:N2})",
             payment.PaymentNumber, doc.DocumentNumber, amount, payment.UnappliedAmount);
         return new CustomerCreditAllocationResult(payment.Id, payment.PaymentNumber, doc.Id, doc.DocumentNumber, amount,
@@ -447,7 +466,7 @@ public class CustomerCreditService : ICustomerCreditService
 
             await RecomputeUnappliedAsync(companyId, payment, ct);
             // ถอยภาษีขายถึงกำหนดถ้าใบไม่เหลือเงินรับ (ตัวเดียวกับยกเลิกการรับชำระ) — งวดปิด/ยื่นแล้ว = throw ⇒ ทั้งธุรกรรม rollback
-            vatNotice = await _documents.UndoCreditAllocationTaxEffectsAsync(companyId, doc.Id, payment.PaymentNumber);
+            vatNotice = await _documents.UndoCreditAllocationTaxEffectsAsync(companyId, payment.Id, doc.Id, payment.PaymentNumber);
             _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId,
@@ -488,5 +507,113 @@ public class CustomerCreditService : ICustomerCreditService
         payment.UnappliedAmount = UnappliedCreditBalance.Compute(payment.Amount, live);
         payment.UnappliedResolvedAt = UnappliedCreditBalance.HasBalance(payment.UnappliedAmount) ? null : DateTime.UtcNow;
         payment.UpdatedAt = DateTime.UtcNow;
+    }
+
+    // ───────────────────────── คิวใบเสร็จค้างออก (ฝ่ายค้าน H2) ─────────────────────────
+
+    /// <summary>ใบที่ถูกปิดยอดด้วยการรับชำระที่จัดสรร (เงินเกิน/หลายใบ/จัดสรรทีหลัง) แล้ว<b>ออกใบเสร็จรับเงิน/ใบกำกับภาษีอัตโนมัติไม่ได้</b> —
+    /// ใบมีป้าย <see cref="PaymentExcessPlan.ReceiptPendingMarker"/> และคู่ (การชำระ, ใบ) ยังไม่มีใบเสร็จที่มีผล · ปุ่ม "ออกใบเสร็จ" ของแต่ละแถวเรียกเส้นเดิม</summary>
+    public async Task<List<CustomerCreditReceiptPendingRow>> ReceiptPendingAsync(Guid companyId, CancellationToken ct = default)
+    {
+        var marker = PaymentExcessPlan.ReceiptPendingMarker;
+        var flagged = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.Status != DocumentStatus.Voided
+                && d.InternalNotes != null && d.InternalNotes.Contains(marker))
+            .OrderBy(d => d.DocumentDate)
+            .Select(d => new { d.Id, d.DocumentNumber, d.ContactId })
+            .Take(ListCap).ToListAsync(ct);
+        if (flagged.Count == 0) return new List<CustomerCreditReceiptPendingRow>();
+        var docIds = flagged.Select(d => d.Id).ToList();
+        var pairs = await (
+            from a in _db.PaymentAllocations.AsNoTracking()
+            join p in _db.Payments.AsNoTracking() on a.PaymentId equals p.Id
+            where a.CompanyId == companyId && p.CompanyId == companyId && !a.IsDeleted && !p.IsDeleted && docIds.Contains(a.DocumentId)
+            select new { a.PaymentId, p.PaymentNumber, a.DocumentId, a.AllocatedAmount }).ToListAsync(ct);
+        var payIds = pairs.Select(x => x.PaymentId).Distinct().ToList();
+        var receipts = await _db.Documents.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
+                && r.SettlementPaymentId != null && payIds.Contains(r.SettlementPaymentId.Value) && r.RelatedDocumentId != null)
+            .Select(r => new { PaymentId = r.SettlementPaymentId!.Value, DocumentId = r.RelatedDocumentId!.Value })
+            .ToListAsync(ct);
+        var done = receipts.Select(r => (r.PaymentId, r.DocumentId)).ToHashSet();
+        var contactIds = flagged.Select(d => d.ContactId).Distinct().ToList();
+        var names = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+            .Select(c => new { c.Id, c.Name }).ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+        return pairs.GroupBy(x => (x.PaymentId, x.PaymentNumber, x.DocumentId))
+            .Where(g => !done.Contains((g.Key.PaymentId, g.Key.DocumentId)))
+            .Select(g =>
+            {
+                var d = flagged.First(f => f.Id == g.Key.DocumentId);
+                return new CustomerCreditReceiptPendingRow(d.Id, d.DocumentNumber, names.TryGetValue(d.ContactId, out var n) ? n : null,
+                    g.Key.PaymentId, g.Key.PaymentNumber, g.Sum(x => x.AllocatedAmount));
+            }).ToList();
+    }
+
+    // ───────────────────────── รายการก่อนรอบ 258 ที่ต้องตรวจ (ฝ่ายค้าน M4) ─────────────────────────
+
+    public Task<CustomerCreditRow> ConfirmLegacyAsync(Guid companyId, Guid paymentId, string actor, CancellationToken ct = default)
+        => ResolveLegacyAsync(companyId, paymentId, close: false, reason: null, actor, ct);
+
+    public Task<CustomerCreditRow> CloseLegacyAsync(Guid companyId, Guid paymentId, string reason, string actor, CancellationToken ct = default)
+        => ResolveLegacyAsync(companyId, paymentId, close: true, reason, actor, ct);
+
+    /// <summary>
+    /// ยืนยัน/ปิดรายการเงินส่วนเกินก่อนรอบ 258 (เฉพาะแถวที่ติดธงต้องตรวจ): ยืนยัน = เงินยังค้างจริง ⇒ ใช้ได้เหมือนเงินรอจัดสรรทั่วไป ·
+    /// ปิด = เงินส่วนนี้ถูกจัดการในบัญชีไปแล้ว (เช่น ล้างด้วยสมุดรายวัน) ⇒ ยอดคงเหลือเป็น 0 โดย<b>ไม่ลงบัญชี</b> (ระบบไม่รู้ว่าลงอะไรไว้ — เหตุผลบังคับ) · audit ทั้งสองทาง
+    /// </summary>
+    private async Task<CustomerCreditRow> ResolveLegacyAsync(Guid companyId, Guid paymentId, bool close, string? reason, string actor, CancellationToken ct)
+    {
+        var trimmed = (reason ?? "").Trim();
+        if (close && trimmed.Length < 5)
+            throw new BusinessRuleException("ระบุเหตุผลของการปิดรายการ (อย่างน้อย 5 ตัวอักษร) เช่น เลขสมุดรายวันที่ล้างยอดนี้ไปแล้ว", CustomerCreditAllocation.NeedsReviewRuleCode);
+        Payment? payment = null;
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            payment = await _db.Payments
+                .FromSqlRaw("""SELECT * FROM "Payments" WHERE "Id" = {0} AND "CompanyId" = {1} FOR UPDATE""", paymentId, companyId)
+                .FirstOrDefaultAsync(ct)
+                ?? throw new KeyNotFoundException("ไม่พบการรับชำระ (อาจถูกยกเลิกแล้ว)");
+            await _db.Entry(payment).ReloadAsync(ct);
+            if (!payment.UnappliedNeedsReview)
+                throw new BusinessRuleException(
+                    $"รายการ {payment.PaymentNumber} ไม่ใช่รายการก่อนรอบ 258 ที่ต้องตรวจ — เงินรอจัดสรรปกติปิดได้ด้วยการจัดสรรให้ใบ หรือยกเลิกการรับชำระ",
+                    CustomerCreditAllocation.NeedsReviewRuleCode, 409);
+            var before = payment.UnappliedAmount;
+            payment.UnappliedNeedsReview = false;
+            if (close)
+            {
+                payment.UnappliedAmount = 0m;
+                payment.UnappliedResolvedAt = DateTime.UtcNow;
+                payment.UnappliedNote = string.IsNullOrWhiteSpace(payment.UnappliedNote) ? "ปิดรายการ: " + trimmed : payment.UnappliedNote + " · ปิดรายการ: " + trimmed;
+            }
+            payment.UpdatedAt = DateTime.UtcNow;
+            payment.UpdatedBy = actor;
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = Guid.TryParse(actor, out var actorId) ? actorId : null,
+                Action = AuditAction.Update,
+                EntityType = "Payment",
+                EntityId = payment.Id.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    RuleCode = close ? "CC-LEGACY-CLOSE" : "CC-LEGACY-CONFIRM",
+                    payment.PaymentNumber,
+                    UnappliedBefore = before,
+                    UnappliedAfter = payment.UnappliedAmount,
+                    Reason = close ? trimmed : "ยืนยันว่าเงินส่วนเกินยังค้างจริง",
+                }),
+            });
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        });
+        var list = await ListAsync(companyId, null, includeResolved: true, ct);
+        return list.Items.FirstOrDefault(r => r.PaymentId == paymentId)
+            ?? new CustomerCreditRow(payment!.Id, payment.PaymentNumber, payment.ContactId, null, payment.PaymentDate, payment.Amount, payment.UnappliedAmount,
+                payment.UnappliedReason ?? nameof(UnappliedReason.Unknown), PaymentExcessPlan.LabelOf(payment.UnappliedReason), payment.UnappliedNote, 0, payment.Reference,
+                new List<CustomerCreditAllocationRow>());
     }
 }

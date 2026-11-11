@@ -7,12 +7,14 @@ namespace Accounting.Helpers;
 /// <param name="IsThb">การชำระเป็นสกุลบาทอัตรา 1 (ใบแรกของการชำระเป็น THB และไม่มีอัตรา ณ วันชำระ)</param>
 public sealed record CustomerCreditFacts(
     Guid CompanyId, Guid? ContactId, string PaymentNumber, DateTime PaymentDate, decimal UnappliedAmount,
-    bool HasUnappliedAccount, bool IsVoided, bool IsSettlementBatchPayment, bool IsThb);
+    bool HasUnappliedAccount, bool IsVoided, bool IsSettlementBatchPayment, bool IsThb,
+    // ฝ่ายค้านรอบ 258 M4: แถวก่อนรอบ 258 ที่ backfill ประทับ — ยังไม่มีคนยืนยันว่าเงินยังค้างจริง (อาจถูกล้างด้วยสมุดรายวันมือแล้ว)
+    bool NeedsReview = false);
 
 /// <summary>ข้อเท็จจริงของใบปลายทางที่จะรับการจัดสรร — อ่านใต้ล็อกแถวโดยผู้เรียก</summary>
 public sealed record CustomerCreditTargetFacts(
     Guid CompanyId, Guid ContactId, string DocumentNumber, DocumentType DocumentType, DocumentStatus Status,
-    DateTime DocumentDate, decimal BalanceDue, string? Currency, decimal ExchangeRate);
+    DateTime DocumentDate, decimal BalanceDue, string? Currency, decimal ExchangeRate, decimal VatAmount = 0m);
 
 /// <summary>เหตุปฏิเสธการจัดสรร (ข้อความถึงผู้ใช้ + รหัสกฎ + HTTP status)</summary>
 public sealed record CustomerCreditRefusal(string Message, string RuleCode, int StatusCode);
@@ -33,6 +35,20 @@ public static class CustomerCreditAllocation
 {
     public const string RuleCode = "CC-ALLOC";
     public const string ContactRuleCode = "CC-ALLOC-CONTACT";
+    public const string NeedsReviewRuleCode = "CC-LEGACY-REVIEW";
+    /// <summary>ยอดคงเหลือที่หน้าจอเห็นไม่ตรงกับของจริงใต้ล็อก (คำขอซ้อน/กดซ้ำ) — ฝ่ายค้านรอบ 258 M7</summary>
+    public const string StaleRuleCode = "CC-ALLOC-STALE";
+
+    /// <summary>
+    /// กันจัดสรรซ้ำจากการกดซ้ำ/สองแท็บ (M7): หน้าจอส่ง "ยอดคงเหลือที่เห็นตอนกด" มาด้วย — ใต้ล็อกแถว ยอดจริงต้องเท่ากัน ไม่งั้นปฏิเสธให้โหลดใหม่ ·
+    /// null = ผู้เรียกไม่ส่งมา (API เดิม — ไม่ตรวจ)
+    /// </summary>
+    public static CustomerCreditRefusal? StaleCheck(decimal? expectedUnappliedBefore, decimal actualUnapplied, string paymentNumber)
+        => expectedUnappliedBefore is decimal expected && Math.Abs(expected - actualUnapplied) > UnappliedCreditBalance.Tolerance
+            ? new CustomerCreditRefusal(
+                $"เงินรอจัดสรรของ {paymentNumber} เปลี่ยนไปแล้ว (ตอนกดเห็น {Money(expected)} · ตอนนี้ {Money(actualUnapplied)}) — อาจมีการจัดสรรซ้อน/กดซ้ำ · โหลดหน้าใหม่แล้วตรวจยอดก่อนทำต่อ",
+                StaleRuleCode, 409)
+            : null;
     public const string LegalReference = "ป.รัษฎากร ม.78/1 (จุดความรับผิดเมื่อรับชำระ)";
 
     /// <summary>ชนิดเอกสารที่รับการจัดสรรได้ — ใบฝั่งขายที่ตั้งลูกหนี้และรับชำระตรงได้</summary>
@@ -64,6 +80,9 @@ public static class CustomerCreditAllocation
             return No($"การรับชำระ {credit.PaymentNumber} เป็นของรอบโอนจากผู้ให้บริการ — จัดการที่หน้า “รอบโอน” ไม่ใช่เงินรอจัดสรร");
         if (!credit.HasUnappliedAccount || !UnappliedCreditBalance.HasBalance(credit.UnappliedAmount))
             return No($"การรับชำระ {credit.PaymentNumber} ไม่มีเงินรอจัดสรรคงเหลือ");
+        if (credit.NeedsReview)
+            return No($"เงินรอจัดสรรของ {credit.PaymentNumber} เป็นรายการก่อนรอบ 258 ที่ยังต้องตรวจ (ระบบไม่รู้ว่าเงินส่วนเกินนี้ถูกล้างด้วยสมุดรายวันไปแล้วหรือยัง) — "
+                + "ที่หน้า “เงินรอจัดสรร” กด “ยืนยันว่ายังค้างจริง” ก่อนจัดสรร หรือ “ปิดรายการ” พร้อมเหตุผล", NeedsReviewRuleCode);
         if (credit.ContactId is not Guid owner || owner == Guid.Empty)
             return No($"ระบบไม่ทราบว่าเงินรอจัดสรรของ {credit.PaymentNumber} เป็นของลูกค้ารายใด (รายการก่อนรอบ 258) — "
                 + "ยกเลิกการรับชำระนี้แล้วบันทึกใหม่ เพื่อให้เงินผูกกับลูกค้า", ContactRuleCode);
@@ -84,6 +103,9 @@ public static class CustomerCreditAllocation
             return No("ยอดที่จัดสรรมีทศนิยมได้ไม่เกิน 2 ตำแหน่ง", RuleCode, 400);
         if (amount > credit.UnappliedAmount)
             return No($"ยอดที่จัดสรร {Money(amount)} มากกว่าเงินรอจัดสรรคงเหลือ {Money(credit.UnappliedAmount)} ของ {credit.PaymentNumber}");
+        // ฝ่ายค้านรอบ 258 M5: ใบแจ้งหนี้ที่มี VAT จัดสรรบางส่วนไม่ได้ (ด่านเดียวกับหน้ารับชำระ — ฝั่งเซิร์ฟเวอร์)
+        if (VatInvoiceSettlementGate.PartialRefusal(target.DocumentType, target.VatAmount, amount, target.BalanceDue, target.DocumentNumber) is string partialVat)
+            return No(partialVat, VatInvoiceSettlementGate.RuleCode);
         if (DocumentSettlementState.WouldOverpay(target.BalanceDue, amount))
             return No($"ยอดที่จัดสรร {Money(amount)} มากกว่ายอดค้างของ {target.DocumentNumber} ({Money(target.BalanceDue)}) — จัดสรรได้ไม่เกินยอดค้าง");
         var d = applyDate.Date;

@@ -30,10 +30,35 @@ public static class CustomerCreditMigration
         """ALTER TABLE "PaymentAllocations" ADD COLUMN IF NOT EXISTS "JournalEntryId" uuid NULL;""",
         """ALTER TABLE "PaymentAllocations" ADD COLUMN IF NOT EXISTS "StampedDocumentPaymentDate" boolean NOT NULL DEFAULT false;""",
         """CREATE INDEX IF NOT EXISTS "IX_Payments_Company_Unapplied" ON "Payments" ("CompanyId", "ContactId") WHERE "UnappliedAmount" > 0 AND "IsDeleted" = false;""",
+        """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "UnappliedNeedsReview" boolean NOT NULL DEFAULT false;""",
+        // ฝ่ายค้านรอบ 258 L2: เวลาที่แจ้งทีม "มีเงินรอจัดสรรพอปิดใบนี้" (ภายใน — ไม่ใช่ช่องฟอร์ม) · null = ยังไม่แจ้ง/พ้นช่วงระงับแล้ว
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CreditCoverNoticeAt" timestamp NULL;""",
         // ผัง 21630 ให้บริษัทเดิมที่มีกลุ่ม 216 (บริษัทผังกำหนดเอง = สร้างตอนใช้/ล้มดัง — UnappliedReceiptAccount.EnsureAsync)
         UnappliedReceiptAccount.MigrationSeedSql(),
         BackfillSql(),
     };
+
+    /// <summary>คีย์ marker ของการติดธง "ต้องตรวจ" ให้แถวที่ backfill รุ่นแรกประทับไปแล้ว (ฝ่ายค้านรอบ 258 M4)</summary>
+    public const string LegacyReviewMarkerKey = "r258-unapplied-legacy-review";
+
+    /// <summary>
+    /// ฝ่ายค้านรอบ 258 M4 (ครั้งเดียวใต้ marker): แถวที่ backfill ประทับ = ผังพักไม่ใช่ 21630 (ลงผังเดิม 217xx ก่อนรอบ 258) และยังไม่เคยถูกจัดสรรทีหลัง ⇒
+    /// <c>UnappliedNeedsReview = true</c> — เงินส่วนเกินเดิมอาจถูกล้างด้วยสมุดรายวันมือไปแล้ว ห้ามนับเป็นเงินรอจัดสรรจนกว่าคนยืนยัน
+    /// (แถวที่เกิดหลังรอบ 258 ลง 21630 เสมอ — ไม่ถูกแตะ)
+    /// </summary>
+    public static string LegacyReviewSql() => $$"""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM "OneShotDataFixes" WHERE "Key" = '{{LegacyReviewMarkerKey}}') THEN
+                UPDATE "Payments" p SET "UnappliedNeedsReview" = true
+                WHERE p."UnappliedAccountId" IS NOT NULL AND p."IsDeleted" = false AND p."UnappliedAmount" > 0.005
+                  AND NOT EXISTS (SELECT 1 FROM "ChartOfAccounts" c WHERE c."Id" = p."UnappliedAccountId" AND c."CompanyId" = p."CompanyId"
+                                  AND c."AccountCode" = '{{UnappliedReceiptAccount.Code}}')
+                  AND NOT EXISTS (SELECT 1 FROM "PaymentAllocations" a WHERE a."PaymentId" = p."Id" AND a."CompanyId" = p."CompanyId" AND a."IsLateAllocation" = true);
+                INSERT INTO "OneShotDataFixes" ("Key", "AppliedAt") VALUES ('{{LegacyReviewMarkerKey}}', (now() at time zone 'utc')) ON CONFLICT DO NOTHING;
+            END IF;
+        END $$;
+        """;
 
     /// <summary>backfill ครั้งเดียวใต้ marker — เงื่อนไขอยู่ในคำอธิบายคลาส (JournalType 3 = สมุดรายวันรับ · Status 1 = Posted)</summary>
     public static string BackfillSql() => $$"""
@@ -44,7 +69,8 @@ public static class CustomerCreditMigration
                     "UnappliedAmount" = x.remaining,
                     "UnappliedAccountId" = x.account_id,
                     "ContactId" = x.contact_id,
-                    "UnappliedReason" = 'Unknown'
+                    "UnappliedReason" = 'Unknown',
+                    "UnappliedNeedsReview" = true
                 FROM (
                     SELECT p2."Id" AS pid,
                            round(p2."Amount" - COALESCE((SELECT sum(a."AllocatedAmount") FROM "PaymentAllocations" a

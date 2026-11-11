@@ -73,7 +73,7 @@ public class OverdueDunningJob : BackgroundService
                 && d.AgingDays != null && d.AgingDays >= 30)
             .Select(d => new {
                 d.Id, d.CompanyId, d.DocumentNumber, d.AgingDays, d.BalanceDue,
-                d.LastDunningSentAt, d.LastDunningLevel, d.ContactId
+                d.LastDunningSentAt, d.LastDunningLevel, d.ContactId, d.CreditCoverNoticeAt
             })
             .ToListAsync(ct);
 
@@ -82,7 +82,7 @@ public class OverdueDunningJob : BackgroundService
         var today = DateTime.UtcNow.Date;
         var sent = 0;
         // รอบ 258 (DECISIONS 258-1-9): เงินรอจัดสรรต่อลูกค้า — โหลดครั้งเดียวต่อบริษัท (ตัวอ่านเดียว CustomerCreditQuery)
-        var creditByCompany = new Dictionary<Guid, Dictionary<Guid, decimal>>();
+        var creditHoldsByCompany = new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>();
         foreach (var c in candidates)
         {
             if (ct.IsCancellationRequested) return;
@@ -102,20 +102,25 @@ public class OverdueDunningJob : BackgroundService
 
             // รอบ 258: ลูกค้ามีเงินรอจัดสรรพอปิดใบนี้ ⇒ ไม่ออกหนังสือทวง — แจ้งทีมให้จัดสรรแทน (ตัวตัดสินเดียว DunningSuppression)
             // ประทับเฉพาะ LastDunningSentAt (พัก 7 วันกันแจ้งซ้ำทุกรอบ) ไม่ขยับระดับทวง ⇒ เงินรอจัดสรรหมดเมื่อไร การทวงตามอายุหนี้เดินต่อจากระดับเดิม
-            if (!creditByCompany.TryGetValue(c.CompanyId, out var creditByContact))
-                creditByCompany[c.CompanyId] = creditByContact =
-                    await Accounting.Helpers.CustomerCreditQuery.UnappliedByContactAsync(db, c.CompanyId, ct);
-            var creditHold = Accounting.Helpers.DunningSuppression.Decide(c.BalanceDue,
-                creditByContact.TryGetValue(c.ContactId, out var contactCredit) ? contactCredit : 0m);
-            if (creditHold.SuppressCustomerReminder)
+            // ฝ่ายค้าน M1: แผนหักเงินสะสมเก่าสุดก่อน (DunningSuppression.Plan ผ่าน DunningHoldsAsync) — เฉพาะใบที่จัดสรรได้จริง
+            if (!creditHoldsByCompany.TryGetValue(c.CompanyId, out var creditHolds))
+                creditHoldsByCompany[c.CompanyId] = creditHolds =
+                    await Accounting.Helpers.CustomerCreditQuery.DunningHoldsAsync(db, c.CompanyId, ct);
+            if (creditHolds.TryGetValue(c.Id, out var creditHoldReason))
             {
-                if (notify == null) continue;
+                // ฝ่ายค้าน L2: แจ้งทีมครั้งเดียวต่อช่วงที่ใบถูกระงับ (CreditCoverNoticeAt) — ไม่แจ้งซ้ำทุก 7 วันไม่มีที่สิ้นสุด · ไม่แตะ LastDunningSentAt (ไม่ได้ส่งทวง)
+                if (c.CreditCoverNoticeAt != null) continue;
+                if (notify == null)
+                {
+                    _logger.LogWarning("ใบ {Doc} ถูกระงับทวงเพราะมีเงินรอจัดสรร แต่ไม่มีช่องแจ้งเตือนให้แจ้งทีม — รอบถัดไปลองใหม่", c.DocumentNumber);
+                    continue;
+                }
                 try
                 {
                     await notify.DispatchAsync(c.CompanyId, NotificationEvents.CustomerCreditCoversInvoice, new NotificationContext
                     {
                         Title = $"มีเงินรอจัดสรรพอปิดใบนี้: {c.DocumentNumber} — {contactName ?? "(ไม่ระบุ)"}",
-                        Message = $"ใบค้าง {c.AgingDays} วัน ยอดค้าง ฿{c.BalanceDue:N2} · {creditHold.Reason}",
+                        Message = $"ใบค้าง {c.AgingDays} วัน ยอดค้าง ฿{c.BalanceDue:N2} · {creditHoldReason}",
                         ActionUrl = $"/pages/documents.html?id={c.Id}",
                         EntityType = "Document", EntityId = c.Id,
                     });
@@ -128,7 +133,7 @@ public class OverdueDunningJob : BackgroundService
                 var heldDoc = await db.Documents.FirstOrDefaultAsync(d => d.Id == c.Id && d.CompanyId == c.CompanyId, ct);
                 if (heldDoc != null)
                 {
-                    heldDoc.LastDunningSentAt = DateTime.UtcNow;
+                    heldDoc.CreditCoverNoticeAt = DateTime.UtcNow;
                     try { await db.SaveChangesAsync(ct); }
                     catch (Exception ex) { _logger.LogWarning(ex, "ประทับเวลาแจ้งเงินรอจัดสรรของใบ {DocId} ไม่สำเร็จ", c.Id); }
                 }
@@ -182,6 +187,7 @@ public class OverdueDunningJob : BackgroundService
             {
                 trackedDoc.LastDunningSentAt = DateTime.UtcNow;
                 trackedDoc.LastDunningLevel = targetLevel;
+                trackedDoc.CreditCoverNoticeAt = null;   // รอบ 258 L2: ทวงตามปกติแล้ว = พ้นช่วงระงับ (ถูกระงับอีกครั้งจะแจ้งทีมใหม่)
                 try
                 {
                     await db.SaveChangesAsync(ct);

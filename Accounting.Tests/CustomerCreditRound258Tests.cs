@@ -15,6 +15,7 @@ public class CustomerCreditRound258Tests
     private static readonly Guid Customer = Guid.NewGuid();
     private static readonly DateTime Received = new(2026, 11, 3);
     private static readonly DateTime Today = new(2026, 11, 20);
+    private const string Uninvoiced = nameof(UnappliedReason.UninvoicedSupply);
 
     private static CustomerCreditFacts Credit(decimal unapplied = 5_350m, Guid? contact = null, bool unknownOwner = false,
         bool hasAccount = true, bool voided = false, bool settlement = false, bool thb = true, Guid? company = null)
@@ -100,12 +101,73 @@ public class CustomerCreditRound258Tests
     }
 
     [Fact]
-    public void ใบแจ้งหนี้มีVatที่ปิดด้วยเส้นไม่ออกใบกำกับอัตโนมัติ_ต้องมีคำเตือน_ใบอื่นไม่เตือน()
+    public void ออกใบเสร็จอัตโนมัติไม่ได้_ป้ายบนใบมีเครื่องหมายคิวและทางไปต่อ()
     {
-        Assert.Contains("มาตรา 86", PaymentExcessPlan.NoAutoTaxInvoiceNotice(DocumentType.Invoice, 350m, "INV-0002")!, StringComparison.Ordinal);
-        Assert.Null(PaymentExcessPlan.NoAutoTaxInvoiceNotice(DocumentType.Invoice, 0m, "INV-0002"));          // ไม่มี VAT
-        Assert.Null(PaymentExcessPlan.NoAutoTaxInvoiceNotice(DocumentType.TaxInvoice, 350m, "IV-0002"));      // ใบกำกับออกแล้ว
-        Assert.Null(PaymentExcessPlan.NoAutoTaxInvoiceNotice(DocumentType.DebitNote, 350m, "DN-0002"));
+        var note = PaymentExcessPlan.ReceiptPendingNote("INV-0002", "PAY-202611-0001", "ผู้บันทึกไม่มีสิทธิ์");
+        Assert.StartsWith(PaymentExcessPlan.ReceiptPendingMarker, note, StringComparison.Ordinal);
+        Assert.Contains("ออกใบเสร็จ", note, StringComparison.Ordinal);
+        Assert.Contains("PAY-202611-0001", note, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void M2_เงินเกินพร้อมบรรทัดปรับ_ปฏิเสธ_และยอดที่หน้าจอเห็นต้องตรงกับที่เซิร์ฟเวอร์คิด()
+    {
+        Assert.Contains("บรรทัดปรับ", PaymentExcessPlan.RefuseExcess(true, true, false, true, UnappliedReason.Unknown, hasAdjustments: true)!, StringComparison.Ordinal);
+        Assert.Null(PaymentExcessPlan.RefuseExcess(true, true, false, true, UnappliedReason.Unknown, hasAdjustments: false));
+        // ยอดค้าง 1,000 · เงิน 1,500 · คูปอง −50: แผงแสดงเงินเกิน 550 แต่คำขอจริงมีเงินเกิน 500 ⇒ ปฏิเสธ
+        Assert.Contains("ไม่ตรง", PaymentExcessPlan.ExpectedExcessMismatch(550m, 500m)!, StringComparison.Ordinal);
+        Assert.Null(PaymentExcessPlan.ExpectedExcessMismatch(500m, 500m));
+        Assert.Null(PaymentExcessPlan.ExpectedExcessMismatch(null, 500m));      // API เดิมไม่ส่ง = ไม่ตรวจ
+        Assert.NotNull(PaymentExcessPlan.ExpectedExcessMismatch(0m, 500m));     // หน้าจอคิดว่าไม่เหลือ แต่จริงเหลือ
+    }
+
+    // ───────── M5 ด่านใบแจ้งหนี้ที่มี VAT ─────────
+
+    [Fact]
+    public void M5_ใบแจ้งหนี้มีVat_ปิดบางส่วนถูกปฏิเสธ_ปิดเต็มได้_ใบกำกับและใบไม่มีVatไม่ถูกแตะ()
+    {
+        Assert.Contains("แปลงใบแจ้งหนี้เป็นใบกำกับภาษีก่อน",
+            VatInvoiceSettlementGate.PartialRefusal(DocumentType.Invoice, 700m, 500m, 10_700m, "INV-1")!, StringComparison.Ordinal);
+        Assert.Null(VatInvoiceSettlementGate.PartialRefusal(DocumentType.Invoice, 700m, 10_700m, 10_700m, "INV-1"));       // เต็มยอดค้าง
+        Assert.Null(VatInvoiceSettlementGate.PartialRefusal(DocumentType.Invoice, 700m, 10_699.99m, 10_700m, "INV-1"));    // ขาดไม่เกิน 0.01
+        Assert.Null(VatInvoiceSettlementGate.PartialRefusal(DocumentType.Invoice, 0m, 500m, 10_000m, "INV-1"));            // ไม่มี VAT
+        Assert.Null(VatInvoiceSettlementGate.PartialRefusal(DocumentType.TaxInvoice, 700m, 500m, 10_700m, "IV-1"));        // ใบกำกับออกแล้ว
+        // การจัดสรรเดินด่านเดียวกัน
+        var partial = Check(Credit(unapplied: 500m), Target(balance: 10_700m) with { VatAmount = 700m }, 500m);
+        Assert.Equal(VatInvoiceSettlementGate.RuleCode, partial!.RuleCode);
+        Assert.Null(Check(Credit(unapplied: 10_700m), Target(balance: 10_700m) with { VatAmount = 700m }, 10_700m));
+    }
+
+    // ───────── M4 / M7 ─────────
+
+    [Fact]
+    public void M4_เงินก่อนรอบ258ที่ยังต้องตรวจ_จัดสรรไม่ได้จนกว่าจะยืนยัน()
+    {
+        var refusal = Check(Credit() with { NeedsReview = true }, Target(), 100m);
+        Assert.Equal(CustomerCreditAllocation.NeedsReviewRuleCode, refusal!.RuleCode);
+        Assert.Contains("ยืนยันว่ายังค้างจริง", refusal.Message, StringComparison.Ordinal);
+        Assert.Null(Check(Credit() with { NeedsReview = false }, Target(), 100m));
+    }
+
+    [Fact]
+    public void M7_ยอดที่หน้าจอเห็นไม่ตรงกับของจริงใต้ล็อก_ปฏิเสธ409_ตรงหรือไม่ส่งมา_ผ่าน()
+    {
+        // เงิน 2,000 · กดจัดสรร 500 สองครั้งติดกัน: ครั้งที่สองยังส่ง "เห็น 2,000" แต่ของจริงเหลือ 1,500
+        var stale = CustomerCreditAllocation.StaleCheck(2_000m, 1_500m, "PAY-202611-0001");
+        Assert.Equal((CustomerCreditAllocation.StaleRuleCode, 409), (stale!.RuleCode, stale.StatusCode));
+        Assert.Null(CustomerCreditAllocation.StaleCheck(2_000m, 2_000m, "PAY-202611-0001"));
+        Assert.Null(CustomerCreditAllocation.StaleCheck(null, 1_500m, "PAY-202611-0001"));
+    }
+
+    // ───────── M3 ─────────
+
+    [Fact]
+    public void M3_วันที่รับชำระที่ระบบประทับ_ไม่สืบทอดไปเอกสารลูก_ค่าที่ผู้ใช้กรอกสืบทอดตามเดิม()
+    {
+        var d = new DateTime(2026, 11, 28);
+        Assert.Null(SystemStampedPaymentDate.InheritToChild(d, stampedBySystem: true));
+        Assert.Equal(d, SystemStampedPaymentDate.InheritToChild(d, stampedBySystem: false));
+        Assert.Null(SystemStampedPaymentDate.InheritToChild(null, stampedBySystem: false));
     }
 
     // ───────── UnappliedCreditBalance ─────────
@@ -236,7 +298,7 @@ public class CustomerCreditRound258Tests
     [Fact]
     public void งวดภาษี_รับเงินและจัดสรรเดือนเดียวกัน_ไม่มีธง_ไม่มีข้อความ()
     {
-        var d = LateReceiptTaxPoint.Decide(new DateTime(2026, 11, 3), new DateTime(2026, 11, 20), false, new DateTime(2026, 11, 20));
+        var d = LateReceiptTaxPoint.Decide(Uninvoiced, new DateTime(2026, 11, 3), new DateTime(2026, 11, 20), false, new DateTime(2026, 11, 20));
         Assert.False(d.LateFlag);
         Assert.Null(d.Note);
         Assert.Equal((2026, 11), (d.TaxPointDate.Year, d.TaxPointDate.Month));
@@ -245,7 +307,7 @@ public class CustomerCreditRound258Tests
     [Fact]
     public void งวดภาษี_รับเงินเดือนก่อน_ยังไม่เลยกำหนดยื่นและไม่ล็อก_เข้างวดของวันรับเงิน()
     {
-        var d = LateReceiptTaxPoint.Decide(new DateTime(2026, 10, 28), new DateTime(2026, 11, 5), false, new DateTime(2026, 11, 5));
+        var d = LateReceiptTaxPoint.Decide(Uninvoiced, new DateTime(2026, 10, 28), new DateTime(2026, 11, 5), false, new DateTime(2026, 11, 5));
         Assert.Equal(new DateTime(2026, 10, 28), d.TaxPointDate);
         Assert.False(d.LateFlag);
         Assert.Contains("10/2026", d.Note!, StringComparison.Ordinal);
@@ -254,13 +316,13 @@ public class CustomerCreditRound258Tests
     [Fact]
     public void งวดภาษี_งวดของวันรับเงินยื่นหรือล็อกแล้ว_หรือเลยกำหนดยื่น_เข้างวดปัจจุบันพร้อมธง()
     {
-        var locked = LateReceiptTaxPoint.Decide(new DateTime(2026, 10, 28), new DateTime(2026, 11, 5), true, new DateTime(2026, 11, 5));
+        var locked = LateReceiptTaxPoint.Decide(Uninvoiced, new DateTime(2026, 10, 28), new DateTime(2026, 11, 5), true, new DateTime(2026, 11, 5));
         Assert.Equal(new DateTime(2026, 11, 5), locked.TaxPointDate);
         Assert.True(locked.LateFlag);
         Assert.Contains(DepositPolicyResolver.LateVatMarker, locked.Note!, StringComparison.Ordinal);
         Assert.Contains("89/1", locked.Note!, StringComparison.Ordinal);
 
-        var late = LateReceiptTaxPoint.Decide(new DateTime(2026, 9, 28), new DateTime(2026, 11, 20), false, new DateTime(2026, 11, 20));
+        var late = LateReceiptTaxPoint.Decide(Uninvoiced, new DateTime(2026, 9, 28), new DateTime(2026, 11, 20), false, new DateTime(2026, 11, 20));
         Assert.Equal(new DateTime(2026, 11, 20), late.TaxPointDate);
         Assert.True(late.LateFlag);
     }
@@ -268,12 +330,73 @@ public class CustomerCreditRound258Tests
     [Fact]
     public void ใบที่ภาษีไม่ได้พัก_เงินเข้าก่อนเดือนของใบ_ได้คำเตือน_นอกนั้นเงียบ()
     {
-        var note = LateReceiptTaxPoint.IssuedAfterReceiptNote(new DateTime(2026, 10, 28), new DateTime(2026, 11, 5), 350m);
+        var note = LateReceiptTaxPoint.IssuedAfterReceiptNote(Uninvoiced, new DateTime(2026, 10, 28), new DateTime(2026, 11, 5), 350m);
         Assert.Contains(DepositPolicyResolver.LateVatMarker, note!, StringComparison.Ordinal);
         Assert.Contains("10/2026", note!, StringComparison.Ordinal);
-        Assert.Null(LateReceiptTaxPoint.IssuedAfterReceiptNote(new DateTime(2026, 11, 3), new DateTime(2026, 11, 5), 350m));    // เดือนเดียวกัน
-        Assert.Null(LateReceiptTaxPoint.IssuedAfterReceiptNote(new DateTime(2026, 10, 28), new DateTime(2026, 11, 5), 0m));     // ไม่มี VAT
-        Assert.Null(LateReceiptTaxPoint.IssuedAfterReceiptNote(new DateTime(2026, 12, 2), new DateTime(2026, 11, 5), 350m));    // เงินเข้าหลังออกใบ
+        Assert.Null(LateReceiptTaxPoint.IssuedAfterReceiptNote(Uninvoiced, new DateTime(2026, 11, 3), new DateTime(2026, 11, 5), 350m));    // เดือนเดียวกัน
+        Assert.Null(LateReceiptTaxPoint.IssuedAfterReceiptNote(Uninvoiced, new DateTime(2026, 10, 28), new DateTime(2026, 11, 5), 0m));     // ไม่มี VAT
+        Assert.Null(LateReceiptTaxPoint.IssuedAfterReceiptNote(Uninvoiced, new DateTime(2026, 12, 2), new DateTime(2026, 11, 5), 350m));    // เงินเข้าหลังออกใบ
+    }
+
+    // ───────── H1: งวดภาษีขึ้นกับเหตุผลของเงิน (สถานการณ์ของฝ่ายค้าน) ─────────
+
+    [Theory]
+    [InlineData(nameof(UnappliedReason.Overpaid))]
+    [InlineData(nameof(UnappliedReason.Advance))]
+    [InlineData(nameof(UnappliedReason.Unknown))]
+    [InlineData(null)]
+    [InlineData("อะไรก็ไม่รู้")]
+    public void H1_ก_เงินที่ไม่ใช่ค้างออกใบ_รับ28พย_จัดสรรให้ใบบริการ5ธค_ภาษีเข้างวดธค_ไม่ย้อนไปพย(string? reason)
+    {
+        var d = LateReceiptTaxPoint.Decide(reason, new DateTime(2026, 11, 28), new DateTime(2026, 12, 5), false, new DateTime(2026, 12, 5));
+        Assert.Equal(new DateTime(2026, 12, 5), d.TaxPointDate);
+        Assert.False(d.LateFlag);
+        Assert.Null(d.Note);
+        Assert.False(LateReceiptTaxPoint.ReceiptDrivesTaxPoint(reason));
+        Assert.Equal(new DateTime(2026, 12, 5), LateReceiptTaxPoint.EffectiveReceiptDate(reason, new DateTime(2026, 11, 28), new DateTime(2026, 12, 5)));
+    }
+
+    [Fact]
+    public void H1_ข_เงินโอนเกินตั้งแต่สค_ตัดใบบริการธค_ไม่มีธงภาษีล่าช้าเท็จ_แม้งวดสคยื่นแล้ว()
+    {
+        var d = LateReceiptTaxPoint.Decide(nameof(UnappliedReason.Overpaid), new DateTime(2026, 8, 10), new DateTime(2026, 12, 5), true, new DateTime(2026, 12, 5));
+        Assert.Equal((new DateTime(2026, 12, 5), false, (string?)null), (d.TaxPointDate, d.LateFlag, d.Note));
+        Assert.Null(LateReceiptTaxPoint.IssuedAfterReceiptNote(nameof(UnappliedReason.Overpaid), new DateTime(2026, 8, 10), new DateTime(2026, 12, 5), 700m));
+    }
+
+    [Fact]
+    public void H1_ทิศตรงข้าม_เงินค้างออกใบ_วันรับเงินยังเป็นจุดความรับผิด_และธงล่าช้าเมื่องวดนั้นยื่นแล้ว()
+    {
+        Assert.True(LateReceiptTaxPoint.ReceiptDrivesTaxPoint(Uninvoiced));
+        Assert.Equal(new DateTime(2026, 11, 28), LateReceiptTaxPoint.EffectiveReceiptDate(Uninvoiced, new DateTime(2026, 11, 28), new DateTime(2026, 12, 5)));
+        var open = LateReceiptTaxPoint.Decide(Uninvoiced, new DateTime(2026, 11, 28), new DateTime(2026, 12, 5), false, new DateTime(2026, 12, 5));
+        Assert.Equal((new DateTime(2026, 11, 28), false), (open.TaxPointDate, open.LateFlag));
+        var filed = LateReceiptTaxPoint.Decide(Uninvoiced, new DateTime(2026, 8, 10), new DateTime(2026, 12, 5), true, new DateTime(2026, 12, 5));
+        Assert.Equal((new DateTime(2026, 12, 5), true), (filed.TaxPointDate, filed.LateFlag));
+    }
+
+    // ───────── M1: ระงับทวงแบบหักเงินสะสม ─────────
+
+    [Fact]
+    public void M1_เงิน1000_ใบ5ใบใบละ900_ระงับเฉพาะใบเก่าสุดใบเดียว_เงินแต่ละบาทนับครั้งเดียว()
+    {
+        var ids = Enumerable.Range(0, 5).Select(_ => Guid.NewGuid()).ToList();
+        var held = DunningSuppression.Plan(1_000m, ids.Select(id => new DunningSuppression.OpenDocument(id, 900m, true)));
+        Assert.Equal(new[] { ids[0] }, held.Keys.ToArray());
+    }
+
+    [Fact]
+    public void M1_ใบที่จัดสรรไม่ได้ไม่ถูกระงับและไม่กินเงิน_ใบที่เงินเหลือไม่พอถูกข้าม_ใบถัดไปที่พอยังถูกระงับ()
+    {
+        var usd = Guid.NewGuid(); var big = Guid.NewGuid(); var small = Guid.NewGuid();
+        var held = DunningSuppression.Plan(600m, new[]
+        {
+            new DunningSuppression.OpenDocument(usd, 500m, Allocatable: false),   // สกุลต่างประเทศ/ไม่มีสมุดรายวันตั้งลูกหนี้
+            new DunningSuppression.OpenDocument(big, 700m, Allocatable: true),    // เงินไม่พอปิดเต็ม ⇒ ทวงตามเดิม
+            new DunningSuppression.OpenDocument(small, 600m, Allocatable: true),
+        });
+        Assert.Equal(new[] { small }, held.Keys.ToArray());
+        Assert.Empty(DunningSuppression.Plan(0m, new[] { new DunningSuppression.OpenDocument(small, 600m, true) }));   // ทิศตรงข้าม: ไม่มีเงิน = ไม่ระงับ
     }
 
     // ───────── ผัง 21630 ─────────

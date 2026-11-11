@@ -796,7 +796,9 @@ const API = {
         API.get(`${base}/document/${id}/purge-preview${cascade ? '?cascade=true' : ''}`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
       // ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (แถวที่มี JE แต่ไม่มีเอกสารคู่)
-      issueReceiptForPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/receipt`),
+      // documentId (รอบ 258 H2) = ออกใบเสร็จ "รายใบ" ของการรับชำระที่จัดสรรหลายใบ/จากเงินรอจัดสรร — ไม่ส่ง = ใบหลักของการรับชำระ (เดิม)
+      issueReceiptForPayment: (paymentId, documentId) =>
+        API.post(`${base}/document/payments/${paymentId}/receipt${documentId ? `?documentId=${encodeURIComponent(documentId)}` : ''}`),
       convertDocument: (id, t) => API.post(`${base}/document/${id}/convert/${t}`),
       // ใบวางบิลรวมใบค้างชำระหลายใบ (ลูกค้ารายเดียว)
       getBillingOutstanding: (contactId) => API.get(`${base}/document/billing-note/outstanding?contactId=${contactId}`),
@@ -843,8 +845,10 @@ const API = {
       getCustomerCredits: (q = '') => API.get(`${base}/customer-credits${q}`),
       getCustomerCreditTargets: (paymentId) => API.get(`${base}/customer-credits/${paymentId}/targets`),
       getCustomerCreditsForDocument: (documentId) => API.get(`${base}/customer-credits/for-document/${documentId}`),
-      getPaymentExcessPlan: (documentId, amount, fee) =>
-        API.get(`${base}/customer-credits/excess-plan?documentId=${documentId}&amount=${encodeURIComponent(amount)}&fee=${encodeURIComponent(fee || 0)}`),
+      getPaymentExcessPlan: (documentId, amount, fee, hasAdjustments) =>
+        API.get(`${base}/customer-credits/excess-plan?documentId=${documentId}&amount=${encodeURIComponent(amount)}&fee=${encodeURIComponent(fee || 0)}&hasAdjustments=${hasAdjustments ? 'true' : 'false'}`),
+      confirmLegacyCustomerCredit: (paymentId) => API.post(`${base}/customer-credits/${paymentId}/legacy/confirm`),
+      closeLegacyCustomerCredit: (paymentId, reason) => API.post(`${base}/customer-credits/${paymentId}/legacy/close`, { reason }),
       allocateCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/allocate`, d),
       undoCustomerCreditAllocation: (paymentId, allocationId) =>
         API.post(`${base}/customer-credits/${paymentId}/allocations/${allocationId}/undo`),

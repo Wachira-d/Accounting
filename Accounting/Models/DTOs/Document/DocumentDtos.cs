@@ -1742,7 +1742,10 @@ public record CreatePaymentRequest(
     /// (เส้น <c>Allocations</c>) · ตัวตัดสินเดียว <c>Helpers/PaymentExcessPlan.RefuseExcess</c> · ไม่มีเงินเกิน = ไม่ใช้</summary>
     UnappliedReason? ExcessReason = null,
     /// <summary>รอบ 258: หมายเหตุของเงินส่วนเกิน (เช่น "ค่าติดตั้งงวด 2 ยังไม่ออกใบ") — แสดงในรายการ "เงินรอจัดสรร"</summary>
-    string? ExcessNote = null);
+    string? ExcessNote = null,
+    /// <summary>ฝ่ายค้านรอบ 258 M2: เงินส่วนเกินที่หน้าจอแสดงให้ผู้ใช้ยืนยัน — เซิร์ฟเวอร์คิดใหม่จากคำขอแล้วต้องตรงกัน ไม่งั้นปฏิเสธ
+    /// (<c>PaymentExcessPlan.ExpectedExcessMismatch</c>) · null = ไม่ตรวจ (API เดิม)</summary>
+    decimal? ExpectedExcess = null);
 
 /// <summary>บรรทัดปรับหนึ่งบรรทัดของการชำระ — <c>Amount</c> มีเครื่องหมาย: + = จ่ายเกินยอดหนี้ด้วยรายการนี้ (Dr ผังนี้) ·
 /// − = ปิดหนี้โดยไม่ต้องจ่ายเงิน (Cr ผังนี้)</summary>

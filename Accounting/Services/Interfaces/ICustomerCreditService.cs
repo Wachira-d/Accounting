@@ -19,7 +19,14 @@ public interface ICustomerCreditService
     Task<CustomerCreditForDocumentResponse> ForDocumentAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
 
     /// <summary>แผนจัดการเงินเกินของหน้ารับชำระ: เงินเกินเท่าไร · เก็บได้ไหม · เหตุผลที่เลือกได้ · ใบค้างอื่นของลูกค้า</summary>
-    Task<PaymentExcessPlanResponse> ExcessPlanAsync(Guid companyId, Guid documentId, decimal amount, decimal fee, CancellationToken ct = default);
+    Task<PaymentExcessPlanResponse> ExcessPlanAsync(Guid companyId, Guid documentId, decimal amount, decimal fee, bool hasAdjustments,
+        CancellationToken ct = default);
+
+    /// <summary>ฝ่ายค้านรอบ 258 M4: ยืนยันว่าเงินส่วนเกินก่อนรอบ 258 (ติดธงต้องตรวจ) ยังค้างจริง ⇒ ใช้ได้เหมือนเงินรอจัดสรรทั่วไป · audit</summary>
+    Task<CustomerCreditRow> ConfirmLegacyAsync(Guid companyId, Guid paymentId, string actor, CancellationToken ct = default);
+
+    /// <summary>ฝ่ายค้านรอบ 258 M4: ปิดรายการเงินส่วนเกินก่อนรอบ 258 ที่ถูกจัดการในบัญชีไปแล้ว (เหตุผลบังคับ · ไม่ลงบัญชี) · audit</summary>
+    Task<CustomerCreditRow> CloseLegacyAsync(Guid companyId, Guid paymentId, string reason, string actor, CancellationToken ct = default);
 
     /// <summary>จัดสรรเงินรอจัดสรรให้ใบขาย: Dr ผังพัก (21630) / Cr ลูกหนี้ที่ใบตั้งไว้ + ลดยอดค้าง + ขั้นภาษีหลังรับชำระ</summary>
     Task<CustomerCreditAllocationResult> AllocateAsync(Guid companyId, Guid paymentId, AllocateCustomerCreditRequest request, string actor,

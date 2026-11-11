@@ -16,14 +16,24 @@ public record CustomerCreditAllocationRow(Guid Id, Guid DocumentId, string Docum
 /// <param name="AgeDays">จำนวนวันตั้งแต่วันรับเงิน</param>
 public record CustomerCreditRow(Guid PaymentId, string PaymentNumber, Guid? ContactId, string? ContactName, DateTime PaymentDate,
     decimal Amount, decimal UnappliedAmount, string Reason, string ReasonLabel, string? Note, int AgeDays, string? Reference,
-    List<CustomerCreditAllocationRow> Allocations);
+    List<CustomerCreditAllocationRow> Allocations,
+    // ฝ่ายค้านรอบ 258 M4: รายการก่อนรอบ 258 ที่ต้องตรวจ — ยังจัดสรรไม่ได้/ไม่นับในยอดรวม จนกว่าจะยืนยันหรือปิดรายการ
+    bool NeedsReview = false);
+
+/// <summary>ใบที่ปิดยอดแล้วแต่ยังไม่ได้ออกใบเสร็จรับเงิน/ใบกำกับภาษีของการรับเงินที่จัดสรร (คิวงาน — ฝ่ายค้านรอบ 258 H2)</summary>
+public record CustomerCreditReceiptPendingRow(Guid DocumentId, string DocumentNumber, string? ContactName, Guid PaymentId, string PaymentNumber, decimal Amount);
+
+/// <summary>คำขอปิดรายการเงินส่วนเกินก่อนรอบ 258 (เหตุผลบังคับ)</summary>
+public record CloseLegacyCreditRequest(string Reason);
 
 /// <summary>รายการเงินรอจัดสรร + ยอดรวม + เทียบกับบัญชีแยกประเภท 21630</summary>
 /// <param name="GlBalance">ยอดคงเหลือของผัง 21630 ในบัญชีแยกประเภท (null = บริษัทยังไม่มีผังนี้)</param>
 /// <param name="GlDifference">ยอดในบัญชี − ยอดรวมของรายการที่ลงผัง 21630 (0 = ตรงกัน)</param>
 /// <param name="GlNote">ข้อความเมื่อไม่ตรง/มีรายการเก่าที่ลงผังอื่น (null = ตรงกัน)</param>
 public record CustomerCreditListResponse(List<CustomerCreditRow> Items, decimal TotalUnapplied, decimal? GlBalance,
-    decimal GlDifference, string? GlNote);
+    decimal GlDifference, string? GlNote,
+    // ฝ่ายค้านรอบ 258 H2: คิว "ใบที่ต้องออกใบเสร็จ/ใบกำกับ" (null = ไม่ได้ขอ — กรองรายลูกค้า)
+    List<CustomerCreditReceiptPendingRow>? ReceiptPending = null);
 
 /// <summary>ใบค้างของลูกค้าที่รับการจัดสรรจากเงินก้อนนี้ได้ (หรือเหตุที่ไม่ได้)</summary>
 public record CustomerCreditTargetRow(Guid DocumentId, string DocumentNumber, DocumentType DocumentType, DateTime DocumentDate,
@@ -38,7 +48,8 @@ public record CustomerCreditForDocumentResponse(Guid DocumentId, string Document
     decimal TotalUsable, List<CustomerCreditUsableRow> Credits);
 
 /// <summary>คำขอจัดสรรเงินรอจัดสรรให้ใบ — <paramref name="ApplyDate"/> null = วันนี้</summary>
-public record AllocateCustomerCreditRequest(Guid DocumentId, decimal Amount, DateTime? ApplyDate = null);
+/// <param name="ExpectedUnappliedBefore">ฝ่ายค้านรอบ 258 M7: ยอดคงเหลือที่หน้าจอเห็นตอนกด — ไม่ตรงกับของจริงใต้ล็อก = ปฏิเสธ (กันกดซ้ำ/สองแท็บ) · null = ไม่ตรวจ</param>
+public record AllocateCustomerCreditRequest(Guid DocumentId, decimal Amount, DateTime? ApplyDate = null, decimal? ExpectedUnappliedBefore = null);
 
 /// <summary>ผลของการจัดสรร/ยกเลิกการจัดสรร</summary>
 /// <param name="Notices">ข้อความที่ผู้ใช้ต้องรู้ (เช่น ธงภาษีขายล่าช้า) — ว่าง = ไม่มี</param>

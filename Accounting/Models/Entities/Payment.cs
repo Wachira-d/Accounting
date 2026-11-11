@@ -144,6 +144,10 @@ public class Payment : TenantEntity
     public string? UnappliedNote { get; set; }
     /// <summary>เวลาที่ยอดรอจัดสรรเหลือ 0 (จัดสรรครบ) — ยกเลิกการจัดสรรแล้วกลับเป็น null</summary>
     public DateTime? UnappliedResolvedAt { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 258 M4: แถวก่อนรอบ 258 ที่ backfill ประทับ — <b>ต้องตรวจ</b>: ระบบไม่รู้ว่าเงินส่วนเกินนี้ถูกล้างด้วยสมุดรายวันมือไปแล้วหรือยัง
+    /// (JE ไม่มีผู้ติดต่อ เทียบยอดรายลูกค้าไม่ได้) ⇒ ยังไม่นับเป็นเงินรอจัดสรร (ไม่จัดสรร · ไม่ระงับทวง · ไม่ขึ้นรายงาน) จนกว่าคนจะ "ยืนยันว่ายังค้างจริง"
+    /// หรือ "ปิดรายการ" พร้อมเหตุผล (<c>CustomerCreditService.ConfirmLegacyAsync/CloseLegacyAsync</c> + audit)</summary>
+    public bool UnappliedNeedsReview { get; set; }
 
     /// <summary>Per-document allocation lines — populated when ONE
     /// payment settles MULTIPLE documents (e.g. a single ฿15,000

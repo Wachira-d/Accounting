@@ -163,9 +163,15 @@ public class AgingReportService : IAgingReportService
             .OrderByDescending(d => d.TotalBalance).ToList();
 
         var creditTotal = creditByContact.Values.Sum();
+        var shownContacts = meaningful.Select(d => d.ContactId).ToHashSet();
+        var creditOutsideTable = creditByContact.Where(kv => !shownContacts.Contains(kv.Key)).Sum(kv => kv.Value);
         var creditNote = creditTotal > UnappliedCreditBalance.Tolerance
             ? $"เงินรอจัดสรรของลูกค้า (รับเงินแล้วแต่ยังไม่ผูกกับใบ) รวม {creditTotal:N2} บาท ณ ปัจจุบัน — ยอดค้างในรายงานนี้ยังไม่หักเงินส่วนนี้ "
               + "(จัดสรรที่หน้า “เงินรอจัดสรร” แล้วยอดค้างของใบจึงลดลง)"
+              // ฝ่ายค้านรอบ 258 L3: ยอดรวมนี้รวมลูกค้าที่ไม่มีใบค้าง (ไม่อยู่ในตาราง) — บอกจำนวนให้กระทบกับคอลัมน์ในตารางได้
+              + (creditOutsideTable > UnappliedCreditBalance.Tolerance
+                  ? $" · ในจำนวนนี้ {creditOutsideTable:N2} บาทเป็นของลูกค้าที่ไม่มีใบค้างในรายงาน (ไม่อยู่ในตาราง)"
+                  : "")
             : null;
         return new AgingReportResponse(reportType, asOfDate, buckets, meaningful, totals, creditTotal, creditNote);
     }

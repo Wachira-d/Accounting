@@ -270,6 +270,8 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PortalAccessPermissions.MigrationStatements());   // รอบ 257 D-H3 — คืนธงสิทธิ์พอร์ทัลที่หน้าเดิมบันทึกเป็น false ทั้งหมด (ครั้งเดียว · ก่อนเปิดด่านธง)
         list.AddRange(Accounting.Helpers.Round257Pack4Migration.Statements());   // รอบ 257 ชุด 4 — ลายนิ้วมือค่าตั้งต้นรายการประจำ · ใบสำคัญไม่สร้างล่วงหน้า · ถอนความยินยอมเมื่อบริษัทยกเลิกปลายทาง (หลังบล็อกที่สร้างตาราง)
         list.AddRange(Accounting.Helpers.CustomerCreditMigration.Statements());   // รอบ 258 — เงินรอจัดสรร: คอลัมน์ Payments/PaymentAllocations · ผัง 21630 · backfill ครั้งเดียว (หลัง OneShotDataFixesTableSql)
+        // ฝ่ายค้านรอบ 258 M4 — หลัง backfill: แถวที่ backfill รุ่นแรกประทับไปแล้ว (ผังพักไม่ใช่ 21630) ติดธง "ต้องตรวจ" ครั้งเดียวใต้ marker
+        list.Add(Accounting.Helpers.CustomerCreditMigration.LegacyReviewSql());
         return list;
     }
 
