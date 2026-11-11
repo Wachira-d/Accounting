@@ -17945,6 +17945,151 @@ REVIEWER_CASES += [
     ("R257z6", "Update", "storedBasicId: s.LineOaBasicId, storedGroupId: s.LineDefaultGroupId) is string centralValue", "storedBasicId: null) is string centralValue", True),
 ]
 
+# ═══ รอบ 258 แพ็ก "สิทธิ์ + คิวส่ง + หน้าแจ้งเตือนซ้ำ" (erp-review/2026-11-11 · คำตัดสิน 258-2-*) ═══
+_R258P_WHY = "รอบ 258 แพ็ก สิทธิ์+คิวส่ง (คำตัดสิน 258-2-*): "
+_R258P_ESC = "Controllers/EmailScheduleController.cs"
+_R258P_NCC = "Controllers/NotificationConfigController.cs"
+_R258P_NCS = "Services/Implementations/NotificationConfigService.cs"
+_R258P_DENY_RE = r"is\s*\{\s*\}\s*deny\w*\s*\)\s*return\s+deny"
+RULES += [
+    dict(file=_R258P_ESC, method="RequireSettingsAsync", must=["SettingsWriteGate.EvaluateAsync(_permissions"],
+         why=_R258P_WHY + "A-H1/B-H1 ด่านเขียนของหน้าตารางส่งมีตัวตัดสินเดียว (Helpers/SettingsWriteGate)"),
+    dict(file=_R258P_ESC, method="UpsertRule", must=["RequireSettingsAsync(", "rejectApiKey: true"], must_re=[_R258P_DENY_RE],
+         before=[("RequireSettingsAsync(", "_svc.UpsertRuleAsync(")],
+         why=_R258P_WHY + "A-H1/B-H1 แก้กฎ (Bcc · เนื้ออีเมล · ช่องทาง) ต้องถือ CompanySettings.Edit และห้ามใช้ API key"),
+    dict(file=_R258P_ESC, method="DeleteRule", must=["RequireSettingsAsync(", "rejectApiKey: true"], must_re=[_R258P_DENY_RE],
+         before=[("RequireSettingsAsync(", "_svc.DeleteRuleAsync(")], why=_R258P_WHY + "A-H1/B-H1 ลบกฎ = ใบแจ้งหนี้/ทวงหยุดส่งเงียบ"),
+    dict(file=_R258P_ESC, method="Retry", must=["RequireSettingsAsync("], must_re=[_R258P_DENY_RE],
+         before=[("RequireSettingsAsync(", "_svc.RetryFailedAsync(")], why=_R258P_WHY + "A-H1/B-H1 ส่งอีกครั้ง = ส่งอีเมลในนามบริษัท (ด่านเดียวกับคิว LINE)"),
+    dict(file=_R258P_ESC, method="Cancel", must=["RequireSettingsAsync("], must_re=[_R258P_DENY_RE],
+         before=[("RequireSettingsAsync(", "_svc.CancelPendingAsync(")], why=_R258P_WHY + "A-H1/B-H1 ยกเลิกคิวอีเมล"),
+    dict(file=_R258P_NCC, method="RequireSettingsAsync", must=["SettingsWriteGate.EvaluateAsync(_permissions", "rejectApiKey: true"],
+         why=_R258P_WHY + "A-H3 ตารางแจ้งเตือนทั้งบริษัท: CompanySettings.Edit + ห้ามใช้ API key"),
+    dict(file=_R258P_NCC, method="BulkUpsertSettings", must=["RequireSettingsAsync("], must_re=[_R258P_DENY_RE],
+         before=[("RequireSettingsAsync(", "_service.BulkUpsertCompanySettingsAsync(")], why=_R258P_WHY + "A-H3 PUT ตารางแจ้งเตือนต้องผ่านด่านก่อนเขียน"),
+    dict(file=_R258P_NCS, method="BulkUpsertCompanySettingsAsync", must=["NotificationSettingMerge.LineGroup("],
+         forbid=["EnableLineGroup = dto.EnableLineGroup"],
+         why=_R258P_WHY + "A-H3/E-H1 ช่องกลุ่ม LINE ที่ผู้เรียกไม่ส่ง = คงค่าที่ใช้อยู่ (ห้ามเขียนค่าจาก DTO ทับตรง ๆ)"),
+    dict(file=_R258P_NCS, method="ClearLineBindingAsync", must=["AddChainedAuditLog("], before=[("AddChainedAuditLog(", "SaveChangesAsync(")],
+         why=_R258P_WHY + "A-H2 ถอดการผูก LINE ต้องมีร่องรอย (คู่กับ audit ตอนผูก)"),
+    dict(file="Controllers/LineWebhookController.cs", method="IssueBindCode", must=["StaffLineBindView.From("],
+         before=[("StaffLineBindView.From(", "_bot.IssueBindCodeAsync(")],
+         why=_R258P_WHY + "A-M9 ชื่อบอท/ลิงก์เพิ่มเพื่อนมาจากค่าตั้ง OA กลาง · บอทไม่พร้อม = บอกเหตุ ไม่ออกรหัส"),
+]
+REVIEWER_CASES += [
+    # ถอดด่านออกจากการลบกฎ ⇒ ต้องฟ้อง
+    ("R258p1", "DeleteRule", 'if (await RequireSettingsAsync(companyId, "ลบกฎตารางส่ง", rejectApiKey: true) is { } deny) return deny;', "", True),
+    # แก้กฎยอมให้คีย์ทำ ⇒ ต้องฟ้อง
+    ("R258p2", "UpsertRule", 'RequireSettingsAsync(companyId, "แก้กฎตารางส่ง", rejectApiKey: true)', 'RequireSettingsAsync(companyId, "แก้กฎตารางส่ง")', True),
+    # ตารางแจ้งเตือนเรียกด่านแล้วไม่ใช้ผล ⇒ ต้องฟ้อง
+    ("R258p3", "BulkUpsertSettings", 'if (await RequireSettingsAsync(companyId, "แก้ตารางแจ้งเตือนของบริษัท") is { } deny) return deny;',
+     'await RequireSettingsAsync(companyId, "แก้ตารางแจ้งเตือนของบริษัท");', True),
+]
+_R258P_ESS = "Services/Implementations/EmailScheduleService.cs"
+RULES += [
+    dict(file=_R258P_ESS, method="ProcessPendingQueueAsync", must=["RecoverStaleSendingAsync(", "EmailQueueStaleSending.StatusSending"],
+         why=_R258P_WHY + "B-H2 กู้แถวค้างกำลังส่งก่อนจองรอบใหม่ · ประทับเวลาต่อแถวก่อนส่งแบบมีเงื่อนไข (แถวที่ถูกกู้/ยกเลิกไปแล้วไม่ถูกส่ง)"),
+    dict(file=_R258P_ESS, method="RecoverStaleSendingAsync", must=["EmailQueueStaleSending.Cutoff(", "EmailQueueStaleSending.StatusFailed", "EmailQueueStaleSending.StaleReason"],
+         forbid=["StatusPending"],
+         why=_R258P_WHY + "B-H2 แถวค้าง ⇒ Failed พร้อมเหตุ — ห้ามคืนเป็น Pending เอง (ผู้ให้บริการอาจรับไปแล้ว = ส่งซ้ำ)"),
+    dict(file=_R258P_ESS, method="RetryFailedAsync", must=["EmailQueueStaleSending.CanRetry("],
+         why=_R258P_WHY + "B-H2 ลองใหม่รับ Failed + แถวค้างกำลังส่ง (ตัวตัดสินเดียว) — Sent/กำลังส่งจริงไม่รับ"),
+    dict(file=_R258P_ESS, method="CancelPendingAsync", must=["EmailQueueStaleSending.Cutoff(", "EmailQueueStaleSending.StatusSending"],
+         why=_R258P_WHY + "B-H2 ยกเลิกรับ Pending + แถวค้างกำลังส่ง (คำสั่งเดียวแบบมีเงื่อนไข)"),
+    dict(file=_R258P_ESC, method="GetQueue", must=["EmailQueueStaleSending.CanRetry(", "EmailQueueStaleSending.CanCancel("],
+         why=_R258P_WHY + "B-H2 ปุ่มของคิวตัดสินที่เซิร์ฟเวอร์ (หน้าเว็บไม่ตัดสินจากสถานะเอง)"),
+    dict(file=_R258P_ESS, method="ScanMonthlyStatementsAsync", must=["ScheduleCatchUp.Monthly(", "StampScanDayAsync("], forbid=["todayBkk.Day != sendDay"],
+         why=_R258P_WHY + "B-M7 ใบแจ้งยอดรายเดือน: วันที่ตั้ง/ย้อนหลังตัดสินที่ ScheduleCatchUp + ประทับลายน้ำหลังบันทึกคิว"),
+    dict(file=_R258P_ESS, method="ScanDueSoonAndOverdueAsync", must=["ScheduleCatchUp.MissedDays(", "StampScanDayAsync(", "ScanDueDayAsync("],
+         why=_R258P_WHY + "B-M7 ใกล้ครบ/เกินกำหนด: เก็บวันที่พลาด (ลายน้ำต่อกฎ) ก่อนสแกนวันนี้ แล้วประทับลายน้ำ"),
+    dict(file=_R258P_ESS, method="ScanDueDayAsync", must=["ScheduleCatchUp.DueRuleCatchesUp(", "!catchUp && rule.Trigger"],
+         why=_R258P_WHY + "B-M7 ย้อนเก็บเฉพาะกฎ/วันที่ตัวตัดสินอนุญาต · ทวงเฉพาะครั้งแรกของใบ (ไม่ท่วม)"),
+    dict(file=_R258P_ESS, method="UpsertRuleAsync", must=["ScheduleCatchUp.WatermarkAfterEdit("],
+         before=[("ScheduleCatchUp.WatermarkAfterEdit(", "existing.IsActive = rule.IsActive")],
+         why=_R258P_WHY + "B-M7 เปิดกฎที่ปิดไว้/เปลี่ยนตาราง ⇒ ล้างลายน้ำ (ก่อนเขียนค่าใหม่ทับ)"),
+]
+REVIEWER_CASES += [
+    # ตัวกู้คืนแถวค้างเป็น Pending (ส่งซ้ำเอง) ⇒ ต้องฟ้อง
+    ("R258p4", "RecoverStaleSendingAsync", "SetProperty(q => q.Status, EmailQueueStaleSending.StatusFailed)",
+     "SetProperty(q => q.Status, EmailQueueStaleSending.StatusPending)", True),
+    # ใบแจ้งยอดกลับไปเทียบวันนี้ = วันที่ตั้ง อย่างเดียว ⇒ ต้องฟ้อง
+    ("R258p5", "ScanMonthlyStatementsAsync", "if (!monthlyPlan.Send) continue;", "if (todayBkk.Day != sendDay) continue;", True),
+]
+_R258P_REC = "Services/Implementations/RecurringTransactionService.cs"
+RULES += [
+    dict(file=_R258P_REC, method="NoticeRecipientAsync", must=["RecurringStaffNotice.Recipient(", "CompanyMembership.IsActiveMemberAsync("],
+         why=_R258P_WHY + "B-M5 ผู้รับแจ้งเตือนรายการประจำ = ผู้สร้างที่ยังเป็นสมาชิกที่ใช้งาน (ตัวเดียวทุกจุด)"),
+    dict(file=_R258P_REC, method="RecordRunFailureAsync", must=["NoticeRecipientAsync("], forbid=["Guid.TryParse(createdBy, out var ownerId)"],
+         why=_R258P_WHY + "B-M5 แจ้งรอบล้มไม่ส่งถึงผู้สร้างที่ออกจากบริษัทแล้ว"),
+    dict(file=_R258P_REC, method="NotifyStuckDraftAsync", must=["NotificationEvents.RecurringRunFailed", "RecurringStaffNotice.StuckDraftTitle(", "NoticeRecipientAsync("],
+         why=_R258P_WHY + "B-M1 ใบค้างร่างเพราะอนุมัติอัตโนมัติไม่ผ่าน ⇒ แจ้งทีมทันที"),
+    dict(file=_R258P_REC, method="CreateDocumentFromTemplateAsync",
+         must=["NotifyStuckDraftAsync(", "enqueueOutcome.LineQueued", "EmailEnqueueOutcome.WarnNoContactEmail("],
+         before=[("RecordAutoApproveFailureAsync(", "NotifyStuckDraftAsync(")],
+         forbid=["Guid.TryParse(recurring.CreatedBy, out var ownerId)"],
+         why=_R258P_WHY + "B-M1 แจ้งหลังบันทึกเหตุบนใบ · A-M1 ข LINE ออกแล้วไม่เตือนไม่มีอีเมล · B-M5 ผู้รับผ่านตัวเดียว"),
+    dict(file=_R258P_ESS, method="OnRecurringDocumentCreatedAsync", must=["DocumentLineQueuedAsync(", "LineQueued ="],
+         why=_R258P_WHY + "A-M1 ข ตัวเข้าคิวบอกผู้เรียกว่าเอกสารออกทาง LINE แล้วไหม"),
+    dict(file=_R258P_ESS, method="EnqueueRecurringDocumentAsync", must=["EmailEnqueueOutcome.ApprovedRuleDelivered(", "DocumentLineQueuedAsync(companyId, doc.Id, approvedKey"],
+         why=_R258P_WHY + "A-M1 ก กฎเมื่ออนุมัติที่ส่งทาง LINE นับว่าส่งแล้ว (ไม่ส่งซ้ำจากกฎรายการประจำ)"),
+    dict(file=_R258P_ESS, method="DocumentLineQueuedAsync", must=["q.CompanyId == companyId", "ContactLineChannel.StatusSkipped"],
+         why=_R258P_WHY + "A-M1 แถว LINE ที่ 'ข้าม' ไม่ใช่การส่ง · กรองบริษัทเสมอ"),
+    dict(file="Services/Implementations/RecurringAutopilotService.cs", method="BuildAsync",
+         must=["RecurringApprovePolicyLoader.AutoApproverRefusalAsync(", "AutoApproverRefusal = approverRefusal"],
+         why=_R258P_WHY + "B-M2 แผงความพร้อม/ทดลองรันใช้ด่านผู้อนุมัติตัวเดียวกับรอบรันจริง"),
+]
+REVIEWER_CASES += [
+    # กฎเมื่ออนุมัติกลับไปดูแต่คิวอีเมล (LINE อย่างเดียวไม่ถูกนับ ⇒ ส่งซ้ำ) ⇒ ต้องฟ้อง
+    ("R258p6", "EnqueueRecurringDocumentAsync", "await DocumentLineQueuedAsync(companyId, doc.Id, approvedKey, ct));", "false);", True),
+    # อนุมัติอัตโนมัติไม่ผ่านแล้วไม่แจ้งทีม ⇒ ต้องฟ้อง
+    ("R258p7", "CreateDocumentFromTemplateAsync",
+     "await NotifyStuckDraftAsync(recurring, result.Id, result.DocumentNumber, DocumentApprovalWarningsException.DescribeForUser(ex));", "{ }", True),
+]
+_R258P_BOT = "Services/Implementations/LineBotService.cs"
+RULES += [
+    dict(file="Controllers/LineWebhookController.cs", method="HandleOneToOneEventAsync",
+         must=["_groups.MarkEventSeenAsync(", "_groups.UnmarkEventSeenAsync(", "_bot.ReplyAsync(userId, reply, replyToken)"],
+         before=[("_groups.MarkEventSeenAsync(", "_bot.HandleMessageAsync("), ("_groups.MarkEventSeenAsync(", "_bot.HandleImageAsync("),
+                 ("_groups.MarkEventSeenAsync(", "_bot.HandlePostbackAsync(")],
+         why=_R258P_WHY + "A-M3 event 1:1 ของ OA กลางกันซ้ำด้วย webhookEventId (ตารางในฐาน) ก่อนประมวล · A-M2 ตอบด้วย reply token"),
+    dict(file=_R258P_BOT, method="ReplyAsync", must=["_customerLinks.ReplyAsync(", "LineUnboundSender.PushFallbackAllowed("],
+         before=[("_customerLinks.ReplyAsync(", "TryPushViaNextAccAsync("), ("LineUnboundSender.PushFallbackAllowed(", "TryPushViaNextAccAsync(")],
+         why=_R258P_WHY + "A-M2 reply token ก่อน · ถอยไป push เฉพาะผู้ส่งที่ผูกบัญชีแล้ว (คนแปลกหน้าไม่ทำให้เกิด push)"),
+    dict(file=_R258P_BOT, method="UnboundReplyAsync", must=["_rateLimiter.TryConsumeAsync(", "LineUnboundSender.Reply("],
+         why=_R258P_WHY + "A-M2 คำตอบถึงคนที่ยังไม่ผูกจำกัดต่อผู้ส่ง (ตัวนับในฐาน)"),
+    dict(file=_R258P_BOT, method="HandleMessageAsync", must=["UnboundReplyAsync("], why=_R258P_WHY + "A-M2 ข้อความจากคนที่ยังไม่ผูกผ่านตัวจำกัด"),
+    dict(file=_R258P_BOT, method="HandleImageAsync", must=["UnboundReplyAsync("], why=_R258P_WHY + "A-M2 รูป/ไฟล์จากคนที่ยังไม่ผูกผ่านตัวจำกัด"),
+    dict(file=_R258P_BOT, method="HandlePostbackAsync", must=["UnboundReplyAsync("], why=_R258P_WHY + "A-M2 ปุ่มกดจากคนที่ยังไม่ผูกผ่านตัวจำกัด"),
+]
+REVIEWER_CASES += [
+    # ตอบโดยไม่ส่ง reply token (กลับไป push ทุกข้อความ) ⇒ ต้องฟ้อง
+    ("R258p8", "HandleOneToOneEventAsync", "await _bot.ReplyAsync(userId, reply, replyToken);", "await _bot.ReplyAsync(userId, reply);", True),
+    # push โดยไม่ถามว่าผู้ส่งผูกแล้วหรือยัง ⇒ ต้องฟ้อง
+    ("R258p9", "ReplyAsync", "if (!LineUnboundSender.PushFallbackAllowed(replied, bound))", "if (false)", True),
+]
+_R258P_OCRC = "Controllers/OcrController.cs"
+RULES += [
+    dict(file=_R258P_OCRC, method="CreateDocument",
+         must=["_service.GetResultAsync(companyId, scanId)", "scanBefore?.ComplianceIssues?.Select(", "scanBefore?.Quality?.Letter"],
+         before=[("_service.GetResultAsync(companyId, scanId)", "_service.CreateDocumentFromScanAsync(")],
+         why=_R258P_WHY + "C-H2 สร้าง+อนุมัติจากเว็บ/คีย์ใช้ด่านเต็มตัวเดียวกับ LINE (ผลตรวจตามสรรพากร + เกรดคุณภาพ) — ไม่ประเมิน = ไม่อนุมัติเอง"),
+    dict(file="Services/Implementations/OcrService.cs", method="WithAutoApproveVerdict", must=["OcrPostingReadiness.EvaluateUnseen("],
+         why=_R258P_WHY + "C-H2 ธง canAutoApprove ตัดสินที่เซิร์ฟเวอร์ (หน้าเว็บไม่ถือกติกาเอง)"),
+    dict(file=_R258P_OCRC, method="OcrQuotaExhaustedAsync", must=["_quota.GetQuotaStatusAsync("],
+         why=_R258P_WHY + "C-M4 คำตอบโควต้าหมดตัวเดียวของ /upload และ /scan/{id}"),
+    dict(file="Controllers/V1/OcrV1Controller.cs", method="Scan", must=["OcrQuotaRefundRule.NotBilledReason("],
+         before=[("OcrQuotaRefundRule.NotBilledReason(", "MeterAsync(")],
+         why=_R258P_WHY + "C-H3 API v1 ไม่คิดเงินสแกนที่ล้ม/ผลเดิม/e-Tax XML (กติกาเดียวกับเว็บ/LINE) — ตัดสินก่อนคิดเงิน"),
+]
+REVIEWER_CASES += [
+    # คำตอบโควต้าหมดไม่อ่านสถานะโควตา (ข้อความไม่มีตัวเลขใช้ไป/เพดาน) ⇒ ต้องฟ้อง
+    ("R258p10", "OcrQuotaExhaustedAsync", "var status = await _quota.GetQuotaStatusAsync(companyId);", "object? status = null;", True),
+    # API v1 กลับไปคิดเงินทุกกรณี (ไม่ถามกติกาคืนโควตา) ⇒ ต้องฟ้อง
+    ("R258p11", "Scan", "var notBilled = Accounting.Helpers.OcrQuotaRefundRule.NotBilledReason(result.ScanStatus, result.OcrEngine);",
+     "string? notBilled = null;", True),
+]
+# ═══ จบ รอบ 258 แพ็ก สิทธิ์+คิวส่ง ═══
+
 
 # ── รอบ 258 "เงินรอจัดสรร" (erp-review/2026-11-11/team-D-lump-payment.md §3.9 · DECISIONS 258-1-*) ──
 # ลูกค้าโอนก้อนเดียวปิดหลายยอดแต่ออกใบไว้ใบเดียว: เงินส่วนเกินลงผังพัก 21630 แล้วจัดสรรทีหลังให้ใบที่ออกภายหลัง ·
@@ -18012,7 +18157,7 @@ RULES += [
          why=_R258_WHY + "ถอยภาษีขายตอนยกเลิกการจัดสรรใช้ตัวเดียวกับยกเลิกการรับชำระ (ผู้ใช้กดเอง = งวดปิดต้องปฏิเสธ)"),
     dict(file="Helpers/LateReceiptTaxPoint.cs", method="Decide", must=["DepositPolicyResolver.ForfeitTaxPointDecision(", "DepositForfeitVatRoute.UndueReclassification"],
          why=_R258_WHY + "งวดภาษีของเงินที่รับก่อนผูกใบ = ตัวตัดสินเดียวกับการริบมัดจำ (ไม่มีสูตรที่สอง)"),
-    dict(file="Services/Implementations/EmailScheduleService.cs", method="ScanDueSoonAndOverdueAsync",
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="ScanDueDayAsync",   # ตัวสแกนรายวันของ ScanDueSoonAndOverdueAsync (วันนี้ + วันที่ย้อนเก็บ)
          must=["DunningSuppression.Decide(", "CustomerCreditQuery.UnappliedByContactAsync(", "creditHold.SuppressCustomerReminder", "AddNotSentRow("],
          before=[("DunningSuppression.Decide(", "EnqueueDocumentAsync(rule, doc")],
          why=_R258_WHY + "258-1-9: ลูกค้าที่มีเงินรอจัดสรรพอปิดใบ ห้ามถูกเตือน/ทวง (อีเมล·LINE) — แถวข้ามพร้อมเหตุ"),

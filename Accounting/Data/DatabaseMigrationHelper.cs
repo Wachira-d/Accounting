@@ -282,6 +282,9 @@ public static class DatabaseMigrationHelper
     {
         """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "UpcomingRunNotifiedFor" timestamp NULL;""",
         """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "RepeatActivatedAt" timestamp NULL;""",
+        // รอบ 258 (B-M7): ลายน้ำสแกนตามวันต่อกฎ + บันทึกการส่งย้อนหลัง (Helpers/ScheduleCatchUp)
+        """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "LastDayScanBkk" timestamp NULL;""",
+        """ALTER TABLE "EmailScheduleRules" ADD COLUMN IF NOT EXISTS "LastCatchUpNote" text NULL;""",
         """UPDATE "EmailScheduleRules" SET "RepeatActivatedAt" = (now() at time zone 'utc') WHERE "RepeatEveryDays" > 0 AND "RepeatActivatedAt" IS NULL;""",
         """
         DO $$

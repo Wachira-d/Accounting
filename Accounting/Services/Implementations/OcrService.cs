@@ -10668,7 +10668,19 @@ public class OcrService : IOcrService
                 ComplianceIssues = Ocr.OcrScanComplianceEvaluator.Evaluate(x, ourTaxId),
                 DocumentSideMap = sideMap,
             })
+            // รอบ 258 (C-H2): ธง "อนุมัติรวดได้ไหม" ตัดสินที่เซิร์ฟเวอร์จากผลตรวจข้างบน (ตัวเดียว OcrPostingReadiness.EvaluateUnseen)
+            .Select(WithAutoApproveVerdict)
             .ToList();
+    }
+
+    /// <summary>รอบ 258 (C-H2): เติมธง <c>CanAutoApprove</c>/<c>AutoApproveBlockedReason</c> จากข้อเท็จจริงของแถว (หลังประเมินตามสรรพากรแล้ว)</summary>
+    private static OcrResultResponse WithAutoApproveVerdict(OcrResultResponse x)
+    {
+        var verdict = Accounting.Helpers.OcrPostingReadiness.EvaluateUnseen(
+            x.ScanStatus, x.CreatedDocumentId.HasValue, x.IsDuplicate, x.HasHandwriting, x.HasPotentialFixedAsset,
+            !string.IsNullOrWhiteSpace(x.ExtractedVendorName), x.ExtractedTotalAmount != null,
+            x.ProcessingNotes, x.ExtractedDate != null, x.ComplianceIssues?.Select(i => i.Severity), x.Quality?.Letter);
+        return x with { CanAutoApprove = verdict.CanAutoApprove, AutoApproveBlockedReason = verdict.Reason };
     }
 
     /// <summary>เวอร์ชันรายตัว — ใช้กับ endpoint ที่คืนผลสแกนใบเดียว</summary>

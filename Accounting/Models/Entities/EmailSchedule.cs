@@ -51,6 +51,13 @@ public class EmailScheduleRule : TenantEntity
     /// ระบบประทับเอง (<c>OverdueReminderSchedule.NextActivatedAt</c>) · null = ไม่เปิด/ไม่รู้ ⇒ ไม่ส่งซ้ำ</summary>
     public DateTime? RepeatActivatedAt { get; set; }
 
+    /// <summary>รอบ 258 (B-M7): ลายน้ำ "วันที่ไทยที่ตัวสแกนตามวันสแกนกฎนี้ครั้งล่าสุด" (เที่ยงคืนของวันนั้น) — ระบบเขียนเอง ·
+    /// null = ยังไม่เคยสแกน/เพิ่งแก้ตาราง (ไม่ย้อนเก็บ) · ผู้อ่าน: <c>Helpers/ScheduleCatchUp</c></summary>
+    public DateTime? LastDayScanBkk { get; set; }
+
+    /// <summary>รอบ 258 (B-M7): บันทึกการส่งย้อนหลังครั้งล่าสุด (ระบบไม่ได้ทำงานในวันที่ตั้งไว้) — ระบบเขียนเอง · หน้าตารางส่งแสดงใต้กฎ</summary>
+    public string? LastCatchUpNote { get; set; }
+
     /// <summary>หัวเรื่องเทมเพลต — รองรับ placeholder
     /// {DocNumber} {DueDate} {ContactName} {Amount} {CompanyName}.
     /// null = ใช้ default ของ DocumentEmailService.</summary>

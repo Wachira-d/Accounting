@@ -64,18 +64,17 @@
     <div id="paneLine" class="tab-pane hidden">
       <div style="max-width:560px">
         <div style="background:#f0fdf4;border:1px solid #86efac;padding:10px 12px;border-radius:6px;margin-bottom:14px;font-size:13px;color:#14532d">
-          ผูกรหัสผู้ใช้ LINE ของคุณ → ระบบจะส่งแจ้งเตือนเข้า LINE ส่วนตัว (ไม่ใช่กลุ่ม) · ถ้ายังไม่ผูก ระบบจะแจ้งทางกระดิ่งในระบบ / อีเมลแทนโดยอัตโนมัติ
+ผูก LINE ของคุณ → ระบบจะส่งแจ้งเตือนเข้า LINE ส่วนตัว (ไม่ใช่กลุ่ม) · ถ้ายังไม่ผูก ระบบจะแจ้งทางกระดิ่งในระบบ / อีเมลแทนโดยอัตโนมัติ
         </div>
-        <div class="form-group">
-          <label class="form-label" for="lineUid">รหัสผู้ใช้ LINE (User ID)</label>
-          <input type="text" class="form-input" id="lineUid" placeholder="U1234abcd..." maxlength="64">
-          <div style="font-size:11px;color:#94a3b8;margin-top:4px">
-            หารหัสได้จาก: เพิ่ม LINE OA ของบริษัทเป็นเพื่อน → ทักไปหนึ่งข้อความ → ผู้ดูแลระบบเห็นรหัสในบันทึกของ OA (หรือใช้ <a href="https://developers.line.biz/console/" target="_blank" style="color:#0ea5e9">LINE Developers Console</a>)
-          </div>
+        <!-- รอบ 258 (A-H2): ผูกได้ทางเดียวคือรหัส 6 หลักที่หน้า "เชื่อมต่อ LINE" (จำกัดความถี่ · บันทึกร่องรอย · อีเมลแจ้งเจ้าของบัญชี) —
+             ช่องพิมพ์รหัสผู้ใช้ LINE ถูกถอด (รหัสนั้นคือกุญแจที่บอทใช้ยืนยันว่าเป็นคุณ) -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a class="btn btn-primary" href="/pages/line-bind.html">📱 เชื่อมต่อ LINE ด้วยรหัส 6 หลัก</a>
+          <button class="btn btn-danger" id="btnClearLine" onclick="Page.clearLine()" style="display:none">ยกเลิกการเชื่อมต่อ</button>
         </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-primary" onclick="Page.saveLine()">บันทึก</button>
-          <button class="btn btn-danger" onclick="Page.clearLine()">ยกเลิกการเชื่อมต่อ</button>
+        <div style="font-size:12px;color:#64748b;margin-top:8px">
+          ขั้นตอน: กดปุ่มด้านบน → ได้รหัส 6 หลัก → เพิ่มบัญชี LINE ของ NextAcc เป็นเพื่อน → ส่งข้อความ <strong>ผูก [รหัส]</strong> ในแชตนั้น ·
+          ระบบส่งอีเมลแจ้งคุณทุกครั้งที่มี LINE ผูกเข้าบัญชี
         </div>
         <div id="lineStatus" style="margin-top:12px;font-size:13px"></div>
       </div>
@@ -87,10 +86,7 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script>
-    const roleLabels = {
-      Requester: 'ผู้ขอ', DirectManager: 'หัวหน้าตรง', DepartmentHead: 'หัวหน้าแผนก',
-      HR_Admin: 'ฝ่ายบุคคล', Accounting: 'ฝ่ายบัญชี', Owner: 'เจ้าของบริษัท'
-    };
+    // รอบ 258 (E-H1): ป้ายบทบาทมาจากเซิร์ฟเวอร์ (catalog.roleLabels) — หน้านี้ไม่มีสำเนา
 
     const Page = {
       _catalog: null, _matrix: {}, _prefs: {},
@@ -150,6 +146,7 @@
       renderMatrix() {
         const cat = this._catalog; if (!cat) return;
         const roles = cat.recipientRoles;
+        const roleLabels = cat.roleLabels || {};
         const groups = {};
         cat.events.forEach(e => { (groups[e.domain] ||= []).push(e); });
         // รอบ 232 (232-Notify): ช่องที่ 4 "กลุ่ม LINE ของบริษัท" (OA ของร้าน · หนึ่งครั้งต่อเหตุการณ์ · ไม่ขึ้นกับบทบาท) — เซิร์ฟเวอร์ส่งแถวค่าตั้งต้น (isDefault) มาให้
@@ -271,27 +268,20 @@
         try {
           const res = await api.getMyLineBinding();
           const d = res.data || {};
-          document.getElementById('lineUid').value = d.lineUserId || '';
-          document.getElementById('lineStatus').innerHTML = d.isBound
-            ? '<span style="color:#059669">✓ เชื่อมต่อ LINE แล้ว — ระบบจะส่งแจ้งเตือนเข้า LINE ส่วนตัวของคุณ</span>'
-            : '<span style="color:#94a3b8">ยังไม่ได้เชื่อมต่อ — ระบบจะแจ้งทางกระดิ่งในระบบ / อีเมลแทน</span>';
+          const st = document.getElementById('lineStatus');
+          st.textContent = d.isBound
+            ? '✓ เชื่อมต่อ LINE แล้ว' + (d.lineUserIdTail ? ' (บัญชี LINE ลงท้าย ' + d.lineUserIdTail + ')' : '') + ' — ระบบจะส่งแจ้งเตือนเข้า LINE ส่วนตัวของคุณ'
+            : 'ยังไม่ได้เชื่อมต่อ — ระบบจะแจ้งทางกระดิ่งในระบบ / อีเมลแทน';
+          st.style.color = d.isBound ? '#059669' : '#94a3b8';
+          const clr = document.getElementById('btnClearLine');
+          if (clr) clr.style.display = d.isBound ? '' : 'none';
         } catch (e) {
           // รอบ 250 WP-03 (D §4.5): ล้มดัง (เดิม /* ignore */ — ช่องว่างดูเหมือน "ยังไม่ผูก")
           Layout.panelError('lineStatus', 'โหลดสถานะการเชื่อมต่อ LINE ไม่สำเร็จ — สถานะจริงอาจผูกอยู่แล้ว', () => this.loadLine(), e && e.message);
         }
       },
-      async saveLine() {
-        const api = Layout.api(); if (!api) return;
-        const val = document.getElementById('lineUid').value.trim();
-        if (!val) { Layout.toast('กรุณาระบุ LINE User ID', 'error'); return; }
-        try {
-          await api.setMyLineBinding({ lineUserId: val });
-          Layout.toast('บันทึกการเชื่อมต่อสำเร็จ');
-          await this.loadLine();
-        } catch (e) { Layout.toast(e.message, 'error'); }
-      },
       async clearLine() {
-        if (!(await Layout.confirm('ยืนยันยกเลิกการเชื่อมต่อ LINE?'))) return;
+        if (!(await Layout.confirm('ยืนยันยกเลิกการเชื่อมต่อ LINE? — บอทจะไม่รับคำสั่งจาก LINE นี้ในนามคุณอีก (ผูกใหม่ได้ด้วยรหัส 6 หลัก)'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.clearMyLineBinding();

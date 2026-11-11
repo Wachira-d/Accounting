@@ -1543,7 +1543,6 @@ const API = {
       getMyNotificationPreferences: () => API.get(`${base}/notifications/config/preferences/me`),
       upsertMyNotificationPreferences: (d) => API.put(`${base}/notifications/config/preferences/me`, d),
       getMyLineBinding: () => API.get(`${base}/notifications/config/line-binding/me`),
-      setMyLineBinding: (d) => API.put(`${base}/notifications/config/line-binding/me`, d),
       clearMyLineBinding: () => API.del(`${base}/notifications/config/line-binding/me`),
       // Tax Calendar
       getTaxEvents: (q = '') => API.get(`${base}/tax-calendar${q}`),

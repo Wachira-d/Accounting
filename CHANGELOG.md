@@ -6912,3 +6912,28 @@ _รอบ 258 — "เงินรอจัดสรร" (แพ็ก P1–P3 
 (6) ระงับเตือน/ทวงลูกค้าเมื่อเงินรอจัดสรร ≥ ยอดค้างของใบ + แจ้งทีมแทน (`DunningSuppression`) · อายุลูกหนี้/ใบแจ้งยอดแสดงเงินรอจัดสรรแยกบรรทัด. (7) backfill ครั้งเดียวของแถวเดิม.
 ยังไม่ทำ: ออกใบที่ขาด/ย้ายเป็นมัดจำ/คืนเงิน/ตัดเศษ (P4) · คิวเงินโอน/ธนาคาร (P5) · แจ้งเตือนอายุ/พอร์ทัล (P6 ที่เหลือ). เทสต์ `CustomerCreditRound258Tests` ·
 `Db/CustomerCreditDbTests` · กติกา R258 ใน `required_call_site_check`. commit 24a8df4a — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 1 (สิทธิ์ + หน้าแจ้งเตือนซ้ำ + ทางผูก LINE ที่สอง · team-A H1/H2/H3/M9/L9 · team-B B-H1 · team-E E-H1 · คำตัดสิน 258-2-1…258-2-3):
+ด่านเขียนของกฎตารางส่ง/คิวอีเมล (`SettingsWriteGate` — CompanySettings.Edit · ตั้ง/ลบกฎห้ามใช้ API key) · ตารางแจ้งเตือนของบริษัทมีด่าน + ช่องกลุ่ม LINE ที่ไม่ส่ง = คงเดิม
+(`NotificationSettingMerge`) · ถอดตารางสำเนาจาก settings.html (บ้านเดียว notifications.html) · ป้ายบทบาทจากเซิร์ฟเวอร์ · ถอด PUT line-binding/me (ผูกด้วยรหัสทางเดียว) +
+audit ตอนถอด · line-bind.html ใช้ชื่อบอทจากค่าตั้ง OA กลาง (`StaffLineBindView`) · write_permission_gate_check WATCHED +2 (baseline −8) · required_call_site_check R258p 10 ข้อ + 3 เคสกลายพันธุ์_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 1: ด่านเขียนตารางส่ง/ตารางแจ้งเตือน · บ้านเดียวของตารางแจ้งเตือน · ผูก LINE พนักงานทางเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 24b3680e)_
+
+_รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 2 (คิวส่ง · team-B B-H2/B-M7 · คำตัดสิน 258-2-4…258-2-5): แถวคิวอีเมลค้าง "กำลังส่ง" เกิน 30 นาที ⇒ Failed พร้อมเหตุ (ไม่คืน Pending เอง) + ประทับเวลาต่อแถวก่อนส่ง ·
+ลองใหม่/ยกเลิกรับแถวค้าง · ธง canRetry/canCancel จากเซิร์ฟเวอร์ · Autopilot นับแถวค้าง (`EmailQueueStaleSending`) · กฎตามวันที่พลาดวันเป้าหมาย: ลายน้ำต่อกฎ `LastDayScanBkk` +
+ย้อนเก็บไม่เกิน 3 วัน + บันทึก `LastCatchUpNote` บนหน้าตารางส่ง (`ScheduleCatchUp`) · migration เพิ่ม 2 คอลัมน์ใน EmailScheduleRules · required_call_site_check R258p +9 ข้อ + 2 เคสกลายพันธุ์_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 2: คิวอีเมลค้างกำลังส่ง · กฎตามวันย้อนเก็บแบบมีขอบเขต — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 54c83725)_
+
+_รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 3 (รายการประจำ · team-B B-M1/B-M2/B-M5 · team-A M1 · คำตัดสิน 258-2-6): อนุมัติอัตโนมัติไม่ผ่าน ⇒ แจ้งทีมทันที (`recurring.run_failed` · `RecurringStaffNotice`) ·
+ผู้รับ = ผู้สร้างที่ยังเป็นสมาชิก (ตัวเดียว 4 จุด) · แผงความพร้อมมีข้อ `APPROVER-GONE` (ด่านเดียวกับรอบรันจริง) · กฎเมื่ออนุมัติที่ส่งทาง LINE นับว่าครอบแล้ว +
+LINE ออกแล้วไม่เตือน "ไม่มีอีเมล" (`EmailEnqueueOutcome.ApprovedRuleDelivered/WarnNoContactEmail/LineQueued`) · required_call_site_check R258p +8 ข้อ + 2 เคสกลายพันธุ์_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 3: รายการประจำ — แจ้งทีมเมื่อค้างร่าง · ผู้รับ · ความพร้อม · LINE — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 38e7503f)_
+
+_รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 4 (webhook OA กลาง · team-A M2/M3 · คำตัดสิน 258-2-7): event 1:1 กันซ้ำด้วย webhookEventId (ตารางเดิมในฐาน) + try ต่อ event · ตอบด้วย reply token ก่อน
+ถอยไป push เฉพาะผู้ส่งที่ผูกแล้ว · คนที่ยังไม่ผูกจำกัด 3/นาที · 20/วัน (`LineUnboundSender`) · required_call_site_check R258p +6 ข้อ + 2 เคสกลายพันธุ์_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 4: webhook OA กลาง 1:1 — กันซ้ำ · reply token · จำกัดคนที่ยังไม่ผูก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b5724a3c)_
+
+_รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 5 (OCR · team-C H2/H3/M3/M4 · คำตัดสิน 258-2-8): create-document?approve=true ใช้ด่านเต็มตัวเดียวกับ LINE (ผลตรวจตามสรรพากร + เกรดคุณภาพ) ·
+ธง `canAutoApprove`/`autoApproveBlockedReason` จากเซิร์ฟเวอร์แทนกติกา `_isBatchApprovable` ใน JS (`OcrPostingReadiness.EvaluateUnseen`) · scan/{fileAttachmentId} หักโควตา/คืนตามกติกาเดียวกับ /upload ·
+API v1 ไม่คิดเงินสแกนที่ล้ม/ผลเดิม/e-Tax XML (`OcrQuotaRefundRule.NotBilledReason`) + ตอบ scanStatus · ai-tools.html แท็บ OCR: Layout.esc + สถานะตามจริง + เลิกสร้างเอกสารข้ามหน้าตรวจ ·
+required_call_site_check R258p +4 ข้อ + 1 เคสกลายพันธุ์_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 5: สแกนเอกสาร — ด่านอนุมัติรวดฝั่งเซิร์ฟเวอร์ · โควตา/ค่าบริการ · แท็บ OCR ของ ai-tools — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e159d198)_

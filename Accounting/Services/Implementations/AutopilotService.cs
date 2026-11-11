@@ -160,14 +160,18 @@ public class AutopilotService : IAutopilotService
             $"document-auto-send/post-payment-runs/{r.Id}/retry", "เปิดเอกสาร", DocHref(r.DocumentId))));
 
         // (4) อีเมลเอกสารส่งไม่สำเร็จ (คิว)
+        var staleSendingCutoff = EmailQueueStaleSending.Cutoff(DateTime.UtcNow);
         var failedMail = await _db.EmailQueues.AsNoTracking()
-            .Where(q => q.CompanyId == companyId && q.Status == "Failed" && q.EntityType == "Document" && q.CreatedAt >= window)
+            // รอบ 258 (B-H2): รวมแถวที่ค้าง "กำลังส่ง" เกินเส้นแบ่ง (ตัวกู้จะประทับล้มในรอบถัดไป — ระหว่างนั้นก็ต้องเห็น)
+            .Where(q => q.CompanyId == companyId && q.EntityType == "Document" && q.CreatedAt >= window
+                && (q.Status == EmailQueueStaleSending.StatusFailed
+                    || (q.Status == EmailQueueStaleSending.StatusSending && (q.UpdatedAt ?? q.CreatedAt) < staleSendingCutoff)))
             .OrderByDescending(q => q.CreatedAt).Take(50)
-            .Select(q => new { q.EntityId, q.ToEmail, q.ErrorMessage, q.CreatedAt,
+            .Select(q => new { q.EntityId, q.ToEmail, q.ErrorMessage, q.CreatedAt, q.Status,
                 Number = _db.Documents.Where(d => d.Id == q.EntityId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefault() })
             .ToListAsync(ct);
         list.AddRange(failedMail.Select(m => new AutopilotIssueDto("EmailFailed", $"{m.Number ?? "เอกสาร"}: ส่งอีเมลถึง {m.ToEmail} ไม่สำเร็จ",
-            m.ErrorMessage ?? "ส่งไม่สำเร็จครบรอบ", m.CreatedAt, m.EntityId, "เปิดเอกสารแล้วส่งใหม่", DocHref(m.EntityId), null, null, null)));
+            m.ErrorMessage ?? (m.Status == EmailQueueStaleSending.StatusSending ? EmailQueueStaleSending.StaleReason : "ส่งไม่สำเร็จครบรอบ"), m.CreatedAt, m.EntityId, "เปิดเอกสารแล้วส่งใหม่", DocHref(m.EntityId), null, null, null)));
 
         // (5) ใบเสนอราคาที่ลูกค้ายอมรับแต่แปลงอัตโนมัติไม่ได้
         var held = new[] { nameof(QuotationAcceptAutopilot.Outcome.Held), nameof(QuotationAcceptAutopilot.Outcome.Failed) };

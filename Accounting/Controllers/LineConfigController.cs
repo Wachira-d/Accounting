@@ -147,6 +147,7 @@ public class LineConfigController : ControllerBase
 
     [HttpPost("test")]
     [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ทดสอบส่ง LINE")]   // รอบ 258 (A-L9): คู่กับ PUT — ส่งข้อความในนามบริษัท + ประทับ "ตั้งค่าแล้ว"
     public async Task<ActionResult<ApiResponse<LineTestResult>>> Test(
         Guid companyId, [FromBody] TestLineConfigRequest req)
     {

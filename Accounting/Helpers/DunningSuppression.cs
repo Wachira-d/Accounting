@@ -12,7 +12,7 @@ public sealed record DunningSuppressionDecision(bool SuppressCustomerReminder, s
 /// <para>ที่มา: ลูกค้าโอนก้อนเดียวปิด 2 ยอด แต่ออกใบไว้ใบเดียว ⇒ เงินอีกส่วนค้างเป็นเงินรอจัดสรร · ใบที่ออกทีหลังยังขึ้น "ค้างชำระ" จนกว่าจะกดจัดสรร
 /// ⇒ ลูกค้าที่จ่ายครบแล้วถูกทวง · กติกา: เงินรอจัดสรรของลูกค้า ≥ ยอดค้างของใบ ⇒ <b>ไม่ทวงลูกค้า</b> แจ้งทีมงานให้จัดสรรแทน ·
 /// น้อยกว่า ⇒ ทวงตามเดิม (ข้อความภายในบอกยอดเงินรอจัดสรร) · ไม่มีเงินรอจัดสรร ⇒ พฤติกรรมเดิมทุกประการ</para>
-/// <para>ผู้เรียก (ล็อกใน <c>tools/required_call_site_check.py</c>): <c>EmailScheduleService.ScanDueSoonAndOverdueAsync</c> (อีเมล/LINE ถึงลูกค้า) ·
+/// <para>ผู้เรียก (ล็อกใน <c>tools/required_call_site_check.py</c>): <c>EmailScheduleService.ScanDueDayAsync</c> (ตัวสแกนรายวันของเตือนครบกำหนด/เกินกำหนด — อีเมล/LINE ถึงลูกค้า · รวมวันที่ย้อนเก็บ) ·
 /// <c>OverdueDunningJob</c> (หนังสือทวงตามอายุหนี้)</para>
 /// </summary>
 public static class DunningSuppression

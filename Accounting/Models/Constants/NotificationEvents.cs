@@ -234,4 +234,16 @@ public static class NotificationRecipientRoles
     {
         Requester, DirectManager, DepartmentHead, HrAdmin, Accounting, Owner
     };
+
+    /// <summary>รอบ 258 (E-H1 · F2 ข้อ 5): ป้ายไทยของบทบาทผู้รับ — ตัวตั้งตัวเดียว ส่งให้หน้าเว็บผ่านแคตตาล็อก
+    /// (เดิมหน้า settings/notifications มีสำเนาใน JS สองชุดที่คำไม่ตรงกัน)</summary>
+    public static readonly IReadOnlyDictionary<string, string> Labels = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [Requester] = "ผู้ขอ",
+        [DirectManager] = "หัวหน้าตรง",
+        [DepartmentHead] = "หัวหน้าแผนก",
+        [HrAdmin] = "ฝ่ายบุคคล",
+        [Accounting] = "ฝ่ายบัญชี",
+        [Owner] = "เจ้าของบริษัท",
+    };
 }

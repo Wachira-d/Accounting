@@ -1400,17 +1400,9 @@
        *  เพราะการอนุมัติรวดข้ามขั้นตรวจของคน ถ้าปล่อยใบที่มีข้อสงสัยผ่าน
        *  ผู้ใช้จะเลิกเชื่อทั้งฟีเจอร์ */
       _isBatchApprovable(s) {
-        if (s.scanStatus !== 'Completed' || s.createdDocumentId) return false;
-        if (s.isDuplicate || s.hasHandwriting || s.hasPotentialFixedAsset) return false;
-        // complianceIssues = undefined แปลว่า "เซิร์ฟเวอร์ยังไม่ได้ประเมิน"
-        // → ไม่ใช่ "ไม่มีปัญหา" จึงไม่ปล่อยผ่าน (สัญญาเดียวกับตอนวาดคำเตือน)
-        if (!Array.isArray(s.complianceIssues)) return false;
-        if (s.complianceIssues.some(i => i.severity === 'error')) return false;
-        // ต้องมีข้อมูลครบพอจะลงบัญชีได้จริง
-        if (!s.extractedVendorName || s.extractedTotalAmount == null || !s.extractedDate) return false;
-        // เกรดคุณภาพ D = ควรถ่ายใหม่ ไม่ควรอนุมัติรวด
-        if (s.quality?.letter === 'D') return false;
-        return true;
+        // รอบ 258 (C-H2): เซิร์ฟเวอร์ตัดสิน (OcrPostingReadiness.EvaluateUnseen → s.canAutoApprove) — หน้านี้ไม่ถือกติกาเอง ·
+        // undefined/null = "ยังไม่ได้ประเมิน" ≠ "ได้" จึงไม่ปล่อยผ่าน · เส้น create-document?approve=true ตรวจซ้ำที่เซิร์ฟเวอร์ด้วยด่านเดียวกับ LINE
+        return s.canAutoApprove === true;
       },
 
       toggleSelectAll(on) {

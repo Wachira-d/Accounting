@@ -29,5 +29,7 @@ public interface ILineBotService
 
     /// <summary>Reply to a user via the LINE Messaging API push endpoint
     /// using the configured ChannelAccessToken.</summary>
-    Task ReplyAsync(string lineUserId, string text);
+    /// <summary>รอบ 258 (A-M2): ตอบผู้ส่ง — มี <paramref name="replyToken"/> = ตอบด้วย reply token ก่อน (ไม่กินโควตา push) ·
+    /// ถอยไป push เฉพาะเมื่อ reply ล้มและผู้ส่งผูกบัญชีแล้ว</summary>
+    Task ReplyAsync(string lineUserId, string text, string? replyToken = null);
 }
