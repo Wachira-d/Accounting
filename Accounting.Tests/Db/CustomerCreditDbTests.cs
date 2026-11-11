@@ -305,7 +305,7 @@ public class CustomerCreditDbTests
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
             var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Credits(req).AllocateAsync(s.CompanyId, pay.Id,
-                new AllocateCustomerCreditRequest(own.Id, 600m), "tester"));
+                new AllocateCustomerCreditRequest(own.Id, 600m, Today), "tester"));   // ระบุวันที่ตรงกับงวดที่ปิด (ไม่ขึ้นกับเขตเวลาตอนรันเทสต์)
             Assert.Contains("ปิดแล้ว", ex.Message, StringComparison.Ordinal);
         }
 
