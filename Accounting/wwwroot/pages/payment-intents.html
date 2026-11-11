@@ -77,6 +77,8 @@
           document.getElementById('body').innerHTML = '<div class="card">กรุณาเลือกบริษัทก่อน</div>';
           return;
         }
+        // รอบ 259-3 (E-M4): deep-link จาก Autopilot/ธนาคาร/พอร์ทัล (?status=Pending = สลิป/รายการรอยืนยัน) — ตัวกรองเดียวกับดรอปดาวน์
+        try { const st = new URLSearchParams(location.search).get('status'); if (st) this.filter.status = st; } catch (_) { /* ไม่มี query */ }
         await this.load();
       },
 
@@ -233,7 +235,7 @@
       // รอบ 228 ฝ่ายค้าน S5: รับทราบ/จัดการข้อพิพาท (ล้างธงจนกว่าข้อพิพาทจะเปลี่ยน · audit ที่เซิร์ฟเวอร์)
       async ackDispute(id) {
         const api = Layout.api(); if (!api) return;
-        const note = prompt('บันทึกสิ่งที่ทำ (เช่น ส่งหลักฐานแล้ว/ออกใบลดหนี้แล้ว)', '');
+        const note = await Layout.promptText({ title: 'รับทราบข้อพิพาท', label: 'บันทึกสิ่งที่ทำ', placeholder: 'เช่น ส่งหลักฐานแล้ว/ออกใบลดหนี้แล้ว', multiline: true });
         if (note === null) return;
         try { const res = await api.acknowledgePaymentDispute(id, note); Layout.toast(res?.message || 'บันทึกแล้ว'); await this.load(); }
         catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
@@ -281,7 +283,7 @@
           const res = await api.reverseTestModeLegacyPayment(intentId, paymentId);
           Layout.toast(res?.message || 'กลับรายการแล้ว');
         } catch (e) {
-          alert(e.message || 'กลับรายการไม่สำเร็จ');
+          await Layout.notice({ title: 'กลับรายการไม่สำเร็จ', message: e.message || 'กลับรายการไม่สำเร็จ' });
         }
         await this.load();
       },
@@ -289,29 +291,35 @@
       // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ — ปุ่มโผล่เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง · ผล/เหตุผลมาจากเซิร์ฟเวอร์ทั้งหมด
       async redispatch(id) {
         const api = Layout.api(); if (!api) return;
-        if (!confirm('ส่งต่อรายการนี้ให้ต้นทางอีกครั้ง?\n\nระบบจะเรียกตัวจัดการเดิม (ออกใบเสร็จ / ตัดหนี้ / ยืนยันการจอง) — ถ้าเคยบันทึกแล้วจะไม่บันทึกซ้ำ')) return;
+        if (!await Layout.confirm({ title: 'ส่งต่อรายการนี้ให้ต้นทางอีกครั้ง?', okText: 'ส่งต่อ',
+          message: 'ระบบจะเรียกตัวจัดการเดิม (ออกใบเสร็จ / ตัดหนี้ / ยืนยันการจอง) — ถ้าเคยบันทึกแล้วจะไม่บันทึกซ้ำ' })) return;
         try {
           const res = await api.redispatchPaymentIntent(id);
-          alert(res?.message || 'ส่งต่อแล้ว');
+          await Layout.notice({ title: 'ส่งต่อแล้ว', message: res?.message || 'ส่งต่อแล้ว' });
         } catch (e) {
           // ต้นทางยังบันทึกไม่สำเร็จ — ข้อความจากเซิร์ฟเวอร์บอกเหตุ + ทางไปต่อ ต้องให้ผู้ใช้อ่านครบ
-          alert(e.message || 'ส่งต่อไม่สำเร็จ');
+          await Layout.notice({ title: 'ส่งต่อไม่สำเร็จ', message: e.message || 'ส่งต่อไม่สำเร็จ' });
         }
         await this.load();
       },
 
       async manual(id, isDocumentSlip) {
         const api = Layout.api(); if (!api) return;
-        const reason = prompt('เหตุผลที่ยืนยันด้วยมือ (ผู้สอบบัญชีจะเห็นข้อความนี้):',
-          'ตรวจสอบยอดในบัญชีธนาคารแล้วพบเงินเข้าจริง');
-        if (!reason) return;
-        // รอบ 250 ฝ่ายค้าน M4: สลิปของเอกสาร — วันที่เงินเข้าจริง (ว่าง = วันที่ลูกค้าแนบสลิป · เซิร์ฟเวอร์ตัดสิน/ตรวจ)
-        let receivedDate = null;
-        if (isDocumentSlip) {
-          const raw = prompt('วันที่เงินเข้าบัญชีจริง (ปปปป-ดด-วว ค.ศ.) — เว้นว่าง = วันที่ลูกค้าแนบสลิป:', '');
-          if (raw === null) return;
-          receivedDate = raw.trim() || null;
-        }
+        // รอบ 259-3 (ทีม E 3ก-5 · §4.1): หน้าต่างเดียว (ยอด · วันที่เงินเข้าแบบเลือกวัน · เหตุผล) แทนลูกโซ่ prompt() ที่ต้องพิมพ์ ปปปป-ดด-วว เอง
+        // ยอด = ยอดของรายการ (สลิป/เงินออนไลน์ — ยืนยันตามที่ลูกค้าแจ้ง แก้ที่นี่ไม่ได้) · บัญชีเงินเข้า = ตามผังรับเงินของช่องทาง (เซิร์ฟเวอร์ตัดสิน)
+        // · วันที่: เซิร์ฟเวอร์ตรวจ (DocumentSlipIntents.ReceivedDate) ว่าง = วันที่ลูกค้าแนบสลิป
+        const r = this.rows.find(x => x.id === id) || {};
+        const fields = [
+          { key: 'amount', label: 'ยอด', type: 'readonly', value: Layout.money(r.amount) + ' บาท' },
+        ];
+        if (isDocumentSlip) fields.push({ key: 'receivedDate', label: 'วันที่เงินเข้าบัญชีจริง', type: 'date',
+          hint: 'เว้นว่าง = วันที่ลูกค้าแนบสลิป · ดูวันที่จากรายการเดินบัญชี' });
+        fields.push({ key: 'reason', label: 'เหตุผล (ผู้สอบบัญชีจะเห็นข้อความนี้)', type: 'textarea', required: true,
+          value: 'ตรวจสอบยอดในบัญชีธนาคารแล้วพบเงินเข้าจริง' });
+        const form = await Layout.formDialog({ title: 'ยืนยันการรับเงินด้วยมือ', okText: 'ถัดไป', fields });
+        if (!form) return;
+        const reason = form.reason;
+        const receivedDate = isDocumentSlip ? (form.receivedDate || null) : null;
         if (!(await Layout.confirmDanger({
           title: 'ยืนยันการรับเงินด้วยมือ',
           message: 'ระบบจะถือว่า<strong>เงินเข้าแล้ว</strong>และดำเนินการต่อให้ต้นทางทันที '
@@ -329,7 +337,8 @@
 
       async rejectSlip(id) {
         const api = Layout.api(); if (!api) return;
-        const reason = prompt('เหตุผลที่ปฏิเสธสลิป (บันทึกลงประวัติ):', 'ไม่พบเงินเข้าตามสลิป');
+        const reason = await Layout.promptText({ title: 'ปฏิเสธสลิป', label: 'เหตุผล (บันทึกลงประวัติ)', value: 'ไม่พบเงินเข้าตามสลิป',
+          required: true, okText: 'ปฏิเสธสลิป', danger: true });
         if (!reason) return;
         try {
           const res = await api.rejectPaymentIntentSlip(id, reason);
@@ -340,20 +349,21 @@
 
       async refund(id, max) {
         const api = Layout.api(); if (!api) return;
-        const raw = prompt(`ยอดที่ต้องการคืน (สูงสุด ${max.toFixed(2)}):`, max.toFixed(2));
-        if (raw === null) return;
-        const amount = Number(raw);
-        if (!(amount > 0) || amount > max + 0.005) { Layout.toast('ยอดคืนไม่ถูกต้อง', 'error'); return; }
-        const reason = prompt('เหตุผลการคืนเงิน:', 'ลูกค้ายกเลิกคำสั่งซื้อ');
-        if (!reason) return;
+        // ยอดสูงสุด (refundableRemaining) มาจากเซิร์ฟเวอร์ · เซิร์ฟเวอร์ตรวจยอดอีกครั้ง
+        const form = await Layout.formDialog({ title: 'คืนเงิน', okText: 'คืนเงิน', danger: true, fields: [
+          { key: 'amount', label: `ยอดที่ต้องการคืน (สูงสุด ${Layout.money(max)})`, type: 'number', step: '0.01', min: 0.01, value: max.toFixed(2), required: true },
+          { key: 'reason', label: 'เหตุผลการคืนเงิน', type: 'text', value: 'ลูกค้ายกเลิกคำสั่งซื้อ', required: true },
+        ] });
+        if (!form) return;
+        const amount = form.amount, reason = form.reason;
         try {
           const res = await api.refundPaymentIntent(id, amount, reason);
           // ขั้นถัดไปที่ระบบทำแทนไม่ได้ — ต้องบอกให้ชัด ไม่ใช่ปล่อยให้ผู้ใช้เดา
-          alert(`${res?.message || 'คืนเงินแล้ว'}\n\nขั้นถัดไป: ${res?.data?.nextStep || ''}`);
+          await Layout.notice({ title: 'คืนเงินแล้ว', message: `${res?.message || 'คืนเงินแล้ว'}\n\nขั้นถัดไป: ${res?.data?.nextStep || ''}` });
           await this.load();
         } catch (e) {
           // เงินอาจออกไปแล้วแม้ลงบัญชีไม่สำเร็จ — ข้อความจากเซิร์ฟเวอร์บอกชัด ต้องให้ผู้ใช้อ่านครบ (ไม่ใช่ toast หายไป)
-          alert(e.message || 'คืนเงินไม่สำเร็จ');
+          await Layout.notice({ title: 'คืนเงินไม่สำเร็จ', message: e.message || 'คืนเงินไม่สำเร็จ' });
           await this.load();
         }
       },
@@ -363,9 +373,9 @@
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.verifyPaymentIntentRefund(id);
-          alert(res?.message || 'ตรวจแล้ว');
+          await Layout.notice({ title: 'ผลการตรวจ', message: res?.message || 'ตรวจแล้ว' });
         } catch (e) {
-          alert(e.message || 'ตรวจผลไม่สำเร็จ');
+          await Layout.notice({ title: 'ตรวจผลไม่สำเร็จ', message: e.message || 'ตรวจผลไม่สำเร็จ' });
         }
         await this.load();
       },
@@ -374,28 +384,26 @@
       async resolveRefund(id) {
         const api = Layout.api(); if (!api) return;
         const r = this.rows.find(x => x.id === id) || {};
-        const wentOut = confirm('ในแดชบอร์ดผู้ให้บริการ มีรายการคืนเงินของครั้งที่ผลไม่แน่ชัดหรือไม่?\n\n'
-          + 'ตกลง = มี (เงินออกแล้ว — ระบบจะลงบัญชีคืนเงินให้)\nยกเลิก = ไม่มี (ไปขั้นยืนยันว่าไม่มีเงินออก)');
+        // กล่องสองทาง: "มี" / "ไม่มี" · × = ไม่ทำต่อ (dismissValue null)
+        const wentOut = await Layout.confirm({ title: 'ผลการคืนเงินที่ไม่แน่ชัด', okText: 'มี — เงินออกแล้ว', cancelText: 'ไม่มี', dismissValue: null,
+          message: 'ในแดชบอร์ดผู้ให้บริการ มีรายการคืนเงินของครั้งที่ผลไม่แน่ชัดหรือไม่? · มี = เงินออกแล้ว (ระบบจะลงบัญชีคืนเงินให้) · ไม่มี = ยืนยันว่าไม่มีเงินออก (ระบบปลดล็อกให้คืนใหม่ได้)' });
+        if (wentOut === null) return;
         const body = { decision: wentOut ? 'MoneyWentOut' : 'NoMoneyOut' };
-        if (wentOut) {
-          const raw = prompt('ยอดที่ผู้ให้บริการคืนไปจริง (ตามแดชบอร์ด):',
-            r.refundOutcomeUnknownAmount == null ? '' : Number(r.refundOutcomeUnknownAmount).toFixed(2));
-          if (raw === null || raw.trim() === '') return;
-          body.amount = Number(raw);
-          const ref = prompt('เลขอ้างอิงการคืนเงินจากแดชบอร์ดผู้ให้บริการ:', '');
-          if (!ref) return;
-          body.providerRefundRef = ref;
-        } else if (!confirm('ยืนยันว่าแดชบอร์ดผู้ให้บริการ "ไม่มี" รายการคืนเงินของครั้งนี้ — ระบบจะปลดล็อกให้คืนใหม่ได้')) {
-          return;
-        }
-        const evidence = prompt('หลักฐาน (สิ่งที่เห็นในแดชบอร์ด — ผู้สอบบัญชีจะเห็นข้อความนี้):', '');
-        if (!evidence) return;
-        body.evidence = evidence;
+        const fields = wentOut ? [
+          { key: 'amount', label: 'ยอดที่ผู้ให้บริการคืนไปจริง (ตามแดชบอร์ด)', type: 'number', step: '0.01', min: 0.01, required: true,
+            value: r.refundOutcomeUnknownAmount == null ? '' : Number(r.refundOutcomeUnknownAmount).toFixed(2) },
+          { key: 'ref', label: 'เลขอ้างอิงการคืนเงินจากแดชบอร์ดผู้ให้บริการ', type: 'text', required: true },
+        ] : [ { key: 'none', label: 'ยืนยัน', type: 'readonly', value: 'แดชบอร์ดผู้ให้บริการ "ไม่มี" รายการคืนเงินของครั้งนี้' } ];
+        fields.push({ key: 'evidence', label: 'หลักฐาน (สิ่งที่เห็นในแดชบอร์ด — ผู้สอบบัญชีจะเห็นข้อความนี้)', type: 'textarea', required: true });
+        const form = await Layout.formDialog({ title: wentOut ? 'บันทึกเงินคืนที่ออกแล้ว' : 'ยืนยันว่าไม่มีเงินออก', okText: 'บันทึกผล', fields });
+        if (!form) return;
+        if (wentOut) { body.amount = form.amount; body.providerRefundRef = form.ref; }
+        body.evidence = form.evidence;
         try {
           const res = await api.resolvePaymentIntentRefundManually(id, body);
-          alert(res?.message || 'บันทึกผลแล้ว');
+          await Layout.notice({ title: 'บันทึกผลแล้ว', message: res?.message || 'บันทึกผลแล้ว' });
         } catch (e) {
-          alert(e.message || 'บันทึกผลไม่สำเร็จ');
+          await Layout.notice({ title: 'บันทึกผลไม่สำเร็จ', message: e.message || 'บันทึกผลไม่สำเร็จ' });
         }
         await this.load();
       },
@@ -404,26 +412,27 @@
       async recordLegacyRefund(id) {
         const api = Layout.api(); if (!api) return;
         const r = this.rows.find(x => x.id === id) || {};
-        const raw = prompt('ยอดที่ผู้ให้บริการคืนไปจริง (ตามแดชบอร์ดผู้ให้บริการ):',
-          r.status === 'Refunded' ? Number(r.amount || 0).toFixed(2) : '');
-        if (raw === null || raw.trim() === '') return;
-        const at = prompt('วันที่เงินคืนออกจริง (ปปปป-ดด-วว ค.ศ. ตามแดชบอร์ด):', '');
-        if (!at) return;
-        const ref = prompt('เลขอ้างอิงการคืนเงินจากแดชบอร์ดผู้ให้บริการ:', '');
-        if (!ref) return;
-        const evidence = prompt('หลักฐาน (สิ่งที่เห็นในแดชบอร์ด — ผู้สอบบัญชีจะเห็นข้อความนี้):', '');
-        if (!evidence) return;
-        const book = confirm('ให้ระบบลงรายการบัญชีคืนเงินให้หรือไม่?\n\n'
-          + 'ตกลง = ยังไม่เคยลงบัญชีคืนเงินรายการนี้ (ระบบลง Dr ลูกหนี้ / Cr บัญชีพักให้)\n'
-          + 'ยกเลิก = ลงรายการบัญชีด้วยมือไว้แล้ว (บันทึกเฉพาะยอดคืน — ห้ามลงซ้ำ)');
+        // รอบ 259-3: หน้าต่างเดียว (วันที่แบบเลือกวัน) แทน prompt() 4 กล่อง + confirm() — ตัวเลือกลงบัญชีเป็นช่องเลือกที่อ่านออก
+        const form = await Layout.formDialog({ title: 'บันทึกยอดคืนเงินย้อนหลัง', okText: 'บันทึก', fields: [
+          { key: 'amount', label: 'ยอดที่ผู้ให้บริการคืนไปจริง (ตามแดชบอร์ด)', type: 'number', step: '0.01', min: 0.01, required: true,
+            value: r.status === 'Refunded' ? Number(r.amount || 0).toFixed(2) : '' },
+          { key: 'refundedAt', label: 'วันที่เงินคืนออกจริง (ตามแดชบอร์ด)', type: 'date', required: true },
+          { key: 'ref', label: 'เลขอ้างอิงการคืนเงินจากแดชบอร์ดผู้ให้บริการ', type: 'text', required: true },
+          { key: 'evidence', label: 'หลักฐาน (สิ่งที่เห็นในแดชบอร์ด — ผู้สอบบัญชีจะเห็นข้อความนี้)', type: 'textarea', required: true },
+          { key: 'journal', label: 'รายการบัญชีคืนเงิน', type: 'select', value: 'BookNow', options: [
+            { value: 'BookNow', label: 'ยังไม่เคยลงบัญชี — ให้ระบบลง Dr ลูกหนี้ / Cr บัญชีพัก' },
+            { value: 'AlreadyBookedManually', label: 'ลงด้วยมือไว้แล้ว — บันทึกเฉพาะยอดคืน (ห้ามลงซ้ำ)' },
+          ] },
+        ] });
+        if (!form) return;
         try {
           const res = await api.recordPaymentIntentLegacyRefund(id, {
-            amount: Number(raw), refundedAt: at.trim(), providerRefundRef: ref, evidence,
-            journal: book ? 'BookNow' : 'AlreadyBookedManually',
+            amount: form.amount, refundedAt: form.refundedAt, providerRefundRef: form.ref, evidence: form.evidence,
+            journal: form.journal,
           });
-          alert(`${res?.message || 'บันทึกแล้ว'}${res?.data?.nextStep ? '\n\nขั้นถัดไป: ' + res.data.nextStep : ''}`);
+          await Layout.notice({ title: 'บันทึกแล้ว', message: `${res?.message || 'บันทึกแล้ว'}${res?.data?.nextStep ? ' · ขั้นถัดไป: ' + res.data.nextStep : ''}` });
         } catch (e) {
-          alert(e.message || 'บันทึกไม่สำเร็จ');
+          await Layout.notice({ title: 'บันทึกไม่สำเร็จ', message: e.message || 'บันทึกไม่สำเร็จ' });
         }
         await this.load();
       },
@@ -433,13 +442,14 @@
       async editFee(id) {
         const api = Layout.api(); if (!api) return;
         const r = this.rows.find(x => x.id === id) || {};
-        const raw = prompt(`${r.feeInputLabel || 'ค่าธรรมเนียม'} ของรายการนี้ (ตามสเตทเมนต์ผู้ให้บริการ):`,
-          r.feeActual == null ? '' : Number(r.feeActual).toFixed(2));
-        if (raw === null || raw.trim() === '') return;
-        const fee = Number(raw);
+        const form = await Layout.formDialog({ title: 'แก้ค่าธรรมเนียม', okText: 'บันทึก', fields: [
+          { key: 'fee', label: `${r.feeInputLabel || 'ค่าธรรมเนียม'} ของรายการนี้ (ตามสเตทเมนต์ผู้ให้บริการ)`, type: 'number', step: '0.01', min: 0, required: true,
+            value: r.feeActual == null ? '' : Number(r.feeActual).toFixed(2) },
+          { key: 'reason', label: 'เหตุผลที่แก้ (ผู้สอบบัญชีจะเห็นข้อความนี้)', type: 'text', value: 'ตามสเตทเมนต์ผู้ให้บริการ', required: true },
+        ] });
+        if (!form) return;
+        const fee = form.fee, reason = form.reason;
         if (!(fee >= 0)) { Layout.toast('ค่าธรรมเนียมไม่ถูกต้อง', 'error'); return; }
-        const reason = prompt('เหตุผลที่แก้ (ผู้สอบบัญชีจะเห็นข้อความนี้):', 'ตามสเตทเมนต์ผู้ให้บริการ');
-        if (!reason) return;
         try {
           const res = await api.updatePaymentIntentFee(id, fee, reason);
           Layout.toast(res?.message || 'แก้ค่าธรรมเนียมแล้ว');

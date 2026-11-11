@@ -1337,7 +1337,7 @@
             return;
           }
         } catch (e) {
-          if (!confirm(`Pre-check ไม่สำเร็จ (${e.message}). ดำเนินการยื่นต่อ?`)) return;
+          if (!await Layout.confirm({ title: 'ตรวจก่อนยื่นไม่สำเร็จ', message: `ตรวจก่อนยื่นไม่สำเร็จ (${e.message || ''}) — ดำเนินการยื่นต่อ?`, okText: 'ยื่นต่อ' })) return;
         }
         await this._doFileReport(id);
       },
@@ -1349,7 +1349,8 @@
       async _doFileReport(id) {
         // ข้อความต้องตรงกับสิ่งที่ระบบทำจริง: ระบบ**ไม่ได้**ส่งแบบไปกรมสรรพากร
         // แค่บันทึกว่าผู้ใช้ยื่นแล้ว (D2-B1a)
-        if (!confirm('บันทึกว่ายื่นแบบนี้แล้ว?\n\nระบบไม่ได้ส่งแบบไปกรมสรรพากรให้ — เป็นการบันทึกตามที่คุณแจ้ง\nถ้ายังไม่มีเลขรับ งวดนี้จะยังไม่ถูกล็อก และบันทึกเลขรับภายหลังได้')) return;
+        if (!await Layout.confirm({ title: 'บันทึกว่ายื่นแบบนี้แล้ว?', okText: 'บันทึกว่ายื่นแล้ว',
+          message: 'ระบบไม่ได้ส่งแบบไปกรมสรรพากรให้ — เป็นการบันทึกตามที่คุณแจ้ง' + '\n' + 'ถ้ายังไม่มีเลขรับ งวดนี้จะยังไม่ถูกล็อก และบันทึกเลขรับภายหลังได้' })) return;
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.fileTaxReport(id);
@@ -1363,13 +1364,14 @@
       // ทางไปต่อของผู้ยื่นกระดาษ/e-Filing ที่ยังไม่มีเลขรับตอนกดยื่น —
       // กลับมากรอกเลขรับที่นี่ ระบบจะอัปเกรดเป็น "ยื่นแล้ว" + ล็อกงวดให้เอง
       async recordFilingNumber(id) {
-        const num = prompt('กรอกเลขรับ / เลขอ้างอิงจากกรมสรรพากร (จากใบเสร็จ หรือหน้ายืนยันของ e-Filing):');
-        if (num === null) return;
-        if (!num.trim()) { Layout.toast('ต้องระบุเลขรับ', 'error'); return; }
-        const dateStr = prompt('วันที่กรมสรรพากรรับแบบ (ปปปป-ดด-วว):',
-          new Date().toISOString().slice(0, 10));
-        if (dateStr === null) return;
-        const when = new Date(dateStr);
+        // รอบ 259-3 (ทีม E 3ง-1 · §4.1): หน้าต่างเดียว + ช่องเลือกวัน (ค่าตั้งต้น = วันนี้ตามปฏิทินไทย ไม่ใช่ toISOString ที่เลื่อนวันใน ICT)
+        const form = await Layout.formDialog({ title: 'บันทึกเลขรับจากกรมสรรพากร', okText: 'บันทึก', fields: [
+          { key: 'num', label: 'เลขรับ / เลขอ้างอิง (จากใบเสร็จ หรือหน้ายืนยันของ e-Filing)', type: 'text', required: true },
+          { key: 'date', label: 'วันที่กรมสรรพากรรับแบบ', type: 'date', required: true, value: Layout.toDateInput(new Date()) },
+        ] });
+        if (!form) return;
+        const num = form.num;
+        const when = new Date(form.date);
         if (isNaN(when.getTime())) { Layout.toast('วันที่ไม่ถูกต้อง', 'error'); return; }
         const cid = Layout.getCompanyId();
         try {
@@ -1550,7 +1552,7 @@
       },
 
       async unlockFiling(reportId) {
-        const reason = prompt('ระบุเหตุผลในการ Unlock การยื่นภาษี (ต้องระบุ):');
+        const reason = await Layout.promptText({ title: 'ปลดล็อกการยื่นภาษี', label: 'เหตุผล (ต้องระบุ)', required: true, multiline: true, okText: 'ปลดล็อก', danger: true });
         if (!reason || !reason.trim()) return;
         const api = Layout.api(); if (!api) return;
         const cid = Layout.getCompanyId();
@@ -1562,10 +1564,9 @@
       },
 
       async rejectAndReverse(reportId) {
-        const reason = prompt('ระบุเหตุผลที่ RD ปฏิเสธการขอคืน (ต้องระบุ):');
+        const reason = await Layout.promptText({ title: 'กรมสรรพากรปฏิเสธการขอคืน', label: 'เหตุผลที่กรมสรรพากรปฏิเสธ (ต้องระบุ)', required: true, multiline: true,
+          message: 'ระบบจะลงรายการกลับอัตโนมัติ: Dr VAT ขอคืนไม่ได้ (ค่าใช้จ่าย) · Cr ภาษีซื้อ — รายงานนี้จะกลับเป็นสถานะร่าง', okText: 'กลับรายการ', danger: true });
         if (!reason || !reason.trim()) return;
-        const confirmMsg = 'ระบบจะสร้าง JE กลับรายการอัตโนมัติ:\n  Dr VAT ขอคืนไม่ได้ (ค่าใช้จ่าย)\n  Cr ภาษีซื้อ\n\nรายงานนี้จะกลับเป็นสถานะ Draft\nดำเนินการต่อ?';
-        if (!confirm(confirmMsg)) return;
         const cid = Layout.getCompanyId();
         try {
           const res = await API.post(`/api/companies/${cid}/tax/${reportId}/reject-reverse`,
@@ -1582,11 +1583,18 @@
         for (let i = 1; i <= 6; i++) {
           const dt = new Date(d.getFullYear(), d.getMonth() + i, 1);
           const p = dt.getFullYear() * 100 + (dt.getMonth() + 1);
-          months.push(`<option value="${p}">${dt.toLocaleDateString('th-TH',{year:'numeric',month:'long'})} (${p})</option>`);
+          months.push({ value: String(p), label: dt.toLocaleDateString('th-TH', { year: 'numeric', month: 'long' }) });
         }
-        const period = prompt(`เลื่อน Input VAT ${vatAmount.toLocaleString()} บาท ไปงวดใด?\n(ตัวเลข YYYYMM เช่น 202607 = ก.ค. 2026)\nกฎหมายให้เลื่อนได้สูงสุด 6 เดือน`);
-        if (!period) return;
-        const reason = prompt('เหตุผลในการเลื่อน (optional):') || null;
+        // รอบ 259-3 (ทีม E 3ง-1): เลือกงวดจากรายการ (เดิมพิมพ์ YYYYMM เอง) · เซิร์ฟเวอร์ตรวจกรอบ 6 เดือน (§82/3) อีกครั้ง
+        const form = await Layout.formDialog({ title: `เลื่อนภาษีซื้อ ${Layout.money(vatAmount)} บาท`, okText: 'เลื่อนงวด',
+          message: 'กฎหมายให้เลื่อนได้สูงสุด 6 เดือน', fields: [
+          { key: 'period', label: 'ไปงวด', type: 'select', value: months[0] && months[0].value,
+            options: months },
+          { key: 'reason', label: 'เหตุผลในการเลื่อน (ไม่บังคับ)', type: 'text' },
+        ] });
+        if (!form || !form.period) return;
+        const period = form.period;
+        const reason = form.reason || null;
         const cid = Layout.getCompanyId();
         try {
           const res = await API.post(`/api/companies/${cid}/tax/defer-input-vat`,

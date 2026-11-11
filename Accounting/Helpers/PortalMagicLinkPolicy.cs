@@ -72,4 +72,9 @@ public static class PortalMagicLinkPolicy
     public static string? Link(string? baseUrl, Guid companyId, string token)
         => string.IsNullOrWhiteSpace(baseUrl) ? null
             : $"{baseUrl.TrimEnd('/')}/portal.html?company={companyId}&magic={Uri.EscapeDataString(token)}";
+
+    /// <summary>รอบ 259-3 (E 4.6): ลิงก์หน้าเข้าสู่ระบบพอร์ทัลลูกค้าของบริษัท (ที่หน้า customer-portal ให้คัดลอก) — origin จาก URL ของระบบ
+    /// (<see cref="SystemBaseUrl.OriginForRequestAsync"/>) ไม่ใช่ <c>location.origin</c> ของหน้าพนักงาน</summary>
+    public static string LoginLink(string origin, Guid companyId)
+        => $"{origin.TrimEnd('/')}/portal.html?company={companyId}";
 }

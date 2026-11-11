@@ -700,7 +700,7 @@
        *  เป็นแถวเดียว หรือแตกแถวเกินมา ผู้ใช้มีทางออกแค่ "แกะใหม่" (จำกัดจำนวน
        *  ครั้ง) หรือไปแก้ทีหลังในฟอร์ม */
       async modifyLine(scanId, action, lineIndex) {
-        if (action === 'delete' && !confirm('ลบบรรทัดนี้?')) return;
+        if (action === 'delete' && !await Layout.confirm('ลบบรรทัดนี้?')) return;
         try {
           const cid = Layout.getCompanyId();
           await API.post(`/api/companies/${cid}/ocr/${scanId}/modify-line`, { action, lineIndex });
@@ -850,20 +850,20 @@
 
       // ==================== Self-Learning Backfill ====================
       async backfillIntelligence() {
-        if (!confirm('ระบบจะอ่านเอกสารย้อนหลัง 24 เดือน เพื่อเรียนรู้ประเภทเอกสาร, รหัสบัญชี, WHT ของผู้ขายแต่ละราย\n\nกระบวนการนี้อาจใช้เวลาหลายวินาที ดำเนินการต่อ?')) return;
+        if (!await Layout.confirm('ระบบจะอ่านเอกสารย้อนหลัง 24 เดือน เพื่อเรียนรู้ประเภทเอกสาร, รหัสบัญชี, WHT ของผู้ขายแต่ละราย\n\nกระบวนการนี้อาจใช้เวลาหลายวินาที ดำเนินการต่อ?')) return;
         const cid = Layout.getCompanyId();
-        if (!cid) { alert('ไม่พบ companyId'); return; }
+        if (!cid) { Layout.toast('ยังไม่ได้เลือกบริษัท', 'error'); return; }
         try {
           // Use API.post directly — Layout.api(url) is a no-arg helper that returns
           // the company-scoped API client, NOT a fetch wrapper.
           const res = await API.post(`/api/companies/${cid}/ocr/intelligence/backfill?sinceMonths=24`);
           if (res?.success) {
-            alert(res.message || `เรียนรู้สำเร็จ ${res.data?.vendorsTrained || 0} ราย`);
+            Layout.notice(res.message || `เรียนรู้สำเร็จ ${res.data?.vendorsTrained || 0} ราย`);
           } else {
-            alert('ไม่สำเร็จ: ' + (res?.message || 'unknown'));
+            Layout.notice('ไม่สำเร็จ: ' + (res?.message || 'unknown'));
           }
         } catch (e) {
-          alert('ไม่สำเร็จ: ' + (e?.message || e));
+          Layout.notice('ไม่สำเร็จ: ' + (e?.message || e));
         }
       },
 
@@ -1438,7 +1438,7 @@
         const picked = [...document.querySelectorAll('input.batch-pick')]
           .filter(cb => cb.checked).map(cb => cb.dataset.scanId);
         if (!picked.length) return;
-        if (!confirm(`ยืนยันสร้างและลงบัญชี ${picked.length} ใบ?\n\n`
+        if (!await Layout.confirm(`ยืนยันสร้างและลงบัญชี ${picked.length} ใบ?\n\n`
           + 'ระบบจะทำทีละใบ — ใบที่ข้อมูลไม่ครบตามกฎหมายจะได้เป็นใบร่างพร้อมเหตุผลแทน')) return;
 
         const btn = document.getElementById('batchApproveBtn');
@@ -1897,7 +1897,7 @@
           // "กดยืนยันสร้างซ้ำ" — แต่ไม่เคยมีปุ่มนั้นอยู่จริง ⇒ ผู้ใช้ที่เจอ
           // ใบซ้ำ (จริงหรือเตือนผิด) ตันสนิท (ผลตรวจ T1-14)
           if (this._isDuplicateBlock(err)) {
-            if (!confirm(err.message + '\n\nยืนยันสร้างเอกสารใหม่อีกใบ?')) return;
+            if (!await Layout.confirm(err.message + '\n\nยืนยันสร้างเอกสารใหม่อีกใบ?')) return;
             try {
               await api.ocrCreateDocument(scanId, target, false, true);
               Layout.toast('สร้างเอกสารสำเร็จ (ยืนยันสร้างซ้ำ)');
@@ -1933,13 +1933,13 @@
           ? 'ลบ scan นี้ + เอกสารที่สร้างอัตโนมัติ (Draft) ทั้งคู่?\n\n' +
             '⚠️ ถ้าเอกสารถูกอนุมัติแล้ว ระบบจะปฏิเสธ — ต้อง void จากหน้าเอกสารแทน'
           : 'ลบเอกสารสแกนนี้?';
-        if (!confirm(msg)) return;
+        if (!await Layout.confirm(msg)) return;
         // Optional "label before delete" (per the business flow): a short
         // reason ("ไม่ใช่เอกสารบริษัท", "ค่าใช้จ่ายต้องห้าม", "เอกสารไม่ถูกต้องตามสรรพากร"
         // ฯลฯ) is stored in the audit log so the deletion is explainable later.
         // null = user hit "ยกเลิก" on the prompt → abort the whole deletion;
         // empty string = no label, proceed (the label is optional).
-        const reasonInput = prompt('ระบุเหตุผล/ป้ายกำกับการลบ (ไม่บังคับ — ใช้บันทึกตรวจสอบ, กดยกเลิกเพื่อไม่ลบ):', '');
+        const reasonInput = await Layout.promptText({ title: 'เหตุผลการลบ', label: 'เหตุผล/ป้ายกำกับการลบ (ไม่บังคับ — ใช้บันทึกตรวจสอบ)', okText: 'ลบ', danger: true });
         if (reasonInput === null) return;
         const reason = reasonInput.trim() || null;
         const api = Layout.api();
@@ -1955,7 +1955,7 @@
 
       // ==================== Review Modal ====================
       async retryScan(scanId) {
-        if (!confirm('แกะข้อมูล OCR ใหม่อีกครั้ง? (ไม่ใช้โควต้า, จำกัดตามค่าที่ Admin ตั้งไว้)')) return;
+        if (!await Layout.confirm('แกะข้อมูล OCR ใหม่อีกครั้ง? (ไม่ใช้โควต้า, จำกัดตามค่าที่ Admin ตั้งไว้)')) return;
         const api = Layout.api();
         if (!api) { Layout.toast('ไม่พบ company context', 'error'); return; }
         try {
@@ -2205,7 +2205,7 @@
       },
 
       async unlinkPredecessor(scanId) {
-        if (!confirm('ยกเลิกการผูกกับเอกสารต้นทาง? เอกสารที่สร้างจากสแกนนี้จะไม่อ้างอิงใบเดิม')) return;
+        if (!await Layout.confirm('ยกเลิกการผูกกับเอกสารต้นทาง? เอกสารที่สร้างจากสแกนนี้จะไม่อ้างอิงใบเดิม')) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.ocrUnlinkPredecessor(scanId);
@@ -2215,7 +2215,7 @@
       },
 
       async unlinkPo(scanId) {
-        if (!confirm('ยกเลิกการผูกกับใบสั่งซื้อ?')) return;
+        if (!await Layout.confirm('ยกเลิกการผูกกับใบสั่งซื้อ?')) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.ocrUnlinkPo(scanId);
@@ -2225,7 +2225,7 @@
       },
 
       // ============= Fixed Asset registration =============
-      // Lightweight dialog implementation using prompt(). A fuller modal
+      // Lightweight dialog (Layout.formDialog — รอบ 259-3). A fuller modal
       // form (with CoA picker for AssetAccount / DepExp / AccDep) is the
       // natural next step but this MVP path lets users register the asset
       // immediately with sensible defaults — the FixedAsset record is then
@@ -2234,17 +2234,21 @@
         if (!this._reviewScan) return;
         const scanId = this._reviewScan.id;
         const defaultCode = `AST-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
-        const code = prompt('รหัสสินทรัพย์ (Asset Code):', defaultCode);
-        if (!code) return;
-        const name = prompt('ชื่อสินทรัพย์:', candidate.description || '');
-        if (!name) return;
-        const months = parseInt(prompt('อายุการใช้งาน (เดือน):', String(candidate.suggestedUsefulLifeMonths || 60))) || 60;
-        const salvageStr = prompt('มูลค่าซาก (Salvage Value) — กรอก 0 ถ้าไม่มี:', '0');
-        const salvage = parseFloat(salvageStr) || 0;
+        // รอบ 259-3 (ทีม E 3ค-1 · §4.1): หน้าต่างเดียวแทน prompt() 4 กล่อง (LINE in-app browser บล็อก native)
+        const form = await Layout.formDialog({ title: 'ลงทะเบียนสินทรัพย์', okText: 'ถัดไป', fields: [
+          { key: 'code', label: 'รหัสสินทรัพย์', type: 'text', required: true, value: defaultCode },
+          { key: 'name', label: 'ชื่อสินทรัพย์', type: 'text', required: true, value: candidate.description || '' },
+          { key: 'months', label: 'อายุการใช้งาน (เดือน)', type: 'number', min: 1, step: '1', required: true, value: String(candidate.suggestedUsefulLifeMonths || 60) },
+          { key: 'salvage', label: 'มูลค่าซาก (0 ถ้าไม่มี)', type: 'number', min: 0, step: '0.01', value: '0' },
+        ] });
+        if (!form) return;
+        const code = form.code, name = form.name;
+        const months = parseInt(form.months, 10) || 60;
+        const salvage = Number(form.salvage) || 0;
         const cost = candidate.amount || candidate.unitPrice || 0;
         if (cost <= 0) { Layout.toast('ราคาซื้อต้อง > 0', 'error'); return; }
 
-        if (!confirm(
+        if (!await Layout.confirm(
           `ลงทะเบียนสินทรัพย์:\n` +
           `  รหัส: ${code}\n  ชื่อ: ${name}\n  ราคาซื้อ: ฿${cost.toLocaleString()}\n` +
           `  มูลค่าซาก: ฿${salvage.toLocaleString()}\n  อายุใช้งาน: ${months} เดือน\n  วิธี: StraightLine\n\n` +
@@ -3709,7 +3713,7 @@
         try { return await api.ocrCorrect(scanId, correction); }
         catch (e) {
           if (!(e && e.status === 409 && e.body?.data?.ruleCode === 'OCR-ACCT-PLACEMENT')) throw e;
-          if (!confirm((e.message || '') + '\n\nยืนยันบันทึกบัญชีตามที่เลือกหรือไม่? (ระบบจะบันทึกประวัติการยืนยันไว้)')) throw e;
+          if (!await Layout.confirm((e.message || '') + '\n\nยืนยันบันทึกบัญชีตามที่เลือกหรือไม่? (ระบบจะบันทึกประวัติการยืนยันไว้)')) throw e;
           return await api.ocrCorrect(scanId, { ...correction, acknowledgeAccountPlacement: true });
         }
       },
@@ -3872,7 +3876,7 @@
           return;
         }
         if (!allowDuplicate
-            && !confirm('บันทึกเป็น Journal Entry เท่านั้น (ไม่สร้างเอกสารในระบบ)?\nระบบจะลง Dr/Cr + ภาษีซื้อ-ขาย/หัก ณ ที่จ่าย ให้อัตโนมัติตามยอดที่อ่านได้')) return;
+            && !await Layout.confirm('บันทึกเป็น Journal Entry เท่านั้น (ไม่สร้างเอกสารในระบบ)?\nระบบจะลง Dr/Cr + ภาษีซื้อ-ขาย/หัก ณ ที่จ่าย ให้อัตโนมัติตามยอดที่อ่านได้')) return;
         const btn = document.getElementById('reviewCreateJeBtn');
         btn.disabled = true; btn.textContent = 'กำลังบันทึก JE...';
         try {
@@ -3897,7 +3901,7 @@
           // ⇒ ต้องมีทางยืนยันเหมือนเส้นสร้างเอกสาร ไม่ใช่ตันที่ toast สีแดง
           if (!j.success && !allowDuplicate && this._isDuplicateBlock({ message: j.message })) {
             btn.disabled = false; btn.textContent = '🧾 บันทึก JE เท่านั้น';
-            if (!confirm(j.message + '\n\nยืนยันบันทึก JE อีกครั้ง?')) return;
+            if (!await Layout.confirm(j.message + '\n\nยืนยันบันทึก JE อีกครั้ง?')) return;
             return await this.createJeFromReview(true);
           }
           if (!j.success) throw new Error(j.message);
@@ -4291,7 +4295,7 @@
         if (!scan) return;
         const sourceLine = (this._stockPreview?.lines || []).find(l => l.lineIndex === idx);
         if (!sourceLine || !productId) return;
-        if (!confirm(`บันทึกว่า "${sourceLine.description || ''}" ≠ "${sourceLine.bestMatch?.name || ''}" ?\nระบบจะไม่เสนอสินค้านี้สำหรับชื่อนี้อีก`)) return;
+        if (!await Layout.confirm(`บันทึกว่า "${sourceLine.description || ''}" ≠ "${sourceLine.bestMatch?.name || ''}" ?\nระบบจะไม่เสนอสินค้านี้สำหรับชื่อนี้อีก`)) return;
         try {
           await Layout.api().ocrRejectMatch(scan.id, {
             ocrDescription: sourceLine.description || '',
@@ -4777,7 +4781,7 @@
               const head = strong
                 ? '⚠️ ใบนี้ถูกบันทึกไปแล้ว (เลขใบกำกับของผู้ขายตรงกัน)'
                 : 'ℹ️ พบเอกสารที่คล้ายกันมาก (คู่ค้าและยอดตรงกัน)';
-              if (!confirm(`${head}\n\n${lines}\n\n`
+              if (!await Layout.confirm(`${head}\n\n${lines}\n\n`
                   + 'สร้างต่อไปจะทำให้ค่าใช้จ่าย/ภาษีซื้อถูกบันทึกซ้ำ\n'
                   + 'ยังต้องการสร้างเอกสารใหม่หรือไม่?')) return;
             }
