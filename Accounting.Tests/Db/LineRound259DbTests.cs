@@ -37,7 +37,8 @@ public class LineRound259DbTests
 
     private sealed record Seed(Guid CompanyId, Guid ContactId, Guid DocumentId, Guid CreditId, Guid EndpointId, string Tag);
 
-    private static async Task<Seed> SeedAsync(AccountingDbContext db, string tag, string? email, DocumentStatus status = DocumentStatus.Paid)
+    private static async Task<Seed> SeedAsync(AccountingDbContext db, string tag, string? email, DocumentStatus status = DocumentStatus.Paid,
+        decimal balance = 0m)
     {
         var company = new Company { Name = "บริษัท 259 " + tag, TaxId = Ours, FiscalYearStartMonth = 1 };
         db.Companies.Add(company);
@@ -55,7 +56,7 @@ public class LineRound259DbTests
             CompanyId = company.Id, ContactId = contact.Id, DocumentType = DocumentType.TaxInvoice,
             DocumentNumber = "INV259-" + Random.Shared.Next(100000, 999999), Status = status,
             DocumentDate = DateTime.UtcNow.Date.AddDays(-8), SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_040m,
-            WithholdingTaxAmount = 30m, PaidAmount = 1_040m, BalanceDue = 0m, Currency = "THB",
+            WithholdingTaxAmount = 30m, PaidAmount = 1_040m - balance, BalanceDue = balance, Currency = "THB",
         };
         db.Documents.Add(doc);
         await db.SaveChangesAsync();
@@ -115,6 +116,15 @@ public class LineRound259DbTests
         // รอบซ้ำ (ขั้นเดิม) ⇒ ไม่มีการ์ดที่สอง
         Assert.Equal(0, (await svc.RunCompanyAsync(s.CompanyId, now.AddMinutes(3))).Queued);
         Assert.Equal(1, await db.LineQueues.CountAsync(q => q.CompanyId == s.CompanyId));
+
+        // ฝ่ายค้าน 259 L6: ได้ใบครบแล้ว ⇒ รอบถัดไปเพิกถอนลิงก์ทวงของผู้ติดต่อ · ตอนส่งลิงก์ที่ถูกเพิกถอน ⇒ ไม่ส่งพร้อมเหตุที่บอกทางไปต่อจริง
+        await db.WhtCreditsReceived.Where(w => w.Id == s.CreditId)
+            .ExecuteUpdateAsync(x => x.SetProperty(w => w.Status, WhtCreditStatus.Received).SetProperty(w => w.ReceivedAmount, 30m));
+        await svc.RunCompanyAsync(s.CompanyId, now.AddDays(1));
+        Assert.NotNull(await db.WhtCertUploadLinks.AsNoTracking().Where(l => l.Id == link.Id).Select(l => l.RevokedAt).SingleAsync());
+        var dead = await WhtCertUploadLinkService.LineReminderUrlAsync(db, Config(), s.CompanyId, lq.Id, default);
+        Assert.Null(dead.Url);
+        Assert.Equal(WhtCertUploadLinkPolicy.ReminderLinkUnusable, dead.Problem);
 
         // ทิศตรงข้าม: ไม่มีอีเมลและไม่มี LINE ⇒ แถว "ข้าม" พร้อมเหตุ ไม่มีคิว
         var n = await SeedAsync(db, "wn " + Guid.NewGuid().ToString("N")[..6], email: null);
@@ -212,5 +222,134 @@ public class LineRound259DbTests
         Assert.Equal(0, await db.LineQueues.CountAsync(q => q.CompanyId == d.CompanyId));
         // ข้ามบริษัท: เอกสารของบริษัทอื่น ⇒ ไม่พบ
         await Assert.ThrowsAsync<BusinessRuleException>(() => svc.SendAsync(d.CompanyId, s.DocumentId, new[] { s.EndpointId }, false, null, "t@259"));
+    }
+
+    // ─────────── ฝ่ายค้าน 259 (M1 · L2 · L5) — ลิงก์ชำระในการส่งเอง ───────────
+
+    private const string PayUrl = "https://app.nextacc.test/pages/pay-document.html?c=x&t=paytoken259";
+
+    /// <summary>ตัวออกลิงก์ปลอม — <paramref name="mode"/>: ok · refused · revoked · gone (ออกได้ตอนกด แต่ตอนส่งไม่มีแล้ว)</summary>
+    private static IDocumentPayLinkService FakePay(string mode) => F4Proxy<IDocumentPayLinkService>.Create((m, _) => m switch
+    {
+        nameof(IDocumentPayLinkService.EnsureLinkAsync) => mode switch
+        {
+            "revoked" => (object)Task.FromException<PayLinkResult>(new PayLinkRevokedException()),
+            "refused" => (object)new PayLinkResult(null, null, Array.Empty<string>(), "บริษัทยังไม่เปิดรับชำระออนไลน์"),
+            _ => (object)new PayLinkResult(PayUrl, new DocumentPayLinkPolicy.Amounts(1_070m, 30m, 1_040m), new[] { "PromptPay" }, null),
+        },
+        nameof(IDocumentPayLinkService.CurrentUrlAsync) => mode == "gone" ? null : (object)PayUrl,
+        nameof(IDocumentPayLinkService.PayQrFactsAsync) => (object)new DocumentPayQrFacts(null, 1_040m, PayUrl, null, 1),
+        _ => null,
+    });
+
+    private static IContactRecipientResolver RecipientsWithGroup(Guid userEp, Guid groupEp, bool groupShowsAmounts)
+        => F4Proxy<IContactRecipientResolver>.Create((m, a) => m == nameof(IContactRecipientResolver.ResolveAsync)
+            ? new ContactRecipientRule.RecipientSet((NotifyTopic)a[2]!, new[]
+            {
+                new ContactRecipientRule.RecipientOption(userEp, NotifyEndpointKind.LineUser, null, "LINE ของลูกค้า", true, null, null, true, false),
+                new ContactRecipientRule.RecipientOption(groupEp, NotifyEndpointKind.LineGroup, null, "กลุ่มบัญชีลูกค้า", true, null, null, groupShowsAmounts, false),
+            })
+            : null);
+
+    [Fact]
+    public async Task ส่งเองติ๊กลิงก์ชำระ_ผู้ใช้_LINE_ได้ปุ่มผ่านผู้ส่งคิว_กลุ่มซ่อนยอดปฏิเสธ_กลุ่มแสดงยอดผ่าน_เพิกถอนหรือออกไม่ได้ปฏิเสธ_ตอนส่งลิงก์หายข้าม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "pay " + Guid.NewGuid().ToString("N")[..6], email: "ap@buyer259.co.th", status: DocumentStatus.Approved, balance: 1_040m);
+        var groupEp = Guid.NewGuid();
+
+        // M1: กลุ่มซ่อนยอด + ลิงก์ชำระ ⇒ ปฏิเสธทั้งคำขอ ไม่มีแถว
+        var hidden = new DocumentLineSendService(db, RecipientsWithGroup(s.EndpointId, groupEp, groupShowsAmounts: false), FakePay("ok"));
+        var opts = await hidden.OptionsAsync(s.CompanyId, s.DocumentId);
+        Assert.True(opts.PayLinkOffered);
+        Assert.False(opts.Targets.Single(t => t.EndpointId == groupEp).PayLink);
+        Assert.True(opts.Targets.Single(t => t.EndpointId == s.EndpointId).PayLink);
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => hidden.SendAsync(s.CompanyId, s.DocumentId, new[] { s.EndpointId, groupEp }, true, null, "t@259"));
+        Assert.Contains("ซ่อนยอด", ex.Message);
+        Assert.Equal(0, await db.LineQueues.CountAsync(q => q.CompanyId == s.CompanyId));
+        // ทิศตรงข้าม: กลุ่มที่แสดงยอดได้ปุ่มชำระ
+        var shown = new DocumentLineSendService(db, RecipientsWithGroup(s.EndpointId, groupEp, groupShowsAmounts: true), FakePay("ok"));
+        Assert.True((await shown.OptionsAsync(s.CompanyId, s.DocumentId)).Targets.Single(t => t.EndpointId == groupEp).PayLink);
+
+        // L5: ลิงก์ถูกเพิกถอน ⇒ ตัวออกลิงก์โยน 409 ไม่มีแถว · ออกไม่ได้ ⇒ 409 พร้อมเหตุ
+        await Assert.ThrowsAsync<PayLinkRevokedException>(() =>
+            new DocumentLineSendService(db, Recipients(s.EndpointId), FakePay("revoked")).SendAsync(s.CompanyId, s.DocumentId, new[] { s.EndpointId }, true, null, "t@259"));
+        var refused = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            new DocumentLineSendService(db, Recipients(s.EndpointId), FakePay("refused")).SendAsync(s.CompanyId, s.DocumentId, new[] { s.EndpointId }, true, null, "t@259"));
+        Assert.Contains("ยังไม่เปิดรับชำระออนไลน์", refused.Message);
+        Assert.Equal(0, await db.LineQueues.CountAsync(q => q.CompanyId == s.CompanyId));
+
+        // ผู้ใช้ LINE + ลิงก์ชำระ ⇒ เข้าคิว (ManualSend) แล้วผู้ส่งคิวส่งการ์ดที่มีปุ่มชำระ
+        var r = await new DocumentLineSendService(db, Recipients(s.EndpointId), FakePay("ok"))
+            .SendAsync(s.CompanyId, s.DocumentId, new[] { s.EndpointId }, true, null, "t@259");
+        Assert.Equal(1, r.Queued);
+        Assert.True(Assert.Single(r.Endpoints!).Queued);
+        var row = await db.LineQueues.AsNoTracking().SingleAsync(q => q.CompanyId == s.CompanyId);
+        Assert.Equal((ContactLineChannel.ManualTrigger, (bool?)true), (row.Trigger, row.IncludePayLink));
+        await db.LineQueues.Where(q => q.Id == row.Id).ExecuteUpdateAsync(x => x.SetProperty(q => q.ScheduledFor, DateTime.UtcNow.AddYears(-5)));
+        var probe = new PushProbe();
+        await new ContactLineQueueService(db, FakeLine(probe), Recipients(s.EndpointId), Secrets, NoEmail(),
+            NullLogger<ContactLineQueueService>.Instance, payLinks: FakePay("ok"), config: Config()).ProcessPendingAsync();
+        Assert.Equal(ContactLineChannel.StatusSent, (await db.LineQueues.AsNoTracking().SingleAsync(q => q.Id == row.Id)).Status);
+        Assert.Contains(probe.Pushes, p => p.Json.Contains("paytoken259"));
+
+        // L2: ตอนส่งลิงก์ใช้ไม่ได้แล้ว ⇒ ข้ามพร้อมเหตุ (ไม่ใช่ "ส่งแล้ว" โดยไม่มีปุ่ม)
+        db.ChangeTracker.Clear();
+        var late = new LineQueue
+        {
+            CompanyId = s.CompanyId, EntityType = "Document", EntityId = s.DocumentId, ContactId = s.ContactId, EndpointId = s.EndpointId,
+            EndpointKind = NotifyEndpointKind.LineUser, Topic = NotifyTopic.Document.ToString(), Trigger = ContactLineChannel.ManualTrigger,
+            ScheduledFor = DateTime.UtcNow.AddYears(-5), Status = ContactLineChannel.StatusPending, RetryKey = Guid.NewGuid(),
+            IdempotencyKey = "t259late:" + Guid.NewGuid().ToString("N"), BaseKey = "t259late", IncludePayLink = true,
+        };
+        db.LineQueues.Add(late);
+        await db.SaveChangesAsync();
+        await new ContactLineQueueService(db, FakeLine(probe), Recipients(s.EndpointId), Secrets, NoEmail(),
+            NullLogger<ContactLineQueueService>.Instance, payLinks: FakePay("gone"), config: Config()).ProcessPendingAsync();
+        var lateRow = await db.LineQueues.AsNoTracking().SingleAsync(q => q.Id == late.Id);
+        Assert.Equal(ContactLineChannel.StatusSkipped, lateRow.Status);
+        Assert.Equal(DocumentLineSendRule.PayLinkGoneAtSend, lateRow.ErrorMessage);
+    }
+
+    private sealed class FakeEmailSender : IEmailSender
+    {
+        public List<EmailMessage> Sent { get; } = new();
+        public EmailProvider Provider => EmailProvider.Smtp;
+        public Task<EmailSendResult> SendAsync(EmailMessage message, CancellationToken ct = default)
+        {
+            Sent.Add(message);
+            return Task.FromResult(EmailSendResult.Ok("mid-259-pay"));
+        }
+    }
+
+    private static DocumentEmailService Email(AccountingDbContext db, FakeEmailSender sender, IDocumentPayLinkService pay)
+        => new(db, F4Proxy<IEmailSenderFactory>.Create((m, _) => m == nameof(IEmailSenderFactory.PlatformFromAddress) ? "no-reply@nextacc.net" : sender),
+            F4Proxy<IEtaxInvoiceService>.Create((_, _) => null), NullLogger<DocumentEmailService>.Instance, pdf: null, storage: null, config: Config(),
+            payLinks: pay);
+
+    private static Accounting.Models.DTOs.Email.SendDocumentEmailRequest Mail(bool payLink)
+        => new("ap@buyer259.co.th", null, null, null, null, AttachPdf: false, IncludePayLink: payLink);
+
+    [Fact]
+    public async Task อีเมลส่งเองติ๊กลิงก์ชำระ_มีบล็อกชำระ_ไม่ติ๊กไม่มี_ออกไม่ได้หรือเพิกถอนไม่ส่ง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "mail " + Guid.NewGuid().ToString("N")[..6], email: "ap@buyer259.co.th", status: DocumentStatus.Approved, balance: 1_040m);
+        var sender = new FakeEmailSender();
+        await Email(db, sender, FakePay("ok")).SendDocumentEmailAsync(s.CompanyId, s.DocumentId, Mail(true), "t@259");
+        Assert.Contains("paytoken259", Assert.Single(sender.Sent).HtmlBody);
+
+        // ทิศตรงข้าม: ไม่ติ๊ก ⇒ ไม่มีบล็อก
+        var plain = new FakeEmailSender();
+        await Email(db, plain, FakePay("ok")).SendDocumentEmailAsync(s.CompanyId, s.DocumentId, Mail(false), "t@259");
+        Assert.DoesNotContain("paytoken259", Assert.Single(plain.Sent).HtmlBody);
+
+        // ออกไม่ได้ ⇒ 409 ไม่ส่ง · เพิกถอน ⇒ PayLinkRevokedException ไม่ส่ง
+        var none = new FakeEmailSender();
+        await Assert.ThrowsAsync<BusinessRuleException>(() => Email(db, none, FakePay("refused")).SendDocumentEmailAsync(s.CompanyId, s.DocumentId, Mail(true), "t@259"));
+        await Assert.ThrowsAsync<PayLinkRevokedException>(() => Email(db, none, FakePay("revoked")).SendDocumentEmailAsync(s.CompanyId, s.DocumentId, Mail(true), "t@259"));
+        Assert.Empty(none.Sent);
     }
 }

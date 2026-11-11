@@ -219,13 +219,18 @@ public class DocumentEmailService : IDocumentEmailService
     /// ถาม <see cref="EtaxDeliveryRouter"/>: อีเมลธรรมดา ⇒ <see cref="SendDocumentEmailAsync"/> (พฤติกรรมเดิมทุกตัวอักษร) · e-Tax by Email ⇒ แถว e-Tax
     /// (ออกให้ถ้ายังไม่มี) แล้ว <see cref="SendEtaxByEmailAsync"/> — ด่านปฏิเสธ = โยน <see cref="BusinessRuleException"/> (ล้มดัง · <b>ห้ามถอยเป็นอีเมลธรรมดา</b>) ·
     /// ส่ง e-Tax ไปแล้ว ⇒ สำเนาธรรมดา เว้นแต่ <c>ConfirmEtaxResend</c></summary>
+    /// <summary>ฝ่ายค้าน 259 L1: เหตุเมื่อติ๊กลิงก์ชำระบนทาง e-Tax by Email</summary>
+    internal const string EtaxPayLinkRefusal =
+        "ใบนี้ส่งแบบ e-Tax by Email (เนื้ออีเมลตามรูปแบบสรรพากร) — ใส่ลิงก์ชำระเงินไม่ได้ · เอาติ๊ก \"ใส่ลิงก์ชำระเงินออนไลน์\" ออกแล้วส่ง หรือส่งลิงก์ชำระทาง LINE/อีเมลธรรมดาแยก";
+
     /// <summary>รอบ 259 (E-H3): บล็อกลิงก์ชำระของอีเมลที่ส่งเอง — ตัวออกลิงก์เดียว (<see cref="IDocumentPayLinkService.EnsureLinkAsync"/> · ช่องทางตามผู้ติดต่อ › บริษัท) ·
     /// บล็อก HTML ตัวเดียวกับอีเมลตามตาราง (<see cref="DocumentPayLinkPolicy.EmailBlock"/>) · ออกไม่ได้ ⇒ โยน <see cref="BusinessRuleException"/> พร้อมเหตุ</summary>
     private async Task<string> ManualPayBlockAsync(Guid companyId, Guid documentId, bool isEnglish)
     {
         if (_payLinks == null)
             throw new BusinessRuleException("บริการลิงก์ชำระเงินยังไม่พร้อม — ส่งโดยไม่ติ๊ก \"ใส่ลิงก์ชำระเงิน\"", "DOC-EMAIL-PAYLINK", 503);
-        var r = await _payLinks.EnsureLinkAsync(companyId, documentId, null);
+        // ฝ่ายค้าน 259 L5 (259-2-8): ลิงก์ที่ถูกเพิกถอน ⇒ ตัวออกลิงก์โยน PayLinkRevokedException (409) — หน้าต่างส่งเองไม่ออกใหม่ทับ
+        var r = await _payLinks.EnsureLinkAsync(companyId, documentId, null, default, allowReissueRevoked: false);
         if (r.Url == null || r.Amounts == null)
             throw new BusinessRuleException("ใส่ลิงก์ชำระเงินไม่ได้ — " + (r.Refusal ?? "ไม่ทราบเหตุ") + " (เอาติ๊ก \"ใส่ลิงก์ชำระเงิน\" ออกแล้วส่งได้)",
                 "DOC-EMAIL-PAYLINK", 409);
@@ -240,6 +245,9 @@ public class DocumentEmailService : IDocumentEmailService
             || (route.Channel == EtaxEmailChannel.PlainCopyAfterEtax && req.ConfirmEtaxResend);
         if (!etaxPath)
             return await SendDocumentEmailAsync(companyId, documentId, req, actorEmail);
+        // ฝ่ายค้าน 259 L1: เนื้อ e-Tax by Email ตามรูปแบบสรรพากร — ไม่มีบล็อกลิงก์ชำระ ⇒ ติ๊กมา = ปฏิเสธ (ห้ามทิ้งค่าเงียบ)
+        if (req.IncludePayLink)
+            throw new BusinessRuleException(EtaxPayLinkRefusal, "DOC-EMAIL-PAYLINK", 409);
         // ฝ่ายค้าน N5: ด่านผู้ส่งก่อนออกแถว e-Tax — ค่าตั้งผู้ส่งไม่พร้อม ⇒ ไม่สร้างแถว e-Tax ค้าง · ปฏิเสธดังพร้อมแถว Failed บนเอกสาร
         var settings = await GetOrCreateSettings(companyId);
         if (EtaxByEmailSenderGate.Refusal(EtaxByEmailSenderGate.From(settings,
