@@ -37,8 +37,17 @@ public static class ContactLineChannel
     /// (ไม่ใช่ trigger ของกฎตารางส่ง — ไม่อยู่ใน <see cref="LineTriggers"/> ⇒ ฟอร์มกฎตารางส่งไม่เปิดเรื่องนี้ · ค่าตั้งอยู่ที่ "หลังลูกค้าชำระ: ออกใบเสร็จ…แล้วส่ง")</summary>
     public const string ReceiptTrigger = "ReceiptIssued";
 
-    /// <summary>trigger ที่ผู้ส่งคิว LINE รับได้ = กฎตารางส่ง + ใบเสร็จหลังรับชำระ</summary>
-    public static bool SenderSupports(string? trigger) => SupportsLine(trigger) || trigger == ReceiptTrigger;
+    /// <summary>รอบ 259 (E-H3 · 259-2-2): trigger ของแถวที่ผู้ใช้กด "ส่งทาง LINE" เองจากหน้าเอกสาร (ไม่ใช่กฎตารางส่ง — ฟอร์มกฎไม่เปิดเรื่องนี้) ·
+    /// ใบต้องออกแล้ว (ตัวตัดสินตอนส่งเดียวกับกฎ "เมื่ออนุมัติ") · ปุ่มชำระตามที่ผู้ใช้เลือก (<c>LineQueue.IncludePayLink</c>)</summary>
+    public const string ManualTrigger = "ManualSend";
+
+    /// <summary>trigger ที่ผู้ส่งคิว LINE รับได้ = กฎตารางส่ง + ใบเสร็จหลังรับชำระ + ส่งเองจากหน้าเอกสาร</summary>
+    public static bool SenderSupports(string? trigger) => SupportsLine(trigger) || trigger == ReceiptTrigger || trigger == ManualTrigger;
+
+    /// <summary>รอบ 259 (A-L5): กด "ส่งอีกครั้ง" แถว LINE ที่อีเมลถอยไปแล้ว ⇒ บอกก่อนยืนยัน (ลูกค้าได้ทั้งอีเมลและ LINE — ตั้งใจได้ แต่ต้องรู้) · null = ไม่มีหมายเหตุ</summary>
+    public static string? RetryNote(DateTime? fallbackQueuedAt)
+        => fallbackQueuedAt == null ? null
+            : "แถวนี้เคยถอยไปส่งทางอีเมลแทนแล้ว — ส่ง LINE อีกครั้งลูกค้าจะได้ทั้งอีเมลและ LINE ของเรื่องเดียวกัน";
 
     /// <summary>รอบ 258-3 (F-H1): ปลายทาง LINE ที่ใช้ส่งได้ของชุดผู้รับ (เรื่องตามที่ตัวหาผู้รับเดียวกรองแล้ว — ปลายทางที่ไม่ได้ติ๊กเรื่องนี้ = ไม่ Available) ·
     /// ตัวเดียวของงานหลังรับชำระ + ธงส่งของรายการประจำ (ห้ามกรองเองในบริการ)</summary>

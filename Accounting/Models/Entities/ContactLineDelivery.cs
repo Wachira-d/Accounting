@@ -43,6 +43,10 @@ public class LineQueue : TenantEntity
     public bool FallbackToEmail { get; set; }
     /// <summary>เวลาที่เข้าคิวอีเมลแทนแล้ว (ถอยครั้งเดียวต่อใบ)</summary>
     public DateTime? FallbackQueuedAt { get; set; }
+    /// <summary>รอบ 259 (E-H3): แถวที่ผู้ใช้ส่งเองจากหน้าเอกสาร — true = ใส่ปุ่มชำระ (ออกลิงก์ถ้ายังไม่มี) · false = ไม่ใส่ · null = กฎตารางส่ง/ใบเสร็จ (ตัวตัดสินเดิม)</summary>
+    public bool? IncludePayLink { get; set; }
+    /// <summary>รอบ 259: ผู้ใช้ที่กดส่งเอง (แถวจากหน้าเอกสาร) · null = ระบบ</summary>
+    public Guid? RequestedByUserId { get; set; }
 }
 
 /// <summary>

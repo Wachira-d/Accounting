@@ -360,7 +360,7 @@ public class ContactLineGroupService : IContactLineGroupService
         if (request.Topics == null) topics = NotifyTopics.DefaultsFor(NotifyEndpointKind.LineGroup);
         else
         {
-            var (parsed, problem) = NotifyTopics.FromRequest(request.Topics, allowEmpty: false);
+            var (parsed, problem) = NotifyTopics.FromRequest(request.Topics, allowEmpty: false, NotifyEndpointKind.LineGroup);   // รอบ 259 (A-M4)
             if (problem != null) throw new BusinessRuleException(problem, "NOTIFY-CONTACT-TOPIC", 400);
             topics = parsed!;
         }
@@ -441,7 +441,10 @@ public class ContactLineGroupService : IContactLineGroupService
             LineGroupBindRule.Replies.Bound(companyName, c.ContactName, topics.Select(NotifyTopics.Label)), Guid.NewGuid());
         if (!announce.Ok) _logger.LogWarning("ประกาศผูกกลุ่ม LINE ไม่สำเร็จ (company {Company}): {Error}", companyId, announce.Error);
 
-        return await _recipients.GetOverviewAsync(companyId, contactId, canEdit: true, ct)
+        var overview = await _recipients.GetOverviewAsync(companyId, contactId, canEdit: true, ct)
             ?? throw new BusinessRuleException("ไม่พบผู้ติดต่อ", "NOTIFY-CONTACT-NOT-FOUND", 404);
+        // รอบ 259 (A-M7): ผลประกาศจริงถึงผู้ใช้ (เดิมตอบ "บอทประกาศในกลุ่มแล้ว" เสมอ) — การผูกไม่ย้อน · ตัวประกอบข้อความเดียว LineGroupBindRule.AnnounceOutcome
+        return overview with { ActionNote = LineGroupBindRule.AnnounceOutcome(announce.Ok,
+            announce.Ok ? null : LinePushOutcome.Classify(false, announce.HttpStatus, announce.Error, announce.RuleCode, announce.TransportError).Reason) };
     }
 }

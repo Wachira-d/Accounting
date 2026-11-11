@@ -3087,7 +3087,39 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (L3) สิทธิ์ = อนุมัติเอกสารตามชนิดใบซื้อจริง + ชั้นความลับ (ด่านเดียวกับบันทึกการชำระ) · รายการต้องเห็นเอกสารฝั่งซื้อ · (L5) audit ฝั่งผู้ขายไม่มี id ภายในของผู้ซื้อ ·
   (L6) `PartnerExchangeRules.IsTaxInvoiceCarrier` ใบเสร็จรับเงิน/ใบกำกับอย่างย่อ ⇒ ไม่ใช่หลักฐานภาษีซื้อ (§82/5(2) · ผู้เรียกเส้นคู่ค้า 3 จุดส่งรูปแบบ — `PortalAccountantExport`/`PartnerEvidenceRepair` ยังไม่ส่ง) ·
   Db test `BillingChainRound258DbTests` · Last verified `commit 1139bb5f`
-- ยังไม่ทำในแพ็กนี้: ค่าตั้ง `WorkflowAutomationConfig.AutoCreateReceiptFromIncomingPayment` ยังไม่มีผู้อ่าน (คงใน baseline settings_reader — 258-3-8) · การ์ดความพร้อมบนหน้า payment-settings (F-M1 ส่วนบริษัท) · ทวง 50 ทวิ ทาง LINE (การ์ดของผู้ติดต่อ + ลิงก์อัปโหลดต่อแถวคิว — ผู้ส่งคิว LINE ยังรองรับเฉพาะการ์ดเอกสาร) · Last verified `commit 4e9efbc4`
+- ยังไม่ทำในแพ็กนี้: ค่าตั้ง `WorkflowAutomationConfig.AutoCreateReceiptFromIncomingPayment` ยังไม่มีผู้อ่าน (คงใน baseline settings_reader — 258-3-8) · การ์ดความพร้อมบนหน้า payment-settings (F-M1 ส่วนบริษัท) · ~~ทวง 50 ทวิ ทาง LINE~~ (ทำแล้วรอบ 259 — §2.12g-259) · Last verified `commit 4e9efbc4`
+
+### 2.12g-259 รอบ 259 แพ็ก B "ส่งทาง LINE ให้ครบ" (erp-review/2026-11-11/team-A-line.md · team-E-ux.md · คำตัดสิน 259-2-*)
+
+- **ทวง 50 ทวิ ทาง LINE (258-3-6 → 259-2-1)** — `WhtCertReminderService.RunCompanyAsync` ถามตัวหาผู้รับเดียว (เรื่อง 50 ทวิ) ครั้งเดียว ⇒ อีเมล + ปลายทาง LINE ·
+  ตัวตัดสินช่องทาง `LineWhtCertCard.Channels` (ไม่ส่งอัตโนมัติชนะ · ถูกลบ ⇒ ไม่ส่ง · มีอีเมล ⇒ อีเมล · มีปลายทาง LINE ⇒ การ์ดต่อปลายทาง · ไม่มีทั้งสอง ⇒ แถว "ข้าม" พร้อมเหตุ
+  `NoChannelReason` — เดิมไม่มีอีเมล = ข้ามเสมอแม้ผูก LINE) · ค่าตั้งเดิมตัวเดียว `WhtCertReminderEnabled` · จังหวะ/กันซ้ำ = ขั้นเดียวกับอีเมล (บันทึกทวงแถวเดียว +
+  `LineQueuedCount`) · แถวคิว LINE ชนิด `WhtCertRequest` (EntityId = ผู้ติดต่อ · trigger `WhtCertReminder` · ไม่ถอยไปอีเมล) + ลิงก์อัปโหลดต่อแถว
+  (`WhtCertUploadLink.LineQueueId` · token `WhtCertUploadLinkPolicy.TokenForLineQueue` คนละป้ายกับอีเมล) สร้างในธุรกรรมเดียว ·
+  ผู้ส่ง `ContactLineQueueService.SendWhtCertRequestAsync`: ด่านร่วมกับอีเมลทวง (`CompanyContactSkipReasonAsync` · ส่งใบครบแล้ว ⇒ ข้าม) · ปลายทางยังรับเรื่อง 50 ทวิ ·
+  ลิงก์อ่านอย่างเดียว (`LineReminderUrlAsync` — ไม่มีแถว ⇒ ล้มพร้อมเหตุ ไม่ส่งลิงก์เสีย) · เนื้อการ์ดจากรายการที่ค้าง ณ ตอนส่ง (`AwaitingItemsAsync`) ·
+  กลุ่มซ่อนยอด ⇒ ไม่แสดงภาษีที่หัก + ไม่มีปุ่มอัปโหลด (หน้าอัปโหลดแสดงยอด — ตัวตัดสินเดียว `LineDocumentViewLink.EndpointAllows`) · push/จำแนกผลตัวเดียวกับการ์ดเอกสาร
+  (`PushAsync`) · ล้ม ⇒ แถวคิว LINE (หน้า ส่งเอกสารอัตโนมัติ › คิว LINE ป้าย "ทวง 50 ทวิ · ผู้ติดต่อ") + Autopilot `LineFailed` ป้ายของตัวเอง (ไม่มีปุ่มเปิดเอกสาร)
+- **💬 ส่งทาง LINE เองจากหน้าเอกสาร (E-H3 · 259-2-2)** — `GET/POST document/{id}/line-send` (ด่านเดียวกับส่งอีเมล: Document.Create ตามชนิด + ชั้นความลับ) ·
+  `DocumentLineSendService`: ใบต้องออกแล้ว (`DocumentLineSendRule.DocumentProblem`) · ปลายทาง LINE จากตัวหาผู้รับเดียว (เรื่อง "เอกสาร" · ใช้ไม่ได้ = แสดงพร้อมเหตุ เลือกไม่ได้) ·
+  เลือกผิด/ใช้ไม่ได้ ⇒ ปฏิเสธทั้งคำขอ · ติ๊กลิงก์ชำระ ⇒ ออกลิงก์ด้วยตัวออกเดียว (`EnsureLinkAsync`) ก่อนเข้าคิว — ออกไม่ได้ ⇒ ปฏิเสธพร้อมเหตุ · เข้าคิว LINE เดิม
+  (trigger `ManualSend` · `IncludePayLink` ต่อแถว · กดซ้ำนาทีเดียว = แถวเดิม) · ผู้ส่งคิวใช้การ์ดเดียวกับตารางส่ง (ภาษา/หัวเดียวกับ PDF · ปุ่มดู PDF) · ตอบ "เข้าคิวแล้ว" ไม่ใช่ "ส่งแล้ว" ·
+  หน้าต่างส่งอีเมลมีช่อง "ใส่ลิงก์ชำระเงินออนไลน์" (`SendDocumentEmailRequest.IncludePayLink` → บล็อกเดียวกับอีเมลตามตาราง `DocumentPayLinkPolicy.EmailBlock` ·
+  ออกไม่ได้ ⇒ 409 ไม่ส่ง · ทาง e-Tax by Email ซ่อนช่อง) · ชนิดที่ส่งได้จากเซิร์ฟเวอร์ (`GET document/send-types` = `DocumentLineSendRule.SendableTypes` — เดิมรายการใน documents.html)
+- **เรื่องที่ติ๊กได้แต่ LINE ไม่ส่ง (A-M4 · 259-2-3)** — `NotifyTopics.LineUnsupportedReason` (ลิงก์เซ็น · อื่น ๆ) ตัวเดียว: ค่าตั้งต้นผู้ใช้ LINE ไม่มีลิงก์เซ็น ·
+  `FromRequest(…, kind)` ปฏิเสธเรื่องนี้บนปลายทาง LINE · คำเชิญเก่าถูกตัดตอนผูก (`SupportedFor`) · หน้า contacts ล็อกช่อง + เหตุ · migration ตัดค่าที่เก็บไว้
+  (`Round259LineMigration` — ปลายทาง LINE ที่มี "Sign"/"Other")
+- **ความพร้อม LINE OA (A-M5/M6/L3 · 259-2-4)** — webhook OA บริษัทประทับ `CompanySettings.LineLastWebhookAt` (ลายเซ็นผ่าน + บอทตรง · ไม่ถี่กว่า 5 นาที) ·
+  แท็บ LINE แสดงแถวจาก `LineOaHealth.Rows` (OA · "ยังไม่เคยได้รับ event จาก LINE" · Basic ID ว่าง · ผลทดสอบตาม `LineLastTestStatus` ไม่ใช่ธงที่รีเซ็ตตอนบันทึก) ·
+  ทดสอบส่งเลือกกลุ่มทีมที่ตั้งไว้ได้ (`TargetKey`) · ล้ม ⇒ เหตุจริงของ LINE (`LineOaHealth.TestFailureMessage` ผ่าน `LinePushOutcome.Classify` — เดิม "ดู log") ·
+  ผูกกลุ่มแล้วประกาศล้ม ⇒ `ActionNote` + ข้อความตามผลจริง (`LineGroupBindRule.AnnounceOutcome/ConfirmMessage` — A-M7) ·
+  ลูกค้าส่งรูป/ไฟล์ในแชต OA บริษัท ⇒ ตอบรับ + ทางไปต่อ (แนบสลิปที่หน้าชำระ) จำกัด 2/นาที · 10/วัน ต่อผู้ใช้ LINE (ตัวนับกลาง `IChatRateLimiter` · คีย์ hash) — **ยังไม่เก็บสลิปจากแชต** (259-2-5)
+- LOW: ลบ `DocumentLineDeliveryService` (ไม่มีผู้เรียก · A-L1) · Webhook URL ที่เดียว (A-L2) · กล่องยืนยันปุ่มล้างรหัสบอกผลทั้งสองเส้น (A-L4) · ส่งซ้ำแถว LINE ที่ถอยไปอีเมลแล้ว ⇒ ถามยืนยัน
+  (`ContactLineChannel.RetryNote` · A-L5) · ตัวทำงานคิวแยก try ต่อขั้น (คิวอีเมลล้มไม่ลากคิว LINE · A-L7) · ชื่อหน้า/เมนู "ส่งเอกสารอัตโนมัติ (อีเมล/LINE)" + ป้ายผู้ติดต่อ
+  "ไม่ส่งเอกสารอัตโนมัติ (อีเมล/LINE)" (ผู้อ่าน `AutoSendBlock` คุมทั้งสองช่องอยู่แล้ว · E-M6)
+- ยังไม่ทำ: เก็บสลิปจากแชตเป็นรายการรอตรวจ (ผูก PaymentIntent) + แจ้งทีม · ชั่วโมงเงียบ · กระดิ่งเมื่อคิว LINE ล้มซ้ำ · ตัวเลือกกลุ่ม/ผู้ใช้ที่บอทรู้จักนอกจากกลุ่มทีม ·
+  การ์ดความพร้อมบนหน้า payment-settings · L6 (`OnDocumentApprovedAsync` กลืนข้อผิดพลาด) ·
+  เทสต์ `LineRound259Tests` · Db `LineRound259DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 7dc53e0c
 
 ### 2.12g-259c รอบ 259 แพ็ก C "รวมบ้าน · ไม่ซ้อน" (erp-review/2026-11-11/team-E-ux.md · คำตัดสิน 259-3-*)
 
@@ -3336,7 +3368,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     แพ็ก `notify.topup.line` ฿290/1,000 · `notify.topup.email` ฿190/5,000 · อีเมลเอกสารผ่าน SMTP ของ NextAcc ตัดโควตารายเดือน (ด้านบน · ACCOUNT_STRUCTURE §5)
   - **เฝ้าต้นทุน OA กลาง — รอบ 254 L4 (N8)**: `NextAccOaQuotaWatch` รายชั่วโมง (push จาก LINE + ตัวนับ reply ต่อเดือน) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% · ไม่ตัดโควตาผู้เช่า
   - **ยังไม่ทำ (บอกตรง ๆ)**: กลุ่ม/ส่งผ่าน OA กลางของบริษัท**อื่น** + สวิตช์ `CentralOaGroupDeliveryEnabled` (ทำพร้อมกัน — DECISIONS 254-WP11-11 · บริษัทผู้ให้บริการเปิดแล้วตาม 256-2) ·
-    ชั่วโมงเงียบ · ลิงก์ดูเอกสาร (`DocumentViewLink`) · LINE ของใบแจ้งยอด/50 ทวิ/ใบเสร็จหลังรับชำระ/ลิงก์เซ็น (L6) · กระดิ่งเมื่อล้มซ้ำ ·
+    ชั่วโมงเงียบ · LINE ของใบแจ้งยอด/ลิงก์เซ็น (L6 — ลิงก์ดู PDF · ใบเสร็จหลังรับชำระ ทำแล้วรอบ 258-3 · 50 ทวิ ทำแล้วรอบ 259 §2.12g-259) · กระดิ่งเมื่อล้มซ้ำ ·
     เทสต์ `LineDeliveryRound254Tests` · Db `LineQueueRound254DbTests` · ล็อก R254 (+ เคส R254a–j) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit cee44a3c
   - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·
     แจ้งเตือนจองคิว/บริการ (`BookingNotifier` — ลูกค้าเว็บ ไม่ใช่ปลายทางผู้ติดต่อ) · พอร์ทัล/ใบเสนอราคาสาธารณะ (ผู้รับเปิดเอง)
@@ -4424,13 +4456,49 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   (`POST customer-credits/{id}/legacy/confirm` · สิทธิ์อนุมัติฝั่งขาย) หรือ **[ปิดรายการ]** (`…/legacy/close` · เหตุผลบังคับ · สิทธิ์ยกเลิกฝั่งขาย · ยอดเป็นศูนย์ **ไม่ลงบัญชี** · audit
   `CC-LEGACY-CONFIRM/CLOSE`) · หน้าตรวจความถูกต้องข้อมูล (`DataIntegritySections` หมวด `LegacyPaymentExcess`) แสดงแถวที่รอตรวจ + **เงินจ่ายเจ้าหนี้ส่วนเกินเดิมที่ลงกลุ่ม 114/11400**
   (ฝั่งจ่ายไม่มีรายการติดตาม — ให้ผู้ทำบัญชีย้ายด้วยสมุดรายวัน) · แถวที่ถูกนำไปตัดใบแล้วไม่แตะ (258-1-12)
-- **ยังไม่ทำ (แพ็กถัดไป)**: ออกใบที่ขาดจากเงินรอจัดสรร · ย้ายเป็นมัดจำ · คืนเงิน · ตัดเศษ (P4) · เสนอแยก/เกินในคิวเงินโอน + ปุ่มบนบรรทัดธนาคาร (P5) ·
-  แจ้งเตือนอายุเงินรอจัดสรร · พอร์ทัล (P6 ส่วนที่เหลือ) · คิวใบที่ต้องออกใบเสร็จใน Autopilot issues · สกุลต่างประเทศ
+- **รอบ 259 P4 — ทางออกของเงินรอจัดสรร** (`CustomerCreditService.Movements.cs` · ตัวตัดสินเดียว `Helpers/CustomerCreditMovementRules.Check` ใต้ล็อกแถวการชำระ ·
+  ตาราง `PaymentCreditMovements` (Kind = ชื่อ `PaymentCreditMovementKind`) · ยอดคงเหลือ = ยอดรับ − Σ จัดสรร − Σ ขาออกที่ตัดยอด (`Helpers/CustomerCreditLedger.RecomputeAsync`
+  สูตรเดียว `UnappliedCreditBalance.Compute`) · กันกดซ้ำ `IdempotencyKey` (unique ต่อบริษัท) + `ExpectedUnappliedBefore` · ด่านงวดบัญชีปิด · audit `CC-REFUND/CC-WRITEOFF/CC-TO-DEPOSIT/CC-TO-INVOICE/CC-MOVE-UNDO`):
+  - **ออกใบแจ้งหนี้ส่วนที่ขาด** (`POST customer-credits/{id}/issue-invoice` · สิทธิ์สร้างใบ): สร้าง**ร่าง** (ใบแจ้งหนี้/ใบกำกับ · ลูกค้ารายเดียวกัน · วันที่วันนี้ ·
+    บรรทัดเดียวยอด = ยอดที่ใช้ได้ ผู้ใช้แก้ก่อนอนุมัติ · ไม่ประทับวันรับชำระ) + **จอง** (`ToInvoice` — ไม่ตัดยอดคงเหลือ แต่ลด "ยอดที่ใช้ได้" ของทุกทางออกอื่น
+    ระหว่างที่ใบยังเป็นร่าง/รออนุมัติ `CustomerCreditMovementRules.HoldsUsable`) · ป้าย `[CC-HOLD]` ในหมายเหตุภายใน · **อนุมัติที่หน้าเอกสาร**
+    (`DocumentController.ApproveDocument` → `ICustomerCreditService.AfterDocumentApprovedAsync`) ⇒ `AllocateAsync` ด่านเดียวกับกดเอง (จุดความรับผิดตามเหตุผลของเงิน
+    `LateReceiptTaxPoint` — ค้างออกใบ = วันรับเงิน) · ล้ม = ข้อความในคำตอบ + ป้าย `[CC-HOLD-FAILED]` บนใบ · การจองถูกปล่อยเสมอ · ใบร่างถูกลบ/ปฏิเสธ/อนุมัติทางอื่น
+    = การจองหมดผลเอง (เงินกลับไปใช้ได้ — ปุ่ม "ใช้เงินรอจัดสรร" + คำถามหลังอนุมัติ) · ยกเลิกการจองเองได้ที่หน้าเงินรอจัดสรร
+  - **ย้ายเป็นเงินมัดจำ** (`POST …/to-deposit` · สร้าง + อนุมัติใบเสร็จ): จองยอดใต้ล็อก (`ToDeposit` ตัดยอดทันที) → `CreateDocumentAsync` ใบเสร็จ `IsDeposit` (ระบบมัดจำเดิม ·
+    โหมด VAT ตาม `DepositPolicyResolver` ม.78/1) **ขาเงินเข้า = `PaymentAccountId` ผังพักที่รับไว้จริง (Dr 21630 — ไม่ใช่เงินเข้าธนาคารซ้ำ)** ลงวันที่วันนี้ (ไม่ย้อน)
+    → อนุมัติ `SystemWorkflow` · ยอดไม่ตรง/อนุมัติไม่ได้ ⇒ ลบร่าง + ปล่อยการจอง + 409 (เงินอยู่ครบ) · เงินล่วงหน้า/ค้างออกใบที่รับคนละงวด ⇒ `[DEPOSIT-LATE-VAT]`
+    (`CustomerCreditMovementRules.DepositLateVatNote`) บนใบมัดจำ · บริษัทจด VAT + วันนี้อยู่ในงวด ภ.พ.30 ที่ยื่น/ล็อก = ปฏิเสธ · **ยกเลิกใบมัดจำ** (`VoidDocumentAsync`
+    ในธุรกรรมเดียวกัน `CustomerCreditLedger.ReleaseForVoidedDocumentAsync`) ⇒ ขาออกถูกปล่อย เงินกลับเป็นเงินรอจัดสรร
+  - **คืนเงินลูกค้า** (`POST …/refund` · อนุมัติฝั่งขาย + `Bank.Reconcile`): บัญชีธนาคาร (ผังที่ผูก — `DocumentMoneyChannel` ไม่ตกเงินสด) + หลักฐานการจ่ายบังคับ →
+    JE `CashPayments` **Dr ผังพัก / Cr ธนาคาร** อ้าง `{เลขการชำระ}#R{n}` (ไม่ขึ้นต้น `{เลข}/` — ยกเลิกการชำระไม่กลับเงินที่คืนไปแล้วเงียบ ๆ) + `BankAccount.CurrentBalance` ลด
+  - **ตัดเศษ** (`POST …/write-off` · อนุมัติฝั่งขาย): เฉพาะ**ยอดที่เหลือทั้งหมด** ≤ เพดานของบริษัท (`CompanySettings.CustomerCreditWriteOffCap` ตั้งต้น 1.00 · ตั้งได้ 0–20
+    ที่หน้าเงินรอจัดสรร `PUT customer-credits/settings` สิทธิ์ `CompanySettings.Edit`) → **Dr ผังพัก / Cr 54960 ผลต่างจากการปัดเศษ** `#W{n}`
+  - **ยกเลิกขาออก** (`POST …/movements/{id}/undo` · สิทธิ์ Void): คืนเงิน/ตัดเศษ = กลับ JE (+ ยอดธนาคาร) · การจอง = ปล่อย · ใบมัดจำ = ยกเลิกที่หน้าเอกสาร ·
+    **ยกเลิกการรับชำระที่ยังมีขาออกที่ตัดยอด = ปฏิเสธ 409 `CC-VOID-MOVEMENT`** (`CustomerCreditLedger.VoidBlockAsync` ต้นทาง `VoidPaymentAsync`)
+  - หน้า "เงินรอจัดสรร": ปุ่มของแถวจากเซิร์ฟเวอร์ (`CustomerCreditRow.Actions` · `Available`) · รายการขาออกในแถวย่อย · เทียบยอด 21630 ไม่เปลี่ยน (ขาออกลงทั้ง GL และยอดคงเหลือ)
+- **รอบ 259 P5 — เงินเข้าธนาคารที่ยังไม่จับคู่** (`GET customer-credits/bank-line/{lineId}/suggestions` · เห็นฝั่งขาย + `Bank.View` · **เสนอเท่านั้น**): ตัวตัดสินเดียว
+  `Helpers/BankReceiptSplitSuggestion.Suggest` — (ก) ใบค้าง 2–6 ใบของ**ลูกค้ารายเดียวที่ระบุตัวได้** (อ้างเลขเอกสาร/ชื่อผู้โอนตรง) รวมเท่ายอดเงินเข้าพอดี และเป็น**ชุดเดียว**
+  ในทุกลูกค้าที่ระบุตัวได้ (ค้นแบบมีขอบเขต `Helpers/SubsetSum` — ตัวเดียวของระบบ · `WhtCertMatchPolicy` ใช้ตัวนี้แล้ว) · (ข) อ้างเลขใบเดียวที่ยอดน้อยกว่าเงินเข้า ⇒ ใบนั้น + ส่วนเกิน ·
+  ไม่มีตัวระบุตัว/หลายชุด = ไม่เสนอ (บอกเหตุ) · ปุ่ม "บันทึกเป็นรับเงินลูกค้า" (`bank.html` บรรทัดเงินเข้า Unmatched) = ลิงก์ที่เซิร์ฟเวอร์ประกอบ
+  `documents.html?openDoc=&pay=1&payAmount=&payDate=&payBank=&payRef=` ⇒ เปิดหน้ารับชำระของใบแรกที่เติมค่าไว้ (ผู้ใช้กดบันทึกเอง · แผงเงินเกินเดิมจัดการส่วนเกิน) ·
+  ปิดหนี้อัตโนมัติยังมีแค่ "ยอดตรงใบเดียว + statement ของผู้อนุมัติ" (`BankReceiptAutoSettle.Decide` ไม่เปลี่ยน · DECISIONS 258-1)
+- **รอบ 259 P6** — Autopilot "เรื่องที่ระบบทำต่อไม่ได้" (`AutopilotService.IssuesAsync` → `Helpers/CustomerCreditWorkQueue.AutopilotIssuesAsync` ตัวอ่านเดียวกับหน้า):
+  `ReceiptPending` ใบที่ต้องออกใบเสร็จ (`[RECEIPT-PENDING]`) · `CustomerCreditAged` เงินรอจัดสรรค้างเกิน 30 วัน · **ใบเก่าก่อนรอบ 258** ที่ปิดด้วยแถวจัดสรรพร้อมรับเงินแต่ไม่มี
+  ใบเสร็จลูก (`CustomerCreditWorkQueue.LegacyMissingReceiptsAsync` · การชำระก่อนเวลา marker `r258-unapplied-backfill`) ⇒ การ์ดบนหน้าเงินรอจัดสรร + "ออกใบเสร็จทั้งหมด"
+  (คำขอละใบผ่าน `POST document/payments/{id}/receipt?documentId=` เดิม · ผลรายแถว) · ส่งออก `GET customer-credits/export?format=xlsx|csv` (`Helpers/CustomerCreditExport` →
+  `TabularExport`/MiniExcel — ตัวเลขเดียวกับหน้า) · หลังอนุมัติใบขายที่หน้าเอกสาร: ถามจาก `for-document` (เซิร์ฟเวอร์) "ลูกค้ามีเงินรอจัดสรร x บาท — ใช้ตัดใบนี้?" · ใบแจ้งยอดลูกค้า
+  แสดงเงินรอจัดสรรแยกบรรทัดอยู่แล้ว (รอบ 258)
+- **ยังไม่ทำ**: พอร์ทัลลูกค้าแสดงเงินรอจัดสรร (หน้าพอร์ทัลเป็นของทีม C รอบ 259 — ข้อมูลพร้อมที่ `CustomerCreditQuery.UnappliedForContactAsync`) · คีย์แจ้งเตือนกระดิ่ง
+  `customer_credit.unallocated_aging` (ขึ้นแล้วใน Autopilot issues) · ฝั่งจ่ายเจ้าหนี้ · สกุลต่างประเทศ · ใบแจ้งหนี้ส่วนที่ขาดหลายบรรทัด (ผู้ใช้แก้ในร่าง)
 - **ด่านอื่นจากฝ่ายค้าน** (`erp-review/2026-11-11/review-258-customer-credit.md`): M2 เงินเกินพร้อมบรรทัดปรับส่วนต่าง = ปฏิเสธ (`RefuseExcess(hasAdjustments)`) + ยอดเงินเกินที่หน้าจอแสดงต้องตรงกับที่
   เซิร์ฟเวอร์คิด (`CreatePaymentRequest.ExpectedExcess` → `PaymentExcessPlan.ExpectedExcessMismatch`) · L1 ข้อความ "ชำระร่วมกับเอกสารอื่น" ชี้ทาง "ยกเลิกการจัดสรร" · L3 หมายเหตุรายงานอายุลูกหนี้บอกยอดของ
   ลูกค้าที่ไม่อยู่ในตาราง
 - เทสต์ `CustomerCreditRound258Tests` · `Db/CustomerCreditDbTests` (H1 สองทิศ · H2 ใบเสร็จรายใบ + e-Tax · ภ.พ.30 ยื่นแล้ว · ภาษีถูกหัก · M1–M7 · ยกเลิกใบ/การชำระ · สิทธิ์ 403/404) ·
   `tools/required_call_site_check.py` (กติกา R258) · `write_permission_gate_check` เฝ้า `CustomerCreditController` · Last verified `commit 78e3f30c` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+- เทสต์รอบ 259 `CustomerCreditRound259Tests` (ตัวตัดสินขาออก · สูตร · การจอง · ม.78/1 ใบมัดจำ · SubsetSum · ข้อเสนอบรรทัดเงินเข้า) · `Db/CustomerCreditRound259DbTests`
+  (คืนเงิน + บล็อกยกเลิกการชำระ + ยกเลิกการคืน · เกินยอดที่ใช้ได้ · ตัดเศษ/กดซ้ำ · อนุมัติแล้วจัดสรรเอง/ล้มดัง · ยกเลิกใบมัดจำ · คิว Autopilot/ใบเก่า) · กติกา R259 ใน
+  `tools/required_call_site_check.py` · Last verified commit <เติมในคอมมิตตามหลัง> — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 3.5 Void / Cancel
 - **Method**: `VoidDocumentAsync` (`:1959`) — **cascade 7+ขั้น**:
@@ -8699,6 +8767,7 @@ _Last verified against codebase: 2026-11-11 (รอบ 257 ปิดท้าย
 
 _Last verified against codebase: 2026-11-11 (รอบ 258 — §3.4b เงินรอจัดสรร: ผัง 21630 + ตัวตัดสินเงินเกิน/การจัดสรร · จัดสรรทีหลัง/ยกเลิก · หน้ารับชำระ/หน้าเงินรอจัดสรร/ปุ่มบนใบ · §2.12g-0 ระงับทวงเมื่อเงินรอจัดสรรพอปิดใบ · อายุลูกหนี้/ใบแจ้งยอดแสดงแยกบรรทัด · P-1/P-2 · backfill) · commit 24a8df4a — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _Last verified against codebase: 2026-11-11 (รอบ 258 ฝ่ายค้าน — §3.4b: จุดความรับผิดตามเหตุผลของเงิน (H1) · ใบเสร็จ/ใบกำกับรายใบ + คิว (H2) · ขั้นภาษีในธุรกรรม (M6) · ด่านบางส่วนของใบมี VAT ฝั่งเซิร์ฟเวอร์ (M5) · รายการก่อนรอบ 258 ต้องตรวจ (M4) · กันกดซ้ำ (M7) · §2.12g-0 แผนระงับทวงเก่าสุดก่อน (M1)) · commit 78e3f30c — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก A — §3.4b เงินรอจัดสรรต่อจนจบ: ออกใบส่วนที่ขาด (จอง → อนุมัติแล้วจัดสรรเอง) · ย้ายเป็นมัดจำ (Dr 21630) · คืนเงิน · ตัดเศษ · ยกเลิกขาออก/บล็อกยกเลิกการชำระ · ข้อเสนอบรรทัดเงินเข้า · Autopilot issues · ใบเก่าไม่มีใบเสร็จ · ส่งออก) · commit <เติมในคอมมิตตามหลัง> — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 1: ด่านเขียนตารางส่ง/ตารางแจ้งเตือน · บ้านเดียวของตารางแจ้งเตือน · ผูก LINE พนักงานทางเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 24b3680e)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 2: คิวอีเมลค้างกำลังส่ง · กฎตามวันย้อนเก็บแบบมีขอบเขต — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 54c83725)_
@@ -8714,3 +8783,5 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิ�
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 9: แก้ผลฝ่ายค้าน R-H1 · R-M1…3 · R-L2…L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2be3e30c)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส้นบิลอัตโนมัติจนจบ — §2.12g-258c ชุด 1: ใบเสร็จทาง LINE · ลิงก์ดู PDF · ใบกำกับ ณ วันรับเงินถึงคู่ค้า · ล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4e9efbc4)_
+
+_Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก B ส่งทาง LINE ให้ครบ — §2.12g-259: ทวง 50 ทวิ ทาง LINE (การ์ด + ลิงก์อัปโหลดต่อแถว) · 💬 ส่งทาง LINE เองจากหน้าเอกสาร + ลิงก์ชำระในอีเมลที่ส่งเอง · เรื่องที่ LINE ไม่ส่งติ๊กไม่ได้ + migration · ความพร้อม OA (webhook เข้าจริง · Basic ID · ผลทดสอบ · เหตุจริงเมื่อทดสอบล้ม) · ประกาศผูกกลุ่มตามผลจริง · ตอบรับรูป/ไฟล์ในแชต · ลบ DocumentLineDeliveryService — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7dc53e0c)_

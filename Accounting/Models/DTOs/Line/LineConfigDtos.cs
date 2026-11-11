@@ -28,7 +28,14 @@ public record LineConfigResponse(
     /// <summary>รอบ 257 C-H1: คำอธิบายของบริษัทผู้ให้บริการ (ใช้ OA กลางอยู่แล้ว · ห้ามเปลี่ยน webhook ของ OA กลาง) จาก <c>LineOwnOaGuard.PlatformNotice</c> · บริษัทอื่น = null</summary>
     string? PlatformOaNotice = null,
     /// <summary>รอบ 257 ฝ่ายค้าน M1: บริษัทผู้ให้บริการยังมี token/secret ค้าง — หน้าแสดงสถานะ + ปุ่มล้าง (ส่วน OA ของร้านถูกซ่อน) · null = ไม่มี</summary>
-    string? PlatformLegacyOwnOaNotice = null);
+    string? PlatformLegacyOwnOaNotice = null,
+    /// <summary>รอบ 259 (A-M5 · A-L3): แถวความพร้อมของ OA บริษัท (OA · webhook เข้าจริงไหม · Basic ID · ผลทดสอบ) จาก <c>LineOaHealth.Rows</c> — หน้าแสดงตรงตัว</summary>
+    IReadOnlyList<Accounting.Helpers.LineOaHealth.Row>? Health = null,
+    /// <summary>รอบ 259 (A-M6): ปลายทางทดสอบที่ระบบรู้จัก (กลุ่ม LINE ของทีมที่ตั้งไว้) — เลือกแทนการพิมพ์ U…/C… · ไม่มี LINE id ใน DTO (ส่งกลับเป็น key)</summary>
+    IReadOnlyList<LineTestTarget>? TestTargets = null);
+
+/// <summary>รอบ 259 (A-M6): ปลายทางทดสอบหนึ่งตัว — <paramref name="Key"/> = <c>LineOaHealth.TeamGroupTargetKey</c> (เซิร์ฟเวอร์อ่าน id เอง)</summary>
+public record LineTestTarget(string Key, string Label);
 
 /// <summary>รอบ 212 แพ็ก B: สถานะคำเชิญผูกใหม่ของการเปลี่ยน OA ล่าสุด — <c>Label</c> = ข้อความที่หน้าเว็บแสดงตรง ๆ (ไม่มีกติกาฝั่ง JS)</summary>
 public record CustomerRelinkProgress(
@@ -58,6 +65,7 @@ public record UpdateLineConfigRequest(
     /// <summary>LINE OA basic id (@xxx) — สำหรับปุ่ม/QR เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิป · null = ไม่แก้ · "" = ล้าง</summary>
     string? OaBasicId = null);
 
-public record TestLineConfigRequest(string ToLineId);
+/// <param name="TargetKey">รอบ 259 (A-M6): ปลายทางที่ระบบรู้จัก (<c>LineConfigResponse.TestTargets</c>) — มีค่า ⇒ ใช้แทน <paramref name="ToLineId"/></param>
+public record TestLineConfigRequest(string? ToLineId, string? TargetKey = null);
 
 public record LineTestResult(bool Success, string? Message);

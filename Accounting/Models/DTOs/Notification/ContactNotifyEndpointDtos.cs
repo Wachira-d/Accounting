@@ -1,7 +1,8 @@
 namespace Accounting.Models.DTOs.Notification;
 
 /// <summary>รอบ 245 L1 — ตัวเลือกเรื่องที่รับ (ชื่อ enum + ป้ายไทยจากเซิร์ฟเวอร์)</summary>
-public record NotifyTopicOption(string Key, string Label);
+/// <param name="LineUnsupported">รอบ 259 (A-M4): เรื่องนี้ไม่มีเส้นส่งทาง LINE ⇒ เหตุ (หน้าเว็บล็อกช่องของปลายทาง LINE) · null = LINE ส่งได้</param>
+public record NotifyTopicOption(string Key, string Label, string? LineUnsupported = null);
 
 /// <summary>ปลายทางหนึ่งแถว — ทุกป้าย/สถานะ/สิทธิ์กดปุ่มคำนวณที่เซิร์ฟเวอร์ (หน้าแสดงอย่างเดียว) · <paramref name="Id"/> null = อีเมลหลักที่ยังไม่มีแถวค่าตั้ง (รับทุกเรื่อง) ·
 /// ไม่มี LINE id ใน DTO (แม้แบบปิดบัง — เจ้าหน้าที่ไม่ต้องใช้)</summary>

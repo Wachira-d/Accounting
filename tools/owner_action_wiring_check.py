@@ -179,7 +179,8 @@ RULES = [
     (S + 'DocumentEmailService.cs', 'SendDocumentEmailAsync', 'body', HEADING),
     (S + 'DocumentEmailService.cs', 'SendEtaxByEmailAsync', 'body', HEADING),
     (S + 'DocumentEmailService.cs', 'GetDefaultTemplateAsync', 'body', HEADING),
-    (S + 'DocumentLineDeliveryService.cs', 'SendDocumentLineAsync', 'body', HEADING),
+    # รอบ 259 (A-L1): DocumentLineDeliveryService (ไม่มีผู้เรียก) ถูกลบ — การ์ด LINE ของเอกสารเดียวที่ส่งจริงอยู่ในผู้ส่งคิว
+    (S + 'ContactLineQueueService.cs', 'BuildCardAsync', 'body', HEADING),
     # รอบ 201 ทีม PL (A-PL9 · N+1): เนื้ออีเมลตั้งเวลาเรียกหัวผ่านแคชต่อรอบ HeadingForAsync ซึ่งเรียกตัวตัดสินหัวตัวเดียว (ใช้ผลทั้งสองชั้น)
     (S + 'EmailScheduleService.cs', 'EnqueueDocumentAsync', 'body', value_used(r'HeadingForAsync')),
     (S + 'EmailScheduleService.cs', 'HeadingForAsync', 'body', HEADING),
@@ -392,7 +393,7 @@ REVIEWER_CASES = [
     ('M9', C + 'DocumentController.cs', '[Accounting.Filters.RejectApiKey("ลบเอกสารถาวร")]',
      '[Accounting.Filters.RejectApiKey("ลบเอกสารถาวร")]\n    // คอมเมนต์คั่นระหว่าง attribute กับเมธอด', False),
     ('SENS', C + 'DocumentController.cs', 'return Forbid403<EmailTemplate>(hidden);', 'Console.WriteLine(hidden);', True),
-    ('HEAD', S + 'DocumentLineDeliveryService.cs', 'var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(',
+    ('HEAD', S + 'ContactLineQueueService.cs', 'var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(',
      '_ = await PdfGenerationService.ResolveDocumentHeadingAsync(', True),
 ]
 

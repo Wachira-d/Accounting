@@ -887,8 +887,8 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnified
     Accounting.Services.Implementations.Payments.UnifiedPaymentQueryService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payroll.ITipPayoutService,
     Accounting.Services.Implementations.Payroll.TipPayoutService>();
-builder.Services.AddScoped<Accounting.Services.Implementations.IDocumentLineDeliveryService,
-    Accounting.Services.Implementations.DocumentLineDeliveryService>();
+// รอบ 259 (A-L1): DocumentLineDeliveryService ถูกลบ (ไม่มีผู้เรียก · อ่าน Contact.LineUserId ที่ย้ายออกแล้ว) — ส่งเอกสารทาง LINE เองจากหน้าเอกสาร = DocumentLineSendService
+builder.Services.AddScoped<IDocumentLineSendService, DocumentLineSendService>();
 builder.Services.AddScoped<IPayslipLineDeliveryService, PayslipLineDeliveryService>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินต่อเอกสาร (ไม่พึ่ง IDocumentService — EmailScheduleService ใช้ได้) + งานหลังรับชำระ (ออก/ส่งใบเสร็จ)
