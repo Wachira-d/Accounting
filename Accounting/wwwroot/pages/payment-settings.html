@@ -48,6 +48,15 @@
 
       <div id="modeBanner"></div>
       <div id="body"><div class="card muted">กำลังโหลด…</div></div>
+      <!-- รอบ 259-3 (ทีม E-M3): เส้นโอน/QR + แจ้งสลิป ใช้ได้โดยไม่ต้องมีผู้ให้บริการ — เดิมหน้านี้กรองทิ้ง ⇒ ร้านที่รับโอนอย่างเดียวไม่รู้ว่าพร้อมแล้ว -->
+      <div class="card" id="slipPathCard">
+        <h3>โอนเข้าบัญชี / QR พร้อมเพย์ + แจ้งสลิป</h3>
+        <p class="sub">ลูกค้าโอนหรือสแกน QR จากหน้าชำระเงินของเอกสาร/พอร์ทัลลูกค้า แล้วแนบสลิป — ระบบ<b>ไม่ปิดหนี้จากสลิปเอง</b> พนักงานตรวจแล้วกดยืนยัน
+          · ไม่ต้องมีผู้ให้บริการรับชำระ ไม่มีค่าธรรมเนียม</p>
+        <div id="slipPathStatus" class="muted">กำลังตรวจ…</div>
+        <div style="margin-top:8px;font-size:13px">ตั้งบัญชีรับโอน/QR ที่ <a href="/pages/bank.html">หน้าบัญชีธนาคาร</a>
+          · ยืนยันสลิปที่ <a href="/pages/payment-intents.html?status=Pending">หน้ารายการรับชำระออนไลน์</a></div>
+      </div>
     </div>
   </div>
 
@@ -83,10 +92,23 @@
           this.providers = p.data || [];
           this.configs = c.data || [];
           this.render();
+          this.loadSlipPath();
         } catch (e) {
           document.getElementById('body').innerHTML =
             `<div class="card" style="color:#b91c1c">โหลดข้อมูลไม่สำเร็จ: ${Layout.esc(e.message)}</div>`;
         }
+      },
+
+      /** รอบ 259-3 (E-M3): ความพร้อมเส้นโอน/สลิป — ช่องทางที่บริษัทเปิดได้จริงจากเซิร์ฟเวอร์ (document-auto-send/settings · ตัวเดียวกับลิงก์ชำระ) */
+      async loadSlipPath() {
+        const el = document.getElementById('slipPathStatus'); if (!el) return;
+        try {
+          const r = await API.get(`/api/companies/${encodeURIComponent(Layout.getCompanyId())}/document-auto-send/settings`);
+          const ch = ((r && r.data && r.data.companyChannels) || []).find(x => x.code === 'ManualSlip');
+          el.innerHTML = ch
+            ? `<span style="color:#15803d">✅ พร้อมใช้ — ${Layout.esc(ch.label)}</span>`
+            : '<span style="color:#b45309">⚠️ ยังไม่มีบัญชีรับโอน/พร้อมเพย์ — ตั้งที่หน้าบัญชีธนาคารก่อน</span>';
+        } catch (e) { el.textContent = 'ตรวจความพร้อมไม่สำเร็จ: ' + (e.message || ''); }
       },
 
       cfgOf(code) { return this.configs.find(x => x.providerCode === code) || null; },
@@ -100,7 +122,7 @@
                · ลูกค้าจะเห็นป้ายนี้บนหน้าจ่ายเงินด้วย</div>`;
 
         document.getElementById('body').innerHTML = this.providers
-          // เส้นสลิปเป็น provider ตัวหนึ่งในระบบ แต่ไม่มีอะไรให้ตั้งค่า จึงไม่แสดงที่นี่
+          // เส้นสลิปเป็น provider ตัวหนึ่งในระบบ ไม่มีคีย์ให้ตั้ง — แสดงความพร้อมแยกที่การ์ด #slipPathCard (รอบ 259-3)
           .filter(p => p.supportsWebhook)
           .map(p => this.cardHtml(p)).join('')
           || '<div class="card muted">ยังไม่มีผู้ให้บริการรับชำระเงินที่รองรับในระบบ</div>';

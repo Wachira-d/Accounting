@@ -32,6 +32,16 @@ public class PortalAdminController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<PortalAccessResponse>>>> GetAccesses(Guid companyId)
         => Ok(new ApiResponse<List<PortalAccessResponse>>(true, await _service.GetAccessesAsync(companyId)));
 
+    /// <summary>รอบ 259-3 (E 4.6): ลิงก์หน้าเข้าสู่ระบบพอร์ทัลของบริษัท — origin จาก URL ของระบบ (ตัวตั้งเดียว SystemBaseUrl) · หน้าเว็บไม่ประกอบจาก location.origin</summary>
+    [HttpGet("link")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    public async Task<ActionResult<ApiResponse<object>>> PortalLink(Guid companyId,
+        [FromServices] Accounting.Data.AccountingDbContext db, [FromServices] Microsoft.Extensions.Configuration.IConfiguration config, CancellationToken ct)
+    {
+        var origin = await Accounting.Helpers.SystemBaseUrl.OriginForRequestAsync(db, config, Request.Scheme, Request.Host.ToString(), ct);
+        return Ok(new ApiResponse<object>(true, new { url = Accounting.Helpers.PortalMagicLinkPolicy.LoginLink(origin, companyId) }));
+    }
+
     [HttpPut("access/{accessId:guid}")]
     [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
     [Accounting.Filters.RejectApiKey("แก้สิทธิ์พอร์ทัลลูกค้า")]
@@ -221,6 +231,22 @@ public class PortalPublicController : ControllerBase
                 await _service.GetDocumentPaymentOptionsAsync(companyId, contactId.Value, documentId, ct)));
         }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>(false, null, ex.Message)); }
+    }
+
+    /// <summary>รอบ 259-3 (E-M1): ปุ่ม "ชำระ" ของพอร์ทัล ⇒ หน้าชำระของเอกสาร (ลิงก์เดียวกับอีเมล — ออนไลน์ + โอน/สลิป + กติกาหัก ณ ที่จ่าย) ·
+    /// ใบที่ลูกค้าไม่เห็น = 404 · ธงสิทธิ์ "ชำระ" ปิด = 403</summary>
+    [HttpPost("{companyId:guid}/documents/{documentId:guid}/pay-link")]
+    [Authorize(AuthenticationSchemes = Accounting.Helpers.PortalTokenPolicy.Scheme)]
+    public async Task<ActionResult<ApiResponse<PortalPayLinkResponse>>> DocumentPayLink(Guid companyId, Guid documentId, CancellationToken ct)
+    {
+        var contactId = GetContactIdFromToken();
+        if (contactId == null) return Unauthorized(new ApiResponse<PortalPayLinkResponse>(false, null, "Invalid portal token"));
+        if (await DenyPortalAsync(companyId, "pay", ct) is { } deny) return Forbidden<PortalPayLinkResponse>(deny);
+        try
+        {
+            return Ok(new ApiResponse<PortalPayLinkResponse>(true, await _service.GetDocumentPayLinkAsync(companyId, contactId.Value, documentId, ct)));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<PortalPayLinkResponse>(false, null, ex.Message)); }
     }
 
     /// <summary>Customer uploads a payment slip for one of their

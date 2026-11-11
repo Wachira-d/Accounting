@@ -201,7 +201,7 @@
       async ensureYear() {
         const api = Layout.api(); if (!api) return;
         const def = new Date().getFullYear();
-        const input = prompt('สร้างงวดบัญชีรายเดือน (ม.ค.–ธ.ค.) ที่ยังขาดของปีใด?\nระบุปี ค.ศ. เช่น ' + def, def);
+        const input = await Layout.promptText({ title: 'สร้างงวดบัญชีรายเดือนที่ยังขาด', label: 'ปี ค.ศ.', inputType: 'number', min: 2000, max: 2200, value: def, required: true, okText: 'สร้างงวด' });
         if (!input) return;
         const year = parseInt(input.trim(), 10);
         if (!year || year < 2000 || year > 2200) { Layout.toast('ปีไม่ถูกต้อง', 'error'); return; }
@@ -339,59 +339,28 @@
           const pEnd = period?.endDate?.split('T')[0] || '';
           const pName = period?.name || id;
 
-          const [jRes, dRes, tbRes] = await Promise.all([
-            api.getJournals(`?status=Draft&fromDate=${pStart}&toDate=${pEnd}&pageSize=1`),
-            api.getDocuments(`?status=Draft&fromDate=${pStart}&toDate=${pEnd}&pageSize=1`),
-            api.trialBalance(`?asOfDate=${pEnd}`)
-          ]);
-
-          const draftJEs = jRes.data?.totalCount ?? jRes.data?.items?.length ?? 0;
-          const draftDocs = dRes.data?.totalCount ?? dRes.data?.items?.length ?? 0;
-          const tb = tbRes.data;
-          const tbBalanced = Math.abs((tb?.totalDebit || 0) - (tb?.totalCredit || 0)) < 0.02;
-
-          const checks = [
-            { label: 'รายการ Draft (สมุดรายวัน)', value: draftJEs === 0, detail: draftJEs === 0 ? 'ไม่มี' : `${draftJEs} รายการ — ต้อง Post หรือ Void ก่อน` },
-            { label: 'เอกสาร Draft', value: draftDocs === 0, detail: draftDocs === 0 ? 'ไม่มี' : `${draftDocs} รายการ — ต้องอนุมัติหรือยกเลิก` },
-            { label: 'งบทดลองสมดุล', value: tbBalanced, detail: tbBalanced ? `Dr ${Layout.money(tb?.totalDebit)} = Cr ${Layout.money(tb?.totalCredit)}` : `Dr ${Layout.money(tb?.totalDebit)} ≠ Cr ${Layout.money(tb?.totalCredit)}` },
-          ];
-
-          // AI anomaly check — เพิ่มรายการตรวจที่ checklist เดิมไม่มี
-          // (Approved doc ไม่มี JE post + missing monthly depreciation)
-          try {
-            const pStartDate = new Date(pStart);
-            const yr = pStartDate.getUTCFullYear();
-            const mo = pStartDate.getUTCMonth() + 1;
-            const cid = Layout.getCompanyId();
-            const token = localStorage.getItem('token');
-            const aiRes = await fetch(`/api/companies/${cid}/ai/period-close/anomaly-check?year=${yr}&month=${mo}`,
-              { headers: { 'Authorization': 'Bearer ' + token } });
-            const aiJ = await aiRes.json();
-            const aiD = aiJ?.data;
-            if (aiD && Array.isArray(aiD.issues)) {
-              aiD.issues.forEach(iss => {
-                checks.push({
-                  label: `🤖 ${iss.title}`,
-                  value: false,
-                  detail: `${iss.severity} — ${iss.fix}`,
-                });
-              });
-            }
-          } catch { /* AI check is supplementary — original 3 checks already gate */ }
-
-          const allPassed = checks.every(c => c.value);
+          // รอบ 259-3 (ทีม E-M7 · คำตัดสิน 259-3-6): เช็กลิสต์ก่อนปิดงวดชุดเดียวของระบบ = PreCloseChecklistService (เซิร์ฟเวอร์ · ตัวเดียวกับหน้าเครื่องมือนักบัญชี)
+          // เดิมหน้านี้คำนวณ 3 ข้อเอง (ค่าคลาด 0.02 · นับร่างเอง) + ติดป้าย 🤖 ให้กฎตายตัว ⇒ ปุ่มปิดงวดจริงใช้ชุดที่อ่อนกว่า
+          const [yy, mm] = pStart.split('-').map(n => parseInt(n, 10));
+          const pcRes = await API.get(`/api/companies/${encodeURIComponent(Layout.getCompanyId())}/accountant/pre-close-checklist?year=${yy}&month=${mm}`);
+          const pc = (pcRes && pcRes.data) || { items: [] };
+          const checks = (pc.items || []).map(i => ({
+            label: i.label, value: !!i.passed, severity: i.severity, detail: i.message || '', actionUrl: i.actionUrl,
+          }));
+          const allPassed = pc.readyToClose === true;   // เซิร์ฟเวอร์ตัดสิน (ข้อเตือนไม่บล็อก)
 
           content.innerHTML = `
             <p class="text-sm text-gray-500" style="margin-bottom:16px">งวด: <strong>${Layout.esc(pName)}</strong> (${pStart} — ${pEnd})</p>
             <div style="display:flex;flex-direction:column;gap:12px">
               ${checks.map(c => `
-                <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:${c.value ? '#f0fdf4' : '#fef2f2'}">
-                  <span style="font-size:18px">${c.value ? '✅' : '❌'}</span>
-                  <div>
-                    <div class="font-medium" style="font-size:13px">${c.label}</div>
-                    <div class="text-xs" style="color:${c.value ? 'var(--success)' : 'var(--danger)'}">${c.detail}</div>
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:${c.value ? '#f0fdf4' : c.severity === 'Error' ? '#fef2f2' : '#fffbeb'}">
+                  <span style="font-size:18px">${c.value ? '✅' : c.severity === 'Error' ? '❌' : '⚠️'}</span>
+                  <div style="flex:1">
+                    <div class="font-medium" style="font-size:13px">${Layout.esc(c.label)}</div>
+                    <div class="text-xs" style="color:${c.value ? 'var(--success)' : 'var(--danger)'}">${Layout.esc(c.detail)}</div>
                   </div>
-                </div>`).join('')}
+                  ${c.actionUrl && !c.value ? `<a href="${Layout.esc(c.actionUrl)}" class="btn btn-sm btn-ghost">ไปแก้ →</a>` : ''}
+                </div>`).join('') || '<div class="text-gray-400">ไม่มีรายการตรวจ</div>'}
             </div>
             ${allPassed ? '<p class="text-success text-sm" style="margin-top:16px;text-align:center">✓ ผ่านการตรวจสอบทุกรายการ — พร้อมปิดงวด</p>'
               : '<p class="text-danger text-sm" style="margin-top:16px;text-align:center">⚠ มีรายการที่ต้องแก้ไข (ระบบจะตรวจสอบอีกครั้งเมื่อปิดจริง)</p>'}
@@ -427,7 +396,7 @@
 
       // ===== Soft Close / Reopen (Task 1 of ERP upgrade) =====
       async softClose(id) {
-        if (!confirm('Soft-close งวดนี้? — Admin สามารถ Reopen ได้ภายหลัง\nระบบจะ reject postings ใหม่ ยกเว้น adjustment')) return;
+        if (!await Layout.confirm({ title: 'ปิดงวดชั่วคราว', okText: 'ปิดชั่วคราว', message: 'ผู้ดูแลเปิดงวดกลับได้ภายหลัง · ระหว่างนี้ระบบไม่รับรายการใหม่ ยกเว้นรายการปรับปรุง' })) return;
         const cid = Layout.getCompanyId();
         try {
           const res = await API.post(`/api/companies/${cid}/accounting/fiscal-periods/${id}/soft-close`);
@@ -436,7 +405,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async reopen(id) {
-        if (!confirm('เปิดงวดอีกครั้ง?')) return;
+        if (!await Layout.confirm({ title: 'เปิดงวดอีกครั้ง', message: 'เปิดงวดนี้ให้บันทึกรายการได้อีกครั้ง?', okText: 'เปิดงวด' })) return;
         const cid = Layout.getCompanyId();
         try {
           const res = await API.post(`/api/companies/${cid}/accounting/fiscal-periods/${id}/reopen`);
@@ -471,7 +440,7 @@
         const reAccount = document.getElementById('yeRetainedAccount').value;
         const closingDate = document.getElementById('yeClosingDate').value || null;
         if (!year || !reAccount) { Layout.toast('กรุณาระบุปีและบัญชีกำไรสะสม', 'error'); return; }
-        const ok = confirm(`ยืนยันปิดสิ้นปี ${year}?\nระบบจะ:\n• สร้าง JE ปิดบัญชี P&L → Retained Earnings\n• Lock ทุกเดือนในปี ${year}\n• Roll opening balances ไปปี ${year + 1}\n\nถ้าพบรายการผิดภายหลัง เจ้าของบริษัทกด "ยกเลิกการปิดปี" ได้ (เฉพาะปีล่าสุด) — แน่ใจหรือไม่?`);
+        const ok = await Layout.confirm(`ยืนยันปิดสิ้นปี ${year}?\nระบบจะ:\n• สร้าง JE ปิดบัญชี P&L → Retained Earnings\n• Lock ทุกเดือนในปี ${year}\n• Roll opening balances ไปปี ${year + 1}\n\nถ้าพบรายการผิดภายหลัง เจ้าของบริษัทกด "ยกเลิกการปิดปี" ได้ (เฉพาะปีล่าสุด) — แน่ใจหรือไม่?`);
         if (!ok) return;
         const cid = Layout.getCompanyId();
         const btn = document.getElementById('yeConfirmBtn');

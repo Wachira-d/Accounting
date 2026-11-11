@@ -22,6 +22,10 @@
       </div>
     </div>
 
+
+    <!-- รอบ 259-3 (ทีม E-M7): แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร (รายงานข้อ 44 กลุ่ม e-Tax — ย้ายจากแถบหน้าเอกสาร) · เซิร์ฟเวอร์จำแนก · ไม่มีรายการ = ซ่อน -->
+    <div id="etaxRdReview" style="display:none;background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #d97706;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#92400e;line-height:1.7"></div>
+
     <!-- Config Status Banner -->
     <div id="configBanner" class="card" style="margin-bottom:16px;display:none;border-left:4px solid #f59e0b;background:#fffbeb">
       <div style="display:flex;align-items:center;gap:12px">
@@ -242,6 +246,42 @@
     </div>
   </div>
 
+    <!-- รอบ 259-3: ย้ายจาก documents.html · รอบ 255 (ETR-ACK) — บันทึก "ตรวจแล้ว" ของแถว e-Tax ในรายงานข้อ 44 (ทางไปต่อของแถบเตือน · เซิร์ฟเวอร์ตัดสินว่าแถวอยู่ในกลุ่ม/บันทึกซ้ำ/สิทธิ์) -->
+    <div class="modal-overlay" id="etaxReviewAckModal">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header">
+          <h3 class="modal-title">บันทึกผลตรวจแถว e-Tax ที่กรมสรรพากร</h3>
+          <button class="modal-close" onclick="Layout.closeModal('etaxReviewAckModal')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="eraEtaxId">
+          <div id="eraRowInfo" style="font-size:13px;margin-bottom:10px;color:#374151"></div>
+          <div class="form-group">
+            <label for="eraOutcomeRejected" class="form-label">ผลที่ตรวจพบในระบบ e-Tax ของกรมสรรพากร/ผู้ให้บริการ</label>
+            <label style="display:block;font-size:13px;margin-bottom:4px"><input type="radio" id="eraOutcomeRejected" name="eraOutcome" value="RejectedOrNotReceived" checked onchange="Page.etaxReviewAckOutcomeChanged()">
+              ถูกปฏิเสธ หรือกรมสรรพากร/ผู้ให้บริการไม่เคยได้รับใบนี้ — ไม่ต้องทำอะไรเพิ่ม</label>
+            <label style="display:block;font-size:13px"><input type="radio" name="eraOutcome" value="CancelledAtRd" onchange="Page.etaxReviewAckOutcomeChanged()">
+              ใบนี้ถูกยกเลิกที่กรมสรรพากรแล้ว (ต้องระบุเลขอ้างอิงการยกเลิก)</label>
+            <div class="text-xs text-gray-500" style="margin-top:6px">ถ้ากรมสรรพากรยังถือใบนี้อยู่ (ยังมีผล) — ห้ามบันทึกที่นี่ ต้องยกเลิกหรือออกใบลดหนี้ทางกรมสรรพากร
+              แล้วบันทึกผ่าน “ยกเลิกทาง e-Tax”/ใบลดหนี้ของเอกสารนั้น</div>
+          </div>
+          <div class="form-group" id="eraRefGroup" style="display:none">
+            <label for="eraRdReference" class="form-label">เลขอ้างอิงการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ</label>
+            <input class="form-input" id="eraRdReference" maxlength="200">
+          </div>
+          <div class="form-group">
+            <label for="eraNote" class="form-label">บันทึกสิ่งที่ตรวจ (บังคับ อย่างน้อย 5 ตัวอักษร — เก็บใน audit ให้ผู้สอบบัญชี)</label>
+            <textarea class="form-input" id="eraNote" rows="3" maxlength="1000" placeholder="เช่น ตรวจที่ระบบ e-Tax ของกรมสรรพากรวันที่ … สถานะ “ปฏิเสธ”"></textarea>
+          </div>
+          <div class="text-xs text-gray-500">ระบบเก็บเป็นบันทึกการตรวจเท่านั้น — ไม่เปลี่ยนสถานะแถว e-Tax เอกสาร หรือภาษี</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('etaxReviewAckModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="eraSubmitBtn" onclick="Page.submitEtaxReviewAck()">บันทึกว่าตรวจแล้ว</button>
+        </div>
+      </div>
+    </div>
+
   <script src="/js/api.js"></script>
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
@@ -285,6 +325,69 @@
       } catch (e) { Layout.toast(e.message, 'error'); }
     },
 
+      // รอบ 259-3 (ทีม E-M7): แถว e-Tax จากรายงานข้อ 44 (ตัวเดียวกับที่เคยอยู่หน้าเอกสาร) — การจำแนก/ข้อความ/ตัวเลือกที่ใช้ได้มาจากเซิร์ฟเวอร์
+      async loadEtaxRdReview() {
+        const el = document.getElementById('etaxRdReview');
+        const api = Layout.api();
+        if (!el || !api) return;
+        try {
+          const r = await api.getEtaxReissueReview();
+          const d = r?.data;
+          const etaxRows = [...(d?.submittedEtaxVoidedWithoutEvidence || []), ...(d?.emailedEtaxVoidedInSystem || [])];
+          if (!etaxRows.length) { el.style.display = 'none'; return; }
+          const link = (id, no) => `<a href="/pages/documents.html?openDoc=${encodeURIComponent(id)}" style="color:#92400e;text-decoration:underline">${Layout.esc(no || '')}</a>`;
+          el.innerHTML = `📋 <b>แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร (${Number(etaxRows.length)} รายการ)</b>`
+            + etaxRows.slice(0, 50).map(x => `<div>• ${link(x.documentId, x.documentNumber)} — ${Layout.esc(x.finding || '')} `
+              + `<button type="button" class="btn btn-sm btn-secondary" style="padding:1px 8px;font-size:12px" `
+              + `onclick="Page.openEtaxReviewAck('${Layout.jsArg(x.etaxId)}','${Layout.jsArg(x.etaxRefNumber || '')}','${Layout.jsArg(x.documentNumber || '')}','${Layout.jsArg((x.allowedOutcomes || []).join(','))}')">✓ ตรวจแล้ว</button></div>`).join('')
+            + (etaxRows.length > 50 ? `<div>… อีก ${etaxRows.length - 50} รายการ</div>` : '');
+          el.style.display = '';
+        } catch (err) {
+          // ล้ม = บอกตรง ๆ (ไม่ซ่อนเหมือนไม่มีรายการ)
+          el.style.display = '';
+          el.textContent = 'ตรวจแถว e-Tax ที่ต้องตรวจที่กรมสรรพากรไม่สำเร็จ: ' + (err.message || '');
+        }
+      },
+      openEtaxReviewAck(etaxId, etaxRef, docNo, allowedCsv) {
+        document.getElementById('eraEtaxId').value = etaxId;
+        document.getElementById('eraRowInfo').innerHTML = `แถว e-Tax <b>${Layout.esc(etaxRef || '-')}</b> ของเอกสาร <b>${Layout.esc(docNo || '-')}</b>`;
+        // รอบ 257 ชุด 3: ตัวเลือกที่ใช้ได้ของแถวนี้มาจากเซิร์ฟเวอร์ (กลุ่มส่งอีเมลพร้อมสำเนา ETDA = "ยกเลิกที่กรมสรรพากรแล้ว" เท่านั้น) · ว่าง = ทุกตัวเลือก
+        const allowed = String(allowedCsv || '').split(',').filter(Boolean);
+        const radios = Array.from(document.querySelectorAll('input[name="eraOutcome"]'));
+        radios.forEach(r => { const ok = !allowed.length || allowed.includes(r.value); r.disabled = !ok; r.closest('label').style.display = ok ? 'block' : 'none'; });
+        const first = radios.find(r => !r.disabled);
+        radios.forEach(r => { r.checked = r === first; });
+        document.getElementById('eraRdReference').value = '';
+        document.getElementById('eraNote').value = '';
+        document.getElementById('eraSubmitBtn').disabled = false;
+        this.etaxReviewAckOutcomeChanged();
+        Layout.openModal('etaxReviewAckModal');
+      },
+      etaxReviewAckOutcomeChanged() {
+        const v = document.querySelector('input[name="eraOutcome"]:checked')?.value;
+        document.getElementById('eraRefGroup').style.display = v === 'CancelledAtRd' ? '' : 'none';
+      },
+      async submitEtaxReviewAck() {
+        const api = Layout.api(); if (!api) return;
+        const id = document.getElementById('eraEtaxId').value;
+        const outcome = document.querySelector('input[name="eraOutcome"]:checked')?.value || null;
+        const payload = {
+          outcome,
+          rdReference: outcome === 'CancelledAtRd' ? (document.getElementById('eraRdReference').value || null) : null,
+          note: document.getElementById('eraNote').value,
+        };
+        const btn = document.getElementById('eraSubmitBtn');
+        btn.disabled = true;
+        try {
+          const res = await api.acknowledgeEtaxReviewRow(id, payload);
+          Layout.closeModal('etaxReviewAckModal');
+          Layout.toast(res?.message || 'บันทึกว่าตรวจแล้ว', 'success', 10000);
+          await this.loadEtaxRdReview();
+        } catch (e) {
+          Layout.toast(e.message || 'บันทึกผลตรวจไม่สำเร็จ', 'error', 12000);
+        } finally { btn.disabled = false; }
+      },
+
     async init() {
       const exSlot = document.getElementById('etaxExportSlot');
       if (exSlot && window.ExportUtil) exSlot.innerHTML = ExportUtil.renderMenu([
@@ -319,6 +422,7 @@
         }
       }
       await this.load();
+      this.loadEtaxRdReview();   // รอบ 259-3: แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร (ย้ายมาจากหน้าเอกสาร)
     },
 
     async loadConfigStatus() {
@@ -465,7 +569,7 @@
 
     async doGenerate() {
       const docId = document.getElementById('docSelect').value;
-      if (!docId) { alert('กรุณาเลือกเอกสาร'); return; }
+      if (!docId) { Layout.toast('กรุณาเลือกเอกสาร', 'error'); return; }
       const signDigitally = document.getElementById('signDigitally').checked;
       const quickSubmit = document.getElementById('quickSubmit').checked;
 
@@ -476,37 +580,37 @@
         } else {
           res = await API.post(`/api/companies/${this.companyId}/etax/generate`, { documentId: docId, signDigitally });
         }
-        alert(res.message || 'สร้าง e-Tax สำเร็จ');
+        Layout.notice(res.message || 'สร้าง e-Tax สำเร็จ');
         this.closeModal('generateModal');
         await this.load();
-      } catch(e) { alert(e.message); }
+      } catch(e) { Layout.notice({ title: 'ไม่สำเร็จ', message: e.message || 'ไม่สำเร็จ' }); }
     },
 
     async sign(id) {
-      if (!confirm('ต้องการลงนามดิจิทัล?')) return;
+      if (!await Layout.confirm({ title: 'ลงนามดิจิทัล', message: 'ลงนามดิจิทัลใบนี้?', okText: 'ลงนาม' })) return;
       try {
         const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/sign`);
-        alert(res.message || 'ลงนามสำเร็จ');
+        Layout.notice(res.message || 'ลงนามสำเร็จ');
         await this.load();
-      } catch(e) { alert(e.message); }
+      } catch(e) { Layout.notice({ title: 'ไม่สำเร็จ', message: e.message || 'ไม่สำเร็จ' }); }
     },
 
     async submit(id) {
-      if (!confirm('ต้องการส่งข้อมูลไปกรมสรรพากร?')) return;
+      if (!await Layout.confirm({ title: 'ส่งข้อมูลไปกรมสรรพากร', message: 'ส่งข้อมูลใบนี้ไปกรมสรรพากร?', okText: 'ส่ง' })) return;
       try {
         const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/submit`);
-        alert(res.message || 'ส่งสำเร็จ');
+        Layout.notice(res.message || 'ส่งสำเร็จ');
         await this.load();
-      } catch(e) { alert(e.message); }
+      } catch(e) { Layout.notice({ title: 'ไม่สำเร็จ', message: e.message || 'ไม่สำเร็จ' }); }
     },
 
     async signAndSubmit(id) {
-      if (!confirm('ต้องการลงนามและส่งกรมสรรพากร?')) return;
+      if (!await Layout.confirm({ title: 'ลงนามและส่งกรมสรรพากร', message: 'ลงนามดิจิทัลแล้วส่งใบนี้ไปกรมสรรพากร?', okText: 'ลงนามและส่ง' })) return;
       try {
         const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/sign-and-submit`);
-        alert(res.message || 'ลงนามและส่งสำเร็จ');
+        Layout.notice(res.message || 'ลงนามและส่งสำเร็จ');
         await this.load();
-      } catch(e) { alert(e.message); }
+      } catch(e) { Layout.notice({ title: 'ไม่สำเร็จ', message: e.message || 'ไม่สำเร็จ' }); }
     },
 
     async viewXml(id) {
@@ -518,7 +622,7 @@
         const xml = await res.text();
         document.getElementById('xmlContent').textContent = xml;
         document.getElementById('xmlModal').style.display = 'flex';
-      } catch(e) { alert(e.message); }
+      } catch(e) { Layout.notice({ title: 'ไม่สำเร็จ', message: e.message || 'ไม่สำเร็จ' }); }
     },
 
     downloadXml() {
@@ -552,9 +656,9 @@
       if (!(await Layout.confirmDanger({ title: 'ยกเลิก e-Tax Invoice', message: 'ยกเลิกในระบบนี้ (ยังไม่ได้ส่งถึงกรมสรรพากร) — ระบบไม่ได้ส่งคำยกเลิกใด ๆ ถึงกรมสรรพากร', mode: 'type', confirmText: 'confirm' }))) return;
       try {
         const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/void`, {});
-        alert(res?.message || 'ยกเลิกในระบบนี้แล้ว');
+        Layout.notice(res?.message || 'ยกเลิกในระบบนี้แล้ว');
         await this.load();
-      } catch(e) { alert(e.message); }
+      } catch(e) { Layout.notice({ title: 'ไม่สำเร็จ', message: e.message || 'ไม่สำเร็จ' }); }
     },
 
     async doVoidWithEvidence() {
@@ -576,9 +680,9 @@
         }
         const res = await API.post(`/api/companies/${this.companyId}/etax/${id}/void`, payload);
         this.closeModal('voidEvidenceModal');
-        alert(res?.message || 'ยกเลิกในระบบนี้แล้ว');
+        Layout.notice(res?.message || 'ยกเลิกในระบบนี้แล้ว');
         await this.load();
-      } catch(e) { alert(e.message); }
+      } catch(e) { Layout.notice({ title: 'ไม่สำเร็จ', message: e.message || 'ไม่สำเร็จ' }); }
     },
 
     async openSendByEmail(etaxId) {
@@ -618,7 +722,8 @@
       if (!to) { Layout.toast('กรุณากรอกอีเมลผู้รับ', 'error'); return; }
       if (this._sendBlocked) { Layout.toast('ยังส่งไม่ได้ — ดูเหตุที่กล่องด้านบน', 'error'); return; }
       // ฝ่ายค้าน B1: ทดสอบ e-Tax by Email (สำเนาไป UAT) ⇒ ถามยืนยัน
-      if (this._sendUat && !confirm('เปิด "ทดสอบ e-Tax by Email" — สำเนาจะไปที่ ' + this._sendUat + ' (UAT ของ ETDA) ใบนี้จะไม่ถูกประทับเวลาจริง\n\nยืนยันส่งแบบทดสอบ?')) return;
+      if (this._sendUat && !await Layout.confirm({ title: 'ส่งแบบทดสอบ', okText: 'ส่งแบบทดสอบ',
+        message: 'เปิด "ทดสอบ e-Tax by Email" — สำเนาจะไปที่ ' + this._sendUat + ' (ระบบทดสอบของ ETDA) ใบนี้จะไม่ถูกประทับเวลาจริง' })) return;
       // หัวเรื่อง/CC/ไฟล์แนบ เซิร์ฟเวอร์กำหนดเอง (กรมสรรพากร) — ส่งเฉพาะผู้รับ + เนื้อความ
       const req = { to, cc: null, subject: null, body: document.getElementById('seBody').value || null,
         includePdf: true, includeXml: false, includeRdTimestamp: true, confirmResend: false };
@@ -628,7 +733,7 @@
         try { res = await API.post(url, req); }
         catch (e) {
           // ส่งซ้ำต้องยืนยัน (409 ETAX-EMAIL-RESEND)
-          if (e && e.status === 409 && e.body?.data?.ruleCode === 'ETAX-EMAIL-RESEND' && confirm((e.message || '') + '\n\nยืนยันส่งซ้ำ?'))
+          if (e && e.status === 409 && e.body?.data?.ruleCode === 'ETAX-EMAIL-RESEND' && await Layout.confirm({ title: 'ส่งซ้ำ?', message: e.message || '', okText: 'ส่งซ้ำ' }))
             res = await API.post(url, Object.assign({}, req, { confirmResend: true }));
           else throw e;
         }

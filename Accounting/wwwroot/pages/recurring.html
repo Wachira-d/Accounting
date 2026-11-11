@@ -247,7 +247,8 @@
             </div>
             <!-- รอบ 250 WP-08 (คำตัดสิน 250-29): ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" — ชนะกฎบริษัท/รายการนี้ (บันทึกด้วยปุ่ม "บันทึกที่ผู้ติดต่อ") -->
             <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:12px;font-weight:normal">
-              <input type="checkbox" id="fCustAutoSendOff"> ไม่ส่งเอกสารอัตโนมัติถึงผู้ติดต่อรายนี้ (ทั้งอีเมลและ LINE ทุกเส้น — ส่งเองจากหน้าเอกสารยังได้)</label>
+              <input type="checkbox" id="fCustAutoSendOff"> ไม่ส่งเอกสารอัตโนมัติถึงผู้ติดต่อรายนี้ (อีเมล/LINE ทุกเส้น — ส่งเองจากหน้าเอกสารยังได้)</label>
+            <div style="font-size:11px;color:#64748b;margin-top:4px">ค่าเหล่านี้แก้ได้ที่ <a href="/pages/contacts.html" target="_blank" rel="noopener">หน้าผู้ติดต่อ</a> ด้วย · กด "บันทึก" ของรายการนี้แล้วระบบบันทึกค่าผู้ติดต่อที่แก้ให้ด้วย</div>
           </div>
           </div>
           <div class="rec-step" data-step="5" style="display:none" id="step-approve">
@@ -327,6 +328,9 @@ const Page = {
     // รอบ 250 WP-03 (D §1.2 · B F-6): นโยบายที่ผู้ใช้เปลี่ยนในขั้น ⑤ ต้องไม่หายเงียบ — จำ dirty + ปุ่มบันทึกนโยบายรู้สถานะฟอร์ม
     const pr = document.getElementById('fPolicyRows');
     if (pr) pr.addEventListener('change', () => { this._policyDirty = true; this._updatePolicyButtons(); });
+    // รอบ 259-3 (ทีม E S2 · E-M6): ค่าตั้งของผู้ติดต่อในกรอบนี้ (ช่องทาง · หลังชำระ · ไม่ส่งอัตโนมัติ) — จำ dirty ⇒ ปุ่ม "บันทึก" หลักบันทึกต่อให้ (เดิมหายเงียบ §4A)
+    const cg = document.getElementById('fContactPayGroup');
+    if (cg) cg.addEventListener('change', () => { this._contactDirty = true; });
     if (fm) { fm.addEventListener('input', () => this._updatePolicyButtons()); fm.addEventListener('change', () => this._updatePolicyButtons()); }
     this.load();
   },
@@ -474,20 +478,27 @@ const Page = {
     const cpe = document.getElementById('fCustPostPayEmail'); if (cpe) cpe.value = (this._contactAp && this._contactAp.postPayEmailReceipt) || 'Inherit';
     const cpp = document.getElementById('fCustPostPayPartial'); if (cpp) cpp.value = (this._contactAp && this._contactAp.postPayIncludePartial) || 'Inherit';
     const cao = document.getElementById('fCustAutoSendOff'); if (cao) { cao.checked = !!(this._contactAp && this._contactAp.autoSendDisabled); cao.disabled = !this._contactAp; }
+    this._contactDirty = false;   // รอบ 259-3: ค่าที่เพิ่งโหลด = ค่าที่บันทึกแล้ว
     this._renderPolicy();
   },
-  async saveContactPayMode() {
+  /** รอบ 259-3: บันทึกค่าตั้งผู้ติดต่อ (โยนเมื่อล้ม — ผู้เรียกบอกผู้ใช้) · ตัวเดียวของปุ่ม "บันทึกที่ผู้ติดต่อ" และปุ่มบันทึกหลัก */
+  async _saveContactAutopilot() {
     const cid = document.getElementById('fContactId')?.value || '';
-    if (!cid) { Layout.toast('เลือกผู้ติดต่อก่อน', 'error'); return; }
-    const api = Layout.api(); if (!api) return;
+    if (!cid) throw new Error('เลือกผู้ติดต่อก่อน');
+    const api = Layout.api(); if (!api) throw new Error('ยังไม่ได้เลือกบริษัท');
+    const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null,
+      postPayEmailReceipt: !this._apOpts ? null : (document.getElementById('fCustPostPayEmail')?.value || 'Inherit'),
+      postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fCustPostPayPartial')?.value || 'Inherit'),
+      // รอบ 250 WP-08: ไม่ได้โหลดค่าตั้งผู้ติดต่อ ⇒ null (= เซิร์ฟเวอร์คงเดิม · ไม่ล้างเงียบ)
+      autoSendDisabled: !this._contactAp ? null : !!document.getElementById('fCustAutoSendOff')?.checked });
+    this._contactAp = res.data || this._contactAp;
+    this._contactDirty = false;
+    const caoAfter = document.getElementById('fCustAutoSendOff'); if (caoAfter) caoAfter.checked = !!(this._contactAp && this._contactAp.autoSendDisabled);
+    return res;
+  },
+  async saveContactPayMode() {
     try {
-      const res = await api.updateContactAutopilot(cid, { paymentMode: document.getElementById('fCustPayMode')?.value || '', payLinkChannels: null,
-        postPayEmailReceipt: !this._apOpts ? null : (document.getElementById('fCustPostPayEmail')?.value || 'Inherit'),
-        postPayIncludePartial: !this._apOpts ? null : (document.getElementById('fCustPostPayPartial')?.value || 'Inherit'),
-        // รอบ 250 WP-08: ไม่ได้โหลดค่าตั้งผู้ติดต่อ ⇒ null (= เซิร์ฟเวอร์คงเดิม · ไม่ล้างเงียบ)
-        autoSendDisabled: !this._contactAp ? null : !!document.getElementById('fCustAutoSendOff')?.checked });
-      this._contactAp = res.data || this._contactAp;
-      const caoAfter = document.getElementById('fCustAutoSendOff'); if (caoAfter) caoAfter.checked = !!(this._contactAp && this._contactAp.autoSendDisabled);
+      const res = await this._saveContactAutopilot();
       Layout.toast((res && res.message) || 'บันทึกแล้ว');
       this.refreshReadiness(true);
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -1305,6 +1316,11 @@ const Page = {
             Layout.toast('บันทึกรายการแล้ว แต่บันทึกนโยบายอนุมัติไม่สำเร็จ: ' + (pe.message || '') + ' — นโยบายเดิมยังมีผล', 'error', 12000);
           }
         }
+      }
+      // รอบ 259-3 (ทีม E S2): ค่าตั้งผู้ติดต่อที่แก้ในกรอบนี้แต่ยังไม่ได้กด "บันทึกที่ผู้ติดต่อ" ⇒ บันทึกต่อให้ (ล้ม = บอกดัง รายการบันทึกแล้ว)
+      if (this._contactDirty && this._contactAp) {
+        try { await this._saveContactAutopilot(); Layout.toast('บันทึกค่าตั้งของผู้ติดต่อแล้วด้วย', 'success'); }
+        catch (ce) { Layout.toast('บันทึกรายการแล้ว แต่บันทึกค่าตั้งของผู้ติดต่อไม่สำเร็จ: ' + (ce.message || '') + ' — ค่าเดิมของผู้ติดต่อยังมีผล', 'error', 12000); }
       }
       // เตือนตรง ๆ ถ้าเปิดส่งอีเมลแต่บริษัทยังไม่มีอีเมลที่ทดสอบผ่าน — จะได้
       // ไม่เข้าใจผิดว่าลูกค้าได้รับเมลจากชื่อบริษัทตัวเองทุกงวด

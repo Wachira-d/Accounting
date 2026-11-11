@@ -3121,6 +3121,27 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   การ์ดความพร้อมบนหน้า payment-settings · L6 (`OnDocumentApprovedAsync` กลืนข้อผิดพลาด) ·
   เทสต์ `LineRound259Tests` · Db `LineRound259DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 7dc53e0c
 
+### 2.12g-259c รอบ 259 แพ็ก C "รวมบ้าน · ไม่ซ้อน" (erp-review/2026-11-11/team-E-ux.md · คำตัดสิน 259-3-*)
+
+- **พอร์ทัลลูกค้ามีบ้านเดียว (E-H2 · 259-3-1)**: ลูกค้า = `customer-portal.html` → `/portal.html` (ธงสิทธิ์ 4 ตัว) · หน้า `vendor-portal-admin.html` = "พอร์ทัลผู้ขาย"
+  ออกลิงก์ได้เฉพาะผู้ขาย — `VendorPortalService.IssueAsync` ปฏิเสธบทบาท Customer (`VendorPortalTokenRules.IssueRefusal`) · ลิงก์ลูกค้าที่ออกก่อนรอบนี้ยังเปิดได้จนหมดอายุ ·
+  `GET api/companies/{c}/vendor-portal/tokens` (สถานะ/ป้าย/เพิกถอนได้ไหมจากเซิร์ฟเวอร์ · ไม่มี token ดิบ) + `POST …/tokens/{id}/revoke` (เพิกถอนซ้ำ/หมดอายุ = 400 บอกเหตุ) ·
+  อีเมลผู้รับ = `SendInviteAsync` ส่งจริงผ่าน `IEmailService.TrySendAsync` (ไม่ได้ตั้งอีเมลระบบ = ไม่ส่ง + บอก) · ลิงก์เต็มจาก `SystemBaseUrl` ·
+  `customer-portal.html` ลิงก์เข้าพอร์ทัลจาก `GET …/portal/link` (`PortalMagicLinkPolicy.LoginLink`) — `location.origin` เหลือ 0 ในสองหน้านี้
+- **ปุ่ม "ชำระ" ในพอร์ทัล = หน้าชำระของเอกสาร (E-M1 · 259-3-2)**: `POST api/portal/{c}/documents/{d}/pay-link` (สิทธิ์พอร์ทัล "pay" · ใบที่ลูกค้าเห็นได้เท่านั้น) ⇒
+  `IDocumentPayLinkService.EnsureLinkAsync` (ลิงก์เดียวกับอีเมล §2.12g — ออนไลน์ + โอน/QR + แจ้งสลิป + "ไม่หัก ณ ที่จ่าย") · ออกลิงก์ไม่ได้เพราะบริษัทไม่มีช่องทางออนไลน์
+  แต่ใบรับโอนได้ ⇒ `SlipFallback` = กล่องโอน/สลิปของพอร์ทัล (ยอดอ่านอย่างเดียว) · `UploadDocumentSlipAsync` ไม่ส่งยอด ⇒ ยอดสุทธิหลังหัก ณ ที่จ่าย (`TransferForDocumentAsync.Net`) ·
+  ป้าย/"เกินกำหนด" ของพอร์ทัล = `PortalDocumentStatus` (วันที่ไทย) บน `PortalDocumentResponse`
+- **คิวสลิปเจ้าของเดียว (E-M4 · 259-3-3)**: ยืนยัน/ปฏิเสธสลิป = `payment-intents.html` (`?status=Pending`) · Autopilot issue `SlipPending` + KPI `slipAwaitingConfirm` ชี้ไปคิว
+  (ไม่มีปุ่มยืนยันที่ Autopilot) · ยืนยันด้วยมือ = `Layout.formDialog` (ยอดอ่านอย่างเดียว · วันที่เงินเข้าแบบเลือกวัน · เหตุผล) — บัญชีเงินเข้าตามผังรับเงินของช่องทางเหมือนเดิม
+- **ศูนย์รวมค่าตั้ง (E-M2 · 259-3-4)**: `AutopilotSettingsDto.Hub` (`AutopilotSettingsHub`) แสดงสถานะ + ลิงก์บ้านของค่า · wht-credit มีสวิตช์ทวง 50 ทวิ (endpoint เดิม)
+- **ค่าตั้งผู้ติดต่อ (E-M6 · 259-3-5)**: แผงใน contacts.html (endpoint `recurring/contacts/{id}/autopilot` เดิม) · recurring.html ปุ่มบันทึกหลักบันทึกค่าผู้ติดต่อที่แก้ค้าง
+- **ปิดงวด (E-M7 · 259-3-6)**: เช็กลิสต์ใน fiscal.html = `PreCloseChecklistService` (ตัวเดียวกับเครื่องมือนักบัญชี) · แถว e-Tax ที่ต้องตรวจที่กรมสรรพากร + "ตรวจแล้ว" อยู่ที่ etax.html
+- **อื่น ๆ (259-3-7)**: `GET api/companies/{c}/getting-started` (`GettingStartedChecklist`) · payment-settings แสดงเส้นโอน/สลิป · เมนูคู่ค้าอยู่หมวดซื้อ ·
+  native confirm/prompt/alert = 0 ใน payment-intents/etax/tax/tax-remittance/document-scan/fiscal/customer-portal (ใช้ `Layout.confirm/notice/promptText/formDialog`)
+
+_Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก C รวมบ้าน · ไม่ซ้อน — §2.12g-259c — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 95b419a3 · e3e6f40a)_
+
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 
 **สภาพก่อนรอบนี้ (สำรวจ):**
