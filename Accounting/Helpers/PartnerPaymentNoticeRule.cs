@@ -70,7 +70,7 @@ public static class PartnerPaymentNoticeRule
     public sealed record Plan(decimal? Amount, decimal? Wht, string? Problem, string? Warning = null);
 
     /// <summary>ข้อความเตือนเมื่อจ่ายเต็มทั้งที่ใบซื้อมีภาษีหัก ณ ที่จ่ายค้าง (ตัวเดียว — เทสต์อ้างได้)</summary>
-    public static string FullPaidWhtWarning(decimal wht, string purchaseNumber)
+    private static string FullPaidWhtWarning(decimal wht, string purchaseNumber)
         => $"จ่ายเต็มยอดผ่านลิงก์ของผู้ขาย — ระบบจะบันทึกภาษีหัก ณ ที่จ่าย 0 บาท แต่ตามกติกาของเรา {purchaseNumber} ต้องหัก {wht:N2} บาท · "
            + "หน้าที่หักและนำส่งยังอยู่ (ม.50 · ผู้จ่ายรับผิดร่วมตาม ม.54) — หลังบันทึกจ่าย เปิดใบซื้อเพื่อบันทึกภาษีหัก/ออก 50 ทวิ แบบภาษีออกแทน หรือเรียกเงินส่วนนั้นคืนจากผู้ขาย";
 

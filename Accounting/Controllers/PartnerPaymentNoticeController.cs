@@ -31,7 +31,7 @@ public class PartnerPaymentNoticeController : ControllerBase
         => StatusCode(403, new ApiResponse<object>(false, new { requiredPermission = key.Replace("perm:", "") }, PermissionKeys.DeniedMessage(key)));
 
     /// <summary>ด่านเดียวกับ <c>DocumentController.CreatePayment</c>: อนุมัติเอกสารชนิดนั้น + ชั้นความลับ · null = ผ่าน</summary>
-    private async Task<ObjectResult?> DenyPayAsync(Guid companyId, Guid userId, Guid noticeId, CancellationToken ct)
+    private async Task<ObjectResult?> DenyDocAsync(Guid companyId, Guid userId, Guid noticeId, CancellationToken ct)
     {
         var target = await _service.TargetAsync(companyId, noticeId, ct);
         if (target is not { } t) return NotFound(new ApiResponse<object>(false, null, "ไม่พบการแจ้งนี้หรือใบซื้อปลายทาง"));
@@ -65,7 +65,7 @@ public class PartnerPaymentNoticeController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         if (userId == Guid.Empty) return Unauthorized();
-        if (await DenyPayAsync(companyId, userId, noticeId, ct) is { } deny) return deny;
+        if (await DenyDocAsync(companyId, userId, noticeId, ct) is { } deny) return deny;
         try
         {
             var r = await _service.RecordAsync(companyId, noticeId, userId, req?.BankAccountId, req?.PaymentMethod, ct);
@@ -84,7 +84,7 @@ public class PartnerPaymentNoticeController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         if (userId == Guid.Empty) return Unauthorized();
-        if (await DenyPayAsync(companyId, userId, noticeId, ct) is { } deny) return deny;
+        if (await DenyDocAsync(companyId, userId, noticeId, ct) is { } deny) return deny;
         try
         {
             await _service.DismissAsync(companyId, noticeId, userId, req?.Reason, ct);
