@@ -25,7 +25,7 @@ public static class ScheduleReadView
         "คุณดูตารางส่งได้ แต่แก้กฎ/สั่งคิวไม่ได้ — ต้องมีสิทธิ์ “แก้ไขการตั้งค่าบริษัท” (CompanySettings.Edit) · ขอจากเจ้าของบริษัทที่หน้า “บทบาทและสิทธิ์” · "
         + "ผู้รับสำเนา (Bcc) · เนื้อเทมเพลต · ผู้รับของสลิปเงินเดือน/50 ทวิ ถูกซ่อนไว้";
 
-    public static bool IsSensitiveKind(string? entityType) => entityType != null && SensitiveQueueKinds.Contains(entityType);
+    private static bool IsSensitiveKind(string? entityType) => entityType != null && SensitiveQueueKinds.Contains(entityType);
 
     /// <summary>อีเมลที่ซ่อนชื่อ (เหลือโดเมน) — หลายที่อยู่คั่น , หรือ ; ซ่อนทุกตัว · ว่าง = ว่าง</summary>
     public static string MaskEmails(string? emails)

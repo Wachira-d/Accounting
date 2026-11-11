@@ -25,7 +25,7 @@ public static class RecurringStaffNotice
            + (ReadableNumber(documentNumber) is string no ? $" ({no})" : "");
 
     /// <summary>รอบ 258 ฝ่ายค้าน R-L9: เลขที่ที่คนอ่านได้ — ใบร่างถือเลขชั่วคราว <c>DRAFT-{guid}</c> (เลขจริงออกตอนอนุมัติ §86/4) ⇒ ไม่แสดง (null)</summary>
-    public static string? ReadableNumber(string? documentNumber)
+    private static string? ReadableNumber(string? documentNumber)
         => string.IsNullOrWhiteSpace(documentNumber) || documentNumber.TrimStart().StartsWith("DRAFT-", StringComparison.OrdinalIgnoreCase)
             ? null : documentNumber.Trim();
 
