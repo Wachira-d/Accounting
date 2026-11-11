@@ -6942,3 +6942,9 @@ _รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 6 (
 กติกา call-site เดิม ~30 ข้อผูกชื่อเมธอด `ScanDueSoonAndOverdueAsync`/`OnRecurringDocumentCreatedAsync`/`CancelPendingAsync`/`NotifyUpcomingRunsAsync` ⇒ คืนโครงเดิม
 (local function · ถอดตัวห่อ · `IEmailScheduleService.DocumentLineQueuedAsync` แทน `EmailEnqueueOutcome.LineQueued`) · กติกา R250 ของ NotifyUpcomingRunsAsync ชี้ไป `NoticeRecipientAsync`_
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 6: แก้ผล CI/ตัวตรวจ — โครงเมธอดเดิม · APPROVER-GONE เป็นข้อเพิ่ม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5b1adc42)_
+
+_รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 9 (แก้ผลฝ่ายค้าน review-258-perms-queue · คำตัดสิน 258-2-10…13): R-H1 งานตัวตนผู้ใช้ 7 จุดห้ามใช้ API key · R-M1 คีย์รายการประจำถึงเจ้าของโดยตั้งต้น ·
+R-M2 ย้อนเก็บไม่ซ้อนครั้งซ้ำของวันนี้ · R-M3 `SendStartedAt` + `ClaimToken` (migration 2 คอลัมน์ใน EmailQueues) · R-L2 ธง `canCreateAndApprove` · R-L3 ค่ากลุ่มต่อเหตุการณ์ ·
+R-L4/R-L5 `ScheduleReadView` + `GET email-schedule/access` · R-L6 ถอนประทับเฉพาะก่อนเข้าตัวจัดการ · R-L9 · R-L10 · R-L7 มีงานล้างอยู่แล้ว (PdpaRetentionPurgeJob) ·
+R-L1/R-L8 จดเป็นความเสี่ยงคงค้าง · required_call_site_check +6 ข้อ + 3 เคสกลายพันธุ์_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 9: แก้ผลฝ่ายค้าน R-H1 · R-M1…3 · R-L2…L10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

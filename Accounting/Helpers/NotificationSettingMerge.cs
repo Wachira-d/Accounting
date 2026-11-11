@@ -18,6 +18,21 @@ public static class NotificationSettingMerge
     /// <param name="eventHasRows">เหตุการณ์นี้มีแถวที่บันทึกไว้แล้วอย่างน้อยหนึ่งแถวไหม</param>
     /// <param name="anyStoredRowOfEventOn">แถวที่บันทึกไว้ของเหตุการณ์นี้มีแถวใดเปิดกลุ่มอยู่ไหม</param>
     /// <param name="systemDefaultOn">ค่าตั้งต้นของระบบสำหรับเหตุการณ์นี้ (เมื่อบริษัทยังไม่เคยตั้ง)</param>
+    /// <summary>รอบ 258 ฝ่ายค้าน R-L3: ค่าของ<b>เหตุการณ์</b>ที่คำขอนี้ระบุชัด — เครื่องแจ้งเตือนอ่าน "กลุ่ม LINE" ต่อเหตุการณ์ (แถวใดเปิด = ประกาศ) ฉะนั้นการเขียนต้องตัดสิน
+    /// ต่อเหตุการณ์เหมือนกัน: มีแถวใดของเหตุการณ์ส่งค่ามา ⇒ ค่านั้นเป็นของทั้งเหตุการณ์ (มีแถวใดส่ง true = เปิด · ส่งมาแต่ false ล้วน = ปิด) และผู้เรียกต้องเขียนลง
+    /// <b>ทุกแถวที่เก็บไว้</b>ของเหตุการณ์ (รวมแถวบทบาทที่คำขอไม่ได้ส่ง/ไม่อยู่ในแคตตาล็อกแล้ว) — ไม่งั้นหน้าแสดง "ปิด" ขณะที่กลุ่มยังได้ประกาศ ·
+    /// ไม่มีแถวใดส่งค่า ⇒ null (คงค่าที่ใช้อยู่ — <see cref="LineGroup"/>)</summary>
+    public static bool? EventValue(IEnumerable<bool?> requestedOfEvent)
+    {
+        bool? value = null;
+        foreach (var r in requestedOfEvent)
+        {
+            if (r == true) return true;
+            if (r == false) value = false;
+        }
+        return value;
+    }
+
     public static bool LineGroup(bool? requested, bool? storedOnRow, bool eventHasRows, bool anyStoredRowOfEventOn, bool systemDefaultOn)
         => requested ?? storedOnRow ?? (eventHasRows ? anyStoredRowOfEventOn : systemDefaultOn);
 }

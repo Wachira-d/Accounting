@@ -212,6 +212,14 @@ public static class OcrPostingReadiness
         return Evaluate(processingNotes, hasUsableDate, issueSeverities, qualityLetter);
     }
 
+    /// <summary>รอบ 258 ฝ่ายค้าน R-L2: "กดสร้าง + อนุมัติในหน้าตรวจแล้วจะอนุมัติจริงไหม" — ด่านเดียวกับ <c>create-document?approve=true</c>
+    /// (<see cref="Evaluate(string?, bool, IEnumerable{string}?, string?)"/>) ประเมินก่อนกด ให้หน้าเว็บบอกผู้ใช้ล่วงหน้า (เดิมกดแล้วได้ Draft + เหตุ = เสียหนึ่งรอบ) ·
+    /// ต่างจาก <see cref="EvaluateUnseen"/>: คนเปิดดูแล้ว ⇒ ลายมือ/สินทรัพย์/ใบซ้ำไม่หยุด · สแกนยังไม่เสร็จหรือสร้างแล้ว = ไม่ประเมิน (null)</summary>
+    public static Verdict? EvaluateReviewed(string? scanStatus, bool hasCreatedDocument, string? processingNotes, bool hasUsableDate,
+        IEnumerable<string>? issueSeverities, string? qualityLetter)
+        => hasCreatedDocument || !string.Equals(scanStatus, OcrQuotaRefundRule.CompletedStatus, StringComparison.Ordinal)
+            ? null : Evaluate(processingNotes, hasUsableDate, issueSeverities, qualityLetter);
+
     private static string? WithLiveOverstatement(string? processingNotes, bool? overstatedNow)
     {
         if (overstatedNow != false || string.IsNullOrEmpty(processingNotes)) return processingNotes;

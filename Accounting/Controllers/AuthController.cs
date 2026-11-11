@@ -111,8 +111,11 @@ public class AuthController : ControllerBase
     /// <summary>ผูกบัญชีภายนอกเพิ่ม ขณะล็อกอินอยู่แล้ว — ไม่ต้องมีอีเมลจาก
     /// provider (ใช้กับ LINE ที่ channel ยังไม่ได้รับสิทธิ์ email). หน้าเว็บพา
     /// ผู้ใช้ผ่าน OAuth ตามปกติ แล้วส่ง code ที่ได้กลับมาที่นี่</summary>
+    // รอบ 258 ฝ่ายค้าน R-H1 (กวาดคลาสเดียวกัน): งานของ "ตัวตนผู้ใช้" บน route ที่ไม่มี companyId — คีย์ API ถือตัวตนผู้ออกคีย์
+    // ⇒ ผูกบัญชีภายนอกของตัวเองเข้าบัญชีเจ้าของ = ยึดบัญชี · ต้องเป็นคนที่ล็อกอินบนเว็บเท่านั้น
     [Authorize]
     [HttpPost("external-logins/link")]
+    [Accounting.Filters.RejectApiKey("ผูกบัญชีภายนอก")]
     public async Task<ActionResult<ApiResponse<ExternalLoginResponse>>> LinkExternalLogin(
         [FromBody] LinkExternalLoginRequest request)
     {
@@ -125,6 +128,7 @@ public class AuthController : ControllerBase
 
     [Authorize]
     [HttpDelete("external-logins/{linkId:guid}")]
+    [Accounting.Filters.RejectApiKey("ถอดบัญชีภายนอก")]
     public async Task<ActionResult<ApiResponse<string>>> RemoveExternalLogin(Guid linkId)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -261,6 +265,7 @@ public class AuthController : ControllerBase
 
     [Authorize]
     [HttpPost("change-password")]
+    [Accounting.Filters.RejectApiKey("เปลี่ยนรหัสผ่าน")]
     public async Task<ActionResult<ApiResponse<string>>> ChangePassword([FromBody] ChangePasswordRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
@@ -293,6 +298,7 @@ public class AuthController : ControllerBase
 
     [Authorize]
     [HttpPut("profile")]
+    [Accounting.Filters.RejectApiKey("แก้โปรไฟล์ผู้ใช้")]
     public async Task<ActionResult<ApiResponse<UserProfileResponse>>> UpdateProfile([FromBody] UpdateProfileRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);

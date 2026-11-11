@@ -167,6 +167,10 @@ public static class NotificationAudiencePolicy
         Accounting.Models.Constants.NotificationEvents.AutopilotBankSettleFailed,
         Accounting.Models.Constants.NotificationEvents.AutopilotDailyDigest,
         Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange,
+        // รอบ 258 ฝ่ายค้าน R-M1: รอบรายการประจำล้ม/ใบค้างร่าง · อนุมัติพร้อมข้อสังเกต — ผู้รับระบุตัว = ผู้สร้างที่ยังเป็นสมาชิก (RecurringStaffNotice)
+        // ผู้สร้างออกจากบริษัทแล้ว + บริษัทยังไม่ตั้งแถวของคีย์ ⇒ เดิมไม่ถึงใครเลย (DefaultMatrix ว่าง) — ต้องถึงเจ้าของ
+        Accounting.Models.Constants.NotificationEvents.RecurringRunFailed,
+        Accounting.Models.Constants.NotificationEvents.RecurringApprovedWithNotes,
     };
 
     /// <summary>เส้นผู้รับที่ระบุ (บริษัทยังไม่ตั้งคีย์) ส่งอีเมลด้วยไหม — คีย์กระดิ่งเท่านั้น = ไม่ส่ง · อื่น ๆ = กระดิ่ง + อีเมลเหมือนเดิม</summary>

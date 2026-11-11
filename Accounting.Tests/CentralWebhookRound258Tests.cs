@@ -96,15 +96,32 @@ public class CentralWebhookRound258Tests
     }
 
     [Fact]
-    public async Task eventหนึ่งล้ม_ถอนการประทับ_eventถัดไปยังถูกประมวล_ตอบ200()
+    public async Task ตัวจัดการล้มหลังเข้าแล้ว_ไม่ถอนการประทับ_ส่งซ้ำไม่สร้างใบที่สอง_eventถัดไปยังถูกประมวล_ตอบ200()
     {
+        // รอบ 258 ฝ่ายค้าน R-L6: เข้าตัวจัดการแล้ว = อาจมีผลข้างเคียงแล้ว (เอกสารสร้างแล้ว แล้วขั้นหลังโยน) ⇒ คงประทับไว้
         var log = new Log { ThrowOnText = "พัง" };
         var result = await Controller(log, Body(Event("ev-bad", "พัง"), Event("ev-ok", "ดูยอด"))).Receive();
         Assert.IsType<OkResult>(result);
-        Assert.Equal(new[] { "ev-bad" }, log.Unmarks);
+        Assert.Empty(log.Unmarks);
+        Assert.Contains("ev-bad", log.AlreadySeen);
         Assert.Contains("message:ดูยอด", log.Bot);
-        Assert.DoesNotContain("ev-bad", log.AlreadySeen);
-        Assert.Contains("ev-ok", log.AlreadySeen);
+        // LINE ส่ง event เดิมซ้ำ ⇒ ไม่เข้าตัวจัดการอีก
+        log.ThrowOnText = null;
+        await Controller(log, Body(Event("ev-bad", "พัง"))).Receive();
+        Assert.DoesNotContain("message:พัง", log.Bot);
+    }
+
+    [Fact]
+    public async Task ทิศตรงข้าม_ล้มก่อนถึงตัวจัดการ_ถอนการประทับ_ส่งซ้ำแล้วประมวลได้()
+    {
+        var log = new Log();
+        // event ที่ไม่มีส่วน message (อ่านไม่ได้) ⇒ ล้มก่อนเรียกตัวจัดการ — ยังไม่มีอะไรเกิดขึ้น
+        var malformed = "{\"type\":\"message\",\"webhookEventId\":\"ev-early\",\"replyToken\":\"rt\",\"source\":{\"type\":\"user\",\"userId\":\"U258aaaaaaaaaaaaaaaaaaaaaaaaaaaaa1\"}}";
+        var result = await Controller(log, Body(malformed, Event("ev-ok", "ดูยอด"))).Receive();
+        Assert.IsType<OkResult>(result);
+        Assert.Equal(new[] { "ev-early" }, log.Unmarks);
+        Assert.DoesNotContain("ev-early", log.AlreadySeen);
+        Assert.Contains("message:ดูยอด", log.Bot);
     }
 
     [Fact]

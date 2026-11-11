@@ -62,6 +62,31 @@ public class QueueRecoveryRound258Tests
         Assert.Equal(TimeSpan.FromMinutes(30), EmailQueueStaleSending.StaleAfter);
     }
 
+    // ───── รอบ 258 ฝ่ายค้าน R-M3 ─────
+
+    [Fact]
+    public void ตัวกู้_ยังไม่เคยเริ่มส่ง_คืนเข้าคิว_เริ่มส่งแล้ว_ล้มรอคน_ไม่ค้างไม่แตะ()
+    {
+        var stale = Now.AddMinutes(-31);
+        Assert.Equal("Pending", EmailQueueStaleSending.RecoveryStatus("Sending", stale, Created, sendStartedAt: null, Now));
+        Assert.Equal("Failed", EmailQueueStaleSending.RecoveryStatus("Sending", stale, Created, sendStartedAt: stale, Now));
+        // ทิศตรงข้าม: ยังไม่ค้าง/สถานะอื่น = ไม่แตะ
+        Assert.Null(EmailQueueStaleSending.RecoveryStatus("Sending", Now.AddMinutes(-5), Created, null, Now));
+        Assert.Null(EmailQueueStaleSending.RecoveryStatus("Sent", stale, Created, stale, Now));
+        Assert.Null(EmailQueueStaleSending.RecoveryStatus("Failed", stale, Created, null, Now));
+    }
+
+    [Fact]
+    public void ด่านเริ่มส่ง_เฉพาะแถวที่ยังถือโทเคนของรอบจองนี้()
+    {
+        var mine = Guid.NewGuid();
+        Assert.True(EmailQueueStaleSending.MayStartSend("Sending", mine, mine));
+        Assert.False(EmailQueueStaleSending.MayStartSend("Sending", Guid.NewGuid(), mine));   // ถูกกู้แล้วเครื่องอื่นจองใหม่
+        Assert.False(EmailQueueStaleSending.MayStartSend("Sending", null, mine));             // ถูกกู้ (ล้างโทเคน)
+        Assert.False(EmailQueueStaleSending.MayStartSend("Failed", mine, mine));
+        Assert.False(EmailQueueStaleSending.MayStartSend("Cancelled", mine, mine));
+    }
+
     // ───── B-M7 ─────
 
     private static readonly DateTime Today = new(2026, 11, 11);
@@ -102,7 +127,29 @@ public class QueueRecoveryRound258Tests
         Assert.True(ScheduleCatchUp.DueRuleCatchesUp("DocumentOverdue", 7, 0, Today.AddDays(-1), Today, last));
         Assert.True(ScheduleCatchUp.DueRuleCatchesUp("DocumentOverdue", 7, 7, Today.AddDays(-2), Today, last));
         Assert.False(ScheduleCatchUp.DueRuleCatchesUp("DocumentOverdue", 7, 1, Today.AddDays(-1), Today, last));   // วันนี้ทวงอยู่แล้ว
+        Assert.False(ScheduleCatchUp.DueRuleCatchesUp("DocumentOverdue", 7, 1, Today.AddDays(-2), Today, last));
         Assert.False(ScheduleCatchUp.DueRuleCatchesUp("DocumentApproved", 0, 0, Today.AddDays(-1), Today, last));
+    }
+
+    [Theory]
+    // รอบ 258 ฝ่ายค้าน R-M2: (ซ้ำทุก N วัน, วันที่พลาดห่างจากวันนี้กี่วัน, ย้อนเก็บไหม)
+    [InlineData(2, 2, false)]   // ครั้งแรกเมื่อ 2 วันก่อน ⇒ วันนี้ถึงครั้งซ้ำพอดี — ย้อนด้วย = สองฉบับ
+    [InlineData(2, 1, true)]    // เมื่อวาน ⇒ วันนี้ยังไม่ถึงครั้งซ้ำ — ย้อนเก็บครั้งแรก
+    [InlineData(2, 3, true)]
+    [InlineData(3, 3, false)]
+    [InlineData(3, 1, true)]
+    [InlineData(3, 2, true)]
+    [InlineData(1, 1, false)]   // ทุกวัน: เหมือนเดิม — ไม่ย้อนทุกกรณี
+    [InlineData(1, 2, false)]
+    [InlineData(1, 3, false)]
+    [InlineData(0, 1, true)]    // ไม่ส่งซ้ำ: ย้อนเก็บครั้งเดียวของใบ
+    [InlineData(0, 3, true)]
+    [InlineData(7, 2, true)]    // รอบยาวกว่าช่วงย้อน ⇒ ย้อนได้เสมอ
+    public void เกินกำหนดส่งซ้ำทุกNวัน_ไม่ย้อนวันที่ครั้งซ้ำของวันนี้ครอบแล้ว(int repeatEvery, int daysAgo, bool expected)
+    {
+        var last = Today.AddDays(-4);   // พลาด 3 วันเต็ม
+        Assert.Equal(expected, ScheduleCatchUp.DueRuleCatchesUp("DocumentOverdue", 7, repeatEvery, Today.AddDays(-daysAgo), Today, last));
+        Assert.Equal(!expected && repeatEvery > 0, ScheduleCatchUp.RepeatCoversToday(repeatEvery, Today.AddDays(-daysAgo), Today));
     }
 
     [Fact]
