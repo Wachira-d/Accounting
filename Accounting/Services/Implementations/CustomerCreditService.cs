@@ -521,8 +521,10 @@ public partial class CustomerCreditService : ICustomerCreditService
     }
 
     /// <summary>คิดยอดคงเหลือใหม่จากแถวจริง — ตัวเดียว <see cref="CustomerCreditLedger.RecomputeAsync"/> (การจัดสรร + ขาออกที่ตัดยอด · รอบ 259 P4)</summary>
-    private Task RecomputeUnappliedAsync(Guid companyId, Payment payment, CancellationToken ct)
-        => CustomerCreditLedger.RecomputeAsync(_db, companyId, payment, ct);
+    private async Task RecomputeUnappliedAsync(Guid companyId, Payment payment, CancellationToken ct)
+    {
+        await CustomerCreditLedger.RecomputeAsync(_db, companyId, payment, ct);
+    }
 
     // ───────────────────────── คิวใบเสร็จค้างออก (ฝ่ายค้าน H2) ─────────────────────────
 
