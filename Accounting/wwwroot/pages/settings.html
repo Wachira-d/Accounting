@@ -1186,16 +1186,14 @@
     <!-- ===== Notification Matrix Tab ===== -->
     <div id="tabNotify" class="card hidden">
       <h3 class="card-title" style="margin-bottom:4px">🔔 ตั้งค่าการแจ้งเตือน</h3>
-      <p class="text-gray-400" style="margin:0 0 16px;font-size:13px">
-        เลือกว่า <strong>เหตุการณ์ใด</strong> จะแจ้งใคร (Role) ผ่านช่องทาง
-        ใดบ้าง — กระดิ่งในแอป / อีเมล / LINE. ปิดทุกช่อง = ไม่แจ้ง.
-        การส่งสลิป PDF ทาง Email + แนบไฟล์เป็นค่าตั้งของกฎ EmailSchedule (แท็บอีเมลกำหนด).
-      </p>
-      <div id="notifyMatrixWrap">
-        <div class="text-gray-400 text-center" style="padding:30px">กำลังโหลด…</div>
-      </div>
-      <div style="display:flex;justify-content:flex-end;margin-top:16px">
-        <button class="btn btn-primary" onclick="Page.saveNotifyMatrix()">บันทึก</button>
+      <!-- รอบ 258 (A-H3 · E-H1): ตารางแจ้งเตือนของทีมมีบ้านเดียวคือหน้า "การแจ้งเตือน" — ตารางสำเนาที่เคยอยู่ตรงนี้ถูกถอด
+           (มันไม่มีช่อง "กลุ่ม LINE ของบริษัท" ⇒ กดบันทึกแล้วปิดประกาศเข้ากลุ่มทีมทุกเหตุการณ์เงียบ ๆ) -->
+      <div style="border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;margin-bottom:8px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div style="flex:1;min-width:240px;font-size:13px;color:#475569">
+          เลือกว่า <strong>เหตุการณ์ใด</strong> แจ้งใคร ทางกระดิ่งในระบบ / อีเมล / LINE ส่วนตัว / กลุ่ม LINE ของบริษัท —
+          ตั้งได้ที่หน้า <strong>การแจ้งเตือน</strong> (ที่เดียว)
+        </div>
+        <a class="btn btn-primary" href="/pages/notifications.html">ไปหน้าการแจ้งเตือน →</a>
       </div>
 
       <!-- รอบ 212 C: สรุปรายวันทาง LINE ถึงพนักงาน (js/staff-daily-summary.js · ข้อมูล/ป้ายจากเซิร์ฟเวอร์) -->
@@ -1644,7 +1642,6 @@
         if (tab === 'license') this.loadLicenseTab();
         if (tab === 'line') this.loadLineConfig();
         if (tab === 'notify') {
-          this.loadNotifyMatrix();
           const cid = Layout.getCompanyId();
           if (cid && window.CustomerNotify) {
             CustomerNotify.mountQuota(document.getElementById('notifyQuotaCard'), { companyId: cid });
@@ -2289,87 +2286,6 @@
           out.innerHTML = `<div style="font-size:13px;color:${j && j.success ? '#16a34a' : '#dc2626'}">
             ${j && j.success ? '✅' : '❌'} ${Layout.esc((j && j.message) || '')}</div>`;
         } catch (e) { out.innerHTML = `<div style="color:#dc2626">❌ ${Layout.esc(e.message)}</div>`; }
-      },
-
-      // ===== Notification Matrix =====
-      _notifyCatalog: null,
-      _notifySettings: [],
-      async loadNotifyMatrix() {
-        const cid = Layout.getCompanyId();
-        if (!cid) return;
-        const wrap = document.getElementById('notifyMatrixWrap');
-        try {
-          this._notifyCatalog = null;   // โหลดไม่ครบ = ห้ามบันทึก (เดิมส่ง settings: [] ทับค่าที่ตั้งไว้ทั้งหมด — แบบเดียวกับ notifications.html WP-03 ข้อ 7)
-          const [catRes, setRes] = await Promise.all([
-            API.get(`/api/companies/${cid}/notifications/config/catalog`),
-            API.get(`/api/companies/${cid}/notifications/config/settings`),
-          ]);
-          if (!catRes?.success || !setRes?.success) throw new Error((catRes && catRes.message) || (setRes && setRes.message) || 'เซิร์ฟเวอร์ไม่ตอบข้อมูล');
-          this._notifySettings = setRes.data || [];
-          this._notifyCatalog = catRes.data || { events: [], recipientRoles: [] };
-          this._renderNotifyMatrix();
-        } catch (e) {
-          // ล้มดัง + ลองใหม่ (WP-13 I) · ข้อความ error ผ่าน textContent (เดิมต่อ e.message ดิบเข้า innerHTML)
-          Layout.panelError(wrap, 'โหลดตารางแจ้งเตือนไม่สำเร็จ — ยังบันทึกไม่ได้', () => this.loadNotifyMatrix(), e && e.message);
-        }
-      },
-      _renderNotifyMatrix() {
-        const cat = this._notifyCatalog;
-        if (!cat) return;
-        const map = new Map();
-        for (const s of this._notifySettings)
-          map.set(`${s.eventKey}|${s.recipientRole}`, s);
-        const events = cat.events || [];
-        const roles = cat.recipientRoles || cat.roles || [];
-        const roleLabel = { Requester: 'พนักงาน', DirectManager: 'หัวหน้างาน', DepartmentHead: 'หัวหน้าแผนก',
-          HR_Admin: 'HR', Accounting: 'บัญชี', Owner: 'เจ้าของบริษัท' };
-        let html = `<div style="overflow-x:auto"><table class="table" style="font-size:13px;min-width:780px">
-          <thead><tr>
-            <th style="text-align:left;width:30%">เหตุการณ์</th>
-            <th style="text-align:left">ผู้รับ</th>
-            <th style="text-align:center">🔔 กระดิ่ง</th>
-            <th style="text-align:center">✉️ อีเมล</th>
-            <th style="text-align:center">💬 LINE</th>
-          </tr></thead><tbody>`;
-        for (const ev of events) {
-          for (const role of roles) {
-            const key = `${ev.key}|${role}`;
-            const s = map.get(key) || { enableSystem: false, enableEmail: false, enableLine: false };
-            html += `<tr>
-              <td><div><strong>${Layout.esc(ev.label)}</strong></div></td>
-              <td>${Layout.esc(roleLabel[role] || role)}</td>
-              <td style="text-align:center"><input type="checkbox" aria-label="${Layout.esc(ev.label)} · ${Layout.esc(roleLabel[role] || role)} · กระดิ่ง" data-ev="${Layout.esc(ev.key)}" data-role="${Layout.esc(role)}" data-ch="sys" ${s.enableSystem ? 'checked' : ''}></td>
-              <td style="text-align:center"><input type="checkbox" aria-label="${Layout.esc(ev.label)} · ${Layout.esc(roleLabel[role] || role)} · อีเมล" data-ev="${Layout.esc(ev.key)}" data-role="${Layout.esc(role)}" data-ch="email" ${s.enableEmail ? 'checked' : ''}></td>
-              <td style="text-align:center"><input type="checkbox" aria-label="${Layout.esc(ev.label)} · ${Layout.esc(roleLabel[role] || role)} · LINE" data-ev="${Layout.esc(ev.key)}" data-role="${Layout.esc(role)}" data-ch="line" ${s.enableLine ? 'checked' : ''}></td>
-            </tr>`;
-          }
-        }
-        html += `</tbody></table></div>`;
-        document.getElementById('notifyMatrixWrap').innerHTML = html;
-      },
-      async saveNotifyMatrix() {
-        const cid = Layout.getCompanyId();
-        if (!cid) return;
-        if (!this._notifyCatalog) { Layout.toast('ตารางแจ้งเตือนยังโหลดไม่สำเร็จ — กด "ลองใหม่" ก่อนบันทึก (กันค่าที่ตั้งไว้ถูกล้าง)', 'error', 6000); return; }
-        const rowsMap = new Map();
-        document.querySelectorAll('#notifyMatrixWrap input[type=checkbox]').forEach(cb => {
-          const k = `${cb.dataset.ev}|${cb.dataset.role}`;
-          if (!rowsMap.has(k)) rowsMap.set(k, {
-            eventKey: cb.dataset.ev, recipientRole: cb.dataset.role,
-            enableSystem: false, enableEmail: false, enableLine: false
-          });
-          const r = rowsMap.get(k);
-          if (cb.dataset.ch === 'sys') r.enableSystem = cb.checked;
-          if (cb.dataset.ch === 'email') r.enableEmail = cb.checked;
-          if (cb.dataset.ch === 'line') r.enableLine = cb.checked;
-        });
-        // ส่งทุก row — backend จัด upsert/delete ให้
-        const settings = Array.from(rowsMap.values());
-        try {
-          const j = await API.put(`/api/companies/${cid}/notifications/config/settings`, { settings });
-          if (!j || !j.success) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
-          Layout.toast('บันทึกการตั้งค่าแจ้งเตือนเรียบร้อย');
-        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       // ===== Email Config =====

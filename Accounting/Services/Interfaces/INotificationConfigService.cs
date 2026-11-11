@@ -19,6 +19,6 @@ public interface INotificationConfigService
     Task BulkUpsertUserPreferencesAsync(Guid companyId, Guid userId, BulkUpdateNotificationPreferencesRequest request);
 
     Task<LineBindingResponse> GetLineBindingAsync(Guid userId);
-    Task<LineBindingResponse> SetLineBindingAsync(Guid userId, LineBindingRequest request);
-    Task<LineBindingResponse> ClearLineBindingAsync(Guid userId);
+    /// <summary>รอบ 258 (A-H2): ถอดการผูก LINE ของตัวเอง + บันทึก audit (การผูกทำผ่านรหัสที่บอทเท่านั้น — ไม่มีทางตั้ง userId ดิบ)</summary>
+    Task<LineBindingResponse> ClearLineBindingAsync(Guid userId, Guid? companyId = null, string? ipAddress = null);
 }

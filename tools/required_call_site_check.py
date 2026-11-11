@@ -17945,6 +17945,48 @@ REVIEWER_CASES += [
     ("R257z6", "Update", "storedBasicId: s.LineOaBasicId, storedGroupId: s.LineDefaultGroupId) is string centralValue", "storedBasicId: null) is string centralValue", True),
 ]
 
+# ═══ รอบ 258 แพ็ก "สิทธิ์ + คิวส่ง + หน้าแจ้งเตือนซ้ำ" (erp-review/2026-11-11 · คำตัดสิน 258-2-*) ═══
+_R258P_WHY = "รอบ 258 แพ็ก สิทธิ์+คิวส่ง (คำตัดสิน 258-2-*): "
+_R258P_ESC = "Controllers/EmailScheduleController.cs"
+_R258P_NCC = "Controllers/NotificationConfigController.cs"
+_R258P_NCS = "Services/Implementations/NotificationConfigService.cs"
+_R258P_DENY_RE = r"is\s*\{\s*\}\s*deny\w*\s*\)\s*return\s+deny"
+RULES += [
+    dict(file=_R258P_ESC, method="RequireSettingsAsync", must=["SettingsWriteGate.EvaluateAsync(_permissions"],
+         why=_R258P_WHY + "A-H1/B-H1 ด่านเขียนของหน้าตารางส่งมีตัวตัดสินเดียว (Helpers/SettingsWriteGate)"),
+    dict(file=_R258P_ESC, method="UpsertRule", must=["RequireSettingsAsync(", "rejectApiKey: true"], must_re=[_R258P_DENY_RE],
+         before=[("RequireSettingsAsync(", "_svc.UpsertRuleAsync(")],
+         why=_R258P_WHY + "A-H1/B-H1 แก้กฎ (Bcc · เนื้ออีเมล · ช่องทาง) ต้องถือ CompanySettings.Edit และห้ามใช้ API key"),
+    dict(file=_R258P_ESC, method="DeleteRule", must=["RequireSettingsAsync(", "rejectApiKey: true"], must_re=[_R258P_DENY_RE],
+         before=[("RequireSettingsAsync(", "_svc.DeleteRuleAsync(")], why=_R258P_WHY + "A-H1/B-H1 ลบกฎ = ใบแจ้งหนี้/ทวงหยุดส่งเงียบ"),
+    dict(file=_R258P_ESC, method="Retry", must=["RequireSettingsAsync("], must_re=[_R258P_DENY_RE],
+         before=[("RequireSettingsAsync(", "_svc.RetryFailedAsync(")], why=_R258P_WHY + "A-H1/B-H1 ส่งอีกครั้ง = ส่งอีเมลในนามบริษัท (ด่านเดียวกับคิว LINE)"),
+    dict(file=_R258P_ESC, method="Cancel", must=["RequireSettingsAsync("], must_re=[_R258P_DENY_RE],
+         before=[("RequireSettingsAsync(", "_svc.CancelPendingAsync(")], why=_R258P_WHY + "A-H1/B-H1 ยกเลิกคิวอีเมล"),
+    dict(file=_R258P_NCC, method="RequireSettingsAsync", must=["SettingsWriteGate.EvaluateAsync(_permissions", "rejectApiKey: true"],
+         why=_R258P_WHY + "A-H3 ตารางแจ้งเตือนทั้งบริษัท: CompanySettings.Edit + ห้ามใช้ API key"),
+    dict(file=_R258P_NCC, method="BulkUpsertSettings", must=["RequireSettingsAsync("], must_re=[_R258P_DENY_RE],
+         before=[("RequireSettingsAsync(", "_service.BulkUpsertCompanySettingsAsync(")], why=_R258P_WHY + "A-H3 PUT ตารางแจ้งเตือนต้องผ่านด่านก่อนเขียน"),
+    dict(file=_R258P_NCS, method="BulkUpsertCompanySettingsAsync", must=["NotificationSettingMerge.LineGroup("],
+         forbid=["EnableLineGroup = dto.EnableLineGroup"],
+         why=_R258P_WHY + "A-H3/E-H1 ช่องกลุ่ม LINE ที่ผู้เรียกไม่ส่ง = คงค่าที่ใช้อยู่ (ห้ามเขียนค่าจาก DTO ทับตรง ๆ)"),
+    dict(file=_R258P_NCS, method="ClearLineBindingAsync", must=["AddChainedAuditLog("], before=[("AddChainedAuditLog(", "SaveChangesAsync(")],
+         why=_R258P_WHY + "A-H2 ถอดการผูก LINE ต้องมีร่องรอย (คู่กับ audit ตอนผูก)"),
+    dict(file="Controllers/LineWebhookController.cs", method="IssueBindCode", must=["StaffLineBindView.From("],
+         before=[("StaffLineBindView.From(", "_bot.IssueBindCodeAsync(")],
+         why=_R258P_WHY + "A-M9 ชื่อบอท/ลิงก์เพิ่มเพื่อนมาจากค่าตั้ง OA กลาง · บอทไม่พร้อม = บอกเหตุ ไม่ออกรหัส"),
+]
+REVIEWER_CASES += [
+    # ถอดด่านออกจากการลบกฎ ⇒ ต้องฟ้อง
+    ("R258p1", "DeleteRule", 'if (await RequireSettingsAsync(companyId, "ลบกฎตารางส่ง", rejectApiKey: true) is { } deny) return deny;', "", True),
+    # แก้กฎยอมให้คีย์ทำ ⇒ ต้องฟ้อง
+    ("R258p2", "UpsertRule", 'RequireSettingsAsync(companyId, "แก้กฎตารางส่ง", rejectApiKey: true)', 'RequireSettingsAsync(companyId, "แก้กฎตารางส่ง")', True),
+    # ตารางแจ้งเตือนเรียกด่านแล้วไม่ใช้ผล ⇒ ต้องฟ้อง
+    ("R258p3", "BulkUpsertSettings", 'if (await RequireSettingsAsync(companyId, "แก้ตารางแจ้งเตือนของบริษัท") is { } deny) return deny;',
+     'await RequireSettingsAsync(companyId, "แก้ตารางแจ้งเตือนของบริษัท");', True),
+]
+# ═══ จบ รอบ 258 แพ็ก สิทธิ์+คิวส่ง ═══
+
 
 def main() -> int:
     errs = []

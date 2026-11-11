@@ -160,6 +160,12 @@ WATCHED = [
     # รอบ 257 A-H1 (team-A H1) — สร้าง/แก้/ลบ/หยุด/เปิดต่อ/สร้างทันที ของรายการประจำ เดิมมีแค่ [Authorize] และอยู่ใน baseline 6 แถว ⇒ ปิดด่านครบ
     # (RecurringWriteGate: Document.Create ของชนิด · Document.Approve เมื่อระบบอนุมัติ/ส่งแทนคน · Journal.Manage ของสมุดรายวัน) ⇒ ถอดจาก baseline + ย้ายเข้า WATCHED ตอนเขียว
     "Accounting/Controllers/RecurringController.cs",
+    # รอบ 258 (A-H1 · B-H1) — กฎตารางส่ง (สร้าง/แก้/ลบ) + คิวอีเมล (ส่งอีกครั้ง/ยกเลิก) เดิมมีแค่ [Authorize] ขณะที่คิว LINE ในไฟล์เดียวกันมีด่าน
+    # (คู่สมมาตรที่แก้ฝั่งเดียว) ⇒ Viewer ใส่ Bcc เป็นอีเมลตัวเองแล้วได้สำเนาใบกำกับ/สลิปเงินเดือนทุกใบ · ด่าน = RequireSettingsAsync → Helpers/SettingsWriteGate
+    "Accounting/Controllers/EmailScheduleController.cs",
+    # รอบ 258 (A-H3 · A-H2) — ตารางแจ้งเตือนทั้งบริษัท (PUT settings) เดิมไม่มีด่าน · ทางผูก LINE ด้วย userId ดิบ (PUT line-binding/me) ถูกถอด ·
+    # ค่าส่วนตัวของผู้ใช้เอง (preferences/me · ถอดการผูกของตัวเอง) อยู่ใน SELF_SERVICE_POSTS
+    "Accounting/Controllers/NotificationConfigController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -314,6 +320,10 @@ SELF_SERVICE_POSTS = {
     # (สุ่ม 32 ไบต์ · hash · ใช้ครั้งเดียว · หมดอายุ) + จำกัดความถี่ต่อ IP (DB) · เขียนแค่หลักฐานยินยอม + hash รหัสผูกของคำเชิญนั้น
     # (required_call_site_check R254 ConsentAsync ล็อกลำดับ limiter → คำเชิญ → หลักฐาน)
     ("ContactLineJoinController.cs", "Consent"),
+    # รอบ 258: ผู้ใช้ปิดช่องทางแจ้งเตือนของ**ตัวเอง** (userId จาก token · แถว NotificationPreferences ของตัวเองเท่านั้น) และ
+    # ถอดการผูก LINE ของ**ตัวเอง** (ลดสิทธิ์ของตัวเอง · มี audit) — ไม่มีข้อมูลของคนอื่นให้แตะ · การ "ผูก" ไม่อยู่ที่นี่แล้ว (รหัสที่บอทเท่านั้น)
+    ("NotificationConfigController.cs", "UpsertMyPreferences"),
+    ("NotificationConfigController.cs", "ClearMyLineBinding"),
 }
 
 ACTION_RE = re.compile(r'^\s*\[Http(Get|Post|Put|Delete|Patch)(\("([^"]*)"\))?\]')

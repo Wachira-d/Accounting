@@ -2952,6 +2952,25 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ตั้งค่า: การ์ด "ลิงก์ให้ลูกค้าเซ็น" (`/api/companies/{id}/sign-requests/settings` · บันทึก/ออกรหัสลับ = เจ้าของเท่านั้น)
 - เทสต์ `SignRequestRound240Tests` · Db `SignRequestRound240DbTests` · ล็อก `tools/required_call_site_check.py` R240 — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 2.12g-258 รอบ 258 แพ็ก "สิทธิ์ + คิวส่ง + หน้าแจ้งเตือนซ้ำ" (erp-review/2026-11-11 · คำตัดสิน 258-2-*)
+
+
+- **ด่านเขียนของหน้าตารางส่ง (A-H1 · B-H1)**: `PUT/DELETE email-schedule/rules` + `POST email-schedule/queue/{id}/retry|cancel` ต้องถือ `CompanySettings.Edit`
+  (ด่านเดียวกับคิว LINE ในไฟล์เดียวกัน — `EmailScheduleController.RequireSettingsAsync` → ตัวตัดสินเดียว `Helpers/SettingsWriteGate`) ·
+  ตั้ง/ลบกฎทำด้วย API key ไม่ได้ (`OWNER-ACTION-NO-API-KEY` — คีย์ถือตัวตนเจ้าของ จึงผ่านด่านสิทธิ์เสมอ) · ส่งอีกครั้ง/ยกเลิกคิวตัดสินด้วยสิทธิ์ ·
+  ไม่มีสิทธิ์ = 403 `SETTINGS-WRITE-GATE` พร้อมทางไปต่อ (หน้าบทบาทและสิทธิ์) · GET กฎ/คิวคงเดิม (สมาชิกอ่านได้)
+- **ตารางแจ้งเตือนของทีมมีบ้านเดียว (A-H3 · E-H1)**: หน้า `notifications.html` เท่านั้น — ตารางสำเนาในแท็บ ตั้งค่า › การแจ้งเตือน ถูกถอด เหลือการ์ดลิงก์ ·
+  `PUT notifications/config/settings` ต้องถือ `CompanySettings.Edit` + ห้ามใช้ API key · ช่อง `enableLineGroup` ของคำขอเป็น `bool?`:
+  **ไม่ส่ง (null) = คงค่าที่ระบบใช้อยู่** (แถวเดิม › แถวอื่นของเหตุการณ์ › ค่าตั้งต้นของระบบ — `Helpers/NotificationSettingMerge.LineGroup`) ไม่ใช่ "ปิด" ·
+  ป้ายบทบาทผู้รับมาจากเซิร์ฟเวอร์ (`catalog.roleLabels` ← `NotificationRecipientRoles.Labels`) หน้าเว็บไม่มีสำเนา ·
+  ค่าส่วนตัว (`preferences/me`) ไม่ต้องมีสิทธิ์ตั้งค่าบริษัท
+- **ผูก LINE พนักงาน = ทางเดียว (A-H2 · A-M9)**: `PUT notifications/config/line-binding/me` (พิมพ์ LINE userId ดิบ) **ถูกถอด** — `User.LineUserId` คือกุญแจยืนยันตัวของบอทกลาง
+  ผูกได้เฉพาะรหัส 6 หลัก (`POST api/line-bot/issue-bind-code` → ส่ง `ผูก 123456` ให้บอท: จำกัดความถี่ · ถอดบัญชีอื่นที่ถือค่าเดิม · audit · อีเมลแจ้งเจ้าของบัญชี) ·
+  `GET line-binding/me` ส่งแค่ `isBound` + ท้าย 6 ตัว (ไม่ส่ง id เต็ม) · `DELETE` (ถอดของตัวเอง) จด audit `LineBindCode` (`Bound=false`) ·
+  หน้า `line-bind.html` แสดงชื่อบอท/ลิงก์เพิ่มเพื่อนจากเซิร์ฟเวอร์ (`Helpers/StaffLineBindView` ← ค่าตั้ง OA กลาง) — บอทยังไม่พร้อม (ไม่มี token/secret) = ไม่ออกรหัส บอกเหตุ ·
+  `POST line-config/test` ห้ามใช้ API key (คู่กับ PUT)
+<!-- P258-END -->
+
 ### 2.12g-0 ตารางส่งอีเมล "เกินกำหนด" ส่งซ้ำทุก N วัน · แจ้งเตือนก่อนรอบรายการประจำ (รอบ 250 WP-04 ต่อยอด + ฝ่ายค้าน 74a2d1f6)
 - `EmailScheduleRule.RepeatEveryDays` (เดิมเก็บ+แสดงแต่ไม่มีผล) — **เฉพาะกฎ DocumentOverdue** (ทริกเกอร์อื่น > 0 ⇒ 400 · หน้าซ่อนช่อง):
   ครั้งแรกวันที่เกินกำหนดครบ Offset (กุญแจเดิม `overdue-{Offset}`) · ครั้งซ้ำทุก N วัน (กุญแจ `overdue-{Offset}-{yyyyMMdd}`) **สูงสุด 6 ครั้ง**
@@ -8478,3 +8497,5 @@ _Last verified against codebase: 2026-11-11 (รอบ 257 ปิดท้าย
 กล่องรับไม่ยืนยันอัตโนมัติใบของปีที่ยื่นแล้ว · ต้นทางหาย (ระบบขับ) ไม่กันแต่แจ้งเจ้าของ · §2.12l: ทางได้ใบกำกับนอกระบบต้องผ่านกติกา VAT + ไม่รับ e-Tax ประทับเวลา · คำยืนยันนอกระบบของใบกำกับเดียวกันคงไว้ ·
 งานซ่อมกลุ่ม "ไม่มีใบกำกับในสาย" (marker ใหม่) · ปุ่มตามสิทธิ์ · §2.12g2 ใบลดหนี้ที่อ้างใบต้นทางไม่ถูกหักซ้ำในใบแจ้งยอดพอร์ทัล (`StatementCreditNoteReduces`) ·
 §2.12h ปุ่มล้างรหัสเชื่อมส่ง null ช่อง Group ID/Basic ID + ด่านค่าของ OA กลางปฏิเสธเฉพาะค่าที่ต่างจากที่เก็บอยู่ · §2.7 ข้อความผู้รับผิดชอบรายการ/ทางไปต่อของแม่แบบสมุดรายวัน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8a61047e)_
+
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 1: ด่านเขียนตารางส่ง/ตารางแจ้งเตือน · บ้านเดียวของตารางแจ้งเตือน · ผูก LINE พนักงานทางเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

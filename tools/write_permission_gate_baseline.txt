@@ -277,10 +277,6 @@ Accounting/Controllers/ECommerceController.cs	SyncOrders	1
 Accounting/Controllers/ECommerceController.cs	TestConnection	1
 Accounting/Controllers/EarlyPaymentDiscountController.cs	Create	1
 Accounting/Controllers/EarlyPaymentDiscountController.cs	Update	1
-Accounting/Controllers/EmailScheduleController.cs	Cancel	1
-Accounting/Controllers/EmailScheduleController.cs	DeleteRule	1
-Accounting/Controllers/EmailScheduleController.cs	Retry	1
-Accounting/Controllers/EmailScheduleController.cs	UpsertRule	1
 Accounting/Controllers/GovernmentServiceController.cs	GetShippingRates	1
 Accounting/Controllers/GovernmentServiceController.cs	RequestTimestamp	1
 Accounting/Controllers/GovernmentServiceController.cs	SyncBotRates	1
@@ -317,10 +313,6 @@ Accounting/Controllers/MobileController.cs	QuickApprove	1
 Accounting/Controllers/MobileController.cs	RegisterDevice	1
 Accounting/Controllers/MobileController.cs	Sync	1
 Accounting/Controllers/MobileController.cs	UnregisterDevice	1
-Accounting/Controllers/NotificationConfigController.cs	BulkUpsertSettings	1
-Accounting/Controllers/NotificationConfigController.cs	ClearMyLineBinding	1
-Accounting/Controllers/NotificationConfigController.cs	SetMyLineBinding	1
-Accounting/Controllers/NotificationConfigController.cs	UpsertMyPreferences	1
 Accounting/Controllers/NotificationController.cs	MarkAllAsRead	1
 Accounting/Controllers/NotificationController.cs	MarkAsRead	1
 Accounting/Controllers/OcrController.cs	PurchaseCredits	1

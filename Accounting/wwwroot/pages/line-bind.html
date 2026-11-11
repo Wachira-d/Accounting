@@ -45,7 +45,8 @@
         <div class="num">1</div>
         <div>
           <h4>เพิ่มบอทเป็นเพื่อน</h4>
-          <p>สแกน QR ของ Next Acc Bot หรือค้นหา <strong>@nextacc-bot</strong> ใน LINE แล้วกดเพิ่มเพื่อน</p>
+          <!-- รอบ 258 (A-M9): ชื่อบอท/ลิงก์เพิ่มเพื่อนมาจากเซิร์ฟเวอร์ (ค่าตั้ง LINE ของ NextAcc) — หน้านี้ไม่ฝังชื่อบอทเอง -->
+          <p id="botHow">กำลังโหลดชื่อบัญชี LINE ของ NextAcc…</p>
         </div>
       </div>
       <div class="lb-step">
@@ -86,6 +87,7 @@
       async issueCode() {
         try {
           const res = await API.post('/api/line-bot/issue-bind-code', {});
+          this.renderBot(res?.data || {});
           const code = res?.data?.code;
           if (code) {
             // Format as "123 456" for readability
@@ -96,6 +98,31 @@
           } else throw new Error(res?.message || 'ไม่สามารถสร้างรหัสได้');
         } catch (e) {
           document.getElementById('bindCode').textContent = '❌ ' + e.message;
+        }
+      },
+      // รอบ 258 (A-M9): เซิร์ฟเวอร์ส่ง basicId / addFriendUrl / notice — หน้าแสดงอย่างเดียว (textContent · ลิงก์ผ่าน href ที่ตรวจ scheme)
+      renderBot(d) {
+        const el = document.getElementById('botHow');
+        if (!el) return;
+        el.textContent = '';
+        if (d.basicId) {
+          el.append('ค้นหา ');
+          const b = document.createElement('strong');
+          b.textContent = d.basicId;
+          el.append(b, ' ใน LINE แล้วกดเพิ่มเพื่อน');
+          if (d.addFriendUrl && /^https:\/\/line\.me\//.test(d.addFriendUrl)) {
+            el.append(' หรือ ');
+            const a = document.createElement('a');
+            a.href = d.addFriendUrl; a.target = '_blank'; a.rel = 'noopener';
+            a.textContent = 'กดที่นี่เพื่อเพิ่มเพื่อน';
+            el.append(a, ' (เปิดบนคอมพิวเตอร์จะเห็น QR ให้สแกน)');
+          }
+        }
+        if (d.notice) {
+          const n = document.createElement('div');
+          n.style.cssText = 'margin-top:6px;color:#b45309';
+          n.textContent = '⚠️ ' + d.notice;
+          el.append(n);
         }
       },
       startTimer() {

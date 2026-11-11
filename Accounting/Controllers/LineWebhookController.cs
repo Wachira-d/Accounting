@@ -180,15 +180,25 @@ public class LineWebhookController : ControllerBase
 public class LineBotBindController : ControllerBase
 {
     private readonly ILineBotService _bot;
-    public LineBotBindController(ILineBotService bot) => _bot = bot;
+    /// <summary>รอบ 258 (A-M9): ค่าตั้ง OA กลาง (ผู้อ่านตัวเดียว) — ชื่อบอท/ลิงก์เพิ่มเพื่อนบนหน้าผูกมาจากที่นี่ ไม่ฝังในหน้าเว็บ</summary>
+    private readonly INextAccLineConfig? _nextAcc;
+    public LineBotBindController(ILineBotService bot, INextAccLineConfig? nextAcc = null)
+    {
+        _bot = bot; _nextAcc = nextAcc;
+    }
 
     [HttpPost("issue-bind-code")]
-    public async Task<ActionResult<ApiResponse<object>>> IssueBindCode()
+    public async Task<ActionResult<ApiResponse<object>>> IssueBindCode(CancellationToken ct = default)
     {
         var userId = Accounting.Helpers.JwtHelper.GetUserIdFromClaims(User);
+        // รอบ 258 (A-M9): บอทกลางยังไม่พร้อมรับข้อความ (ไม่มี token/secret) ⇒ บอกเหตุแทนการออกรหัสที่ส่งไปแล้วเงียบ
+        var central = _nextAcc == null ? null : await _nextAcc.GetAsync(ct);
+        var view = Accounting.Helpers.StaffLineBindView.From(central?.HasToken == true && central.HasSecret, central?.BasicId);
+        if (!view.BotReady)
+            return Ok(new ApiResponse<object>(false, new { view.BotReady, view.BasicId, view.AddFriendUrl, view.Notice }, view.Notice));
         var code = await _bot.IssueBindCodeAsync(userId);
         return Ok(new ApiResponse<object>(true,
-            new { code, expiresInMinutes = 10 },
+            new { code, expiresInMinutes = 10, view.BotReady, view.BasicId, view.AddFriendUrl, view.Notice },
             "ส่งข้อความ 'ผูก " + code + "' ให้บอทใน LINE ภายใน 10 นาที"));
     }
 }
