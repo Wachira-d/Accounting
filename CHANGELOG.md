@@ -6941,4 +6941,4 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิ�
 _รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 6 (แก้ผล CI ของ 2868a000 + ผล required_call_site_check): Db test รอบ 248 ล้ม 1 ตัว (ข้อ APPROVER-GONE ไปแทนข้อ APPROVE) ⇒ เป็นข้อเพิ่ม ·
 กติกา call-site เดิม ~30 ข้อผูกชื่อเมธอด `ScanDueSoonAndOverdueAsync`/`OnRecurringDocumentCreatedAsync`/`CancelPendingAsync`/`NotifyUpcomingRunsAsync` ⇒ คืนโครงเดิม
 (local function · ถอดตัวห่อ · `IEmailScheduleService.DocumentLineQueuedAsync` แทน `EmailEnqueueOutcome.LineQueued`) · กติกา R250 ของ NotifyUpcomingRunsAsync ชี้ไป `NoticeRecipientAsync`_
-_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 6: แก้ผล CI/ตัวตรวจ — โครงเมธอดเดิม · APPROVER-GONE เป็นข้อเพิ่ม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 6: แก้ผล CI/ตัวตรวจ — โครงเมธอดเดิม · APPROVER-GONE เป็นข้อเพิ่ม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5b1adc42)_
