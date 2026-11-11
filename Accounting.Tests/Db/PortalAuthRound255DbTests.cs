@@ -27,6 +27,7 @@ namespace Accounting.Tests.Db;
 /// โทเคน access ผ่าน + เส้นเอกสาร/ส่งออก 200 · โทเคนพนักงาน (JWT) บนเส้นพอร์ทัล = 401 · โทเคนพอร์ทัลบนเส้นพนักงาน (JwtBearer อ่านไม่ออก) = 401 ·
 /// สิทธิ์ถูกปิด = 401 · refresh ใช้แทน access ไม่ได้ (และ access ใช้ refresh ไม่ได้) · บริษัทในเส้นทางไม่ตรงโทเคน = 401
 /// </summary>
+[Trait("Category", "Db")]
 public class PortalAuthRound255DbTests
 {
     private readonly ITestOutputHelper _out;

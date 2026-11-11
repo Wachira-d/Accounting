@@ -17,6 +17,32 @@ public sealed record DunningSuppressionDecision(bool SuppressCustomerReminder, s
 /// </summary>
 public static class DunningSuppression
 {
+    /// <summary>ใบค้าง 1 ใบของลูกค้าสำหรับ <see cref="Plan"/> — <paramref name="Allocatable"/> = การจัดสรรเงินรอจัดสรรให้ใบนี้ผ่านตัวตัดสิน
+    /// (<see cref="CustomerCreditAllocation.Check"/> + มีสมุดรายวันตั้งลูกหนี้) — ใบที่จัดสรรไม่ได้ (สกุลต่างประเทศ · ไม่มี JE) ห้ามถูกระงับ</summary>
+    public sealed record OpenDocument(Guid DocumentId, decimal BalanceDue, bool Allocatable);
+
+    /// <summary>
+    /// ฝ่ายค้านรอบ 258 M1 — ใบไหนของลูกค้ารายนี้ที่ "เงินรอจัดสรรพอปิด": เดินใบ<b>เก่าสุดก่อน</b> แล้ว<b>หักเงินสะสม</b> (เงินแต่ละบาทนับครั้งเดียว) ·
+    /// ใบที่เงินคงเหลือไม่พอปิดเต็ม หรือจัดสรรไม่ได้ ⇒ ไม่ถูกระงับ (ทวงตามเดิม) และไม่กินเงิน
+    /// (เดิมเทียบรายใบกับเงินรวม: เงิน 1,000 · ใบ 5 ใบ ใบละ 900 ⇒ ระงับทั้ง 5 ใบ)
+    /// </summary>
+    /// <param name="openOldestFirst">ใบค้างของลูกค้ารายเดียว เรียงเก่าสุดก่อน</param>
+    /// <returns>ใบที่ถูกระงับ → ข้อความถึงทีมงาน</returns>
+    public static IReadOnlyDictionary<Guid, string> Plan(decimal contactUnappliedCredit, IEnumerable<OpenDocument> openOldestFirst)
+    {
+        var held = new Dictionary<Guid, string>();
+        var left = contactUnappliedCredit;
+        foreach (var doc in openOldestFirst)
+        {
+            if (!doc.Allocatable) continue;
+            var decision = Decide(doc.BalanceDue, left);
+            if (!decision.SuppressCustomerReminder) continue;
+            held[doc.DocumentId] = decision.Reason ?? "ลูกค้ามีเงินรอจัดสรรพอปิดใบนี้";
+            left -= doc.BalanceDue;
+        }
+        return held;
+    }
+
     public static DunningSuppressionDecision Decide(decimal documentBalanceDue, decimal contactUnappliedCredit)
     {
         if (!UnappliedCreditBalance.HasBalance(contactUnappliedCredit) || documentBalanceDue <= 0m)

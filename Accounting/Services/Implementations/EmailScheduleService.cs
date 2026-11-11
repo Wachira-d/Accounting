@@ -619,7 +619,7 @@ public class EmailScheduleService : IEmailScheduleService
         var catchUp = today != realToday;
         int enqueued = 0, notSentRows = 0;
         // รอบ 258 (DECISIONS 258-1-9): เงินรอจัดสรรต่อลูกค้า โหลดครั้งเดียวต่อบริษัท · กุญแจแถว "ข้าม" ที่เพิ่มในรอบสแกนนี้ (สองกฎของใบเดียวกันห้ามเพิ่มซ้ำ — ดัชนี unique)
-        var creditByCompany = new Dictionary<Guid, Dictionary<Guid, decimal>>();
+        var creditHoldsByCompany = new Dictionary<Guid, IReadOnlyDictionary<Guid, string>>();
         var creditHoldKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var rule in rules)
         {
@@ -660,24 +660,48 @@ public class EmailScheduleService : IEmailScheduleService
             }
             await _db.HydrateContactsAsync(rule.CompanyId, docs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
             var sendUtc = ScheduledUtc(realToday, rule.SendAtHour);   // รอบ 258: ย้อนเก็บส่งตามชั่วโมงของวันนี้จริง (เลยชั่วโมงแล้ว = รอบถัดไป)
-            if (!creditByCompany.TryGetValue(rule.CompanyId, out var creditByContact))
-                creditByCompany[rule.CompanyId] = creditByContact =
-                    await Accounting.Helpers.CustomerCreditQuery.UnappliedByContactAsync(_db, rule.CompanyId, ct);
+            // ฝ่ายค้านรอบ 258 M1: ใบที่ถูกระงับ = แผนหักเงินสะสมเก่าสุดก่อน (เงินแต่ละบาทนับครั้งเดียว · เฉพาะใบที่จัดสรรได้จริง) — ตัวอ่านเดียว DunningHoldsAsync
+            if (!creditHoldsByCompany.TryGetValue(rule.CompanyId, out var creditHolds))
+                creditHoldsByCompany[rule.CompanyId] = creditHolds =
+                    await Accounting.Helpers.CustomerCreditQuery.DunningHoldsAsync(_db, rule.CompanyId, ct);
+            var creditHoldSuffix = $"credit-hold-{rule.Id:N}";
+            // M1 (การเตือนแบบตรงวันไม่หาย): ใบที่กฎนี้เคยระงับไว้ และตอนนี้ไม่ถูกระงับแล้วแต่ยังค้าง ⇒ ส่งการเตือนที่ถูกข้ามไป (ครั้งเดียว) แล้วปิดแถวระงับ
+            if (!catchUp)
+            {
+                var heldRows = await _db.EmailQueues
+                    .Where(q => q.CompanyId == rule.CompanyId && !q.IsDeleted && q.EntityType == "Document"
+                        && q.IdempotencyKey != null && q.IdempotencyKey.EndsWith(":" + creditHoldSuffix))
+                    .ToListAsync(ct);
+                foreach (var heldRow in heldRows.Where(r => !creditHolds.ContainsKey(r.EntityId)))
+                {
+                    heldRow.IsDeleted = true;
+                    heldRow.UpdatedAt = DateTime.UtcNow;
+                    notSentRows++;
+                    if (docs.Any(d => d.Id == heldRow.EntityId)) continue;   // วันนี้กฎนี้หยิบใบนี้เองอยู่แล้ว
+                    var released = await _db.Documents.AsNoTracking()
+                        .FirstOrDefaultAsync(d => d.Id == heldRow.EntityId && d.CompanyId == rule.CompanyId && !d.IsDeleted
+                            && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Draft && d.BalanceDue > 0 && d.DueDate != null, ct);
+                    if (released == null) continue;
+                    if (rule.Trigger == "DocumentDueSoon" && released.DueDate!.Value.Date < today) continue;   // เลยกำหนดแล้ว — "ใกล้ครบกำหนด" ไม่มีความหมาย
+                    await _db.HydrateContactsAsync(rule.CompanyId, new List<Document> { released });
+                    var late = await EnqueueDocumentAsync(rule, released, daysOffset: 0, suffix: "credit-release", ct, overrideSendUtc: sendUtc);
+                    if (late.Queued) enqueued++;
+                    else if (late.NotSent != null) notSentRows++;
+                }
+            }
             foreach (var doc in docs)
             {
                 var overdueDays = (today - doc.DueDate!.Value.Date).Days;
                 // รอบ 258: ลูกค้ามีเงินรอจัดสรรพอปิดใบนี้ (โอนมาแล้วแต่ยังไม่ได้ผูกกับใบ) ⇒ ไม่เตือน/ทวงลูกค้า (อีเมลและ LINE) ·
                 // แถว "ข้าม" พร้อมเหตุครั้งเดียวต่อใบต่อ trigger (ทีมงานเห็นในประวัติการส่ง + OverdueDunningJob แจ้งทีมให้จัดสรร)
-                var creditHold = Accounting.Helpers.DunningSuppression.Decide(doc.BalanceDue,
-                    creditByContact.TryGetValue(doc.ContactId, out var contactCredit) ? contactCredit : 0m);
-                if (creditHold.SuppressCustomerReminder)
+                if (creditHolds.TryGetValue(doc.Id, out var creditHoldReason))
                 {
-                    var holdKey = DocumentQueueKey(doc.Id, rule.Trigger, "credit-hold");
+                    var holdKey = DocumentQueueKey(doc.Id, rule.Trigger, creditHoldSuffix);
                     if (creditHoldKeys.Add(holdKey)
                         && !await _db.EmailQueues.AnyAsync(q => q.CompanyId == doc.CompanyId && q.IdempotencyKey == holdKey && !q.IsDeleted, ct))
                     {
                         AddNotSentRow(doc.CompanyId, rule.Id, "Document", doc.Id, $"แจ้งเตือนการชำระ {doc.DocumentNumber}", sendUtc, holdKey,
-                            creditHold.Reason ?? "ลูกค้ามีเงินรอจัดสรรพอปิดใบนี้");
+                            creditHoldReason);
                         notSentRows++;
                     }
                     continue;

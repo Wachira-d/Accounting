@@ -42,8 +42,13 @@ public static class PaymentExcessPlan
     /// <param name="hasFee">มีค่าธรรมเนียมหักจากยอดโอน</param>
     /// <param name="vatRegistered">บริษัทจด VAT</param>
     /// <param name="reason">เหตุผลที่ผู้ใช้เลือก (null = ยังไม่เลือก)</param>
-    public static string? RefuseExcess(bool receivableSide, bool isThb, bool hasFee, bool vatRegistered, UnappliedReason? reason)
+    public static string? RefuseExcess(bool receivableSide, bool isThb, bool hasFee, bool vatRegistered, UnappliedReason? reason,
+        bool hasAdjustments = false)
     {
+        // ฝ่ายค้านรอบ 258 M2: บรรทัดปรับส่วนต่างผูกกับหนี้ใบเดียว — มีเงินเกินด้วย ⇒ ปฏิเสธ (เดิมแผงเงินเกินทิ้งบรรทัดปรับเงียบ ๆ)
+        if (hasAdjustments)
+            return "การรับเงินเกินพร้อมบรรทัดปรับส่วนต่าง (คูปอง/ค่าส่ง/ส่วนลด) ยังไม่รองรับในรายการเดียว — บันทึกรับชำระใบนี้พร้อมบรรทัดปรับเท่ายอดค้างก่อน "
+                 + "แล้วบันทึกเงินส่วนเกินเป็นอีกรายการ";
         if (!receivableSide)
             return "ยอดจ่ายมากกว่ายอดที่จัดสรรให้เอกสาร — ฝั่งจ่ายเจ้าหนี้ยังไม่รองรับเงินจ่ายเกิน/จ่ายล่วงหน้ารอจัดสรร · "
                  + "บันทึกจ่ายเท่ายอดค้างของใบ แล้วบันทึกเงินจ่ายล่วงหน้าเป็นใบสำคัญจ่ายแยก";
@@ -109,15 +114,23 @@ public static class PaymentExcessPlan
     }
 
     /// <summary>
-    /// คำเตือนของใบแจ้งหนี้ที่มีภาษีมูลค่าเพิ่ม ซึ่งถูกปิดด้วยการรับชำระหลายใบ/เงินเกิน/การจัดสรรจากเงินรอจัดสรร — เส้นเหล่านี้<b>ไม่ออก</b>ใบกำกับภาษี/ใบเสร็จรับเงินอัตโนมัติ
-    /// (ต่างจากรับชำระใบเดียวเต็มยอด) · ภาษีขายเข้า ภ.พ.30 แล้ว แต่เอกสารตามมาตรา 86 ต้องออกโดยคน — ต้องบอกผู้ใช้ทุกครั้ง (ห้ามเงียบ) ·
-    /// null = ไม่ต้องเตือน (ไม่ใช่ใบแจ้งหนี้ · ไม่มี VAT)
+    /// ฝ่ายค้านรอบ 258 M2: เงินส่วนเกินที่หน้าจอแสดงให้ผู้ใช้ยืนยัน ต้องเท่ากับที่เซิร์ฟเวอร์คิดจากคำขอจริง — ไม่ตรง = ปฏิเสธ (ไม่บันทึกยอดที่ผู้ใช้ไม่ได้เห็น) ·
+    /// null = ตรง หรือผู้เรียกไม่ส่งมา (API เดิม)
     /// </summary>
-    public static string? NoAutoTaxInvoiceNotice(DocumentType type, decimal vatAmount, string documentNumber)
-        => type == DocumentType.Invoice && vatAmount > 0.005m
-            ? $"{documentNumber}: ใบแจ้งหนี้ที่มีภาษีมูลค่าเพิ่มถูกปิดยอดด้วยการรับชำระหลายใบ/เงินรอจัดสรร — ระบบไม่ออกใบกำกับภาษี/ใบเสร็จรับเงินให้อัตโนมัติในรายการนี้ "
-              + "(ภาษีขายถูกนำเข้า ภ.พ.30 แล้ว) · ต้องออกใบกำกับภาษีให้ลูกค้าตามมาตรา 86 — ตรวจกับผู้ทำบัญชี"
+    public static string? ExpectedExcessMismatch(decimal? expectedExcess, decimal actualExcess)
+        => expectedExcess is decimal expected && Math.Abs(expected - actualExcess) > UnappliedCreditBalance.Tolerance
+            ? "เงินส่วนเกินที่หน้าจอแสดง (" + expected.ToString("#,##0.00", CultureInfo.InvariantCulture) + ") ไม่ตรงกับที่ระบบคำนวณจากรายการนี้ ("
+              + actualExcess.ToString("#,##0.00", CultureInfo.InvariantCulture) + ") — ปิดหน้าต่างแล้วเปิดบันทึกรับชำระใหม่"
             : null;
+
+    /// <summary>ป้ายบนหมายเหตุภายในของใบที่ถูกปิดยอดแล้วแต่<b>ยังไม่ได้ออกใบเสร็จรับเงิน/ใบกำกับภาษี</b>ของการรับเงินนั้น (ฝ่ายค้านรอบ 258 H2) —
+    /// ตัวอ่านคิวงาน: <c>CustomerCreditService.ReceiptPendingAsync</c></summary>
+    public const string ReceiptPendingMarker = "[RECEIPT-PENDING]";
+
+    /// <summary>ข้อความที่เก็บบนใบ (ไม่ใช่แค่ toast) เมื่อออกใบเสร็จ/ใบกำกับอัตโนมัติของการรับเงินไม่ได้ — พร้อมทางไปต่อ</summary>
+    public static string ReceiptPendingNote(string documentNumber, string paymentNumber, string why)
+        => $"{ReceiptPendingMarker} {documentNumber}: ถูกปิดยอดด้วยการรับชำระ {paymentNumber} แล้ว แต่ยังไม่ได้ออกใบเสร็จรับเงิน/ใบกำกับภาษีของเงินก้อนนี้ ({why}) — "
+           + "เปิดใบนี้แล้วกด “ออกใบเสร็จ” ที่ประวัติการชำระ (มาตรา 86 · 105)";
 
     /// <summary>ข้อความหัวแผงเงินเกินบนหน้ารับชำระ</summary>
     public static string Headline(decimal excess)

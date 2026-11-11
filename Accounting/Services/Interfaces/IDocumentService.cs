@@ -336,11 +336,14 @@ public interface IDocumentService
     // ── รอบ 258 "เงินรอจัดสรร" — จุดต่อของ CustomerCreditService กับขั้นภาษีเดิมของเอกสาร (DocumentService.CustomerCredit.cs) ──
     /// <summary>ขั้นหลัง commit ของการจัดสรรเงินรอจัดสรรให้ใบขาย: ย้ายภาษีขายที่พัก (21913 → 21911) ด้วยงวดของ<b>วันรับเงิน</b>ถ้ายังยื่นทัน
     /// (<c>LateReceiptTaxPoint</c>) · ภาษีถูกหัก ณ ที่จ่ายเมื่อปิดยอดครบ · ทะเบียนเครดิตภาษี · ธงสลิปที่ถูกแทน — คืนข้อความที่ผู้ใช้ต้องรู้ (ธงภาษีล่าช้า)</summary>
-    Task<IReadOnlyList<string>> AfterCreditAllocatedAsync(Guid companyId, Guid documentId, DateTime receiptDate, DateTime applyDate,
-        string journalReference, string actor);
+    Task<IReadOnlyList<string>> ApplyCreditAllocationTaxStepsAsync(Guid companyId, Guid documentId, string? creditReason, DateTime receiptDate,
+        DateTime applyDate, string journalReference, string actor);
+    /// <summary>ฝ่ายค้านรอบ 258 H2/M6 — ขั้นหลัง commit ของการจัดสรร: ธงสลิปที่ถูกแทน + ออกใบเสร็จรับเงิน/ใบกำกับภาษี "รายใบ" ตามนโยบายเดียวกับรับชำระใบเดียว ·
+    /// ออกไม่ได้ = ป้ายบนใบ (คิวงาน) + ข้อความ — ไม่ throw</summary>
+    Task<IReadOnlyList<string>> AfterCreditAllocationCommittedAsync(Guid companyId, Guid paymentId, Guid documentId, string actor);
     /// <summary>ภายในธุรกรรมของการยกเลิกการจัดสรร (หลังคืนยอดของใบแล้ว): ถอยภาษีขายถึงกำหนดถ้าใบไม่เหลือเงินรับ — ตัวเดียวกับการยกเลิกการรับชำระ ·
     /// งวดปิด/ยื่นแล้ว = <c>BusinessRuleException</c> (ผู้เรียก rollback) · คืนข้อความธง (null = ไม่มี)</summary>
-    Task<string?> UndoCreditAllocationTaxEffectsAsync(Guid companyId, Guid documentId, string paymentNumber);
+    Task<string?> UndoCreditAllocationTaxEffectsAsync(Guid companyId, Guid paymentId, Guid documentId, string paymentNumber);
     /// <summary>ขั้นหลัง commit ของการยกเลิกการจัดสรร: ปรับทะเบียนเครดิตภาษีถูกหักให้ตรง GL (JE ภาษีถูกหักของการจัดสรรถูกกลับแล้ว)</summary>
     Task SyncWhtCreditAfterCreditUndoAsync(Guid companyId, Guid documentId);
     /// <summary>เหตุที่ "ลงรายการภาษีขายในวันนั้นไม่ได้" (งวดบัญชีปิด หรือ ภ.พ.30 เดือนนั้นยื่น/ประกาศว่ายื่น/ล็อก) — ตัวเดียวกับด่านถอย/ย้ายภาษีขาย ·
@@ -390,5 +393,5 @@ public interface IDocumentService
     /// <summary>ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (ย้อนหลัง) — ทางไปต่อ
     /// ของแถวที่มี JE รับเงินแต่ไม่มีเอกสารคู่ (ดูรายละเอียดที่ implementation).
     /// idempotent: มีใบอยู่แล้วคืนใบเดิมพร้อม <c>AlreadyExisted=true</c></summary>
-    Task<IssuedReceiptResult> IssueReceiptForPaymentAsync(Guid companyId, Guid paymentId, string createdBy);
+    Task<IssuedReceiptResult> IssueReceiptForPaymentAsync(Guid companyId, Guid paymentId, string createdBy, Guid? forDocumentId = null);
 }

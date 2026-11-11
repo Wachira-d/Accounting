@@ -50,7 +50,9 @@ public sealed record DataIntegrityReport(
     // รอบ 250 ฝ่ายค้าน M3 — แถวรับชำระ "[PENDING-VERIFY]" ของสลิปพอร์ทัลรุ่นเก่าที่ระบบไม่ย้ายเอง (ต้องให้คนตัดสิน) · อ่านอย่างเดียว
     List<DataIntegritySuspect>? PortalSlipLegacyNeedsReview = null,
     // รอบ 257 ชุด 3 ฝ่ายค้าน M2 — ใบซื้อจากคู่ค้าที่อนุมัติแล้ว ซึ่งยืนยันต้นฉบับก่อนผู้ขายส่งใบกำกับ (คำยืนยันเป็นของใบแจ้งหนี้) · อ่านอย่างเดียว (ไม่กลับรายการเอง)
-    List<DataIntegritySuspect>? PartnerConfirmedBeforeTaxInvoice = null)
+    List<DataIntegritySuspect>? PartnerConfirmedBeforeTaxInvoice = null,
+    // ฝ่ายค้านรอบ 258 M4 — เงินส่วนเกินของการรับ/จ่ายชำระก่อนรอบ 258 ที่ต้องให้คนตรวจ (ฝั่งรับ: ธงต้องตรวจ · ฝั่งจ่าย: ลงผังกลุ่ม 114 เช่น 11400) · อ่านอย่างเดียว
+    List<DataIntegritySuspect>? LegacyPaymentExcess = null)
 {
     /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
     /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
@@ -66,7 +68,7 @@ public sealed record DataIntegrityReport(
         + (ApiJournalDepositDrawnWithoutBookingRef?.Count ?? 0)
         + (PurchaseVatInconsistentWithBase?.Count ?? 0)
         + (PortalSlipLegacyNeedsReview?.Count ?? 0)
-        + (PartnerConfirmedBeforeTaxInvoice?.Count ?? 0);
+        + (PartnerConfirmedBeforeTaxInvoice?.Count ?? 0) + (LegacyPaymentExcess?.Count ?? 0);
 }
 
 /// <summary>
@@ -215,7 +217,8 @@ public class DataIntegrityReportService
                 x.VatAmount, null, $"/pages/documents.html?openDoc={x.DocumentId}", "เปิดเอกสาร")));
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
             ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, dnCashTwice, apiNoRef, vatBase,
-            slipReview, partnerEarly);
+            slipReview, partnerEarly,
+            await Accounting.Helpers.CustomerCreditQuery.LegacyExcessSuspectsAsync(_db, companyId));
     }
 
     /// <summary>รอบ 250 ฝ่ายค้าน M3 — แถวสลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจและยังไม่ถูกลบ (= migration ไม่ย้ายเอง: ผูกธนาคาร/JE/ใบเสร็จ/มีเงินจริงแยกแล้ว ·

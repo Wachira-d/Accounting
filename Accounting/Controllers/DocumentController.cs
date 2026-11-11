@@ -1784,7 +1784,7 @@ public class DocumentController : ControllerBase
     /// สร้างย้อนหลัง เพราะเลข §86/4 ต้อง gap-free และตรวจสอบได้ว่าใครออก</para></summary>
     [HttpPost("payments/{paymentId:guid}/receipt")]
     public async Task<ActionResult<ApiResponse<IssuedReceiptResult>>> IssueReceiptForPayment(
-        Guid companyId, Guid paymentId)
+        Guid companyId, Guid paymentId, [FromQuery] Guid? documentId = null)
     {
         // ออกใบเสร็จ = ออกเอกสารตามกฎหมายใบใหม่พร้อมเลขจริง ⇒ ระดับ Create ของ
         // Receipt (เส้นบันทึกชำระใช้ Approve ของใบต้นทางอยู่แล้ว — ที่นี่คนกดอาจ
@@ -1792,8 +1792,9 @@ public class DocumentController : ControllerBase
         var denyIssue = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
             DocumentType.Receipt, DocPerm.Create, "ออกใบเสร็จรับเงินสำหรับการชำระของ");
         if (denyIssue != null) return Forbid403<IssuedReceiptResult>(denyIssue);
+        // รอบ 258 H2: documentId = ออกใบเสร็จ "รายใบ" ของการรับชำระที่จัดสรร (เงินเกิน/หลายใบ/เงินรอจัดสรร) — ไม่ส่ง = พฤติกรรมเดิม
         var result = await _documentService.IssueReceiptForPaymentAsync(
-            companyId, paymentId, JwtHelper.GetUserIdFromClaims(User).ToString());
+            companyId, paymentId, JwtHelper.GetUserIdFromClaims(User).ToString(), documentId);
         var msg = result.AlreadyExisted
             ? $"การรับชำระนี้มีใบเสร็จอยู่แล้ว: {result.ReceiptNumber}"
             : result.IsDraft

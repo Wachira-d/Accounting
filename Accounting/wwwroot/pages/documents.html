@@ -11322,7 +11322,10 @@
                   return `<a href="#" onclick="Page.detail('${p.receiptDocumentId}');return false;">${Layout.esc(p.receiptDocumentNumber)}</a>`;
                 if (p.source === 'document') return '<span class="text-gray-400">—</span>';
                 // รอบ 258: การรับชำระก้อนที่ผูกใบอื่นเป็นหลัก (ใบนี้ได้รับการจัดสรร) — ไม่เสนอออกใบเสร็จของทั้งก้อนจากใบนี้
-                if (p.source === 'allocation') return '<span class="text-gray-500" title="เงินก้อนนี้รับชำระพร้อมใบอื่น หรือจัดสรรจากเงินรอจัดสรร">จัดสรรจากเงินก้อนรวม</span>';
+                // ฝ่ายค้าน H2: ออกใบเสร็จ/ใบกำกับ "รายใบ" ได้ (ยอด = ยอดที่จัดสรรให้ใบนี้) — เซิร์ฟเวอร์ตัดสินว่าออกได้ไหม/ถือ VAT ไหม
+                if (p.source === 'allocation' && !p.sourceServesAsReceipt)
+                  return `<button class="btn btn-sm btn-secondary" title="เงินก้อนนี้รับชำระพร้อมใบอื่น หรือจัดสรรจากเงินรอจัดสรร — ออกใบเสร็จของส่วนที่จัดสรรให้ใบนี้"
+                    onclick="Page.issueReceiptForPayment('${Layout.jsArg(p.id)}','${Layout.jsArg(d.id)}')">🧾 ออกใบเสร็จ</button>`;
                 // ใบต้นทางเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ของการรับเงินก้อนนี้อยู่แล้ว
                 // (รับครบวันเดียวกับวันที่ใบ) → ห้ามเสนอปุ่ม ไม่งั้นได้กระดาษใบรับ 2 ใบ
                 // ต่อการรับเงินก้อนเดียว. **ธงมาจากเซิร์ฟเวอร์** (ตัวตัดสินเดียวกับ
@@ -13129,7 +13132,8 @@
             // รอบ 258 "เงินรอจัดสรร": เงินรับมากกว่ายอดค้าง — เดิม toast แล้วจบ (ไม่มีทางไปต่อ) · เซิร์ฟเวอร์คิดเงินเกิน/ทางเลือก/เหตุผล
             // (GET customer-credits/excess-plan) หน้านี้แสดงและส่งสิ่งที่ผู้ใช้เลือกเท่านั้น
             await this._rpOpenExcess({
-              docId, amount, settleNet, paymentDate, paymentMethod, reference, notes, wrap,
+              docId, amount, settleNet, paymentDate, paymentMethod, reference, notes, wrap, settleAdjustments,
+              issueReceipt: document.getElementById('rpIssueReceipt')?.checked || false,
               fee: parseFloat(document.getElementById('rpFee').value || '0') || 0,
               whtEntered: (sourceWht > 0 && rpWht.dataset.userTouched === '1' && rpWht.value !== '') ? (parseFloat(rpWht.value) || 0) : null,
               overrideBankAccountId: (document.getElementById('rpBankOverride').value) || null,
@@ -13222,7 +13226,8 @@
       async _rpOpenExcess(ctx) {
         const api = Layout.api(); if (!api) return;
         let plan = null;
-        try { plan = (await api.getPaymentExcessPlan(ctx.docId, ctx.amount - ctx.settleNet, ctx.fee))?.data; }
+        // ฝ่ายค้าน M2: บอกเซิร์ฟเวอร์ว่ามีบรรทัดปรับ — เซิร์ฟเวอร์ปฏิเสธพร้อมทางไปต่อ (เดิมแผงนี้ทิ้งบรรทัดปรับเงียบ ๆ)
+        try { plan = (await api.getPaymentExcessPlan(ctx.docId, ctx.amount - ctx.settleNet, ctx.fee, (ctx.settleAdjustments || []).length > 0))?.data; }
         catch (e) { Layout.toast('ตรวจเงินเกินยอดค้างไม่สำเร็จ: ' + (e.message || ''), 'error', 9000); return; }
         if (!plan || !(plan.excess > 0)) { Layout.toast('ยอดที่ปิดหนี้มากกว่ายอดค้างชำระ', 'error'); return; }
         if (plan.refusal) { await Layout.notice({ title: 'เงินรับมากกว่ายอดค้างของใบ', message: plan.refusal }); return; }
@@ -13266,7 +13271,7 @@
                 <label class="form-label" for="rpExcessNote">หมายเหตุของเงินส่วนนี้ (ถ้ามี)</label>
                 <input id="rpExcessNote" class="form-input" type="text" maxlength="300" placeholder="เช่น ค่าติดตั้งงวด 2 ยังไม่ได้ออกใบ">
               </div>
-              <div class="text-xs text-gray-500">รายการที่มีเงินเกินหรือผูกหลายใบ ระบบไม่ออกใบเสร็จรับเงินอัตโนมัติ — ออกใบเสร็จของแต่ละใบได้จากประวัติการชำระของใบนั้น</div>
+              <div class="text-xs text-gray-500">ใบเสร็จรับเงิน/ใบกำกับภาษีออกให้แต่ละใบตามตัวเลือก “ออกใบเสร็จรับเงินให้ลูกค้า” ของหน้าก่อน — ใบไหนออกอัตโนมัติไม่ได้ ระบบจะแจ้งและขึ้นคิวที่หน้า “เงินรอจัดสรร”</div>
             </div>
             <div class="modal-footer">
               <button class="btn btn-secondary" onclick="Layout.closeModal('rpExcessModal')">กลับไปแก้ยอด</button>
@@ -13307,6 +13312,10 @@
               allocations: [{ documentId: ctx.docId, allocatedAmount: plan.balanceDue, withholdingTaxAmount: ctx.whtEntered }].concat(extra),
               excessReason: remaining > 0.005 ? reason : null,
               excessNote: remaining > 0.005 ? ((document.getElementById('rpExcessNote').value || '').trim() || null) : null,
+              // ฝ่ายค้าน M2: เงินส่วนเกินที่ผู้ใช้เห็นบนแผง — เซิร์ฟเวอร์คิดใหม่จากคำขอแล้วต้องตรงกัน · บรรทัดปรับส่งไปด้วย (เซิร์ฟเวอร์ปฏิเสธ ไม่ทิ้งเงียบ)
+              expectedExcess: Math.max(0, remaining),
+              issueReceiptDocument: ctx.issueReceipt,
+              ...((ctx.settleAdjustments || []).length ? { settlementAdjustments: ctx.settleAdjustments } : {}),
             });
             const kept = Number(payRes?.data?.unappliedCredit || 0);
             Layout.toast(kept > 0
@@ -13385,9 +13394,13 @@
         const api = Layout.api(); if (!api) return;
         const amount = parseFloat(document.getElementById('ccUseAmt_' + k)?.value || '');
         if (isNaN(amount) || amount <= 0) { Layout.toast('ใส่ยอดที่จะใช้กับใบนี้', 'error'); return; }
+        if (this._ccBusy) return;   // ฝ่ายค้าน M7: กันกดซ้ำระหว่างรอคำตอบ
+        this._ccBusy = true;
+        document.querySelectorAll('#ccUseModal button').forEach(b => { b.disabled = true; });
         try {
           const res = await api.allocateCustomerCredit(x.paymentId, {
             documentId: c.documentId, amount, applyDate: document.getElementById('ccUseDate').value || null,
+            expectedUnappliedBefore: x.unappliedAmount,   // M7: ยอดที่หน้าจอเห็น — เซิร์ฟเวอร์เทียบใต้ล็อก
           });
           const notices = res?.data?.notices || [];
           Layout.toast(res?.message || 'ใช้เงินรอจัดสรรแล้ว', notices.length ? 'warning' : 'success', notices.length ? 15000 : 6000);
@@ -13395,6 +13408,10 @@
           Layout.closeModal('detailModal');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ใช้เงินรอจัดสรรไม่สำเร็จ', 'error', 10000); }
+        finally {
+          this._ccBusy = false;
+          document.querySelectorAll('#ccUseModal button').forEach(b => { b.disabled = false; });
+        }
       },
       /** รอบ 193: เพิ่มแถวบรรทัดปรับในหน้าบันทึกการชำระ (สร้างด้วย DOM — ค่าผู้ใช้/เซิร์ฟเวอร์ไม่ผ่าน innerHTML) */
       _rpSettleAddRow(code, amount, reason, onChange) {
@@ -13512,7 +13529,7 @@
           + 'ใบจะลงวันที่ "วันที่รับเงินจริง" ตาม ป.รัษฎากร ม.105 '
           + 'และไม่ลงบัญชีซ้ำ (JE ของการรับชำระลงไปแล้ว)'))) return;
         try {
-          const res = await api.issueReceiptForPayment(paymentId);
+          const res = await api.issueReceiptForPayment(paymentId, docId);   // docId = ใบที่กำลังเปิด (รายใบของการรับชำระที่จัดสรร · รอบ 258 H2)
           Layout.toast(res.message || 'ออกใบเสร็จรับเงินแล้ว', 'success', 8000);
           if (docId) await this.detail(docId);
           await this.load();

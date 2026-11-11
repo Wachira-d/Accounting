@@ -29,6 +29,8 @@
       <div id="ccGlNote" class="text-sm" style="display:none;padding:0 16px 12px;color:#92400e"></div>
     </div>
 
+    <div class="card" id="ccReceiptPending" style="display:none;margin-bottom:12px"></div>
+
     <div class="table-container">
       <table class="table">
         <thead><tr>
@@ -78,6 +80,9 @@
       contactId: null,
       rows: [],
       _allocPaymentId: null,
+      _allocUnapplied: null,
+      _busy: false,
+      receiptPending: [],
       _targets: [],
       async init() {
         if (!Layout.init('customer-credits')) return;
@@ -96,6 +101,8 @@
           const res = await api.getCustomerCredits(q.length ? '?' + q.join('&') : '');
           const d = res.data || {};
           this.rows = d.items || [];
+          this.receiptPending = d.receiptPending || [];
+          this.renderReceiptPending();
           document.getElementById('ccTotal').textContent = Layout.money(d.totalUnapplied || 0);
           document.getElementById('ccGl').textContent = this.contactId ? 'ดูได้เมื่อไม่กรองลูกค้า'
             : (d.glBalance === null || d.glBalance === undefined ? 'ยังไม่มีผังนี้' : Layout.money(d.glBalance));
@@ -134,7 +141,11 @@
             <td>${Layout.esc(r.reasonLabel || '')}${r.note ? `<div class="text-xs text-gray-500">${Layout.esc(r.note)}</div>` : ''}</td>
             <td class="text-right">${Number(r.ageDays || 0)}</td>
             <td>
-              ${r.unappliedAmount > 0 ? `<button class="btn btn-sm btn-primary" onclick="Page.openAllocate(${i})">จัดสรรให้ใบ</button>` : '<span class="text-gray-400">จัดสรรครบแล้ว</span>'}
+              ${r.needsReview
+                ? `<span class="pill pill-warning" title="รายการก่อนรอบ 258 — ระบบไม่รู้ว่าเงินส่วนเกินนี้ถูกล้างด้วยสมุดรายวันไปแล้วหรือยัง จึงยังไม่นับเป็นเงินรอจัดสรร">ต้องตรวจ</span>
+                   <button class="btn btn-sm btn-primary" onclick="Page.confirmLegacy(${i})">ยืนยันว่ายังค้างจริง</button>
+                   <button class="btn btn-sm btn-secondary" onclick="Page.closeLegacy(${i})">ปิดรายการ</button>`
+                : (r.unappliedAmount > 0 ? `<button class="btn btn-sm btn-primary" onclick="Page.openAllocate(${i})">จัดสรรให้ใบ</button>` : '<span class="text-gray-400">จัดสรรครบแล้ว</span>')}
               ${allocs ? `<button class="btn btn-sm btn-secondary" onclick="Page.toggle(${i})">ใบที่ผูกแล้ว (${(r.allocations || []).length})</button>` : ''}
             </td>
           </tr>
@@ -142,6 +153,23 @@
             <table class="table" style="margin:0;font-size:12.5px"><tbody>${allocs}</tbody></table>
           </td></tr>`;
         }).join('');
+      },
+      renderReceiptPending() {
+        const host = document.getElementById('ccReceiptPending');
+        if (!host) return;
+        const rows = this.receiptPending || [];
+        host.style.display = rows.length ? 'block' : 'none';
+        if (!rows.length) { host.innerHTML = ''; return; }
+        host.innerHTML = `<div class="card-header"><h3 class="card-title">ใบที่ปิดยอดแล้วแต่ยังไม่ได้ออกใบเสร็จรับเงิน/ใบกำกับภาษี (${rows.length})</h3></div>
+          <div class="table-container" style="border:none"><table class="table" style="font-size:13px">
+            <thead><tr><th>เลขที่ใบ</th><th>ลูกค้า</th><th>การรับชำระ</th><th class="text-right">ยอดที่จัดสรร</th><th></th></tr></thead>
+            <tbody>${rows.map((x, k) => `<tr>
+              <td><a href="/pages/documents.html?openDoc=${encodeURIComponent(x.documentId)}" style="color:var(--primary)">${Layout.esc(x.documentNumber)}</a></td>
+              <td>${Layout.esc(x.contactName || '')}</td>
+              <td>${Layout.esc(x.paymentNumber)}</td>
+              <td class="text-right">${Layout.money(x.amount)}</td>
+              <td><button class="btn btn-sm btn-primary" onclick="Page.issueReceipt(${Number(k)})">🧾 ออกใบเสร็จ</button></td>
+            </tr>`).join('')}</tbody></table></div>`;
       },
       toggle(i) {
         const el = document.getElementById('ccAllocs_' + i);
@@ -151,6 +179,7 @@
         const r = this.rows[i]; if (!r) return;
         const api = Layout.api(); if (!api) return;
         this._allocPaymentId = r.paymentId;
+        this._allocUnapplied = r.unappliedAmount;
         document.getElementById('ccAllocInfo').innerHTML =
           `${Layout.esc(r.contactName || '')} · การรับชำระ <b>${Layout.esc(r.paymentNumber)}</b> วันที่ ${Layout.date(r.paymentDate)} · คงเหลือรอจัดสรร <b>${Layout.money(r.unappliedAmount)}</b>`;
         document.getElementById('ccAllocDate').value = Layout.dateInput(new Date());
@@ -184,15 +213,68 @@
         const documentId = (this._targets || [])[k]?.documentId; if (!documentId) return;
         const amount = parseFloat(document.getElementById('ccAllocAmt_' + k)?.value || '');
         if (isNaN(amount) || amount <= 0) { Layout.toast('ใส่ยอดที่จะจัดสรรให้ใบนี้', 'error'); return; }
+        if (this._busy) return;   // ฝ่ายค้าน M7: กันกดซ้ำระหว่างรอคำตอบ
+        this._busy = true;
+        document.querySelectorAll('#ccAllocModal button').forEach(b => { b.disabled = true; });
         try {
           const res = await api.allocateCustomerCredit(this._allocPaymentId, {
             documentId, amount, applyDate: document.getElementById('ccAllocDate').value || null,
+            expectedUnappliedBefore: this._allocUnapplied,   // M7: ยอดที่หน้าจอเห็น — เซิร์ฟเวอร์เทียบใต้ล็อก
           });
           const notices = res?.data?.notices || [];
           Layout.toast(res?.message || 'จัดสรรแล้ว', notices.length ? 'warning' : 'success', notices.length ? 15000 : 5000);
           Layout.closeModal('ccAllocModal');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'จัดสรรไม่สำเร็จ', 'error', 10000); }
+        finally {
+          this._busy = false;
+          document.querySelectorAll('#ccAllocModal button').forEach(b => { b.disabled = false; });
+        }
+      },
+      // ฝ่ายค้าน M4: รายการก่อนรอบ 258 ที่ต้องตรวจ — ยืนยันว่ายังค้างจริง หรือปิดรายการพร้อมเหตุผล (เซิร์ฟเวอร์ตรวจสิทธิ์ + audit)
+      async confirmLegacy(i) {
+        const r = this.rows[i]; if (!r || this._busy) return;
+        const api = Layout.api(); if (!api) return;
+        const ok = await Layout.confirm({
+          title: 'ยืนยันว่ายังค้างจริง',
+          message: 'ยืนยันว่าเงินส่วนเกินของรายการนี้ยังค้างอยู่จริง (ยังไม่ถูกล้างด้วยสมุดรายวัน/คืนลูกค้า)? หลังยืนยันจะจัดสรรให้ใบได้และถูกนับเป็นเงินรอจัดสรร',
+          okText: 'ยืนยัน' });
+        if (!ok) return;
+        this._busy = true;
+        try {
+          const res = await api.confirmLegacyCustomerCredit(r.paymentId);
+          Layout.toast(res?.message || 'ยืนยันแล้ว', 'success', 6000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ยืนยันไม่สำเร็จ', 'error', 10000); }
+        finally { this._busy = false; }
+      },
+      async closeLegacy(i) {
+        const r = this.rows[i]; if (!r || this._busy) return;
+        const api = Layout.api(); if (!api) return;
+        const reason = await Layout.promptText({
+          title: 'ปิดรายการเงินส่วนเกินเดิม',
+          message: 'ใช้เมื่อเงินส่วนนี้ถูกจัดการในบัญชีไปแล้ว (เช่น ล้างด้วยสมุดรายวัน หรือคืนลูกค้าแล้ว) — ระบบจะไม่ลงบัญชีเพิ่ม และบันทึกเหตุผลไว้ในประวัติการแก้ไข',
+          label: 'เหตุผล (เช่น เลขสมุดรายวันที่ล้างยอดนี้)', required: true, okText: 'ปิดรายการ' });
+        if (reason === null) return;
+        this._busy = true;
+        try {
+          const res = await api.closeLegacyCustomerCredit(r.paymentId, reason);
+          Layout.toast(res?.message || 'ปิดรายการแล้ว', 'success', 6000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ปิดรายการไม่สำเร็จ', 'error', 10000); }
+        finally { this._busy = false; }
+      },
+      // ฝ่ายค้าน H2: ออกใบเสร็จ/ใบกำกับของใบที่ปิดยอดแล้วแต่ยังไม่มีใบเสร็จ (คิวงาน) — เส้นเดียวกับปุ่ม "ออกใบเสร็จ" บนใบ
+      async issueReceipt(k) {
+        const row = (this.receiptPending || [])[k]; if (!row || this._busy) return;
+        const api = Layout.api(); if (!api) return;
+        this._busy = true;
+        try {
+          const res = await api.issueReceiptForPayment(row.paymentId, row.documentId);
+          Layout.toast(res?.message || 'ออกใบเสร็จแล้ว', 'success', 8000);
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ออกใบเสร็จไม่สำเร็จ', 'error', 10000); }
+        finally { this._busy = false; }
       },
       async undo(i, j) {
         const r = this.rows[i]; if (!r) return;

@@ -12336,6 +12336,8 @@ public partial class DocumentService : IDocumentService
     {
         // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ตัดสินใบเสร็จอัตโนมัติก่อนแตะอะไร — ปฏิเสธ = throw ก่อนกลับ JE
         var (receiptDecision, receiptDoc) = await DecideAutoReceiptOnPaymentVoidAsync(companyId, payment, cause);
+        // ฝ่ายค้านรอบ 258 H2: ใบเสร็จ "รายใบ" ของใบอื่นที่การชำระนี้จัดสรรให้ (ไม่ใช่ใบหลัก) — ตัดสินด้วยตัวเดียวกัน ก่อนแตะอะไร (ถึงกรมสรรพากรแล้ว + ผู้ใช้กด = throw)
+        var allocationReceipts = await DecideAllocationReceiptsOnVoidAsync(companyId, payment.Id, payment.ReceiptDocumentId, null, cause);
 
         var allocations = await _db.PaymentAllocations
             .Where(a => a.PaymentId == payment.Id && a.CompanyId == companyId && !a.IsDeleted)
@@ -12440,6 +12442,9 @@ public partial class DocumentService : IDocumentService
 
         // 4) ใบเสร็จหลักฐานที่ออกคู่กับการชำระ (evidence-only ไม่มี JE) — ยกเลิก หรือติดธง "ต้องยกเลิกทาง e-Tax" (รอบ 200 ทีม V1)
         var etaxCancellationFlag = await ApplyAutoReceiptOnPaymentVoidAsync(companyId, receiptDecision, receiptDoc, pn);
+        foreach (var own in allocationReceipts.Values)
+            etaxCancellationFlag = CombineNotices(etaxCancellationFlag,
+                await ApplyAutoReceiptOnPaymentVoidAsync(companyId, own.Decision, own.Receipt, pn));
 
         // 4b) รอบ 200 ทีม V1H (คำตัดสินข้อ 50): ถอยภาษีขายถึงกำหนด "รายใบ" ผ่านตัวเดียวกับเส้นใบเดียว — เดิมเส้นนี้ไม่ถอยเลย ⇒ ยกเลิกเงินก้อนเดียวที่จ่ายหลายใบ
         //     แล้วภาษีขายของเงินที่ไม่เคยได้รับยังอยู่ใน ภ.พ.30 · ใบที่ยังมีเงินรับอื่น/ใบเสร็จถือ VAT ที่มีผล = ไม่ถอย (ตัวตัดสินเดียวกัน) · งวดปิด: ผู้ใช้ = 409 ทั้งก้อน
@@ -12448,11 +12453,15 @@ public partial class DocumentService : IDocumentService
         foreach (var undoDocId in docIds)
         {
             if (!docMap.TryGetValue(undoDocId, out var undoDoc)) continue;
-            if (await UndoOutputVatOnPaymentVoidAsync(companyId, undoDoc, receiptDecision, receiptDoc, cause, reason, pn) is string notice)
+            // H2: ใบที่มีใบเสร็จรายใบของตัวเอง ตัดสินการถอยภาษีขายจากใบเสร็จของใบนั้น (ไม่ใช่ใบเสร็จของใบหลัก)
+            var docDecision = receiptDecision;
+            Document? docReceipt = receiptDoc;
+            if (allocationReceipts.TryGetValue(undoDocId, out var ownReceipt)) { docDecision = ownReceipt.Decision; docReceipt = ownReceipt.Receipt; }
+            if (await UndoOutputVatOnPaymentVoidAsync(companyId, undoDoc, docDecision, docReceipt, cause, reason, pn) is string notice)
                 vatNotices.Add(notice);
             // รอบ 200 ทีม V1I (ฝ่ายค้าน V1H-O1): ตัวเดียวกับเส้นใบเดียว — ใบกำกับทาง (ค) ของใบนี้ที่เสียยอดครอบ ⇒ ติดธงกลับ
             etaxCancellationFlag = CombineNotices(etaxCancellationFlag,
-                await ReflagKeptOriginalReceiptsAsync(companyId, undoDoc, payment.Id, receiptDoc?.Id, pn));
+                await ReflagKeptOriginalReceiptsAsync(companyId, undoDoc, payment.Id, docReceipt?.Id, pn));
         }
 
         // 5) 50 ทวิ ที่ auto-สร้างจากการจ่ายนี้ — Draft ยกเลิกได้, Issued ต้องแจ้ง
@@ -13625,7 +13634,9 @@ public partial class DocumentService : IDocumentService
             created.CertifierPosition = source.CertifierPosition;
             created.WitnessName = source.WitnessName;
             created.WitnessPosition = source.WitnessPosition;
-            created.PaymentDate = source.PaymentDate;
+            // ฝ่ายค้านรอบ 258 M3: วันที่รับชำระที่ "ระบบประทับ" ตอนจัดสรรจากเงินรอจัดสรร ไม่สืบทอดไปใบลูก (ไม่ให้เข้า TaxPointResolver ของใบลูกโดยไม่ผ่านด่านงวด)
+            created.PaymentDate = Accounting.Helpers.SystemStampedPaymentDate.InheritToChild(source.PaymentDate,
+                await _db.PaymentAllocations.AnyAsync(a => a.CompanyId == companyId && a.DocumentId == source.Id && a.StampedDocumentPaymentDate));
             // คำขอเจ้าของ 2026-10-12 — เอกสารลูกสืบทอด (กฎ #4 A): ใบแจ้งหนี้ซื้อ/ค่าใช้จ่ายที่ตั้งผู้ถูกหัก (ประกันผ่านโบรกเกอร์) หรือปิด
             // "สร้าง 50 ทวิ อัตโนมัติ" ⇒ ใบสำคัญจ่ายที่แปลงมา (ใบที่ออก 50 ทวิ จริงตอนจ่าย) ต้องถือค่าเดียวกัน · null สืบทอดเป็น null
             // ผู้ถูกหักหัวเอกสารส่งไปกับคำขอสร้างแล้ว (ด้านบน) — ห้ามตั้งทับที่นี่ (ทับผลยกผู้ถูกหักรายบรรทัด)
@@ -15068,7 +15079,7 @@ public partial class DocumentService : IDocumentService
     /// <para>ใบที่ได้เป็นตัวเดียวกับที่เส้นบันทึกชำระออกให้ (<see cref="CreateSettlementReceiptAsync"/>)
     /// — ลงวันที่ <c>payment.PaymentDate</c> · ไม่ลง JE ซ้ำ · ไม่คิด VAT ซ้ำ</para></summary>
     public async Task<IssuedReceiptResult> IssueReceiptForPaymentAsync(
-        Guid companyId, Guid paymentId, string createdBy)
+        Guid companyId, Guid paymentId, string createdBy, Guid? forDocumentId = null)
     {
         var strategy = _db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
@@ -15089,14 +15100,35 @@ public partial class DocumentService : IDocumentService
 
             // มีใบเสร็จอยู่แล้ว → คืนใบเดิม ไม่สร้างซ้ำ (idempotent). เช็ค **สองทาง**
             // เพราะข้อมูลเก่าอาจมีใบอยู่จริงแต่ FK บน payment ว่าง
-            var existing = await _db.Documents
-                .FirstOrDefaultAsync(r => r.CompanyId == companyId && !r.IsDeleted
-                    && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
-                    && (r.Id == payment.ReceiptDocumentId || r.SettlementPaymentId == paymentId));
+            // ฝ่ายค้านรอบ 258 H2: การชำระที่มีแถวจัดสรร (เงินเกิน · หลายใบ · จัดสรรจากเงินรอจัดสรร) ออกใบเสร็จ "รายใบ" ได้ —
+            // ยอด = ยอดที่จัดสรรให้ใบนั้น (ข้อเท็จจริงที่บันทึกแล้ว) · วันที่ = วันที่ถือว่ารับชำระของใบนั้น (LateReceiptTaxPoint.EffectiveReceiptDate) ·
+            // ไม่ระบุใบ + ทุกแถวจัดสรรเป็นของใบหลักใบเดียว (เงินเกิน) = ใบหลัก · ไม่ระบุใบ + หลายใบ = ปฏิเสธตามเดิม (SettlementReceiptPolicy)
+            var allocRows = await _db.PaymentAllocations.AsNoTracking()
+                .Where(a => a.PaymentId == paymentId && a.CompanyId == companyId && !a.IsDeleted)
+                .Select(a => new { a.DocumentId, a.AllocatedAmount, a.IsLateAllocation, a.AppliedAt })
+                .ToListAsync();
+            var targetDocId = forDocumentId ?? payment.DocumentId;
+            var targetRows = allocRows.Where(a => a.DocumentId == targetDocId).ToList();
+            var perDocument = targetRows.Count > 0
+                && (forDocumentId != null || allocRows.All(a => a.DocumentId == payment.DocumentId));
+            if (forDocumentId != null && allocRows.Count > 0 && targetRows.Count == 0)
+                throw new BusinessRuleException("การรับชำระนี้ไม่ได้จัดสรรให้เอกสารที่เลือก — ออกใบเสร็จของเอกสารนี้จากการรับชำระนี้ไม่ได้", "RECEIPT-NOT-ALLOCATED", 409);
+            if (forDocumentId != null && allocRows.Count == 0 && forDocumentId != payment.DocumentId)
+                throw new BusinessRuleException("การรับชำระนี้เป็นของเอกสารอื่น — ออกใบเสร็จของเอกสารนี้จากการรับชำระนี้ไม่ได้", "RECEIPT-NOT-ALLOCATED", 409);
+
+            var existing = perDocument
+                ? await _db.Documents
+                    .FirstOrDefaultAsync(r => r.CompanyId == companyId && !r.IsDeleted
+                        && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
+                        && r.SettlementPaymentId == paymentId && r.RelatedDocumentId == targetDocId)
+                : await _db.Documents
+                    .FirstOrDefaultAsync(r => r.CompanyId == companyId && !r.IsDeleted
+                        && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
+                        && (r.Id == payment.ReceiptDocumentId || r.SettlementPaymentId == paymentId));
             if (existing != null)
             {
-                // ซ่อมสายที่ขาดไปด้วยเลย — ครั้งหน้าปุ่มจะไม่โผล่มาให้กดอีก
-                if (payment.ReceiptDocumentId != existing.Id)
+                // ซ่อมสายที่ขาดไปด้วยเลย — ครั้งหน้าปุ่มจะไม่โผล่มาให้กดอีก (เฉพาะใบเสร็จของใบหลัก)
+                if (payment.ReceiptDocumentId != existing.Id && targetDocId == payment.DocumentId)
                 {
                     payment.ReceiptDocumentId = existing.Id;
                     await _db.SaveChangesAsync();
@@ -15108,11 +15140,28 @@ public partial class DocumentService : IDocumentService
 
             // เงินก้อนเดียวกระจายหลายใบ — ใบเสร็จ settlement เป็น 1 payment : 1 ใบ
             // ต้นทาง จึงตัดสินยอดต่อใบเองไม่ได้ ("ไม่รู้ = บอกว่าไม่รู้")
-            var allocCount = await _db.PaymentAllocations.CountAsync(
-                a => a.PaymentId == paymentId && a.CompanyId == companyId && !a.IsDeleted);
+            var allocCount = perDocument ? 0 : allocRows.Count;
             var doc = await _db.Documents.FirstOrDefaultAsync(
-                d => d.Id == payment.DocumentId && d.CompanyId == companyId && !d.IsDeleted)
+                d => d.Id == targetDocId && d.CompanyId == companyId && !d.IsDeleted)
                 ?? throw new KeyNotFoundException("ไม่พบเอกสารต้นทางของการชำระนี้");
+            // "มุมมองการรับเงินของใบนี้" — ไม่ถูก track (อ่านอย่างเดียวโดยตัวสร้างใบเสร็จ) · การชำระใบเดียว = แถวจริง
+            var receiptOf = payment;
+            if (perDocument)
+            {
+                var lateApplied = targetRows.Where(a => a.IsLateAllocation && a.AppliedAt != null).Select(a => a.AppliedAt!.Value).ToList();
+                receiptOf = new Payment
+                {
+                    Id = payment.Id, CompanyId = companyId, PaymentNumber = payment.PaymentNumber, DocumentId = targetDocId,
+                    PaymentDate = lateApplied.Count > 0
+                        ? Accounting.Helpers.LateReceiptTaxPoint.EffectiveReceiptDate(payment.UnappliedReason, payment.PaymentDate, lateApplied.Max())
+                        : payment.PaymentDate,
+                    Amount = targetRows.Sum(a => a.AllocatedAmount),
+                    PaymentMethod = payment.PaymentMethod, Reference = payment.Reference, BankAccount = payment.BankAccount,
+                    BankAccountId = payment.BankAccountId, OverrideBankAccountId = payment.OverrideBankAccountId,
+                    OverridePaymentAccountId = payment.OverridePaymentAccountId, Notes = payment.Notes, ProjectId = payment.ProjectId,
+                    CreatedBy = payment.CreatedBy,
+                };
+            }
 
             // ใบต้นทางเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ของการรับเงินก้อนนี้อยู่แล้ว
             // ไหม — ตัวตัดสินตัวเดียวกับที่หน้าจอ/PDF ใช้ (ComputeServedAsReceipt)
@@ -15125,7 +15174,7 @@ public partial class DocumentService : IDocumentService
                 (await LoadSettlementDatesAsync(_db, companyId, new[] { doc.Id }))
                     .TryGetValue(doc.Id, out var settledOnSrc) ? settledOnSrc : null);
             var sourceServesAsReceipt = Accounting.Helpers.ReceiptIssuePolicy.CoversPayment(
-                servedByDoc, doc.DocumentDate, payment.PaymentDate);
+                servedByDoc, doc.DocumentDate, receiptOf.PaymentDate);
 
             // ด่านทั้งหมดอยู่ที่ Helpers/SettlementReceiptPolicy ตัวเดียว — คืนเหตุผล
             // เป็นข้อความไทยที่เอาไปโชว์ได้ ไม่ใช่ bool ให้หน้าจอแต่งคำเอง
@@ -15138,8 +15187,12 @@ public partial class DocumentService : IDocumentService
             // รายการเดียวของใบ และยอดคงเหลือเป็นศูนย์)
             var paymentCount = await _db.Payments.CountAsync(
                 pm => pm.DocumentId == doc.Id && pm.CompanyId == companyId && !pm.IsDeleted);
+            // รายใบ (H2): "งวดเดียว" = การจัดสรรของการชำระนี้ปิดใบทั้งใบ (ไม่มีเงินรับอื่นก่อนหน้า) — เกณฑ์เดียวกับเส้นรับชำระ (singleShotFull)
+            var singleShot = perDocument
+                ? doc.BalanceDue <= 0.005m && doc.PaidAmount - receiptOf.Amount <= 0.05m
+                : doc.BalanceDue <= 0.005m && paymentCount == 1;
             var carryVat = Accounting.Helpers.SettlementReceiptPolicy.CarriesTaxInvoiceRole(
-                doc.DocumentType, doc.VatAmount, doc.BalanceDue <= 0.005m && paymentCount == 1,
+                doc.DocumentType, doc.VatAmount, singleShot,
                 liveVatReceiptExists: await LiveVatReceiptExistsAsync(companyId, doc.Id, exceptReceiptId: null));
 
             // สิทธิ์อนุมัติของ "ผู้กดออกใบ" → ใบสมบูรณ์ทันที (เลขจริง) หรือ Draft
@@ -15150,9 +15203,9 @@ public partial class DocumentService : IDocumentService
                     .CanApproveAsync(_permissionService, companyId, uid, DocumentType.Receipt);
 
             var receipt = await CreateSettlementReceiptAsync(
-                companyId, doc, payment, createdBy, canApprove, carryVat);
+                companyId, doc, receiptOf, createdBy, canApprove, carryVat);
             await _db.SaveChangesAsync();
-            payment.ReceiptDocumentId = receipt.Id;
+            if (targetDocId == payment.DocumentId) payment.ReceiptDocumentId = receipt.Id;   // ใบเสร็จของใบอื่น (จัดสรร) หาเจอด้วย SettlementPaymentId + RelatedDocumentId
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
             // ★ รอบ 193 ฝ่ายค้าน C-3 — ใบเสร็จที่ถือ VAT = ใบกำกับ ณ วันรับเงิน (§78/1) เกิดเป็น Paid ไม่ผ่าน
@@ -15294,6 +15347,12 @@ public partial class DocumentService : IDocumentService
         // ด่านจ่ายเกิน — เกณฑ์เดียวกับทุกทางเข้า (Integration/นำเข้าไฟล์) ผ่าน
         // `DocumentSettlementState.WouldOverpay` (ผลตรวจ D4-3: เดิมเว็บใช้ 0.01
         // · integration ใช้ 0.005 · นำเข้าไฟล์ไม่มีด่านเลย) · มีบรรทัดปรับ = ตรวจยอดที่ปิดจริงใน Check ข้างบนแล้ว
+        // ฝ่ายค้านรอบ 258 M5: ด่าน "ใบแจ้งหนี้มี VAT รับบางส่วนไม่ได้" ย้ายมาฝั่งเซิร์ฟเวอร์ (เดิมอยู่ใน JS ของหน้ารับชำระอย่างเดียว) — เฉพาะทางเข้าที่คนบันทึกเอง ·
+        // ทางเข้าอัตโนมัติ (gateway/integration/นำเข้าไฟล์/ธนาคาร) คงเดิม: ยอดเงินที่เข้าจริงจากภายนอกปฏิเสธไม่ได้
+        if (source == Accounting.Helpers.PaymentEntrySource.Manual && settleLines.Count == 0
+            && Accounting.Helpers.VatInvoiceSettlementGate.PartialRefusal(doc.DocumentType, doc.VatAmount, request.Amount + paymentFee,
+                doc.BalanceDue, doc.DocumentNumber) is string partialVatInvoice)
+            throw new BusinessRuleException(partialVatInvoice, Accounting.Helpers.VatInvoiceSettlementGate.RuleCode);
         if (settleLines.Count == 0 && Accounting.Helpers.DocumentSettlementState.WouldOverpay(
                 doc.BalanceDue, request.Amount + paymentFee))
             throw new InvalidOperationException(
@@ -15867,6 +15926,10 @@ public partial class DocumentService : IDocumentService
                 if (alloc.AllocatedAmount > d.BalanceDue + 0.01m)
                     throw new InvalidOperationException(
                         $"จัดสรร {alloc.AllocatedAmount:N2} ของ {d.DocumentNumber} เกินยอดค้าง ({d.BalanceDue:N2})");
+                // ฝ่ายค้านรอบ 258 M5: ใบแจ้งหนี้ที่มี VAT ผูกบางส่วนไม่ได้ (ด่านเดียวกับรับชำระใบเดียว/การจัดสรร)
+                if (Accounting.Helpers.VatInvoiceSettlementGate.PartialRefusal(d.DocumentType, d.VatAmount, alloc.AllocatedAmount,
+                        d.BalanceDue, d.DocumentNumber) is string partialVatInvoice)
+                    throw new BusinessRuleException(partialVatInvoice, Accounting.Helpers.VatInvoiceSettlementGate.RuleCode);
             }
 
             // รอบ 258 "เงินรอจัดสรร" (DECISIONS 258-1-2/3/8): ยอดรับมากกว่าที่จัดสรร ⇒ ตัวตัดสินเดียว PaymentExcessPlan — ฝั่งรับ · สกุลบาท · ไม่มีค่าธรรมเนียม ·
@@ -15874,6 +15937,9 @@ public partial class DocumentService : IDocumentService
             var excessFirstDoc = docMap[request.Allocations[0].DocumentId];
             var excessAmount = Accounting.Helpers.UnappliedCreditBalance.Compute(request.Amount, allocSum);
             var hasExcess = Accounting.Helpers.UnappliedCreditBalance.HasBalance(excessAmount);
+            // ฝ่ายค้านรอบ 258 M2: เงินส่วนเกินที่หน้าจอให้ผู้ใช้ยืนยัน ต้องตรงกับที่คิดจากคำขอจริง (ไม่ส่งมา = API เดิม ไม่ตรวจ)
+            if (Accounting.Helpers.PaymentExcessPlan.ExpectedExcessMismatch(request.ExpectedExcess, excessAmount) is string excessMismatch)
+                throw new BusinessRuleException(excessMismatch, Accounting.Helpers.PaymentExcessPlan.RuleCode, 409);
             if ((request.FeeAmount ?? 0m) > 0m && !hasExcess)
                 throw new BusinessRuleException(
                     "การรับ/จ่ายชำระหลายใบในครั้งเดียวยังไม่รองรับค่าธรรมเนียมที่หักจากยอดโอน — บันทึกใบที่มีค่าธรรมเนียมแยกเป็นการชำระทีละใบ",
@@ -16071,10 +16137,6 @@ public partial class DocumentService : IDocumentService
 
                 payment.WithholdingTaxAmount = totalWht;
                 await _db.SaveChangesAsync();
-                // รอบ 258: เส้นนี้ไม่ออกใบกำกับภาษี/ใบเสร็จรับเงินอัตโนมัติ (SettlementReceiptPolicy — กระจายหลายใบ) ⇒ ใบแจ้งหนี้ที่มี VAT ต้องบอกผู้ใช้ (ห้ามเงียบ)
-                foreach (var allocated in docs)
-                    if (Accounting.Helpers.PaymentExcessPlan.NoAutoTaxInvoiceNotice(allocated.DocumentType, allocated.VatAmount, allocated.DocumentNumber) is string noAutoDoc)
-                        multiWhtWarnings.Add(noAutoDoc);
 
                 // ===== เงินส่วนเกินที่ยังไม่จัดสรร (UnappliedCredit) — ต้องลง GL =====
                 // เงินเข้าธนาคารจริงเต็ม request.Amount แต่ JE รายเอกสารลงแค่ allocSum
@@ -16211,6 +16273,14 @@ public partial class DocumentService : IDocumentService
                     }
                 }
 
+                // ฝ่ายค้านรอบ 258 H2: ใบเสร็จรับเงิน/ใบกำกับภาษีอัตโนมัติ "รายใบ" — ผ่านเส้นออกใบเสร็จของการชำระตัวเดียวกับปุ่ม (IssueReceiptForPaymentAsync ·
+                // SettlementReceiptPolicy · ถือ VAT เมื่อปิดเต็มงวดเดียว) ⇒ ใบแจ้งหนี้ที่จ่ายเต็มพร้อมเงินเกินได้ "ใบกำกับภาษี/ใบเสร็จรับเงิน" เหมือนรับชำระใบเดียว ·
+                // ออกไม่ได้ = ป้าย [RECEIPT-PENDING] บนใบ + คำเตือนในคำตอบ + คิวที่หน้า "เงินรอจัดสรร" (ไม่ใช่แค่ toast)
+                if (isInflowDoc)
+                    foreach (var receiptDoc in docs)
+                        if (await TryAutoIssueAllocationReceiptAsync(companyId, payment, receiptDoc, request.IssueReceiptDocument, createdBy) is string receiptNotice)
+                            multiWhtWarnings.Add(receiptNotice);
+
                 // Re-load PaymentAllocation rows to pick up generated Ids,
                 // then enrich with the docMap (resolved client-side).
                 var rawAllocs = await _db.PaymentAllocations
@@ -16278,6 +16348,7 @@ public partial class DocumentService : IDocumentService
         // → ประกาศชนิดไว้ตรง ๆ แล้วเติมทีหลัง ชัดเจนกว่าและไม่มีทางเพี้ยน
         var receiptByPayment = new Dictionary<Guid, (Guid Id, string Number)>();
         var receiptById = new Dictionary<Guid, string>();
+        var receiptByPaymentDoc = new Dictionary<(Guid PaymentId, Guid DocumentId), (Guid Id, string Number)>();
         if (payIds.Count > 0)
         {
             var receiptDocs = await _db.Documents.AsNoTracking()
@@ -16285,13 +16356,18 @@ public partial class DocumentService : IDocumentService
                     && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
                     && ((r.SettlementPaymentId != null && payIds.Contains(r.SettlementPaymentId.Value))
                         || receiptFkIds.Contains(r.Id)))
-                .Select(r => new { r.Id, r.DocumentNumber, r.SettlementPaymentId })
+                .Select(r => new { r.Id, r.DocumentNumber, r.SettlementPaymentId, r.RelatedDocumentId })
                 .ToListAsync();
             foreach (var r in receiptDocs)
             {
                 receiptById[r.Id] = r.DocumentNumber;
                 if (r.SettlementPaymentId.HasValue)
+                {
                     receiptByPayment.TryAdd(r.SettlementPaymentId.Value, (r.Id, r.DocumentNumber));
+                    // รอบ 258 H2: ใบเสร็จรายใบของการชำระที่จัดสรรหลายใบ — คีย์ (การชำระ, ใบต้นทาง)
+                    if (r.RelatedDocumentId.HasValue)
+                        receiptByPaymentDoc.TryAdd((r.SettlementPaymentId.Value, r.RelatedDocumentId.Value), (r.Id, r.DocumentNumber));
+                }
             }
         }
 
@@ -16301,6 +16377,7 @@ public partial class DocumentService : IDocumentService
         // คำนวณที่เซิร์ฟเวอร์ด้วยตัวตัดสินตัวเดียวกับหัวกระดาษ — ห้ามให้ JS เดาเอง
         // (defect class "สำเนามือฝั่ง JS ที่ตามหลังอยู่ไม่กี่ธง")
         var srcDocIds = payments.Select(p => p.DocumentId).Distinct().ToList();
+        if (documentId.HasValue && !srcDocIds.Contains(documentId.Value)) srcDocIds.Add(documentId.Value);   // รอบ 258 H2: ใบที่ถาม (แถวจัดสรร) ตัดสินจากหัวของใบนั้นเอง
         var srcDocs = srcDocIds.Count == 0
             ? new List<Document>()
             : await _db.Documents.AsNoTracking()
@@ -16319,11 +16396,15 @@ public partial class DocumentService : IDocumentService
         // การชำระ "รายการนี้" ถูกคุมด้วยหัวใบต้นทางไหม — ต้องเทียบวันที่ของรายการ
         // ด้วย เพราะใบที่ผ่อนหลายงวดแล้วงวดสุดท้ายตรงวันที่ใบ ยังต้องออกใบเสร็จให้
         // งวดก่อนหน้าที่รับเงินคนละวัน
-        bool ServedFor(Payment p) => servedByDoc.TryGetValue(p.DocumentId, out var sv)
+        bool ServedFor(Payment p) => servedByDoc.TryGetValue(
+                documentId.HasValue && allocatedToDoc.ContainsKey(p.Id) ? documentId.Value : p.DocumentId, out var sv)
             && Accounting.Helpers.ReceiptIssuePolicy.CoversPayment(sv.Served, sv.DocDate, p.PaymentDate);
 
         (Guid? Id, string? Number) ReceiptOf(Payment p)
         {
+            // รอบ 258 H2: การชำระที่จัดสรรให้ใบที่ถาม ⇒ ใบเสร็จของ "ใบนั้น" เท่านั้น (ไม่หยิบใบเสร็จของใบอื่นในก้อนเดียวกันมาแสดง)
+            if (documentId.HasValue && allocatedToDoc.ContainsKey(p.Id))
+                return receiptByPaymentDoc.TryGetValue((p.Id, documentId.Value), out var ownRec) ? (ownRec.Id, ownRec.Number) : (null, null);
             if (receiptByPayment.TryGetValue(p.Id, out var byPay)) return (byPay.Id, byPay.Number);
             if (p.ReceiptDocumentId.HasValue && receiptById.TryGetValue(p.ReceiptDocumentId.Value, out var num))
                 return (p.ReceiptDocumentId, num);

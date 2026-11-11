@@ -71,10 +71,35 @@ public class CustomerCreditController : ControllerBase
     /// <summary>แผนจัดการเงินเกินของหน้ารับชำระ (อ่านอย่างเดียว) — เซิร์ฟเวอร์คิดเงินเกิน/เหตุผล/ใบค้างอื่น หน้าเว็บแสดงตาม</summary>
     [HttpGet("excess-plan")]
     public async Task<ActionResult<ApiResponse<PaymentExcessPlanResponse>>> ExcessPlan(Guid companyId,
-        [FromQuery] Guid documentId, [FromQuery] decimal amount, [FromQuery] decimal fee = 0m, CancellationToken ct = default)
+        [FromQuery] Guid documentId, [FromQuery] decimal amount, [FromQuery] decimal fee = 0m, [FromQuery] bool hasAdjustments = false,
+        CancellationToken ct = default)
     {
         if (await DenyViewAsync(companyId) is { } deny) return Forbid403<PaymentExcessPlanResponse>(deny);
-        return Ok(new ApiResponse<PaymentExcessPlanResponse>(true, await _credits.ExcessPlanAsync(companyId, documentId, amount, fee, ct)));
+        return Ok(new ApiResponse<PaymentExcessPlanResponse>(true,
+            await _credits.ExcessPlanAsync(companyId, documentId, amount, fee, hasAdjustments, ct)));
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 258 M4: ยืนยันว่าเงินส่วนเกินก่อนรอบ 258 ยังค้างจริง (เปิดให้จัดสรร/นับเป็นเงินรอจัดสรร) — ระดับเดียวกับบันทึกรับชำระฝั่งขาย</summary>
+    [HttpPost("{paymentId:guid}/legacy/confirm")]
+    public async Task<ActionResult<ApiResponse<CustomerCreditRow>>> ConfirmLegacy(Guid companyId, Guid paymentId, CancellationToken ct = default)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, DocumentType.Invoice))
+            return Forbid403<CustomerCreditRow>("ไม่มีสิทธิ์ยืนยันรายการเงินรอจัดสรร (ต้องการ Document.Approve หรือ Document.Revenue.Approve)");
+        var row = await _credits.ConfirmLegacyAsync(companyId, paymentId, userId.ToString(), ct);
+        return Ok(new ApiResponse<CustomerCreditRow>(true, row, $"ยืนยันแล้ว — {row.PaymentNumber} ใช้เป็นเงินรอจัดสรรได้"));
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 258 M4: ปิดรายการเงินส่วนเกินก่อนรอบ 258 ที่ถูกจัดการในบัญชีไปแล้ว (เหตุผลบังคับ · ไม่ลงบัญชี) — ระดับ Void ฝั่งขาย</summary>
+    [HttpPost("{paymentId:guid}/legacy/close")]
+    public async Task<ActionResult<ApiResponse<CustomerCreditRow>>> CloseLegacy(Guid companyId, Guid paymentId,
+        [FromBody] CloseLegacyCreditRequest request, CancellationToken ct = default)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userId, DocumentType.Invoice))
+            return Forbid403<CustomerCreditRow>("ไม่มีสิทธิ์ปิดรายการเงินรอจัดสรร (ต้องการ Document.Void หรือ Document.Revenue.Void)");
+        var row = await _credits.CloseLegacyAsync(companyId, paymentId, request.Reason, userId.ToString(), ct);
+        return Ok(new ApiResponse<CustomerCreditRow>(true, row, $"ปิดรายการ {row.PaymentNumber} แล้ว"));
     }
 
     /// <summary>จัดสรรเงินรอจัดสรรให้ใบขาย — ระดับเดียวกับบันทึกรับชำระ (Approve ของชนิดใบปลายทาง)</summary>
