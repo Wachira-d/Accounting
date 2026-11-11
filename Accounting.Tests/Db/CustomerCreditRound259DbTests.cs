@@ -196,7 +196,7 @@ public class CustomerCreditRound259DbTests
         await db.SaveChangesAsync();
 
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await RefusedAsync(() => Credits(req).RefundAsync(s.CompanyId, pay.Id, new CustomerCreditRefundRequest(300m, s.BankId, "TRX-02")),
+            await RefusedAsync(() => Credits(req).RefundAsync(s.CompanyId, pay.Id, new CustomerCreditRefundRequest(300m, s.BankId, "TRX-02"), "tester"),
                 CustomerCreditMovementRules.RefundRuleCode);
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
@@ -229,7 +229,7 @@ public class CustomerCreditRound259DbTests
         var big = await CreditAsync(db, s, 5m);
 
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await RefusedAsync(() => Credits(req).WriteOffAsync(s.CompanyId, big.Id, new CustomerCreditWriteOffRequest(5m, Note: "ลูกค้าโอนเกินเศษ")), CustomerCreditMovementRules.WriteOffRuleCode);
+            await RefusedAsync(() => Credits(req).WriteOffAsync(s.CompanyId, big.Id, new CustomerCreditWriteOffRequest(5m, Note: "ลูกค้าโอนเกินเศษ"), "tester"), CustomerCreditMovementRules.WriteOffRuleCode);
 
         var key = "wo-" + Guid.NewGuid().ToString("N");
         CustomerCreditMovementResult first, second;
