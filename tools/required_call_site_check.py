@@ -18045,7 +18045,7 @@ REVIEWER_CASES += [
 ]
 _R258P_BOT = "Services/Implementations/LineBotService.cs"
 RULES += [
-    dict(file="Controllers/LineWebhookController.cs", method="HandleOneToOneEventAsync",
+    dict(file="Controllers/LineWebhookController.cs", method="Receive",
          must=["_groups.MarkEventSeenAsync(", "_groups.UnmarkEventSeenAsync(", "_bot.ReplyAsync(userId, reply, replyToken)"],
          before=[("_groups.MarkEventSeenAsync(", "_bot.HandleMessageAsync("), ("_groups.MarkEventSeenAsync(", "_bot.HandleImageAsync("),
                  ("_groups.MarkEventSeenAsync(", "_bot.HandlePostbackAsync(")],
@@ -18061,7 +18061,7 @@ RULES += [
 ]
 REVIEWER_CASES += [
     # ตอบโดยไม่ส่ง reply token (กลับไป push ทุกข้อความ) ⇒ ต้องฟ้อง
-    ("R258p8", "HandleOneToOneEventAsync", "await _bot.ReplyAsync(userId, reply, replyToken);", "await _bot.ReplyAsync(userId, reply);", True),
+    ("R258p8", "Receive", "await _bot.ReplyAsync(userId, reply, replyToken);", "await _bot.ReplyAsync(userId, reply);", True),
     # push โดยไม่ถามว่าผู้ส่งผูกแล้วหรือยัง ⇒ ต้องฟ้อง
     ("R258p9", "ReplyAsync", "if (!LineUnboundSender.PushFallbackAllowed(replied, bound))", "if (false)", True),
 ]
