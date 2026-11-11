@@ -3244,6 +3244,8 @@ const Layout = {
         document.body.appendChild(wrap);
       }
       if (wrap !== document.body.lastElementChild) document.body.appendChild(wrap);
+      // ฝ่ายค้าน L4: เปิดซ้อนขณะหน้าต่างเดิมยังเปิด ⇒ ปิดตัวเดิมด้วย null ก่อน (ผู้เรียกเดิมไม่ค้างรอตลอดไป)
+      if (typeof wrap._finishPrev === 'function') wrap._finishPrev(null);
       const $ = s => wrap.querySelector(s);
       $('#lfTitle').textContent = o.title || 'กรอกข้อมูล';
       if (o.messageHtml != null) $('#lfMessage').innerHTML = o.messageHtml; else $('#lfMessage').textContent = o.message || '';
@@ -3286,10 +3288,11 @@ const Layout = {
       let done = false;
       const finish = v => {
         if (done) return; done = true;
-        wrap._onDismiss = null; ok.onclick = null; $('#lfCancel').onclick = null; $('#lfClose').onclick = null;
+        wrap._onDismiss = null; wrap._finishPrev = null; ok.onclick = null; $('#lfCancel').onclick = null; $('#lfClose').onclick = null;
         this.closeModal('layoutFormModal');
         resolve(v);
       };
+      wrap._finishPrev = finish;
       const accept = () => {
         const out = {};
         for (const [k, { el, f }] of Object.entries(inputs)) {
@@ -3299,6 +3302,9 @@ const Layout = {
             if (raw === '') { out[k] = null; continue; }
             const n = Number(raw);
             if (!Number.isFinite(n)) { err.textContent = `"${f.label || k}" ต้องเป็นตัวเลข`; el.focus(); return; }
+            // ฝ่ายค้าน L4: ตรวจช่วงที่ผู้เรียกกำหนด (เซิร์ฟเวอร์ยังตรวจซ้ำ — ที่นี่ให้ข้อความผิดมาทันที)
+            if (f.min != null && n < Number(f.min)) { err.textContent = `"${f.label || k}" ต้องไม่น้อยกว่า ${f.min}`; el.focus(); return; }
+            if (f.max != null && n > Number(f.max)) { err.textContent = `"${f.label || k}" ต้องไม่เกิน ${f.max}`; el.focus(); return; }
             out[k] = n;
           } else out[k] = raw;
         }

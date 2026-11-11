@@ -28,7 +28,11 @@ public class VendorPortalController : ControllerBase
     public sealed record IssueTokenRequest(Guid ContactId, string Role, int? ValidDays,
         string? RecipientEmail);
 
+    /// <summary>รอบ 259-3 ฝ่ายค้าน M3: ออกลิงก์ = เปิดใบสั่งซื้อ/ใบแจ้งหนี้ของผู้ติดต่อให้คนนอก + ส่งอีเมลในนามบริษัท ⇒ สิทธิ์แก้ผู้ติดต่อ (Contact.Edit ·
+    /// ระดับเดียวกับให้สิทธิ์พอร์ทัลลูกค้า) · คีย์ API ห้าม · อีเมลเข้าคิว (โควตา) ไม่ส่งตรงจากคำขอ</summary>
     [Authorize]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    [Accounting.Filters.RejectApiKey("ออกลิงก์พอร์ทัลผู้ขาย")]
     [HttpPost("api/companies/{companyId:guid}/vendor-portal/tokens")]
     public async Task<ActionResult<ApiResponse<object>>> Issue(
         Guid companyId, [FromBody] IssueTokenRequest req, CancellationToken ct)
@@ -41,8 +45,8 @@ public class VendorPortalController : ControllerBase
             // รอบ 259-3 (E-H2 · E 4.6): ลิงก์เต็มจาก URL ของระบบ (SystemBaseUrl ตัวเดียว) — หน้าเว็บไม่ประกอบจาก location.origin
             var origin = await Helpers.SystemBaseUrl.OriginForRequestAsync(_db, _config, Request.Scheme, Request.Host.ToString(), ct);
             var url = $"{origin}/vendor-portal.html?t={raw}";
-            // ช่องอีเมลผู้รับ = ส่งจริง (เดิมเก็บอย่างเดียว · silent no-op) · ผลจริงคืนให้หน้าแสดง
-            var invite = await _svc.SendInviteAsync(companyId, stored, url, ct);
+            // ช่องอีเมลผู้รับ = เข้าคิวส่งจริง (เดิมเก็บอย่างเดียว · silent no-op) · ลิงก์ในอีเมลเป็นของผู้รับ (ออกตอนส่ง) · ผลคืนให้หน้าแสดง
+            var invite = await _svc.QueueInviteAsync(companyId, stored, ct);
             return Ok(new ApiResponse<object>(true, new
             {
                 tokenId = stored.Id,
@@ -51,7 +55,7 @@ public class VendorPortalController : ControllerBase
                 portalUrl = url,
                 stored.Role,
                 inviteRequested = invite.Requested,
-                inviteSent = invite.Sent,
+                inviteQueued = invite.Queued,
                 inviteNote = invite.Note,
             }, "ออกลิงก์แล้ว — ลิงก์แสดงครั้งเดียว · " + invite.Note));
         }
@@ -60,13 +64,27 @@ public class VendorPortalController : ControllerBase
 
     /// <summary>รอบ 259-3 (E-H2): ลิงก์ที่ออกแล้ว (ผู้ติดต่อ · หมดอายุ · ใช้ล่าสุด · สถานะ · เพิกถอนได้ไหม) — ไม่มี token ดิบ</summary>
     [Authorize]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
     [HttpGet("api/companies/{companyId:guid}/vendor-portal/tokens")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<VendorPortalTokenRow>>>> List(Guid companyId, CancellationToken ct)
         => Ok(new ApiResponse<IReadOnlyList<VendorPortalTokenRow>>(true, await _svc.ListAsync(companyId, ct)));
 
     public sealed record RevokeTokenRequest(string? Reason);
 
+    /// <summary>รอบ 259-3 ฝ่ายค้าน L6: เพิกถอนลิงก์บทบาทลูกค้าเดิม (ก่อนรอบ 259) ทั้งหมด — ปิดประตูที่สองของลูกค้าก่อนหมดอายุ</summary>
     [Authorize]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    [Accounting.Filters.RejectApiKey("เพิกถอนลิงก์พอร์ทัล")]
+    [HttpPost("api/companies/{companyId:guid}/vendor-portal/tokens/revoke-legacy-customer")]
+    public async Task<ActionResult<ApiResponse<object>>> RevokeLegacyCustomer(Guid companyId, CancellationToken ct)
+    {
+        var n = await _svc.RevokeLegacyCustomerAsync(companyId, "", ct);
+        return Ok(new ApiResponse<object>(true, new { revoked = n }, n > 0 ? $"เพิกถอนลิงก์ลูกค้าเดิม {n} รายการแล้ว" : "ไม่มีลิงก์ลูกค้าเดิมที่ยังใช้ได้"));
+    }
+
+    [Authorize]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
+    [Accounting.Filters.RejectApiKey("เพิกถอนลิงก์พอร์ทัล")]
     [HttpPost("api/companies/{companyId:guid}/vendor-portal/tokens/{tokenId:guid}/revoke")]
     public async Task<ActionResult<ApiResponse<object>>> Revoke(
         Guid companyId, Guid tokenId, [FromBody] RevokeTokenRequest? req, CancellationToken ct)

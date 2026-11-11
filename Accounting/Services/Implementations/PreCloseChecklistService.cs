@@ -22,16 +22,40 @@ public class PreCloseChecklistService
     public record ChecklistResult(int Year, int Month, bool ReadyToClose,
         int PassedCount, int FailedCount, int WarningCount, List<CheckItem> Items);
 
+    /// <summary>ชนิดเอกสารที่ AutoPost ลง JE จริง (ใบเสนอราคา/PR/PO/ใบส่งของ/ใบวางบิล ไม่มี JE โดยธรรมชาติ) — ตัวเดียวของเช็กลิสต์ปิดงวดและตัวตรวจก่อนปิดเดิม</summary>
+    public static readonly DocumentType[] JeBearingTypes =
+    {
+        DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.ReceiptVoucher,
+        DocumentType.DebitNote, DocumentType.CreditNote, DocumentType.PurchaseInvoice, DocumentType.Expense,
+        DocumentType.PaymentVoucher, DocumentType.CertificateInLieu, DocumentType.GoodsReceiptNote,
+    };
+
+    /// <summary>เดือนปฏิทิน — ถ้ามีงวดบัญชีของ year/month ใช้ช่วงวันที่ของงวดนั้น (ตัวเดียวกับปุ่มปิดงวด)</summary>
     public async Task<ChecklistResult> RunAsync(Guid companyId, int year, int month)
     {
-        var periodStart = new DateTime(year, month, 1);
-        var periodEnd = periodStart.AddMonths(1);
+        var period = await _db.FiscalPeriods.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Year == year && p.Month == month);
+        if (period != null) return await RunCoreAsync(companyId, year, month, period.StartDate, period.EndDate, period);
+        var start = new DateTime(year, month, 1);
+        return await RunCoreAsync(companyId, year, month, start, start.AddMonths(1).AddTicks(-1), null);
+    }
+
+    /// <summary>รอบ 259-3 (ฝ่ายค้าน M2 · คำตัดสิน 259-3-8): เช็กลิสต์ของงวดที่ระบุ — <c>AccountingService.CloseFiscalPeriodAsync</c> บล็อกด้วย
+    /// <see cref="ChecklistResult.ReadyToClose"/> ของตัวนี้ตัวเดียว ⇒ "หน้าบอกพร้อม ⇔ กดปิดได้" (เดิมสองชุดกติกาต่างกัน)</summary>
+    public Task<ChecklistResult> RunForPeriodAsync(Guid companyId, FiscalPeriod period)
+        => RunCoreAsync(companyId, period.Year, period.Month, period.StartDate, period.EndDate, period);
+
+    private async Task<ChecklistResult> RunCoreAsync(Guid companyId, int year, int month, DateTime from, DateTime toInclusive, FiscalPeriod? fp)
+    {
+        var periodStart = from;
+        var periodEnd = toInclusive;
+        var fpId = fp?.Id;
         var items = new List<CheckItem>();
 
-        // 1. No Draft JEs left in period
+        // 1. No Draft JEs left in period (ผูกงวด หรือวันที่อยู่ในช่วง — ตัวเดียวกับด่านปิดงวดเดิม)
         var draftJeCount = await _db.JournalEntries.AsNoTracking()
-            .CountAsync(j => j.CompanyId == companyId
-                && j.EntryDate >= periodStart && j.EntryDate < periodEnd
+            .CountAsync(j => j.CompanyId == companyId && !j.IsDeleted
+                && ((fpId != null && j.FiscalPeriodId == fpId) || (j.EntryDate >= periodStart && j.EntryDate <= periodEnd))
                 && j.Status == JournalEntryStatus.Draft);
         items.Add(new("DRAFT_JE", "ใบสำคัญที่ยัง Draft", draftJeCount == 0,
             draftJeCount == 0 ? "Info" : "Error",
@@ -40,10 +64,10 @@ public class PreCloseChecklistService
 
         // 2. Posted JE balance check (Dr=Cr per entry — should always be true but verify)
         var unbalancedJeCount = await _db.JournalEntries.AsNoTracking()
-            .CountAsync(j => j.CompanyId == companyId
-                && j.EntryDate >= periodStart && j.EntryDate < periodEnd
+            .CountAsync(j => j.CompanyId == companyId && !j.IsDeleted
+                && ((fpId != null && j.FiscalPeriodId == fpId) || (j.EntryDate >= periodStart && j.EntryDate <= periodEnd))
                 && j.Status == JournalEntryStatus.Posted
-                && j.TotalDebit != j.TotalCredit);
+                && Math.Abs(j.TotalDebit - j.TotalCredit) > 0.01m);
         items.Add(new("JE_BALANCE", "ใบสำคัญสมดุล Dr=Cr", unbalancedJeCount == 0,
             unbalancedJeCount == 0 ? "Info" : "Error",
             unbalancedJeCount == 0 ? "ใบสำคัญทุกใบสมดุล" : $"⚠️ พบใบสำคัญไม่สมดุล {unbalancedJeCount} ใบ — เร่งตรวจสอบ",
@@ -52,17 +76,42 @@ public class PreCloseChecklistService
         // 3. Unreconciled bank transactions in period
         var unrecBankCount = await _db.Set<BankTransaction>().AsNoTracking()
             .CountAsync(t => t.CompanyId == companyId && !t.IsDeleted
-                && t.TransactionDate >= periodStart && t.TransactionDate < periodEnd
+                && t.TransactionDate >= periodStart && t.TransactionDate <= periodEnd
                 && t.ReconciliationStatus == ReconciliationStatus.Unmatched);
-        items.Add(new("BANK_UNRECONCILED", "Bank transaction ยังไม่กระทบยอด", unrecBankCount == 0,
-            unrecBankCount == 0 ? "Info" : (unrecBankCount < 5 ? "Warning" : "Error"),
-            unrecBankCount == 0 ? "Bank reconciled ครบทุกรายการ" : $"พบ {unrecBankCount} รายการที่ยังไม่กระทบยอด",
+        // รอบ 259-3 (M2): กติกาเดียวกับด่านปิดงวดเดิม — ค้างแม้รายการเดียว = ปิดไม่ได้ (เดิม checklist ปล่อย 1–4 รายการเป็นคำเตือน แต่ปุ่มปิดบล็อก)
+        items.Add(new("BANK_UNRECONCILED", "รายการธนาคารยังไม่กระทบยอด", unrecBankCount == 0,
+            unrecBankCount == 0 ? "Info" : "Error",
+            unrecBankCount == 0 ? "กระทบยอดธนาคารครบทุกรายการ" : $"พบ {unrecBankCount} รายการที่ยังไม่กระทบยอด — กระทบยอดหรือตั้งเป็น \"ไม่รวม\" ก่อนปิดงวด",
             unrecBankCount, "/pages/bank.html"));
+
+        // รอบ 259-3 (M2): เอกสารร่างในงวด = ปิดไม่ได้ (ด่านเดิมของปุ่มปิด · หน้าเคยแสดง แต่เช็กลิสต์ไม่มีข้อนี้)
+        var draftDocCount = await _db.Documents.AsNoTracking()
+            .CountAsync(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.DocumentDate >= periodStart && d.DocumentDate <= periodEnd
+                && d.Status == DocumentStatus.Draft);
+        items.Add(new("DRAFT_DOCS", "เอกสารที่ยังเป็นร่าง", draftDocCount == 0,
+            draftDocCount == 0 ? "Info" : "Error",
+            draftDocCount == 0 ? "ไม่มีเอกสารร่างในงวด" : $"ยังมีเอกสารร่าง {draftDocCount} ฉบับในงวดนี้ — อนุมัติหรือยกเลิกก่อนปิดงวด",
+            draftDocCount, "/pages/documents.html"));
+
+        // รอบ 259-3 (M2): เอกสารที่ออกแล้วแต่ไม่มี JE (AutoPost ล้ม) — ย้ายจากตัวตรวจก่อนปิดเดิม (ป้าย 🤖 ที่ถอดไป) · คำเตือน ไม่บล็อก
+        // (ข้อมูลเก่าที่ลงบัญชีด้วยมือแยกใบได้ — ให้คนตัดสิน · คำตัดสิน 259-3-8)
+        var docNoJeCount = await _db.Documents.AsNoTracking()
+            .CountAsync(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.DocumentDate >= periodStart && d.DocumentDate <= periodEnd
+                && JeBearingTypes.Contains(d.DocumentType)
+                && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status)
+                && d.Status != DocumentStatus.Voided
+                && !_db.JournalEntries.Any(j => j.SourceDocumentId == d.Id && !j.IsDeleted));
+        items.Add(new("DOC_NO_JE", "เอกสารที่ออกแล้วแต่ยังไม่ลงบัญชี", docNoJeCount == 0,
+            docNoJeCount == 0 ? "Info" : "Warning",
+            docNoJeCount == 0 ? "เอกสารที่ออกแล้วลงบัญชีครบ" : $"พบเอกสาร {docNoJeCount} ใบที่ออกแล้วแต่ไม่มีรายการบัญชี — ลงบัญชีใหม่จากหน้าเอกสาร หรือบันทึกด้วยมือ",
+            docNoJeCount, "/pages/documents.html"));
 
         // 4. Documents pending approval that should have been actioned
         var pendingDocCount = await _db.Documents.AsNoTracking()
             .CountAsync(d => d.CompanyId == companyId && !d.IsDeleted
-                && d.DocumentDate >= periodStart && d.DocumentDate < periodEnd
+                && d.DocumentDate >= periodStart && d.DocumentDate <= periodEnd
                 && d.Status == DocumentStatus.WaitingApproval);
         items.Add(new("DOC_PENDING_APPROVAL", "เอกสารรออนุมัติ", pendingDocCount == 0,
             pendingDocCount == 0 ? "Info" : "Warning",
@@ -101,7 +150,7 @@ public class PreCloseChecklistService
             join l in _db.JournalEntryLines on j.Id equals l.JournalEntryId
             join a in _db.ChartOfAccounts on l.AccountId equals a.Id
             where j.CompanyId == companyId
-                && j.EntryDate >= periodStart && j.EntryDate < periodEnd
+                && j.EntryDate >= periodStart && j.EntryDate <= periodEnd
                 && j.Status == JournalEntryStatus.Posted
                 && a.AccountName.Contains("ค่าเสื่อม")
             select j.Id).Distinct().CountAsync();
@@ -143,8 +192,7 @@ public class PreCloseChecklistService
         }
 
         // 8. Period not already closed
-        var period = await _db.FiscalPeriods.AsNoTracking()
-            .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Year == year && p.Month == month);
+        var period = fp;
         var notClosed = period == null || period.Status == FiscalPeriodStatus.Open;
         items.Add(new("PERIOD_OPEN", "สถานะงวดบัญชี", notClosed,
             notClosed ? "Info" : "Warning",

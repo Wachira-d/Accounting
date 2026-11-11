@@ -2862,39 +2862,11 @@ public partial class AccountingService : IAccountingService
             throw new InvalidOperationException("สามารถปิดได้เฉพาะงวดบัญชีที่เปิดอยู่เท่านั้น");
 
         // ===== Pre-closing checklist =====
-        var issues = new List<string>();
-
-        // 1. Draft journal entries
-        var draftCount = await _db.JournalEntries.CountAsync(j =>
-            j.FiscalPeriodId == periodId && j.Status == JournalEntryStatus.Draft);
-        if (draftCount > 0)
-            issues.Add($"ยังมีใบสำคัญ Draft {draftCount} รายการ (ต้อง Post หรือ Void ก่อน)");
-
-        // 2. Draft documents in this period
-        var draftDocs = await _db.Documents.CountAsync(d =>
-            d.CompanyId == companyId && !d.IsDeleted
-            && d.DocumentDate >= period.StartDate && d.DocumentDate <= period.EndDate
-            && d.Status == DocumentStatus.Draft);
-        if (draftDocs > 0)
-            issues.Add($"ยังมีเอกสาร Draft {draftDocs} ฉบับในงวดนี้");
-
-        // 3. Unbalanced journal entries (Dr != Cr)
-        var unbalanced = await _db.JournalEntries.CountAsync(j =>
-            j.FiscalPeriodId == periodId
-            && j.Status == JournalEntryStatus.Posted
-            && Math.Abs(j.TotalDebit - j.TotalCredit) > 0.01m);
-        if (unbalanced > 0)
-            issues.Add($"พบใบสำคัญไม่สมดุล (เดบิต≠เครดิต) {unbalanced} รายการ");
-
-        // 4. Unreconciled bank transactions
-        var unreconciledBank = await _db.BankTransactions.CountAsync(t =>
-            t.CompanyId == companyId
-            && t.TransactionDate >= period.StartDate && t.TransactionDate <= period.EndDate
-            && t.ReconciliationStatus == ReconciliationStatus.Unmatched);
-        if (unreconciledBank > 0)
-            issues.Add($"ยังมีรายการธนาคารที่ยังไม่กระทบยอด {unreconciledBank} รายการ (แนะนำให้กระทบยอดก่อน)");
-
-        if (issues.Count > 0)
+        // รอบ 259-3 (ฝ่ายค้าน M2 · คำตัดสิน 259-3-8): ชุดเดียวกับหน้าปิดงวด/เครื่องมือนักบัญชี (PreCloseChecklistService) — "พร้อมปิด" ⇔ ปิดได้
+        // เดิมเขียนกติกาชุดที่สองที่นี่ (ร่าง · ธนาคาร · สมดุล) ซึ่งต่างจากหน้า ⇒ หน้าขึ้นเขียวแต่ปุ่มปฏิเสธ
+        var check = await new PreCloseChecklistService(_db).RunForPeriodAsync(companyId, period);
+        var issues = check.Items.Where(i => !i.Passed && i.Severity == "Error").Select(i => i.Message).ToList();
+        if (!check.ReadyToClose)
             throw new InvalidOperationException(
                 "ไม่สามารถปิดงวดได้ — พบปัญหาที่ต้องแก้ไข:\n• " + string.Join("\n• ", issues));
 

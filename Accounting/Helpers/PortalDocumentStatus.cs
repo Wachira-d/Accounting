@@ -14,4 +14,13 @@ public static class PortalDocumentStatus
         => status == Voided ? "ยกเลิก"
             : balanceDue <= 0 ? "ชำระแล้ว"
             : IsOverdue(status, balanceDue, dueDate, nowUtc) ? "เกินกำหนด" : "รอชำระ";
+
+    public const string ContactShopMessage = "ร้านยังไม่เปิดช่องทางชำระเงินสำหรับเอกสารนี้ — กรุณาติดต่อร้าน";
+
+    /// <summary>รอบ 259-3 ฝ่ายค้าน L1: เหตุที่ลูกค้าชำระใบนี้ในพอร์ทัลไม่ได้ — ข้อความถึง<b>ลูกค้า</b> (เหตุภายในเช่น "ยังไม่ได้ตั้ง URL ของระบบ" ·
+    /// "ตรวจช่องทางในตารางส่ง" · ลิงก์ถูกเพิกถอน เป็นเรื่องของร้าน ไม่แสดงต่อลูกค้า) · ยกเลิก/ชำระครบ บอกตรง ๆ</summary>
+    public static string PayRefusalForCustomer(string status, decimal balanceDue)
+        => status == Voided ? "เอกสารนี้ถูกยกเลิกแล้ว — ชำระไม่ได้"
+            : balanceDue <= 0.005m ? "เอกสารนี้ชำระครบแล้ว"
+            : ContactShopMessage;
 }

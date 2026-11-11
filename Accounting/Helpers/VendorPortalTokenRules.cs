@@ -44,10 +44,32 @@ public static class VendorPortalTokenRules
     /// <summary>เพิกถอนได้เฉพาะลิงก์ที่ยังใช้งานได้ (หมดอายุแล้วใช้ไม่ได้อยู่แล้ว · เพิกถอนแล้วซ้ำไม่มีผล)</summary>
     public static bool CanRevoke(string status) => status == StatusActive;
 
-    /// <summary>ผลการส่งคำเชิญทางอีเมล — ข้อความถึงผู้ใช้ (ไม่มี "ส่งแล้ว" ถ้าไม่ได้ส่งจริง · F2 #3)</summary>
-    public static string InviteNote(bool requested, bool configured, bool sent)
+    /// <summary>รอบ 259-3 ฝ่ายค้าน M3: คำเชิญเข้าคิว EmailQueue (โควตา/เพดานอีเมล · ผู้ส่งในนามบริษัท) — ไม่ส่งตรงจากคำขอ ·
+    /// ลิงก์ในอีเมลออกตอนส่ง (คิว/บันทึกเก็บที่หมาย <see cref="LinkPlaceholder"/> ไม่เก็บ token ดิบ — ระบบเก็บแค่ hash)</summary>
+    public const string QueueEntityType = "VendorPortalInvite";
+    public const string LinkPlaceholder = "{VendorPortalLink}";
+
+    /// <summary>อีเมลผู้รับคำเชิญ: ว่าง = ไม่ส่ง (null, null) · อีเมลเดียวเท่านั้น (ห้ามคั่นหลายรายด้วย , ; หรือช่องว่าง) · รูปผิด = (null, เหตุ)</summary>
+    public static (string? Email, string? Problem) InviteEmail(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return (null, null);
+        var t = raw.Trim();
+        if (t.IndexOfAny(new[] { ',', ';', ' ', '\t', '\r', '\n', '<', '>' }) >= 0 || t.Count(c => c == '@') != 1)
+            return (null, "ใส่อีเมลผู้รับได้ทีละหนึ่งอีเมล (รูปแบบ name@example.com)");
+        var n = PortalMagicLinkPolicy.NormalizeEmail(t);
+        var at = n?.IndexOf('@') ?? -1;
+        return n == null || at < 1 || n.IndexOf('.', at) < 0 ? (null, "รูปแบบอีเมลผู้รับไม่ถูกต้อง") : (n, null);
+    }
+
+    /// <summary>ผลคำเชิญ — ข้อความถึงผู้ใช้ (เข้าคิว ≠ ส่งถึงแล้ว · F2 #3)</summary>
+    public static string InviteNote(bool requested, bool queued)
         => !requested ? "ไม่ได้ระบุอีเมลผู้รับ — คัดลอกลิงก์ส่งให้ผู้ขายเอง"
-            : !configured ? "ยังไม่ได้ตั้งค่าอีเมลของระบบ — ยังไม่ได้ส่งอีเมล คัดลอกลิงก์ส่งให้ผู้ขายเอง"
-            : sent ? "ส่งลิงก์ทางอีเมลแล้ว"
-            : "ส่งอีเมลไม่สำเร็จ — คัดลอกลิงก์ส่งให้ผู้ขายเอง";
+            : queued ? "เข้าคิวส่งอีเมลเชิญแล้ว (ลิงก์ในอีเมลเป็นลิงก์แยกของผู้รับ) — ดูผลการส่งที่หน้าตารางส่งเอกสาร › คิว/ประวัติส่ง"
+            : "เข้าคิวส่งอีเมลไม่สำเร็จ — คัดลอกลิงก์ส่งให้ผู้ขายเอง";
+
+    /// <summary>ตอนส่งจากคิว: ลิงก์ต้นทางยังใช้งานได้ไหม — null = ส่ง · ข้อความ = ข้ามพร้อมเหตุ</summary>
+    public static string? InviteSkipReason(string? sourceStatus)
+        => sourceStatus == StatusActive ? null
+            : sourceStatus == null ? "ไม่พบลิงก์พอร์ทัลผู้ขายของคำเชิญนี้ — ไม่ส่ง"
+            : $"ลิงก์พอร์ทัลผู้ขาย{StatusLabel(sourceStatus)} — ไม่ส่งคำเชิญ";
 }
