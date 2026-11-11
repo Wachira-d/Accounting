@@ -78,17 +78,17 @@ public class OcrRound259Tests
     [Fact]
     public void CM5_เพิ่มบรรทัด_แถวว่างจริง_ต้องกรอกหรือลบก่อนสร้าง()
     {
-        Assert.Equal(1, OcrBlankLine.Count(new (string?, decimal?)[] { ("", null) }));
-        Assert.Equal(1, OcrBlankLine.Count(new (string?, decimal?)[] { ("  ", 0m) }));   // แถว 1 × 0.00 ที่ปุ่มเดิมสร้างไว้ (persist แล้ว) — ถูกจับด้วย
-        Assert.Equal(2, OcrBlankLine.Count(new (string?, decimal?)[] { ("", null), ("ค่าขนส่ง", 50m), (null, 0m) }));
+        Assert.Equal(1, OcrBlankLine.Count(new (string?, decimal?, decimal?, decimal?)[] { ("", null, null, null) }));
+        Assert.Equal(1, OcrBlankLine.Count(new (string?, decimal?, decimal?, decimal?)[] { ("  ", 0m, 0m, 1m) }));   // แถว 1 × 0.00 ที่ปุ่มเดิมสร้างไว้ (persist แล้ว) — ถูกจับด้วย
+        Assert.Equal(2, OcrBlankLine.Count(new (string?, decimal?, decimal?, decimal?)[] { ("", null, null, null), ("ค่าขนส่ง", 50m, null, null), (null, 0m, null, null) }));
         Assert.Contains("ลบ", OcrBlankLine.Message(1));
     }
 
     [Fact]
     public void CM5_ทิศตรงข้าม_แถวที่มียอดแต่อ่านชื่อไม่ได้_ไม่ใช่แถวว่าง()
     {
-        Assert.Equal(0, OcrBlankLine.Count(new (string?, decimal?)[] { ("", 120m), ("ค่าบริการ", null) }));
-        Assert.Equal(0, OcrBlankLine.Count(new (string?, decimal?)[] { ("ค่าบริการ", 100m) }));
+        Assert.Equal(0, OcrBlankLine.Count(new (string?, decimal?, decimal?, decimal?)[] { ("", 120m, null, null), ("ค่าบริการ", null, null, null), ("", null, 100m, 2m) }));
+        Assert.Equal(0, OcrBlankLine.Count(new (string?, decimal?, decimal?, decimal?)[] { ("ค่าบริการ", 100m, null, null) }));
     }
 
     // ───── C-M2: แก้เฉพาะยอดรวม ⇒ ถอดฐาน/VAT ใหม่ ─────
@@ -166,5 +166,26 @@ public class OcrRound259Tests
         Assert.Null(OcrDuplicateScanRule.DecideByContent(docs, 65.00m, Day.AddDays(1), null, Vendor));        // วันต่าง
         Assert.Null(OcrDuplicateScanRule.DecideByContent(docs, 65.50m, Day, null, Vendor));                   // ยอดต่าง
         Assert.Null(OcrDuplicateScanRule.DecideByContent(docs, null, Day, null, Vendor));                     // อ่านยอดไม่ได้
+    }
+
+    // ───── ฝ่ายค้าน 259-D L1/L2 ─────
+
+    [Fact]
+    public void L1_ยอดใหม่ต่ำกว่าVATเดิม_ไม่ถอด_ฐานไม่ติดลบ()
+    {
+        var (sub, vat, note) = OcrHeaderAmounts.RederiveAfterTotalEdit(null, 700m, 1000m, 500m);
+        Assert.Null(sub);
+        Assert.Equal(700m, vat);
+        Assert.Contains("ต่ำกว่า VAT", note);
+        // ทิศตรงข้าม: ยอดใหม่สูงกว่า VAT ยังถอดตามกติกาเดิม
+        Assert.Equal(500m, OcrHeaderAmounts.RederiveAfterTotalEdit(467.29m, 32.71m, 500m, 535m).SubTotal);
+    }
+
+    [Fact]
+    public void L2_บรรทัดเดียวตามยอดใหม่_ตามฐานที่บรรทัดถือ_ไม่ตรงไม่เดา()
+    {
+        Assert.Equal(500m, OcrHeaderAmounts.RescaleSingleLine(467.29m, 467.29m, 500m, 500m, 535m));   // บรรทัดเป็นฐาน
+        Assert.Equal(535m, OcrHeaderAmounts.RescaleSingleLine(500m, 467.29m, 500m, 500m, 535m));      // บรรทัดเป็นยอดรวม
+        Assert.Null(OcrHeaderAmounts.RescaleSingleLine(320m, 467.29m, 500m, 500m, 535m));             // ไม่ตรงทั้งสอง
     }
 }

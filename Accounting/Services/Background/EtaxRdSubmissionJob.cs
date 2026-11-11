@@ -8,7 +8,7 @@ namespace Accounting.Services.Background;
 
 /// <summary>
 /// รอบ 259 (B-M6 · คำตัดสิน 259-4-6 · CLAUDE.md §F "Submission cron ภายในวันที่ 15 ของเดือนถัดไป · retry queue") — งานนำส่ง e-Tax ต่อกรมสรรพากร
-/// ของบริษัทที่เปิด<b>โหมดส่งตรง</b> (<c>EtaxEnabled</c> + <see cref="EtaxMode.Direct"/>) · ทุก 3 ชั่วโมงในช่วงวันที่ 1–15 (เวลาไทย) ·
+/// ของบริษัทที่เปิด<b>โหมดส่งตรง</b> (<c>EtaxEnabled</c> + <see cref="EtaxMode.Direct"/>) · ทุก 3 ชั่วโมงในช่วงวันที่ 1–15 (เวลาไทย) · หลังจากนั้นทุก 12 ชม. สำหรับใบที่เลยกำหนด ·
 /// ทีละเครื่องผ่าน <see cref="JobLock"/> (F4 ข้อ 6) · ตัวงาน = <see cref="IEtaxInvoiceService.SubmitPendingPreviousMonthsAsync"/> (คิวเว้นช่วงต่อฉบับ ·
 /// ประทับ "ส่งแล้ว" เฉพาะเมื่อกรมตอบรับจริง) · ผลรวมแจ้งทีมต่อบริษัท + เรื่องค้างหน้า Autopilot · โหมด e-Tax by Email ไม่เกี่ยว (ส่งทางอีเมลคนละเส้น)
 /// </summary>
@@ -17,6 +17,7 @@ public class EtaxRdSubmissionJob : BackgroundService
     private readonly IServiceProvider _services;
     private readonly ILogger<EtaxRdSubmissionJob> _logger;
     private static readonly TimeSpan Interval = TimeSpan.FromHours(3);
+    private static readonly TimeSpan OutsideWindowInterval = TimeSpan.FromHours(12);
 
     public EtaxRdSubmissionJob(IServiceProvider services, ILogger<EtaxRdSubmissionJob> logger)
     { _services = services; _logger = logger; }
@@ -28,14 +29,15 @@ public class EtaxRdSubmissionJob : BackgroundService
         {
             try { await RunOnceAsync(DateTime.UtcNow, stoppingToken); }
             catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogError(ex, "EtaxRdSubmissionJob รอบนี้ล้ม — รอบหน้าลองใหม่"); }
-            try { await Task.Delay(Interval, stoppingToken); } catch (OperationCanceledException) { return; }
+            // ฝ่ายค้าน 259-D M4: วันที่ 1–15 ทุก 3 ชม. · หลังวันที่ 15 ยังทำงาน (ใบเลยกำหนดลองวันละครั้งตามคิว RdNextAttemptAt) ทุก 12 ชม.
+            var wait = EtaxRdSubmission.InSubmissionWindow(DateTime.UtcNow) ? Interval : OutsideWindowInterval;
+            try { await Task.Delay(wait, stoppingToken); } catch (OperationCanceledException) { return; }
         }
     }
 
-    /// <summary>หนึ่งรอบภายใต้ล็อกงาน · นอกช่วงวันที่ 1–15 = ไม่ทำอะไร · คืน false เมื่ออีกเครื่องถือล็อก</summary>
+    /// <summary>หนึ่งรอบภายใต้ล็อกงาน · ทุกวัน (ฝ่ายค้าน 259-D M4 — เดิมหยุดหลังวันที่ 15 ⇒ ใบที่ล้ม/ลงนามช้าค้างไปเดือนหน้า) · คืน false เมื่ออีกเครื่องถือล็อก</summary>
     internal async Task<bool> RunOnceAsync(DateTime nowUtc, CancellationToken ct)
     {
-        if (!EtaxRdSubmission.InSubmissionWindow(nowUtc)) return true;
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
         var etax = scope.ServiceProvider.GetRequiredService<IEtaxInvoiceService>();

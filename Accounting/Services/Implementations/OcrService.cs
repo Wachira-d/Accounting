@@ -5207,8 +5207,26 @@ public class OcrService : IOcrService
             {
                 var (reSub, reVat, reNote) = Accounting.Helpers.OcrHeaderAmounts.RederiveAfterTotalEdit(
                     result.ExtractedSubTotal, result.ExtractedVatAmount, result.ExtractedTotalAmount, correction.TotalAmount);
+                var oldSubForLine = result.ExtractedSubTotal;
+                var oldTotalForLine = result.ExtractedTotalAmount;
                 result.ExtractedSubTotal = reSub;
                 result.ExtractedVatAmount = reVat;
+                // ฝ่ายค้าน 259-D L2: บรรทัดเดียว ⇒ บรรทัดตามยอดใหม่ · หลายบรรทัด ⇒ หมายเหตุให้ตรวจที่หน้ารีวิว (มือถือมองไม่เห็นบรรทัด)
+                if (reNote != null && !string.IsNullOrWhiteSpace(result.ExtractedItemsJson))
+                {
+                    List<OcrExtractedLineItem>? lines = null;
+                    try { lines = System.Text.Json.JsonSerializer.Deserialize<List<OcrExtractedLineItem>>(result.ExtractedItemsJson); }
+                    catch (System.Text.Json.JsonException) { /* ตัวอ่านตอนสร้างรายงานเอง */ }
+                    if (lines is { Count: 1 } && lines[0].Amount is decimal la
+                        && Accounting.Helpers.OcrHeaderAmounts.RescaleSingleLine(la, oldSubForLine, oldTotalForLine, reSub, correction.TotalAmount.Value) is decimal na)
+                    {
+                        lines[0].Amount = na;
+                        if (lines[0].Quantity is null or 1m) lines[0].UnitPrice = na;
+                        result.ExtractedItemsJson = SerializeExtractedItems(lines);
+                    }
+                    else if (lines is { Count: > 1 })
+                        reNote += "\n" + Accounting.Helpers.OcrHeaderAmounts.MultiLineTotalEditNote;
+                }
                 if (reNote != null)
                     result.ProcessingNotes = string.IsNullOrEmpty(result.ProcessingNotes) ? reNote : result.ProcessingNotes + "\n" + reNote;
             }
@@ -6655,7 +6673,7 @@ public class OcrService : IOcrService
             try { blankCheck = System.Text.Json.JsonSerializer.Deserialize<List<OcrExtractedLineItem>>(result.ExtractedItemsJson); }
             catch (System.Text.Json.JsonException) { /* ตัวอ่านข้างล่างรายงานเอง */ }
             if (blankCheck != null
-                && Accounting.Helpers.OcrBlankLine.Count(blankCheck.Select(i => (i.Description, i.Amount))) is var blanks and > 0)
+                && Accounting.Helpers.OcrBlankLine.Count(blankCheck.Select(i => (i.Description, i.Amount, i.UnitPrice, i.Quantity))) is var blanks and > 0)
                 throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.OcrBlankLine.Message(blanks),
                     Accounting.Helpers.OcrBlankLine.RuleCode);
         }
@@ -11126,10 +11144,14 @@ public class OcrService : IOcrService
     {
         // รอบ 259 (C-M5 · คำตัดสิน 259-4-8): engine ให้ตารางมาแต่ไม่ครบ (Σ ต่ำกว่ายอดที่กระดาษพิสูจน์) ⇒ ลองตารางจากข้อความเป็นผู้สมัครที่สอง ·
         // รับเฉพาะเมื่อลงยอดที่พิสูจน์แล้ว + ได้แถวมากกว่า (ตัวตัดสินเดียว OcrTextTableFallback — pure + golden) · ไม่ผ่าน ⇒ คงตาราง engine ([Σ-GAP] เดิมฟ้อง)
+        // ฝ่ายค้าน 259-D L4: ตาราง engine ติด VAT ต่อบรรทัดไม่เหมือนกัน (ผสมยกเว้น) ⇒ ตารางข้อความไม่มีข้อมูลนี้ ⇒ คงตาราง engine
+        var vatShapes = data.Items.Select(i => (i.VatRate, i.PriceIncludesVat)).Distinct().ToList();
+        if (vatShapes.Count > 1) return;
         var fallback = Accounting.Helpers.OcrTextTableFallback.Decide(
             data.Items.Select(i => i.Amount ?? 0m).ToList(), data.SubTotal, provenPaperTotal, rawText);
         if (fallback.Replace)
         {
+            var (sharedVatRate, sharedInclusive) = vatShapes[0];
             data.Items.Clear();
             foreach (var line in fallback.Lines)
             {
@@ -11141,6 +11163,8 @@ public class OcrService : IOcrService
                     UnitPrice = line.UnitPrice,
                     Amount = line.Amount,
                     Unit = line.Unit,
+                    VatRate = sharedVatRate,                 // ฝ่ายค้าน 259-D L4: VAT เดียวกันทั้งตาราง ⇒ ส่งต่อ
+                    PriceIncludesVat = sharedInclusive,
                 });
             }
             data.ReasoningTrace.Add(fallback.Note!);

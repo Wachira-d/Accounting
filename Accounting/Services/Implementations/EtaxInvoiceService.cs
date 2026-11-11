@@ -581,10 +581,18 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
 
     // ===== RD API Submission =====
 
-    public async Task<EtaxInvoiceResponse> SubmitToRevenueAsync(Guid companyId, Guid etaxId)
+    public Task<EtaxInvoiceResponse> SubmitToRevenueAsync(Guid companyId, Guid etaxId)
+        => SubmitToRevenueCoreAsync(companyId, etaxId, notifyFailures: true);
+
+    /// <summary>ตัวส่งเดียว · <paramref name="notifyFailures"/> = false สำหรับงานประจำเดือน (ฝ่ายค้าน 259-D H2/L6 — รวมแจ้งครั้งเดียวต่อรอบ ไม่ใช่ต่อฉบับ)</summary>
+    private async Task<EtaxInvoiceResponse> SubmitToRevenueCoreAsync(Guid companyId, Guid etaxId, bool notifyFailures)
     {
         var etax = await _db.EtaxInvoices.FirstOrDefaultAsync(e => e.Id == etaxId && e.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ e-Tax Invoice");
+        // ฝ่ายค้าน 259-D M3: กำหนดส่ง/เลยกำหนด คิดจากวันที่เอกสาร (ตัวเดียว EtaxRdSubmission.FilingMonthOf) — ไม่ใช่วันที่สร้างแถว e-Tax
+        var documentDate = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == etax.DocumentId && d.CompanyId == companyId)
+            .Select(d => (DateTime?)d.DocumentDate).FirstOrDefaultAsync() ?? etax.CreatedAt;
 
         // รอบ 259 (B-M6): ลงนามแล้ว หรือส่งล้มทางเทคนิค (ลองใหม่ได้ — เดิมปุ่ม "ลองส่งใหม่ทั้งหมด" อ่านแถว Error แต่ด่านนี้รับเฉพาะ Signed ⇒ ล้มทุกแถว)
         if (!EtaxRdSubmission.CanSubmit(etax.Status, etax.SignedAt, etax.DigitalSignature, etax.ErrorCode))
@@ -632,9 +640,9 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             etax.RdLastAttemptAt = notConfiguredAt;
             etax.RdNextAttemptAt = notConfiguredAt.AddHours(24);
             await _db.SaveChangesAsync();
-            if (etax.RdSubmitAttempts == 1)
-                await NotifyRdSubmitFailureAsync(etax, etax.ErrorMessage, EtaxRdSubmission.Outcome.Transient);
-            throw new Accounting.Helpers.BusinessRuleException(
+            if (notifyFailures && etax.RdSubmitAttempts == 1)
+                await NotifyRdSubmitFailureAsync(etax, etax.ErrorMessage, EtaxRdSubmission.Outcome.ConfigError, documentDate);
+            throw new EtaxRdConfigException(
                 "ยังไม่ได้ตั้งค่าการเชื่อมต่อกรมสรรพากร (RD API Key / URL) จึงยังนำส่ง e-Tax ไม่ได้ — "
                 + "ไปที่หน้าตั้งค่า e-Tax เพื่อกรอกคีย์ที่ได้รับจากกรมสรรพากร "
                 + "หรือเปลี่ยนไปใช้โหมด \u201ce-Tax Invoice by Email\u201d สำหรับกิจการที่รายได้ไม่เกิน 30 ล้านบาท/ปี "
@@ -657,9 +665,10 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
             etax.ErrorCode = EtaxRdSubmission.ErrorSubmit;
             etax.RdSubmitAttempts++;
             etax.RdLastAttemptAt = attemptAt;
-            etax.RdNextAttemptAt = EtaxRdSubmission.NextAttemptAt(etax.RdSubmitAttempts, attemptAt);
+            etax.RdNextAttemptAt = EtaxRdSubmission.NextAttemptAt(etax.RdSubmitAttempts, attemptAt, documentDate);
             await _db.SaveChangesAsync();
-            if (etax.RdSubmitAttempts == 1) await NotifyRdSubmitFailureAsync(etax, etax.ErrorMessage, EtaxRdSubmission.Outcome.Transient);
+            if (notifyFailures && etax.RdSubmitAttempts == 1)
+                await NotifyRdSubmitFailureAsync(etax, etax.ErrorMessage, EtaxRdSubmission.Outcome.Transient, documentDate);
             throw new InvalidOperationException($"ส่งข้อมูลกรมสรรพากรล้มเหลว: {ex.Message}", ex);
         }
 
@@ -682,9 +691,14 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         else
         {
             etax.ErrorMessage = submissionResult.ErrorMessage;
-            etax.ErrorCode = submissionResult.ErrorCode;
-            etax.RdNextAttemptAt = outcome == EtaxRdSubmission.Outcome.Transient
-                ? EtaxRdSubmission.NextAttemptAt(etax.RdSubmitAttempts, attemptAt) : null;
+            etax.ErrorCode = outcome == EtaxRdSubmission.Outcome.ConfigError ? EtaxRdSubmission.ErrorAuth : submissionResult.ErrorCode;
+            // ฝ่ายค้าน 259-D H2: ตั้งค่าผิด ⇒ ลองใหม่ได้ (วันละครั้ง หรือกดเองหลังแก้คีย์) · ชั่วคราว ⇒ คิว (เลยกำหนด = วันละครั้ง) · ปฏิเสธ ⇒ ไม่ลองซ้ำ
+            etax.RdNextAttemptAt = outcome switch
+            {
+                EtaxRdSubmission.Outcome.Transient => EtaxRdSubmission.NextAttemptAt(etax.RdSubmitAttempts, attemptAt, documentDate),
+                EtaxRdSubmission.Outcome.ConfigError => attemptAt.AddHours(24),
+                _ => null,
+            };
         }
         await _db.SaveChangesAsync();
 
@@ -693,10 +707,11 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         if (!stampSubmitted)
         {
             var reason = submissionResult.ErrorMessage ?? $"กรมสรรพากรตอบกลับ HTTP {submissionResult.HttpStatus}";
-            if (outcome == EtaxRdSubmission.Outcome.Rejected || etax.RdSubmitAttempts == 1)
-                await NotifyRdSubmitFailureAsync(etax, reason, outcome);
-            throw new BusinessRuleException(EtaxRdSubmission.FailureMessage(reason,
-                EtaxRdSubmission.DeadlineFor(etax.CreatedAt), outcome), EtaxRdSubmission.RuleCode);
+            if (notifyFailures && (outcome == EtaxRdSubmission.Outcome.Rejected || etax.RdSubmitAttempts == 1))
+                await NotifyRdSubmitFailureAsync(etax, reason, outcome, documentDate);
+            var message = EtaxRdSubmission.FailureMessage(reason, documentDate, attemptAt, outcome);
+            if (outcome == EtaxRdSubmission.Outcome.ConfigError) throw new EtaxRdConfigException(message, EtaxRdSubmission.RuleCode);
+            throw new BusinessRuleException(message, EtaxRdSubmission.RuleCode);
         }
         return MapToResponse(etax);
     }

@@ -172,4 +172,42 @@ public static class RecurringSchedule
     public static string LockedPeriodSkipNote(DateTime periodDate, string closedReason)
         => $"ข้ามงวด {periodDate:dd/MM}/{periodDate.Year + 543} ไม่ลงสมุดรายวัน เพราะงวดบัญชีปิดแล้ว ({closedReason}) — "
            + "ระบบไม่ลงรายการของงวดนี้ไปไว้งวดอื่น · ถ้ายังต้องบันทึก ให้ผู้มีสิทธิ์เปิดงวดแล้วบันทึกสมุดรายวันของงวดนั้นเอง";
+
+    /// <summary>ฝ่ายค้าน 259-D M1 (คำตัดสิน 259-4-10): รหัสกติกา "รอบอัตโนมัติไม่ลงสมุดรายวันข้ามปีบัญชีเอง"</summary>
+    public const string CrossYearRuleCode = "RECURRING-JE-CROSS-YEAR";
+
+    /// <summary>ปีบัญชีของวัน (ปีที่ปีบัญชีเริ่ม) ตามเดือนเริ่มปีบัญชีของบริษัท (1–12 · นอกช่วง = 1)</summary>
+    private static int FiscalYearOf(DateTime date, int fiscalYearStartMonth)
+    {
+        var start = fiscalYearStartMonth is >= 1 and <= 12 ? fiscalYearStartMonth : 1;
+        var d = ThaiDate.CalendarDateUtc(date);
+        return d.Month >= start ? d.Year : d.Year - 1;
+    }
+
+    /// <summary>งวดของใบสำคัญอยู่คนละปีบัญชีกับวันนี้ (ตามปฏิทินไทย)</summary>
+    public static bool CrossesFiscalYear(DateTime periodDate, DateTime nowUtc, int fiscalYearStartMonth)
+        => FiscalYearOf(periodDate, fiscalYearStartMonth) != FiscalYearOf(nowUtc, fiscalYearStartMonth);
+
+    public static string CrossYearHoldMessage(DateTime periodDate)
+    {
+        var d = ThaiDate.CalendarDateUtc(periodDate);
+        return $"งวด {d:dd/MM}/{d.Year + 543} อยู่ในปีบัญชีก่อนหน้า — รอบอัตโนมัติไม่ลงสมุดรายวันข้ามปีบัญชีเอง (งบ/ภ.ง.ด.50 ของปีนั้นอาจปิด/ยื่นแล้ว) · "
+               + "ตรวจแล้วกด \"สร้างทันที\" เพื่อลงทีละงวด หรือแก้วันเริ่ม/หยุดรายการที่หน้ารายการประจำ";
+    }
+
+    /// <summary>งวดที่ลงก่อนเดือนนี้ (ตามปฏิทินไทย) = ลงย้อนหลัง</summary>
+    public static bool IsBackfill(DateTime periodDate, DateTime nowUtc)
+    {
+        var p = ThaiDate.CalendarDateUtc(periodDate);
+        var t = ThaiDate.CalendarDateUtc(nowUtc);
+        return (p.Year, p.Month).CompareTo((t.Year, t.Month)) < 0;
+    }
+
+    /// <summary>ฝ่ายค้าน 259-D M1: ข้อความ "ลงย้อนหลัง N งวด (ตั้งแต่ …)" บนแถว · ไม่มี = null</summary>
+    public static string? BackfillNote(IReadOnlyCollection<DateTime> backfilledPeriods)
+    {
+        if (backfilledPeriods is not { Count: > 0 }) return null;
+        var from = ThaiDate.CalendarDateUtc(backfilledPeriods.Min());
+        return $"ลงสมุดรายวันย้อนหลัง {backfilledPeriods.Count} งวด (ตั้งแต่งวด {from:dd/MM}/{from.Year + 543}) ลงวันที่ของแต่ละงวด — ตรวจงบของเดือนเหล่านั้น";
+    }
 }

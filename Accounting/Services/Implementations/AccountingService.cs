@@ -352,16 +352,17 @@ public partial class AccountingService : IAccountingService
         }
     }
 
-    public async Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy)
+    public async Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy,
+        string? recurringRunKey = null)
     {
-        var entryId = await CreateJournalEntryCoreAsync(companyId, request, createdBy, null);
+        var entryId = await CreateJournalEntryCoreAsync(companyId, request, createdBy, null, recurringRunKey);
         return await GetJournalEntryAsync(companyId, entryId);
     }
 
     /// <summary>ตัวสร้างใบสำคัญ (คืน Id) · <paramref name="allowDeletedAccountIds"/> = ผังที่ถูกลบซึ่งใบปิดปีต้องล้าง (รอบ 4 P2-b — ผู้เรียกเดียว
     /// <c>YearEndCloseAsync</c> · ผู้เรียกอื่นส่ง null) · ไม่ map คำตอบ (บรรทัดของผังที่ลบไม่มี Account ให้ map)</summary>
     private async Task<Guid> CreateJournalEntryCoreAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy,
-        IReadOnlyCollection<Guid>? allowDeletedAccountIds)
+        IReadOnlyCollection<Guid>? allowDeletedAccountIds, string? recurringRunKey = null)
     {
         // Validate at least 2 lines (double-entry)
         if (request.Lines.Count < 2)
@@ -481,7 +482,9 @@ public partial class AccountingService : IAccountingService
                 DimensionId = request.DimensionId,
                 Note = request.Note,
                 Tags = request.Tags,
-                SourceDocumentId = sourceDocId
+                SourceDocumentId = sourceDocId,
+                // ฝ่ายค้าน 259-D M2: กุญแจ "รายการประจำ + งวด" ใน INSERT เดียวกับใบสำคัญ (unique ต่อบริษัท) — ล่มก่อนประทับรอบ ⇒ รอบถัดไปไม่ลงซ้ำ
+                RecurringRunKey = recurringRunKey,
             };
 
             // Validate project belongs to company (if provided)

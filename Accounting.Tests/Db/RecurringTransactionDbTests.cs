@@ -495,6 +495,10 @@ public class RecurringTransactionDbTests
             id = (await Svc(req).CreateAsync(s.CompanyId, new CreateRecurringTransactionRequest("ตั้งค้างจ่ายรายเดือน", null, RecurringFrequency.Monthly,
                 Today, null, null, "Journal", null, null, JournalTemplate(s), AutoApprove: false), "tester")).Id;
         var stuck = Today.AddMonths(-monthsBack);
+        // ฝ่ายค้าน 259-D M1: รอบอัตโนมัติหยุดเมื่อข้ามปีบัญชี ⇒ ตั้งเดือนเริ่มปีบัญชีให้ทุกงวดในเทสต์อยู่ปีเดียวกัน (ไม่ขึ้นกับวันที่รันเทสต์)
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await req.Companies.Where(c => c.Id == s.CompanyId)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.FiscalYearStartMonth, stuck.AddMonths(-1).Month));
         using (var req = DbTestDatabase.TryCreateContext()!)
             await req.RecurringTransactions.Where(r => r.Id == id && r.CompanyId == s.CompanyId)
                 .ExecuteUpdateAsync(u => u.SetProperty(r => r.NextRunDate, stuck).SetProperty(r => r.StartDate, stuck)
@@ -625,5 +629,64 @@ public class RecurringTransactionDbTests
         // ใบล่วงหน้าเป็นรอบพิเศษ ไม่กินงวด (คงคำตัดสินข้อ 150) — กำหนดงวดยังเป็นวันเริ่ม
         var row = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == id && r.CompanyId == s.CompanyId);
         Assert.Equal(Today.AddDays(10), row.NextRunDate);
+    }
+
+    [Fact]
+    public async Task R259D_M2_สมุดรายวันล่มหลังลงใบก่อนประทับรอบ_รอบถัดไปไม่ลงซ้ำ_ประทับด้วยใบเดิม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var (id, _) = await StuckJournalAsync(s, 0);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).ProcessDueRecurringTransactionsAsync();
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var je = await c.JournalEntries.AsNoTracking().SingleAsync(j => j.CompanyId == s.CompanyId);
+            Assert.Equal(RecurringRunKey.ForPeriod(id, Today), je.RecurringRunKey);
+        }
+        // จำลองล่มระหว่างลงใบสำคัญกับประทับรอบ
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await c.RecurringTransactions.Where(r => r.Id == id && r.CompanyId == s.CompanyId)
+                .ExecuteUpdateAsync(u => u.SetProperty(r => r.NextRunDate, Today).SetProperty(r => r.TotalRuns, 0).SetProperty(r => r.LastRunDate, (DateTime?)null));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).ProcessDueRecurringTransactionsAsync();
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(1, await check.JournalEntries.CountAsync(j => j.CompanyId == s.CompanyId));
+        var row = await check.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == id && r.CompanyId == s.CompanyId);
+        Assert.Equal(1, row.TotalRuns);
+        Assert.True(row.NextRunDate > Today);
+        Assert.Contains("ไม่ออกซ้ำ", row.LastRunNotice ?? "");
+    }
+
+    [Fact]
+    public async Task R259D_M1_สมุดรายวันลงย้อนหลัง_บอกจำนวนงวด_ข้ามปีบัญชีหยุดรอคน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var (id, periods) = await StuckJournalAsync(s, 2);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).ProcessDueRecurringTransactionsAsync();
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Contains($"ย้อนหลัง {periods.Count - 1} งวด",
+                (await c.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == id && r.CompanyId == s.CompanyId)).LastRunNotice ?? "");
+        // ทิศตรงข้าม/หยุดรอคน: ปีบัญชีเริ่มเดือนนี้ ⇒ งวดที่ค้างอยู่ปีก่อน ⇒ รอบอัตโนมัติไม่ลง + เหตุบนแถว · ผู้ใช้กดสร้างทันที = ยืนยัน ลงได้
+        var (id2, _) = await StuckJournalAsync(s, 1);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await c.Companies.Where(x => x.Id == s.CompanyId).ExecuteUpdateAsync(u => u.SetProperty(x => x.FiscalYearStartMonth, Today.Month));
+        var before = 0;
+        using (var c = DbTestDatabase.TryCreateContext()!) before = await c.JournalEntries.CountAsync(j => j.CompanyId == s.CompanyId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).ProcessDueRecurringTransactionsAsync();
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(before, await c.JournalEntries.CountAsync(j => j.CompanyId == s.CompanyId));
+            Assert.Contains("ปีบัญชีก่อนหน้า", (await c.RecurringTransactions.AsNoTracking().SingleAsync(r => r.Id == id2 && r.CompanyId == s.CompanyId)).LastRunError ?? "");
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Svc(req).RunNowAsync(s.CompanyId, id2, "tester");
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(before + 1, await check.JournalEntries.CountAsync(j => j.CompanyId == s.CompanyId));
     }
 }

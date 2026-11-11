@@ -3146,6 +3146,9 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **e-Tax ส่งตรง (B-M6 · 259-4-6)**: `SubmitToRevenueAsync` จัดผลด้วย `Helpers/EtaxRdSubmission.Classify/StatusFor` (SubmittedAt เฉพาะกรมตอบรับ · Rejected · Error + `RdNextAttemptAt`) ·
   ลองซ้ำได้กับแถวส่งล้มทางเทคนิค (`CanSubmit`) · ล้ม ⇒ แถว e-Tax + Autopilot `EtaxRdFailed` + `etax.rd_submit_failed` · ลงนามสำเร็จแล้วส่งล้มไม่ใช่ "ลงนามล้มเหลว" ·
   `EtaxRdSubmissionJob` (JobLock) วันที่ 1–15 → `SubmitPendingPreviousMonthsAsync` ต่อบริษัทโหมด Direct
+- **ฝ่ายค้าน 259-D (259-4-10/11/12)**: สมุดรายวันประจำ — รอบอัตโนมัติไม่ลงข้ามปีบัญชี (`RECURRING-JE-CROSS-YEAR`) · ข้อความลงย้อนหลัง N งวด · `JournalEntries.RecurringRunKey` ·
+  แจ้งงวดปิดครั้งเดียวต่อรอบ · e-Tax — migration แถว `ERR-…`/`RD-แต่งเลข` (`EtaxRdSubmission.LegacyStampRepairSql`) · 401/403/404/405 = ตั้งค่าผิด หยุดชุด (`EtaxRdConfigException`) ·
+  เดือนภาษี/กำหนดส่งตามวันที่เอกสาร · งานทำงานหลังวันที่ 15 (เลยกำหนดลองวันละครั้ง · ป้ายเลยกำหนด) · OCR L1–L4 (ไม่ถอดเมื่อยอด < VAT · บรรทัดเดียวตามยอด · แถวว่างดูราคา×จำนวน · VAT ต่อบรรทัดไม่เหมือนกันไม่แทนตาราง)
 - **OCR (C-M2/C-M5/C-L1/L3/L4 · 259-4-8/9)** — รายละเอียดอยู่ `docs/lessons/ocr-pipeline.md` §"รอบ 259": ตารางไม่ครบ ⇒ `OcrTextTableFallback` ใน `TrySplitLineItemsAsync` ·
   แถวที่เพิ่มเป็นแถวว่าง + `OCR-BLANK-LINE` ตอนสร้าง · แก้ยอดรวมอย่างเดียว ⇒ `OcrHeaderAmounts.RederiveAfterTotalEdit` ใน `SubmitCorrectionAsync` · ใบซ้ำรหัส `OCR-DUPLICATE` +
   ซ้ำด้วยเนื้อหา (`FindContentDuplicateWarningAsync`) · DTO `vendorMatchUsedAi` · `counterpartyMissingNote` · มือถือ `mobile-expense.html` ไม่กลืน error
@@ -8827,3 +8830,5 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส�
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D — §2.12g-259d: Autopilot ส่วนที่เหลือ (B-M3/M4/M6 · L1–L4 · L11) + OCR (C-M2/M5 · C-L1/L3/L4) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 21c7bce5)_
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก B ส่งทาง LINE ให้ครบ — §2.12g-259: ทวง 50 ทวิ ทาง LINE (การ์ด + ลิงก์อัปโหลดต่อแถว) · 💬 ส่งทาง LINE เองจากหน้าเอกสาร + ลิงก์ชำระในอีเมลที่ส่งเอง · เรื่องที่ LINE ไม่ส่งติ๊กไม่ได้ + migration · ความพร้อม OA (webhook เข้าจริง · Basic ID · ผลทดสอบ · เหตุจริงเมื่อทดสอบล้ม) · ประกาศผูกกลุ่มตามผลจริง · ตอบรับรูป/ไฟล์ในแชต · ลบ DocumentLineDeliveryService — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7dc53e0c)_
+
+_Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D ฝ่ายค้าน — §2.12g-259d: H1/H2 · M1–M4 · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

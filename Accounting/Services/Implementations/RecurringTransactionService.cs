@@ -431,9 +431,11 @@ public class RecurringTransactionService : IRecurringTransactionService
             var consumesPeriod = RecurringSchedule.IsDue(recurring.NextRunDate, DateTime.UtcNow, recurring.LeadDays);
             try
             {
+                _journalBackfilled.Clear();
                 var lockedNote = await ExecuteRecurringAsync(recurring, performedBy, consumesPeriod, confirmExtra);
                 if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
                 if (lockedNote != null) await AppendRunNoticeTextAsync(recurring, lockedNote);   // รอบ 259 (B-M4)
+                if (RecurringSchedule.BackfillNote(_journalBackfilled) is string backNote) await AppendRunNoticeTextAsync(recurring, backNote);   // ฝ่ายค้าน 259-D M1
             }
             // รอบ 259 (B-L3): คำถามยืนยัน "ใบล่วงหน้าของงวดนี้มีแล้ว" ไม่ใช่รอบล้ม — ไม่เขียนเหตุล้มลงแถว (โยนกลับให้หน้าถามผู้ใช้)
             catch (Exception ex) when (ex is not OperationCanceledException
@@ -508,12 +510,19 @@ public class RecurringTransactionService : IRecurringTransactionService
                             await _db.SaveChangesAsync();
                             return;
                         }
+                        _journalBackfilled.Clear();
                         var lockedNote = await ExecuteRecurringAsync(recurring, ScheduledActor, consumesPeriod: true);
                         // รอบ 259 (B-M4): สมุดรายวัน — งวดที่เหลือไล่ต่อในรอบนี้ (ลงวันที่ของงวดตัวเอง · งวดปิด = ข้ามพร้อมเหตุ)
                         if (IsJournalTemplate(recurring.TemplateType))
                             lockedNote = await CatchUpJournalPeriodsAsync(recurring, ScheduledActor, now, lockedNote);
                         if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
-                        if (lockedNote != null) await AppendRunNoticeTextAsync(recurring, lockedNote);
+                        if (lockedNote != null)
+                        {
+                            await AppendRunNoticeTextAsync(recurring, lockedNote);
+                            await NotifyLockedPeriodSkipAsync(recurring, lockedNote);   // ฝ่ายค้าน 259-D L6: แจ้งครั้งเดียวต่อรอบ (ไม่ใช่ต่องวด)
+                        }
+                        // ฝ่ายค้าน 259-D M1: ลงย้อนหลัง N งวด ⇒ บอกบนแถว (ระบบทำของสำคัญเองต้องดัง)
+                        if (RecurringSchedule.BackfillNote(_journalBackfilled) is string backNote) await AppendRunNoticeTextAsync(recurring, backNote);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -632,7 +641,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
         if (IsJournalTemplate(recurring.TemplateType))
-            return await CreateJournalFromTemplateAsync(recurring, performedBy, jsonOptions, baseDate, consumesPeriod);
+            return await CreateJournalFromTemplateAsync(recurring, performedBy, jsonOptions, baseDate, consumesPeriod, confirmedExtra);
         await CreateDocumentFromTemplateAsync(recurring, performedBy, jsonOptions, baseDate, consumesPeriod, confirmedExtra);
         return null;
     }
@@ -939,7 +948,16 @@ public class RecurringTransactionService : IRecurringTransactionService
         {
             var existing = await _db.Documents.IgnoreQueryFilters().AsNoTracking()
                 .Where(d => d.CompanyId == recurring.CompanyId && d.RecurringRunKey == runKey)
-                .Select(d => new { d.Id, d.DocumentNumber }).FirstOrDefaultAsync();
+                .Select(d => new { d.Id, d.DocumentNumber, d.IsDeleted }).FirstOrDefaultAsync();
+            if (existing is { IsDeleted: true })
+            {
+                // ฝ่ายค้าน 259-D L5: ใบของงวดนี้ถูกลบ (ร่างที่ผู้ใช้ลบ) ⇒ ไม่ "กู้" ด้วยใบที่ลบ — ปล่อยกุญแจ แล้วออกใบของงวดใหม่
+                // (ลบร่างจากหน้าเอกสารเป็น hard delete อยู่แล้ว — เส้นนี้กันแถวที่ถูก soft-delete ทางอื่น)
+                await _db.Documents.IgnoreQueryFilters()
+                    .Where(d => d.Id == existing.Id && d.CompanyId == recurring.CompanyId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(d => d.RecurringRunKey, (string?)null));
+                existing = null;
+            }
             if (existing != null)
             {
                 if (!consumesPeriod)
@@ -1321,8 +1339,11 @@ public class RecurringTransactionService : IRecurringTransactionService
         }
     }
 
+    /// <summary>ฝ่ายค้าน 259-D M1: วันของงวดที่สมุดรายวันลงย้อนหลังในรอบนี้ (ต่อคำขอ · ล้างต้นรอบ)</summary>
+    private readonly List<DateTime> _journalBackfilled = new();
+
     private async Task<string?> CreateJournalFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions,
-        DateTime baseDate, bool consumesPeriod)
+        DateTime baseDate, bool consumesPeriod, bool confirmedExtra = false)
     {
         // รอบ 259 (B-M4): ใบสำคัญลงวันที่ของงวด (รอบที่ใช้งวด) — งวดบัญชีของวันนั้นปิด ⇒ ข้ามงวด (เลื่อนกำหนด · ไม่นับครั้ง · ไม่สร้างใบ) พร้อมเหตุบนแถว + แจ้งทีม ·
         // ห้ามลงวันที่อื่นแทน (ค่าใช้จ่ายจะไปอยู่ผิดงวด) · ตัวตัดสินงวดปิดตัวเดียวกับการลงบัญชีจริง (JournalEntryBuilder.ClosedPeriodReasonAsync)
@@ -1335,9 +1356,38 @@ public class RecurringTransactionService : IRecurringTransactionService
             if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
                 recurring.Status = RecurringStatus.Completed;
             await _db.SaveChangesAsync();
-            await NotifyLockedPeriodSkipAsync(recurring, note);
             _logger.LogInformation("Recurring journal {Id}: skipped locked period {Date:yyyy-MM-dd}", recurring.Id, entryDate);
             return note;
+        }
+        // ฝ่ายค้าน 259-D M1 (คำตัดสิน 259-4-10): รอบอัตโนมัติไม่ลงสมุดรายวันข้ามปีบัญชีเอง (งบ/ภ.ง.ด.50 ปีก่อนอาจปิดแล้ว) ⇒ หยุดรอคน
+        // (เหตุบนแถว + แจ้งครั้งแรก — ผ่านเส้นรอบล้มเดิม) · ผู้ใช้กด "สร้างทันที" = ยืนยันทีละงวด
+        if (consumesPeriod && string.Equals(performedBy, ScheduledActor, StringComparison.Ordinal))
+        {
+            var fyStart = await _db.Companies.AsNoTracking().Where(c => c.Id == recurring.CompanyId)
+                .Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
+            if (RecurringSchedule.CrossesFiscalYear(entryDate, DateTime.UtcNow, fyStart))
+                throw new BusinessRuleException(RecurringSchedule.CrossYearHoldMessage(entryDate), RecurringSchedule.CrossYearRuleCode);
+        }
+        // ฝ่ายค้าน 259-D M2: กุญแจ "รายการ + งวด" ของสมุดรายวัน — พบใบของงวดแล้ว (ล่มก่อนประทับรอบ) ⇒ ประทับรอบด้วยใบเดิม ไม่ลงซ้ำ ·
+        // รอบพิเศษซ้ำ ⇒ 409 ถามยืนยัน (ตัวตัดสินเดียวกับเอกสาร RecurringRunKey.For)
+        var jeRunKey = RecurringRunKey.For(recurring.Id, recurring.NextRunDate, consumesPeriod, confirmedExtra);
+        if (jeRunKey != null)
+        {
+            var existingJe = await _db.JournalEntries.IgnoreQueryFilters().AsNoTracking()
+                .Where(j => j.CompanyId == recurring.CompanyId && j.RecurringRunKey == jeRunKey)
+                .Select(j => new { j.Id, j.EntryNumber }).FirstOrDefaultAsync();
+            if (existingJe != null)
+            {
+                if (!consumesPeriod)
+                    throw new BusinessRuleException(RecurringRunKey.EarlyAlreadyIssuedMessage(existingJe.EntryNumber, recurring.NextRunDate),
+                        RecurringRunKey.RuleCode, 409);
+                var recoveredPeriod = recurring.NextRunDate;
+                await MarkRunAsync(recurring, consumesPeriod: true, documentId: null);
+                await SetRunNoticeAsync(recurring, new List<string> { RecurringRunKey.RecoveredNote(existingJe.EntryNumber, recoveredPeriod) });
+                _logger.LogWarning("Recurring journal {Id}: period {Key} already has JE {Je} — stamped run without posting again",
+                    recurring.Id, jeRunKey, existingJe.Id);
+                return null;
+            }
         }
         try
         {
@@ -1372,8 +1422,9 @@ public class RecurringTransactionService : IRecurringTransactionService
                 Lines: lines
             );
 
-            var result = await _accountingService.CreateJournalEntryAsync(recurring.CompanyId, request, performedBy);
+            var result = await _accountingService.CreateJournalEntryAsync(recurring.CompanyId, request, performedBy, jeRunKey);
             await MarkRunAsync(recurring, consumesPeriod, documentId: null);
+            if (consumesPeriod && RecurringSchedule.IsBackfill(entryDate, DateTime.UtcNow)) _journalBackfilled.Add(entryDate);
 
             // Auto-post if configured · รอบ 257 ฝ่ายค้าน L4: ผู้สร้างต้องยังมี Journal.Manage ณ ตอนรัน (ไม่มี ⇒ ค้างร่าง + เหตุบนแถว)
             var autoPostGone = recurring.AutoApprove && result != null

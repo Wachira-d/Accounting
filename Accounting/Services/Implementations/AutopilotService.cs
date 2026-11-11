@@ -260,19 +260,22 @@ public class AutopilotService : IAutopilotService
         if (etaxDirect)
         {
             var monthStart = EtaxRdSubmission.CurrentMonthStart(nowUtc);
-            var etaxRows = await _db.EtaxInvoices.AsNoTracking()
-                .Where(e => e.CompanyId == companyId && e.SubmittedAt == null
-                    && (e.Status == EtaxStatus.Rejected
-                        || (e.Status == EtaxStatus.Error && e.SignedAt != null)
-                        || (e.Status == EtaxStatus.Signed && e.CreatedAt < monthStart)))
-                .OrderBy(e => e.CreatedAt).Take(50)
-                .Select(e => new { e.DocumentId, e.Status, e.ErrorMessage, e.CreatedAt, e.RdLastAttemptAt,
-                    Number = _db.Documents.Where(d => d.Id == e.DocumentId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefault() })
-                .ToListAsync(ct);
+            // ฝ่ายค้าน 259-D M3: เดือนภาษี/กำหนดส่ง = วันที่เอกสาร (ตัวเดียว EtaxRdSubmission.FilingMonthOf/DeadlineLabel) · M4: ป้าย "เลยกำหนดส่งแล้ว"
+            var etaxRows = await (from e in _db.EtaxInvoices.AsNoTracking()
+                                  join d in _db.Documents.AsNoTracking() on e.DocumentId equals d.Id
+                                  where e.CompanyId == companyId && d.CompanyId == companyId && e.SubmittedAt == null
+                                        && (e.Status == EtaxStatus.Rejected
+                                            || (e.Status == EtaxStatus.Error && e.SignedAt != null)
+                                            || (e.Status == EtaxStatus.Signed && d.DocumentDate < monthStart))
+                                  orderby d.DocumentDate
+                                  select new { e.DocumentId, e.Status, e.ErrorMessage, e.CreatedAt, e.RdLastAttemptAt, d.DocumentDate, Number = d.DocumentNumber })
+                .Take(50).ToListAsync(ct);
             list.AddRange(etaxRows.Select(e => new AutopilotIssueDto("EtaxRdFailed",
-                $"{e.Number ?? "เอกสาร"}: e-Tax " + (e.Status == EtaxStatus.Signed ? "ลงนามแล้วยังไม่ได้นำส่งกรมสรรพากร" : "นำส่งกรมสรรพากรไม่สำเร็จ"),
-                (e.ErrorMessage ?? "ยังไม่ได้นำส่ง") + $" — กำหนดส่ง {EtaxRdSubmission.DeadlineFor(e.CreatedAt):dd/MM/yyyy}"
-                    + (e.Status == EtaxStatus.Rejected ? " · กรมปฏิเสธ: แก้ข้อมูล/ออกใบใหม่" : " · ระบบลองส่งให้วันที่ 1–15 หรือกดส่งเองที่หน้า e-Tax"),
+                $"{e.Number ?? "เอกสาร"}: e-Tax " + (e.Status == EtaxStatus.Signed ? "ลงนามแล้วยังไม่ได้นำส่งกรมสรรพากร" : "นำส่งกรมสรรพากรไม่สำเร็จ")
+                    + (EtaxRdSubmission.IsOverdue(e.DocumentDate, nowUtc) ? " (เลยกำหนดส่ง)" : ""),
+                (e.ErrorMessage ?? "ยังไม่ได้นำส่ง") + $" — เดือนภาษี {EtaxRdSubmission.FilingMonthOf(e.DocumentDate):MM}/{EtaxRdSubmission.FilingMonthOf(e.DocumentDate).Year + 543} · "
+                    + EtaxRdSubmission.DeadlineLabel(e.DocumentDate, nowUtc)
+                    + (e.Status == EtaxStatus.Rejected ? " · กรมปฏิเสธ: แก้ข้อมูล/ออกใบใหม่" : " · ระบบลองส่งให้อัตโนมัติ (วันที่ 1–15 ทุก 3 ชม. · เลยกำหนดแล้ววันละครั้ง) หรือกดส่งเองที่หน้า e-Tax"),
                 e.RdLastAttemptAt ?? e.CreatedAt, e.DocumentId, "เปิดหน้า e-Tax", "/pages/etax.html", null, "เปิดเอกสาร", DocHref(e.DocumentId))));
         }
 

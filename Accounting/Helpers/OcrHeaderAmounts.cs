@@ -104,6 +104,9 @@ public static class OcrHeaderAmounts
         if (newTotal is not > 0m || (oldTotal is decimal ot && ot == newTotal.Value)) return (oldSub, oldVat, null);
         var total = newTotal.Value;
         var vat = oldVat ?? 0m;
+        // ฝ่ายค้าน 259-D L1: ยอดใหม่ต่ำกว่า VAT เดิม ⇒ ถอดแล้วฐานติดลบ — ไม่ถอด (คงฐาน/VAT เดิม) + บอกให้ตรวจ
+        if (total < vat)
+            return (oldSub, oldVat, $"[TOTAL-EDIT] ผู้ใช้แก้ยอดรวมเป็น {total:N2} ต่ำกว่า VAT เดิม {vat:N2} — ไม่ถอดฐาน/VAT ใหม่ ตรวจยอดกับใบเสร็จที่หน้ารีวิว");
         if (vat == 0m)
             return (total, 0m, $"[TOTAL-EDIT] ผู้ใช้แก้ยอดรวมเป็น {total:N2} — ใบไม่มี VAT ⇒ ฐาน = ยอดรวม");
         if (oldSub is decimal os && os > 0m && Math.Abs(Math.Round(os * 0.07m, 2, MidpointRounding.AwayFromZero) - vat) <= 0.05m)
@@ -113,4 +116,15 @@ public static class OcrHeaderAmounts
         }
         return (total - vat, vat, $"[TOTAL-EDIT] ผู้ใช้แก้ยอดรวมเป็น {total:N2} — VAT เดิม {vat:N2} ไม่ใช่ 7% ของฐานล้วน ⇒ คง VAT ฐาน = ยอดรวม − VAT (ตรวจก่อนยืนยัน)");
     }
+
+    /// <summary>ฝ่ายค้าน 259-D L2: แก้เฉพาะยอดรวมของใบที่มี<b>บรรทัดเดียว</b> ⇒ บรรทัดนั้นตามยอดใหม่ (ฐานเดียวกับที่บรรทัดถืออยู่: เท่าฐานเดิม ⇒ ฐานใหม่ ·
+    /// เท่ายอดรวมเดิม ⇒ ยอดรวมใหม่) · ไม่ตรงทั้งสอง = null (ไม่เดา — [Σ-GAP] ตอนสร้างฟ้อง) · หลายบรรทัด ผู้เรียกไม่เรียก (หมายเหตุให้ตรวจแทน)</summary>
+    public static decimal? RescaleSingleLine(decimal lineAmount, decimal? oldSub, decimal? oldTotal, decimal? newSub, decimal newTotal)
+    {
+        if (oldSub is decimal os && newSub is decimal ns && Math.Abs(lineAmount - os) <= 0.01m) return ns;
+        if (oldTotal is decimal ot && Math.Abs(lineAmount - ot) <= 0.01m) return newTotal;
+        return null;
+    }
+
+    public const string MultiLineTotalEditNote = "[TOTAL-EDIT] ใบมีหลายบรรทัด — บรรทัดรายการไม่ขยับตามยอดที่แก้ · เปิดหน้ารีวิวสแกนเพื่อแก้บรรทัดก่อนอนุมัติ";
 }

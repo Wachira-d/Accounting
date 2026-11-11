@@ -159,6 +159,12 @@ public class AutopilotRound259Tests
     [InlineData(true, 200, null, EtaxRdSubmission.Outcome.Submitted)]
     [InlineData(false, 400, null, EtaxRdSubmission.Outcome.Rejected)]
     [InlineData(false, 422, null, EtaxRdSubmission.Outcome.Rejected)]
+    [InlineData(false, 409, null, EtaxRdSubmission.Outcome.Rejected)]
+    [InlineData(false, 401, null, EtaxRdSubmission.Outcome.ConfigError)]
+    [InlineData(false, 403, null, EtaxRdSubmission.Outcome.ConfigError)]
+    [InlineData(false, 404, null, EtaxRdSubmission.Outcome.ConfigError)]
+    [InlineData(false, 405, null, EtaxRdSubmission.Outcome.ConfigError)]
+    [InlineData(false, 410, null, EtaxRdSubmission.Outcome.Transient)]
     [InlineData(false, 429, null, EtaxRdSubmission.Outcome.Transient)]
     [InlineData(false, 408, null, EtaxRdSubmission.Outcome.Transient)]
     [InlineData(false, 503, null, EtaxRdSubmission.Outcome.Transient)]
@@ -207,5 +213,70 @@ public class AutopilotRound259Tests
         Assert.Equal(now.AddHours(24), EtaxRdSubmission.NextAttemptAt(9, now));
         Assert.Null(EtaxRdSubmission.JobSummary(0, 0, 0, now));
         Assert.Contains("ไม่สำเร็จ 2", EtaxRdSubmission.JobSummary(5, 3, 2, now));
+    }
+
+    // ───── ฝ่ายค้าน 259-D ─────
+
+    [Fact]
+    public void H2_คีย์หมดอายุ_401_เป็นข้อผิดพลาดตั้งค่า_ส่งซ้ำได้หลังแก้_ไม่ใช่กรมปฏิเสธ()
+    {
+        var o = EtaxRdSubmission.Classify(false, 401, null);
+        var (status, stamp) = EtaxRdSubmission.StatusFor(o);
+        Assert.Equal(EtaxStatus.Error, status);
+        Assert.False(stamp);
+        Assert.True(EtaxRdSubmission.CanSubmit(status, DateTime.UtcNow, "sig", EtaxRdSubmission.ErrorAuth));
+        var msg = EtaxRdSubmission.FailureMessage("HTTP 401", new DateTime(2026, 10, 28), new DateTime(2026, 11, 2), o);
+        Assert.Contains("RD API Key", msg);
+        Assert.DoesNotContain("แก้ข้อมูลเอกสาร", msg);
+        // ทิศตรงข้าม: 422 ยังเป็นการปฏิเสธเนื้อเอกสาร (ไม่ลองซ้ำเอง)
+        Assert.Equal(EtaxStatus.Rejected, EtaxRdSubmission.StatusFor(EtaxRdSubmission.Classify(false, 422, null)).Status);
+        Assert.Contains("หยุดส่งฉบับที่เหลือ", EtaxRdSubmission.JobSummary(1, 0, 1, new DateTime(2026, 11, 15), msg));
+    }
+
+    [Fact]
+    public void M3_เดือนภาษีและกำหนดส่งตามวันที่เอกสาร_ไม่ใช่วันลงนาม()
+    {
+        var docDate = new DateTime(2026, 10, 28, 3, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(new DateTime(2026, 10, 1), EtaxRdSubmission.FilingMonthOf(docDate).Date);
+        Assert.Equal(new DateTime(2026, 11, 15), EtaxRdSubmission.DeadlineFor(docDate).Date);
+        Assert.Contains("กำหนดส่ง 15/11/2569", EtaxRdSubmission.DeadlineLabel(docDate, new DateTime(2026, 11, 3, 3, 0, 0, DateTimeKind.Utc)));
+    }
+
+    [Fact]
+    public void M4_เลยวันที่15_เป็นเลยกำหนด_ลองวันละครั้ง_ทิศตรงข้ามยังไม่ถึงกำหนดใช้คิวปกติ()
+    {
+        var docDate = new DateTime(2026, 10, 28, 3, 0, 0, DateTimeKind.Utc);
+        var after = new DateTime(2026, 11, 16, 3, 0, 0, DateTimeKind.Utc);
+        var before = new DateTime(2026, 11, 14, 3, 0, 0, DateTimeKind.Utc);
+        Assert.True(EtaxRdSubmission.IsOverdue(docDate, after));
+        Assert.Contains("เลยกำหนดส่ง", EtaxRdSubmission.DeadlineLabel(docDate, after));
+        Assert.Equal(after.AddHours(24), EtaxRdSubmission.NextAttemptAt(1, after, docDate));
+        Assert.False(EtaxRdSubmission.IsOverdue(docDate, before));
+        Assert.Equal(before.AddHours(1), EtaxRdSubmission.NextAttemptAt(1, before, docDate));
+    }
+
+    [Fact]
+    public void H1_ซ่อมแถวเก่าเฉพาะเลขส่งที่แต่งขึ้น()
+    {
+        var sql = EtaxRdSubmission.LegacyStampRepairSql();
+        Assert.Contains(sql, s => s.Contains("LIKE 'ERR-%'") && s.Contains($"\"Status\" = {(int)EtaxStatus.Submitted}") && s.Contains("\"SubmittedAt\" = NULL"));
+        Assert.Contains(sql, s => s.Contains("^RD-[0-9]{14}$") && !s.Contains("\"Status\" ="));
+    }
+
+    [Fact]
+    public void M1_ปีบัญชี_ข้ามปีต้องหยุด_ปีเดียวกันไม่หยุด_และข้อความลงย้อนหลัง()
+    {
+        var now = new DateTime(2026, 11, 11, 3, 0, 0, DateTimeKind.Utc);
+        Assert.True(RecurringSchedule.CrossesFiscalYear(new DateTime(2025, 12, 31), now, 1));
+        Assert.False(RecurringSchedule.CrossesFiscalYear(new DateTime(2026, 1, 31), now, 1));
+        // ปีบัญชีเริ่ม ต.ค.: ก.ย. 2026 อยู่ปีก่อน · ต.ค. 2026 ปีเดียวกัน
+        Assert.True(RecurringSchedule.CrossesFiscalYear(new DateTime(2026, 9, 30), now, 10));
+        Assert.False(RecurringSchedule.CrossesFiscalYear(new DateTime(2026, 10, 1), now, 10));
+        Assert.True(RecurringSchedule.IsBackfill(new DateTime(2026, 10, 31), now));
+        Assert.False(RecurringSchedule.IsBackfill(new DateTime(2026, 11, 1), now));
+        Assert.Null(RecurringSchedule.BackfillNote(Array.Empty<DateTime>()));
+        var note = RecurringSchedule.BackfillNote(new[] { new DateTime(2026, 9, 30), new DateTime(2026, 8, 31) });
+        Assert.Contains("ย้อนหลัง 2 งวด", note);
+        Assert.Contains("31/08/2569", note);
     }
 }

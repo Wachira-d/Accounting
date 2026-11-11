@@ -15,6 +15,9 @@ public static class Round259AutopilotMigration
         """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "RdNextAttemptAt" timestamp NULL;""",
         // C-L1: ป้ายซื่อสัตย์ของผู้ขายที่ AI จับคู่ (แถวเดิม = false — ไม่รู้ว่ามาจาก AI จริงหรือนักเรียน ⇒ ไม่แต่ง "AI")
         """ALTER TABLE "OcrScanResults" ADD COLUMN IF NOT EXISTS "VendorMatchUsedAi" boolean NOT NULL DEFAULT false;""",
+        // ฝ่ายค้าน 259-D M2: กุญแจกันซ้ำ "รายการประจำ + งวด" ของสมุดรายวัน (ประทับใน INSERT เดียวกับใบสำคัญ)
+        $"""ALTER TABLE "JournalEntries" ADD COLUMN IF NOT EXISTS "RecurringRunKey" character varying({RecurringRunKey.MaxLength}) NULL;""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_JournalEntries_RecurringRunKey" ON "JournalEntries" ("CompanyId", "RecurringRunKey") WHERE "RecurringRunKey" IS NOT NULL;""",
         // B-L11 (คำตัดสิน 259-4-5): ค่าตั้งปิดงวดอัตโนมัติถูกลบจาก entity — คอลัมน์เดิม (NOT NULL จากสคีมาแรก) ต้องมี DEFAULT ไม่งั้น INSERT แถวค่าตั้งใหม่ล้ม ·
         // ฐานที่สร้างหลังรอบนี้ไม่มีคอลัมน์ ⇒ ตรวจก่อน (idempotent)
         """
@@ -28,5 +31,5 @@ public static class Round259AutopilotMigration
             END IF;
         END $$;
         """,
-    };
+    }.Concat(EtaxRdSubmission.LegacyStampRepairSql()).ToList();   // ฝ่ายค้าน 259-D H1 — หลังคอลัมน์คิว (idempotent)
 }

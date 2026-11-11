@@ -11,11 +11,12 @@ public static class OcrBlankLine
 {
     public const string RuleCode = "OCR-BLANK-LINE";
 
-    private static bool IsBlank(string? description, decimal? amount)
-        => string.IsNullOrWhiteSpace(description) && (amount is null || amount == 0m);
+    /// <summary>ฝ่ายค้าน 259-D L3: ยอดตามสูตรเดียวของโฟลเดอร์ OCR (<see cref="OcrDuplicateLineGuard.EffectiveAmount"/> — ราคา × จำนวนเมื่อยังไม่มียอด)</summary>
+    private static bool IsBlank(string? description, decimal? amount, decimal? unitPrice, decimal? quantity)
+        => string.IsNullOrWhiteSpace(description) && OcrDuplicateLineGuard.EffectiveAmount(amount, unitPrice, quantity) == 0m;
 
-    public static int Count(IEnumerable<(string? Description, decimal? Amount)> lines)
-        => lines.Count(l => IsBlank(l.Description, l.Amount));
+    public static int Count(IEnumerable<(string? Description, decimal? Amount, decimal? UnitPrice, decimal? Quantity)> lines)
+        => lines.Count(l => IsBlank(l.Description, l.Amount, l.UnitPrice, l.Quantity));
 
     public static string Message(int count)
         => $"มีบรรทัดรายการที่เพิ่มไว้แต่ยังว่าง {count} บรรทัด — กรอกรายละเอียด/จำนวน/ราคา หรือกด ✕ ลบบรรทัดนั้นที่หน้าตรวจสอบ แล้วกดสร้างเอกสารอีกครั้ง";

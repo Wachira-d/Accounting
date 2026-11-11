@@ -20,7 +20,9 @@ public interface IAccountingService
         BusinessType businessType, IndustryType industryType);
 
     // Journal Entries
-    Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy);
+    /// <param name="recurringRunKey">ฝ่ายค้าน 259-D M2: กุญแจกันซ้ำของรอบรายการประจำ (<c>Helpers/RecurringRunKey</c>) — <b>พารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request</b></param>
+    Task<JournalEntryResponse> CreateJournalEntryAsync(Guid companyId, CreateJournalEntryRequest request, string createdBy,
+        string? recurringRunKey = null);
     /// <summary>ด่านเข้มของใบสำคัญที่ผู้ใช้บันทึกเอง (ผังเปิดใช้/ไม่ใช่บัญชีคุม + สาขา/มิติ/โครงการของบริษัทนี้) — endpoint เรียกก่อน Create</summary>
     Task ValidateManualJournalAsync(Guid companyId, CreateJournalEntryRequest request);
     Task<JournalEntryResponse> GetJournalEntryAsync(Guid companyId, Guid entryId);

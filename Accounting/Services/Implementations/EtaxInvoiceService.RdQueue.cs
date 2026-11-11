@@ -15,7 +15,7 @@ namespace Accounting.Services.Implementations;
 public partial class EtaxInvoiceService
 {
     /// <summary>แจ้งทีมเมื่อนำส่งล้ม — แจ้งล้ม = log (เหตุอยู่บนแถว e-Tax + หน้า Autopilot แล้ว · ไม่ทำให้ผู้เรียกล้มซ้อน)</summary>
-    private async Task NotifyRdSubmitFailureAsync(EtaxInvoice etax, string reason, EtaxRdSubmission.Outcome outcome)
+    private async Task NotifyRdSubmitFailureAsync(EtaxInvoice etax, string reason, EtaxRdSubmission.Outcome outcome, DateTime documentDate)
     {
         if (_notify == null) return;
         try
@@ -26,7 +26,7 @@ public partial class EtaxInvoiceService
             await _notify.DispatchAsync(etax.CompanyId, Accounting.Models.Constants.NotificationEvents.EtaxRdSubmitFailed, new NotificationContext
             {
                 Title = EtaxRdSubmission.FailureTitle(number),
-                Message = EtaxRdSubmission.FailureMessage(reason, EtaxRdSubmission.DeadlineFor(etax.CreatedAt), outcome),
+                Message = EtaxRdSubmission.FailureMessage(reason, documentDate, DateTime.UtcNow, outcome),
                 ActionUrl = "/pages/etax.html",
                 EntityType = "EtaxInvoice",
                 EntityId = etax.Id,
@@ -54,25 +54,36 @@ public partial class EtaxInvoiceService
             .Select(e => e.Id)
             .Take(EtaxRdSubmission.BatchPerCompany)
             .ToListAsync(ct);
-        int ok = 0, failed = 0;
+        int ok = 0, failed = 0, attempted = 0;
+        string? stopped = null;
         foreach (var id in ids)
         {
             ct.ThrowIfCancellationRequested();
+            attempted++;
             try
             {
-                await SubmitToRevenueAsync(companyId, id);
+                // ฝ่ายค้าน 259-D H2/L6: ไม่แจ้งต่อฉบับ — สรุปครั้งเดียวท้ายรอบ
+                await SubmitToRevenueCoreAsync(companyId, id, notifyFailures: false);
                 ok++;
+            }
+            catch (EtaxRdConfigException cex)
+            {
+                // คีย์/URL ของกรมผิด ⇒ ฉบับต่อไปจะล้มแบบเดียวกัน — หยุดชุดที่เหลือ (ไม่ประทับฉบับที่ยังไม่ส่ง) · แจ้งครั้งเดียวในสรุป
+                failed++;
+                stopped = cex.Message;
+                _db.ChangeTracker.Clear();
+                break;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // เหตุอยู่บนแถว e-Tax แล้ว (SubmitToRevenueAsync ประทับ + แจ้งครั้งแรก) — นับในสรุป ไปฉบับถัดไป
+                // เหตุอยู่บนแถว e-Tax แล้ว (ตัวส่งประทับ) — นับในสรุป ไปฉบับถัดไป
                 failed++;
                 _logger.LogInformation("e-Tax {Id}: งานประจำเดือนนำส่งไม่สำเร็จ — {Reason}", id, ex.Message);
             }
             _db.ChangeTracker.Clear();
         }
         var deadline = EtaxRdSubmission.DeadlineFor(cutoff.AddDays(-1));
-        if (EtaxRdSubmission.JobSummary(ids.Count, ok, failed, deadline) is { } summary && _notify != null)
+        if (EtaxRdSubmission.JobSummary(attempted, ok, failed, deadline, stopped) is { } summary && _notify != null)
         {
             try
             {
@@ -90,8 +101,14 @@ public partial class EtaxInvoiceService
                 _logger.LogWarning(nex, "e-Tax batch summary notification failed for {Company}", companyId);
             }
         }
-        return new EtaxRdBatchResult(ids.Count, ok, failed);
+        return new EtaxRdBatchResult(attempted, ok, failed);
     }
+}
+
+/// <summary>ฝ่ายค้าน 259-D H2: นำส่งล้มเพราะการเชื่อมต่อกับกรมตั้งค่าผิด/ยังไม่ตั้ง (ไม่ใช่เนื้อเอกสาร) — งานประจำเดือนหยุดชุดที่เหลือเมื่อเจอ</summary>
+public sealed class EtaxRdConfigException : BusinessRuleException
+{
+    public EtaxRdConfigException(string message, string ruleCode) : base(message, ruleCode) { }
 }
 
 /// <summary>ผลงานนำส่งประจำเดือนของบริษัทหนึ่ง</summary>
