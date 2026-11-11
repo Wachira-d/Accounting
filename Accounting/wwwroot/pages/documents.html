@@ -2076,7 +2076,12 @@
         const hashDoc = (window.location.hash.match(/^#doc=([0-9a-fA-F-]{36})$/) || [])[1];
         const openDocId = params.get('openDoc') || params.get('id') || params.get('view') || hashDoc;
         if (openDocId) {
-          try { await this.detail(openDocId); }
+          try {
+            await this.detail(openDocId);
+            // รอบ 259 P5: ลิงก์ "บันทึกเป็นรับเงินลูกค้า" จากหน้าธนาคาร (เซิร์ฟเวอร์ประกอบลิงก์) — เปิดหน้ารับชำระที่เติมยอด/วันที่/อ้างอิง/บัญชี
+            // ของบรรทัดเงินเข้าไว้ ผู้ใช้ตรวจแล้วกดบันทึกเอง (ไม่มีการลงบัญชีอัตโนมัติ)
+            if (params.get('pay') === '1') await this._openPayFromLink(openDocId, params);
+          }
           catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }
         }
 
@@ -10632,7 +10637,7 @@
           const ok = await api.approveDocument(docId, { acknowledgeWarnings: false });
           // คำขอเจ้าของ 2026-10-12: ออก 50 ทวิ อัตโนมัติไม่สำเร็จ ⇒ บอกทันที (ทางอนุมัติทุกปุ่มของหน้านี้ผ่านตรงนี้)
           this._toastWhtCertFailed?.(ok);
-          return { approved: true };
+          return { approved: true, message: ok?.message };   // รอบ 259: ข้อความเซิร์ฟเวอร์ (เช่น จัดสรรเงินรอจัดสรรให้ใบที่ออกจากเงินก้อนนั้นแล้ว)
         } catch (e) {
           const data = e && e.status === 422 && e.body && e.body.data;
           if (!data || !Array.isArray(data.warnings) || !data.warnings.length) throw e;
@@ -10642,7 +10647,7 @@
                 try {
                   const ok2 = await api.approveDocument(docId, { acknowledgeWarnings: true });
                   this._toastWhtCertFailed?.(ok2);
-                  resolve({ approved: true });
+                  resolve({ approved: true, message: ok2?.message });
                 } catch (e2) { reject(e2); }
               },
               () => resolve({ approved: false, cancelled: true, warnings: data.warnings }));
@@ -11627,7 +11632,9 @@
             const r = await this._approveConfirmingWarnings(api, id);
             if (!r.approved) return;
             Layout.closeModal('detailModal');
-            Layout.toast('อนุมัติเอกสารสำเร็จ');
+            Layout.toast(r.message || 'อนุมัติเอกสารสำเร็จ', /—/.test(r.message || '') ? 'warning' : 'success', /—/.test(r.message || '') ? 12000 : 4000);
+            // รอบ 259: ลูกค้ามีเงินรอจัดสรรที่ใช้กับใบนี้ได้ ⇒ ถาม (ยอดมาจากเซิร์ฟเวอร์ — หน้าไม่มีสำเนากติกา)
+            await this._offerCustomerCredit(id);
             // ถ้าเอกสารฝั่งซื้อ (PV/PI/Expense) ที่มีบรรทัดลงผัง PPE → ระบบ
             // auto-register สินทรัพย์ NeedsReview=true. เด้ง modal ถามผู้ใช้
             // ให้เปิดไปเติมรายละเอียดทันที (กฎเหล็ก #2 + TFRS for NPAEs บทที่ 10).
@@ -13433,6 +13440,44 @@
           // ไม่มีสิทธิ์ดูฝั่งขาย (403) = ไม่มีปุ่ม · ความผิดพลาดอื่นต้องเห็น (ไม่งั้นปุ่มหายเงียบ)
           if (!/สิทธิ์/.test(e.message || '')) slot.innerHTML = ` <span class="text-xs text-gray-500" title="${Layout.esc(e.message || '')}">ตรวจเงินรอจัดสรรของลูกค้าไม่สำเร็จ</span>`;
         }
+      },
+      /** รอบ 259 — หลังอนุมัติใบขาย: เซิร์ฟเวอร์ตอบว่าลูกค้ามีเงินรอจัดสรรที่ใช้กับใบนี้ได้เท่าไร (0 = ไม่ถาม) */
+      async _offerCustomerCredit(docId) {
+        const api = Layout.api(); if (!api || !api.getCustomerCreditsForDocument) return;
+        let c = null;
+        try { c = (await api.getCustomerCreditsForDocument(docId))?.data; }
+        catch (e) {
+          if (!/สิทธิ์/.test(e.message || '')) Layout.toast('ตรวจเงินรอจัดสรรของลูกค้าไม่สำเร็จ: ' + (e.message || ''), 'warning', 7000);
+          return;
+        }
+        if (!c || !(c.totalUsable > 0)) return;
+        const ok = await Layout.confirm({ title: 'ลูกค้ามีเงินรอจัดสรร',
+          message: `ลูกค้ามีเงินรอจัดสรร ${Layout.money(c.totalUsable)} บาท — ใช้ตัดใบ ${c.documentNumber} นี้?`, okText: 'ใช้ตัดใบนี้' });
+        if (!ok) return;
+        this._ccForDoc = c;
+        this.openUseCredit();
+      },
+      /** รอบ 259 P5 — เปิดหน้ารับชำระของใบที่เปิดอยู่แล้วเติมค่าจากลิงก์ (ยอด · วันที่ · อ้างอิง · บัญชีธนาคาร) · ค่าที่เติม = ค่าของผู้ใช้ (userTouched) */
+      async _openPayFromLink(docId, params) {
+        const d = this._currentDoc;
+        if (!d || String(d.id) !== String(docId)) return;
+        await this.recordPayment(d.id, Number(d.balanceDue ?? 0), Number(d.withholdingTaxAmount ?? 0),
+          Number(d.payeeAmount ?? d.totalAmount ?? 0), d.currency || 'THB', Number(d.exchangeRate ?? 1),
+          d.documentType, Number(d.vatAmount ?? 0));
+        const set = (id, v) => {
+          const el = document.getElementById(id);
+          if (!el || v === null || v === undefined || v === '') return;
+          el.value = v;
+          el.dataset.userTouched = '1';
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        set('rpDate', params.get('payDate'));
+        set('rpRef', params.get('payRef'));
+        const bank = document.getElementById('rpBankOverride');
+        if (bank && params.get('payBank') && [...bank.options].some(o => o.value === params.get('payBank'))) set('rpBankOverride', params.get('payBank'));
+        set('rpAmount', params.get('payAmount'));
+        Layout.toast('เติมยอด/วันที่จากรายการเดินบัญชีแล้ว — ตรวจแล้วกดบันทึก (เงินเกินยอดค้าง ระบบให้เลือกผูกใบอื่น/เก็บเป็นเงินรอจัดสรร)', 'info', 9000);
       },
       openUseCredit() {
         const c = this._ccForDoc; if (!c) return;

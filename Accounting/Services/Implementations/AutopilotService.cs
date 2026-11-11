@@ -203,6 +203,9 @@ public class AutopilotService : IAutopilotService
         // รอบ 258-3 (F-M2 · F-M3): ช่วงที่เส้นบิลอัตโนมัติขาดแล้วเดิมไม่มีใครเห็นนอกหน้าย่อย
         list.AddRange(await BillingChainIssuesAsync(companyId, window, nowUtc, ct));
 
+        // รอบ 259 P6: ใบที่ต้องออกใบเสร็จ ([RECEIPT-PENDING]) · เงินรอจัดสรรค้างเกิน 30 วัน — ตัวอ่านเดียวกับหน้า "เงินรอจัดสรร"
+        list.AddRange(await CustomerCreditWorkQueue.AutopilotIssuesAsync(_db, companyId, nowUtc, ct));
+
         return list.OrderByDescending(i => i.At).ToList();
     }
 

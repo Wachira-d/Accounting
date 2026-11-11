@@ -4435,13 +4435,49 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   (`POST customer-credits/{id}/legacy/confirm` · สิทธิ์อนุมัติฝั่งขาย) หรือ **[ปิดรายการ]** (`…/legacy/close` · เหตุผลบังคับ · สิทธิ์ยกเลิกฝั่งขาย · ยอดเป็นศูนย์ **ไม่ลงบัญชี** · audit
   `CC-LEGACY-CONFIRM/CLOSE`) · หน้าตรวจความถูกต้องข้อมูล (`DataIntegritySections` หมวด `LegacyPaymentExcess`) แสดงแถวที่รอตรวจ + **เงินจ่ายเจ้าหนี้ส่วนเกินเดิมที่ลงกลุ่ม 114/11400**
   (ฝั่งจ่ายไม่มีรายการติดตาม — ให้ผู้ทำบัญชีย้ายด้วยสมุดรายวัน) · แถวที่ถูกนำไปตัดใบแล้วไม่แตะ (258-1-12)
-- **ยังไม่ทำ (แพ็กถัดไป)**: ออกใบที่ขาดจากเงินรอจัดสรร · ย้ายเป็นมัดจำ · คืนเงิน · ตัดเศษ (P4) · เสนอแยก/เกินในคิวเงินโอน + ปุ่มบนบรรทัดธนาคาร (P5) ·
-  แจ้งเตือนอายุเงินรอจัดสรร · พอร์ทัล (P6 ส่วนที่เหลือ) · คิวใบที่ต้องออกใบเสร็จใน Autopilot issues · สกุลต่างประเทศ
+- **รอบ 259 P4 — ทางออกของเงินรอจัดสรร** (`CustomerCreditService.Movements.cs` · ตัวตัดสินเดียว `Helpers/CustomerCreditMovementRules.Check` ใต้ล็อกแถวการชำระ ·
+  ตาราง `PaymentCreditMovements` (Kind = ชื่อ `PaymentCreditMovementKind`) · ยอดคงเหลือ = ยอดรับ − Σ จัดสรร − Σ ขาออกที่ตัดยอด (`Helpers/CustomerCreditLedger.RecomputeAsync`
+  สูตรเดียว `UnappliedCreditBalance.Compute`) · กันกดซ้ำ `IdempotencyKey` (unique ต่อบริษัท) + `ExpectedUnappliedBefore` · ด่านงวดบัญชีปิด · audit `CC-REFUND/CC-WRITEOFF/CC-TO-DEPOSIT/CC-TO-INVOICE/CC-MOVE-UNDO`):
+  - **ออกใบแจ้งหนี้ส่วนที่ขาด** (`POST customer-credits/{id}/issue-invoice` · สิทธิ์สร้างใบ): สร้าง**ร่าง** (ใบแจ้งหนี้/ใบกำกับ · ลูกค้ารายเดียวกัน · วันที่วันนี้ ·
+    บรรทัดเดียวยอด = ยอดที่ใช้ได้ ผู้ใช้แก้ก่อนอนุมัติ · ไม่ประทับวันรับชำระ) + **จอง** (`ToInvoice` — ไม่ตัดยอดคงเหลือ แต่ลด "ยอดที่ใช้ได้" ของทุกทางออกอื่น
+    ระหว่างที่ใบยังเป็นร่าง/รออนุมัติ `CustomerCreditMovementRules.HoldsUsable`) · ป้าย `[CC-HOLD]` ในหมายเหตุภายใน · **อนุมัติที่หน้าเอกสาร**
+    (`DocumentController.ApproveDocument` → `ICustomerCreditService.AfterDocumentApprovedAsync`) ⇒ `AllocateAsync` ด่านเดียวกับกดเอง (จุดความรับผิดตามเหตุผลของเงิน
+    `LateReceiptTaxPoint` — ค้างออกใบ = วันรับเงิน) · ล้ม = ข้อความในคำตอบ + ป้าย `[CC-HOLD-FAILED]` บนใบ · การจองถูกปล่อยเสมอ · ใบร่างถูกลบ/ปฏิเสธ/อนุมัติทางอื่น
+    = การจองหมดผลเอง (เงินกลับไปใช้ได้ — ปุ่ม "ใช้เงินรอจัดสรร" + คำถามหลังอนุมัติ) · ยกเลิกการจองเองได้ที่หน้าเงินรอจัดสรร
+  - **ย้ายเป็นเงินมัดจำ** (`POST …/to-deposit` · สร้าง + อนุมัติใบเสร็จ): จองยอดใต้ล็อก (`ToDeposit` ตัดยอดทันที) → `CreateDocumentAsync` ใบเสร็จ `IsDeposit` (ระบบมัดจำเดิม ·
+    โหมด VAT ตาม `DepositPolicyResolver` ม.78/1) **ขาเงินเข้า = `PaymentAccountId` ผังพักที่รับไว้จริง (Dr 21630 — ไม่ใช่เงินเข้าธนาคารซ้ำ)** ลงวันที่วันนี้ (ไม่ย้อน)
+    → อนุมัติ `SystemWorkflow` · ยอดไม่ตรง/อนุมัติไม่ได้ ⇒ ลบร่าง + ปล่อยการจอง + 409 (เงินอยู่ครบ) · เงินล่วงหน้า/ค้างออกใบที่รับคนละงวด ⇒ `[DEPOSIT-LATE-VAT]`
+    (`CustomerCreditMovementRules.DepositLateVatNote`) บนใบมัดจำ · บริษัทจด VAT + วันนี้อยู่ในงวด ภ.พ.30 ที่ยื่น/ล็อก = ปฏิเสธ · **ยกเลิกใบมัดจำ** (`VoidDocumentAsync`
+    ในธุรกรรมเดียวกัน `CustomerCreditLedger.ReleaseForVoidedDocumentAsync`) ⇒ ขาออกถูกปล่อย เงินกลับเป็นเงินรอจัดสรร
+  - **คืนเงินลูกค้า** (`POST …/refund` · อนุมัติฝั่งขาย + `Bank.Reconcile`): บัญชีธนาคาร (ผังที่ผูก — `DocumentMoneyChannel` ไม่ตกเงินสด) + หลักฐานการจ่ายบังคับ →
+    JE `CashPayments` **Dr ผังพัก / Cr ธนาคาร** อ้าง `{เลขการชำระ}#R{n}` (ไม่ขึ้นต้น `{เลข}/` — ยกเลิกการชำระไม่กลับเงินที่คืนไปแล้วเงียบ ๆ) + `BankAccount.CurrentBalance` ลด
+  - **ตัดเศษ** (`POST …/write-off` · อนุมัติฝั่งขาย): เฉพาะ**ยอดที่เหลือทั้งหมด** ≤ เพดานของบริษัท (`CompanySettings.CustomerCreditWriteOffCap` ตั้งต้น 1.00 · ตั้งได้ 0–20
+    ที่หน้าเงินรอจัดสรร `PUT customer-credits/settings` สิทธิ์ `CompanySettings.Edit`) → **Dr ผังพัก / Cr 54960 ผลต่างจากการปัดเศษ** `#W{n}`
+  - **ยกเลิกขาออก** (`POST …/movements/{id}/undo` · สิทธิ์ Void): คืนเงิน/ตัดเศษ = กลับ JE (+ ยอดธนาคาร) · การจอง = ปล่อย · ใบมัดจำ = ยกเลิกที่หน้าเอกสาร ·
+    **ยกเลิกการรับชำระที่ยังมีขาออกที่ตัดยอด = ปฏิเสธ 409 `CC-VOID-MOVEMENT`** (`CustomerCreditLedger.VoidBlockAsync` ต้นทาง `VoidPaymentAsync`)
+  - หน้า "เงินรอจัดสรร": ปุ่มของแถวจากเซิร์ฟเวอร์ (`CustomerCreditRow.Actions` · `Available`) · รายการขาออกในแถวย่อย · เทียบยอด 21630 ไม่เปลี่ยน (ขาออกลงทั้ง GL และยอดคงเหลือ)
+- **รอบ 259 P5 — เงินเข้าธนาคารที่ยังไม่จับคู่** (`GET customer-credits/bank-line/{lineId}/suggestions` · เห็นฝั่งขาย + `Bank.View` · **เสนอเท่านั้น**): ตัวตัดสินเดียว
+  `Helpers/BankReceiptSplitSuggestion.Suggest` — (ก) ใบค้าง 2–6 ใบของ**ลูกค้ารายเดียวที่ระบุตัวได้** (อ้างเลขเอกสาร/ชื่อผู้โอนตรง) รวมเท่ายอดเงินเข้าพอดี และเป็น**ชุดเดียว**
+  ในทุกลูกค้าที่ระบุตัวได้ (ค้นแบบมีขอบเขต `Helpers/SubsetSum` — ตัวเดียวของระบบ · `WhtCertMatchPolicy` ใช้ตัวนี้แล้ว) · (ข) อ้างเลขใบเดียวที่ยอดน้อยกว่าเงินเข้า ⇒ ใบนั้น + ส่วนเกิน ·
+  ไม่มีตัวระบุตัว/หลายชุด = ไม่เสนอ (บอกเหตุ) · ปุ่ม "บันทึกเป็นรับเงินลูกค้า" (`bank.html` บรรทัดเงินเข้า Unmatched) = ลิงก์ที่เซิร์ฟเวอร์ประกอบ
+  `documents.html?openDoc=&pay=1&payAmount=&payDate=&payBank=&payRef=` ⇒ เปิดหน้ารับชำระของใบแรกที่เติมค่าไว้ (ผู้ใช้กดบันทึกเอง · แผงเงินเกินเดิมจัดการส่วนเกิน) ·
+  ปิดหนี้อัตโนมัติยังมีแค่ "ยอดตรงใบเดียว + statement ของผู้อนุมัติ" (`BankReceiptAutoSettle.Decide` ไม่เปลี่ยน · DECISIONS 258-1)
+- **รอบ 259 P6** — Autopilot "เรื่องที่ระบบทำต่อไม่ได้" (`AutopilotService.IssuesAsync` → `Helpers/CustomerCreditWorkQueue.AutopilotIssuesAsync` ตัวอ่านเดียวกับหน้า):
+  `ReceiptPending` ใบที่ต้องออกใบเสร็จ (`[RECEIPT-PENDING]`) · `CustomerCreditAged` เงินรอจัดสรรค้างเกิน 30 วัน · **ใบเก่าก่อนรอบ 258** ที่ปิดด้วยแถวจัดสรรพร้อมรับเงินแต่ไม่มี
+  ใบเสร็จลูก (`CustomerCreditWorkQueue.LegacyMissingReceiptsAsync` · การชำระก่อนเวลา marker `r258-unapplied-backfill`) ⇒ การ์ดบนหน้าเงินรอจัดสรร + "ออกใบเสร็จทั้งหมด"
+  (คำขอละใบผ่าน `POST document/payments/{id}/receipt?documentId=` เดิม · ผลรายแถว) · ส่งออก `GET customer-credits/export?format=xlsx|csv` (`Helpers/CustomerCreditExport` →
+  `TabularExport`/MiniExcel — ตัวเลขเดียวกับหน้า) · หลังอนุมัติใบขายที่หน้าเอกสาร: ถามจาก `for-document` (เซิร์ฟเวอร์) "ลูกค้ามีเงินรอจัดสรร x บาท — ใช้ตัดใบนี้?" · ใบแจ้งยอดลูกค้า
+  แสดงเงินรอจัดสรรแยกบรรทัดอยู่แล้ว (รอบ 258)
+- **ยังไม่ทำ**: พอร์ทัลลูกค้าแสดงเงินรอจัดสรร (หน้าพอร์ทัลเป็นของทีม C รอบ 259 — ข้อมูลพร้อมที่ `CustomerCreditQuery.UnappliedForContactAsync`) · คีย์แจ้งเตือนกระดิ่ง
+  `customer_credit.unallocated_aging` (ขึ้นแล้วใน Autopilot issues) · ฝั่งจ่ายเจ้าหนี้ · สกุลต่างประเทศ · ใบแจ้งหนี้ส่วนที่ขาดหลายบรรทัด (ผู้ใช้แก้ในร่าง)
 - **ด่านอื่นจากฝ่ายค้าน** (`erp-review/2026-11-11/review-258-customer-credit.md`): M2 เงินเกินพร้อมบรรทัดปรับส่วนต่าง = ปฏิเสธ (`RefuseExcess(hasAdjustments)`) + ยอดเงินเกินที่หน้าจอแสดงต้องตรงกับที่
   เซิร์ฟเวอร์คิด (`CreatePaymentRequest.ExpectedExcess` → `PaymentExcessPlan.ExpectedExcessMismatch`) · L1 ข้อความ "ชำระร่วมกับเอกสารอื่น" ชี้ทาง "ยกเลิกการจัดสรร" · L3 หมายเหตุรายงานอายุลูกหนี้บอกยอดของ
   ลูกค้าที่ไม่อยู่ในตาราง
 - เทสต์ `CustomerCreditRound258Tests` · `Db/CustomerCreditDbTests` (H1 สองทิศ · H2 ใบเสร็จรายใบ + e-Tax · ภ.พ.30 ยื่นแล้ว · ภาษีถูกหัก · M1–M7 · ยกเลิกใบ/การชำระ · สิทธิ์ 403/404) ·
   `tools/required_call_site_check.py` (กติกา R258) · `write_permission_gate_check` เฝ้า `CustomerCreditController` · Last verified `commit 78e3f30c` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+- เทสต์รอบ 259 `CustomerCreditRound259Tests` (ตัวตัดสินขาออก · สูตร · การจอง · ม.78/1 ใบมัดจำ · SubsetSum · ข้อเสนอบรรทัดเงินเข้า) · `Db/CustomerCreditRound259DbTests`
+  (คืนเงิน + บล็อกยกเลิกการชำระ + ยกเลิกการคืน · เกินยอดที่ใช้ได้ · ตัดเศษ/กดซ้ำ · อนุมัติแล้วจัดสรรเอง/ล้มดัง · ยกเลิกใบมัดจำ · คิว Autopilot/ใบเก่า) · กติกา R259 ใน
+  `tools/required_call_site_check.py` · Last verified commit <เติมในคอมมิตตามหลัง> — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 3.5 Void / Cancel
 - **Method**: `VoidDocumentAsync` (`:1959`) — **cascade 7+ขั้น**:
@@ -8710,6 +8746,7 @@ _Last verified against codebase: 2026-11-11 (รอบ 257 ปิดท้าย
 
 _Last verified against codebase: 2026-11-11 (รอบ 258 — §3.4b เงินรอจัดสรร: ผัง 21630 + ตัวตัดสินเงินเกิน/การจัดสรร · จัดสรรทีหลัง/ยกเลิก · หน้ารับชำระ/หน้าเงินรอจัดสรร/ปุ่มบนใบ · §2.12g-0 ระงับทวงเมื่อเงินรอจัดสรรพอปิดใบ · อายุลูกหนี้/ใบแจ้งยอดแสดงแยกบรรทัด · P-1/P-2 · backfill) · commit 24a8df4a — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _Last verified against codebase: 2026-11-11 (รอบ 258 ฝ่ายค้าน — §3.4b: จุดความรับผิดตามเหตุผลของเงิน (H1) · ใบเสร็จ/ใบกำกับรายใบ + คิว (H2) · ขั้นภาษีในธุรกรรม (M6) · ด่านบางส่วนของใบมี VAT ฝั่งเซิร์ฟเวอร์ (M5) · รายการก่อนรอบ 258 ต้องตรวจ (M4) · กันกดซ้ำ (M7) · §2.12g-0 แผนระงับทวงเก่าสุดก่อน (M1)) · commit 78e3f30c — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก A — §3.4b เงินรอจัดสรรต่อจนจบ: ออกใบส่วนที่ขาด (จอง → อนุมัติแล้วจัดสรรเอง) · ย้ายเป็นมัดจำ (Dr 21630) · คืนเงิน · ตัดเศษ · ยกเลิกขาออก/บล็อกยกเลิกการชำระ · ข้อเสนอบรรทัดเงินเข้า · Autopilot issues · ใบเก่าไม่มีใบเสร็จ · ส่งออก) · commit <เติมในคอมมิตตามหลัง> — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 1: ด่านเขียนตารางส่ง/ตารางแจ้งเตือน · บ้านเดียวของตารางแจ้งเตือน · ผูก LINE พนักงานทางเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 24b3680e)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 2: คิวอีเมลค้างกำลังส่ง · กฎตามวันย้อนเก็บแบบมีขอบเขต — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 54c83725)_

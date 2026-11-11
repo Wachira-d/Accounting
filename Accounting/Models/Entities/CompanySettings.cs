@@ -388,6 +388,10 @@ public class CompanySettings : TenantEntity
     // Helpers/ReceiptIssuePolicy ตัวเดียว ห้ามเช็ค enum เองในแต่ละไฟล์
     public ReceiptIssueMode ReceiptIssueMode { get; set; } = ReceiptIssueMode.Combined;
 
+    // รอบ 259 P4 (DECISIONS 259-1-4): เพดาน "ตัดเศษเงินรอจัดสรร" ต่อรายการ (บาท) — เศษคงเหลือ ≤ ค่านี้ตัดเข้าผลต่างจากการปัดเศษได้ ·
+    // ผู้อ่าน: Helpers/CustomerCreditMovementRules.Check (ผ่าน CustomerCreditService.WriteOffAsync) · แก้ที่หน้า "เงินรอจัดสรร" · ค่าตั้งต้น 1.00
+    public decimal CustomerCreditWriteOffCap { get; set; } = 1.00m;
+
     // ── รูปแบบกระดาษหลักฐานรับเงินต่อกรณี (รอบ 203 · คำถามเจ้าของ 2026-10-09) ──
     // แกนที่สาม: ReceiptIssueMode คุม "ออกกี่ใบ" · UnifyTaxInvoiceNumberSeries คุม "เลขชุดไหน" · อันนี้คุม
     // "กระดาษประกาศตัวเป็นอะไร" (ใบเสร็จเปล่า / ใบเสร็จ+ใบกำกับเต็มรูป / +อย่างย่อ / หลักฐานรับชำระ) ต่อกรณี

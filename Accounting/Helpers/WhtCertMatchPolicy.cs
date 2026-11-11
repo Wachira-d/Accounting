@@ -108,9 +108,10 @@ public static class WhtCertMatchPolicy
 
         // K4 — subset ที่รวมได้ภาษีบนใบ (ใกล้วันที่บนใบก่อน · ไม่เกิน MaxSubsetRows แถว)
         var ordered = pool.OrderBy(Dist).ThenBy(c => c.CreditId).Take(MaxSubsetRows).ToList();
-        var found = new List<List<Candidate>>();
-        FindSubsets(ordered, 0, new List<Candidate>(), 0m, tax, found);
-        var multi = found.Where(s => s.Count >= 2).ToList();
+        // รอบ 259 P5: อัลกอริทึม subset ตัวเดียวของระบบ (Helpers/SubsetSum) — พฤติกรรมเดิม: ≥ 2 แถว · หยุดที่ 2 ชุด · ไม่จำกัดงบ (≤ 12 แถว)
+        var multi = SubsetSum.Find(ordered.Select(c => c.Outstanding).ToList(), tax, Tolerance, minCount: 2, maxCount: int.MaxValue,
+                maxSolutions: 2, nodeBudget: int.MaxValue)
+            .Solutions.Select(ix => ix.Select(i => ordered[i]).ToList()).ToList();
         if (multi.Count == 1)
             return new(WhtCertMatchLevel.Exact, multi[0].Select(c => new Allocation(c.CreditId, R(c.Outstanding))).ToList(),
                 $"ใบเดียวครอบ {multi[0].Count} รายการ — ยอดรวมตรงกับภาษีบนใบ");
@@ -126,24 +127,6 @@ public static class WhtCertMatchPolicy
 
         return new(WhtCertMatchLevel.Ambiguous, Array.Empty<Allocation>(),
             "ยอดภาษีบนใบไม่ตรงกับรายการหรือชุดรายการใดของผู้จ่ายรายนี้ — เลือกเอกสารที่ใบนี้ครอบเอง");
-    }
-
-    /// <summary>ค้นทุกชุดที่รวมได้ <paramref name="target"/> ±Tolerance — หยุดที่ 2 ชุด (พอบอกว่ากำกวมแล้ว)</summary>
-    private static void FindSubsets(List<Candidate> items, int start, List<Candidate> pick, decimal sum, decimal target, List<List<Candidate>> found)
-    {
-        if (found.Count >= 2) return;
-        if (pick.Count >= 2 && Math.Abs(sum - target) <= Tolerance)
-        {
-            found.Add(new List<Candidate>(pick));
-            return;
-        }
-        if (sum > target + Tolerance) return;
-        for (var i = start; i < items.Count && found.Count < 2; i++)
-        {
-            pick.Add(items[i]);
-            FindSubsets(items, i + 1, pick, sum + items[i].Outstanding, target, found);
-            pick.RemoveAt(pick.Count - 1);
-        }
     }
 
     private static decimal R(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
