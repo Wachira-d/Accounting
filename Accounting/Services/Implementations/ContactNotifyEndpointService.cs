@@ -93,7 +93,7 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
             }
             if (request?.Topics != null)
             {
-                var (parsed, topicProblem) = NotifyTopics.FromRequest(request.Topics, allowEmpty: false);
+                var (parsed, topicProblem) = NotifyTopics.FromRequest(request.Topics, allowEmpty: false, row.Kind);   // รอบ 259 (A-M4): LINE ไม่รับเรื่องที่ไม่มีเส้นส่ง
                 if (topicProblem != null) throw new BusinessRuleException(topicProblem, "NOTIFY-CONTACT-TOPIC", 400);
                 row.TopicsJson = NotifyTopics.Serialize(parsed!);
             }

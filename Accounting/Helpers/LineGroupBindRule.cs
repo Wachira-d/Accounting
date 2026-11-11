@@ -72,6 +72,16 @@ public static class LineGroupBindRule
         => $"ข้าพเจ้ายืนยันว่าสมาชิกทุกคนในกลุ่ม LINE \"{(string.IsNullOrWhiteSpace(groupName) ? "กลุ่มนี้" : groupName!.Trim())}\" มีสิทธิ์เห็นเอกสารของ "
            + $"{(string.IsNullOrWhiteSpace(contactName) ? "ผู้ติดต่อนี้" : contactName!.Trim())} และบอทจะประกาศการผูกในกลุ่มทันที";
 
+    /// <summary>รอบ 259 (A-M7): ข้อความหลังผูกกลุ่ม — ตามผลประกาศในกลุ่มจริง · null = ประกาศสำเร็จ (ผู้เรียกใช้ข้อความสำเร็จปกติ)</summary>
+    public static string? AnnounceOutcome(bool announced, string? reason)
+        => announced ? null
+            : "ผูกกลุ่มแล้ว แต่บอทประกาศในกลุ่มไม่สำเร็จ" + (string.IsNullOrWhiteSpace(reason) ? "" : " — " + reason!.Trim())
+              + " · สมาชิกในกลุ่มยังไม่เห็นข้อความยืนยัน: ตรวจว่าบอทยังอยู่ในกลุ่ม/OA ยังใช้งานได้ แล้วแจ้งสมาชิกเอง (เอกสารครั้งถัดไปจะส่งตามปกติถ้าช่องใช้ได้)";
+
+    /// <summary>ข้อความตอบกลับหลังผูกกลุ่มสำเร็จ (คอนโทรลเลอร์) — ตามผลประกาศ</summary>
+    public static string ConfirmMessage(string? actionNote)
+        => string.IsNullOrWhiteSpace(actionNote) ? "ผูกกลุ่ม LINE แล้ว — บอทประกาศในกลุ่มแล้ว" : actionNote!;
+
     public static class Replies
     {
         public const string Join = "สวัสดีครับ — บอทพร้อมส่งการแจ้งเอกสารเข้ากลุ่มนี้ เมื่อผู้ดูแลบริษัทผูกกลุ่มกับผู้ติดต่อแล้ว\n"

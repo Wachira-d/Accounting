@@ -254,6 +254,9 @@ public class CompanySettings : TenantEntity
     /// secret ยังเป็นของ OA อื่น · ระบบไม่ทับค่าที่จำไว้ + ไม่บันทึกการสลับ · หน้า ตั้งค่า → LINE แสดงปัญหา · ล้างเมื่อเปลี่ยน token/secret หรือ webhook ตรงกลับมา</summary>
     public string? LineWebhookDestinationMismatch { get; set; }
     public bool LineConfigured { get; set; } = false;
+    /// <summary>รอบ 259 (A-M5): เวลาที่ webhook ของ OA บริษัทได้รับคำขอจาก LINE ที่ลายเซ็นผ่าน + บอทตรงล่าสุด (ระบบประทับเอง · ขยับไม่ถี่กว่า
+    /// <c>LineWebhookHealth.StampEvery</c>) · null = ยังไม่เคย ⇒ ความพร้อมบอก "ยังไม่เคยได้รับ event จาก LINE" (ผูก/หยุด/บล็อกทำงานไม่ได้)</summary>
+    public DateTime? LineLastWebhookAt { get; set; }
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }
 

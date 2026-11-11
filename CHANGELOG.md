@@ -6961,3 +6961,10 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส�
 _รอบ 258 แพ็ก เส้นบิลอัตโนมัติจนจบ ชุดแก้ฝ่ายค้าน (review-258-billing-chain.md · คำตัดสิน 258-3-10…14): M1 กลุ่มซ่อนยอดไม่ได้ปุ่ม PDF · M2 e-Tax by Email: LINE อย่างเดียวหยุด + อีเมลก่อน LINE ·
 M3 คำเตือน ม.54 · M4 เลือกบัญชี/วิธีจ่าย · M5 ข้อความแหล่ง + ตรวจรายการเดินบัญชี · M6 Db test · L1–L6 (scope · 409 · สิทธิ์ · ลิงก์ตายตามปลายทาง · audit · ใบอย่างย่อ) · migration คอลัมน์ SourceChannel_
 _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส้นบิลอัตโนมัติจนจบ — §2.12g-258c ชุดแก้ฝ่ายค้าน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1139bb5f)_
+
+_รอบ 259 แพ็ก B ส่งทาง LINE ให้ครบ (team-A-line M4–M8 · L1–L7 · team-E E-H3/E-M6 · คำตัดสิน 259-2-1…259-2-6): ทวง 50 ทวิ ทาง LINE (ค่าตั้งเดิมตัวเดียว · ช่องทางจาก
+`LineWhtCertCard.Channels` · แถวคิว `WhtCertRequest` + ลิงก์ต่อแถว `TokenForLineQueue`) · ปุ่ม 💬 ส่งทาง LINE (`DocumentLineSendService` · trigger `ManualSend`) + ลิงก์ชำระใน
+อีเมลที่ส่งเอง · ชนิดที่ส่งได้จากเซิร์ฟเวอร์ · `NotifyTopics.LineUnsupportedReason` + migration ตัด "ลิงก์เซ็น" จากปลายทาง LINE · `LineLastWebhookAt` + `LineOaHealth.Rows` ·
+ทดสอบส่งบอกเหตุจริง · ประกาศผูกกลุ่มตามผลจริง · ตอบรับรูป/ไฟล์ในแชต (จำกัดต่อผู้ใช้) · ลบ `DocumentLineDeliveryService` · Webhook URL ที่เดียว · ส่งซ้ำแถวที่ถอยไปอีเมลถามก่อน ·
+ตัวทำงานคิวแยก try ต่อขั้น · ชื่อหน้า "ส่งเอกสารอัตโนมัติ (อีเมล/LINE)"_
+_Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก B ส่งทาง LINE ให้ครบ — §2.12g-259: ทวง 50 ทวิ ทาง LINE (การ์ด + ลิงก์อัปโหลดต่อแถว) · 💬 ส่งทาง LINE เองจากหน้าเอกสาร + ลิงก์ชำระในอีเมลที่ส่งเอง · เรื่องที่ LINE ไม่ส่งติ๊กไม่ได้ + migration · ความพร้อม OA (webhook เข้าจริง · Basic ID · ผลทดสอบ · เหตุจริงเมื่อทดสอบล้ม) · ประกาศผูกกลุ่มตามผลจริง · ตอบรับรูป/ไฟล์ในแชต · ลบ DocumentLineDeliveryService — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

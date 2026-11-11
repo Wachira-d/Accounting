@@ -65,6 +65,11 @@ public static class WhtCertUploadLinkPolicy
     public static string TokenForQueue(byte[] key, Guid companyId, Guid emailQueueId)
         => Convert.ToHexString(HMACSHA256.HashData(key, System.Text.Encoding.UTF8.GetBytes($"whtq:{companyId:N}:{emailQueueId:N}"))).ToLowerInvariant();
 
+    /// <summary>รอบ 259 (258-3-6): token ของลิงก์บนการ์ด LINE ทวงหนึ่งใบ — HMAC(กุญแจเดียวกัน, ป้าย "whtl" + บริษัท + แถวคิว LINE) ·
+    /// คนละป้ายกับอีเมล (<see cref="TokenForQueue"/>) ⇒ id ของคิวสองตารางไม่มีทางได้ token เดียวกัน · ลองส่งใหม่ = URL เดิม</summary>
+    public static string TokenForLineQueue(byte[] key, Guid companyId, Guid lineQueueId)
+        => Convert.ToHexString(HMACSHA256.HashData(key, System.Text.Encoding.UTF8.GetBytes($"whtl:{companyId:N}:{lineQueueId:N}"))).ToLowerInvariant();
+
     /// <summary>ลิงก์ใช้ได้ไหม (ตัดสินสดทุกครั้ง) — ไม่ถูกเพิกถอน · ยังไม่หมดอายุ</summary>
     public static bool Usable(DateTime expiresAtUtc, DateTime? revokedAtUtc, DateTime nowUtc)
         => revokedAtUtc == null && expiresAtUtc > nowUtc;

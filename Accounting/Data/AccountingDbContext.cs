@@ -2667,6 +2667,9 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => new { x.CompanyId, x.ContactId }).HasDatabaseName("IX_WhtCertUploadLinks_Contact");
             e.HasIndex(x => new { x.CompanyId, x.EmailQueueId }).IsUnique()
                 .HasFilter("\"EmailQueueId\" IS NOT NULL").HasDatabaseName("UX_WhtCertUploadLinks_Queue");
+            // รอบ 259 (258-3-6): หนึ่งลิงก์ต่อการ์ด LINE ทวง (Helpers/Round259LineMigration)
+            e.HasIndex(x => new { x.CompanyId, x.LineQueueId }).IsUnique()
+                .HasFilter("\"LineQueueId\" IS NOT NULL").HasDatabaseName("UX_WhtCertUploadLinks_LineQueue");
             e.Property(x => x.TokenHash).HasMaxLength(64);
             e.Property(x => x.Source).HasMaxLength(30);
             e.HasQueryFilter(x => !x.IsDeleted);

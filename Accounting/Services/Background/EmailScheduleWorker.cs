@@ -35,17 +35,30 @@ public class EmailScheduleWorker : BackgroundService
                 using var scope = _services.CreateScope();
                 var svc = scope.ServiceProvider.GetRequiredService<IEmailScheduleService>();
 
-                var sent = await svc.ProcessPendingQueueAsync(stoppingToken);
-                if (sent > 0)
-                    _logger.LogInformation("EmailScheduleWorker: ส่ง {Count} ฉบับสำเร็จ", sent);
+                // รอบ 259 (A-L7): คิวอีเมลโยน ⇒ เดิมทั้งรอบหลุด (คิว LINE/งานหลังรับชำระไม่ถูกเรียก) — แยก try ต่อขั้น · ล้มดังใน log ระดับ Error
+                try
+                {
+                    var sent = await svc.ProcessPendingQueueAsync(stoppingToken);
+                    if (sent > 0)
+                        _logger.LogInformation("EmailScheduleWorker: ส่ง {Count} ฉบับสำเร็จ", sent);
+                }
+                catch (Exception emailEx) when (emailEx is not TaskCanceledException && emailEx is not OperationCanceledException)
+                {
+                    _logger.LogError(emailEx, "EmailScheduleWorker: คิวอีเมลรอบนี้ล้ม — ไปต่อคิว LINE/งานหลังรับชำระ");
+                }
 
                 // รอบ 254 WP-11 L2: คิว LINE ถึงผู้ติดต่อ — scope ของตัวเอง (แถวหนึ่งพังไม่ลากคิวอีเมล) · จองแถวด้วย SKIP LOCKED (หลายเครื่องไม่ส่งซ้ำ)
-                using (var lineScope = _services.CreateScope())
+                try
                 {
+                    using var lineScope = _services.CreateScope();
                     var lineQueue = lineScope.ServiceProvider.GetRequiredService<IContactLineQueueService>();
                     var lineSent = await lineQueue.ProcessPendingAsync(stoppingToken);
                     if (lineSent > 0)
                         _logger.LogInformation("EmailScheduleWorker: ส่ง LINE ถึงผู้ติดต่อ {Count} ข้อความ", lineSent);
+                }
+                catch (Exception lineEx) when (lineEx is not TaskCanceledException && lineEx is not OperationCanceledException)
+                {
+                    _logger.LogError(lineEx, "EmailScheduleWorker: คิว LINE รอบนี้ล้ม — ไปต่องานหลังรับชำระ");
                 }
 
                 // รอบ 241: งานหลังรับชำระ (ออก/ส่งใบเสร็จ) — scope ของตัวเอง (แถวหนึ่งพังไม่ลากคิวอีเมล) · จองแถวด้วย SKIP LOCKED (หลายเครื่องไม่ทำซ้ำ)
