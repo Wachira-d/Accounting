@@ -126,6 +126,36 @@ public static class PartnerExchangeRules
         _ => "การเชื่อมนี้ไม่ได้ใช้งานอยู่ — ไม่มีอะไรให้ระงับ",
     };
 
+    /// <summary>ฝ่ายค้าน LOW (รอบ 257 ชุด 3): เชิญซ้ำได้ไหม — ถูกปฏิเสธ/ถูกระงับ ต้องพ้นช่วงพัก <paramref name="cooldownDays"/> วันก่อน (กันสแปม §6.3 · เดิมระงับแล้วเชิญซ้ำได้ทันที) ·
+    /// ไม่รู้เวลา (แถวเก่าก่อนมีคอลัมน์) = ได้ · สถานะอื่น = ไม่ใช่เรื่องของตัวนี้ (false)</summary>
+    public static bool ReinviteAllowed(TradingPartnershipStatus status, DateTime? rejectedAt, DateTime? suspendedAt, DateTime nowUtc, int cooldownDays) => status switch
+    {
+        TradingPartnershipStatus.Rejected => rejectedAt == null || rejectedAt <= nowUtc.AddDays(-cooldownDays),
+        TradingPartnershipStatus.Suspended => suspendedAt == null || suspendedAt <= nowUtc.AddDays(-cooldownDays),
+        _ => false,
+    };
+
+    /// <summary>ต้นทางหนึ่งใบในสายของใบซื้อ (ฝ่ายค้าน LOW: ใบแทนหลังต้นทางถูกยกเลิก)</summary>
+    public readonly record struct SourceLiveness(Guid Id, bool Voided, Guid? Replaces);
+
+    /// <summary>มีต้นทางที่ถูกยกเลิก<b>และยังไม่มีใบแทนที่มีผล</b>ในชุดไหม — ใบแทน = ต้นทางที่มีผลซึ่งสาย <c>ReplacesDocumentId</c> (≤ 6 ชั้น ภายในชุด) ถึงใบที่ถูกยกเลิก ·
+    /// true ⇒ ใบซื้อติด SourceVoided · false ⇒ ไม่มีต้นทางยกเลิก หรือทุกใบที่ยกเลิกมีใบแทนแล้ว (ตัวตัดสินเดียวของเส้นแนบหลักฐาน + ตรวจต้นทางสด)</summary>
+    public static bool AnyUnreplacedVoided(IReadOnlyCollection<SourceLiveness> sources)
+    {
+        var byId = sources.GroupBy(x => x.Id).ToDictionary(g => g.Key, g => g.First());
+        var replaced = new HashSet<Guid>();
+        foreach (var live in sources.Where(x => !x.Voided))
+        {
+            var cur = live.Replaces;
+            for (var depth = 0; depth < 6 && cur is Guid id; depth++)
+            {
+                replaced.Add(id);
+                cur = byId.TryGetValue(id, out var next) ? next.Replaces : null;
+            }
+        }
+        return sources.Any(x => x.Voided && !replaced.Contains(x.Id));
+    }
+
     /// <summary>ข้อความหลังระงับ (ผู้ใช้เห็น) — บอกผลและทางกลับ</summary>
     public const string SuspendedMessage =
         "ระงับการเชื่อมแล้ว — หยุดส่งเอกสาร/สร้างใบซื้อร่าง/ส่ง 50 ทวิ เข้าระบบของกันและกัน · เอกสารที่ส่งไปแล้วยังอยู่ · เชื่อมใหม่ได้ด้วยการส่งคำเชิญอีกครั้ง";
@@ -149,17 +179,23 @@ public static class PartnerExchangeRules
 
     // ═══════════ รอบ 257 ชุด 3 (D-M2): คัดลอกใบขายเป็นใบซื้อร่าง ═══════════
 
-    /// <summary>คัดลอกใบของผู้ขายเป็นใบซื้อร่าง "ครบเท่าต้นฉบับ" ได้ไหม · null = ได้ (คัดลอกส่วนลดหัวใบ/บรรทัด · หน่วย · ภาษีหัก ณ ที่จ่าย · ผลต่างปัดเศษ) ·
+    /// <summary>บรรทัดหนึ่งของใบต้นทางที่ตัวตรวจการคัดลอกใช้ (รอบ 257 ชุด 3 ฝ่ายค้าน M4: เพิ่มจำนวน/ราคา/ส่วนลด/VAT เพื่อตรวจราคารวม VAT)</summary>
+    public readonly record struct CopyLine(decimal Qty, decimal UnitPrice, decimal Discount, decimal Amount, decimal Vat, decimal Wht);
+
+    /// <summary>คัดลอกใบของคู่ค้าเป็นเอกสารปลายทาง "ครบเท่าต้นฉบับ" ได้ไหม (ใบซื้อร่าง · ใบสั่งซื้อ/ใบแจ้งหนี้ปลายทาง — ตัวตรวจเดียว) · null = ได้
+    /// (คัดลอกส่วนลดหัวใบ/บรรทัด · หน่วย · ภาษีหัก ณ ที่จ่าย · ผลต่างปัดเศษ · รูปแบบราคารวม VAT) ·
     /// ข้อความ = ไม่สร้าง (เหตุบนแถวกล่องเข้า) — ช่องที่ต้องผูกกับข้อมูลของผู้รับเอง (ใบมัดจำ · ผังส่วนลดหลัง VAT · ผู้จ่ายออกภาษีแทน) ไม่เดา ·
-    /// ยอดบรรทัดไม่รวมเท่าหัวใบ (สัญญา <c>SubTotal = Σ บรรทัด + ผลต่างปัดเศษ</c> · <c>Total = ฐาน + VAT − ภาษีหัก</c>) = ไม่คัดลอกใบที่เพี้ยน</summary>
+    /// ยอดบรรทัดไม่รวมเท่าหัวใบ (สัญญา <c>SubTotal = Σ บรรทัด + ผลต่างปัดเศษ</c> · <c>Total = ฐาน + VAT − ภาษีหัก</c>) = ไม่คัดลอกใบที่เพี้ยน ·
+    /// ฝ่ายค้าน M4: ใบราคารวม VAT (ไม่มีส่วนลดท้ายบิล) ⇒ จำนวน × ราคา − ส่วนลด ต้องเท่า ฐาน + VAT ของบรรทัด (เปิดแก้แล้วบันทึกที่ฝั่งผู้รับจะได้ยอดเดิม)</summary>
     public static string? CopyProblem(decimal subTotal, decimal vat, decimal wht, decimal total, decimal rounding,
-        decimal depositBaseDeducted, decimal whtPayerBorne, decimal postVatDeduction, IReadOnlyCollection<(decimal Amount, decimal Wht)> lines)
+        decimal depositBaseDeducted, decimal whtPayerBorne, decimal postVatDeduction, IReadOnlyCollection<CopyLine> lines,
+        bool pricesIncludeVat = false, decimal billDiscountAmount = 0m)
     {
-        const string P = "ไม่ได้สร้างใบซื้อร่าง: ";
-        if (depositBaseDeducted != 0m) return P + "ใบของผู้ขายหักมัดจำที่ออกใบกำกับแล้ว — บันทึกเองพร้อมอ้างใบมัดจำของท่าน";
-        if (whtPayerBorne != 0m) return P + "ผู้ขายระบุให้ผู้จ่ายออกภาษีหัก ณ ที่จ่ายแทน — บันทึกเองพร้อมเลือกประเภท 50 ทวิ";
-        if (postVatDeduction != 0m) return P + "ใบของผู้ขายมีส่วนลดหลังคิด VAT — บันทึกเองพร้อมผังส่วนลด";
-        if (lines.Count == 0) return P + "ใบของผู้ขายไม่มีรายการสินค้า/บริการ";
+        const string P = "ไม่ได้สร้างเอกสารจากคู่ค้า: ";
+        if (depositBaseDeducted != 0m) return P + "ใบของคู่ค้าหักมัดจำที่ออกใบกำกับแล้ว — บันทึกเองพร้อมอ้างใบมัดจำของท่าน";
+        if (whtPayerBorne != 0m) return P + "คู่ค้าระบุให้ผู้จ่ายออกภาษีหัก ณ ที่จ่ายแทน — บันทึกเองพร้อมเลือกประเภท 50 ทวิ";
+        if (postVatDeduction != 0m) return P + "ใบของคู่ค้ามีส่วนลดหลังคิด VAT — บันทึกเองพร้อมผังส่วนลด";
+        if (lines.Count == 0) return P + "ใบของคู่ค้าไม่มีรายการสินค้า/บริการ";
         var sumLines = lines.Sum(l => l.Amount);
         if (Math.Abs(sumLines + rounding - subTotal) > 0.005m)
             return P + $"ยอดรายการรวม {sumLines:#,##0.00} ไม่เท่ายอดก่อนภาษีบนหัวใบ {subTotal:#,##0.00} — บันทึกเองจากต้นฉบับ";
@@ -168,6 +204,9 @@ public static class PartnerExchangeRules
             return P + $"ภาษีหัก ณ ที่จ่ายรายบรรทัดรวม {sumWht:#,##0.00} ไม่เท่าบนหัวใบ {wht:#,##0.00} — บันทึกเองจากต้นฉบับ";
         if (Math.Abs(WhtGrossUp.PayeeTotal(subTotal, vat, wht, 0m) - total) > 0.005m)
             return P + $"ยอดรวม {total:#,##0.00} ไม่เท่า ฐาน + VAT − ภาษีหัก ณ ที่จ่าย — บันทึกเองจากต้นฉบับ";
+        if (pricesIncludeVat && billDiscountAmount == 0m
+            && lines.Any(l => Math.Abs(Math.Round(l.Qty * l.UnitPrice, 2, MidpointRounding.AwayFromZero) - l.Discount - (l.Amount + l.Vat)) > 0.02m))
+            return P + "ใบราคารวม VAT ที่ราคาต่อหน่วยไม่ตรงยอดบรรทัด (จำนวน × ราคา − ส่วนลด ≠ ฐาน + VAT) — บันทึกเองจากต้นฉบับ";
         return null;
     }
 
@@ -202,8 +241,40 @@ public static class PartnerInputVatEvidence
     public const string AwaitingTaxInvoice = "AwaitingTaxInvoice";
 
     public const string AwaitingTaxInvoiceMessage =
-        "ต้นทางเป็นใบแจ้งหนี้ (ยังไม่ใช่ใบกำกับภาษี) — ยืนยันต้นฉบับใบกำกับไม่ได้ · เมื่อผู้ขายออกใบกำกับภาษี/ใบเสร็จรับเงินที่เป็นใบกำกับของการขายนี้ผ่าน NextAcc "
-        + "ระบบจะแนบเข้าใบนี้ให้เอง แล้วจึงกด \"ได้รับต้นฉบับแล้ว\" (ม.82/5(1))";
+        "ต้นทางยังไม่ใช่ใบกำกับภาษี (หรือ VAT ไม่ตรงใบกำกับ) — ยืนยันต้นฉบับใบกำกับแบบปกติไม่ได้ · เมื่อผู้ขายออกใบกำกับภาษี/ใบเสร็จที่เป็นใบกำกับผ่าน NextAcc "
+        + "ระบบจะแนบเข้าใบนี้ให้เอง · ถ้าได้ใบกำกับจากผู้ขายนอกระบบ กด \"ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ\" พร้อมเลขที่/วันที่ใบกำกับ (ม.82/5(1) · ม.86/4)";
+
+    /// <summary>ฝ่ายค้าน M3: VAT ของใบกำกับใหม่กับ VAT บนใบซื้อของผู้รับ ต่างกันไม่เกิน 0.005</summary>
+    public static bool VatMatches(decimal sourceVat, decimal purchaseVat) => Math.Abs(sourceVat - purchaseVat) <= 0.005m;
+
+    public const string VatMismatchMessage =
+        "VAT บนใบกำกับของผู้ขายไม่เท่า VAT บนใบซื้อนี้ — ยังลงภาษีซื้อไม่ได้ · แก้ยอด/VAT ให้ตรงใบกำกับ แล้วกด \"ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ\" พร้อมเลขที่/วันที่";
+
+    // ═══════════ ฝ่ายค้าน M1: ทางออกของคน — "ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ" ═══════════
+
+    /// <summary>ใช้ทาง "ได้ใบกำกับนอกระบบ" ได้ไหม — เฉพาะใบที่รอใบกำกับ (<see cref="AwaitingTaxInvoice"/>) · ต้องมีเลขที่ (≤ 100 ตัว) + วันที่
+    /// (ไม่ก่อน ค.ศ. 2000 · ไม่เกินพรุ่งนี้) · null = ได้</summary>
+    public static string? ExternalTaxInvoiceProblem(string? evidence, string? number, DateTime? date, DateTime todayUtc)
+    {
+        if (evidence == SourceVoided) return SourceVoidedMessage;
+        if (evidence != AwaitingTaxInvoice)
+            return ConfirmProblem(evidence) == null
+                ? "ใบนี้มีใบกำกับของผู้ขายผ่านระบบแล้ว — ใช้ปุ่ม \"ได้รับต้นฉบับแล้ว\" แทน"
+                : ConfirmProblem(evidence);
+        if (string.IsNullOrWhiteSpace(number)) return "กรอกเลขที่ใบกำกับภาษีของผู้ขาย";
+        if (number.Trim().Length > 100) return "เลขที่ใบกำกับยาวเกิน 100 ตัวอักษร";
+        if (date is not DateTime d) return "กรอกวันที่บนใบกำกับภาษีของผู้ขาย";
+        if (d.Date < new DateTime(2000, 1, 1) || d.Date > todayUtc.Date.AddDays(1)) return "วันที่ใบกำกับไม่ถูกต้อง (ต้องไม่อยู่ในอนาคต)";
+        return null;
+    }
+
+    /// <summary>ผู้รับใช้ทาง "ได้ใบกำกับนอกระบบ" ได้ไหม (ปุ่มบนหน้าคู่ค้า — server computes)</summary>
+    public static bool CanConfirmExternalTaxInvoice(string? evidence) => evidence == AwaitingTaxInvoice;
+
+    /// <summary>ฝ่ายค้าน LOW: ยืนยันแบบ "ได้ e-Tax ที่ประทับเวลา" ผ่านทางปกติได้เฉพาะเมื่อไฟล์ e-Tax ที่ลงลายมือชื่อของต้นทางถึงผู้รับแล้ว · null = ได้</summary>
+    public static string? StampedEtaxProblem(string? evidence)
+        => CanConfirmStampedEtax(evidence) ? null
+            : "ต้นทางไม่ใช่ e-Tax ที่ลงลายมือชื่อและส่งไฟล์ถึงท่าน — ยืนยันแบบ \"ได้ e-Tax ที่ประทับเวลา\" ไม่ได้ (เลือก \"ได้รับต้นฉบับกระดาษแล้ว\")";
 
     /// <summary>ยืนยันแล้ว — ทางไปต่อเมื่อภาษีซื้อยังพัก (รอบ 257 ชุด 3: เดิมตอบ "ไม่ได้รอต้นฉบับ" เฉย ๆ = ทางตัน)</summary>
     public const string AlreadyConfirmedMessage =
@@ -246,9 +317,12 @@ public static class PartnerInputVatEvidence
     /// <summary>รอบ 257 ชุด 3 (D-H4): หลักฐานของใบใหม่ในสายการขายเดิมมาถึงใบซื้อที่มีอยู่ — ใบใหม่ทำหน้าที่ใบกำกับ ขณะที่<b>ทุกใบที่ผูกไว้ก่อนหน้าไม่ใช่</b>
     /// ⇒ คำยืนยัน/หลักฐานเดิมเป็นของใบแจ้งหนี้ ไม่ใช่ต้นฉบับใบกำกับ ⇒ ตั้งใหม่เป็น <paramref name="offered"/> (ผลของ <see cref="Of"/>) ให้ผู้รับยืนยันต้นฉบับใบกำกับอีกครั้ง ·
     /// ต้นทางถูกยกเลิก คงเดิม · อื่น ๆ = <see cref="Merge"/> (ทิศตรงข้าม: ยืนยันใบกำกับไว้แล้ว ใบกำกับที่ออกแทนมาถึง ⇒ คงค่าที่ยืนยัน)</summary>
-    public static string OnNewSource(string? current, string offered, bool newSourceIsTaxInvoice, bool priorSourceWasTaxInvoice)
+    /// <param name="vatMatches">ฝ่ายค้าน M3: VAT บนใบกำกับใหม่เท่ากับ VAT บนใบซื้อ (±0.005 — <see cref="VatMatches"/>) · ไม่เท่า ⇒ <see cref="AwaitingTaxInvoice"/>
+    /// (ห้ามตั้งหลักฐานที่ปลดภาษีซื้อได้บนยอดที่ไม่ตรงใบกำกับ — ผู้รับแก้ VAT ให้ตรงแล้วใช้ทาง "ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ")</param>
+    public static string OnNewSource(string? current, string offered, bool newSourceIsTaxInvoice, bool priorSourceWasTaxInvoice, bool vatMatches = true)
     {
         if (current == SourceVoided) return SourceVoided;
+        if (newSourceIsTaxInvoice && !vatMatches) return AwaitingTaxInvoice;
         if (newSourceIsTaxInvoice && !priorSourceWasTaxInvoice) return offered;
         return Merge(current, offered);
     }

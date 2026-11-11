@@ -17,6 +17,8 @@ public static class AutopilotPartnerMigration
         """ALTER TABLE "WorkflowAutomationConfigs" ADD COLUMN IF NOT EXISTS "CreatePurchaseDraftsFromPartners" boolean NOT NULL DEFAULT false;""",
         """ALTER TABLE "TradingPartnerships" ADD COLUMN IF NOT EXISTS "PurchaseDraftLimitA" numeric(18,2) NULL;""",
         """ALTER TABLE "TradingPartnerships" ADD COLUMN IF NOT EXISTS "PurchaseDraftLimitB" numeric(18,2) NULL;""",
+        // รอบ 257 ชุด 3 (ฝ่ายค้าน LOW): ช่วงพักเชิญซ้ำหลังระงับ (NULL = ไม่เคย/แถวเก่า ⇒ เชิญได้ตามเดิม)
+        """ALTER TABLE "TradingPartnerships" ADD COLUMN IF NOT EXISTS "SuspendedAt" timestamp NULL;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PartnerInputVatEvidence" varchar(32) NULL;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PartnerSourceLinkId" uuid NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_Documents_PartnerSourceLinkId" ON "Documents" ("CompanyId", "PartnerSourceLinkId") WHERE "PartnerSourceLinkId" IS NOT NULL;""",

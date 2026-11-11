@@ -16800,12 +16800,19 @@ def program_boot_migrations_errors(text: str) -> list:
     elif apply < 0 or move < apply:
         errs.append("Program.cs เรียก PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db) ก่อน DatabaseMigrationHelper.ApplyMissingColumns( — "
                     + _R250W4_WHY + "ตาราง marker/คอลัมน์ต้องมีก่อน")
+    # รอบ 257 ชุด 3 ฝ่ายค้าน M2: งานซ่อมหลักฐานใบซื้อจากคู่ค้าเดินตอนบูต หลัง ApplyMissingColumns (มี ≠ ถูกเรียก)
+    repair = code.find("PartnerEvidenceRepair.RunAsync(db)")
+    if repair < 0:
+        errs.append("Program.cs ไม่เรียก PartnerEvidenceRepair.RunAsync(db) ตอนบูต — รอบ 257 ชุด 3 ฝ่ายค้าน M2: งานซ่อมไม่มีผู้เรียก = ไม่มีงานซ่อม")
+    elif apply < 0 or repair < apply:
+        errs.append("Program.cs เรียก PartnerEvidenceRepair.RunAsync(db) ก่อน DatabaseMigrationHelper.ApplyMissingColumns( — ตาราง marker ต้องมีก่อน")
     return errs
 
 
 def program_boot_migrations_self_test() -> list:
     good = ("DatabaseMigrationHelper.ApplyMissingColumns(db, logger);\n"
-            "var r246 = await Accounting.Helpers.PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db);\n")
+            "var r246 = await Accounting.Helpers.PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db);\n"
+            "var r257 = await Accounting.Helpers.PartnerEvidenceRepair.RunAsync(db);\n")
     fails = []
     if program_boot_migrations_errors(good):
         fails.append("self-test program_boot_migrations: ฟ้องผิดกับลำดับที่ถูก")
@@ -17245,9 +17252,10 @@ RULES += [
     # D-H4 + LOW ใบเสร็จที่เป็นใบกำกับ + D-M2 คัดลอกครบ — ตัวตัดสินเดียวต่อเรื่อง
     dict(file=_R255X, method="TryCreatePurchaseDraftAsync",
          must=["PartnerExchangeRules.IsTaxInvoiceCarrier(", "ChainHasTaxInvoiceAsync(", "PartnerInputVatEvidence.OnNewSource(",
-               "PartnerExchangeRules.CopyProblem(", "DocumentIssuerBranch.ResolveCode(", "PartnerExchangeRules.ReceiptNoChainMessage",
-               "WithholdingTaxAmount = src.WithholdingTaxAmount", "BillDiscountAmount = src.BillDiscountAmount", "Unit = line.Unit"],
-         before=[("PartnerExchangeRules.CopyProblem(", "_db.Documents.Add(draft)"), ("ChainHasTaxInvoiceAsync(", "PartnerInputVatEvidence.OnNewSource("),
+               "PartnerCopyProblem(src)", "CopyPartnerMoney(src, draft)", "DocumentIssuerBranch.ResolveCode(", "PartnerExchangeRules.ReceiptNoChainMessage",
+               "PartnerInputVatEvidence.VatMatches(", "PartnerExchangeRules.AnyUnreplacedVoided(", "ChainSourceLivenessAsync("],
+         before=[("PartnerCopyProblem(src)", "_db.Documents.Add(draft)"), ("ChainHasTaxInvoiceAsync(", "PartnerInputVatEvidence.OnNewSource("),
+                 ("PartnerInputVatEvidence.VatMatches(", "PartnerInputVatEvidence.OnNewSource("),
                  ("PartnerExchangeRules.ReceiptNoChainMessage", "_db.Documents.Add(draft)")],
          why=_R257_3_WHY + "D-H4 คำยืนยันของใบแจ้งหนี้ไม่ติดไปกับใบกำกับ · ใบเสร็จที่เป็นใบกำกับไม่สร้างใบใหม่ · D-M2 คัดลอกครบหรือไม่สร้าง"),
     dict(file=_R255X, method="ChainHasTaxInvoiceAsync",
@@ -17292,9 +17300,47 @@ RULES += [
          must=["PartnerNeedsOriginal:", "PartnerInputVatEvidence.ConfirmProblem("],
          why=_R257_3_WHY + "D-M5 ป้าย/ทางไปปุ่มยืนยันต้นฉบับบนหน้าเอกสารจากตัวตัดสินเดียว"),
     dict(file="Services/Implementations/DocumentService.Reissue.cs", method="AcknowledgeEtaxReviewRowAsync",
-         must=["EtaxReissueReview.OutcomeForGroupProblem("],
-         before=[("EtaxReissueReview.OutcomeForGroupProblem(", "AddChainedAuditLog(")],
+         must=["EtaxReissueReview.OutcomeAllowedProblem(", "reviewRow?.AllowedOutcomes"],
+         before=[("EtaxReissueReview.OutcomeAllowedProblem(", "AddChainedAuditLog(")],
          why=_R257_3_WHY + "LOW กลุ่มส่งอีเมลพร้อมสำเนา ETDA เลือก 'ถูกปฏิเสธ/ไม่เคยได้รับ' ไม่ได้"),
+    # ── ฝ่ายค้านของ 2b94b71a (ไม่มี HIGH) ──
+    dict(file=_R255X, method="PartnerCopyProblem", must=["PartnerExchangeRules.CopyProblem(", "src.PricesIncludeVat", "src.BillDiscountAmount"],
+         why=_R257_3_WHY + "ฝ่ายค้าน M4/LOW ตัวตรวจการคัดลอกเดียวของทุกเอกสารจากคู่ค้า (รวมราคารวม VAT)"),
+    dict(file=_R255X, method="CopyPartnerMoney",
+         must=["target.PricesIncludeVat = src.PricesIncludeVat", "target.BillDiscountAmount = src.BillDiscountAmount",
+               "target.WithholdingTaxAmount = src.WithholdingTaxAmount", "Unit = line.Unit", "DiscountAmount = line.DiscountAmount"],
+         forbid=["AccountId =", "ProductCode =", "WhtPayeeContactId ="],
+         why=_R257_3_WHY + "ฝ่ายค้าน M4/LOW ตัวคัดลอกเดียว · ไม่คัดลอกผังบัญชี/รหัสสินค้า/ผู้ถูกหักของอีกบริษัท"),
+    dict(file=XTENANT, method="CreateDownstreamPoAsync",
+         must=["PartnerCopyProblem(quote)", "CopyPartnerMoney(quote, po)", "DownstreamPoDraftComment", "_notify.DispatchAsync("],
+         before=[("PartnerCopyProblem(quote)", "_db.Documents.Add(po)")],
+         why=_R257_3_WHY + "ฝ่ายค้าน M5/LOW PO ร่าง: ตัวคัดลอกเดียว · เหตุบนแถว · แจ้งทั้งสองฝ่าย"),
+    dict(file=XTENANT, method="CreateDownstreamInvoiceAsync",
+         must=["PartnerCopyProblem(po)", "CopyPartnerMoney(po, inv)"],
+         before=[("PartnerCopyProblem(po)", "_db.Documents.Add(inv)")],
+         why=_R257_3_WHY + "ฝ่ายค้าน LOW ใบแจ้งหนี้ปลายทางใช้ตัวคัดลอกเดียว"),
+    dict(file=_R255X, method="ConfirmExternalTaxInvoiceAsync",
+         must=["PartnerInputVatEvidence.ExternalTaxInvoiceProblem(", "PartnerSourceCheckAsync(", "PartnerInputVatEvidence.Confirmed(",
+               "d.CompanyId == companyId", "AddChainedAuditLog("],
+         before=[("PartnerInputVatEvidence.ExternalTaxInvoiceProblem(", "PartnerInputVatEvidence.Confirmed("), ("PartnerSourceCheckAsync(", "PartnerInputVatEvidence.Confirmed(")],
+         why=_R257_3_WHY + "ฝ่ายค้าน M1 ทางออกของคนจากรอใบกำกับ: ด่าน · ต้นทางสด · tenant · audit"),
+    dict(file="Controllers/PartnerExchangeController.cs", method="ConfirmExternalTaxInvoice",
+         must=["_service.ConfirmExternalTaxInvoiceAsync(", "_docs.CompleteSupplierTaxInvoiceAsync(", "BeginTransactionAsync(", "CommitAsync("],
+         before=[("BeginTransactionAsync(", "_service.ConfirmExternalTaxInvoiceAsync("), ("_service.ConfirmExternalTaxInvoiceAsync(", "_docs.CompleteSupplierTaxInvoiceAsync("),
+                 ("_docs.CompleteSupplierTaxInvoiceAsync(", "CommitAsync(")],
+         why=_R257_3_WHY + "ฝ่ายค้าน M1 ยืนยัน + ย้าย VAT ในธุรกรรมเดียวผ่านเส้นเติมใบกำกับเดิม"),
+    dict(file=_R255X, method="ConfirmPartnerOriginalAsync", must=["PartnerInputVatEvidence.StampedEtaxProblem("],
+         why=_R257_3_WHY + "ฝ่ายค้าน LOW ได้ e-Tax ที่ประทับเวลา เฉพาะใบที่ไฟล์ลงลายมือชื่อถึงผู้รับ"),
+    dict(file=_R255X, method="PartnerSourceCheckAsync", must=["PartnerExchangeRules.AnyUnreplacedVoided(", "ChainSourceLivenessAsync("],
+         why=_R257_3_WHY + "ฝ่ายค้าน LOW ต้นทางยกเลิกที่มีใบแทนแล้วไม่ติดธง (ตัวตัดสินเดียวกับเส้นแนบ)"),
+    dict(file=XTENANT, method="InvitePartnerAsync", must=["PartnerExchangeRules.ReinviteAllowed("],
+         why=_R257_3_WHY + "ฝ่ายค้าน LOW ช่วงพักเชิญซ้ำหลังระงับ 7 วันเหมือนถูกปฏิเสธ"),
+    dict(file="Helpers/PartnerEvidenceRepair.cs", method="RunCoreAsync",
+         must=["AdvisoryLockKey.OneShotDataFix", "NotApproved("], must_lit=["pg_advisory_xact_lock", "OneShotDataFixes"],
+         why=_R257_3_WHY + "ฝ่ายค้าน M2 ครั้งเดียว · ใต้ล็อก · เฉพาะใบที่ยังไม่อนุมัติ"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="GetAsync",
+         must=["PartnerEvidenceRepair.FindAsync(_db, companyId)"],
+         why=_R257_3_WHY + "ฝ่ายค้าน M2 ใบที่อนุมัติแล้วลิสต์ในรายงานตรวจข้อมูล (ตัวหาเดียวกับงานซ่อม)"),
 ]
 
 

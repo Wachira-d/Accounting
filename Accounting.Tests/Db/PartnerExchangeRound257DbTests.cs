@@ -214,8 +214,16 @@ public class PartnerExchangeRound257DbTests
         Assert.False(await c1.CrossTenantDocumentLinks.AnyAsync(l => l.SourceDocumentId == inv.Id));
         Assert.Equal("Suspended", (await Svc(c1).PartnerStatusForContactAsync(s.Seller.Id, s.BuyerAtSeller.Id)).State);
 
-        // ทางกลับ: เชิญใหม่ ⇒ คำเชิญสด (Pending) ⇒ อีกฝ่ายยอมรับได้
+        // ฝ่ายค้าน LOW: เชิญซ้ำทันทีหลังระงับ ⇒ ยังระงับ (ช่วงพัก 7 วัน) · พ้นช่วงพักแล้วเชิญ ⇒ คำเชิญสด (Pending) ⇒ อีกฝ่ายยอมรับได้
         await Svc(c1).InvitePartnerAsync(s.Seller.Id, s.Buyer.TaxId!, "00000", actor, null);
+        using (var cw = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(TradingPartnershipStatus.Suspended, (await cw.TradingPartnerships.AsNoTracking().SingleAsync(x => x.Id == s.PartnershipId)).Status);
+            await cw.TradingPartnerships.Where(x => x.Id == s.PartnershipId)
+                .ExecuteUpdateAsync(x => x.SetProperty(t => t.SuspendedAt, DateTime.UtcNow.AddDays(-8)));
+        }
+        using (var ci = DbTestDatabase.TryCreateContext()!)
+            await Svc(ci).InvitePartnerAsync(s.Seller.Id, s.Buyer.TaxId!, "00000", actor, null);
         using var c2 = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(TradingPartnershipStatus.Pending, (await c2.TradingPartnerships.AsNoTracking().SingleAsync(x => x.Id == s.PartnershipId)).Status);
         Assert.Equal(TradingPartnershipStatus.Accepted, (await Svc(c2).AcceptPartnershipAsync(s.Buyer.Id, s.PartnershipId, actor)).Status);
@@ -298,5 +306,136 @@ public class PartnerExchangeRound257DbTests
         // ทิศตรงข้าม: คู่ระงับ ⇒ อนุมัติได้ แต่ไม่สร้างเอกสารปลายทาง + เหตุบนแถว
         Assert.False(await check.Documents.AnyAsync(d => d.CompanyId == paused.S.Buyer.Id && d.DocumentType == DocumentType.PurchaseOrder));
         Assert.Contains("ระงับ", (await check.CrossTenantDocumentLinks.AsNoTracking().SingleAsync(l => l.Id == paused.LinkId)).Comment);
+        // ฝ่ายค้าน M5: แถวบอกว่า PO เป็นร่าง · ตัวคัดลอกเดียว
+        Assert.Contains(CrossTenantWorkflowService.DownstreamPoDraftComment, (await check.CrossTenantDocumentLinks.AsNoTracking().SingleAsync(l => l.Id == live.LinkId)).Comment);
+        Assert.Equal(1_000m, po.SubTotal);
+        Assert.Single(await check.DocumentLines.AsNoTracking().Where(l => l.DocumentId == po.Id).ToListAsync());
+    }
+
+    // ═══════════ ฝ่ายค้านของ 2b94b71a ═══════════
+
+    [Fact]
+    public async Task R257F_M1_ได้ใบกำกับนอกระบบ_ร่างได้เลขวันที่_PaperConfirmed_ทิศตรงข้ามใบกำกับผ่านระบบใช้ทางนี้ไม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var invoice = await SellerDocAsync(db, s, DocumentType.Invoice);
+        var l1 = await Svc(db).OnDocumentSentAsync(invoice);
+        var tiv = await SellerDocAsync(db, s, DocumentType.TaxInvoice);
+        var l2 = await Svc(db).OnDocumentSentAsync(tiv);
+        using var c1 = DbTestDatabase.TryCreateContext()!;
+        var draft = await DraftOfAsync(c1, s.Buyer.Id, l1!.Id);
+        var outcome = await Svc(c1).ConfirmExternalTaxInvoiceAsync(s.Buyer.Id, draft.Id, Guid.NewGuid(), false, " IV-EXT-1 ", DateTime.UtcNow.Date);
+        Assert.False(outcome.Approved);
+        Assert.Equal(PartnerInputVatEvidence.PaperConfirmed, outcome.Evidence);
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var after = await c2.Documents.AsNoTracking().SingleAsync(d => d.Id == draft.Id);
+        Assert.Equal("IV-EXT-1", after.SupplierInvoiceNumber);
+        Assert.True(after.HasTaxInvoiceReference);
+        Assert.True(await c2.AuditLogs.AnyAsync(a => a.CompanyId == s.Buyer.Id && a.EntityId == draft.Id.ToString()
+            && a.NewValues != null && a.NewValues.Contains("PartnerExternalTaxInvoiceConfirmed")));
+        // ทิศตรงข้าม: ใบที่ได้ใบกำกับผ่านระบบ (PaperRequired) ใช้ทางนี้ไม่ได้ · บริษัทอื่นใช้ไม่ได้
+        var other = await DraftOfAsync(c2, s.Buyer.Id, l2!.Id);
+        await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(c2).ConfirmExternalTaxInvoiceAsync(s.Buyer.Id, other.Id, Guid.NewGuid(), false, "X", DateTime.UtcNow.Date));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => Svc(c2).ConfirmExternalTaxInvoiceAsync(s.Seller.Id, draft.Id, Guid.NewGuid(), false, "X", DateTime.UtcNow.Date));
+        // ฝ่ายค้าน LOW: ยืนยันแบบ e-Tax ประทับเวลาบนใบที่ไม่มีไฟล์ลงลายมือชื่อ = 409
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(c2).ConfirmPartnerOriginalAsync(s.Buyer.Id, other.Id, Guid.NewGuid(), stampedEtax: true));
+        Assert.Equal(409, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task R257F_M3_ใบกำกับVATไม่ตรงใบซื้อ_คงรอใบกำกับ_เหตุบนแถว_ทิศตรงข้ามVATตรง_ได้หลักฐานปกติ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var inv = await SellerDocAsync(db, s, DocumentType.Invoice);
+        var l1 = await Svc(db).OnDocumentSentAsync(inv);
+        var tivBad = await SellerDocAsync(db, s, DocumentType.TaxInvoice, relatedTo: inv.Id, shape: d =>
+        {
+            d.Lines.Clear();
+            d.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 5m, VatAmount = 50m });
+            d.VatAmount = 50m; d.TotalAmount = 1_050m;
+        });
+        var lb = await Svc(db).OnDocumentSentAsync(tivBad);
+        using var c1 = DbTestDatabase.TryCreateContext()!;
+        var draft = await DraftOfAsync(c1, s.Buyer.Id, l1!.Id);
+        Assert.Equal(PartnerInputVatEvidence.AwaitingTaxInvoice, draft.PartnerInputVatEvidence);
+        Assert.Contains("VAT", (await c1.CrossTenantDocumentLinks.AsNoTracking().SingleAsync(l => l.Id == lb!.Id)).Comment);
+
+        var s2 = await SeedAsync(c1);
+        var inv2 = await SellerDocAsync(c1, s2, DocumentType.Invoice);
+        var m1 = await Svc(c1).OnDocumentSentAsync(inv2);
+        var tivOk = await SellerDocAsync(c1, s2, DocumentType.TaxInvoice, relatedTo: inv2.Id);
+        await Svc(c1).OnDocumentSentAsync(tivOk);
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(PartnerInputVatEvidence.PaperRequired, (await DraftOfAsync(c2, s2.Buyer.Id, m1!.Id)).PartnerInputVatEvidence);
+    }
+
+    [Fact]
+    public async Task R257F_LOW_ใบแทนหลังต้นทางยกเลิก_ล้างธง_ตรวจสดไม่ติด_ทิศตรงข้ามไม่มีใบแทนยังติด()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var tiv = await SellerDocAsync(db, s, DocumentType.TaxInvoice);
+        var l1 = await Svc(db).OnDocumentSentAsync(tiv);
+        await db.Documents.Where(d => d.Id == tiv.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.Status, DocumentStatus.Voided));
+        using (var cv = DbTestDatabase.TryCreateContext()!) Assert.Equal(1, await Svc(cv).OnSourceVoidedAsync(s.Seller.Id, tiv.Id));
+        using var c1 = DbTestDatabase.TryCreateContext()!;
+        var draftId = (await DraftOfAsync(c1, s.Buyer.Id, l1!.Id)).Id;
+        Assert.True((await Svc(c1).PartnerSourceCheckAsync(s.Buyer.Id, draftId)).Voided);   // ทิศตรงข้าม: ยังไม่มีใบแทน ⇒ ติด
+        var replacement = new Document
+        {
+            CompanyId = s.Seller.Id, ContactId = s.BuyerAtSeller.Id, DocumentType = DocumentType.TaxInvoice, DocumentNumber = "S257R-" + Guid.NewGuid().ToString("N")[..8],
+            Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date, SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, BalanceDue = 1_070m,
+            Currency = "THB", ReplacesDocumentId = tiv.Id,
+        };
+        replacement.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการวางระบบ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7m, VatAmount = 70m });
+        c1.Documents.Add(replacement);
+        await c1.SaveChangesAsync();
+        await Svc(c1).OnDocumentSentAsync(replacement);
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(PartnerInputVatEvidence.PaperRequired, await c2.Documents.Where(d => d.Id == draftId).Select(d => d.PartnerInputVatEvidence).SingleAsync());
+        Assert.False((await Svc(c2).PartnerSourceCheckAsync(s.Buyer.Id, draftId)).Voided);
+        Assert.Equal(PartnerInputVatEvidence.PaperConfirmed, (await Svc(c2).ConfirmPartnerOriginalAsync(s.Buyer.Id, draftId, Guid.NewGuid())).Evidence);
+    }
+
+    [Fact]
+    public async Task R257F_M2_ยืนยันก่อนใบกำกับมาถึง_ตัวหาเจอ_ทิศตรงข้ามยืนยันหลังใบกำกับ_ไม่เจอ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        // ใบที่ 1: ยืนยัน (audit) ก่อนแถวกล่องเข้าของใบกำกับ — ข้อมูลรุ่นก่อนแก้
+        var s = await SeedAsync(db);
+        var inv = await SellerDocAsync(db, s, DocumentType.Invoice);
+        var l1 = await Svc(db).OnDocumentSentAsync(inv);
+        using var c1 = DbTestDatabase.TryCreateContext()!;
+        var draft = await DraftOfAsync(c1, s.Buyer.Id, l1!.Id);
+        var tiv = await SellerDocAsync(c1, s, DocumentType.TaxInvoice, relatedTo: inv.Id);
+        await Svc(c1).OnDocumentSentAsync(tiv);
+        var tivLinkAt = await c1.CrossTenantDocumentLinks.Where(l => l.SourceDocumentId == tiv.Id).Select(l => l.CreatedAt).SingleAsync();
+        await c1.Documents.Where(d => d.Id == draft.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.PartnerInputVatEvidence, PartnerInputVatEvidence.PaperConfirmed));
+        c1.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = s.Buyer.Id, Action = AuditAction.Update, EntityType = "Document", EntityId = draft.Id.ToString(),
+            OldValues = "{\"inputVatEvidence\":\"PaperRequired\"}",
+            NewValues = "{\"inputVatEvidence\":\"PaperConfirmed\",\"ruleCode\":\"" + PartnerExchangeRules.RuleCode + "\"}",
+            Timestamp = tivLinkAt.AddDays(-1),
+        });
+        await c1.SaveChangesAsync();
+        // ใบที่ 2 (ทิศตรงข้าม): ยืนยันจริงหลังใบกำกับมาถึง
+        var s2 = await SeedAsync(c1);
+        var tiv2 = await SellerDocAsync(c1, s2, DocumentType.TaxInvoice);
+        var m1 = await Svc(c1).OnDocumentSentAsync(tiv2);
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var d2 = await DraftOfAsync(c2, s2.Buyer.Id, m1!.Id);
+        await Svc(c2).ConfirmPartnerOriginalAsync(s2.Buyer.Id, d2.Id, Guid.NewGuid());
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var hit = Assert.Single(await PartnerEvidenceRepair.FindAsync(check, s.Buyer.Id));
+        Assert.Equal(draft.Id, hit.DocumentId);
+        Assert.Empty(await PartnerEvidenceRepair.FindAsync(check, s2.Buyer.Id));
     }
 }
