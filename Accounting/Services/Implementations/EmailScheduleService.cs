@@ -278,6 +278,28 @@ public class EmailScheduleService : IEmailScheduleService
 
     public async Task<EmailEnqueueOutcome> OnRecurringDocumentCreatedAsync(Guid companyId, Guid documentId, Guid recurringId, CancellationToken ct = default)
     {
+        var outcome = await EnqueueRecurringDocumentAsync(companyId, documentId, recurringId, ct);
+        if (outcome.Kind == EmailEnqueueKind.Failed) return outcome;
+        // รอบ 258 (A-M1 ข): บอกผู้เรียกว่าเอกสารนี้ออกทาง LINE แล้วไหม (แถวคิว LINE ที่ไม่ใช่ "ข้าม" — ทั้งจากกฎเมื่ออนุมัติและกฎรายการประจำ)
+        try { return outcome with { LineQueued = await DocumentLineQueuedAsync(companyId, documentId, null, ct) }; }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "OnRecurringDocumentCreated: ตรวจคิว LINE ของเอกสาร {Doc} ไม่สำเร็จ", documentId);
+            return outcome;
+        }
+    }
+
+    /// <summary>รอบ 258 (A-M1): เอกสารนี้มีแถวคิว LINE ถึงผู้ติดต่อที่ไม่ใช่ "ข้าม" ไหม — <paramref name="baseKey"/> ระบุ = เฉพาะกุญแจนั้น (กฎหนึ่ง)</summary>
+    private async Task<bool> DocumentLineQueuedAsync(Guid companyId, Guid documentId, string? baseKey, CancellationToken ct)
+    {
+        return await _db.LineQueues.AsNoTracking().AnyAsync(q => q.CompanyId == companyId && !q.IsDeleted
+            && q.EntityType == "Document" && q.EntityId == documentId
+            && (baseKey == null || q.BaseKey == baseKey)
+            && q.Status != ContactLineChannel.StatusSkipped, ct);
+    }
+
+    private async Task<EmailEnqueueOutcome> EnqueueRecurringDocumentAsync(Guid companyId, Guid documentId, Guid recurringId, CancellationToken ct)
+    {
         try
         {
             var doc = await _db.Documents.AsNoTracking()
@@ -312,10 +334,13 @@ public class EmailScheduleService : IEmailScheduleService
             // ฝ่ายค้าน WP-02 ข้อ 6: OnDocumentApprovedAsync กลืนความผิดพลาด (LogWarning) ⇒ "มีกฎ" ≠ "เข้าคิวแล้ว" — ข้ามเฉพาะเมื่อมีแถวคิวของกฎนั้นจริง
             // (กุญแจเดียวกับฝั่งเขียน) · ไม่มีแถว ⇒ เดินเส้นรายการประจำต่อ (ลูกค้าต้องได้อีเมลหนึ่งฉบับ ไม่ใช่ศูนย์)
             var approvedKey = DocumentQueueKey(doc.Id, "DocumentApproved", "approved");
-            var approvedQueued = approvedRuleCovers && await _db.EmailQueues.AsNoTracking()
-                .AnyAsync(q => q.CompanyId == companyId && q.IdempotencyKey == approvedKey && !q.IsDeleted
-                    // ฝ่ายค้าน MED-6: แถว "ข้าม" (ไม่ส่งเพราะค่าตั้งผู้ติดต่อ/ใบเปลี่ยน) ไม่ใช่การส่ง ⇒ ไม่นับว่ากฎนั้นครอบแล้ว
-                    && q.Status != ScheduledEmailSendCheck.SkippedStatus, ct);
+            // รอบ 258 (A-M1 ก): กฎเมื่ออนุมัติที่ติ๊ก LINE อย่างเดียวมีแถวใน LineQueues (ไม่มีแถวอีเมล) ⇒ นับด้วย — ไม่งั้นลูกค้าได้การ์ด LINE สองใบ/LINE + อีเมล
+            var approvedQueued = approvedRuleCovers && EmailEnqueueOutcome.ApprovedRuleDelivered(
+                await _db.EmailQueues.AsNoTracking()
+                    .AnyAsync(q => q.CompanyId == companyId && q.IdempotencyKey == approvedKey && !q.IsDeleted
+                        // ฝ่ายค้าน MED-6: แถว "ข้าม" (ไม่ส่งเพราะค่าตั้งผู้ติดต่อ/ใบเปลี่ยน) ไม่ใช่การส่ง ⇒ ไม่นับว่ากฎนั้นครอบแล้ว
+                        && q.Status != ScheduledEmailSendCheck.SkippedStatus, ct),
+                await DocumentLineQueuedAsync(companyId, doc.Id, approvedKey, ct));
             if (EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCovers, documentApproved: true, approvedQueued))
                 return EmailEnqueueOutcome.Skipped(EmailEnqueueOutcome.CoveredByApprovedRule);
 

@@ -66,6 +66,9 @@ public static class AutopilotReadiness
         public bool? PolicySetterActive { get; init; }
         /// <summary>เหตุที่นโยบายหยุดมีผล (ผู้ตั้งออก/หมดสิทธิ์ · ผู้ติดต่อ/ชนิดเอกสารเปลี่ยนหลังตั้ง) — null = มีผล/ไม่มีนโยบาย</summary>
         public string? PolicyInactiveReason { get; init; }
+        /// <summary>รอบ 258 (B-M2): เหตุที่ "ผู้รับผิดชอบการอนุมัติของรายการ" อนุมัติไม่ได้แล้ว ณ ตอนนี้ (ตัวเดียวกับรอบรันจริง
+        /// <c>RecurringApprovePolicyLoader.AutoApproverRefusalAsync</c>) · null = อนุมัติได้/ไม่ได้ตรวจ (ร่างใหม่ที่ยังไม่บันทึก)</summary>
+        public string? AutoApproverRefusal { get; init; }
         /// <summary>เหตุผลที่สร้างเอกสารไม่ได้เลย (ตัวตรวจเทมเพลตเดิม) · null = สร้างได้</summary>
         public string? TemplateError { get; init; }
         /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 2 · คำตัดสิน §2 #9/Y7): ตั้ง URL ของระบบแล้วจริงไหม (<see cref="SystemBaseUrl.IsConfigured"/> — ค่าที่มากับซอร์ส ≠ ตั้งแล้ว) ·
@@ -188,6 +191,13 @@ public static class AutopilotReadiness
         {
             Add("APPROVE", "อนุมัติ", Info, "ไม่ได้เปิดอนุมัติอัตโนมัติ — ทุกงวดได้ใบร่าง ต้องมีคนอนุมัติก่อนส่ง",
                 "ใบร่างยังไม่มีเลขที่จริง (§86/4) จึงส่งให้ลูกค้าไม่ได้", PolicyStepUrl, "เปิดอนุมัติอัตโนมัติ");
+        }
+        // รอบ 258 (B-M2): ผู้รับผิดชอบการอนุมัติของรายการหมดสิทธิ์/ออกจากบริษัท ⇒ ทุกรอบค้างร่าง (RECURRING-APPROVER-GONE) — เดิมแผงยังเขียว
+        else if (f.AutoApproverRefusal != null)
+        {
+            approveFails = true;
+            Add("APPROVER-GONE", "อนุมัติ", Fail, "ถ้ารันตอนนี้ ใบจะค้างเป็นร่าง — ผู้รับผิดชอบการอนุมัติของรายการไม่มีสิทธิ์แล้ว",
+                f.AutoApproverRefusal, PolicyStepUrl, "ไปขั้นอนุมัติ");
         }
         else if (f.ApprovalWarnings == null)
         {

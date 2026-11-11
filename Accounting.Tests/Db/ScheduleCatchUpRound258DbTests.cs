@@ -157,4 +157,72 @@ public class ScheduleCatchUpRound258DbTests
         await svc.UpsertRuleAsync(s.CompanyId, edited, "tester");
         Assert.Null((await RuleAsync(s.CompanyId, s.RuleId)).LastDayScanBkk);
     }
+
+    // ───── รอบ 258 (A-M1): กฎ "เมื่ออนุมัติ" ที่ส่งทาง LINE แล้ว ⇒ กฎ "รายการประจำสร้างเอกสาร" ไม่ส่งซ้ำ ─────
+
+    private static async Task<(Seed S, Guid RecurringId)> SeedRecurringCaseAsync(AccountingDbContext db, string lineRowStatus)
+    {
+        var s = await SeedAsync(db, watermark: null);
+        var contactId = await db.Documents.Where(d => d.CompanyId == s.CompanyId && d.Id == s.TodayInvoiceId).Select(d => d.ContactId).SingleAsync();
+        // กฎเมื่ออนุมัติ (ติ๊ก LINE อย่างเดียว) + กฎรายการประจำสร้างเอกสาร (อีเมล)
+        db.EmailScheduleRules.Add(new EmailScheduleRule
+        {
+            CompanyId = s.CompanyId, Trigger = "DocumentApproved", IsActive = true, SendAtHour = 9,
+            ChannelEmail = false, ChannelLineUser = true, LineFallbackToEmail = false,
+        });
+        db.EmailScheduleRules.Add(new EmailScheduleRule { CompanyId = s.CompanyId, Trigger = "RecurringInvoiceCreated", IsActive = true, SendAtHour = 9 });
+        var baseKey = EmailScheduleService.DocumentQueueKey(s.TodayInvoiceId, "DocumentApproved", "approved");
+        db.LineQueues.Add(new LineQueue
+        {
+            CompanyId = s.CompanyId, EntityType = "Document", EntityId = s.TodayInvoiceId, ContactId = contactId, EndpointKind = "",
+            Topic = "Document", Trigger = "DocumentApproved", ScheduledFor = DateTime.UtcNow.AddHours(1), Status = lineRowStatus,
+            RetryKey = Guid.NewGuid(), IdempotencyKey = baseKey + ":test-" + Guid.NewGuid().ToString("N"), BaseKey = baseKey,
+        });
+        var rec = new RecurringTransaction
+        {
+            CompanyId = s.CompanyId, Name = "ค่าบริการรายเดือน 258", ContactId = contactId, AutoSendEmail = true,
+            Frequency = RecurringFrequency.Monthly, DocumentType = DocumentType.Invoice,
+            TemplateType = "Document", TemplateData = "{}", StartDate = DateTime.UtcNow.Date, NextRunDate = DateTime.UtcNow.Date.AddMonths(1),
+        };
+        db.RecurringTransactions.Add(rec);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        return (s, rec.Id);
+    }
+
+    private static async Task<int> RecurringEmailRowsAsync(Guid companyId, Guid documentId)
+    {
+        using var check = DbTestDatabase.TryCreateContext()!;
+        return await check.EmailQueues.AsNoTracking().CountAsync(q => q.CompanyId == companyId && q.EntityId == documentId && !q.IsDeleted
+            && q.IdempotencyKey != null && q.IdempotencyKey.Contains(":RecurringInvoiceCreated:"));
+    }
+
+    [Fact]
+    public async Task กฎเมื่ออนุมัติส่งทางLINEแล้ว_กฎรายการประจำไม่ส่งซ้ำ_และบอกผู้เรียกว่าออกทางLINE()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (s, recurringId) = await SeedRecurringCaseAsync(db, ContactLineChannel.StatusPending);
+
+        var outcome = await Sched(db).OnRecurringDocumentCreatedAsync(s.CompanyId, s.TodayInvoiceId, recurringId);
+
+        Assert.Equal(EmailEnqueueKind.Skipped, outcome.Kind);
+        Assert.Equal(EmailEnqueueOutcome.CoveredByApprovedRule, outcome.Reason);
+        Assert.True(outcome.LineQueued);
+        Assert.Equal(0, await RecurringEmailRowsAsync(s.CompanyId, s.TodayInvoiceId));
+    }
+
+    [Fact]
+    public async Task ทิศตรงข้าม_แถวLINEของกฎเมื่ออนุมัติเป็นข้าม_กฎรายการประจำยังส่งอีเมลหนึ่งฉบับ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (s, recurringId) = await SeedRecurringCaseAsync(db, ContactLineChannel.StatusSkipped);
+
+        var outcome = await Sched(db).OnRecurringDocumentCreatedAsync(s.CompanyId, s.TodayInvoiceId, recurringId);
+
+        Assert.Equal(EmailEnqueueKind.Enqueued, outcome.Kind);
+        Assert.False(outcome.LineQueued);
+        Assert.Equal(1, await RecurringEmailRowsAsync(s.CompanyId, s.TodayInvoiceId));
+    }
 }

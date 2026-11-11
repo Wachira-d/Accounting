@@ -18015,6 +18015,36 @@ REVIEWER_CASES += [
     # ใบแจ้งยอดกลับไปเทียบวันนี้ = วันที่ตั้ง อย่างเดียว ⇒ ต้องฟ้อง
     ("R258p5", "ScanMonthlyStatementsAsync", "if (!monthlyPlan.Send) continue;", "if (todayBkk.Day != sendDay) continue;", True),
 ]
+_R258P_REC = "Services/Implementations/RecurringTransactionService.cs"
+RULES += [
+    dict(file=_R258P_REC, method="NoticeRecipientAsync", must=["RecurringStaffNotice.Recipient(", "CompanyMembership.IsActiveMemberAsync("],
+         why=_R258P_WHY + "B-M5 ผู้รับแจ้งเตือนรายการประจำ = ผู้สร้างที่ยังเป็นสมาชิกที่ใช้งาน (ตัวเดียวทุกจุด)"),
+    dict(file=_R258P_REC, method="RecordRunFailureAsync", must=["NoticeRecipientAsync("], forbid=["Guid.TryParse(createdBy, out var ownerId)"],
+         why=_R258P_WHY + "B-M5 แจ้งรอบล้มไม่ส่งถึงผู้สร้างที่ออกจากบริษัทแล้ว"),
+    dict(file=_R258P_REC, method="NotifyStuckDraftAsync", must=["NotificationEvents.RecurringRunFailed", "RecurringStaffNotice.StuckDraftTitle(", "NoticeRecipientAsync("],
+         why=_R258P_WHY + "B-M1 ใบค้างร่างเพราะอนุมัติอัตโนมัติไม่ผ่าน ⇒ แจ้งทีมทันที"),
+    dict(file=_R258P_REC, method="CreateDocumentFromTemplateAsync",
+         must=["NotifyStuckDraftAsync(", "enqueueOutcome.LineQueued", "EmailEnqueueOutcome.WarnNoContactEmail("],
+         before=[("RecordAutoApproveFailureAsync(", "NotifyStuckDraftAsync(")],
+         forbid=["Guid.TryParse(recurring.CreatedBy, out var ownerId)"],
+         why=_R258P_WHY + "B-M1 แจ้งหลังบันทึกเหตุบนใบ · A-M1 ข LINE ออกแล้วไม่เตือนไม่มีอีเมล · B-M5 ผู้รับผ่านตัวเดียว"),
+    dict(file=_R258P_ESS, method="OnRecurringDocumentCreatedAsync", must=["DocumentLineQueuedAsync(", "LineQueued ="],
+         why=_R258P_WHY + "A-M1 ข ตัวเข้าคิวบอกผู้เรียกว่าเอกสารออกทาง LINE แล้วไหม"),
+    dict(file=_R258P_ESS, method="EnqueueRecurringDocumentAsync", must=["EmailEnqueueOutcome.ApprovedRuleDelivered(", "DocumentLineQueuedAsync(companyId, doc.Id, approvedKey"],
+         why=_R258P_WHY + "A-M1 ก กฎเมื่ออนุมัติที่ส่งทาง LINE นับว่าส่งแล้ว (ไม่ส่งซ้ำจากกฎรายการประจำ)"),
+    dict(file=_R258P_ESS, method="DocumentLineQueuedAsync", must=["q.CompanyId == companyId", "ContactLineChannel.StatusSkipped"],
+         why=_R258P_WHY + "A-M1 แถว LINE ที่ 'ข้าม' ไม่ใช่การส่ง · กรองบริษัทเสมอ"),
+    dict(file="Services/Implementations/RecurringAutopilotService.cs", method="BuildAsync",
+         must=["RecurringApprovePolicyLoader.AutoApproverRefusalAsync(", "AutoApproverRefusal = approverRefusal"],
+         why=_R258P_WHY + "B-M2 แผงความพร้อม/ทดลองรันใช้ด่านผู้อนุมัติตัวเดียวกับรอบรันจริง"),
+]
+REVIEWER_CASES += [
+    # กฎเมื่ออนุมัติกลับไปดูแต่คิวอีเมล (LINE อย่างเดียวไม่ถูกนับ ⇒ ส่งซ้ำ) ⇒ ต้องฟ้อง
+    ("R258p6", "EnqueueRecurringDocumentAsync", "await DocumentLineQueuedAsync(companyId, doc.Id, approvedKey, ct));", "false);", True),
+    # อนุมัติอัตโนมัติไม่ผ่านแล้วไม่แจ้งทีม ⇒ ต้องฟ้อง
+    ("R258p7", "CreateDocumentFromTemplateAsync",
+     "await NotifyStuckDraftAsync(recurring, result.Id, result.DocumentNumber, DocumentApprovalWarningsException.DescribeForUser(ex));", "{ }", True),
+]
 # ═══ จบ รอบ 258 แพ็ก สิทธิ์+คิวส่ง ═══
 
 

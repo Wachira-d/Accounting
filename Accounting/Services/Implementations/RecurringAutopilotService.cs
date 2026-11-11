@@ -420,6 +420,9 @@ public class RecurringAutopilotService : IRecurringAutopilotService
 
         // ── นโยบาย (ตัวโหลดเดียวกับเส้นอนุมัติจริง) ──
         var policy = await RecurringApprovePolicyLoader.LoadAsync(_db, _permissions, companyId, r, ct);
+        // รอบ 258 (B-M2): ด่านเดียวกับรอบรันจริง (ผู้รับผิดชอบการอนุมัติยังมีสิทธิ์ไหม) — ร่างใหม่ที่ยังไม่มีผู้สร้าง (ผู้กรอกคือผู้รับผิดชอบ) ไม่ตรวจ
+        var approverRefusal = string.IsNullOrEmpty(r.CreatedBy) ? null
+            : await RecurringApprovePolicyLoader.AutoApproverRefusalAsync(_db, _permissions, companyId, r, policy, ct);
         var blocking = warnings == null ? Array.Empty<string>()
             : ApprovalAcknowledgement.Unacknowledged(ApprovalAckSource.UnattendedWithPolicy, warnings, policy.Policy);
         var released = warnings == null ? Array.Empty<string>() : AutoApprovePolicy.Released(policy.Policy, warnings);
@@ -576,6 +579,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
             Policy = policy.Stored,
             PolicySetterActive = policy.SetterActive,
             PolicyInactiveReason = policy.InactiveReason,
+            AutoApproverRefusal = approverRefusal,
             TemplateError = templateError,
             SystemBaseUrlConfigured = baseUrlConfigured,
             ApprovedEmailRuleCovers = hasApprovedRule,

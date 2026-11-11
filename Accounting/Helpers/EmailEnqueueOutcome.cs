@@ -36,6 +36,17 @@ public sealed record EmailEnqueueOutcome(EmailEnqueueKind Kind, string? Reason)
     /// <summary>ตัดสินว่าต้องข้ามเพราะกฎ DocumentApproved ครอบแล้วไหม — <paramref name="approvedRuleCoversType"/> = มีกฎ DocumentApproved ที่ใช้งานอยู่และชนิดตรง/ว่าง ·
     /// <paramref name="documentApproved"/> = ใบผ่านการอนุมัติแล้ว (ไม่ใช่ร่าง/รออนุมัติ/ปฏิเสธ) ·
     /// <paramref name="approvedRowQueued"/> = มีแถวคิวของกฎนั้นสำหรับใบนี้จริง (ฝ่ายค้าน WP-02 ข้อ 6 — ตัวเข้าคิวฝั่งอนุมัติกลืนความผิดพลาด ⇒ "มีกฎ" อย่างเดียวไม่พอ)</summary>
+    /// <summary>รอบ 258 (A-M1): เอกสารนี้มีแถวคิว LINE ถึงผู้ติดต่อ (ไม่ใช่แถว "ข้าม") — ผู้เรียก (รายการประจำ) ใช้ตัดสินว่ายังต้องเตือน "ไม่มีอีเมล" ไหม</summary>
+    public bool LineQueued { get; init; }
+
+    /// <summary>รอบ 258 (A-M1 ข): เตือน "ไม่ได้ส่งอีเมล เพราะผู้ติดต่อไม่มีอีเมล" ไหม — ไม่มีอีเมลที่ส่งได้ <b>และ</b>ไม่ได้ออกทาง LINE
+    /// (ลูกค้าได้เอกสารทาง LINE แล้ว = ไม่ใช่เรื่องที่ต้องตามแก้)</summary>
+    public static bool WarnNoContactEmail(bool hasDeliverableEmail, bool lineQueued) => !hasDeliverableEmail && !lineQueued;
+
+    /// <summary>รอบ 258 (A-M1 ก): กฎ "เมื่ออนุมัติเอกสาร" ส่งใบนี้แล้วไหม — แถวอีเมล<b>หรือ</b>แถว LINE ของกุญแจเดียวกัน (กฎที่ติ๊ก LINE อย่างเดียวไม่มีแถวอีเมล
+    /// ⇒ เดิมไม่ถูกนับ แล้วกฎ "รายการประจำสร้างเอกสาร" ส่งซ้ำอีกใบ)</summary>
+    public static bool ApprovedRuleDelivered(bool emailRowQueued, bool lineRowQueued) => emailRowQueued || lineRowQueued;
+
     public static bool SkipForApprovedRule(bool approvedRuleCoversType, bool documentApproved, bool approvedRowQueued)
         => approvedRuleCoversType && documentApproved && approvedRowQueued;
 

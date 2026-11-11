@@ -431,7 +431,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                             await _db.SaveChangesAsync();
                             return;
                         }
-                        await ExecuteRecurringAsync(recurring, "System", consumesPeriod: true);
+                        await ExecuteRecurringAsync(recurring, ScheduledActor, consumesPeriod: true);
                         if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
@@ -487,11 +487,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             // ประทับก่อนส่ง = อย่างมากครั้งเดียว (DispatchAsync กลืนข้อผิดพลาดเองไม่คืนผล — ส่งล้ม = รอบนั้นไม่ได้กระดิ่ง · L3)
             var days = RecurringUpcomingNotice.DaysUntil(createAt, today);
             // ฝ่ายค้าน H2: ผู้รับ = ผู้สร้างที่ยังเป็นสมาชิกที่ใช้งานของบริษัทนี้ · ไม่งั้น null ⇒ ค่าตั้งต้นของคีย์ (กระดิ่งเจ้าของ)
-            Guid? recipient = null;
-            if (Guid.TryParse(r.CreatedBy, out var creatorId)
-                && await _db.CompanyUsers.AsNoTracking().AnyAsync(cu => cu.CompanyId == r.CompanyId && cu.UserId == creatorId
-                    && cu.User.Status == UserStatus.Active))
-                recipient = creatorId;
+            var recipient = await NoticeRecipientAsync(r.CompanyId, r.CreatedBy);   // รอบ 258 (B-M5): ตัวเดียวของทุกแจ้งเตือนรายการประจำ
             await _notify.DispatchAsync(r.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringUpcomingRun, new NotificationContext
             {
                 Title = $"รายการประจำ \"{r.Name}\" จะสร้างเอกสารในอีก {days} วัน",
@@ -669,6 +665,40 @@ public class RecurringTransactionService : IRecurringTransactionService
 
     /// <summary>รอบล้ม ⇒ เหตุผล (ไทย · บอกช่อง + ทางแก้) ลงแถว + ErrorLog/แจ้งผู้ตั้งรายการ <b>เฉพาะครั้งแรก/เมื่อสาเหตุเปลี่ยน</b>
     /// (เดิม ErrorLog ทุก 15 นาทีตลอดไป และผู้ใช้ไม่เห็นอะไรเลย) · ระบบยังลองใหม่ทุกรอบ — แก้แล้วรอบถัดไปเดินเอง (คำตัดสินข้อ 150)</summary>
+    /// <summary>ผู้กระทำของรอบอัตโนมัติ (งานเบื้องหลัง) — ใช้แยก "รอบอัตโนมัติ" ออกจาก "กดสร้างทันที"</summary>
+    private const string ScheduledActor = "System";
+
+    /// <summary>รอบ 258 (B-M5): ผู้รับแบบระบุตัวของแจ้งเตือนรายการประจำ — ผู้สร้างที่ยังเป็นสมาชิกที่ใช้งาน · ไม่งั้น null
+    /// (ตามตารางแจ้งเตือน/ค่าตั้งต้นของเหตุการณ์) · ตัวตัดสินเดียว <see cref="Accounting.Helpers.RecurringStaffNotice.Recipient"/></summary>
+    private async Task<Guid?> NoticeRecipientAsync(Guid companyId, string? createdBy)
+    {
+        var creatorId = Accounting.Helpers.RecurringStaffNotice.CreatorId(createdBy);
+        var active = creatorId is Guid uid && await Accounting.Helpers.CompanyMembership.IsActiveMemberAsync(_db, companyId, uid);
+        return Accounting.Helpers.RecurringStaffNotice.Recipient(createdBy, active);
+    }
+
+    /// <summary>รอบ 258 (B-M1): ใบของรอบนี้สร้างแล้วแต่อนุมัติอัตโนมัติไม่ผ่าน (ค้างร่าง) ⇒ แจ้งทีมทันที · แจ้งล้ม = log (เหตุอยู่บนใบ + แถวรายการแล้ว)</summary>
+    private async Task NotifyStuckDraftAsync(RecurringTransaction recurring, Guid documentId, string? documentNumber, string? reason)
+    {
+        if (_notify == null) return;
+        try
+        {
+            await _notify.DispatchAsync(recurring.CompanyId, global::Accounting.Models.Constants.NotificationEvents.RecurringRunFailed, new NotificationContext
+            {
+                Title = Accounting.Helpers.RecurringStaffNotice.StuckDraftTitle(recurring.Name, documentNumber),
+                Message = Accounting.Helpers.RecurringStaffNotice.StuckDraftMessage(reason),
+                ActionUrl = RecurringRunOutcome.DocumentUrl(documentId),
+                EntityType = "Document",
+                EntityId = documentId,
+                RecipientUserId = await NoticeRecipientAsync(recurring.CompanyId, recurring.CreatedBy),
+            });
+        }
+        catch (Exception nex) when (nex is not OperationCanceledException)
+        {
+            _logger.LogWarning(nex, "Recurring {Id}: stuck-draft notification dispatch failed for {Doc}", recurring.Id, documentId);
+        }
+    }
+
     private async Task RecordRunFailureAsync(Guid companyId, Guid recurringId, string name, string? createdBy, Exception ex, bool fromSchedule)
     {
         var reason = RecurringRunFailure.UserMessage(ex);
@@ -699,7 +729,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                 ActionUrl = "/pages/recurring.html",
                 EntityType = "RecurringTransaction",
                 EntityId = recurringId,
-                RecipientUserId = Guid.TryParse(createdBy, out var ownerId) ? ownerId : null,
+                RecipientUserId = await NoticeRecipientAsync(companyId, createdBy),   // รอบ 258 (B-M5)
             });
         }
         catch (Exception nex) when (nex is not OperationCanceledException)
@@ -1009,7 +1039,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                                     ActionUrl = RecurringRunOutcome.DocumentUrl(result.Id),
                                     EntityType = "Document",
                                     EntityId = result.Id,
-                                    RecipientUserId = Guid.TryParse(recurring.CreatedBy, out var ownerId) ? ownerId : null,
+                                    RecipientUserId = await NoticeRecipientAsync(recurring.CompanyId, recurring.CreatedBy),   // รอบ 258 (B-M5)
                                 });
                             }
                             catch (Exception nex) when (nex is not OperationCanceledException)
@@ -1036,6 +1066,10 @@ public class RecurringTransactionService : IRecurringTransactionService
                                 ApproveWarnings = ex is DocumentApprovalWarningsException aw ? aw.Warnings.ToList() : null,
                             };
                         await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoApprove/{result.Id}");
+                        // รอบ 258 (B-M1): ใบสร้างแล้วแต่ค้างร่าง ⇒ แจ้งทีมทันที (หน้า Autopilot บอก "ล้ม/ติด = แจ้งทันที") — เฉพาะรอบอัตโนมัติ
+                        // (กด "สร้างทันที" ผู้กดเห็นผลบนหน้าอยู่แล้ว) · หนึ่งครั้งต่อใบ (catch นี้เกิดครั้งเดียวต่อใบที่สร้าง)
+                        if (!outcome.Committed && string.Equals(performedBy, ScheduledActor, StringComparison.Ordinal))
+                            await NotifyStuckDraftAsync(recurring, result.Id, result.DocumentNumber, DocumentApprovalWarningsException.DescribeForUser(ex));
                         // ฝ่ายค้าน LOW-8: บอก "นโยบายหยุดมีผล" เฉพาะรอบที่มีคำเตือนซึ่งนโยบายจะปล่อยได้จริง (ไม่ใช่ทุกรอบ)
                         if (stoppedPolicyReason != null && (ex is DocumentApprovalWarningsException stopAw
                                 ? stopAw.Warnings.Any(w => Accounting.Helpers.AutoApprovePolicy.CodeOf(w) != null)
@@ -1057,6 +1091,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // recurring แทน (ผู้ใช้ติ๊กในฟอร์มเดียวจบ ไม่ต้องไปสร้างกฎอีกหน้า)
                 // ใช้ trigger แยกจาก DocumentApproved เพราะเงื่อนไข/เวลาส่งต่างกัน.
                 // ส่งเฉพาะใบที่อนุมัติแล้ว — Draft ยังไม่มีเลขจริง §86/4. fail-safe.
+                var lineWentOut = false;   // รอบ 258 (A-M1 ข): เอกสารเข้าคิว LINE ถึงผู้ติดต่อแล้ว (ผลจากตัวเข้าคิว)
                 if (result != null && _emailSchedule != null)
                 {
                     // รอบ 250 (WP-02 §2.4 ข้อ 1 · คำตัดสิน §2 #8): ตัวเข้าคิวคืนผล (ไม่กลืนเงียบ) ⇒ ธง EmailEnqueueFailed ตั้งจากผลด้วยตัวตัดสินเดียว
@@ -1067,6 +1102,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                         _logger.LogError(ex2, "Email schedule (recurring) enqueue failed Doc={Doc}", result.Id);
                         enqueueOutcome = Accounting.Helpers.EmailEnqueueOutcome.Failed(ex2.Message);
                     }
+                    lineWentOut = enqueueOutcome.LineQueued;
                     var (factsAfterEmail, enqueueNotice) = Accounting.Helpers.EmailEnqueueOutcome.Apply(facts, enqueueOutcome, result.DocumentNumber);
                     facts = factsAfterEmail;
                     if (enqueueNotice != null) notices.Add(enqueueNotice);
@@ -1080,8 +1116,10 @@ public class RecurringTransactionService : IRecurringTransactionService
                         facts = facts with { EmailHeldForDraft = true };
                     }
                     // ตัวตัดสินเดียวกับผู้ส่งจริง (EnqueueDocumentAsync ส่งไปที่ Contact.Email) — ห้ามข้ามเงียบ
+                    // รอบ 258 (A-M1 ข): ลูกค้าได้เอกสารทาง LINE แล้ว ⇒ ไม่เตือน/ไม่ตั้งธง "ไม่มีอีเมล" (เดิมเตือนผิดทั้งที่ส่งถึงแล้ว)
                     else if (facts.EmailNotSentReason == null
-                             && !RecurringEmailReadiness.HasDeliverableEmail(await DocumentEmailToAsync(recurring.CompanyId, contactId)))
+                             && Accounting.Helpers.EmailEnqueueOutcome.WarnNoContactEmail(
+                                 RecurringEmailReadiness.HasDeliverableEmail(await DocumentEmailToAsync(recurring.CompanyId, contactId)), lineWentOut))
                     {
                         notices.Add(RecurringEmailReadiness.NotSentNoEmail + " — เพิ่มอีเมลที่หน้าผู้ติดต่อ แล้วส่งเอกสารนี้จากหน้าเอกสาร");
                         facts = facts with { EmailSkippedNoContactEmail = true };
