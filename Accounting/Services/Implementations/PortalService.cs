@@ -422,8 +422,23 @@ public class PortalService : IPortalService
         var beforeSigns = await StatementSignsAsync(companyId, beforeQuery);
         var beforeIds = beforeSigns.Where(kv => kv.Value != 0m).Select(kv => kv.Key).ToList();
         var beforeBalances = await beforeQuery.AsNoTracking().Where(d => beforeIds.Contains(d.Id))
-            .Select(d => new { d.Id, d.BalanceDue }).ToListAsync();
-        var openingBalance = beforeBalances.Sum(b => beforeSigns[b.Id] * b.BalanceDue);
+            .Select(d => new
+            {
+                d.Id, d.BalanceDue,
+                HasSource = d.RelatedDocumentId != null && _db.Documents.Any(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId),
+            }).ToListAsync();
+        // รอบ 257 ปิดท้าย LOW: ใบลดหนี้ที่อ้างใบต้นทางลดยอดค้างของใบต้นทางไปแล้วตอนอนุมัติ ⇒ ไม่หักซ้ำในยอดยกมา (ตัวตัดสินเดียว StatementCreditNoteReduces)
+        var openingBalance = beforeBalances
+            .Where(b => beforeSigns[b.Id] > 0m || DocumentPayLinkPolicy.StatementCreditNoteReduces(b.HasSource, sourceListedInPeriod: false))
+            .Sum(b => beforeSigns[b.Id] * b.BalanceDue);
+        // ใบลดหนี้ในงวดที่ใบต้นทางอยู่ก่อนงวด ⇒ ยอดยกมา (BalanceDue ปัจจุบันของใบต้นทาง) รวมผลของใบลดหนี้นี้แล้ว — ขึ้นบรรทัดให้เห็น แต่ไม่ลดยอดซ้ำ
+        var creditNoteSources = await inPeriod.AsNoTracking()
+            .Where(d => inPeriodIds.Contains(d.Id) && d.RelatedDocumentId != null)
+            .Select(d => new
+            {
+                d.Id,
+                SourceDate = _db.Documents.Where(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId).Select(r => (DateTime?)r.DocumentDate).FirstOrDefault(),
+            }).ToDictionaryAsync(x => x.Id, x => x.SourceDate);
 
         var lines = new List<PortalStatementLine>();
         var runningBalance = openingBalance;
@@ -434,10 +449,14 @@ public class PortalService : IPortalService
             var sign = inPeriodSigns.GetValueOrDefault(doc.Id);
             if (sign != 0m)
             {
-                var amount = sign * doc.TotalAmount;
+                var sourceDate = creditNoteSources.GetValueOrDefault(doc.Id);
+                var reduces = sign > 0m || DocumentPayLinkPolicy.StatementCreditNoteReduces(
+                    hasSource: sourceDate != null, sourceListedInPeriod: sourceDate >= fromDate && sourceDate <= toDate);
+                var amount = reduces ? sign * doc.TotalAmount : 0m;
                 runningBalance += amount;
                 lines.Add(new PortalStatementLine(
-                    doc.DocumentDate, doc.DocumentNumber, $"{(sign > 0 ? "Invoice" : "Credit note")} - {doc.DocumentNumber}",
+                    doc.DocumentDate, doc.DocumentNumber,
+                    $"{(sign > 0 ? "Invoice" : "Credit note")} - {doc.DocumentNumber}" + (reduces ? "" : " (หักจากใบต้นทางแล้ว — รวมอยู่ในยอดยกมา)"),
                     amount, runningBalance));
             }
 

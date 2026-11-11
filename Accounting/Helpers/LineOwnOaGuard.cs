@@ -40,12 +40,22 @@ public static class LineOwnOaGuard
         + "ใส่ค่าจาก LINE OA ของร้านเอง หรือเว้นว่าง";
 
     /// <summary>รอบ 257 ฝ่ายค้าน L7: Basic ID / Group ID ทีมที่จะตั้ง ห้ามเป็นค่าของ OA กลาง (ทุกบริษัท) · null = ผ่าน · ค่าว่าง/null = ไม่ได้ตั้งค่าใหม่</summary>
-    public static string? CentralValueRefusal(string? normalizedBasicId, string? groupId, string? centralBasicId, IEnumerable<string>? centralGroupIds)
+    /// <param name="storedBasicId">รอบ 257 ปิดท้าย MED-6: ค่าที่บันทึกไว้แล้วของบริษัท — ค่าที่ส่งมา<b>เท่ากับค่าที่เก็บอยู่</b> = ไม่ได้ตั้งค่าใหม่ ⇒ ไม่ปฏิเสธ
+    /// (เดิมบริษัทผู้ให้บริการที่มีค่าของ OA กลางค้างจากก่อนมีด่าน กด "ล้างรหัสเชื่อม" ไม่ได้ — หน้าเว็บส่งค่าเดิมกลับมาแล้วถูกปฏิเสธทั้งคำขอ) ·
+    /// ค่าที่<b>ต่างจากที่เก็บอยู่</b>และเป็นของ OA กลาง ⇒ ปฏิเสธเหมือนเดิม</param>
+    /// <param name="storedGroupId">เช่นเดียวกันสำหรับ Group ID ทีม</param>
+    public static string? CentralValueRefusal(string? normalizedBasicId, string? groupId, string? centralBasicId, IEnumerable<string>? centralGroupIds,
+        string? storedBasicId = null, string? storedGroupId = null)
     {
-        if (!string.IsNullOrWhiteSpace(normalizedBasicId) && !string.IsNullOrWhiteSpace(centralBasicId)
-            && string.Equals(normalizedBasicId.Trim().TrimStart('@'), centralBasicId.Trim().TrimStart('@'), StringComparison.OrdinalIgnoreCase))
+        static string Basic(string v) => v.Trim().TrimStart('@');
+        var basicUnchanged = !string.IsNullOrWhiteSpace(normalizedBasicId) && !string.IsNullOrWhiteSpace(storedBasicId)
+            && string.Equals(Basic(normalizedBasicId), Basic(storedBasicId), StringComparison.OrdinalIgnoreCase);
+        if (!basicUnchanged && !string.IsNullOrWhiteSpace(normalizedBasicId) && !string.IsNullOrWhiteSpace(centralBasicId)
+            && string.Equals(Basic(normalizedBasicId), Basic(centralBasicId), StringComparison.OrdinalIgnoreCase))
             return CentralValueMessage;
-        if (!string.IsNullOrWhiteSpace(groupId) && centralGroupIds != null
+        var groupUnchanged = !string.IsNullOrWhiteSpace(groupId) && !string.IsNullOrWhiteSpace(storedGroupId)
+            && string.Equals(groupId.Trim(), storedGroupId.Trim(), StringComparison.Ordinal);
+        if (!groupUnchanged && !string.IsNullOrWhiteSpace(groupId) && centralGroupIds != null
             && centralGroupIds.Any(g => string.Equals(g?.Trim(), groupId.Trim(), StringComparison.Ordinal)))
             return CentralValueMessage;
         return null;

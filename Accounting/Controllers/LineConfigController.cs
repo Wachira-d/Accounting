@@ -73,7 +73,9 @@ public class LineConfigController : ControllerBase
         var central = _nextAcc == null ? null : await _nextAcc.GetAsync(ct);
         // รอบ 257 ฝ่ายค้าน L7: Basic ID / Group ID ทีมห้ามเป็นค่าของ OA กลาง (ทุกบริษัท · ก่อนแก้อะไร)
         if (LineOwnOaGuard.CentralValueRefusal(string.IsNullOrWhiteSpace(req.OaBasicId) ? null : CustomerLineLinkRule.NormalizeBasicId(req.OaBasicId),
-                req.DefaultGroupId, central?.BasicId, _nextAcc == null ? null : await _nextAcc.PlatformGroupIdsAsync(ct)) is string centralValue)
+                req.DefaultGroupId, central?.BasicId, _nextAcc == null ? null : await _nextAcc.PlatformGroupIdsAsync(ct),
+                // รอบ 257 ปิดท้าย MED-6: ปฏิเสธเฉพาะค่าที่ต่างจากที่เก็บอยู่ (ค่าเดิมที่ส่งกลับมา = ไม่ได้ตั้งใหม่ — ไม่ขวางการล้างรหัสเชื่อม/แก้ช่องอื่น)
+                storedBasicId: s.LineOaBasicId, storedGroupId: s.LineDefaultGroupId) is string centralValue)
             return BadRequest(new ApiResponse<LineConfigResponse>(false, null, centralValue));
         if (tokenChanged || secretChanged)
         {

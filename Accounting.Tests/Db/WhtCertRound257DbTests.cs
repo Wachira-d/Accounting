@@ -550,4 +550,158 @@ public class WhtCertRound257DbTests
             Assert.Equal(409, ex.StatusCode);
         }
     }
+
+    // ═══════════ รอบ 257 ปิดท้าย (คำตัดสิน 257-5-1/257-5-2): ทุกทางที่เพิ่ม/เปลี่ยนเครดิตของปีที่ยื่น ภ.ง.ด.50 แล้ว ═══════════
+
+    private static IAiOrchestrator GenuineAi(Action onAsk) => F4Proxy<IAiOrchestrator>.Create((name, _) =>
+    {
+        if (name != nameof(IAiOrchestrator.AskAsync)) return null;
+        onAsk();
+        return new AiResponse { Status = AiCallStatus.Success, PrimaryAnswer = "Genuine", Confidence = 0.95m, UsedAi = true, FeedbackId = Guid.NewGuid() };
+    });
+
+    private static WhtCertIntakeService IntakeWith(AccountingDbContext db, IAiOrchestrator ai)
+        => new(db, ai, F4Proxy<IAiFeedbackRecorder>.Create((_, _) => null), Credits(db), NullLogger<WhtCertIntakeService>.Instance);
+
+    private static WhtCreditService.UpsertRequest Upsert(int year, decimal wht, string? certNo, DateTime? certDate, string? notes = null)
+        => new(year, certNo, certDate, null, "ลูกค้าผู้หัก จำกัด", Payer, WhtPayerFormType.Pnd53, "40(2)",
+            Math.Round(wht / 0.03m, 2, MidpointRounding.AwayFromZero), 3m, wht, null, null, notes);
+
+    [Fact]
+    public async Task Z_MED1_สร้างแถวพร้อมใบ_และแก้ยอด_ในปีที่ยื่นแล้ว_409_ทิศตรงข้ามปีที่ยังไม่ยื่น_และแถวรอใบ_ทำได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var filed = await SeedAsync(db);
+        var open = await SeedAsync(db);
+        await SubmitConfirmAsync(filed, 400m, "2569/Z1-F");
+        await SubmitConfirmAsync(open, 400m, "2569/Z1-O");
+        await FileCitAsync(filed.CompanyId, filed.TaxYear);
+
+        // สร้างแถวใหม่พร้อมใบที่ลงวันที่ในปีที่ยื่นแล้ว ⇒ 409 + ไม่มีแถวเพิ่ม
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Credits(c).CreateAsync(filed.CompanyId, Upsert(filed.TaxYear, 150m, "2569/Z1-NEW", filed.PaidOn)));
+            Assert.Equal((409, WhtCreditFiledYearGuard.RuleCode), (ex.StatusCode, ex.RuleCode));
+            Assert.Contains("ปลดล็อก", ex.Message);
+        }
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(1, await c.WhtCreditsReceived.CountAsync(w => w.CompanyId == filed.CompanyId));
+        // ทิศตรงข้าม: แถวรอใบ (ไม่มีวันที่ใบ ⇒ ไม่อยู่ในแบบใด) ของบริษัทเดียวกันสร้างได้ · บริษัทที่ยังไม่ยื่นสร้างพร้อมใบได้
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Credits(c).CreateAsync(filed.CompanyId, Upsert(filed.TaxYear, 150m, null, null));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var id = await Credits(c).CreateAsync(open.CompanyId, Upsert(open.TaxYear, 150m, "2569/Z1-NEW", open.PaidOn));
+            Assert.Equal(WhtCreditStatus.Received, (await RowAsync(open.CompanyId, id)).Status);
+        }
+
+        // แก้ยอดภาษีถูกหักของแถวที่ใบอยู่ในปีที่ยื่นแล้ว ⇒ 409 · แก้หมายเหตุ (ยอดเดิม) ⇒ ได้
+        var fRow = await RowAsync(filed.CompanyId, filed.CreditId);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Credits(c).UpdateAsync(filed.CompanyId, filed.CreditId,
+                Upsert(filed.TaxYear, 900m, fRow.CertificateNumber, fRow.CertificateDate)));
+            Assert.Equal((409, WhtCreditFiledYearGuard.RuleCode), (ex.StatusCode, ex.RuleCode));
+        }
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Credits(c).UpdateAsync(filed.CompanyId, filed.CreditId, Upsert(filed.TaxYear, 1_000m, fRow.CertificateNumber, fRow.CertificateDate, "โทรตามใบส่วนที่เหลือแล้ว"));
+        fRow = await RowAsync(filed.CompanyId, filed.CreditId);
+        Assert.Equal((1_000m, 400m, "โทรตามใบส่วนที่เหลือแล้ว"), (fRow.WhtAmount, fRow.ReceivedAmount, fRow.Notes));
+        // ทิศตรงข้าม: บริษัทที่ยังไม่ยื่น แก้ยอดได้
+        var oRow = await RowAsync(open.CompanyId, open.CreditId);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Credits(c).UpdateAsync(open.CompanyId, open.CreditId, Upsert(open.TaxYear, 900m, oRow.CertificateNumber, oRow.CertificateDate));
+        Assert.Equal(900m, (await RowAsync(open.CompanyId, open.CreditId)).WhtAmount);
+    }
+
+    [Fact]
+    public async Task Z_MED2_ใบในปีที่ยื่นแล้ว_ไม่ยืนยันอัตโนมัติ_คนยืนยัน409_ปลดล็อกแล้วยืนยันได้_ทิศตรงข้ามปีที่ยังไม่ยื่นยืนยันอัตโนมัติ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var filed = await SeedAsync(db);
+        var open = await SeedAsync(db);
+        await FileCitAsync(filed.CompanyId, filed.TaxYear);
+
+        var asked = 0;
+        WhtCertSubmitResult r;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            r = await IntakeWith(c, GenuineAi(() => asked++)).SubmitAsync(filed.CompanyId, Sub(1_000m, "2569/Z2-F", filed.PaidOn));
+        Assert.False(r.AutoConfirmed, r.Message);
+        Assert.Equal(0, asked);                                  // ด่าน ⇒ ไม่ถาม AI (ไม่เสีย token กับใบที่ไม่ auto อยู่แล้ว)
+        Assert.Contains("ภ.ง.ด.50", r.Message);
+        Assert.Contains("ปลดล็อก", r.Message);
+        var row = await RowAsync(filed.CompanyId, filed.CreditId);
+        Assert.Equal((WhtCreditStatus.Pending, 0m), (row.Status, row.ReceivedAmount));
+
+        // คนกดยืนยัน ⇒ 409 พร้อมทางไปต่อ · แถวไม่ขยับ
+        var confirm = new WhtCertConfirmRequest(Allocations: new[] { new WhtCertAllocationInput(filed.CreditId, 1_000m) });
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Intake(c).ConfirmAsync(filed.CompanyId, r.IntakeId, confirm, Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true));
+            Assert.Equal((409, WhtCreditFiledYearGuard.RuleCode), (ex.StatusCode, ex.RuleCode));
+        }
+        row = await RowAsync(filed.CompanyId, filed.CreditId);
+        Assert.Equal((WhtCreditStatus.Pending, 0m), (row.Status, row.ReceivedAmount));
+
+        // ทิศตรงข้าม: ใบแบบเดียวกันในบริษัทที่ยังไม่ยื่นปีนั้น ⇒ ยืนยันอัตโนมัติเหมือนเดิม
+        WhtCertSubmitResult ok;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            ok = await IntakeWith(c, GenuineAi(() => asked++)).SubmitAsync(open.CompanyId, Sub(1_000m, "2569/Z2-O", open.PaidOn));
+        Assert.True(ok.AutoConfirmed, ok.Message);
+        Assert.Equal(1, asked);
+        Assert.Equal(1_000m, (await RowAsync(open.CompanyId, open.CreditId)).ReceivedAmount);
+
+        // ปลดล็อก (กลับเป็นร่าง) ⇒ คนยืนยันใบของปีนั้นได้
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            await c.TaxReports.Where(t => t.CompanyId == filed.CompanyId).ExecuteUpdateAsync(x => x.SetProperty(t => t.Status, TaxReportStatus.Draft));
+            await Intake(c).ConfirmAsync(filed.CompanyId, r.IntakeId, confirm, Guid.NewGuid(), "ผู้ทำบัญชี", holdsTaxFile: true);
+        }
+        Assert.Equal(1_000m, (await RowAsync(filed.CompanyId, filed.CreditId)).ReceivedAmount);
+    }
+
+    [Fact]
+    public async Task Z_LOW_ต้นทางถูกยกเลิกหลังยื่นแล้ว_ไม่กัน_แต่แจ้งเจ้าของ_ทิศตรงข้ามปีที่ยังไม่ยื่นไม่แจ้ง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var filed = await SeedAsync(db);
+        var open = await SeedAsync(db);
+        var owners = new Dictionary<Guid, Guid>();
+        foreach (var s in new[] { filed, open })
+        {
+            var u = new User { Email = $"r257z-own-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "เจ้าของทดสอบ 257" };
+            db.Users.Add(u);
+            db.CompanyUsers.Add(new CompanyUser { UserId = u.Id, CompanyId = s.CompanyId, Role = UserRole.Owner });
+            owners[s.CompanyId] = u.Id;
+        }
+        await db.SaveChangesAsync();
+        foreach (var s in new[] { filed, open })
+        {
+            await SubmitConfirmAsync(s, 400m, "2569/Z3-" + s.CompanyId.ToString("N")[..4]);
+            using var c = DbTestDatabase.TryCreateContext()!;
+            await Credits(c).ExpireAsync(s.CompanyId, s.CreditId, Reason, null, Actor);   // ตัดสูญส่วนที่เหลือ 600 พร้อม JE
+        }
+        await FileCitAsync(filed.CompanyId, filed.TaxYear);
+
+        foreach (var s in new[] { filed, open })
+        {
+            using var c = DbTestDatabase.TryCreateContext()!;
+            // ทางระบบขับ (ใบต้นทางถูกยกเลิก) ⇒ ไม่ถูกด่านปีที่ยื่นแล้วปฏิเสธ (คำตัดสิน 257-5-2: ความจริงของต้นทางชนะ)
+            Assert.True(await Credits(c).UndoWriteOffAsync(s.CompanyId, s.CreditId, "ใบต้นทางถูกยกเลิก", 0m, removeRow: true, "system"));
+        }
+        using var read = DbTestDatabase.TryCreateContext()!;
+        var note = await read.Set<Notification>().IgnoreQueryFilters().AsNoTracking()
+            .SingleAsync(n => n.CompanyId == filed.CompanyId && n.EntityId == filed.CreditId);
+        Assert.Equal(owners[filed.CompanyId], note.UserId);
+        Assert.Contains("ยื่น ภ.ง.ด.50 เพิ่มเติม", note.Message);
+        Assert.True(await read.AuditLogs.AnyAsync(a => a.CompanyId == filed.CompanyId && a.EntityId == filed.CreditId.ToString()
+            && a.NewValues != null && a.NewValues.Contains("\"filedYearChanged\":" + filed.TaxYear)));
+        // ทิศตรงข้าม: ปีที่ยังไม่ยื่น ⇒ ไม่มีอะไรต้องยื่นเพิ่ม ⇒ ไม่รบกวนเจ้าของ
+        Assert.False(await read.Set<Notification>().IgnoreQueryFilters().AnyAsync(n => n.CompanyId == open.CompanyId && n.EntityId == open.CreditId));
+    }
 }

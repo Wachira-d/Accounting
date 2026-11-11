@@ -30,7 +30,9 @@ namespace Accounting.Tests.Db;
 /// <item>D-H2 ผู้ติดต่อที่เป็นทั้งลูกค้าและผู้ขาย: ใบซื้อไม่อยู่ในรายการ/ใบแจ้งยอด/ส่งออก · เปิดใบเดี่ยว/PDF/ชำระ/สลิปของใบซื้อ = ไม่พบ · ใบแจ้งหนี้ยังเห็น</item>
 /// <item>D-H1 ให้/แก้/ปิดสิทธิ์ลง audit chain พร้อมผู้ทำ</item>
 /// </list>
+/// <para>รอบ 257 ปิดท้าย: ติด <c>Category=Db</c> — เดิมคลาสนี้ไม่มี trait ⇒ job db-test (กรอง Category=Db) ไม่เคยรัน และ job เทสต์ปกติไม่มีฐาน ⇒ ทุกเทสต์ข้ามเงียบ</para>
 /// </summary>
+[Trait("Category", "Db")]
 public class PortalPermissionsRound257DbTests
 {
     private readonly ITestOutputHelper _out;
@@ -292,5 +294,57 @@ public class PortalPermissionsRound257DbTests
         Assert.Equal(3, rows.Count);
         Assert.All(rows, r => Assert.Equal(actor, r.UserId));
         Assert.Contains(rows, r => r.Action == AuditAction.Create);
+    }
+
+    // ═══════════ รอบ 257 ปิดท้าย LOW: ใบลดหนี้ที่อ้างใบต้นทางไม่ถูกหักซ้ำในใบแจ้งยอด ═══════════
+
+    [Fact]
+    public async Task Z_LOW_ใบลดหนี้ที่อ้างใบแจ้งหนี้_ไม่หักซ้ำในยอดยกมา_ทิศตรงข้ามใบลดหนี้ลอย_ยังหัก_และใบลดหนี้ในงวดของใบก่อนงวดไม่ลดซ้ำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var svc = new PortalService(db, Config());
+        var s = await SeedAsync(db, svc);
+        var old = DateTime.UtcNow.Date.AddDays(-40);
+        var today = DateTime.UtcNow.Date;
+        // ใบแจ้งหนี้ 1,070 ก่อนงวด · ใบลดหนี้ 214 อ้างใบแจ้งหนี้ (อนุมัติแล้ว ⇒ ยอดค้างของใบแจ้งหนี้เหลือ 856 — สิ่งที่ ApplySourceDocumentAdjustmentsAsync ทำ)
+        await db.Documents.Where(d => d.Id == s.Invoice.Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(d => d.DocumentDate, old).SetProperty(d => d.PaidAmount, 214m).SetProperty(d => d.BalanceDue, 856m)
+                .SetProperty(d => d.Status, DocumentStatus.PartiallyPaid));
+        await db.Documents.Where(d => d.Id == s.Purchase.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.DocumentDate, old));
+        Document Cn(string prefix, decimal total, DateTime date, Guid? source) => new()
+        {
+            CompanyId = s.Shop.Id, ContactId = s.Contact.Id, DocumentType = DocumentType.CreditNote, DocumentNumber = prefix + Guid.NewGuid().ToString("N")[..8],
+            Status = DocumentStatus.Approved, DocumentDate = date, SubTotal = Math.Round(total / 1.07m, 2, MidpointRounding.AwayFromZero),
+            VatAmount = total - Math.Round(total / 1.07m, 2, MidpointRounding.AwayFromZero), TotalAmount = total, BalanceDue = total, Currency = "THB",
+            RelatedDocumentId = source, CnDnPurchaseSideOverride = source == null ? false : null,
+        };
+        var linked = Cn("CN-L-", 214m, old.AddDays(1), s.Invoice.Id);
+        db.Documents.Add(linked);
+        await db.SaveChangesAsync();
+
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var st = await new PortalService(c, Config()).GetMyStatementAsync(s.Shop.Id, s.Contact.Id, today.AddDays(-7), today.AddDays(1));
+            Assert.Equal(856m, st.OpeningBalance);   // เดิม 642 (856 − 214 ซ้ำ)
+            Assert.Equal(856m, st.ClosingBalance);
+        }
+
+        // ทิศตรงข้าม: ใบลดหนี้ที่ไม่อ้างใบต้นทาง (เครดิตลอย — ไม่เคยลดยอดค้างของใบใด) ยังหักในยอดยกมา
+        var floating = Cn("CN-F-", 107m, old.AddDays(2), null);
+        db.Documents.Add(floating);
+        // ใบลดหนี้ในงวดที่อ้างใบแจ้งหนี้ก่อนงวด (ยอดค้างของใบแจ้งหนี้ลดไปแล้ว ⇒ อยู่ในยอดยกมา) — ขึ้นบรรทัดให้เห็น แต่ไม่ลดยอดซ้ำ
+        var inPeriod = Cn("CN-P-", 107m, today, s.Invoice.Id);
+        db.Documents.Add(inPeriod);
+        await db.SaveChangesAsync();
+        await db.Documents.Where(d => d.Id == s.Invoice.Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(d => d.PaidAmount, 321m).SetProperty(d => d.BalanceDue, 749m));
+
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var st2 = await new PortalService(c2, Config()).GetMyStatementAsync(s.Shop.Id, s.Contact.Id, today.AddDays(-7), today.AddDays(1));
+        Assert.Equal(749m - 107m, st2.OpeningBalance);            // ใบแจ้งหนี้ 749 − เครดิตลอย 107
+        var line = Assert.Single(st2.Lines, l => l.DocumentNumber == inPeriod.DocumentNumber);
+        Assert.Equal(0m, line.Amount);
+        Assert.Equal(642m, st2.ClosingBalance);                    // ไม่ใช่ 535 (หักใบลดหนี้ในงวดซ้ำ)
     }
 }

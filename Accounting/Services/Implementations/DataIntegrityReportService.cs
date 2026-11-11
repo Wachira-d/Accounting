@@ -206,6 +206,13 @@ public class DataIntegrityReportService
                 + "คำยืนยันเป็นของใบแจ้งหนี้ · ตรวจต้นฉบับใบกำกับ ถ้าไม่มี ให้กลับรายการภาษีซื้อ (ระบบไม่ทำให้)",
                 x.VatAmount, null, $"/pages/documents.html?openDoc={x.DocumentId}", "เปิดเอกสาร"))
             .ToList();
+        // รอบ 257 ปิดท้าย MED-5: ยืนยันแล้วแต่สายไม่มีใบกำกับของผู้ขายเลย (อนุมัติแล้ว) — หมวดเดียวกัน · ตัวหาเดียวกับงานครั้งเดียว
+        partnerEarly.AddRange((await Accounting.Helpers.PartnerEvidenceRepair.FindNoCarrierAsync(_db, companyId))
+            .Where(x => !Accounting.Helpers.PartnerEvidenceRepair.NotApproved(x.Status))
+            .Select(x => new DataIntegritySuspect("PartnerConfirmedBeforeTaxInvoice", x.DocumentId, x.Number, x.Date,
+                "ยืนยันต้นฉบับแล้ว แต่ผู้ขายยังไม่เคยส่งใบกำกับภาษีของการขายนี้ผ่านระบบ (ต้นทางเป็นใบแจ้งหนี้) — คำยืนยันเป็นของใบแจ้งหนี้ · "
+                + "ตรวจว่ามีต้นฉบับใบกำกับจริงไหม ถ้าไม่มี ให้กลับรายการภาษีซื้อ (ระบบไม่ทำให้)",
+                x.VatAmount, null, $"/pages/documents.html?openDoc={x.DocumentId}", "เปิดเอกสาร")));
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
             ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, dnCashTwice, apiNoRef, vatBase,
             slipReview, partnerEarly);

@@ -301,6 +301,10 @@ public class WhtCreditService
             throw new BusinessRuleException(CertificateDateRequiredMessage, DedupeRuleCode);
         return await InTxAsync(async () =>
         {
+        // รอบ 257 ปิดท้าย MED-1: แถวใหม่ที่วันที่บนใบอยู่ในปีที่ยื่น ภ.ง.ด.50 แล้ว = เพิ่มเครดิตเข้าปีที่ยื่นไปแล้ว ⇒ 409 (ตัวเดียวกับแก้/ลบ/ได้รับใบ) ·
+        // ล็อกระดับบริษัทก่อนล็อกเลขที่ใบ (ลำดับเดียวทุกทาง) · กล่องรับเรียกเส้นนี้ใต้ล็อกเดียวกันอยู่แล้ว (xact lock re-entrant)
+        await WhtCreditFiledYearGuard.LockCompanyAsync(_db, companyId);
+        await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "บันทึกรายการภาษีถูกหักที่มีหนังสือรับรอง", default, r.CertificateDate);
         // ฝ่ายค้าน WP-09 รอบสอง M-A/M-D: กันซ้ำสองทาง (ทะเบียน + ใบที่ยืนยันแล้วในกล่องรับ) ปีเดียวกัน — ตัวเดียวกับกล่องรับ
         await EnsureCertificateNotRecordedAsync(companyId, r.CertificateNumber, r.PayerTaxId, r.PayerContactId, r.CertificateDate, r.TaxYear);
         var e = new WhtCreditReceived
@@ -349,6 +353,9 @@ public class WhtCreditService
                 // ฝ่ายค้าน H1: แก้เลขที่/วันที่ใบของแถวที่เครดิตอยู่ในปีที่ยื่น ภ.ง.ด.50 แล้ว (ค่าเดิมหรือค่าใหม่) ⇒ 409
                 if (certChanged || dateChanged)
                     await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "แก้เลขที่/วันที่บนหนังสือรับรอง", default, e.CertificateDate, r.CertificateDate);
+                // รอบ 257 ปิดท้าย LOW: แก้ยอดภาษีถูกหักของแถวที่ใบอยู่ในปีที่ยื่นแล้ว = ยอดเครดิตของปีนั้นเปลี่ยน ⇒ 409 เช่นกัน (ยอดเท่าเดิม/ส่ง 0 = ไม่ได้แก้ยอด ⇒ ผ่าน)
+                if (WhtCreditFiledYearGuard.AmountChanged(e.WhtAmount, r.WhtAmount))
+                    await WhtCreditFiledYearGuard.EnsureNotFiledAsync(_db, companyId, "แก้ยอดภาษีถูกหัก", default, e.CertificateDate);
                 // ฝ่ายค้าน WP-09 รอบสอง H-A/H-B: แถวที่ได้ใบบางส่วนผ่านกล่องรับ (ReceivedAmount > 0) — เลขที่ใบแรกแก้ไม่ได้ · วันที่แก้ได้เฉพาะในรอบเดียวกัน
                 // (ตัวตัดสินเดียวกับกล่องรับ H2) · ยอดถูกหักต่ำกว่ายอดที่ได้ใบไม่ได้ · สถานะ/ยอดที่ได้ใบไม่ถูกเปลี่ยนเพราะ "มีเลขที่ใบ" (ใบถัดไปเข้ากล่องรับ)
                 var partCertified = e.ReceivedAmount > 0.005m;
@@ -685,12 +692,18 @@ public class WhtCreditService
     {
         return await InTxAsync(async () =>
             {
+                // รอบ 257 ปิดท้าย LOW (คำตัดสิน 257-5-2): ล็อกระดับบริษัทก่อนล็อกแถว (ตัวเดียวกับการยื่น/ปลดล็อก ภ.ง.ด.50) · ทางนี้ระบบขับ (ต้นทางถูกยกเลิก/คืนเงิน) ⇒
+                // ไม่กันด้วยด่านปีที่ยื่นแล้ว (ความจริงของต้นทางชนะ — กันแล้วทะเบียน/11910 ค้างยอดของใบที่ไม่มีอยู่) แต่แจ้งเจ้าของเมื่อกระทบปีที่ยื่นแล้ว
+                await WhtCreditFiledYearGuard.LockCompanyAsync(_db, companyId);
                 await LockCreditAsync(companyId, id);
                 // รอบ 244 (แก้ CI ข้อ 3): แถวที่กลับรายการแล้วพร้อมถอดแถว (removeRow ⇒ IsDeleted) ถูกตัวกรอง soft-delete ซ่อน ⇒ Load โยน KeyNotFound ·
                 // เรียกซ้ำ (ยกเลิกใบต้นทางซ้ำ/ลองใหม่) ต้อง "ไม่ทำอะไร" ไม่ใช่ 404 ⇒ อ่านรวมแถวที่ถอดแล้ว (กรองบริษัทเอง) · ไม่มีจริง = KeyNotFound เหมือนเดิม
                 var e = await LoadFresh(companyId, id, includeRemoved: true);
                 if (!WhtCreditWriteOff.NeedsReversal(e.Status, e.WriteOffJournalEntryId, e.WriteOffReversalJournalEntryId)) return false;
                 var before = new { status = e.Status.ToString(), e.WhtAmount, e.WriteOffJournalEntryId };
+                var whtBeforeUndo = e.WhtAmount;
+                var creditBeforeUndo = WhtCreditableAmount.Of(e.Status, e.WhtAmount, e.ReceivedAmount);
+                var filedYear = creditBeforeUndo > 0.005m ? await WhtCreditFiledYearGuard.LockedYearAsync(_db, companyId, e.CertificateDate) : null;
                 var (reversalId, reversalNo, writeOffNo) = await ReverseWriteOffJournalCoreAsync(companyId, e, reason);
                 var remaining = Math.Max(0m, Math.Round(remainingAmount, 2, MidpointRounding.AwayFromZero));
                 e.WriteOffReversalJournalEntryId = reversalId;
@@ -709,6 +722,8 @@ public class WhtCreditService
                     e.Status = e.ReceivedAmount > 0.005m
                         ? WhtCreditableAmount.StatusForReceived(remaining, e.ReceivedAmount) : WhtCreditStatus.Pending;
                 }
+                // เครดิตของแถวไม่เปลี่ยน (ส่วนที่ได้ใบยังครบ) ⇒ ไม่กระทบแบบที่ยื่น ⇒ ไม่แจ้ง (ทิศตรงข้าม: ไม่รบกวนเจ้าของเมื่อไม่มีอะไรต้องยื่นเพิ่ม)
+                if (Math.Abs(creditBeforeUndo - WhtCreditableAmount.Of(e.Status, e.WhtAmount, e.ReceivedAmount)) <= 0.005m) filedYear = null;
                 e.Notes = AppendNote(e.Notes, $"กลับรายการตัดสูญ {writeOffNo} ด้วย {reversalNo}: {reason}");
                 e.UpdatedAt = DateTime.UtcNow;
                 _db.AddChainedAuditLog(new AuditLog
@@ -720,10 +735,11 @@ public class WhtCreditService
                     {
                         action = "wht-credit-writeoff-undone", ruleCode = WhtCreditWriteOff.UndoRuleCode, legalReference = WhtCreditWriteOff.LegalReference,
                         reason, status = e.Status.ToString(), removed = e.IsDeleted, remaining, writeOffJournal = writeOffNo, reversalJournal = reversalNo,
-                        reversalJournalEntryId = reversalId,
+                        reversalJournalEntryId = reversalId, filedYearChanged = filedYear,
                     }),
                     Timestamp = DateTime.UtcNow,
                 });
+                await NotifyOwnersFiledYearChangedAsync(companyId, e, filedYear, whtBeforeUndo, reason);
                 await _db.SaveChangesAsync();
                 return true;
             });
@@ -1031,8 +1047,14 @@ public class WhtCreditService
     {
         await InTxAsync(async () =>
             {
+                // รอบ 257 ปิดท้าย LOW (คำตัดสิน 257-5-2): ล็อกระดับบริษัทก่อนล็อกแถว · ทางระบบขับ (คืนเงินเต็มจำนวน) ⇒ ไม่กันด้วยด่านปีที่ยื่นแล้ว แต่แจ้งเจ้าของ
+                await WhtCreditFiledYearGuard.LockCompanyAsync(_db, companyId);
                 await LockCreditAsync(companyId, id);
                 var e = await LoadFresh(companyId, id);
+                // เครดิตของแถวนี้อยู่ในแบบที่ยื่นแล้วไหม (มีใบ = นับเป็นเครดิต · แถวรอใบ ไม่มีวันที่ใบ ⇒ ไม่อยู่ในแบบใด)
+                var filedYear = WhtCreditableAmount.Of(e.Status, e.WhtAmount, e.ReceivedAmount) > 0.005m
+                    ? await WhtCreditFiledYearGuard.LockedYearAsync(_db, companyId, e.CertificateDate) : null;
+                var whtBeforeCancel = e.WhtAmount;
                 if (e.Status == WhtCreditStatus.Claimed)
                     throw new BusinessRuleException("รายการนี้ใช้เครดิตในแบบยื่นไปแล้ว — ตัดทิ้งไม่ได้");
                 // แถวตัดสูญพร้อม JE ต้องเดิน UndoWriteOffAsync (กลับ JE ก่อน) — ไม่งั้น 11910 ติดลบ (ใบลดหนี้ Cr ซ้ำกับ JE ตัดสูญ)
@@ -1042,6 +1064,7 @@ public class WhtCreditService
                 e.ReceivedAmount = 0m;   // ฝ่ายค้าน WP-09 รอบสอง M-B: คืนเงินแล้ว ⇒ ส่วนที่ได้ใบไม่เป็นเครดิต (Of(Expired) = 0)
                 e.Notes = AppendNote(e.Notes, $"หมดสิทธิ์ (ไม่ลงบัญชี — ใบลดหนี้ล้าง 11910 แล้ว): {reason}");
                 e.UpdatedAt = DateTime.UtcNow;
+                await NotifyOwnersFiledYearChangedAsync(companyId, e, filedYear, whtBeforeCancel, reason);
                 await _db.SaveChangesAsync();
                 return true;
             });
@@ -1061,6 +1084,24 @@ public class WhtCreditService
         if (!WhtCreditWriteOff.IsNonDeductibleAccount(acc.AccountCode, acc.AccountType, acc.ParentAccount?.AccountCode))
             throw new BusinessRuleException(NotTaxGroupMessage, WhtCreditWriteOff.RuleCode);
         return acc;
+    }
+
+    /// <summary>รอบ 257 ปิดท้าย LOW (คำตัดสิน 257-5-2): ทางระบบขับ (ต้นทางถูกยกเลิก/คืนเงิน) เปลี่ยนเครดิตของปีที่ยื่น ภ.ง.ด.50 แล้ว ⇒ กระดิ่งถึงเจ้าของบริษัท
+    /// (ไม่กันการเปลี่ยน — ความจริงของต้นทางชนะ · แต่ต้องมีคนรู้ว่าต้องยื่นเพิ่มเติม) · <paramref name="filedYear"/> null = ไม่กระทบปีที่ยื่นแล้ว ⇒ ไม่ทำอะไร ·
+    /// แถวเข้า ChangeTracker — ผู้เรียกบันทึกในธุรกรรมเดียวกัน</summary>
+    private async Task NotifyOwnersFiledYearChangedAsync(Guid companyId, WhtCreditReceived e, int? filedYear, decimal whtBefore, string reason)
+    {
+        if (filedYear is not int fy) return;
+        var owners = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner).Select(cu => cu.UserId).Distinct().ToListAsync();
+        foreach (var owner in owners)
+            _db.Set<Notification>().Add(new Notification
+            {
+                UserId = owner, CompanyId = companyId, Type = NotificationType.System, Channel = NotificationChannel.InApp,
+                Title = "เครดิตภาษีถูกหักของปีที่ยื่น ภ.ง.ด.50 แล้วเปลี่ยน",
+                Message = WhtCreditFiledYearGuard.SourceChangedFiledYearMessage(fy, e.PayerName, whtBefore, reason),
+                ActionUrl = "/pages/wht-credit.html", EntityType = nameof(WhtCreditReceived), EntityId = e.Id,
+            });
     }
 
     private Task LockCreditAsync(Guid companyId, Guid id)

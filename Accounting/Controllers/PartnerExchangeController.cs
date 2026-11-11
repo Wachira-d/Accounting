@@ -64,7 +64,9 @@ public class PartnerExchangeController : ControllerBase
     {
         if (!(await DocumentPermissionHelper.VisibleDirectionsAsync(_perms, companyId, JwtHelper.GetUserIdFromClaims(User))).Purchase)
             return Denied(PermissionKeys.DocumentPurchaseView);
-        return Ok(new ApiResponse<List<object>>(true, await _service.IncomingPurchaseDraftsAsync(companyId, ct)));
+        // รอบ 257 ปิดท้าย LOW: ธงปุ่ม "ได้รับใบกำกับภาษีจากผู้ขายนอกระบบ" ตามสิทธิ์อนุมัติเอกสารซื้อของผู้เรียก (ตัวเดียวกับด่านของเส้นยืนยัน)
+        var mayConfirm = await _perms.HasPermissionAsync(companyId, JwtHelper.GetUserIdFromClaims(User), PermissionKeys.DocumentPurchaseApprove);
+        return Ok(new ApiResponse<List<object>>(true, await _service.IncomingPurchaseDraftsAsync(companyId, ct, mayConfirmTaxInvoice: mayConfirm)));
     }
 
     /// <summary>ชนิดต้นฉบับที่ผู้รับยืนยัน — <c>Paper</c> (ตั้งต้น) = ใบกำกับกระดาษ ⇒ PaperConfirmed · <c>StampedEtax</c> = ไฟล์ e-Tax ที่ประทับเวลา ETDA ⇒ EtaxVerified</summary>
