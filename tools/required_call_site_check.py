@@ -18074,6 +18074,12 @@ RULES += [
     dict(file=_R258P_ESS, method="ScanDueSoonAndOverdueAsync",
          must=["ScheduleCatchUp.MissedDays(", "StampScanDayAsync(", "ScanDayAsync(realToday)", "ScheduleCatchUp.DueRuleCatchesUp(", "!catchUp && rule.Trigger"],
          why=_R258P_WHY + "B-M7 ใกล้ครบ/เกินกำหนด: เก็บวันที่พลาด (ลายน้ำต่อกฎ) ก่อนสแกนวันนี้ แล้วประทับลายน้ำ · ย้อนเก็บเฉพาะกฎ/วันที่ตัวตัดสินอนุญาต · ทวงเฉพาะครั้งแรกของใบ"),
+    # รอบ 259 (259-2-7): รอบสแกนบันทึกแบบ idempotent (ผู้สแกนสองตัว · สองกฎ/วันย้อนเก็บได้กุญแจเดียวกัน) — ห้ามกลับไป SaveChanges ดิบ
+    dict(file=_R258P_ESS, method="ScanDueSoonAndOverdueAsync", must=["QueueRowSave.SaveSkippingExistingKeysAsync(_db, ct)"],
+         forbid=["if (enqueued > 0 || notSentRows > 0) await _db.SaveChangesAsync(ct);"],
+         why="รอบ 259 (259-2-7): กุญแจคิวที่มีแล้ว = ผลเดียวกับที่ต้องการ ⇒ ถอดแถวซ้ำ ไม่ล้มทั้งรอบ (เดิม 23505 ⇒ ทุกใบในรอบหาย + ลายน้ำไม่ขยับ)"),
+    dict(file=_R258P_ESS, method="EnqueueLineAsync", must=["_db.LineQueues.Local.Any("],
+         why="รอบ 259 (259-2-7): แถวของเหตุการณ์เดียวกันที่เพิ่มในรอบนี้แต่ยังไม่บันทึก ⇒ มีแล้ว"),
     dict(file=_R258P_ESS, method="UpsertRuleAsync", must=["ScheduleCatchUp.WatermarkAfterEdit("],
          before=[("ScheduleCatchUp.WatermarkAfterEdit(", "existing.IsActive = rule.IsActive")],
          why=_R258P_WHY + "B-M7 เปิดกฎที่ปิดไว้/เปลี่ยนตาราง ⇒ ล้างลายน้ำ (ก่อนเขียนค่าใหม่ทับ)"),

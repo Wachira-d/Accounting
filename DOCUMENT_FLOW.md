@@ -3119,6 +3119,9 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - LOW: ลบ `DocumentLineDeliveryService` (ไม่มีผู้เรียก · A-L1) · Webhook URL ที่เดียว (A-L2) · กล่องยืนยันปุ่มล้างรหัสบอกผลทั้งสองเส้น (A-L4) · ส่งซ้ำแถว LINE ที่ถอยไปอีเมลแล้ว ⇒ ถามยืนยัน
   (`ContactLineChannel.RetryNote` · A-L5) · ตัวทำงานคิวแยก try ต่อขั้น (คิวอีเมลล้มไม่ลากคิว LINE · A-L7) · ชื่อหน้า/เมนู "ส่งเอกสารอัตโนมัติ (อีเมล/LINE)" + ป้ายผู้ติดต่อ
   "ไม่ส่งเอกสารอัตโนมัติ (อีเมล/LINE)" (ผู้อ่าน `AutoSendBlock` คุมทั้งสองช่องอยู่แล้ว · E-M6)
+- **รอบสแกนใกล้ครบ/เกินกำหนดบันทึกแบบ idempotent (259-2-7)** — สองกฎ trigger/offset เดียวกัน (รวมวันย้อนเก็บ) หรือผู้สแกนสองตัวได้กุญแจคิวเดียวกัน ⇒
+  ถอดแถวซ้ำ (`QueueRowSave.SaveSkippingExistingKeysAsync` · `EnqueueLineAsync` ตรวจแถวที่ยังไม่บันทึกด้วย) แทนที่ทั้งรอบจะล้ม 23505 · ชน unique อื่นยังโยน ·
+  Db `QueueRowSaveRound259DbTests` · Last verified commit <เติมในคอมมิตตามหลัง>
 - ยังไม่ทำ: เก็บสลิปจากแชตเป็นรายการรอตรวจ (ผูก PaymentIntent) + แจ้งทีม · ชั่วโมงเงียบ · กระดิ่งเมื่อคิว LINE ล้มซ้ำ · ตัวเลือกกลุ่ม/ผู้ใช้ที่บอทรู้จักนอกจากกลุ่มทีม ·
   การ์ดความพร้อมบนหน้า payment-settings · L6 (`OnDocumentApprovedAsync` กลืนข้อผิดพลาด) ·
   เทสต์ `LineRound259Tests` · Db `LineRound259DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 7dc53e0c
