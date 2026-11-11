@@ -3166,7 +3166,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **อื่น ๆ (259-3-7)**: `GET api/companies/{c}/getting-started` (`GettingStartedChecklist`) · payment-settings แสดงเส้นโอน/สลิป · เมนูคู่ค้าอยู่หมวดซื้อ ·
   native confirm/prompt/alert = 0 ใน payment-intents/etax/tax/tax-remittance/document-scan/fiscal/customer-portal (ใช้ `Layout.confirm/notice/promptText/formDialog`)
 
-_Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก C รวมบ้าน · ไม่ซ้อน — §2.12g-259c — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 95b419a3 · e3e6f40a · ชุดแก้ฝ่ายค้าน commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก C รวมบ้าน · ไม่ซ้อน — §2.12g-259c — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 95b419a3 · e3e6f40a · ชุดแก้ฝ่ายค้าน commit 0b5c5646)_
 
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 
