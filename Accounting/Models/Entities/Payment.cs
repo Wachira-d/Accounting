@@ -127,6 +127,24 @@ public class Payment : TenantEntity
     /// </summary>
     public Guid? SettlementBatchId { get; set; }
 
+    // ── รอบ 258 "เงินรอจัดสรร" (DECISIONS 258-1-x · erp-review/2026-11-11/team-D-lump-payment.md §3.1) ──
+    /// <summary>เจ้าของเงิน (ผู้ติดต่อ) — ประทับโดยเส้นรับชำระหลายใบ · null = แถวก่อนรอบ 258 ที่ backfill พิสูจน์เจ้าของไม่ได้
+    /// (ไม่รู้ = จัดสรรทีหลังไม่ได้ — <c>Helpers/CustomerCreditAllocation.Check</c>)</summary>
+    public Guid? ContactId { get; set; }
+    /// <summary>ยอด "เงินรอจัดสรร" คงเหลือ (สกุลบาท) — สูตรเดียว <c>Helpers/UnappliedCreditBalance.Compute</c>
+    /// (<c>Amount − Σ PaymentAllocations ที่ยังมีผล</c>) · มีความหมายเฉพาะแถวที่ <see cref="UnappliedAccountId"/> มีค่า
+    /// (การชำระใบเดียวไม่มีแถวจัดสรร — ห้ามคิดสูตรนี้กับแถวเหล่านั้น) · 0 = ไม่มี/จัดสรรครบแล้ว</summary>
+    public decimal UnappliedAmount { get; set; }
+    /// <summary>ผังที่ Cr ไว้จริงตอนรับเงินส่วนเกิน (21630 · แถวเก่าอาจเป็น 217xx) — การจัดสรรทีหลังต้อง Dr ผังเดิมนี้ ·
+    /// null = การชำระนี้ไม่เคยมีเงินส่วนเกินลงบัญชี</summary>
+    public Guid? UnappliedAccountId { get; set; }
+    /// <summary>เหตุผลที่เงินยังไม่ผูกกับใบ — ชื่อของ <see cref="Accounting.Models.Enums.UnappliedReason"/> (บังคับเมื่อมีเงินเกิน · 258-1-2)</summary>
+    public string? UnappliedReason { get; set; }
+    /// <summary>หมายเหตุของเงินรอจัดสรร (ผู้บันทึกกรอก)</summary>
+    public string? UnappliedNote { get; set; }
+    /// <summary>เวลาที่ยอดรอจัดสรรเหลือ 0 (จัดสรรครบ) — ยกเลิกการจัดสรรแล้วกลับเป็น null</summary>
+    public DateTime? UnappliedResolvedAt { get; set; }
+
     /// <summary>Per-document allocation lines — populated when ONE
     /// payment settles MULTIPLE documents (e.g. a single ฿15,000
     /// cheque that pays invoice A 5K + B 6K + C 4K). When this list
@@ -154,4 +172,15 @@ public class PaymentAllocation : TenantEntity
     /// Payment.WithholdingTaxAmount.</summary>
     public decimal WithholdingTaxAmount { get; set; }
     public string? Note { get; set; }
+
+    // ── รอบ 258 "เงินรอจัดสรร": การจัดสรรทีหลัง (<c>CustomerCreditService.AllocateAsync</c>) ใช้ตารางเดียวกัน ──
+    /// <summary>true = จัดสรรจากเงินรอจัดสรรหลังวันรับเงิน (JE ของตัวเอง <see cref="JournalEntryId"/>) · false = จัดสรรพร้อมรับเงิน (เดิม)</summary>
+    public bool IsLateAllocation { get; set; }
+    /// <summary>วันที่จัดสรรทีหลัง (วันที่ของ JE Dr เงินรอจัดสรร / Cr ลูกหนี้) — null = จัดสรรพร้อมรับเงิน</summary>
+    public DateTime? AppliedAt { get; set; }
+    /// <summary>JE ของการจัดสรรทีหลัง — ยกเลิกการจัดสรรกลับ JE ตัวนี้</summary>
+    public Guid? JournalEntryId { get; set; }
+    /// <summary>การจัดสรรนี้ประทับ <c>Document.PaymentDate</c> = วันรับเงินให้ใบปลายทาง (ใบที่ออกหลังเงินเข้า · §78/1) —
+    /// ยกเลิกการจัดสรรต้องคืนค่าเป็น null เฉพาะเมื่อธงนี้เป็น true (ไม่ล้างค่าที่ผู้ใช้กรอกเอง)</summary>
+    public bool StampedDocumentPaymentDate { get; set; }
 }

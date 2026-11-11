@@ -41,6 +41,7 @@ public static class SpecialPurposeAccount
             TradeReceivableAccount.GatewayClearingCode,   // 11340 ลูกหนี้ผู้ให้บริการรับชำระเงิน (บัญชีพัก)
             WhtPayableAccount.Pnd2Code, WhtPayableAccount.Pnd3Code, WhtPayableAccount.Pnd53Code, WhtPayableAccount.Pnd54Code,
             WhtPayableAccount.EWithholdingCode,           // 2191x / 21923 ภาษีหัก ณ ที่จ่ายรอนำส่งตามแบบ
+            UnappliedReceiptAccount.Code,                 // 21630 เงินรับจากลูกค้ารอจัดสรร (รอบ 258) — ห้ามเป็นผังมัดจำ/รับล่วงหน้าตั้งต้นของกลุ่ม 216
             WhtCreditWriteOff.ExpenseAccountCode,         // 58010 ตัดสูญภาษีถูกหักที่ขอเครดิตไม่ได้ (รอบ 243a) — ห้ามเป็นผังค่าใช้จ่ายตั้งต้น
         };
         codes.AddRange(SettlementChartSeed.SeededCodes);  // 11350 เงินที่ผู้ให้บริการกันไว้ · 53170 ค่าธรรมเนียมรับชำระ · 57140 ขาดทุน chargeback

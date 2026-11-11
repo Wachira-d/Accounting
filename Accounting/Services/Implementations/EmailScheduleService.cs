@@ -560,6 +560,9 @@ public class EmailScheduleService : IEmailScheduleService
         if (rules.Count == 0) return 0;
 
         int enqueued = 0, notSentRows = 0;
+        // รอบ 258 (DECISIONS 258-1-9): เงินรอจัดสรรต่อลูกค้า โหลดครั้งเดียวต่อบริษัท · กุญแจแถว "ข้าม" ที่เพิ่มในรอบสแกนนี้ (สองกฎของใบเดียวกันห้ามเพิ่มซ้ำ — ดัชนี unique)
+        var creditByCompany = new Dictionary<Guid, Dictionary<Guid, decimal>>();
+        var creditHoldKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var rule in rules)
         {
             // DueSoon: OffsetDays ติดลบ — เช่น -3 = ส่งล่วงหน้า 3 วัน
@@ -598,9 +601,28 @@ public class EmailScheduleService : IEmailScheduleService
             }
             await _db.HydrateContactsAsync(rule.CompanyId, docs);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
             var sendUtc = ScheduledUtc(today, rule.SendAtHour);
+            if (!creditByCompany.TryGetValue(rule.CompanyId, out var creditByContact))
+                creditByCompany[rule.CompanyId] = creditByContact =
+                    await Accounting.Helpers.CustomerCreditQuery.UnappliedByContactAsync(_db, rule.CompanyId, ct);
             foreach (var doc in docs)
             {
                 var overdueDays = (today - doc.DueDate!.Value.Date).Days;
+                // รอบ 258: ลูกค้ามีเงินรอจัดสรรพอปิดใบนี้ (โอนมาแล้วแต่ยังไม่ได้ผูกกับใบ) ⇒ ไม่เตือน/ทวงลูกค้า (อีเมลและ LINE) ·
+                // แถว "ข้าม" พร้อมเหตุครั้งเดียวต่อใบต่อ trigger (ทีมงานเห็นในประวัติการส่ง + OverdueDunningJob แจ้งทีมให้จัดสรร)
+                var creditHold = Accounting.Helpers.DunningSuppression.Decide(doc.BalanceDue,
+                    creditByContact.TryGetValue(doc.ContactId, out var contactCredit) ? contactCredit : 0m);
+                if (creditHold.SuppressCustomerReminder)
+                {
+                    var holdKey = DocumentQueueKey(doc.Id, rule.Trigger, "credit-hold");
+                    if (creditHoldKeys.Add(holdKey)
+                        && !await _db.EmailQueues.AnyAsync(q => q.CompanyId == doc.CompanyId && q.IdempotencyKey == holdKey && !q.IsDeleted, ct))
+                    {
+                        AddNotSentRow(doc.CompanyId, rule.Id, "Document", doc.Id, $"แจ้งเตือนการชำระ {doc.DocumentNumber}", sendUtc, holdKey,
+                            creditHold.Reason ?? "ลูกค้ามีเงินรอจัดสรรพอปิดใบนี้");
+                        notSentRows++;
+                    }
+                    continue;
+                }
                 var queued = await EnqueueDocumentAsync(rule, doc, daysOffset: 0,
                     suffix: rule.Trigger == "DocumentDueSoon" ? $"due-{rule.OffsetDays}"
                         : Accounting.Helpers.OverdueReminderSchedule.Suffix(rule.OffsetDays, overdueDays, today),

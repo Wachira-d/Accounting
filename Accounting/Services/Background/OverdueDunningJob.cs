@@ -81,6 +81,8 @@ public class OverdueDunningJob : BackgroundService
 
         var today = DateTime.UtcNow.Date;
         var sent = 0;
+        // รอบ 258 (DECISIONS 258-1-9): เงินรอจัดสรรต่อลูกค้า — โหลดครั้งเดียวต่อบริษัท (ตัวอ่านเดียว CustomerCreditQuery)
+        var creditByCompany = new Dictionary<Guid, Dictionary<Guid, decimal>>();
         foreach (var c in candidates)
         {
             if (ct.IsCancellationRequested) return;
@@ -97,6 +99,41 @@ public class OverdueDunningJob : BackgroundService
 
             var contactName = await db.Contacts.AsNoTracking()
                 .Where(x => x.Id == c.ContactId).Select(x => x.Name).FirstOrDefaultAsync(ct);
+
+            // รอบ 258: ลูกค้ามีเงินรอจัดสรรพอปิดใบนี้ ⇒ ไม่ออกหนังสือทวง — แจ้งทีมให้จัดสรรแทน (ตัวตัดสินเดียว DunningSuppression)
+            // ประทับเฉพาะ LastDunningSentAt (พัก 7 วันกันแจ้งซ้ำทุกรอบ) ไม่ขยับระดับทวง ⇒ เงินรอจัดสรรหมดเมื่อไร การทวงตามอายุหนี้เดินต่อจากระดับเดิม
+            if (!creditByCompany.TryGetValue(c.CompanyId, out var creditByContact))
+                creditByCompany[c.CompanyId] = creditByContact =
+                    await Accounting.Helpers.CustomerCreditQuery.UnappliedByContactAsync(db, c.CompanyId, ct);
+            var creditHold = Accounting.Helpers.DunningSuppression.Decide(c.BalanceDue,
+                creditByContact.TryGetValue(c.ContactId, out var contactCredit) ? contactCredit : 0m);
+            if (creditHold.SuppressCustomerReminder)
+            {
+                if (notify == null) continue;
+                try
+                {
+                    await notify.DispatchAsync(c.CompanyId, NotificationEvents.CustomerCreditCoversInvoice, new NotificationContext
+                    {
+                        Title = $"มีเงินรอจัดสรรพอปิดใบนี้: {c.DocumentNumber} — {contactName ?? "(ไม่ระบุ)"}",
+                        Message = $"ใบค้าง {c.AgingDays} วัน ยอดค้าง ฿{c.BalanceDue:N2} · {creditHold.Reason}",
+                        ActionUrl = $"/pages/documents.html?id={c.Id}",
+                        EntityType = "Document", EntityId = c.Id,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "แจ้งทีมเรื่องเงินรอจัดสรรพอปิดใบ {DocId} ไม่สำเร็จ — รอบถัดไปแจ้งใหม่", c.Id);
+                    continue;
+                }
+                var heldDoc = await db.Documents.FirstOrDefaultAsync(d => d.Id == c.Id && d.CompanyId == c.CompanyId, ct);
+                if (heldDoc != null)
+                {
+                    heldDoc.LastDunningSentAt = DateTime.UtcNow;
+                    try { await db.SaveChangesAsync(ct); }
+                    catch (Exception ex) { _logger.LogWarning(ex, "ประทับเวลาแจ้งเงินรอจัดสรรของใบ {DocId} ไม่สำเร็จ", c.Id); }
+                }
+                continue;
+            }
 
             var eventKey = targetLevel switch
             {

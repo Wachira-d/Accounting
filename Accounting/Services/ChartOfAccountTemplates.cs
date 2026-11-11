@@ -132,6 +132,8 @@ public static class ChartOfAccountTemplates
             new("216", "เงินมัดจำและเงินรับล่วงหน้าอื่น", "Deposits and Other Advances Received", AccountType.Liability, 3),
             new("21610", "เงินมัดจำรับ", "Deposit Received", AccountType.Liability, 4),
             new("21620", "เงินค้ำประกัน", "Security Deposit / Guarantee Deposit", AccountType.Liability, 4),
+            // รอบ 258 (DECISIONS 258-1-1): ผังพัก "เงินรอจัดสรร" — เงินที่รับจากลูกค้าแล้วแต่ยังไม่ผูกกับใบ (ตัวหาเดียว Helpers/UnappliedReceiptAccount)
+            new("21630", "เงินรับจากลูกค้ารอจัดสรร", "Customer Receipts Pending Allocation", AccountType.Liability, 4),
             new("217", "รายได้รับล่วงหน้า", "Unearned Revenue / Deferred Revenue", AccountType.Liability, 3),
             new("21711", "ค่าเช่ารับล่วงหน้า", "Unearned Rental Income", AccountType.Liability, 4),
             new("21712", "ค่าสินค้ารับล่วงหน้า", "Advance Received from Customers", AccountType.Liability, 4),

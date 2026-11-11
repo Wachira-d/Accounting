@@ -160,6 +160,8 @@ WATCHED = [
     # รอบ 257 A-H1 (team-A H1) — สร้าง/แก้/ลบ/หยุด/เปิดต่อ/สร้างทันที ของรายการประจำ เดิมมีแค่ [Authorize] และอยู่ใน baseline 6 แถว ⇒ ปิดด่านครบ
     # (RecurringWriteGate: Document.Create ของชนิด · Document.Approve เมื่อระบบอนุมัติ/ส่งแทนคน · Journal.Manage ของสมุดรายวัน) ⇒ ถอดจาก baseline + ย้ายเข้า WATCHED ตอนเขียว
     "Accounting/Controllers/RecurringController.cs",
+    # รอบ 258 — เงินรอจัดสรร: จัดสรร = ลง JE + ลดยอดค้าง (ระดับเดียวกับบันทึกรับชำระ) · ยกเลิกการจัดสรร = กลับ JE (ระดับ Void)
+    "Accounting/Controllers/CustomerCreditController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
