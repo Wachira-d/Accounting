@@ -15120,7 +15120,9 @@ public partial class DocumentService : IDocumentService
                 ? await _db.Documents
                     .FirstOrDefaultAsync(r => r.CompanyId == companyId && !r.IsDeleted
                         && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
-                        && r.SettlementPaymentId == paymentId && r.RelatedDocumentId == targetDocId)
+                        && ((r.SettlementPaymentId == paymentId && r.RelatedDocumentId == targetDocId)
+                            // ใบเสร็จของใบหลักที่ผูกผ่าน Payment.ReceiptDocumentId (ข้อมูลเดิมที่ SettlementPaymentId อาจว่าง) — ไม่ออกซ้ำ
+                            || (targetDocId == payment.DocumentId && r.Id == payment.ReceiptDocumentId)))
                 : await _db.Documents
                     .FirstOrDefaultAsync(r => r.CompanyId == companyId && !r.IsDeleted
                         && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected

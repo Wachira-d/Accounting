@@ -420,7 +420,7 @@ public static class SettlementPaidReissue
         nameof(Document.Pp36RdReceiptNumber), nameof(Document.Pp36RdReceiptDate), nameof(Document.OcrIntelTrainedAt),
         nameof(Document.OcrConfidenceScore), nameof(Document.RdComplianceStatus), nameof(Document.RdComplianceIssuesJson),
         nameof(Document.OcrTenantMismatchFlag), nameof(Document.AgingDays), nameof(Document.AgingLastEvaluatedAt),
-        nameof(Document.LastDunningSentAt), nameof(Document.LastDunningLevel), nameof(Document.ReissueRequestedAt),
+        nameof(Document.LastDunningSentAt), nameof(Document.LastDunningLevel), nameof(Document.CreditCoverNoticeAt), nameof(Document.ReissueRequestedAt),
         nameof(Document.ReissueRequestedBy), nameof(Document.ReissueRequestJson),
         // รอบ 200 ทีม V1G: RV1F-12 — ผู้จัดทำใบแทนคือผู้ขอ (CreatedBy) ไม่ใช่ผู้จัดทำภายนอกของใบเดิม ⇒ ลายเซ็นผู้จัดทำใบเดิมไม่ตามไป ·
         // ใบลดหนี้ที่ปิดธง e-Tax ของใบเสร็จ (ข้อ 47) เป็นของใบเสร็จนั้นเท่านั้น
