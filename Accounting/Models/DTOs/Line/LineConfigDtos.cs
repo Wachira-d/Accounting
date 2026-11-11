@@ -26,7 +26,9 @@ public record LineConfigResponse(
     /// <summary>รอบ 257 C-H1: บริษัทนี้คือบริษัทผู้ให้บริการ (<c>SiteSettings.PlatformCompanyId</c>) — หน้าเว็บซ่อนส่วน "ใช้ LINE OA ของร้านเอง"</summary>
     bool IsPlatformCompany = false,
     /// <summary>รอบ 257 C-H1: คำอธิบายของบริษัทผู้ให้บริการ (ใช้ OA กลางอยู่แล้ว · ห้ามเปลี่ยน webhook ของ OA กลาง) จาก <c>LineOwnOaGuard.PlatformNotice</c> · บริษัทอื่น = null</summary>
-    string? PlatformOaNotice = null);
+    string? PlatformOaNotice = null,
+    /// <summary>รอบ 257 ฝ่ายค้าน M1: บริษัทผู้ให้บริการยังมี token/secret ค้าง — หน้าแสดงสถานะ + ปุ่มล้าง (ส่วน OA ของร้านถูกซ่อน) · null = ไม่มี</summary>
+    string? PlatformLegacyOwnOaNotice = null);
 
 /// <summary>รอบ 212 แพ็ก B: สถานะคำเชิญผูกใหม่ของการเปลี่ยน OA ล่าสุด — <c>Label</c> = ข้อความที่หน้าเว็บแสดงตรง ๆ (ไม่มีกติกาฝั่ง JS)</summary>
 public record CustomerRelinkProgress(

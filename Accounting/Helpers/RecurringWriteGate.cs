@@ -42,10 +42,17 @@ public static class RecurringWriteGate
         => $"รายการนี้ให้ระบบอนุมัติ/ส่งเอกสารแทนคน — ต้องมีสิทธิ์อนุมัติเอกสารชนิดนี้ ({type} · Document.Approve) · "
            + "ขอผู้มีสิทธิ์อนุมัติทำแทน หรือปิด \"อนุมัติอัตโนมัติ\" และ \"ส่งอีเมลอัตโนมัติ\" ให้ระบบสร้างเป็นร่างรออนุมัติ";
 
-    /// <summary>ผลตัดสิน · null = ผ่าน · ข้อความ = ปฏิเสธ (403) · <paramref name="needsApprove"/> มาจาก <see cref="NeedsApprove"/>/<see cref="AfterUpdate"/> ของรายการ</summary>
+    /// <summary>รอบ 257 ฝ่ายค้าน L3: คีย์ API ตั้ง/คง/เปิดต่อ/สร้างทันทีรายการที่ระบบอนุมัติ/ส่งแทนคนไม่ได้ (คีย์ acc_ ถือตัวตนเจ้าของ ⇒ ด่านสิทธิ์ผ่านเสมอ)</summary>
+    public const string ApiKeyMessage =
+        "รายการนี้ให้ระบบอนุมัติ/ส่งเอกสารแทนคน — ตั้ง/แก้/เปิดต่อ/สร้างทันทีด้วย API key ไม่ได้ · เข้าสู่ระบบบนเว็บด้วยผู้มีสิทธิ์อนุมัติ "
+        + "หรือส่งรายการโดยปิด “อนุมัติอัตโนมัติ” และ “ส่งอีเมลอัตโนมัติ” (ระบบสร้างเป็นร่างรออนุมัติ)";
+
+    /// <summary>ผลตัดสิน · null = ผ่าน · ข้อความ = ปฏิเสธ (403) · <paramref name="needsApprove"/> มาจาก <see cref="NeedsApprove"/>/<see cref="AfterUpdate"/> ของรายการ ·
+    /// <paramref name="isApiKeyRequest"/> = คำขอยืนยันตัวด้วย API key (<c>OwnerActionGuard.IsApiKeyRequest</c>)</summary>
     public static async Task<string?> DenyAsync(IPermissionService perms, Guid companyId, Guid userId,
-        string? templateType, DocumentType? documentType, bool needsApprove)
+        string? templateType, DocumentType? documentType, bool needsApprove, bool isApiKeyRequest = false)
     {
+        if (needsApprove && isApiKeyRequest) return ApiKeyMessage;
         if (IsJournal(templateType))
             return await perms.HasPermissionAsync(companyId, userId, PermissionKeys.JournalManage) ? null : JournalMessage;
         var type = documentType ?? DocumentType.Invoice;   // แบบเดียวกับด่านอ่านของรายการประจำ (DenyAutopilotReadAsync)

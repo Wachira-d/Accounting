@@ -60,6 +60,10 @@ public class PortalService : IPortalService
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == request.ContactId)
             ?? throw new InvalidOperationException("Contact not found.");
 
+        // รอบ 257 ฝ่ายค้าน L5: ไม่เปิดสิทธิ์ใดเลย ⇒ 400 (รวมหน้าเก่าที่แคชไว้ซึ่งส่งธงในรูปที่ไม่ bind)
+        if (PortalAccessPermissions.CreateRefusal(request.CanViewInvoices, request.CanViewStatements, request.CanDownloadPdf, request.CanMakePayment) is string noFlags)
+            throw new BusinessRuleException(noFlags, "PORTAL-FLAGS", 400);
+
         var existing = await _db.Set<PortalAccess>()
             .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Email == request.Email);
 
@@ -272,10 +276,28 @@ public class PortalService : IPortalService
                 d.Id, d.DocumentType, d.CnDnPurchaseSideOverride,
                 RelatedType = _db.Documents.Where(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId).Select(r => (DocumentType?)r.DocumentType).FirstOrDefault(),
                 ContactSupplierOnly = _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsSupplier && !c.IsCustomer).FirstOrDefault(),
+                ContactCustomerOnly = _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsCustomer && !c.IsSupplier).FirstOrDefault(),
             })
             .ToListAsync(ct);
-        return facts.Where(f => DocumentPayLinkPolicy.IsCustomerFacing(f.DocumentType, f.RelatedType, f.CnDnPurchaseSideOverride, f.ContactSupplierOnly))
+        return facts.Where(f => DocumentPayLinkPolicy.IsCustomerFacing(f.DocumentType, f.RelatedType, f.CnDnPurchaseSideOverride, f.ContactSupplierOnly, f.ContactCustomerOnly))
             .Select(f => f.Id).ToList();   // List (ไม่ใช่ HashSet) — EF แปล List.Contains เป็น IN/ANY ได้แน่นอน
+    }
+
+    /// <summary>รอบ 257 ฝ่ายค้าน M2: เครื่องหมายของใบในใบแจ้งยอด — ตัวเดียวทั้งยอดยกมาและบรรทัดในงวด (<see cref="DocumentPayLinkPolicy.StatementSigned"/>:
+    /// ใบที่ลูกค้าจ่ายเรา +1 · ใบลดหนี้ฝั่งขาย −1 · ใบเสนอราคา/ใบวางบิล/ใบเสร็จ/ฝั่งซื้อ 0)</summary>
+    private async Task<Dictionary<Guid, decimal>> StatementSignsAsync(Guid companyId, IQueryable<Document> query, CancellationToken ct = default)
+    {
+        var rows = await query.AsNoTracking()
+            .Select(d => new
+            {
+                d.Id, d.DocumentType, d.CnDnPurchaseSideOverride,
+                RelatedType = _db.Documents.Where(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId).Select(r => (DocumentType?)r.DocumentType).FirstOrDefault(),
+                ContactSupplierOnly = _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsSupplier && !c.IsCustomer).FirstOrDefault(),
+                ContactCustomerOnly = _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsCustomer && !c.IsSupplier).FirstOrDefault(),
+            })
+            .ToListAsync(ct);
+        return rows.ToDictionary(r => r.Id, r => DocumentPayLinkPolicy.StatementSigned(r.DocumentType, r.RelatedType, r.CnDnPurchaseSideOverride,
+            r.ContactSupplierOnly, r.ContactCustomerOnly, 1m));
     }
 
     /// <summary>รอบ 257 D-H2: ใบนี้เป็นของผู้ติดต่อในโทเคน · ออกแล้ว · ลูกค้าเห็นได้ (ด่านเดียวของเส้นใบเดี่ยว: รายละเอียด · PDF · ตัวเลือกชำระ · แนบสลิป)</summary>
@@ -298,10 +320,11 @@ public class PortalService : IPortalService
                 // รอบ 250 (WP-02 ฝ่ายค้าน ข้อ 3): ฝั่งของใบเพิ่มหนี้ตัดสินด้วยตัวตัดสินเดียวกับ JE รับชำระ — ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ติดต่อเป็นผู้ขายอย่างเดียว
                 d.CnDnPurchaseSideOverride,
                 ContactSupplierOnly = _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsSupplier && !c.IsCustomer).FirstOrDefault(),
+                ContactCustomerOnly = _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsCustomer && !c.IsSupplier).FirstOrDefault(),
             })
             .ToListAsync();
         // รอบ 257 D-H2: เฉพาะใบที่ลูกค้าเห็นได้ (ตัวตัดสินเดียว — ข้อเท็จจริงฝั่งอยู่ในแถวที่ฉายแล้ว)
-        rows = rows.Where(d => DocumentPayLinkPolicy.IsCustomerFacing(d.DocumentType, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly)).ToList();
+        rows = rows.Where(d => DocumentPayLinkPolicy.IsCustomerFacing(d.DocumentType, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly, d.ContactCustomerOnly)).ToList();
         var pending = await SlipPendingByDocumentAsync(companyId, rows.Select(r => r.Id).ToList());   // รอบ 250 ฝ่ายค้าน L4 (WP-02b)
         // รอบ 250 WP-03 (ฝ่ายค้าน H1): ปุ่ม "ชำระ" ตามกติกาเดียวกับลิงก์ชำระ (DocumentPayLinkPolicy.IssueRefusal — ฝั่งขาย · THB · ยอดค้าง > 0 · ออกแล้ว)
         // · ใบกำกับที่อ้างใบแจ้งหนี้ตรวจตอนเปิดหน้าต่างชำระ (TransferForDocumentAsync) — หน้าเว็บไม่ตัดสินชนิดเอง
@@ -385,33 +408,37 @@ public class PortalService : IPortalService
 
     public async Task<PortalStatementResponse> GetMyStatementAsync(Guid companyId, Guid contactId, DateTime fromDate, DateTime toDate)
     {
-        // รอบ 257 D-H2: ใบแจ้งยอดนับเฉพาะใบที่ออกแล้วและลูกค้าเห็นได้ (เดิมรวมใบร่าง + ยอดค้างของใบซื้อจากผู้ติดต่อที่เป็นผู้ขายด้วย)
+        // รอบ 257 D-H2 + ฝ่ายค้าน M2: ใบแจ้งยอดนับเฉพาะใบที่ออกแล้ว · เครื่องหมายจากตัวตัดสินเดียว (StatementSignsAsync) ทั้งในงวดและยอดยกมา —
+        // เดิมยอดยกมารวมยอดค้างของใบเสนอราคา/ใบวางบิล/ใบซื้อ ขณะที่บรรทัดในงวดนับเฉพาะใบแจ้งหนี้ ⇒ สองกติกาในใบเดียว
         var inPeriod = PortalDocuments(companyId, contactId).Where(d => d.DocumentDate >= fromDate && d.DocumentDate <= toDate);
-        var inPeriodIds = await CustomerFacingIdsAsync(companyId, inPeriod);
+        var inPeriodSigns = await StatementSignsAsync(companyId, inPeriod);
+        var inPeriodIds = inPeriodSigns.Where(kv => kv.Value != 0m).Select(kv => kv.Key).ToList();
         var documents = await inPeriod
             .Where(d => inPeriodIds.Contains(d.Id))
             .OrderBy(d => d.DocumentDate)
             .ToListAsync();
 
-        // Calculate opening balance from documents before the period
-        var before = PortalDocuments(companyId, contactId).Where(d => d.DocumentDate < fromDate);
-        var beforeIds = await CustomerFacingIdsAsync(companyId, before);
-        var openingBalance = await before
-            .Where(d => beforeIds.Contains(d.Id))
-            .SumAsync(d => d.BalanceDue);
+        var beforeQuery = PortalDocuments(companyId, contactId).Where(d => d.DocumentDate < fromDate);
+        var beforeSigns = await StatementSignsAsync(companyId, beforeQuery);
+        var beforeIds = beforeSigns.Where(kv => kv.Value != 0m).Select(kv => kv.Key).ToList();
+        var beforeBalances = await beforeQuery.AsNoTracking().Where(d => beforeIds.Contains(d.Id))
+            .Select(d => new { d.Id, d.BalanceDue }).ToListAsync();
+        var openingBalance = beforeBalances.Sum(b => beforeSigns[b.Id] * b.BalanceDue);
 
         var lines = new List<PortalStatementLine>();
         var runningBalance = openingBalance;
 
         foreach (var doc in documents)
         {
-            // Add document charge
-            if (doc.DocumentType == DocumentType.Invoice || doc.DocumentType == DocumentType.TaxInvoice)
+            // ใบตั้งหนี้ (+) / ใบลดหนี้ฝั่งขาย (−) — ตัวตัดสินเดียวกับยอดยกมา
+            var sign = inPeriodSigns.GetValueOrDefault(doc.Id);
+            if (sign != 0m)
             {
-                runningBalance += doc.TotalAmount;
+                var amount = sign * doc.TotalAmount;
+                runningBalance += amount;
                 lines.Add(new PortalStatementLine(
-                    doc.DocumentDate, doc.DocumentNumber, $"Invoice - {doc.DocumentNumber}",
-                    doc.TotalAmount, runningBalance));
+                    doc.DocumentDate, doc.DocumentNumber, $"{(sign > 0 ? "Invoice" : "Credit note")} - {doc.DocumentNumber}",
+                    amount, runningBalance));
             }
 
             // Add payments against this document — สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ (รอบ 250 M-2 · ตัวตั้งเดียว PortalSlipPending)

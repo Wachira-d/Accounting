@@ -180,7 +180,8 @@ public class RecurringController : ControllerBase
     /// <summary>รอบ 257 A-H1: ด่านเขียนรายการประจำตัวเดียว (<see cref="RecurringWriteGate"/> — สร้างเอกสารชนิดนั้น · อนุมัติเมื่อระบบอนุมัติ/ส่งแทนคน) · null = ผ่าน</summary>
     private Task<string?> DenyRecurringWriteAsync(Guid companyId, string? templateType, DocumentType? type, bool needsApprove)
     {
-        return RecurringWriteGate.DenyAsync(_permissions, companyId, JwtHelper.GetUserIdFromClaims(User), templateType, type, needsApprove);
+        return RecurringWriteGate.DenyAsync(_permissions, companyId, JwtHelper.GetUserIdFromClaims(User), templateType, type, needsApprove,
+            isApiKeyRequest: OwnerActionGuard.IsApiKeyRequest(HttpContext));   // รอบ 257 ฝ่ายค้าน L3
     }
 
     [HttpPost]

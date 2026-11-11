@@ -62,17 +62,22 @@ public class LineConfigController : ControllerBase
         var before = _customerLinks == null ? null : await _customerLinks.ResolveChannelAsync(companyId);
         // ฝ่ายค้าน (B+D) ข้อ 2: token ใหม่ ⇒ ถาม LINE ว่าเป็นบอทไหน (ก่อนแก้อะไร) · เปลี่ยน token โดยไม่ใส่ secret ทั้งที่มี secret เดิม ⇒ ต้องเป็นบอทเดิมที่จำไว้
         // ไม่งั้นปฏิเสธ (secret ของ OA เก่า + token ของ OA ใหม่ = webhook ของ OA เก่าผ่านลายเซ็นแล้วพลิกบอทกลับ/เชิญลูกค้าผิด ๆ)
-        var tokenChanged = !string.IsNullOrEmpty(req.ChannelAccessToken);
-        var secretChanged = !string.IsNullOrEmpty(req.ChannelSecret);
+        // รอบ 257 ฝ่ายค้าน L6: ช่องว่างล้วน = ล้าง (เดิมนับเป็น "ตั้งค่าใหม่" แล้วเข้ารหัสช่องว่างเก็บไว้)
+        var tokenChanged = LineOwnOaGuard.Classify(req.ChannelAccessToken) == LineOwnOaGuard.InputKind.Set;
+        var secretChanged = LineOwnOaGuard.Classify(req.ChannelSecret) == LineOwnOaGuard.InputKind.Set;
         var ct = HttpContext?.RequestAborted ?? default;
         string? fetchedBot = null;
         if (tokenChanged && _relink != null)
-            fetchedBot = await _relink.FetchBotUserIdAsync(req.ChannelAccessToken!, ct);
+            fetchedBot = await _relink.FetchBotUserIdAsync(req.ChannelAccessToken!.Trim(), ct);
         // รอบ 257 C-H1: token/secret ของ OA กลาง ห้ามเป็น "OA ของร้านเอง" (ทุกบริษัท) · บริษัทผู้ให้บริการตั้ง OA ของตัวเองไม่ได้ (ล้างได้) — ก่อนแก้อะไร
+        var central = _nextAcc == null ? null : await _nextAcc.GetAsync(ct);
+        // รอบ 257 ฝ่ายค้าน L7: Basic ID / Group ID ทีมห้ามเป็นค่าของ OA กลาง (ทุกบริษัท · ก่อนแก้อะไร)
+        if (LineOwnOaGuard.CentralValueRefusal(string.IsNullOrWhiteSpace(req.OaBasicId) ? null : CustomerLineLinkRule.NormalizeBasicId(req.OaBasicId),
+                req.DefaultGroupId, central?.BasicId, _nextAcc == null ? null : await _nextAcc.PlatformGroupIdsAsync(ct)) is string centralValue)
+            return BadRequest(new ApiResponse<LineConfigResponse>(false, null, centralValue));
         if (tokenChanged || secretChanged)
         {
             var isPlatform = LineOwnOaGuard.IsPlatformCompany(companyId, await PlatformCompanyLookup.IdAsync(_db, ct));
-            var central = _nextAcc == null ? null : await _nextAcc.GetAsync(ct);
             var centralBot = central?.BotUserId;
             if (tokenChanged && string.IsNullOrWhiteSpace(centralBot) && central?.HasToken == true && _relink != null)
                 centralBot = await _relink.FetchBotUserIdAsync(central.AccessToken!, ct);
@@ -85,14 +90,14 @@ public class LineConfigController : ControllerBase
         if (pairProblem != null) return BadRequest(new ApiResponse<LineConfigResponse>(false, null, pairProblem));
         s.LineEnabled = req.Enabled;
         // รอบ 257 C-M1: null = คงเดิม · "" = ล้าง · ค่า = ตั้งใหม่ (เดิม "" ถูกถือว่าคงเดิม ⇒ ล้างไม่ได้เงียบ ๆ)
-        var tokenCleared = req.ChannelAccessToken != null && req.ChannelAccessToken.Trim().Length == 0;
-        var secretCleared = req.ChannelSecret != null && req.ChannelSecret.Trim().Length == 0;
+        var tokenCleared = LineOwnOaGuard.Classify(req.ChannelAccessToken) == LineOwnOaGuard.InputKind.Clear;
+        var secretCleared = LineOwnOaGuard.Classify(req.ChannelSecret) == LineOwnOaGuard.InputKind.Clear;
         if (tokenCleared) { s.LineChannelAccessToken = null; s.LineOaDestination = null; }
-        else if (!string.IsNullOrEmpty(req.ChannelAccessToken))
-            s.LineChannelAccessToken = _secrets.Protect(req.ChannelAccessToken);
+        else if (tokenChanged)
+            s.LineChannelAccessToken = _secrets.Protect(req.ChannelAccessToken!.Trim());
         if (secretCleared) s.LineChannelSecret = null;
-        else if (!string.IsNullOrEmpty(req.ChannelSecret))
-            s.LineChannelSecret = _secrets.Protect(req.ChannelSecret);
+        else if (secretChanged)
+            s.LineChannelSecret = _secrets.Protect(req.ChannelSecret!.Trim());
         if (req.DefaultGroupId != null) s.LineDefaultGroupId = string.IsNullOrWhiteSpace(req.DefaultGroupId) ? null : req.DefaultGroupId.Trim();
         // รอบ 211: Basic ID ใช้ทำปุ่มเพิ่มเพื่อน/ส่งรหัสของลูกค้า ⇒ รูปแบบผิดต้องบอก (ไม่เก็บเงียบแล้วปุ่มพัง)
         if (req.OaBasicId != null)
@@ -187,6 +192,7 @@ public class LineConfigController : ControllerBase
         {
             IsPlatformCompany = isPlatform,
             PlatformOaNotice = LineOwnOaGuard.PlatformNotice(isPlatform),
+            PlatformLegacyOwnOaNotice = LineOwnOaGuard.PlatformLegacyNotice(isPlatform, !string.IsNullOrEmpty(s.LineChannelAccessToken), !string.IsNullOrEmpty(s.LineChannelSecret)),
             CustomerChannel = _customerLinks == null ? null : await _customerLinks.GetChannelInfoAsync(companyId),
             RelinkInvite = _relink == null ? null : await _relink.GetProgressAsync(companyId),
             WebhookProblem = string.IsNullOrWhiteSpace(s.LineWebhookDestinationMismatch) ? null : CustomerRelinkInvitePlan.SecretOfOtherOaProblem,
