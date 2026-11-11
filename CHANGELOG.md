@@ -6927,4 +6927,4 @@ _รอบ 258 แพ็ก สิทธิ์+คิวส่ง: ชุด 5 (
 ธง `canAutoApprove`/`autoApproveBlockedReason` จากเซิร์ฟเวอร์แทนกติกา `_isBatchApprovable` ใน JS (`OcrPostingReadiness.EvaluateUnseen`) · scan/{fileAttachmentId} หักโควตา/คืนตามกติกาเดียวกับ /upload ·
 API v1 ไม่คิดเงินสแกนที่ล้ม/ผลเดิม/e-Tax XML (`OcrQuotaRefundRule.NotBilledReason`) + ตอบ scanStatus · ai-tools.html แท็บ OCR: Layout.esc + สถานะตามจริง + เลิกสร้างเอกสารข้ามหน้าตรวจ ·
 required_call_site_check R258p +4 ข้อ + 1 เคสกลายพันธุ์_
-_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 5: สแกนเอกสาร — ด่านอนุมัติรวดฝั่งเซิร์ฟเวอร์ · โควตา/ค่าบริการ · แท็บ OCR ของ ai-tools — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก สิทธิ์+คิวส่ง — §2.12g-258 ชุด 5: สแกนเอกสาร — ด่านอนุมัติรวดฝั่งเซิร์ฟเวอร์ · โควตา/ค่าบริการ · แท็บ OCR ของ ai-tools — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e159d198)_
