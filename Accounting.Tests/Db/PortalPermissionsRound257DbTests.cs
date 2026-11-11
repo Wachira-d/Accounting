@@ -30,7 +30,9 @@ namespace Accounting.Tests.Db;
 /// <item>D-H2 ผู้ติดต่อที่เป็นทั้งลูกค้าและผู้ขาย: ใบซื้อไม่อยู่ในรายการ/ใบแจ้งยอด/ส่งออก · เปิดใบเดี่ยว/PDF/ชำระ/สลิปของใบซื้อ = ไม่พบ · ใบแจ้งหนี้ยังเห็น</item>
 /// <item>D-H1 ให้/แก้/ปิดสิทธิ์ลง audit chain พร้อมผู้ทำ</item>
 /// </list>
+/// <para>รอบ 257 ปิดท้าย: ติด <c>Category=Db</c> — เดิมคลาสนี้ไม่มี trait ⇒ job db-test (กรอง Category=Db) ไม่เคยรัน และ job เทสต์ปกติไม่มีฐาน ⇒ ทุกเทสต์ข้ามเงียบ</para>
 /// </summary>
+[Trait("Category", "Db")]
 public class PortalPermissionsRound257DbTests
 {
     private readonly ITestOutputHelper _out;
