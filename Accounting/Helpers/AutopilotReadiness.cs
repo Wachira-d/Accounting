@@ -187,17 +187,18 @@ public static class AutopilotReadiness
 
         // ── อนุมัติ ──
         var approveFails = false;
-        if (!f.AutoApprove)
-        {
-            Add("APPROVE", "อนุมัติ", Info, "ไม่ได้เปิดอนุมัติอัตโนมัติ — ทุกงวดได้ใบร่าง ต้องมีคนอนุมัติก่อนส่ง",
-                "ใบร่างยังไม่มีเลขที่จริง (§86/4) จึงส่งให้ลูกค้าไม่ได้", PolicyStepUrl, "เปิดอนุมัติอัตโนมัติ");
-        }
-        // รอบ 258 (B-M2): ผู้รับผิดชอบการอนุมัติของรายการหมดสิทธิ์/ออกจากบริษัท ⇒ ทุกรอบค้างร่าง (RECURRING-APPROVER-GONE) — เดิมแผงยังเขียว
-        else if (f.AutoApproverRefusal != null)
+        // รอบ 258 (B-M2): ผู้รับผิดชอบการอนุมัติของรายการหมดสิทธิ์/ออกจากบริษัท ⇒ ทุกรอบค้างร่าง (RECURRING-APPROVER-GONE) — เดิมแผงยังเขียว ·
+        // เป็นข้อเพิ่ม (ข้อคำเตือนก่อนอนุมัติด้านล่างยังแสดงตามเดิม) — แต่ไม่ขึ้นข้อ "อนุมัติอัตโนมัติจะผ่าน" ขัดกัน
+        if (f.AutoApprove && f.AutoApproverRefusal != null)
         {
             approveFails = true;
             Add("APPROVER-GONE", "อนุมัติ", Fail, "ถ้ารันตอนนี้ ใบจะค้างเป็นร่าง — ผู้รับผิดชอบการอนุมัติของรายการไม่มีสิทธิ์แล้ว",
                 f.AutoApproverRefusal, PolicyStepUrl, "ไปขั้นอนุมัติ");
+        }
+        if (!f.AutoApprove)
+        {
+            Add("APPROVE", "อนุมัติ", Info, "ไม่ได้เปิดอนุมัติอัตโนมัติ — ทุกงวดได้ใบร่าง ต้องมีคนอนุมัติก่อนส่ง",
+                "ใบร่างยังไม่มีเลขที่จริง (§86/4) จึงส่งให้ลูกค้าไม่ได้", PolicyStepUrl, "เปิดอนุมัติอัตโนมัติ");
         }
         else if (f.ApprovalWarnings == null)
         {
@@ -213,7 +214,7 @@ public static class AutopilotReadiness
                     + (releasable.Count > 0 ? " — คำเตือนที่มีรหัส (เช่น ลูกค้าค้างชำระ) เลือกให้ระบบอนุมัติต่อพร้อมบันทึกได้ที่ขั้น \"อนุมัติ\"" : ""),
                 releasable.Count > 0 ? PolicyStepUrl : null, releasable.Count > 0 ? "ตั้งนโยบายอนุมัติ" : null);
         }
-        else
+        else if (f.AutoApproverRefusal == null)
         {
             Add("APPROVE", "อนุมัติ", Ok, f.ApprovalReleased.Count > 0
                 ? $"อนุมัติอัตโนมัติจะผ่าน — นโยบายปล่อยคำเตือน {f.ApprovalReleased.Count} ข้อ (ลงหมายเหตุ + บันทึกตรวจสอบ)"
