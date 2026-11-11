@@ -2122,12 +2122,7 @@ public class AiSuggestionController : ControllerBase
         // เฉพาะชนิดที่ AutoPost ลง JE จริง — ใบเสนอราคา/PR/PO/ใบส่งของ/ใบวางบิล ไม่มี JE
         // โดยธรรมชาติ เดิมถูกนับเป็น "ยังไม่ลงบัญชี" ทุกใบ (false positive กลบของจริง) และ
         // `== Approved` ทำให้ใบ Sent/Paid ที่ AutoPost ล้มเงียบหลุดจากการตรวจ (ERP_REVIEW A-04)
-        var jeBearingTypes = new[]
-        {
-            DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.ReceiptVoucher,
-            DocumentType.DebitNote, DocumentType.CreditNote, DocumentType.PurchaseInvoice, DocumentType.Expense,
-            DocumentType.PaymentVoucher, DocumentType.CertificateInLieu, DocumentType.GoodsReceiptNote,
-        };
+        var jeBearingTypes = Accounting.Services.Implementations.PreCloseChecklistService.JeBearingTypes;   // รอบ 259-3: ตัวตั้งเดียว
         var docsNoJe = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted
                 && d.DocumentDate >= start && d.DocumentDate <= end

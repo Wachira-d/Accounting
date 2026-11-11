@@ -720,13 +720,17 @@ public class PortalService : IPortalService
         // ความเป็นเจ้าของ + ลูกค้าเห็นได้ ผ่านด่านเดียวกับตัวเลือกชำระ (PortalDocuments + IsPortalVisibleAsync)
         var exists = await PortalDocuments(companyId, contactId).AsNoTracking().AnyAsync(d => d.Id == documentId, ct);
         if (!exists || !await IsPortalVisibleAsync(companyId, contactId, documentId, ct)) throw new KeyNotFoundException("ไม่พบเอกสาร");
-        if (_payLinks == null) throw new InvalidOperationException("ระบบลิงก์ชำระยังไม่พร้อม — ติดต่อผู้ดูแลระบบ");
+        var docFacts = await _db.Documents.AsNoTracking().Where(d => d.Id == documentId && d.CompanyId == companyId)
+            .Select(d => new { d.Status, d.BalanceDue }).FirstAsync(ct);
+        // ฝ่ายค้าน L1: ข้อความถึงลูกค้าเท่านั้น (เหตุภายในของร้านไม่หลุดถึงลูกค้า) · L2: ระบบลิงก์ไม่พร้อม = คำตอบปกติ ไม่โยนข้อผิดพลาดทั่วไป
+        var customerRefusal = PortalDocumentStatus.PayRefusalForCustomer(docFacts.Status.ToString(), docFacts.BalanceDue);
+        if (_payLinks == null) return new PortalPayLinkResponse(null, PortalDocumentStatus.ContactShopMessage, false);
         var link = await _payLinks.EnsureLinkAsync(companyId, documentId, null, ct);
         if (link.Ok) return new PortalPayLinkResponse(link.Url, null, false);
-        // ออกลิงก์ไม่ได้: ใบชำระไม่ได้ (เหตุเดียวกับหน้าชำระ) หรือบริษัทยังไม่มีช่องทางออนไลน์ ⇒ โอน/สลิปของพอร์ทัล (ยอดจากเซิร์ฟเวอร์)
+        // ออกลิงก์ไม่ได้: ใบชำระไม่ได้ (เหตุเดียวกับหน้าชำระ) · บริษัทยังไม่มีช่องทางออนไลน์ · ลิงก์ถูกร้านเพิกถอน ⇒ โอน/สลิปของพอร์ทัล (ยอดจากเซิร์ฟเวอร์) ถ้าใบรับโอนได้
         var transfer = await _payLinks.TransferForDocumentAsync(companyId, documentId, ct);
         var fallback = transfer is { Refusal: null, Transfer: not null };
-        return new PortalPayLinkResponse(null, transfer?.Refusal ?? link.Refusal, fallback);
+        return new PortalPayLinkResponse(null, fallback ? null : customerRefusal, fallback);
     }
 
     /// <summary>ลูกค้าแนบสลิปโอนของใบแจ้งหนี้/ใบกำกับ — <b>"แจ้งโอน" ไม่ใช่ "รับชำระแล้ว"</b> (รอบ 250 WP-02b · M-2/G-T7)

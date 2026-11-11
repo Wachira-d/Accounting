@@ -27,7 +27,7 @@
       <div class="vp-grid">
         <div><label for="contactName">ผู้ขาย (ผู้ติดต่อ)</label><input type="hidden" id="contactId"><input type="text" id="contactName" class="form-input"></div>
         <div><label for="validDays">อายุลิงก์ (วัน)</label><input id="validDays" type="number" min="1" max="365" class="form-input" value="90"></div>
-        <div><label for="recipientEmail">ส่งลิงก์ทางอีเมลถึง (ไม่บังคับ)</label><input id="recipientEmail" type="email" class="form-input" placeholder="เว้นว่าง = คัดลอกลิงก์ส่งเอง"></div>
+        <div><label for="recipientEmail">ส่งลิงก์ทางอีเมลถึง (ไม่บังคับ)</label><input id="recipientEmail" type="email" class="form-input" placeholder="อีเมลเดียว · เว้นว่าง = คัดลอกลิงก์ส่งเอง"></div>
       </div>
       <div style="margin-top:14px">
         <button class="btn btn-primary" id="issueBtn" onclick="Page.issue()">ออกลิงก์</button>
@@ -39,7 +39,10 @@
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h3>ลิงก์ที่ออกแล้ว</h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h3>ลิงก์ที่ออกแล้ว</h3>
+        <button class="btn btn-sm btn-danger" id="revokeLegacyBtn" style="display:none" onclick="Page.revokeLegacy()">เพิกถอนลิงก์ลูกค้าเดิมทั้งหมด</button>
+      </div>
       <div class="table-container">
         <table class="table">
           <thead><tr><th>ผู้ติดต่อ</th><th>บทบาท</th><th>ออกเมื่อ</th><th>หมดอายุ</th><th>ใช้ล่าสุด</th><th>อีเมลผู้รับ</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
@@ -78,6 +81,8 @@
           Layout.tableError(body, 8, 'โหลดรายการลิงก์ไม่สำเร็จ', () => this.load(), e.message);
           return;
         }
+        // ลิงก์บทบาทลูกค้าเดิม (ก่อนรอบ 259) ที่ยังใช้ได้ = ประตูที่สองของลูกค้า — ปุ่มปิดทีเดียว
+        document.getElementById('revokeLegacyBtn').style.display = this.rows.some(t => t.role === 'Customer' && t.canRevoke) ? '' : 'none';
         if (!this.rows.length) { body.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400">ยังไม่เคยออกลิงก์</td></tr>'; return; }
         const esc = Layout.esc;
         // สถานะ/ป้าย/เพิกถอนได้ไหม มาจากเซิร์ฟเวอร์ (VendorPortalTokenRules) — หน้านี้แสดงอย่างเดียว
@@ -111,7 +116,7 @@
           document.getElementById('result').innerHTML = `
             <div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:8px;padding:14px 18px">
               <div style="font-weight:700;color:#15803d;margin-bottom:8px">✅ ออกลิงก์แล้ว · หมดอายุ ${esc(Layout.date(d.expiresAt))}</div>
-              <div style="font-size:13px;color:${d.inviteSent ? '#15803d' : '#92400e'};margin-bottom:8px">${d.inviteSent ? '📧' : 'ℹ️'} ${esc(d.inviteNote || '')}</div>
+              <div style="font-size:13px;color:${d.inviteQueued ? '#15803d' : '#92400e'};margin-bottom:8px">${d.inviteQueued ? '📧' : 'ℹ️'} ${esc(d.inviteNote || '')}</div>
               <div class="vp-url" id="issuedUrl">${esc(url)}</div>
               <button class="btn btn-sm btn-success" style="margin-top:10px" onclick="Page.copyUrl()">📋 คัดลอกลิงก์</button>
             </div>`;
@@ -124,6 +129,17 @@
       copyUrl() {
         if (!this._lastUrl) return;
         navigator.clipboard.writeText(this._lastUrl).then(() => Layout.toast('คัดลอกแล้ว'), () => Layout.toast('คัดลอกไม่สำเร็จ — เลือกข้อความแล้วคัดลอกเอง', 'error'));
+      },
+
+      async revokeLegacy() {
+        if (!await Layout.confirm({ title: 'เพิกถอนลิงก์ลูกค้าเดิมทั้งหมด', danger: true, okText: 'เพิกถอนทั้งหมด',
+          message: 'ลูกค้าที่ใช้ลิงก์เหล่านี้จะเปิดไม่ได้ทันที — ให้สิทธิ์ที่หน้าพอร์ทัลลูกค้าแทน (เปิด/ปิดสิทธิ์ทีละเรื่องได้)' })) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const r = await API.post(`/api/companies/${encodeURIComponent(cid)}/vendor-portal/tokens/revoke-legacy-customer`, {});
+          Layout.toast((r && r.message) || 'เพิกถอนแล้ว');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        await this.load();
       },
 
       async revoke(id) {

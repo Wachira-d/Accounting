@@ -478,8 +478,6 @@ Accounting/Controllers/VatFilingHistoryController.cs	Bulk	1
 Accounting/Controllers/VatFilingHistoryController.cs	Delete	1
 Accounting/Controllers/VatFilingHistoryController.cs	Upsert	1
 Accounting/Controllers/VendorConsolidatedPaymentController.cs	PayBulk	1
-Accounting/Controllers/VendorPortalController.cs	Issue	1
-Accounting/Controllers/VendorPortalController.cs	Revoke	1
 Accounting/Controllers/VendorPortalController.cs	SubmitInvoice	1
 Accounting/Controllers/VendorPortalController.cs	Summary	1
 Accounting/Controllers/WarehouseController.cs	Create	1

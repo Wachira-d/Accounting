@@ -50,12 +50,84 @@ public class UxConsolidationRound259Tests
     }
 
     [Fact]
-    public void ผลส่งอีเมล_ไม่บอกว่าส่งแล้วถ้าไม่ได้ส่งจริง()
+    public void ผลคำเชิญ_เข้าคิวไม่ใช่ส่งถึงแล้ว()
     {
-        Assert.Equal("ส่งลิงก์ทางอีเมลแล้ว", VendorPortalTokenRules.InviteNote(true, true, true));
-        Assert.DoesNotContain("ส่งลิงก์ทางอีเมลแล้ว", VendorPortalTokenRules.InviteNote(true, false, false));
-        Assert.DoesNotContain("ส่งลิงก์ทางอีเมลแล้ว", VendorPortalTokenRules.InviteNote(true, true, false));
-        Assert.Contains("ไม่ได้ระบุอีเมล", VendorPortalTokenRules.InviteNote(false, true, false));
+        Assert.Contains("เข้าคิว", VendorPortalTokenRules.InviteNote(true, true));
+        Assert.DoesNotContain("ส่งแล้ว", VendorPortalTokenRules.InviteNote(true, true));
+        Assert.Contains("ไม่สำเร็จ", VendorPortalTokenRules.InviteNote(true, false));
+        Assert.Contains("ไม่ได้ระบุอีเมล", VendorPortalTokenRules.InviteNote(false, false));
+    }
+
+    [Theory]
+    [InlineData("ap@vendor.co.th", "ap@vendor.co.th", false)]
+    [InlineData("  AP@Vendor.CO.TH ", "ap@vendor.co.th", false)]
+    [InlineData("a@x.test, b@x.test", null, true)]
+    [InlineData("a@x.test;b@x.test", null, true)]
+    [InlineData("not-an-email", null, true)]
+    [InlineData("a@@x.test", null, true)]
+    [InlineData("a@nodot", null, true)]
+    [InlineData("Name <a@x.test>", null, true)]
+    public void อีเมลผู้รับคำเชิญ_อีเมลเดียวรูปถูกเท่านั้น(string raw, string? expected, bool problem)
+    {
+        var (email, why) = VendorPortalTokenRules.InviteEmail(raw);
+        Assert.Equal(expected, email);
+        Assert.Equal(problem, why != null);
+    }
+
+    [Fact]
+    public void อีเมลว่าง_ไม่ส่งและไม่ใช่ข้อผิดพลาด()
+    {
+        Assert.Equal(((string?)null, (string?)null), VendorPortalTokenRules.InviteEmail("   "));
+        Assert.Equal(((string?)null, (string?)null), VendorPortalTokenRules.InviteEmail(null));
+    }
+
+    [Fact]
+    public void คิวคำเชิญ_ลิงก์ต้นทางใช้ได้ส่ง_เพิกถอนหมดอายุไม่พบ_ข้าม()
+    {
+        Assert.Null(VendorPortalTokenRules.InviteSkipReason(VendorPortalTokenRules.StatusActive));
+        Assert.NotNull(VendorPortalTokenRules.InviteSkipReason(VendorPortalTokenRules.StatusRevoked));
+        Assert.NotNull(VendorPortalTokenRules.InviteSkipReason(VendorPortalTokenRules.StatusExpired));
+        Assert.NotNull(VendorPortalTokenRules.InviteSkipReason(null));
+    }
+
+    // ───── ฝ่ายค้าน M3: ด่านสิทธิ์ของหน้าพอร์ทัลผู้ขาย ─────
+
+    [Theory]
+    [InlineData(nameof(Accounting.Controllers.VendorPortalController.Issue), true)]
+    [InlineData(nameof(Accounting.Controllers.VendorPortalController.Revoke), true)]
+    [InlineData(nameof(Accounting.Controllers.VendorPortalController.RevokeLegacyCustomer), true)]
+    [InlineData(nameof(Accounting.Controllers.VendorPortalController.List), false)]
+    public void พอร์ทัลผู้ขาย_ฝั่งพนักงาน_ต้องมีContactEdit_เขียนปฏิเสธคีย์API(string method, bool writes)
+    {
+        var m = typeof(Accounting.Controllers.VendorPortalController).GetMethod(method)!;
+        var perm = System.Reflection.CustomAttributeExtensions.GetCustomAttributes<Accounting.Filters.RequirePermissionAttribute>(m).SingleOrDefault();
+        Assert.NotNull(perm);
+        var key = (string)typeof(Accounting.Filters.RequirePermissionAttribute)
+            .GetField("_key", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(perm)!;
+        Assert.Equal(Accounting.Models.Constants.PermissionKeys.ContactEdit, key);
+        Assert.Equal(writes, System.Reflection.CustomAttributeExtensions.GetCustomAttribute<Accounting.Filters.RejectApiKeyAttribute>(m) != null);
+    }
+
+    [Theory]
+    [InlineData(nameof(Accounting.Controllers.VendorPortalController.Summary))]
+    [InlineData(nameof(Accounting.Controllers.VendorPortalController.SubmitInvoice))]
+    public void ทิศตรงข้าม_ฝั่งผู้ขายถือลิงก์_ไม่มีด่านสิทธิ์ผู้ใช้(string method)
+    {
+        var m = typeof(Accounting.Controllers.VendorPortalController).GetMethod(method)!;
+        Assert.Empty(System.Reflection.CustomAttributeExtensions.GetCustomAttributes<Accounting.Filters.RequirePermissionAttribute>(m));
+    }
+
+    // ───── ฝ่ายค้าน L1: ข้อความถึงลูกค้า ─────
+
+    [Fact]
+    public void พอร์ทัล_เหตุชำระไม่ได้_ข้อความถึงลูกค้า_ไม่มีเหตุภายใน()
+    {
+        Assert.Contains("ยกเลิก", PortalDocumentStatus.PayRefusalForCustomer("Voided", 100m));
+        Assert.Equal("เอกสารนี้ชำระครบแล้ว", PortalDocumentStatus.PayRefusalForCustomer("Approved", 0m));
+        var other = PortalDocumentStatus.PayRefusalForCustomer("Approved", 100m);
+        Assert.Equal(PortalDocumentStatus.ContactShopMessage, other);
+        Assert.DoesNotContain("URL", other);
+        Assert.DoesNotContain("ตารางส่ง", other);
     }
 
     // ───── E 4.2 พอร์ทัลลูกค้า: เกินกำหนด/ป้ายที่เซิร์ฟเวอร์ ─────
