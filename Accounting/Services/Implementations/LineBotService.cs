@@ -226,8 +226,8 @@ public class LineBotService : ILineBotService
         // 2) Everything below requires a bound user.
         var user = await _db.Users.FirstOrDefaultAsync(u => u.LineUserId == lineUserId);
         if (user == null)
-            return "👋 ยังไม่ได้เชื่อมต่อบัญชี — กรุณาขอรหัสจากเว็บไซต์ Next Acc แล้วส่งข้อความ\n" +
-                   "ผูก {รหัส 6 หลัก}";
+            return await UnboundReplyAsync(lineUserId, "👋 ยังไม่ได้เชื่อมต่อบัญชี — กรุณาขอรหัสจากเว็บไซต์ Next Acc แล้วส่งข้อความ\n" +
+                   "ผูก {รหัส 6 หลัก}");
         // ⚠️ ด่านสถานะบัญชีต้องครอบ **ทุกทางเข้า** ไม่ใช่แค่เว็บ —
         // PayrollService ตั้ง Status=Inactive ให้อัตโนมัติเมื่อพนักงานลาออก
         // พร้อมคอมเมนต์ว่า "login + LIFF are revoked" แต่เส้น LINE ไม่เคย
@@ -444,7 +444,7 @@ public class LineBotService : ILineBotService
     {
         var user = await _db.Users.FirstOrDefaultAsync(u => u.LineUserId == lineUserId);
         if (user == null)
-            return "👋 ได้รับรูปแล้ว แต่ยังไม่ได้เชื่อมต่อบัญชี — กรุณาขอรหัสจากเว็บไซต์ Next Acc แล้วส่งข้อความ\nผูก {รหัส 6 หลัก}\nจากนั้นส่งรูปใบเสร็จมาอีกครั้ง";
+            return await UnboundReplyAsync(lineUserId, "👋 ได้รับรูปแล้ว แต่ยังไม่ได้เชื่อมต่อบัญชี — กรุณาขอรหัสจากเว็บไซต์ Next Acc แล้วส่งข้อความ\nผูก {รหัส 6 หลัก}\nจากนั้นส่งรูปใบเสร็จมาอีกครั้ง");
         // ⚠️ ด่านสถานะบัญชีต้องครอบ **ทุกทางเข้า** ไม่ใช่แค่เว็บ —
         // PayrollService ตั้ง Status=Inactive ให้อัตโนมัติเมื่อพนักงานลาออก
         // พร้อมคอมเมนต์ว่า "login + LIFF are revoked" แต่เส้น LINE ไม่เคย
@@ -795,7 +795,7 @@ public class LineBotService : ILineBotService
 
         var user = await _db.Users.FirstOrDefaultAsync(u => u.LineUserId == lineUserId);
         if (user == null)
-            return "👋 ยังไม่ได้เชื่อมต่อบัญชี — ผูกบัญชีก่อนแล้วลองใหม่ (ส่ง: ผูก {รหัส 6 หลัก})";
+            return await UnboundReplyAsync(lineUserId, "👋 ยังไม่ได้เชื่อมต่อบัญชี — ผูกบัญชีก่อนแล้วลองใหม่ (ส่ง: ผูก {รหัส 6 หลัก})");
         // ⚠️ ด่านสถานะบัญชีต้องครอบ **ทุกทางเข้า** ไม่ใช่แค่เว็บ —
         // PayrollService ตั้ง Status=Inactive ให้อัตโนมัติเมื่อพนักงานลาออก
         // พร้อมคอมเมนต์ว่า "login + LIFF are revoked" แต่เส้น LINE ไม่เคย
@@ -1014,9 +1014,31 @@ public class LineBotService : ILineBotService
         return (vendor, amt);
     }
 
-    public async Task ReplyAsync(string lineUserId, string text)
+    /// <summary>รอบ 258 (A-M2): คำตอบถึงผู้ส่งที่ยังไม่ผูกบัญชี — จำกัดต่อผู้ส่ง (ตัวนับในฐาน · หลายเครื่องนับร่วมกัน) · เกิน = null (เงียบ) ·
+    /// fail-open: ตัวนับพัง ≠ เหตุที่จะไม่บอกคนใหม่ว่าต้องผูกบัญชี (คำตอบออกทาง reply token ซึ่งไม่กินโควตา)</summary>
+    private async Task<string?> UnboundReplyAsync(string lineUserId, string reply)
     {
-        // ฝ่ายค้าน 232 S1: push ข้อความถึงผู้ใช้บอท (ชื่อเดิม "Reply" แต่เป็น push) ผ่าน ILineNotifyService ตัวเดียว — ไม่ยิง endpoint push ของ LINE เอง
+        var within = await _rateLimiter.TryConsumeAsync(LineUnboundSender.Key(lineUserId), LineUnboundSender.PerMinute, LineUnboundSender.PerDay);
+        if (!within)
+            _logger.LogWarning("LINE OA กลาง: ผู้ส่งที่ยังไม่ผูกบัญชีส่งข้อความเกินเพดาน — ไม่ตอบ (lineUserId {User})", CustomerLineLinkRule.Mask(lineUserId));
+        return LineUnboundSender.Reply(within, reply);
+    }
+
+    public async Task ReplyAsync(string lineUserId, string text, string? replyToken = null)
+    {
+        // รอบ 258 (A-M2): ตอบด้วย reply token ก่อน (ไม่กินโควตา push ของ OA กลาง) — ถอยไป push เฉพาะเมื่อ reply ล้ม<b>และ</b>ผู้ส่งผูกบัญชีแล้ว
+        // (คนแปลกหน้าไม่มีวันทำให้เกิด push) · ตัวตัดสินเดียว LineUnboundSender.PushFallbackAllowed
+        var replied = false;
+        if (!string.IsNullOrWhiteSpace(replyToken) && _customerLinks != null)
+            replied = await _customerLinks.ReplyAsync(CustomerNotifyChannel.ScopeNextAcc, null, replyToken, text);
+        if (replied) return;
+        var bound = await _db.Users.AsNoTracking().AnyAsync(u => u.LineUserId == lineUserId);
+        if (!LineUnboundSender.PushFallbackAllowed(replied, bound))
+        {
+            _logger.LogWarning("LINE OA กลาง: ตอบผู้ส่งที่ยังไม่ผูกบัญชีไม่สำเร็จ (reply token ใช้ไม่ได้) — ไม่ถอยไป push (lineUserId {User})", CustomerLineLinkRule.Mask(lineUserId));
+            return;
+        }
+        // ฝ่ายค้าน 232 S1: push ข้อความถึงผู้ใช้บอทผ่าน ILineNotifyService ตัวเดียว — ไม่ยิง endpoint push เอง
         if (_line == null) { _logger.LogWarning("LINE push skipped — ไม่มี ILineNotifyService (นอก DI)"); return; }
         var r = await _line.TryPushViaNextAccAsync(lineUserId, new[] { text });
         if (!r.Ok) _logger.LogWarning("LINE push failed for {User}: {Error}", CustomerLineLinkRule.Mask(lineUserId), r.Error);

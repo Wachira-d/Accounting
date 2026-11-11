@@ -18045,6 +18045,28 @@ REVIEWER_CASES += [
     ("R258p7", "CreateDocumentFromTemplateAsync",
      "await NotifyStuckDraftAsync(recurring, result.Id, result.DocumentNumber, DocumentApprovalWarningsException.DescribeForUser(ex));", "{ }", True),
 ]
+_R258P_BOT = "Services/Implementations/LineBotService.cs"
+RULES += [
+    dict(file="Controllers/LineWebhookController.cs", method="HandleOneToOneEventAsync",
+         must=["_groups.MarkEventSeenAsync(", "_groups.UnmarkEventSeenAsync(", "_bot.ReplyAsync(userId, reply, replyToken)"],
+         before=[("_groups.MarkEventSeenAsync(", "_bot.HandleMessageAsync("), ("_groups.MarkEventSeenAsync(", "_bot.HandleImageAsync("),
+                 ("_groups.MarkEventSeenAsync(", "_bot.HandlePostbackAsync(")],
+         why=_R258P_WHY + "A-M3 event 1:1 ของ OA กลางกันซ้ำด้วย webhookEventId (ตารางในฐาน) ก่อนประมวล · A-M2 ตอบด้วย reply token"),
+    dict(file=_R258P_BOT, method="ReplyAsync", must=["_customerLinks.ReplyAsync(", "LineUnboundSender.PushFallbackAllowed("],
+         before=[("_customerLinks.ReplyAsync(", "TryPushViaNextAccAsync("), ("LineUnboundSender.PushFallbackAllowed(", "TryPushViaNextAccAsync(")],
+         why=_R258P_WHY + "A-M2 reply token ก่อน · ถอยไป push เฉพาะผู้ส่งที่ผูกบัญชีแล้ว (คนแปลกหน้าไม่ทำให้เกิด push)"),
+    dict(file=_R258P_BOT, method="UnboundReplyAsync", must=["_rateLimiter.TryConsumeAsync(", "LineUnboundSender.Reply("],
+         why=_R258P_WHY + "A-M2 คำตอบถึงคนที่ยังไม่ผูกจำกัดต่อผู้ส่ง (ตัวนับในฐาน)"),
+    dict(file=_R258P_BOT, method="HandleMessageAsync", must=["UnboundReplyAsync("], why=_R258P_WHY + "A-M2 ข้อความจากคนที่ยังไม่ผูกผ่านตัวจำกัด"),
+    dict(file=_R258P_BOT, method="HandleImageAsync", must=["UnboundReplyAsync("], why=_R258P_WHY + "A-M2 รูป/ไฟล์จากคนที่ยังไม่ผูกผ่านตัวจำกัด"),
+    dict(file=_R258P_BOT, method="HandlePostbackAsync", must=["UnboundReplyAsync("], why=_R258P_WHY + "A-M2 ปุ่มกดจากคนที่ยังไม่ผูกผ่านตัวจำกัด"),
+]
+REVIEWER_CASES += [
+    # ตอบโดยไม่ส่ง reply token (กลับไป push ทุกข้อความ) ⇒ ต้องฟ้อง
+    ("R258p8", "HandleOneToOneEventAsync", "await _bot.ReplyAsync(userId, reply, replyToken);", "await _bot.ReplyAsync(userId, reply);", True),
+    # push โดยไม่ถามว่าผู้ส่งผูกแล้วหรือยัง ⇒ ต้องฟ้อง
+    ("R258p9", "ReplyAsync", "if (!LineUnboundSender.PushFallbackAllowed(replied, bound))", "if (false)", True),
+]
 # ═══ จบ รอบ 258 แพ็ก สิทธิ์+คิวส่ง ═══
 
 
