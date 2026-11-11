@@ -73,13 +73,14 @@ public class NotificationConfigRound258DbTests
         // แถวบทบาทใหม่ของเหตุการณ์เดียวกันที่ไม่ส่งช่องกลุ่ม ⇒ ตามค่าของเหตุการณ์ (เปิด)
         await svc.BulkUpsertCompanySettingsAsync(cid, Req(NotificationEvents.DocumentApproved, NotificationRecipientRoles.Accounting, group: null), "tester");
 
-        // ทิศตรงข้าม: ส่ง false = ปิดจริง
+        // ทิศตรงข้าม: ส่ง false = ปิดจริง (ทั้งเหตุการณ์)
         await svc.BulkUpsertCompanySettingsAsync(cid, Req(NotificationEvents.DocumentApproved, NotificationRecipientRoles.Owner, group: false), "tester");
         using (var check = DbTestDatabase.TryCreateContext()!)
         {
             var rows = await check.NotificationSettings.Where(s => s.CompanyId == cid && s.EventKey == NotificationEvents.DocumentApproved).ToListAsync();
             Assert.False(rows.Single(r => r.RecipientRole == NotificationRecipientRoles.Owner).EnableLineGroup);
-            Assert.True(rows.Single(r => r.RecipientRole == NotificationRecipientRoles.Accounting).EnableLineGroup);
+            // รอบ 258 ฝ่ายค้าน R-L3: ค่ากลุ่มเป็นของเหตุการณ์ — ส่ง false แถวเดียว = ปิดทุกแถวที่เก็บไว้ (เครื่องแจ้งเตือนอ่านแบบ "แถวใดเปิด = ประกาศ")
+            Assert.False(rows.Single(r => r.RecipientRole == NotificationRecipientRoles.Accounting).EnableLineGroup);
             // บริษัทอื่นไม่ถูกแตะ (tenant)
             Assert.True((await check.NotificationSettings.SingleAsync(s => s.CompanyId == other)).EnableLineGroup);
         }
