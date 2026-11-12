@@ -120,8 +120,11 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         var provenance = s.Channel == WhtCertIntakeChannel.NextAccLink;
         if (provenance)
         {
+            // ฝ่ายค้าน 264-P5 M1: ตัวตนผู้จ่ายของแถวรอใบที่ใบนี้จะปิด (ผู้ติดต่อในสมุดของเรา) — ส่งเข้าไปผูกกับบริษัทต้นทาง
+            var allocPayers = match.Allocations
+                .Select(a => candById.TryGetValue(a.CreditId, out var c) ? c.Candidate.PayerContactId : null).ToList();
             var problems = WhtCertIntakeVerdict.ProvenanceProblems(
-                await LoadProvenanceAsync(companyId, co.TaxId, payerTax, certNo, s, ct));
+                await LoadProvenanceAsync(companyId, co.TaxId, payerTax, certNo, s, allocPayers, ct));
             gates.AddRange(problems.Select(x => WhtCertIntakeVerdict.ProvenanceGatePrefix + x));
         }
 
@@ -295,6 +298,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         var msg = outcome switch
         {
             // ฝ่ายค้าน WP-09 M6: นักเรียนตอบจากประวัติผู้จ่าย (ไม่ได้อ่านกระดาษ) ⇒ ข้อความต้องไม่อ้างว่าตรวจกระดาษแล้ว
+            WhtCertIntakeVerdict.Outcome.AutoConfirm when intake.AuthenticityByProvenance => WhtCertIntakeVerdict.ProvenanceConfirmedMessage,   // ฝ่ายค้าน L5
             WhtCertIntakeVerdict.Outcome.AutoConfirm => intake.WhtCertAuthenticityUsedAi
                 ? "ยืนยันอัตโนมัติแล้ว — ใบตรงกับรายการรอใบ ผ่านด่านทุกข้อ และ AI ตรวจแล้วดูเป็นใบจริง (ใช้เป็นเครดิตได้)"
                 : "ยืนยันอัตโนมัติแล้ว — ใบตรงกับรายการรอใบ ผ่านด่านทุกข้อ และผู้จ่ายรายนี้มีประวัติใบที่ยืนยันแล้ว (ระบบไม่ได้ตรวจกระดาษใบนี้ — เปิดดูได้ที่กล่องรับ)",
@@ -349,8 +353,9 @@ public class WhtCertIntakeService : IWhtCertIntakeService
     /// บริษัทผู้จ่าย = บริษัทที่เลขผู้เสียภาษีตรงใบ <b>และ</b>เป็นคู่ค้าที่เชื่อมอยู่ (Accepted) กับเรา · ใบเลขที่นี้ในบริษัทนั้นที่ผู้ถูกหักคือผู้ติดต่อที่ผูก
     /// <c>NextAccTenant</c> = บริษัทเรา · ยอด/อัตรา/วันที่คิดด้วยสูตรเดียวกับฝั่งส่ง (<see cref="PartnerExchangeRules.CertRate"/> · <see cref="PartnerExchangeRules.WhtCertificateDate"/>) ·
     /// อ่านข้ามบริษัทเฉพาะคู่ที่เชื่อมอยู่ (ทุก query ผูก CompanyId ของคู่) · ตัดสินที่ <see cref="WhtCertIntakeVerdict.ProvenanceProblems"/></summary>
+    /// <param name="allocatedPayerContactIds">ผู้จ่ายของแถวรอใบที่ใบนี้จับคู่ (ผู้ติดต่อในสมุดของเรา · null = แถวไม่มีผู้ติดต่อ) — ฝ่ายค้าน M1</param>
     private async Task<WhtCertIntakeVerdict.ProvenanceFacts> LoadProvenanceAsync(Guid companyId, string? ourTaxId, string payerTax, string? certNo,
-        WhtCertSubmission s, CancellationToken ct)
+        WhtCertSubmission s, IReadOnlyList<Guid?> allocatedPayerContactIds, CancellationToken ct)
     {
         var submitted = new WhtCertIntakeVerdict.SubmittedCertFacts(s.PayeeTaxId, s.IncomeAmount, s.WhtAmount, s.WhtRate, s.CertificateDate, s.PayerFormType);
         var none = new WhtCertIntakeVerdict.ProvenanceFacts(false, 0, false, null, ourTaxId, submitted);
@@ -359,26 +364,42 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             .Where(t => (t.CompanyAId == companyId || t.CompanyBId == companyId) && t.Status == TradingPartnershipStatus.Accepted)
             .Select(t => t.CompanyAId == companyId ? t.CompanyBId : t.CompanyAId)
             .ToListAsync(ct);
+        // ฝ่ายค้าน L4: ใบช่องนี้มาพร้อมบริษัทผู้จ่ายที่ส่งจริง (ระบบเติมฝั่งเซิร์ฟเวอร์) ⇒ จำกัดที่บริษัทนั้น — สาขาที่แยกเป็นผู้เช่าเลขภาษีเดียวกันไม่ปนกัน
+        if (s.SourcePayerCompanyId is Guid srcCo) partners = partners.Where(x => x == srcCo).ToList();
         if (partners.Count == 0) return none;
         var payerIds = (await _db.Companies.AsNoTracking().IgnoreQueryFilters()
                 .Where(c => partners.Contains(c.Id)).Select(c => new { c.Id, c.TaxId }).ToListAsync(ct))
             .Where(c => ThaiTaxId.Same(c.TaxId, payerTax)).Select(c => c.Id).ToList();   // กุญแจ = เลขผู้เสียภาษี (ไม่ใช่ชื่อ)
         if (payerIds.Count == 0) return none;
         var us = companyId.ToString();
+        var srcCert = s.SourceWhtCertId;
         var rows = await _db.WithholdingTaxCerts.AsNoTracking().IgnoreQueryFilters()
-            .Where(w => payerIds.Contains(w.CompanyId) && w.CertificateNumber == certNo
+            .Where(w => payerIds.Contains(w.CompanyId) && w.CertificateNumber == certNo && (srcCert == null || w.Id == srcCert)
                 && w.PayeeContact.CompanyId == w.CompanyId
                 && w.PayeeContact.ExternalSystem == PartnerWhtCertExchangeService.ExternalSystem && w.PayeeContact.ExternalId == us)
             .Select(w => new
             {
-                w.IsDeleted, w.Status, w.TotalIncomeAmount, w.TotalTaxAmount, w.TaxFormType, w.IssuedDate, PayeeTaxId = w.PayeeContact.TaxId,
+                w.CompanyId, w.IsDeleted, w.Status, w.TotalIncomeAmount, w.TotalTaxAmount, w.TaxFormType, w.IssuedDate, PayeeTaxId = w.PayeeContact.TaxId,
                 Lines = w.Lines.Select(l => new { l.TaxRate, l.PaymentDate }).ToList(),
             })
             .ToListAsync(ct);
         var live = rows.Where(r => !r.IsDeleted
             && (r.Status == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued || r.Status == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Printed)).ToList();
+        // ฝ่ายค้าน L6: "ผู้จ่ายยกเลิก" เฉพาะแถวที่ถูกยกเลิก/ลบจริง (ร่างไม่ใช่การยกเลิก)
+        var voided = rows.Any(r => r.IsDeleted || r.Status == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Voided);
         var src = live.Count == 1 ? live[0] : null;
-        return new WhtCertIntakeVerdict.ProvenanceFacts(true, live.Count, rows.Count > live.Count,
+        // ฝ่ายค้าน M1 (คำตัดสิน 264-5-6): ผู้จ่ายของทุกแถวรอใบต้องเป็นผู้ติดต่อของเราที่ผูก NextAccTenant กับบริษัทต้นทาง (ข้อมูลในสมุดของเรา)
+        var linked = false;
+        if (src != null && allocatedPayerContactIds.Count > 0 && allocatedPayerContactIds.All(x => x != null))
+        {
+            var ids = allocatedPayerContactIds.Select(x => x!.Value).Distinct().ToList();
+            var srcKey = src.CompanyId.ToString();
+            var ok = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .CountAsync(c => c.CompanyId == companyId && ids.Contains(c.Id) && !c.IsDeleted
+                    && c.ExternalSystem == PartnerWhtCertExchangeService.ExternalSystem && c.ExternalId == srcKey, ct);
+            linked = ok == ids.Count;
+        }
+        return new WhtCertIntakeVerdict.ProvenanceFacts(true, live.Count, voided,
             src == null ? null : new WhtCertIntakeVerdict.SourceCertFacts(
                 src.TotalIncomeAmount, src.TotalTaxAmount,
                 PartnerExchangeRules.CertRate(src.Lines.Select(l => l.TaxRate).ToList(), src.TotalIncomeAmount, src.TotalTaxAmount),
@@ -390,7 +411,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                     _ => null,
                 },
                 src.PayeeTaxId),
-            ourTaxId, submitted);
+            ourTaxId, submitted, linked);
     }
 
     /// <param name="Duplicate">ใบเดิม (ผู้จ่ายเดียวกันตามกุญแจ) ⇒ ผลเดิม · null = ไม่ซ้ำ</param>

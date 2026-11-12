@@ -169,8 +169,11 @@ public static class WhtCertIntakeVerdict
     /// <param name="LiveSourceCount">จำนวนใบเลขที่นี้ในบริษัทผู้จ่ายที่ออกแล้ว (ออก/พิมพ์ · ไม่ถูกลบ) และผู้ถูกหักคือผู้ติดต่อที่ผูกกับบริษัทเรา</param>
     /// <param name="SourceVoided">มีใบเลขที่นี้ (ผูกกับเรา) แต่ถูกยกเลิก/ลบแล้ว</param>
     /// <param name="Source">ใบที่ออกแล้ว (เมื่อ <paramref name="LiveSourceCount"/> = 1) · null = ไม่มี/กำกวม</param>
+    /// <param name="CreditPayersLinked">ฝ่ายค้าน 264-P5 M1 (คำตัดสิน 264-5-6): ทุกแถวรอใบที่ใบนี้จะปิด มีผู้จ่าย (ผู้ติดต่อ<b>ในสมุดของเรา</b>) ที่ผูก
+    /// <c>NextAccTenant</c> กับบริษัทต้นทางของใบ — ตัวตนผูกกับข้อมูลที่เราบันทึกเอง ไม่ใช่ <c>Company.TaxId</c> ที่ผู้เช่าฝั่งผู้จ่ายกรอกเอง ·
+    /// ค่าตั้งต้น false (ทางปลอดภัย = รอคน)</param>
     public sealed record ProvenanceFacts(bool PartnershipAccepted, int LiveSourceCount, bool SourceVoided, SourceCertFacts? Source,
-        string? OurTaxId, SubmittedCertFacts Submitted);
+        string? OurTaxId, SubmittedCertFacts Submitted, bool CreditPayersLinked = false);
 
     /// <param name="Rate">อัตราจาก <c>PartnerExchangeRules.CertRate</c> (สูตรเดียวกับฝั่งส่ง) · <paramref name="CertificateDate"/> จาก <c>PartnerExchangeRules.WhtCertificateDate</c></param>
     public sealed record SourceCertFacts(decimal Income, decimal Tax, decimal Rate, DateTime? CertificateDate, WhtPayerFormType? Form, string? PayeeContactTaxId);
@@ -197,6 +200,8 @@ public static class WhtCertIntakeVerdict
             return p;
         }
         var sub = f.Submitted;
+        if (!f.CreditPayersLinked)
+            p.Add("ผู้จ่ายบนรายการรอ 50 ทวิ ในสมุดของเรายังไม่ได้ผูกกับบริษัทคู่ค้าที่ส่งใบนี้ — ระบบไม่ยืนยันเอง · ตรวจใบแล้วกดยืนยัน หรือผูกผู้ติดต่อกับคู่ค้าที่หน้าผู้ติดต่อ");
         if (!ThaiTaxId.IsValid(f.OurTaxId) || !ThaiTaxId.Same(s.PayeeContactTaxId, f.OurTaxId))
             p.Add("เลขผู้เสียภาษีผู้ถูกหักบนใบในระบบของผู้จ่ายไม่ตรงเลขของบริษัทเรา");
         else if (!ThaiTaxId.Same(sub.PayeeTaxId, f.OurTaxId))
@@ -211,6 +216,10 @@ public static class WhtCertIntakeVerdict
 
     /// <summary>คำนำของด่านเมื่อพิสูจน์ที่มาไม่ได้ (ตัวเดียว — เทสต์อ้างได้)</summary>
     public const string ProvenanceGatePrefix = "ยืนยันจากระบบของผู้จ่ายไม่ได้: ";
+
+    /// <summary>ฝ่ายค้าน 264-P5 L5: ข้อความตอบกลับเมื่อยืนยันด้วยที่มา (ตัวเดียว — ไม่ใช้ข้อความของคำตอบนักเรียน)</summary>
+    public const string ProvenanceConfirmedMessage =
+        "ยืนยันอัตโนมัติแล้ว — แถวหนังสือรับรองในระบบของผู้จ่าย (คู่ค้า NextAcc) ตรงทุกช่อง และตรงกับรายการรอใบของผู้จ่ายรายนี้ (ไม่ได้ใช้ AI)";
 
     /// <summary>ป้ายของใบที่ยืนยันด้วยที่มา (ไม่ใช่ AI · ไม่ใช่นักเรียน) — กฎเหล็ก #1 ป้ายซื่อสัตย์</summary>
     public const string ProvenanceLabel = "⚙️ ยืนยันจากระบบของผู้จ่าย (คู่ค้า NextAcc) — แถวหนังสือรับรองในบริษัทผู้จ่ายตรงทุกช่อง · ไม่ได้ใช้ AI";
