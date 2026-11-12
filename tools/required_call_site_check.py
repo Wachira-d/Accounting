@@ -16857,13 +16857,20 @@ def program_boot_migrations_errors(text: str) -> list:
         errs.append("Program.cs ไม่เรียก PartnerEvidenceRepair.RunAsync(db) ตอนบูต — รอบ 257 ชุด 3 ฝ่ายค้าน M2: งานซ่อมไม่มีผู้เรียก = ไม่มีงานซ่อม")
     elif apply < 0 or repair < apply:
         errs.append("Program.cs เรียก PartnerEvidenceRepair.RunAsync(db) ก่อน DatabaseMigrationHelper.ApplyMissingColumns( — ตาราง marker ต้องมีก่อน")
+    # รอบ 260-5 (คำตัดสิน 260-5-2): งานคืนค่าสแกน API v1 ที่ล้มเดินตอนบูต หลัง ApplyMissingColumns (มี ≠ ถูกเรียก)
+    refund = code.find("OcrFailedScanRefund.RunAsync(db)")
+    if refund < 0:
+        errs.append("Program.cs ไม่เรียก OcrFailedScanRefund.RunAsync(db) ตอนบูต — คำตัดสิน 260-5-2: งานคืนค่าสแกนที่ล้มไม่มีผู้เรียก = ไม่มีการคืน")
+    elif apply < 0 or refund < apply:
+        errs.append("Program.cs เรียก OcrFailedScanRefund.RunAsync(db) ก่อน DatabaseMigrationHelper.ApplyMissingColumns( — ตาราง marker ต้องมีก่อน")
     return errs
 
 
 def program_boot_migrations_self_test() -> list:
     good = ("DatabaseMigrationHelper.ApplyMissingColumns(db, logger);\n"
             "var r246 = await Accounting.Helpers.PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db);\n"
-            "var r257 = await Accounting.Helpers.PartnerEvidenceRepair.RunAsync(db);\n")
+            "var r257 = await Accounting.Helpers.PartnerEvidenceRepair.RunAsync(db);\n"
+            "var r2605 = await Accounting.Helpers.OcrFailedScanRefund.RunAsync(db);\n")
     fails = []
     if program_boot_migrations_errors(good):
         fails.append("self-test program_boot_migrations: ฟ้องผิดกับลำดับที่ถูก")
@@ -16875,6 +16882,8 @@ def program_boot_migrations_self_test() -> list:
                "DatabaseMigrationHelper.ApplyMissingColumns(db, logger);\n")
     if not program_boot_migrations_errors(swapped):
         fails.append("self-test program_boot_migrations: เรียกก่อน ApplyMissingColumns แล้วไม่ฟ้อง")
+    if not program_boot_migrations_errors(good.replace("OcrFailedScanRefund.RunAsync(db)", "OcrFailedScanRefund.Decide(")):
+        fails.append("self-test program_boot_migrations: ถอดงานคืนค่าสแกน (260-5-2) แล้วไม่ฟ้อง")
     return fails
 
 
@@ -18414,6 +18423,26 @@ RULES += [
          why=_R259D_WHY + "C-M2 แก้เฉพาะยอดรวม ⇒ ถอดฐาน/VAT ใหม่"),
     dict(file="Services/Implementations/OcrService.cs", method="FindDuplicateDocumentWarningAsync", must=["FindContentDuplicateWarningAsync("],
          why=_R259D_WHY + "C-L4 อ่านเลขที่ไม่ได้ ⇒ ซ้ำด้วยเนื้อหา"),
+]
+# ── รอบ 260-5 ทีมตัดสินใจ (คำตัดสิน 260-5-*) — ถอดการเรียกออกแล้วเทสต์ pure ยังเขียว ⇒ ล็อกจุดเรียก ──
+_R2605_WHY = "รอบ 260-5 (คำตัดสิน 260-5-*): "
+RULES += [
+    dict(file=DOC, method="CreateSettlementReceiptAsync",
+         must=["LateReceiptTaxPoint.IssuedAfterMoneyNote(", "payment.PaymentDate, invoice.DocumentDate, carriesTaxInvoiceRole, receipt.VatAmount",
+               "AppendInternalNote(receipt, issuedLateNote)", "DocumentDate = payment.PaymentDate,"],
+         forbid=["LateReceiptTaxPoint.ReceiptDocumentDate("],
+         why=_R2605_WHY + "260-5-1 ใบเสร็จ/ใบกำกับลงวันที่รับเงินจริง (ม.105 · ม.78/1 · ม.86 — ไม่เลื่อนเป็นวันที่ใบแจ้งหนี้) · ใบที่ถือ VAT ออกหลังวันรับเงิน ⇒ หมายเหตุภายใน [LATE-TAX-INVOICE]"),
+    dict(file="Helpers/OcrFailedScanRefund.cs", method="Decide", must=["OcrQuotaRefundRule.ShouldRefund(scanStatus, ocrEngine)"],
+         why=_R2605_WHY + "260-5-2 ตัวตัดสินสแกนตัวเดียวกับเส้นเว็บ/LINE/v1 (ไม่มีสูตรที่สอง)"),
+    dict(file="Helpers/OcrFailedScanRefund.cs", method="RunCoreAsync",
+         must=["AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey)", "alreadyDone.Contains(ev.Id.ToString())", "scan!.CompanyId == ev.CompanyId",
+               "AddChainedAuditLog(", "Decide(found,", "DatabaseMigrationHelper.OneShotDataFixesTableSql"],
+         before=[("alreadyDone.Contains(ev.Id.ToString())", "account!.CreditBalance += ev.ChargedAmount")],
+         why=_R2605_WHY + "260-5-2 ครั้งเดียว + ไม่คืนซ้ำต่อแถว (audit) · สแกนของบริษัทเดียวกัน · audit ทุกแถว"),
+]
+REVIEWER_CASES += [
+    # 260-5-2: ถอดกันคืนซ้ำต่อแถว ⇒ marker ถูกลบแล้วคืนเครดิตสองครั้ง ⇒ ต้องฟ้อง
+    ("R2605-1", "RunCoreAsync", "if (alreadyDone.Contains(ev.Id.ToString())) continue;", "", True),
 ]
 # ═══ รอบ 259 แพ็ก A "เงินรอจัดสรร ต่อจนจบ" (DECISIONS 259-1-x) ═══
 # ล็อก: ขาออกทุกชนิดผ่านตัวตัดสินเดียวใต้ล็อกแถว ก่อนลง JE · กันกดซ้ำ · ด่านงวด · ยอดคิดใหม่ · ยกเลิกการชำระถูกบล็อก ·
