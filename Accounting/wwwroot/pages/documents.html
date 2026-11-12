@@ -13522,13 +13522,22 @@
           return;
         }
         const rows = (p.effects || []).map(x => `<tr><td style="padding:3px 10px 3px 0;vertical-align:top;white-space:nowrap"><b>${Layout.esc(x.label)}</b></td><td style="padding:3px 0">${Layout.esc(x.detail)}</td></tr>`).join('');
-        const ok = await Layout.confirm({ title: 'ผลของการผูก — ตรวจก่อนยืนยัน',
-          messageHtml: `<table style="font-size:13px;width:100%">${/*html — แถวประกอบจาก Layout.esc แล้ว*/ rows}</table><div class="text-xs text-gray-500" style="margin-top:6px">${Layout.esc(p.legalReference || '')}</div>`,
-          okText: 'ยืนยันผูก' });
-        if (!ok || this._rlBusy) return;
+        const effectsHtml = `<table style="font-size:13px;width:100%">${/*html — แถวประกอบจาก Layout.esc แล้ว*/ rows}</table><div class="text-xs text-gray-500" style="margin-top:6px">${Layout.esc(p.legalReference || '')}</div>`;
+        // รอบ 266 แพ็ก B: เส้นที่เซิร์ฟเวอร์บอกว่าต้องมีเหตุผล (ย้ายการรับชำระ — เก็บบนใบแทน + ร่องรอยตรวจสอบ) ⇒ ช่องเหตุผลบังคับในหน้าต่างยืนยัน
+        let reason = null;
+        if (p.requiresReason === true) {
+          const v = await Layout.formDialog({ title: 'ผลของการย้ายการรับชำระ — ตรวจก่อนยืนยัน', messageHtml: effectsHtml, okText: 'ยืนยันย้าย',
+            fields: [{ key: 'reason', label: 'เหตุผลที่ย้าย (เก็บให้ผู้สอบบัญชี)', type: 'textarea', required: true }] });
+          if (!v || !String(v.reason || '').trim()) return;
+          reason = String(v.reason).trim();
+        } else {
+          const ok = await Layout.confirm({ title: 'ผลของการผูก — ตรวจก่อนยืนยัน', messageHtml: effectsHtml, okText: 'ยืนยันผูก' });
+          if (!ok) return;
+        }
+        if (this._rlBusy) return;
         this._rlBusy = true;   // กันกดซ้ำระหว่างรอคำตอบ (เซิร์ฟเวอร์กันซ้ำอีกชั้นด้วยกุญแจพรีวิว)
         try {
-          const res = await api.linkReceipt(Object.assign({}, req, { amount: p.amount, previewToken: p.previewToken }));
+          const res = await api.linkReceipt(Object.assign({}, req, { amount: p.amount, previewToken: p.previewToken, reason }));
           const notices = res?.data?.notices || [];
           Layout.toast(res?.message || 'ผูกแล้ว', 'success', notices.length > 1 ? 12000 : 6000);
           Layout.closeModal('detailModal');

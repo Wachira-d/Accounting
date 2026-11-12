@@ -487,7 +487,7 @@ public class PortalService : IPortalService
             // Add payments against this document — สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ (รอบ 250 M-2 · ตัวตั้งเดียว PortalSlipPending)
             var payments = await _db.Payments
                 .Where(PortalSlipPending.CountsAsReceived)
-                .Where(p => p.CompanyId == companyId && p.DocumentId == doc.Id && p.PaymentDate >= fromDate && p.PaymentDate <= toDate)
+                .Where(p => p.CompanyId == companyId && (p.MovedToDocumentId ?? p.DocumentId) == doc.Id && p.PaymentDate >= fromDate && p.PaymentDate <= toDate)
                 .OrderBy(p => p.PaymentDate)
                 .ToListAsync();
 
