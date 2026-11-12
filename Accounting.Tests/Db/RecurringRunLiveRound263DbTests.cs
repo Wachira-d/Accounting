@@ -142,6 +142,16 @@ public class RecurringRunLiveRound263DbTests
             Assert.Empty(after.Steps);
             Assert.Contains(after.Resolved!, r => r.Contains("ปิดเรื่องแล้ว") && r.Contains("ผู้อนุมัติรอบ263"));
         }
+        // ฝ่ายค้าน 263 F4: ร่องรอยถาวรแบบสายโซ่ (ข้อเท็จจริงใน JSON ถูกล้างในรอบถัดไป)
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var audit = await check.AuditLogs.AsNoTracking()
+                .Where(a => a.CompanyId == co.Id && a.EntityType == nameof(RecurringTransaction) && a.EntityId == rec.Id.ToString())
+                .ToListAsync();
+            var row = Assert.Single(audit, a => (a.NewValues ?? "").Contains(RecurringTransactionService.DismissSkippedAuditAction));
+            Assert.Equal(approver.Id, row.UserId);
+            Assert.False(string.IsNullOrEmpty(row.RowHash));
+        }
         // ทิศตรงข้าม: ปิดซ้ำ = ปฏิเสธพร้อมเหตุ (ไม่ใช่สำเร็จเงียบ)
         using (var req = DbTestDatabase.TryCreateContext()!)
             await Assert.ThrowsAsync<BusinessRuleException>(() => Recurring(req).DismissSkippedPeriodsAsync(co.Id, rec.Id, approver.Id.ToString()));

@@ -50,6 +50,12 @@ public interface ICustomerCreditService
     /// <summary>ออกใบแจ้งหนี้ส่วนที่ขาด: สร้างร่างของลูกค้ารายเดียวกัน + จองเงินไว้ (อนุมัติแล้วจัดสรรเอง — <see cref="AfterDocumentApprovedAsync"/>)</summary>
     Task<CustomerCreditMovementResult> IssueInvoiceAsync(Guid companyId, Guid paymentId, CustomerCreditIssueInvoiceRequest request, string actor, CancellationToken ct = default);
 
+    /// <summary>รอบ 265: ออกใบเสร็จ/ใบกำกับภาษีจากเงินรอจัดสรรโดยตรง (ไม่มีใบแจ้งหนี้) — สร้าง + อนุมัติ · ขาเงินเข้า = ผังพัก · ล้ม = ถอยครบ</summary>
+    Task<CustomerCreditMovementResult> IssueReceiptAsync(Guid companyId, Guid paymentId, CustomerCreditIssueReceiptRequest request, string actor, CancellationToken ct = default);
+
+    /// <summary>รอบ 265: ค่าของหน้าต่างออกใบเสร็จ (วันที่ที่ใบจะลง · อัตรา VAT · รายการประจำของลูกค้า · ใบที่เงินก้อนนี้ชำระแล้ว)</summary>
+    Task<CustomerCreditReceiptOptions> ReceiptOptionsAsync(Guid companyId, Guid paymentId, CancellationToken ct = default);
+
     /// <summary>ยกเลิกขาออก (คืนเงิน/ตัดเศษ: กลับ JE · การจอง: ปล่อย) — ใบมัดจำยกเลิกที่หน้าเอกสาร</summary>
     Task<CustomerCreditMovementResult> UndoMovementAsync(Guid companyId, Guid paymentId, Guid movementId, string? reason, string actor, CancellationToken ct = default);
 

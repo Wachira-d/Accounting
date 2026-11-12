@@ -6,6 +6,10 @@ namespace Accounting.Helpers;
 public static class PartnerConsentMigration
 {
     public const string AppendOnlyFunction = "PartnerAutomationConsents_append_only";
+    public const string NoDeleteFunction = "PartnerAutomationConsents_no_delete";
+
+    /// <summary>SqlState ของ RAISE EXCEPTION ใน trigger ทั้งสอง (plpgsql ตั้งต้น) — ผู้เขียนแปลงเป็น 409 (ฝ่ายค้าน M4)</summary>
+    public const string TriggerSqlState = "P0001";
 
     public static IReadOnlyList<string> Statements() => new List<string>
     {
@@ -33,6 +37,8 @@ public static class PartnerConsentMigration
             CONSTRAINT "FK_PartnerAutomationConsents_Companies_CompanyId" FOREIGN KEY ("CompanyId") REFERENCES "Companies"("Id") ON DELETE CASCADE
         );
         """,
+        // ฝ่ายค้าน L2: รุ่นของ hash (แถวเดิม = 1)
+        """ALTER TABLE "PartnerAutomationConsents" ADD COLUMN IF NOT EXISTS "HashVersion" integer NOT NULL DEFAULT 1;""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartnerAutomationConsents_Active" ON "PartnerAutomationConsents" ("CompanyId", "TradingPartnershipId", "Scope") WHERE "WithdrawnAt" IS NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_PartnerAutomationConsents_Company_Partnership" ON "PartnerAutomationConsents" ("CompanyId", "TradingPartnershipId");""",
         $$"""
@@ -50,13 +56,28 @@ public static class PartnerConsentMigration
              OR NEW."TextVersion" IS DISTINCT FROM OLD."TextVersion"
              OR NEW."EvidenceHash" IS DISTINCT FROM OLD."EvidenceHash"
              OR NEW."GrantedByUserId" IS DISTINCT FROM OLD."GrantedByUserId"
-             OR NEW."GrantedAt" IS DISTINCT FROM OLD."GrantedAt" THEN
+             OR NEW."GrantedAt" IS DISTINCT FROM OLD."GrantedAt"
+             OR NEW."HashVersion" IS DISTINCT FROM OLD."HashVersion"
+             OR NEW."IsDeleted" IS DISTINCT FROM OLD."IsDeleted" THEN
             RAISE EXCEPTION 'PartnerAutomationConsents: แก้ขอบเขต/เพดาน/บัญชี/ผู้ให้ไม่ได้ — ถอนแถวเดิมแล้วให้ความยินยอมใหม่ (append-only)';
           END IF;
           RETURN NEW;
         END
         $fn$ LANGUAGE plpgsql;
         """,
+        // ฝ่ายค้าน L1: ห้ามลบแถวหลักฐานความยินยอม (PDPA ม.19 ภาระพิสูจน์อยู่กับผู้ควบคุม) — ยกเว้นบริษัทผู้ให้ไม่มีอยู่แล้ว (cascade ตอนลบบริษัทถาวร)
+        $$"""
+        CREATE OR REPLACE FUNCTION "{{NoDeleteFunction}}"() RETURNS trigger AS $fn$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM "Companies" WHERE "Id" = OLD."CompanyId") THEN
+            RAISE EXCEPTION 'PartnerAutomationConsents: ลบหลักฐานความยินยอมไม่ได้ (append-only) — ถอนแทน';
+          END IF;
+          RETURN OLD;
+        END
+        $fn$ LANGUAGE plpgsql;
+        """,
+        """DROP TRIGGER IF EXISTS "TR_PartnerAutomationConsents_NoDelete" ON "PartnerAutomationConsents";""",
+        $$"""CREATE TRIGGER "TR_PartnerAutomationConsents_NoDelete" BEFORE DELETE ON "PartnerAutomationConsents" FOR EACH ROW EXECUTE FUNCTION "{{NoDeleteFunction}}"();""",
         """DROP TRIGGER IF EXISTS "TR_PartnerAutomationConsents_AppendOnly" ON "PartnerAutomationConsents";""",
         $$"""CREATE TRIGGER "TR_PartnerAutomationConsents_AppendOnly" BEFORE UPDATE ON "PartnerAutomationConsents" FOR EACH ROW EXECUTE FUNCTION "{{AppendOnlyFunction}}"();""",
     };

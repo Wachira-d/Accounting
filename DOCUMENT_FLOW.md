@@ -2318,6 +2318,9 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (`POST recurring/{id}/dismiss-skipped` · ไม่มีงวดค้าง = 400 `RECURRING-SKIP-NONE`) (263-1-3) · สมุดรายวันลงบัญชีอัตโนมัติไม่ได้ ⇒ ข้อเท็จจริง `JournalPostBlockedReason`
   + ปุ่มเปิดสมุดรายวัน · หมายเหตุ "แก้แล้ว … โดย" ประทับ<b>ชื่อ</b>ผู้อนุมัติ (`DocumentService.ActorLabelAsync`) · แถวเก่าที่มี id ผู้ใช้แสดงเป็นชื่อตอนเปิดเอกสาร (263-1-4) ·
   ไฟล์ส่งออกคอลัมน์ "เรื่องต้องทำต่อ" อ่านจากผลสด · Last verified `commit fb083106` (รอบ 263 · db-test เขียว run 43232352858)
+  + **ฝ่ายค้าน 263 (คำตัดสิน 263-1-6…8)**: ข้อความที่ตรวจสถานะไม่ได้ (`UnverifiedNotes`) แสดงเป็นขั้นตอน + กันแก้ครบ · สมุดรายวันทุกใบของรอบไล่งวด (`JournalBlocks`) ·
+  ชำระครบจบเรื่องอีเมลเฉพาะใบเรียกเก็บที่ไม่ใช่ใบกำกับภาษี (§86) · หลักฐานอีเมลต้องถึงผู้รับของผู้ติดต่อ · ปิดเรื่องงวดที่ข้ามใต้ล็อกรอบ + audit สายโซ่ `RECURRING-SKIP-DISMISS` ·
+  สมุดรายวันถูกลบ = จบ · ค้นชื่อผู้ใช้เฉพาะสมาชิกบริษัท
 - **ฝ่ายค้านรอบ 1 (2026-10-14)**: ขั้นใดก็ตาม<b>หลัง</b> `MarkRunAsync` ที่ล้ม (บันทึกหมายเหตุบนใบ · บันทึกผลอนุมัติล้ม · ErrorLog · คิวอีเมล) ⇒ เป็น `LastRunNotice`
   (`RecurringRunFailure.AfterCreateNotice` — "สร้างแล้ว รอบนี้นับแล้ว ไม่ต้องกดสร้างทันทีซ้ำ") ไม่ใช่ `LastRunError` (เดิมแถวขึ้นล้ม ⇒ ผู้ใช้กดซ้ำ = ใบซ้ำ) ·
   cron บันทึกเหตุผลล้ม<b>ภายใต้ล็อกต่อรายการ</b> (เดิมหลังปล่อยล็อก ⇒ ทับผลสำเร็จของปุ่มที่รันต่อ) · ตอนบันทึก แหล่งเงิน/หมวดค่าใช้จ่ายตรวจด้วย
@@ -3253,11 +3256,15 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   มีแถวใช้อยู่ ⇒ ถอนแถวเดิม ("แทนที่") + แถวใหม่ในธุรกรรมเดียว · audit `PartnerConsentGranted` / `PartnerConsentWithdrawn` (ruleCode `XT-CONSENT`) ผ่าน `AddChainedAuditLog`
 - **ถอน**: `DELETE …/partner-consents/{id}?reason=` — มีผลทันทีกับงานที่ยังไม่ทำ · งานที่ทำแล้วไม่ย้อน (F7) · แถวของบริษัทอื่น = 404
 - **ขอ (ฝั่ง A)**: `POST …/partner-consents/request` → กระดิ่ง `autopilot.partner_exchange` ของ B ลิงก์ `/pages/partner-automation.html?partnership={id}` · 3 ครั้ง/คู่/วัน · ส่งล้ม = 502 (ไม่ตอบว่าส่งแล้ว) · audit `PartnerConsentRequested` ฝั่ง A
-- **ตอนใช้ (API ของ P3/P5)**: `PartnerConsentService.CheckAsync(companyId, partnershipId, scope, amount)` → `PartnerConsent.UseCheck` (Ok · Code · Reason · ConsentId · GrantorUserId · MaxAmount · DefaultPayBankAccountId) ·
+- **ตอนใช้ (API ของ P3/P5)**: `PartnerConsentService.CheckForWriteAsync(companyId, partnershipId, scope, CapAmount?)` ในธุรกรรมของท่อ (หน้า/รายงาน: `CheckAsync` อ่านอย่างเดียว) → `PartnerConsent.UseCheck` (Ok · Code · Reason · ConsentId · GrantorUserId · MaxAmount · DefaultPayBankAccountId) ·
   ตรวจสดทุกครั้ง: คู่ Accepted · แถวของบริษัท/คู่/ขอบเขตนี้ · ไม่ถอน · hash ตรง · ให้หลังการระงับครั้งล่าสุด (`StaleAfterSuspend` — เชื่อมกลับไม่ฟื้นเอง) · ผู้ให้ยังใช้งาน + ยังมีสิทธิ์ของขอบเขต (`GrantorLostPermission`) · ยอดไม่เกินเพดาน ·
   ไม่ผ่าน ⇒ ท่อกลับเป็นปุ่มเดียวพร้อม `Reason`
 - **ค่าตั้งเดิม** `PUT workflow-automation`: เขียน audit `WorkflowAutomationConfigChanged` (ช่องที่เปลี่ยน ก่อน/หลัง · ไม่เปลี่ยน = ไม่เขียน) — C-06
 - **หน้า**: `partner-automation.html` (ลิงก์จากแถวคู่ค้า Accepted/Suspended ใน `partners.html` + กระดิ่งคำขอ) · ป้าย/ข้อความ/เหตุ/สิทธิ์ของผู้เปิดหน้ามาจากเซิร์ฟเวอร์ · ปุ่มยินยอมล็อกพร้อมเหตุเมื่อผู้เปิดไม่มีสิทธิ์ · ประวัติแถว + ผลตรวจ hash ต่อแถว
+- **ชุดแก้ฝ่ายค้าน (review-264-P1 · คำตัดสิน 264-2-17…22)**: ระงับคู่ ⇒ ถอนทุกแถวในการบันทึกเดียวกัน + `Allows` ตัดแถวที่ให้ก่อน `AcceptedAt` ล่าสุด ·
+  ท่อใช้ `CheckForWriteAsync` (ในธุรกรรม · `FOR SHARE`) — `CheckAsync` อ่านอย่างเดียว · ถอน/แทนที่ `FOR UPDATE` + 409 · ยอดเทียบเพดาน = `CapAmount` (บาทรวม VAT ก่อนหัก ณ ที่จ่าย · สกุลอื่น/ติดลบ ⇒ ไม่รู้ยอด) ·
+  บัญชีจ่ายตรวจซ้ำตอนใช้ (`PayAccountInactive`) · บริษัทคู่ค้าถูกลบ/ระงับ ⇒ หยุด · trigger กัน IsDeleted + DELETE · hash `PAC2` (`HashVersion`) · `MinTextVersion` · `WiredSince` (แพ็กที่พลิก `ReaderWired` ต้องตั้ง) ·
+  หน้าแสดงคู่ Pending ที่มีแถวความยินยอม · อีเมลใน audit ค่าตั้งเป็นลายนิ้วมือ
 - **kill-switch**: ไม่มีการเรียก AI ในแพ็กนี้
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
@@ -3708,6 +3715,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   เหตุบน `PartnerDeliveryError` (**ไม่นับครั้ง** · แก้แล้วรอบถัดไปส่งเองและล้างเหตุ) · ไม่มีหลักฐานว่าเป็นคู่ค้า ⇒ ไม่ประทับ · ความยินยอม = จุดเดียว `ReturnWhtCertsAllowedAsync` (ค่าตั้งเดิม — P1 สลับ) ·
   Autopilot `PartnerTaxEvidenceIssuesAsync`: ใบซื้อจากคู่ค้ารอต้นฉบับใกล้ครบ/เลยกรอบ ม.82/3 (`PartnerTaxEvidenceAlerts` · เหลือ ≤ 2 เดือน) · `PartnerPayBlocked` (การแจ้งค้าง · ด่วนเมื่อ ภ.ง.ด.53 ใกล้กำหนด) ·
   `PartnerWhtCertUndelivered` (เหตุก่อนส่ง/ส่งไม่สำเร็จ) · Last verified `commit 70253c2e`
+  **ชุดแก้ฝ่ายค้าน (264-5-6…9)**: เลือกใบหลังกรองผู้ถูกหักที่อาจเป็นคู่ค้าใน SQL (ใบติดเหตุไปท้ายคิว) · ยืนยันด้วยที่มาเฉพาะเมื่อผู้จ่ายของทุกแถวรอใบ (ผู้ติดต่อในสมุดเรา)
+  ผูก `NextAccTenant` กับบริษัทต้นทาง · ใบส่งพร้อม `SourcePayerCompanyId/SourceWhtCertId` (ระบบเติม) · ตอบ "ซ้ำ" กับรายการของใบอื่น ⇒ ไม่ประทับส่งแล้ว ·
+  ผู้ถูกหักไม่ใช่คู่ค้าแล้ว ⇒ ล้างเหตุ · ปิดการส่ง ⇒ ไม่แสดงเรื่องค้าง · ม.82/3 แยกชุดใกล้ครบ/เลยกรอบ · ผู้ติดต่อของบริษัทที่ไม่เคยเป็นคู่ = ไม่ใช่เส้นนี้ · `commit 1491ea8b`
 - **พอร์ทัลลูกค้าไม่ต้องจำรหัสผ่าน (ข้อ 8 · AUTOPILOT §8.1)**: `POST api/portal/magic-link {companyId, email}` — ส่งเฉพาะอีเมลที่ผู้ขายเปิด `PortalAccess` ไว้ (ใช้งานอยู่) ·
   **คำตอบเดียวทุกกรณี** (`PortalMagicLinkPolicy.AckMessage` · 202) · เพดานต่ออีเมล 1/นาที 5/วัน + ต่อบริษัท 10/นาที 200/วัน (ตัวนับในฐาน fail-closed) · เวลาตอบขั้นต่ำคงที่ ·
   โทเคนสุ่ม 32 ไบต์ เก็บ SHA-256 ใน `PortalMagicLinks` · อายุ 15 นาที · ใช้ครั้งเดียว (compare-and-set `UsedAt`) · ไม่มี URL ของระบบ/SMTP ⇒ ไม่ส่ง (log error · ไม่แต่งโดเมน) ·
@@ -4703,6 +4713,20 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   **M5** ใบเสร็จ/ใบกำกับที่ผู้ใช้ออกเองให้ใบ (ไม่ผูกการชำระ · ยอดตรงการรับเงินนี้หรือครอบทั้งใบ — `Helpers/ManualReceiptCoverage`) นับเป็น "มีแล้ว" ทั้งรายการใบเก่าและด่านกันซ้ำของ
   `IssueReceiptForPaymentAsync` · marker cutover กลืนเฉพาะ "ไม่มีตาราง" · **L1** ยกเลิกคืนเงิน = สิทธิ์เดียวกับคืนเงิน + เหตุผลบังคับ (คืนเงิน/ตัดเศษ) · **L2** ปล่อยการจอง/ผูกใบลง audit chain ·
   **L3** ทุกความล้มเหลวหลังอนุมัติ = ป้ายบนใบ · **L4** ลบร่างไม่ได้ ⇒ ป้าย `[CC-ORPHAN-DRAFT]` + ข้อความ · **L5** คีย์ทำด้วยตัวเดียว · **L6** ข้อเสนอแบ่งหลายใบเปิดใบแรกด้วยยอดของใบนั้น · ใบล่าสุดก่อน
+- **รอบ 265 — ออกใบเสร็จ/ใบกำกับภาษีจากเงินรอจัดสรร (ไม่มีใบแจ้งหนี้)** (คำตัดสิน 265-1-1…6 · ตัวตัดสินเดียว `Helpers/CreditReceiptPlan` · `CustomerCreditService.Receipt.cs`):
+  เคสเจ้าของ "ออก INV-001 ใบเดียว ลูกค้าโอนปิดสองเดือน — ไม่ต้องสร้างใบแจ้งหนี้เพิ่ม" ⇒ ปุ่ม **[🧾 ออกใบเสร็จ (ไม่มีใบแจ้งหนี้)]** บนแถวเงินรอจัดสรร
+  (`CustomerCreditActions.CanIssueReceipt` · ค่าของหน้าต่าง `GET customer-credits/{id}/receipt-options` — วันที่ที่ใบจะลง · อัตรา VAT · ใบที่เงินก้อนนี้ชำระแล้ว · รายการประจำของลูกค้า) →
+  `POST customer-credits/{id}/issue-receipt` (สิทธิ์สร้าง + อนุมัติใบเสร็จ): (1) ตรวจบรรทัด (`LinesProblem` — ชื่อ/จำนวน/ราคา §86/4 · ไม่จด VAT ใส่ VAT = ปฏิเสธ ม.86/13 · VAT ต่อบรรทัด 0/อัตราบริษัท ·
+  หัก ณ ที่จ่ายต่อบรรทัด 0–15%) + รายการประจำ (`RecurringProblem`) ก่อนเขียนอะไร → (2) จองยอดใต้ล็อก (ขาออก `ToReceipt` ตัดยอดทันที · `CustomerCreditMovementRules.Check` · ด่านงวดบัญชีของ**วันที่บนใบ**
+  — ปิด = ปฏิเสธพร้อมทางไปต่อ ไม่ลงวันนี้แทน) → (3) `CreateDocumentAsync` ใบเสร็จ standalone **ลงวันที่รับเงิน** (ค้างออกใบ · ม.105) หรือวันนี้ (เหตุผลอื่น) ·
+  `PaymentAccountId` = ผังพักที่รับไว้จริง ⇒ JE เส้นใบเสร็จ standalone เดิม **Dr 21630 / Cr รายได้ + Cr 21911** (+ Dr 11910 ภาษีถูกหัก) · ยอดสุทธิไม่เท่ายอดที่ใช้ = ลบร่าง + ปล่อย + 409 (`TotalMismatch`) ·
+  อนุมัติ `SystemWorkflow` (เลขที่ตอนอนุมัติ · รูปแบบกระดาษ `ReceiptFormRule`) · ล้มหลังอนุมัติ = ห้ามปล่อย ผูกใบ + ข้อความ → (4) `ApplyCreditReceiptTaxPointAsync`: งวดรับเงินยื่น/ปิด/เลยกำหนด ⇒
+  `TaxPointDate` = งวดปัจจุบันจาก `LateReceiptTaxPoint.Decide` + `[DEPOSIT-LATE-VAT]` · ออกหลังวันรับเงินและถือ VAT ⇒ `[LATE-TAX-INVOICE]` · หมายเหตุภายใน `[CC-RECEIPT]` ·
+  หมายเหตุที่พิมพ์อ้างใบที่เงินก้อนเดียวกันชำระแล้ว (`ReceiptNotes` — ข้อมูลของใบ ไม่ใช่ป้ายแม่แบบ ⇒ renderer ×2 ไม่เปลี่ยน) · **รายการประจำ**: เลือกงวด ⇒ ใบถือ `RecurringRunKey` ของงวดที่กำลังจะถึง ⇒
+  รอบอัตโนมัติไม่ออกซ้ำ (ข้อความ `RecurringBilledNote`) · งวดมีเอกสารแล้ว = ปฏิเสธ · **ยกเลิก** = ยกเลิกใบที่หน้าเอกสาร ⇒ `ReleaseForVoidedDocumentAsync` คืนเงิน + ปล่อยกุญแจงวด (ปุ่มยกเลิกรายการปฏิเสธ — ชี้หน้าเอกสาร) ·
+  **ทางลัดหน้ารับชำระ**: เหตุผลที่เซิร์ฟเวอร์ติด `OffersReceipt` (ค้างออกใบ) ⇒ หลังบันทึกถาม "ออกใบเสร็จส่วนที่เกินเลย" ⇒ `customer-credits.html?receiptFor=` · **ใบเสร็จใบเดียวรวม INV-001 + รายการใหม่ / รวมสองใบแจ้งหนี้ = ไม่ทำ**
+  (265-1-2: ทำเป็นสองใบลงวันที่เดียวกันที่อ้างกัน · ใบเสร็จรวมหลายใบ = backlog) · ใบสั่งขาย/ใบส่งของ = ไม่ผูก (265-1-4 — แปลงเป็นใบแจ้งหนี้แล้วจัดสรร) ·
+  เทสต์ `CustomerCreditRound265Tests` · Db `CustomerCreditRound265DbTests` · กติกา R265 ใน `tools/required_call_site_check.py` · Last verified commit 4558f767 — ยังไม่ได้คอมไพล์ในเครื่องนี้
 - **ยังไม่ทำ**: พอร์ทัลลูกค้าแสดงเงินรอจัดสรร (หน้าพอร์ทัลเป็นของทีม C รอบ 259 — ข้อมูลพร้อมที่ `CustomerCreditQuery.UnappliedForContactAsync`) · คีย์แจ้งเตือนกระดิ่ง
   `customer_credit.unallocated_aging` (ขึ้นแล้วใน Autopilot issues) · ฝั่งจ่ายเจ้าหนี้ · สกุลต่างประเทศ · ใบแจ้งหนี้ส่วนที่ขาดหลายบรรทัด (ผู้ใช้แก้ในร่าง)
 - **ด่านอื่นจากฝ่ายค้าน** (`erp-review/2026-11-11/review-258-customer-credit.md`): M2 เงินเกินพร้อมบรรทัดปรับส่วนต่าง = ปฏิเสธ (`RefuseExcess(hasAdjustments)`) + ยอดเงินเกินที่หน้าจอแสดงต้องตรงกับที่
@@ -9018,3 +9042,5 @@ _Last verified against codebase: 2026-11-12 (รอบ 262 — §2.12g-262: บ�
 
 _Last verified against codebase: 2026-11-12 (รอบ 264 P1 ความยินยอมงานอัตโนมัติกับคู่ค้า — §2.12g-264-P1: ตาราง append-only + hash canonical · ให้สองขั้น · ถอนทันที · ระงับ/เชื่อมกลับไม่ฟื้นเอง · สิทธิ์ผู้ให้ตรวจซ้ำตอนใช้ · `CheckAsync` สำหรับ P3/P5 · audit ค่าตั้งเดิม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3d6cdb70)_
 _Last verified against codebase: 2026-11-12 (รอบ 262 ชุดแก้ฝ่ายค้าน — §2.12g-262: H1 ลิงก์ชำระทั่วไปของใบค่าบริการผู้เช่าถูกปฏิเสธทุกทาง + เพิกถอนของค้าง · M1–M3 · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
+
+_Last verified against codebase: 2026-11-12 (รอบ 264 P1 ชุดแก้ฝ่ายค้าน — §2.12g-264-P1: H1 ระงับ ⇒ ถอน + ตัดแถวก่อนยอมรับครั้งล่าสุด · M1 CheckForWriteAsync FOR SHARE · M2–M4 · L1–L8 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f7eb8eee)_

@@ -121,6 +121,47 @@
     </div>
   </div>
 
+  <!-- รอบ 265 (คำตัดสิน 265-1-1): ออกใบเสร็จ/ใบกำกับภาษีจากเงินรอจัดสรร ไม่ต้องมีใบแจ้งหนี้ — วันที่/อัตรา VAT/รายการประจำมาจากเซิร์ฟเวอร์ · ยอดสุทธิตรวจที่เซิร์ฟเวอร์ -->
+  <div class="modal-overlay" id="ccRcpModal">
+    <div class="modal" style="max-width:820px">
+      <div class="modal-header">
+        <h3 class="modal-title">ออกใบเสร็จรับเงิน/ใบกำกับภาษีจากเงินรอจัดสรร</h3>
+        <button class="modal-close" onclick="Layout.closeModal('ccRcpModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="ccRcpInfo" class="text-sm" style="margin-bottom:8px"></div>
+        <div id="ccRcpDate" class="text-sm" style="margin-bottom:8px;color:#1e40af"></div>
+        <div id="ccRcpBlocked" class="text-sm text-danger" style="display:none;margin-bottom:8px"></div>
+        <div class="form-group" id="ccRcpRecurringRow" style="display:none">
+          <label class="form-label" for="ccRcpRecurring">เงินนี้เป็นงวดของรายการประจำ (กันออกใบงวดเดียวกันซ้ำ)</label>
+          <select class="form-select" id="ccRcpRecurring" onchange="Page.pickRecurring()"></select>
+          <div class="text-xs text-gray-500" id="ccRcpRecurringHint"></div>
+        </div>
+        <div class="table-container" style="border:none">
+          <table class="table" style="font-size:13px">
+            <thead><tr><th>รายการ</th><th class="text-right" style="width:90px">จำนวน</th><th class="text-right" style="width:130px">ราคาต่อหน่วย</th>
+              <th style="width:90px">VAT</th><th class="text-right" style="width:90px">หัก ณ ที่จ่าย %</th><th style="width:40px"></th></tr></thead>
+            <tbody id="ccRcpLines"></tbody>
+          </table>
+        </div>
+        <button class="btn btn-sm btn-secondary" onclick="Page.addRcpLine()">+ เพิ่มบรรทัด</button>
+        <label class="text-sm" style="display:flex;gap:6px;align-items:center;margin-top:10px">
+          <input type="checkbox" id="ccRcpInclVat" checked> ราคาที่กรอกรวม VAT แล้ว
+        </label>
+        <div class="form-group" style="max-width:240px;margin-top:10px">
+          <label class="form-label" for="ccRcpAmount">ยอดที่ใช้จากเงินรอจัดสรร (บาท)</label>
+          <input type="number" step="0.01" min="0" class="form-input" id="ccRcpAmount">
+        </div>
+        <div class="text-xs text-gray-500">ระบบคิด VAT/หัก ณ ที่จ่ายให้ แล้ว<b>ยอดสุทธิของใบต้องเท่ายอดที่ใช้</b> (ไม่ตรง = ไม่บันทึกอะไร) · ลงบัญชี: เดบิต เงินรับจากลูกค้ารอจัดสรร / เครดิต รายได้ + ภาษีขาย ·
+          เลขที่ใบออกตอนระบบอนุมัติ · ยกเลิกใบนี้ที่หน้าเอกสาร ⇒ เงินกลับเป็นเงินรอจัดสรร</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('ccRcpModal')">ปิด</button>
+        <button class="btn btn-primary" id="ccRcpSubmit" onclick="Page.submitReceipt()">🧾 ออกใบเสร็จ</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/api.js"></script>
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
@@ -144,6 +185,13 @@
         const params = new URLSearchParams(location.search);
         this.contactId = params.get('contactId') || null;
         await this.load();
+        // รอบ 265: ทางลัดจากหน้ารับชำระ (“ออกใบเสร็จส่วนที่เกินเลย”) — เปิดหน้าต่างของการรับชำระนั้นทันที
+        const receiptFor = params.get('receiptFor');
+        if (receiptFor) {
+          const i = this.rows.findIndex(r => r.paymentId === receiptFor);
+          if (i >= 0) this.openReceipt(i);
+          else Layout.toast('ไม่พบเงินรอจัดสรรของการรับชำระนี้ (อาจใช้ไปแล้ว)', 'warning', 8000);
+        }
       },
       async load(manual) {
         const api = Layout.api(); if (!api) return;
@@ -198,6 +246,7 @@
           // รอบ 259 P4: ปุ่มที่กดได้มาจากเซิร์ฟเวอร์ (r.actions) — หน้าไม่มีสำเนาเงื่อนไข
           const ac = r.actions || {};
           const actBtns = r.needsReview || !(r.unappliedAmount > 0) ? '' : [
+            ac.canIssueReceipt ? `<button class="btn btn-sm btn-primary" onclick="Page.openReceipt(${i})" title="ออกใบเสร็จรับเงิน/ใบกำกับภาษีจากเงินก้อนนี้ตรง ๆ — ไม่ต้องสร้างใบแจ้งหนี้">🧾 ออกใบเสร็จ (ไม่มีใบแจ้งหนี้)</button>` : '',
             ac.canIssueInvoice ? `<button class="btn btn-sm btn-secondary" onclick="Page.openMove(${i}, 'invoice')" title="สร้างใบแจ้งหนี้ร่างของลูกค้ารายนี้ — อนุมัติแล้วระบบจัดสรรเงินก้อนนี้ให้เอง">ออกใบแจ้งหนี้ส่วนที่ขาด</button>` : '',
             ac.canToDeposit ? `<button class="btn btn-sm btn-secondary" onclick="Page.openMove(${i}, 'deposit')" title="ออกใบมัดจำ (ระบบมัดจำเดิม) จากเงินก้อนนี้">ย้ายเป็นเงินมัดจำ</button>` : '',
             ac.canRefund ? `<button class="btn btn-sm btn-secondary" onclick="Page.openMove(${i}, 'refund')">คืนเงินลูกค้า</button>` : '',
@@ -511,6 +560,97 @@
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error', 10000); }
         finally { this._busy = false; }
+      },
+
+      // ───── รอบ 265: ออกใบเสร็จจากเงินรอจัดสรร (ไม่มีใบแจ้งหนี้) — หน้านี้เก็บแค่ค่าที่ผู้ใช้กรอก · วันที่/VAT/ยอดสุทธิ ตัดสินที่เซิร์ฟเวอร์ ─────
+      _rcp: null,
+      async openReceipt(i) {
+        const r = this.rows[i]; if (!r) return;
+        const api = Layout.api(); if (!api) return;
+        let opt;
+        try { opt = (await api.getCustomerCreditReceiptOptions(r.paymentId))?.data; }
+        catch (e) { Layout.toast(e.message || 'โหลดไม่สำเร็จ', 'error', 8000); return; }
+        if (!opt) return;
+        this._rcp = { paymentId: r.paymentId, unapplied: r.unappliedAmount, key: this._newKey(), opt };
+        document.getElementById('ccRcpInfo').innerHTML =
+          `${Layout.esc(r.contactName || '')} · การรับชำระ <b>${Layout.esc(r.paymentNumber)}</b> วันที่ ${Layout.date(r.paymentDate)} · ใช้ได้ <b>${Layout.money(opt.available)}</b>`
+          + ((opt.settledDocumentNumbers || []).length ? `<div class="text-xs text-gray-500">เงินก้อนนี้ชำระ ${Layout.esc(opt.settledDocumentNumbers.join(', '))} แล้ว — ใบเสร็จนี้อ้างถึงใบนั้นในหมายเหตุ</div>` : '');
+        document.getElementById('ccRcpDate').textContent = opt.paperDateNote || '';
+        const blocked = document.getElementById('ccRcpBlocked');
+        blocked.style.display = opt.blockedReason ? '' : 'none';
+        blocked.textContent = opt.blockedReason || '';
+        document.getElementById('ccRcpSubmit').disabled = !!opt.blockedReason;
+        const recRow = document.getElementById('ccRcpRecurringRow');
+        const recs = opt.recurring || [];
+        recRow.style.display = recs.length ? '' : 'none';
+        document.getElementById('ccRcpRecurring').innerHTML = '<option value="">— ไม่ใช่งวดของรายการประจำ —</option>'
+          + recs.map((x, k) => `<option value="${k}" ${x.blockedReason ? 'disabled' : ''}>${Layout.esc(x.periodLabel)}${x.blockedReason ? ' (เลือกไม่ได้)' : ''}</option>`).join('');
+        document.getElementById('ccRcpRecurringHint').textContent = recs.filter(x => x.blockedReason).map(x => x.blockedReason).join(' · ');
+        document.getElementById('ccRcpAmount').value = Number(opt.available || 0).toFixed(2);
+        document.getElementById('ccRcpInclVat').checked = true;
+        document.getElementById('ccRcpLines').innerHTML = '';
+        this.addRcpLine({ description: '', quantity: 1, unitPrice: Number(opt.available || 0) });
+        Layout.openModal('ccRcpModal');
+      },
+      addRcpLine(v) {
+        const opt = this._rcp?.opt; if (!opt) return;
+        const val = v || { description: '', quantity: 1, unitPrice: 0 };
+        const rates = opt.vatRates || [0];
+        const tr = document.createElement('tr');
+        tr.className = 'cc-rcp-line';
+        tr.innerHTML = `<td><input type="text" class="form-input cc-rcp-desc" maxlength="500" placeholder="เช่น ค่าบริการเดือน ต.ค." aria-label="รายการ"></td>
+          <td><input type="number" step="0.0001" min="0" class="form-input cc-rcp-qty" style="text-align:right" aria-label="จำนวน"></td>
+          <td><input type="number" step="0.01" min="0" class="form-input cc-rcp-price" style="text-align:right" aria-label="ราคาต่อหน่วย"></td>
+          <td><select class="form-select cc-rcp-vat" aria-label="อัตรา VAT">${rates.map(x => `<option value="${Number(x)}">${Number(x)}%</option>`).join('')}</select></td>
+          <td><input type="number" step="0.01" min="0" max="15" class="form-input cc-rcp-wht" style="text-align:right" value="0" aria-label="หัก ณ ที่จ่าย %"></td>
+          <td><button class="btn btn-sm btn-ghost" title="ลบบรรทัด" onclick="this.closest('tr').remove()">✕</button></td>`;
+        tr.querySelector('.cc-rcp-desc').value = val.description || '';
+        tr.querySelector('.cc-rcp-qty').value = String(val.quantity ?? 1);
+        tr.querySelector('.cc-rcp-price').value = Number(val.unitPrice || 0).toFixed(2);
+        tr.querySelector('.cc-rcp-vat').value = String(Number(opt.defaultVatRate || 0));
+        document.getElementById('ccRcpLines').appendChild(tr);
+      },
+      pickRecurring() {
+        const opt = this._rcp?.opt; if (!opt) return;
+        const k = document.getElementById('ccRcpRecurring').value;
+        const x = k === '' ? null : (opt.recurring || [])[Number(k)];
+        if (!x) return;
+        // เติมคำอธิบาย/ยอดของงวดจากเซิร์ฟเวอร์ลงบรรทัดแรกที่ผู้ใช้ยังไม่ได้แก้ (ผู้ใช้แก้ต่อได้)
+        const first = document.querySelector('#ccRcpLines .cc-rcp-line');
+        if (first && !first.querySelector('.cc-rcp-desc').value.trim()) first.querySelector('.cc-rcp-desc').value = x.suggestedDescription || x.name;
+        if (first && x.suggestedAmount) first.querySelector('.cc-rcp-price').value = Number(x.suggestedAmount).toFixed(2);
+      },
+      async submitReceipt() {
+        const m = this._rcp; if (!m || this._busy) return;
+        const api = Layout.api(); if (!api) return;
+        const lines = Array.from(document.querySelectorAll('#ccRcpLines .cc-rcp-line')).map(tr => ({
+          description: tr.querySelector('.cc-rcp-desc').value || '',
+          quantity: parseFloat(tr.querySelector('.cc-rcp-qty').value || '0'),
+          unitPrice: parseFloat(tr.querySelector('.cc-rcp-price').value || '0'),
+          vatRate: parseFloat(tr.querySelector('.cc-rcp-vat').value || '0'),
+          withholdingTaxRate: parseFloat(tr.querySelector('.cc-rcp-wht').value || '0'),
+        }));
+        const k = document.getElementById('ccRcpRecurring').value;
+        const rec = k === '' ? null : (m.opt.recurring || [])[Number(k)];
+        const btn = document.getElementById('ccRcpSubmit');
+        this._busy = true; btn.disabled = true;
+        try {
+          const res = await api.customerCreditIssueReceipt(m.paymentId, {
+            amount: parseFloat(document.getElementById('ccRcpAmount').value || '0'),
+            lines, pricesIncludeVat: document.getElementById('ccRcpInclVat').checked,
+            recurringTransactionId: rec ? rec.id : null,
+            idempotencyKey: m.key, expectedUnappliedBefore: m.unapplied });
+          const notices = res?.data?.notices || [];
+          Layout.toast(res?.message || 'ออกใบเสร็จแล้ว', notices.length ? 'warning' : 'success', notices.length ? 15000 : 6000);
+          notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          Layout.closeModal('ccRcpModal');
+          this._rcp = null;
+          await this.load();
+        } catch (e) {
+          if (this._rcp) this._rcp.key = this._newKey();   // คำขอที่ล้ม = รายการใหม่เมื่อกดอีกครั้ง (259 M2)
+          Layout.toast(e.message || 'ออกใบเสร็จไม่สำเร็จ', 'error', 12000);
+        }
+        finally { this._busy = false; btn.disabled = !!(this._rcp?.opt?.blockedReason); }
       },
 
       async undo(i, j) {

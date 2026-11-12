@@ -142,6 +142,7 @@ public partial class CrossTenantWorkflowService
             }),
             Timestamp = DateTime.UtcNow,
         });
+        await PartnerConsentService.WithdrawAllOnSuspendAsync(_db, p.Id, userId);   // รอบ 264 P1 ฝ่ายค้าน H1: ความยินยอมงานอัตโนมัติทุกขอบเขตของคู่นี้ถอนในการบันทึกเดียวกัน
         await _db.SaveChangesAsync();
         var other = p.CompanyAId == companyId ? p.CompanyBId : p.CompanyAId;
         if (_notify != null)

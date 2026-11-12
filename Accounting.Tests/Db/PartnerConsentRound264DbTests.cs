@@ -74,6 +74,8 @@ public class PartnerConsentRound264DbTests
             pv.TextVersion, pv.EvidenceHash, pv.NeedsTypedConfirm ? PartnerConsent.ConfirmPhrase : null));
     }
 
+    private static PartnerConsent.CapAmount T(decimal v) => PartnerConsent.CapAmount.Thb(v);
+
     private static Task<List<AuditLog>> ChainAsync(AccountingDbContext db, Guid companyId)
         => db.AuditLogs.AsNoTracking().Where(a => a.CompanyId == companyId && a.RowHash != null).OrderBy(a => a.Id).ToListAsync();
 
@@ -89,7 +91,7 @@ public class PartnerConsentRound264DbTests
             first = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, 5_000m, s.BankB);
         using (var c2 = DbTestDatabase.TryCreateContext()!)
         {
-            var ok = await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, 4_000m);
+            var ok = await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(4_000m));
             Assert.True(ok.Ok, ok.Reason);
             Assert.Equal(first.Id, ok.ConsentId);
             Assert.Equal(s.OwnerB, ok.GrantorUserId);
@@ -102,14 +104,14 @@ public class PartnerConsentRound264DbTests
             await Svc(c3).WithdrawAsync(s.B, s.OwnerB, first.Id, "ทดสอบถอน");
         using (var c4 = DbTestDatabase.TryCreateContext()!)
         {
-            var off = await Svc(c4).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, 4_000m);
+            var off = await Svc(c4).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(4_000m));
             Assert.False(off.Ok);
             Assert.Equal(PartnerConsent.Codes.NoConsent, off.Code);
             await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(c4).WithdrawAsync(s.B, s.OwnerB, first.Id, null));   // ถอนซ้ำ = 409
         }
         PartnerAutomationConsent second;
         using (var c5 = DbTestDatabase.TryCreateContext()!)
-            second = await GrantAsync(c5, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, 6_000m);
+            second = await GrantAsync(c5, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, T(6_000m));
         using var check = DbTestDatabase.TryCreateContext()!;
         var rows = await check.PartnerAutomationConsents.AsNoTracking().Where(x => x.CompanyId == s.B).OrderBy(x => x.GrantedAt).ToListAsync();
         Assert.Equal(2, rows.Count);
@@ -119,7 +121,7 @@ public class PartnerConsentRound264DbTests
         Assert.Equal(second.Id, rows[1].Id);
         // แถว audit อัตโนมัติของ ChangeTracker (สร้าง/แก้ entity) อยู่ร่วมกัน — นับเฉพาะเหตุการณ์ที่ service เขียน
         var events = (await check.AuditLogs.AsNoTracking().Where(a => a.CompanyId == s.B && a.EntityType == nameof(PartnerAutomationConsent)).Select(a => a.NewValues!).ToListAsync())
-            .Where(e => e.Contains("PartnerConsent")).ToList();
+            .Where(e => e.Contains("\"event\":\"PartnerConsent")).ToList();
         Assert.Equal(3, events.Count);
         Assert.Equal(2, events.Count(e => e.Contains("PartnerConsentGranted")));
         Assert.Equal(1, events.Count(e => e.Contains("PartnerConsentWithdrawn")));
@@ -134,8 +136,8 @@ public class PartnerConsentRound264DbTests
         if (db == null) { _out.WriteLine(Skip); return; }
         var s = await SeedAsync(db);
         PartnerAutomationConsent r1, r2;
-        using (var c1 = DbTestDatabase.TryCreateContext()!) r1 = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, 1_000m);
-        using (var c2 = DbTestDatabase.TryCreateContext()!) r2 = await GrantAsync(c2, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, 2_000m);
+        using (var c1 = DbTestDatabase.TryCreateContext()!) r1 = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, T(1_000m));
+        using (var c2 = DbTestDatabase.TryCreateContext()!) r2 = await GrantAsync(c2, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, T(2_000m));
         using var check = DbTestDatabase.TryCreateContext()!;
         var rows = await check.PartnerAutomationConsents.AsNoTracking().Where(x => x.CompanyId == s.B).ToListAsync();
         Assert.Equal(2, rows.Count);
@@ -156,31 +158,151 @@ public class PartnerConsentRound264DbTests
     }
 
     [Fact]
-    public async Task ระงับคู่_หยุดทุกขอบเขต_เชื่อมกลับ_ความยินยอมเดิมไม่ฟื้นเอง_ทิศตรงข้าม_ให้ใหม่ผ่าน()
+    public async Task H1_ระงับ_เชิญใหม่_ยอมรับ_เส้นจริง_ความยินยอมเดิมถูกถอนและไม่ฟื้น_ระหว่างรอยอมรับเห็นประวัติ_ทิศตรงข้าม_ให้ใหม่ผ่าน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var ownerA = await UserAsync(db, s.A, UserRole.Owner);
+        PartnerAutomationConsent granted;
+        using (var c1 = DbTestDatabase.TryCreateContext()!)
+            granted = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.ReceiveSlipCopy, null);
+        static CrossTenantWorkflowService Xt(AccountingDbContext c) => new(c, NullLogger<CrossTenantWorkflowService>.Instance);
+
+        using (var c2 = DbTestDatabase.TryCreateContext()!)
+            await Xt(c2).SuspendPartnershipAsync(s.B, s.PartnershipId, s.OwnerB, "ทดสอบ");
+        using (var c3 = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(PartnerConsent.Codes.PartnerNotActive, (await Svc(c3).CheckAsync(s.B, s.PartnershipId, Scope.ReceiveSlipCopy, null)).Code);
+            var row = await c3.PartnerAutomationConsents.AsNoTracking().SingleAsync(x => x.Id == granted.Id);
+            Assert.NotNull(row.WithdrawnAt);   // ถอนในการบันทึกเดียวกับการระงับ
+            Assert.Equal(PartnerConsentService.SuspendReason, row.WithdrawReason);
+            await Assert.ThrowsAsync<BusinessRuleException>(() => GrantAsync(c3, s.B, s.OwnerB, s.PartnershipId, Scope.ReceiveSlipCopy, null));
+        }
+        // เส้นจริง: พ้นช่วงพัก → A เชิญใหม่ (ล้าง SuspendedAt · Pending) → B ยอมรับ (AcceptedAt ใหม่)
+        await db.TradingPartnerships.Where(p => p.Id == s.PartnershipId)
+            .ExecuteUpdateAsync(x => x.SetProperty(p => p.SuspendedAt, DateTime.UtcNow.AddDays(-30)));
+        var taxB = await db.Companies.AsNoTracking().Where(c => c.Id == s.B).Select(c => c.TaxId).SingleAsync();
+        using (var c4 = DbTestDatabase.TryCreateContext()!)
+            await Xt(c4).InvitePartnerAsync(s.A, taxB!, null, ownerA, null);
+        using (var c5 = DbTestDatabase.TryCreateContext()!)
+        {
+            var pend = await c5.TradingPartnerships.AsNoTracking().SingleAsync(p => p.Id == s.PartnershipId);
+            Assert.Equal(TradingPartnershipStatus.Pending, pend.Status);
+            Assert.Null(pend.SuspendedAt);
+            // ระหว่างรอยอมรับ: B เห็นการ์ดคู่นี้ + ประวัติ (ถอนได้ถ้ายังมีแถวใช้อยู่)
+            var page = await Svc(c5).ListAsync(s.B, s.OwnerB);
+            var card = Assert.Single(page.Partners, c => c.PartnershipId == s.PartnershipId);
+            Assert.NotEmpty(card.History);
+        }
+        using (var c6 = DbTestDatabase.TryCreateContext()!)
+            await Xt(c6).AcceptPartnershipAsync(s.B, s.PartnershipId, s.OwnerB);
+        using (var c7 = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(PartnerConsent.Codes.NoConsent, (await Svc(c7).CheckAsync(s.B, s.PartnershipId, Scope.ReceiveSlipCopy, null)).Code);
+
+        // ชั้นที่สองของด่าน: แม้แถวยังไม่ถูกถอน (ข้อมูลก่อนแก้) — ให้ก่อนการยอมรับครั้งล่าสุด ⇒ ไม่ฟื้น
+        using (var c8 = DbTestDatabase.TryCreateContext()!)
+        {
+            var p = await c8.TradingPartnerships.AsNoTracking().SingleAsync(x => x.Id == s.PartnershipId);
+            var text = PartnerConsent.TextFor(Scope.AutoApprovePurchase, 1)!;
+            var old = PartnerConsent.TruncateToSecond(p.AcceptedAt!.Value.AddDays(-1));
+            c8.PartnerAutomationConsents.Add(new PartnerAutomationConsent
+            {
+                CompanyId = s.B, TradingPartnershipId = s.PartnershipId, PartnerCompanyId = s.A, Scope = nameof(Scope.AutoApprovePurchase), MaxAmount = 1_000m,
+                TextVersion = 1, HashVersion = 2, GrantedByUserId = s.OwnerB, GrantedAt = old,
+                EvidenceHash = PartnerConsent.HashV2(s.B, s.PartnershipId, s.A, Scope.AutoApprovePurchase, 1_000m, null, 1, text, s.OwnerB, old),
+            });
+            await c8.SaveChangesAsync();
+            Assert.Equal(PartnerConsent.Codes.StaleAfterSuspend, (await Svc(c8).CheckAsync(s.B, s.PartnershipId, Scope.AutoApprovePurchase, T(10m))).Code);
+        }
+        // ทิศตรงข้าม: ให้ใหม่หลังยอมรับ ⇒ ผ่าน
+        using (var c9 = DbTestDatabase.TryCreateContext()!)
+            await GrantAsync(c9, s.B, s.OwnerB, s.PartnershipId, Scope.ReceiveSlipCopy, null);
+        using var c10 = DbTestDatabase.TryCreateContext()!;
+        Assert.True((await Svc(c10).CheckAsync(s.B, s.PartnershipId, Scope.ReceiveSlipCopy, null)).Ok);
+        Assert.False(AuditHashChain.Analyze(await ChainAsync(c10, s.B)).HasIntegrityFindings);
+    }
+
+    [Fact]
+    public async Task M1_ตรวจเพื่อเขียนในธุรกรรม_ถอนรอจนท่อจบ_ไม่มีธุรกรรม_ใช้ผิด()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        PartnerAutomationConsent row;
+        using (var c1 = DbTestDatabase.TryCreateContext()!)
+            row = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, 5_000m);
+        using (var c0 = DbTestDatabase.TryCreateContext()!)
+            await Assert.ThrowsAsync<InvalidOperationException>(() => Svc(c0).CheckForWriteAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(1m)));
+
+        using var pipe = DbTestDatabase.TryCreateContext()!;
+        await using var tx = await pipe.Database.BeginTransactionAsync();
+        Assert.True((await Svc(pipe).CheckForWriteAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(1m))).Ok);
+        using var other = DbTestDatabase.TryCreateContext()!;
+        var withdraw = Svc(other).WithdrawAsync(s.B, s.OwnerB, row.Id, "ถอนระหว่างท่อทำงาน");
+        await Task.Delay(700);
+        Assert.False(withdraw.IsCompleted);   // รอ FOR SHARE ของท่อ
+        await tx.CommitAsync();
+        var done = await withdraw.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.NotNull(done.WithdrawnAt);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        await using var tx2 = await check.Database.BeginTransactionAsync();
+        Assert.Equal(PartnerConsent.Codes.NoConsent, (await Svc(check).CheckForWriteAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(1m))).Code);
+    }
+
+    [Fact]
+    public async Task M2_บัญชีจ่ายที่ประกาศถูกปิด_ตรวจตอนใช้ไม่ส่งบัญชีออก_พร้อมเหตุ_L7_บริษัทคู่ค้าระงับหยุด()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
         var s = await SeedAsync(db);
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-        {
-            await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.ReceiveSlipCopy, null);
-        }
+            await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, 5_000m, s.BankB);
         using (var c2 = DbTestDatabase.TryCreateContext()!)
-            await new CrossTenantWorkflowService(c2, NullLogger<CrossTenantWorkflowService>.Instance).SuspendPartnershipAsync(s.B, s.PartnershipId, s.OwnerB, "ทดสอบ");
+            Assert.Equal(s.BankB, (await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(1m))).DefaultPayBankAccountId);
+        await db.BankAccounts.Where(b => b.Id == s.BankB).ExecuteUpdateAsync(x => x.SetProperty(b => b.IsActive, false));
         using (var c3 = DbTestDatabase.TryCreateContext()!)
         {
-            Assert.Equal(PartnerConsent.Codes.PartnerNotActive, (await Svc(c3).CheckAsync(s.B, s.PartnershipId, Scope.ReceiveSlipCopy, null)).Code);
-            // ระหว่างระงับให้ใหม่ไม่ได้
-            await Assert.ThrowsAsync<BusinessRuleException>(() => GrantAsync(c3, s.B, s.OwnerB, s.PartnershipId, Scope.ReceiveSlipCopy, null));
+            var r = await Svc(c3).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(1m));
+            Assert.True(r.Ok);
+            Assert.Null(r.DefaultPayBankAccountId);
+            Assert.Equal(PartnerConsent.PayAccountInactive, r.PayAccountProblem);
         }
-        await db.TradingPartnerships.Where(p => p.Id == s.PartnershipId)
-            .ExecuteUpdateAsync(x => x.SetProperty(p => p.Status, TradingPartnershipStatus.Accepted));
-        using (var c4 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(PartnerConsent.Codes.StaleAfterSuspend, (await Svc(c4).CheckAsync(s.B, s.PartnershipId, Scope.ReceiveSlipCopy, null)).Code);
-        using (var c5 = DbTestDatabase.TryCreateContext()!)
-            await GrantAsync(c5, s.B, s.OwnerB, s.PartnershipId, Scope.ReceiveSlipCopy, null);
-        using var c6 = DbTestDatabase.TryCreateContext()!;
-        Assert.True((await Svc(c6).CheckAsync(s.B, s.PartnershipId, Scope.ReceiveSlipCopy, null)).Ok);
+        await db.Companies.Where(c => c.Id == s.A).ExecuteUpdateAsync(x => x.SetProperty(c => c.Status, CompanyStatus.Suspended));
+        using var c4 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(PartnerConsent.Codes.PartnerNotActive, (await Svc(c4).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(1m))).Code);
+    }
+
+    [Fact]
+    public async Task M4_ถอนพร้อมกันสองครั้ง_สำเร็จหนึ่ง_409_หนึ่ง_L1_ลบหรือซ่อนแถวที่ใช้อยู่ไม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        PartnerAutomationConsent row;
+        using (var c1 = DbTestDatabase.TryCreateContext()!)
+            row = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.ReceiveSlipCopy, null);
+        await Assert.ThrowsAnyAsync<Exception>(() => db.Database.ExecuteSqlRawAsync(
+            "UPDATE \"PartnerAutomationConsents\" SET \"IsDeleted\" = true WHERE \"Id\" = {0}", row.Id));
+        await Assert.ThrowsAnyAsync<Exception>(() => db.Database.ExecuteSqlRawAsync(
+            "DELETE FROM \"PartnerAutomationConsents\" WHERE \"Id\" = {0}", row.Id));
+
+        using var a = DbTestDatabase.TryCreateContext()!;
+        using var b = DbTestDatabase.TryCreateContext()!;
+        var t1 = Svc(a).WithdrawAsync(s.B, s.OwnerB, row.Id, "หนึ่ง");
+        var t2 = Svc(b).WithdrawAsync(s.B, s.OwnerB, row.Id, "สอง");
+        var results = new List<Exception?>();
+        foreach (var t in new Task[] { t1, t2 })
+        {
+            try { await t; results.Add(null); }
+            catch (Exception ex) { results.Add(ex); }
+        }
+        Assert.Single(results, e => e == null);
+        var err = Assert.IsType<BusinessRuleException>(Assert.Single(results, e => e != null));
+        Assert.Equal(409, err.StatusCode);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(1, (await check.AuditLogs.AsNoTracking().Where(x => x.CompanyId == s.B && x.EntityId == row.Id.ToString()).Select(x => x.NewValues!).ToListAsync())
+            .Count(v => v.Contains("\"event\":\"PartnerConsentWithdrawn")));
     }
 
     [Fact]
@@ -192,13 +314,13 @@ public class PartnerConsentRound264DbTests
         using (var c0 = DbTestDatabase.TryCreateContext()!)
             await Assert.ThrowsAsync<BusinessRuleException>(() => GrantAsync(c0, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, null));
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, 10_700m);
+            await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, T(10_700m));
         using var c2 = DbTestDatabase.TryCreateContext()!;
-        Assert.Equal(PartnerConsent.Codes.OverCap, (await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, 10_700.01m)).Code);
-        Assert.True((await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, 10_700m)).Ok);
+        Assert.Equal(PartnerConsent.Codes.OverCap, (await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(10_700.01m))).Code);
+        Assert.True((await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(10_700m))).Ok);
         Assert.Equal(PartnerConsent.Codes.AmountUnknown, (await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, null)).Code);
         // ขอบเขตอื่นของคู่เดียวกันไม่ได้รับไปด้วย
-        Assert.Equal(PartnerConsent.Codes.NoConsent, (await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoApprovePurchase, 1m)).Code);
+        Assert.Equal(PartnerConsent.Codes.NoConsent, (await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoApprovePurchase, T(1m))).Code);
     }
 
     [Fact]
@@ -216,7 +338,7 @@ public class PartnerConsentRound264DbTests
         // ตั้งค่าบริษัทได้แต่อนุมัติใบซื้อไม่ได้ ⇒ เปิด "บันทึกจ่ายเอง" ไม่ได้ (403) · ขอบเขตแคบที่ไม่ต้องอนุมัติก็ยังต้องเห็นฝั่งซื้อ
         using (var c1 = DbTestDatabase.TryCreateContext()!)
         {
-            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => GrantAsync(c1, s.B, staff, s.PartnershipId, Scope.AutoRecordPayment, 1_000m));
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => GrantAsync(c1, s.B, staff, s.PartnershipId, Scope.AutoRecordPayment, T(1_000m)));
             Assert.Equal(403, ex.StatusCode);
             Assert.Contains("Document.Purchase.Approve", ex.Message);
             Assert.Equal(0, await c1.PartnerAutomationConsents.CountAsync(x => x.CompanyId == s.B));
@@ -226,22 +348,22 @@ public class PartnerConsentRound264DbTests
         db.CompanyRolePermissions.Add(approve);
         await db.SaveChangesAsync();
         using (var c2 = DbTestDatabase.TryCreateContext()!)
-            await GrantAsync(c2, s.B, staff, s.PartnershipId, Scope.AutoRecordPayment, 1_000m);
+            await GrantAsync(c2, s.B, staff, s.PartnershipId, Scope.AutoRecordPayment, T(1_000m));
         using (var c3 = DbTestDatabase.TryCreateContext()!)
-            Assert.True((await Svc(c3).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, 500m)).Ok);
+            Assert.True((await Svc(c3).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(500m))).Ok);
 
         // ถูกลดสิทธิ์ ⇒ ตอนใช้หยุดเอง (ไม่ต้องถอนแถว)
         await db.CompanyRolePermissions.Where(x => x.Id == approve.Id).ExecuteDeleteAsync();
         using (var c4 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(PartnerConsent.Codes.GrantorLostPermission, (await Svc(c4).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, 500m)).Code);
+            Assert.Equal(PartnerConsent.Codes.GrantorLostPermission, (await Svc(c4).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(500m))).Code);
         // คืนสิทธิ์แต่ปิดผู้ใช้ ⇒ ยังหยุด
         db.CompanyRolePermissions.Add(new CompanyRolePermission { CompanyRoleId = role.Id, MenuItemId = PermissionKeys.DocumentPurchaseApprove, CanAccess = true });
         await db.SaveChangesAsync();
         using (var c5 = DbTestDatabase.TryCreateContext()!)
-            Assert.True((await Svc(c5).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, 500m)).Ok);
+            Assert.True((await Svc(c5).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(500m))).Ok);
         await db.Users.Where(u => u.Id == staff).ExecuteUpdateAsync(x => x.SetProperty(u => u.Status, UserStatus.Inactive));
         using var c6 = DbTestDatabase.TryCreateContext()!;
-        Assert.Equal(PartnerConsent.Codes.GrantorLostPermission, (await Svc(c6).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, 500m)).Code);
+        Assert.Equal(PartnerConsent.Codes.GrantorLostPermission, (await Svc(c6).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(500m))).Code);
     }
 
     [Fact]
@@ -258,18 +380,18 @@ public class PartnerConsentRound264DbTests
 
         PartnerAutomationConsent row;
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            row = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, 3_000m);
+            row = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, T(3_000m));
 
         using (var c2 = DbTestDatabase.TryCreateContext()!)
         {
             // A (อีกฝั่งของคู่เดียวกัน) ไม่ได้รับความยินยอมของ B
-            Assert.Equal(PartnerConsent.Codes.NoConsent, (await Svc(c2).CheckAsync(s.A, s.PartnershipId, Scope.AutoApprovePurchase, 1m)).Code);
+            Assert.Equal(PartnerConsent.Codes.NoConsent, (await Svc(c2).CheckAsync(s.A, s.PartnershipId, Scope.AutoApprovePurchase, T(1m))).Code);
             await Assert.ThrowsAsync<KeyNotFoundException>(() => Svc(c2).WithdrawAsync(s.A, ownerA, row.Id, null));
             var pageA = await Svc(c2).ListAsync(s.A, ownerA);
             Assert.All(pageA.Partners.SelectMany(p => p.Scopes), sc => Assert.Null(sc.Active));
             Assert.All(pageA.Partners, p => Assert.Empty(p.History));
             // บริษัทนอกคู่ = ไม่พบคู่ (ไม่บอกว่ามีแถว)
-            Assert.Equal(PartnerConsent.Codes.NoPartner, (await Svc(c2).CheckAsync(outsider.Id, s.PartnershipId, Scope.AutoApprovePurchase, 1m)).Code);
+            Assert.Equal(PartnerConsent.Codes.NoPartner, (await Svc(c2).CheckAsync(outsider.Id, s.PartnershipId, Scope.AutoApprovePurchase, T(1m))).Code);
             await Assert.ThrowsAsync<KeyNotFoundException>(() => GrantAsync(c2, outsider.Id, ownerX, s.PartnershipId, Scope.ReceiveSlipCopy, null));
             Assert.Empty((await Svc(c2).ListAsync(outsider.Id, ownerX)).Partners);
         }
