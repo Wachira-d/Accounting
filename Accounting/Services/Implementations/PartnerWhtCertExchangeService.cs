@@ -26,10 +26,15 @@ public class PartnerWhtCertExchangeService
     private readonly ILogger<PartnerWhtCertExchangeService> _logger;
 
     public PartnerWhtCertExchangeService(AccountingDbContext db, IWhtCertIntakeService intake, ILogger<PartnerWhtCertExchangeService> logger,
-        INotificationEngine? notify = null)
+        INotificationEngine? notify = null, PartnerConsentService? consent = null)
     {
         _db = db; _intake = intake; _logger = logger; _notify = notify;
+        // รอบ 264 P3: ตัวตรวจความยินยอมตัวเดียว (P1) — ผู้สร้างนอก DI (เทสต์/เครื่องมือ) ได้ตัวตรวจบนฐานเดียวกัน (ขอบเขตทั้งบริษัทไม่ใช้สิทธิ์ผู้ให้)
+        _consent = consent ?? new PartnerConsentService(db, new PermissionService(db),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PartnerConsentService>.Instance);
     }
+
+    private readonly PartnerConsentService _consent;
 
     public const string ExternalSystem = PartnerExchangeRules.NextAccTenantSystem;
     private const int BatchPerCompany = 50;
@@ -238,14 +243,30 @@ public class PartnerWhtCertExchangeService
             .ExecuteUpdateAsync(s => s.SetProperty(w => w.PartnerDeliveryError, (string?)null), ct);
     }
 
-    /// <summary>รอบ 264 P5 — <b>จุดเรียกความยินยอมเดียว</b>ของเส้น "ส่ง 50 ทวิ กลับให้คู่ค้า" (ขอบเขต ReturnWhtCerts) · ตอนนี้ = ค่าตั้งทั้งบริษัทของผู้จ่าย
-    /// <c>WorkflowAutomationConfig.SendWhtCertsToPartners</c> (+ watermark) — แพ็ก P1 (ความยินยอมต่อคู่ × ขอบเขต) สลับตัวอ่านที่นี่ที่เดียว
-    /// (คำตัดสิน 264-5-5 · required_call_site_check R264-P5)</summary>
+    /// <summary>รอบ 264 P5 — <b>จุดเรียกความยินยอมเดียว</b>ของเส้น "ส่ง 50 ทวิ กลับให้คู่ค้า" (ขอบเขต ReturnWhtCerts · คำตัดสิน 264-5-5) ·
+    /// รอบ 264 P3: สลับเป็นตัวตรวจความยินยอมของ P1 แล้ว — <see cref="PartnerConsentService.CheckForWriteAsync"/> (ขอบเขตนี้ตัดสินด้วยค่าตั้งทั้งบริษัท +
+    /// คู่ต้อง Accepted ณ ตอนนี้ — 264-2-1) · watermark <c>SendWhtCertsToPartnersSince</c> ของค่าตั้งเดิมยังเป็นเงื่อนไข (ส่งเฉพาะใบหลังเปิด) ·
+    /// ธุรกรรมสั้นของการตรวจ: ขอบเขตทั้งบริษัทไม่มีแถวความยินยอมให้ถือล็อก และการส่งเข้ากล่องรับ (บริษัทผู้รับ) เปิดธุรกรรมของตัวเอง</summary>
     private async Task<bool> ReturnWhtCertsAllowedAsync(Guid payerId, Guid payeeCompanyId, CancellationToken ct)
     {
-        _ = payeeCompanyId;   // ความยินยอมต่อคู่ (P1) จะใช้คู่นี้ · ตอนนี้ค่าตั้งทั้งบริษัท
-        return await _db.WorkflowAutomationConfigs.AsNoTracking()
+        var on = await _db.WorkflowAutomationConfigs.AsNoTracking()
             .AnyAsync(c => c.CompanyId == payerId && c.SendWhtCertsToPartners && c.SendWhtCertsToPartnersSince != null, ct);
+        if (!on) return false;
+        var pid = await _db.TradingPartnerships.AsNoTracking()
+            .Where(p => (p.CompanyAId == payerId && p.CompanyBId == payeeCompanyId) || (p.CompanyAId == payeeCompanyId && p.CompanyBId == payerId))
+            .Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct);
+        if (pid is not Guid partnershipId) return false;
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync(ct) : null;
+        try
+        {
+            var v = await _consent.CheckForWriteAsync(payerId, partnershipId, PartnerConsent.Scope.ReturnWhtCerts, null, ct);
+            if (ownTx != null) await ownTx.CommitAsync(ct);
+            return v.Ok;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
     }
 
     /// <param name="giveUp">รอบ 257 ชุด 2 (B-L4): ผลเชิงกำหนด (กล่องรับตีกลับ) ⇒ ตั้งจำนวนครั้งเต็มเพดาน (ไม่ส่งซ้ำ) · false = ล้มชั่วคราว นับ +1</param>

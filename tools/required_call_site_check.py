@@ -3493,18 +3493,23 @@ RULES += [
          forbid=["OnDocumentSentAsync("],
          why="รอบ 258-3 F-H2: ทางเข้าเดียว RouteSentDocumentAsync (ล้มดัง 3 ที่) — ห้ามเรียก OnDocumentSentAsync ตรง"),
     # รอบ 258-3 (F-H3): ผู้ขายรับเงิน ⇒ แจ้งผู้ซื้อคู่ค้าเท่านั้น (ไม่บันทึกแทน) · ผู้ซื้อกด ⇒ ยอดจากตัวตัดสินเดียว
+    # รอบ 264 P3 (C-04): การแจ้งย้ายเข้าขั้นหลัง commit ของ CreatePaymentAsync (ทุกทางเข้า) — handler ห้ามเรียกเองซ้ำ (แจ้งสองครั้ง/สองกุญแจ)
     dict(file="Services/Payments/Handlers/DocumentPaymentHandler.cs", method="HandleSucceededAsync",
-         must=["_partnerNotices.NotifySellerReceivedAsync("],
-         before=[("_docs.CreatePaymentAsync(", "_partnerNotices.NotifySellerReceivedAsync(")],
-         why="รอบ 258-3 F-H3: จ่ายผ่าน gateway ของผู้ขาย ⇒ ผู้ซื้อคู่ค้าได้รับการแจ้ง (เดิมไม่รู้ ⇒ 50 ทวิ ไม่ออก)"),
-    dict(file="Services/Implementations/PartnerPaymentNoticeService.cs", method="NotifySellerReceivedAsync",
-         must=["TradingPartnershipStatus.Accepted", "l.TargetCompanyId", "DocumentPermissionHelper.IsPurchase(", "Audit(sellerCompanyId", "Audit(l.TargetCompanyId"],
+         must=["_docs.CreatePaymentAsync("], forbid=["NotifySellerReceivedAsync(", "NotifyForSellerPaymentAsync("],
+         why="รอบ 264 P3 (C-04 · 264-3-6): ผู้ซื้อคู่ค้าได้รับการแจ้งจากขั้นหลัง commit ตัวเดียวของการรับชำระ — handler ไม่แจ้งเอง"),
+    dict(file="Services/Implementations/PartnerPaymentNoticeService.cs", method="NotifyCoreAsync",
+         must=["TradingPartnershipStatus.Accepted", "l.TargetCompanyId", "DocumentPermissionHelper.IsPurchase(", "Audit(db, sellerCompanyId", "Audit(db, l.TargetCompanyId",
+               "n.SellerPaymentId == r.SellerPaymentId", "n.PaymentIntentId == r.PaymentIntentId"],
          forbid=["CreatePaymentAsync(", "ChangeTracker.Clear()"],
-         why="รอบ 258-3 F-H3 (+ฝ่ายค้าน L1 ห้ามล้าง scope ของผู้เรียก): ฝั่งผู้ขายสร้างการแจ้งเท่านั้น — ห้ามบันทึกบัญชีแทนผู้ซื้อ · คู่ค้า Accepted + ใบปลายทางของผู้ซื้อ · audit ทั้งสองฝั่ง"),
+         why="รอบ 258-3 F-H3 (+ฝ่ายค้าน L1 ห้ามล้าง scope ของผู้เรียก) · รอบ 264 P3 กันซ้ำสองกุญแจ: ฝั่งผู้ขายสร้างการแจ้งเท่านั้น — ห้ามบันทึกบัญชีแทนผู้ซื้อ · "
+             "คู่ค้า Accepted + ใบปลายทางของผู้ซื้อ · audit ทั้งสองฝั่ง"),
     dict(file="Services/Implementations/PartnerPaymentNoticeService.cs", method="RecordAsync",
-         must=["PlanAsync(companyId, n, ct)", "PartnerPaymentNoticeRule.PaymentReference(", "x.CompanyId == companyId"],
-         before=[("PlanAsync(companyId, n, ct)", "_docs.CreatePaymentAsync(")],
-         why="รอบ 258-3 F-H3: ยอด/ภาษีหักจากตัวตัดสินเดียว (กติกาของผู้ซื้อ) ก่อนบันทึก · กันซ้ำด้วยเลขอ้างอิง canonical · ผูกบริษัทผู้เรียก"),
+         must=["PlanForAsync(_db, companyId, n, ct)", "PartnerPaymentNoticeRule.PaymentReferenceFor(", "PartnerPaymentNoticeRule.PaymentReferencesToCheck(",
+               "x.CompanyId == companyId", "SellerPaymentLiveAsync(", "x.SellerVoidedAt == null"],
+         must_re=[r"if\s*\(\s*bankAccountId\s*==\s*null\s*&&\s*!\s*payFromCash\s*\)\s*throw\b"],
+         before=[("PlanForAsync(_db, companyId, n, ct)", "_docs.CreatePaymentAsync("), ("SellerPaymentLiveAsync(", "_docs.CreatePaymentAsync(")],
+         why="รอบ 258-3 F-H3 · รอบ 264 P3 (C-01 · C-03): ยอด/ภาษีหักจากตัวตัดสินเดียว ก่อนบันทึก · กันซ้ำด้วยเลขอ้างอิง canonical ทั้งสองรูป · "
+             "ไม่เลือกบัญชี/เงินสดเอง = ปฏิเสธ (ไม่ตกไปเงินสดเงียบ) · ผู้ขายยกเลิกแล้วบันทึกไม่ได้"),
     dict(file="Services/Implementations/DocumentService.SettlementFollowUp.cs", method="ReportSettlementReceiptFailureAsync",
          must=["LogError(", "StampSettlementReceiptFailureAsync(", "NotificationEvents.PostPaymentAutomationBlocked"],
          forbid=["LogWarning("],
@@ -19009,8 +19014,10 @@ RULES += [
     dict(file=_R264_P5_X, method="StampSkipAsync", must=["w.CompanyId == payerId", "w.PartnerDeliveredAt == null"],
          forbid=["PartnerDeliveryAttempts"],
          why=_R264_P5_WHY + "เหตุก่อนส่งไม่นับครั้ง (แก้ต้นเหตุแล้วส่งรอบถัดไปเอง) · ไม่ทับใบที่ส่งแล้ว"),
-    dict(file=_R264_P5_X, method="ReturnWhtCertsAllowedAsync", must=["SendWhtCertsToPartners", "c.CompanyId == payerId"],
-         why=_R264_P5_WHY + "264-5-5 จุดเรียกความยินยอมเดียวของขอบเขต ReturnWhtCerts — P1 สลับตัวอ่านที่นี่ที่เดียว"),
+    dict(file=_R264_P5_X, method="ReturnWhtCertsAllowedAsync",
+         must=["SendWhtCertsToPartners", "c.CompanyId == payerId", "_consent.CheckForWriteAsync(payerId, partnershipId, PartnerConsent.Scope.ReturnWhtCerts"],
+         must_re=[r"return\s+v\s*\.\s*Ok\s*;"],
+         why=_R264_P5_WHY + "264-5-5 จุดเรียกความยินยอมเดียวของขอบเขต ReturnWhtCerts — รอบ 264 P3 สลับเป็นตัวตรวจของ P1 (คู่ Accepted ณ ตอนนี้ + ค่าตั้งทั้งบริษัท) แล้ว"),
     dict(file=_R264_P5_AP, method="IssuesAsync", must=["PartnerTaxEvidenceIssuesAsync("],
          why=_R264_P5_WHY + "264-5-4 แถวหลักฐานภาษีจากคู่ค้าอยู่ในรายการเรื่องค้างของ Autopilot"),
     dict(file=_R264_P5_AP, method="PartnerTaxEvidenceIssuesAsync",
@@ -19020,9 +19027,9 @@ RULES += [
          forbid=["SaveChangesAsync", "ExecuteUpdateAsync"],
          why=_R264_P5_WHY + "ม.82/3 ตัดสินที่ตัวช่วยเดียว (นับเดือนสูตรรายงานภาษี) · อ่านอย่างเดียว · ผูก CompanyId"),
     dict(file=_R264_P5_AP, method="PartnerPayBlockedIssuesAsync",
-         must=["n.CompanyId == companyId", "PartnerTaxEvidenceAlerts.PayNoticeWhtUrgent("],
-         forbid=["SaveChangesAsync", "ExecuteUpdateAsync"],
-         why=_R264_P5_WHY + "264-2-15 ด่วนเมื่อ ภ.ง.ด.53 ใกล้กำหนด (ตัวคิดกำหนดยื่นเดิม) · อ่านอย่างเดียว · จุดที่ P3 สลับ query"),
+         must=["PartnerPayablePipeline.BlockedRowsAsync(_db, companyId", "PartnerTaxEvidenceAlerts.PayNoticeWhtUrgent(", "n.AutoBlockedReason", "n.SellerVoidedAfterRecord"],
+         forbid=["SaveChangesAsync", "ExecuteUpdateAsync", "_db.PartnerPaymentNotices"],
+         why=_R264_P5_WHY + "264-2-15 ด่วนเมื่อ ภ.ง.ด.53 ใกล้กำหนด (ตัวคิดกำหนดยื่นเดิม) · อ่านอย่างเดียว · รอบ 264 P3 สลับเป็น query ของท่อฝั่ง B (เหตุจากท่อ · ผู้ขายยกเลิกหลังบันทึก)"),
 ]
 REVIEWER_CASES += [
     # ช่องคู่ค้ายังถาม AI (ตัดเงื่อนไขที่มา) ⇒ ต้องฟ้อง
@@ -19237,8 +19244,100 @@ REVIEWER_CASES += [
     ("R262c", "QueueContactCardsAsync", "c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId == key", "true", True),
 ]
 
+# ── รอบ 264 P3 (team-264-a2b-design §3.1 · §5 · C-01 · C-03 · C-04 · C-05 · C-08 · คำตัดสิน 264-3-1…264-3-9) — ท่อฝั่งผู้ซื้อ (B) ──
+# แหล่งเงินไม่มีค่าที่แต่งขึ้น · ความยินยอมตรวจเพื่อเขียนในธุรกรรมที่ถือไว้ตลอดการบันทึก · แจ้งจากทุกทางเข้าของผู้ขาย · ถอนเมื่อผู้ขายยกเลิก · ผังใบร่างผ่านตัวแนะนำเดิม
+_R264P3_WHY = "รอบ 264 P3 ท่อฝั่งผู้ซื้อ (264-3-x): "
+_R264P3_PIPE = "Services/Implementations/PartnerPayablePipeline.cs"
+_R264P3_SVC = "Services/Implementations/PartnerPaymentNoticeService.cs"
+RULES += [
+    dict(file=_R264P3_PIPE, method="ProcessAsync",
+         must=["consentSvc.CheckForWriteAsync(companyId, n.TradingPartnershipId, Scope.AutoRecordPayment, PartnerConsent.CapAmount.Thb(doc.TotalAmount)",
+               "lockDb.Database.BeginTransactionAsync(", "PartnerAutoRecordPolicy.Decide(", "SourceDecisionAsync(", "PartnerPaymentNoticeService.PlanForAsync(",
+               "PartnerPaymentNoticeService.SellerPaymentLiveAsync(", "PaymentEntrySource.PartnerAuto", "grantor.ToString()",
+               "PartnerPaymentNoticeRule.PaymentReferencesToCheck(", "x.SellerVoidedAt == null", "lockTx.CommitAsync("],
+         must_re=[r"OverrideBankAccountId\s*:\s*bank\b", r"if\s*\(\s*!\s*verdict\s*\.\s*Auto\b"],
+         before=[("BeginTransactionAsync(", "CheckForWriteAsync("), ("CheckForWriteAsync(", "PartnerAutoRecordPolicy.Decide("),
+                 ("PartnerAutoRecordPolicy.Decide(", "_docs.CreatePaymentAsync("), ("_docs.CreatePaymentAsync(", "lockTx.CommitAsync("),
+                 ("PartnerPaymentNoticeRule.PaymentReferencesToCheck(", "_docs.CreatePaymentAsync(")],
+         forbid=[".CheckAsync(", "CompanyWideToggleOn("],
+         why=_R264P3_WHY + "ความยินยอมตรวจเพื่อเขียนในธุรกรรมล็อกที่ถือไว้จนบันทึกจ่ายเสร็จ (P1 M1) · ด่านเดียวก่อนเขียน · ผู้บันทึก = GUID ผู้ให้ · "
+             "บัญชีจากตัวตัดสินแหล่งเงินเท่านั้น · กันซ้ำก่อนบันทึก"),
+    dict(file=_R264P3_PIPE, method="SourceDecisionAsync",
+         must=["PartnerPaySourceAccount.Decide(", "p.CompanyId == companyId", "consent.DefaultPayBankAccountId", "consent?.PayAccountProblem"],
+         forbid=["111", "21230", "_ai", "AskAsync"],
+         why=_R264P3_WHY + "264-3-1 ตัวตัดสินแหล่งเงินตัวเดียว · บัญชีของความยินยอมเฉพาะเมื่อใช้ได้ · ไม่มีผังเงินสด/กรรมการที่แต่งขึ้น · ไม่มี AI"),
+    dict(file=_R264P3_PIPE, method="UsablePayAccountsAsync",
+         must=["b.CompanyId == companyId", "DocumentMoneyChannel.EvaluateAsync(", "SlipReceivingAccount.UsableProblem("],
+         why=_R264P3_WHY + "บัญชีที่จ่ายได้ผ่านตัวตรวจเดียวกับฝั่งรับ (คู่สมมาตร) + ผังที่ลงได้ · ของบริษัทผู้เรียกเท่านั้น"),
+    dict(file=_R264P3_PIPE, method="BlockedRowsAsync",
+         must=["n.CompanyId == companyId", "p.CompanyId == companyId", "n.AutoBlockedReason"],
+         forbid=["SaveChangesAsync", "ExecuteUpdateAsync"],
+         why=_R264P3_WHY + "แถว Autopilot อ่านอย่างเดียว · ผูก CompanyId · ผู้ขายยกเลิกหลังบันทึกแสดงจนกว่าเรายกเลิกการจ่าย"),
+    dict(file=_R264P3_PIPE, method="ReleaseAsync",
+         must=["PartnerPaymentNoticeRule.StatusRecording", "n.AutoBlockedCode == code"], must_lit=['"PartnerPaymentAutoBlocked"'],
+         why=_R264P3_WHY + "ไม่ผ่าน = กลับเป็นปุ่มเดียว + เหตุบนแถว · audit ครั้งแรกต่อเหตุ (ไม่สแปม)"),
+    dict(file=_R264P3_PIPE, method="MarkRecordedAsync",
+         must=["PartnerPaymentNoticeService.Audit(", "PartnerAutoRecordPolicy.RuleCode", "PartnerAutoRecordPolicy.LegalReference", "FlagRecordedVoidedAsync("],
+         must_lit=['"PartnerPaymentAutoRecorded"'],
+         why=_R264P3_WHY + "audit ความยินยอม/ที่มาของบัญชี/ผู้แพ้ · ผู้ขายยกเลิกระหว่างบันทึก ⇒ ป้าย"),
+    dict(file=_R264P3_PIPE, method="SuggestDraftGlAsync",
+         must=["_glAi.SuggestGlAccountAsync(", "GlSuggestionApplyPolicy.MayAutoFill(", "byCode.ContainsKey(", "line.GlAccountAiFeedbackId = sugg.FeedbackId",
+               "AiAnswerSource.Label(", "DraftGlMarker", "d.CompanyId == companyId", "DocumentStatus.Draft"],
+         forbid=["ApproveDocumentAsync(", "AskAsync(", "IAiProvider"],
+         why=_R264P3_WHY + "C-08 ผังใบร่างจากตัวแนะนำเดิม (orchestrator · นักเรียนก่อน) · guard ผังของบริษัท · เก็บ FeedbackId · ป้ายซื่อสัตย์ · ไม่อนุมัติเอง (กฎ #1)"),
+    dict(file=_R264P3_SVC, method="NotifyForSellerPaymentAsync",
+         must=["p.CompanyId == sellerCompanyId", "!p.IsDeleted", "CrossTenantLinkType.InvoiceFlow", "NotifyCoreAsync(", "PartnerPaymentNoticeRule.ChannelOf(",
+               "pay.Amount + pay.FeeAmount"],
+         forbid=["CreatePaymentAsync("],
+         why=_R264P3_WHY + "264-3-6 ทุกทางเข้ารับชำระของผู้ขาย · เงินที่ออกจากผู้ซื้อ = ยอดรับ + ค่าธรรมเนียม · สร้างการแจ้งเท่านั้น"),
+    dict(file=_R264P3_SVC, method="WithdrawForSellerPaymentAsync",
+         must=["n.SourceCompanyId == sellerCompanyId", "n.SellerPaymentId == sellerPaymentId", "PartnerPaymentNoticeRule.StatusWithdrawn",
+               "x.Status == PartnerPaymentNoticeRule.StatusOpen", "FlagRecordedVoidedAsync(", "Audit(db, n.CompanyId", "Audit(db, sellerCompanyId"],
+         forbid=["VoidPaymentAsync(", "CreatePaymentAsync("],
+         why=_R264P3_WHY + "264-3-7 (C-03) ผู้ขายยกเลิก ⇒ ถอนแบบมีเงื่อนไข / ป้ายบนใบซื้อ · ไม่ยกเลิกการจ่ายของผู้ซื้อแทน (E6) · audit สองฝั่ง"),
+    dict(file=_R264P3_SVC, method="ListAsync",
+         must=["PartnerPayablePipeline.SourceDecisionAsync(", "PartnerPayablePipeline.UsablePayAccountsAsync(", "DefaultBankAccountId: source?.BankAccountId"],
+         forbid=["FirstOrDefault()"],
+         why=_R264P3_WHY + "C-01 ค่า preselect จากตัวตัดสินแหล่งเงินเท่านั้น (ไม่มี \"บัญชีแรก\")"),
+    dict(file=_R264P3_SVC, method="PlanForAsync",
+         must=["DocumentService.PaymentWhtFiguresAsync(", "PartnerPaymentNoticeRule.For(", "sellerRecordedWht: n.SellerRecordedWht", "d.CompanyId == companyId"],
+         why=_R264P3_WHY + "264-3-5 ยอด/ภาษีหักตัวคิดเดียว (ปุ่มเดียว + ท่อ) · จ่ายบางส่วนยืนยันไขว้กับภาษีหักที่ผู้ขายลง"),
+    dict(file="Services/Implementations/DocumentService.cs", method="CreatePaymentAsync",
+         must=["NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, source)"],
+         before=[("transaction.CommitAsync(", "NotifyPartnerOfSellerPaymentAsync(")],
+         why=_R264P3_WHY + "264-3-6 (C-04) ขั้นหลัง commit ของการรับชำระทุกทางเข้า ⇒ แจ้งผู้ซื้อคู่ค้า"),
+    dict(file="Services/Implementations/DocumentService.cs", method="AfterPaymentRecordedAsync",
+         must=["NotifyPartnerOfSellerPaymentAsync(companyId, paymentId, source)"],
+         why=_R264P3_WHY + "264-3-6 ทางเข้า integration แจ้งผู้ซื้อคู่ค้าด้วยแกนเดียวกัน"),
+    dict(file="Services/Implementations/DocumentService.cs", method="VoidPaymentAsync",
+         must=["WithdrawPartnerNoticesForVoidedPaymentAsync(companyId, paymentId)"],
+         before=[("tx.CommitAsync(", "WithdrawPartnerNoticesForVoidedPaymentAsync(")],
+         why=_R264P3_WHY + "264-3-7 (C-03) ยกเลิกการรับชำระของผู้ขาย ⇒ ถอน/ป้ายการแจ้งของผู้ซื้อ (หลัง commit)"),
+    dict(file="Helpers/PartnerPaySourceAccount.cs", method="Decide",
+         must=["f.Usable.ContainsKey(", "Origin.Unknown", "SlipNotOursReason", "SlipVsConsentReason", "AutoThreshold"],
+         forbid=["Usable.Keys.First", "Usable.First", ".First()"],
+         why=_R264P3_WHY + "264-3-1 ไม่รู้ = Unknown (ไม่มีบัญชีแรก) · หลักฐานขัดกันไม่อัตโนมัติ · id นอกชุดบัญชีของบริษัทไม่ใช่หลักฐาน"),
+    dict(file="Helpers/PartnerAutoRecordPolicy.cs", method="Decide",
+         must=["f.SellerPaymentLive", "f.ConsentOk", "f.Plan.Warning", "f.Source.AllowsAuto", "f.PayerBorneWht", "f.SourceIsAbbreviated"],
+         why=_R264P3_WHY + "264-3-2 ด่านเดียว: ผู้ขายยกเลิก · ความยินยอม · คำเตือนภาษีหัก (B3) · แหล่งเงิน · ภาษีออกแทน · อย่างย่อ"),
+]
+REVIEWER_CASES += [
+    # ท่อเรียกบันทึกจ่ายโดยไม่ดูด่าน ⇒ ต้องฟ้อง
+    ("R264P3a", "ProcessAsync", "if (!verdict.Auto || consent?.GrantorUserId is not Guid grantor", "if (false && consent?.GrantorUserId is not Guid grantor", True),
+    # ผู้บันทึกกลับเป็นสตริงระบบ ⇒ ต้องฟ้อง
+    ("R264P3b", "ProcessAsync", "grantor.ToString(), PaymentEntrySource.PartnerAuto)", "\"partner-auto\", PaymentEntrySource.PartnerAuto)", True),
+    # กลับไปเลือก "บัญชีแรก" ⇒ ต้องฟ้อง
+    ("R264P3c", "Decide", "var hint = InUsableSet(f.Usable, f.History)", "var first = f.Usable.Keys.First(); var hint = InUsableSet(f.Usable, f.History)", True),
+    # ปุ่มเดียวยอมให้ไม่เลือกบัญชี ⇒ ต้องฟ้อง
+    ("R264P3d", "RecordAsync", "if (bankAccountId == null && !payFromCash)", "if (false)", True),
+    # ยกเลิกการรับชำระไม่ถอนการแจ้ง ⇒ ต้องฟ้อง
+    ("R264P3e", "VoidPaymentAsync", "await WithdrawPartnerNoticesForVoidedPaymentAsync(companyId, paymentId);", "", True),
+]
+
 # รอบ 264 P1 ฝ่ายค้าน M1 — ท่อที่เขียนบัญชีต้องใช้ CheckForWriteAsync (ในธุรกรรม · FOR SHARE) ไม่ใช่ CheckAsync (อ่านอย่างเดียว)
-_R264P1_CONSENT_OK = {"Services/Implementations/PartnerConsentService.cs", "Controllers/PartnerConsentController.cs"}
+_R264P1_CONSENT_OK = {"Services/Implementations/PartnerConsentService.cs", "Controllers/PartnerConsentController.cs",
+                      # รอบ 264 P3: ListAsync ของหน้า partners.html อ่านอย่างเดียว (ป้าย/ค่า preselect) — การเขียนของท่ออยู่ใน PartnerPayablePipeline (CheckForWriteAsync)
+                      "Services/Implementations/PartnerPaymentNoticeService.cs"}
 
 
 def consent_check_caller_errors(files=None) -> list:

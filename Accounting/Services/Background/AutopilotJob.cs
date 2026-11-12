@@ -40,6 +40,9 @@ public class AutopilotJob : BackgroundService
             // รอบ 264 (คำตัดสิน 264-1-4): คำขอเชื่อมคู่ค้า ⇒ แจ้งเจ้าของ/ผู้ดูแลของบริษัทปลายทาง (กระดิ่ง · อีเมล · LINE) — นอกคำขอของผู้ขอ (เวลาตอบคงที่)
             await StepAsync("PartnerLinkRequests", async sp => await sp.GetRequiredService<CrossTenantWorkflowService>().DispatchPendingLinkRequestNoticesAsync(DateTime.UtcNow, stoppingToken),
                 n => $"แจ้งคำขอเชื่อมคู่ค้า NextAcc {n} รายการ", stoppingToken);
+            // รอบ 264 P3 (คำตัดสิน 264-3-8): การแจ้ง "ผู้ขายคู่ค้ารับเงินแล้ว" ⇒ ระบบของผู้ซื้อบันทึกจ่ายเองภายใต้ความยินยอม (ไม่ทำในคำขอของผู้ขาย) + ผังบัญชีใบซื้อร่าง
+            await StepAsync("PartnerPayable", async sp => await sp.GetRequiredService<PartnerPayablePipeline>().RunOnceAsync(DateTime.UtcNow, stoppingToken),
+                n => $"ท่อฝั่งผู้ซื้อคู่ค้า NextAcc ทำ {n} รายการ (บันทึกจ่าย/เติมผังใบร่าง)", stoppingToken);
             try { await Task.Delay(Cycle, stoppingToken); } catch { return; }
         }
     }
