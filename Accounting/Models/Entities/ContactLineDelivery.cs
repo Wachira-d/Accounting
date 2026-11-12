@@ -66,6 +66,9 @@ public class ContactLineInvite : TenantEntity
     public DateTime ExpiresAt { get; set; }
     /// <summary>บอทของ OA บริษัทตอนสร้างคำเชิญ (null = ยังไม่รู้)</summary>
     public string? OaDestination { get; set; }
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-2): OA ที่คำเชิญนี้ผูกด้วย — "company" (OA ของบริษัท · ค่าเดิมของทุกแถวก่อนรอบนี้) หรือ "nextacc"
+    /// (OA กลาง · เฉพาะบริษัทผู้ให้บริการ) · ไถ่ได้เฉพาะผ่าน webhook ของ OA เดียวกัน (<c>ProviderCentralOa.InviteMatchesChannel</c>)</summary>
+    public string OaScope { get; set; } = "company";
     /// <summary>เรื่องที่ปลายทางจะรับ (JSON ชื่อ <c>NotifyTopic</c>)</summary>
     public string TopicsJson { get; set; } = "[]";
     public Guid? CreatedByUserId { get; set; }

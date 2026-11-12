@@ -219,12 +219,14 @@ public class LineCentralGroupRound256DbTests
             Assert.Equal(NotifyEndpointKind.ScopeNextAcc, codeRow.OaScope);
             Assert.Equal(s.CompanyId, codeRow.CompanyIdHint);
 
-            // หน้าผู้ติดต่อ: กล่องผูกกลุ่มเปิด + บอกให้เชิญ OA กลาง (Basic ID จากค่าตั้ง) · ลิงก์ 1:1 ยังปิด (ไม่มี OA บริษัท)
+            // หน้าผู้ติดต่อ: กล่องผูกกลุ่มเปิด + บอกให้เชิญ OA กลาง (Basic ID จากค่าตั้ง) · รอบ 262 (คำตัดสิน 262-1-1): ลิงก์ 1:1 เปิดผ่าน OA กลางด้วย
+            // (เดิมปิดเพราะไม่มี OA บริษัท — บริษัทผู้ให้บริการตั้ง OA เองไม่ได้ ⇒ ทางตัน)
             var overview = await Resolver(db).GetOverviewAsync(s.CompanyId, s.ContactId, canEdit: true);
             Assert.True(overview!.LineGroupBind!.Available);
             Assert.True(overview.LineGroupBind.ViaCentralOa);
             Assert.Contains("@810pamnc", overview.LineGroupBind.Instruction);
-            Assert.False(overview.LineBind!.Available);
+            Assert.True(overview.LineBind!.Available);
+            Assert.True(overview.LineBind.ViaCentralOa);
 
             var preview = await Groups(db, log).PreviewAsync(s.CompanyId, s.ContactId, code, null);
             Assert.Null(preview.Problem);

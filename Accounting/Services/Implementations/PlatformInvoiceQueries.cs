@@ -62,6 +62,24 @@ public static class PlatformInvoiceQueries
                 && issued.Contains(d.Status) && contactIds.Contains(d.ContactId));
     }
 
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-3): ผู้ติดต่อของบริษัทผู้เช่าในบริษัทผู้ให้บริการ (กุญแจเดียวกับ <see cref="ForBuyer"/>) — หลายแถว ⇒ แถวแรกตามเวลาสร้าง ·
+    /// ไม่มี (ยังไม่เคยออกใบ) ⇒ null</summary>
+    public static Task<Guid?> BuyerContactIdAsync(AccountingDbContext db, Guid platformId, Guid buyerCompanyId, CancellationToken ct = default)
+    {
+        var key = buyerCompanyId.ToString();
+        return db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == platformId && !c.IsDeleted && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId == key)
+            .OrderBy(c => c.CreatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>รอบ 262: เอกสารนี้เป็นใบของบริษัทผู้เช่า (ผู้ติดต่อผูก tenant) ในบริษัทผู้ให้บริการไหม — ปุ่มชำระของการ์ด LINE ไปศูนย์บิล ไม่ใช่ลิงก์ชำระทั่วไป</summary>
+    public static async Task<bool> IsTenantDocumentAsync(AccountingDbContext db, Guid companyId, Guid contactId, CancellationToken ct = default)
+    {
+        if (await PlatformTenantIdAsync(db, ct) is not Guid platformId || platformId != companyId) return false;
+        return await db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .AnyAsync(c => c.Id == contactId && c.CompanyId == platformId && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId != null, ct);
+    }
+
     /// <summary>project เป็นแถวมุมผู้จ่าย — ใช้เป็น<b>ขั้นสุดท้าย</b>ของ query เท่านั้น (ห้ามต่อ Where/OrderBy/Contains หลังจากนี้)</summary>
     public static IQueryable<PlatformInvoiceRow> AsRows(this IQueryable<Document> q, Guid buyerCompanyId)
         => q.Select(d => new PlatformInvoiceRow(d.Id, buyerCompanyId, d.DocumentNumber, d.Reference, d.Status,
