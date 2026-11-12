@@ -148,6 +148,9 @@ public class Payment : TenantEntity
     /// (JE ไม่มีผู้ติดต่อ เทียบยอดรายลูกค้าไม่ได้) ⇒ ยังไม่นับเป็นเงินรอจัดสรร (ไม่จัดสรร · ไม่ระงับทวง · ไม่ขึ้นรายงาน) จนกว่าคนจะ "ยืนยันว่ายังค้างจริง"
     /// หรือ "ปิดรายการ" พร้อมเหตุผล (<c>CustomerCreditService.ConfirmLegacyAsync/CloseLegacyAsync</c> + audit)</summary>
     public bool UnappliedNeedsReview { get; set; }
+    /// <summary>รอบ 260-3: เวลาที่กระดิ่ง "เงินรอจัดสรรค้างเกิน 30 วัน" (<c>ar.credit.unallocated_aging</c>) แจ้งทีมแล้ว — ภายใน (ไม่ใช่ช่องฟอร์ม) ·
+    /// null = ยังไม่แจ้ง · แจ้งครั้งเดียวต่อการรับชำระ (ไม่แจ้งซ้ำทุกวัน) · ผู้เขียนเดียว <c>Helpers/CustomerCreditAgedNotice</c></summary>
+    public DateTime? UnappliedAgedNoticeAt { get; set; }
 
     /// <summary>Per-document allocation lines — populated when ONE
     /// payment settles MULTIPLE documents (e.g. a single ฿15,000
