@@ -455,6 +455,7 @@ public class AccountingDbContext : DbContext
     // ===== Cross-tenant B2B workflow =====
     public DbSet<TradingPartnership> TradingPartnerships => Set<TradingPartnership>();
     public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
+    public DbSet<PartnerLinkRequest> PartnerLinkRequests => Set<PartnerLinkRequest>();   // รอบ 264 (Helpers/PartnerLinkRequestMigration)
     public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
     public DbSet<PartnerAutomationConsent> PartnerAutomationConsents => Set<PartnerAutomationConsent>();   // รอบ 264 P1 (Helpers/PartnerConsentMigration)
     public DbSet<WorkflowAutomationConfig> WorkflowAutomationConfigs => Set<WorkflowAutomationConfig>();
@@ -2342,6 +2343,7 @@ public class AccountingDbContext : DbContext
             // Canonical pair — unique combination since we always order
             // (CompanyAId, CompanyBId) so the smaller GUID comes first.
             e.HasIndex(p => new { p.CompanyAId, p.CompanyBId }).IsUnique();
+            e.Property(p => p.InviteNoticeResult).HasMaxLength(32);   // รอบ 264 (Helpers/PartnerLinkRequestMigration)
             e.Property(p => p.AutoApproveAmountLimit).HasPrecision(18, 2);
             e.HasQueryFilter(p => !p.IsDeleted);
         });
@@ -3760,6 +3762,15 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.UnlinkReason).HasMaxLength(32);
             e.HasIndex(x => new { x.CompanyId, x.TargetKind, x.TargetId }).HasDatabaseName("IX_CustomerLineLinks_Company_Target");
             e.HasIndex(x => x.LineUserId).HasDatabaseName("IX_CustomerLineLinks_LineUser");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 264 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerLinkRequestMigration
+        modelBuilder.Entity<PartnerLinkRequest>(e =>
+        {
+            e.Property(x => x.PartnerTaxId).HasMaxLength(13);
+            e.Property(x => x.PartnerBranchCode).HasMaxLength(5);
+            e.Property(x => x.Message).HasMaxLength(500);
+            e.HasIndex(x => new { x.CompanyId, x.CreatedAt }).HasDatabaseName("IX_PartnerLinkRequests_Company_Created");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 264 P1 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerConsentMigration (unique บางส่วน: แถวที่ยังไม่ถอนหนึ่งแถวต่อบริษัท·คู่·ขอบเขต)

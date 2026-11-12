@@ -232,8 +232,10 @@ public class PartnerExchangeRound257DbTests
     // ═══════════ D-M1 ═══════════
 
     [Fact]
-    public async Task R257_M1_คำเชิญจริงแจ้งเจ้าของปลายทาง_ทิศตรงข้ามปลายทางไม่เปิดค้นเจอ_ไม่เก็บไม่แจ้ง()
+    public async Task R257_M1_รอบ264_คำเชิญถึงปลายทางทั้งที่เปิดและไม่เปิดค้นเจอ_ไม่เขียนกระดิ่งในคำขอ_เข้าคิวแจ้ง()
     {
+        // รอบ 264 (คำตัดสิน 264-1-1 แทน 257-3-3): ปลายทางที่ไม่เปิด "ให้คู่ค้าค้นเจอ" ได้คำขอด้วย (เดิมไม่เก็บ = ผู้ใช้รายงานว่าหาที่ยอมรับไม่เจอ) ·
+        // การแจ้งไม่อยู่ในคำขอของผู้เชิญแล้ว (outbox ⇒ งานเบื้องหลังส่งผ่านเครื่องแจ้งเตือน — PartnerLinkRequestRound264DbTests)
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
         async Task<(Company Co, Guid Owner)> CompanyWithOwnerAsync(bool discoverable)
@@ -257,10 +259,13 @@ public class PartnerExchangeRound257DbTests
         await Svc(db).InvitePartnerAsync(inviter.Id, closed.Co.TaxId!, null, Guid.NewGuid(), "สวัสดี");
 
         using var check = DbTestDatabase.TryCreateContext()!;
-        var bell = await check.Notifications.AsNoTracking().SingleAsync(n => n.UserId == open.Owner && n.CompanyId == open.Co.Id);
-        Assert.DoesNotContain("สวัสดี", bell.Message);   // ข้อความเชิญไม่อยู่ในการแจ้งเตือน (ช่องฟิชชิง)
-        Assert.False(await check.Notifications.AnyAsync(n => n.UserId == closed.Owner));
-        Assert.False(await check.TradingPartnerships.AnyAsync(p => p.CompanyAId == closed.Co.Id || p.CompanyBId == closed.Co.Id));   // ไม่เก็บ (คำตัดสิน 257-3-3)
+        foreach (var target in new[] { open, closed })
+        {
+            var row = await check.TradingPartnerships.AsNoTracking().SingleAsync(p => p.CompanyAId == target.Co.Id || p.CompanyBId == target.Co.Id);
+            Assert.Equal(TradingPartnershipStatus.Pending, row.Status);
+            Assert.NotNull(row.InviteNoticeDueAt);                                        // เข้าคิวแจ้ง
+            Assert.False(await check.Notifications.AnyAsync(n => n.UserId == target.Owner));   // ไม่มีงานแจ้งในคำขอ (เวลาตอบคงที่)
+        }
         // ผู้เชิญไม่ได้รับสัญญาณใดในบริษัทตัวเอง (P-1)
         Assert.False(await check.Notifications.AnyAsync(n => n.CompanyId == inviter.Id));
     }

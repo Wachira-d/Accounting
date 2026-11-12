@@ -1594,6 +1594,9 @@ const API = {
       // รอบ 255 WP-12B ข้อ 6–8: หน้า "คู่ค้าที่ใช้ NextAcc" (ต่อยอด trading-partners/workflow-automation เดิม)
       getTradingPartners: () => API.get(`${base}/trading-partners`),
       invitePartner: (d) => API.post(`${base}/trading-partners/invite`, d),
+      // รอบ 264: การ์ดยอมรับจากลิงก์แจ้งเตือน · "คำขอที่เราส่ง"
+      getPartnerLinkRequest: (id) => API.get(`${base}/trading-partners/requests/${encodeURIComponent(id)}`),
+      getOutgoingPartnerRequests: () => API.get(`${base}/trading-partners/requests/outgoing`),
       acceptPartner: (id) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/accept`),
       rejectPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/reject`, { reason: reason || null }),
       suspendPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/suspend`, { reason: reason || null }),

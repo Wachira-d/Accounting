@@ -182,6 +182,14 @@ public static class NotificationAudiencePolicy
 
     public static IReadOnlyList<NotificationDefaultRow> DefaultMatrix(string eventKey, bool companyLineGroupConfigured)
     {
+        // รอบ 264 (คำตัดสิน 264-1-4): คำขอเชื่อมคู่ค้า — ต้องถึงคนที่กดยอมรับได้ทุกช่องที่เขามี (กระดิ่ง · อีเมล · LINE ที่ผูกกับบอทกลางเอง) ·
+        // ไม่ประกาศเข้ากลุ่ม LINE ของบริษัท (คำขอจากบุคคลภายนอก ไม่ใช่เรื่องของทั้งทีม) · บริษัทตั้งแถวของคีย์เองแล้ว ⇒ ตามที่ตั้ง (ปิดได้ทุกช่อง)
+        if (eventKey == Accounting.Models.Constants.NotificationEvents.PartnerLinkRequested)
+            return new[]
+            {
+                new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: true, EnableLine: true, EnableLineGroup: false),
+                new NotificationDefaultRow("CompanyAdmin", EnableSystem: true, EnableEmail: true, EnableLine: true, EnableLineGroup: false),
+            };
         if (BellOnlyKeys.Contains(eventKey))
             return new[] { new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: false, EnableLine: false, EnableLineGroup: false) };
         if (EmailDefaultKeys.Contains(eventKey))

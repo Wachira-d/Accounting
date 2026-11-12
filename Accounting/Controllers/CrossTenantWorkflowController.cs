@@ -49,41 +49,83 @@ public class CrossTenantWorkflowController : ControllerBase
     [HttpGet("trading-partners")]
     public async Task<ActionResult<ApiResponse<object>>> List(Guid companyId)
     {
-        var rows = await _db.TradingPartnerships.AsNoTracking()
+        var raw = await _db.TradingPartnerships.AsNoTracking()
             .Include(p => p.CompanyA)
             .Include(p => p.CompanyB)
             .Where(p => p.CompanyAId == companyId || p.CompanyBId == companyId)
             // รอบ 250 WP-02b (P-1): ฝั่งผู้เชิญเห็นคู่ค้าเมื่อปลายทางตอบรับแล้วเท่านั้น — แถว Pending/Rejected ที่เราเชิญเองบอก "มีบริษัทเลขนี้ในระบบ"
             // (ชื่อ + เลขภาษี) ซึ่งเป็นสิ่งเดียวกับที่คำตอบของ invite ปิดไว้ · ฝั่งผู้รับเชิญเห็นคำเชิญทุกสถานะตามเดิม (ต้องกดตอบรับได้)
+            // รอบ 264: ผู้ขอติดตามคำขอของตัวเองที่ "คำขอที่เราส่ง" (trading-partners/requests/outgoing — ไม่รั่วสมาชิกภาพ) แทน
             .Where(p => p.InvitedByCompanyId != companyId
                 || p.Status == TradingPartnershipStatus.Accepted || p.Status == TradingPartnershipStatus.Suspended)
             .OrderByDescending(p => p.CreatedAt)
             .Select(p => new
             {
                 p.Id,
-                Status = p.Status.ToString(),
+                p.Status,
                 Partner = p.CompanyAId == companyId
-                    ? new { p.CompanyB.Id, p.CompanyB.Name, p.CompanyB.TaxId }
-                    : new { p.CompanyA.Id, p.CompanyA.Name, p.CompanyA.TaxId },
+                    ? new { p.CompanyB.Id, p.CompanyB.Name, p.CompanyB.TaxId, p.CompanyB.BranchCode }
+                    : new { p.CompanyA.Id, p.CompanyA.Name, p.CompanyA.TaxId, p.CompanyA.BranchCode },
                 IsInviter = p.InvitedByCompanyId == companyId,
                 p.InvitationMessage,
                 p.AcceptedAt,
                 p.RejectedAt,
                 p.RejectionReason,
                 p.AutoApproveAmountLimit,
-                // รอบ 255 WP-12B ข้อ 7: เพดานใบซื้อร่างที่ "เรา" รับจากคู่นี้ (ฝั่งผู้รับ) + ป้ายสถานะไทยจากเซิร์ฟเวอร์
+                // รอบ 255 WP-12B ข้อ 7: เพดานใบซื้อร่างที่ "เรา" รับจากคู่นี้ (ฝั่งผู้รับ)
                 PurchaseDraftLimit = p.CompanyAId == companyId ? p.PurchaseDraftLimitA : p.PurchaseDraftLimitB,
-                StatusLabel = p.Status == TradingPartnershipStatus.Accepted ? "เชื่อมแล้ว"
-                    : p.Status == TradingPartnershipStatus.Suspended ? "ระงับชั่วคราว"
-                    : p.Status == TradingPartnershipStatus.Pending
-                        // รอบ 255 ฝ่ายค้าน LOW: แยกฝั่ง — คำเชิญที่เราส่ง = รอคู่ค้า · ที่เราได้รับ = รอเรา
-                        ? (p.InvitedByCompanyId == companyId ? "รอคู่ค้ายอมรับ" : "รอเรายอมรับ")
-                        : "ปฏิเสธแล้ว",
+                p.InvitedAt,
                 p.CreatedAt,
             })
             .ToListAsync();
+        // รอบ 264: ป้าย/ปุ่ม/วันหมดอายุจากตัวตัดสินเดียว (PartnerLinkRequestRules) — หน้าแสดงอย่างเดียว · ส่ง enum เป็นชื่อ
+        var now = DateTime.UtcNow;
+        var rows = raw.Select(p =>
+        {
+            var expired = PartnerLinkRequestRules.IsExpired(p.Status, p.InvitedAt, p.CreatedAt, now);
+            return new
+            {
+                p.Id,
+                Status = p.Status.ToString(),
+                Partner = new { p.Partner.Id, p.Partner.Name, p.Partner.TaxId, BranchLabel = TaxBranchCode.Label(p.Partner.BranchCode) },
+                p.IsInviter,
+                p.InvitationMessage,
+                p.AcceptedAt,
+                p.RejectedAt,
+                p.RejectionReason,
+                p.AutoApproveAmountLimit,
+                p.PurchaseDraftLimit,
+                StatusLabel = PartnerLinkRequestRules.PartnershipLabel(p.Status, p.IsInviter, expired),
+                CanRespond = PartnerLinkRequestRules.CanRespond(p.Status, p.IsInviter, expired),
+                Expired = expired,
+                ExpiresAt = p.Status == TradingPartnershipStatus.Pending ? PartnerLinkRequestRules.RequestExpiryUtc(p.InvitedAt, p.CreatedAt) : (DateTime?)null,
+                p.CreatedAt,
+            };
+        }).ToList();
         return Ok(new ApiResponse<object>(true, rows));
     }
+
+    /// <summary>รอบ 264 — การ์ดยอมรับของปลายทาง (ลิงก์ในกระดิ่ง/อีเมล/LINE: <c>partners.html?request=&lt;id&gt;</c>) · เฉพาะบริษัทผู้รับของคำขอนี้ ·
+    /// ไม่ใช่ผู้รับ/ไม่มีแถว ⇒ 404 ข้อความเดียว (ไม่บอกว่ามีแถว) · สิทธิ์เดียวกับปุ่มยอมรับ</summary>
+    [HttpGet("trading-partners/requests/{partnershipId:guid}")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    public async Task<ActionResult<ApiResponse<object>>> GetIncomingRequest(Guid companyId, Guid partnershipId)
+    {
+        var r = await _service.GetIncomingLinkRequestAsync(companyId, partnershipId, DateTime.UtcNow);
+        return r == null
+            ? NotFound(new ApiResponse<object>(false, null, IncomingRequestNotFoundMessage))
+            : Ok(new ApiResponse<object>(true, r));
+    }
+
+    /// <summary>ข้อความเมื่อเปิดลิงก์คำขอแล้วไม่พบในบริษัทที่เลือก — บอกทางไปต่อ (สลับบริษัท) โดยไม่บอกว่ามีแถวในบริษัทอื่น</summary>
+    public const string IncomingRequestNotFoundMessage =
+        "ไม่พบคำขอเชื่อมนี้ในบริษัทที่เลือกอยู่ — ตรวจว่าเลือกบริษัทที่ได้รับคำขอ (มุมบนของจอ) แล้วเปิดลิงก์อีกครั้ง หรือดูรายการ \"คู่ค้าที่เชื่อม / คำขอที่รอเรายอมรับ\"";
+
+    /// <summary>รอบ 264 — "คำขอที่เราส่ง" (ผู้ขอ) · สถานะ รอตอบ/เชื่อมแล้ว/หมดอายุ เท่านั้น — ไม่บอกว่าเลขนั้นใช้ NextAcc หรือถูกปฏิเสธ (คำตัดสิน 264-1-2)</summary>
+    [HttpGet("trading-partners/requests/outgoing")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.CompanySettingsEdit)]
+    public async Task<ActionResult<ApiResponse<object>>> ListOutgoingRequests(Guid companyId)
+        => Ok(new ApiResponse<object>(true, await _service.ListOutgoingLinkRequestsAsync(companyId, DateTime.UtcNow)));
 
     /// <param name="PartnerBranchCode">รหัสสาขา 5 หลักของคู่ค้า (ว่าง = ไม่ระบุ · 00000 = สำนักงานใหญ่) — จับคู่ด้วยเลขภาษี + สาขา (P-2)</param>
     public record InviteRequest(string PartnerTaxId, string? Message, string? PartnerBranchCode = null);
@@ -118,8 +160,12 @@ public class CrossTenantWorkflowController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         var p = await _service.AcceptPartnershipAsync(companyId, partnershipId, userId);
-        return Ok(new ApiResponse<object>(true, new { p.Id, Status = p.Status.ToString() }, "ยืนยันความเป็นพาร์ทเนอร์เรียบร้อย"));
+        return Ok(new ApiResponse<object>(true, new { p.Id, Status = p.Status.ToString() }, AcceptedMessage));
     }
+
+    /// <summary>รอบ 264: ข้อความหลังยอมรับ (การ์ดยอมรับแสดงตามนี้) — บอกผลและสิ่งที่ยังไม่เกิดจนกว่าจะเปิดค่าตั้ง</summary>
+    public const string AcceptedMessage =
+        "เชื่อมต่อเสร็จสิ้น — เชื่อมกับคู่ค้ารายนี้รายเดียว (ไม่ได้เปิดให้บริษัทอื่นค้นเจอ) · การส่งเอกสาร/ใบซื้อร่าง/50 ทวิ อัตโนมัติยังเป็นไปตามค่าตั้งของเรา (ค่าตั้งต้นปิด)";
 
     public record RejectRequest(string? Reason);
 

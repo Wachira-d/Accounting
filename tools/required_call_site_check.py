@@ -16110,7 +16110,7 @@ RULES += [
          must=["p.InvitedByCompanyId != companyId", "TradingPartnershipStatus.Accepted"],
          why=_R250_WHY + "P-1 ฝั่งผู้เชิญเห็นคู่ค้าเมื่อปลายทางตอบรับแล้วเท่านั้น (แถว Pending ที่เราเชิญ = บอกว่ามีบริษัทเลขนี้)"),
     dict(file=XTENANT, method="InvitePartnerAsync",
-         must=["PartnerCompanyMatch.NormalizeTaxId(", "PartnerCompanyMatch.Pick(", "AddChainedAuditLog("],
+         must=["PartnerCompanyMatch.NormalizeTaxId(", "PartnerCompanyMatch.InviteTargets(", "AddChainedAuditLog("],
          forbid=["FirstOrDefaultAsync(c => c.TaxId", "return null", "return existing", "return p"],
          why=_R250_WHY + "P-1/P-2 จับคู่เลขภาษี+สาขาด้วยตัวจับคู่เดียว · ไม่คืนผลการค้นให้ผู้เรียก · audit เหมือนกันทุกกรณี"),
     dict(file=XTENANT, method="OnDocumentSentAsync",
@@ -16202,10 +16202,10 @@ RULES += [
          must=["DocumentSlipIntents.UploadProblem(", "storage.DeleteAsync("],
          before=[("DocumentSlipIntents.UploadProblem(", "_intents.StartAsync(")],
          why=_R250A_WHY + "H2/L4 ตัดสินที่ยอดค้าง · ล้มแล้วลบไฟล์ (รอบ 255: ย้ายเข้าประตูเดียว)"),
-    # H3: คำเชิญถึงเฉพาะบริษัทที่เปิดให้ค้นเจอ · เพดานต่อวัน · เวลาตอบคงที่
+    # H3: เพดานต่อวัน · เวลาตอบคงที่ · รอบ 264 (คำตัดสิน 264-1-1 แทน H3 เดิม): คำขอถึงทุกบริษัทที่ตรงเลข — ห้ามกรองด้วย PartnerDiscoverable อีก
     dict(file=XTENANT, method="InvitePartnerAsync",
-         must=["c.PartnerDiscoverable", "InviteMinimumDuration"],
-         why=_R250A_WHY + "H3 บริษัทที่ไม่เปิดไม่รับคำเชิญและไม่นับกำกวม · เวลาตอบเท่ากันทุกทาง"),
+         must=["InviteMinimumDuration"], forbid=["c.PartnerDiscoverable"],
+         why=_R250A_WHY + "H3 เวลาตอบเท่ากันทุกทาง · รอบ 264: กรองบริษัทที่ไม่เปิดค้นเจอ = คำขอหายเงียบ (บั๊กที่ผู้ใช้รายงาน)"),
     dict(file=_R250_XCTL, method="Invite",
          must_re=[r"if\s*\(\s*!\s*await\s+_limiter\s*\.\s*TryConsumeAsync\s*\("],
          before=[("_limiter.TryConsumeAsync(", "_service.InvitePartnerAsync(")],
@@ -17190,7 +17190,7 @@ _R255X = "Services/Implementations/CrossTenantWorkflowService.Partners.cs"
 RULES += [
     # ข้อ 6: เพดานคู่ (Y5) ตรวจก่อนยอมรับ · สถานะไม่รั่ว · scope documents:read
     dict(file=XTENANT, method="AcceptPartnershipAsync",
-         must=["EnsureTradingPartnerCapAsync(", "PartnerExchangeRules.AcceptProblem(", "AdvisoryLockKey.TradingPartnerAccept"],
+         must=["EnsureTradingPartnerCapAsync(", "PartnerLinkRequestRules.AcceptProblem(", "AdvisoryLockKey.TradingPartnerAccept"],
          must_lit=["pg_advisory_xact_lock"],
          before=[("AdvisoryLockKey.TradingPartnerAccept", "EnsureTradingPartnerCapAsync("), ("EnsureTradingPartnerCapAsync(", "TradingPartnershipStatus.Accepted;")],
          why=_R255_WHY + "ข้อ 6 Y5 เพดานคู่ต่อแพ็กเกจตรวจก่อนยอมรับ (null = ไม่จำกัด)"),
@@ -17348,12 +17348,12 @@ RULES += [
          must=["DocumentStatus.Draft"], must_lit=['"DRAFT-'],
          forbid=["DocumentStatus.Approved", "CrossTenantLinkType.PoFlow", "CreateDownstreamInvoiceAsync("],
          why=_R257_3_WHY + "LOW N3 เอกสารที่ระบบสร้างในฝั่งผู้รับเป็นร่างเสมอ (ข้อกำหนดฉบับใหม่)"),
-    # D-M1 คำเชิญจริงแจ้งเจ้าของปลายทางในธุรกรรมเดียว (ก่อนเติมเวลาคงที่)
+    # D-M1 → รอบ 264 (คำตัดสิน 264-1-4): คำเชิญจริงเข้าคิวแจ้ง (outbox) ในธุรกรรมเดียว · ไม่มีงานช่องแจ้งเตือนในคำขอของผู้เชิญ (เวลาตอบเท่ากัน)
     dict(file=XTENANT, method="InvitePartnerAsync",
-         must=["UserRole.Owner", "NotificationChannel.InApp", "c.PartnerDiscoverable"],
-         before=[("NotificationChannel.InApp", "await _db.SaveChangesAsync()"), ("await _db.SaveChangesAsync()", "InviteMinimumDuration - sw.Elapsed")],
-         forbid=["_notify.DispatchAsync("],
-         why=_R257_3_WHY + "D-M1 แจ้งเจ้าของปลายทางเฉพาะคำเชิญจริง · ไม่ผ่านช่องภายนอก (เวลาตอบเท่ากัน)"),
+         must=["InviteNoticeDueAt = now", "_db.PartnerLinkRequests.Add("],
+         before=[("InviteNoticeDueAt = now", "await _db.SaveChangesAsync()"), ("await _db.SaveChangesAsync()", "InviteMinimumDuration - sw.Elapsed")],
+         forbid=["_notify.DispatchAsync(", "DispatchWithOutcomeAsync(", "NotificationChannel.InApp", "Set<Notification>().Add("],
+         why=_R257_3_WHY + "D-M1/264-1-4 แจ้งปลายทางผ่านคิว (งานเบื้องหลัง) · ไม่มีช่องแจ้งเตือนในคำขอ (เวลาตอบเท่ากัน)"),
     # D-M4 ส่งออกนักบัญชี — สาขาตามใบ · อ้างอิง · บทบาทใบกำกับ
     dict(file="Services/Implementations/PortalService.cs", method="ExportAccountantLedgerAsync",
          must=["DocumentIssuerBranch.ResolveCode(", "PortalAccountantExport.ReferenceText(", "d.CompanyId == companyId", "b.CompanyId == companyId",
@@ -18805,6 +18805,43 @@ RULES += [
          why=_R260_3_WHY + "260-3-5/7 ตัวนับ = เงื่อนไขทางเข้า SQL ตัวเดียวกับตัวกรอง · กรองก่อนตัดจำนวน (ฝ่ายค้าน M3) · อ่านแบบมีขอบเขต (L5)"),
     dict(file="Helpers/PurchaseDraftInbox.cs", method="Base", must=["d.CompanyId == companyId", "InboxTypes"],
          why=_R260_3_WHY + "260-3-8 tenant + ชนิดในกล่องตัวเดียว"),
+]
+
+# ═══ รอบ 264 — คำขอเชื่อมคู่ค้าถึงปลายทางจริง (คำตัดสิน 264-1-x · Helpers/PartnerLinkRequestRules) ═══
+_R264_WHY = "รอบ 264 (คำขอเชื่อมคู่ค้า): "
+_R264_LR = "Services/Implementations/CrossTenantWorkflowService.LinkRequests.cs"
+RULES += [
+    dict(file=_R264_LR, method="DispatchPendingLinkRequestNoticesAsync",
+         must=["PartnerLinkRequestRules.Decide(", "DispatchWithOutcomeAsync(", "NotificationEvents.PartnerLinkRequested", "PartnerLinkRequestRules.AcceptUrl(",
+               "PartnerLinkRequestRules.IsExpired(", "p.Status == TradingPartnershipStatus.Pending"],
+         must_re=[r"if\s*\(\s*outcome\s*==\s*Accounting\.Services\.Interfaces\.NotificationDispatchOutcome\.Failed\s*\)"],
+         before=[("PartnerLinkRequestRules.Decide(", "DispatchWithOutcomeAsync(")],
+         forbid=["Set<Notification>().Add(", "PartnerDiscoverable"],
+         why=_R264_WHY + "264-1-4/5 แจ้งปลายทางผ่านเครื่องแจ้งเตือนกลาง (ตามตารางของปลายทาง) · ตัดสินเพดาน/หมดอายุก่อนส่ง · ส่งล้ม = ไม่ประทับว่าแจ้งแล้ว"),
+    dict(file=_R264_LR, method="GetIncomingLinkRequestAsync",
+         must=["x.CompanyAId == companyId || x.CompanyBId == companyId", "x.InvitedByCompanyId != companyId", "PartnerLinkRequestRules.CanRespond("],
+         why=_R264_WHY + "264-1-7 การ์ดยอมรับเปิดได้เฉพาะปลายทางของคำขอ (ผู้ขอ/บริษัทอื่น = ไม่พบ)"),
+    dict(file=_R264_LR, method="ListOutgoingLinkRequestsAsync",
+         must=["r.CompanyId == companyId", "PartnerLinkRequestRules.OutgoingStateOf("],
+         forbid=["TradingPartnerships", "RejectedAt"],
+         why=_R264_WHY + "264-1-2 ผู้ขอเห็นสถานะจากแถวของตัวเองเท่านั้น (ไม่อ่านแถวคู่ ⇒ ไม่รั่วว่ามีบริษัท/ถูกปฏิเสธ)"),
+    dict(file=XTENANT, method="AcceptPartnershipAsync",
+         must=["PartnerLinkRequestRules.AcceptProblem(", "r.CompanyId == p.InvitedByCompanyId", "NotifyRequesterAcceptedAsync(", "AddChainedAuditLog("],
+         must_lit=['"TradingPartnerLinkAccepted"'],
+         before=[("PartnerLinkRequestRules.AcceptProblem(", "p.Status = TradingPartnershipStatus.Accepted"), ("CommitAsync()", "NotifyRequesterAcceptedAsync(")],
+         why=_R264_WHY + "264-1-5 หมดอายุยอมรับไม่ได้ · 264-1-6 หลักฐานความยินยอม · 264-1-3 แจ้งผู้ขอว่าใครยอมรับ (หลัง commit)"),
+    dict(file=_R250_XCTL, method="List",
+         must=["PartnerLinkRequestRules.CanRespond(", "PartnerLinkRequestRules.PartnershipLabel("],
+         why=_R264_WHY + "ป้าย/ปุ่ม/หมดอายุจากตัวตัดสินเดียว (หน้าไม่ตัดสินเอง)"),
+    dict(file="Services/Background/AutopilotJob.cs", method="ExecuteAsync",
+         must=["DispatchPendingLinkRequestNoticesAsync("],
+         why=_R264_WHY + "264-1-4 มีผู้เรียกงานแจ้งคำขอ (มี ≠ ถูกเรียก)"),
+]
+REVIEWER_CASES += [
+    # รอบ 264: กลับไปกรองด้วย PartnerDiscoverable ⇒ ต้องฟ้อง (บั๊กที่ผู้ใช้รายงาน)
+    ("R264a", "InvitePartnerAsync", ".Where(c => !c.IsDeleted && c.Id != invitingCompanyId", ".Where(c => !c.IsDeleted && c.PartnerDiscoverable && c.Id != invitingCompanyId", True),
+    # ประทับ "แจ้งแล้ว" แม้ส่งล้ม ⇒ ต้องฟ้อง
+    ("R264b", "DispatchPendingLinkRequestNoticesAsync", "if (outcome == Accounting.Services.Interfaces.NotificationDispatchOutcome.Failed)", "if (false)", True),
 ]
 # รอบ 264 P1 — ความยินยอมงานอัตโนมัติกับคู่ค้า (คำตัดสิน 264-2-1…3 · DOCUMENT_FLOW §2.12g-264-P1)
 _R264P1_WHY = "รอบ 264 P1 ความยินยอมงานอัตโนมัติกับคู่ค้า (คำตัดสิน 264-2-1…3): "
