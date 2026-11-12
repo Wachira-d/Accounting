@@ -7060,4 +7060,4 @@ _รอบ 265: ออกใบเสร็จรับเงิน/ใบกำ
 ขาออกชนิดใหม่ `ToReceipt` · ตัวตัดสินเดียว `Helpers/CreditReceiptPlan` (บรรทัด §86/4 · ม.86/13 · วันที่ใบ ม.105 · ยอดสุทธิต้องเท่ายอดที่ใช้ · งวดภาษี · รายการประจำ) ·
 `CustomerCreditService.IssueReceiptAsync` (จองใต้ล็อก → ใบเสร็จ standalone ขาเงินเข้า 21630 → อนุมัติ → `ApplyCreditReceiptTaxPointAsync`) · ยกเลิกใบ ⇒ เงินกลับ + ปล่อยกุญแจงวด ·
 รายการประจำงวดที่ปิดแล้วไม่ถูกออกซ้ำ (`RecurringRunKey` · ข้อความ `RecurringBilledNote`) · ทางลัดหน้ารับชำระ (`OffersReceipt`) · ใบเสร็จรวมใบเดียว = ไม่ทำ (265-1-2) ·
-`RecurringTemplate.Summary` ตัวอ่านเดียวของยอดแม่แบบ · เทสต์ `CustomerCreditRound265Tests` + Db `CustomerCreditRound265DbTests` · กติกา R265 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+`RecurringTemplate.Summary` ตัวอ่านเดียวของยอดแม่แบบ · เทสต์ `CustomerCreditRound265Tests` + Db `CustomerCreditRound265DbTests` · กติกา R265 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4558f767_

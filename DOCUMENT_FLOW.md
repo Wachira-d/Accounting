@@ -4711,7 +4711,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   รอบอัตโนมัติไม่ออกซ้ำ (ข้อความ `RecurringBilledNote`) · งวดมีเอกสารแล้ว = ปฏิเสธ · **ยกเลิก** = ยกเลิกใบที่หน้าเอกสาร ⇒ `ReleaseForVoidedDocumentAsync` คืนเงิน + ปล่อยกุญแจงวด (ปุ่มยกเลิกรายการปฏิเสธ — ชี้หน้าเอกสาร) ·
   **ทางลัดหน้ารับชำระ**: เหตุผลที่เซิร์ฟเวอร์ติด `OffersReceipt` (ค้างออกใบ) ⇒ หลังบันทึกถาม "ออกใบเสร็จส่วนที่เกินเลย" ⇒ `customer-credits.html?receiptFor=` · **ใบเสร็จใบเดียวรวม INV-001 + รายการใหม่ / รวมสองใบแจ้งหนี้ = ไม่ทำ**
   (265-1-2: ทำเป็นสองใบลงวันที่เดียวกันที่อ้างกัน · ใบเสร็จรวมหลายใบ = backlog) · ใบสั่งขาย/ใบส่งของ = ไม่ผูก (265-1-4 — แปลงเป็นใบแจ้งหนี้แล้วจัดสรร) ·
-  เทสต์ `CustomerCreditRound265Tests` · Db `CustomerCreditRound265DbTests` · กติกา R265 ใน `tools/required_call_site_check.py` · Last verified commit (เติมคอมมิตตามหลัง) — ยังไม่ได้คอมไพล์ในเครื่องนี้
+  เทสต์ `CustomerCreditRound265Tests` · Db `CustomerCreditRound265DbTests` · กติกา R265 ใน `tools/required_call_site_check.py` · Last verified commit 4558f767 — ยังไม่ได้คอมไพล์ในเครื่องนี้
 - **ยังไม่ทำ**: พอร์ทัลลูกค้าแสดงเงินรอจัดสรร (หน้าพอร์ทัลเป็นของทีม C รอบ 259 — ข้อมูลพร้อมที่ `CustomerCreditQuery.UnappliedForContactAsync`) · คีย์แจ้งเตือนกระดิ่ง
   `customer_credit.unallocated_aging` (ขึ้นแล้วใน Autopilot issues) · ฝั่งจ่ายเจ้าหนี้ · สกุลต่างประเทศ · ใบแจ้งหนี้ส่วนที่ขาดหลายบรรทัด (ผู้ใช้แก้ในร่าง)
 - **ด่านอื่นจากฝ่ายค้าน** (`erp-review/2026-11-11/review-258-customer-credit.md`): M2 เงินเกินพร้อมบรรทัดปรับส่วนต่าง = ปฏิเสธ (`RefuseExcess(hasAdjustments)`) + ยอดเงินเกินที่หน้าจอแสดงต้องตรงกับที่
