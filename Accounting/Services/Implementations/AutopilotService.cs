@@ -211,6 +211,8 @@ public class AutopilotService : IAutopilotService
         // รอบ 259-3 (ทีม E-M4 · คำตัดสิน 259-3-3): (11) สลิปลูกค้ารอพนักงานยืนยัน — คิวเจ้าของเดียวคือหน้ารายการรับชำระออนไลน์ (payment-intents) ·
         // ที่นี่ชี้ไปที่นั่น ไม่มีปุ่มยืนยันซ้ำ (ยืนยันต้องเห็นรูปสลิป + วันที่เงินเข้า)
         list.AddRange(await SlipPendingIssuesAsync(companyId, ct));
+        // รอบ 260: สลิปจากแชต LINE ที่ยังไม่ผูกเอกสาร (ไม่ได้ผูก LINE · อ่านยอดไม่ได้ · ยอดไม่ตรง · ลูกค้าไม่ได้เลือก) — คิวเดียวกัน (หน้ารายการรับชำระออนไลน์)
+        list.AddRange(await LineChatSlipIssuesAsync(companyId, nowUtc, ct));
         // รอบ 259 P6: ใบที่ต้องออกใบเสร็จ ([RECEIPT-PENDING]) · เงินรอจัดสรรค้างเกิน 30 วัน — ตัวอ่านเดียวกับหน้า "เงินรอจัดสรร"
         list.AddRange(await CustomerCreditWorkQueue.AutopilotIssuesAsync(_db, companyId, nowUtc, ct));
 
@@ -253,6 +255,47 @@ public class AutopilotService : IAutopilotService
             : new AutopilotIssueDto("LineFailed",
             $"{q.Number ?? "เอกสาร"}: ส่งทาง {NotifyEndpointKind.Label(q.EndpointKind)} ไม่สำเร็จ",
             q.ErrorMessage ?? "LINE ไม่รับข้อความ", q.CreatedAt, q.EntityId, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html", null, "เปิดเอกสาร", DocHref(q.EntityId))));
+
+        // รอบ 260-4 (team-A L6/L8 · คำตัดสิน 260-4-4/260-4-6): กระดิ่ง "LINE ล้มซ้ำ/ช่องเสีย" และ "อนุมัติแล้วเข้าคิวส่งอัตโนมัติไม่สำเร็จ" — แถวแจ้งเตือนเดียวกับที่ส่งถึงเจ้าของ
+        // (ทุกเจ้าของได้แถวของตัวเอง ⇒ รวมเป็นเรื่องเดียวต่อชนิด/เอกสาร · ล่าสุดก่อน)
+        var alertTypes = new[] { LineFailureAlert.EntityType, LineFailureAlert.ApproveEnqueueEntityType };
+        var alerts = await _db.Notifications.AsNoTracking()
+            .Where(n => n.CompanyId == companyId && n.EntityType != null && alertTypes.Contains(n.EntityType) && n.CreatedAt >= window)
+            .OrderByDescending(n => n.CreatedAt).Take(200)
+            .Select(n => new { n.EntityType, n.EntityId, n.Title, n.Message, n.CreatedAt }).ToListAsync(ct);
+        // ฝ่ายค้าน 260-4 L6: เรื่องที่แก้แล้วไม่ค้าง — LINE ส่งสำเร็จหลังกระดิ่ง (OA บริษัท) · รายการมีแถวคิว/การส่งหลังกระดิ่ง (ส่งเองแล้ว)
+        DateTime? lastLineSent = null;
+        if (alerts.Any(a => a.EntityType == LineFailureAlert.EntityType))
+            lastLineSent = await _db.LineQueues.AsNoTracking()
+                .Where(q => q.CompanyId == companyId && q.Status == ContactLineChannel.StatusSent && q.SentAt != null
+                    && (q.OaScope == null || q.OaScope != NotifyEndpointKind.ScopeNextAcc))
+                .MaxAsync(q => q.SentAt, ct);
+        var enqueueIds = alerts.Where(a => a.EntityType == LineFailureAlert.ApproveEnqueueEntityType && a.EntityId != null).Select(a => a.EntityId!.Value).Distinct().ToList();
+        var lastSendByEntity = new Dictionary<Guid, DateTime>();
+        if (enqueueIds.Count > 0)
+        {
+            foreach (var r in await _db.EmailQueues.AsNoTracking()
+                         .Where(q => q.CompanyId == companyId && !q.IsDeleted && enqueueIds.Contains(q.EntityId) && q.Status != ScheduledEmailSendCheck.SkippedStatus)
+                         .GroupBy(q => q.EntityId).Select(g => new { g.Key, At = g.Max(q => q.CreatedAt) }).ToListAsync(ct))
+                lastSendByEntity[r.Key] = r.At;
+            foreach (var r in await _db.LineQueues.AsNoTracking()
+                         .Where(q => q.CompanyId == companyId && !q.IsDeleted && enqueueIds.Contains(q.EntityId) && q.Status != ContactLineChannel.StatusSkipped)
+                         .GroupBy(q => q.EntityId).Select(g => new { g.Key, At = g.Max(q => q.CreatedAt) }).ToListAsync(ct))
+                if (!lastSendByEntity.TryGetValue(r.Key, out var at) || r.At > at) lastSendByEntity[r.Key] = r.At;
+            foreach (var r in await _db.DocumentEmailLogs.AsNoTracking()
+                         .Where(l => l.CompanyId == companyId && l.DocumentId != null && enqueueIds.Contains(l.DocumentId.Value))
+                         .GroupBy(l => l.DocumentId!.Value).Select(g => new { g.Key, At = g.Max(l => l.CreatedAt) }).ToListAsync(ct))
+                if (!lastSendByEntity.TryGetValue(r.Key, out var at) || r.At > at) lastSendByEntity[r.Key] = r.At;
+        }
+        foreach (var a in alerts.GroupBy(n => (n.EntityType, n.EntityId)).Select(g => g.First())
+                     .Where(a => a.EntityType == LineFailureAlert.EntityType
+                         ? !(lastLineSent is DateTime sent && sent > a.CreatedAt)
+                         : !(a.EntityId is Guid eid && lastSendByEntity.TryGetValue(eid, out var at) && at > a.CreatedAt)))
+            list.Add(a.EntityType == LineFailureAlert.EntityType
+                ? new AutopilotIssueDto("LineRepeatedFailure", a.Title, a.Message, a.CreatedAt, null, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html",
+                    null, "ตั้งค่า LINE", "/pages/settings.html?tab=line")
+                : new AutopilotIssueDto("AutoSendEnqueueFailed", a.Title, a.Message, a.CreatedAt, a.EntityId, "เปิดเอกสารแล้วส่งเอง (📧/💬)",
+                    a.EntityId is Guid d ? DocHref(d) : null, null, null, null));
 
         // รอบ 259 (B-M6): e-Tax โหมดส่งตรง — นำส่งกรมล้ม/กรมปฏิเสธ · ลงนามแล้วแต่ใบเดือนก่อนยังไม่ส่ง (กำหนดวันที่ 15) — ตัวตัดสิน Helpers/EtaxRdSubmission
         var etaxDirect = await _db.CompanySettings.AsNoTracking()
@@ -319,6 +362,20 @@ public class AutopilotService : IAutopilotService
             $"{i.Number ?? "เอกสาร"}: สลิปลูกค้า {i.Amount:N2} บาท รอยืนยัน",
             "ลูกค้าแนบสลิปแล้ว — ระบบไม่ปิดหนี้จากสลิปเอง · ตรวจรูปสลิปกับรายการเดินบัญชี แล้วกดยืนยัน/ปฏิเสธที่หน้ารายการรับชำระออนไลน์",
             i.CreatedAt, i.SourceId, "ไปยืนยันสลิป", SlipQueueHref, null, "เปิดเอกสาร", DocHref(i.SourceId))).ToList();
+    }
+
+    /// <summary>รอบ 260: สลิปจากแชต LINE ที่รอพนักงาน — แถว Unmatched + ตัวเลือกที่หมดอายุแล้ว (อ่านอย่างเดียว · การย้ายสถานะทำที่ <c>LineChatSlipService</c>)</summary>
+    private async Task<List<AutopilotIssueDto>> LineChatSlipIssuesAsync(Guid companyId, DateTime nowUtc, CancellationToken ct)
+    {
+        // ตัวกรองคิวเดียวกับหน้ารายการรับชำระ (LineChatSlipService.QueueOf — ไม่ได้ผูก · ตัวเลือกหมดอายุ · ค้างกำลังแจ้งโอน)
+        var rows = await LineChatSlipService.QueueOf(_db.LineChatSlips.AsNoTracking(), companyId, nowUtc)
+            .OrderBy(x => x.CreatedAt).Take(50)
+            .ToListAsync(ct);
+        return rows.Select(x => new AutopilotIssueDto("LineChatSlipUnmatched",
+            "สลิปจากแชต LINE ยังไม่ผูกเอกสาร" + (x.OcrAmount is decimal a ? $" ยอด {a:N2} บาท" : ""),
+            LineChatSlipRule.Reasons.Label(LineChatSlipService.EffectiveReason(x))
+                + " — ดูรูปสลิปแล้วผูกกับเอกสาร หรือปิดรายการ (ระบบไม่ปิดหนี้จากสลิปเอง)",
+            x.CreatedAt, null, "ไปผูกสลิป", SlipQueueHref, null, null, null)).ToList();
     }
 
     /// <summary>ย่อหน้าของป้ายบนหมายเหตุภายใน (ข้อความถึงผู้ใช้ — ไม่ต้องถอดป้าย)</summary>

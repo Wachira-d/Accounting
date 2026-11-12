@@ -2,7 +2,10 @@ namespace Accounting.Models.DTOs.Portal;
 
 public record CreatePortalAccessRequest(Guid ContactId, string Email, string? Password, string? DisplayName, bool CanViewInvoices, bool CanViewStatements, bool CanDownloadPdf, bool CanMakePayment);
 public record UpdatePortalAccessRequest(bool? CanViewInvoices, bool? CanViewStatements, bool? CanDownloadPdf, bool? CanMakePayment, bool? IsActive);
-public record PortalAccessResponse(Guid Id, Guid ContactId, string ContactName, string Email, string? DisplayName, bool IsActive, DateTime? LastLoginAt, bool CanViewInvoices, bool CanViewStatements, bool CanDownloadPdf, bool CanMakePayment);
+/// <param name="UnappliedCredit">รอบ 260-3: เงินรอจัดสรรคงเหลือของผู้ติดต่อ (ตัวอ่านเดียว <c>CustomerCreditQuery</c>) — หน้าพนักงานแสดงอย่างเดียว · null = ไม่ได้คำนวณ (ผู้เรียกไม่เห็นฝั่งขาย · ฝ่ายค้าน L1)</param>
+/// <param name="UnappliedCreditShownToCustomer">ลูกค้าเห็นยอดนี้ในพอร์ทัลไหม (<c>PortalAccessPermissions.CreditShownToCustomer</c> — ด่านเดียวกับเส้นใบแจ้งยอด)</param>
+public record PortalAccessResponse(Guid Id, Guid ContactId, string ContactName, string Email, string? DisplayName, bool IsActive, DateTime? LastLoginAt, bool CanViewInvoices, bool CanViewStatements, bool CanDownloadPdf, bool CanMakePayment,
+    decimal? UnappliedCredit = null, bool? UnappliedCreditShownToCustomer = null);
 
 public record PortalLoginRequest(string Email, string Password, Guid CompanyId);
 public record PortalLoginResponse(string AccessToken, string RefreshToken, Guid ContactId, string ContactName, Guid CompanyId, string CompanyName);
@@ -18,7 +21,10 @@ public record PortalDocumentResponse(Guid Id, string DocumentNumber, string Docu
     public bool IsOverdue => global::Accounting.Helpers.PortalDocumentStatus.IsOverdue(Status, BalanceDue, DueDate, DateTime.UtcNow);
     public string StatusLabel => global::Accounting.Helpers.PortalDocumentStatus.Label(Status, BalanceDue, DueDate, DateTime.UtcNow);
 }
-public record PortalStatementResponse(DateTime FromDate, DateTime ToDate, decimal OpeningBalance, decimal TotalCharged, decimal TotalPaid, decimal ClosingBalance, List<PortalStatementLine> Lines);
+/// <param name="UnappliedCredit">รอบ 260-3 (ต่อ 259-1-9): เงินรอจัดสรรของ<b>ผู้ติดต่อในโทเคน</b> ณ ปัจจุบัน (รับแล้วยังไม่ผูกกับใบ) — บรรทัดแยก
+/// <b>ไม่หัก</b>จากยอดคงเหลือ (เหมือนใบแจ้งยอดฝั่งพนักงาน) · อยู่ใต้ธง "ดูใบแจ้งยอด" ของเส้นนี้ · 0 = ไม่มี</param>
+public record PortalStatementResponse(DateTime FromDate, DateTime ToDate, decimal OpeningBalance, decimal TotalCharged, decimal TotalPaid, decimal ClosingBalance, List<PortalStatementLine> Lines,
+    decimal UnappliedCredit = 0m);
 public record PortalStatementLine(DateTime Date, string DocumentNumber, string Description, decimal Amount, decimal Balance);
 public record PortalPaymentResponse(Guid Id, DateTime PaymentDate, decimal Amount, string PaymentMethod, string? Reference, string DocumentNumber)
 {

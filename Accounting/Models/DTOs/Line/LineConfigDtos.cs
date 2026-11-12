@@ -31,11 +31,17 @@ public record LineConfigResponse(
     string? PlatformLegacyOwnOaNotice = null,
     /// <summary>รอบ 259 (A-M5 · A-L3): แถวความพร้อมของ OA บริษัท (OA · webhook เข้าจริงไหม · Basic ID · ผลทดสอบ) จาก <c>LineOaHealth.Rows</c> — หน้าแสดงตรงตัว</summary>
     IReadOnlyList<global::Accounting.Helpers.LineOaHealth.Row>? Health = null,
-    /// <summary>รอบ 259 (A-M6): ปลายทางทดสอบที่ระบบรู้จัก (กลุ่ม LINE ของทีมที่ตั้งไว้) — เลือกแทนการพิมพ์ U…/C… · ไม่มี LINE id ใน DTO (ส่งกลับเป็น key)</summary>
-    IReadOnlyList<LineTestTarget>? TestTargets = null);
+    /// <summary>รอบ 260-4 (คำตัดสิน 260-4-1): ชั่วโมงเงียบของการ์ด LINE ถึงลูกค้า (เวลาไทย) + ประโยคสถานะจาก <c>LineQuietHours.Sentence</c></summary>
+    bool QuietHoursEnabled = false,
+    int QuietStartHour = 21,
+    int QuietEndHour = 8,
+    string? QuietHoursNote = null,
+    /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร (<c>CompanySettings.LineChatSlipIntakeEnabled</c> · echo กลับให้ฟอร์ม)</summary>
+    bool ChatSlipIntake = true);
 
-/// <summary>รอบ 259 (A-M6): ปลายทางทดสอบหนึ่งตัว — <paramref name="Key"/> = <c>LineOaHealth.TeamGroupTargetKey</c> (เซิร์ฟเวอร์อ่าน id เอง)</summary>
-public record LineTestTarget(string Key, string Label);
+/// <summary>รอบ 259 (A-M6) · รอบ 260-4 (คำตัดสิน 260-4-3): ปลายทางทดสอบหนึ่งตัว — <paramref name="Key"/> = <c>LineOaHealth.TeamGroupTargetKey</c> หรือ
+/// <c>LineOaHealth.EndpointTargetKey</c> (เซิร์ฟเวอร์อ่าน id เอง · ไม่มี LINE id ใน DTO) · <paramref name="ReachesContact"/> = ข้อความทดสอบถึงผู้รับของผู้ติดต่อ (หน้าถามยืนยันก่อน)</summary>
+public record LineTestTarget(string Key, string Label, bool ReachesContact = false);
 
 /// <summary>รอบ 212 แพ็ก B: สถานะคำเชิญผูกใหม่ของการเปลี่ยน OA ล่าสุด — <c>Label</c> = ข้อความที่หน้าเว็บแสดงตรง ๆ (ไม่มีกติกาฝั่ง JS)</summary>
 public record CustomerRelinkProgress(
@@ -63,9 +69,15 @@ public record UpdateLineConfigRequest(
     /// <summary>LINE Group/Room ID สำหรับส่งแจ้งเตือนกลุ่ม (optional) · null = ไม่แก้ · "" = ล้าง</summary>
     string? DefaultGroupId,
     /// <summary>LINE OA basic id (@xxx) — สำหรับปุ่ม/QR เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิป · null = ไม่แก้ · "" = ล้าง</summary>
-    string? OaBasicId = null);
+    string? OaBasicId = null,
+    /// <summary>รอบ 260-4: ชั่วโมงเงียบ · null = คงเดิม (ปุ่มล้างรหัสเชื่อมไม่แตะ)</summary>
+    bool? QuietHoursEnabled = null,
+    int? QuietStartHour = null,
+    int? QuietEndHour = null,
+    /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร · null = คงเดิม</summary>
+    bool? ChatSlipIntake = null);
 
-/// <param name="TargetKey">รอบ 259 (A-M6): ปลายทางที่ระบบรู้จัก (<c>LineConfigResponse.TestTargets</c>) — มีค่า ⇒ ใช้แทน <paramref name="ToLineId"/></param>
+/// <param name="TargetKey">รอบ 259 (A-M6): ปลายทางที่ระบบรู้จัก (รอบ 260-4: <c>GET line-config/test-targets</c>) — มีค่า ⇒ ใช้แทน <paramref name="ToLineId"/></param>
 public record TestLineConfigRequest(string? ToLineId, string? TargetKey = null);
 
 public record LineTestResult(bool Success, string? Message);

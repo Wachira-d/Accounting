@@ -131,18 +131,31 @@ public static class CustomerCreditWorkQueue
             }).ToList();
     }
 
-    /// <summary>เงินรอจัดสรรที่ค้างนานกว่า <see cref="AgingDays"/> วัน (เก่าสุดก่อน)</summary>
-    private static async Task<List<(Guid PaymentId, string PaymentNumber, DateTime PaymentDate, decimal Unapplied, string? Reason)>> AgedAsync(
-        AccountingDbContext db, Guid companyId, DateTime todayThai, CancellationToken ct = default)
+    /// <summary>แถวเงินรอจัดสรรที่ค้างนาน — <paramref name="AgedNoticeAt"/> = เวลาที่กระดิ่ง "ค้างเกิน 30 วัน" แจ้งทีมแล้ว (null = ยังไม่แจ้ง · รอบ 260-3)</summary>
+    public sealed record AgedRow(Guid PaymentId, string PaymentNumber, DateTime PaymentDate, decimal Unapplied, string? Reason, Guid? ContactId, DateTime? AgedNoticeAt);
+
+    /// <summary>
+    /// เงินรอจัดสรรที่ค้างนานกว่า <see cref="AgingDays"/> วัน (เก่าสุดก่อน) — <b>นิยามเดียว</b>ของ "ค้างนาน" ·
+    /// ผู้อ่าน: <see cref="AutopilotIssuesAsync"/> (issue <c>CustomerCreditAged</c>) และกระดิ่ง <c>ar.credit.unallocated_aging</c>
+    /// (<see cref="CustomerCreditAgedNotice"/> · รอบ 260-3 — ห้ามเขียนเกณฑ์อายุ/ตัวกรองซ้ำที่อื่น)
+    /// </summary>
+    private static async Task<List<AgedRow>> AgedAsync(AccountingDbContext db, Guid companyId, DateTime todayThai, CancellationToken ct = default)
+    {
+        return await AgedQuery(db, companyId, todayThai, onlyUnnotified: false)
+            .OrderBy(p => p.PaymentDate).Take(Cap)
+            .Select(p => new AgedRow(p.Id, p.PaymentNumber, p.PaymentDate, p.UnappliedAmount, p.UnappliedReason, p.ContactId, p.UnappliedAgedNoticeAt))
+            .ToListAsync(ct);
+    }
+
+    /// <summary>ฝ่ายค้าน 260-3 M2: predicate ของ "ค้างนาน" ตัวเดียว (ไม่ตัดจำนวน) — <paramref name="onlyUnnotified"/> = กรอง "ยังไม่เคยแจ้ง" ในฝั่ง SQL
+    /// <b>ก่อน</b> Take/Count/Sum (เดิมกรองหลังตัด 500 ⇒ บริษัทที่มีแถวแจ้งแล้ว ≥ 500 ไม่เคยได้แจ้งแถวใหม่) · tenant</summary>
+    public static IQueryable<Accounting.Models.Entities.Payment> AgedQuery(AccountingDbContext db, Guid companyId, DateTime todayThai, bool onlyUnnotified)
     {
         var cut = todayThai.Date.AddDays(-AgingDays);
-        var rows = await db.Payments.AsNoTracking()
+        var q = db.Payments.AsNoTracking()
             .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.UnappliedAccountId != null && !p.UnappliedNeedsReview
-                && p.UnappliedAmount > UnappliedCreditBalance.Tolerance && p.PaymentDate < cut)
-            .OrderBy(p => p.PaymentDate).Take(Cap)
-            .Select(p => new { p.Id, p.PaymentNumber, p.PaymentDate, p.UnappliedAmount, p.UnappliedReason })
-            .ToListAsync(ct);
-        return rows.Select(r => (r.Id, r.PaymentNumber, r.PaymentDate, r.UnappliedAmount, r.UnappliedReason)).ToList();
+                && p.UnappliedAmount > UnappliedCreditBalance.Tolerance && p.PaymentDate < cut);
+        return onlyUnnotified ? q.Where(p => p.UnappliedAgedNoticeAt == null) : q;
     }
 
     /// <summary>เรื่องที่ระบบทำต่อไม่ได้ของ Autopilot: ใบที่ต้องออกใบเสร็จ · เงินรอจัดสรรค้างเกิน 30 วัน — ลิงก์ไปหน้า "เงินรอจัดสรร"</summary>

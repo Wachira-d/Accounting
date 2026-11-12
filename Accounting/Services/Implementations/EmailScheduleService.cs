@@ -24,13 +24,16 @@ public class EmailScheduleService : IEmailScheduleService
     private readonly IContactRecipientResolver _recipients;
     /// <summary>รอบ 254 WP-11 L4 (Q4): โควตาอีเมลรายเดือนของเส้น SMTP ของ NextAcc · null (สร้างนอก DI) ⇒ ไม่นับรายเดือน</summary>
     private readonly INotifyQuotaService? _notifyQuota;
+    /// <summary>รอบ 260-4 (A-L6): กระดิ่ง "อนุมัติแล้วเข้าคิวส่งอัตโนมัติไม่สำเร็จ" — scope แยก (context ของคำขออนุมัติอาจค้างแถวที่ล้ม) · null = ไม่แจ้ง (เทสต์เดิม)</summary>
+    private readonly Microsoft.Extensions.DependencyInjection.IServiceScopeFactory? _scopes;
 
     public EmailScheduleService(AccountingDbContext db, IEmailSenderFactory senderFactory,
         IPdfGenerationService pdf, ILogger<EmailScheduleService> logger, IDocumentPayLinkService? payLinks = null,
         IConfiguration? config = null, IDocumentEmailService? docEmail = null, IContactRecipientResolver? recipients = null,
-        INotifyQuotaService? notifyQuota = null)
+        INotifyQuotaService? notifyQuota = null, Microsoft.Extensions.DependencyInjection.IServiceScopeFactory? scopes = null)
     {
         _db = db;
+        _scopes = scopes;
         _notifyQuota = notifyQuota;
         _senderFactory = senderFactory;
         _pdf = pdf;
@@ -157,7 +160,60 @@ public class EmailScheduleService : IEmailScheduleService
                 await EnqueueDocumentAsync(rule, doc, daysOffset: rule.OffsetDays, suffix: "approved", ct);
             await _db.SaveChangesAsync(ct);
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "OnDocumentApproved enqueue failed Doc={Doc}", documentId); }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // รอบ 260-4 (team-A L6 · คำตัดสิน 260-4-6): เดิม LogWarning อย่างเดียว ⇒ ลูกค้าไม่ได้เอกสารและไม่มีใครรู้ · ตอนนี้ LogError + กระดิ่ง (ต่อใบ) + Autopilot
+            // (การอนุมัติไม่ล้ม — ผู้เรียกตั้งใจ fail-safe) · ฝ่ายค้าน M3: ถอดแถวคิวที่เพิ่มในรอบนี้ออกก่อน (ไม่ให้ SaveChanges ถัดไปของคำขอเดียวกันบันทึกตามทีหลัง
+            // ⇒ ลูกค้าได้สองฉบับเมื่อผู้ใช้ส่งเองตามกระดิ่ง · หรือพาการจัดสรรเงินรอจัดสรรล้มตาม) · timeout ภายใน (TaskCanceled ที่ผู้เรียกไม่ได้ยกเลิก) ก็ดังด้วย
+            await EnqueueFailedAsync(LineFailureAlert.EnqueueSource.DocumentApproved, companyId, documentId, ex, ct);
+        }
+    }
+
+    /// <summary>รอบ 260-4 (A-L6 · ฝ่ายค้าน M2/M3): เข้าคิวส่งอัตโนมัติล้ม (อนุมัติเอกสาร · จ่ายเงินเดือน · ออก 50 ทวิ) — ตัวเดียวของทั้งสามทาง:
+    /// ถอดแถวคิวอีเมล/LINE ที่ยังไม่บันทึกออกจาก context ของคำขอ → LogError → กระดิ่งต่อรายการ</summary>
+    private async Task EnqueueFailedAsync(LineFailureAlert.EnqueueSource source, Guid companyId, Guid entityId, Exception ex, CancellationToken ct)
+    {
+        foreach (var e in _db.ChangeTracker.Entries()
+                     .Where(x => x.State == EntityState.Added && (x.Entity is EmailQueue || x.Entity is LineQueue)).ToList())
+            e.State = EntityState.Detached;
+        _logger.LogError(ex, "{Source} enqueue failed Entity={Entity}", source, entityId);
+        await NotifyEnqueueFailedAsync(source, companyId, entityId, ex.GetBaseException().Message, CancellationToken.None);
+    }
+
+    /// <summary>รอบ 260-4 (A-L6 · M2): กระดิ่งครั้งเดียวต่อรายการ (<see cref="LineFailureAlert.ApproveEnqueueEntityType"/> + EntityId = รายการ) ถึงผู้รับตัวเดียว
+    /// <see cref="LineAlertRecipients"/> (เจ้าของที่ใช้งาน · ไม่มี ⇒ ผู้มีสิทธิ์แก้ค่าตั้ง) · scope แยก · ล้ม ⇒ LogError</summary>
+    private async Task NotifyEnqueueFailedAsync(LineFailureAlert.EnqueueSource source, Guid companyId, Guid entityId, string? reason, CancellationToken ct)
+    {
+        if (_scopes == null) return;
+        try
+        {
+            using var scope = _scopes.CreateScope();
+            var sp = scope.ServiceProvider;
+            var db = (AccountingDbContext)sp.GetService(typeof(AccountingDbContext))!;
+            if (sp.GetService(typeof(INotificationService)) is not INotificationService notifications) return;
+            if (await db.Notifications.AnyAsync(n => n.CompanyId == companyId && n.EntityType == LineFailureAlert.ApproveEnqueueEntityType && n.EntityId == entityId, ct))
+                return;
+            var number = source switch
+            {
+                LineFailureAlert.EnqueueSource.PayrollPaid => await db.PayrollRuns.AsNoTracking().Where(r => r.Id == entityId && r.CompanyId == companyId)
+                    .Select(r => r.Name).FirstOrDefaultAsync(ct),
+                LineFailureAlert.EnqueueSource.WhtCertIssued => await db.WithholdingTaxCerts.AsNoTracking().Where(c => c.Id == entityId && c.CompanyId == companyId)
+                    .Select(c => c.CertificateNumber).FirstOrDefaultAsync(ct),
+                _ => await db.Documents.AsNoTracking().Where(d => d.Id == entityId && d.CompanyId == companyId)
+                    .Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct),
+            };
+            var recipients = await LineAlertRecipients.ForCompanyAsync(db, sp.GetService(typeof(IPermissionService)) as IPermissionService, companyId, ct);
+            if (recipients.Count == 0)
+                _logger.LogError("เข้าคิวส่งอัตโนมัติล้ม ({Source}) บริษัท {Company} แต่ไม่มีผู้รับกระดิ่งที่ใช้งานอยู่", source, companyId);
+            foreach (var u in recipients)
+                await notifications.SendAsync(u, companyId, NotificationType.System, LineFailureAlert.EnqueueTitle(source),
+                    LineFailureAlert.EnqueueMessage(source, number, reason), LineFailureAlert.EnqueueActionUrl(source, entityId),
+                    LineFailureAlert.ApproveEnqueueEntityType, entityId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งเรื่องเข้าคิวส่งอัตโนมัติล้ม ({Source}) Entity={Entity} ไม่สำเร็จ", source, entityId);
+        }
     }
 
     public async Task OnPayrollPaidAsync(Guid companyId, Guid payrollRunId, CancellationToken ct = default)
@@ -211,7 +267,11 @@ public class EmailScheduleService : IEmailScheduleService
             }
             await _db.SaveChangesAsync(ct);
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "OnPayrollPaid enqueue failed Run={Run}", payrollRunId); }
+        // ฝ่ายค้าน 260-4 M2: ทางเดียวกับ A-L6 (ถอดแถวที่ค้าง · LogError · กระดิ่ง · Autopilot)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            await EnqueueFailedAsync(LineFailureAlert.EnqueueSource.PayrollPaid, companyId, payrollRunId, ex, ct);
+        }
     }
 
     public async Task OnWhtCertIssuedAsync(Guid companyId, Guid certId, CancellationToken ct = default)
@@ -273,7 +333,11 @@ public class EmailScheduleService : IEmailScheduleService
             }
             await _db.SaveChangesAsync(ct);
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "OnWhtCertIssued enqueue failed Cert={Cert}", certId); }
+        // ฝ่ายค้าน 260-4 M2: ทางเดียวกับ A-L6
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            await EnqueueFailedAsync(LineFailureAlert.EnqueueSource.WhtCertIssued, companyId, certId, ex, ct);
+        }
     }
 
     /// <summary>รอบ 258 (A-M1 ข): เอกสารนี้มีแถวคิว LINE ถึงผู้ติดต่อที่ไม่ใช่ "ข้าม" ไหม (ทุกกฎ) — รายการประจำใช้ตัดสินว่ายังต้องเตือน "ไม่มีอีเมล" ไหม</summary>
@@ -517,8 +581,17 @@ public class EmailScheduleService : IEmailScheduleService
 
                 var totalAmount = monthDocs.Sum(d => d.TotalAmount);
                 var totalOutstanding = monthDocs.Sum(d => d.BalanceDue);
+                // รอบ 260-3 (คำตัดสิน 260-3-2): เงินรอจัดสรรของลูกค้า (ตัวอ่านเดียว · ตัวเลขเดียวกับใบแจ้งยอดบนหน้า/CSV/พอร์ทัล) — บรรทัดแยก ไม่หักจากยอดค้าง
+                var unappliedCredit = await CustomerCreditQuery.UnappliedForContactAsync(_db, rule.CompanyId, contact.Id, ct);
+                var hasUnapplied = unappliedCredit > UnappliedCreditBalance.Tolerance;
+                var unappliedHtml = hasUnapplied
+                    ? $"<p style='background:#eff6ff;padding:8px 12px;border-radius:6px'>เงินที่ชำระไว้แล้วรอนำไปหักกับใบ (เงินรอจัดสรร) <strong>{unappliedCredit:N2} บาท</strong> — ยังไม่หักจากยอดค้างชำระด้านบน</p>"
+                    : "";
                 var ctx = new Dictionary<string, string?>
                 {
+                    // ฝ่ายค้าน 260-3 L3: ไม่มีเงินรอจัดสรร = ว่าง (ไม่ใช่ "0.00" ที่ทำให้เข้าใจผิด) · ประโยคสำเร็จรูปสำหรับแม่แบบของผู้ใช้ (ถูก HtmlEncode ตอน Render)
+                    ["UnappliedCredit"] = hasUnapplied ? unappliedCredit.ToString("N2") : "",
+                    ["UnappliedCreditLine"] = hasUnapplied ? $"เงินที่ชำระไว้แล้วรอนำไปหักกับใบ (เงินรอจัดสรร) {unappliedCredit:N2} บาท — ยังไม่หักจากยอดค้างชำระ" : "",
                     ["ContactName"] = contact.Name,
                     ["Period"] = period,
                     ["Amount"] = totalAmount.ToString("N2"),
@@ -550,6 +623,7 @@ public class EmailScheduleService : IEmailScheduleService
                           </tr></thead>
                           <tbody>{rowsHtml}</tbody>
                         </table>
+                        {unappliedHtml}
                         <p style='color:#64748b;font-size:13px;margin-top:14px'>ส่งโดย {System.Net.WebUtility.HtmlEncode(companyName)} โดยอัตโนมัติ</p>
                       </div>";
 
@@ -1485,6 +1559,14 @@ public class EmailScheduleService : IEmailScheduleService
     </div>";
 
     // ── CRUD rules + queue management ───────────────────────────────
+
+    public async Task<LineQuietHours.RuleWarnings> LineQuietWarningsAsync(Guid companyId, CancellationToken ct = default)
+    {
+        var q = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => new { s.LineQuietHoursEnabled, s.LineQuietStartHour, s.LineQuietEndHour }).FirstOrDefaultAsync(ct);
+        return q == null ? LineQuietHours.RuleWarningsByHour(false, LineQuietHours.DefaultStartHour, LineQuietHours.DefaultEndHour)
+            : LineQuietHours.RuleWarningsByHour(q.LineQuietHoursEnabled, q.LineQuietStartHour, q.LineQuietEndHour);
+    }
 
     public async Task<List<EmailScheduleRule>> GetRulesAsync(Guid companyId)
         => await _db.EmailScheduleRules.AsNoTracking()

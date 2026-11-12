@@ -132,7 +132,8 @@ const Page = {
     // รอบ 257 D-H3: ธงสิทธิ์ที่เซิร์ฟเวอร์บังคับจริง — ติ๊ก/เอาออกแล้วบันทึกทันที (เซิร์ฟเวอร์คืนค่าที่เก็บ ⇒ โหลดใหม่)
     const flag = (a, key, label) => `<label style="display:block;font-size:12px;white-space:nowrap"><input type="checkbox" ${a[key] ? 'checked' : ''} onchange="Page.setFlag('${Layout.jsArg(a.id)}','${key}',this.checked)"> ${label}</label>`;
     tbody.innerHTML = items.map(a => `<tr>
-      <td><span class="font-medium">${esc(a.contactName || a.customerName || '-')}</span></td>
+      <td><span class="font-medium">${esc(a.contactName || a.customerName || '-')}</span>${Number(a.unappliedCredit) > 0
+        ? `<div class="text-xs" style="color:#1d4ed8;margin-top:2px" title="ยอดจากหน้าเงินรอจัดสรร — ลูกค้าเห็นในแท็บใบแจ้งยอดของพอร์ทัลเมื่อเปิดสิทธิ์ใบแจ้งยอด">เงินรอจัดสรร ${Layout.money(a.unappliedCredit)} · ${a.unappliedCreditShownToCustomer ? 'ลูกค้าเห็นในใบแจ้งยอด' : 'ลูกค้าไม่เห็น (ไม่ได้เปิดสิทธิ์ใบแจ้งยอด/ปิดสิทธิ์)'}</div>` : ''}</td>
       <td>${esc(a.email || '-')}</td>
       <td>${Layout.date(a.createdAt || a.createdDate)}</td>
       <td>${a.lastLoginAt ? Layout.date(a.lastLoginAt) : 'ยังไม่เคยเข้า'}</td>

@@ -19,6 +19,9 @@ namespace Accounting.Tests.Db;
 /// แถวเดียว ไม่ล้มทั้งรอบ · (ข) ผู้สแกนอีกตัวบันทึกกุญแจไปก่อน (หลายเครื่อง) ⇒ ถอดแถวซ้ำ บันทึกแถวอื่นของรอบได้ · ทิศตรงข้าม: ชน unique อื่น ⇒ ยังโยน
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 260-4 (CI db-test run 43151543956): ScanDueSoonAndOverdueAsync กวาดทุกบริษัทในฐานร่วม — สองคลาสพร้อมกันเข้าคิวใบเดียวกันด้วยตัวหาผู้รับคนละตัว
+// (ตัวหาผู้รับของอีกคลาสถอดรหัสปลายทางด้วยกุญแจคนละตัวไม่ได้ ⇒ แถว line:none + แถวปลายทาง) ⇒ คลาสที่สแกนอยู่ collection เดียวกัน (ไม่รันขนาน)
+[Collection("SubscriptionExpirySweep")]   // ร่วมกับ LineCentralGroupRound256 ที่สแกนเหมือนกัน (คลาสหนึ่งอยู่ได้ collection เดียว)
 public class QueueRowSaveRound259DbTests
 {
     private readonly ITestOutputHelper _out;

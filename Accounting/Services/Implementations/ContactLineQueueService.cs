@@ -65,10 +65,8 @@ public class ContactLineQueueService : IContactLineQueueService
             var since = LinePushOutcome.AlertMonthStartUtc(DateTime.UtcNow);
             if (await db.Notifications.AnyAsync(n => n.CompanyId == companyId && n.EntityType == LinePushOutcome.MonthlyLimitAlertEntity && n.CreatedAt >= since, ct))
                 return;
-            var ownerIds = await db.CompanyUsers.AsNoTracking()
-                .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner).Select(cu => cu.UserId).ToListAsync(ct);
-            var active = await CompanyMembership.ActiveMemberIdsAsync(db, companyId, ownerIds, ct);
-            foreach (var u in ownerIds.Where(active.Contains))
+            // รอบ 260-4 (ฝ่ายค้าน L8): ผู้รับตัวเดียว — เจ้าของที่ใช้งาน · ไม่มี ⇒ ผู้มีสิทธิ์แก้ค่าตั้งบริษัท
+            foreach (var u in await LineAlertRecipients.ForCompanyAsync(db, scope.ServiceProvider.GetService<IPermissionService>(), companyId, ct))
                 await notifications.SendAsync(u, companyId, NotificationType.System, LinePushOutcome.MonthlyLimitAlertTitle, LinePushOutcome.MonthlyLimitAlertMessage,
                     "/pages/email-schedule.html", LinePushOutcome.MonthlyLimitAlertEntity, null);
         }
@@ -115,6 +113,8 @@ public class ContactLineQueueService : IContactLineQueueService
         if (claimedIds.Count == 0) return 0;
 
         var sent = 0;
+        // รอบ 260-4 (คำตัดสิน 260-4-1): ค่าตั้งชั่วโมงเงียบต่อบริษัท — อ่านครั้งเดียวต่อบริษัทต่อรอบ (ตัวแปรของรอบนี้ ไม่ใช่ static)
+        var quietCache = new Dictionary<Guid, (bool Enabled, int Start, int End)>();
         foreach (var id in claimedIds.Take(BatchSize))
         {
             // ฝ่ายค้าน M1(ข): ทีละแถว — context สะอาดทุกรอบ (บันทึกแถวก่อนหน้าล้ม/Clear แล้ว แถวนี้ยังถูกติดตามและบันทึกได้)
@@ -129,7 +129,9 @@ public class ContactLineQueueService : IContactLineQueueService
             if (item == null) continue;
             try
             {
-                if (await SendOneAsync(item, ct)) sent++;
+                // รอบ 260-4: ชั่วโมงเงียบ ⇒ เลื่อน (กลับเป็นรอส่ง · ไม่นับความพยายาม) — ไม่ยิง LINE · ใบเสร็จหลังชำระ/ส่งเองจากหน้าเอกสารไม่ถูกเลื่อน
+                if (await DeferForQuietHoursAsync(item, quietCache, ct)) { }
+                else if (await SendOneAsync(item, ct)) sent++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -165,6 +167,145 @@ public class ContactLineQueueService : IContactLineQueueService
             }
         }
         return sent;
+    }
+
+    /// <summary>รอบ 260-4 (team-A L8 · คำตัดสิน 260-4-1/260-4-2): แถวที่จองได้ในช่วงเงียบของบริษัท ⇒ กลับเป็น "รอส่ง" พร้อม <c>ScheduledFor</c> = สิ้นช่วงเงียบ +
+    /// หมายเหตุ (ตัวตัดสินเดียว <see cref="LineQuietHours.DeferUntilUtc"/>) · ไม่แตะ RetryCount/RetryKey · คืน true = เลื่อนแล้ว (ผู้เรียกบันทึก)</summary>
+    private async Task<bool> DeferForQuietHoursAsync(LineQueue item, Dictionary<Guid, (bool Enabled, int Start, int End)> cache, CancellationToken ct)
+    {
+        if (LineQuietHours.IsExempt(item.Trigger, item.CustomerInitiated)) return false;
+        if (!cache.TryGetValue(item.CompanyId, out var q))
+        {
+            var row = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == item.CompanyId)
+                .Select(s => new { s.LineQuietHoursEnabled, s.LineQuietStartHour, s.LineQuietEndHour }).FirstOrDefaultAsync(ct);
+            q = row == null
+                ? (LineQuietHours.DefaultEnabled, LineQuietHours.DefaultStartHour, LineQuietHours.DefaultEndHour)
+                : (row.LineQuietHoursEnabled, row.LineQuietStartHour, row.LineQuietEndHour);
+            cache[item.CompanyId] = q;
+        }
+        var until = LineQuietHours.DeferUntilUtc(DateTime.UtcNow, q.Enabled, q.Start, q.End, item.Trigger, item.CustomerInitiated);
+        if (until is not DateTime at) return false;
+        item.Status = ContactLineChannel.StatusPending;
+        item.ScheduledFor = at;
+        item.ErrorMessage = Trunc(LineQuietHours.DeferNote(at, q.Start, q.End), 2000);
+        item.RuleCode = LineQuietHours.RuleCode;
+        item.UpdatedAt = DateTime.UtcNow;
+        return true;
+    }
+
+    /// <summary>รอบ 260-4 (team-A L8 · คำตัดสิน 260-4-4): LINE ล้มถาวรซ้ำ (≥ <see cref="LineFailureAlert.Threshold"/> ใน <see cref="LineFailureAlert.Window"/>) หรือ Token/ช่องของ OA บริษัทเสีย ⇒
+    /// กระดิ่งถึงเจ้าของที่ยังใช้งาน <b>ครั้งเดียวต่อ 24 ชม.</b> · กันซ้ำข้ามเครื่องใต้ <c>pg_advisory_xact_lock</c> ต่อบริษัท · โควตาเดือนหมดไม่นับ (มีกระดิ่งของตัวเอง) ·
+    /// OA กลางไม่นับ · scope แยก (ไม่บันทึกแถวคิวกลางทาง) · ล้ม ⇒ LogError (แถวคิวบอกเหตุอยู่แล้ว)</summary>
+    private async Task AlertRepeatedFailureAsync(Guid companyId, Guid currentRowId, bool channelBroken, string? reason, CancellationToken ct,
+        bool decryptFailed = false)
+    {
+        if (_scopes == null) return;
+        try
+        {
+            using var scope = _scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+            var notifications = scope.ServiceProvider.GetService<INotificationService>();
+            if (notifications == null) return;
+            var now = DateTime.UtcNow;
+            var since = now - LineFailureAlert.Window;
+            // แถวนี้ยังไม่ได้บันทึกเป็น "ล้มเหลว" (บันทึกหลังคืนจากผู้ส่ง) ⇒ นับแยก +1
+            var failures = 1 + await db.LineQueues.AsNoTracking()
+                .CountAsync(x => x.CompanyId == companyId && x.Id != currentRowId && x.Status == ContactLineChannel.StatusFailed
+                    && x.UpdatedAt != null && x.UpdatedAt >= since
+                    && (x.RuleCode == null || x.RuleCode != LinePushOutcome.CodeMonthlyLimit)
+                    && (x.OaScope == null || x.OaScope != NotifyEndpointKind.ScopeNextAcc), ct);
+            // ฝ่ายค้าน M4: ชนิดของกระดิ่ง (ล้มซ้ำ · Token/ช่องเสีย · ถอดรหัสไม่ได้) — กันซ้ำแยกต่อชนิด (EntityId = Guid คงที่ต่อชนิด)
+            if (LineFailureAlert.AlertKind(failures, channelBroken, decryptFailed) is not LineFailureAlert.Kind kind) return;
+            var kindId = LineFailureAlert.KindId(kind);
+            var strategy = db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var tx = await db.Database.BeginTransactionAsync(ct);
+                await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                    new object[] { AdvisoryLockKey.For(companyId, LineFailureAlert.LockScope, "repeated") }, ct);
+                var dedupeSince = now - LineFailureAlert.Dedupe;
+                if (await db.Notifications.AnyAsync(n => n.CompanyId == companyId && n.EntityType == LineFailureAlert.EntityType && n.EntityId == kindId
+                        && n.CreatedAt >= dedupeSince, ct))
+                {
+                    await tx.CommitAsync(ct);
+                    return;
+                }
+                // ฝ่ายค้าน L8: ผู้รับตัวเดียว (เจ้าของที่ใช้งาน · ไม่มี ⇒ ผู้มีสิทธิ์แก้ค่าตั้งบริษัท)
+                var recipients = await LineAlertRecipients.ForCompanyAsync(db, scope.ServiceProvider.GetService<IPermissionService>(), companyId, ct);
+                if (recipients.Count == 0)
+                    _logger.LogError("LINE ถึงผู้ติดต่อของบริษัท {Company} ล้ม ({Kind}) แต่ไม่มีผู้รับกระดิ่งที่ใช้งานอยู่", companyId, kind);
+                foreach (var u in recipients)
+                    await notifications.SendAsync(u, companyId, NotificationType.System, LineFailureAlert.Title(kind),
+                        LineFailureAlert.Message(kind, failures, reason), "/pages/email-schedule.html", LineFailureAlert.EntityType, kindId);
+                await tx.CommitAsync(ct);
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งเจ้าของบริษัท {Company} เรื่อง LINE ล้มซ้ำไม่สำเร็จ — แถวคิว LINE บอกเหตุแล้ว", companyId);
+        }
+    }
+
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน L7 · คำตัดสิน 260-4-11): LINE OA กลางของ NextAcc ล้มถาวร (Token/ช่องเสีย · โควตาหมด) ⇒ กระดิ่งผู้ดูแลระบบครั้งเดียวต่อวัน
+    /// (เรื่องเดียวกระทบทุกบริษัทที่ส่งเข้ากลุ่มผ่าน OA กลาง — บริษัทแก้ไม่ได้) · กันซ้ำใต้ล็อกระดับแพลตฟอร์ม · scope แยก · ล้ม ⇒ LogError</summary>
+    private async Task AlertCentralOaFailureAsync(string? code, string? reason, CancellationToken ct)
+    {
+        if (_scopes == null) return;
+        try
+        {
+            using var scope = _scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+            var notifications = scope.ServiceProvider.GetService<INotificationService>();
+            if (notifications == null) return;
+            var since = DateTime.UtcNow - LineFailureAlert.Dedupe;
+            var strategy = db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var tx = await db.Database.BeginTransactionAsync(ct);
+                await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                    new object[] { AdvisoryLockKey.For(LineFailureAlert.LockScope, "central") }, ct);
+                if (await db.Notifications.AnyAsync(n => n.CompanyId == null && n.EntityType == LineFailureAlert.CentralEntityType && n.CreatedAt >= since, ct))
+                {
+                    await tx.CommitAsync(ct);
+                    return;
+                }
+                var admins = await db.Users.AsNoTracking()
+                    .Where(u => u.IsSystemAdmin && !u.IsDeleted && u.Status == UserStatus.Active).Select(u => u.Id).Take(20).ToListAsync(ct);
+                if (admins.Count == 0) _logger.LogError("LINE OA กลางล้ม ({Code}) แต่ไม่มีผู้ดูแลระบบที่ใช้งานอยู่ให้แจ้ง", code);
+                foreach (var u in admins)
+                    await notifications.SendAsync(u, null, NotificationType.System, LineFailureAlert.CentralTitle, LineFailureAlert.CentralMessage(code, reason),
+                        "/admin/site-settings.html", LineFailureAlert.CentralEntityType, null);
+                await tx.CommitAsync(ct);
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งผู้ดูแลระบบเรื่อง LINE OA กลางล้มไม่สำเร็จ");
+        }
+    }
+
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน M1 · คำตัดสิน 260-4-8): ถอด LINE id ของปลายทางไม่ได้ — อาการเดียวกับ "กุญแจเข้ารหัสของเครื่องไม่ตรงกัน" ⇒ ล้มดัง (LogError) ·
+    /// ครั้งแรกลองใหม่ (เครื่องอื่นอาจถอดได้) · ครั้งถัดไปล้มพร้อมคำแนะนำที่ถูก (ตรวจกุญแจก่อน "ผูกใหม่") + กระดิ่งชนิด "ถอดรหัสไม่ได้" · ถอยไปอีเมลตามเดิม</summary>
+    private async Task<bool> DecryptFailedAsync(LineQueue item, ContactNotifyEndpoint ep, bool fallback, CancellationToken ct)
+    {
+        _logger.LogError("ถอดรหัส LINE id ของปลายทาง {Endpoint} บริษัท {Company} ไม่ได้ (แถวคิว {Id} ครั้งที่ {Try}) — ตรวจว่าทุกเครื่องใช้ ENCRYPTION_KEY เดียวกัน",
+            ep.Id, item.CompanyId, item.Id, item.RetryCount + 1);
+        var now = DateTime.UtcNow;
+        if (item.RetryCount == 0)
+        {
+            item.RetryCount = 1;
+            item.Status = ContactLineChannel.StatusPending;
+            item.ScheduledFor = now + LinePushOutcome.Backoff(1);
+            item.ErrorMessage = LineFailureAlert.DecryptRetryNote;
+            item.RuleCode = LineFailureAlert.DecryptRuleCode;
+            item.UpdatedAt = now;
+            return false;
+        }
+        Finish(item, ContactLineChannel.StatusFailed, LineFailureAlert.DecryptAdvice, LineFailureAlert.DecryptRuleCode);
+        if (ep.OaScope == NotifyEndpointKind.ScopeNextAcc) await AlertCentralOaFailureAsync(LineFailureAlert.DecryptRuleCode, LineFailureAlert.DecryptAdvice, ct);
+        else await AlertRepeatedFailureAsync(item.CompanyId, item.Id, channelBroken: false, LineFailureAlert.DecryptAdvice, ct, decryptFailed: true);
+        if (fallback) await FallbackAsync(item, eligible: true, ct);
+        return false;
     }
 
     /// <summary>เหตุเมื่อแถวค้าง "กำลังส่ง" ครบเพดานความพยายาม</summary>
@@ -214,11 +355,7 @@ public class ContactLineQueueService : IContactLineQueueService
         var isGroup = ep.Kind == NotifyEndpointKind.LineGroup;
         var to = _secrets.Unprotect(isGroup ? ep.LineGroupId : ep.LineUserId);
         if (string.IsNullOrWhiteSpace(to))
-        {
-            Finish(item, ContactLineChannel.StatusFailed, "ถอดรหัส LINE id ของปลายทางไม่ได้ (คีย์เปลี่ยน/ค่าเสียหาย) — ให้ผู้รับผูกใหม่", null);
-            await FallbackAsync(item, eligible: true, ct);
-            return false;
-        }
+            return await DecryptFailedAsync(item, ep, fallback: true, ct);
 
         // ฝ่ายค้าน 259 L2: ผู้ใช้ติ๊กลิงก์ชำระ (ส่งเอง) แต่ตอนส่งลิงก์ใช้ไม่ได้แล้ว ⇒ ไม่ส่ง (ไม่ใช่การ์ดไม่มีปุ่มแล้วขึ้น "ส่งแล้ว")
         if (item.IncludePayLink == true && doc.BalanceDue > 0 && DocumentLineSendRule.PayLinkAllowed(ep.Kind, ep.ShowAmounts)
@@ -267,10 +404,7 @@ public class ContactLineQueueService : IContactLineQueueService
         var isGroup = ep.Kind == NotifyEndpointKind.LineGroup;
         var to = _secrets.Unprotect(isGroup ? ep.LineGroupId : ep.LineUserId);
         if (string.IsNullOrWhiteSpace(to))
-        {
-            Finish(item, ContactLineChannel.StatusFailed, "ถอดรหัส LINE id ของปลายทางไม่ได้ (คีย์เปลี่ยน/ค่าเสียหาย) — ให้ผู้รับผูกใหม่", null);
-            return false;
-        }
+            return await DecryptFailedAsync(item, ep, fallback: false, ct);
         string? uploadUrl = null;
         if (LineWhtCertCard.UploadLinkAllowed(isGroup, ep.ShowAmounts))
         {
@@ -339,8 +473,16 @@ public class ContactLineQueueService : IContactLineQueueService
             else
                 _logger.LogWarning("LINE OA ของบริษัท {Company} ส่งไม่ได้ ({Code}) — แถวคิว {Id}", item.CompanyId, cls.Code, item.Id);
         }
-        if (cls.Code == LinePushOutcome.CodeMonthlyLimit && ep.OaScope != NotifyEndpointKind.ScopeNextAcc)
+        if (ep.OaScope == NotifyEndpointKind.ScopeNextAcc)
+        {
+            // รอบ 260-4 (ฝ่ายค้าน L7): OA กลางเสีย/โควตาหมด ⇒ กระดิ่งผู้ดูแลระบบครั้งเดียวต่อวัน (log อย่างเดียวไม่ใช่การล้มดัง)
+            if (cls.ChannelBroken || cls.Code == LinePushOutcome.CodeMonthlyLimit) await AlertCentralOaFailureAsync(cls.Code, cls.Reason, ct);
+        }
+        else if (cls.Code == LinePushOutcome.CodeMonthlyLimit)
             await AlertMonthlyLimitAsync(item.CompanyId, ct);
+        // รอบ 260-4 (260-4-4): ล้มซ้ำ/ช่องเสีย ⇒ กระดิ่งครั้งเดียวต่อวัน (โควตาเดือนหมด = กระดิ่งของตัวเองข้างบน · OA กลาง = ไม่ใช่เรื่องที่บริษัทแก้)
+        else
+            await AlertRepeatedFailureAsync(item.CompanyId, item.Id, cls.ChannelBroken, cls.Reason, ct);
         await FallbackAsync(item, cls.FallbackEligible, ct);
         return false;
     }

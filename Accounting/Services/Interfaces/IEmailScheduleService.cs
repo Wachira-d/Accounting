@@ -47,6 +47,8 @@ public interface IEmailScheduleService
 
     // CRUD rules
     Task<List<EmailScheduleRule>> GetRulesAsync(Guid companyId);
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน L3): คำเตือนชั่วโมงเงียบของ LINE ต่อชั่วโมงส่ง (ฟอร์มกฎ) — ค่าตั้งบริษัทผ่านตัวตัดสินเดียว <c>LineQuietHours.RuleWarningsByHour</c></summary>
+    Task<Accounting.Helpers.LineQuietHours.RuleWarnings> LineQuietWarningsAsync(Guid companyId, CancellationToken ct = default);
     Task<EmailScheduleRule> UpsertRuleAsync(Guid companyId, EmailScheduleRule rule, string actor);
     Task DeleteRuleAsync(Guid companyId, Guid ruleId);
 

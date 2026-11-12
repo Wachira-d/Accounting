@@ -56,6 +56,10 @@ public static class PortalSlipPending
         => fromPayLink
             ? $"สลิปจากหน้าชำระของเอกสาร (รอตรวจ) — {documentNumber} · ไฟล์: แท็บไฟล์แนบของเอกสาร"
             : $"สลิปจากพอร์ทัลลูกค้า (รอตรวจ) — {documentNumber} · ไฟล์: {slipUrl}";
+
+    /// <summary>รอบ 260: สลิปที่ลูกค้าส่งในแชต LINE OA ของบริษัท (ไฟล์ไม่เสิร์ฟตรง — เปิดจากแท็บไฟล์แนบของเอกสาร)</summary>
+    public static string LineChatIntentDescription(string documentNumber)
+        => $"สลิปจากแชต LINE ของลูกค้า (รอตรวจ) — {documentNumber} · ไฟล์: แท็บไฟล์แนบของเอกสาร";
 }
 
 /// <summary>

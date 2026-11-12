@@ -27,8 +27,12 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
 
     public DocumentPaymentHandler(AccountingDbContext db, IDocumentService docs,
         IGatewayAccountResolver accounts, ILogger<DocumentPaymentHandler> logger,
-        Accounting.Services.Implementations.PartnerPaymentNoticeService? partnerNotices = null)
-    { _db = db; _docs = docs; _accounts = accounts; _logger = logger; _partnerNotices = partnerNotices; }
+        Accounting.Services.Implementations.PartnerPaymentNoticeService? partnerNotices = null,
+        Accounting.Services.Storage.IFileStorage? storage = null)
+    { _db = db; _docs = docs; _accounts = accounts; _logger = logger; _partnerNotices = partnerNotices; _storage = storage; }
+
+    /// <summary>รอบ 260-2: ที่เก็บไฟล์ — ตรวจรูป QR ของบัญชีตอนหาค่าแนะนำ "บัญชีที่แสดงให้ลูกค้าโอน" (null = นับเฉพาะพร้อมเพย์ · เทสต์)</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
 
     /// <summary>รอบ 258-3 (F-H3): แจ้งผู้ซื้อที่เป็นคู่ค้า NextAcc ว่าผู้ขายรับเงินแล้ว (ไม่บันทึกแทน) · null = เทสต์/เครื่องมือ</summary>
     private readonly Accounting.Services.Implementations.PartnerPaymentNoticeService? _partnerNotices;
@@ -79,6 +83,11 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
                 intent.Amount, doc.DocumentNumber, doc.BalanceDue, intent.Id);
 
         var moneyIn = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
+        // รอบ 260-2: สลิปโอน ⇒ บัญชีธนาคารที่เงินเข้า (ค่าที่ประทับตอนยืนยัน · ไม่มี ⇒ ค่าแนะนำ) จากตัวตัดสินเดียว Helpers/SlipReceivingAccount —
+        // เดิมส่ง null ⇒ สืบทอดแหล่งเงินของใบ (ส่วนใหญ่ว่าง) ⇒ JE ลงเงินสด 111 ทั้งที่เงินเข้าธนาคาร · เงินผ่านผู้ให้บริการ (moneyIn มีค่า) ไม่ใช้ตัวนี้
+        var receivingBank = moneyIn == null
+            ? await Accounting.Helpers.SlipReceivingAccount.OverrideForHandlerAsync(_db, _storage?.Locator.AttachmentsRoot, intent, ct)
+            : null;
 
         // รอบ 241 (คำตัดสิน 241-3): ลิงก์ชำระเงินเก็บ "ยอดสุทธิหลังลูกค้าหัก ณ ที่จ่าย" ⇒ เงินเข้า + WHT ที่เหลือ = ยอดค้าง ⇒ บันทึก WHT ทั้งก้อน (ปิดหนี้)
         // ตัวตัดสินเดียว DocumentPayLinkPolicy.WhtForPayment · ไม่ตรง = null = ตัวบันทึกรับชำระแนะนำเอง (พฤติกรรมเดิม)
@@ -111,6 +120,7 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
             Reference: reference,
             BankAccount: null,
             Notes: $"ชำระออนไลน์ผ่านระบบรับชำระเงิน — {doc.DocumentNumber}",
+            OverrideBankAccountId: receivingBank,
             OverridePaymentAccountId: moneyIn,
             WithholdingTaxAmount: paymentWht
         ), intent.ConfirmedBy ?? "payment-gateway", source: Accounting.Helpers.PaymentEntrySource.Gateway);

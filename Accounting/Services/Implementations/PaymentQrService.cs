@@ -101,6 +101,27 @@ public class PaymentQrService : IPaymentQrService
         return (pick.AccountId is Guid p ? configured.First(a => a.Id == p) : null, pick);
     }
 
+    /// <summary>รอบ 260-2: ตัวเลือกบัญชีของ<b>เอกสารใบนี้</b> (เทมเพลตของใบ → <see cref="PickDocumentAccountAsync"/>) — ตัวเดียวของกล่องโอนบนหน้าชำระ/พอร์ทัล
+    /// (<c>DocumentPayLinkService.DocumentAccountTransferAsync</c>) และค่าแนะนำ "บัญชีที่แสดงให้ลูกค้าโอน" ตอนยืนยันสลิป (<c>SlipReceivingAccount</c>) ·
+    /// <paramref name="document"/> ต้องโหลด <c>Brand</c> มาแล้ว (เทมเพลตตั้งต้นของแบรนด์)</summary>
+    internal static async Task<(BankAccount? Account, PaymentQrPolicy.AccountPick Pick)> PickForDocumentAsync(AccountingDbContext db, string attachmentsRoot,
+        Guid companyId, Document document, CancellationToken ct)
+    {
+        var template = await PdfGenerationService.ResolveDocumentTemplateAsync(db, companyId, document, null);
+        return await PickDocumentAccountAsync(db, attachmentsRoot, companyId, document.PaymentAccountId, document.BankAccountId,
+            template.PaymentQrBankAccountId, ct);
+    }
+
+    /// <summary>รอบ 260-2: id ของบัญชีที่ระบบแสดงให้ลูกค้าโอนสำหรับใบนี้ — บัญชีที่ตั้ง QR ที่ตัวเลือกหยิบ (ตัวเดียวกับกล่องโอนของหน้าชำระ) ·
+    /// null = ไม่มี/กำกวม (ผู้เรียกไปชั้นถัดไป) · <paramref name="attachmentsRoot"/> null ⇒ รูป QR ที่อัปโหลดไม่นับ (พร้อมเพย์ยังนับ)</summary>
+    public static async Task<Guid?> ShownDocumentAccountIdAsync(AccountingDbContext db, string? attachmentsRoot, Guid companyId, Document document,
+        CancellationToken ct)
+    {
+        // ฝ่ายค้าน 260-2 M2: เฉพาะบัญชีที่ใบ "แสดงจริง" (มี QR) — ChosenId ที่ไม่มี QR ไม่ถูกพิมพ์/แสดง (หน้าชำระแสดงบัญชีรับโอนของเว็บแทน)
+        var (acct, _) = await PickForDocumentAsync(db, attachmentsRoot ?? "", companyId, document, ct);
+        return acct?.Id;
+    }
+
     /// <summary>QR ของบัญชี (รูปที่อัปโหลดอ่านผ่านที่เก็บกลาง · อ่านไม่ได้ ⇒ ถอยไปพร้อมเพย์ถ้ามี · ไม่มีอะไร = null) ·
     /// ธนาคาร/ชื่อ/เลขบัญชี = ของบัญชีนี้เสมอ (S2(ข))</summary>
     internal static async Task<BankPaymentQr?> BuildAccountQrAsync(IFileStorage storage, IPromptPayService promptPay, ILogger? logger, Guid companyId,

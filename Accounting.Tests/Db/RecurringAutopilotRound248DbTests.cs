@@ -19,6 +19,9 @@ namespace Accounting.Tests.Db;
 /// (2) นโยบายปล่อย AR-OVERDUE ⇒ ใบประจำอนุมัติ + audit <c>APPROVE-UNATTENDED-POLICY</c> ·
 /// ทิศตรงข้าม: ไม่ตั้งนโยบาย ⇒ ค้างร่างเหมือนรอบ 247 · ผู้ตั้งออกจากบริษัท ⇒ ไม่ปล่อย · ตั้งนโยบายปล่อย §86/4 ⇒ ปฏิเสธ
 /// </summary>
+// รอบ 260-4 (CI db-test): ProcessDueRecurringTransactionsAsync กวาดทุกบริษัทในฐานร่วม ⇒ ห้ามรันขนานกับคลาสที่ seed รายการประจำถึงรอบวันนี้
+// (เคยออกใบที่สองให้ seed ของ R248 กลางทดลองรัน/ส่งทดสอบ + ชนล็อก "กำลังสร้างเอกสารอยู่")
+[Collection("recurring-due-sweep")]
 [Trait("Category", "Db")]
 public class RecurringAutopilotRound248DbTests
 {

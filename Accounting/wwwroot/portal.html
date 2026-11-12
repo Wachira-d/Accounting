@@ -499,6 +499,11 @@
             <div class="kpi"><div class="kpi-label">ชำระ (เครดิต)</div><div class="kpi-value" style="color:var(--success)">฿${money(s.totalPaid)}</div></div>
             <div class="kpi"><div class="kpi-label">ยอดคงเหลือ</div><div class="kpi-value" style="color:${s.closingBalance>0?'var(--danger)':'var(--success)'}">฿${money(s.closingBalance)}</div></div>
           </div>
+          ${Number(s.unappliedCredit) > 0 ? `<div class="kpi" style="margin:-4px 0 14px;background:#eff6ff;border-color:#bfdbfe">
+            <div class="kpi-label">เงินที่ชำระไว้แล้ว รอผู้ขายนำไปหักกับใบ (เงินรอจัดสรร)</div>
+            <div class="kpi-value" style="color:var(--primary)">฿${money(s.unappliedCredit)}</div>
+            <div style="font-size:12px;color:#475569;margin-top:4px">ยอดปัจจุบัน · ยังไม่หักจาก “ยอดคงเหลือ” ด้านบน — ผู้ขายจะจัดสรรให้ใบ หรือติดต่อผู้ขายเพื่อขอคืน</div>
+          </div>` : ''}
           ${(s.lines||[]).length === 0
             ? '<div class="empty">ไม่มีรายการในช่วงนี้</div>'
             : `<div class="tbl-wrap"><table>

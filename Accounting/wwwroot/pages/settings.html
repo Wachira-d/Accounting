@@ -1149,6 +1149,16 @@
         <label for="lineOaBasicId" class="form-label">LINE OA Basic ID <span class="text-gray-400" style="font-size:12px">(เช่น @myshop — ใช้ทำปุ่ม "เพิ่มเพื่อน/ส่งรหัส" ให้ลูกค้าหน้าเว็บผูก LINE รับแจ้งเตือน และให้พนักงานผูก LINE รับสลิป)</span></label>
         <input type="text" class="form-input" id="lineOaBasicId" placeholder="@myshop" />
       </div>
+
+      <!-- รอบ 260 (คำตัดสิน 260-1-1): สลิปที่ลูกค้าส่งในแชต OA ของบริษัท ⇒ ผูกเอกสาร — ความพร้อมอยู่ในกล่อง "ความพร้อมของ LINE OA" (แถวจากเซิร์ฟเวอร์) -->
+      <div class="form-group">
+        <label style="display:flex;gap:8px;align-items:flex-start">
+          <input type="checkbox" id="lineChatSlipIntake" checked />
+          <span>รับสลิปที่ลูกค้าส่งในแชต LINE อัตโนมัติ
+            <span class="text-gray-400" style="font-size:12px;display:block">ระบบอ่านยอดจากรูป แล้วหาเอกสารค้างชำระของผู้ติดต่อที่ผูก LINE นั้น — ตรงใบเดียว = บันทึกการแจ้งโอนให้เอง ·
+            หลายใบ = ลูกค้ากดเลือกในแชต · ไม่ตรง = เข้าคิวที่หน้ารายการรับชำระออนไลน์ · ระบบไม่ปิดหนี้จากสลิปเอง</span></span>
+        </label>
+      </div>
       </details>
 
       <!-- รอบ 211: ช่องทางแจ้งลูกค้าปลายทาง (การจอง/ออเดอร์/สมาชิกเว็บ) — เซิร์ฟเวอร์ตัดสินทุกค่า หน้านี้แสดงอย่างเดียว -->
@@ -1165,6 +1175,18 @@
 
       <!-- รอบ 259 (A-M5 · A-L3): ความพร้อมของ LINE OA ของบริษัท — แถวจากเซิร์ฟเวอร์ (LineOaHealth.Rows · webhook เข้าจริงไหม · Basic ID · ผลทดสอบ) -->
       <div class="form-group" id="lineHealth" style="display:none;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;font-size:13px"></div>
+
+      <!-- รอบ 260-4 (คำตัดสิน 260-4-1/260-4-2): ชั่วโมงเงียบของการ์ด LINE ถึงลูกค้า — ใครถูกเลื่อน/ใครส่งทันที เซิร์ฟเวอร์บอก (LineQuietHours.Sentence) -->
+      <div class="form-group" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px">
+        <label for="lineQuietEnabled" style="display:flex;gap:8px;align-items:center;font-weight:600;font-size:13px">
+          <input type="checkbox" id="lineQuietEnabled" /> 🌙 ชั่วโมงเงียบ — ไม่ส่งการ์ด LINE ถึงลูกค้าช่วงกลางคืน (เลื่อนไปส่งหลังช่วงเงียบ ไม่ทิ้ง)
+        </label>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap;font-size:13px">
+          <label for="lineQuietStart">ตั้งแต่</label> <select id="lineQuietStart" class="form-input" style="width:auto"></select>
+          <label for="lineQuietEnd">ถึง</label> <select id="lineQuietEnd" class="form-input" style="width:auto"></select> <span>(เวลาไทย)</span>
+        </div>
+        <div id="lineQuietNote" class="text-gray-500" style="font-size:12px;margin-top:6px"></div>
+      </div>
 
       <div class="form-group">
         <label for="lineTestId" class="form-label">📨 ทดสอบส่งข้อความ</label>
@@ -2186,6 +2208,7 @@
           { const clr = document.getElementById('lineClearSecretsBtn'); if (clr) clr.style.display = (c.hasAccessToken || c.hasChannelSecret) ? '' : 'none'; }
           document.getElementById('lineGroupId').value = c.defaultGroupId || '';
           document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
+          { const cs = document.getElementById('lineChatSlipIntake'); if (cs) cs.checked = c.chatSlipIntake !== false; }   // รอบ 260 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นเปิด)
           this._renderLineCustomerChannel(c.customerChannel);
           this._renderLineRelinkInvite(c.relinkInvite, c.webhookProblem);
           { const n = document.getElementById('lineTenantNotice'); if (n) { n.style.display = c.tenantLineNotice ? '' : 'none'; n.textContent = c.tenantLineNotice ? '🔔 ' + c.tenantLineNotice : ''; } }
@@ -2201,12 +2224,14 @@
           // รอบ 259 (A-M5 · A-L3): ความพร้อมจากเซิร์ฟเวอร์ (ผลทดสอบล่าสุดอยู่ในแถว "test" — เดิมสีตามธงที่รีเซ็ตตอนบันทึก ⇒ ผ่านแล้วแดง)
           document.getElementById('lineTestResult').innerHTML = '';
           this._renderLineHealth(c.health);
-          { const sel = document.getElementById('lineTestTarget'); const ts = c.testTargets || [];
-            sel.innerHTML = ts.map(t => `<option value="${Layout.esc(t.key)}">${Layout.esc(t.label)}</option>`).join('')
-              + '<option value="">พิมพ์ LINE ID เอง…</option>';
-            sel.style.display = ts.length ? '' : 'none';
-            sel.value = ts.length ? ts[0].key : '';
-            document.getElementById('lineTestId').style.display = sel.value ? 'none' : ''; }
+          // รอบ 260-4: ชั่วโมงเงียบ (ค่าจากเซิร์ฟเวอร์ · ประโยคสถานะจากเซิร์ฟเวอร์)
+          { const hours = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
+            const qs = document.getElementById('lineQuietStart'); const qe = document.getElementById('lineQuietEnd');
+            qs.innerHTML = hours; qe.innerHTML = hours;
+            qs.value = String(c.quietStartHour == null ? 21 : c.quietStartHour); qe.value = String(c.quietEndHour == null ? 8 : c.quietEndHour);
+            document.getElementById('lineQuietEnabled').checked = !!c.quietHoursEnabled;
+            document.getElementById('lineQuietNote').textContent = c.quietHoursNote || ''; }
+          await this._loadLineTestTargets(cid);
           // รอบ 231 S1: คำใบ้ค่ากำกวม (เซิร์ฟเวอร์ประกอบ — ไม่ใช่ข้อผิดพลาด)
           if (c.secretHint) {
             document.getElementById('lineTestResult').innerHTML +=
@@ -2216,6 +2241,20 @@
       },
       // รอบ 211: แสดงผลที่เซิร์ฟเวอร์ตัดสิน (OA ที่ใช้ · ผูกได้ไหม · URL webhook ต่อบริษัท · จำนวนลิงก์) — ไม่มีกติกาฝั่งหน้าเว็บ
       // รอบ 212 แพ็ก B: "เชิญผูกใหม่: ส่งแล้ว N/M" — ป้ายทั้งก้อนเซิร์ฟเวอร์ประกอบ (CustomerRelinkInvitePlan.ProgressLabel) · หน้านี้แสดงอย่างเดียว
+      // รอบ 260-4 (คำตัดสิน 260-4-3): ปลายทางทดสอบที่ระบบรู้จัก (กลุ่มทีม + ปลายทาง LINE ของผู้ติดต่อที่ผูกกับ OA ของบริษัท) — endpoint แยกที่มีด่านสิทธิ์เดียวกับหน้าตั้งค่า LINE ·
+      // ไม่มีสิทธิ์/โหลดไม่ได้ ⇒ เหลือช่องพิมพ์ ID เอง
+      async _loadLineTestTargets(cid) {
+        const sel = document.getElementById('lineTestTarget');
+        let ts = [];
+        try { const r = await API.get(`/api/companies/${cid}/line-config/test-targets`); ts = (r && r.success && r.data) || []; } catch (e) { ts = []; }
+        sel.innerHTML = ts.map(t => `<option value="${Layout.esc(t.key)}" data-contact="${t.reachesContact ? '1' : ''}">${Layout.esc(t.label)}${t.reachesContact ? ' — ผู้ติดต่อ' : ''}</option>`).join('')
+          + '<option value="">พิมพ์ LINE ID เอง…</option>';
+        sel.style.display = ts.length ? '' : 'none';
+        // ฝ่ายค้าน 260-4 L1: ค่าเริ่มต้น = กลุ่มทีม (ถ้ามี) ไม่งั้น "พิมพ์เอง" — ไม่เลือกผู้ติดต่อจริงให้เอง
+        const team = ts.find(t => !t.reachesContact);
+        sel.value = team ? team.key : '';
+        document.getElementById('lineTestId').style.display = sel.value ? 'none' : '';
+      },
       _renderLineHealth(rows) {
         const box = document.getElementById('lineHealth');
         if (!box) return;
@@ -2262,6 +2301,12 @@
           // รอบ 257 C-M1: ช่องที่ hydrate จากค่าเดิม — ว่าง = ล้าง ("") ไม่ใช่ null (เดิมล้างแล้วบันทึกไม่มีผลเงียบ ๆ)
           defaultGroupId: document.getElementById('lineGroupId').value.trim(),
           oaBasicId: document.getElementById('lineOaBasicId').value.trim(),
+          // รอบ 260-4: ชั่วโมงเงียบ (ช่วงผิด ⇒ เซิร์ฟเวอร์ปฏิเสธพร้อมเหตุ)
+          quietHoursEnabled: document.getElementById('lineQuietEnabled').checked,
+          quietStartHour: Number(document.getElementById('lineQuietStart').value),
+          quietEndHour: Number(document.getElementById('lineQuietEnd').value),
+          // รอบ 260: รับสลิปจากแชต LINE (ส่งค่าทุกครั้งที่บันทึก — ช่อง hydrate จากเซิร์ฟเวอร์)
+          chatSlipIntake: !!(document.getElementById('lineChatSlipIntake') || {}).checked,
         };
         try {
           const j = await API.put(`/api/companies/${cid}/line-config`, body);
@@ -2296,6 +2341,10 @@
         const targetKey = document.getElementById('lineTestTarget').value || null;
         const to = targetKey ? null : document.getElementById('lineTestId').value.trim();
         if (!targetKey && !to) { Layout.toast('กรุณาเลือกปลายทาง หรือระบุ LINE User ID / Group ID', 'error'); return; }
+        // รอบ 260-4 (260-4-3): ปลายทางของผู้ติดต่อ = ข้อความถึงผู้รับจริงของลูกค้า ⇒ ถามก่อน
+        { const opt = document.getElementById('lineTestTarget').selectedOptions[0];
+          if (targetKey && opt && opt.dataset.contact === '1'
+            && !confirm('ข้อความทดสอบจะส่งถึงผู้รับจริงของผู้ติดต่อ (' + opt.textContent + ')\nส่งต่อไหม?')) return; }
         const out = document.getElementById('lineTestResult');
         out.innerHTML = '<div style="font-size:12px;color:#64748b">กำลังส่ง…</div>';
         try {

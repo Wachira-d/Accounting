@@ -23,14 +23,24 @@ public class PortalAdminController : ControllerBase
     [HttpPost("access")]
     [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
     [Accounting.Filters.RejectApiKey("ให้สิทธิ์พอร์ทัลลูกค้า")]
-    public async Task<ActionResult<ApiResponse<PortalAccessResponse>>> CreateAccess(Guid companyId, [FromBody] CreatePortalAccessRequest request)
-        => StatusCode(201, new ApiResponse<PortalAccessResponse>(true, await _service.CreateAccessAsync(companyId, request, ActorId)));
+    public async Task<ActionResult<ApiResponse<PortalAccessResponse>>> CreateAccess(Guid companyId, [FromBody] CreatePortalAccessRequest request,
+        [FromServices] IPermissionService perms)
+        => StatusCode(201, new ApiResponse<PortalAccessResponse>(true, await _service.CreateAccessAsync(companyId, request, ActorId, await SeesCreditAsync(perms, companyId))));
+
+    /// <summary>รอบ 260-3 (ฝ่ายค้าน L1): ยอดเงินรอจัดสรรบนหน้าสิทธิ์พอร์ทัล = ข้อมูลฝั่งขาย ⇒ ด่านเดียวกับหน้าเงินรอจัดสรร (<c>VisibleDirections.Revenue</c>) ·
+    /// ผู้มีแค่ Contact.Edit (เช่น ฝ่ายจัดซื้อ) ได้ null (ไม่เห็นยอด)</summary>
+    private async Task<bool> SeesCreditAsync(IPermissionService perms, Guid companyId)
+    {
+        return (await Accounting.Helpers.DocumentPermissionHelper.VisibleDirectionsAsync(perms, companyId, ActorId)).Revenue;
+    }
 
     /// <summary>รอบ 257 ฝ่ายค้าน L2: รายการสิทธิ์ (อีเมลภายนอก + ผู้ติดต่อ = ข้อมูลส่วนบุคคล) — ไม่มีคีย์ Contact.View ในระบบ ⇒ Contact.Edit (DECISIONS 257-1-9)</summary>
     [HttpGet("access")]
     [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
-    public async Task<ActionResult<ApiResponse<List<PortalAccessResponse>>>> GetAccesses(Guid companyId)
-        => Ok(new ApiResponse<List<PortalAccessResponse>>(true, await _service.GetAccessesAsync(companyId)));
+    public async Task<ActionResult<ApiResponse<List<PortalAccessResponse>>>> GetAccesses(Guid companyId, [FromServices] IPermissionService perms)
+    {
+        return Ok(new ApiResponse<List<PortalAccessResponse>>(true, await _service.GetAccessesAsync(companyId, await SeesCreditAsync(perms, companyId))));
+    }
 
     /// <summary>รอบ 259-3 (E 4.6): ลิงก์หน้าเข้าสู่ระบบพอร์ทัลของบริษัท — origin จาก URL ของระบบ (ตัวตั้งเดียว SystemBaseUrl) · หน้าเว็บไม่ประกอบจาก location.origin</summary>
     [HttpGet("link")]
@@ -45,8 +55,9 @@ public class PortalAdminController : ControllerBase
     [HttpPut("access/{accessId:guid}")]
     [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]
     [Accounting.Filters.RejectApiKey("แก้สิทธิ์พอร์ทัลลูกค้า")]
-    public async Task<ActionResult<ApiResponse<PortalAccessResponse>>> UpdateAccess(Guid companyId, Guid accessId, [FromBody] UpdatePortalAccessRequest request)
-        => Ok(new ApiResponse<PortalAccessResponse>(true, await _service.UpdateAccessAsync(companyId, accessId, request, ActorId)));
+    public async Task<ActionResult<ApiResponse<PortalAccessResponse>>> UpdateAccess(Guid companyId, Guid accessId, [FromBody] UpdatePortalAccessRequest request,
+        [FromServices] IPermissionService perms)
+        => Ok(new ApiResponse<PortalAccessResponse>(true, await _service.UpdateAccessAsync(companyId, accessId, request, ActorId, await SeesCreditAsync(perms, companyId))));
 
     [HttpPost("access/{accessId:guid}/deactivate")]
     [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.ContactEdit)]

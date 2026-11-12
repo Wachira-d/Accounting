@@ -60,6 +60,14 @@ public class OverdueDunningJob : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
         var notify = scope.ServiceProvider.GetService<INotificationEngine>();
 
+        // รอบ 260-3 (คำตัดสิน 260-3-3): กระดิ่ง "เงินรอจัดสรรค้างเกิน 30 วัน" — นิยามเดียวกับ issue ของ Autopilot (CustomerCreditWorkQueue.AgedAsync) ·
+        // รันก่อนลูปทวง (ลูปทวง return ก่อนเมื่อไม่มีใบค้าง) · ล้ม = ไม่ขวางการทวง
+        if (notify != null)
+        {
+            try { await Accounting.Helpers.CustomerCreditAgedNotice.RunAsync(db, notify, DateTime.UtcNow, _logger, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogError(ex, "แจ้งเงินรอจัดสรรค้างนานล้มทั้งรอบ — รอบถัดไปแจ้งใหม่"); }
+        }
+
         var arTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.DebitNote };
         var activeStatuses = new[] { DocumentStatus.Approved, DocumentStatus.Sent,
             DocumentStatus.PartiallyPaid, DocumentStatus.Overdue };

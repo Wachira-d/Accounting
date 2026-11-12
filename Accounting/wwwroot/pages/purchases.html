@@ -30,14 +30,21 @@
       <div>
         <h2 class="page-title">ซื้อสินค้า</h2>
         <p class="page-subtitle">ติดตามและรายงานเอกสารฝั่งซื้อ — สร้าง/แก้ไขผ่านหน้าเอกสาร (มี dimension + AI + approval warnings ครบ)</p>
-        <!-- รอบ 259-3 (ทีม E-M5): ใบซื้อร่างที่รอตรวจมาจาก 3 ทางเข้า — ทางเข้าเดียวจากหน้านี้ไปทุกกล่อง (แต่ละกล่องคงบ้านของตัวเอง) -->
-        <p class="page-subtitle" style="margin-top:4px">📥 ใบซื้อรอตรวจ: <a href="/pages/review-queue.html">จากสแกน (OCR)</a> ·
-          <a href="/pages/partners.html#ptDraftBody">จากคู่ค้าที่ใช้ NextAcc</a> · <a href="/pages/documents.html?side=expense">เอกสารฝั่งซื้อ (กรองสถานะ "ร่าง")</a></p>
       </div>
       <div class="flex gap-2" id="pageActions">
         <a class="btn btn-primary" href="/pages/documents.html?openCreate=expense&type=PurchaseOrder">+ ใบสั่งซื้อ</a>
         <a class="btn btn-secondary" href="/pages/documents.html?openCreate=expense&type=PurchaseInvoice">+ บันทึกซื้อสินค้า</a>
       </div>
+    </div>
+
+    <!-- รอบ 260-3 (คำตัดสิน 260-3-5): กล่อง "ใบซื้อร่างรอตรวจ" กล่องเดียว — ทุกทางเข้า (OCR · LINE · e-Tax XML · คู่ค้า · สร้างเอง) จาก purchase-inbox ตัวเดียว
+         (ตัวนับกับรายการมาจาก query เดียว) · แทนลิงก์ 3 กล่องเดิมของรอบ 259-3 -->
+    <div class="card" id="draftInbox" style="padding:16px;margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div class="font-bold">📥 ใบซื้อร่างรอตรวจ <span id="inboxTotal" class="text-gray-500 text-sm"></span></div>
+        <div id="inboxCounts" class="text-sm" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      </div>
+      <div id="inboxBody" class="text-sm text-gray-400" style="margin-top:10px">กำลังโหลด...</div>
     </div>
 
     <!-- Summary Cards (procurement KPIs) -->
@@ -120,6 +127,42 @@
         if (pa && window.ExportUtil) pa.insertAdjacentHTML('afterbegin', this._exportMenu('exportAll'));
         await this.load();
         this.loadStats();
+        this.loadInbox();
+      },
+
+      /** รอบ 260-3 (คำตัดสิน 260-3-5): กล่องใบซื้อร่างรอตรวจ — ตัวนับ/ป้าย/ลิงก์มาจากเซิร์ฟเวอร์ (PurchaseDraftInbox) หน้าแสดงอย่างเดียว */
+      inboxSource: '',
+      async loadInbox() {
+        const body = document.getElementById('inboxBody');
+        try {
+          // ฝ่ายค้าน 260-3 M3: กรองทางเข้าที่เซิร์ฟเวอร์ก่อนตัดจำนวน (เดิมกรองในหน้าจากรายการที่ตัดแล้ว ⇒ ตัวนับบอก N แต่ไม่มีแถว)
+          const q = this.inboxSource ? `?source=${encodeURIComponent(this.inboxSource)}` : '';
+          const r = await API.get(`/api/companies/${encodeURIComponent(Layout.getCompanyId())}/purchase-inbox${q}`);
+          this._inbox = (r && r.data) || { total: 0, counts: [], items: [] };
+          this.renderInbox();
+        } catch (e) {
+          body.innerHTML = `<span style="color:#b91c1c">โหลดกล่องใบซื้อร่างไม่สำเร็จ: ${Layout.esc(e.message || '')}</span> <button class="btn btn-sm btn-ghost" onclick="Page.loadInbox()">ลองใหม่</button>`;
+        }
+      },
+      setInboxSource(src) { this.inboxSource = this.inboxSource === src ? '' : src; this.loadInbox(); },
+      renderInbox() {
+        const ib = this._inbox || { total: 0, counts: [], items: [] };
+        document.getElementById('inboxTotal').textContent = `(${ib.total} ใบ)`;
+        document.getElementById('inboxCounts').innerHTML = (ib.counts || []).filter(c => c.count > 0).map(c =>
+          `<button class="btn btn-sm ${this.inboxSource === c.source ? 'btn-primary' : 'btn-ghost'}" onclick="Page.setInboxSource('${Layout.jsArg(c.source)}')">${Layout.esc(c.label)} ${c.count}</button>`).join('');
+        const items = ib.items || [];
+        const body = document.getElementById('inboxBody');
+        const note = ib.truncated ? `<div class="text-xs text-gray-500" style="margin-top:6px">แสดง ${items.length} ใบล่าสุด — ตัวนับนับครบทุกใบ</div>` : '';
+        if (!items.length) { body.innerHTML = (ib.total ? 'ไม่มีใบในทางเข้านี้' : 'ไม่มีใบซื้อร่างรอตรวจ') + note; return; }
+        body.classList.remove('text-gray-400');
+        body.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>ผู้ขาย</th><th>วันที่</th><th class="text-right">ยอด</th><th>ทางเข้า</th><th></th></tr></thead><tbody>${items.map(i => `<tr>
+            <td><a href="${Layout.esc(i.openHref)}" style="color:var(--primary)">${Layout.esc(i.documentNumber)}</a></td>
+            <td>${Layout.esc(i.contactName || '-')}</td>
+            <td>${Layout.date(i.documentDate)}</td>
+            <td class="text-right">${Layout.money(i.totalAmount)}</td>
+            <td>${Layout.esc(i.sourceLabel)}${i.fileName ? `<div class="text-xs text-gray-500">${Layout.esc(i.fileName)}</div>` : ''}</td>
+            <td><a class="btn btn-sm btn-ghost" href="${Layout.esc(i.openHref)}">ตรวจ / อนุมัติ</a>${i.sourceHref ? ` <a class="text-xs" href="${Layout.esc(i.sourceHref)}">${Layout.esc(i.sourceHrefLabel || '')}</a>` : ''}</td>
+          </tr>`).join('')}</tbody></table></div>${note}`;
       },
 
       /** ตัวกรองของรายการ (ไม่รวม page/pageSize) — ตัวเดียวที่ทั้ง load() และปุ่มส่งออกใช้ (EXPORT_AUDIT §X2)

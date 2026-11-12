@@ -20,6 +20,9 @@ namespace Accounting.Tests.Db;
 /// <para>(3) แก้ระยะของกฎ ⇒ ลายน้ำถูกล้าง (ไม่ย้อนเก็บตามตารางเก่า)</para>
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 260-4 (CI db-test run 43151543956): ScanDueSoonAndOverdueAsync กวาดทุกบริษัทในฐานร่วม — สองคลาสพร้อมกันเข้าคิวใบเดียวกันด้วยตัวหาผู้รับคนละตัว
+// (ตัวหาผู้รับของอีกคลาสถอดรหัสปลายทางด้วยกุญแจคนละตัวไม่ได้ ⇒ แถว line:none + แถวปลายทาง) ⇒ คลาสที่สแกนอยู่ collection เดียวกัน (ไม่รันขนาน)
+[Collection("SubscriptionExpirySweep")]   // ร่วมกับ LineCentralGroupRound256 ที่สแกนเหมือนกัน (คลาสหนึ่งอยู่ได้ collection เดียว)
 public class ScheduleCatchUpRound258DbTests
 {
     private readonly ITestOutputHelper _out;

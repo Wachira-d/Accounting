@@ -30,6 +30,18 @@ public static class WhtCertUploadLinkPolicy
     public const int ViewsPerMinute = 30;
     public const int ViewsPerDay = 600;
 
+    /// <summary>คำตัดสิน 260-5-7 (ฝ่ายค้าน 260-5 L5): กล่องรับ 50 ทวิ ภายใน (พนักงานอัปโหลด) ไม่หักโควตา OCR แต่มีเพดานการสแกน<b>ต่อบริษัท</b> —
+    /// กันใช้กล่องนี้สแกนเอกสารทั่วไปเลี่ยงโควตา · เกินเพดาน = ไม่สแกน ไฟล์เข้ากล่องแบบรอตรวจ (ไม่ทิ้งหลักฐาน · ไม่ล้ม) · ตัวนับ DB (<c>IChatRateLimiter</c>)</summary>
+    public const int InternalScansPerMinute = 20;
+    public const int InternalScansPerDay = 200;
+
+    /// <summary>คีย์ตัวนับของเพดานข้างบน</summary>
+    public static string InternalScanKey(Guid companyId) => $"wht-intake-ocr:{companyId:N}";
+
+    /// <summary>ข้อความเมื่อเกินเพดาน (ต่อท้ายข้อความผลการส่ง)</summary>
+    public const string InternalScanCapNotice =
+        " · วันนี้สแกนใบ 50 ทวิ ในกล่องรับครบเพดานของบริษัทแล้ว — ไฟล์นี้เข้ากล่องแบบรอตรวจ (กรอกจากไฟล์) ไม่ได้อ่านอัตโนมัติ";
+
     public const int MaxSenderNameLength = 100;
 
     public const string NotFoundMessage = "ลิงก์ไม่ถูกต้อง — กรุณาติดต่อผู้ขายเพื่อขอลิงก์ใหม่";

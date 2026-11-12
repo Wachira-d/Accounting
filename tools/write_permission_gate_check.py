@@ -162,6 +162,8 @@ WATCHED = [
     "Accounting/Controllers/RecurringController.cs",
     # รอบ 258 — เงินรอจัดสรร: จัดสรร = ลง JE + ลดยอดค้าง (ระดับเดียวกับบันทึกรับชำระ) · ยกเลิกการจัดสรร = กลับ JE (ระดับ Void)
     "Accounting/Controllers/CustomerCreditController.cs",
+    # รอบ 260 — คิวสลิปจากแชต LINE: ผูกกับเอกสาร = สร้างรายการรอยืนยัน · ปิด = ทิ้งหลักฐานจากลูกค้า (ระดับเดียวกับยืนยัน/ปฏิเสธสลิป)
+    "Accounting/Controllers/LineChatSlipController.cs",
     # รอบ 258 (A-H1 · B-H1) — กฎตารางส่ง (สร้าง/แก้/ลบ) + คิวอีเมล (ส่งอีกครั้ง/ยกเลิก) เดิมมีแค่ [Authorize] ขณะที่คิว LINE ในไฟล์เดียวกันมีด่าน
     # (คู่สมมาตรที่แก้ฝั่งเดียว) ⇒ Viewer ใส่ Bcc เป็นอีเมลตัวเองแล้วได้สำเนาใบกำกับ/สลิปเงินเดือนทุกใบ · ด่าน = RequireSettingsAsync → Helpers/SettingsWriteGate
     "Accounting/Controllers/EmailScheduleController.cs",

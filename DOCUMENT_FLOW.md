@@ -467,6 +467,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     `Company.Address` ความมั่นใจ **0.70** (สีเหลือง + เหตุผล §86/4) · ห้ามทับที่อยู่ที่พิมพ์ · สาขาผู้ซื้อบนกระดาษเป็นสาขาอื่นของเรา ⇒ ไม่เติม · ข้าม e-Tax XML
   - **ที่อยู่ผู้ขาย (#15)** — ตรงแล้ว ไม่แก้: `VendorAddress` = ที่พิมพ์ (หลักฐาน) · ทะเบียนลง `DbdAddress` แยกช่อง · `Contact.Address` ผ่าน `OcrIssuerBranch.ContactAddress` ·
     ค้นทะเบียน RD แยกสาขาทั้งแถว (#18 · §6.2i)
+  - **ฝ่ายค้านรอบ 260-3 (`erp-review/2026-11-12/review-260-3.md` · คำตัดสิน 260-3-6…8)**: ทางเข้าเป็นเงื่อนไข SQL ตัวเดียว (`WhereSource`) ใช้ทั้งตัวนับ (`CountAsync` ต่อทางเข้า —
+    ไม่โหลดใบทั้งหมด) และ `?source=` ที่กรองก่อน `Take` (ค่าไม่รู้จัก = 400) · รายการ ≤ 500 · หมายเหตุ "แสดงบางส่วน" ทุกทาง · ไม่นับใบขอซื้อ/ใบสั่งซื้อ (`InboxTypes`) ·
+    Last verified `commit b951eadb`
+  - **กล่องใบซื้อร่างรอตรวจ (รอบ 260-3 · คำตัดสิน 260-3-5)** — กล่องเดียวที่ `purchases.html` (`GET api/companies/{c}/purchase-inbox` → `Helpers/PurchaseDraftInbox.LoadAsync`):
+    ใบฝั่งซื้อ (`DocumentPermissionHelper.PurchaseTypes`) สถานะร่าง ไม่ถูกลบ ชั้นความลับที่ผู้ดูเห็น · ทางเข้าจาก `Classify` ตัวเดียว (คู่ค้า `PartnerSourceLinkId` › LINE
+    metadata สแกนมี `"sourceChannel":"line"`/`"lineUserId"` › ไฟล์ e-Tax XML `OcrEngine=EtaxXml` › สแกน OCR › สร้างเอง) · ตัวนับกับรายการมาจาก query เดียว (ผลรวม = แถว · ตัดรายการที่ limit
+    แต่ตัวนับครบ) · ต้องเห็นฝั่งซื้อ (403) · ลิงก์ 3 กล่องเดิมบนหน้าถูกถอด — review-queue = คิวสอนระบบ OCR · partners = หลักฐานภาษีซื้อของใบจากคู่ค้า (ลิงก์งานเฉพาะทางต่อแถว)
   - **คิวรอตรวจ (#31/#32 · ทีม U2)** — `GET ocr/review-queue` คืน `{ items, drafts, summary }`: **ร่างที่สร้างจากสแกน** (`ActiveLearningRanker.DraftsFromScansAsync` ·
     กรองด้วยสิทธิ์มองเห็นชุดเดียวกับลิสต์เอกสาร · กดแล้วไป `documents.html?openDoc=`) + **ทุกใบในงวดที่ยังไม่ปิด** (ไม่ตัดที่ 30 วัน · `Helpers/ClosedPeriodRanges` —
     `FiscalPeriod.Status ∈ {Closed, Locked}` · ไม่มีแถวงวด = เปิด · ช่วงครึ่งเปิด `[Start, EndDate+1วัน)`) · นิยาม "อยู่ในคิว"/"วันที่ทางบัญชีของสแกน" เป็น expression
@@ -2085,6 +2092,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **ยังไม่มี**: ดึงรอบโอนอัตโนมัติ · อ่าน `fee_vat` จาก Omise (G-7) · chargeback/reserve · marketplace/OTA · โอน 11630 ที่เลย §82/3 เป็นค่าใช้จ่ายอัตโนมัติ
   (รอเจ้าของ/นักบัญชี — review198-A R-E3) · บล็อกเอกสารซื้อจากผู้ให้บริการที่ยังมี 11630 ค้าง (ต้องผูกผู้ให้บริการ ↔ ผู้ติดต่อก่อน)
 
+- **รอบ 260-3 (คำตัดสิน 260-3-4) — การ์ด "ความพร้อมรับเงินจากลูกค้า" บน `payment-settings.html`** (`GET payment-settings/readiness` → `Helpers/PaymentChannelReadiness.Build`):
+  แถว GATEWAY · PAY-LIVE · PAY-TRANSFER · PAY-LINK · LINE-PAY · SLIP-QUEUE ประกอบจากของเดิม — `AutopilotSettingsHub.Build` (ตัวเดียวกับการ์ดศูนย์รวมของ Autopilot) ·
+  `AutopilotReadiness.PayLiveItem` (แถวเดียวกับความพร้อมของรายการประจำ) · `LineChannelAsync` (LINE OA) · `SystemBaseUrl.IsConfiguredAsync` · ผู้ให้บริการเงินจริง =
+  `PaymentChannelReadiness.GatewayLiveAsync` (config ตัวแรกของ `Helpers/ActivePaymentConfig.Ordered` — ตัวเลือกเดียวกับลิงก์ชำระ/รายการรับชำระ — อยู่โหมดเงินจริง · ฝ่ายค้าน L4 — รายการประจำใช้ตัวนี้แล้ว เดิมไม่ดู `IsActive`) · แถบโหมดและสถานะเส้นโอน/สลิปบนหน้าอ่านจากแถวเหล่านี้
+  (ถอดการเดา live จาก configs และการหา `ManualSlip` ใน JS) · ตรวจไม่ได้ = ⚠️ ไม่ใช่ ✅ · Last verified `commit 86193689`
+
 ### 2.6 POS (Point of Sale)
 - **บัญชีธนาคารรับเงินของเครื่อง (รอบ 200 ทีม G · review198-E ข้อ E-3)**: หน้าตั้งค่าเครื่อง (`pos.html` โมดัล "ตั้งค่าเครื่อง") มีช่อง **"บัญชีธนาคารรับเงิน"**
   (ค่า = ผังบัญชีของบัญชีธนาคารที่ผูกผัง · `PosTerminal.BankAccountId` — เดิมมีใน API แต่ไม่มีช่องบนจอ ทั้งที่ข้อความล้มดังชี้ไปที่ช่องนั้น) · `TerminalResponse.MoneyAccountWarning`
@@ -3009,6 +3022,8 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   สแกนเสร็จ · ยังไม่สร้าง · ไม่ซ้ำ · ไม่มีลายมือ · ไม่ใช่สินทรัพย์ · มีผู้ขาย/ยอดรวม) — ช่องติ๊กอนุมัติรวดของ `document-scan.html` อ่านธงนี้ (กติกาใน JS ถูกถอด) ·
   `POST ocr/scan/{fileAttachmentId}` หักโควตา OCR เหมือน `/upload` (ล้ม/e-Tax XML/คัดลอกผลเดิม = คืน · โควตาหมด = 429 ข้อความเดียวกัน `OcrQuotaExhaustedAsync`) ·
   API v1 `POST v1/ocr/scan` คิดค่าบริการเฉพาะเมื่อใช้เครื่องอ่านจริงและสำเร็จ (`OcrQuotaRefundRule.NotBilledReason` — ตัวเดียวกับกติกาคืนโควตา) และตอบ `scanStatus` + `billing.billed/notBilledReason` ·
+  **แถวที่คิดไปแล้วก่อนรอบ 258** (คำตัดสิน 260-5-2): งานบูตครั้งเดียว `Helpers/OcrFailedScanRefund.RunAsync` (marker `r260-5-6-ocr-v1-failed-scan-refund` · `pg_advisory_xact_lock` · กันคืนซ้ำต่อแถวด้วย audit `system:ocr-v1-refund`) — ยังไม่เข้าใบ = ถอดจากรอบบิล · เติมเงิน = ล้างยอดใช้เครดิต (ไม่มีใบ ⇒ ถอดแถวด้วย) · เข้าใบแล้ว = แถวคงเดิม + กระดิ่งเจ้าของ "ยังไม่ได้คืน · รอใบลดหนี้ (ม.86/10)" + คิวแอดมิน `GET api/admin/platform-billing/ocr-v1-credit-notes` + กระดิ่งแอดมินแพลตฟอร์ม · ถือล็อกงวดเดียวกับงานออกบิล · ถอด/เครดิตด้วย UPDATE แบบมีเงื่อนไข/บวกเพิ่ม · นับสแกนล้มที่กินโควตาฟรีของเดือนที่ปิดรอบ · สแกนของบริษัทอื่น/สำเร็จจริง ไม่แตะ (คำตัดสิน 260-5-6) ·
+  กล่องรับ 50 ทวิ/ลิงก์อัปโหลดลูกค้า **ไม่หักโควตา — ตั้งใจ** (คำตัดสิน 260-5-4) · กล่องรับภายในมีเพดานสแกนต่อบริษัท 20/นาที · 200/วัน — เกิน = เข้ากล่องแบบรอตรวจไม่อ่านอัตโนมัติ (260-5-7) ·
   แท็บ OCR ของ `ai-tools.html`: ค่าจากกระดาษผ่าน `Layout.esc` ทุกช่อง · สถานะตามจริง (ล้ม = "สแกนไม่สำเร็จ") · ไม่สร้างเอกสารเอง (ลิงก์ไปหน้าสแกนเอกสารซึ่งมีหน้าตรวจ/คำเตือนใบซ้ำ)
 
 - **แก้ผล CI/ตัวตรวจของชุด 2–3 (โครงสร้างเท่านั้น — พฤติกรรมตามหัวข้อข้างบน)**: ลูปสแกนใกล้ครบ/เกินกำหนดอยู่ในเมธอดชื่อเดิม `ScanDueSoonAndOverdueAsync`
@@ -3127,9 +3142,65 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   `DocumentPayLinkService.EnsureLinkAsync(allowReissueRevoked)`: ลิงก์ที่ถูกเพิกถอน ⇒ ปุ่มพนักงาน/อีเมลตามตารางออกใหม่ได้ (audit `pay-link-reissued`) · หน้าต่างส่งเอง/พอร์ทัล ⇒
   `PayLinkRevokedException` · ลิงก์ที่ใช้อยู่ไม่ถูกเขียนทับช่องทาง · ลิงก์ทวง 50 ทวิ ตรวจเพิกถอน/หมดอายุตอนส่ง + เพิกถอนรวมเมื่อได้ใบครบ (`RevokeSettledReminderLinksAsync`) ·
   Last verified commit fa93803d
-- ยังไม่ทำ: เก็บสลิปจากแชตเป็นรายการรอตรวจ (ผูก PaymentIntent) + แจ้งทีม · ชั่วโมงเงียบ · กระดิ่งเมื่อคิว LINE ล้มซ้ำ · ตัวเลือกกลุ่ม/ผู้ใช้ที่บอทรู้จักนอกจากกลุ่มทีม ·
-  การ์ดความพร้อมบนหน้า payment-settings · L6 (`OnDocumentApprovedAsync` กลืนข้อผิดพลาด) ·
+- ยังไม่ทำ: ~~เก็บสลิปจากแชตเป็นรายการรอตรวจ (ผูก PaymentIntent) + แจ้งทีม~~ (ทำแล้วรอบ 260 — §2.12g-260) · การ์ดความพร้อมบนหน้า payment-settings ·
+  ~~ชั่วโมงเงียบ · กระดิ่งเมื่อคิว LINE ล้มซ้ำ · ตัวเลือกกลุ่ม/ผู้ใช้ที่บอทรู้จัก · L6~~ (ทำแล้วรอบ 260-4 — §2.12g-2604) ·
   เทสต์ `LineRound259Tests` · Db `LineRound259DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 7dc53e0c
+
+### 2.12g-2604 รอบ 260-4 LINE ที่เหลือจากแพ็ก B (team-A L6/L8 · review-259-pack-B · คำตัดสิน 260-4-*)
+
+- **ชั่วโมงเงียบ** (260-4-1/2): ค่าตั้งบริษัท `CompanySettings.LineQuietHoursEnabled/LineQuietStartHour/LineQuietEndHour` (ตั้งค่า → LINE · เวลาไทย · ค่าตั้งต้น**ปิด** ช่วงที่เสนอ 21:00–08:00 ·
+  ช่วงผิด ⇒ PUT 400) · ผู้อ่านตัวเดียว `ContactLineQueueService.ProcessPendingAsync` → `DeferForQuietHoursAsync` (ตัวตัดสิน `Helpers/LineQuietHours.DeferUntilUtc`): แถวที่จองได้ในช่วงเงียบ ⇒
+  กลับเป็น "รอส่ง" · `ScheduledFor` = สิ้นช่วงเงียบ · `RuleCode = LINE-QUIET-HOURS` + หมายเหตุบนแถว · ไม่นับความพยายาม (**เลื่อน ไม่ทิ้ง**) · ส่งแล้วหมายเหตุถูกล้าง ·
+  เลื่อน: อนุมัติ · ใกล้/เกินกำหนด · รายการประจำ · ทวง 50 ทวิ · **ส่งทันที**: ใบเสร็จหลังลูกค้าชำระ (`ReceiptIssued`) · ส่งเองจากหน้าเอกสาร (`ManualSend`) · คำตอบในแชตไม่ผ่านคิวนี้
+- **กระดิ่ง LINE ล้มซ้ำ** (260-4-4): การ์ดที่ LINE ปฏิเสธถาวร (`PushAsync`) ⇒ `AlertRepeatedFailureAsync` (scope แยก): ล้ม ≥ 5 ใน 1 ชม. หรือ Token/ช่องเสีย ⇒ แจ้งเจ้าของที่ยังใช้งาน
+  ครั้งเดียวต่อ 24 ชม. (`Notifications.EntityType = LineQueueRepeatedFailure` · กันซ้ำใต้ `pg_advisory_xact_lock` ต่อบริษัท) · โควตาเดือนหมด/OA กลางไม่นับ · Autopilot แสดง (`LineRepeatedFailure`)
+- **ปลายทางทดสอบที่รู้จัก** (260-4-3): `GET line-config/test-targets` (`CompanySettingsEdit` + ห้ามคีย์) ⇒ กลุ่มทีม + ปลายทาง LINE ของผู้ติดต่อในบริษัทนี้ที่ผูกกับ OA ของบริษัท (ชื่อ · ไม่มี LINE id) ·
+  `POST line-config/test` รับ key `ep:{id}` ⇒ หาใหม่ในบริษัทนี้ (`LineTestTargets.ResolveAsync`) · ปลายทางผู้ติดต่อ ⇒ หน้าถามยืนยันก่อน · พิมพ์ id เองยังได้
+- **A-L6** (260-4-6): `EmailScheduleService.OnDocumentApprovedAsync` เข้าคิวล้ม ⇒ LogError + กระดิ่งเจ้าของต่อเอกสาร (`AutoSendEnqueueFailed` · กันซ้ำต่อใบ) + Autopilot — การอนุมัติไม่ล้ม
+- **ชุดแก้ฝ่ายค้าน** (`erp-review/2026-11-12/review-260-4.md` · คำตัดสิน 260-4-7…15): ปลายทางทดสอบผ่านตัวตัดสินผู้รับเดียว (ความยินยอม PDPA · ผู้ติดต่อไม่ถูกลบ) +
+  ข้อความทดสอบไม่มี GUID + audit/PiiAccessLog เมื่อส่งถึงผู้ติดต่อ + ค่าเริ่มต้นตัวเลือก = กลุ่มทีม · ถอด LINE id ไม่ได้ ⇒ ลองใหม่หนึ่งครั้งแล้วล้มพร้อมคำแนะนำเรื่อง
+  ENCRYPTION_KEY + กระดิ่ง · กระดิ่งแยกชนิด (ล้มซ้ำ/Token/ถอดรหัส) · OA กลางล้ม ⇒ กระดิ่งผู้ดูแลระบบ · ผู้รับกระดิ่งตัวเดียว `LineAlertRecipients` (เจ้าของ ⇒
+  ผู้มีสิทธิ์แก้ค่าตั้ง) · เข้าคิวอัตโนมัติล้ม (อนุมัติ · เงินเดือน · 50 ทวิ) ถอดแถวที่ค้างก่อนแจ้ง · ใบเสร็จยกเว้นชั่วโมงเงียบเฉพาะลูกค้าชำระเอง
+  (`LineQueue.CustomerInitiated`) · ฟอร์มกฎเตือนชั่วโมงส่งในช่วงเงียบ · ปิดช่วงเงียบปล่อยแถวที่รอ · Autopilot ซ่อนเรื่องที่แก้แล้ว · สแกนใกล้/เกินกำหนดผ่าน JobLock
+- เทสต์ `LineRound260Tests` · Db `LineRound260DbTests` · ล็อก R2604 (+ เคส R2604a–c) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 2f2579a6 · ชุดแก้ฝ่ายค้าน commit 6611da26 (CI 43162956487 เขียว)
+
+### 2.12g-260 รอบ 260 "สลิปในแชต LINE ⇒ ผูกเอกสาร" (คำตัดสิน 260-1-1…260-1-6)
+
+- **ทางเข้า** — `CustomerLineWebhookController` (ลายเซ็นผ่าน + บอทตรง · กันซ้ำ webhookEventId เดิม) · รูป (`message.type=image`) ในแชต 1:1 หรือกลุ่มของผู้ติดต่อที่
+  **เปิดแสดงยอด** ⇒ เพดานเดิมของรอบ 259 (2/นาที · 10/วัน ต่อแหล่งแชต · failClosed) ⇒ `ILineChatSlipService.HandleImageAsync` · คืน null (ปิดสวิตช์ ·
+  กลุ่มไม่ผูก/ซ่อนยอด · ไม่ใช่รูปที่รับ) ⇒ คำตอบเดิม `LineOaHealth.ChatMediaReply` / เส้นกลุ่มเดิม · ไฟล์ (`file`) ยังได้คำตอบเดิม
+- **อ่านสลิป** — ดึงรูปด้วย token ของบริษัท (`ICustomerLineLinkService.DownloadMessageContentAsync` · ≤ 10 MB) · ชนิดจากไบต์จริง (`SlipEvidenceRule.DetectPublicType`) ·
+  OCR ในเครื่อง (`ISlipImageReader` = Tesseract) + ตัวแยกข้อความเดียว `Helpers/OcrSlipText` (ยอด "มั่นใจ" เฉพาะบรรทัดจำนวนเงินให้ยอดเดียว หรือทั้งสลิปมียอดเดียว ·
+  เลขอ้างอิง · วันที่ พ.ศ.) · **ไม่มี AI** (260-1-2 — ไม่มี distillation ที่ต้องทำ · kill-switch ไม่มีผล) · ยังไม่ถอด QR (ไม่มีตัวถอดในระบบ · QR สลิปไทยไม่มียอด)
+- **กันซ้ำ** — แฮชไฟล์ หรือเลขอ้างอิง ตรงกับแถวแชตที่ยังเปิด (`LineChatSlipRule.Statuses.Live`) หรือรายการรอยืนยัน/รับเงินแล้ว (`SlipEvidenceRule.DuplicateStatuses`) ⇒
+  ตอบ "ส่งเข้ามาแล้ว" · ไม่มีแถวใหม่
+- **ตัดสิน** `LineChatSlipRule.Decide` — ผู้สมัคร = เอกสารค้างชำระของผู้ติดต่อที่ผูก LINE นั้น (บริษัทเดียวกัน · ใบที่ `DocumentPayLinkPolicy.IssueRefusal` ปฏิเสธไม่เป็นผู้สมัคร ·
+  ร่าง/รออนุมัติ/ยกเลิก/ปฏิเสธ/ชำระครบ ตัดโดย `DocumentSlipIntents.UploadProblem`) · ตรง "ยอดที่ลูกค้าต้องโอน" (= ยอดค้าง ซึ่งเป็นยอดหลังหัก ณ ที่จ่ายแล้ว) จาก
+  `IDocumentPayLinkService.DueAmountsForDocumentAsync` (ตัวคิดเดียวกับหน้าชำระ/พอร์ทัล — ไม่สร้าง QR) ตรงถึงสตางค์ (AwayFromZero) · ไม่จับผลรวมหลายใบ (260-1-3) ·
+  ยอดเต็มก่อนหัก (ลูกค้าไม่หัก — เกินยอดค้าง) ⇒ คิวพนักงานเหตุ `GrossBeforeWht` (ไม่ผูกเอง · แบบเดียวกับ BankReceiptAutoSettle "เสนอเท่านั้น")
+  - **ใบเดียว + ยอดมั่นใจ** ⇒ `SlipEvidenceService.SubmitAsync` (ช่องทาง `line-chat-customer` · ไฟล์โฟลเดอร์ไม่เสิร์ฟตรง · ไฟล์แนบของเอกสาร · แจ้งทีม E-06) =
+    `PaymentIntent(ManualSlip)` **รอยืนยัน** ในคิวเดียว (`payment-intents.html?status=Pending` · Autopilot `SlipPending`) · ไม่สร้าง Payment · ไม่ประทับชำระ ·
+    ปิดหนี้ทางเดิมเท่านั้น: คนยืนยัน หรือรายการเดินบัญชีจริงที่ `BankReceiptAutoSettle` จับเลขอ้างอิงได้ ⇒ ใบเสร็จ/ใบกำกับ/ส่งอัตโนมัติตามเดิม ·
+    ตอบในแชตเลขที่ + ยอด (ยอดเฉพาะปลายทางที่แสดงยอด)
+  - **หลายใบ / ยอดไม่มั่นใจแต่ตรงบางใบ** ⇒ แถว `AwaitingChoice` (อายุ 24 ชม.) + quick reply ≤ 10 ใบ + "ไม่ใช่ใบเหล่านี้" · postback `ls1|slip|doc|sig`
+    ลงลายเซ็น HMAC (กุญแจจาก Channel Secret · ผูก บริษัท + แหล่งแชต + สลิป + ใบ — `LineChatSlipRule.Sign/Verify` ตัวเดียว) · เซิร์ฟเวอร์ตรวจซ้ำ: แถวของบริษัท ·
+    แหล่งแชตเดียวกัน · ยังรอเลือก/ไม่หมดอายุ · ใบอยู่ในชุดที่เสนอ · ผูก LINE ยังอยู่ + ใบยังเป็นของผู้ติดต่อนั้น · compare-and-set (กดซ้ำ = ครั้งเดียว) ⇒ ประตูเดิม
+  - **ไม่ตรง / อ่านไม่ได้ / ไม่ได้ผูก LINE / ลูกค้าปฏิเสธ / หมดอายุ / แจ้งโอนไม่ผ่านด่าน** ⇒ แถว `Unmatched` พร้อมเหตุ (`LineChatSlipRule.Reasons`) + แจ้งทีม ·
+    ตอบ "ทางร้านจะตรวจ"
+- **คิวพนักงาน** — กล่อง "สลิปจากแชต LINE ที่ยังไม่ผูกเอกสาร" บนหน้ารายการรับชำระออนไลน์ (`js/line-chat-slips-queue.js` · `LineChatSlipController`:
+  ดู = `BankView` · ผูก/ปิด = `BankReconcile` เดียวกับยืนยัน/ปฏิเสธสลิป) · ผูก = เลือกใบที่เสนอหรือพิมพ์เลขที่ (+ยอด) ⇒ ประตูเดิม (`Assigned` · audit) ·
+  ปิด = ต้องมีเหตุ (audit) · เงินที่ยังไม่รู้ว่าใบไหน ⇒ รอรายการเดินบัญชีแล้วบันทึก "เงินรอจัดสรร" ที่หน้าธนาคาร (เส้นเดิม — ไม่สร้างเงินจากสลิป) ·
+  Autopilot `LineChatSlipUnmatched` ชี้คิวเดียวกัน
+- **ค่าตั้ง** — `CompanySettings.LineChatSlipIntakeEnabled` (ค่าตั้งต้นเปิด — 260-1-4 · แท็บ LINE ของหน้าตั้งค่า · PUT `chatSlipIntake` null = คงเดิม) ·
+  แถวความพร้อม `chat-slip` (`LineChatSlipRule.ReadinessRow`: ปิด · OA/webhook ยังไม่พร้อม · เครื่องนี้อ่านรูปไม่ได้ · พร้อม) · ตาราง `LineChatSlips` (`Round260LineSlipMigration`)
+- **ฝ่ายค้าน 260-1 (คำตัดสิน 260-1-7…10)** — M1 ref จาก OCR ไม่ประทับลงรายการรอยืนยัน (`bankRef: null`) · ref ซ้ำรูปต่าง ⇒ คิวพนักงาน `DuplicateRef` ·
+  M2 ล้มด้วยเหตุใดก็ตามหลังจอง ⇒ แถวกลับคิว (`SystemError` · `FallbackToStaffAsync`/`RestoreToStaffAsync`) · พนักงานผูกล้ม ⇒ คืนสถานะ (`finally`) · ไฟล์เขียนแล้วแถวไม่ได้บันทึก ⇒ ลบไฟล์ ·
+  แถวค้าง "กำลังแจ้งโอน" > 10 นาทีอยู่ในคิว · M3 ผูกเองเฉพาะภาพที่ดูเป็นสลิป (`LooksLikeSlip`) · M4 ลบสำเนารูปเมื่อผูก/ปิด + `LineChatSlipRetentionJob` (90 วัน) + PiiAccessLog + RoPA ·
+  M5 คิวพนักงาน: ค่าเริ่มต้นว่าง · เลือก+พิมพ์พร้อมกัน = ขัดกัน · ยอดอ่านไม่ออก = ไม่ส่ง · L1 messageId เดียว = แถวเดียว (unique) · L2 ไม่ผูก: ไม่แจ้งรายแถว + 30/วัน ·
+  L3 กลุ่มตรวจการผูกก่อนกินเพดาน · ปุ่มมีเพดาน 6/นาที 60/วัน · L4 ยอดที่ต้องโอนหักสลิปรอตรวจของใบ (เต็มแล้วไม่เป็นผู้สมัคร · เหลือบางส่วนเป็นผู้สมัครด้วยยอดที่เหลือ) · L5 กรองชนิดใน SQL ก่อนจำกัด · GET ไม่เขียนฐาน (คิวคำนวณจากสถานะ+เวลา `QueueOf`) ·
+  L6 ผูกด้วยเลขที่: เฉพาะชนิดที่รับชำระได้ · ซ้ำหลายใบ ⇒ 409 · ใบของผู้ติดต่ออื่น ⇒ คำเตือน + audit `crossContact` · L7 badge สลิปค่าบริการผ่าน `OcrSlipText.BadgeAmount` (เทสต์สองทิศ) ·
+  L8 ปีสองหลักตัวเดียว `OcrSlipText.TwoDigitYear` · L9 ปิดสวิตช์ ⇒ ปุ่มเดิมกดไม่ได้ (คิวพนักงาน) · ป้ายไฟล์แนบ `line-chat-staff`
+- เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde (ฝ่ายค้าน: 65c031ed)
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
 
@@ -3166,7 +3237,22 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   แต่ใบรับโอนได้ ⇒ `SlipFallback` = กล่องโอน/สลิปของพอร์ทัล (ยอดอ่านอย่างเดียว) · เหตุที่ชำระไม่ได้ถึงลูกค้า = `PortalDocumentStatus.PayRefusalForCustomer` (ไม่ส่งเหตุภายในของร้าน) · `UploadDocumentSlipAsync` ไม่ส่งยอด ⇒ ยอดสุทธิหลังหัก ณ ที่จ่าย (`TransferForDocumentAsync.Net`) ·
   ป้าย/"เกินกำหนด" ของพอร์ทัล = `PortalDocumentStatus` (วันที่ไทย) บน `PortalDocumentResponse`
 - **คิวสลิปเจ้าของเดียว (E-M4 · 259-3-3)**: ยืนยัน/ปฏิเสธสลิป = `payment-intents.html` (`?status=Pending`) · Autopilot issue `SlipPending` + KPI `slipAwaitingConfirm` ชี้ไปคิว
-  (ไม่มีปุ่มยืนยันที่ Autopilot) · ยืนยันด้วยมือ = `Layout.formDialog` (ยอดอ่านอย่างเดียว · วันที่เงินเข้าแบบเลือกวัน · เหตุผล) — บัญชีเงินเข้าตามผังรับเงินของช่องทางเหมือนเดิม
+  (ไม่มีปุ่มยืนยันที่ Autopilot) · ยืนยันด้วยมือ = `Layout.formDialog` (ยอดอ่านอย่างเดียว · **บัญชีที่เงินเข้า (สลิปโอน · รอบ 260-2)** · วันที่เงินเข้าแบบเลือกวัน · เหตุผล)
+- **บัญชีที่เงินตามสลิปเข้า (รอบ 260-2 · คำตัดสิน 260-2-1…5 · `erp-review/2026-11-12/team-260-2-slip-bank-account.md`)**: ตัวตัดสินเดียว `Helpers/SlipReceivingAccount`
+  (ใช้กับ manual-slip เท่านั้น — เงินผ่านผู้ให้บริการ = บัญชีพักของ `IGatewayAccountResolver` ตามเดิม · เลือกธนาคาร = 400) ·
+  `POST …/pay/intents/{id}/confirm-manually` รับ `bankAccountId` (ว่าง = ค่าแนะนำ) — ตรวจ: บัญชีของบริษัทนี้ · เปิดใช้ · สกุลเดียวกับรายการ · ไม่ใช่ฝากประจำ ·
+  มีเลขบัญชี/พร้อมเพย์ · ผูกผังที่ลงรายการได้ (`DocumentMoneyChannel.EvaluateAsync`) · ใช้ไม่ได้ = 400 พร้อมเหตุ (ไม่ตกไปเงินสด) ·
+  ค่าแนะนำ (ลำดับตายตัว): **แหล่งเงินของเอกสาร** (สืบทอดตามเดิม — ไม่ส่ง override) → **บัญชีที่แสดงให้ลูกค้าโอน** (`PaymentQrService.PickForDocumentAsync` ตัวเดียวกับกล่องโอนของหน้าชำระ
+  → บัญชีรับโอนของเว็บแถวแรกที่เลขบัญชีตรงบัญชีธนาคาร) → **บัญชีรับโอนบัญชีเดียว**ของบริษัท → ไม่แนะนำ (หลายบัญชี = ไม่เดา ⇒ แหล่งเงินของเอกสาร/เงินสด 111 ตามเดิม) ·
+  บัญชีผู้รับที่อ่านจากสลิปเองยังไม่มีตัวอ่าน (ไม่แต่ง) · ตัดสินแล้ว**ประทับ** `PaymentIntent.ReceivingBankAccountId` + `ReceivingAccountOrigin` + audit `SlipReceivingAccountDecided`
+  (เลือก vs แนะนำ) ใต้ล็อกต่อรายการก่อน `ApplyChargeAsync` ⇒ `DocumentPaymentHandler` ส่ง `OverrideBankAccountId` ⇒ `CreatePaymentAsync` (JE Dr ผังที่บัญชีผูก · `Payment.BankAccountId` ·
+  ยอดธนาคาร · ใบเสร็จอัตโนมัติสืบทอด `BankAccountId` = "ชำระโดย" · ผู้สมัครกระทบยอดธนาคารของบัญชีนั้น) · ส่งต่อใหม่ใช้ค่าที่ประทับ · รายการที่ยังไม่ประทับ (ก่อนรอบนี้) = ค่าแนะนำ ·
+  สลิปการจองนัดหมาย (`SiteBookingPaymentHandler` — หน้าการจองเลือกไม่ได้) = ค่าแนะนำตัวเดียวกัน (บัญชีรับโอนของเว็บนั้น → บัญชีเดียว) ส่งเป็น `RecordBookingPaymentRequest.BankAccountId` ·
+  `GET …/pay/intents/{id}/receiving-accounts` (ตัวเลือก + ใช้ได้/เหตุ + ค่าแนะนำ + เหตุผล · สิทธิ์ `BankReconcile` + ปฏิเสธคีย์ API เท่าปุ่มยืนยัน) · หน้ารายการ echo บัญชีที่ใช้ ·
+  ฝ่ายค้าน 260-2 (คำตัดสิน 260-2-6/7): ยุบเป็นสืบทอดเฉพาะแหล่งเงินที่เป็นธนาคารเอง (ผังที่ผูกธนาคาร ⇒ ส่งธนาคารนั้น) · "แสดงให้ลูกค้า" = บัญชีที่มี QR เท่านั้น ·
+  บัญชีรับโอนของเว็บที่ไม่ตรงบัญชีใด ⇒ ไม่เดา · แหล่งเงินเอกสารใช้ไม่ได้ + ไม่เลือก = 400 · ตรวจซ้ำใต้ล็อก · ปฏิเสธสลิปถือล็อกเดียวกัน · ประทับ+audit ธุรกรรมเดียว ·
+  ไม่เปลี่ยนสถานะ = คืนค่าเดิม + 409 · `POST …/redispatch` รับ `bankAccountId` (เฉพาะรายการค้าง) · ชื่อธนาคารต้องเข้ากันตอนจับเลขบัญชีของเว็บ ·
+  **ไม่อยู่ในรอบนี้**: สลิปคำสั่งซื้อเว็บ (`CmsCommerceService.ConfirmPaymentAsync` — ไม่มี PaymentIntent) · สลิปมัดจำที่พักเลือกบัญชีที่หน้าที่พักอยู่แล้ว · ปิดหนี้จากรายการเดินบัญชีใช้บัญชีของรายการเอง
 - **ศูนย์รวมค่าตั้ง (E-M2 · 259-3-4)**: `AutopilotSettingsDto.Hub` (`AutopilotSettingsHub`) แสดงสถานะ + ลิงก์บ้านของค่า · wht-credit มีสวิตช์ทวง 50 ทวิ (endpoint เดิม)
 - **ค่าตั้งผู้ติดต่อ (E-M6 · 259-3-5)**: แผงใน contacts.html (endpoint `recurring/contacts/{id}/autopilot` เดิม) · recurring.html ปุ่มบันทึกหลักบันทึกค่าผู้ติดต่อที่แก้ค้าง
 - **ปิดงวด (E-M7 · 259-3-6 · ฝ่ายค้าน M2 259-3-8)**: เช็กลิสต์ใน fiscal.html **และด่านของปุ่มปิด** (`AccountingService.CloseFiscalPeriodAsync` → `RunForPeriodAsync`) = `PreCloseChecklistService`
@@ -3402,7 +3488,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     แพ็ก `notify.topup.line` ฿290/1,000 · `notify.topup.email` ฿190/5,000 · อีเมลเอกสารผ่าน SMTP ของ NextAcc ตัดโควตารายเดือน (ด้านบน · ACCOUNT_STRUCTURE §5)
   - **เฝ้าต้นทุน OA กลาง — รอบ 254 L4 (N8)**: `NextAccOaQuotaWatch` รายชั่วโมง (push จาก LINE + ตัวนับ reply ต่อเดือน) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% · ไม่ตัดโควตาผู้เช่า
   - **ยังไม่ทำ (บอกตรง ๆ)**: กลุ่ม/ส่งผ่าน OA กลางของบริษัท**อื่น** + สวิตช์ `CentralOaGroupDeliveryEnabled` (ทำพร้อมกัน — DECISIONS 254-WP11-11 · บริษัทผู้ให้บริการเปิดแล้วตาม 256-2) ·
-    ชั่วโมงเงียบ · LINE ของใบแจ้งยอด/ลิงก์เซ็น (L6 — ลิงก์ดู PDF · ใบเสร็จหลังรับชำระ ทำแล้วรอบ 258-3 · 50 ทวิ ทำแล้วรอบ 259 §2.12g-259) · กระดิ่งเมื่อล้มซ้ำ ·
+    LINE ของใบแจ้งยอด/ลิงก์เซ็น (L6 — ลิงก์ดู PDF · ใบเสร็จหลังรับชำระ ทำแล้วรอบ 258-3 · 50 ทวิ ทำแล้วรอบ 259 §2.12g-259) · ~~ชั่วโมงเงียบ · กระดิ่งเมื่อล้มซ้ำ~~ (ทำแล้วรอบ 260-4 §2.12g-2604) ·
     เทสต์ `LineDeliveryRound254Tests` · Db `LineQueueRound254DbTests` · ล็อก R254 (+ เคส R254a–j) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit cee44a3c
   - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·
     แจ้งเตือนจองคิว/บริการ (`BookingNotifier` — ลูกค้าเว็บ ไม่ใช่ปลายทางผู้ติดต่อ) · พอร์ทัล/ใบเสนอราคาสาธารณะ (ผู้รับเปิดเอง)
@@ -4470,7 +4556,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **ยกเลิกใบที่การรับชำระยังมีเงินรอจัดสรรค้าง** (`VoidDocumentAsync`): ปฏิเสธ 409 `CC-VOID-DOC-CREDIT` ก่อนแตะอะไร — ให้ยกเลิกการรับชำระนั้นเองก่อน · ใบที่มีใบเสร็จของการรับชำระ (H2) ถูกกันด้วยด่านเอกสารลูกเดิมก่อนถึงด่านนี้ (ทิศเดียวกัน)
   (เดิม cascade ยกเลิกการรับชำระทั้งก้อน ⇒ เงินส่วนเกินที่รับจริงหายจากบัญชีเงียบ ๆ) · ใบที่ถูกจัดสรรทีหลัง = ถูกกันด้วยด่าน "ชำระร่วมกับเอกสารอื่น" เดิม (ยกเลิกการจัดสรรก่อน)
 - **ใบเสร็จรับเงิน/ใบกำกับภาษี "รายใบ"** (ฝ่ายค้าน H2 · ม.86 · 258-1-20): การรับชำระที่มีแถวจัดสรร (เงินเกิน · หลายใบ · จัดสรรทีหลัง) ออกใบเสร็จ**ต่อใบที่ปิด**ผ่านเส้นเดิม
-  `IssueReceiptForPaymentAsync(…, forDocumentId)` (ยอด = ยอดที่จัดสรรให้ใบนั้น · วันที่ = `LateReceiptTaxPoint.EffectiveReceiptDate` · ถือ VAT เมื่อการจัดสรรนี้ปิดใบทั้งใบ — `SettlementReceiptPolicy` เดิม ·
+  `IssueReceiptForPaymentAsync(…, forDocumentId)` (ยอด = ยอดที่จัดสรรให้ใบนั้น · วันที่ = `LateReceiptTaxPoint.EffectiveReceiptDate` — **เงินค้างออกใบที่รับก่อนวันที่ใบแจ้งหนี้ ใบลงวันที่รับเงินจริง ไม่เลื่อนเป็นวันที่ใบแจ้งหนี้** (คำตัดสิน 260-5-1: ม.105 · ม.78/1 · ม.86 ชี้วันเดียวกัน · งวด VAT = เดือนรับเงิน) · **งวดรายงานของใบที่ถือ VAT = `TaxPointDate` = `OutputVatDueAt` ของใบต้นทาง** (260-5-5 H1 — งวดรับเงินปิด/เลยกำหนด ⇒ งวดปัจจุบันครั้งเดียว ไม่หาย) · ใบที่ถือ VAT ของใบที่ภาษีถูกพักแล้วย้ายได้หมายเหตุภายใน `[LATE-TAX-INVOICE]` บอกงวดจากค่านั้น (`LateReceiptTaxPoint.IssuedAfterMoneyNote` ในตัวสร้างใบเสร็จตัวเดียว `CreateSettlementReceiptAsync` — ออกช้ากว่า ม.86 "ทันที" · ไม่พิมพ์ถึงลูกค้า · ภาษีไม่ได้พัก เช่นสินค้า = ไม่มีหมายเหตุ) · ถือ VAT เมื่อการจัดสรรนี้ปิดใบทั้งใบ — `SettlementReceiptPolicy` เดิม ·
   หาเจอด้วย `SettlementPaymentId + RelatedDocumentId` · ใบหลักยังผูก `Payment.ReceiptDocumentId`) — **ออกอัตโนมัติหลัง commit** ตามนโยบายเดียวกับรับชำระใบเดียว (`ReceiptIssuePolicy`) ทั้งใน
   `CreateMultiDocPaymentAsync` และหลังจัดสรร (`TryAutoIssueAllocationReceiptAsync`) ⇒ ใบแจ้งหนี้มี VAT ที่จ่ายเต็มพร้อมเงินเกินได้ใบกำกับภาษี/ใบเสร็จเหมือนเดิม · **ออกไม่ได้** = ป้าย
   `[RECEIPT-PENDING]` + เหตุผลบนใบ (`PaymentExcessPlan.ReceiptPendingNote` · ไม่ใช่แค่ข้อความชั่วคราว) + คิว "ใบที่ต้องออกใบเสร็จ/ใบกำกับ" ที่หน้าเงินรอจัดสรร (`CustomerCreditService.ReceiptPendingAsync` —
@@ -4523,6 +4609,14 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   (คำขอละใบผ่าน `POST document/payments/{id}/receipt?documentId=` เดิม · ผลรายแถว) · ส่งออก `GET customer-credits/export?format=xlsx|csv` (`Helpers/CustomerCreditExport` →
   `TabularExport`/MiniExcel — ตัวเลขเดียวกับหน้า) · หลังอนุมัติใบขายที่หน้าเอกสาร: ถามจาก `for-document` (เซิร์ฟเวอร์) "ลูกค้ามีเงินรอจัดสรร x บาท — ใช้ตัดใบนี้?" · ใบแจ้งยอดลูกค้า
   แสดงเงินรอจัดสรรแยกบรรทัดอยู่แล้ว (รอบ 258)
+- **รอบ 260-3 (คำตัดสิน 260-3-1…3) — เงินรอจัดสรรถึงลูกค้า + กระดิ่งค้างนาน**: (1) **พอร์ทัลลูกค้า** แท็บใบแจ้งยอด (`GET api/portal/{c}/statement` →
+  `PortalStatementResponse.UnappliedCredit` จาก `CustomerCreditQuery.UnappliedForContactAsync(ผู้ติดต่อในโทเคน)`) แสดงยอดแยก **ไม่หักจากยอดคงเหลือ** · อยู่ใต้ธง
+  "ดูใบแจ้งยอด" ของเส้นเดิม (ธงปิด = 403 ทั้งเส้น · ไม่มีธงใหม่) · หน้าสิทธิ์พอร์ทัลของพนักงาน (`customer-portal.html` · `PortalAccessResponse.UnappliedCredit/UnappliedCreditShownToCustomer`
+  ด่าน `PortalAccessPermissions.CreditShownToCustomer` = เส้น statement) บอกยอด + ลูกค้าเห็นไหม · (2) **ใบแจ้งยอดรายเดือนทางอีเมล** (`ScanMonthlyStatementsAsync`)
+  เพิ่มบรรทัดเงินรอจัดสรร + ตัวแทน `{UnappliedCredit}` ในแม่แบบ — ใบแจ้งยอดไม่มี PDF (ไม่มี renderer คู่) · (3) **กระดิ่ง `ar.credit.unallocated_aging`**
+  (`Helpers/CustomerCreditAgedNotice.RunAsync` ใน `OverdueDunningJob` ใต้ JobLock): นิยาม "ค้างเกิน 30 วัน" = `CustomerCreditWorkQueue.AgedAsync` ตัวเดียวกับ issue
+  `CustomerCreditAged` ของ Autopilot · หนึ่งรายการต่อบริษัทต่อรอบ (จำนวน · ยอดรวม · เก่าสุด) → ประทับ `Payment.UnappliedAgedNoticeAt` (แจ้งครั้งเดียวต่อการรับชำระ ·
+  ประทับเฉพาะเมื่อ `INotificationEngine.DispatchWithOutcomeAsync` คืน Delivered/SuppressedByCompany — ล้ม/ไม่มีผู้รับ/ไม่รู้ผล = ไม่ประทับ · นับ/ประทับด้วย `AgedQuery(onlyUnnotified)` ใน SQL ไม่ตัด 500 · ฝ่ายค้าน M1/M2) · ค่าตั้งต้น = กระดิ่งเจ้าของ (`NotificationAudiencePolicy.BellOnlyKeys`) · Last verified `commit 86193689`
 - **ฝ่ายค้านรอบ 259** (`erp-review/2026-11-11/review-259-pack-A.md` · คำตัดสิน 259-1-10…16): **H1** ยกเลิกเอกสารที่ cascade ยกเลิกการรับชำระซึ่งมีขาออกที่ตัดยอด =
   409 `CC-VOID-MOVEMENT` ก่อนกลับ JE และ**ก่อนด่านเอกสารลูก** (ใบเสร็จรายใบเป็นลูก — ผู้ใช้ต้องได้เหตุจริงก่อน) + ตรวจซ้ำในธุรกรรม (`CustomerCreditLedger.VoidBlockForPaymentsAsync` ใน `VoidDocumentAsync`) · **H2** ใบมัดจำอนุมัติแล้วแต่ขั้นหลังอนุมัติล้ม ⇒ **ไม่ปล่อยการจอง**
   (`CustomerCreditMovementRules.DepositIssued`) ผูกใบ + ข้อความ · **M1** หลังจองใช้ `CancellationToken.None` จนจบ · ยกเลิก ToDeposit ที่ยังไม่ผูกใบ: หาใบมัดจำของเงินก้อนนี้
@@ -8830,5 +8924,14 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส�
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D — §2.12g-259d: Autopilot ส่วนที่เหลือ (B-M3/M4/M6 · L1–L4 · L11) + OCR (C-M2/M5 · C-L1/L3/L4) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 21c7bce5)_
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก B ส่งทาง LINE ให้ครบ — §2.12g-259: ทวง 50 ทวิ ทาง LINE (การ์ด + ลิงก์อัปโหลดต่อแถว) · 💬 ส่งทาง LINE เองจากหน้าเอกสาร + ลิงก์ชำระในอีเมลที่ส่งเอง · เรื่องที่ LINE ไม่ส่งติ๊กไม่ได้ + migration · ความพร้อม OA (webhook เข้าจริง · Basic ID · ผลทดสอบ · เหตุจริงเมื่อทดสอบล้ม) · ประกาศผูกกลุ่มตามผลจริง · ตอบรับรูป/ไฟล์ในแชต · ลบ DocumentLineDeliveryService — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7dc53e0c)_
+_Last verified against codebase: 2026-11-12 (รอบ 260-4 LINE ที่เหลือจากแพ็ก B — §2.12g-2604: ชั่วโมงเงียบ (เลื่อน ไม่ทิ้ง · ใบเสร็จ/ส่งเองยกเว้น) · กระดิ่ง LINE ล้มซ้ำ/Token เสีย + Autopilot · ปลายทางทดสอบที่รู้จักจากการผูก · A-L6 เข้าคิวตอนอนุมัติล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2f2579a6 · แก้ CI c40109a8 · d36c96d3)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D ฝ่ายค้าน — §2.12g-259d: H1/H2 · M1–M4 · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d493044a)_
+
+_Last verified against codebase: 2026-11-12 (รอบ 260-2 — §2.12g-259c: บัญชีที่เงินตามสลิปเข้า (`Helpers/SlipReceivingAccount` · confirm-manually รับ bankAccountId · ประทับบนรายการ · handler เอกสาร/การจองส่งต่อ) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit abce9847)_
+_Last verified against codebase: 2026-11-12 (รอบ 260-3 — §3.4b เงินรอจัดสรรบนพอร์ทัล/อีเมลใบแจ้งยอด + กระดิ่งค้างนาน · §2.6b การ์ดความพร้อมรับเงิน · §OCR กล่องใบซื้อร่างกล่องเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 86193689)_
+_Last verified against codebase: 2026-11-12 (รอบ 260-5 ทีมตัดสินใจ — §3.4b ใบกำกับ ณ วันรับเงินที่รับก่อนใบแจ้งหนี้ · §2.12g-258 ชุด 5 คืนค่าสแกน API v1 ที่ล้ม · 50 ทวิ ไม่หักโควตา — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ccbc0de2)_
+
+_Last verified against codebase: 2026-11-12 (รอบ 260-2 ชุดแก้ฝ่ายค้าน — §2.12g-259c: M1–M4 · L1–L4 (L5 บันทึกไว้) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4226d3e4)_
+_Last verified against codebase: 2026-11-12 (รอบ 260-3 ฝ่ายค้าน — M1 ผลการส่งจริงก่อนประทับ · M2 นับ/กรองใน SQL · M3 กรองทางเข้าก่อนตัด · L1–L5 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b951eadb)_
+_Last verified against codebase: 2026-11-12 (รอบ 260-5 ชุดแก้ฝ่ายค้าน — §3.4b งวดรายงานของใบกำกับ ณ วันรับเงิน = OutputVatDueAt (H1) · หมายเหตุตามงวดจริง (M1) · §2.12g-258 ชุด 5 คืนค่าสแกน M2–M5/L3/L4 · คิวใบลดหนี้แอดมิน · เพดานกล่องรับ 50 ทวิ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7e69bdd1)_

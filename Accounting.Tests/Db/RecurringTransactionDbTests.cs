@@ -21,6 +21,9 @@ namespace Accounting.Tests.Db;
 /// ⇒ "connection is already in a transaction" ทุกครั้ง · (3) ของที่อ้างไว้ถูกปิด/ลบหลังบันทึก ⇒ ล้มดังบนแถว (LastRunError) ไม่ใช่ลงเงินสดเงียบ ๆ ·
 /// (4) วันสิ้นสุดนับรวมวันนั้น + เลยวันสิ้นสุด = เสร็จสิ้น + ขยายแล้วกลับมาใช้งาน
 /// </summary>
+// รอบ 260-4 (CI db-test): ProcessDueRecurringTransactionsAsync กวาดทุกบริษัทในฐานร่วม ⇒ ห้ามรันขนานกับคลาสที่ seed รายการประจำถึงรอบวันนี้
+// (เคยออกใบที่สองให้ seed ของ R248 กลางทดลองรัน/ส่งทดสอบ + ชนล็อก "กำลังสร้างเอกสารอยู่")
+[Collection("recurring-due-sweep")]
 [Trait("Category", "Db")]
 public class RecurringTransactionDbTests
 {

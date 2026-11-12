@@ -275,6 +275,9 @@ public static class DatabaseMigrationHelper
         list.Add(Accounting.Helpers.CustomerCreditMigration.LegacyReviewSql());
         list.AddRange(Accounting.Helpers.Round259AutopilotMigration.Statements());   // รอบ 259 ชุด D — กุญแจกันซ้ำรอบรายการประจำ · คิวนำส่ง e-Tax ต่อกรมสรรพากร
         list.AddRange(Accounting.Helpers.Round259LineMigration.Statements());   // รอบ 259 แพ็ก B — LINE: webhook ล่าสุด · การ์ดทวง 50 ทวิ · ส่งเองจากหน้าเอกสาร · ตัดเรื่องที่ LINE ไม่ส่ง
+        list.AddRange(Accounting.Helpers.Round260LineMigration.Statements());   // รอบ 260-4 — LINE: ชั่วโมงเงียบของการ์ดถึงลูกค้า
+        list.AddRange(Accounting.Helpers.Round260SlipReceivingMigration.Statements());   // รอบ 260-2 — บัญชีที่เงินตามสลิปเข้า (ประทับบนรายการชำระตอนยืนยัน)
+        list.AddRange(Accounting.Helpers.Round260LineSlipMigration.Statements());   // รอบ 260 — สลิปจากแชต LINE OA ของบริษัท (ตาราง + สวิตช์รับสลิป)
         return list;
     }
 

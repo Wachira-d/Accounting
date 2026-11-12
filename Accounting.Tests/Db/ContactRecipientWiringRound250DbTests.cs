@@ -20,6 +20,9 @@ namespace Accounting.Tests.Db;
 /// ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ⇒ รายการประจำ/ตารางส่งไม่เข้าคิว (พร้อมเหตุ) และทิศตรงข้าม
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 260-4 (CI db-test run 43151543956): ScanDueSoonAndOverdueAsync กวาดทุกบริษัทในฐานร่วม — สองคลาสพร้อมกันเข้าคิวใบเดียวกันด้วยตัวหาผู้รับคนละตัว
+// (ตัวหาผู้รับของอีกคลาสถอดรหัสปลายทางด้วยกุญแจคนละตัวไม่ได้ ⇒ แถว line:none + แถวปลายทาง) ⇒ คลาสที่สแกนอยู่ collection เดียวกัน (ไม่รันขนาน)
+[Collection("SubscriptionExpirySweep")]   // ร่วมกับ LineCentralGroupRound256 ที่สแกนเหมือนกัน (คลาสหนึ่งอยู่ได้ collection เดียว)
 public class ContactRecipientWiringRound250DbTests
 {
     private readonly ITestOutputHelper _out;

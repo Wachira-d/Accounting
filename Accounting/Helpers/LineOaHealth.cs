@@ -14,6 +14,8 @@ namespace Accounting.Helpers;
 public static class LineOaHealth
 {
     public const string RuleCode = "LINE-OA-HEALTH";
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน L2): EntityType ของ audit เมื่อทดสอบส่งถึงผู้รับของผู้ติดต่อ</summary>
+    public const string TestAuditEntityType = "LineTestToContact";
 
     /// <summary>ประทับเวลา webhook ไม่ถี่กว่านี้ (กันเขียนฐานทุก event ของแชตที่คุยกันถี่)</summary>
     public static readonly TimeSpan StampEvery = TimeSpan.FromMinutes(5);
@@ -57,7 +59,8 @@ public static class LineOaHealth
     }
 
     /// <summary>รอบ 259 (A-M8 ส่วนแรก · 259-2-4): ลูกค้าส่งรูป/ไฟล์ (เช่นสลิป) ในแชต OA ของบริษัท — เดิมเงียบ ⇒ ตอบรับพร้อมทางไปต่อ ·
-    /// ระบบยังไม่เก็บสลิปจากแชต (ยังไม่ผูกกับรายการชำระ — ทางที่ตรวจได้คือแนบที่หน้าชำระของการ์ด) · ไม่เก็บไฟล์ ไม่อ่านเนื้อหา</summary>
+    /// รอบ 260: ใช้เฉพาะเมื่อเส้นสลิปจากแชต (<c>LineChatSlipService</c>) ไม่รับ — ปิดสวิตช์ <c>LineChatSlipIntakeEnabled</c> · ไฟล์ที่ไม่ใช่รูป · บริการไม่พร้อม ·
+    /// ข้อความนี้เองไม่เก็บไฟล์ ไม่อ่านเนื้อหา</summary>
     public const string ChatMediaReply =
         "ได้รับรูป/ไฟล์แล้วค่ะ แต่แชตนี้ยังบันทึกสลิปเข้าระบบอัตโนมัติไม่ได้ — ถ้าเป็นสลิปโอนเงิน กรุณากดปุ่ม \"ชำระเงิน\" บนการ์ดเอกสารแล้วแนบสลิปที่หน้านั้น "
         + "(ระบบจะผูกกับใบให้) หรือแจ้งผู้ขายโดยตรง";
@@ -74,6 +77,26 @@ public static class LineOaHealth
     /// <summary>key ของปลายทางทดสอบ "กลุ่ม LINE ของทีมที่ตั้งไว้" (<c>CompanySettings.LineDefaultGroupId</c>)</summary>
     public const string TeamGroupTargetKey = "team-group";
 
+    /// <summary>รอบ 260-4 (260-4-3): key ของปลายทาง LINE ของผู้ติดต่อ (<c>ContactNotifyEndpoint.Id</c>) — หน้าเว็บไม่เห็น LINE id</summary>
+    public const string EndpointTargetPrefix = "ep:";
+
+    public static string EndpointTargetKey(Guid endpointId) => EndpointTargetPrefix + endpointId.ToString("N");
+
+    /// <summary>key ปลายทางของผู้ติดต่อ ⇒ id · อย่างอื่น ⇒ null (ไปเส้น <see cref="TestTarget"/>)</summary>
+    public static Guid? ParseEndpointKey(string? targetKey)
+        => targetKey != null && targetKey.StartsWith(EndpointTargetPrefix, StringComparison.Ordinal)
+           && Guid.TryParseExact(targetKey[EndpointTargetPrefix.Length..], "N", out var id) ? id : null;
+
+    /// <summary>ป้ายของปลายทางผู้ติดต่อในรายการทดสอบ</summary>
+    public static string EndpointTargetLabel(string? contactName, string kind, string? groupName, string? label)
+    {
+        var who = string.IsNullOrWhiteSpace(contactName) ? "ผู้ติดต่อ" : contactName!.Trim();
+        var what = kind == NotifyEndpointKind.LineGroup
+            ? "กลุ่ม LINE" + (string.IsNullOrWhiteSpace(groupName) ? "" : " \"" + groupName!.Trim() + "\"")
+            : "LINE ผู้ใช้" + (string.IsNullOrWhiteSpace(label) ? "" : " (" + label!.Trim() + ")");
+        return LineMessageLimits.Truncate(who + " · " + what, 160);
+    }
+
     /// <summary>ปลายทางของคำขอทดสอบ — key ที่รู้จัก ⇒ id จากค่าตั้ง · ไม่มี key ⇒ id ที่พิมพ์ · key ไม่รู้จัก/ค่าตั้งว่าง ⇒ (null, เหตุ)</summary>
     public static (string? To, string? Problem) TestTarget(string? targetKey, string? typedId, string? teamGroupId)
     {
@@ -84,6 +107,10 @@ public static class LineOaHealth
         }
         return string.IsNullOrWhiteSpace(typedId) ? (null, "เลือกปลายทาง หรือระบุ LINE User ID (U…) / Group ID (C…) ของผู้รับ") : (typedId.Trim(), null);
     }
+
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน H1): ข้อความทดสอบที่ส่งจริง — ถึงผู้รับของลูกค้าได้ ⇒ ชื่อบริษัท + เวลา ไม่มี GUID/ศัพท์เทคนิค</summary>
+    public static string TestMessage(string? companyName, string timeText)
+        => LineMessageLimits.Truncate($"✅ ทดสอบการแจ้งเตือนทาง LINE จาก {(string.IsNullOrWhiteSpace(companyName) ? "ร้านค้า" : companyName!.Trim())}\nเวลา: {timeText}", 500);
 
     /// <summary>ข้อความเมื่อทดสอบส่งล้ม — เหตุจริงจาก LINE (จำแนกตัวเดียวกับคิว LINE) + ทางไปต่อ</summary>
     public static string TestFailureMessage(int? httpStatus, string? error, bool transportError)
