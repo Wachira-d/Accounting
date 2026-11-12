@@ -21,6 +21,8 @@ public class PartnerAutomationConsent : TenantEntity
     public int TextVersion { get; set; }
     /// <summary>SHA-256 ของ (บริษัท · คู่ · ขอบเขต · เพดาน · บัญชี · เวอร์ชัน · ข้อความ) จาก <c>PartnerConsent.Hash</c> ตัวเดียว</summary>
     public string EvidenceHash { get; set; } = "";
+    /// <summary>รุ่นของ <see cref="EvidenceHash"/> — 1 = PAC1 (เนื้อความยินยอม) · 2 = PAC2 (+ คู่ค้า · ผู้ให้ · เวลาให้ · ฝ่ายค้าน L2) · แถวเดิมคง 1 และยังตรวจได้</summary>
+    public int HashVersion { get; set; } = 1;
     public Guid GrantedByUserId { get; set; }
     public DateTime GrantedAt { get; set; }
     public Guid? WithdrawnByUserId { get; set; }

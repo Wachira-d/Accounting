@@ -18847,11 +18847,17 @@ REVIEWER_CASES += [
 _R264P1_WHY = "รอบ 264 P1 ความยินยอมงานอัตโนมัติกับคู่ค้า (คำตัดสิน 264-2-1…3): "
 _R264P1_SVC = "Services/Implementations/PartnerConsentService.cs"
 RULES += [
-    dict(file=_R264P1_SVC, method="CheckAsync",
+    dict(file=_R264P1_SVC, method="EvaluateAsync",
          must=["PartnerConsent.Allows(", "GrantProblemForAsync(companyId, row.GrantedByUserId, scope)", "PartnerConsent.AllowsCompanyWide(",
-               "x.CompanyId == companyId", "x.WithdrawnAt == null", "x.CompanyAId == companyId || x.CompanyBId == companyId"],
-         forbid=["grantorOk = true", "IgnoreQueryFilters("],
-         why=_R264P1_WHY + "264-2-3 ตัวตรวจตอนใช้ตัวเดียว: สิทธิ์ผู้ให้ตรวจสดทุกครั้ง · ผูกบริษัท · แถวที่ยังไม่ถอน · ขอบเขตทั้งบริษัทอ่านติ๊กเดิม"),
+               "x.CompanyId == companyId", "x.WithdrawnAt == null", "x.CompanyAId == companyId || x.CompanyBId == companyId",
+               "CompanyStatus.Active", "b.CompanyId == companyId && b.IsActive && !b.IsDeleted"],
+         forbid=["grantorOk = true", "payOk = true", "partnerActive = true", "IgnoreQueryFilters("],
+         why=_R264P1_WHY + "264-2-3 ตัวตรวจตอนใช้ตัวเดียว: สิทธิ์ผู้ให้ตรวจสดทุกครั้ง · ผูกบริษัท · แถวที่ยังไม่ถอน · ขอบเขตทั้งบริษัทอ่านติ๊กเดิม · "
+             "ฝ่ายค้าน M2 บัญชีจ่ายตรวจซ้ำ · L7 บริษัทคู่ค้ายังใช้งาน"),
+    dict(file=_R264P1_SVC, method="CheckForWriteAsync",
+         must=["_db.Database.CurrentTransaction == null", "EvaluateAsync("], must_lit=["FOR SHARE"],
+         before=[("ExecuteSqlInterpolatedAsync(", "EvaluateAsync(")],
+         why=_R264P1_WHY + "ฝ่ายค้าน M1: ตรวจเพื่อเขียนต้องอยู่ในธุรกรรมของท่อ + ล็อก FOR SHARE ก่อนประเมิน (ถอนรอจนท่อจบ)"),
     dict(file=_R264P1_SVC, method="GrantProblemForAsync", must=["PartnerConsent.GrantProblem(", "UserStatus.Active", "HasNeedAsync("],
          why=_R264P1_WHY + "F5/F6 ความยินยอมไม่กว้างกว่าสิทธิ์ผู้ให้ · ผู้ใช้ที่ปิดแล้วให้/ใช้ไม่ได้"),
     dict(file=_R264P1_SVC, method="HasNeedAsync",
@@ -18865,17 +18871,28 @@ RULES += [
     dict(file=_R264P1_SVC, method="PreviewAsync", must=["ValidateAsync(", "PartnerConsent.Hash(", "PartnerConsent.CurrentTextVersion"],
          why=_R264P1_WHY + "264-2-2 ขั้นที่หนึ่งคืน hash จากฟังก์ชัน canonical ตัวเดียว"),
     dict(file=_R264P1_SVC, method="GrantAsync",
-         must=["ValidateAsync(", "PartnerConsent.Hash(", "PartnerConsent.ConfirmProblem(", "MarkWithdrawn(", "_db.AddChainedAuditLog("], must_lit=['"PartnerConsentGranted"'],
-         before=[("PartnerConsent.ConfirmProblem(", "PartnerAutomationConsents.Add("), ("MarkWithdrawn(", "PartnerAutomationConsents.Add(")],
+         must=["ValidateAsync(", "PartnerConsent.Hash(", "PartnerConsent.HashV2(", "PartnerConsent.ConfirmProblem(", "MarkWithdrawn(", "_db.AddChainedAuditLog(",
+               "LockActiveForUpdateAsync(", "PartnerConsentMigration.TriggerSqlState"], must_lit=['"PartnerConsentGranted"'],
+         before=[("PartnerConsent.ConfirmProblem(", "PartnerAutomationConsents.Add("), ("MarkWithdrawn(", "PartnerAutomationConsents.Add("),
+                 ("LockActiveForUpdateAsync(", "MarkWithdrawn(")],
          why=_R264P1_WHY + "264-2-1/2 สองขั้น (hash ที่เห็น = hash ที่เก็บ) · แทนที่ = ถอนแถวเดิมก่อนเพิ่ม (append-only) · audit chain"),
-    dict(file=_R264P1_SVC, method="WithdrawAsync", must=["x.CompanyId == companyId", "MarkWithdrawn("],
+    dict(file=_R264P1_SVC, method="WithdrawAsync", must=["x.CompanyId == companyId", "MarkWithdrawn(", "PartnerConsentMigration.TriggerSqlState"],
+         must_lit=["FOR UPDATE"], before=[("ExecuteSqlInterpolatedAsync(", "MarkWithdrawn(")],
          why=_R264P1_WHY + "F7 ถอนทันที · แถวของบริษัทอื่น = ไม่พบ"),
-    dict(file=_R264P1_SVC, method="MarkWithdrawn", must=["_db.AddChainedAuditLog("], must_lit=['"PartnerConsentWithdrawn"'],
+    dict(file=_R264P1_SVC, method="MarkWithdrawnCore", must=["db.AddChainedAuditLog("], must_lit=['"PartnerConsentWithdrawn"'],
          why=_R264P1_WHY + "การถอนทุกครั้งเข้า audit chain"),
     dict(file="Helpers/PartnerConsent.cs", method="HashMatches", must=["TextFor(", "Hash(", "FixedTimeEquals("],
          why=_R264P1_WHY + "กฎ #4 C ตัวตรวจแถวใช้ hash canonical ตัวเดียวกับตอนเขียน"),
-    dict(file="Helpers/PartnerConsent.cs", method="Allows", must=["HashMatches(row)", "partnership.SuspendedAt", "grantorStillPermitted", "row.MaxAmount"],
+    dict(file="Helpers/PartnerConsent.cs", method="Allows",
+         must=["HashMatches(row)", "partnership.SuspendedAt", "partnership.AcceptedAt", "grantorStillPermitted", "row.MaxAmount", "partnerCompanyActive",
+               "amount.Usable", "d.MinTextVersion", "d.WiredSince"],
          why=_R264P1_WHY + "ตอนใช้: hash · ระงับแล้วไม่ฟื้นเอง · สิทธิ์ผู้ให้ · เพดาน"),
+    dict(file="Services/Implementations/CrossTenantWorkflowService.Partners.cs", method="SuspendPartnershipAsync",
+         must=["PartnerConsentService.WithdrawAllOnSuspendAsync(_db, p.Id, userId)"],
+         before=[("PartnerConsentService.WithdrawAllOnSuspendAsync(", "_db.SaveChangesAsync(")],
+         why=_R264P1_WHY + "ฝ่ายค้าน H1: ระงับคู่ ⇒ ถอนความยินยอมทุกขอบเขตในการบันทึกเดียวกัน (เชื่อมกลับไม่ฟื้นเอง)"),
+    dict(file=_R264P1_SVC, method="WithdrawAllOnSuspendAsync", must=["MarkWithdrawnCore(", "x.WithdrawnAt == null"], must_lit=["FOR UPDATE"],
+         why=_R264P1_WHY + "ฝ่ายค้าน H1: ถอนทุกแถวที่ใช้อยู่ของคู่ (ทั้งสองบริษัท) พร้อม audit"),
     dict(file="Controllers/CrossTenantWorkflowController.cs", method="UpdateConfig",
          must=["PartnerConsent.ConfigSnapshot(", "PartnerConsent.ConfigDiff(", "_db.AddChainedAuditLog("],
          before=[("PartnerConsent.ConfigDiff(", "_db.SaveChangesAsync(")],
@@ -19090,6 +19107,39 @@ REVIEWER_CASES += [
     ("R262c", "QueueContactCardsAsync", "c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId == key", "true", True),
 ]
 
+# รอบ 264 P1 ฝ่ายค้าน M1 — ท่อที่เขียนบัญชีต้องใช้ CheckForWriteAsync (ในธุรกรรม · FOR SHARE) ไม่ใช่ CheckAsync (อ่านอย่างเดียว)
+_R264P1_CONSENT_OK = {"Services/Implementations/PartnerConsentService.cs", "Controllers/PartnerConsentController.cs"}
+
+
+def consent_check_caller_errors(files=None) -> list:
+    errs = []
+    if files is None:
+        files = {}
+        for path in SRC.rglob("*.cs"):
+            rel = path.relative_to(SRC).as_posix()
+            if rel.startswith(("bin/", "obj/")) or rel in _R264P1_CONSENT_OK:
+                continue
+            files[rel] = path.read_text(encoding="utf-8")
+    for rel, text in files.items():
+        code = mask(text)
+        if "PartnerConsentService" in code and re.search(r"\.CheckAsync\s*\(", code):
+            errs.append(f"{rel}: ใช้ PartnerConsentService แล้วเรียก .CheckAsync( — ท่อที่เขียนต้องเรียก CheckForWriteAsync ในธุรกรรมของตัวเอง "
+                        "(ฝ่ายค้าน 264 P1 M1 · คำตัดสิน 264-2-6) · หน้า/รายงานอ่านอย่างเดียวให้เพิ่มไฟล์ใน _R264P1_CONSENT_OK พร้อมเหตุ")
+    return errs
+
+
+def consent_check_caller_self_test() -> list:
+    bad = {"Services/Implementations/X.cs": "class X { PartnerConsentService _c; async Task F() { await _c.CheckAsync(a, b, s, null); } }"}
+    good = {"Services/Implementations/X.cs": "class X { PartnerConsentService _c; async Task F() { await _c.CheckForWriteAsync(a, b, s, null); } }"}
+    other = {"Services/Implementations/Y.cs": "class Y { Foo _f; async Task F() { await _f.CheckAsync(); } }"}
+    fails = []
+    if not consent_check_caller_errors(bad):
+        fails.append("self-test: ท่อเรียก PartnerConsentService.CheckAsync แล้วไม่ฟ้อง")
+    if consent_check_caller_errors(good) or consent_check_caller_errors(other):
+        fails.append("self-test: CheckForWriteAsync / CheckAsync ของคลาสอื่น ถูกฟ้องผิด")
+    return fails
+
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
@@ -19118,11 +19168,12 @@ def main() -> int:
     errs += wht_writeoff_lock_key_errors((SRC / _R243A_WHT).read_text(encoding="utf-8"))   # รอบ 250 WP-02 §2.4 ข้อ 9
     errs += program_boot_migrations_errors((SRC / "Program.cs").read_text(encoding="utf-8"))   # รอบ 250 WP-04 R246-MIG
     errs += wht_credit_add_errors()   # รอบ 252 WP-09 (ประตูเดียวของ 50 ทวิ ขาเข้า)
+    errs += consent_check_caller_errors()   # รอบ 264 P1 ฝ่ายค้าน M1
     st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
           + notes_marker_self_test(marker_files) + line_config_self_test(marker_files) + line_push_self_test(marker_files)
           + cascade_writer_self_test() + program_outbound_clients_self_test() + wht_credit_ioe_self_test()
           + doc_inline_vat_formula_self_test() + wht_writeoff_lock_key_self_test() + program_boot_migrations_self_test()
-          + wht_credit_add_self_test())
+          + wht_credit_add_self_test() + consent_check_caller_self_test())
     for e in errs + st:
         print("❌ " + e)
     if errs or st:

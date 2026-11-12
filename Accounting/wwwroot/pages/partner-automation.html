@@ -145,7 +145,9 @@ const Page = {
     if (!pv) return;
     // ขั้นที่ 1: อ่านข้อความจากเซิร์ฟเวอร์ (ข้อความเดียวกับที่ถูก hash)
     const ok = await Layout.confirm({ title: 'ความยินยอม: ' + pv.label, okText: 'ยินยอมตามข้อความนี้',
-      message: pv.text + '\n\n' + (pv.maxAmount != null ? `เพดานต่อใบ ${Layout.money(pv.maxAmount)} บาท` : 'ไม่จำกัดยอด') + ` · ข้อความเวอร์ชัน ${pv.textVersion}` });
+      message: pv.text + '\n\n' + (pv.maxAmount != null ? `เพดานต่อใบ ${Layout.money(pv.maxAmount)} บาท (ยอดรวมบาทก่อนหัก ณ ที่จ่าย)` : 'ไม่จำกัดยอด')
+        + (pv.defaultPayBankAccountId ? ` · จ่ายจาก ${pv.payAccountLabel || 'บัญชีที่เลือก'}` : '')
+        + ` · ข้อความเวอร์ชัน ${pv.textVersion}` });
     if (!ok) return;
     // ขั้นที่ 2: ขอบเขตที่ลงบัญชีอัตโนมัติต้องพิมพ์ยืนยัน
     let typed = null;
