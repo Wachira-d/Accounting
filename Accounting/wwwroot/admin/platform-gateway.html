@@ -135,7 +135,8 @@
                  <div class="row"><button class="admin-btn admin-btn-outline" onclick="Page.mode('Test')">กลับสู่โหมดทดสอบ</button></div>`
               : `${missing.length ? `<div class="bad" style="font-size:13px">ยังเปิดรับเงินจริงไม่ได้:</div><ul class="list">${missing.map(m => `<li>${e(m)}</li>`).join('')}</ul>` : '<div class="ok" style="font-size:13px">พร้อมเปิดรับเงินจริง</div>'}
                  <div class="row"><input id="gConfirm" placeholder="พิมพ์ &quot;${e(d.confirmPhrase)}&quot; เพื่อยืนยัน" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;min-width:240px">
-                 <button class="admin-btn admin-btn-primary" ${d.canEnableLive ? '' : 'disabled'} onclick="Page.mode('Live')">เปิดรับเงินจริง</button></div>`}
+                 <button class="admin-btn admin-btn-primary" ${d.canEnableLive ? '' : `disabled title="${e(missing.length ? 'ทำรายการด้านบนให้ครบก่อน' : 'ยังไม่พร้อมเปิดรับเงินจริง')}"`} onclick="Page.mode('Live')">เปิดรับเงินจริง</button></div>
+                 ${d.canEnableLive ? '' : `<div class="muted" style="margin-top:4px">ปุ่มนี้กดได้เมื่อทำครบทุกข้อด้านบน${missing.length ? '' : ' (เซิร์ฟเวอร์ยังไม่อนุญาต — กดโหลดหน้าใหม่)'}</div>`}`}
             <div class="row">
               ${c.isActive
                 ? `<input id="gReason" placeholder="เหตุผลที่ปิด (บังคับ)" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;min-width:240px">
