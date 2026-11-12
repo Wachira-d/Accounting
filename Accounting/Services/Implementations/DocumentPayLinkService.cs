@@ -568,6 +568,15 @@ public class DocumentPayLinkService : IDocumentPayLinkService
             await TransferBlockAsync(companyId, d.Id, amounts.Net, ct));
     }
 
+    public async Task<DocumentTransferView?> DueAmountsForDocumentAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+    {
+        var d = await LoadDocAsync(companyId, documentId, null, ct);
+        if (d == null) return null;
+        if (Refusal(d) is { } refusal) return new DocumentTransferView(refusal, 0m, 0m, 0m, null);
+        var (amounts, _) = await AmountsAsync(companyId, d, ct);
+        return new DocumentTransferView(null, amounts.Gross, amounts.Wht, amounts.Net, null);
+    }
+
     /// <summary>รอบ 246 QR (ฝ่ายค้าน S2) — บัญชีรับโอนของใบนี้จากตัวเลือกบัญชีเดียวกับกระดาษ (แหล่งเงินของใบ → บัญชีของใบ → เทมเพลต → บัญชีเดียวที่ตั้ง QR) +
     /// QR ของบัญชีนั้น (พร้อมเพย์ฝังยอดสุทธิของลิงก์ · รูปที่อัปโหลด) · ไม่มีที่เก็บ/ไม่พบบัญชี = null (ผู้เรียกใช้บัญชีรับโอนของเว็บ)</summary>
     private async Task<PublicTransferInfo?> DocumentAccountTransferAsync(Guid companyId, Guid documentId, decimal net, CancellationToken ct)
@@ -576,9 +585,8 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         var doc = await _db.Documents.AsNoTracking().Include(x => x.Brand)
             .FirstOrDefaultAsync(x => x.Id == documentId && x.CompanyId == companyId, ct);
         if (doc == null) return null;
-        var template = await PdfGenerationService.ResolveDocumentTemplateAsync(_db, companyId, doc, null);
-        var (acct, _) = await PaymentQrService.PickDocumentAccountAsync(_db, _storage.Locator.AttachmentsRoot, companyId,
-            doc.PaymentAccountId, doc.BankAccountId, template.PaymentQrBankAccountId, ct);
+        // รอบ 260-2: ตัวเลือกบัญชีของใบตัวเดียวกับค่าแนะนำตอนยืนยันสลิป (SlipReceivingAccount — "บัญชีที่แสดงให้ลูกค้าโอน")
+        var (acct, _) = await PaymentQrService.PickForDocumentAsync(_db, _storage.Locator.AttachmentsRoot, companyId, doc, ct);
         if (acct == null) return null;
         var superseded = await PaymentQrService.SupersededByTaxInvoiceAsync(_db, companyId, doc, ct);
         var qr = await PaymentQrService.BuildAccountQrAsync(_storage, new PromptPayService(), _logger, companyId, acct, acct.PromptPayId,

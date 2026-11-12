@@ -218,6 +218,12 @@ public class PaymentIntent : TenantEntity
     /// <summary>เลขอ้างอิงรายการโอนที่ลูกค้ากรอก (ตัด/ปรับรูปด้วย <c>SlipEvidenceRule.NormalizeRef</c>) — กันซ้ำ + เป็น "ตัวระบุตัว" ให้
     /// <c>BankReceiptAutoSettle</c> เมื่อรายการเดินบัญชีจริงมาถึง · สลิป<b>ไม่ปิดหนี้เอง</b> (F2 ข้อ 3)</summary>
     public string? SlipBankRef { get; set; }
+    /// <summary>รอบ 260-2: บัญชีธนาคารที่เงินตามสลิปเข้า — ประทับตอนพนักงานยืนยัน (เลือกเอง หรือค่าแนะนำของ <c>Helpers/SlipReceivingAccount</c>) ·
+    /// null + <see cref="ReceivingAccountOrigin"/> มีค่า = ตัดสินแล้วว่าไม่ส่ง override (สืบทอดแหล่งเงินของเอกสาร/เงินสดตั้งต้น — เท่าพฤติกรรมเดิม) ·
+    /// ผู้อ่าน: <c>DocumentPaymentHandler</c>/<c>SiteBookingPaymentHandler</c> (ส่งเป็น OverrideBankAccountId/BankAccountId) · หน้ารายการรับชำระ (echo)</summary>
+    public Guid? ReceivingBankAccountId { get; set; }
+    /// <summary>รอบ 260-2: ที่มาของ <see cref="ReceivingBankAccountId"/> (ชื่อ <c>SlipReceivingAccount.Origin</c>) · null = ยังไม่ตัดสิน (รายการก่อนรอบนี้/ยังไม่ยืนยัน)</summary>
+    public string? ReceivingAccountOrigin { get; set; }
 
     public int AttemptCount { get; set; }
     public DateTime? LastPolledAt { get; set; }

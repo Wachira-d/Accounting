@@ -32,7 +32,9 @@ public record LineConfigResponse(
     /// <summary>รอบ 259 (A-M5 · A-L3): แถวความพร้อมของ OA บริษัท (OA · webhook เข้าจริงไหม · Basic ID · ผลทดสอบ) จาก <c>LineOaHealth.Rows</c> — หน้าแสดงตรงตัว</summary>
     IReadOnlyList<global::Accounting.Helpers.LineOaHealth.Row>? Health = null,
     /// <summary>รอบ 259 (A-M6): ปลายทางทดสอบที่ระบบรู้จัก (กลุ่ม LINE ของทีมที่ตั้งไว้) — เลือกแทนการพิมพ์ U…/C… · ไม่มี LINE id ใน DTO (ส่งกลับเป็น key)</summary>
-    IReadOnlyList<LineTestTarget>? TestTargets = null);
+    IReadOnlyList<LineTestTarget>? TestTargets = null,
+    /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร (<c>CompanySettings.LineChatSlipIntakeEnabled</c> · echo กลับให้ฟอร์ม)</summary>
+    bool ChatSlipIntake = true);
 
 /// <summary>รอบ 259 (A-M6): ปลายทางทดสอบหนึ่งตัว — <paramref name="Key"/> = <c>LineOaHealth.TeamGroupTargetKey</c> (เซิร์ฟเวอร์อ่าน id เอง)</summary>
 public record LineTestTarget(string Key, string Label);
@@ -63,7 +65,9 @@ public record UpdateLineConfigRequest(
     /// <summary>LINE Group/Room ID สำหรับส่งแจ้งเตือนกลุ่ม (optional) · null = ไม่แก้ · "" = ล้าง</summary>
     string? DefaultGroupId,
     /// <summary>LINE OA basic id (@xxx) — สำหรับปุ่ม/QR เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิป · null = ไม่แก้ · "" = ล้าง</summary>
-    string? OaBasicId = null);
+    string? OaBasicId = null,
+    /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร · null = คงเดิม</summary>
+    bool? ChatSlipIntake = null);
 
 /// <param name="TargetKey">รอบ 259 (A-M6): ปลายทางที่ระบบรู้จัก (<c>LineConfigResponse.TestTargets</c>) — มีค่า ⇒ ใช้แทน <paramref name="ToLineId"/></param>
 public record TestLineConfigRequest(string? ToLineId, string? TargetKey = null);

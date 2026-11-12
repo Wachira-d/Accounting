@@ -45,6 +45,7 @@ public class AccountingDbContext : DbContext
     public DbSet<PlatformCoupon> PlatformCoupons => Set<PlatformCoupon>();
     public DbSet<PlatformCouponRedemption> PlatformCouponRedemptions => Set<PlatformCouponRedemption>();
     public DbSet<LineOaSwitchEvent> LineOaSwitchEvents => Set<LineOaSwitchEvent>();   // รอบ 212 แพ็ก B
+    public DbSet<LineChatSlip> LineChatSlips => Set<LineChatSlip>();   // รอบ 260 — สลิปจากแชต LINE OA ของบริษัท (Helpers/Round260LineSlipMigration)
     public DbSet<LineOaDestinationSighting> LineOaDestinationSightings => Set<LineOaDestinationSighting>();   // รอบ 212 ฝ่ายค้าน (B+D) ข้อ 4
     public DbSet<PayslipShareToken> PayslipShareTokens => Set<PayslipShareToken>();
     public DbSet<Company> Companies => Set<Company>();
@@ -1184,6 +1185,7 @@ public class AccountingDbContext : DbContext
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<PaymentIntent>().Property(x => x.SavedCardRef).HasMaxLength(100);   // ฝ่ายค้านรอบ 230 B2
+        modelBuilder.Entity<PaymentIntent>().Property(x => x.ReceivingAccountOrigin).HasMaxLength(32);   // รอบ 260-2
         modelBuilder.Entity<PdpaConsentRecord>().Property(x => x.UserAgent).HasMaxLength(500);   // ฝ่ายค้านรอบ 230 S2
         modelBuilder.Entity<PlatformAutoChargeSettings>(e =>
         {
@@ -4090,6 +4092,26 @@ public class AccountingDbContext : DbContext
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 212 แพ็ก B: การสลับ LINE OA → คำเชิญผูกใหม่ (ตาราง/index ต้องตรงกับ CmsRound212NotifyStatements + Helpers/CustomerRelinkMigration)
+        // รอบ 260: สลิปจากแชต LINE OA ของบริษัท (ตาราง/index ต้องตรงกับ Helpers/Round260LineSlipMigration)
+        modelBuilder.Entity<LineChatSlip>(e =>
+        {
+            e.Property(x => x.SourceKind).HasMaxLength(16);
+            e.Property(x => x.SourceKey).HasMaxLength(64);
+            e.Property(x => x.LineMessageId).HasMaxLength(64);
+            e.Property(x => x.FileSha256).HasMaxLength(64);
+            e.Property(x => x.StoragePath).HasMaxLength(1024);
+            e.Property(x => x.ContentType).HasMaxLength(64);
+            e.Property(x => x.OcrAmount).HasPrecision(18, 2);
+            e.Property(x => x.OcrAmounts).HasMaxLength(500);
+            e.Property(x => x.OcrRef).HasMaxLength(64);
+            e.Property(x => x.Status).HasMaxLength(24);
+            e.Property(x => x.Reason).HasMaxLength(32);
+            e.Property(x => x.ReasonDetail).HasMaxLength(500);
+            e.Property(x => x.ResolvedBy).HasMaxLength(256);
+            e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_LineChatSlips_Company_Status");
+            e.HasIndex(x => new { x.CompanyId, x.FileSha256 }).HasDatabaseName("IX_LineChatSlips_Company_Sha");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
         modelBuilder.Entity<LineOaSwitchEvent>(e =>
         {
             e.Property(x => x.FromScope).HasMaxLength(16);

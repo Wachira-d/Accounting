@@ -14901,7 +14901,7 @@ RULES += [
          must=["PaymentQrPolicy.PickAccount(", "ConfiguredAccountsAsync(", "a.CompanyId == companyId", "a.IsActive", "a.LinkedAccountId == gl"],
          why=_R246_WHY + "S3 ตัวเลือกบัญชีเดียวของกระดาษ + หน้าชำระสาธารณะ — แหล่งเงินของใบก่อน (ผังผูกหลายบัญชี = ไม่เดา) · tenant"),
     dict(file="Services/Implementations/DocumentPayLinkService.cs", method="DocumentAccountTransferAsync",
-         must=["PaymentQrService.PickDocumentAccountAsync(", "PaymentQrService.BuildAccountQrAsync(", "SupersededByTaxInvoiceAsync(",
+         must=["PaymentQrService.PickForDocumentAsync(", "PaymentQrService.BuildAccountQrAsync(", "SupersededByTaxInvoiceAsync(",
                "x.CompanyId == companyId", "PaymentQrPolicy.EmbedAmount("],
          why=_R246_WHY + "S2 หน้าชำระสาธารณะใช้ตัวเลือกบัญชี/ตัวสร้าง QR เดียวกับกระดาษ"),
     dict(file="Services/Implementations/DocumentPayLinkService.cs", method="TransferBlockAsync",
@@ -15433,7 +15433,8 @@ RULES += [
          must=["line.TryPushPlatformOpsAsync(message)", "if (!r.Ok)", "NextAccOaUsage.TryMarkWarnedAsync("],
          before=[("line.TryPushPlatformOpsAsync(message)", "NextAccOaUsage.TryMarkWarnedAsync(")],
          why=_R254Q_WHY + "N8: ส่งก่อนประทับ — ส่งไม่สำเร็จไม่ประทับ (ล้มดัง · รอบหน้าลองใหม่) · กลุ่มผู้ดูแลแพลตฟอร์มเท่านั้น"),
-    dict(file="Services/Implementations/Cms/CustomerLineLinkService.cs", method="ReplyAsync",
+    # รอบ 260: ตัวส่ง reply ย้ายเข้า ReplyMessagesAsync (ReplyAsync ข้อความเดียวเรียกต่อ — ทั้งสองทางนับโควตาที่เดียว)
+    dict(file="Services/Implementations/Cms/CustomerLineLinkService.cs", method="ReplyMessagesAsync",
          must=["scope != CustomerNotifyChannel.ScopeCompany", "NextAccOaUsage.IncrementAsync(_db, NextAccOaQuotaRule.KindReply"],
          before=[("resp.IsSuccessStatusCode", "NextAccOaUsage.IncrementAsync(")],
          why=_R254Q_WHY + "N8: นับ reply ของ OA กลางที่ตอบสำเร็จ (OA ของบริษัทไม่นับ — บริษัทจ่ายเอง)"),
@@ -15556,7 +15557,7 @@ REVIEWER_CASES += [
     ("R254t", "ProcessPendingQueueAsync", "monthly = await _notifyQuota.ReservePlatformEmailAsync(item.CompanyId, ct);",
      "monthly = await _notifyQuota.ReservePlatformEmailAsync(item.CompanyId, ct)\n                        ;", False),
     # L4 N8: นับ reply ของ OA บริษัทด้วย (บิดตัวเลขต้นทุน OA กลาง) ⇒ ต้องฟ้อง
-    ("R254u", "ReplyAsync", "if (scope != CustomerNotifyChannel.ScopeCompany) await NextAccOaUsage.IncrementAsync(", "await NextAccOaUsage.IncrementAsync(", True),
+    ("R254u", "ReplyMessagesAsync", "if (scope != CustomerNotifyChannel.ScopeCompany) await NextAccOaUsage.IncrementAsync(", "await NextAccOaUsage.IncrementAsync(", True),
     # L4 N8: ส่งเตือนไม่สำเร็จแล้วยังประทับ (เงียบตลอดงวด) ⇒ ต้องฟ้อง
     ("R254v", "AlertOnceAsync", "if (!r.Ok)", "if (false)", True),
     # fix2 H1: ขายแพ็กของช่องโดยไม่ตรวจว่าแยกเพดาน ⇒ ต้องฟ้อง
@@ -18525,6 +18526,43 @@ RULES += [
     dict(file="Helpers/WhtCertMatchPolicy.cs", method="MatchWithin", must=["SubsetSum.Find("], forbid=["FindSubsets("],
          why=_R259_WHY + "อัลกอริทึม subset ตัวเดียวของระบบ (Helpers/SubsetSum)"),
 ]
+
+# รอบ 260 (คำตัดสิน 260-1-1…6): สลิปในแชต LINE ⇒ ผูกเอกสาร — ด่านต้องอยู่ที่จุดเรียก (กันซ้ำก่อนเขียนไฟล์ · ตัวตัดสินเดียว · ลายเซ็น+ฐานก่อนแจ้งโอน ·
+# ประตูแจ้งโอนเดิมเท่านั้น — ห้ามประทับรับเงิน/สร้าง Payment เอง · ทุก query กรองบริษัท)
+_R260_SLIP = "Services/Implementations/LineChatSlipService.cs"
+_R260_WHY = "รอบ 260 (คำตัดสิน 260-1-1 · DOCUMENT_FLOW §2.12g-260): "
+RULES += [
+    dict(file=_R260_SLIP, method="HandleImageAsync",
+         must=["SettingsAsync(", "BindingAsync(", "SlipEvidenceRule.DetectPublicType(", "IsDuplicateAsync(", "CandidatesAsync(", "LineChatSlipRule.Decide(",
+               "TrySubmitAsync(", "LineChatSlipRule.PostbackData(", "ToStaffAsync("],
+         before=[("IsDuplicateAsync(", "_storage.WriteAsync("), ("LineChatSlipRule.Decide(", "TrySubmitAsync(")],
+         forbid=["ApplyChargeAsync(", "CreatePaymentAsync(", "PaymentIntentStatus.Succeeded", "AskAsync("],
+         why=_R260_WHY + "สลิปซ้ำไม่เขียนไฟล์/แถว · ผูกใบด้วยตัวตัดสินเดียว · ไม่ประทับรับเงิน (F2 ข้อ 3) · ไม่มี AI ในเส้นนี้"),
+    dict(file=_R260_SLIP, method="TrySubmitAsync",
+         must=["_slips.SubmitAsync(", "SlipEvidenceService.ChannelLineChat"],
+         forbid=["ApplyChargeAsync(", "CreatePaymentAsync(", "_intents.StartAsync(", "new PaymentIntent"],
+         why=_R260_WHY + "แจ้งโอนผ่านประตูเดียว SlipEvidenceService.SubmitAsync (ยอดค้าง · กันซ้ำ · ไฟล์ไม่เสิร์ฟตรง · แจ้งทีม) — ไม่สร้างรายการเอง"),
+    dict(file=_R260_SLIP, method="HandlePostbackAsync",
+         must=["LineChatSlipRule.Verify(", "row.SourceKey != sourceKey", "x.CompanyId == companyId", "LineChatSlipRule.ChoiceProblem(",
+               "ParseCandidates(", "BindingAsync(", "contactIds.Contains(doc.ContactId)", "ClaimAsync("],
+         before=[("LineChatSlipRule.Verify(", "ClaimAsync("), ("LineChatSlipRule.ChoiceProblem(", "ClaimAsync("), ("ClaimAsync(", "TrySubmitAsync(")],
+         why=_R260_WHY + "ปุ่มเลือกใบ: ลายเซ็น + แหล่งแชต + บริษัท + หมดอายุ + ใบอยู่ในชุดที่เสนอ + ผูก LINE ยังอยู่ ก่อนจอง (compare-and-set) แล้วจึงแจ้งโอน"),
+    dict(file=_R260_SLIP, method="CandidatesAsync",
+         must=["d.CompanyId == companyId", "contactIds.Contains(d.ContactId)", "_payLinks.DueAmountsForDocumentAsync(", "due.Refusal != null"],
+         why=_R260_WHY + "ผู้สมัคร = ใบของผู้ติดต่อที่ผูก LINE ในบริษัทเดียวกัน · ยอดสุทธิหลังหัก ณ ที่จ่าย จากตัวคิดของหน้าชำระ (ไม่คิดเอง)"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="DueAmountsForDocumentAsync",
+         must=["Refusal(d)", "AmountsAsync("], forbid=["TransferBlockAsync("],
+         before=[("Refusal(d)", "AmountsAsync(")],
+         why=_R260_WHY + "ยอดของใบสำหรับจับคู่สลิป = กติกาเดียวกับหน้าชำระ (ปฏิเสธก่อน · ยอดสุทธิหลัง WHT) โดยไม่สร้างกล่องโอน/QR"),
+    dict(file=_R260_SLIP, method="AssignAsync",
+         must=["d.CompanyId == companyId", "ClaimAsync(", "TrySubmitAsync(", "AddChainedAuditLog("],
+         before=[("ClaimAsync(", "TrySubmitAsync(")],
+         why=_R260_WHY + "พนักงานผูกสลิป: ใบในบริษัทเดียวกัน · จองก่อน · ประตูแจ้งโอนเดิม · audit"),
+    dict(file="Controllers/CustomerLineWebhookController.cs", method="Receive",
+         must=["ConsumeMediaAsync(", "_chatSlips.HandleImageAsync(", "_chatSlips.HandlePostbackAsync(", "GroupSlipRepliesAsync("],
+         before=[("LineWebhookSignature.Verify(", "_chatSlips.HandleImageAsync("), ("ConsumeMediaAsync(", "_chatSlips.HandleImageAsync(")],
+         why=_R260_WHY + "รูปในแชตเข้าเส้นสลิปหลังลายเซ็นผ่าน + เพดานต่อแหล่งแชตเท่านั้น (ทางเข้าสาธารณะ)"),
+]
 REVIEWER_CASES += [
     # ถอดตัวตัดสินขาออก ⇒ ต้องฟ้อง
     ("R259a", "MoveWithJournalAsync", "CustomerCreditMovementRules.Check(kind, credit, credit.UnappliedAmount, amount, date, today, cap,",
@@ -18534,6 +18572,51 @@ REVIEWER_CASES += [
      "Task.FromResult<string?>(null)", True),
 ]
 
+# ── รอบ 260-2: บัญชีที่เงินตามสลิปเข้า (erp-review/2026-11-12/team-260-2-slip-bank-account.md · คำตัดสิน 260-2-1..5) ──
+# ตัวตัดสินเดียว Helpers/SlipReceivingAccount — ทางยืนยัน (คิว) ตรวจ+ประทับใต้ล็อกก่อนส่งต่อ · handler ทุกตัวที่รับสลิปอ่านค่าเดียวกัน (ประทับ/ค่าแนะนำ) ·
+# ตัวเลือกบัญชีที่ "แสดงให้ลูกค้าโอน" ตัวเดียวกับกล่องโอนของหน้าชำระ
+_R2602_WHY = "รอบ 260-2 บัญชีที่เงินตามสลิปเข้า: "
+RULES += [
+    dict(file=GW_CTL, method="ConfirmManually",
+         must=["SlipReceivingAccount.ResolveAsync(", "receiving.Decision.Ok", "JobLock.RunExclusiveAsync(", "AddChainedAuditLog(",
+               "PaymentIntentPolicy.Evaluate(status, PaymentIntentStatus.Succeeded)"],
+         before=[("SlipReceivingAccount.ResolveAsync(", "_intents.ApplyChargeAsync("), ("receiving.Decision.Ok", "_intents.ApplyChargeAsync("),
+                 ("i.ReceivingAccountOrigin", "_intents.ApplyChargeAsync("), ("AddChainedAuditLog(", "_intents.ApplyChargeAsync(")],
+         why=_R2602_WHY + "บัญชีที่เลือกต้องผ่านตัวตัดสิน (บริษัท · เปิดใช้ · รับโอนได้ · ผูกผัง) และถูกประทับ + audit ก่อนส่งต่อ handler · ล็อกต่อรายการ (สองคนกดคนละบัญชี)"),
+    dict(file=GW_CTL, method="ReceivingAccounts",
+         must=["SlipReceivingAccount.ResolveAsync(", "SlipReceivingAccount.UsableProblem("],
+         why=_R2602_WHY + "ตัวเลือก/ค่าแนะนำ/เหตุผลมาจากตัวตัดสินเดียว (หน้าแสดงอย่างเดียว · F2 ข้อ 5)"),
+    dict(file="Services/Payments/Handlers/DocumentPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["SlipReceivingAccount.OverrideForHandlerAsync(", "OverrideBankAccountId: receivingBank"],
+         before=[("SlipReceivingAccount.OverrideForHandlerAsync(", "_docs.CreatePaymentAsync(")],
+         why=_R2602_WHY + "เดิมส่ง null ⇒ JE ของสลิปโอนลงเงินสด 111 · ค่าที่ประทับตอนยืนยันต้องไปถึง CreatePaymentAsync"),
+    dict(file="Services/Payments/Handlers/SiteBookingPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["SlipReceivingAccount.OverrideForHandlerAsync("],
+         before=[("SlipReceivingAccount.OverrideForHandlerAsync(", "RecordDepositPaymentAsync(")],
+         why=_R2602_WHY + "สลิปการจอง (หน้าเลือกไม่ได้) ใช้ค่าแนะนำตัวเดียวกัน — เดิมใบรับมัดจำไม่มีแหล่งเงิน ⇒ เงินสด"),
+    dict(file="Helpers/SlipReceivingAccount.cs", method="ResolveAsync",
+         must=["PaymentQrService.ShownDocumentAccountIdAsync(", "SiteTransferMatchAsync(", "DocumentMoneyChannel.ForPayment(", "Suggest(", "Decide("],
+         must_re=[r"d\s*\.\s*CompanyId\s*==\s*companyId"],
+         why=_R2602_WHY + "ค่าแนะนำ: แหล่งเงินของเอกสาร (ตัวเดียวกับการชำระ) → บัญชีที่แสดงให้ลูกค้าโอน (ตัวเลือกบัญชีของกระดาษ/หน้าชำระ) · tenant"),
+    dict(file="Helpers/SlipReceivingAccount.cs", method="LoadAccountsAsync",
+         must=["DocumentMoneyChannel.EvaluateAsync("],
+         must_re=[r"b\s*\.\s*CompanyId\s*==\s*companyId"],
+         why=_R2602_WHY + "ผูกผังที่ลงรายการได้ = ตัวตรวจเดียวกับแหล่งเงินของเอกสาร (ไม่มีสำเนากติกา) · tenant"),
+    dict(file="Helpers/SlipReceivingAccount.cs", method="SiteTransferMatchAsync",
+         must=["SiteTransferAccount.Rows(", "MatchByAccountNumber("],
+         why=_R2602_WHY + "บัญชีรับโอนของเว็บอ่านจากตัวอ่านเดียว (แถวเดียวกับที่ลูกค้าเห็น)"),
+    dict(file=_R246_SVC, method="PickForDocumentAsync",
+         must=["PdfGenerationService.ResolveDocumentTemplateAsync(", "PickDocumentAccountAsync("],
+         why=_R2602_WHY + "ตัวเลือกบัญชีของใบ = เทมเพลตของใบ + ตัวเลือกบัญชีเดียวของกระดาษ (รอบ 246 S3)"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="DocumentAccountTransferAsync",
+         must=["PaymentQrService.PickForDocumentAsync("],
+         forbid=["ResolveDocumentTemplateAsync(", "PickDocumentAccountAsync("],
+         why=_R2602_WHY + "กล่องโอนของหน้าชำระกับค่าแนะนำตอนยืนยันสลิป = ตัวเลือกบัญชีของใบตัวเดียว (ห้ามประกอบเองซ้ำ)"),
+]
+REVIEWER_CASES += [
+    # ถอดการส่งบัญชีที่เงินเข้าออกจาก handler ⇒ ต้องฟ้อง (กลับไปลงเงินสด)
+    ("R2602a", "HandleSucceededAsync", "OverrideBankAccountId: receivingBank,", "OverrideBankAccountId: null,", True),
+]
 # ── รอบ 260-3 (คำตัดสิน 260-3-1..5): เงินรอจัดสรรบนพอร์ทัล/ใบแจ้งยอดอีเมล · กระดิ่งค้างนาน · การ์ดความพร้อมรับเงิน · กล่องใบซื้อร่างกล่องเดียว ──
 _R260_3_WHY = "รอบ 260-3: "
 RULES += [
