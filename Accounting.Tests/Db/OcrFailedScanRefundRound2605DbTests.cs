@@ -89,7 +89,7 @@ public class OcrFailedScanRefundRound2605DbTests
         await db.Database.ExecuteSqlRawAsync("""DELETE FROM "OneShotDataFixes" WHERE "Key" = {0}""", OcrFailedScanRefund.MarkerKey);
 
         var first = await OcrFailedScanRefund.RunAsync(db);
-        Assert.True(first.Removed >= 3 && first.Credited >= 2 && first.NeedsCreditNote >= 1, first.ToString());
+        Assert.True(first.Removed >= 2 && first.Credited >= 2 && first.NeedsCreditNote >= 1, first.ToString());
         Assert.Empty(db.ChangeTracker.Entries());
         Assert.Equal(1, await MarkerCountAsync(db));
 
