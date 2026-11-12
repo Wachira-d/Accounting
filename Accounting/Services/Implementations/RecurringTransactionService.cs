@@ -1051,12 +1051,13 @@ public class RecurringTransactionService : IRecurringTransactionService
     }
 
     /// <summary>รอบ 259 (B-L2): งวดนี้มีใบแล้ว (ระบบหยุดระหว่างสร้างใบกับประทับรอบในรอบก่อน) ⇒ ประทับรอบด้วยใบเดิม ไม่ออกซ้ำ + ข้อความบนแถว</summary>
-    private async Task StampRecoveredPeriodAsync(RecurringTransaction recurring, Guid documentId, string? documentNumber, string runKey)
+    private async Task StampRecoveredPeriodAsync(RecurringTransaction recurring, Guid documentId, string? documentNumber, string runKey,
+        string? note = null)
     {
         var periodDate = recurring.NextRunDate;
         await MarkRunAsync(recurring, consumesPeriod: true, documentId,
             countRun: RecurringRunKey.CountsAsNewRun(recurring.LastDocumentId, documentId));
-        await SetRunNoticeAsync(recurring, new List<string> { RecurringRunKey.RecoveredNote(documentNumber, periodDate) });
+        await SetRunNoticeAsync(recurring, new List<string> { note ?? RecurringRunKey.RecoveredNote(documentNumber, periodDate) });
         _logger.LogWarning("Recurring {Id}: period {Key} already has document {Doc} — stamped run without creating a duplicate",
             recurring.Id, runKey, documentId);
     }
@@ -1086,7 +1087,11 @@ public class RecurringTransactionService : IRecurringTransactionService
                 if (!consumesPeriod)
                     throw new BusinessRuleException(RecurringRunKey.EarlyAlreadyIssuedMessage(existing.DocumentNumber, recurring.NextRunDate),
                         RecurringRunKey.RuleCode, 409);
-                await StampRecoveredPeriodAsync(recurring, existing.Id, existing.DocumentNumber, runKey);
+                // รอบ 265 (คำตัดสิน 265-1-4): ใบของงวดนี้คือใบเสร็จที่ออกจากเงินรอจัดสรร (ปิดงวดล่วงหน้า) — ไม่ใช่ "ระบบหยุดระหว่างทาง"
+                var billedFromCredit = await _db.PaymentCreditMovements.AsNoTracking().AnyAsync(m => m.CompanyId == recurring.CompanyId
+                    && m.TargetDocumentId == existing.Id && m.Kind == nameof(PaymentCreditMovementKind.ToReceipt) && !m.IsDeleted);
+                await StampRecoveredPeriodAsync(recurring, existing.Id, existing.DocumentNumber, runKey,
+                    billedFromCredit ? CreditReceiptPlan.RecurringBilledNote(existing.DocumentNumber, recurring.NextRunDate) : null);
                 return;
             }
         }
@@ -1803,30 +1808,9 @@ public class RecurringTransactionService : IRecurringTransactionService
         }
     }
 
-    private static decimal ExtractAmount(string? templateData)
-    {
-        if (string.IsNullOrEmpty(templateData)) return 0;
-        try
-        {
-            using var doc = JsonDocument.Parse(templateData);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty("lines", out var lines) && lines.ValueKind == JsonValueKind.Array)
-            {
-                decimal total = 0;
-                foreach (var line in lines.EnumerateArray())
-                {
-                    // ⚠️ เดิมเรียก GetDecimal() ตรง ๆ — ค่าที่เป็นสตริง ("1,200") หรือ null โยน ⇒ ยอด ฿0 บนหน้าจอ ·
-                    // ตอนนี้ตัวอ่านเดียวกับตอนสร้างเอกสาร (RecurringTemplate.TryNumber) — ยอดบนจอ = ยอดที่จะออกใบจริง
-                    var qty = RecurringTemplate.TryNumber(line, "quantity", 1m) ?? 1m;
-                    var price = RecurringTemplate.TryNumber(line, "unitPrice", 0m) ?? 0m;
-                    total += qty * price;
-                }
-                return total;
-            }
-        }
-        catch (JsonException) { /* template JSON เสีย — คืน 0 ให้ list ยังโหลดได้ (ตัวตรวจตอนถึงรอบบอกผู้ใช้เองบนแถว) */ }
-        return 0;
-    }
+    // ⚠️ เดิมเรียก GetDecimal() ตรง ๆ — ค่าที่เป็นสตริง ("1,200") หรือ null โยน ⇒ ยอด ฿0 บนหน้าจอ · ตอนนี้ตัวอ่านเดียวกับตอนสร้างเอกสาร
+    // (RecurringTemplate.TryNumber ผ่าน RecurringTemplate.Summary — รอบ 265 ย้ายมาเป็นตัวเดียวให้ใบเสร็จจากเงินรอจัดสรรใช้ร่วม)
+    private static decimal ExtractAmount(string? templateData) => RecurringTemplate.Summary(templateData).Total;
 
     /// <summary>รอบ 204 — อ่าน "whtCertType" จาก template (ชื่อ enum หรือเลข 1/2/3) · ไม่มี/อ่านไม่ออก ⇒ null (= หัก ณ ที่จ่าย)</summary>
     private static Accounting.Models.DTOs.Tax.WithholdingTaxCertType? ParseTemplateWhtCertType(JsonElement root)

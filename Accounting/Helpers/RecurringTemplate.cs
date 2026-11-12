@@ -30,6 +30,33 @@ public static class RecurringTemplate
     /// <summary>ผลอ่านเทมเพลตทั้งก้อน: รหัสทุกตัวแยกตามตาราง + ปัญหารูปแบบ (ข้อความไทยพร้อมบรรทัด/ช่อง)</summary>
     public sealed record Scan(IReadOnlyList<Ref> Refs, IReadOnlyList<string> Problems, int LineCount);
 
+    /// <summary>ยอดรวม (Σ จำนวน × ราคา) + คำอธิบายบรรทัดแรกของเทมเพลตเอกสาร — ตัวอ่านเดียวของยอดบนหน้ารายการประจำ (<c>ExtractAmount</c>) และค่าเสนอของ
+    /// ใบเสร็จจากเงินรอจัดสรร (รอบ 265) · JSON เสีย = (0, null) ไม่โยน</summary>
+    public static (decimal Total, string? FirstDescription) Summary(string? templateData)
+    {
+        if (string.IsNullOrEmpty(templateData)) return (0m, null);
+        try
+        {
+            using var doc = JsonDocument.Parse(templateData);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("lines", out var lines) && lines.ValueKind == JsonValueKind.Array)
+            {
+                decimal total = 0;
+                string? first = null;
+                foreach (var line in lines.EnumerateArray())
+                {
+                    var qty = TryNumber(line, "quantity", 1m) ?? 1m;
+                    var price = TryNumber(line, "unitPrice", 0m) ?? 0m;
+                    total += qty * price;
+                    first ??= Text(line, "description");
+                }
+                return (total, first);
+            }
+        }
+        catch (JsonException) { /* template JSON เสีย — ยอด 0 (ตัวตรวจตอนถึงรอบบอกผู้ใช้เองบนแถว) */ }
+        return (0m, null);
+    }
+
     /// <summary>ตัวเลขของช่อง <paramref name="name"/> — null = มีค่าแต่อ่านไม่ได้</summary>
     public static decimal? TryNumber(JsonElement obj, string name, decimal fallback)
     {

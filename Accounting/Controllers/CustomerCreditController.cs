@@ -184,6 +184,27 @@ public class CustomerCreditController : ControllerBase
         return MovementOk(r, $"ออกใบมัดจำ {r.TargetDocumentNumber} ยอด {r.Amount:N2} บาทแล้ว");
     }
 
+    /// <summary>รอบ 265: ค่าของหน้าต่าง "ออกใบเสร็จจากเงินรอจัดสรร" (อ่านอย่างเดียว) — เห็นฝั่งขาย</summary>
+    [HttpGet("{paymentId:guid}/receipt-options")]
+    public async Task<ActionResult<ApiResponse<CustomerCreditReceiptOptions>>> ReceiptOptions(Guid companyId, Guid paymentId, CancellationToken ct = default)
+    {
+        if (await DenyViewAsync(companyId) is { } deny) return Forbid403<CustomerCreditReceiptOptions>(deny);
+        return Ok(new ApiResponse<CustomerCreditReceiptOptions>(true, await _credits.ReceiptOptionsAsync(companyId, paymentId, ct)));
+    }
+
+    /// <summary>รอบ 265: ออกใบเสร็จรับเงิน/ใบกำกับภาษีจากเงินรอจัดสรร (ไม่มีใบแจ้งหนี้) — สร้าง + อนุมัติใบเสร็จ ⇒ สิทธิ์เดียวกับย้ายเป็นมัดจำ</summary>
+    [HttpPost("{paymentId:guid}/issue-receipt")]
+    public async Task<ActionResult<ApiResponse<CustomerCreditMovementResult>>> IssueReceipt(Guid companyId, Guid paymentId,
+        [FromBody] CustomerCreditIssueReceiptRequest request, CancellationToken ct = default)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userId, DocumentType.Receipt)
+            || !await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, DocumentType.Receipt))
+            return Forbid403<CustomerCreditMovementResult>("ไม่มีสิทธิ์ออกใบเสร็จ (ต้องการสร้างและอนุมัติเอกสารฝั่งขาย)");
+        var r = await _credits.IssueReceiptAsync(companyId, paymentId, request, userId.ToString(), ct);
+        return MovementOk(r, $"ออกใบเสร็จ {r.TargetDocumentNumber} ยอด {r.Amount:N2} บาทจากเงินรอจัดสรรแล้ว (คงเหลือ {r.RemainingUnapplied:N2})");
+    }
+
     /// <summary>ออกใบแจ้งหนี้ส่วนที่ขาด (ร่าง) — สิทธิ์สร้างเอกสารชนิดนั้น · จัดสรรเกิดตอนอนุมัติ (ต้องมีสิทธิ์อนุมัติอยู่แล้ว)</summary>
     [HttpPost("{paymentId:guid}/issue-invoice")]
     public async Task<ActionResult<ApiResponse<CustomerCreditMovementResult>>> IssueInvoice(Guid companyId, Guid paymentId,

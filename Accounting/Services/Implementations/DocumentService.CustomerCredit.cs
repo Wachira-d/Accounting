@@ -234,6 +234,56 @@ public partial class DocumentService
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ApplyCreditReceiptTaxPointAsync(Guid companyId, Guid receiptId, string? creditReason, DateTime receiptDate,
+        string actor)
+    {
+        var notices = new List<string>();
+        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == receiptId && d.CompanyId == companyId);
+        if (doc == null || doc.VatAmount <= 0.005m) return notices;
+        var today = ThaiDate.CalendarDateUtc(DateTime.UtcNow).Date;
+        // งวดภาษี: ตัวตัดสินเดียวกับการจัดสรร (ค้างออกใบ = งวดวันรับเงินถ้ายังยื่นทัน · เหตุผลอื่น = วันที่ใบ/วันนี้) — ไม่มีสูตรที่สอง
+        var drives = LateReceiptTaxPoint.ReceiptDrivesTaxPoint(creditReason);
+        var decision = LateReceiptTaxPoint.Decide(creditReason, receiptDate, today,
+            drives && await DepositReceiptPeriodLockedAsync(companyId, receiptDate), today,
+            await PlatformHolidayStore.LoadSetAsync(_db, receiptDate.Year, today.Year));
+        var stamp = CreditReceiptPlan.ReportingTaxPoint(decision, doc.DocumentDate, doc.VatAmount);
+        var lateNote = stamp is DateTime tp ? CreditReceiptPlan.LateVatNote(doc.DocumentDate, tp) : null;
+        var issuedLate = CreditReceiptPlan.IssuedLateNote(doc.DocumentDate, today, doc.VatAmount);
+        if (stamp == null && issuedLate == null) return notices;
+        var before = doc.TaxPointDate;
+        if (stamp is DateTime point) doc.TaxPointDate = point;
+        foreach (var n in new[] { lateNote, issuedLate })
+        {
+            if (n == null) continue;
+            notices.Add(n);
+            if (!(doc.InternalNotes ?? "").Contains(n, StringComparison.Ordinal)) AppendInternalNote(doc, n);
+        }
+        doc.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = Guid.TryParse(actor, out var actorId) ? actorId : null,
+            Action = AuditAction.Update,
+            EntityType = "Document",
+            EntityId = doc.Id.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                RuleCode = CreditReceiptPlan.RuleCode,
+                LegalReference = CreditReceiptPlan.LegalReference,
+                doc.DocumentNumber,
+                CreditReason = creditReason,
+                ReceiptDate = receiptDate.Date,
+                TaxPointBefore = before,
+                TaxPointAfter = doc.TaxPointDate,
+                decision.LateFlag,
+                Notes = notices,
+            }),
+        });
+        await _db.SaveChangesAsync();
+        return notices;
+    }
+
+    /// <inheritdoc />
     public Task<string?> CreditAllocationVatLockReasonAsync(Guid companyId, DateTime date)
         => OutputVatPeriodLockReasonAsync(companyId, date);
 

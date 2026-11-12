@@ -17,6 +17,7 @@ public static class CustomerCreditLedger
         .Where(CustomerCreditMovementRules.ReducesBalance).Select(k => k.ToString()).ToArray();
     private static readonly string ToInvoiceKind = nameof(PaymentCreditMovementKind.ToInvoice);
     private static readonly string ToDepositKind = nameof(PaymentCreditMovementKind.ToDeposit);
+    private static readonly string ToReceiptKind = nameof(PaymentCreditMovementKind.ToReceipt);
 
     /// <summary>Σ ขาออกที่มีผลซึ่งตัดยอดของการชำระนี้</summary>
     private static async Task<decimal> LiveReducingSumAsync(AccountingDbContext db, Guid companyId, Guid paymentId, CancellationToken ct = default)
@@ -106,9 +107,14 @@ public static class CustomerCreditLedger
     {
         var rows = await db.PaymentCreditMovements
             .Where(m => m.CompanyId == companyId && m.TargetDocumentId == documentId && !m.IsDeleted && m.ReleasedAt == null
-                && (m.Kind == ToDepositKind || m.Kind == ToInvoiceKind))
+                && (m.Kind == ToDepositKind || m.Kind == ToInvoiceKind || m.Kind == ToReceiptKind))
             .ToListAsync(ct);
         if (rows.Count == 0) return 0;
+        // รอบ 265 (คำตัดสิน 265-1-4): ใบเสร็จจากเงินรอจัดสรรที่ปิดงวดรายการประจำถูกยกเลิก ⇒ ปล่อยกุญแจงวด (รอบถัดไป/“สร้างทันที” ออกใบงวดนั้นได้อีก ·
+        // งวดที่รอบอัตโนมัติประทับผ่านไปแล้วไม่ถอยเอง — ผู้ใช้กด “สร้างทันที” ที่รายการประจำ)
+        if (rows.Any(r => r.Kind == ToReceiptKind))
+            await db.Documents.Where(d => d.Id == documentId && d.CompanyId == companyId && d.RecurringRunKey != null)
+                .ExecuteUpdateAsync(u => u.SetProperty(d => d.RecurringRunKey, (string?)null), ct);
         foreach (var paymentId in rows.Select(r => r.PaymentId).Distinct().OrderBy(id => id))
         {
             var payment = await db.Payments

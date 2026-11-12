@@ -18537,6 +18537,46 @@ RULES += [
          why=_R259_WHY + "อัลกอริทึม subset ตัวเดียวของระบบ (Helpers/SubsetSum)"),
 ]
 
+# ═══ รอบ 265 "ออกใบเสร็จ/ใบกำกับภาษีจากเงินรอจัดสรร (ไม่มีใบแจ้งหนี้)" (คำตัดสิน 265-1-x) ═══
+# ล็อก: ตรวจบรรทัด/รายการประจำก่อนเขียน · จองใต้ล็อกด้วยตัวตัดสินขาออกเดียว + ด่านงวดของวันที่บนใบ · ขาเงินเข้า = ผังพัก · ยอดสุทธิไม่ตรง = ปฏิเสธ ·
+# ล้มก่อนอนุมัติ = ลบร่าง + ปล่อย · งวดภาษีผ่าน LateReceiptTaxPoint.Decide ตัวเดียว · ยกเลิกใบ ⇒ ปล่อยขาออก + กุญแจงวดรายการประจำ
+_R265_WHY = "รอบ 265 ใบเสร็จจากเงินรอจัดสรร: "
+_R265_RCP = "Services/Implementations/CustomerCreditService.Receipt.cs"
+RULES += [
+    dict(file=_R265_RCP, method="IssueReceiptAsync",
+         must=["CreditReceiptPlan.LinesProblem(", "CreditReceiptPlan.PaperDate(", "CustomerCreditMovementRules.Check(", "CustomerCreditAllocation.StaleCheck(",
+               "JournalEntryBuilder.ClosedPeriodReasonAsync(", "ExistingByKeyAsync(", "RecomputeUnappliedAsync(", "AuditMovement(",
+               "PaymentAccountId: payment.UnappliedAccountId", "CreditReceiptPlan.TotalMismatch(", "ApprovalAckSource.SystemWorkflow",
+               "ReleaseMovementAsync(", "_documents.DeleteDocumentAsync(", "CustomerCreditMovementRules.DepositIssued(",
+               "_documents.ApplyCreditReceiptTaxPointAsync(", "CreditReceiptPlan.RecurringProblem(", "recurringRun: origin",
+               "_documents.CreditAllocationVatLockReasonAsync("],
+         must_lit=["FOR UPDATE"],
+         before=[("CreditReceiptPlan.LinesProblem(", "BeginTransactionAsync("), ("CustomerCreditMovementRules.Check(", "_documents.CreateDocumentAsync("),
+                 ("JournalEntryBuilder.ClosedPeriodReasonAsync(", "_documents.CreateDocumentAsync("),
+                 ("CreditReceiptPlan.TotalMismatch(", "_documents.ApproveDocumentAsync("),
+                 ("_documents.ApproveDocumentAsync(", "_documents.ApplyCreditReceiptTaxPointAsync(")],
+         forbid=["payment.UnappliedAmount -=", "payment.UnappliedAmount =", "IsDeposit: true", "DocumentDate: today"],
+         why=_R265_WHY + "265-1-1 ตรวจก่อนเขียน · จองใต้ล็อก · ขาเงินเข้า = ผังพัก (ไม่ใช่เงินเข้าธนาคารซ้ำ) · ยอดสุทธิต้องเท่ายอดที่ใช้ · ล้ม = ถอยครบ · "
+             + "วันที่ใบจากตัวตัดสินเดียว (ม.105 — ห้ามลงวันนี้เอง) · งวดภาษีหลังอนุมัติ"),
+    dict(file="Services/Implementations/DocumentService.CustomerCredit.cs", method="ApplyCreditReceiptTaxPointAsync",
+         must=["LateReceiptTaxPoint.Decide(", "DepositReceiptPeriodLockedAsync(", "CreditReceiptPlan.ReportingTaxPoint(", "AddChainedAuditLog(",
+               "d.CompanyId == companyId"],
+         forbid=["SameVatPeriod("],
+         why=_R265_WHY + "265-1-3 งวดรายงานของใบลงวันที่รับเงินที่งวดยื่น/ปิดแล้ว = งวดปัจจุบัน (ตัวตัดสินเดียวกับการจัดสรร · คลาส 260-5-5 H1) + audit"),
+    dict(file="Helpers/CustomerCreditLedger.cs", method="ReleaseForVoidedDocumentAsync", must=["ToReceiptKind", "RecurringRunKey"],
+         why=_R265_WHY + "265-1-4 ยกเลิกใบเสร็จจากเงินรอจัดสรร ⇒ เงินกลับ + ปล่อยกุญแจงวดรายการประจำ (ออกงวดนั้นได้อีก)"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateDocumentFromTemplateAsync",
+         must=["RecurringRunKey.For(", "nameof(PaymentCreditMovementKind.ToReceipt)", "CreditReceiptPlan.RecurringBilledNote("],
+         why=_R265_WHY + "265-1-4 รอบอัตโนมัติพบงวดที่ออกเป็นใบเสร็จจากเงินรอจัดสรรแล้ว ⇒ ไม่ออกซ้ำ + ข้อความตรงเหตุ"),
+    dict(file="Services/Implementations/DocumentService.cs", method="IssueReceiptForPaymentAsync",
+         must=["ManualReceiptCoverage.Covers(", "m.Kind == creditReceiptKind", "nameof(PaymentCreditMovementKind.ToReceipt)"],
+         why=_R265_WHY + "265-1-7 ใบเสร็จจากเงินรอจัดสรรเป็นหลักฐานของเงินคนละก้อน — ห้ามนับว่าครอบยอดที่จัดสรร (กันเงินที่จัดสรรไม่มีใบเสร็จเงียบ)"),
+    dict(file="Controllers/CustomerCreditController.cs", method="IssueReceipt",
+         must=["DocumentPermissionHelper.CanCreateAsync(", "DocumentPermissionHelper.CanApproveAsync("],
+         before=[("DocumentPermissionHelper.CanApproveAsync(", "_credits.IssueReceiptAsync(")],
+         why=_R265_WHY + "ระบบสร้าง + อนุมัติใบเสร็จให้ ⇒ ผู้กดต้องมีทั้งสองสิทธิ์ (เท่าย้ายเป็นมัดจำ)"),
+]
+
 # รอบ 260 (คำตัดสิน 260-1-1…6): สลิปในแชต LINE ⇒ ผูกเอกสาร — ด่านต้องอยู่ที่จุดเรียก (กันซ้ำก่อนเขียนไฟล์ · ตัวตัดสินเดียว · ลายเซ็น+ฐานก่อนแจ้งโอน ·
 # ประตูแจ้งโอนเดิมเท่านั้น — ห้ามประทับรับเงิน/สร้าง Payment เอง · ทุก query กรองบริษัท)
 _R260_SLIP = "Services/Implementations/LineChatSlipService.cs"
