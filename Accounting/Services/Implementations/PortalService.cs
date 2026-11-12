@@ -96,7 +96,9 @@ public class PortalService : IPortalService
     {
         // ไม่ Include Contact ใน SQL (required nav + !IsDeleted → INNER JOIN
         // ตัดแถวที่ contact ถูกลบ) — materialize แล้ว reattach + map ใน memory
-        var accesses = await _db.Set<PortalAccess>()
+        // รอบ 260-3: อ่านอย่างเดียว (AsNoTracking) — เดิมติดตามแถวแล้วต่อ Contact ที่โหลดแบบไม่ติดตามเข้าไป ⇒ SaveChanges ถัดไปในขอบเขตเดียวกัน
+        // (เช่น แก้สิทธิ์ต่อจากเปิดรายการ) พยายามแนบ Contact ซ้ำกับตัวที่ติดตามอยู่ ⇒ "cannot be tracked" (Db R260_1)
+        var accesses = await _db.Set<PortalAccess>().AsNoTracking()
             .Where(p => p.CompanyId == companyId)
             .OrderByDescending(p => p.CreatedAt)
             .ToListAsync();
