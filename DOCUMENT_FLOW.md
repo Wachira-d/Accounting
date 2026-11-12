@@ -3221,7 +3221,19 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   แต่ใบรับโอนได้ ⇒ `SlipFallback` = กล่องโอน/สลิปของพอร์ทัล (ยอดอ่านอย่างเดียว) · เหตุที่ชำระไม่ได้ถึงลูกค้า = `PortalDocumentStatus.PayRefusalForCustomer` (ไม่ส่งเหตุภายในของร้าน) · `UploadDocumentSlipAsync` ไม่ส่งยอด ⇒ ยอดสุทธิหลังหัก ณ ที่จ่าย (`TransferForDocumentAsync.Net`) ·
   ป้าย/"เกินกำหนด" ของพอร์ทัล = `PortalDocumentStatus` (วันที่ไทย) บน `PortalDocumentResponse`
 - **คิวสลิปเจ้าของเดียว (E-M4 · 259-3-3)**: ยืนยัน/ปฏิเสธสลิป = `payment-intents.html` (`?status=Pending`) · Autopilot issue `SlipPending` + KPI `slipAwaitingConfirm` ชี้ไปคิว
-  (ไม่มีปุ่มยืนยันที่ Autopilot) · ยืนยันด้วยมือ = `Layout.formDialog` (ยอดอ่านอย่างเดียว · วันที่เงินเข้าแบบเลือกวัน · เหตุผล) — บัญชีเงินเข้าตามผังรับเงินของช่องทางเหมือนเดิม
+  (ไม่มีปุ่มยืนยันที่ Autopilot) · ยืนยันด้วยมือ = `Layout.formDialog` (ยอดอ่านอย่างเดียว · **บัญชีที่เงินเข้า (สลิปโอน · รอบ 260-2)** · วันที่เงินเข้าแบบเลือกวัน · เหตุผล)
+- **บัญชีที่เงินตามสลิปเข้า (รอบ 260-2 · คำตัดสิน 260-2-1…5 · `erp-review/2026-11-12/team-260-2-slip-bank-account.md`)**: ตัวตัดสินเดียว `Helpers/SlipReceivingAccount`
+  (ใช้กับ manual-slip เท่านั้น — เงินผ่านผู้ให้บริการ = บัญชีพักของ `IGatewayAccountResolver` ตามเดิม · เลือกธนาคาร = 400) ·
+  `POST …/pay/intents/{id}/confirm-manually` รับ `bankAccountId` (ว่าง = ค่าแนะนำ) — ตรวจ: บัญชีของบริษัทนี้ · เปิดใช้ · สกุลเดียวกับรายการ · ไม่ใช่ฝากประจำ ·
+  มีเลขบัญชี/พร้อมเพย์ · ผูกผังที่ลงรายการได้ (`DocumentMoneyChannel.EvaluateAsync`) · ใช้ไม่ได้ = 400 พร้อมเหตุ (ไม่ตกไปเงินสด) ·
+  ค่าแนะนำ (ลำดับตายตัว): **แหล่งเงินของเอกสาร** (สืบทอดตามเดิม — ไม่ส่ง override) → **บัญชีที่แสดงให้ลูกค้าโอน** (`PaymentQrService.PickForDocumentAsync` ตัวเดียวกับกล่องโอนของหน้าชำระ
+  → บัญชีรับโอนของเว็บแถวแรกที่เลขบัญชีตรงบัญชีธนาคาร) → **บัญชีรับโอนบัญชีเดียว**ของบริษัท → ไม่แนะนำ (หลายบัญชี = ไม่เดา ⇒ แหล่งเงินของเอกสาร/เงินสด 111 ตามเดิม) ·
+  บัญชีผู้รับที่อ่านจากสลิปเองยังไม่มีตัวอ่าน (ไม่แต่ง) · ตัดสินแล้ว**ประทับ** `PaymentIntent.ReceivingBankAccountId` + `ReceivingAccountOrigin` + audit `SlipReceivingAccountDecided`
+  (เลือก vs แนะนำ) ใต้ล็อกต่อรายการก่อน `ApplyChargeAsync` ⇒ `DocumentPaymentHandler` ส่ง `OverrideBankAccountId` ⇒ `CreatePaymentAsync` (JE Dr ผังที่บัญชีผูก · `Payment.BankAccountId` ·
+  ยอดธนาคาร · ใบเสร็จอัตโนมัติสืบทอด `BankAccountId` = "ชำระโดย" · ผู้สมัครกระทบยอดธนาคารของบัญชีนั้น) · ส่งต่อใหม่ใช้ค่าที่ประทับ · รายการที่ยังไม่ประทับ (ก่อนรอบนี้) = ค่าแนะนำ ·
+  สลิปการจองนัดหมาย (`SiteBookingPaymentHandler` — หน้าการจองเลือกไม่ได้) = ค่าแนะนำตัวเดียวกัน (บัญชีรับโอนของเว็บนั้น → บัญชีเดียว) ส่งเป็น `RecordBookingPaymentRequest.BankAccountId` ·
+  `GET …/pay/intents/{id}/receiving-accounts` (ตัวเลือก + ใช้ได้/เหตุ + ค่าแนะนำ + เหตุผล · สิทธิ์ `BankReconcile` + ปฏิเสธคีย์ API เท่าปุ่มยืนยัน) · หน้ารายการ echo บัญชีที่ใช้ ·
+  **ไม่อยู่ในรอบนี้**: สลิปคำสั่งซื้อเว็บ (`CmsCommerceService.ConfirmPaymentAsync` — ไม่มี PaymentIntent) · สลิปมัดจำที่พักเลือกบัญชีที่หน้าที่พักอยู่แล้ว · ปิดหนี้จากรายการเดินบัญชีใช้บัญชีของรายการเอง
 - **ศูนย์รวมค่าตั้ง (E-M2 · 259-3-4)**: `AutopilotSettingsDto.Hub` (`AutopilotSettingsHub`) แสดงสถานะ + ลิงก์บ้านของค่า · wht-credit มีสวิตช์ทวง 50 ทวิ (endpoint เดิม)
 - **ค่าตั้งผู้ติดต่อ (E-M6 · 259-3-5)**: แผงใน contacts.html (endpoint `recurring/contacts/{id}/autopilot` เดิม) · recurring.html ปุ่มบันทึกหลักบันทึกค่าผู้ติดต่อที่แก้ค้าง
 - **ปิดงวด (E-M7 · 259-3-6 · ฝ่ายค้าน M2 259-3-8)**: เช็กลิสต์ใน fiscal.html **และด่านของปุ่มปิด** (`AccountingService.CloseFiscalPeriodAsync` → `RunForPeriodAsync`) = `PreCloseChecklistService`
@@ -8897,5 +8909,6 @@ _Last verified against codebase: 2026-11-12 (รอบ 260-4 LINE ที่เ�
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D ฝ่ายค้าน — §2.12g-259d: H1/H2 · M1–M4 · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d493044a)_
 
+_Last verified against codebase: 2026-11-12 (รอบ 260-2 — §2.12g-259c: บัญชีที่เงินตามสลิปเข้า (`Helpers/SlipReceivingAccount` · confirm-manually รับ bankAccountId · ประทับบนรายการ · handler เอกสาร/การจองส่งต่อ) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-3 — §3.4b เงินรอจัดสรรบนพอร์ทัล/อีเมลใบแจ้งยอด + กระดิ่งค้างนาน · §2.6b การ์ดความพร้อมรับเงิน · §OCR กล่องใบซื้อร่างกล่องเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 86193689)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-5 ทีมตัดสินใจ — §3.4b ใบกำกับ ณ วันรับเงินที่รับก่อนใบแจ้งหนี้ · §2.12g-258 ชุด 5 คืนค่าสแกน API v1 ที่ล้ม · 50 ทวิ ไม่หักโควตา — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ccbc0de2)_
