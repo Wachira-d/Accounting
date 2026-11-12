@@ -3192,7 +3192,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   L3 กลุ่มตรวจการผูกก่อนกินเพดาน · ปุ่มมีเพดาน 6/นาที 60/วัน · L4 ใบที่สลิปรอตรวจเต็มแล้วไม่เป็นผู้สมัคร · L5 กรองชนิดใน SQL ก่อนจำกัด · GET ไม่เขียนฐาน (คิวคำนวณจากสถานะ+เวลา `QueueOf`) ·
   L6 ผูกด้วยเลขที่: เฉพาะชนิดที่รับชำระได้ · ซ้ำหลายใบ ⇒ 409 · ใบของผู้ติดต่ออื่น ⇒ คำเตือน + audit `crossContact` · L7 badge สลิปค่าบริการผ่าน `OcrSlipText.BadgeAmount` (เทสต์สองทิศ) ·
   L8 ปีสองหลักตัวเดียว `OcrSlipText.TwoDigitYear` · L9 ปิดสวิตช์ ⇒ ปุ่มเดิมกดไม่ได้ (คิวพนักงาน) · ป้ายไฟล์แนบ `line-chat-staff`
-- เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde (ฝ่ายค้าน: <เติมในคอมมิตตามหลัง>)
+- เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde (ฝ่ายค้าน: 65c031ed)
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
 
