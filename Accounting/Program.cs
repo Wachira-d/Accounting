@@ -653,6 +653,9 @@ builder.Services.AddSingleton<Accounting.Services.Implementations.Ocr.EmbeddedTe
 builder.Services.AddScoped<IReportBuilderService, ReportBuilderService>();
 builder.Services.AddScoped<IPortalService, PortalService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.SlipEvidenceService>();
+// รอบ 260 (คำตัดสิน 260-1-1): สลิปที่ลูกค้าส่งในแชต LINE OA ของบริษัท ⇒ จับคู่ยอดกับเอกสาร (อ่านรูปในเครื่อง · ไม่มี AI) · ผู้เรียก CustomerLineWebhookController + LineChatSlipController
+builder.Services.AddSingleton<Accounting.Services.Implementations.ISlipImageReader, Accounting.Services.Implementations.TesseractSlipImageReader>();
+builder.Services.AddScoped<Accounting.Services.Implementations.ILineChatSlipService, Accounting.Services.Implementations.LineChatSlipService>();
 builder.Services.AddScoped<Accounting.Services.Implementations.PartnerWhtCertExchangeService>();   // รอบ 255 WP-12B ข้อ 8 — 50 ทวิ ผ่านคู่ค้า (AutopilotJob)   // รอบ 255 WP-12B ข้อ 1 — ประตูเดียวของการแจ้งโอน (พอร์ทัล + หน้าชำระของเอกสาร)
 
 // Phase 5: World-Class
@@ -2191,6 +2194,20 @@ try
     catch (Exception ex)
     {
         app.Logger.LogError(ex, "รอบ 257: ซ่อมหลักฐานใบซื้อจากคู่ค้าไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
+    }
+
+    // รอบ 260-5 (คำตัดสิน 260-5-2): คืนค่าสแกน API v1 ที่ถูกคิดก่อนรอบ 258 ทั้งที่สแกนล้ม/ใช้ผลเดิม/อ่านจาก e-Tax XML (ครั้งเดียว · marker OneShotDataFixes ·
+    // กันคืนซ้ำต่อแถวด้วย audit) · ยังไม่เข้าใบ = ถอดจากรอบบิล · เติมเงิน = คืนเครดิต · เข้าใบแล้ว = แจ้งเจ้าของว่ารอใบลดหนี้ (ไม่ประทับว่าคืน) · ล้ม = ย้อน + บูตถัดไปทำใหม่
+    try
+    {
+        var r2605 = await Accounting.Helpers.OcrFailedScanRefund.RunAsync(db);
+        if (r2605.Companies > 0)
+            app.Logger.LogInformation("รอบ 260-5: ค่าสแกน API ที่ไม่ควรถูกคิด — ถอด {Removed} · คืนเครดิต {Credited} ({CreditedAmount}) · รอใบลดหนี้ {Cn} ({CnAmount}) · {Companies} บริษัท",
+                r2605.Removed, r2605.Credited, r2605.CreditedAmount, r2605.NeedsCreditNote, r2605.CreditNoteAmount, r2605.Companies);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "รอบ 260-5: คืนค่าสแกน API ที่ไม่ควรถูกคิดไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
     }
 
     // รอบ 246 QR (ฝ่ายค้าน N3): ย้ายเลขพร้อมเพย์เดิมของเทมเพลต → บัญชีธนาคาร ครั้งเดียว (เฉพาะบริษัทที่ชัดเจน · audit ทุกบริษัท) · ล้ม = ย้อน + บูตถัดไปทำใหม่

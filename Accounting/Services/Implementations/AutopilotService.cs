@@ -211,6 +211,8 @@ public class AutopilotService : IAutopilotService
         // รอบ 259-3 (ทีม E-M4 · คำตัดสิน 259-3-3): (11) สลิปลูกค้ารอพนักงานยืนยัน — คิวเจ้าของเดียวคือหน้ารายการรับชำระออนไลน์ (payment-intents) ·
         // ที่นี่ชี้ไปที่นั่น ไม่มีปุ่มยืนยันซ้ำ (ยืนยันต้องเห็นรูปสลิป + วันที่เงินเข้า)
         list.AddRange(await SlipPendingIssuesAsync(companyId, ct));
+        // รอบ 260: สลิปจากแชต LINE ที่ยังไม่ผูกเอกสาร (ไม่ได้ผูก LINE · อ่านยอดไม่ได้ · ยอดไม่ตรง · ลูกค้าไม่ได้เลือก) — คิวเดียวกัน (หน้ารายการรับชำระออนไลน์)
+        list.AddRange(await LineChatSlipIssuesAsync(companyId, nowUtc, ct));
         // รอบ 259 P6: ใบที่ต้องออกใบเสร็จ ([RECEIPT-PENDING]) · เงินรอจัดสรรค้างเกิน 30 วัน — ตัวอ่านเดียวกับหน้า "เงินรอจัดสรร"
         list.AddRange(await CustomerCreditWorkQueue.AutopilotIssuesAsync(_db, companyId, nowUtc, ct));
 
@@ -319,6 +321,22 @@ public class AutopilotService : IAutopilotService
             $"{i.Number ?? "เอกสาร"}: สลิปลูกค้า {i.Amount:N2} บาท รอยืนยัน",
             "ลูกค้าแนบสลิปแล้ว — ระบบไม่ปิดหนี้จากสลิปเอง · ตรวจรูปสลิปกับรายการเดินบัญชี แล้วกดยืนยัน/ปฏิเสธที่หน้ารายการรับชำระออนไลน์",
             i.CreatedAt, i.SourceId, "ไปยืนยันสลิป", SlipQueueHref, null, "เปิดเอกสาร", DocHref(i.SourceId))).ToList();
+    }
+
+    /// <summary>รอบ 260: สลิปจากแชต LINE ที่รอพนักงาน — แถว Unmatched + ตัวเลือกที่หมดอายุแล้ว (อ่านอย่างเดียว · การย้ายสถานะทำที่ <c>LineChatSlipService</c>)</summary>
+    private async Task<List<AutopilotIssueDto>> LineChatSlipIssuesAsync(Guid companyId, DateTime nowUtc, CancellationToken ct)
+    {
+        var rows = await _db.LineChatSlips.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && (x.Status == LineChatSlipRule.Statuses.Unmatched
+                || (x.Status == LineChatSlipRule.Statuses.AwaitingChoice && x.ChoiceExpiresAt != null && x.ChoiceExpiresAt <= nowUtc)))
+            .OrderBy(x => x.CreatedAt).Take(50)
+            .Select(x => new { x.Id, x.OcrAmount, x.Reason, x.Status, x.CreatedAt })
+            .ToListAsync(ct);
+        return rows.Select(x => new AutopilotIssueDto("LineChatSlipUnmatched",
+            "สลิปจากแชต LINE ยังไม่ผูกเอกสาร" + (x.OcrAmount is decimal a ? $" ยอด {a:N2} บาท" : ""),
+            LineChatSlipRule.Reasons.Label(x.Status == LineChatSlipRule.Statuses.AwaitingChoice ? LineChatSlipRule.Reasons.ChoiceExpired : x.Reason)
+                + " — ดูรูปสลิปแล้วผูกกับเอกสาร หรือปิดรายการ (ระบบไม่ปิดหนี้จากสลิปเอง)",
+            x.CreatedAt, null, "ไปผูกสลิป", SlipQueueHref, null, null, null)).ToList();
     }
 
     /// <summary>ย่อหน้าของป้ายบนหมายเหตุภายใน (ข้อความถึงผู้ใช้ — ไม่ต้องถอดป้าย)</summary>

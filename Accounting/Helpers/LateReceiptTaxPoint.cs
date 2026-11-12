@@ -33,6 +33,29 @@ public static class LateReceiptTaxPoint
     public static DateTime EffectiveReceiptDate(string? storedReason, DateTime receiptDate, DateTime applyDate)
         => ReceiptDrivesTaxPoint(storedReason) ? receiptDate.Date : applyDate.Date;
 
+    /// <summary>
+    /// <b>ใบเสร็จ/ใบกำกับ ณ วันรับเงิน ที่วันรับเงินมาก่อนวันที่ของใบที่อ้าง — คำตัดสิน 260-5-1</b>
+    /// <para>วันที่บนใบ = <b>วันรับเงินจริง</b> (ไม่เลื่อนไปวันที่ใบแจ้งหนี้): ม.105 ใบรับลงวันที่ที่รับเงิน · ม.78/1(1) ค่าบริการ ความรับผิดเกิดเมื่อรับเงิน ·
+    /// ม.86 ใบกำกับออก ณ จุดความรับผิด ⇒ ทั้งสามมาตราชี้วันเดียวกัน · เลื่อนเป็นวันที่ใบแจ้งหนี้ = ใบรับที่ลงวันที่เท็จ (<see cref="ReceiptIssuePolicy"/>)
+    /// และงวด VAT ของกระดาษไม่ตรงงวดที่ <see cref="Decide"/> ลงไว้</para>
+    /// <para>สิ่งที่ผิดจริงคือ <b>ออกช้า</b> (ม.86 "ทันที") — ใบที่ถือ VAT ได้หมายเหตุภายใน <see cref="IssuedAfterMoneyMarker"/> ให้นักบัญชีเห็น · ใบเสร็จเปล่า
+    /// (VAT อยู่ที่ใบกำกับต้นทาง) ไม่มีหมายเหตุที่นี่ — ความล่าช้าของใบกำกับต้นทางถูกบอกที่ <see cref="IssuedAfterReceiptNote"/> แล้ว</para>
+    /// null = ไม่มีอะไรต้องบอก (ไม่ถือ VAT · VAT 0 · รับเงินไม่ก่อนวันที่ใบที่อ้าง)
+    /// </summary>
+    public static string? IssuedAfterMoneyNote(DateTime moneyReceivedDate, DateTime sourceDocumentDate, bool carriesTaxInvoiceRole, decimal vatAmount)
+    {
+        if (!carriesTaxInvoiceRole || vatAmount <= 0.005m) return null;
+        if (moneyReceivedDate.Date >= sourceDocumentDate.Date) return null;
+        var received = moneyReceivedDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+        var source = sourceDocumentDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+        return $"{IssuedAfterMoneyMarker} ใบกำกับภาษี/ใบเสร็จนี้ลงวันที่รับเงิน {received} (ม.105 · จุดความรับผิด ม.78/1) ซึ่งก่อนใบที่อ้าง ({source}) — "
+            + "ภาษีขายเป็นของงวดเดือนที่รับเงิน · ม.86 ให้ออกใบกำกับภาษีทันทีที่รับเงินค่าบริการ แต่ใบนี้ออกภายหลัง · "
+            + "ครั้งหน้า: รับเงินก่อนออกใบ ⇒ ออกใบกำกับ/ใบเสร็จ ณ วันรับเงิน (หรือย้ายเป็นเงินมัดจำ) ตอนรับเงิน · ปรึกษานักบัญชีเรื่องเบี้ยปรับ/เงินเพิ่ม";
+    }
+
+    /// <summary>ป้ายของ <see cref="IssuedAfterMoneyNote"/> (ค้นได้ในหมายเหตุภายใน)</summary>
+    public const string IssuedAfterMoneyMarker = "[LATE-TAX-INVOICE]";
+
     /// <summary>ตัดสินวันที่ย้ายภาษีขายถึงกำหนดของใบที่ภาษียังพักอยู่ (21913)</summary>
     /// <param name="creditReason">เหตุผลของเงินรอจัดสรร (ค่าที่เก็บ — ชื่อของ <see cref="UnappliedReason"/>)</param>
     /// <param name="receiptDate">วันรับเงิน (วันที่ของการรับชำระต้นทาง)</param>

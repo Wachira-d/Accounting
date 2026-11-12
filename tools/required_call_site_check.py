@@ -15433,7 +15433,8 @@ RULES += [
          must=["line.TryPushPlatformOpsAsync(message)", "if (!r.Ok)", "NextAccOaUsage.TryMarkWarnedAsync("],
          before=[("line.TryPushPlatformOpsAsync(message)", "NextAccOaUsage.TryMarkWarnedAsync(")],
          why=_R254Q_WHY + "N8: ส่งก่อนประทับ — ส่งไม่สำเร็จไม่ประทับ (ล้มดัง · รอบหน้าลองใหม่) · กลุ่มผู้ดูแลแพลตฟอร์มเท่านั้น"),
-    dict(file="Services/Implementations/Cms/CustomerLineLinkService.cs", method="ReplyAsync",
+    # รอบ 260: ตัวส่ง reply ย้ายเข้า ReplyMessagesAsync (ReplyAsync ข้อความเดียวเรียกต่อ — ทั้งสองทางนับโควตาที่เดียว)
+    dict(file="Services/Implementations/Cms/CustomerLineLinkService.cs", method="ReplyMessagesAsync",
          must=["scope != CustomerNotifyChannel.ScopeCompany", "NextAccOaUsage.IncrementAsync(_db, NextAccOaQuotaRule.KindReply"],
          before=[("resp.IsSuccessStatusCode", "NextAccOaUsage.IncrementAsync(")],
          why=_R254Q_WHY + "N8: นับ reply ของ OA กลางที่ตอบสำเร็จ (OA ของบริษัทไม่นับ — บริษัทจ่ายเอง)"),
@@ -15556,7 +15557,7 @@ REVIEWER_CASES += [
     ("R254t", "ProcessPendingQueueAsync", "monthly = await _notifyQuota.ReservePlatformEmailAsync(item.CompanyId, ct);",
      "monthly = await _notifyQuota.ReservePlatformEmailAsync(item.CompanyId, ct)\n                        ;", False),
     # L4 N8: นับ reply ของ OA บริษัทด้วย (บิดตัวเลขต้นทุน OA กลาง) ⇒ ต้องฟ้อง
-    ("R254u", "ReplyAsync", "if (scope != CustomerNotifyChannel.ScopeCompany) await NextAccOaUsage.IncrementAsync(", "await NextAccOaUsage.IncrementAsync(", True),
+    ("R254u", "ReplyMessagesAsync", "if (scope != CustomerNotifyChannel.ScopeCompany) await NextAccOaUsage.IncrementAsync(", "await NextAccOaUsage.IncrementAsync(", True),
     # L4 N8: ส่งเตือนไม่สำเร็จแล้วยังประทับ (เงียบตลอดงวด) ⇒ ต้องฟ้อง
     ("R254v", "AlertOnceAsync", "if (!r.Ok)", "if (false)", True),
     # fix2 H1: ขายแพ็กของช่องโดยไม่ตรวจว่าแยกเพดาน ⇒ ต้องฟ้อง
@@ -16857,13 +16858,20 @@ def program_boot_migrations_errors(text: str) -> list:
         errs.append("Program.cs ไม่เรียก PartnerEvidenceRepair.RunAsync(db) ตอนบูต — รอบ 257 ชุด 3 ฝ่ายค้าน M2: งานซ่อมไม่มีผู้เรียก = ไม่มีงานซ่อม")
     elif apply < 0 or repair < apply:
         errs.append("Program.cs เรียก PartnerEvidenceRepair.RunAsync(db) ก่อน DatabaseMigrationHelper.ApplyMissingColumns( — ตาราง marker ต้องมีก่อน")
+    # รอบ 260-5 (คำตัดสิน 260-5-2): งานคืนค่าสแกน API v1 ที่ล้มเดินตอนบูต หลัง ApplyMissingColumns (มี ≠ ถูกเรียก)
+    refund = code.find("OcrFailedScanRefund.RunAsync(db)")
+    if refund < 0:
+        errs.append("Program.cs ไม่เรียก OcrFailedScanRefund.RunAsync(db) ตอนบูต — คำตัดสิน 260-5-2: งานคืนค่าสแกนที่ล้มไม่มีผู้เรียก = ไม่มีการคืน")
+    elif apply < 0 or refund < apply:
+        errs.append("Program.cs เรียก OcrFailedScanRefund.RunAsync(db) ก่อน DatabaseMigrationHelper.ApplyMissingColumns( — ตาราง marker ต้องมีก่อน")
     return errs
 
 
 def program_boot_migrations_self_test() -> list:
     good = ("DatabaseMigrationHelper.ApplyMissingColumns(db, logger);\n"
             "var r246 = await Accounting.Helpers.PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db);\n"
-            "var r257 = await Accounting.Helpers.PartnerEvidenceRepair.RunAsync(db);\n")
+            "var r257 = await Accounting.Helpers.PartnerEvidenceRepair.RunAsync(db);\n"
+            "var r2605 = await Accounting.Helpers.OcrFailedScanRefund.RunAsync(db);\n")
     fails = []
     if program_boot_migrations_errors(good):
         fails.append("self-test program_boot_migrations: ฟ้องผิดกับลำดับที่ถูก")
@@ -16875,6 +16883,8 @@ def program_boot_migrations_self_test() -> list:
                "DatabaseMigrationHelper.ApplyMissingColumns(db, logger);\n")
     if not program_boot_migrations_errors(swapped):
         fails.append("self-test program_boot_migrations: เรียกก่อน ApplyMissingColumns แล้วไม่ฟ้อง")
+    if not program_boot_migrations_errors(good.replace("OcrFailedScanRefund.RunAsync(db)", "OcrFailedScanRefund.Decide(")):
+        fails.append("self-test program_boot_migrations: ถอดงานคืนค่าสแกน (260-5-2) แล้วไม่ฟ้อง")
     return fails
 
 
@@ -18415,6 +18425,26 @@ RULES += [
     dict(file="Services/Implementations/OcrService.cs", method="FindDuplicateDocumentWarningAsync", must=["FindContentDuplicateWarningAsync("],
          why=_R259D_WHY + "C-L4 อ่านเลขที่ไม่ได้ ⇒ ซ้ำด้วยเนื้อหา"),
 ]
+# ── รอบ 260-5 ทีมตัดสินใจ (คำตัดสิน 260-5-*) — ถอดการเรียกออกแล้วเทสต์ pure ยังเขียว ⇒ ล็อกจุดเรียก ──
+_R2605_WHY = "รอบ 260-5 (คำตัดสิน 260-5-*): "
+RULES += [
+    dict(file=DOC, method="CreateSettlementReceiptAsync",
+         must=["LateReceiptTaxPoint.IssuedAfterMoneyNote(", "payment.PaymentDate, invoice.DocumentDate, carriesTaxInvoiceRole, receipt.VatAmount",
+               "AppendInternalNote(receipt, issuedLateNote)", "DocumentDate = payment.PaymentDate,"],
+         forbid=["LateReceiptTaxPoint.ReceiptDocumentDate("],
+         why=_R2605_WHY + "260-5-1 ใบเสร็จ/ใบกำกับลงวันที่รับเงินจริง (ม.105 · ม.78/1 · ม.86 — ไม่เลื่อนเป็นวันที่ใบแจ้งหนี้) · ใบที่ถือ VAT ออกหลังวันรับเงิน ⇒ หมายเหตุภายใน [LATE-TAX-INVOICE]"),
+    dict(file="Helpers/OcrFailedScanRefund.cs", method="Decide", must=["OcrQuotaRefundRule.ShouldRefund(scanStatus, ocrEngine)"],
+         why=_R2605_WHY + "260-5-2 ตัวตัดสินสแกนตัวเดียวกับเส้นเว็บ/LINE/v1 (ไม่มีสูตรที่สอง)"),
+    dict(file="Helpers/OcrFailedScanRefund.cs", method="RunCoreAsync",
+         must=["AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey)", "alreadyDone.Contains(ev.Id.ToString())", "scan!.CompanyId == ev.CompanyId",
+               "AddChainedAuditLog(", "Decide(found,", "DatabaseMigrationHelper.OneShotDataFixesTableSql"],
+         before=[("alreadyDone.Contains(ev.Id.ToString())", "account!.CreditBalance += ev.ChargedAmount")],
+         why=_R2605_WHY + "260-5-2 ครั้งเดียว + ไม่คืนซ้ำต่อแถว (audit) · สแกนของบริษัทเดียวกัน · audit ทุกแถว"),
+]
+REVIEWER_CASES += [
+    # 260-5-2: ถอดกันคืนซ้ำต่อแถว ⇒ marker ถูกลบแล้วคืนเครดิตสองครั้ง ⇒ ต้องฟ้อง
+    ("R2605-1", "RunCoreAsync", "if (alreadyDone.Contains(ev.Id.ToString())) continue;", "", True),
+]
 # ═══ รอบ 259 แพ็ก A "เงินรอจัดสรร ต่อจนจบ" (DECISIONS 259-1-x) ═══
 # ล็อก: ขาออกทุกชนิดผ่านตัวตัดสินเดียวใต้ล็อกแถว ก่อนลง JE · กันกดซ้ำ · ด่านงวด · ยอดคิดใหม่ · ยกเลิกการชำระถูกบล็อก ·
 # ยกเลิกใบมัดจำปล่อยขาออกในธุรกรรมเดียว · อนุมัติแล้วจัดสรรผ่านเส้นเดิม · ข้อเสนอธนาคารเสนอเท่านั้น
@@ -18496,6 +18526,43 @@ RULES += [
     dict(file="Helpers/WhtCertMatchPolicy.cs", method="MatchWithin", must=["SubsetSum.Find("], forbid=["FindSubsets("],
          why=_R259_WHY + "อัลกอริทึม subset ตัวเดียวของระบบ (Helpers/SubsetSum)"),
 ]
+
+# รอบ 260 (คำตัดสิน 260-1-1…6): สลิปในแชต LINE ⇒ ผูกเอกสาร — ด่านต้องอยู่ที่จุดเรียก (กันซ้ำก่อนเขียนไฟล์ · ตัวตัดสินเดียว · ลายเซ็น+ฐานก่อนแจ้งโอน ·
+# ประตูแจ้งโอนเดิมเท่านั้น — ห้ามประทับรับเงิน/สร้าง Payment เอง · ทุก query กรองบริษัท)
+_R260_SLIP = "Services/Implementations/LineChatSlipService.cs"
+_R260_WHY = "รอบ 260 (คำตัดสิน 260-1-1 · DOCUMENT_FLOW §2.12g-260): "
+RULES += [
+    dict(file=_R260_SLIP, method="HandleImageAsync",
+         must=["SettingsAsync(", "BindingAsync(", "SlipEvidenceRule.DetectPublicType(", "IsDuplicateAsync(", "CandidatesAsync(", "LineChatSlipRule.Decide(",
+               "TrySubmitAsync(", "LineChatSlipRule.PostbackData(", "ToStaffAsync("],
+         before=[("IsDuplicateAsync(", "_storage.WriteAsync("), ("LineChatSlipRule.Decide(", "TrySubmitAsync(")],
+         forbid=["ApplyChargeAsync(", "CreatePaymentAsync(", "PaymentIntentStatus.Succeeded", "AskAsync("],
+         why=_R260_WHY + "สลิปซ้ำไม่เขียนไฟล์/แถว · ผูกใบด้วยตัวตัดสินเดียว · ไม่ประทับรับเงิน (F2 ข้อ 3) · ไม่มี AI ในเส้นนี้"),
+    dict(file=_R260_SLIP, method="TrySubmitAsync",
+         must=["_slips.SubmitAsync(", "SlipEvidenceService.ChannelLineChat"],
+         forbid=["ApplyChargeAsync(", "CreatePaymentAsync(", "_intents.StartAsync(", "new PaymentIntent"],
+         why=_R260_WHY + "แจ้งโอนผ่านประตูเดียว SlipEvidenceService.SubmitAsync (ยอดค้าง · กันซ้ำ · ไฟล์ไม่เสิร์ฟตรง · แจ้งทีม) — ไม่สร้างรายการเอง"),
+    dict(file=_R260_SLIP, method="HandlePostbackAsync",
+         must=["LineChatSlipRule.Verify(", "row.SourceKey != sourceKey", "x.CompanyId == companyId", "LineChatSlipRule.ChoiceProblem(",
+               "ParseCandidates(", "BindingAsync(", "contactIds.Contains(doc.ContactId)", "ClaimAsync("],
+         before=[("LineChatSlipRule.Verify(", "ClaimAsync("), ("LineChatSlipRule.ChoiceProblem(", "ClaimAsync("), ("ClaimAsync(", "TrySubmitAsync(")],
+         why=_R260_WHY + "ปุ่มเลือกใบ: ลายเซ็น + แหล่งแชต + บริษัท + หมดอายุ + ใบอยู่ในชุดที่เสนอ + ผูก LINE ยังอยู่ ก่อนจอง (compare-and-set) แล้วจึงแจ้งโอน"),
+    dict(file=_R260_SLIP, method="CandidatesAsync",
+         must=["d.CompanyId == companyId", "contactIds.Contains(d.ContactId)", "_payLinks.DueAmountsForDocumentAsync(", "due.Refusal != null"],
+         why=_R260_WHY + "ผู้สมัคร = ใบของผู้ติดต่อที่ผูก LINE ในบริษัทเดียวกัน · ยอดสุทธิหลังหัก ณ ที่จ่าย จากตัวคิดของหน้าชำระ (ไม่คิดเอง)"),
+    dict(file="Services/Implementations/DocumentPayLinkService.cs", method="DueAmountsForDocumentAsync",
+         must=["Refusal(d)", "AmountsAsync("], forbid=["TransferBlockAsync("],
+         before=[("Refusal(d)", "AmountsAsync(")],
+         why=_R260_WHY + "ยอดของใบสำหรับจับคู่สลิป = กติกาเดียวกับหน้าชำระ (ปฏิเสธก่อน · ยอดสุทธิหลัง WHT) โดยไม่สร้างกล่องโอน/QR"),
+    dict(file=_R260_SLIP, method="AssignAsync",
+         must=["d.CompanyId == companyId", "ClaimAsync(", "TrySubmitAsync(", "AddChainedAuditLog("],
+         before=[("ClaimAsync(", "TrySubmitAsync(")],
+         why=_R260_WHY + "พนักงานผูกสลิป: ใบในบริษัทเดียวกัน · จองก่อน · ประตูแจ้งโอนเดิม · audit"),
+    dict(file="Controllers/CustomerLineWebhookController.cs", method="Receive",
+         must=["ConsumeMediaAsync(", "_chatSlips.HandleImageAsync(", "_chatSlips.HandlePostbackAsync(", "GroupSlipRepliesAsync("],
+         before=[("LineWebhookSignature.Verify(", "_chatSlips.HandleImageAsync("), ("ConsumeMediaAsync(", "_chatSlips.HandleImageAsync(")],
+         why=_R260_WHY + "รูปในแชตเข้าเส้นสลิปหลังลายเซ็นผ่าน + เพดานต่อแหล่งแชตเท่านั้น (ทางเข้าสาธารณะ)"),
+]
 REVIEWER_CASES += [
     # ถอดตัวตัดสินขาออก ⇒ ต้องฟ้อง
     ("R259a", "MoveWithJournalAsync", "CustomerCreditMovementRules.Check(kind, credit, credit.UnappliedAmount, amount, date, today, cap,",
@@ -18549,6 +18616,51 @@ RULES += [
 REVIEWER_CASES += [
     # ถอดการส่งบัญชีที่เงินเข้าออกจาก handler ⇒ ต้องฟ้อง (กลับไปลงเงินสด)
     ("R2602a", "HandleSucceededAsync", "OverrideBankAccountId: receivingBank,", "OverrideBankAccountId: null,", True),
+]
+# ── รอบ 260-3 (คำตัดสิน 260-3-1..5): เงินรอจัดสรรบนพอร์ทัล/ใบแจ้งยอดอีเมล · กระดิ่งค้างนาน · การ์ดความพร้อมรับเงิน · กล่องใบซื้อร่างกล่องเดียว ──
+_R260_3_WHY = "รอบ 260-3: "
+RULES += [
+    dict(file="Services/Implementations/PortalService.cs", method="GetMyStatementAsync",
+         must=["CustomerCreditQuery.UnappliedForContactAsync(_db, companyId, contactId)"],
+         why=_R260_3_WHY + "260-3-1 ใบแจ้งยอดพอร์ทัลแสดงเงินรอจัดสรรของผู้ติดต่อในโทเคน (ตัวอ่านเดียว · tenant)"),
+    dict(file="Services/Implementations/PortalService.cs", method="GetAccessesAsync",
+         must=["CustomerCreditQuery.UnappliedByContactAsync(", "PortalAccessPermissions.CreditShownToCustomer("],
+         why=_R260_3_WHY + "260-3-1 หน้าสิทธิ์พอร์ทัลบอกยอด + ลูกค้าเห็นไหม จากด่านเดียวกับเส้นใบแจ้งยอด"),
+    dict(file="Helpers/PortalAccessPermissions.cs", method="CreditShownToCustomer",
+         must=["Refusal(", "Route("], must_lit=['"statement"'],
+         why=_R260_3_WHY + "260-3-1 ลูกค้าเห็นเงินรอจัดสรร = ผ่านด่านเส้น statement (ไม่มีธงที่สอง)"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="ScanMonthlyStatementsAsync",
+         must=["CustomerCreditQuery.UnappliedForContactAsync("],
+         why=_R260_3_WHY + "260-3-2 ใบแจ้งยอดรายเดือนทางอีเมลแสดงเงินรอจัดสรรเป็นบรรทัดแยก (ตัวเลขเดียวกับหน้า/CSV/พอร์ทัล)"),
+    dict(file="Helpers/CustomerCreditAgedNotice.cs", method="RunAsync",
+         must=["CustomerCreditWorkQueue.AgedAsync(", "NotificationEvents.CustomerCreditAged", "Compose("],
+         before=[("DispatchAsync(", "ExecuteUpdateAsync(")], forbid=["AddDays(", "AgingDays"],
+         why=_R260_3_WHY + "260-3-3 กระดิ่งค้างนานใช้นิยามเดียวกับ Autopilot (ห้ามเกณฑ์อายุที่สอง) · ประทับหลังส่งเท่านั้น"),
+    dict(file="Helpers/CustomerCreditWorkQueue.cs", method="AutopilotIssuesAsync", must=["AgedAsync("],
+         why=_R260_3_WHY + "260-3-3 issue CustomerCreditAged กับกระดิ่งอ่านตัวเดียวกัน"),
+    dict(file="Services/Background/OverdueDunningJob.cs", method="RunAsync", must=["CustomerCreditAgedNotice.RunAsync("],
+         why=_R260_3_WHY + "260-3-3 กระดิ่งค้างนานมีผู้เรียกจริง (งานรายวันใต้ JobLock)"),
+    dict(file="Controllers/PaymentSettingsController.cs", method="Readiness",
+         must=["PaymentChannelReadiness.Build(", "autopilot.SettingsAsync(", "PaymentChannelReadiness.LiveConfigs(", "SystemBaseUrl.IsConfiguredAsync(", "recipients.LineChannelAsync("],
+         why=_R260_3_WHY + "260-3-4 การ์ดความพร้อมประกอบจากแถวเดิม (ศูนย์รวม Autopilot · PAY-LIVE · LINE OA · URL ระบบ)"),
+    dict(file="Helpers/PaymentChannelReadiness.cs", method="Build", must=["AutopilotReadiness.PayLiveItem("],
+         why=_R260_3_WHY + "260-3-4 แถว PAY-LIVE ตัวเดียวกับความพร้อมของรายการประจำ"),
+    dict(file="Helpers/AutopilotReadiness.cs", method="Evaluate", must=["PayLiveItem("],
+         why=_R260_3_WHY + "260-3-4 รายการประจำใช้แถว PAY-LIVE ตัวเดียวกับการ์ดหน้ารับชำระออนไลน์"),
+    dict(file="Controllers/PurchaseInboxController.cs", method="Get",
+         must=["DocumentPermissionHelper.VisibleDirectionsAsync(", "PurchaseDraftInbox.LoadAsync(", "GetVisibleKindsAsync("],
+         before=[("VisibleDirectionsAsync(", "PurchaseDraftInbox.LoadAsync(")],
+         why=_R260_3_WHY + "260-3-5 กล่องใบซื้อร่าง: ด่านเห็นฝั่งซื้อก่อนอ่าน + กรองชั้นความลับ"),
+    dict(file="Helpers/PurchaseDraftInbox.cs", method="LoadAsync",
+         must=["Classify(", "CountBySource(", "DocumentPermissionHelper.PurchaseTypes", "d.CompanyId == companyId"],
+         why=_R260_3_WHY + "260-3-5 ตัวนับกับรายการมาจาก query เดียว · ชุดชนิดฝั่งซื้อตัวเดียวกับด่านสิทธิ์ · tenant"),
+]
+REVIEWER_CASES += [
+    # ถอดการแสดงเงินรอจัดสรรในใบแจ้งยอดพอร์ทัล ⇒ ต้องฟ้อง
+    ("R260a", "GetMyStatementAsync", "CustomerCreditQuery.UnappliedForContactAsync(_db, companyId, contactId)", "Task.FromResult(0m)", True),
+    # กระดิ่งเขียนเกณฑ์อายุเอง ⇒ ต้องฟ้อง
+    ("R260b", "RunAsync", "Compose(await CustomerCreditWorkQueue.AgedAsync(db, companyId, today, ct))",
+     "Compose(await CustomerCreditWorkQueue.AgedAsync(db, companyId, today.AddDays(-30), ct))", True),
 ]
 
 def main() -> int:

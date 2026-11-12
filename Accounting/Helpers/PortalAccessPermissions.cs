@@ -57,6 +57,13 @@ public static class PortalAccessPermissions
             ? null
             : "เลือกสิทธิ์อย่างน้อย 1 อย่าง (ดูเอกสาร · ดาวน์โหลด PDF · ใบแจ้งยอด · ชำระเงิน) — ถ้าหน้านี้ไม่มีช่องให้ติ๊ก กรุณาโหลดหน้าใหม่ (Ctrl+F5) แล้วสร้างอีกครั้ง";
 
+    /// <summary>รอบ 260-3 (คำตัดสิน 260-3-1): ลูกค้าเห็น "เงินรอจัดสรร" ของตัวเองในพอร์ทัลไหม — <b>ด่านเดียวกับเส้นใบแจ้งยอด</b>
+    /// (<c>Route("statement")</c>) และมียอดจริง · ไม่มีธงแยก (ไม่เพิ่มคอลัมน์สิทธิ์) · ผู้อ่าน: หน้าสิทธิ์พอร์ทัลของพนักงาน (บอกว่าลูกค้าจะเห็นอะไร)</summary>
+    public static bool CreditShownToCustomer(PortalAccessFlags? flags, bool isActive, decimal unappliedCredit)
+    {
+        return isActive && unappliedCredit > UnappliedCreditBalance.Tolerance && Refusal(flags, Route("statement")) == null;
+    }
+
     /// <summary>null = ผ่าน · ข้อความ = ปฏิเสธ (403) · <paramref name="flags"/> null = ไม่พบสิทธิ์ ⇒ ปฏิเสธ</summary>
     public static string? Refusal(PortalAccessFlags? flags, IEnumerable<PortalPermission> needs)
     {
