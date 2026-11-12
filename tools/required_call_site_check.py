@@ -19231,6 +19231,53 @@ def consent_check_caller_self_test() -> list:
         fails.append("self-test: CheckForWriteAsync / CheckAsync ของคลาสอื่น ถูกฟ้องผิด")
     return fails
 
+# ── รอบ 266 แพ็ก A (erp-review/2026-11-12/team-266-manual-doc-link.md · คำตัดสิน 266-1-x) — ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ (เจ้าเดียวกัน) ──
+# ตัวตัดสินเดียว ReceiptLinkPolicy ต้องถูกเรียกทุกทางเข้า · ใบร่างตัดสินซ้ำใต้ล็อกก่อนเขียน · ด่าน G-1 (ผู้ติดต่อเดียวกัน) ที่สร้าง/แก้ไข/อนุมัติ · G-2 คำเตือน
+_R266_WHY = "รอบ 266 แพ็ก A (คำตัดสิน 266-1-x): "
+_R266_SVC = "Services/Implementations/ReceiptLinkService.cs"
+_R266_GUARD = "Services/Implementations/DocumentService.ReceiptSourceGuard.cs"
+RULES += [
+    dict(file=_R266_SVC, method="EvaluateAsync",
+         must=["ReceiptLinkPolicy.Decide(", "_credits.ForDocumentAsync(", "DepositPolicyResolver.GrossApplyBlocked(", "SameEntityOtherBranchAsync("],
+         why=_R266_WHY + "266-1-1/4 ผู้สมัคร · พรีวิว · ผูก ตัดสินด้วยตัวเดียว + ด่านเดิมของเงินรอจัดสรร/มัดจำ (ไม่เขียนสำเนา) + สาขาต่าง = คนละราย"),
+    dict(file=_R266_SVC, method="LinkAsync",
+         must=["EvaluateRequestAsync(", "EnsureFresh(", "AuditLink(", "_credits.AllocateAsync(", "_documents.ApplyDepositToInvoiceAsync("],
+         call_args=[("AllocateCustomerCreditRequest(", "ExpectedUnappliedBefore")],
+         before=[("ExecuteSqlRawAsync(", "receipt.RelatedDocumentId = locked.Invoice.Id"),
+                 ("EnsureFresh(locked", "receipt.RelatedDocumentId = locked.Invoice.Id")],
+         why=_R266_WHY + "266-1-2 เขียนใบต้นทางเฉพาะใบร่าง ตัดสินซ้ำใต้ล็อก + กุญแจพรีวิว (กดซ้ำ/ข้อเท็จจริงเปลี่ยน = 409) · เงินรอจัดสรรส่งยอดที่เห็นตอนพรีวิว"),
+    dict(file=_R266_SVC, method="CandidatesAsync",
+         must=["Visible(kinds", "d.CompanyId == companyId", "d.ContactId == origin.ContactId", "EvaluateAsync("],
+         why=_R266_WHY + "ผู้สมัคร = เจ้าเดียวกัน · tenant · กรองชั้นความลับ · ทุกแถวมีผลตัดสิน"),
+    dict(file=_R266_GUARD, method="GuardReceiptSourceAsync",
+         must=["ReceiptLinkPolicy.SourceRefusal(", "GetPredecessorTypes(", "d.CompanyId == companyId", "ContactTaxBranchKey.SameEntityIdsAsync("],
+         must_re=[r"if\s*\(\s*refusal\s*!=\s*null\s*\)\s*throw\b"],
+         why=_R266_WHY + "266-1-13 G-1 ใบเสร็จอ้างใบของผู้ติดต่ออื่น = ปฏิเสธ (เดิมกรองแค่หน้าจอ)"),
+    dict(file=_R266_GUARD, method="ApplyReceiptSourceOnUpdateAsync",
+         must=["ReceiptLinkPolicy.Decide(", "ReceiptLinkPolicy.Classify(", "GuardReceiptSourceAsync(", "AddChainedAuditLog("],
+         before=[("ReceiptLinkPolicy.Decide(", "doc.RelatedDocumentId = target")],
+         why=_R266_WHY + "266-1-2 ฟอร์มแก้ไขของใบเสร็จร่าง = ตัวตัดสินเดียวกับปุ่มผูก · ใบที่ออกเลขแล้วส่งค่าใหม่ = ปฏิเสธดัง · ตรวจ G-1 ซ้ำหลังแก้"),
+    dict(file=DOC, method="CreateDocumentAsync", must=["GuardReceiptSourceAsync(companyId, doc"],
+         before=[("doc.RelatedDocumentId = request.RelatedDocumentId", "GuardReceiptSourceAsync(")],
+         why=_R266_WHY + "266-1-13 G-1 ตอนสร้าง (หน้าเว็บ · API · มือถือ เดินเมธอดนี้)"),
+    dict(file=DOC, method="ApproveDocumentAsync#2", must=["GuardReceiptSourceAsync("],
+         before=[("GuardReceiptSourceAsync(", "AutoPostToJournalAsync(")],
+         why=_R266_WHY + "266-1-13 G-1 ตอนอนุมัติ ก่อนลง JE/ตัดยอดค้างใบต้นทาง (ใบร่างเก่า/ทางเข้าที่หลุด)"),
+    dict(file=DOC, method="UpdateDocumentAsync", must=["ApplyReceiptSourceOnUpdateAsync(companyId, doc, request.RelatedDocumentId"],
+         why=_R266_WHY + "266-1-2 ช่อง RelatedDocumentId ของ UpdateDocumentRequest มีผู้อ่าน (ไม่ใช่ silent no-op) + G-1 หลังเปลี่ยนผู้ติดต่อ"),
+    dict(file=DOC, method="CollectApprovalWarningsAsync", must=["ReceiptLinkPolicy.DuplicateCashSaleWarning("],
+         why=_R266_WHY + "266-1-14 G-2 ใบแจ้งหนี้หลังใบขายสดยอดเท่ากัน = คำเตือน"),
+    dict(file="Controllers/ReceiptLinkController.cs", method="Link",
+         must=["DocumentPermissionHelper.CanApproveAsync(", "OwnerActionGuard.IsApiKeyRequest("],
+         before=[("DocumentPermissionHelper.CanApproveAsync(", "_links.LinkAsync(")],
+         why=_R266_WHY + "266-1-10 ผูก = อนุมัติชนิดใบปลายทาง · API key ไม่เปิด v1"),
+]
+REVIEWER_CASES += [
+    # ด่าน G-1 ไม่โยนเมื่อพบเหตุปฏิเสธ ⇒ ต้องฟ้อง
+    ("R266a", "GuardReceiptSourceAsync", "if (refusal != null)\n            throw", "if (refusal == null)\n            throw", True),
+    # ผูกใบร่างโดยไม่ตรวจกุญแจพรีวิวใต้ล็อก ⇒ ต้องฟ้อง
+    ("R266b", "LinkAsync", "EnsureFresh(locked, request.PreviewToken);", ";", True),
+]
 
 def main() -> int:
     errs = []

@@ -387,7 +387,10 @@ public record UpdateDocumentRequest(
     decimal? PostVatDeductionAmount = null,
     string? PostVatDeductionAccountCode = null,
     // ทีม U — แยกยอดจ่ายจริงตามแหล่ง: null = คงค่าเดิม · [] = ล้าง (เลิกติ๊ก) · มีบรรทัด = แทนชุดเดิมทั้งชุด (Σ ต้อง = ยอดรวมทั้งสิ้นหลังแก้)
-    List<PaymentSourceLineRequest>? PaymentSources = null);
+    List<PaymentSourceLineRequest>? PaymentSources = null,
+    // รอบ 266 (266-1-2): ใบต้นทางของ "ใบเสร็จร่างที่สร้างเอง" — null = คงค่าเดิม · Guid.Empty = ล้าง (กลับเป็นใบเสร็จอิสระ) · ค่าอื่น = ตั้ง/เปลี่ยน
+    // (ตัวตัดสิน ReceiptLinkPolicy.Decide เส้น SetDraftSource · ใบที่ออกเลขแล้ว/ใบเสร็จอัตโนมัติ/ใบมัดจำ ส่งค่าใหม่มา = ปฏิเสธดัง 409)
+    Guid? RelatedDocumentId = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -1050,6 +1053,9 @@ public record DocumentResponse(
     bool CanLinkToSource = false,
     /// <summary>เซิร์ฟเวอร์ตัดสิน (DocumentLinkPolicy.UnlinkBlockReason) ว่าโชว์ปุ่ม "ยกเลิกการผูก" ได้ไหม — ใบแจ้งหนี้ซื้อถอดไม่ได้</summary>
     bool CanUnlinkSource = false,
+    /// <summary>รอบ 266 (266-1-2): ช่อง "ใบต้นทาง" ของฟอร์มแก้ไขเปลี่ยน/ล้างได้ไหม — ใบเสร็จร่างที่สร้างเองเท่านั้น (ReceiptLinkPolicy.Classify = DraftReceipt) ·
+    /// หน้าเว็บไม่เดาจากชนิด/สถานะเอง · false = ล็อกพร้อมบอกเหตุผล (ห้าม silent no-op)</summary>
+    bool CanChangeReceiptSource = false,
     // ทีมตรวจงานค้าง 2026-10-08 (C-02): ใบวางบิลรวมใบแจ้งหนี้ — หน้าเว็บซ่อนแปลง/รับชำระที่ใบวางบิล แล้วโชว์ "รับชำระตามใบวางบิล" (เซิร์ฟเวอร์ตัดสิน)
     bool IsRollupBillingNote = false,
     /// <summary>คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A): ติ๊ก "สร้าง 50 ทวิ อัตโนมัติ" ของใบ</summary>
