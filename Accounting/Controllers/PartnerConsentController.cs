@@ -92,13 +92,12 @@ public class PartnerConsentController : ControllerBase
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
         if (userId == Guid.Empty) return Unauthorized();
-        if (!await _limiter.TryConsumeAsync($"xt-consent-req:{companyId:N}:{req.PartnershipId:N}", PartnerConsentService.RequestsPerPartnerPerDay,
-                PartnerConsentService.RequestsPerPartnerPerDay, ct, failClosed: true))
-            return StatusCode(429, new ApiResponse<object>(false, null,
-                $"ส่งคำขอถึงคู่ค้ารายนี้ครบ {PartnerConsentService.RequestsPerPartnerPerDay} ครั้งของวันนี้แล้ว — ลองใหม่พรุ่งนี้"));
         try
         {
-            await _service.RequestFromPartnerAsync(companyId, userId, req.PartnershipId, req.Scopes, ct);
+            // ฝ่ายค้าน L8(d): โควตานับหลังคำขอผ่านการตรวจ (service เรียกตัวนับเอง)
+            await _service.RequestFromPartnerAsync(companyId, userId, req.PartnershipId, req.Scopes,
+                () => _limiter.TryConsumeAsync($"xt-consent-req:{companyId:N}:{req.PartnershipId:N}", PartnerConsentService.RequestsPerPartnerPerDay,
+                    PartnerConsentService.RequestsPerPartnerPerDay, ct, failClosed: true), ct);
             return Ok(new ApiResponse<object>(true, null, "ส่งคำขอถึงคู่ค้าแล้ว — ระบบของคู่ค้าจะไม่ทำอะไรจนกว่าเขาจะยินยอมเอง"));
         }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }

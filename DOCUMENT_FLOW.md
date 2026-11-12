@@ -3251,11 +3251,15 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   มีแถวใช้อยู่ ⇒ ถอนแถวเดิม ("แทนที่") + แถวใหม่ในธุรกรรมเดียว · audit `PartnerConsentGranted` / `PartnerConsentWithdrawn` (ruleCode `XT-CONSENT`) ผ่าน `AddChainedAuditLog`
 - **ถอน**: `DELETE …/partner-consents/{id}?reason=` — มีผลทันทีกับงานที่ยังไม่ทำ · งานที่ทำแล้วไม่ย้อน (F7) · แถวของบริษัทอื่น = 404
 - **ขอ (ฝั่ง A)**: `POST …/partner-consents/request` → กระดิ่ง `autopilot.partner_exchange` ของ B ลิงก์ `/pages/partner-automation.html?partnership={id}` · 3 ครั้ง/คู่/วัน · ส่งล้ม = 502 (ไม่ตอบว่าส่งแล้ว) · audit `PartnerConsentRequested` ฝั่ง A
-- **ตอนใช้ (API ของ P3/P5)**: `PartnerConsentService.CheckAsync(companyId, partnershipId, scope, amount)` → `PartnerConsent.UseCheck` (Ok · Code · Reason · ConsentId · GrantorUserId · MaxAmount · DefaultPayBankAccountId) ·
+- **ตอนใช้ (API ของ P3/P5)**: `PartnerConsentService.CheckForWriteAsync(companyId, partnershipId, scope, CapAmount?)` ในธุรกรรมของท่อ (หน้า/รายงาน: `CheckAsync` อ่านอย่างเดียว) → `PartnerConsent.UseCheck` (Ok · Code · Reason · ConsentId · GrantorUserId · MaxAmount · DefaultPayBankAccountId) ·
   ตรวจสดทุกครั้ง: คู่ Accepted · แถวของบริษัท/คู่/ขอบเขตนี้ · ไม่ถอน · hash ตรง · ให้หลังการระงับครั้งล่าสุด (`StaleAfterSuspend` — เชื่อมกลับไม่ฟื้นเอง) · ผู้ให้ยังใช้งาน + ยังมีสิทธิ์ของขอบเขต (`GrantorLostPermission`) · ยอดไม่เกินเพดาน ·
   ไม่ผ่าน ⇒ ท่อกลับเป็นปุ่มเดียวพร้อม `Reason`
 - **ค่าตั้งเดิม** `PUT workflow-automation`: เขียน audit `WorkflowAutomationConfigChanged` (ช่องที่เปลี่ยน ก่อน/หลัง · ไม่เปลี่ยน = ไม่เขียน) — C-06
 - **หน้า**: `partner-automation.html` (ลิงก์จากแถวคู่ค้า Accepted/Suspended ใน `partners.html` + กระดิ่งคำขอ) · ป้าย/ข้อความ/เหตุ/สิทธิ์ของผู้เปิดหน้ามาจากเซิร์ฟเวอร์ · ปุ่มยินยอมล็อกพร้อมเหตุเมื่อผู้เปิดไม่มีสิทธิ์ · ประวัติแถว + ผลตรวจ hash ต่อแถว
+- **ชุดแก้ฝ่ายค้าน (review-264-P1 · คำตัดสิน 264-2-17…22)**: ระงับคู่ ⇒ ถอนทุกแถวในการบันทึกเดียวกัน + `Allows` ตัดแถวที่ให้ก่อน `AcceptedAt` ล่าสุด ·
+  ท่อใช้ `CheckForWriteAsync` (ในธุรกรรม · `FOR SHARE`) — `CheckAsync` อ่านอย่างเดียว · ถอน/แทนที่ `FOR UPDATE` + 409 · ยอดเทียบเพดาน = `CapAmount` (บาทรวม VAT ก่อนหัก ณ ที่จ่าย · สกุลอื่น/ติดลบ ⇒ ไม่รู้ยอด) ·
+  บัญชีจ่ายตรวจซ้ำตอนใช้ (`PayAccountInactive`) · บริษัทคู่ค้าถูกลบ/ระงับ ⇒ หยุด · trigger กัน IsDeleted + DELETE · hash `PAC2` (`HashVersion`) · `MinTextVersion` · `WiredSince` (แพ็กที่พลิก `ReaderWired` ต้องตั้ง) ·
+  หน้าแสดงคู่ Pending ที่มีแถวความยินยอม · อีเมลใน audit ค่าตั้งเป็นลายนิ้วมือ
 - **kill-switch**: ไม่มีการเรียก AI ในแพ็กนี้
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
@@ -9032,3 +9036,5 @@ _Last verified against codebase: 2026-11-12 (รอบ 262 — §2.12g-262: บ�
 _Last verified against codebase: 2026-11-12 (รอบ 262 — §2.12g-262: บริษัทผู้ให้บริการเรียกเก็บค่าบริการทาง LINE ผ่าน OA กลาง (ผูก 1:1 · ผู้เช่าผูกเองจากศูนย์บิล · ใบแจ้งหนี้/ทวง/ใบเสร็จเข้าคิว LINE ของผู้ติดต่อ · ปุ่มชำระ = ศูนย์บิล · หน้าตั้งค่า server computes) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81af94ae)_
 
 _Last verified against codebase: 2026-11-12 (รอบ 264 P1 ความยินยอมงานอัตโนมัติกับคู่ค้า — §2.12g-264-P1: ตาราง append-only + hash canonical · ให้สองขั้น · ถอนทันที · ระงับ/เชื่อมกลับไม่ฟื้นเอง · สิทธิ์ผู้ให้ตรวจซ้ำตอนใช้ · `CheckAsync` สำหรับ P3/P5 · audit ค่าตั้งเดิม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3d6cdb70)_
+
+_Last verified against codebase: 2026-11-12 (รอบ 264 P1 ชุดแก้ฝ่ายค้าน — §2.12g-264-P1: H1 ระงับ ⇒ ถอน + ตัดแถวก่อนยอมรับครั้งล่าสุด · M1 CheckForWriteAsync FOR SHARE · M2–M4 · L1–L8 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f7eb8eee)_

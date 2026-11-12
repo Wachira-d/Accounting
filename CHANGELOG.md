@@ -7069,3 +7069,6 @@ _รอบ 265: ออกใบเสร็จรับเงิน/ใบกำ
 `CustomerCreditService.IssueReceiptAsync` (จองใต้ล็อก → ใบเสร็จ standalone ขาเงินเข้า 21630 → อนุมัติ → `ApplyCreditReceiptTaxPointAsync`) · ยกเลิกใบ ⇒ เงินกลับ + ปล่อยกุญแจงวด ·
 รายการประจำงวดที่ปิดแล้วไม่ถูกออกซ้ำ (`RecurringRunKey` · ข้อความ `RecurringBilledNote`) · ทางลัดหน้ารับชำระ (`OffersReceipt`) · ใบเสร็จรวมใบเดียว = ไม่ทำ (265-1-2) ·
 `RecurringTemplate.Summary` ตัวอ่านเดียวของยอดแม่แบบ · เทสต์ `CustomerCreditRound265Tests` + Db `CustomerCreditRound265DbTests` · กติกา R265 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4558f767_
+_รอบ 264 P1 ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-12/review-264-P1.md` · คำตัดสิน 264-2-17…22): H1 ระงับคู่ถอนความยินยอมทุกแถว + ตัดแถวที่ให้ก่อนยอมรับครั้งล่าสุด (Db เดินเส้นระงับ→เชิญ→ยอมรับจริง) ·
+M1 `CheckForWriteAsync` ในธุรกรรมของท่อ FOR SHARE + ตัวตรวจผู้เรียก · M2 บัญชีจ่ายตรวจซ้ำ · M3 `CapAmount` บาทก่อนหัก · M4 FOR UPDATE + 409 · L1 trigger IsDeleted/DELETE · L2 PAC2 + HashVersion ·
+L3 MinTextVersion · L4 WiredSince · L5 เพดานที่ตั้งไว้บังคับเสมอ · L6 อีเมลเป็นลายนิ้วมือ · L7 บริษัทคู่ค้าถูกลบ/ระงับ · L8 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f7eb8eee_
