@@ -350,6 +350,11 @@ public class DocumentsV1Controller : PublicApiControllerBase
 
     // ==================== รอบ 240: ลิงก์ให้ลูกค้าเซ็น (DOCUMENT_FLOW §2.12f · คำตัดสิน 240-2/240-4) ====================
 
+    /// <remarks>รอบ 267 (ฝ่ายค้าน M8 · คำตัดสิน 267-1-24/267-1-32) — <b>สัญญาที่เปลี่ยน</b>: <c>url</c> = ลิงก์หน้าเอกสารของใบ
+    /// (<c>/pages/pay-document.html?c=…&amp;t=…</c> — เดิม <c>quotation-accept.html?token=</c>/<c>delivery-sign.html?token=</c>) ·
+    /// <c>expiresAt</c> = สิ้นสุดช่วงที่ลูกค้าตอบรับได้ (ใบเสนอราคา = สิ้นวันยืนราคา · ไม่มีวันที่ = 30 วัน · ใบส่งของ = 14 วัน) ไม่ใช่วันหมดอายุของลิงก์ ·
+    /// <c>regenerate: true</c> = ออก token ใหม่จริง (ลิงก์เดิมใช้ไม่ได้ทันที) · ใบเสนอราคาที่พ้นวันยืนราคา ⇒ 400 <c>SIGN-LINK-VALIDITY</c> ·
+    /// ลิงก์ที่พนักงานเพิกถอนไว้ ⇒ 409 (คีย์ API ออกใหม่แทนไม่ได้ — ให้พนักงานออกจากหน้าเอกสาร) · เพิกถอนเอง: <c>POST …/sign-link/revoke</c></remarks>
     /// <summary>คำขอออก/ใช้ลิงก์ — <c>regenerate</c> = ออก token ใหม่ (ลิงก์เดิมเพิกถอน) · <c>callbackUrl</c>/<c>callbackRef</c> = ตั้ง/เปลี่ยน webhook ต่อเอกสาร ·
     /// <c>sendEmail</c> = ส่งอีเมลขอเซ็นถึง <c>emailTo</c> (ว่าง = ผู้รับล่าสุด/อีเมลของผู้ติดต่อ) ทันที</summary>
     public record SignLinkRequest(bool Regenerate = false, string? CallbackUrl = null, string? CallbackRef = null,
@@ -377,7 +382,7 @@ public class DocumentsV1Controller : PublicApiControllerBase
         try
         {
             var link = await _signs.IssueLinkAsync(ctx!.CompanyId, documentId,
-                new IssueSignLinkOptions(req.Regenerate, req.CallbackUrl, req.CallbackRef), origin, ct);
+                new IssueSignLinkOptions(req.Regenerate, req.CallbackUrl, req.CallbackRef, StaffIntent: false), origin, ct);
             SignEmailResult? email = null;
             if (req.SendEmail)
                 email = await _signs.SendEmailAsync(ctx.CompanyId, documentId,
@@ -408,7 +413,36 @@ public class DocumentsV1Controller : PublicApiControllerBase
         }
         catch (Accounting.Helpers.BusinessRuleException ex)
         {
-            return BadRequest(new ApiResponse<string>(false, null, ex.Message));
+            // รอบ 267 ฝ่ายค้าน M8: คงรหัสสถานะของเหตุ (ลิงก์ถูกเพิกถอน = 409 · อื่น ๆ = 400 ตามเดิม)
+            return StatusCode(ex.StatusCode, new ApiResponse<string>(false, null, ex.Message));
+        }
+    }
+
+    /// <summary>รอบ 267 ฝ่ายค้าน H2/M8 — เพิกถอนลิงก์หน้าเอกสารของใบ (ลิงก์ที่ <c>sign-link</c> คืน): ใช้ไม่ได้ทันทีทุกทาง (ดู · ดาวน์โหลด · ยอมรับ/เซ็นรับ) ·
+    /// scope <c>documents:write</c> · สิทธิ์สร้างเอกสารชนิดนั้นของผู้ออกคีย์ + ชั้นความลับ · ออกใหม่: <c>sign-link</c> (ถ้าคีย์นี้เป็นผู้เพิกถอนเอง
+    /// ก็ยังต้องให้พนักงานออกจากหน้าเอกสาร — การเพิกถอนไม่ถูกล้างด้วยคีย์ API)</summary>
+    [HttpPost("{documentId:guid}/sign-link/revoke")]
+    public async Task<IActionResult> RevokeSignLink(Guid documentId, [FromServices] IDocumentPayLinkService links, CancellationToken ct)
+    {
+        var (ctx, error) = await ResolveCallerAsync("documents:write", Feature, ct);
+        if (error != null) return error;
+        var target = await Db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == ctx!.CompanyId && !d.IsDeleted)
+            .Select(d => new { d.DocumentType })
+            .FirstOrDefaultAsync(ct);
+        if (target == null || Helpers.SignRequestKinds.For(target.DocumentType) == null)
+            return NotFound(new ApiResponse<string>(false, null, "ไม่พบเอกสารที่ลูกค้าเซ็นได้รายการนี้ในบริษัทของคุณ"));
+        var permError = await CheckCreatePermissionAsync(ctx!, target.DocumentType, ct);
+        if (permError != null) return permError;
+        if (await DenySensitiveForKeyAsync(ctx!, documentId, "เพิกถอนลิงก์ของ", ct) is { } hidden) return hidden;
+        try
+        {
+            await links.RevokeAsync(ctx!.CompanyId, documentId, $"api:v1:{ctx.ApiKeyId}", ct);
+            return Ok(new ApiResponse<object>(true, new { documentId, revoked = true }, "เพิกถอนลิงก์แล้ว — ลิงก์เดิมใช้ไม่ได้ทันที"));
+        }
+        catch (Accounting.Helpers.BusinessRuleException ex)
+        {
+            return StatusCode(ex.StatusCode, new ApiResponse<string>(false, null, ex.Message));
         }
     }
 

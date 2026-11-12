@@ -59,7 +59,7 @@ public class NotificationService : INotificationService
             .ToListAsync();
 
         return notifications.Select(n => new NotificationResponse(
-            n.Id, n.Type, n.Title, n.Message, n.ActionUrl, n.IsRead, n.CreatedAt)).ToList();
+            n.Id, n.Type, n.Title, n.Message, n.ActionUrl, n.IsRead, n.CreatedAt, Accounting.Helpers.NotificationLink.InternalPath(n.ActionUrl))).ToList();
     }
 
     public async Task<NotificationCountResponse> GetCountAsync(Guid userId)

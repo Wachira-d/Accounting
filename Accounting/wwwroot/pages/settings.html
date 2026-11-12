@@ -1084,8 +1084,11 @@
       <div style="border:1px solid #d1fae5;background:#f0fdf4;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px">
         <!-- รอบ 257 ชุด 4 (C-M6): แยกสองเรื่อง — เดิมประโยคเดียว "ส่งได้แล้ว ไม่ต้องตั้งค่า" จริงเฉพาะลูกค้าจอง/สั่งซื้อ ไม่ใช่เอกสารถึงผู้ติดต่อ -->
         ✅ <b>ลูกค้าที่จอง/สั่งซื้อผ่านเว็บ</b> — แจ้งเตือนทาง LINE ได้แล้ว ระบบส่งผ่าน LINE ของ NextAcc ให้โดยไม่ต้องตั้งค่า<br>
-        ⚙️ <b>ส่งเอกสารถึงผู้ติดต่อทาง LINE</b> (ใบแจ้งหนี้ · ทวงชำระ · รายการประจำ ตามตารางส่ง) — ต้องใช้ <b>LINE OA ของร้านเอง</b> (ตั้งที่ "ตั้งค่าขั้นสูง" ด้านล่าง)
+        <!-- รอบ 262 (คำตัดสิน 262-1-7): ประโยคจากเซิร์ฟเวอร์ (ProviderCentralOa.ContactSendNotice) — บริษัทผู้ให้บริการส่งผ่าน OA กลาง (ไม่อ้างส่วน "ตั้งค่าขั้นสูง" ที่ถูกซ่อน) -->
+        ⚙️ <span id="lineContactSendNotice">กำลังตรวจช่องทางส่งเอกสารถึงผู้ติดต่อ…</span>
       </div>
+      <!-- รอบ 262: ความพร้อมของการส่งเอกสารถึงผู้ติดต่อผ่าน LINE OA กลาง (บริษัทผู้ให้บริการเท่านั้น · แถวจากเซิร์ฟเวอร์) -->
+      <div id="lineProviderReadiness" style="display:none;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin:0 0 12px;font-size:13px"></div>
       <!-- รอบ 232 (232-Notify): สถานะ "แจ้งเตือนธุรกิจของบริษัททาง LINE (กลุ่มทีม)" — เซิร์ฟเวอร์ตัดสิน (tenantLineNotice) · ไม่มี OA ของร้าน = ไปกระดิ่ง/อีเมล ไม่ผ่าน OA กลาง -->
       <div id="lineTenantNotice" style="border:1px solid #fde68a;background:#fffbeb;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px;display:none"></div>
       <!-- รอบ 257 C-H1: บริษัทผู้ให้บริการใช้ OA กลางอยู่แล้ว — เซิร์ฟเวอร์ส่ง isPlatformCompany + platformOaNotice ⇒ ซ่อนส่วนขั้นสูงทั้งก้อน แสดงคำอธิบายแทน -->
@@ -2224,6 +2227,9 @@
           // รอบ 259 (A-M5 · A-L3): ความพร้อมจากเซิร์ฟเวอร์ (ผลทดสอบล่าสุดอยู่ในแถว "test" — เดิมสีตามธงที่รีเซ็ตตอนบันทึก ⇒ ผ่านแล้วแดง)
           document.getElementById('lineTestResult').innerHTML = '';
           this._renderLineHealth(c.health);
+          // รอบ 262: ประโยค + แถวความพร้อมจากเซิร์ฟเวอร์ (หน้าแสดงตรงตัว)
+          { const n = document.getElementById('lineContactSendNotice'); if (n) n.textContent = c.contactSendNotice || ''; }
+          this._renderLineRows('lineProviderReadiness', 'ความพร้อม: ส่งเอกสารถึงผู้ติดต่อผ่าน LINE OA กลาง (OA ของบริษัทนี้)', c.providerLineReadiness);
           // รอบ 260-4: ชั่วโมงเงียบ (ค่าจากเซิร์ฟเวอร์ · ประโยคสถานะจากเซิร์ฟเวอร์)
           { const hours = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
             const qs = document.getElementById('lineQuietStart'); const qe = document.getElementById('lineQuietEnd');
@@ -2255,13 +2261,15 @@
         sel.value = team ? team.key : '';
         document.getElementById('lineTestId').style.display = sel.value ? 'none' : '';
       },
-      _renderLineHealth(rows) {
-        const box = document.getElementById('lineHealth');
+      _renderLineHealth(rows) { this._renderLineRows('lineHealth', 'ความพร้อมของ LINE OA ของบริษัท', rows); },
+      // รอบ 262: ตัวแสดงแถวความพร้อมตัวเดียว (OA ของบริษัท · OA กลางของบริษัทผู้ให้บริการ) — ป้าย/ระดับจากเซิร์ฟเวอร์
+      _renderLineRows(boxId, title, rows) {
+        const box = document.getElementById(boxId);
         if (!box) return;
         if (!rows || !rows.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
         const icon = { ok: '✅', warn: '⚠️', error: '❌' };
         const color = { ok: '#166534', warn: '#92400e', error: '#b91c1c' };
-        box.innerHTML = '<div style="font-weight:600;margin-bottom:4px">ความพร้อมของ LINE OA ของบริษัท</div>' + rows.map(r =>
+        box.innerHTML = `<div style="font-weight:600;margin-bottom:4px">${Layout.esc(title)}</div>` + rows.map(r =>
           `<div style="margin:3px 0;color:${color[r.level] || '#334155' /* text — สีคงที่ของหน้าตามระดับจากเซิร์ฟเวอร์ */}">${icon[r.level] || '•'} ${Layout.esc(r.label)}`
           + (r.detail ? `<div style="font-size:12px;color:#475569;margin-left:22px">${Layout.esc(r.detail)}</div>` : '') + '</div>').join('');
         box.style.display = '';

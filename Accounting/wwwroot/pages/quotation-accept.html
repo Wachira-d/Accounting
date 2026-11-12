@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- รอบ 267 ฝ่ายค้าน L6: token ของลิงก์อยู่ใน URL — ไม่ส่ง Referer ออกนอกหน้า -->
+  <meta name="referrer" content="no-referrer">
   <title>ยอมรับใบเสนอราคา</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -70,6 +72,8 @@
     const thaiDate = (d) => new Date(d).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' });
     let pad = null;
     let requireSignature = false;
+    // รอบ 267 ฝ่ายค้าน H1: ฉบับที่หน้านี้แสดง (เลข Rev + hash เนื้อหาจากเซิร์ฟเวอร์) — ส่งกลับตอนกดยอมรับ · เอกสารถูกแก้ระหว่างนั้น = เซิร์ฟเวอร์ปฏิเสธ
+    let seen = { revisionNumber: null, contentHash: null };
 
     function acceptedHtml(q) {
       return `<div class="accepted-box">
@@ -118,6 +122,7 @@
       const q = j.data;
       const accepted = !!q.acceptedAt;
       requireSignature = !!q.requireSignature;
+      seen = { revisionNumber: q.revisionNumber ?? null, contentHash: q.contentHash || null };
       const rev = q.revisionNumber > 0 ? ` (Rev.${Number(q.revisionNumber)})` : '';
       card.innerHTML = `
         <h1>ใบเสนอราคา ${esc(q.documentNumber)}${rev}</h1>
@@ -172,6 +177,8 @@
             acceptedBy: name,
             note: (document.getElementById('accNote').value || '').trim() || null,
             signatureBase64: signature,
+            revisionNumber: seen.revisionNumber,
+            contentHash: seen.contentHash,
           }),
         });
         let j = {};

@@ -234,6 +234,17 @@ public partial class DocumentService
     }
 
     /// <inheritdoc />
+    public async Task<LateReceiptTaxPointDecision> DecideCreditReceiptTaxPointAsync(Guid companyId, string? creditReason, DateTime receiptDate)
+    {
+        // ตัวตัดสินเดียวกับการจัดสรร (ApplyCreditAllocationTaxStepsAsync) — ไม่มีสูตรที่สอง · ค้างออกใบ = งวดวันรับเงินถ้ายังยื่นทัน ไม่งั้นงวดปัจจุบัน
+        var today = ThaiDate.CalendarDateUtc(DateTime.UtcNow).Date;
+        var drives = LateReceiptTaxPoint.ReceiptDrivesTaxPoint(creditReason);
+        return LateReceiptTaxPoint.Decide(creditReason, receiptDate, today,
+            drives && await DepositReceiptPeriodLockedAsync(companyId, receiptDate), today,
+            await PlatformHolidayStore.LoadSetAsync(_db, receiptDate.Year, today.Year));
+    }
+
+    /// <inheritdoc />
     public Task<string?> CreditAllocationVatLockReasonAsync(Guid companyId, DateTime date)
         => OutputVatPeriodLockReasonAsync(companyId, date);
 

@@ -345,6 +345,8 @@ builder.Services.AddScoped<ISlipOcrAssistService, SlipOcrAssistService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 // รอบ 258 — เงินรอจัดสรร (เงินรับจากลูกค้าที่ยังไม่ผูกกับใบ · ผัง 21630): รายการ · จัดสรรทีหลัง · ยกเลิกการจัดสรร (ขั้นภาษีผ่าน IDocumentService)
 builder.Services.AddScoped<ICustomerCreditService, CustomerCreditService>();
+// รอบ 266 แพ็ก A — ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ (เจ้าเดียวกัน) · ตัวตัดสิน Helpers/ReceiptLinkPolicy
+builder.Services.AddScoped<IReceiptLinkService, ReceiptLinkService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 // ทะเบียนภาษีที่เราถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.51/50 (WHT_CREDIT_PLAN.md)
 builder.Services.AddScoped<Accounting.Services.Implementations.WhtCreditService>();
@@ -900,6 +902,8 @@ builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 builder.Services.AddScoped<IDocumentPayLinkService, DocumentPayLinkService>();
 builder.Services.AddScoped<IPostPaymentAutomationService, PostPaymentAutomationService>();
 builder.Services.AddScoped<PartnerPaymentNoticeService>();   // รอบ 258-3 F-H3 — แจ้งผู้ซื้อคู่ค้าว่าผู้ขายรับเงินแล้ว (ผู้ซื้อกดบันทึกจ่ายเอง)
+builder.Services.AddScoped<PartnerConsentService>();   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ผู้เขียนเดียว + CheckAsync ที่ท่อ P3/P5 เรียก)
+builder.Services.AddScoped<PartnerPayablePipeline>();   // รอบ 264 P3 — ท่อฝั่งผู้ซื้อ: บันทึกจ่ายเองภายใต้ความยินยอม AutoRecordPayment (AutopilotJob ขั้น PartnerPayable)
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
 builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();
 

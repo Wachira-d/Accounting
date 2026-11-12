@@ -39,6 +39,14 @@ public static class PlatformDunningPolicy
     public static string Key(Guid documentId, string kind, int days) =>
         kind is KindIssued or KindDue ? $"inv:{documentId:N}:{kind}" : $"inv:{documentId:N}:{kind}:{days}";
 
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-4): ชนิดแจ้งเตือนของกุญแจที่ <see cref="Key"/> ออก (ตัวอ่านคู่ของตัวเขียนเดียว) · กุญแจที่ไม่ใช่ของใบแจ้งหนี้ (ตัดบัตร · ระดับบริษัท) ⇒ null</summary>
+    public static string? KindOfKey(string? key)
+    {
+        var parts = (key ?? "").Split(':');
+        if (parts.Length < 3 || parts[0] != "inv" || !Guid.TryParseExact(parts[1], "N", out _)) return null;
+        return parts[2] is KindIssued or KindBefore or KindDue or KindAfter ? parts[2] : null;
+    }
+
     public static string CompanyKey(Guid companyId, string kind, DateTime nowUtc) =>
         $"co:{companyId:N}:{kind}:{PlatformInvoiceRules.ThaiDate(nowUtc):yyyyMMdd}";
 

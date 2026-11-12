@@ -47,6 +47,9 @@ public static class NotificationEvents
     /// <summary>รอบ 240: ลูกค้ายอมรับใบเสนอราคา/เซ็นรับสินค้าผ่านลิงก์ออนไลน์ — ผู้ส่งเดียว <c>SignEventDispatcher</c> (outbox) ·
     /// ค่าตั้งต้น = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้) ผ่าน <c>NotificationAudiencePolicy.MigratedBroadcastKeys</c></summary>
     public const string DocumentCustomerSigned  = "document.customer_signed";
+    /// <summary>รอบ 267 P1: ผู้ถือลิงก์หน้าเอกสารที่หมดอายุ/พ้นกำหนดทำรายการ ขอให้ผู้ขายส่งลิงก์ใหม่ (ระบบไม่ออก token ให้คนนอก) ·
+    /// ผู้ส่ง: <c>PublicDocumentPageController.NotifyLinkRequestedAsync</c> · ค่าตั้งต้น = กระดิ่งถึงเจ้าของ (<c>NotificationAudiencePolicy.BellOnlyKeys</c>)</summary>
+    public const string DocumentLinkRequested   = "document.link_requested";
     /// <summary>รอบ 241: งานส่งเอกสารอัตโนมัติหลังรับชำระหยุด/ล้ม (ลูกค้าไม่มีอีเมล · ข้อมูลผู้ซื้อไม่ครบสำหรับใบกำกับ · ใบเสร็จเป็นร่าง · ส่งไม่สำเร็จครบรอบ) —
     /// ผู้ส่งเดียว <c>PostPaymentAutomationService</c> · ค่าตั้งต้น = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้)</summary>
     public const string PostPaymentAutomationBlocked = "document.post_payment_blocked";
@@ -105,6 +108,13 @@ public static class NotificationEvents
     /// <summary>E-11 (รอบ 255 WP-12B ข้อ 8): คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ากล่องรับของเราแล้ว — ต้องตรวจก่อนใช้เป็นเครดิต ·
     /// รอบ 258-3: + 50 ทวิ เข้ากล่องรับแล้วรอคนยืนยัน (F-M4) · ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ บันทึกจ่ายใบซื้อ (F-H3)</summary>
     public const string AutopilotPartnerExchange = "autopilot.partner_exchange";
+    /// <summary>รอบ 264 (คำตัดสิน 264-1-4): บริษัทที่ใช้ NextAcc ส่งคำขอเชื่อมระบบถึงเรา — ผู้ส่งเดียว <c>CrossTenantWorkflowService.DispatchPendingLinkRequestNoticesAsync</c>
+    /// (งานเบื้องหลัง · ไม่ส่งในคำขอของผู้ขอ — เวลาตอบต้องเท่ากันทุกกรณี) · ค่าตั้งต้น = กระดิ่ง + อีเมล + LINE ถึงเจ้าของ และผู้มีสิทธิ์ตั้งค่าบริษัท
+    /// (<c>NotificationAudiencePolicy.DefaultMatrix</c>) · ลิงก์ = การ์ดยอมรับ <c>partners.html?request=</c></summary>
+    public const string PartnerLinkRequested = "partner.link_requested";
+    /// <summary>รอบ 264 ฝ่ายค้าน L4 (คำตัดสิน 264-1-11): ปลายทางตอบรับคำขอเชื่อมที่เราส่ง — ผู้ส่งเดียว <c>NotifyRequesterAcceptedAsync</c> ·
+    /// เดิมยืม <see cref="AutopilotPartnerExchange"/> (ความหมาย "ยกเลิก 50 ทวิ") ⇒ ปิดคีย์นั้นแล้วไม่รู้ว่าใครรับคำขอ · ค่าตั้งต้นเหมือน <see cref="PartnerLinkRequested"/> (ไม่เข้ากลุ่ม LINE)</summary>
+    public const string PartnerLinkAccepted = "partner.link_accepted";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
     /// เพื่อสอบ DBA / raw SQL.</summary>
@@ -179,6 +189,7 @@ public static class NotificationEvents
         ("Accounting", DocumentApproved, "อนุมัติเอกสาร"),
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
         ("Accounting", DocumentCustomerSigned, "ลูกค้ายอมรับใบเสนอราคา/เซ็นรับสินค้าผ่านลิงก์ออนไลน์"),
+        ("Accounting", DocumentLinkRequested, "ลูกค้าขอลิงก์หน้าเอกสารใหม่ (ลิงก์เดิมหมดอายุ/พ้นกำหนดทำรายการ)"),
         ("Accounting", PostPaymentAutomationBlocked, "ส่งเอกสารอัตโนมัติหลังรับชำระหยุด/ไม่สำเร็จ (ต้องให้คนดำเนินการ)"),
         ("Accounting", PaymentReceived, "บันทึกรับชำระเงิน (ลูกค้าจ่ายเรา)"),
         ("Accounting", PaymentMade, "บันทึกจ่ายชำระเงิน (เราจ่ายผู้ขาย/คืนเงิน)"),
@@ -203,6 +214,8 @@ public static class NotificationEvents
         ("Accounting", AutopilotBankSettleFailed, "Autopilot: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ"),
         ("Accounting", AutopilotDailyDigest, "Autopilot: สรุปประจำวัน (สำเร็จ · รอยืนยัน · เรื่องที่ระบบทำต่อไม่ได้)"),
         ("Accounting", AutopilotPartnerExchange, "Autopilot: คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ามาแล้ว (ตรวจก่อนใช้เครดิต)"),
+        ("Accounting", PartnerLinkAccepted, "คู่ค้าตอบรับคำขอเชื่อมระบบที่เราส่ง (ตรวจชื่อ/เลขภาษี/สาขาของผู้ตอบรับ)"),
+        ("Accounting", PartnerLinkRequested, "คู่ค้าที่ใช้ NextAcc ส่งคำขอเชื่อมระบบถึงเรา (กดลิงก์เพื่อยอมรับ/ปฏิเสธ)"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
         ("Accounting", EtaxRdSubmitFailed, "e-Tax นำส่งกรมสรรพากรไม่สำเร็จ (โหมดส่งตรง) · สรุปงานนำส่งประจำเดือน"),
         ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),
@@ -238,10 +251,12 @@ public static class NotificationRecipientRoles
     public const string Accounting = "Accounting";
     /// <summary>Company Owner users.</summary>
     public const string Owner = "Owner";
+    /// <summary>รอบ 264: ผู้มีสิทธิ์ตั้งค่าบริษัท (perm:CompanySettings.Edit) + เจ้าของ — คนที่กดยอมรับคำขอเชื่อมคู่ค้าได้</summary>
+    public const string CompanyAdmin = "CompanyAdmin";
 
     public static readonly IReadOnlyList<string> All = new[]
     {
-        Requester, DirectManager, DepartmentHead, HrAdmin, Accounting, Owner
+        Requester, DirectManager, DepartmentHead, HrAdmin, Accounting, Owner, CompanyAdmin
     };
 
     /// <summary>รอบ 258 (E-H1 · F2 ข้อ 5): ป้ายไทยของบทบาทผู้รับ — ตัวตั้งตัวเดียว ส่งให้หน้าเว็บผ่านแคตตาล็อก
@@ -254,5 +269,6 @@ public static class NotificationRecipientRoles
         [HrAdmin] = "ฝ่ายบุคคล",
         [Accounting] = "ฝ่ายบัญชี",
         [Owner] = "เจ้าของบริษัท",
+        [CompanyAdmin] = "ผู้ดูแลตั้งค่าบริษัท",
     };
 }

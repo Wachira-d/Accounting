@@ -291,7 +291,35 @@ public class LineConfigController : ControllerBase
                 s.LineLastWebhookAt, !string.IsNullOrWhiteSpace(s.LineWebhookDestinationMismatch), s.LineOaBasicId,
                 s.LineLastTestedAt, s.LineLastTestStatus, isPlatform), s, isPlatform),
             QuietHoursNote = LineQuietHours.Sentence(s.LineQuietHoursEnabled, s.LineQuietStartHour, s.LineQuietEndHour),
+        } with
+        {
+            // รอบ 262 (คำตัดสิน 262-1-7): บริษัทผู้ให้บริการ — OA กลางคือ OA ของบริษัทสำหรับผู้ติดต่อ ⇒ ประโยค + แถวความพร้อมจากเซิร์ฟเวอร์ (ไม่อ้างส่วนที่ซ่อน)
+            ContactSendNotice = ProviderCentralOa.ContactSendNotice(isPlatform, isPlatform ? await CentralBasicIdAsync() : null),
+            ProviderLineReadiness = isPlatform ? await ProviderReadinessAsync(companyId) : Array.Empty<LineOaHealth.Row>(),
         };
+    }
+
+    private async Task<string?> CentralBasicIdAsync() => _nextAcc == null ? null : (await _nextAcc.GetAsync()).BasicId;
+
+    /// <summary>รอบ 262: ข้อเท็จจริงของแถวความพร้อม (OA กลาง · ลูกค้าที่ผูก LINE ผ่าน OA กลาง · ค่าตั้งการแจ้งค่าบริการ) → ตัวตัดสินเดียว <c>ProviderCentralOa.ReadinessRows</c></summary>
+    private async Task<IReadOnlyList<LineOaHealth.Row>> ProviderReadinessAsync(Guid companyId)
+    {
+        var nx = _nextAcc == null ? null : await _nextAcc.GetAsync();
+        var bound = await _db.ContactNotifyEndpoints.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && e.OaScope == NotifyEndpointKind.ScopeNextAcc && e.UnlinkedAt == null && !e.IsDeleted
+                && (e.Kind == NotifyEndpointKind.LineUser || e.Kind == NotifyEndpointKind.LineGroup))
+            .Select(e => e.ContactId).Distinct().CountAsync();
+        var contacts = await _db.Contacts.AsNoTracking().CountAsync(c => c.CompanyId == companyId && !c.IsDeleted);
+        var policy = await Accounting.Services.Implementations.PlatformBillingSettingsService.LoadPolicyAsync(_db);
+        // ฝ่ายค้าน L2 (262-1-14): Bot User ID ที่ตั้งไว้ต้องตรงบอทของ token (ตั้งผิด ⇒ ผูกทุกครั้งตอบ "เปลี่ยนบัญชี") — ถาม LINE ด้วยตัวอ่านเดียวกับด่าน 257-1-7
+        string? fetchedBot = null;
+        if (nx?.HasToken == true && _relink != null && !string.IsNullOrWhiteSpace(nx.BotUserId))
+        {
+            try { fetchedBot = await _relink.FetchBotUserIdAsync(nx.AccessToken!); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { _logger?.LogWarning(ex, "อ่าน Bot User ID ของ OA กลางจาก LINE ไม่ได้ (แถวความพร้อม)"); }
+        }
+        return ProviderCentralOa.ReadinessRows(true, new ProviderCentralOa.ReadinessFacts(nx?.HasToken == true, nx?.HasSecret == true, nx?.Problem, nx?.BasicId,
+            bound, contacts, policy.ReminderLineEnabled, policy.ReminderEmailEnabled) { CentralBotConfigured = nx?.BotUserId, CentralBotFetched = fetchedBot });
     }
 
     /// <summary>รอบ 260: แถวความพร้อม "รับสลิปจากแชต" ต่อท้าย (ตัวตัดสินเดียว LineChatSlipRule.ReadinessRow) · บริษัทผู้ให้บริการไม่มี OA ของร้าน = ไม่มีแถว</summary>

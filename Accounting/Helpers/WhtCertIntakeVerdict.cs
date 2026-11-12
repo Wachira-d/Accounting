@@ -1,3 +1,5 @@
+using Accounting.Models.Enums;
+
 namespace Accounting.Helpers;
 
 /// <summary>
@@ -104,9 +106,11 @@ public static class WhtCertIntakeVerdict
     /// ไม่ได้ตรวจ (ด่านเชิงกำหนดไม่ผ่าน/ไม่มีคำตอบ) = บอกตรง ๆ — หน้าเว็บแสดงข้อความนี้อย่างเดียว (ไม่มีสำเนาป้ายใน JS)</summary>
     /// <param name="priorConfirmedFromPayer">จำนวนใบของผู้จ่ายรายนี้ที่ยืนยันแล้วก่อนหน้า — ป้ายของคำตอบนักเรียน (ฝ่ายค้าน WP-09 M6:
     /// นักเรียนตอบจากประวัติผู้จ่าย ไม่ได้อ่านกระดาษใบนี้ ⇒ ห้ามอ้างว่า "ตรวจแล้ว")</param>
-    public static string AuthenticityLabel(string? answer, decimal? confidence, bool usedAi, int priorConfirmedFromPayer = 0)
+    /// <param name="byProvenance">รอบ 264 P5: คำตอบมาจากการพิสูจน์ที่มา (<see cref="ProvenanceProblems"/> ว่าง) — ไม่ใช่ AI/นักเรียน</param>
+    public static string AuthenticityLabel(string? answer, decimal? confidence, bool usedAi, int priorConfirmedFromPayer = 0, bool byProvenance = false)
     {
         if (answer == null) return "⚙️ ยังไม่ได้ตรวจของจริง — ผู้ใช้ตรวจใบแล้วกดยืนยัน";
+        if (byProvenance && answer == Genuine && !usedAi) return ProvenanceLabel;
         var pct = confidence is decimal c ? $" ({c:P0})" : "";
         if (!usedAi)
             return $"⚙️ ผู้จ่ายรายนี้ยืนยันแล้ว {Math.Max(0, priorConfirmedFromPayer)} ใบ — ระบบไม่ได้ตรวจกระดาษใบนี้"
@@ -151,6 +155,74 @@ public static class WhtCertIntakeVerdict
                 : otherPayerContactId != null ? CertPayerMatch.Different : CertPayerMatch.Unknown;   // อีกใบไม่รู้ผู้ติดต่อ ⇒ ไม่รู้ (ไม่เดา)
         return CertPayerMatch.Unknown;
     }
+
+    // ═══════════ รอบ 264 P5 (C-02 · B8 · คำตัดสิน 264-5-1): ใบจากคู่ค้า NextAcc ยืนยันด้วย "ที่มา" ไม่ใช่ AI ═══════════
+
+    /// <summary>ความมั่นใจของคำตอบที่มาจากการพิสูจน์ที่มาด้วยฐานข้อมูล (ไม่ใช่การคาดเดา — แถวจริงในบริษัทผู้จ่าย)</summary>
+    public const decimal ProvenanceConfidence = 1m;
+
+    /// <summary>ส่วนต่างที่ยอมได้ระหว่างยอดบนใบที่ส่งมากับแถว 50 ทวิ ในบริษัทผู้จ่าย — สตางค์เดียวกัน (ตัวเลขล้วนไม่มีการสะกดผิด · F2 ข้อ 3)</summary>
+    public const decimal ProvenanceAmountTolerance = 0.005m;
+
+    /// <summary>ข้อเท็จจริงที่ <c>WhtCertIntakeService</c> อ่านจากฐาน (ไม่ใช่จากผู้ส่ง) เพื่อพิสูจน์ว่าใบช่อง <c>NextAccLink</c> มีอยู่จริงในบริษัทผู้จ่าย</summary>
+    /// <param name="PartnershipAccepted">ผู้จ่าย (บริษัทที่เลขผู้เสียภาษีตรงใบ) เป็นคู่ค้าที่เชื่อมอยู่ (Accepted) กับเรา</param>
+    /// <param name="LiveSourceCount">จำนวนใบเลขที่นี้ในบริษัทผู้จ่ายที่ออกแล้ว (ออก/พิมพ์ · ไม่ถูกลบ) และผู้ถูกหักคือผู้ติดต่อที่ผูกกับบริษัทเรา</param>
+    /// <param name="SourceVoided">มีใบเลขที่นี้ (ผูกกับเรา) แต่ถูกยกเลิก/ลบแล้ว</param>
+    /// <param name="Source">ใบที่ออกแล้ว (เมื่อ <paramref name="LiveSourceCount"/> = 1) · null = ไม่มี/กำกวม</param>
+    /// <param name="CreditPayersLinked">ฝ่ายค้าน 264-P5 M1 (คำตัดสิน 264-5-6): ทุกแถวรอใบที่ใบนี้จะปิด มีผู้จ่าย (ผู้ติดต่อ<b>ในสมุดของเรา</b>) ที่ผูก
+    /// <c>NextAccTenant</c> กับบริษัทต้นทางของใบ — ตัวตนผูกกับข้อมูลที่เราบันทึกเอง ไม่ใช่ <c>Company.TaxId</c> ที่ผู้เช่าฝั่งผู้จ่ายกรอกเอง ·
+    /// ค่าตั้งต้น false (ทางปลอดภัย = รอคน)</param>
+    public sealed record ProvenanceFacts(bool PartnershipAccepted, int LiveSourceCount, bool SourceVoided, SourceCertFacts? Source,
+        string? OurTaxId, SubmittedCertFacts Submitted, bool CreditPayersLinked = false);
+
+    /// <param name="Rate">อัตราจาก <c>PartnerExchangeRules.CertRate</c> (สูตรเดียวกับฝั่งส่ง) · <paramref name="CertificateDate"/> จาก <c>PartnerExchangeRules.WhtCertificateDate</c></param>
+    public sealed record SourceCertFacts(decimal Income, decimal Tax, decimal Rate, DateTime? CertificateDate, WhtPayerFormType? Form, string? PayeeContactTaxId);
+
+    public sealed record SubmittedCertFacts(string? PayeeTaxId, decimal Income, decimal Tax, decimal Rate, DateTime? CertificateDate, WhtPayerFormType Form);
+
+    /// <summary>ปัญหาของการพิสูจน์ที่มา (ไทย) — ว่าง = ใบนี้คือแถว 50 ทวิ ที่ผู้จ่ายออกจริง เลขภาษีทั้งสองฝั่ง/ยอด/อัตรา/วันที่/แบบ ตรงทุกช่อง ⇒
+    /// ผู้เรียกตั้งคำตอบ <see cref="Genuine"/> (<see cref="ProvenanceConfidence"/>) <b>โดยไม่เรียก orchestrator</b> · ไม่ว่าง ⇒ เป็นด่าน (รอคน · ไม่ถาม AI —
+    /// ใบช่องคู่ค้าที่ยอดไม่ตรงแถวต้นทาง = ข้อมูลถูกแก้ระหว่างทาง ห้ามให้ AI "รับรอง" แทน)</summary>
+    public static IReadOnlyList<string> ProvenanceProblems(ProvenanceFacts f)
+    {
+        var p = new List<string>();
+        if (!f.PartnershipAccepted) { p.Add("ผู้จ่ายไม่ได้เป็นคู่ค้า NextAcc ที่เชื่อมอยู่กับบริษัทเรา — ยืนยันจากระบบของผู้จ่ายไม่ได้"); return p; }
+        if (f.LiveSourceCount == 0)
+        {
+            p.Add(f.SourceVoided
+                ? "ผู้จ่ายยกเลิกหนังสือรับรองเลขนี้ในระบบของผู้จ่ายแล้ว — ห้ามใช้เป็นเครดิตภาษี (ขอใบใหม่จากผู้จ่าย)"
+                : "ไม่พบหนังสือรับรองเลขนี้ที่ออกให้บริษัทเราในระบบของผู้จ่าย");
+            return p;
+        }
+        if (f.LiveSourceCount > 1 || f.Source is not { } s)
+        {
+            p.Add("พบหนังสือรับรองเลขนี้ในระบบของผู้จ่ายมากกว่าหนึ่งใบ — ระบบไม่เดาว่าใบไหน");
+            return p;
+        }
+        var sub = f.Submitted;
+        if (!f.CreditPayersLinked)
+            p.Add("ผู้จ่ายบนรายการรอ 50 ทวิ ในสมุดของเรายังไม่ได้ผูกกับบริษัทคู่ค้าที่ส่งใบนี้ — ระบบไม่ยืนยันเอง · ตรวจใบแล้วกดยืนยัน หรือผูกผู้ติดต่อกับคู่ค้าที่หน้าผู้ติดต่อ");
+        if (!ThaiTaxId.IsValid(f.OurTaxId) || !ThaiTaxId.Same(s.PayeeContactTaxId, f.OurTaxId))
+            p.Add("เลขผู้เสียภาษีผู้ถูกหักบนใบในระบบของผู้จ่ายไม่ตรงเลขของบริษัทเรา");
+        else if (!ThaiTaxId.Same(sub.PayeeTaxId, f.OurTaxId))
+            p.Add("เลขผู้เสียภาษีผู้ถูกหักที่ส่งมาไม่ตรงใบในระบบของผู้จ่าย");
+        if (Math.Abs(s.Tax - sub.Tax) > ProvenanceAmountTolerance) p.Add($"ยอดภาษีที่ส่งมา ({sub.Tax:N2}) ไม่ตรงใบในระบบของผู้จ่าย ({s.Tax:N2})");
+        if (Math.Abs(s.Income - sub.Income) > ProvenanceAmountTolerance) p.Add($"ยอดเงินได้ที่ส่งมา ({sub.Income:N2}) ไม่ตรงใบในระบบของผู้จ่าย ({s.Income:N2})");
+        if (Math.Abs(s.Rate - sub.Rate) > ProvenanceAmountTolerance) p.Add("อัตราที่ส่งมาไม่ตรงใบในระบบของผู้จ่าย");
+        if (s.CertificateDate?.Date != sub.CertificateDate?.Date) p.Add("วันที่บนใบที่ส่งมาไม่ตรงใบในระบบของผู้จ่าย");
+        if (s.Form != sub.Form) p.Add("แบบ (ภ.ง.ด.3/53) ที่ส่งมาไม่ตรงใบในระบบของผู้จ่าย");
+        return p;
+    }
+
+    /// <summary>คำนำของด่านเมื่อพิสูจน์ที่มาไม่ได้ (ตัวเดียว — เทสต์อ้างได้)</summary>
+    public const string ProvenanceGatePrefix = "ยืนยันจากระบบของผู้จ่ายไม่ได้: ";
+
+    /// <summary>ฝ่ายค้าน 264-P5 L5: ข้อความตอบกลับเมื่อยืนยันด้วยที่มา (ตัวเดียว — ไม่ใช้ข้อความของคำตอบนักเรียน)</summary>
+    public const string ProvenanceConfirmedMessage =
+        "ยืนยันอัตโนมัติแล้ว — แถวหนังสือรับรองในระบบของผู้จ่าย (คู่ค้า NextAcc) ตรงทุกช่อง และตรงกับรายการรอใบของผู้จ่ายรายนี้ (ไม่ได้ใช้ AI)";
+
+    /// <summary>ป้ายของใบที่ยืนยันด้วยที่มา (ไม่ใช่ AI · ไม่ใช่นักเรียน) — กฎเหล็ก #1 ป้ายซื่อสัตย์</summary>
+    public const string ProvenanceLabel = "⚙️ ยืนยันจากระบบของผู้จ่าย (คู่ค้า NextAcc) — แถวหนังสือรับรองในบริษัทผู้จ่ายตรงทุกช่อง · ไม่ได้ใช้ AI";
 
     /// <summary>ปีภาษี (รอบบัญชีของบริษัท) ของวันที่ — กติกาเดียวกับ <c>SyncWhtCreditReceivedAsync</c> (เดือนเริ่มรอบ 1–12)</summary>
     public static int FiscalYearOf(DateTime date, int fiscalStartMonth)

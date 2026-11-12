@@ -224,7 +224,7 @@ public class ContactRecipientWiringRound250DbTests
             DocumentNumber = "QT250W8-" + Random.Shared.Next(100000, 999999), Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date,
             SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, Currency = "THB",
         };
-        SignRequestKinds.SetNewToken(qt, Accounting.Controllers.PublicQuotationController.NewToken(), DateTime.UtcNow);
+        Accounting.Tests.LegacySignLinkSeed.Seed(qt);
         qt.Lines.Add(new DocumentLine { LineOrder = 1, Description = "งานติดตั้ง", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m });
         db.Documents.Add(qt);
         await db.SaveChangesAsync();

@@ -1363,8 +1363,14 @@ public class EmailScheduleService : IEmailScheduleService
         // ถอยไปอีเมลตอนส่ง (ล้มถาวร) — เฉพาะกฎที่ไม่ได้ติ๊กอีเมล (ติ๊กอีเมล = อีเมลออกอยู่แล้ว)
         // รอบ 257 ชุด 4 (C-M3): อีเมลถูกบังคับด้วย e-Tax by Email ⇒ ไม่ถอย (ตัวตัดสินเดียว ContactLineChannel.LineFallbackAtSend)
         var fallbackAtSend = ContactLineChannel.LineFallbackAtSend(rule.ChannelEmail, rule.LineFallbackToEmail, etaxForcesEmail);
+        // รอบ 262 ฝ่ายค้าน L1 (คำตัดสิน 262-1-13): ปลายทางที่ได้การ์ดค่าบริการ (บริษัทผู้ให้บริการ) ของใบ+เรื่องเดียวกันแล้ว ⇒ กฎไม่เข้าคิวซ้ำ (ตัวเทียบเดียวกับฝั่งการ์ดค่าบริการ)
+        var platformCarded = await PlatformInvoiceQueries.CardedEndpointsAsync(_db, doc.CompanyId, doc.Id, rule.Trigger,
+            plan.Endpoints.Select(e => e.EndpointId!.Value).ToList(), fromPlatform: true, ct);
+        var queuedNow = 0;
         foreach (var ep in plan.Endpoints)
         {
+            if (platformCarded.Contains(ep.EndpointId!.Value)) continue;
+            queuedNow++;
             var key = ContactLineChannel.QueueKey(baseKey, ep.EndpointId);
             _db.LineQueues.Add(new LineQueue
             {
@@ -1374,7 +1380,7 @@ public class EmailScheduleService : IEmailScheduleService
                 IdempotencyKey = key, BaseKey = baseKey, FallbackToEmail = fallbackAtSend,
             });
         }
-        return new LineEnqueueResult(plan.Endpoints.Count, false, false, null);
+        return queuedNow == 0 ? new LineEnqueueResult(0, true, false, null) : new LineEnqueueResult(queuedNow, false, false, null);
     }
 
     public async Task<string?> EnqueueLineFallbackEmailAsync(Guid companyId, Guid? ruleId, Guid documentId, string baseKey, string trigger,
@@ -1596,7 +1602,10 @@ public class EmailScheduleService : IEmailScheduleService
         if (ContactLineChannel.RuleProblem(rule.Trigger, rule.ChannelEmail, rule.ChannelLineUser, rule.ChannelLineGroup,
                 lineChannel.Open && lineChannel.CompanyOaReady, lineChannel.CompanyOaProblem,
                 centralGroupOpen: lineChannel.Open && lineChannel.NextAccGroupOpen
-                    && await _recipients.CentralGroupProblemAsync(companyId) == null) is string channelErr)
+                    && await _recipients.CentralGroupProblemAsync(companyId) == null,
+                // รอบ 262 (คำตัดสิน 262-1-1): บริษัทผู้ให้บริการ — OA กลางคือ OA ของบริษัท ⇒ ติ๊ก LINE ผู้ใช้ได้เมื่อ OA กลางพร้อม (token + secret)
+                centralUserOpen: lineChannel.Open && lineChannel.NextAccUserOpen
+                    && await _recipients.CentralUserProblemAsync(companyId) == null) is string channelErr)
             throw new BusinessRuleException(channelErr, ContactLineChannel.RuleCode);
         if (rule.Id == Guid.Empty)
         {

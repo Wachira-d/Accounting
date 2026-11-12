@@ -3,62 +3,127 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ชำระเงินตามเอกสาร</title>
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex">
+  <title>เอกสาร</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Noto Sans Thai', sans-serif; background: #f1f5f9; color: #0f172a;
            min-height: 100vh; display: flex; justify-content: center; padding: 20px 12px; }
     .card { background: #fff; border-radius: 14px; box-shadow: 0 4px 24px rgba(15,23,42,.08);
-            max-width: 520px; width: 100%; padding: 24px; height: fit-content; }
+            max-width: 640px; width: 100%; padding: 24px; height: fit-content; }
     h1 { font-size: 19px; margin-bottom: 4px; }
-    .sub { color: #64748b; font-size: 13px; margin-bottom: 14px; }
+    h2 { font-size: 15px; margin: 18px 0 6px; }
+    .sub { color: #64748b; font-size: 13px; margin-bottom: 10px; }
+    .chip { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 12px; background: #e0e7ff; color: #3730a3; margin-left: 6px; vertical-align: middle; }
+    .chip.void { background: #fee2e2; color: #991b1b; }
+    .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 14px; }
-    td { padding: 7px 4px; border-bottom: 1px solid #f1f5f9; }
+    th { text-align: left; color: #64748b; font-weight: 500; font-size: 12px; border-bottom: 1px solid #e2e8f0; padding: 6px 4px; }
+    td { padding: 7px 4px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
     .num { text-align: right; white-space: nowrap; }
+    th.num { text-align: right; }
     .total td { font-weight: 700; font-size: 16px; border-bottom: 0; }
     .note { background: #fef3c7; color: #92400e; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 8px 0; }
+    .info { background: #eff6ff; color: #1e3a8a; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 8px 0; }
+    .ok { background: #dcfce7; color: #166534; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 8px 0; }
+    .voided { background: #fee2e2; color: #991b1b; border-radius: 8px; padding: 10px 12px; font-size: 14px; font-weight: 600; margin: 8px 0; }
     .test { background: #fee2e2; color: #991b1b; border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 10px; }
-    .btn { display: block; width: 100%; background: #4f46e5; color: #fff; border: 0; border-radius: 10px;
+    .btn { display: block; width: 100%; background: #4f46e5; color: #fff; border: 0; border-radius: 10px; text-align: center; text-decoration: none;
            padding: 13px; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; margin-top: 8px; }
+    .btn.alt { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .btn.go { background: #16a34a; }
+    .btn[disabled] { background: #e2e8f0; color: #64748b; cursor: not-allowed; }
+    .why { font-size: 12px; color: #92400e; margin: 4px 2px 0; }
     .transfer { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-top: 14px; font-size: 14px; line-height: 1.7; }
     .err { text-align: center; color: #b91c1c; padding: 40px 10px; }
-    .done { text-align: center; padding: 26px 10px; }
     .copy { border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-family: inherit; cursor: pointer; margin-left: 6px; }
     .slip { border-top: 1px dashed #e2e8f0; margin-top: 10px; padding-top: 10px; }
     .slip label { display: block; font-size: 13px; margin: 6px 0 3px; }
     .slip input[type=text], .slip input[type=file] { width: 100%; font-family: inherit; font-size: 13px; padding: 7px; border: 1px solid #cbd5e1; border-radius: 8px; }
     .msg { border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-top: 8px; }
     .msg.ok { background: #dcfce7; color: #166534; } .msg.bad { background: #fee2e2; color: #991b1b; }
+    .rel { border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; margin-top: 8px; font-size: 13px; line-height: 1.6; }
+    .rel a { color: #1d4ed8; font-weight: 600; }
+    .foot { font-size: 12px; color: #64748b; margin-top: 16px; }
   </style>
 </head>
 <body>
   <div class="card" id="card"><div class="err">กำลังโหลด...</div></div>
   <script src="/js/pay-widget.js"></script>
   <script>
-    // รอบ 241 — หน้าชำระเงินตามเอกสาร (ลิงก์จากอีเมลตามตาราง) · ยอด/ช่องทาง/เหตุที่จ่ายไม่ได้มาจากเซิร์ฟเวอร์ทั้งหมด (DocumentPayLinkPolicy)
-    // หน้านี้ไม่ส่งยอดเงินและไม่ส่งรหัสเอกสาร — ตัวตนอยู่ใน token ของ URL (PayWidget โหมดลูกค้าปลายทาง)
+    // รอบ 267 P1 — หน้าเอกสารสำหรับลูกค้า (URL เดิมของลิงก์ชำระรอบ 241 — ลิงก์ที่ลูกค้าถืออยู่เปิดหน้านี้ได้ทันที)
+    // ทุกค่ามาจากเซิร์ฟเวอร์: หัวใบ · รายการ · ยอด · ปุ่ม (page.actions จาก CustomerDocPage.Actions) · ข้อความ (page.labels) · เหตุที่ทำไม่ได้
+    // หน้านี้ไม่มีตารางชนิดเอกสาร/ปุ่ม/ป้ายของตัวเอง · ไม่ส่งยอดเงินและไม่ส่งรหัสเอกสาร — ตัวตนอยู่ใน token ของ URL
+    // โหมด: ?c=&t= (ลิงก์ของใบ) · ?c=&lq=&lt= (การ์ด LINE — ดูอย่างเดียว) · ?c=&preview= (พนักงานดูตัวอย่าง — ต้องล็อกอิน)
     const qs = new URLSearchParams(location.search);
     const companyId = qs.get('c');
     const token = qs.get('t');
+    const lineQueue = qs.get('lq');
+    const lineToken = qs.get('lt');
+    const previewDoc = qs.get('preview');
     const card = document.getElementById('card');
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const money = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const dateTh = (d) => d ? new Date(d).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-';
-    const base = () => `/api/companies/${encodeURIComponent(companyId)}/public-pay/documents/${encodeURIComponent(token)}`;
+    const qty = (n) => Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 4 });
+    let english = false;
+    const dateText = (d) => d ? new Date(d).toLocaleDateString(english ? 'en-GB' : 'th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-';
+    // ที่อยู่จากเซิร์ฟเวอร์เท่านั้น: path ภายในเว็บนี้ (ขึ้นต้น / ตัวเดียว) — ไม่ต่อ URL ภายนอกเข้า href
+    // (ฝ่ายค้าน 267 L8: ไม่รับ "/\host" — เบราว์เซอร์ตีเป็น "//host")
+    const safePath = (p) => (typeof p === 'string' && /^\/(?![\\/])/.test(p)) ? p : null;
+    const c = () => encodeURIComponent(companyId);
+    // เส้นจ่าย/สลิปเดิม (เฉพาะโหมดลิงก์ของใบ)
+    const base = () => `/api/companies/${c()}/public-pay/documents/${encodeURIComponent(token)}`;
+    function viewEndpoint() {
+      if (token) return { url: base(), headers: {} };
+      if (lineQueue && lineToken) return { url: `/api/companies/${c()}/line-doc/${encodeURIComponent(lineQueue)}/${encodeURIComponent(lineToken)}/page`, headers: {} };
+      if (previewDoc) {
+        let jwt = null;
+        try { jwt = localStorage.getItem('token'); } catch { jwt = null; }
+        return { url: `/api/companies/${c()}/document/${encodeURIComponent(previewDoc)}/customer-page-preview`, headers: jwt ? { Authorization: 'Bearer ' + jwt } : {} };
+      }
+      return null;
+    }
     let view = null;
     // รอบ 253 (WP-10): ตัวเลือก "ไม่หัก ณ ที่จ่าย" — หน้าแสดงยอดที่เซิร์ฟเวอร์คำนวณ (net / noWhtAmount) และส่งแค่ตัวเลือก + version ข้อความที่แสดง
     let noWht = false;
 
     async function load(flash) {
-      if (!companyId || !token) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง</div>'; return; }
+      const ep = companyId ? viewEndpoint() : null;
+      if (!ep) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง</div>'; return; }
       let r;
-      try { r = await fetch(base()); }
+      try { r = await fetch(ep.url, { headers: ep.headers }); }
       catch { card.innerHTML = '<div class="err">เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง</div>'; return; }
       const j = await r.json().catch(() => null);
-      if (!r.ok || !j || !j.data) { card.innerHTML = `<div class="err">${esc((j && j.message) || 'ลิงก์ไม่ถูกต้อง หรือหมดอายุแล้ว — กรุณาติดต่อผู้ขาย')}</div>`; return; }
+      if (!r.ok || !j || !j.success || !j.data) { renderUnusable(j, r.status); return; }
       view = j.data;
+      english = !!(view.page && view.page.isEnglish);
+      document.title = `${view.documentTitle || ''} ${view.documentNumber || ''}`.trim() || 'เอกสาร';
       render(flash);
+    }
+
+    // ลิงก์ใช้ไม่ได้ — เซิร์ฟเวอร์ไม่ส่งข้อมูลของใบ (ข้อความเดียวทุกเหตุ) · หมดอายุไม่นาน ⇒ เซิร์ฟเวอร์บอกว่าขอลิงก์ใหม่ได้ (ไม่ใช่ทางตัน)
+    function renderUnusable(j, status) {
+      const msg = (j && j.message) || (status === 401 || status === 403 ? 'กรุณาเข้าสู่ระบบก่อนดูตัวอย่างหน้านี้' : 'ลิงก์ไม่ถูกต้อง หรือหมดอายุแล้ว — กรุณาติดต่อผู้ขาย');
+      const page = j && j.data && j.data.page;
+      const reqPath = page && page.canRequestLink ? safePath(page.requestLinkPath) : null;
+      card.innerHTML = `<div class="err">${esc(msg)}</div>` + (reqPath
+        ? `<button type="button" class="btn" id="reqLinkBtn">ขอลิงก์ใหม่จากผู้ขาย</button><div id="reqLinkMsg" role="status"></div>
+           <div class="foot">ระบบจะแจ้งผู้ขายให้ส่งลิงก์ใหม่ให้ท่าน (ไม่มีการเปิดเผยข้อมูลเอกสารจนกว่าจะได้ลิงก์ใหม่)</div>` : '');
+      const b = document.getElementById('reqLinkBtn');
+      if (b) b.addEventListener('click', () => requestLink(reqPath, b));
+    }
+
+    async function requestLink(path, btn) {
+      const msg = document.getElementById('reqLinkMsg');
+      if (!path || !msg) return;
+      btn.disabled = true; msg.className = 'msg'; msg.textContent = '...';
+      let r, j = null;
+      try { r = await fetch(path, { method: 'POST' }); j = await r.json().catch(() => null); }
+      catch { msg.className = 'msg bad'; msg.textContent = 'เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง'; btn.disabled = false; return; }
+      if (!r.ok || !j || !j.success) { msg.className = 'msg bad'; msg.textContent = (j && j.message) || 'ส่งคำขอไม่สำเร็จ — กรุณาติดต่อผู้ขาย'; btn.disabled = false; return; }
+      msg.className = 'msg ok'; msg.textContent = j.message || (j.data && j.data.message) || '';
     }
 
     // รอบ 246 QR — QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดที่ต้องชำระ) · ยอมเฉพาะ data:image/png;base64 (ไม่ต่อ URL อื่นเข้า src)
@@ -68,12 +133,78 @@
         '<div style="font-size:12px;color:#64748b">สแกนด้วยแอปธนาคาร — ยอดเงินอยู่ใน QR แล้ว</div></div>';
     }
 
+    // ── ส่วนหน้าเอกสาร (รอบ 267): รายการ · ยอดของใบ · ใบที่เกี่ยวข้อง — ป้ายทั้งหมดจาก page.labels ──
+    function linesHtml(p, L) {
+      const lines = p.lines || [];
+      if (!lines.length) return '';
+      const head = p.showAmounts
+        ? `<tr><th>${esc(L.item)}</th><th class="num">${esc(L.qty)}</th><th class="num">${esc(L.unitPrice)}</th><th class="num">${esc(L.amount)}</th></tr>`
+        : `<tr><th>${esc(L.item)}</th><th class="num">${esc(L.qty)}</th></tr>`;
+      const rows = lines.map(l => p.showAmounts
+        ? `<tr><td>${esc(l.description)}</td><td class="num">${qty(l.quantity)} ${esc(l.unit || '')}</td><td class="num">${money(l.unitPrice)}</td><td class="num">${money(l.amount)}</td></tr>`
+        : `<tr><td>${esc(l.description)}</td><td class="num">${qty(l.quantity)} ${esc(l.unit || '')}</td></tr>`).join('');
+      return `<div class="table-wrap"><table><thead>${head}</thead><tbody>${rows}</tbody></table></div>`;
+    }
+
+    function totalsHtml(p, L) {
+      if (!p.showAmounts) return '';
+      const cur = esc(L.currency);
+      const row = (label, n, cls) => `<tr${cls ? ` class="${cls}"` : ''}><td>${esc(label)}</td><td class="num">${money(n)} ${cur}</td></tr>`;
+      const rows = [row(L.subTotal, p.subTotal)];
+      if (Number(p.discountAmount) > 0.005) rows.push(row(L.discount, -p.discountAmount));
+      if (Number(p.vatAmount) > 0.005) rows.push(row(L.vat, p.vatAmount));
+      if (Number(p.withholdingTaxAmount) > 0.005) rows.push(row(L.wht, -p.withholdingTaxAmount));
+      rows.push(row(L.total, p.totalAmount, 'total'));
+      if (Number(p.paidAmount) > 0.005) { rows.push(row(L.paid, p.paidAmount)); rows.push(row(L.balance, p.balanceDue)); }
+      return `<table>${rows.join('')}</table>`;
+    }
+
+    function relatedHtml(p, L) {
+      const rel = p.related || [];
+      if (!rel.length) return '';
+      const relBase = safePath(p.relatedPdfBase);
+      const act = (p.actions || []).find(a => a.id === 'download-pdf');
+      return `<h2>${esc(L.related)}</h2>` + rel.map(r => `<div class="rel">
+          <span style="color:#64748b">${esc(r.kindLabel)}</span><br>
+          <b>${esc(r.title)} ${esc(r.documentNumber)}</b> · ${esc(dateText(r.documentDate))} · ${esc(r.statusLabel)}
+          ${r.totalAmount != null ? `<br>${esc(L.total)} ${money(r.totalAmount)} ${esc(L.currency)}${r.balanceDue != null && Number(r.balanceDue) > 0.005 ? ` · ${esc(L.balance)} ${money(r.balanceDue)} ${esc(L.currency)}` : ''}` : ''}
+          ${relBase && act ? `<br><a href="${esc(relBase + encodeURIComponent(r.relId) + '/pdf')}" target="_blank" rel="noopener">${esc(act.label)}</a>` : ''}
+        </div>`).join('');
+    }
+
+    // ปุ่มที่เซิร์ฟเวอร์ตัดสิน — หน้านี้เลือกแค่ "ตัววาด" ตามรหัส (จ่าย/สลิปวาดในส่วนชำระเดิมด้านล่าง)
+    function actionButtonsHtml(p) {
+      const out = [];
+      const pdfPath = safePath(p.pdfPath);
+      for (const a of (p.actions || [])) {
+        if (a.id === 'pay-online' || a.id === 'submit-slip') continue;
+        if (a.id === 'download-pdf') {
+          if (a.enabled && pdfPath) out.push(`<a class="btn alt" href="${esc(pdfPath)}" target="_blank" rel="noopener">${esc(a.label)}</a>`);
+          else out.push(`<button type="button" class="btn alt" disabled>${esc(a.label)}</button>${a.disabledReason ? `<div class="why">${esc(a.disabledReason)}</div>` : ''}`);
+        } else if (a.id === 'request-link') {
+          const rp = safePath(p.requestLinkPath);
+          if (a.enabled && rp) out.push(`<button type="button" class="btn alt" id="reqLinkBtn">${esc(a.label)}</button><div id="reqLinkMsg" role="status"></div>`);
+        } else {
+          // ตอบรับ (ยอมรับใบเสนอราคา · เซ็นรับสินค้า) — ช่วงเปลี่ยนผ่าน: เซิร์ฟเวอร์ให้ที่อยู่หน้าตอบรับเดิม (token ตัวเดียวกัน)
+          const href = safePath(a.href);
+          if (a.enabled && href) out.push(`<a class="btn go" href="${esc(href)}">${esc(a.label)}</a>`);
+          else if (p.respondedAt) out.push(`<div class="ok">✓ ${esc(a.disabledReason || a.label)}${p.respondedBy ? ' — ' + esc(p.respondedBy) : ''} · ${esc(dateText(p.respondedAt))}</div>`);
+          else out.push(`<button type="button" class="btn go" disabled>${esc(a.label)}</button>${a.disabledReason ? `<div class="why">${esc(a.disabledReason)}</div>` : ''}`);
+        }
+      }
+      return out.join('');
+    }
+
     function render(flash) {
       const v = view;
-      // ลิงก์ใช้ไม่ได้ — เซิร์ฟเวอร์ไม่ส่งข้อมูลของใบมาเลย (เลข/ยอด/ลูกค้า) · แสดงข้อความอย่างเดียว
-      if (!v.documentNumber) { card.innerHTML = `<div class="err">${esc(v.blockedNote || 'ลิงก์ใช้ไม่ได้')}</div>`; return; }
+      const p = v.page || { actions: [], lines: [], related: [], labels: {} };
+      const L = p.labels || {};
+      const payAct = (p.actions || []).find(a => a.id === 'pay-online');
+      const linkMode = p.mode === 'link';
       const wht = Number(v.wht || 0) > 0.005;
       if (!v.noWhtOffered) noWht = false;
+      // ── ส่วนชำระเดิม (รอบ 241–257) — แสดงเมื่อใบนี้เป็นชนิดที่จ่ายได้ (มีปุ่มจ่ายจากเซิร์ฟเวอร์) และยังมีอะไรให้ทำ/ให้บอก ──
+      const showPay = !!payAct && (linkMode ? (v.canPayOnline || !!v.transfer || !!v.blockedNote) : false);
       // รอบ 244: gross = ยอดก่อนหัก ณ ที่จ่าย (ยอดค้างของใบเป็นยอดสุทธิแล้ว — เซิร์ฟเวอร์คำนวณ DocumentPayLinkPolicy.AmountsFor)
       const rows = [`<tr><td>${wht ? 'ยอดก่อนหักภาษี ณ ที่จ่าย' : 'ยอดค้างชำระตามเอกสาร'}</td><td class="num">${money(v.gross)} บาท</td></tr>`];
       if (wht && !noWht) rows.push(`<tr><td>หัก ภาษีหัก ณ ที่จ่าย (ท่านเป็นผู้หักและออกหนังสือรับรอง 50 ทวิ)</td><td class="num">− ${money(v.wht)} บาท</td></tr>`);
@@ -88,16 +219,12 @@
           <label style="display:flex;gap:8px;margin-top:4px"><input type="radio" name="whtChoice" value="nowht" ${noWht ? 'checked' : ''}>
             <span>ไม่หัก ณ ที่จ่าย — ชำระยอดเต็ม ${money(v.noWhtAmount)} บาท</span></label>
           ${noWht && v.noWhtWarn ? `<div class="note">${esc(v.noWhtNotice)}</div>
-            <label style="display:flex;gap:8px;font-size:13px"><input type="checkbox" id="noWhtAccept" onchange="document.getElementById('noWhtAcceptMsg').hidden=true"><span>ข้าพเจ้าได้อ่านคำเตือนและยืนยันว่าไม่หักภาษี ณ ที่จ่าย</span></label>
+            <label style="display:flex;gap:8px;font-size:13px"><input type="checkbox" id="noWhtAccept" onchange="document.getElementById('noWhtAcceptMsg').hidden=true"><span>ข้าพเจ้าได้อ่านคำเตือนและยืนยันว่าไม่หักภาษี ณ ที่จ่ายสำหรับการชำระนี้</span></label>
             <div id="noWhtAcceptMsg" class="msg bad" role="alert" hidden>กรุณาอ่านคำเตือนแล้วติ๊กยืนยันก่อนเลือก "ไม่หัก ณ ที่จ่าย"</div>
             <input id="noWhtName" maxlength="100" placeholder="ชื่อผู้ยืนยัน (ไม่บังคับ)" style="width:100%;margin-top:6px;padding:8px;border:1px solid #e2e8f0;border-radius:8px;font-family:inherit">` : ''}
         </div>` : '';
-      card.innerHTML = `
-        ${v.isTestMode ? '<div class="test">โหมดทดสอบ — ไม่มีการเก็บเงินจริง</div>' : ''}
-        ${flash ? `<div class="note" style="background:#dcfce7;color:#166534">${esc(flash)}</div>` : ''}
-        <h1>${esc(v.documentTitle)} ${esc(v.documentNumber)}</h1>
-        <div class="sub">${esc(v.companyName)}${v.customerName ? ' · ถึง ' + esc(v.customerName) : ''}<br>
-          ลงวันที่ ${esc(dateTh(v.documentDate))}${v.dueDate ? ' · ครบกำหนด ' + esc(dateTh(v.dueDate)) : ''}</div>
+      const paySection = showPay ? `
+        <h2>${esc(payAct.label)}</h2>
         <table>${rows.join('')}</table>
         ${choice}
         ${v.blockedNote ? `<div class="note">${esc(v.blockedNote)}</div>` : ''}
@@ -117,13 +244,33 @@
             <button type="submit" class="btn" id="slipBtn">ส่งสลิปให้ผู้ขาย</button>
             <div style="font-size:12px;color:#64748b;margin-top:6px">ผู้ขายจะตรวจยอดแล้วยืนยันการชำระ — สถานะเปลี่ยนเป็น "ชำระแล้ว" เมื่อผู้ขายยืนยันเท่านั้น</div>
             <div id="slipMsg" role="status"></div>
-          </form>` : '<span style="font-size:12px;color:#64748b">โอนแล้วกรุณาส่งหลักฐานการโอนถึงผู้ขาย (ตอบกลับอีเมลที่ได้รับ)</span>'}</div>` : ''}`;
+          </form>` : '<span style="font-size:12px;color:#64748b">โอนแล้วกรุณาส่งหลักฐานการโอนถึงผู้ขาย (ตอบกลับอีเมลที่ได้รับ)</span>'}</div>` : ''}`
+        // โหมดที่ไม่ใช่ลิงก์ของใบ (การ์ด LINE · พรีวิว): ไม่มีส่วนชำระ — บอกเหตุจากเซิร์ฟเวอร์ (ทางไปต่อ = ปุ่ม "ขอลิงก์ทำรายการ" ด้านบน)
+        : (payAct && !linkMode && payAct.disabledReason ? `<div class="info">${esc(payAct.label)}: ${esc(payAct.disabledReason)}</div>` : '');
+
+      card.innerHTML = `
+        ${v.isTestMode ? '<div class="test">โหมดทดสอบ — ไม่มีการเก็บเงินจริง</div>' : ''}
+        ${p.mode === 'preview' ? `<div class="info">${esc(L.preview)}</div>` : ''}
+        ${flash ? `<div class="ok">${esc(flash)}</div>` : ''}
+        <h1>${esc(v.documentTitle)} ${esc(v.documentNumber)}${Number(p.revisionNumber) > 0 ? ` <span style="font-weight:400;font-size:13px">Rev.${esc(p.revisionNumber)}</span>` : ''}
+          ${p.statusLabel ? `<span class="chip${p.voided ? ' void' : ''}">${esc(p.statusLabel)}</span>` : ''}</h1>
+        <div class="sub">${esc(v.companyName)}${v.customerName ? ` · ${esc(L.to)} ` + esc(v.customerName) : ''}<br>
+          ${esc(L.date)} ${esc(dateText(v.documentDate))}${v.dueDate ? ` · ${esc(L.due)} ` + esc(dateText(v.dueDate)) : ''}</div>
+        ${p.voided ? `<div class="voided">${esc(L.voided)}</div>` : ''}
+        ${linesHtml(p, L)}
+        ${totalsHtml(p, L)}
+        ${actionButtonsHtml(p)}
+        ${paySection}
+        ${relatedHtml(p, L)}
+        <div class="foot">${esc(L.pdfNote)}</div>`;
       card.querySelectorAll('[data-pay-index]').forEach(b => b.addEventListener('click', () => pay(methods[Number(b.dataset.payIndex)].code)));
       card.querySelectorAll('input[name="whtChoice"]').forEach(r => r.addEventListener('change', () => { noWht = r.value === 'nowht' && r.checked; render(); }));
       const copyBtn = card.querySelector('[data-copy="account"]');
       if (copyBtn && t && t.accountNumber) copyBtn.addEventListener('click', () => copyText(String(t.accountNumber).replace(/[^0-9]/g, ''), copyBtn));
       const form = document.getElementById('slipForm');
       if (form) form.addEventListener('submit', (e) => { e.preventDefault(); submitSlip(); });
+      const rb = document.getElementById('reqLinkBtn');
+      if (rb) rb.addEventListener('click', () => requestLink(safePath(p.requestLinkPath), rb));
     }
 
     // รอบ 255 WP-12B ข้อ 1 — คัดลอกเลขบัญชี (ตัวเลขล้วน วางในแอปธนาคารได้ทันที) · เบราว์เซอร์ที่ไม่มี clipboard API ⇒ บอกให้คัดลอกเอง

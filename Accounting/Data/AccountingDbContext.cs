@@ -455,7 +455,9 @@ public class AccountingDbContext : DbContext
     // ===== Cross-tenant B2B workflow =====
     public DbSet<TradingPartnership> TradingPartnerships => Set<TradingPartnership>();
     public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
+    public DbSet<PartnerLinkRequest> PartnerLinkRequests => Set<PartnerLinkRequest>();   // รอบ 264 (Helpers/PartnerLinkRequestMigration)
     public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
+    public DbSet<PartnerAutomationConsent> PartnerAutomationConsents => Set<PartnerAutomationConsent>();   // รอบ 264 P1 (Helpers/PartnerConsentMigration)
     public DbSet<WorkflowAutomationConfig> WorkflowAutomationConfigs => Set<WorkflowAutomationConfig>();
 
     // ===== CMS & Multi-Site =====
@@ -2341,6 +2343,7 @@ public class AccountingDbContext : DbContext
             // Canonical pair — unique combination since we always order
             // (CompanyAId, CompanyBId) so the smaller GUID comes first.
             e.HasIndex(p => new { p.CompanyAId, p.CompanyBId }).IsUnique();
+            e.Property(p => p.InviteNoticeResult).HasMaxLength(32);   // รอบ 264 (Helpers/PartnerLinkRequestMigration)
             e.Property(p => p.AutoApproveAmountLimit).HasPrecision(18, 2);
             e.HasQueryFilter(p => !p.IsDeleted);
         });
@@ -3761,6 +3764,27 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => x.LineUserId).HasDatabaseName("IX_CustomerLineLinks_LineUser");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
+        // รอบ 264 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerLinkRequestMigration
+        modelBuilder.Entity<PartnerLinkRequest>(e =>
+        {
+            e.Property(x => x.PartnerTaxId).HasMaxLength(13);
+            e.Property(x => x.PartnerBranchCode).HasMaxLength(5);
+            e.Property(x => x.Message).HasMaxLength(500);
+            e.HasIndex(x => new { x.CompanyId, x.CreatedAt }).HasDatabaseName("IX_PartnerLinkRequests_Company_Created");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 264 P1 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerConsentMigration (unique บางส่วน: แถวที่ยังไม่ถอนหนึ่งแถวต่อบริษัท·คู่·ขอบเขต)
+        modelBuilder.Entity<PartnerAutomationConsent>(e =>
+        {
+            e.Property(x => x.Scope).HasMaxLength(32);
+            e.Property(x => x.EvidenceHash).HasMaxLength(64);
+            e.Property(x => x.WithdrawReason).HasMaxLength(500);
+            e.Property(x => x.MaxAmount).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.TradingPartnershipId, x.Scope }).IsUnique()
+                .HasFilter("\"WithdrawnAt\" IS NULL").HasDatabaseName("IX_PartnerAutomationConsents_Active");
+            e.HasIndex(x => new { x.CompanyId, x.TradingPartnershipId }).HasDatabaseName("IX_PartnerAutomationConsents_Company_Partnership");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
         // รอบ 258-3 F-H3 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerPaymentNoticeMigration
         modelBuilder.Entity<PartnerPaymentNotice>(e =>
         {
@@ -3771,7 +3795,12 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.SourceChannel).HasMaxLength(32);
             e.Property(x => x.CashAmount).HasPrecision(18, 2);
             e.Property(x => x.SellerRecordedWht).HasPrecision(18, 2);
+            e.Property(x => x.AutoBlockedReason).HasMaxLength(500);
+            e.Property(x => x.AutoBlockedCode).HasMaxLength(40);
             e.HasIndex(x => new { x.CompanyId, x.PaymentIntentId }).IsUnique().HasDatabaseName("IX_PartnerPaymentNotices_Company_Intent");
+            // รอบ 264 P3 (264-3-6): กุญแจกันซ้ำใหม่ = การรับชำระของผู้ขาย (ชื่อ/เงื่อนไขตรง PartnerPaymentNoticeMigration)
+            e.HasIndex(x => new { x.CompanyId, x.SellerPaymentId }).IsUnique()
+                .HasFilter("\"SellerPaymentId\" IS NOT NULL").HasDatabaseName("IX_PartnerPaymentNotices_Company_SellerPayment");
             e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_PartnerPaymentNotices_Company_Status");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
@@ -3807,6 +3836,7 @@ public class AccountingDbContext : DbContext
         {
             e.Property(x => x.TokenHash).HasMaxLength(64);
             e.Property(x => x.OaDestination).HasMaxLength(64);
+            e.Property(x => x.OaScope).HasMaxLength(16);   // รอบ 262 — ค่าตั้งต้น company ใน SQL (Helpers/ContactLineDeliveryMigration)
             e.Property(x => x.CodeHash).HasMaxLength(64);
             e.HasIndex(x => x.TokenHash).IsUnique().HasDatabaseName("IX_ContactLineInvites_TokenHash");
             e.HasIndex(x => new { x.CompanyId, x.CodeHash }).HasDatabaseName("IX_ContactLineInvites_Company_CodeHash");

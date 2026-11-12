@@ -9,7 +9,9 @@ namespace Accounting.Helpers;
 /// <param name="Hint">คำอธิบายผลที่ตามมา</param>
 /// <param name="Allowed">เลือกได้ไหม</param>
 /// <param name="BlockedReason">เหตุที่เลือกไม่ได้ + ทางไปต่อ (null เมื่อเลือกได้)</param>
-public sealed record PaymentExcessOption(string Reason, string Label, string Hint, bool Allowed, string? BlockedReason);
+/// <param name="OffersReceipt">รอบ 265 (คำตัดสิน 265-1-5): หลังบันทึก หน้ารับชำระเสนอ "ออกใบเสร็จส่วนที่เกินเลย" (ใบเสร็จจากเงินรอจัดสรร ไม่ต้องมีใบแจ้งหนี้) —
+/// เซิร์ฟเวอร์ตัดสิน หน้าเว็บไม่เทียบชื่อเหตุผลเอง</param>
+public sealed record PaymentExcessOption(string Reason, string Label, string Hint, bool Allowed, string? BlockedReason, bool OffersReceipt = false);
 
 /// <summary>ใบค้างอื่นของลูกค้ารายเดียวกันที่เสนอให้ผูกเงินเกิน (เก่าสุดก่อน)</summary>
 public sealed record PaymentExcessSplitRow(Guid DocumentId, decimal BalanceDue, decimal Suggested);
@@ -75,8 +77,8 @@ public static class PaymentExcessPlan
     public static IReadOnlyList<PaymentExcessOption> ReasonOptions(bool vatRegistered) => new[]
     {
         new PaymentExcessOption(nameof(UnappliedReason.UninvoicedSupply), Label(UnappliedReason.UninvoicedSupply),
-            "ส่งของ/ให้บริการแล้วแต่ยังไม่ได้ออกใบ — ออกใบแล้วกด “ใช้เงินรอจัดสรร” ที่ใบนั้น"
-            + (vatRegistered ? " · ค่าบริการ: ภาษีถึงกำหนดตั้งแต่วันรับเงิน ควรออกใบกำกับภายในเดือนเดียวกัน" : ""), true, null),
+            "ส่งของ/ให้บริการแล้วแต่ยังไม่ได้ออกใบ — บันทึกแล้วออกใบเสร็จส่วนนี้ได้ทันที (ไม่ต้องสร้างใบแจ้งหนี้) หรือออกใบแล้วกด “ใช้เงินรอจัดสรร” ที่ใบนั้น"
+            + (vatRegistered ? " · ค่าบริการ: ภาษีถึงกำหนดตั้งแต่วันรับเงิน ควรออกใบกำกับภายในเดือนเดียวกัน" : ""), true, null, OffersReceipt: true),
         new PaymentExcessOption(nameof(UnappliedReason.Overpaid), Label(UnappliedReason.Overpaid),
             "ลูกค้าโอนเกิน — เก็บไว้รอคืนเงิน หรือผูกกับใบถัดไปของลูกค้ารายนี้", true, null),
         new PaymentExcessOption(nameof(UnappliedReason.Advance), Label(UnappliedReason.Advance),

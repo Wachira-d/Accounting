@@ -23,15 +23,18 @@ public class ContactLineBindingService : IContactLineBindingService
     private readonly ILogger<ContactLineBindingService> _logger;
     /// <summary>ฝ่ายค้าน M4: ชื่อแสดงจากโปรไฟล์ LINE (OA บริษัท) ตอนผูก · null (นอก DI/เทสต์) ⇒ ไม่มีชื่อ (ไม่ล้มการผูก)</summary>
     private readonly ILineNotifyService? _line;
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-1): ค่าตั้ง OA กลาง (Basic ID บนหน้ายินยอม — ผู้อ่านตัวเดียว) · null (นอก DI/เทสต์) ⇒ ไม่มีปุ่มเพิ่มเพื่อน OA กลาง</summary>
+    private readonly INextAccLineConfig? _nextAcc;
 
     /// <summary>กดยินยอม/ขอรหัสต่อ IP (DB-backed · หลายเครื่อง)</summary>
     private const int ConsentPerMinute = 5;
     private const int ConsentPerDay = 40;
 
     public ContactLineBindingService(AccountingDbContext db, ISecretProtector secrets, IContactRecipientResolver recipients,
-        IChatRateLimiter limiter, IConfiguration config, ILogger<ContactLineBindingService> logger, ILineNotifyService? line = null)
+        IChatRateLimiter limiter, IConfiguration config, ILogger<ContactLineBindingService> logger, ILineNotifyService? line = null,
+        INextAccLineConfig? nextAcc = null)
     {
-        _db = db; _secrets = secrets; _recipients = recipients; _limiter = limiter; _config = config; _logger = logger; _line = line;
+        _db = db; _secrets = secrets; _recipients = recipients; _limiter = limiter; _config = config; _logger = logger; _line = line; _nextAcc = nextAcc;
     }
 
     /// <summary>เปิดหน้าเชิญต่อ IP (ฝ่ายค้าน L3)</summary>
@@ -49,9 +52,16 @@ public class ContactLineBindingService : IContactLineBindingService
             .Select(c => new { c.Id, c.Name })
             .FirstOrDefaultAsync(ct)
             ?? throw new BusinessRuleException("ไม่พบผู้ติดต่อ", "NOTIFY-CONTACT-NOT-FOUND", 404);
-        // OA ของบริษัทเท่านั้น (คำตัดสิน N8) — ตัวตัดสินความพร้อมเดียวกับสถานะปลายทาง/ด่านบันทึกกฎ
+        // OA ของบริษัทเท่านั้น (คำตัดสิน N8) — ตัวตัดสินความพร้อมเดียวกับสถานะปลายทาง/ด่านบันทึกกฎ ·
+        // รอบ 262 (คำตัดสิน 262-1-1): บริษัทผู้ให้บริการ ⇒ OA กลางคือ OA ของบริษัท (คำเชิญ scope nextacc · ไถ่ได้เฉพาะ webhook กลาง)
         var line = await _recipients.LineChannelAsync(companyId, ct);
-        if (!line.Open || !line.CompanyOaReady)
+        var viaCentral = line.Open && line.NextAccUserOpen;
+        if (viaCentral)
+        {
+            if (await _recipients.CentralUserProblemAsync(companyId, ct) is string central)
+                throw new BusinessRuleException(central + " — บริษัทผู้ให้บริการผูก LINE ของผู้ติดต่อผ่าน LINE OA กลางของ NextAcc", ProviderCentralOa.RuleCode, 409);
+        }
+        else if (!line.Open || !line.CompanyOaReady)
             throw new BusinessRuleException((line.CompanyOaProblem ?? "LINE OA ของบริษัทยังไม่พร้อม")
                 + " — ผูก LINE ของผู้ติดต่อได้ผ่าน LINE OA ของบริษัทเท่านั้น (ตั้งที่ ตั้งค่า → แจ้งเตือนทาง LINE)", ContactLineBindRule.RuleCode, 409);
 
@@ -65,7 +75,8 @@ public class ContactLineBindingService : IContactLineBindingService
         var invite = new ContactLineInvite
         {
             CompanyId = companyId, ContactId = contact.Id, TokenHash = ContactLineBindRule.TokenHash(token),
-            ExpiresAt = now + ContactLineBindRule.InviteLifetime, OaDestination = line.CompanyOaDestination,
+            ExpiresAt = now + ContactLineBindRule.InviteLifetime, OaDestination = viaCentral ? line.CentralOaDestination : line.CompanyOaDestination,
+            OaScope = ProviderCentralOa.InviteScope(viaCentral),
             TopicsJson = NotifyTopics.Serialize(NotifyTopics.DefaultsFor(NotifyEndpointKind.LineUser)),
             CreatedByUserId = actorUserId, CreatedBy = actorEmail,
         };
@@ -74,7 +85,8 @@ public class ContactLineBindingService : IContactLineBindingService
         {
             CompanyId = companyId, UserId = actorUserId, UserEmail = actorEmail, Action = AuditAction.Create,
             EntityType = ContactRecipientRule.AuditEntityType, EntityId = contact.Id.ToString(),
-            NewValues = JsonSerializer.Serialize(new { op = "line-invite", inviteId = invite.Id, expiresAt = invite.ExpiresAt, revokedOpen = revoked, rule = ContactLineBindRule.RuleCode }),
+            NewValues = JsonSerializer.Serialize(new { op = "line-invite", inviteId = invite.Id, expiresAt = invite.ExpiresAt, revokedOpen = revoked, oaScope = invite.OaScope,
+                rule = ContactLineBindRule.RuleCode }),
             Timestamp = now,
         });
         await _db.SaveChangesAsync(ct);
@@ -82,7 +94,8 @@ public class ContactLineBindingService : IContactLineBindingService
         var path = ContactLineBindRule.JoinPath(companyId, token);
         var url = NotificationLink.Absolute(await SystemBaseUrl.ResolveAsync(_db, _config, ct), path);
         return new ContactLineInviteResponse(path, url, url == null ? null : QrDataUri(url), invite.ExpiresAt,
-            $"ส่งลิงก์นี้ให้ผู้รับของ \"{contact.Name}\" (หรือให้สแกน QR ต่อหน้า) — ผู้รับกดยินยอมบนมือถือของตัวเอง แล้วส่งรหัสในแชต LINE OA ของบริษัท · "
+            $"ส่งลิงก์นี้ให้ผู้รับของ \"{contact.Name}\" (หรือให้สแกน QR ต่อหน้า) — ผู้รับกดยินยอมบนมือถือของตัวเอง แล้วส่งรหัสในแชต "
+            + (viaCentral ? "LINE OA กลางของ NextAcc (OA ของบริษัทนี้)" : "LINE OA ของบริษัท") + " · "
             + $"ลิงก์ใช้ได้ครั้งเดียว หมดอายุใน {ContactLineBindRule.InviteLifetime.TotalDays:0} วัน"
             + (url == null ? " · ยังไม่ได้ตั้ง URL ของระบบ (ผู้ดูแลระบบ) — หน้าเว็บประกอบลิงก์จากโดเมนที่เปิดอยู่" : ""));
     }
@@ -137,9 +150,21 @@ public class ContactLineBindingService : IContactLineBindingService
 
         // บริษัทเปลี่ยน/ปิด OA หลังออกลิงก์ ⇒ userId ที่จะได้ใช้กับ OA ที่ส่งจริงไม่ได้
         var line = await _recipients.LineChannelAsync(companyId, ct);
-        if (!line.Open || !line.CompanyOaReady || ContactRecipientRule.OaChanged(invite.OaDestination, line.CompanyOaDestination))
-            throw new BusinessRuleException(ContactLineBindRule.Replies.WrongChannel, ContactLineBindRule.RuleCode, 409);
-        var basicId = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId).Select(s => s.LineOaBasicId).FirstOrDefaultAsync(ct);
+        string? basicId;
+        if (invite.OaScope == NotifyEndpointKind.ScopeNextAcc)
+        {
+            // รอบ 262 (คำตัดสิน 262-1-2): คำเชิญผ่าน OA กลาง ⇒ ยังเป็นบริษัทผู้ให้บริการ + OA กลางพร้อม + บอทกลางไม่เปลี่ยน · ปุ่มเพิ่มเพื่อน/ส่งรหัส = OA กลาง
+            if (!line.Open || !line.NextAccUserOpen || await _recipients.CentralUserProblemAsync(companyId, ct) != null
+                || ContactRecipientRule.OaChanged(invite.OaDestination, line.CentralOaDestination))
+                throw new BusinessRuleException(ContactLineBindRule.Replies.WrongChannel, ContactLineBindRule.RuleCode, 409);
+            basicId = _nextAcc == null ? null : (await _nextAcc.GetAsync(ct)).BasicId;
+        }
+        else
+        {
+            if (!line.Open || !line.CompanyOaReady || ContactRecipientRule.OaChanged(invite.OaDestination, line.CompanyOaDestination))
+                throw new BusinessRuleException(ContactLineBindRule.Replies.WrongChannel, ContactLineBindRule.RuleCode, 409);
+            basicId = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId).Select(s => s.LineOaBasicId).FirstOrDefaultAsync(ct);
+        }
 
         if (invite.ConsentRecordId == null)
         {
@@ -172,9 +197,12 @@ public class ContactLineBindingService : IContactLineBindingService
             CustomerLineLinkRule.SendCodeUrl(basicId, code), invite.CodeExpiresAt.Value);
     }
 
-    public async Task<string?> TryRedeemAsync(Guid companyId, string? destination, string lineUserId, string text, CancellationToken ct = default)
+    public async Task<string?> TryRedeemAsync(Guid companyId, string? destination, string lineUserId, string text, CancellationToken ct = default,
+        string oaScope = NotifyEndpointKind.ScopeCompany)
     {
         if (string.IsNullOrWhiteSpace(lineUserId) || !CustomerLineLinkRule.IsLinkAttempt(text)) return null;
+        // รอบ 262 (คำตัดสิน 262-1-2): webhook ของ OA ใด ⇒ ขอบเขตนั้น (OA ของบริษัท = company · webhook กลาง = nextacc เฉพาะบริษัทผู้ให้บริการ)
+        if (oaScope != NotifyEndpointKind.ScopeCompany && oaScope != NotifyEndpointKind.ScopeNextAcc) return null;
         var code = CustomerLineLinkRule.TryParse(text);
         if (code == null) return null;   // รูปแบบผิด ⇒ เส้นลูกค้าเว็บตอบ (จำกัดความถี่ที่นั่น)
         // ฝ่ายค้าน L1: จำกัดความถี่ต่อ LINE user ก่อนค้นรหัส (กันเดารหัสผ่านเส้นนี้ก่อนถึงตัวจำกัดของเส้นลูกค้าเว็บ)
@@ -191,6 +219,9 @@ public class ContactLineBindingService : IContactLineBindingService
         // userId ของ LINE เป็นค่าต่อ OA ⇒ บอทที่รับรหัสต้องเป็นบอทเดียวกับตอนออกลิงก์ (บริษัทเปลี่ยน OA ระหว่างทาง ⇒ ไม่ผูก)
         if (ContactRecipientRule.OaChanged(invite.OaDestination, destination))
             return ContactLineBindRule.Replies.WrongChannel;
+        // คำเชิญของ OA หนึ่งไถ่ผ่าน OA อื่นไม่ได้ (userId ใช้ได้เฉพาะ OA ที่ออก) — คำเชิญ company ผ่าน webhook กลาง/คำเชิญ nextacc ผ่าน webhook บริษัท ⇒ ไม่ผูก
+        if (!ProviderCentralOa.InviteMatchesChannel(invite.OaScope, oaScope))
+            return ContactLineBindRule.Replies.WrongChannel;
         var consentLive = await _db.PdpaConsentRecords.AsNoTracking()
             .AnyAsync(r => r.Id == invite.ConsentRecordId && r.CompanyId == companyId && r.WithdrawnAt == null, ct);
         if (!consentLive) return ContactLineBindRule.Replies.Invalid;
@@ -198,7 +229,8 @@ public class ContactLineBindingService : IContactLineBindingService
         var companyName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
         var uid = lineUserId.Trim();
         // ฝ่ายค้าน M4: ชื่อแสดงจากโปรไฟล์ LINE ให้พนักงานเห็นว่าใครผูก (ป้ายของปลายทาง · audit เก็บแบบปิดบัง) — อ่านไม่ได้ ⇒ ไม่มีชื่อ
-        var profileName = _line == null ? null : await _line.TryGetCompanyOaProfileNameAsync(companyId, uid);
+        var profileName = _line == null ? null
+            : oaScope == NotifyEndpointKind.ScopeNextAcc ? await _line.TryGetNextAccProfileNameAsync(uid) : await _line.TryGetCompanyOaProfileNameAsync(companyId, uid);
         var label = ContactLineBindRule.ProfileLabel(profileName);
         var dest = string.IsNullOrWhiteSpace(destination) ? null : destination.Trim();
         var idHash = NotifyEndpointKind.LineIdHash(dest, uid);
@@ -222,7 +254,7 @@ public class ContactLineBindingService : IContactLineBindingService
         {
             CompanyId = companyId, ContactId = invite.ContactId, Kind = NotifyEndpointKind.LineUser,
             LineUserId = _secrets.Protect(uid), LineIdHash = idHash,
-            OaScope = NotifyEndpointKind.ScopeCompany, OaDestination = dest,
+            OaScope = oaScope, OaDestination = dest,
             // รอบ 259 (A-M4): คำเชิญที่ออกก่อนรอบนี้อาจเก็บ "ลิงก์เซ็น" ไว้ ⇒ ตัดเรื่องที่ LINE ไม่มีเส้นส่ง (ตัวเดียว NotifyTopics.SupportedFor)
             TopicsJson = NotifyTopics.Parse(invite.TopicsJson) is { } invited
                 ? NotifyTopics.Serialize(NotifyTopics.SupportedFor(NotifyEndpointKind.LineUser, invited))
@@ -240,7 +272,7 @@ public class ContactLineBindingService : IContactLineBindingService
             NewValues = JsonSerializer.Serialize(new
             {
                 op = "line-bind", endpointId = endpoint.Id, inviteId = invite.Id, lineUser = CustomerLineLinkRule.Mask(uid),
-                lineName = ContactLineBindRule.MaskName(label),
+                lineName = ContactLineBindRule.MaskName(label), oaScope,
                 relinked = previous.Count, consent = invite.ConsentRecordId, rule = ContactLineBindRule.RuleCode,
             }),
             Timestamp = now,
@@ -307,6 +339,122 @@ public class ContactLineBindingService : IContactLineBindingService
         });
         await _db.SaveChangesAsync(ct);
         return n;
+    }
+
+    // ═══════════ รอบ 262 (คำตัดสิน 262-1-1/262-1-2/262-1-3): บริษัทผู้ให้บริการ — OA กลางคือ OA ของบริษัทสำหรับผู้ติดต่อ ═══════════
+
+    /// <summary>บริษัทผู้ให้บริการที่ตั้งไว้ (อ่านใหม่ทุกครั้ง) — null = ยังไม่ตั้ง ⇒ webhook กลางไม่มีคำเชิญผู้ติดต่อให้ไถ่</summary>
+    private async Task<Guid?> ProviderIdAsync(CancellationToken ct)
+    {
+        var id = await PlatformCompanyLookup.IdAsync(_db, ct);
+        return id is Guid p && ProviderCentralOa.Allowed(p, id) ? p : null;
+    }
+
+    public async Task<string?> TryRedeemCentralAsync(string? destination, string lineUserId, string text, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId) || !CustomerLineLinkRule.IsLinkAttempt(text)) return null;   // ข้อความอื่นไม่แตะฐาน
+        // ค้นรหัสเฉพาะคำเชิญของบริษัทผู้ให้บริการ (scope nextacc) — คำเชิญของบริษัทอื่นไม่มีทางถูกไถ่ผ่าน OA กลาง (ห้ามค้นข้ามบริษัท)
+        if (await ProviderIdAsync(ct) is not Guid providerId) return null;
+        // ฝ่ายค้าน L6 (262-1-16): รหัสที่ไม่ใช่คำเชิญผู้ติดต่อของบริษัทผู้ให้บริการ ⇒ ส่งต่อเส้นลิงก์ลูกค้าเว็บบน OA กลางโดย<b>ไม่กินตัวจำกัดของเส้นผู้ติดต่อ</b>
+        // (เส้นลูกค้าเว็บจำกัดความถี่ของตัวเอง — ลูกค้าหน้าร้านของผู้เช่าไม่ได้ Throttled จากเส้นนี้)
+        var code = CustomerLineLinkRule.TryParse(text);
+        if (code == null) return null;
+        var hash = CustomerLineLinkRule.Hash(code);
+        if (!await _db.ContactLineInvites.AsNoTracking().AnyAsync(i => i.CompanyId == providerId && i.CodeHash == hash, ct)) return null;
+        return await TryRedeemAsync(providerId, destination, lineUserId, text, ct, NotifyEndpointKind.ScopeNextAcc);
+    }
+
+    public async Task<string?> TryStopCentralAsync(string? destination, string lineUserId, string text, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId) || !ContactLineBindRule.IsStop(text)) return null;
+        // ปลดเฉพาะปลายทางของบริษัทผู้ให้บริการที่ผูกกับบอทกลางนี้ (LineIdHash รวมบอท) — ไม่มี ⇒ null (ข้อความไปบอท ERP ตามเดิม)
+        if (await ProviderIdAsync(ct) is not Guid providerId) return null;
+        // ฝ่ายค้าน L3 (คำตัดสิน 262-1-15): "หยุด" = หยุดรับทาง LINE จากผู้ส่งรายนี้ทั้งหมด (PDPA ม.19 ถอนได้ง่ายเท่าให้) — คำตอบบอกว่าหยุดการรับของผู้ติดต่อใดบ้าง
+        var idHash = NotifyEndpointKind.LineIdHash(string.IsNullOrWhiteSpace(destination) ? null : destination.Trim(), lineUserId.Trim());
+        var names = await (from e in _db.ContactNotifyEndpoints.AsNoTracking()
+                           join c in _db.Contacts.AsNoTracking().IgnoreQueryFilters() on e.ContactId equals c.Id
+                           where e.CompanyId == providerId && c.CompanyId == providerId && e.Kind == NotifyEndpointKind.LineUser
+                                 && e.LineIdHash == idHash && e.UnlinkedAt == null
+                           select c.Name).Distinct().ToListAsync(ct);
+        var reply = await TryStopAsync(providerId, destination, lineUserId, text, ct);
+        return reply == null ? null : reply + ProviderCentralOa.StopScopeNote(names);
+    }
+
+    public async Task<int> SetBlockedCentralAsync(string? destination, string lineUserId, bool blocked, CancellationToken ct = default)
+        => await ProviderIdAsync(ct) is Guid providerId ? await SetBlockedAsync(providerId, destination, lineUserId, blocked, ct) : 0;
+
+    /// <summary>ผู้ติดต่อของบริษัทผู้เช่านี้ในบริษัทผู้ให้บริการที่คำเชิญผูกเองลง (ผู้ติดต่อของใบล่าสุด — <see cref="PlatformInvoiceQueries.BuyerContactIdAsync"/>)</summary>
+    private async Task<(Guid? ProviderId, Guid? ContactId)> BuyerContactAsync(Guid buyerCompanyId, CancellationToken ct)
+    {
+        var providerId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct);
+        if (providerId is not Guid pid) return (null, null);
+        return (pid, await PlatformInvoiceQueries.BuyerContactIdAsync(_db, pid, buyerCompanyId, ct));
+    }
+
+    public async Task<ProviderCentralOa.BillingLineView> BillingLineViewAsync(Guid buyerCompanyId, bool canManage, CancellationToken ct = default)
+    {
+        var (providerId, contactId) = await BuyerContactAsync(buyerCompanyId, ct);
+        string? central = null;
+        var endpoints = new List<ProviderCentralOa.BillingLineEndpoint>();
+        if (providerId is Guid pid && contactId is Guid)
+        {
+            // ฝ่ายค้าน M1/M2: ปลายทาง LINE ผู้ใช้ผ่าน OA กลางของ<b>ทุกแถว</b>ผู้ติดต่อของผู้เช่า — ป้ายปิดบัง · ไม่มี LINE id · ยกเลิกได้จากที่นี่
+            var contactIds = await PlatformInvoiceQueries.BuyerContactIdsAsync(_db, pid, buyerCompanyId, ct);
+            var rows = await _db.ContactNotifyEndpoints.AsNoTracking()
+                .Where(e => e.CompanyId == pid && contactIds.Contains(e.ContactId) && e.OaScope == NotifyEndpointKind.ScopeNextAcc
+                    && e.Kind == NotifyEndpointKind.LineUser && e.UnlinkedAt == null && !e.IsDeleted)
+                .OrderBy(e => e.LinkedAt).Select(e => new { e.Id, e.Label, e.LinkedAt, e.LastSentAt, e.BlockedAt }).ToListAsync(ct);
+            endpoints = rows.Select(r => new ProviderCentralOa.BillingLineEndpoint(r.Id, ProviderCentralOa.MaskedEndpointLabel(r.Label), r.LinkedAt, r.LastSentAt,
+                r.BlockedAt != null ? "ผู้รับบล็อก LINE OA กลาง" : "ใช้งาน")).ToList();
+            central = await _recipients.CentralUserProblemAsync(pid, ct);
+        }
+        return ProviderCentralOa.BillingView(providerId != null, contactId != null, central, endpoints.Count, canManage) with { Endpoints = endpoints };
+    }
+
+    public async Task<ProviderCentralOa.BillingLineView> UnlinkBillingEndpointAsync(Guid buyerCompanyId, Guid endpointId, Guid? actorUserId, string? actorEmail,
+        CancellationToken ct = default)
+    {
+        var providerId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct)
+            ?? throw new BusinessRuleException("ไม่พบปลายทาง LINE นี้", ProviderCentralOa.RuleCode, 404);
+        // ปลายทางต้องเป็นของผู้ติดต่อ (แถวใดก็ได้) ของผู้เช่ารายนี้ในบริษัทผู้ให้บริการ — ของบริษัทอื่น/ของลูกค้าทั่วไป = ไม่พบ (ไม่บอกว่ามีอยู่)
+        var contactIds = await PlatformInvoiceQueries.BuyerContactIdsAsync(_db, providerId, buyerCompanyId, ct);
+        var now = DateTime.UtcNow;
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var ep = await _db.ContactNotifyEndpoints.FirstOrDefaultAsync(e => e.Id == endpointId && e.CompanyId == providerId && contactIds.Contains(e.ContactId)
+            && e.OaScope == NotifyEndpointKind.ScopeNextAcc && e.Kind == NotifyEndpointKind.LineUser && e.UnlinkedAt == null && !e.IsDeleted, ct)
+            ?? throw new BusinessRuleException("ไม่พบปลายทาง LINE นี้ (อาจถูกยกเลิกไปแล้ว)", ProviderCentralOa.RuleCode, 404);
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            new object[] { AdvisoryLockKey.For(providerId, AdvisoryLockKey.ContactNotifyEndpoint, ep.ContactId.ToString()) }, ct);
+        var consentId = ep.ConsentRecordId;
+        NotifyEndpointKind.MarkUnlinked(ep, NotifyEndpointKind.UnlinkTenant, now);   // ตัวยกเลิกเดียว (ล้าง LINE id + ป้ายจาก LINE · PDPA ม.22)
+        if (consentId is Guid cid)
+            await _db.PdpaConsentRecords.Where(c => c.Id == cid && c.CompanyId == providerId && c.WithdrawnAt == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.WithdrawnAt, (DateTime?)now).SetProperty(c => c.WithdrawnReason, NotifyEndpointKind.UnlinkTenant), ct);
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = providerId, UserId = actorUserId, UserEmail = actorEmail, Action = AuditAction.Delete,
+            EntityType = ContactRecipientRule.AuditEntityType, EntityId = ep.ContactId.ToString(),
+            NewValues = JsonSerializer.Serialize(new { op = "line-unlink-by-tenant", endpointId = ep.Id, buyerCompanyId, consent = consentId, rule = ProviderCentralOa.RuleCode }),
+            Timestamp = now,
+        });
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return await BillingLineViewAsync(buyerCompanyId, canManage: true, ct);
+    }
+
+    public async Task<ContactLineInviteResponse> CreateBillingInviteAsync(Guid buyerCompanyId, Guid? actorUserId, string? actorEmail, CancellationToken ct = default)
+    {
+        // ฝ่ายค้าน L5 (262-1-17): จำกัดความถี่ต่อบริษัทผู้เช่า (DB · หลายเครื่อง) — แต่ละครั้งเขียน audit ในบริษัทผู้ให้บริการ + เพิกถอนลิงก์เดิมของผู้ติดต่อ
+        if (!await _limiter.TryConsumeAsync(ProviderCentralOa.BillingInviteRateKey(buyerCompanyId), ProviderCentralOa.BillingInvitePerMinute,
+                ProviderCentralOa.BillingInvitePerDay, ct, failClosed: true))
+            throw new BusinessRuleException("สร้างลิงก์บ่อยเกินไป — ใช้ลิงก์ล่าสุดที่สร้างไว้ หรือรอสักครู่แล้วลองใหม่", ProviderCentralOa.RuleCode, 429);
+        var (providerId, contactId) = await BuyerContactAsync(buyerCompanyId, ct);
+        var view = ProviderCentralOa.BillingView(providerId != null, contactId != null,
+            providerId is Guid p ? await _recipients.CentralUserProblemAsync(p, ct) : null, 0, canManage: true);
+        if (!view.Available || providerId is not Guid pid || contactId is not Guid cid)
+            throw new BusinessRuleException(view.Reason ?? "ยังผูก LINE รับใบแจ้งหนี้ค่าบริการไม่ได้", ProviderCentralOa.RuleCode, 409);
+        // คำเชิญอยู่ในบริษัทผู้ให้บริการ (ผู้ควบคุมข้อมูลของการส่งใบแจ้งหนี้) · ผู้ขอ = ผู้ใช้ของบริษัทผู้เช่า (audit ระบุตัวตน) · ความยินยอมผู้รับกดเองบนมือถือ (PDPA ม.19)
+        return await CreateInviteAsync(pid, cid, actorUserId, actorEmail, ct);
     }
 
     /// <summary>ฝ่ายค้าน L7 (PDPA ม.39 · DESIGN §6.3): บริษัทเริ่มส่งข้อมูลผู้ติดต่อให้ LINE ⇒ มีแถว RoPA ของกิจกรรมนี้ (ครั้งเดียวต่อบริษัท · ไม่ทับที่บริษัทแก้ไว้)</summary>

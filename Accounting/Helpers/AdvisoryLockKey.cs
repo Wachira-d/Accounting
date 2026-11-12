@@ -182,6 +182,8 @@ public static class AdvisoryLockKey
     public const string SlipEvidence = "slip-evidence";
     /// <summary>รอบ 255 WP-12B (ฝ่ายค้าน M5): ยอมรับคู่ค้า/ตรวจเพดานจำนวนคู่ — part = "accept" ต่อบริษัท (ล็อกทั้งสองบริษัทเรียงตาม Guid)</summary>
     public const string TradingPartnerAccept = "partner-accept";
+    /// <summary>รอบ 264 ฝ่ายค้าน M1: เปิด/สร้างแถวคู่จากคำขอเชื่อม — part = "invite:" + Guid ของอีกฝ่าย (คีย์ต่อคู่เรียง A &lt; B) · กันสองคำขอพร้อมกันชน unique</summary>
+    public const string TradingPartnerInvite = "partner-invite";
 
     /// <summary>คีย์ล็อก "ยอดคงค้างของใบมัดจำ" ตัวเดียวของทุกทางเข้าที่อ่าน-แล้ว-เขียนยอดรับรู้/ตัดชำระ (รอบ 194 R2 · P-a):
     /// ปุ่มรับรู้/ริบ · ที่พัก · CMS (<c>RealizeDepositAsync</c> — session lock ผ่าน <c>JobLock</c> เพราะเส้นริบเปิดธุรกรรมของตัวเองหลายขั้น) ·
@@ -275,4 +277,8 @@ public static class AdvisoryLockKey
     /// <summary>รอบ 251 (WP-07 ฝ่ายค้านข้อ 2d): ส่งอีเมลทดสอบของรายการประจำ — part = userId · ผูก companyId · xact lock ครอบ นับเพดาน → ส่ง → audit
     /// (สองคำขอพร้อมกันของผู้ใช้เดียวกันเกินเพดานไม่ได้)</summary>
     public const string RecurringSendTest = "recurring-send-test";
+
+    /// <summary>รอบ 267 ฝ่ายค้าน M5 — "ลูกค้าขอลิงก์หน้าเอกสารใหม่": ตรวจ "วันนี้ขอไปแล้วหรือยัง" + เขียนแถว audit ใต้ล็อกต่อใบ
+    /// (คำขอสาธารณะพร้อมกันหลายตัว = แถวเดียว · กระดิ่งครั้งเดียว) · ผู้ใช้: <c>DocumentPayLinkService.RecordLinkRequestAsync</c></summary>
+    public const string DocumentLinkRequest = "doc-link-request";
 }

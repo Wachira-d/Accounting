@@ -4,7 +4,10 @@ namespace Accounting.Services.Interfaces;
 
 /// <summary>ตัวเลือกการออก/ใช้ลิงก์ให้ลูกค้าเซ็น — <see cref="Regenerate"/> = ออก token ใหม่ (ลิงก์เดิมใช้ไม่ได้) ·
 /// <see cref="CallbackUrl"/> ไม่ null = ตั้ง/เปลี่ยน webhook ต่อเอกสาร · <see cref="ClearCallback"/> = ลบ webhook ต่อเอกสาร</summary>
-public sealed record IssueSignLinkOptions(bool Regenerate, string? CallbackUrl = null, string? CallbackRef = null, bool ClearCallback = false);
+/// <param name="Regenerate">รอบ 267 ฝ่ายค้าน H2 (267-1-24): ออก token ใหม่<b>จริง</b> — ลิงก์หน้าเอกสารเดิมของใบใช้ไม่ได้ทันที (ส่งผิดคน = กดออกใหม่)</param>
+/// <param name="StaffIntent">ผู้เรียกเป็นคนกด (หน้าเอกสารของพนักงาน) — false (คีย์ API) ⇒ ไม่ออกลิงก์ใหม่แทนลิงก์ที่พนักงานเพิกถอนไว้ (259-2-8 · ฝ่ายค้าน 267 M8)</param>
+public sealed record IssueSignLinkOptions(bool Regenerate, string? CallbackUrl = null, string? CallbackRef = null, bool ClearCallback = false,
+    bool StaffIntent = true);
 
 public sealed record SignLinkResult(
     Guid DocumentId, string Kind, string EventType, string Url, string Token, DateTime? ExpiresAt,

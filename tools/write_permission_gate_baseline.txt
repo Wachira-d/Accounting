@@ -297,6 +297,7 @@ Accounting/Controllers/IntercompanyController.cs	Create	1
 Accounting/Controllers/IntercompanyController.cs	Void	1
 Accounting/Controllers/InvitationController.cs	Accept	1
 Accounting/Controllers/LeaveController.cs	CreateMyLeave	1
+Accounting/Controllers/LineDocumentViewController.cs	RequestLink	1
 Accounting/Controllers/LineWebhookController.cs	IssueBindCode	1
 Accounting/Controllers/LineWebhookController.cs	Receive	1
 Accounting/Controllers/LoanController.cs	Create	1
@@ -389,6 +390,7 @@ Accounting/Controllers/PublicChatController.cs	Ask	1
 Accounting/Controllers/PublicChatController.cs	Rate	1
 Accounting/Controllers/PublicChatController.cs	RequestAgent	1
 Accounting/Controllers/PublicChatController.cs	Vote	1
+Accounting/Controllers/PublicDocumentPageController.cs	RequestLink	1
 Accounting/Controllers/PublicPaymentController.cs	StartBooking	1
 # รอบ 241: ลิงก์ชำระเงินของเอกสาร — ทางเข้าสาธารณะโดยตั้งใจ (สิทธิ์ = token 256 บิต · ฐานเก็บ hash · ยอด/ช่องทางจากเซิร์ฟเวอร์ · เพดานสร้างรายการ 20/ชม./ใบเดิมของ StartAsync)
 Accounting/Controllers/PublicPaymentController.cs	StartDocument	1

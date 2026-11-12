@@ -20,8 +20,42 @@ public interface IDocumentPayLinkService
     /// คืนลิงก์ หรือเหตุที่ออกไม่ได้ (ไม่โยน)</summary>
     /// <param name="allowReissueRevoked">รอบ 259 (259-2-8): ลิงก์ที่ถูกเพิกถอน ⇒ ออกใหม่ได้เฉพาะผู้เรียกที่ตั้งใจ (ปุ่มออกลิงก์ของพนักงาน · อีเมลตามตาราง) ·
     /// false (หน้าต่างส่งเอง · พอร์ทัล) ⇒ โยน <see cref="Accounting.Helpers.PayLinkRevokedException"/> · ลิงก์ที่ยังใช้ได้ไม่ถูกเขียนทับช่องทาง · ออกใหม่แทนลิงก์เดิม = audit</param>
+    /// <param name="customerPage">รอบ 267 (267-1-1): ออกลิงก์ในฐานะ "ลิงก์หน้าเอกสาร" — ด่าน = <see cref="CustomerDocPage.IssueRefusal"/> (ใบที่จ่ายไม่ได้ เช่น
+    /// ใบเสนอราคา/ใบเสร็จ ก็ออกได้ · ปุ่มจ่ายยังตัดสินสดที่ชั้นจ่าย) · ผู้เรียกภายนอกใช้ <see cref="EnsureCustomerLinkAsync"/> เท่านั้น
+    /// (ล็อก R267a) — token/คอลัมน์/การเพิกถอนชุดเดียวกับลิงก์ชำระ</param>
     Task<PayLinkResult> EnsureLinkAsync(Guid companyId, Guid documentId, IReadOnlyCollection<string>? scheduleChannels, CancellationToken ct = default,
-        bool allowReissueRevoked = false, string? actor = null);
+        bool allowReissueRevoked = false, string? actor = null, bool customerPage = false);
+
+    /// <summary>รอบ 267 P1 (267-1-1) — <b>ตัวออกเดียวของลิงก์หน้าเอกสาร</b> (หนึ่งลิงก์ต่อใบ · คอลัมน์ <c>PayLink*</c> เดิม · URL เดิม) ·
+    /// ลิงก์ที่ยังใช้ได้ไม่ถูกทับ · ลิงก์ที่ถูกเพิกถอนออกใหม่ได้เฉพาะ <paramref name="allowReissueRevoked"/> (259-2-8) ·
+    /// ใบค่าบริการ NextAcc ของผู้เช่า = ปฏิเสธ (262-1-9) · คืนลิงก์ หรือเหตุที่ออกไม่ได้ (ไม่โยน ยกเว้นลิงก์ถูกเพิกถอน)</summary>
+    /// <param name="purpose">ใครขอ (บันทึกใน audit ตอนออกใหม่) เช่น <c>sign-link</c> · <c>staff-copy</c></param>
+    /// <param name="fallbackOrigin">origin ของคำขอ (ปุ่มของพนักงาน) — ใช้ประกอบ URL เมื่อยังไม่ได้ตั้ง URL ของระบบ (เส้นลิงก์เซ็นเดิมทำแบบนี้)</param>
+    Task<CustomerLinkResult> EnsureCustomerLinkAsync(Guid companyId, Guid documentId, string purpose, CancellationToken ct = default,
+        bool allowReissueRevoked = false, string? actor = null, string? fallbackOrigin = null);
+
+    /// <summary>รอบ 267 P1 — URL ของลิงก์หน้าเอกสารที่ยังใช้ได้ (อ่านอย่างเดียว · ไม่ออก/ต่ออายุ) · null = ยังไม่มี/เพิกถอน/หมดอายุ/ใบที่ลูกค้าไม่เห็น ·
+    /// ต่างจาก <see cref="CurrentUrlAsync"/> (ชั้นจ่าย — ใบที่จ่ายไม่ได้คืน null)</summary>
+    Task<string?> CurrentCustomerUrlAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
+
+    /// <summary>รอบ 267 P1 — view model ของหน้าเอกสารในโหมดที่ไม่ใช้ token ของใบ (พอร์ทัล · การ์ด LINE · พรีวิวของพนักงาน) ·
+    /// <b>ผู้เรียกต้องพิสูจน์สิทธิ์ก่อน</b> (JWT พอร์ทัล + ลูกค้าเห็นได้ · HMAC แถวคิว LINE · สิทธิ์อ่านเอกสารของพนักงาน) ·
+    /// ไม่มีเป้าหมายรายการชำระ (จ่าย/สลิปทำได้เฉพาะโหมดลิงก์) · null = ไม่พบ/ใบที่ลูกค้าไม่เห็น</summary>
+    Task<PublicDocumentPayView?> PageForDocumentAsync(Guid companyId, Guid documentId, CustomerDocPage.Mode mode, CancellationToken ct = default);
+
+    /// <summary>รอบ 267 P1 — เอกสารที่ token นี้ดาวน์โหลด PDF ได้: ตัวใบเอง (<paramref name="relatedId"/> = null) หรือใบที่เกี่ยวข้อง
+    /// ที่อยู่<b>ในชุดที่หน้าแสดง</b>เท่านั้น (ไม่ใช่แค่บริษัทเดียวกัน) · null = ไม่พบ/ลิงก์ใช้ไม่ได้/นอกชุด</summary>
+    Task<Guid?> ResolvePdfDocumentAsync(Guid companyId, string token, Guid? relatedId, CancellationToken ct = default);
+
+    /// <summary>รอบ 267 P1 — ประทับ "ลูกค้าเปิดลิงก์แล้ว" ครั้งแรก (เฉพาะชนิดที่มีป้ายติดตามลิงก์เซ็น · เรียกจากการโหลดหน้าจริงเท่านั้น)</summary>
+    Task MarkOpenedAsync(Guid companyId, string token, CancellationToken ct = default);
+
+    /// <summary>รอบ 267 P1 — ผู้ถือลิงก์ที่<b>หมดอายุ</b> (หรือลิงก์ที่ยังใช้ได้แต่ปุ่มปิดเพราะพ้นกำหนด) ขอให้ผู้ขายส่งลิงก์ใหม่:
+    /// ไม่ออก token ให้คนนอก · บันทึก audit + คืนข้อมูลให้ผู้เรียกแจ้งพนักงาน · ≤ 1 ครั้ง/ใบ/วัน · ลิงก์ที่ถูกเพิกถอน = ไม่พบ</summary>
+    Task<CustomerLinkRequestResult> RequestNewLinkAsync(Guid companyId, string token, CancellationToken ct = default);
+
+    /// <summary>เหมือน <see cref="RequestNewLinkAsync"/> สำหรับผู้เรียกที่พิสูจน์สิทธิ์ด้วยทางอื่นแล้ว (การ์ด LINE)</summary>
+    Task<CustomerLinkRequestResult> RequestLinkForDocumentAsync(Guid companyId, Guid documentId, string source, CancellationToken ct = default);
 
     /// <summary>บล็อกลิงก์ชำระเงินสำหรับอีเมลตามตาราง — null เมื่อไม่แนบ (ปิด · ใบไม่เข้าเงื่อนไข · บริษัทยังไม่ตั้งรับชำระออนไลน์)</summary>
     Task<PayLinkResult?> ForScheduledEmailAsync(EmailScheduleRule rule, Document doc, CancellationToken ct = default);
@@ -75,7 +109,73 @@ public sealed record DocumentPayQrFacts(string? PayLinkRefusal, decimal? NetAmou
 public sealed record PayLinkResult(string? Url, DocumentPayLinkPolicy.Amounts? Amounts, IReadOnlyList<string> Channels, string? Refusal)
 {
     public bool Ok => Url != null && Refusal == null;
+    /// <summary>รอบ 267: token ของลิงก์ (เฉพาะผู้เรียกในเซิร์ฟเวอร์ — ไม่ส่งออกใน JSON) · วันหมดอายุของลิงก์</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? Token { get; init; }
+    public DateTime? ExpiresAt { get; init; }
 }
+
+/// <summary>รอบ 267 P1 — ผลของ <c>EnsureCustomerLinkAsync</c>: <paramref name="Refusal"/> ไม่ว่าง = ออกไม่ได้ (ข้อความไทยพร้อมทางไปต่อ)</summary>
+public sealed record CustomerLinkResult(string? Url, string? Token, DateTime? ExpiresAt, string? Refusal)
+{
+    public bool Ok => Url != null && Refusal == null;
+}
+
+/// <summary>บรรทัดของใบบนหน้าเอกสาร — ราคา/ยอด = null เมื่อหน้านี้ไม่แสดงยอด (<c>CustomerDocPage.ShowsAmounts</c>)</summary>
+public sealed record CustomerDocPageLine(string Description, decimal Quantity, string? Unit, decimal? UnitPrice, decimal? Discount, decimal? Amount);
+
+/// <summary>ใบที่เกี่ยวข้องของหน้าเอกสาร — <paramref name="RelId"/> ใช้ได้เฉพาะกับ token ของใบที่ส่งมันมา (เซิร์ฟเวอร์ตรวจชุดซ้ำตอนดาวน์โหลด) ·
+/// <paramref name="Kind"/>: parent · child · replacement · billed</summary>
+public sealed record CustomerDocPageRelated(Guid RelId, string Kind, string KindLabel, string Title, string DocumentNumber, DateTime DocumentDate,
+    decimal? TotalAmount, decimal? BalanceDue, string StatusLabel);
+
+/// <summary>
+/// รอบ 267 P1 — ส่วน "หน้าเอกสาร" ของ view model (หัวใบอยู่ในช่องเดิมของ <see cref="PublicDocumentPayView"/>) ·
+/// ทุกค่ามาจากเซิร์ฟเวอร์ (<c>CustomerDocPage</c>) — หน้าเว็บแสดงอย่างเดียว · ไม่มี id ภายใน/ผังบัญชี/หมายเหตุภายใน/ผู้สร้าง/IP
+/// </summary>
+public sealed record CustomerDocPageView(
+    string Mode,
+    string LinkState,
+    bool Viewable,
+    bool CanRequestLink,
+    bool IsEnglish,
+    string StatusLabel,
+    bool Voided,
+    int RevisionNumber,
+    bool ShowAmounts,
+    string Currency,
+    decimal SubTotal,
+    decimal DiscountAmount,
+    decimal VatAmount,
+    decimal WithholdingTaxAmount,
+    decimal TotalAmount,
+    decimal PaidAmount,
+    decimal BalanceDue,
+    IReadOnlyList<CustomerDocPageLine> Lines,
+    IReadOnlyList<CustomerDocPage.PageAction> Actions,
+    IReadOnlyList<CustomerDocPageRelated> Related,
+    IReadOnlyDictionary<string, string> Labels,
+    string? RespondedBy,
+    DateTime? RespondedAt,
+    DateTime? ExpiresAt)
+{
+    /// <summary>ที่อยู่ PDF ของใบในโหมดนี้ (เส้นที่ผู้ถือสิทธิ์โหมดนั้นเรียกได้ตรง ๆ) · null = โหมดนี้ไม่มีเส้นดาวน์โหลดตรง — controller เติม</summary>
+    public string? PdfPath { get; init; }
+    /// <summary>ฐานของที่อยู่ PDF ใบที่เกี่ยวข้อง (ต่อท้ายด้วย <c>{relId}/pdf</c>) · null = โหมดนี้ไม่ให้ดาวน์โหลดใบที่เกี่ยวข้อง</summary>
+    public string? RelatedPdfBase { get; init; }
+    /// <summary>ที่อยู่เส้น "ขอลิงก์ใหม่/ขอลิงก์ทำรายการ" ของโหมดนี้ (POST) · null = ไม่มี</summary>
+    public string? RequestLinkPath { get; init; }
+
+    /// <summary>ลิงก์ใช้ไม่ได้ — ไม่มีข้อมูลของใบเลย (มีแค่สถานะลิงก์ + ขอลิงก์ใหม่ได้ไหม)</summary>
+    public static CustomerDocPageView Unusable(CustomerDocPage.LinkState state, bool canRequestLink) => new(
+        CustomerDocPage.ModeCode(CustomerDocPage.Mode.Link), state.ToString(), false, canRequestLink, false, "", false, 0, false, "THB",
+        0m, 0m, 0m, 0m, 0m, 0m, 0m, Array.Empty<CustomerDocPageLine>(), Array.Empty<CustomerDocPage.PageAction>(),
+        Array.Empty<CustomerDocPageRelated>(), CustomerDocPage.Labels(false, Accounting.Models.Enums.DocumentType.Invoice), null, null, null);
+}
+
+/// <summary>ผลของการขอลิงก์ใหม่ — <paramref name="Found"/> false = ข้อความเดียว (ไม่พบ/เพิกถอน/เกินช่วงขอ) ·
+/// <paramref name="Recorded"/> true = บันทึกคำขอครั้งนี้ (ผู้เรียกแจ้งพนักงาน) · false = วันนี้ขอไปแล้ว (ไม่แจ้งซ้ำ)</summary>
+public sealed record CustomerLinkRequestResult(bool Found, bool Recorded, Guid DocumentId, string DocumentNumber, string Message);
 
 public sealed record DocumentAutoSendSettingsDto(
     bool PayLinkAvailable,
@@ -120,7 +220,14 @@ public sealed record DocumentPayLinkStatusDto(
     decimal Net,
     /// <summary>ฝ่ายค้าน S3: ใบตั้ง WHT ไว้แต่ผู้ซื้อไม่มีหน้าที่หัก (ลิงก์เรียกยอดเต็ม) — null = ไม่มีอะไรต้องเตือน</summary>
     string? WhtNote,
-    List<PostPaymentRunDto> Runs);
+    List<PostPaymentRunDto> Runs)
+{
+    /// <summary>รอบ 267 ฝ่ายค้าน H2: ลูกค้ายังเปิดหน้าเอกสารด้วยลิงก์ของใบนี้ได้ไหม (ระดับหน้า — ไม่ขึ้นกับว่าจ่ายได้) ·
+    /// หน้าพนักงานแสดงปุ่ม "ยกเลิกลิงก์" ตามค่านี้ (ทุกชนิดเอกสาร) · <see cref="PageUrl"/> = ลิงก์นั้น · <see cref="PageLinkNote"/> = คำอธิบายขอบเขต</summary>
+    public bool PageLinkUsable { get; init; }
+    public string? PageUrl { get; init; }
+    public string? PageLinkNote { get; init; }
+}
 
 /// <summary><paramref name="PromptPayQrDataUri"/> — รอบ 246 QR: QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดสุทธิของลิงก์) · null = ไม่มีเลขพร้อมเพย์ที่ใช้ได้</summary>
 /// <summary>รอบ 250 WP-03 — ผลของ <c>TransferForDocumentAsync</c>: <paramref name="Refusal"/> ไม่ว่าง = ใบนี้รับชำระทางนี้ไม่ได้ (ข้อความไทย) · ยอดค้าง/WHT/สุทธิ · กล่องโอน (null = ไม่มีบัญชีรับโอน)</summary>
@@ -161,6 +268,10 @@ public sealed record PublicDocumentPayView(
     /// <summary>เป้าหมายของรายการชำระ (ไม่ส่งออกใน JSON ของหน้า — controller เลือกช่องที่คืนเอง)</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public PublicPayTarget Target { get; init; } = null!;
+
+    /// <summary>รอบ 267 P1: ส่วนหน้าเอกสาร (บรรทัด · ยอด · ปุ่มที่เซิร์ฟเวอร์ตัดสิน · ใบที่เกี่ยวข้อง) — ช่องเดิมด้านบนคงชื่อเดิม
+    /// (หน้าชำระรุ่นก่อนที่เบราว์เซอร์แคชไว้ยังทำงาน) · null เฉพาะผู้สร้างรุ่นเก่า (เทสต์)</summary>
+    public CustomerDocPageView? Page { get; init; }
 
     /// <summary>รอบ 255 WP-12B ข้อ 1: หน้าชำระแสดงฟอร์ม "แจ้งโอน + แนบสลิป" ไหม (เซิร์ฟเวอร์ตัดสิน — <c>SlipEvidenceRule.PayLinkSlipAllowed</c>) ·
     /// ใช้ได้ทั้งโหมดโอนอย่างเดียว (ไม่มีช่องทางออนไลน์) — ไม่ผูกกับ <see cref="CanPayOnline"/></summary>

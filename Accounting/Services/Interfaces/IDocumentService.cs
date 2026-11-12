@@ -39,7 +39,8 @@ public interface IDocumentService
     Task<List<DocumentPeriod>> GetDocumentPeriodsAsync(Guid companyId, IReadOnlyList<DocumentType>? types = null);
     /// <summary>Same as GetDocumentsAsync but redacts items the user lacks permission for.</summary>
     Task<PagedResponse<DocumentResponse>> GetDocumentsForUserAsync(Guid companyId, Guid userId, DocumentType? type, PagedRequest request, Guid? projectId = null, Guid? contactId = null, string? status = null, DateTime? fromDate = null, DateTime? toDate = null, Guid? relatedDocumentId = null, Guid? revenueContractId = null, bool staleOnly = false, IReadOnlyList<DocumentType>? types = null, Accounting.Helpers.ConversionProgressState? conversion = null, string? whtCert = null);
-    Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request);
+    /// <param name="actor">ผู้แก้ไข (ลง audit ของการเปลี่ยนใบต้นทางของใบเสร็จร่าง — รอบ 266 ฝ่ายค้าน M5) · null = ผู้เรียกภายใน</param>
+    Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request, string? actor = null);
     /// <summary>เติม/แก้รายละเอียดใบกำกับภาษีซื้อ (เลขที่ + วันที่ + สาขา + override
     /// ผัง VAT) หลังอนุมัติแล้ว — ใช้กับเอกสารที่ตอน approve ใบกำกับยังไม่ครบ
     /// §86/4 จึง post VAT เข้า 11640 "ภาษีซื้อยังไม่ถึงกำหนด". เมื่อ field ครบ
@@ -351,6 +352,9 @@ public interface IDocumentService
     /// <summary>เหตุที่ "ลงรายการภาษีขายในวันนั้นไม่ได้" (งวดบัญชีปิด หรือ ภ.พ.30 เดือนนั้นยื่น/ประกาศว่ายื่น/ล็อก) — ตัวเดียวกับด่านถอย/ย้ายภาษีขาย ·
     /// ผู้จัดสรรเงินรอจัดสรรใช้ตรวจวันที่จัดสรรของใบที่ยังพักภาษีขาย (null = ลงได้)</summary>
     Task<string?> CreditAllocationVatLockReasonAsync(Guid companyId, DateTime date);
+    /// <summary>รอบ 265 ฝ่ายค้าน H1/M2 (คำตัดสิน 265-1-8): งวดภาษีของใบเสร็จจากเงินรอจัดสรร ตัดสิน<b>ก่อนจอง</b> — <c>LateReceiptTaxPoint.Decide</c>
+    /// (วันจัดสรร = วันนี้ · ธงงวดรับเงินปิด = ภ.พ.30 ยื่น/ประกาศ/ล็อก หรืองวดบัญชีปิด) · อ่านอย่างเดียว ไม่เขียนอะไร</summary>
+    Task<Accounting.Helpers.LateReceiptTaxPointDecision> DecideCreditReceiptTaxPointAsync(Guid companyId, string? creditReason, DateTime receiptDate);
     /// <summary>Multi-document payment — one Payment row that settles
     /// many Documents pro-rata to caller-supplied AllocatedAmount per
     /// row. Use when one cheque / transfer covers multiple invoices.

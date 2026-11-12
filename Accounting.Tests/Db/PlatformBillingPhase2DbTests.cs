@@ -237,6 +237,7 @@ public class PlatformBillingPhase2DbTests
     {
         public readonly List<string> Keys = new();
         public Task InvoiceIssuedAsync(Guid buyerCompanyId, Guid invoiceDocumentId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task ReceiptIssuedAsync(Guid buyerCompanyId, Guid receiptDocumentId, CancellationToken ct = default) => Task.CompletedTask;   // รอบ 262
         public Task<int> SendAsync(Guid buyerCompanyId, Guid? documentId, string messageKey, string subject, string body, CancellationToken ct = default)
         { Keys.Add(messageKey); return Task.FromResult(1); }
     }

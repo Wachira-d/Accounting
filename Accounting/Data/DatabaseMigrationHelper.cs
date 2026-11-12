@@ -258,6 +258,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PlatformUpgradeModeMigration.Statements());   // รอบ 237 — อัปเกรดกลางรอบ 2 แบบ: ค่าตั้งแพลตฟอร์ม + แบบที่ลูกค้าเลือกบนรายการชำระ
         list.AddRange(Accounting.Helpers.SignRequestMigration.Statements());   // รอบ 240 — ลิงก์ให้ลูกค้าเซ็น: webhook ต่อเอกสาร · อีเมลขอเซ็น/เตือน · outbox เหตุการณ์ลูกค้าเซ็น
         list.AddRange(Accounting.Helpers.DocumentAutoSendMigration.Statements());   // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · งานหลังรับชำระ (ใบเสร็จ/ขอ 50 ทวิ)
+        list.AddRange(Accounting.Helpers.CustomerDocPage.LegacyTokenHashSql);   // รอบ 267 P1 (267-1-3) — token ดิบของลิงก์ยอมรับ/เซ็นรับรุ่นก่อน ⇒ hash ในที่เดิม (รันซ้ำได้ · ฐานไม่เหลือ token ดิบ)
         list.Add(OneShotDataFixesTableSql);   // รอบ 250 WP-04 — ตาราง marker ของงานย้ายข้อมูลครั้งเดียว (ตัวเดียว · ก่อนทุกบล็อกที่อ่าน/เขียน marker)
         list.AddRange(Round250ScheduleSettingsStatements());   // รอบ 250 WP-04 ต่อยอด — แจ้งก่อนรอบรายการประจำ · วันเปิดส่งซ้ำของกฎทวง · ปิดแจ้งก่อนรอบของแถวเดิม (ครั้งเดียว)
         list.AddRange(Accounting.Helpers.LicenseLapseMigration.Statements());   // รอบ 238 (236-3) — คืนสถานะแถวบริษัทที่ถูก cascade ตาม License · License ในระยะผ่อนผัน Expired → PastDue (idempotent)
@@ -268,6 +269,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.NotifyChannelQuotaMigration.Statements());   // รอบ 254 WP-11 L4 — ตัวนับ/เพดาน/โบนัส/แพ็กแยกช่อง LINE·อีเมล (หลังบล็อกรอบ 212/213 ที่สร้างตาราง)
         list.AddRange(Accounting.Helpers.AutopilotPartnerMigration.Statements());   // รอบ 255 WP-12B — รายการประจำทุก N เดือน/ล่วงหน้า · คู่ค้า NextAcc · ใบซื้อร่าง · 50 ทวิ ผ่านคู่ค้า · พอร์ทัลลิงก์วิเศษ
         list.AddRange(Accounting.Helpers.PartnerPaymentNoticeMigration.Statements());   // รอบ 258-3 F-H3 — การแจ้ง "ผู้ขายคู่ค้ารับเงินแล้ว" ในบริษัทผู้ซื้อ
+        list.AddRange(Accounting.Helpers.PartnerLinkRequestMigration.Statements());   // รอบ 264 — คำขอเชื่อมคู่ค้าถึงปลายทางเสมอ · outbox การแจ้ง · "คำขอที่เราส่ง"
         list.AddRange(Accounting.Helpers.PortalAccessPermissions.MigrationStatements());   // รอบ 257 D-H3 — คืนธงสิทธิ์พอร์ทัลที่หน้าเดิมบันทึกเป็น false ทั้งหมด (ครั้งเดียว · ก่อนเปิดด่านธง)
         list.AddRange(Accounting.Helpers.Round257Pack4Migration.Statements());   // รอบ 257 ชุด 4 — ลายนิ้วมือค่าตั้งต้นรายการประจำ · ใบสำคัญไม่สร้างล่วงหน้า · ถอนความยินยอมเมื่อบริษัทยกเลิกปลายทาง (หลังบล็อกที่สร้างตาราง)
         list.AddRange(Accounting.Helpers.CustomerCreditMigration.Statements());   // รอบ 258 — เงินรอจัดสรร: คอลัมน์ Payments/PaymentAllocations · ผัง 21630 · backfill ครั้งเดียว (หลัง OneShotDataFixesTableSql)
@@ -278,6 +280,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round260LineMigration.Statements());   // รอบ 260-4 — LINE: ชั่วโมงเงียบของการ์ดถึงลูกค้า
         list.AddRange(Accounting.Helpers.Round260SlipReceivingMigration.Statements());   // รอบ 260-2 — บัญชีที่เงินตามสลิปเข้า (ประทับบนรายการชำระตอนยืนยัน)
         list.AddRange(Accounting.Helpers.Round260LineSlipMigration.Statements());   // รอบ 260 — สลิปจากแชต LINE OA ของบริษัท (ตาราง + สวิตช์รับสลิป)
+        list.AddRange(Accounting.Helpers.PartnerConsentMigration.Statements());   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ต่อคู่ × ขอบเขต · append-only)
         return list;
     }
 
@@ -6361,6 +6364,8 @@ public static class DatabaseMigrationHelper
             """,
             // ── รอบ 253 (WP-10 · AUTO_SEND_WHT_DESIGN §3.2/§4.3/§6.3 · N4): ลิงก์อัปโหลด 50 ทวิ · ทวงอัตโนมัติ · ยอมรับ "ไม่หัก" · เลขอ้างอิง e-WHT ──
             """ALTER TABLE "WhtCertIntakes" ADD COLUMN IF NOT EXISTS "EvidenceReference" varchar(100) NULL;""",
+            // ── รอบ 264 P5 (คำตัดสิน 264-5-1): ใบจากคู่ค้า NextAcc ยืนยันด้วยที่มา (ไม่ถาม AI) — แถวเดิมทั้งหมด = false (เคยผ่านเส้นตรวจของจริงเดิม · ไม่เติมย้อนหลัง) ──
+            """ALTER TABLE "WhtCertIntakes" ADD COLUMN IF NOT EXISTS "AuthenticityByProvenance" boolean NOT NULL DEFAULT false;""",
             // ── รอบ 257 ชุด 2 ฝ่ายค้าน (L2/L7): แถวเครดิตที่ "บันทึกเป็นรายการใหม่" จากใบในกล่องรับ (ถอนใบ ⇒ ถอดแถวด้วยคอลัมน์นี้เท่านั้น) ·
             // ชนิดหลักฐานของแถวก่อนใบนี้ลง (ถอนใบ ⇒ คืนค่าเดิม) · เติมย้อนหลังจากหมายเหตุที่ระบบเขียนเอง ("สร้างจากใบ 50 ทวิ ในกล่องรับ") + การจัดสรรที่ยืนยันแรกสุด (บริษัทเดียวกัน · รันซ้ำได้)
             """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "CreatedFromIntakeId" uuid NULL;""",

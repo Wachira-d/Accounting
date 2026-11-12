@@ -2547,13 +2547,17 @@ const Layout = {
         if (items.length === 0) {
           list.innerHTML = '<p class="text-gray-500 text-sm text-center" style="padding:20px">ไม่มีการแจ้งเตือน</p>';
         } else {
-          list.innerHTML = items.map(n => `
-            <div style="padding:12px 0;border-bottom:1px solid var(--gray-100);${n.isRead ? '' : 'background:#F5F3FF;margin:0 -24px;padding:12px 24px'}">
+          // รอบ 264 (ฝ่ายค้าน L7): ลิงก์ที่กดได้มาจากเซิร์ฟเวอร์ (n.href ผ่าน NotificationLink.InternalPath) — หน้าไม่ตัดสินเองว่า path ไหนปลอดภัย
+          list.innerHTML = items.map(n => {
+            const body = `
               <div class="text-sm font-medium">${Layout.esc(n.title)}</div>
               <div class="text-xs text-gray-500" style="margin-top:2px">${Layout.esc(n.message)}</div>
-              <div class="text-xs text-gray-400" style="margin-top:4px">${new Date(n.createdAt).toLocaleString('th-TH')}</div>
-            </div>
-          `).join('');
+              <div class="text-xs text-gray-400" style="margin-top:4px">${new Date(n.createdAt).toLocaleString('th-TH')}</div>`;
+            const style = `display:block;color:inherit;text-decoration:none;padding:12px 0;border-bottom:1px solid var(--gray-100);${n.isRead ? '' : 'background:#F5F3FF;margin:0 -24px;padding:12px 24px'}`;
+            return n.href
+              ? `<a href="${Layout.esc(n.href)}" style="${style}">${body}</a>`
+              : `<div style="${style}">${body}</div>`;
+          }).join('');
         }
       } catch (e) {
         list.innerHTML = '<p class="text-danger text-sm text-center" style="padding:20px">โหลดข้อมูลไม่สำเร็จ</p>';

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>งานอัตโนมัติกับคู่ค้า - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .pa-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:14px; }
+    .pa-card.pa-focus { border-color:#2563eb; box-shadow:0 0 0 2px #bfdbfe; }
+    .pa-card h3 { font-size:15px; font-weight:700; margin:0 0 6px; }
+    .pa-muted { color:#64748b; font-size:13px; }
+    .pa-badge { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; background:#f1f5f9; color:#334155; }
+    .pa-warn { background:#fef3c7; color:#92400e; }
+    .pa-ok { background:#dcfce7; color:#166534; }
+    .pa-scope { border-top:1px solid #f1f5f9; padding:10px 0; display:grid; grid-template-columns:minmax(220px,1.3fr) minmax(220px,1fr); gap:10px; }
+    .pa-ctl { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .pa-ctl input, .pa-ctl select { max-width:220px; }
+    @media (max-width: 720px) { .pa-scope { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">งานอัตโนมัติกับคู่ค้า</h2>
+        <p class="page-subtitle">ความยินยอมของบริษัทเรา<strong>ต่อคู่ค้าแต่ละราย ต่อเรื่อง</strong> ให้ระบบของเราเองทำงานแทนคน — คู่ค้าทำได้แค่ "ขอ" ·
+          ทุกเรื่องตั้งต้นปิด · ถอนได้ทุกเมื่อ (มีผลทันที) · ระงับการเชื่อม = หยุดทุกเรื่อง · ความยินยอมกว้างกว่าสิทธิ์ของผู้ให้ไม่ได้</p></div>
+      <div><a class="btn btn-secondary" href="/pages/partners.html">← คู่ค้าที่ใช้ NextAcc</a>
+        <button class="btn btn-secondary" onclick="Page.load()">รีเฟรช</button></div>
+    </div>
+    <div id="paErr" role="alert" class="pa-card" style="display:none;color:#b91c1c"></div>
+    <div id="paList"><div class="pa-card pa-muted">กำลังโหลด...</div></div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+// รอบ 264 P1 — ป้าย/ข้อความยินยอม/สถานะ/เหตุ ทุกตัวมาจากเซิร์ฟเวอร์ (Helpers/PartnerConsent) · หน้านี้ไม่มีสำเนากติกา · ทุกค่าที่แสดงผ่าน Layout.esc
+const Page = {
+  view: null, focusId: null,
+
+  base() { const cid = Layout.getCompanyId(); return cid ? `/api/companies/${cid}/partner-consents` : null; },
+
+  async init() {
+    if (!Layout.init('partners')) return;
+    Layout.setTitle('งานอัตโนมัติกับคู่ค้า');
+    try { this.focusId = new URLSearchParams(location.search).get('partnership'); } catch { this.focusId = null; }
+    await this.load();
+  },
+
+  async load() {
+    const api = Layout.api(); const base = this.base(); if (!api || !base) return;
+    const err = document.getElementById('paErr');
+    try {
+      const r = await api.get(base);
+      this.view = (r && r.data) || null;
+      err.style.display = 'none';
+    } catch (e) {
+      this.view = null;
+      err.textContent = 'โหลดไม่สำเร็จ: ' + (e.message || 'ไม่ทราบสาเหตุ');
+      err.style.display = '';
+    }
+    this.render();
+  },
+
+  scopeHtml(card, s) {
+    const accepted = card.status === 'Accepted';
+    const a = s.active;
+    const badge = s.ok ? `<span class="pa-badge pa-ok">ใช้อยู่</span>` : `<span class="pa-badge pa-warn">ไม่ทำงาน</span>`;
+    const detail = a ? `<div class="pa-muted">ยินยอมโดย ${Layout.esc(a.grantedByName)} · ${Layout.esc(Layout.dateTime ? Layout.dateTime(a.grantedAt) : a.grantedAt)}`
+        + (a.maxAmount != null ? ` · เพดาน ${Layout.esc(Layout.money(a.maxAmount))} บาท/ใบ` : ' · ไม่จำกัดยอด')
+        + (a.payAccountLabel ? ` · จ่ายจาก ${Layout.esc(a.payAccountLabel)}` : (s.allowsPayAccount ? ' · ไม่ตั้งบัญชีจ่าย (ใช้หลักฐานเท่านั้น)' : ''))
+        + ` · ข้อความเวอร์ชัน ${Layout.esc(a.textVersion)}</div>` : '';
+    const left = `<div><strong>${Layout.esc(s.label)}</strong> ${badge}
+      <div class="pa-muted">${Layout.esc(s.verdictReason)}</div>${detail}
+      ${s.effectNote ? `<div class="pa-muted" style="color:#92400e">ⓘ ${Layout.esc(s.effectNote)}</div>` : ''}</div>`;
+    if (s.companyWide) {
+      return `<div class="pa-scope">${left}<div class="pa-ctl"><a class="btn btn-secondary btn-sm" href="/pages/partners.html">ตั้งที่ค่าตั้งของทั้งบริษัท</a></div></div>`;
+    }
+    const key = `${card.partnershipId}:${s.scope}`;
+    const blocked = !accepted ? 'การเชื่อมไม่ได้ใช้งานอยู่ — ให้ความยินยอมได้เมื่อเชื่อมกลับแล้ว' : s.callerCannotGrantReason;
+    const capVal = a && a.maxAmount != null ? a.maxAmount : (s.suggestedCap != null ? s.suggestedCap : '');
+    const acctOpts = s.allowsPayAccount
+      ? `<select class="form-input" data-acct="${Layout.esc(key)}" aria-label="บัญชีจ่ายตั้งต้น"><option value="">ไม่ตั้ง — ใช้หลักฐานเท่านั้น</option>`
+        + (this.view.payAccounts || []).map(o => `<option value="${Layout.esc(o.value)}" ${a && a.defaultPayBankAccountId === o.value ? 'selected' : ''}>${Layout.esc(o.label)}</option>`).join('')
+        + `</select>` : '';
+    const right = `<div><div class="pa-ctl">
+        <input class="form-input" type="number" min="0.01" step="0.01" data-cap="${Layout.esc(key)}" value="${Layout.esc(capVal)}"
+          placeholder="${s.requiresCap ? 'เพดานต่อใบ (บาท · บังคับ)' : 'เพดานต่อใบ (ว่าง = ไม่จำกัด)'}" aria-label="เพดานต่อใบ" ${blocked ? 'disabled' : ''}>
+        ${acctOpts}
+        <button class="btn btn-primary btn-sm" data-grant="${Layout.esc(key)}" ${blocked ? 'disabled' : ''}>${a ? 'ยืนยันใหม่ / เปลี่ยนเพดาน' : 'อ่านข้อความและยินยอม'}</button>
+        ${a ? `<button class="btn btn-danger btn-sm" data-withdraw="${Layout.esc(a.id)}">ถอนความยินยอม</button>` : ''}
+      </div>${blocked ? `<div class="pa-muted">🔒 ${Layout.esc(blocked)}</div>` : ''}</div>`;
+    return `<div class="pa-scope">${left}${right}</div>`;
+  },
+
+  render() {
+    const host = document.getElementById('paList');
+    const v = this.view;
+    if (!v) { host.innerHTML = '<div class="pa-card pa-muted">ไม่มีข้อมูล (ต้องมีสิทธิ์ตั้งค่าบริษัท)</div>'; return; }
+    if (!v.partners.length) {
+      host.innerHTML = '<div class="pa-card pa-muted">ยังไม่มีคู่ค้าที่เชื่อม — เชื่อมคู่ค้าที่หน้า <a href="/pages/partners.html">คู่ค้าที่ใช้ NextAcc</a> ก่อน</div>';
+      return;
+    }
+    host.innerHTML = v.partners.map(c => {
+      const perPartner = c.scopes.filter(s => !s.companyWide);
+      const hist = c.history.length ? `<details style="margin-top:8px"><summary class="pa-muted">ประวัติความยินยอม (${c.history.length} แถว · ไม่ถูกแก้ทับ)</summary>
+        <table class="table" style="margin-top:6px"><thead><tr><th>เรื่อง</th><th>เพดาน</th><th>ให้โดย/เมื่อ</th><th>ถอนโดย/เมื่อ · เหตุ</th><th>หลักฐาน</th></tr></thead><tbody>`
+        + c.history.map(h => `<tr><td>${Layout.esc(h.scopeLabel)}</td>
+            <td>${Layout.esc(h.maxAmount == null ? 'ไม่จำกัด' : Layout.money(h.maxAmount))}</td>
+            <td>${Layout.esc(h.grantedByName)}<div class="pa-muted">${Layout.esc(Layout.dateTime ? Layout.dateTime(h.grantedAt) : h.grantedAt)}</div></td>
+            <td>${h.withdrawnAt ? `${Layout.esc(h.withdrawnByName || '-')}<div class="pa-muted">${Layout.esc(Layout.dateTime ? Layout.dateTime(h.withdrawnAt) : h.withdrawnAt)}${h.withdrawReason ? ' · ' + Layout.esc(h.withdrawReason) : ''}</div>` : '<span class="pa-badge pa-ok">ใช้อยู่</span>'}</td>
+            <td>${h.hashOk ? '<span class="pa-badge pa-ok">ตรง</span>' : '<span class="pa-badge pa-warn">ไม่ตรง</span>'}</td></tr>`).join('')
+        + `</tbody></table></details>` : '';
+      const req = c.status === 'Accepted' ? `<div class="pa-ctl" style="margin-top:8px"><span class="pa-muted">ขอให้คู่ค้าเปิดเรื่องเดียวกันฝั่งเขา:</span>
+          ${perPartner.map(s => `<label class="pa-muted"><input type="checkbox" data-req-scope="${Layout.esc(c.partnershipId)}" value="${Layout.esc(s.scope)}"> ${Layout.esc(s.label)}</label>`).join('')}
+          <button class="btn btn-secondary btn-sm" data-req="${Layout.esc(c.partnershipId)}">ส่งคำขอถึงคู่ค้า</button></div>` : '';
+      return `<div class="pa-card${this.focusId === c.partnershipId ? ' pa-focus' : ''}" id="pa-${Layout.esc(c.partnershipId)}">
+        <h3>🤝 ${Layout.esc(c.partnerName)} <span class="pa-badge">${Layout.esc(c.statusLabel || c.status)}</span></h3>
+        <div class="pa-muted">${Layout.esc(c.partnerTaxId || '')}</div>
+        ${c.scopes.map(s => this.scopeHtml(c, s)).join('')}${req}${hist}</div>`;
+    }).join('');
+    host.querySelectorAll('[data-grant]').forEach(b => b.addEventListener('click', () => this.grant(b.dataset.grant)));
+    host.querySelectorAll('[data-withdraw]').forEach(b => b.addEventListener('click', () => this.withdraw(b.dataset.withdraw)));
+    host.querySelectorAll('[data-req]').forEach(b => b.addEventListener('click', () => this.requestPartner(b.dataset.req)));
+    if (this.focusId) {
+      const el = document.getElementById('pa-' + this.focusId);
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start' });
+    }
+  },
+
+  async grant(key) {
+    const api = Layout.api(); const base = this.base(); if (!api || !base) return;
+    const [partnershipId, scope] = key.split(':');
+    const capEl = document.querySelector(`[data-cap="${CSS.escape(key)}"]`);
+    const acctEl = document.querySelector(`[data-acct="${CSS.escape(key)}"]`);
+    const capRaw = capEl ? capEl.value.trim() : '';
+    const body = { partnershipId, scope, maxAmount: capRaw === '' ? null : Number(capRaw), defaultPayBankAccountId: acctEl && acctEl.value ? acctEl.value : null };
+    let pv;
+    try { pv = ((await api.post(`${base}/preview`, body)) || {}).data; }
+    catch (e) { Layout.toast(e.message || 'เปิดข้อความยินยอมไม่สำเร็จ', 'error'); return; }
+    if (!pv) return;
+    // ขั้นที่ 1: อ่านข้อความจากเซิร์ฟเวอร์ (ข้อความเดียวกับที่ถูก hash)
+    const ok = await Layout.confirm({ title: 'ความยินยอม: ' + pv.label, okText: 'ยินยอมตามข้อความนี้',
+      message: pv.text + '\n\n' + (pv.maxAmount != null ? `เพดานต่อใบ ${Layout.money(pv.maxAmount)} บาท (ยอดรวมบาทก่อนหัก ณ ที่จ่าย)` : 'ไม่จำกัดยอด')
+        + (pv.defaultPayBankAccountId ? ` · จ่ายจาก ${pv.payAccountLabel || 'บัญชีที่เลือก'}` : '')
+        + ` · ข้อความเวอร์ชัน ${pv.textVersion}` });
+    if (!ok) return;
+    // ขั้นที่ 2: ขอบเขตที่ลงบัญชีอัตโนมัติต้องพิมพ์ยืนยัน
+    let typed = null;
+    if (pv.needsTypedConfirm) {
+      typed = await Layout.promptText({ title: 'ยืนยันอีกครั้ง', label: `พิมพ์คำว่า “${pv.confirmPhrase}” เพื่อเปิดการลงบัญชีอัตโนมัติ`, required: true });
+      if (typed === null) return;
+    }
+    try {
+      const r = await api.post(base, Object.assign({}, body, { maxAmount: pv.maxAmount, textVersion: pv.textVersion, evidenceHash: pv.evidenceHash, typedConfirm: typed }));
+      Layout.toast((r && r.message) || 'บันทึกความยินยอมแล้ว', 'success');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'บันทึกความยินยอมไม่สำเร็จ', 'error'); }
+  },
+
+  async withdraw(id) {
+    const api = Layout.api(); const base = this.base(); if (!api || !base) return;
+    const reason = await Layout.promptText({ title: 'ถอนความยินยอม', label: 'เหตุผล (ไม่บังคับ) — มีผลทันทีกับงานที่ยังไม่ได้ทำ · งานที่ทำไปแล้วไม่ถูกย้อน' });
+    if (reason === null) return;
+    try {
+      const r = await api.del(`${base}/${encodeURIComponent(id)}${reason ? '?reason=' + encodeURIComponent(reason) : ''}`);
+      Layout.toast((r && r.message) || 'ถอนความยินยอมแล้ว', 'success');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'ถอนไม่สำเร็จ', 'error'); }
+  },
+
+  async requestPartner(partnershipId) {
+    const api = Layout.api(); const base = this.base(); if (!api || !base) return;
+    const scopes = Array.from(document.querySelectorAll(`[data-req-scope="${CSS.escape(partnershipId)}"]`)).filter(x => x.checked).map(x => x.value);
+    if (!scopes.length) { Layout.toast('เลือกอย่างน้อยหนึ่งเรื่องที่จะขอ', 'error'); return; }
+    try {
+      const r = await api.post(`${base}/request`, { partnershipId, scopes });
+      Layout.toast((r && r.message) || 'ส่งคำขอแล้ว', 'success');
+    } catch (e) { Layout.toast(e.message || 'ส่งคำขอไม่สำเร็จ', 'error'); }
+  },
+};
+document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

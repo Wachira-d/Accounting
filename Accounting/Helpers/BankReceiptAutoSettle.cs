@@ -17,6 +17,10 @@ public static class BankReceiptAutoSettle
 {
     public const string RuleAuto = "BANK-AUTO-SETTLE";
     public const string RuleSuggest = "BANK-AUTO-SUGGEST";
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-18): เงินเข้าที่ตรงได้แต่ใบค่าบริการ NextAcc ของผู้เช่า — ไม่ตัดชำระอัตโนมัติ (ข้ามการต่ออายุแพ็กเกจ) · ทางไปต่อของผู้ดูแล</summary>
+    public const string PlatformTenantReason =
+        "ยอดนี้ตรงได้เฉพาะใบค่าบริการ NextAcc ของผู้เช่า — ระบบไม่ตัดชำระอัตโนมัติ (ต้องผ่านรายการชำระค่าบริการเพื่อต่ออายุแพ็กเกจ) · "
+        + "บันทึกที่ หน้าแอดมิน → เรียกเก็บค่าบริการ (ยืนยันการโอน/จับคู่รอบโอน) หรือให้ผู้เช่าแจ้งชำระที่ศูนย์บิล";
     public const string RuleNone = "BANK-AUTO-NONE";
     /// <summary>ฝ่ายค้านรอบสอง LOW: คนกดยืนยันข้อเสนอ (ไม่ใช่ระบบปิดเอง) — รหัสกติกาบนบรรทัดแยกจาก <see cref="RuleAuto"/></summary>
     public const string RuleConfirm = "BANK-CONFIRM-SUGGEST";

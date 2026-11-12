@@ -276,27 +276,42 @@ public class SignRequestRound240Tests
     public void ป้ายสถานะ_ออก_ส่ง_เปิด_เซ็น_หมดอายุ_และออกใหม่ล้างการติดตาม()
     {
         var now = new DateTime(2026, 11, 5, 0, 0, 0, DateTimeKind.Utc);
-        var d = new EntDocument { DocumentType = DocumentType.Quotation, Status = DocumentStatus.Approved };
-        Assert.Null(SignRequestKinds.Status(d, now));
-        SignRequestKinds.SetNewToken(d, "aa", now);
+        // รอบ 267 P1: ลิงก์ที่ส่งให้ลูกค้าตอบรับ = ลิงก์หน้าเอกสารของใบ (PayLink*) ที่ผู้ขายเปิดช่วงตอบรับ (MarkIssued) — ไม่มี token ของตัวเองอีก
+        var d = new EntDocument { DocumentType = DocumentType.Quotation, Status = DocumentStatus.Approved, PayLinkTokenHash = "h", PayLinkExpiresAt = now.AddDays(400) };
+        Assert.Null(SignRequestKinds.Status(d, now));          // มีลิงก์หน้าเอกสารแต่ยังไม่ได้ส่งให้ตอบรับ ⇒ ยังไม่มีป้าย
+        SignRequestKinds.MarkIssued(d, now);
         Assert.Equal("issued", SignRequestKinds.Status(d, now)!.Code);
-        Assert.Equal(now.AddDays(30), d.QuotationAcceptTokenExpiresAt);
+        Assert.Equal(now.AddDays(30), SignRequestKinds.Read(d).ExpiresAt);   // ไม่มีวันยืนราคา = 30 วันจากวันส่ง
         d.SignLinkEmailedAt = now;
         Assert.Equal("emailed", SignRequestKinds.Status(d, now)!.Code);
         d.SignLinkOpenedAt = now;
         Assert.Equal("opened", SignRequestKinds.Status(d, now)!.Code);
         Assert.Equal("expired", SignRequestKinds.Status(d, now.AddDays(31))!.Code);
-        SignRequestKinds.SetNewToken(d, "bb", now);
+        SignRequestKinds.MarkIssued(d, now);
         Assert.Null(d.SignLinkOpenedAt);
         Assert.Null(d.SignLinkEmailedAt);
         Assert.Equal("issued", SignRequestKinds.Status(d, now)!.Code);
         d.QuotationAcceptedAt = now;
         Assert.Equal("signed", SignRequestKinds.Status(d, now.AddDays(90))!.Code);   // เซ็นแล้วชนะหมดอายุ
 
-        var dn = new EntDocument { DocumentType = DocumentType.DeliveryNote };
-        SignRequestKinds.SetNewToken(dn, "cc", now);
-        Assert.Equal(now.AddDays(14), dn.DeliverySignTokenExpiresAt);
+        var dn = new EntDocument { DocumentType = DocumentType.DeliveryNote, PayLinkTokenHash = "h" };
+        SignRequestKinds.MarkIssued(dn, now);
+        Assert.Equal(now.AddDays(14), SignRequestKinds.Read(dn).ExpiresAt);
         Assert.Null(dn.QuotationAcceptToken);
+
+        // ทิศตรงข้าม (267-1-3): ลิงก์ยอมรับรุ่นก่อนรอบ 267 (คอลัมน์เดิมเก็บ hash) ยังขึ้นป้ายและใช้วันหมดอายุของตัวเอง · ส่งใหม่ = เลิกลิงก์รุ่นก่อน
+        var old = new EntDocument
+        {
+            DocumentType = DocumentType.Quotation, QuotationAcceptToken = CustomerDocPage.LegacyStored("ab12"), QuotationAcceptTokenExpiresAt = now.AddDays(5),
+        };
+        Assert.Equal("issued", SignRequestKinds.Status(old, now)!.Code);
+        Assert.Equal("expired", SignRequestKinds.Status(old, now.AddDays(6))!.Code);
+        SignRequestKinds.MarkIssued(old, now);
+        Assert.Null(old.QuotationAcceptToken);
+        // เพิกถอนลิงก์หน้าเอกสาร ⇒ ไม่มีลิงก์ให้ตอบรับ (ป้ายหาย)
+        d.QuotationAcceptedAt = null;
+        d.PayLinkRevokedAt = now;
+        Assert.Null(SignRequestKinds.Status(d, now));
     }
 
     // ───────────── ข้อความอีเมล ─────────────

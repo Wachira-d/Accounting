@@ -358,7 +358,9 @@ public class ContactLineQueueService : IContactLineQueueService
             return await DecryptFailedAsync(item, ep, fallback: true, ct);
 
         // ฝ่ายค้าน 259 L2: ผู้ใช้ติ๊กลิงก์ชำระ (ส่งเอง) แต่ตอนส่งลิงก์ใช้ไม่ได้แล้ว ⇒ ไม่ส่ง (ไม่ใช่การ์ดไม่มีปุ่มแล้วขึ้น "ส่งแล้ว")
+        // รอบ 262 (262-1-6): ใบค่าบริการของผู้เช่า ⇒ ปุ่มไปศูนย์บิล (ไม่ใช้ลิงก์ชำระทั่วไป) — ไม่มีลิงก์ทั่วไปไม่ใช่เหตุข้าม
         if (item.IncludePayLink == true && doc.BalanceDue > 0 && DocumentLineSendRule.PayLinkAllowed(ep.Kind, ep.ShowAmounts)
+            && !await PlatformInvoiceQueries.IsTenantDocumentAsync(_db, item.CompanyId, doc.ContactId, ct)
             && (_payLinks == null || await _payLinks.CurrentUrlAsync(item.CompanyId, doc.Id, ct) == null))
         {
             Finish(item, ContactLineChannel.StatusSkipped, DocumentLineSendRule.PayLinkGoneAtSend, DocumentLineSendRule.RuleCode);
@@ -528,6 +530,12 @@ public class ContactLineQueueService : IContactLineQueueService
     /// <summary>ลิงก์ชำระ — ตัวตัดสินเดียวกับอีเมลตามตาราง (ค่าตั้งของกฎ › ผู้ติดต่อ › บริษัท) · กฎหาย ⇒ ลิงก์ที่มีอยู่แล้วเท่านั้น · ไม่มี ⇒ ไม่มีปุ่ม</summary>
     private async Task<string?> PayUrlAsync(LineQueue item, Document doc, CancellationToken ct)
     {
+        // รอบ 262 (คำตัดสิน 262-1-6): ใบค่าบริการ NextAcc ของผู้เช่า (ผู้ติดต่อผูก tenant ในบริษัทผู้ให้บริการ) ⇒ ปุ่มไปศูนย์บิลของผู้เช่า — เงินเข้าบัญชีของระบบผ่านเส้นชำระ
+        // ของแพลตฟอร์ม (ต่ออายุ/ตัดชำระผ่าน SubscriptionPayment) · ห้ามใช้ลิงก์ชำระเอกสารทั่วไปของบริษัท (ข้ามการต่ออายุแพ็กเกจ)
+        // ฝ่ายค้าน L4: ศูนย์บิลของบริษัทผู้ซื้อ (?company=) — ผู้ใช้หลายบริษัทไม่เจอศูนย์บิลของบริษัทที่เปิดค้างไว้
+        if (await PlatformInvoiceQueries.TenantBuyerIdAsync(_db, item.CompanyId, doc.ContactId, ct) is Guid buyerId)
+            return ProviderCentralOa.BillingPayUrl(item.IncludePayLink,
+                NotificationLink.Absolute(await SystemBaseUrl.ResolveAsync(_db, _config, ct), ProviderCentralOa.BillingPath(buyerId)));
         if (_payLinks == null) return null;
         // รอบ 259 (E-H3): ส่งเองจากหน้าเอกสาร — ผู้ใช้เลือกเอง (ติ๊ก = ลิงก์ออกไว้แล้วตอนกด · ไม่ติ๊ก = ไม่มีปุ่ม)
         if (item.IncludePayLink is bool manual) return manual ? await _payLinks.CurrentUrlAsync(item.CompanyId, doc.Id, ct) : null;

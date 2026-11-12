@@ -3,6 +3,7 @@ using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
+using Accounting.Models.DTOs.Notification;
 using Accounting.Models.DTOs.Subscription;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
@@ -99,6 +100,41 @@ public class BillingCenterController : ControllerBase
             new Models.DTOs.DocumentTemplate.GeneratePdfRequest(documentId, null, null, null, null));
         Response.Headers["Cache-Control"] = "private, no-store";
         return File(gen.PdfData, "application/pdf", gen.FileName);
+    }
+
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-3): กล่อง "รับใบแจ้งหนี้ทาง LINE" — สถานะ (ผูกแล้วกี่ปลายทาง · กดได้ไหม + เหตุ) จากเซิร์ฟเวอร์ · สิทธิ์ Billing.Manage</summary>
+    [HttpGet("line")]
+    public async Task<ActionResult<ApiResponse<ProviderCentralOa.BillingLineView>>> LineStatus(Guid companyId,
+        [FromServices] IContactLineBindingService lineBinding, CancellationToken ct)
+    {
+        if (await RequireBillingAsync(companyId, "ดูการรับใบแจ้งหนี้ทาง LINE") is { } deny) return deny;
+        return Ok(new ApiResponse<ProviderCentralOa.BillingLineView>(true, await lineBinding.BillingLineViewAsync(companyId, canManage: true, ct)));
+    }
+
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-3): ผู้เช่าสร้างลิงก์/QR ผูก LINE รับใบแจ้งหนี้ค่าบริการ — คำเชิญของผู้ติดต่อบริษัทนี้ในบริษัทผู้ให้บริการ (ผ่าน LINE OA กลาง) ·
+    /// ผู้รับกดยินยอมเองบนมือถือ (PDPA ม.19) · คีย์ API ใช้ไม่ได้ (ผูกช่องทางรับเอกสาร = การกระทำของคน) · สิทธิ์ Billing.Manage</summary>
+    [HttpPost("line-invite")]
+    public async Task<ActionResult<ApiResponse<ContactLineInviteResponse>>> CreateLineInvite(Guid companyId,
+        [FromServices] IContactLineBindingService lineBinding, CancellationToken ct)
+    {
+        if (OwnerActionGuard.DenyResult(HttpContext, "สร้างลิงก์ผูก LINE รับใบแจ้งหนี้ค่าบริการ") is { } keyDenied) return keyDenied;
+        if (await RequireBillingAsync(companyId, "ผูก LINE รับใบแจ้งหนี้ค่าบริการ") is { } deny) return deny;
+        Guid? uid = Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var u) ? u : null;
+        var r = await lineBinding.CreateBillingInviteAsync(companyId, uid, User.FindFirst(ClaimTypes.Email)?.Value ?? User.Identity?.Name, ct);
+        return StatusCode(201, new ApiResponse<ContactLineInviteResponse>(true, r, "สร้างลิงก์ผูก LINE แล้ว — เปิดบนมือถือที่ใช้ LINE"));
+    }
+
+    /// <summary>รอบ 262 ฝ่ายค้าน M1 (คำตัดสิน 262-1-10): ผู้เช่ายกเลิกปลายทาง LINE ที่ผูกรับใบค่าบริการ (คนที่ออกจากบริษัทแล้ว ฯลฯ) — Billing.Manage · ปฏิเสธคีย์ API ·
+    /// ปลายทางของบริษัทอื่น = 404 · ถอนความยินยอม + audit (PDPA ม.19/ม.37)</summary>
+    [HttpDelete("line/{endpointId:guid}")]
+    public async Task<ActionResult<ApiResponse<ProviderCentralOa.BillingLineView>>> UnlinkLine(Guid companyId, Guid endpointId,
+        [FromServices] IContactLineBindingService lineBinding, CancellationToken ct)
+    {
+        if (OwnerActionGuard.DenyResult(HttpContext, "ยกเลิก LINE รับใบแจ้งหนี้ค่าบริการ") is { } keyDenied) return keyDenied;
+        if (await RequireBillingAsync(companyId, "ยกเลิก LINE รับใบแจ้งหนี้ค่าบริการ") is { } deny) return deny;
+        Guid? uid = Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var u) ? u : null;
+        var view = await lineBinding.UnlinkBillingEndpointAsync(companyId, endpointId, uid, User.FindFirst(ClaimTypes.Email)?.Value ?? User.Identity?.Name, ct);
+        return Ok(new ApiResponse<ProviderCentralOa.BillingLineView>(true, view, "ยกเลิกแล้ว — บัญชี LINE นี้จะไม่ได้รับใบแจ้งหนี้/ใบเสร็จค่าบริการอีก"));
     }
 
     /// <summary>แจ้งชำระใบแจ้งหนี้ด้วยการโอน + แนบสลิปในคำขอเดียว (ยอด = ยอดค้างของใบ · ติ๊กยอมรับเงื่อนไขบังคับ)</summary>

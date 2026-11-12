@@ -61,7 +61,8 @@ public partial class CustomerCreditService
         string? writeOffWhy = null;
         if (usable && available > cap + UnappliedCreditBalance.Tolerance)
             writeOffWhy = $"คงเหลือ {Money(available)} เกินเพดานตัดเศษ {Money(cap)}";
-        return new CustomerCreditActions(usable && hasContact, usable && hasContact, usable && hasContact, usable && writeOffWhy == null, writeOffWhy);
+        return new CustomerCreditActions(usable && hasContact, usable && hasContact, usable && hasContact, usable && writeOffWhy == null, writeOffWhy,
+            CanIssueReceipt: usable && hasContact);
     }
 
     // ───────────────────────── ตั้งค่า ─────────────────────────
@@ -278,18 +279,28 @@ public partial class CustomerCreditService
             // ฝ่ายค้านรอบ 259 L1: ยกเลิกคืนเงิน/ตัดเศษ (กลับ JE + ยอดธนาคาร) ต้องมีเหตุผล
             if (kind is PaymentCreditMovementKind.Refund or PaymentCreditMovementKind.WriteOff && why.Length < 5)
                 throw new BusinessRuleException("ระบุเหตุผลของการยกเลิก (อย่างน้อย 5 ตัวอักษร) — รายการนี้กลับรายการบัญชี", CustomerCreditMovementRules.UndoRuleCode, 400);
-            if (kind == PaymentCreditMovementKind.ToDeposit)
+            if (CustomerCreditMovementRules.IssuesApprovedDocument(kind))
             {
                 // ฝ่ายค้านรอบ 259 M1: ขาออกที่ยังไม่ได้ผูกใบมัดจำ (ล้มกลางทาง) — หาใบมัดจำของเงินก้อนนี้ก่อน: มี = ผูก + ให้ยกเลิกใบนั้น · ไม่มี = ปล่อยได้
+                // รอบ 265: ใบเสร็จจากเงินรอจัดสรร (ToReceipt) เดินด่านเดียวกัน — ใบเสร็จ standalone (ไม่ใช่มัดจำ) ที่ขาเงินเข้าเป็นผังพักของเงินก้อนนี้
+                var isDepositKind = kind == PaymentCreditMovementKind.ToDeposit;
                 if (movement.TargetDocumentId != null)
-                    throw new BusinessRuleException(
-                        "ยกเลิกการย้ายเป็นมัดจำที่นี่ไม่ได้ — ยกเลิกใบมัดจำที่หน้าเอกสาร (ระบบคืนเงินกลับเป็นเงินรอจัดสรรให้เอง)",
+                    throw new BusinessRuleException(isDepositKind
+                        ? "ยกเลิกการย้ายเป็นมัดจำที่นี่ไม่ได้ — ยกเลิกใบมัดจำที่หน้าเอกสาร (ระบบคืนเงินกลับเป็นเงินรอจัดสรรให้เอง)"
+                        : "ยกเลิกใบเสร็จที่ออกจากเงินรอจัดสรรที่นี่ไม่ได้ — ยกเลิกใบเสร็จนั้นที่หน้าเอกสาร (ระบบคืนเงินกลับเป็นเงินรอจัดสรรให้เอง)",
                         CustomerCreditMovementRules.UndoRuleCode, 409);
                 var since = movement.CreatedAt.AddMinutes(-5);
+                var thisMovementId = movement.Id;
+                var thisAmount = movement.Amount;
                 var orphanDeposit = await _db.Documents.AsNoTracking()
-                    .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.IsDeposit && d.Reference == payment.PaymentNumber
+                    .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.IsDeposit == isDepositKind && d.DocumentType == DocumentType.Receipt
+                        && d.Reference == payment.PaymentNumber
                         && d.PaymentAccountId == payment.UnappliedAccountId && d.CreatedAt >= since
-                        && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                        && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                        // รอบ 265 ฝ่ายค้าน M1: ใบที่เป็นปลายทางของขาออกอื่นที่ยังมีผลอยู่แล้ว ห้ามถูกผูกซ้ำ (เงินก้อนเดียวหลายใบ) · ยอดต้องเท่ารายการนี้
+                        && !_db.PaymentCreditMovements.Any(m => m.CompanyId == companyId && m.TargetDocumentId == d.Id && m.Id != thisMovementId
+                            && !m.IsDeleted && m.ReleasedAt == null)
+                        && d.TotalAmount == thisAmount)
                     .OrderBy(d => d.CreatedAt).Select(d => new { d.Id, d.DocumentNumber, d.Status }).FirstOrDefaultAsync(ct);
                 if (orphanDeposit != null)
                 {
@@ -297,16 +308,17 @@ public partial class CustomerCreditService
                     {
                         movement.TargetDocumentId = orphanDeposit.Id;
                         movement.UpdatedAt = DateTime.UtcNow;
-                        AuditMovement(companyId, actor, movement, payment, CustomerCreditMovementRules.ToDepositRuleCode, null,
-                            "ผูกใบมัดจำที่ออกแล้วกับรายการที่ค้าง " + orphanDeposit.DocumentNumber);
+                        AuditMovement(companyId, actor, movement, payment, isDepositKind ? CustomerCreditMovementRules.ToDepositRuleCode
+                                : CustomerCreditMovementRules.ToReceiptRuleCode, null,
+                            "ผูกเอกสารที่ออกแล้วกับรายการที่ค้าง " + orphanDeposit.DocumentNumber);
                         await _db.SaveChangesAsync(ct);
                         await tx.CommitAsync(ct);
                         throw new BusinessRuleException(
-                            $"ใบมัดจำ {orphanDeposit.DocumentNumber} ของรายการนี้ออกแล้ว — ผูกกับรายการให้แล้ว · ยกเลิกใบมัดจำนั้นที่หน้าเอกสารถ้าต้องการคืนเงินเป็นเงินรอจัดสรร",
+                            $"{(isDepositKind ? "ใบมัดจำ" : "ใบเสร็จ")} {orphanDeposit.DocumentNumber} ของรายการนี้ออกแล้ว — ผูกกับรายการให้แล้ว · ยกเลิกใบนั้นที่หน้าเอกสารถ้าต้องการคืนเงินเป็นเงินรอจัดสรร",
                             CustomerCreditMovementRules.UndoRuleCode, 409);
                     }
                     throw new BusinessRuleException(
-                        $"มีร่างใบมัดจำ {orphanDeposit.DocumentNumber} ของรายการนี้ค้างอยู่ — ลบร่างนั้นที่หน้าเอกสารก่อน แล้วกดยกเลิกอีกครั้ง",
+                        $"มีร่าง {orphanDeposit.DocumentNumber} ของรายการนี้ค้างอยู่ — ลบร่างนั้นที่หน้าเอกสารก่อน แล้วกดยกเลิกอีกครั้ง",
                         CustomerCreditMovementRules.UndoRuleCode, 409);
                 }
             }
@@ -329,6 +341,7 @@ public partial class CustomerCreditService
             {
                 PaymentCreditMovementKind.ToInvoice => "ยกเลิกการจองโดยผู้ใช้",
                 PaymentCreditMovementKind.ToDeposit => "ยกเลิกรายการที่ค้าง (ไม่มีใบมัดจำ)",
+                PaymentCreditMovementKind.ToReceipt => "ยกเลิกรายการที่ค้าง (ไม่มีใบเสร็จ)",
                 _ => "ยกเลิกโดยผู้ใช้ (กลับรายการบัญชีแล้ว): " + why,
             };
             movement.UpdatedAt = DateTime.UtcNow;
@@ -505,7 +518,8 @@ public partial class CustomerCreditService
     }
 
     /// <summary>ผูกใบปลายทางกับขาออก + audit (ฝ่ายค้านรอบ 259 L2 — ทุกการเขียนลง audit chain)</summary>
-    private async Task StampTargetAsync(Guid companyId, Guid movementId, Guid targetId, string targetNumber, string actor)
+    private async Task StampTargetAsync(Guid companyId, Guid movementId, Guid targetId, string targetNumber, string actor,
+        string ruleCode = CustomerCreditMovementRules.ToDepositRuleCode)
     {
         var m = await _db.PaymentCreditMovements.FirstAsync(x => x.Id == movementId && x.CompanyId == companyId);
         m.TargetDocumentId = targetId;
@@ -520,7 +534,7 @@ public partial class CustomerCreditService
             EntityId = m.Id.ToString(),
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
-                RuleCode = CustomerCreditMovementRules.ToDepositRuleCode,
+                RuleCode = ruleCode,
                 m.Kind,
                 m.Amount,
                 TargetDocumentId = targetId,

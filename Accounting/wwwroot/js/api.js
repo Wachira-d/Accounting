@@ -820,6 +820,11 @@ const API = {
       getLinkCandidates: (id) => API.get(`${base}/document/${id}/link-candidates`),
       linkDocumentSource: (id, body) => API.post(`${base}/document/${id}/link-source`, body),
       unlinkDocumentSource: (id) => API.post(`${base}/document/${id}/unlink-source`, {}),
+      // รอบ 266 แพ็ก A — ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ (เจ้าเดียวกัน) · เซิร์ฟเวอร์ตัดสินทุกแถว (ReceiptLinkPolicy)
+      getReceiptLinkCandidates: (docId) => API.get(`${base}/receipt-links/candidates?fromDocumentId=${encodeURIComponent(docId)}`),
+      previewReceiptLink: (d) => API.post(`${base}/receipt-links/preview`, d),
+      linkReceipt: (d) => API.post(`${base}/receipt-links`, d),
+      undoReceiptLink: (d) => API.post(`${base}/receipt-links/undo`, d),
       getConversionTargets: (id) => API.get(`${base}/document/${id}/conversion-targets`),
       batchConvertDocuments: (ids, t) => API.post(`${base}/document/batch-convert/${t}`, { documentIds: ids }),
       createInvoiceFromObligation: (obligationId) => API.post(`${base}/document/from-obligation/${obligationId}`),
@@ -868,6 +873,9 @@ const API = {
       writeOffCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/write-off`, d),
       customerCreditToDeposit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/to-deposit`, d),
       customerCreditIssueInvoice: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/issue-invoice`, d),
+      // รอบ 265 — ออกใบเสร็จ/ใบกำกับภาษีจากเงินรอจัดสรร (ไม่มีใบแจ้งหนี้) + ค่าของหน้าต่าง (วันที่ที่ใบจะลง · อัตรา VAT · รายการประจำ)
+      getCustomerCreditReceiptOptions: (paymentId) => API.get(`${base}/customer-credits/${paymentId}/receipt-options`),
+      customerCreditIssueReceipt: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/issue-receipt`, d),
       undoCustomerCreditMovement: (paymentId, movementId, reason) =>
         API.post(`${base}/customer-credits/${paymentId}/movements/${movementId}/undo`, { reason: reason || null }),
       updateCustomerCreditSettings: (d) => API.put(`${base}/customer-credits/settings`, d),
@@ -1594,8 +1602,11 @@ const API = {
       // รอบ 255 WP-12B ข้อ 6–8: หน้า "คู่ค้าที่ใช้ NextAcc" (ต่อยอด trading-partners/workflow-automation เดิม)
       getTradingPartners: () => API.get(`${base}/trading-partners`),
       invitePartner: (d) => API.post(`${base}/trading-partners/invite`, d),
+      // รอบ 264: การ์ดยอมรับจากลิงก์แจ้งเตือน · "คำขอที่เราส่ง"
+      getPartnerLinkRequest: (id) => API.get(`${base}/trading-partners/requests/${encodeURIComponent(id)}`),
+      getOutgoingPartnerRequests: () => API.get(`${base}/trading-partners/requests/outgoing`),
       acceptPartner: (id) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/accept`),
-      rejectPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/reject`, { reason: reason || null }),
+      rejectPartner: (id, reason, blockRequester) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/reject`, { reason: reason || null, blockRequester: !!blockRequester }),
       suspendPartner: (id, reason) => API.post(`${base}/trading-partners/${encodeURIComponent(id)}/suspend`, { reason: reason || null }),
       setPartnerDraftLimit: (id, limit) => API.put(`${base}/trading-partners/${encodeURIComponent(id)}/purchase-draft-limit`, { limit }),
       getWorkflowAutomation: () => API.get(`${base}/workflow-automation`),

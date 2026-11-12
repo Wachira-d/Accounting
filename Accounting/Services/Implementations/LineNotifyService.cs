@@ -204,6 +204,12 @@ public class LineNotifyService : ILineNotifyService
             var (centralDenied, centralToken) = await CentralGroupRouteAsync(companyId);
             return (centralDenied, centralToken, centralDenied == null);
         }
+        // รอบ 262 (คำตัดสิน 262-1-1): LINE ผู้ใช้ 1:1 ของผู้ติดต่อที่ผูกผ่าน OA กลาง ⇒ เฉพาะบริษัทผู้ให้บริการ (ตรวจใหม่ตอนส่ง) · ไม่นับตัวนับกลุ่ม (ยอด push จริงมาจาก LINE)
+        if (oaScope == NotifyEndpointKind.ScopeNextAcc && target == LineTargetKind.TenantMember)
+        {
+            var (userDenied, userToken) = await CentralContactUserRouteAsync(companyId);
+            return (userDenied, userToken, false);
+        }
         if (oaScope != NotifyEndpointKind.ScopeCompany)
             return (oaScope == NotifyEndpointKind.ScopeNextAcc
                 ? LinePushResult.Denied(ContactRecipientRule.RuleCodeNextAccNotOpen, ContactRecipientRule.NextAccNotOpenReason)
@@ -223,6 +229,20 @@ public class LineNotifyService : ILineNotifyService
             centralOaGroupDeliveryEnabled: LineGroupBindRule.CentralScopeAllowed(companyId, platformId));
         if (!route.Allowed)
             return (LinePushResult.Denied(ContactRecipientRule.RuleCodeNextAccNotOpen, ContactRecipientRule.CentralGroupNotPlatformReason), null);
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return (LinePushResult.Fail(NextAccLineConfigRule.NotConfiguredMessage), null);
+        return (null, token);
+    }
+
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-1) — LINE ผู้ใช้ 1:1 ของผู้ติดต่อผ่าน <b>OA กลาง</b>: ด่านบริษัทผู้ให้บริการตัวเดียว (<see cref="ProviderCentralOa.Allowed"/>)
+    /// ตรวจใหม่ทุกครั้งที่ส่ง → นโยบายเส้นทาง (TenantBusiness · OA กลาง · ผู้รับ 1:1) → token ของ OA กลาง · บริษัทอื่น ⇒ ปฏิเสธด้วยเหตุ N8 เดิม</summary>
+    private async Task<(LinePushResult? Denied, string? Token)> CentralContactUserRouteAsync(Guid companyId)
+    {
+        var platformId = _db == null ? null : await PlatformCompanyLookup.IdAsync(_db);
+        if (!ProviderCentralOa.Allowed(companyId, platformId))
+            return (LinePushResult.Denied(ContactRecipientRule.RuleCodeNextAccNotOpen, ContactRecipientRule.NextAccNotOpenReason), null);
+        var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.NextAccOa, LineTargetKind.TenantMember, companyOaConfigured: false);
+        if (!route.Allowed) return (LinePushResult.Denied(route.RuleCode, route.Reason!), null);
         var token = await NextAccTokenAsync();
         if (string.IsNullOrWhiteSpace(token)) return (LinePushResult.Fail(NextAccLineConfigRule.NotConfiguredMessage), null);
         return (null, token);
@@ -327,12 +347,26 @@ public class LineNotifyService : ILineNotifyService
         if (string.IsNullOrWhiteSpace(lineUserId)) return null;
         var oa = await ResolveCompanyOaAsync(companyId);
         if (!oa.Configured || string.IsNullOrWhiteSpace(oa.Token)) return null;
+        return await ProfileNameCoreAsync(oa.Token!, lineUserId);
+    }
+
+    /// <summary>รอบ 262: ชื่อแสดงของผู้ใช้ที่ผูกผ่าน OA กลาง (ป้ายของปลายทางผู้ติดต่อของบริษัทผู้ให้บริการ) · อ่านไม่ได้ ⇒ null (ไม่ล้มการผูก)</summary>
+    public async Task<string?> TryGetNextAccProfileNameAsync(string lineUserId)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId)) return null;
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        return await ProfileNameCoreAsync(token, lineUserId);
+    }
+
+    private async Task<string?> ProfileNameCoreAsync(string token, string lineUserId)
+    {
         try
         {
             var client = _httpClientFactory.CreateClient();
             client.Timeout = PushTimeout;
             using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.line.me/v2/bot/profile/" + Uri.EscapeDataString(lineUserId.Trim()));
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", oa.Token);
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
             using var resp = await client.SendAsync(req);
             if (!resp.IsSuccessStatusCode)
             {

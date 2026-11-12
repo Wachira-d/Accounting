@@ -279,6 +279,20 @@ public static class DocumentMoneyChannel
         return d.GlAccountId;
     }
 
+    /// <summary>ผังเงินสดตั้งต้นของบริษัท (กลุ่ม 111 ที่ลงรายการได้) — ลำดับเดียวกับที่ตัวลงบัญชีรับ/จ่ายใช้เมื่อไม่เลือกแหล่งเงิน
+    /// (<c>DocumentService.FindAccountAsync("111")</c>: ตรงรหัสก่อน แล้วรหัสขึ้นต้น · ไม่ใช่บัญชีคุม) · null = ไม่มี (ผู้เรียกบอกผู้ใช้ด้วย <see cref="NoDefaultCashMessage"/>) ·
+    /// ใช้เมื่อผู้ใช้<b>เลือกเงินสดเอง</b> แล้วต้องส่งเป็นผังตรงของการชำระ (ไม่สืบทอดบัญชีธนาคารของเอกสาร — ฝ่ายค้าน 264-P3 M1)</summary>
+    public static async Task<Guid?> DefaultCashAccountIdAsync(AccountingDbContext db, Guid companyId, CancellationToken ct = default)
+    {
+        var found = await db.ChartOfAccounts.DefaultPostingCandidates(db)
+                .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "111" && a.IsActive, ct)
+            ?? await db.ChartOfAccounts.WhereNotControlAccount(db)
+                .Where(a => a.CompanyId == companyId && a.AccountCode.StartsWith("111") && a.IsActive)
+                .OrderByGeneralPurposeFirst()
+                .FirstOrDefaultAsync(ct);
+        return found?.Id;
+    }
+
     /// <summary>ข้อความเมื่อไม่ได้เลือกแหล่งเงินและหาผังเงินสดตั้งต้นไม่เจอ (ผังกำหนดเอง) — เดิมบันทึกรับ/จ่ายโดยไม่มี JE เลย</summary>
     public static string NoDefaultCashMessage(string fixHint) =>
         "ไม่พบผังเงินสด (กลุ่ม 111) ที่ลงรายการได้ในผังบัญชีของบริษัท ระบบจึงลงบัญชีเงินเข้า/ออกไม่ได้ — "

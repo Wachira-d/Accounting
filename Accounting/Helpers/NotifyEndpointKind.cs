@@ -51,6 +51,8 @@ public static class NotifyEndpointKind
     public const string UnlinkErase = "erase";
     /// <summary>รวมผู้ติดต่อแล้วซ้ำ (แถวหลักของผู้ถูกรวม · อีเมล/LINE ซ้ำ) — ฝ่ายค้าน S4</summary>
     public const string UnlinkMerge = "merge";
+    /// <summary>รอบ 262 ฝ่ายค้าน M1: ผู้เช่ายกเลิกปลายทางรับใบค่าบริการจากศูนย์บิลของตัวเอง</summary>
+    public const string UnlinkTenant = "tenant";
 
     public static bool IsLine(string? kind) => kind == LineUser || kind == LineGroup;
 
@@ -97,6 +99,7 @@ public static class NotifyEndpointKind
         UnlinkCompany => "ผู้ดูแลบริษัทยกเลิก",
         UnlinkErase => "ลบตามคำขอเจ้าของข้อมูล (PDPA)",
         UnlinkMerge => "ซ้ำหลังรวมผู้ติดต่อ",
+        UnlinkTenant => "ผู้เช่ายกเลิกจากศูนย์บิลค่าบริการ",
         "user" => "ผู้รับยกเลิกเอง",
         "bot-removed" => "บอทถูกนำออกจากกลุ่ม",
         "relinked" => "ผูกใหม่แทน",
