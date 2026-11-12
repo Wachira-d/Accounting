@@ -27,13 +27,16 @@ public class PurchaseInboxController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<PurchaseDraftInbox.Result>>> Get(Guid companyId, [FromQuery] int limit = PurchaseDraftInbox.DefaultLimit,
-        CancellationToken ct = default)
+    public async Task<ActionResult<ApiResponse<PurchaseDraftInbox.Result>>> Get(Guid companyId, [FromQuery] string? source = null,
+        [FromQuery] int limit = PurchaseDraftInbox.DefaultLimit, CancellationToken ct = default)
     {
+        // ฝ่ายค้าน 260-3 M3: กรองทางเข้าฝั่งเซิร์ฟเวอร์ก่อนตัดจำนวน · ค่าไม่รู้จัก = 400 (ไม่เดาเป็น "ทั้งหมด")
+        if (!PurchaseDraftInbox.TryParseSource(source, out var only))
+            return BadRequest(new ApiResponse<PurchaseDraftInbox.Result>(false, null!, "ทางเข้าไม่ถูกต้อง — ใช้ " + string.Join(" / ", Enum.GetNames<PurchaseDraftSource>())));
         var userId = JwtHelper.GetUserIdFromClaims(User);
         if (!(await DocumentPermissionHelper.VisibleDirectionsAsync(_perms, companyId, userId)).Purchase)
             return StatusCode(403, new ApiResponse<PurchaseDraftInbox.Result>(false, null!, PermissionKeys.DeniedMessage(PermissionKeys.DocumentPurchaseView)));
         var kinds = await _sensitivity.GetVisibleKindsAsync(companyId, userId);
-        return Ok(new ApiResponse<PurchaseDraftInbox.Result>(true, await PurchaseDraftInbox.LoadAsync(_db, companyId, kinds, limit, ct)));
+        return Ok(new ApiResponse<PurchaseDraftInbox.Result>(true, await PurchaseDraftInbox.LoadAsync(_db, companyId, kinds, only, limit, ct)));
     }
 }

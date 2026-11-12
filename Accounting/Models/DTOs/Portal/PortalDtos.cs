@@ -2,10 +2,10 @@ namespace Accounting.Models.DTOs.Portal;
 
 public record CreatePortalAccessRequest(Guid ContactId, string Email, string? Password, string? DisplayName, bool CanViewInvoices, bool CanViewStatements, bool CanDownloadPdf, bool CanMakePayment);
 public record UpdatePortalAccessRequest(bool? CanViewInvoices, bool? CanViewStatements, bool? CanDownloadPdf, bool? CanMakePayment, bool? IsActive);
-/// <param name="UnappliedCredit">รอบ 260-3: เงินรอจัดสรรคงเหลือของผู้ติดต่อ (ตัวอ่านเดียว <c>CustomerCreditQuery</c>) — หน้าพนักงานแสดงอย่างเดียว</param>
+/// <param name="UnappliedCredit">รอบ 260-3: เงินรอจัดสรรคงเหลือของผู้ติดต่อ (ตัวอ่านเดียว <c>CustomerCreditQuery</c>) — หน้าพนักงานแสดงอย่างเดียว · null = ไม่ได้คำนวณ (ผู้เรียกไม่เห็นฝั่งขาย · ฝ่ายค้าน L1)</param>
 /// <param name="UnappliedCreditShownToCustomer">ลูกค้าเห็นยอดนี้ในพอร์ทัลไหม (<c>PortalAccessPermissions.CreditShownToCustomer</c> — ด่านเดียวกับเส้นใบแจ้งยอด)</param>
 public record PortalAccessResponse(Guid Id, Guid ContactId, string ContactName, string Email, string? DisplayName, bool IsActive, DateTime? LastLoginAt, bool CanViewInvoices, bool CanViewStatements, bool CanDownloadPdf, bool CanMakePayment,
-    decimal UnappliedCredit = 0m, bool UnappliedCreditShownToCustomer = false);
+    decimal? UnappliedCredit = null, bool? UnappliedCreditShownToCustomer = null);
 
 public record PortalLoginRequest(string Email, string Password, Guid CompanyId);
 public record PortalLoginResponse(string AccessToken, string RefreshToken, Guid ContactId, string ContactName, Guid CompanyId, string CompanyName);

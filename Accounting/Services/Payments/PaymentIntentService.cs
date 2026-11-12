@@ -236,11 +236,7 @@ public class PaymentIntentService : IPaymentIntentService
         if (settled != null && !documentSlip)
             throw new InvalidOperationException("รายการนี้ชำระเงินเรียบร้อยแล้ว");
 
-        var config = await _db.PaymentProviderConfigs
-            .Where(c => c.CompanyId == companyId && c.IsActive && !c.IsDeleted
-                     && (providerCode == null || c.ProviderCode == providerCode))
-            .OrderBy(c => c.SortOrder).ThenBy(c => c.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+        var config = await Accounting.Helpers.ActivePaymentConfig.Ordered(_db, companyId, providerCode).FirstOrDefaultAsync(ct);   // รอบ 260-3 L4: ตัวเลือกเดียว
 
         // ยังเปิดอยู่และยอดเท่ากัน + ยังไม่หมดอายุ → ใช้ใบเดิม (ห้ามสร้าง QR ซ้อน) ·
         // รอบ 227 ฝ่ายค้าน N2: และโหมดเดียวกับช่องทางตอนนี้ — QR ทดสอบที่ค้างไว้ห้ามถูกยื่นให้ผู้จ่ายหลังเปิดรับเงินจริง (และกลับกัน)

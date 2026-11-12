@@ -1,6 +1,7 @@
 using Accounting.Data;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Helpers;
 
@@ -17,10 +18,12 @@ public static class PaymentChannelReadiness
     /// <summary><paramref name="Hub"/> = ผลของ <see cref="AutopilotSettingsHub.Build"/> · <paramref name="LineOaProblem"/> null เมื่อ <paramref name="LineOaReady"/></summary>
     public sealed record Facts(IReadOnlyList<AutopilotSettingsHub.Item> Hub, bool GatewayLive, bool SystemBaseUrlConfigured, bool LineOaReady, string? LineOaProblem);
 
-    /// <summary>ผู้ให้บริการรับชำระที่ "รับเงินจริงอยู่" ของบริษัท — โหมดเงินจริง + เปิดใช้ + ไม่ถูกลบ · ผู้อ่าน: การ์ดนี้ และความพร้อมของรายการประจำ
-    /// (<c>RecurringAutopilotService</c> — เดิมเขียน query เองโดยไม่ดู <c>IsActive</c>) · tenant</summary>
-    public static IQueryable<PaymentProviderConfig> LiveConfigs(AccountingDbContext db, Guid companyId)
-        => db.PaymentProviderConfigs.Where(pc => pc.CompanyId == companyId && !pc.IsDeleted && pc.IsActive && pc.Mode == PaymentProviderMode.Live);
+    /// <summary>ฝ่ายค้าน 260-3 L4: "รับเงินจริงอยู่" = config ที่ทางรับเงินจริงเลือก (<see cref="ActivePaymentConfig.Ordered"/> ตัวแรก — ตัวเดียวกับลิงก์ชำระ/รายการรับชำระ)
+    /// อยู่โหมดเงินจริง · เดิม "มี config Live ตัวไหนก็ได้" ⇒ ตัวแรกเป็นโหมดทดสอบแต่การ์ดขึ้น ✅ · ผู้อ่าน: การ์ดนี้ + ความพร้อมของรายการประจำ · tenant</summary>
+    public static async Task<bool> GatewayLiveAsync(AccountingDbContext db, Guid companyId, CancellationToken ct = default)
+    {
+        return await ActivePaymentConfig.Ordered(db, companyId).Select(c => (PaymentProviderMode?)c.Mode).FirstOrDefaultAsync(ct) == PaymentProviderMode.Live;
+    }
 
     private static AutopilotSettingsHub.Item? HubItem(Facts f, string key) => f.Hub.FirstOrDefault(i => i.Key == key);
 

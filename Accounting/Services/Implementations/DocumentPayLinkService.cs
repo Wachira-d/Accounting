@@ -45,10 +45,9 @@ public class DocumentPayLinkService : IDocumentPayLinkService
     // ═══════════════ ความจริงของบริษัท ═══════════════
 
     private async Task<PaymentProviderConfig?> ActiveConfigAsync(Guid companyId, CancellationToken ct)
-        => await _db.PaymentProviderConfigs.AsNoTracking()
-            .Where(c => c.CompanyId == companyId && c.IsActive && !c.IsDeleted)
-            .OrderBy(c => c.SortOrder).ThenBy(c => c.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+    {
+        return await ActivePaymentConfig.Ordered(_db, companyId).AsNoTracking().FirstOrDefaultAsync(ct);   // รอบ 260-3 L4: ตัวเลือกเดียว
+    }
 
     public async Task<DocumentPayLinkPolicy.CompanyFacts> CompanyFactsAsync(Guid companyId, CancellationToken ct = default)
     {

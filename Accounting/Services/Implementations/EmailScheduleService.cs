@@ -556,12 +556,15 @@ public class EmailScheduleService : IEmailScheduleService
                 var totalOutstanding = monthDocs.Sum(d => d.BalanceDue);
                 // รอบ 260-3 (คำตัดสิน 260-3-2): เงินรอจัดสรรของลูกค้า (ตัวอ่านเดียว · ตัวเลขเดียวกับใบแจ้งยอดบนหน้า/CSV/พอร์ทัล) — บรรทัดแยก ไม่หักจากยอดค้าง
                 var unappliedCredit = await CustomerCreditQuery.UnappliedForContactAsync(_db, rule.CompanyId, contact.Id, ct);
-                var unappliedHtml = unappliedCredit > UnappliedCreditBalance.Tolerance
+                var hasUnapplied = unappliedCredit > UnappliedCreditBalance.Tolerance;
+                var unappliedHtml = hasUnapplied
                     ? $"<p style='background:#eff6ff;padding:8px 12px;border-radius:6px'>เงินที่ชำระไว้แล้วรอนำไปหักกับใบ (เงินรอจัดสรร) <strong>{unappliedCredit:N2} บาท</strong> — ยังไม่หักจากยอดค้างชำระด้านบน</p>"
                     : "";
                 var ctx = new Dictionary<string, string?>
                 {
-                    ["UnappliedCredit"] = unappliedCredit.ToString("N2"),
+                    // ฝ่ายค้าน 260-3 L3: ไม่มีเงินรอจัดสรร = ว่าง (ไม่ใช่ "0.00" ที่ทำให้เข้าใจผิด) · ประโยคสำเร็จรูปสำหรับแม่แบบของผู้ใช้ (ถูก HtmlEncode ตอน Render)
+                    ["UnappliedCredit"] = hasUnapplied ? unappliedCredit.ToString("N2") : "",
+                    ["UnappliedCreditLine"] = hasUnapplied ? $"เงินที่ชำระไว้แล้วรอนำไปหักกับใบ (เงินรอจัดสรร) {unappliedCredit:N2} บาท — ยังไม่หักจากยอดค้างชำระ" : "",
                     ["ContactName"] = contact.Name,
                     ["Period"] = period,
                     ["Amount"] = totalAmount.ToString("N2"),

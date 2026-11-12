@@ -167,7 +167,7 @@ public class PaymentSettingsController : ControllerBase
         var hub = (await autopilot.SettingsAsync(companyId, ct)).Hub ?? Array.Empty<AutopilotSettingsHub.Item>();
         var line = await recipients.LineChannelAsync(companyId, ct);
         var items = PaymentChannelReadiness.Build(new PaymentChannelReadiness.Facts(hub,
-            await PaymentChannelReadiness.LiveConfigs(_db, companyId).AsNoTracking().AnyAsync(ct),
+            await PaymentChannelReadiness.GatewayLiveAsync(_db, companyId, ct),
             await SystemBaseUrl.IsConfiguredAsync(_db, _config, ct),
             line.CompanyOaReady,
             line.CompanyOaReady ? null : line.CompanyOaProblem ?? "ยังไม่ได้ตั้ง LINE OA ของบริษัท (ตั้งค่า → แจ้งเตือนทาง LINE)"));

@@ -17,6 +17,29 @@ namespace Accounting.Services.Interfaces;
 public interface INotificationEngine
 {
     Task DispatchAsync(Guid companyId, string eventKey, NotificationContext context);
+
+    /// <summary>รอบ 260-3 (ฝ่ายค้าน M1): เหมือน <see cref="DispatchAsync"/> แต่คืนผล — สำหรับผู้เรียกที่ประทับ "แจ้งแล้ว" (ห้ามประทับเมื่อส่งล้ม/ไม่มีผู้รับ) ·
+    /// ตัวจริง (<c>NotificationEngine</c>) ใช้ตัวส่งตัวเดียวกัน · ตัวอื่นที่ไม่ได้เขียนเมธอดนี้ = <see cref="NotificationDispatchOutcome.Unknown"/> (ผู้เรียกต้องไม่ประทับ)</summary>
+    async Task<NotificationDispatchOutcome> DispatchWithOutcomeAsync(Guid companyId, string eventKey, NotificationContext context)
+    {
+        await DispatchAsync(companyId, eventKey, context);
+        return NotificationDispatchOutcome.Unknown;
+    }
+}
+
+/// <summary>ผลของการส่งหนึ่งเหตุการณ์ (รอบ 260-3) — ส่งเป็นชื่อเสมอถ้าออกนอกระบบ</summary>
+public enum NotificationDispatchOutcome
+{
+    /// <summary>ตัวส่งไม่รายงานผล — ถือว่าไม่รู้ (ห้ามประทับว่าแจ้งแล้ว)</summary>
+    Unknown = 0,
+    /// <summary>สั่งส่งอย่างน้อยหนึ่งช่องแล้ว</summary>
+    Delivered = 1,
+    /// <summary>บริษัทตั้งปิดทุกช่องของคีย์นี้ (ตั้งใจ)</summary>
+    SuppressedByCompany = 2,
+    /// <summary>ไม่มีผู้รับ/ช่องที่ส่งได้</summary>
+    NoRecipient = 3,
+    /// <summary>ส่งล้ม (error ถูกบันทึกแล้ว)</summary>
+    Failed = 4,
 }
 
 /// <summary>
