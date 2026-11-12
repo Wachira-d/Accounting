@@ -19180,6 +19180,13 @@ RULES += [
     dict(file="Controllers/LineConfigController.cs", method="ProviderReadinessAsync",
          must=["e.CompanyId == companyId", "c.CompanyId == companyId", "ProviderCentralOa.ReadinessRows(true", "LoadPolicyAsync("],
          why=_R262_WHY + "262-1-7 แถวความพร้อมจากข้อเท็จจริงของบริษัทนี้ (tenant) + ค่าตั้งการเรียกเก็บจริง"),
+    dict(file="Services/Implementations/BankReceiptSettleService.cs", method="CandidatesAsync",
+         must=["PlatformInvoiceQueries.IsTenantDocumentAsync(_db, companyId, cid, ct)", "tenantContacts.Contains(d.ContactId)", "BankReceiptAutoSettle.PlatformTenantReason"],
+         before=[("tenantContacts.Contains(d.ContactId)", "list.Add(new Candidate(")],
+         why=_R262_WHY + "262-1-18 เงินเข้าบัญชีไม่ตัดชำระใบค่าบริการผู้เช่า (ข้าม SubscriptionPayment) · บอกเหตุบนแถวธนาคาร"),
+    dict(file="Services/Implementations/PortalService.cs", method="GetMyDocumentsAsync",
+         must=["PlatformInvoiceQueries.IsTenantDocumentAsync(_db, companyId, contactId)", "platformTenantDocument: tenantDocs"],
+         why=_R262_WHY + "262-1-18 พอร์ทัลไม่ขึ้นปุ่มชำระของใบค่าบริการผู้เช่า (ตัวตัดสินเดียวกับลิงก์ชำระ)"),
     # ── ฝ่ายค้าน 262 (review-262.md · คำตัดสิน 262-1-9…262-1-17) ──
     dict(file="Services/Implementations/DocumentPayLinkService.cs", method="Refusal", must=["d.PlatformTenantDocument"],
          why=_R262_WHY + "262-1-9 H1 ใบค่าบริการของผู้เช่า: ตัวตัดสินลิงก์ชำระเดียวปฏิเสธ (ช่องติ๊ก LINE/อีเมล · QR บนกระดาษ · หน้าชำระ · ตารางส่ง)"),

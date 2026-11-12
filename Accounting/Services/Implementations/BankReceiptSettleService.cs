@@ -146,6 +146,12 @@ public class BankReceiptSettleService : IBankReceiptSettleService
 
         var approveByType = new Dictionary<DocumentType, bool>();
         var list = new List<Candidate>();
+        // รอบ 262 (คำตัดสิน 262-1-18): ใบค่าบริการ NextAcc ของผู้เช่า (บริษัทผู้ให้บริการ + ผู้ติดต่อผูก tenant) ⇒ ไม่ใช่ผู้สมัครตัดชำระอัตโนมัติจากเงินเข้าบัญชี —
+        // ตัดชำระตรงในบริษัทผู้ให้บริการ = ใบปิดโดยแพ็กเกจไม่ต่ออายุ (ข้าม SubscriptionPayment) · ทางที่ถูก = รายการชำระค่าบริการ/จับคู่โอนของแพลตฟอร์ม
+        var tenantContacts = new HashSet<Guid>();
+        foreach (var cid in contactIds)
+            if (await PlatformInvoiceQueries.IsTenantDocumentAsync(_db, companyId, cid, ct)) tenantContacts.Add(cid);
+        var tenantSkipped = 0;
         foreach (var d in docs)
         {
             var contact = contacts.FirstOrDefault(c => c.Id == d.ContactId);
@@ -155,6 +161,7 @@ public class BankReceiptSettleService : IBankReceiptSettleService
             var saleSide = DocumentPayLinkPolicy.IsSaleSide(d.DocumentType, relatedType,
                 d.CnDnPurchaseSideOverride, contact != null && contact.IsSupplier && !contact.IsCustomer);
             var superseding = await PaymentQrService.SupersedingTaxInvoiceNumberAsync(_db, companyId, d, ct);
+            if (tenantContacts.Contains(d.ContactId)) { tenantSkipped++; continue; }
             if (DocumentPayLinkPolicy.IssueRefusal(d.DocumentType, d.Status, d.BalanceDue, saleSide, d.Currency, superseding) != null) continue;
 
             if (!approveByType.TryGetValue(d.DocumentType, out var mayApprove))
@@ -181,6 +188,8 @@ public class BankReceiptSettleService : IBankReceiptSettleService
                 CreatorMayApprove: mayApprove,
                 ContactIsSupplier: contact?.IsSupplier ?? false), contact?.Name, d.DocumentType));
         }
+        // ทุกผู้สมัครเป็นใบค่าบริการผู้เช่า ⇒ ไม่ตัดอัตโนมัติ + บอกเหตุและทางไปต่อบนแถวธนาคาร (ไม่เงียบ)
+        if (list.Count == 0 && tenantSkipped > 0) return new CandidateSet(list, BankReceiptAutoSettle.PlatformTenantReason, new List<ExactLite>());
         return new CandidateSet(list, null, new List<ExactLite>());
     }
 

@@ -434,4 +434,53 @@ public class ProviderCentralOaRound262DbTests
             Assert.True(await db.AuditLogs.AnyAsync(a => a.CompanyId == f.PlatformId && a.NewValues!.Contains("line-unlink-by-tenant")));
         }));
     }
+
+    [Fact]
+    public async Task R262_18_เงินเข้าบัญชีไม่ตัดชำระใบค่าบริการผู้เช่าอัตโนมัติพร้อมเหตุ_พอร์ทัลไม่ขึ้นปุ่มชำระ_ทิศตรงข้าม_ใบลูกค้าทั่วไปไม่ถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var f = await PlatformBillingPhase2DbTests.SeedAsync(db);
+        var plain = new Contact { CompanyId = f.PlatformId, Name = "ลูกค้าทั่วไปของ NextAcc 262-18", IsCustomer = true, TaxId = "" };
+        db.Contacts.Add(plain);
+        var acct = new BankAccount { CompanyId = f.PlatformId, AccountName = "รับค่าบริการ", BankName = "กสิกร", AccountNumber = "2620000018" };
+        db.BankAccounts.Add(acct);
+        await db.SaveChangesAsync();
+        await PlatformBillingPhase2DbTests.WithPlatformTenantAsync(db, f.PlatformId, async () =>
+        {
+            var tenantInv = await PlatformBillingPhase2DbTests.InvoiceAsync(db, f, "B18T-" + Guid.NewGuid().ToString("N")[..6], 1_234.56m, DateTime.UtcNow.AddDays(10));
+            var plainInv = await PlatformBillingPhase2DbTests.InvoiceAsync(db, f with { ContactId = plain.Id }, "B18P-" + Guid.NewGuid().ToString("N")[..6], 777.77m,
+                DateTime.UtcNow.AddDays(10));
+            BankTransaction Line(decimal amount) => new()
+            {
+                CompanyId = f.PlatformId, BankAccountId = acct.Id, TransactionDate = DateTime.UtcNow.Date, TransactionType = BankTransactionType.Deposit,
+                Amount = amount, Description = "โอนเข้า", ReconciliationStatus = ReconciliationStatus.Unmatched, EntrySource = BankReceiptAutoSettle.SourceStatement,
+            };
+            var tLine = Line(1_234.56m);
+            var pLine = Line(777.77m);
+            db.BankTransactions.AddRange(tLine, pLine);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+            var bank = new BankReceiptSettleService(db, F4Proxy<IDocumentService>.Create((_, _) => null), NullLogger<BankReceiptSettleService>.Instance);
+            // ใบผู้เช่า: เปิดตัดอัตโนมัติก็ไม่ตัด (ไม่มีการชำระ) · ประทับ "เสนอ" พร้อมเหตุ + ทางไปต่อ
+            await bank.EvaluateLineAsync(f.PlatformId, tLine.Id, companyEnabled: true, DateTime.UtcNow);
+            db.ChangeTracker.Clear();
+            var t = await db.BankTransactions.AsNoTracking().SingleAsync(x => x.Id == tLine.Id);
+            Assert.Equal(BankReceiptAutoSettle.PlatformTenantReason, t.AutoSettleReason);
+            Assert.Null(t.AutoSettleDocumentId);
+            Assert.Null(t.MatchedPaymentId);
+            Assert.Equal(1_234.56m, (await db.Documents.AsNoTracking().SingleAsync(d => d.Id == tenantInv.Id)).BalanceDue);
+            // ทิศตรงข้าม: ใบลูกค้าทั่วไปของบริษัทผู้ให้บริการยังเป็นผู้สมัคร (ปิดตัดอัตโนมัติ ⇒ ไม่ยิงตัวบันทึกการชำระ)
+            await bank.EvaluateLineAsync(f.PlatformId, pLine.Id, companyEnabled: false, DateTime.UtcNow);
+            db.ChangeTracker.Clear();
+            var p = await db.BankTransactions.AsNoTracking().SingleAsync(x => x.Id == pLine.Id);
+            Assert.NotEqual(BankReceiptAutoSettle.PlatformTenantReason, p.AutoSettleReason);
+            Assert.NotNull(p.AutoSettleVerdict);
+
+            // พอร์ทัล: ผู้ติดต่อผู้เช่าไม่เห็นปุ่มชำระ (ชำระที่ศูนย์บิล) · ลูกค้าทั่วไปเห็น
+            var portal = new PortalService(db, Cfg());
+            Assert.False((await portal.GetMyDocumentsAsync(f.PlatformId, f.ContactId)).Single(d => d.Id == tenantInv.Id).CanPay);
+            Assert.True((await portal.GetMyDocumentsAsync(f.PlatformId, plain.Id)).Single(d => d.Id == plainInv.Id).CanPay);
+        });
+    }
 }

@@ -347,6 +347,8 @@ public class PortalService : IPortalService
         // รอบ 257 D-H2: เฉพาะใบที่ลูกค้าเห็นได้ (ตัวตัดสินเดียว — ข้อเท็จจริงฝั่งอยู่ในแถวที่ฉายแล้ว)
         rows = rows.Where(d => DocumentPayLinkPolicy.IsCustomerFacing(d.DocumentType, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly, d.ContactCustomerOnly)).ToList();
         var pending = await SlipPendingByDocumentAsync(companyId, rows.Select(r => r.Id).ToList());   // รอบ 250 ฝ่ายค้าน L4 (WP-02b)
+        // รอบ 262 (คำตัดสิน 262-1-18): ผู้ติดต่อในโทเคน = ผู้เช่าของบริษัทผู้ให้บริการ ⇒ ใบค่าบริการชำระที่ศูนย์บิลเท่านั้น (ตัวตัดสินเดียวกับลิงก์ชำระ) — ปุ่มชำระไม่ขึ้น
+        var tenantDocs = await PlatformInvoiceQueries.IsTenantDocumentAsync(_db, companyId, contactId);
         // รอบ 250 WP-03 (ฝ่ายค้าน H1): ปุ่ม "ชำระ" ตามกติกาเดียวกับลิงก์ชำระ (DocumentPayLinkPolicy.IssueRefusal — ฝั่งขาย · THB · ยอดค้าง > 0 · ออกแล้ว)
         // · ใบกำกับที่อ้างใบแจ้งหนี้ตรวจตอนเปิดหน้าต่างชำระ (TransferForDocumentAsync) — หน้าเว็บไม่ตัดสินชนิดเอง
         return rows.Select(d => new PortalDocumentResponse(
@@ -355,7 +357,8 @@ public class PortalService : IPortalService
                 d.BalanceDue, d.Status.ToString(),
                 SlipPendingAmount: pending.GetValueOrDefault(d.Id),
                 CanPay: DocumentPayLinkPolicy.IssueRefusal(d.DocumentType, d.Status, d.BalanceDue,
-                    DocumentPayLinkPolicy.IsSaleSide(d.DocumentType, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly), d.Currency, null) == null))
+                    DocumentPayLinkPolicy.IsSaleSide(d.DocumentType, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly), d.Currency, null,
+                    platformTenantDocument: tenantDocs) == null))
             .ToList();
     }
 
