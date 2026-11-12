@@ -69,7 +69,7 @@ public static class OcrSlipText
 
     /// <summary>ปีสองหลักบนสลิป — ตัวตีความเดียวของทั้งรูป dd/mm/yy และ "12 พ.ย. 69" (ฝ่ายค้าน L8): มากกว่า (ปี ค.ศ. ปัจจุบัน % 100) + 10 ⇒ พ.ศ. (25yy − 543) ·
     /// อื่น ๆ ⇒ ค.ศ. 20yy (ปี 2026: "69" = 2569 = 2026 · "26" = 2026)</summary>
-    public static int TwoDigitYear(int yy, int nowYear)
+    private static int TwoDigitYear(int yy, int nowYear)
         => yy > (nowYear % 100) + 10 ? 2500 + yy - 543 : 2000 + yy;
 
     private static decimal? ConfidentAmount(string text, IReadOnlyList<decimal> all)
