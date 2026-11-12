@@ -665,7 +665,18 @@ const API = {
   changePassword(data) { return this.post('/api/auth/change-password', data); },
 
   // Company scoped
+  /** รอบ 263: ตัวเรียกต่อบริษัท + เมธอดทั่วไป get/post/put/del (URL เต็ม) — เดิมหน้าเรียก `Layout.api().get(url)` 8 จุด
+   *  (ลิงก์ชำระ & ส่งอัตโนมัติ · ลิงก์เซ็น · ตารางส่ง · ตั้งค่า) แต่วัตถุนี้ไม่มี .get ⇒ "api.get is not a function" ทุกแผง */
   c(companyId) {
+    const o = this._c(companyId);
+    if (!o.get) o.get = (url, signal) => API.get(url, signal);
+    if (!o.post) o.post = (url, data, signal) => API.post(url, data, signal);
+    if (!o.put) o.put = (url, data, signal) => API.put(url, data, signal);
+    if (!o.del) o.del = (url, signal) => API.del(url, signal);
+    return o;
+  },
+
+  _c(companyId) {
     const base = `/api/companies/${companyId}`;
     return {
       // Dashboard
