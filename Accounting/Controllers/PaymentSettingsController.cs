@@ -156,6 +156,24 @@ public class PaymentSettingsController : ControllerBase
                 p.SettlesDirectlyToBank))
             .OrderBy(p => p.Code).ToList()));
 
+    /// <summary>รอบ 260-3 (คำตัดสิน 260-3-4): การ์ด "ความพร้อมรับเงินจากลูกค้า" — ผู้ให้บริการ · เงินจริง (PAY-LIVE) · โอน/สลิป · ลิงก์ชำระในอีเมล ·
+    /// ปุ่มชำระบนการ์ด LINE · คิวสลิป · ประกอบจากแถวเดิม (<see cref="PaymentChannelReadiness.Build"/> — ศูนย์รวมค่าตั้งของ Autopilot ตัวเดียวกัน) ·
+    /// อ่านอย่างเดียว · tenant · หน้าแสดงอย่างเดียว (ไม่มีเงื่อนไขใน JS)</summary>
+    [HttpGet("readiness")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<AutopilotReadiness.Item>>>> Readiness(Guid companyId,
+        [FromServices] Services.Interfaces.IAutopilotService autopilot,
+        [FromServices] Services.Interfaces.IContactRecipientResolver recipients, CancellationToken ct)
+    {
+        var hub = (await autopilot.SettingsAsync(companyId, ct)).Hub ?? Array.Empty<AutopilotSettingsHub.Item>();
+        var line = await recipients.LineChannelAsync(companyId, ct);
+        var items = PaymentChannelReadiness.Build(new PaymentChannelReadiness.Facts(hub,
+            await PaymentChannelReadiness.LiveConfigs(_db, companyId).AsNoTracking().AnyAsync(ct),
+            await SystemBaseUrl.IsConfiguredAsync(_db, _config, ct),
+            line.CompanyOaReady,
+            line.CompanyOaReady ? null : line.CompanyOaProblem ?? "ยังไม่ได้ตั้ง LINE OA ของบริษัท (ตั้งค่า → แจ้งเตือนทาง LINE)"));
+        return Ok(new ApiResponse<IReadOnlyList<AutopilotReadiness.Item>>(true, items));
+    }
+
     [HttpGet]
     public async Task<ActionResult<ApiResponse<List<ConfigResponse>>>> List(
         Guid companyId, CancellationToken ct)

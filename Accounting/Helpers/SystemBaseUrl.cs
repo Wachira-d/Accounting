@@ -49,4 +49,12 @@ public static class SystemBaseUrl
         var admin = await db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.AppBaseUrl).FirstOrDefaultAsync(ct);
         return Pick(admin, config?["App:BaseUrl"]);
     }
+
+    /// <summary>รอบ 260-3: "ตั้ง URL ของระบบแล้วจริง" จากฐาน + appsettings (ตัวตัดสิน <see cref="IsConfigured"/>) — ผู้อ่าน: การ์ดความพร้อมหน้ารับชำระออนไลน์ ·
+    /// สูตรเดียวกับ <c>RecurringAutopilotService.LoadSharedFactsAsync</c> (ผ่าน <see cref="IsConfigured"/> ตัวเดียว)</summary>
+    public static async Task<bool> IsConfiguredAsync(AccountingDbContext db, IConfiguration? config, CancellationToken ct = default)
+    {
+        var admin = await db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.AppBaseUrl).FirstOrDefaultAsync(ct);
+        return IsConfigured(admin, config?["App:BaseUrl"]);
+    }
 }

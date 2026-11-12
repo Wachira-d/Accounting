@@ -120,6 +120,10 @@ public static class NotificationEvents
     /// <summary>รอบ 258 (DECISIONS 258-1-9): ใบค้างที่ถึงเกณฑ์ทวง แต่ลูกค้ามี "เงินรอจัดสรร" พอปิดใบ ⇒ ไม่ทวงลูกค้า แจ้งทีมให้จัดสรรแทน
     /// (<c>OverdueDunningJob</c> · ตัวตัดสิน <c>Helpers/DunningSuppression</c>) · ซ้ำได้ทุก 7 วันจนกว่าจะจัดสรร</summary>
     public const string CustomerCreditCoversInvoice = "ar.credit.covers_invoice";
+    /// <summary>รอบ 260-3 (ต่อ 259-1-9 · คำตัดสิน 260-3-3): เงินรอจัดสรรของลูกค้าค้างเกิน 30 วัน — แจ้งทีมครั้งเดียวต่อการรับชำระ ·
+    /// นิยาม "ค้างนาน" ตัวเดียวกับ issue <c>CustomerCreditAged</c> ของ Autopilot (<c>CustomerCreditWorkQueue.AgedAsync</c>) ·
+    /// ผู้ส่ง <c>Helpers/CustomerCreditAgedNotice</c> (รันใน <c>OverdueDunningJob</c>) · ค่าตั้งต้น = กระดิ่งถึงเจ้าของ</summary>
+    public const string CustomerCreditAged = "ar.credit.unallocated_aging";
 
     // ===== Approval workflow (multi-step) =====
     /// <summary>มีรายการรอการอนุมัติของผู้รับ — recipient = ApproverUserId
@@ -205,6 +209,7 @@ public static class NotificationEvents
         ("Accounting", OverdueDunningFirst, "AR เกิน 60 วัน — ส่งหนังสือทวงหนี้รอบที่ 2"),
         ("Accounting", OverdueDunningFinal, "AR เกิน 90 วัน — ส่งหนังสือทวงหนี้ครั้งสุดท้าย"),
         ("Accounting", CustomerCreditCoversInvoice, "ใบค้างชำระที่ลูกค้ามีเงินรอจัดสรรพอปิด — ไม่ทวงลูกค้า แจ้งให้จัดสรร"),
+        ("Accounting", CustomerCreditAged, "เงินรอจัดสรรของลูกค้าค้างเกิน 30 วัน — จัดสรร/ย้ายเป็นมัดจำ/คืนเงิน"),
         ("Approval", ApprovalRequired, "มีรายการรอการอนุมัติ"),
         ("Approval", ApprovalGranted, "อนุมัติคำขอแล้ว"),
         ("Approval", ApprovalRejected, "ปฏิเสธคำขอ"),

@@ -159,7 +159,15 @@ public static class AutopilotReadiness
     public const string EtaxSettingsUrl = "/pages/settings.html#etax";
     public const string BankAccountsUrl = "/pages/bank.html";
     public const string FiscalPeriodUrl = "/pages/fiscal.html";
+    /// <summary>ตั้งแนบลิงก์ชำระแต่ยังออกลิงก์ไม่ได้ — ถ้อยคำเดียวของรายการประจำและการ์ดหน้ารับชำระออนไลน์ (รอบ 260-3)</summary>
+    public const string PayLinkNoOnlineTitle = "ตั้งให้แนบลิงก์ชำระ แต่บริษัทยังรับชำระออนไลน์ไม่ได้";
     public const string EtaxSenderFailTitle = "e-Tax by Email: จะล้มที่ด่านผู้ส่งตอนส่ง — ใบกำกับของรอบนี้จะไม่ถูกส่ง";
+
+    /// <summary>แถว PAY-LIVE ตัวเดียว (รอบ 260-3 แยกออกมา) — ผู้อ่าน: <see cref="Evaluate"/> (ความพร้อมของรายการประจำ) และ
+    /// <see cref="PaymentChannelReadiness.Build"/> (การ์ดความพร้อมหน้ารับชำระออนไลน์) ⇒ ถ้อยคำ/ระดับเดียวกันทั้งสองหน้า</summary>
+    public static Item PayLiveItem(bool live) => new("PAY-LIVE", "รับเงิน", live ? Ok : Info,
+        live ? "รับชำระออนไลน์โหมดเงินจริงแล้ว — เงินเข้าลงรับชำระ/ออกใบเสร็จเอง" : "รับชำระออนไลน์ยังเป็นโหมดทดสอบ/ยังไม่ตั้ง — เงินโหมดทดสอบไม่มีผลทางบัญชี",
+        null, PaymentSettingsUrl, live ? null : "ตั้งรับชำระออนไลน์");
 
     private static string D(DateTime? d) => d is { } v ? ThaiDate.ToThaiDisplayString(v) : "-";
 
@@ -357,7 +365,7 @@ public static class AutopilotReadiness
                 "ลิงก์ชำระสร้างจาก URL ของระบบ — ยังไม่ได้ตั้ง (หรือยังเป็นค่าที่มากับโปรแกรม) ⇒ อีเมลส่งได้แต่ไม่มีลิงก์/QR ชำระ · แจ้งผู้ดูแลระบบให้ตั้งที่หน้าแอดมิน → ตั้งค่าระบบ",
                 SystemSettingsUrl, "ตั้ง URL ของระบบ (ผู้ดูแลระบบ)");
         else if (f.PayLinkUnavailableReason != null)
-            Add("GATEWAY", "รับเงิน", Warn, "ตั้งให้แนบลิงก์ชำระ แต่บริษัทยังรับชำระออนไลน์ไม่ได้", f.PayLinkUnavailableReason,
+            Add("GATEWAY", "รับเงิน", Warn, PayLinkNoOnlineTitle, f.PayLinkUnavailableReason,
                 PaymentSettingsUrl, "ตั้งค่ารับชำระเงินออนไลน์");
         else if (DocumentPayLinkPolicy.OnlineOnly(f.PayLinkAllowed).Count == 0)
             Add("GATEWAY", "รับเงิน", Warn, "ช่องทางที่เลือกไม่มีช่องทางออนไลน์ที่บริษัทเปิดอยู่ — จะไม่แนบลิงก์ชำระ", null,
@@ -405,9 +413,7 @@ public static class AutopilotReadiness
                 lineRc > 0 ? $"ใบเสร็จหลังรับชำระไปทาง LINE ด้วย ({lineRc} ปลายทางที่ติ๊ก “ใบเสร็จ”)" : "ใบเสร็จหลังรับชำระไปทางอีเมลอย่างเดียว (ไม่มี LINE ที่ติ๊ก “ใบเสร็จ”)",
                 null, ContactsUrl, lineRc > 0 ? null : "ตั้งช่องทางแจ้งเตือนของผู้ติดต่อ");
         if (f.SaleSide && f.GatewayLive is bool live)
-            Add("PAY-LIVE", "รับเงิน", live ? Ok : Info,
-                live ? "รับชำระออนไลน์โหมดเงินจริงแล้ว — เงินเข้าลงรับชำระ/ออกใบเสร็จเอง" : "รับชำระออนไลน์ยังเป็นโหมดทดสอบ/ยังไม่ตั้ง — เงินโหมดทดสอบไม่มีผลทางบัญชี",
-                null, PaymentSettingsUrl, live ? null : "ตั้งรับชำระออนไลน์");
+            items.Add(PayLiveItem(live));
         if (f.SaleSide && f.PartnerLinked == true)
             Add("PARTNER", "คู่ค้า", Ok,
                 "ผู้ติดต่อเป็นคู่ค้า NextAcc — ใบแจ้งหนี้และใบเสร็จ/ใบกำกับ ณ วันรับเงินเข้าระบบของเขา · จ่ายผ่านลิงก์แล้วเขาได้รับแจ้งให้กดบันทึกจ่าย",
