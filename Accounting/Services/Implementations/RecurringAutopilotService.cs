@@ -573,7 +573,7 @@ public class RecurringAutopilotService : IRecurringAutopilotService
                     .Select(tp => tp.CompanyAId == companyId ? tp.CompanyBId : tp.CompanyAId)
                     .AnyAsync(otherId => _db.Companies.Any(co => co.Id == otherId && !co.IsDeleted && co.TaxId == chainTaxId), ct);
             }
-            gatewayLive = await PaymentChannelReadiness.LiveConfigs(_db, companyId).AsNoTracking().AnyAsync(ct);   // รอบ 260-3: ตัวเดียวกับการ์ดหน้ารับชำระออนไลน์ (+ ต้องเปิดใช้)
+            gatewayLive = await PaymentChannelReadiness.GatewayLiveAsync(_db, companyId, ct);   // รอบ 260-3: ตัวเดียวกับการ์ดหน้ารับชำระออนไลน์ (+ ต้องเปิดใช้)
         }
 
         var facts = new AutopilotReadiness.Facts

@@ -54,7 +54,7 @@ public class PortalService : IPortalService
 
     // ===== Portal Access Management =====
 
-    public async Task<PortalAccessResponse> CreateAccessAsync(Guid companyId, CreatePortalAccessRequest request, Guid actorUserId)
+    public async Task<PortalAccessResponse> CreateAccessAsync(Guid companyId, CreatePortalAccessRequest request, Guid actorUserId, bool includeCredit = false)
     {
         var contact = await _db.Contacts
             .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Id == request.ContactId)
@@ -89,14 +89,16 @@ public class PortalService : IPortalService
         AuditAccess(companyId, actorUserId, AuditAction.Create, access, null);   // รอบ 257 D-H1
         await _db.SaveChangesAsync();
 
-        return MapToAccessResponse(access, contact.Name);
+        return await WithCreditAsync(companyId, MapToAccessResponse(access, contact.Name), includeCredit);
     }
 
-    public async Task<List<PortalAccessResponse>> GetAccessesAsync(Guid companyId)
+    public async Task<List<PortalAccessResponse>> GetAccessesAsync(Guid companyId, bool includeCredit = false)
     {
         // ไม่ Include Contact ใน SQL (required nav + !IsDeleted → INNER JOIN
         // ตัดแถวที่ contact ถูกลบ) — materialize แล้ว reattach + map ใน memory
-        var accesses = await _db.Set<PortalAccess>()
+        // รอบ 260-3: อ่านอย่างเดียว (AsNoTracking) — เดิมติดตามแถวแล้วต่อ Contact ที่โหลดแบบไม่ติดตามเข้าไป ⇒ SaveChanges ถัดไปในขอบเขตเดียวกัน
+        // (เช่น แก้สิทธิ์ต่อจากเปิดรายการ) พยายามแนบ Contact ซ้ำกับตัวที่ติดตามอยู่ ⇒ "cannot be tracked" (Db R260_1)
+        var accesses = await _db.Set<PortalAccess>().AsNoTracking()
             .Where(p => p.CompanyId == companyId)
             .OrderByDescending(p => p.CreatedAt)
             .ToListAsync();
@@ -108,22 +110,31 @@ public class PortalService : IPortalService
         foreach (var p in accesses)
             if (contactMap.TryGetValue(p.ContactId, out var c)) p.Contact = c;
 
-        // รอบ 260-3 (คำตัดสิน 260-3-1): เงินรอจัดสรรต่อผู้ติดต่อ (ตัวอ่านเดียว · หนึ่งคำสั่ง) + ลูกค้าเห็นไหม (ด่านเดียวกับเส้นใบแจ้งยอด)
-        var credits = await CustomerCreditQuery.UnappliedByContactAsync(_db, companyId);
-        return accesses.Select(p =>
-            {
-                var credit = credits.GetValueOrDefault(p.ContactId);
-                return new PortalAccessResponse(
-                    p.Id, p.ContactId, p.Contact?.Name ?? string.Empty, p.Email, p.DisplayName,
-                    p.IsActive, p.LastLoginAt,
-                    p.CanViewInvoices, p.CanViewStatements, p.CanDownloadPdf, p.CanMakePayment,
-                    credit, PortalAccessPermissions.CreditShownToCustomer(
-                        new PortalAccessFlags(p.CanViewInvoices, p.CanViewStatements, p.CanDownloadPdf, p.CanMakePayment), p.IsActive, credit));
-            })
-            .ToList();
+        // รอบ 260-3 (คำตัดสิน 260-3-1 · ฝ่ายค้าน L1): เงินรอจัดสรรต่อผู้ติดต่อ (ตัวอ่านเดียว · หนึ่งคำสั่ง) + ลูกค้าเห็นไหม — เฉพาะผู้เรียกที่เห็นฝั่งขาย
+        var credits = includeCredit ? await CustomerCreditQuery.UnappliedByContactAsync(_db, companyId) : null;
+        return accesses.Select(p => WithCredit(MapToAccessResponse(p, p.Contact?.Name ?? string.Empty), credits)).ToList();
     }
 
-    public async Task<PortalAccessResponse> UpdateAccessAsync(Guid companyId, Guid accessId, UpdatePortalAccessRequest request, Guid actorUserId)
+    /// <summary>รอบ 260-3 (ฝ่ายค้าน L1/L2): ใส่เงินรอจัดสรร + "ลูกค้าเห็นไหม" (ด่านเดียวกับเส้นใบแจ้งยอด) · <paramref name="credits"/> null = ไม่ได้คำนวณ ⇒ ส่ง null (ไม่แต่ง 0/false)</summary>
+    private static PortalAccessResponse WithCredit(PortalAccessResponse r, IReadOnlyDictionary<Guid, decimal>? credits)
+    {
+        if (credits == null) return r;
+        var credit = credits.GetValueOrDefault(r.ContactId);
+        return r with
+        {
+            UnappliedCredit = credit,
+            UnappliedCreditShownToCustomer = PortalAccessPermissions.CreditShownToCustomer(
+                new PortalAccessFlags(r.CanViewInvoices, r.CanViewStatements, r.CanDownloadPdf, r.CanMakePayment), r.IsActive, credit),
+        };
+    }
+
+    /// <summary>คำตอบของสร้าง/แก้สิทธิ์ (ฝ่ายค้าน L2: echo ค่าจริง ไม่ใช่ 0/false ที่แต่งขึ้น)</summary>
+    private async Task<PortalAccessResponse> WithCreditAsync(Guid companyId, PortalAccessResponse r, bool includeCredit)
+        => includeCredit
+            ? WithCredit(r, new Dictionary<Guid, decimal> { [r.ContactId] = await CustomerCreditQuery.UnappliedForContactAsync(_db, companyId, r.ContactId) })
+            : r;
+
+    public async Task<PortalAccessResponse> UpdateAccessAsync(Guid companyId, Guid accessId, UpdatePortalAccessRequest request, Guid actorUserId, bool includeCredit = false)
     {
         var access = await _db.Set<PortalAccess>()
             .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.Id == accessId)
@@ -145,7 +156,7 @@ public class PortalService : IPortalService
 
         await _db.SaveChangesAsync();
 
-        return MapToAccessResponse(access, contactName ?? access.DisplayName ?? access.Email);
+        return await WithCreditAsync(companyId, MapToAccessResponse(access, contactName ?? access.DisplayName ?? access.Email), includeCredit);
     }
 
     public async Task DeactivateAccessAsync(Guid companyId, Guid accessId, Guid actorUserId)

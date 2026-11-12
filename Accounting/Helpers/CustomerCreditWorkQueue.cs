@@ -139,15 +139,23 @@ public static class CustomerCreditWorkQueue
     /// ผู้อ่าน: <see cref="AutopilotIssuesAsync"/> (issue <c>CustomerCreditAged</c>) และกระดิ่ง <c>ar.credit.unallocated_aging</c>
     /// (<see cref="CustomerCreditAgedNotice"/> · รอบ 260-3 — ห้ามเขียนเกณฑ์อายุ/ตัวกรองซ้ำที่อื่น)
     /// </summary>
-    public static async Task<List<AgedRow>> AgedAsync(AccountingDbContext db, Guid companyId, DateTime todayThai, CancellationToken ct = default)
+    private static async Task<List<AgedRow>> AgedAsync(AccountingDbContext db, Guid companyId, DateTime todayThai, CancellationToken ct = default)
     {
-        var cut = todayThai.Date.AddDays(-AgingDays);
-        return await db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.UnappliedAccountId != null && !p.UnappliedNeedsReview
-                && p.UnappliedAmount > UnappliedCreditBalance.Tolerance && p.PaymentDate < cut)
+        return await AgedQuery(db, companyId, todayThai, onlyUnnotified: false)
             .OrderBy(p => p.PaymentDate).Take(Cap)
             .Select(p => new AgedRow(p.Id, p.PaymentNumber, p.PaymentDate, p.UnappliedAmount, p.UnappliedReason, p.ContactId, p.UnappliedAgedNoticeAt))
             .ToListAsync(ct);
+    }
+
+    /// <summary>ฝ่ายค้าน 260-3 M2: predicate ของ "ค้างนาน" ตัวเดียว (ไม่ตัดจำนวน) — <paramref name="onlyUnnotified"/> = กรอง "ยังไม่เคยแจ้ง" ในฝั่ง SQL
+    /// <b>ก่อน</b> Take/Count/Sum (เดิมกรองหลังตัด 500 ⇒ บริษัทที่มีแถวแจ้งแล้ว ≥ 500 ไม่เคยได้แจ้งแถวใหม่) · tenant</summary>
+    public static IQueryable<Accounting.Models.Entities.Payment> AgedQuery(AccountingDbContext db, Guid companyId, DateTime todayThai, bool onlyUnnotified)
+    {
+        var cut = todayThai.Date.AddDays(-AgingDays);
+        var q = db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.UnappliedAccountId != null && !p.UnappliedNeedsReview
+                && p.UnappliedAmount > UnappliedCreditBalance.Tolerance && p.PaymentDate < cut);
+        return onlyUnnotified ? q.Where(p => p.UnappliedAgedNoticeAt == null) : q;
     }
 
     /// <summary>เรื่องที่ระบบทำต่อไม่ได้ของ Autopilot: ใบที่ต้องออกใบเสร็จ · เงินรอจัดสรรค้างเกิน 30 วัน — ลิงก์ไปหน้า "เงินรอจัดสรร"</summary>

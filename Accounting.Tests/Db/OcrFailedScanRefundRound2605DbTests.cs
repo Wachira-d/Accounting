@@ -74,6 +74,12 @@ public class OcrFailedScanRefundRound2605DbTests
         var okUnbilled = await ChargeAsync(db, a, await ScanAsync(db, a, "Completed", "Azure"), 3m);
         var failedBilled = await ChargeAsync(db, a, await ScanAsync(db, a, "Failed", "Azure"), 3m, billedPeriod: "2026-09");
         var failedFree = await ChargeAsync(db, a, await ScanAsync(db, a, "Failed", null), 0m, coveredFree: true);
+        // M2: สแกนล้มที่กินโควตาฟรีของเดือนที่ปิดรอบแล้ว — ไม่มีอะไรให้ถอด แต่ต้องนับให้เห็น (คิวผู้ให้บริการ)
+        var failedFreeBilled = await ChargeAsync(db, a, await ScanAsync(db, a, "Failed", "Azure"), 0m, billedPeriod: "2026-09", coveredFree: true);
+        // แอดมินแพลตฟอร์ม (M4) — ต้องได้กระดิ่งครั้งเดียว
+        var admin = new User { Email = $"r2605-admin-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "แอดมิน " + tag, Status = UserStatus.Active, IsSystemAdmin = true };
+        db.Users.Add(admin);
+        await db.SaveChangesAsync();
         // เติมเงิน
         var acct = new BillingAccount { Name = "กลุ่มเติมเงิน " + tag, PaymentModel = PaymentModel.Prepaid, CreditBalance = 100m };
         db.BillingAccounts.Add(acct);
@@ -102,7 +108,7 @@ public class OcrFailedScanRefundRound2605DbTests
             var billed = await Ev(failedBilled);                             // (3) เข้าใบแล้ว: แถวคงเดิม
             Assert.Equal((false, 3m, "2026-09"), (billed.IsDeleted, billed.ChargedAmount, billed.BilledPeriod));
             Assert.True((await Ev(prepaidUnbilled)).IsDeleted);              // (4) เติมเงินยังไม่ปิดรอบ: ถอด + คืน
-            Assert.False((await Ev(prepaidBilled)).IsDeleted);               // (4) ปิดรอบแล้ว: คืนเครดิต แถวคงไว้
+            Assert.True((await Ev(prepaidBilled)).IsDeleted);                // (4) M3: ปิดรอบแบบไม่มีใบ ⇒ คืนเครดิต + ถอด (ไม่ค้างเป็นยอดค้างเก็บ)
             Assert.False((await Ev(prepaidOk)).IsDeleted);
             Assert.Equal(110m, (await check.BillingAccounts.AsNoTracking().SingleAsync(x => x.Id == acct.Id)).CreditBalance);
             Assert.False((await Ev(crossTenant)).IsDeleted);                 // (5) ข้ามบริษัท
@@ -110,13 +116,20 @@ public class OcrFailedScanRefundRound2605DbTests
             // (6) audit ทุกแถวที่ตัดสิน (chain) + ไม่มีแถว audit ของแถวที่ไม่แตะ
             var audited = await check.AuditLogs.AsNoTracking()
                 .Where(x => x.UserEmail == OcrFailedScanRefund.Actor && x.EntityType == nameof(UsageEvent)).Select(x => x.EntityId).ToListAsync();
-            foreach (var id in new[] { failedUnbilled, failedFree, failedBilled, prepaidUnbilled, prepaidBilled })
+            foreach (var id in new[] { failedUnbilled, failedFree, failedBilled, prepaidUnbilled, prepaidBilled, failedFreeBilled })
                 Assert.Contains(id.ToString(), audited);
             foreach (var id in new[] { okUnbilled, prepaidOk, crossTenant })
                 Assert.DoesNotContain(id.ToString(), audited);
             var note = await check.Notifications.AsNoTracking().SingleAsync(n => n.UserId == ownerA && n.CompanyId == a);
             Assert.Contains("ยังไม่ได้คืน", note.Message);                    // ส่วนที่เข้าใบแล้วไม่ถูกอ้างว่าคืน
             Assert.False(await check.Notifications.AsNoTracking().AnyAsync(n => n.CompanyId == c));
+            Assert.Contains("โควตาฟรี", note.Message);                       // M2: นับแถวโควตาฟรีของเดือนที่ปิดรอบ
+            Assert.Equal(1, await check.Notifications.AsNoTracking().CountAsync(n => n.UserId == admin.Id && n.EntityType == OcrFailedScanRefund.AdminNotificationEntityType));
+
+            // M4: คิวใบลดหนี้ของผู้ให้บริการ — แถวที่เข้าใบแล้ว 3 บาท + แถวโควตาฟรี (0) ของบริษัท a · ไม่มีแถวที่ถอด/คืนแล้ว
+            var queue = (await OcrFailedScanRefund.AwaitingCreditNotesAsync(check)).Where(q => q.CompanyId == a).ToList();
+            Assert.Equal((2, 3m), (queue.Sum(q => q.Scans), queue.Sum(q => q.Amount)));
+            Assert.DoesNotContain(await OcrFailedScanRefund.AwaitingCreditNotesAsync(check), q => q.CompanyId == b);
         }
 
         // (7) marker มีแล้ว ⇒ ไม่ทำอะไร
@@ -130,6 +143,7 @@ public class OcrFailedScanRefundRound2605DbTests
             Assert.Equal(110m, (await check.BillingAccounts.AsNoTracking().SingleAsync(x => x.Id == acct.Id)).CreditBalance);
             Assert.Equal(1, await check.AuditLogs.AsNoTracking().CountAsync(x => x.UserEmail == OcrFailedScanRefund.Actor && x.EntityId == prepaidBilled.ToString()));
             Assert.Equal(1, await check.Notifications.AsNoTracking().CountAsync(n => n.UserId == ownerA && n.CompanyId == a));
+            Assert.Equal(1, await check.Notifications.AsNoTracking().CountAsync(n => n.UserId == admin.Id && n.EntityType == OcrFailedScanRefund.AdminNotificationEntityType));
         }
     }
 }
