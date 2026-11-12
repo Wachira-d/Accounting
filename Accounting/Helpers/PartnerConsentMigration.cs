@@ -78,7 +78,7 @@ public static class PartnerConsentMigration
         """,
         """DROP TRIGGER IF EXISTS "TR_PartnerAutomationConsents_NoDelete" ON "PartnerAutomationConsents";""",
         $$"""CREATE TRIGGER "TR_PartnerAutomationConsents_NoDelete" BEFORE DELETE ON "PartnerAutomationConsents" FOR EACH ROW EXECUTE FUNCTION "{{NoDeleteFunction}}"();""",
-        """DROP TRIGGER IF EXISTS "TR_PartnerAutomationConsents_AppendOnly" ON "PartnerAutomationConsents";"""
+        """DROP TRIGGER IF EXISTS "TR_PartnerAutomationConsents_AppendOnly" ON "PartnerAutomationConsents";""",
         $$"""CREATE TRIGGER "TR_PartnerAutomationConsents_AppendOnly" BEFORE UPDATE ON "PartnerAutomationConsents" FOR EACH ROW EXECUTE FUNCTION "{{AppendOnlyFunction}}"();""",
     };
 }
