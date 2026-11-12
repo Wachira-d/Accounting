@@ -3169,7 +3169,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   Autopilot `LineChatSlipUnmatched` ชี้คิวเดียวกัน
 - **ค่าตั้ง** — `CompanySettings.LineChatSlipIntakeEnabled` (ค่าตั้งต้นเปิด — 260-1-4 · แท็บ LINE ของหน้าตั้งค่า · PUT `chatSlipIntake` null = คงเดิม) ·
   แถวความพร้อม `chat-slip` (`LineChatSlipRule.ReadinessRow`: ปิด · OA/webhook ยังไม่พร้อม · เครื่องนี้อ่านรูปไม่ได้ · พร้อม) · ตาราง `LineChatSlips` (`Round260LineSlipMigration`)
-- เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit (เติมในคอมมิตตามหลัง)
+- เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
 
@@ -8881,4 +8881,4 @@ _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก B ส่
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D ฝ่ายค้าน — §2.12g-259d: H1/H2 · M1–M4 · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d493044a)_
 
-_Last verified against codebase: 2026-11-12 (รอบ 260-3 — §3.4b เงินรอจัดสรรบนพอร์ทัล/อีเมลใบแจ้งยอด + กระดิ่งค้างนาน · §2.6b การ์ดความพร้อมรับเงิน · §OCR กล่องใบซื้อร่างกล่องเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-12 (รอบ 260-3 — §3.4b เงินรอจัดสรรบนพอร์ทัล/อีเมลใบแจ้งยอด + กระดิ่งค้างนาน · §2.6b การ์ดความพร้อมรับเงิน · §OCR กล่องใบซื้อร่างกล่องเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 86193689)_
