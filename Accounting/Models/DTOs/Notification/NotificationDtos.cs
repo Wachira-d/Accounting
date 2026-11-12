@@ -9,7 +9,9 @@ public record NotificationResponse(
     string Message,
     string? ActionUrl,
     bool IsRead,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    // รอบ 264 ฝ่ายค้าน L7: ลิงก์ที่กดได้ในกระดิ่ง — ผ่าน NotificationLink.InternalPath (เซิร์ฟเวอร์ตัดสิน · หน้าไม่มีสำเนากติกา) · null = ไม่มีลิงก์
+    string? Href = null);
 
 public record MarkReadRequest(List<Guid> NotificationIds);
 

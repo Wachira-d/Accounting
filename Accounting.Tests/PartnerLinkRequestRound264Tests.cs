@@ -94,24 +94,61 @@ public class PartnerLinkRequestRound264Tests
     // ═══════════ ข้อความแจ้ง ═══════════
 
     [Fact]
-    public void ข้อความแจ้งปลายทาง_มีชื่อผู้ขอ_ลิงก์การ์ดยอมรับ_ไม่มีข้อความอิสระ()
+    public void ข้อความแจ้งปลายทาง_เลขปิดบังและสาขา_ไม่มีชื่อหรือข้อความอิสระ_ลิงก์การ์ดยอมรับ()
     {
-        var msg = PartnerLinkRequestRules.NoticeMessage("บริษัท เอ จำกัด\nบรรทัดสอง", "0105555555555", T0.AddDays(30));
-        Assert.Contains("บริษัท เอ จำกัด", msg);
-        Assert.Contains("0105555555555", msg);
-        Assert.DoesNotContain("\n", msg);
-        Assert.Contains("คู่ค้าที่ใช้ NextAcc", msg);
+        // ฝ่ายค้าน M2/L6: ชื่อบริษัทผู้ขอ = ข้อความอิสระ ⇒ ไม่อยู่ในข้อความ (อีเมล/LINE) · เลขภาษีแบบปิดบัง
+        var msg = PartnerLinkRequestRules.NoticeMessage("0105555555553", "00001", T0.AddDays(30));
+        Assert.Contains("0-XXXX-XXXXX-XX-3", msg);
+        Assert.DoesNotContain("0105555555553", msg);
+        Assert.Contains("สาขาที่ 00001", msg);
         Assert.Contains("จนกว่าคุณจะยอมรับ", msg);
-        Assert.Contains("บริษัทที่ใช้ NextAcc", PartnerLinkRequestRules.NoticeMessage(null, null, T0));
+        Assert.Contains("เลขผู้เสียภาษี -", PartnerLinkRequestRules.NoticeMessage(null, null, T0));
+        Assert.Contains("เลขผู้เสียภาษี - ", PartnerLinkRequestRules.NoticeMessage("12", null, T0));
         var cid = Guid.NewGuid(); var pid = Guid.NewGuid();
         var url = PartnerLinkRequestRules.AcceptUrl(cid, pid);
-        Assert.StartsWith("/pages/partners.html?", url);
-        Assert.Contains("company=" + cid, url);
-        Assert.Contains("request=" + pid, url);
         Assert.Equal("/pages/partners.html?company=" + cid + "&request=" + pid, url);
-        Assert.DoesNotContain("//", url);   // path ภายใน (NotificationLink.Absolute รับเฉพาะ "/" ที่ไม่ใช่ "//")
-        Assert.Contains("ระงับการเชื่อม", PartnerLinkRequestRules.AcceptedNoticeMessage("ปลายทาง", "0105555555555", "00001"));
-        Assert.Contains("สาขา", PartnerLinkRequestRules.AcceptedNoticeMessage("ปลายทาง", "0105555555555", "00001"));
+        Assert.Equal(url, NotificationLink.InternalPath(url));   // ลิงก์ผ่านตัวตัดสินของกระดิ่ง
+        // ข้อความตอบรับถึงผู้ขอ: เลขปิดบัง · บอกว่าไม่ได้ยืนยันเจ้าของเลข (L5) · ทางไปต่อ "ระงับการเชื่อม"
+        var acc = PartnerLinkRequestRules.AcceptedNoticeMessage("0105555555553", "00001");
+        Assert.Contains("0-XXXX-XXXXX-XX-3", acc);
+        Assert.Contains("ไม่ได้ยืนยัน", acc);
+        Assert.Contains("ระงับการเชื่อม", acc);
+        Assert.Contains("ไม่ได้ยืนยัน", PartnerLinkRequestRules.NameUnverifiedLabel);
+    }
+
+    [Fact]
+    public void กระดิ่ง_pathภายในเท่านั้น_กันตัวควบคุมและแบ็กสแลช()
+    {
+        Assert.Equal("/pages/a.html?x=1", NotificationLink.InternalPath(" /pages/a.html?x=1 "));
+        Assert.Null(NotificationLink.InternalPath("//evil.example"));
+        Assert.Null(NotificationLink.InternalPath("/\t/evil.example"));
+        Assert.Null(NotificationLink.InternalPath("/\n/evil.example"));
+        Assert.Null(NotificationLink.InternalPath("/a\\b"));
+        Assert.Null(NotificationLink.InternalPath("https://evil.example"));
+        Assert.Null(NotificationLink.InternalPath("javascript:alert(1)"));
+        Assert.Null(NotificationLink.InternalPath(null));
+    }
+
+    [Fact]
+    public void ปฏิเสธ_เฉพาะคำขอที่รอเรา_คู่ที่เชื่อมแล้วต้องระงับ_บล็อกผู้ขอ()
+    {
+        Assert.Null(PartnerLinkRequestRules.RejectProblem(TradingPartnershipStatus.Pending, invitedByUs: false));
+        Assert.Equal(PartnerLinkRequestRules.RejectNotAllowedMessage, PartnerLinkRequestRules.RejectProblem(TradingPartnershipStatus.Pending, invitedByUs: true));
+        Assert.NotNull(PartnerLinkRequestRules.RejectProblem(TradingPartnershipStatus.Accepted, invitedByUs: false));
+        Assert.NotNull(PartnerLinkRequestRules.RejectProblem(TradingPartnershipStatus.Suspended, invitedByUs: false));
+        Assert.Contains("ระงับการเชื่อม", PartnerLinkRequestRules.RejectNotAllowedMessage);
+        var a = Guid.NewGuid(); var b = Guid.NewGuid();
+        Assert.True(PartnerLinkRequestRules.BlockedForRequester(b, a));
+        Assert.False(PartnerLinkRequestRules.BlockedForRequester(a, a));   // ผู้บล็อกส่งคำขอเอง = ปลดบล็อก
+        Assert.False(PartnerLinkRequestRules.BlockedForRequester(null, a));
+    }
+
+    [Fact]
+    public void เกินเพดาน_เลื่อนไปเมื่อหน้าต่างว่าง_ไม่เงียบถาวร()
+    {
+        Assert.Equal(T0.AddHours(23).AddMinutes(1), PartnerLinkRequestRules.CapRetryAt(T0.AddHours(-1), T0));
+        Assert.Equal(T0.AddHours(1), PartnerLinkRequestRules.CapRetryAt(null, T0));
+        Assert.Equal(T0.AddMinutes(1), PartnerLinkRequestRules.CapRetryAt(T0.AddHours(-30), T0));   // ไม่ย้อนอดีต
     }
 
     // ═══════════ งานเบื้องหลัง ═══════════
@@ -140,6 +177,11 @@ public class PartnerLinkRequestRound264Tests
         Assert.Equal(NotificationAudience.TenantBusiness, NotificationAudiencePolicy.Classify(NotificationEvents.PartnerLinkRequested));
         Assert.Contains(NotificationRecipientRoles.CompanyAdmin, NotificationRecipientRoles.All);
         Assert.True(NotificationRecipientRoles.Labels.ContainsKey(NotificationRecipientRoles.CompanyAdmin));
+        // ฝ่ายค้าน L4: คีย์ตอบรับของตัวเอง — ค่าตั้งต้นเดียวกัน ไม่เข้ากลุ่ม LINE
+        var acc = NotificationAudiencePolicy.DefaultMatrix(NotificationEvents.PartnerLinkAccepted, companyLineGroupConfigured: true);
+        Assert.Equal(rows.Select(r => r.RecipientRole), acc.Select(r => r.RecipientRole));
+        Assert.All(acc, r => Assert.False(r.EnableLineGroup));
+        Assert.Contains(NotificationEvents.All, c => c.Key == NotificationEvents.PartnerLinkAccepted);
         // ทิศตรงข้าม: คีย์อื่นไม่ถูกแตะ (ค่าตั้งต้นของคีย์ที่ไม่รู้จัก = ว่าง)
         Assert.Empty(NotificationAudiencePolicy.DefaultMatrix("partner.unknown_key", true));
     }

@@ -79,20 +79,32 @@ public static class PartnerLinkRequestRules
     {
         OutgoingState.Accepted => "เชื่อมแล้ว — คู่ค้าตอบรับ (ดูในตารางคู่ค้า)",
         OutgoingState.Expired => "หมดอายุ — คู่ค้าไม่ได้ตอบรับภายใน 30 วัน",
-        _ => "ส่งแล้ว — รอคู่ค้าตอบรับ",
+        // ฝ่ายค้าน L3: ข้อความเดียวทุกกรณี (ไม่รั่ว) — ถ้าคู่ค้ารายนี้ส่งคำขอถึงเราไว้แล้ว ทางลัดคือกดยอมรับในตาราง
+        _ => "ส่งแล้ว — รอคู่ค้าตอบรับ (ถ้าคู่ค้ารายนี้ส่งคำขอถึงเราไว้ก่อน กดยอมรับในตาราง \"คู่ค้าที่เชื่อม / คำขอที่รอเรายอมรับ\" ได้เลย)",
     };
 
-    // ═══════════ ข้อความแจ้ง B (ไม่มีข้อความอิสระของผู้ขอ — ช่องฟิชชิง · เปิดอ่านที่หน้าคู่ค้า) ═══════════
+    // ═══════════ ข้อความแจ้ง (ฝ่ายค้าน M2/L5/L6 · คำตัดสิน 264-1-10) ═══════════
+    // ช่องนอกแอป (อีเมล · LINE) ไม่มีข้อความอิสระที่บริษัทอื่นตั้งเอง (ชื่อบริษัท = ข้อความอิสระ ไม่ได้ยืนยันทะเบียน ⇒ ช่องฟิชชิง) ·
+    // เลขภาษีแบบปิดบัง (PiiMask.CitizenId — ผู้ขออาจเป็นบุคคลธรรมดา) + สาขา · ชื่อ/เลขเต็มอ่านบนการ์ดในแอปพร้อมป้าย "ระบบไม่ได้ยืนยัน"
 
     public const string NoticeTitle = "มีคำขอเชื่อมระบบจากคู่ค้าที่ใช้ NextAcc";
 
-    /// <summary>ข้อความถึง B — ชื่อ + เลขภาษีของผู้ขอ (ผู้ขอเปิดเผยเองเมื่อส่งคำขอ) · ยังไม่มีข้อมูลของ B ไปถึงผู้ขอจนกว่าจะยอมรับ</summary>
-    public static string NoticeMessage(string? requesterName, string? requesterTaxId, DateTime expiresAtUtc)
+    /// <summary>ป้ายของชื่อผู้ขอบนการ์ดในแอป (ชื่อ = ค่าที่ผู้ขอตั้งเอง)</summary>
+    public const string NameUnverifiedLabel = "ชื่อที่ผู้ขอตั้งเอง — ระบบไม่ได้ยืนยัน";
+
+    /// <summary>เลขภาษีแบบปิดบังสำหรับช่องนอกแอป · ไม่ใช่ 13 หลัก ⇒ "-"</summary>
+    private static string MaskedTaxId(string? taxId)
     {
-        var name = Clip(requesterName, 120) ?? "บริษัทที่ใช้ NextAcc";
-        var tax = string.IsNullOrWhiteSpace(requesterTaxId) ? "" : $" (เลขผู้เสียภาษี {requesterTaxId!.Trim()})";
+        var d = ThaiTaxId.Normalize(taxId);
+        return d.Length == 13 ? PiiMask.CitizenId(d)! : "-";
+    }
+
+    /// <summary>ข้อความถึง B (กระดิ่ง · อีเมล · LINE) — เลขภาษีปิดบัง + สาขาของผู้ขอ (ระบบคำนวณ) · ไม่มีชื่อ/ข้อความอิสระ · ข้อมูลของ B ไม่ไปถึงผู้ขอจนกว่าจะยอมรับ</summary>
+    public static string NoticeMessage(string? requesterTaxId, string? requesterBranchCode, DateTime expiresAtUtc)
+    {
         var until = QuotaAddOnPricing.ThaiDateText(expiresAtUtc.AddHours(7).Date);   // พ.ศ. ไม่ขึ้นกับ culture ของเครื่อง
-        return $"{name}{tax} ขอเชื่อมระบบกับบริษัทของคุณ — เปิดรับคำขอได้ที่หน้า \"คู่ค้าที่ใช้ NextAcc\" แล้วกดยอมรับหรือปฏิเสธ · "
+        return $"บริษัทที่ใช้ NextAcc (เลขผู้เสียภาษี {MaskedTaxId(requesterTaxId)} · {TaxBranchCode.Label(requesterBranchCode)}) ขอเชื่อมระบบกับบริษัทของคุณ — "
+             + "กดลิงก์หรือเปิดหน้า \"คู่ค้าที่ใช้ NextAcc\" ในระบบเพื่อดูรายละเอียดและกดยอมรับหรือปฏิเสธ · "
              + $"ยังไม่มีข้อมูลหรือเอกสารใดของคุณถูกส่งไปจนกว่าคุณจะยอมรับ · คำขอหมดอายุ {until}";
     }
 
@@ -100,19 +112,34 @@ public static class PartnerLinkRequestRules
     public static string AcceptUrl(Guid targetCompanyId, Guid partnershipId)
         => $"/pages/partners.html?company={targetCompanyId}&request={partnershipId}";
 
-    /// <summary>ข้อความถึงผู้ขอเมื่อมีผู้ยอมรับ — ชื่อ + เลขภาษี + สาขาของผู้ยอมรับ (ยินยอมแล้ว) ให้ตรวจว่าเป็นคู่ค้าที่ตั้งใจจริง</summary>
-    public static string AcceptedNoticeMessage(string? name, string? taxId, string? branchCode)
-        => $"{Clip(name, 120) ?? "คู่ค้า"} (เลขผู้เสียภาษี {(taxId ?? "-").Trim()} · {TaxBranchCode.Label(branchCode)}) ตอบรับคำขอเชื่อมระบบแล้ว — "
-           + "ตรวจชื่อ/เลขภาษี/สาขาให้ตรงกับคู่ค้าที่ตั้งใจ ถ้าไม่ใช่ ให้กด \"ระงับการเชื่อม\" ที่หน้าคู่ค้าทันที";
+    /// <summary>ข้อความถึงผู้ขอเมื่อมีผู้ยอมรับ — เลขภาษีปิดบัง + สาขาของผู้ยอมรับ + "ระบบไม่ได้ยืนยันเจ้าของเลข" (ฝ่ายค้าน L5) · ไม่มีชื่อ (ข้อความอิสระ · M2)</summary>
+    public static string AcceptedNoticeMessage(string? taxId, string? branchCode)
+        => $"บริษัทเลขผู้เสียภาษี {MaskedTaxId(taxId)} · {TaxBranchCode.Label(branchCode)} ตอบรับคำขอเชื่อมระบบแล้ว — "
+           + "ระบบไม่ได้ยืนยันว่าบริษัทนี้เป็นเจ้าของเลขภาษีจริง: เปิดหน้า \"คู่ค้าที่ใช้ NextAcc\" ตรวจชื่อ/เลขภาษีเต็ม/สาขาให้ตรงกับคู่ค้าที่ตั้งใจ · "
+           + "ถ้าไม่ใช่ ให้กด \"ระงับการเชื่อม\" ทันที";
 
     public const string AcceptedNoticeTitle = "คู่ค้าตอบรับคำขอเชื่อมระบบแล้ว";
+
+    // ═══════════ ปฏิเสธ (ฝ่ายค้าน M4 · คำตัดสิน 264-1-12) ═══════════
+
+    public const string RejectNotAllowedMessage =
+        "ปฏิเสธได้เฉพาะคำขอที่คู่ค้าส่งมาและยังรอเรายอมรับ — คู่ที่เชื่อมแล้ว/ระงับแล้วใช้ \"ระงับการเชื่อม\" (มีบันทึกเหตุผลและแจ้งคู่ค้า)";
+
+    /// <summary>ปฏิเสธได้ไหม · null = ได้ — Pending เท่านั้น และผู้ปฏิเสธต้องไม่ใช่ผู้ขอ</summary>
+    public static string? RejectProblem(TradingPartnershipStatus status, bool invitedByUs)
+        => status == TradingPartnershipStatus.Pending && !invitedByUs ? null : RejectNotAllowedMessage;
+
+    /// <summary>ฝ่ายค้าน L8 (คำตัดสิน 264-1-13): คู่นี้ถูก "ปฏิเสธและไม่รับคำขอจากบริษัทนี้อีก" โดยอีกฝ่ายไหม — ผู้ที่บล็อกเองส่งคำขอได้ (เปิดใหม่ = ปลดบล็อก) ·
+    /// ถูกบล็อก ⇒ คำขอใหม่ไม่เปิดแถว ไม่แจ้ง · ผู้ขอยังเห็น "รอตอบ" (264-1-2)</summary>
+    public static bool BlockedForRequester(Guid? blockedByCompanyId, Guid requestingCompanyId)
+        => blockedByCompanyId is Guid b && b != requestingCompanyId;
 
     // ═══════════ การแจ้งจากงานเบื้องหลัง ═══════════
 
     public enum NoticeAction { Send, SkipCapped, SkipExpired, GiveUp }
 
     /// <summary>งานเบื้องหลังทำอะไรกับแถวที่รอแจ้ง — หมดอายุ ⇒ ไม่แจ้ง · <b>เคยส่งล้ม</b>และคำขอเก่าเกิน <see cref="NoticeGiveUpHours"/> ⇒ เลิก
-    /// (งานหยุดไปหลายวันโดยไม่เคยลอง ⇒ ยังส่ง) · ปลายทางได้รับครบเพดานวันนี้ ⇒ ไม่แจ้ง (แถวยังอยู่บนหน้า)</summary>
+    /// (งานหยุดไปหลายวันโดยไม่เคยลอง ⇒ ยังส่ง) · ปลายทางได้รับครบเพดานวันนี้ ⇒ <b>เลื่อน</b> (ไม่ประทับว่าแจ้งแล้ว — ฝ่ายค้าน M3 · <see cref="CapRetryAt"/>)</summary>
     public static NoticeAction Decide(bool expired, DateTime requestedAt, DateTime nowUtc, int targetNoticesLast24h, bool previouslyFailed)
     {
         if (expired) return NoticeAction.SkipExpired;
@@ -121,10 +148,10 @@ public static class PartnerLinkRequestRules
         return NoticeAction.Send;
     }
 
-    private static string? Clip(string? s, int max)
+    /// <summary>ฝ่ายค้าน M3: เกินเพดาน ⇒ ลองใหม่เมื่อการแจ้งเก่าสุดในหน้าต่าง 24 ชม. หลุดออก (+1 นาที) · ไม่รู้เวลา ⇒ อีก 1 ชม. · ไม่ก่อน now</summary>
+    public static DateTime CapRetryAt(DateTime? oldestNoticeInWindowUtc, DateTime nowUtc)
     {
-        if (string.IsNullOrWhiteSpace(s)) return null;
-        var t = s.Trim().Replace('\n', ' ').Replace('\r', ' ');
-        return t.Length > max ? t[..max] : t;
+        var at = oldestNoticeInWindowUtc is DateTime o ? o.AddHours(24).AddMinutes(1) : nowUtc.AddHours(1);
+        return at > nowUtc ? at : nowUtc.AddMinutes(1);
     }
 }

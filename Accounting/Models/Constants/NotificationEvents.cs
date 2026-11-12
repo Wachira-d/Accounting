@@ -109,6 +109,9 @@ public static class NotificationEvents
     /// (งานเบื้องหลัง · ไม่ส่งในคำขอของผู้ขอ — เวลาตอบต้องเท่ากันทุกกรณี) · ค่าตั้งต้น = กระดิ่ง + อีเมล + LINE ถึงเจ้าของ และผู้มีสิทธิ์ตั้งค่าบริษัท
     /// (<c>NotificationAudiencePolicy.DefaultMatrix</c>) · ลิงก์ = การ์ดยอมรับ <c>partners.html?request=</c></summary>
     public const string PartnerLinkRequested = "partner.link_requested";
+    /// <summary>รอบ 264 ฝ่ายค้าน L4 (คำตัดสิน 264-1-11): ปลายทางตอบรับคำขอเชื่อมที่เราส่ง — ผู้ส่งเดียว <c>NotifyRequesterAcceptedAsync</c> ·
+    /// เดิมยืม <see cref="AutopilotPartnerExchange"/> (ความหมาย "ยกเลิก 50 ทวิ") ⇒ ปิดคีย์นั้นแล้วไม่รู้ว่าใครรับคำขอ · ค่าตั้งต้นเหมือน <see cref="PartnerLinkRequested"/> (ไม่เข้ากลุ่ม LINE)</summary>
+    public const string PartnerLinkAccepted = "partner.link_accepted";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
     /// เพื่อสอบ DBA / raw SQL.</summary>
@@ -207,6 +210,7 @@ public static class NotificationEvents
         ("Accounting", AutopilotBankSettleFailed, "Autopilot: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ"),
         ("Accounting", AutopilotDailyDigest, "Autopilot: สรุปประจำวัน (สำเร็จ · รอยืนยัน · เรื่องที่ระบบทำต่อไม่ได้)"),
         ("Accounting", AutopilotPartnerExchange, "Autopilot: คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ามาแล้ว (ตรวจก่อนใช้เครดิต)"),
+        ("Accounting", PartnerLinkAccepted, "คู่ค้าตอบรับคำขอเชื่อมระบบที่เราส่ง (ตรวจชื่อ/เลขภาษี/สาขาของผู้ตอบรับ)"),
         ("Accounting", PartnerLinkRequested, "คู่ค้าที่ใช้ NextAcc ส่งคำขอเชื่อมระบบถึงเรา (กดลิงก์เพื่อยอมรับ/ปฏิเสธ)"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
         ("Accounting", EtaxRdSubmitFailed, "e-Tax นำส่งกรมสรรพากรไม่สำเร็จ (โหมดส่งตรง) · สรุปงานนำส่งประจำเดือน"),

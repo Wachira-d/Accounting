@@ -34,13 +34,23 @@ public partial class CrossTenantWorkflowService
             var requestedAt = PartnerLinkRequestRules.RequestedAt(p.InvitedAt, p.CreatedAt);
             var since = nowUtc.AddHours(-24);
             // นับการแจ้งที่ปลายทางได้รับใน 24 ชม. (ทุกผู้ขอ · เฉพาะที่ส่งจริง) — tenant = ปลายทาง (แถวคู่ที่ปลายทางเป็นสมาชิกและไม่ใช่ผู้ขอ)
-            var sentToTarget = await _db.TradingPartnerships.AsNoTracking()
-                .CountAsync(x => (x.CompanyAId == target || x.CompanyBId == target) && x.InvitedByCompanyId != target
+            var windowQ = _db.TradingPartnerships.AsNoTracking()
+                .Where(x => (x.CompanyAId == target || x.CompanyBId == target) && x.InvitedByCompanyId != target
                     && x.InviteNotifiedAt != null && x.InviteNotifiedAt >= since
-                    && x.InviteNoticeResult == nameof(Accounting.Services.Interfaces.NotificationDispatchOutcome.Delivered), ct);
+                    && x.InviteNoticeResult == nameof(Accounting.Services.Interfaces.NotificationDispatchOutcome.Delivered));
+            var sentToTarget = await windowQ.CountAsync(ct);
             var action = PartnerLinkRequestRules.Decide(
                 PartnerLinkRequestRules.IsExpired(p.Status, p.InvitedAt, p.CreatedAt, nowUtc), requestedAt, nowUtc, sentToTarget,
                 previouslyFailed: p.InviteNoticeResult == nameof(Accounting.Services.Interfaces.NotificationDispatchOutcome.Failed));
+            if (action == PartnerLinkRequestRules.NoticeAction.SkipCapped)
+            {
+                // ฝ่ายค้าน M3 (คำตัดสิน 264-1-10): เกินเพดาน ⇒ เลื่อนไปเมื่อหน้าต่าง 24 ชม. ว่าง — ไม่ประทับว่าแจ้งแล้ว (เดิมเงียบถาวร ⇒ ผู้โจมตีปิดเสียงคำขอจริงได้)
+                p.InviteNoticeResult = action.ToString();
+                p.InviteNoticeDueAt = PartnerLinkRequestRules.CapRetryAt(await windowQ.MinAsync(x => x.InviteNotifiedAt, ct), nowUtc);
+                await _db.SaveChangesAsync(ct);
+                handled++;
+                continue;
+            }
             if (action != PartnerLinkRequestRules.NoticeAction.Send)
             {
                 p.InviteNotifiedAt = nowUtc;
@@ -51,14 +61,14 @@ public partial class CrossTenantWorkflowService
                 continue;
             }
             var requester = await _db.Companies.AsNoTracking().Where(c => c.Id == p.InvitedByCompanyId)
-                .Select(c => new { c.Name, c.TaxId }).FirstOrDefaultAsync(ct);
+                .Select(c => new { c.TaxId, c.BranchCode }).FirstOrDefaultAsync(ct);
             var outcome = Accounting.Services.Interfaces.NotificationDispatchOutcome.NoRecipient;
             if (_notify != null)
                 outcome = await _notify.DispatchWithOutcomeAsync(target, Accounting.Models.Constants.NotificationEvents.PartnerLinkRequested,
                     new Accounting.Services.Interfaces.NotificationContext
                     {
                         Title = PartnerLinkRequestRules.NoticeTitle,
-                        Message = PartnerLinkRequestRules.NoticeMessage(requester?.Name, requester?.TaxId, PartnerLinkRequestRules.RequestExpiryUtc(p.InvitedAt, p.CreatedAt)),
+                        Message = PartnerLinkRequestRules.NoticeMessage(requester?.TaxId, requester?.BranchCode, PartnerLinkRequestRules.RequestExpiryUtc(p.InvitedAt, p.CreatedAt)),
                         ActionUrl = PartnerLinkRequestRules.AcceptUrl(target, p.Id),
                         EntityType = "TradingPartnership", EntityId = p.Id,
                     });
@@ -113,7 +123,8 @@ public partial class CrossTenantWorkflowService
             p.RejectedAt,
             Requester = new
             {
-                Name = requester?.Name, TaxId = requester?.TaxId,
+                // ฝ่ายค้าน M2/L5: ชื่อ = ค่าที่ผู้ขอตั้งเอง (ไม่มีการยืนยันทะเบียน) — ป้ายจากเซิร์ฟเวอร์ แสดงคู่กับชื่อเสมอ
+                Name = requester?.Name, NameNote = PartnerLinkRequestRules.NameUnverifiedLabel, TaxId = requester?.TaxId,
                 BranchLabel = TaxBranchCode.Label(requester?.BranchCode),
             },
             ProblemMessage = problem,

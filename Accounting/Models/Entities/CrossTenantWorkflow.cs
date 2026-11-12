@@ -73,6 +73,10 @@ public class TradingPartnership : BaseEntity
     public string? InviteNoticeResult { get; set; }
     /// <summary>คำขอของผู้ขอ (<see cref="PartnerLinkRequest"/> ในบริษัทผู้ขอ) ที่เปิดแถวนี้ล่าสุด — ยอมรับแล้วประทับกลับที่คำขอนั้น</summary>
     public Guid? LinkRequestId { get; set; }
+    /// <summary>ฝ่ายค้าน L8 (คำตัดสิน 264-1-13): บริษัทที่กด "ปฏิเสธและไม่รับคำขอจากบริษัทนี้อีก" · null = ไม่บล็อก ·
+    /// ผู้อ่าน: <c>PartnerLinkRequestRules.BlockedForRequester</c> ← <c>InvitePartnerAsync</c> · ผู้บล็อกส่งคำขอเอง ⇒ ปลดบล็อก</summary>
+    public Guid? RequestsBlockedByCompanyId { get; set; }
+    public DateTime? RequestsBlockedAt { get; set; }
 }
 
 /// <summary>

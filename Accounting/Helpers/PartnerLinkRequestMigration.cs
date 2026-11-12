@@ -12,6 +12,9 @@ public static class PartnerLinkRequestMigration
         """ALTER TABLE "TradingPartnerships" ADD COLUMN IF NOT EXISTS "InviteNotifiedAt" timestamp NULL;""",
         """ALTER TABLE "TradingPartnerships" ADD COLUMN IF NOT EXISTS "InviteNoticeResult" varchar(32) NULL;""",
         """ALTER TABLE "TradingPartnerships" ADD COLUMN IF NOT EXISTS "LinkRequestId" uuid NULL;""",
+        // ฝ่ายค้าน L8 (คำตัดสิน 264-1-13): ปฏิเสธและไม่รับคำขอจากบริษัทนี้อีก
+        """ALTER TABLE "TradingPartnerships" ADD COLUMN IF NOT EXISTS "RequestsBlockedByCompanyId" uuid NULL;""",
+        """ALTER TABLE "TradingPartnerships" ADD COLUMN IF NOT EXISTS "RequestsBlockedAt" timestamp NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_TradingPartnerships_InviteNoticeDue" ON "TradingPartnerships" ("InviteNoticeDueAt") WHERE "InviteNoticeDueAt" IS NOT NULL;""",
         """
         CREATE TABLE IF NOT EXISTS "PartnerLinkRequests" (

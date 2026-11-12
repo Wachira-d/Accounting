@@ -67,9 +67,22 @@ public partial class CrossTenantWorkflowService
             && !Accounting.Helpers.TaxBranchCode.TryNormalize(partnerBranchCode, out _, out var branchError))
             throw new Accounting.Helpers.BusinessRuleException(branchError ?? "รหัสสาขาไม่ถูกต้อง", Accounting.Helpers.PartnerCompanyMatch.RuleCode, 400);
 
-        // ฝ่ายค้าน H3: เวลาตอบเท่ากันทุกทาง — งานที่ต่างกัน (สร้าง/เปิดคำเชิญ) ถูกเติมเวลาจนถึงเพดานคงที่ (กันวัดเวลาแยก "มี/ไม่มี")
+        // ฝ่ายค้าน H3: เวลาตอบเท่ากันทุกทาง — งานที่ต่างกัน (สร้าง/เปิดคำเชิญ) ถูกเติมเวลาจนถึงเพดานคงที่ (กันวัดเวลาแยก "มี/ไม่มี") ·
+        // รอบ 264 ฝ่ายค้าน M1: เติมเวลาใน finally — ทุกทาง (รวม exception) ใช้เวลาเท่ากัน
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var rawTax = (partnerTaxId ?? "").Trim();
+        try
+        {
+            await InviteCoreAsync(invitingCompanyId, taxId, (partnerTaxId ?? "").Trim(), partnerBranchCode, invitedByUserId, message);
+        }
+        finally
+        {
+            var rest = InviteMinimumDuration - sw.Elapsed;
+            if (rest > TimeSpan.Zero) await Task.Delay(rest);
+        }
+    }
+
+    private async Task InviteCoreAsync(Guid invitingCompanyId, string taxId, string rawTax, string? partnerBranchCode, Guid invitedByUserId, string? message)
+    {
         var now = DateTime.UtcNow;
         // รอบ 264 (คำตัดสิน 264-1-2): "คำขอที่เราส่ง" — เกิดทุกครั้ง รูปเดียวกันทุกกรณี (ไม่มีผลการค้นในแถว) ⇒ ผู้ขอติดตามสถานะได้โดยไม่รู้ว่าเลขนี้ใช้ NextAcc
         var request = new PartnerLinkRequest
@@ -79,7 +92,7 @@ public partial class CrossTenantWorkflowService
             CreatedBy = invitedByUserId.ToString(),
         };
         _db.PartnerLinkRequests.Add(request);
-        // รอบ 264 (คำตัดสิน 264-1-1 · แทน 257-3-3): ค้นทุกบริษัทที่ตรงเลขภาษี — <b>ไม่ดู</b> PartnerDiscoverable (เดิมกรอง ⇒ ปลายทางที่ไม่เปิด = ไม่พบ ⇒ คำขอหายเงียบ
+        // รอบ 264 (คำตัดสิน 264-1-1 · แทน 257-3-3): ค้นทุกบริษัทที่ตรงเลขภาษี — ไม่ดู PartnerDiscoverable (เดิมกรอง ⇒ ปลายทางที่ไม่เปิด = ไม่พบ ⇒ คำขอหายเงียบ
         // ทั้งที่ผู้ใช้ส่งเลขถูก) · ปลายทางตัดสินเองด้วยการกดยอมรับ · กำกวม ⇒ ส่งถึงทุกบริษัทที่ตรง (InviteTargets · คำตัดสิน 264-1-3)
         var candidates = await _db.Companies.AsNoTracking()
             .Where(c => !c.IsDeleted && c.Id != invitingCompanyId && (c.TaxId == taxId || c.TaxId == rawTax))
@@ -87,80 +100,110 @@ public partial class CrossTenantWorkflowService
             .ToListAsync();
         var targets = Accounting.Helpers.PartnerCompanyMatch.InviteTargets(candidates, partnerBranchCode);
 
-        var outcomes = new List<string>();   // ใช้ใน log ของเซิร์ฟเวอร์เท่านั้น — ห้ามไหลเข้า response/audit ที่ผู้เชิญอ่านได้
-        if (targets.Count == 0) outcomes.Add(Accounting.Helpers.PartnerMatchKind.None.ToString());
-        foreach (var partnerId in targets)
+        // ฝ่ายค้าน M1 (คำตัดสิน 264-1-9): อ่าน-แล้วสร้างแถวคู่ใต้ pg_advisory_xact_lock ต่อคู่ — สองคำขอพร้อมกันไม่ชน unique (เดิมตัวที่สองได้ 500 ⇒ แยก "มี/ไม่มี" ได้)
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
         {
-            var (a, b) = OrderPair(invitingCompanyId, partnerId);
-            var existing = await _db.TradingPartnerships
-                .FirstOrDefaultAsync(p => p.CompanyAId == a && p.CompanyBId == b);
-            string outcome;
-            if (existing == null)
+            var outcomes = new List<string>();   // ใช้ใน log ของเซิร์ฟเวอร์เท่านั้น — ห้ามไหลเข้า response/audit ที่ผู้เชิญอ่านได้
+            if (targets.Count == 0) outcomes.Add(Accounting.Helpers.PartnerMatchKind.None.ToString());
+            foreach (var partnerId in targets)
             {
-                _db.TradingPartnerships.Add(new TradingPartnership
+                var (a, b) = OrderPair(invitingCompanyId, partnerId);
+                await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                    Accounting.Helpers.AdvisoryLockKey.For(a, Accounting.Helpers.AdvisoryLockKey.TradingPartnerInvite, "invite:" + b.ToString("N")));
+                var existing = await _db.TradingPartnerships
+                    .FirstOrDefaultAsync(p => p.CompanyAId == a && p.CompanyBId == b);
+                string outcome;
+                if (existing == null)
                 {
-                    CompanyAId = a,
-                    CompanyBId = b,
-                    Status = TradingPartnershipStatus.Pending,
-                    InvitedByCompanyId = invitingCompanyId,
-                    InvitedByUserId = invitedByUserId,
-                    InvitationMessage = message,
-                    CreatedBy = invitedByUserId.ToString(),
-                    InvitedAt = now,
-                    InviteNoticeDueAt = now,
-                    LinkRequestId = request.Id,
-                });
-                outcome = "Created";
+                    _db.TradingPartnerships.Add(new TradingPartnership
+                    {
+                        CompanyAId = a,
+                        CompanyBId = b,
+                        Status = TradingPartnershipStatus.Pending,
+                        InvitedByCompanyId = invitingCompanyId,
+                        InvitedByUserId = invitedByUserId,
+                        InvitationMessage = message,
+                        CreatedBy = invitedByUserId.ToString(),
+                        InvitedAt = now,
+                        InviteNoticeDueAt = now,
+                        LinkRequestId = request.Id,
+                    });
+                    outcome = "Created";
+                }
+                // ฝ่ายค้าน L8 (คำตัดสิน 264-1-13): อีกฝ่าย "ไม่รับคำขอจากบริษัทนี้อีก" ⇒ ไม่เปิด ไม่แจ้ง (คำตอบเท่าเดิม)
+                else if (Accounting.Helpers.PartnerLinkRequestRules.BlockedForRequester(existing.RequestsBlockedByCompanyId, invitingCompanyId))
+                    outcome = "Blocked";
+                // รอบ 257 ชุด 3 (ฝ่ายค้าน LOW): ระงับแล้วต้องพ้นช่วงพัก 7 วันเหมือนถูกปฏิเสธ (ตัวตัดสินเดียว ReinviteAllowed) — คำตอบยังเหมือนเดิมทุกกรณี ·
+                // รอบ 264: คำขอที่รอตอบแต่หมดอายุแล้ว ⇒ เปิดใหม่เป็นคำขอสด (แจ้งใหม่) · ยังไม่หมดอายุ ⇒ ไม่แจ้งซ้ำ (กันสแปม)
+                else if (Accounting.Helpers.PartnerExchangeRules.ReinviteAllowed(existing.Status, existing.RejectedAt, existing.SuspendedAt, now, RejectedReinviteCooldownDays)
+                    || Accounting.Helpers.PartnerLinkRequestRules.IsExpired(existing.Status, existing.InvitedAt, existing.CreatedAt, now))
+                {
+                    // เชิญซ้ำหลังถูกปฏิเสธ (พ้นช่วงพัก) / ถูกระงับ / หมดอายุ — เปิดใหม่ให้ปลายทางเห็นคำเชิญสด
+                    // (รอบ 255 ฝ่ายค้าน M4: ยอมรับได้จาก Pending เท่านั้น ⇒ ทางกลับของแถวที่ถูกระงับคือเชิญใหม่ทางนี้)
+                    existing.Status = TradingPartnershipStatus.Pending;
+                    existing.InvitedByCompanyId = invitingCompanyId;
+                    existing.InvitedByUserId = invitedByUserId;
+                    existing.InvitationMessage = message;
+                    existing.RejectedAt = null;
+                    existing.RejectionReason = null;
+                    existing.SuspendedAt = null;
+                    existing.UpdatedAt = now;
+                    existing.InvitedAt = now;
+                    existing.InviteNoticeDueAt = now;
+                    existing.InviteNotifiedAt = null;
+                    existing.InviteNoticeResult = null;
+                    existing.LinkRequestId = request.Id;
+                    existing.RequestsBlockedByCompanyId = null;   // ผู้บล็อกส่งคำขอเอง = ปลดบล็อก
+                    existing.RequestsBlockedAt = null;
+                    outcome = "Reopened";
+                }
+                // ฝ่ายค้าน L1: ส่งซ้ำระหว่างรอ (เราเป็นผู้ขอ) ⇒ ต่ออายุคู่ให้ตรงกับแถวคำขอใหม่ · ไม่แจ้งซ้ำ
+                else if (existing.Status == TradingPartnershipStatus.Pending && existing.InvitedByCompanyId == invitingCompanyId)
+                {
+                    existing.InvitedAt = now;
+                    existing.UpdatedAt = now;
+                    existing.LinkRequestId = request.Id;
+                    outcome = "Refreshed";
+                }
+                // ฝ่ายค้าน L3: เชื่อมกันอยู่แล้ว ⇒ คำขอของเรา = เชื่อมแล้ว (ผู้ขอเห็นคู่นี้ในตารางคู่ค้าอยู่แล้ว ⇒ ไม่รั่ว)
+                else if (existing.Status == TradingPartnershipStatus.Accepted)
+                {
+                    request.AcceptedAt = now;
+                    request.AcceptedPartnershipId = existing.Id;
+                    outcome = "AlreadyLinked";
+                }
+                else outcome = "Unchanged:" + existing.Status;
+                outcomes.Add(outcome);
+                // รอบ 264 (คำตัดสิน 264-1-4 · แทนแถวกระดิ่งตรงของ 257-3-3): การแจ้งปลายทางไปที่ outbox (InviteNoticeDueAt) — งานเบื้องหลังส่งผ่านเครื่องแจ้งเตือน
+                // (กระดิ่ง + อีเมล + LINE ตามตารางของปลายทาง) · ในคำขอนี้ไม่มีงานช่องภายนอก ⇒ เวลาตอบไม่ต่างจนวัดได้ (ถูกเติมถึงเพดานคงที่เหมือนเดิม)
             }
-            // รอบ 257 ชุด 3 (ฝ่ายค้าน LOW): ระงับแล้วต้องพ้นช่วงพัก 7 วันเหมือนถูกปฏิเสธ (ตัวตัดสินเดียว ReinviteAllowed) — คำตอบยังเหมือนเดิมทุกกรณี ·
-            // รอบ 264: คำขอที่รอตอบแต่หมดอายุแล้ว ⇒ เปิดใหม่เป็นคำขอสด (แจ้งใหม่) · ยังไม่หมดอายุ ⇒ ไม่แจ้งซ้ำ (กันสแปม)
-            else if (Accounting.Helpers.PartnerExchangeRules.ReinviteAllowed(existing.Status, existing.RejectedAt, existing.SuspendedAt, now, RejectedReinviteCooldownDays)
-                || Accounting.Helpers.PartnerLinkRequestRules.IsExpired(existing.Status, existing.InvitedAt, existing.CreatedAt, now))
-            {
-                // เชิญซ้ำหลังถูกปฏิเสธ (พ้นช่วงพัก) / ถูกระงับ / หมดอายุ — เปิดใหม่ให้ปลายทางเห็นคำเชิญสด
-                // (รอบ 255 ฝ่ายค้าน M4: ยอมรับได้จาก Pending เท่านั้น ⇒ ทางกลับของแถวที่ถูกระงับคือเชิญใหม่ทางนี้)
-                existing.Status = TradingPartnershipStatus.Pending;
-                existing.InvitedByCompanyId = invitingCompanyId;
-                existing.InvitedByUserId = invitedByUserId;
-                existing.InvitationMessage = message;
-                existing.RejectedAt = null;
-                existing.RejectionReason = null;
-                existing.SuspendedAt = null;
-                existing.UpdatedAt = now;
-                existing.InvitedAt = now;
-                existing.InviteNoticeDueAt = now;
-                existing.InviteNotifiedAt = null;
-                existing.InviteNoticeResult = null;
-                existing.LinkRequestId = request.Id;
-                outcome = "Reopened";
-            }
-            else outcome = "Unchanged:" + existing.Status;
-            outcomes.Add(outcome);
-            // รอบ 264 (คำตัดสิน 264-1-4 · แทนแถวกระดิ่งตรงของ 257-3-3): การแจ้งปลายทางไปที่ outbox (InviteNoticeDueAt) — งานเบื้องหลังส่งผ่านเครื่องแจ้งเตือน
-            // (กระดิ่ง + อีเมล + LINE ตามตารางของปลายทาง) · ในคำขอนี้ไม่มีงานช่องภายนอก ⇒ เวลาตอบไม่ต่างจนวัดได้ (ถูกเติมถึงเพดานคงที่เหมือนเดิม)
-        }
 
-        // audit ของผู้เชิญ — เนื้อหาเหมือนกันทุกกรณี (ผู้ดูแลของบริษัทผู้เชิญอ่าน audit ได้ ⇒ ห้ามมีผลการค้น)
-        _db.AddChainedAuditLog(new AuditLog
-        {
-            CompanyId = invitingCompanyId,
-            UserId = invitedByUserId,
-            Action = AuditAction.Create,
-            EntityType = "TradingPartnerInvite",
-            EntityId = invitingCompanyId.ToString(),
-            NewValues = JsonSerializer.Serialize(new
+            // audit ของผู้เชิญ — เนื้อหาเหมือนกันทุกกรณี (ผู้ดูแลของบริษัทผู้เชิญอ่าน audit ได้ ⇒ ห้ามมีผลการค้น)
+            _db.AddChainedAuditLog(new AuditLog
             {
-                @event = "TradingPartnerInviteRequested",
-                partnerTaxId = taxId,
-                partnerBranchCode = Accounting.Helpers.PartnerCompanyMatch.WantedBranch(partnerBranchCode),
-                ruleCode = Accounting.Helpers.PartnerCompanyMatch.RuleCode,
-            }),
-            Timestamp = now,
-        });
-        await _db.SaveChangesAsync();
-        _logger.LogInformation("Trading partner invite from {Company}: outcome {Outcome}", invitingCompanyId, string.Join(",", outcomes));
-        var rest = InviteMinimumDuration - sw.Elapsed;
-        if (rest > TimeSpan.Zero) await Task.Delay(rest);
+                CompanyId = invitingCompanyId,
+                UserId = invitedByUserId,
+                Action = AuditAction.Create,
+                EntityType = "TradingPartnerInvite",
+                EntityId = invitingCompanyId.ToString(),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    @event = "TradingPartnerInviteRequested",
+                    partnerTaxId = taxId,
+                    partnerBranchCode = Accounting.Helpers.PartnerCompanyMatch.WantedBranch(partnerBranchCode),
+                    ruleCode = Accounting.Helpers.PartnerCompanyMatch.RuleCode,
+                }),
+                Timestamp = now,
+            });
+            await _db.SaveChangesAsync();
+            if (ownTx != null) await ownTx.CommitAsync();
+            _logger.LogInformation("Trading partner invite from {Company}: outcome {Outcome}", invitingCompanyId, string.Join(",", outcomes));
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
     }
 
     /// <summary>ฝ่ายค้าน H3: เวลาขั้นต่ำของการเชิญทุกกรณี (กันวัดเวลาตอบแยกสมาชิกภาพ) — สูงกว่างานจริงปกติ</summary>
@@ -222,16 +265,26 @@ public partial class CrossTenantWorkflowService
                 Timestamp = acceptedAt,
             });
             await _db.SaveChangesAsync();
-            // รอบ 264 (คำตัดสิน 264-1-2): "คำขอที่เราส่ง" ของผู้ขอ ⇒ เชื่อมแล้ว — คำขอที่เปิดแถวนี้ + คำขอซ้ำที่ยังไม่หมดอายุถึงเลขภาษีของเรา
-            // (ส่งซ้ำระหว่างรอ = ไม่เปิดแถวใหม่ ⇒ แถวคำขอใหม่ไม่ถูกอ้าง · ยอมรับแล้วเปิดเผยตัวตนได้ — ความยินยอม) · ครั้งแรกที่ยอมรับเท่านั้น
+            // รอบ 264 (คำตัดสิน 264-1-2 · ฝ่ายค้าน L2 คำตัดสิน 264-1-14): "คำขอที่เราส่ง" ของผู้ขอ ⇒ เชื่อมแล้ว — คำขอที่เปิดแถวนี้ +
+            // คำขออื่นที่ยังไม่หมดอายุซึ่ง<b>ส่งถึงเราจริง</b>: เลขภาษีตรง และ (สาขาตรงเป๊ะ หรือไม่ระบุสาขาแล้วตัวเลือกผู้รับเลือกเรา — InviteTargets ตัวเดียวกับตอนส่ง)
             var me = await _db.Companies.AsNoTracking().Where(c => c.Id == acceptingCompanyId).Select(c => new { c.TaxId, c.BranchCode }).FirstOrDefaultAsync();
             var myTax = Accounting.Helpers.PartnerCompanyMatch.NormalizeTaxId(me?.TaxId) ?? "";
             var myBranch = Accounting.Helpers.TaxBranchCode.Normalize(me?.BranchCode);
+            var noBranchReachesMe = false;
+            if (myTax != "")
+            {
+                var rawMyTax = (me?.TaxId ?? "").Trim();
+                var sameTax = await _db.Companies.AsNoTracking()
+                    .Where(c => !c.IsDeleted && c.Id != p.InvitedByCompanyId && (c.TaxId == myTax || c.TaxId == rawMyTax))
+                    .Select(c => new Accounting.Helpers.PartnerCompanyCandidate(c.Id, c.BranchCode)).ToListAsync();
+                noBranchReachesMe = Accounting.Helpers.PartnerCompanyMatch.InviteTargets(sameTax, null).Contains(acceptingCompanyId);
+            }
             var linkRequestId = p.LinkRequestId ?? Guid.Empty;
             await _db.PartnerLinkRequests
                 .Where(r => r.CompanyId == p.InvitedByCompanyId && r.AcceptedAt == null
                     && (r.Id == linkRequestId
-                        || (myTax != "" && r.PartnerTaxId == myTax && (r.PartnerBranchCode == null || r.PartnerBranchCode == myBranch) && r.ExpiresAt >= acceptedAt)))
+                        || (myTax != "" && r.PartnerTaxId == myTax && r.ExpiresAt >= acceptedAt
+                            && (r.PartnerBranchCode == myBranch || (r.PartnerBranchCode == null && noBranchReachesMe)))))
                 .ExecuteUpdateAsync(x => x.SetProperty(r => r.AcceptedAt, (DateTime?)acceptedAt).SetProperty(r => r.AcceptedPartnershipId, (Guid?)p.Id));
             if (ownTx != null) await ownTx.CommitAsync();
         }
@@ -249,30 +302,55 @@ public partial class CrossTenantWorkflowService
     {
         if (_notify == null) return;
         var me = await _db.Companies.AsNoTracking().Where(c => c.Id == acceptingCompanyId)
-            .Select(c => new { c.Name, c.TaxId, c.BranchCode }).FirstOrDefaultAsync();
-        await _notify.DispatchAsync(p.InvitedByCompanyId, Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange, new Accounting.Services.Interfaces.NotificationContext
+            .Select(c => new { c.TaxId, c.BranchCode }).FirstOrDefaultAsync();
+        // ฝ่ายค้าน L4 (คำตัดสิน 264-1-11): คีย์ของตัวเอง (เดิมยืม autopilot.partner_exchange = "ยกเลิก 50 ทวิ") · M2/L5/L6: ไม่มีชื่อ (ข้อความอิสระ) · เลขปิดบัง · "ไม่ได้ยืนยัน"
+        await _notify.DispatchAsync(p.InvitedByCompanyId, Accounting.Models.Constants.NotificationEvents.PartnerLinkAccepted, new Accounting.Services.Interfaces.NotificationContext
         {
             Title = Accounting.Helpers.PartnerLinkRequestRules.AcceptedNoticeTitle,
-            Message = Accounting.Helpers.PartnerLinkRequestRules.AcceptedNoticeMessage(me?.Name, me?.TaxId, me?.BranchCode),
+            Message = Accounting.Helpers.PartnerLinkRequestRules.AcceptedNoticeMessage(me?.TaxId, me?.BranchCode),
             ActionUrl = "/pages/partners.html?company=" + p.InvitedByCompanyId,
             EntityType = "TradingPartnership", EntityId = p.Id, ActorUserId = actorUserId,
         });
     }
 
+    /// <summary>ปฏิเสธคำขอเชื่อม — รอบ 264 ฝ่ายค้าน M4 (คำตัดสิน 264-1-12): เฉพาะคำขอที่รอเรายอมรับ (Pending และเราไม่ใช่ผู้ขอ) · อื่น ๆ ⇒ 409 + ทางไปต่อ "ระงับการเชื่อม"
+    /// (เดิมตัดคู่ที่เชื่อมแล้วได้เงียบ ๆ โดยไม่มีหลักฐาน) · audit <c>TradingPartnerLinkRejected</c> (เหตุผลเก็บฝั่งผู้ปฏิเสธ · ผู้ขอไม่ได้สัญญาณ — 264-1-2) ·
+    /// <paramref name="blockRequester"/> = "ไม่รับคำขอจากบริษัทนี้อีก" (คำตัดสิน 264-1-13)</summary>
     public async Task<TradingPartnership> RejectPartnershipAsync(
-        Guid rejectingCompanyId, Guid partnershipId, string? reason)
+        Guid rejectingCompanyId, Guid partnershipId, string? reason, Guid? rejectedByUserId = null, bool blockRequester = false)
     {
         var p = await _db.TradingPartnerships
             .FirstOrDefaultAsync(x => x.Id == partnershipId)
             ?? throw new InvalidOperationException("ไม่พบ trading partnership");
         if (p.CompanyAId != rejectingCompanyId && p.CompanyBId != rejectingCompanyId)
             throw new UnauthorizedAccessException("บริษัทไม่ได้เป็นส่วนหนึ่งของ partnership นี้");
+        if (Accounting.Helpers.PartnerLinkRequestRules.RejectProblem(p.Status, p.InvitedByCompanyId == rejectingCompanyId) is string problem)
+            throw new Accounting.Helpers.BusinessRuleException(problem, Accounting.Helpers.PartnerLinkRequestRules.RuleCode, 409);
 
+        reason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+        if (reason is { Length: > 500 }) reason = reason[..500];
+        var now = DateTime.UtcNow;
         p.Status = TradingPartnershipStatus.Rejected;
-        p.RejectedAt = DateTime.UtcNow;
+        p.RejectedAt = now;
         p.RejectionReason = reason;
-        p.UpdatedAt = DateTime.UtcNow;
+        p.UpdatedAt = now;
         p.InviteNoticeDueAt = null;   // รอบ 264: ตอบแล้ว ⇒ ไม่แจ้ง "มีคำขอ" (outbox) · ผู้ขอไม่ได้รับสัญญาณการปฏิเสธ (คำตัดสิน 264-1-2)
+        if (blockRequester)
+        {
+            p.RequestsBlockedByCompanyId = rejectingCompanyId;
+            p.RequestsBlockedAt = now;
+        }
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = rejectingCompanyId, UserId = rejectedByUserId, Action = AuditAction.Update,
+            EntityType = "TradingPartnership", EntityId = p.Id.ToString(),
+            NewValues = JsonSerializer.Serialize(new
+            {
+                @event = "TradingPartnerLinkRejected", requesterCompanyId = p.InvitedByCompanyId, reason, blockRequester,
+                ruleCode = Accounting.Helpers.PartnerLinkRequestRules.RuleCode, legalReference = Accounting.Helpers.PartnerLinkRequestRules.LegalReference,
+            }),
+            Timestamp = now,
+        });
         await _db.SaveChangesAsync();
         return p;
     }

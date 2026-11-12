@@ -133,7 +133,10 @@ public class PartnerLinkRequestRound264DbTests
         var call = Assert.Single(notify.Calls, c => c.CompanyId == b.Co.Id);
         Assert.Equal(NotificationEvents.PartnerLinkRequested, call.Key);
         Assert.Equal(PartnerLinkRequestRules.AcceptUrl(b.Co.Id, row.Id), call.Ctx.ActionUrl);
-        Assert.Contains(a.Co.Name, call.Ctx.Message);
+        // ฝ่ายค้าน M2/L6: ไม่มีชื่อ (ข้อความอิสระ) · เลขปิดบัง · ไม่มีข้อความเชิญ
+        Assert.DoesNotContain(a.Co.Name, call.Ctx.Message);
+        Assert.DoesNotContain(a.Co.TaxId, call.Ctx.Message);
+        Assert.Contains(PiiMask.CitizenId(a.Co.TaxId)!, call.Ctx.Message);
         Assert.DoesNotContain("ขอเชื่อมครับ", call.Ctx.Message);
         Assert.DoesNotContain(notify.Calls, c => c.CompanyId == a.Co.Id);   // ผู้ขอไม่ได้สัญญาณ
         var stamped = await RowAsync(a.Co.Id, b.Co.Id);
@@ -168,8 +171,9 @@ public class PartnerLinkRequestRound264DbTests
         Assert.Equal("Accepted", outgoing.Single(o => o.GetProperty("partnerTaxId").GetString() == b.Co.TaxId).GetProperty("state").GetString());
         Assert.Equal("Awaiting", outgoing.Single(o => o.GetProperty("partnerTaxId").GetString() == unknownTax).GetProperty("state").GetString());
         var toA = Assert.Single(notify.Calls, c => c.CompanyId == a.Co.Id);
-        Assert.Contains(b.Co.Name, toA.Ctx.Message);
-        Assert.Contains(b.Co.TaxId, toA.Ctx.Message);
+        Assert.Equal(NotificationEvents.PartnerLinkAccepted, toA.Key);   // ฝ่ายค้าน L4: คีย์ของตัวเอง
+        Assert.DoesNotContain(b.Co.Name, toA.Ctx.Message);
+        Assert.Contains(PiiMask.CitizenId(b.Co.TaxId)!, toA.Ctx.Message);
         // A เห็นคู่ค้าในตารางคู่ค้าหลังยอมรับเท่านั้น
         Assert.Equal(1, Data(await Controller(after, a.Owner).List(a.Co.Id)).GetArrayLength());
     }
@@ -287,13 +291,23 @@ public class PartnerLinkRequestRound264DbTests
         using (var job = DbTestDatabase.TryCreateContext()!)
             await Svc(job, notify).DispatchPendingLinkRequestNoticesAsync(DateTime.UtcNow);
         Assert.DoesNotContain(notify.Calls, c => c.CompanyId == target.Co.Id);
-        Assert.Equal(nameof(PartnerLinkRequestRules.NoticeAction.SkipCapped), (await RowAsync(extra.Co.Id, target.Co.Id)).InviteNoticeResult);
+        var capped = await RowAsync(extra.Co.Id, target.Co.Id);
+        Assert.Equal(nameof(PartnerLinkRequestRules.NoticeAction.SkipCapped), capped.InviteNoticeResult);
+        // ฝ่ายค้าน M3: ไม่เงียบถาวร — ไม่ประทับว่าแจ้งแล้ว · เลื่อนไปเมื่อหน้าต่าง 24 ชม. ว่าง
+        Assert.Null(capped.InviteNotifiedAt);
+        Assert.True(capped.InviteNoticeDueAt > DateTime.UtcNow.AddHours(22));
         // ยังอยู่ในรายการของปลายทาง (กดยอมรับได้)
         using (var ct = DbTestDatabase.TryCreateContext()!)
         {
             var list = Data(await Controller(ct, target.Owner).List(target.Co.Id)).EnumerateArray().ToList();
             Assert.Contains(list, p => p.GetProperty("partner").GetProperty("id").GetGuid() == extra.Co.Id && p.GetProperty("canRespond").GetBoolean());
         }
+
+        // วันถัดไป (หน้าต่างว่าง) ⇒ ได้แจ้ง
+        using (var nextDay = DbTestDatabase.TryCreateContext()!)
+            await Svc(nextDay, notify).DispatchPendingLinkRequestNoticesAsync(DateTime.UtcNow.AddHours(25));
+        Assert.Single(notify.Calls, c => c.CompanyId == target.Co.Id);
+        Assert.Equal(nameof(NotificationDispatchOutcome.Delivered), (await RowAsync(extra.Co.Id, target.Co.Id)).InviteNoticeResult);
 
         // ส่งล้ม ⇒ ผล Failed + เลื่อนเวลา · ไม่ประทับว่าแจ้งแล้ว · รอบถัดไปหลังถึงเวลา ⇒ ส่งได้
         var t2 = await CompanyAsync(db, "ปลายทางส่งล้ม 264");
@@ -340,5 +354,115 @@ public class PartnerLinkRequestRound264DbTests
         Assert.Equal(1, Data(await Controller(c, a.Owner).ListOutgoingRequests(a.Co.Id)).GetArrayLength());
         // ผู้ขอไม่เห็นแถวรอตอบในตารางคู่ค้า (P-1)
         Assert.Equal(0, Data(await Controller(c, a.Owner).List(a.Co.Id)).GetArrayLength());
+    }
+
+    // ═══════════ (5) ฝ่ายค้านรอบ 264 ═══════════
+
+    [Fact]
+    public async Task M1_ส่งพร้อมกันสองครั้งถึงบริษัทที่มีอยู่_ทั้งคู่202_แถวคู่เดียว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var a = await CompanyAsync(db, "ผู้ขอพร้อมกัน 264");
+        var b = await CompanyAsync(db, "ปลายทางพร้อมกัน 264");
+        async Task<int?> One()
+        {
+            using var c = DbTestDatabase.TryCreateContext()!;
+            return Status(await Controller(c, a.Owner).Invite(a.Co.Id, new CrossTenantWorkflowController.InviteRequest(b.Co.TaxId, null)));
+        }
+        var results = await Task.WhenAll(One(), One(), One());
+        Assert.All(results, r => Assert.Equal(202, r));
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Single(await check.TradingPartnerships.AsNoTracking().Where(p => p.CompanyAId == a.Co.Id || p.CompanyBId == a.Co.Id).ToListAsync());
+        Assert.Equal(3, await check.PartnerLinkRequests.CountAsync(r => r.CompanyId == a.Co.Id));
+    }
+
+    [Fact]
+    public async Task M4_ปฏิเสธคู่ที่เชื่อมแล้ว409_ผู้ขอปฏิเสธเองไม่ได้_ปฏิเสธคำขอจริงมีaudit_บล็อกแล้วส่งใหม่ไม่เปิด()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var a = await CompanyAsync(db, "ผู้ขอปฏิเสธ M4 264");
+        var b = await CompanyAsync(db, "ปลายทาง M4 264");
+        await Svc(db).InvitePartnerAsync(a.Co.Id, b.Co.TaxId, null, a.Owner, null);
+        var row = await RowAsync(a.Co.Id, b.Co.Id);
+
+        // ผู้ขอ "ปฏิเสธ" คำขอของตัวเองไม่ได้
+        using (var c1 = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(c1).RejectPartnershipAsync(a.Co.Id, row.Id, null, a.Owner))).StatusCode);
+        // ปลายทางปฏิเสธ + บล็อก ⇒ audit · ผู้ขอส่งใหม่หลังพ้นช่วงพัก ⇒ ไม่เปิด ไม่แจ้ง (คำตอบเท่าเดิม)
+        using (var c2 = DbTestDatabase.TryCreateContext()!)
+            await Controller(c2, b.Owner).Reject(b.Co.Id, row.Id, new CrossTenantWorkflowController.RejectRequest("สแปม", BlockRequester: true));
+        using (var c3 = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.True(await c3.AuditLogs.AnyAsync(x => x.CompanyId == b.Co.Id && x.EntityId == row.Id.ToString()
+                && x.NewValues != null && x.NewValues.Contains("TradingPartnerLinkRejected")));
+            Assert.Equal(b.Co.Id, (await RowAsync(a.Co.Id, b.Co.Id)).RequestsBlockedByCompanyId);
+            await c3.TradingPartnerships.Where(p => p.Id == row.Id).ExecuteUpdateAsync(x => x.SetProperty(p => p.RejectedAt, DateTime.UtcNow.AddDays(-8)));
+        }
+        using (var c4 = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(202, Status(await Controller(c4, a.Owner).Invite(a.Co.Id, new CrossTenantWorkflowController.InviteRequest(b.Co.TaxId, null))));
+        var blocked = await RowAsync(a.Co.Id, b.Co.Id);
+        Assert.Equal(TradingPartnershipStatus.Rejected, blocked.Status);
+        Assert.Null(blocked.InviteNoticeDueAt);
+        // ทิศตรงข้าม: ผู้บล็อก (B) ส่งคำขอถึง A เอง ⇒ เปิดคำขอสด + ปลดบล็อก ⇒ A ยอมรับ ⇒ เชื่อม
+        using (var c5 = DbTestDatabase.TryCreateContext()!)
+            await Svc(c5).InvitePartnerAsync(b.Co.Id, a.Co.TaxId, null, b.Owner, null);
+        var reopened = await RowAsync(a.Co.Id, b.Co.Id);
+        Assert.Equal(TradingPartnershipStatus.Pending, reopened.Status);
+        Assert.Null(reopened.RequestsBlockedByCompanyId);
+        using (var c6 = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(TradingPartnershipStatus.Accepted, (await Svc(c6).AcceptPartnershipAsync(a.Co.Id, row.Id, a.Owner)).Status);
+        // คู่ที่เชื่อมแล้ว ⇒ ปฏิเสธ = 409 (ทางไปต่อ: ระงับการเชื่อม) · สถานะไม่เปลี่ยน
+        using (var c7 = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(c7).RejectPartnershipAsync(b.Co.Id, row.Id, null, b.Owner));
+            Assert.Equal(409, ex.StatusCode);
+            Assert.Contains("ระงับการเชื่อม", ex.Message);
+        }
+        Assert.Equal(TradingPartnershipStatus.Accepted, (await RowAsync(a.Co.Id, b.Co.Id)).Status);
+        // L3: คำขอถึงคู่ที่เชื่อมอยู่แล้ว ⇒ คำขอที่เราส่ง = เชื่อมแล้วทันที
+        using (var c8 = DbTestDatabase.TryCreateContext()!)
+            await Svc(c8).InvitePartnerAsync(a.Co.Id, b.Co.TaxId, null, a.Owner, null);
+        using var c9 = DbTestDatabase.TryCreateContext()!;
+        var latest = await c9.PartnerLinkRequests.AsNoTracking().Where(r => r.CompanyId == a.Co.Id).OrderByDescending(r => r.CreatedAt).FirstAsync();
+        Assert.NotNull(latest.AcceptedAt);
+    }
+
+    [Fact]
+    public async Task L1_L2_ส่งซ้ำระหว่างรอต่ออายุคู่_ยอมรับไม่ประทับคำขอไม่ระบุสาขาที่ไม่ได้ส่งถึงผู้ยอมรับ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var a = await CompanyAsync(db, "ผู้ขอ L2 264");
+        var tax = RandTax();
+        var hq = await CompanyAsync(db, "สำนักงานใหญ่ L2 264", taxId: tax);
+        var br = new Company { Name = "สาขา L2 264 " + Guid.NewGuid().ToString("N")[..6], TaxId = tax, BranchCode = "00001" };
+        db.Companies.Add(br);
+        var brOwner = new User { Email = $"r264-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "เจ้าของสาขา" };
+        db.Users.Add(brOwner);
+        await db.SaveChangesAsync();
+        db.CompanyUsers.Add(new CompanyUser { UserId = brOwner.Id, CompanyId = br.Id, Role = UserRole.Owner });
+        await db.SaveChangesAsync();
+
+        await Svc(db).InvitePartnerAsync(a.Co.Id, tax, null, a.Owner, null);      // ไม่ระบุสาขา ⇒ สำนักงานใหญ่
+        await Svc(db).InvitePartnerAsync(a.Co.Id, tax, "00001", a.Owner, null);   // สาขา 00001
+        // L1: ส่งซ้ำถึงสาขาระหว่างรอ ⇒ ต่ออายุ InvitedAt (ไม่แจ้งซ้ำ)
+        var before = await RowAsync(a.Co.Id, br.Id);
+        using (var old = DbTestDatabase.TryCreateContext()!)
+            await old.TradingPartnerships.Where(p => p.Id == before.Id).ExecuteUpdateAsync(x => x.SetProperty(p => p.InvitedAt, DateTime.UtcNow.AddDays(-25)));
+        using (var again = DbTestDatabase.TryCreateContext()!)
+            await Svc(again).InvitePartnerAsync(a.Co.Id, tax, "00001", a.Owner, null);
+        var refreshed = await RowAsync(a.Co.Id, br.Id);
+        Assert.True(refreshed.InvitedAt > DateTime.UtcNow.AddDays(-1));
+
+        // L2: สาขายอมรับ ⇒ คำขอ "ไม่ระบุสาขา" (ถึงสำนักงานใหญ่) ไม่ถูกประทับ · คำขอสาขาทั้งสองฉบับ = เชื่อมแล้ว
+        using (var acc = DbTestDatabase.TryCreateContext()!)
+            await Svc(acc).AcceptPartnershipAsync(br.Id, refreshed.Id, brOwner.Id);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var reqs = await check.PartnerLinkRequests.AsNoTracking().Where(r => r.CompanyId == a.Co.Id).ToListAsync();
+        Assert.Null(reqs.Single(r => r.PartnerBranchCode == null).AcceptedAt);
+        Assert.All(reqs.Where(r => r.PartnerBranchCode == "00001"), r => Assert.NotNull(r.AcceptedAt));
+        _ = hq;
     }
 }

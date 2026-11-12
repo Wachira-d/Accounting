@@ -2547,16 +2547,15 @@ const Layout = {
         if (items.length === 0) {
           list.innerHTML = '<p class="text-gray-500 text-sm text-center" style="padding:20px">ไม่มีการแจ้งเตือน</p>';
         } else {
-          // รอบ 264: แถวที่มีลิงก์ภายใน (path ขึ้นต้น "/" ไม่ใช่ "//") กดไปหน้าที่ต้องทำต่อได้ — เดิมกระดิ่งแสดงอย่างเดียว ⇒ ลิงก์ "เปิดรับคำขอเชื่อม" กดไม่ได้
-          const internal = (u) => typeof u === 'string' && u.startsWith('/') && !u.startsWith('//') && !u.startsWith('/\\');
+          // รอบ 264 (ฝ่ายค้าน L7): ลิงก์ที่กดได้มาจากเซิร์ฟเวอร์ (n.href ผ่าน NotificationLink.InternalPath) — หน้าไม่ตัดสินเองว่า path ไหนปลอดภัย
           list.innerHTML = items.map(n => {
             const body = `
               <div class="text-sm font-medium">${Layout.esc(n.title)}</div>
               <div class="text-xs text-gray-500" style="margin-top:2px">${Layout.esc(n.message)}</div>
               <div class="text-xs text-gray-400" style="margin-top:4px">${new Date(n.createdAt).toLocaleString('th-TH')}</div>`;
             const style = `display:block;color:inherit;text-decoration:none;padding:12px 0;border-bottom:1px solid var(--gray-100);${n.isRead ? '' : 'background:#F5F3FF;margin:0 -24px;padding:12px 24px'}`;
-            return internal(n.actionUrl)
-              ? `<a href="${Layout.esc(n.actionUrl)}" style="${style}">${body}</a>`
+            return n.href
+              ? `<a href="${Layout.esc(n.href)}" style="${style}">${body}</a>`
               : `<div style="${style}">${body}</div>`;
           }).join('');
         }

@@ -184,7 +184,8 @@ public static class NotificationAudiencePolicy
     {
         // รอบ 264 (คำตัดสิน 264-1-4): คำขอเชื่อมคู่ค้า — ต้องถึงคนที่กดยอมรับได้ทุกช่องที่เขามี (กระดิ่ง · อีเมล · LINE ที่ผูกกับบอทกลางเอง) ·
         // ไม่ประกาศเข้ากลุ่ม LINE ของบริษัท (คำขอจากบุคคลภายนอก ไม่ใช่เรื่องของทั้งทีม) · บริษัทตั้งแถวของคีย์เองแล้ว ⇒ ตามที่ตั้ง (ปิดได้ทุกช่อง)
-        if (eventKey == Accounting.Models.Constants.NotificationEvents.PartnerLinkRequested)
+        if (eventKey == Accounting.Models.Constants.NotificationEvents.PartnerLinkRequested
+            || eventKey == Accounting.Models.Constants.NotificationEvents.PartnerLinkAccepted)   // ฝ่ายค้าน L4: คีย์ตอบรับของตัวเอง — ไม่เข้ากลุ่ม LINE
             return new[]
             {
                 new NotificationDefaultRow("Owner", EnableSystem: true, EnableEmail: true, EnableLine: true, EnableLineGroup: false),

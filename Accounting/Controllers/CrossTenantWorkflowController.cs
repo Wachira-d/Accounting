@@ -167,15 +167,18 @@ public class CrossTenantWorkflowController : ControllerBase
     public const string AcceptedMessage =
         "เชื่อมต่อเสร็จสิ้น — เชื่อมกับคู่ค้ารายนี้รายเดียว (ไม่ได้เปิดให้บริษัทอื่นค้นเจอ) · การส่งเอกสาร/ใบซื้อร่าง/50 ทวิ อัตโนมัติยังเป็นไปตามค่าตั้งของเรา (ค่าตั้งต้นปิด)";
 
-    public record RejectRequest(string? Reason);
+    /// <param name="BlockRequester">รอบ 264 (คำตัดสิน 264-1-13): "ปฏิเสธและไม่รับคำขอจากบริษัทนี้อีก"</param>
+    public record RejectRequest(string? Reason, bool BlockRequester = false);
 
     [HttpPost("trading-partners/{partnershipId:guid}/reject")]
     [Accounting.Filters.RequirePermission(PermissionKeys.CompanySettingsEdit)]
     [Accounting.Filters.RejectApiKey("ปฏิเสธ/ยกเลิกคู่ค้าเชื่อมระบบ")]
     public async Task<ActionResult<ApiResponse<object>>> Reject(Guid companyId, Guid partnershipId, [FromBody] RejectRequest req)
     {
-        var p = await _service.RejectPartnershipAsync(companyId, partnershipId, req?.Reason);
-        return Ok(new ApiResponse<object>(true, new { p.Id, Status = p.Status.ToString() }, "ปฏิเสธความเป็นพาร์ทเนอร์เรียบร้อย"));
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var p = await _service.RejectPartnershipAsync(companyId, partnershipId, req?.Reason, userId == Guid.Empty ? null : userId, req?.BlockRequester ?? false);
+        return Ok(new ApiResponse<object>(true, new { p.Id, Status = p.Status.ToString() },
+            req?.BlockRequester == true ? "ปฏิเสธแล้ว — จะไม่รับคำขอจากบริษัทนี้อีก (ปลดได้โดยส่งคำขอถึงเขาเอง)" : "ปฏิเสธคำขอแล้ว"));
     }
 
     public record SuspendRequest(string? Reason);

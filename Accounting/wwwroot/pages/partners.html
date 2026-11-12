@@ -161,6 +161,7 @@ const Page = {
     card.innerHTML = `<h3>🔗 คำขอเชื่อมระบบจาก ${Layout.esc(req.name || 'คู่ค้า')}</h3>
       <div class="pt-grid2">
         <div><div class="pt-muted">ผู้ขอ</div><div>${Layout.esc(req.name || '-')}</div>
+          ${req.nameNote ? `<div class="pt-muted" style="color:#92400e">(${Layout.esc(req.nameNote)})</div>` : ''}
           <div class="pt-muted">เลขผู้เสียภาษี ${Layout.esc(req.taxId || '-')} · ${Layout.esc(req.branchLabel || '')}</div></div>
         <div><div class="pt-muted">สถานะ</div><div><span class="pt-badge ${r.canRespond ? 'pt-warn' : r.status === 'Accepted' ? 'pt-ok' : ''}">${Layout.esc(r.statusLabel || r.status)}</span></div>
           <div class="pt-muted">ส่งเมื่อ ${Layout.esc(new Date(r.requestedAt).toLocaleDateString('th-TH'))}${r.status === 'Pending' ? ' · หมดอายุ ' + Layout.esc(new Date(r.expiresAt).toLocaleDateString('th-TH')) : ''}</div></div>
@@ -170,11 +171,14 @@ const Page = {
       ${r.problemMessage ? `<p class="pt-muted" role="alert" style="color:#b91c1c">${Layout.esc(r.problemMessage)}</p>` : ''}
       ${r.canRespond ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-primary" id="ptReqAccept">✅ ยอมรับและเชื่อมต่อ</button>
-          <button class="btn btn-secondary" id="ptReqReject">ปฏิเสธ</button></div>` : ''}`;
+          <button class="btn btn-secondary" id="ptReqReject">ปฏิเสธ</button>
+          <button class="btn btn-secondary" id="ptReqBlock">ปฏิเสธและไม่รับคำขอจากบริษัทนี้อีก</button></div>` : ''}`;
     const acc = document.getElementById('ptReqAccept');
     if (acc) acc.addEventListener('click', () => this.respondRequest(id, 'accept'));
     const rej = document.getElementById('ptReqReject');
     if (rej) rej.addEventListener('click', () => this.respondRequest(id, 'reject'));
+    const blk = document.getElementById('ptReqBlock');
+    if (blk) blk.addEventListener('click', () => this.respondRequest(id, 'block'));
     card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   },
 
@@ -195,10 +199,11 @@ const Page = {
         this._doneMessage = res && res.message;
         Layout.toast((res && res.message) || 'เชื่อมต่อเสร็จสิ้น', 'success');
       } else {
-        const reason = await Layout.promptText({ title: 'ปฏิเสธคำขอเชื่อม', label: 'เหตุผล (ไม่บังคับ · ผู้ขอไม่เห็น)' });
+        const block = act === 'block';
+        const reason = await Layout.promptText({ title: block ? 'ปฏิเสธและไม่รับคำขอจากบริษัทนี้อีก' : 'ปฏิเสธคำขอเชื่อม', label: 'เหตุผล (ไม่บังคับ · ผู้ขอไม่เห็น)' });
         if (reason === null) return;
-        await api.rejectPartner(id, reason);
-        Layout.toast('ปฏิเสธคำขอแล้ว', 'success');
+        const res = await api.rejectPartner(id, reason, block);
+        Layout.toast((res && res.message) || 'ปฏิเสธคำขอแล้ว', 'success');
       }
       await this.load();
     } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
