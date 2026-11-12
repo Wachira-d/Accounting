@@ -94,10 +94,10 @@ public class CreditInboxRound260DbTests
         return d;
     }
 
-    /// <summary>การรับชำระที่มีเงินรอจัดสรรค้าง (ผูกผังพัก · รู้เจ้าของ)</summary>
+    /// <summary>การรับชำระที่มีเงินรอจัดสรรค้าง (ผูกผังพัก · รู้เจ้าของ) · เลขที่จาก Guid — เลขสุ่มช่วง 900,000 เคยชนกันใน R260_6 (501 แถว · unique ต่อบริษัท)</summary>
     private static Payment Credit(Guid companyId, Guid docId, Guid? contactId, decimal unapplied, DateTime paymentDate, DateTime? noticeAt = null) => new()
     {
-        CompanyId = companyId, PaymentNumber = "RC260-" + Random.Shared.Next(100000, 999999), DocumentId = docId, PaymentDate = paymentDate,
+        CompanyId = companyId, PaymentNumber = "RC260-" + Guid.NewGuid().ToString("N")[..16], DocumentId = docId, PaymentDate = paymentDate,
         Amount = unapplied + 100m, PaymentMethod = PaymentMethod.BankTransfer, ContactId = contactId, UnappliedAmount = unapplied,
         UnappliedAccountId = Guid.NewGuid(), UnappliedReason = nameof(UnappliedReason.Unknown), UnappliedAgedNoticeAt = noticeAt,
     };
