@@ -287,7 +287,7 @@ public sealed class LineChatSlipService : ILineChatSlipService
     }
 
     /// <summary>เอกสารค้างชำระของผู้ติดต่อที่ผูก LINE (บริษัทเดียวกัน) + ยอดจากตัวคิดของหน้าชำระ — ฝ่ายค้าน L5: กรองชนิดที่รับชำระได้ใน SQL ก่อนจำกัดจำนวน ·
-    /// L4: ใบที่สลิปรอตรวจรวมยอดนี้แล้วเกินยอดค้าง ไม่เป็นผู้สมัคร (ด่านเดียวกับประตูแจ้งโอน <see cref="SlipEvidenceRule.PendingProblem"/>)</summary>
+    /// L4: ยอดที่ต้องโอน = หักสลิปรอตรวจของใบแล้ว — เต็มยอดแล้วไม่เป็นผู้สมัคร · เหลือบางส่วนเป็นผู้สมัครด้วยยอดที่เหลือ (ด่านเดียวกับประตูแจ้งโอน <see cref="SlipEvidenceRule.PendingProblem"/>)</summary>
     private async Task<List<LineChatSlipRule.Candidate>> CandidatesAsync(Guid companyId, IReadOnlyCollection<Guid> contactIds, int take, CancellationToken ct)
     {
         var types = DocumentPayLinkPolicy.PayableTypes;
@@ -311,8 +311,12 @@ public sealed class LineChatSlipService : ILineChatSlipService
         {
             var due = await _payLinks.DueAmountsForDocumentAsync(companyId, d.Id, ct);
             if (due == null || due.Refusal != null) continue;
-            if (SlipEvidenceRule.PendingProblem(pending.GetValueOrDefault(d.Id), due.Net, d.BalanceDue) != null) continue;
-            list.Add(new LineChatSlipRule.Candidate(d.Id, d.ContactId, d.DocumentNumber, d.DocumentDate, d.Status, d.BalanceDue, due.Net, due.Gross));
+            // สลิปรอตรวจของใบนี้หักออกจากยอดที่ต้องโอน — เต็มยอดแล้ว ⇒ ไม่เป็นผู้สมัคร · เหลือบางส่วน ⇒ ผู้สมัครด้วยยอดที่เหลือ (ลูกค้าโอนงวดที่เหลือ)
+            var pendingSum = pending.GetValueOrDefault(d.Id);
+            var remaining = Math.Round(due.Net - pendingSum, 2, MidpointRounding.AwayFromZero);
+            if (remaining <= 0.009m || SlipEvidenceRule.PendingProblem(pendingSum, remaining, d.BalanceDue) != null) continue;
+            list.Add(new LineChatSlipRule.Candidate(d.Id, d.ContactId, d.DocumentNumber, d.DocumentDate, d.Status, d.BalanceDue, remaining,
+                Math.Max(remaining, due.Gross - pendingSum)));
         }
         return list;
     }

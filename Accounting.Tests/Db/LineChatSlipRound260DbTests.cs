@@ -417,4 +417,92 @@ public class LineChatSlipRound260DbTests
         Assert.Null(fresh.FileDeletedAt);
         Assert.True(System.IO.File.Exists(fresh.StoragePath));
     }
+
+    private static SlipEvidenceService PortalSlips(AccountingDbContext db, Seed s)
+        => new(db, new PaymentIntentService(db, new IPaymentProvider[] { new ManualSlipPaymentProvider() },
+            Array.Empty<IPaymentCompletionHandler>(), NullLogger<PaymentIntentService>.Instance), s.Storage);
+
+    [Fact]
+    public async Task ฝ่ายค้าน_L4_ใบที่สลิปรอตรวจเต็มยอดแล้วไม่เป็นผู้สมัคร_ทิศตรงข้ามรอตรวจบางส่วนเป็นผู้สมัครด้วยยอดที่เหลือ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var full = await InvoiceAsync(db, s.CompanyId, s.ContactId, 1000m, ageDays: 3);      // ยอดค้าง 1,070
+        var partial = await InvoiceAsync(db, s.CompanyId, s.ContactId, 2000m, ageDays: 2);   // ยอดค้าง 2,140
+        // สลิปพอร์ทัลรอตรวจ: ใบแรกเต็มยอด · ใบที่สองบางส่วน 1,000
+        await PortalSlips(db, s).SubmitAsync(s.CompanyId, full.Id, s.ContactId, new SlipFile(Png("portal-full"), "image/png", "a.png"),
+            1070m, null, SlipEvidenceService.ChannelPortal);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await PortalSlips(c, s).SubmitAsync(s.CompanyId, partial.Id, s.ContactId, new SlipFile(Png("portal-part"), "image/png", "b.png"),
+                1000m, null, SlipEvidenceService.ChannelPortal);
+
+        // สลิปแชตยอด 1,070 (เท่ายอดค้างของใบแรก) ⇒ ใบแรกไม่เป็นผู้สมัคร (รอตรวจเต็มแล้ว) ⇒ ไม่ตรง — ไม่มีรายการที่สองบนใบแรก
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Contains(LineChatSlipRule.Replies.StaffWillCheck,
+                Json(await Svc(c, s, Png("chat-full"), Sure(1070m)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "700001")));
+        // ทิศตรงข้าม: สลิปแชตยอดที่เหลือของใบที่สอง (2,140 − 1,000 = 1,140) ⇒ ผูกเองกับใบที่สอง
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Contains(partial.DocumentNumber,
+                Json(await Svc(c, s, Png("chat-rest"), Sure(1140m)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "700002")));
+
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(1, await c2.PaymentIntents.CountAsync(i => i.CompanyId == s.CompanyId && i.SourceId == full.Id));
+        Assert.Equal(new[] { 1000m, 1140m }, (await c2.PaymentIntents.AsNoTracking().Where(i => i.CompanyId == s.CompanyId && i.SourceId == partial.Id)
+            .Select(i => i.Amount).ToListAsync()).OrderBy(a => a).ToArray());
+        Assert.Equal(LineChatSlipRule.Reasons.NoMatch,
+            (await c2.LineChatSlips.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.LineMessageId == "700001")).Reason);
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_L6_พนักงานผูกใบของผู้ติดต่ออื่น_มีคำเตือนและauditข้ามผู้ติดต่อ_ทิศตรงข้ามใบของเจ้าของแชตไม่เตือน_ชนิดที่รับชำระไม่ได้ไม่พบ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var other = new Contact { CompanyId = s.CompanyId, Name = "ลูกค้าอื่น 260 L6", IsCustomer = true, ContactType = ContactType.JuristicPerson, TaxId = "0105556000017" };
+        db.Contacts.Add(other);
+        await db.SaveChangesAsync();
+        var mine = await InvoiceAsync(db, s.CompanyId, s.ContactId, 300m);
+        var theirs = await InvoiceAsync(db, s.CompanyId, other.Id, 400m);
+        var quotation = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.Quotation, Status = DocumentStatus.Approved,
+            DocumentNumber = "QT260-" + Random.Shared.Next(100000, 999999), DocumentDate = DateTime.UtcNow.Date, SubTotal = 999m, TotalAmount = 999m,
+            BalanceDue = 999m, Currency = "THB",
+        };
+        db.Documents.Add(quotation);
+        await db.SaveChangesAsync();
+        // สองสลิปจากแชตของเจ้าของ (ผูก LINE) ยอดไม่ตรงใบใด ⇒ คิวพนักงาน
+        await Svc(db, s, Png("l6a"), Sure(12.34m)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "800001");
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Svc(c, s, Png("l6b"), Sure(56.78m)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "800002");
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var rowA = await c2.LineChatSlips.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.LineMessageId == "800001");
+        var rowB = await c2.LineChatSlips.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.LineMessageId == "800002");
+        Assert.Equal(s.ContactId, rowA.ContactId);
+
+        // ชนิดที่รับชำระไม่ได้ (ใบเสนอราคา) ⇒ ไม่พบ (ไม่ผูกกับใบผิดชนิด) · แถวยังอยู่ในคิว
+        var notPayable = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            Svc(c2, s, Png("x"), Sure(1m)).AssignAsync(s.CompanyId, rowA.Id, new AssignLineChatSlipRequest(null, quotation.DocumentNumber, 100m), "user:test"));
+        Assert.Equal(404, notPayable.StatusCode);
+
+        using var c3 = DbTestDatabase.TryCreateContext()!;
+        var cross = await Svc(c3, s, Png("x"), Sure(1m)).AssignAsync(s.CompanyId, rowA.Id, new AssignLineChatSlipRequest(null, theirs.DocumentNumber, 100m), "user:test");
+        Assert.True(cross.CrossContact);
+        using var c4 = DbTestDatabase.TryCreateContext()!;
+        var same = await Svc(c4, s, Png("x"), Sure(1m)).AssignAsync(s.CompanyId, rowB.Id, new AssignLineChatSlipRequest(mine.Id, null, 100m), "user:test");
+        Assert.False(same.CrossContact);
+
+        using var c5 = DbTestDatabase.TryCreateContext()!;
+        var audits = await c5.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == s.CompanyId && a.EntityType == LineChatSlipRule.AuditEntityType).ToListAsync();
+        Assert.Contains(audits, a => a.EntityId == rowA.Id.ToString() && a.NewValues!.Contains("\"crossContact\":true"));
+        Assert.Contains(audits, a => a.EntityId == rowB.Id.ToString() && a.NewValues!.Contains("\"crossContact\":false"));
+        // ไฟล์แนบที่พนักงานผูก ติดป้ายพนักงาน (ฝ่ายค้าน L9)
+        Assert.True(await c5.Set<FileAttachment>().AnyAsync(f => f.CompanyId == s.CompanyId && f.EntityId == theirs.Id
+            && f.CreatedBy == SlipEvidenceService.ChannelLineChatStaff));
+        // เลขที่ซ้ำหลายใบ ⇒ 409: ฐานเทสต์มี unique (CompanyId, DocumentNumber) ทั้งตาราง และฐานจริงมี partial unique ของใบที่ยังไม่ลบ ⇒
+        // สร้างกรณีนี้ในฐานไม่ได้ — กิ่ง 409 เป็นด่านสำรองของข้อมูลเก่า (ระบุในรายงาน)
+    }
 }
