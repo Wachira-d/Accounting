@@ -36,6 +36,16 @@ public static class PartnerAutoRecordPolicy
         public const string VatMismatch = "VatMismatch";
         public const string Source = "Source";
         public const string PostFailed = "PostFailed";
+        public const string OtherPayment = "OtherPayment";
+        public const string WhtPeriod = "WhtPeriod";
+        /// <summary>ใบซื้อปิดแล้ว/ถูกยกเลิก/หาไม่พบ — เหตุถาวร (ท่อประเมินซ้ำห่าง ๆ)</summary>
+        public const string PlanFinal = "PlanFinal";
+
+        /// <summary>ฝ่ายค้าน M7: เหตุที่ไม่หายเองในไม่กี่นาที ⇒ ท่อประเมินซ้ำวันละครั้ง (ไม่ใช่ทุก 15 นาที)</summary>
+        public static readonly IReadOnlyList<string> Slow = new[]
+        {
+            SourceVoided, SellerPaymentUnknown, Currency, Abbreviated, PayerBorne, VatMismatch, OtherPayment, WhtPeriod, PlanFinal, PlanWarning,
+        };
     }
 
     /// <param name="NoticeOpen">การแจ้งยังรอบันทึก (ไม่ถูกปิด/ถอน/บันทึกแล้ว)</param>
@@ -50,6 +60,9 @@ public static class PartnerAutoRecordPolicy
     /// <param name="PayerBorneWht">ใบซื้อเป็นภาษีออกแทน (ผู้จ่ายรับภาระภาษีหัก) — ตัวคิดของเราไม่ยืนยันการจ่ายผ่านลิงก์</param>
     /// <param name="VatMismatch">VAT ของใบผู้ขายไม่เท่า VAT บนใบซื้อ</param>
     /// <param name="Source">ผลตัวตัดสินแหล่งเงิน</param>
+    /// <param name="UnexplainedPurchasePayment">ฝ่ายค้าน H1: ใบซื้อมีการจ่ายที่ยังมีผลซึ่ง<b>ไม่ได้มาจากการแจ้งที่บันทึกแล้วและผู้ขายยังไม่ยกเลิก</b>
+    /// (บันทึกเอง · หรือมาจากการแจ้งที่ผู้ขายยกเลิกแล้วบันทึกรับใหม่) ⇒ การแจ้งนี้อาจเป็นเงินก้อนเดียวกัน ⇒ ไม่บันทึกเอง</param>
+    /// <param name="WhtDateInPastMonth">ฝ่ายค้าน M4: มีภาษีหัก และวันที่จ่าย (ที่ผู้ขายกรอก) อยู่ในเดือนภาษีก่อนเดือนปัจจุบัน ⇒ 50 ทวิ/ภ.ง.ด.3/53 จะย้อนเข้าเดือนที่อาจยื่นแล้ว ⇒ ให้คนเลือกวันที่</param>
     public sealed record Facts(
         bool NoticeOpen,
         bool SellerPaymentKnown,
@@ -62,7 +75,9 @@ public static class PartnerAutoRecordPolicy
         bool SourceIsAbbreviated,
         bool PayerBorneWht,
         bool VatMismatch,
-        PartnerPaySourceAccount.Decision Source);
+        PartnerPaySourceAccount.Decision Source,
+        bool UnexplainedPurchasePayment = false,
+        bool WhtDateInPastMonth = false);
 
     public sealed record Verdict(Kind Kind, string Code, string Reason)
     {
@@ -71,7 +86,21 @@ public static class PartnerAutoRecordPolicy
 
     private static Verdict One(string code, string reason) => new(Kind.OneClick, code, reason);
 
-    public const string SellerVoidedReason = "ผู้ขายยกเลิกการรับชำระนี้แล้ว — ไม่ต้องบันทึกจ่าย (ถ้าเงินออกจากบัญชีเราแล้ว ให้ขอคืนจากผู้ขาย)";
+    /// <summary>ฝ่ายค้าน L8: ระบบรู้แค่ว่าผู้ขายยกเลิก<b>รายการ</b> — ไม่รู้ว่าเงินออกจริงหรือไม่ (ผู้ขายอาจแค่แก้รายการแล้วบันทึกรับใหม่) ⇒ ไม่สรุปแทน</summary>
+    public const string SellerVoidedReason = "ผู้ขายยกเลิกรายการรับชำระนี้แล้ว — บันทึกจ่ายจากการแจ้งนี้ไม่ได้ · ตรวจกับผู้ขายก่อน (ผู้ขายอาจบันทึกรับใหม่ = จะมีการแจ้งใหม่ · ถ้าเงินออกจากบัญชีเราแล้วและผู้ขายไม่ได้รับ ให้ขอคืน)";
+
+    public const string OtherPaymentReason = "ใบซื้อนี้มีการจ่ายที่ไม่ได้มาจากการแจ้งของผู้ขายที่ยังมีผล (บันทึกเอง หรือผู้ขายยกเลิกแล้วบันทึกรับใหม่) — อาจเป็นเงินก้อนเดียวกัน ระบบไม่บันทึกเอง · ตรวจก่อนกดบันทึกจ่าย (ถ้าซ้ำให้ปิดการแจ้ง)";
+
+    public const string WhtPeriodReason = "การจ่ายนี้มีภาษีหัก ณ ที่จ่าย และวันที่ผู้ขายรับเงินอยู่ในเดือนภาษีก่อนหน้า — ภ.ง.ด.3/53 ของเดือนนั้นอาจยื่นไปแล้ว/เลยกำหนด ระบบไม่เลือกวันที่ให้ · กดบันทึกจ่ายเองแล้วตรวจแบบที่ยื่น (ยื่นเพิ่มเติมถ้าจำเป็น)";
+
+    /// <summary>ฝ่ายค้าน M4 (pure): มีภาษีหัก และเดือน (เวลาไทย) ของวันที่จ่ายก่อนเดือนปัจจุบัน · ไม่มีภาษีหัก = ไม่เกี่ยว</summary>
+    public static bool WhtDateInPastMonthOf(DateTime paidAtUtc, decimal? planWht, DateTime nowUtc)
+    {
+        if ((planWht ?? 0m) <= 0m) return false;
+        var paid = paidAtUtc.AddHours(7);
+        var now = nowUtc.AddHours(7);
+        return paid.Year * 12 + paid.Month < now.Year * 12 + now.Month;
+    }
 
     /// <summary>ลำดับด่าน = ลำดับเหตุที่โชว์ (เหตุแรกที่ไม่ผ่าน) · ทุกเหตุเป็นไทยที่โชว์/ลง audit ได้ตรง</summary>
     public static Verdict Decide(Facts f)
@@ -79,13 +108,16 @@ public static class PartnerAutoRecordPolicy
         if (!f.NoticeOpen) return new(Kind.Refuse, Codes.NoticeClosed, "การแจ้งนี้ปิด/ถอน/บันทึกไปแล้ว");
         if (f.SellerPaymentKnown && !f.SellerPaymentLive) return new(Kind.Refuse, Codes.SellerVoided, SellerVoidedReason);
         if (f.SourceDocumentVoided) return new(Kind.Refuse, Codes.SourceVoided, "ผู้ขายยกเลิกใบของการแจ้งนี้แล้ว — ตรวจกับผู้ขายก่อนบันทึกจ่าย");
+        // ฝ่ายค้าน L7: เหตุจริงของใบ (ร่าง/ชำระครบ/ยอดไม่ตรง · สกุล) มาก่อนความยินยอม — คู่ที่ไม่ได้ยินยอมต้องเห็นเหตุของใบ ไม่ใช่ "ยังไม่ได้ยินยอม"
+        if (f.Plan.Problem != null || f.Plan.Amount is not decimal) return One(Codes.Plan, f.Plan.Problem ?? "คำนวณยอดที่จะบันทึกไม่ได้ — บันทึกเองที่หน้าใบซื้อ");
+        if (!string.Equals((f.Currency ?? "").Trim(), "THB", StringComparison.OrdinalIgnoreCase))
+            return One(Codes.Currency, "ใบซื้อไม่ใช่สกุลบาท — ระบบไม่บันทึกเอง (อัตราแลกเปลี่ยน ณ วันจ่ายต้องมีคนยืนยัน)");
         if (!f.SellerPaymentKnown)
             return One(Codes.SellerPaymentUnknown, "การแจ้งรุ่นก่อนรอบ 264 ไม่ผูกการรับชำระของผู้ขาย — ระบบตรวจสดไม่ได้ว่าผู้ขายยกเลิกหรือไม่ จึงไม่บันทึกเอง (กดบันทึกจ่ายเองได้)");
         if (!f.ConsentOk) return One(Codes.Consent, "ไม่บันทึกเอง: " + (string.IsNullOrWhiteSpace(f.ConsentReason) ? "ยังไม่ได้ให้ความยินยอม" : f.ConsentReason!.Trim()));
-        if (f.Plan.Problem != null || f.Plan.Amount is not decimal) return One(Codes.Plan, f.Plan.Problem ?? "คำนวณยอดที่จะบันทึกไม่ได้ — บันทึกเองที่หน้าใบซื้อ");
+        if (f.UnexplainedPurchasePayment) return One(Codes.OtherPayment, OtherPaymentReason);
         if (f.Plan.Warning != null) return One(Codes.PlanWarning, "ไม่บันทึกเอง — " + f.Plan.Warning);
-        if (!string.Equals((f.Currency ?? "").Trim(), "THB", StringComparison.OrdinalIgnoreCase))
-            return One(Codes.Currency, "ใบซื้อไม่ใช่สกุลบาท — ระบบไม่บันทึกเอง (อัตราแลกเปลี่ยน ณ วันจ่ายต้องมีคนยืนยัน)");
+        if (f.WhtDateInPastMonth) return One(Codes.WhtPeriod, WhtPeriodReason);
         if (f.SourceIsAbbreviated) return One(Codes.Abbreviated, "ใบของผู้ขายเป็นใบกำกับภาษีอย่างย่อ — ระบบไม่บันทึกเอง (ตรวจหลักฐานก่อน)");
         if (f.PayerBorneWht) return One(Codes.PayerBorne, "ใบซื้อเป็นภาษีหัก ณ ที่จ่ายแบบออกแทน — ระบบไม่บันทึกเอง (ตรวจยอดภาษีออกแทนก่อน)");
         if (f.VatMismatch) return One(Codes.VatMismatch, "VAT บนใบของผู้ขายไม่เท่ากับใบซื้อของเรา — ระบบไม่บันทึกเอง (ตรวจใบซื้อก่อน)");

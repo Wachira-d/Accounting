@@ -187,6 +187,15 @@ public class PartnerPayableRound264Tests
         Is(Pass() with { PayerBorneWht = true }, O, PartnerAutoRecordPolicy.Codes.PayerBorne);
         Is(Pass() with { VatMismatch = true }, O, PartnerAutoRecordPolicy.Codes.VatMismatch);
         Is(Pass() with { Source = PartnerPaySourceAccount.Decide(new(Usable())) }, O, PartnerAutoRecordPolicy.Codes.Source);
+        // ฝ่ายค้าน H1 / M4
+        Is(Pass() with { UnexplainedPurchasePayment = true }, O, PartnerAutoRecordPolicy.Codes.OtherPayment);
+        Is(Pass() with { WhtDateInPastMonth = true }, O, PartnerAutoRecordPolicy.Codes.WhtPeriod);
+        // ฝ่ายค้าน L7: เหตุของใบ (ร่าง/ชำระครบ · สกุล) มาก่อน "ยังไม่ได้ยินยอม"
+        Is(Pass() with { ConsentOk = false, Plan = new(null, null, "PI ยังเป็นร่าง") }, O, PartnerAutoRecordPolicy.Codes.Plan);
+        Is(Pass() with { ConsentOk = false, Currency = "USD" }, O, PartnerAutoRecordPolicy.Codes.Currency);
+        Assert.DoesNotContain("ไม่ต้องบันทึกจ่าย", PartnerAutoRecordPolicy.SellerVoidedReason);   // L8: ไม่สรุปสิ่งที่ระบบไม่ได้ตรวจ
+        Assert.All(PartnerAutoRecordPolicy.Codes.Slow, c => Assert.DoesNotContain(c, new[] { PartnerAutoRecordPolicy.Codes.Consent, PartnerAutoRecordPolicy.Codes.Plan,
+            PartnerAutoRecordPolicy.Codes.Source, PartnerAutoRecordPolicy.Codes.PostFailed }));
         Assert.Contains("ถอนความยินยอมแล้ว", PartnerAutoRecordPolicy.Decide(Pass() with { ConsentOk = false, ConsentReason = "ถอนความยินยอมแล้ว" }).Reason);
     }
 
@@ -229,6 +238,51 @@ public class PartnerPayableRound264Tests
         }
     }
 
+    [Fact]
+    public void H2_ใบซื้อไม่มีภาษีหัก_แต่ผู้ขายบันทึกว่าถูกหัก_ไม่บันทึกหักศูนย์เงียบๆ_ทิศตรงข้าม_ผู้ขายไม่ได้ลงหัก_ยังได้แผน()
+    {
+        // ใบ 10,000 + VAT 700 · ผู้ขายรับ 10,400 + ถูกหัก 300 · ใบซื้อของเราไม่มีภาษีหัก ⇒ สองฝั่งขัดกัน ⇒ ไม่เดา
+        var p = PartnerPaymentNoticeRule.For(DocumentStatus.Approved, 10_700m, 0m, 10_400m, "PI-H2", sellerRecordedWht: 300m, singleWhtRatePercent: null, purchaseHasVat: true);
+        Assert.Null(p.Amount);
+        Assert.NotNull(p.Problem);
+        var ok = PartnerPaymentNoticeRule.For(DocumentStatus.Approved, 10_700m, 0m, 10_400m, "PI-H2", sellerRecordedWht: 0m, singleWhtRatePercent: null, purchaseHasVat: true);
+        Assert.Equal(10_400m, ok.Amount);
+        Assert.Equal(0m, ok.Wht);
+    }
+
+    [Fact]
+    public void L9_จ่ายบางส่วนมีภาษีหัก_ใบซื้อมี_VAT_ไม่เดา_แม้ยอดสองฝั่งตรงกันด้วยสูตรเดียวกัน()
+    {
+        // 520 × 3/97 = 16.08 — ถ้าใบมี VAT ฐานภาษีหักไม่ใช่เงินที่จ่ายทั้งก้อน ⇒ สองฝั่ง "ตรงกัน" บนเลขผิดได้ ⇒ ไม่เดา
+        Assert.NotNull(PartnerPaymentNoticeRule.For(DocumentStatus.Approved, 1_070m, 30m, 520m, "PI-L9", sellerRecordedWht: 16.08m, singleWhtRatePercent: 3m, purchaseHasVat: true).Problem);
+        Assert.Null(PartnerPaymentNoticeRule.For(DocumentStatus.Approved, 1_070m, 30m, 520m, "PI-L9", sellerRecordedWht: 16.08m, singleWhtRatePercent: 3m, purchaseHasVat: false).Problem);
+        // ยอดเต็ม (เงิน + ภาษีหักที่เหลือ = ยอดค้าง) ไม่ถูกแตะด้วยธง VAT
+        Assert.Equal(1_040m, PartnerPaymentNoticeRule.For(DocumentStatus.Approved, 1_070m, 30m, 1_040m, "PI-L9", sellerRecordedWht: 30m, singleWhtRatePercent: 3m, purchaseHasVat: true).Amount);
+    }
+
+    [Fact]
+    public void M4_วันที่จ่ายอยู่เดือนภาษีก่อน_และมีภาษีหัก_ต้องให้คนเลือกวันที่_ทิศตรงข้าม_เดือนเดียวกันหรือไม่มีภาษีหักผ่าน()
+    {
+        var now = new DateTime(2026, 12, 20, 3, 0, 0, DateTimeKind.Utc);
+        Assert.True(PartnerAutoRecordPolicy.WhtDateInPastMonthOf(new DateTime(2026, 11, 20, 0, 0, 0, DateTimeKind.Utc), 3_000m, now));
+        Assert.False(PartnerAutoRecordPolicy.WhtDateInPastMonthOf(new DateTime(2026, 11, 20, 0, 0, 0, DateTimeKind.Utc), 0m, now));
+        Assert.False(PartnerAutoRecordPolicy.WhtDateInPastMonthOf(new DateTime(2026, 11, 20, 0, 0, 0, DateTimeKind.Utc), null, now));
+        Assert.False(PartnerAutoRecordPolicy.WhtDateInPastMonthOf(new DateTime(2026, 12, 1, 0, 0, 0, DateTimeKind.Utc), 3_000m, now));
+        // ขอบเดือนตามเวลาไทย: 30 พ.ย. 18:00 UTC = 1 ธ.ค. 01:00 ไทย ⇒ เดือนเดียวกับ "ตอนนี้" (ธ.ค.)
+        Assert.False(PartnerAutoRecordPolicy.WhtDateInPastMonthOf(new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc), 3_000m, now));
+        Assert.True(PartnerAutoRecordPolicy.WhtDateInPastMonthOf(new DateTime(2025, 12, 25, 0, 0, 0, DateTimeKind.Utc), 3_000m, now));
+    }
+
+    [Fact]
+    public void M3_ป้ายของบัญชีในความยินยอม_บอกว่าเป็นค่าตั้งบวกคำบอกของผู้ขาย_ยังไม่ตรวจรายการเดินบัญชี()
+    {
+        var d = D(new(Usable(), ConsentDefault: BankA));
+        Assert.StartsWith(PartnerPaySourceAccount.ConsentDefaultLabelPrefix, d.Label);
+        Assert.EndsWith(PartnerPaySourceAccount.ConsentDefaultCaveat, d.Label);
+        Assert.Contains("ผู้ขายแจ้งรับเงิน", d.Label);
+        Assert.Contains("ยังไม่ได้ตรวจกับรายการเดินบัญชี", d.Label);
+    }
+
     // ═══ กุญแจ/เลขอ้างอิงของการแจ้ง (264-3-6) ═══
 
     [Fact]
@@ -269,7 +323,11 @@ public class PartnerPayableRound264Tests
             Assert.DoesNotContain("ลิงก์", PartnerPaymentNoticeRule.ChannelLabel(ch));
         }
         Assert.Equal("ผู้ขายยกเลิกการรับเงิน — ถอนการแจ้งแล้ว", PartnerPaymentNoticeRule.StatusLabel(PartnerPaymentNoticeRule.StatusWithdrawn));
-        Assert.StartsWith(PartnerPaymentNoticeRule.SellerVoidedMarker, PartnerPaymentNoticeRule.SellerVoidedNote("ผู้ขาย", "INV-1", 100m, DateTime.UtcNow));
+        var pay = Guid.NewGuid();
+        var key = PartnerPaymentNoticeRule.SellerVoidedKey(pay, Guid.NewGuid());
+        Assert.StartsWith(PartnerPaymentNoticeRule.SellerVoidedMarker, key);
+        Assert.StartsWith(key, PartnerPaymentNoticeRule.SellerVoidedNote("ผู้ขาย", "INV-1", 100m, DateTime.UtcNow, key));
+        Assert.NotEqual(key, PartnerPaymentNoticeRule.SellerVoidedKey(Guid.NewGuid(), Guid.NewGuid()));   // L2: กุญแจต่อการรับชำระ — สองรายการในวันเดียวไม่ชนกัน
     }
 
     // ═══ ความยินยอมต่อสายแล้ว (P1 contract · L4) ═══

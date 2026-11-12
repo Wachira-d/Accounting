@@ -152,6 +152,10 @@ public class BillingChainRound258DbTests
         await db.Documents.Where(d => d.Id == purchaseId).ExecuteUpdateAsync(x => x.SetProperty(d => d.Status, DocumentStatus.Approved)
             .SetProperty(d => d.BalanceDue, 1_070m).SetProperty(d => d.WithholdingTaxAmount, 0m));
         var intent = Guid.NewGuid();
+        // รอบ 264 P3 ฝ่ายค้าน M1: "เงินสด" ลงผังเงินสดของบริษัท (ต้องมีผัง 111x)
+        var cashGl = new ChartOfAccount { CompanyId = s.Buyer.Id, AccountCode = "11110", AccountName = "เงินสด", AccountType = AccountType.Asset, Level = 4, IsActive = true };
+        db.ChartOfAccounts.Add(cashGl);
+        await db.SaveChangesAsync();
         using (var c1 = DbTestDatabase.TryCreateContext()!)
             Assert.Equal(1, await Notices(c1).NotifySellerReceivedAsync(s.Seller.Id, intent, invoice.Id, 1_070m, "PAY-INTENT-z", DateTime.UtcNow, PaymentMethodKind.Card));
         Guid noticeId;
@@ -172,7 +176,10 @@ public class BillingChainRound258DbTests
             Assert.Equal(409, ex.StatusCode);
         }
         Assert.Single(calls);
-        Assert.Equal(PaymentMethod.CreditCard, calls[0].PaymentMethod);   // M4: วิธีจ่ายตั้งต้นตามช่องทางที่ผู้ขายรับ
+        // M4 (258): วิธีจ่ายตั้งต้นตามช่องทางที่ผู้ขายรับ — รอบ 264 P3 M1: เลือก "เงินสด" เอง ⇒ วิธีจ่าย = เงินสด + ผังเงินสดเป็นผังตรง
+        Assert.Equal(PaymentMethod.Cash, calls[0].PaymentMethod);
+        Assert.Equal(cashGl.Id, calls[0].OverridePaymentAccountId);
+        Assert.Equal(PaymentMethod.CreditCard, PartnerPaymentNoticeRule.DefaultMethod(nameof(PaymentMethodKind.Card)));
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(1, await check.Payments.CountAsync(p => p.CompanyId == s.Buyer.Id && p.Reference == PartnerPaymentNoticeRule.PaymentReference(intent)));
         // ทิศตรงข้าม: บัญชีของบริษัทอื่น ⇒ ปฏิเสธ (ไม่เชื่อ id จากหน้าเว็บ)

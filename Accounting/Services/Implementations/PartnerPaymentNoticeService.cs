@@ -212,6 +212,9 @@ public class PartnerPaymentNoticeService
                 .Where(n => n.SourceCompanyId == sellerCompanyId && n.SellerPaymentId == sellerPaymentId && !n.IsDeleted && n.SellerVoidedAt == null)
                 .ToListAsync(ct);
             if (rows.Count == 0) return 0;
+            // การรับชำระต้องถูกกลับ<b>จริง</b>ในฐาน (ธุรกรรมยกเลิกที่ rollback/วนใหม่ไม่ถอนผิด — ผู้เรียกเข้าคิวจากตัวกลับรายการร่วม)
+            if (await db.Payments.AsNoTracking().IgnoreQueryFilters().AnyAsync(p => p.Id == sellerPaymentId && p.CompanyId == sellerCompanyId && !p.IsDeleted, ct))
+                return 0;
             var sellerName = await db.Companies.AsNoTracking().Where(c => c.Id == sellerCompanyId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "ผู้ขาย";
             var touched = 0;
             foreach (var n in rows)
@@ -238,7 +241,7 @@ public class PartnerPaymentNoticeService
                         .Where(x => x.Id == n.Id && x.CompanyId == n.CompanyId).Select(x => x.Status).FirstAsync(ct);
                     evt = "PartnerPaymentSellerVoided";
                     if (status == PartnerPaymentNoticeRule.StatusRecorded)
-                        await FlagRecordedVoidedAsync(db, n.CompanyId, n.TargetDocumentId, sellerName, n.SourceDocumentNumber, n.CashAmount, nowUtc, ct);
+                        await FlagRecordedVoidedAsync(db, n, sellerName, nowUtc, ct);
                 }
                 var fresh = await db.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters().FirstAsync(x => x.Id == n.Id && x.CompanyId == n.CompanyId, ct);
                 Audit(db, n.CompanyId, null, evt, fresh);
@@ -258,16 +261,51 @@ public class PartnerPaymentNoticeService
     }
 
     /// <summary>ป้ายบนใบซื้อของผู้ซื้อ (หมายเหตุภายใน · ตัวเดียว <see cref="PartnerPaymentNoticeRule.SellerVoidedNote"/>) — ไม่ซ้ำ · ไม่แตะการจ่าย</summary>
-    internal static Task<int> FlagRecordedVoidedAsync(AccountingDbContext db, Guid buyerCompanyId, Guid purchaseId, string sellerName, string sourceDocumentNumber,
-        decimal cash, DateTime nowUtc, CancellationToken ct)
+    /// <remarks>ฝ่ายค้าน L2: กุญแจกันซ้ำต่อการรับชำระของผู้ขาย (<see cref="PartnerPaymentNoticeRule.SellerVoidedKey"/>) · เขียนแถว audit ระดับเอกสารใน chain ของผู้ซื้อ
+    /// (การแก้หมายเหตุภายในของใบซื้อจากเหตุการณ์ของอีกบริษัทต้องมีร่องรอย) · ผู้เรียกไม่ต้อง SaveChanges เอง</remarks>
+    internal static async Task<int> FlagRecordedVoidedAsync(AccountingDbContext db, PartnerPaymentNotice n, string sellerName, DateTime nowUtc, CancellationToken ct)
     {
-        var note = PartnerPaymentNoticeRule.SellerVoidedNote(sellerName, sourceDocumentNumber, cash, nowUtc);
-        var key = PartnerPaymentNoticeRule.SellerVoidedMarker + " " + nowUtc.AddHours(7).ToString("dd/MM/yyyy") + ": " + sellerName;
-        return db.Documents.IgnoreQueryFilters()
+        var key = PartnerPaymentNoticeRule.SellerVoidedKey(n.SellerPaymentId, n.Id);
+        var note = PartnerPaymentNoticeRule.SellerVoidedNote(sellerName, n.SourceDocumentNumber, n.CashAmount, nowUtc, key);
+        var purchaseId = n.TargetDocumentId;
+        var buyerCompanyId = n.CompanyId;
+        var done = await db.Documents.IgnoreQueryFilters()
             .Where(d => d.Id == purchaseId && d.CompanyId == buyerCompanyId && (d.InternalNotes == null || !d.InternalNotes.Contains(key)))
             .ExecuteUpdateAsync(u => u
                 .SetProperty(d => d.InternalNotes, d => d.InternalNotes == null || d.InternalNotes == "" ? note : d.InternalNotes + "\n" + note)
                 .SetProperty(d => d.UpdatedAt, (DateTime?)nowUtc), ct);
+        if (done == 0) return 0;
+        db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = buyerCompanyId, Action = AuditAction.Update, EntityType = "Document", EntityId = purchaseId.ToString(),
+            NewValues = JsonSerializer.Serialize(new
+            {
+                @event = "PartnerPaymentSellerVoidedFlagged", noticeId = n.Id, sellerPaymentId = n.SellerPaymentId, recordedPaymentId = n.RecordedPaymentId,
+                cash = n.CashAmount, field = "InternalNotes", ruleCode = PartnerPaymentNoticeRule.RuleCode,
+            }),
+            Timestamp = nowUtc,
+        });
+        await db.SaveChangesAsync(ct);
+        return done;
+    }
+
+    /// <summary>ฝ่ายค้าน 264-P3 H1 — ใบซื้อมีการจ่ายที่ยังมีผลซึ่ง<b>ไม่ได้อธิบายด้วยการแจ้งของผู้ขายที่ยังมีผล</b>ไหม: การจ่ายของใบนี้ (ของบริษัทผู้เรียก · ยังไม่ถูกยกเลิก)
+    /// ที่ไม่ใช่ <c>RecordedPaymentId</c> ของการแจ้งที่บันทึกแล้ว + ผู้ขายยังไม่ยกเลิก (ทั้งธง <c>SellerVoidedAt</c> และตรวจสดที่การรับชำระของผู้ขาย) ·
+    /// จริง ⇒ การแจ้งใหม่อาจเป็นเงินก้อนเดียวกัน (ผู้ขายยกเลิกแล้วบันทึกรับใหม่ · หรือเราบันทึกจ่ายเองไปก่อน) ⇒ ท่อไม่บันทึกเอง · ปุ่มเดียวเตือนก่อนกด</summary>
+    public static async Task<bool> UnexplainedPurchasePaymentAsync(AccountingDbContext db, Guid companyId, Guid purchaseId, CancellationToken ct = default)
+    {
+        var live = await db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.DocumentId == purchaseId && !p.IsDeleted).Select(p => p.Id).ToListAsync(ct);
+        // การจ่ายก้อนเดียวหลายใบที่จัดสรรมาที่ใบนี้ก็นับ (ไม่มีการแจ้งใดอธิบายได้)
+        if (await db.PaymentAllocations.AsNoTracking().AnyAsync(a => a.CompanyId == companyId && a.DocumentId == purchaseId && !a.IsDeleted, ct)) return true;
+        if (live.Count == 0) return false;
+        // IgnoreQueryFilters ที่ราก (ครอบ subquery ของการรับชำระฝั่งผู้ขาย — อีกบริษัท) ⇒ กรอง IsDeleted เองทุกตาราง
+        var explained = await db.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters()
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.TargetDocumentId == purchaseId && x.Status == PartnerPaymentNoticeRule.StatusRecorded
+                && x.SellerVoidedAt == null && x.RecordedPaymentId != null && x.SellerPaymentId != null
+                && db.Payments.Any(sp => sp.Id == x.SellerPaymentId && sp.CompanyId == x.SourceCompanyId && !sp.IsDeleted))
+            .Select(x => x.RecordedPaymentId!.Value).ToListAsync(ct);
+        return live.Any(id => !explained.Contains(id));
     }
 
     private static async Task NotifyVoidedAsync(INotificationEngine? notify, ILogger logger, Guid buyerCompanyId, PartnerPaymentNotice n, string sellerName, CancellationToken ct)
@@ -329,11 +367,16 @@ public class PartnerPaymentNoticeService
                 number = doc?.DocumentNumber;
                 PartnerConsent.UseCheck? consent = null;
                 if (_consent != null && doc != null)
-                    consent = await _consent.CheckAsync(companyId, n.TradingPartnershipId, PartnerConsent.Scope.AutoRecordPayment, PartnerConsent.CapAmount.Thb(doc.TotalAmount), ct);
-                source = await PartnerPayablePipeline.SourceDecisionAsync(_db, companyId, n, doc, usable, consent, ct);
+                    consent = await _consent.CheckAsync(companyId, n.TradingPartnershipId, PartnerConsent.Scope.AutoRecordPayment, PartnerPayablePipeline.CapOf(doc), ct);
+                source = await PartnerPayablePipeline.SourceDecisionAsync(_db, companyId, n, doc, usable, consent, DateTime.UtcNow, ct);
+                // ฝ่ายค้าน M3: ถ้อยคำตรงกับหลักฐานที่มีจริงวันนี้ (ค่าตั้งของเรา + คำบอกของผู้ขาย — ยังไม่ตรวจกับรายการเดินบัญชี)
                 autoState = consent is { Ok: true }
-                    ? "⚙️ ระบบบันทึกเองเมื่อหลักฐานครบ" + (n.AutoBlockedReason is string br ? " — ยังไม่บันทึก: " + br : " (รอรอบถัดไป)")
+                    ? "⚙️ ระบบบันทึกเองตามบัญชีตั้งต้นที่ตั้งไว้ตอนยินยอม เมื่อผู้ขายแจ้งรับเงิน (ยังไม่ตรวจกับรายการเดินบัญชีของเรา)"
+                        + (n.AutoBlockedReason is string br ? " — ยังไม่บันทึก: " + br : " · รอรอบถัดไป")
                     : "ระบบไม่บันทึกเอง" + (consent != null ? " — " + consent.Reason : "") + " · กดบันทึกจ่ายเอง หรือเปิด “งานอัตโนมัติกับคู่ค้า”";
+                // ฝ่ายค้าน H1: ใบซื้อมีการจ่ายที่อาจเป็นเงินก้อนเดียวกัน ⇒ เตือนในกล่องยืนยันของปุ่มเดียวด้วย (ตัวตรวจเดียวกับท่อ)
+                if (plan is { Problem: null } && doc != null && await UnexplainedPurchasePaymentAsync(_db, companyId, doc.Id, ct))
+                    plan = plan with { Warning = (plan.Warning == null ? "" : plan.Warning + " · ") + PartnerAutoRecordPolicy.OtherPaymentReason };
             }
             number ??= await _db.Documents.AsNoTracking().Where(d => d.Id == n.TargetDocumentId && d.CompanyId == companyId)
                 .Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct);
@@ -362,7 +405,7 @@ public class PartnerPaymentNoticeService
         var rates = doc.Lines.Where(l => !l.IsDeleted && l.Amount != 0m).Select(l => l.WithholdingTaxRate).Distinct().ToList();
         decimal? singleRate = rates.Count == 1 && rates[0] > 0m ? rates[0] : null;
         return (PartnerPaymentNoticeRule.For(doc.Status, doc.BalanceDue, wht.NetCap, n.CashAmount, doc.DocumentNumber,
-            sellerRecordedWht: n.SellerRecordedWht, singleWhtRatePercent: singleRate), doc);
+            sellerRecordedWht: n.SellerRecordedWht, singleWhtRatePercent: singleRate, purchaseHasVat: doc.VatAmount > 0m), doc);
     }
 
     /// <summary>ใบซื้อปลายทางของการแจ้ง (ผูกบริษัทผู้เรียก) — ให้ controller ตรวจสิทธิ์ตามชนิดจริง + ความลับ · null = ไม่พบ</summary>
@@ -398,6 +441,14 @@ public class PartnerPaymentNoticeService
         if (bankAccountId is Guid bid && !await _db.BankAccounts.AsNoTracking()
                 .AnyAsync(b => b.Id == bid && b.CompanyId == companyId && !b.IsDeleted && b.IsActive, ct))
             throw new BusinessRuleException("ไม่พบบัญชีเงินนี้ในบริษัทของท่าน (หรือปิดใช้งานแล้ว) — เลือกบัญชีใหม่", PartnerPaymentNoticeRule.RuleCode, 400);
+        // ฝ่ายค้าน M1: "เงินสด" = ผังเงินสดของบริษัทเป็นผังตรงของการชำระ + วิธีจ่ายเงินสด — ไม่สืบทอดบัญชีธนาคารที่ตั้งบนใบซื้อ (เดิมลงธนาคารของใบทั้งที่ผู้ใช้ประกาศเงินสด)
+        Guid? cashAccountId = null;
+        if (bankAccountId == null)
+        {
+            cashAccountId = await DocumentMoneyChannel.DefaultCashAccountIdAsync(_db, companyId, ct)
+                ?? throw new BusinessRuleException(DocumentMoneyChannel.NoDefaultCashMessage("เลือกบัญชีธนาคารที่จ่ายจริงแทน"), DocumentMoneyChannel.RuleCode, 409);
+            payMethod = PaymentMethod.Cash;
+        }
         if (n.SellerVoidedAt != null || await SellerPaymentLiveAsync(_db, n, ct) == false)
             throw new BusinessRuleException(PartnerAutoRecordPolicy.SellerVoidedReason, PartnerPaymentNoticeRule.RuleCode, 409);
         var references = PartnerPaymentNoticeRule.PaymentReferencesToCheck(n.SellerPaymentId, n.PaymentIntentId);
@@ -429,13 +480,17 @@ public class PartnerPaymentNoticeService
                         DocumentId: n.TargetDocumentId, PaymentDate: n.PaidAt, Amount: amount, PaymentMethod: payMethod,
                         Reference: reference, BankAccount: null,
                         Notes: $"จ่ายผ่าน{PartnerPaymentNoticeRule.ChannelLabel(n.SourceChannel)} (คู่ค้า NextAcc) — {n.SourceDocumentNumber}",
-                        OverrideBankAccountId: bankAccountId, WithholdingTaxAmount: plan.Wht), userId.ToString(), PaymentEntrySource.Manual);
+                        OverrideBankAccountId: bankAccountId, OverridePaymentAccountId: cashAccountId, WithholdingTaxAmount: plan.Wht),
+                        userId.ToString(), PaymentEntrySource.Manual);
                     paymentId = pay.Id;
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException or DbUpdateException)
                 {
                     // ฝ่ายค้าน L2: เส้นจ่ายเดิมปฏิเสธ (ยอดเกิน/งวดปิด/วันที่ ฯลฯ) ⇒ 409 ข้อความไทย ไม่ใช่ 500
-                    throw new BusinessRuleException("บันทึกจ่ายไม่สำเร็จ: " + ex.Message + " — แก้แล้วกดใหม่ หรือบันทึกเองที่หน้าใบซื้อ", PartnerPaymentNoticeRule.RuleCode, 409);
+                    // ฝ่ายค้าน L8: ข้อความของฐานข้อมูลไม่ถึงผู้ใช้ (ข้อความกติกาของเส้นจ่ายเป็นไทยถึงผู้ใช้ได้)
+                    if (ex is DbUpdateException) _logger.LogError(ex, "บันทึกจ่ายจากการแจ้ง {Notice} ของบริษัท {Company} ล้มที่ฐานข้อมูล", noticeId, companyId);
+                    throw new BusinessRuleException("บันทึกจ่ายไม่สำเร็จ: " + PartnerPayablePipeline.UserMessageOf(ex) + " — แก้แล้วกดใหม่ หรือบันทึกเองที่หน้าใบซื้อ",
+                        PartnerPaymentNoticeRule.RuleCode, 409);
                 }
             }
         }
@@ -456,7 +511,7 @@ public class PartnerPaymentNoticeService
         await _db.SaveChangesAsync(ct);
         // ผู้ขายยกเลิกระหว่างที่เรากำลังบันทึก ⇒ ป้ายบนใบซื้อ (ไม่ยกเลิกการจ่ายแทน)
         if (fresh.SellerVoidedAt != null || await SellerPaymentLiveAsync(_db, fresh, ct) == false)
-            await FlagRecordedVoidedAsync(_db, companyId, fresh.TargetDocumentId, "ผู้ขาย", fresh.SourceDocumentNumber, fresh.CashAmount, DateTime.UtcNow, ct);
+            await FlagRecordedVoidedAsync(_db, fresh, "ผู้ขาย", DateTime.UtcNow, ct);
         return (await ListAsync(companyId, ct)).First(x => x.Id == noticeId);
     }
 

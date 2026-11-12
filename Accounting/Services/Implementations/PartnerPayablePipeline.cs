@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -10,19 +11,21 @@ using Scope = Accounting.Helpers.PartnerConsent.Scope;
 namespace Accounting.Services.Implementations;
 
 /// <summary>
-/// รอบ 264 P3 (team-264-a2b-design §5 · คำตัดสิน 264-3-1…264-3-9) — <b>ท่อฝั่งผู้ซื้อ (B)</b>: การแจ้ง "ผู้ขายคู่ค้ารับเงินแล้ว" ⇒ ระบบของ B บันทึกจ่ายใบซื้อเอง
-/// เมื่อ<b>ทุกช่องมีหลักฐาน</b> และ B ยินยอม (<c>AutoRecordPayment</c>) · ไม่ผ่าน ⇒ กลับเป็นปุ่มเดียวเดิม + เหตุบนแถว + แถว Autopilot
+/// รอบ 264 P3 (team-264-a2b-design §5 · คำตัดสิน 264-3-1…264-3-22) — <b>ท่อฝั่งผู้ซื้อ (B)</b>: การแจ้ง "ผู้ขายคู่ค้ารับเงินแล้ว" ⇒ ระบบของ B บันทึกจ่ายใบซื้อเอง
+/// ภายใต้ความยินยอม <c>AutoRecordPayment</c> ของ B · ไม่ผ่าน ⇒ กลับเป็นปุ่มเดียวเดิม + เหตุบนแถว + แถว Autopilot
 /// <list type="bullet">
+/// <item><b>หลักฐานที่มีจริงวันนี้ (ฝ่ายค้าน M3 — พูดตรง ๆ)</b>: ยอด = เงินที่ผู้ขายบันทึกรับ (คำบอกของผู้ขาย) · บัญชีที่จ่าย = บัญชีตั้งต้นที่ B ตั้งไว้ตอนยินยอม ·
+/// <b>ยังไม่มีการตรวจกับรายการเดินบัญชีของ B</b> — ชั้นรายการเดินบัญชี/ผู้จ่ายเลือก/สลิปของ <see cref="PartnerPaySourceAccount"/> ยังไม่มีผู้ป้อน
+/// (backlog: แพ็ก P2 สลิป · แพ็ก P4 รายการเดินบัญชี/จ่ายจากระบบของเรา — ป้อนที่ <see cref="SourceDecisionAsync"/>) · ป้าย/หมายเหตุการจ่ายบอกข้อนี้</item>
 /// <item><b>ไม่ทำงานในคำขอของผู้ขาย</b> (เขียนสมุด B ใต้ scope ของคำขอ A = L1 รอบ 258) ⇒ ขั้น <c>PartnerPayable</c> ของ <c>AutopilotJob</c> (JobLock ต่อขั้น) ·
-/// รายแถวประเมินซ้ำทุก <see cref="ReevaluateEvery"/> (watermark ต่อแถว <c>AutoEvaluatedAt</c> — ไม่วนอ่านทั้งฐานทุกรอบ)</item>
+/// เฉพาะการแจ้งของ<b>คู่ค้าที่มีความยินยอมบันทึกจ่ายที่ใช้อยู่</b> (M7) · watermark ต่อแถว <c>AutoEvaluatedAt</c>: เหตุชั่วคราวประเมินซ้ำทุก <see cref="ReevaluateEvery"/> ·
+/// เหตุถาวร (<see cref="PartnerAutoRecordPolicy.Codes.Slow"/>) วันละครั้ง</item>
 /// <item><b>idempotent ต่อการรับชำระของผู้ขาย</b>: จองแถวแบบมีเงื่อนไข (Open → Recording) · เลขอ้างอิง canonical <c>PARTNER-PAID-P{paymentId}</c> ·
-/// พบการจ่ายที่อ้างแล้ว ⇒ ปิดแถวเป็นบันทึกแล้ว (ไม่สร้างใบที่สอง)</item>
+/// พบการจ่ายที่อ้างแล้ว ⇒ ปิดแถวเป็นบันทึกแล้ว · <b>ใบซื้อมีการจ่ายอื่นที่อธิบายไม่ได้</b> (บันทึกเอง · ผู้ขายยกเลิกแล้วบันทึกรับใหม่) ⇒ ไม่บันทึกเอง (ฝ่ายค้าน H1)</item>
 /// <item><b>ความยินยอมตรวจเพื่อเขียน</b>: <see cref="PartnerConsentService.CheckForWriteAsync"/> ในธุรกรรมล็อก (FOR SHARE) ที่ถือไว้<b>ตลอดการบันทึกจ่าย</b> —
-/// การถอน/ระงับคู่รอจนการบันทึกจบ (ฝ่ายค้าน P1 M1) · <c>CreatePaymentAsync</c> เปิดธุรกรรมของตัวเองเสมอ ⇒ ธุรกรรมล็อกอยู่บน connection แยก (scope ใหม่) ·
-/// ผู้บันทึก = GUID ผู้ให้ความยินยอม (264-2-3 · ไม่ใช่สตริงระบบ) · ยอดเทียบเพดาน = ยอดรวมใบซื้อเป็นบาทก่อนหัก (CapAmount — P1 M3)</item>
-/// <item>ตรวจสดก่อนเขียนทุกครั้ง: คู่ค้า · ความยินยอม · สิทธิ์ผู้ให้ · การรับชำระของผู้ขายยังไม่ถูกยกเลิก · ใบซื้อ · ยอด/ภาษีหักของ B · แหล่งเงินออก</item>
-/// <item><b>ไม่มีจุดเรียก AI ในเส้นเงิน</b> (ตัวตัดสิน <see cref="PartnerPaySourceAccount"/> · <see cref="PartnerAutoRecordPolicy"/> pure) ·
-/// จุดเรียก AI เดียวของไฟล์นี้ = ผังบัญชีของใบซื้อร่างจากคู่ค้า (<see cref="SuggestDraftGlAsync"/> · C-08) ผ่านตัวแนะนำผังเดิม (orchestrator · นักเรียนก่อน · คีย์ GlAccountSuggestion เดิม)</item>
+/// <c>CreatePaymentAsync</c> เปิดธุรกรรมของตัวเองเสมอ ⇒ ธุรกรรมล็อกอยู่บน connection แยก (scope ใหม่ · มี <c>idle_in_transaction_session_timeout</c> กันค้างเงียบ — L1) ·
+/// ผู้บันทึก = GUID ผู้ให้ความยินยอม · ยอดเทียบเพดาน = ยอดรวมใบซื้อตามสกุลของใบ (<see cref="CapOf"/> — เพดานเป็น<b>ต่อใบ</b> ไม่มีเพดานสะสม: คำตัดสิน 264-3-18)</item>
+/// <item><b>ไม่มีจุดเรียก AI ในเส้นเงิน</b> · จุดเรียก AI เดียวของไฟล์นี้ = ผังบัญชีของใบซื้อร่างจากคู่ค้า (<see cref="SuggestDraftGlAsync"/> · C-08) ผ่านตัวแนะนำผังเดิม</item>
 /// </list>
 /// </summary>
 public class PartnerPayablePipeline
@@ -32,26 +35,34 @@ public class PartnerPayablePipeline
     private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<PartnerPayablePipeline> _logger;
     private readonly Accounting.Services.Ai.IOcrAiAugmenter? _glAi;
+    private readonly INotificationEngine? _notify;
 
     public const int BatchPerCompany = 50;
     public const int DraftBatchPerCompany = 20;
-    /// <summary>ประเมินแถวเดิมซ้ำเมื่อพ้นช่วงนี้ (ความยินยอม/ใบซื้อ/หลักฐานอาจเปลี่ยน)</summary>
+    public const int SweepBatch = 100;
+    /// <summary>ประเมินแถวเดิมซ้ำเมื่อพ้นช่วงนี้ (เหตุชั่วคราว: ความยินยอม · ใบซื้อร่าง · แหล่งเงิน · เส้นจ่ายปฏิเสธ)</summary>
     public static readonly TimeSpan ReevaluateEvery = TimeSpan.FromMinutes(15);
-    /// <summary>ป้ายบนใบซื้อร่างว่าเติมผังบัญชีจากตัวแนะนำแล้ว (ครั้งเดียวต่อใบ — ไม่ถาม AI ซ้ำทุกรอบ)</summary>
+    /// <summary>ฝ่ายค้าน M7: เหตุถาวร (<see cref="PartnerAutoRecordPolicy.Codes.Slow"/>) ประเมินซ้ำห่าง ๆ — ไม่เปิด scope/ธุรกรรมทุก 15 นาทีตลอดไป</summary>
+    public static readonly TimeSpan ReevaluateSlowEvery = TimeSpan.FromHours(24);
+    /// <summary>ป้ายบนใบซื้อร่างว่าเติมผังบัญชีจากตัวแนะนำแล้ว/เลิกถามแล้ว (ไม่ถามซ้ำ)</summary>
     public const string DraftGlMarker = "[PARTNER-DRAFT-GL]";
+    /// <summary>ป้ายว่าถามแล้วยังไม่ได้ผังที่ใช้ได้ (ถามซ้ำได้อีกหลัง <see cref="DraftGlRetryEvery"/> · สูงสุด <see cref="DraftGlMaxTries"/> ครั้ง — L6)</summary>
+    public const string DraftGlTryMarker = "[PARTNER-DRAFT-GL-TRY]";
+    public const int DraftGlMaxTries = 3;
+    public static readonly TimeSpan DraftGlRetryEvery = TimeSpan.FromHours(6);
 
     public PartnerPayablePipeline(AccountingDbContext db, IDocumentService docs, IServiceScopeFactory scopes, ILogger<PartnerPayablePipeline> logger,
-        Accounting.Services.Ai.IOcrAiAugmenter? glAi = null)
-    { _db = db; _docs = docs; _scopes = scopes; _logger = logger; _glAi = glAi; }
+        Accounting.Services.Ai.IOcrAiAugmenter? glAi = null, INotificationEngine? notify = null)
+    { _db = db; _docs = docs; _scopes = scopes; _logger = logger; _glAi = glAi; _notify = notify; }
 
-    /// <summary>หนึ่งรอบของงานเบื้องหลัง (ผู้เรียกเดียว = <c>AutopilotJob</c> ขั้น PartnerPayable) — คืนจำนวนงานที่ทำ (บันทึกจ่าย + ใบร่างที่เติมผัง)</summary>
+    /// <summary>หนึ่งรอบของงานเบื้องหลัง (ผู้เรียกเดียว = <c>AutopilotJob</c> ขั้น PartnerPayable) — คืนจำนวนงานที่ทำ (ถอน/ป้าย + บันทึกจ่าย + ใบร่างที่เติมผัง)</summary>
     public async Task<int> RunOnceAsync(DateTime nowUtc, CancellationToken ct = default)
     {
+        var done = await SweepSellerVoidedAsync(nowUtc, ct);
         var name = Scope.AutoRecordPayment.ToString();
         // บริษัทที่มีความยินยอมบันทึกจ่ายที่ยังใช้อยู่ — ไม่มี = ไม่มีงาน (ปุ่มเดียวเดิมทำงานเหมือนเดิม)
         var payers = await _db.PartnerAutomationConsents.AsNoTracking()
             .Where(c => c.WithdrawnAt == null && c.Scope == name).Select(c => c.CompanyId).Distinct().ToListAsync(ct);
-        var done = 0;
         foreach (var companyId in payers)
             done += await RunForCompanyAsync(companyId, nowUtc, ct);
         // C-08: ใบซื้อร่างจากคู่ค้าของบริษัทที่เปิดสร้างใบร่าง ⇒ ผังบัญชีจากตัวแนะนำเดิม (ไม่อนุมัติเอง)
@@ -62,16 +73,45 @@ public class PartnerPayablePipeline
         return done;
     }
 
-    /// <summary>แถวที่ถึงรอบประเมินของบริษัทผู้ซื้อหนึ่งราย (tenant = <paramref name="companyId"/> ทุก query)</summary>
+    /// <summary>
+    /// ฝ่ายค้าน M2/L4 — ตาข่ายของขั้นถอนหลัง commit (ทุกบริษัท · ไม่ขึ้นกับความยินยอม): การแจ้งที่การรับชำระของผู้ขาย<b>ถูกกลับแล้วในฐาน</b>แต่ยังไม่ถูกถอน/ติดป้าย
+    /// (ขั้นหลัง commit ล้ม · แถวก่อนรอบ 264) ⇒ เดินตัวถอนตัวเดียวกัน (<see cref="PartnerPaymentNoticeService.WithdrawForSellerPaymentAsync"/> — audit สองฝั่ง + แจ้ง) ·
+    /// แทน SQL migration ที่เปลี่ยนสถานะโดยไม่มี audit · แถวที่ปิด/ถอนแล้วไม่ถูกแตะ · งานระบบข้ามบริษัทโดยเจตนา (ตัวถอนผูกบริษัทผู้ขาย + บริษัทเจ้าของแถวทุก query)
+    /// </summary>
+    public async Task<int> SweepSellerVoidedAsync(DateTime nowUtc, CancellationToken ct = default)
+    {
+        var hits = await _db.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters()
+            .Where(n => !n.IsDeleted && n.SellerVoidedAt == null && n.SellerPaymentId != null
+                && (n.Status == PartnerPaymentNoticeRule.StatusOpen || n.Status == PartnerPaymentNoticeRule.StatusRecording
+                    || n.Status == PartnerPaymentNoticeRule.StatusRecorded)
+                && _db.Payments.Any(p => p.Id == n.SellerPaymentId && p.CompanyId == n.SourceCompanyId && p.IsDeleted))   // IgnoreQueryFilters ที่รากครอบ subquery
+            .Select(n => new { n.SourceCompanyId, SellerPaymentId = n.SellerPaymentId!.Value })
+            .Distinct().Take(SweepBatch).ToListAsync(ct);
+        var done = 0;
+        foreach (var h in hits)
+            done += await PartnerPaymentNoticeService.WithdrawForSellerPaymentAsync(_db, _notify, _logger, h.SourceCompanyId, h.SellerPaymentId, nowUtc, ct);
+        return done;
+    }
+
+    /// <summary>แถวที่ถึงรอบประเมินของบริษัทผู้ซื้อหนึ่งราย (tenant = <paramref name="companyId"/> ทุก query) · เฉพาะคู่ค้าที่มีแถวความยินยอมบันทึกจ่ายที่ยังไม่ถอน (M7)</summary>
     public async Task<int> RunForCompanyAsync(Guid companyId, DateTime nowUtc, CancellationToken ct = default)
     {
+        var name = Scope.AutoRecordPayment.ToString();
+        var consented = await _db.PartnerAutomationConsents.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && c.WithdrawnAt == null && c.Scope == name)
+            .Select(c => c.TradingPartnershipId).Distinct().ToListAsync(ct);
+        if (consented.Count == 0) return 0;
         var due = nowUtc - ReevaluateEvery;
+        var dueSlow = nowUtc - ReevaluateSlowEvery;
+        var slow = PartnerAutoRecordPolicy.Codes.Slow.ToList();
         var stale = nowUtc - PartnerPaymentNoticeRule.RecordingStale;
         var ids = await _db.PartnerPaymentNotices.AsNoTracking()
-            .Where(n => n.CompanyId == companyId && !n.IsDeleted && n.SellerVoidedAt == null
+            .Where(n => n.CompanyId == companyId && !n.IsDeleted && n.SellerVoidedAt == null && consented.Contains(n.TradingPartnershipId)
                 && (n.Status == PartnerPaymentNoticeRule.StatusOpen
                     || (n.Status == PartnerPaymentNoticeRule.StatusRecording && (n.UpdatedAt ?? n.CreatedAt) < stale))
-                && (n.AutoEvaluatedAt == null || n.AutoEvaluatedAt < due))
+                && (n.AutoEvaluatedAt == null
+                    || n.AutoEvaluatedAt < dueSlow
+                    || (n.AutoEvaluatedAt < due && (n.AutoBlockedCode == null || !slow.Contains(n.AutoBlockedCode)))))
             .OrderBy(n => n.AutoEvaluatedAt ?? DateTime.MinValue).ThenBy(n => n.PaidAt)
             .Select(n => n.Id).Take(BatchPerCompany).ToListAsync(ct);
         var recorded = 0;
@@ -79,6 +119,14 @@ public class PartnerPayablePipeline
             if (await ProcessAsync(companyId, id, nowUtc, ct)) recorded++;
         return recorded;
     }
+
+    /// <summary>ยอดเทียบเพดานความยินยอม = ยอดรวมของใบซื้อ<b>ตามสกุลของใบ</b> (ฝ่ายค้าน L3: ใบสกุลอื่น ⇒ <c>AmountUnknown</c> ที่ตัวตรวจความยินยอม — ไม่ติดป้ายบาทให้ยอดสกุลอื่น)</summary>
+    public static PartnerConsent.CapAmount CapOf(Document purchase)
+        => new(purchase.TotalAmount, string.IsNullOrWhiteSpace(purchase.Currency) ? "THB" : purchase.Currency.Trim());
+
+    /// <summary>ข้อความถึงผู้ใช้ของข้อผิดพลาดจากเส้นจ่าย (ฝ่ายค้าน L8): ข้อความกติกา (ไทย) ผ่านได้ · ข้อผิดพลาดของฐานข้อมูลไม่ถึงผู้ใช้</summary>
+    public static string UserMessageOf(Exception ex)
+        => ex is DbUpdateException ? "ฐานข้อมูลปฏิเสธรายการ (ผู้ดูแลระบบดูบันทึกระบบ)" : ex.Message;
 
     /// <summary>ประเมิน/บันทึกการแจ้งหนึ่งแถว — true = บันทึกจ่ายแล้ว (ใหม่หรือพบของเดิม) · ไม่โยน (ล้ม = แถวกลับเป็นรอบันทึก + เหตุ + LogError)</summary>
     public async Task<bool> ProcessAsync(Guid companyId, Guid noticeId, DateTime nowUtc, CancellationToken ct = default)
@@ -111,16 +159,19 @@ public class PartnerPayablePipeline
                 .Where(d => d.Id == n.SourceDocumentId && d.CompanyId == n.SourceCompanyId)
                 .Select(d => new { d.Status, d.IsDeleted, d.ReceiptForm, d.VatAmount }).FirstOrDefaultAsync(ct);
             var usable = await UsablePayAccountsAsync(_db, companyId, ct);
+            var otherPayment = doc != null && await PartnerPaymentNoticeService.UnexplainedPurchasePaymentAsync(_db, companyId, doc.Id, ct);
 
             // ── ธุรกรรมล็อกความยินยอม (connection แยก) — ถือไว้จนบันทึกจ่ายเสร็จ ──
             using var lockScope = _scopes.CreateScope();
             var lockDb = lockScope.ServiceProvider.GetRequiredService<AccountingDbContext>();
             var consentSvc = lockScope.ServiceProvider.GetRequiredService<PartnerConsentService>();
             await using var lockTx = await lockDb.Database.BeginTransactionAsync(ct);
+            // ฝ่ายค้าน L1: ถ้าวันหน้าเส้นจ่ายไปรอแถวที่ธุรกรรมนี้ล็อกไว้ (PostgreSQL ไม่เห็นเป็น deadlock) ⇒ ฐานตัดธุรกรรมล็อกทิ้งเองแทนการค้างเงียบ
+            await lockDb.Database.ExecuteSqlRawAsync("SET LOCAL idle_in_transaction_session_timeout = '180s'", ct);
             var consent = doc == null
                 ? null
-                : await consentSvc.CheckForWriteAsync(companyId, n.TradingPartnershipId, Scope.AutoRecordPayment, PartnerConsent.CapAmount.Thb(doc.TotalAmount), ct);
-            var source = await SourceDecisionAsync(_db, companyId, n, doc, usable, consent, ct);
+                : await consentSvc.CheckForWriteAsync(companyId, n.TradingPartnershipId, Scope.AutoRecordPayment, CapOf(doc), ct);
+            var source = await SourceDecisionAsync(_db, companyId, n, doc, usable, consent, nowUtc, ct);
             var verdict = PartnerAutoRecordPolicy.Decide(new PartnerAutoRecordPolicy.Facts(
                 NoticeOpen: true,
                 SellerPaymentKnown: live != null,
@@ -133,26 +184,36 @@ public class PartnerPayablePipeline
                 SourceIsAbbreviated: src?.ReceiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated,
                 PayerBorneWht: (doc?.WhtPayerBorneAmount ?? 0m) > 0m,
                 VatMismatch: doc != null && src != null && !PartnerInputVatEvidence.VatMatches(src.VatAmount, doc.VatAmount),
-                Source: source));
+                Source: source,
+                UnexplainedPurchasePayment: otherPayment,
+                WhtDateInPastMonth: PartnerAutoRecordPolicy.WhtDateInPastMonthOf(n.PaidAt, plan.Wht, nowUtc)));
             if (!verdict.Auto || consent?.GrantorUserId is not Guid grantor || source.BankAccountId is not Guid bank || plan.Amount is not decimal amount)
             {
                 await lockTx.RollbackAsync(ct);
                 if (verdict.Kind == PartnerAutoRecordPolicy.Kind.Refuse && verdict.Code == PartnerAutoRecordPolicy.Codes.SellerVoided)
                     await WithdrawStaleAsync(n, nowUtc, ct);
                 else
-                    await ReleaseAsync(n, verdict.Auto ? PartnerAutoRecordPolicy.Codes.Consent : verdict.Code,
+                {
+                    // ใบซื้อปิดแล้ว/ยกเลิก/หาไม่พบ = เหตุถาวร (ประเมินซ้ำห่าง ๆ — M7)
+                    var final = verdict.Code == PartnerAutoRecordPolicy.Codes.Plan
+                        && (doc == null || doc.Status is DocumentStatus.Voided or DocumentStatus.Rejected || doc.BalanceDue <= PartnerPaymentNoticeRule.Tolerance);
+                    await ReleaseAsync(n, verdict.Auto ? PartnerAutoRecordPolicy.Codes.Consent : final ? PartnerAutoRecordPolicy.Codes.PlanFinal : verdict.Code,
                         verdict.Auto ? "ไม่พบผู้ให้ความยินยอม — ระบบไม่บันทึกเอง" : verdict.Reason, nowUtc, ct);
+                }
                 return false;
             }
 
             var reference = PartnerPaymentNoticeRule.PaymentReferenceFor(n.SellerPaymentId, n.PaymentIntentId)!;
+            var grantorName = await _db.Users.AsNoTracking().Where(u => u.Id == grantor).Select(u => u.FullName).FirstOrDefaultAsync(ct) ?? "ผู้ให้ความยินยอม";
+            // ฝ่ายค้าน M3/M5: หมายเหตุของการจ่ายบอกตรง ๆ ว่าระบบบันทึกเอง · ตามความยินยอมของใคร · ด้วยหลักฐานอะไร (ผู้บันทึก = ผู้ให้ความยินยอม ไม่ใช่ผู้กด)
+            var notes = $"⚙️ ระบบบันทึกเอง (ไม่มีผู้กด) ตามความยินยอมของ {grantorName} — {source.Label} · {PartnerPaymentNoticeRule.ChannelLabel(n.SourceChannel)} · "
+                + $"{n.SourceDocumentNumber} · ความยินยอม {consent.ConsentId:N}";
             Models.DTOs.Document.PaymentResponse pay;
             try
             {
                 pay = await _docs.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
                     DocumentId: n.TargetDocumentId, PaymentDate: n.PaidAt, Amount: amount, PaymentMethod: PartnerPaymentNoticeRule.DefaultMethod(n.SourceChannel),
-                    Reference: reference, BankAccount: null,
-                    Notes: $"บันทึกจ่ายอัตโนมัติตามการแจ้งของผู้ขายคู่ค้า ({PartnerPaymentNoticeRule.ChannelLabel(n.SourceChannel)}) — {n.SourceDocumentNumber} · ความยินยอม {consent.ConsentId:N}",
+                    Reference: reference, BankAccount: null, Notes: notes,
                     OverrideBankAccountId: bank, WithholdingTaxAmount: plan.Wht), grantor.ToString(), PaymentEntrySource.PartnerAuto);
             }
             catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or KeyNotFoundException or BusinessRuleException or DbUpdateException)
@@ -160,11 +221,13 @@ public class PartnerPayablePipeline
                 // เส้นจ่ายเดิมปฏิเสธ (งวดปิด · ยอดเกิน · วันที่ ฯลฯ — ตัวตรวจตัวเดียวกับปุ่มเดียว) ⇒ กลับเป็นปุ่มเดียว + เหตุของมัน
                 await lockTx.RollbackAsync(CancellationToken.None);
                 _db.ChangeTracker.Clear();
-                await ReleaseAsync(n, PartnerAutoRecordPolicy.Codes.PostFailed, "บันทึกจ่ายอัตโนมัติไม่สำเร็จ: " + ex.Message + " — กดบันทึกเองได้", nowUtc, ct);
+                if (ex is DbUpdateException) _logger.LogError(ex, "ท่อบันทึกจ่ายจากการแจ้ง {Notice} ของบริษัท {Company} ล้มที่ฐานข้อมูล", noticeId, companyId);
+                await ReleaseAsync(n, PartnerAutoRecordPolicy.Codes.PostFailed, "บันทึกจ่ายอัตโนมัติไม่สำเร็จ: " + UserMessageOf(ex) + " — กดบันทึกเองได้", nowUtc, ct);
                 return false;
             }
             await lockTx.CommitAsync(ct);
             await MarkRecordedAsync(companyId, noticeId, pay.Id, consent, source, plan, nowUtc, ct);
+            await NotifyAutoRecordedAsync(companyId, n, amount, plan.Wht ?? 0m, source, grantorName, ct);
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -180,6 +243,30 @@ public class PartnerPayablePipeline
                 _logger.LogError(rex, "ปล่อยแถวแจ้ง {Notice} กลับเป็นรอบันทึกไม่สำเร็จ (ค้างกำลังบันทึก — ปุ่มเดียวกดได้หลัง {Min} นาที)", noticeId, PartnerPaymentNoticeRule.RecordingStale.TotalMinutes);
             }
             return false;
+        }
+    }
+
+    /// <summary>ฝ่ายค้าน M5: ระบบบันทึกจ่ายเองสำเร็จ ⇒ แจ้งผู้ซื้อหนึ่งครั้งต่อการบันทึก (ยอด · บัญชี · ภาษีหัก · ลิงก์ใบซื้อเพื่อตรวจ/ยกเลิก) — เครื่องแจ้งเตือนกลาง
+    /// (ตารางของบริษัท/ผู้ใช้รวมเป็นสรุปได้ตามค่าตั้งของเขา) · ล้ม = LogError (การจ่ายบันทึกแล้ว + audit มีแล้ว)</summary>
+    private async Task NotifyAutoRecordedAsync(Guid companyId, PartnerPaymentNotice n, decimal amount, decimal wht, PartnerPaySourceAccount.Decision source, string grantorName,
+        CancellationToken ct)
+    {
+        if (_notify == null) return;
+        try
+        {
+            await _notify.DispatchAsync(companyId, NotificationEvents.AutopilotPartnerExchange, new NotificationContext
+            {
+                Title = $"⚙️ ระบบบันทึกจ่าย {amount:N2} บาท ของ {n.SourceDocumentNumber} เองแล้ว (ตามความยินยอมของ {grantorName})",
+                Message = $"จ่าย {amount:N2} บาท + ภาษีหัก ณ ที่จ่าย {wht:N2} บาท · {source.Label} · ลงวันที่ผู้ขายรับเงิน {n.PaidAt.AddHours(7):dd/MM/yyyy} — "
+                    + "ตรวจกับรายการเดินบัญชีของเรา · ไม่ถูกต้องให้ยกเลิกการจ่ายที่ใบซื้อ · หยุดการบันทึกเองได้ที่ “งานอัตโนมัติกับคู่ค้า”",
+                ActionUrl = $"/pages/documents.html?id={n.TargetDocumentId}",
+                EntityType = nameof(PartnerPaymentNotice), EntityId = n.Id,
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _ = ct;
+            _logger.LogError(ex, "แจ้งบริษัท {Company} ว่าระบบบันทึกจ่ายเอง (การแจ้ง {Notice}) ไม่สำเร็จ — การจ่ายและ audit บันทึกแล้ว", companyId, n.Id);
         }
     }
 
@@ -200,13 +287,14 @@ public class PartnerPayablePipeline
             extra: consent == null ? (object)new { recoveredExistingPayment = true } : new
             {
                 consentId = consent.ConsentId, grantorUserId = consent.GrantorUserId, origin = source?.Origin.ToString(), bankAccountId = source?.BankAccountId,
-                confidence = source?.Confidence, losers = source?.Losers.Select(l => new { origin = l.Origin.ToString(), l.BankAccountId }),
-                amount = plan?.Amount, wht = plan?.Wht, ruleCode = PartnerAutoRecordPolicy.RuleCode, legalReference = PartnerAutoRecordPolicy.LegalReference,
+                evidence = source?.Label, confidence = source?.Confidence, losers = source?.Losers.Select(l => new { origin = l.Origin.ToString(), l.BankAccountId }),
+                amount = plan?.Amount, wht = plan?.Wht, entrySource = nameof(PaymentEntrySource.PartnerAuto),
+                ruleCode = PartnerAutoRecordPolicy.RuleCode, legalReference = PartnerAutoRecordPolicy.LegalReference,
                 consentRuleCode = PartnerConsent.RuleCode, usedAi = false,
             });
         await _db.SaveChangesAsync(ct);
         if (fresh.SellerVoidedAt != null || await PartnerPaymentNoticeService.SellerPaymentLiveAsync(_db, fresh, ct) == false)
-            await PartnerPaymentNoticeService.FlagRecordedVoidedAsync(_db, companyId, fresh.TargetDocumentId, "ผู้ขาย", fresh.SourceDocumentNumber, fresh.CashAmount, nowUtc, ct);
+            await PartnerPaymentNoticeService.FlagRecordedVoidedAsync(_db, fresh, "ผู้ขาย", nowUtc, ct);
     }
 
     /// <summary>ไม่ผ่าน ⇒ แถวกลับเป็นรอบันทึก + เหตุ · audit <c>PartnerPaymentAutoBlocked</c> เฉพาะเมื่อเหตุเปลี่ยน (ครั้งแรกต่อเหตุ — ไม่สแปม)</summary>
@@ -272,52 +360,40 @@ public class PartnerPayablePipeline
         return map;
     }
 
-    /// <summary>ตัวตัดสินแหล่งเงินของการแจ้งหนึ่งแถว — โหลดข้อเท็จจริงแล้วเรียก <see cref="PartnerPaySourceAccount.Decide"/> (ตัวเดียว · ผู้เรียก: ท่อ + หน้า)</summary>
+    /// <summary>ตัวตัดสินแหล่งเงินของการแจ้งหนึ่งแถว — โหลดข้อเท็จจริงแล้วเรียก <see cref="PartnerPaySourceAccount.Decide"/> (ตัวเดียว · ผู้เรียก: ท่อ + หน้า) ·
+    /// <b>ชั้นที่ 1–3 ยังไม่มีผู้ป้อน</b> (ส่ง null ตรง ๆ — backlog P2/P4 · ไม่มีเมธอดว่างที่ดูเหมือนตรวจแล้ว — ฝ่ายค้าน M3) ·
+    /// คำแนะนำจากประวัติ = การ<b>จ่าย</b>เอกสารฝั่งซื้อของผู้ติดต่อนี้เท่านั้น (ฝ่ายค้าน L5)</summary>
     public static async Task<PartnerPaySourceAccount.Decision> SourceDecisionAsync(AccountingDbContext db, Guid companyId, PartnerPaymentNotice n, Document? purchase,
-        IReadOnlyDictionary<Guid, string> usable, PartnerConsent.UseCheck? consent, CancellationToken ct = default)
+        IReadOnlyDictionary<Guid, string> usable, PartnerConsent.UseCheck? consent, DateTime nowUtc, CancellationToken ct = default)
     {
-        var bankLine = await BankLineEvidenceAsync(db, companyId, n, ct);
-        var slip = await SlipEvidenceAsync(db, companyId, n, ct);
+        _ = n;
         Guid? history = null;
         if (purchase != null)
         {
-            var since = DateTime.UtcNow.AddMonths(-12);
+            var since = nowUtc.AddMonths(-12);
+            var purchaseTypes = DocumentPermissionHelper.PurchaseTypes.ToList();
             history = await db.Payments.AsNoTracking()
                 .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.BankAccountId != null && p.PaymentDate >= since
-                    && p.Document.CompanyId == companyId && p.Document.ContactId == purchase.ContactId)
+                    && p.Document.CompanyId == companyId && p.Document.ContactId == purchase.ContactId && purchaseTypes.Contains(p.Document.DocumentType))
                 .GroupBy(p => p.BankAccountId)
                 .OrderByDescending(g => g.Count())
                 .Select(g => g.Key).FirstOrDefaultAsync(ct);
         }
         return PartnerPaySourceAccount.Decide(new PartnerPaySourceAccount.Facts(
             Usable: usable,
-            BankLine: bankLine,
-            PayerDeclared: null,   // แพ็ก P4 ("จ่ายจากระบบของเรา" — PartnerPaymentPlans) ป้อนที่นี่
-            SlipMatch: slip,
+            BankLine: null,        // backlog แพ็ก P4 (BankPaymentLineMatch — รายการเดินบัญชีฝั่งเงินออกที่ตรงการแจ้งเดียว)
+            PayerDeclared: null,   // backlog แพ็ก P4 ("จ่ายจากระบบของเรา" — PartnerPaymentPlans)
+            SlipMatch: null,       // backlog แพ็ก P2 (SlipAccountMatch — สลิปตรงบัญชีเดียวของเรา)
             ConsentDefault: consent is { Ok: true } ? consent.DefaultPayBankAccountId : null,
             ConsentDefaultProblem: consent?.PayAccountProblem,
             History: history,
             PurchaseDocBank: purchase?.BankAccountId));
     }
 
-    /// <summary>ชั้นที่ 1 — รายการเดินบัญชีฝั่งเงินออกของผู้ซื้อที่ตรงการแจ้งเดียว (ตัวตัดสิน <c>BankPaymentLineMatch</c> ของแพ็ก P4) · <b>ยังไม่มีผู้ป้อน</b> ⇒ ไม่มีหลักฐานชั้นนี้</summary>
-    private static Task<Guid?> BankLineEvidenceAsync(AccountingDbContext db, Guid companyId, PartnerPaymentNotice n, CancellationToken ct)
-    {
-        _ = db; _ = companyId; _ = n; _ = ct;
-        return Task.FromResult<Guid?>(null);
-    }
-
-    /// <summary>ชั้นที่ 3 — สลิปของผู้ซื้อที่ตรงบัญชีเดียว (ตัวจับคู่ <c>SlipAccountMatch</c> ของแพ็ก P2) · <b>ยังไม่มีผู้ป้อน</b> ⇒ ไม่มีหลักฐานชั้นนี้ (ไม่เดาจากสลิปที่อ่านไม่ได้)</summary>
-    private static Task<PartnerPaySourceAccount.Slip?> SlipEvidenceAsync(AccountingDbContext db, Guid companyId, PartnerPaymentNotice n, CancellationToken ct)
-    {
-        _ = db; _ = companyId; _ = n; _ = ct;
-        return Task.FromResult<PartnerPaySourceAccount.Slip?>(null);
-    }
-
     // ═══════════ แถว Autopilot "การแจ้งชำระจากคู่ค้าค้าง" (query ของท่อ — ผู้อ่าน: AutopilotService.PartnerPayBlockedIssuesAsync) ═══════════
 
-    /// <summary>แถวค้างของบริษัทหนึ่ง (อ่านอย่างเดียว · ผูก CompanyId): (ก) รอบันทึกเกิน 1 วัน / มีเหตุจากท่อ (ข) กำลังบันทึกค้าง (ค) บันทึกแล้วแต่ผู้ขายยกเลิกการรับเงิน
-    /// และการจ่ายของเรายังมีผล</summary>
+    /// <summary>แถวค้างของบริษัทหนึ่ง (อ่านอย่างเดียว · ผูก CompanyId): (ก) รอบันทึกเกิน 1 วัน · หรือท่อบอกเหตุที่ไม่ใช่ "ยังไม่ได้ยินยอม" (แสดงทันที — M7)
+    /// (ข) กำลังบันทึกค้าง (ค) บันทึกแล้วแต่ผู้ขายยกเลิกการรับเงิน และการจ่ายของเรายังมีผล</summary>
     public sealed record BlockedRow(Guid Id, string SourceDocumentNumber, Guid TargetDocumentId, decimal CashAmount, decimal SellerRecordedWht, DateTime PaidAt,
         string? Note, string? AutoBlockedReason, DateTime CreatedAt, bool SellerVoidedAfterRecord);
 
@@ -325,9 +401,11 @@ public class PartnerPayablePipeline
     {
         var openCut = nowUtc.AddDays(-1);
         var staleCut = nowUtc - PartnerPaymentNoticeRule.RecordingStale;
+        var consentCode = PartnerAutoRecordPolicy.Codes.Consent;
         var pending = await db.PartnerPaymentNotices.AsNoTracking()
             .Where(n => n.CompanyId == companyId && !n.IsDeleted && n.SellerVoidedAt == null
-                && ((n.Status == PartnerPaymentNoticeRule.StatusOpen && (n.CreatedAt < openCut || n.AutoBlockedReason != null))
+                && ((n.Status == PartnerPaymentNoticeRule.StatusOpen
+                        && (n.CreatedAt < openCut || (n.AutoBlockedReason != null && n.AutoBlockedCode != consentCode)))
                     || (n.Status == PartnerPaymentNoticeRule.StatusRecording && (n.UpdatedAt ?? n.CreatedAt) < staleCut)))
             .OrderBy(n => n.PaidAt).Take(50)
             .Select(n => new BlockedRow(n.Id, n.SourceDocumentNumber, n.TargetDocumentId, n.CashAmount, n.SellerRecordedWht, n.PaidAt, n.Note, n.AutoBlockedReason,
@@ -348,35 +426,39 @@ public class PartnerPayablePipeline
     /// <summary>
     /// ใบซื้อร่างที่สร้างจากเอกสารของคู่ค้า (<c>PartnerSourceLinkId</c>) ยังไม่มีผังบัญชี ⇒ ถามตัวแนะนำผังเดิม <c>IOcrAiAugmenter.SuggestGlAccountAsync</c>
     /// (orchestrator · นักเรียนก่อน · คีย์เดิม GlAccountSuggestion — ไม่เพิ่ม AiFeatureKey) · เติมเฉพาะคำตอบที่ผ่าน <see cref="GlSuggestionApplyPolicy.MayAutoFill"/>
-    /// และ<b>อยู่ในผังที่ใช้งานของบริษัท</b> (anti-hallucination) · เก็บ <c>GlAccountAiFeedbackId</c> ต่อบรรทัด (ตอนผู้ใช้อนุมัติ/แก้ ระบบเรียก RecordUserChoice เดิม) ·
-    /// ป้ายซื่อสัตย์บนหมายเหตุภายในของใบ ("🤖 AI" เฉพาะเมื่อเรียกจริง · "⚙️ ระบบ" เมื่อโมเดลในบ้านตอบ) · ถามครั้งเดียวต่อใบ (<see cref="DraftGlMarker"/>) ·
-    /// kill-switch: AI ปิด + นักเรียนไม่ถึงเกณฑ์ ⇒ ใบยังเป็นร่างที่ไม่มีผัง (เท่าเดิม — ผู้ใช้เลือกตอนอนุมัติ) ไม่พัง
+    /// และ<b>อยู่ในชุดผังที่ใบซื้อลงได้ของบริษัท</b> (<see cref="DraftGlCandidatesAsync"/> — ค่าใช้จ่าย/สินทรัพย์ที่ไม่ใช่เงินสด·ธนาคาร·ลูกหนี้·ภาษีซื้อ · anti-hallucination) ·
+    /// เขียนแบบมีเงื่อนไข <c>AccountId IS NULL</c> + ใบยังเป็นร่าง (ผังที่ผู้ใช้เพิ่งเลือกชนะเสมอ — L6) · เก็บ <c>GlAccountAiFeedbackId</c> ต่อบรรทัด ·
+    /// ป้ายซื่อสัตย์บนหมายเหตุภายใน ("🤖 AI" เฉพาะเมื่อเรียกจริง) · เติมได้ ⇒ ป้ายปิด <see cref="DraftGlMarker"/> · เติมไม่ได้/ล้ม ⇒ ป้ายลอง <see cref="DraftGlTryMarker"/>
+    /// (ถามซ้ำหลัง <see cref="DraftGlRetryEvery"/> · สูงสุด <see cref="DraftGlMaxTries"/> ครั้ง — โมเดลในบ้านอาจเรียนเพิ่ม) ·
+    /// kill-switch: AI ปิด + นักเรียนไม่ถึงเกณฑ์ ⇒ ใบยังเป็นร่างที่ไม่มีผัง (เท่าเดิม) ไม่พัง · คืนจำนวนใบที่เติมได้
     /// </summary>
     public async Task<int> SuggestDraftGlAsync(Guid companyId, DateTime nowUtc, CancellationToken ct = default)
     {
         if (_glAi == null) return 0;
         var since = nowUtc.AddDays(-30);
+        var retryCut = nowUtc - DraftGlRetryEvery;
         var drafts = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.PartnerSourceLinkId != null && d.Status == DocumentStatus.Draft
                 && d.DocumentType == DocumentType.PurchaseInvoice && d.CreatedAt >= since
                 && (d.InternalNotes == null || !d.InternalNotes.Contains(DraftGlMarker))
+                && (d.InternalNotes == null || !d.InternalNotes.Contains(DraftGlTryMarker) || d.UpdatedAt == null || d.UpdatedAt < retryCut)
                 && d.Lines.Any(l => !l.IsDeleted && l.AccountId == null))
             .OrderBy(d => d.CreatedAt).Take(DraftBatchPerCompany)
-            .Select(d => new { d.Id, d.ContactId })
+            .Select(d => new { d.Id, d.ContactId, d.InternalNotes })
             .ToListAsync(ct);
         if (drafts.Count == 0) return 0;
-        var coa = await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted)
-            .Select(a => new { a.Id, a.AccountCode }).ToListAsync(ct);
-        var byCode = coa.GroupBy(a => a.AccountCode).ToDictionary(g => g.Key, g => g.First().Id);
+        var byCode = await DraftGlCandidatesAsync(_db, companyId, ct);
         var done = 0;
         foreach (var d in drafts)
         {
+            var tries = CountOf(d.InternalNotes, DraftGlTryMarker) + 1;
             try
             {
                 var vendor = await _db.Contacts.AsNoTracking().Where(c => c.Id == d.ContactId && c.CompanyId == companyId)
                     .Select(c => new { c.Name, c.TaxId }).FirstOrDefaultAsync(ct);
-                var lines = await _db.DocumentLines.Where(l => l.DocumentId == d.Id && !l.IsDeleted && l.AccountId == null).ToListAsync(ct);
+                var lines = await _db.DocumentLines.AsNoTracking()
+                    .Where(l => l.DocumentId == d.Id && l.Document.CompanyId == companyId && !l.IsDeleted && l.AccountId == null)
+                    .Select(l => new { l.Id, l.Description, l.Amount }).ToListAsync(ct);
                 int filled = 0, asked = 0;
                 bool usedAi = false, fromStudent = false;
                 foreach (var line in lines)
@@ -389,37 +471,87 @@ public class PartnerPayablePipeline
                     fromStudent |= sugg.FromStudent;
                     var inCoa = sugg.Answer != null && byCode.ContainsKey(sugg.Answer);
                     if (!GlSuggestionApplyPolicy.MayAutoFill(sugg.Answer, sugg.Confidence, sugg.HasModelAnswer, inCoa)) continue;
-                    line.AccountId = byCode[sugg.Answer!];
-                    line.GlAccountAiFeedbackId = sugg.FeedbackId;
-                    filled++;
+                    Guid? accountId = byCode[sugg.Answer!];
+                    var feedbackId = sugg.FeedbackId;
+                    // ค่าผู้ใช้ชนะ: เขียนเฉพาะบรรทัดที่ยังไม่มีผังและใบยังเป็นร่าง ณ ตอนเขียน
+                    filled += await _db.DocumentLines
+                        .Where(l => l.Id == line.Id && l.DocumentId == d.Id && l.AccountId == null
+                            && l.Document.CompanyId == companyId && l.Document.Status == DocumentStatus.Draft)
+                        .ExecuteUpdateAsync(u => u.SetProperty(l => l.AccountId, accountId).SetProperty(l => l.GlAccountAiFeedbackId, feedbackId), ct);
                 }
                 var who = AiAnswerSource.Of(usedAi, fromStudent);
                 var whoLabel = AiAnswerSource.Label(who);   // ป้ายซื่อสัตย์ (กฎ #1): 🤖 AI เฉพาะเมื่อเรียกจริง
-                var note = $"{DraftGlMarker} {nowUtc.AddHours(7):dd/MM/yyyy}: ผังบัญชีจาก {whoLabel} — เติม {filled}/{asked} บรรทัด"
-                    + (filled < asked ? " (บรรทัดที่เหลือเลือกเองตอนตรวจ)" : "") + " · ตรวจผังแล้วอนุมัติใบซื้อเอง (ระบบไม่อนุมัติแทน)";
-                var doc = await _db.Documents.FirstAsync(x => x.Id == d.Id && x.CompanyId == companyId, ct);
-                if (doc.Status != DocumentStatus.Draft) { _db.ChangeTracker.Clear(); continue; }   // ผู้ใช้อนุมัติไปแล้วระหว่างรอ — ไม่แตะ
-                doc.InternalNotes = string.IsNullOrWhiteSpace(doc.InternalNotes) ? note : doc.InternalNotes + "\n" + note;
-                doc.UpdatedAt = nowUtc;
-                _db.AddChainedAuditLog(new AuditLog
+                var stamp = $"{nowUtc.AddHours(7):dd/MM/yyyy}";
+                var note = filled > 0
+                    ? $"{DraftGlMarker} {stamp}: ผังบัญชีจาก {whoLabel} — เติม {filled}/{asked} บรรทัด"
+                        + (filled < asked ? " (บรรทัดที่เหลือเลือกเองตอนตรวจ)" : "") + " · ตรวจผังแล้วอนุมัติใบซื้อเอง (ระบบไม่อนุมัติแทน)"
+                    : tries >= DraftGlMaxTries
+                        ? $"{DraftGlMarker} {stamp}: {whoLabel} — ยังไม่มีผังบัญชีที่ใช้ได้หลังถาม {tries} ครั้ง (เลิกถาม · เลือกผังเองตอนตรวจ)"
+                        : $"{DraftGlTryMarker} {stamp}: {whoLabel} — ยังไม่มีผังบัญชีที่ใช้ได้ (ครั้งที่ {tries}/{DraftGlMaxTries} · ระบบถามใหม่ภายหลัง · เลือกผังเองได้เลย)";
+                await AppendDraftNoteAsync(companyId, d.Id, note, nowUtc, ct);
+                if (filled > 0)
                 {
-                    CompanyId = companyId, Action = AuditAction.Update, EntityType = "Document", EntityId = d.Id.ToString(),
-                    NewValues = JsonSerializer.Serialize(new
+                    _db.AddChainedAuditLog(new AuditLog
                     {
-                        @event = "PartnerDraftGlSuggested", filled, asked, usedAi, fromLocalModel = fromStudent, ruleCode = PartnerExchangeRules.RuleCode,
-                    }),
-                    Timestamp = nowUtc,
-                });
-                await _db.SaveChangesAsync(ct);
-                _db.ChangeTracker.Clear();
-                done++;
+                        CompanyId = companyId, Action = AuditAction.Update, EntityType = "Document", EntityId = d.Id.ToString(),
+                        NewValues = JsonSerializer.Serialize(new
+                        {
+                            @event = "PartnerDraftGlSuggested", filled, asked, usedAi, fromLocalModel = fromStudent, ruleCode = PartnerExchangeRules.RuleCode,
+                        }),
+                        Timestamp = nowUtc,
+                    });
+                    await _db.SaveChangesAsync(ct);
+                    done++;
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _db.ChangeTracker.Clear();
                 _logger.LogError(ex, "เติมผังบัญชีใบซื้อร่างจากคู่ค้า {Doc} ของบริษัท {Company} ไม่สำเร็จ (ใบยังเป็นร่าง — เลือกผังเองตอนตรวจ)", d.Id, companyId);
+                // ล้มกลางใบก็นับเป็นหนึ่งครั้ง (ไม่ถามซ้ำทุกรอบ 5 นาที — L6)
+                try
+                {
+                    await AppendDraftNoteAsync(companyId, d.Id,
+                        (tries >= DraftGlMaxTries ? DraftGlMarker : DraftGlTryMarker) + $" {nowUtc.AddHours(7):dd/MM/yyyy}: ถามผังบัญชีไม่สำเร็จ (ครั้งที่ {tries}/{DraftGlMaxTries}) — เลือกผังเองตอนตรวจ",
+                        nowUtc, CancellationToken.None);
+                }
+                catch (Exception nex) when (nex is not OperationCanceledException)
+                {
+                    _logger.LogError(nex, "ประทับป้ายลองผังบัญชีบนใบซื้อร่าง {Doc} ไม่สำเร็จ", d.Id);
+                }
             }
         }
         return done;
     }
+
+    /// <summary>ชุดผังที่ตัวแนะนำเติมให้ใบซื้อร่างได้ (รหัส → id): ผังที่ใช้งานของบริษัท หมวดค่าใช้จ่าย หรือสินทรัพย์ที่<b>ไม่ใช่</b>เงินสด/ธนาคาร/ลูกหนี้/ภาษีซื้อ
+    /// (รหัสขึ้นต้น 111 · 112 · 113 · 116) และไม่ใช่ผังที่บัญชีธนาคารผูกไว้ — รายได้/หนี้สิน/ทุน/เงินฝากไม่ผ่าน (ฝ่ายค้าน L6)</summary>
+    public static async Task<Dictionary<string, Guid>> DraftGlCandidatesAsync(AccountingDbContext db, Guid companyId, CancellationToken ct = default)
+    {
+        var bankLinked = await db.BankAccounts.AsNoTracking().Where(b => b.CompanyId == companyId && !b.IsDeleted && b.LinkedAccountId != null)
+            .Select(b => b.LinkedAccountId!.Value).ToListAsync(ct);
+        var coa = await db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                && (a.AccountType == AccountType.Expense
+                    || (a.AccountType == AccountType.Asset && !a.AccountCode.StartsWith("111") && !a.AccountCode.StartsWith("112")
+                        && !a.AccountCode.StartsWith("113") && !a.AccountCode.StartsWith("116"))))
+            .Select(a => new { a.Id, a.AccountCode }).ToListAsync(ct);
+        return coa.Where(a => !bankLinked.Contains(a.Id)).GroupBy(a => a.AccountCode).ToDictionary(g => g.Key, g => g.First().Id);
+    }
+
+    private static int CountOf(string? text, string marker)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        var count = 0;
+        for (var i = text.IndexOf(marker, StringComparison.Ordinal); i >= 0; i = text.IndexOf(marker, i + marker.Length, StringComparison.Ordinal)) count++;
+        return count;
+    }
+
+    /// <summary>ต่อท้ายหมายเหตุภายในของใบซื้อร่าง (เฉพาะใบของบริษัทนี้ที่ยังเป็นร่าง — ผู้ใช้อนุมัติไปแล้วระหว่างรอ = ไม่แตะ)</summary>
+    private Task<int> AppendDraftNoteAsync(Guid companyId, Guid documentId, string note, DateTime nowUtc, CancellationToken ct)
+        => _db.Documents
+            .Where(x => x.Id == documentId && x.CompanyId == companyId && x.Status == DocumentStatus.Draft)
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(x => x.InternalNotes, x => x.InternalNotes == null || x.InternalNotes == "" ? note : x.InternalNotes + "\n" + note)
+                .SetProperty(x => x.UpdatedAt, (DateTime?)nowUtc), ct);
 }
