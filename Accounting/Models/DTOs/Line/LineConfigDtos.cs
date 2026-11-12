@@ -35,7 +35,9 @@ public record LineConfigResponse(
     bool QuietHoursEnabled = false,
     int QuietStartHour = 21,
     int QuietEndHour = 8,
-    string? QuietHoursNote = null);
+    string? QuietHoursNote = null,
+    /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร (<c>CompanySettings.LineChatSlipIntakeEnabled</c> · echo กลับให้ฟอร์ม)</summary>
+    bool ChatSlipIntake = true);
 
 /// <summary>รอบ 259 (A-M6) · รอบ 260-4 (คำตัดสิน 260-4-3): ปลายทางทดสอบหนึ่งตัว — <paramref name="Key"/> = <c>LineOaHealth.TeamGroupTargetKey</c> หรือ
 /// <c>LineOaHealth.EndpointTargetKey</c> (เซิร์ฟเวอร์อ่าน id เอง · ไม่มี LINE id ใน DTO) · <paramref name="ReachesContact"/> = ข้อความทดสอบถึงผู้รับของผู้ติดต่อ (หน้าถามยืนยันก่อน)</summary>
@@ -71,9 +73,11 @@ public record UpdateLineConfigRequest(
     /// <summary>รอบ 260-4: ชั่วโมงเงียบ · null = คงเดิม (ปุ่มล้างรหัสเชื่อมไม่แตะ)</summary>
     bool? QuietHoursEnabled = null,
     int? QuietStartHour = null,
-    int? QuietEndHour = null);
+    int? QuietEndHour = null,
+    /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร · null = คงเดิม</summary>
+    bool? ChatSlipIntake = null);
 
-/// <param name="TargetKey">รอบ 259 (A-M6): ปลายทางที่ระบบรู้จัก (<c>LineConfigResponse.TestTargets</c>) — มีค่า ⇒ ใช้แทน <paramref name="ToLineId"/></param>
+/// <param name="TargetKey">รอบ 259 (A-M6): ปลายทางที่ระบบรู้จัก (รอบ 260-4: <c>GET line-config/test-targets</c>) — มีค่า ⇒ ใช้แทน <paramref name="ToLineId"/></param>
 public record TestLineConfigRequest(string? ToLineId, string? TargetKey = null);
 
 public record LineTestResult(bool Success, string? Message);

@@ -15049,6 +15049,10 @@ public partial class DocumentService : IDocumentService
                     (carryVatFromSource ? " — ทำหน้าที่ใบกำกับภาษี ณ วันรับเงิน (§78/1)" : ""),
             CreatedBy = createdBy,
         };
+        // คำตัดสิน 260-5-1 — รับเงินก่อนวันที่ใบที่อ้าง (เงินก้อนเข้าก่อนออกใบ) ⇒ วันที่ใบคงเป็นวันรับเงิน (ม.105 · ม.78/1 · ม.86) แต่ใบที่ถือ VAT ออกช้า ⇒ หมายเหตุภายใน
+        var issuedLateNote = Accounting.Helpers.LateReceiptTaxPoint.IssuedAfterMoneyNote(
+            payment.PaymentDate, invoice.DocumentDate, carriesTaxInvoiceRole, receipt.VatAmount);
+        if (issuedLateNote != null) AppendInternalNote(receipt, issuedLateNote);
         _db.Documents.Add(receipt);
         if (carryVatFromSource && srcLines != null)
         {

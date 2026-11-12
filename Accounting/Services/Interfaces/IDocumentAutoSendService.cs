@@ -45,6 +45,9 @@ public interface IDocumentPayLinkService
     Task LinkNoWhtIntentAsync(Guid companyId, Guid acceptanceId, Guid paymentIntentId, CancellationToken ct = default);
     /// <summary>รอบ 250 WP-03 (ฝ่ายค้าน H1): ตัวเลือกโอน/QR ของใบสำหรับพอร์ทัล — กติกาเดียวกับหน้าชำระ (IssueRefusal · ยอดสุทธิหลัง WHT · บัญชีของใบ) · null = ไม่พบใบ</summary>
     Task<DocumentTransferView?> TransferForDocumentAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
+    /// <summary>รอบ 260: ยอดของใบตามกติกาเดียวกับ <see cref="TransferForDocumentAsync"/> (IssueRefusal · ยอดสุทธิหลัง WHT) แต่<b>ไม่สร้างกล่องโอน/QR</b> —
+    /// ผู้เรียกที่ต้องการแค่ "ยอดที่ลูกค้าต้องโอน" ของหลายใบ (จับคู่สลิปจากแชต LINE) · <c>Transfer</c> = null เสมอ · null = ไม่พบใบ</summary>
+    Task<DocumentTransferView?> DueAmountsForDocumentAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
 }
 
 /// <summary>รอบ 241 — งานอัตโนมัติหลังรับชำระ (ออก/ส่งใบเสร็จ หรือใบเสร็จ-ใบกำกับภาษี · ตรวจแถวรอ 50 ทวิ) · ตัวตัดสิน <see cref="PostPaymentAutomationPolicy"/></summary>

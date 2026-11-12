@@ -30,12 +30,15 @@ public class LineConfigController : ControllerBase
     private readonly ILogger<LineConfigController>? _logger;
     /// <summary>รอบ 257 C-H1: ค่าตั้ง OA กลาง (ผู้อ่านตัวเดียว) — กัน token/secret ของ OA กลางถูกใส่เป็น "OA ของร้านเอง" · null (สร้างนอก DI) = ตรวจได้เฉพาะบริษัทผู้ให้บริการ</summary>
     private readonly INextAccLineConfig? _nextAcc;
+    /// <summary>รอบ 260: เครื่องนี้อ่านยอดจากรูปสลิปได้ไหม (แถวความพร้อม "รับสลิปจากแชต") · null = ไม่รู้ ⇒ ถือว่าอ่านไม่ได้</summary>
+    private readonly Accounting.Services.Implementations.ISlipImageReader? _slipReader;
 
     public LineConfigController(AccountingDbContext db, ISecretProtector secrets, ILineNotifyService line,
         ICustomerLineLinkService? customerLinks = null, ICustomerRelinkInviteService? relink = null, ILogger<LineConfigController>? logger = null,
-        INextAccLineConfig? nextAcc = null)
+        INextAccLineConfig? nextAcc = null, Accounting.Services.Implementations.ISlipImageReader? slipReader = null)
     {
         _nextAcc = nextAcc;
+        _slipReader = slipReader;
         _db = db;
         _secrets = secrets;
         _line = line;
@@ -100,6 +103,7 @@ public class LineConfigController : ControllerBase
         if (req.QuietHoursEnabled is bool quietOn) s.LineQuietHoursEnabled = quietOn;
         if (req.QuietStartHour is int qs) s.LineQuietStartHour = qs;
         if (req.QuietEndHour is int qe) s.LineQuietEndHour = qe;
+        if (req.ChatSlipIntake is bool chatSlip) s.LineChatSlipIntakeEnabled = chatSlip;   // รอบ 260 · null = คงเดิม (ปุ่มล้างรหัสไม่แตะ)
         // รอบ 257 C-M1: null = คงเดิม · "" = ล้าง · ค่า = ตั้งใหม่ (เดิม "" ถูกถือว่าคงเดิม ⇒ ล้างไม่ได้เงียบ ๆ)
         var tokenCleared = LineOwnOaGuard.Classify(req.ChannelAccessToken) == LineOwnOaGuard.InputKind.Clear;
         var secretCleared = LineOwnOaGuard.Classify(req.ChannelSecret) == LineOwnOaGuard.InputKind.Clear;
@@ -237,11 +241,20 @@ public class LineConfigController : ControllerBase
             TenantLineNotice = NotificationAudiencePolicy.CompanyGroupNotice(
                 s.LineEnabled && _secrets.IsUsable(s.LineChannelAccessToken), !string.IsNullOrWhiteSpace(s.LineDefaultGroupId)),
             // รอบ 259 (A-M5 · A-L3): ความพร้อมจริง (webhook เข้าจริง · Basic ID · ผลทดสอบตามสถานะทดสอบ ไม่ใช่ธงที่รีเซ็ตตอนบันทึก)
-            Health = LineOaHealth.Rows(s.LineEnabled, _secrets.IsUsable(s.LineChannelAccessToken), _secrets.IsUsable(s.LineChannelSecret),
+            Health = WithChatSlipRow(LineOaHealth.Rows(s.LineEnabled, _secrets.IsUsable(s.LineChannelAccessToken), _secrets.IsUsable(s.LineChannelSecret),
                 s.LineLastWebhookAt, !string.IsNullOrWhiteSpace(s.LineWebhookDestinationMismatch), s.LineOaBasicId,
-                s.LineLastTestedAt, s.LineLastTestStatus, isPlatform),
+                s.LineLastTestedAt, s.LineLastTestStatus, isPlatform), s, isPlatform),
             QuietHoursNote = LineQuietHours.Sentence(s.LineQuietHoursEnabled, s.LineQuietStartHour, s.LineQuietEndHour),
         };
+    }
+
+    /// <summary>รอบ 260: แถวความพร้อม "รับสลิปจากแชต" ต่อท้าย (ตัวตัดสินเดียว LineChatSlipRule.ReadinessRow) · บริษัทผู้ให้บริการไม่มี OA ของร้าน = ไม่มีแถว</summary>
+    private IReadOnlyList<LineOaHealth.Row> WithChatSlipRow(IReadOnlyList<LineOaHealth.Row> rows, CompanySettings s, bool isPlatform)
+    {
+        if (isPlatform) return rows;
+        var oaReady = CompanyLineReadiness.Evaluate(s.LineEnabled, _secrets.IsUsable(s.LineChannelAccessToken), _secrets.IsUsable(s.LineChannelSecret)).Ready;
+        return rows.Append(LineChatSlipRule.ReadinessRow(s.LineChatSlipIntakeEnabled, oaReady,
+            s.LineLastWebhookAt != null && string.IsNullOrWhiteSpace(s.LineWebhookDestinationMismatch), _slipReader?.IsAvailable == true)).ToList();
     }
 
     private static LineConfigResponse Build(CompanySettings s) => new(
@@ -255,5 +268,6 @@ public class LineConfigController : ControllerBase
         OaBasicId: s.LineOaBasicId,
         QuietHoursEnabled: s.LineQuietHoursEnabled,
         QuietStartHour: s.LineQuietStartHour,
-        QuietEndHour: s.LineQuietEndHour);
+        QuietEndHour: s.LineQuietEndHour,
+        ChatSlipIntake: s.LineChatSlipIntakeEnabled);
 }

@@ -1149,6 +1149,16 @@
         <label for="lineOaBasicId" class="form-label">LINE OA Basic ID <span class="text-gray-400" style="font-size:12px">(เช่น @myshop — ใช้ทำปุ่ม "เพิ่มเพื่อน/ส่งรหัส" ให้ลูกค้าหน้าเว็บผูก LINE รับแจ้งเตือน และให้พนักงานผูก LINE รับสลิป)</span></label>
         <input type="text" class="form-input" id="lineOaBasicId" placeholder="@myshop" />
       </div>
+
+      <!-- รอบ 260 (คำตัดสิน 260-1-1): สลิปที่ลูกค้าส่งในแชต OA ของบริษัท ⇒ ผูกเอกสาร — ความพร้อมอยู่ในกล่อง "ความพร้อมของ LINE OA" (แถวจากเซิร์ฟเวอร์) -->
+      <div class="form-group">
+        <label style="display:flex;gap:8px;align-items:flex-start">
+          <input type="checkbox" id="lineChatSlipIntake" checked />
+          <span>รับสลิปที่ลูกค้าส่งในแชต LINE อัตโนมัติ
+            <span class="text-gray-400" style="font-size:12px;display:block">ระบบอ่านยอดจากรูป แล้วหาเอกสารค้างชำระของผู้ติดต่อที่ผูก LINE นั้น — ตรงใบเดียว = บันทึกการแจ้งโอนให้เอง ·
+            หลายใบ = ลูกค้ากดเลือกในแชต · ไม่ตรง = เข้าคิวที่หน้ารายการรับชำระออนไลน์ · ระบบไม่ปิดหนี้จากสลิปเอง</span></span>
+        </label>
+      </div>
       </details>
 
       <!-- รอบ 211: ช่องทางแจ้งลูกค้าปลายทาง (การจอง/ออเดอร์/สมาชิกเว็บ) — เซิร์ฟเวอร์ตัดสินทุกค่า หน้านี้แสดงอย่างเดียว -->
@@ -2198,6 +2208,7 @@
           { const clr = document.getElementById('lineClearSecretsBtn'); if (clr) clr.style.display = (c.hasAccessToken || c.hasChannelSecret) ? '' : 'none'; }
           document.getElementById('lineGroupId').value = c.defaultGroupId || '';
           document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
+          { const cs = document.getElementById('lineChatSlipIntake'); if (cs) cs.checked = c.chatSlipIntake !== false; }   // รอบ 260 — ค่าจากเซิร์ฟเวอร์ (ค่าตั้งต้นเปิด)
           this._renderLineCustomerChannel(c.customerChannel);
           this._renderLineRelinkInvite(c.relinkInvite, c.webhookProblem);
           { const n = document.getElementById('lineTenantNotice'); if (n) { n.style.display = c.tenantLineNotice ? '' : 'none'; n.textContent = c.tenantLineNotice ? '🔔 ' + c.tenantLineNotice : ''; } }
@@ -2292,6 +2303,8 @@
           quietHoursEnabled: document.getElementById('lineQuietEnabled').checked,
           quietStartHour: Number(document.getElementById('lineQuietStart').value),
           quietEndHour: Number(document.getElementById('lineQuietEnd').value),
+          // รอบ 260: รับสลิปจากแชต LINE (ส่งค่าทุกครั้งที่บันทึก — ช่อง hydrate จากเซิร์ฟเวอร์)
+          chatSlipIntake: !!(document.getElementById('lineChatSlipIntake') || {}).checked,
         };
         try {
           const j = await API.put(`/api/companies/${cid}/line-config`, body);

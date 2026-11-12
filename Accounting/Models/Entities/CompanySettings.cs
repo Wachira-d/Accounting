@@ -257,6 +257,10 @@ public class CompanySettings : TenantEntity
     /// <summary>รอบ 259 (A-M5): เวลาที่ webhook ของ OA บริษัทได้รับคำขอจาก LINE ที่ลายเซ็นผ่าน + บอทตรงล่าสุด (ระบบประทับเอง · ขยับไม่ถี่กว่า
     /// <c>LineWebhookHealth.StampEvery</c>) · null = ยังไม่เคย ⇒ ความพร้อมบอก "ยังไม่เคยได้รับ event จาก LINE" (ผูก/หยุด/บล็อกทำงานไม่ได้)</summary>
     public DateTime? LineLastWebhookAt { get; set; }
+    /// <summary>รอบ 260 (คำตัดสิน 260-1-1 · 260-1-4 ค่าตั้งต้นเปิด): รับสลิปที่ลูกค้าส่งในแชต LINE OA ของบริษัท ⇒ จับคู่ยอดกับเอกสารค้างชำระของผู้ติดต่อ
+    /// (ใบเดียว = แจ้งโอนให้เอง · หลายใบ = ลูกค้ากดเลือก · ไม่ตรง = คิวพนักงาน) · ไม่ปิดหนี้เอง · ผู้อ่าน: <c>LineChatSlipService</c> + แถวความพร้อมแท็บ LINE ·
+    /// ปิด ⇒ คำตอบเดิมของรอบ 259 (แนบสลิปที่หน้าชำระ)</summary>
+    public bool LineChatSlipIntakeEnabled { get; set; } = true;
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }
     /// <summary>รอบ 260-4 (team-A L8 · คำตัดสิน 260-4-1): ชั่วโมงเงียบของการ์ด LINE ถึงลูกค้า (เวลาไทย) — ตัวตัดสิน <c>Helpers/LineQuietHours</c> ·

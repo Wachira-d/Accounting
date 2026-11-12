@@ -45,6 +45,13 @@ public interface ICustomerLineLinkService
     /// <summary>ตอบกลับด้วย reply token (ไม่กินโควตา push) ผ่าน token ของ OA ตาม scope · ไม่สำเร็จ ⇒ false (log)</summary>
     Task<bool> ReplyAsync(string scope, Guid? companyId, string replyToken, string text, CancellationToken ct = default);
 
+    /// <summary>รอบ 260: ตอบกลับด้วย message object ของ LINE (เช่นข้อความ + quick reply ปุ่มเลือกใบ) — ตัวส่งเดียวกับ <see cref="ReplyAsync"/> · ไม่เกิน 5 ก้อน</summary>
+    Task<bool> ReplyMessagesAsync(string scope, Guid? companyId, string replyToken, IReadOnlyList<object> messages, CancellationToken ct = default);
+
+    /// <summary>รอบ 260: ดึงไฟล์ของข้อความ (รูป) ในแชต OA ของบริษัท (<c>api-data.line.me/v2/bot/message/{id}/content</c>) ด้วย token ของบริษัท ·
+    /// ใหญ่เกิน <paramref name="maxBytes"/> / ไม่มี token / LINE ไม่ตอบ ⇒ null (log ระดับ Error)</summary>
+    Task<byte[]?> DownloadMessageContentAsync(Guid companyId, string messageId, int maxBytes, CancellationToken ct = default);
+
     /// <summary>LINE userId ที่ลูกค้าผูกเองและยังใช้ได้กับ OA ปัจจุบัน — ระเบียน (การจอง/ออเดอร์) &gt; สมาชิก &gt; สมาชิกที่ผูกผู้ติดต่อ ERP · ไม่มี ⇒ null</summary>
     Task<string?> ResolveLineUserIdAsync(Guid companyId, CustomerLineTarget target, CancellationToken ct = default);
 }

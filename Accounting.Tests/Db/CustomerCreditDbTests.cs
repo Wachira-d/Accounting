@@ -649,6 +649,47 @@ public class CustomerCreditDbTests
         }
     }
 
+    // ───────── 260-5-1: ใบกำกับ ณ วันรับเงิน ที่รับเงินก่อนวันที่ใบแจ้งหนี้ ─────────
+
+    [Fact]
+    public async Task R2605_1_รับเงินค้างออกใบก่อนออกใบแจ้งหนี้_ใบกำกับณวันรับเงินลงวันที่รับเงินจริงพร้อมหมายเหตุออกช้า_เงินโอนเกินลงวันที่จัดสรรไม่มีหมายเหตุ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var received = Today.AddDays(-3);
+
+        // (ก) ค้างออกใบ: เงินเข้า 3 วันก่อนออกใบแจ้งหนี้ (มี VAT) ⇒ ใบเสร็จ/ใบกำกับรายใบลงวันที่รับเงิน (ม.105 · ม.78/1 · ม.86) ไม่ใช่วันที่ใบแจ้งหนี้ + [LATE-TAX-INVOICE]
+        var s = await SeedAsync(db);
+        var uninvoiced = await CreditAsync(db, s, 1_070m, UnappliedReason.UninvoicedSupply, received);
+        var inv = await InvoiceAsync(db, s, s.CustomerId, 1_000m, 70m, date: Today);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Credits(req).AllocateAsync(s.CompanyId, uninvoiced.Id, new AllocateCustomerCreditRequest(inv.Id, 1_070m, Today), "tester");
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var receipt = await ReceiptOfAsync(check, s.CompanyId, uninvoiced.Id, inv.Id);
+            Assert.True(receipt != null, "ใบที่ปิดด้วยเงินค้างออกใบไม่ได้ใบเสร็จ/ใบกำกับรายใบ — หมายเหตุ: " + (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == inv.Id)).InternalNotes);
+            Assert.Equal(received.Date, receipt!.DocumentDate.Date);           // วันรับเงินจริง — ไม่เลื่อนเป็นวันที่ใบแจ้งหนี้
+            Assert.Equal((true, 70m), (receipt.IsTaxInvoiceByLaw == true, receipt.VatAmount));
+            Assert.Contains(LateReceiptTaxPoint.IssuedAfterMoneyMarker, receipt.InternalNotes ?? "", StringComparison.Ordinal);
+            Assert.DoesNotContain(LateReceiptTaxPoint.IssuedAfterMoneyMarker, receipt.Notes ?? "", StringComparison.Ordinal);   // ไม่พิมพ์ถึงลูกค้า
+            Assert.Equal(received.Date, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == inv.Id)).OutputVatDueAt?.Date);   // งวด VAT = วันรับเงิน
+        }
+
+        // (ข) ทิศตรงข้าม: เงินโอนเกิน (หนี้ที่ต้องคืนจนวันหักกลบ) ⇒ ใบลงวันที่จัดสรร = วันที่ใบ ⇒ ไม่มีหมายเหตุออกช้า
+        var s2 = await SeedAsync(db);
+        var overpaid = await CreditAsync(db, s2, 1_070m, UnappliedReason.Overpaid, received);
+        var inv2 = await InvoiceAsync(db, s2, s2.CustomerId, 1_000m, 70m, date: Today);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Credits(req).AllocateAsync(s2.CompanyId, overpaid.Id, new AllocateCustomerCreditRequest(inv2.Id, 1_070m, Today), "tester");
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var receipt = await ReceiptOfAsync(check, s2.CompanyId, overpaid.Id, inv2.Id);
+            Assert.NotNull(receipt);
+            Assert.Equal(Today, receipt!.DocumentDate.Date);
+            Assert.DoesNotContain(LateReceiptTaxPoint.IssuedAfterMoneyMarker, receipt.InternalNotes ?? "", StringComparison.Ordinal);
+        }
+    }
+
     // ───────── H2: ใบแจ้งหนี้มี VAT ที่ปิดผ่านแผงเงินเกิน/การจัดสรร ต้องได้ใบเสร็จ/ใบกำกับภาษี ─────────
 
     [Fact]
