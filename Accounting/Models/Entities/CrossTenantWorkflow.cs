@@ -60,6 +60,38 @@ public class TradingPartnership : BaseEntity
     public decimal? PurchaseDraftLimitA { get; set; }
     /// <summary>เพดานเมื่อ <see cref="CompanyBId"/> เป็นผู้รับ</summary>
     public decimal? PurchaseDraftLimitB { get; set; }
+
+    // ── รอบ 264 (คำตัดสิน 264-1-x · Helpers/PartnerLinkRequestRules · Helpers/PartnerLinkRequestMigration) ──
+    /// <summary>เวลาที่ส่ง/เปิดคำขอล่าสุด — ฐานของวันหมดอายุ (<c>PartnerLinkRequestRules.ExpiresAt</c>) · null = แถวเก่า (ใช้ CreatedAt)</summary>
+    public DateTime? InvitedAt { get; set; }
+    /// <summary>outbox ของการแจ้งผู้รับ (กระดิ่ง/อีเมล/LINE ผ่านเครื่องแจ้งเตือน) — ค่า = ส่งได้ตั้งแต่เวลานี้ · null = ไม่มีอะไรต้องส่ง ·
+    /// ผู้เขียน: <c>InvitePartnerAsync</c> (ในธุรกรรมคำขอ) · ผู้อ่าน: <c>DispatchPendingLinkRequestNoticesAsync</c> (AutopilotJob)</summary>
+    public DateTime? InviteNoticeDueAt { get; set; }
+    /// <summary>เวลาที่งานเบื้องหลังตัดสินการแจ้งแล้ว (ส่ง/ข้ามเพราะเพดาน/หมดอายุ/เลิกลอง) · ผลอยู่ใน <see cref="InviteNoticeResult"/></summary>
+    public DateTime? InviteNotifiedAt { get; set; }
+    /// <summary>ผลการแจ้ง (ชื่อ enum เสมอ: Delivered · NoRecipient · SuppressedByCompany · Failed · SkipCapped · SkipExpired · GiveUp)</summary>
+    public string? InviteNoticeResult { get; set; }
+    /// <summary>คำขอของผู้ขอ (<see cref="PartnerLinkRequest"/> ในบริษัทผู้ขอ) ที่เปิดแถวนี้ล่าสุด — ยอมรับแล้วประทับกลับที่คำขอนั้น</summary>
+    public Guid? LinkRequestId { get; set; }
+}
+
+/// <summary>
+/// รอบ 264 — "คำขอที่เราส่ง" ของบริษัทผู้ขอ (<see cref="TenantEntity.CompanyId"/> = ผู้ขอ) · <b>เกิดทุกครั้งที่กดส่ง</b> ไม่ว่าเลขภาษีนั้นจะมีในระบบหรือไม่
+/// (แถวรูปเดียวกันทุกกรณี ⇒ ไม่รั่วสมาชิกภาพ · คำตัดสิน 264-1-2) · สถานะที่ผู้ขอเห็นคำนวณจาก <see cref="AcceptedAt"/> + <see cref="ExpiresAt"/> เท่านั้น
+/// (<c>PartnerLinkRequestRules.OutgoingStateOf</c>) — การปฏิเสธไม่ถูกบันทึกที่นี่
+/// </summary>
+public class PartnerLinkRequest : TenantEntity
+{
+    /// <summary>เลขภาษีที่ผู้ขอกรอก (13 หลักที่ normalize แล้ว)</summary>
+    public string PartnerTaxId { get; set; } = "";
+    /// <summary>สาขาที่ผู้ขอกรอก (5 หลัก) · null = ไม่ระบุ</summary>
+    public string? PartnerBranchCode { get; set; }
+    public string? Message { get; set; }
+    public Guid RequestedByUserId { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    /// <summary>ปลายทางยอมรับแล้ว (ประทับโดย <c>AcceptPartnershipAsync</c>) · null = ยังไม่มีผู้ยอมรับ</summary>
+    public DateTime? AcceptedAt { get; set; }
+    public Guid? AcceptedPartnershipId { get; set; }
 }
 
 /// <summary>

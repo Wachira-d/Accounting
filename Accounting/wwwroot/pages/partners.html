@@ -24,11 +24,14 @@
       <div><button class="btn btn-secondary" onclick="Page.load()">รีเฟรช</button></div>
     </div>
 
+    <!-- รอบ 264: การ์ดยอมรับจากลิงก์แจ้งเตือน (partners.html?request=<id>) — ซ่อนจนกว่าจะมีพารามิเตอร์ · ข้อความ/ปุ่มตามเซิร์ฟเวอร์ -->
+    <div class="pt-card" id="ptRequestCard" style="display:none;border-color:#6366f1;box-shadow:0 0 0 2px #e0e7ff"></div>
+
     <div class="pt-card">
       <h3>🤝 ส่งคำขอเชื่อม</h3>
-      <p class="pt-muted">ระบบตอบ "ส่งคำขอแล้ว" ทุกกรณี (ไม่บอกว่าเลขภาษีนี้ใช้ NextAcc หรือไม่) · <strong>คู่ค้าต้องเปิด "ให้คู่ค้าค้นเจอ" ในหน้านี้ของเขาก่อน</strong>
-        (ค่าตั้งต้นปิด) — ถ้ายังไม่เปิด คำขอจะ<strong>ไม่ถูกเก็บไว้</strong> และเขาจะไม่เห็นภายหลัง ⇒ แจ้งคู่ค้าให้เปิดก่อน แล้วส่งคำขออีกครั้ง ·
-        คำขอที่ถึงจริงจะแจ้งเตือนเจ้าของบริษัทปลายทาง</p>
+      <p class="pt-muted">ระบบตอบ "ส่งคำขอแล้ว" ทุกกรณี (ไม่บอกว่าเลขภาษีนี้ใช้ NextAcc หรือไม่) · ถ้าผู้รับใช้ NextAcc เจ้าของ/ผู้ดูแลของเขาจะได้รับแจ้ง
+        (กระดิ่ง · อีเมล · LINE ตามที่เขาตั้ง · ภายในไม่กี่นาที) พร้อมลิงก์ให้กดยอมรับ — <strong>เขาไม่ต้องเปิด "ให้คู่ค้าค้นเจอ" ก่อน</strong> ·
+        ข้อมูลของเขาจะเห็นที่นี่หลังเขายอมรับเท่านั้น · คำขอหมดอายุใน 30 วัน</p>
       <div class="pt-grid2">
         <div><label for="ptTax" class="form-label">เลขประจำตัวผู้เสียภาษีของคู่ค้า (13 หลัก)</label><input id="ptTax" class="form-input" maxlength="17" autocomplete="off"></div>
         <div><label for="ptBranch" class="form-label">รหัสสาขา (5 หลัก · ว่าง = ไม่ระบุ)</label><input id="ptBranch" class="form-input" maxlength="5" autocomplete="off"></div>
@@ -44,6 +47,17 @@
         <table class="table">
           <thead><tr><th>คู่ค้า</th><th>สถานะ</th><th>เพดานยอดใบซื้อร่าง (ของเรา)</th><th>จัดการ</th></tr></thead>
           <tbody id="ptBody"><tr><td colspan="4" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pt-card">
+      <h3>📤 คำขอที่เราส่ง</h3>
+      <p class="pt-muted">สถานะมีแค่ "รอคู่ค้าตอบรับ" · "เชื่อมแล้ว" · "หมดอายุ" — ระบบไม่บอกว่าเลขนี้ใช้ NextAcc หรือไม่ และไม่บอกการปฏิเสธ (คุ้มครองข้อมูลของคู่ค้า)</p>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>วันที่ส่ง</th><th>เลขผู้เสียภาษี / สาขาที่กรอก</th><th>สถานะ</th></tr></thead>
+          <tbody id="ptOutBody"><tr><td colspan="3" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -75,7 +89,7 @@
     <div class="pt-card">
       <h3>⚙️ ค่าตั้งของเรา</h3>
       <div class="pt-grid2">
-        <label for="ptDiscoverable"><input type="checkbox" id="ptDiscoverable"> ให้คู่ค้าที่ใช้ NextAcc ค้นเจอและส่งคำขอเชื่อมถึงเราได้ (ค่าตั้งต้นปิด)</label>
+        <label for="ptDiscoverable"><input type="checkbox" id="ptDiscoverable"> แสดงว่าเราใช้ NextAcc ให้คู่ค้าที่มีเราเป็นผู้ติดต่อเห็น (ค่าตั้งต้นปิด · คำขอเชื่อมถึงเราได้เสมอ — เชื่อมเมื่อเรากดยอมรับเท่านั้น)</label>
         <label for="ptDrafts"><input type="checkbox" id="ptDrafts"> สร้างใบซื้อร่างจากใบแจ้งหนี้/ใบกำกับที่คู่ค้าส่งมา (ค่าตั้งต้นปิด · ไม่อนุมัติ/ไม่ลงภาษีซื้อเอง)</label>
         <label for="ptWht"><input type="checkbox" id="ptWht"> ส่งหนังสือรับรอง 50 ทวิ ที่เราออกให้คู่ค้าเข้าระบบของเขาอัตโนมัติ (เฉพาะใบที่ออกหลังเปิด · ค่าตั้งต้นปิด)</label>
       </div>
@@ -102,12 +116,15 @@ const Page = {
   async load() {
     const api = Layout.api(); if (!api) return;
     try {
-      const [p, d, c, n] = await Promise.all([
+      const [p, d, c, n, o] = await Promise.all([
         api.getTradingPartners(),
         api.getPartnerPurchaseDrafts().catch(e => ({ data: null, _err: e })),
         api.getWorkflowAutomation().catch(e => ({ data: null, _err: e })),
         api.getPartnerPaymentNotices().catch(e => ({ data: null, _err: e })),
+        api.getOutgoingPartnerRequests().catch(e => ({ data: null, _err: e })),
       ]);
+      this.outgoing = o && o.data ? o.data : null;
+      this.outgoingErr = o && o._err ? (o._err.message || 'ไม่ทราบสาเหตุ') : null;
       this.notices = n && n.data ? n.data : null;
       this.noticesErr = n && n._err ? (n._err.message || 'ไม่ทราบสาเหตุ') : null;
       this.partners = (p && p.data) || [];
@@ -119,14 +136,80 @@ const Page = {
       return;
     }
     this.render();
+    await this.loadRequestCard();
+  },
+
+  // รอบ 264: ลิงก์ในแจ้งเตือน ⇒ การ์ดยอมรับเด่นบนสุด (หนึ่งคลิกเชื่อม) · ไม่พบ/หมดอายุ/ไม่มีสิทธิ์ = ข้อความจากเซิร์ฟเวอร์
+  requestId() {
+    try { const v = new URLSearchParams(location.search).get('request'); return v && /^[0-9a-f-]{36}$/i.test(v) ? v : null; } catch { return null; }
+  },
+
+  async loadRequestCard() {
+    const id = this.requestId();
+    const card = document.getElementById('ptRequestCard');
+    if (!id || !card) return;
+    const api = Layout.api(); if (!api) return;
+    card.style.display = '';
+    let r;
+    try { r = (await api.getPartnerLinkRequest(id)).data; }
+    catch (e) {
+      card.innerHTML = `<h3>🔗 คำขอเชื่อมระบบ</h3><p class="pt-muted">${Layout.esc(e.message || 'เปิดคำขอไม่สำเร็จ')}</p>`;
+      return;
+    }
+    if (this._doneRequest === id && r.status === 'Accepted') return this.renderRequestDone(r);
+    const req = r.requester || {};
+    card.innerHTML = `<h3>🔗 คำขอเชื่อมระบบจาก ${Layout.esc(req.name || 'คู่ค้า')}</h3>
+      <div class="pt-grid2">
+        <div><div class="pt-muted">ผู้ขอ</div><div>${Layout.esc(req.name || '-')}</div>
+          <div class="pt-muted">เลขผู้เสียภาษี ${Layout.esc(req.taxId || '-')} · ${Layout.esc(req.branchLabel || '')}</div></div>
+        <div><div class="pt-muted">สถานะ</div><div><span class="pt-badge ${r.canRespond ? 'pt-warn' : r.status === 'Accepted' ? 'pt-ok' : ''}">${Layout.esc(r.statusLabel || r.status)}</span></div>
+          <div class="pt-muted">ส่งเมื่อ ${Layout.esc(new Date(r.requestedAt).toLocaleDateString('th-TH'))}${r.status === 'Pending' ? ' · หมดอายุ ' + Layout.esc(new Date(r.expiresAt).toLocaleDateString('th-TH')) : ''}</div></div>
+      </div>
+      ${r.invitationMessage ? `<div class="pt-muted" style="margin-top:8px">ข้อความจากผู้ขอ (ตรวจก่อนเชื่อ — ระบบไม่ได้ยืนยัน): <span style="white-space:pre-wrap">${Layout.esc(r.invitationMessage)}</span></div>` : ''}
+      <p class="pt-muted" style="margin-top:8px">ยอมรับ = เชื่อมกับผู้ขอรายนี้รายเดียว · ชื่อ/เลขภาษีของเราจะแสดงให้ผู้ขอเห็น · ไม่มีเอกสารใดถูกส่งอัตโนมัติจนกว่าจะเปิดค่าตั้งด้านล่าง</p>
+      ${r.problemMessage ? `<p class="pt-muted" role="alert" style="color:#b91c1c">${Layout.esc(r.problemMessage)}</p>` : ''}
+      ${r.canRespond ? `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" id="ptReqAccept">✅ ยอมรับและเชื่อมต่อ</button>
+          <button class="btn btn-secondary" id="ptReqReject">ปฏิเสธ</button></div>` : ''}`;
+    const acc = document.getElementById('ptReqAccept');
+    if (acc) acc.addEventListener('click', () => this.respondRequest(id, 'accept'));
+    const rej = document.getElementById('ptReqReject');
+    if (rej) rej.addEventListener('click', () => this.respondRequest(id, 'reject'));
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+
+  renderRequestDone(r) {
+    const card = document.getElementById('ptRequestCard');
+    const req = (r && r.requester) || {};
+    card.innerHTML = `<h3>✅ เชื่อมต่อเสร็จสิ้น</h3>
+      <p>${Layout.esc(this._doneMessage || 'เชื่อมต่อเสร็จสิ้น')}</p>
+      <p class="pt-muted">คู่ค้า: ${Layout.esc(req.name || '-')} · ${Layout.esc(req.taxId || '')} — ตั้งค่าการรับเอกสารจากคู่ค้าได้ที่ "ค่าตั้งของเรา" ด้านล่าง</p>`;
+  },
+
+  async respondRequest(id, act) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      if (act === 'accept') {
+        const res = await api.acceptPartner(id);
+        this._doneRequest = id;
+        this._doneMessage = res && res.message;
+        Layout.toast((res && res.message) || 'เชื่อมต่อเสร็จสิ้น', 'success');
+      } else {
+        const reason = await Layout.promptText({ title: 'ปฏิเสธคำขอเชื่อม', label: 'เหตุผล (ไม่บังคับ · ผู้ขอไม่เห็น)' });
+        if (reason === null) return;
+        await api.rejectPartner(id, reason);
+        Layout.toast('ปฏิเสธคำขอแล้ว', 'success');
+      }
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
   },
 
   render() {
     const rows = this.partners.map(p => {
-      const pending = p.status === 'Pending' && !p.isInviter;
+      const pending = !!p.canRespond;   // รอบ 264: เซิร์ฟเวอร์ตัดสิน (รอเรา + ยังไม่หมดอายุ)
       const limit = p.purchaseDraftLimit == null ? 'ไม่จำกัด' : Layout.money(p.purchaseDraftLimit);
-      return `<tr><td>${Layout.esc(p.partner ? p.partner.name : '-')}<div class="pt-muted">${Layout.esc(p.partner ? p.partner.taxId : '')}</div></td>
-        <td><span class="pt-badge">${Layout.esc(p.statusLabel || p.status)}</span></td>
+      return `<tr><td>${Layout.esc(p.partner ? p.partner.name : '-')}<div class="pt-muted">${Layout.esc(p.partner ? p.partner.taxId : '')} · ${Layout.esc(p.partner ? p.partner.branchLabel || '' : '')}</div></td>
+        <td><span class="pt-badge">${Layout.esc(p.statusLabel || p.status)}</span>${p.canRespond && p.expiresAt ? `<div class="pt-muted">หมดอายุ ${Layout.esc(new Date(p.expiresAt).toLocaleDateString('th-TH'))}</div>` : ''}</td>
         <td>${Layout.esc(limit)}</td>
         <td>${pending ? `<button class="btn btn-primary btn-sm" data-act="accept" data-id="${Layout.esc(p.id)}">ยอมรับ</button>
            <button class="btn btn-secondary btn-sm" data-act="reject" data-id="${Layout.esc(p.id)}">ปฏิเสธ</button>` : ''}
@@ -138,6 +221,15 @@ const Page = {
     document.getElementById('ptBody').innerHTML = rows.length ? rows.join('')
       : '<tr><td colspan="4" class="text-center text-gray-400">ยังไม่มีคู่ค้าที่เชื่อม</td></tr>';
     document.querySelectorAll('#ptBody [data-act]').forEach(b => b.addEventListener('click', () => this.partnerAction(b.dataset.act, b.dataset.id)));
+    const ob = document.getElementById('ptOutBody');
+    if (ob) {
+      ob.innerHTML = this.outgoing == null
+        ? `<tr><td colspan="3" class="text-center">${Layout.esc('โหลดคำขอที่เราส่งไม่สำเร็จ: ' + (this.outgoingErr || ''))}</td></tr>`
+        : this.outgoing.length === 0 ? '<tr><td colspan="3" class="text-center text-gray-400">ยังไม่เคยส่งคำขอ</td></tr>'
+        : this.outgoing.map(o => `<tr><td>${Layout.esc(new Date(o.sentAt).toLocaleDateString('th-TH'))}</td>
+            <td>${Layout.esc(o.partnerTaxId)}<div class="pt-muted">${Layout.esc(o.branchLabel || '')}</div></td>
+            <td><span class="pt-badge ${o.state === 'Accepted' ? 'pt-ok' : o.state === 'Expired' ? 'pt-warn' : ''}">${Layout.esc(o.stateLabel || o.state)}</span></td></tr>`).join('');
+    }
 
     const dBody = document.getElementById('ptDraftBody');
     if (this.drafts == null) dBody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ไม่มีสิทธิ์ดูเอกสารฝั่งซื้อ หรือโหลดไม่สำเร็จ</td></tr>';
@@ -256,6 +348,7 @@ const Page = {
       });
       Layout.toast((r && r.message) || 'ส่งคำขอแล้ว', 'success');
       document.getElementById('ptTax').value = ''; document.getElementById('ptMsg').value = '';
+      await this.load();   // รอบ 264: แถวใหม่ใน "คำขอที่เราส่ง"
     } catch (e) { Layout.toast(e.message || 'ส่งคำขอไม่สำเร็จ', 'error'); }
     finally { btn.disabled = false; }
   },

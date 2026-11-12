@@ -242,6 +242,11 @@ public class NotificationEngine : INotificationEngine
                         .Select(uid => new Recipient(uid, null, null, null))
                         .ToList();
 
+                case NotificationRecipientRoles.CompanyAdmin:   // รอบ 264: คนที่ยอมรับคำขอเชื่อมคู่ค้าได้ (สิทธิ์เดียวกับปุ่มยอมรับ)
+                    return (await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.CompanySettingsEdit, UserRole.Owner))
+                        .Select(uid => new Recipient(uid, null, null, null))
+                        .ToList();
+
                 case NotificationRecipientRoles.HrAdmin:
                     return (await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.HrAdmin, UserRole.SystemAdmin))
                         .Select(uid => new Recipient(uid, null, null, null))
