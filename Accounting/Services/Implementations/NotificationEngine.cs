@@ -65,6 +65,7 @@ public class NotificationEngine : INotificationEngine
     public async Task<NotificationDispatchOutcome> DispatchWithOutcomeAsync(Guid companyId, string eventKey, NotificationContext context)
     {
         var attempted = false;
+        var recipientFailed = false;
         try
         {
             // รอบ 249: อ่าน "ทุกแถว" ของคีย์ (รวมแถวที่ปิดทุกช่อง) — เดิมกรองเฉพาะแถวที่เปิดบางช่อง ⇒ บริษัทที่เอาติ๊กค่าตั้งต้นออกแล้วบันทึก
@@ -184,16 +185,28 @@ public class NotificationEngine : INotificationEngine
                     supLine = pp.SuppressLine;
                 }
 
-                if (e.Sys && !supSys && r.UserId.HasValue)
-                    { await DispatchSystemAsync(r.UserId.Value, companyId, context); attempted = true; }
+                // รอบ 264 ฝ่ายค้าน L8: ล้มที่ผู้รับคนหนึ่งไม่หยุดคนถัดไป (เดิม exception ออกทั้งเหตุการณ์ ⇒ ผู้เรียกลองใหม่ ⇒ คนแรกได้ซ้ำ) ·
+                // แถวกระดิ่งที่เซฟไม่ผ่านถูก detach ใน DispatchSystemAsync (ไม่ค้างใน ChangeTracker ของผู้เรียก)
+                try
+                {
+                    if (e.Sys && !supSys && r.UserId.HasValue)
+                        { await DispatchSystemAsync(r.UserId.Value, companyId, context); attempted = true; }
 
-                if (e.Email && !supEmail && !string.IsNullOrWhiteSpace(email))
-                    { await DispatchEmailAsync(companyId, email!, fullName, context, link); attempted = true; }
+                    if (e.Email && !supEmail && !string.IsNullOrWhiteSpace(email))
+                        { await DispatchEmailAsync(companyId, email!, fullName, context, link); attempted = true; }
 
-                if (e.Line && !supLine && !string.IsNullOrWhiteSpace(lineUserId))
-                    { await DispatchLineAsync(companyId, lineUserId!, context, eventKey, link); attempted = true; }
+                    if (e.Line && !supLine && !string.IsNullOrWhiteSpace(lineUserId))
+                        { await DispatchLineAsync(companyId, lineUserId!, context, eventKey, link); attempted = true; }
+                }
+                catch (Exception rex) when (rex is not OperationCanceledException)
+                {
+                    recipientFailed = true;
+                    _logger.LogError(rex, "NotificationEngine: ส่ง {EventKey} ถึงผู้รับหนึ่งรายไม่สำเร็จ (company {CompanyId}) — ผู้รับอื่นส่งต่อ", eventKey, companyId);
+                }
             }
-            return attempted ? NotificationDispatchOutcome.Delivered : NotificationDispatchOutcome.NoRecipient;
+            // "Delivered" = สั่งส่งอย่างน้อยหนึ่งช่องแล้ว (นิยามเดิมของ enum) ⇒ ผู้เรียกไม่ลองใหม่แล้วส่งซ้ำถึงคนที่ได้แล้ว · ไม่มีใครได้เลยแต่มีล้ม = Failed
+            return attempted ? NotificationDispatchOutcome.Delivered
+                : recipientFailed ? NotificationDispatchOutcome.Failed : NotificationDispatchOutcome.NoRecipient;
         }
         catch (Exception ex)
         {
@@ -243,9 +256,17 @@ public class NotificationEngine : INotificationEngine
                         .ToList();
 
                 case NotificationRecipientRoles.CompanyAdmin:   // รอบ 264: คนที่ยอมรับคำขอเชื่อมคู่ค้าได้ (สิทธิ์เดียวกับปุ่มยอมรับ)
-                    return (await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.CompanySettingsEdit, UserRole.Owner))
+                {
+                    // ฝ่ายค้าน L8: บทบาทมาตรฐานผ่านตัวตัดสินเดียวกับด่านจริง (BuiltInRolePermissions.Grants — Owner + SystemAdmin + ที่ตารางให้) + บทบาทกำหนดเองที่ให้คีย์นี้
+                    var byCustom = await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.CompanySettingsEdit, UserRole.Owner);
+                    var members = await _db.Set<CompanyUser>().Where(cu => cu.CompanyId == companyId)
+                        .Select(cu => new { cu.UserId, cu.Role }).ToListAsync();
+                    return byCustom
+                        .Concat(members.Where(m => BuiltInRolePermissions.Grants(m.Role, PermissionKeys.CompanySettingsEdit)).Select(m => m.UserId))
+                        .Distinct()
                         .Select(uid => new Recipient(uid, null, null, null))
                         .ToList();
+                }
 
                 case NotificationRecipientRoles.HrAdmin:
                     return (await ResolveByPermissionOrRoleAsync(companyId, PermissionKeys.HrAdmin, UserRole.SystemAdmin))
@@ -349,7 +370,12 @@ public class NotificationEngine : INotificationEngine
             EntityId = context.EntityId,
         };
         _db.Set<Notification>().Add(n);
-        await _db.SaveChangesAsync();
+        try { await _db.SaveChangesAsync(); }
+        catch
+        {
+            _db.Entry(n).State = EntityState.Detached;   // รอบ 264 ฝ่ายค้าน L8: ไม่ทิ้งแถวที่เซฟไม่ผ่านไว้ให้ SaveChanges ถัดไปของผู้เรียกล้มตาม
+            throw;
+        }
     }
 
     private async Task DispatchEmailAsync(Guid companyId, string toEmail, string? toName, NotificationContext context, string? link)

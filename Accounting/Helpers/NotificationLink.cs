@@ -12,6 +12,16 @@ namespace Accounting.Helpers;
 /// กระดิ่งในแอปยังเก็บ path สัมพัทธ์เดิม (นำทางในแอป) — helper นี้ใช้เฉพาะช่องที่ออกนอกแอป</summary>
 public static class NotificationLink
 {
+    /// <summary>รอบ 264 ฝ่ายค้าน L7: path ภายในที่นำทางได้ปลอดภัย — ตัวตัดสินเดียวของกระดิ่งในแอป (ส่งเป็น <c>href</c> · หน้าไม่ตัดสินเอง) และของ <see cref="Absolute"/> ·
+    /// ต้องขึ้นต้น "/" ไม่ใช่ "//" · ไม่มี "\\" · ไม่มีอักขระควบคุม/ช่องว่าง (เบราว์เซอร์ตัด \t \n ก่อนแยก URL ⇒ "/\t/evil" = "//evil") · อื่น ๆ = null</summary>
+    public static string? InternalPath(string? actionUrl)
+    {
+        var url = (actionUrl ?? "").Trim();
+        if (url.Length == 0 || url[0] != '/') return null;
+        if (url.Any(ch => char.IsControl(ch) || char.IsWhiteSpace(ch) || ch == '\\')) return null;
+        return url.StartsWith("//", StringComparison.Ordinal) ? null : url;
+    }
+
     public static string? Absolute(string? origin, string? actionUrl)
     {
         var url = (actionUrl ?? "").Trim();
@@ -22,7 +32,7 @@ public static class NotificationLink
             return abs.Scheme == Uri.UriSchemeHttps || abs.Scheme == Uri.UriSchemeHttp ? url : null;
 
         // path ภายในเท่านั้น — "//evil.example" คือ URL ไปโดเมนอื่น ไม่ใช่ path
-        if (!url.StartsWith("/", StringComparison.Ordinal) || url.StartsWith("//", StringComparison.Ordinal) || url.Contains('\\'))
+        if (InternalPath(url) == null)
             return null;
 
         if (!SystemBaseUrl.IsConfigured(null, origin)) return null;
