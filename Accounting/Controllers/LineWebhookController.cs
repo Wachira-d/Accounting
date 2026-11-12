@@ -23,11 +23,13 @@ public class LineWebhookController : ControllerBase
     private readonly ICustomerRelinkInviteService? _relink;
     /// <summary>รอบ 256 (คำตัดสิน 256-2): กลุ่ม LINE ของผู้ติดต่อของบริษัทผู้ให้บริการผ่าน OA กลาง (#HeyNextAcc/#ByeNextAcc · leave · สมาชิก) + กัน webhook ซ้ำ</summary>
     private readonly IContactLineGroupService? _groups;
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-2): LINE ผู้ใช้ 1:1 ของผู้ติดต่อของบริษัทผู้ให้บริการผ่าน OA กลาง (รหัสผูก · "หยุด" · บล็อก) — OA กลางคือ OA ของบริษัทนั้น</summary>
+    private readonly IContactLineBindingService? _contactLine;
 
     public LineWebhookController(ILineBotService bot, ILogger<LineWebhookController> logger, ICustomerLineLinkService? customerLinks = null,
-        ICustomerRelinkInviteService? relink = null, IContactLineGroupService? groups = null)
+        ICustomerRelinkInviteService? relink = null, IContactLineGroupService? groups = null, IContactLineBindingService? contactLine = null)
     {
-        _bot = bot; _logger = logger; _customerLinks = customerLinks; _relink = relink; _groups = groups;
+        _bot = bot; _logger = logger; _customerLinks = customerLinks; _relink = relink; _groups = groups; _contactLine = contactLine;
     }
 
     [HttpPost]
@@ -61,6 +63,8 @@ public class LineWebhookController : ControllerBase
                     && ev.TryGetProperty("source", out var fs) && fs.TryGetProperty("userId", out var fu) && !string.IsNullOrEmpty(fu.GetString()))
                 {
                     await _customerLinks.SetBlockedAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, fu.GetString()!, blocked: type == "unfollow");
+                    // รอบ 262: ปลายทางผู้ติดต่อของบริษัทผู้ให้บริการที่ผูกกับบอทกลาง — บล็อก/เพิ่มเพื่อนกลับ ⇒ หยุด/เปิดการส่ง (ไม่มีการผูก ⇒ 0 แถว)
+                    if (_contactLine != null) await _contactLine.SetBlockedCentralAsync(destination, fu.GetString()!, blocked: type == "unfollow");
                     continue;
                 }
                 if (!ev.TryGetProperty("source", out var src)) continue;
@@ -130,7 +134,12 @@ public class LineWebhookController : ControllerBase
                     if (msgType == "text")
                     {
                         entered = true;
-                        reply = await _bot.HandleMessageAsync(userId, msg.GetProperty("text").GetString() ?? "", destination);
+                        var text = msg.GetProperty("text").GetString() ?? "";
+                        // รอบ 262 (คำตัดสิน 262-1-2): รหัสผูก LINE ของผู้ติดต่อ (บริษัทผู้ให้บริการเท่านั้น) / "หยุด" ของปลายทางนั้น — ก่อนบอท ERP · ไม่ใช่ของผู้ติดต่อ ⇒ null ⇒ บอทเดิม
+                        if (_contactLine != null)
+                            reply = await _contactLine.TryRedeemCentralAsync(destination, userId, text)
+                                    ?? await _contactLine.TryStopCentralAsync(destination, userId, text);
+                        reply ??= await _bot.HandleMessageAsync(userId, text, destination);
                     }
                     else if (msgType is "image" or "file")
                     {

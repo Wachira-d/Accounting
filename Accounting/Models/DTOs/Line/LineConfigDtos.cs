@@ -37,7 +37,11 @@ public record LineConfigResponse(
     int QuietEndHour = 8,
     string? QuietHoursNote = null,
     /// <summary>รอบ 260: รับสลิปจากแชต LINE ⇒ ผูกเอกสาร (<c>CompanySettings.LineChatSlipIntakeEnabled</c> · echo กลับให้ฟอร์ม)</summary>
-    bool ChatSlipIntake = true);
+    bool ChatSlipIntake = true,
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-7): ประโยค "ส่งเอกสารถึงผู้ติดต่อทาง LINE" (<c>ProviderCentralOa.ContactSendNotice</c>) — บริษัทผู้ให้บริการไม่อ้างส่วนที่ถูกซ่อน</summary>
+    string? ContactSendNotice = null,
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-7): แถวความพร้อม "ส่งเอกสารถึงผู้ติดต่อผ่าน LINE OA กลาง" ของบริษัทผู้ให้บริการ (<c>ProviderCentralOa.ReadinessRows</c>) · บริษัทอื่น = ว่าง</summary>
+    IReadOnlyList<global::Accounting.Helpers.LineOaHealth.Row>? ProviderLineReadiness = null);
 
 /// <summary>รอบ 259 (A-M6) · รอบ 260-4 (คำตัดสิน 260-4-3): ปลายทางทดสอบหนึ่งตัว — <paramref name="Key"/> = <c>LineOaHealth.TeamGroupTargetKey</c> หรือ
 /// <c>LineOaHealth.EndpointTargetKey</c> (เซิร์ฟเวอร์อ่าน id เอง · ไม่มี LINE id ใน DTO) · <paramref name="ReachesContact"/> = ข้อความทดสอบถึงผู้รับของผู้ติดต่อ (หน้าถามยืนยันก่อน)</summary>
