@@ -124,6 +124,19 @@ public class BillingCenterController : ControllerBase
         return StatusCode(201, new ApiResponse<ContactLineInviteResponse>(true, r, "สร้างลิงก์ผูก LINE แล้ว — เปิดบนมือถือที่ใช้ LINE"));
     }
 
+    /// <summary>รอบ 262 ฝ่ายค้าน M1 (คำตัดสิน 262-1-10): ผู้เช่ายกเลิกปลายทาง LINE ที่ผูกรับใบค่าบริการ (คนที่ออกจากบริษัทแล้ว ฯลฯ) — Billing.Manage · ปฏิเสธคีย์ API ·
+    /// ปลายทางของบริษัทอื่น = 404 · ถอนความยินยอม + audit (PDPA ม.19/ม.37)</summary>
+    [HttpDelete("line/{endpointId:guid}")]
+    public async Task<ActionResult<ApiResponse<ProviderCentralOa.BillingLineView>>> UnlinkLine(Guid companyId, Guid endpointId,
+        [FromServices] IContactLineBindingService lineBinding, CancellationToken ct)
+    {
+        if (OwnerActionGuard.DenyResult(HttpContext, "ยกเลิก LINE รับใบแจ้งหนี้ค่าบริการ") is { } keyDenied) return keyDenied;
+        if (await RequireBillingAsync(companyId, "ยกเลิก LINE รับใบแจ้งหนี้ค่าบริการ") is { } deny) return deny;
+        Guid? uid = Guid.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var u) ? u : null;
+        var view = await lineBinding.UnlinkBillingEndpointAsync(companyId, endpointId, uid, User.FindFirst(ClaimTypes.Email)?.Value ?? User.Identity?.Name, ct);
+        return Ok(new ApiResponse<ProviderCentralOa.BillingLineView>(true, view, "ยกเลิกแล้ว — บัญชี LINE นี้จะไม่ได้รับใบแจ้งหนี้/ใบเสร็จค่าบริการอีก"));
+    }
+
     /// <summary>แจ้งชำระใบแจ้งหนี้ด้วยการโอน + แนบสลิปในคำขอเดียว (ยอด = ยอดค้างของใบ · ติ๊กยอมรับเงื่อนไขบังคับ)</summary>
     [HttpPost("invoices/{documentId:guid}/slip")]
     [RequestSizeLimit(SubscriptionSlipUpload.MaxBytes + 1024 * 1024)]

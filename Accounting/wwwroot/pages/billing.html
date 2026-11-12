@@ -140,12 +140,21 @@
         const v = this.view || {}, e = Layout.esc, box = document.getElementById('lineBill');
         let h = `<div class="muted" style="margin-bottom:8px">${e(v.note || '')}</div>`
           + `<div style="margin-bottom:8px">ผูก LINE แล้ว ${e(String(v.boundCount || 0))} บัญชี</div>`
+          // รอบ 262 ฝ่ายค้าน M1: รายการปลายทาง (ป้ายปิดบังจากเซิร์ฟเวอร์) + ยกเลิกได้เอง
+          + (v.endpoints || []).map(x => `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">`
+              + `<span>${e(x.label)} · ผูกเมื่อ ${e(Layout.date(x.linkedAt))} · ${e(x.status)}</span>`
+              + `<button class="btn btn-sm btn-outline" onclick="LineBill.unlink('${e(x.id)}')">ยกเลิก</button></div>`).join('')
           + `<button class="btn btn-primary" id="lineBillBtn" ${v.available ? '' : 'disabled'} onclick="LineBill.invite()">สร้างลิงก์/QR ผูก LINE</button>`
           + (v.available ? '' : `<div class="note warn" style="margin-top:8px">${e(v.reason || '')}</div>`);
         if (invite) h += `<div style="margin-top:12px">${invite.qrDataUri ? `<img src="${e(invite.qrDataUri)}" alt="QR ผูก LINE" style="width:180px;height:180px">` : ''}`
           + (invite.url ? `<div style="word-break:break-all;margin-top:6px"><a href="${e(invite.url)}" target="_blank" rel="noopener">${e(invite.url)}</a></div>` : '')
           + `<div class="muted" style="margin-top:6px">${e(invite.note || '')}</div></div>`;
         box.innerHTML = h;
+      },
+      async unlink(id) {
+        if (!confirm('ยกเลิกบัญชี LINE นี้? จะไม่ได้รับใบแจ้งหนี้/ใบเสร็จค่าบริการทาง LINE อีก')) return;
+        try { const r = await API.del(`${Bill.base()}/line/${encodeURIComponent(id)}`); Layout.toast(r?.message || 'ยกเลิกแล้ว', 'success'); this.view = r.data; this.render(); }
+        catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }
       },
       async invite() {
         try { const r = await API.post(`${Bill.base()}/line-invite`, {}); Layout.toast(r?.message || 'สร้างลิงก์แล้ว', 'success'); this.render(r.data); }

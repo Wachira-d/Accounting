@@ -138,6 +138,8 @@ public class DocumentPayLinkService : IDocumentPayLinkService
     {
         /// <summary>รอบ 250 (WP-02 §2.3): เลขใบกำกับภาษีที่อ้างใบแจ้งหนี้นี้และยังมีผล (โหลดใน <see cref="LoadDocAsync"/> — ตัดสินใน policy ไม่ใช่ service)</summary>
         public string? SupersedingTaxInvoice { get; init; }
+        /// <summary>รอบ 262 ฝ่ายค้าน H1: ใบค่าบริการของผู้เช่า (บริษัทผู้ให้บริการ + ผู้ติดต่อผูก tenant) — ห้ามลิงก์ทั่วไปทุกทาง</summary>
+        public bool PlatformTenantDocument { get; init; }
     }
 
     /// <summary>โหลดตาม id หรือตาม <b>hash</b> ของ token (ฐานไม่มี token ตรง) — ผู้เรียกฝั่ง token ต้องยืนยันซ้ำด้วย <c>TokenMatches</c> (เวลาคงที่)</summary>
@@ -158,6 +160,7 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         return facts with
         {
             SupersedingTaxInvoice = await PaymentQrService.SupersedingTaxInvoiceNumberAsync(_db, companyId, facts.Type, facts.Id, ct),
+            PlatformTenantDocument = await PlatformInvoiceQueries.IsTenantDocumentAsync(_db, companyId, facts.ContactId, ct),
         };
     }
 
@@ -193,8 +196,10 @@ public class DocumentPayLinkService : IDocumentPayLinkService
     }
 
     private static string? Refusal(DocFacts d)
-        => DocumentPayLinkPolicy.IssueRefusal(d.Type, d.Status, d.BalanceDue, DocumentPayLinkPolicy.IsSaleSide(d.Type, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly), d.Currency,
-            d.SupersedingTaxInvoice);
+    {
+        return DocumentPayLinkPolicy.IssueRefusal(d.Type, d.Status, d.BalanceDue, DocumentPayLinkPolicy.IsSaleSide(d.Type, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly), d.Currency,
+            d.SupersedingTaxInvoice, d.PlatformTenantDocument);
+    }
 
     private async Task<(IReadOnlyList<string> All, IReadOnlyList<string>? CompanyDefault, string? Unavailable)> ChannelsAsync(Guid companyId, CancellationToken ct)
     {
