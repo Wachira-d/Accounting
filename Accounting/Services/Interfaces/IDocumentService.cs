@@ -351,6 +351,9 @@ public interface IDocumentService
     /// <summary>เหตุที่ "ลงรายการภาษีขายในวันนั้นไม่ได้" (งวดบัญชีปิด หรือ ภ.พ.30 เดือนนั้นยื่น/ประกาศว่ายื่น/ล็อก) — ตัวเดียวกับด่านถอย/ย้ายภาษีขาย ·
     /// ผู้จัดสรรเงินรอจัดสรรใช้ตรวจวันที่จัดสรรของใบที่ยังพักภาษีขาย (null = ลงได้)</summary>
     Task<string?> CreditAllocationVatLockReasonAsync(Guid companyId, DateTime date);
+    /// <summary>รอบ 265 (คำตัดสิน 265-1-1/265-1-3): หลังอนุมัติใบเสร็จที่ออกจากเงินรอจัดสรร — งวดรายงานภาษีขาย (<c>TaxPointDate</c>) ตาม
+    /// <c>LateReceiptTaxPoint.Decide</c> (งวดรับเงินยื่น/ปิด/เลยกำหนด ⇒ งวดปัจจุบัน + ธงล่าช้า) + หมายเหตุภายใน + audit · คืนข้อความถึงผู้ใช้ (ว่าง = ไม่มี)</summary>
+    Task<IReadOnlyList<string>> ApplyCreditReceiptTaxPointAsync(Guid companyId, Guid receiptId, string? creditReason, DateTime receiptDate, string actor);
     /// <summary>Multi-document payment — one Payment row that settles
     /// many Documents pro-rata to caller-supplied AllocatedAmount per
     /// row. Use when one cheque / transfer covers multiple invoices.

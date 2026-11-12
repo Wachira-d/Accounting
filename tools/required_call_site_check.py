@@ -18537,6 +18537,46 @@ RULES += [
          why=_R259_WHY + "อัลกอริทึม subset ตัวเดียวของระบบ (Helpers/SubsetSum)"),
 ]
 
+# ═══ รอบ 265 "ออกใบเสร็จ/ใบกำกับภาษีจากเงินรอจัดสรร (ไม่มีใบแจ้งหนี้)" (คำตัดสิน 265-1-x) ═══
+# ล็อก: ตรวจบรรทัด/รายการประจำก่อนเขียน · จองใต้ล็อกด้วยตัวตัดสินขาออกเดียว + ด่านงวดของวันที่บนใบ · ขาเงินเข้า = ผังพัก · ยอดสุทธิไม่ตรง = ปฏิเสธ ·
+# ล้มก่อนอนุมัติ = ลบร่าง + ปล่อย · งวดภาษีผ่าน LateReceiptTaxPoint.Decide ตัวเดียว · ยกเลิกใบ ⇒ ปล่อยขาออก + กุญแจงวดรายการประจำ
+_R265_WHY = "รอบ 265 ใบเสร็จจากเงินรอจัดสรร: "
+_R265_RCP = "Services/Implementations/CustomerCreditService.Receipt.cs"
+RULES += [
+    dict(file=_R265_RCP, method="IssueReceiptAsync",
+         must=["CreditReceiptPlan.LinesProblem(", "CreditReceiptPlan.PaperDate(", "CustomerCreditMovementRules.Check(", "CustomerCreditAllocation.StaleCheck(",
+               "JournalEntryBuilder.ClosedPeriodReasonAsync(", "ExistingByKeyAsync(", "RecomputeUnappliedAsync(", "AuditMovement(",
+               "PaymentAccountId: payment.UnappliedAccountId", "CreditReceiptPlan.TotalMismatch(", "ApprovalAckSource.SystemWorkflow",
+               "ReleaseMovementAsync(", "_documents.DeleteDocumentAsync(", "CustomerCreditMovementRules.DepositIssued(",
+               "_documents.ApplyCreditReceiptTaxPointAsync(", "CreditReceiptPlan.RecurringProblem(", "recurringRun: origin",
+               "_documents.CreditAllocationVatLockReasonAsync("],
+         must_lit=["FOR UPDATE"],
+         before=[("CreditReceiptPlan.LinesProblem(", "BeginTransactionAsync("), ("CustomerCreditMovementRules.Check(", "_documents.CreateDocumentAsync("),
+                 ("JournalEntryBuilder.ClosedPeriodReasonAsync(", "_documents.CreateDocumentAsync("),
+                 ("CreditReceiptPlan.TotalMismatch(", "_documents.ApproveDocumentAsync("),
+                 ("_documents.ApproveDocumentAsync(", "_documents.ApplyCreditReceiptTaxPointAsync(")],
+         forbid=["payment.UnappliedAmount -=", "payment.UnappliedAmount =", "IsDeposit: true", "DocumentDate: today"],
+         why=_R265_WHY + "265-1-1 ตรวจก่อนเขียน · จองใต้ล็อก · ขาเงินเข้า = ผังพัก (ไม่ใช่เงินเข้าธนาคารซ้ำ) · ยอดสุทธิต้องเท่ายอดที่ใช้ · ล้ม = ถอยครบ · "
+             + "วันที่ใบจากตัวตัดสินเดียว (ม.105 — ห้ามลงวันนี้เอง) · งวดภาษีหลังอนุมัติ"),
+    dict(file="Services/Implementations/DocumentService.CustomerCredit.cs", method="ApplyCreditReceiptTaxPointAsync",
+         must=["LateReceiptTaxPoint.Decide(", "DepositReceiptPeriodLockedAsync(", "CreditReceiptPlan.ReportingTaxPoint(", "AddChainedAuditLog(",
+               "d.CompanyId == companyId"],
+         forbid=["SameVatPeriod("],
+         why=_R265_WHY + "265-1-3 งวดรายงานของใบลงวันที่รับเงินที่งวดยื่น/ปิดแล้ว = งวดปัจจุบัน (ตัวตัดสินเดียวกับการจัดสรร · คลาส 260-5-5 H1) + audit"),
+    dict(file="Helpers/CustomerCreditLedger.cs", method="ReleaseForVoidedDocumentAsync", must=["ToReceiptKind", "RecurringRunKey"],
+         why=_R265_WHY + "265-1-4 ยกเลิกใบเสร็จจากเงินรอจัดสรร ⇒ เงินกลับ + ปล่อยกุญแจงวดรายการประจำ (ออกงวดนั้นได้อีก)"),
+    dict(file="Services/Implementations/RecurringTransactionService.cs", method="CreateDocumentFromTemplateAsync",
+         must=["RecurringRunKey.For(", "nameof(PaymentCreditMovementKind.ToReceipt)", "CreditReceiptPlan.RecurringBilledNote("],
+         why=_R265_WHY + "265-1-4 รอบอัตโนมัติพบงวดที่ออกเป็นใบเสร็จจากเงินรอจัดสรรแล้ว ⇒ ไม่ออกซ้ำ + ข้อความตรงเหตุ"),
+    dict(file="Services/Implementations/DocumentService.cs", method="IssueReceiptForPaymentAsync",
+         must=["ManualReceiptCoverage.Covers(", "m.Kind == creditReceiptKind", "nameof(PaymentCreditMovementKind.ToReceipt)"],
+         why=_R265_WHY + "265-1-7 ใบเสร็จจากเงินรอจัดสรรเป็นหลักฐานของเงินคนละก้อน — ห้ามนับว่าครอบยอดที่จัดสรร (กันเงินที่จัดสรรไม่มีใบเสร็จเงียบ)"),
+    dict(file="Controllers/CustomerCreditController.cs", method="IssueReceipt",
+         must=["DocumentPermissionHelper.CanCreateAsync(", "DocumentPermissionHelper.CanApproveAsync("],
+         before=[("DocumentPermissionHelper.CanApproveAsync(", "_credits.IssueReceiptAsync(")],
+         why=_R265_WHY + "ระบบสร้าง + อนุมัติใบเสร็จให้ ⇒ ผู้กดต้องมีทั้งสองสิทธิ์ (เท่าย้ายเป็นมัดจำ)"),
+]
+
 # รอบ 260 (คำตัดสิน 260-1-1…6): สลิปในแชต LINE ⇒ ผูกเอกสาร — ด่านต้องอยู่ที่จุดเรียก (กันซ้ำก่อนเขียนไฟล์ · ตัวตัดสินเดียว · ลายเซ็น+ฐานก่อนแจ้งโอน ·
 # ประตูแจ้งโอนเดิมเท่านั้น — ห้ามประทับรับเงิน/สร้าง Payment เอง · ทุก query กรองบริษัท)
 _R260_SLIP = "Services/Implementations/LineChatSlipService.cs"
@@ -18967,24 +19007,33 @@ RULES += [
          why=_R263_WHY + "263-1-1 หน้าได้หลักฐาน 'ตอนนี้' ทุกครั้ง (ถอด live = กลับไปโชว์ข้อความแช่แข็ง)"),
     dict(file=RECURRING, method="LoadRunLiveAsync",
          must=["AutoApproveFailure.LastResolution(", "_db.DocumentEmailLogs", "_db.EmailQueues", "_db.LineQueues", "_db.JournalEntries",
+               "RecurringRunOutcome.SentToRecipient(", "JournalsLoaded = true", "cu.CompanyId == companyId", "AllJournalBlocks",
                "RecurringRunOutcome.FactsFromLegacyNotice(", "l.CompanyId == companyId", "q.CompanyId == companyId", "j.CompanyId == companyId"],
          why=_R263_WHY + "263-1-1/2 หลักฐานจากฐาน (ผู้อนุมัติ · ส่งอีเมล · LINE · สมุดรายวัน · แถวเก่า) + กรองบริษัททุก query"),
     dict(file=RECURRING, method="MarkRunAsync",
-         must=["SkipCarry(", "Property(r => r.LastRunOutcome).IsModified = true"],
+         must=["SkipCarry(", "Property(r => r.LastRunOutcome).IsModified = true", "JournalBlocks = _journalBlocks.ToList()"],
          forbid=["recurring.LastRunOutcome = null;"],
          why=_R263_WHY + "263-1-3 งวดที่ข้ามที่ยังค้างพาข้ามรอบ (เดิมรอบถัดไปล้างทิ้ง) · เขียนค่าจริงแม้ entity ค้าง"),
+    dict(file=RECURRING, method="RecordJournalBlockAsync",
+         must=["_journalBlocks.Add(", "JournalBlocks = _journalBlocks.ToList()", "SetRunNoticeAsync("],
+         why=_R263_WHY + "ฝ่ายค้าน F2 สมุดรายวันทุกใบของรอบไล่งวดอยู่บนแถวจนลงบัญชี (เดิมเหลือใบสุดท้าย)"),
+    dict(file=RECURRING, method="AppendRunNoticeTextAsync",
+         must=["WithUnverifiedNote(note)"],
+         why=_R263_WHY + "ฝ่ายค้าน F1 ข้อความล้วนตรวจสถานะไม่ได้ ⇒ กันการบอกว่าแก้ครบ"),
     dict(file=RECURRING, method="SetRunNoticeAsync",
          must=["SkipCarry(issuedOneNow: false)", "RecurringRunOutcome.SkipCarryNotice("],
          why=_R263_WHY + "263-1-3 เรื่องอื่นของรอบไม่ลบงวดที่ข้ามที่ยังค้าง"),
     dict(file=RECURRING, method="DismissSkippedPeriodsAsync",
-         must=["SkippedRemaining <= 0", "BusinessRuleException(", "SkippedDismissedAt = DateTime.UtcNow", "r.CompanyId == companyId"],
+         must=["SkippedRemaining <= 0", "BusinessRuleException(", "SkippedDismissedAt = now", "r.CompanyId == companyId",
+               "JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.RecurringRun", "_db.AddChainedAuditLog(", "DismissSkippedAuditAction"],
+         before=[("_db.AddChainedAuditLog(", "SaveChangesAsync(")],
          why=_R263_WHY + "263-1-3 ปิดเรื่องงวดที่ข้าม: ไม่มีงวดค้าง = ปฏิเสธพร้อมเหตุ (ไม่ใช่สำเร็จเงียบ) + ประทับเวลา/ชื่อ"),
     dict(file="Controllers/RecurringController.cs", method="DismissSkipped",
          must=["DenyRecurringWriteAsync(", "DismissSkippedPeriodsAsync("],
          before=[("DenyRecurringWriteAsync(", "DismissSkippedPeriodsAsync(")],
          why=_R263_WHY + "263-1-3 ด่านสิทธิ์ก่อนเขียน"),
     dict(file=DOC, method="ApproveDocumentAsync#2",
-         must=["AutoApproveFailure.HasOpenFailure(", "ActorLabelAsync(approvedBy)"],
+         must=["AutoApproveFailure.HasOpenFailure(", "ActorLabelAsync(companyId, approvedBy)"],
          why=_R263_WHY + "263-1-4 หมายเหตุ 'แก้แล้ว' ประทับชื่อผู้อนุมัติ ไม่ใช่ id ผู้ใช้ดิบ"),
     dict(file=DOC, method="GetDocumentAsync",
          must=["AutoApproveFailure.ApproverIds(", "AutoApproveFailure.WithApproverNames("],
