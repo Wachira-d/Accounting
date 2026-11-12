@@ -98,7 +98,7 @@ public class CrossTenantWorkflowController : ControllerBase
                 StatusLabel = PartnerLinkRequestRules.PartnershipLabel(p.Status, p.IsInviter, expired),
                 CanRespond = PartnerLinkRequestRules.CanRespond(p.Status, p.IsInviter, expired),
                 Expired = expired,
-                ExpiresAt = p.Status == TradingPartnershipStatus.Pending ? PartnerLinkRequestRules.ExpiryOf(p.InvitedAt, p.CreatedAt) : (DateTime?)null,
+                ExpiresAt = p.Status == TradingPartnershipStatus.Pending ? PartnerLinkRequestRules.RequestExpiryUtc(p.InvitedAt, p.CreatedAt) : (DateTime?)null,
                 p.CreatedAt,
             };
         }).ToList();

@@ -58,7 +58,7 @@ public partial class CrossTenantWorkflowService
                     new Accounting.Services.Interfaces.NotificationContext
                     {
                         Title = PartnerLinkRequestRules.NoticeTitle,
-                        Message = PartnerLinkRequestRules.NoticeMessage(requester?.Name, requester?.TaxId, PartnerLinkRequestRules.ExpiryOf(p.InvitedAt, p.CreatedAt)),
+                        Message = PartnerLinkRequestRules.NoticeMessage(requester?.Name, requester?.TaxId, PartnerLinkRequestRules.RequestExpiryUtc(p.InvitedAt, p.CreatedAt)),
                         ActionUrl = PartnerLinkRequestRules.AcceptUrl(target, p.Id),
                         EntityType = "TradingPartnership", EntityId = p.Id,
                     });
@@ -107,7 +107,7 @@ public partial class CrossTenantWorkflowService
             CanRespond = PartnerLinkRequestRules.CanRespond(p.Status, invitedByUs: false, expired),
             Expired = expired,
             RequestedAt = PartnerLinkRequestRules.RequestedAt(p.InvitedAt, p.CreatedAt),
-            ExpiresAt = PartnerLinkRequestRules.ExpiryOf(p.InvitedAt, p.CreatedAt),
+            ExpiresAt = PartnerLinkRequestRules.RequestExpiryUtc(p.InvitedAt, p.CreatedAt),
             p.InvitationMessage,
             p.AcceptedAt,
             p.RejectedAt,

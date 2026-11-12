@@ -41,11 +41,11 @@ public static class PartnerLinkRequestRules
     /// <summary>เวลาที่คำขอถูกส่ง (เปิดใหม่) — แถวเก่าก่อนมีคอลัมน์ใช้ <paramref name="createdAt"/></summary>
     public static DateTime RequestedAt(DateTime? invitedAt, DateTime createdAt) => invitedAt ?? createdAt;
 
-    public static DateTime ExpiryOf(DateTime? invitedAt, DateTime createdAt) => RequestedAt(invitedAt, createdAt).AddDays(ExpiryDays);
+    public static DateTime RequestExpiryUtc(DateTime? invitedAt, DateTime createdAt) => RequestedAt(invitedAt, createdAt).AddDays(ExpiryDays);
 
     /// <summary>คำขอที่รอตอบหมดอายุแล้วไหม — สถานะอื่นไม่ใช่เรื่องของตัวนี้ (false)</summary>
     public static bool IsExpired(TradingPartnershipStatus status, DateTime? invitedAt, DateTime createdAt, DateTime nowUtc)
-        => status == TradingPartnershipStatus.Pending && nowUtc > ExpiryOf(invitedAt, createdAt);
+        => status == TradingPartnershipStatus.Pending && nowUtc > RequestExpiryUtc(invitedAt, createdAt);
 
     public const string ExpiredMessage = "คำขอเชื่อมนี้หมดอายุแล้ว (เกิน 30 วัน) — ให้คู่ค้าส่งคำขอใหม่ หรือเราส่งคำขอถึงเขาจากหน้าคู่ค้า";
 
