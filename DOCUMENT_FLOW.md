@@ -3157,7 +3157,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **ปลายทางทดสอบที่รู้จัก** (260-4-3): `GET line-config/test-targets` (`CompanySettingsEdit` + ห้ามคีย์) ⇒ กลุ่มทีม + ปลายทาง LINE ของผู้ติดต่อในบริษัทนี้ที่ผูกกับ OA ของบริษัท (ชื่อ · ไม่มี LINE id) ·
   `POST line-config/test` รับ key `ep:{id}` ⇒ หาใหม่ในบริษัทนี้ (`LineTestTargets.ResolveAsync`) · ปลายทางผู้ติดต่อ ⇒ หน้าถามยืนยันก่อน · พิมพ์ id เองยังได้
 - **A-L6** (260-4-6): `EmailScheduleService.OnDocumentApprovedAsync` เข้าคิวล้ม ⇒ LogError + กระดิ่งเจ้าของต่อเอกสาร (`AutoSendEnqueueFailed` · กันซ้ำต่อใบ) + Autopilot — การอนุมัติไม่ล้ม
-- เทสต์ `LineRound260Tests` · Db `LineRound260DbTests` · ล็อก R2604 (+ เคส R2604a) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit (sha ในคอมมิตตามหลัง)
+- เทสต์ `LineRound260Tests` · Db `LineRound260DbTests` · ล็อก R2604 (+ เคส R2604a) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 2f2579a6
 
 ### 2.12g-260 รอบ 260 "สลิปในแชต LINE ⇒ ผูกเอกสาร" (คำตัดสิน 260-1-1…260-1-6)
 
@@ -8909,7 +8909,7 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส�
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D — §2.12g-259d: Autopilot ส่วนที่เหลือ (B-M3/M4/M6 · L1–L4 · L11) + OCR (C-M2/M5 · C-L1/L3/L4) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 21c7bce5)_
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก B ส่งทาง LINE ให้ครบ — §2.12g-259: ทวง 50 ทวิ ทาง LINE (การ์ด + ลิงก์อัปโหลดต่อแถว) · 💬 ส่งทาง LINE เองจากหน้าเอกสาร + ลิงก์ชำระในอีเมลที่ส่งเอง · เรื่องที่ LINE ไม่ส่งติ๊กไม่ได้ + migration · ความพร้อม OA (webhook เข้าจริง · Basic ID · ผลทดสอบ · เหตุจริงเมื่อทดสอบล้ม) · ประกาศผูกกลุ่มตามผลจริง · ตอบรับรูป/ไฟล์ในแชต · ลบ DocumentLineDeliveryService — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7dc53e0c)_
-_Last verified against codebase: 2026-11-12 (รอบ 260-4 LINE ที่เหลือจากแพ็ก B — §2.12g-2604: ชั่วโมงเงียบ (เลื่อน ไม่ทิ้ง · ใบเสร็จ/ส่งเองยกเว้น) · กระดิ่ง LINE ล้มซ้ำ/Token เสีย + Autopilot · ปลายทางทดสอบที่รู้จักจากการผูก · A-L6 เข้าคิวตอนอนุมัติล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (ตามหลัง))_
+_Last verified against codebase: 2026-11-12 (รอบ 260-4 LINE ที่เหลือจากแพ็ก B — §2.12g-2604: ชั่วโมงเงียบ (เลื่อน ไม่ทิ้ง · ใบเสร็จ/ส่งเองยกเว้น) · กระดิ่ง LINE ล้มซ้ำ/Token เสีย + Autopilot · ปลายทางทดสอบที่รู้จักจากการผูก · A-L6 เข้าคิวตอนอนุมัติล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2f2579a6 · แก้ CI c40109a8 · d36c96d3)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D ฝ่ายค้าน — §2.12g-259d: H1/H2 · M1–M4 · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d493044a)_
 
