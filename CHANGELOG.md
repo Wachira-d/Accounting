@@ -7109,4 +7109,4 @@ _รอบ 267 แพ็ก P1 "ลิงก์เดียว หน้าเ�
 เพิกถอน 259-2-8 · ใบผู้เช่า 262-1-9) · `PublicDocumentPageController` (ดู · PDF · PDF ใบที่เกี่ยวข้อง · ขอลิงก์ใหม่) · `pay-document.html` เป็นหน้าเอกสาร (โหมด link / line-view / preview · API โหมด portal) ·
 ลิงก์หมดอายุ ⇒ ขอลิงก์ใหม่ (audit chain + กระดิ่ง · ไม่ออก token ให้คนนอก) · migration แทน token ดิบของลิงก์ยอมรับ/เซ็นรับด้วย hash ในที่เดิม + `SignRequestService` ใช้ลิงก์หน้าเอกสาร
 (ไม่ออก token ดิบ) · หน้ายอมรับ/เซ็นรับเดิมรับ token ของหน้าเอกสารในช่วงเปลี่ยนผ่าน · log ปิดบัง token — เทสต์ `CustomerDocPageRound267Tests` · `Db/CustomerDocPageRound267DbTests` ·
-ล็อก R267a–f — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>_
+ล็อก R267a–f — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 67eddfe6_
