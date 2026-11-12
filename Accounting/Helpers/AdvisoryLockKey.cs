@@ -49,6 +49,9 @@ public static class AdvisoryLockKey
 
     // ── scope กลาง — ประกาศไว้ที่เดียวกันไม่ให้พิมพ์ผิดแล้วกลายเป็นคนละล็อก ──
 
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน L9): สแกนใกล้/เกินกำหนดทุกบริษัท (<c>EmailScheduleService.ScanDueSoonAndOverdueAsync</c>) — ครั้งละเครื่องเดียว · part = "global"</summary>
+    public const string DueSoonOverdueScan = "due-soon-overdue-scan";
+
     /// <summary>ตัด/ยกเลิกเงินมัดจำของการจอง — part = เลขการจอง (<c>BookingDepositDrawdown.ExtractKeys</c>) · ทีม S 2026-10-26</summary>
     public const string BookingDeposit = "booking-deposit";
     /// <summary>รอบ 208: เปลี่ยนสถานะออเดอร์หน้าเว็บ (ขั้นริบมัดจำ/ใบลดหนี้ห้ามรันซ้อน) — part = orderId</summary>

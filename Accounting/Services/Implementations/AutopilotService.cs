@@ -263,7 +263,34 @@ public class AutopilotService : IAutopilotService
             .Where(n => n.CompanyId == companyId && n.EntityType != null && alertTypes.Contains(n.EntityType) && n.CreatedAt >= window)
             .OrderByDescending(n => n.CreatedAt).Take(200)
             .Select(n => new { n.EntityType, n.EntityId, n.Title, n.Message, n.CreatedAt }).ToListAsync(ct);
-        foreach (var a in alerts.GroupBy(n => (n.EntityType, n.EntityId)).Select(g => g.First()))
+        // ฝ่ายค้าน 260-4 L6: เรื่องที่แก้แล้วไม่ค้าง — LINE ส่งสำเร็จหลังกระดิ่ง (OA บริษัท) · รายการมีแถวคิว/การส่งหลังกระดิ่ง (ส่งเองแล้ว)
+        DateTime? lastLineSent = null;
+        if (alerts.Any(a => a.EntityType == LineFailureAlert.EntityType))
+            lastLineSent = await _db.LineQueues.AsNoTracking()
+                .Where(q => q.CompanyId == companyId && q.Status == ContactLineChannel.StatusSent && q.SentAt != null
+                    && (q.OaScope == null || q.OaScope != NotifyEndpointKind.ScopeNextAcc))
+                .MaxAsync(q => q.SentAt, ct);
+        var enqueueIds = alerts.Where(a => a.EntityType == LineFailureAlert.ApproveEnqueueEntityType && a.EntityId != null).Select(a => a.EntityId!.Value).Distinct().ToList();
+        var lastSendByEntity = new Dictionary<Guid, DateTime>();
+        if (enqueueIds.Count > 0)
+        {
+            foreach (var r in await _db.EmailQueues.AsNoTracking()
+                         .Where(q => q.CompanyId == companyId && !q.IsDeleted && enqueueIds.Contains(q.EntityId) && q.Status != ScheduledEmailSendCheck.SkippedStatus)
+                         .GroupBy(q => q.EntityId).Select(g => new { g.Key, At = g.Max(q => q.CreatedAt) }).ToListAsync(ct))
+                lastSendByEntity[r.Key] = r.At;
+            foreach (var r in await _db.LineQueues.AsNoTracking()
+                         .Where(q => q.CompanyId == companyId && !q.IsDeleted && enqueueIds.Contains(q.EntityId) && q.Status != ContactLineChannel.StatusSkipped)
+                         .GroupBy(q => q.EntityId).Select(g => new { g.Key, At = g.Max(q => q.CreatedAt) }).ToListAsync(ct))
+                if (!lastSendByEntity.TryGetValue(r.Key, out var at) || r.At > at) lastSendByEntity[r.Key] = r.At;
+            foreach (var r in await _db.DocumentEmailLogs.AsNoTracking()
+                         .Where(l => l.CompanyId == companyId && l.DocumentId != null && enqueueIds.Contains(l.DocumentId.Value))
+                         .GroupBy(l => l.DocumentId!.Value).Select(g => new { g.Key, At = g.Max(l => l.CreatedAt) }).ToListAsync(ct))
+                if (!lastSendByEntity.TryGetValue(r.Key, out var at) || r.At > at) lastSendByEntity[r.Key] = r.At;
+        }
+        foreach (var a in alerts.GroupBy(n => (n.EntityType, n.EntityId)).Select(g => g.First())
+                     .Where(a => a.EntityType == LineFailureAlert.EntityType
+                         ? !(lastLineSent is DateTime sent && sent > a.CreatedAt)
+                         : !(a.EntityId is Guid eid && lastSendByEntity.TryGetValue(eid, out var at) && at > a.CreatedAt)))
             list.Add(a.EntityType == LineFailureAlert.EntityType
                 ? new AutopilotIssueDto("LineRepeatedFailure", a.Title, a.Message, a.CreatedAt, null, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html",
                     null, "ตั้งค่า LINE", "/pages/settings.html?tab=line")

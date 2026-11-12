@@ -193,12 +193,7 @@ public class ContactRecipientResolver : IContactRecipientResolver
         var rows = await _db.ContactNotifyEndpoints.AsNoTracking()
             .Where(e => e.CompanyId == companyId && e.ContactId == contactId)
             .ToListAsync(ct);
-        var consentIds = rows.Where(r => r.ConsentRecordId != null).Select(r => r.ConsentRecordId!.Value).Distinct().ToList();
-        var consents = consentIds.Count == 0
-            ? new Dictionary<Guid, DateTime?>()
-            : await _db.PdpaConsentRecords.AsNoTracking()
-                .Where(r => r.CompanyId == companyId && consentIds.Contains(r.Id))
-                .ToDictionaryAsync(r => r.Id, r => r.WithdrawnAt, ct);
+        var consents = await ConsentsAsync(_db, companyId, rows, ct);
         // กลุ่มกลางของระบบ (คำตอบเจ้าของ Q1(b) · ฝ่ายค้าน S2) — ทั้งค่าหน้าแอดมินและ config แยกกัน (ไม่ใช่ผล Merge) · อ่านเฉพาะเมื่อมีปลายทางกลุ่ม
         IReadOnlyList<string> platformGroups = Array.Empty<string>();
         if (rows.Any(r => r.Kind == NotifyEndpointKind.LineGroup) && _nextAccLine != null)
@@ -227,13 +222,28 @@ public class ContactRecipientResolver : IContactRecipientResolver
             NextAccGroupOpen: centralGroups);
     }
 
-    private ContactRecipientRule.EndpointFacts ToFacts(ContactNotifyEndpoint r, IReadOnlyDictionary<Guid, DateTime?> consents)
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน H1): ความยินยอมของแถวปลายทาง (id → เวลาถอน) — ตัวเดียวของตัวหาผู้รับและรายการปลายทางทดสอบ LINE</summary>
+    internal static async Task<IReadOnlyDictionary<Guid, DateTime?>> ConsentsAsync(AccountingDbContext db, Guid companyId,
+        IEnumerable<ContactNotifyEndpoint> rows, CancellationToken ct)
+    {
+        var consentIds = rows.Where(r => r.ConsentRecordId != null).Select(r => r.ConsentRecordId!.Value).Distinct().ToList();
+        return consentIds.Count == 0
+            ? new Dictionary<Guid, DateTime?>()
+            : await db.PdpaConsentRecords.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && consentIds.Contains(r.Id))
+                .ToDictionaryAsync(r => r.Id, r => r.WithdrawnAt, ct);
+    }
+
+    private ContactRecipientRule.EndpointFacts ToFacts(ContactNotifyEndpoint r, IReadOnlyDictionary<Guid, DateTime?> consents) => FactsOf(r, consents, _secrets);
+
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน H1): แถว → ข้อเท็จจริงของตัวตัดสิน <c>ContactRecipientRule.Status</c> — ตัวเดียว</summary>
+    internal static ContactRecipientRule.EndpointFacts FactsOf(ContactNotifyEndpoint r, IReadOnlyDictionary<Guid, DateTime?> consents, ISecretProtector? secrets)
     {
         // ความยินยอมต้องเป็นแถวของบริษัทนี้จริง — อ้าง id ที่ไม่พบ = ไม่มีความยินยอม
         Guid? consentId = r.ConsentRecordId is Guid id && consents.ContainsKey(id) ? id : null;
         var withdrawn = consentId is Guid cid ? consents[cid] : null;
         // ฝ่ายค้าน S2: ถอดไม่ออก ⇒ Unprotect คืน "" ⇒ ตัวตัดสินถือว่า "อ่านไม่ได้ = ใช้ไม่ได้" (ไม่ผ่านด่านกลุ่มกลางเพราะเทียบไม่ได้)
-        var groupPlain = r.Kind == NotifyEndpointKind.LineGroup ? _secrets?.Unprotect(r.LineGroupId) : null;
+        var groupPlain = r.Kind == NotifyEndpointKind.LineGroup ? secrets?.Unprotect(r.LineGroupId) : null;
         return new ContactRecipientRule.EndpointFacts(r.Id, r.CompanyId, r.ContactId, r.Kind, r.Label, r.Email, groupPlain, r.OaScope,
             r.GroupNameSnapshot, r.MemberCountSnapshot, r.TopicsJson, r.ShowAmounts, r.IsPrimary, r.Verified, r.Source,
             consentId, withdrawn, r.BlockedAt, r.UnlinkedAt, r.UnlinkReason, r.IsDeleted, r.LinkedAt) { OaDestination = r.OaDestination };

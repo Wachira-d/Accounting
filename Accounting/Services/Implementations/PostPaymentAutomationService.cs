@@ -374,7 +374,9 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
                     // ใบเสร็จของการชำระนี้ (ออกในขั้นก่อน/มีอยู่แล้ว) หรือใบต้นทางที่เป็นใบเสร็จอยู่แล้ว
                     var lineTarget = receiptId ?? (servesAsReceipt ? doc.Id : (Guid?)null);
                     if (lineTarget is not Guid lt) { blocked.Add("ไม่พบใบเสร็จของการชำระนี้ — ยังไม่ได้ส่งทาง LINE"); break; }
-                    var queuedLine = await EnqueueReceiptLineAsync(cid, lt, doc.ContactId, lineEndpoints, ct);
+                    // รอบ 260-4 (ฝ่ายค้าน L4): ชั่วโมงเงียบยกเว้นเฉพาะการชำระที่ลูกค้าทำเอง (ลิงก์/ผู้ให้บริการรับชำระ)
+                    var queuedLine = await EnqueueReceiptLineAsync(cid, lt, doc.ContactId, lineEndpoints, ct,
+                        customerInitiated: PostPaymentAutomationPolicy.ParseSource(run.Source) == PaymentEntrySource.Gateway);
                     run = await MarkDoneAsync(run.Id, step, receiptId, ct);
                     done.Add(queuedLine > 0 ? $"เข้าคิวส่งใบเสร็จทาง LINE {queuedLine} ปลายทาง (สถานะการส่งดูที่ ตารางส่ง › คิว LINE)" : "ใบเสร็จนี้เข้าคิว LINE ไปแล้ว (ไม่ส่งซ้ำ)");
                     break;
@@ -403,7 +405,7 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
     /// <see cref="ContactLineChannel.QueueKey"/> ⇒ เอกสาร+ปลายทางเดียวกันไม่เข้าคิวซ้ำ แม้งานลองใหม่) · ไม่ถอยไปอีเมล (ขั้นอีเมลของงานนี้ตัดสินอีเมลเอง) ·
     /// ผู้ส่ง = <see cref="ContactLineQueueService"/> ตัวเดิม (ตรวจปลายทาง/ความยินยอมซ้ำตอนส่ง · ล้ม = สถานะ+เหตุบนแถวคิว + แถว Autopilot "LINE ส่งไม่ออก")</summary>
     private async Task<int> EnqueueReceiptLineAsync(Guid companyId, Guid receiptId, Guid contactId,
-        IReadOnlyList<ContactRecipientRule.RecipientOption> endpoints, CancellationToken ct)
+        IReadOnlyList<ContactRecipientRule.RecipientOption> endpoints, CancellationToken ct, bool customerInitiated = false)
     {
         var baseKey = ContactLineChannel.ReceiptBaseKey(receiptId);
         var existing = await _db.LineQueues.AsNoTracking()
@@ -420,7 +422,7 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
                 CompanyId = companyId, RuleId = null, EntityType = "Document", EntityId = receiptId, ContactId = contactId,
                 EndpointId = ep.EndpointId, EndpointKind = ep.Kind, Topic = NotifyTopic.Receipt.ToString(), Trigger = ContactLineChannel.ReceiptTrigger,
                 ScheduledFor = now, Status = ContactLineChannel.StatusPending, RetryKey = ContactLineChannel.RetryKey(companyId, key),
-                IdempotencyKey = key, BaseKey = baseKey, FallbackToEmail = false, CreatedBy = SystemActor,
+                IdempotencyKey = key, BaseKey = baseKey, FallbackToEmail = false, CreatedBy = SystemActor, CustomerInitiated = customerInitiated,
             });
             added++;
         }

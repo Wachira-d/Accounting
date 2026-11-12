@@ -34,7 +34,7 @@ public class LineRound260DbTests
             ["App:BaseUrl"] = "https://app.nextacc.test", ["Jwt:Secret"] = "line-260-db-test-secret-0123456789abcdef",
         }).Build();
 
-    private sealed record Seed(Guid CompanyId, Guid ContactId, Guid DocumentId, Guid EndpointId, string LineUserId, Guid OwnerId);
+    private sealed record Seed(Guid CompanyId, Guid ContactId, Guid DocumentId, Guid EndpointId, string LineUserId, Guid OwnerId, Guid ConsentId);
 
     private static async Task<Seed> SeedAsync(AccountingDbContext db, string tag, bool quietNow)
     {
@@ -58,13 +58,16 @@ public class LineRound260DbTests
             DocumentDate = DateTime.UtcNow.Date, SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, BalanceDue = 1_070m, Currency = "THB",
         };
         db.Documents.Add(doc);
+        // ฝ่ายค้าน 260-4 H1: ปลายทาง LINE ต้องมีความยินยอม (ตัวตัดสินผู้รับเดียว)
+        var consent = new PdpaConsentRecord { CompanyId = company.Id, Purpose = ContactLineBindRule.ConsentPurpose, SubjectContactId = contact.Id };
+        db.PdpaConsentRecords.Add(consent);
         var uid = "U260" + Guid.NewGuid().ToString("N");
         var ep = new ContactNotifyEndpoint
         {
             CompanyId = company.Id, ContactId = contact.Id, Kind = NotifyEndpointKind.LineUser, LineUserId = Secrets.Protect(uid),
             LineIdHash = NotifyEndpointKind.LineIdHash(Bot, uid), OaScope = NotifyEndpointKind.ScopeCompany, OaDestination = Bot,
             TopicsJson = NotifyTopics.Serialize(new[] { NotifyTopic.Document }), ShowAmounts = true, Verified = true,
-            Source = ContactLineBindRule.SourceLineInvite, LinkedAt = DateTime.UtcNow, Label = "ฝ่ายบัญชี",
+            Source = ContactLineBindRule.SourceLineInvite, LinkedAt = DateTime.UtcNow, Label = "ฝ่ายบัญชี", ConsentRecordId = consent.Id,
         };
         db.ContactNotifyEndpoints.Add(ep);
         var owner = new User { Email = $"line260-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "เจ้าของ 260" };
@@ -72,7 +75,7 @@ public class LineRound260DbTests
         await db.SaveChangesAsync();
         db.CompanyUsers.Add(new CompanyUser { UserId = owner.Id, CompanyId = company.Id, Role = UserRole.Owner });
         await db.SaveChangesAsync();
-        return new Seed(company.Id, contact.Id, doc.Id, ep.Id, uid, owner.Id);
+        return new Seed(company.Id, contact.Id, doc.Id, ep.Id, uid, owner.Id, consent.Id);
     }
 
     private static LineQueue Row(Seed s, string trigger) => new()
@@ -157,7 +160,8 @@ public class LineRound260DbTests
         var bells = await db.Notifications.AsNoTracking()
             .Where(n => n.CompanyId == s.CompanyId && n.EntityType == LineFailureAlert.EntityType).ToListAsync();
         var bell = Assert.Single(bells);   // สองแถวล้ม ⇒ กระดิ่งเดียว (กันซ้ำ 24 ชม.)
-        Assert.Equal((s.OwnerId, LineFailureAlert.Title(channelBroken: true)), (bell.UserId, bell.Title));
+        Assert.Equal((s.OwnerId, LineFailureAlert.Title(channelBroken: true), (Guid?)LineFailureAlert.KindId(LineFailureAlert.Kind.ChannelBroken)),
+            (bell.UserId, bell.Title, bell.EntityId));
 
         db.LineQueues.Add(Row(s, ContactLineChannel.ManualTrigger));
         await db.SaveChangesAsync();
@@ -173,6 +177,57 @@ public class LineRound260DbTests
         await Sender(db, o, FakeLine(pushed, new LinePushResult(false, "The request body has 1 error(s)", HttpStatus: 400)), Scopes()).ProcessPendingAsync();
         Assert.Equal(1, await db.LineQueues.CountAsync(q => q.CompanyId == o.CompanyId && q.Status == ContactLineChannel.StatusFailed));
         Assert.Equal(0, await db.Notifications.CountAsync(n => n.CompanyId == o.CompanyId && n.EntityType == LineFailureAlert.EntityType));
+
+        // ฝ่ายค้าน M4: ชนิดต่างกันกันซ้ำแยกกัน — บริษัท o ล้มครบเกณฑ์ (ชนิด "ล้มซ้ำ") แล้ว Token เสีย ⇒ ได้สองกระดิ่งคนละชนิด
+        for (var i = 0; i < LineFailureAlert.Threshold; i++) db.LineQueues.Add(Row(o, ContactLineChannel.ManualTrigger));
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        await Sender(db, o, FakeLine(pushed, new LinePushResult(false, "The request body has 1 error(s)", HttpStatus: 400)), Scopes()).ProcessPendingAsync();
+        Assert.Equal(1, await db.Notifications.CountAsync(n => n.CompanyId == o.CompanyId && n.EntityType == LineFailureAlert.EntityType
+            && n.EntityId == LineFailureAlert.KindId(LineFailureAlert.Kind.Repeated)));
+        db.LineQueues.Add(Row(o, ContactLineChannel.ManualTrigger));
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        await Sender(db, o, FakeLine(pushed, auth), Scopes()).ProcessPendingAsync();
+        Assert.Equal(1, await db.Notifications.CountAsync(n => n.CompanyId == o.CompanyId && n.EntityType == LineFailureAlert.EntityType
+            && n.EntityId == LineFailureAlert.KindId(LineFailureAlert.Kind.ChannelBroken)));
+    }
+
+    [Fact]
+    public async Task ถอดรหัส_LINE_id_ไม่ได้_ลองใหม่หนึ่งครั้ง_แล้วล้มพร้อมคำแนะนำเรื่องกุญแจ_และกระดิ่งชนิดถอดรหัส()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "dk " + Guid.NewGuid().ToString("N")[..6], quietNow: false);
+        var row = Row(s, ContactLineChannel.ManualTrigger);
+        db.LineQueues.Add(row);
+        await db.SaveChangesAsync();
+        var pushed = new List<string>();
+        // ตัวส่งใช้กุญแจคนละตัว (อาการเดียวกับเครื่องที่ตั้ง ENCRYPTION_KEY ผิด)
+        ContactLineQueueService WrongKey() => new(db, FakeLine(pushed, new LinePushResult(true, null, HttpStatus: 200)), Recipients(s.EndpointId),
+            new SecretProtector("another-key-260"), NoEmail(), NullLogger<ContactLineQueueService>.Instance, config: Config(), scopes: Scopes());
+        await WrongKey().ProcessPendingAsync();
+        db.ChangeTracker.Clear();
+        var first = await db.LineQueues.AsNoTracking().SingleAsync(q => q.Id == row.Id);
+        Assert.Equal((ContactLineChannel.StatusPending, 1, LineFailureAlert.DecryptRuleCode), (first.Status, first.RetryCount, first.RuleCode));
+        Assert.Equal(0, await db.Notifications.CountAsync(n => n.CompanyId == s.CompanyId && n.EntityType == LineFailureAlert.EntityType));
+        await db.LineQueues.Where(q => q.Id == row.Id).ExecuteUpdateAsync(x => x.SetProperty(q => q.ScheduledFor, DateTime.UtcNow.AddYears(-5)));
+        await WrongKey().ProcessPendingAsync();
+        db.ChangeTracker.Clear();
+        var second = await db.LineQueues.AsNoTracking().SingleAsync(q => q.Id == row.Id);
+        Assert.Equal((ContactLineChannel.StatusFailed, LineFailureAlert.DecryptAdvice), (second.Status, second.ErrorMessage));
+        Assert.Contains("ENCRYPTION_KEY", second.ErrorMessage);
+        Assert.Equal(1, await db.Notifications.CountAsync(n => n.CompanyId == s.CompanyId && n.EntityType == LineFailureAlert.EntityType
+            && n.EntityId == LineFailureAlert.KindId(LineFailureAlert.Kind.Decrypt)));
+        Assert.DoesNotContain(s.LineUserId, pushed);   // ไม่เคยยิง LINE
+
+        // ทิศตรงข้าม: กุญแจถูก ⇒ ส่งได้ ไม่มีกระดิ่งถอดรหัสเพิ่ม
+        var ok = Row(s, ContactLineChannel.ManualTrigger);
+        db.LineQueues.Add(ok);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        await Sender(db, s, FakeLine(pushed, new LinePushResult(true, null, HttpStatus: 200)), Scopes()).ProcessPendingAsync();
+        Assert.Equal(ContactLineChannel.StatusSent, (await db.LineQueues.AsNoTracking().SingleAsync(q => q.Id == ok.Id)).Status);
     }
 
     [Fact]
@@ -187,13 +242,14 @@ public class LineRound260DbTests
         {
             CompanyId = a.CompanyId, ContactId = a.ContactId, Kind = NotifyEndpointKind.LineGroup, LineGroupId = Secrets.Protect(gid),
             OaScope = NotifyEndpointKind.ScopeCompany, OaDestination = Bot, GroupNameSnapshot = "บัญชีลูกค้า", Verified = true, LinkedAt = DateTime.UtcNow,
+            ConsentRecordId = a.ConsentId,
         };
         ContactNotifyEndpoint Hidden(Action<ContactNotifyEndpoint> tweak)
         {
             var e = new ContactNotifyEndpoint
             {
                 CompanyId = a.CompanyId, ContactId = a.ContactId, Kind = NotifyEndpointKind.LineUser, LineUserId = Secrets.Protect("Uhidden"),
-                OaScope = NotifyEndpointKind.ScopeCompany, OaDestination = Bot, Verified = true, LinkedAt = DateTime.UtcNow,
+                OaScope = NotifyEndpointKind.ScopeCompany, OaDestination = Bot, Verified = true, LinkedAt = DateTime.UtcNow, ConsentRecordId = a.ConsentId,
             };
             tweak(e);
             return e;
@@ -202,10 +258,17 @@ public class LineRound260DbTests
         var unlinked = Hidden(e => e.UnlinkedAt = DateTime.UtcNow);
         var blocked = Hidden(e => e.BlockedAt = DateTime.UtcNow);
         var oldOa = Hidden(e => e.OaDestination = "Uold-bot");
-        db.ContactNotifyEndpoints.AddRange(group, central, unlinked, blocked, oldOa);
+        var noConsent = Hidden(e => e.ConsentRecordId = null);   // ฝ่ายค้าน H1: แถว legacy ไม่มีความยินยอม
+        // ฝ่ายค้าน H1: ผู้ติดต่อที่ถูกลบ (soft-delete) ⇒ ไม่อยู่ในรายการ/ส่งไม่ได้
+        var gone = new Contact { CompanyId = a.CompanyId, Name = "ผู้ติดต่อที่ถูกลบ 260", IsCustomer = true, ContactType = ContactType.JuristicPerson, IsDeleted = true };
+        db.Contacts.Add(gone);
+        await db.SaveChangesAsync();
+        var ofDeleted = Hidden(e => e.ContactId = gone.Id);
+        db.ContactNotifyEndpoints.AddRange(group, central, unlinked, blocked, oldOa, noConsent, ofDeleted);
         await db.SaveChangesAsync();
 
-        var list = await LineTestTargets.ListAsync(db, a.CompanyId, default);
+        var none = Array.Empty<string>();
+        var list = await LineTestTargets.ListAsync(db, Secrets, a.CompanyId, none, default);
         Assert.Equal(LineOaHealth.TeamGroupTargetKey, list[0].Key);
         Assert.False(list[0].ReachesContact);
         var keys = list.Skip(1).Select(t => t.Key).ToHashSet();
@@ -215,14 +278,22 @@ public class LineRound260DbTests
         Assert.DoesNotContain(list, t => t.Key == LineOaHealth.EndpointTargetKey(b.EndpointId));   // ของบริษัทอื่นไม่อยู่ในรายการ
         Assert.DoesNotContain(list, t => t.Label.Contains(gid) || t.Label.Contains(a.LineUserId));   // ไม่มี LINE id ในป้าย
 
-        Assert.Equal((gid, (string?)null), await LineTestTargets.ResolveAsync(db, Secrets, a.CompanyId, group.Id, default));
-        Assert.Equal((a.LineUserId, (string?)null), await LineTestTargets.ResolveAsync(db, Secrets, a.CompanyId, a.EndpointId, default));
-        // ข้ามบริษัท / ปลายทางที่ไม่อยู่ในรายการ ⇒ ไม่พบพร้อมเหตุ
-        foreach (var id in new[] { b.EndpointId, central.Id, unlinked.Id, blocked.Id, oldOa.Id })
+        var g = await LineTestTargets.ResolveAsync(db, Secrets, a.CompanyId, group.Id, none, default);
+        Assert.Equal((gid, (string?)null, (Guid?)a.ContactId), (g.To, g.Problem, g.ContactId));
+        Assert.Equal(a.LineUserId, (await LineTestTargets.ResolveAsync(db, Secrets, a.CompanyId, a.EndpointId, none, default)).To);
+        // ข้ามบริษัท / ปลายทางที่ไม่อยู่ในรายการ (OA กลาง · ยกเลิก · บล็อก · บอทเดิม · ไม่มีความยินยอม · ผู้ติดต่อถูกลบ) ⇒ ไม่พบพร้อมเหตุ
+        foreach (var id in new[] { b.EndpointId, central.Id, unlinked.Id, blocked.Id, oldOa.Id, noConsent.Id, ofDeleted.Id })
         {
-            var (to, problem) = await LineTestTargets.ResolveAsync(db, Secrets, a.CompanyId, id, default);
-            Assert.Null(to);
-            Assert.NotNull(problem);
+            var r = await LineTestTargets.ResolveAsync(db, Secrets, a.CompanyId, id, none, default);
+            Assert.Null(r.To);
+            Assert.NotNull(r.Problem);
         }
+
+        // ฝ่ายค้าน H1 สองทิศ: ถอนความยินยอม (เส้น PDPA ประทับ WithdrawnAt โดยไม่ปลดปลายทาง) ⇒ หายจากรายการ + ส่งด้วย key ไม่ได้ · ยังยินยอม = อยู่ (ข้างบน)
+        await db.PdpaConsentRecords.Where(c => c.Id == a.ConsentId).ExecuteUpdateAsync(x => x.SetProperty(c => c.WithdrawnAt, (DateTime?)DateTime.UtcNow));
+        var after = await LineTestTargets.ListAsync(db, Secrets, a.CompanyId, none, default);
+        Assert.DoesNotContain(after, t => t.ReachesContact);
+        Assert.Null((await LineTestTargets.ResolveAsync(db, Secrets, a.CompanyId, a.EndpointId, none, default)).To);
+        Assert.Null((await LineTestTargets.ResolveAsync(db, Secrets, a.CompanyId, group.Id, none, default)).To);
     }
 }

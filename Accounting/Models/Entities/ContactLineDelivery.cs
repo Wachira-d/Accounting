@@ -47,6 +47,9 @@ public class LineQueue : TenantEntity
     public bool? IncludePayLink { get; set; }
     /// <summary>รอบ 259: ผู้ใช้ที่กดส่งเอง (แถวจากหน้าเอกสาร) · null = ระบบ</summary>
     public Guid? RequestedByUserId { get; set; }
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน L4 · คำตัดสิน 260-4-13): การ์ดใบเสร็จของการชำระที่ลูกค้าทำเอง (ลิงก์/ผู้ให้บริการรับชำระ — ทางเข้า Gateway) ⇒ ไม่ถูกเลื่อนตามชั่วโมงเงียบ ·
+    /// false = ระบบ/พนักงาน/นำเข้า/จับคู่ธนาคาร (เลื่อนตามช่วง)</summary>
+    public bool CustomerInitiated { get; set; }
 }
 
 /// <summary>

@@ -357,8 +357,9 @@ public class LineNotifyService : ILineNotifyService
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.TenantMember, oa.Configured);
         if (!route.Allowed)
             return (false, "ยังไม่ได้ตั้งค่า Channel Access Token ของ LINE OA ของร้าน (ติ๊ก \"เปิดใช้งาน\" + ใส่ Token แล้วบันทึกก่อน) — " + route.Reason);
-        var r = await PushCoreAsync(oa.Token, TextPayload(toLineId.Trim(),
-            $"✅ ทดสอบ LINE Messaging API สำเร็จ\nบริษัท: {companyId}\nเวลา: {NowIct()}"), "test");
+        // รอบ 260-4 (ฝ่ายค้าน H1): ปลายทางทดสอบอาจเป็นผู้รับของลูกค้า ⇒ ข้อความไม่มี GUID/ศัพท์เทคนิค (ตัวประกอบเดียว LineOaHealth.TestMessage)
+        var companyName = _db == null ? null : await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync();
+        var r = await PushCoreAsync(oa.Token, TextPayload(toLineId.Trim(), LineOaHealth.TestMessage(companyName, NowIct())), "test");
         // รอบ 259 (A-M6): ล้ม ⇒ เหตุจริงจาก LINE (ตัวจำแนกเดียวกับคิว LINE) — เดิม "ดู log" ที่ผู้ใช้เปิดไม่ได้
         return r.Ok
             ? (true, "ส่งข้อความทดสอบสำเร็จ")

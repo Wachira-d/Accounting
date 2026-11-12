@@ -14,6 +14,8 @@ namespace Accounting.Helpers;
 public static class LineOaHealth
 {
     public const string RuleCode = "LINE-OA-HEALTH";
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน L2): EntityType ของ audit เมื่อทดสอบส่งถึงผู้รับของผู้ติดต่อ</summary>
+    public const string TestAuditEntityType = "LineTestToContact";
 
     /// <summary>ประทับเวลา webhook ไม่ถี่กว่านี้ (กันเขียนฐานทุก event ของแชตที่คุยกันถี่)</summary>
     public static readonly TimeSpan StampEvery = TimeSpan.FromMinutes(5);
@@ -105,6 +107,10 @@ public static class LineOaHealth
         }
         return string.IsNullOrWhiteSpace(typedId) ? (null, "เลือกปลายทาง หรือระบุ LINE User ID (U…) / Group ID (C…) ของผู้รับ") : (typedId.Trim(), null);
     }
+
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน H1): ข้อความทดสอบที่ส่งจริง — ถึงผู้รับของลูกค้าได้ ⇒ ชื่อบริษัท + เวลา ไม่มี GUID/ศัพท์เทคนิค</summary>
+    public static string TestMessage(string? companyName, string timeText)
+        => LineMessageLimits.Truncate($"✅ ทดสอบการแจ้งเตือนทาง LINE จาก {(string.IsNullOrWhiteSpace(companyName) ? "ร้านค้า" : companyName!.Trim())}\nเวลา: {timeText}", 500);
 
     /// <summary>ข้อความเมื่อทดสอบส่งล้ม — เหตุจริงจาก LINE (จำแนกตัวเดียวกับคิว LINE) + ทางไปต่อ</summary>
     public static string TestFailureMessage(int? httpStatus, string? error, bool transportError)

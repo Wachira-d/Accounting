@@ -33,6 +33,11 @@ public class EmailScheduleController : ControllerBase
         return Ok(new ApiResponse<ContactLineChannel.RuleChannelLabels>(true, ContactLineChannel.ChannelLabels(open)));
     }
 
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน L3 · server computes): คำเตือนชั่วโมงเงียบต่อชั่วโมงส่ง — หน้าแสดงตามชั่วโมง/ช่องที่ติ๊ก (ไม่มีกติกาช่วงเวลาใน JS)</summary>
+    [HttpGet("line-quiet-warnings")]
+    public async Task<ActionResult<ApiResponse<LineQuietHours.RuleWarnings>>> LineQuietWarnings(Guid companyId)
+        => Ok(new ApiResponse<LineQuietHours.RuleWarnings>(true, await _svc.LineQuietWarningsAsync(companyId)));
+
     /// <summary>รอบ 254 WP-11 L2 → รอบ 258 (A-H1/B-H1): ด่านเขียนของหน้าตารางส่งทั้งหน้า — กฎ (สร้าง/แก้/ลบ) + คิวอีเมล + คิว LINE ·
     /// ตัวตัดสินเดียว <see cref="SettingsWriteGate"/> (CompanySettings.Edit · งานตั้งกฎห้ามใช้ API key) · null = ผ่าน · ไม่มีบริการสิทธิ์ = ปฏิเสธ</summary>
     private async Task<ActionResult?> RequireSettingsAsync(Guid companyId, string verb = "จัดการคิว LINE", bool rejectApiKey = false)

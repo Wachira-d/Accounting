@@ -32,11 +32,15 @@ public class LineConfigController : ControllerBase
     private readonly INextAccLineConfig? _nextAcc;
     /// <summary>รอบ 260: เครื่องนี้อ่านยอดจากรูปสลิปได้ไหม (แถวความพร้อม "รับสลิปจากแชต") · null = ไม่รู้ ⇒ ถือว่าอ่านไม่ได้</summary>
     private readonly Accounting.Services.Implementations.ISlipImageReader? _slipReader;
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน L2): บันทึกการเข้าถึงข้อมูลส่วนบุคคลเมื่อทดสอบส่งถึงผู้รับของผู้ติดต่อ (ม.37) · null (นอก DI) = audit อย่างเดียว</summary>
+    private readonly Accounting.Services.Implementations.Pdpa.IPdpaService? _pdpa;
 
     public LineConfigController(AccountingDbContext db, ISecretProtector secrets, ILineNotifyService line,
         ICustomerLineLinkService? customerLinks = null, ICustomerRelinkInviteService? relink = null, ILogger<LineConfigController>? logger = null,
-        INextAccLineConfig? nextAcc = null, Accounting.Services.Implementations.ISlipImageReader? slipReader = null)
+        INextAccLineConfig? nextAcc = null, Accounting.Services.Implementations.ISlipImageReader? slipReader = null,
+        Accounting.Services.Implementations.Pdpa.IPdpaService? pdpa = null)
     {
+        _pdpa = pdpa;
         _nextAcc = nextAcc;
         _slipReader = slipReader;
         _db = db;
@@ -100,6 +104,8 @@ public class LineConfigController : ControllerBase
             fetchedBot, s.LineOaDestination);
         if (pairProblem != null) return BadRequest(new ApiResponse<LineConfigResponse>(false, null, pairProblem));
         s.LineEnabled = req.Enabled;
+        // ฝ่ายค้าน 260-4 L5: ปิดชั่วโมงเงียบ ⇒ การ์ดที่เลื่อนไว้ส่งรอบถัดไป (ไม่ต้องรอถึง 08:00 เดิม)
+        var releaseQuiet = req.QuietHoursEnabled == false && s.LineQuietHoursEnabled;
         if (req.QuietHoursEnabled is bool quietOn) s.LineQuietHoursEnabled = quietOn;
         if (req.QuietStartHour is int qs) s.LineQuietStartHour = qs;
         if (req.QuietEndHour is int qe) s.LineQuietEndHour = qe;
@@ -130,11 +136,21 @@ public class LineConfigController : ControllerBase
         // Reset configured flag after change — admin must re-test
         s.LineConfigured = false;
         await _db.SaveChangesAsync();
+        var released = releaseQuiet ? await ReleaseQuietDeferredAsync(companyId) : 0;
 
-        var message = "บันทึกการตั้งค่า LINE เรียบร้อย";
+        var message = "บันทึกการตั้งค่า LINE เรียบร้อย" + (released > 0 ? $" · การ์ด LINE ที่รอชั่วโมงเงียบ {released} รายการจะส่งรอบถัดไป" : "");
         var relinkNote = await RecordOaSwitchAsync(companyId, before);
         if (relinkNote != null) message += " · " + relinkNote;
         return Ok(new ApiResponse<LineConfigResponse>(true, await BuildAsync(companyId, s), message));
+    }
+
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน L5): แถวรอส่งของบริษัทนี้ที่ถูกเลื่อนด้วยชั่วโมงเงียบ ⇒ ถึงเวลาส่งเดี๋ยวนี้ (แบบมีเงื่อนไขคำสั่งเดียว — แถวที่ตัวส่งจองไปแล้วไม่ถูกแตะ)</summary>
+    private Task<int> ReleaseQuietDeferredAsync(Guid companyId)
+    {
+        var now = DateTime.UtcNow;
+        return _db.LineQueues
+            .Where(q => q.CompanyId == companyId && q.Status == ContactLineChannel.StatusPending && q.RuleCode == LineQuietHours.RuleCode && q.ScheduledFor > now)
+            .ExecuteUpdateAsync(x => x.SetProperty(q => q.ScheduledFor, now).SetProperty(q => q.UpdatedAt, (DateTime?)now));
     }
 
     /// <summary>รอบ 212 แพ็ก B: OA ที่ส่งจริงเปลี่ยน (ร้าน↔NextAcc หรือ bot ใหม่) ⇒ บันทึกการสลับให้งานเบื้องหลังเชิญลูกค้าที่ผูกไว้เดิมผูกใหม่ ·
@@ -166,9 +182,15 @@ public class LineConfigController : ControllerBase
     {
         // รอบ 259 (A-M6): เลือกปลายทางที่ระบบรู้จัก (ไม่ต้องพิมพ์ C…) หรือพิมพ์เอง — ตัวตัดสินเดียว LineOaHealth.TestTarget
         // รอบ 260-4 (260-4-3): ปลายทางของผู้ติดต่อที่ผูกกับ OA ของบริษัท (key "ep:…") ⇒ หาใหม่ในบริษัทนี้เท่านั้น (ตัวเดียวกับรายการ — LineTestTargets.ResolveAsync)
+        // ฝ่ายค้าน 260-4 H1: ตัวตัดสินผู้รับเดียว (ความยินยอม · ผู้ติดต่อไม่ถูกลบ) · L2: ส่งถึงผู้รับของผู้ติดต่อ ⇒ audit + PiiAccessLog ก่อนส่ง
         string? to, targetProblem;
+        var rct = HttpContext?.RequestAborted ?? default;
         if (LineOaHealth.ParseEndpointKey(req?.TargetKey) is Guid endpointId)
-            (to, targetProblem) = await LineTestTargets.ResolveAsync(_db, _secrets, companyId, endpointId, HttpContext?.RequestAborted ?? default);
+        {
+            var hit = await LineTestTargets.ResolveAsync(_db, _secrets, companyId, endpointId, await PlatformGroupsAsync(rct), rct);
+            (to, targetProblem) = (hit.To, hit.Problem);
+            if (to != null && hit.ContactId is Guid contactId) await RecordContactTestAsync(companyId, endpointId, contactId, rct);
+        }
         else
         {
             var current = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId).Select(x => x.LineDefaultGroupId).FirstOrDefaultAsync();
@@ -208,8 +230,32 @@ public class LineConfigController : ControllerBase
     [Accounting.Filters.RejectApiKey("ดูปลายทางทดสอบ LINE")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<LineTestTarget>>>> TestTargets(Guid companyId)
     {
-        var targets = await LineTestTargets.ListAsync(_db, companyId, HttpContext?.RequestAborted ?? default);
+        var rct = HttpContext?.RequestAborted ?? default;
+        var targets = await LineTestTargets.ListAsync(_db, _secrets, companyId, await PlatformGroupsAsync(rct), rct);
         return Ok(new ApiResponse<IReadOnlyList<LineTestTarget>>(true, targets));
+    }
+
+    /// <summary>กลุ่ม LINE กลางของระบบ (ตัวตัดสินผู้รับตัดออก) — ไม่มีตัวอ่านค่าตั้ง OA กลาง (นอก DI) ⇒ ว่าง</summary>
+    private async Task<IReadOnlyCollection<string>> PlatformGroupsAsync(CancellationToken ct)
+        => _nextAcc == null ? Array.Empty<string>() : await _nextAcc.PlatformGroupIdsAsync(ct);
+
+    /// <summary>รอบ 260-4 (ฝ่ายค้าน L2 · คำตัดสิน 260-4-10): ทดสอบส่งถึงผู้รับของผู้ติดต่อ = ใช้ LINE id ของบุคคลภายนอกในนามบริษัท ⇒
+    /// audit hash chain หนึ่งแถว (ปลายทาง · ผู้กด) + PiiAccessLog (ม.37) ก่อนส่ง · ไม่มี LINE id ในบันทึก</summary>
+    private async Task RecordContactTestAsync(Guid companyId, Guid endpointId, Guid contactId, CancellationToken ct)
+    {
+        var actorEmail = User?.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? User?.Identity?.Name ?? "";
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserEmail = actorEmail, Action = Accounting.Models.Enums.AuditAction.Create, EntityType = LineOaHealth.TestAuditEntityType,
+            EntityId = endpointId.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { @event = "LineTestToContact", endpointId, contactId, ruleCode = LineOaHealth.RuleCode }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        if (_pdpa != null && User != null)
+            await _pdpa.LogPiiAccessAsync(companyId, JwtHelper.GetUserIdFromClaims(User), actorEmail, subjectType: "Contact", subjectId: contactId,
+                fieldName: "LINE ของผู้รับ (ทดสอบส่ง)", operation: "Use", purpose: "ทดสอบการแจ้งเตือนทาง LINE ของบริษัท",
+                ipAddress: HttpContext?.Connection?.RemoteIpAddress?.ToString(), userAgent: HttpContext?.Request?.Headers.UserAgent.ToString(), ct: ct);
     }
 
     private async Task<CompanySettings> GetOrCreateSettings(Guid companyId)

@@ -2250,7 +2250,9 @@
         sel.innerHTML = ts.map(t => `<option value="${Layout.esc(t.key)}" data-contact="${t.reachesContact ? '1' : ''}">${Layout.esc(t.label)}${t.reachesContact ? ' — ผู้ติดต่อ' : ''}</option>`).join('')
           + '<option value="">พิมพ์ LINE ID เอง…</option>';
         sel.style.display = ts.length ? '' : 'none';
-        sel.value = ts.length ? ts[0].key : '';
+        // ฝ่ายค้าน 260-4 L1: ค่าเริ่มต้น = กลุ่มทีม (ถ้ามี) ไม่งั้น "พิมพ์เอง" — ไม่เลือกผู้ติดต่อจริงให้เอง
+        const team = ts.find(t => !t.reachesContact);
+        sel.value = team ? team.key : '';
         document.getElementById('lineTestId').style.display = sel.value ? 'none' : '';
       },
       _renderLineHealth(rows) {

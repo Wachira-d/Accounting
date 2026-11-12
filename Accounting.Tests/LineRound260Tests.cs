@@ -35,14 +35,61 @@ public class LineRound260Tests
     }
 
     [Fact]
-    public void ยกเว้นเฉพาะใบเสร็จหลังชำระและส่งเอง()
+    public void ยกเว้นเฉพาะใบเสร็จที่ลูกค้าชำระเองและส่งเอง()
     {
-        Assert.Null(LineQuietHours.DeferUntilUtc(Utc(2026, 11, 12, 15), true, 21, 8, ContactLineChannel.ReceiptTrigger));
+        // ฝ่ายค้าน 260-4 L4: ใบเสร็จยกเว้นเฉพาะลูกค้าชำระเอง (ลิงก์/ผู้ให้บริการรับชำระ) · ใบเสร็จจากพนักงาน/จับคู่ธนาคาร/นำเข้าตอนกลางคืนถูกเลื่อน
+        Assert.Null(LineQuietHours.DeferUntilUtc(Utc(2026, 11, 12, 15), true, 21, 8, ContactLineChannel.ReceiptTrigger, customerInitiated: true));
+        Assert.NotNull(LineQuietHours.DeferUntilUtc(Utc(2026, 11, 12, 15), true, 21, 8, ContactLineChannel.ReceiptTrigger, customerInitiated: false));
         Assert.Null(LineQuietHours.DeferUntilUtc(Utc(2026, 11, 12, 15), true, 21, 8, ContactLineChannel.ManualTrigger));
         foreach (var t in ContactLineChannel.LineTriggers)
             Assert.False(LineQuietHours.IsExempt(t));
         Assert.False(LineQuietHours.IsExempt(LineWhtCertCard.QueueTrigger));
         Assert.False(LineQuietHours.IsExempt(null));
+        Assert.False(LineQuietHours.IsExempt(LineWhtCertCard.QueueTrigger, customerInitiated: true));   // ธงลูกค้ามีผลกับใบเสร็จเท่านั้น
+    }
+
+    [Fact]
+    public void คำเตือนฟอร์มกฎ_ต่อชั่วโมง_เฉพาะช่วงเงียบเปิด_บอกอีเมลกับLINEคนละเวลา()
+    {
+        var w = LineQuietHours.RuleWarningsByHour(true, 21, 8);
+        Assert.Equal(24, w.LineOnly.Count);
+        Assert.NotNull(w.LineOnly[22]);
+        Assert.NotNull(w.LineOnly[7]);
+        Assert.Null(w.LineOnly[8]);
+        Assert.Null(w.LineOnly[20]);
+        Assert.Contains("08:00", w.LineOnly[22]);
+        Assert.Contains("อีเมล", w.LineAndEmail[22]);
+        Assert.DoesNotContain("อีเมล", w.LineOnly[22]);
+        // ทิศตรงข้าม: ปิดอยู่/ค่าเสีย ⇒ ไม่มีคำเตือนสักชั่วโมง
+        Assert.All(LineQuietHours.RuleWarningsByHour(false, 21, 8).LineOnly, x => Assert.Null(x));
+        Assert.All(LineQuietHours.RuleWarningsByHour(true, 8, 8).LineAndEmail, x => Assert.Null(x));
+    }
+
+    [Fact]
+    public void กระดิ่งแยกชนิด_กันซ้ำต่อชนิด_ถอดรหัสไม่ได้ดังทันที()
+    {
+        Assert.Equal(LineFailureAlert.Kind.ChannelBroken, LineFailureAlert.AlertKind(1, channelBroken: true));
+        Assert.Equal(LineFailureAlert.Kind.Decrypt, LineFailureAlert.AlertKind(0, channelBroken: false, decryptFailed: true));
+        Assert.Equal(LineFailureAlert.Kind.Repeated, LineFailureAlert.AlertKind(LineFailureAlert.Threshold, false));
+        Assert.Null(LineFailureAlert.AlertKind(LineFailureAlert.Threshold - 1, false));
+        var ids = Enum.GetValues<LineFailureAlert.Kind>().Select(LineFailureAlert.KindId).ToList();
+        Assert.Equal(ids.Count, ids.Distinct().Count());
+        Assert.Contains("ENCRYPTION_KEY", LineFailureAlert.Message(LineFailureAlert.Kind.Decrypt, 1, null));
+        Assert.DoesNotContain("ผูกใหม่", LineFailureAlert.DecryptRetryNote);
+        // M2: ข้อความของแต่ละทางเข้าที่เข้าคิวอัตโนมัติ
+        Assert.Contains("สลิป", LineFailureAlert.EnqueueMessage(LineFailureAlert.EnqueueSource.PayrollPaid, "มี.ค.", null));
+        Assert.Contains("50 ทวิ", LineFailureAlert.EnqueueTitle(LineFailureAlert.EnqueueSource.WhtCertIssued));
+        Assert.Contains("openDoc=", LineFailureAlert.EnqueueActionUrl(LineFailureAlert.EnqueueSource.DocumentApproved, Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void ข้อความทดสอบไม่มี_GUID()
+    {
+        var m = LineOaHealth.TestMessage("บริษัท ก จำกัด", "12/11/2026 10:00");
+        Assert.Contains("บริษัท ก จำกัด", m);
+        Assert.DoesNotMatch("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-", m);
+        Assert.DoesNotContain("Messaging API", m);
+        Assert.Contains("ร้านค้า", LineOaHealth.TestMessage(null, "x"));
     }
 
     [Fact]
@@ -62,13 +109,13 @@ public class LineRound260Tests
     [Fact]
     public void กระดิ่งล้มซ้ำ_เกณฑ์และช่องเสีย()
     {
-        Assert.False(LineFailureAlert.ShouldAlert(LineFailureAlert.Threshold - 1, channelBroken: false));
-        Assert.True(LineFailureAlert.ShouldAlert(LineFailureAlert.Threshold, channelBroken: false));
-        Assert.True(LineFailureAlert.ShouldAlert(1, channelBroken: true));
+        Assert.Null(LineFailureAlert.AlertKind(LineFailureAlert.Threshold - 1, channelBroken: false));
+        Assert.NotNull(LineFailureAlert.AlertKind(LineFailureAlert.Threshold, channelBroken: false));
+        Assert.NotNull(LineFailureAlert.AlertKind(1, channelBroken: true));
         Assert.Contains("Token", LineFailureAlert.Message(true, 1, "401"));
         Assert.Contains("5 ครั้ง", LineFailureAlert.Message(false, 5, null));
-        Assert.Contains("INV-1", LineFailureAlert.ApproveEnqueueMessage("INV-1", "boom"));
-        Assert.Contains("ส่งเอง", LineFailureAlert.ApproveEnqueueMessage(null, null));
+        Assert.Contains("INV-1", LineFailureAlert.EnqueueMessage(LineFailureAlert.EnqueueSource.DocumentApproved, "INV-1", "boom"));
+        Assert.Contains("ส่งเอง", LineFailureAlert.EnqueueMessage(LineFailureAlert.EnqueueSource.DocumentApproved, null, null));
     }
 
     [Fact]
@@ -93,5 +140,6 @@ public class LineRound260Tests
         Assert.Contains("\"LineQuietHoursEnabled\" boolean NOT NULL DEFAULT false", sql);
         Assert.Contains("\"LineQuietStartHour\" integer NOT NULL DEFAULT 21", sql);
         Assert.Contains("\"LineQuietEndHour\" integer NOT NULL DEFAULT 8", sql);
+        Assert.Contains("\"LineQueues\" ADD COLUMN IF NOT EXISTS \"CustomerInitiated\" boolean NOT NULL DEFAULT false", sql);
     }
 }

@@ -14,5 +14,7 @@ public static class Round260LineMigration
             + LineQuietHours.DefaultStartHour.ToString(System.Globalization.CultureInfo.InvariantCulture) + ";",
         "ALTER TABLE \"CompanySettings\" ADD COLUMN IF NOT EXISTS \"LineQuietEndHour\" integer NOT NULL DEFAULT "
             + LineQuietHours.DefaultEndHour.ToString(System.Globalization.CultureInfo.InvariantCulture) + ";",
+        // ฝ่ายค้าน 260-4 L4: ใบเสร็จของการชำระที่ลูกค้าทำเอง (แถวเดิม = false ⇒ เลื่อนตามช่วง — ทางที่ปลอดภัยกว่า)
+        "ALTER TABLE \"LineQueues\" ADD COLUMN IF NOT EXISTS \"CustomerInitiated\" boolean NOT NULL DEFAULT false;",
     };
 }

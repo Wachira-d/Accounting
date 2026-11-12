@@ -175,6 +175,8 @@
             <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineUser"> <span id="rChLineUserLabel">LINE ผู้ใช้ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</span></label>
             <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineGroup"> <span id="rChLineGroupLabel">กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</span></label>
             <div id="rChLineNote" style="font-size:11px;color:#64748b;margin-left:22px"></div>
+            <!-- รอบ 260-4 (ฝ่ายค้าน L3): ชั่วโมงส่งตกในชั่วโมงเงียบของ LINE — ข้อความจากเซิร์ฟเวอร์ต่อชั่วโมง (…/email-schedule/line-quiet-warnings) -->
+            <div id="rQuietWarn" style="font-size:12px;color:#92400e;margin-left:22px;display:none"></div>
             <label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:4px"><input type="checkbox" id="rLineFallback" checked> ถ้า LINE ส่งไม่ได้ ให้ส่งอีเมลแทน (มีผลเมื่อไม่ได้ติ๊กอีเมล)</label>
             <p class="form-help">การ์ด LINE มีชื่อเอกสาร เลขที่ ยอด วันครบกำหนด และลิงก์ชำระ (ไม่แนบไฟล์ · ไม่ใช่การส่งใบกำกับภาษีอิเล็กทรอนิกส์) · ผูก LINE ของผู้รับที่หน้าผู้ติดต่อ แท็บช่องทางแจ้งเตือน ·
               ถ้าบริษัทใช้ e-Tax by Email ใบกำกับจะถูกส่งทางอีเมลด้วยเสมอแม้ติ๊ก LINE อย่างเดียว (คิวอีเมลบอกเหตุไว้) · ผู้รับพิมพ์ "หยุด" = หยุดเฉพาะ LINE</p>
@@ -328,6 +330,14 @@
         document.getElementById('rLineFallback').checked = r ? r.lineFallbackToEmail !== false : true;
         document.getElementById('ruleTitle').textContent = id ? 'แก้ไขกฎ' : 'เพิ่มกฎใหม่';
         this._toggleTriggerFields();
+        // รอบ 260-4: คำเตือนชั่วโมงเงียบตามชั่วโมง/ช่องที่ติ๊ก (ผูกครั้งเดียว)
+        if (!this._quietBound) {
+          this._quietBound = true;
+          ['rHour', 'rChEmail', 'rChLineUser', 'rChLineGroup'].forEach(id => {
+            const el = document.getElementById(id); if (el) { el.addEventListener('input', () => this._renderQuietWarn()); el.addEventListener('change', () => this._renderQuietWarn()); }
+          });
+        }
+        this._renderQuietWarn();
         Layout.openModal('ruleModal');
       },
 
@@ -347,6 +357,24 @@
           const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.textContent = v; };
           set('rChLineUserLabel', d.lineUser); set('rChLineGroupLabel', d.lineGroup); set('rChLineNote', d.note);
         } catch (_) { /* คงป้ายตั้งต้น */ }
+        await this._loadQuietWarnings();
+      },
+      // รอบ 260-4 (ฝ่ายค้าน L3): คำเตือนชั่วโมงเงียบ — เซิร์ฟเวอร์ให้ข้อความต่อชั่วโมง หน้าเลือกตามชั่วโมง/ช่องที่ติ๊ก
+      _quietWarn: null,
+      async _loadQuietWarnings() {
+        const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
+        try { const r = await api.get(`/api/companies/${cid}/email-schedule/line-quiet-warnings`); this._quietWarn = r && r.data; }
+        catch (_) { this._quietWarn = null; }
+        this._renderQuietWarn();
+      },
+      _renderQuietWarn() {
+        const box = document.getElementById('rQuietWarn'); if (!box) return;
+        const w = this._quietWarn; const h = Number(document.getElementById('rHour').value);
+        const line = document.getElementById('rChLineUser').checked || document.getElementById('rChLineGroup').checked;
+        const email = document.getElementById('rChEmail').checked;
+        const list = w ? (email ? w.lineAndEmail : w.lineOnly) : null;
+        const text = line && list && Number.isInteger(h) && h >= 0 && h < 24 ? list[h] : null;
+        box.textContent = text || ''; box.style.display = text ? '' : 'none';
       },
       _renderChannels(selected) {
         const s = this._autoSend;

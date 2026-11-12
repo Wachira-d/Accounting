@@ -72,7 +72,12 @@ public class EmailScheduleWorker : BackgroundService
 
                 if (DateTime.UtcNow - lastScan > ScanInterval)
                 {
-                    var enq = await svc.ScanDueSoonAndOverdueAsync(stoppingToken);
+                    // รอบ 260-4 (ฝ่ายค้าน L9 · คำตัดสิน 260-4-15): สแกนทุกบริษัท ⇒ ครั้งละเครื่องเดียว (JobLock) — สองเครื่องสแกนพร้อมกันแล้วตัวหาผู้รับให้ผลต่างกัน
+                    // (กุญแจเครื่องไม่ตรง/ผูก-ถอนระหว่างอ่าน) ได้ทั้งแถว line:none + แถวปลายทาง + อีเมลถอย ⇒ ลูกค้าได้ทั้ง LINE และอีเมล
+                    var enq = 0;
+                    var scanDb = scope.ServiceProvider.GetRequiredService<Accounting.Data.AccountingDbContext>();
+                    await Accounting.Helpers.JobLock.RunExclusiveAsync(scanDb, Accounting.Helpers.AdvisoryLockKey.DueSoonOverdueScan, "global",
+                        async () => enq = await svc.ScanDueSoonAndOverdueAsync(stoppingToken), _logger, ct: stoppingToken);
                     if (enq > 0)
                         _logger.LogInformation("EmailScheduleWorker: enqueue {Count} แจ้งเตือนใกล้/เกินกำหนด", enq);
 
