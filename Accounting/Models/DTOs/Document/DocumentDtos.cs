@@ -441,10 +441,12 @@ public record RefundDepositRequest(
 /// <summary>นำมัดจำไปหักกับใบแจ้งหนี้/ใบกำกับสุดท้าย (offset). ระบบรับรู้
 /// รายได้จากมัดจำ (Dr ขายรอรับรู้/Cr รายได้) + ลด BalanceDue ของใบสุดท้าย
 /// ตามยอดมัดจำที่จ่ายมาแล้ว (treat เป็น prepayment).</summary>
+/// <param name="ExpectedInvoiceBalanceDue">รอบ 266 ฝ่ายค้าน M3: ยอดค้างของใบปลายทางที่ผู้เรียกเห็นตอนกด — ไม่ตรงกับของจริงใต้ล็อก = 409 (กันหักซ้ำ) · null = ไม่ตรวจ</param>
 public record ApplyDepositRequest(
     Guid DepositDocumentId,
     decimal Amount,
-    DateTime? ApplyDate = null);
+    DateTime? ApplyDate = null,
+    decimal? ExpectedInvoiceBalanceDue = null);
 
 /// <summary>"JV มัดจำที่ไม่มีเอกสาร" ที่เปิดให้นำมาตัดชำระได้ (integration post ตรง
 /// ผ่าน /integration/journals หรือลงมือ). DeferredNet = ยอดคงเหลือบัญชี 215/217;
@@ -1056,6 +1058,9 @@ public record DocumentResponse(
     /// <summary>รอบ 266 (266-1-2): ช่อง "ใบต้นทาง" ของฟอร์มแก้ไขเปลี่ยน/ล้างได้ไหม — ใบเสร็จร่างที่สร้างเองเท่านั้น (ReceiptLinkPolicy.Classify = DraftReceipt) ·
     /// หน้าเว็บไม่เดาจากชนิด/สถานะเอง · false = ล็อกพร้อมบอกเหตุผล (ห้าม silent no-op)</summary>
     bool CanChangeReceiptSource = false,
+    /// <summary>รอบ 266 (ฝ่ายค้าน M6): วาดปุ่ม "ผูกใบเสร็จ/เงินที่รับไว้แล้ว" (ใบตั้งลูกหนี้ที่ค้าง) / "ผูกกับใบแจ้งหนี้" (ใบเสร็จร่าง · ใบมัดจำ) ไหม — ตัดสินจากข้อมูลบนใบ
+    /// (ReceiptLinkPolicy.OffersLinkButton) · ผู้สมัครโหลดเมื่อกดปุ่ม ไม่ใช่ทุกครั้งที่เปิดเอกสาร</summary>
+    bool CanOpenReceiptLink = false,
     // ทีมตรวจงานค้าง 2026-10-08 (C-02): ใบวางบิลรวมใบแจ้งหนี้ — หน้าเว็บซ่อนแปลง/รับชำระที่ใบวางบิล แล้วโชว์ "รับชำระตามใบวางบิล" (เซิร์ฟเวอร์ตัดสิน)
     bool IsRollupBillingNote = false,
     /// <summary>คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A): ติ๊ก "สร้าง 50 ทวิ อัตโนมัติ" ของใบ</summary>

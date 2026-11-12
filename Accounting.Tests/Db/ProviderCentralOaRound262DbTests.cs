@@ -38,7 +38,11 @@ public class ProviderCentralOaRound262DbTests
         ? NextAccLineConfigRule.PlatformGroupIds(AdminGroup, null)
         : new NextAccLineSettings(CentralToken, "S", "@810pamnc", CentralBot, AdminGroup, NextAccLineConfigRule.SourceAdmin));
 
-    private static IConfiguration Cfg() => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["App:BaseUrl"] = "https://app.nextacc.test" }).Build();
+    private static IConfiguration Cfg() => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+    {
+        ["App:BaseUrl"] = "https://app.nextacc.test",
+        ["Portal:SigningKey"] = "r262-portal-signing-key-for-db-tests-0123456789",   // PortalService (262-1-18)
+    }).Build();
 
     private static ContactRecipientResolver Resolver(AccountingDbContext db) => new(db, Secrets, Central());
 

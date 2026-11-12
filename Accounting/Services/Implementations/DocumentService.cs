@@ -2926,7 +2926,7 @@ public partial class DocumentService : IDocumentService
             doc.Lines.Where(l => _db.Entry(l).State != EntityState.Deleted).OrderBy(l => l.LineOrder)
                 .Select(l => (l.Quantity, l.UnitPrice, l.Amount, l.VatAmount)));
 
-    public async Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request)
+    public async Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request, string? actor = null)
     {
         var doc = await _db.Documents
             .Include(d => d.Lines)
@@ -3797,9 +3797,13 @@ public partial class DocumentService : IDocumentService
         }
 
         // รอบ 266 (266-1-2 · G-1): ใบต้นทางของใบเสร็จร่าง (เปลี่ยน/ล้างได้เฉพาะใบร่างที่สร้างเอง) + ตรวจผู้ติดต่อซ้ำหลังแก้
-        await ApplyReceiptSourceOnUpdateAsync(companyId, doc, request.RelatedDocumentId, doc.UpdatedBy);
+        // ฝ่ายค้าน M1: เมื่อคำขอแตะใบต้นทาง เปิดธุรกรรมครอบการล็อกแถว + การบันทึก (แข่งกับการอนุมัติไม่ได้) · M5: ผู้กระทำจากผู้เรียก
+        await using var receiptSourceTx = request.RelatedDocumentId.HasValue && _db.Database.CurrentTransaction == null
+            ? await _db.Database.BeginTransactionAsync() : null;
+        await ApplyReceiptSourceOnUpdateAsync(companyId, doc, request.RelatedDocumentId, actor);
 
         await _db.SaveChangesAsync();
+        if (receiptSourceTx != null) await receiptSourceTx.CommitAsync();
         // ปิดลูปการสอน local model — บรรทัดที่มี FeedbackId + AccountId สุดท้าย
         // จะถูกบันทึก choice ทันที (กฎเหล็ก #1: เก็บ feedback ทุกครั้งที่ user
         // ตัดสินใจ — accept หรือ override)
@@ -6122,6 +6126,11 @@ public partial class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"ยอดที่ตัดชำระ (ฐาน {baseAmt:N2}) เกินมัดจำคงเหลือ ({Math.Max(0, availableBase):N2}) — " +
                 $"มัดจำ {deposit.DocumentNumber} รับรู้แล้ว {deposit.DepositRealizedAmount:N2} คืนแล้ว {refundedBase:N2}");
+        // รอบ 266 ฝ่ายค้าน M3: ยอดค้างที่ผู้เรียกเห็นตอนพรีวิวต้องตรงกับของจริงใต้ล็อก (กดซ้ำ/สองแท็บ = ครั้งที่สองถูกปฏิเสธ ไม่หักซ้ำ) · null = ผู้เรียกเดิม ไม่ตรวจ
+        if (request.ExpectedInvoiceBalanceDue is decimal expectedBalance && Math.Abs(expectedBalance - invoice.BalanceDue) > 0.005m)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ยอดค้างของ {invoice.DocumentNumber} เปลี่ยนไปแล้ว (ตอนกดเห็น {expectedBalance:N2} · ตอนนี้ {invoice.BalanceDue:N2}) — อาจมีการหักมัดจำ/รับชำระซ้อนหรือกดซ้ำ · โหลดหน้าใหม่แล้วตรวจยอดก่อนทำต่อ",
+                Accounting.Helpers.ReceiptLinkPolicy.StaleCode, 409);
         // (2) ห้ามหักเกินยอดค้างของใบแจ้งหนี้: กัน PaidAmount > TotalAmount
         if (request.Amount > invoice.BalanceDue + 0.005m)
             throw new InvalidOperationException(
@@ -6900,6 +6909,11 @@ public partial class DocumentService : IDocumentService
         // so the UI can prompt for explicit confirmation.
         var warnings = await CollectApprovalWarningsAsync(companyId, doc);
         var unacknowledged = Accounting.Helpers.ApprovalAcknowledgement.Unacknowledged(ackSource, warnings, autoApprovePolicy);
+        // รอบ 266 ฝ่ายค้าน L8 (266-1-21): ทางอนุมัติที่ไม่มีคนเห็นคำเตือน (ระบบ/รายการประจำ/ลายเซ็น) — คำเตือนใบขายสดยอดเท่ากันถูกทิ้งร่องรอยบนใบ (หมายเหตุภายใน ไม่พิมพ์)
+        if (ackSource != Accounting.Helpers.ApprovalAckSource.User && ackSource != Accounting.Helpers.ApprovalAckSource.None
+            && warnings.FirstOrDefault(w => w.StartsWith("[" + Accounting.Helpers.ReceiptLinkPolicy.DuplicateWarningCode + "]", StringComparison.Ordinal)) is { } g2Trace
+            && !(doc.InternalNotes ?? "").Contains(Accounting.Helpers.ReceiptLinkPolicy.DuplicateWarningCode, StringComparison.Ordinal))
+            AppendInternalNote(doc, g2Trace);
         if (unacknowledged.Count > 0)
         {
             warnings = unacknowledged.ToList();
@@ -7142,7 +7156,8 @@ public partial class DocumentService : IDocumentService
         // block ที่ approve (ไม่ใช่ตอนสร้าง) — ร่างยังลองผิดลองถูกได้ และข้อความ
         // ต้องบอก **เลขใบที่ควรผูก** ไม่ใช่แค่ปฏิเสธ (ห้ามให้ผู้ใช้ตัน)
         // รอบ 266 G-1 (266-1-13): ใบเสร็จอ้างใบของผู้ติดต่ออื่น (ร่างเก่า/API) ต้องไม่ผ่านการอนุมัติ — ก่อนลง JE/ตัดยอดค้างใบต้นทาง
-        await GuardReceiptSourceAsync(companyId, doc, checkCurrency: !doc.IsSettlementReceipt);
+        // ฝ่ายค้าน M2: ตอนอนุมัติตรวจสภาพใบต้นทางซ้ำด้วย (ยกเลิก/ออกใบแทน · รับบางส่วนของใบแจ้งหนี้ที่มี VAT · ใบกำกับขายเงินสด)
+        await GuardReceiptSourceAsync(companyId, doc, checkCurrency: !doc.IsSettlementReceipt, atApproval: true);
 
         if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
             && doc.VatAmount > 0 && !doc.RelatedDocumentId.HasValue
@@ -7322,6 +7337,8 @@ public partial class DocumentService : IDocumentService
                     .FirstAsync();
                 if (lockedStatus != DocumentStatus.Draft && lockedStatus != DocumentStatus.WaitingApproval)
                     throw new InvalidOperationException("เอกสารถูกอนุมัติไปแล้วโดยผู้ใช้งานคนอื่น กรุณารีเฟรชหน้านี้");
+                // รอบ 266 ฝ่ายค้าน M1: ใบต้นทาง/ผู้ติดต่อของใบเสร็จต้องไม่ถูกฟอร์มแก้ไขอีกคำขอเปลี่ยนระหว่างที่อ่านไว้กับตอนล็อก
+                await EnsureReceiptSourceUnchangedUnderLockAsync(companyId, doc);
 
                 // R4-1: หลังอนุมัติเนื้อหาถูกล็อก (IsSignatureCurrent ถือว่าลายเซ็นที่เหลือมีผล) ⇒ ลายเซ็นลูกค้าที่ไม่ตรงเนื้อหาต้องถูก
                 // "แทนที่" ในธุรกรรมเดียวกับการอนุมัติ — ไม่งั้น PDF ของใบที่อนุมัติแล้วพิมพ์ลายเซ็นที่ลูกค้าให้กับเนื้อหาเดิม
@@ -21773,6 +21790,7 @@ public partial class DocumentService : IDocumentService
         CanLinkToSource: Accounting.Helpers.DocumentLinkPolicy.ChildBlockReason(LinkFacts(d, upstream?.DocumentType)) is null,   // ตัวประกอบข้อเท็จจริงตัวเดียวกับด่านผูก
         CanUnlinkSource: d.SourceLinkedAt != null && Accounting.Helpers.DocumentLinkPolicy.UnlinkBlockReason(d.DocumentType, d.Status) is null,
         CanChangeReceiptSource: Accounting.Helpers.ReceiptLinkPolicy.Classify(ReceiptLinkFacts.Source(d)) == Accounting.Helpers.ReceiptLinkKind.DraftReceipt,   // รอบ 266 — ตัวจัดชนิดเดียวกับด่านแก้ไข
+        CanOpenReceiptLink: Accounting.Helpers.ReceiptLinkPolicy.OffersLinkButton(ReceiptLinkFacts.Source(d), ReceiptLinkFacts.Invoice(d)),   // ฝ่ายค้าน M6 — ไม่แตะฐาน
         IsRollupBillingNote: BillingNoteKind.IsRollup(d.DocumentType, d.Lines.Any(l => l.SourceDocumentId != null)),
         // คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A) + ป้าย "ออก 50 ทวิ อัตโนมัติไม่สำเร็จ" (ล้มดัง)
         WhtCertAutoIssue: d.WhtCertAutoIssue,
@@ -23001,14 +23019,23 @@ public partial class DocumentService : IDocumentService
             var g2To = doc.DocumentDate.Date.AddDays(Accounting.Helpers.ReceiptLinkPolicy.DuplicateWindowDays + 1);
             var cashSales = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && d.Id != doc.Id && !d.IsDeleted && d.ContactId == doc.ContactId
-                    && d.TotalAmount == doc.TotalAmount && d.DocumentDate >= g2From && d.DocumentDate < g2To
+                    && d.TotalAmount >= doc.TotalAmount - 0.01m && d.TotalAmount <= doc.TotalAmount + 0.01m   // ฝ่ายค้าน L8: ปัดเศษรวม/แยกภาษีต่างกัน 0.01
+                    && d.DocumentDate >= g2From && d.DocumentDate < g2To
                     && d.ReplacedByDocumentId == null
                     && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent || d.Status == DocumentStatus.Paid)
                     && (((d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
                             && d.RelatedDocumentId == null && !d.IsDeposit && !d.IsSettlementReceipt && d.SettlementPaymentId == null)
                         || (d.DocumentType == DocumentType.TaxInvoice && d.IssuedAsCashReceipt)))
                 .OrderBy(d => d.DocumentDate).Select(d => d.DocumentNumber).Take(3).ToListAsync();
-            if (cashSales.Count > 0)
+            // ฝ่ายค้าน L8 (266-1-21): ลูกค้าค่าบริการยอดคงที่ — มีใบแจ้งหนี้/ใบกำกับยอดเดียวกันของผู้ติดต่อนี้ที่อนุมัติแล้วใน 90 วัน = ยอดประจำ ไม่ใช่สัญญาณใบซ้ำ ⇒ ไม่เตือน
+            var g2Recurring = cashSales.Count > 0 && await _db.Documents.AsNoTracking().AnyAsync(d => d.CompanyId == companyId && d.Id != doc.Id
+                && !d.IsDeleted && d.ContactId == doc.ContactId
+                && (d.DocumentType == DocumentType.Invoice || d.DocumentType == DocumentType.TaxInvoice) && !d.IssuedAsCashReceipt
+                && d.TotalAmount >= doc.TotalAmount - 0.01m && d.TotalAmount <= doc.TotalAmount + 0.01m
+                && d.DocumentDate >= doc.DocumentDate.Date.AddDays(-90) && d.DocumentDate < doc.DocumentDate.Date
+                && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent || d.Status == DocumentStatus.Paid
+                    || d.Status == DocumentStatus.PartiallyPaid || d.Status == DocumentStatus.Overdue));
+            if (Accounting.Helpers.ReceiptLinkPolicy.ShouldWarnDuplicateCashSale(cashSales.Count, g2Recurring))
                 warnings.Add(Accounting.Helpers.ReceiptLinkPolicy.DuplicateCashSaleWarning(cashSales, doc.TotalAmount));
         }
 

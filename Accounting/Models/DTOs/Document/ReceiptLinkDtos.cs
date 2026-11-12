@@ -15,7 +15,8 @@ public record ReceiptLinkCandidate(
 
 /// <summary>ผู้สมัครของใบที่เปิดอยู่ — <paramref name="Side"/> = "invoice" (เปิดจากใบแจ้งหนี้) · "receipt" (เปิดจากใบเสร็จ) · null = ใบนี้ไม่ใช่ทั้งสอง</summary>
 /// <param name="Notice">ข้อความระดับใบ (เช่น ใบเสร็จขายสด/ของการชำระใบอื่น — เหตุที่ผูกไม่ได้ + ทางไปต่อ) · null = ไม่มี</param>
-/// <param name="ShowButton">หน้าเว็บวาดปุ่มไหม (มีแถว หรือมีข้อความระดับใบที่ต้องบอก) — เซิร์ฟเวอร์ตัดสิน</param>
+/// <param name="ShowButton">มีแถวที่ผูกได้อย่างน้อย 1 แถวไหม (ฝ่ายค้าน M6) — false = หน้าเว็บแสดง <paramref name="Notice"/> + รายการที่ผูกไม่ได้พร้อมเหตุผล ·
+/// การวาดปุ่มบนหน้าเอกสารใช้ <c>DocumentResponse.CanOpenReceiptLink</c> (ไม่เรียก endpoint นี้ตอนเปิดเอกสาร)</param>
 /// <param name="CanUndoDraftSource">ใบเสร็จร่างนี้ผูกใบต้นทางอยู่ ⇒ แสดงปุ่มถอด</param>
 public record ReceiptLinkCandidatesResponse(
     Guid DocumentId, string DocumentNumber, string? Side, string? Kind, string? Notice, string? WayForward,
