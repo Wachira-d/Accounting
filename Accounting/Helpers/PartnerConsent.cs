@@ -67,8 +67,11 @@ public static class PartnerConsent
 
     /// <param name="CompanyWideToggle">ขอบเขตเดิมที่ยังตัดสินด้วยติ๊กระดับบริษัท (<c>WorkflowAutomationConfig</c>) — ต่อคู่ยังไม่เปิดรับ (คำตัดสิน 264-2-1: ห้าม silent no-op)</param>
     /// <param name="ReaderWired">มีท่อที่อ่านขอบเขตนี้แล้วหรือยัง — false ⇒ หน้าแสดง "ให้ไว้ล่วงหน้าได้ ยังไม่มีผล" (ไม่ใช่เงียบ) · แพ็กที่ต่อสายเปลี่ยนเป็น true ในคอมมิตเดียวกัน</param>
+    /// <param name="MinTextVersion">ฝ่ายค้าน L3: เวอร์ชันข้อความต่ำสุดที่ยังยอมรับ — ข้อความใหม่ที่ขยายสิ่งที่ท่อทำ ⇒ ขยับค่านี้ ⇒ แถวเก่าได้ TextOutdated</param>
+    /// <param name="WiredSince">ฝ่ายค้าน L4: วันที่ท่ออ่านขอบเขตนี้เริ่มทำงาน (UTC) — แพ็กที่พลิก ReaderWired ต้องตั้งค่านี้ในคอมมิตเดียวกัน ⇒
+    /// แถวที่ให้ไว้ "ล่วงหน้า" ก่อนวันนั้นต้องยืนยันใหม่ (GrantedBeforeWired) — ไม่เริ่มมีผลเองโดยที่ผู้ให้ไม่รู้</param>
     public sealed record ScopeDef(Scope Scope, string Label, IReadOnlyList<Need> Needs, bool RequiresCap, bool AllowsPayAccount,
-        bool NeedsTypedConfirm, bool CompanyWideToggle, bool ReaderWired);
+        bool NeedsTypedConfirm, bool CompanyWideToggle, bool ReaderWired, int MinTextVersion = 1, DateTime? WiredSince = null);
 
     public static IReadOnlyList<ScopeDef> Scopes { get; } = new List<ScopeDef>
     {
@@ -150,14 +153,43 @@ public static class PartnerConsent
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
             Canonical(companyId, partnershipId, scope, maxAmount, payBankAccountId, textVersion, text)))).ToLowerInvariant();
 
-    /// <summary>hash ของแถวที่เก็บไว้ตรงกับเนื้อแถว + ข้อความเวอร์ชันที่อ้างไหม (แถวถูกแก้ทับ/อ้างเวอร์ชันที่ไม่มี ⇒ false)</summary>
+    /// <summary>ฝ่ายค้าน L2 — รูปที่เก็บรุ่น 2 (<c>PAC2</c>): เนื้อของ <see cref="Canonical"/> + บริษัทคู่ค้า + ผู้ให้ + เวลาให้ (วินาที UTC) ⇒ "หลักฐานตรง" รับรอง "ใคร/เมื่อไร" ด้วย ·
+    /// เป็น <b>integrity check</b> (SHA-256 ไม่มีกุญแจ) ไม่ใช่ tamper-proof ต่อผู้ที่เขียนฐานได้ — ด่านจริงคือ trigger append-only + audit chain ·
+    /// <c>PAC1</c> (<see cref="Hash"/>) ยังเป็น "hash ที่ผู้ให้เห็น" ในขั้นดู/ยินยอม และแถวรุ่น 1 ยังตรวจได้</summary>
+    public static string CanonicalV2(Guid companyId, Guid partnershipId, Guid partnerCompanyId, Scope scope, decimal? maxAmount, Guid? payBankAccountId,
+        int textVersion, string text, Guid grantedByUserId, DateTime grantedAtUtc)
+        => string.Join("\n",
+            "PAC2",
+            partnerCompanyId.ToString("D"),
+            grantedByUserId.ToString("D"),
+            TruncateToSecond(grantedAtUtc).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
+            Canonical(companyId, partnershipId, scope, maxAmount, payBankAccountId, textVersion, text));
+
+    public static string HashV2(Guid companyId, Guid partnershipId, Guid partnerCompanyId, Scope scope, decimal? maxAmount, Guid? payBankAccountId,
+        int textVersion, string text, Guid grantedByUserId, DateTime grantedAtUtc)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            CanonicalV2(companyId, partnershipId, partnerCompanyId, scope, maxAmount, payBankAccountId, textVersion, text, grantedByUserId, grantedAtUtc)))).ToLowerInvariant();
+
+    /// <summary>รุ่นของ hash ที่แถวใหม่ใช้ (1 = PAC1 · 2 = PAC2)</summary>
+    public const int CurrentHashVersion = 2;
+
+    /// <summary>เวลาให้ที่เก็บ/hash ตัดเหลือวินาที (round-trip ผ่าน timestamp ของ PostgreSQL โดยไม่เพี้ยน)</summary>
+    public static DateTime TruncateToSecond(DateTime t) => new(t.Ticks - t.Ticks % TimeSpan.TicksPerSecond, DateTimeKind.Utc);
+
+    /// <summary>hash ของแถวที่เก็บไว้ตรงกับเนื้อแถว + ข้อความเวอร์ชันที่อ้างไหม (แถวถูกแก้ทับ/อ้างเวอร์ชันที่ไม่มี/รุ่น hash ไม่รู้จัก ⇒ false)</summary>
     public static bool HashMatches(PartnerAutomationConsent row)
     {
         if (!TryParse(row.Scope, out var scope)) return false;
         var text = TextFor(scope, row.TextVersion);
         if (text == null) return false;
-        var expected = Hash(row.CompanyId, row.TradingPartnershipId, scope, row.MaxAmount, row.DefaultPayBankAccountId, row.TextVersion, text);
-        return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(expected), Encoding.ASCII.GetBytes(row.EvidenceHash ?? ""));
+        var expected = row.HashVersion switch
+        {
+            1 => Hash(row.CompanyId, row.TradingPartnershipId, scope, row.MaxAmount, row.DefaultPayBankAccountId, row.TextVersion, text),
+            2 => HashV2(row.CompanyId, row.TradingPartnershipId, row.PartnerCompanyId, scope, row.MaxAmount, row.DefaultPayBankAccountId, row.TextVersion, text,
+                row.GrantedByUserId, row.GrantedAt),
+            _ => null,
+        };
+        return expected != null && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(expected), Encoding.ASCII.GetBytes(row.EvidenceHash ?? ""));
     }
 
     // ═══════════ ตอนให้ ═══════════
@@ -214,6 +246,18 @@ public static class PartnerConsent
         public const string AmountUnknown = "AmountUnknown";
         public const string OverCap = "OverCap";
         public const string CompanyWideOff = "CompanyWideOff";
+        public const string TextOutdated = "TextOutdated";
+        public const string GrantedBeforeWired = "GrantedBeforeWired";
+    }
+
+    /// <summary>
+    /// ฝ่ายค้าน M3 — <b>ยอดที่เทียบเพดาน</b> = ยอดรวมของใบเป็น<b>บาท</b> รวม VAT <b>ก่อนหัก ณ ที่จ่าย</b> (<c>Document.TotalAmount</c> ของใบสกุล THB) ·
+    /// ห้ามส่งยอดสุทธิหลังหัก / ยอดเงินที่โอน / ยอดสกุลต่างประเทศ · สกุลอื่น ⇒ AmountUnknown (ไม่แปลงเอง) · ติดลบ ⇒ AmountUnknown
+    /// </summary>
+    public sealed record CapAmount(decimal GrandTotalBeforeWht, string Currency)
+    {
+        public static CapAmount Thb(decimal grandTotalBeforeWht) => new(grandTotalBeforeWht, "THB");
+        public bool Usable => string.Equals((Currency ?? "").Trim(), "THB", StringComparison.OrdinalIgnoreCase) && GrandTotalBeforeWht >= 0m;
     }
 
     /// <summary>คำตอบตอนใช้ — <see cref="Code"/> เป็นชื่อคงที่ (หน้า/ท่อใช้แยกเหตุ) · <see cref="Reason"/> ข้อความไทยถึงผู้ใช้</summary>
@@ -222,32 +266,41 @@ public static class PartnerConsent
     private static Verdict No(string code, string reason) => new(false, code, reason);
 
     /// <summary>
-    /// ขอบเขตต่อคู่ใช้ได้ตอนนี้ไหม — ตรวจสดทุกครั้ง: คู่ค้า Accepted · แถวของบริษัท/คู่/ขอบเขตนี้ · ยังไม่ถอน · hash ตรง · ให้หลังการระงับครั้งล่าสุด ·
-    /// ผู้ให้ยังมีสิทธิ์ (<paramref name="grantorStillPermitted"/> = ผล <see cref="GrantProblem"/> ของผู้ให้ <b>ณ ตอนนี้</b> + ผู้ใช้ยังใช้งาน) · ยอดไม่เกินเพดาน
+    /// ขอบเขตต่อคู่ใช้ได้ตอนนี้ไหม — ตรวจสดทุกครั้ง: คู่ค้า Accepted + บริษัทคู่ค้ายังใช้งาน · แถวของบริษัท/คู่/ขอบเขตนี้ · ยังไม่ถอน · hash ตรง · เวอร์ชันข้อความยังยอมรับ ·
+    /// ให้หลังการยอมรับ/การระงับครั้งล่าสุด (เชื่อมกลับไม่ฟื้นเอง) · ให้หลังท่อเริ่มทำงาน · ผู้ให้ยังมีสิทธิ์ (<paramref name="grantorStillPermitted"/> = ผล GrantProblem
+    /// ของผู้ให้ ณ ตอนนี้ + ผู้ใช้ยังใช้งาน) · ยอด (<see cref="CapAmount"/>) ไม่เกินเพดาน — ตั้งเพดานไว้แล้วไม่รู้ยอด = ไม่ผ่าน
     /// </summary>
-    public static Verdict Allows(Scope scope, PartnerAutomationConsent? row, TradingPartnership? partnership, Guid companyId, decimal? amount, bool grantorStillPermitted)
+    public static Verdict Allows(Scope scope, PartnerAutomationConsent? row, TradingPartnership? partnership, Guid companyId, CapAmount? amount,
+        bool grantorStillPermitted, bool partnerCompanyActive = true)
     {
         var d = Def(scope);
         if (partnership == null || (partnership.CompanyAId != companyId && partnership.CompanyBId != companyId))
             return No(Codes.NoPartner, "ไม่พบการเชื่อมกับคู่ค้ารายนี้");
         if (partnership.Status != TradingPartnershipStatus.Accepted)
             return No(Codes.PartnerNotActive, "การเชื่อมกับคู่ค้าไม่ได้ใช้งานอยู่ (" + partnership.Status + ") — งานอัตโนมัติทุกขอบเขตหยุด");
+        if (!partnerCompanyActive)
+            return No(Codes.PartnerNotActive, "บริษัทคู่ค้าถูกลบหรือระงับการใช้งาน — งานอัตโนมัติทุกขอบเขตหยุด");
         if (row == null)
-            return No(Codes.NoConsent, "ยังไม่ได้ให้ความยินยอม “" + d.Label + "” กับคู่ค้ารายนี้");
+            return No(Codes.NoConsent, "ยังไม่ได้ให้ความยินยอม \u201c" + d.Label + "\u201d กับคู่ค้ารายนี้");
         if (row.CompanyId != companyId || row.TradingPartnershipId != partnership.Id || row.Scope != scope.ToString())
             return No(Codes.WrongRow, "แถวความยินยอมไม่ใช่ของบริษัท/คู่ค้า/ขอบเขตนี้");
         if (row.WithdrawnAt != null || row.IsDeleted)
             return No(Codes.Withdrawn, "ถอนความยินยอมแล้ว");
         if (!HashMatches(row))
             return No(Codes.Tampered, "หลักฐานความยินยอมไม่ตรงกับเนื้อแถว (hash) — ให้ความยินยอมใหม่");
-        if (partnership.SuspendedAt is DateTime s && s >= row.GrantedAt)
-            return No(Codes.StaleAfterSuspend, "ความยินยอมให้ไว้ก่อนการระงับการเชื่อมครั้งล่าสุด — ให้ความยินยอมใหม่");
+        if (row.TextVersion < d.MinTextVersion)
+            return No(Codes.TextOutdated, "ข้อความยินยอมที่ให้ไว้เป็นเวอร์ชันเก่า (ขอบเขตงานเปลี่ยน) — อ่านข้อความใหม่แล้วยืนยันอีกครั้ง");
+        if ((partnership.SuspendedAt is DateTime s && s >= row.GrantedAt) || (partnership.AcceptedAt is DateTime acc && TruncateToSecond(acc) > row.GrantedAt))
+            return No(Codes.StaleAfterSuspend, "ความยินยอมให้ไว้ก่อนการเชื่อมครั้งล่าสุด (มีการระงับ/เชื่อมใหม่) — ให้ความยินยอมใหม่");
+        if (d.ReaderWired && d.WiredSince is DateTime w && row.GrantedAt < w)
+            return No(Codes.GrantedBeforeWired, "ให้ไว้ล่วงหน้าก่อนงานอัตโนมัตินี้เริ่มทำงาน — ยืนยันใหม่เพื่อเริ่มใช้");
         if (!grantorStillPermitted)
             return No(Codes.GrantorLostPermission, "ผู้ให้ความยินยอมไม่มีสิทธิ์แล้ว (ลาออก/ถูกลดสิทธิ์) — ผู้มีสิทธิ์ยืนยันใหม่");
-        if (d.RequiresCap && amount == null)
-            return No(Codes.AmountUnknown, "ไม่ทราบยอดของงานนี้ — ไม่ทำอัตโนมัติ");
-        if (row.MaxAmount is decimal cap && amount is decimal a && a > cap)
-            return No(Codes.OverCap, $"ยอด {a:N2} บาท เกินเพดานที่ยินยอมไว้ {cap:N2} บาท");
+        var needAmount = d.RequiresCap || row.MaxAmount != null;
+        if (needAmount && (amount == null || !amount.Usable))
+            return No(Codes.AmountUnknown, "ไม่ทราบยอดรวมเงินบาทก่อนหัก ณ ที่จ่ายของงานนี้ (หรือไม่ใช่สกุลบาท) — ไม่ทำอัตโนมัติ");
+        if (row.MaxAmount is decimal cap && amount is { } a && a.GrandTotalBeforeWht > cap)
+            return No(Codes.OverCap, $"ยอด {a.GrandTotalBeforeWht:N2} บาท เกินเพดานที่ยินยอมไว้ {cap:N2} บาท");
         return new Verdict(true, Codes.Ok, "ใช้ได้ — ยินยอมไว้" + (row.MaxAmount is decimal c2 ? $" (เพดาน {c2:N2} บาท)" : ""));
     }
 
@@ -296,7 +349,9 @@ public static class PartnerConsent
             ["defaultApproverUserId"] = c.DefaultApproverUserId?.ToString("D"),
             ["defaultSignatureId"] = c.DefaultSignatureId?.ToString("D"),
             ["notifyOnIncomingDocument"] = B(c.NotifyOnIncomingDocument),
-            ["notifyEmail"] = c.NotifyEmail,
+            // ฝ่ายค้าน L6: อีเมลบุคคลไม่เข้าแถว audit chain (ลบไม่ได้) — เก็บลายนิ้วมือสั้นพอให้เห็นว่า "เปลี่ยน" เท่านั้น
+            ["notifyEmail"] = string.IsNullOrWhiteSpace(c.NotifyEmail) ? null
+                : "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(c.NotifyEmail.Trim().ToLowerInvariant())))[..12].ToLowerInvariant(),
             ["createPurchaseDraftsFromPartners"] = B(c.CreatePurchaseDraftsFromPartners),
             ["sendWhtCertsToPartners"] = B(c.SendWhtCertsToPartners),
             ["sendWhtCertsToPartnersSince"] = c.SendWhtCertsToPartnersSince?.ToString("O", CultureInfo.InvariantCulture),
@@ -312,11 +367,18 @@ public static class PartnerConsent
     public static string PageUrl(Guid partnershipId) => "/pages/partner-automation.html?partnership=" + partnershipId.ToString("D");
 
     /// <summary>ผลตรวจตอนใช้ที่ส่งให้ท่อ (P3/P5) — <see cref="ConsentId"/>/<see cref="GrantorUserId"/> ใช้อ้างใน audit/actor ของงานอัตโนมัติ (264-2-3)</summary>
-    public sealed record UseCheck(bool Ok, string Code, string Reason, Guid? ConsentId, Guid? GrantorUserId, decimal? MaxAmount, Guid? DefaultPayBankAccountId)
+    /// <param name="DefaultPayBankAccountId">บัญชีจ่ายที่ผู้ให้ประกาศ — มีค่าเฉพาะเมื่อ Ok และบัญชียังใช้ได้ ณ ตอนนี้ (ของบริษัท · ใช้งาน · ไม่ถูกลบ) · ยังต้องผ่านตัวตรวจบัญชีของท่อ</param>
+    /// <param name="PayAccountProblem">ฝ่ายค้าน M2: ประกาศบัญชีไว้แต่ใช้ไม่ได้แล้ว ⇒ PayAccountInactive (ท่อใช้หลักฐานเท่านั้น · ไม่เดาบัญชีอื่น) · null = ไม่มีปัญหา/ไม่ได้ประกาศ</param>
+    public sealed record UseCheck(bool Ok, string Code, string Reason, Guid? ConsentId, Guid? GrantorUserId, decimal? MaxAmount, Guid? DefaultPayBankAccountId,
+        string? PayAccountProblem = null)
     {
-        public static UseCheck From(Verdict v, PartnerAutomationConsent? row)
-            => new(v.Ok, v.Code, v.Reason, row?.Id, row?.GrantedByUserId, row?.MaxAmount, v.Ok ? row?.DefaultPayBankAccountId : null);
+        public static UseCheck From(Verdict v, PartnerAutomationConsent? row, bool payAccountUsable = true)
+            => new(v.Ok, v.Code, v.Reason, row?.Id, row?.GrantedByUserId, row?.MaxAmount,
+                v.Ok && payAccountUsable ? row?.DefaultPayBankAccountId : null,
+                v.Ok && !payAccountUsable && row?.DefaultPayBankAccountId != null ? PayAccountInactive : null);
     }
+
+    public const string PayAccountInactive = "PayAccountInactive";
 
     /// <summary>ตัดเหตุการถอนให้สั้น (ไม่บังคับ)</summary>
     public static string? CleanReason(string? reason)

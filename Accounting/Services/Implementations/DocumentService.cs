@@ -2059,11 +2059,14 @@ public partial class DocumentService : IDocumentService
     }
 
     /// <summary>รอบ 263: ป้ายผู้กระทำสำหรับข้อความที่คนอ่าน (หมายเหตุภายใน) — id ผู้ใช้ ⇒ ชื่อ (ไม่พบ = id เดิม ไม่แต่งชื่อ) · งานระบบ ⇒ ป้ายระบบ</summary>
-    private async Task<string> ActorLabelAsync(string actor)
+    private async Task<string> ActorLabelAsync(Guid companyId, string actor)
     {
         if (Guid.TryParse(actor, out var uid))
         {
-            var name = await _db.Users.AsNoTracking().Where(u => u.Id == uid).Select(u => u.FullName).FirstOrDefaultAsync();
+            // ฝ่ายค้าน 263 F7: ค้นเฉพาะสมาชิกของบริษัทนี้
+            var name = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == uid && _db.CompanyUsers.Any(cu => cu.UserId == u.Id && cu.CompanyId == companyId))
+                .Select(u => u.FullName).FirstOrDefaultAsync();
             return string.IsNullOrWhiteSpace(name) ? actor : name.Trim();
         }
         return SystemActor.Display(actor) ?? actor;
@@ -2300,7 +2303,8 @@ public partial class DocumentService : IDocumentService
         var approverIds = AutoApproveFailure.ApproverIds(resp.InternalNotes);
         if (approverIds.Count > 0)
         {
-            var names = await _db.Users.AsNoTracking().Where(u => approverIds.Contains(u.Id))
+            var names = await _db.Users.AsNoTracking()
+                .Where(u => approverIds.Contains(u.Id) && _db.CompanyUsers.Any(cu => cu.UserId == u.Id && cu.CompanyId == companyId))   // ฝ่ายค้าน 263 F7
                 .Select(u => new { u.Id, u.FullName }).ToDictionaryAsync(u => u.Id, u => u.FullName);
             resp = resp with { InternalNotes = AutoApproveFailure.WithApproverNames(resp.InternalNotes, names) };
         }
@@ -7812,7 +7816,7 @@ public partial class DocumentService : IDocumentService
                 // ฝ่ายค้าน P2-6 (PP36): เคยอนุมัติอัตโนมัติไม่สำเร็จ แล้วอนุมัติสำเร็จรอบนี้ ⇒ ปิดหมายเหตุเดิมด้วย "แก้แล้ว" (ไม่ลบ — คงร่องรอย)
                 // รอบ 263: "โดย" = ชื่อผู้ใช้ (เดิมประทับ id ผู้ใช้ดิบ "โดย 5ca33982-…") · ระบบ = ป้ายระบบ · ค้นชื่อเฉพาะเมื่อมีข้อความล้มที่ยังไม่ปิด
                 if (AutoApproveFailure.HasOpenFailure(doc.InternalNotes))
-                    doc.InternalNotes = AutoApproveFailure.MarkResolved(doc.InternalNotes, DateTime.UtcNow, await ActorLabelAsync(approvedBy));
+                    doc.InternalNotes = AutoApproveFailure.MarkResolved(doc.InternalNotes, DateTime.UtcNow, await ActorLabelAsync(companyId, approvedBy));
 
                 // R-04: นับโควตาของใบที่เลื่อนนับ — ในธุรกรรมเดียวกับการอนุมัติ (อนุมัติล้ม = ไม่นับ) · ปลดธงกันนับซ้ำเมื่ออนุมัติใบเดิมอีกครั้งไม่ได้อยู่แล้ว
                 if (doc.QuotaCountDeferred)
@@ -15201,11 +15205,16 @@ public partial class DocumentService : IDocumentService
                 var allocatedHere = allocRows.Where(a => a.DocumentId == targetDocId).Sum(a => a.AllocatedAmount);
                 var targetTotal = await _db.Documents.AsNoTracking().Where(d => d.Id == targetDocId && d.CompanyId == companyId)
                     .Select(d => d.TotalAmount).FirstOrDefaultAsync();
+                // รอบ 265 (คำตัดสิน 265-1-7): ใบเสร็จที่ออกจากเงินรอจัดสรร (ToReceipt) เป็นหลักฐานของ "เงินส่วนที่ใบนั้นใช้ไปแล้ว" — คนละก้อนกับยอดที่จัดสรรให้ใบนี้
+                // (ยอดนั้นถูกตัดออกจากเงินรอจัดสรรแล้ว จัดสรรซ้ำไม่ได้) ⇒ ไม่นับเป็นใบที่ครอบการรับเงินนี้ แม้ถูกผูกกับใบนี้ทีหลัง (กันใบเสร็จของเงินที่จัดสรรหายเงียบ)
+                var creditReceiptKind = nameof(PaymentCreditMovementKind.ToReceipt);
                 var manualReceipts = await _db.Documents.AsNoTracking()
                     .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.RelatedDocumentId == targetDocId && r.SettlementPaymentId == null
                         && manualTypes.Contains(r.DocumentType) && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
                         && r.Status != DocumentStatus.Draft && r.Status != DocumentStatus.WaitingApproval
-                        && (payment.ReceiptDocumentId == null || r.Id != payment.ReceiptDocumentId))
+                        && (payment.ReceiptDocumentId == null || r.Id != payment.ReceiptDocumentId)
+                        && !_db.PaymentCreditMovements.Any(m => m.CompanyId == companyId && m.TargetDocumentId == r.Id && m.Kind == creditReceiptKind
+                            && !m.IsDeleted && m.ReleasedAt == null))
                     .ToListAsync();
                 existing = manualReceipts.FirstOrDefault(r => Accounting.Helpers.ManualReceiptCoverage.Covers(r.TotalAmount, allocatedHere, targetTotal));
             }

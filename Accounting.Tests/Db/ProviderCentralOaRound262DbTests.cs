@@ -316,4 +316,122 @@ public class ProviderCentralOaRound262DbTests
             Assert.Contains($"c={f.PlatformId:D}", billingInvite.Path);   // คำเชิญอยู่ในบริษัทผู้ให้บริการ (ผู้ติดต่อของผู้เช่า)
         });
     }
+
+    // ═══════════ ฝ่ายค้าน 262 (erp-review/2026-11-12/review-262.md · คำตัดสิน 262-1-9…262-1-17) ═══════════
+
+    /// <summary>ปลายทาง LINE ผู้ใช้ scope nextacc ของผู้ติดต่อ (ตรงจากฐาน — ความยินยอมจริง) · ใช้ในเทสต์ที่ไม่ต้องเดินเส้นผูกเต็ม</summary>
+    private static async Task<ContactNotifyEndpoint> SeedCentralEndpointAsync(AccountingDbContext db, Guid companyId, Guid contactId, string uid, string? label = null)
+    {
+        var consent = new PdpaConsentRecord { CompanyId = companyId, Purpose = ContactLineBindRule.ConsentPurpose, SubjectContactId = contactId };
+        db.PdpaConsentRecords.Add(consent);
+        await db.SaveChangesAsync();
+        var ep = new ContactNotifyEndpoint
+        {
+            CompanyId = companyId, ContactId = contactId, Kind = NotifyEndpointKind.LineUser, LineUserId = Secrets.Protect(uid), Label = label,
+            LineIdHash = NotifyEndpointKind.LineIdHash(CentralBot, uid), OaScope = NotifyEndpointKind.ScopeNextAcc, OaDestination = CentralBot,
+            TopicsJson = NotifyTopics.Serialize(NotifyTopics.DefaultsFor(NotifyEndpointKind.LineUser)), Verified = true,
+            Source = ContactLineBindRule.SourceLineInvite, ConsentRecordId = consent.Id, LinkedAt = DateTime.UtcNow,
+        };
+        db.ContactNotifyEndpoints.Add(ep);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        return ep;
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_H1_ใบค่าบริการของผู้เช่าออกลิงก์ชำระทั่วไปไม่ได้_ลิงก์เดิมถูกเพิกถอน_ทิศตรงข้าม_ใบลูกค้าทั่วไปไม่ถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var f = await PlatformBillingPhase2DbTests.SeedAsync(db);
+        var plain = new Contact { CompanyId = f.PlatformId, Name = "ลูกค้าทั่วไปของ NextAcc 262", IsCustomer = true, TaxId = "" };
+        db.Contacts.Add(plain);
+        await db.SaveChangesAsync();
+        await PlatformBillingPhase2DbTests.WithPlatformTenantAsync(db, f.PlatformId, async () =>
+        {
+            var tenantInv = await PlatformBillingPhase2DbTests.InvoiceAsync(db, f, "H1T-" + Guid.NewGuid().ToString("N")[..6], 1_070m, DateTime.UtcNow.AddDays(10));
+            var plainInv = await PlatformBillingPhase2DbTests.InvoiceAsync(db, f with { ContactId = plain.Id }, "H1P-" + Guid.NewGuid().ToString("N")[..6], 500m,
+                DateTime.UtcNow.AddDays(10));
+            // ลิงก์ทั่วไปที่ออกไว้ก่อนรอบนี้ (ของค้าง) ทั้งสองใบ
+            await db.Documents.Where(d => d.Id == tenantInv.Id || d.Id == plainInv.Id)
+                .ExecuteUpdateAsync(x => x.SetProperty(d => d.PayLinkTokenHash, d => "h262-" + d.DocumentNumber).SetProperty(d => d.PayLinkRevokedAt, (DateTime?)null));
+            db.ChangeTracker.Clear();
+            var links = new DocumentPayLinkService(db, Array.Empty<Accounting.Services.Payments.IPaymentProvider>(), Secrets, Cfg(), NullLogger<DocumentPayLinkService>.Instance);
+            var refused = await links.EnsureLinkAsync(f.PlatformId, tenantInv.Id, null, allowReissueRevoked: true);
+            Assert.Null(refused.Url);
+            Assert.Equal(DocumentPayLinkPolicy.PlatformTenantRefusal, refused.Refusal);
+            Assert.Null(await links.CurrentUrlAsync(f.PlatformId, tenantInv.Id));
+            Assert.Equal(DocumentPayLinkPolicy.PlatformTenantRefusal, (await links.StatusAsync(f.PlatformId, tenantInv.Id)).Refusal);
+            // ทิศตรงข้าม: ใบของลูกค้าทั่วไปของบริษัทผู้ให้บริการไม่ได้เหตุนี้
+            Assert.NotEqual(DocumentPayLinkPolicy.PlatformTenantRefusal, (await links.EnsureLinkAsync(f.PlatformId, plainInv.Id, null, allowReissueRevoked: true)).Refusal);
+
+            // migration: เพิกถอนเฉพาะลิงก์ของใบผู้เช่า · รันซ้ำไม่แตะซ้ำ
+            await db.Database.ExecuteSqlRawAsync(ProviderCentralOa.RevokeTenantPayLinksSql);
+            var t1 = (await db.Documents.AsNoTracking().SingleAsync(d => d.Id == tenantInv.Id)).PayLinkRevokedAt;
+            Assert.NotNull(t1);
+            Assert.Null((await db.Documents.AsNoTracking().SingleAsync(d => d.Id == plainInv.Id)).PayLinkRevokedAt);
+            await db.Database.ExecuteSqlRawAsync(ProviderCentralOa.RevokeTenantPayLinksSql);
+            Assert.Equal(t1, (await db.Documents.AsNoTracking().SingleAsync(d => d.Id == tenantInv.Id)).PayLinkRevokedAt);
+        });
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_M1_M2_M3_ผู้เช่าเห็นและยกเลิกปลายทางเอง_ผู้ติดต่อหลายแถวยังได้การ์ด_ขั้นครบกำหนดไม่ถูกขั้นก่อนกลบ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var f = await PlatformBillingPhase2DbTests.SeedAsync(db);
+        var other = await PlatformBillingPhase2DbTests.SeedAsync(db, f.PlatformId);   // ผู้เช่าอีกราย (บริษัทผู้ให้บริการเดียวกัน)
+        // M2: ผู้เช่าเปลี่ยนสาขา ⇒ ตัวออกใบสร้างผู้ติดต่อแถวใหม่ (ExternalId เดิม)
+        var newRow = new Contact
+        {
+            CompanyId = f.PlatformId, Name = "ร้านลูกค้าเฟส 2 (สาขาใหม่)", IsCustomer = true, BranchCode = "00001",
+            ExternalSystem = PlatformInvoiceRules.TenantContactSystem, ExternalId = f.BuyerId.ToString(), CreatedAt = DateTime.UtcNow.AddMinutes(1),
+        };
+        db.Contacts.Add(newRow);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var uid = "U262m" + Guid.NewGuid().ToString("N")[..27];
+        await PlatformBillingPhase2DbTests.WithPlatformTenantAsync(db, f.PlatformId, async () => await WithBillingLineAsync(db, async () =>
+        {
+            db.ChangeTracker.Clear();
+            var oldEp = await SeedCentralEndpointAsync(db, f.PlatformId, f.ContactId, uid, "LINE: สมชาย ใจดี");   // ผูกไว้บนแถวเก่า
+            var inv = await PlatformBillingPhase2DbTests.InvoiceAsync(db, f with { ContactId = newRow.Id }, "M2-" + Guid.NewGuid().ToString("N")[..6], 900m,
+                DateTime.UtcNow.AddDays(1));
+            db.ChangeTracker.Clear();
+            // คำเชิญผูกเองลงแถวของใบล่าสุด (แถวใหม่)
+            Assert.Equal(newRow.Id, await PlatformInvoiceQueries.BuyerContactIdAsync(db, f.PlatformId, f.BuyerId));
+
+            var notifier = new PlatformBillingNotifier(db, NullLogger<PlatformBillingNotifier>.Instance, email: null, line: DirectLine(new List<string>()),
+                recipients: Resolver(db), secrets: Secrets);
+            // M3: ขั้น "ก่อนครบ 1 วัน" แล้ว "ครบกำหนดวันนี้" ห่างกันไม่ถึง 20 ชม. ⇒ ได้การ์ดทั้งสองขั้น (ไม่กลบกันเอง)
+            await notifier.SendAsync(f.BuyerId, inv.Id, PlatformDunningPolicy.Key(inv.Id, PlatformDunningPolicy.KindBefore, 1), "ก่อน", "ก่อน");
+            await notifier.SendAsync(f.BuyerId, inv.Id, PlatformDunningPolicy.Key(inv.Id, PlatformDunningPolicy.KindDue, 0), "ครบ", "ครบ");
+            db.ChangeTracker.Clear();
+            var rows = await db.LineQueues.AsNoTracking().Where(q => q.CompanyId == f.PlatformId && q.EntityId == inv.Id).ToListAsync();
+            Assert.Equal(2, rows.Count);
+            Assert.All(rows, r => Assert.Equal(oldEp.Id, r.EndpointId));
+            Assert.All(rows, r => Assert.Equal(f.ContactId, r.ContactId));   // M2: แถวคิวถือผู้ติดต่อเจ้าของปลายทาง (แถวเก่า)
+            Assert.All(rows, r => Assert.Equal("DocumentDueSoon", r.Trigger));
+
+            // M1: ศูนย์บิลเห็นปลายทาง (ป้ายปิดบัง ไม่มี LINE id) · ผู้เช่ารายอื่นยกเลิกไม่ได้ (ไม่พบ) · เจ้าของยกเลิกได้ + ถอนความยินยอม
+            var view = await Binding(db).BillingLineViewAsync(f.BuyerId, canManage: true);
+            var listed = Assert.Single(view.Endpoints);
+            Assert.Equal(oldEp.Id, listed.Id);
+            Assert.DoesNotContain(uid, listed.Label);
+            Assert.DoesNotContain("สมชาย ใจดี", listed.Label);
+            Assert.Empty((await Binding(db).BillingLineViewAsync(other.BuyerId, canManage: true)).Endpoints);
+            await Assert.ThrowsAsync<BusinessRuleException>(() => Binding(db).UnlinkBillingEndpointAsync(other.BuyerId, oldEp.Id, null, "x@other.local"));
+            db.ChangeTracker.Clear();
+            Assert.Null((await db.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == oldEp.Id)).UnlinkedAt);
+            var after = await Binding(db).UnlinkBillingEndpointAsync(f.BuyerId, oldEp.Id, null, "owner@buyer262.local");
+            Assert.Empty(after.Endpoints);
+            db.ChangeTracker.Clear();
+            var gone = await db.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == oldEp.Id);
+            Assert.Equal(NotifyEndpointKind.UnlinkTenant, gone.UnlinkReason);
+            Assert.Null(gone.LineUserId);
+            Assert.NotNull((await db.PdpaConsentRecords.AsNoTracking().SingleAsync(c => c.Id == oldEp.ConsentRecordId)).WithdrawnAt);
+            Assert.True(await db.AuditLogs.AnyAsync(a => a.CompanyId == f.PlatformId && a.NewValues!.Contains("line-unlink-by-tenant")));
+        }));
+    }
 }

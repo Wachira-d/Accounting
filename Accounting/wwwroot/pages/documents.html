@@ -13403,6 +13403,8 @@
               ...((ctx.settleAdjustments || []).length ? { settlementAdjustments: ctx.settleAdjustments } : {}),
             });
             const kept = Number(payRes?.data?.unappliedCredit || 0);
+            // รอบ 265 (คำตัดสิน 265-1-5): เหตุผลที่เซิร์ฟเวอร์ติดธง OffersReceipt (ค้างออกใบ) ⇒ เสนอ "ออกใบเสร็จส่วนที่เกินเลย" (ไม่ต้องสร้างใบแจ้งหนี้)
+            const offer = kept > 0 && (plan.reasons || []).some(r => r.reason === reason && r.offersReceipt) && payRes?.data?.id;
             Layout.toast(kept > 0
               ? `บันทึกรับเงินแล้ว — เก็บเป็นเงินรอจัดสรร ${Layout.money(kept)} (ดูที่เมนู “เงินรอจัดสรร”)`
               : 'บันทึกรับเงินแล้ว — ผูกกับใบที่เลือกครบ', 'success', 9000);
@@ -13411,6 +13413,13 @@
             Layout.closeModal('rpExcessModal');
             ctx.wrap.classList.remove('active');
             Layout.closeModal('detailModal');
+            if (offer && await Layout.confirm({
+              title: 'ออกใบเสร็จส่วนที่เกินเลย',
+              message: `เก็บเงินส่วนเกิน ${Layout.money(kept)} เป็นเงินรอจัดสรร (ค้างออกใบ) แล้ว — ออกใบเสร็จรับเงิน/ใบกำกับภาษีของส่วนนี้ตอนนี้เลยไหม? (ไม่ต้องสร้างใบแจ้งหนี้ · ใบลงวันที่รับเงิน)`,
+              okText: '🧾 ออกใบเสร็จส่วนที่เกิน', cancelText: 'ไว้ทีหลัง' })) {
+              window.location.assign('/pages/customer-credits.html?receiptFor=' + encodeURIComponent(payRes.data.id));
+              return;
+            }
             await this.load();
           } catch (e) {
             Layout.toast(e.message, 'error', 10000);

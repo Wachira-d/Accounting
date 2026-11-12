@@ -228,13 +228,22 @@ public class AutopilotService : IAutopilotService
     {
         var list = new List<AutopilotIssueDto>();
         var pending = new[] { PartnerInputVatEvidence.AwaitingTimestamp, PartnerInputVatEvidence.PaperRequired };
-        var docs = await _db.Documents.AsNoTracking()
+        // ฝ่ายค้าน 264-P5 L3: สองชุดแยกเพดาน — "ใกล้ครบ" (ใกล้กำหนดก่อน) ไม่ถูกใบที่เลยกรอบสะสมกินโควตา · "เลยกรอบ" ล่าสุดก่อน
+        var (apFrom, apBefore, expBefore) = PartnerTaxEvidenceAlerts.QueryBounds(nowUtc);
+        var pendingDocs = _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.PartnerInputVatEvidence != null && pending.Contains(d.PartnerInputVatEvidence)
-                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected && d.VatAmount > 0m)
-            .OrderBy(d => d.SupplierTaxInvoiceDate ?? d.DocumentDate).Take(200)
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected && d.VatAmount > 0m);
+        var approaching = await pendingDocs
+            .Where(d => (d.SupplierTaxInvoiceDate ?? d.DocumentDate) >= apFrom && (d.SupplierTaxInvoiceDate ?? d.DocumentDate) < apBefore)
+            .OrderBy(d => d.SupplierTaxInvoiceDate ?? d.DocumentDate).Take(100)
             .Select(d => new { d.Id, d.DocumentNumber, Date = d.SupplierTaxInvoiceDate ?? d.DocumentDate, d.CreatedAt })
             .ToListAsync(ct);
-        foreach (var d in docs)
+        var expired = await pendingDocs
+            .Where(d => (d.SupplierTaxInvoiceDate ?? d.DocumentDate) < expBefore)
+            .OrderByDescending(d => d.SupplierTaxInvoiceDate ?? d.DocumentDate).Take(50)
+            .Select(d => new { d.Id, d.DocumentNumber, Date = d.SupplierTaxInvoiceDate ?? d.DocumentDate, d.CreatedAt })
+            .ToListAsync(ct);
+        foreach (var d in approaching.Concat(expired).DistinctBy(x => x.Id))
         {
             var w = PartnerTaxEvidenceAlerts.InputVatWindowOf(d.Date, nowUtc);
             if (!PartnerTaxEvidenceAlerts.ShowsRow(w)) continue;
@@ -245,8 +254,11 @@ public class AutopilotService : IAutopilotService
 
         list.AddRange(await PartnerPayBlockedIssuesAsync(companyId, nowUtc, ct));
 
+        // ฝ่ายค้าน L1: ปิดการส่งให้คู่ค้าแล้ว ⇒ เหตุค้างของเส้นนี้ไม่ใช่เรื่องค้าง (งานไม่วนมาที่บริษัทนี้อีก)
+        var sending = await _db.WorkflowAutomationConfigs.AsNoTracking()
+            .AnyAsync(c => c.CompanyId == companyId && c.SendWhtCertsToPartners && c.SendWhtCertsToPartnersSince != null, ct);
         var certs = await _db.WithholdingTaxCerts.AsNoTracking()
-            .Where(w => w.CompanyId == companyId && !w.IsDeleted && w.PartnerDeliveredAt == null && w.PartnerDeliveryError != null
+            .Where(w => sending && w.CompanyId == companyId && !w.IsDeleted && w.PartnerDeliveredAt == null && w.PartnerDeliveryError != null
                 && (w.Status == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued || w.Status == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Printed))
             .OrderByDescending(w => w.IssuedDate).Take(50)
             .Select(w => new { w.Id, w.CertificateNumber, w.PartnerDeliveryError, At = w.UpdatedAt ?? w.IssuedDate ?? w.CreatedAt })

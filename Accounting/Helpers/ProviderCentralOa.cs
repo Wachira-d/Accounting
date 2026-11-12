@@ -50,7 +50,12 @@ public static class ProviderCentralOa
 
     /// <summary>ข้อเท็จจริงของแถวความพร้อม (ผู้อ่าน: <c>LineConfigController</c>)</summary>
     public sealed record ReadinessFacts(bool CentralHasToken, bool CentralHasSecret, string? CentralConfigProblem, string? CentralBasicId,
-        int BoundContacts, int ContactsTotal, bool BillingLineEnabled, bool BillingEmailEnabled);
+        int BoundContacts, int ContactsTotal, bool BillingLineEnabled, bool BillingEmailEnabled)
+    {
+        /// <summary>รอบ 262 ฝ่ายค้าน L2: Bot User ID ที่ตั้งไว้ในหน้าแอดมิน (ใช้เทียบตอนผูก) · ค่าที่ LINE ตอบจาก token (null = ถาม LINE ไม่ได้/ไม่มี token)</summary>
+        public string? CentralBotConfigured { get; init; }
+        public string? CentralBotFetched { get; init; }
+    }
 
     /// <summary>แถวความพร้อม "ส่งเอกสารถึงผู้ติดต่อผ่าน LINE OA กลาง" ของบริษัทผู้ให้บริการ (server computes · หน้าแสดงตรงตัว) · บริษัทอื่น ⇒ ว่าง</summary>
     public static IReadOnlyList<LineOaHealth.Row> ReadinessRows(bool isProvider, ReadinessFacts f)
@@ -65,6 +70,7 @@ public static class ProviderCentralOa
             ? new LineOaHealth.Row("central-basic-id", LineOaHealth.LevelWarn, "ยังไม่ได้ใส่ Basic ID ของ LINE OA กลาง",
                 "หน้าผูก LINE ของลูกค้าจะไม่มีปุ่ม \"เพิ่มเพื่อน\"/\"ส่งรหัส\" — ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์ → LINE OA กลาง → Basic ID")
             : new LineOaHealth.Row("central-basic-id", LineOaHealth.LevelOk, "Basic ID ของ LINE OA กลาง: " + f.CentralBasicId!.Trim(), null));
+        rows.Add(BotRow(f.CentralBotConfigured, f.CentralBotFetched, f.CentralHasToken));
         rows.Add(new LineOaHealth.Row("central-webhook", LineOaHealth.LevelOk, "Webhook ของ OA กลางต้องชี้ /api/line-webhook",
             "การผูก LINE ของลูกค้าเดินผ่าน webhook กลางตัวเดียว — ห้ามเปลี่ยน Webhook ของ OA กลางใน LINE Developers (257-1-7)"));
         rows.Add(f.BoundContacts > 0
@@ -79,6 +85,22 @@ public static class ProviderCentralOa
         return rows;
     }
 
+    /// <summary>รอบ 262 ฝ่ายค้าน L2 (คำตัดสิน 262-1-14): Bot User ID ที่ตั้งไว้ต้องตรงบอทของ token — ตั้งผิด ⇒ ผูกทุกครั้งตอบ "เปลี่ยนบัญชี" + ปลายทาง nextacc ทั้งหมด "ต้องผูกใหม่"</summary>
+    internal static LineOaHealth.Row BotRow(string? configured, string? fetched, bool hasToken)
+    {
+        var c = (configured ?? "").Trim();
+        var f = (fetched ?? "").Trim();
+        if (c.Length == 0)
+            return new("central-bot", LineOaHealth.LevelWarn, "ยังไม่ได้ใส่ Bot User ID ของ LINE OA กลาง",
+                "ระบบไม่ตรวจว่าบอทของ OA กลางเปลี่ยนหรือไม่ — ใส่ที่ ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์ → LINE OA กลาง → Bot User ID (ค่าที่ขึ้นต้นด้วย U)");
+        if (!hasToken || f.Length == 0)
+            return new("central-bot", LineOaHealth.LevelWarn, "ตรวจ Bot User ID กับ LINE ไม่ได้ตอนนี้", "LINE ไม่ตอบ หรือยังไม่มี token ของ OA กลาง — ลองโหลดหน้านี้ใหม่");
+        return string.Equals(c, f, StringComparison.Ordinal)
+            ? new("central-bot", LineOaHealth.LevelOk, "Bot User ID ของ LINE OA กลางตรงกับบอทของ token", null)
+            : new("central-bot", LineOaHealth.LevelError, "Bot User ID ของ LINE OA กลางไม่ตรงกับบอทของ token",
+                $"ค่าที่ตั้ง {c} ≠ บอทจริง {f} — ลูกค้าผูก LINE ทุกครั้งจะได้ \"บริษัทเปลี่ยนบัญชี LINE\" · แก้ Bot User ID ที่ ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์ → LINE OA กลาง");
+    }
+
     /// <summary>แจ้งเตือนค่าบริการ (ชนิดจาก <see cref="PlatformDunningPolicy.KindOfKey"/>) → trigger ของการ์ดเอกสารในคิว LINE ของผู้ติดต่อ ·
     /// null = ไม่ใช่เรื่องของใบ (ผลตัดบัตร ฯลฯ — ส่งตรงถึงเจ้าของเท่านั้น)</summary>
     public static string? TriggerForKind(string? kind) => kind switch
@@ -90,7 +112,10 @@ public static class ProviderCentralOa
     };
 
     /// <summary>กุญแจเหตุการณ์ของการ์ดค่าบริการ (ต่อใบ + ต่อกุญแจข้อความ ⇒ ขั้นทวงแต่ละขั้นคนละการ์ด · ขั้นเดิมซ้ำไม่เข้าคิว)</summary>
-    public static string QueueBaseKey(Guid documentId, string trigger, string messageKey) => $"doc:{documentId}:{trigger}:platform:{messageKey}";
+    public static string QueueBaseKey(Guid documentId, string trigger, string messageKey) => QueueBasePrefix(documentId, trigger) + messageKey;
+
+    /// <summary>รอบ 262 ฝ่ายค้าน M3/L1: ส่วนต้นของกุญแจการ์ดค่าบริการ — แยก "การ์ดของงานนี้" ออกจาก "การ์ดของกฎตารางส่ง" ในตัวกันซ้ำทั้งสองทาง</summary>
+    public static string QueueBasePrefix(Guid documentId, string trigger) => $"doc:{documentId}:{trigger}:platform:";
 
     /// <summary>ปลายทางเดียวกันได้การ์ด trigger เดียวกันของใบนี้จากทางอื่นแล้ว (เช่นกฎตารางส่งของบริษัทผู้ให้บริการ) ภายในช่วงนี้ ⇒ ไม่เข้าคิวซ้ำ ·
     /// ใบใหม่/ใบเสร็จ = ครั้งเดียวต่อใบตลอดไป (null) · ทวงชำระ = ภายใน 20 ชม. (ขั้นทวงคนละวันยังได้การ์ดของขั้นนั้น)</summary>
@@ -108,8 +133,41 @@ public static class ProviderCentralOa
     public static string? BillingPayUrl(bool? includePayLink, string? billingCenterUrl)
         => includePayLink == false || string.IsNullOrWhiteSpace(billingCenterUrl) ? null : billingCenterUrl;
 
+    /// <summary>รอบ 262 ฝ่ายค้าน L4: ทางศูนย์บิล<b>ของบริษัทผู้ซื้อ</b> (<c>?company=</c> — layout.js สลับบริษัทตามลิงก์) · ผู้ใช้หลายบริษัทไม่เจอศูนย์บิลของบริษัทที่เปิดค้างไว้</summary>
+    public static string BillingPath(Guid buyerCompanyId) => $"/pages/billing.html?company={buyerCompanyId:D}";
+
+    /// <summary>รอบ 262 ฝ่ายค้าน L3 (คำตัดสิน 262-1-15): คำตอบ "หยุด" บน OA กลาง — บอกว่าหยุดการรับของผู้ติดต่อใดบ้าง (หยุดทุกรายที่ LINE นี้ผูกไว้กับบริษัทผู้ให้บริการ) + ทางกลับมารับ</summary>
+    public static string StopScopeNote(IReadOnlyCollection<string> contactNames)
+        => contactNames.Count == 0 ? ""
+            : $"\nหยุดการรับของ: {string.Join(" · ", contactNames.Take(10))}{(contactNames.Count > 10 ? $" และอีก {contactNames.Count - 10} ราย" : "")}"
+              + " — ต้องการรับของบางรายต่อ ให้ผู้ส่งเอกสาร (หรือศูนย์บิลค่าบริการของบริษัทนั้น) ส่งลิงก์ผูกใหม่";
+
+    /// <summary>รอบ 262 ฝ่ายค้าน M1: ป้ายปลายทางบนศูนย์บิลของผู้เช่า — ชื่อโปรไฟล์ LINE แบบปิดบัง (ตัวเดียวกับ audit) · ไม่มีชื่อ ⇒ "บัญชี LINE"</summary>
+    public static string MaskedEndpointLabel(string? label) => ContactLineBindRule.MaskName(label) ?? "บัญชี LINE";
+
+    /// <summary>รอบ 262 ฝ่ายค้าน L5: เพดานสร้างลิงก์ผูก LINE จากศูนย์บิลต่อบริษัทผู้เช่า (แต่ละครั้งเขียน audit ในบริษัทผู้ให้บริการ + เพิกถอนลิงก์เดิม)</summary>
+    public const int BillingInvitePerMinute = 2, BillingInvitePerDay = 10;
+    public static string BillingInviteRateKey(Guid buyerCompanyId) => $"billing-line-invite:{buyerCompanyId:N}";
+
+    /// <summary>รอบ 262 ฝ่ายค้าน H1 (คำตัดสิน 262-1-9 · F2 ข้อ 9): ลิงก์ชำระทั่วไปที่ออกให้ใบค่าบริการของผู้เช่าไว้ก่อนรอบนี้ ⇒ เพิกถอน (idempotent · รันทุกบูต ·
+    /// ตอนใช้งานถูกปฏิเสธด้วย <c>DocumentPayLinkPolicy.PlatformTenantRefusal</c> อยู่แล้ว — นี่คือการล้างของค้างให้สถานะบนหน้าเอกสารตรงจริง)</summary>
+    public const string RevokeTenantPayLinksSql = """
+        UPDATE "Documents" d SET "PayLinkRevokedAt" = (now() at time zone 'utc')
+        WHERE d."PayLinkTokenHash" IS NOT NULL AND d."PayLinkRevokedAt" IS NULL
+          AND d."CompanyId" = (SELECT s."PlatformCompanyId" FROM "SiteSettings" s ORDER BY s."CreatedAt" LIMIT 1)
+          AND EXISTS (SELECT 1 FROM "Contacts" c WHERE c."Id" = d."ContactId" AND c."CompanyId" = d."CompanyId"
+                      AND c."ExternalSystem" = 'NextAccTenant' AND c."ExternalId" IS NOT NULL);
+        """;
+
     /// <summary>สถานะกล่อง "รับใบแจ้งหนี้ทาง LINE" บนศูนย์บิลของผู้เช่า (server computes)</summary>
-    public sealed record BillingLineView(bool Available, string? Reason, int BoundCount, string Note);
+    public sealed record BillingLineView(bool Available, string? Reason, int BoundCount, string Note)
+    {
+        /// <summary>รอบ 262 ฝ่ายค้าน M1: รายการปลายทางที่ผูกอยู่ (ยกเลิกได้จากศูนย์บิล)</summary>
+        public IReadOnlyList<BillingLineEndpoint> Endpoints { get; init; } = Array.Empty<BillingLineEndpoint>();
+    }
+
+    /// <summary>รอบ 262 ฝ่ายค้าน M1: ปลายทางหนึ่งตัวบนศูนย์บิล (ป้ายปิดบัง · ไม่มี LINE id)</summary>
+    public sealed record BillingLineEndpoint(Guid Id, string Label, DateTime LinkedAt, DateTime? LastSentAt, string Status);
 
     public static BillingLineView BillingView(bool providerSet, bool contactExists, string? centralProblem, int boundCount, bool canManage)
     {

@@ -873,6 +873,9 @@ const API = {
       writeOffCustomerCredit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/write-off`, d),
       customerCreditToDeposit: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/to-deposit`, d),
       customerCreditIssueInvoice: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/issue-invoice`, d),
+      // รอบ 265 — ออกใบเสร็จ/ใบกำกับภาษีจากเงินรอจัดสรร (ไม่มีใบแจ้งหนี้) + ค่าของหน้าต่าง (วันที่ที่ใบจะลง · อัตรา VAT · รายการประจำ)
+      getCustomerCreditReceiptOptions: (paymentId) => API.get(`${base}/customer-credits/${paymentId}/receipt-options`),
+      customerCreditIssueReceipt: (paymentId, d) => API.post(`${base}/customer-credits/${paymentId}/issue-receipt`, d),
       undoCustomerCreditMovement: (paymentId, movementId, reason) =>
         API.post(`${base}/customer-credits/${paymentId}/movements/${movementId}/undo`, { reason: reason || null }),
       updateCustomerCreditSettings: (d) => API.put(`${base}/customer-credits/settings`, d),

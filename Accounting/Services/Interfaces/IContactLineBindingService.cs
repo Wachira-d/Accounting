@@ -39,6 +39,11 @@ public interface IContactLineBindingService
     /// <summary>รอบ 262 (คำตัดสิน 262-1-3): ผู้เช่าขอลิงก์ผูก LINE ของผู้ติดต่อตัวเองในบริษัทผู้ให้บริการ (ผู้เรียกตรวจ Billing.Manage แล้ว) · ไม่พร้อม ⇒ BusinessRuleException</summary>
     Task<ContactLineInviteResponse> CreateBillingInviteAsync(Guid buyerCompanyId, Guid? actorUserId, string? actorEmail, CancellationToken ct = default);
 
+    /// <summary>รอบ 262 ฝ่ายค้าน M1 (คำตัดสิน 262-1-10): ผู้เช่ายกเลิกปลายทาง LINE รับใบค่าบริการของตัวเอง (ผู้เรียกตรวจ Billing.Manage แล้ว) · ตัวยกเลิกเดียว + ถอนความยินยอม + audit ·
+    /// ปลายทางที่ไม่ใช่ของผู้เช่ารายนี้ ⇒ 404</summary>
+    Task<Accounting.Helpers.ProviderCentralOa.BillingLineView> UnlinkBillingEndpointAsync(Guid buyerCompanyId, Guid endpointId, Guid? actorUserId, string? actorEmail,
+        CancellationToken ct = default);
+
     /// <summary>webhook ของ OA บริษัท: ผู้รับพิมพ์ "หยุด" ⇒ ปลดปลายทาง 1:1 ของ userId นั้นในบริษัทนี้ + ถอนความยินยอม · ไม่มีปลายทาง ⇒ null (ไม่ตอบ — แชตของร้าน)</summary>
     Task<string?> TryStopAsync(Guid companyId, string? destination, string lineUserId, string text, CancellationToken ct = default);
 

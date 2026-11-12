@@ -40,6 +40,17 @@ public static class PartnerTaxEvidenceAlerts
         return new Window(state, elapsed, Math.Max(0, left), invMonth.AddMonths(ClaimWindowMonths));
     }
 
+    /// <summary>ฝ่ายค้าน 264-P5 L3: ขอบเขต SQL ของสองชุดแถว (เผื่อหนึ่งวันกันเส้นแบ่งเวลา — ตัวตัดสินจริงคือ <see cref="InputVatWindowOf"/>) ·
+    /// <c>ApproachingFrom..ApproachingBefore</c> = ใบที่อาจ "ใกล้ครบ" · <c>ExpiredBefore</c> = ใบที่อาจ "เลยกรอบ" (แยกเพดาน — ใบที่เลยกรอบสะสมไม่บังใบที่ยังช่วยได้)</summary>
+    public static (DateTime ApproachingFrom, DateTime ApproachingBefore, DateTime ExpiredBefore) QueryBounds(DateTime nowUtc)
+    {
+        var bkk = nowUtc.AddHours(7);
+        var month = new DateTime(bkk.Year, bkk.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var oldestOpen = month.AddMonths(-ClaimWindowMonths);                       // เดือนใบเก่าสุดที่ยังเคลมได้
+        var approachingBefore = month.AddMonths(-(ClaimWindowMonths - WarnMonthsLeft) + 1);   // เหลือ ≤ WarnMonthsLeft
+        return (oldestOpen.AddDays(-1), approachingBefore.AddDays(1), oldestOpen.AddDays(1));
+    }
+
     /// <summary>แสดงเป็นแถว Autopilot ไหม — ใกล้ครบ/เลยกรอบแล้ว (เปิดอยู่ไกล = ไม่รก)</summary>
     public static bool ShowsRow(Window w) => w.State != WindowState.Open;
 

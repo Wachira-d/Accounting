@@ -93,10 +93,17 @@ public class WhtCertPartnerReturnRound264DbTests
         };
         cert.Lines.Add(new WithholdingTaxCertLine { LineOrder = 1, IncomeTypeCode = "40(2)", IncomeDescription = "ค่าบริการ", PaymentDate = paid, IncomeAmount = 10_000m, TaxRate = 3m, TaxAmount = 300m });
         db.WithholdingTaxCerts.Add(cert);
-        // ฝั่งผู้ขาย: แถวรอ 50 ทวิ ของผู้จ่ายรายนี้ (ถูกหักตอนรับชำระ)
+        // ฝั่งผู้ขาย: ผู้ติดต่อของผู้จ่ายในสมุดของผู้ขาย ผูก NextAccTenant กับบริษัทผู้จ่าย (เส้นคู่ค้าสร้างให้) + แถวรอ 50 ทวิ ของผู้จ่ายรายนี้
+        var payerAtPayee = new Contact
+        {
+            CompanyId = payee.Id, Name = payer.Name, TaxId = payer.TaxId, BranchCode = "00000", IsCustomer = true,
+            ExternalSystem = PartnerWhtCertExchangeService.ExternalSystem, ExternalId = payer.Id.ToString(),
+        };
+        db.Contacts.Add(payerAtPayee);
+        await db.SaveChangesAsync();
         var credit = new WhtCreditReceived
         {
-            CompanyId = payee.Id, TaxYear = WhtCertIntakeVerdict.FiscalYearOf(paid, 1), PayerName = payer.Name, PayerTaxId = payer.TaxId,
+            CompanyId = payee.Id, TaxYear = WhtCertIntakeVerdict.FiscalYearOf(paid, 1), PayerName = payer.Name, PayerTaxId = payer.TaxId, PayerContactId = payerAtPayee.Id,
             IncomeAmount = Math.Round(creditWht / 0.03m, 2, MidpointRounding.AwayFromZero), WhtRate = 3m, WhtAmount = creditWht,
             Status = WhtCreditStatus.Pending, FirstWithheldAt = paid,
         };
@@ -290,5 +297,95 @@ public class WhtCertPartnerReturnRound264DbTests
         var row = Assert.Single(rows);
         Assert.Equal(five.Id, row.DocumentId);
         Assert.Contains("82/3", row.Title);
+    }
+
+    // ═══════════ ฝ่ายค้าน 264-P5 ═══════════
+
+    [Fact]
+    public async Task R264_M1_คู่ค้าสวมเลขผู้เสียภาษีของลูกค้ารายอื่น_ไม่ยืนยันอัตโนมัติ_แถวของรายนั้นยังรอ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        // X = ลูกค้าของผู้ขายที่ไม่ได้อยู่บน NextAcc · ผู้ขายรอ 50 ทวิ ของ X 300 บาท (ผู้ติดต่อ X ในสมุดผู้ขายไม่ได้ผูกกับคู่ค้า)
+        var xTax = ValidTax();
+        var x = new Contact { CompanyId = s.Payee.Id, Name = "ลูกค้า X", TaxId = xTax, BranchCode = "00000", IsCustomer = true };
+        db.Contacts.Add(x);
+        await db.SaveChangesAsync();
+        var paid = s.Cert.Lines.First().PaymentDate;
+        var xCredit = new WhtCreditReceived
+        {
+            CompanyId = s.Payee.Id, TaxYear = WhtCertIntakeVerdict.FiscalYearOf(paid, 1), PayerName = x.Name, PayerTaxId = xTax, PayerContactId = x.Id,
+            IncomeAmount = 10_000m, WhtRate = 3m, WhtAmount = 300m, Status = WhtCreditStatus.Pending, FirstWithheldAt = paid,
+        };
+        db.WhtCreditsReceived.Add(xCredit);
+        await db.SaveChangesAsync();
+        // ผู้จ่าย (คู่ค้า Accepted) เปลี่ยนเลขผู้เสียภาษีของตัวเองเป็นเลขของ X
+        await db.Companies.Where(c => c.Id == s.Payer.Id).ExecuteUpdateAsync(u => u.SetProperty(c => c.TaxId, xTax));
+        var ai = new KillSwitchAi();
+        using (var run = DbTestDatabase.TryCreateContext()!)
+            await Exchange(run, ai.Proxy()).DeliverForPayerAsync(s.Payer.Id, s.Since, DateTime.UtcNow);
+        Assert.Equal(0, ai.Calls);
+        using var read = DbTestDatabase.TryCreateContext()!;
+        var intake = await read.WhtCertIntakes.AsNoTracking().SingleAsync(i => i.CompanyId == s.Payee.Id && i.CertificateNumber == s.Cert.CertificateNumber);
+        Assert.False(intake.AutoConfirmed);
+        Assert.False(intake.AuthenticityByProvenance);
+        Assert.Contains("ยังไม่ได้ผูกกับบริษัทคู่ค้า", intake.GateProblems);
+        Assert.Equal(WhtCreditStatus.Pending, (await read.WhtCreditsReceived.AsNoTracking().SingleAsync(w => w.Id == xCredit.Id)).Status);
+        // ทิศตรงข้าม (ผู้ติดต่อของแถวผูกถูกต้อง ⇒ ยืนยันเอง) = R264_ปิดproviderทุกตัว_…
+    }
+
+    [Fact]
+    public async Task R264_H1_ใบถึงผู้ขายทั่วไป51ใบค้าง_ใบของคู่ค้ายังถูกส่ง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var plain = new Contact { CompanyId = s.Payer.Id, Name = "ผู้ขายทั่วไป", TaxId = ValidTax(), BranchCode = "00000", IsSupplier = true, Address = "1 ถนนพระราม 4" };
+        db.Contacts.Add(plain);
+        await db.SaveChangesAsync();
+        for (var i = 0; i < 51; i++)
+        {
+            var c = new WithholdingTaxCert
+            {
+                CompanyId = s.Payer.Id, CertificateNumber = $"WHTP-{i}-" + Guid.NewGuid().ToString("N")[..4], PayeeContactId = plain.Id,
+                TaxFormType = TaxType.WithholdingTax53, TaxYear = DateTime.UtcNow.Year, TaxMonth = DateTime.UtcNow.Month, CertificateType = WithholdingTaxCertType.Withhold,
+                Status = WithholdingTaxCertStatus.Issued, TotalIncomeAmount = 1_000m, TotalTaxAmount = 30m, IssuedDate = DateTime.UtcNow.AddDays(-4),   // เก่ากว่าใบของคู่ค้า
+            };
+            c.Lines.Add(new WithholdingTaxCertLine { LineOrder = 1, IncomeTypeCode = "40(2)", IncomeDescription = "ค่าบริการ", PaymentDate = DateTime.UtcNow.Date.AddDays(-4), IncomeAmount = 1_000m, TaxRate = 3m, TaxAmount = 30m });
+            db.WithholdingTaxCerts.Add(c);
+        }
+        await db.SaveChangesAsync();
+        var ai = new KillSwitchAi();
+        using (var run = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(1, await Exchange(run, ai.Proxy()).DeliverForPayerAsync(s.Payer.Id, s.Since, DateTime.UtcNow));
+        using var read = DbTestDatabase.TryCreateContext()!;
+        Assert.NotNull((await read.WithholdingTaxCerts.AsNoTracking().SingleAsync(w => w.Id == s.Cert.Id && w.CompanyId == s.Payer.Id)).PartnerDeliveredAt);
+        // ใบถึงผู้ขายทั่วไปไม่ถูกแตะ (ไม่ใช่งานของเส้นนี้)
+        Assert.False(await read.WithholdingTaxCerts.AsNoTracking().AnyAsync(w => w.CompanyId == s.Payer.Id && w.PayeeContactId == plain.Id
+            && (w.PartnerDeliveredAt != null || w.PartnerDeliveryError != null || w.PartnerDeliveryAttempts > 0)));
+    }
+
+    [Fact]
+    public async Task R264_L1_เหตุค้างถูกล้าง_เมื่อผู้ติดต่อไม่ใช่คู่ค้าแล้ว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, contactSystem: "Peak");
+        var ai = new KillSwitchAi();
+        using (var run = DbTestDatabase.TryCreateContext()!)
+            await Exchange(run, ai.Proxy()).DeliverForPayerAsync(s.Payer.Id, s.Since, DateTime.UtcNow);
+        using (var mid = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.NotNull((await mid.WithholdingTaxCerts.AsNoTracking().SingleAsync(w => w.Id == s.Cert.Id)).PartnerDeliveryError);
+            // ผู้ใช้ตัดสินใจไม่ผูก: ผู้ติดต่อนี้ไม่ใช่บริษัทคู่ค้า (เลขผู้เสียภาษีเปลี่ยน)
+            await mid.Contacts.Where(c => c.Id == s.PayeeAtPayer.Id && c.CompanyId == s.Payer.Id).ExecuteUpdateAsync(u => u.SetProperty(c => c.TaxId, ValidTax()));
+        }
+        using (var run = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(0, await Exchange(run, ai.Proxy()).DeliverForPayerAsync(s.Payer.Id, s.Since, DateTime.UtcNow));
+        using var read = DbTestDatabase.TryCreateContext()!;
+        Assert.Null((await read.WithholdingTaxCerts.AsNoTracking().SingleAsync(w => w.Id == s.Cert.Id && w.CompanyId == s.Payer.Id)).PartnerDeliveryError);
+        Assert.DoesNotContain(await new AutopilotService(read, F4Proxy<IBankReceiptSettleService>.Create((_, _) => null)).IssuesAsync(s.Payer.Id, DateTime.UtcNow),
+            i => i.Kind == "PartnerWhtCertUndelivered");
     }
 }
