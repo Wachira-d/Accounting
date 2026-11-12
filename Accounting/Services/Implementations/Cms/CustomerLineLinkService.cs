@@ -309,22 +309,30 @@ public class CustomerLineLinkService : ICustomerLineLinkService
         return true;
     }
 
-    public async Task<bool> ReplyAsync(string scope, Guid? companyId, string replyToken, string text, CancellationToken ct = default)
+    public Task<bool> ReplyAsync(string scope, Guid? companyId, string replyToken, string text, CancellationToken ct = default)
+        => string.IsNullOrWhiteSpace(text) ? Task.FromResult(false)
+            : ReplyMessagesAsync(scope, companyId, replyToken, new object[] { new { type = "text", text } }, ct);
+
+    private async Task<string?> TokenForAsync(string scope, Guid? companyId, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(replyToken) || string.IsNullOrWhiteSpace(text)) return false;
-        string? token;
         if (scope == CustomerNotifyChannel.ScopeCompany && companyId is Guid cid)
         {
             var enc = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == cid).Select(s => s.LineChannelAccessToken).FirstOrDefaultAsync(ct);
-            token = _secrets.Unprotect(enc);
+            return _secrets.Unprotect(enc);
         }
-        else token = (await _nextAcc.GetAsync(ct)).AccessToken;
+        return (await _nextAcc.GetAsync(ct)).AccessToken;
+    }
+
+    public async Task<bool> ReplyMessagesAsync(string scope, Guid? companyId, string replyToken, IReadOnlyList<object> messages, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(replyToken) || messages == null || messages.Count == 0) return false;
+        var token = await TokenForAsync(scope, companyId, ct);
         if (string.IsNullOrWhiteSpace(token)) return false;
         try
         {
             var client = _http.CreateClient();
             client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            using var content = new StringContent(JsonSerializer.Serialize(new { replyToken, messages = new[] { new { type = "text", text } } }),
+            using var content = new StringContent(JsonSerializer.Serialize(new { replyToken, messages = messages.Take(LineMessageLimits.MaxMessagesPerPush).ToArray() }),
                 Encoding.UTF8, "application/json");
             var resp = await client.PostAsync("https://api.line.me/v2/bot/message/reply", content, ct);
             if (resp.IsSuccessStatusCode)
@@ -340,6 +348,41 @@ public class CustomerLineLinkService : ICustomerLineLinkService
         {
             _logger.LogWarning(ex, "LINE reply ({Scope}) ล้ม", scope);
             return false;
+        }
+    }
+
+    public async Task<byte[]?> DownloadMessageContentAsync(Guid companyId, string messageId, int maxBytes, CancellationToken ct = default)
+    {
+        // messageId ของ LINE เป็นตัวเลขล้วน — กันต่อ path แปลก ๆ เข้า URL
+        if (string.IsNullOrWhiteSpace(messageId) || messageId.Length > 32 || !messageId.All(char.IsAsciiDigit)) return null;
+        var token = await TokenForAsync(CustomerNotifyChannel.ScopeCompany, companyId, ct);
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        try
+        {
+            var client = _http.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            using var resp = await client.GetAsync($"https://api-data.line.me/v2/bot/message/{messageId}/content", System.Net.Http.HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogError("ดึงรูปจากแชต LINE ของบริษัท {CompanyId} ไม่สำเร็จ — LINE ตอบ {Status}", companyId, (int)resp.StatusCode);
+                return null;
+            }
+            if (resp.Content.Headers.ContentLength is long len && len > maxBytes) return null;
+            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
+            using var ms = new MemoryStream();
+            var buffer = new byte[81920];
+            int read;
+            while ((read = await stream.ReadAsync(buffer, ct)) > 0)
+            {
+                ms.Write(buffer, 0, read);
+                if (ms.Length > maxBytes) return null;
+            }
+            return ms.ToArray();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "ดึงรูปจากแชต LINE ของบริษัท {CompanyId} ล้ม", companyId);
+            return null;
         }
     }
 

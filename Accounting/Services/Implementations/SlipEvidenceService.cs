@@ -39,6 +39,8 @@ public class SlipEvidenceService
     /// <summary>ช่องทางที่แจ้ง (บันทึกเป็นผู้สร้างไฟล์แนบ — หน้าเอกสารบอกได้ว่ามาจากไหน)</summary>
     public const string ChannelPortal = "portal-customer";
     public const string ChannelPayLink = "pay-link-customer";
+    /// <summary>รอบ 260: สลิปที่ลูกค้าส่งในแชต LINE OA ของบริษัท (<c>LineChatSlipService</c> — ผูกใบโดยระบบ/ลูกค้ากดเลือก/พนักงาน) · ไฟล์ไม่เสิร์ฟตรงเหมือนหน้าชำระ</summary>
+    public const string ChannelLineChat = "line-chat-customer";
 
     /// <param name="contactId">พอร์ทัล = ผู้ติดต่อในโทเคน (ด่านความเป็นเจ้าของ) · ลิงก์ชำระ = ผู้ติดต่อของใบ (โทเคนพิสูจน์แล้ว)</param>
     /// <param name="amount">null = ยอดค้างของใบ</param>
@@ -56,6 +58,9 @@ public class SlipEvidenceService
         var ext = SlipEvidenceRule.ExtensionFor(sniffed)
             ?? throw new ArgumentException("รองรับเฉพาะรูปภาพ (JPEG/PNG/WEBP) หรือ PDF ของสลิป");
         var fromPayLink = channel == ChannelPayLink;
+        // รอบ 260: สลิปจากแชต LINE ก็มาจากคนนอกระบบ ⇒ โฟลเดอร์ที่ไม่เสิร์ฟตรง (แบบหน้าชำระ) · ป้ายช่องทางของตัวเอง
+        var fromLineChat = channel == ChannelLineChat;
+        var nonServed = fromPayLink || fromLineChat;
 
         SlipEvidenceResult? result = null;
         // รอบ 255 ฝ่ายค้าน LOW: ตรวจซ้ำ + ยอดสลิปรอตรวจ + สร้างรายการ ภายใต้ล็อกต่อบริษัท — สองคำขอพร้อมกันไม่ผ่านด่านทั้งคู่
@@ -90,7 +95,7 @@ public class SlipEvidenceService
             // เก็บผ่านที่เก็บกลาง (Local/S3) · รอบ 255 ฝ่ายค้าน M8: สลิปจากหน้าชำระ (คนนอกระบบอัปโหลด) อยู่โฟลเดอร์ที่<b>ไม่เสิร์ฟตรง</b> —
             // พนักงานเปิดผ่าน attachments/{id}/download (ด่านสิทธิ์ + บริษัท) แบบ /uploads/slips · พอร์ทัลคงโฟลเดอร์เดิม
             var storage = _storage ?? _images?.Storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
-            var relDir = fromPayLink ? $"uploads/document-slips/{DateTime.UtcNow:yyyy-MM}" : $"uploads/portal-slips/{DateTime.UtcNow:yyyy-MM}";
+            var relDir = nonServed ? $"uploads/document-slips/{DateTime.UtcNow:yyyy-MM}" : $"uploads/portal-slips/{DateTime.UtcNow:yyyy-MM}";
             var absDir = System.IO.Path.Combine(storage.Locator.RelativeBase, "wwwroot", relDir);
             string storedName; string absPath; string relUrl;
             if (_images != null && _images.IsProcessableImage(sniffed!))
@@ -116,7 +121,8 @@ public class SlipEvidenceService
             {
                 intent = await _intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
                     PaymentSourceKind.Document, doc.Id, pay, PaymentMethodKind.ManualSlip,
-                    Description: PortalSlipPending.IntentDescription(doc.DocumentNumber, relUrl, fromPayLink),
+                    Description: fromLineChat ? PortalSlipPending.LineChatIntentDescription(doc.DocumentNumber)
+                        : PortalSlipPending.IntentDescription(doc.DocumentNumber, relUrl, fromPayLink),
                     ContactId: doc.ContactId),
                     providerCode: Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code, ct: ct);
             }
@@ -146,7 +152,7 @@ public class SlipEvidenceService
                 CreatedBy = channel,
             });
             await _db.SaveChangesAsync(ct);
-            result = new SlipEvidenceResult(intent, fromPayLink ? "" : relUrl, slipRef);
+            result = new SlipEvidenceResult(intent, nonServed ? "" : relUrl, slipRef);
         }, null, companyId, ct);
         if (!ran || result == null)
             throw new BusinessRuleException("กำลังรับสลิปอีกรายการของผู้ขายรายนี้อยู่ — รอสักครู่แล้วแนบอีกครั้ง", DocumentSlipIntents.RuleCode, 409);

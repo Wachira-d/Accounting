@@ -42,6 +42,8 @@
           บิล POS · ค่าบริการระบบ · ใช้หน้านี้ตอบคำถาม <b>"ลูกค้าบอกว่าจ่ายแล้วแต่ระบบไม่รู้"</b>
         </p>
       </div>
+      <!-- รอบ 260: สลิปจากแชต LINE ที่ยังไม่ผูกเอกสาร (js/line-chat-slips-queue.js · ข้อมูลจาก LineChatSlipController) -->
+      <div id="lineChatSlips"></div>
       <div id="body"><div class="card">กำลังโหลด…</div></div>
     </div>
   </div>
@@ -58,6 +60,7 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/line-chat-slips-queue.js"></script>
   <script>
     // หน้ารายการ intent (PAYMENT_GATEWAY_DESIGN.md เฟส 5)
     //
@@ -80,6 +83,7 @@
         // รอบ 259-3 (E-M4): deep-link จาก Autopilot/ธนาคาร/พอร์ทัล (?status=Pending = สลิป/รายการรอยืนยัน) — ตัวกรองเดียวกับดรอปดาวน์
         try { const st = new URLSearchParams(location.search).get('status'); if (st) this.filter.status = st; } catch (_) { /* ไม่มี query */ }
         await this.load();
+        await LineChatSlipQueue.load();   // รอบ 260
       },
 
       async load() {
