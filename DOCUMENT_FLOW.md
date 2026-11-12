@@ -3202,6 +3202,25 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   L8 ปีสองหลักตัวเดียว `OcrSlipText.TwoDigitYear` · L9 ปิดสวิตช์ ⇒ ปุ่มเดิมกดไม่ได้ (คิวพนักงาน) · ป้ายไฟล์แนบ `line-chat-staff`
 - เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde (ฝ่ายค้าน: 65c031ed)
 
+### 2.12g-264-P1 รอบ 264 แพ็ก P1 "ความยินยอมงานอัตโนมัติกับคู่ค้า" (erp-review/2026-11-12/team-264-a2b-design.md §2 · คำตัดสิน 264-2-1…3)
+
+- **หลัก**: ไม่มีใครลงบัญชีในสมุดของอีกบริษัท — การบันทึกในสมุด B เกิดจากท่อของ B เองภายใต้ความยินยอมของ B เท่านั้น · A ได้แค่ "ขอ" (F9)
+- **ข้อมูล**: `PartnerAutomationConsents` (`CompanyId` = ผู้ให้ = ฝั่งที่ถูกลงบัญชี · `TradingPartnershipId` · `Scope` ชื่อ enum · `MaxAmount` · `DefaultPayBankAccountId` (เฉพาะ AutoRecord) ·
+  `TextVersion` + `EvidenceHash` · ผู้ให้/เวลา · ผู้ถอน/เวลา/เหตุ) · append-only (trigger `TR_PartnerAutomationConsents_AppendOnly`) · unique บางส่วน `(CompanyId, TradingPartnershipId, Scope) WHERE WithdrawnAt IS NULL`
+- **ขอบเขต** (`Helpers/PartnerConsent.Scopes` ตัวเดียว): `PurchaseDrafts` · `ReturnWhtCerts` = **ค่าตั้งทั้งบริษัทเดิม** (`WorkflowAutomationConfig` — ผู้อ่านเดิมไม่แตะ · ต่อคู่ปิดรับ 409) ·
+  `AutoApprovePurchase` · `AutoRecordPayment` (ต้องมีเพดาน + พิมพ์ "ยินยอม") · `ReceiveSlipCopy` — สามตัวนี้ยังไม่มีท่ออ่าน (`ReaderWired=false` ⇒ หน้าแสดง "ยังไม่มีผล") จนแพ็ก P2–P4 ต่อสาย
+- **ให้ (สองขั้น)**: `POST api/companies/{cid}/partner-consents/preview` (ข้อความ + hash · ไม่เขียน) → `POST …/partner-consents` (hash เดิม + คำยืนยัน) ·
+  ด่าน: `CompanySettings.Edit` + ไม่รับ API key · คู่ต้อง Accepted · `RequestProblem` (รูปคำขอ) · `GrantProblemForAsync` (สิทธิ์ของขอบเขตกับผู้กดจริง → 403) · บัญชีจ่ายต้องเป็นของบริษัท+ใช้งาน · `ConfirmProblem` ·
+  มีแถวใช้อยู่ ⇒ ถอนแถวเดิม ("แทนที่") + แถวใหม่ในธุรกรรมเดียว · audit `PartnerConsentGranted` / `PartnerConsentWithdrawn` (ruleCode `XT-CONSENT`) ผ่าน `AddChainedAuditLog`
+- **ถอน**: `DELETE …/partner-consents/{id}?reason=` — มีผลทันทีกับงานที่ยังไม่ทำ · งานที่ทำแล้วไม่ย้อน (F7) · แถวของบริษัทอื่น = 404
+- **ขอ (ฝั่ง A)**: `POST …/partner-consents/request` → กระดิ่ง `autopilot.partner_exchange` ของ B ลิงก์ `/pages/partner-automation.html?partnership={id}` · 3 ครั้ง/คู่/วัน · ส่งล้ม = 502 (ไม่ตอบว่าส่งแล้ว) · audit `PartnerConsentRequested` ฝั่ง A
+- **ตอนใช้ (API ของ P3/P5)**: `PartnerConsentService.CheckAsync(companyId, partnershipId, scope, amount)` → `PartnerConsent.UseCheck` (Ok · Code · Reason · ConsentId · GrantorUserId · MaxAmount · DefaultPayBankAccountId) ·
+  ตรวจสดทุกครั้ง: คู่ Accepted · แถวของบริษัท/คู่/ขอบเขตนี้ · ไม่ถอน · hash ตรง · ให้หลังการระงับครั้งล่าสุด (`StaleAfterSuspend` — เชื่อมกลับไม่ฟื้นเอง) · ผู้ให้ยังใช้งาน + ยังมีสิทธิ์ของขอบเขต (`GrantorLostPermission`) · ยอดไม่เกินเพดาน ·
+  ไม่ผ่าน ⇒ ท่อกลับเป็นปุ่มเดียวพร้อม `Reason`
+- **ค่าตั้งเดิม** `PUT workflow-automation`: เขียน audit `WorkflowAutomationConfigChanged` (ช่องที่เปลี่ยน ก่อน/หลัง · ไม่เปลี่ยน = ไม่เขียน) — C-06
+- **หน้า**: `partner-automation.html` (ลิงก์จากแถวคู่ค้า Accepted/Suspended ใน `partners.html` + กระดิ่งคำขอ) · ป้าย/ข้อความ/เหตุ/สิทธิ์ของผู้เปิดหน้ามาจากเซิร์ฟเวอร์ · ปุ่มยินยอมล็อกพร้อมเหตุเมื่อผู้เปิดไม่มีสิทธิ์ · ประวัติแถว + ผลตรวจ hash ต่อแถว
+- **kill-switch**: ไม่มีการเรียก AI ในแพ็กนี้
+
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
 
 - **แก้รายการประจำแล้วนโยบายอนุมัติไม่ดับเงียบ (B-M3 · 259-4-1 ทับ 257-4-7)**: `PUT recurring/{id}` ส่งผู้แก้ + "มีสิทธิ์อนุมัติชนิดหลังแก้ และไม่ใช่คีย์ API" (`RecurringEditor`) ⇒
@@ -8935,3 +8954,5 @@ _Last verified against codebase: 2026-11-12 (รอบ 260-5 ทีมตัด�
 _Last verified against codebase: 2026-11-12 (รอบ 260-2 ชุดแก้ฝ่ายค้าน — §2.12g-259c: M1–M4 · L1–L4 (L5 บันทึกไว้) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4226d3e4)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-3 ฝ่ายค้าน — M1 ผลการส่งจริงก่อนประทับ · M2 นับ/กรองใน SQL · M3 กรองทางเข้าก่อนตัด · L1–L5 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b951eadb)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-5 ชุดแก้ฝ่ายค้าน — §3.4b งวดรายงานของใบกำกับ ณ วันรับเงิน = OutputVatDueAt (H1) · หมายเหตุตามงวดจริง (M1) · §2.12g-258 ชุด 5 คืนค่าสแกน M2–M5/L3/L4 · คิวใบลดหนี้แอดมิน · เพดานกล่องรับ 50 ทวิ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7e69bdd1)_
+
+_Last verified against codebase: 2026-11-12 (รอบ 264 P1 ความยินยอมงานอัตโนมัติกับคู่ค้า — §2.12g-264-P1: ตาราง append-only + hash canonical · ให้สองขั้น · ถอนทันที · ระงับ/เชื่อมกลับไม่ฟื้นเอง · สิทธิ์ผู้ให้ตรวจซ้ำตอนใช้ · `CheckAsync` สำหรับ P3/P5 · audit ค่าตั้งเดิม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_

@@ -278,6 +278,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round260LineMigration.Statements());   // รอบ 260-4 — LINE: ชั่วโมงเงียบของการ์ดถึงลูกค้า
         list.AddRange(Accounting.Helpers.Round260SlipReceivingMigration.Statements());   // รอบ 260-2 — บัญชีที่เงินตามสลิปเข้า (ประทับบนรายการชำระตอนยืนยัน)
         list.AddRange(Accounting.Helpers.Round260LineSlipMigration.Statements());   // รอบ 260 — สลิปจากแชต LINE OA ของบริษัท (ตาราง + สวิตช์รับสลิป)
+        list.AddRange(Accounting.Helpers.PartnerConsentMigration.Statements());   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ต่อคู่ × ขอบเขต · append-only)
         return list;
     }
 

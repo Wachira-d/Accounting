@@ -18806,6 +18806,45 @@ RULES += [
     dict(file="Helpers/PurchaseDraftInbox.cs", method="Base", must=["d.CompanyId == companyId", "InboxTypes"],
          why=_R260_3_WHY + "260-3-8 tenant + ชนิดในกล่องตัวเดียว"),
 ]
+# รอบ 264 P1 — ความยินยอมงานอัตโนมัติกับคู่ค้า (คำตัดสิน 264-2-1…3 · DOCUMENT_FLOW §2.12g-264-P1)
+_R264P1_WHY = "รอบ 264 P1 ความยินยอมงานอัตโนมัติกับคู่ค้า (คำตัดสิน 264-2-1…3): "
+_R264P1_SVC = "Services/Implementations/PartnerConsentService.cs"
+RULES += [
+    dict(file=_R264P1_SVC, method="CheckAsync",
+         must=["PartnerConsent.Allows(", "GrantProblemForAsync(companyId, row.GrantedByUserId, scope)", "PartnerConsent.AllowsCompanyWide(",
+               "x.CompanyId == companyId", "x.WithdrawnAt == null", "x.CompanyAId == companyId || x.CompanyBId == companyId"],
+         forbid=["grantorOk = true", "IgnoreQueryFilters("],
+         why=_R264P1_WHY + "264-2-3 ตัวตรวจตอนใช้ตัวเดียว: สิทธิ์ผู้ให้ตรวจสดทุกครั้ง · ผูกบริษัท · แถวที่ยังไม่ถอน · ขอบเขตทั้งบริษัทอ่านติ๊กเดิม"),
+    dict(file=_R264P1_SVC, method="GrantProblemForAsync", must=["PartnerConsent.GrantProblem(", "UserStatus.Active", "HasNeedAsync("],
+         why=_R264P1_WHY + "F5/F6 ความยินยอมไม่กว้างกว่าสิทธิ์ผู้ให้ · ผู้ใช้ที่ปิดแล้วให้/ใช้ไม่ได้"),
+    dict(file=_R264P1_SVC, method="HasNeedAsync",
+         must=["DocumentPermissionHelper.CanApproveAsync(", "DocumentPermissionHelper.CanCreateAsync(", "DocumentPermissionHelper.VisibleDirectionsAsync(",
+               "PermissionKeys.CompanySettingsEdit", "PermissionKeys.TaxFile"],
+         why=_R264P1_WHY + "264-2-3 สิทธิ์ของขอบเขต = ด่านเดิมของระบบ (ไม่เขียนกติกาสิทธิ์ซ้ำ)"),
+    dict(file=_R264P1_SVC, method="ValidateAsync",
+         must=["PartnerConsent.TryParse(", "PartnerConsent.RequestProblem(", "GrantProblemForAsync(companyId, userId, scope)", "TradingPartnershipStatus.Accepted",
+               "x.CompanyAId == companyId || x.CompanyBId == companyId", "x.CompanyId == companyId && x.IsActive"],
+         why=_R264P1_WHY + "ด่านเดียวของขั้นดูข้อความและขั้นยินยอม: รูปคำขอ · คู่ Accepted · สิทธิ์ผู้กด · บัญชีจ่ายของบริษัทนี้"),
+    dict(file=_R264P1_SVC, method="PreviewAsync", must=["ValidateAsync(", "PartnerConsent.Hash(", "PartnerConsent.CurrentTextVersion"],
+         why=_R264P1_WHY + "264-2-2 ขั้นที่หนึ่งคืน hash จากฟังก์ชัน canonical ตัวเดียว"),
+    dict(file=_R264P1_SVC, method="GrantAsync",
+         must=["ValidateAsync(", "PartnerConsent.Hash(", "PartnerConsent.ConfirmProblem(", "MarkWithdrawn(", "_db.AddChainedAuditLog("], must_lit=['"PartnerConsentGranted"'],
+         before=[("PartnerConsent.ConfirmProblem(", "PartnerAutomationConsents.Add("), ("MarkWithdrawn(", "PartnerAutomationConsents.Add(")],
+         why=_R264P1_WHY + "264-2-1/2 สองขั้น (hash ที่เห็น = hash ที่เก็บ) · แทนที่ = ถอนแถวเดิมก่อนเพิ่ม (append-only) · audit chain"),
+    dict(file=_R264P1_SVC, method="WithdrawAsync", must=["x.CompanyId == companyId", "MarkWithdrawn("],
+         why=_R264P1_WHY + "F7 ถอนทันที · แถวของบริษัทอื่น = ไม่พบ"),
+    dict(file=_R264P1_SVC, method="MarkWithdrawn", must=["_db.AddChainedAuditLog("], must_lit=['"PartnerConsentWithdrawn"'],
+         why=_R264P1_WHY + "การถอนทุกครั้งเข้า audit chain"),
+    dict(file="Helpers/PartnerConsent.cs", method="HashMatches", must=["TextFor(", "Hash(", "FixedTimeEquals("],
+         why=_R264P1_WHY + "กฎ #4 C ตัวตรวจแถวใช้ hash canonical ตัวเดียวกับตอนเขียน"),
+    dict(file="Helpers/PartnerConsent.cs", method="Allows", must=["HashMatches(row)", "partnership.SuspendedAt", "grantorStillPermitted", "row.MaxAmount"],
+         why=_R264P1_WHY + "ตอนใช้: hash · ระงับแล้วไม่ฟื้นเอง · สิทธิ์ผู้ให้ · เพดาน"),
+    dict(file="Controllers/CrossTenantWorkflowController.cs", method="UpdateConfig",
+         must=["PartnerConsent.ConfigSnapshot(", "PartnerConsent.ConfigDiff(", "_db.AddChainedAuditLog("],
+         before=[("PartnerConsent.ConfigDiff(", "_db.SaveChangesAsync(")],
+         why=_R264P1_WHY + "C-06 ค่าตั้งเดิมระดับบริษัทเข้า audit chain (ใคร/ก่อน/หลัง)"),
+]
+
 REVIEWER_CASES += [
     # ถอดการแสดงเงินรอจัดสรรในใบแจ้งยอดพอร์ทัล ⇒ ต้องฟ้อง
     ("R260a", "GetMyStatementAsync", "CustomerCreditQuery.UnappliedForContactAsync(_db, companyId, contactId)", "Task.FromResult(0m)", True),

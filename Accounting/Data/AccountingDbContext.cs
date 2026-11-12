@@ -456,6 +456,7 @@ public class AccountingDbContext : DbContext
     public DbSet<TradingPartnership> TradingPartnerships => Set<TradingPartnership>();
     public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
     public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
+    public DbSet<PartnerAutomationConsent> PartnerAutomationConsents => Set<PartnerAutomationConsent>();   // รอบ 264 P1 (Helpers/PartnerConsentMigration)
     public DbSet<WorkflowAutomationConfig> WorkflowAutomationConfigs => Set<WorkflowAutomationConfig>();
 
     // ===== CMS & Multi-Site =====
@@ -3759,6 +3760,18 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.UnlinkReason).HasMaxLength(32);
             e.HasIndex(x => new { x.CompanyId, x.TargetKind, x.TargetId }).HasDatabaseName("IX_CustomerLineLinks_Company_Target");
             e.HasIndex(x => x.LineUserId).HasDatabaseName("IX_CustomerLineLinks_LineUser");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 264 P1 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerConsentMigration (unique บางส่วน: แถวที่ยังไม่ถอนหนึ่งแถวต่อบริษัท·คู่·ขอบเขต)
+        modelBuilder.Entity<PartnerAutomationConsent>(e =>
+        {
+            e.Property(x => x.Scope).HasMaxLength(32);
+            e.Property(x => x.EvidenceHash).HasMaxLength(64);
+            e.Property(x => x.WithdrawReason).HasMaxLength(500);
+            e.Property(x => x.MaxAmount).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.TradingPartnershipId, x.Scope }).IsUnique()
+                .HasFilter("\"WithdrawnAt\" IS NULL").HasDatabaseName("IX_PartnerAutomationConsents_Active");
+            e.HasIndex(x => new { x.CompanyId, x.TradingPartnershipId }).HasDatabaseName("IX_PartnerAutomationConsents_Company_Partnership");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 258-3 F-H3 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerPaymentNoticeMigration
