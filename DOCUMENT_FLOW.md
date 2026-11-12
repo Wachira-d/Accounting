@@ -4970,7 +4970,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **ไฟล์:** `Helpers/ReceiptLinkPolicy.cs` (`ReceiptLinkMoveFacts` · `MoveRefusal` · `MoveEffects` · `MoveJournalReference`) · `Helpers/PaymentEffectiveDocument.cs` · `Helpers/ReceiptLinkMoveMigration.cs` ·
   `Services/Implementations/DocumentService.ReceiptLink.cs` · `ReceiptLinkService.cs` (เส้น Move* · ถอด · ผู้สมัครการรับชำระที่ไม่มีใบเสร็จแยก) · `PdfGenerationService.ReplacementReference.cs` · `Models/Entities/Payment.cs` · `wwwroot/pages/documents.html` (ช่องเหตุผลบังคับเมื่อพรีวิวตอบ `requiresReason`)
 - **เทสต์:** pure `ReceiptLinkPolicyTests` (`Move_*` · `MoveEffects_*` · `MoveJournalReference_*` · `PaymentEffectiveDocument_*` · `ReplacementLine_*` · `ManualReceiptOfOtherInvoice_*`) · Db `ReceiptLinkMoveDbTests` (14) · กติกา R266B ใน `tools/required_call_site_check.py` ·
-  Last verified `commit <pending>` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+  Last verified `commit 46ac5463` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 3.5 Void / Cancel
 - **Method**: `VoidDocumentAsync` (`:1959`) — **cascade 7+ขั้น**:
@@ -9285,4 +9285,4 @@ _Last verified against codebase: 2026-11-12 (รอบ 262-1-18 — §2.12g-262:
 _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P1 — §2.12n หน้าเอกสารสำหรับลูกค้า: ลิงก์เดียวต่อใบบน token ของลิงก์ชำระ · หน้า pay-document เป็นหน้าเอกสาร 4 โหมด · ขอลิงก์ใหม่เมื่อหมดอายุ · ลิงก์ยอมรับ/เซ็นรับรุ่นก่อนเก็บเป็น hash + หยุดออก (§2.8 · §2.8b · §2.12f · §2.12g) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 67eddfe6)_
 _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P1 ชุดแก้ฝ่ายค้าน — §2.12n: H1 ยอมรับ/เซ็นรับผูกเลข Rev + ออก Rev ปิดช่วงตอบรับ · H2 เพิกถอนได้ทุกชนิด + ออกใหม่หมุน token · M1–M8 · L1–L8 (คำตัดสิน 267-1-24…32) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 22bb5074)_
 _Last verified against codebase: 2026-11-12 (รอบ 264 P3 ชุดแก้ฝ่ายค้าน — §2.12g-264-P3: H1 การจ่ายอื่นของใบซื้อ · H2/L9 จ่ายบางส่วน · M1 เงินสด · M2 ยกเลิกทั้งใบ + ตัวกวาด · M3 ถ้อยคำ · M4 เดือนภาษีหัก · M5 แจ้งเมื่อบันทึกเอง · M6 ล็อกตอนส่ง 50 ทวิ · M7 · L1–L9 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 17fefa5a)_
-_Last verified against codebase: 2026-11-12 (รอบ 266 แพ็ก B — §3.4c-B ย้ายการรับชำระที่ตัดผิดใบผ่าน 21630 สองขา (ขาเงินสด/คู่ธนาคารไม่ถูกแตะ) · `Payment.MovedToDocumentId` + แถวจัดสรรที่ปล่อย · ยกเลิกใบเสร็จเดิม + ใบแทน "ออกแทนใบเลขที่ …" สอง renderer · ด่าน e-Tax/งวดภาษี/คู่ค้า/ภาษีถูกหัก/SoD · พักการทวง) · commit <pending> — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_Last verified against codebase: 2026-11-12 (รอบ 266 แพ็ก B — §3.4c-B ย้ายการรับชำระที่ตัดผิดใบผ่าน 21630 สองขา (ขาเงินสด/คู่ธนาคารไม่ถูกแตะ) · `Payment.MovedToDocumentId` + แถวจัดสรรที่ปล่อย · ยกเลิกใบเสร็จเดิม + ใบแทน "ออกแทนใบเลขที่ …" สอง renderer · ด่าน e-Tax/งวดภาษี/คู่ค้า/ภาษีถูกหัก/SoD · พักการทวง) · commit 46ac5463 — ยังไม่ได้คอมไพล์ในเครื่องนี้_
