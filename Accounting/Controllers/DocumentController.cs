@@ -548,7 +548,27 @@ public class DocumentController : ControllerBase
         var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
             docType.Value, DocPerm.Create, "แก้ไข");
         if (deny != null) return Forbid403<DocumentResponse>(deny);
-        var result = await _documentService.UpdateDocumentAsync(companyId, documentId, request);
+        // รอบ 266 ฝ่ายค้าน M4 (266-1-10): ตั้ง/เปลี่ยนใบต้นทางของใบเสร็จร่างผ่านฟอร์ม = ด่านเดียวกับปุ่มผูก — API key ไม่ได้ ·
+        // ตั้งใบต้นทาง = Approve ของชนิดใบปลายทาง · ล้าง = ระดับแก้ใบร่าง (Create — ผ่านด่านข้างบนแล้ว) · ค่าเดิม = ไม่ใช่การเปลี่ยน
+        if (request.RelatedDocumentId is Guid reqSource)
+        {
+            var currentSource = await _db.Documents.AsNoTracking().Where(d => d.Id == documentId && d.CompanyId == companyId)
+                .Select(d => d.RelatedDocumentId).FirstOrDefaultAsync();
+            var newSource = reqSource == Guid.Empty ? (Guid?)null : reqSource;
+            if (newSource != currentSource)
+            {
+                if (OwnerActionGuard.IsApiKeyRequest(HttpContext))
+                    return Forbid403<DocumentResponse>("เปลี่ยนใบต้นทางของใบเสร็จทำด้วย API key ไม่ได้ในรุ่นนี้ (คำตัดสิน 266-1-10) — ทำที่หน้าเอกสารบนเว็บ");
+                if (newSource is Guid targetId)
+                {
+                    var targetType = await GetDocumentTypeAsync(companyId, targetId);
+                    if (targetType == null) return NotFound(new ApiResponse<DocumentResponse>(false, null, "ไม่พบใบต้นทางที่เลือก"));
+                    if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, JwtHelper.GetUserIdFromClaims(User), targetType.Value))
+                        return Forbid403<DocumentResponse>($"ไม่มีสิทธิ์ผูกการรับเงินเข้าเอกสาร {targetType.Value} (ต้องการ Document.Approve หรือ Document.Revenue.Approve)");
+                }
+            }
+        }
+        var result = await _documentService.UpdateDocumentAsync(companyId, documentId, request, JwtHelper.GetUserIdFromClaims(User).ToString());
         return Ok(new ApiResponse<DocumentResponse>(true, result));
     }
 

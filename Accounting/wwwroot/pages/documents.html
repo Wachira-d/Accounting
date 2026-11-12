@@ -7278,6 +7278,8 @@
         const contactId = document.getElementById('fContactId')?.value;
         this._receiptSourceCache = {};
         this._receiptSourceId = null;
+        this._receiptSourceHydrated = false;      // ระหว่างโหลด/ทางออกก่อนกำหนด = "ยังไม่ได้ตรวจ" (ห้ามส่งใบต้นทางตอนบันทึก)
+        this._receiptSourceUserTouched = false;
         sel.innerHTML = '<option value="">— ใบเสร็จอิสระ (ขายสด: ลงรายได้ + VAT) —</option>';
         const h = document.getElementById('receiptSourceHint'); if (h) h.style.display = 'none';
         if (!contactId) return;
@@ -7304,9 +7306,22 @@
         } catch { /* best-effort */ }
         // ต้องอยู่นอก try — ใบต้นทางที่ผูกไว้ต้องกลับมาแสดงแม้โหลดลิสต์ไม่สำเร็จ
         this._applyPinnedSource(sel, 'receiptSourceHint');
+        this._receiptSourceHydrated = true;
+      },
+
+      /** ใบต้นทางของใบเสร็จใน payload (pure — tools/receipt_source_payload_sim.js รันโค้ดนี้จริง) · สร้างใหม่: ส่งเมื่อเลือกใบไว้ ·
+       *  แก้ไข: ส่งเฉพาะเมื่อเซิร์ฟเวอร์ให้แก้ (editable) + ลิสต์โหลด/ปักหมุดเสร็จ (hydrated) + ผู้ใช้เลือกเอง (userTouched) + ค่าต่างจากที่ผูกไว้ ·
+       *  Guid.Empty (= ล้าง) ส่งเฉพาะเมื่อผู้ใช้เลือก "ใบเสร็จอิสระ" เอง — ค่าที่ยังไม่ถูกเติมต้องไม่กลายเป็นคำสั่งล้าง (ฝ่ายค้าน H1) */
+      _receiptSourcePayload(st) {
+        if (!st.editing) return st.selectedId ? { relatedDocumentId: st.selectedId } : {};
+        if (!st.editable || !st.hydrated || !st.userTouched) return {};
+        const next = st.selectedId || null, prev = st.pinnedId || null;
+        if (next === prev) return {};
+        return { relatedDocumentId: next || '00000000-0000-0000-0000-000000000000' };
       },
 
       onReceiptSourceSelect() {
+        this._receiptSourceUserTouched = true;   // เรียกจาก onchange ของผู้ใช้เท่านั้น (ค่าที่ระบบตั้งด้วยโค้ดไม่ยิง change)
         const id = document.getElementById('fReceiptSourceDoc')?.value || '';
         const h = document.getElementById('receiptSourceHint');
         this._receiptSourceId = id || null;
@@ -9146,6 +9161,8 @@
         this._pinnedSourceId = null;
         this._pinnedSourceDoc = null;
         this._receiptSourceEditable = false;   // รอบ 266: ห้ามค้างสิทธิ์แก้ใบต้นทางจากใบก่อน
+        this._receiptSourceHydrated = false;
+        this._receiptSourceUserTouched = false;
         const isExpense = side === 'expense';
         document.querySelector('#formModal .modal-title').textContent = isExpense ? 'สร้างเอกสารรายจ่าย' : 'สร้างเอกสารรายรับ';
         // Tag the line table so ProductLookup knows whether to fill selling
@@ -9414,6 +9431,8 @@
           this._pinnedSourceDoc = d.relatedDocument || null;
           // รอบ 266 (266-1-2): ใบเสร็จร่างที่สร้างเอง เปลี่ยน/ล้างใบต้นทางได้ — เซิร์ฟเวอร์ตัดสิน (canChangeReceiptSource) ไม่เดาจากชนิด/สถานะ
           this._receiptSourceEditable = d.canChangeReceiptSource === true;
+          this._receiptSourceHydrated = false;
+          this._receiptSourceUserTouched = false;
           Layout.closeModal('detailModal');
           document.querySelector('#formModal .modal-title').textContent = 'แก้ไขเอกสาร';
           document.getElementById('fDocType').value = d.documentType;
@@ -10040,14 +10059,14 @@
           // ใบเสร็จที่ "ดึงใบค้างลูกหนี้" → ผูกต้นทาง = settlement (ตัดลูกหนี้
           // ไม่ลงรายได้ซ้ำ). ส่งเฉพาะตอนสร้างใหม่และเลือกใบไว้เท่านั้น —
           // ไม่ส่ง null ทับของเดิมตอนแก้ไขเอกสารที่แปลงมา
-          ...((!this.editingId && this._receiptSourceId
-              && (_effectiveDocType === 'Receipt' || _effectiveDocType === 'ReceiptVoucher'))
-            ? { relatedDocumentId: this._receiptSourceId } : {}),
-          // รอบ 266 (266-1-2): แก้ใบเสร็จร่างที่สร้างเอง — ส่งใบต้นทางทุกครั้ง (ค่าเดิม = ไม่เปลี่ยน · ว่าง = Guid.Empty ล้าง) ·
-          // ใบที่เซิร์ฟเวอร์ไม่ให้แก้ (canChangeReceiptSource=false) ไม่ส่ง — ช่องถูกล็อกพร้อมเหตุผลแล้ว
-          ...((this.editingId && this._receiptSourceEditable === true
-              && (_effectiveDocType === 'Receipt' || _effectiveDocType === 'ReceiptVoucher'))
-            ? { relatedDocumentId: this._receiptSourceId || '00000000-0000-0000-0000-000000000000' } : {}),
+          // รอบ 266 (266-1-2 · ฝ่ายค้าน H1): ตัวประกอบเดียว _receiptSourcePayload — แก้ไข: ส่งเฉพาะเมื่อ "hydrate เสร็จ + ผู้ใช้เลือกเอง + ค่าเปลี่ยน"
+          // ("ยังไม่ได้ตรวจ" ≠ "ล้าง" — เดิมส่ง Guid.Empty ทุกครั้งที่ค่ายังไม่ถูกเติม ⇒ ใบเสร็จร่างที่แปลงมาถูกถอดใบต้นทางเงียบ)
+          ...((_effectiveDocType === 'Receipt' || _effectiveDocType === 'ReceiptVoucher')
+            ? this._receiptSourcePayload({
+                editing: !!this.editingId, editable: this._receiptSourceEditable === true,
+                hydrated: this._receiptSourceHydrated === true, userTouched: this._receiptSourceUserTouched === true,
+                selectedId: this._receiptSourceId, pinnedId: this._pinnedSourceId })
+            : {}),
           // ใบลดหนี้/เพิ่มหนี้ที่เลือกใบกำกับ/เอกสารต้นฉบับจาก dropdown (§86/9-10)
           ...((!this.editingId && this._cnSourceId
               && (_effectiveDocType === 'CreditNote' || _effectiveDocType === 'DebitNote'))
@@ -11297,7 +11316,6 @@
           if (d.bookingNumber) this.renderBookingLinked(d.id, d.bookingNumber);
 
           this.renderUseCreditButton(d);   // รอบ 258 (ไม่ await — ปุ่มเสริม ไม่ถ่วงการแสดงใบ)
-          this.renderReceiptLinkButton(d);   // รอบ 266 แพ็ก A (ไม่ await — ปุ่มเสริม)
           // Load related payments and journal entries
           try {
             const [paymentsRes, journalsRes] = await Promise.all([
@@ -11419,8 +11437,15 @@
           if (d.canUnlinkSource) {
             actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.unlinkSource('${d.id}')" title="ยกเลิกการผูกกับเอกสารต้นทาง (ผูกไว้ภายหลัง ไม่ได้แปลงมา)">✂️ ยกเลิกการผูก</button>`;
           }
-          // รอบ 266 แพ็ก A — "ผูกใบเสร็จ/เงินที่รับไว้แล้ว" (ใบแจ้งหนี้ ↔ ใบเสร็จ · เจ้าเดียวกัน) เติมหลังโหลด — เซิร์ฟเวอร์ตัดสินว่ามีอะไรให้ผูก/ต้องบอกไหม
-          actions += `<span id="rlSlot_${Layout.esc(d.id)}"></span>`;
+          // รอบ 266 แพ็ก A — "ผูกใบเสร็จ/เงินที่รับไว้แล้ว" (ใบแจ้งหนี้ ↔ ใบเสร็จ · เจ้าเดียวกัน) · เซิร์ฟเวอร์ตัดสินจากข้อมูลบนใบ (canOpenReceiptLink ·
+          // canChangeReceiptSource) — ผู้สมัครโหลดเมื่อกดปุ่มเท่านั้น (ฝ่ายค้าน M6: เดิมเรียกทุกครั้งที่เปิดเอกสารทุกชนิด)
+          if (d.canOpenReceiptLink === true) {
+            const rlInvoiceSide = !['Receipt', 'ReceiptVoucher'].includes(d.documentType);   // ป้ายปุ่มเท่านั้น — เงื่อนไขอยู่ที่เซิร์ฟเวอร์
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openReceiptLink('${Layout.jsArg(d.id)}')" title="เลือกใบเสร็จร่าง · เงินรอจัดสรร · ใบมัดจำ ของผู้ติดต่อเดียวกันมาตัดยอดค้าง — ระบบแสดงผลก่อนยืนยัน">${rlInvoiceSide ? '🔗 ผูกใบเสร็จ/เงินที่รับไว้แล้ว' : '🔗 ผูกกับใบแจ้งหนี้'}</button>`;
+          }
+          if (d.canChangeReceiptSource === true && d.relatedDocumentId) {
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.undoDraftReceiptSource('${Layout.jsArg(d.id)}')" title="ใบเสร็จร่างนี้กลับเป็นใบเสร็จอิสระ">✂️ ถอดใบต้นทางของใบร่าง</button>`;
+          }
           if (d.status === 'Approved' || d.status === 'Sent') {
             if (d.documentType === 'Quotation') {
               actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.quotationAcceptLink('${d.id}')" title="สร้างลิงก์สาธารณะให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ (อายุ 30 วัน) — คัดลอกลิงก์อัตโนมัติ">🔗 ลิงก์ยอมรับ</button>`;
@@ -13444,35 +13469,21 @@
           if (!/สิทธิ์/.test(e.message || '')) slot.innerHTML = ` <span class="text-xs text-gray-500" title="${Layout.esc(e.message || '')}">ตรวจเงินรอจัดสรรของลูกค้าไม่สำเร็จ</span>`;
         }
       },
-      /** รอบ 266 แพ็ก A — ปุ่ม "ผูกใบเสร็จ/เงินที่รับไว้แล้ว" (หน้าใบแจ้งหนี้) / "ผูกกับใบแจ้งหนี้" (หน้าใบเสร็จ) · เซิร์ฟเวอร์ตัดสิน showButton · ทุกแถว + เหตุผล + ทางไปต่อ
-       *  (Helpers/ReceiptLinkPolicy) — หน้าเว็บไม่มีสูตร/เงื่อนไขของตัวเอง (F2 ข้อ 5) · ข้อความจากเซิร์ฟเวอร์ผ่าน Layout.esc ทุกจุด */
-      async renderReceiptLinkButton(d) {
-        const slot = document.getElementById('rlSlot_' + d.id);
-        if (!slot) return;
-        const api = Layout.api(); if (!api || !api.getReceiptLinkCandidates) return;
-        try {
-          const c = (await api.getReceiptLinkCandidates(d.id))?.data;
-          if (!c) return;
-          this._rlFor = c;
-          let html = '';
-          if (c.showButton) {
-            const label = c.side === 'invoice' ? '🔗 ผูกใบเสร็จ/เงินที่รับไว้แล้ว' : '🔗 ผูกกับใบแจ้งหนี้';
-            html += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openReceiptLink()" title="เลือกใบเสร็จร่าง · เงินรอจัดสรร · ใบมัดจำ ของผู้ติดต่อเดียวกันมาตัดยอดค้าง — ระบบแสดงผลก่อนยืนยัน">${Layout.esc(label)}</button>`;
-          }
-          if (c.canUndoDraftSource) {
-            html += ` <button data-g="more" class="btn btn-secondary" onclick="Page.undoDraftReceiptSource('${Layout.jsArg(d.id)}')" title="ใบเสร็จร่างนี้กลับเป็นใบเสร็จอิสระ">✂️ ถอดใบต้นทางของใบร่าง</button>`;
-          }
-          slot.innerHTML = html;
-        } catch (e) {
-          // ไม่มีสิทธิ์ดูฝั่งขาย = ไม่มีปุ่ม · ความผิดพลาดอื่นต้องเห็น (ไม่งั้นปุ่มหายเงียบ)
-          if (!/สิทธิ์/.test(e.message || '')) slot.innerHTML = ` <span class="text-xs text-gray-500" title="${Layout.esc(e.message || '')}">ตรวจการผูกใบเสร็จไม่สำเร็จ</span>`;
-        }
-      },
+      /** รอบ 266 แพ็ก A — "ผูกใบเสร็จ/เงินที่รับไว้แล้ว" (หน้าใบแจ้งหนี้) / "ผูกกับใบแจ้งหนี้" (หน้าใบเสร็จ) · เซิร์ฟเวอร์ตัดสินทุกแถว + เหตุผล + ทางไปต่อ
+       *  (Helpers/ReceiptLinkPolicy) — หน้าเว็บไม่มีสูตร/เงื่อนไขของตัวเอง (F2 ข้อ 5) · ข้อความจากเซิร์ฟเวอร์ผ่าน Layout.esc ทุกจุด ·
+       *  ผู้สมัครโหลดเมื่อกดปุ่ม (ฝ่ายค้าน M6) */
       _rlReasonHtml(x) {
         return `${Layout.esc(x.reason || '')}${x.wayForward ? `<br><span style="color:#047857">👉 ${Layout.esc(x.wayForward)}</span>` : ''}`;
       },
-      async openReceiptLink() {
-        const c = this._rlFor; if (!c) return;
+      async openReceiptLink(docId) {
+        const api = Layout.api(); if (!api || !api.getReceiptLinkCandidates) return;
+        if (this._rlLoading) return;
+        this._rlLoading = true;
+        let c = null;
+        try { c = (await api.getReceiptLinkCandidates(docId))?.data; }
+        catch (e) { Layout.toast(e.message || 'โหลดรายการที่ผูกได้ไม่สำเร็จ', 'error', 10000); return; }
+        finally { this._rlLoading = false; }
+        if (!c) return;
         const items = c.items || [];
         const allowed = items.filter(x => x.allowed);
         const refused = items.filter(x => !x.allowed);

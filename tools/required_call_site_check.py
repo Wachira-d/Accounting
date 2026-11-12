@@ -19305,6 +19305,27 @@ RULES += [
          why=_R266_WHY + "266-1-2 ช่อง RelatedDocumentId ของ UpdateDocumentRequest มีผู้อ่าน (ไม่ใช่ silent no-op) + G-1 หลังเปลี่ยนผู้ติดต่อ"),
     dict(file=DOC, method="CollectApprovalWarningsAsync", must=["ReceiptLinkPolicy.DuplicateCashSaleWarning("],
          why=_R266_WHY + "266-1-14 G-2 ใบแจ้งหนี้หลังใบขายสดยอดเท่ากัน = คำเตือน"),
+    # ── ชุดแก้ฝ่ายค้าน (erp-review/2026-11-12/review-266-A.md · คำตัดสิน 266-1-15…22) ──
+    dict(file=_R266_GUARD, method="GuardReceiptSourceAsync", must=["ReceiptLinkPolicy.SourceStateRefusal(", "ForeignServiceVat.PayeeAmount("],
+         why=_R266_WHY + "M2 (266-1-16) ด่านฝั่งใบปลายทางของปุ่มผูก (ยกเลิก/แทน · ร่าง · ขายเงินสด · บางส่วนของใบแจ้งหนี้ VAT) ตรวจซ้ำที่สร้าง/แก้ไข/อนุมัติ"),
+    dict(file=DOC, method="ApproveDocumentAsync#2", must=["EnsureReceiptSourceUnchangedUnderLockAsync(", "atApproval: true"],
+         before=[("EnsureReceiptSourceUnchangedUnderLockAsync(", "AutoPostToJournalAsync(")],
+         why=_R266_WHY + "M1/M2 (266-1-15/16) ใต้ล็อกของการอนุมัติ ใบต้นทาง/ผู้ติดต่อต้องตรงกับที่อ่านไว้ · ตรวจยอดที่จะปิดหนี้ตอนอนุมัติ"),
+    dict(file=_R266_GUARD, method="ApplyReceiptSourceOnUpdateAsync", must=["ExecuteSqlRawAsync(", "live.Status"],
+         before=[("ExecuteSqlRawAsync(", "ReceiptLinkPolicy.Classify("), ("ExecuteSqlRawAsync(", "doc.RelatedDocumentId = target")],
+         why=_R266_WHY + "M1 (266-1-15) เส้นฟอร์มล็อกแถวแล้วจัดชนิดจากสถานะสดก่อนเขียนใบต้นทาง (ทางเข้าที่สองของข้อมูลชุดเดียวกับปุ่มผูก)"),
+    dict(file=DOC, method="UpdateDocumentAsync", must=["BeginTransactionAsync(", "ApplyReceiptSourceOnUpdateAsync(companyId, doc, request.RelatedDocumentId, actor)"],
+         before=[("BeginTransactionAsync(", "ApplyReceiptSourceOnUpdateAsync(")],
+         why=_R266_WHY + "M1/M5 (266-1-15/19) ธุรกรรมครอบการล็อก + การบันทึก · audit ของการเปลี่ยนใบต้นทางมีผู้กระทำ"),
+    dict(file=DOC, method="ApplyDepositToInvoiceCoreAsync", must=["request.ExpectedInvoiceBalanceDue"],
+         why=_R266_WHY + "M3 (266-1-17) ยอดค้างที่พรีวิวเห็นตรวจใต้ล็อกของเส้นหักมัดจำ (กดซ้ำ/สองแท็บ ไม่หักซ้ำ)"),
+    dict(file=_R266_SVC, method="LinkAsync", call_args=[("ApplyDepositRequest(", "ExpectedInvoiceBalanceDue")],
+         why=_R266_WHY + "M3 (266-1-17) ปุ่มผูกส่งยอดค้างที่พรีวิวเห็นเข้าเส้นหักมัดจำ"),
+    dict(file="Controllers/DocumentController.cs", method="UpdateDocument",
+         must=["OwnerActionGuard.IsApiKeyRequest(", "DocumentPermissionHelper.CanApproveAsync("],
+         before=[("OwnerActionGuard.IsApiKeyRequest(", "_documentService.UpdateDocumentAsync("),
+                 ("DocumentPermissionHelper.CanApproveAsync(", "_documentService.UpdateDocumentAsync(")],
+         why=_R266_WHY + "M4 (266-1-18) PUT ตั้งใบต้นทางของใบเสร็จร่าง = ด่านเดียวกับปุ่มผูก (API key ไม่ได้ · Approve ของใบปลายทาง)"),
     dict(file="Controllers/ReceiptLinkController.cs", method="Link",
          must=["DocumentPermissionHelper.CanApproveAsync(", "OwnerActionGuard.IsApiKeyRequest("],
          before=[("DocumentPermissionHelper.CanApproveAsync(", "_links.LinkAsync(")],
@@ -19315,6 +19336,10 @@ REVIEWER_CASES += [
     ("R266a", "GuardReceiptSourceAsync", "if (refusal != null)\n            throw", "if (refusal == null)\n            throw", True),
     # ผูกใบร่างโดยไม่ตรวจกุญแจพรีวิวใต้ล็อก ⇒ ต้องฟ้อง
     ("R266b", "LinkAsync", "EnsureFresh(locked, request.PreviewToken);", ";", True),
+    # เส้นฟอร์มจัดชนิดจากสถานะที่โหลดไว้ก่อนล็อก (ไม่ใช่สถานะสด) ⇒ ต้องฟ้อง
+    ("R266c", "ApplyReceiptSourceOnUpdateAsync", "with { Status = live.Status }", "", True),
+    # หักมัดจำไม่ส่งยอดค้างที่คาดไว้ ⇒ ต้องฟ้อง
+    ("R266d", "LinkAsync", ", ExpectedInvoiceBalanceDue: e.Invoice.BalanceDue", "", True),
 ]
 
 def main() -> int:

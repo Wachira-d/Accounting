@@ -242,8 +242,8 @@ public class DataIntegrityReportService
             .ToListAsync();
         return rows.Select(r => new DataIntegritySuspect("ReceiptSourceContactMismatch", r.Id, r.DocumentNumber, r.DocumentDate,
                 $"สถานะ {r.Status} · อ้างใบต้นทาง {r.SourceNumber} ของผู้ติดต่อคนละราย — "
-                + (r.Status == DocumentStatus.Draft
-                    ? "ใบร่าง: แก้ผู้ติดต่อหรือใบต้นทางให้ตรงกันก่อนอนุมัติ (ระบบไม่ให้อนุมัติแล้ว)"
+                + (r.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval   // ฝ่ายค้าน L10: รออนุมัติ = ยังไม่ลงบัญชี
+                    ? "ยังไม่อนุมัติ (ยังไม่ลงบัญชี): แก้ผู้ติดต่อหรือใบต้นทางให้ตรงกันก่อนอนุมัติ — ระบบไม่ให้อนุมัติแล้ว (ใบรออนุมัติให้ตีกลับเป็นร่างก่อน)"
                     : "ลูกหนี้ของใบต้นทางอาจถูกตัดด้วยเงินของอีกราย — ให้ผู้ทำบัญชีตรวจ แล้วยกเลิกใบเสร็จและออกใหม่ให้ถูกราย (ระบบไม่แก้ให้)"),
                 r.TotalAmount, null, $"/pages/documents.html?openDoc={r.Id}", "เปิดเอกสาร"))
             .ToList();
