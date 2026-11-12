@@ -866,6 +866,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.OcrStuckScanSwe
 builder.Services.AddHostedService<Accounting.Services.Background.PdpaRetentionPurgeJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.NextAccOaQuotaWatch>();   // รอบ 254 WP-11 L4 (N8) — เฝ้าต้นทุน OA กลาง (push/reply) ทุกชั่วโมง · JobLock
 builder.Services.AddHostedService<Accounting.Services.Background.ChatRetentionPurgeJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.LineChatSlipRetentionJob>();   // รอบ 260 ฝ่ายค้าน M4 — ลบรูปสลิปจากแชต LINE ที่พ้นระยะเก็บ (JobLock)
 // 2026-10-19: ตรวจวันหมดอายุใบรับรอง SSL ของโดเมนแพลตฟอร์ม วันละครั้ง — เตือนผู้ดูแลระบบล่วงหน้า 30/14/7/1 วัน (หน้าเว็บ + อีเมล)
 builder.Services.AddHostedService<Accounting.Services.Background.TlsCertificateMonitorJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.BankUnmatchedDigestJob>();

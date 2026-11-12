@@ -43,5 +43,14 @@ public static class Round260LineSlipMigration
         """,
         """CREATE INDEX IF NOT EXISTS "IX_LineChatSlips_Company_Status" ON "LineChatSlips" ("CompanyId", "Status");""",
         """CREATE INDEX IF NOT EXISTS "IX_LineChatSlips_Company_Sha" ON "LineChatSlips" ("CompanyId", "FileSha256");""",
+        // ฝ่ายค้าน 260-1 M4: วันที่ลบสำเนารูป (PDPA retention)
+        """ALTER TABLE "LineChatSlips" ADD COLUMN IF NOT EXISTS "FileDeletedAt" timestamp NULL;""",
+        // ฝ่ายค้าน 260-1 L1: ข้อความ LINE เดียว = แถวเดียว (LINE ส่ง webhook ซ้ำระหว่างรอบแรกยังอ่านรูป) — ล้างค่าซ้ำก่อนสร้าง unique (แถวเก่าสุดคงไว้)
+        """
+        UPDATE "LineChatSlips" s SET "LineMessageId" = NULL
+        WHERE "LineMessageId" IS NOT NULL AND EXISTS (SELECT 1 FROM "LineChatSlips" o WHERE o."CompanyId" = s."CompanyId"
+            AND o."LineMessageId" = s."LineMessageId" AND (o."CreatedAt" < s."CreatedAt" OR (o."CreatedAt" = s."CreatedAt" AND o."Id" < s."Id")));
+        """,
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_LineChatSlips_Company_Message" ON "LineChatSlips" ("CompanyId", "LineMessageId") WHERE "LineMessageId" IS NOT NULL;""",
     };
 }

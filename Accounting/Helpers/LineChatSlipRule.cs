@@ -33,6 +33,29 @@ public static class LineChatSlipRule
     /// <summary>ใบที่เสนอให้เลือกสูงสุด (quick reply ของ LINE รับ 13 ปุ่ม — เหลือปุ่ม "ไม่ใช่ใบเหล่านี้")</summary>
     public const int MaxChoices = 10;
 
+    /// <summary>รอบ 260 ฝ่ายค้าน M4 (คำตัดสิน 260-1-9): แถวที่ไม่ได้ผูกเอกสารเก็บรูปไว้ไม่เกินเท่านี้ — เลย ⇒ งานเบื้องหลังลบรูป + ปิดแถว (ไม่มีเหตุทางกฎหมายให้เก็บรูปที่ไม่ใช่หลักฐานบัญชี) ·
+    /// แถวที่ผูกแล้ว/ปิดแล้วลบรูปทันที (สำเนาหลักฐานอยู่ที่ไฟล์แนบของเอกสาร)</summary>
+    public const int UnmatchedRetentionDays = 90;
+
+    /// <summary>ฝ่ายค้าน M2: แถว "กำลังแจ้งโอน" ที่ค้างนานเกินนี้ (ระบบล่มกลางทาง) ⇒ นับเป็นคิวพนักงาน</summary>
+    public static readonly TimeSpan StuckSubmitting = TimeSpan.FromMinutes(10);
+
+    /// <summary>ฝ่ายค้าน L2: แถว "LINE ยังไม่ผูก" ต่อบริษัทต่อวัน (เวลาไทย) สูงสุด — เกิน ⇒ ไม่เก็บ (คำตอบเดิมของรอบ 259) · แถวนี้ไม่แจ้งทีมรายแถว (รวมใน Autopilot)</summary>
+    public const int UnboundDailyCap = 30;
+
+    /// <summary>ฝ่ายค้าน L3: เพดานปุ่มเลือกใบต่อแหล่งแชต (ตารางกลาง)</summary>
+    public const int PostbackPerMinute = 6, PostbackPerDay = 60;
+
+    public static string PostbackRateKey(string sourceKey) => "co-line-slip-pb:" + sourceKey[..Math.Min(32, sourceKey.Length)];
+
+    // ── ฝ่ายค้าน M4 (PDPA ม.39): แถว RoPA ของ "รับรูปสลิปจากแชต LINE" — ระบบสร้างครั้งแรกที่รับรูป (ไม่ทับที่บริษัทแก้ไว้) ──
+    public const string RopaPurpose = "รับรูปสลิปโอนเงินที่ลูกค้าส่งในแชต LINE OA ของบริษัท เพื่อผูกกับเอกสารค้างชำระ";
+    public const string RopaLegalBasis = "Contract";
+    public const string RopaDataCategories = "รูปสลิป (ชื่อผู้โอน · เลขบัญชีบางส่วน · ยอด · วันที่ · เลขอ้างอิง) · hash ของ LINE userId/groupId · รูปอื่นที่ผู้ใช้ส่งมา";
+    public const string RopaRetention = "ผูกเอกสารแล้ว/ปิดรายการ ⇒ ลบสำเนาในแชตทันที (หลักฐานอยู่ที่ไฟล์แนบเอกสารตามอายุเอกสารบัญชี) · ไม่ได้ผูก ⇒ ลบรูปเมื่อครบ 90 วัน";
+    public const string RopaRecipients = "พนักงานผู้มีสิทธิ์ดูรายการรับชำระของบริษัท · LY Corporation (LINE — ผู้ส่งรูปผ่านแพลตฟอร์ม)";
+    public const string RopaNote = "ระบบสร้างอัตโนมัติเมื่อรับรูปจากแชต LINE ครั้งแรก (รอบ 260) — ผู้ดูแลข้อมูลทบทวนได้ที่หน้า PDPA";
+
     /// <summary>ไฟล์รูปจากแชตใหญ่สุดที่ดึงมาอ่าน</summary>
     public const int MaxBytes = 10 * 1024 * 1024;
 
@@ -56,8 +79,6 @@ public static class LineChatSlipRule
         /// (<c>SlipEvidenceRule.DuplicateStatuses</c> — ผู้ขายปฏิเสธสลิปแล้วส่งใหม่ได้) · ปิดโดยพนักงานแล้ว = ส่งใหม่ได้</summary>
         public static readonly string[] Live = { AwaitingChoice, Submitting, Unmatched };
 
-        /// <summary>คิวพนักงาน (ยังไม่ผูกใบ)</summary>
-        public static readonly string[] Assignable = { AwaitingChoice, Unmatched };
     }
 
     // ── เหตุที่สลิปเข้าคิวพนักงาน ──
@@ -70,6 +91,9 @@ public static class LineChatSlipRule
         public const string ChoiceExpired = "ChoiceExpired";
         public const string SubmitFailed = "SubmitFailed";
         public const string GrossBeforeWht = "GrossBeforeWht";
+        public const string DuplicateRef = "DuplicateRef";
+        public const string SystemError = "SystemError";
+        public const string IntakeOff = "IntakeOff";
 
         public static string Label(string? code) => code switch
         {
@@ -79,6 +103,9 @@ public static class LineChatSlipRule
             CustomerDeclined => "ลูกค้าบอกว่าไม่ใช่ใบที่ระบบเสนอ",
             ChoiceExpired => "ลูกค้าไม่ได้เลือกใบภายในเวลา",
             SubmitFailed => "ผูกกับเอกสารที่ตรงยอดไม่สำเร็จ",
+            DuplicateRef => "เลขอ้างอิงที่อ่านได้ซ้ำกับสลิปที่รับไว้แล้ว (รูปต่างกัน) — เทียบรูปกับรายการเดิมก่อนผูก (OCR อาจอ่านเลขผู้รับเงิน/Ref1 ที่เหมือนกันทุกใบ)",
+            SystemError => "ระบบขัดข้องระหว่างบันทึกการแจ้งโอน — ผูกเองได้",
+            IntakeOff => "ร้านปิดรับสลิปทางแชตก่อนลูกค้ากดเลือกใบ",
             GrossBeforeWht => "ยอดสลิปเท่ายอดเต็มก่อนหัก ณ ที่จ่าย (ลูกค้าอาจไม่ได้หัก) — เกินยอดค้าง: ตรวจว่าจะรับส่วนเกินเป็นเงินรอจัดสรร หรือรอหนังสือ 50 ทวิ",
             _ => "ยังไม่ผูกเอกสาร",
         };
@@ -119,7 +146,8 @@ public static class LineChatSlipRule
         // ยอดเต็มก่อนหัก ณ ที่จ่าย (ลูกค้าไม่หัก?) — เกินยอดค้าง ⇒ แจ้งโอนไม่ได้ · ไม่เดาว่าเงินส่วนเกินคืออะไร (คนตัดสิน: เงินรอจัดสรร/50 ทวิ) · แบบเดียวกับ BankReceiptAutoSettle "เสนอเท่านั้น"
         if (matches.Count == 0) return new Decision(Outcome.None, matches, grossHit ? Reasons.GrossBeforeWht : Reasons.NoMatch);
         var ordered = matches.OrderBy(m => m.Doc.Date).ThenBy(m => m.Doc.Number, StringComparer.Ordinal).Take(MaxChoices).ToList();
-        return reading.Amount != null && matches.Count == 1
+        // รอบ 260 ฝ่ายค้าน M3 (คำตัดสิน 260-1-7): ผูกเองเฉพาะภาพที่ "ดูเป็นสลิป" (เลขอ้างอิง/คำว่าสำเร็จ) — ภาพหน้าชำระ/QR ที่มียอดเดียว ⇒ ให้ลูกค้ากดยืนยัน 1 ปุ่ม
+        return reading.Amount != null && reading.LooksLikeSlip && matches.Count == 1
             ? new Decision(Outcome.One, ordered, null)
             : new Decision(Outcome.Many, ordered, null);
     }
@@ -214,6 +242,8 @@ public static class LineChatSlipRule
         public const string StaffWillCheck = "ได้รับรูปแล้วค่ะ — ถ้าเป็นสลิปโอนเงิน ทางร้านจะตรวจและผูกกับเอกสารให้";
 
         public const string DownloadFailed = "ได้รับรูปแล้ว แต่ระบบดึงรูปไม่สำเร็จค่ะ — กรุณาส่งสลิปอีกครั้ง";
+
+        public const string IntakeOff = "ตอนนี้ร้านปิดรับสลิปทางแชตแล้วค่ะ — ทางร้านจะตรวจสลิปที่ส่งมาและผูกกับเอกสารให้";
 
         public const string ChoiceInvalid = "ตัวเลือกนี้ใช้ไม่ได้แล้วค่ะ (หมดอายุหรือเลือกไปแล้ว) — ทางร้านจะตรวจสลิปและผูกกับเอกสารให้";
 

@@ -340,15 +340,13 @@ public class AutopilotService : IAutopilotService
     /// <summary>รอบ 260: สลิปจากแชต LINE ที่รอพนักงาน — แถว Unmatched + ตัวเลือกที่หมดอายุแล้ว (อ่านอย่างเดียว · การย้ายสถานะทำที่ <c>LineChatSlipService</c>)</summary>
     private async Task<List<AutopilotIssueDto>> LineChatSlipIssuesAsync(Guid companyId, DateTime nowUtc, CancellationToken ct)
     {
-        var rows = await _db.LineChatSlips.AsNoTracking()
-            .Where(x => x.CompanyId == companyId && (x.Status == LineChatSlipRule.Statuses.Unmatched
-                || (x.Status == LineChatSlipRule.Statuses.AwaitingChoice && x.ChoiceExpiresAt != null && x.ChoiceExpiresAt <= nowUtc)))
+        // ตัวกรองคิวเดียวกับหน้ารายการรับชำระ (LineChatSlipService.QueueOf — ไม่ได้ผูก · ตัวเลือกหมดอายุ · ค้างกำลังแจ้งโอน)
+        var rows = await LineChatSlipService.QueueOf(_db.LineChatSlips.AsNoTracking(), companyId, nowUtc)
             .OrderBy(x => x.CreatedAt).Take(50)
-            .Select(x => new { x.Id, x.OcrAmount, x.Reason, x.Status, x.CreatedAt })
             .ToListAsync(ct);
         return rows.Select(x => new AutopilotIssueDto("LineChatSlipUnmatched",
             "สลิปจากแชต LINE ยังไม่ผูกเอกสาร" + (x.OcrAmount is decimal a ? $" ยอด {a:N2} บาท" : ""),
-            LineChatSlipRule.Reasons.Label(x.Status == LineChatSlipRule.Statuses.AwaitingChoice ? LineChatSlipRule.Reasons.ChoiceExpired : x.Reason)
+            LineChatSlipRule.Reasons.Label(LineChatSlipService.EffectiveReason(x))
                 + " — ดูรูปสลิปแล้วผูกกับเอกสาร หรือปิดรายการ (ระบบไม่ปิดหนี้จากสลิปเอง)",
             x.CreatedAt, null, "ไปผูกสลิป", SlipQueueHref, null, null, null)).ToList();
     }

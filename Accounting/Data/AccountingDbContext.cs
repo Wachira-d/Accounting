@@ -4110,6 +4110,7 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.ResolvedBy).HasMaxLength(256);
             e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_LineChatSlips_Company_Status");
             e.HasIndex(x => new { x.CompanyId, x.FileSha256 }).HasDatabaseName("IX_LineChatSlips_Company_Sha");
+            e.HasIndex(x => new { x.CompanyId, x.LineMessageId }).IsUnique().HasFilter("\"LineMessageId\" IS NOT NULL").HasDatabaseName("UX_LineChatSlips_Company_Message");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<LineOaSwitchEvent>(e =>

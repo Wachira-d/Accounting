@@ -19,8 +19,13 @@ namespace Accounting.Controllers;
 public class LineChatSlipController : ControllerBase
 {
     private readonly ILineChatSlipService _slips;
+    /// <summary>ฝ่ายค้าน 260-1 M4: บันทึกการเปิดดูรูปสลิป (PDPA ม.37 PiiAccessLog) — null = ไม่บันทึก (เทสต์)</summary>
+    private readonly Accounting.Services.Implementations.Pdpa.IPdpaService? _pdpa;
 
-    public LineChatSlipController(ILineChatSlipService slips) => _slips = slips;
+    public LineChatSlipController(ILineChatSlipService slips, Accounting.Services.Implementations.Pdpa.IPdpaService? pdpa = null)
+    {
+        _slips = slips; _pdpa = pdpa;
+    }
 
     private string Actor() => $"user:{JwtHelper.GetUserIdFromClaims(User)}";
 
@@ -34,7 +39,12 @@ public class LineChatSlipController : ControllerBase
     public async Task<IActionResult> SlipFile(Guid companyId, Guid slipId, CancellationToken ct)
     {
         var f = await _slips.ReadFileAsync(companyId, slipId, ct);
-        if (f == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบไฟล์สลิป"));
+        if (f == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบไฟล์สลิป (ผูก/ปิดแล้วระบบลบสำเนาในแชต — ดูที่ไฟล์แนบของเอกสาร)"));
+        if (_pdpa != null)
+            await _pdpa.LogPiiAccessAsync(companyId, JwtHelper.GetUserIdFromClaims(User), User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "",
+                subjectType: Accounting.Helpers.LineChatSlipRule.AuditEntityType, subjectId: slipId, fieldName: "รูปสลิปจากแชต LINE", operation: "Read",
+                purpose: "ตรวจสลิปเพื่อผูกกับเอกสาร", ipAddress: HttpContext?.Connection?.RemoteIpAddress?.ToString(),
+                userAgent: HttpContext?.Request?.Headers.UserAgent.ToString(), ct: ct);
         Response.Headers["Cache-Control"] = "private, no-store";
         return File(f.Value.Bytes, f.Value.ContentType);
     }
@@ -49,7 +59,8 @@ public class LineChatSlipController : ControllerBase
         {
             var r = await _slips.AssignAsync(companyId, slipId, request, Actor(), ct);
             return Ok(new ApiResponse<LineChatSlipAssignResult>(true, r,
-                $"ผูกสลิปกับ {r.DocumentNumber} แล้ว — อยู่ในรายการรอยืนยันด้านล่าง (ยังไม่ใช่การรับชำระ)"));
+                $"ผูกสลิปกับ {r.DocumentNumber} แล้ว — อยู่ในรายการรอยืนยันด้านล่าง (ยังไม่ใช่การรับชำระ)"
+                + (r.CrossContact ? " · ⚠️ เอกสารนี้เป็นของผู้ติดต่ออื่นที่ไม่ใช่เจ้าของแชต — ตรวจก่อนยืนยัน (บันทึกในประวัติแล้ว)" : "")));
         }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<LineChatSlipAssignResult>(false, null, ex.Message)); }
         catch (BusinessRuleException ex) { return StatusCode(ex.StatusCode, new ApiResponse<LineChatSlipAssignResult>(false, null, ex.Message)); }

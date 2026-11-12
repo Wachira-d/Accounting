@@ -55,15 +55,27 @@ public class CustomerLineWebhookController : ControllerBase
            && await _limiter.TryConsumeAsync(LineOaHealth.ChatMediaRateKey(destination, sourceId),
                LineOaHealth.ChatMediaPerMinute, LineOaHealth.ChatMediaPerDay, ct, failClosed: true);
 
+    /// <summary>ฝ่ายค้าน 260-1 L3: ปุ่มเลือกใบของสลิปจากแชต — เพดานต่อแหล่งแชต (ตารางกลาง · failClosed) ก่อนตรวจลายเซ็น/ฐาน · postback อื่นไม่แตะตัวนับ</summary>
+    private async Task<bool> ConsumeSlipPostbackAsync(string? destination, string sourceId, string? data, CancellationToken ct)
+        => LineChatSlipRule.IsOurs(data) && !string.IsNullOrEmpty(sourceId) && _limiter != null
+           && await _limiter.TryConsumeAsync(LineChatSlipRule.PostbackRateKey(NotifyEndpointKind.LineIdHash(
+                   string.IsNullOrWhiteSpace(destination) ? null : destination.Trim(), sourceId.Trim())),
+               LineChatSlipRule.PostbackPerMinute, LineChatSlipRule.PostbackPerDay, ct, failClosed: true);
+
     /// <summary>รอบ 260: เหตุการณ์ในกลุ่มที่เป็นงานของเส้นสลิป (รูป · ปุ่มเลือกใบ) ⇒ message ที่ตอบ · null = เส้นกลุ่มเดิม</summary>
     private async Task<IReadOnlyList<object>?> GroupSlipRepliesAsync(Guid companyId, string? destination, string? type, JsonElement ev, string groupId, CancellationToken ct)
     {
         if (_chatSlips == null || string.IsNullOrEmpty(groupId)) return null;
         var source = Accounting.Models.DTOs.Line.LineChatSource.Group(groupId);
-        if (type == "postback" && ev.TryGetProperty("postback", out var pb) && pb.TryGetProperty("data", out var data))
-            return await _chatSlips.HandlePostbackAsync(companyId, destination, source, data.GetString(), ct);
+        if (type == "postback" && ev.TryGetProperty("postback", out var pb) && pb.TryGetProperty("data", out var data)
+            && LineChatSlipRule.IsOurs(data.GetString()))
+            return await ConsumeSlipPostbackAsync(destination, groupId, data.GetString(), ct)
+                ? await _chatSlips.HandlePostbackAsync(companyId, destination, source, data.GetString(), ct)
+                : Array.Empty<object>();   // เกินเพดาน ⇒ ไม่ตอบ (ไม่ส่งต่อเส้นกลุ่มเดิม)
+        // ฝ่ายค้าน L3: ตรวจว่ากลุ่มเป็นงานของเส้นสลิป (อ่านอย่างเดียว) ก่อนกินเพดาน — กลุ่มอื่นไม่เขียนตัวนับ
         if (type == "message" && ev.TryGetProperty("message", out var msg) && msg.TryGetProperty("type", out var mt) && mt.GetString() == "image"
-            && msg.TryGetProperty("id", out var mid) && await ConsumeMediaAsync(destination, groupId, ct))
+            && msg.TryGetProperty("id", out var mid) && await _chatSlips.IsSlipGroupAsync(companyId, destination, groupId, ct)
+            && await ConsumeMediaAsync(destination, groupId, ct))
             return await _chatSlips.HandleImageAsync(companyId, destination, source, mid.GetString() ?? "", ct);
         return null;
     }
@@ -135,7 +147,7 @@ public class CustomerLineWebhookController : ControllerBase
                     if (_chatSlips != null && sourceType == "group" && src.TryGetProperty("groupId", out var slipGroup)
                         && await GroupSlipRepliesAsync(companyId, destination, type, ev, slipGroup.GetString() ?? "", ct) is { } groupSlipReply)
                     {
-                        if (!string.IsNullOrEmpty(groupReplyToken))
+                        if (groupSlipReply.Count > 0 && !string.IsNullOrEmpty(groupReplyToken))
                             await _links.ReplyMessagesAsync(CustomerNotifyChannel.ScopeCompany, companyId, groupReplyToken, groupSlipReply, ct);
                         continue;
                     }
@@ -177,7 +189,8 @@ public class CustomerLineWebhookController : ControllerBase
                         break;
                     case "postback":
                         // รอบ 260: ปุ่มเลือกใบของสลิปจากแชต (ลายเซ็น + ตรวจซ้ำกับฐานในบริการ)
-                        if (_chatSlips != null && ev.TryGetProperty("postback", out var pbu) && pbu.TryGetProperty("data", out var pbuData))
+                        if (_chatSlips != null && ev.TryGetProperty("postback", out var pbu) && pbu.TryGetProperty("data", out var pbuData)
+                            && await ConsumeSlipPostbackAsync(destination, userId, pbuData.GetString(), ct))
                             replyMessages = await _chatSlips.HandlePostbackAsync(companyId, destination,
                                 Accounting.Models.DTOs.Line.LineChatSource.User(userId), pbuData.GetString(), ct);
                         break;

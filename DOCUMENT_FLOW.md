@@ -3188,7 +3188,14 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   Autopilot `LineChatSlipUnmatched` ชี้คิวเดียวกัน
 - **ค่าตั้ง** — `CompanySettings.LineChatSlipIntakeEnabled` (ค่าตั้งต้นเปิด — 260-1-4 · แท็บ LINE ของหน้าตั้งค่า · PUT `chatSlipIntake` null = คงเดิม) ·
   แถวความพร้อม `chat-slip` (`LineChatSlipRule.ReadinessRow`: ปิด · OA/webhook ยังไม่พร้อม · เครื่องนี้อ่านรูปไม่ได้ · พร้อม) · ตาราง `LineChatSlips` (`Round260LineSlipMigration`)
-- เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde
+- **ฝ่ายค้าน 260-1 (คำตัดสิน 260-1-7…10)** — M1 ref จาก OCR ไม่ประทับลงรายการรอยืนยัน (`bankRef: null`) · ref ซ้ำรูปต่าง ⇒ คิวพนักงาน `DuplicateRef` ·
+  M2 ล้มด้วยเหตุใดก็ตามหลังจอง ⇒ แถวกลับคิว (`SystemError` · `FallbackToStaffAsync`/`RestoreToStaffAsync`) · พนักงานผูกล้ม ⇒ คืนสถานะ (`finally`) · ไฟล์เขียนแล้วแถวไม่ได้บันทึก ⇒ ลบไฟล์ ·
+  แถวค้าง "กำลังแจ้งโอน" > 10 นาทีอยู่ในคิว · M3 ผูกเองเฉพาะภาพที่ดูเป็นสลิป (`LooksLikeSlip`) · M4 ลบสำเนารูปเมื่อผูก/ปิด + `LineChatSlipRetentionJob` (90 วัน) + PiiAccessLog + RoPA ·
+  M5 คิวพนักงาน: ค่าเริ่มต้นว่าง · เลือก+พิมพ์พร้อมกัน = ขัดกัน · ยอดอ่านไม่ออก = ไม่ส่ง · L1 messageId เดียว = แถวเดียว (unique) · L2 ไม่ผูก: ไม่แจ้งรายแถว + 30/วัน ·
+  L3 กลุ่มตรวจการผูกก่อนกินเพดาน · ปุ่มมีเพดาน 6/นาที 60/วัน · L4 ใบที่สลิปรอตรวจเต็มแล้วไม่เป็นผู้สมัคร · L5 กรองชนิดใน SQL ก่อนจำกัด · GET ไม่เขียนฐาน (คิวคำนวณจากสถานะ+เวลา `QueueOf`) ·
+  L6 ผูกด้วยเลขที่: เฉพาะชนิดที่รับชำระได้ · ซ้ำหลายใบ ⇒ 409 · ใบของผู้ติดต่ออื่น ⇒ คำเตือน + audit `crossContact` · L7 badge สลิปค่าบริการผ่าน `OcrSlipText.BadgeAmount` (เทสต์สองทิศ) ·
+  L8 ปีสองหลักตัวเดียว `OcrSlipText.TwoDigitYear` · L9 ปิดสวิตช์ ⇒ ปุ่มเดิมกดไม่ได้ (คิวพนักงาน) · ป้ายไฟล์แนบ `line-chat-staff`
+- เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde (ฝ่ายค้าน: 65c031ed)
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
 

@@ -39,14 +39,8 @@ public class SlipOcrAssistService : ISlipOcrAssistService
             var reading = Accounting.Helpers.OcrSlipText.Parse(text);
             var amounts = reading.Amounts;
 
-            decimal? chosen = null;
-            bool? matches = null;
-            if (amounts.Count > 0)
-            {
-                // ให้ค่าที่ "ตรงกับยอดที่แจ้ง" มาก่อน (ปลอดภัยสุดสำหรับ badge)
-                if (amounts.Any(a => Math.Abs(a - expected) < 0.01m)) { chosen = expected; matches = true; }
-                else { chosen = amounts.Max(); matches = false; } // ยอดสูงสุด = มักเป็นยอดโอน
-            }
+            // ให้ค่าที่ "ตรงกับยอดที่แจ้ง" มาก่อน (ปลอดภัยสุดสำหรับ badge) · ไม่ตรง ⇒ ยอดสูงสุด — ตัวเดียว OcrSlipText.BadgeAmount (เทสต์ล็อก)
+            var (chosen, matches) = Accounting.Helpers.OcrSlipText.BadgeAmount(amounts, expected);
 
             payment.SlipOcrAmount = chosen;
             payment.SlipOcrAmountMatches = matches;
