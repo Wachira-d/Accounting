@@ -117,7 +117,10 @@ public class PartnerConsentRound264DbTests
         Assert.Equal("ทดสอบถอน", rows[0].WithdrawReason);
         Assert.Null(rows[1].WithdrawnAt);
         Assert.Equal(second.Id, rows[1].Id);
-        var events = await check.AuditLogs.AsNoTracking().Where(a => a.CompanyId == s.B && a.EntityType == nameof(PartnerAutomationConsent)).Select(a => a.NewValues!).ToListAsync();
+        // แถว audit อัตโนมัติของ ChangeTracker (สร้าง/แก้ entity) อยู่ร่วมกัน — นับเฉพาะเหตุการณ์ที่ service เขียน
+        var events = (await check.AuditLogs.AsNoTracking().Where(a => a.CompanyId == s.B && a.EntityType == nameof(PartnerAutomationConsent)).Select(a => a.NewValues!).ToListAsync())
+            .Where(e => e.Contains("PartnerConsent")).ToList();
+        Assert.Equal(3, events.Count);
         Assert.Equal(2, events.Count(e => e.Contains("PartnerConsentGranted")));
         Assert.Equal(1, events.Count(e => e.Contains("PartnerConsentWithdrawn")));
         Assert.All(events, e => Assert.Contains(PartnerConsent.RuleCode, e));
@@ -325,7 +328,7 @@ public class PartnerConsentRound264DbTests
         }
         using var check = DbTestDatabase.TryCreateContext()!;
         var rows = await check.AuditLogs.AsNoTracking()
-            .Where(a => a.CompanyId == s.B && a.EntityType == nameof(WorkflowAutomationConfig)).ToListAsync();
+            .Where(a => a.CompanyId == s.B && a.EntityType == nameof(WorkflowAutomationConfig) && a.NewValues!.Contains("WorkflowAutomationConfigChanged")).ToListAsync();
         var one = Assert.Single(rows);
         Assert.Equal(s.OwnerB, one.UserId);
         Assert.Contains("WorkflowAutomationConfigChanged", one.NewValues);
