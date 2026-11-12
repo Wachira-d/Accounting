@@ -105,6 +105,15 @@ public class AdminPlatformBillingController : ControllerBase
             .ToList()));
     }
 
+    /// <summary>คำตัดสิน 260-5-6 (ฝ่ายค้าน M4): ค่าสแกน API v1 ที่ไม่ควรถูกคิดแต่อยู่ในใบแจ้งหนี้ค่าบริการแล้ว (+ สแกนล้มที่กินโควตาฟรีของเดือนที่ปิดรอบ) —
+    /// คิวอ่านอย่างเดียวให้ผู้ให้บริการออกใบลดหนี้ (ม.86/10) · ตัวประกอบเดียว <c>OcrFailedScanRefund.AwaitingCreditNotesAsync</c></summary>
+    [HttpGet("ocr-v1-credit-notes")]
+    public async Task<ActionResult<ApiResponse<object>>> OcrV1CreditNotes(CancellationToken ct)
+    {
+        var queue = await Accounting.Helpers.OcrFailedScanRefund.AwaitingCreditNotesAsync(_db, ct);
+        return Ok(new ApiResponse<object>(true, queue));
+    }
+
     [HttpGet("tenant-routed-intents")]
     public async Task<ActionResult<ApiResponse<object>>> TenantRoutedIntents(CancellationToken ct)
     {

@@ -673,6 +673,8 @@ public class CustomerCreditDbTests
             Assert.Contains(LateReceiptTaxPoint.IssuedAfterMoneyMarker, receipt.InternalNotes ?? "", StringComparison.Ordinal);
             Assert.DoesNotContain(LateReceiptTaxPoint.IssuedAfterMoneyMarker, receipt.Notes ?? "", StringComparison.Ordinal);   // ไม่พิมพ์ถึงลูกค้า
             Assert.Equal(received.Date, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == inv.Id)).OutputVatDueAt?.Date);   // งวด VAT = วันรับเงิน
+            Assert.Equal(received.Date, receipt.TaxPointDate?.Date);           // 260-5-6 H1: งวดรายงานของใบกำกับ = วันที่ระบบลงภาษี
+            Assert.Equal(70m, await Pp30VatOfAsync(check, s.CompanyId, received, inv.Id, receipt.Id));   // ภ.พ.30 งวดรับเงิน มี 70 ครั้งเดียว
         }
 
         // (ข) ทิศตรงข้าม: เงินโอนเกิน (หนี้ที่ต้องคืนจนวันหักกลบ) ⇒ ใบลงวันที่จัดสรร = วันที่ใบ ⇒ ไม่มีหมายเหตุออกช้า
@@ -687,6 +689,55 @@ public class CustomerCreditDbTests
             Assert.NotNull(receipt);
             Assert.Equal(Today, receipt!.DocumentDate.Date);
             Assert.DoesNotContain(LateReceiptTaxPoint.IssuedAfterMoneyMarker, receipt.InternalNotes ?? "", StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>ยอดภาษีขายของเอกสารชุดนี้ในรายงาน ภ.พ.30 ของงวด (แถวที่ไม่ถูกตัดออก)</summary>
+    private static async Task<decimal> Pp30VatOfAsync(Accounting.Data.AccountingDbContext db, Guid companyId, DateTime month, params Guid[] docIds)
+    {
+        var report = await new TaxService(db).ComputeVatReportAsync(companyId, month.Year, month.Month);
+        return report.Lines.Where(l => !l.IsExcluded && l.DocumentId is Guid id && docIds.Contains(id)).Sum(l => l.TaxAmount);
+    }
+
+    [Fact]
+    public async Task R2605_5_H1_รับเงินค้างออกใบในงวดที่เลยกำหนดยื่น_ภาษีขายอยู่ในภพ30งวดปัจจุบันครั้งเดียว_ทิศตรงข้ามงวดเปิดอยู่งวดรับเงิน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+
+        // (ก) เงิน "ค้างออกใบ" เมื่อ 2 เดือนก่อน (งวดนั้นเลยกำหนดยื่นแล้ว) → ใบแจ้งหนี้มี VAT 70 วันนี้ → จัดสรร ⇒ ระบบลงภาษีงวดปัจจุบัน + [DEPOSIT-LATE-VAT]
+        //     ใบกำกับ ณ วันรับเงินลงวันที่รับเงิน (ม.105) แต่ TaxPointDate = วันที่ระบบลงภาษี ⇒ ภ.พ.30 งวดปัจจุบันมี 70 ครั้งเดียว · งวดรับเงินไม่มี
+        var s = await SeedAsync(db);
+        var uninvoiced = await CreditAsync(db, s, 1_070m, UnappliedReason.UninvoicedSupply, TwoMonthsAgo);
+        var inv = await InvoiceAsync(db, s, s.CustomerId, 1_000m, 70m, date: Today);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Credits(req).AllocateAsync(s.CompanyId, uninvoiced.Id, new AllocateCustomerCreditRequest(inv.Id, 1_070m, Today), "tester");
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var d = await check.Documents.AsNoTracking().SingleAsync(x => x.Id == inv.Id);
+            Assert.Equal(Today, d.OutputVatDueAt?.Date);
+            var receipt = await ReceiptOfAsync(check, s.CompanyId, uninvoiced.Id, inv.Id);
+            Assert.True(receipt != null, "ไม่มีใบกำกับรายใบ — หมายเหตุ: " + d.InternalNotes);
+            Assert.Equal(TwoMonthsAgo.Date, receipt!.DocumentDate.Date);      // กระดาษ = วันรับเงิน
+            Assert.Equal(Today, receipt.TaxPointDate?.Date);                   // งวดรายงาน = วันที่ระบบลงภาษี
+            Assert.Contains(DepositPolicyResolver.LateVatMarker, receipt.InternalNotes ?? "", StringComparison.Ordinal);   // M1: หมายเหตุบอกงวดตามธงล่าช้า
+            Assert.Equal(70m, await Pp30VatOfAsync(check, s.CompanyId, Today, inv.Id, receipt.Id));
+            Assert.Equal(0m, await Pp30VatOfAsync(check, s.CompanyId, TwoMonthsAgo, inv.Id, receipt.Id));
+        }
+
+        // (ข) ทิศตรงข้าม: งวดรับเงินยังยื่นทัน (เงินเข้าวันนี้ก่อนออกใบในวันเดียวกัน) ⇒ ภาษีอยู่งวดรับเงินครั้งเดียว · ไม่มีธงล่าช้า
+        var s2 = await SeedAsync(db);
+        var open = await CreditAsync(db, s2, 1_070m, UnappliedReason.UninvoicedSupply, Today);
+        var inv2 = await InvoiceAsync(db, s2, s2.CustomerId, 1_000m, 70m, date: Today);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Credits(req).AllocateAsync(s2.CompanyId, open.Id, new AllocateCustomerCreditRequest(inv2.Id, 1_070m, Today), "tester");
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var receipt = await ReceiptOfAsync(check, s2.CompanyId, open.Id, inv2.Id);
+            Assert.NotNull(receipt);
+            Assert.Equal(Today, receipt!.TaxPointDate?.Date ?? receipt.DocumentDate.Date);
+            Assert.DoesNotContain(DepositPolicyResolver.LateVatMarker, receipt.InternalNotes ?? "", StringComparison.Ordinal);
+            Assert.Equal(70m, await Pp30VatOfAsync(check, s2.CompanyId, Today, inv2.Id, receipt.Id));
         }
     }
 

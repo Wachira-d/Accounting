@@ -18430,7 +18430,8 @@ _R2605_WHY = "รอบ 260-5 (คำตัดสิน 260-5-*): "
 RULES += [
     dict(file=DOC, method="CreateSettlementReceiptAsync",
          must=["LateReceiptTaxPoint.IssuedAfterMoneyNote(", "payment.PaymentDate, invoice.DocumentDate, carriesTaxInvoiceRole, receipt.VatAmount",
-               "AppendInternalNote(receipt, issuedLateNote)", "DocumentDate = payment.PaymentDate,"],
+               "AppendInternalNote(receipt, issuedLateNote)", "DocumentDate = payment.PaymentDate,",
+               "receipt.TaxPointDate = vatDueAt.Date", "invoice.OutputVatDueAt);"],
          forbid=["LateReceiptTaxPoint.ReceiptDocumentDate("],
          why=_R2605_WHY + "260-5-1 ใบเสร็จ/ใบกำกับลงวันที่รับเงินจริง (ม.105 · ม.78/1 · ม.86 — ไม่เลื่อนเป็นวันที่ใบแจ้งหนี้) · ใบที่ถือ VAT ออกหลังวันรับเงิน ⇒ หมายเหตุภายใน [LATE-TAX-INVOICE]"),
     dict(file="Helpers/OcrFailedScanRefund.cs", method="Decide", must=["OcrQuotaRefundRule.ShouldRefund(scanStatus, ocrEngine)"],
@@ -18438,8 +18439,14 @@ RULES += [
     dict(file="Helpers/OcrFailedScanRefund.cs", method="RunCoreAsync",
          must=["AdvisoryLockKey.For(AdvisoryLockKey.OneShotDataFix, MarkerKey)", "alreadyDone.Contains(ev.Id.ToString())", "scan!.CompanyId == ev.CompanyId",
                "AddChainedAuditLog(", "Decide(found,", "DatabaseMigrationHelper.OneShotDataFixesTableSql"],
-         before=[("alreadyDone.Contains(ev.Id.ToString())", "account!.CreditBalance += ev.ChargedAmount")],
-         why=_R2605_WHY + "260-5-2 ครั้งเดียว + ไม่คืนซ้ำต่อแถว (audit) · สแกนของบริษัทเดียวกัน · audit ทุกแถว"),
+         before=[("alreadyDone.Contains(ev.Id.ToString())", "AddChainedAuditLog("),
+                 ("AdvisoryLockKey.For(AdvisoryLockKey.UsageInvoicing", "db.UsageEvents.IgnoreQueryFilters()")],
+         why=_R2605_WHY + "260-5-2 ครั้งเดียว + ไม่คืนซ้ำต่อแถว (audit) · สแกนของบริษัทเดียวกัน · audit ทุกแถว · 260-5-6 M5 ล็อกงวดเดียวกับงานออกบิลก่อนอ่านแถว"),
+    dict(file="Controllers/AdminPlatformBillingController.cs", method="OcrV1CreditNotes", must=["OcrFailedScanRefund.AwaitingCreditNotesAsync("],
+         why=_R2605_WHY + "260-5-6 M4 คิวใบลดหนี้ของผู้ให้บริการมาจากตัวประกอบเดียว"),
+    dict(file="Controllers/WhtCertIntakeController.cs", method="Upload", must=["WhtCertUploadLinkPolicy.InternalScanKey(companyId)", "WhtCertUploadLinkPolicy.InternalScansPerDay"],
+         before=[("WhtCertUploadLinkPolicy.InternalScanKey(companyId)", "_ocr.ScanAsync(")],
+         why=_R2605_WHY + "260-5-7 กล่องรับ 50 ทวิ ภายในมีเพดานสแกนต่อบริษัทก่อนเรียกเครื่องอ่าน"),
 ]
 REVIEWER_CASES += [
     # 260-5-2: ถอดกันคืนซ้ำต่อแถว ⇒ marker ถูกลบแล้วคืนเครดิตสองครั้ง ⇒ ต้องฟ้อง
