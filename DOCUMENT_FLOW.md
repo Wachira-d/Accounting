@@ -3164,6 +3164,31 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (`LineQueue.CustomerInitiated`) · ฟอร์มกฎเตือนชั่วโมงส่งในช่วงเงียบ · ปิดช่วงเงียบปล่อยแถวที่รอ · Autopilot ซ่อนเรื่องที่แก้แล้ว · สแกนใกล้/เกินกำหนดผ่าน JobLock
 - เทสต์ `LineRound260Tests` · Db `LineRound260DbTests` · ล็อก R2604 (+ เคส R2604a–c) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 2f2579a6 · ชุดแก้ฝ่ายค้าน commit 6611da26 (CI 43162956487 เขียว)
 
+### 2.12g-262 รอบ 262 บริษัทผู้ให้บริการเรียกเก็บค่าบริการทาง LINE — LINE OA กลาง = OA ของบริษัทผู้ให้บริการ (`erp-review/2026-11-12/team-262-provider-line-billing.md` · คำตัดสิน 262-1-*)
+
+- **ตัวตัดสินเดียว** `Helpers/ProviderCentralOa` (pure): เฉพาะบริษัทผู้ให้บริการ (`SiteSettings.PlatformCompanyId` · ด่าน `ProviderCentralOa.Allowed` = `LineGroupBindRule.CentralScopeAllowed` อ่านใหม่ทุกครั้ง)
+  OA กลางคือ "OA ของบริษัท" สำหรับผู้ติดต่อ — LINE ผู้ใช้ 1:1 + กลุ่ม (กลุ่มคงเส้น §2.12g-256-2) · บริษัทอื่นคง N8 · **กลุ่มกลางของแอดมินห้ามเสมอ** (`GroupProblem` + `IsPlatformCentralGroup`)
+- **ตัวหาผู้รับ**: `LineOpenness.NextAccUserOpen` + `CentralOaDestination` (`ContactRecipientResolver.LoadLineAsync`) → `ContactRecipientRule.LineGate`: ปลายทาง `nextacc`
+  LineUser ส่งได้เมื่อเป็นบริษัทผู้ให้บริการ · บอทของ OA กลางไม่ตรงบอทที่ผูก ⇒ "ต้องผูกใหม่" (`RuleCodeOaChanged`) · บริษัทผู้ให้บริการเปลี่ยน ⇒ `NextAccNotOpenReason`
+- **ผูก 1:1** (262-1-2): คำเชิญ `ContactLineInvites.OaScope` (คอลัมน์ใหม่ ค่าตั้งต้น `company` · migration `ContactLineDeliveryMigration`) — บริษัทผู้ให้บริการออก scope `nextacc`
+  (OA กลางต้องมี token + secret — `CentralUserProblemAsync`) · หน้า `contact-line-join.html` เดิม (ยินยอม PDPA ม.19 · ปุ่มเพิ่มเพื่อน/ส่งรหัส = Basic ID ของ OA กลาง) ·
+  ผู้รับส่ง `ผูก LN-…` ในแชต OA กลาง → `LineWebhookController.Receive` (ลายเซ็นผ่านแล้ว) → `TryRedeemCentralAsync` **ก่อนบอท ERP** ค้นเฉพาะคำเชิญของบริษัทผู้ให้บริการ →
+  ปลายทาง `LineUser` scope `nextacc` · คำเชิญไถ่ได้เฉพาะ OA เดียวกัน (`InviteMatchesChannel`) · "หยุด" ⇒ `TryStopCentralAsync` (ปลด + ถอนยินยอม) · follow/unfollow ⇒ `SetBlockedCentralAsync`
+- **ผู้เช่าผูกเอง** (262-1-3): `GET/POST api/subscription/{companyId}/billing-center/line|line-invite` (Billing.Manage · ปฏิเสธคีย์ API) → คำเชิญของผู้ติดต่อของผู้เช่าในบริษัทผู้ให้บริการ
+  (`PlatformInvoiceQueries.BuyerContactIdAsync`) · กล่อง "รับใบแจ้งหนี้ค่าบริการทาง LINE" บน `billing.html` (สถานะ/เหตุจากเซิร์ฟเวอร์ `ProviderCentralOa.BillingView`)
+- **ส่ง**: `LineNotifyService.ContactRouteAsync` → `CentralContactUserRouteAsync` (ตรวจบริษัทผู้ให้บริการตอนส่ง → นโยบายเส้นทาง → token ของ OA กลาง) · ด่านบันทึกกฎตารางส่ง `centralUserOpen`
+- **การแจ้งค่าบริการ → คิว LINE ของผู้ติดต่อ** (262-1-4/5): `PlatformBillingNotifier.SendAsync` → `QueueContactCardsAsync` ก่อนข้อความตรง: ใบใหม่ `DocumentApproved` · ทวงก่อน/วันครบ
+  `DocumentDueSoon` · เกินกำหนด `DocumentOverdue` (ชนิดจาก `PlatformDunningPolicy.KindOfKey`) · ใบต้องเป็นของผู้ซื้อรายนี้ (ผู้ติดต่อผูก tenant) · จองคีย์ช่อง `line-contact` (`Queued` — ไม่ใช่ส่งแล้ว) ·
+  ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ชนะ · ปลายทางที่ได้การ์ด trigger เดียวกันจากกฎตารางส่งแล้วไม่ซ้ำ · เจ้าของที่ LINE id ตรงปลายทางที่ได้การ์ด ⇒ ไม่ได้ข้อความตรงซ้ำ (ช่อง `line` = Skipped พร้อมเหตุ) ·
+  ใบเสร็จ: `GenerateReceiptForApprovedPaymentAsync` + `SettlePlatformInvoiceAsync` → `ReceiptIssuedAsync` (`ReceiptIssued` · ไม่รอชั่วโมงเงียบ · ครั้งเดียวต่อใบ) · ผลตัดบัตร/ระงับระดับบริษัท = ข้อความตรงเดิม
+- **ปุ่มชำระ** (262-1-6): การ์ดของใบที่ผู้ติดต่อผูก tenant ⇒ ศูนย์บิลของผู้เช่า (`/pages/billing.html` · เงินเข้าบัญชีของระบบผ่าน `SubscriptionPayment`) ไม่ใช่ลิงก์ชำระเอกสารทั่วไป
+  (`ContactLineQueueService.PayUrlAsync` · ทุกทางเข้าการ์ด) · ผู้ส่งคิวเดิมทั้งหมด (ชั่วโมงเงียบ · กระดิ่งล้ม/OA กลางล้มถึงผู้ดูแลระบบ · ถอดรหัสไม่ได้ — §2.12g-2604)
+- **หน้าตั้งค่า LINE** (262-1-7): ประโยค "ส่งเอกสารถึงผู้ติดต่อทาง LINE" จากเซิร์ฟเวอร์ (`LineConfigResponse.ContactSendNotice` — บริษัทผู้ให้บริการไม่อ้างส่วนที่ซ่อน) +
+  แถวความพร้อม `ProviderLineReadiness` (OA กลาง · Basic ID · webhook `/api/line-webhook` · ลูกค้าที่ผูกแล้ว · สวิตช์ LINE ของการเรียกเก็บ)
+- ยังไม่ทำ (262-1-8): ใบเสร็จส่วนเสริม/โควตาเสริมทาง LINE · ลิงก์ชำระสาธารณะในการ์ด · อีเมลตามตาราง/ส่งเองของใบค่าบริการยังออกลิงก์ชำระทั่วไปได้
+- เทสต์ `ProviderCentralOaRound262Tests` · Db `ProviderCentralOaRound262DbTests` (+ ปรับ `LineCentralGroupRound256DbTests`: ลิงก์ 1:1 ของบริษัทผู้ให้บริการเปิดแล้ว) · ล็อก R262 (+ เคส R262a–c) —
+  ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit <pending>
+
 ### 2.12g-260 รอบ 260 "สลิปในแชต LINE ⇒ ผูกเอกสาร" (คำตัดสิน 260-1-1…260-1-6)
 
 - **ทางเข้า** — `CustomerLineWebhookController` (ลายเซ็นผ่าน + บอทตรง · กันซ้ำ webhookEventId เดิม) · รูป (`message.type=image`) ในแชต 1:1 หรือกลุ่มของผู้ติดต่อที่
@@ -8935,3 +8960,4 @@ _Last verified against codebase: 2026-11-12 (รอบ 260-5 ทีมตัด�
 _Last verified against codebase: 2026-11-12 (รอบ 260-2 ชุดแก้ฝ่ายค้าน — §2.12g-259c: M1–M4 · L1–L4 (L5 บันทึกไว้) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4226d3e4)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-3 ฝ่ายค้าน — M1 ผลการส่งจริงก่อนประทับ · M2 นับ/กรองใน SQL · M3 กรองทางเข้าก่อนตัด · L1–L5 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b951eadb)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-5 ชุดแก้ฝ่ายค้าน — §3.4b งวดรายงานของใบกำกับ ณ วันรับเงิน = OutputVatDueAt (H1) · หมายเหตุตามงวดจริง (M1) · §2.12g-258 ชุด 5 คืนค่าสแกน M2–M5/L3/L4 · คิวใบลดหนี้แอดมิน · เพดานกล่องรับ 50 ทวิ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7e69bdd1)_
+_Last verified against codebase: 2026-11-12 (รอบ 262 — §2.12g-262: บริษัทผู้ให้บริการเรียกเก็บค่าบริการทาง LINE ผ่าน OA กลาง (ผูก 1:1 · ผู้เช่าผูกเองจากศูนย์บิล · ใบแจ้งหนี้/ทวง/ใบเสร็จเข้าคิว LINE ของผู้ติดต่อ · ปุ่มชำระ = ศูนย์บิล · หน้าตั้งค่า server computes) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_

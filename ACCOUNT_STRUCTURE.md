@@ -797,6 +797,13 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
   · **ฝ่ายค้านรอบสุดท้าย (d24ce956):** production + TrustProxyHeaders เปิด + ไม่ตั้ง `Security:KnownProxies`/`Security:KnownNetworks` (CIDR คั่นด้วย `,` เช่น
   `10.0.0.0/8`) ⇒ **boot ไม่ขึ้น** (fail-fast แบบ secret) · ยกเว้นตั้ง `Security:TrustAllForwarders=true` อย่างตั้งใจ (พอร์ต backend เปิดเฉพาะ proxy) — ⚠️ ก่อน deploy คอมมิตนี้ต้องตั้งค่าใดค่าหนึ่ง
 
+- **รอบ 262 — ส่งใบ/ทวง/ใบเสร็จทาง LINE ถึงผู้ติดต่อของผู้เช่า (คำตัดสิน 262-1-* · DOCUMENT_FLOW §2.12g-262):** บริษัทผู้ให้บริการ (`SiteSettings.PlatformCompanyId`) ใช้
+  LINE OA กลางเป็น OA ของบริษัทสำหรับผู้ติดต่อ (ตัวตัดสิน `Helpers/ProviderCentralOa`) · ผู้ติดต่อผู้เช่า (`ExternalSystem=NextAccTenant` · `ExternalId=CompanyId`) ผูก LINE ผ่าน
+  คำเชิญ scope `nextacc` (`ContactLineInvites.OaScope` คอลัมน์ใหม่) — ผู้เช่ากดเองได้ที่ศูนย์บิล (`billing-center/line-invite` · Billing.Manage) · `PlatformBillingNotifier` เข้าคิว
+  การ์ดเอกสาร (`LineQueues` ของบริษัทผู้ให้บริการ · ผู้ส่งคิวเดิม) ก่อนข้อความตรงถึงเจ้าของ (คนที่ได้การ์ดแล้วไม่ได้ซ้ำ) · แถว `PlatformBillingNotices` ช่อง `line-contact` = Queued ·
+  ปุ่มชำระในการ์ด = ศูนย์บิล (เงินเข้าบัญชีของระบบผ่าน `SubscriptionPayment` — ไม่ใช่ลิงก์ชำระทั่วไปของบริษัท) · ใบเสร็จ (ซื้อตรง + ตัดชำระใบ) เข้าคิวครั้งเดียวต่อใบ ·
+  บริษัทอื่นไม่ได้รับสิทธิ์นี้ (N8) · กลุ่มกลางของแอดมินห้ามเสมอ
+
 ### 6.2d Omise ของ NextAcc — เงิน → เอกสาร → บัญชี (รอบ 227 · `erp-review/2026-11-02/PLATFORM_OMISE_AUDIT.md`)
 
 - **ขาเงินเข้าของเงินค่าบริการ:** จ่ายผ่าน gateway (มี `PaymentIntent` สำเร็จของต้นทางนั้นใต้บริษัทผู้ให้บริการ) ⇒ ใบเสร็จค่าแพ็กเกจ/ตัดชำระใบแจ้งหนี้/ใบเสร็จส่วนเสริม
@@ -1529,3 +1536,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 6 �
 _Last verified against codebase: 2026-11-11 (รอบ 258 — ผัง 21630 "เงินรับจากลูกค้ารอจัดสรร" ในแม่แบบ + บริษัทเดิม · ผังเฉพาะกิจ) · commit 24a8df4a_
 _Last verified against codebase: 2026-11-11 (รอบ 258 ฝ่ายค้าน — `Payment.UnappliedNeedsReview` (รายการเงินส่วนเกินก่อนรอบ 258 ต้องยืนยัน/ปิดก่อนนับเป็นเงินรอจัดสรร) · `Document.CreditCoverNoticeAt` (แจ้งทีมครั้งเดียวเมื่อใบถูกระงับทวง) · ผังไม่เปลี่ยน) · commit 78e3f30c_
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก A — ตาราง `PaymentCreditMovements` (ขาออกของเงินรอจัดสรร) · `CompanySettings.CustomerCreditWriteOffCap` (เพดานตัดเศษ ตั้งต้น 1.00) · ผังไม่เพิ่ม (ใช้ 21630 · 54960 เดิม)) · commit 5a3b7fa1_
+_Last verified against codebase: 2026-11-12 (รอบ 262 — §6.2c: ใบ/ทวง/ใบเสร็จค่าบริการทาง LINE ของผู้ติดต่อผู้เช่าผ่าน OA กลาง (บริษัทผู้ให้บริการเท่านั้น) · `ContactLineInvites.OaScope` · ศูนย์บิลผูก LINE — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_

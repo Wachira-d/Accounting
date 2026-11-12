@@ -82,6 +82,8 @@
 
     <section class="hub-pane" data-pane="docs">
       <div class="card"><h3>ใบแจ้งหนี้</h3><div id="invoices">กำลังโหลด...</div></div>
+      <!-- รอบ 262 (คำตัดสิน 262-1-3): ผูก LINE รับใบแจ้งหนี้/ทวง/ใบเสร็จค่าบริการ (ผ่าน LINE OA กลาง) — สถานะ/เหตุ/ข้อความจากเซิร์ฟเวอร์ -->
+      <div class="card" id="lineBillCard"><h3>รับใบแจ้งหนี้ค่าบริการทาง LINE</h3><div id="lineBill">กำลังโหลด...</div></div>
       <!-- รอบ 230 (PLATFORM_OMISE_AUDIT §5.2): บัตรที่บันทึกไว้ + ตัดบัตรอัตโนมัติ — ค่าทั้งหมดจากเซิร์ฟเวอร์ (js/billing-saved-cards.js) -->
       <div class="card" id="savedCardsCard"><h3>บัตรที่บันทึกไว้ · ตัดบัตรอัตโนมัติ</h3><div id="savedCards">กำลังโหลด...</div></div>
       <div class="card"><h3>ประวัติการชำระ</h3><div id="payments">กำลังโหลด...</div></div>
@@ -126,6 +128,31 @@
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
+    // รอบ 262 (คำตัดสิน 262-1-3): กล่อง "รับใบแจ้งหนี้ค่าบริการทาง LINE" — กดได้ไหม/เหตุ/จำนวนที่ผูกจาก GET …/billing-center/line · สร้างลิงก์ = POST …/line-invite
+    const LineBill = {
+      view: null,
+      async load() {
+        const box = document.getElementById('lineBill');
+        try { this.view = (await API.get(`${Bill.base()}/line`)).data; this.render(); }
+        catch (e) { box.innerHTML = `<div class="note bad">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`; }
+      },
+      render(invite) {
+        const v = this.view || {}, e = Layout.esc, box = document.getElementById('lineBill');
+        let h = `<div class="muted" style="margin-bottom:8px">${e(v.note || '')}</div>`
+          + `<div style="margin-bottom:8px">ผูก LINE แล้ว ${e(String(v.boundCount || 0))} บัญชี</div>`
+          + `<button class="btn btn-primary" id="lineBillBtn" ${v.available ? '' : 'disabled'} onclick="LineBill.invite()">สร้างลิงก์/QR ผูก LINE</button>`
+          + (v.available ? '' : `<div class="note warn" style="margin-top:8px">${e(v.reason || '')}</div>`);
+        if (invite) h += `<div style="margin-top:12px">${invite.qrDataUri ? `<img src="${e(invite.qrDataUri)}" alt="QR ผูก LINE" style="width:180px;height:180px">` : ''}`
+          + (invite.url ? `<div style="word-break:break-all;margin-top:6px"><a href="${e(invite.url)}" target="_blank" rel="noopener">${e(invite.url)}</a></div>` : '')
+          + `<div class="muted" style="margin-top:6px">${e(invite.note || '')}</div></div>`;
+        box.innerHTML = h;
+      },
+      async invite() {
+        try { const r = await API.post(`${Bill.base()}/line-invite`, {}); Layout.toast(r?.message || 'สร้างลิงก์แล้ว', 'success'); this.render(r.data); }
+        catch (e) { Layout.toast(e.message || 'สร้างลิงก์ไม่สำเร็จ', 'error'); }
+      },
+    };
+
     // ทุกค่าที่แสดง (ยอด · สถานะ · ป้าย · จ่ายได้ไหม/เพราะอะไร · เงื่อนไข) มาจาก GET …/billing-center — หน้าเว็บไม่ตัดสินเอง
     const Bill = {
       data: null,
@@ -145,6 +172,7 @@
           this.data = res.data;
           this.render();
           PayerCard.render();   // รอบ 234
+          LineBill.load();   // รอบ 262 — ไม่รอ (กล่องแยก · ล้มแล้วบอกในกล่อง)
           PlanTab.render();   // รอบ 232: เดิม `if (window.PlanTab)` — const ระดับสคริปต์ไม่อยู่บน window ⇒ ไม่เคยเรนเดอร์ (การ์ดค้าง "กำลังโหลด...")
         } catch (e) {
           document.getElementById('plan').innerHTML = `<div class="note bad">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;

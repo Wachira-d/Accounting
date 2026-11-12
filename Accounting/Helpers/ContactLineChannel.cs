@@ -70,8 +70,9 @@ public static class ContactLineChannel
     /// <summary>ด่านตอนบันทึกกฎ — null = ผ่าน · <paramref name="companyOaReady"/> = OA ของบริษัทพร้อมส่ง (เปิด + token/secret ถอดได้)</summary>
     /// <param name="centralGroupOpen">รอบ 256 (คำตัดสิน 256-2): บริษัทผู้ให้บริการส่งเข้ากลุ่มของผู้ติดต่อผ่าน LINE OA กลางได้ ⇒ ติ๊ก "กลุ่ม LINE" อย่างเดียวไม่ต้องมี OA ของบริษัท
     /// (LINE ผู้ใช้ 1:1 ยังต้องมี OA ของบริษัท)</param>
+    /// <param name="centralUserOpen">รอบ 262 (คำตัดสิน 262-1-1): บริษัทผู้ให้บริการ — OA กลางคือ OA ของบริษัท ⇒ ติ๊ก "LINE ผู้ใช้" ได้โดยไม่มี OA ของบริษัทเอง</param>
     public static string? RuleProblem(string? trigger, bool email, bool lineUser, bool lineGroup, bool companyOaReady, string? companyOaProblem,
-        bool centralGroupOpen = false)
+        bool centralGroupOpen = false, bool centralUserOpen = false)
     {
         if (!email && !WantsLine(lineUser, lineGroup))
             return "เลือกช่องทางอย่างน้อย 1 ช่อง (อีเมล · LINE ผู้ใช้ของผู้ติดต่อ · กลุ่ม LINE ของผู้ติดต่อ)";
@@ -80,7 +81,7 @@ public static class ContactLineChannel
             return "สลิปเงินเดือนส่งทาง LINE ของผู้ติดต่อไม่ได้ (ข้อมูลส่วนบุคคลของพนักงาน — ส่งได้เฉพาะ 1:1 ถึงพนักงานตามเส้นสลิปเดิม)";
         if (!SupportsLine(trigger))
             return "เรื่องนี้ยังส่งทาง LINE ไม่ได้ (รองรับ: เมื่ออนุมัติเอกสาร · ใกล้/เกินกำหนด · รายการประจำ) — ใบแจ้งยอด/50 ทวิ ทาง LINE อยู่ในเฟสถัดไป · ติ๊กเฉพาะอีเมล";
-        if (!companyOaReady && !(centralGroupOpen && !lineUser))
+        if (!companyOaReady && !((centralGroupOpen || !lineGroup) && (centralUserOpen || !lineUser)))
             return "ยังไม่มีช่อง LINE ของบริษัท — ตั้ง LINE OA ของบริษัทให้พร้อม (เปิดใช้ + Channel Access Token + Channel Secret) ที่ ตั้งค่า → แจ้งเตือนทาง LINE"
                    + (string.IsNullOrWhiteSpace(companyOaProblem) ? "" : " · " + companyOaProblem)
                    + " (ส่งถึงผู้ติดต่อผ่าน LINE OA กลางของ NextAcc ยังไม่เปิด — รอโควตา LINE แยกช่อง)";
@@ -93,15 +94,22 @@ public static class ContactLineChannel
 
     /// <summary>รอบ 257 ชุด 4 (C-M5 · server computes): ประโยคเรื่อง LINE OA กลางของ NextAcc — บริษัทผู้ให้บริการ (<c>NextAccGroupOpen</c> · 256-2) ส่งเข้า<b>กลุ่ม</b>
     /// ของผู้ติดต่อผ่าน OA กลางได้แล้ว · บริษัทอื่น/ผู้ใช้ 1:1 ยังไม่เปิด (N8 · 254-WP11-11) — ตัวเดียวของแท็บผู้ติดต่อ · ป้ายตารางส่ง · DOCUMENT_FLOW §2.12h</summary>
-    public static string CentralOaSentence(bool nextAccGroupOpen) => nextAccGroupOpen
-        ? "กลุ่ม LINE ของผู้ติดต่อผ่าน LINE OA กลางของ NextAcc เปิดแล้วสำหรับบริษัทนี้ (บริษัทผู้ให้บริการ · รอบ 256) · ผู้ใช้ LINE 1:1 ผ่าน OA กลางยังไม่เปิด"
-        : "ผ่าน LINE OA กลางของ NextAcc ยังไม่เปิด (ใช้ LINE OA ของบริษัทเอง)";
+    public static string CentralOaSentence(bool nextAccGroupOpen) => CentralOaSentence(nextAccGroupOpen, nextAccGroupOpen);
+
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-1): บริษัทผู้ให้บริการ ⇒ LINE ผู้ใช้ 1:1 ผ่าน OA กลางเปิดด้วย (ตัวตัดสินเดียว <c>ProviderCentralOa.Allowed</c>)</summary>
+    public static string CentralOaSentence(bool nextAccGroupOpen, bool nextAccUserOpen) => (nextAccGroupOpen, nextAccUserOpen) switch
+    {
+        (true, true) => "LINE ผู้ใช้ 1:1 และกลุ่ม LINE ของผู้ติดต่อผ่าน LINE OA กลางของ NextAcc เปิดแล้วสำหรับบริษัทนี้ (บริษัทผู้ให้บริการ — OA กลางคือ OA ของบริษัทนี้ · รอบ 256/262)",
+        (true, false) => "กลุ่ม LINE ของผู้ติดต่อผ่าน LINE OA กลางของ NextAcc เปิดแล้วสำหรับบริษัทนี้ (บริษัทผู้ให้บริการ · รอบ 256) · ผู้ใช้ LINE 1:1 ผ่าน OA กลางยังไม่เปิด",
+        (false, true) => "LINE ผู้ใช้ 1:1 ของผู้ติดต่อผ่าน LINE OA กลางของ NextAcc เปิดแล้วสำหรับบริษัทนี้ (บริษัทผู้ให้บริการ · รอบ 262)",
+        _ => "ผ่าน LINE OA กลางของ NextAcc ยังไม่เปิด (ใช้ LINE OA ของบริษัทเอง)",
+    };
 
     /// <summary>รอบ 257 ชุด 4 (C-M5): ป้ายช่องทาง LINE ของฟอร์มกฎตารางส่ง (email-schedule.html) — เซิร์ฟเวอร์ส่ง หน้าแสดงตรงตัว</summary>
     public sealed record RuleChannelLabels(string LineUser, string LineGroup, string Note);
 
     public static RuleChannelLabels ChannelLabels(bool nextAccGroupOpen) => new(
-        "LINE ผู้ใช้ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)",
+        nextAccGroupOpen ? "LINE ผู้ใช้ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท หรือ LINE OA กลางของ NextAcc)" : "LINE ผู้ใช้ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)",
         nextAccGroupOpen ? "กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท หรือ LINE OA กลางของ NextAcc)" : "กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)",
         CentralOaSentence(nextAccGroupOpen));
 

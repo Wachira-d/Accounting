@@ -254,8 +254,11 @@ public static class ContactRecipientRule
     /// <paramref name="CompanyOaReady"/> = บริษัทเปิด LINE + token/secret ถอดได้ · <paramref name="CompanyOaDestination"/> = บอทของ OA บริษัทที่จำไว้ (เทียบกับบอทที่ผูกปลายทาง) ·
     /// <paramref name="NextAccOpen"/> = ส่งถึงผู้ติดต่อผ่าน OA กลาง (คำตัดสิน N8: <b>ปิด</b>จนมีโควตา LINE แยกช่อง L4) ·
     /// <paramref name="NextAccGroupOpen"/> = รอบ 256 (คำตัดสิน 256-2): <b>กลุ่ม</b>ของผู้ติดต่อผ่าน OA กลาง เปิดเฉพาะบริษัทผู้ให้บริการ (<c>LineGroupBindRule.CentralScopeAllowed</c>)</summary>
+    /// <para><paramref name="NextAccUserOpen"/> = รอบ 262 (คำตัดสิน 262-1-1): <b>LINE ผู้ใช้ 1:1</b> ของผู้ติดต่อผ่าน OA กลาง เปิดเฉพาะบริษัทผู้ให้บริการ
+    /// (OA กลาง = OA ของบริษัทนั้น · ตัวตัดสินเดียว <c>ProviderCentralOa.Allowed</c>) · <paramref name="CentralOaDestination"/> = บอทของ OA กลางตอนนี้
+    /// (เทียบกับบอทที่ผูกปลายทาง scope nextacc — OA กลางเปลี่ยนบอท ⇒ ต้องผูกใหม่ · null = ไม่รู้ ⇒ ไม่ตัดสินว่าเปลี่ยน)</para>
     public sealed record LineOpenness(bool Open, bool CompanyOaReady, string? CompanyOaDestination, string? CompanyOaProblem, bool NextAccOpen,
-        bool NextAccGroupOpen = false)
+        bool NextAccGroupOpen = false, bool NextAccUserOpen = false, string? CentralOaDestination = null)
     {
         public static LineOpenness Closed { get; } = new(false, false, null, null, false);
         /// <summary>ไม่กั้นด้วยความพร้อมของช่อง — ใช้กับ overload แบบ bool (ตัวตัดสินแถวของ L1) เท่านั้น</summary>
@@ -279,9 +282,17 @@ public static class ContactRecipientRule
         if (e.OaScope == NotifyEndpointKind.ScopeNextAcc)
         {
             // รอบ 256 (คำตัดสิน 256-2): กลุ่มที่ผูกผ่าน OA กลาง ⇒ ส่งได้เฉพาะเมื่อบริษัทนี้เป็นบริษัทผู้ให้บริการ (ตรวจใหม่ทุกครั้ง — เปลี่ยนบริษัทผู้ให้บริการแล้วหยุดส่ง)
-            if (e.Kind == NotifyEndpointKind.LineGroup && line.NextAccGroupOpen) return null;
-            return line.NextAccOpen ? null : new EndpointStatus(false, "line-not-open", "ยังไม่เปิดส่ง",
-                e.Kind == NotifyEndpointKind.LineGroup ? CentralGroupNotPlatformReason : NextAccNotOpenReason, RuleCodeNextAccNotOpen);
+            // รอบ 262 (คำตัดสิน 262-1-1): LINE ผู้ใช้ 1:1 ที่ผูกผ่าน OA กลาง ⇒ ส่งได้เฉพาะบริษัทผู้ให้บริการ (OA กลาง = OA ของบริษัทนั้น) · บริษัทอื่นคง N8
+            var centralOpen = (e.Kind == NotifyEndpointKind.LineGroup && line.NextAccGroupOpen)
+                              || (e.Kind == NotifyEndpointKind.LineUser && line.NextAccUserOpen) || line.NextAccOpen;
+            if (!centralOpen)
+                return new EndpointStatus(false, "line-not-open", "ยังไม่เปิดส่ง",
+                    e.Kind == NotifyEndpointKind.LineGroup ? CentralGroupNotPlatformReason : NextAccNotOpenReason, RuleCodeNextAccNotOpen);
+            // userId/groupId ของ LINE ใช้ได้เฉพาะบอทที่ออก ⇒ OA กลางเปลี่ยนบอทแล้ว ปลายทางเดิมส่งไม่ถึง (ตัวเทียบเดียวกับ OA บริษัท)
+            if (OaChanged(e.OaDestination, line.CentralOaDestination))
+                return new(false, "oa-changed", "ต้องผูกใหม่",
+                    "LINE OA กลางของ NextAcc เปลี่ยนบอทแล้ว — LINE userId/groupId ใช้ได้เฉพาะบอทที่ผูกไว้ ⇒ ให้ผู้รับผูกใหม่", RuleCodeOaChanged);
+            return null;
         }
         if (e.OaScope == NotifyEndpointKind.ScopeCompany)
         {
