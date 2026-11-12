@@ -345,7 +345,7 @@ public class CustomerCreditRound265DbTests
             await Assert.ThrowsAsync<BusinessRuleException>(() => Credits(req).AllocateAsync(s.CompanyId, full.Id,
                 new AllocateCustomerCreditRequest(later.Id, 2_000m, Today), "tester"));
         using (var c = DbTestDatabase.TryCreateContext()!)
-            Assert.False(await c.Documents.AsNoTracking().AnyAsync(d => d.CompanyId == s.CompanyId && d.SettlementPaymentId == full.Id && !d.IsDeleted));
+            Assert.False(await c.Documents.AsNoTracking().AnyAsync(d => d.CompanyId == s.CompanyId && d.SettlementPaymentId == full.Id && d.RelatedDocumentId == later.Id && !d.IsDeleted));
 
         // (ข) ใช้บางส่วน 3,000 แล้วจัดสรร 2,000 ที่เหลือ ⇒ ใบเสร็จของการจัดสรรออกได้หนึ่งใบ (กดซ้ำ = ใบเดิม) · Σ ใบเสร็จ = เงินที่รับ
         var (pay, _) = await CreditAsync(db, s, 5_000m);
