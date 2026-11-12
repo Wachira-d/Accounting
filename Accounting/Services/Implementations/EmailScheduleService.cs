@@ -175,7 +175,7 @@ public class EmailScheduleService : IEmailScheduleService
         if (_scopes == null) return;
         try
         {
-            using var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.CreateScope(_scopes);
+            using var scope = _scopes.CreateScope();
             var sp = scope.ServiceProvider;
             var db = (AccountingDbContext)sp.GetService(typeof(AccountingDbContext))!;
             if (sp.GetService(typeof(INotificationService)) is not INotificationService notifications) return;
