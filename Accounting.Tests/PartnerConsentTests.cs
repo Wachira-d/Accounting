@@ -296,14 +296,15 @@ public class PartnerConsentTests
     public void L2_PAC2_ผูกผู้ให้_เวลา_คู่ค้า_round_trip_ทิศตรงข้ามแก้แล้วไม่ผ่าน_PAC1_เดิมยังตรวจได้()
     {
         var granted = PartnerConsent.TruncateToSecond(new DateTime(2026, 11, 12, 5, 6, 7, DateTimeKind.Utc).AddTicks(123));
-        PartnerAutomationConsent V2()
+        static PartnerAutomationConsent V2Of(DateTime g)
         {
-            var r = Row(bank: Bank, grantedAt: granted);
+            var r = Row(bank: Bank, grantedAt: g);
             r.HashVersion = 2;
             r.EvidenceHash = PartnerConsent.HashV2(B, Pid, A, Scope.AutoRecordPayment, r.MaxAmount, Bank, 1,
-                PartnerConsent.TextFor(Scope.AutoRecordPayment, 1)!, r.GrantedByUserId, granted);
+                PartnerConsent.TextFor(Scope.AutoRecordPayment, 1)!, r.GrantedByUserId, g);
             return r;
         }
+        PartnerAutomationConsent V2() => V2Of(granted);
         Assert.True(PartnerConsent.HashMatches(V2()));
         var who = V2(); who.GrantedByUserId = Guid.NewGuid();
         Assert.False(PartnerConsent.HashMatches(who));
