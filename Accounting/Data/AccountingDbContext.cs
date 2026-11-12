@@ -3807,6 +3807,7 @@ public class AccountingDbContext : DbContext
         {
             e.Property(x => x.TokenHash).HasMaxLength(64);
             e.Property(x => x.OaDestination).HasMaxLength(64);
+            e.Property(x => x.OaScope).HasMaxLength(16);   // รอบ 262 — ค่าตั้งต้น company ใน SQL (Helpers/ContactLineDeliveryMigration)
             e.Property(x => x.CodeHash).HasMaxLength(64);
             e.HasIndex(x => x.TokenHash).IsUnique().HasDatabaseName("IX_ContactLineInvites_TokenHash");
             e.HasIndex(x => new { x.CompanyId, x.CodeHash }).HasDatabaseName("IX_ContactLineInvites_Company_CodeHash");

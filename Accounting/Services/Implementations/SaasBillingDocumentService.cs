@@ -87,6 +87,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                     if (t.WithholdingTaxAmount > 0m) await Accounting.Services.Platform.PlatformWhtCertificateService.LinkCoreAsync(_db, t);
                     await _db.SaveChangesAsync();
                     await SendEmailAsync(companyId, issued.DocumentNumber, issued.IsTaxInvoice, t);
+                    // รอบ 262 (คำตัดสิน 262-1-5): การ์ดใบเสร็จถึงปลายทาง LINE ของผู้ติดต่อของผู้เช่า (คิว LINE ของบริษัทผู้ให้บริการ · ไม่โยน)
+                    if (_notifier != null) await _notifier.ReceiptIssuedAsync(companyId, issued.DocumentId);
                     return;
                 }
                 // ออกไม่สำเร็จ → ตกลงไปโหมด PDF เดิม (เงินเข้าแล้วต้องมีหลักฐานเสมอ)
@@ -345,6 +347,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                 _logger.LogError("ตัดชำระใบแจ้งหนี้ค่าบริการต้องทำด้วยมือ (payment {PaymentId} · ใบ {InvoiceId}): {Problem}", paymentId, invoiceId, problem);
             }
             await _db.SaveChangesAsync();
+            // รอบ 262 (คำตัดสิน 262-1-5): ใบเสร็จของการตัดชำระนี้ ⇒ การ์ดใบเสร็จทาง LINE ของผู้ติดต่อ (ครั้งเดียวต่อใบ — คีย์ข้อความ · ไม่โยน)
+            if (_notifier != null && res?.ReceiptDocumentId is Guid receiptId) await _notifier.ReceiptIssuedAsync(buyerId, receiptId);
         }
         catch (Exception ex)
         {

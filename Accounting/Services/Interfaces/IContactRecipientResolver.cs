@@ -22,4 +22,7 @@ public interface IContactRecipientResolver
     /// <summary>รอบ 256-2 (ฝ่ายค้าน L6): ช่อง "กลุ่มของผู้ติดต่อผ่าน LINE OA กลาง" ของบริษัทนี้พร้อมไหม — null = พร้อม (เป็นบริษัทผู้ให้บริการ + มี token ของ OA กลาง) ·
     /// ไม่พร้อม ⇒ เหตุ · ตัวเดียวของกล่องผูกกลุ่มบนหน้าผู้ติดต่อและด่านบันทึกกฎตารางส่ง</summary>
     Task<string?> CentralGroupProblemAsync(Guid companyId, CancellationToken ct = default);
+
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-1): LINE ผู้ใช้ 1:1 ผ่าน OA กลาง (บริษัทผู้ให้บริการเท่านั้น) พร้อมไหม — null = พร้อม (token + secret ของ OA กลาง)</summary>
+    Task<string?> CentralUserProblemAsync(Guid companyId, CancellationToken ct = default);
 }

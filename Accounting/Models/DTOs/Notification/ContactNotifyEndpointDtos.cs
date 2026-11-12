@@ -60,7 +60,7 @@ public record ContactNotifyOverviewResponse(
 public record ContactNotifyComingSoon(string Key, string Label, string Reason);
 
 /// <summary>รอบ 254 WP-11 L2 — <paramref name="Available"/> false ⇒ ปุ่มปิดพร้อม <paramref name="Reason"/></summary>
-public record ContactLineBindOffer(bool Available, string? Reason, int OpenInvites = 0);
+public record ContactLineBindOffer(bool Available, string? Reason, int OpenInvites = 0, bool ViaCentralOa = false);   // รอบ 262: บริษัทผู้ให้บริการผูกผ่าน OA กลาง
 
 /// <summary>รอบ 256 (คำตัดสิน 256-2) — กล่องผูกกลุ่มด้วยรหัส #HeyNextAcc · <paramref name="Instruction"/> = ขั้นตอน (บอกว่าเชิญ OA ตัวไหน) ·
 /// <paramref name="ViaCentralOa"/> = ผ่าน LINE OA กลาง (บริษัทผู้ให้บริการเท่านั้น — หน้าไม่ชี้ไปตั้ง OA ของบริษัท) · <paramref name="Available"/> false ⇒ ล็อกพร้อม <paramref name="Reason"/></summary>

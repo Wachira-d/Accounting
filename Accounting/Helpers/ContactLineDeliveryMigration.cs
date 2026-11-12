@@ -83,6 +83,8 @@ public static class ContactLineDeliveryMigration
         """,
         """CREATE UNIQUE INDEX IF NOT EXISTS "IX_ContactLineInvites_TokenHash" ON "ContactLineInvites" ("TokenHash");""",
         """CREATE INDEX IF NOT EXISTS "IX_ContactLineInvites_Company_CodeHash" ON "ContactLineInvites" ("CompanyId", "CodeHash");""",
+        // รอบ 262 (คำตัดสิน 262-1-2): ขอบเขต OA ของคำเชิญ — แถวเดิมทั้งหมดออกผ่าน OA ของบริษัท ⇒ ค่าตั้งต้น 'company' คงพฤติกรรมเดิม (ไม่มีข้อมูลต้องซ่อม)
+        """ALTER TABLE "ContactLineInvites" ADD COLUMN IF NOT EXISTS "OaScope" varchar(16) NOT NULL DEFAULT 'company';""",
         // รอบ 254 WP-11 L3: รหัสผูกกลุ่ม (ระดับแพลตฟอร์ม — ไม่มี CompanyId) + กัน webhook ซ้ำ
         """
         CREATE TABLE IF NOT EXISTS "LineGroupBindCodes" (

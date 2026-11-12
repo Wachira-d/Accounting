@@ -1,6 +1,7 @@
 using System.Net;
 using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -24,22 +25,33 @@ public interface IPlatformBillingNotifier
 
     /// <summary>ส่งข้อความตามคีย์ (ทุกช่องที่เปิด) · คืนจำนวนช่องที่ส่งถึง · ไม่โยน</summary>
     Task<int> SendAsync(Guid buyerCompanyId, Guid? documentId, string messageKey, string subject, string body, CancellationToken ct = default);
+
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-5): ใบเสร็จ/ใบกำกับค่าบริการออกแล้ว ⇒ การ์ดใบเสร็จถึงปลายทาง LINE ของผู้ติดต่อของผู้เช่า (คิว LINE ของบริษัทผู้ให้บริการ) ·
+    /// ครั้งเดียวต่อใบ · ไม่โยน (เงินเข้าแล้ว การแจ้งต้องไม่ทำให้การอนุมัติพัง)</summary>
+    Task ReceiptIssuedAsync(Guid buyerCompanyId, Guid receiptDocumentId, CancellationToken ct = default);
 }
 
 public class PlatformBillingNotifier : IPlatformBillingNotifier
 {
     public const string ChannelEmail = "email", ChannelLine = "line";
-    public const string StatusClaimed = "Claimed", StatusSent = "Sent", StatusFailed = "Failed", StatusSkipped = "Skipped";
+    /// <summary>รอบ 262: การ์ดเอกสารผ่านคิว LINE ของผู้ติดต่อ (บริษัทผู้ให้บริการ · OA กลาง) — แถวจองนี้บอกว่า "เข้าคิวแล้ว" (Queued) ไม่ใช่ "ส่งแล้ว" ·
+    /// ผลส่งจริงอยู่บนแถวคิว LINE (ส่งแล้ว = LINE ตอบรับเท่านั้น)</summary>
+    public const string ChannelLineContact = "line-contact";
+    public const string StatusClaimed = "Claimed", StatusSent = "Sent", StatusFailed = "Failed", StatusSkipped = "Skipped", StatusQueued = "Queued";
+    private const string SystemActor = "system:platform-billing";
     public const string BillingPath = "/pages/billing.html";
 
     private readonly AccountingDbContext _db;
     private readonly IEmailService? _email;
     private readonly ILineNotifyService? _line;
     private readonly ILogger<PlatformBillingNotifier> _logger;
+    /// <summary>รอบ 262: ตัวหาผู้รับเดียว (ปลายทาง LINE ของผู้ติดต่อ + ความยินยอม + ด่าน OA) · null (นอก DI/เทสต์เดิม) ⇒ ไม่มีการ์ดผ่านคิว (พฤติกรรมเดิม)</summary>
+    private readonly IContactRecipientResolver? _recipients;
+    private readonly ISecretProtector? _secrets;
 
     public PlatformBillingNotifier(AccountingDbContext db, ILogger<PlatformBillingNotifier> logger,
-        IEmailService? email = null, ILineNotifyService? line = null)
-    { _db = db; _logger = logger; _email = email; _line = line; }
+        IEmailService? email = null, ILineNotifyService? line = null, IContactRecipientResolver? recipients = null, ISecretProtector? secrets = null)
+    { _db = db; _logger = logger; _email = email; _line = line; _recipients = recipients; _secrets = secrets; }
 
     public async Task InvoiceIssuedAsync(Guid buyerCompanyId, Guid invoiceDocumentId, CancellationToken ct = default)
     {
@@ -90,11 +102,19 @@ public class PlatformBillingNotifier : IPlatformBillingNotifier
             }
             if (policy.ReminderLineEnabled)
             {
+                // รอบ 262 (คำตัดสิน 262-1-4/262-1-5): การ์ดเอกสาร (ปุ่มชำระ = ศูนย์บิล) ถึงปลายทาง LINE ของผู้ติดต่อของผู้เช่าก่อน แล้วข้อความตรงถึงเจ้าของ
+                // เฉพาะคนที่ยังไม่ได้การ์ด (LINE id เดียวกันผ่าน OA กลาง ⇒ ไม่ส่งซ้ำ — ช่องเดียว)
+                var cards = await QueueContactCardsAsync(buyerCompanyId, documentId, messageKey,
+                    ProviderCentralOa.TriggerForKind(PlatformDunningPolicy.KindOfKey(messageKey)), customerInitiated: false, ct);
                 var claim = await ClaimAsync(buyerCompanyId, documentId, messageKey, ChannelLine, ct);
                 if (claim is Guid id)
                 {
-                    var to = owners.Where(o => !string.IsNullOrWhiteSpace(o.LineUserId)).ToList();
-                    if (_line == null || to.Count == 0) await FinishAsync(id, StatusSkipped, _line == null ? "ไม่มีบริการ LINE" : "เจ้าของบริษัทยังไม่ผูก LINE", ct);
+                    var withLine = owners.Where(o => !string.IsNullOrWhiteSpace(o.LineUserId)).ToList();
+                    var to = ProviderCentralOa.OwnersNotCovered(withLine, o => o.LineUserId, cards.LineIds);
+                    if (_line == null || to.Count == 0)
+                        await FinishAsync(id, StatusSkipped, _line == null ? "ไม่มีบริการ LINE"
+                            : withLine.Count > 0 ? $"เจ้าของบริษัทได้การ์ดเอกสารทางคิว LINE ของผู้ติดต่อแล้ว ({cards.LineIds.Count} ปลายทาง) — ไม่ส่งข้อความซ้ำ"
+                            : "เจ้าของบริษัทยังไม่ผูก LINE", ct);
                     else
                     {
                         var ok = 0; string? err = null;
@@ -112,6 +132,97 @@ public class PlatformBillingNotifier : IPlatformBillingNotifier
         }
         catch (Exception ex) { _logger.LogError(ex, "ส่งแจ้งเตือนค่าบริการไม่สำเร็จ (company {Company} · คีย์ {Key})", buyerCompanyId, messageKey); }
         return delivered;
+    }
+
+    public async Task ReceiptIssuedAsync(Guid buyerCompanyId, Guid receiptDocumentId, CancellationToken ct = default)
+    {
+        try
+        {
+            var policy = await PlatformBillingSettingsService.LoadPolicyAsync(_db, ct);
+            if (!policy.ReminderLineEnabled) return;   // ช่อง LINE ของการแจ้งค่าบริการปิด ⇒ ใบเสร็จไปทางอีเมลตามเดิมเท่านั้น
+            // ผู้เช่าเพิ่งจ่าย ⇒ ใบเสร็จไม่รอชั่วโมงเงียบ (customerInitiated — ตัวตัดสินเดียว LineQuietHours.IsExempt)
+            await QueueContactCardsAsync(buyerCompanyId, receiptDocumentId, ProviderCentralOa.ReceiptMessageKey(receiptDocumentId),
+                ContactLineChannel.ReceiptTrigger, customerInitiated: true, ct);
+        }
+        catch (Exception ex) { _logger.LogError(ex, "เข้าคิวการ์ดใบเสร็จค่าบริการทาง LINE ไม่สำเร็จ (company {Company} · ใบ {Doc})", buyerCompanyId, receiptDocumentId); }
+    }
+
+    private sealed record ContactCards(int Queued, IReadOnlyCollection<string> LineIds)
+    {
+        public static ContactCards None { get; } = new(0, Array.Empty<string>());
+    }
+
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-4/262-1-5) — การ์ดเอกสารค่าบริการเข้าคิว LINE ของผู้ติดต่อของผู้เช่าในบริษัทผู้ให้บริการ:
+    /// <list type="number">
+    /// <item>ใบต้องเป็นของผู้ซื้อรายนี้ (ผู้ติดต่อผูก tenant = <paramref name="buyerCompanyId"/> · บริษัทผู้ให้บริการเท่านั้น) — ใบของบริษัทอื่นไม่มีทางถึงผู้ติดต่อรายนี้</item>
+    /// <item>จองคีย์ข้อความช่อง <see cref="ChannelLineContact"/> (ข้ามเครื่อง/รันซ้ำเข้าคิวครั้งเดียว) → ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ชนะ → ตัวหาผู้รับเดียว (เรื่องตาม trigger)</item>
+    /// <item>หนึ่งแถวต่อปลายทาง · กุญแจกันซ้ำ <see cref="ContactLineChannel.QueueKey"/> · ปลายทางที่ได้การ์ด trigger เดียวกันจากทางอื่นแล้ว (กฎตารางส่ง) ไม่เข้าคิวซ้ำ</item>
+    /// <item>ผู้ส่ง = <c>ContactLineQueueService</c> ตัวเดิม (ชั่วโมงเงียบ · ตรวจใบ/ปลายทางซ้ำตอนส่ง · กระดิ่งล้ม · ปุ่มชำระ = ศูนย์บิล) · ไม่ถอยไปอีเมล (ช่องอีเมลของงานนี้ตัดสินเอง)</item>
+    /// </list>
+    /// คืน LINE id (OA กลาง) ของปลายทางผู้ใช้ที่ได้การ์ด — ผู้เรียกไม่ส่งข้อความตรงซ้ำถึงคนเดียวกัน</summary>
+    private async Task<ContactCards> QueueContactCardsAsync(Guid buyerCompanyId, Guid? documentId, string messageKey, string? trigger, bool customerInitiated,
+        CancellationToken ct)
+    {
+        if (_recipients == null || documentId is not Guid docId || trigger == null) return ContactCards.None;
+        var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct);
+        if (platformId is not Guid pid) return ContactCards.None;
+        var key = buyerCompanyId.ToString();
+        var doc = await (from d in _db.Documents.AsNoTracking()
+                         join c in _db.Contacts.AsNoTracking() on d.ContactId equals c.Id
+                         where d.Id == docId && d.CompanyId == pid && !d.IsDeleted
+                               && c.CompanyId == pid && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId == key
+                         select new { d.Id, d.ContactId, c.AutoSendDisabled }).FirstOrDefaultAsync(ct);
+        if (doc == null) return ContactCards.None;
+        var claim = await ClaimAsync(buyerCompanyId, docId, messageKey, ChannelLineContact, ct);
+        if (claim is not Guid claimId) return ContactCards.None;   // เข้าคิวไปแล้ว (ข้อความตรงของขั้นนี้ก็จองไปแล้วเช่นกัน)
+
+        var set = await _recipients.ResolveAsync(pid, doc.ContactId, NotifyTopics.ForTrigger(trigger), ct);
+        var plan = ContactLineChannel.Plan(channelEmail: false, lineUser: true, lineGroup: true, fallbackToEmail: false, set.Options,
+            AutopilotSettingsResolver.AutoSendBlock(doc.AutoSendDisabled));
+        if (plan.Endpoints.Count == 0)
+        {
+            await FinishAsync(claimId, StatusSkipped, plan.NotSent ?? "ผู้ติดต่อยังไม่มีปลายทาง LINE ที่รับเรื่องนี้", ct);
+            return ContactCards.None;
+        }
+        var baseKey = ProviderCentralOa.QueueBaseKey(docId, trigger, messageKey);
+        var endpointIds = plan.Endpoints.Select(e => e.EndpointId!.Value).ToList();
+        var window = ProviderCentralOa.DuplicateWindow(trigger);
+        var since = window is TimeSpan w ? DateTime.UtcNow - w : DateTime.MinValue;
+        var dead = new[] { ContactLineChannel.StatusCancelled, ContactLineChannel.StatusFailed, ContactLineChannel.StatusSkipped };
+        var already = await _db.LineQueues.AsNoTracking()
+            .Where(q => q.CompanyId == pid && q.EntityId == docId && q.Trigger == trigger && !q.IsDeleted && q.EndpointId != null
+                && endpointIds.Contains(q.EndpointId.Value) && !dead.Contains(q.Status) && q.CreatedAt >= since)
+            .Select(q => q.EndpointId!.Value).Distinct().ToListAsync(ct);
+        var now = DateTime.UtcNow;
+        var added = 0;
+        foreach (var ep in plan.Endpoints)
+        {
+            if (already.Contains(ep.EndpointId!.Value)) continue;
+            var queueKey = ContactLineChannel.QueueKey(baseKey, ep.EndpointId);
+            _db.LineQueues.Add(new LineQueue
+            {
+                CompanyId = pid, RuleId = null, EntityType = "Document", EntityId = docId, ContactId = doc.ContactId,
+                EndpointId = ep.EndpointId, EndpointKind = ep.Kind, Topic = NotifyTopics.ForTrigger(trigger).ToString(), Trigger = trigger,
+                ScheduledFor = now, Status = ContactLineChannel.StatusPending, RetryKey = ContactLineChannel.RetryKey(pid, queueKey),
+                IdempotencyKey = queueKey, BaseKey = baseKey, FallbackToEmail = false, CreatedBy = SystemActor, CustomerInitiated = customerInitiated,
+            });
+            added++;
+        }
+        if (added > 0) await _db.SaveChangesAsync(ct);
+        // ปลายทางผู้ใช้ที่ได้การ์ด (ใหม่หรือจากทางอื่น) — LINE id ของ OA กลางเท่านั้น (เทียบกับ User.LineUserId ที่ผูกกับบอทกลาง)
+        var covered = new List<string>();
+        if (_secrets != null)
+        {
+            var userEps = plan.Endpoints.Where(e => e.Kind == NotifyEndpointKind.LineUser).Select(e => e.EndpointId!.Value).ToList();
+            var protectedIds = await _db.ContactNotifyEndpoints.AsNoTracking()
+                .Where(e => e.CompanyId == pid && userEps.Contains(e.Id) && e.OaScope == NotifyEndpointKind.ScopeNextAcc)
+                .Select(e => e.LineUserId).ToListAsync(ct);
+            covered.AddRange(protectedIds.Select(v => _secrets.Unprotect(v)).Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v!.Trim()));
+        }
+        await FinishAsync(claimId, StatusQueued, added > 0
+            ? $"เข้าคิว LINE ของผู้ติดต่อ {added} ปลายทาง (ผลส่งจริง: บริษัทผู้ให้บริการ → ตารางส่ง › คิว LINE)"
+            : "ปลายทาง LINE ของผู้ติดต่อได้การ์ดเรื่องนี้จากทางอื่นแล้ว (กฎตารางส่ง) — ไม่เข้าคิวซ้ำ", ct);
+        return new ContactCards(added, covered);
     }
 
     /// <summary>จองสิทธิ์ส่ง — คืน id ของแถวที่จองได้ · null = ส่งไปแล้ว/อีกเครื่องกำลังส่ง</summary>

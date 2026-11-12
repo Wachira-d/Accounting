@@ -89,6 +89,50 @@ public static class AutoApproveFailure
         return notes.TrimEnd() + "\n" + $"{ResolvedMarker} {bkk} (เวลาไทย) โดย {approvedBy}";
     }
 
+    /// <summary>รอบ 263: หมายเหตุมีข้อความ "อนุมัติอัตโนมัติ … ไม่สำเร็จ" ที่ยังไม่ถูกปิดไหม — ผู้อนุมัติเช็กก่อนค้นชื่อผู้อนุมัติ (ไม่ค้นทุกครั้งที่อนุมัติ)</summary>
+    public static bool HasOpenFailure(string? notes)
+    {
+        if (string.IsNullOrWhiteSpace(notes)) return false;
+        var lastFail = LastFailureIndex(notes);
+        return lastFail >= 0 && notes.LastIndexOf(ResolvedMarker, StringComparison.Ordinal) < lastFail;
+    }
+
+    /// <summary>รอบ 263: "แก้แล้ว" ล่าสุดที่ปิดข้อความล้ม — เวลา (ข้อความเวลาไทยตามที่ประทับ) + ผู้อนุมัติ (ชื่อ หรือ id ผู้ใช้ของแถวเก่า) · ไม่มี = null</summary>
+    public sealed record Resolution(string AtBangkok, string By);
+
+    private static readonly System.Text.RegularExpressions.Regex ResolvedLine = new(
+        System.Text.RegularExpressions.Regex.Escape(ResolvedMarker) + " (?<at>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}) \\(เวลาไทย\\) โดย (?<by>[^\\n]+)",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>รอบ 263: อ่าน "แก้แล้ว" ตัวล่าสุดที่อยู่<b>หลัง</b>ข้อความล้มตัวล่าสุด (รูปแบบเดียวกับ <see cref="MarkResolved"/> — ตัวเขียน/ตัวอ่านอยู่ไฟล์เดียว)</summary>
+    public static Resolution? LastResolution(string? notes)
+    {
+        if (string.IsNullOrWhiteSpace(notes)) return null;
+        var lastFail = LastFailureIndex(notes);
+        System.Text.RegularExpressions.Match? last = null;
+        foreach (System.Text.RegularExpressions.Match m in ResolvedLine.Matches(notes))
+            if (m.Index > lastFail) last = m;
+        return last == null ? null : new Resolution(last.Groups["at"].Value, last.Groups["by"].Value.Trim());
+    }
+
+    /// <summary>รอบ 263: id ผู้ใช้ที่ค้างอยู่ในบรรทัด "แก้แล้ว" ของแถวเก่า (ก่อนรอบ 263 ประทับ id ไม่ใช่ชื่อ) — ให้ผู้แสดงค้นชื่อครั้งเดียว</summary>
+    public static IReadOnlyList<Guid> ApproverIds(string? notes)
+    {
+        if (string.IsNullOrWhiteSpace(notes)) return Array.Empty<Guid>();
+        return ResolvedLine.Matches(notes).Select(m => Guid.TryParse(m.Groups["by"].Value.Trim(), out var g) ? g : Guid.Empty)
+            .Where(g => g != Guid.Empty).Distinct().ToList();
+    }
+
+    /// <summary>รอบ 263: แทน id ผู้ใช้ในบรรทัด "แก้แล้ว" ด้วยชื่อ (เฉพาะที่ค้นเจอ · ไม่เจอ = คงเดิม — ไม่แต่งชื่อ) · แตะเฉพาะบรรทัดของตัวเอง</summary>
+    public static string? WithApproverNames(string? notes, IReadOnlyDictionary<Guid, string> names)
+    {
+        if (string.IsNullOrWhiteSpace(notes) || names.Count == 0) return notes;
+        return ResolvedLine.Replace(notes, m =>
+            Guid.TryParse(m.Groups["by"].Value.Trim(), out var g) && names.TryGetValue(g, out var name) && !string.IsNullOrWhiteSpace(name)
+                ? m.Value[..(m.Groups["by"].Index - m.Index)] + name.Trim()
+                : m.Value);
+    }
+
     private static int LastFailureIndex(string notes)
     {
         var idx = notes.LastIndexOf(NoteMarker, StringComparison.Ordinal);
