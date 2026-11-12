@@ -100,7 +100,12 @@ public class RecurringRunOutcomeTests
     public void Opposite_UserApprovedDraftAfterwards_ApprovalStepDisappears()
     {
         var facts = CreditCase with { EmailHeldForDraft = false, SkippedPeriods = 0, SkippedFrom = null };
-        Assert.Null(Build(facts, Doc(DocumentStatus.Approved, "INV-2569-0042")));
+        // รอบ 263: ไม่ใช่ null อีกแล้ว — ได้บรรทัด "แก้ครบแล้ว" (AllResolved) แทนกล่องเตือน · ไม่มีขั้นตอน/ปุ่ม
+        var v = Build(facts, Doc(DocumentStatus.Approved, "INV-2569-0042"))!;
+        Assert.True(v.AllResolved);
+        Assert.Empty(v.Steps);
+        Assert.Empty(v.Actions);
+        Assert.Contains(v.Resolved!, r => r.StartsWith("อนุมัติแล้ว: ใบแจ้งหนี้ INV-2569-0042"));
     }
 
     [Fact]

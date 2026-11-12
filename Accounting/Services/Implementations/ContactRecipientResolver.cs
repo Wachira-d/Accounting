@@ -127,6 +127,17 @@ public class ContactRecipientResolver : IContactRecipientResolver
         return nx.HasToken ? null : nx.Problem ?? LineGroupBindRule.Replies.CentralOaNotConfigured;
     }
 
+    /// <summary>รอบ 262 (คำตัดสิน 262-1-1): LINE ผู้ใช้ 1:1 ผ่าน OA กลางพร้อมไหม — null = พร้อม · ไม่ใช่บริษัทผู้ให้บริการ ⇒ เหตุ N8 ·
+    /// พร้อม = token + secret ของ OA กลาง (webhook กลางต้องตรวจลายเซ็นได้จึงรับรหัสผูกได้) — ตัวเดียวของปุ่มลิงก์ผูก · สร้างคำเชิญ · ยินยอม · ศูนย์บิล</summary>
+    public async Task<string?> CentralUserProblemAsync(Guid companyId, CancellationToken ct = default)
+    {
+        if (!ProviderCentralOa.Allowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct)))
+            return ContactRecipientRule.NextAccNotOpenReason;
+        if (_nextAccLine == null) return LineGroupBindRule.Replies.CentralOaNotConfigured;
+        var nx = await _nextAccLine.GetAsync(ct);
+        return ProviderCentralOa.CentralProblem(nx.HasToken, nx.HasSecret, nx.Problem);
+    }
+
     /// <summary>รอบ 256 (คำตัดสิน 256-2): กล่อง "เพิ่มกลุ่ม LINE" — server computes · page displays ·
     /// บริษัทผู้ให้บริการ ⇒ ผ่าน LINE OA กลาง (ข้อความบอก Basic ID ของ OA กลางจากค่าตั้ง) · บริษัทอื่น ⇒ OA ของบริษัทเท่านั้น (N8 คงเดิม)</summary>
     private async Task<ContactLineGroupBindOffer> LineGroupBindOfferAsync(Guid companyId, bool canEdit, CancellationToken ct)
@@ -160,20 +171,31 @@ public class ContactRecipientResolver : IContactRecipientResolver
         var now = DateTime.UtcNow;
         var open = await _db.ContactLineInvites.AsNoTracking()
             .CountAsync(i => i.CompanyId == companyId && i.ContactId == contactId && i.UsedAt == null && i.RevokedAt == null && i.ExpiresAt > now, ct);
+        // รอบ 262 (คำตัดสิน 262-1-1): บริษัทผู้ให้บริการ ⇒ ผูกผ่าน LINE OA กลาง (OA ของบริษัทนี้) — พร้อม = token + secret ของ OA กลาง (ตัวตัดสินเดียว CentralProblemAsync)
+        if (line.NextAccUserOpen)
+        {
+            var central = await CentralUserProblemAsync(companyId, ct);
+            return central == null
+                ? new ContactLineBindOffer(true, null, open, ViaCentralOa: true)
+                : new ContactLineBindOffer(false, central, open, ViaCentralOa: true);
+        }
         if (!line.CompanyOaReady)
             return new ContactLineBindOffer(false, (line.CompanyOaProblem ?? "LINE OA ของบริษัทยังไม่พร้อม")
-                + " — ผูก LINE ของผู้ติดต่อได้ผ่าน LINE OA ของบริษัทเท่านั้น (OA กลางของ NextAcc ยังไม่เปิดสำหรับผู้ติดต่อ)", open);
+                + " — ผูก LINE ของผู้ติดต่อได้ผ่าน LINE OA ของบริษัทเท่านั้น (OA กลางของ NextAcc ใช้ได้เฉพาะบริษัทผู้ให้บริการ)", open);
         return new ContactLineBindOffer(true, null, open);
     }
 
     /// <summary>รอบ 250 WP-08: ประโยคบนแท็บ (เซิร์ฟเวอร์ส่ง · หน้าแสดงตรงตัว) — เส้นส่งที่อ่านค่าตั้งนี้แล้วจริง (ล็อกด้วย required_call_site_check R250L1)
     /// · รอบ 257 ชุด 4 (C-M5): ประโยค LINE ขึ้นกับ <c>NextAccGroupOpen</c> (บริษัทผู้ให้บริการ ⇒ กลุ่มผ่าน OA กลางเปิดแล้ว ตั้งแต่รอบ 256) — เดิมบอก "ยังไม่เปิด" กับทุกบริษัท</summary>
-    internal static string DeliveryNoteFor(bool nextAccGroupOpen) =>
+    internal static string DeliveryNoteFor(bool nextAccGroupOpen) => DeliveryNoteFor(nextAccGroupOpen, nextAccGroupOpen);
+
+    /// <summary>รอบ 262: บริษัทผู้ให้บริการ ⇒ LINE ผู้ใช้ 1:1 ผ่าน OA กลางเปิดด้วย (ตัวเดียวกับกลุ่ม)</summary>
+    internal static string DeliveryNoteFor(bool nextAccGroupOpen, bool nextAccUserOpen) =>
         "ปลายทางที่ตั้งที่นี่มีผลกับการส่งอีเมลถึงผู้ติดต่อรายนี้แล้ว (ตัวหาผู้รับตัวเดียว): ตารางส่งอีเมล (เมื่ออนุมัติ/รายการประจำ) · ทวงชำระ/ใบแจ้งยอด · "
         + "ส่ง 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น — เรื่องที่ไม่ได้เลือกจะไม่ถูกส่งไปปลายทางนั้น และถ้าไม่มีปลายทางใดรับเรื่องนั้นเลย ระบบไม่ส่งพร้อมบันทึกเหตุบนคิว · "
         + "ช่องผู้รับที่ผู้ใช้กรอกเองตอนส่ง (เช่นลิงก์เซ็นครั้งก่อน) ยังชนะ · อีเมลหลักแก้ที่แท็บข้อมูลทั่วไป · "
         + "LINE (รอบ 254): ส่งการ์ดเอกสารถึงผู้ใช้ LINE ที่ผูกผ่าน LINE OA ของบริษัทเมื่อกฎในตารางส่งติ๊กช่อง LINE (เมื่ออนุมัติ · ใกล้/เกินกำหนด · รายการประจำ) · "
-        + ContactLineChannel.CentralOaSentence(nextAccGroupOpen);
+        + ContactLineChannel.CentralOaSentence(nextAccGroupOpen, nextAccUserOpen);
 
     private sealed record RowMeta(DateTime LinkedAt, DateTime? LastSentAt, string? LastFailure);
 
@@ -218,8 +240,11 @@ public class ContactRecipientResolver : IContactRecipientResolver
             s != null && _secrets.IsUsable(s.LineChannelAccessToken), s != null && _secrets.IsUsable(s.LineChannelSecret));
         // รอบ 256 (คำตัดสิน 256-2): กลุ่มของผู้ติดต่อผ่าน OA กลาง ⇒ เฉพาะบริษัทผู้ให้บริการ (ตัวตัดสินเดียว LineGroupBindRule.CentralScopeAllowed · อ่านใหม่ทุกครั้ง)
         var centralGroups = LineGroupBindRule.CentralScopeAllowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct));
+        // รอบ 262 (คำตัดสิน 262-1-1): บริษัทผู้ให้บริการ ⇒ OA กลางคือ OA ของบริษัทสำหรับ LINE ผู้ใช้ 1:1 ด้วย (ตัวตัดสินเดียวกับกลุ่ม) · บอทของ OA กลางตอนนี้ (เทียบบอทที่ผูก)
+        var centralUsers = ProviderCentralOa.Allowed(companyId, await PlatformCompanyLookup.IdAsync(_db, ct));
+        var centralBot = centralUsers && _nextAccLine != null ? (await _nextAccLine.GetAsync(ct)).BotUserId : null;
         return new ContactRecipientRule.LineOpenness(LineDeliveryOpen, ready.Ready, s?.LineOaDestination, ready.Problem, NextAccTenantDeliveryOpen,
-            NextAccGroupOpen: centralGroups);
+            NextAccGroupOpen: centralGroups, NextAccUserOpen: centralUsers, CentralOaDestination: centralBot);
     }
 
     /// <summary>รอบ 260-4 (ฝ่ายค้าน H1): ความยินยอมของแถวปลายทาง (id → เวลาถอน) — ตัวเดียวของตัวหาผู้รับและรายการปลายทางทดสอบ LINE</summary>

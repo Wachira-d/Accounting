@@ -263,4 +263,16 @@ public class RecurringController : ControllerBase
         var result = await _recurringService.RunNowAsync(companyId, id, userId, confirmExtra);   // รอบ 259 (B-L3): ใบล่วงหน้าซ้ำต้องยืนยัน
         return Ok(new ApiResponse<RecurringTransactionResponse>(true, result, "ดำเนินการสำเร็จ"));
     }
+
+    /// <summary>รอบ 263 (คำตัดสิน 263-1-3): ปิดเรื่อง "งวดที่ข้าม" — ผู้ใช้ออกเองแล้ว/ไม่ต้องออก · สิทธิ์เดียวกับเปิดใช้งานคืน (แก้รายการประจำ)</summary>
+    [HttpPost("{id:guid}/dismiss-skipped")]
+    public async Task<ActionResult<ApiResponse<RecurringTransactionResponse>>> DismissSkipped(Guid companyId, Guid id)
+    {
+        var item = await _recurringService.GetByIdAsync(companyId, id);
+        if (await DenyRecurringWriteAsync(companyId, item.TemplateType, item.DocumentType, needsApprove: false) is { } deny)
+            return Forbid403<RecurringTransactionResponse>(deny);
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _recurringService.DismissSkippedPeriodsAsync(companyId, id, userId);
+        return Ok(new ApiResponse<RecurringTransactionResponse>(true, result, "ปิดเรื่องงวดที่ข้ามแล้ว"));
+    }
 }

@@ -2056,6 +2056,17 @@ public partial class DocumentService : IDocumentService
         }
     }
 
+    /// <summary>รอบ 263: ป้ายผู้กระทำสำหรับข้อความที่คนอ่าน (หมายเหตุภายใน) — id ผู้ใช้ ⇒ ชื่อ (ไม่พบ = id เดิม ไม่แต่งชื่อ) · งานระบบ ⇒ ป้ายระบบ</summary>
+    private async Task<string> ActorLabelAsync(string actor)
+    {
+        if (Guid.TryParse(actor, out var uid))
+        {
+            var name = await _db.Users.AsNoTracking().Where(u => u.Id == uid).Select(u => u.FullName).FirstOrDefaultAsync();
+            return string.IsNullOrWhiteSpace(name) ? actor : name.Trim();
+        }
+        return SystemActor.Display(actor) ?? actor;
+    }
+
     public async Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId)
     {
         var doc = await _db.Documents
@@ -2282,6 +2293,14 @@ public partial class DocumentService : IDocumentService
             var whtNet = Accounting.Helpers.WhtCreditNoteRemainder.Compute(doc.WithholdingTaxAmount, cnWhts);
             if (whtNet.CreditNoteCount > 0)
                 resp = resp with { WhtNetOfAdjustments = whtNet.Remaining };
+        }
+        // รอบ 263: หมายเหตุ "✅ แก้แล้ว … โดย <id ผู้ใช้>" ของแถวก่อนรอบ 263 ⇒ แสดงชื่อ (ค้นเฉพาะ id ที่อยู่ในหมายเหตุ · ผู้ใช้ไม่ผูกบริษัท ค้นด้วย id ตรง)
+        var approverIds = AutoApproveFailure.ApproverIds(resp.InternalNotes);
+        if (approverIds.Count > 0)
+        {
+            var names = await _db.Users.AsNoTracking().Where(u => approverIds.Contains(u.Id))
+                .Select(u => new { u.Id, u.FullName }).ToDictionaryAsync(u => u.Id, u => u.FullName);
+            resp = resp with { InternalNotes = AutoApproveFailure.WithApproverNames(resp.InternalNotes, names) };
         }
         return resp;
     }
@@ -7783,7 +7802,9 @@ public partial class DocumentService : IDocumentService
                 await AutoRegisterFixedAssetsAsync(companyId, doc, approvedBy);
 
                 // ฝ่ายค้าน P2-6 (PP36): เคยอนุมัติอัตโนมัติไม่สำเร็จ แล้วอนุมัติสำเร็จรอบนี้ ⇒ ปิดหมายเหตุเดิมด้วย "แก้แล้ว" (ไม่ลบ — คงร่องรอย)
-                doc.InternalNotes = AutoApproveFailure.MarkResolved(doc.InternalNotes, DateTime.UtcNow, approvedBy);
+                // รอบ 263: "โดย" = ชื่อผู้ใช้ (เดิมประทับ id ผู้ใช้ดิบ "โดย 5ca33982-…") · ระบบ = ป้ายระบบ · ค้นชื่อเฉพาะเมื่อมีข้อความล้มที่ยังไม่ปิด
+                if (AutoApproveFailure.HasOpenFailure(doc.InternalNotes))
+                    doc.InternalNotes = AutoApproveFailure.MarkResolved(doc.InternalNotes, DateTime.UtcNow, await ActorLabelAsync(approvedBy));
 
                 // R-04: นับโควตาของใบที่เลื่อนนับ — ในธุรกรรมเดียวกับการอนุมัติ (อนุมัติล้ม = ไม่นับ) · ปลดธงกันนับซ้ำเมื่ออนุมัติใบเดิมอีกครั้งไม่ได้อยู่แล้ว
                 if (doc.QuotaCountDeferred)

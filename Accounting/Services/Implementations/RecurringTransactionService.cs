@@ -426,14 +426,15 @@ public class RecurringTransactionService : IRecurringTransactionService
             await _db.Entry(recurring).ReloadAsync();
             EnsureRunnableNow(recurring);
             // งวดค้างหลายงวด ⇒ ข้ามไปงวดล่าสุดที่ถึงกำหนด (ปุ่มนี้ออกงวดเดียว — ไม่ใช่งวดเก่าสุด) · ตัวตัดสินเดียวกับ cron
-            var skipNote = await SkipOverduePeriodsAsync(recurring, DateTime.UtcNow);
+            await SkipOverduePeriodsAsync(recurring, DateTime.UtcNow);   // รอบ 263: เขียนงวดที่ข้ามลงแถวครั้งเดียว (พาข้ามรอบโดย MarkRunAsync)
             // ถึงกำหนดแล้ว = รอบนี้คืองวดนั้น (เลื่อนกำหนดถัดไป) · ก่อนกำหนด = รอบพิเศษ ไม่กินงวด
             var consumesPeriod = RecurringSchedule.IsDue(recurring.NextRunDate, DateTime.UtcNow, recurring.LeadDays);
             try
             {
                 _journalBackfilled.Clear();
                 var lockedNote = await ExecuteRecurringAsync(recurring, performedBy, consumesPeriod, confirmExtra);
-                if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
+                // รอบ 263: งวดที่ข้ามเขียนครั้งเดียวก่อนรอบ (SkipOverduePeriodsAsync) แล้ว MarkRunAsync/SetRunNoticeAsync พาไปเอง — เดิมเขียนซ้ำหลังรอบ
+                // เพราะ MarkRunAsync ล้างทิ้ง (ตอนนี้ไม่ล้างงวดที่ยังค้าง)
                 if (lockedNote != null) await AppendRunNoticeTextAsync(recurring, lockedNote);   // รอบ 259 (B-M4)
                 if (RecurringSchedule.BackfillNote(_journalBackfilled) is string backNote) await AppendRunNoticeTextAsync(recurring, backNote);   // ฝ่ายค้าน 259-D M1
             }
@@ -503,7 +504,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                     if (recurring == null || recurring.Status != RecurringStatus.Active || !RecurringSchedule.IsDue(recurring.NextRunDate, now, recurring.LeadDays)) return;
                     try
                     {
-                        var skipNote = await SkipOverduePeriodsAsync(recurring, now);
+                        await SkipOverduePeriodsAsync(recurring, now);   // รอบ 263: เขียนครั้งเดียว (ดู RunNowAsync)
                         if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
                         {
                             recurring.Status = RecurringStatus.Completed;
@@ -515,7 +516,6 @@ public class RecurringTransactionService : IRecurringTransactionService
                         // รอบ 259 (B-M4): สมุดรายวัน — งวดที่เหลือไล่ต่อในรอบนี้ (ลงวันที่ของงวดตัวเอง · งวดปิด = ข้ามพร้อมเหตุ)
                         if (IsJournalTemplate(recurring.TemplateType))
                             lockedNote = await CatchUpJournalPeriodsAsync(recurring, ScheduledActor, now, lockedNote);
-                        if (skipNote != null) await AppendRunNoticeAsync(recurring, skipNote);
                         if (lockedNote != null)
                         {
                             await AppendRunNoticeTextAsync(recurring, lockedNote);
@@ -622,8 +622,9 @@ public class RecurringTransactionService : IRecurringTransactionService
             .Where(r => r.Id == recurring.Id && r.CompanyId == recurring.CompanyId)
             .Select(r => new { r.LastRunNotice, r.LastRunOutcome }).FirstOrDefaultAsync();
         var note = skip.Note;
-        var facts = (ReadFacts(recurring.Id, current?.LastRunOutcome) ?? new RecurringRunFacts())
-            with { SkippedPeriods = skip.Count, SkippedFrom = skip.From };
+        var prev = ReadFacts(recurring.Id, current?.LastRunOutcome) ?? new RecurringRunFacts();
+        // รอบ 263: งวดที่ข้ามรอบก่อนที่ยังค้าง (พามาโดย MarkRunAsync) + ข้ามใหม่รอบนี้ = รวมกัน · ช่วงเดิม (เรียกซ้ำในรอบเดียว) = ไม่นับซ้ำ
+        var facts = RecurringRunOutcome.MergeSkip(prev, skip.Count, skip.From);
         var text = current?.LastRunNotice;
         var merged = string.IsNullOrEmpty(text) ? note : text.Contains(note) ? text : text + " · " + note;
         await SetRunNoticeAsync(recurring, new List<string> { merged }, facts);
@@ -681,8 +682,19 @@ public class RecurringTransactionService : IRecurringTransactionService
         if (consumesPeriod) recurring.NextRunDate = GetNextRunDate(recurring);
         recurring.LastRunError = null;
         recurring.LastRunErrorAt = null;
-        recurring.LastRunNotice = null;
-        recurring.LastRunOutcome = null;
+        // รอบ 263 (คำตัดสิน 263-1-3): งวดที่ข้ามที่ยังไม่ออกครบ/ยังไม่ปิดเรื่อง ต้องค้างข้ามรอบ (เดิมรอบถัดไป — แม้กด "สร้างงวดที่ข้าม" ครั้งแรก — ล้างทิ้ง
+        // ทั้งที่ยังเหลืองวด) · รอบพิเศษไม่กินงวดที่ออกใบ = ออกงวดที่ข้ามไป 1 งวด · อ่านค่าจากฐาน (คำสั่ง ExecuteUpdate ข้าง context ทำให้ค่าใน entity ค้าง)
+        var currentRun = await _db.RecurringTransactions.AsNoTracking()
+            .Where(r => r.Id == recurring.Id && r.CompanyId == recurring.CompanyId)
+            .Select(r => new { r.LastRunNotice, r.LastRunOutcome }).FirstOrDefaultAsync();
+        var prevFacts = currentRun?.LastRunOutcome != null ? ReadFacts(recurring.Id, currentRun.LastRunOutcome)
+            : RecurringRunOutcome.FactsFromLegacyNotice(currentRun?.LastRunNotice);
+        var carry = prevFacts?.SkipCarry(issuedOneNow: !consumesPeriod && documentId.HasValue);
+        if (carry != null && carry.SkippedRemaining <= 0) carry = null;   // ออกครบแล้ว ⇒ จบ (ไม่พาไป)
+        recurring.LastRunNotice = carry == null ? null : RecurringRunOutcome.SkipCarryNotice(carry);
+        recurring.LastRunOutcome = carry == null ? null : JsonSerializer.Serialize(carry);
+        _db.Entry(recurring).Property(r => r.LastRunNotice).IsModified = true;
+        _db.Entry(recurring).Property(r => r.LastRunOutcome).IsModified = true;
         if (documentId.HasValue) recurring.LastDocumentId = documentId;
         if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
             recurring.Status = RecurringStatus.Completed;
@@ -695,6 +707,22 @@ public class RecurringTransactionService : IRecurringTransactionService
     {
         if (notices.Count == 0) return;
         var text = string.Join(" · ", notices);
+        // รอบ 263 (คำตัดสิน 263-1-3): งวดที่ข้ามที่ยังค้าง (MarkRunAsync พามา) ต้องไม่หายเพราะรอบนี้มีเรื่องอื่นต้องบอก
+        if (facts == null || facts.SkippedPeriods == 0)
+        {
+            var currentJson = await _db.RecurringTransactions.AsNoTracking()
+                .Where(r => r.Id == recurring.Id && r.CompanyId == recurring.CompanyId)
+                .Select(r => r.LastRunOutcome).FirstOrDefaultAsync();
+            if (ReadFacts(recurring.Id, currentJson)?.SkipCarry(issuedOneNow: false) is { } carried)
+            {
+                facts = (facts ?? new RecurringRunFacts()) with
+                {
+                    SkippedPeriods = carried.SkippedPeriods, SkippedFrom = carried.SkippedFrom, SkippedIssued = carried.SkippedIssued,
+                };
+                var carryText = RecurringRunOutcome.SkipCarryNotice(carried);
+                if (!text.Contains(carryText, StringComparison.Ordinal)) text += " · " + carryText;
+            }
+        }
         if (text.Length > 2000) text = text[..2000] + "…";
         // รอบ 247: ข้อเท็จจริงแบบโครงสร้างคู่กับข้อความเดิม — หน้ารายการประจำประกอบหัวเรื่อง/ขั้นตอน/ปุ่มจากตัวนี้ (RecurringRunOutcome.Build)
         var json = facts == null || facts.IsEmpty ? null : JsonSerializer.Serialize(facts);
@@ -716,16 +744,19 @@ public class RecurringTransactionService : IRecurringTransactionService
     }
 
     /// <summary>รอบ 247: คำตอบของหน้ารายการประจำ + ผลรอบล่าสุดแบบโครงสร้าง (สถานะเอกสาร "ตอนนี้" · อีเมลผู้ติดต่อ "ตอนนี้" ·
-    /// กฎส่งอีเมลเมื่ออนุมัติ) — query ละครั้งต่อหน้า (ไม่ N+1) · ทุก query กรองบริษัท</summary>
+    /// กฎส่งอีเมลเมื่ออนุมัติ) — query ละครั้งต่อหน้า (ไม่ N+1) · ทุก query กรองบริษัท ·
+    /// รอบ 263: + หลักฐาน "ตอนนี้" ของแต่ละเรื่อง (ผู้อนุมัติ/เวลาจากหมายเหตุ "แก้แล้ว" · บันทึกส่งอีเมล/คิว · LINE ส่งแล้ว · สมุดรายวัน) ⇒
+    /// ตัวประเมินสดตัวเดียว <see cref="RecurringRunOutcome.Build"/> (เดิมกล่องเตือนแสดงข้อความแช่แข็งตอนรัน ทั้งที่ผู้ใช้อนุมัติ+รับชำระแล้ว)</summary>
     private async Task<List<RecurringTransactionResponse>> MapWithOutcomeAsync(Guid companyId, IReadOnlyList<RecurringTransaction> rows)
     {
         var docIds = rows.Where(r => r.LastDocumentId.HasValue).Select(r => r.LastDocumentId!.Value).Distinct().ToList();
-        var docs = docIds.Count == 0 ? new Dictionary<Guid, RecurringRunDoc>()
-            : (await _db.Documents.AsNoTracking()
+        var docRows = docIds.Count == 0 ? new List<RunDocRow>()
+            : await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
-                .Select(d => new { d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate })
-                .ToListAsync())
-                .ToDictionary(d => d.Id, d => new RecurringRunDoc(d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate));
+                .Select(d => new RunDocRow(d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate, d.InternalNotes))
+                .ToListAsync();
+        var docs = docRows.ToDictionary(d => d.Id, d => new RecurringRunDoc(d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate));
+        var live = await LoadRunLiveAsync(companyId, rows, docRows);
         var contactIds = rows.Where(r => r.ContactId.HasValue).Select(r => r.ContactId!.Value).Distinct().ToList();
         // รอบ 250 WP-08: อีเมลที่ส่งได้ของเรื่อง "เอกสาร" (ตัวหาผู้รับเดียวกับผู้ส่งจริง) — ต่อผู้ติดต่อที่ไม่ซ้ำในหน้านี้
         var emails = new Dictionary<Guid, string?>();
@@ -745,11 +776,82 @@ public class RecurringTransactionService : IRecurringTransactionService
             var ruleApplies = doc != null && approvedRuleTypes.Any(t => t == null || t == doc.Type.ToString());
             var outcome = r.LastRunNotice == null && r.LastRunOutcome == null ? null
                 : RecurringRunOutcome.Build(ReadFacts(r.Id, r.LastRunOutcome), r.LastRunNotice, doc, r.ContactId, email, ruleApplies,
-                    canRunNow: r.Status == RecurringStatus.Active);
+                    canRunNow: r.Status == RecurringStatus.Active, live: live.GetValueOrDefault(r.Id));
             var emailWarning = RecurringEmailReadiness.SettingWarning(r.AutoSendEmail, !IsJournalTemplate(r.TemplateType), r.ContactId, email);
             list.Add(MapToResponse(r, outcome, emailWarning));
         }
         return list;
+    }
+
+    private sealed record RunDocRow(Guid Id, string? DocumentNumber, DocumentStatus Status, DocumentType DocumentType, DateTime DocumentDate, string? InternalNotes);
+
+    /// <summary>รอบ 263: หลักฐาน "ตอนนี้" ต่อรายการ (key = id รายการประจำ) — query ละครั้งต่อหน้า · ทุก query กรองบริษัท · อ่านอย่างเดียว</summary>
+    private async Task<Dictionary<Guid, RecurringRunLive>> LoadRunLiveAsync(Guid companyId, IReadOnlyList<RecurringTransaction> rows, List<RunDocRow> docRows)
+    {
+        var result = new Dictionary<Guid, RecurringRunLive>();
+        if (rows.All(r => r.LastRunNotice == null && r.LastRunOutcome == null)) return result;
+        var docIds = docRows.Select(d => d.Id).ToList();
+
+        // ผู้อนุมัติ/เวลา จากหมายเหตุ "✅ แก้แล้ว" บนใบ (ตัวเขียน/ตัวอ่านเดียวกัน AutoApproveFailure) · id ผู้ใช้ของแถวก่อนรอบ 263 ⇒ ชื่อ
+        var approvals = docRows.ToDictionary(d => d.Id, d => AutoApproveFailure.LastResolution(d.InternalNotes));
+        var userIds = approvals.Values.Where(a => a != null && Guid.TryParse(a.By, out _)).Select(a => Guid.Parse(a!.By)).Distinct().ToList();
+        var userNames = userIds.Count == 0 ? new Dictionary<Guid, string>()
+            : await _db.Users.AsNoTracking().Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.FullName);
+
+        var mailLogs = docIds.Count == 0 ? new Dictionary<Guid, DateTime>()
+            : (await _db.DocumentEmailLogs.AsNoTracking()
+                .Where(l => l.CompanyId == companyId && l.DocumentId != null && docIds.Contains(l.DocumentId.Value)
+                            && l.Status == EmailLogStatus.Sent && l.SentAt != null)
+                .GroupBy(l => l.DocumentId!.Value).Select(g => new { g.Key, At = g.Min(l => l.SentAt!.Value) }).ToListAsync())
+                .ToDictionary(x => x.Key, x => x.At);
+        var queue = docIds.Count == 0 ? new List<(Guid EntityId, string Status, DateTime? SentAt)>()
+            : (await _db.EmailQueues.AsNoTracking()
+                .Where(q => q.CompanyId == companyId && !q.IsDeleted && q.EntityType == "Document" && docIds.Contains(q.EntityId)
+                            && (q.Status == "Sent" || q.Status == "Pending" || q.Status == "Sending"))
+                .Select(q => new { q.EntityId, q.Status, q.SentAt }).ToListAsync())
+                .Select(q => (q.EntityId, q.Status, q.SentAt)).ToList();
+        var lineSent = docIds.Count == 0 ? new HashSet<Guid>()
+            : (await _db.LineQueues.AsNoTracking()
+                .Where(q => q.CompanyId == companyId && !q.IsDeleted && q.EntityType == "Document" && docIds.Contains(q.EntityId)
+                            && q.Status == ContactLineChannel.StatusSent)
+                .Select(q => q.EntityId).Distinct().ToListAsync()).ToHashSet();
+
+        // สมุดรายวันที่ข้อเท็จจริงอ้าง (id ของรอบใหม่ · เลขที่ของแถวเก่า)
+        var factsByRow = rows.ToDictionary(r => r.Id, r => ReadFacts(r.Id, r.LastRunOutcome) ?? RecurringRunOutcome.FactsFromLegacyNotice(r.LastRunNotice));
+        var jeIds = factsByRow.Values.Where(f => f?.JournalEntryId != null).Select(f => f!.JournalEntryId!.Value).Distinct().ToList();
+        var jeNos = factsByRow.Values.Where(f => f?.JournalEntryId == null && !string.IsNullOrEmpty(f?.JournalEntryNumber))
+            .Select(f => f!.JournalEntryNumber!).Distinct().ToList();
+        var journals = jeIds.Count == 0 && jeNos.Count == 0 ? new List<RecurringRunJournal>()
+            : await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.CompanyId == companyId && (jeIds.Contains(j.Id) || jeNos.Contains(j.EntryNumber)))
+                .Select(j => new RecurringRunJournal(j.Id, j.EntryNumber, j.Status)).ToListAsync();
+
+        foreach (var r in rows)
+        {
+            var f = factsByRow[r.Id];
+            RecurringRunJournal? je = null;
+            if (f?.JournalEntryId is Guid jid) je = journals.FirstOrDefault(j => j.Id == jid);
+            else if (!string.IsNullOrEmpty(f?.JournalEntryNumber))
+            {
+                var byNo = journals.Where(j => j.EntryNumber == f!.JournalEntryNumber).ToList();
+                je = byNo.Count == 1 ? byNo[0] : null;   // เลขซ้ำ (หลายสมุด) = ไม่เดา
+            }
+            AutoApproveFailure.Resolution? approval = null;
+            DateTime? sentAt = null;
+            bool queued = false, line = false;
+            if (r.LastDocumentId is Guid did)
+            {
+                if (approvals.TryGetValue(did, out var ap) && ap != null)
+                    approval = Guid.TryParse(ap.By, out var uid) && userNames.TryGetValue(uid, out var nm) && !string.IsNullOrWhiteSpace(nm)
+                        ? ap with { By = nm.Trim() } : ap;
+                var qSent = queue.Where(q => q.EntityId == did && q.Status == "Sent" && q.SentAt != null).Select(q => q.SentAt).Min();
+                sentAt = mailLogs.TryGetValue(did, out var logAt) ? (qSent is { } qa && qa < logAt ? qa : logAt) : qSent;
+                queued = queue.Any(q => q.EntityId == did && q.Status != "Sent");
+                line = lineSent.Contains(did);
+            }
+            result[r.Id] = new RecurringRunLive { Approval = approval, EmailSentAtUtc = sentAt, EmailQueued = queued, LineSent = line, Journal = je };
+        }
+        return result;
     }
 
     /// <summary>หลังบันทึก (สร้าง/แก้ไข): บันทึกได้เสมอ แต่ติ๊กส่งอีเมลกับผู้ติดต่อที่ไม่มีอีเมล ⇒ คำเตือนกลับในคำตอบ (ผู้ใช้อาจเพิ่มอีเมลทีหลัง)</summary>
@@ -759,6 +861,27 @@ public class RecurringTransactionService : IRecurringTransactionService
         // รอบ 259 (B-M3): ผลประทับนโยบายใหม่/หยุดมีผลตอนแก้ — ขึ้นพร้อมคำเตือนอีเมล (ห้ามหยุดมีผลเงียบ ๆ)
         var warnings = new[] { mapped.AutoSendEmailWarning, extraWarning }.Where(w => !string.IsNullOrEmpty(w)).Select(w => w!).ToArray();
         return warnings.Length == 0 ? mapped : mapped with { SaveWarnings = warnings };
+    }
+
+    /// <summary>รอบ 263 (คำตัดสิน 263-1-3): ผู้ใช้ปิดเรื่อง "งวดที่ข้าม" (ออกเองแล้ว/ไม่ต้องออก) — ประทับเวลา + ชื่อผู้กดลงข้อเท็จจริงของรอบ ·
+    /// ไม่มีงวดที่ข้ามค้าง ⇒ ปฏิเสธพร้อมเหตุ (ไม่ใช่สำเร็จเงียบ) · แถวเก่า (มีแต่ข้อความ) ⇒ แปลงเป็นข้อเท็จจริงก่อนประทับ</summary>
+    public async Task<RecurringTransactionResponse> DismissSkippedPeriodsAsync(Guid companyId, Guid id, string dismissedBy)
+    {
+        var row = await _db.RecurringTransactions.AsNoTracking()
+            .Where(r => r.Id == id && r.CompanyId == companyId)
+            .Select(r => new { r.LastRunNotice, r.LastRunOutcome }).FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
+        var facts = row.LastRunOutcome != null ? ReadFacts(id, row.LastRunOutcome) : RecurringRunOutcome.FactsFromLegacyNotice(row.LastRunNotice);
+        if (facts == null || facts.SkippedRemaining <= 0)
+            throw new BusinessRuleException("รายการนี้ไม่มีงวดที่ข้ามค้างอยู่แล้ว — รีเฟรชหน้าเพื่อดูสถานะล่าสุด", "RECURRING-SKIP-NONE");
+        var who = dismissedBy;
+        if (Guid.TryParse(dismissedBy, out var uid))
+            who = await _db.Users.AsNoTracking().Where(u => u.Id == uid).Select(u => u.FullName).FirstOrDefaultAsync() is { Length: > 0 } nm ? nm.Trim() : dismissedBy;
+        var json = JsonSerializer.Serialize(facts with { SkippedDismissedAt = DateTime.UtcNow, SkippedDismissedBy = who });
+        await _db.RecurringTransactions
+            .Where(r => r.Id == id && r.CompanyId == companyId)
+            .ExecuteUpdateAsync(u => u.SetProperty(r => r.LastRunOutcome, json));
+        return await GetByIdAsync(companyId, id);
     }
 
     /// <summary>รอบ 247: ฟอร์มรายการประจำถาม "ผู้ติดต่อนี้รับอีเมลได้ไหม" ตอนเลือกผู้ติดต่อ — ตัวตัดสินเดียวกับผู้ส่งจริง (RecurringEmailReadiness)</summary>
@@ -1430,7 +1553,9 @@ public class RecurringTransactionService : IRecurringTransactionService
             var autoPostGone = recurring.AutoApprove && result != null
                 ? await RecurringApprovePolicyLoader.AutoPostRefusalAsync(_db, _permissions, recurring.CompanyId, recurring) : null;
             if (autoPostGone != null)
-                await SetRunNoticeAsync(recurring, new List<string> { $"สมุดรายวัน {result!.EntryNumber} ไม่ได้ลงบัญชีอัตโนมัติ: {autoPostGone}" });
+                await SetRunNoticeAsync(recurring, new List<string> { $"สมุดรายวัน {result!.EntryNumber} ไม่ได้ลงบัญชีอัตโนมัติ: {autoPostGone}" },
+                    // รอบ 263: ข้อเท็จจริงคู่ข้อความ ⇒ หน้าตรวจสถานะสมุดรายวัน "ตอนนี้" (ผู้ใช้ลงบัญชีเองแล้ว = เรื่องจบ ไม่เตือนค้าง)
+                    new RecurringRunFacts { JournalPostBlockedReason = autoPostGone, JournalEntryId = result.Id, JournalEntryNumber = result.EntryNumber });
             else if (recurring.AutoApprove && result != null)
             {
                 try
@@ -1448,6 +1573,9 @@ public class RecurringTransactionService : IRecurringTransactionService
                         await SetRunNoticeAsync(recurring, new List<string>
                         {
                             $"ลงบัญชีสมุดรายวัน {result.EntryNumber} อัตโนมัติไม่สำเร็จ (ค้างเป็นร่าง): {RecurringRunFailure.UserMessage(ex)} — เปิดสมุดรายวันแล้วกดลงบัญชีเอง",
+                        }, new RecurringRunFacts   // รอบ 263: ตัวประเมินสดดูสถานะสมุดรายวัน "ตอนนี้"
+                        {
+                            JournalPostBlockedReason = RecurringRunFailure.UserMessage(ex), JournalEntryId = result.Id, JournalEntryNumber = result.EntryNumber,
                         });
                     }
                     catch (Exception nex) when (nex is not OperationCanceledException)

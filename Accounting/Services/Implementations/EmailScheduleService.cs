@@ -1596,7 +1596,10 @@ public class EmailScheduleService : IEmailScheduleService
         if (ContactLineChannel.RuleProblem(rule.Trigger, rule.ChannelEmail, rule.ChannelLineUser, rule.ChannelLineGroup,
                 lineChannel.Open && lineChannel.CompanyOaReady, lineChannel.CompanyOaProblem,
                 centralGroupOpen: lineChannel.Open && lineChannel.NextAccGroupOpen
-                    && await _recipients.CentralGroupProblemAsync(companyId) == null) is string channelErr)
+                    && await _recipients.CentralGroupProblemAsync(companyId) == null,
+                // รอบ 262 (คำตัดสิน 262-1-1): บริษัทผู้ให้บริการ — OA กลางคือ OA ของบริษัท ⇒ ติ๊ก LINE ผู้ใช้ได้เมื่อ OA กลางพร้อม (token + secret)
+                centralUserOpen: lineChannel.Open && lineChannel.NextAccUserOpen
+                    && await _recipients.CentralUserProblemAsync(companyId) == null) is string channelErr)
             throw new BusinessRuleException(channelErr, ContactLineChannel.RuleCode);
         if (rule.Id == Guid.Empty)
         {
