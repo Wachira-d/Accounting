@@ -156,4 +156,27 @@ public class CustomerCreditRound265Tests
         Assert.Equal(0m, RecurringTemplate.Summary("{not json").Total);
         Assert.Equal(0m, RecurringTemplate.Summary(null).Total);
     }
+
+    [Fact]
+    public void L3_ด่านอนุมัติ_วงเงินหรือแบ่งแยกหน้าที่ปฏิเสธพร้อมทางไปต่อ_ไม่ติดด่านผ่าน()
+    {
+        Assert.Null(CreditReceiptPlan.ApprovalControlProblem(false, false));
+        Assert.Contains("ออกใบแจ้งหนี้ส่วนที่ขาด", CreditReceiptPlan.ApprovalControlProblem(true, false)!, StringComparison.Ordinal);
+        Assert.Contains("ผู้มีสิทธิ์อนุมัติอีกคน", CreditReceiptPlan.ApprovalControlProblem(false, true)!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void M3_ป้ายงวดบอกงวดที่กำลังจะถึง_ยกเลิกหลังรอบผ่านมีข้อความ_ยังไม่ผ่านไม่มี_กุญแจอ่านกลับได้()
+    {
+        var period = new DateTime(2026, 10, 1);
+        Assert.Contains("งวดที่กำลังจะถึง", CreditReceiptPlan.PeriodLabel("ค่าดูแลระบบ", period), StringComparison.Ordinal);
+        Assert.NotNull(CreditReceiptPlan.VoidedRecurringPeriodNotice("RC-1", "ค่าดูแลระบบ", period, new DateTime(2026, 11, 1)));
+        Assert.Null(CreditReceiptPlan.VoidedRecurringPeriodNotice("RC-1", "ค่าดูแลระบบ", period, period));
+        var id = Guid.NewGuid();
+        Assert.True(RecurringRunKey.TryParsePeriod(RecurringRunKey.ForPeriod(id, period), out var back, out var date));
+        Assert.Equal(id, back);
+        Assert.Equal(ThaiDate.CalendarDateUtc(period).Date, date.Date);
+        Assert.False(RecurringRunKey.TryParsePeriod(RecurringRunKey.For(id, period, consumesPeriod: false, confirmedExtra: false), out _, out _));
+        Assert.False(RecurringRunKey.TryParsePeriod(null, out _, out _));
+    }
 }

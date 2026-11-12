@@ -290,11 +290,17 @@ public partial class CustomerCreditService
                         : "ยกเลิกใบเสร็จที่ออกจากเงินรอจัดสรรที่นี่ไม่ได้ — ยกเลิกใบเสร็จนั้นที่หน้าเอกสาร (ระบบคืนเงินกลับเป็นเงินรอจัดสรรให้เอง)",
                         CustomerCreditMovementRules.UndoRuleCode, 409);
                 var since = movement.CreatedAt.AddMinutes(-5);
+                var thisMovementId = movement.Id;
+                var thisAmount = movement.Amount;
                 var orphanDeposit = await _db.Documents.AsNoTracking()
                     .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.IsDeposit == isDepositKind && d.DocumentType == DocumentType.Receipt
                         && d.Reference == payment.PaymentNumber
                         && d.PaymentAccountId == payment.UnappliedAccountId && d.CreatedAt >= since
-                        && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                        && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                        // รอบ 265 ฝ่ายค้าน M1: ใบที่เป็นปลายทางของขาออกอื่นที่ยังมีผลอยู่แล้ว ห้ามถูกผูกซ้ำ (เงินก้อนเดียวหลายใบ) · ยอดต้องเท่ารายการนี้
+                        && !_db.PaymentCreditMovements.Any(m => m.CompanyId == companyId && m.TargetDocumentId == d.Id && m.Id != thisMovementId
+                            && !m.IsDeleted && m.ReleasedAt == null)
+                        && d.TotalAmount == thisAmount)
                     .OrderBy(d => d.CreatedAt).Select(d => new { d.Id, d.DocumentNumber, d.Status }).FirstOrDefaultAsync(ct);
                 if (orphanDeposit != null)
                 {

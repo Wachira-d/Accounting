@@ -20,6 +20,18 @@ public static class RecurringRunKey
     public static string ForPeriod(Guid recurringId, DateTime periodDate)
         => $"{recurringId:N}:{ThaiDate.CalendarDateUtc(periodDate):yyyyMMdd}";
 
+    /// <summary>รอบ 265 (ฝ่ายค้าน M3): อ่านกุญแจงวดกลับ (รายการ + วันงวด) — กุญแจรอบพิเศษ (<c>:early</c>) / รูปแบบอื่น = false</summary>
+    public static bool TryParsePeriod(string? key, out Guid recurringId, out DateTime periodDate)
+    {
+        recurringId = Guid.Empty;
+        periodDate = default;
+        if (string.IsNullOrEmpty(key)) return false;
+        var parts = key.Split(':');
+        return parts.Length == 2 && Guid.TryParseExact(parts[0], "N", out recurringId)
+            && DateTime.TryParseExact(parts[1], "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out periodDate);
+    }
+
     /// <summary>กุญแจของรอบพิเศษก่อนกำหนด — 1 ใบต่องวดที่กำลังจะถึง</summary>
     private static string ForEarly(Guid recurringId, DateTime upcomingPeriodDate) => ForPeriod(recurringId, upcomingPeriodDate) + ":early";
 

@@ -1032,7 +1032,7 @@ public class DocumentController : ControllerBase
                 $"ไม่มีสิทธิ์ยกเลิกเอกสาร {docType} (ต้องการ Document.Void หรือ Document.{(DocumentPermissionHelper.IsRevenue(docType.Value) ? "Revenue" : "Purchase")}.Void)");
         // รอบ 201 ทีม DV (A-DV4 · คำตัดสินข้อ 68): ธงที่ติดระหว่างยกเลิกการชำระใน cascade ต้องถึงผู้กด — เดิมทิ้งผล ตอบแค่ "สำเร็จ" (รูปเดียวกับ VoidPayment)
         var voided = await _documentService.VoidDocumentAsync(companyId, documentId, reversalDate);
-        var notice = string.Join(" · ", new[] { voided.EtaxCancellationFlag, voided.OutputVatNotice }
+        var notice = string.Join(" · ", new[] { voided.EtaxCancellationFlag, voided.OutputVatNotice, voided.CreditNotice }
             .Where(n => !string.IsNullOrWhiteSpace(n)));
         return Ok(new ApiResponse<string>(true, notice.Length == 0 ? null : notice,
             notice.Length == 0 ? "ยกเลิกเอกสารสำเร็จ" : "ยกเลิกเอกสารสำเร็จ — " + notice));

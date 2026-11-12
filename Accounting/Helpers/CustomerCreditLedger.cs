@@ -102,19 +102,71 @@ public static class CustomerCreditLedger
     /// (ReleasedAt) + คิดยอดคงเหลือใหม่ — JE ของใบมัดจำ (Dr ผังพัก) ถูกกลับโดยการยกเลิกใบแล้ว เงินจึงกลับเป็นเงินรอจัดสรร · ล็อกแถวการชำระ
     /// (ลำดับ ใบ → การชำระ เดียวกับเส้นจัดสรร) · คืนจำนวนแถวที่ปล่อย · audit ทุกแถว
     /// </summary>
+    /// <param name="notices">รอบ 265 ฝ่ายค้าน M3: ข้อความถึงผู้ยกเลิก (เช่น งวดรายการประจำที่ใบนี้ปิดไว้ถูกรอบประทับผ่านไปแล้ว) — null = ไม่เก็บ</param>
     public static async Task<int> ReleaseForVoidedDocumentAsync(AccountingDbContext db, Guid companyId, Guid documentId, string? actor,
-        CancellationToken ct = default)
+        CancellationToken ct = default, List<string>? notices = null)
     {
         var rows = await db.PaymentCreditMovements
             .Where(m => m.CompanyId == companyId && m.TargetDocumentId == documentId && !m.IsDeleted && m.ReleasedAt == null
                 && (m.Kind == ToDepositKind || m.Kind == ToInvoiceKind || m.Kind == ToReceiptKind))
             .ToListAsync(ct);
         if (rows.Count == 0) return 0;
+        // รอบ 265 ฝ่ายค้าน M1: ขาออกที่ "ออกใบ" (ใบมัดจำ/ใบเสร็จ) ชี้ใบเดียวกันรวมเกินยอดใบ ⇒ ข้อมูลผูกผิด (ใบหนึ่งถูกผูกกับสองรายการ) —
+        // ปล่อยทั้งหมด = เงินรอจัดสรรเพิ่มเกินยอดที่ JE กลับจริง ⇒ ล้มดัง (การยกเลิกทั้งธุรกรรม rollback) ให้ผู้ดูแลแก้การผูกก่อน
+        var issuing = rows.Where(r => r.Kind == ToReceiptKind || r.Kind == ToDepositKind).Sum(r => r.Amount);
+        if (issuing > 0m)
+        {
+            var docTotal = await db.Documents.AsNoTracking().IgnoreQueryFilters()
+                .Where(d => d.Id == documentId && d.CompanyId == companyId).Select(d => (decimal?)d.TotalAmount).FirstOrDefaultAsync(ct) ?? 0m;
+            if (issuing > docTotal + UnappliedCreditBalance.Tolerance)
+                throw new BusinessRuleException(
+                    $"ยกเลิกเอกสารนี้ไม่ได้ — มีรายการเงินรอจัดสรรผูกกับใบนี้รวม {issuing:N2} บาท เกินยอดใบ {docTotal:N2} (ผูกผิด) · "
+                    + "ยกเลิกแล้วเงินจะกลับเกินที่รับจริง — ให้ผู้ดูแลระบบตรวจการผูกรายการที่หน้า “เงินรอจัดสรร” ก่อน",
+                    CustomerCreditMovementRules.UndoRuleCode, 409);
+        }
         // รอบ 265 (คำตัดสิน 265-1-4): ใบเสร็จจากเงินรอจัดสรรที่ปิดงวดรายการประจำถูกยกเลิก ⇒ ปล่อยกุญแจงวด (รอบถัดไป/“สร้างทันที” ออกใบงวดนั้นได้อีก ·
         // งวดที่รอบอัตโนมัติประทับผ่านไปแล้วไม่ถอยเอง — ผู้ใช้กด “สร้างทันที” ที่รายการประจำ)
         if (rows.Any(r => r.Kind == ToReceiptKind))
-            await db.Documents.Where(d => d.Id == documentId && d.CompanyId == companyId && d.RecurringRunKey != null)
-                .ExecuteUpdateAsync(u => u.SetProperty(d => d.RecurringRunKey, (string?)null), ct);
+        {
+            var keyed = await db.Documents.AsNoTracking().IgnoreQueryFilters()
+                .Where(d => d.Id == documentId && d.CompanyId == companyId && d.RecurringRunKey != null)
+                .Select(d => new { d.RecurringRunKey, d.DocumentNumber }).FirstOrDefaultAsync(ct);
+            if (keyed != null)
+            {
+                await db.Documents.Where(d => d.Id == documentId && d.CompanyId == companyId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(d => d.RecurringRunKey, (string?)null), ct);
+                // ฝ่ายค้าน M3: งวดที่รอบอัตโนมัติประทับผ่านไปแล้ว ⇒ ข้อความบนแถวรายการประจำ (ไม่ถอยงวดเอง — คำตัดสิน 265-1-11)
+                string? notice = null;
+                if (RecurringRunKey.TryParsePeriod(keyed.RecurringRunKey, out var recurringId, out var periodDate))
+                {
+                    var rec = await db.RecurringTransactions.AsNoTracking()
+                        .Where(r => r.Id == recurringId && r.CompanyId == companyId)
+                        .Select(r => new { r.Name, r.NextRunDate, r.LastRunNotice }).FirstOrDefaultAsync(ct);
+                    if (rec != null && CreditReceiptPlan.VoidedRecurringPeriodNotice(keyed.DocumentNumber, rec.Name, periodDate, rec.NextRunDate) is string n)
+                    {
+                        notice = n;
+                        var merged = string.IsNullOrEmpty(rec.LastRunNotice) ? n : rec.LastRunNotice.Contains(n) ? rec.LastRunNotice : rec.LastRunNotice + " · " + n;
+                        await db.RecurringTransactions.Where(r => r.Id == recurringId && r.CompanyId == companyId)
+                            .ExecuteUpdateAsync(u => u.SetProperty(r => r.LastRunNotice, merged), ct);
+                    }
+                }
+                if (notice != null) notices?.Add(notice);
+                db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId,
+                    UserId = Guid.TryParse(actor, out var kuid) ? kuid : null,
+                    Action = AuditAction.Update,
+                    EntityType = "Document",
+                    EntityId = documentId.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        RuleCode = CustomerCreditMovementRules.ToReceiptRuleCode,
+                        ReleasedRecurringRunKey = keyed.RecurringRunKey,
+                        Notice = notice,
+                    }),
+                });
+            }
+        }
         foreach (var paymentId in rows.Select(r => r.PaymentId).Distinct().OrderBy(id => id))
         {
             var payment = await db.Payments

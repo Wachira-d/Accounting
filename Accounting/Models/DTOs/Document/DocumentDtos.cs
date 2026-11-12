@@ -1194,7 +1194,8 @@ public sealed record EtaxCancelRequiredItem(Guid Id, string DocumentNumber, Docu
 /// <param name="EtaxCancellationFlag">ข้อความธงที่ติดบนใบเสร็จ — null = ไม่มี (ยกเลิกใบเสร็จตามปกติ/ไม่มีใบเสร็จ)</param>
 /// <param name="OutputVatNotice">รอบ 200 ทีม V1G (ข้อ 48 · RV1F-2): เช็คเด้ง/ยกเลิกการลงบัญชีรอบโอนกลับรายการเงินแล้วแต่ถอยภาษีขายไม่ได้
 /// (เดือนที่ตั้งรายการปิด/ยื่นแล้ว) — ข้อความเดียวกับธงบนใบต้นทาง · null = ไม่มี</param>
-public sealed record PaymentVoidResult(string? EtaxCancellationFlag, string? OutputVatNotice = null)
+/// <param name="CreditNotice">รอบ 265 ฝ่ายค้าน M3: ข้อความของเงินรอจัดสรรเมื่อยกเลิกใบเสร็จที่ออกจากเงินรอจัดสรร (เช่น งวดรายการประจำที่รอบผ่านไปแล้ว) · null = ไม่มี</param>
+public sealed record PaymentVoidResult(string? EtaxCancellationFlag, string? OutputVatNotice = null, string? CreditNotice = null)
 {
     public static PaymentVoidResult None { get; } = new((string?)null);
 }
