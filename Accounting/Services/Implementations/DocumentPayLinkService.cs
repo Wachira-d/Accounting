@@ -585,9 +585,8 @@ public class DocumentPayLinkService : IDocumentPayLinkService
         var doc = await _db.Documents.AsNoTracking().Include(x => x.Brand)
             .FirstOrDefaultAsync(x => x.Id == documentId && x.CompanyId == companyId, ct);
         if (doc == null) return null;
-        var template = await PdfGenerationService.ResolveDocumentTemplateAsync(_db, companyId, doc, null);
-        var (acct, _) = await PaymentQrService.PickDocumentAccountAsync(_db, _storage.Locator.AttachmentsRoot, companyId,
-            doc.PaymentAccountId, doc.BankAccountId, template.PaymentQrBankAccountId, ct);
+        // รอบ 260-2: ตัวเลือกบัญชีของใบตัวเดียวกับค่าแนะนำตอนยืนยันสลิป (SlipReceivingAccount — "บัญชีที่แสดงให้ลูกค้าโอน")
+        var (acct, _) = await PaymentQrService.PickForDocumentAsync(_db, _storage.Locator.AttachmentsRoot, companyId, doc, ct);
         if (acct == null) return null;
         var superseded = await PaymentQrService.SupersededByTaxInvoiceAsync(_db, companyId, doc, ct);
         var qr = await PaymentQrService.BuildAccountQrAsync(_storage, new PromptPayService(), _logger, companyId, acct, acct.PromptPayId,

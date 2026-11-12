@@ -6994,6 +6994,12 @@ L1–L7 (ข้อความถึงลูกค้า · formDialog min/max 
 
 _รอบ 259 ชุด D ชุดแก้ฝ่ายค้าน (review-259-pack-D.md · คำตัดสิน 259-4-10…12): H1 migration แถว e-Tax ที่ประทับส่งแล้วจากคำตอบล้ม · H2 401/403/404/405 = ตั้งค่าผิด หยุดชุด · M1 สมุดรายวันไม่ลงข้ามปีบัญชีเอง + บอกงวดย้อนหลัง · M2 กุญแจกันซ้ำสมุดรายวัน · M3 กำหนดส่งตามวันที่เอกสาร · M4 ลองใบเลยกำหนดทุกวัน · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d493044a_
 
+_รอบ 260-2 ยืนยันสลิป: เลือกบัญชีที่เงินเข้า (`erp-review/2026-11-12/team-260-2-slip-bank-account.md` · คำตัดสิน 260-2-1…5 · DOCUMENT_FLOW §2.12g-259c · TEST_PLAN P2602):
+ตัวตัดสินเดียว `Helpers/SlipReceivingAccount` (ใช้กับ manual-slip · ตรวจบัญชีที่เลือก · ค่าแนะนำ: แหล่งเงินของเอกสาร → บัญชีที่แสดงให้ลูกค้าโอน → บัญชีรับโอนบัญชีเดียว → ไม่เดา) ·
+`confirm-manually` รับ `bankAccountId` + ประทับ `PaymentIntent.ReceivingBankAccountId/ReceivingAccountOrigin` + audit ใต้ล็อกต่อรายการ · `GET receiving-accounts` ·
+`DocumentPaymentHandler`/`SiteBookingPaymentHandler` ส่งบัญชีนั้นต่อ (เดิม JE สลิปโอนลงเงินสด 111) · `PaymentQrService.PickForDocumentAsync` ตัวเลือกบัญชีของใบตัวเดียว (หน้าชำระ + ค่าแนะนำ) ·
+ช่องเลือกใน formDialog ของ payment-intents + echo บนแถว · migration 2 คอลัมน์ · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_Last verified against codebase: 2026-11-12 (รอบ 260-2 — §2.12g-259c บัญชีที่เงินตามสลิปเข้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
 _รอบ 260 "สลิปในแชต LINE ⇒ ผูกเอกสาร" (คำตัดสินเจ้าของ 260-1-1 · ทีม 260-1-2…6 · DOCUMENT_FLOW §2.12g-260 · TEST_PLAN P260): รูปในแชต OA บริษัท (1:1 · กลุ่มของผู้ติดต่อที่แสดงยอด) ⇒
 อ่านยอดในเครื่อง (`Helpers/OcrSlipText` — ย้ายตัวแยกจาก `SlipOcrAssistService` · แก้ "1500.00" ถูกอ่านเป็น 500.00) ⇒ ตัวตัดสินเดียว `LineChatSlipRule.Decide`
 (ใบของผู้ติดต่อที่ผูก LINE · ยอดค้างหรือยอดสุทธิหลังหัก ณ ที่จ่าย จาก `DueAmountsForDocumentAsync` ใหม่ · ไม่จับผลรวม) ⇒ ใบเดียว = รายการรอยืนยันผ่าน `SlipEvidenceService.SubmitAsync`

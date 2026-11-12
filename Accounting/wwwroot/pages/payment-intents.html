@@ -206,7 +206,8 @@
             ${r.dispute ? `<div style="margin-top:2px"><span class="pill ${r.dispute.needsAttention ? 'cn-miss' : 'cn-ok'}">${r.dispute.needsAttention ? '⚠️ ' : ''}${Layout.esc(r.dispute.label)}</span>
               ${r.dispute.amount != null ? `<div style="font-size:11px">ยอดโต้แย้ง ${Layout.money(r.dispute.amount)}${r.dispute.reason ? ' · ' + Layout.esc(r.dispute.reason) : ''}</div>` : ''}
               ${r.dispute.needsAttention && r.dispute.nextStep ? `<div style="color:#b45309;font-size:11px">${Layout.esc(r.dispute.nextStep)}</div>` : ''}</div>` : ''}</td>
-          <td style="font-size:11.5px">${Layout.esc(r.confirmedBy || '—')}</td>
+          <td style="font-size:11.5px">${Layout.esc(r.confirmedBy || '—')}
+            ${r.receivingAccountOriginLabel ? `<div style="color:#475569;font-size:11px;margin-top:2px" title="บัญชีที่เงินตามสลิปเข้า (ตัดสินตอนยืนยัน)">🏦 ${Layout.esc(r.receivingAccountLabel || r.receivingAccountOriginLabel)}${r.receivingAccountLabel ? ' · ' + Layout.esc(r.receivingAccountOriginLabel) : ''}</div>` : ''}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.events('${r.id}')">ประวัติ</button>
             ${open ? `<button class="btn btn-sm btn-secondary" onclick="Page.live('${r.id}')">ตรวจสถานะสด</button>
@@ -310,12 +311,29 @@
       async manual(id, isDocumentSlip) {
         const api = Layout.api(); if (!api) return;
         // รอบ 259-3 (ทีม E 3ก-5 · §4.1): หน้าต่างเดียว (ยอด · วันที่เงินเข้าแบบเลือกวัน · เหตุผล) แทนลูกโซ่ prompt() ที่ต้องพิมพ์ ปปปป-ดด-วว เอง
-        // ยอด = ยอดของรายการ (สลิป/เงินออนไลน์ — ยืนยันตามที่ลูกค้าแจ้ง แก้ที่นี่ไม่ได้) · บัญชีเงินเข้า = ตามผังรับเงินของช่องทาง (เซิร์ฟเวอร์ตัดสิน)
+        // ยอด = ยอดของรายการ (สลิป/เงินออนไลน์ — ยืนยันตามที่ลูกค้าแจ้ง แก้ที่นี่ไม่ได้)
         // · วันที่: เซิร์ฟเวอร์ตรวจ (DocumentSlipIntents.ReceivedDate) ว่าง = วันที่ลูกค้าแนบสลิป
+        // รอบ 260-2: บัญชีที่เงินเข้า — สลิปโอนเท่านั้น (canChooseReceivingAccount จากเซิร์ฟเวอร์) · ตัวเลือก/ค่าแนะนำ/เหตุผล/บัญชีที่ใช้ไม่ได้ มาจาก
+        //   GET receiving-accounts (SlipReceivingAccount) — หน้าแสดงอย่างเดียว · เงินผ่านผู้ให้บริการ = บัญชีพักของผู้ให้บริการ (ไม่มีช่อง)
         const r = this.rows.find(x => x.id === id) || {};
         const fields = [
           { key: 'amount', label: 'ยอด', type: 'readonly', value: Layout.money(r.amount) + ' บาท' },
         ];
+        if (r.canChooseReceivingAccount === true) {
+          let ra = null;
+          try { ra = (await api.getPaymentIntentReceivingAccounts(id))?.data || null; }
+          catch (e) { Layout.toast(e.message || 'โหลดรายการบัญชีไม่สำเร็จ', 'error'); return; }
+          if (ra && ra.applies) {
+            // ตัวเลือกที่ใช้ไม่ได้ไม่ให้เลือก (เหตุอยู่ในป้าย) · ค่าตั้งต้น = ค่าแนะนำของเซิร์ฟเวอร์ · ตัวเลือกว่าง = ผลที่เซิร์ฟเวอร์บอก (defaultLabel)
+            const opts = [{ value: '', label: ra.defaultLabel || 'ตามคำแนะนำของระบบ' }]
+              .concat((ra.options || []).filter(o => o.usable === true).map(o => ({ value: o.value, label: o.label })));
+            const blocked = (ra.options || []).filter(o => o.usable !== true);
+            fields.push({ key: 'bankAccountId', label: 'บัญชีที่เงินเข้า', type: 'select', options: opts,
+              value: ra.suggestedBankAccountId || '',
+              hint: (ra.suggestedOriginLabel ? 'ค่าแนะนำ: ' + ra.suggestedOriginLabel + ' — ' : '') + (ra.reason || '')
+                + (blocked.length ? ' · ใช้ไม่ได้: ' + blocked.map(o => o.label + ' (' + (o.problem || '') + ')').join(' · ') : '') });
+          }
+        }
         if (isDocumentSlip) fields.push({ key: 'receivedDate', label: 'วันที่เงินเข้าบัญชีจริง', type: 'date',
           hint: 'เว้นว่าง = วันที่ลูกค้าแนบสลิป · ดูวันที่จากรายการเดินบัญชี' });
         fields.push({ key: 'reason', label: 'เหตุผล (ผู้สอบบัญชีจะเห็นข้อความนี้)', type: 'textarea', required: true,
@@ -324,6 +342,7 @@
         if (!form) return;
         const reason = form.reason;
         const receivedDate = isDocumentSlip ? (form.receivedDate || null) : null;
+        const bankAccountId = form.bankAccountId || null;
         if (!(await Layout.confirmDanger({
           title: 'ยืนยันการรับเงินด้วยมือ',
           message: 'ระบบจะถือว่า<strong>เงินเข้าแล้ว</strong>และดำเนินการต่อให้ต้นทางทันที '
@@ -333,7 +352,7 @@
           mode: 'math'
         }))) return;
         try {
-          const res = await api.confirmPaymentIntentManually(id, reason, receivedDate);
+          const res = await api.confirmPaymentIntentManually(id, reason, receivedDate, bankAccountId);
           Layout.toast(res?.message || 'ยืนยันแล้ว');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ยืนยันไม่สำเร็จ', 'error'); }
