@@ -110,9 +110,12 @@ public static class DocumentPayLinkPolicy
     /// <summary>รอบ 260 (ฝ่ายค้าน L5/L6): ชนิดที่ <see cref="IssueRefusal"/> อาจรับ — ใช้กรองใน SQL ก่อนจำกัดจำนวน (ตัวตัดสินจริงยังเป็น IssueRefusal ต่อใบ)</summary>
     public static readonly DocumentType[] PayableTypes = { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.DebitNote };
 
+    /// <param name="platformTenantDocument">รอบ 262 ฝ่ายค้าน H1 (คำตัดสิน 262-1-9): ใบค่าบริการ NextAcc ของผู้เช่า (บริษัทผู้ให้บริการ + ผู้ติดต่อผูก tenant —
+    /// <c>PlatformInvoiceQueries.IsTenantDocumentAsync</c>) ⇒ ห้ามลิงก์ชำระทั่วไป (จ่ายผ่านลิงก์นี้ = ตัดชำระใบโดยแพ็กเกจไม่ต่ออายุ) · ชำระที่ศูนย์บิลเท่านั้น</param>
     public static string? IssueRefusal(DocumentType type, DocumentStatus status, decimal balanceDue, bool saleSide, string? currency,
-        string? supersedingTaxInvoiceNumber)
+        string? supersedingTaxInvoiceNumber, bool platformTenantDocument = false)
     {
+        if (platformTenantDocument) return PlatformTenantRefusal;
         if (!(type is DocumentType.Invoice or DocumentType.TaxInvoice || (type == DocumentType.DebitNote && saleSide)))
             return "ลิงก์ชำระเงินใช้ได้กับใบแจ้งหนี้ · ใบกำกับภาษี · ใบเพิ่มหนี้ฝั่งขายเท่านั้น";
         if (TaxInvoiceRefusal(type, supersedingTaxInvoiceNumber) is string taxInv) return taxInv;
@@ -126,6 +129,10 @@ public static class DocumentPayLinkPolicy
             return "เอกสารนี้ชำระครบแล้ว";
         return null;
     }
+
+    /// <summary>รอบ 262 ฝ่ายค้าน H1: เหตุเดียวของใบค่าบริการ (ลิงก์ทั่วไป · ช่องติ๊กส่ง LINE/อีเมล · QR บนกระดาษ · หน้าชำระสาธารณะ)</summary>
+    public const string PlatformTenantRefusal =
+        "ใบค่าบริการ NextAcc ของผู้เช่า — ชำระที่ \"ศูนย์บิลค่าบริการ\" ของบริษัทผู้เช่าเท่านั้น (ต่ออายุแพ็กเกจผ่านรายการชำระค่าบริการ) · ไม่ออกลิงก์ชำระเอกสารทั่วไป";
 
     /// <summary>เอกสารนี้เป็น "ลูกค้าจ่ายเรา" ไหม — ใบแจ้งหนี้/ใบกำกับ = ใช่ · ใบเพิ่มหนี้ = ฝั่งขายตามตัวตัดสินทิศเงินเดียวกับ JE รับชำระ
     /// (<see cref="CashFlowDirection.Of"/>: ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ติดต่อเป็นผู้ขายอย่างเดียว) · <b>ไม่รู้ฝั่ง = ไม่ใช่</b> (JE จะปฏิเสธการรับชำระอยู่แล้ว ⇒

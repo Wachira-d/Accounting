@@ -168,10 +168,10 @@ public class ProviderCentralOaRound262Tests
     [Fact]
     public void แถวความพร้อม_เฉพาะบริษัทผู้ให้บริการ_บอกเหตุตามข้อเท็จจริง()
     {
-        var ok = new ProviderCentralOa.ReadinessFacts(true, true, null, "@810pamnc", 3, 10, true, true);
+        var ok = new ProviderCentralOa.ReadinessFacts(true, true, null, "@810pamnc", 3, 10, true, true) { CentralBotConfigured = "U1", CentralBotFetched = "U1" };
         Assert.Empty(ProviderCentralOa.ReadinessRows(false, ok));
         var rows = ProviderCentralOa.ReadinessRows(true, ok);
-        Assert.Equal(new[] { "central-oa", "central-basic-id", "central-webhook", "bound", "billing-line" }, rows.Select(r => r.Code));
+        Assert.Equal(new[] { "central-oa", "central-basic-id", "central-bot", "central-webhook", "bound", "billing-line" }, rows.Select(r => r.Code));
         Assert.All(rows, r => Assert.Equal(LineOaHealth.LevelOk, r.Level));
         var bad = ProviderCentralOa.ReadinessRows(true, ok with { CentralHasSecret = false, CentralBasicId = null, BoundContacts = 0, BillingLineEnabled = false });
         Assert.Equal(LineOaHealth.LevelError, bad.Single(r => r.Code == "central-oa").Level);
@@ -182,6 +182,44 @@ public class ProviderCentralOaRound262Tests
         Assert.Equal(LineGroupBindRule.Replies.CentralOaNotConfigured, ProviderCentralOa.CentralProblem(false, false, null));
         Assert.Equal("ถอดรหัสไม่ได้", ProviderCentralOa.CentralProblem(false, true, "ถอดรหัสไม่ได้"));
         Assert.Null(ProviderCentralOa.CentralProblem(true, true, null));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_L2_Bot_User_ID_ไม่ตรงบอทของ_token_แดง_ตรง_เขียว_ไม่ได้ตั้ง_หรือถามไม่ได้_เหลือง()
+    {
+        Assert.Equal(LineOaHealth.LevelError, ProviderCentralOa.BotRow("Uwrong", "Ureal", true).Level);
+        Assert.Contains("Ureal", ProviderCentralOa.BotRow("Uwrong", "Ureal", true).Detail);
+        Assert.Equal(LineOaHealth.LevelOk, ProviderCentralOa.BotRow(" Ureal ", "Ureal", true).Level);
+        Assert.Equal(LineOaHealth.LevelWarn, ProviderCentralOa.BotRow(null, "Ureal", true).Level);
+        Assert.Equal(LineOaHealth.LevelWarn, ProviderCentralOa.BotRow("Ureal", null, true).Level);
+        Assert.Equal(LineOaHealth.LevelWarn, ProviderCentralOa.BotRow("Ureal", "Ureal", false).Level);
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_H1_ใบค่าบริการของผู้เช่า_ออกลิงก์ชำระทั่วไปไม่ได้_ทิศตรงข้าม_ใบทั่วไปไม่ถูกแตะ()
+    {
+        Assert.Equal(DocumentPayLinkPolicy.PlatformTenantRefusal, DocumentPayLinkPolicy.IssueRefusal(Accounting.Models.Enums.DocumentType.Invoice,
+            Accounting.Models.Enums.DocumentStatus.Approved, 1_070m, true, "THB", null, platformTenantDocument: true));
+        Assert.Null(DocumentPayLinkPolicy.IssueRefusal(Accounting.Models.Enums.DocumentType.Invoice,
+            Accounting.Models.Enums.DocumentStatus.Approved, 1_070m, true, "THB", null, platformTenantDocument: false));
+        Assert.Contains("ศูนย์บิล", DocumentPayLinkPolicy.PlatformTenantRefusal);
+        Assert.Contains("\"PayLinkRevokedAt\"", ProviderCentralOa.RevokeTenantPayLinksSql);
+        Assert.Contains("NextAccTenant", ProviderCentralOa.RevokeTenantPayLinksSql);
+        Assert.Contains("\"PayLinkRevokedAt\" IS NULL", ProviderCentralOa.RevokeTenantPayLinksSql);   // idempotent
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_L3_L4_M3_ประโยคหยุด_ลิงก์ศูนย์บิลต่อบริษัท_ส่วนต้นกุญแจ()
+    {
+        var buyer = Guid.Parse("26200000-0000-0000-0000-0000000000b1");
+        Assert.Equal("/pages/billing.html?company=26200000-0000-0000-0000-0000000000b1", ProviderCentralOa.BillingPath(buyer));
+        Assert.Contains("ร้าน ก · ร้าน ข", ProviderCentralOa.StopScopeNote(new[] { "ร้าน ก", "ร้าน ข" }));
+        Assert.Equal("", ProviderCentralOa.StopScopeNote(Array.Empty<string>()));
+        Assert.Contains("และอีก 2 ราย", ProviderCentralOa.StopScopeNote(Enumerable.Range(1, 12).Select(i => "ร้าน " + i).ToList()));
+        var inv = Guid.NewGuid();
+        Assert.StartsWith(ProviderCentralOa.QueueBasePrefix(inv, "DocumentDueSoon"),
+            ProviderCentralOa.QueueBaseKey(inv, "DocumentDueSoon", PlatformDunningPolicy.Key(inv, PlatformDunningPolicy.KindDue, 0)));
+        Assert.Equal("บัญชี LINE", ProviderCentralOa.MaskedEndpointLabel(null));
     }
 
     [Fact]

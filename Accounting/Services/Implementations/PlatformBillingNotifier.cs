@@ -79,7 +79,7 @@ public class PlatformBillingNotifier : IPlatformBillingNotifier
                 .Join(_db.Users.AsNoTracking(), cu => cu.UserId, u => u.Id, (cu, u) => new { u.Email, u.FullName, u.LineUserId })
                 .ToListAsync(ct);
             var baseUrl = (await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.AppBaseUrl).FirstOrDefaultAsync(ct))?.TrimEnd('/');
-            var link = (baseUrl ?? "") + BillingPath;
+            var link = (baseUrl ?? "") + ProviderCentralOa.BillingPath(buyerCompanyId);   // ฝ่ายค้าน L4: ศูนย์บิลของบริษัทนี้
 
             if (policy.ReminderEmailEnabled)
             {
@@ -106,6 +106,8 @@ public class PlatformBillingNotifier : IPlatformBillingNotifier
                 // เฉพาะคนที่ยังไม่ได้การ์ด (LINE id เดียวกันผ่าน OA กลาง ⇒ ไม่ส่งซ้ำ — ช่องเดียว)
                 var cards = await QueueContactCardsAsync(buyerCompanyId, documentId, messageKey,
                     ProviderCentralOa.TriggerForKind(PlatformDunningPolicy.KindOfKey(messageKey)), customerInitiated: false, ct);
+                // ฝ่ายค้าน L6: การ์ดที่เข้าคิว = ช่อง LINE ทำงานแล้ว (ผลส่งจริงอยู่บนคิว) — ตัวนับของการทวงไม่ขึ้น 0 เมื่อไปทางการ์ดอย่างเดียว
+                if (cards.Queued > 0) delivered++;
                 var claim = await ClaimAsync(buyerCompanyId, documentId, messageKey, ChannelLine, ct);
                 if (claim is Guid id)
                 {
@@ -171,37 +173,45 @@ public class PlatformBillingNotifier : IPlatformBillingNotifier
                          join c in _db.Contacts.AsNoTracking() on d.ContactId equals c.Id
                          where d.Id == docId && d.CompanyId == pid && !d.IsDeleted
                                && c.CompanyId == pid && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId == key
-                         select new { d.Id, d.ContactId, c.AutoSendDisabled }).FirstOrDefaultAsync(ct);
+                         select new { d.Id, d.ContactId }).FirstOrDefaultAsync(ct);
         if (doc == null) return ContactCards.None;
         var claim = await ClaimAsync(buyerCompanyId, docId, messageKey, ChannelLineContact, ct);
         if (claim is not Guid claimId) return ContactCards.None;   // เข้าคิวไปแล้ว (ข้อความตรงของขั้นนี้ก็จองไปแล้วเช่นกัน)
 
-        var set = await _recipients.ResolveAsync(pid, doc.ContactId, NotifyTopics.ForTrigger(trigger), ct);
-        var plan = ContactLineChannel.Plan(channelEmail: false, lineUser: true, lineGroup: true, fallbackToEmail: false, set.Options,
-            AutopilotSettingsResolver.AutoSendBlock(doc.AutoSendDisabled));
-        if (plan.Endpoints.Count == 0)
+        // ฝ่ายค้าน M2 (262-1-11): ผู้เช่าหนึ่งรายมีผู้ติดต่อได้หลายแถว (เปลี่ยนเลขภาษี/สาขา ⇒ แถวใหม่) ⇒ รวมปลายทางของ<b>ทุกแถว</b>ที่ ExternalId = ผู้เช่า
+        // (แถวคิวถือผู้ติดต่อเจ้าของปลายทาง — ผู้ส่งตรวจปลายทางกับผู้ติดต่อนั้น) · ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ชนะต่อแถว
+        var contactIds = await PlatformInvoiceQueries.BuyerContactIdsAsync(_db, pid, buyerCompanyId, ct);
+        if (!contactIds.Contains(doc.ContactId)) contactIds.Insert(0, doc.ContactId);
+        var autoOff = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.CompanyId == pid && contactIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id, c => c.AutoSendDisabled, ct);
+        var targets = new List<(Guid ContactId, ContactRecipientRule.RecipientOption Endpoint)>();
+        string? notSent = null;
+        foreach (var cid in contactIds)
         {
-            await FinishAsync(claimId, StatusSkipped, plan.NotSent ?? "ผู้ติดต่อยังไม่มีปลายทาง LINE ที่รับเรื่องนี้", ct);
+            var set = await _recipients.ResolveAsync(pid, cid, NotifyTopics.ForTrigger(trigger), ct);
+            var plan = ContactLineChannel.Plan(channelEmail: false, lineUser: true, lineGroup: true, fallbackToEmail: false, set.Options,
+                AutopilotSettingsResolver.AutoSendBlock(autoOff.GetValueOrDefault(cid)));
+            if (plan.Endpoints.Count == 0) { if (cid == doc.ContactId) notSent = plan.NotSent; continue; }
+            targets.AddRange(plan.Endpoints.Where(e => targets.All(t => t.Endpoint.EndpointId != e.EndpointId)).Select(e => (cid, e)));
+        }
+        if (targets.Count == 0)
+        {
+            await FinishAsync(claimId, StatusSkipped, notSent ?? "ผู้ติดต่อยังไม่มีปลายทาง LINE ที่รับเรื่องนี้", ct);
             return ContactCards.None;
         }
         var baseKey = ProviderCentralOa.QueueBaseKey(docId, trigger, messageKey);
-        var endpointIds = plan.Endpoints.Select(e => e.EndpointId!.Value).ToList();
-        var window = ProviderCentralOa.DuplicateWindow(trigger);
-        var since = window is TimeSpan w ? DateTime.UtcNow - w : DateTime.MinValue;
-        var dead = new[] { ContactLineChannel.StatusCancelled, ContactLineChannel.StatusFailed, ContactLineChannel.StatusSkipped };
-        var already = await _db.LineQueues.AsNoTracking()
-            .Where(q => q.CompanyId == pid && q.EntityId == docId && q.Trigger == trigger && !q.IsDeleted && q.EndpointId != null
-                && endpointIds.Contains(q.EndpointId.Value) && !dead.Contains(q.Status) && q.CreatedAt >= since)
-            .Select(q => q.EndpointId!.Value).Distinct().ToListAsync(ct);
+        var endpointIds = targets.Select(t => t.Endpoint.EndpointId!.Value).ToList();
+        // ฝ่ายค้าน M3 (262-1-12): กันซ้ำเฉพาะการ์ดของ<b>ทางอื่น</b> (กฎตารางส่ง/ส่งเอง) — การ์ดค่าบริการขั้นก่อนของงานนี้ไม่กลบขั้นถัดไป (ก่อนครบ → ครบวันนี้)
+        var already = await PlatformInvoiceQueries.CardedEndpointsAsync(_db, pid, docId, trigger, endpointIds, fromPlatform: false, ct);
         var now = DateTime.UtcNow;
         var added = 0;
-        foreach (var ep in plan.Endpoints)
+        foreach (var (cid, ep) in targets)
         {
             if (already.Contains(ep.EndpointId!.Value)) continue;
             var queueKey = ContactLineChannel.QueueKey(baseKey, ep.EndpointId);
             _db.LineQueues.Add(new LineQueue
             {
-                CompanyId = pid, RuleId = null, EntityType = "Document", EntityId = docId, ContactId = doc.ContactId,
+                CompanyId = pid, RuleId = null, EntityType = "Document", EntityId = docId, ContactId = cid,
                 EndpointId = ep.EndpointId, EndpointKind = ep.Kind, Topic = NotifyTopics.ForTrigger(trigger).ToString(), Trigger = trigger,
                 ScheduledFor = now, Status = ContactLineChannel.StatusPending, RetryKey = ContactLineChannel.RetryKey(pid, queueKey),
                 IdempotencyKey = queueKey, BaseKey = baseKey, FallbackToEmail = false, CreatedBy = SystemActor, CustomerInitiated = customerInitiated,
@@ -209,11 +219,11 @@ public class PlatformBillingNotifier : IPlatformBillingNotifier
             added++;
         }
         if (added > 0) await _db.SaveChangesAsync(ct);
-        // ปลายทางผู้ใช้ที่ได้การ์ด (ใหม่หรือจากทางอื่น) — LINE id ของ OA กลางเท่านั้น (เทียบกับ User.LineUserId ที่ผูกกับบอทกลาง)
+        // ปลายทางผู้ใช้ที่ได้การ์ด (ใหม่หรือจากกฎตารางส่ง) — LINE id ของ OA กลางเท่านั้น (เทียบกับ User.LineUserId ที่ผูกกับบอทกลาง)
         var covered = new List<string>();
         if (_secrets != null)
         {
-            var userEps = plan.Endpoints.Where(e => e.Kind == NotifyEndpointKind.LineUser).Select(e => e.EndpointId!.Value).ToList();
+            var userEps = targets.Where(t => t.Endpoint.Kind == NotifyEndpointKind.LineUser).Select(t => t.Endpoint.EndpointId!.Value).ToList();
             var protectedIds = await _db.ContactNotifyEndpoints.AsNoTracking()
                 .Where(e => e.CompanyId == pid && userEps.Contains(e.Id) && e.OaScope == NotifyEndpointKind.ScopeNextAcc)
                 .Select(e => e.LineUserId).ToListAsync(ct);
@@ -221,7 +231,7 @@ public class PlatformBillingNotifier : IPlatformBillingNotifier
         }
         await FinishAsync(claimId, StatusQueued, added > 0
             ? $"เข้าคิว LINE ของผู้ติดต่อ {added} ปลายทาง (ผลส่งจริง: บริษัทผู้ให้บริการ → ตารางส่ง › คิว LINE)"
-            : "ปลายทาง LINE ของผู้ติดต่อได้การ์ดเรื่องนี้จากทางอื่นแล้ว (กฎตารางส่ง) — ไม่เข้าคิวซ้ำ", ct);
+            : "ปลายทาง LINE ของผู้ติดต่อได้การ์ดเรื่องนี้จากกฎตารางส่ง/การส่งเองของบริษัทผู้ให้บริการแล้ว — ไม่เข้าคิวซ้ำ", ct);
         return new ContactCards(added, covered);
     }
 
