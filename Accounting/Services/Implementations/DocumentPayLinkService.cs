@@ -138,6 +138,8 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
     {
         /// <summary>รอบ 250 (WP-02 §2.3): เลขใบกำกับภาษีที่อ้างใบแจ้งหนี้นี้และยังมีผล (โหลดใน <see cref="LoadDocAsync"/> — ตัดสินใน policy ไม่ใช่ service)</summary>
         public string? SupersedingTaxInvoice { get; init; }
+        /// <summary>รอบ 267 ฝ่ายค้าน M7: วันออกลิงก์ (แยกลิงก์ชำระรุ่นก่อน — <see cref="CustomerDocPage.IsPayOnlyLink"/>)</summary>
+        public DateTime? PayLinkIssuedAt { get; init; }
         /// <summary>รอบ 262 ฝ่ายค้าน H1: ใบค่าบริการของผู้เช่า (บริษัทผู้ให้บริการ + ผู้ติดต่อผูก tenant) — ห้ามลิงก์ทั่วไปทุกทาง</summary>
         public bool PlatformTenantDocument { get; init; }
     }
@@ -161,6 +163,8 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         {
             SupersedingTaxInvoice = await PaymentQrService.SupersedingTaxInvoiceNumberAsync(_db, companyId, facts.Type, facts.Id, ct),
             PlatformTenantDocument = await PlatformInvoiceQueries.IsTenantDocumentAsync(_db, companyId, facts.ContactId, ct),
+            PayLinkIssuedAt = await _db.Documents.AsNoTracking().Where(x => x.Id == facts.Id && x.CompanyId == companyId)
+                .Select(x => x.PayLinkIssuedAt).FirstOrDefaultAsync(ct),
         };
     }
 
@@ -230,11 +234,15 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         if (unavailable != null && !customerPage) return new PayLinkResult(null, null, Array.Empty<string>(), unavailable);
         // รอบ 248 (AUTOPILOT §5.1): ช่องทาง = ตารางส่ง › ผู้ติดต่อ › ค่าบริษัท (ตัวต่อชั้นเดียว AutopilotSettingsResolver) — ผู้ติดต่อไม่ได้ตั้ง = เท่าเดิม
         var contactLayer = await ContactPayLayerAsync(companyId, d.ContactId, all, ct);
+        // ฝ่ายค้าน 267 M3 (267-1-27): ทางจ่าย (ปุ่มออกลิงก์ชำระ/ตารางส่ง) = ผู้เรียกตั้งใจให้จ่ายได้ (companyAttach: true เดิม) ·
+        // ลิงก์หน้าเอกสาร = ใช้ค่า "แนบลิงก์ชำระ" ของบริษัทจริง ⇒ บริษัท/ผู้ติดต่อที่ไม่เปิดรับชำระทางลิงก์ (ปิด · โอนอย่างเดียว · ไม่มี) ไม่ได้ปุ่มจ่ายจากหน้าเอกสาร
+        var companyAttach = !customerPage || (await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => (bool?)s.PayLinkDefaultEnabled).FirstOrDefaultAsync(ct) ?? false);
         var choice = AutopilotSettingsResolver.Resolve(
             scheduleChannels is { Count: > 0 } ? new AutopilotSettingsResolver.Layer(null, scheduleChannels.ToList()) : null,
-            null, contactLayer, companyAttach: true, companyDefault);
+            null, contactLayer, companyAttach, companyDefault);
         var allowed = DocumentPayLinkPolicy.Allowed(all, choice.Channels, null);
-        var payable = payRefusal == null && unavailable == null && DocumentPayLinkPolicy.OnlineOnly(allowed).Count > 0;
+        var payable = payRefusal == null && unavailable == null && choice.Attach && DocumentPayLinkPolicy.OnlineOnly(allowed).Count > 0;
         if (DocumentPayLinkPolicy.OnlineOnly(allowed).Count == 0 && !customerPage)
             return new PayLinkResult(null, null, allowed, "ช่องทางที่เลือกไม่มีช่องทางออนไลน์ที่บริษัทเปิดอยู่ — ตรวจช่องทางในตารางส่งเอกสาร/ค่าตั้งส่งเอกสารอัตโนมัติ");
 
@@ -247,7 +255,13 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         // ทางจ่ายคงเงื่อนไขใบกำกับของรอบ 250 (มาถึงตรงนี้ได้เฉพาะใบที่ไม่มีใบกำกับอ้างอยู่แล้ว — Refusal ตัดไปก่อน)
         string? token = DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now, customerPage ? null : d.SupersedingTaxInvoice)
             ? Recover(d.PayLinkTokenProtected, d.PayLinkTokenHash) : null;
-        if (token != null)
+        if (token != null && d.PayLinkChannelsJson == null && json != null)
+        {
+            // ฝ่ายค้าน 267 M4 (267-1-27): ลิงก์หน้าเอกสารที่ออกตอน "ยังจ่ายไม่ได้" (ยังไม่เคยตรึงช่องทาง) ⇒ ตรึงช่องทางครั้งแรกตอนที่จ่ายได้
+            // (เขียนแบบมีเงื่อนไข "ยังว่างอยู่" — ไม่ใช่การเขียนทับตัวเลือกของลิงก์ที่ใช้อยู่ · 259 C-M1 คงเดิม)
+            await PinChannelsIfUnsetAsync(companyId, d, json, ct);
+        }
+        else if (token != null)
         {
             // ฝ่ายค้าน 259 C-M1: ไม่เขียนทับช่องทางของลิงก์ที่ยังใช้ได้ (ลิงก์ที่ส่งออกไปแล้วต้องเปิดได้ด้วยช่องทางเดิม) ⇒ คืนช่องทางที่ลิงก์ถืออยู่
             allowed = DocumentPayLinkPolicy.Allowed(all, DocumentPayLinkPolicy.ParseChannels(d.PayLinkChannelsJson), companyDefault);
@@ -416,6 +430,9 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
             ? Recover(d.PayLinkTokenProtected, d.PayLinkTokenHash) : null;
         var usable = raw != null;
         var origin = await SystemBaseUrl.ResolveAsync(_db, _config, ct);
+        var pageRaw = CustomerDocPage.StateOf(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, DateTime.UtcNow) == CustomerDocPage.LinkState.Usable
+            ? (raw ?? Recover(d.PayLinkTokenProtected, d.PayLinkTokenHash)) : null;
+        var pageUrl = pageRaw != null && origin != null ? DocumentPayLinkPolicy.Url(origin, companyId, pageRaw) : null;
         var runs = await _db.PostPaymentAutomationRuns.AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.DocumentId == documentId)
             .OrderByDescending(r => r.CreatedAt).Take(20).ToListAsync(ct);
@@ -428,8 +445,20 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
             Gross: amounts.Gross, Wht: amounts.Wht, Net: amounts.Net,
             WhtNote: whtNote,
             Runs: runs.Select(r => new PostPaymentRunDto(r.Id, r.PaymentId, r.Source, r.Status, PostPaymentAutomationPolicy.StatusLabel(r.Status),
-                r.Attempts, r.Message, r.StepsDone, r.ReceiptDocumentId, r.CreatedAt, r.CompletedAt)).ToList());
+                r.Attempts, r.Message, r.StepsDone, r.ReceiptDocumentId, r.CreatedAt, r.CompletedAt)).ToList())
+        {
+            // ฝ่ายค้าน 267 H2: สถานะลิงก์ "ระดับหน้า" (ไม่ขึ้นกับว่าจ่ายได้ไหม) — ปุ่มเพิกถอนบนหน้าพนักงานต้องขึ้นกับค่านี้
+            // (ใบเสนอราคา · ใบส่งของ · ใบเสร็จ · ใบที่ชำระครบ/ออกใบกำกับแล้ว ก็มีลิงก์ที่ลูกค้าเปิดได้)
+            PageLinkUsable = pageUrl != null,
+            PageUrl = pageUrl,
+            PageLinkNote = pageUrl == null ? null : PageLinkStaffNote(d, DateTime.UtcNow),
+        };
     }
+
+    private static string PageLinkStaffNote(DocFacts d, DateTime nowUtc)
+        => CustomerDocPage.IsPayOnlyLink(d.PayLinkIssuedAt, d.PayLinkExpiresAt)
+            ? "ลิงก์นี้ออกก่อนมีหน้าเอกสาร — ลูกค้าเห็นเฉพาะยอดและปุ่มชำระ (ยกเลิกลิงก์แล้วออกใหม่เพื่อให้เห็นรายการ/ดาวน์โหลด PDF)"
+            : "ลูกค้าที่ถือลิงก์นี้เปิดดูเอกสาร/ดาวน์โหลด PDF ได้จนกว่าจะหมดอายุหรือถูกยกเลิก";
 
     // ═══════════════ หน้าชำระสาธารณะ ═══════════════
 
@@ -464,6 +493,9 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         var payLinkUsable = DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now, d.SupersedingTaxInvoice);
         var blocked = (payLinkUsable ? null : DocumentPayLinkPolicy.UnusableNote(d.SupersedingTaxInvoice, UnusableLinkNote))
             ?? Refusal(d)
+            // ฝ่ายค้าน 267 M3: ลิงก์ที่ยังไม่เคยถูกเปิดให้จ่าย (ไม่มีช่องทางที่ตรึงไว้ — ออกเป็นลิงก์หน้าเอกสารขณะบริษัท/ผู้ติดต่อไม่เปิดรับชำระทางลิงก์)
+            // ⇒ ไม่มีปุ่มจ่าย/บัญชีรับโอน/ฟอร์มสลิป จนกว่าทางจ่ายจะตรึงช่องทาง (ปุ่มออกลิงก์ชำระ · ตารางส่ง)
+            ?? (d.PayLinkChannelsJson == null ? PayNotOpenedNote : null)
             ?? (unavailable != null || online.Count == 0 ? "ผู้ขายยังไม่เปิดรับชำระออนไลน์สำหรับเอกสารนี้ — กรุณาติดต่อผู้ขาย" : null);
         // เอกสารนี้รับเงินออนไลน์สำเร็จไปแล้วหนึ่งครั้ง ⇒ ไม่รับซ้ำ (ด่านเดียวกับ PaymentIntentService.StartAsync "ชำระเรียบร้อยแล้ว" — บอกก่อนลูกค้ากด)
         if (blocked == null && await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId
@@ -479,7 +511,7 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         var card = online.Contains(nameof(PaymentMethodKind.Card), StringComparer.OrdinalIgnoreCase) ? PaymentClientSetup.For(adapter, cfg) : null;
 
         PublicTransferInfo? transfer = null;
-        if (allowed.Contains(DocumentPayLinkPolicy.BankTransferCode, StringComparer.OrdinalIgnoreCase) && Refusal(d) == null)
+        if (allowed.Contains(DocumentPayLinkPolicy.BankTransferCode, StringComparer.OrdinalIgnoreCase) && Refusal(d) == null && d.PayLinkChannelsJson != null)
             transfer = await TransferBlockAsync(companyId, d.Id, amounts.Net, ct);
 
         var title = heading.Title;
@@ -493,7 +525,9 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         var slipOffered = Accounting.Helpers.SlipEvidenceRule.PayLinkSlipAllowed(transfer != null, amounts.Net);
         // รอบ 267 P1: ส่วนหน้าเอกสาร — ปุ่มทั้งหมดจากตัวตัดสินเดียว (CustomerDocPage.Actions ใน BuildPageAsync) บนข้อเท็จจริงชุดเดียวกับช่องจ่ายด้านล่าง
         var page = await BuildPageAsync(companyId, d, row, CustomerDocPage.Mode.Link, heading.IsEnglish,
-            payOffered: blocked == null && amounts.Net > 0.005m, payBlockedNote: blocked, slipOffered: slipOffered, token: token, nowUtc: now, ct);
+            payOffered: blocked == null && amounts.Net > 0.005m, payBlockedNote: blocked, slipOffered: slipOffered, token: token, nowUtc: now, ct,
+            // ฝ่ายค้าน 267 M7 (267-1-30): ลิงก์ชำระที่ออกก่อนรอบ 267 คงขอบเขตเดิม (หัวใบ + ยอด + จ่าย/สลิป) — ไม่ได้บรรทัด/PDF/ใบที่เกี่ยวข้องย้อนหลัง
+            payOnly: CustomerDocPage.IsPayOnlyLink(row.PayLinkIssuedAt, row.PayLinkExpiresAt));
         return new PublicDocumentPayView(
             CompanyName: (heading.IsEnglish && !string.IsNullOrWhiteSpace(company?.NameEn) ? company!.NameEn : company?.Name) ?? "",
             DocumentTitle: title, DocumentNumber: d.DocumentNumber, DocumentDate: d.DocumentDate, DueDate: d.DueDate,
@@ -637,6 +671,39 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         return new PublicTransferInfo(acct.BankName, acct.AccountNumber, acct.AccountName,
             qr?.PromptPayId == null ? null : PaymentQrPolicy.DisplayPromptPayId(qr.PromptPayId),
             qr == null ? null : "data:image/png;base64," + Convert.ToBase64String(qr.Png));
+    }
+
+    /// <summary>ฝ่ายค้าน 267 M3: ลิงก์หน้าเอกสารที่ยังไม่ถูกเปิดให้จ่าย</summary>
+    public const string PayNotOpenedNote = "ผู้ขายยังไม่เปิดรับชำระผ่านลิงก์สำหรับเอกสารนี้ — กรุณาติดต่อผู้ขาย";
+
+    /// <summary>ฝ่ายค้าน 267 M4 — ตรึงช่องทางของลิงก์ที่ยังไม่เคยมีช่องทาง (เขียนเฉพาะเมื่อยังว่างและยังเป็น token เดิม · สองคำขอพร้อมกัน = ค่าของคนแรก)</summary>
+    private async Task PinChannelsIfUnsetAsync(Guid companyId, DocFacts d, string json, CancellationToken ct)
+    {
+        var sameHash = d.PayLinkTokenHash;
+        await _db.Documents
+            .Where(x => x.Id == d.Id && x.CompanyId == companyId && x.PayLinkTokenHash == sameHash && x.PayLinkChannelsJson == null)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.PayLinkChannelsJson, (string?)json), ct);
+    }
+
+    /// <summary>
+    /// ฝ่ายค้าน 267 M7 (267-1-31) — เพิกถอนลิงก์หน้าเอกสารทุกใบของผู้ติดต่อ (ลบ/ปิดผู้ติดต่อ · DSR erase): ผู้เขียน <c>PayLinkRevokedAt</c> อยู่ไฟล์นี้ไฟล์เดียว ·
+    /// static เพราะผู้เรียก (<c>DocumentService.DeleteContactAsync</c> · <c>PdpaService</c>) ไม่พึ่ง service นี้ · คืนจำนวนใบที่เพิกถอน + แถว audit chain 1 แถว
+    /// (ผู้เรียก SaveChanges) · ออกลิงก์ใหม่ภายหลังได้เฉพาะปุ่มของพนักงาน (259-2-8)
+    /// </summary>
+    public static async Task<int> RevokeForContactAsync(AccountingDbContext db, Guid companyId, Guid contactId, string actor, string reason, CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var n = await db.Documents
+            .Where(d => d.CompanyId == companyId && d.ContactId == contactId && d.PayLinkTokenHash != null && d.PayLinkRevokedAt == null)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.PayLinkRevokedAt, (DateTime?)now), ct);
+        if (n > 0)
+            db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserEmail = actor, Action = AuditAction.Update, EntityType = "DocumentPayLink", EntityId = contactId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { @event = "pay-links-revoked-for-contact", contactId, documents = n, reason, ruleCode = CustomerDocPage.RuleCode }),
+                Timestamp = now,
+            });
+        return n;
     }
 
     public const string UnusableLinkNote = "ลิงก์นี้ใช้ไม่ได้แล้ว (หมดอายุหรือถูกยกเลิก) — กรุณาติดต่อผู้ขายเพื่อขอลิงก์ใหม่";

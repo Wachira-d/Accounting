@@ -27,10 +27,13 @@ public class PublicDocumentPageController : ControllerBase
     private readonly IChatRateLimiter _limiter;
     private readonly INotificationEngine? _notify;
     private readonly ILogger<PublicDocumentPageController> _logger;
+    /// <summary>รอบ 267 ฝ่ายค้าน M7 (267-1-31 · PDPA ม.37): บันทึกการดาวน์โหลด PDF ทางลิงก์สาธารณะ · null (สร้างนอก DI) = ไม่บันทึก</summary>
+    private readonly Accounting.Services.Implementations.Pdpa.IPdpaService? _pdpa;
 
     public PublicDocumentPageController(IDocumentPayLinkService links, IPdfGenerationService pdf, IChatRateLimiter limiter,
-        ILogger<PublicDocumentPageController> logger, INotificationEngine? notify = null)
-    { _links = links; _pdf = pdf; _limiter = limiter; _logger = logger; _notify = notify; }
+        ILogger<PublicDocumentPageController> logger, INotificationEngine? notify = null,
+        Accounting.Services.Implementations.Pdpa.IPdpaService? pdpa = null)
+    { _links = links; _pdf = pdf; _limiter = limiter; _logger = logger; _notify = notify; _pdpa = pdpa; }
 
     private string Ip => HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
@@ -48,11 +51,20 @@ public class PublicDocumentPageController : ControllerBase
         return StatusCode(429, new ApiResponse<T>(false, default, CustomerDocPage.RateMessage));
     }
 
-    /// <summary>เพดานของเส้น — ต่อ (token + IP) (<see cref="CustomerDocPage.RateKey"/>) ·
-    /// <paramref name="failClosed"/>: ตารางตัวนับใช้ไม่ได้ ⇒ ปฏิเสธไหม — เส้นดู = ไม่ (หน้านี้คือหน้าชำระเดิม: ตัวนับล่มต้องไม่ทำให้ลูกค้าจ่ายไม่ได้) ·
-    /// PDF (เรนเดอร์หนัก) และขอลิงก์ใหม่ (เขียน) = ปฏิเสธ</summary>
-    private async Task<bool> OverRateAsync(string bucket, string token, int perMinute, int perDay, bool failClosed, CancellationToken ct)
+    // ═══ เพดาน (ฝ่ายค้าน 267 M6 · 267-1-29) — สามถัง · ตัวเลขเดียวที่ CustomerDocPage.Limits ═══
+    // (1) ต่อ IP อย่างเดียว (หลวม) — ก่อนแตะฐาน: token สุ่มทีละค่าไม่ได้ถังใหม่ และไม่สร้างแถวตัวนับต่อ token สุ่ม
+    // (2) ต่อ (token + IP) — หลังยืนยันว่า token มีจริงเท่านั้น (ลูกค้าหลัง NAT เดียวกันไม่โดนรวม)
+    // (3) ต่อ token อย่างเดียว — งานหนัก (เรนเดอร์ PDF) ที่หมุน IP หนีไม่ได้
+    // failClosed: ตารางตัวนับใช้ไม่ได้ ⇒ ปฏิเสธไหม — เส้นดู = ไม่ (หน้านี้คือหน้าชำระเดิม) · PDF/ขอลิงก์ใหม่ = ปฏิเสธ
+
+    private async Task<bool> OverIpAsync(string bucket, bool failClosed, CancellationToken ct)
+        => !await _limiter.TryConsumeAsync(CustomerDocPage.RateKeyIp(bucket, Ip), CustomerDocPage.Limits.IpPerMinute, CustomerDocPage.Limits.IpPerDay, ct, failClosed: failClosed);
+
+    private async Task<bool> OverTokenIpAsync(string bucket, string token, int perMinute, int perDay, bool failClosed, CancellationToken ct)
         => !await _limiter.TryConsumeAsync(CustomerDocPage.RateKey(bucket, token, Ip), perMinute, perDay, ct, failClosed: failClosed);
+
+    private async Task<bool> OverTokenAsync(string bucket, string token, int perMinute, int perDay, CancellationToken ct)
+        => !await _limiter.TryConsumeAsync(CustomerDocPage.RateKeyToken(bucket, token), perMinute, perDay, ct, failClosed: true);
 
     private static string BasePath(Guid companyId, string token)
         => $"/api/companies/{companyId:D}/public-pay/documents/{Uri.EscapeDataString(token)}";
@@ -63,16 +75,18 @@ public class PublicDocumentPageController : ControllerBase
     public async Task<ActionResult<ApiResponse<PublicDocumentPayView>>> View(Guid companyId, string token, CancellationToken ct)
     {
         NoStore();
-        if (await OverRateAsync("view", token, CustomerDocPage.Limits.ViewPerMinute, CustomerDocPage.Limits.ViewPerDay, failClosed: false, ct))
-            return TooMany<PublicDocumentPayView>();
+        if (await OverIpAsync("view", failClosed: false, ct)) return TooMany<PublicDocumentPayView>();
         var view = await _links.PublicViewAsync(companyId, token, ct);
         if (view == null)
             return NotFound(new ApiResponse<PublicDocumentPayView>(false, null, CustomerDocPage.NotFoundMessage));
+        if (await OverTokenIpAsync("view", token, CustomerDocPage.Limits.ViewPerMinute, CustomerDocPage.Limits.ViewPerDay, failClosed: false, ct))
+            return TooMany<PublicDocumentPayView>();
         var basePath = BasePath(companyId, token);
         if (view.Page is not { Viewable: true })
         {
-            // ลิงก์ใช้ไม่ได้: ไม่มีข้อมูลของใบ · หมดอายุไม่นาน ⇒ ทางไปต่อ = ขอลิงก์ใหม่ (ไม่ออก token ให้คนนอก)
-            var stub = view.Page is { CanRequestLink: true } p ? view with { Page = p with { RequestLinkPath = basePath + "/request-link" } } : view;
+            // ลิงก์ใช้ไม่ได้: ไม่มีข้อมูลของใบ · ฝ่ายค้าน 267 L4: คำตอบเหมือน token ที่ไม่มีจริงทุกประการ (data = null — ไม่บอกสถานะเพิกถอน/ใช้ได้)
+            // ยกเว้นกรณีเดียวที่มีทางไปต่อ: หมดอายุไม่นาน ⇒ data.page มีแค่ "ขอลิงก์ใหม่ได้" (ไม่ออก token ให้คนนอก)
+            var stub = view.Page is { CanRequestLink: true } p ? view with { Page = p with { RequestLinkPath = basePath + "/request-link" } } : null;
             return NotFound(new ApiResponse<PublicDocumentPayView>(false, stub, CustomerDocPage.NotFoundMessage));
         }
         await _links.MarkOpenedAsync(companyId, token, ct);
@@ -94,15 +108,37 @@ public class PublicDocumentPageController : ControllerBase
     private async Task<IActionResult> PdfCoreAsync(Guid companyId, string token, Guid? relId, CancellationToken ct)
     {
         NoStore();
-        if (await OverRateAsync("pdf", token, CustomerDocPage.Limits.PdfPerMinute, CustomerDocPage.Limits.PdfPerDay, failClosed: true, ct))
-            return TooMany<object>();
+        if (await OverIpAsync("pdf", failClosed: true, ct)) return TooMany<object>();
         IActionResult Missing() => NotFound(new ApiResponse<object>(false, null, CustomerDocPage.NotFoundMessage));
         var documentId = await _links.ResolvePdfDocumentAsync(companyId, token, relId, ct);
         if (documentId is not Guid id) return Missing();
+        // token มีจริงแล้ว ⇒ เพดานเรนเดอร์: ต่อ (token + IP) และต่อ token รวมทุก IP (หมุน IP หนีไม่ได้)
+        if (await OverTokenIpAsync("pdf", token, CustomerDocPage.Limits.PdfPerMinute, CustomerDocPage.Limits.PdfPerDay, failClosed: true, ct)
+            || await OverTokenAsync("pdf", token, CustomerDocPage.Limits.PdfPerTokenPerMinute, CustomerDocPage.Limits.PdfPerTokenPerDay, ct))
+            return TooMany<object>();
         var pdf = await _pdf.GenerateDocumentPdfAsync(companyId, new Models.DTOs.DocumentTemplate.GeneratePdfRequest(id, null, null, null, null));
         if (pdf?.PdfData is not { Length: > 0 }) return Missing();
+        await LogPdfAccessAsync(companyId, id, relId != null, ct);
         Response.Headers.ContentDisposition = $"inline; filename=\"{SafeFileName(pdf.FileName)}\"";
         return File(pdf.PdfData, "application/pdf");
+    }
+
+    /// <summary>รอบ 267 ฝ่ายค้าน M7 (PDPA ม.37): PDF ของเอกสารมีชื่อ/ที่อยู่/เลขผู้เสียภาษีของคู่ค้า — ทุกการดาวน์โหลดทางลิงก์สาธารณะลงบันทึกการเข้าถึง
+    /// (ใบไหน · เมื่อไร · hash ของ IP/เบราว์เซอร์ — ไม่เก็บ IP ตรงของคนนอก) · บันทึกล้ม = log ระดับ error (ไม่เงียบ) แต่ไม่กันลูกค้าจากเอกสารของตัวเอง</summary>
+    private async Task LogPdfAccessAsync(Guid companyId, Guid documentId, bool related, CancellationToken ct)
+    {
+        if (_pdpa == null) return;
+        try
+        {
+            var ua = HttpContext?.Request.Headers.UserAgent.ToString();
+            await _pdpa.LogPiiAccessAsync(companyId, Guid.Empty, "ผู้ถือลิงก์เอกสาร (ไม่ได้ล็อกอิน)", "Document", documentId,
+                related ? "DocumentPdf.Related" : "DocumentPdf", "PublicLinkDownload", "ลูกค้าดาวน์โหลดเอกสารผ่านลิงก์หน้าเอกสาร (" + CustomerDocPage.RuleCode + ")",
+                "sha256:" + QuotationAcceptance.Sha256Hex(Ip)![..24], string.IsNullOrEmpty(ua) ? null : "sha256:" + QuotationAcceptance.Sha256Hex(ua)![..24], ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "บันทึกการเข้าถึง PDF ทางลิงก์สาธารณะไม่สำเร็จ doc={DocId} company={CompanyId}", documentId, companyId);
+        }
     }
 
     /// <summary>ผลของการขอลิงก์ — ไม่มีรหัสภายใน</summary>
@@ -114,8 +150,7 @@ public class PublicDocumentPageController : ControllerBase
     public async Task<ActionResult<ApiResponse<RequestLinkResponse>>> RequestLink(Guid companyId, string token, CancellationToken ct)
     {
         NoStore();
-        if (await OverRateAsync("reqlink", token, CustomerDocPage.Limits.ViewPerMinute, CustomerDocPage.Limits.ViewPerDay, failClosed: true, ct))
-            return TooMany<RequestLinkResponse>();
+        if (await OverIpAsync("reqlink", failClosed: true, ct)) return TooMany<RequestLinkResponse>();
         var r = await _links.RequestNewLinkAsync(companyId, token, ct);
         if (!r.Found) return NotFound(new ApiResponse<RequestLinkResponse>(false, null, CustomerDocPage.NotFoundMessage));
         if (r.Recorded) await NotifyLinkRequestedAsync(_notify, _logger, companyId, r);

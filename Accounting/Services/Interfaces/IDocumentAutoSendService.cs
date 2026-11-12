@@ -220,7 +220,14 @@ public sealed record DocumentPayLinkStatusDto(
     decimal Net,
     /// <summary>ฝ่ายค้าน S3: ใบตั้ง WHT ไว้แต่ผู้ซื้อไม่มีหน้าที่หัก (ลิงก์เรียกยอดเต็ม) — null = ไม่มีอะไรต้องเตือน</summary>
     string? WhtNote,
-    List<PostPaymentRunDto> Runs);
+    List<PostPaymentRunDto> Runs)
+{
+    /// <summary>รอบ 267 ฝ่ายค้าน H2: ลูกค้ายังเปิดหน้าเอกสารด้วยลิงก์ของใบนี้ได้ไหม (ระดับหน้า — ไม่ขึ้นกับว่าจ่ายได้) ·
+    /// หน้าพนักงานแสดงปุ่ม "ยกเลิกลิงก์" ตามค่านี้ (ทุกชนิดเอกสาร) · <see cref="PageUrl"/> = ลิงก์นั้น · <see cref="PageLinkNote"/> = คำอธิบายขอบเขต</summary>
+    public bool PageLinkUsable { get; init; }
+    public string? PageUrl { get; init; }
+    public string? PageLinkNote { get; init; }
+}
 
 /// <summary><paramref name="PromptPayQrDataUri"/> — รอบ 246 QR: QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดสุทธิของลิงก์) · null = ไม่มีเลขพร้อมเพย์ที่ใช้ได้</summary>
 /// <summary>รอบ 250 WP-03 — ผลของ <c>TransferForDocumentAsync</c>: <paramref name="Refusal"/> ไม่ว่าง = ใบนี้รับชำระทางนี้ไม่ได้ (ข้อความไทย) · ยอดค้าง/WHT/สุทธิ · กล่องโอน (null = ไม่มีบัญชีรับโอน)</summary>

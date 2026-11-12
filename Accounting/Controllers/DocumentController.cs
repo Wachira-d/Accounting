@@ -245,8 +245,8 @@ public class DocumentController : ControllerBase
     }
 
     /// <summary>ส่งลิงก์ให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ — รอบ 267 P1: คืน URL <b>หน้าเอกสารของใบ</b> (ลิงก์เดียวต่อใบ ·
-    /// ไม่มี token ยอมรับของตัวเองอีก) + เปิดช่วงตอบรับ (ถึงวันยืนราคา · ไม่มีวันที่ = 30 วัน) · เรียกซ้ำ = เริ่มช่วงตอบรับใหม่
-    /// (token ของหน้าเอกสารไม่ถูกหมุน — เพิกถอนใช้ปุ่มเพิกถอนลิงก์ของใบ)</summary>
+    /// ไม่มี token ยอมรับของตัวเองอีก) + เปิดช่วงตอบรับ (ถึงวันยืนราคา · ไม่มีวันที่ = 30 วัน) · เรียกซ้ำ = <b>ออก token ใหม่</b>
+    /// (ลิงก์เดิมใช้ไม่ได้ทันที — ฝ่ายค้าน 267 H2 · 267-1-24) + เริ่มช่วงตอบรับใหม่</summary>
     [HttpPost("{documentId:guid}/quotation-accept-link")]
     public async Task<ActionResult<ApiResponse<object>>> CreateQuotationAcceptLink(
         Guid companyId, Guid documentId, [FromServices] ISignRequestService signs, [FromServices] IConfiguration config)
@@ -300,7 +300,7 @@ public class DocumentController : ControllerBase
     }
 
     /// <summary>ส่งลิงก์ "ลูกค้าเซ็นรับสินค้าออนไลน์" (POD) — เฉพาะใบส่งของที่อนุมัติแล้ว · รอบ 267 P1: คืน URL หน้าเอกสารของใบ
-    /// (ลิงก์เดียวต่อใบ) + เปิดช่วงเซ็นรับ 14 วัน · เรียกซ้ำ = เริ่มช่วงใหม่ (token ของหน้าเอกสารไม่ถูกหมุน)</summary>
+    /// (ลิงก์เดียวต่อใบ) + เปิดช่วงเซ็นรับ 14 วัน · เรียกซ้ำ = ออก token ใหม่ (ลิงก์เดิมใช้ไม่ได้ทันที — 267-1-24) + เริ่มช่วงใหม่</summary>
     [HttpPost("{documentId:guid}/delivery-sign-link")]
     public async Task<ActionResult<ApiResponse<object>>> CreateDeliverySignLink(
         Guid companyId, Guid documentId, [FromServices] ISignRequestService signs, [FromServices] IConfiguration config)

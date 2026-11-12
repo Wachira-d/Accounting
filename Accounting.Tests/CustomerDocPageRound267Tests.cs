@@ -406,6 +406,12 @@ public class CustomerDocPageRound267Tests
         Assert.Equal(c + "/public-pay/documents/[redacted]/intents/x", CustomerDocPage.RedactPath(c + "/public-pay/documents/" + t + "/intents/x"));
         Assert.Equal("/api/public/quotation/[redacted]/accept", CustomerDocPage.RedactPath("/api/public/quotation/" + t + "/accept"));
         Assert.Equal("/api/public/delivery/[redacted]", CustomerDocPage.RedactPath("/api/public/delivery/" + t));
+        // ฝ่ายค้าน 267 L6: ลิงก์การ์ด LINE (token = segment ที่สองหลัง /line-doc/) รวมเส้น page / request-link
+        const string q = "9f2504e0-4f89-11d3-9a0c-0305e82c3301";
+        Assert.Equal(c + "/line-doc/" + q + "/[redacted]", CustomerDocPage.RedactPath(c + "/line-doc/" + q + "/" + t));
+        Assert.Equal(c + "/line-doc/" + q + "/[redacted]/page", CustomerDocPage.RedactPath(c + "/line-doc/" + q + "/" + t + "/page"));
+        Assert.Equal(c + "/line-doc/" + q + "/[redacted]/request-link", GatewayWebhookRoute.RedactPath(c + "/line-doc/" + q + "/" + t + "/request-link"));
+        Assert.Equal(c + "/line-doc/" + q, CustomerDocPage.RedactPath(c + "/line-doc/" + q));
         // ทิศตรงข้าม: path อื่นไม่ถูกแตะ
         Assert.Equal(c + "/document/list", CustomerDocPage.RedactPath(c + "/document/list"));
         Assert.Equal(c + "/public-pay/methods", CustomerDocPage.RedactPath(c + "/public-pay/methods"));
@@ -428,5 +434,100 @@ public class CustomerDocPageRound267Tests
         Assert.Equal(CustomerDocPage.RateKey("view", t, null), CustomerDocPage.RateKey("view", t, " "));   // ไม่รู้ IP = ถังเดียวกัน
         // รูป token ผิด ⇒ ถังเดียวต่อ IP (ไม่สร้างแถวตัวนับจากขยะทีละค่า)
         Assert.Equal(CustomerDocPage.RateKey("view", "x", "1.2.3.4"), CustomerDocPage.RateKey("view", "../etc", "1.2.3.4"));
+    }
+
+    // ═════════ ชุดแก้ฝ่ายค้าน (erp-review/2026-11-12/review-267-P1.md · คำตัดสิน 267-1-24…32) ═════════
+
+    [Fact]
+    public void CDP267_H1_RespondStale_ยอมรับได้เฉพาะฉบับที่ลูกค้าเห็น()
+    {
+        // token ของหน้าเอกสาร (ไม่ถูกล้างตอนออก Rev) ⇒ ต้องส่งเลข Rev เสมอ และต้องตรง
+        Assert.Equal(CustomerDocPage.RespondStaleMessage, CustomerDocPage.RespondStaleReason(true, null, 0, null, "h"));
+        Assert.Equal(CustomerDocPage.RespondStaleMessage, CustomerDocPage.RespondStaleReason(true, 0, 1, null, "h"));
+        Assert.Equal(CustomerDocPage.RespondStaleMessage, CustomerDocPage.RespondStaleReason(true, 1, 1, "x", "h"));     // hash เนื้อหาไม่ตรง
+        Assert.Contains("เอกสารถูกแก้ไข", CustomerDocPage.RespondStaleMessage);
+        // ทิศตรงข้าม: ฉบับที่เห็น = ฉบับปัจจุบัน ⇒ ผ่าน (hash ไม่ส่งมา = ไม่บังคับ · ตัวพิมพ์ไม่มีผล)
+        Assert.Null(CustomerDocPage.RespondStaleReason(true, 1, 1, null, "h"));
+        Assert.Null(CustomerDocPage.RespondStaleReason(true, 1, 1, "AB", "ab"));
+        // ลิงก์รุ่นก่อน (ถูกล้างตอนออก Rev อยู่แล้ว) ไม่บังคับเลข Rev — หน้าที่แคชไว้ยังใช้ได้ · แต่ถ้าส่งมาต้องตรง
+        Assert.Null(CustomerDocPage.RespondStaleReason(false, null, 3, null, "h"));
+        Assert.NotNull(CustomerDocPage.RespondStaleReason(false, 2, 3, null, "h"));
+    }
+
+    [Fact]
+    public void CDP267_H1_M1_ออกRevปิดช่วงตอบรับ_ลิงก์ดูไม่ใช่สิทธิ์ตอบรับ_ป้ายพนักงานตรงกัน()
+    {
+        var due = new DateTime(2026, 11, 20, 0, 0, 0, DateTimeKind.Utc);
+        var d = new EntDocument { DocumentType = DocumentType.Quotation, PayLinkTokenHash = "h", PayLinkExpiresAt = Now.AddDays(400), DueDate = due,
+            QuotationAcceptToken = CustomerDocPage.LegacyStored("ab12"), QuotationAcceptTokenExpiresAt = Now.AddDays(9) };
+        SignRequestKinds.MarkIssued(d, Now);
+        Assert.NotNull(SignRequestKinds.Status(d, Now));
+        Assert.Null(CustomerDocPage.RespondWindowClosedReason(false, d.DocumentType, d.DueDate, d.SignLinkIssuedAt, Now));
+        // ออก Rev ใหม่ ⇒ ช่วงตอบรับปิด (ลิงก์ยังเปิดดูได้ — token ไม่ถูกแตะ) + ลิงก์รุ่นก่อนถูกเลิก + ป้ายบนรายการเอกสารหาย
+        SignRequestKinds.CloseRespondOnRevision(d);
+        Assert.Null(d.SignLinkIssuedAt);
+        Assert.Null(d.QuotationAcceptToken);
+        Assert.Equal("h", d.PayLinkTokenHash);
+        Assert.Null(SignRequestKinds.Status(d, Now));
+        // M1: มีวันยืนราคาแต่ผู้ขายยังไม่ได้ส่งให้ตอบรับ ⇒ ปิดพร้อมเหตุ (เดิมวันยืนราคาอย่างเดียวก็เปิด = ลิงก์ทุกอันยอมรับได้)
+        Assert.Null(CustomerDocPage.RespondWindowEnd(DocumentType.Quotation, due, null));
+        Assert.Contains("ยังไม่ได้ส่งลิงก์ให้ตอบรับ", CustomerDocPage.RespondWindowClosedReason(false, DocumentType.Quotation, due, null, Now));
+        var a = Act(CustomerDocPage.Actions(F(DocumentType.Quotation, due: due, start: null, href: "/pages/quotation-accept.html?token=ab"), Now), CustomerDocPage.ActionAccept)!;
+        Assert.False(a.Enabled);
+        Assert.Null(a.Href);
+        // ทิศตรงข้าม: ส่งให้ตอบรับใหม่ ⇒ เปิดอีกครั้ง
+        SignRequestKinds.MarkIssued(d, Now);
+        Assert.Equal("issued", SignRequestKinds.Status(d, Now)!.Code);
+        Assert.Null(CustomerDocPage.RespondWindowClosedReason(false, d.DocumentType, d.DueDate, d.SignLinkIssuedAt, Now));
+    }
+
+    [Fact]
+    public void CDP267_L3_ลิงก์รุ่นก่อนของใบเสนอราคา_พ้นวันยืนราคาถือว่าหมดช่วงตอบรับ()
+    {
+        var d = new EntDocument { DocumentType = DocumentType.Quotation, DueDate = new DateTime(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc),
+            QuotationAcceptToken = CustomerDocPage.LegacyStored("ab12"), QuotationAcceptTokenExpiresAt = Now.AddDays(20) };
+        Assert.Equal(new DateTime(2026, 11, 13, 17, 0, 0, DateTimeKind.Utc), SignRequestKinds.Read(d).ExpiresAt);   // วันยืนราคามาก่อนวันหมดอายุลิงก์
+        Assert.Equal("expired", SignRequestKinds.Status(d, Now.AddDays(2))!.Code);
+        // ทิศตรงข้าม: ลิงก์หมดก่อนวันยืนราคา ⇒ ใช้วันหมดอายุของลิงก์ · ใบส่งของ/ไม่มีวันยืนราคา ⇒ ไม่ถูกแตะ
+        d.QuotationAcceptTokenExpiresAt = Now.AddHours(5);
+        Assert.Equal(Now.AddHours(5), SignRequestKinds.Read(d).ExpiresAt);
+        var dn = new EntDocument { DocumentType = DocumentType.DeliveryNote, DueDate = d.DueDate,
+            DeliverySignToken = CustomerDocPage.LegacyStored("cd34"), DeliverySignTokenExpiresAt = Now.AddDays(9) };
+        Assert.Equal(Now.AddDays(9), SignRequestKinds.Read(dn).ExpiresAt);
+    }
+
+    [Fact]
+    public void CDP267_M7_ลิงก์ชำระรุ่นก่อน_คงขอบเขตจ่ายอย่างเดียว_ไม่ได้ดาวน์โหลดย้อนหลัง()
+    {
+        Assert.True(CustomerDocPage.IsPayOnlyLink(Now.AddDays(-10), Now.AddDays(50)));      // ออกแบบ 60 วัน (ก่อนรอบ 267)
+        Assert.False(CustomerDocPage.IsPayOnlyLink(Now, CustomerDocPage.NewLinkExpiry(Now)));   // ลิงก์หน้าเอกสาร 400 วัน
+        Assert.False(CustomerDocPage.IsPayOnlyLink(null, Now.AddDays(5)));
+        Assert.False(CustomerDocPage.IsPayOnlyLink(Now, null));
+        var payOnly = CustomerDocPage.Actions(new CustomerDocPage.Facts(DocumentType.Invoice, DocumentStatus.Approved, CustomerDocPage.Mode.Link, false,
+            true, null, true, null, null, null, null, PayOnly: true), Now);
+        Assert.Equal(new[] { CustomerDocPage.ActionPayOnline, CustomerDocPage.ActionSubmitSlip }, payOnly.Select(x => x.Id));   // ไม่มีดาวน์โหลด
+        Assert.All(payOnly, x => Assert.True(x.Enabled));
+        // ใบเสนอราคาบนลิงก์รุ่นก่อน (ไม่เคยมี) ⇒ ไม่มีปุ่มใด ๆ
+        Assert.Empty(CustomerDocPage.Actions(new CustomerDocPage.Facts(DocumentType.Quotation, DocumentStatus.Approved, CustomerDocPage.Mode.Link, false,
+            false, null, false, null, Now, null, "/x", PayOnly: true), Now));
+    }
+
+    [Fact]
+    public void CDP267_M6_ถังเพดานสามแบบ_ไม่มีtokenหรือIPตรง()
+    {
+        const string t = "ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34";
+        const string t2 = "ffffcd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34";
+        // ต่อ IP อย่างเดียว: token สุ่มคนละค่าจาก IP เดียวกัน = ถังเดียว (ไม่สร้างถังต่อ token สุ่ม)
+        var ip = CustomerDocPage.RateKeyIp("view", "1.2.3.4");
+        Assert.DoesNotContain("1.2.3.4", ip);
+        Assert.NotEqual(ip, CustomerDocPage.RateKeyIp("view", "5.6.7.8"));
+        Assert.NotEqual(ip, CustomerDocPage.RateKeyIp("pdf", "1.2.3.4"));
+        // ต่อ token อย่างเดียว: หมุน IP ไม่ได้ถังใหม่
+        var tok = CustomerDocPage.RateKeyToken("pdf", t);
+        Assert.DoesNotContain(t, tok);
+        Assert.NotEqual(tok, CustomerDocPage.RateKeyToken("pdf", t2));
+        Assert.True(tok.Length <= 60 && ip.Length <= 60);
+        Assert.NotEqual(tok, CustomerDocPage.RateKey("pdf", t, "1.2.3.4"));
+        Assert.True(CustomerDocPage.Limits.IpPerMinute > CustomerDocPage.Limits.ViewPerMinute);   // ถัง IP หลวมกว่าถังต่อ token (สำนักงาน/CGNAT)
     }
 }

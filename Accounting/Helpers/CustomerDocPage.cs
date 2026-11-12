@@ -46,6 +46,12 @@ public static class CustomerDocPage
         public const int ViewPerDay = 300;
         public const int PdfPerMinute = 10;
         public const int PdfPerDay = 120;
+        /// <summary>ถังต่อ IP อย่างเดียว (ทุก token รวมกัน) — หลวมพอสำหรับสำนักงาน/CGNAT · กันยิง token สุ่ม</summary>
+        public const int IpPerMinute = 300;
+        public const int IpPerDay = 20000;
+        /// <summary>เรนเดอร์ PDF ต่อ token รวมทุก IP</summary>
+        public const int PdfPerTokenPerMinute = 30;
+        public const int PdfPerTokenPerDay = 300;
     }
 
     /// <summary>กุญแจตัวนับของเส้นสาธารณะ — ต่อ (token + IP) ไม่ใช่ IP อย่างเดียว (ลูกค้าหลัง CGNAT มือถือ/สำนักงานเดียวกันไม่โดนรวมกัน — หน้านี้คือหน้าชำระ) ·
@@ -56,6 +62,16 @@ public static class CustomerDocPage
         var who = (DocumentPayLinkPolicy.LooksValid(token) ? token! : "invalid") + "|" + (string.IsNullOrWhiteSpace(ip) ? "unknown" : ip);
         return $"docpage:{bucket}:{QuotationAcceptance.Sha256Hex(who)![..32]}";
     }
+
+    /// <summary>ฝ่ายค้าน 267 M6: ถังต่อ IP อย่างเดียว (หลวม — กัน token สุ่มทีละค่าสร้างถังไม่จำกัด · ตรวจก่อนถังต่อ token) ·
+    /// เก็บ hash สั้นของ IP (ไม่มี IP ตรงในตารางตัวนับ)</summary>
+    public static string RateKeyIp(string bucket, string? ip)
+        => $"docpage-ip:{bucket}:{QuotationAcceptance.Sha256Hex(string.IsNullOrWhiteSpace(ip) ? "unknown" : ip)![..32]}";
+
+    /// <summary>ฝ่ายค้าน 267 M6: ถังต่อ token อย่างเดียว (ทุก IP รวมกัน) — เพดานงานหนัก/งานเขียนต่อใบ (เรนเดอร์ PDF · ขอลิงก์) ที่หมุน IP หนีไม่ได้ ·
+    /// ใช้หลังยืนยันว่า token มีจริงเท่านั้น (ไม่สร้างแถวจาก token สุ่ม)</summary>
+    public static string RateKeyToken(string bucket, string token)
+        => $"docpage-t:{bucket}:{DocumentPayLinkPolicy.TokenHash(token)[..32]}";
 
     /// <summary>โหมดของหน้า — หน้าเดียว ข้อมูลรูปเดียว ต่างกันที่ "ใครเปิด" (ชื่อที่ส่งออก = <see cref="ModeCode"/>)</summary>
     public enum Mode
@@ -149,15 +165,46 @@ public static class CustomerDocPage
     /// <param name="linkStartUtc">วันที่ผู้ขายส่งลิงก์ให้ตอบรับ (<c>SignLinkIssuedAt</c> · ไม่มี = วันออกลิงก์หน้าเอกสาร)</param>
     public static DateTime? RespondWindowEnd(DocumentType type, DateTime? dueDate, DateTime? linkStartUtc)
     {
+        // ฝ่ายค้าน 267 M1 (267-1-25): ลิงก์สำหรับ "ดู" ≠ สิทธิ์ตอบรับ — ผู้ขายต้องเปิดให้ตอบรับก่อน (SignLinkIssuedAt) ทุกชนิด
+        // รวมใบเสนอราคาที่มีวันยืนราคา (เดิมวันยืนราคาอย่างเดียวก็เปิด ⇒ ลิงก์ทุกอันยอมรับได้) · ออก Rev ใหม่ล้างค่านี้ (H1)
+        if (linkStartUtc is not DateTime start) return null;
         if (type == DocumentType.Quotation)
         {
             if (dueDate is DateTime due)
                 return DateTime.SpecifyKind(due.Date.AddDays(1).AddHours(-7), DateTimeKind.Utc);   // เที่ยงคืนเวลาไทยของวันถัดจากวันยืนราคา
-            return linkStartUtc?.AddDays(QuotationDefaultWindowDays);
+            return start.AddDays(QuotationDefaultWindowDays);
         }
-        if (type == DocumentType.DeliveryNote) return linkStartUtc?.AddDays(DeliverySignWindowDays);
+        if (type == DocumentType.DeliveryNote) return start.AddDays(DeliverySignWindowDays);
         return null;
     }
+
+    /// <summary>ข้อความเมื่อเอกสารถูกแก้หลังจากหน้าที่ลูกค้าเปิดค้างไว้ (เลข Rev/เนื้อหาที่เห็น ≠ ปัจจุบัน) — ฝ่ายค้าน 267 H1</summary>
+    public const string RespondStaleMessage = "เอกสารถูกแก้ไข — เปิดดูฉบับล่าสุด";
+
+    /// <summary>
+    /// ฝ่ายค้าน 267 H1 — การตอบรับ (ยอมรับ/เซ็นรับ) ผูกกับ "ฉบับที่ลูกค้าเห็น": เลข Rev ที่หน้าแสดงต้องตรงกับใบ ณ ตอนกด และ hash เนื้อหา (ถ้าหน้าส่งมา)
+    /// ต้องตรงกับเนื้อหาปัจจุบัน · <paramref name="requireSeen"/> = เปิดด้วย token ของหน้าเอกสาร (token ไม่ถูกล้างตอนออก Rev ⇒ ต้องส่งเลข Rev เสมอ) ·
+    /// ลิงก์รุ่นก่อน (ถูกล้างตอนออก Rev อยู่แล้ว) ไม่บังคับ แต่ถ้าส่งมาก็ตรวจ · null = ตรง
+    /// </summary>
+    public static string? RespondStaleReason(bool requireSeen, int? seenRevision, int currentRevision, string? seenContentHash, string? currentContentHash)
+    {
+        if (seenRevision == null && requireSeen) return RespondStaleMessage;
+        if (seenRevision != null && seenRevision.Value != currentRevision) return RespondStaleMessage;
+        if (!string.IsNullOrWhiteSpace(seenContentHash)
+            && !string.Equals(seenContentHash.Trim(), currentContentHash, StringComparison.OrdinalIgnoreCase)) return RespondStaleMessage;
+        return null;
+    }
+
+    /// <summary>อายุลิงก์ชำระรุ่นก่อนรอบ 267 (วัน) — ใช้แยก "ลิงก์ที่ออกเป็นลิงก์ชำระอย่างเดียว" (<see cref="IsPayOnlyLink"/>)</summary>
+    public const int LegacyPayLinkTtlDays = 60;
+
+    /// <summary>
+    /// ฝ่ายค้าน 267 M7 (267-1-30): ลิงก์นี้ออกก่อนรอบ 267 ในฐานะ<b>ลิงก์ชำระอย่างเดียว</b>ไหม — ลิงก์รุ่นนั้นอายุ 60 วันนับจากวันออก (ลิงก์หน้าเอกสาร = 400 วัน)
+    /// ⇒ ลิงก์ที่อยู่ในมือคนอื่นอยู่แล้ว<b>ไม่ได้สิทธิ์เพิ่มย้อนหลัง</b>: เห็นหัวใบ + ยอดที่ต้องชำระ + ปุ่มจ่าย/สลิป เท่าเดิม (ไม่มีบรรทัด · PDF · ใบที่เกี่ยวข้อง)
+    /// จนกว่าพนักงานจะเพิกถอนแล้วออกลิงก์ใหม่ · ไม่รู้วันออก/วันหมดอายุ = ไม่ใช่ (ลิงก์ที่ไม่มีวันหมดอายุไม่เคยมีในรุ่นก่อน)
+    /// </summary>
+    public static bool IsPayOnlyLink(DateTime? issuedAt, DateTime? expiresAt)
+        => issuedAt != null && expiresAt != null && (expiresAt.Value - issuedAt.Value).TotalDays <= LegacyPayLinkTtlDays + 1;
 
     /// <summary>เหตุที่ "ตอบรับ" (ยอมรับใบเสนอราคา/เซ็นรับสินค้า) ไม่ได้ ณ ตอนนี้เพราะหน้าต่างเวลา — null = ยังเปิด ·
     /// ตัวตัดสินเดียวของปุ่มบนหน้าเอกสาร (<see cref="Actions"/>) และของหน้าตอบรับเดิมเมื่อเปิดด้วย token ของหน้าเอกสาร
@@ -182,7 +229,7 @@ public static class CustomerDocPage
         DocumentType Type, DocumentStatus Status, Mode Mode, bool IsEnglish,
         bool PayOffered, string? PayBlockedNote, bool SlipOffered,
         DateTime? DueDate, DateTime? RespondStartUtc, DateTime? RespondedAt, string? RespondHref,
-        bool PdfAvailable = true);
+        bool PdfAvailable = true, bool PayOnly = false);
 
     /// <summary>ปุ่มหนึ่งปุ่มบนหน้า — <paramref name="Id"/> = รหัสที่หน้าเว็บใช้เลือกตัววาด (ไม่ใช่ข้อความ) · <paramref name="Href"/> = ที่ไปต่อ
     /// (หน้าตอบรับเดิมในช่วงเปลี่ยนผ่าน) · ปิด = <paramref name="DisabledReason"/> ต้องมีเสมอ (ไม่มีปุ่มเทาที่ไม่บอกเหตุ)</summary>
@@ -213,7 +260,8 @@ public static class CustomerDocPage
         var previewNote = T(en, "โหมดดูตัวอย่างของพนักงาน — ปุ่มใช้งานไม่ได้", "Staff preview — buttons are disabled");
         var voided = f.Status == DocumentStatus.Voided;
 
-        list.Add(!f.PdfAvailable
+        // ฝ่ายค้าน 267 M7: ลิงก์ชำระรุ่นก่อน (ชำระอย่างเดียว) — ไม่มีดาวน์โหลด/ตอบรับ · เหลือปุ่มจ่าย/สลิปตามเดิม
+        if (!f.PayOnly) list.Add(!f.PdfAvailable
             ? new PageAction(ActionDownloadPdf, false, T(en, "ดาวน์โหลด PDF", "Download PDF"),
                 T(en, "ยังสร้างไฟล์ PDF ไม่ได้ในขณะนี้ — กรุณาติดต่อผู้ขาย", "The PDF is not available right now — please contact the seller"), RuleCode)
             : preview
@@ -253,7 +301,7 @@ public static class CustomerDocPage
         }
 
         var respondId = f.Type == DocumentType.Quotation ? ActionAccept : f.Type == DocumentType.DeliveryNote ? ActionSignDelivery : null;
-        if (respondId != null)
+        if (respondId != null && !f.PayOnly)
         {
             var label = respondId == ActionAccept ? T(en, "ยอมรับใบเสนอราคา", "Accept the quotation") : T(en, "เซ็นรับสินค้า", "Sign for the delivery");
             string? closed = null;
@@ -361,6 +409,16 @@ public static class CustomerDocPage
             if (start >= path.Length) return path;
             var end = path.IndexOf('/', start);
             return path[..start] + "[redacted]" + (end < 0 ? "" : path[end..]);
+        }
+        // ฝ่ายค้าน 267 L6: ลิงก์การ์ด LINE — /line-doc/{queueId}/{token}[/page|/request-link] (token = segment ที่สองหลัง marker)
+        const string lineMarker = "/line-doc/";
+        var li = path.IndexOf(lineMarker, StringComparison.OrdinalIgnoreCase);
+        if (li >= 0)
+        {
+            var q = path.IndexOf('/', li + lineMarker.Length);
+            if (q < 0 || q == path.Length - 1) return path;
+            var tEnd = path.IndexOf('/', q + 1);
+            return path[..(q + 1)] + "[redacted]" + (tEnd < 0 ? "" : path[tEnd..]);
         }
         return path;
     }

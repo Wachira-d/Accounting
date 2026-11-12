@@ -13809,12 +13809,17 @@
           Layout.panelError(host, 'โหลดส่วน “ลิงก์ชำระเงิน & ส่งเอกสารอัตโนมัติ” ไม่สำเร็จ', () => this.renderAutoSendSection(docId), e && e.message);
           return;
         }
-        if (!s || (!s.url && !(s.runs || []).length && s.refusal)) { host.textContent = ''; return; }
+        // รอบ 267 ฝ่ายค้าน H2: ใบที่ "จ่ายไม่ได้" (ใบเสนอราคา · ใบส่งของ · ใบเสร็จ · ชำระครบ/ออกใบกำกับแล้ว) ก็มีลิงก์หน้าเอกสารที่ลูกค้าเปิดได้ —
+        // แผงต้องขึ้นและมีปุ่มยกเลิกลิงก์เมื่อเซิร์ฟเวอร์บอกว่าลิงก์ระดับหน้ายังใช้ได้ (pageLinkUsable) ไม่ใช่ดูจากเหตุปฏิเสธของชั้นจ่าย
+        if (!s || (!s.url && !s.pageLinkUsable && !(s.runs || []).length && s.refusal)) { host.textContent = ''; return; }
         const esc = Layout.esc;
         const runs = (s.runs || []).map(r => `<tr><td>${Layout.date(r.createdAt)}</td><td>${esc(r.statusLabel)}</td><td>${esc(r.message || '')}</td>
           <td>${(r.status === 'Blocked' || r.status === 'Failed') ? `<button class="btn btn-sm btn-secondary" data-autosend-retry="${esc(r.id)}">ลองใหม่</button>` : ''}</td></tr>`).join('');
         host.innerHTML = `<h4 style="font-size:14px;margin-bottom:8px">ลิงก์ชำระเงิน &amp; ส่งเอกสารอัตโนมัติ</h4>
-          ${s.refusal ? `<div class="text-sm text-gray-500">${esc(s.refusal)}</div>` : `
+          ${s.refusal ? `<div class="text-sm text-gray-500">${esc(s.refusal)}</div>${s.pageLinkUsable ? `
+          <div class="text-sm" style="margin-top:6px">ลิงก์หน้าเอกสารของลูกค้ายังเปิดได้${s.pageLinkNote ? ' — ' + esc(s.pageLinkNote) : ''}</div>
+          ${s.pageUrl ? `<div class="text-sm" style="margin-top:4px;word-break:break-all"><a href="${esc(s.pageUrl)}" target="_blank" rel="noopener">${esc(s.pageUrl)}</a> (หมดอายุ ${Layout.date(s.expiresAt)})</div>` : ''}
+          <div style="margin-top:6px"><button class="btn btn-sm btn-danger-outline" data-autosend-revoke="1">ยกเลิกลิงก์</button></div>` : ''}` : `
           <div class="text-sm">ยอดค้าง ${Layout.money(s.gross)}${Number(s.wht) > 0.005 ? ` · หัก ณ ที่จ่ายที่ลูกค้าจะหัก ${Layout.money(s.wht)} · ลูกค้าโอน ${Layout.money(s.net)}` : ''}
             · ช่องทาง: ${(s.channels || []).map(c => esc(c.label)).join(', ') || '-'}</div>
           ${s.whtNote ? `<div class="text-sm" style="color:#b45309;margin-top:4px">⚠️ ${esc(s.whtNote)}</div>` : ''}

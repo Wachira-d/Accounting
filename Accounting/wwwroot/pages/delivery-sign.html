@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- รอบ 267 ฝ่ายค้าน L6: token ของลิงก์อยู่ใน URL — ไม่ส่ง Referer ออกนอกหน้า -->
+  <meta name="referrer" content="no-referrer">
   <title>เซ็นรับสินค้า</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -55,6 +57,8 @@
     /** ข้อความผิดพลาดในกล่องบนหน้า (role=alert) แทน alert() — in-app browser บางตัวปิด alert เงียบ ๆ */
     function say(msg) { const el = document.getElementById('signMsg'); if (el) el.textContent = msg || ''; }
 
+    let seen = { revisionNumber: null, contentHash: null };
+
     async function load() {
       if (!token) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง</div>'; return; }
       let r;
@@ -63,6 +67,8 @@
       if (!r.ok) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง หรือหมดอายุแล้ว<br>กรุณาติดต่อผู้ส่งสินค้า</div>'; return; }
       const j = await r.json();
       const q = j.data;
+      // รอบ 267 ฝ่ายค้าน H1: ฉบับที่หน้านี้แสดง — ส่งกลับตอนเซ็นรับ
+      seen = { revisionNumber: q.revisionNumber ?? null, contentHash: q.contentHash || null };
       if (q.signedAt) {
         card.innerHTML = `<div class="done"><div class="big">✅</div>
           <h1>ใบส่งของ ${esc(q.documentNumber)}</h1>
@@ -121,6 +127,8 @@
             signedBy: name,
             signatureBase64: signature,
             note: (document.getElementById('signNote').value || '').trim() || null,
+            revisionNumber: seen.revisionNumber,
+            contentHash: seen.contentHash,
           }),
         });
         const j = await r.json().catch(() => null);

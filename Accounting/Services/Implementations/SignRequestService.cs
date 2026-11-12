@@ -132,12 +132,22 @@ public class SignRequestService : ISignRequestService
             ApplyCallback(doc, await SettingsAsync(companyId, ct), options.CallbackUrl, options.CallbackRef, options.ClearCallback);
         // รอบ 267 P1 (267-1-3): ไม่ออก token ยอมรับ/เซ็นรับของตัวเองอีก — ลิงก์ = ลิงก์หน้าเอกสารของใบ (ออก/ใช้เดิมที่ตัวออกเดียว) ·
         // "ออกใหม่" = เริ่มช่วงตอบรับใหม่ + ล้างสถานะติดตาม + เลิกลิงก์รุ่นก่อน (SignRequestKinds.MarkIssued) — token ของหน้าเอกสารไม่ถูกหมุน
-        var link = await EnsurePageLinkAsync(doc, staffIntent: true, "sign-link", origin, ct);
-        if (options.Regenerate || !SignRequestKinds.LinkUsable(SignRequestKinds.Read(doc), now))
+        // ฝ่ายค้าน 267 L1: ตรวจ "เปิดรอบตอบรับได้ไหม" ก่อนแตะลิงก์ (คำขอที่ถูกปฏิเสธต้องไม่เปลี่ยนสถานะลิงก์/ไม่ล้างการเพิกถอน)
+        var open = options.Regenerate || !SignRequestKinds.LinkUsable(SignRequestKinds.Read(doc), now);
+        if (open) EnsureRespondWindowOpen(doc, now);
+        // ฝ่ายค้าน 267 M8: คีย์ API ไม่ล้างการเพิกถอนที่พนักงานตั้งไว้ (259-2-8 — ออกใหม่แทนลิงก์ที่เพิกถอน = คนกดเท่านั้น)
+        if (doc.PayLinkRevokedAt != null && !options.StaffIntent) throw new PayLinkRevokedException();
+        // ฝ่ายค้าน 267 H2 (267-1-24): "ออกใหม่" = หมุน token จริง — ลิงก์เดิม (ส่งผิดคน/รั่ว) ใช้ไม่ได้ทันทีทุกทาง แล้วออก token ใหม่ในคำขอเดียวกัน
+        // (ชนิดที่มีลิงก์เซ็น = ใบเสนอราคา/ใบส่งของ — ไม่มีลิงก์ชำระที่จะตายตาม)
+        var rotated = false;
+        if (options.Regenerate
+            && CustomerDocPage.StateOf(doc.PayLinkTokenHash, doc.PayLinkExpiresAt, doc.PayLinkRevokedAt, now) == CustomerDocPage.LinkState.Usable)
         {
-            EnsureRespondWindowOpen(doc, now);
-            SignRequestKinds.MarkIssued(doc, now);
+            await _links.RevokeAsync(companyId, documentId, "sign-link-regenerate", ct);
+            rotated = true;
         }
+        var link = await EnsurePageLinkAsync(doc, staffIntent: options.StaffIntent || rotated, "sign-link", origin, ct);
+        if (open) SignRequestKinds.MarkIssued(doc, now);
         doc.UpdatedAt = now;
         await _db.SaveChangesAsync(ct);
         return ToResult(doc, link, now);
@@ -206,12 +216,14 @@ public class SignRequestService : ISignRequestService
 
         // ลิงก์: ช่วงตอบรับที่ยังเปิดใช้ต่อ (อีเมลเตือนต้องเป็นรอบเดิม) · ไม่มี/พ้นช่วง ⇒ เปิดรอบใหม่ ·
         // รอบ 267 P1: URL = ลิงก์หน้าเอกสารของใบ (ตัวออกเดียว) — อีเมลเตือนของลิงก์รุ่นก่อนก็ได้ลิงก์หน้าเอกสาร (หน้าเดิมยังเปิดได้จนหมดอายุ)
-        if (!SignRequestKinds.LinkUsable(SignRequestKinds.Read(doc), now) && reminder)
+        var open = !SignRequestKinds.LinkUsable(SignRequestKinds.Read(doc), now);
+        if (open && reminder)
             throw new BusinessRuleException("ลิงก์เดิมหมดอายุแล้ว — ไม่ส่งอีเมลเตือน", "SIGN-REMINDER-EXPIRED");
+        // ฝ่ายค้าน 267 L1: ตรวจช่วงตอบรับก่อนแตะลิงก์ (ใบเสนอราคาพ้นวันยืนราคา ⇒ ปฏิเสธโดยไม่ออก/กู้ลิงก์)
+        if (open) EnsureRespondWindowOpen(doc, now);
         var pageLink = await EnsurePageLinkAsync(doc, staffIntent: purpose == SignRequestPurposes.Manual, actor, origin, ct);
-        if (!SignRequestKinds.LinkUsable(SignRequestKinds.Read(doc), now))
+        if (open)
         {
-            EnsureRespondWindowOpen(doc, now);
             SignRequestKinds.MarkIssued(doc, now);
             await _db.SaveChangesAsync(ct);
         }

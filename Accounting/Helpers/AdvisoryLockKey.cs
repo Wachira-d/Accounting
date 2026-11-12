@@ -277,4 +277,8 @@ public static class AdvisoryLockKey
     /// <summary>รอบ 251 (WP-07 ฝ่ายค้านข้อ 2d): ส่งอีเมลทดสอบของรายการประจำ — part = userId · ผูก companyId · xact lock ครอบ นับเพดาน → ส่ง → audit
     /// (สองคำขอพร้อมกันของผู้ใช้เดียวกันเกินเพดานไม่ได้)</summary>
     public const string RecurringSendTest = "recurring-send-test";
+
+    /// <summary>รอบ 267 ฝ่ายค้าน M5 — "ลูกค้าขอลิงก์หน้าเอกสารใหม่": ตรวจ "วันนี้ขอไปแล้วหรือยัง" + เขียนแถว audit ใต้ล็อกต่อใบ
+    /// (คำขอสาธารณะพร้อมกันหลายตัว = แถวเดียว · กระดิ่งครั้งเดียว) · ผู้ใช้: <c>DocumentPayLinkService.RecordLinkRequestAsync</c></summary>
+    public const string DocumentLinkRequest = "doc-link-request";
 }

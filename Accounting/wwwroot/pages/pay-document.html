@@ -70,7 +70,8 @@
     let english = false;
     const dateText = (d) => d ? new Date(d).toLocaleDateString(english ? 'en-GB' : 'th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-';
     // ที่อยู่จากเซิร์ฟเวอร์เท่านั้น: path ภายในเว็บนี้ (ขึ้นต้น / ตัวเดียว) — ไม่ต่อ URL ภายนอกเข้า href
-    const safePath = (p) => (typeof p === 'string' && /^\/(?!\/)/.test(p)) ? p : null;
+    // (ฝ่ายค้าน 267 L8: ไม่รับ "/\host" — เบราว์เซอร์ตีเป็น "//host")
+    const safePath = (p) => (typeof p === 'string' && /^\/(?![\\/])/.test(p)) ? p : null;
     const c = () => encodeURIComponent(companyId);
     // เส้นจ่าย/สลิปเดิม (เฉพาะโหมดลิงก์ของใบ)
     const base = () => `/api/companies/${c()}/public-pay/documents/${encodeURIComponent(token)}`;

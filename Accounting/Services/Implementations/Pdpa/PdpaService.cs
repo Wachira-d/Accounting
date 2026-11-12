@@ -911,6 +911,10 @@ public partial class PdpaService : IPdpaService
                 .Where(i => i.CompanyId == companyId && i.ContactId == contactId.Value && i.UsedAt == null && i.RevokedAt == null)
                 .ExecuteUpdateAsync(s => s.SetProperty(i => i.RevokedAt, (DateTime?)DateTime.UtcNow), ct);
 
+            // รอบ 267 ฝ่ายค้าน M7 (267-1-31): ลิงก์หน้าเอกสารของทุกใบของผู้ติดต่อรายนี้ ⇒ เพิกถอน (ผู้ถือลิงก์เดิมเปิดดู/ดาวน์โหลดเอกสารที่มีข้อมูลของเจ้าของข้อมูลไม่ได้อีก ·
+            // ตัวเอกสารยังอยู่ตาม legal hold) — ผู้เขียน PayLinkRevokedAt ตัวเดียว
+            changed += await DocumentPayLinkService.RevokeForContactAsync(_db, companyId, contactId.Value, actor, "dsr-erase", ct);
+
             // ── รอบ 239 ฝ่ายค้าน N: หลักฐานการยอมรับใบเสนอราคา/เซ็นรับสินค้าออนไลน์ของคู่ค้ารายนี้ (ม.33) ──
             // ใบที่ยังอยู่ในอายุเก็บ (QuotationAcceptance.UnderLegalHold = MAX(RetentionUntil, วันที่เอกสาร + 5 ปี) · พ.ร.บ.การบัญชี ม.14 ·
             // ป.รัษฎากร §87/3 · หลักฐานสัญญา) ⇒ legal hold คงไว้ · พ้นอายุแล้ว ⇒ ล้างชื่อ/หมายเหตุ/IP/รูปลายเซ็น (ErasePii ตัวเดียว)

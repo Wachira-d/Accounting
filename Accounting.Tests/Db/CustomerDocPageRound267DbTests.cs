@@ -80,6 +80,18 @@ public class CustomerDocPageRound267DbTests
         return doc;
     }
 
+    /// <summary>ผู้ขาย "ส่งให้ลูกค้าตอบรับ" (สิ่งที่ SignRequestService.MarkIssued ทำ) — ฝ่ายค้าน 267 M1: ลิงก์ดูอย่างเดียวยังตอบรับไม่ได้</summary>
+    private static Task OpenForResponseAsync(Accounting.Data.AccountingDbContext db, Guid documentId, DateTime? at = null)
+        => db.Documents.Where(d => d.Id == documentId).ExecuteUpdateAsync(x => x.SetProperty(d => d.SignLinkIssuedAt, (DateTime?)(at ?? DateTime.UtcNow)));
+
+    /// <summary>hash เนื้อหาที่เส้นดูของหน้ายอมรับส่งให้หน้าเว็บ (ช่อง <c>contentHash</c>)</summary>
+    private static string SeenContentHash(IActionResult viewResult)
+    {
+        var ok = Assert.IsType<OkObjectResult>(viewResult);
+        var data = ok.Value!.GetType().GetProperty("Data")!.GetValue(ok.Value)!;
+        return (string)data.GetType().GetProperty("contentHash")!.GetValue(data)!;
+    }
+
     private static string TokenOf(string url) => System.Web.HttpUtility.ParseQueryString(new Uri(url).Query)["t"]!;
 
     private static PublicQuotationController LegacyPage(Accounting.Data.AccountingDbContext db)
@@ -113,10 +125,27 @@ public class CustomerDocPageRound267DbTests
         var inv = await AddDocAsync(db, s, DocumentType.Invoice, "INV");
         var link = await s.Links.EnsureLinkAsync(s.CompanyId, inv.Id, null);          // ทางออกลิงก์ชำระเดิม (รอบ 241)
         Assert.True(link.Ok, link.Refusal);
-        // จำลองลิงก์ที่ออกก่อนรอบ 267 (อายุ 60 วัน) — ต้องเปิดได้ตามเดิมจนถึงวันหมดอายุเดิม
-        var oldExpiry = DateTime.UtcNow.AddDays(20);
-        await db.Documents.Where(d => d.Id == inv.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.PayLinkExpiresAt, (DateTime?)oldExpiry));
         var token = TokenOf(link.Url!);
+
+        // ── ฝ่ายค้าน 267 M7 (267-1-30): ลิงก์ชำระที่ออกก่อนรอบ 267 (อายุ 60 วัน) คงขอบเขตเดิม — หัวใบ + ยอด + จ่าย · ไม่ได้บรรทัด/PDF/ใบที่เกี่ยวข้องย้อนหลัง ──
+        var issuedAt = DateTime.UtcNow.AddDays(-40);
+        await db.Documents.Where(d => d.Id == inv.Id).ExecuteUpdateAsync(x => x
+            .SetProperty(d => d.PayLinkIssuedAt, (DateTime?)issuedAt).SetProperty(d => d.PayLinkExpiresAt, (DateTime?)issuedAt.AddDays(60)));
+        var old = (await s.Links.PublicViewAsync(s.CompanyId, token))!;
+        Assert.True(old.CanPayOnline, old.BlockedNote);                                  // จ่ายได้ตามเดิมจนถึงวันหมดอายุเดิม
+        Assert.Equal(inv.DocumentNumber, old.DocumentNumber);
+        Assert.Equal(1_070m, old.Target.AmountDue);
+        Assert.True(old.Page!.Viewable);
+        Assert.Empty(old.Page.Lines);
+        Assert.Empty(old.Page.Related);
+        Assert.Null(Act(old.Page, CustomerDocPage.ActionDownloadPdf));
+        Assert.True(Act(old.Page, CustomerDocPage.ActionPayOnline)!.Enabled);
+        Assert.Null(await s.Links.ResolvePdfDocumentAsync(s.CompanyId, token, null));    // ไม่มีปุ่ม = ดาวน์โหลดไม่ได้ (ไม่ใช่แค่ซ่อนปุ่ม)
+        Assert.Contains("ออกก่อนมีหน้าเอกสาร", (await s.Links.StatusAsync(s.CompanyId, inv.Id)).PageLinkNote);
+        // ทิศตรงข้าม: ลิงก์ที่ออกหลังรอบ 267 (400 วัน) = หน้าเอกสารเต็ม
+        var now = DateTime.UtcNow;
+        await db.Documents.Where(d => d.Id == inv.Id).ExecuteUpdateAsync(x => x
+            .SetProperty(d => d.PayLinkIssuedAt, (DateTime?)now).SetProperty(d => d.PayLinkExpiresAt, (DateTime?)CustomerDocPage.NewLinkExpiry(now)));
 
         var view = (await s.Links.PublicViewAsync(s.CompanyId, token))!;
         // ช่องจ่ายเดิม (หน้าชำระรุ่นก่อนที่แคชไว้ยังทำงาน)
@@ -188,7 +217,23 @@ public class CustomerDocPageRound267DbTests
         Assert.False(view.CanSubmitSlip);
         var page = view.Page!;
         Assert.Null(Act(page, CustomerDocPage.ActionPayOnline));
-        var accept = Act(page, CustomerDocPage.ActionAccept)!;
+        // ฝ่ายค้าน 267 M1: ลิงก์ที่ออกเพื่อ "ดู" ยังยอมรับไม่ได้ (ปุ่มปิดพร้อมเหตุ + ทางไปต่อ) — ผู้ขายต้องส่งให้ตอบรับก่อน · ป้ายบนรายการเอกสารยังไม่ขึ้น
+        var closed = Act(page, CustomerDocPage.ActionAccept)!;
+        Assert.False(closed.Enabled);
+        Assert.Contains("ยังไม่ได้ส่งลิงก์ให้ตอบรับ", closed.DisabledReason);
+        Assert.Null(closed.Href);
+        Assert.True(Act(page, CustomerDocPage.ActionRequestLink)!.Enabled);
+        db.ChangeTracker.Clear();
+        var blockedAccept = Assert.IsType<ObjectResult>(await LegacyPage(db).Accept(a.Token!, new PublicQuotationController.AcceptRequest("คุณยังไม่ถูกเชิญ", RevisionNumber: 0)));
+        Assert.Equal(409, blockedAccept.StatusCode);
+        // H2: หน้าพนักงานรู้ว่าใบที่จ่ายไม่ได้มีลิงก์ที่ลูกค้าเปิดได้ (ปุ่มยกเลิกลิงก์ขึ้นกับค่านี้)
+        var status = await s.Links.StatusAsync(s.CompanyId, qt.Id);
+        Assert.NotNull(status.Refusal);
+        Assert.True(status.PageLinkUsable);
+        Assert.Equal(a.Url, status.PageUrl);
+        // ทิศตรงข้าม: ผู้ขายส่งให้ตอบรับแล้ว ⇒ ปุ่มเปิด
+        await OpenForResponseAsync(db, qt.Id);
+        var accept = Act((await s.Links.PublicViewAsync(s.CompanyId, a.Token!))!.Page!, CustomerDocPage.ActionAccept)!;
         Assert.True(accept.Enabled, accept.DisabledReason);
         Assert.Equal("/pages/quotation-accept.html?token=" + a.Token, accept.Href);
 
@@ -210,6 +255,7 @@ public class CustomerDocPageRound267DbTests
         Assert.Null(await s.Links.ResolvePdfDocumentAsync(s.CompanyId, a.Token!, null));
         Assert.Null(await s.Links.CurrentCustomerUrlAsync(s.CompanyId, qt.Id));
         Assert.False((await s.Links.RequestNewLinkAsync(s.CompanyId, a.Token!)).Found);
+        Assert.False((await s.Links.StatusAsync(s.CompanyId, qt.Id)).PageLinkUsable);
         await Assert.ThrowsAsync<PayLinkRevokedException>(() => s.Links.EnsureCustomerLinkAsync(s.CompanyId, qt.Id, "test"));
         var c = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, qt.Id, "staff-link", default, allowReissueRevoked: true, actor: "tester");
         Assert.True(c.Ok, c.Refusal);
@@ -226,6 +272,16 @@ public class CustomerDocPageRound267DbTests
         var inv = await AddDocAsync(db, s, DocumentType.Invoice, "INV");
         var page = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, inv.Id, "test");
         Assert.True(page.Ok, page.Refusal);
+        // ฝ่ายค้าน 267 M3: บริษัทไม่ได้เปิด "แนบลิงก์ชำระ" ⇒ ลิงก์หน้าเอกสารไม่ได้ปุ่มจ่าย/บัญชีรับโอน/ฟอร์มสลิป (ดู + ดาวน์โหลดได้) จนกว่าทางจ่ายจะเปิด
+        var before = (await s.Links.PublicViewAsync(s.CompanyId, page.Token!))!;
+        Assert.False(before.CanPayOnline);
+        Assert.Equal(DocumentPayLinkService.PayNotOpenedNote, before.BlockedNote);
+        Assert.Null(before.Transfer);
+        Assert.False(before.CanSubmitSlip);
+        Assert.False(before.Target.CanPayNow);
+        Assert.True(Act(before.Page!, CustomerDocPage.ActionDownloadPdf)!.Enabled);
+        Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == inv.Id).Select(d => d.PayLinkChannelsJson).SingleAsync());
+        // ฝ่ายค้าน 267 M4: ทางจ่าย (ปุ่มออกลิงก์ชำระ/ตารางส่ง) ตรึงช่องทางครั้งแรกบนลิงก์เดิม
         var pay = await s.Links.EnsureLinkAsync(s.CompanyId, inv.Id, new[] { "PromptPay" });
         Assert.True(pay.Ok, pay.Refusal);
         Assert.Equal(page.Url, pay.Url);                                               // ลำดับไหนก็ได้ลิงก์เดียวกัน
@@ -249,12 +305,45 @@ public class CustomerDocPageRound267DbTests
         var qt = await AddDocAsync(db, s, DocumentType.Quotation, "QT", due: DateTime.UtcNow.Date.AddDays(5));
         var link = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, qt.Id, "test");
         Assert.True(link.Ok, link.Refusal);
+        await OpenForResponseAsync(db, qt.Id);
         db.ChangeTracker.Clear();
 
         Assert.IsType<OkObjectResult>(await LegacyPage(db).View(link.Token!));
         await s.Links.MarkOpenedAsync(s.CompanyId, link.Token!);
         Assert.NotNull(await db.Documents.AsNoTracking().Where(d => d.Id == qt.Id).Select(d => d.SignLinkOpenedAt).SingleAsync());
-        Assert.IsType<OkObjectResult>(await LegacyPage(db).Accept(link.Token!, new PublicQuotationController.AcceptRequest("คุณสมหญิง ผู้จัดการ")));
+        // ── ฝ่ายค้าน 267 H1: ยอมรับได้เฉพาะฉบับที่ลูกค้าเห็น ──
+        // (ก) หน้าไม่ส่งเลข Rev (หน้ารุ่นเก่าที่แคชไว้) ⇒ ปฏิเสธ
+        var noRev = Assert.IsType<ObjectResult>(await LegacyPage(db).Accept(link.Token!, new PublicQuotationController.AcceptRequest("คุณสมหญิง ผู้จัดการ")));
+        Assert.Equal(409, noRev.StatusCode);
+        // (ข) ผู้ขายแก้เอกสารระหว่างที่หน้าลูกค้าค้างอยู่ (Rev 0 → 1) ⇒ ปฏิเสธ "เอกสารถูกแก้ไข" — ไม่บันทึกการยอมรับ Rev ที่ลูกค้าไม่เคยเห็น
+        await db.Documents.Where(d => d.Id == qt.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.RevisionNumber, 1));
+        var stale = Assert.IsType<ObjectResult>(await LegacyPage(db).Accept(link.Token!, new PublicQuotationController.AcceptRequest("คุณสมหญิง ผู้จัดการ", RevisionNumber: 0)));
+        Assert.Equal(409, stale.StatusCode);
+        Assert.Contains(CustomerDocPage.RespondStaleMessage, ((Accounting.Models.DTOs.ApiResponse<string>)stale.Value!).Message);
+        // (ค) hash เนื้อหาที่เห็นไม่ตรงเนื้อหาปัจจุบัน ⇒ ปฏิเสธ
+        var wrongHash = Assert.IsType<ObjectResult>(await LegacyPage(db).Accept(link.Token!,
+            new PublicQuotationController.AcceptRequest("คุณสมหญิง ผู้จัดการ", RevisionNumber: 1, ContentHash: new string('0', 64))));
+        Assert.Equal(409, wrongHash.StatusCode);
+        Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == qt.Id).Select(d => d.QuotationAcceptedAt).SingleAsync());
+        // (ง) เส้น revision จริงปิดช่วงตอบรับ (ตัวตั้งเดียว) ⇒ ลิงก์เดิมยังเปิดดู Rev ล่าสุดได้ แต่ยอมรับไม่ได้จนผู้ขายส่งใหม่
+        var tracked = await db.Documents.FirstAsync(d => d.Id == qt.Id);
+        SignRequestKinds.CloseRespondOnRevision(tracked);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var afterRev = (await s.Links.PublicViewAsync(s.CompanyId, link.Token!))!.Page!;
+        Assert.True(afterRev.Viewable);
+        Assert.Equal(1, afterRev.RevisionNumber);
+        Assert.False(Act(afterRev, CustomerDocPage.ActionAccept)!.Enabled);
+        var closedAfterRev = Assert.IsType<ObjectResult>(await LegacyPage(db).Accept(link.Token!, new PublicQuotationController.AcceptRequest("คุณสมหญิง ผู้จัดการ", RevisionNumber: 1)));
+        Assert.Equal(409, closedAfterRev.StatusCode);
+        Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == qt.Id).Select(d => d.QuotationAcceptedAt).SingleAsync());
+        // ทิศตรงข้าม: ผู้ขายส่งให้ตอบรับใหม่ + ลูกค้าเห็น Rev ปัจจุบัน (เลข Rev + hash จากเส้นดู) ⇒ ยอมรับได้
+        await OpenForResponseAsync(db, qt.Id);
+        db.ChangeTracker.Clear();
+        var seenHash = SeenContentHash(await LegacyPage(db).View(link.Token!));   // สิ่งที่หน้ายอมรับได้จากเซิร์ฟเวอร์และส่งกลับตอนกด
+        db.ChangeTracker.Clear();
+        Assert.IsType<OkObjectResult>(await LegacyPage(db).Accept(link.Token!,
+            new PublicQuotationController.AcceptRequest("คุณสมหญิง ผู้จัดการ", RevisionNumber: 1, ContentHash: seenHash)));
         var row = await db.Documents.AsNoTracking().SingleAsync(d => d.Id == qt.Id);
         Assert.NotNull(row.QuotationAcceptedAt);
         Assert.Equal("คุณสมหญิง ผู้จัดการ", row.QuotationAcceptedBy);
@@ -268,12 +357,13 @@ public class CustomerDocPageRound267DbTests
         // พ้นวันยืนราคา ⇒ หน้าเอกสารปิดปุ่มพร้อมเหตุ และหน้าตอบรับเดิมปฏิเสธ (ไม่ยอมรับเงียบ) — ตัวตัดสินเดียวกัน
         var late = await AddDocAsync(db, s, DocumentType.Quotation, "QL", due: DateTime.UtcNow.Date.AddDays(-2));
         var lateLink = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, late.Id, "test");
+        await OpenForResponseAsync(db, late.Id);
         db.ChangeTracker.Clear();
         var latePage = (await s.Links.PublicViewAsync(s.CompanyId, lateLink.Token!))!.Page!;
         Assert.False(Act(latePage, CustomerDocPage.ActionAccept)!.Enabled);
         Assert.Contains("ยืนราคาถึง", Act(latePage, CustomerDocPage.ActionAccept)!.DisabledReason);
         Assert.True(Act(latePage, CustomerDocPage.ActionRequestLink)!.Enabled);
-        var denied = Assert.IsType<ObjectResult>(await LegacyPage(db).Accept(lateLink.Token!, new PublicQuotationController.AcceptRequest("คุณช้า")));
+        var denied = Assert.IsType<ObjectResult>(await LegacyPage(db).Accept(lateLink.Token!, new PublicQuotationController.AcceptRequest("คุณช้า", RevisionNumber: 0)));
         Assert.Equal(409, denied.StatusCode);
         Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == late.Id).Select(d => d.QuotationAcceptedAt).SingleAsync());
 
@@ -283,7 +373,7 @@ public class CustomerDocPageRound267DbTests
         await s.Links.RevokeAsync(s.CompanyId, gone.Id, "tester");
         db.ChangeTracker.Clear();
         Assert.IsType<NotFoundObjectResult>(await LegacyPage(db).View(goneLink.Token!));
-        Assert.IsType<NotFoundObjectResult>(await LegacyPage(db).Accept(goneLink.Token!, new PublicQuotationController.AcceptRequest("คุณเอ")));
+        Assert.IsType<NotFoundObjectResult>(await LegacyPage(db).Accept(goneLink.Token!, new PublicQuotationController.AcceptRequest("คุณเอ", RevisionNumber: 0)));
         // token ของใบแจ้งหนี้ (ไม่ใช่ใบเสนอราคา) ใช้กับหน้ายอมรับไม่ได้
         var inv = await AddDocAsync(db, s, DocumentType.Invoice, "INV");
         var invLink = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, inv.Id, "test");
@@ -311,6 +401,9 @@ public class CustomerDocPageRound267DbTests
 
         var link = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, dn.Id, "test");
         Assert.True(link.Ok, link.Refusal);
+        // M1: ยังไม่ได้ส่งให้เซ็นรับ ⇒ ปุ่มปิด
+        Assert.False(Act((await s.Links.PublicViewAsync(s.CompanyId, link.Token!))!.Page!, CustomerDocPage.ActionSignDelivery)!.Enabled);
+        await OpenForResponseAsync(db, dn.Id);
         var page = (await s.Links.PublicViewAsync(s.CompanyId, link.Token!))!.Page!;
         Assert.False(page.ShowAmounts);
         var line = Assert.Single(page.Lines);
@@ -324,15 +417,27 @@ public class CustomerDocPageRound267DbTests
 
         db.ChangeTracker.Clear();
         var sig = QuotationAcceptanceRound239Tests.DataUri(QuotationAcceptanceRound239Tests.DrawnSignature());
-        Assert.IsType<OkObjectResult>(await LegacyPage(db).SignDelivery(link.Token!, new PublicQuotationController.DeliverySignRequest("ผู้รับของ", sig)));
+        // H1 (ใบส่งของ): ไม่ส่งเลข Rev / Rev ไม่ตรง ⇒ ปฏิเสธ ไม่เซ็นรับฉบับที่ไม่เคยเห็น
+        Assert.Equal(409, Assert.IsType<ObjectResult>(await LegacyPage(db).SignDelivery(link.Token!,
+            new PublicQuotationController.DeliverySignRequest("ผู้รับของ", sig))).StatusCode);
+        db.ChangeTracker.Clear();
+        await db.Documents.Where(d => d.Id == dn.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.RevisionNumber, 2));
+        var staleDn = Assert.IsType<ObjectResult>(await LegacyPage(db).SignDelivery(link.Token!,
+            new PublicQuotationController.DeliverySignRequest("ผู้รับของ", sig, RevisionNumber: 0)));
+        Assert.Equal(409, staleDn.StatusCode);
+        db.ChangeTracker.Clear();
+        Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == dn.Id).Select(d => d.DeliverySignedAt).SingleAsync());
+        // ทิศตรงข้าม: Rev ที่เห็นตรงกับใบ ⇒ เซ็นรับได้
+        Assert.IsType<OkObjectResult>(await LegacyPage(db).SignDelivery(link.Token!,
+            new PublicQuotationController.DeliverySignRequest("ผู้รับของ", sig, RevisionNumber: 2)));
         db.ChangeTracker.Clear();
         Assert.NotNull(await db.Documents.AsNoTracking().Where(d => d.Id == dn.Id).Select(d => d.DeliverySignedAt).SingleAsync());
         // พ้น 14 วัน ⇒ ปฏิเสธ
         var old = await AddDocAsync(db, s, DocumentType.DeliveryNote, "DO");
         var oldLink = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, old.Id, "test");
-        await db.Documents.Where(d => d.Id == old.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.PayLinkIssuedAt, (DateTime?)DateTime.UtcNow.AddDays(-15)));
+        await OpenForResponseAsync(db, old.Id, DateTime.UtcNow.AddDays(-15));
         db.ChangeTracker.Clear();
-        var late = Assert.IsType<ObjectResult>(await LegacyPage(db).SignDelivery(oldLink.Token!, new PublicQuotationController.DeliverySignRequest("ผู้รับของ", sig)));
+        var late = Assert.IsType<ObjectResult>(await LegacyPage(db).SignDelivery(oldLink.Token!, new PublicQuotationController.DeliverySignRequest("ผู้รับของ", sig, RevisionNumber: 0)));
         Assert.Equal(409, late.StatusCode);
     }
 
@@ -372,6 +477,19 @@ public class CustomerDocPageRound267DbTests
         // ไม่ออก token ให้คนนอก: hash ของลิงก์ไม่เปลี่ยน และลิงก์ยังหมดอายุ
         Assert.Equal(hashBefore, await db.Documents.AsNoTracking().Where(d => d.Id == inv.Id).Select(d => d.PayLinkTokenHash).SingleAsync());
         Assert.False((await s.Links.PublicViewAsync(s.CompanyId, link.Token!))!.Page!.Viewable);
+
+        // ฝ่ายค้าน 267 M5: ลิงก์ปกติที่หน้าไม่ได้เสนอปุ่มขอลิงก์ (ใบแจ้งหนี้ที่ยังเปิดได้) ⇒ กดกระดิ่งพนักงาน/เขียน audit ไม่ได้
+        var normal = await AddDocAsync(db, s, DocumentType.Invoice, "INV");
+        var normalLink = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, normal.Id, "test");
+        Assert.False((await s.Links.RequestNewLinkAsync(s.CompanyId, normalLink.Token!)).Found);
+        var normalId = normal.Id.ToString();
+        Assert.Equal(0, await db.AuditLogs.AsNoTracking().CountAsync(a => a.CompanyId == s.CompanyId
+            && a.EntityType == DocumentPayLinkService.LinkRequestEntity && a.EntityId == normalId));
+        // ทิศตรงข้าม: ลิงก์ที่ยังใช้ได้แต่หน้าเสนอปุ่ม (ใบเสนอราคาที่ยังไม่ถูกเปิดให้ตอบรับ) ⇒ รับ
+        var viewOnly = await AddDocAsync(db, s, DocumentType.Quotation, "QT");
+        var viewOnlyLink = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, viewOnly.Id, "test");
+        Assert.True((await s.Links.RequestNewLinkAsync(s.CompanyId, viewOnlyLink.Token!)).Recorded);
+        Assert.False((await s.Links.RequestNewLinkAsync(s.CompanyId, viewOnlyLink.Token!)).Recorded);
 
         // ทิศตรงข้าม: token มั่ว / ข้ามบริษัท / หมดอายุนานเกินช่วงขอ ⇒ ไม่พบ ไม่บันทึก
         Assert.False((await s.Links.RequestNewLinkAsync(s.CompanyId, DocumentPayLinkPolicy.NewToken())).Found);
@@ -429,6 +547,19 @@ public class CustomerDocPageRound267DbTests
         Assert.Null(await s.Links.ResolvePdfDocumentAsync(s.CompanyId, link.Token!, draftChild.Id));
         Assert.Null(await s.Links.ResolvePdfDocumentAsync(s.CompanyId, link.Token!, Guid.NewGuid()));
 
+        // ฝ่ายค้าน 267 M2: หน้าใบส่งของ (ไม่แสดงราคา · ผู้ถือลิงก์อาจเป็นคนรับของหน้างาน) ⇒ ไม่มีใบที่เกี่ยวข้องชนิดที่มีราคา ทั้งรายการและ PDF
+        var dn = await AddDocAsync(db, s, DocumentType.DeliveryNote, "DN", tweak: d => d.RelatedDocumentId = inv1.Id);
+        var dnLink = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, dn.Id, "test");
+        Assert.Empty((await s.Links.PublicViewAsync(s.CompanyId, dnLink.Token!))!.Page!.Related);
+        Assert.Null(await s.Links.ResolvePdfDocumentAsync(s.CompanyId, dnLink.Token!, inv1.Id));
+        Assert.Equal(dn.Id, await s.Links.ResolvePdfDocumentAsync(s.CompanyId, dnLink.Token!, null));
+        // ทิศตรงข้าม: ใบแจ้งหนี้ (แสดงราคา) เห็นใบส่งของที่ออกต่อจากมัน
+        var inv1PageLink = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, inv1.Id, "test");
+        Assert.Contains((await s.Links.PublicViewAsync(s.CompanyId, inv1PageLink.Token!))!.Page!.Related, r => r.RelId == dn.Id && r.TotalAmount == null);
+        // โหมด LINE-ดู/พรีวิว: ไม่มีรายการใบที่เกี่ยวข้อง (ใบเดียวเท่าลิงก์การ์ดเดิม · พรีวิวไม่ผ่านด่านชั้นความลับของใบอื่น)
+        Assert.Empty((await s.Links.PageForDocumentAsync(s.CompanyId, bn.Id, CustomerDocPage.Mode.LineView))!.Page!.Related);
+        Assert.Empty((await s.Links.PageForDocumentAsync(s.CompanyId, bn.Id, CustomerDocPage.Mode.Preview))!.Page!.Related);
+
         // S13: ใบที่ถูกยกเลิกหลังส่งลิงก์ ⇒ เปิดได้ · ไม่มีปุ่มนอกจากดาวน์โหลด · แสดงใบแทนของผู้ติดต่อเดียวกัน
         var replacement = await AddDocAsync(db, s, DocumentType.Invoice, "INV");
         var voided = await AddDocAsync(db, s, DocumentType.Invoice, "INV");
@@ -459,6 +590,16 @@ public class CustomerDocPageRound267DbTests
         var reverted = (await s.Links.PublicViewAsync(s.CompanyId, inv1Link.Token!))!;
         Assert.False(reverted.Page!.Viewable);
         Assert.Equal("", reverted.DocumentNumber);
+
+        // ฝ่ายค้าน 267 M7 (267-1-31): ลบ/ปิดผู้ติดต่อ · DSR erase ⇒ ลิงก์ของทุกใบของผู้ติดต่อรายนั้นถูกเพิกถอน (ของผู้ติดต่ออื่นไม่ถูกแตะ)
+        var foreignLink = await s.Links.EnsureCustomerLinkAsync(s.CompanyId, foreign.Id, "test");
+        var revokedCount = await DocumentPayLinkService.RevokeForContactAsync(db, s.CompanyId, s.ContactId, "tester", "contact-deactivated");
+        await db.SaveChangesAsync();
+        Assert.True(revokedCount >= 3);
+        Assert.False((await s.Links.PublicViewAsync(s.CompanyId, link.Token!))!.Page!.Viewable);
+        Assert.Null(await s.Links.ResolvePdfDocumentAsync(s.CompanyId, link.Token!, null));
+        Assert.True((await s.Links.PublicViewAsync(s.CompanyId, foreignLink.Token!))!.Page!.Viewable);
+        Assert.Equal(0, await DocumentPayLinkService.RevokeForContactAsync(db, s.CompanyId, s.ContactId, "tester", "again"));   // รันซ้ำไม่เพิกถอนซ้ำ
     }
 
     // ───────── 267-1-3: migration token ดิบ ⇒ hash (PostgreSQL เขียน · C# ค้น) ─────────
@@ -534,14 +675,32 @@ public class CustomerDocPageRound267DbTests
         Assert.Null(row.QuotationAcceptToken);                                          // ไม่ออก token ยอมรับของตัวเองอีก (267-1-3)
         Assert.NotNull(row.SignLinkIssuedAt);
         Assert.Equal(DocumentPayLinkPolicy.TokenHash(link.Token), row.PayLinkTokenHash);
-        // "ออกใหม่" อีกครั้ง = เริ่มช่วงตอบรับใหม่ แต่ลิงก์ที่ส่งให้ลูกค้าไปแล้วไม่ตาย (token เดิม)
+        // ไม่ขอออกใหม่ = ลิงก์เดิม
+        db.ChangeTracker.Clear();
+        Assert.Equal(link.Url, (await svc.IssueLinkAsync(s.CompanyId, qt.Id, new IssueSignLinkOptions(Regenerate: false), "https://app.nextacc.test")).Url);
+        // ฝ่ายค้าน 267 H2 (267-1-24): "ออกใหม่" = หมุน token จริง — ลิงก์เดิม (ส่งผิดคน) ใช้ไม่ได้ทันทีทุกทาง
         db.ChangeTracker.Clear();
         var again = await svc.IssueLinkAsync(s.CompanyId, qt.Id, new IssueSignLinkOptions(Regenerate: true), "https://app.nextacc.test");
-        Assert.Equal(link.Url, again.Url);
+        Assert.NotEqual(link.Url, again.Url);
+        Assert.Null(await s.Links.PublicViewAsync(s.CompanyId, link.Token));
+        db.ChangeTracker.Clear();
+        Assert.IsType<NotFoundObjectResult>(await LegacyPage(db).Accept(link.Token, new PublicQuotationController.AcceptRequest("ผู้รับผิดคน", RevisionNumber: 0)));
+        Assert.True((await s.Links.PublicViewAsync(s.CompanyId, again.Token))!.Page!.Viewable);
         // ป้ายสถานะบนรายการเอกสารยังทำงานกับลิงก์รุ่นใหม่
         Assert.Equal("issued", (await svc.GetStatusesAsync(s.CompanyId, new[] { qt.Id }))[qt.Id].Code);
-        await s.Links.MarkOpenedAsync(s.CompanyId, link.Token);
+        await s.Links.MarkOpenedAsync(s.CompanyId, again.Token);
         Assert.Equal("opened", (await svc.GetStatusesAsync(s.CompanyId, new[] { qt.Id }))[qt.Id].Code);
+        // ฝ่ายค้าน 267 M8: พนักงานเพิกถอนแล้ว — คีย์ API (StaffIntent: false) ออกใหม่แทนไม่ได้ · พนักงานกดเองได้
+        await s.Links.RevokeAsync(s.CompanyId, qt.Id, "staff");
+        db.ChangeTracker.Clear();
+        await Assert.ThrowsAsync<PayLinkRevokedException>(() =>
+            svc.IssueLinkAsync(s.CompanyId, qt.Id, new IssueSignLinkOptions(Regenerate: false, StaffIntent: false), "https://app.nextacc.test"));
+        await Assert.ThrowsAsync<PayLinkRevokedException>(() =>
+            svc.IssueLinkAsync(s.CompanyId, qt.Id, new IssueSignLinkOptions(Regenerate: true, StaffIntent: false), "https://app.nextacc.test"));
+        db.ChangeTracker.Clear();
+        Assert.NotNull(await db.Documents.AsNoTracking().Where(d => d.Id == qt.Id).Select(d => d.PayLinkRevokedAt).SingleAsync());   // การเพิกถอนไม่ถูกล้าง
+        var byStaff = await svc.IssueLinkAsync(s.CompanyId, qt.Id, new IssueSignLinkOptions(Regenerate: false), "https://app.nextacc.test");
+        Assert.NotEqual(again.Url, byStaff.Url);
 
         // S5: ใบเสนอราคาที่พ้นวันยืนราคา ⇒ ไม่ส่งลิงก์ที่ลูกค้ากดยอมรับไม่ได้ (ปฏิเสธพร้อมทางไปต่อ)
         var late = await AddDocAsync(db, s, DocumentType.Quotation, "QL", due: DateTime.UtcNow.Date.AddDays(-3));
@@ -549,7 +708,10 @@ public class CustomerDocPageRound267DbTests
         var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
             svc.IssueLinkAsync(s.CompanyId, late.Id, new IssueSignLinkOptions(Regenerate: true), "https://app.nextacc.test"));
         Assert.Contains("ยืนราคา", ex.Message);
-        Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == late.Id).Select(d => d.SignLinkIssuedAt).SingleAsync());
+        // ฝ่ายค้าน 267 L1: คำขอที่ถูกปฏิเสธไม่เปลี่ยนสถานะลิงก์ (ไม่ออก token · ไม่เปิดช่วงตอบรับ)
+        var lateRow = await db.Documents.AsNoTracking().Where(d => d.Id == late.Id).Select(d => new { d.SignLinkIssuedAt, d.PayLinkTokenHash }).SingleAsync();
+        Assert.Null(lateRow.SignLinkIssuedAt);
+        Assert.Null(lateRow.PayLinkTokenHash);
         // ทิศตรงข้าม: ใบส่งของไม่มีวันยืนราคา ⇒ ส่งได้
         var dn = await AddDocAsync(db, s, DocumentType.DeliveryNote, "DN", due: DateTime.UtcNow.Date.AddDays(-3));
         db.ChangeTracker.Clear();

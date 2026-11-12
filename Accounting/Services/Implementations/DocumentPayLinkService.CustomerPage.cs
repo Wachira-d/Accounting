@@ -122,22 +122,30 @@ public partial class DocumentPayLinkService
     /// <summary>ส่วนหน้าเอกสาร — บรรทัด · ยอด · ใบที่เกี่ยวข้อง · ปุ่ม (ตัวตัดสินเดียว <see cref="CustomerDocPage.Actions"/>) ·
     /// ผู้เรียก: <see cref="PublicViewAsync"/> (โหมดลิงก์) · <see cref="PageForDocumentAsync"/> (พอร์ทัล/LINE/พรีวิว)</summary>
     private async Task<CustomerDocPageView> BuildPageAsync(Guid companyId, DocFacts d, PageRow row, CustomerDocPage.Mode mode, bool isEnglish,
-        bool payOffered, string? payBlockedNote, bool slipOffered, string? token, DateTime nowUtc, CancellationToken ct)
+        bool payOffered, string? payBlockedNote, bool slipOffered, string? token, DateTime nowUtc, CancellationToken ct, bool payOnly = false)
     {
-        var show = CustomerDocPage.ShowsAmounts(d.Type);
-        var lines = await _db.DocumentLines.AsNoTracking()
-            .Where(l => l.DocumentId == d.Id && l.Document.CompanyId == companyId)
-            .OrderBy(l => l.LineOrder).Take(MaxLines)
-            .Select(l => new { l.Description, l.Quantity, l.Unit, l.UnitPrice, l.DiscountAmount, l.Amount })
-            .ToListAsync(ct);
+        // ฝ่ายค้าน 267 M7: ลิงก์ชำระรุ่นก่อน (payOnly) ไม่ส่งบรรทัด/ยอดของใบ/ใบที่เกี่ยวข้อง — เหลือช่องจ่ายเดิมของ view model
+        var show = CustomerDocPage.ShowsAmounts(d.Type) && !payOnly;
+        var lines = payOnly
+            ? new[] { new { Description = "", Quantity = 0m, Unit = "", UnitPrice = 0m, DiscountAmount = 0m, Amount = 0m } }.Take(0).ToList()
+            : await _db.DocumentLines.AsNoTracking()
+                .Where(l => l.DocumentId == d.Id && l.Document.CompanyId == companyId)
+                .OrderBy(l => l.LineOrder).Take(MaxLines)
+                .Select(l => new { l.Description, l.Quantity, l.Unit, l.UnitPrice, l.DiscountAmount, l.Amount })
+                .ToListAsync(ct);
         var respondedAt = d.Type == DocumentType.Quotation ? row.QuotationAcceptedAt : d.Type == DocumentType.DeliveryNote ? row.DeliverySignedAt : null;
         var respondedBy = d.Type == DocumentType.Quotation ? row.QuotationAcceptedBy : d.Type == DocumentType.DeliveryNote ? row.DeliverySignedBy : null;
         // ช่วงเปลี่ยนผ่าน P1→P2: ปุ่มตอบรับพาไปหน้ายอมรับ/เซ็นรับเดิมด้วย token ตัวเดียวกัน (หน้าเดิมรับ token ของหน้าเอกสาร — PublicQuotationController)
         var respondHref = mode == CustomerDocPage.Mode.Link && token != null ? CustomerDocPage.LegacyRespondPath(d.Type, token) : null;
+        // ฝ่ายค้าน 267 M1: ช่วงตอบรับเริ่มเมื่อผู้ขายส่งให้ตอบรับ (SignLinkIssuedAt) เท่านั้น — ไม่ถอยไปใช้วันออกลิงก์ (ลิงก์ดู ≠ สิทธิ์ยอมรับ)
         var actions = CustomerDocPage.Actions(new CustomerDocPage.Facts(
             d.Type, d.Status, mode, isEnglish, payOffered, payBlockedNote, slipOffered,
-            d.DueDate, row.SignLinkIssuedAt ?? row.PayLinkIssuedAt, respondedAt, respondHref), nowUtc);
-        var related = await RelatedAsync(companyId, d, row, isEnglish, ct);
+            d.DueDate, row.SignLinkIssuedAt, respondedAt, respondHref, PayOnly: payOnly), nowUtc);
+        // ใบที่เกี่ยวข้อง: เฉพาะโหมดลิงก์ของใบ — ฝ่ายค้าน 267 M2 (โหมด LINE-ดู = ใบเดียวเท่าลิงก์การ์ดเดิม) · L5 (พรีวิวของพนักงานไม่ผ่านด่านชั้นความลับ
+        // ของใบที่เกี่ยวข้อง) · M7 (ลิงก์ชำระรุ่นก่อน) · พอร์ทัลมีรายการเอกสารของตัวเองอยู่แล้ว
+        var related = mode == CustomerDocPage.Mode.Link && !payOnly
+            ? await RelatedAsync(companyId, d, row, isEnglish, ct)
+            : new List<CustomerDocPageRelated>();
         return new CustomerDocPageView(
             Mode: CustomerDocPage.ModeCode(mode),
             LinkState: CustomerDocPage.LinkState.Usable.ToString(),
@@ -190,7 +198,10 @@ public partial class DocumentPayLinkService
         var contactId = d.ContactId;
         var rows = await _db.Documents.AsNoTracking()
             .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.ContactId == contactId && x.Id != docId
-                && (keys.Contains(x.Id) || x.RelatedDocumentId == docId))
+                && (keys.Contains(x.Id) || x.RelatedDocumentId == docId)
+                // ฝ่ายค้าน 267 L7: กรอง "ออกแล้วยังมีผล" ในฐานก่อนจำกัดจำนวน (ใบลูกที่ยกเลิก/ร่างเยอะต้องไม่ดันใบจริงหล่นจากชุด) — ตัวตัดสินจริงยังเป็น IsEffective ด้านล่าง
+                && x.Status != DocumentStatus.Draft && x.Status != DocumentStatus.WaitingApproval
+                && x.Status != DocumentStatus.Rejected && x.Status != DocumentStatus.Voided)
             .OrderBy(x => x.DocumentDate).ThenBy(x => x.DocumentNumber).Take(MaxRelated)
             .Select(x => new { x.Id, x.DocumentType, x.Status, x.DocumentNumber, x.DocumentDate, x.TotalAmount, x.BalanceDue, x.RelatedDocumentId, x.CnDnPurchaseSideOverride })
             .ToListAsync(ct);
@@ -205,6 +216,9 @@ public partial class DocumentPayLinkService
             DocumentType? parentType = r.RelatedDocumentId is Guid pid && parentTypes.TryGetValue(pid, out var pt) ? pt : null;
             if (!DocumentPayLinkPolicy.IsCustomerFacing(r.DocumentType, parentType, r.CnDnPurchaseSideOverride, row.ContactSupplierOnly, row.ContactCustomerOnly))
                 continue;
+            // ฝ่ายค้าน 267 M2: หน้าที่ไม่แสดงราคา (ใบส่งของ — ผู้ถือลิงก์อาจเป็นคนรับของหน้างาน) ⇒ ไม่มีใบที่เกี่ยวข้องชนิดที่มีราคา
+            // (ทั้งรายการและ PDF — ResolvePdfDocumentAsync ใช้ชุดนี้ชุดเดียว) · PDF ใบแจ้งหนี้ฝัง QR/ลิงก์ชำระของใบนั้นด้วย
+            if (!CustomerDocPage.ShowsAmounts(d.Type) && CustomerDocPage.ShowsAmounts(r.DocumentType)) continue;
             var kind = kinds.TryGetValue(r.Id, out var k) ? k : "child";
             string title;
             try { title = (await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, r.Id)).Title; }
@@ -265,6 +279,8 @@ public partial class DocumentPayLinkService
         // ด่านเดียวกับการเปิดหน้า (token · เพิกถอน/หมดอายุ · ใบที่ลูกค้าเห็นได้) — ไม่มีทางลัด
         var view = await PublicViewAsync(companyId, token, ct);
         if (view?.Page is not { Viewable: true } page) return null;
+        // ดาวน์โหลดได้เฉพาะเมื่อหน้าเสนอปุ่มดาวน์โหลดจริง (ลิงก์ชำระรุ่นก่อน = ไม่มี — ฝ่ายค้าน 267 M7)
+        if (!page.Actions.Any(a => a.Id == CustomerDocPage.ActionDownloadPdf && a.Enabled)) return null;
         if (relatedId == null) return view.Target.SourceId;
         // ใบที่เกี่ยวข้อง: ต้องอยู่ในชุดที่หน้าแสดงของใบนี้ (บริษัทเดียวกันอย่างเดียวไม่พอ)
         return page.Related.Any(r => r.RelId == relatedId.Value) ? relatedId : null;
@@ -302,15 +318,29 @@ public partial class DocumentPayLinkService
         if (d == null || !DocumentPayLinkPolicy.TokenMatches(token, d.PayLinkTokenHash)) return none;
         var now = DateTime.UtcNow;
         var state = CustomerDocPage.StateOf(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now);
-        // ลิงก์ที่ยังใช้ได้ (ปุ่มปิดเพราะพ้นกำหนดตอบรับ) หรือหมดอายุไม่นาน เท่านั้น — เพิกถอน/หมดอายุนานเกิน = ข้อความเดียว
-        if (state != CustomerDocPage.LinkState.Usable && !CustomerDocPage.CanRequestNewLink(state, d.PayLinkExpiresAt, now)) return none;
+        // ฝ่ายค้าน 267 M5 (267-1-28): รับคำขอเฉพาะเมื่อ "หน้าเสนอปุ่มนี้จริง" — ลิงก์หมดอายุไม่นาน (ปุ่มขอลิงก์ใหม่) หรือลิงก์ที่ยังใช้ได้และมีปุ่ม
+        // "ขอลิงก์ทำรายการ" เปิดอยู่ (ตอบรับปิดเพราะพ้นช่วง/ยังไม่ถูกเปิดให้ตอบรับ) · ลิงก์ปกติ (เช่นใบแจ้งหนี้ที่จ่ายได้) กดกระดิ่งพนักงานไม่ได้ ·
+        // เพิกถอน/หมดอายุนานเกิน = ข้อความเดียว
+        if (state == CustomerDocPage.LinkState.Usable)
+        {
+            var view = await PublicViewAsync(companyId, token, ct);
+            if (!RequestLinkOffered(view?.Page)) return none;
+        }
+        else if (!CustomerDocPage.CanRequestNewLink(state, d.PayLinkExpiresAt, now)) return none;
         return await RecordLinkRequestAsync(companyId, d, "link", ct);
     }
 
+    private static bool RequestLinkOffered(CustomerDocPageView? page)
+        => page is { Viewable: true } && page.Actions.Any(a => a.Id == CustomerDocPage.ActionRequestLink && a.Enabled);
+
     public async Task<CustomerLinkRequestResult> RequestLinkForDocumentAsync(Guid companyId, Guid documentId, string source, CancellationToken ct = default)
     {
+        var none = new CustomerLinkRequestResult(false, false, Guid.Empty, "", CustomerDocPage.NotFoundMessage);
         var d = await LoadDocAsync(companyId, documentId, null, ct);
-        if (d == null) return new CustomerLinkRequestResult(false, false, Guid.Empty, "", CustomerDocPage.NotFoundMessage);
+        if (d == null) return none;
+        // ฝ่ายค้าน 267 M5: โหมด LINE-ดู — รับเฉพาะเมื่อหน้าในโหมดนั้นเสนอปุ่ม "ขอลิงก์ทำรายการ" (ใบที่ไม่มีอะไรให้ทำ = ไม่รับ)
+        var page = (await PageForDocumentAsync(companyId, documentId, CustomerDocPage.Mode.LineView, ct))?.Page;
+        if (!RequestLinkOffered(page)) return none;
         return await RecordLinkRequestAsync(companyId, d, source, ct);
     }
 
@@ -324,10 +354,18 @@ public partial class DocumentPayLinkService
         var now = DateTime.UtcNow;
         var since = now.AddDays(-1);
         var entityId = d.Id.ToString();
-        // กันซ้ำ 1 ครั้ง/ใบ/วัน จากแถว audit เอง (ฐานข้อมูล — ใช้ร่วมหลายเครื่อง · ไม่มี state ในหน่วยความจำ)
+        // กันซ้ำ 1 ครั้ง/ใบ/วัน จากแถว audit เอง (ฐานข้อมูล — ใช้ร่วมหลายเครื่อง · ไม่มี state ในหน่วยความจำ) ·
+        // ฝ่ายค้าน 267 M5: ตรวจ-แล้ว-เขียน ใต้ pg_advisory_xact_lock ต่อใบ ในธุรกรรมเดียว ⇒ คำขอพร้อมกัน N ตัว = แถว audit 1 แถว + กระดิ่ง 1 ครั้ง
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.DocumentLinkRequest, entityId) }, ct);
         var already = await _db.AuditLogs.AsNoTracking().AnyAsync(a => a.CompanyId == companyId
             && a.EntityType == LinkRequestEntity && a.EntityId == entityId && a.Timestamp >= since, ct);
-        if (already) return new CustomerLinkRequestResult(true, false, d.Id, d.DocumentNumber, labels["requestAlready"]);
+        if (already)
+        {
+            await tx.RollbackAsync(ct);
+            return new CustomerLinkRequestResult(true, false, d.Id, d.DocumentNumber, labels["requestAlready"]);
+        }
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId, UserEmail = "ผู้ถือลิงก์เอกสาร (ไม่ได้ล็อกอิน)", Action = AuditAction.Create,
@@ -340,6 +378,7 @@ public partial class DocumentPayLinkService
             Timestamp = now,
         });
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return new CustomerLinkRequestResult(true, true, d.Id, d.DocumentNumber, labels["requestSent"]);
     }
 }

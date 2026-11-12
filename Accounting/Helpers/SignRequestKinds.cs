@@ -79,6 +79,12 @@ public static class SignRequestKinds
             var end = window != null && d.PayLinkExpiresAt != null ? (window < d.PayLinkExpiresAt ? window : d.PayLinkExpiresAt) : window ?? d.PayLinkExpiresAt;
             return new(true, end, signedAt, signedBy);
         }
+        // ฝ่ายค้าน 267 L3: ลิงก์รุ่นก่อนเข้มเท่ารุ่นใหม่ — ใบเสนอราคาพ้นวันยืนราคา = ตอบรับไม่ได้ (วันสิ้นสุด = ตัวที่มาก่อนระหว่างวันหมดอายุลิงก์กับสิ้นวันยืนราคา)
+        if (d.DocumentType == DocumentType.Quotation && d.DueDate != null && !string.IsNullOrWhiteSpace(legacy))
+        {
+            var validity = CustomerDocPage.RespondWindowEnd(d.DocumentType, d.DueDate, d.DueDate);
+            if (validity != null && (legacyExp == null || validity < legacyExp)) legacyExp = validity;
+        }
         return new(!string.IsNullOrWhiteSpace(legacy), legacyExp, signedAt, signedBy);
     }
 
@@ -88,8 +94,8 @@ public static class SignRequestKinds
 
     /// <summary>ผู้ขาย "ส่งลิงก์ให้ลูกค้าตอบรับ" (รอบ 267 — แทน <c>SetNewToken</c>): เริ่มช่วงตอบรับใหม่ + ล้างสถานะติดตามของรอบก่อน
     /// (เปิดแล้ว/ส่งอีเมลแล้ว/เตือนแล้ว) + <b>เลิกลิงก์ยอมรับ/เซ็นรับรุ่นก่อนของใบนี้</b> (ความหมายเดิมของ "ออกใหม่ = ลิงก์เดิมใช้ไม่ได้") ·
-    /// <b>ไม่ออก token</b> — token ของหน้าเอกสารออกที่ <c>IDocumentPayLinkService.EnsureCustomerLinkAsync</c> ตัวเดียว และไม่ถูกหมุนที่นี่
-    /// (ลิงก์ที่ส่งให้ลูกค้าไปแล้วไม่ตาย · เพิกถอน = ปุ่มเพิกถอนลิงก์ของใบ)</summary>
+    /// <b>ไม่ออก token</b> — token ของหน้าเอกสารออก/หมุนที่ <c>IDocumentPayLinkService</c> ตัวเดียว (ผู้เรียก <c>SignRequestService.IssueLinkAsync</c>:
+    /// "ออกใหม่" = เพิกถอนลิงก์เดิมแล้วออก token ใหม่ — ฝ่ายค้าน 267 H2 · 267-1-24)</summary>
     public static void MarkIssued(Document d, DateTime nowUtc)
     {
         if (For(d.DocumentType) == null) throw new InvalidOperationException("ชนิดเอกสารนี้ไม่มีลิงก์ให้ลูกค้าเซ็น");
@@ -97,6 +103,18 @@ public static class SignRequestKinds
         else { d.DeliverySignToken = null; d.DeliverySignTokenExpiresAt = null; }
         d.SignLinkIssuedAt = nowUtc;
         ResetTracking(d);
+    }
+
+    /// <summary>รอบ 267 ฝ่ายค้าน H1 — ออก Rev ใหม่ = <b>ปิดช่วงตอบรับ</b>ของใบ: ล้าง <c>SignLinkIssuedAt</c> (ลิงก์หน้าเอกสารยังเปิดดู Rev ล่าสุดได้
+    /// แต่ปุ่มยอมรับ/เซ็นรับปิดจนผู้ขายส่งให้ตอบรับใหม่ — <see cref="CustomerDocPage.RespondWindowEnd"/> ต้องมีค่านี้) + เลิกลิงก์ยอมรับ/เซ็นรับรุ่นก่อน
+    /// (พฤติกรรมเดิมของรอบ 239) · ผู้เรียก: <c>DocumentService.UpdateDocumentAsync</c> เส้น revision (ทุกชนิดเอกสาร — ชนิดที่ไม่มีลิงก์เซ็นก็ไม่เสียอะไร)</summary>
+    public static void CloseRespondOnRevision(Document d)
+    {
+        d.SignLinkIssuedAt = null;
+        d.QuotationAcceptToken = null;
+        d.QuotationAcceptTokenExpiresAt = null;
+        d.DeliverySignToken = null;
+        d.DeliverySignTokenExpiresAt = null;
     }
 
     /// <summary>ล้างสถานะติดตามของลิงก์ (เปิดแล้ว · ส่งอีเมลแล้ว · ผู้รับ · เตือนแล้ว) — ผู้เรียก: <see cref="MarkIssued"/> และ

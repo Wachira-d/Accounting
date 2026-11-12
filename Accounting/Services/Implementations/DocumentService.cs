@@ -3095,12 +3095,11 @@ public partial class DocumentService : IDocumentService
             //     ลิงก์เดิมต้องใช้ต่อไม่ได้ (ขอลิงก์ใหม่ให้คู่ค้ายืนยัน Rev ปัจจุบัน)
             // รอบ 239: หลักฐานการยอมรับออนไลน์ทั้งชุด (ชื่อ · เวลา · ลายเซ็น · hash · IP ฯลฯ) ล้างที่ตัวตั้งเดียว — ค่าเดิมอยู่ใน snapshot ข้างบน
             Accounting.Helpers.QuotationAcceptance.ClearOn(doc);
-            doc.QuotationAcceptToken = null;
-            doc.QuotationAcceptTokenExpiresAt = null;
+            // รอบ 267 ฝ่ายค้าน H1: ลิงก์หน้าเอกสาร (token ของใบ) ไม่ถูกล้างตอนออก Rev ⇒ ต้อง "ปิดช่วงตอบรับ" ที่ตัวตั้งเดียว —
+            // ลูกค้ายังเปิดดู Rev ล่าสุดได้ แต่ยอมรับ/เซ็นรับไม่ได้จนกว่าผู้ขายจะส่งให้ตอบรับใหม่ (+ เลิกลิงก์รุ่นก่อนตามเดิม)
+            Accounting.Helpers.SignRequestKinds.CloseRespondOnRevision(doc);
             doc.DeliverySignedAt = null;
             doc.DeliverySignedBy = null;
-            doc.DeliverySignToken = null;
-            doc.DeliverySignTokenExpiresAt = null;
             doc.DeliverySignatureBase64 = null;
         }
 
@@ -14763,6 +14762,9 @@ public partial class DocumentService : IDocumentService
         if (docCount > 0 || whtCount > 0)
         {
             contact.IsActive = false;
+            // รอบ 267 ฝ่ายค้าน M7 (267-1-31): ผู้ใช้สั่งลบผู้ติดต่อ (ระบบปิดการใช้งานแทนเพราะมีเอกสาร) ⇒ ลิงก์หน้าเอกสารของใบของรายนี้ถูกเพิกถอน
+            // (ออกใหม่ได้จากปุ่มของพนักงาน) — ผู้เขียน PayLinkRevokedAt ตัวเดียว (DocumentPayLinkService)
+            await DocumentPayLinkService.RevokeForContactAsync(_db, companyId, contactId, "contact-delete", "contact-deactivated");
             await _db.SaveChangesAsync();
             return new ContactDeleteResult(
                 Deleted: false,
