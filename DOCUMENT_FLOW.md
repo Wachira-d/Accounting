@@ -3683,7 +3683,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ฝั่งผู้จ่าย: ก่อนส่ง `PartnerExchangeRules.WhtDeliveryCheckOf` — ผู้ติดต่อผูกระบบอื่น/ยังไม่ผูกแต่เลขตรงคู่ค้า · คู่ไม่ได้เชื่อม · เลข/สาขาผู้ถูกหักไม่ตรงบริษัทคู่ค้า · ที่อยู่ว่าง · ปิดค่าตั้ง ⇒
   เหตุบน `PartnerDeliveryError` (**ไม่นับครั้ง** · แก้แล้วรอบถัดไปส่งเองและล้างเหตุ) · ไม่มีหลักฐานว่าเป็นคู่ค้า ⇒ ไม่ประทับ · ความยินยอม = จุดเดียว `ReturnWhtCertsAllowedAsync` (ค่าตั้งเดิม — P1 สลับ) ·
   Autopilot `PartnerTaxEvidenceIssuesAsync`: ใบซื้อจากคู่ค้ารอต้นฉบับใกล้ครบ/เลยกรอบ ม.82/3 (`PartnerTaxEvidenceAlerts` · เหลือ ≤ 2 เดือน) · `PartnerPayBlocked` (การแจ้งค้าง · ด่วนเมื่อ ภ.ง.ด.53 ใกล้กำหนด) ·
-  `PartnerWhtCertUndelivered` (เหตุก่อนส่ง/ส่งไม่สำเร็จ)
+  `PartnerWhtCertUndelivered` (เหตุก่อนส่ง/ส่งไม่สำเร็จ) · Last verified `commit 70253c2e`
 - **พอร์ทัลลูกค้าไม่ต้องจำรหัสผ่าน (ข้อ 8 · AUTOPILOT §8.1)**: `POST api/portal/magic-link {companyId, email}` — ส่งเฉพาะอีเมลที่ผู้ขายเปิด `PortalAccess` ไว้ (ใช้งานอยู่) ·
   **คำตอบเดียวทุกกรณี** (`PortalMagicLinkPolicy.AckMessage` · 202) · เพดานต่ออีเมล 1/นาที 5/วัน + ต่อบริษัท 10/นาที 200/วัน (ตัวนับในฐาน fail-closed) · เวลาตอบขั้นต่ำคงที่ ·
   โทเคนสุ่ม 32 ไบต์ เก็บ SHA-256 ใน `PortalMagicLinks` · อายุ 15 นาที · ใช้ครั้งเดียว (compare-and-set `UsedAt`) · ไม่มี URL ของระบบ/SMTP ⇒ ไม่ส่ง (log error · ไม่แต่งโดเมน) ·
