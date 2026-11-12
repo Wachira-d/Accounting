@@ -467,6 +467,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     `Company.Address` ความมั่นใจ **0.70** (สีเหลือง + เหตุผล §86/4) · ห้ามทับที่อยู่ที่พิมพ์ · สาขาผู้ซื้อบนกระดาษเป็นสาขาอื่นของเรา ⇒ ไม่เติม · ข้าม e-Tax XML
   - **ที่อยู่ผู้ขาย (#15)** — ตรงแล้ว ไม่แก้: `VendorAddress` = ที่พิมพ์ (หลักฐาน) · ทะเบียนลง `DbdAddress` แยกช่อง · `Contact.Address` ผ่าน `OcrIssuerBranch.ContactAddress` ·
     ค้นทะเบียน RD แยกสาขาทั้งแถว (#18 · §6.2i)
+  - **กล่องใบซื้อร่างรอตรวจ (รอบ 260-3 · คำตัดสิน 260-3-5)** — กล่องเดียวที่ `purchases.html` (`GET api/companies/{c}/purchase-inbox` → `Helpers/PurchaseDraftInbox.LoadAsync`):
+    ใบฝั่งซื้อ (`DocumentPermissionHelper.PurchaseTypes`) สถานะร่าง ไม่ถูกลบ ชั้นความลับที่ผู้ดูเห็น · ทางเข้าจาก `Classify` ตัวเดียว (คู่ค้า `PartnerSourceLinkId` › LINE
+    `ExternalMetadataJson.sourceChannel=line` › ไฟล์ e-Tax XML `OcrEngine=EtaxXml` › สแกน OCR › สร้างเอง) · ตัวนับกับรายการมาจาก query เดียว (ผลรวม = แถว · ตัดรายการที่ limit
+    แต่ตัวนับครบ) · ต้องเห็นฝั่งซื้อ (403) · ลิงก์ 3 กล่องเดิมบนหน้าถูกถอด — review-queue = คิวสอนระบบ OCR · partners = หลักฐานภาษีซื้อของใบจากคู่ค้า (ลิงก์งานเฉพาะทางต่อแถว)
   - **คิวรอตรวจ (#31/#32 · ทีม U2)** — `GET ocr/review-queue` คืน `{ items, drafts, summary }`: **ร่างที่สร้างจากสแกน** (`ActiveLearningRanker.DraftsFromScansAsync` ·
     กรองด้วยสิทธิ์มองเห็นชุดเดียวกับลิสต์เอกสาร · กดแล้วไป `documents.html?openDoc=`) + **ทุกใบในงวดที่ยังไม่ปิด** (ไม่ตัดที่ 30 วัน · `Helpers/ClosedPeriodRanges` —
     `FiscalPeriod.Status ∈ {Closed, Locked}` · ไม่มีแถวงวด = เปิด · ช่วงครึ่งเปิด `[Start, EndDate+1วัน)`) · นิยาม "อยู่ในคิว"/"วันที่ทางบัญชีของสแกน" เป็น expression
@@ -2084,6 +2088,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   เมื่อไม่มี `Bank.View`
 - **ยังไม่มี**: ดึงรอบโอนอัตโนมัติ · อ่าน `fee_vat` จาก Omise (G-7) · chargeback/reserve · marketplace/OTA · โอน 11630 ที่เลย §82/3 เป็นค่าใช้จ่ายอัตโนมัติ
   (รอเจ้าของ/นักบัญชี — review198-A R-E3) · บล็อกเอกสารซื้อจากผู้ให้บริการที่ยังมี 11630 ค้าง (ต้องผูกผู้ให้บริการ ↔ ผู้ติดต่อก่อน)
+
+- **รอบ 260-3 (คำตัดสิน 260-3-4) — การ์ด "ความพร้อมรับเงินจากลูกค้า" บน `payment-settings.html`** (`GET payment-settings/readiness` → `Helpers/PaymentChannelReadiness.Build`):
+  แถว GATEWAY · PAY-LIVE · PAY-TRANSFER · PAY-LINK · LINE-PAY · SLIP-QUEUE ประกอบจากของเดิม — `AutopilotSettingsHub.Build` (ตัวเดียวกับการ์ดศูนย์รวมของ Autopilot) ·
+  `AutopilotReadiness.PayLiveItem` (แถวเดียวกับความพร้อมของรายการประจำ) · `LineChannelAsync` (LINE OA) · `SystemBaseUrl.IsConfiguredAsync` · ผู้ให้บริการเงินจริง =
+  `PaymentChannelReadiness.LiveConfigs` (Live + เปิดใช้ — รายการประจำใช้ตัวนี้แล้ว เดิมไม่ดู `IsActive`) · แถบโหมดและสถานะเส้นโอน/สลิปบนหน้าอ่านจากแถวเหล่านี้
+  (ถอดการเดา live จาก configs และการหา `ManualSlip` ใน JS) · ตรวจไม่ได้ = ⚠️ ไม่ใช่ ✅ · Last verified `commit <เติมในคอมมิตตามหลัง>`
 
 ### 2.6 POS (Point of Sale)
 - **บัญชีธนาคารรับเงินของเครื่อง (รอบ 200 ทีม G · review198-E ข้อ E-3)**: หน้าตั้งค่าเครื่อง (`pos.html` โมดัล "ตั้งค่าเครื่อง") มีช่อง **"บัญชีธนาคารรับเงิน"**
@@ -4553,6 +4563,14 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   (คำขอละใบผ่าน `POST document/payments/{id}/receipt?documentId=` เดิม · ผลรายแถว) · ส่งออก `GET customer-credits/export?format=xlsx|csv` (`Helpers/CustomerCreditExport` →
   `TabularExport`/MiniExcel — ตัวเลขเดียวกับหน้า) · หลังอนุมัติใบขายที่หน้าเอกสาร: ถามจาก `for-document` (เซิร์ฟเวอร์) "ลูกค้ามีเงินรอจัดสรร x บาท — ใช้ตัดใบนี้?" · ใบแจ้งยอดลูกค้า
   แสดงเงินรอจัดสรรแยกบรรทัดอยู่แล้ว (รอบ 258)
+- **รอบ 260-3 (คำตัดสิน 260-3-1…3) — เงินรอจัดสรรถึงลูกค้า + กระดิ่งค้างนาน**: (1) **พอร์ทัลลูกค้า** แท็บใบแจ้งยอด (`GET api/portal/{c}/statement` →
+  `PortalStatementResponse.UnappliedCredit` จาก `CustomerCreditQuery.UnappliedForContactAsync(ผู้ติดต่อในโทเคน)`) แสดงยอดแยก **ไม่หักจากยอดคงเหลือ** · อยู่ใต้ธง
+  "ดูใบแจ้งยอด" ของเส้นเดิม (ธงปิด = 403 ทั้งเส้น · ไม่มีธงใหม่) · หน้าสิทธิ์พอร์ทัลของพนักงาน (`customer-portal.html` · `PortalAccessResponse.UnappliedCredit/UnappliedCreditShownToCustomer`
+  ด่าน `PortalAccessPermissions.CreditShownToCustomer` = เส้น statement) บอกยอด + ลูกค้าเห็นไหม · (2) **ใบแจ้งยอดรายเดือนทางอีเมล** (`ScanMonthlyStatementsAsync`)
+  เพิ่มบรรทัดเงินรอจัดสรร + ตัวแทน `{UnappliedCredit}` ในแม่แบบ — ใบแจ้งยอดไม่มี PDF (ไม่มี renderer คู่) · (3) **กระดิ่ง `ar.credit.unallocated_aging`**
+  (`Helpers/CustomerCreditAgedNotice.RunAsync` ใน `OverdueDunningJob` ใต้ JobLock): นิยาม "ค้างเกิน 30 วัน" = `CustomerCreditWorkQueue.AgedAsync` ตัวเดียวกับ issue
+  `CustomerCreditAged` ของ Autopilot · หนึ่งรายการต่อบริษัทต่อรอบ (จำนวน · ยอดรวม · เก่าสุด) → ประทับ `Payment.UnappliedAgedNoticeAt` (แจ้งครั้งเดียวต่อการรับชำระ ·
+  ส่งล้ม = ไม่ประทับ) · ค่าตั้งต้น = กระดิ่งเจ้าของ (`NotificationAudiencePolicy.BellOnlyKeys`) · Last verified `commit <เติมในคอมมิตตามหลัง>`
 - **ฝ่ายค้านรอบ 259** (`erp-review/2026-11-11/review-259-pack-A.md` · คำตัดสิน 259-1-10…16): **H1** ยกเลิกเอกสารที่ cascade ยกเลิกการรับชำระซึ่งมีขาออกที่ตัดยอด =
   409 `CC-VOID-MOVEMENT` ก่อนกลับ JE และ**ก่อนด่านเอกสารลูก** (ใบเสร็จรายใบเป็นลูก — ผู้ใช้ต้องได้เหตุจริงก่อน) + ตรวจซ้ำในธุรกรรม (`CustomerCreditLedger.VoidBlockForPaymentsAsync` ใน `VoidDocumentAsync`) · **H2** ใบมัดจำอนุมัติแล้วแต่ขั้นหลังอนุมัติล้ม ⇒ **ไม่ปล่อยการจอง**
   (`CustomerCreditMovementRules.DepositIssued`) ผูกใบ + ข้อความ · **M1** หลังจองใช้ `CancellationToken.None` จนจบ · ยกเลิก ToDeposit ที่ยังไม่ผูกใบ: หาใบมัดจำของเงินก้อนนี้
@@ -8862,3 +8880,5 @@ _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D — §2.1
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก B ส่งทาง LINE ให้ครบ — §2.12g-259: ทวง 50 ทวิ ทาง LINE (การ์ด + ลิงก์อัปโหลดต่อแถว) · 💬 ส่งทาง LINE เองจากหน้าเอกสาร + ลิงก์ชำระในอีเมลที่ส่งเอง · เรื่องที่ LINE ไม่ส่งติ๊กไม่ได้ + migration · ความพร้อม OA (webhook เข้าจริง · Basic ID · ผลทดสอบ · เหตุจริงเมื่อทดสอบล้ม) · ประกาศผูกกลุ่มตามผลจริง · ตอบรับรูป/ไฟล์ในแชต · ลบ DocumentLineDeliveryService — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7dc53e0c)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D ฝ่ายค้าน — §2.12g-259d: H1/H2 · M1–M4 · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d493044a)_
+
+_Last verified against codebase: 2026-11-12 (รอบ 260-3 — §3.4b เงินรอจัดสรรบนพอร์ทัล/อีเมลใบแจ้งยอด + กระดิ่งค้างนาน · §2.6b การ์ดความพร้อมรับเงิน · §OCR กล่องใบซื้อร่างกล่องเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

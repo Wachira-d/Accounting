@@ -35,6 +35,8 @@ public static class DocumentPermissionHelper
 
     public static bool IsRevenue(DocumentType t) => Revenue.Contains(t);
     public static bool IsPurchase(DocumentType t) => Purchase.Contains(t);
+    /// <summary>ชุดชนิดเอกสารฝั่งซื้อ (อ่านอย่างเดียว) — รอบ 260-3: กล่องใบซื้อร่างรอตรวจ (<c>PurchaseDraftInbox</c>) ใช้ชุดเดียวกับด่านสิทธิ์</summary>
+    public static IReadOnlyCollection<DocumentType> PurchaseTypes => Purchase;
 
     public static Task<bool> CanCreateAsync(IPermissionService perms, Guid companyId, Guid userId, DocumentType type) =>
         AnyAsync(perms, companyId, userId,

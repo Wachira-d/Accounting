@@ -517,8 +517,14 @@ public class EmailScheduleService : IEmailScheduleService
 
                 var totalAmount = monthDocs.Sum(d => d.TotalAmount);
                 var totalOutstanding = monthDocs.Sum(d => d.BalanceDue);
+                // รอบ 260-3 (คำตัดสิน 260-3-2): เงินรอจัดสรรของลูกค้า (ตัวอ่านเดียว · ตัวเลขเดียวกับใบแจ้งยอดบนหน้า/CSV/พอร์ทัล) — บรรทัดแยก ไม่หักจากยอดค้าง
+                var unappliedCredit = await CustomerCreditQuery.UnappliedForContactAsync(_db, rule.CompanyId, contact.Id, ct);
+                var unappliedHtml = unappliedCredit > UnappliedCreditBalance.Tolerance
+                    ? $"<p style='background:#eff6ff;padding:8px 12px;border-radius:6px'>เงินที่ชำระไว้แล้วรอนำไปหักกับใบ (เงินรอจัดสรร) <strong>{unappliedCredit:N2} บาท</strong> — ยังไม่หักจากยอดค้างชำระด้านบน</p>"
+                    : "";
                 var ctx = new Dictionary<string, string?>
                 {
+                    ["UnappliedCredit"] = unappliedCredit.ToString("N2"),
                     ["ContactName"] = contact.Name,
                     ["Period"] = period,
                     ["Amount"] = totalAmount.ToString("N2"),
@@ -550,6 +556,7 @@ public class EmailScheduleService : IEmailScheduleService
                           </tr></thead>
                           <tbody>{rowsHtml}</tbody>
                         </table>
+                        {unappliedHtml}
                         <p style='color:#64748b;font-size:13px;margin-top:14px'>ส่งโดย {System.Net.WebUtility.HtmlEncode(companyName)} โดยอัตโนมัติ</p>
                       </div>";
 

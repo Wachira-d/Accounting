@@ -18543,6 +18543,52 @@ REVIEWER_CASES += [
      "Task.FromResult<string?>(null)", True),
 ]
 
+# ── รอบ 260-3 (คำตัดสิน 260-3-1..5): เงินรอจัดสรรบนพอร์ทัล/ใบแจ้งยอดอีเมล · กระดิ่งค้างนาน · การ์ดความพร้อมรับเงิน · กล่องใบซื้อร่างกล่องเดียว ──
+_R260_3_WHY = "รอบ 260-3: "
+RULES += [
+    dict(file="Services/Implementations/PortalService.cs", method="GetMyStatementAsync",
+         must=["CustomerCreditQuery.UnappliedForContactAsync(_db, companyId, contactId)"],
+         why=_R260_3_WHY + "260-3-1 ใบแจ้งยอดพอร์ทัลแสดงเงินรอจัดสรรของผู้ติดต่อในโทเคน (ตัวอ่านเดียว · tenant)"),
+    dict(file="Services/Implementations/PortalService.cs", method="GetAccessesAsync",
+         must=["CustomerCreditQuery.UnappliedByContactAsync(", "PortalAccessPermissions.CreditShownToCustomer("],
+         why=_R260_3_WHY + "260-3-1 หน้าสิทธิ์พอร์ทัลบอกยอด + ลูกค้าเห็นไหม จากด่านเดียวกับเส้นใบแจ้งยอด"),
+    dict(file="Helpers/PortalAccessPermissions.cs", method="CreditShownToCustomer",
+         must=["Refusal(", "Route("], must_lit=['"statement"'],
+         why=_R260_3_WHY + "260-3-1 ลูกค้าเห็นเงินรอจัดสรร = ผ่านด่านเส้น statement (ไม่มีธงที่สอง)"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="ScanMonthlyStatementsAsync",
+         must=["CustomerCreditQuery.UnappliedForContactAsync("],
+         why=_R260_3_WHY + "260-3-2 ใบแจ้งยอดรายเดือนทางอีเมลแสดงเงินรอจัดสรรเป็นบรรทัดแยก (ตัวเลขเดียวกับหน้า/CSV/พอร์ทัล)"),
+    dict(file="Helpers/CustomerCreditAgedNotice.cs", method="RunAsync",
+         must=["CustomerCreditWorkQueue.AgedAsync(", "NotificationEvents.CustomerCreditAged", "Compose("],
+         before=[("DispatchAsync(", "ExecuteUpdateAsync(")], forbid=["AddDays(", "AgingDays"],
+         why=_R260_3_WHY + "260-3-3 กระดิ่งค้างนานใช้นิยามเดียวกับ Autopilot (ห้ามเกณฑ์อายุที่สอง) · ประทับหลังส่งเท่านั้น"),
+    dict(file="Helpers/CustomerCreditWorkQueue.cs", method="AutopilotIssuesAsync", must=["AgedAsync("],
+         why=_R260_3_WHY + "260-3-3 issue CustomerCreditAged กับกระดิ่งอ่านตัวเดียวกัน"),
+    dict(file="Services/Background/OverdueDunningJob.cs", method="RunAsync", must=["CustomerCreditAgedNotice.RunAsync("],
+         why=_R260_3_WHY + "260-3-3 กระดิ่งค้างนานมีผู้เรียกจริง (งานรายวันใต้ JobLock)"),
+    dict(file="Controllers/PaymentSettingsController.cs", method="Readiness",
+         must=["PaymentChannelReadiness.Build(", "autopilot.SettingsAsync(", "PaymentChannelReadiness.LiveConfigs(", "SystemBaseUrl.IsConfiguredAsync(", "recipients.LineChannelAsync("],
+         why=_R260_3_WHY + "260-3-4 การ์ดความพร้อมประกอบจากแถวเดิม (ศูนย์รวม Autopilot · PAY-LIVE · LINE OA · URL ระบบ)"),
+    dict(file="Helpers/PaymentChannelReadiness.cs", method="Build", must=["AutopilotReadiness.PayLiveItem("],
+         why=_R260_3_WHY + "260-3-4 แถว PAY-LIVE ตัวเดียวกับความพร้อมของรายการประจำ"),
+    dict(file="Helpers/AutopilotReadiness.cs", method="Evaluate", must=["PayLiveItem("],
+         why=_R260_3_WHY + "260-3-4 รายการประจำใช้แถว PAY-LIVE ตัวเดียวกับการ์ดหน้ารับชำระออนไลน์"),
+    dict(file="Controllers/PurchaseInboxController.cs", method="Get",
+         must=["DocumentPermissionHelper.VisibleDirectionsAsync(", "PurchaseDraftInbox.LoadAsync(", "GetVisibleKindsAsync("],
+         before=[("VisibleDirectionsAsync(", "PurchaseDraftInbox.LoadAsync(")],
+         why=_R260_3_WHY + "260-3-5 กล่องใบซื้อร่าง: ด่านเห็นฝั่งซื้อก่อนอ่าน + กรองชั้นความลับ"),
+    dict(file="Helpers/PurchaseDraftInbox.cs", method="LoadAsync",
+         must=["Classify(", "CountBySource(", "DocumentPermissionHelper.PurchaseTypes", "d.CompanyId == companyId"],
+         why=_R260_3_WHY + "260-3-5 ตัวนับกับรายการมาจาก query เดียว · ชุดชนิดฝั่งซื้อตัวเดียวกับด่านสิทธิ์ · tenant"),
+]
+REVIEWER_CASES += [
+    # ถอดการแสดงเงินรอจัดสรรในใบแจ้งยอดพอร์ทัล ⇒ ต้องฟ้อง
+    ("R260a", "GetMyStatementAsync", "CustomerCreditQuery.UnappliedForContactAsync(_db, companyId, contactId)", "Task.FromResult(0m)", True),
+    # กระดิ่งเขียนเกณฑ์อายุเอง ⇒ ต้องฟ้อง
+    ("R260b", "RunAsync", "Compose(await CustomerCreditWorkQueue.AgedAsync(db, companyId, today, ct))",
+     "Compose(await CustomerCreditWorkQueue.AgedAsync(db, companyId, today.AddDays(-30), ct))", True),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
