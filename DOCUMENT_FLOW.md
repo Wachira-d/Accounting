@@ -2309,6 +2309,15 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (`Helpers/RecurringRunOutcome.Build`: หัวเรื่อง · สิ่งที่ต้องทำ · ปุ่ม `?openDoc=`/หน้าผู้ติดต่อ/สร้างงวดที่ข้าม) จากสถานะเอกสาร "ตอนนี้" (อนุมัติเองแล้ว ⇒ ขั้นอนุมัติหาย) ·
   อีเมล: AutoSendEmail ทำงานตอนสร้างใบเท่านั้น — อนุมัติเองทีหลังส่งเฉพาะกฎ DocumentApproved · ผู้ติดต่อไม่มีอีเมล (`RecurringEmailReadiness` = กติกาผู้ส่งจริง `Contact.Email`)
   ⇒ ฟอร์มปิดช่องส่งอีเมล (`GET recurring/email-readiness`) · บันทึกได้แต่คืน `saveWarnings` · ป้าย `autoSendEmailWarning`
+  + **รอบ 263 (คำร้องผู้ใช้ · คำตัดสิน 263-1-1…5) — ตัวประเมินสด**: `RecurringRunOutcome.Build(…, live)` ตรวจ<b>ทุก</b>เรื่องกับสถานะ "ตอนนี้"
+  (`RecurringTransactionService.LoadRunLiveAsync` — ผู้อนุมัติ/เวลาจากหมายเหตุ "✅ แก้แล้ว" บนใบ · `DocumentEmailLogs`/`EmailQueues` ส่งแล้ว/ในคิว ·
+  `LineQueues` ส่งแล้ว · สถานะสมุดรายวัน · กรองบริษัททุก query) ⇒ เรื่องที่จบย้ายไป `resolved` (ใคร/เมื่อไร) · จบครบ ⇒ `allResolved` (หน้าไม่ขึ้นกล่องเหลือง/ป้ายในตาราง
+  — บรรทัดเล็ก "แก้ครบแล้ว") · ใบชำระครบ ⇒ เรื่องอีเมลจบ (263-1-2) · ใบยกเลิก/ลบ ⇒ "ไม่ต้องทำต่อ" (ข้อความต่างจากอนุมัติแล้ว) ·
+  แถวก่อนรอบ 247 (มีแต่ `LastRunNotice`) อ่านประโยคที่ระบบเคยเขียนเป็นข้อเท็จจริง (`FactsFromLegacyNotice` · ไม่รู้จัก = แสดงแบบเดิม ไม่บอกว่าแก้แล้ว) ·
+  **งวดที่ข้าม** ค้างข้ามรอบจนออกครบ (`MarkRunAsync` พา `SkipCarry` · รอบพิเศษไม่กินงวด = ออกเพิ่ม 1 งวด) หรือผู้ใช้กด "ออกเองแล้ว/ไม่ต้องออก"
+  (`POST recurring/{id}/dismiss-skipped` · ไม่มีงวดค้าง = 400 `RECURRING-SKIP-NONE`) (263-1-3) · สมุดรายวันลงบัญชีอัตโนมัติไม่ได้ ⇒ ข้อเท็จจริง `JournalPostBlockedReason`
+  + ปุ่มเปิดสมุดรายวัน · หมายเหตุ "แก้แล้ว … โดย" ประทับ<b>ชื่อ</b>ผู้อนุมัติ (`DocumentService.ActorLabelAsync`) · แถวเก่าที่มี id ผู้ใช้แสดงเป็นชื่อตอนเปิดเอกสาร (263-1-4) ·
+  ไฟล์ส่งออกคอลัมน์ "เรื่องต้องทำต่อ" อ่านจากผลสด
 - **ฝ่ายค้านรอบ 1 (2026-10-14)**: ขั้นใดก็ตาม<b>หลัง</b> `MarkRunAsync` ที่ล้ม (บันทึกหมายเหตุบนใบ · บันทึกผลอนุมัติล้ม · ErrorLog · คิวอีเมล) ⇒ เป็น `LastRunNotice`
   (`RecurringRunFailure.AfterCreateNotice` — "สร้างแล้ว รอบนี้นับแล้ว ไม่ต้องกดสร้างทันทีซ้ำ") ไม่ใช่ `LastRunError` (เดิมแถวขึ้นล้ม ⇒ ผู้ใช้กดซ้ำ = ใบซ้ำ) ·
   cron บันทึกเหตุผลล้ม<b>ภายใต้ล็อกต่อรายการ</b> (เดิมหลังปล่อยล็อก ⇒ ทับผลสำเร็จของปุ่มที่รันต่อ) · ตอนบันทึก แหล่งเงิน/หมวดค่าใช้จ่ายตรวจด้วย
@@ -3187,7 +3196,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   แถวความพร้อม `ProviderLineReadiness` (OA กลาง · Basic ID · webhook `/api/line-webhook` · ลูกค้าที่ผูกแล้ว · สวิตช์ LINE ของการเรียกเก็บ)
 - ยังไม่ทำ (262-1-8): ใบเสร็จส่วนเสริม/โควตาเสริมทาง LINE · ลิงก์ชำระสาธารณะในการ์ด · อีเมลตามตาราง/ส่งเองของใบค่าบริการยังออกลิงก์ชำระทั่วไปได้
 - เทสต์ `ProviderCentralOaRound262Tests` · Db `ProviderCentralOaRound262DbTests` (+ ปรับ `LineCentralGroupRound256DbTests`: ลิงก์ 1:1 ของบริษัทผู้ให้บริการเปิดแล้ว) · ล็อก R262 (+ เคส R262a–c) —
-  ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit <pending>
+  ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 81af94ae
 
 ### 2.12g-260 รอบ 260 "สลิปในแชต LINE ⇒ ผูกเอกสาร" (คำตัดสิน 260-1-1…260-1-6)
 
@@ -3226,6 +3235,25 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   L6 ผูกด้วยเลขที่: เฉพาะชนิดที่รับชำระได้ · ซ้ำหลายใบ ⇒ 409 · ใบของผู้ติดต่ออื่น ⇒ คำเตือน + audit `crossContact` · L7 badge สลิปค่าบริการผ่าน `OcrSlipText.BadgeAmount` (เทสต์สองทิศ) ·
   L8 ปีสองหลักตัวเดียว `OcrSlipText.TwoDigitYear` · L9 ปิดสวิตช์ ⇒ ปุ่มเดิมกดไม่ได้ (คิวพนักงาน) · ป้ายไฟล์แนบ `line-chat-staff`
 - เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde (ฝ่ายค้าน: 65c031ed)
+
+### 2.12g-264-P1 รอบ 264 แพ็ก P1 "ความยินยอมงานอัตโนมัติกับคู่ค้า" (erp-review/2026-11-12/team-264-a2b-design.md §2 · คำตัดสิน 264-2-1…3)
+
+- **หลัก**: ไม่มีใครลงบัญชีในสมุดของอีกบริษัท — การบันทึกในสมุด B เกิดจากท่อของ B เองภายใต้ความยินยอมของ B เท่านั้น · A ได้แค่ "ขอ" (F9)
+- **ข้อมูล**: `PartnerAutomationConsents` (`CompanyId` = ผู้ให้ = ฝั่งที่ถูกลงบัญชี · `TradingPartnershipId` · `Scope` ชื่อ enum · `MaxAmount` · `DefaultPayBankAccountId` (เฉพาะ AutoRecord) ·
+  `TextVersion` + `EvidenceHash` · ผู้ให้/เวลา · ผู้ถอน/เวลา/เหตุ) · append-only (trigger `TR_PartnerAutomationConsents_AppendOnly`) · unique บางส่วน `(CompanyId, TradingPartnershipId, Scope) WHERE WithdrawnAt IS NULL`
+- **ขอบเขต** (`Helpers/PartnerConsent.Scopes` ตัวเดียว): `PurchaseDrafts` · `ReturnWhtCerts` = **ค่าตั้งทั้งบริษัทเดิม** (`WorkflowAutomationConfig` — ผู้อ่านเดิมไม่แตะ · ต่อคู่ปิดรับ 409) ·
+  `AutoApprovePurchase` · `AutoRecordPayment` (ต้องมีเพดาน + พิมพ์ "ยินยอม") · `ReceiveSlipCopy` — สามตัวนี้ยังไม่มีท่ออ่าน (`ReaderWired=false` ⇒ หน้าแสดง "ยังไม่มีผล") จนแพ็ก P2–P4 ต่อสาย
+- **ให้ (สองขั้น)**: `POST api/companies/{cid}/partner-consents/preview` (ข้อความ + hash · ไม่เขียน) → `POST …/partner-consents` (hash เดิม + คำยืนยัน) ·
+  ด่าน: `CompanySettings.Edit` + ไม่รับ API key · คู่ต้อง Accepted · `RequestProblem` (รูปคำขอ) · `GrantProblemForAsync` (สิทธิ์ของขอบเขตกับผู้กดจริง → 403) · บัญชีจ่ายต้องเป็นของบริษัท+ใช้งาน · `ConfirmProblem` ·
+  มีแถวใช้อยู่ ⇒ ถอนแถวเดิม ("แทนที่") + แถวใหม่ในธุรกรรมเดียว · audit `PartnerConsentGranted` / `PartnerConsentWithdrawn` (ruleCode `XT-CONSENT`) ผ่าน `AddChainedAuditLog`
+- **ถอน**: `DELETE …/partner-consents/{id}?reason=` — มีผลทันทีกับงานที่ยังไม่ทำ · งานที่ทำแล้วไม่ย้อน (F7) · แถวของบริษัทอื่น = 404
+- **ขอ (ฝั่ง A)**: `POST …/partner-consents/request` → กระดิ่ง `autopilot.partner_exchange` ของ B ลิงก์ `/pages/partner-automation.html?partnership={id}` · 3 ครั้ง/คู่/วัน · ส่งล้ม = 502 (ไม่ตอบว่าส่งแล้ว) · audit `PartnerConsentRequested` ฝั่ง A
+- **ตอนใช้ (API ของ P3/P5)**: `PartnerConsentService.CheckAsync(companyId, partnershipId, scope, amount)` → `PartnerConsent.UseCheck` (Ok · Code · Reason · ConsentId · GrantorUserId · MaxAmount · DefaultPayBankAccountId) ·
+  ตรวจสดทุกครั้ง: คู่ Accepted · แถวของบริษัท/คู่/ขอบเขตนี้ · ไม่ถอน · hash ตรง · ให้หลังการระงับครั้งล่าสุด (`StaleAfterSuspend` — เชื่อมกลับไม่ฟื้นเอง) · ผู้ให้ยังใช้งาน + ยังมีสิทธิ์ของขอบเขต (`GrantorLostPermission`) · ยอดไม่เกินเพดาน ·
+  ไม่ผ่าน ⇒ ท่อกลับเป็นปุ่มเดียวพร้อม `Reason`
+- **ค่าตั้งเดิม** `PUT workflow-automation`: เขียน audit `WorkflowAutomationConfigChanged` (ช่องที่เปลี่ยน ก่อน/หลัง · ไม่เปลี่ยน = ไม่เขียน) — C-06
+- **หน้า**: `partner-automation.html` (ลิงก์จากแถวคู่ค้า Accepted/Suspended ใน `partners.html` + กระดิ่งคำขอ) · ป้าย/ข้อความ/เหตุ/สิทธิ์ของผู้เปิดหน้ามาจากเซิร์ฟเวอร์ · ปุ่มยินยอมล็อกพร้อมเหตุเมื่อผู้เปิดไม่มีสิทธิ์ · ประวัติแถว + ผลตรวจ hash ต่อแถว
+- **kill-switch**: ไม่มีการเรียก AI ในแพ็กนี้
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
 
@@ -3666,6 +3694,15 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ภ.ง.ด.3/53 ⇒ **ประตูเดียวของผู้ขาย** `WhtCertIntakeService.SubmitAsync(ผู้ขาย, Channel = NextAccLink)` (กันซ้ำเลขที่+ผู้จ่าย · ด่านเชิงกำหนด — เลขภาษีผู้ถูกหักต้องเป็นของผู้ขาย ·
   ตรวจของจริง local-first · WP-09) · เอกสารฝั่งผู้ขายที่ใบครอบ = ใบต้นทางของใบซื้อร่าง (แถวกล่องเข้า) · `WithholdingTaxCert.PartnerDeliveredAt/PartnerIntakeId` ประทับ**เฉพาะเมื่อกล่องรับตอบผลจริง** ·
   ล้ม ⇒ `PartnerDeliveryError` + `PartnerDeliveryAttempts` (≤ 8 ครั้ง) · ผู้จ่ายยกเลิกใบที่ส่งแล้ว ⇒ แจ้งผู้ขายครั้งเดียว `autopilot.partner_exchange` (E-11 · ไม่ตีกลับรายการของผู้ขายเอง)
+- **รอบ 264 P5 — ขากลับ 50 ทวิ ยืนยันด้วยที่มา + ตรวจก่อนส่ง (C-02 · C-10 · B8/B10/B12 · คำตัดสิน 264-5-1…264-5-5)**:
+  ฝั่งผู้รับ: ช่อง `NextAccLink` ⇒ `WhtCertIntakeService.LoadProvenanceAsync` อ่านแถว 50 ทวิ ในบริษัทผู้จ่าย**จากฐาน** (คู่ Accepted ที่เลขผู้เสียภาษีตรงใบ · ผู้ติดต่อผู้ถูกหักผูก `NextAccTenant` = เรา) →
+  `WhtCertIntakeVerdict.ProvenanceProblems` (ออกแล้ว · ไม่ยกเลิก · ไม่กำกวม · เลขภาษีผู้ถูกหัก · ภาษี/เงินได้/อัตรา ±0.005 · วันที่ · แบบ) · ผ่าน + ด่านเดิมผ่าน ⇒ ยืนยันอัตโนมัติ**โดยไม่เรียก orchestrator**
+  (`AuthenticityByProvenance=true` · `UsedAi=false` · ไม่มีแถว feedback · ป้าย "⚙️ ยืนยันจากระบบของผู้จ่าย" · audit `wht-cert-intake-provenance-confirmed`) ⇒ **ปิด provider ทุกตัวแล้วใบจริงยังยืนยันเอง** ·
+  ไม่ผ่าน ⇒ ด่าน "ยืนยันจากระบบของผู้จ่ายไม่ได้: …" (รอคน · ไม่ถาม AI) · ช่องอื่นเดินเส้นตรวจของจริงเดิม ·
+  ฝั่งผู้จ่าย: ก่อนส่ง `PartnerExchangeRules.WhtDeliveryCheckOf` — ผู้ติดต่อผูกระบบอื่น/ยังไม่ผูกแต่เลขตรงคู่ค้า · คู่ไม่ได้เชื่อม · เลข/สาขาผู้ถูกหักไม่ตรงบริษัทคู่ค้า · ที่อยู่ว่าง · ปิดค่าตั้ง ⇒
+  เหตุบน `PartnerDeliveryError` (**ไม่นับครั้ง** · แก้แล้วรอบถัดไปส่งเองและล้างเหตุ) · ไม่มีหลักฐานว่าเป็นคู่ค้า ⇒ ไม่ประทับ · ความยินยอม = จุดเดียว `ReturnWhtCertsAllowedAsync` (ค่าตั้งเดิม — P1 สลับ) ·
+  Autopilot `PartnerTaxEvidenceIssuesAsync`: ใบซื้อจากคู่ค้ารอต้นฉบับใกล้ครบ/เลยกรอบ ม.82/3 (`PartnerTaxEvidenceAlerts` · เหลือ ≤ 2 เดือน) · `PartnerPayBlocked` (การแจ้งค้าง · ด่วนเมื่อ ภ.ง.ด.53 ใกล้กำหนด) ·
+  `PartnerWhtCertUndelivered` (เหตุก่อนส่ง/ส่งไม่สำเร็จ) · Last verified `commit 70253c2e`
 - **พอร์ทัลลูกค้าไม่ต้องจำรหัสผ่าน (ข้อ 8 · AUTOPILOT §8.1)**: `POST api/portal/magic-link {companyId, email}` — ส่งเฉพาะอีเมลที่ผู้ขายเปิด `PortalAccess` ไว้ (ใช้งานอยู่) ·
   **คำตอบเดียวทุกกรณี** (`PortalMagicLinkPolicy.AckMessage` · 202) · เพดานต่ออีเมล 1/นาที 5/วัน + ต่อบริษัท 10/นาที 200/วัน (ตัวนับในฐาน fail-closed) · เวลาตอบขั้นต่ำคงที่ ·
   โทเคนสุ่ม 32 ไบต์ เก็บ SHA-256 ใน `PortalMagicLinks` · อายุ 15 นาที · ใช้ครั้งเดียว (compare-and-set `UsedAt`) · ไม่มี URL ของระบบ/SMTP ⇒ ไม่ส่ง (log error · ไม่แต่งโดเมน) ·
@@ -8972,3 +9009,6 @@ _Last verified against codebase: 2026-11-12 (รอบ 260-3 ฝ่ายค้�
 _Last verified against codebase: 2026-11-12 (รอบ 260-5 ชุดแก้ฝ่ายค้าน — §3.4b งวดรายงานของใบกำกับ ณ วันรับเงิน = OutputVatDueAt (H1) · หมายเหตุตามงวดจริง (M1) · §2.12g-258 ชุด 5 คืนค่าสแกน M2–M5/L3/L4 · คิวใบลดหนี้แอดมิน · เพดานกล่องรับ 50 ทวิ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7e69bdd1)_
 _Last verified against codebase: 2026-11-12 (รอบ 264 — §2.12l คำขอเชื่อมคู่ค้าถึงปลายทางเสมอ (ไม่ดู PartnerDiscoverable) · แจ้งผ่านเครื่องแจ้งเตือนจาก outbox · การ์ดยอมรับ `partners.html?request=` · "คำขอที่เราส่ง" ไม่รั่วสมาชิกภาพ · หมดอายุ 30 วัน · เพดานแจ้ง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 050e98d1)_
 _Last verified against codebase: 2026-11-12 (รอบ 262 — §2.12g-262: บริษัทผู้ให้บริการเรียกเก็บค่าบริการทาง LINE ผ่าน OA กลาง (ผูก 1:1 · ผู้เช่าผูกเองจากศูนย์บิล · ใบแจ้งหนี้/ทวง/ใบเสร็จเข้าคิว LINE ของผู้ติดต่อ · ปุ่มชำระ = ศูนย์บิล · หน้าตั้งค่า server computes) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
+_Last verified against codebase: 2026-11-12 (รอบ 262 — §2.12g-262: บริษัทผู้ให้บริการเรียกเก็บค่าบริการทาง LINE ผ่าน OA กลาง (ผูก 1:1 · ผู้เช่าผูกเองจากศูนย์บิล · ใบแจ้งหนี้/ทวง/ใบเสร็จเข้าคิว LINE ของผู้ติดต่อ · ปุ่มชำระ = ศูนย์บิล · หน้าตั้งค่า server computes) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81af94ae)_
+
+_Last verified against codebase: 2026-11-12 (รอบ 264 P1 ความยินยอมงานอัตโนมัติกับคู่ค้า — §2.12g-264-P1: ตาราง append-only + hash canonical · ให้สองขั้น · ถอนทันที · ระงับ/เชื่อมกลับไม่ฟื้นเอง · สิทธิ์ผู้ให้ตรวจซ้ำตอนใช้ · `CheckAsync` สำหรับ P3/P5 · audit ค่าตั้งเดิม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_

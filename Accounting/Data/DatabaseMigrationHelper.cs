@@ -279,6 +279,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.Round260LineMigration.Statements());   // รอบ 260-4 — LINE: ชั่วโมงเงียบของการ์ดถึงลูกค้า
         list.AddRange(Accounting.Helpers.Round260SlipReceivingMigration.Statements());   // รอบ 260-2 — บัญชีที่เงินตามสลิปเข้า (ประทับบนรายการชำระตอนยืนยัน)
         list.AddRange(Accounting.Helpers.Round260LineSlipMigration.Statements());   // รอบ 260 — สลิปจากแชต LINE OA ของบริษัท (ตาราง + สวิตช์รับสลิป)
+        list.AddRange(Accounting.Helpers.PartnerConsentMigration.Statements());   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ต่อคู่ × ขอบเขต · append-only)
         return list;
     }
 
@@ -6362,6 +6363,8 @@ public static class DatabaseMigrationHelper
             """,
             // ── รอบ 253 (WP-10 · AUTO_SEND_WHT_DESIGN §3.2/§4.3/§6.3 · N4): ลิงก์อัปโหลด 50 ทวิ · ทวงอัตโนมัติ · ยอมรับ "ไม่หัก" · เลขอ้างอิง e-WHT ──
             """ALTER TABLE "WhtCertIntakes" ADD COLUMN IF NOT EXISTS "EvidenceReference" varchar(100) NULL;""",
+            // ── รอบ 264 P5 (คำตัดสิน 264-5-1): ใบจากคู่ค้า NextAcc ยืนยันด้วยที่มา (ไม่ถาม AI) — แถวเดิมทั้งหมด = false (เคยผ่านเส้นตรวจของจริงเดิม · ไม่เติมย้อนหลัง) ──
+            """ALTER TABLE "WhtCertIntakes" ADD COLUMN IF NOT EXISTS "AuthenticityByProvenance" boolean NOT NULL DEFAULT false;""",
             // ── รอบ 257 ชุด 2 ฝ่ายค้าน (L2/L7): แถวเครดิตที่ "บันทึกเป็นรายการใหม่" จากใบในกล่องรับ (ถอนใบ ⇒ ถอดแถวด้วยคอลัมน์นี้เท่านั้น) ·
             // ชนิดหลักฐานของแถวก่อนใบนี้ลง (ถอนใบ ⇒ คืนค่าเดิม) · เติมย้อนหลังจากหมายเหตุที่ระบบเขียนเอง ("สร้างจากใบ 50 ทวิ ในกล่องรับ") + การจัดสรรที่ยืนยันแรกสุด (บริษัทเดียวกัน · รันซ้ำได้)
             """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "CreatedFromIntakeId" uuid NULL;""",

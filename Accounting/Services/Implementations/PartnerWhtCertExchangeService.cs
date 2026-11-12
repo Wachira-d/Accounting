@@ -31,7 +31,7 @@ public class PartnerWhtCertExchangeService
         _db = db; _intake = intake; _logger = logger; _notify = notify;
     }
 
-    public const string ExternalSystem = "NextAccTenant";
+    public const string ExternalSystem = PartnerExchangeRules.NextAccTenantSystem;
     private const int BatchPerCompany = 50;
 
     /// <summary>หนึ่งรอบของงาน — คืนจำนวนใบที่ส่ง/แจ้งได้ (ผลรอบของงาน)</summary>
@@ -71,23 +71,45 @@ public class PartnerWhtCertExchangeService
             .ToListAsync(ct);
         if (certs.Count == 0) return 0;
 
+        // รอบ 264 P5 (C-10): โหลดผู้ติดต่อผู้ถูกหักทุกราย (ไม่กรองเฉพาะที่ผูก NextAccTenant) — ผูกระบบอื่นแต่เลขตรงคู่ค้า ⇒ เหตุบนใบ ไม่ใช่ข้ามเงียบ
         var contactIds = certs.Select(c => c.PayeeContactId).Distinct().ToList();
         var contacts = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .Where(c => c.CompanyId == payerId && contactIds.Contains(c.Id) && c.ExternalSystem == ExternalSystem)
-            .Select(c => new { c.Id, c.ExternalId, c.TaxId, c.BranchCode })
+            .Where(c => c.CompanyId == payerId && contactIds.Contains(c.Id))
+            .Select(c => new { c.Id, c.ExternalSystem, c.ExternalId, c.TaxId, c.BranchCode, c.Address, c.District, c.Province })
             .ToListAsync(ct);
         var accepted = await _db.TradingPartnerships.AsNoTracking()
             .Where(t => (t.CompanyAId == payerId || t.CompanyBId == payerId) && t.Status == TradingPartnershipStatus.Accepted)
             .Select(t => t.CompanyAId == payerId ? t.CompanyBId : t.CompanyAId)
             .ToListAsync(ct);
+        // ผู้รับ (บริษัทคู่ค้า) — เลข/สาขาของจริงจากบริษัทนั้น ใช้ตรวจผู้ถูกหักบนใบก่อนส่ง (B12 · คำตัดสิน 264-5-3)
+        var partnerCos = (await _db.Companies.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => accepted.Contains(c.Id)).Select(c => new { c.Id, c.TaxId, c.BranchCode }).ToListAsync(ct))
+            .ToDictionary(c => c.Id);
 
         var sent = 0;
         foreach (var cert in certs)
         {
             if (!PartnerExchangeRules.WhtCertDeliverable((int)cert.Status, cert.IssuedDate, since, cert.PartnerDeliveredAt, cert.PartnerDeliveryAttempts)) continue;
             var contact = contacts.FirstOrDefault(c => c.Id == cert.PayeeContactId);
-            // ผู้ถูกหักไม่ใช่บริษัทคู่ค้าที่เชื่อมแล้ว ⇒ ไม่ใช่งานของเส้นนี้ (ใบส่งทางอีเมล/กระดาษเดิม) — ไม่ประทับอะไร
-            if (contact == null || !Guid.TryParse(contact.ExternalId, out var payeeCompanyId) || !accepted.Contains(payeeCompanyId)) continue;
+            if (contact == null) continue;
+            var linked = contact.ExternalSystem == ExternalSystem && Guid.TryParse(contact.ExternalId, out var linkedId) && accepted.Contains(linkedId)
+                ? linkedId : (Guid?)null;
+            var partner = linked is Guid lp && partnerCos.TryGetValue(lp, out var pc) ? pc : null;
+            var check = PartnerExchangeRules.WhtDeliveryCheckOf(new PartnerExchangeRules.WhtDeliveryFacts(
+                contact.ExternalSystem, partner != null,
+                partner == null && partnerCos.Values.Any(c => ThaiTaxId.Same(c.TaxId, contact.TaxId)),
+                contact.TaxId, contact.BranchCode, partner?.TaxId, partner?.BranchCode,
+                PartnerExchangeRules.PayeeAddressPresent(contact.Address, contact.District, contact.Province),
+                partner != null && await ReturnWhtCertsAllowedAsync(payerId, partner.Id, ct)));
+            // ไม่มีหลักฐานว่าผู้ถูกหักเป็นคู่ค้า ⇒ ไม่ใช่งานของเส้นนี้ (ใบส่งทางอีเมล/กระดาษเดิม) — ไม่ประทับอะไร
+            if (check.Action == PartnerExchangeRules.WhtDeliveryAction.NotPartner) continue;
+            // C-10 · B12 · ผู้รับไม่ตรง · คู่ไม่ได้เชื่อม ⇒ เหตุบนใบ (ไม่นับครั้ง — แก้แล้วส่งรอบถัดไปเอง) · ไม่ข้ามเงียบ
+            if (check.Action == PartnerExchangeRules.WhtDeliveryAction.Skip)
+            {
+                await StampSkipAsync(payerId, cert.Id, check.Reason!, ct);
+                continue;
+            }
+            var payeeCompanyId = partner!.Id;
             var form = cert.TaxFormType switch
             {
                 TaxType.WithholdingTax53 => (WhtPayerFormType?)WhtPayerFormType.Pnd53,
@@ -163,6 +185,26 @@ public class PartnerWhtCertExchangeService
             }
         }
         return sent;
+    }
+
+    /// <summary>รอบ 264 P5 (C-10 · คำตัดสิน 264-5-2): เหตุที่ยังส่งไม่ได้ (ผูกระบบอื่น · ที่อยู่ว่าง · ผู้รับไม่ตรง · คู่ไม่ได้เชื่อม) — ประทับบนใบโดย<b>ไม่นับครั้ง</b>
+    /// (ไม่ใช่การล้มของการส่ง · แก้ต้นเหตุแล้วรอบถัดไปส่งเอง) · เขียนเฉพาะเมื่อเหตุเปลี่ยน (ไม่เขียนซ้ำทุกรอบ)</summary>
+    private async Task StampSkipAsync(Guid payerId, Guid certId, string reason, CancellationToken ct)
+    {
+        await _db.WithholdingTaxCerts
+            .Where(w => w.Id == certId && w.CompanyId == payerId && w.PartnerDeliveredAt == null
+                && (w.PartnerDeliveryError == null || w.PartnerDeliveryError != reason))
+            .ExecuteUpdateAsync(s => s.SetProperty(w => w.PartnerDeliveryError, reason), ct);
+    }
+
+    /// <summary>รอบ 264 P5 — <b>จุดเรียกความยินยอมเดียว</b>ของเส้น "ส่ง 50 ทวิ กลับให้คู่ค้า" (ขอบเขต ReturnWhtCerts) · ตอนนี้ = ค่าตั้งทั้งบริษัทของผู้จ่าย
+    /// <c>WorkflowAutomationConfig.SendWhtCertsToPartners</c> (+ watermark) — แพ็ก P1 (ความยินยอมต่อคู่ × ขอบเขต) สลับตัวอ่านที่นี่ที่เดียว
+    /// (คำตัดสิน 264-5-5 · required_call_site_check R264-P5)</summary>
+    private async Task<bool> ReturnWhtCertsAllowedAsync(Guid payerId, Guid payeeCompanyId, CancellationToken ct)
+    {
+        _ = payeeCompanyId;   // ความยินยอมต่อคู่ (P1) จะใช้คู่นี้ · ตอนนี้ค่าตั้งทั้งบริษัท
+        return await _db.WorkflowAutomationConfigs.AsNoTracking()
+            .AnyAsync(c => c.CompanyId == payerId && c.SendWhtCertsToPartners && c.SendWhtCertsToPartnersSince != null, ct);
     }
 
     /// <param name="giveUp">รอบ 257 ชุด 2 (B-L4): ผลเชิงกำหนด (กล่องรับตีกลับ) ⇒ ตั้งจำนวนครั้งเต็มเพดาน (ไม่ส่งซ้ำ) · false = ล้มชั่วคราว นับ +1</param>

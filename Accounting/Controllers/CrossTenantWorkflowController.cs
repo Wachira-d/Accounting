@@ -261,6 +261,9 @@ public class CrossTenantWorkflowController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> UpdateConfig(Guid companyId, [FromBody] WorkflowConfigUpdate req)
     {
         var c = await _service.GetOrCreateConfigAsync(companyId);
+        // รอบ 264 P1 (C-06): ภาพก่อนแก้ — การเปิด/ปิดงานอัตโนมัติข้ามบริษัทต้องตอบได้ว่าใคร/เมื่อไร/จากอะไรเป็นอะไร (audit chain ของบริษัทนี้)
+        var discoverableBefore = await _db.Companies.Where(x => x.Id == companyId).Select(x => (bool?)x.PartnerDiscoverable).FirstOrDefaultAsync();
+        var before = PartnerConsent.ConfigSnapshot(c, discoverableBefore);
         if (req.AutoApproveIncomingQuotations.HasValue) c.AutoApproveIncomingQuotations = req.AutoApproveIncomingQuotations.Value;
         if (req.AutoApproveMinAmount.HasValue) c.AutoApproveMinAmount = req.AutoApproveMinAmount.Value;
         if (req.AutoApproveMaxAmount.HasValue) c.AutoApproveMaxAmount = req.AutoApproveMaxAmount.Value;
@@ -288,6 +291,20 @@ public class CrossTenantWorkflowController : ControllerBase
             company.PartnerDiscoverable = req.PartnerDiscoverable.Value;
         }
         c.UpdatedAt = DateTime.UtcNow;
+        var after = PartnerConsent.ConfigSnapshot(c, req.PartnerDiscoverable ?? discoverableBefore);
+        if (PartnerConsent.ConfigDiff(before, after) is { Count: > 0 } changed)
+            _db.AddChainedAuditLog(new Accounting.Models.Entities.AuditLog
+            {
+                CompanyId = companyId, UserId = JwtHelper.GetUserIdFromClaims(User), Action = AuditAction.Update,
+                EntityType = nameof(Accounting.Models.Entities.WorkflowAutomationConfig), EntityId = c.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(changed.ToDictionary(k => k, k => before[k])),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    @event = "WorkflowAutomationConfigChanged", changed = changed.ToDictionary(k => k, k => after[k]),
+                    ruleCode = PartnerConsent.RuleCode, legalReference = PartnerConsent.LegalReference,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
         await _db.SaveChangesAsync();
         return Ok(new ApiResponse<object>(true, null, "บันทึก workflow automation config เรียบร้อย"));
     }

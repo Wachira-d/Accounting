@@ -215,7 +215,8 @@ const Page = {
            <button class="btn btn-secondary btn-sm" data-act="reject" data-id="${Layout.esc(p.id)}">ปฏิเสธ</button>` : ''}
           ${p.status === 'Accepted' ? `<button class="btn btn-secondary btn-sm" data-act="limit" data-id="${Layout.esc(p.id)}">ตั้งเพดาน</button>
            <button class="btn btn-danger btn-sm" data-act="suspend" data-id="${Layout.esc(p.id)}">ระงับการเชื่อม</button>` : ''}
-          ${p.status === 'Suspended' ? `<span class="pt-muted">เชื่อมใหม่: ส่งคำขอเชื่อมด้านบนอีกครั้ง</span>` : ''}</td></tr>`;
+          ${p.status === 'Suspended' ? `<span class="pt-muted">เชื่อมใหม่: ส่งคำขอเชื่อมด้านบนอีกครั้ง</span>` : ''}
+          ${p.status === 'Accepted' || p.status === 'Suspended' ? `<a class="btn btn-secondary btn-sm" href="/pages/partner-automation.html?partnership=${encodeURIComponent(p.id)}">งานอัตโนมัติกับคู่ค้านี้</a>` : ''}</td></tr>`;
     });
     document.getElementById('ptBody').innerHTML = rows.length ? rows.join('')
       : '<tr><td colspan="4" class="text-center text-gray-400">ยังไม่มีคู่ค้าที่เชื่อม</td></tr>';
