@@ -467,9 +467,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     `Company.Address` ความมั่นใจ **0.70** (สีเหลือง + เหตุผล §86/4) · ห้ามทับที่อยู่ที่พิมพ์ · สาขาผู้ซื้อบนกระดาษเป็นสาขาอื่นของเรา ⇒ ไม่เติม · ข้าม e-Tax XML
   - **ที่อยู่ผู้ขาย (#15)** — ตรงแล้ว ไม่แก้: `VendorAddress` = ที่พิมพ์ (หลักฐาน) · ทะเบียนลง `DbdAddress` แยกช่อง · `Contact.Address` ผ่าน `OcrIssuerBranch.ContactAddress` ·
     ค้นทะเบียน RD แยกสาขาทั้งแถว (#18 · §6.2i)
+  - **ฝ่ายค้านรอบ 260-3 (`erp-review/2026-11-12/review-260-3.md` · คำตัดสิน 260-3-6…8)**: ทางเข้าเป็นเงื่อนไข SQL ตัวเดียว (`WhereSource`) ใช้ทั้งตัวนับ (`CountAsync` ต่อทางเข้า —
+    ไม่โหลดใบทั้งหมด) และ `?source=` ที่กรองก่อน `Take` (ค่าไม่รู้จัก = 400) · รายการ ≤ 500 · หมายเหตุ "แสดงบางส่วน" ทุกทาง · ไม่นับใบขอซื้อ/ใบสั่งซื้อ (`InboxTypes`) ·
+    Last verified `commit b951eadb`
   - **กล่องใบซื้อร่างรอตรวจ (รอบ 260-3 · คำตัดสิน 260-3-5)** — กล่องเดียวที่ `purchases.html` (`GET api/companies/{c}/purchase-inbox` → `Helpers/PurchaseDraftInbox.LoadAsync`):
     ใบฝั่งซื้อ (`DocumentPermissionHelper.PurchaseTypes`) สถานะร่าง ไม่ถูกลบ ชั้นความลับที่ผู้ดูเห็น · ทางเข้าจาก `Classify` ตัวเดียว (คู่ค้า `PartnerSourceLinkId` › LINE
-    `ExternalMetadataJson.sourceChannel=line` › ไฟล์ e-Tax XML `OcrEngine=EtaxXml` › สแกน OCR › สร้างเอง) · ตัวนับกับรายการมาจาก query เดียว (ผลรวม = แถว · ตัดรายการที่ limit
+    metadata สแกนมี `"sourceChannel":"line"`/`"lineUserId"` › ไฟล์ e-Tax XML `OcrEngine=EtaxXml` › สแกน OCR › สร้างเอง) · ตัวนับกับรายการมาจาก query เดียว (ผลรวม = แถว · ตัดรายการที่ limit
     แต่ตัวนับครบ) · ต้องเห็นฝั่งซื้อ (403) · ลิงก์ 3 กล่องเดิมบนหน้าถูกถอด — review-queue = คิวสอนระบบ OCR · partners = หลักฐานภาษีซื้อของใบจากคู่ค้า (ลิงก์งานเฉพาะทางต่อแถว)
   - **คิวรอตรวจ (#31/#32 · ทีม U2)** — `GET ocr/review-queue` คืน `{ items, drafts, summary }`: **ร่างที่สร้างจากสแกน** (`ActiveLearningRanker.DraftsFromScansAsync` ·
     กรองด้วยสิทธิ์มองเห็นชุดเดียวกับลิสต์เอกสาร · กดแล้วไป `documents.html?openDoc=`) + **ทุกใบในงวดที่ยังไม่ปิด** (ไม่ตัดที่ 30 วัน · `Helpers/ClosedPeriodRanges` —
@@ -2092,7 +2095,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 - **รอบ 260-3 (คำตัดสิน 260-3-4) — การ์ด "ความพร้อมรับเงินจากลูกค้า" บน `payment-settings.html`** (`GET payment-settings/readiness` → `Helpers/PaymentChannelReadiness.Build`):
   แถว GATEWAY · PAY-LIVE · PAY-TRANSFER · PAY-LINK · LINE-PAY · SLIP-QUEUE ประกอบจากของเดิม — `AutopilotSettingsHub.Build` (ตัวเดียวกับการ์ดศูนย์รวมของ Autopilot) ·
   `AutopilotReadiness.PayLiveItem` (แถวเดียวกับความพร้อมของรายการประจำ) · `LineChannelAsync` (LINE OA) · `SystemBaseUrl.IsConfiguredAsync` · ผู้ให้บริการเงินจริง =
-  `PaymentChannelReadiness.LiveConfigs` (Live + เปิดใช้ — รายการประจำใช้ตัวนี้แล้ว เดิมไม่ดู `IsActive`) · แถบโหมดและสถานะเส้นโอน/สลิปบนหน้าอ่านจากแถวเหล่านี้
+  `PaymentChannelReadiness.GatewayLiveAsync` (config ตัวแรกของ `Helpers/ActivePaymentConfig.Ordered` — ตัวเลือกเดียวกับลิงก์ชำระ/รายการรับชำระ — อยู่โหมดเงินจริง · ฝ่ายค้าน L4 — รายการประจำใช้ตัวนี้แล้ว เดิมไม่ดู `IsActive`) · แถบโหมดและสถานะเส้นโอน/สลิปบนหน้าอ่านจากแถวเหล่านี้
   (ถอดการเดา live จาก configs และการหา `ManualSlip` ใน JS) · ตรวจไม่ได้ = ⚠️ ไม่ใช่ ✅ · Last verified `commit 86193689`
 
 ### 2.6 POS (Point of Sale)
@@ -3154,7 +3157,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **ปลายทางทดสอบที่รู้จัก** (260-4-3): `GET line-config/test-targets` (`CompanySettingsEdit` + ห้ามคีย์) ⇒ กลุ่มทีม + ปลายทาง LINE ของผู้ติดต่อในบริษัทนี้ที่ผูกกับ OA ของบริษัท (ชื่อ · ไม่มี LINE id) ·
   `POST line-config/test` รับ key `ep:{id}` ⇒ หาใหม่ในบริษัทนี้ (`LineTestTargets.ResolveAsync`) · ปลายทางผู้ติดต่อ ⇒ หน้าถามยืนยันก่อน · พิมพ์ id เองยังได้
 - **A-L6** (260-4-6): `EmailScheduleService.OnDocumentApprovedAsync` เข้าคิวล้ม ⇒ LogError + กระดิ่งเจ้าของต่อเอกสาร (`AutoSendEnqueueFailed` · กันซ้ำต่อใบ) + Autopilot — การอนุมัติไม่ล้ม
-- เทสต์ `LineRound260Tests` · Db `LineRound260DbTests` · ล็อก R2604 (+ เคส R2604a) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit (sha ในคอมมิตตามหลัง)
+- เทสต์ `LineRound260Tests` · Db `LineRound260DbTests` · ล็อก R2604 (+ เคส R2604a) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 2f2579a6
 
 ### 2.12g-260 รอบ 260 "สลิปในแชต LINE ⇒ ผูกเอกสาร" (คำตัดสิน 260-1-1…260-1-6)
 
@@ -4598,7 +4601,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   เพิ่มบรรทัดเงินรอจัดสรร + ตัวแทน `{UnappliedCredit}` ในแม่แบบ — ใบแจ้งยอดไม่มี PDF (ไม่มี renderer คู่) · (3) **กระดิ่ง `ar.credit.unallocated_aging`**
   (`Helpers/CustomerCreditAgedNotice.RunAsync` ใน `OverdueDunningJob` ใต้ JobLock): นิยาม "ค้างเกิน 30 วัน" = `CustomerCreditWorkQueue.AgedAsync` ตัวเดียวกับ issue
   `CustomerCreditAged` ของ Autopilot · หนึ่งรายการต่อบริษัทต่อรอบ (จำนวน · ยอดรวม · เก่าสุด) → ประทับ `Payment.UnappliedAgedNoticeAt` (แจ้งครั้งเดียวต่อการรับชำระ ·
-  ส่งล้ม = ไม่ประทับ) · ค่าตั้งต้น = กระดิ่งเจ้าของ (`NotificationAudiencePolicy.BellOnlyKeys`) · Last verified `commit 86193689`
+  ประทับเฉพาะเมื่อ `INotificationEngine.DispatchWithOutcomeAsync` คืน Delivered/SuppressedByCompany — ล้ม/ไม่มีผู้รับ/ไม่รู้ผล = ไม่ประทับ · นับ/ประทับด้วย `AgedQuery(onlyUnnotified)` ใน SQL ไม่ตัด 500 · ฝ่ายค้าน M1/M2) · ค่าตั้งต้น = กระดิ่งเจ้าของ (`NotificationAudiencePolicy.BellOnlyKeys`) · Last verified `commit 86193689`
 - **ฝ่ายค้านรอบ 259** (`erp-review/2026-11-11/review-259-pack-A.md` · คำตัดสิน 259-1-10…16): **H1** ยกเลิกเอกสารที่ cascade ยกเลิกการรับชำระซึ่งมีขาออกที่ตัดยอด =
   409 `CC-VOID-MOVEMENT` ก่อนกลับ JE และ**ก่อนด่านเอกสารลูก** (ใบเสร็จรายใบเป็นลูก — ผู้ใช้ต้องได้เหตุจริงก่อน) + ตรวจซ้ำในธุรกรรม (`CustomerCreditLedger.VoidBlockForPaymentsAsync` ใน `VoidDocumentAsync`) · **H2** ใบมัดจำอนุมัติแล้วแต่ขั้นหลังอนุมัติล้ม ⇒ **ไม่ปล่อยการจอง**
   (`CustomerCreditMovementRules.DepositIssued`) ผูกใบ + ข้อความ · **M1** หลังจองใช้ `CancellationToken.None` จนจบ · ยกเลิก ToDeposit ที่ยังไม่ผูกใบ: หาใบมัดจำของเงินก้อนนี้
@@ -8906,7 +8909,7 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส�
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D — §2.12g-259d: Autopilot ส่วนที่เหลือ (B-M3/M4/M6 · L1–L4 · L11) + OCR (C-M2/M5 · C-L1/L3/L4) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 21c7bce5)_
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก B ส่งทาง LINE ให้ครบ — §2.12g-259: ทวง 50 ทวิ ทาง LINE (การ์ด + ลิงก์อัปโหลดต่อแถว) · 💬 ส่งทาง LINE เองจากหน้าเอกสาร + ลิงก์ชำระในอีเมลที่ส่งเอง · เรื่องที่ LINE ไม่ส่งติ๊กไม่ได้ + migration · ความพร้อม OA (webhook เข้าจริง · Basic ID · ผลทดสอบ · เหตุจริงเมื่อทดสอบล้ม) · ประกาศผูกกลุ่มตามผลจริง · ตอบรับรูป/ไฟล์ในแชต · ลบ DocumentLineDeliveryService — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7dc53e0c)_
-_Last verified against codebase: 2026-11-12 (รอบ 260-4 LINE ที่เหลือจากแพ็ก B — §2.12g-2604: ชั่วโมงเงียบ (เลื่อน ไม่ทิ้ง · ใบเสร็จ/ส่งเองยกเว้น) · กระดิ่ง LINE ล้มซ้ำ/Token เสีย + Autopilot · ปลายทางทดสอบที่รู้จักจากการผูก · A-L6 เข้าคิวตอนอนุมัติล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (ตามหลัง))_
+_Last verified against codebase: 2026-11-12 (รอบ 260-4 LINE ที่เหลือจากแพ็ก B — §2.12g-2604: ชั่วโมงเงียบ (เลื่อน ไม่ทิ้ง · ใบเสร็จ/ส่งเองยกเว้น) · กระดิ่ง LINE ล้มซ้ำ/Token เสีย + Autopilot · ปลายทางทดสอบที่รู้จักจากการผูก · A-L6 เข้าคิวตอนอนุมัติล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2f2579a6 · แก้ CI c40109a8 · d36c96d3)_
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D ฝ่ายค้าน — §2.12g-259d: H1/H2 · M1–M4 · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d493044a)_
 
@@ -8914,4 +8917,5 @@ _Last verified against codebase: 2026-11-12 (รอบ 260-2 — §2.12g-259c: �
 _Last verified against codebase: 2026-11-12 (รอบ 260-3 — §3.4b เงินรอจัดสรรบนพอร์ทัล/อีเมลใบแจ้งยอด + กระดิ่งค้างนาน · §2.6b การ์ดความพร้อมรับเงิน · §OCR กล่องใบซื้อร่างกล่องเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 86193689)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-5 ทีมตัดสินใจ — §3.4b ใบกำกับ ณ วันรับเงินที่รับก่อนใบแจ้งหนี้ · §2.12g-258 ชุด 5 คืนค่าสแกน API v1 ที่ล้ม · 50 ทวิ ไม่หักโควตา — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ccbc0de2)_
 
+_Last verified against codebase: 2026-11-12 (รอบ 260-3 ฝ่ายค้าน — M1 ผลการส่งจริงก่อนประทับ · M2 นับ/กรองใน SQL · M3 กรองทางเข้าก่อนตัด · L1–L5 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b951eadb)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-5 ชุดแก้ฝ่ายค้าน — §3.4b งวดรายงานของใบกำกับ ณ วันรับเงิน = OutputVatDueAt (H1) · หมายเหตุตามงวดจริง (M1) · §2.12g-258 ชุด 5 คืนค่าสแกน M2–M5/L3/L4 · คิวใบลดหนี้แอดมิน · เพดานกล่องรับ 50 ทวิ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7e69bdd1)_

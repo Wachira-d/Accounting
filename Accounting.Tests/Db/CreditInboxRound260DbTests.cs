@@ -48,12 +48,24 @@ public class CreditInboxRound260DbTests
 
     private sealed class RecordingEngine : INotificationEngine
     {
+        private readonly NotificationDispatchOutcome _outcome;
+        private readonly bool _throw;
+        public RecordingEngine(NotificationDispatchOutcome outcome = NotificationDispatchOutcome.Delivered, bool @throw = false) { _outcome = outcome; _throw = @throw; }
         public List<(Guid CompanyId, string Key, NotificationContext Ctx)> Calls { get; } = new();
-        public Task DispatchAsync(Guid companyId, string eventKey, NotificationContext context)
+        public Task DispatchAsync(Guid companyId, string eventKey, NotificationContext context) => DispatchWithOutcomeAsync(companyId, eventKey, context);
+        public Task<NotificationDispatchOutcome> DispatchWithOutcomeAsync(Guid companyId, string eventKey, NotificationContext context)
         {
             Calls.Add((companyId, eventKey, context));
-            return Task.CompletedTask;
+            if (_throw) throw new InvalidOperationException("ช่องแจ้งเตือนล้ม (เทสต์)");
+            return Task.FromResult(_outcome);
         }
+    }
+
+    /// <summary>engine เดิมที่ไม่ได้เขียน DispatchWithOutcomeAsync (ค่าตั้งต้นของ interface = Unknown)</summary>
+    private sealed class LegacyEngine : INotificationEngine
+    {
+        public int Calls;
+        public Task DispatchAsync(Guid companyId, string eventKey, NotificationContext context) { Calls++; return Task.CompletedTask; }
     }
 
     private static string TaxId() => "09" + string.Concat(Enumerable.Range(0, 11).Select(_ => (char)('0' + Random.Shared.Next(10))));
@@ -142,9 +154,17 @@ public class CreditInboxRound260DbTests
         Assert.Equal(300m, (await svc.GetMyStatementAsync(shop.Id, b.Id, today.AddDays(-1), today.AddDays(1))).UnappliedCredit);
 
         // หน้าสิทธิ์ของพนักงาน: ยอด + "ลูกค้าเห็น" (ด่านเดียวกับเส้นใบแจ้งยอด)
-        var row = Assert.Single(await svc.GetAccessesAsync(shop.Id), x => x.Id == access.Id);
+        var row = Assert.Single(await svc.GetAccessesAsync(shop.Id, includeCredit: true), x => x.Id == access.Id);
         Assert.Equal(500m, row.UnappliedCredit);
         Assert.True(row.UnappliedCreditShownToCustomer);
+        // ฝ่ายค้าน L1: ผู้เรียกที่ไม่เห็นฝั่งขาย ⇒ null (ไม่ได้คำนวณ · ไม่แต่ง 0)
+        var hidden = Assert.Single(await svc.GetAccessesAsync(shop.Id), x => x.Id == access.Id);
+        Assert.Null(hidden.UnappliedCredit);
+        Assert.Null(hidden.UnappliedCreditShownToCustomer);
+        // ฝ่ายค้าน L2: คำตอบของแก้สิทธิ์ echo ค่าจริง
+        var upd = await svc.UpdateAccessAsync(shop.Id, access.Id, new UpdatePortalAccessRequest(null, null, null, null, null), Guid.NewGuid(), includeCredit: true);
+        Assert.Equal(500m, upd.UnappliedCredit);
+        Assert.True(upd.UnappliedCreditShownToCustomer);
 
         // เส้นพอร์ทัลจริง: ธงเปิด = 200 พร้อมยอด
         var ok = await (await ControllerAsync(svc, session.AccessToken, shop.Id)).GetStatement(shop.Id, today.AddDays(-1), today.AddDays(1));
@@ -157,7 +177,7 @@ public class CreditInboxRound260DbTests
         var svc2 = new PortalService(c2, Config());
         var denied = await (await ControllerAsync(svc2, session.AccessToken, shop.Id)).GetStatement(shop.Id, today.AddDays(-1), today.AddDays(1));
         Assert.Equal(403, (denied.Result as ObjectResult)?.StatusCode);
-        var row2 = Assert.Single(await svc2.GetAccessesAsync(shop.Id), x => x.Id == access.Id);
+        var row2 = Assert.Single(await svc2.GetAccessesAsync(shop.Id, includeCredit: true), x => x.Id == access.Id);
         Assert.Equal(500m, row2.UnappliedCredit);
         Assert.False(row2.UnappliedCreditShownToCustomer);
     }
@@ -183,8 +203,22 @@ public class CreditInboxRound260DbTests
         var issues = await CustomerCreditWorkQueue.AutopilotIssuesAsync(db, shop.Id, now);
         Assert.Equal(2, issues.Count(i => i.Kind == "CustomerCreditAged"));
 
+        // ฝ่ายค้าน M1 ทิศตรงข้าม: ส่งล้ม/ไม่มีผู้รับ/engine ไม่รายงานผล/engine โยน ⇒ ไม่ประทับ
+        foreach (var bad in new[] { NotificationDispatchOutcome.Failed, NotificationDispatchOutcome.NoRecipient })
+        {
+            var e = new RecordingEngine(bad);
+            await CustomerCreditAgedNotice.RunAsync(db, e, DateTime.UtcNow, null);
+            Assert.Single(e.Calls, c => c.CompanyId == shop.Id);
+        }
+        var legacy = new LegacyEngine();
+        await CustomerCreditAgedNotice.RunAsync(db, legacy, DateTime.UtcNow, null);
+        Assert.True(legacy.Calls >= 1);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => CustomerCreditAgedNotice.RunAsync(db, new RecordingEngine(@throw: true), DateTime.UtcNow, null));
+        using (var c0 = DbTestDatabase.TryCreateContext()!)
+            Assert.Null((await c0.Payments.AsNoTracking().SingleAsync(p => p.Id == aged.Id)).UnappliedAgedNoticeAt);
+
         var engine = new RecordingEngine();
-        await CustomerCreditAgedNotice.RunAsync(db, engine, now, null);
+        await CustomerCreditAgedNotice.RunAsync(db, engine, DateTime.UtcNow, null);
         var mine = engine.Calls.Where(c => c.CompanyId == shop.Id).ToList();
         var call = Assert.Single(mine);
         Assert.Equal(NotificationEvents.CustomerCreditAged, call.Key);
@@ -198,7 +232,7 @@ public class CreditInboxRound260DbTests
 
         // รอบถัดไป: ไม่แจ้งซ้ำ
         var engine2 = new RecordingEngine();
-        await CustomerCreditAgedNotice.RunAsync(c2, engine2, now, null);
+        await CustomerCreditAgedNotice.RunAsync(c2, engine2, DateTime.UtcNow, null);
         Assert.DoesNotContain(engine2.Calls, c => c.CompanyId == shop.Id);
     }
 
@@ -264,5 +298,61 @@ public class CreditInboxRound260DbTests
         Assert.Equal(5, r3.Total);
         Assert.Equal(2, r3.Items.Count);
         Assert.True(r3.Truncated);
+        // ฝ่ายค้าน M3: กรองทางเข้าก่อนตัดจำนวน — ทุกทางเข้า: แถวที่ได้ = ตัวนับ และป้ายตรงทางเข้า (นิยามเดียวกัน)
+        foreach (var src in Enum.GetValues<PurchaseDraftSource>())
+        {
+            var f = await PurchaseDraftInbox.LoadAsync(db, shop.Id, new HashSet<SensitivityKind>(), src, limit: 1);
+            Assert.Equal(src.ToString(), f.Source);
+            var only = Assert.Single(f.Items);
+            Assert.Equal(src.ToString(), only.Source);
+            Assert.False(f.Truncated);
+        }
+        // 260-3-8: ใบขอซื้อ/ใบสั่งซื้อร่าง ไม่อยู่ในกล่อง
+        db.Documents.AddRange(Doc(shop.Id, a.Id, DocumentType.PurchaseOrder, DocumentStatus.Draft), Doc(shop.Id, a.Id, DocumentType.PurchaseRequisition, DocumentStatus.Draft));
+        await db.SaveChangesAsync();
+        Assert.Equal(5, (await PurchaseDraftInbox.LoadAsync(db, shop.Id, new HashSet<SensitivityKind>())).Total);
+    }
+
+    [Fact]
+    public async Task R260_6_M2_แจ้งแล้ว500แถว_แถวใหม่1แถวยังถูกแจ้ง_นับครบ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (shop, a, _) = await CompanyAsync(db);
+        var inv = Doc(shop.Id, a.Id, DocumentType.Invoice, DocumentStatus.Approved);
+        db.Documents.Add(inv);
+        await db.SaveChangesAsync();
+        var today = ThaiDate.CalendarDateUtc(DateTime.UtcNow).Date;
+        // 500 แถวที่แจ้งแล้ว เก่ากว่าแถวใหม่ (อยู่ก่อนใน OrderBy PaymentDate ของ AgedAsync ที่ตัด 500)
+        db.Payments.AddRange(Enumerable.Range(0, CustomerCreditWorkQueue.Cap).Select(i =>
+            Credit(shop.Id, inv.Id, a.Id, 1m, today.AddDays(-200 - (i % 50)), noticeAt: DateTime.UtcNow.AddDays(-10))));
+        var fresh = Credit(shop.Id, inv.Id, a.Id, 777m, today.AddDays(-40));
+        db.Payments.Add(fresh);
+        await db.SaveChangesAsync();
+
+        var engine = new RecordingEngine();
+        await CustomerCreditAgedNotice.RunAsync(db, engine, DateTime.UtcNow, null);
+        var call = Assert.Single(engine.Calls, c => c.CompanyId == shop.Id);
+        Assert.Contains("1 รายการ", call.Ctx.Title);
+        Assert.Contains("777.00", call.Ctx.Title);
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        Assert.NotNull((await c2.Payments.AsNoTracking().SingleAsync(p => p.Id == fresh.Id)).UnappliedAgedNoticeAt);
+    }
+
+    [Fact]
+    public async Task R260_7_L4_โหมดเงินจริง_ตามconfigที่ทางรับเงินเลือก_ไม่ใช่มีตัวไหนLive()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (shop, _, _) = await CompanyAsync(db);
+        Assert.False(await PaymentChannelReadiness.GatewayLiveAsync(db, shop.Id));
+        db.PaymentProviderConfigs.AddRange(
+            new PaymentProviderConfig { CompanyId = shop.Id, ProviderCode = "omise", Mode = PaymentProviderMode.Test, SortOrder = 0 },
+            new PaymentProviderConfig { CompanyId = shop.Id, ProviderCode = "omise", Mode = PaymentProviderMode.Live, SortOrder = 1 });
+        await db.SaveChangesAsync();
+        Assert.False(await PaymentChannelReadiness.GatewayLiveAsync(db, shop.Id));   // ตัวแรก (ที่ลิงก์ชำระใช้) = ทดสอบ
+        await db.PaymentProviderConfigs.Where(c => c.CompanyId == shop.Id && c.Mode == PaymentProviderMode.Test)
+            .ExecuteUpdateAsync(x => x.SetProperty(c => c.IsActive, false));
+        Assert.True(await PaymentChannelReadiness.GatewayLiveAsync(db, shop.Id));    // ตัวที่เหลือ = เงินจริง
     }
 }
