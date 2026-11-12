@@ -3127,9 +3127,22 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   `DocumentPayLinkService.EnsureLinkAsync(allowReissueRevoked)`: ลิงก์ที่ถูกเพิกถอน ⇒ ปุ่มพนักงาน/อีเมลตามตารางออกใหม่ได้ (audit `pay-link-reissued`) · หน้าต่างส่งเอง/พอร์ทัล ⇒
   `PayLinkRevokedException` · ลิงก์ที่ใช้อยู่ไม่ถูกเขียนทับช่องทาง · ลิงก์ทวง 50 ทวิ ตรวจเพิกถอน/หมดอายุตอนส่ง + เพิกถอนรวมเมื่อได้ใบครบ (`RevokeSettledReminderLinksAsync`) ·
   Last verified commit fa93803d
-- ยังไม่ทำ: เก็บสลิปจากแชตเป็นรายการรอตรวจ (ผูก PaymentIntent) + แจ้งทีม · ชั่วโมงเงียบ · กระดิ่งเมื่อคิว LINE ล้มซ้ำ · ตัวเลือกกลุ่ม/ผู้ใช้ที่บอทรู้จักนอกจากกลุ่มทีม ·
-  การ์ดความพร้อมบนหน้า payment-settings · L6 (`OnDocumentApprovedAsync` กลืนข้อผิดพลาด) ·
+- ยังไม่ทำ: เก็บสลิปจากแชตเป็นรายการรอตรวจ (ผูก PaymentIntent) + แจ้งทีม · การ์ดความพร้อมบนหน้า payment-settings ·
+  ~~ชั่วโมงเงียบ · กระดิ่งเมื่อคิว LINE ล้มซ้ำ · ตัวเลือกกลุ่ม/ผู้ใช้ที่บอทรู้จัก · L6~~ (ทำแล้วรอบ 260-4 — §2.12g-2604) ·
   เทสต์ `LineRound259Tests` · Db `LineRound259DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 7dc53e0c
+
+### 2.12g-2604 รอบ 260-4 LINE ที่เหลือจากแพ็ก B (team-A L6/L8 · review-259-pack-B · คำตัดสิน 260-4-*)
+
+- **ชั่วโมงเงียบ** (260-4-1/2): ค่าตั้งบริษัท `CompanySettings.LineQuietHoursEnabled/LineQuietStartHour/LineQuietEndHour` (ตั้งค่า → LINE · เวลาไทย · ค่าตั้งต้น**ปิด** ช่วงที่เสนอ 21:00–08:00 ·
+  ช่วงผิด ⇒ PUT 400) · ผู้อ่านตัวเดียว `ContactLineQueueService.ProcessPendingAsync` → `DeferForQuietHoursAsync` (ตัวตัดสิน `Helpers/LineQuietHours.DeferUntilUtc`): แถวที่จองได้ในช่วงเงียบ ⇒
+  กลับเป็น "รอส่ง" · `ScheduledFor` = สิ้นช่วงเงียบ · `RuleCode = LINE-QUIET-HOURS` + หมายเหตุบนแถว · ไม่นับความพยายาม (**เลื่อน ไม่ทิ้ง**) · ส่งแล้วหมายเหตุถูกล้าง ·
+  เลื่อน: อนุมัติ · ใกล้/เกินกำหนด · รายการประจำ · ทวง 50 ทวิ · **ส่งทันที**: ใบเสร็จหลังลูกค้าชำระ (`ReceiptIssued`) · ส่งเองจากหน้าเอกสาร (`ManualSend`) · คำตอบในแชตไม่ผ่านคิวนี้
+- **กระดิ่ง LINE ล้มซ้ำ** (260-4-4): การ์ดที่ LINE ปฏิเสธถาวร (`PushAsync`) ⇒ `AlertRepeatedFailureAsync` (scope แยก): ล้ม ≥ 5 ใน 1 ชม. หรือ Token/ช่องเสีย ⇒ แจ้งเจ้าของที่ยังใช้งาน
+  ครั้งเดียวต่อ 24 ชม. (`Notifications.EntityType = LineQueueRepeatedFailure` · กันซ้ำใต้ `pg_advisory_xact_lock` ต่อบริษัท) · โควตาเดือนหมด/OA กลางไม่นับ · Autopilot แสดง (`LineRepeatedFailure`)
+- **ปลายทางทดสอบที่รู้จัก** (260-4-3): `GET line-config/test-targets` (`CompanySettingsEdit` + ห้ามคีย์) ⇒ กลุ่มทีม + ปลายทาง LINE ของผู้ติดต่อในบริษัทนี้ที่ผูกกับ OA ของบริษัท (ชื่อ · ไม่มี LINE id) ·
+  `POST line-config/test` รับ key `ep:{id}` ⇒ หาใหม่ในบริษัทนี้ (`LineTestTargets.ResolveAsync`) · ปลายทางผู้ติดต่อ ⇒ หน้าถามยืนยันก่อน · พิมพ์ id เองยังได้
+- **A-L6** (260-4-6): `EmailScheduleService.OnDocumentApprovedAsync` เข้าคิวล้ม ⇒ LogError + กระดิ่งเจ้าของต่อเอกสาร (`AutoSendEnqueueFailed` · กันซ้ำต่อใบ) + Autopilot — การอนุมัติไม่ล้ม
+- เทสต์ `LineRound260Tests` · Db `LineRound260DbTests` · ล็อก R2604 (+ เคส R2604a) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit (sha ในคอมมิตตามหลัง)
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
 
@@ -3402,7 +3415,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     แพ็ก `notify.topup.line` ฿290/1,000 · `notify.topup.email` ฿190/5,000 · อีเมลเอกสารผ่าน SMTP ของ NextAcc ตัดโควตารายเดือน (ด้านบน · ACCOUNT_STRUCTURE §5)
   - **เฝ้าต้นทุน OA กลาง — รอบ 254 L4 (N8)**: `NextAccOaQuotaWatch` รายชั่วโมง (push จาก LINE + ตัวนับ reply ต่อเดือน) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% · ไม่ตัดโควตาผู้เช่า
   - **ยังไม่ทำ (บอกตรง ๆ)**: กลุ่ม/ส่งผ่าน OA กลางของบริษัท**อื่น** + สวิตช์ `CentralOaGroupDeliveryEnabled` (ทำพร้อมกัน — DECISIONS 254-WP11-11 · บริษัทผู้ให้บริการเปิดแล้วตาม 256-2) ·
-    ชั่วโมงเงียบ · LINE ของใบแจ้งยอด/ลิงก์เซ็น (L6 — ลิงก์ดู PDF · ใบเสร็จหลังรับชำระ ทำแล้วรอบ 258-3 · 50 ทวิ ทำแล้วรอบ 259 §2.12g-259) · กระดิ่งเมื่อล้มซ้ำ ·
+    LINE ของใบแจ้งยอด/ลิงก์เซ็น (L6 — ลิงก์ดู PDF · ใบเสร็จหลังรับชำระ ทำแล้วรอบ 258-3 · 50 ทวิ ทำแล้วรอบ 259 §2.12g-259) · ~~ชั่วโมงเงียบ · กระดิ่งเมื่อล้มซ้ำ~~ (ทำแล้วรอบ 260-4 §2.12g-2604) ·
     เทสต์ `LineDeliveryRound254Tests` · Db `LineQueueRound254DbTests` · ล็อก R254 (+ เคส R254a–j) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit cee44a3c
   - **ไม่อยู่ในขอบเขต (backlog WP-11/L6 · จดตามฝ่ายค้าน)**: หน้าต่าง "ส่งอีเมล" ที่ผู้ใช้กดเอง (`DocumentEmailService` เติมผู้รับตั้งต้นจาก `Contact.Email` — ผู้ใช้แก้ได้ก่อนส่ง) ·
     แจ้งเตือนจองคิว/บริการ (`BookingNotifier` — ลูกค้าเว็บ ไม่ใช่ปลายทางผู้ติดต่อ) · พอร์ทัล/ใบเสนอราคาสาธารณะ (ผู้รับเปิดเอง)
@@ -8830,5 +8843,6 @@ _Last verified against codebase: 2026-11-11 (รอบ 258 แพ็ก เส�
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D — §2.12g-259d: Autopilot ส่วนที่เหลือ (B-M3/M4/M6 · L1–L4 · L11) + OCR (C-M2/M5 · C-L1/L3/L4) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 21c7bce5)_
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก B ส่งทาง LINE ให้ครบ — §2.12g-259: ทวง 50 ทวิ ทาง LINE (การ์ด + ลิงก์อัปโหลดต่อแถว) · 💬 ส่งทาง LINE เองจากหน้าเอกสาร + ลิงก์ชำระในอีเมลที่ส่งเอง · เรื่องที่ LINE ไม่ส่งติ๊กไม่ได้ + migration · ความพร้อม OA (webhook เข้าจริง · Basic ID · ผลทดสอบ · เหตุจริงเมื่อทดสอบล้ม) · ประกาศผูกกลุ่มตามผลจริง · ตอบรับรูป/ไฟล์ในแชต · ลบ DocumentLineDeliveryService — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7dc53e0c)_
+_Last verified against codebase: 2026-11-12 (รอบ 260-4 LINE ที่เหลือจากแพ็ก B — §2.12g-2604: ชั่วโมงเงียบ (เลื่อน ไม่ทิ้ง · ใบเสร็จ/ส่งเองยกเว้น) · กระดิ่ง LINE ล้มซ้ำ/Token เสีย + Autopilot · ปลายทางทดสอบที่รู้จักจากการผูก · A-L6 เข้าคิวตอนอนุมัติล้มดัง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (ตามหลัง))_
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D ฝ่ายค้าน — §2.12g-259d: H1/H2 · M1–M4 · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d493044a)_

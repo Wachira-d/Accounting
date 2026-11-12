@@ -74,6 +74,26 @@ public static class LineOaHealth
     /// <summary>key ของปลายทางทดสอบ "กลุ่ม LINE ของทีมที่ตั้งไว้" (<c>CompanySettings.LineDefaultGroupId</c>)</summary>
     public const string TeamGroupTargetKey = "team-group";
 
+    /// <summary>รอบ 260-4 (260-4-3): key ของปลายทาง LINE ของผู้ติดต่อ (<c>ContactNotifyEndpoint.Id</c>) — หน้าเว็บไม่เห็น LINE id</summary>
+    public const string EndpointTargetPrefix = "ep:";
+
+    public static string EndpointTargetKey(Guid endpointId) => EndpointTargetPrefix + endpointId.ToString("N");
+
+    /// <summary>key ปลายทางของผู้ติดต่อ ⇒ id · อย่างอื่น ⇒ null (ไปเส้น <see cref="TestTarget"/>)</summary>
+    public static Guid? ParseEndpointKey(string? targetKey)
+        => targetKey != null && targetKey.StartsWith(EndpointTargetPrefix, StringComparison.Ordinal)
+           && Guid.TryParseExact(targetKey[EndpointTargetPrefix.Length..], "N", out var id) ? id : null;
+
+    /// <summary>ป้ายของปลายทางผู้ติดต่อในรายการทดสอบ</summary>
+    public static string EndpointTargetLabel(string? contactName, string kind, string? groupName, string? label)
+    {
+        var who = string.IsNullOrWhiteSpace(contactName) ? "ผู้ติดต่อ" : contactName!.Trim();
+        var what = kind == NotifyEndpointKind.LineGroup
+            ? "กลุ่ม LINE" + (string.IsNullOrWhiteSpace(groupName) ? "" : " \"" + groupName!.Trim() + "\"")
+            : "LINE ผู้ใช้" + (string.IsNullOrWhiteSpace(label) ? "" : " (" + label!.Trim() + ")");
+        return LineMessageLimits.Truncate(who + " · " + what, 160);
+    }
+
     /// <summary>ปลายทางของคำขอทดสอบ — key ที่รู้จัก ⇒ id จากค่าตั้ง · ไม่มี key ⇒ id ที่พิมพ์ · key ไม่รู้จัก/ค่าตั้งว่าง ⇒ (null, เหตุ)</summary>
     public static (string? To, string? Problem) TestTarget(string? targetKey, string? typedId, string? teamGroupId)
     {

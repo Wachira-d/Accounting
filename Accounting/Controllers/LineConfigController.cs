@@ -3,6 +3,7 @@ using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Line;
 using Accounting.Models.Entities;
+using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -87,10 +88,18 @@ public class LineConfigController : ControllerBase
                     central?.AccessToken, central?.ChannelSecret) is string oaRefusal)
                 return BadRequest(new ApiResponse<LineConfigResponse>(false, null, oaRefusal));
         }
+        // รอบ 260-4: ชั่วโมงเงียบ — ตรวจก่อนแก้อะไร (ช่วงผิด = ปฏิเสธทั้งคำขอ ไม่เก็บครึ่งเดียว)
+        var quietStart = req.QuietStartHour ?? s.LineQuietStartHour;
+        var quietEnd = req.QuietEndHour ?? s.LineQuietEndHour;
+        if ((req.QuietHoursEnabled ?? s.LineQuietHoursEnabled) && LineQuietHours.Problem(quietStart, quietEnd) is string quietProblem)
+            return BadRequest(new ApiResponse<LineConfigResponse>(false, null, quietProblem));
         var pairProblem = CustomerRelinkInvitePlan.TokenWithoutSecretProblem(tokenChanged, secretChanged, _secrets.IsUsable(s.LineChannelSecret),
             fetchedBot, s.LineOaDestination);
         if (pairProblem != null) return BadRequest(new ApiResponse<LineConfigResponse>(false, null, pairProblem));
         s.LineEnabled = req.Enabled;
+        if (req.QuietHoursEnabled is bool quietOn) s.LineQuietHoursEnabled = quietOn;
+        if (req.QuietStartHour is int qs) s.LineQuietStartHour = qs;
+        if (req.QuietEndHour is int qe) s.LineQuietEndHour = qe;
         // รอบ 257 C-M1: null = คงเดิม · "" = ล้าง · ค่า = ตั้งใหม่ (เดิม "" ถูกถือว่าคงเดิม ⇒ ล้างไม่ได้เงียบ ๆ)
         var tokenCleared = LineOwnOaGuard.Classify(req.ChannelAccessToken) == LineOwnOaGuard.InputKind.Clear;
         var secretCleared = LineOwnOaGuard.Classify(req.ChannelSecret) == LineOwnOaGuard.InputKind.Clear;
@@ -152,8 +161,15 @@ public class LineConfigController : ControllerBase
         Guid companyId, [FromBody] TestLineConfigRequest req)
     {
         // รอบ 259 (A-M6): เลือกปลายทางที่ระบบรู้จัก (ไม่ต้องพิมพ์ C…) หรือพิมพ์เอง — ตัวตัดสินเดียว LineOaHealth.TestTarget
-        var current = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId).Select(x => x.LineDefaultGroupId).FirstOrDefaultAsync();
-        var (to, targetProblem) = LineOaHealth.TestTarget(req?.TargetKey, req?.ToLineId, current);
+        // รอบ 260-4 (260-4-3): ปลายทางของผู้ติดต่อที่ผูกกับ OA ของบริษัท (key "ep:…") ⇒ หาใหม่ในบริษัทนี้เท่านั้น (ตัวเดียวกับรายการ — LineTestTargets.ResolveAsync)
+        string? to, targetProblem;
+        if (LineOaHealth.ParseEndpointKey(req?.TargetKey) is Guid endpointId)
+            (to, targetProblem) = await LineTestTargets.ResolveAsync(_db, _secrets, companyId, endpointId, HttpContext?.RequestAborted ?? default);
+        else
+        {
+            var current = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId).Select(x => x.LineDefaultGroupId).FirstOrDefaultAsync();
+            (to, targetProblem) = LineOaHealth.TestTarget(req?.TargetKey, req?.ToLineId, current);
+        }
         if (to == null) return BadRequest(new ApiResponse<LineTestResult>(false, new LineTestResult(false, targetProblem!), targetProblem));
         var (ok, msg) = await _line.TestConfigAsync(companyId, to);
         if (ok)
@@ -180,11 +196,17 @@ public class LineConfigController : ControllerBase
         return Ok(new ApiResponse<LineTestResult>(ok, new LineTestResult(ok, msg), msg));
     }
 
-    /// <summary>รอบ 259 (A-M6): ปลายทางทดสอบที่ระบบรู้จัก — กลุ่มของทีมที่ตั้งไว้ (ไม่ส่ง id ให้หน้าเว็บ · key เท่านั้น) · ผู้ติดต่อไม่อยู่ในรายการ (ห้ามส่งข้อความทดสอบถึงลูกค้า)</summary>
-    private static IReadOnlyList<LineTestTarget> TestTargets(CompanySettings s)
-        => string.IsNullOrWhiteSpace(s.LineDefaultGroupId)
-            ? Array.Empty<LineTestTarget>()
-            : new[] { new LineTestTarget(LineOaHealth.TeamGroupTargetKey, "กลุ่ม LINE ของทีม (ที่ตั้งไว้ด้านบน)") };
+    /// <summary>รอบ 260-4 (team-A · คำตัดสิน 260-4-3): ปลายทางทดสอบที่ระบบรู้จัก — กลุ่มของทีมที่ตั้งไว้ + ปลายทาง LINE ของผู้ติดต่อที่ผูกกับ OA ของบริษัท
+    /// (ชื่อผู้ติดต่อ/กลุ่ม · ไม่ส่ง LINE id ให้หน้าเว็บ — key เท่านั้น) · ด่านเดียวกับหน้าตั้งค่า LINE (แก้ค่าตั้งบริษัท + ห้ามคีย์) — GET line-config ไม่มีด่านสิทธิ์
+    /// ⇒ รายชื่อผู้ติดต่อไม่อยู่ใน GET นั้น</summary>
+    [HttpGet("test-targets")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ดูปลายทางทดสอบ LINE")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<LineTestTarget>>>> TestTargets(Guid companyId)
+    {
+        var targets = await LineTestTargets.ListAsync(_db, companyId, HttpContext?.RequestAborted ?? default);
+        return Ok(new ApiResponse<IReadOnlyList<LineTestTarget>>(true, targets));
+    }
 
     private async Task<CompanySettings> GetOrCreateSettings(Guid companyId)
     {
@@ -218,7 +240,7 @@ public class LineConfigController : ControllerBase
             Health = LineOaHealth.Rows(s.LineEnabled, _secrets.IsUsable(s.LineChannelAccessToken), _secrets.IsUsable(s.LineChannelSecret),
                 s.LineLastWebhookAt, !string.IsNullOrWhiteSpace(s.LineWebhookDestinationMismatch), s.LineOaBasicId,
                 s.LineLastTestedAt, s.LineLastTestStatus, isPlatform),
-            TestTargets = TestTargets(s),
+            QuietHoursNote = LineQuietHours.Sentence(s.LineQuietHoursEnabled, s.LineQuietStartHour, s.LineQuietEndHour),
         };
     }
 
@@ -230,5 +252,8 @@ public class LineConfigController : ControllerBase
         Configured: s.LineConfigured,
         LastTestedAt: s.LineLastTestedAt,
         LastTestStatus: s.LineLastTestStatus,
-        OaBasicId: s.LineOaBasicId);
+        OaBasicId: s.LineOaBasicId,
+        QuietHoursEnabled: s.LineQuietHoursEnabled,
+        QuietStartHour: s.LineQuietStartHour,
+        QuietEndHour: s.LineQuietEndHour);
 }

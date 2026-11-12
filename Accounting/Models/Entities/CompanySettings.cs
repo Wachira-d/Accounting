@@ -259,6 +259,11 @@ public class CompanySettings : TenantEntity
     public DateTime? LineLastWebhookAt { get; set; }
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }
+    /// <summary>รอบ 260-4 (team-A L8 · คำตัดสิน 260-4-1): ชั่วโมงเงียบของการ์ด LINE ถึงลูกค้า (เวลาไทย) — ตัวตัดสิน <c>Helpers/LineQuietHours</c> ·
+    /// ผู้อ่าน <c>ContactLineQueueService.ProcessPendingAsync</c> (เลื่อน ไม่ทิ้ง) · ค่าตั้งต้นปิด (ช่วงที่เสนอ 21:00–08:00)</summary>
+    public bool LineQuietHoursEnabled { get; set; } = Accounting.Helpers.LineQuietHours.DefaultEnabled;
+    public int LineQuietStartHour { get; set; } = Accounting.Helpers.LineQuietHours.DefaultStartHour;
+    public int LineQuietEndHour { get; set; } = Accounting.Helpers.LineQuietHours.DefaultEndHour;
 
     // ─── Cross-tenant knowledge sharing (OCR learning) ───
     // When true (default), this company's per-tenant training data

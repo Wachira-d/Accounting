@@ -254,6 +254,20 @@ public class AutopilotService : IAutopilotService
             $"{q.Number ?? "เอกสาร"}: ส่งทาง {NotifyEndpointKind.Label(q.EndpointKind)} ไม่สำเร็จ",
             q.ErrorMessage ?? "LINE ไม่รับข้อความ", q.CreatedAt, q.EntityId, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html", null, "เปิดเอกสาร", DocHref(q.EntityId))));
 
+        // รอบ 260-4 (team-A L6/L8 · คำตัดสิน 260-4-4/260-4-6): กระดิ่ง "LINE ล้มซ้ำ/ช่องเสีย" และ "อนุมัติแล้วเข้าคิวส่งอัตโนมัติไม่สำเร็จ" — แถวแจ้งเตือนเดียวกับที่ส่งถึงเจ้าของ
+        // (ทุกเจ้าของได้แถวของตัวเอง ⇒ รวมเป็นเรื่องเดียวต่อชนิด/เอกสาร · ล่าสุดก่อน)
+        var alertTypes = new[] { LineFailureAlert.EntityType, LineFailureAlert.ApproveEnqueueEntityType };
+        var alerts = await _db.Notifications.AsNoTracking()
+            .Where(n => n.CompanyId == companyId && n.EntityType != null && alertTypes.Contains(n.EntityType) && n.CreatedAt >= window)
+            .OrderByDescending(n => n.CreatedAt).Take(200)
+            .Select(n => new { n.EntityType, n.EntityId, n.Title, n.Message, n.CreatedAt }).ToListAsync(ct);
+        foreach (var a in alerts.GroupBy(n => (n.EntityType, n.EntityId)).Select(g => g.First()))
+            list.Add(a.EntityType == LineFailureAlert.EntityType
+                ? new AutopilotIssueDto("LineRepeatedFailure", a.Title, a.Message, a.CreatedAt, null, "ดูคิว LINE (ส่งใหม่ได้)", "/pages/email-schedule.html",
+                    null, "ตั้งค่า LINE", "/pages/settings.html?tab=line")
+                : new AutopilotIssueDto("AutoSendEnqueueFailed", a.Title, a.Message, a.CreatedAt, a.EntityId, "เปิดเอกสารแล้วส่งเอง (📧/💬)",
+                    a.EntityId is Guid d ? DocHref(d) : null, null, null, null));
+
         // รอบ 259 (B-M6): e-Tax โหมดส่งตรง — นำส่งกรมล้ม/กรมปฏิเสธ · ลงนามแล้วแต่ใบเดือนก่อนยังไม่ส่ง (กำหนดวันที่ 15) — ตัวตัดสิน Helpers/EtaxRdSubmission
         var etaxDirect = await _db.CompanySettings.AsNoTracking()
             .AnyAsync(s => s.CompanyId == companyId && s.EtaxEnabled && s.EtaxMode == EtaxMode.Direct, ct);

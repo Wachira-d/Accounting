@@ -18505,6 +18505,55 @@ REVIEWER_CASES += [
      "Task.FromResult<string?>(null)", True),
 ]
 
+# ── รอบ 260-4 LINE ที่เหลือจากแพ็ก B (team-A L6/L8 · คำตัดสิน 260-4-1…260-4-6): ชั่วโมงเงียบ · กระดิ่งล้มซ้ำ · ปลายทางทดสอบที่รู้จัก ──
+_R2604_WHY = "รอบ 260-4 (LINE ชั่วโมงเงียบ/กระดิ่ง/ปลายทางทดสอบ): "
+_R2604_Q = "Services/Implementations/ContactLineQueueService.cs"
+RULES += [
+    dict(file=_R2604_Q, method="ProcessPendingAsync", must=["DeferForQuietHoursAsync(item, quietCache, ct)"],
+         before=[("DeferForQuietHoursAsync(", "SendOneAsync(")],
+         why=_R2604_WHY + "260-4-1 แถวที่จองได้ในช่วงเงียบเลื่อนก่อนยิง LINE (ผู้อ่านค่าตั้งตัวเดียว)"),
+    dict(file=_R2604_Q, method="DeferForQuietHoursAsync",
+         must=["LineQuietHours.IsExempt(", "LineQuietHours.DeferUntilUtc(", "s.CompanyId == item.CompanyId", "ContactLineChannel.StatusPending"],
+         forbid=["RetryCount", "RetryKey", "StatusSkipped", "StatusCancelled"],
+         why=_R2604_WHY + "260-4-1/2 เลื่อน ไม่ทิ้ง · ไม่นับความพยายาม · ใบเสร็จ/ส่งเองยกเว้น (ตัวตัดสินเดียว)"),
+    dict(file=_R2604_Q, method="AlertRepeatedFailureAsync",
+         must=["_scopes.CreateScope()", "x.CompanyId == companyId", "LinePushOutcome.CodeMonthlyLimit", "LineFailureAlert.ShouldAlert(",
+               "AdvisoryLockKey.For(companyId, LineFailureAlert.LockScope", "n.CompanyId == companyId",
+               "LineFailureAlert.Dedupe", "CompanyMembership.ActiveMemberIdsAsync("],
+         must_lit=["SELECT pg_advisory_xact_lock({0})"],
+         before=[("AdvisoryLockKey.For(companyId, LineFailureAlert.LockScope", "db.Notifications.AnyAsync(")],
+         forbid=["_db."],
+         why=_R2604_WHY + "260-4-4 กระดิ่งล้มซ้ำ/ช่องเสีย ครั้งเดียวต่อ 24 ชม. กันซ้ำข้ามเครื่องใต้ล็อกต่อบริษัท (scope แยก · tenant)"),
+    dict(file=_R2604_Q, method="PushAsync", must=["AlertRepeatedFailureAsync(item.CompanyId, item.Id, cls.ChannelBroken"],
+         why=_R2604_WHY + "260-4-4 ทุกการ์ดที่ LINE ปฏิเสธถาวรเดินด่านกระดิ่ง"),
+    dict(file="Controllers/LineConfigController.cs", method="Update", must=["LineQuietHours.Problem("],
+         before=[("LineQuietHours.Problem(", "s.LineEnabled = req.Enabled")],
+         why=_R2604_WHY + "260-4-1 ช่วงเงียบผิด ⇒ ปฏิเสธทั้งคำขอก่อนแก้อะไร"),
+    dict(file="Controllers/LineConfigController.cs", method="TestTargets",
+         must=["LineTestTargets.ListAsync("],   # ด่านสิทธิ์ (CompanySettingsEdit + RejectApiKey) อยู่บน attribute — ตัวตรวจนี้อ่านแค่ตัวเมธอด
+         why=_R2604_WHY + "260-4-3 รายชื่อปลายทางของผู้ติดต่อ = ด่านเดียวกับหน้าตั้งค่า LINE (GET line-config ไม่มีด่าน)"),
+    dict(file="Controllers/LineConfigController.cs", method="Test", must=["LineTestTargets.ResolveAsync(_db, _secrets, companyId"],
+         before=[("LineTestTargets.ResolveAsync(", "_line.TestConfigAsync(")],
+         why=_R2604_WHY + "260-4-3 key ปลายทางหาใหม่ในบริษัทนี้ตอนส่ง (ไม่เชื่อรายการที่หน้าเว็บถือ)"),
+    dict(file="Services/Implementations/LineTestTargets.cs", method="Usable",
+         must=["e.CompanyId == companyId", "NotifyEndpointKind.ScopeCompany", "e.UnlinkedAt == null", "e.BlockedAt == null"],
+         why=_R2604_WHY + "260-4-3 เฉพาะปลายทางของบริษัทนี้ที่ผูกกับ OA ของบริษัทและยังใช้ได้"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="OnDocumentApprovedAsync",
+         must=["NotifyApproveEnqueueFailedAsync(", "_logger.LogError("], forbid=["LogWarning("],
+         why=_R2604_WHY + "260-4-6 (A-L6) เข้าคิวส่งอัตโนมัติตอนอนุมัติล้ม ⇒ ล้มดัง (กระดิ่ง + Autopilot) ไม่ใช่ LogWarning"),
+    dict(file="Services/Implementations/EmailScheduleService.cs", method="NotifyApproveEnqueueFailedAsync",
+         must=["n.CompanyId == companyId", "cu.CompanyId == companyId", "d.CompanyId == companyId", "CompanyMembership.ActiveMemberIdsAsync("],
+         forbid=["_db."],
+         why=_R2604_WHY + "260-4-6 กระดิ่งต่อใบ (กันซ้ำ · tenant · scope แยก)"),
+    dict(file="Services/Implementations/AutopilotService.cs", method="BillingChainIssuesAsync",
+         must=["LineFailureAlert.EntityType", "LineFailureAlert.ApproveEnqueueEntityType", "n.CompanyId == companyId"],
+         why=_R2604_WHY + "260-4-4/6 กระดิ่งขึ้น Autopilot ด้วย (แถวแจ้งเตือนเดียวกัน)"),
+]
+REVIEWER_CASES += [
+    # ถอดการเลื่อนช่วงเงียบ ⇒ ต้องฟ้อง
+    ("R2604a", "ProcessPendingAsync", "if (await DeferForQuietHoursAsync(item, quietCache, ct)) { }", "if (false) { }", True),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

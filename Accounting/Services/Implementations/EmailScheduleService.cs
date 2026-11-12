@@ -24,13 +24,16 @@ public class EmailScheduleService : IEmailScheduleService
     private readonly IContactRecipientResolver _recipients;
     /// <summary>รอบ 254 WP-11 L4 (Q4): โควตาอีเมลรายเดือนของเส้น SMTP ของ NextAcc · null (สร้างนอก DI) ⇒ ไม่นับรายเดือน</summary>
     private readonly INotifyQuotaService? _notifyQuota;
+    /// <summary>รอบ 260-4 (A-L6): กระดิ่ง "อนุมัติแล้วเข้าคิวส่งอัตโนมัติไม่สำเร็จ" — scope แยก (context ของคำขออนุมัติอาจค้างแถวที่ล้ม) · null = ไม่แจ้ง (เทสต์เดิม)</summary>
+    private readonly Microsoft.Extensions.DependencyInjection.IServiceScopeFactory? _scopes;
 
     public EmailScheduleService(AccountingDbContext db, IEmailSenderFactory senderFactory,
         IPdfGenerationService pdf, ILogger<EmailScheduleService> logger, IDocumentPayLinkService? payLinks = null,
         IConfiguration? config = null, IDocumentEmailService? docEmail = null, IContactRecipientResolver? recipients = null,
-        INotifyQuotaService? notifyQuota = null)
+        INotifyQuotaService? notifyQuota = null, Microsoft.Extensions.DependencyInjection.IServiceScopeFactory? scopes = null)
     {
         _db = db;
+        _scopes = scopes;
         _notifyQuota = notifyQuota;
         _senderFactory = senderFactory;
         _pdf = pdf;
@@ -157,7 +160,41 @@ public class EmailScheduleService : IEmailScheduleService
                 await EnqueueDocumentAsync(rule, doc, daysOffset: rule.OffsetDays, suffix: "approved", ct);
             await _db.SaveChangesAsync(ct);
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "OnDocumentApproved enqueue failed Doc={Doc}", documentId); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // รอบ 260-4 (team-A L6 · คำตัดสิน 260-4-6): เดิม LogWarning อย่างเดียว ⇒ ลูกค้าไม่ได้เอกสารและไม่มีใครรู้ · ตอนนี้ LogError + กระดิ่งเจ้าของ (ต่อใบ) + Autopilot
+            // (การอนุมัติไม่ล้ม — ผู้เรียกตั้งใจ fail-safe)
+            _logger.LogError(ex, "OnDocumentApproved enqueue failed Doc={Doc}", documentId);
+            await NotifyApproveEnqueueFailedAsync(companyId, documentId, ex.GetBaseException().Message, ct);
+        }
+    }
+
+    /// <summary>รอบ 260-4 (A-L6): กระดิ่งถึงเจ้าของที่ยังใช้งาน ครั้งเดียวต่อเอกสาร (<see cref="LineFailureAlert.ApproveEnqueueEntityType"/>) · scope แยก · ล้ม ⇒ LogError</summary>
+    private async Task NotifyApproveEnqueueFailedAsync(Guid companyId, Guid documentId, string? reason, CancellationToken ct)
+    {
+        if (_scopes == null) return;
+        try
+        {
+            using var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.CreateScope(_scopes);
+            var sp = scope.ServiceProvider;
+            var db = (AccountingDbContext)sp.GetService(typeof(AccountingDbContext))!;
+            if (sp.GetService(typeof(INotificationService)) is not INotificationService notifications) return;
+            if (await db.Notifications.AnyAsync(n => n.CompanyId == companyId && n.EntityType == LineFailureAlert.ApproveEnqueueEntityType && n.EntityId == documentId, ct))
+                return;
+            var number = await db.Documents.AsNoTracking().Where(d => d.Id == documentId && d.CompanyId == companyId)
+                .Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct);
+            var ownerIds = await db.CompanyUsers.AsNoTracking()
+                .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner).Select(cu => cu.UserId).ToListAsync(ct);
+            var active = await CompanyMembership.ActiveMemberIdsAsync(db, companyId, ownerIds, ct);
+            foreach (var u in ownerIds.Where(active.Contains))
+                await notifications.SendAsync(u, companyId, NotificationType.System, LineFailureAlert.ApproveEnqueueTitle,
+                    LineFailureAlert.ApproveEnqueueMessage(number, reason), "/pages/documents.html?openDoc=" + documentId,
+                    LineFailureAlert.ApproveEnqueueEntityType, documentId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งเจ้าของเรื่องเข้าคิวส่งอัตโนมัติล้ม Doc={Doc} ไม่สำเร็จ", documentId);
+        }
     }
 
     public async Task OnPayrollPaidAsync(Guid companyId, Guid payrollRunId, CancellationToken ct = default)
