@@ -111,7 +111,7 @@ public class PartnerConsentRound264DbTests
         }
         PartnerAutomationConsent second;
         using (var c5 = DbTestDatabase.TryCreateContext()!)
-            second = await GrantAsync(c5, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, T(6_000m));
+            second = await GrantAsync(c5, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, 6_000m);
         using var check = DbTestDatabase.TryCreateContext()!;
         var rows = await check.PartnerAutomationConsents.AsNoTracking().Where(x => x.CompanyId == s.B).OrderBy(x => x.GrantedAt).ToListAsync();
         Assert.Equal(2, rows.Count);
@@ -136,8 +136,8 @@ public class PartnerConsentRound264DbTests
         if (db == null) { _out.WriteLine(Skip); return; }
         var s = await SeedAsync(db);
         PartnerAutomationConsent r1, r2;
-        using (var c1 = DbTestDatabase.TryCreateContext()!) r1 = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, T(1_000m));
-        using (var c2 = DbTestDatabase.TryCreateContext()!) r2 = await GrantAsync(c2, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, T(2_000m));
+        using (var c1 = DbTestDatabase.TryCreateContext()!) r1 = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, 1_000m);
+        using (var c2 = DbTestDatabase.TryCreateContext()!) r2 = await GrantAsync(c2, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, 2_000m);
         using var check = DbTestDatabase.TryCreateContext()!;
         var rows = await check.PartnerAutomationConsents.AsNoTracking().Where(x => x.CompanyId == s.B).ToListAsync();
         Assert.Equal(2, rows.Count);
@@ -314,7 +314,7 @@ public class PartnerConsentRound264DbTests
         using (var c0 = DbTestDatabase.TryCreateContext()!)
             await Assert.ThrowsAsync<BusinessRuleException>(() => GrantAsync(c0, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, null));
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, T(10_700m));
+            await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, 10_700m);
         using var c2 = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(PartnerConsent.Codes.OverCap, (await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(10_700.01m))).Code);
         Assert.True((await Svc(c2).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(10_700m))).Ok);
@@ -338,7 +338,7 @@ public class PartnerConsentRound264DbTests
         // ตั้งค่าบริษัทได้แต่อนุมัติใบซื้อไม่ได้ ⇒ เปิด "บันทึกจ่ายเอง" ไม่ได้ (403) · ขอบเขตแคบที่ไม่ต้องอนุมัติก็ยังต้องเห็นฝั่งซื้อ
         using (var c1 = DbTestDatabase.TryCreateContext()!)
         {
-            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => GrantAsync(c1, s.B, staff, s.PartnershipId, Scope.AutoRecordPayment, T(1_000m)));
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => GrantAsync(c1, s.B, staff, s.PartnershipId, Scope.AutoRecordPayment, 1_000m));
             Assert.Equal(403, ex.StatusCode);
             Assert.Contains("Document.Purchase.Approve", ex.Message);
             Assert.Equal(0, await c1.PartnerAutomationConsents.CountAsync(x => x.CompanyId == s.B));
@@ -348,7 +348,7 @@ public class PartnerConsentRound264DbTests
         db.CompanyRolePermissions.Add(approve);
         await db.SaveChangesAsync();
         using (var c2 = DbTestDatabase.TryCreateContext()!)
-            await GrantAsync(c2, s.B, staff, s.PartnershipId, Scope.AutoRecordPayment, T(1_000m));
+            await GrantAsync(c2, s.B, staff, s.PartnershipId, Scope.AutoRecordPayment, 1_000m);
         using (var c3 = DbTestDatabase.TryCreateContext()!)
             Assert.True((await Svc(c3).CheckAsync(s.B, s.PartnershipId, Scope.AutoRecordPayment, T(500m))).Ok);
 
@@ -380,7 +380,7 @@ public class PartnerConsentRound264DbTests
 
         PartnerAutomationConsent row;
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            row = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, T(3_000m));
+            row = await GrantAsync(c1, s.B, s.OwnerB, s.PartnershipId, Scope.AutoApprovePurchase, 3_000m);
 
         using (var c2 = DbTestDatabase.TryCreateContext()!)
         {
