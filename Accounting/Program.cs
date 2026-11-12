@@ -2196,6 +2196,20 @@ try
         app.Logger.LogError(ex, "รอบ 257: ซ่อมหลักฐานใบซื้อจากคู่ค้าไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
     }
 
+    // รอบ 260-5 (คำตัดสิน 260-5-2): คืนค่าสแกน API v1 ที่ถูกคิดก่อนรอบ 258 ทั้งที่สแกนล้ม/ใช้ผลเดิม/อ่านจาก e-Tax XML (ครั้งเดียว · marker OneShotDataFixes ·
+    // กันคืนซ้ำต่อแถวด้วย audit) · ยังไม่เข้าใบ = ถอดจากรอบบิล · เติมเงิน = คืนเครดิต · เข้าใบแล้ว = แจ้งเจ้าของว่ารอใบลดหนี้ (ไม่ประทับว่าคืน) · ล้ม = ย้อน + บูตถัดไปทำใหม่
+    try
+    {
+        var r2605 = await Accounting.Helpers.OcrFailedScanRefund.RunAsync(db);
+        if (r2605.Companies > 0)
+            app.Logger.LogInformation("รอบ 260-5: ค่าสแกน API ที่ไม่ควรถูกคิด — ถอด {Removed} · คืนเครดิต {Credited} ({CreditedAmount}) · รอใบลดหนี้ {Cn} ({CnAmount}) · {Companies} บริษัท",
+                r2605.Removed, r2605.Credited, r2605.CreditedAmount, r2605.NeedsCreditNote, r2605.CreditNoteAmount, r2605.Companies);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "รอบ 260-5: คืนค่าสแกน API ที่ไม่ควรถูกคิดไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
+    }
+
     // รอบ 246 QR (ฝ่ายค้าน N3): ย้ายเลขพร้อมเพย์เดิมของเทมเพลต → บัญชีธนาคาร ครั้งเดียว (เฉพาะบริษัทที่ชัดเจน · audit ทุกบริษัท) · ล้ม = ย้อน + บูตถัดไปทำใหม่
     try
     {
