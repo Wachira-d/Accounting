@@ -9017,4 +9017,4 @@ _Last verified against codebase: 2026-11-12 (รอบ 262 — §2.12g-262: บ�
 
 _Last verified against codebase: 2026-11-12 (รอบ 264 P1 ความยินยอมงานอัตโนมัติกับคู่ค้า — §2.12g-264-P1: ตาราง append-only + hash canonical · ให้สองขั้น · ถอนทันที · ระงับ/เชื่อมกลับไม่ฟื้นเอง · สิทธิ์ผู้ให้ตรวจซ้ำตอนใช้ · `CheckAsync` สำหรับ P3/P5 · audit ค่าตั้งเดิม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3d6cdb70)_
 
-_Last verified against codebase: 2026-11-12 (รอบ 264 P1 ชุดแก้ฝ่ายค้าน — §2.12g-264-P1: H1 ระงับ ⇒ ถอน + ตัดแถวก่อนยอมรับครั้งล่าสุด · M1 CheckForWriteAsync FOR SHARE · M2–M4 · L1–L8 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_
+_Last verified against codebase: 2026-11-12 (รอบ 264 P1 ชุดแก้ฝ่ายค้าน — §2.12g-264-P1: H1 ระงับ ⇒ ถอน + ตัดแถวก่อนยอมรับครั้งล่าสุด · M1 CheckForWriteAsync FOR SHARE · M2–M4 · L1–L8 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f7eb8eee)_
