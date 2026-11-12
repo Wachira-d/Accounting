@@ -108,10 +108,18 @@ public class PortalService : IPortalService
         foreach (var p in accesses)
             if (contactMap.TryGetValue(p.ContactId, out var c)) p.Contact = c;
 
-        return accesses.Select(p => new PortalAccessResponse(
-                p.Id, p.ContactId, p.Contact?.Name ?? string.Empty, p.Email, p.DisplayName,
-                p.IsActive, p.LastLoginAt,
-                p.CanViewInvoices, p.CanViewStatements, p.CanDownloadPdf, p.CanMakePayment))
+        // รอบ 260-3 (คำตัดสิน 260-3-1): เงินรอจัดสรรต่อผู้ติดต่อ (ตัวอ่านเดียว · หนึ่งคำสั่ง) + ลูกค้าเห็นไหม (ด่านเดียวกับเส้นใบแจ้งยอด)
+        var credits = await CustomerCreditQuery.UnappliedByContactAsync(_db, companyId);
+        return accesses.Select(p =>
+            {
+                var credit = credits.GetValueOrDefault(p.ContactId);
+                return new PortalAccessResponse(
+                    p.Id, p.ContactId, p.Contact?.Name ?? string.Empty, p.Email, p.DisplayName,
+                    p.IsActive, p.LastLoginAt,
+                    p.CanViewInvoices, p.CanViewStatements, p.CanDownloadPdf, p.CanMakePayment,
+                    credit, PortalAccessPermissions.CreditShownToCustomer(
+                        new PortalAccessFlags(p.CanViewInvoices, p.CanViewStatements, p.CanDownloadPdf, p.CanMakePayment), p.IsActive, credit));
+            })
             .ToList();
     }
 
@@ -481,8 +489,11 @@ public class PortalService : IPortalService
         var totalCharged = lines.Where(l => l.Amount > 0).Sum(l => l.Amount);
         var totalPaid = Math.Abs(lines.Where(l => l.Amount < 0).Sum(l => l.Amount));
 
+        // รอบ 260-3 (คำตัดสิน 260-3-1): เงินรอจัดสรรของผู้ติดต่อในโทเคนเท่านั้น (contactId มาจากโทเคน · tenant) — บรรทัดแยก ไม่หักจากยอดคงเหลือ
+        // ผู้เรียกเดียว = เส้น "statement" ที่ผ่านด่านธง "ดูใบแจ้งยอด" แล้ว ⇒ ธงปิด = ไม่ถึงที่นี่
+        var unapplied = await CustomerCreditQuery.UnappliedForContactAsync(_db, companyId, contactId);
         return new PortalStatementResponse(
-            fromDate, toDate, openingBalance, totalCharged, totalPaid, runningBalance, lines);
+            fromDate, toDate, openingBalance, totalCharged, totalPaid, runningBalance, lines, unapplied);
     }
 
     public async Task<List<PortalPaymentResponse>> GetMyPaymentsAsync(Guid companyId, Guid contactId)

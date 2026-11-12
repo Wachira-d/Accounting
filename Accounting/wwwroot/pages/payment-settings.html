@@ -47,13 +47,19 @@
       </div>
 
       <div id="modeBanner"></div>
+      <!-- รอบ 260-3 (คำตัดสิน 260-3-4): ความพร้อมรับเงินทั้งเส้น — แถวจากเซิร์ฟเวอร์ (payment-settings/readiness · ศูนย์รวมค่าตั้ง Autopilot + PAY-LIVE ตัวเดียวกับรายการประจำ) · หน้าแสดงอย่างเดียว -->
+      <div class="card" id="readinessCard">
+        <h3>ความพร้อมรับเงินจากลูกค้า</h3>
+        <p class="sub">ช่องทางรับเงิน · ลิงก์ชำระในอีเมล/LINE · คิวสลิป — สถานะจากระบบ (แก้ที่หน้าที่ลิงก์ไว้)</p>
+        <div id="readinessBody" class="muted">กำลังตรวจ…</div>
+      </div>
       <div id="body"><div class="card muted">กำลังโหลด…</div></div>
       <!-- รอบ 259-3 (ทีม E-M3): เส้นโอน/QR + แจ้งสลิป ใช้ได้โดยไม่ต้องมีผู้ให้บริการ — เดิมหน้านี้กรองทิ้ง ⇒ ร้านที่รับโอนอย่างเดียวไม่รู้ว่าพร้อมแล้ว -->
       <div class="card" id="slipPathCard">
         <h3>โอนเข้าบัญชี / QR พร้อมเพย์ + แจ้งสลิป</h3>
         <p class="sub">ลูกค้าโอนหรือสแกน QR จากหน้าชำระเงินของเอกสาร/พอร์ทัลลูกค้า แล้วแนบสลิป — ระบบ<b>ไม่ปิดหนี้จากสลิปเอง</b> พนักงานตรวจแล้วกดยืนยัน
           · ไม่ต้องมีผู้ให้บริการรับชำระ ไม่มีค่าธรรมเนียม</p>
-        <div id="slipPathStatus" class="muted">กำลังตรวจ…</div>
+        <div id="slipPathStatus" class="muted">กำลังตรวจ…</div><!-- รอบ 260-3: ข้อความจากแถว PAY-TRANSFER ของการ์ดความพร้อม -->
         <div style="margin-top:8px;font-size:13px">ตั้งบัญชีรับโอน/QR ที่ <a href="/pages/bank.html">หน้าบัญชีธนาคาร</a>
           · ยืนยันสลิปที่ <a href="/pages/payment-intents.html?status=Pending">หน้ารายการรับชำระออนไลน์</a></div>
       </div>
@@ -92,34 +98,47 @@
           this.providers = p.data || [];
           this.configs = c.data || [];
           this.render();
-          this.loadSlipPath();
+          this.loadReadiness();
         } catch (e) {
           document.getElementById('body').innerHTML =
-            `<div class="card" style="color:#b91c1c">โหลดข้อมูลไม่สำเร็จ: ${Layout.esc(e.message)}</div>`;
+            `<div class="card" style="color:#b91c1c">โหลดข้อมูลไม่สำเร็จ: ${Layout.esc(e.message)} <button class="btn btn-sm btn-secondary" onclick="Page.load()">ลองใหม่</button></div>`;
         }
       },
 
-      /** รอบ 259-3 (E-M3): ความพร้อมเส้นโอน/สลิป — ช่องทางที่บริษัทเปิดได้จริงจากเซิร์ฟเวอร์ (document-auto-send/settings · ตัวเดียวกับลิงก์ชำระ) */
-      async loadSlipPath() {
-        const el = document.getElementById('slipPathStatus'); if (!el) return;
+      /** รอบ 260-3 (คำตัดสิน 260-3-4): การ์ดความพร้อม + แถบโหมด + สถานะเส้นโอน/สลิป จากแถวเดียวของเซิร์ฟเวอร์ (เดิมหน้าเดา live จาก configs และหา ManualSlip เอง) */
+      async loadReadiness() {
+        const body = document.getElementById('readinessBody');
+        const slip = document.getElementById('slipPathStatus');
         try {
-          const r = await API.get(`/api/companies/${encodeURIComponent(Layout.getCompanyId())}/document-auto-send/settings`);
-          const ch = ((r && r.data && r.data.companyChannels) || []).find(x => x.code === 'ManualSlip');
-          el.innerHTML = ch
-            ? `<span style="color:#15803d">✅ พร้อมใช้ — ${Layout.esc(ch.label)}</span>`
-            : '<span style="color:#b45309">⚠️ ยังไม่มีบัญชีรับโอน/พร้อมเพย์ — ตั้งที่หน้าบัญชีธนาคารก่อน</span>';
-        } catch (e) { el.textContent = 'ตรวจความพร้อมไม่สำเร็จ: ' + (e.message || ''); }
+          const r = await API.get(`/api/companies/${encodeURIComponent(Layout.getCompanyId())}/payment-settings/readiness`);
+          const items = (r && r.data) || [];
+          const icon = v => v === 'Ok' ? '✅' : v === 'Warn' ? '⚠️' : v === 'Fail' ? '❌' : 'ⓘ';
+          const color = v => v === 'Ok' ? '#15803d' : v === 'Warn' || v === 'Fail' ? '#b45309' : '#334155';
+          const row = i => `<div style="padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px">
+              <span style="color:${color(i.verdict)}">${icon(i.verdict)} ${Layout.esc(i.title)}</span>
+              ${i.why ? `<div style="color:#64748b;font-size:12px;margin-left:22px">${Layout.esc(i.why)}</div>` : ''}
+              ${i.fixUrl ? `<div style="margin-left:22px;font-size:12px"><a href="${Layout.esc(i.fixUrl)}">${Layout.esc(i.fixLabel || 'ไปแก้')}</a></div>` : ''}
+            </div>`;
+          body.innerHTML = items.length ? items.map(row).join('') : '<span class="muted">ไม่มีข้อมูลความพร้อม</span>';
+          body.classList.remove('muted');
+          const live = items.find(i => i.code === 'PAY-LIVE');
+          document.getElementById('modeBanner').innerHTML = live && live.verdict === 'Ok'
+            ? `<div class="mode-banner live">✅ <b>โหมดใช้งานจริง</b> — เงินที่ลูกค้าจ่ายเข้าบัญชีจริง</div>`
+            : `<div class="mode-banner test">⚠️ <b>โหมดทดสอบ</b> — เงินไม่เข้าจริง ใช้สำหรับลองระบบเท่านั้น
+                 · ลูกค้าจะเห็นป้ายนี้บนหน้าจ่ายเงินด้วย</div>`;
+          const tr = items.find(i => i.code === 'PAY-TRANSFER');
+          if (slip) slip.innerHTML = tr ? `<span style="color:${color(tr.verdict)}">${icon(tr.verdict)} ${Layout.esc(tr.title)}</span>` : '<span class="muted">ตรวจไม่ได้</span>';
+        } catch (e) {
+          body.innerHTML = `<span style="color:#b91c1c">ตรวจความพร้อมไม่สำเร็จ: ${Layout.esc(e.message || '')}</span> <button class="btn btn-sm btn-secondary" onclick="Page.loadReadiness()">ลองใหม่</button>`;
+          if (slip) slip.textContent = 'ตรวจความพร้อมไม่สำเร็จ';
+          document.getElementById('modeBanner').innerHTML = '<div class="mode-banner test">⚠️ ตรวจโหมดรับเงิน (ทดสอบ/เงินจริง) ไม่สำเร็จ — ดูโหมดของแต่ละผู้ให้บริการด้านล่าง</div>';
+        }
       },
 
       cfgOf(code) { return this.configs.find(x => x.providerCode === code) || null; },
 
       render() {
-        // แถบโหมด — ต้องเห็นทุกครั้งที่เข้าหน้านี้ ไม่ใช่ซ่อนอยู่ในรายละเอียด
-        const live = this.configs.filter(c => c.mode === 'Live' && c.isActive);
-        document.getElementById('modeBanner').innerHTML = live.length
-          ? `<div class="mode-banner live">✅ <b>โหมดใช้งานจริง</b> — เงินที่ลูกค้าจ่ายเข้าบัญชีจริง</div>`
-          : `<div class="mode-banner test">⚠️ <b>โหมดทดสอบ</b> — เงินไม่เข้าจริง ใช้สำหรับลองระบบเท่านั้น
-               · ลูกค้าจะเห็นป้ายนี้บนหน้าจ่ายเงินด้วย</div>`;
+        // แถบโหมด — ต้องเห็นทุกครั้งที่เข้าหน้านี้ · รอบ 260-3: ตัดสินจากแถว PAY-LIVE ของเซิร์ฟเวอร์ (loadReadiness) ไม่ใช่เดาจาก configs ในหน้า
 
         document.getElementById('body').innerHTML = this.providers
           // เส้นสลิปเป็น provider ตัวหนึ่งในระบบ ไม่มีคีย์ให้ตั้ง — แสดงความพร้อมแยกที่การ์ด #slipPathCard (รอบ 259-3)

@@ -39,6 +39,8 @@ public static class CustomerCreditMigration
         """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PaymentCreditMovements_CompanyId_IdempotencyKey" ON "PaymentCreditMovements" ("CompanyId", "IdempotencyKey") WHERE "IdempotencyKey" IS NOT NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_PaymentCreditMovements_Target" ON "PaymentCreditMovements" ("CompanyId", "TargetDocumentId") WHERE "TargetDocumentId" IS NOT NULL;""",
         """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "CustomerCreditWriteOffCap" numeric(18,2) NOT NULL DEFAULT 1.00;""",
+        // รอบ 260-3: เวลาที่กระดิ่ง "เงินรอจัดสรรค้างเกิน 30 วัน" แจ้งทีมแล้ว (ภายใน · แจ้งครั้งเดียวต่อการรับชำระ)
+        """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "UnappliedAgedNoticeAt" timestamp NULL;""",
         // ผัง 21630 ให้บริษัทเดิมที่มีกลุ่ม 216 (บริษัทผังกำหนดเอง = สร้างตอนใช้/ล้มดัง — UnappliedReceiptAccount.EnsureAsync)
         UnappliedReceiptAccount.MigrationSeedSql(),
         BackfillSql(),
