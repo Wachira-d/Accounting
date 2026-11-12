@@ -37,6 +37,9 @@ public class AutopilotJob : BackgroundService
             // รอบ 255 WP-12B ข้อ 8: 50 ทวิ ที่ผู้จ่ายออก ⇒ กล่องรับของผู้ขายที่เป็นคู่ค้า NextAcc (ค่าตั้งต้นปิด · JobLock ของขั้นนี้)
             await StepAsync("PartnerWhtCerts", async sp => await sp.GetRequiredService<PartnerWhtCertExchangeService>().RunOnceAsync(DateTime.UtcNow, stoppingToken),
                 n => $"ส่ง/แจ้ง 50 ทวิ ผ่านคู่ค้า NextAcc {n} ใบ", stoppingToken);
+            // รอบ 264 (คำตัดสิน 264-1-4): คำขอเชื่อมคู่ค้า ⇒ แจ้งเจ้าของ/ผู้ดูแลของบริษัทปลายทาง (กระดิ่ง · อีเมล · LINE) — นอกคำขอของผู้ขอ (เวลาตอบคงที่)
+            await StepAsync("PartnerLinkRequests", async sp => await sp.GetRequiredService<CrossTenantWorkflowService>().DispatchPendingLinkRequestNoticesAsync(DateTime.UtcNow, stoppingToken),
+                n => $"แจ้งคำขอเชื่อมคู่ค้า NextAcc {n} รายการ", stoppingToken);
             try { await Task.Delay(Cycle, stoppingToken); } catch { return; }
         }
     }

@@ -105,6 +105,10 @@ public static class NotificationEvents
     /// <summary>E-11 (รอบ 255 WP-12B ข้อ 8): คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ากล่องรับของเราแล้ว — ต้องตรวจก่อนใช้เป็นเครดิต ·
     /// รอบ 258-3: + 50 ทวิ เข้ากล่องรับแล้วรอคนยืนยัน (F-M4) · ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ บันทึกจ่ายใบซื้อ (F-H3)</summary>
     public const string AutopilotPartnerExchange = "autopilot.partner_exchange";
+    /// <summary>รอบ 264 (คำตัดสิน 264-1-4): บริษัทที่ใช้ NextAcc ส่งคำขอเชื่อมระบบถึงเรา — ผู้ส่งเดียว <c>CrossTenantWorkflowService.DispatchPendingLinkRequestNoticesAsync</c>
+    /// (งานเบื้องหลัง · ไม่ส่งในคำขอของผู้ขอ — เวลาตอบต้องเท่ากันทุกกรณี) · ค่าตั้งต้น = กระดิ่ง + อีเมล + LINE ถึงเจ้าของ และผู้มีสิทธิ์ตั้งค่าบริษัท
+    /// (<c>NotificationAudiencePolicy.DefaultMatrix</c>) · ลิงก์ = การ์ดยอมรับ <c>partners.html?request=</c></summary>
+    public const string PartnerLinkRequested = "partner.link_requested";
     /// <summary>F14 audit hash chain ตรวจรายสัปดาห์เจอ tamper (มี
     /// row ที่ RowHash/PrevHash ไม่ตรง). ส่งหา Owner + Accounting role
     /// เพื่อสอบ DBA / raw SQL.</summary>
@@ -203,6 +207,7 @@ public static class NotificationEvents
         ("Accounting", AutopilotBankSettleFailed, "Autopilot: เงินโอนเข้าตรงใบค้างแต่บันทึกรับชำระอัตโนมัติไม่สำเร็จ"),
         ("Accounting", AutopilotDailyDigest, "Autopilot: สรุปประจำวัน (สำเร็จ · รอยืนยัน · เรื่องที่ระบบทำต่อไม่ได้)"),
         ("Accounting", AutopilotPartnerExchange, "Autopilot: คู่ค้า NextAcc ยกเลิกหนังสือรับรอง 50 ทวิ ที่ส่งเข้ามาแล้ว (ตรวจก่อนใช้เครดิต)"),
+        ("Accounting", PartnerLinkRequested, "คู่ค้าที่ใช้ NextAcc ส่งคำขอเชื่อมระบบถึงเรา (กดลิงก์เพื่อยอมรับ/ปฏิเสธ)"),
         ("Accounting", AuditChainTampered, "🚨 Audit log ถูกแก้ไข (hash chain ไม่ตรง)"),
         ("Accounting", EtaxRdSubmitFailed, "e-Tax นำส่งกรมสรรพากรไม่สำเร็จ (โหมดส่งตรง) · สรุปงานนำส่งประจำเดือน"),
         ("Accounting", OverdueDunningReminder, "AR เกิน 30 วัน — ส่งหนังสือทวงหนี้รอบที่ 1"),
@@ -238,10 +243,12 @@ public static class NotificationRecipientRoles
     public const string Accounting = "Accounting";
     /// <summary>Company Owner users.</summary>
     public const string Owner = "Owner";
+    /// <summary>รอบ 264: ผู้มีสิทธิ์ตั้งค่าบริษัท (perm:CompanySettings.Edit) + เจ้าของ — คนที่กดยอมรับคำขอเชื่อมคู่ค้าได้</summary>
+    public const string CompanyAdmin = "CompanyAdmin";
 
     public static readonly IReadOnlyList<string> All = new[]
     {
-        Requester, DirectManager, DepartmentHead, HrAdmin, Accounting, Owner
+        Requester, DirectManager, DepartmentHead, HrAdmin, Accounting, Owner, CompanyAdmin
     };
 
     /// <summary>รอบ 258 (E-H1 · F2 ข้อ 5): ป้ายไทยของบทบาทผู้รับ — ตัวตั้งตัวเดียว ส่งให้หน้าเว็บผ่านแคตตาล็อก
@@ -254,5 +261,6 @@ public static class NotificationRecipientRoles
         [HrAdmin] = "ฝ่ายบุคคล",
         [Accounting] = "ฝ่ายบัญชี",
         [Owner] = "เจ้าของบริษัท",
+        [CompanyAdmin] = "ผู้ดูแลตั้งค่าบริษัท",
     };
 }

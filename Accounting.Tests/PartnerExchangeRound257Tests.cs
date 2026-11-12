@@ -170,10 +170,12 @@ public class PartnerExchangeRound257Tests
     // ═══════════ D-M1: คำตอบการเชิญบอกเงื่อนไข ═══════════
 
     [Fact]
-    public void R257_M1_คำตอบเชิญบอกว่าปลายทางต้องเปิดค้นเจอก่อน_ไม่รั่วผล()
+    public void R257_M1_รอบ264_คำตอบเชิญบอกว่าผู้รับได้แจ้งพร้อมลิงก์_ไม่ต้องเปิดค้นเจอก่อน_ไม่รั่วผล()
     {
-        Assert.Contains("ให้คู่ค้าค้นเจอ", PartnerCompanyMatch.InviteAckMessage);
+        // รอบ 264 (คำตัดสิน 264-1-1): เงื่อนไข "ปลายทางต้องเปิดค้นเจอก่อน" ถูกถอด ⇒ ข้อความต้องไม่สั่งให้คู่ค้าเปิดก่อนอีก
+        Assert.DoesNotContain("ให้คู่ค้าค้นเจอ", PartnerCompanyMatch.InviteAckMessage);
         Assert.Contains("ถ้าผู้รับใช้ NextAcc", PartnerCompanyMatch.InviteAckMessage);
+        Assert.Contains("คำขอที่เราส่ง", PartnerCompanyMatch.InviteAckMessage);
         Assert.DoesNotContain("ไม่พบ", PartnerCompanyMatch.InviteAckMessage);
     }
 

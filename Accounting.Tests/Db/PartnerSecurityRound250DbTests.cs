@@ -503,8 +503,10 @@ public class PartnerSecurityRound250DbTests
     }
 
     [Fact]
-    public async Task H3_ปลายทางไม่เปิดให้ค้นเจอ_ไม่ได้คำเชิญ_บริษัทปลอมที่ไม่เปิดไม่ทำให้กำกวม()
+    public async Task H3_รอบ264_ปลายทางไม่เปิดค้นเจอก็ได้คำขอ_เลขซ้ำส่งถึงทุกบริษัทที่ตรง_คำตอบเท่ากัน()
     {
+        // รอบ 264 (คำตัดสิน 264-1-1/264-1-3 แทน H3 เดิม): ไม่ดู PartnerDiscoverable · เลขซ้ำ (บริษัทที่ตั้งเลขเหยื่อ) ⇒ ทั้งสองได้คำขอ —
+        // ทิ้งเมื่อกำกวม = บริษัทปลอมวัดได้ว่ามีผู้ใช้เลขนั้น · ผู้ยอมรับถูกแจ้งชื่อ/เลข/สาขาถึงผู้ขอ (PartnerLinkRequestRound264DbTests)
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var hiddenTax = RandTax();
@@ -517,14 +519,19 @@ public class PartnerSecurityRound250DbTests
 
         var r1 = await Controller(db, uid).Invite(inviter.Id, new CrossTenantWorkflowController.InviteRequest(hiddenTax, null));
         var r2 = await Controller(db, uid).Invite(inviter.Id, new CrossTenantWorkflowController.InviteRequest(victimTax, null));
+        var r3 = await Controller(db, uid).Invite(inviter.Id, new CrossTenantWorkflowController.InviteRequest(RandTax(), null));
         Assert.Equal(Body(r1), Body(r2));
+        Assert.Equal(Body(r1), Body(r3));
 
         using var check = DbTestDatabase.TryCreateContext()!;
         var rows = await check.TradingPartnerships.AsNoTracking().Where(p => p.CompanyAId == inviter.Id || p.CompanyBId == inviter.Id).ToListAsync();
-        var row = Assert.Single(rows);                                    // ถึงเหยื่อ (เปิด) เท่านั้น · ไม่ถึงบริษัทที่ไม่เปิด
-        Assert.Contains(victim.Id, new[] { row.CompanyAId, row.CompanyBId });
-        Assert.DoesNotContain(hidden.Id, new[] { row.CompanyAId, row.CompanyBId });
-        Assert.DoesNotContain(fake.Id, new[] { row.CompanyAId, row.CompanyBId });
+        Assert.Equal(3, rows.Count);
+        var members = rows.SelectMany(r => new[] { r.CompanyAId, r.CompanyBId }).ToHashSet();
+        Assert.Contains(hidden.Id, members);
+        Assert.Contains(victim.Id, members);
+        Assert.Contains(fake.Id, members);
+        // "คำขอที่เราส่ง" ของผู้ขอ: 3 แถวรูปเดียวกัน (รวมเลขที่ไม่มีในระบบ)
+        Assert.Equal(3, await check.PartnerLinkRequests.CountAsync(r => r.CompanyId == inviter.Id));
     }
 
     [Fact]

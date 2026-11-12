@@ -35,9 +35,11 @@ public static class PartnerCompanyMatch
 {
     public const string RuleCode = "XT-PARTNER-MATCH";
 
-    /// <summary>คำตอบของการเชิญคู่ค้า — <b>เหมือนกันทุกกรณี</b> (มี/ไม่มีบริษัทของเลขนี้ในระบบ · เชิญซ้ำ · เชิญตัวเอง) กันการไล่เลขภาษีว่าใครใช้ NextAcc (P-1 ·
-    /// คำตัดสินข้อ 3 PartnerDiscoverable ตั้งต้นปิด) · ผู้เชิญรู้ผลเมื่อปลายทางตอบรับเท่านั้น · รอบ 257 ชุด 3 (D-M1): บอกเงื่อนไข "ปลายทางต้องเปิดให้ค้นเจอก่อน" (เดิมคำเชิญหายเงียบ)</summary>
-    public const string InviteAckMessage = "ส่งคำเชิญแล้ว ถ้าผู้รับใช้ NextAcc และเปิด \"ให้คู่ค้าค้นเจอ\" ไว้ จะเห็นในระบบ — ถ้ายังไม่เปิด คำเชิญจะไม่ถูกเก็บไว้ ให้แจ้งคู่ค้าเปิดก่อนแล้วเชิญอีกครั้ง";
+    /// <summary>คำตอบของการเชิญคู่ค้า — <b>เหมือนกันทุกกรณี</b> (มี/ไม่มีบริษัทของเลขนี้ในระบบ · เชิญซ้ำ · เชิญตัวเอง) กันการไล่เลขภาษีว่าใครใช้ NextAcc (P-1) ·
+    /// รอบ 264 (คำตัดสิน 264-1-1): คำขอถึงบริษัทที่ตรงเลขภาษี + สาขาเสมอ (ไม่ต้องเปิด "ให้คู่ค้าค้นเจอ" ก่อน — เดิมคำขอหายเงียบเมื่อปลายทางไม่เปิด) ·
+    /// ผู้เชิญรู้ผลเมื่อปลายทางตอบรับเท่านั้น (ตาราง "คำขอที่เราส่ง")</summary>
+    public const string InviteAckMessage = "ส่งคำขอแล้ว ถ้าผู้รับใช้ NextAcc เจ้าของ/ผู้ดูแลของเขาจะได้รับแจ้ง (กระดิ่ง · อีเมล · LINE ตามที่เขาตั้ง) พร้อมลิงก์ให้กดยอมรับ — "
+        + "ติดตามได้ที่ \"คำขอที่เราส่ง\" (ระบบไม่บอกว่าเลขนี้ใช้ NextAcc หรือไม่จนกว่าเขาจะตอบรับ · คำขอหมดอายุใน 30 วัน)";
 
     /// <summary>ข้อความเมื่อเลขภาษีที่กรอกผิดรูป — ตัดสินจากรูปแบบอย่างเดียว (ไม่ดูฐาน) ⇒ ไม่รั่วสมาชิกภาพ</summary>
     public const string InvalidTaxIdMessage = "เลขประจำตัวผู้เสียภาษีของคู่ค้าต้องเป็นตัวเลข 13 หลัก";
@@ -78,6 +80,22 @@ public static class PartnerCompanyMatch
         return hq.Count == 1
             ? new PartnerCompanyPick(PartnerMatchKind.Matched, hq[0].Id)
             : new PartnerCompanyPick(PartnerMatchKind.Ambiguous, null);
+    }
+
+    /// <summary>รอบ 264 (คำตัดสิน 264-1-3): ผู้รับ<b>คำขอเชื่อม</b> — ตรงหนึ่งเดียว ⇒ บริษัทนั้น · กำกวม ⇒ <b>ทุกบริษัทที่ตรง</b>
+    /// (ระบุสาขา = ทุกบริษัทสาขานั้น · ไม่ระบุ = สำนักงานใหญ่ทุกราย ถ้ามี ≥ 2 · ไม่มีสำนักงานใหญ่ = ทุกบริษัทของเลขนี้) · ไม่มี ⇒ ว่าง ·
+    /// ต่างจาก <see cref="Pick"/> (ส่ง<b>เอกสาร</b> — กำกวม ⇒ ไม่ส่ง) เพราะคำขอไม่ย้ายข้อมูลใด: ผู้รับต้องกดยอมรับเอง · ทิ้งเมื่อกำกวม = บริษัทที่ตั้งเลขซ้ำวัดได้ว่ามีอีกบริษัทถือเลขนั้น</summary>
+    public static IReadOnlyList<Guid> InviteTargets(IEnumerable<PartnerCompanyCandidate>? sameTaxId, string? branchCode)
+    {
+        var list = (sameTaxId ?? Enumerable.Empty<PartnerCompanyCandidate>())
+            .GroupBy(c => c.Id).Select(g => g.First()).ToList();
+        var pick = Pick(list, branchCode);
+        if (pick.Kind == PartnerMatchKind.Matched && pick.CompanyId is Guid one) return new[] { one };
+        if (pick.Kind == PartnerMatchKind.None) return Array.Empty<Guid>();
+        var wanted = WantedBranch(branchCode);
+        if (wanted != null) return list.Where(c => TaxBranchCode.Normalize(c.BranchCode) == wanted).Select(c => c.Id).OrderBy(x => x).ToList();
+        var hq = list.Where(c => TaxBranchCode.Normalize(c.BranchCode) == TaxBranchCode.HeadOffice).ToList();
+        return (hq.Count >= 2 ? hq : list).Select(c => c.Id).OrderBy(x => x).ToList();
     }
 
     private static PartnerCompanyPick Single(List<PartnerCompanyCandidate> hits) => hits.Count switch
