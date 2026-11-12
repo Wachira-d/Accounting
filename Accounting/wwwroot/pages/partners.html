@@ -76,8 +76,9 @@
     <!-- รอบ 258-3 (F-H3): ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ เรากดบันทึกจ่ายใบซื้อของเราเอง (ยอด/ภาษีหักจากเซิร์ฟเวอร์ตามกติกาของเรา) -->
     <div class="pt-card" id="partner-paid">
       <h3>💳 ผู้ขายแจ้งว่ารับเงินแล้ว</h3>
-      <p class="pt-muted">เมื่อเราจ่ายใบแจ้งหนี้ผ่านลิงก์ชำระของผู้ขายที่ใช้ NextAcc ระบบของผู้ขายแจ้งมาที่นี่ — ระบบ<b>ไม่บันทึกจ่ายแทน</b>: กด “บันทึกจ่ายตามที่ผู้ขายรับแล้ว”
-        เพื่อบันทึกจ่ายใบซื้อของเรา (ภาษีหัก ณ ที่จ่ายตามกติกาของเรา · 50 ทวิ ออกตามค่าตั้งของเรา) · ใบซื้อที่ยังเป็นร่างต้องอนุมัติก่อน</p>
+      <p class="pt-muted">เมื่อผู้ขายที่ใช้ NextAcc บันทึกรับเงินของใบแจ้งหนี้ที่ส่งให้เรา (ลิงก์ชำระ · สลิป · รับชำระเอง) ระบบของผู้ขายแจ้งมาที่นี่ — กด “บันทึกจ่ายตามที่ผู้ขายรับแล้ว”
+        เพื่อบันทึกจ่ายใบซื้อของเรา (ภาษีหัก ณ ที่จ่ายตามกติกาของเรา · 50 ทวิ ออกตามค่าตั้งของเรา) · ใบซื้อที่ยังเป็นร่างต้องอนุมัติก่อน ·
+        ให้ระบบของเราบันทึกเองเมื่อหลักฐานครบได้ที่หน้า <a href="/pages/partner-automation.html">งานอัตโนมัติกับคู่ค้า</a> (ไม่รู้ว่าเงินออกจากบัญชีไหน = ไม่บันทึกเอง)</p>
       <div class="table-container">
         <table class="table">
           <thead><tr><th>วันที่รับเงิน</th><th>ผู้ขาย / ใบของผู้ขาย</th><th>ใบซื้อของเรา</th><th class="text-right">ผู้ขายรับ</th><th class="text-right">จะบันทึก (จ่าย + ภาษีหัก)</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
@@ -282,10 +283,14 @@ const Page = {
         <td><a href="/pages/documents.html?id=${encodeURIComponent(n.targetDocumentId)}">${Layout.esc(n.targetDocumentNumber || 'เปิดใบซื้อ')}</a></td>
         <td class="text-right">${Layout.esc(Layout.money(n.cashAmount))}<div class="pt-muted">ผู้ขายบันทึกภาษีหัก ${Layout.esc(Layout.money(n.sellerRecordedWht))}</div></td>
         <td class="text-right">${Layout.esc(planned)}</td>
-        <td><span class="pt-badge">${Layout.esc(n.statusLabel || n.status)}</span>${n.note ? `<div class="pt-muted">${Layout.esc(n.note)}</div>` : ''}</td>
+        <td><span class="pt-badge">${Layout.esc(n.statusLabel || n.status)}</span>${n.note ? `<div class="pt-muted">${Layout.esc(n.note)}</div>` : ''}
+          ${n.sellerVoided && n.status === 'Recorded' ? `<div class="pt-muted" style="color:#b91c1c">${Layout.esc('ผู้ขายยกเลิกการรับเงินนี้แล้ว — ตรวจรายการเดินบัญชี แล้วยกเลิกการจ่ายที่ใบซื้อเอง (ระบบไม่ยกเลิกแทน)')}</div>` : ''}
+          ${open && n.autoState ? `<div class="pt-muted">${Layout.esc(n.autoState)}${n.consentPageUrl ? ` · <a href="${Layout.esc(n.consentPageUrl)}">งานอัตโนมัติกับคู่ค้า</a>` : ''}</div>` : ''}</td>
         <td>${open && !n.problem ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">
             <select class="form-select" data-acct="${Layout.esc(n.id)}" aria-label="บัญชีที่จ่าย"></select>
             <select class="form-select" data-method="${Layout.esc(n.id)}" aria-label="วิธีจ่าย"></select></div>
+            ${n.sourceLabel ? `<div class="pt-muted" style="${n.defaultBankAccountId ? '' : 'color:#b45309'}">${Layout.esc(n.sourceLabel)}</div>` : ''}
+            ${n.hintLabel ? `<div class="pt-muted">${Layout.esc(n.hintLabel)}</div>` : ''}
             <button class="btn btn-primary btn-sm" data-paid="${Layout.esc(n.id)}">บันทึกจ่ายตามที่ผู้ขายรับแล้ว</button>` : ''}
           ${open && n.plannedWarning ? `<div class="pt-muted" style="color:#b45309">${Layout.esc(n.plannedWarning)}</div>` : ''}
           ${open ? `<button class="btn btn-secondary btn-sm" data-dismiss="${Layout.esc(n.id)}">ปิดการแจ้ง</button>` : ''}
@@ -301,7 +306,9 @@ const Page = {
   fillPayControls(body) {
     const fill = (el, list, cur) => (list || []).forEach(o => el.add(new Option(o.label, o.value, false, String(o.value) === String(cur || ''))));
     (this.notices || []).forEach(n => {
-      const a = body.querySelector(`[data-acct="${CSS.escape(n.id)}"]`); if (a) fill(a, n.accounts, n.defaultBankAccountId);
+      // รอบ 264 P3 (C-01): ไม่มีบัญชีที่มีหลักฐาน ⇒ ช่องว่าง "— เลือกบัญชีที่จ่ายออกจริง —" (ไม่ preselect บัญชีแรก/เงินสด · ผู้กดต้องเลือก)
+      const a = body.querySelector(`[data-acct="${CSS.escape(n.id)}"]`);
+      if (a) { a.add(new Option('— เลือกบัญชีที่จ่ายออกจริง —', '', false, !n.defaultBankAccountId)); fill(a, n.accounts, n.defaultBankAccountId); }
       const m = body.querySelector(`[data-method="${CSS.escape(n.id)}"]`); if (m) fill(m, n.methods, n.defaultMethod);
     });
   },
@@ -312,7 +319,9 @@ const Page = {
     if (!n) return;
     const acctEl = document.querySelector(`[data-acct="${CSS.escape(id)}"]`);
     const methodEl = document.querySelector(`[data-method="${CSS.escape(id)}"]`);
-    const acctLabel = acctEl && acctEl.selectedOptions[0] ? acctEl.selectedOptions[0].textContent : '-';
+    // รอบ 264 P3 (C-01): ต้องเลือกบัญชี (หรือเงินสด) เอง — เซิร์ฟเวอร์ปฏิเสธเช่นกัน
+    if (!acctEl || !acctEl.value) { Layout.toast('เลือกบัญชีที่เงินออกจริง (หรือ “เงินสด”) ก่อนบันทึกจ่าย — ระบบไม่เดาบัญชีให้', 'error'); return; }
+    const acctLabel = acctEl.selectedOptions[0] ? acctEl.selectedOptions[0].textContent : '-';
     const methodLabel = methodEl && methodEl.selectedOptions[0] ? methodEl.selectedOptions[0].textContent : '-';
     const paidAt = Layout.date ? Layout.date(n.paidAt) : String(n.paidAt || '').slice(0, 10);
     // ฝ่ายค้าน M5: บอกแหล่งของข้อมูล (ผู้ขายเป็นผู้แจ้ง) + ให้ตรวจรายการเดินบัญชีของเราก่อน · M3: คำเตือนภาษีหักจากเซิร์ฟเวอร์
@@ -324,7 +333,8 @@ const Page = {
         + (n.plannedWarning ? `\n\n⚠️ ${n.plannedWarning}` : '') });
     if (!ok) return;
     try {
-      const r = await api.recordPartnerPaymentNotice(id, { bankAccountId: acctEl && acctEl.value ? acctEl.value : null, paymentMethod: methodEl ? methodEl.value : null });
+      const cash = acctEl.value === 'cash';
+      const r = await api.recordPartnerPaymentNotice(id, { bankAccountId: cash ? null : acctEl.value, payFromCash: cash, paymentMethod: methodEl ? methodEl.value : null });
       Layout.toast((r && r.message) || 'บันทึกจ่ายแล้ว', 'success');
       await this.load();
     } catch (e) { Layout.toast(e.message || 'บันทึกจ่ายไม่สำเร็จ', 'error'); }

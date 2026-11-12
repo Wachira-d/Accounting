@@ -27,15 +27,11 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
 
     public DocumentPaymentHandler(AccountingDbContext db, IDocumentService docs,
         IGatewayAccountResolver accounts, ILogger<DocumentPaymentHandler> logger,
-        Accounting.Services.Implementations.PartnerPaymentNoticeService? partnerNotices = null,
         Accounting.Services.Storage.IFileStorage? storage = null)
-    { _db = db; _docs = docs; _accounts = accounts; _logger = logger; _partnerNotices = partnerNotices; _storage = storage; }
+    { _db = db; _docs = docs; _accounts = accounts; _logger = logger; _storage = storage; }
 
     /// <summary>รอบ 260-2: ที่เก็บไฟล์ — ตรวจรูป QR ของบัญชีตอนหาค่าแนะนำ "บัญชีที่แสดงให้ลูกค้าโอน" (null = นับเฉพาะพร้อมเพย์ · เทสต์)</summary>
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
-
-    /// <summary>รอบ 258-3 (F-H3): แจ้งผู้ซื้อที่เป็นคู่ค้า NextAcc ว่าผู้ขายรับเงินแล้ว (ไม่บันทึกแทน) · null = เทสต์/เครื่องมือ</summary>
-    private readonly Accounting.Services.Implementations.PartnerPaymentNoticeService? _partnerNotices;
 
     public PaymentSourceKind SourceKind => PaymentSourceKind.Document;
 
@@ -124,10 +120,7 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
             OverridePaymentAccountId: moneyIn,
             WithholdingTaxAmount: paymentWht
         ), intent.ConfirmedBy ?? "payment-gateway", source: Accounting.Helpers.PaymentEntrySource.Gateway);
-        // รอบ 258-3 (F-H3): ใบนี้ส่งเข้าระบบคู่ค้า (InvoiceFlow → ใบซื้อของผู้ซื้อ) ⇒ แจ้งผู้ซื้อให้กดบันทึกจ่ายครั้งเดียว — ไม่โยน (เงินบันทึกแล้ว)
-        if (_partnerNotices != null)
-            await _partnerNotices.NotifySellerReceivedAsync(intent.CompanyId, intent.Id, doc.Id, intent.Amount, reference,
-                intent.PaidAt ?? intent.ConfirmedAt ?? DateTime.UtcNow, intent.MethodKind, ct);
+        // รอบ 258-3 (F-H3) → รอบ 264 P3 (C-04): การแจ้งผู้ซื้อคู่ค้าย้ายเข้าขั้นหลัง commit ของ CreatePaymentAsync (ทุกทางเข้า · กุญแจ = การรับชำระ) — handler ไม่เรียกเองแล้ว
         // รอบ 250 (WP-02 §2.1): งานส่งเอกสารหลังรับชำระเข้าคิวในแกน CreatePaymentAsync (หลัง commit · แถวเดียวต่อการชำระ — webhook ซ้ำไม่เพิ่ม)
     }
 }

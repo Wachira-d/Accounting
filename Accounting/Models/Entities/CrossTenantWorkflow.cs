@@ -193,7 +193,18 @@ public class PartnerPaymentNotice : TenantEntity
     public string SourceDocumentNumber { get; set; } = "";
     /// <summary>ใบซื้อของผู้ซื้อ (จาก <c>CrossTenantDocumentLink.TargetDocumentId</c>)</summary>
     public Guid TargetDocumentId { get; set; }
-    public Guid PaymentIntentId { get; set; }
+    /// <summary>รายการชำระผ่านลิงก์ของผู้ขาย · รอบ 264 P3 (คำตัดสิน 264-3-6): null ได้ — การแจ้งเกิดจากทุกทางเข้ารับชำระของผู้ขาย (มือ/สลิป/รายการเดินบัญชี/นำเข้า) ไม่ใช่แค่ลิงก์</summary>
+    public Guid? PaymentIntentId { get; set; }
+    /// <summary>รอบ 264 P3 (264-3-6): <b>กุญแจกันซ้ำ</b> = การรับชำระของผู้ขาย (<c>Payment.Id</c> ในบริษัทผู้ขาย) · แถวเดิมเติมจาก <c>Payments.Reference = PAY-INTENT-{intent}</c> (migration) · null = แถวเก่าที่หาการชำระไม่พบ</summary>
+    public Guid? SellerPaymentId { get; set; }
+    /// <summary>รอบ 264 P3: ผู้ขายยกเลิกการรับชำระนี้แล้ว (เวลา) — Open ⇒ <c>Withdrawn</c> · Recorded ⇒ ป้ายบนใบซื้อ + แจ้ง (ไม่ยกเลิกการจ่ายของผู้ซื้อแทน · E6)</summary>
+    public DateTime? SellerVoidedAt { get; set; }
+    /// <summary>รอบ 264 P3: เหตุล่าสุดที่ท่ออัตโนมัติไม่บันทึกจ่ายเอง (ข้อความไทยจาก <c>PartnerAutoRecordPolicy</c>) · null = ยังไม่เคยประเมิน/ผ่าน</summary>
+    public string? AutoBlockedReason { get; set; }
+    /// <summary>รหัสเหตุ (ชื่อคงที่) — audit <c>PartnerPaymentAutoBlocked</c> ครั้งแรกต่อเหตุ (ไม่สแปม)</summary>
+    public string? AutoBlockedCode { get; set; }
+    /// <summary>ท่อประเมินแถวนี้ล่าสุดเมื่อไร (UTC)</summary>
+    public DateTime? AutoEvaluatedAt { get; set; }
     /// <summary>เงินที่ผู้ขายรับจริง (หลังผู้ซื้อหัก ณ ที่จ่าย)</summary>
     public decimal CashAmount { get; set; }
     /// <summary>ภาษีหักที่ผู้ขายบันทึกไว้ฝั่งตัวเอง (แสดงเทียบ — ไม่ใช้คำนวณแทนกติกาของผู้ซื้อ)</summary>

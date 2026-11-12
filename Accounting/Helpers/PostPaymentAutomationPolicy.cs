@@ -281,6 +281,9 @@ public enum PaymentEntrySource
     /// <summary>รอบ 252 WP-12A (AUTOPILOT §5): เงินโอนในรายการเดินบัญชีจริง (statement/feed) ปิดหนี้ใบค้าง — ระบบปิดเอง (<c>BankReceiptAutoSettle</c> = AutoSettle)
     /// หรือคนกดยืนยันข้อเสนอในคิว "เงินเข้าที่รอยืนยัน" · เดินเต็มเหมือน gateway (ออก/ส่งใบเสร็จตามค่าตั้ง)</summary>
     BankAutoSettle,
+    /// <summary>รอบ 264 P3 (คำตัดสิน 264-3-3): ท่อฝั่ง<b>ผู้ซื้อ</b> (<c>PartnerPayablePipeline</c>) บันทึกจ่ายใบซื้อเองตามการแจ้ง "ผู้ขายคู่ค้ารับเงินแล้ว"
+    /// ภายใต้ความยินยอม <c>AutoRecordPayment</c> ของผู้ซื้อ · ผู้บันทึก = GUID ผู้ให้ความยินยอม · เดินเต็มเหมือนบันทึกมือ (50 ทวิ ตามเส้นเดิม)</summary>
+    PartnerAuto,
 }
 
 /// <summary>

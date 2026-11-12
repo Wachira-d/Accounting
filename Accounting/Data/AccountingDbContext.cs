@@ -3795,7 +3795,12 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.SourceChannel).HasMaxLength(32);
             e.Property(x => x.CashAmount).HasPrecision(18, 2);
             e.Property(x => x.SellerRecordedWht).HasPrecision(18, 2);
+            e.Property(x => x.AutoBlockedReason).HasMaxLength(500);
+            e.Property(x => x.AutoBlockedCode).HasMaxLength(40);
             e.HasIndex(x => new { x.CompanyId, x.PaymentIntentId }).IsUnique().HasDatabaseName("IX_PartnerPaymentNotices_Company_Intent");
+            // รอบ 264 P3 (264-3-6): กุญแจกันซ้ำใหม่ = การรับชำระของผู้ขาย (ชื่อ/เงื่อนไขตรง PartnerPaymentNoticeMigration)
+            e.HasIndex(x => new { x.CompanyId, x.SellerPaymentId }).IsUnique()
+                .HasFilter("\"SellerPaymentId\" IS NOT NULL").HasDatabaseName("IX_PartnerPaymentNotices_Company_SellerPayment");
             e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_PartnerPaymentNotices_Company_Status");
             e.HasQueryFilter(x => !x.IsDeleted);
         });

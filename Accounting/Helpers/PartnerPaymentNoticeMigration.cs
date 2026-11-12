@@ -37,5 +37,42 @@ public static class PartnerPaymentNoticeMigration
         """CREATE INDEX IF NOT EXISTS "IX_PartnerPaymentNotices_Company_Status" ON "PartnerPaymentNotices" ("CompanyId", "Status");""",
         // ฝ่ายค้าน M5 (ชุดแก้): ช่องทางที่ผู้ขายรับเงิน — ตารางที่สร้างไปแล้วได้คอลัมน์เพิ่ม
         """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SourceChannel" varchar(32) NULL;""",
+        // ── รอบ 264 P3 (คำตัดสิน 264-3-6/7): การแจ้งจากทุกทางเข้ารับชำระของผู้ขาย + ถอนเมื่อผู้ขายยกเลิก + ท่ออัตโนมัติฝั่งผู้ซื้อ ──
+        """ALTER TABLE "PartnerPaymentNotices" ALTER COLUMN "PaymentIntentId" DROP NOT NULL;""",
+        """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SellerPaymentId" uuid NULL;""",
+        """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SellerVoidedAt" timestamp without time zone NULL;""",
+        """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "AutoBlockedReason" varchar(500) NULL;""",
+        """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "AutoBlockedCode" varchar(40) NULL;""",
+        """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "AutoEvaluatedAt" timestamp without time zone NULL;""",
+        // กุญแจที่ persist แล้ว (F2 ข้อ 9): แถวเดิมเติม SellerPaymentId จากการรับชำระของผู้ขายที่อ้าง intent เดียวกัน
+        // (รูปเลขอ้างอิงตาม GatewayPaymentRecord.Reference = PAY-INTENT-{N}) · ตัวที่ยังไม่ถูกยกเลิกก่อน · ซ้ำได้ (เงื่อนไข IS NULL)
+        BackfillSellerPaymentSql,
+        """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartnerPaymentNotices_Company_SellerPayment" ON "PartnerPaymentNotices" ("CompanyId", "SellerPaymentId") WHERE "SellerPaymentId" IS NOT NULL;""",
+        // C-03 ของที่ค้างอยู่แล้ว: ผู้ขายยกเลิกการรับชำระไปก่อนรอบนี้ ⇒ การแจ้งที่ยังรอบันทึก = ถอน · ที่บันทึกแล้ว = ติดป้าย (ไม่แตะการจ่ายของผู้ซื้อ)
+        WithdrawVoidedOpenSql,
+        FlagVoidedRecordedSql,
     };
+
+    public const string BackfillSellerPaymentSql = """
+        UPDATE "PartnerPaymentNotices" n SET "SellerPaymentId" = (
+            SELECT p."Id" FROM "Payments" p
+            WHERE p."CompanyId" = n."SourceCompanyId" AND p."Reference" = 'PAY-INTENT-' || replace(n."PaymentIntentId"::text, '-', '')
+            ORDER BY p."IsDeleted", p."CreatedAt" DESC LIMIT 1)
+        WHERE n."SellerPaymentId" IS NULL AND n."PaymentIntentId" IS NOT NULL;
+        """;
+
+    public const string WithdrawVoidedOpenSql = """
+        UPDATE "PartnerPaymentNotices" n SET "Status" = 'Withdrawn', "SellerVoidedAt" = COALESCE(p."UpdatedAt", now() at time zone 'utc'),
+            "AutoBlockedReason" = 'ผู้ขายยกเลิกการรับชำระนี้แล้ว — ไม่ต้องบันทึกจ่าย', "UpdatedAt" = now() at time zone 'utc'
+        FROM "Payments" p
+        WHERE p."Id" = n."SellerPaymentId" AND p."CompanyId" = n."SourceCompanyId" AND p."IsDeleted" = true
+          AND n."Status" = 'Open' AND n."SellerVoidedAt" IS NULL;
+        """;
+
+    public const string FlagVoidedRecordedSql = """
+        UPDATE "PartnerPaymentNotices" n SET "SellerVoidedAt" = COALESCE(p."UpdatedAt", now() at time zone 'utc'), "UpdatedAt" = now() at time zone 'utc'
+        FROM "Payments" p
+        WHERE p."Id" = n."SellerPaymentId" AND p."CompanyId" = n."SourceCompanyId" AND p."IsDeleted" = true
+          AND n."Status" <> 'Open' AND n."SellerVoidedAt" IS NULL;
+        """;
 }

@@ -3098,7 +3098,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **ความพร้อมทั้งเส้นบนรายการประจำ (F-M1 · 258-3-9)**: แผงความพร้อมเดิม (`AutopilotReadiness.Evaluate` ← `RecurringAutopilotService`) เพิ่มแถว `LINE-DOC`
   (ปลายทาง LINE ที่รับเรื่องเอกสาร + เหตุ OA ไม่พร้อม) · `LINE-RECEIPT` (เมื่อเปิดส่งใบเสร็จหลังชำระ) · `PAY-LIVE` (โหมดเงินจริง — ไม่ใช่ `GATEWAY` เดิมของลิงก์ชำระ) · `PARTNER` (ผู้ติดต่อเป็นคู่ค้า Accepted) —
   ✓/ⓘ เท่านั้น ไม่กดระดับ "อัตโนมัติเต็ม" (`ChainInfoCodes`) · ไม่ได้ตรวจ (null) = ไม่มีแถว
-- **ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ ผู้ซื้อกดบันทึกจ่ายครั้งเดียว (F-H3 · 258-3-7)**: `DocumentPaymentHandler` (gateway/สลิปที่ยืนยัน) หลังบันทึกรับชำระ ⇒
+- **ผู้ขายคู่ค้ารับเงินผ่านลิงก์แล้ว ⇒ ผู้ซื้อกดบันทึกจ่ายครั้งเดียว (F-H3 · 258-3-7)** _(รอบ 264 P3: จุดสร้างการแจ้งย้ายเป็นขั้นหลัง commit ของ `CreatePaymentAsync` ทุกทางเข้า · กุญแจ = การรับชำระของผู้ขาย · ค่าตั้งต้นบัญชี "บัญชีแรก" ถูกถอด — ดู §2.12g-264-P3)_: `DocumentPaymentHandler` (gateway/สลิปที่ยืนยัน) หลังบันทึกรับชำระ ⇒
   `PartnerPaymentNoticeService.NotifySellerReceivedAsync` — ลิงก์ InvoiceFlow ที่มีใบซื้อปลายทาง + คู่ค้า Accepted ⇒ แถว `PartnerPaymentNotices` ใน**บริษัทผู้ซื้อ**
   (unique ต่อรายการชำระ · audit ทั้งสองฝั่ง) + แจ้ง `AutopilotPartnerExchange` (กระดิ่ง/กลุ่ม LINE ตามค่าตั้งของผู้ซื้อ) · **ไม่บันทึกบัญชีแทน** ·
   ผู้ซื้อกด "บันทึกจ่ายตามที่ผู้ขายรับแล้ว" (partners.html §partner-paid · `POST partner-payment-notices/{id}/record` · สิทธิ์อนุมัติใบซื้อ · ห้าม API key) ⇒
@@ -3110,7 +3110,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (M2) บริษัทโหมด e-Tax by Email + ใบที่อาจเป็นใบกำกับ (`Facts.EtaxEmailRequired`): ผู้ติดต่อมีแต่ LINE ⇒ หยุด `EtaxNeedsEmailBlock` + แจ้งทีม (พฤติกรรมเดิม) ·
   มีอีเมล ⇒ ขั้นอีเมล (e-Tax) ก่อน LINE (ปฏิเสธ/ล้ม ⇒ ไม่ถึง LINE) · บริษัทอื่นคงเดิม (LINE อย่างเดียว = Done) ·
   (M3) ใบซื้อมีภาษีหักค้างแต่ผู้ขายรับเต็ม ⇒ บันทึกได้ (หัก 0) พร้อมคำเตือน ม.50/ม.54 ในกล่องยืนยัน (`PartnerPaymentNoticeRule.FullPaidWhtWarning`) ·
-  (M4) กล่องยืนยันเลือกบัญชีเงิน (ตั้งต้น = บัญชีของใบซื้อ › บัญชีแรกที่ใช้งาน) + วิธีจ่าย (ตั้งต้นตามช่องทางที่ผู้ขายรับ) · เซิร์ฟเวอร์ตรวจบัญชีเป็นของบริษัทผู้เรียก ·
+  (M4) กล่องยืนยันเลือกบัญชีเงิน (~~ตั้งต้น = บัญชีของใบซื้อ › บัญชีแรกที่ใช้งาน~~ รอบ 264 P3: ตั้งต้นเฉพาะบัญชีที่มีหลักฐาน — บัญชีของใบซื้อเป็นคำแนะนำ · ไม่มี = ช่องว่างให้เลือก) + วิธีจ่าย (ตั้งต้นตามช่องทางที่ผู้ขายรับ) · เซิร์ฟเวอร์ตรวจบัญชีเป็นของบริษัทผู้เรียก ·
   (M5) ข้อความยืนยันบอกแหล่ง ("ผู้ขาย … แจ้งว่ารับเงินผ่าน … เมื่อ …") + "ตรวจรายการเดินบัญชีของท่านก่อนกด" (คอลัมน์ `PartnerPaymentNotices.SourceChannel`) ·
   (L1) ไม่ล้าง scope ของผู้เรียก — ถอดเฉพาะแถวของตัวเอง · (L2) จองแถวแจ้งแบบมีเงื่อนไข (`Recording`) + ข้อผิดพลาดเส้นจ่าย ⇒ 409 ไทย ·
   (L3) สิทธิ์ = อนุมัติเอกสารตามชนิดใบซื้อจริง + ชั้นความลับ (ด่านเดียวกับบันทึกการชำระ) · รายการต้องเห็นเอกสารฝั่งซื้อ · (L5) audit ฝั่งผู้ขายไม่มี id ภายในของผู้ซื้อ ·
@@ -3268,6 +3268,35 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   บัญชีจ่ายตรวจซ้ำตอนใช้ (`PayAccountInactive`) · บริษัทคู่ค้าถูกลบ/ระงับ ⇒ หยุด · trigger กัน IsDeleted + DELETE · hash `PAC2` (`HashVersion`) · `MinTextVersion` · `WiredSince` (แพ็กที่พลิก `ReaderWired` ต้องตั้ง) ·
   หน้าแสดงคู่ Pending ที่มีแถวความยินยอม · อีเมลใน audit ค่าตั้งเป็นลายนิ้วมือ
 - **kill-switch**: ไม่มีการเรียก AI ในแพ็กนี้
+
+### 2.12g-264-P3 รอบ 264 แพ็ก P3 "ท่อฝั่งผู้ซื้อ — ผู้ขายรับเงินแล้ว ⇒ ระบบของผู้ซื้อบันทึกจ่ายเองเมื่อหลักฐานครบ" (erp-review/2026-11-12/team-264-a2b-design.md §3.1 · §5 · คำตัดสิน 264-3-1…9)
+
+- **หลัก**: ผู้ขาย (A) สร้างได้แค่ "การแจ้ง" ในบริษัทผู้ซื้อ (B) · การบันทึกในสมุด B เกิดจากท่อของ B เอง (`Services/Implementations/PartnerPayablePipeline` · ขั้น `PartnerPayable` ของ `AutopilotJob` ใต้ `JobLock`) ภายใต้ความยินยอม `AutoRecordPayment` ของ B เท่านั้น ·
+  ขาดหลักฐานช่องใด ⇒ ปุ่ม "บันทึกจ่ายตามที่ผู้ขายรับแล้ว" เดิม + เหตุบนแถว (`AutoBlockedReason`) + แถว Autopilot `PartnerPayBlocked`
+- **การแจ้งจากทุกทางเข้าของ A (C-04 · 264-3-6)**: ขั้นหลัง commit ของ `CreatePaymentAsync` (มือ · gateway · สลิป · รายการเดินบัญชี · นำเข้า) และ `AfterPaymentRecordedAsync` (integration) →
+  `DocumentService.NotifyPartnerOfSellerPaymentAsync` (partial `DocumentService.PartnerNotice.cs`) → `PartnerPaymentNoticeService.NotifyForSellerPaymentAsync` (ใบที่ไม่ได้ส่งเข้าระบบคู่ค้าจบที่ query เดียว) ·
+  `DocumentPaymentHandler` ไม่แจ้งเองแล้ว · เงินที่ผู้ซื้อจ่าย = `Payment.Amount + FeeAmount` · ช่องทาง = `PaymentMethodKind` เมื่อมี intent (หาได้จาก `Payment.PaymentIntentId` หรือเลขอ้างอิง `PAY-INTENT-{N}`) ไม่งั้น `Entry:Manual/BankAutoSettle/Import/Other` ·
+  **กุญแจ = `SellerPaymentId`** (unique บางส่วน `IX_PartnerPaymentNotices_Company_SellerPayment`) + intent เดิม · `PaymentIntentId` nullable · การชำระหลายใบไม่แจ้ง (backlog D8)
+- **ผู้ขายยกเลิกการรับชำระ (C-03 · 264-3-7)**: ขั้นหลัง commit ของ `VoidPaymentAsync` → `WithdrawPartnerNoticesForVoidedPaymentAsync` → `PartnerPaymentNoticeService.WithdrawForSellerPaymentAsync`:
+  รอบันทึก ⇒ สถานะใหม่ `Withdrawn` (compare-and-set) · กำลังบันทึก ⇒ ประทับ `SellerVoidedAt` · บันทึกแล้ว ⇒ ป้าย `[PARTNER-PAYMENT-VOIDED]` บนหมายเหตุภายในของใบซื้อ + แจ้ง B + แถว Autopilot จนกว่า B ยกเลิกการจ่ายเอง ·
+  **ไม่ยกเลิกการจ่ายของ B แทน** (E6) · audit `PartnerPaymentNoticeWithdrawn` / `PartnerPaymentSellerVoided` ทั้งสองฝั่ง · ปุ่มเดียวและท่อตรวจการรับชำระของ A สด (ยกเลิกแล้ว ⇒ 409 / ท่อถอนเอง)
+- **แหล่งเงินออก (C-01 HIGH · 264-3-1)**: ตัวตัดสินเดียว `Helpers/PartnerPaySourceAccount.Decide` (pure · ตาราง `Precedence`): รายการเดินบัญชี › ที่ผู้จ่ายเลือก › สลิปตรงบัญชีเดียว › บัญชีในความยินยอม · ประวัติ/บัญชีบนใบซื้อ = คำแนะนำ ·
+  ไม่รู้/หลักฐานขัดกัน ⇒ `Unknown` (ไม่บันทึกเอง · **ไม่ preselect** · ไม่มี "บัญชีแรก" · เงินสดต้องเลือกเอง) · ชั้นรายการเดินบัญชี/ผู้จ่ายเลือก/สลิป **ยังไม่มีผู้ป้อน** (แพ็ก P4/P2 ป้อนที่ `SourceDecisionAsync`) ⇒ วันนี้อัตโนมัติได้เฉพาะเมื่อ B ตั้งบัญชีจ่ายในความยินยอม ·
+  บัญชีที่ใช้ได้ = `PartnerPayablePipeline.UsablePayAccountsAsync` (ตัวตรวจคู่สมมาตร `SlipReceivingAccount.UsableProblem` + `DocumentMoneyChannel.EvaluateAsync`) · ปุ่มเดียว: ไม่เลือกบัญชีและไม่เลือก "เงินสด" (`payFromCash`) = 400
+- **ด่าน (264-3-2)**: `Helpers/PartnerAutoRecordPolicy.Decide` — การแจ้งยังรอบันทึก · การรับชำระของ A ยังมีผล (ตรวจสด) · ใบของ A ไม่ถูกยกเลิก · แถวรุ่นก่อนไม่ผูกการรับชำระ ⇒ ปุ่มเดียว · ความยินยอม ·
+  ยอด/ภาษีหักจาก `PartnerPaymentNoticeRule.For` ไม่มีคำเตือน (B3) · บาท · ไม่ใช่ใบอย่างย่อ/ภาษีออกแทน · VAT ตรง · แหล่งเงิน `AllowsAuto` · งวดปิด = ตัวบันทึกจ่ายเดิมปฏิเสธ ⇒ ปุ่มเดียวพร้อมข้อความ
+- **บันทึก (264-3-3)**: ความยินยอมตรวจด้วย `PartnerConsentService.CheckForWriteAsync(…, AutoRecordPayment, CapAmount.Thb(ใบซื้อ.TotalAmount))` ใน**ธุรกรรมล็อกบน connection แยก** ที่ถือไว้จน `CreatePaymentAsync` commit (ถอน/ระงับรอ) ·
+  `CreatePaymentAsync(…, createdBy = GUID ผู้ให้, PaymentEntrySource.PartnerAuto)` · เลขอ้างอิง `PARTNER-PAID-P{paymentId}` (แถวเก่าที่มีแต่ intent คงรูป `PARTNER-PAID-{intent}` · กันซ้ำตรวจทั้งสองรูป) · ภาษีหักของ B ⇒ 50 ทวิ ตามเส้นเดิม ·
+  audit `PartnerPaymentAutoRecorded` (consentId · ผู้ให้ · Origin · ผู้แพ้ · ยอด · ภาษีหัก · `usedAi=false`) · ไม่ผ่าน ⇒ Open + เหตุ + audit `PartnerPaymentAutoBlocked` เมื่อรหัสเหตุเปลี่ยน · watermark ต่อแถว `AutoEvaluatedAt` (15 นาที)
+- **จ่ายบางส่วน (C-05 · 264-3-5)**: `PartnerPaymentNoticeRule.PartialPlan` — ไม่มีภาษีหักค้าง ⇒ ตามเงินจริง · มีภาษีหัก ⇒ อัตราเดียวทั้งใบ + `round(เงิน × r/(100−r),2)` = ภาษีหักที่ A ลง · ยอดเต็มเดิมไม่เปลี่ยน · ตัวคิด `PlanForAsync` ตัวเดียว
+- **ผังใบซื้อร่างจากคู่ค้า (C-08 · 264-3-9)**: `PartnerPayablePipeline.SuggestDraftGlAsync` (บริษัทที่เปิดสร้างใบร่าง) → `IOcrAiAugmenter.SuggestGlAccountAsync` (orchestrator · นักเรียนก่อน) · เติมเฉพาะ `GlSuggestionApplyPolicy.MayAutoFill` + รหัสในผังของบริษัท ·
+  `GlAccountAiFeedbackId` · ป้าย `[PARTNER-DRAFT-GL]` (`AiAnswerSource.Label`) · ครั้งเดียวต่อใบ · ไม่อนุมัติเอง (AutoApprovePurchase ยังไม่ต่อสาย)
+- **ความยินยอม**: `AutoRecordPayment` `ReaderWired=true` · `WiredSince = 2026-11-12 UTC` (`PartnerConsent.AutoRecordPaymentWiredSince`) ⇒ แถวที่ให้ล่วงหน้าก่อนวันนั้นต้องยืนยันใหม่ · P5 `ReturnWhtCertsAllowedAsync` ใช้ `CheckForWriteAsync` (ขอบเขตทั้งบริษัท) ·
+  แถว Autopilot `PartnerPayBlocked` = `PartnerPayablePipeline.BlockedRowsAsync`
+- **หน้า** (`partners.html` §partner-paid): ป้ายที่มาของบัญชี (⚙️) / เหตุที่ไม่รู้ · คำแนะนำไม่ preselect · ช่อง "— เลือกบัญชีที่จ่ายออกจริง —" ว่างเมื่อไม่มีหลักฐาน · สถานะงานอัตโนมัติ + ลิงก์ `partner-automation.html` · ผู้ขายยกเลิกหลังบันทึก ⇒ ป้ายแดง
+- **migration** (`Helpers/PartnerPaymentNoticeMigration`): `PaymentIntentId` DROP NOT NULL · คอลัมน์ `SellerPaymentId` · `SellerVoidedAt` · `AutoBlockedReason/Code` · `AutoEvaluatedAt` · เติม `SellerPaymentId` จาก `Payments.Reference = PAY-INTENT-{N}` ·
+  แถว Open ที่ A ยกเลิกไปแล้ว ⇒ `Withdrawn` · ที่บันทึกแล้ว ⇒ ประทับเวลา (idempotent)
+- **kill-switch**: เส้นเงินไม่มีการเรียก AI (ตัวตัดสิน pure) · ผังใบร่าง: AI ปิด + นักเรียนไม่มีคำตอบ ⇒ ใบร่างเท่าเดิม · เทสต์ `PartnerPayableRound264Tests` · Db `PartnerPayableRound264DbTests`
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
 
@@ -9097,3 +9126,5 @@ _Last verified against codebase: 2026-11-12 (รอบ 262 ชุดแก้ฝ
 
 _Last verified against codebase: 2026-11-12 (รอบ 264 P1 ชุดแก้ฝ่ายค้าน — §2.12g-264-P1: H1 ระงับ ⇒ ถอน + ตัดแถวก่อนยอมรับครั้งล่าสุด · M1 CheckForWriteAsync FOR SHARE · M2–M4 · L1–L8 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f7eb8eee)_
 _Last verified against codebase: 2026-11-12 (รอบ 262-1-18 — §2.12g-262: เงินเข้าบัญชีไม่ตัดชำระใบค่าบริการผู้เช่าอัตโนมัติ (เหตุ + ทางไปต่อ) · พอร์ทัลไม่ขึ้นปุ่มชำระใบผู้เช่า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
+
+_Last verified against codebase: 2026-11-12 (รอบ 264 P3 ท่อฝั่งผู้ซื้อ — §2.12g-264-P3: แหล่งเงินไม่มีค่าที่แต่งขึ้น · ด่านบันทึกเอง · ความยินยอมล็อกตลอดการบันทึก · แจ้งจากทุกทางเข้า · ถอนเมื่อผู้ขายยกเลิก · จ่ายบางส่วน · ผังใบร่าง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_

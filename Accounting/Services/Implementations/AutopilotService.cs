@@ -269,25 +269,24 @@ public class AutopilotService : IAutopilotService
         return list;
     }
 
-    /// <summary>รอบ 264 P5 — แถว "การแจ้งชำระจากคู่ค้าค้าง" (<c>PartnerPayBlocked</c>) · <b>จุดเดียวที่แพ็ก P3 สลับเป็น query ของท่อฝั่ง B</b>
-    /// (ตอนนี้ = การแจ้งสถานะ Open ที่ค้างเกิน 1 วัน + Recording ที่ค้างเกิน <see cref="PartnerPaymentNoticeRule.RecordingStale"/>) · มี WHT ค้างหลังสิ้นเดือนที่จ่าย ⇒
+    /// <summary>รอบ 264 P5 — แถว "การแจ้งชำระจากคู่ค้าค้าง" (<c>PartnerPayBlocked</c>) · <b>รอบ 264 P3 สลับเป็น query ของท่อฝั่ง B แล้ว</b>
+    /// (<see cref="PartnerPayablePipeline.BlockedRowsAsync"/> — รอบันทึกเกิน 1 วันหรือท่อบอกเหตุ · กำลังบันทึกค้าง · บันทึกแล้วแต่ผู้ขายยกเลิกการรับเงิน) · มี WHT ค้างหลังสิ้นเดือนที่จ่าย ⇒
     /// หัวเรื่อง "ด่วน" พร้อมกำหนดยื่น ภ.ง.ด.53 (264-2-15) · อ่านอย่างเดียว · ผูก CompanyId</summary>
     private async Task<List<AutopilotIssueDto>> PartnerPayBlockedIssuesAsync(Guid companyId, DateTime nowUtc, CancellationToken ct)
     {
-        var openCut = nowUtc.AddDays(-1);
-        var staleCut = nowUtc - PartnerPaymentNoticeRule.RecordingStale;
-        var notices = await _db.PartnerPaymentNotices.AsNoTracking()
-            .Where(n => n.CompanyId == companyId && !n.IsDeleted
-                && ((n.Status == PartnerPaymentNoticeRule.StatusOpen && n.CreatedAt < openCut)
-                    || (n.Status == PartnerPaymentNoticeRule.StatusRecording && (n.UpdatedAt ?? n.CreatedAt) < staleCut)))
-            .OrderBy(n => n.PaidAt).Take(50)
-            .Select(n => new { n.Id, n.SourceDocumentNumber, n.TargetDocumentId, n.CashAmount, n.SellerRecordedWht, n.PaidAt, n.Note, n.CreatedAt })
-            .ToListAsync(ct);
+        var notices = await PartnerPayablePipeline.BlockedRowsAsync(_db, companyId, nowUtc, ct);
         return notices.Select(n =>
         {
+            if (n.SellerVoidedAfterRecord)
+                return new AutopilotIssueDto("PartnerPayBlocked", $"ผู้ขายยกเลิกการรับเงิน {n.CashAmount:N2} บาท ({n.SourceDocumentNumber}) ที่เราบันทึกจ่ายแล้ว",
+                    "ระบบไม่ยกเลิกการจ่ายของเราแทน — ตรวจรายการเดินบัญชี แล้วยกเลิกการจ่ายที่ใบซื้อ หรือขอเงินคืนจากผู้ขาย", n.CreatedAt, n.TargetDocumentId,
+                    "เปิดใบซื้อ", DocHref(n.TargetDocumentId), null, "เปิดหน้าคู่ค้า (การแจ้งชำระ)", "/pages/partners.html");
             var due = PartnerTaxEvidenceAlerts.PayNoticeWhtUrgent(n.PaidAt, n.SellerRecordedWht, nowUtc);
             var title = (due is DateTime ? "ด่วน: " : "") + $"ผู้ขายแจ้งว่ารับเงิน {n.CashAmount:N2} บาท ({n.SourceDocumentNumber}) — ยังไม่ได้บันทึกจ่าย";
-            var detail = (string.IsNullOrWhiteSpace(n.Note) ? "การแจ้งชำระจากคู่ค้ายังค้าง — ตรวจแล้วบันทึกจ่ายหรือปิดการแจ้งที่หน้าคู่ค้า" : n.Note!.Trim())
+            var why = !string.IsNullOrWhiteSpace(n.AutoBlockedReason) ? "ระบบไม่บันทึกเอง: " + n.AutoBlockedReason!.Trim()
+                : !string.IsNullOrWhiteSpace(n.Note) ? n.Note!.Trim()
+                : "การแจ้งชำระจากคู่ค้ายังค้าง — ตรวจแล้วบันทึกจ่ายหรือปิดการแจ้งที่หน้าคู่ค้า";
+            var detail = why
                 + (due is DateTime d
                     ? $" · มีภาษีหัก ณ ที่จ่าย {n.SellerRecordedWht:N2} บาท — ภ.ง.ด.53 ของเดือนที่จ่ายครบกำหนดยื่น {d:dd/MM}/{d.Year + 543} (บันทึกจ่ายเพื่อออก 50 ทวิ ลงวันจ่ายได้ — ท.ป.4/2528)"
                     : "");

@@ -11915,6 +11915,7 @@ public partial class DocumentService : IDocumentService
                 "ปลดการจับคู่ธนาคารของการชำระที่ยกเลิก {PayId} ไม่สำเร็จ — " +
                 "ตรวจรายการเดินบัญชีที่ยังค้างสถานะกระทบยอดด้วยมือ", paymentId);
         }
+        await WithdrawPartnerNoticesForVoidedPaymentAsync(companyId, paymentId);   // รอบ 264 P3 (C-03): ถอน/ติดป้ายการแจ้งของผู้ซื้อคู่ค้า · ไม่โยน
         return etaxCancellationFlag == null && outputVatNotice == null
             ? PaymentVoidResult.None
             : new PaymentVoidResult(etaxCancellationFlag, outputVatNotice);
@@ -15813,6 +15814,7 @@ public partial class DocumentService : IDocumentService
             // SyncWhtCreditReceivedAsync (ในธุรกรรมข้างบน — แถวรอ 50 ทวิ มีก่อนงานตรวจ) · ทางเข้าที่มีเส้นใบเสร็จของตัวเอง = แถว Skipped พร้อมเหตุ ·
             // ไม่โยน (เงินบันทึกแล้ว — Error log)
             await PostPaymentAutomationService.EnqueueCoreAsync(_db, _logger, companyId, payment.Id, source, createdBy, CancellationToken.None);
+            await NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, source);   // รอบ 264 P3 (C-04): แจ้งผู้ซื้อคู่ค้าจากทุกทางเข้า · ไม่โยน
 
             // Webhooks — payment.received (always) + document.paid
             // (when BalanceDue is now zero). Both fire outside the
@@ -15979,6 +15981,7 @@ public partial class DocumentService : IDocumentService
         // ลำดับเดียวกับ CreatePaymentAsync: ทะเบียนเครดิตภาษีถูกหักก่อน แล้วงานหลังรับชำระ (ตัวตรวจแถวรอ 50 ทวิ อ่านทะเบียนนี้)
         await SyncWhtCreditReceivedAsync(companyId, doc);
         await PostPaymentAutomationService.EnqueueCoreAsync(_db, _logger, companyId, paymentId, source, actor, CancellationToken.None);
+        await NotifyPartnerOfSellerPaymentAsync(companyId, paymentId, source);   // รอบ 264 P3 (C-04): ทางเข้า integration ก็แจ้งผู้ซื้อคู่ค้า
     }
 
     public async Task<PaymentResponse> CreateMultiDocPaymentAsync(Guid companyId, CreatePaymentRequest request, string createdBy)

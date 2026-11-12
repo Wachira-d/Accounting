@@ -177,8 +177,9 @@ public class PartnerConsentTests
     [Fact]
     public void Allows_ระงับแล้วเชื่อมกลับ_ความยินยอมเดิมไม่ฟื้นเอง_ทิศตรงข้าม_ให้หลังเชื่อมกลับผ่าน()
     {
-        var granted = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
-        var suspended = new DateTime(2026, 11, 5, 0, 0, 0, DateTimeKind.Utc);
+        // รอบ 264 P3: ขอบเขตนี้ต่อสายแล้ว (WiredSince 2026-11-12) ⇒ วันที่ของเทสต์อยู่หลังวันต่อสาย (ไม่ให้ GrantedBeforeWired บังผลที่ทดสอบ)
+        var granted = new DateTime(2026, 12, 1, 0, 0, 0, DateTimeKind.Utc);
+        var suspended = new DateTime(2026, 12, 5, 0, 0, 0, DateTimeKind.Utc);
         Assert.Equal(PartnerConsent.Codes.StaleAfterSuspend,
             PartnerConsent.Allows(Scope.AutoRecordPayment, Row(grantedAt: granted), Partner(TradingPartnershipStatus.Accepted, suspended), B, T(1m), true).Code);
         Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(grantedAt: suspended.AddDays(1)), Partner(TradingPartnershipStatus.Accepted, suspended), B, T(1m), true).Ok);
@@ -221,7 +222,8 @@ public class PartnerConsentTests
     [Fact]
     public void ป้ายผล_ขอบเขตที่ยังไม่มีท่ออ่าน_บอกว่ายังไม่มีผล_ขอบเขตทั้งบริษัท_บอกที่ตั้ง()
     {
-        Assert.Contains("ยังไม่มีงานอัตโนมัติ", PartnerConsent.EffectNote(PartnerConsent.Def(Scope.AutoRecordPayment)));
+        Assert.Contains("ยังไม่มีงานอัตโนมัติ", PartnerConsent.EffectNote(PartnerConsent.Def(Scope.AutoApprovePurchase)));
+        Assert.Null(PartnerConsent.EffectNote(PartnerConsent.Def(Scope.AutoRecordPayment)));   // รอบ 264 P3: ท่อบันทึกจ่ายอ่านขอบเขตนี้แล้ว
         Assert.Contains("ทั้งบริษัท", PartnerConsent.EffectNote(PartnerConsent.Def(Scope.PurchaseDrafts)));
         Assert.Equal("/pages/partner-automation.html?partnership=" + Pid.ToString("D"), PartnerConsent.PageUrl(Pid));
     }

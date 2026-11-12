@@ -7090,3 +7090,12 @@ Db test สองทิศ — ยังไม่ได้คอมไพล์�
 _รอบ 265 ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-12/review-265.md` · คำตัดสิน 265-1-8…12): H1/M2 ใบเสร็จจากเงินรอจัดสรรที่ลงวันที่ในงวดที่ยื่นแล้ว — ภาษีพัก 21913 ที่วันที่ใบ
 แล้วย้ายเข้า 21911 ที่วันที่ถึงกำหนดในธุรกรรมอนุมัติ (`Document.CreditReceiptVatDueAt` · ตัวย้ายเดิมของใบแจ้งหนี้) ⇒ GL กับ ภ.พ.30 เดือนเดียวกัน · M1 ยกเลิกรายการที่ค้างไม่ผูกใบของรายการอื่น +
 ด่านคืนเงินเกินยอดใบ · M3 ยกเลิกใบที่ปิดงวดรายการประจำ ⇒ ข้อความสองที่ · L1/L3 ยอดและด่านอนุมัติตรวจก่อนจอง · L4 กดซ้ำพร้อมกัน + audit — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 0102f98a_
+
+_รอบ 264 แพ็ก P3 (`erp-review/2026-11-12/team-264-a2b-design.md` §3.1 · §5 · คำตัดสิน 264-3-1…9 · DOCUMENT_FLOW §2.12g-264-P3): ท่อฝั่งผู้ซื้อ —
+ผู้ขายคู่ค้ารับเงินแล้ว ⇒ ระบบของผู้ซื้อบันทึกจ่ายเองเมื่อหลักฐานครบภายใต้ความยินยอม `AutoRecordPayment` (`PartnerPayablePipeline` · ขั้น `PartnerPayable` ของ AutopilotJob ·
+`CheckForWriteAsync` ในธุรกรรมล็อกที่ถือไว้ตลอดการบันทึก · ผู้บันทึก = GUID ผู้ให้ · `PaymentEntrySource.PartnerAuto`) · ไม่ผ่าน ⇒ ปุ่มเดียว + เหตุ + แถว Autopilot ·
+**C-01** ถอด "บัญชีแรกที่ใช้งาน" — ตัวตัดสินแหล่งเงิน `Helpers/PartnerPaySourceAccount` (ไม่รู้ = ไม่ preselect · เงินสดต้องเลือกเอง · ปุ่มเดียวไม่เลือก = 400) ·
+ด่าน `Helpers/PartnerAutoRecordPolicy` · **C-04** การแจ้งจากทุกทางเข้ารับชำระของผู้ขาย (หลัง commit ของ `CreatePaymentAsync`/`AfterPaymentRecordedAsync` · กุญแจ `SellerPaymentId` + migration) ·
+**C-03** ผู้ขายยกเลิกการรับชำระ ⇒ ถอน/ป้ายบนใบซื้อ (ไม่ยกเลิกการจ่ายแทน) · **C-05** จ่ายบางส่วน (`PartialPlan`) · **C-08** ผังใบซื้อร่างจากตัวแนะนำเดิม (ป้ายซื่อสัตย์ · ไม่อนุมัติเอง) ·
+ความยินยอม `AutoRecordPayment` ต่อสายแล้ว (`WiredSince` 2026-11-12) · P5 สลับ `ReturnWhtCertsAllowedAsync` + `PartnerPayBlockedIssuesAsync` · เทสต์ `PartnerPayableRound264Tests` + Db `PartnerPayableRound264DbTests` —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit (เติมในคอมมิตตามหลัง)_

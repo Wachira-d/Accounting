@@ -162,12 +162,13 @@ public class BillingChainRound258DbTests
         var user = Guid.NewGuid();
         using (var c3 = DbTestDatabase.TryCreateContext()!)
         {
-            var r = await Notices(c3, PayingDocs(s.Buyer.Id, calls)).RecordAsync(s.Buyer.Id, noticeId, user, null, null);
+            // รอบ 264 P3 (C-01): ไม่ส่งบัญชี ⇒ ต้องเลือก "เงินสด" เอง (เดิมตกไปเงินสดเงียบ ๆ)
+            var r = await Notices(c3, PayingDocs(s.Buyer.Id, calls)).RecordAsync(s.Buyer.Id, noticeId, user, null, null, payFromCash: true);
             Assert.Equal(PartnerPaymentNoticeRule.StatusRecorded, r.Status);
         }
         using (var c4 = DbTestDatabase.TryCreateContext()!)
         {
-            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Notices(c4, PayingDocs(s.Buyer.Id, calls)).RecordAsync(s.Buyer.Id, noticeId, user, null, null));
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Notices(c4, PayingDocs(s.Buyer.Id, calls)).RecordAsync(s.Buyer.Id, noticeId, user, null, null, payFromCash: true));
             Assert.Equal(409, ex.StatusCode);
         }
         Assert.Single(calls);
