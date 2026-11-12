@@ -118,7 +118,8 @@ public static class GatewayWebhookRoute
     /// segment รหัสเป็น <c>[redacted]</c> · path อื่นคืนเดิม</summary>
     public static string RedactPath(string? path)
     {
-        if (string.IsNullOrEmpty(path) || !path.StartsWith(WebhookPathPrefix, StringComparison.OrdinalIgnoreCase)) return path ?? "";
+        // รอบ 267 P1: path อื่น ⇒ ปิดบัง token ของหน้าเอกสาร/หน้าตอบรับเดิม (ตัวตัดสินเดียว CustomerDocPage.RedactPath — จุดเรียกเดิม 3 middleware ไม่ต้องแก้)
+        if (string.IsNullOrEmpty(path) || !path.StartsWith(WebhookPathPrefix, StringComparison.OrdinalIgnoreCase)) return CustomerDocPage.RedactPath(path);
         var rest = path[WebhookPathPrefix.Length..];
         var slash = rest.IndexOf('/');
         if (slash < 0 || slash == rest.Length - 1) return path;

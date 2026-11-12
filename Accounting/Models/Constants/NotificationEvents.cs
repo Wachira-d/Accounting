@@ -47,6 +47,9 @@ public static class NotificationEvents
     /// <summary>รอบ 240: ลูกค้ายอมรับใบเสนอราคา/เซ็นรับสินค้าผ่านลิงก์ออนไลน์ — ผู้ส่งเดียว <c>SignEventDispatcher</c> (outbox) ·
     /// ค่าตั้งต้น = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้) ผ่าน <c>NotificationAudiencePolicy.MigratedBroadcastKeys</c></summary>
     public const string DocumentCustomerSigned  = "document.customer_signed";
+    /// <summary>รอบ 267 P1: ผู้ถือลิงก์หน้าเอกสารที่หมดอายุ/พ้นกำหนดทำรายการ ขอให้ผู้ขายส่งลิงก์ใหม่ (ระบบไม่ออก token ให้คนนอก) ·
+    /// ผู้ส่ง: <c>PublicDocumentPageController.NotifyLinkRequestedAsync</c> · ค่าตั้งต้น = กระดิ่งถึงเจ้าของ (<c>NotificationAudiencePolicy.BellOnlyKeys</c>)</summary>
+    public const string DocumentLinkRequested   = "document.link_requested";
     /// <summary>รอบ 241: งานส่งเอกสารอัตโนมัติหลังรับชำระหยุด/ล้ม (ลูกค้าไม่มีอีเมล · ข้อมูลผู้ซื้อไม่ครบสำหรับใบกำกับ · ใบเสร็จเป็นร่าง · ส่งไม่สำเร็จครบรอบ) —
     /// ผู้ส่งเดียว <c>PostPaymentAutomationService</c> · ค่าตั้งต้น = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้)</summary>
     public const string PostPaymentAutomationBlocked = "document.post_payment_blocked";
@@ -186,6 +189,7 @@ public static class NotificationEvents
         ("Accounting", DocumentApproved, "อนุมัติเอกสาร"),
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
         ("Accounting", DocumentCustomerSigned, "ลูกค้ายอมรับใบเสนอราคา/เซ็นรับสินค้าผ่านลิงก์ออนไลน์"),
+        ("Accounting", DocumentLinkRequested, "ลูกค้าขอลิงก์หน้าเอกสารใหม่ (ลิงก์เดิมหมดอายุ/พ้นกำหนดทำรายการ)"),
         ("Accounting", PostPaymentAutomationBlocked, "ส่งเอกสารอัตโนมัติหลังรับชำระหยุด/ไม่สำเร็จ (ต้องให้คนดำเนินการ)"),
         ("Accounting", PaymentReceived, "บันทึกรับชำระเงิน (ลูกค้าจ่ายเรา)"),
         ("Accounting", PaymentMade, "บันทึกจ่ายชำระเงิน (เราจ่ายผู้ขาย/คืนเงิน)"),

@@ -182,9 +182,10 @@ public class Document : TenantEntity
     /// ก่อนพิมพ์ตรงกับของจริง (หลัก "Draft PDF = Approved PDF")</summary>
     public bool PaidOnIssue { get; set; }
 
-    /// <summary>Capability token สำหรับลิงก์ "ลูกค้ากดยอมรับใบเสนอราคาออนไลน์"
-    /// — random hex 64 ตัว สร้างเมื่อผู้ใช้ขอลิงก์ (POST accept-link). ผู้ถือ
-    /// ลิงก์ดู/ยอมรับใบเสนอราคาได้โดยไม่ต้อง login (read-only + accept เท่านั้น).</summary>
+    /// <summary>ลิงก์ "ลูกค้ากดยอมรับใบเสนอราคาออนไลน์" <b>รุ่นก่อนรอบ 267</b> — ตั้งแต่รอบ 267 (คำตัดสิน 267-1-3) คอลัมน์นี้เก็บ
+    /// <b>hash</b> ของ token (<c>h1:</c> + SHA-256 · <c>CustomerDocPage.LegacyStored</c>) ไม่ใช่ token ดิบ และ<b>ไม่ออกเพิ่ม</b>
+    /// (ลิงก์ที่ส่งให้ลูกค้า = ลิงก์หน้าเอกสารของใบ — <c>PayLink*</c>) · ลิงก์เดิมที่ลูกค้าถืออยู่เปิดได้จนหมดอายุ ·
+    /// ผู้อ่าน: <c>PublicQuotationController.FindByTokenAsync</c> · <c>SignRequestKinds.Read</c></summary>
     public string? QuotationAcceptToken { get; set; }
     /// <summary>วันหมดอายุของลิงก์ยอมรับ (default +30 วันจากที่สร้าง).</summary>
     public DateTime? QuotationAcceptTokenExpiresAt { get; set; }
@@ -220,9 +221,9 @@ public class Document : TenantEntity
     /// บัญชีแล้วห้ามแก้ย้อนหลัง ต้องยกเลิก/ออกใบลดหนี้ตามเดิม.</summary>
     public int RevisionNumber { get; set; }
 
-    /// <summary>Capability token ลิงก์ "ลูกค้าเซ็นรับสินค้าออนไลน์" (Proof of
-    /// Delivery) — ใช้กับใบส่งของ (DeliveryNote): ลูกค้าเปิดลิงก์บนมือถือ
-    /// วาดลายเซ็น + พิมพ์ชื่อ → ประทับลงช่อง "ผู้รับของ" บน PDF อัตโนมัติ.</summary>
+    /// <summary>ลิงก์ "ลูกค้าเซ็นรับสินค้าออนไลน์" (Proof of Delivery) <b>รุ่นก่อนรอบ 267</b> ของใบส่งของ — ตั้งแต่รอบ 267 (267-1-3) เก็บ
+    /// <b>hash</b> ของ token (<c>CustomerDocPage.LegacyStored</c>) และไม่ออกเพิ่ม (ลิงก์ = ลิงก์หน้าเอกสารของใบ) ·
+    /// ลูกค้าเปิดหน้าเซ็นรับ วาดลายเซ็น + พิมพ์ชื่อ → ประทับลงช่อง "ผู้รับของ" บน PDF</summary>
     public string? DeliverySignToken { get; set; }
     public DateTime? DeliverySignTokenExpiresAt { get; set; }
     public DateTime? DeliverySignedAt { get; set; }

@@ -18,8 +18,9 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class DocumentPayLinkPolicy
 {
-    /// <summary>อายุลิงก์ (วัน) — ส่งอีเมลรอบใหม่หลังหมดอายุ = ออกลิงก์ใหม่ (ลิงก์เดิมใช้ไม่ได้)</summary>
-    public const int TtlDays = 60;
+    /// <summary>อายุลิงก์ (วัน) — ส่งอีเมลรอบใหม่หลังหมดอายุ = ออกลิงก์ใหม่ (ลิงก์เดิมใช้ไม่ได้) ·
+    /// รอบ 267 (267-1-1): ลิงก์ชำระ = ลิงก์หน้าเอกสาร ⇒ ตัวเลขเดียว <see cref="CustomerDocPage.LinkTtlDays"/> (เดิม 60 — ลิงก์ที่ออกไปแล้วคงวันหมดอายุเดิม)</summary>
+    public const int TtlDays = CustomerDocPage.LinkTtlDays;
 
     /// <summary>ช่องทาง "โอนเข้าบัญชี" (แสดงเลขบัญชี/พร้อมเพย์ของบริษัท · ไม่ใช่ช่องทางออนไลน์)</summary>
     public static readonly string BankTransferCode = nameof(PaymentMethodKind.ManualSlip);

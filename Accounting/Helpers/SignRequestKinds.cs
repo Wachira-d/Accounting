@@ -52,32 +52,54 @@ public static class SignRequestKinds
             : "ต้องอนุมัติเอกสารก่อนจึงส่งลิงก์ให้ลูกค้าเซ็นได้ (ฉบับร่าง/รออนุมัติยังไม่มีเลขเอกสารจริง)";
     }
 
-    /// <summary>สถานะลิงก์ของใบ (ตามชนิด) — อ่านจากคอลัมน์ของชนิดนั้นที่เดียว</summary>
-    public readonly record struct LinkState(string? Token, DateTime? ExpiresAt, DateTime? SignedAt, string? SignedBy);
+    /// <summary>สถานะลิงก์ให้ลูกค้าตอบรับของใบ (ตามชนิด) — <paramref name="HasLink"/> = มีลิงก์ที่ส่งให้ลูกค้าตอบรับได้ ·
+    /// <paramref name="ExpiresAt"/> = สิ้นสุดช่วงที่ตอบรับได้ (ไม่ใช่วันหมดอายุของลิงก์หน้าเอกสาร)</summary>
+    public readonly record struct LinkState(bool HasLink, DateTime? ExpiresAt, DateTime? SignedAt, string? SignedBy);
 
-    public static LinkState Read(Document d) => d.DocumentType switch
+    /// <summary>
+    /// อ่านสถานะจากที่เดียว — รอบ 267 (267-1-3): สองรุ่นของลิงก์
+    /// <list type="bullet">
+    /// <item><b>ลิงก์หน้าเอกสาร</b> (ออกตั้งแต่รอบ 267): token ของใบตัวเดียว (<c>PayLink*</c>) ที่ผู้ขายเปิดให้ตอบรับแล้ว (<c>SignLinkIssuedAt</c>) และไม่ถูกเพิกถอน ·
+    /// ช่วงตอบรับจากตัวตัดสินเดียว <see cref="CustomerDocPage.RespondWindowEnd"/> (ไม่เกินวันหมดอายุของลิงก์)</item>
+    /// <item><b>ลิงก์ยอมรับ/เซ็นรับรุ่นก่อน</b> (ออกก่อนรอบ 267 · ฐานเก็บเป็น hash แล้ว): ใช้วันหมดอายุของตัวเองจนหมด — ไม่ออกเพิ่ม</item>
+    /// </list>
+    /// </summary>
+    public static LinkState Read(Document d)
     {
-        DocumentType.Quotation => new(d.QuotationAcceptToken, d.QuotationAcceptTokenExpiresAt, d.QuotationAcceptedAt, d.QuotationAcceptedBy),
-        DocumentType.DeliveryNote => new(d.DeliverySignToken, d.DeliverySignTokenExpiresAt, d.DeliverySignedAt, d.DeliverySignedBy),
-        _ => default,
-    };
+        var (legacy, legacyExp, signedAt, signedBy) = d.DocumentType switch
+        {
+            DocumentType.Quotation => (d.QuotationAcceptToken, d.QuotationAcceptTokenExpiresAt, d.QuotationAcceptedAt, d.QuotationAcceptedBy),
+            DocumentType.DeliveryNote => (d.DeliverySignToken, d.DeliverySignTokenExpiresAt, d.DeliverySignedAt, d.DeliverySignedBy),
+            _ => ((string?)null, (DateTime?)null, (DateTime?)null, (string?)null),
+        };
+        if (For(d.DocumentType) == null) return default;
+        if (d.SignLinkIssuedAt != null && !string.IsNullOrWhiteSpace(d.PayLinkTokenHash) && d.PayLinkRevokedAt == null)
+        {
+            var window = CustomerDocPage.RespondWindowEnd(d.DocumentType, d.DueDate, d.SignLinkIssuedAt);
+            var end = window != null && d.PayLinkExpiresAt != null ? (window < d.PayLinkExpiresAt ? window : d.PayLinkExpiresAt) : window ?? d.PayLinkExpiresAt;
+            return new(true, end, signedAt, signedBy);
+        }
+        return new(!string.IsNullOrWhiteSpace(legacy), legacyExp, signedAt, signedBy);
+    }
 
-    /// <summary>ลิงก์ยังใช้ได้ไหม (มี token และไม่หมดอายุ)</summary>
+    /// <summary>ลิงก์ยังใช้ตอบรับได้ไหม (มีลิงก์ และยังไม่พ้นช่วงตอบรับ)</summary>
     public static bool LinkUsable(LinkState s, DateTime nowUtc)
-        => !string.IsNullOrWhiteSpace(s.Token) && (s.ExpiresAt == null || s.ExpiresAt > nowUtc);
+        => s.HasLink && (s.ExpiresAt == null || s.ExpiresAt > nowUtc);
 
-    /// <summary>ออก token ใหม่ให้ใบ (token เดิมใช้ไม่ได้ทันที = เพิกถอน) + ล้างสถานะติดตามของลิงก์เดิม (เปิดแล้ว/ส่งอีเมลแล้ว/เตือนแล้ว)</summary>
-    public static void SetNewToken(Document d, string token, DateTime nowUtc)
+    /// <summary>ผู้ขาย "ส่งลิงก์ให้ลูกค้าตอบรับ" (รอบ 267 — แทน <c>SetNewToken</c>): เริ่มช่วงตอบรับใหม่ + ล้างสถานะติดตามของรอบก่อน
+    /// (เปิดแล้ว/ส่งอีเมลแล้ว/เตือนแล้ว) + <b>เลิกลิงก์ยอมรับ/เซ็นรับรุ่นก่อนของใบนี้</b> (ความหมายเดิมของ "ออกใหม่ = ลิงก์เดิมใช้ไม่ได้") ·
+    /// <b>ไม่ออก token</b> — token ของหน้าเอกสารออกที่ <c>IDocumentPayLinkService.EnsureCustomerLinkAsync</c> ตัวเดียว และไม่ถูกหมุนที่นี่
+    /// (ลิงก์ที่ส่งให้ลูกค้าไปแล้วไม่ตาย · เพิกถอน = ปุ่มเพิกถอนลิงก์ของใบ)</summary>
+    public static void MarkIssued(Document d, DateTime nowUtc)
     {
-        var k = For(d.DocumentType) ?? throw new InvalidOperationException("ชนิดเอกสารนี้ไม่มีลิงก์ให้ลูกค้าเซ็น");
-        var exp = nowUtc.AddDays(k.TtlDays);
-        if (d.DocumentType == DocumentType.Quotation) { d.QuotationAcceptToken = token; d.QuotationAcceptTokenExpiresAt = exp; }
-        else { d.DeliverySignToken = token; d.DeliverySignTokenExpiresAt = exp; }
+        if (For(d.DocumentType) == null) throw new InvalidOperationException("ชนิดเอกสารนี้ไม่มีลิงก์ให้ลูกค้าเซ็น");
+        if (d.DocumentType == DocumentType.Quotation) { d.QuotationAcceptToken = null; d.QuotationAcceptTokenExpiresAt = null; }
+        else { d.DeliverySignToken = null; d.DeliverySignTokenExpiresAt = null; }
         d.SignLinkIssuedAt = nowUtc;
         ResetTracking(d);
     }
 
-    /// <summary>ล้างสถานะติดตามของลิงก์ (เปิดแล้ว · ส่งอีเมลแล้ว · ผู้รับ · เตือนแล้ว) — ผู้เรียก: <see cref="SetNewToken"/> และ
+    /// <summary>ล้างสถานะติดตามของลิงก์ (เปิดแล้ว · ส่งอีเมลแล้ว · ผู้รับ · เตือนแล้ว) — ผู้เรียก: <see cref="MarkIssued"/> และ
     /// <c>QuotationAcceptance.ClearOn</c> (ออก Rev ใหม่ = ต้องส่งให้ลูกค้าใหม่ · ฝ่ายค้าน N4) · ไม่แตะ token/callback</summary>
     public static void ResetTracking(Document d)
     {
@@ -86,9 +108,6 @@ public static class SignRequestKinds
         d.SignLinkEmailedTo = null;
         d.SignReminderSentAt = null;
     }
-
-    /// <summary>URL สาธารณะของลิงก์ — origin มาจาก <c>SystemBaseUrl.PublicOrigin</c> (ไม่ประกอบโดเมนเอง)</summary>
-    public static string Url(string origin, Kind k, string token) => $"{origin.TrimEnd('/')}{k.PagePath}?token={token}";
 
     /// <summary>ป้ายสถานะบนรายการเอกสาร (เซิร์ฟเวอร์ประกอบ · หน้าเว็บแสดงอย่างเดียว) — Code: signed · expired · opened · emailed · issued</summary>
     public sealed record Chip(string Code, string Label, string Tone);
@@ -100,7 +119,7 @@ public static class SignRequestKinds
         if (k == null) return null;
         var s = Read(d);
         if (s.SignedAt != null) return new("signed", k.SignedTh, "success");
-        if (string.IsNullOrWhiteSpace(s.Token)) return null;
+        if (!s.HasLink) return null;
         if (!LinkUsable(s, nowUtc)) return new("expired", "ลิงก์หมดอายุ", "muted");
         if (d.SignLinkOpenedAt != null) return new("opened", "ลูกค้าเปิดลิงก์แล้ว", "info");
         if (d.SignLinkEmailedAt != null) return new("emailed", d.SignReminderSentAt != null ? "ส่งอีเมลแล้ว (เตือนแล้ว)" : "ส่งอีเมลแล้ว", "info");

@@ -93,7 +93,7 @@ public class PublicQuotationController : ControllerBase
             vatAmount = doc.VatAmount,
             totalAmount = doc.TotalAmount,
             notes = doc.Notes,
-            expiresAt = doc.QuotationAcceptTokenExpiresAt,
+            expiresAt = RespondEnd(doc, token),
             acceptedAt = doc.QuotationAcceptedAt,
             acceptedBy = doc.QuotationAcceptedBy,
             // รอบ 239: สถานะ/ค่าที่หน้าลูกค้าแสดง — ข้อความยินยอมมาจากเซิร์ฟเวอร์ (หน้าเว็บไม่มีสำเนา)
@@ -163,6 +163,10 @@ public class PublicQuotationController : ControllerBase
         var decision = QuotationAcceptance.DecideAccept(doc.QuotationAcceptedAt, request?.AcceptedBy, request?.SignatureBase64, requireSignature);
         if (decision.Outcome == QuotationAcceptance.Outcome.AlreadyAccepted)
             return Ok(new ApiResponse<object>(true, AcceptedState(doc), decision.Message));
+        // รอบ 267 P1: เปิดด้วย token ของหน้าเอกสาร ⇒ ช่วงตอบรับจากตัวตัดสินเดียวกับปุ่มบนหน้าเอกสาร (พ้นวันยืนราคา = ปฏิเสธพร้อมเหตุ ไม่ใช่ยอมรับเงียบ)
+        var viaPage = ViaPageToken(doc.QuotationAcceptToken, token);
+        if (viaPage && RespondClosedReason(doc) is { } closed)
+            return StatusCode(409, new ApiResponse<string>(false, null, closed));
         if (!decision.Accept)
             return BadRequest(new ApiResponse<string>(false, null, decision.Message));
 
@@ -174,6 +178,7 @@ public class PublicQuotationController : ControllerBase
         var ip = HttpContext?.Connection.RemoteIpAddress?.ToString();
         var uaHash = QuotationAcceptance.Sha256Hex(Request.Headers.UserAgent.ToString());
         var tokenHash = QuotationAcceptance.Sha256Hex(token.ToLowerInvariant());
+        var pageHash = DocumentPayLinkPolicy.TokenHash(token);
 
         // ลายเซ็น: เขียนไบต์ที่ผ่านตัวตรวจแล้วลงที่เก็บกลางก่อน (ไม่ใช่ข้อความดิบจากคำขอ) — ยอมรับไม่สำเร็จ ⇒ ลบทิ้ง
         string? sigPath = null;
@@ -192,7 +197,9 @@ public class PublicQuotationController : ControllerBase
             await using var tx = await _db.Database.BeginTransactionAsync();
             claimed = await _db.Documents
                 .Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId
-                    && d.QuotationAcceptedAt == null && d.QuotationAcceptToken == doc.QuotationAcceptToken)
+                    && d.QuotationAcceptedAt == null && d.QuotationAcceptToken == doc.QuotationAcceptToken
+                    // รอบ 267: token ของหน้าเอกสาร ⇒ ลิงก์ต้องยังเป็น token นี้และไม่ถูกเพิกถอน ณ ตอนจอง (เพิกถอนระหว่างทาง = ไม่จอง)
+                    && (!viaPage || (d.PayLinkTokenHash == pageHash && d.PayLinkRevokedAt == null)))
                 .ExecuteUpdateAsync(u => u
                     .SetProperty(d => d.QuotationAcceptedAt, now)
                     .SetProperty(d => d.QuotationAcceptedBy, name)
@@ -296,14 +303,24 @@ public class PublicQuotationController : ControllerBase
             || !token.All(Uri.IsHexDigit))
             return null;
 
+        // รอบ 267 P1 (267-1-3): ฐานไม่เก็บ token ดิบ — ค้นด้วย hash สองรุ่น: (ก) ลิงก์ยอมรับที่ออกก่อนรอบ 267 (คอลัมน์เดิมเก็บ h1:hash · หมดเองตามอายุ)
+        // (ข) token ของหน้าเอกสารของใบ (ลิงก์เดียวต่อใบ — ปุ่ม "ยอมรับ" บนหน้าเอกสารพามาที่หน้านี้ในช่วงเปลี่ยนผ่าน)
+        var legacyKey = CustomerDocPage.LegacyStored(token);
+        var pageHash = DocumentPayLinkPolicy.TokenHash(token);
         var doc = await _db.Documents.AsNoTracking()
             .Include(d => d.Lines)
-            .FirstOrDefaultAsync(d => d.QuotationAcceptToken == token
+            .FirstOrDefaultAsync(d => (d.QuotationAcceptToken == legacyKey || (d.PayLinkTokenHash == pageHash && d.PayLinkRevokedAt == null))
                 && d.DocumentType == DocumentType.Quotation
                 && !d.IsDeleted
                 && d.Status != DocumentStatus.Voided
                 && d.Status != DocumentStatus.Draft);
         if (doc == null) return null;
+        if (ViaPageToken(doc.QuotationAcceptToken, token))
+        {
+            if (!PageLinkLive(doc, token)) return null;
+            await _db.HydrateContactAsync(doc.CompanyId, doc);
+            return doc;
+        }
         if (doc.QuotationAcceptTokenExpiresAt is { } exp && exp < DateTime.UtcNow) return null;
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate ผ่าน doc.CompanyId
         await _db.HydrateContactAsync(doc.CompanyId, doc);
@@ -355,6 +372,10 @@ public class PublicQuotationController : ControllerBase
             return Ok(new ApiResponse<object>(true,
                 new { signedAt = doc.DeliverySignedAt, signedBy = doc.DeliverySignedBy },
                 "ใบส่งของนี้ถูกเซ็นรับไปแล้ว"));
+        // รอบ 267 P1: token ของหน้าเอกสาร ⇒ ช่วงเซ็นรับจากตัวตัดสินเดียวกับปุ่มบนหน้าเอกสาร
+        var viaPage = ViaPageToken(doc.DeliverySignToken, token);
+        if (viaPage && RespondClosedReason(doc) is { } closed)
+            return StatusCode(409, new ApiResponse<string>(false, null, closed));
         if (string.IsNullOrWhiteSpace(request.SignedBy))
             return BadRequest(new ApiResponse<string>(false, null, "กรุณาระบุชื่อผู้รับสินค้า"));
         // รอบ 239: ตัวตรวจลายเซ็นตัวเดียวกับการยอมรับใบเสนอราคา (PNG จริง · ≤ 200KB · ขนาดภาพ · ไม่ว่าง) — เดิมรับ base64 อะไรก็ได้ ≤ 700KB
@@ -367,10 +388,12 @@ public class PublicQuotationController : ControllerBase
         var now = DateTime.UtcNow;
         var contentHash = DocumentSignedContent.Hash(doc, doc.Lines);   // เนื้อหาที่ลูกค้าเห็นตอนเซ็น (ก่อนต่อหมายเหตุ)
         var tokenHash = QuotationAcceptance.Sha256Hex(token.ToLowerInvariant());
+        var pageHash = DocumentPayLinkPolicy.TokenHash(token);
         await using var tx = await _db.Database.BeginTransactionAsync();
         var claimed = await _db.Documents
             .Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId
-                && d.DeliverySignedAt == null && d.DeliverySignToken == doc.DeliverySignToken)
+                && d.DeliverySignedAt == null && d.DeliverySignToken == doc.DeliverySignToken
+                && (!viaPage || (d.PayLinkTokenHash == pageHash && d.PayLinkRevokedAt == null)))
             .ExecuteUpdateAsync(u => u.SetProperty(d => d.DeliverySignedAt, now));
         if (claimed == 0)
         {
@@ -409,21 +432,59 @@ public class PublicQuotationController : ControllerBase
             return null;
 
         var q = track ? _db.Documents.AsQueryable() : _db.Documents.AsNoTracking();
+        // รอบ 267 P1 (267-1-3): ค้นด้วย hash สองรุ่น เหมือน FindByTokenAsync (ลิงก์เซ็นรับรุ่นก่อน · token ของหน้าเอกสาร)
+        var legacyKey = CustomerDocPage.LegacyStored(token);
+        var pageHash = DocumentPayLinkPolicy.TokenHash(token);
         var doc = await q
             .Include(d => d.Lines)
-            .FirstOrDefaultAsync(d => d.DeliverySignToken == token
+            .FirstOrDefaultAsync(d => (d.DeliverySignToken == legacyKey || (d.PayLinkTokenHash == pageHash && d.PayLinkRevokedAt == null))
                 && d.DocumentType == DocumentType.DeliveryNote
                 && !d.IsDeleted
                 && d.Status != DocumentStatus.Voided
                 && d.Status != DocumentStatus.Draft);
         if (doc == null) return null;
+        if (ViaPageToken(doc.DeliverySignToken, token))
+        {
+            if (!PageLinkLive(doc, token)) return null;
+            await _db.HydrateContactAsync(doc.CompanyId, doc);
+            return doc;
+        }
         if (doc.DeliverySignTokenExpiresAt is { } exp && exp < DateTime.UtcNow) return null;
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate ผ่าน doc.CompanyId
         await _db.HydrateContactAsync(doc.CompanyId, doc);
         return doc;
     }
 
-    /// <summary>สร้าง token แบบ crypto-random (helper กลางให้ DocumentController ใช้)</summary>
+    // ═══════════════ รอบ 267 P1 — token ของหน้าเอกสารบนหน้าตอบรับเดิม (ช่วงเปลี่ยนผ่าน · ลบพร้อมหน้าเดิมในแพ็กเก็บกวาด) ═══════════════
+
+    /// <summary>คำขอนี้มาด้วย token ของหน้าเอกสาร (ไม่ใช่ลิงก์ยอมรับ/เซ็นรับรุ่นก่อน) — ค่าในคอลัมน์รุ่นก่อนไม่ตรง hash ของ token ที่ถือมา</summary>
+    private static bool ViaPageToken(string? legacyStored, string token)
+    {
+        return !string.Equals(legacyStored, CustomerDocPage.LegacyStored(token), StringComparison.Ordinal);
+    }
+
+    /// <summary>token ของหน้าเอกสารยังใช้ได้กับใบนี้ไหม — ยืนยัน hash เวลาคงที่ · ไม่เพิกถอน/ไม่หมดอายุ · ใบออกเลขแล้ว (ตัวตัดสินลิงก์เดียวกับหน้าเอกสาร)</summary>
+    private static bool PageLinkLive(Models.Entities.Document doc, string token)
+    {
+        return DocumentPayLinkPolicy.TokenMatches(token, doc.PayLinkTokenHash)
+               && DocumentPayLinkPolicy.LinkUsable(doc.PayLinkTokenHash, doc.PayLinkExpiresAt, doc.PayLinkRevokedAt, DateTime.UtcNow, null)
+               && DocumentStatusRules.IsIssued(doc.Status);
+    }
+
+    /// <summary>เหตุที่ตอบรับไม่ได้เพราะพ้นช่วง (token ของหน้าเอกสาร) — ตัวตัดสินเดียว <see cref="CustomerDocPage.RespondWindowClosedReason"/></summary>
+    private static string? RespondClosedReason(Models.Entities.Document doc)
+    {
+        return CustomerDocPage.RespondWindowClosedReason(false, doc.DocumentType, doc.DueDate, doc.SignLinkIssuedAt ?? doc.PayLinkIssuedAt, DateTime.UtcNow);
+    }
+
+    /// <summary>วันสิ้นสุดที่หน้าตอบรับแสดง — ลิงก์รุ่นก่อน = วันหมดอายุของตัวเอง · token ของหน้าเอกสาร = สิ้นสุดช่วงตอบรับ</summary>
+    private static DateTime? RespondEnd(Models.Entities.Document doc, string token)
+        => ViaPageToken(doc.QuotationAcceptToken, token)
+            ? CustomerDocPage.RespondWindowEnd(doc.DocumentType, doc.DueDate, doc.SignLinkIssuedAt ?? doc.PayLinkIssuedAt)
+            : doc.QuotationAcceptTokenExpiresAt;
+
+    /// <summary>สร้าง token แบบ crypto-random — รอบ 267: ระบบไม่ออก token ยอมรับ/เซ็นรับของตัวเองแล้ว (ลิงก์ = ลิงก์หน้าเอกสาร) ·
+    /// คงไว้สำหรับเทสต์ที่จำลองลิงก์รุ่นก่อน (เก็บลงฐานด้วย <c>CustomerDocPage.LegacyStored</c> เท่านั้น)</summary>
     public static string NewToken() =>
         Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
 }

@@ -158,6 +158,8 @@ public static class NotificationAudiencePolicy
         Accounting.Models.Constants.NotificationEvents.RecurringUpcomingRun,
         // รอบ 260-3 (คำตัดสิน 260-3-3): เงินรอจัดสรรค้างเกิน 30 วัน — งานภายในของทีม (ไม่ใช่เรื่องลูกค้า) ⇒ กระดิ่งเจ้าของจนกว่าบริษัทจะตั้งคีย์เอง
         Accounting.Models.Constants.NotificationEvents.CustomerCreditAged,
+        // รอบ 267 P1: ลูกค้าขอลิงก์หน้าเอกสารใหม่ — งานของทีมขาย (กระดิ่ง · ไม่มีอีเมล/LINE ตั้งต้น ⇒ คำขอสาธารณะไม่ยิงเครือข่าย)
+        Accounting.Models.Constants.NotificationEvents.DocumentLinkRequested,
     };
 
     /// <summary>รอบ 252 WP-12A (AUTOPILOT §10 · Q7 "อีเมลสถานะถึงทีมเรา"): คีย์ที่ค่าตั้งต้น = <b>กระดิ่ง + อีเมล</b>ถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทเมื่อผูกไว้) ·

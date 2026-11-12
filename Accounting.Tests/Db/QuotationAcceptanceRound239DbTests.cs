@@ -57,9 +57,9 @@ public class QuotationAcceptanceRound239DbTests
             CompanyId = company.Id, ContactId = contact.Id, DocumentType = DocumentType.Quotation,
             DocumentNumber = "QT-" + Random.Shared.Next(100000, 999999), Status = status, DocumentDate = DateTime.UtcNow.Date,
             SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, Currency = "THB",
-            QuotationAcceptToken = PublicQuotationController.NewToken(),
-            QuotationAcceptTokenExpiresAt = expires ?? DateTime.UtcNow.AddDays(30),
         };
+        // รอบ 267 (267-1-3): ลิงก์ยอมรับรุ่นก่อน — ฐานเก็บ hash · token ดิบอยู่ที่ LegacySignLinkSeed.RawOf(doc)
+        LegacySignLinkSeed.Seed(doc, expires);
         doc.Lines.Add(new DocumentLine { LineOrder = 1, Description = "งานติดตั้ง", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m });
         db.Documents.Add(doc);
         await db.SaveChangesAsync();
@@ -93,7 +93,7 @@ public class QuotationAcceptanceRound239DbTests
         var (cid, doc) = await SeedAsync(db, "บริษัทยอมรับ239");
         var expectedHash = DocumentSignedContent.Hash(doc, doc.Lines);
 
-        var res = await Controller(db, storage).Accept(doc.QuotationAcceptToken!,
+        var res = await Controller(db, storage).Accept(LegacySignLinkSeed.RawOf(doc),
             new PublicQuotationController.AcceptRequest("คุณเอ ใจดี", "ส่งของวันจันทร์", SignatureUri()));
         Assert.IsType<OkObjectResult>(res);
 
@@ -104,7 +104,7 @@ public class QuotationAcceptanceRound239DbTests
         Assert.Equal(expectedHash, row.QuotationAcceptContentHash);
         Assert.Equal("203.0.113.9", row.QuotationAcceptIp);
         Assert.Equal(QuotationAcceptance.Sha256Hex("Mozilla/5.0 (test)"), row.QuotationAcceptUserAgentHash);
-        Assert.Equal(QuotationAcceptance.Sha256Hex(doc.QuotationAcceptToken), row.QuotationAcceptTokenHash);
+        Assert.Equal(QuotationAcceptance.Sha256Hex(LegacySignLinkSeed.RawOf(doc)), row.QuotationAcceptTokenHash);
         Assert.Null(row.Notes);   // ไม่ต่อข้อความลง Notes อีก (เนื้อหาเอกสารไม่เปลี่ยนหลังยอมรับ)
         Assert.True(QuotationAcceptance.IsOwnSignatureLocation(row.QuotationAcceptSignaturePath, storage.Locator.AttachmentsRoot, cid, doc.Id));
         var bytes = await storage.ReadAllBytesAsync(row.QuotationAcceptSignaturePath);
@@ -121,7 +121,7 @@ public class QuotationAcceptanceRound239DbTests
         Assert.Equal("203.0.113.9", audit.IpAddress);
 
         // ยอมรับซ้ำ (ชื่อ/ลายเซ็นใหม่) ⇒ สถานะเดิม · ไม่ทับ · ไม่มี audit/ไฟล์เพิ่ม
-        var again = await Controller(db, storage).Accept(doc.QuotationAcceptToken!,
+        var again = await Controller(db, storage).Accept(LegacySignLinkSeed.RawOf(doc),
             new PublicQuotationController.AcceptRequest("คนอื่น", null, SignatureUri()));
         Assert.IsType<OkObjectResult>(again);
         var row2 = await db.Documents.AsNoTracking().SingleAsync(d => d.Id == doc.Id && d.CompanyId == cid);
@@ -149,14 +149,14 @@ public class QuotationAcceptanceRound239DbTests
         var storage = MakeStorage(TempRoot());
         var (cid, doc) = await SeedAsync(db, "บริษัทบังคับเซ็น239", requireSignature: true);
 
-        var denied = await Controller(db, storage).Accept(doc.QuotationAcceptToken!, new PublicQuotationController.AcceptRequest("คุณบี"));
+        var denied = await Controller(db, storage).Accept(LegacySignLinkSeed.RawOf(doc), new PublicQuotationController.AcceptRequest("คุณบี"));
         Assert.IsType<BadRequestObjectResult>(denied);
         Assert.Null((await db.Documents.AsNoTracking().SingleAsync(d => d.Id == doc.Id && d.CompanyId == cid)).QuotationAcceptedAt);
 
-        var view = Assert.IsType<OkObjectResult>(await Controller(db, storage).View(doc.QuotationAcceptToken!));
+        var view = Assert.IsType<OkObjectResult>(await Controller(db, storage).View(LegacySignLinkSeed.RawOf(doc)));
         Assert.Contains("requireSignature = True", view.Value!.GetType().GetProperty("Data")!.GetValue(view.Value)!.ToString());
 
-        var ok = await Controller(db, storage).Accept(doc.QuotationAcceptToken!,
+        var ok = await Controller(db, storage).Accept(LegacySignLinkSeed.RawOf(doc),
             new PublicQuotationController.AcceptRequest("คุณบี", null, SignatureUri()));
         Assert.IsType<OkObjectResult>(ok);
     }
@@ -171,9 +171,9 @@ public class QuotationAcceptanceRound239DbTests
         var pdf = F4Proxy<IPdfGenerationService>.Create((_, _) => { called = true; return null; });
         var (_, doc) = await SeedAsync(db, "บริษัทหมดอายุ239", expires: DateTime.UtcNow.AddMinutes(-1));
         var c = Controller(db, storage, pdf);
-        Assert.IsType<NotFoundObjectResult>(await c.View(doc.QuotationAcceptToken!));
-        Assert.IsType<NotFoundObjectResult>(await c.Pdf(doc.QuotationAcceptToken!));
-        Assert.IsType<NotFoundObjectResult>(await c.Accept(doc.QuotationAcceptToken!,
+        Assert.IsType<NotFoundObjectResult>(await c.View(LegacySignLinkSeed.RawOf(doc)));
+        Assert.IsType<NotFoundObjectResult>(await c.Pdf(LegacySignLinkSeed.RawOf(doc)));
+        Assert.IsType<NotFoundObjectResult>(await c.Accept(LegacySignLinkSeed.RawOf(doc),
             new PublicQuotationController.AcceptRequest("คุณซี", null, SignatureUri())));
         Assert.False(called);
     }
@@ -197,12 +197,12 @@ public class QuotationAcceptanceRound239DbTests
         var (cidB, docB) = await SeedAsync(db, "บริษัทบี239");
         var (_, voided) = await SeedAsync(db, "บริษัทยกเลิก239", status: DocumentStatus.Voided);
 
-        Assert.IsType<FileContentResult>(await Controller(db, storage, pdf).Pdf(docA.QuotationAcceptToken!));
-        Assert.IsType<FileContentResult>(await Controller(db, storage, pdf).Pdf(docB.QuotationAcceptToken!));
+        Assert.IsType<FileContentResult>(await Controller(db, storage, pdf).Pdf(LegacySignLinkSeed.RawOf(docA)));
+        Assert.IsType<FileContentResult>(await Controller(db, storage, pdf).Pdf(LegacySignLinkSeed.RawOf(docB)));
         Assert.Equal(new[] { (cidA, docA.Id), (cidB, docB.Id) }, calls);
 
         Assert.IsType<NotFoundObjectResult>(await Controller(db, storage, pdf).Pdf(PublicQuotationController.NewToken()));
-        Assert.IsType<NotFoundObjectResult>(await Controller(db, storage, pdf).Pdf(voided.QuotationAcceptToken!));
+        Assert.IsType<NotFoundObjectResult>(await Controller(db, storage, pdf).Pdf(LegacySignLinkSeed.RawOf(voided)));
         Assert.IsType<NotFoundObjectResult>(await Controller(db, storage, pdf).Pdf("../" + docA.Id));
         Assert.Equal(2, calls.Count);
     }
@@ -215,17 +215,17 @@ public class QuotationAcceptanceRound239DbTests
         var storage = MakeStorage(TempRoot());
         var (cidA, docA) = await SeedAsync(db, "บริษัทเจ้าของลายเซ็น239");
         var (cidB, docB) = await SeedAsync(db, "บริษัทผู้แอบดู239");
-        await Controller(db, storage).Accept(docA.QuotationAcceptToken!, new PublicQuotationController.AcceptRequest("คุณเอ", null, SignatureUri()));
+        await Controller(db, storage).Accept(LegacySignLinkSeed.RawOf(docA), new PublicQuotationController.AcceptRequest("คุณเอ", null, SignatureUri()));
         var pathA = (await db.Documents.AsNoTracking().SingleAsync(d => d.Id == docA.Id && d.CompanyId == cidA)).QuotationAcceptSignaturePath;
 
         // เจ้าของ token อ่านลายเซ็นตัวเองได้
-        Assert.IsType<FileContentResult>(await Controller(db, storage).Signature(docA.QuotationAcceptToken!));
+        Assert.IsType<FileContentResult>(await Controller(db, storage).Signature(LegacySignLinkSeed.RawOf(docA)));
 
         // แถวของบริษัท B ถูกแก้ให้ชี้ไฟล์ของ A ⇒ token ของ B ต้องอ่านไม่ได้
         await db.Documents.Where(d => d.Id == docB.Id && d.CompanyId == cidB).ExecuteUpdateAsync(u => u
             .SetProperty(d => d.QuotationAcceptedAt, DateTime.UtcNow)
             .SetProperty(d => d.QuotationAcceptSignaturePath, pathA));
-        Assert.IsType<NotFoundObjectResult>(await Controller(db, storage).Signature(docB.QuotationAcceptToken!));
+        Assert.IsType<NotFoundObjectResult>(await Controller(db, storage).Signature(LegacySignLinkSeed.RawOf(docB)));
     }
 
     // ───────────── ฝ่ายค้านรอบ 239 ─────────────
@@ -266,7 +266,7 @@ public class QuotationAcceptanceRound239DbTests
                 .SetProperty(d => d.QuotationAcceptedBy, "คำขอที่มาก่อน"));
         });
 
-        var res = await Controller(db, hooked).Accept(doc.QuotationAcceptToken!,
+        var res = await Controller(db, hooked).Accept(LegacySignLinkSeed.RawOf(doc),
             new PublicQuotationController.AcceptRequest("คำขอที่มาทีหลัง", null, SignatureUri()));
         Assert.IsType<OkObjectResult>(res);   // ตอบสถานะจริง (ยอมรับแล้ว) ไม่ใช่ error
 
@@ -291,8 +291,8 @@ public class QuotationAcceptanceRound239DbTests
             CompanyId = company.Id, ContactId = contact.Id, DocumentType = DocumentType.DeliveryNote,
             DocumentNumber = "DN-" + Random.Shared.Next(100000, 999999), Status = DocumentStatus.Approved,
             DocumentDate = DateTime.UtcNow.Date, Currency = "THB",
-            DeliverySignToken = PublicQuotationController.NewToken(), DeliverySignTokenExpiresAt = DateTime.UtcNow.AddDays(14),
         };
+        LegacySignLinkSeed.Seed(doc);
         doc.Lines.Add(new DocumentLine { LineOrder = 1, Description = "สินค้า", Quantity = 2, UnitPrice = 0m, Amount = 0m });
         db.Documents.Add(doc);
         await db.SaveChangesAsync();
@@ -311,7 +311,7 @@ public class QuotationAcceptanceRound239DbTests
         Assert.IsType<NotFoundObjectResult>(await Controller(db, storage).SignDelivery(PublicQuotationController.NewToken(),
             new PublicQuotationController.DeliverySignRequest("ใคร", "ไม่ใช่รูป")));
 
-        var ok = await Controller(db, storage).SignDelivery(doc.DeliverySignToken!,
+        var ok = await Controller(db, storage).SignDelivery(LegacySignLinkSeed.RawOf(doc),
             new PublicQuotationController.DeliverySignRequest("คุณรับของ", SignatureUri()));
         Assert.IsType<OkObjectResult>(ok);
         var row = await db.Documents.AsNoTracking().SingleAsync(d => d.Id == doc.Id && d.CompanyId == cid);
@@ -319,7 +319,7 @@ public class QuotationAcceptanceRound239DbTests
         Assert.StartsWith("data:image/png;base64,", row.DeliverySignatureBase64);
 
         // เซ็นซ้ำ (รูปเสียด้วย) ⇒ สถานะเดิม ไม่ทับ
-        var again = await Controller(db, storage).SignDelivery(doc.DeliverySignToken!,
+        var again = await Controller(db, storage).SignDelivery(LegacySignLinkSeed.RawOf(doc),
             new PublicQuotationController.DeliverySignRequest("คนอื่น", "ไม่ใช่รูป"));
         Assert.IsType<OkObjectResult>(again);
         var row2 = await db.Documents.AsNoTracking().SingleAsync(d => d.Id == doc.Id && d.CompanyId == cid);

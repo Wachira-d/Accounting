@@ -206,9 +206,47 @@ public class DocumentController : ControllerBase
             logs.Select(MapEmailLog).ToList()));
     }
 
-    /// <summary>สร้าง/ต่ออายุลิงก์ให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ —
-    /// คืน URL สาธารณะ (token 64 hex, อายุ 30 วัน). เรียกซ้ำ = ออก token
-    /// ใหม่ (ลิงก์เดิมใช้ไม่ได้ — ทำหน้าที่ revoke ไปในตัว).</summary>
+    /// <summary>รอบ 267 P1 — ออกลิงก์หน้าเอกสารของลูกค้า (หรือคืนลิงก์เดิมที่ยังใช้ได้ · หนึ่งลิงก์ต่อใบ) สำหรับเอกสารทุกชนิดที่ลูกค้าเห็นได้ ·
+    /// ตัวออกเดียว <c>EnsureCustomerLinkAsync</c> (ด่าน <c>CustomerDocPage.IssueRefusal</c>) · สิทธิ์ = สร้างเอกสารชนิดนั้น + ชั้นความลับ ·
+    /// ปุ่มของพนักงาน = ออกใหม่แทนลิงก์ที่ถูกเพิกถอนได้ (259-2-8 — ตั้งใจ · มี audit)</summary>
+    [HttpPost("{documentId:guid}/customer-link")]
+    public async Task<ActionResult<ApiResponse<object>>> CreateCustomerLink(
+        Guid companyId, Guid documentId, [FromServices] IDocumentPayLinkService links, [FromServices] IConfiguration config, CancellationToken ct)
+    {
+        var type = await GetDocumentTypeAsync(companyId, documentId);
+        if (type == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var deny = await DenyDocAsync(companyId, userId, type.Value, DocPerm.Create, "สร้างลิงก์หน้าเอกสารของ");
+        if (deny != null) return Forbid403<object>(deny);
+        var visible = await _documentService.GetDocumentForUserAsync(companyId, documentId, userId);
+        if (visible.IsRedacted) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
+        var origin = await SystemBaseUrl.OriginForRequestAsync(_db, config, Request.Scheme, Request.Host.ToString());
+        var link = await links.EnsureCustomerLinkAsync(companyId, documentId, "staff-link", ct, allowReissueRevoked: true,
+            actor: User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? userId.ToString(), fallbackOrigin: origin);
+        if (!link.Ok) return BadRequest(new ApiResponse<object>(false, null, link.Refusal));
+        return Ok(new ApiResponse<object>(true, new { url = link.Url, expiresAt = link.ExpiresAt },
+            "ลิงก์หน้าเอกสารพร้อมใช้ — ลูกค้าเปิดดู/ดาวน์โหลด และทำรายการที่ใบนี้เปิดให้ได้จากลิงก์เดียว"));
+    }
+
+    /// <summary>รอบ 267 P1 — ตัวอย่างหน้าเอกสารที่ลูกค้าจะเห็น (โหมดพรีวิว: ปุ่มทั้งหมดปิด · ไม่ประทับ "เปิดแล้ว" · ไม่ออกลิงก์) ·
+    /// ผ่านด่านอ่านเอกสารของผู้ใช้ (ฝั่งเอกสาร + ชั้นความลับ) ก่อน</summary>
+    [HttpGet("{documentId:guid}/customer-page-preview")]
+    public async Task<ActionResult<ApiResponse<PublicDocumentPayView>>> CustomerPagePreview(
+        Guid companyId, Guid documentId, [FromServices] IDocumentPayLinkService links, CancellationToken ct)
+    {
+        var visible = await _documentService.GetDocumentForUserAsync(companyId, documentId, JwtHelper.GetUserIdFromClaims(User));
+        if (visible.IsRedacted) return NotFound(new ApiResponse<PublicDocumentPayView>(false, null, "ไม่พบเอกสาร"));
+        var view = await links.PageForDocumentAsync(companyId, documentId, CustomerDocPage.Mode.Preview, ct);
+        if (view == null)
+            return NotFound(new ApiResponse<PublicDocumentPayView>(false, null,
+                "เอกสารนี้ยังไม่มีหน้าสำหรับลูกค้า (ยังไม่ออกเลขเอกสาร หรือเป็นเอกสารที่ลูกค้าไม่เห็น)"));
+        Response.Headers.CacheControl = "private, no-store";
+        return Ok(new ApiResponse<PublicDocumentPayView>(true, view));
+    }
+
+    /// <summary>ส่งลิงก์ให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ — รอบ 267 P1: คืน URL <b>หน้าเอกสารของใบ</b> (ลิงก์เดียวต่อใบ ·
+    /// ไม่มี token ยอมรับของตัวเองอีก) + เปิดช่วงตอบรับ (ถึงวันยืนราคา · ไม่มีวันที่ = 30 วัน) · เรียกซ้ำ = เริ่มช่วงตอบรับใหม่
+    /// (token ของหน้าเอกสารไม่ถูกหมุน — เพิกถอนใช้ปุ่มเพิกถอนลิงก์ของใบ)</summary>
     [HttpPost("{documentId:guid}/quotation-accept-link")]
     public async Task<ActionResult<ApiResponse<object>>> CreateQuotationAcceptLink(
         Guid companyId, Guid documentId, [FromServices] ISignRequestService signs, [FromServices] IConfiguration config)
@@ -235,7 +273,7 @@ public class DocumentController : ControllerBase
             expiresAt = link.ExpiresAt,
             acceptedAt = link.SignedAt,
             status = link.Status,
-        }, "สร้างลิงก์แล้ว — ส่งให้ลูกค้ากดยอมรับได้เลย (อายุ 30 วัน)"));
+        }, "สร้างลิงก์แล้ว — ส่งให้ลูกค้าเปิดหน้าเอกสารแล้วกดยอมรับได้เลย"));
     }
 
     /// <summary>รอบ 239: รูปลายเซ็นที่ลูกค้าเซ็นตอนยอมรับใบเสนอราคาออนไลน์ (ข้อมูลส่วนบุคคล) — ผ่านด่านอ่านเอกสารเดียวกับหน้าเอกสาร
@@ -261,8 +299,8 @@ public class DocumentController : ControllerBase
         return File(bytes!, "image/png");
     }
 
-    /// <summary>สร้าง/ต่ออายุลิงก์ "ลูกค้าเซ็นรับสินค้าออนไลน์" (POD) — เฉพาะ
-    /// ใบส่งของที่อนุมัติแล้ว; token อายุ 14 วัน; เรียกซ้ำ = revoke ลิงก์เก่า.</summary>
+    /// <summary>ส่งลิงก์ "ลูกค้าเซ็นรับสินค้าออนไลน์" (POD) — เฉพาะใบส่งของที่อนุมัติแล้ว · รอบ 267 P1: คืน URL หน้าเอกสารของใบ
+    /// (ลิงก์เดียวต่อใบ) + เปิดช่วงเซ็นรับ 14 วัน · เรียกซ้ำ = เริ่มช่วงใหม่ (token ของหน้าเอกสารไม่ถูกหมุน)</summary>
     [HttpPost("{documentId:guid}/delivery-sign-link")]
     public async Task<ActionResult<ApiResponse<object>>> CreateDeliverySignLink(
         Guid companyId, Guid documentId, [FromServices] ISignRequestService signs, [FromServices] IConfiguration config)
@@ -289,7 +327,7 @@ public class DocumentController : ControllerBase
             signedAt = link.SignedAt,
             signedBy = link.SignedBy,
             status = link.Status,
-        }, "สร้างลิงก์แล้ว — ส่งให้ลูกค้าเซ็นรับสินค้าได้เลย (อายุ 14 วัน)"));
+        }, "สร้างลิงก์แล้ว — ส่งให้ลูกค้าเปิดหน้าเอกสารแล้วเซ็นรับสินค้าได้เลย (ภายใน 14 วัน)"));
     }
 
     // ==================== รอบ 240: ส่งลิงก์ให้ลูกค้าเซ็นทางอีเมล · ป้ายสถานะ · ประวัติ webhook (DOCUMENT_FLOW §2.12f) ====================

@@ -286,6 +286,27 @@ public class PortalPublicController : ControllerBase
         catch (Accounting.Helpers.BusinessRuleException ex) { return StatusCode(ex.StatusCode, new ApiResponse<PortalSlipUploadResponse>(false, null!, ex.Message)); }
     }
 
+    /// <summary>รอบ 267 P1 — หน้าเอกสารในโหมดพอร์ทัล (view model รูปเดียวกับลิงก์หน้าเอกสาร): ใบต้องเป็นของผู้ติดต่อในโทเคนและลูกค้าเห็นได้
+    /// (ด่านเดียวกับรายละเอียดใบของพอร์ทัล — <c>GetDocumentAsync</c>) · ธงสิทธิ์ "document" · ปุ่มจากตัวตัดสินเดียว <c>CustomerDocPage.Actions</c>
+    /// (โหมดนี้ = ดู · PDF/ชำระใช้เส้นเดิมของพอร์ทัล) · ทางเข้าบนหน้าพอร์ทัลต่อสายในแพ็ก P4</summary>
+    [HttpGet("{companyId:guid}/documents/{documentId:guid}/page")]
+    [Authorize(AuthenticationSchemes = Accounting.Helpers.PortalTokenPolicy.Scheme)]
+    public async Task<ActionResult<ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>>> DocumentPage(Guid companyId, Guid documentId,
+        [FromServices] Accounting.Services.Interfaces.IDocumentPayLinkService links, CancellationToken ct)
+    {
+        var contactId = GetContactIdFromToken();
+        if (contactId == null) return Unauthorized(new ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>(false, null, "Invalid portal token"));
+        if (await DenyPortalAsync(companyId, "document", ct) is { } deny) return Forbidden<Accounting.Services.Interfaces.PublicDocumentPayView>(deny);
+        await _service.GetDocumentAsync(companyId, contactId.Value, documentId);   // ไม่ใช่ใบของผู้ติดต่อนี้/ลูกค้าไม่เห็น ⇒ โยน (เส้นรายละเอียดเดิม)
+        var view = await links.PageForDocumentAsync(companyId, documentId, Accounting.Helpers.CustomerDocPage.Mode.Portal, ct);
+        if (view?.Page == null) return NotFound(new ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>(false, null, "ไม่พบเอกสาร"));
+        var pdfOk = await DenyPortalAsync(companyId, "pdf", ct) == null;
+        return Ok(new ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>(true, view with
+        {
+            Page = view.Page with { PdfPath = pdfOk ? $"/api/portal/{companyId:D}/documents/{documentId:D}/pdf" : null },
+        }));
+    }
+
     /// <summary>รอบ 255 WP-12B ฝ่ายค้าน H1: ตัวตนจาก scheme "Portal" (PortalAuthenticationHandler ตรวจโทเคน access · สิทธิ์ยังเปิด · บริษัทในเส้นทางตรงโทเคนแล้ว)</summary>
     private Guid? GetContactIdFromToken()
         => Guid.TryParse(User.FindFirst(Accounting.Helpers.PortalTokenPolicy.ClaimContactId)?.Value, out var id) ? id : null;

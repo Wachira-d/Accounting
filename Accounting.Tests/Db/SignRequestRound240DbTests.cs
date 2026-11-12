@@ -85,7 +85,7 @@ public class SignRequestRound240DbTests
             Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date,
             SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, Currency = "THB",
         };
-        SignRequestKinds.SetNewToken(doc, PublicQuotationController.NewToken(), DateTime.UtcNow);
+        LegacySignLinkSeed.Seed(doc);   // รอบ 267 (267-1-3): ลิงก์รุ่นก่อน — ฐานเก็บ hash · token ดิบ = LegacySignLinkSeed.RawOf(doc)
         doc.Lines.Add(new DocumentLine { LineOrder = 1, Description = "งานติดตั้ง", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m });
         db.Documents.Add(doc);
         await db.SaveChangesAsync();
@@ -122,9 +122,9 @@ public class SignRequestRound240DbTests
         db.ChangeTracker.Clear();
 
         var ctl = PublicController(db);
-        var r1 = await ctl.Accept(doc.QuotationAcceptToken!, new PublicQuotationController.AcceptRequest("คุณสมชาย"));
+        var r1 = await ctl.Accept(LegacySignLinkSeed.RawOf(doc), new PublicQuotationController.AcceptRequest("คุณสมชาย"));
         Assert.IsType<OkObjectResult>(r1);
-        var r2 = await ctl.Accept(doc.QuotationAcceptToken!, new PublicQuotationController.AcceptRequest("คุณสมชาย"));
+        var r2 = await ctl.Accept(LegacySignLinkSeed.RawOf(doc), new PublicQuotationController.AcceptRequest("คุณสมชาย"));
         Assert.IsType<OkObjectResult>(r2);
 
         var rows = await db.SignEventOutbox.Where(e => e.CompanyId == cid).ToListAsync();
@@ -166,9 +166,9 @@ public class SignRequestRound240DbTests
         var (cid, doc) = await SeedAsync(db, "SR240 dn " + Guid.NewGuid().ToString("N")[..6], DocumentType.DeliveryNote);
         var ctl = PublicController(db);
         var sig = QuotationAcceptanceRound239Tests.DataUri(QuotationAcceptanceRound239Tests.DrawnSignature());
-        Assert.IsType<OkObjectResult>(await ctl.SignDelivery(doc.DeliverySignToken!, new PublicQuotationController.DeliverySignRequest("ผู้รับ", sig)));
+        Assert.IsType<OkObjectResult>(await ctl.SignDelivery(LegacySignLinkSeed.RawOf(doc), new PublicQuotationController.DeliverySignRequest("ผู้รับ", sig)));
         db.ChangeTracker.Clear();
-        Assert.IsType<OkObjectResult>(await PublicController(db).SignDelivery(doc.DeliverySignToken!, new PublicQuotationController.DeliverySignRequest("ผู้รับ", sig)));
+        Assert.IsType<OkObjectResult>(await PublicController(db).SignDelivery(LegacySignLinkSeed.RawOf(doc), new PublicQuotationController.DeliverySignRequest("ผู้รับ", sig)));
 
         var row = Assert.Single(await db.SignEventOutbox.Where(e => e.CompanyId == cid).ToListAsync());
         Assert.Equal("delivery.signed", row.EventType);
@@ -196,7 +196,7 @@ public class SignRequestRound240DbTests
         Assert.Equal("office@seller.co.th", msg.ReplyTo);
         Assert.Equal(new[] { "buyer@customer.co.th" }, msg.To);
         Assert.Contains("อีเมลนี้ส่งในนาม", msg.HtmlBody);
-        Assert.Contains("quotation-accept.html?token=", msg.HtmlBody);
+        Assert.Contains("pay-document.html?c=", msg.HtmlBody);   // รอบ 267 P1: อีเมลขอเซ็นพาไปหน้าเอกสารของใบ (ลิงก์เดียวต่อใบ)
 
         var log = Assert.Single(await db.DocumentEmailLogs.AsNoTracking().Where(l => l.CompanyId == cid).ToListAsync());
         Assert.Equal(EmailLogStatus.Sent, log.Status);
@@ -246,8 +246,12 @@ public class SignRequestRound240DbTests
         var link = await svc.IssueLinkAsync(cidA, docA.Id, new IssueSignLinkOptions(false, "https://erp.example.com/cb", "PO-1"), "https://app.nextacc.net");
         Assert.Equal("https://erp.example.com/cb", link.CallbackUrl);
         Assert.Equal("PO-1", link.CallbackRef);
-        Assert.Equal(docA.QuotationAcceptToken, link.Token);   // ไม่ขอออกใหม่ + ลิงก์เดิมยังใช้ได้ ⇒ ใช้ token เดิม
-        Assert.StartsWith("https://app.nextacc.net/pages/quotation-accept.html?token=", link.Url);
+        // รอบ 267 P1: ลิงก์ที่คืน = ลิงก์หน้าเอกสารของใบ (token ของตัวเอง — ไม่ใช่ token ยอมรับรุ่นก่อน) · ไม่ขอออกใหม่ ⇒ ลิงก์รุ่นก่อนที่ยังใช้ได้ไม่ถูกเลิก
+        Assert.Contains("/pages/pay-document.html?c=" + cidA.ToString("D") + "&t=" + link.Token, link.Url);
+        Assert.NotEqual(LegacySignLinkSeed.RawOf(docA), link.Token);
+        var stored = await db.Documents.AsNoTracking().Where(d => d.Id == docA.Id).Select(d => new { d.QuotationAcceptToken, d.PayLinkTokenHash }).SingleAsync();
+        Assert.Equal(CustomerDocPage.LegacyStored(LegacySignLinkSeed.RawOf(docA)), stored.QuotationAcceptToken);
+        Assert.Equal(DocumentPayLinkPolicy.TokenHash(link.Token), stored.PayLinkTokenHash);   // ฐานเก็บ hash เท่านั้น
 
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
             svc.IssueLinkAsync(cidB, docA.Id, new IssueSignLinkOptions(true), "https://app.nextacc.net"));
@@ -417,7 +421,7 @@ public class SignRequestRound240DbTests
             CompanyId = cid, ContactId = old.ContactId, DocumentType = DocumentType.DeliveryNote, DocumentNumber = "DN-REM-" + Random.Shared.Next(1000, 9999),
             Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date, TotalAmount = 10m,
         };
-        SignRequestKinds.SetNewToken(sentDoc, PublicQuotationController.NewToken(), DateTime.UtcNow);
+        LegacySignLinkSeed.Seed(sentDoc);
         sentDoc.SignLinkEmailedAt = DateTime.UtcNow.AddDays(-2);
         sentDoc.SignLinkEmailedTo = "dn@customer.co.th";
         sentDoc.Lines.Add(new DocumentLine { LineOrder = 1, Description = "x", Quantity = 1, UnitPrice = 10m, Amount = 10m });

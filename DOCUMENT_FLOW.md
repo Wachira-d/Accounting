@@ -2424,6 +2424,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   · ทางเลี่ยงที่ปิดแล้ว: แก้ไขรายการ (409 — แก้หัว/หมายเหตุได้) · โคลน (409) · ใบแจ้งหนี้ที่ถูกแทนที่ด้วยใบกำกับ ⇒ รายการรับชำระชี้ใบกำกับ
 
 ### 2.8 Quotation online accept (ลูกค้ากดยอมรับใบเสนอราคา)
+> **รอบ 267 P1 (สถานะปัจจุบัน — อ่านก่อน):** ระบบ**ไม่ออก token ยอมรับของตัวเองแล้ว** — `POST /document/{id}/quotation-accept-link` และอีเมลขอเซ็น
+> คืน/ส่ง **ลิงก์หน้าเอกสารของใบ** (§2.12n · ลิงก์เดียวต่อใบ) · ช่วงยอมรับ = ถึงวันยืนราคา (`DueDate` สิ้นวันเวลาไทย) ไม่มีวันที่ = 30 วันจากวันส่ง ·
+> หน้า `quotation-accept.html` + `api/public/quotation/{token}` ยังอยู่ในช่วงเปลี่ยนผ่าน: รับ (ก) token ของหน้าเอกสาร (ข) ลิงก์รุ่นก่อนที่ออกก่อนรอบ 267
+> (คอลัมน์ `QuotationAcceptToken` เก็บ **hash** `h1:` + SHA-256 — ฐานไม่มี token ดิบ · หมดเองตามอายุ) · ข้อความด้านล่างที่พูดถึง "token 64 hex บนคอลัมน์" = ลิงก์รุ่นก่อน
 - **สร้างลิงก์** (ต้อง login): `POST /document/{id}/quotation-accept-link` —
   เฉพาะ Quotation ที่อนุมัติแล้ว; token 64 hex อายุ 30 วัน เก็บบน
   `Document.QuotationAcceptToken(+ExpiresAt)`; เรียกซ้ำ = revoke ลิงก์เก่า
@@ -2474,6 +2478,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ใบที่อนุมัติก่อนรอบนี้ด้วยลายเซ็นที่ไม่ตรงเนื้อหา ย้อนตรวจไม่ได้ (ไม่มี hash) — คงพิมพ์ตามเดิม
 
 ### 2.8b Delivery e-sign — ลูกค้าเซ็นรับสินค้าออนไลน์ (Proof of Delivery)
+> **รอบ 267 P1 (สถานะปัจจุบัน):** เหมือน §2.8 — `POST /document/{id}/delivery-sign-link` คืนลิงก์หน้าเอกสารของใบ (§2.12n) · ช่วงเซ็นรับ 14 วันจากวันส่ง ·
+> หน้า `delivery-sign.html` รับ token ของหน้าเอกสาร และลิงก์รุ่นก่อน (คอลัมน์ `DeliverySignToken` เก็บ hash) จนหมดอายุ
 - **สร้างลิงก์**: `POST /document/{id}/delivery-sign-link` — เฉพาะ DeliveryNote
   ที่อนุมัติแล้ว; token 64 hex อายุ 14 วัน (`Document.DeliverySignToken`)
 - **ฝั่งลูกค้า**: `GET/POST /api/public/delivery/{token}(/sign)` — วาดลายเซ็น
@@ -2933,6 +2939,11 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 
 ### 2.12f ลิงก์ให้ลูกค้าเซ็น — อีเมลในนามบริษัท · webhook ต่อเอกสาร · อัตโนมัติ (รอบ 240 · คำตัดสิน 240-1…240-8)
 
+> **รอบ 267 P1 (สถานะปัจจุบัน):** `SignRequestService.IssueLinkAsync/SendEmailAsync/PreviewEmailAsync` ใช้ **ลิงก์หน้าเอกสารของใบ**
+> (`IDocumentPayLinkService.EnsureCustomerLinkAsync` — §2.12n) · "ออกใหม่" (`Regenerate`) = เริ่มช่วงตอบรับใหม่ + ล้างสถานะติดตาม + เลิกลิงก์รุ่นก่อน
+> (`SignRequestKinds.MarkIssued`) — **token ของหน้าเอกสารไม่ถูกหมุน** (เพิกถอน = ปุ่มเพิกถอนลิงก์ของใบ) · ใบเสนอราคาที่พ้นวันยืนราคา ⇒ ปฏิเสธ `SIGN-LINK-VALIDITY`
+> (ไม่ส่งลิงก์ที่ลูกค้ากดยอมรับไม่ได้) · งานอัตโนมัติ/อีเมลเตือนไม่ออกลิงก์ใหม่แทนลิงก์ที่ถูกเพิกถอน (259-2-8) · ป้ายสถานะ (`SignRequestKinds.Status`) อ่านลิงก์ทั้งสองรุ่น
+
 **สำรวจทั้งเรพ (240-1):** เอกสารที่ลูกค้าภายนอก "ลงนาม/ยอมรับ" ผ่านลิงก์ได้มี 2 ชนิด — ใบเสนอราคา (ยอมรับ + ลายเซ็น) และใบส่งของ (เซ็นรับสินค้า) ·
 ลิงก์สาธารณะอื่น (สลิปเงินเดือน · ใบจองที่พัก · ลิงก์ชำระเงิน · พอร์ทัลลูกค้า/ผู้ขาย) เป็น "ดู/จ่าย/ส่งสลิป" ไม่ใช่ลงนาม · ตัวตั้งเดียว `Helpers/SignRequestKinds`
 (ชนิด · ชื่อ event · หน้า · อายุลิงก์ · สถานะที่ส่งได้ · ป้าย) — ร่าง/**รออนุมัติ** (เลข DRAFT — เดิมหลุด) /ยกเลิก/ปฏิเสธ ส่งไม่ได้
@@ -3328,6 +3339,9 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   native confirm/prompt/alert = 0 ใน payment-intents/etax/tax/tax-remittance/document-scan/fiscal/customer-portal (ใช้ `Layout.confirm/notice/promptText/formDialog`)
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 แพ็ก C รวมบ้าน · ไม่ซ้อน — §2.12g-259c — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 95b419a3 · e3e6f40a · ชุดแก้ฝ่ายค้าน commit 0b5c5646)_
+
+> **รอบ 267 P1:** ลิงก์ชำระของ §2.12g = **ลิงก์หน้าเอกสาร** (token/คอลัมน์/URL เดียวกัน — §2.12n) · อายุลิงก์ใหม่ 400 วัน (เดิม 60 — ลิงก์ที่ออกแล้วคงวันเดิม) ·
+> "ลิงก์ใช้ได้" ตัดสินระดับหน้า: ใบแจ้งหนี้ที่ออกใบกำกับแล้ว/ชำระครบ **ยังเปิดดูได้** (ปุ่มจ่ายปิดด้วยเหตุเดิมของ `DocumentPayLinkPolicy.IssueRefusal`)
 
 ### 2.12g ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · ออก/ส่งใบเสร็จหลังรับชำระ (รอบ 241 · คำตัดสิน 241-1…241-10)
 
@@ -3986,6 +4000,58 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - B-M2 ลิงก์อัปโหลด: ประตูเดียวตอบ "ใบเดิม" ⇒ ลบไฟล์ที่เพิ่งเก็บ (`DeleteOrphanAsync`) · B-M3 ทางเข้า e-WHT รอหลักฐาน ดู §2.12j
 
 เทสต์ `WhtCertRound257Tests` · `Db/WhtCertRound253DbTests` (`R257_L2_…`) · `Db/PartnerExchangeRound255DbTests` (`R257_L4_…`) · Last verified 2026-11-10 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e104a7bb
+
+### 2.12n หน้าเอกสารสำหรับลูกค้า — ลิงก์เดียวต่อใบ · หน้าเดียวทุกชนิด (รอบ 267 แพ็ก P1 · คำตัดสิน 267-1-1…267-1-3 · 267-1-19…267-1-23)
+
+ดีไซน์: `erp-review/2026-11-12/team-267-doc-pages-design.md` (§19 แพ็ก P1) · สภาพก่อนรอบนี้: `team-267-doc-pages-current.md` ·
+**P1 = อ่านอย่างเดียว + ทางเดิม** — ผู้ลงนาม/บัญชีหลักฐาน/ฉบับเซ็น (P2) · หน้าต่าง "ส่งให้ลูกค้า"/ไทม์ไลน์/เซ็นทาง LINE (P3) · เติมหลังจ่าย (P4) **ยังไม่ทำ**
+
+- **ลิงก์ (267-1-1):** หนึ่งใบ = หนึ่ง token — คอลัมน์เดิม `Document.PayLinkTokenHash/Protected/IssuedAt/ExpiresAt/RevokedAt` (ไม่มีคอลัมน์ token ใหม่) ·
+  URL เดิม `/pages/pay-document.html?c={companyId}&t={token}` ⇒ ลิงก์ชำระที่ลูกค้าถืออยู่กลายเป็นหน้าเอกสารทันที ·
+  ตัวออกเดียว `DocumentPayLinkService.EnsureLinkAsync` สองชั้น: ชั้นจ่ายเดิม (ด่าน `DocumentPayLinkPolicy.IssueRefusal`) และ
+  `EnsureCustomerLinkAsync(companyId, docId, purpose)` (ด่าน `CustomerDocPage.IssueRefusal`) ⇒ ใบเสนอราคา/ใบส่งของ/ใบเสร็จ/ใบลดหนี้/ใบวางบิล/ใบสั่งซื้อ ออกลิงก์ได้แม้ "จ่ายไม่ได้" ·
+  ลิงก์ที่ยังใช้ได้ไม่ถูกทับ · ลิงก์ที่ถูกเพิกถอนออกใหม่ได้เฉพาะ `allowReissueRevoked` (259-2-8: ปุ่มของพนักงาน · อีเมลที่คนกดส่ง — งานอัตโนมัติ/พอร์ทัล = `PayLinkRevokedException`) ·
+  ใบค่าบริการ NextAcc ของผู้เช่า = ปฏิเสธ (262-1-9) · อายุลิงก์ `CustomerDocPage.LinkTtlDays = 400` (= `DocumentPayLinkPolicy.TtlDays` ตัวเลขเดียว)
+- **ตัวตัดสินเดียว `Helpers/CustomerDocPage.cs` (pure):** `IssueRefusal` (ชนิด/ฝั่ง/สถานะ/ใบผู้เช่า) · `ViewRefused` (ใบกลับเป็นร่าง/ลูกค้าไม่เห็น = เปิดไม่ได้ · ใบยกเลิกหลังส่งลิงก์ = เปิดได้) ·
+  `StateOf`/`CanRequestNewLink` (ใช้ได้ · หมดอายุ · เพิกถอน) · `Actions(Facts, now)` → `PageAction(Id, Enabled, Label, DisabledReason, RuleCode, Href)` ·
+  `RespondWindowEnd/RespondWindowClosedReason` · `ShowsAmounts` · `Labels`/`StatusLabel` (ไทย/อังกฤษตามภาษาเอกสาร) · `Limits` · `RedactPath` · `LegacyStored` ·
+  **หน้าเว็บไม่มีตารางชนิด/ปุ่ม/ป้ายของตัวเอง**
+
+| ชนิด (ออกเลขแล้ว) | ดู + PDF | ปุ่มใน P1 | ช่วง |
+|---|---|---|---|
+| ใบเสนอราคา | ✅ | **ยอมรับ** → หน้ายอมรับเดิมด้วย token ตัวเดียวกัน (ช่วงเปลี่ยนผ่าน) | ถึงวันยืนราคา (สิ้นวันเวลาไทย) · ไม่มีวันที่ = 30 วันจากวันส่ง |
+| ใบส่งของ | ✅ (ไม่แสดงราคา/ยอด) | **เซ็นรับ** → หน้าเซ็นรับเดิม | 14 วันจากวันส่ง |
+| ใบแจ้งหนี้ · ใบกำกับ · ใบเพิ่มหนี้ฝั่งขาย | ✅ | **จ่ายออนไลน์** · **แจ้งโอน + สลิป** · "ไม่หัก ณ ที่จ่าย" (เส้นเดิมทุกตัวอักษร — `PublicPaymentController`) | ขณะยอดค้าง > 0 · ดูได้ 400 วัน |
+| ใบเสร็จ · ใบสำคัญรับ · ใบลดหนี้ฝั่งขาย · ใบวางบิล · ใบสั่งซื้อ (ถึงผู้ขาย) | ✅ | — (ใบวางบิลแสดงใบในบิล · จ่ายรายใบ/รับทราบ PO = แพ็กถัดไป) | 400 วัน |
+| ฝั่งซื้ออื่น · ร่าง/รออนุมัติ/ถูกปฏิเสธ · ใบค่าบริการของผู้เช่า | ❌ ออกลิงก์ไม่ได้ | | |
+
+- **โหมดของหน้า (หน้าเดียว · view model รูปเดียว `PublicDocumentPayView` + `Page: CustomerDocPageView`):**
+  `link` = token ของใบ (`GET api/companies/{c}/public-pay/documents/{token}` — `PublicDocumentPageController`) ทุกปุ่ม ·
+  `line-view` = HMAC แถวคิว LINE (`GET …/line-doc/{queueId}/{token}/page` — ด่านเดียวกับ PDF เดิม `ResolveAsync`) ดู + PDF + "ขอลิงก์ทำรายการ" ·
+  `preview` = พนักงาน (`GET …/document/{id}/customer-page-preview` — ด่านอ่านเอกสาร + ชั้นความลับ) ปุ่มทั้งหมดปิด · ไม่ออกลิงก์ · ไม่ประทับเปิด ·
+  `portal` = JWT พอร์ทัล (`GET api/portal/{c}/documents/{id}/page` — ด่านรายละเอียดเดิม + ธงสิทธิ์) ดู + PDF ของพอร์ทัล (**ทางเข้าบน portal.html ต่อสายใน P4**) ·
+  โหมดที่ไม่ใช่ `link` ไม่มีเป้าหมายรายการชำระ (จ่าย/สลิปทำได้จากลิงก์ของใบเท่านั้น)
+- **ซ่อนยอด:** ใบส่งของไม่ส่งราคา/ยอด (`ShowsAmounts`) · กลุ่ม LINE ที่ตั้งซ่อนยอด/ยกเลิกผูก/บล็อก ไม่ได้หน้าเอกสาร (`PageLinkAllowedForLineEndpoint` = ตัวตัดสินเดิม `LineDocumentViewLink.EndpointAllows`) ·
+  view model ไม่มี id ภายใน (ยกเว้น `relId` ของชุดใบที่เกี่ยวข้อง) · ผังบัญชี · หมายเหตุภายใน · ผู้สร้าง · IP · ที่อยู่/เลขภาษี (ฉบับตามกฎหมาย = PDF — resolver ที่อยู่ไม่มีสำเนาที่สอง)
+- **ใบที่เกี่ยวข้อง (= ชุดที่ token ดาวน์โหลดได้ · `RelatedAsync`):** ใบต้นทาง · ใบลูก · ใบที่ออกแทน · ใบในใบวางบิล — บริษัทเดียวกัน + ผู้ติดต่อเดียวกัน + ออกแล้วยังมีผล + ลูกค้าเห็นได้ ·
+  `GET …/documents/{token}/related/{relId}/pdf` ตรวจว่า `relId` อยู่ในชุดของใบนั้น (นอกชุด = 404 ข้อความเดียว) · `GET …/documents/{token}/pdf` = PDF ตัวเดียวกับที่ผู้ขายดาวน์โหลด
+- **ลิงก์ใช้ไม่ได้ — ไม่ใช่ทางตัน:** เพิกถอน/ไม่พบ/ใบกลับเป็นร่าง = 404 ข้อความเดียว (`CustomerDocPage.NotFoundMessage`) ไม่มีข้อมูลของใบ ·
+  **หมดอายุไม่เกิน 180 วัน** = 404 ข้อความเดียว + `page.canRequestLink` ⇒ ปุ่ม "ขอลิงก์ใหม่" → `POST …/documents/{token}/request-link`:
+  **ไม่ออก token ให้คนนอก** — บันทึกแถว audit chain `DocumentLinkRequest` (≤ 1 ครั้ง/ใบ/วัน — ตัวกันซ้ำอ่านจากแถว audit) + แจ้งพนักงานทางกระดิ่ง
+  (`NotificationEvents.DocumentLinkRequested` — ค่าตั้งต้นกระดิ่งเท่านั้น) ⇒ พนักงานออกลิงก์ใหม่ (`POST …/document/{id}/customer-link` หรือปุ่มเดิม) ·
+  ปุ่มตอบรับปิดเพราะพ้นช่วง/โหมด LINE-ดู ⇒ ปุ่ม "ขอลิงก์ทำรายการ" เส้นเดียวกัน
+- **ลิงก์ยอมรับ/เซ็นรับรุ่นก่อน (267-1-3):** หยุดออก · migration ตอนบูต (`CustomerDocPage.LegacyTokenHashSql` — รันซ้ำได้) แทน token ดิบในคอลัมน์
+  `QuotationAcceptToken`/`DeliverySignToken` ด้วย `h1:` + SHA-256 **ในที่เดิม** ⇒ ฐานไม่เหลือ token ดิบ · ลิงก์ที่ลูกค้าถืออยู่เปิดได้จนหมดอายุ (ฝั่งค้น `CustomerDocPage.LegacyStored`) ·
+  `PublicQuotationController.FindByTokenAsync/FindDeliveryByTokenAsync` รับ token ของหน้าเอกสารด้วย (ยืนยันเวลาคงที่ · ไม่เพิกถอน/ไม่หมดอายุ · ช่วงตอบรับจากตัวตัดสินเดียวกับปุ่ม ·
+  จองแบบมีเงื่อนไข "ลิงก์ยังไม่ถูกเพิกถอน ณ ตอนจอง")
+- **ความปลอดภัย:** เพดาน `CustomerDocPage.Limits` นับใน `IChatRateLimiter` (ต่อ token hash + IP · เส้นดูไม่ปฏิเสธเมื่อตารางตัวนับล่ม — หน้านี้คือหน้าชำระ · PDF/ขอลิงก์ใหม่ปฏิเสธ) · `Cache-Control: private, no-store` · `Referrer-Policy: no-referrer` ·
+  log ของ middleware ทั้งสามปิดบัง token ใน path (`GatewayWebhookRoute.RedactPath` → `CustomerDocPage.RedactPath`) · หน้าเว็บรับเฉพาะ path ภายใน (`/…`) จากเซิร์ฟเวอร์เป็น href ·
+  ไม่มี AI ในเส้นนี้ (กฎเหล็ก #1 ไม่ถูกแตะ)
+- **พฤติกรรมที่เปลี่ยน (ตั้งใจ):** (1) ใบแจ้งหนี้ที่ออกใบกำกับแล้ว — เดิมลิงก์ใช้ไม่ได้ทั้งหน้า · ตอนนี้เปิดดู/ดาวน์โหลดได้ ปุ่มจ่ายปิดพร้อมข้อความ "ชำระที่ใบกำกับ …"
+  (2) "ออกลิงก์ยอมรับใหม่" ไม่ทำให้ลิงก์ที่ส่งไปแล้วตาย (3) ใบเสนอราคาที่พ้นวันยืนราคา: ลูกค้ายอมรับออนไลน์ไม่ได้ และพนักงานส่งลิงก์ขอยอมรับไม่ได้จนกว่าจะแก้วันยืนราคา
+  (เดิมยอมรับได้ 30 วันจากวันออกลิงก์โดยไม่ดูวันยืนราคา) (4) อีเมลขอเซ็นพาไปหน้าเอกสาร (กดปุ่มยอมรับอีกหนึ่งครั้ง) จนกว่า P2 จะฝังฟอร์มในหน้า
+- เทสต์ `CustomerDocPageRound267Tests` (pure สองทิศ) · `Db/CustomerDocPageRound267DbTests` · เทสต์เดิมของ 239/240/250 จำลองลิงก์รุ่นก่อนผ่าน `LegacySignLinkSeed` (ฐานเก็บ hash) ·
+  `tools/required_call_site_check.py` R267a–f · Last verified `commit <pending>` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -9097,3 +9163,4 @@ _Last verified against codebase: 2026-11-12 (รอบ 262 ชุดแก้ฝ
 
 _Last verified against codebase: 2026-11-12 (รอบ 264 P1 ชุดแก้ฝ่ายค้าน — §2.12g-264-P1: H1 ระงับ ⇒ ถอน + ตัดแถวก่อนยอมรับครั้งล่าสุด · M1 CheckForWriteAsync FOR SHARE · M2–M4 · L1–L8 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f7eb8eee)_
 _Last verified against codebase: 2026-11-12 (รอบ 262-1-18 — §2.12g-262: เงินเข้าบัญชีไม่ตัดชำระใบค่าบริการผู้เช่าอัตโนมัติ (เหตุ + ทางไปต่อ) · พอร์ทัลไม่ขึ้นปุ่มชำระใบผู้เช่า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
+_Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P1 — §2.12n หน้าเอกสารสำหรับลูกค้า: ลิงก์เดียวต่อใบบน token ของลิงก์ชำระ · หน้า pay-document เป็นหน้าเอกสาร 4 โหมด · ขอลิงก์ใหม่เมื่อหมดอายุ · ลิงก์ยอมรับ/เซ็นรับรุ่นก่อนเก็บเป็น hash + หยุดออก (§2.8 · §2.8b · §2.12f · §2.12g) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_

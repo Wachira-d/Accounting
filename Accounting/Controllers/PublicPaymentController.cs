@@ -178,15 +178,8 @@ public class PublicPaymentController : ControllerBase
     private async Task<PublicPayTarget?> ResolveDocumentAsync(Guid companyId, string token, CancellationToken ct)
         => _docLinks == null ? null : (await _docLinks.PublicViewAsync(companyId, token, ct))?.Target;
 
-    [HttpGet("documents/{token}")]
-    public async Task<ActionResult<ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>>> ViewDocument(
-        Guid companyId, string token, CancellationToken ct)
-    {
-        var view = _docLinks == null ? null : await _docLinks.PublicViewAsync(companyId, token, ct);
-        if (view == null)
-            return NotFound(new ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>(false, null, "ลิงก์ไม่ถูกต้อง — กรุณาติดต่อผู้ขาย"));
-        return Ok(new ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>(true, view));
-    }
+    // รอบ 267 P1: เส้นดู (GET documents/{token}) ย้ายไป PublicDocumentPageController (หน้าเอกสาร — หัวใบ/รายการ/PDF/ปุ่มจากเซิร์ฟเวอร์) ·
+    // เส้นจ่าย/สลิปด้านล่างคงเดิม (เป้าหมายรายการชำระจาก PublicViewAsync ตัวเดียวกัน)
 
     [HttpPost("documents/{token}/intents")]
     public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StartDocument(

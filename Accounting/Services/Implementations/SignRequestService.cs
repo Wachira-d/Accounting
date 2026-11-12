@@ -1,4 +1,3 @@
-using Accounting.Controllers;
 using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.Entities;
@@ -27,12 +26,16 @@ public class SignRequestService : ISignRequestService
     private readonly IContactRecipientResolver _recipients;
     /// <summary>รอบ 254 WP-11 L4 (Q4): โควตาอีเมลรายเดือนของเส้น SMTP ของ NextAcc · null (สร้างนอก DI) ⇒ ไม่นับรายเดือน</summary>
     private readonly INotifyQuotaService? _notifyQuota;
+    /// <summary>รอบ 267 P1 (267-1-1 · 267-1-3): ตัวออกลิงก์หน้าเอกสารตัวเดียว — ลิงก์ที่ส่งให้ลูกค้าตอบรับ = ลิงก์หน้าเอกสารของใบ
+    /// (ไม่มี token ของตัวเองอีก) · null (สร้างนอก DI) ⇒ ตัวจริงบนฐานเดียวกัน (ไม่มีผู้ให้บริการรับชำระ — ลิงก์หน้าเอกสารไม่ต้องใช้)</summary>
+    private readonly IDocumentPayLinkService _links;
 
     public SignRequestService(AccountingDbContext db, IEmailSenderFactory senders, ISecretProtector secrets,
         ILogger<SignRequestService> logger, IConfiguration? config = null, IContactRecipientResolver? recipients = null,
-        INotifyQuotaService? notifyQuota = null)
+        INotifyQuotaService? notifyQuota = null, IDocumentPayLinkService? links = null)
     {
         _db = db;
+        _links = links ?? new DocumentPayLinkService(db, Array.Empty<Accounting.Services.Payments.IPaymentProvider>(), secrets, config);
         _notifyQuota = notifyQuota;
         _senders = senders;
         _secrets = secrets;
@@ -54,12 +57,47 @@ public class SignRequestService : ISignRequestService
     private Task<CompanySettings?> SettingsAsync(Guid companyId, CancellationToken ct)
         => _db.CompanySettings.FirstOrDefaultAsync(s => s.CompanyId == companyId, ct);
 
-    private static SignLinkResult ToResult(Document doc, string origin, DateTime now)
+    private static SignLinkResult ToResult(Document doc, CustomerLinkResult link, DateTime now)
     {
         var kind = SignRequestKinds.For(doc.DocumentType)!;
         var s = SignRequestKinds.Read(doc);
-        return new SignLinkResult(doc.Id, kind.Code, kind.EventType, SignRequestKinds.Url(origin, kind, s.Token!), s.Token!, s.ExpiresAt,
+        return new SignLinkResult(doc.Id, kind.Code, kind.EventType, link.Url!, link.Token!, s.ExpiresAt,
             s.SignedAt, s.SignedBy, doc.SignCallbackUrl, doc.SignCallbackRef, SignRequestKinds.Status(doc, now));
+    }
+
+    /// <summary>รอบ 267 P1: ลิงก์ที่ส่งให้ลูกค้าตอบรับ = ลิงก์หน้าเอกสารของใบ (ตัวออกเดียว <c>EnsureCustomerLinkAsync</c> — ลิงก์ที่ยังใช้ได้ไม่ถูกทับ) ·
+    /// ออกไม่ได้ ⇒ โยนพร้อมเหตุ (ไม่คืน URL ว่าง) · ลิงก์ที่ถูกเพิกถอน: ออกใหม่เฉพาะผู้เรียกที่เป็นคนกด (<paramref name="staffIntent"/>) —
+    /// งานอัตโนมัติ/อีเมลเตือนไม่ล้างการเพิกถอนเอง (259-2-8) · โหลดคอลัมน์ลิงก์ของใบกลับเข้าตัวที่ถืออยู่ (ป้ายสถานะคำนวณจากค่าปัจจุบัน)</summary>
+    private async Task<CustomerLinkResult> EnsurePageLinkAsync(Document doc, bool staffIntent, string actor, string origin, CancellationToken ct)
+    {
+        var link = await _links.EnsureCustomerLinkAsync(doc.CompanyId, doc.Id, "sign-link", ct, allowReissueRevoked: staffIntent, actor: actor, fallbackOrigin: origin);
+        if (!link.Ok) throw new BusinessRuleException(link.Refusal ?? "ออกลิงก์หน้าเอกสารไม่สำเร็จ", "SIGN-LINK-STATUS");
+        var cols = await _db.Documents.AsNoTracking().Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId)
+            .Select(d => new { d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, d.PayLinkIssuedAt }).FirstAsync(ct);
+        // คอลัมน์ลิงก์ถูกเขียนด้วย ExecuteUpdate ในตัวออกลิงก์ — ตั้งทั้งค่าเดิมและค่าปัจจุบันของตัวที่ถืออยู่ให้ตรงฐาน
+        // (ไม่ถูกนับว่าแก้ ⇒ SaveChanges ของผู้เรียกไม่เขียนทับคอลัมน์ลิงก์)
+        var entry = _db.Entry(doc);
+        void Sync<T>(System.Linq.Expressions.Expression<Func<Document, T>> property, T value)
+        {
+            var p = entry.Property(property);
+            p.OriginalValue = value;
+            p.CurrentValue = value;
+        }
+        Sync(d => d.PayLinkTokenHash, cols.PayLinkTokenHash);
+        Sync(d => d.PayLinkExpiresAt, cols.PayLinkExpiresAt);
+        Sync(d => d.PayLinkRevokedAt, cols.PayLinkRevokedAt);
+        Sync(d => d.PayLinkIssuedAt, cols.PayLinkIssuedAt);
+        return link;
+    }
+
+    /// <summary>รอบ 267 P1 (สถานการณ์ S5): เปิดรอบตอบรับใหม่ได้เฉพาะเมื่อช่วงตอบรับจะ<b>เปิดจริง</b> — ใบเสนอราคาที่พ้นวันยืนราคาแล้ว
+    /// ส่งไปลูกค้าก็กดยอมรับไม่ได้ (ตัวตัดสินเดียว <see cref="CustomerDocPage.RespondWindowClosedReason"/>) ⇒ ปฏิเสธพร้อมทางไปต่อ ไม่ส่งลิงก์ที่กดแล้วตัน</summary>
+    private static void EnsureRespondWindowOpen(Document doc, DateTime now)
+    {
+        if (CustomerDocPage.RespondWindowClosedReason(false, doc.DocumentType, doc.DueDate, now, now) != null)
+            throw new BusinessRuleException(
+                "ใบเสนอราคานี้พ้นวันยืนราคาแล้ว — ลูกค้ายอมรับออนไลน์ไม่ได้ · แก้ \"ยืนราคาถึงวันที่\" ของใบ (หรือออกใบเสนอราคาใหม่) แล้วส่งอีกครั้ง",
+                "SIGN-LINK-VALIDITY");
     }
 
     /// <summary>ตรวจ + ตั้ง webhook ต่อเอกสาร (ผู้เรียก SaveChanges) — ต้องมีรหัสลับลงนามของบริษัทก่อน · โฮสต์ตามรายชื่อที่บริษัทอนุญาต</summary>
@@ -92,11 +130,17 @@ public class SignRequestService : ISignRequestService
         var now = DateTime.UtcNow;
         if (options.CallbackUrl != null || options.CallbackRef != null || options.ClearCallback)
             ApplyCallback(doc, await SettingsAsync(companyId, ct), options.CallbackUrl, options.CallbackRef, options.ClearCallback);
+        // รอบ 267 P1 (267-1-3): ไม่ออก token ยอมรับ/เซ็นรับของตัวเองอีก — ลิงก์ = ลิงก์หน้าเอกสารของใบ (ออก/ใช้เดิมที่ตัวออกเดียว) ·
+        // "ออกใหม่" = เริ่มช่วงตอบรับใหม่ + ล้างสถานะติดตาม + เลิกลิงก์รุ่นก่อน (SignRequestKinds.MarkIssued) — token ของหน้าเอกสารไม่ถูกหมุน
+        var link = await EnsurePageLinkAsync(doc, staffIntent: true, "sign-link", origin, ct);
         if (options.Regenerate || !SignRequestKinds.LinkUsable(SignRequestKinds.Read(doc), now))
-            SignRequestKinds.SetNewToken(doc, PublicQuotationController.NewToken(), now);
+        {
+            EnsureRespondWindowOpen(doc, now);
+            SignRequestKinds.MarkIssued(doc, now);
+        }
         doc.UpdatedAt = now;
         await _db.SaveChangesAsync(ct);
-        return ToResult(doc, origin, now);
+        return ToResult(doc, link, now);
     }
 
     /// <summary>ผู้รับตั้งต้น: ผู้รับที่ผู้ใช้กรอกครั้งก่อน (ทับ) › ปลายทางของผู้ติดต่อที่รับเรื่อง "ลิงก์เซ็น" (ตัวหาผู้รับเดียว · ไม่ตั้ง = Contact.Email เดิม) ·
@@ -127,10 +171,8 @@ public class SignRequestService : ISignRequestService
         var doc = await LoadSignableAsync(companyId, documentId, ct);
         await _db.HydrateContactAsync(companyId, doc);
         var now = DateTime.UtcNow;
-        var state = SignRequestKinds.Read(doc);
-        // พรีวิวไม่ออกลิงก์ใหม่ (ไม่เปลี่ยนข้อมูล) — ยังไม่มี/หมดอายุ ⇒ แสดงตัวอย่าง URL; ตอนส่งจริงระบบออกให้
-        var kind = SignRequestKinds.For(doc.DocumentType)!;
-        var url = SignRequestKinds.LinkUsable(state, now) ? SignRequestKinds.Url(origin, kind, state.Token!) : SignRequestKinds.Url(origin, kind, "…");
+        // พรีวิวไม่ออกลิงก์ใหม่ (ไม่เปลี่ยนข้อมูล) — มีลิงก์หน้าเอกสารที่ยังใช้ได้ ⇒ URL จริง · ยังไม่มี ⇒ แสดงตัวอย่าง URL; ตอนส่งจริงจะออกลิงก์ให้
+        var url = await _links.CurrentCustomerUrlAsync(companyId, documentId, ct) ?? DocumentPayLinkPolicy.Url(origin, companyId, "…");
         var (plan, _) = await DocumentEmailService.ResolveOnBehalfSenderAsync(_db, _senders, companyId, await SettingsAsync(companyId, ct), ct);
         var text = await ComposeAsync(doc, url, message, reminder: false, plan, origin, ct);
         var quota = await PlatformEmailQuota.ForCompanyAsync(_db, _config, companyId, now, ct);
@@ -162,14 +204,18 @@ public class SignRequestService : ISignRequestService
         if (valid.Count > SignEmailThrottle.MaxRecipients)
             throw new BusinessRuleException($"ส่งได้ครั้งละไม่เกิน {SignEmailThrottle.MaxRecipients} ผู้รับ", "SIGN-EMAIL-TO");
 
-        // ลิงก์: ใช้ฉบับที่ยังใช้ได้ (อีเมลเตือนต้องเป็นลิงก์เดิม) · ไม่มี/หมดอายุ ⇒ ออกใหม่
+        // ลิงก์: ช่วงตอบรับที่ยังเปิดใช้ต่อ (อีเมลเตือนต้องเป็นรอบเดิม) · ไม่มี/พ้นช่วง ⇒ เปิดรอบใหม่ ·
+        // รอบ 267 P1: URL = ลิงก์หน้าเอกสารของใบ (ตัวออกเดียว) — อีเมลเตือนของลิงก์รุ่นก่อนก็ได้ลิงก์หน้าเอกสาร (หน้าเดิมยังเปิดได้จนหมดอายุ)
+        if (!SignRequestKinds.LinkUsable(SignRequestKinds.Read(doc), now) && reminder)
+            throw new BusinessRuleException("ลิงก์เดิมหมดอายุแล้ว — ไม่ส่งอีเมลเตือน", "SIGN-REMINDER-EXPIRED");
+        var pageLink = await EnsurePageLinkAsync(doc, staffIntent: purpose == SignRequestPurposes.Manual, actor, origin, ct);
         if (!SignRequestKinds.LinkUsable(SignRequestKinds.Read(doc), now))
         {
-            if (reminder) throw new BusinessRuleException("ลิงก์เดิมหมดอายุแล้ว — ไม่ส่งอีเมลเตือน", "SIGN-REMINDER-EXPIRED");
-            SignRequestKinds.SetNewToken(doc, PublicQuotationController.NewToken(), now);
+            EnsureRespondWindowOpen(doc, now);
+            SignRequestKinds.MarkIssued(doc, now);
             await _db.SaveChangesAsync(ct);
         }
-        var url = SignRequestKinds.Url(origin, kind, SignRequestKinds.Read(doc).Token!);
+        var url = pageLink.Url!;
 
         var settings = await SettingsAsync(companyId, ct);
         var (plan, sender) = await DocumentEmailService.ResolveOnBehalfSenderAsync(_db, _senders, companyId, settings, ct);
@@ -276,6 +322,8 @@ public class SignRequestService : ISignRequestService
             .Select(d => new Document
             {
                 Id = d.Id, CompanyId = d.CompanyId, DocumentType = d.DocumentType,
+                DueDate = d.DueDate, SignLinkIssuedAt = d.SignLinkIssuedAt,
+                PayLinkTokenHash = d.PayLinkTokenHash, PayLinkExpiresAt = d.PayLinkExpiresAt, PayLinkRevokedAt = d.PayLinkRevokedAt,
                 QuotationAcceptToken = d.QuotationAcceptToken, QuotationAcceptTokenExpiresAt = d.QuotationAcceptTokenExpiresAt,
                 QuotationAcceptedAt = d.QuotationAcceptedAt, QuotationAcceptedBy = d.QuotationAcceptedBy,
                 DeliverySignToken = d.DeliverySignToken, DeliverySignTokenExpiresAt = d.DeliverySignTokenExpiresAt,
