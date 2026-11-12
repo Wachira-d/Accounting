@@ -25,7 +25,9 @@ public record CustomerCreditRow(Guid PaymentId, string PaymentNumber, Guid? Cont
     CustomerCreditActions? Actions = null);
 
 /// <summary>รอบ 259 P4: ปุ่มของแถวเงินรอจัดสรรที่กดได้ (เซิร์ฟเวอร์ตัดสิน — หน้าเว็บไม่มีสำเนาเงื่อนไข) · ข้อความ = เหตุที่กดไม่ได้</summary>
-public record CustomerCreditActions(bool CanIssueInvoice, bool CanToDeposit, bool CanRefund, bool CanWriteOff, string? WriteOffBlockedReason);
+public record CustomerCreditActions(bool CanIssueInvoice, bool CanToDeposit, bool CanRefund, bool CanWriteOff, string? WriteOffBlockedReason,
+    // รอบ 265 (คำตัดสิน 265-1-1): ออกใบเสร็จ/ใบกำกับภาษีจากเงินก้อนนี้โดยตรง (ไม่มีใบแจ้งหนี้)
+    bool CanIssueReceipt = false);
 
 /// <summary>รอบ 259 P4: ขาออก 1 รายการของเงินรอจัดสรร</summary>
 /// <param name="IsLive">ยังมีผล (ตัดยอด/จองอยู่)</param>
@@ -48,6 +50,31 @@ public record CustomerCreditToDepositRequest(decimal Amount, Guid? DepositKindId
 /// <summary>ออกใบแจ้งหนี้ส่วนที่ขาด — สร้าง<b>ร่าง</b>ของลูกค้ารายเดียวกัน (ยอด = <paramref name="Amount"/> หรือยอดที่ใช้ได้ทั้งหมด) แล้วจองเงินไว้ให้ใบนั้น</summary>
 public record CustomerCreditIssueInvoiceRequest(decimal? Amount = null, DocumentType? DocumentType = null,
     string? IdempotencyKey = null, decimal? ExpectedUnappliedBefore = null);
+
+/// <summary>รอบ 265: บรรทัด 1 รายการของใบเสร็จที่ออกจากเงินรอจัดสรร (ผู้ใช้กรอก · ราคาตามช่อง <c>PricesIncludeVat</c> ของคำขอ)</summary>
+public record CustomerCreditReceiptLineRequest(string Description, decimal Quantity, decimal UnitPrice, decimal VatRate = 0m,
+    decimal WithholdingTaxRate = 0m, string? Unit = null, string? ProductCode = null, Guid? AccountId = null);
+
+/// <summary>
+/// รอบ 265 (คำตัดสิน 265-1-1…5): ออกใบเสร็จรับเงิน/ใบกำกับภาษีจากเงินรอจัดสรร <b>โดยไม่ต้องมีใบแจ้งหนี้</b> — ระบบสร้างและอนุมัติให้
+/// (เลขที่ออกตอนอนุมัติ §86/4) · <paramref name="Amount"/> = ยอดที่ใช้จากเงินรอจัดสรร ต้องเท่ายอดสุทธิของรายการ (ไม่ตรง = ปฏิเสธ ไม่มีอะไรถูกบันทึก) ·
+/// <paramref name="RecurringTransactionId"/> = ใบนี้ปิดงวดที่กำลังจะถึงของรายการประจำ (รอบอัตโนมัติไม่ออกงวดนี้ซ้ำ)
+/// </summary>
+public record CustomerCreditIssueReceiptRequest(decimal Amount, List<CustomerCreditReceiptLineRequest> Lines, bool? PricesIncludeVat = null,
+    Guid? RecurringTransactionId = null, string? IdempotencyKey = null, decimal? ExpectedUnappliedBefore = null);
+
+/// <summary>รอบ 265: รายการประจำของลูกค้าที่ใบเสร็จนี้ปิดงวดได้ — <paramref name="BlockedReason"/> = เหตุที่เลือกไม่ได้ (เช่น งวดนี้ออกแล้ว)</summary>
+public record CustomerCreditRecurringOption(Guid Id, string Name, DateTime NextRunDate, string PeriodLabel, decimal? SuggestedAmount,
+    string? SuggestedDescription, string? BlockedReason);
+
+/// <summary>รอบ 265: ค่าที่หน้าต่าง "ออกใบเสร็จจากเงินรอจัดสรร" ต้องใช้ (เซิร์ฟเวอร์คิด — หน้าเว็บไม่มีสำเนากติกา)</summary>
+/// <param name="PaperDate">วันที่ที่ใบจะลง (วันรับเงิน เมื่อเหตุผล "ค้างออกใบ" · ไม่งั้นวันนี้)</param>
+/// <param name="VatRates">อัตรา VAT ที่เลือกได้ต่อบรรทัด (ไม่จด VAT = [0])</param>
+/// <param name="SettledDocumentNumbers">ใบที่เงินก้อนเดียวกันชำระไปแล้ว (พิมพ์อ้างบนใบ)</param>
+/// <param name="BlockedReason">เหตุที่ออกไม่ได้เลย (null = ออกได้)</param>
+public record CustomerCreditReceiptOptions(Guid PaymentId, string PaymentNumber, decimal Available, DateTime PaperDate, string PaperDateNote,
+    bool VatRegistered, List<decimal> VatRates, decimal DefaultVatRate, List<string> SettledDocumentNumbers,
+    List<CustomerCreditRecurringOption> Recurring, string? BlockedReason);
 
 /// <summary>ผลของขาออก</summary>
 public record CustomerCreditMovementResult(Guid PaymentId, string PaymentNumber, Guid MovementId, string Kind, decimal Amount,

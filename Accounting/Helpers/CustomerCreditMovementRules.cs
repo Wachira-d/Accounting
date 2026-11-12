@@ -25,6 +25,8 @@ public static class CustomerCreditMovementRules
     public const string ToDepositRuleCode = "CC-TO-DEPOSIT";
     public const string WriteOffRuleCode = "CC-WRITEOFF";
     public const string ToInvoiceRuleCode = "CC-TO-INVOICE";
+    /// <summary>รอบ 265 — ออกใบเสร็จ/ใบกำกับจากเงินรอจัดสรร (กติกาบรรทัด/วันที่/งวดภาษีอยู่ที่ <see cref="CreditReceiptPlan"/>)</summary>
+    public const string ToReceiptRuleCode = "CC-TO-RECEIPT";
     public const string UndoRuleCode = "CC-MOVE-UNDO";
     public const string VoidBlockRuleCode = "CC-VOID-MOVEMENT";
     public const string LegalReference = "ป.รัษฎากร ม.78/1 · ม.86 · พ.ร.บ.การบัญชี 2543 ม.17 (เอกสารประกอบการลงบัญชี)";
@@ -55,12 +57,18 @@ public static class CustomerCreditMovementRules
         PaymentCreditMovementKind.ToDeposit => "ย้ายเป็นเงินมัดจำ",
         PaymentCreditMovementKind.WriteOff => "ตัดเศษ",
         PaymentCreditMovementKind.ToInvoice => "จองให้ใบแจ้งหนี้ที่ออก",
+        PaymentCreditMovementKind.ToReceipt => "ออกใบเสร็จ/ใบกำกับภาษี (ไม่มีใบแจ้งหนี้)",
         _ => kind.ToString(),
     };
 
     /// <summary>ชนิดนี้ "ตัดยอดคงเหลือ" (เป็นเงินออกจากผังพักจริง) ไหม — สูตรเดียวของ <see cref="UnappliedCreditBalance.Compute"/></summary>
     public static bool ReducesBalance(PaymentCreditMovementKind kind)
-        => kind is PaymentCreditMovementKind.Refund or PaymentCreditMovementKind.ToDeposit or PaymentCreditMovementKind.WriteOff;
+        => kind is PaymentCreditMovementKind.Refund or PaymentCreditMovementKind.ToDeposit or PaymentCreditMovementKind.WriteOff
+            or PaymentCreditMovementKind.ToReceipt;
+
+    /// <summary>ขาออกที่ "ออกเอกสารปลายทางที่อนุมัติแล้ว" (ใบมัดจำ · ใบเสร็จจากเงินรอจัดสรร) — ยกเลิกที่หน้าเอกสาร (ยกเลิกใบ ⇒ ปล่อยขาออก) ไม่ใช่ปุ่มยกเลิกรายการ</summary>
+    public static bool IssuesApprovedDocument(PaymentCreditMovementKind kind)
+        => kind is PaymentCreditMovementKind.ToDeposit or PaymentCreditMovementKind.ToReceipt;
 
     /// <summary>รายการยังมีผลไหม (ไม่ถูกยกเลิก · ไม่ถูกปล่อย)</summary>
     public static bool IsLive(bool isDeleted, DateTime? releasedAt) => !isDeleted && releasedAt == null;
@@ -85,6 +93,7 @@ public static class CustomerCreditMovementRules
             PaymentCreditMovementKind.Refund => "R",
             PaymentCreditMovementKind.WriteOff => "W",
             PaymentCreditMovementKind.ToDeposit => "D",
+            PaymentCreditMovementKind.ToReceipt => "C",
             _ => "M",
         }) + sequence.ToString(CultureInfo.InvariantCulture);
 
@@ -111,6 +120,7 @@ public static class CustomerCreditMovementRules
             PaymentCreditMovementKind.Refund => RefundRuleCode,
             PaymentCreditMovementKind.ToDeposit => ToDepositRuleCode,
             PaymentCreditMovementKind.WriteOff => WriteOffRuleCode,
+            PaymentCreditMovementKind.ToReceipt => ToReceiptRuleCode,
             _ => ToInvoiceRuleCode,
         };
         CustomerCreditMovementRefusal No(string message, int status = 409) => new(message, code, status);

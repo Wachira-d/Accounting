@@ -43,7 +43,7 @@ public class RecurringRunLiveRound263Tests
         Assert.True(f.EmailHeldForDraft);
         Assert.Equal(2, f.SkippedPeriods);
         Assert.Equal(new DateTime(2026, 8, 26), f.SkippedFrom!.Value.Date);
-        Assert.Null(f.LegacyOther);   // ทุกส่วนรู้จัก (รวมท้ายประโยค " · แก้ตามเหตุผล…" และ " · ถ้างวดที่ข้าม…")
+        Assert.Null(f.UnverifiedNotes);   // ทุกส่วนรู้จัก (รวมท้ายประโยค " · แก้ตามเหตุผล…" และ " · ถ้างวดที่ข้าม…")
     }
 
     [Fact]
@@ -139,10 +139,10 @@ public class RecurringRunLiveRound263Tests
     {
         var jid = Guid.NewGuid();
         var facts = new RecurringRunFacts { JournalPostBlockedReason = "งวดบัญชีปิดแล้ว", JournalEntryId = jid, JournalEntryNumber = "JV-0007" };
-        var draft = Build(facts, null, new RecurringRunLive { Journal = new RecurringRunJournal(jid, "JV-0007", JournalEntryStatus.Draft) })!;
+        var draft = Build(facts, null, new RecurringRunLive { Journals = new[] { new RecurringRunJournal(jid, "JV-0007", JournalEntryStatus.Draft) }, JournalsLoaded = true })!;
         Assert.False(draft.AllResolved);
         Assert.Contains(draft.Actions, a => a.Kind == "openJournal" && a.Url == "/pages/journals.html?entryId=" + jid.ToString("D"));
-        var posted = Build(facts, null, new RecurringRunLive { Journal = new RecurringRunJournal(jid, "JV-0007", JournalEntryStatus.Posted) })!;
+        var posted = Build(facts, null, new RecurringRunLive { Journals = new[] { new RecurringRunJournal(jid, "JV-0007", JournalEntryStatus.Posted) }, JournalsLoaded = true })!;
         Assert.True(posted.AllResolved);
         Assert.False(Build(facts, null)!.AllResolved);   // ไม่มีหลักฐาน = ยังค้าง (ไม่เดาว่าจบ)
         // แถวเก่า: ข้อความสมุดรายวันอ่านเลขที่ได้
@@ -175,13 +175,17 @@ public class RecurringRunLiveRound263Tests
     [Fact]
     public void ข้อเท็จจริงใหม่_บันทึกและอ่านกลับได้_ฟิลด์ภายในไม่ถูกเก็บ()
     {
-        var f = new RecurringRunFacts { SkippedPeriods = 2, SkippedIssued = 1, JournalEntryNumber = "JV-1", LegacyOther = new[] { "x" } };
+        var f = new RecurringRunFacts { SkippedPeriods = 2, SkippedIssued = 1, JournalEntryNumber = "JV-1", UnverifiedNotes = new[] { "x" },
+            JournalBlocks = new[] { new RecurringJournalBlock(Guid.NewGuid(), "JV-2", "เหตุ") } };
         var json = JsonSerializer.Serialize(f);
-        Assert.DoesNotContain("LegacyOther", json);
+        Assert.Contains("UnverifiedNotes", json);   // ฝ่ายค้าน F1: ต้องบันทึก (ปิดเรื่องงวดที่ข้ามแล้วไม่หาย)
+        Assert.DoesNotContain("AllJournalBlocks", json);
         Assert.DoesNotContain("SkippedRemaining", json);
         var back = JsonSerializer.Deserialize<RecurringRunFacts>(json)!;
         Assert.Equal(1, back.SkippedIssued);
         Assert.Equal("JV-1", back.JournalEntryNumber);
+        Assert.Equal("x", Assert.Single(back.UnverifiedNotes!));
+        Assert.Equal("JV-2", Assert.Single(back.JournalBlocks!).EntryNumber);
     }
 
     [Fact]
@@ -200,5 +204,70 @@ public class RecurringRunLiveRound263Tests
         Assert.Null(AutoApproveFailure.LastResolution(LegacyNotice()));   // ยังไม่ปิด = ไม่มีหลักฐานอนุมัติ
         Assert.True(AutoApproveFailure.HasOpenFailure(LegacyNotice()));
         Assert.False(AutoApproveFailure.HasOpenFailure(notes));
+    }
+
+    // ── ฝ่ายค้าน 263 (erp-review/2026-11-12/review-263.md) ──
+
+    [Fact]
+    public void F1_ข้อความแถวเก่าปน_ส่วนที่ไม่รู้จักกันแก้ครบ_แสดงเป็นขั้นตอน()
+    {
+        var mixed = LegacyNotice() + " · ขั้นส่งเข้าระบบ e-Tax ล้ม: เชื่อมต่อไม่ได้";
+        var f = RecurringRunOutcome.FactsFromLegacyNotice(mixed)!;
+        Assert.Equal("ขั้นส่งเข้าระบบ e-Tax ล้ม: เชื่อมต่อไม่ได้", Assert.Single(f.UnverifiedNotes!));
+        var v = Build(null, Doc(DocumentStatus.Approved), legacy: mixed)!;
+        Assert.False(v.AllResolved);
+        Assert.Contains(v.Steps, s => s.Contains("ตรวจสถานะให้ไม่ได้") && s.Contains("e-Tax ล้ม"));
+        Assert.Contains(v.Resolved!, r => r.StartsWith("อนุมัติแล้ว"));   // ส่วนที่ตรวจได้ยังบอกว่าจบ
+        // ทิศตรงข้าม: ข้อเท็จจริงที่มีข้อความล้วน (งวดบัญชีปิด) ⇒ ไม่แก้ครบแม้สมุดรายวันลงแล้ว
+        var jid = Guid.NewGuid();
+        var withLocked = new RecurringRunFacts { JournalBlocks = new[] { new RecurringJournalBlock(jid, "JV-1", "เหตุ") } }.WithUnverifiedNote("ข้ามงวด 09/2569 เพราะงวดบัญชีปิด");
+        var posted = Build(withLocked, null, new RecurringRunLive { Journals = new[] { new RecurringRunJournal(jid, "JV-1", JournalEntryStatus.Posted) }, JournalsLoaded = true })!;
+        Assert.False(posted.AllResolved);
+        Assert.Contains(posted.Steps, s => s.Contains("งวดบัญชีปิด"));
+    }
+
+    [Fact]
+    public void F2_สมุดรายวันหลายใบของรอบไล่งวด_ลงใบสุดท้ายแล้วยังเตือนใบที่เหลือ_ลงครบแล้วจบ()
+    {
+        var ids = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+        var facts = new RecurringRunFacts { JournalBlocks = ids.Select((id, i) => new RecurringJournalBlock(id, $"JV-{i + 1}", "ผู้สร้างไม่มีสิทธิ์ลงบัญชี")).ToList() };
+        RecurringRunLive Live(params JournalEntryStatus[] st)
+            => new() { Journals = ids.Select((id, i) => new RecurringRunJournal(id, $"JV-{i + 1}", st[i])).ToList(), JournalsLoaded = true };
+        var lastOnly = Build(facts, null, Live(JournalEntryStatus.Draft, JournalEntryStatus.Draft, JournalEntryStatus.Posted))!;
+        Assert.False(lastOnly.AllResolved);
+        Assert.Equal("สมุดรายวัน 2 ใบยังไม่ได้ลงบัญชี", lastOnly.Headline);
+        Assert.Equal(2, lastOnly.Actions.Count(a => a.Kind == "openJournal"));
+        Assert.True(Build(facts, null, Live(JournalEntryStatus.Posted, JournalEntryStatus.Reversed, JournalEntryStatus.Posted))!.AllResolved);
+    }
+
+    [Fact]
+    public void F3_ใบกำกับภาษีชำระครบแล้ว_ยังต้องส่งมอบ_ใบแจ้งหนี้ล้วนจบ()
+    {
+        var facts = new RecurringRunFacts { EmailHeldForDraft = true };
+        var tax = Build(facts, Doc(DocumentStatus.Paid) with { IsTaxInvoice = true })!;
+        Assert.False(tax.AllResolved);
+        Assert.Contains(tax.Steps, s => s.StartsWith("อีเมล:"));
+        var taxType = Build(facts, new RecurringRunDoc(DocId, "INV-1", DocumentStatus.Paid, DocumentType.TaxInvoice, PeriodUtc, true))!;
+        Assert.False(taxType.AllResolved);
+        Assert.True(Build(facts, Doc(DocumentStatus.Paid))!.AllResolved);   // ใบแจ้งหนี้ล้วน
+    }
+
+    [Fact]
+    public void F6_หลักฐานอีเมลนับเฉพาะผู้รับของผู้ติดต่อ()
+    {
+        Assert.True(RecurringRunOutcome.SentToRecipient("AP@Customer.test", "ap@customer.test, acc@customer.test"));
+        Assert.True(RecurringRunOutcome.SentToRecipient("me@us.test; acc@customer.test", "ap@customer.test, acc@customer.test"));
+        Assert.False(RecurringRunOutcome.SentToRecipient("me@us.test", "ap@customer.test"));
+        Assert.False(RecurringRunOutcome.SentToRecipient("ap@customer.test", null));
+    }
+
+    [Fact]
+    public void F7_สมุดรายวันถูกลบ_จบพร้อมบอกว่าถูกลบ_ไม่ได้ค้นยังค้าง()
+    {
+        var facts = new RecurringRunFacts { JournalBlocks = new[] { new RecurringJournalBlock(Guid.NewGuid(), "JV-9", "เหตุ") } };
+        var gone = Build(facts, null, new RecurringRunLive { JournalsLoaded = true })!;
+        Assert.True(gone.AllResolved);
+        Assert.Contains(gone.Resolved!, r => r.Contains("ถูกลบ"));
+        Assert.False(Build(facts, null)!.AllResolved);
     }
 }

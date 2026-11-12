@@ -431,7 +431,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             var consumesPeriod = RecurringSchedule.IsDue(recurring.NextRunDate, DateTime.UtcNow, recurring.LeadDays);
             try
             {
-                _journalBackfilled.Clear();
+                _journalBackfilled.Clear(); _journalBlocks.Clear();
                 var lockedNote = await ExecuteRecurringAsync(recurring, performedBy, consumesPeriod, confirmExtra);
                 // รอบ 263: งวดที่ข้ามเขียนครั้งเดียวก่อนรอบ (SkipOverduePeriodsAsync) แล้ว MarkRunAsync/SetRunNoticeAsync พาไปเอง — เดิมเขียนซ้ำหลังรอบ
                 // เพราะ MarkRunAsync ล้างทิ้ง (ตอนนี้ไม่ล้างงวดที่ยังค้าง)
@@ -511,7 +511,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                             await _db.SaveChangesAsync();
                             return;
                         }
-                        _journalBackfilled.Clear();
+                        _journalBackfilled.Clear(); _journalBlocks.Clear();
                         var lockedNote = await ExecuteRecurringAsync(recurring, ScheduledActor, consumesPeriod: true);
                         // รอบ 259 (B-M4): สมุดรายวัน — งวดที่เหลือไล่ต่อในรอบนี้ (ลงวันที่ของงวดตัวเอง · งวดปิด = ข้ามพร้อมเหตุ)
                         if (IsJournalTemplate(recurring.TemplateType))
@@ -670,8 +670,22 @@ public class RecurringTransactionService : IRecurringTransactionService
             .Select(r => new { r.LastRunNotice, r.LastRunOutcome }).FirstOrDefaultAsync();
         var text = current?.LastRunNotice;
         var merged = string.IsNullOrEmpty(text) ? note : text.Contains(note) ? text : text + " · " + note;
-        await SetRunNoticeAsync(recurring, new List<string> { merged }, ReadFacts(recurring.Id, current?.LastRunOutcome));
+        // ฝ่ายค้าน 263 F1: ข้อความล้วน (งวดปิด/ลงย้อนหลัง) ตรวจสถานะให้ไม่ได้ ⇒ เก็บเป็น UnverifiedNotes (กันการบอกว่าแก้ครบ)
+        var prev = current?.LastRunOutcome != null ? ReadFacts(recurring.Id, current.LastRunOutcome)
+            : RecurringRunOutcome.FactsFromLegacyNotice(text);
+        await SetRunNoticeAsync(recurring, new List<string> { merged }, (prev ?? new RecurringRunFacts()).WithUnverifiedNote(note));
     }
+
+    /// <summary>ฝ่ายค้าน 263 F2: บันทึกสมุดรายวันที่ลงบัญชีอัตโนมัติไม่ได้ของรอบนี้ — เขียน<b>ทุกใบ</b>ของรอบ (ข้อความ + ข้อเท็จจริง) ทับแถว</summary>
+    private async Task RecordJournalBlockAsync(RecurringTransaction recurring, RecurringJournalBlock block)
+    {
+        _journalBlocks.Add(block);
+        await SetRunNoticeAsync(recurring, _journalBlocks.Select(JournalBlockNotice).ToList(),
+            new RecurringRunFacts { JournalBlocks = _journalBlocks.ToList() });
+    }
+
+    private static string JournalBlockNotice(RecurringJournalBlock b)
+        => $"สมุดรายวัน {b.EntryNumber} ไม่ได้ลงบัญชีอัตโนมัติ (ค้างเป็นร่าง): {b.Reason} — เปิดสมุดรายวันแล้วกดลงบัญชีเอง";
 
     /// <summary>ประทับ "รอบนี้สร้างแล้ว" ทันทีหลังเอกสาร/สมุดรายวันถูกบันทึก (ก่อนอนุมัติ/ส่งอีเมล) — ช่องว่างที่ระบบล่มแล้วออกใบงวดเดิมซ้ำ
     /// เหลือแค่ระหว่างสองคำสั่งนี้ · ล้างผลล้มของรอบก่อน · ครบจำนวนครั้ง/เลยวันสิ้นสุด ⇒ เสร็จสิ้น</summary>
@@ -691,7 +705,14 @@ public class RecurringTransactionService : IRecurringTransactionService
             : RecurringRunOutcome.FactsFromLegacyNotice(currentRun?.LastRunNotice);
         var carry = prevFacts?.SkipCarry(issuedOneNow: !consumesPeriod && documentId.HasValue);
         if (carry != null && carry.SkippedRemaining <= 0) carry = null;   // ออกครบแล้ว ⇒ จบ (ไม่พาไป)
-        recurring.LastRunNotice = carry == null ? null : RecurringRunOutcome.SkipCarryNotice(carry);
+        var carryText = carry == null ? new List<string>() : new List<string> { RecurringRunOutcome.SkipCarryNotice(carry) };
+        // ฝ่ายค้าน 263 F2: สมุดรายวันที่ลงบัญชีไม่ได้ของงวดก่อนหน้าในรอบเดียวกัน (รอบไล่งวด) — พาไป ไม่ล้างทิ้ง
+        if (_journalBlocks.Count > 0)
+        {
+            carry = (carry ?? new RecurringRunFacts()) with { JournalBlocks = _journalBlocks.ToList() };
+            carryText.AddRange(_journalBlocks.Select(JournalBlockNotice));
+        }
+        recurring.LastRunNotice = carry == null ? null : string.Join(" · ", carryText);
         recurring.LastRunOutcome = carry == null ? null : JsonSerializer.Serialize(carry);
         _db.Entry(recurring).Property(r => r.LastRunNotice).IsModified = true;
         _db.Entry(recurring).Property(r => r.LastRunOutcome).IsModified = true;
@@ -753,15 +774,17 @@ public class RecurringTransactionService : IRecurringTransactionService
         var docRows = docIds.Count == 0 ? new List<RunDocRow>()
             : await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
-                .Select(d => new RunDocRow(d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate, d.InternalNotes))
+                .Select(d => new RunDocRow(d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate, d.InternalNotes,
+                    d.DocumentType == DocumentType.TaxInvoice || d.CombinedInvoiceTaxInvoice))
                 .ToListAsync();
-        var docs = docRows.ToDictionary(d => d.Id, d => new RecurringRunDoc(d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate));
-        var live = await LoadRunLiveAsync(companyId, rows, docRows);
+        // ฝ่ายค้าน 263 F3: ใบกำกับภาษี (ชนิดใบกำกับ/ใบแจ้งหนี้-ใบกำกับรวม) ต้องส่งมอบผู้ซื้อแม้ชำระแล้ว
+        var docs = docRows.ToDictionary(d => d.Id, d => new RecurringRunDoc(d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate, d.IsTaxInvoice));
         var contactIds = rows.Where(r => r.ContactId.HasValue).Select(r => r.ContactId!.Value).Distinct().ToList();
         // รอบ 250 WP-08: อีเมลที่ส่งได้ของเรื่อง "เอกสาร" (ตัวหาผู้รับเดียวกับผู้ส่งจริง) — ต่อผู้ติดต่อที่ไม่ซ้ำในหน้านี้
         var emails = new Dictionary<Guid, string?>();
         foreach (var cid in contactIds)
             emails[cid] = await DocumentEmailToAsync(companyId, cid);
+        var live = await LoadRunLiveAsync(companyId, rows, docRows, emails);
         // กฎ "เมื่ออนุมัติเอกสาร" — ผู้ส่งจริงคือ EmailScheduleService.OnDocumentApprovedAsync (เงื่อนไขเดียวกัน: เปิดใช้ · ไม่ถูกลบ · ชนิดตรงหรือว่าง)
         var approvedRuleTypes = await _db.EmailScheduleRules.AsNoTracking()
             .Where(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == "DocumentApproved")
@@ -783,44 +806,50 @@ public class RecurringTransactionService : IRecurringTransactionService
         return list;
     }
 
-    private sealed record RunDocRow(Guid Id, string? DocumentNumber, DocumentStatus Status, DocumentType DocumentType, DateTime DocumentDate, string? InternalNotes);
+    private sealed record RunDocRow(Guid Id, string? DocumentNumber, DocumentStatus Status, DocumentType DocumentType, DateTime DocumentDate,
+        string? InternalNotes, bool IsTaxInvoice);
 
-    /// <summary>รอบ 263: หลักฐาน "ตอนนี้" ต่อรายการ (key = id รายการประจำ) — query ละครั้งต่อหน้า · ทุก query กรองบริษัท · อ่านอย่างเดียว</summary>
-    private async Task<Dictionary<Guid, RecurringRunLive>> LoadRunLiveAsync(Guid companyId, IReadOnlyList<RecurringTransaction> rows, List<RunDocRow> docRows)
+    /// <summary>รอบ 263: หลักฐาน "ตอนนี้" ต่อรายการ (key = id รายการประจำ) — query ละครั้งต่อหน้า · ทุก query กรองบริษัท · อ่านอย่างเดียว ·
+    /// <paramref name="contactEmails"/> = ผู้รับเรื่อง "เอกสาร" ของผู้ติดต่อ (ฝ่ายค้าน F6: หลักฐานส่งอีเมลนับเฉพาะที่ส่งถึงผู้รับเหล่านี้)</summary>
+    private async Task<Dictionary<Guid, RecurringRunLive>> LoadRunLiveAsync(Guid companyId, IReadOnlyList<RecurringTransaction> rows, List<RunDocRow> docRows,
+        IReadOnlyDictionary<Guid, string?> contactEmails)
     {
         var result = new Dictionary<Guid, RecurringRunLive>();
         if (rows.All(r => r.LastRunNotice == null && r.LastRunOutcome == null)) return result;
         var docIds = docRows.Select(d => d.Id).ToList();
 
         // ผู้อนุมัติ/เวลา จากหมายเหตุ "✅ แก้แล้ว" บนใบ (ตัวเขียน/ตัวอ่านเดียวกัน AutoApproveFailure) · id ผู้ใช้ของแถวก่อนรอบ 263 ⇒ ชื่อ
+        // ฝ่ายค้าน F7: ค้นชื่อเฉพาะสมาชิกของบริษัทนี้
         var approvals = docRows.ToDictionary(d => d.Id, d => AutoApproveFailure.LastResolution(d.InternalNotes));
         var userIds = approvals.Values.Where(a => a != null && Guid.TryParse(a.By, out _)).Select(a => Guid.Parse(a!.By)).Distinct().ToList();
         var userNames = userIds.Count == 0 ? new Dictionary<Guid, string>()
-            : await _db.Users.AsNoTracking().Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.FullName);
+            : await _db.Users.AsNoTracking()
+                .Where(u => userIds.Contains(u.Id) && _db.CompanyUsers.Any(cu => cu.UserId == u.Id && cu.CompanyId == companyId))
+                .ToDictionaryAsync(u => u.Id, u => u.FullName);
 
-        var mailLogs = docIds.Count == 0 ? new Dictionary<Guid, DateTime>()
+        var mailLogs = docIds.Count == 0 ? new List<(Guid DocId, string To, DateTime At)>()
             : (await _db.DocumentEmailLogs.AsNoTracking()
                 .Where(l => l.CompanyId == companyId && l.DocumentId != null && docIds.Contains(l.DocumentId.Value)
                             && l.Status == EmailLogStatus.Sent && l.SentAt != null)
-                .GroupBy(l => l.DocumentId!.Value).Select(g => new { g.Key, At = g.Min(l => l.SentAt!.Value) }).ToListAsync())
-                .ToDictionary(x => x.Key, x => x.At);
-        var queue = docIds.Count == 0 ? new List<(Guid EntityId, string Status, DateTime? SentAt)>()
+                .Select(l => new { DocId = l.DocumentId!.Value, l.ToEmail, At = l.SentAt!.Value }).ToListAsync())
+                .Select(x => (DocId: x.DocId, To: x.ToEmail, At: x.At)).ToList();
+        var queue = docIds.Count == 0 ? new List<(Guid EntityId, string Status, DateTime? SentAt, string To)>()
             : (await _db.EmailQueues.AsNoTracking()
                 .Where(q => q.CompanyId == companyId && !q.IsDeleted && q.EntityType == "Document" && docIds.Contains(q.EntityId)
                             && (q.Status == "Sent" || q.Status == "Pending" || q.Status == "Sending"))
-                .Select(q => new { q.EntityId, q.Status, q.SentAt }).ToListAsync())
-                .Select(q => (q.EntityId, q.Status, q.SentAt)).ToList();
+                .Select(q => new { q.EntityId, q.Status, q.SentAt, q.ToEmail }).ToListAsync())
+                .Select(q => (EntityId: q.EntityId, Status: q.Status, SentAt: q.SentAt, To: q.ToEmail)).ToList();
         var lineSent = docIds.Count == 0 ? new HashSet<Guid>()
             : (await _db.LineQueues.AsNoTracking()
                 .Where(q => q.CompanyId == companyId && !q.IsDeleted && q.EntityType == "Document" && docIds.Contains(q.EntityId)
                             && q.Status == ContactLineChannel.StatusSent)
                 .Select(q => q.EntityId).Distinct().ToListAsync()).ToHashSet();
 
-        // สมุดรายวันที่ข้อเท็จจริงอ้าง (id ของรอบใหม่ · เลขที่ของแถวเก่า)
+        // สมุดรายวันที่ข้อเท็จจริงอ้าง (ฝ่ายค้าน F2: ทุกใบของรอบ · id ของรอบใหม่ · เลขที่ของแถวเก่า)
         var factsByRow = rows.ToDictionary(r => r.Id, r => ReadFacts(r.Id, r.LastRunOutcome) ?? RecurringRunOutcome.FactsFromLegacyNotice(r.LastRunNotice));
-        var jeIds = factsByRow.Values.Where(f => f?.JournalEntryId != null).Select(f => f!.JournalEntryId!.Value).Distinct().ToList();
-        var jeNos = factsByRow.Values.Where(f => f?.JournalEntryId == null && !string.IsNullOrEmpty(f?.JournalEntryNumber))
-            .Select(f => f!.JournalEntryNumber!).Distinct().ToList();
+        var blocks = factsByRow.Values.Where(f => f != null).SelectMany(f => f!.AllJournalBlocks).ToList();
+        var jeIds = blocks.Where(b => b.Id != null).Select(b => b.Id!.Value).Distinct().ToList();
+        var jeNos = blocks.Where(b => b.Id == null && b.EntryNumber.Length > 0).Select(b => b.EntryNumber).Distinct().ToList();
         var journals = jeIds.Count == 0 && jeNos.Count == 0 ? new List<RecurringRunJournal>()
             : await _db.JournalEntries.AsNoTracking()
                 .Where(j => j.CompanyId == companyId && (jeIds.Contains(j.Id) || jeNos.Contains(j.EntryNumber)))
@@ -829,27 +858,32 @@ public class RecurringTransactionService : IRecurringTransactionService
         foreach (var r in rows)
         {
             var f = factsByRow[r.Id];
-            RecurringRunJournal? je = null;
-            if (f?.JournalEntryId is Guid jid) je = journals.FirstOrDefault(j => j.Id == jid);
-            else if (!string.IsNullOrEmpty(f?.JournalEntryNumber))
-            {
-                var byNo = journals.Where(j => j.EntryNumber == f!.JournalEntryNumber).ToList();
-                je = byNo.Count == 1 ? byNo[0] : null;   // เลขซ้ำ (หลายสมุด) = ไม่เดา
-            }
+            var mine = f == null ? new List<RecurringRunJournal>()
+                : journals.Where(j => f.AllJournalBlocks.Any(b => b.Id == j.Id || (b.Id == null && b.EntryNumber == j.EntryNumber))).ToList();
             AutoApproveFailure.Resolution? approval = null;
             DateTime? sentAt = null;
+            string? sentTo = null;
             bool queued = false, line = false;
             if (r.LastDocumentId is Guid did)
             {
                 if (approvals.TryGetValue(did, out var ap) && ap != null)
                     approval = Guid.TryParse(ap.By, out var uid) && userNames.TryGetValue(uid, out var nm) && !string.IsNullOrWhiteSpace(nm)
                         ? ap with { By = nm.Trim() } : ap;
-                var qSent = queue.Where(q => q.EntityId == did && q.Status == "Sent" && q.SentAt != null).Select(q => q.SentAt).Min();
-                sentAt = mailLogs.TryGetValue(did, out var logAt) ? (qSent is { } qa && qa < logAt ? qa : logAt) : qSent;
-                queued = queue.Any(q => q.EntityId == did && q.Status != "Sent");
+                // ฝ่ายค้าน F6: นับเฉพาะอีเมลที่ส่งถึงผู้รับเรื่อง "เอกสาร" ของผู้ติดต่อ (ส่งหาตัวเอง/ผู้รับอื่น ≠ ส่งถึงลูกค้า)
+                var recipients = r.ContactId is Guid cid && contactEmails.TryGetValue(cid, out var to) ? to : null;
+                bool ToContact(string? addr) => RecurringRunOutcome.SentToRecipient(addr, recipients);
+                var proofs = mailLogs.Where(l => l.DocId == did && ToContact(l.To)).Select(l => (l.At, l.To))
+                    .Concat(queue.Where(q => q.EntityId == did && q.Status == "Sent" && q.SentAt != null && ToContact(q.To)).Select(q => (At: q.SentAt!.Value, q.To)))
+                    .OrderBy(x => x.At).ToList();
+                if (proofs.Count > 0) { sentAt = proofs[0].At; sentTo = proofs[0].To; }
+                queued = queue.Any(q => q.EntityId == did && q.Status != "Sent" && ToContact(q.To));
                 line = lineSent.Contains(did);
             }
-            result[r.Id] = new RecurringRunLive { Approval = approval, EmailSentAtUtc = sentAt, EmailQueued = queued, LineSent = line, Journal = je };
+            result[r.Id] = new RecurringRunLive
+            {
+                Approval = approval, EmailSentAtUtc = sentAt, EmailSentTo = sentTo, EmailQueued = queued, LineSent = line,
+                Journals = mine, JournalsLoaded = true,
+            };
         }
         return result;
     }
@@ -867,21 +901,56 @@ public class RecurringTransactionService : IRecurringTransactionService
     /// ไม่มีงวดที่ข้ามค้าง ⇒ ปฏิเสธพร้อมเหตุ (ไม่ใช่สำเร็จเงียบ) · แถวเก่า (มีแต่ข้อความ) ⇒ แปลงเป็นข้อเท็จจริงก่อนประทับ</summary>
     public async Task<RecurringTransactionResponse> DismissSkippedPeriodsAsync(Guid companyId, Guid id, string dismissedBy)
     {
-        var row = await _db.RecurringTransactions.AsNoTracking()
-            .Where(r => r.Id == id && r.CompanyId == companyId)
-            .Select(r => new { r.LastRunNotice, r.LastRunOutcome }).FirstOrDefaultAsync()
-            ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
-        var facts = row.LastRunOutcome != null ? ReadFacts(id, row.LastRunOutcome) : RecurringRunOutcome.FactsFromLegacyNotice(row.LastRunNotice);
-        if (facts == null || facts.SkippedRemaining <= 0)
-            throw new BusinessRuleException("รายการนี้ไม่มีงวดที่ข้ามค้างอยู่แล้ว — รีเฟรชหน้าเพื่อดูสถานะล่าสุด", "RECURRING-SKIP-NONE");
-        var who = dismissedBy;
-        if (Guid.TryParse(dismissedBy, out var uid))
-            who = await _db.Users.AsNoTracking().Where(u => u.Id == uid).Select(u => u.FullName).FirstOrDefaultAsync() is { Length: > 0 } nm ? nm.Trim() : dismissedBy;
-        var json = JsonSerializer.Serialize(facts with { SkippedDismissedAt = DateTime.UtcNow, SkippedDismissedBy = who });
-        await _db.RecurringTransactions
-            .Where(r => r.Id == id && r.CompanyId == companyId)
-            .ExecuteUpdateAsync(u => u.SetProperty(r => r.LastRunOutcome, json));
+        // ฝ่ายค้าน 263 F5: ล็อกต่อรายการตัวเดียวกับรอบ (MarkRunAsync อ่าน-แล้ว-เขียนสองคอลัมน์) — กันการปิดเรื่องหายเงียบเมื่อชนรอบ
+        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.RecurringRun, id.ToString(), async () =>
+        {
+            var recurring = await _db.RecurringTransactions.FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId)
+                ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
+            await _db.Entry(recurring).ReloadAsync();
+            var facts = recurring.LastRunOutcome != null ? ReadFacts(id, recurring.LastRunOutcome)
+                : RecurringRunOutcome.FactsFromLegacyNotice(recurring.LastRunNotice);
+            if (facts == null || facts.SkippedRemaining <= 0)
+                throw new BusinessRuleException("รายการนี้ไม่มีงวดที่ข้ามค้างอยู่แล้ว — รีเฟรชหน้าเพื่อดูสถานะล่าสุด", "RECURRING-SKIP-NONE");
+            var who = await UserLabelAsync(companyId, dismissedBy);
+            var now = DateTime.UtcNow;
+            recurring.LastRunOutcome = JsonSerializer.Serialize(facts with { SkippedDismissedAt = now, SkippedDismissedBy = who });
+            recurring.UpdatedAt = now;
+            recurring.UpdatedBy = dismissedBy;
+            // ฝ่ายค้าน 263 F4: ร่องรอยถาวร (กฎ M · append-only) — ข้อเท็จจริงใน JSON ถูกล้างในรอบถัดไป ร่องรอยต้องไม่หายตาม
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = Guid.TryParse(dismissedBy, out var uid) ? uid : null,
+                EntityType = nameof(RecurringTransaction),
+                EntityId = id.ToString(),
+                Action = AuditAction.Update,
+                OldValues = JsonSerializer.Serialize(new { skippedPeriods = facts.SkippedPeriods, skippedIssued = facts.SkippedIssued, skippedFrom = facts.SkippedFrom }),
+                NewValues = JsonSerializer.Serialize(new
+                {
+                    action = DismissSkippedAuditAction, skippedRemaining = facts.SkippedRemaining, dismissedAt = now, by = who,
+                    reason = "ผู้ใช้ยืนยันว่างวดที่ข้ามออกเองแล้วหรือไม่ต้องออก (คำตัดสิน 263-1-3)",
+                }),
+                Timestamp = now,
+            });
+            await _db.SaveChangesAsync();
+        }, _logger, companyId);
+        if (!ran)
+            throw new BusinessRuleException("รายการนี้กำลังสร้างเอกสารอยู่ (รอบอัตโนมัติหรือหน้าต่างอื่น) — รอสักครู่แล้วลองปิดเรื่องอีกครั้ง",
+                "RECURRING-RUN-BUSY", 409);
         return await GetByIdAsync(companyId, id);
+    }
+
+    /// <summary>ฝ่ายค้าน 263 F4: ป้ายการกระทำใน audit ของการปิดเรื่องงวดที่ข้าม</summary>
+    public const string DismissSkippedAuditAction = "RECURRING-SKIP-DISMISS";
+
+    /// <summary>ฝ่ายค้าน 263 F7: ชื่อผู้ใช้สำหรับข้อความที่คนอ่าน — ค้นเฉพาะสมาชิกของบริษัทนี้ (ไม่พบ = ค่าเดิม ไม่แต่งชื่อ) · งานระบบ = ป้ายระบบ</summary>
+    private async Task<string> UserLabelAsync(Guid companyId, string actor)
+    {
+        if (!Guid.TryParse(actor, out var uid)) return SystemActor.Display(actor) ?? actor;
+        var name = await _db.Users.AsNoTracking()
+            .Where(u => u.Id == uid && _db.CompanyUsers.Any(cu => cu.UserId == u.Id && cu.CompanyId == companyId))
+            .Select(u => u.FullName).FirstOrDefaultAsync();
+        return string.IsNullOrWhiteSpace(name) ? actor : name.Trim();
     }
 
     /// <summary>รอบ 247: ฟอร์มรายการประจำถาม "ผู้ติดต่อนี้รับอีเมลได้ไหม" ตอนเลือกผู้ติดต่อ — ตัวตัดสินเดียวกับผู้ส่งจริง (RecurringEmailReadiness)</summary>
@@ -1051,12 +1120,13 @@ public class RecurringTransactionService : IRecurringTransactionService
     }
 
     /// <summary>รอบ 259 (B-L2): งวดนี้มีใบแล้ว (ระบบหยุดระหว่างสร้างใบกับประทับรอบในรอบก่อน) ⇒ ประทับรอบด้วยใบเดิม ไม่ออกซ้ำ + ข้อความบนแถว</summary>
-    private async Task StampRecoveredPeriodAsync(RecurringTransaction recurring, Guid documentId, string? documentNumber, string runKey)
+    private async Task StampRecoveredPeriodAsync(RecurringTransaction recurring, Guid documentId, string? documentNumber, string runKey,
+        string? note = null)
     {
         var periodDate = recurring.NextRunDate;
         await MarkRunAsync(recurring, consumesPeriod: true, documentId,
             countRun: RecurringRunKey.CountsAsNewRun(recurring.LastDocumentId, documentId));
-        await SetRunNoticeAsync(recurring, new List<string> { RecurringRunKey.RecoveredNote(documentNumber, periodDate) });
+        await SetRunNoticeAsync(recurring, new List<string> { note ?? RecurringRunKey.RecoveredNote(documentNumber, periodDate) });
         _logger.LogWarning("Recurring {Id}: period {Key} already has document {Doc} — stamped run without creating a duplicate",
             recurring.Id, runKey, documentId);
     }
@@ -1086,7 +1156,11 @@ public class RecurringTransactionService : IRecurringTransactionService
                 if (!consumesPeriod)
                     throw new BusinessRuleException(RecurringRunKey.EarlyAlreadyIssuedMessage(existing.DocumentNumber, recurring.NextRunDate),
                         RecurringRunKey.RuleCode, 409);
-                await StampRecoveredPeriodAsync(recurring, existing.Id, existing.DocumentNumber, runKey);
+                // รอบ 265 (คำตัดสิน 265-1-4): ใบของงวดนี้คือใบเสร็จที่ออกจากเงินรอจัดสรร (ปิดงวดล่วงหน้า) — ไม่ใช่ "ระบบหยุดระหว่างทาง"
+                var billedFromCredit = await _db.PaymentCreditMovements.AsNoTracking().AnyAsync(m => m.CompanyId == recurring.CompanyId
+                    && m.TargetDocumentId == existing.Id && m.Kind == nameof(PaymentCreditMovementKind.ToReceipt) && !m.IsDeleted);
+                await StampRecoveredPeriodAsync(recurring, existing.Id, existing.DocumentNumber, runKey,
+                    billedFromCredit ? CreditReceiptPlan.RecurringBilledNote(existing.DocumentNumber, recurring.NextRunDate) : null);
                 return;
             }
         }
@@ -1375,7 +1449,11 @@ public class RecurringTransactionService : IRecurringTransactionService
                         if (stoppedPolicyReason != null && (ex is DocumentApprovalWarningsException stopAw
                                 ? stopAw.Warnings.Any(w => Accounting.Helpers.AutoApprovePolicy.CodeOf(w) != null)
                                 : ex is Accounting.Helpers.BusinessRuleException { RuleCode: RecurringApprovePolicyLoader.AutoApproverRuleCode }))
-                            notices.Add("นโยบายอนุมัติข้ามคำเตือนของรายการนี้หยุดมีผล — " + stoppedPolicyReason + " (ขั้น \"อนุมัติ\" ของรายการประจำ)");
+                        {
+                            var stopNote = "นโยบายอนุมัติข้ามคำเตือนของรายการนี้หยุดมีผล — " + stoppedPolicyReason + " (ขั้น \"อนุมัติ\" ของรายการประจำ)";
+                            notices.Add(stopNote);
+                            facts = facts.WithUnverifiedNote(stopNote);   // ฝ่ายค้าน 263 F1
+                        }
                     }
                 }
 
@@ -1464,6 +1542,9 @@ public class RecurringTransactionService : IRecurringTransactionService
 
     /// <summary>ฝ่ายค้าน 259-D M1: วันของงวดที่สมุดรายวันลงย้อนหลังในรอบนี้ (ต่อคำขอ · ล้างต้นรอบ)</summary>
     private readonly List<DateTime> _journalBackfilled = new();
+    /// <summary>ฝ่ายค้าน 263 F2: สมุดรายวันของรอบนี้ (รวมรอบไล่งวด) ที่ลงบัญชีอัตโนมัติไม่ได้ — ล้างพร้อม <see cref="_journalBackfilled"/> ·
+    /// MarkRunAsync ของงวดถัดไปพาไป (เดิมล้างทิ้ง ⇒ เหลือแค่ใบสุดท้าย แล้วบอก "แก้ครบ" ทั้งที่ใบก่อนหน้ายังเป็นร่าง)</summary>
+    private readonly List<RecurringJournalBlock> _journalBlocks = new();
 
     private async Task<string?> CreateJournalFromTemplateAsync(RecurringTransaction recurring, string performedBy, JsonSerializerOptions jsonOptions,
         DateTime baseDate, bool consumesPeriod, bool confirmedExtra = false)
@@ -1553,9 +1634,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             var autoPostGone = recurring.AutoApprove && result != null
                 ? await RecurringApprovePolicyLoader.AutoPostRefusalAsync(_db, _permissions, recurring.CompanyId, recurring) : null;
             if (autoPostGone != null)
-                await SetRunNoticeAsync(recurring, new List<string> { $"สมุดรายวัน {result!.EntryNumber} ไม่ได้ลงบัญชีอัตโนมัติ: {autoPostGone}" },
-                    // รอบ 263: ข้อเท็จจริงคู่ข้อความ ⇒ หน้าตรวจสถานะสมุดรายวัน "ตอนนี้" (ผู้ใช้ลงบัญชีเองแล้ว = เรื่องจบ ไม่เตือนค้าง)
-                    new RecurringRunFacts { JournalPostBlockedReason = autoPostGone, JournalEntryId = result.Id, JournalEntryNumber = result.EntryNumber });
+                // รอบ 263 + ฝ่ายค้าน F2: ข้อเท็จจริงคู่ข้อความ (ทุกใบของรอบ) ⇒ หน้าตรวจสถานะสมุดรายวัน "ตอนนี้"
+                await RecordJournalBlockAsync(recurring, new RecurringJournalBlock(result!.Id, result.EntryNumber, autoPostGone));
             else if (recurring.AutoApprove && result != null)
             {
                 try
@@ -1570,13 +1650,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                     try
                     {
                         await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoPost/{result.Id}");
-                        await SetRunNoticeAsync(recurring, new List<string>
-                        {
-                            $"ลงบัญชีสมุดรายวัน {result.EntryNumber} อัตโนมัติไม่สำเร็จ (ค้างเป็นร่าง): {RecurringRunFailure.UserMessage(ex)} — เปิดสมุดรายวันแล้วกดลงบัญชีเอง",
-                        }, new RecurringRunFacts   // รอบ 263: ตัวประเมินสดดูสถานะสมุดรายวัน "ตอนนี้"
-                        {
-                            JournalPostBlockedReason = RecurringRunFailure.UserMessage(ex), JournalEntryId = result.Id, JournalEntryNumber = result.EntryNumber,
-                        });
+                        await RecordJournalBlockAsync(recurring, new RecurringJournalBlock(result.Id, result.EntryNumber, RecurringRunFailure.UserMessage(ex)));
                     }
                     catch (Exception nex) when (nex is not OperationCanceledException)
                     {
@@ -1803,30 +1877,9 @@ public class RecurringTransactionService : IRecurringTransactionService
         }
     }
 
-    private static decimal ExtractAmount(string? templateData)
-    {
-        if (string.IsNullOrEmpty(templateData)) return 0;
-        try
-        {
-            using var doc = JsonDocument.Parse(templateData);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty("lines", out var lines) && lines.ValueKind == JsonValueKind.Array)
-            {
-                decimal total = 0;
-                foreach (var line in lines.EnumerateArray())
-                {
-                    // ⚠️ เดิมเรียก GetDecimal() ตรง ๆ — ค่าที่เป็นสตริง ("1,200") หรือ null โยน ⇒ ยอด ฿0 บนหน้าจอ ·
-                    // ตอนนี้ตัวอ่านเดียวกับตอนสร้างเอกสาร (RecurringTemplate.TryNumber) — ยอดบนจอ = ยอดที่จะออกใบจริง
-                    var qty = RecurringTemplate.TryNumber(line, "quantity", 1m) ?? 1m;
-                    var price = RecurringTemplate.TryNumber(line, "unitPrice", 0m) ?? 0m;
-                    total += qty * price;
-                }
-                return total;
-            }
-        }
-        catch (JsonException) { /* template JSON เสีย — คืน 0 ให้ list ยังโหลดได้ (ตัวตรวจตอนถึงรอบบอกผู้ใช้เองบนแถว) */ }
-        return 0;
-    }
+    // ⚠️ เดิมเรียก GetDecimal() ตรง ๆ — ค่าที่เป็นสตริง ("1,200") หรือ null โยน ⇒ ยอด ฿0 บนหน้าจอ · ตอนนี้ตัวอ่านเดียวกับตอนสร้างเอกสาร
+    // (RecurringTemplate.TryNumber ผ่าน RecurringTemplate.Summary — รอบ 265 ย้ายมาเป็นตัวเดียวให้ใบเสร็จจากเงินรอจัดสรรใช้ร่วม)
+    private static decimal ExtractAmount(string? templateData) => RecurringTemplate.Summary(templateData).Total;
 
     /// <summary>รอบ 204 — อ่าน "whtCertType" จาก template (ชื่อ enum หรือเลข 1/2/3) · ไม่มี/อ่านไม่ออก ⇒ null (= หัก ณ ที่จ่าย)</summary>
     private static Accounting.Models.DTOs.Tax.WithholdingTaxCertType? ParseTemplateWhtCertType(JsonElement root)
