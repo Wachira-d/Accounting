@@ -28,4 +28,5 @@ public sealed record AssignLineChatSlipRequest(Guid? DocumentId, string? Documen
 public sealed record DismissLineChatSlipRequest(string? Reason);
 
 /// <summary>ผลการผูก — รายการรอยืนยันที่สร้าง (คิวเดียวกับสลิปพอร์ทัล)</summary>
-public sealed record LineChatSlipAssignResult(Guid SlipId, Guid DocumentId, string DocumentNumber, Guid PaymentIntentId, decimal Amount);
+/// <param name="CrossContact">ฝ่ายค้าน L6: ใบเป็นของผู้ติดต่ออื่นที่ไม่ใช่เจ้าของแชต (ลง audit · หน้าเว็บแสดงคำเตือนจากข้อความเซิร์ฟเวอร์)</param>
+public sealed record LineChatSlipAssignResult(Guid SlipId, Guid DocumentId, string DocumentNumber, Guid PaymentIntentId, decimal Amount, bool CrossContact = false);

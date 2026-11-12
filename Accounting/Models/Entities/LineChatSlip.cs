@@ -18,6 +18,8 @@ public class LineChatSlip : TenantEntity
     public string FileSha256 { get; set; } = "";
     public string StoragePath { get; set; } = "";
     public string ContentType { get; set; } = "";
+    /// <summary>ฝ่ายค้าน M4 (PDPA): ลบสำเนารูปในที่เก็บแล้วเมื่อไร (ผูก/ปิด ⇒ ทันที · ไม่ได้ผูก ⇒ หลัง <c>LineChatSlipRule.UnmatchedRetentionDays</c>) · null = ยังเก็บอยู่</summary>
+    public DateTime? FileDeletedAt { get; set; }
 
     /// <summary>ยอดที่อ่านได้อย่างมั่นใจ (null = ไม่มั่นใจ/ไม่มี)</summary>
     public decimal? OcrAmount { get; set; }

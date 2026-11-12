@@ -18,7 +18,7 @@ public class LineChatSlipRound260Tests
         DocumentStatus status = DocumentStatus.Approved, int day = 1)
         => new(Guid.NewGuid(), contact ?? Me, no, new DateTime(2026, 11, day, 0, 0, 0, DateTimeKind.Utc), status, balance, balance, balance + wht);
 
-    private static OcrSlipText.Reading Sure(decimal amount) => new(new[] { amount }, amount, null, null);
+    private static OcrSlipText.Reading Sure(decimal amount) => new(new[] { amount }, amount, null, null, LooksLikeSlip: true);
     private static OcrSlipText.Reading Unsure(params decimal[] amounts) => new(amounts, null, null, null);
 
     // ─────────── OcrSlipText ───────────
@@ -53,6 +53,47 @@ public class LineChatSlipRound260Tests
         Assert.Null(OcrSlipText.Parse("สวัสดีค่ะ ไม่มีตัวเลข").Amount);
         Assert.Equal(new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc), OcrSlipText.ExtractDate("01/02/2569"));
         Assert.Null(OcrSlipText.ExtractDate("31/02/2026"));
+    }
+
+    // ─────────── ฝ่ายค้าน 260-1 ───────────
+
+    [Fact]
+    public void ฝ่ายค้าน_M3_ภาพหน้าชำระที่มียอดเดียว_ไม่ดูเป็นสลิป_ไม่ผูกเอง_ให้ลูกค้ายืนยัน()
+    {
+        var payPage = OcrSlipText.Parse("ชำระเงิน ใบแจ้งหนี้ INV-001\nยอดที่ต้องชำระ 1,070.00 บาท\nสแกน QR พร้อมเพย์", 2026);
+        Assert.Equal(1070m, payPage.Amount);
+        Assert.False(payPage.LooksLikeSlip);
+        var d = LineChatSlipRule.Decide(payPage, new[] { Doc("INV-001", 1070m) }, new[] { Me });
+        Assert.Equal(LineChatSlipRule.Outcome.Many, d.Outcome);   // ปุ่มยืนยัน 1 ใบ (คำตัดสิน 260-1-7)
+        Assert.Single(d.Matches);
+        // ทิศตรงข้าม: สลิปจริง (โอนเงินสำเร็จ + รหัสอ้างอิง) ยังผูกเอง
+        var slip = OcrSlipText.Parse("โอนเงินสำเร็จ\nจำนวนเงิน 1,070.00\nรหัสอ้างอิง 2026111214050123", 2026);
+        Assert.True(slip.LooksLikeSlip);
+        Assert.Equal(LineChatSlipRule.Outcome.One, LineChatSlipRule.Decide(slip, new[] { Doc("INV-001", 1070m) }, new[] { Me }).Outcome);
+    }
+
+    [Theory]
+    [InlineData("12/11/69", 2026, 11, 12)]   // พ.ศ. สองหลัก (69 > 26 + 10)
+    [InlineData("12/11/26", 2026, 11, 12)]   // ค.ศ. สองหลัก
+    [InlineData("12 พ.ย. 69", 2026, 11, 12)]
+    [InlineData("12 พ.ย. 26", 2026, 11, 12)]
+    [InlineData("01/02/2569", 2026, 2, 1)]
+    [InlineData("01/02/2026", 2026, 2, 1)]
+    public void ฝ่ายค้าน_L8_ปีสองหลัก_สองรูปแบบตีความตรงกัน(string text, int y, int m, int d)
+        => Assert.Equal(new DateTime(y, m, d, 0, 0, 0, DateTimeKind.Utc), OcrSlipText.ExtractDate(text, 2026));
+
+    [Fact]
+    public void ฝ่ายค้าน_L7_badgeสลิปค่าบริการ_ยอดที่แจ้งอยู่บนสลิปตรง_ไม่อยู่ได้ยอดสูงสุด()
+    {
+        // ข้อความสลิปค่าบริการแบบที่ระบบเคยอ่าน (KBank/SCB) — ใบที่ถูกอยู่แล้วต้องไม่ถูกแตะ
+        var kbank = OcrSlipText.Parse("โอนเงินสำเร็จ\n12 พ.ย. 69 10:21 น.\nนาย ก ข\nxxx-x-x1234-x\nบจก. เน็กแอค\nจำนวน: 1,605.00 บาท\nค่าธรรมเนียม: 0.00 บาท", 2026);
+        Assert.Equal(((decimal?)1605.00m, (bool?)true), OcrSlipText.BadgeAmount(kbank.Amounts, 1605m));
+        var scb = OcrSlipText.Parse("Transfer successful\nAmount 1500.00\nFee 0.00\nRef No. 202611120001ABC", 2026);
+        Assert.Equal(((decimal?)1500.00m, (bool?)true), OcrSlipText.BadgeAmount(scb.Amounts, 1500m));   // เดิม regex ตัด 1500.00 เป็น 500.00 ⇒ badge เป็น "ไม่ตรง"
+        // ทิศตรงข้าม: ยอดบนสลิปไม่ใช่ยอดที่แจ้ง ⇒ ไม่ตรง + ยอดสูงสุด · ไม่มียอดเลย ⇒ ไม่มี badge
+        Assert.Equal(((decimal?)1605.00m, (bool?)false), OcrSlipText.BadgeAmount(kbank.Amounts, 999m));
+        Assert.Equal(((decimal?)null, (bool?)null), OcrSlipText.BadgeAmount(Array.Empty<decimal>(), 1605m));
+        Assert.Equal(new DateTime(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc), kbank.Date);
     }
 
     // ─────────── LineChatSlipRule.Decide ───────────

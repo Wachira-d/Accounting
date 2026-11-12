@@ -44,7 +44,7 @@ const LineChatSlipQueue = {
       <td class="num">${r.amount != null ? Layout.money(r.amount) : '—'}${r.amountsText && r.amount == null ? `<div style="color:#94a3b8;font-size:11px">${Layout.esc(r.amountsText)}</div>` : ''}
         ${r.slipRef ? `<div style="font-family:ui-monospace,monospace;font-size:10px;color:#64748b">${Layout.esc(r.slipRef)}</div>` : ''}</td>
       <td style="min-width:220px">
-        <select class="form-input" id="lcs-doc-${Layout.esc(r.id)}">${opts}<option value="">พิมพ์เลขที่เอกสารเอง…</option></select>
+        <select class="form-input" id="lcs-doc-${Layout.esc(r.id)}"><option value="">— เลือกเอกสาร (หรือพิมพ์เลขที่ด้านล่าง) —</option>${opts}</select>
         <input class="form-input" id="lcs-num-${Layout.esc(r.id)}" placeholder="เลขที่เอกสาร (ถ้าไม่อยู่ในรายการ)" style="margin-top:4px">
         <input class="form-input" id="lcs-amt-${Layout.esc(r.id)}" placeholder="ยอด (ว่าง = ยอดที่อ่านได้/ยอดสุทธิของใบ)" inputmode="decimal" style="margin-top:4px">
       </td>
@@ -73,8 +73,14 @@ const LineChatSlipQueue = {
     const sel = document.getElementById('lcs-doc-' + id);
     const num = (document.getElementById('lcs-num-' + id) || {}).value || '';
     const amtRaw = ((document.getElementById('lcs-amt-' + id) || {}).value || '').replace(/,/g, '').trim();
-    const body = { documentId: sel && sel.value ? sel.value : null, documentNumber: sel && sel.value ? null : num.trim(), amount: amtRaw ? Number(amtRaw) : null };
-    if (!body.documentId && !body.documentNumber) { Layout.toast('เลือกเอกสาร หรือพิมพ์เลขที่เอกสาร', 'error'); return; }
+    // ฝ่ายค้าน 260-1 M5: ค่าเริ่มต้นว่าง · เลือกจากรายการและพิมพ์เลขที่พร้อมกัน = ขัดกัน (ไม่เลือกให้เงียบ ๆ) · ยอดอ่านไม่ออก = ไม่ส่ง (ไม่ปล่อยให้เซิร์ฟเวอร์ใช้ยอดอื่นแทน)
+    const picked = sel && sel.value ? sel.value : null;
+    const typed = num.trim();
+    if (picked && typed) { Layout.toast('เลือกเอกสารจากรายการแล้วและพิมพ์เลขที่ด้วย — ล้างอย่างใดอย่างหนึ่ง', 'error'); return; }
+    if (!picked && !typed) { Layout.toast('เลือกเอกสาร หรือพิมพ์เลขที่เอกสาร', 'error'); return; }
+    const amount = amtRaw ? Number(amtRaw) : null;
+    if (amtRaw && !Number.isFinite(amount)) { Layout.toast('ยอดอ่านไม่ออก — พิมพ์เป็นตัวเลข เช่น 1500.00', 'error'); return; }
+    const body = { documentId: picked, documentNumber: picked ? null : typed, amount };
     try {
       const j = await API.post(`${this.base()}/${id}/assign`, body);
       if (!j || !j.success) throw new Error((j && j.message) || 'ผูกไม่สำเร็จ');

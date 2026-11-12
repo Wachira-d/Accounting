@@ -41,6 +41,8 @@ public class SlipEvidenceService
     public const string ChannelPayLink = "pay-link-customer";
     /// <summary>รอบ 260: สลิปที่ลูกค้าส่งในแชต LINE OA ของบริษัท (<c>LineChatSlipService</c> — ผูกใบโดยระบบ/ลูกค้ากดเลือก/พนักงาน) · ไฟล์ไม่เสิร์ฟตรงเหมือนหน้าชำระ</summary>
     public const string ChannelLineChat = "line-chat-customer";
+    /// <summary>ฝ่ายค้าน 260-1 L9: สลิปจากแชตที่<b>พนักงาน</b>ผูกกับเอกสารเอง (ป้ายไฟล์แนบบอกว่าใครผูก — ไม่ใช่ลูกค้า)</summary>
+    public const string ChannelLineChatStaff = "line-chat-staff";
 
     /// <param name="contactId">พอร์ทัล = ผู้ติดต่อในโทเคน (ด่านความเป็นเจ้าของ) · ลิงก์ชำระ = ผู้ติดต่อของใบ (โทเคนพิสูจน์แล้ว)</param>
     /// <param name="amount">null = ยอดค้างของใบ</param>
@@ -59,7 +61,7 @@ public class SlipEvidenceService
             ?? throw new ArgumentException("รองรับเฉพาะรูปภาพ (JPEG/PNG/WEBP) หรือ PDF ของสลิป");
         var fromPayLink = channel == ChannelPayLink;
         // รอบ 260: สลิปจากแชต LINE ก็มาจากคนนอกระบบ ⇒ โฟลเดอร์ที่ไม่เสิร์ฟตรง (แบบหน้าชำระ) · ป้ายช่องทางของตัวเอง
-        var fromLineChat = channel == ChannelLineChat;
+        var fromLineChat = channel is ChannelLineChat or ChannelLineChatStaff;
         var nonServed = fromPayLink || fromLineChat;
 
         SlipEvidenceResult? result = null;

@@ -12,8 +12,12 @@ namespace Accounting.Services.Implementations;
 /// <summary>รอบ 260 — สลิปที่ลูกค้าส่งในแชต LINE OA ของบริษัท (คำตัดสิน 260-1-1)</summary>
 public interface ILineChatSlipService
 {
-    /// <summary>รูปในแชต (webhook ที่ลายเซ็นผ่าน) ⇒ message ที่ตอบกลับ · null = ไม่ใช่งานของเส้นนี้ (ปิดสวิตช์ · กลุ่มที่ไม่ได้ผูก/ไม่แสดงยอด · ไม่ใช่รูป) — ผู้เรียกใช้คำตอบเดิม</summary>
+    /// <summary>รูปในแชต (webhook ที่ลายเซ็นผ่าน) ⇒ message ที่ตอบกลับ · null = ไม่ใช่งานของเส้นนี้ (ปิดสวิตช์ · กลุ่มที่ไม่ได้ผูก/ไม่แสดงยอด · ไม่ใช่รูป ·
+    /// เกินเพดานแถว "ยังไม่ผูก" ต่อวัน) — ผู้เรียกใช้คำตอบเดิม</summary>
     Task<IReadOnlyList<object>?> HandleImageAsync(Guid companyId, string? destination, LineChatSource source, string messageId, CancellationToken ct = default);
+
+    /// <summary>ฝ่ายค้าน L3: กลุ่มนี้เป็นงานของเส้นสลิปไหม (สวิตช์เปิด + ผูกกับผู้ติดต่อ + แสดงยอด) — อ่านอย่างเดียว · ผู้เรียกตรวจก่อนกินเพดาน</summary>
+    Task<bool> IsSlipGroupAsync(Guid companyId, string? destination, string groupId, CancellationToken ct = default);
 
     /// <summary>ปุ่มเลือกใบ (postback) ⇒ message ที่ตอบกลับ · null = postback ไม่ใช่ของเส้นนี้</summary>
     Task<IReadOnlyList<object>?> HandlePostbackAsync(Guid companyId, string? destination, LineChatSource source, string? data, CancellationToken ct = default);
@@ -27,9 +31,9 @@ public interface ILineChatSlipService
 
 /// <summary>
 /// **ผู้เขียน <see cref="LineChatSlip"/> ตัวเดียว** — รูปในแชต ⇒ อ่านยอด (ในเครื่อง · ไม่มี AI) ⇒ ตัวตัดสินเดียว <see cref="LineChatSlipRule.Decide"/> ⇒
-/// ใบเดียว: แจ้งโอนผ่านประตูเดิม <see cref="SlipEvidenceService.SubmitAsync"/> (รายการรอยืนยันในคิวเดียว · ระบบไม่ปิดหนี้เอง) ·
-/// หลายใบ: ปุ่มเลือก (postback ลงลายเซ็น + ตรวจซ้ำกับฐาน) · ไม่ตรง/อ่านไม่ได้/ไม่ได้ผูก: คิวพนักงาน (หน้ารายการรับชำระออนไลน์) พร้อมเหตุ
-/// <para>ยอดสุทธิหลังหัก ณ ที่จ่าย = ตัวคิดเดียวกับหน้าชำระ/พอร์ทัล (<see cref="IDocumentPayLinkService.DueAmountsForDocumentAsync"/>) · ทุก query กรองบริษัท</para>
+/// ใบเดียว + ดูเป็นสลิป: แจ้งโอนผ่านประตูเดิม <see cref="SlipEvidenceService.SubmitAsync"/> (รายการรอยืนยันในคิวเดียว · ระบบไม่ปิดหนี้เอง) ·
+/// หลายใบ/ไม่แน่ใจ: ปุ่มเลือก (postback ลงลายเซ็น + ตรวจซ้ำกับฐาน) · ไม่ตรง/อ่านไม่ได้/ไม่ได้ผูก/ref ซ้ำ: คิวพนักงาน (หน้ารายการรับชำระออนไลน์) พร้อมเหตุ
+/// <para>ฝ่ายค้าน 260-1: ref จาก OCR ไม่ถูกประทับลงรายการรอยืนยัน (M1) · ล้มกลางทางทุกชนิด ⇒ แถวกลับคิวพนักงาน (M2) · สำเนารูปลบเมื่อผูก/ปิด + งานเบื้องหลังลบรูปที่ค้าง (M4)</para>
 /// </summary>
 public sealed class LineChatSlipService : ILineChatSlipService
 {
@@ -52,6 +56,7 @@ public sealed class LineChatSlipService : ILineChatSlipService
 
     public const string ActorAuto = "line-chat:auto";
     public const string ActorCustomer = "line-chat:customer";
+    public const string ActorRetention = "system:line-chat-retention";
 
     private sealed record CandidateRef(Guid d, decimal a);
 
@@ -89,6 +94,16 @@ public sealed class LineChatSlipService : ILineChatSlipService
         return (s.LineEnabled && s.LineChatSlipIntakeEnabled && key != null, key);
     }
 
+    public async Task<bool> IsSlipGroupAsync(Guid companyId, string? destination, string groupId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(groupId)) return false;
+        var (enabled, key) = await SettingsAsync(companyId, ct);
+        if (!enabled || key == null) return false;
+        var source = LineChatSource.Group(groupId);
+        var (contactIds, showAmounts, anyEndpoint) = await BindingAsync(companyId, SourceKey(destination, source), source, ct);
+        return anyEndpoint && showAmounts && contactIds.Count > 0;
+    }
+
     // ═══════════════ รูปในแชต ═══════════════
 
     public async Task<IReadOnlyList<object>?> HandleImageAsync(Guid companyId, string? destination, LineChatSource source, string messageId, CancellationToken ct = default)
@@ -101,6 +116,13 @@ public sealed class LineChatSlipService : ILineChatSlipService
         // กลุ่ม: เฉพาะกลุ่มที่ผูกกับผู้ติดต่อและเปิดแสดงยอด (สมาชิกกลุ่มเห็นยอดในคำตอบ) — อื่น ๆ ไม่ใช่งานของเส้นนี้
         if (source.IsGroup && (!anyEndpoint || !showAmounts || contactIds.Count == 0)) return null;
 
+        // ฝ่ายค้าน L1: ข้อความ LINE เดียว = แถวเดียว (LINE ส่ง webhook ซ้ำระหว่างรอบแรกยังอ่านรูป) — ตรวจก่อนดาวน์โหลด/OCR · unique index กันอีกชั้น
+        var msgId = messageId.Length > 64 ? messageId[..64] : messageId;
+        if (await _db.LineChatSlips.AsNoTracking().AnyAsync(x => x.CompanyId == companyId && x.LineMessageId == msgId, ct))
+            return One(LineChatSlipRule.Replies.Duplicate);
+        // ฝ่ายค้าน L2: LINE ที่ยังไม่ผูก — เพดานแถวต่อบริษัทต่อวันไทย (เกิน ⇒ คำตอบเดิม ไม่เก็บรูป)
+        if (contactIds.Count == 0 && await UnboundTodayAsync(companyId, ct) >= LineChatSlipRule.UnboundDailyCap) return null;
+
         var bytes = await _links.DownloadMessageContentAsync(companyId, messageId, LineChatSlipRule.MaxBytes, ct);
         if (bytes == null || bytes.Length == 0) return One(LineChatSlipRule.Replies.DownloadFailed);
         var sniffed = SlipEvidenceRule.DetectPublicType(bytes);
@@ -108,130 +130,245 @@ public sealed class LineChatSlipService : ILineChatSlipService
         if (sniffed == null || ext == null) return null;
 
         var sha = SlipEvidenceRule.Sha256Hex(bytes);
-        if (await IsDuplicateAsync(companyId, sha, null, ct)) return One(LineChatSlipRule.Replies.Duplicate);
+        if (await IsDuplicateFileAsync(companyId, sha, ct)) return One(LineChatSlipRule.Replies.Duplicate);
         var reading = await _reader.ReadAsync(bytes, sniffed, ct);
         var slipRef = SlipEvidenceRule.NormalizeRef(reading.Ref);
-        if (slipRef != null && await IsDuplicateAsync(companyId, null, slipRef, ct)) return One(LineChatSlipRule.Replies.Duplicate);
+        // ฝ่ายค้าน M1: ref ซ้ำแต่รูปต่าง ⇒ ไม่ทิ้ง — เข้าคิวพนักงานเหตุ DuplicateRef (OCR อาจอ่าน Biller ID/Ref1 ที่เหมือนกันทุกใบ)
+        var refDuplicate = slipRef != null && await IsDuplicateRefAsync(companyId, slipRef, ct);
 
-        // เก็บไฟล์ผ่านที่เก็บกลาง (Local/S3) ในโฟลเดอร์ที่<b>ไม่เสิร์ฟตรง</b> (สลิป = ข้อมูลส่วนบุคคล · พนักงานเปิดผ่าน endpoint ที่ตรวจสิทธิ์)
         var now = DateTime.UtcNow;
         var absPath = Path.Combine(_storage.Locator.RelativeBase, "wwwroot", "uploads", "line-chat-slips", now.ToString("yyyy-MM"), $"{Guid.NewGuid():N}{ext}");
-        await _storage.WriteAsync(absPath, bytes, sniffed, ct);
-
         var row = new LineChatSlip
         {
             CompanyId = companyId, SourceKind = source.Kind, SourceKey = sourceKey, ContactId = contactIds.Count == 1 ? contactIds[0] : (Guid?)null,
-            LineMessageId = messageId.Length > 64 ? messageId[..64] : messageId,
-            FileSha256 = sha, StoragePath = absPath, ContentType = sniffed,
+            LineMessageId = msgId, FileSha256 = sha, StoragePath = absPath, ContentType = sniffed,
             OcrAmount = reading.Amount, OcrAmounts = LineChatSlipRule.AmountsText(reading.Amounts), OcrDate = reading.Date, OcrRef = slipRef,
             ShowAmounts = showAmounts, CreatedBy = "line-webhook",
         };
-
-        var candidates = contactIds.Count == 0 ? new List<LineChatSlipRule.Candidate>() : await CandidatesAsync(companyId, contactIds, ct);
-        var decision = LineChatSlipRule.Decide(reading, candidates, contactIds);
-
-        if (decision.Outcome == LineChatSlipRule.Outcome.One)
+        // เก็บไฟล์ผ่านที่เก็บกลาง (Local/S3) ในโฟลเดอร์ที่ไม่เสิร์ฟตรง · ฝ่ายค้าน M2: ล้มก่อนแถวถูกบันทึก ⇒ ลบไฟล์ (ไม่มีไฟล์กำพร้า)
+        await _storage.WriteAsync(absPath, bytes, sniffed, ct);
+        var saved = false;
+        try
         {
-            var m = decision.Matches[0];
-            var (submitted, problem) = await TrySubmitAsync(companyId, row, m.Doc.DocumentId, m.Doc.ContactId, bytes, m.Amount, ActorAuto, ct);
-            if (submitted)
-                return One(LineChatSlipRule.Replies.Submitted(m.Doc.Number, m.Amount, showAmounts));
-            await ToStaffAsync(row, LineChatSlipRule.Reasons.SubmitFailed, problem, isNew: true, ct);
+            await EnsureRopaAsync(companyId, ct);
+            if (refDuplicate)
+            {
+                await ToStaffAsync(row, LineChatSlipRule.Reasons.DuplicateRef, "เลขอ้างอิง " + slipRef, isNew: true, ct);
+                return One(LineChatSlipRule.Replies.StaffWillCheck);
+            }
+            var candidates = contactIds.Count == 0 ? new List<LineChatSlipRule.Candidate>() : await CandidatesAsync(companyId, contactIds, 30, ct);
+            var decision = LineChatSlipRule.Decide(reading, candidates, contactIds);
+
+            if (decision.Outcome == LineChatSlipRule.Outcome.One)
+            {
+                var m = decision.Matches[0];
+                var (submitted, problem) = await TrySubmitAsync(companyId, row, m.Doc.DocumentId, m.Doc.ContactId, bytes, m.Amount, ActorAuto,
+                    SlipEvidenceService.ChannelLineChat, LineChatSlipRule.Statuses.Submitted, ct);
+                saved = submitted;
+                if (submitted)
+                {
+                    await DropFileAsync(row, ct);
+                    return One(LineChatSlipRule.Replies.Submitted(m.Doc.Number, m.Amount, showAmounts));
+                }
+                await ToStaffAsync(row, LineChatSlipRule.Reasons.SubmitFailed, problem, isNew: true, ct);
+                return One(LineChatSlipRule.Replies.StaffWillCheck);
+            }
+            if (decision.Outcome == LineChatSlipRule.Outcome.Many)
+            {
+                row.Status = LineChatSlipRule.Statuses.AwaitingChoice;
+                row.ChoiceExpiresAt = now.Add(LineChatSlipRule.ChoiceTtl);
+                row.CandidatesJson = JsonSerializer.Serialize(decision.Matches.Select(x => new CandidateRef(x.Doc.DocumentId, x.Amount)));
+                _db.LineChatSlips.Add(row);
+                await _db.SaveChangesAsync(ct);
+                saved = true;
+                return new[] { Text(decision.Matches.Count == 1 ? LineChatSlipRule.Replies.ChooseOne
+                    : LineChatSlipRule.Replies.Choose(reading.Amount, showAmounts, decision.Matches.Count), ChoiceItems(key, companyId, sourceKey, row.Id, decision, showAmounts)) };
+            }
+            await ToStaffAsync(row, decision.Reason, null, isNew: true, ct);
             return One(LineChatSlipRule.Replies.StaffWillCheck);
         }
-        if (decision.Outcome == LineChatSlipRule.Outcome.Many)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            row.Status = LineChatSlipRule.Statuses.AwaitingChoice;
-            row.ChoiceExpiresAt = now.Add(LineChatSlipRule.ChoiceTtl);
-            row.CandidatesJson = JsonSerializer.Serialize(decision.Matches.Select(x => new CandidateRef(x.Doc.DocumentId, x.Amount)));
-            _db.LineChatSlips.Add(row);
-            await _db.SaveChangesAsync(ct);
-            var items = decision.Matches.Select(x => (object)new
+            if (IsMessageDuplicate(ex))
             {
-                type = "action",
-                action = new
-                {
-                    type = "postback", label = LineChatSlipRule.Replies.ChoiceLabel(x.Doc.Number),
-                    data = LineChatSlipRule.PostbackData(key, companyId, sourceKey, row.Id, x.Doc.DocumentId),
-                    displayText = LineChatSlipRule.Replies.ChoiceDisplay(x.Doc.Number, x.Doc.Date, x.Amount, showAmounts),
-                },
-            }).Append((object)new
-            {
-                type = "action",
-                action = new
-                {
-                    type = "postback", label = LineChatSlipRule.Replies.DeclineLabel,
-                    data = LineChatSlipRule.PostbackData(key, companyId, sourceKey, row.Id, null),
-                    displayText = LineChatSlipRule.Replies.DeclineLabel,
-                },
-            }).ToList();
-            var text = decision.Matches.Count == 1 ? LineChatSlipRule.Replies.ChooseOne
-                : LineChatSlipRule.Replies.Choose(reading.Amount, showAmounts, decision.Matches.Count);
-            return new[] { Text(text, items) };
+                _db.ChangeTracker.Clear();
+                await DeleteQuietlyAsync(absPath);
+                return One(LineChatSlipRule.Replies.Duplicate);
+            }
+            _logger.LogError(ex, "สลิปจากแชต LINE ของบริษัท {CompanyId}: ประมวลล้ม — ส่งเข้าคิวพนักงาน", companyId);
+            if (await FallbackToStaffAsync(row, saved, ct)) return One(LineChatSlipRule.Replies.StaffWillCheck);
+            await DeleteQuietlyAsync(absPath);
+            throw;
         }
-        await ToStaffAsync(row, decision.Reason, null, isNew: true, ct);
-        return One(LineChatSlipRule.Replies.StaffWillCheck);
     }
 
-    /// <summary>สลิปนี้ส่งเข้ามาแล้วไหม — แถวแชตที่ยังเปิด + รายการรอยืนยัน/รับเงินแล้ว (ด่านเดียวกับพอร์ทัล) · ทั้งบริษัท</summary>
-    private async Task<bool> IsDuplicateAsync(Guid companyId, string? sha, string? slipRef, CancellationToken ct)
+    private static List<object> ChoiceItems(byte[] key, Guid companyId, string sourceKey, Guid slipId, LineChatSlipRule.Decision decision, bool showAmounts)
+        => decision.Matches.Select(x => (object)new
+        {
+            type = "action",
+            action = new
+            {
+                type = "postback", label = LineChatSlipRule.Replies.ChoiceLabel(x.Doc.Number),
+                data = LineChatSlipRule.PostbackData(key, companyId, sourceKey, slipId, x.Doc.DocumentId),
+                displayText = LineChatSlipRule.Replies.ChoiceDisplay(x.Doc.Number, x.Doc.Date, x.Amount, showAmounts),
+            },
+        }).Append((object)new
+        {
+            type = "action",
+            action = new
+            {
+                type = "postback", label = LineChatSlipRule.Replies.DeclineLabel,
+                data = LineChatSlipRule.PostbackData(key, companyId, sourceKey, slipId, null),
+                displayText = LineChatSlipRule.Replies.DeclineLabel,
+            },
+        }).ToList();
+
+    private static bool IsMessageDuplicate(Exception ex)
+        => ex is DbUpdateException { InnerException: Npgsql.PostgresException { SqlState: "23505", ConstraintName: "UX_LineChatSlips_Company_Message" } };
+
+    /// <summary>ฝ่ายค้าน M2: ล้มกลางทาง ⇒ แถวต้องอยู่ในคิวพนักงาน (ไม่ใช่หายเงียบ) · แถวยังไม่ถูกบันทึก ⇒ บันทึกใหม่ (ล้าง tracker ที่อาจค้างของจากการบันทึกที่ล้ม) ·
+    /// บันทึกแล้ว ⇒ คืนสถานะด้วยคำสั่งเดียว · คืน false เมื่อบันทึกไม่ได้เลย (ผู้เรียกลบไฟล์แล้วโยนต่อ)</summary>
+    private async Task<bool> FallbackToStaffAsync(LineChatSlip row, bool saved, CancellationToken ct)
+    {
+        try
+        {
+            _db.ChangeTracker.Clear();
+            if (saved || await _db.LineChatSlips.AsNoTracking().AnyAsync(x => x.Id == row.Id && x.CompanyId == row.CompanyId, ct))
+            {
+                await RestoreToStaffAsync(row.CompanyId, row.Id, LineChatSlipRule.Reasons.SystemError, ct);
+                return true;
+            }
+            row.Status = LineChatSlipRule.Statuses.Unmatched;
+            row.Reason = LineChatSlipRule.Reasons.SystemError;
+            row.UpdatedAt = DateTime.UtcNow;
+            _db.LineChatSlips.Add(row);
+            await _db.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "สลิปจากแชต LINE ของบริษัท {CompanyId}: บันทึกเข้าคิวพนักงานไม่สำเร็จ", row.CompanyId);
+            return false;
+        }
+    }
+
+    /// <summary>แถวที่ค้าง "กำลังแจ้งโอน"/รอเลือก ⇒ คิวพนักงาน (คำสั่งเดียว · ไม่พึ่ง tracker ที่อาจเสียจากการบันทึกที่ล้ม)</summary>
+    private Task<int> RestoreToStaffAsync(Guid companyId, Guid slipId, string reason, CancellationToken ct)
+    {
+        var open = new[] { LineChatSlipRule.Statuses.Submitting, LineChatSlipRule.Statuses.AwaitingChoice };
+        return _db.LineChatSlips.Where(x => x.Id == slipId && x.CompanyId == companyId && open.Contains(x.Status))
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, LineChatSlipRule.Statuses.Unmatched)
+                .SetProperty(x => x.Reason, reason).SetProperty(x => x.UpdatedAt, (DateTime?)DateTime.UtcNow), ct);
+    }
+
+    private async Task<int> UnboundTodayAsync(Guid companyId, CancellationToken ct)
+    {
+        var startUtc = (DateTime.UtcNow.AddHours(7)).Date.AddHours(-7);
+        return await _db.LineChatSlips.AsNoTracking()
+            .CountAsync(x => x.CompanyId == companyId && x.Reason == LineChatSlipRule.Reasons.Unbound && x.CreatedAt >= startUtc, ct);
+    }
+
+    /// <summary>ไฟล์นี้ส่งเข้ามาแล้วไหม — แถวแชตที่ยังเปิด + รายการรอยืนยัน/รับเงินแล้ว (ด่านเดียวกับพอร์ทัล) · ทั้งบริษัท</summary>
+    private async Task<bool> IsDuplicateFileAsync(Guid companyId, string sha, CancellationToken ct)
     {
         var live = LineChatSlipRule.Statuses.Live;
         var dupStatuses = SlipEvidenceRule.DuplicateStatuses;
-        if (sha != null)
-            return await _db.LineChatSlips.AsNoTracking().AnyAsync(x => x.CompanyId == companyId && x.FileSha256 == sha && live.Contains(x.Status), ct)
-                || await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipFileSha256 == sha && dupStatuses.Contains(i.Status), ct);
-        return await _db.LineChatSlips.AsNoTracking().AnyAsync(x => x.CompanyId == companyId && x.OcrRef == slipRef && live.Contains(x.Status), ct)
+        return await _db.LineChatSlips.AsNoTracking().AnyAsync(x => x.CompanyId == companyId && x.FileSha256 == sha && live.Contains(x.Status), ct)
+            || await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipFileSha256 == sha && dupStatuses.Contains(i.Status), ct);
+    }
+
+    /// <summary>เลขอ้างอิงนี้เคยเห็นไหม (แถวแชตทุกสถานะที่ยังไม่ถูกปิด · รายการรอยืนยัน/รับเงินแล้วที่ลูกค้าพิมพ์เลขอ้างอิงเอง) — สัญญาณให้คนดู ไม่ใช่ข้อห้าม</summary>
+    private async Task<bool> IsDuplicateRefAsync(Guid companyId, string slipRef, CancellationToken ct)
+    {
+        var dupStatuses = SlipEvidenceRule.DuplicateStatuses;
+        return await _db.LineChatSlips.AsNoTracking()
+                .AnyAsync(x => x.CompanyId == companyId && x.OcrRef == slipRef && x.Status != LineChatSlipRule.Statuses.Dismissed, ct)
             || await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipBankRef == slipRef && dupStatuses.Contains(i.Status), ct);
     }
 
-    /// <summary>เอกสารค้างชำระของผู้ติดต่อที่ผูก LINE (บริษัทเดียวกัน) + ยอดสุทธิจากตัวคิดของหน้าชำระ — ใบที่รับชำระทางนี้ไม่ได้ (IssueRefusal) ไม่เป็นผู้สมัคร</summary>
-    private async Task<List<LineChatSlipRule.Candidate>> CandidatesAsync(Guid companyId, IReadOnlyCollection<Guid> contactIds, CancellationToken ct)
+    /// <summary>เอกสารค้างชำระของผู้ติดต่อที่ผูก LINE (บริษัทเดียวกัน) + ยอดจากตัวคิดของหน้าชำระ — ฝ่ายค้าน L5: กรองชนิดที่รับชำระได้ใน SQL ก่อนจำกัดจำนวน ·
+    /// L4: ใบที่สลิปรอตรวจรวมยอดนี้แล้วเกินยอดค้าง ไม่เป็นผู้สมัคร (ด่านเดียวกับประตูแจ้งโอน <see cref="SlipEvidenceRule.PendingProblem"/>)</summary>
+    private async Task<List<LineChatSlipRule.Candidate>> CandidatesAsync(Guid companyId, IReadOnlyCollection<Guid> contactIds, int take, CancellationToken ct)
     {
+        var types = DocumentPayLinkPolicy.PayableTypes;
         var docs = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && !d.IsDeleted && contactIds.Contains(d.ContactId) && d.BalanceDue > 0.009m
+                && types.Contains(d.DocumentType)
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval && d.Status != DocumentStatus.Voided
                 && d.Status != DocumentStatus.Rejected && d.Status != DocumentStatus.Paid)
-            .OrderBy(d => d.DocumentDate).ThenBy(d => d.DocumentNumber).Take(60)
+            .OrderByDescending(d => d.DocumentDate).ThenBy(d => d.DocumentNumber).Take(take)
             .Select(d => new { d.Id, d.ContactId, d.DocumentNumber, d.DocumentDate, d.Status, d.BalanceDue })
             .ToListAsync(ct);
+        if (docs.Count == 0) return new List<LineChatSlipRule.Candidate>();
+        var ids = docs.Select(d => d.Id).ToList();
+        var openSlips = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && i.SourceKind == PaymentSourceKind.Document && ids.Contains(i.SourceId)
+                && i.MethodKind == PaymentMethodKind.ManualSlip && PaymentIntentPolicy.OpenStatuses.Contains(i.Status))
+            .Select(i => new { i.SourceId, i.Amount }).ToListAsync(ct);
+        var pending = openSlips.GroupBy(i => i.SourceId).ToDictionary(g => g.Key, g => g.Sum(i => i.Amount));
         var list = new List<LineChatSlipRule.Candidate>();
         foreach (var d in docs)
         {
             var due = await _payLinks.DueAmountsForDocumentAsync(companyId, d.Id, ct);
             if (due == null || due.Refusal != null) continue;
+            if (SlipEvidenceRule.PendingProblem(pending.GetValueOrDefault(d.Id), due.Net, d.BalanceDue) != null) continue;
             list.Add(new LineChatSlipRule.Candidate(d.Id, d.ContactId, d.DocumentNumber, d.DocumentDate, d.Status, d.BalanceDue, due.Net, due.Gross));
         }
         return list;
     }
 
-    /// <summary>แจ้งโอนผ่านประตูเดิม · สำเร็จ ⇒ แถวผูกใบ (Submitted/Assigned) และบันทึก · ไม่สำเร็จ ⇒ (false, เหตุ) — ผู้เรียกส่งเข้าคิวพนักงาน/แจ้งพนักงาน</summary>
+    /// <summary>แจ้งโอนผ่านประตูเดิม · สำเร็จ ⇒ แถวผูกใบและบันทึก · ไม่สำเร็จด้วยกติกา ⇒ (false, เหตุ) · ล้มอย่างอื่น ⇒ โยน (ผู้เรียกส่งเข้าคิวพนักงาน) ·
+    /// ฝ่ายค้าน M1: <b>ไม่ส่งเลขอ้างอิงจาก OCR</b> เข้าประตู — ค่าที่เครื่องอ่านเดาไม่ใช่เลขที่ลูกค้าแจ้ง (กันซ้ำเท็จทุกช่องทาง · ไม่เป็นตัวระบุตัวให้ปิดหนี้อัตโนมัติ)</summary>
     private async Task<(bool Ok, string? Problem)> TrySubmitAsync(Guid companyId, LineChatSlip row, Guid documentId, Guid? contactId, byte[] bytes,
-        decimal amount, string actor, CancellationToken ct, string doneStatus = LineChatSlipRule.Statuses.Submitted)
+        decimal amount, string actor, string channel, string doneStatus, CancellationToken ct)
     {
+        SlipEvidenceResult r;
         try
         {
-            var r = await _slips.SubmitAsync(companyId, documentId, contactId,
+            r = await _slips.SubmitAsync(companyId, documentId, contactId,
                 new SlipFile(bytes, row.ContentType, "line-slip" + (SlipEvidenceRule.ExtensionFor(row.ContentType) ?? "")),
-                amount, row.OcrRef, SlipEvidenceService.ChannelLineChat, ct);
-            row.Status = doneStatus;
-            row.DocumentId = documentId;
-            row.PaymentIntentId = r.Intent.Id;
-            row.Reason = null;
-            row.ReasonDetail = null;
-            row.ResolvedAt = DateTime.UtcNow;
-            row.ResolvedBy = actor;
-            if (_db.Entry(row).State == EntityState.Detached) _db.LineChatSlips.Add(row);
-            await _db.SaveChangesAsync(ct);
-            return (true, null);
+                amount, bankRef: null, channel, ct);
         }
         catch (Exception ex) when (ex is BusinessRuleException or KeyNotFoundException or ArgumentException)
         {
             return (false, ex.Message);
         }
+        row.Status = doneStatus;
+        row.DocumentId = documentId;
+        row.PaymentIntentId = r.Intent.Id;
+        row.Reason = null;
+        row.ReasonDetail = null;
+        row.ResolvedAt = DateTime.UtcNow;
+        row.ResolvedBy = actor;
+        if (_db.Entry(row).State == EntityState.Detached) _db.LineChatSlips.Add(row);
+        await _db.SaveChangesAsync(ct);
+        return (true, null);
     }
 
-    /// <summary>เข้าคิวพนักงานพร้อมเหตุ + แจ้งทีม</summary>
+    /// <summary>ฝ่ายค้าน M4: สำเนารูปในแชตลบเมื่อผูก/ปิด (สลิปที่ผูกมีสำเนาเป็นไฟล์แนบเอกสารแล้ว) · ลบไม่ได้ ⇒ LogError แล้วงานเบื้องหลังลองใหม่</summary>
+    private async Task DropFileAsync(LineChatSlip row, CancellationToken ct)
+    {
+        try
+        {
+            await _storage.DeleteAsync(row.StoragePath, ct);
+            var now = DateTime.UtcNow;
+            row.FileDeletedAt = now;
+            await _db.LineChatSlips.Where(x => x.Id == row.Id && x.CompanyId == row.CompanyId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.FileDeletedAt, (DateTime?)now), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "ลบสำเนารูปสลิปจากแชตไม่สำเร็จ (สลิป {SlipId}) — งานเก็บรักษาจะลองใหม่", row.Id);
+        }
+    }
+
+    private async Task DeleteQuietlyAsync(string path)
+    {
+        try { await _storage.DeleteAsync(path); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { _logger.LogError(ex, "ลบไฟล์สลิปที่บันทึกไม่สำเร็จไม่ได้ {Path}", path); }
+    }
+
+    /// <summary>เข้าคิวพนักงานพร้อมเหตุ + แจ้งทีม (ฝ่ายค้าน L2: เหตุ "LINE ยังไม่ผูก" ไม่แจ้งรายแถว — รวมใน Autopilot)</summary>
     private async Task ToStaffAsync(LineChatSlip row, string? reason, string? detail, bool isNew, CancellationToken ct)
     {
         row.Status = LineChatSlipRule.Statuses.Unmatched;
@@ -240,7 +377,7 @@ public sealed class LineChatSlipService : ILineChatSlipService
         row.UpdatedAt = DateTime.UtcNow;
         if (isNew && _db.Entry(row).State == EntityState.Detached) _db.LineChatSlips.Add(row);
         await _db.SaveChangesAsync(ct);
-        if (_notify != null)
+        if (_notify != null && reason != LineChatSlipRule.Reasons.Unbound)
         {
             var (title, message) = LineChatSlipRule.StaffNotice(reason, row.OcrAmount);
             await _notify.DispatchAsync(row.CompanyId, Accounting.Models.Constants.NotificationEvents.AutopilotSlipSubmitted, new NotificationContext
@@ -250,20 +387,34 @@ public sealed class LineChatSlipService : ILineChatSlipService
         }
     }
 
+    /// <summary>ฝ่ายค้าน M4 (PDPA ม.39): แถว RoPA ของกิจกรรมนี้ — ครั้งเดียวต่อบริษัท (บันทึกพร้อมแถวสลิป) · ไม่ทับที่บริษัทแก้ไว้</summary>
+    private async Task EnsureRopaAsync(Guid companyId, CancellationToken ct)
+    {
+        if (await _db.PdpaProcessingActivities.AsNoTracking().AnyAsync(r => r.CompanyId == companyId && r.Purpose == LineChatSlipRule.RopaPurpose, ct)) return;
+        if (_db.ChangeTracker.Entries<PdpaProcessingActivity>().Any(e => e.Entity.CompanyId == companyId && e.Entity.Purpose == LineChatSlipRule.RopaPurpose)) return;
+        _db.PdpaProcessingActivities.Add(new PdpaProcessingActivity
+        {
+            CompanyId = companyId, Purpose = LineChatSlipRule.RopaPurpose, LegalBasis = LineChatSlipRule.RopaLegalBasis,
+            DataCategories = LineChatSlipRule.RopaDataCategories, RetentionPeriod = LineChatSlipRule.RopaRetention,
+            Recipients = LineChatSlipRule.RopaRecipients, TransfersOutsideThailand = false, Notes = LineChatSlipRule.RopaNote,
+            CreatedBy = "system", LastReviewedBy = "system",
+        });
+    }
+
     // ═══════════════ ปุ่มเลือกใบ ═══════════════
 
     public async Task<IReadOnlyList<object>?> HandlePostbackAsync(Guid companyId, string? destination, LineChatSource source, string? data, CancellationToken ct = default)
     {
         if (!LineChatSlipRule.IsOurs(data)) return null;
         var pb = LineChatSlipRule.TryParse(data);
-        var (_, key) = await SettingsAsync(companyId, ct);
+        var (enabled, key) = await SettingsAsync(companyId, ct);
         if (pb == null || key == null || string.IsNullOrWhiteSpace(source.Id)) return One(LineChatSlipRule.Replies.ChoiceInvalid);
         var sourceKey = SourceKey(destination, source);
         var row = await _db.LineChatSlips.FirstOrDefaultAsync(x => x.Id == pb.SlipId && x.CompanyId == companyId, ct);
-        // ลายเซ็น (บริษัท + แหล่งแชต + สลิป + ใบ) + แถวต้องเป็นของแหล่งแชตเดียวกัน — ไม่ผ่าน = ข้อความเดียว (ไม่บอกว่าผิดตรงไหน)
+        // ลายเซ็น (บริษัท + แหล่งแชต + สลิป + ใบ) + แถวต้องเป็นของแหล่งแชตเดียวกัน — ไม่ผ่าน = ข้อความเดียว (ไม่บอกว่าผิดตรงไหน · เพดานต่อแหล่งแชตกันที่ผู้เรียก)
         if (row == null || row.SourceKey != sourceKey || !LineChatSlipRule.Verify(key, companyId, sourceKey, pb.SlipId, pb.DocumentId, pb.Signature))
         {
-            _logger.LogWarning("LINE postback สลิปของบริษัท {CompanyId}: ลายเซ็น/แหล่งแชตไม่ตรง (สลิป {SlipId})", companyId, pb.SlipId);
+            _logger.LogInformation("LINE postback สลิปของบริษัท {CompanyId}: ลายเซ็น/แหล่งแชตไม่ตรง", companyId);
             return One(LineChatSlipRule.Replies.ChoiceInvalid);
         }
         var now = DateTime.UtcNow;
@@ -272,6 +423,12 @@ public sealed class LineChatSlipService : ILineChatSlipService
             if (row.Status == LineChatSlipRule.Statuses.AwaitingChoice)
                 await ToStaffAsync(row, LineChatSlipRule.Reasons.ChoiceExpired, null, isNew: false, ct);
             return One(LineChatSlipRule.Replies.ChoiceInvalid);
+        }
+        // ฝ่ายค้าน L9 (คำตัดสิน 260-1-10): ปิดสวิตช์แล้ว ⇒ ปุ่มที่ออกไปแล้วกดไม่ได้ — สลิปเข้าคิวพนักงาน (ไม่หาย)
+        if (!enabled)
+        {
+            await ToStaffAsync(row, LineChatSlipRule.Reasons.IntakeOff, null, isNew: false, ct);
+            return One(LineChatSlipRule.Replies.IntakeOff);
         }
         if (pb.DocumentId == null)
         {
@@ -288,17 +445,32 @@ public sealed class LineChatSlipService : ILineChatSlipService
 
         // compare-and-set: กดซ้ำ/สองเครื่องพร้อมกัน = ครั้งเดียว
         if (!await ClaimAsync(companyId, row.Id, new[] { LineChatSlipRule.Statuses.AwaitingChoice }, ct)) return One(LineChatSlipRule.Replies.ChoiceInvalid);
-        // ค่าในฐาน = Submitting (ClaimAsync) · แถวในหน่วยความจำคงค่าที่โหลด — สถานะปลายทาง (Submitted/Unmatched) เขียนทับด้วย SaveChanges
-        var bytes = await _storage.ReadAllBytesAsync(row.StoragePath, ct);
-        if (bytes == null)
+        // ค่าในฐาน = Submitting · ฝ่ายค้าน M2: ล้มด้วยเหตุใดก็ตามหลังจองแล้ว ⇒ แถวกลับคิวพนักงาน (ไม่ค้าง Submitting)
+        try
         {
-            await ToStaffAsync(row, LineChatSlipRule.Reasons.SubmitFailed, "ไม่พบไฟล์สลิปในที่เก็บ", isNew: false, ct);
+            var bytes = await _storage.ReadAllBytesAsync(row.StoragePath, ct);
+            if (bytes == null)
+            {
+                await ToStaffAsync(row, LineChatSlipRule.Reasons.SubmitFailed, "ไม่พบไฟล์สลิปในที่เก็บ", isNew: false, ct);
+                return One(LineChatSlipRule.Replies.StaffWillCheck);
+            }
+            var (ok, problem) = await TrySubmitAsync(companyId, row, doc.Id, doc.ContactId, bytes, offered.a, ActorCustomer,
+                SlipEvidenceService.ChannelLineChat, LineChatSlipRule.Statuses.Submitted, ct);
+            if (ok)
+            {
+                await DropFileAsync(row, ct);
+                return One(LineChatSlipRule.Replies.Submitted(doc.DocumentNumber, offered.a, row.ShowAmounts));
+            }
+            await ToStaffAsync(row, LineChatSlipRule.Reasons.SubmitFailed, problem, isNew: false, ct);
             return One(LineChatSlipRule.Replies.StaffWillCheck);
         }
-        var (ok, problem) = await TrySubmitAsync(companyId, row, doc.Id, doc.ContactId, bytes, offered.a, ActorCustomer, ct);
-        if (ok) return One(LineChatSlipRule.Replies.Submitted(doc.DocumentNumber, offered.a, row.ShowAmounts));
-        await ToStaffAsync(row, LineChatSlipRule.Reasons.SubmitFailed, problem, isNew: false, ct);
-        return One(LineChatSlipRule.Replies.StaffWillCheck);
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "สลิปจากแชต LINE ของบริษัท {CompanyId}: แจ้งโอนจากปุ่มเลือกใบล้ม — ส่งเข้าคิวพนักงาน", companyId);
+            _db.ChangeTracker.Clear();
+            await RestoreToStaffAsync(companyId, row.Id, LineChatSlipRule.Reasons.SystemError, CancellationToken.None);
+            return One(LineChatSlipRule.Replies.StaffWillCheck);
+        }
     }
 
     private static List<CandidateRef> ParseCandidates(string? json)
@@ -313,42 +485,51 @@ public sealed class LineChatSlipService : ILineChatSlipService
         => await _db.LineChatSlips.Where(x => x.Id == slipId && x.CompanyId == companyId && fromStatuses.Contains(x.Status))
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, LineChatSlipRule.Statuses.Submitting).SetProperty(x => x.UpdatedAt, (DateTime?)DateTime.UtcNow), ct) == 1;
 
-    // ═══════════════ คิวพนักงาน ═══════════════
+    // ═══════════════ คิวพนักงาน (อ่านอย่างเดียวใน GET — ฝ่ายค้าน L5) ═══════════════
 
-    /// <summary>ตัวเลือกที่หมดอายุ ⇒ คิวพนักงาน (เหตุ "ลูกค้าไม่ได้เลือก") — คำสั่งเดียว · ผู้อ่านคิวเรียกก่อนนับ/แสดง</summary>
-    private Task<int> ExpireChoicesAsync(Guid companyId, CancellationToken ct)
+    /// <summary>แถวที่อยู่ในคิวพนักงาน: ไม่ได้ผูก · ตัวเลือกหมดอายุ (ยังไม่มีใครย้ายสถานะ) · ค้าง "กำลังแจ้งโอน" นานเกิน (ระบบล่มกลางทาง — ฝ่ายค้าน M2)</summary>
+    private IQueryable<LineChatSlip> QueueQuery(Guid companyId, DateTime nowUtc) => QueueOf(_db.LineChatSlips.AsNoTracking(), companyId, nowUtc);
+
+    /// <summary>ตัวกรองคิวพนักงานตัวเดียว — บริการนี้ + Autopilot (อ่านอย่างเดียว)</summary>
+    public static IQueryable<LineChatSlip> QueueOf(IQueryable<LineChatSlip> source, Guid companyId, DateTime nowUtc)
     {
-        var now = DateTime.UtcNow;
-        return _db.LineChatSlips
-            .Where(x => x.CompanyId == companyId && x.Status == LineChatSlipRule.Statuses.AwaitingChoice && x.ChoiceExpiresAt != null && x.ChoiceExpiresAt <= now)
-            .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, LineChatSlipRule.Statuses.Unmatched)
-                .SetProperty(x => x.Reason, LineChatSlipRule.Reasons.ChoiceExpired).SetProperty(x => x.UpdatedAt, (DateTime?)now), ct);
+        var stuckBefore = nowUtc - LineChatSlipRule.StuckSubmitting;
+        return source.Where(x => x.CompanyId == companyId
+            && (x.Status == LineChatSlipRule.Statuses.Unmatched
+                || (x.Status == LineChatSlipRule.Statuses.AwaitingChoice && x.ChoiceExpiresAt != null && x.ChoiceExpiresAt <= nowUtc)
+                || (x.Status == LineChatSlipRule.Statuses.Submitting && (x.UpdatedAt == null || x.UpdatedAt < stuckBefore))));
     }
 
-    public async Task<int> OpenCountAsync(Guid companyId, CancellationToken ct = default)
-    {
-        await ExpireChoicesAsync(companyId, ct);
-        return await _db.LineChatSlips.AsNoTracking().CountAsync(x => x.CompanyId == companyId && x.Status == LineChatSlipRule.Statuses.Unmatched, ct);
-    }
+    /// <summary>แถวนี้อยู่ในคิวพนักงานไหม (ตัวเดียวกับ <see cref="QueueQuery"/> สำหรับแถวที่โหลดแล้ว — ผูก/ปิดได้เฉพาะแถวในคิว)</summary>
+    private static bool InQueue(LineChatSlip x, DateTime nowUtc)
+        => x.Status == LineChatSlipRule.Statuses.Unmatched
+           || x.Status == LineChatSlipRule.Statuses.AwaitingChoice
+           || (x.Status == LineChatSlipRule.Statuses.Submitting && (x.UpdatedAt == null || x.UpdatedAt < nowUtc - LineChatSlipRule.StuckSubmitting));
+
+    public static string EffectiveReason(LineChatSlip x)
+        => x.Status == LineChatSlipRule.Statuses.AwaitingChoice ? LineChatSlipRule.Reasons.ChoiceExpired
+            : x.Status == LineChatSlipRule.Statuses.Submitting ? LineChatSlipRule.Reasons.SystemError
+            : x.Reason ?? "";
+
+    public Task<int> OpenCountAsync(Guid companyId, CancellationToken ct = default)
+        => QueueQuery(companyId, DateTime.UtcNow).CountAsync(ct);
 
     public async Task<LineChatSlipListResponse> ListOpenAsync(Guid companyId, CancellationToken ct = default)
     {
-        await ExpireChoicesAsync(companyId, ct);
-        var rows = await _db.LineChatSlips.AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.Status == LineChatSlipRule.Statuses.Unmatched)
-            .OrderBy(x => x.CreatedAt).Take(100).ToListAsync(ct);
+        var rows = await QueueQuery(companyId, DateTime.UtcNow).OrderBy(x => x.CreatedAt).Take(50).ToListAsync(ct);
         var contactIds = rows.Where(r => r.ContactId != null).Select(r => r.ContactId!.Value).Distinct().ToList();
         var names = contactIds.Count == 0 ? new Dictionary<Guid, string>()
             : await _db.Contacts.AsNoTracking().Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+        // ฝ่ายค้าน L5: จำนวนการคิดยอดต่อการโหลดหน้ามีเพดาน (ผู้ติดต่อ ≤ 10 · ใบ ≤ 10 ต่อผู้ติดต่อ) — ใบอื่นพิมพ์เลขที่ได้
         var optionsByContact = new Dictionary<Guid, List<LineChatSlipRule.Candidate>>();
-        foreach (var cid in contactIds) optionsByContact[cid] = await CandidatesAsync(companyId, new[] { cid }, ct);
+        foreach (var cid in contactIds.Take(10)) optionsByContact[cid] = await CandidatesAsync(companyId, new[] { cid }, LineChatSlipRule.MaxChoices, ct);
         var items = rows.Select(r =>
         {
             var opts = r.ContactId is Guid c && optionsByContact.TryGetValue(c, out var list) ? list : new List<LineChatSlipRule.Candidate>();
             return new LineChatSlipRow(r.Id, r.CreatedAt, r.Status, r.SourceKind == LineChatSource.KindGroup ? "กลุ่ม LINE ของผู้ติดต่อ" : "แชต LINE 1:1",
                 r.ContactId, r.ContactId is Guid n && names.TryGetValue(n, out var name) ? name : null,
-                LineChatSlipRule.Reasons.Label(r.Reason), r.ReasonDetail, r.OcrAmount, r.OcrAmounts, r.OcrDate, r.OcrRef,
-                opts.Take(LineChatSlipRule.MaxChoices).Select(o => new LineChatSlipDocOption(o.DocumentId, o.Number, o.Date, o.NetDue, o.GrossDue,
+                LineChatSlipRule.Reasons.Label(EffectiveReason(r)), r.ReasonDetail, r.OcrAmount, r.OcrAmounts, r.OcrDate, r.OcrRef,
+                opts.Select(o => new LineChatSlipDocOption(o.DocumentId, o.Number, o.Date, o.NetDue, o.GrossDue,
                     r.OcrAmount is decimal a && a == Math.Round(o.NetDue, 2, MidpointRounding.AwayFromZero))).ToList());
         }).ToList();
         return new LineChatSlipListResponse(items.Count, items);
@@ -358,39 +539,60 @@ public sealed class LineChatSlipService : ILineChatSlipService
     {
         var row = await _db.LineChatSlips.FirstOrDefaultAsync(x => x.Id == slipId && x.CompanyId == companyId, ct)
             ?? throw new KeyNotFoundException("ไม่พบสลิป");
-        if (!LineChatSlipRule.Statuses.Assignable.Contains(row.Status))
+        if (!InQueue(row, DateTime.UtcNow))
             throw new BusinessRuleException("สลิปนี้ผูกเอกสารหรือปิดไปแล้ว — โหลดหน้าใหม่", LineChatSlipRule.RuleCode, 409);
+        if (request.Amount is decimal reqAmount && reqAmount <= 0m)
+            throw new BusinessRuleException("ยอดต้องมากกว่า 0", LineChatSlipRule.RuleCode, 400);
         var number = request.DocumentNumber?.Trim();
-        var doc = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted
-                && (request.DocumentId != null ? d.Id == request.DocumentId : (number != null && number != "" && d.DocumentNumber == number)))
-            .Select(d => new { d.Id, d.DocumentNumber }).FirstOrDefaultAsync(ct)
-            ?? throw new BusinessRuleException("ไม่พบเอกสารนี้ในบริษัท — ตรวจเลขที่เอกสาร", LineChatSlipRule.RuleCode, 404);
+        if (request.DocumentId == null && string.IsNullOrEmpty(number))
+            throw new BusinessRuleException("เลือกเอกสาร หรือพิมพ์เลขที่เอกสาร", LineChatSlipRule.RuleCode, 400);
+        // ฝ่ายค้าน L6: ค้นเฉพาะชนิดที่รับชำระได้ · เลขที่ซ้ำหลายใบ ⇒ ไม่เดา (ให้เลือกจากรายการ)
+        var types = DocumentPayLinkPolicy.PayableTypes;
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && types.Contains(d.DocumentType)
+                && (request.DocumentId != null ? d.Id == request.DocumentId : d.DocumentNumber == number))
+            .OrderBy(d => d.DocumentDate).Select(d => new { d.Id, d.DocumentNumber, d.ContactId }).Take(3).ToListAsync(ct);
+        if (docs.Count == 0) throw new BusinessRuleException("ไม่พบใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้เลขนี้ในบริษัท — ตรวจเลขที่เอกสาร", LineChatSlipRule.RuleCode, 404);
+        if (docs.Count > 1) throw new BusinessRuleException("เลขที่นี้ตรงกับเอกสารหลายใบ — เปิดเอกสารเพื่อดูว่าใบไหน แล้วผูกจากหน้าเอกสาร หรือเลือกจากรายการ", LineChatSlipRule.RuleCode, 409);
+        var doc = docs[0];
         var due = await _payLinks.DueAmountsForDocumentAsync(companyId, doc.Id, ct);
         if (due?.Refusal is string refusal) throw new BusinessRuleException(refusal, LineChatSlipRule.RuleCode, 400);
         var amount = Math.Round(request.Amount ?? row.OcrAmount ?? due?.Net ?? 0m, 2, MidpointRounding.AwayFromZero);
+        var crossContact = row.ContactId != null && row.ContactId != doc.ContactId;
         var previous = row.Status;
-        if (!await ClaimAsync(companyId, row.Id, LineChatSlipRule.Statuses.Assignable, ct))
+        if (!await ClaimAsync(companyId, row.Id, new[] { previous }, ct))
             throw new BusinessRuleException("สลิปนี้กำลังถูกผูกโดยรายการอื่น — โหลดหน้าใหม่", LineChatSlipRule.RuleCode, 409);
-        var bytes = await _storage.ReadAllBytesAsync(row.StoragePath, ct);
-        string? problem = "ไม่พบไฟล์สลิปในที่เก็บ";
-        var ok = false;
-        if (bytes != null) (ok, problem) = await TrySubmitAsync(companyId, row, doc.Id, null, bytes, amount, actor, ct, LineChatSlipRule.Statuses.Assigned);
-        if (!ok)
+        // ฝ่ายค้าน M2: ล้มด้วยเหตุใดก็ตามหลังจอง ⇒ คืนสถานะเดิม (แถวกลับคิว) แล้วบอกเหตุ
+        var done = false;
+        try
         {
-            // คืนสถานะเดิม (คิวพนักงาน) แล้วบอกเหตุจริงจากประตูแจ้งโอน
-            await _db.LineChatSlips.Where(x => x.Id == row.Id && x.CompanyId == companyId && x.Status == LineChatSlipRule.Statuses.Submitting)
-                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, previous), ct);
-            throw new BusinessRuleException(problem ?? "ผูกสลิปไม่สำเร็จ", LineChatSlipRule.RuleCode, 409);
+            var bytes = await _storage.ReadAllBytesAsync(row.StoragePath, ct);
+            if (bytes == null) throw new BusinessRuleException("ไม่พบไฟล์สลิปในที่เก็บ", LineChatSlipRule.RuleCode, 409);
+            var (ok, problem) = await TrySubmitAsync(companyId, row, doc.Id, null, bytes, amount, actor,
+                SlipEvidenceService.ChannelLineChatStaff, LineChatSlipRule.Statuses.Assigned, ct);
+            if (!ok) throw new BusinessRuleException(problem ?? "ผูกสลิปไม่สำเร็จ", LineChatSlipRule.RuleCode, 409);
+            done = true;
+        }
+        finally
+        {
+            if (!done)
+            {
+                _db.ChangeTracker.Clear();
+                await _db.LineChatSlips.Where(x => x.Id == row.Id && x.CompanyId == companyId && x.Status == LineChatSlipRule.Statuses.Submitting)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, previous == LineChatSlipRule.Statuses.Submitting ? LineChatSlipRule.Statuses.Unmatched : previous)
+                        .SetProperty(x => x.UpdatedAt, (DateTime?)DateTime.UtcNow), CancellationToken.None);
+            }
         }
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId, UserEmail = actor, Action = AuditAction.Update, EntityType = LineChatSlipRule.AuditEntityType, EntityId = row.Id.ToString(),
-            NewValues = JsonSerializer.Serialize(new { op = "assign", documentId = doc.Id, doc.DocumentNumber, amount, paymentIntentId = row.PaymentIntentId, rule = LineChatSlipRule.RuleCode }),
+            NewValues = JsonSerializer.Serialize(new { op = "assign", documentId = doc.Id, doc.DocumentNumber, amount, paymentIntentId = row.PaymentIntentId,
+                crossContact, chatContactId = row.ContactId, documentContactId = doc.ContactId, rule = LineChatSlipRule.RuleCode }),
             Timestamp = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync(ct);
-        return new LineChatSlipAssignResult(row.Id, doc.Id, doc.DocumentNumber, row.PaymentIntentId!.Value, amount);
+        await DropFileAsync(row, ct);
+        return new LineChatSlipAssignResult(row.Id, doc.Id, doc.DocumentNumber, row.PaymentIntentId!.Value, amount, crossContact);
     }
 
     public async Task DismissAsync(Guid companyId, Guid slipId, string? reason, string actor, CancellationToken ct = default)
@@ -399,7 +601,7 @@ public sealed class LineChatSlipService : ILineChatSlipService
         if (why.Length == 0) throw new BusinessRuleException("กรุณาระบุเหตุที่ปิดรายการ (เช่น ไม่ใช่สลิป · บันทึกเป็นเงินรอจัดสรรจากรายการเดินบัญชีแล้ว)", LineChatSlipRule.RuleCode, 400);
         var row = await _db.LineChatSlips.FirstOrDefaultAsync(x => x.Id == slipId && x.CompanyId == companyId, ct)
             ?? throw new KeyNotFoundException("ไม่พบสลิป");
-        if (!LineChatSlipRule.Statuses.Assignable.Contains(row.Status))
+        if (!InQueue(row, DateTime.UtcNow))
             throw new BusinessRuleException("สลิปนี้ผูกเอกสารหรือปิดไปแล้ว — โหลดหน้าใหม่", LineChatSlipRule.RuleCode, 409);
         var now = DateTime.UtcNow;
         row.Status = LineChatSlipRule.Statuses.Dismissed;
@@ -414,14 +616,51 @@ public sealed class LineChatSlipService : ILineChatSlipService
             Timestamp = now,
         });
         await _db.SaveChangesAsync(ct);
+        await DropFileAsync(row, ct);
     }
 
     public async Task<(byte[] Bytes, string ContentType)?> ReadFileAsync(Guid companyId, Guid slipId, CancellationToken ct = default)
     {
-        var row = await _db.LineChatSlips.AsNoTracking().Where(x => x.Id == slipId && x.CompanyId == companyId)
+        var row = await _db.LineChatSlips.AsNoTracking().Where(x => x.Id == slipId && x.CompanyId == companyId && x.FileDeletedAt == null)
             .Select(x => new { x.StoragePath, x.ContentType }).FirstOrDefaultAsync(ct);
         if (row == null) return null;
         var bytes = await _storage.ReadAllBytesAsync(row.StoragePath, ct);
         return bytes == null ? null : (bytes, row.ContentType);
+    }
+
+    // ═══════════════ เก็บรักษา (PDPA — ฝ่ายค้าน M4) ═══════════════
+
+    /// <summary>ลบสำเนารูปที่ไม่มีเหตุให้เก็บแล้ว — ผูก/ปิดแล้วแต่ลบไม่สำเร็จ · ไม่ได้ผูกนานเกิน <see cref="LineChatSlipRule.UnmatchedRetentionDays"/> วัน (ปิดแถวพร้อมเหตุ) ·
+    /// ทุกบริษัท (งานเบื้องหลังใต้ <c>JobLock</c>) · ลบไฟล์ไม่ได้ ⇒ ข้ามแถวนั้น (รอบหน้าลองใหม่) · คืนจำนวนรูปที่ลบ</summary>
+    public static async Task<int> PurgeExpiredAsync(AccountingDbContext db, Accounting.Services.Storage.IFileStorage storage, ILogger logger, DateTime nowUtc,
+        CancellationToken ct = default)
+    {
+        var closed = new[] { LineChatSlipRule.Statuses.Submitted, LineChatSlipRule.Statuses.Assigned, LineChatSlipRule.Statuses.Dismissed };
+        var cutoff = nowUtc.AddDays(-LineChatSlipRule.UnmatchedRetentionDays);
+        var rows = await db.LineChatSlips.IgnoreQueryFilters()
+            .Where(x => x.FileDeletedAt == null && (closed.Contains(x.Status) || x.CreatedAt < cutoff))
+            .OrderBy(x => x.CreatedAt).Take(500).ToListAsync(ct);
+        var purged = 0;
+        foreach (var r in rows)
+        {
+            try { await storage.DeleteAsync(r.StoragePath, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogError(ex, "ลบรูปสลิปจากแชตที่พ้นระยะเก็บไม่สำเร็จ (สลิป {SlipId})", r.Id);
+                continue;
+            }
+            r.FileDeletedAt = nowUtc;
+            if (!closed.Contains(r.Status))
+            {
+                r.Status = LineChatSlipRule.Statuses.Dismissed;
+                r.ReasonDetail = $"พ้นระยะเก็บรูป {LineChatSlipRule.UnmatchedRetentionDays} วันโดยไม่ได้ผูกเอกสาร — ระบบลบรูปแล้ว";
+                r.ResolvedAt = nowUtc;
+                r.ResolvedBy = ActorRetention;
+            }
+            r.UpdatedAt = nowUtc;
+            purged++;
+        }
+        if (purged > 0) await db.SaveChangesAsync(ct);
+        return purged;
     }
 }

@@ -114,7 +114,8 @@ public class LineChatSlipRound260DbTests
         return new LineChatSlipService(db, Secrets, Line(content), Reader(reading), PayLinks(db, s), slips, s.Storage, NullLogger<LineChatSlipService>.Instance);
     }
 
-    private static OcrSlipText.Reading Sure(decimal amount, string? reference = null) => new(new[] { amount }, amount, DateTime.UtcNow.Date, reference);
+    /// <summary>สลิปจริง (มีคำว่าสำเร็จ/เลขอ้างอิง — ฝ่ายค้าน M3: ภาพที่ไม่ดูเป็นสลิปไม่ผูกเอง)</summary>
+    private static OcrSlipText.Reading Sure(decimal amount, string? reference = null) => new(new[] { amount }, amount, DateTime.UtcNow.Date, reference, LooksLikeSlip: true);
 
     // ไม่ escape อักษรไทย (ค่าตั้งต้นของ System.Text.Json แปลงเป็น \uXXXX — ข้อความ LINE ถูกต้องทั้งสองแบบ แต่เทสต์ค้นคำไทย)
     private static readonly JsonSerializerOptions Raw = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
@@ -148,13 +149,16 @@ public class LineChatSlipRound260DbTests
         Assert.Equal(PaymentMethodKind.ManualSlip, intent.MethodKind);
         Assert.True(PaymentIntentPolicy.IsOpen(intent.Status));             // รอยืนยัน — ไม่ใช่สำเร็จ (F2 ข้อ 3)
         Assert.Equal(1070m, intent.Amount);
-        Assert.Equal("REF260ONE0001", intent.SlipBankRef);                  // เลขอ้างอิงให้ BankReceiptAutoSettle จับเมื่อรายการเดินบัญชีเข้า
+        Assert.Null(intent.SlipBankRef);                                     // ฝ่ายค้าน M1: เลขอ้างอิงจาก OCR ไม่ถูกประทับ (กันซ้ำเท็จทุกช่องทาง)
         Assert.Equal(1070m, (await c2.Documents.AsNoTracking().SingleAsync(d => d.Id == inv.Id)).BalanceDue);
         Assert.False(await c2.Payments.AnyAsync(p => p.CompanyId == s.CompanyId));
         Assert.False(await c2.PaymentIntents.AnyAsync(i => i.SourceId == theirs.Id));
         var row = await c2.LineChatSlips.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId);
         Assert.Equal(LineChatSlipRule.Statuses.Submitted, row.Status);
         Assert.Equal(intent.Id, row.PaymentIntentId);
+        Assert.NotNull(row.FileDeletedAt);                                   // ฝ่ายค้าน M4: สำเนาในแชตลบแล้ว (หลักฐานอยู่ที่ไฟล์แนบเอกสาร)
+        Assert.False(System.IO.File.Exists(row.StoragePath));
+        Assert.True(await c2.PdpaProcessingActivities.AnyAsync(r => r.CompanyId == s.CompanyId && r.Purpose == LineChatSlipRule.RopaPurpose));
         Assert.True(await c2.Set<FileAttachment>().AnyAsync(f => f.CompanyId == s.CompanyId && f.EntityId == inv.Id && f.CreatedBy == SlipEvidenceService.ChannelLineChat));
     }
 
@@ -297,12 +301,18 @@ public class LineChatSlipRound260DbTests
         using (var c = DbTestDatabase.TryCreateContext()!)
             Assert.Contains(LineChatSlipRule.Replies.Duplicate,
                 Json(await Svc(c, s, bytes, Sure(1070m, "REF260DUP0001")).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "300002")));
-        // รูปต่าง (ถ่ายหน้าจอใหม่) แต่เลขอ้างอิงเดิม
+        // ฝ่ายค้าน L1: LINE ส่งข้อความเดิมซ้ำ (messageId เดิม) ⇒ ตอบซ้ำ ไม่ดาวน์โหลด/ไม่มีแถว
         using (var c = DbTestDatabase.TryCreateContext()!)
             Assert.Contains(LineChatSlipRule.Replies.Duplicate,
+                Json(await Svc(c, s, Png("redelivery"), Sure(1070m)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "300001")));
+        // ฝ่ายค้าน M1 (ทิศตรงข้าม): รูปต่างแต่เลขอ้างอิงที่ OCR อ่านได้เดิม ⇒ ไม่ทิ้ง — เข้าคิวพนักงานเหตุ DuplicateRef (ไม่ผูกเอง)
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Contains(LineChatSlipRule.Replies.StaffWillCheck,
                 Json(await Svc(c, s, Png("dup2"), Sure(1070m, "REF260DUP0001")).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "300003")));
         using var c2 = DbTestDatabase.TryCreateContext()!;
-        Assert.Equal(1, await c2.LineChatSlips.CountAsync(x => x.CompanyId == s.CompanyId));
+        Assert.Equal(2, await c2.LineChatSlips.CountAsync(x => x.CompanyId == s.CompanyId));
+        Assert.Equal(LineChatSlipRule.Reasons.DuplicateRef,
+            (await c2.LineChatSlips.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.LineMessageId == "300003")).Reason);
         Assert.Equal(1, await c2.PaymentIntents.CountAsync(i => i.CompanyId == s.CompanyId));
     }
 
@@ -325,6 +335,13 @@ public class LineChatSlipRound260DbTests
         Assert.Equal(1, await svc.OpenCountAsync(s.CompanyId));
         await Assert.ThrowsAsync<BusinessRuleException>(() => svc.DismissAsync(s.CompanyId, row.Id, "  ", "user:test"));
         await svc.DismissAsync(s.CompanyId, row.Id, "ไม่ใช่สลิป", "user:test");
+        using (var c3 = DbTestDatabase.TryCreateContext()!)
+        {
+            var closed = await c3.LineChatSlips.AsNoTracking().SingleAsync(x => x.Id == row.Id);
+            Assert.NotNull(closed.FileDeletedAt);                            // ฝ่ายค้าน M4: ปิดแล้วลบรูป
+            Assert.False(System.IO.File.Exists(closed.StoragePath));
+            Assert.Null(await Svc(c3, s, Png("x"), Sure(1070m)).ReadFileAsync(s.CompanyId, row.Id));
+        }
         Assert.Equal(0, await Svc(DbTestDatabase.TryCreateContext()!, s, Png("x"), Sure(1070m)).OpenCountAsync(s.CompanyId));
         // บริษัทอื่นมองไม่เห็นแถวนี้
         Assert.Empty((await svc.ListOpenAsync(Guid.NewGuid())).Items);
@@ -344,5 +361,60 @@ public class LineChatSlipRound260DbTests
         Assert.False(await db.LineChatSlips.AnyAsync(x => x.CompanyId == s.CompanyId || x.CompanyId == s2.CompanyId));
         // postback ที่ไม่ใช่ของเส้นนี้
         Assert.Null(await Svc(db, s2, Png("x"), Sure(1m)).HandlePostbackAsync(s2.CompanyId, Bot, LineChatSource.User(s2.UserId), "approve:" + Guid.NewGuid()));
+    }
+
+    /// <summary>ที่เก็บที่อ่านไฟล์ล้ม (ดิสก์/S3 ขัดข้อง) — เมธอดอื่นเรียกที่เก็บจริง</summary>
+    private static IFileStorage FailingRead(IFileStorage real) => F4Proxy<IFileStorage>.Create((m, a) =>
+    {
+        if (m == nameof(IFileStorage.ReadAllBytesAsync)) throw new System.IO.IOException("ดิสก์ขัดข้อง (เทสต์)");
+        var mi = typeof(IFileStorage).GetMethods().First(x => x.Name == m && x.GetParameters().Length == a.Length
+            && x.GetParameters().Select((p, i) => a[i] == null || p.ParameterType.IsInstanceOfType(a[i])).All(ok => ok));
+        return mi.Invoke(real, a);
+    });
+
+    [Fact]
+    public async Task ฝ่ายค้าน_M2_ปุ่มเลือกใบแล้วที่เก็บล้ม_แถวกลับคิวพนักงาน_ไม่ค้างกำลังแจ้งโอน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (s, _, b, reply, row) = await ManyAsync(db, "m2");
+        var pickB = PostbackData(reply).Single(d => d.Contains(b.Id.ToString("N")));
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var intents = new PaymentIntentService(c, new IPaymentProvider[] { new ManualSlipPaymentProvider() },
+            Array.Empty<IPaymentCompletionHandler>(), NullLogger<PaymentIntentService>.Instance);
+        var failing = FailingRead(s.Storage);
+        var svc = new LineChatSlipService(c, Secrets, Line(Png("x")), Reader(Sure(535m)), PayLinks(c, s), new SlipEvidenceService(c, intents, failing),
+            failing, NullLogger<LineChatSlipService>.Instance);
+        Assert.Contains(LineChatSlipRule.Replies.StaffWillCheck, Json(await svc.HandlePostbackAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), pickB)));
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var after = await c2.LineChatSlips.AsNoTracking().SingleAsync(x => x.Id == row.Id);
+        Assert.Equal(LineChatSlipRule.Statuses.Unmatched, after.Status);
+        Assert.Equal(LineChatSlipRule.Reasons.SystemError, after.Reason);
+        Assert.False(await c2.PaymentIntents.AnyAsync(i => i.CompanyId == s.CompanyId));
+        Assert.Equal(1, await Svc(c2, s, Png("x"), Sure(535m)).OpenCountAsync(s.CompanyId));
+    }
+
+    [Fact]
+    public async Task ฝ่ายค้าน_M4_งานเก็บรักษา_ลบรูปที่ไม่ได้ผูกเกิน90วัน_ทิศตรงข้ามรูปใหม่ไม่ถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, bind: false);
+        await Svc(db, s, Png("old"), Sure(1070m)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "600001");
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Svc(c, s, Png("new"), Sure(1070m)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "600002");
+        await db.LineChatSlips.Where(x => x.CompanyId == s.CompanyId && x.LineMessageId == "600001")
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.CreatedAt, DateTime.UtcNow.AddDays(-(LineChatSlipRule.UnmatchedRetentionDays + 1))));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.True(await LineChatSlipService.PurgeExpiredAsync(c, s.Storage, NullLogger.Instance, DateTime.UtcNow) >= 1);
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var old = await c2.LineChatSlips.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.LineMessageId == "600001");
+        var fresh = await c2.LineChatSlips.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId && x.LineMessageId == "600002");
+        Assert.Equal(LineChatSlipRule.Statuses.Dismissed, old.Status);
+        Assert.NotNull(old.FileDeletedAt);
+        Assert.False(System.IO.File.Exists(old.StoragePath));
+        Assert.Equal(LineChatSlipRule.Statuses.Unmatched, fresh.Status);
+        Assert.Null(fresh.FileDeletedAt);
+        Assert.True(System.IO.File.Exists(fresh.StoragePath));
     }
 }

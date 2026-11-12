@@ -107,6 +107,9 @@ public static class DocumentPayLinkPolicy
     /// และยังมียอดค้าง · ตรงกับชนิดที่ <c>DocumentPaymentHandler</c> → <c>CreatePaymentAsync</c> บันทึกรับชำระได้</summary>
     /// <param name="supersedingTaxInvoiceNumber">รอบ 250 (WP-02 §2.3 · คำตัดสิน §2 #16): เลขใบกำกับภาษีที่อ้างใบแจ้งหนี้นี้และยังมีผล (ตัวโหลดเดียว
     /// <c>PaymentQrService.SupersedingTaxInvoiceNumberAsync</c>) — มี ⇒ ปฏิเสธ (ลูกหนี้ย้ายไปใบกำกับแล้ว · รับชำระซ้ำ/ใบเสร็จซ้อน §86/4) · null = ไม่มี/ใบกำกับถูกยกเลิก</param>
+    /// <summary>รอบ 260 (ฝ่ายค้าน L5/L6): ชนิดที่ <see cref="IssueRefusal"/> อาจรับ — ใช้กรองใน SQL ก่อนจำกัดจำนวน (ตัวตัดสินจริงยังเป็น IssueRefusal ต่อใบ)</summary>
+    public static readonly DocumentType[] PayableTypes = { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.DebitNote };
+
     public static string? IssueRefusal(DocumentType type, DocumentStatus status, decimal balanceDue, bool saleSide, string? currency,
         string? supersedingTaxInvoiceNumber)
     {
