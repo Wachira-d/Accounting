@@ -116,6 +116,20 @@ public class CustomerCreditRound265DbTests
                         && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed)
                   select (decimal?)(l.CreditAmount - l.DebitAmount)).SumAsync() ?? 0m;
 
+    /// <summary>ยอดเคลื่อนไหว (Cr − Dr) ของผังในเดือนหนึ่ง — กรองแบบเดียวกับ TaxGlReconciliationService (Posted · ไม่ใช่คู่กลับรายการ)</summary>
+    private static async Task<decimal> GlMonthCreditAsync(Accounting.Data.AccountingDbContext db, Guid companyId, string code, DateTime month)
+    {
+        var start = new DateTime(month.Year, month.Month, 1);
+        var end = start.AddMonths(1);
+        return await (from l in db.JournalEntryLines.AsNoTracking()
+                      join j in db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                      join a in db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                      where j.CompanyId == companyId && a.AccountCode == code && j.Status == JournalEntryStatus.Posted
+                            && j.OriginalEntryId == null && j.ReversedByEntryId == null && !j.IsDeleted && !l.IsDeleted
+                            && j.EntryDate >= start && j.EntryDate < end
+                      select (decimal?)(l.CreditAmount - l.DebitAmount)).SumAsync() ?? 0m;
+    }
+
     private static async Task<Guid> SuspenseAsync(Accounting.Data.AccountingDbContext db, Guid companyId)
         => await db.ChartOfAccounts.AsNoTracking()
             .Where(a => a.CompanyId == companyId && a.AccountCode == UnappliedReceiptAccount.Code).Select(a => a.Id).SingleAsync();
@@ -181,7 +195,7 @@ public class CustomerCreditRound265DbTests
         Assert.Equal(5_000m, await c.Payments.AsNoTracking().Where(p => p.Id == pay.Id).Select(p => p.UnappliedAmount).SingleAsync());
         Assert.False(await c.Documents.AsNoTracking().AnyAsync(d => d.CompanyId == s.CompanyId && d.DocumentType == DocumentType.Receipt
             && d.Reference == pay.PaymentNumber && !d.IsDeleted && d.Status != DocumentStatus.Voided));
-        Assert.All(await c.PaymentCreditMovements.AsNoTracking().Where(m => m.PaymentId == pay.Id).ToListAsync(), m => Assert.NotNull(m.ReleasedAt));
+        Assert.False(await c.PaymentCreditMovements.AsNoTracking().AnyAsync(m => m.PaymentId == pay.Id));   // ฝ่ายค้าน L1: ปฏิเสธก่อนจอง/สร้างร่าง
         // บรรทัดผิดรูป (ไม่มีชื่อรายการ) = ปฏิเสธก่อนเขียนอะไร (400)
         using var req2 = DbTestDatabase.TryCreateContext()!;
         var bad = new CustomerCreditIssueReceiptRequest(5_000m, new List<CustomerCreditReceiptLineRequest> { new(" ", 1m, 5_000m) });
@@ -215,6 +229,11 @@ public class CustomerCreditRound265DbTests
         // งวดรับเงิน = งวดปัจจุบันที่ยังเปิด ⇒ งวดรายงานไม่ถูกย้าย (ทิศ "ใบที่ถูกอยู่แล้วไม่ถูกแตะ")
         Assert.True(DepositPolicyResolver.SameVatPeriod(rcp.TaxPointDate ?? rcp.DocumentDate, rcp.DocumentDate));
         Assert.DoesNotContain(DepositPolicyResolver.LateVatMarker, rcp.InternalNotes ?? "", StringComparison.Ordinal);
+        // ฝ่ายค้าน H1 ทิศตรงข้าม: งวดเปิด ⇒ ไม่พัก ไม่ย้าย (Cr 21911 ตรงที่วันที่ใบ · 21913 ไม่ถูกแตะ)
+        Assert.Null(rcp.CreditReceiptVatDueAt);
+        Assert.Null(rcp.OutputVatDueAt);
+        Assert.Equal(350m, await GlMonthCreditAsync(c, s.CompanyId, "21911", rcp.DocumentDate));
+        Assert.Equal(0m, await GlMonthCreditAsync(c, s.CompanyId, "21913", rcp.DocumentDate));
     }
 
     [Fact]
@@ -237,6 +256,122 @@ public class CustomerCreditRound265DbTests
         Assert.NotNull(rcp.TaxPointDate);
         Assert.False(DepositPolicyResolver.SameVatPeriod(rcp.TaxPointDate!.Value, lastMonth));   // รายงานงวดปัจจุบัน ไม่ใช่งวดที่ยื่นแล้ว
         Assert.Contains(DepositPolicyResolver.LateVatMarker, rcp.InternalNotes ?? "", StringComparison.Ordinal);
+        // ฝ่ายค้าน H1 (คำตัดสิน 265-1-8): เดือนใน GL = เดือน ภ.พ.30 — เดือนที่ยื่นแล้วไม่มี Cr 21911 เพิ่ม · เดือน TaxPointDate มี 21911 = VAT ของใบ ·
+        // พัก 21913 ที่วันที่ใบแล้วย้ายออกที่วันที่ถึงกำหนด (สุทธิ 0)
+        Assert.Equal(rcp.TaxPointDate!.Value.Date, rcp.CreditReceiptVatDueAt!.Value.Date);
+        Assert.Equal(rcp.TaxPointDate!.Value.Date, rcp.OutputVatDueAt!.Value.Date);
+        Assert.Equal(0m, await GlMonthCreditAsync(c, s.CompanyId, "21911", lastMonth));
+        Assert.Equal(70m, await GlMonthCreditAsync(c, s.CompanyId, "21911", rcp.TaxPointDate!.Value));
+        Assert.Equal(70m, await GlMonthCreditAsync(c, s.CompanyId, "21913", lastMonth));
+        Assert.Equal(-70m, await GlMonthCreditAsync(c, s.CompanyId, "21913", rcp.TaxPointDate!.Value));
+        Assert.Equal(70m, rcp.VatAmount);
+    }
+
+    /// <summary>ฝ่ายค้าน M1 — เงินก้อนเดียวออกใบเสร็จสองใบ · ใบที่สองค้างกลางทาง (จองแล้วไม่มีใบ) ⇒ ยกเลิกรายการที่ค้างต้องปล่อยได้ ไม่ผูกใบเสร็จของรายการแรก ·
+    /// ยกเลิกใบแรกคืนเงินเท่าใบนั้นเท่านั้น</summary>
+    [Fact]
+    public async Task M1_สองใบจากเงินก้อนเดียว_รายการที่ค้างไม่ผูกใบของรายการอื่น_ยกเลิกใบแรกคืนเท่าใบนั้น()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var (pay, _) = await CreditAsync(db, s, 10_000m);
+        CustomerCreditMovementResult first;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            first = await Credits(req).IssueReceiptAsync(s.CompanyId, pay.Id, Req(5_000m, 5_000m), "tester");
+        // จำลองรายการที่สองค้าง: จองแล้วแต่ระบบตายก่อนสร้างใบ
+        var stuck = new PaymentCreditMovement
+        {
+            CompanyId = s.CompanyId, PaymentId = pay.Id, Kind = nameof(PaymentCreditMovementKind.ToReceipt), Amount = 5_000m, MovedAt = Today, CreatedBy = "tester",
+        };
+        db.PaymentCreditMovements.Add(stuck);
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var p = await req.Payments.FirstAsync(x => x.Id == pay.Id);
+            await CustomerCreditLedger.RecomputeAsync(req, s.CompanyId, p);
+            await req.SaveChangesAsync();
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Credits(req).UndoMovementAsync(s.CompanyId, pay.Id, stuck.Id, "ระบบตายกลางทาง", "tester");
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var m = await c.PaymentCreditMovements.AsNoTracking().SingleAsync(x => x.Id == stuck.Id);
+            Assert.Null(m.TargetDocumentId);                          // ไม่ผูกใบเสร็จของรายการแรก
+            Assert.NotNull(m.ReleasedAt);
+            Assert.Equal(5_000m, await c.Payments.AsNoTracking().Where(x => x.Id == pay.Id).Select(x => x.UnappliedAmount).SingleAsync());
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Docs(req).VoidDocumentAsync(s.CompanyId, first.TargetDocumentId!.Value);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(10_000m, await c.Payments.AsNoTracking().Where(x => x.Id == pay.Id).Select(x => x.UnappliedAmount).SingleAsync());
+            Assert.Equal(10_000m, await GlCreditNetAsync(c, s.CompanyId, await SuspenseAsync(c, s.CompanyId)));   // บัญชีย่อย = GL
+        }
+    }
+
+    /// <summary>ฝ่ายค้าน M1 ด่านสอง — ขาออกที่ออกใบสองรายการชี้ใบเดียวกัน (ข้อมูลผูกผิด) ⇒ ยกเลิกใบถูกปฏิเสธ ไม่คืนเงินเกิน</summary>
+    [Fact]
+    public async Task M1_สองขาออกชี้ใบเดียว_ยกเลิกใบถูกปฏิเสธ_ไม่คืนเกิน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var (pay, _) = await CreditAsync(db, s, 10_000m);
+        CustomerCreditMovementResult first;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            first = await Credits(req).IssueReceiptAsync(s.CompanyId, pay.Id, Req(5_000m, 5_000m), "tester");
+        db.PaymentCreditMovements.Add(new PaymentCreditMovement
+        {
+            CompanyId = s.CompanyId, PaymentId = pay.Id, Kind = nameof(PaymentCreditMovementKind.ToReceipt), Amount = 5_000m, MovedAt = Today,
+            TargetDocumentId = first.TargetDocumentId, CreatedBy = "tester",
+        });
+        await db.SaveChangesAsync();
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await RefusedAsync(() => Docs(req).VoidDocumentAsync(s.CompanyId, first.TargetDocumentId!.Value), CustomerCreditMovementRules.UndoRuleCode);
+        using var c = DbTestDatabase.TryCreateContext()!;
+        Assert.NotEqual(DocumentStatus.Voided, await c.Documents.AsNoTracking().Where(d => d.Id == first.TargetDocumentId).Select(d => d.Status).SingleAsync());
+    }
+
+    /// <summary>ฝ่ายค้าน M3 — ยกเลิกใบเสร็จที่ปิดงวดรายการประจำหลังรอบประทับผ่านงวดนั้นแล้ว ⇒ ข้อความบนแถวรายการประจำ + คำตอบการยกเลิก ·
+    /// ทิศตรงข้าม: งวดยังไม่ถูกประทับ ⇒ ไม่มีข้อความ</summary>
+    [Fact]
+    public async Task M3_ยกเลิกใบเสร็จที่ปิดงวดซึ่งรอบผ่านแล้ว_มีข้อความบนรายการประจำและคำตอบ_งวดยังไม่ผ่านไม่มีข้อความ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        RecurringTransaction NewRec(string name) => new()
+        {
+            CompanyId = s.CompanyId, Name = name, Frequency = RecurringFrequency.Monthly, Status = RecurringStatus.Active,
+            StartDate = Today.AddMonths(-1), NextRunDate = Today.AddDays(10), TemplateType = "Document", DocumentType = DocumentType.Invoice,
+            ContactId = s.CustomerId, TemplateData = @"{""lines"":[{""description"":""ค่าดูแลระบบ"",""quantity"":1,""unitPrice"":5000}]}", CreatedBy = "tester",
+        };
+        var passed = NewRec("ค่าดูแลระบบ");
+        var pending = NewRec("ค่าเช่าโฮสต์");
+        db.RecurringTransactions.AddRange(passed, pending);
+        await db.SaveChangesAsync();
+        var (p1, _) = await CreditAsync(db, s, 5_000m);
+        var (p2, _) = await CreditAsync(db, s, 5_000m);
+        CustomerCreditMovementResult r1, r2;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            r1 = await Credits(req).IssueReceiptAsync(s.CompanyId, p1.Id, Req(5_000m, 5_000m, recurring: passed.Id), "tester");
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            r2 = await Credits(req).IssueReceiptAsync(s.CompanyId, p2.Id, Req(5_000m, 5_000m, recurring: pending.Id), "tester");
+        // รอบอัตโนมัติประทับงวดของ "passed" ไปแล้ว (เลื่อนงวด)
+        await db.RecurringTransactions.Where(x => x.Id == passed.Id).ExecuteUpdateAsync(u => u.SetProperty(x => x.NextRunDate, Today.AddDays(40)));
+        PaymentVoidResult v1, v2;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            v1 = await Docs(req).VoidDocumentAsync(s.CompanyId, r1.TargetDocumentId!.Value);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            v2 = await Docs(req).VoidDocumentAsync(s.CompanyId, r2.TargetDocumentId!.Value);
+        Assert.NotNull(v1.CreditNotice);
+        Assert.Contains("ค่าดูแลระบบ", v1.CreditNotice!, StringComparison.Ordinal);
+        Assert.Null(v2.CreditNotice);
+        using var c = DbTestDatabase.TryCreateContext()!;
+        Assert.Contains("ยกเลิกใบเสร็จ", await c.RecurringTransactions.AsNoTracking().Where(x => x.Id == passed.Id).Select(x => x.LastRunNotice).SingleAsync() ?? "",
+            StringComparison.Ordinal);
+        Assert.True(string.IsNullOrEmpty(await c.RecurringTransactions.AsNoTracking().Where(x => x.Id == pending.Id).Select(x => x.LastRunNotice).SingleAsync()));
     }
 
     [Fact]
@@ -370,6 +505,27 @@ public class CustomerCreditRound265DbTests
             && !d.IsDeleted && d.Status != DocumentStatus.Voided).ToListAsync();
         Assert.Single(forInv2);
         Assert.Equal(2_000m, forInv2[0].TotalAmount);
+    }
+
+    /// <summary>ฝ่ายค้าน L3 — บริษัทเปิดแบ่งแยกหน้าที่ ⇒ ปฏิเสธก่อนจองพร้อมทางไปต่อ (ไม่มีร่าง ไม่มีการจองค้าง)</summary>
+    [Fact]
+    public async Task L3_เปิดแบ่งแยกหน้าที่_ปฏิเสธก่อนจองพร้อมทางไปต่อ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        db.CompanySettings.Add(new CompanySettings { CompanyId = s.CompanyId, SodBlockSelfApproval = true });
+        await db.SaveChangesAsync();
+        var (pay, _) = await CreditAsync(db, s, 5_000m);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await RefusedAsync(() => Credits(req).IssueReceiptAsync(s.CompanyId, pay.Id, Req(5_000m, 5_000m), "tester"),
+                CustomerCreditMovementRules.ToReceiptRuleCode);
+            Assert.Contains("ออกใบแจ้งหนี้ส่วนที่ขาด", ex.Message, StringComparison.Ordinal);
+        }
+        using var c = DbTestDatabase.TryCreateContext()!;
+        Assert.False(await c.PaymentCreditMovements.AsNoTracking().AnyAsync(m => m.PaymentId == pay.Id));
+        Assert.Equal(5_000m, await c.Payments.AsNoTracking().Where(x => x.Id == pay.Id).Select(x => x.UnappliedAmount).SingleAsync());
     }
 
     [Fact]

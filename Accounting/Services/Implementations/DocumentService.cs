@@ -7630,8 +7630,9 @@ public partial class DocumentService : IDocumentService
                 // VAT period ของ ภ.พ.30 ใช้เดือนของ TaxPointDate. คำนวณเฉพาะ
                 // เอกสารที่มี VAT (มิฉะนั้นไม่เกี่ยว).
                 // รอบ 201 A-TX2: บริการต่างประเทศ (§83/6 · ภ.พ.36) = วันจ่าย ไม่ใช่ MIN(วันใบผู้ขาย, …) — กติกาเดียวกับหน้านำส่ง (PaymentDate ?? DocumentDate)
+                // รอบ 265 ฝ่ายค้าน H1/M2: ใบเสร็จจากเงินรอจัดสรรที่งวดรับเงินยื่น/ปิดแล้ว — งวดที่ตัดสินไว้ก่อนจอง ประทับในธุรกรรมอนุมัตินี้ (ไม่มีช่วงหลัง commit)
                 if (doc.VatAmount != 0)
-                    doc.TaxPointDate = TaxPointResolver.Resolve(doc, TaxPointResolver.KindForApproval(doc));
+                    doc.TaxPointDate = doc.CreditReceiptVatDueAt ?? TaxPointResolver.Resolve(doc, TaxPointResolver.KindForApproval(doc));
 
                 // ===== Retention §87/3 + พ.ร.บ.บัญชี ม.14 — เก็บ 5 ปี =====
                 //
@@ -7692,6 +7693,17 @@ public partial class DocumentService : IDocumentService
                     && !doc.IsSettlementReceipt && !isFullTaxInvoiceReplacement)
                 {
                     await AutoPostToJournalAsync(companyId, doc, approvedBy);
+                    // รอบ 265 ฝ่ายค้าน H1 (คำตัดสิน 265-1-8): ขาภาษีของใบเสร็จจากเงินรอจัดสรรลง 21913 ที่วันที่ใบ ⇒ ย้ายเข้า 21911 ที่วันที่ถึงกำหนด
+                    // ด้วยกลไกเดียวกับใบแจ้งหนี้ (ล้ม = throw ⇒ การอนุมัติทั้งก้อน rollback — ไม่มีใบที่ภาษีไม่เข้าแบบใดเลย)
+                    if (doc.CreditReceiptVatDueAt is DateTime creditVatDue && doc.VatAmount > 0.005m)
+                    {
+                        await _db.SaveChangesAsync();   // ตัวย้ายอ่านขา 21913 จากฐาน — JE ของใบต้องถูกเขียนก่อน (ยังอยู่ในธุรกรรมอนุมัติ)
+                        await TryReclassifyUndueOutputVatAsync(companyId, doc.Id, creditVatDue, approvedBy, throwOnFailure: true);
+                        if (doc.OutputVatDueAt == null)
+                            throw new BusinessRuleException(
+                                $"เอกสาร {doc.DocumentNumber}: ย้ายภาษีขายจากพัก (21913) เข้างวด {creditVatDue:MM/yyyy} ไม่สำเร็จ — ยังไม่ได้บันทึกอะไร",
+                                Accounting.Helpers.CreditReceiptPlan.RuleCode, 409);
+                    }
                 }
 
                 if (!doc.IsSettlementReceipt && !isFullTaxInvoiceReplacement)
@@ -10038,6 +10050,7 @@ public partial class DocumentService : IDocumentService
     /// ต้องถึงผู้กด (เดิมทิ้งผล ตอบแค่ "สำเร็จ") · ไม่มี = <see cref="PaymentVoidResult.None"/></returns>
     public async Task<PaymentVoidResult> VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null)
     {
+        var creditVoidNotices = new List<string>();   // รอบ 265 ฝ่ายค้าน M3 (ข้อความจาก CustomerCreditLedger ถึงผู้กด)
         // Lines must be Include'd here so ApplyStockMovementsAsync (called
         // during the void transaction below) can iterate them — otherwise
         // doc.Lines is null and stock never gets restored on a void.
@@ -10659,7 +10672,8 @@ public partial class DocumentService : IDocumentService
 
                 await _db.SaveChangesAsync();
                 // รอบ 259 P4: ใบมัดจำที่ย้ายจากเงินรอจัดสรร (ขาเงินเข้า = ผังพัก) ถูกยกเลิก ⇒ JE ถูกกลับแล้ว เงินกลับเป็นเงินรอจัดสรร (ในธุรกรรมเดียวกัน)
-                await Accounting.Helpers.CustomerCreditLedger.ReleaseForVoidedDocumentAsync(_db, companyId, doc.Id, doc.UpdatedBy);
+                creditVoidNotices.Clear();   // execution strategy อาจวนใหม่ — เก็บเฉพาะรอบที่ commit
+                await Accounting.Helpers.CustomerCreditLedger.ReleaseForVoidedDocumentAsync(_db, companyId, doc.Id, doc.UpdatedBy, notices: creditVoidNotices);
                 await transaction.CommitAsync();
             }
             catch
@@ -10765,9 +10779,11 @@ public partial class DocumentService : IDocumentService
             documentType = doc.DocumentType.ToString(),
             voidedAt = DateTime.UtcNow,
         });
-        return cascadeEtaxFlag == null && cascadeVatNotice == null
+        // รอบ 265 ฝ่ายค้าน M3: ข้อความของเงินรอจัดสรร (งวดรายการประจำที่ใบเสร็จนี้ปิดไว้) ถึงผู้กดยกเลิก
+        var creditNotice = creditVoidNotices.Count == 0 ? null : string.Join(" · ", creditVoidNotices);
+        return cascadeEtaxFlag == null && cascadeVatNotice == null && creditNotice == null
             ? PaymentVoidResult.None
-            : new PaymentVoidResult(cascadeEtaxFlag, cascadeVatNotice);
+            : new PaymentVoidResult(cascadeEtaxFlag, cascadeVatNotice) with { CreditNotice = creditNotice };
     }
 
     /// <summary>กู้คืนเอกสารที่ยกเลิกผิด (Voided → Draft, คงเลขเดิม). ดู interface
@@ -17956,9 +17972,12 @@ public partial class DocumentService : IDocumentService
     {
         try
         {
+            // รอบ 265 ฝ่ายค้าน H1: + ใบเสร็จจากเงินรอจัดสรรที่พักภาษีไว้ (CreditReceiptVatDueAt) — กลไกย้ายภาษีตัวเดียว ไม่มีสำเนา
             var inv = await _db.Documents
                 .FirstOrDefaultAsync(d => d.Id == invoiceId && d.CompanyId == companyId
-                    && d.DocumentType == DocumentType.Invoice && !d.IsDeleted);
+                    && (d.DocumentType == DocumentType.Invoice
+                        || (d.DocumentType == DocumentType.Receipt && d.CreditReceiptVatDueAt != null))
+                    && !d.IsDeleted);
             if (inv == null) return;
             if (inv.OutputVatDueAt != null) return;   // reclass ไปแล้ว
             if (inv.Status is DocumentStatus.Voided or DocumentStatus.Rejected) return;
@@ -20297,6 +20316,14 @@ public partial class DocumentService : IDocumentService
                     // Cr "ภาษีขาย ภ.พ.30" 21911 (เข้า ภ.พ.30 ทันที). เมื่อ tax point
                     // ของเคส deferred เกิดจริง RealizeDeposit จะย้าย 21913 → 21911.
                     var useDeferredVat = doc.IsDeposit && doc.DepositOutputVatDeferred;
+                    // รอบ 265 ฝ่ายค้าน H1: ใบเสร็จจากเงินรอจัดสรรที่ภาษีถึงกำหนดในงวดอื่น (CreditReceiptVatDueAt) ⇒ พัก 21913 ที่วันที่ใบ ·
+                    // ผังไม่มี 21913 = ล้มดัง (ห้ามตกไป 21911 ในเดือนที่ยื่นแล้ว)
+                    var creditVatDeferred = doc.CreditReceiptVatDueAt != null && !doc.IsDeposit;
+                    if (creditVatDeferred && await FindAccountAsync(companyId, "21913") == null)
+                        throw new BusinessRuleException(
+                            $"เอกสาร {doc.DocumentNumber}: ไม่พบผัง 21913 “ภาษีขายรอเรียกเก็บ” — ใบลงวันที่ในงวดที่ยื่นแล้วต้องพักภาษีก่อนย้ายเข้างวดปัจจุบัน · เพิ่มผังนี้แล้วลองใหม่",
+                            Accounting.Helpers.CreditReceiptPlan.RuleCode, 409);
+                    useDeferredVat = useDeferredVat || creditVatDeferred;
                     var vatAccount = useDeferredVat
                         ? (await FindAccountAsync(companyId, "21913")
                            ?? await FindAccountAsync(companyId, "21911"))
@@ -22480,7 +22507,7 @@ public partial class DocumentService : IDocumentService
                 : null;
             var purchaseSide = doc.DocumentType is DocumentType.CreditNote or DocumentType.DebitNote
                 && Accounting.Helpers.AdjustmentNoteAccount.ResolveSide(relatedType, doc.CnDnPurchaseSideOverride) == true;
-            var taxDate = (doc.TaxPointDate ?? TaxPointResolver.Resolve(doc)).Date;
+            var taxDate = (doc.CreditReceiptVatDueAt ?? doc.TaxPointDate ?? TaxPointResolver.Resolve(doc)).Date;   // รอบ 265 H1: งวดที่จะรายงานจริง
             if (!purchaseSide && await VatPeriodDeclaredOrFiledAsync(companyId, taxDate))
                 warnings.Add($"⚠️ เดือนภาษี {taxDate:MM/yyyy} ของใบนี้ยื่น (หรือประกาศว่ายื่น/ล็อกงวด) ภ.พ.30 แล้ว — อนุมัติต่อได้ แต่ภาษีขาย "
                     + $"{doc.VatAmount:N2} บาทจะไม่อยู่ในแบบที่ยื่นไป ต้องยื่น ภ.พ.30 เพิ่มเติมของเดือนนั้น (เงินเพิ่ม §89/1) · "

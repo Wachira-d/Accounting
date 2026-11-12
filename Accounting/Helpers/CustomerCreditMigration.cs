@@ -41,6 +41,8 @@ public static class CustomerCreditMigration
         """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "CustomerCreditWriteOffCap" numeric(18,2) NOT NULL DEFAULT 1.00;""",
         // รอบ 260-3: เวลาที่กระดิ่ง "เงินรอจัดสรรค้างเกิน 30 วัน" แจ้งทีมแล้ว (ภายใน · แจ้งครั้งเดียวต่อการรับชำระ)
         """ALTER TABLE "Payments" ADD COLUMN IF NOT EXISTS "UnappliedAgedNoticeAt" timestamp NULL;""",
+        // รอบ 265 ฝ่ายค้าน H1: วันที่ภาษีขายถึงกำหนดของใบเสร็จจากเงินรอจัดสรรที่ลงวันที่ในงวดที่ยื่นแล้ว (ภายใน · ระบบประทับ)
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CreditReceiptVatDueAt" timestamp NULL;""",
         // ผัง 21630 ให้บริษัทเดิมที่มีกลุ่ม 216 (บริษัทผังกำหนดเอง = สร้างตอนใช้/ล้มดัง — UnappliedReceiptAccount.EnsureAsync)
         UnappliedReceiptAccount.MigrationSeedSql(),
         BackfillSql(),

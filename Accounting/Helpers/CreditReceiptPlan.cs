@@ -22,7 +22,7 @@ public sealed record CreditReceiptRecurringFacts(bool Found, Guid? ContactId, Re
 /// <para><b>วันที่บนใบ</b> = วันรับเงิน เมื่อเงินเป็น "ค้างออกใบ" (ม.105 ใบรับลงวันที่รับเงิน · ม.78/1 · ม.86 — หลักเดียวกับ 260-5-1) · เหตุผลอื่น = วันนี้ (วันที่ตกลงหักกลบ)
 /// — ตัวเดียว <see cref="LateReceiptTaxPoint.EffectiveReceiptDate"/> · <b>งวดภาษี</b> = <see cref="LateReceiptTaxPoint.Decide"/> (งวดรับเงิน หรืองวดปัจจุบัน + ธงล่าช้า
 /// เมื่องวดรับเงินยื่น/ปิด/เลยกำหนด — 260-5-5 H1) ⇒ <see cref="ReportingTaxPoint"/></para>
-/// <para>ผู้เรียก: <c>CustomerCreditService.IssueReceiptAsync</c> (ก่อนเขียนอะไร) · <c>DocumentService.ApplyCreditReceiptTaxPointAsync</c> (หลังอนุมัติ) —
+/// <para>ผู้เรียก: <c>CustomerCreditService.IssueReceiptAsync</c> (ก่อนเขียนอะไร) · <c>DocumentService.DecideCreditReceiptTaxPointAsync</c> (ก่อนจอง — 265-1-8) —
 /// <c>tools/required_call_site_check.py</c> กติกา R265 · หน้าเว็บไม่มีสำเนากติกา</para>
 /// </summary>
 public static class CreditReceiptPlan
@@ -125,11 +125,41 @@ public static class CreditReceiptPlan
         => $"{Marker} ออกจากเงินรอจัดสรร {paymentNumber} ยอด {Money(amount)} บาท — ยกเลิกใบนี้ ⇒ เงินกลับเป็นเงินรอจัดสรร"
            + (recurringPeriodLabel == null ? "" : $" · ปิดงวดรายการประจำ {recurringPeriodLabel} (รอบอัตโนมัติไม่ออกใบงวดนี้ซ้ำ)");
 
-    /// <summary>ป้ายงวดของรายการประจำ (พ.ศ. — ข้อความถึงผู้ใช้)</summary>
-    public static string PeriodLabel(string recurringName, DateTime periodDate)
+    /// <summary>"งวด dd/MM/พ.ศ." ของวันงวด</summary>
+    public static string PeriodText(DateTime periodDate)
     {
         var d = ThaiDate.CalendarDateUtc(periodDate);
-        return $"“{recurringName}” งวด {d:dd/MM}/{d.Year + 543}";
+        return $"งวด {d:dd/MM}/{d.Year + 543}";
+    }
+
+    /// <summary>ป้ายงวดของรายการประจำ (พ.ศ. — ข้อความถึงผู้ใช้) · ฝ่ายค้าน M3: บอกชัดว่าเป็น "งวดที่กำลังจะถึง" (ระบบเสนอเฉพาะ NextRunDate)</summary>
+    public static string PeriodLabel(string recurringName, DateTime periodDate)
+        => $"“{recurringName}” งวดที่กำลังจะถึง ({PeriodText(periodDate)})";
+
+    /// <summary>
+    /// ฝ่ายค้าน L3: ด่านอนุมัติของบริษัทที่ใบเสร็จนี้ (ระบบอนุมัติให้ทันที) จะไม่ผ่าน — ตรวจก่อนจอง พร้อมทางที่มีอยู่จริง · null = ผ่าน
+    /// (ผลของ <c>ApprovalControlPolicy.NeedsSignatureFlow/SelfApprovalBlocked</c> ตัวเดียวกับตอนอนุมัติ)
+    /// </summary>
+    public static string? ApprovalControlProblem(bool needsSignatureFlow, bool selfApprovalBlocked)
+    {
+        if (needsSignatureFlow)
+            return "ยอดใบนี้เกินวงเงินอนุมัติตรงของบริษัท — ใบเสร็จที่ระบบออกให้ทันทีผ่านกระบวนการเซ็นหลายขั้นไม่ได้ · "
+                   + "ใช้ “ออกใบแจ้งหนี้ส่วนที่ขาด” (ร่าง) แล้วส่งขออนุมัติตามขั้นตอน — อนุมัติแล้วระบบจัดสรรเงินก้อนนี้ให้เอง";
+        if (selfApprovalBlocked)
+            return "บริษัทเปิดการแบ่งแยกหน้าที่ (ผู้สร้างห้ามอนุมัติเอง) — ใบเสร็จนี้ระบบสร้างและอนุมัติในชื่อผู้กดคนเดียวกัน · "
+                   + "ใช้ “ออกใบแจ้งหนี้ส่วนที่ขาด” (ร่าง) แล้วให้ผู้มีสิทธิ์อนุมัติอีกคนเป็นผู้อนุมัติ";
+        return null;
+    }
+
+    /// <summary>
+    /// ฝ่ายค้าน M3 (คำตัดสิน 265-1-11): ยกเลิกใบเสร็จที่ปิดงวดรายการประจำ ซึ่งรอบอัตโนมัติประทับผ่านไปแล้ว (งวดของกุญแจ &lt; NextRunDate) ⇒ ข้อความ
+    /// บนแถวรายการประจำ + คำตอบของการยกเลิก — ระบบไม่ถอย NextRunDate เอง · null = งวดยังไม่ถูกประทับ (ปล่อยกุญแจแล้วรอบออกงวดนั้นตามปกติ)
+    /// </summary>
+    public static string? VoidedRecurringPeriodNotice(string documentNumber, string recurringName, DateTime periodDate, DateTime nextRunDate)
+    {
+        if (ThaiDate.CalendarDateUtc(periodDate).Date >= ThaiDate.CalendarDateUtc(nextRunDate).Date) return null;
+        return $"ยกเลิกใบเสร็จ {documentNumber} ที่ปิด “{recurringName}” {PeriodText(periodDate)} — รอบอัตโนมัติผ่านงวดนั้นไปแล้ว จึงไม่มีใบของงวดนี้ · "
+               + "ออกใบของงวดนั้นเอง (หน้าเอกสาร หรือ “ออกใบเสร็จ (ไม่มีใบแจ้งหนี้)” โดยไม่เลือกรายการประจำ) — ระบบไม่ถอยงวดของรายการประจำให้เอง";
     }
 
     /// <summary>
