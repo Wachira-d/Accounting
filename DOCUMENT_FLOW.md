@@ -469,7 +469,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ค้นทะเบียน RD แยกสาขาทั้งแถว (#18 · §6.2i)
   - **ฝ่ายค้านรอบ 260-3 (`erp-review/2026-11-12/review-260-3.md` · คำตัดสิน 260-3-6…8)**: ทางเข้าเป็นเงื่อนไข SQL ตัวเดียว (`WhereSource`) ใช้ทั้งตัวนับ (`CountAsync` ต่อทางเข้า —
     ไม่โหลดใบทั้งหมด) และ `?source=` ที่กรองก่อน `Take` (ค่าไม่รู้จัก = 400) · รายการ ≤ 500 · หมายเหตุ "แสดงบางส่วน" ทุกทาง · ไม่นับใบขอซื้อ/ใบสั่งซื้อ (`InboxTypes`) ·
-    Last verified `commit <เติมในคอมมิตตามหลัง>`
+    Last verified `commit b951eadb`
   - **กล่องใบซื้อร่างรอตรวจ (รอบ 260-3 · คำตัดสิน 260-3-5)** — กล่องเดียวที่ `purchases.html` (`GET api/companies/{c}/purchase-inbox` → `Helpers/PurchaseDraftInbox.LoadAsync`):
     ใบฝั่งซื้อ (`DocumentPermissionHelper.PurchaseTypes`) สถานะร่าง ไม่ถูกลบ ชั้นความลับที่ผู้ดูเห็น · ทางเข้าจาก `Classify` ตัวเดียว (คู่ค้า `PartnerSourceLinkId` › LINE
     metadata สแกนมี `"sourceChannel":"line"`/`"lineUserId"` › ไฟล์ e-Tax XML `OcrEngine=EtaxXml` › สแกน OCR › สร้างเอง) · ตัวนับกับรายการมาจาก query เดียว (ผลรวม = แถว · ตัดรายการที่ limit
@@ -8917,4 +8917,4 @@ _Last verified against codebase: 2026-11-12 (รอบ 260-2 — §2.12g-259c: �
 _Last verified against codebase: 2026-11-12 (รอบ 260-3 — §3.4b เงินรอจัดสรรบนพอร์ทัล/อีเมลใบแจ้งยอด + กระดิ่งค้างนาน · §2.6b การ์ดความพร้อมรับเงิน · §OCR กล่องใบซื้อร่างกล่องเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 86193689)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-5 ทีมตัดสินใจ — §3.4b ใบกำกับ ณ วันรับเงินที่รับก่อนใบแจ้งหนี้ · §2.12g-258 ชุด 5 คืนค่าสแกน API v1 ที่ล้ม · 50 ทวิ ไม่หักโควตา — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ccbc0de2)_
 
-_Last verified against codebase: 2026-11-12 (รอบ 260-3 ฝ่ายค้าน — M1 ผลการส่งจริงก่อนประทับ · M2 นับ/กรองใน SQL · M3 กรองทางเข้าก่อนตัด · L1–L5 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-12 (รอบ 260-3 ฝ่ายค้าน — M1 ผลการส่งจริงก่อนประทับ · M2 นับ/กรองใน SQL · M3 กรองทางเข้าก่อนตัด · L1–L5 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b951eadb)_
