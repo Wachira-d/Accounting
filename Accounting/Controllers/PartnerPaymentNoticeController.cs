@@ -56,7 +56,8 @@ public class PartnerPaymentNoticeController : ControllerBase
         return Ok(new ApiResponse<List<PartnerPaymentNoticeDto>>(true, await _service.ListAsync(companyId, ct)));
     }
 
-    public record RecordNoticeRequest(Guid? BankAccountId, string? PaymentMethod);
+    /// <param name="PayFromCash">รอบ 264 P3 (C-01): ผู้กดเลือก "เงินสด" เอง — ไม่ส่งบัญชีและไม่เลือกเงินสด = 400 (ระบบไม่เดาบัญชีให้)</param>
+    public record RecordNoticeRequest(Guid? BankAccountId, string? PaymentMethod, bool? PayFromCash = null);
 
     /// <summary>"บันทึกจ่ายตามที่ผู้ขายรับแล้ว" — บันทึกจ่ายใบซื้อของเราเองผ่านเส้นเดิม (ยอด/ภาษีหักตามกติกาของเรา · บัญชี/วิธีจ่ายที่ผู้กดเลือก) · ไม่ผ่าน = 4xx ข้อความบอกทางไปต่อ</summary>
     [HttpPost("{noticeId:guid}/record")]
@@ -68,7 +69,7 @@ public class PartnerPaymentNoticeController : ControllerBase
         if (await DenyDocAsync(companyId, userId, noticeId, ct) is { } deny) return deny;
         try
         {
-            var r = await _service.RecordAsync(companyId, noticeId, userId, req?.BankAccountId, req?.PaymentMethod, ct);
+            var r = await _service.RecordAsync(companyId, noticeId, userId, req?.BankAccountId, req?.PaymentMethod, req?.PayFromCash == true, ct);
             return Ok(new ApiResponse<PartnerPaymentNoticeDto>(true, r, "บันทึกจ่ายใบซื้อแล้ว"));
         }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<PartnerPaymentNoticeDto>(false, null, ex.Message)); }

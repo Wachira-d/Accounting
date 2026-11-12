@@ -54,10 +54,24 @@ public class ReceiptLinkService : IReceiptLinkService
         => a != b && a != Guid.Empty && b != Guid.Empty
            && (await ContactTaxBranchKey.SameEntityIdsAsync(_db.Contacts.AsNoTracking(), companyId, a, ct)).Contains(b);
 
-    private Task<int> AllocationsAtReceiptAsync(Guid companyId, Guid? paymentId, CancellationToken ct)
-        => paymentId is Guid p
-            ? _db.PaymentAllocations.AsNoTracking().CountAsync(a => a.CompanyId == companyId && a.PaymentId == p && !a.IsLateAllocation, ct)
-            : Task.FromResult(0);
+    /// <summary>ของที่โหลดครั้งเดียวต่อคำขอแล้วใช้กับทุกแถว (ฝ่ายค้าน M6 — เดิมโหลดเงินรอจัดสรร/มัดจำทั้งบริษัทซ้ำต่อแถว)</summary>
+    private sealed class Preloaded
+    {
+        public Dictionary<Guid, CustomerCreditForDocumentResponse> CreditsByInvoice { get; } = new();
+        public Dictionary<Guid, ContactDepositSummary> DepositsByContact { get; } = new();
+        /// <summary>ใบเสร็จที่ออกจากเงินรอจัดสรร (รอบ 265 · ขาออก ToReceipt ที่ยังมีผล) — null = ยังไม่ได้โหลดเป็นชุด (ถามรายใบ)</summary>
+        public HashSet<Guid>? CreditReceiptIds { get; set; }
+    }
+
+    private static readonly string ToReceiptKind = nameof(PaymentCreditMovementKind.ToReceipt);
+
+    private async Task<HashSet<Guid>> CreditReceiptIdsAsync(Guid companyId, IReadOnlyCollection<Guid> receiptIds, CancellationToken ct)
+        => receiptIds.Count == 0
+            ? new HashSet<Guid>()
+            : (await _db.PaymentCreditMovements.AsNoTracking()
+                .Where(m => m.CompanyId == companyId && m.TargetDocumentId != null && receiptIds.Contains(m.TargetDocumentId.Value)
+                    && m.Kind == ToReceiptKind && m.ReleasedAt == null)
+                .Select(m => m.TargetDocumentId!.Value).ToListAsync(ct)).ToHashSet();
 
     private async Task<Document> LoadDocAsync(Guid companyId, Guid id, HashSet<SensitivityKind>? kinds, string what, CancellationToken ct)
     {
@@ -70,14 +84,30 @@ public class ReceiptLinkService : IReceiptLinkService
 
     /// <summary>ตัดสินคู่ (ใบเสร็จ/เงิน, ใบแจ้งหนี้) จากข้อเท็จจริงในฐาน — ตัวเดียวที่ผู้สมัคร · พรีวิว · ผูก ใช้</summary>
     private async Task<Evaluation> EvaluateAsync(Guid companyId, Document inv, Document? receipt, Payment? bareCredit, decimal? requestedAmount,
-        CancellationToken ct)
+        CancellationToken ct, Preloaded? pre = null, bool withDetail = false)
     {
+        pre ??= new Preloaded();
         var invFacts = ReceiptLinkFacts.Invoice(inv);
         ReceiptLinkSourceFacts src;
         Guid? paymentId = null;
         if (receipt != null)
         {
-            src = ReceiptLinkFacts.Source(receipt, await AllocationsAtReceiptAsync(companyId, receipt.SettlementPaymentId, ct));
+            src = ReceiptLinkFacts.Source(receipt);
+            // ฝ่ายค้าน L1: ใบเสร็จขายสดที่ออกจากเงินรอจัดสรร (รอบ 265) — ทางไปต่อคนละแบบ
+            if (ReceiptLinkPolicy.Classify(src) == ReceiptLinkKind.StandaloneSale && ReceiptLinkPolicy.IsReceiptType(receipt.DocumentType))
+            {
+                var fromCredit = pre.CreditReceiptIds != null
+                    ? pre.CreditReceiptIds.Contains(receipt.Id)
+                    : (await CreditReceiptIdsAsync(companyId, new[] { receipt.Id }, ct)).Contains(receipt.Id);
+                if (fromCredit) src = src with { FromUnallocatedCredit = true };
+            }
+            // ฝ่ายค้าน L6: พรีวิวบอกเลขใบต้นทางเดิมที่ใบร่างจะเลิกอ้าง
+            if (withDetail && receipt.RelatedDocumentId is Guid prevId && prevId != inv.Id)
+                src = src with
+                {
+                    PreviousSourceNumber = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                        .Where(d => d.Id == prevId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct),
+                };
             paymentId = receipt.SettlementPaymentId;
         }
         else
@@ -95,18 +125,15 @@ public class ReceiptLinkService : IReceiptLinkService
         Guid? depositId = null;
         switch (kind)
         {
-            case ReceiptLinkKind.CreditReceipt:
             case ReceiptLinkKind.UnappliedCredit:
             {
-                // ด่านของเส้นจัดสรรเดิม (CustomerCreditAllocation.Check ผ่าน ForDocumentAsync) — ไม่เขียนสำเนา
-                var forDoc = await _credits.ForDocumentAsync(companyId, inv.Id, ct);
+                // ด่านของเส้นจัดสรรเดิม (CustomerCreditAllocation.Check ผ่าน ForDocumentAsync) — ไม่เขียนสำเนา · โหลดครั้งเดียวต่อใบแจ้งหนี้ (M6)
+                if (!pre.CreditsByInvoice.TryGetValue(inv.Id, out var forDoc))
+                    pre.CreditsByInvoice[inv.Id] = forDoc = await _credits.ForDocumentAsync(companyId, inv.Id, ct);
                 var row = forDoc.Credits.FirstOrDefault(c => c.PaymentId == paymentId);
-                var pay = await _db.Payments.AsNoTracking()
-                    .Where(p => p.Id == paymentId && p.CompanyId == companyId && !p.IsDeleted)
-                    .Select(p => new { p.UnappliedAmount, p.PaymentNumber }).FirstOrDefaultAsync(ct);
-                available = row?.UnappliedAmount ?? pay?.UnappliedAmount ?? 0m;
+                available = row?.UnappliedAmount ?? bareCredit!.UnappliedAmount;
                 creditRefusal = row?.BlockedReason
-                    ?? (row == null ? $"เงินรอจัดสรรของ {pay?.PaymentNumber ?? src.Number} ใช้กับใบ {inv.DocumentNumber} ไม่ได้ (ไม่มีคงเหลือ · เป็นรายการที่ต้องตรวจ หรือใบนี้รับการจัดสรรไม่ได้)" : null);
+                    ?? (row == null ? $"เงินรอจัดสรรของ {src.Number} ใช้กับใบ {inv.DocumentNumber} ไม่ได้ (ไม่มีคงเหลือ · เป็นรายการที่ต้องตรวจ หรือใบนี้รับการจัดสรรไม่ได้)" : null);
                 var suggested = row != null && row.Usable > 0m ? row.Usable : Math.Min(available.Value, Math.Max(0m, inv.BalanceDue));
                 amount = requestedAmount ?? suggested;
                 break;
@@ -114,7 +141,8 @@ public class ReceiptLinkService : IReceiptLinkService
             case ReceiptLinkKind.DepositReceipt:
             {
                 depositId = receipt!.Id;
-                var summary = await _documents.GetContactDepositSummaryAsync(companyId, receipt.ContactId);
+                if (!pre.DepositsByContact.TryGetValue(receipt.ContactId, out var summary))
+                    pre.DepositsByContact[receipt.ContactId] = summary = await _documents.GetContactDepositSummaryAsync(companyId, receipt.ContactId);
                 var dep = summary.Deposits.FirstOrDefault(x => x.Id == receipt.Id);
                 available = dep == null ? 0m : ReceiptLinkPolicy.DepositGrossOutstanding(dep.BaseAmount, dep.TotalAmount, dep.OutstandingAmount);
                 if (DepositPolicyResolver.GrossApplyBlocked(receipt.VatAmount,
@@ -135,7 +163,7 @@ public class ReceiptLinkService : IReceiptLinkService
     }
 
     private static ReceiptLinkCandidate ToCandidate(Evaluation e, string number, DateTime date, string label) => new(
-        e.Invoice.Id, e.Invoice.Number, e.ReceiptDocumentId, (e.Verdict.Kind is ReceiptLinkKind.CreditReceipt or ReceiptLinkKind.UnappliedCredit) ? e.PaymentId : null,
+        e.Invoice.Id, e.Invoice.Number, e.ReceiptDocumentId, e.Verdict.Kind == ReceiptLinkKind.UnappliedCredit ? e.PaymentId : null,
         number, date, e.Verdict.Kind.ToString(), e.Verdict.Route?.ToString(), e.Available ?? e.Source.TotalAmount, e.Amount,
         AmountEditable: e.Verdict.Route is ReceiptLinkRoute.AllocateCredit or ReceiptLinkRoute.ApplyDeposit,
         e.Verdict.Allowed, e.Verdict.Allowed ? null : e.Verdict.RuleCode, e.Verdict.Message, e.Verdict.WayForward, label);
@@ -143,29 +171,43 @@ public class ReceiptLinkService : IReceiptLinkService
     private static string KindLabel(ReceiptLinkKind k) => k switch
     {
         ReceiptLinkKind.DraftReceipt => "ใบเสร็จร่าง",
-        ReceiptLinkKind.CreditReceipt => "ใบเสร็จของเงินรอจัดสรร",
+        ReceiptLinkKind.PendingApprovalReceipt => "ใบเสร็จรออนุมัติ",
         ReceiptLinkKind.UnappliedCredit => "เงินรอจัดสรร",
         ReceiptLinkKind.DepositReceipt => "ใบมัดจำ",
         ReceiptLinkKind.SettlementOfOther => "ใบเสร็จของการรับชำระใบอื่น",
         ReceiptLinkKind.ManualSettlementOfOther => "ใบเสร็จที่รับชำระใบอื่น",
         ReceiptLinkKind.StandaloneSale => "ใบขายสด",
-        ReceiptLinkKind.CombinedReceipt => "ใบเสร็จรวม",
         _ => "เอกสาร",
     };
 
     private static string Money(decimal v) => v.ToString("#,##0.00", System.Globalization.CultureInfo.InvariantCulture);
+
+    private const string NoContactNotice = "ใบนี้ไม่ระบุผู้ติดต่อ (ลูกค้าทั่วไป) — ระบบไม่รู้ว่าใบไหนเป็นของเจ้าเดียวกัน จึงไม่เสนอรายการให้ผูก";
+    private const string NoContactWayForward = "ระบุผู้ติดต่อของใบร่างก่อน · ใบที่ออกเลขแล้วให้บันทึกรับชำระที่ใบแจ้งหนี้ตามปกติ";
 
     public async Task<ReceiptLinkCandidatesResponse> CandidatesAsync(Guid companyId, Guid fromDocumentId, Guid userId, CancellationToken ct = default)
     {
         var kinds = await VisibleKindsAsync(companyId, userId);
         var origin = await LoadDocAsync(companyId, fromDocumentId, kinds, "เอกสาร", ct);
         var items = new List<ReceiptLinkCandidate>();
+        var pre = new Preloaded();
+        var isTarget = ReceiptLinkPolicy.TargetTypes.Contains(origin.DocumentType) && !(origin.DocumentType == DocumentType.TaxInvoice && origin.IssuedAsCashReceipt);
+        var originKind = isTarget ? ReceiptLinkKind.NotLinkable : ReceiptLinkPolicy.Classify(ReceiptLinkFacts.Source(origin));
+        // ฝ่ายค้าน L7: ใบที่ไม่ใช่ทั้งใบตั้งลูกหนี้ฝั่งขายและใบรับเงิน (เช่น ใบฝั่งซื้อ) = ไม่พบ — ไม่คืนเลขที่เอกสารของชนิดที่ด่าน "เห็นฝั่งขาย" ไม่ครอบ
+        if (!isTarget && originKind == ReceiptLinkKind.NotLinkable && !ReceiptLinkPolicy.IsReceiptType(origin.DocumentType)
+            && !(origin.DocumentType == DocumentType.TaxInvoice && origin.IssuedAsCashReceipt))
+            throw new KeyNotFoundException("ไม่พบเอกสาร");
+        // ฝ่ายค้าน L3: ลูกค้าทั่วไป (ไม่ระบุผู้ติดต่อ) — ไม่เสนอใบของ "ลูกค้าทั่วไปทุกราย"
+        if (origin.ContactId == Guid.Empty)
+            return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, isTarget ? "invoice" : "receipt",
+                isTarget ? null : originKind.ToString(), NoContactNotice, NoContactWayForward, false, items);
 
         // ── เปิดจากใบแจ้งหนี้ ──
-        if (ReceiptLinkPolicy.TargetTypes.Contains(origin.DocumentType))
+        if (isTarget)
         {
             if (!ReceiptLinkPolicy.OpenStatuses.Contains(origin.Status) || origin.BalanceDue <= Tol)
-                return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "invoice", null, null, null, false, items);
+                return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "invoice", null,
+                    $"ใบ {origin.DocumentNumber} ยังไม่อนุมัติ หรือไม่มียอดค้างแล้ว — ไม่มีลูกหนี้ให้ผูก", "อนุมัติใบก่อน หรือเปิดใบที่ยังค้างชำระ", false, items);
 
             // ใบเสร็จร่างที่สร้างเองของผู้ติดต่อเดียวกัน
             var drafts = await _db.Documents.AsNoTracking()
@@ -175,61 +217,54 @@ public class ReceiptLinkService : IReceiptLinkService
                     && !d.IsSettlementReceipt && d.SettlementPaymentId == null && !d.IsDeposit
                     && (d.RelatedDocumentId == null || d.RelatedDocumentId != origin.Id))
                 .OrderByDescending(d => d.DocumentDate).Take(CandidateCap).ToListAsync(ct);
-            // เงินรอจัดสรรของลูกค้า (ตัวอ่านเดิมของปุ่ม "ใช้เงินรอจัดสรร")
-            var forDoc = await _credits.ForDocumentAsync(companyId, origin.Id, ct);
+            // เงินรอจัดสรรของลูกค้า (ตัวอ่านเดิมของปุ่ม "ใช้เงินรอจัดสรร") — โหลดครั้งเดียว
+            var forDoc = pre.CreditsByInvoice[origin.Id] = await _credits.ForDocumentAsync(companyId, origin.Id, ct);
             var creditIds = forDoc.Credits.Select(c => c.PaymentId).ToList();
             var creditPayments = await _db.Payments.AsNoTracking()
                 .Where(p => p.CompanyId == companyId && creditIds.Contains(p.Id) && !p.IsDeleted).ToListAsync(ct);
-            // ใบเสร็จของเงินรอจัดสรร (รอบ 265: SettlementPaymentId + ไม่อ้างใบแจ้งหนี้) — ถ้ามี แสดงเป็นใบเสร็จแทนแถวเงินเปล่า
-            var creditReceipts = await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.SettlementPaymentId != null && creditIds.Contains(d.SettlementPaymentId.Value)
-                    && d.RelatedDocumentId == null && d.Status != DocumentStatus.Voided && d.ReplacedByDocumentId == null)
-                .ToListAsync(ct);
-            // ใบมัดจำคงเหลือของลูกค้า (ตัวอ่านเดิมของแบนเนอร์หักมัดจำ)
-            var depSummary = await _documents.GetContactDepositSummaryAsync(companyId, origin.ContactId);
+            // ใบมัดจำคงเหลือของลูกค้า (ตัวอ่านเดิมของแบนเนอร์หักมัดจำ) — โหลดครั้งเดียว
+            var depSummary = pre.DepositsByContact[origin.ContactId] = await _documents.GetContactDepositSummaryAsync(companyId, origin.ContactId);
             var depIds = depSummary.Deposits.Select(x => x.Id).ToList();
             var deposits = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && depIds.Contains(d.Id) && !d.IsDeleted).ToListAsync(ct);
-            // ใบเสร็จอื่นที่ออกเลขแล้ว (ของการรับชำระใบอื่น/ขายสด) — แสดงพร้อมเหตุที่ผูกไม่ได้ + ทางไปต่อ (ไม่ใช่ซ่อนเงียบ · §4.4)
+            // ใบเสร็จอื่นที่ออกเลขแล้ว (ของการรับชำระใบอื่น/ขายสด/รออนุมัติ) — แสดงพร้อมเหตุที่ผูกไม่ได้ + ทางไปต่อ (ไม่ใช่ซ่อนเงียบ · §4.4)
             var issued = await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.ContactId == origin.ContactId && d.Id != origin.Id
                     && (((d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher) && !d.IsDeposit)
                         || (d.DocumentType == DocumentType.TaxInvoice && d.IssuedAsCashReceipt))
-                    && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent || d.Status == DocumentStatus.Paid)
-                    && (d.RelatedDocumentId == null || d.RelatedDocumentId != origin.Id)
-                    && !(d.SettlementPaymentId != null && creditIds.Contains(d.SettlementPaymentId.Value)))
+                    && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent || d.Status == DocumentStatus.Paid
+                        || d.Status == DocumentStatus.WaitingApproval)
+                    && (d.RelatedDocumentId == null || d.RelatedDocumentId != origin.Id))
                 .OrderByDescending(d => d.DocumentDate).Take(10).ToListAsync(ct);
+            pre.CreditReceiptIds = await CreditReceiptIdsAsync(companyId, issued.Select(d => d.Id).ToList(), ct);
 
             foreach (var r in drafts.Where(d => Visible(kinds, d.Sensitivity)))
-                items.Add(ToCandidate(await EvaluateAsync(companyId, origin, r, null, null, ct), r.DocumentNumber, r.DocumentDate,
+                items.Add(ToCandidate(await EvaluateAsync(companyId, origin, r, null, null, ct, pre), r.DocumentNumber, r.DocumentDate,
                     $"{KindLabel(ReceiptLinkKind.DraftReceipt)} {r.DocumentNumber} · {Money(r.TotalAmount)}"));
             foreach (var p in creditPayments)
             {
-                var rc = creditReceipts.FirstOrDefault(d => d.SettlementPaymentId == p.Id);
-                if (rc != null && !Visible(kinds, rc.Sensitivity)) continue;
-                var e = await EvaluateAsync(companyId, origin, rc, rc == null ? p : null, null, ct);
-                items.Add(ToCandidate(e, rc?.DocumentNumber ?? p.PaymentNumber, rc?.DocumentDate ?? p.PaymentDate,
-                    $"{KindLabel(e.Verdict.Kind)} {rc?.DocumentNumber ?? p.PaymentNumber} · คงเหลือ {Money(e.Available ?? 0m)}"));
+                var e = await EvaluateAsync(companyId, origin, null, p, null, ct, pre);
+                items.Add(ToCandidate(e, p.PaymentNumber, p.PaymentDate, $"{KindLabel(e.Verdict.Kind)} {p.PaymentNumber} · คงเหลือ {Money(e.Available ?? 0m)}"));
             }
             foreach (var d in deposits.Where(d => Visible(kinds, d.Sensitivity)))
             {
-                var e = await EvaluateAsync(companyId, origin, d, null, null, ct);
+                var e = await EvaluateAsync(companyId, origin, d, null, null, ct, pre);
                 items.Add(ToCandidate(e, d.DocumentNumber, d.DocumentDate, $"{KindLabel(ReceiptLinkKind.DepositReceipt)} {d.DocumentNumber} · คงเหลือ {Money(e.Available ?? 0m)} (รวม VAT)"));
             }
             foreach (var d in issued.Where(d => Visible(kinds, d.Sensitivity)))
             {
-                var e = await EvaluateAsync(companyId, origin, d, null, null, ct);
+                var e = await EvaluateAsync(companyId, origin, d, null, null, ct, pre);
                 items.Add(ToCandidate(e, d.DocumentNumber, d.DocumentDate, $"{KindLabel(e.Verdict.Kind)} {d.DocumentNumber} · {Money(d.TotalAmount)}"));
             }
-            return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "invoice", null, null, null, items.Count > 0, items);
+            // ฝ่ายค้าน M6: ปุ่ม/หน้าต่างมีความหมายเมื่อมีแถวที่ผูกได้ — ไม่มี = ประกาศเดียว (รายการที่ผูกไม่ได้ยังแนบไปพร้อมเหตุผล)
+            var anyAllowed = items.Any(x => x.Allowed);
+            return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "invoice", null,
+                anyAllowed ? null : "ไม่มีใบเสร็จร่าง · เงินรอจัดสรร · ใบมัดจำ ของผู้ติดต่อรายนี้ที่ผูกกับใบนี้ได้",
+                anyAllowed ? null : "รับเงินใหม่ให้กด \"💰 บันทึกชำระเงิน\" ที่ใบนี้", anyAllowed, items);
         }
 
         // ── เปิดจากใบเสร็จ ──
-        var fromFacts = ReceiptLinkFacts.Source(origin, await AllocationsAtReceiptAsync(companyId, origin.SettlementPaymentId, ct));
-        var kind = ReceiptLinkPolicy.Classify(fromFacts);
-        var canUndo = kind == ReceiptLinkKind.DraftReceipt && origin.RelatedDocumentId.HasValue;
-        if (kind == ReceiptLinkKind.NotLinkable)
-            return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, null, kind.ToString(), null, null, false, items);
+        var canUndo = originKind == ReceiptLinkKind.DraftReceipt && origin.RelatedDocumentId.HasValue;
         var targetTypes = ReceiptLinkPolicy.TargetTypes.ToArray();
         var openStatuses = ReceiptLinkPolicy.OpenStatuses.ToArray();
         var open = await _db.Documents.AsNoTracking()
@@ -239,21 +274,23 @@ public class ReceiptLinkService : IReceiptLinkService
             .OrderBy(d => d.DocumentDate).Take(CandidateCap).ToListAsync(ct);
         open = open.Where(d => Visible(kinds, d.Sensitivity)).ToList();
         if (open.Count == 0)
-            return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "receipt", kind.ToString(), null, null, canUndo, items, canUndo);
-        if (kind is ReceiptLinkKind.DraftReceipt or ReceiptLinkKind.CreditReceipt or ReceiptLinkKind.DepositReceipt)
+            return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "receipt", originKind.ToString(),
+                "ผู้ติดต่อรายนี้ไม่มีใบแจ้งหนี้/ใบกำกับที่ค้างชำระให้ผูก", null, false, items, canUndo);
+        if (originKind is ReceiptLinkKind.DraftReceipt or ReceiptLinkKind.DepositReceipt)
         {
             foreach (var inv in open)
             {
-                var e = await EvaluateAsync(companyId, inv, origin, null, null, ct);
+                var e = await EvaluateAsync(companyId, inv, origin, null, null, ct, pre);
                 items.Add(ToCandidate(e, inv.DocumentNumber, inv.DocumentDate,
                     $"{DocumentTypeNames.Title(inv.DocumentType, null)} {inv.DocumentNumber} · ค้าง {Money(inv.BalanceDue)}"));
             }
-            return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "receipt", kind.ToString(), null, null, true, items, canUndo);
+            return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "receipt", originKind.ToString(), null, null,
+                items.Any(x => x.Allowed), items, canUndo);
         }
-        // ชนิดที่ผูกไม่ได้ในแพ็ก A (ของการชำระใบอื่น · ขายสด · ใบรวม) — บอกเหตุผล + ทางไปต่อระดับใบ (ไม่ซ่อนเงียบเมื่อมีใบค้างที่อาจซ้ำ)
-        var sample = await EvaluateAsync(companyId, open[0], origin, null, null, ct);
-        return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "receipt", kind.ToString(),
-            sample.Verdict.Message, sample.Verdict.WayForward, true, items);
+        // ชนิดที่ผูกไม่ได้ในแพ็ก A (ของการชำระใบอื่น · ขายสด · รออนุมัติ) — บอกเหตุผล + ทางไปต่อระดับใบ
+        var sample = await EvaluateAsync(companyId, open[0], origin, null, null, ct, pre);
+        return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "receipt", originKind.ToString(),
+            sample.Verdict.Message, sample.Verdict.WayForward, false, items);
     }
 
     private async Task<Evaluation> EvaluateRequestAsync(Guid companyId, ReceiptLinkRequest request, Guid userId, CancellationToken ct)
@@ -262,7 +299,7 @@ public class ReceiptLinkService : IReceiptLinkService
         var kinds = await VisibleKindsAsync(companyId, userId);
         var inv = await LoadDocAsync(companyId, request.InvoiceId, kinds, "ใบแจ้งหนี้", ct);
         if (request.ReceiptDocumentId is Guid rid)
-            return await EvaluateAsync(companyId, inv, await LoadDocAsync(companyId, rid, kinds, "ใบเสร็จ", ct), null, request.Amount, ct);
+            return await EvaluateAsync(companyId, inv, await LoadDocAsync(companyId, rid, kinds, "ใบเสร็จ", ct), null, request.Amount, ct, withDetail: true);
         if (request.PaymentId is Guid pid)
         {
             var pay = await _db.Payments.AsNoTracking().FirstOrDefaultAsync(p => p.Id == pid && p.CompanyId == companyId && !p.IsDeleted, ct)
@@ -323,6 +360,26 @@ public class ReceiptLinkService : IReceiptLinkService
             }),
         });
 
+    /// <summary>ฝ่ายค้าน L5: เส้นเงินเดิม commit ธุรกรรมของตัวเองไปแล้ว (มีแถว audit ของเส้นเดิมเอง) — แถว <c>DOC-RCPT-LINK</c> เพิ่มทีหลัง ·
+    /// บันทึกแถวนี้ไม่สำเร็จ ⇒ **ไม่** คืนข้อผิดพลาดของการกระทำที่สำเร็จแล้ว (ผู้ใช้ลองใหม่จะเจอ RL-STALE) — คืนผลสำเร็จพร้อมข้อความดัง</summary>
+    private async Task<string?> SaveLinkAuditAsync(Guid companyId, string action, Evaluation e, string actor, object? extra, CancellationToken ct)
+    {
+        try
+        {
+            AuditLink(companyId, action, e, actor, extra);
+            await _db.SaveChangesAsync(ct);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _db.ChangeTracker.Clear();
+            return $"การผูกสำเร็จและลงบัญชีแล้ว แต่บันทึกร่องรอย {ReceiptLinkPolicy.RuleCode} ไม่สำเร็จ ({ex.GetType().Name}) — ร่องรอยของการจัดสรร/หักมัดจำเดิมยังอยู่ครบ · แจ้งผู้ดูแลระบบ";
+        }
+    }
+
+    private static IReadOnlyList<string> WithNote(IReadOnlyList<string> notices, string? note)
+        => note == null ? notices : notices.Append(note).ToList();
+
     public async Task<ReceiptLinkResult> LinkAsync(Guid companyId, ReceiptLinkRequest request, Guid userId, CancellationToken ct = default)
     {
         var actor = userId.ToString();
@@ -362,19 +419,19 @@ public class ReceiptLinkService : IReceiptLinkService
                 var allocationId = await _db.PaymentAllocations.AsNoTracking()
                     .Where(a => a.CompanyId == companyId && a.PaymentId == r.PaymentId && a.DocumentId == r.DocumentId && a.IsLateAllocation)
                     .OrderByDescending(a => a.CreatedAt).Select(a => (Guid?)a.Id).FirstOrDefaultAsync(ct);
-                AuditLink(companyId, "AllocateCreditViaReceiptLink", e, actor, new { r.PaymentNumber, allocationId, r.RemainingUnapplied });
-                await _db.SaveChangesAsync(ct);
+                var auditNote = await SaveLinkAuditAsync(companyId, "AllocateCreditViaReceiptLink", e, actor,
+                    new { r.PaymentNumber, allocationId, r.RemainingUnapplied }, ct);
                 return new ReceiptLinkResult(ReceiptLinkRoute.AllocateCredit.ToString(), r.DocumentId, r.DocumentNumber, r.DocumentBalanceDue,
-                    r.DocumentStatus.ToString(), e.ReceiptDocumentId, r.PaymentId, allocationId, r.Notices);
+                    r.DocumentStatus.ToString(), e.ReceiptDocumentId, r.PaymentId, allocationId, WithNote(r.Notices, auditNote));
             }
             case ReceiptLinkRoute.ApplyDeposit:
             {
                 var res = await _documents.ApplyDepositToInvoiceAsync(companyId, e.Invoice.Id,
-                    new ApplyDepositRequest(e.DepositDocumentId!.Value, e.Amount, request.ApplyDate), actor);
-                AuditLink(companyId, "ApplyDepositViaReceiptLink", e, actor, new { deposit = e.DepositDocumentId });
-                await _db.SaveChangesAsync(ct);
+                    // ฝ่ายค้าน M3: ยอดค้างที่พรีวิวเห็นถูกตรวจใต้ล็อกของเส้นเดิม — กดซ้ำ/สองแท็บ = ครั้งที่สอง 409 ไม่หักซ้ำ (เส้นนี้ไม่มีปุ่มถอด)
+                    new ApplyDepositRequest(e.DepositDocumentId!.Value, e.Amount, request.ApplyDate, ExpectedInvoiceBalanceDue: e.Invoice.BalanceDue), actor);
+                var auditNote = await SaveLinkAuditAsync(companyId, "ApplyDepositViaReceiptLink", e, actor, new { deposit = e.DepositDocumentId }, ct);
                 return new ReceiptLinkResult(ReceiptLinkRoute.ApplyDeposit.ToString(), res.Id, res.DocumentNumber, res.BalanceDue,
-                    res.Status.ToString(), e.DepositDocumentId, null, null, Array.Empty<string>());
+                    res.Status.ToString(), e.DepositDocumentId, null, null, WithNote(Array.Empty<string>(), auditNote));
             }
             default:
                 throw Refused(e.Verdict);

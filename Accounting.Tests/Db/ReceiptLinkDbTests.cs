@@ -471,4 +471,194 @@ public class ReceiptLinkDbTests
         var c = await Links(req).CandidatesAsync(a.CompanyId, invA.Id, User);
         Assert.DoesNotContain(c.Items, x => x.ReceiptDocumentId == rcB.Id);
     }
+
+    // ───────── ชุดแก้ฝ่ายค้าน (erp-review/2026-11-12/review-266-A.md · คำตัดสิน 266-1-15…22) ─────────
+
+    [Fact]
+    public async Task H1_แก้ใบเสร็จร่างที่แปลงมาโดยไม่ส่งใบต้นทาง_ใบต้นทางคงเดิม_ส่งGuidEmptyจึงล้าง_และauditมีผู้กระทำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var inv = await InvoiceAsync(db, s, s.CustomerId, 900m);
+        var rc = await ReceiptAsync(db, s, s.CustomerId, 900m, DocumentStatus.Draft, relatedTo: inv.Id);   // ใบร่างที่แปลงจากใบแจ้งหนี้
+        var actor = Guid.NewGuid();
+        // ฟอร์มที่ยังไม่ hydrate / ผู้ใช้ไม่แตะช่อง ⇒ ไม่ส่งคีย์ (null) ⇒ ใบต้นทางต้องคงเดิม (H1: เดิมฟอร์มส่ง Guid.Empty = ถอดเงียบ)
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Docs(req).UpdateDocumentAsync(s.CompanyId, rc.Id, new UpdateDocumentRequest(null, null, null, null, "แก้หมายเหตุ", null), actor.ToString());
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(inv.Id, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == rc.Id)).RelatedDocumentId);
+            Assert.Equal(0, await LinkAuditCountAsync(check, s.CompanyId));
+        }
+        // ส่งค่าเดิม = ไม่ใช่การเปลี่ยน (ไม่มี audit) · ทิศตรงข้าม: ผู้ใช้เลือก "ใบเสร็จอิสระ" เอง (Guid.Empty) = ล้างจริง + audit มีผู้กระทำ (M5)
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Docs(req).UpdateDocumentAsync(s.CompanyId, rc.Id, new UpdateDocumentRequest(null, null, null, null, null, null, RelatedDocumentId: inv.Id), actor.ToString());
+        using (var check = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(0, await LinkAuditCountAsync(check, s.CompanyId));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Docs(req).UpdateDocumentAsync(s.CompanyId, rc.Id, new UpdateDocumentRequest(null, null, null, null, null, null, RelatedDocumentId: Guid.Empty), actor.ToString());
+        using var after = DbTestDatabase.TryCreateContext()!;
+        Assert.Null((await after.Documents.AsNoTracking().SingleAsync(d => d.Id == rc.Id)).RelatedDocumentId);
+        var audit = await after.AuditLogs.AsNoTracking().SingleAsync(a => a.CompanyId == s.CompanyId && a.NewValues != null
+            && a.NewValues.Contains("ClearDraftReceiptSource"));
+        Assert.Equal(actor, audit.UserId);
+        Assert.Contains(actor.ToString(), audit.NewValues, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task M2_อนุมัติใบเสร็จร่างหลังใบต้นทางถูกยกเลิก_หรือถูกแก้ยอดเป็นบางส่วนของใบแจ้งหนี้Vat_ปฏิเสธ_ทิศตรงข้ามใบที่อ้างใบเสนอราคาแก้ไขได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        // (ก) ผูกแล้วใบแจ้งหนี้ถูกยกเลิกก่อนอนุมัติ
+        var inv = await InvoiceAsync(db, s, s.CustomerId, 700m);
+        var rc = await ReceiptAsync(db, s, s.CustomerId, 700m, DocumentStatus.Draft, relatedTo: inv.Id);
+        await db.Documents.Where(d => d.Id == inv.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.Status, DocumentStatus.Voided));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Docs(req).ApproveDocumentAsync(s.CompanyId, rc.Id, "tester", acknowledgeWarnings: true));
+            Assert.Equal(ReceiptLinkPolicy.VoidedCode, ex.RuleCode);
+        }
+        // (ข) ใบแจ้งหนี้มี VAT 1,070 · ใบเสร็จร่างถูกแก้ยอดลงเหลือ 500 หลังผูก ⇒ อนุมัติ = RL-PARTIAL-VAT
+        var vatInv = await InvoiceAsync(db, s, s.CustomerId, 1_070m);
+        await db.Documents.Where(d => d.Id == vatInv.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.SubTotal, 1_000m).SetProperty(d => d.VatAmount, 70m));
+        var partial = await ReceiptAsync(db, s, s.CustomerId, 500m, DocumentStatus.Draft, relatedTo: vatInv.Id);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Docs(req).ApproveDocumentAsync(s.CompanyId, partial.Id, "tester", acknowledgeWarnings: true));
+            Assert.Equal(ReceiptLinkPolicy.PartialVatCode, ex.RuleCode);
+        }
+        // (ค) API สร้างใบเสร็จอ้างใบแจ้งหนี้ร่างของผู้ติดต่อเดียวกัน = ปฏิเสธเหมือนปุ่มผูก
+        var draftInv = await InvoiceAsync(db, s, s.CustomerId, 300m);
+        await db.Documents.Where(d => d.Id == draftInv.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.Status, DocumentStatus.Draft));
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Docs(req).CreateDocumentAsync(s.CompanyId, new CreateDocumentRequest(
+                DocumentType: DocumentType.Receipt, DocumentDate: Today, DueDate: null, ContactId: s.CustomerId, Reference: null, Notes: null,
+                Lines: new List<DocumentLineRequest> { new("รับชำระ", 1m, "รายการ", 300m, 0m, 0m, 0m, s.RevenueId) },
+                RelatedDocumentId: draftInv.Id), "tester"));
+            Assert.Equal(ReceiptLinkPolicy.DraftTargetCode, ex.RuleCode);
+        }
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(DocumentStatus.Draft, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == rc.Id)).Status);
+            Assert.Equal(DocumentStatus.Draft, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == partial.Id)).Status);
+            Assert.Equal(1_070m, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == vatInv.Id)).BalanceDue);
+        }
+        // ทิศตรงข้าม: ใบเสร็จร่างที่แปลงจากใบเสนอราคา (ใบต้นทางไม่ใช่ใบตั้งลูกหนี้ · สถานะใดก็ได้) ไม่ถูกด่านนี้แตะ — แก้ไขได้ตามเดิม
+        var qt = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.CustomerId, DocumentType = DocumentType.Quotation, DocumentNumber = "QT-RL-" + Guid.NewGuid().ToString("N")[..6],
+            Status = DocumentStatus.Draft, DocumentDate = Today, SubTotal = 400m, TotalAmount = 400m, Currency = "THB", ExchangeRate = 1m,
+        };
+        db.Documents.Add(qt);
+        await db.SaveChangesAsync();
+        var fromQt = await ReceiptAsync(db, s, s.CustomerId, 400m, DocumentStatus.Draft, relatedTo: qt.Id);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Docs(req).UpdateDocumentAsync(s.CompanyId, fromQt.Id, new UpdateDocumentRequest(null, null, null, null, "แก้ได้", null));
+        using var last = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(qt.Id, (await last.Documents.AsNoTracking().SingleAsync(d => d.Id == fromQt.Id)).RelatedDocumentId);
+    }
+
+    [Fact]
+    public async Task M3_หักมัดจำกดซ้ำด้วยพรีวิวเดิม_ครั้งที่สองถูกปฏิเสธใต้ล็อก_หักครั้งเดียว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        var dep = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.CustomerId, DocumentType = DocumentType.Receipt, IsDeposit = true,
+            DocumentNumber = "DEP-RL-" + Guid.NewGuid().ToString("N")[..6], Status = DocumentStatus.Paid, DocumentDate = Today.AddDays(-3),
+            SubTotal = 1_000m, TotalAmount = 1_000m, PaidAmount = 1_000m, Currency = "THB", ExchangeRate = 1m, DepositDeferredAccountCode = "21712",
+        };
+        dep.Lines.Add(new DocumentLine { LineOrder = 1, Description = "มัดจำ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m });
+        db.Documents.Add(dep);
+        await db.SaveChangesAsync();
+        var depJe = new JournalEntry
+        {
+            CompanyId = s.CompanyId, EntryNumber = "RV-" + dep.DocumentNumber, EntryDate = dep.DocumentDate, Status = JournalEntryStatus.Posted,
+            Description = "มัดจำ", TotalDebit = 1_000m, TotalCredit = 1_000m, SourceDocumentId = dep.Id, IsAutoGenerated = true, CreatedBy = "tester",
+        };
+        depJe.Lines.Add(new JournalEntryLine { AccountId = s.CashId, DebitAmount = 1_000m, LineOrder = 1 });
+        depJe.Lines.Add(new JournalEntryLine { AccountId = s.AdvanceId, CreditAmount = 1_000m, LineOrder = 2 });
+        db.JournalEntries.Add(depJe);
+        await db.SaveChangesAsync();
+        var inv = await InvoiceAsync(db, s, s.CustomerId, 1_000m);
+        var request = new ReceiptLinkRequest(inv.Id, dep.Id, null, 300m);
+        ReceiptLinkPreviewResponse p;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            p = await Links(req).PreviewAsync(s.CompanyId, request, User);
+        Assert.True(p.Allowed, p.Message);
+        var confirmed = request with { Amount = p.Amount, PreviewToken = p.PreviewToken };
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Links(req).LinkAsync(s.CompanyId, confirmed, User);
+        // แท็บที่สองยืนยันพรีวิวเดิม (มัดจำยังเหลือ 700 ≥ 300 — เดิมหักซ้ำได้): บริการผูกปฏิเสธด้วยกุญแจเก่า · และเส้นเดิมเองปฏิเสธใต้ล็อกเมื่อยอดค้างที่คาดไว้ไม่ตรง
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var stale = await Assert.ThrowsAsync<BusinessRuleException>(() => Links(req).LinkAsync(s.CompanyId, confirmed, User));
+            Assert.Equal(ReceiptLinkPolicy.StaleCode, stale.RuleCode);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var underLock = await Assert.ThrowsAsync<BusinessRuleException>(() => Docs(req).ApplyDepositToInvoiceAsync(s.CompanyId, inv.Id,
+                new ApplyDepositRequest(dep.Id, 300m, null, ExpectedInvoiceBalanceDue: 1_000m), "tester"));
+            Assert.Equal(ReceiptLinkPolicy.StaleCode, underLock.RuleCode);
+        }
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(700m, (await check.Documents.AsNoTracking().SingleAsync(d => d.Id == inv.Id)).BalanceDue);
+        // ทิศตรงข้าม: ผู้เรียกเดิมที่ไม่ส่งค่าคาดหวัง (ปุ่ม "หักมัดจำ" เดิม) ยังหักต่อได้
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Docs(req).ApplyDepositToInvoiceAsync(s.CompanyId, inv.Id, new ApplyDepositRequest(dep.Id, 200m), "tester");
+        using var after = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(500m, (await after.Documents.AsNoTracking().SingleAsync(d => d.Id == inv.Id)).BalanceDue);
+    }
+
+    [Fact]
+    public async Task L7_M6_L1_ใบฝั่งซื้อไม่พบ_ไม่มีแถวที่ผูกได้บอกเหตุ_ใบเสร็จจากเงินรอจัดสรรได้ทางไปต่อของตัวเอง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        using var req = DbTestDatabase.TryCreateContext()!;
+        // (L3 ลูกค้าทั่วไป: ฐานมี FK ผู้ติดต่อ — ล็อกด้วยเทสต์ pure Decide_RefusesOtherContact + OffersLinkButton)
+        // L7: ใบฝั่งซื้อ = ไม่พบ (ไม่คืนเลขที่เอกสาร)
+        var pi = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.CustomerId, DocumentType = DocumentType.PurchaseInvoice, DocumentNumber = "PI-RL-" + Guid.NewGuid().ToString("N")[..6],
+            Status = DocumentStatus.Approved, DocumentDate = Today, SubTotal = 50m, TotalAmount = 50m, BalanceDue = 50m, Currency = "THB", ExchangeRate = 1m,
+        };
+        db.Documents.Add(pi);
+        await db.SaveChangesAsync();
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => Links(req).CandidatesAsync(s.CompanyId, pi.Id, User));
+        // M6 + L1: ใบค้างที่ลูกค้ามีแต่ใบขายสดเก่า — ไม่มีแถวที่ผูกได้ ⇒ ShowButton=false + ประกาศ · ใบเสร็จที่ออกจากเงินรอจัดสรร (ขาออก ToReceipt) ได้ทางไปต่อ "ยกเลิกใบเสร็จ…เงินรอจัดสรร"
+        var inv = await InvoiceAsync(db, s, s.CustomerId, 250m);
+        var cashSale = await ReceiptAsync(db, s, s.CustomerId, 250m, DocumentStatus.Paid);
+        var creditReceipt = await ReceiptAsync(db, s, s.CustomerId, 250m, DocumentStatus.Paid);
+        var pay = new Payment
+        {
+            CompanyId = s.CompanyId, PaymentNumber = "PAY-RL-" + Guid.NewGuid().ToString("N")[..8], PaymentDate = Today, Amount = 250m,
+            DocumentId = inv.Id, ContactId = s.CustomerId, PaymentMethod = PaymentMethod.Cash,
+        };
+        db.Payments.Add(pay);
+        await db.SaveChangesAsync();
+        db.PaymentCreditMovements.Add(new PaymentCreditMovement
+        {
+            CompanyId = s.CompanyId, PaymentId = pay.Id, Kind = nameof(PaymentCreditMovementKind.ToReceipt), Amount = 250m,
+            TargetDocumentId = creditReceipt.Id, MovedAt = Today,
+        });
+        await db.SaveChangesAsync();
+        using var req2 = DbTestDatabase.TryCreateContext()!;
+        var c = await Links(req2).CandidatesAsync(s.CompanyId, inv.Id, User);
+        Assert.False(c.ShowButton);
+        Assert.False(string.IsNullOrWhiteSpace(c.Notice));
+        var plain = Assert.Single(c.Items, x => x.ReceiptDocumentId == cashSale.Id);
+        var fromCredit = Assert.Single(c.Items, x => x.ReceiptDocumentId == creditReceipt.Id);
+        Assert.Equal((false, ReceiptLinkPolicy.DuplicateSaleCode), (plain.Allowed, plain.RuleCode));
+        Assert.Equal((false, ReceiptLinkPolicy.DuplicateSaleCode), (fromCredit.Allowed, fromCredit.RuleCode));
+        Assert.Contains("เงินรอจัดสรร", fromCredit.WayForward, StringComparison.Ordinal);
+        Assert.DoesNotContain("เงินรอจัดสรร", plain.WayForward, StringComparison.Ordinal);
+    }
 }

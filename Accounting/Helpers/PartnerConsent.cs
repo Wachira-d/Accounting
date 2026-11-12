@@ -73,6 +73,9 @@ public static class PartnerConsent
     public sealed record ScopeDef(Scope Scope, string Label, IReadOnlyList<Need> Needs, bool RequiresCap, bool AllowsPayAccount,
         bool NeedsTypedConfirm, bool CompanyWideToggle, bool ReaderWired, int MinTextVersion = 1, DateTime? WiredSince = null);
 
+    /// <summary>รอบ 264 P3 — วันที่ท่อบันทึกจ่ายอัตโนมัติเริ่มอ่านขอบเขต <see cref="Scope.AutoRecordPayment"/> (UTC · go-live ของแพ็ก P3) · <b>ประกาศก่อน <see cref="Scopes"/></b> (ตัวเริ่มค่า static เรียงตามบรรทัด)</summary>
+    public static readonly DateTime AutoRecordPaymentWiredSince = new(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc);
+
     public static IReadOnlyList<ScopeDef> Scopes { get; } = new List<ScopeDef>
     {
         new(Scope.PurchaseDrafts, "สร้างใบซื้อร่างจากเอกสารของคู่ค้า",
@@ -81,9 +84,10 @@ public static class PartnerConsent
         new(Scope.AutoApprovePurchase, "อนุมัติใบซื้อจากคู่ค้าเองภายใต้เพดาน",
             new[] { Need.CompanySettingsEdit, Need.PurchaseApprove }, RequiresCap: true, AllowsPayAccount: false, NeedsTypedConfirm: true,
             CompanyWideToggle: false, ReaderWired: false),
+        // รอบ 264 P3: ผู้อ่าน = PartnerPayablePipeline (ขั้น PartnerPayable ของ AutopilotJob) — แถวที่ให้ไว้ล่วงหน้าก่อนวันต่อสายต้องยืนยันใหม่ (GrantedBeforeWired · L4)
         new(Scope.AutoRecordPayment, "บันทึกจ่ายใบซื้อเองเมื่อคู่ค้ารับเงินแล้ว",
             new[] { Need.CompanySettingsEdit, Need.PurchaseApprove }, RequiresCap: true, AllowsPayAccount: true, NeedsTypedConfirm: true,
-            CompanyWideToggle: false, ReaderWired: false),
+            CompanyWideToggle: false, ReaderWired: true, WiredSince: AutoRecordPaymentWiredSince),
         new(Scope.ReceiveSlipCopy, "รับสำเนาสลิปการโอนจากคู่ค้าเป็นหลักฐาน",
             new[] { Need.CompanySettingsEdit, Need.PurchaseView }, RequiresCap: false, AllowsPayAccount: false, NeedsTypedConfirm: false,
             CompanyWideToggle: false, ReaderWired: false),

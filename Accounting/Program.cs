@@ -903,6 +903,7 @@ builder.Services.AddScoped<IDocumentPayLinkService, DocumentPayLinkService>();
 builder.Services.AddScoped<IPostPaymentAutomationService, PostPaymentAutomationService>();
 builder.Services.AddScoped<PartnerPaymentNoticeService>();   // รอบ 258-3 F-H3 — แจ้งผู้ซื้อคู่ค้าว่าผู้ขายรับเงินแล้ว (ผู้ซื้อกดบันทึกจ่ายเอง)
 builder.Services.AddScoped<PartnerConsentService>();   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ผู้เขียนเดียว + CheckAsync ที่ท่อ P3/P5 เรียก)
+builder.Services.AddScoped<PartnerPayablePipeline>();   // รอบ 264 P3 — ท่อฝั่งผู้ซื้อ: บันทึกจ่ายเองภายใต้ความยินยอม AutoRecordPayment (AutopilotJob ขั้น PartnerPayable)
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
 builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();
 
