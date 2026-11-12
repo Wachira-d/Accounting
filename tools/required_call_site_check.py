@@ -18963,12 +18963,16 @@ RULES += [
          why=_R264_P5_WHY + "ช่องคู่ค้าพิสูจน์ที่มาก่อนถึงตัวตัดสิน · ปัญหาของที่มา = ด่าน (ไม่ถาม AI) · ผ่าน = ของจริงโดยไม่เรียก orchestrator (kill-switch)"),
     dict(file=_R252_SVC, method="LoadProvenanceAsync",
          must=["TradingPartnershipStatus.Accepted", "ThaiTaxId.Same(", "PartnerWhtCertExchangeService.ExternalSystem",
-               "PartnerExchangeRules.CertRate(", "PartnerExchangeRules.WhtCertificateDate(", "w.PayeeContact.ExternalId == us"],
+               "PartnerExchangeRules.CertRate(", "PartnerExchangeRules.WhtCertificateDate(", "w.PayeeContact.ExternalId == us",
+               "s.SourcePayerCompanyId", "s.SourceWhtCertId", "c.ExternalId == srcKey", "WithholdingTaxCertStatus.Voided"],
          forbid=["_ai.", "AskAsync", "s.PayerName"],
          why=_R264_P5_WHY + "ที่มาอ่านจากแถวจริงของคู่ที่เชื่อมอยู่ (กุญแจ = เลขผู้เสียภาษี + ผู้ติดต่อที่ผูกเรา) · สูตรอัตรา/วันที่ตัวเดียวกับฝั่งส่ง · ไม่ใช้ชื่อ"),
     dict(file=_R264_P5_X, method="DeliverForPayerAsync",
          must=["PartnerExchangeRules.WhtDeliveryCheckOf(", "PartnerExchangeRules.PayeeAddressPresent(", "ReturnWhtCertsAllowedAsync(",
-               "StampSkipAsync(", "PartnerExchangeRules.WhtDeliveryAction.Skip", "PartnerExchangeRules.WhtDeliveryAction.NotPartner"],
+               "StampSkipAsync(", "PartnerExchangeRules.WhtDeliveryAction.Skip", "PartnerExchangeRules.WhtDeliveryAction.NotPartner",
+               "ClearSkipAsync(", "PartnerExchangeRules.DuplicateOfOtherCertReason", "SourcePayerCompanyId: payerId", "SourceWhtCertId: cert.Id",
+               "pairedKeys.Contains(c.ExternalId)"],
+         must_re=[r"&&\s*contactIds\s*\.\s*Contains\s*\(\s*w\s*\.\s*PayeeContactId\s*\)"],
          before=[("PartnerExchangeRules.WhtDeliveryCheckOf(", "_intake.SubmitAsync(")],
          why=_R264_P5_WHY + "ตรวจก่อนส่งตัวเดียว (C-10 ผูกระบบอื่น · B12 ที่อยู่ · ผู้รับไม่ตรง · ความยินยอม) ก่อนถึงกล่องรับของคู่ค้า · Skip = เหตุบนใบ ไม่ข้ามเงียบ"),
     dict(file=_R264_P5_X, method="StampSkipAsync", must=["w.CompanyId == payerId", "w.PartnerDeliveredAt == null"],
@@ -18980,7 +18984,8 @@ RULES += [
          why=_R264_P5_WHY + "264-5-4 แถวหลักฐานภาษีจากคู่ค้าอยู่ในรายการเรื่องค้างของ Autopilot"),
     dict(file=_R264_P5_AP, method="PartnerTaxEvidenceIssuesAsync",
          must=["PartnerTaxEvidenceAlerts.InputVatWindowOf(", "PartnerTaxEvidenceAlerts.ShowsRow(", "PartnerPayBlockedIssuesAsync(",
-               "d.CompanyId == companyId", "w.CompanyId == companyId", "PartnerInputVatEvidence.PaperRequired"],
+               "d.CompanyId == companyId", "w.CompanyId == companyId", "PartnerInputVatEvidence.PaperRequired",
+               "PartnerTaxEvidenceAlerts.QueryBounds(", "SendWhtCertsToPartners"],
          forbid=["SaveChangesAsync", "ExecuteUpdateAsync"],
          why=_R264_P5_WHY + "ม.82/3 ตัดสินที่ตัวช่วยเดียว (นับเดือนสูตรรายงานภาษี) · อ่านอย่างเดียว · ผูก CompanyId"),
     dict(file=_R264_P5_AP, method="PartnerPayBlockedIssuesAsync",
@@ -18994,6 +18999,10 @@ REVIEWER_CASES += [
     # เหตุก่อนส่งกลับไปข้ามเงียบ ⇒ ต้องฟ้อง
     ("R264b", "DeliverForPayerAsync", "await StampSkipAsync(payerId, cert.Id, check.Reason!, ct);", "", True),
     # เหตุก่อนส่งนับครั้งเหมือนการล้ม ⇒ ต้องฟ้อง
+    # ฝ่ายค้าน H1: กลับไปเลือกใบก่อนดูผู้ถูกหัก ⇒ ต้องฟ้อง
+    ("R264d", "DeliverForPayerAsync", "w.PartnerDeliveredAt == null && contactIds.Contains(w.PayeeContactId)", "w.PartnerDeliveredAt == null", True),
+    # ฝ่ายค้าน M1: ไม่ผูกตัวตนกับผู้ติดต่อในสมุดเรา ⇒ ต้องฟ้อง
+    ("R264e", "LoadProvenanceAsync", "&& c.ExternalSystem == PartnerWhtCertExchangeService.ExternalSystem && c.ExternalId == srcKey", "", True),
     ("R264c", "StampSkipAsync", ".ExecuteUpdateAsync(s => s.SetProperty(w => w.PartnerDeliveryError, reason), ct);",
      ".ExecuteUpdateAsync(s => s.SetProperty(w => w.PartnerDeliveryError, reason).SetProperty(w => w.PartnerDeliveryAttempts, w => w.PartnerDeliveryAttempts + 1), ct);", True),
 ]

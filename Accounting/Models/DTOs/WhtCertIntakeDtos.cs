@@ -36,7 +36,10 @@ public sealed record WhtCertSubmission(
     bool AmountNeedsReview = false,
     string? EvidenceReference = null,
     // ฝ่ายค้าน WP-10 M2: ลูกค้าของลิงก์อัปโหลด (Channel UploadLink) — ผู้จ่ายต้องเป็นรายนี้ · ไม่ยืนยันอัตโนมัติ
-    Guid? ExpectedPayerContactId = null);
+    Guid? ExpectedPayerContactId = null,
+    // ฝ่ายค้าน 264-P5 L4 (คำตัดสิน 264-5-9): ใบช่อง NextAccLink — บริษัทผู้จ่าย + แถว 50 ทวิ ต้นทาง (ระบบเติมฝั่งเซิร์ฟเวอร์เท่านั้น · ไม่รับจากผู้ใช้)
+    Guid? SourcePayerCompanyId = null,
+    Guid? SourceWhtCertId = null);
 
 /// <param name="Status">ชื่อ <see cref="WhtCertIntakeRecordStatus"/></param>
 /// <param name="Duplicate">ไฟล์/ใบนี้เคยส่งแล้ว — คืนแถวเดิม (idempotent ไม่สร้างแถวใหม่)</param>

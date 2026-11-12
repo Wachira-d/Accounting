@@ -149,6 +149,11 @@ public static class PartnerExchangeRules
         static WhtDeliveryCheck Skip(string reason) => new(WhtDeliveryAction.Skip, reason);
     }
 
+    /// <summary>ฝ่ายค้าน 264-P5 L4: กล่องรับของผู้ขายตอบ "ซ้ำ" กับรายการที่ใบอื่นของผู้จ่ายส่งไปแล้ว — ผู้ขายไม่ได้ใบนี้ (ไม่ใช่ "ส่งแล้ว")</summary>
+    public const string DuplicateOfOtherCertReason =
+        "กล่องรับของผู้ขายมีหนังสือรับรองเลขที่เดียวกันของผู้จ่ายเลขผู้เสียภาษีเดียวกันอยู่แล้ว (ส่งจากใบอื่น เช่น สาขาอื่น/ปีอื่น) — ผู้ขายไม่ได้รับใบนี้ · "
+        + "ส่งหนังสือรับรองให้ผู้ขายทางเดิม หรือแจ้งผู้ขายให้บันทึกเป็นรายการแยก";
+
     /// <summary>ชื่อระบบของผู้ติดต่อที่ผูกบริษัทใน NextAcc (ตัวเดียวกับ <c>PartnerWhtCertExchangeService.ExternalSystem</c>)</summary>
     public const string NextAccTenantSystem = "NextAccTenant";
 
