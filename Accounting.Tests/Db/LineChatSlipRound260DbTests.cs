@@ -84,7 +84,7 @@ public class LineChatSlipRound260DbTests
         {
             CompanyId = companyId, ContactId = contactId, DocumentType = DocumentType.Invoice, Status = DocumentStatus.Approved,
             DocumentNumber = "INV260-" + Random.Shared.Next(100000, 999999), DocumentDate = DateTime.UtcNow.Date.AddDays(-ageDays),
-            SubTotal = subTotal, VatAmount = vat, WithholdingTaxAmount = wht, TotalAmount = subTotal + vat, BalanceDue = subTotal + vat, Currency = "THB",
+            SubTotal = subTotal, VatAmount = vat, WithholdingTaxAmount = wht, TotalAmount = subTotal + vat - wht, BalanceDue = subTotal + vat - wht, Currency = "THB",
         };
         inv.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = subTotal, Amount = subTotal, VatRate = 7m, VatAmount = vat });
         db.Documents.Add(inv);
@@ -116,7 +116,9 @@ public class LineChatSlipRound260DbTests
 
     private static OcrSlipText.Reading Sure(decimal amount, string? reference = null) => new(new[] { amount }, amount, DateTime.UtcNow.Date, reference);
 
-    private static string Json(IReadOnlyList<object>? reply) => JsonSerializer.Serialize(reply);
+    // ไม่ escape อักษรไทย (ค่าตั้งต้นของ System.Text.Json แปลงเป็น \uXXXX — ข้อความ LINE ถูกต้องทั้งสองแบบ แต่เทสต์ค้นคำไทย)
+    private static readonly JsonSerializerOptions Raw = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    private static string Json(IReadOnlyList<object>? reply) => JsonSerializer.Serialize(reply, Raw);
 
     private static List<string> PostbackData(IReadOnlyList<object>? reply)
     {
@@ -165,7 +167,16 @@ public class LineChatSlipRound260DbTests
         var inv = await InvoiceAsync(db, s.CompanyId, s.ContactId, 1000m, wht: 30m);
         var due = (await PayLinks(db, s).DueAmountsForDocumentAsync(s.CompanyId, inv.Id))!;
         Assert.Null(due.Refusal);
-        Assert.True(due.Net < inv.BalanceDue);
+        Assert.True(due.Gross > due.Net);   // ผู้ซื้อนิติบุคคลหัก ณ ที่จ่าย ⇒ ยอดก่อนหัก > ยอดที่ต้องโอน
+
+        // ทิศตรงข้าม: โอนยอดเต็มก่อนหัก ⇒ ไม่ผูกเอง (เกินยอดค้าง) · คิวพนักงานพร้อมเหตุ
+        await Svc(db, s, Png("gross"), Sure(due.Gross)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "100003");
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.False(await c.PaymentIntents.AnyAsync(i => i.CompanyId == s.CompanyId));
+            Assert.Equal(LineChatSlipRule.Reasons.GrossBeforeWht, (await c.LineChatSlips.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId)).Reason);
+        }
+
         await Svc(db, s, Png("net"), Sure(due.Net)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "100002");
         using var c2 = DbTestDatabase.TryCreateContext()!;
         var intent = await c2.PaymentIntents.AsNoTracking().SingleAsync(i => i.CompanyId == s.CompanyId);

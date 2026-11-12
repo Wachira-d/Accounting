@@ -10,8 +10,9 @@ public sealed record LineChatSource(string Kind, string Id)
     public static LineChatSource Group(string groupId) => new(KindGroup, groupId);
 }
 
-/// <summary>ใบที่เสนอให้พนักงานผูก (เอกสารค้างของผู้ติดต่อที่ผูก LINE) — ยอดจากเซิร์ฟเวอร์</summary>
-public sealed record LineChatSlipDocOption(Guid DocumentId, string DocumentNumber, DateTime DocumentDate, decimal BalanceDue, decimal NetDue, bool AmountMatches);
+/// <summary>ใบที่เสนอให้พนักงานผูก (เอกสารค้างของผู้ติดต่อที่ผูก LINE) — ยอดจากเซิร์ฟเวอร์ · <paramref name="NetDue"/> = ยอดที่ลูกค้าต้องโอน ·
+/// <paramref name="GrossDue"/> = ยอดก่อนหัก ณ ที่จ่าย · <paramref name="AmountMatches"/> = ยอดที่อ่านได้เท่ายอดที่ต้องโอน</summary>
+public sealed record LineChatSlipDocOption(Guid DocumentId, string DocumentNumber, DateTime DocumentDate, decimal NetDue, decimal GrossDue, bool AmountMatches);
 
 /// <summary>สลิปจากแชตที่ยังไม่ผูกเอกสาร (คิวพนักงาน) — ป้าย/เหตุ/ยอดจากเซิร์ฟเวอร์ หน้าเว็บแสดงตรงตัว</summary>
 public sealed record LineChatSlipRow(

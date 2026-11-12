@@ -3154,8 +3154,9 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **กันซ้ำ** — แฮชไฟล์ หรือเลขอ้างอิง ตรงกับแถวแชตที่ยังเปิด (`LineChatSlipRule.Statuses.Live`) หรือรายการรอยืนยัน/รับเงินแล้ว (`SlipEvidenceRule.DuplicateStatuses`) ⇒
   ตอบ "ส่งเข้ามาแล้ว" · ไม่มีแถวใหม่
 - **ตัดสิน** `LineChatSlipRule.Decide` — ผู้สมัคร = เอกสารค้างชำระของผู้ติดต่อที่ผูก LINE นั้น (บริษัทเดียวกัน · ใบที่ `DocumentPayLinkPolicy.IssueRefusal` ปฏิเสธไม่เป็นผู้สมัคร ·
-  ร่าง/รออนุมัติ/ยกเลิก/ปฏิเสธ/ชำระครบ ตัดโดย `DocumentSlipIntents.UploadProblem`) · ตรงยอดค้าง หรือยอดสุทธิหลังหัก ณ ที่จ่าย จาก
-  `IDocumentPayLinkService.DueAmountsForDocumentAsync` (ตัวคิดเดียวกับหน้าชำระ/พอร์ทัล — ไม่สร้าง QR) ตรงถึงสตางค์ (AwayFromZero) · ไม่จับผลรวมหลายใบ (260-1-3)
+  ร่าง/รออนุมัติ/ยกเลิก/ปฏิเสธ/ชำระครบ ตัดโดย `DocumentSlipIntents.UploadProblem`) · ตรง "ยอดที่ลูกค้าต้องโอน" (= ยอดค้าง ซึ่งเป็นยอดหลังหัก ณ ที่จ่ายแล้ว) จาก
+  `IDocumentPayLinkService.DueAmountsForDocumentAsync` (ตัวคิดเดียวกับหน้าชำระ/พอร์ทัล — ไม่สร้าง QR) ตรงถึงสตางค์ (AwayFromZero) · ไม่จับผลรวมหลายใบ (260-1-3) ·
+  ยอดเต็มก่อนหัก (ลูกค้าไม่หัก — เกินยอดค้าง) ⇒ คิวพนักงานเหตุ `GrossBeforeWht` (ไม่ผูกเอง · แบบเดียวกับ BankReceiptAutoSettle "เสนอเท่านั้น")
   - **ใบเดียว + ยอดมั่นใจ** ⇒ `SlipEvidenceService.SubmitAsync` (ช่องทาง `line-chat-customer` · ไฟล์โฟลเดอร์ไม่เสิร์ฟตรง · ไฟล์แนบของเอกสาร · แจ้งทีม E-06) =
     `PaymentIntent(ManualSlip)` **รอยืนยัน** ในคิวเดียว (`payment-intents.html?status=Pending` · Autopilot `SlipPending`) · ไม่สร้าง Payment · ไม่ประทับชำระ ·
     ปิดหนี้ทางเดิมเท่านั้น: คนยืนยัน หรือรายการเดินบัญชีจริงที่ `BankReceiptAutoSettle` จับเลขอ้างอิงได้ ⇒ ใบเสร็จ/ใบกำกับ/ส่งอัตโนมัติตามเดิม ·
