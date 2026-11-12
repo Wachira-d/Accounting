@@ -17,6 +17,8 @@ public interface IRecurringTransactionService
     Task<RecurringTransactionResponse> ResumeAsync(Guid companyId, Guid id);
     /// <param name="confirmExtra">รอบ 259 (B-L3): ผู้ใช้ยืนยันออกใบพิเศษก่อนกำหนดเพิ่ม (ใบล่วงหน้าของงวดนี้มีแล้ว — ไม่ยืนยัน = 409 <c>RECURRING-RUN-DUP</c>)</param>
     Task<RecurringTransactionResponse> RunNowAsync(Guid companyId, Guid id, string performedBy, bool confirmExtra = false);
+    /// <summary>รอบ 263: ปิดเรื่อง "งวดที่ข้าม" (ผู้ใช้ออกเองแล้ว/ไม่ต้องออก) — ไม่มีงวดค้าง = BusinessRuleException</summary>
+    Task<RecurringTransactionResponse> DismissSkippedPeriodsAsync(Guid companyId, Guid id, string dismissedBy);
     /// <summary>รอบ 247: ผู้ติดต่อรับอีเมลเอกสารได้ไหม (ฟอร์มรายการประจำ ปิดช่อง "ส่งอีเมล" พร้อมเหตุผล)</summary>
     Task<RecurringEmailReadinessResponse> GetEmailReadinessAsync(Guid companyId, Guid contactId);
     Task ProcessDueRecurringTransactionsAsync(); // Background job
