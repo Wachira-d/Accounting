@@ -9,9 +9,10 @@ public interface IPortalService
 {
     // Portal access management (by company)
     // รอบ 257 D-H1: ผู้ทำ (actorUserId) บังคับ — ทุกการให้/แก้/ปิดสิทธิ์ลง audit chain
-    Task<PortalAccessResponse> CreateAccessAsync(Guid companyId, CreatePortalAccessRequest request, Guid actorUserId);
-    Task<List<PortalAccessResponse>> GetAccessesAsync(Guid companyId);
-    Task<PortalAccessResponse> UpdateAccessAsync(Guid companyId, Guid accessId, UpdatePortalAccessRequest request, Guid actorUserId);
+    /// <param name="includeCredit">รอบ 260-3 (ฝ่ายค้าน L1): ผู้เรียกเห็นฝั่งขาย (<c>VisibleDirections.Revenue</c>) ⇒ คืนเงินรอจัดสรร · false = null (ไม่ได้คำนวณ)</param>
+    Task<PortalAccessResponse> CreateAccessAsync(Guid companyId, CreatePortalAccessRequest request, Guid actorUserId, bool includeCredit = false);
+    Task<List<PortalAccessResponse>> GetAccessesAsync(Guid companyId, bool includeCredit = false);
+    Task<PortalAccessResponse> UpdateAccessAsync(Guid companyId, Guid accessId, UpdatePortalAccessRequest request, Guid actorUserId, bool includeCredit = false);
     Task DeactivateAccessAsync(Guid companyId, Guid accessId, Guid actorUserId);
     /// <summary>รอบ 257 D-H3: ธงสิทธิ์ของสิทธิ์พอร์ทัลในโทเคน (บริษัทนี้ · ยังเปิด · ไม่ถูกลบ) · ไม่พบ = null (ผู้เรียกปฏิเสธ)</summary>
     Task<Accounting.Helpers.PortalAccessFlags?> GetAccessFlagsAsync(Guid companyId, Guid portalAccessId, CancellationToken ct = default);

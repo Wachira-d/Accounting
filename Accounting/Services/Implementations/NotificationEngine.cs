@@ -58,7 +58,13 @@ public class NotificationEngine : INotificationEngine
         string? FullName);
 
     public async Task DispatchAsync(Guid companyId, string eventKey, NotificationContext context)
+        => await DispatchWithOutcomeAsync(companyId, eventKey, context);
+
+    /// <summary>รอบ 260-3 (ฝ่ายค้าน M1): ตัวส่งตัวเดียว — คืนผลจริงให้ผู้เรียกที่ต้องประทับ "แจ้งแล้ว" (ไม่โยน · error = <see cref="NotificationDispatchOutcome.Failed"/>) ·
+    /// Delivered = สั่งส่งอย่างน้อยหนึ่งช่องแล้ว (กระดิ่งเขียนแถวสำเร็จ · อีเมล/LINE เข้าตัวส่งของช่อง) · NoRecipient = ไม่มีผู้รับ/ช่องที่ส่งได้</summary>
+    public async Task<NotificationDispatchOutcome> DispatchWithOutcomeAsync(Guid companyId, string eventKey, NotificationContext context)
     {
+        var attempted = false;
         try
         {
             // รอบ 249: อ่าน "ทุกแถว" ของคีย์ (รวมแถวที่ปิดทุกช่อง) — เดิมกรองเฉพาะแถวที่เปิดบางช่อง ⇒ บริษัทที่เอาติ๊กค่าตั้งต้นออกแล้วบันทึก
@@ -73,13 +79,13 @@ public class NotificationEngine : INotificationEngine
             // รอบ 250 (WP-02 §2.4 ข้อ 4 · คำตัดสิน §2 #11): ลำดับตัดสินตัวเดียว NotificationDispatchRoute.Decide — บริษัทบันทึกแถวของคีย์แล้วแต่ปิดทุกช่อง ⇒ ไม่ส่ง
             // **ก่อน** สาขาผู้รับที่ระบุ (เดิมสาขา RecipientUserId มาก่อน ⇒ ปิดไม่ได้สำหรับเหตุการณ์อนุมัติ/รายการประจำ/ค่าบริการ)
             var route = NotificationDispatchRoute.Decide(savedRows.Count, settings.Count, context.RecipientUserId.HasValue);
-            if (route == NotificationDispatchRoute.Route.SuppressedByCompany) return;
+            if (route == NotificationDispatchRoute.Route.SuppressedByCompany) return NotificationDispatchOutcome.SuppressedByCompany;
             // ถ้า caller ระบุ RecipientUserId override + ยังไม่ตั้งคีย์นี้เลย → ใช้ default channels (System+Email) สำหรับ user
             // คนนั้น แทนที่จะ no-op. ใช้กับ approval/subscription event ที่ recipient เป็น user รู้ตัวอยู่แล้ว ไม่ใช่ role.
             if (route == NotificationDispatchRoute.Route.DirectToRecipient && context.RecipientUserId is Guid directUser)
             {
                 await DispatchDirectAsync(companyId, eventKey, directUser, context, await ExternalLinkAsync(context));
-                return;
+                return NotificationDispatchOutcome.Delivered;
             }
             // รอบ 232 (232-Notify): คีย์ที่ย้ายจากประกาศกลุ่ม LINE เดิม — บริษัทยังไม่ตั้ง ⇒ ค่าตั้งต้นจากตัวตัดสินเดียว
             // (กระดิ่งถึงเจ้าของ + กลุ่ม LINE ของบริษัทเมื่อผูกไว้แล้ว) · คีย์อื่น = ว่าง = ไม่ส่ง (พฤติกรรมเดิม)
@@ -94,14 +100,14 @@ public class NotificationEngine : INotificationEngine
                     })
                     .ToList();
             }
-            if (settings.Count == 0) return;
+            if (settings.Count == 0) return NotificationDispatchOutcome.NoRecipient;
 
             // รอบ 249: ลิงก์ของช่องที่ออกนอกแอป (LINE · อีเมล) — คำนวณครั้งเดียวต่อเหตุการณ์ · กระดิ่งยังใช้ path สัมพัทธ์ (นำทางในแอป)
             var link = settings.Any(s => s.EnableEmail || s.EnableLine || s.EnableLineGroup) ? await ExternalLinkAsync(context) : null;
 
             // ช่อง "กลุ่ม LINE ของบริษัท" — หนึ่งครั้งต่อเหตุการณ์ (ไม่ใช่ต่อผู้รับ) · OA ของบริษัทเท่านั้น · ไม่มี OA ⇒ ผลบอกเหตุ (ไม่ถอยไปกลุ่มกลาง)
             if (settings.Any(s => s.EnableLineGroup))
-                await DispatchCompanyGroupAsync(companyId, eventKey, context, link);
+                { await DispatchCompanyGroupAsync(companyId, eventKey, context, link); attempted = true; }
 
             // recipientKey → effective (channels + Recipient). Key combines
             // UserId.ToString() for system users, or "email:" / "line:"
@@ -129,7 +135,7 @@ public class NotificationEngine : INotificationEngine
                         prev.Line  || s.EnableLine);
                 }
             }
-            if (effective.Count == 0) return;
+            if (effective.Count == 0) return attempted ? NotificationDispatchOutcome.Delivered : NotificationDispatchOutcome.NoRecipient;
 
             // Personal suppressions only apply to user-bound recipients.
             var userIds = effective.Values
@@ -179,19 +185,21 @@ public class NotificationEngine : INotificationEngine
                 }
 
                 if (e.Sys && !supSys && r.UserId.HasValue)
-                    await DispatchSystemAsync(r.UserId.Value, companyId, context);
+                    { await DispatchSystemAsync(r.UserId.Value, companyId, context); attempted = true; }
 
                 if (e.Email && !supEmail && !string.IsNullOrWhiteSpace(email))
-                    await DispatchEmailAsync(companyId, email!, fullName, context, link);
+                    { await DispatchEmailAsync(companyId, email!, fullName, context, link); attempted = true; }
 
                 if (e.Line && !supLine && !string.IsNullOrWhiteSpace(lineUserId))
-                    await DispatchLineAsync(companyId, lineUserId!, context, eventKey, link);
+                    { await DispatchLineAsync(companyId, lineUserId!, context, eventKey, link); attempted = true; }
             }
+            return attempted ? NotificationDispatchOutcome.Delivered : NotificationDispatchOutcome.NoRecipient;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "NotificationEngine.Dispatch failed for {EventKey} (company {CompanyId})",
                 eventKey, companyId);
+            return NotificationDispatchOutcome.Failed;
         }
     }
 

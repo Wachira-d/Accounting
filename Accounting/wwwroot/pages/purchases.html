@@ -135,22 +135,25 @@
       async loadInbox() {
         const body = document.getElementById('inboxBody');
         try {
-          const r = await API.get(`/api/companies/${encodeURIComponent(Layout.getCompanyId())}/purchase-inbox`);
+          // ฝ่ายค้าน 260-3 M3: กรองทางเข้าที่เซิร์ฟเวอร์ก่อนตัดจำนวน (เดิมกรองในหน้าจากรายการที่ตัดแล้ว ⇒ ตัวนับบอก N แต่ไม่มีแถว)
+          const q = this.inboxSource ? `?source=${encodeURIComponent(this.inboxSource)}` : '';
+          const r = await API.get(`/api/companies/${encodeURIComponent(Layout.getCompanyId())}/purchase-inbox${q}`);
           this._inbox = (r && r.data) || { total: 0, counts: [], items: [] };
           this.renderInbox();
         } catch (e) {
           body.innerHTML = `<span style="color:#b91c1c">โหลดกล่องใบซื้อร่างไม่สำเร็จ: ${Layout.esc(e.message || '')}</span> <button class="btn btn-sm btn-ghost" onclick="Page.loadInbox()">ลองใหม่</button>`;
         }
       },
-      setInboxSource(src) { this.inboxSource = this.inboxSource === src ? '' : src; this.renderInbox(); },
+      setInboxSource(src) { this.inboxSource = this.inboxSource === src ? '' : src; this.loadInbox(); },
       renderInbox() {
         const ib = this._inbox || { total: 0, counts: [], items: [] };
         document.getElementById('inboxTotal').textContent = `(${ib.total} ใบ)`;
         document.getElementById('inboxCounts').innerHTML = (ib.counts || []).filter(c => c.count > 0).map(c =>
           `<button class="btn btn-sm ${this.inboxSource === c.source ? 'btn-primary' : 'btn-ghost'}" onclick="Page.setInboxSource('${Layout.jsArg(c.source)}')">${Layout.esc(c.label)} ${c.count}</button>`).join('');
-        const items = (ib.items || []).filter(i => !this.inboxSource || i.source === this.inboxSource);
+        const items = ib.items || [];
         const body = document.getElementById('inboxBody');
-        if (!items.length) { body.innerHTML = ib.total ? 'ไม่มีใบในทางเข้านี้' : 'ไม่มีใบซื้อร่างรอตรวจ'; return; }
+        const note = ib.truncated ? `<div class="text-xs text-gray-500" style="margin-top:6px">แสดง ${items.length} ใบล่าสุด — ตัวนับนับครบทุกใบ</div>` : '';
+        if (!items.length) { body.innerHTML = (ib.total ? 'ไม่มีใบในทางเข้านี้' : 'ไม่มีใบซื้อร่างรอตรวจ') + note; return; }
         body.classList.remove('text-gray-400');
         body.innerHTML = `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>ผู้ขาย</th><th>วันที่</th><th class="text-right">ยอด</th><th>ทางเข้า</th><th></th></tr></thead><tbody>${items.map(i => `<tr>
             <td><a href="${Layout.esc(i.openHref)}" style="color:var(--primary)">${Layout.esc(i.documentNumber)}</a></td>
@@ -159,7 +162,7 @@
             <td class="text-right">${Layout.money(i.totalAmount)}</td>
             <td>${Layout.esc(i.sourceLabel)}${i.fileName ? `<div class="text-xs text-gray-500">${Layout.esc(i.fileName)}</div>` : ''}</td>
             <td><a class="btn btn-sm btn-ghost" href="${Layout.esc(i.openHref)}">ตรวจ / อนุมัติ</a>${i.sourceHref ? ` <a class="text-xs" href="${Layout.esc(i.sourceHref)}">${Layout.esc(i.sourceHrefLabel || '')}</a>` : ''}</td>
-          </tr>`).join('')}</tbody></table></div>${ib.truncated ? '<div class="text-xs text-gray-500" style="margin-top:6px">แสดงบางส่วน — ตัวนับนับครบทุกใบ</div>' : ''}`;
+          </tr>`).join('')}</tbody></table></div>${note}`;
       },
 
       /** ตัวกรองของรายการ (ไม่รวม page/pageSize) — ตัวเดียวที่ทั้ง load() และปุ่มส่งออกใช้ (EXPORT_AUDIT §X2)

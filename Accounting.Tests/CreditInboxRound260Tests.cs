@@ -28,23 +28,15 @@ public class CreditInboxRound260Tests
 
     // ───── 260-3-3 ─────
 
-    private static CustomerCreditWorkQueue.AgedRow Aged(string no, int daysAgo, decimal amt, DateTime? noticed = null)
-        => new(Guid.NewGuid(), no, DateTime.UtcNow.Date.AddDays(-daysAgo), amt, null, Guid.NewGuid(), noticed);
-
     [Fact]
-    public void กระดิ่งค้างนาน_สรุปเฉพาะแถวที่ยังไม่แจ้ง_ทั้งหมดแจ้งแล้ว_ไม่ส่ง()
+    public void กระดิ่งค้างนาน_สรุปจากตัวนับ_ไม่มีแถว_ไม่ส่ง()
     {
-        var rows = new[] { Aged("RC-2", 40, 100m), Aged("RC-1", 90, 1_150m), Aged("RC-0", 120, 999m, DateTime.UtcNow.AddDays(-3)) };
-        var s = CustomerCreditAgedNotice.Compose(rows)!;
-        Assert.Equal(2, s.Count);
-        Assert.Equal(1_250m, s.Total);
-        Assert.Equal(2, s.PaymentIds.Count);
-        Assert.DoesNotContain(rows[2].PaymentId, s.PaymentIds);   // แจ้งแล้ว ⇒ ไม่นับ/ไม่ประทับซ้ำ
-        Assert.Contains("2 รายการ", s.Title);
-        Assert.Contains("1,250.00", s.Title);
-        Assert.Contains("RC-1", s.Message);                       // เก่าสุดที่ยังไม่แจ้ง
-        Assert.Null(CustomerCreditAgedNotice.Compose(new[] { rows[2] }));
-        Assert.Null(CustomerCreditAgedNotice.Compose(Array.Empty<CustomerCreditWorkQueue.AgedRow>()));
+        var s = CustomerCreditAgedNotice.Compose(601, 12_345.5m, "RC-1", new DateTime(2026, 9, 1))!;
+        Assert.Equal(601, s.Count);                                  // ฝ่ายค้าน M2: นับครบ ไม่ตัดที่ 500
+        Assert.Contains("601 รายการ", s.Title);
+        Assert.Contains("12,345.50", s.Title);
+        Assert.Contains("RC-1", s.Message);
+        Assert.Null(CustomerCreditAgedNotice.Compose(0, 0m, null, null));
     }
 
     [Fact]
@@ -116,16 +108,26 @@ public class CreditInboxRound260Tests
     // ───── 260-3-5 ─────
 
     [Theory]
-    [InlineData(true, true, "{\"sourceChannel\":\"line\"}", null, PurchaseDraftSource.Partner)]   // คู่ค้ามาก่อนเสมอ
-    [InlineData(false, true, "{\"sourceChannel\":\"line\",\"lineUserId\":\"U1\"}", null, PurchaseDraftSource.Line)]
-    [InlineData(false, true, "{\"lineUserId\":\"U1\"}", "Azure", PurchaseDraftSource.Line)]
-    [InlineData(false, true, "{not json", "Azure", PurchaseDraftSource.Ocr)]                     // JSON เสีย ≠ LINE
-    [InlineData(false, true, "{\"sourceChannel\":\"partner-api\"}", "Azure", PurchaseDraftSource.Ocr)]
-    [InlineData(false, true, null, "EtaxXml", PurchaseDraftSource.EtaxXml)]
-    [InlineData(false, true, null, null, PurchaseDraftSource.Ocr)]
-    [InlineData(false, false, null, null, PurchaseDraftSource.Manual)]
-    public void กล่องใบซื้อร่าง_จัดทางเข้า(bool partner, bool fromScan, string? meta, string? engine, PurchaseDraftSource expected)
-        => Assert.Equal(expected, PurchaseDraftInbox.Classify(partner, fromScan, meta, engine));
+    [InlineData(true, true, true, true, PurchaseDraftSource.Partner)]     // คู่ค้ามาก่อนเสมอ
+    [InlineData(false, true, true, true, PurchaseDraftSource.Line)]       // LINE มาก่อน e-Tax XML
+    [InlineData(false, true, false, true, PurchaseDraftSource.EtaxXml)]
+    [InlineData(false, true, false, false, PurchaseDraftSource.Ocr)]
+    [InlineData(false, false, false, false, PurchaseDraftSource.Manual)]
+    public void กล่องใบซื้อร่าง_จัดทางเข้า(bool partner, bool fromScan, bool line, bool etax, PurchaseDraftSource expected)
+        => Assert.Equal(expected, PurchaseDraftInbox.Classify(partner, fromScan, line, etax));
+
+    [Fact]
+    public void กล่องใบซื้อร่าง_ค่าทางเข้า_ว่างคือทั้งหมด_ไม่รู้จักปฏิเสธ_ไม่นับใบขอซื้อใบสั่งซื้อ()
+    {
+        Assert.True(PurchaseDraftInbox.TryParseSource(null, out var all) && all == null);
+        Assert.True(PurchaseDraftInbox.TryParseSource("ocr", out var ocr) && ocr == PurchaseDraftSource.Ocr);
+        Assert.False(PurchaseDraftInbox.TryParseSource("Email", out _));
+        Assert.False(PurchaseDraftInbox.TryParseSource("99", out _));
+        Assert.DoesNotContain(DocumentType.PurchaseOrder, PurchaseDraftInbox.InboxTypes);
+        Assert.DoesNotContain(DocumentType.PurchaseRequisition, PurchaseDraftInbox.InboxTypes);
+        Assert.Contains(DocumentType.PurchaseInvoice, PurchaseDraftInbox.InboxTypes);
+        Assert.Contains(DocumentType.Expense, PurchaseDraftInbox.InboxTypes);
+    }
 
     [Fact]
     public void กล่องใบซื้อร่าง_ลิงก์งานเฉพาะทาง_สร้างเองไม่มีลิงก์_ชื่อเอนจิน_eTax_ตัวเดียวกัน()
