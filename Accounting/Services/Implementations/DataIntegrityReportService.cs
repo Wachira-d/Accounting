@@ -52,7 +52,9 @@ public sealed record DataIntegrityReport(
     // รอบ 257 ชุด 3 ฝ่ายค้าน M2 — ใบซื้อจากคู่ค้าที่อนุมัติแล้ว ซึ่งยืนยันต้นฉบับก่อนผู้ขายส่งใบกำกับ (คำยืนยันเป็นของใบแจ้งหนี้) · อ่านอย่างเดียว (ไม่กลับรายการเอง)
     List<DataIntegritySuspect>? PartnerConfirmedBeforeTaxInvoice = null,
     // ฝ่ายค้านรอบ 258 M4 — เงินส่วนเกินของการรับ/จ่ายชำระก่อนรอบ 258 ที่ต้องให้คนตรวจ (ฝั่งรับ: ธงต้องตรวจ · ฝั่งจ่าย: ลงผังกลุ่ม 114 เช่น 11400) · อ่านอย่างเดียว
-    List<DataIntegritySuspect>? LegacyPaymentExcess = null)
+    List<DataIntegritySuspect>? LegacyPaymentExcess = null,
+    // รอบ 266 G-1 (คำตัดสิน 266-1-13) — ใบเสร็จ/ใบสำคัญรับที่อ้างใบต้นทางของผู้ติดต่ออื่น (ก่อนมีด่านเซิร์ฟเวอร์) · อ่านอย่างเดียว (ไม่แก้อัตโนมัติ · F2 ข้อ 9)
+    List<DataIntegritySuspect>? ReceiptsWithMismatchedSourceContact = null)
 {
     /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
     /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
@@ -68,7 +70,8 @@ public sealed record DataIntegrityReport(
         + (ApiJournalDepositDrawnWithoutBookingRef?.Count ?? 0)
         + (PurchaseVatInconsistentWithBase?.Count ?? 0)
         + (PortalSlipLegacyNeedsReview?.Count ?? 0)
-        + (PartnerConfirmedBeforeTaxInvoice?.Count ?? 0) + (LegacyPaymentExcess?.Count ?? 0);
+        + (PartnerConfirmedBeforeTaxInvoice?.Count ?? 0) + (LegacyPaymentExcess?.Count ?? 0)
+        + (ReceiptsWithMismatchedSourceContact?.Count ?? 0);
 }
 
 /// <summary>
@@ -218,7 +221,32 @@ public class DataIntegrityReportService
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
             ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, dnCashTwice, apiNoRef, vatBase,
             slipReview, partnerEarly,
-            await Accounting.Helpers.CustomerCreditQuery.LegacyExcessSuspectsAsync(_db, companyId));
+            await Accounting.Helpers.CustomerCreditQuery.LegacyExcessSuspectsAsync(_db, companyId),
+            await LoadReceiptSourceContactMismatchAsync(companyId));
+    }
+
+    /// <summary>รอบ 266 G-1 — ใบเสร็จ/ใบสำคัญรับ (ทุกสถานะยกเว้นยกเลิก/ปฏิเสธ) ที่ <c>RelatedDocumentId</c> ชี้ใบของผู้ติดต่ออื่น · ทั้งสองฝั่งกรอง
+    /// <c>CompanyId</c> · ใบร่าง: แก้ผู้ติดต่อ/ใบต้นทางในฟอร์มได้ (อนุมัติไม่ผ่านจนกว่าจะตรง) · ใบที่อนุมัติแล้ว: ลูกหนี้ของใบต้นทางถูกตัดด้วยเงินของอีกราย —
+    /// ผู้ทำบัญชีตัดสินรายใบ (ยกเลิกใบเสร็จแล้วออกใหม่ให้ถูกราย) · ระบบไม่แก้ให้</summary>
+    private async Task<List<DataIntegritySuspect>> LoadReceiptSourceContactMismatchAsync(Guid companyId)
+    {
+        var rows = await (from r in _db.Documents.AsNoTracking()
+                          join src in _db.Documents.AsNoTracking() on r.RelatedDocumentId equals src.Id
+                          where r.CompanyId == companyId && src.CompanyId == companyId && !r.IsDeleted
+                                && (r.DocumentType == DocumentType.Receipt || r.DocumentType == DocumentType.ReceiptVoucher)
+                                && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
+                                && r.ContactId != src.ContactId
+                          orderby r.DocumentDate
+                          select new { r.Id, r.DocumentNumber, r.DocumentDate, r.Status, r.TotalAmount, SourceNumber = src.DocumentNumber })
+            .Take(500)
+            .ToListAsync();
+        return rows.Select(r => new DataIntegritySuspect("ReceiptSourceContactMismatch", r.Id, r.DocumentNumber, r.DocumentDate,
+                $"สถานะ {r.Status} · อ้างใบต้นทาง {r.SourceNumber} ของผู้ติดต่อคนละราย — "
+                + (r.Status == DocumentStatus.Draft
+                    ? "ใบร่าง: แก้ผู้ติดต่อหรือใบต้นทางให้ตรงกันก่อนอนุมัติ (ระบบไม่ให้อนุมัติแล้ว)"
+                    : "ลูกหนี้ของใบต้นทางอาจถูกตัดด้วยเงินของอีกราย — ให้ผู้ทำบัญชีตรวจ แล้วยกเลิกใบเสร็จและออกใหม่ให้ถูกราย (ระบบไม่แก้ให้)"),
+                r.TotalAmount, null, $"/pages/documents.html?openDoc={r.Id}", "เปิดเอกสาร"))
+            .ToList();
     }
 
     /// <summary>รอบ 250 ฝ่ายค้าน M3 — แถวสลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจและยังไม่ถูกลบ (= migration ไม่ย้ายเอง: ผูกธนาคาร/JE/ใบเสร็จ/มีเงินจริงแยกแล้ว ·
