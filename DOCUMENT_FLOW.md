@@ -3251,11 +3251,15 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   มีแถวใช้อยู่ ⇒ ถอนแถวเดิม ("แทนที่") + แถวใหม่ในธุรกรรมเดียว · audit `PartnerConsentGranted` / `PartnerConsentWithdrawn` (ruleCode `XT-CONSENT`) ผ่าน `AddChainedAuditLog`
 - **ถอน**: `DELETE …/partner-consents/{id}?reason=` — มีผลทันทีกับงานที่ยังไม่ทำ · งานที่ทำแล้วไม่ย้อน (F7) · แถวของบริษัทอื่น = 404
 - **ขอ (ฝั่ง A)**: `POST …/partner-consents/request` → กระดิ่ง `autopilot.partner_exchange` ของ B ลิงก์ `/pages/partner-automation.html?partnership={id}` · 3 ครั้ง/คู่/วัน · ส่งล้ม = 502 (ไม่ตอบว่าส่งแล้ว) · audit `PartnerConsentRequested` ฝั่ง A
-- **ตอนใช้ (API ของ P3/P5)**: `PartnerConsentService.CheckAsync(companyId, partnershipId, scope, amount)` → `PartnerConsent.UseCheck` (Ok · Code · Reason · ConsentId · GrantorUserId · MaxAmount · DefaultPayBankAccountId) ·
+- **ตอนใช้ (API ของ P3/P5)**: `PartnerConsentService.CheckForWriteAsync(companyId, partnershipId, scope, CapAmount?)` ในธุรกรรมของท่อ (หน้า/รายงาน: `CheckAsync` อ่านอย่างเดียว) → `PartnerConsent.UseCheck` (Ok · Code · Reason · ConsentId · GrantorUserId · MaxAmount · DefaultPayBankAccountId) ·
   ตรวจสดทุกครั้ง: คู่ Accepted · แถวของบริษัท/คู่/ขอบเขตนี้ · ไม่ถอน · hash ตรง · ให้หลังการระงับครั้งล่าสุด (`StaleAfterSuspend` — เชื่อมกลับไม่ฟื้นเอง) · ผู้ให้ยังใช้งาน + ยังมีสิทธิ์ของขอบเขต (`GrantorLostPermission`) · ยอดไม่เกินเพดาน ·
   ไม่ผ่าน ⇒ ท่อกลับเป็นปุ่มเดียวพร้อม `Reason`
 - **ค่าตั้งเดิม** `PUT workflow-automation`: เขียน audit `WorkflowAutomationConfigChanged` (ช่องที่เปลี่ยน ก่อน/หลัง · ไม่เปลี่ยน = ไม่เขียน) — C-06
 - **หน้า**: `partner-automation.html` (ลิงก์จากแถวคู่ค้า Accepted/Suspended ใน `partners.html` + กระดิ่งคำขอ) · ป้าย/ข้อความ/เหตุ/สิทธิ์ของผู้เปิดหน้ามาจากเซิร์ฟเวอร์ · ปุ่มยินยอมล็อกพร้อมเหตุเมื่อผู้เปิดไม่มีสิทธิ์ · ประวัติแถว + ผลตรวจ hash ต่อแถว
+- **ชุดแก้ฝ่ายค้าน (review-264-P1 · คำตัดสิน 264-2-17…22)**: ระงับคู่ ⇒ ถอนทุกแถวในการบันทึกเดียวกัน + `Allows` ตัดแถวที่ให้ก่อน `AcceptedAt` ล่าสุด ·
+  ท่อใช้ `CheckForWriteAsync` (ในธุรกรรม · `FOR SHARE`) — `CheckAsync` อ่านอย่างเดียว · ถอน/แทนที่ `FOR UPDATE` + 409 · ยอดเทียบเพดาน = `CapAmount` (บาทรวม VAT ก่อนหัก ณ ที่จ่าย · สกุลอื่น/ติดลบ ⇒ ไม่รู้ยอด) ·
+  บัญชีจ่ายตรวจซ้ำตอนใช้ (`PayAccountInactive`) · บริษัทคู่ค้าถูกลบ/ระงับ ⇒ หยุด · trigger กัน IsDeleted + DELETE · hash `PAC2` (`HashVersion`) · `MinTextVersion` · `WiredSince` (แพ็กที่พลิก `ReaderWired` ต้องตั้ง) ·
+  หน้าแสดงคู่ Pending ที่มีแถวความยินยอม · อีเมลใน audit ค่าตั้งเป็นลายนิ้วมือ
 - **kill-switch**: ไม่มีการเรียก AI ในแพ็กนี้
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
@@ -3706,6 +3710,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   เหตุบน `PartnerDeliveryError` (**ไม่นับครั้ง** · แก้แล้วรอบถัดไปส่งเองและล้างเหตุ) · ไม่มีหลักฐานว่าเป็นคู่ค้า ⇒ ไม่ประทับ · ความยินยอม = จุดเดียว `ReturnWhtCertsAllowedAsync` (ค่าตั้งเดิม — P1 สลับ) ·
   Autopilot `PartnerTaxEvidenceIssuesAsync`: ใบซื้อจากคู่ค้ารอต้นฉบับใกล้ครบ/เลยกรอบ ม.82/3 (`PartnerTaxEvidenceAlerts` · เหลือ ≤ 2 เดือน) · `PartnerPayBlocked` (การแจ้งค้าง · ด่วนเมื่อ ภ.ง.ด.53 ใกล้กำหนด) ·
   `PartnerWhtCertUndelivered` (เหตุก่อนส่ง/ส่งไม่สำเร็จ) · Last verified `commit 70253c2e`
+  **ชุดแก้ฝ่ายค้าน (264-5-6…9)**: เลือกใบหลังกรองผู้ถูกหักที่อาจเป็นคู่ค้าใน SQL (ใบติดเหตุไปท้ายคิว) · ยืนยันด้วยที่มาเฉพาะเมื่อผู้จ่ายของทุกแถวรอใบ (ผู้ติดต่อในสมุดเรา)
+  ผูก `NextAccTenant` กับบริษัทต้นทาง · ใบส่งพร้อม `SourcePayerCompanyId/SourceWhtCertId` (ระบบเติม) · ตอบ "ซ้ำ" กับรายการของใบอื่น ⇒ ไม่ประทับส่งแล้ว ·
+  ผู้ถูกหักไม่ใช่คู่ค้าแล้ว ⇒ ล้างเหตุ · ปิดการส่ง ⇒ ไม่แสดงเรื่องค้าง · ม.82/3 แยกชุดใกล้ครบ/เลยกรอบ · ผู้ติดต่อของบริษัทที่ไม่เคยเป็นคู่ = ไม่ใช่เส้นนี้ · `commit 1491ea8b`
 - **พอร์ทัลลูกค้าไม่ต้องจำรหัสผ่าน (ข้อ 8 · AUTOPILOT §8.1)**: `POST api/portal/magic-link {companyId, email}` — ส่งเฉพาะอีเมลที่ผู้ขายเปิด `PortalAccess` ไว้ (ใช้งานอยู่) ·
   **คำตอบเดียวทุกกรณี** (`PortalMagicLinkPolicy.AckMessage` · 202) · เพดานต่ออีเมล 1/นาที 5/วัน + ต่อบริษัท 10/นาที 200/วัน (ตัวนับในฐาน fail-closed) · เวลาตอบขั้นต่ำคงที่ ·
   โทเคนสุ่ม 32 ไบต์ เก็บ SHA-256 ใน `PortalMagicLinks` · อายุ 15 นาที · ใช้ครั้งเดียว (compare-and-set `UsedAt`) · ไม่มี URL ของระบบ/SMTP ⇒ ไม่ส่ง (log error · ไม่แต่งโดเมน) ·
@@ -9029,3 +9036,5 @@ _Last verified against codebase: 2026-11-12 (รอบ 262 — §2.12g-262: บ�
 _Last verified against codebase: 2026-11-12 (รอบ 262 — §2.12g-262: บริษัทผู้ให้บริการเรียกเก็บค่าบริการทาง LINE ผ่าน OA กลาง (ผูก 1:1 · ผู้เช่าผูกเองจากศูนย์บิล · ใบแจ้งหนี้/ทวง/ใบเสร็จเข้าคิว LINE ของผู้ติดต่อ · ปุ่มชำระ = ศูนย์บิล · หน้าตั้งค่า server computes) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81af94ae)_
 
 _Last verified against codebase: 2026-11-12 (รอบ 264 P1 ความยินยอมงานอัตโนมัติกับคู่ค้า — §2.12g-264-P1: ตาราง append-only + hash canonical · ให้สองขั้น · ถอนทันที · ระงับ/เชื่อมกลับไม่ฟื้นเอง · สิทธิ์ผู้ให้ตรวจซ้ำตอนใช้ · `CheckAsync` สำหรับ P3/P5 · audit ค่าตั้งเดิม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3d6cdb70)_
+
+_Last verified against codebase: 2026-11-12 (รอบ 264 P1 ชุดแก้ฝ่ายค้าน — §2.12g-264-P1: H1 ระงับ ⇒ ถอน + ตัดแถวก่อนยอมรับครั้งล่าสุด · M1 CheckForWriteAsync FOR SHARE · M2–M4 · L1–L8 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f7eb8eee)_

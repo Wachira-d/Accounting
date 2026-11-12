@@ -19,10 +19,30 @@ public class WhtCertProvenanceRound264Tests
         decimal srcTax = 300m, decimal srcIncome = 10_000m, decimal srcRate = 3m, string? srcPayee = Us, WhtPayerFormType? srcForm = WhtPayerFormType.Pnd53,
         DateTime? srcDate = null,
         decimal subTax = 300m, decimal subIncome = 10_000m, decimal subRate = 3m, string? subPayee = Us, WhtPayerFormType subForm = WhtPayerFormType.Pnd53,
-        DateTime? subDate = null)
+        DateTime? subDate = null, bool linked = true)
         => new(accepted, live, voided,
             live == 1 ? new WhtCertIntakeVerdict.SourceCertFacts(srcIncome, srcTax, srcRate, srcDate ?? CertDate, srcForm, srcPayee) : null,
-            Us, new WhtCertIntakeVerdict.SubmittedCertFacts(subPayee, subIncome, subTax, subRate, subDate ?? CertDate, subForm));
+            Us, new WhtCertIntakeVerdict.SubmittedCertFacts(subPayee, subIncome, subTax, subRate, subDate ?? CertDate, subForm), linked);
+
+    [Fact]
+    public void M1_ผู้จ่ายบนแถวรอใบในสมุดเราไม่ได้ผูกกับคู่ค้า_เป็นปัญหา_ทิศตรงข้ามผูกแล้วผ่าน()
+    {
+        Assert.Contains(WhtCertIntakeVerdict.ProvenanceProblems(Facts(linked: false)), x => x.Contains("ยังไม่ได้ผูก"));
+        Assert.Empty(WhtCertIntakeVerdict.ProvenanceProblems(Facts(linked: true)));
+    }
+
+    [Fact]
+    public void L3_ขอบเขตsql_ครอบทุกใบที่ตัวตัดสินแสดง()
+    {
+        var now = new DateTime(2026, 11, 12, 3, 0, 0, DateTimeKind.Utc);
+        var (from, before, expBefore) = PartnerTaxEvidenceAlerts.QueryBounds(now);
+        foreach (var d in Enumerable.Range(0, 400).Select(i => new DateTime(2025, 10, 1).AddDays(i)))
+        {
+            var w = PartnerTaxEvidenceAlerts.InputVatWindowOf(d, now);
+            if (w.State == PartnerTaxEvidenceAlerts.WindowState.Approaching) Assert.True(d >= from && d < before, d.ToString("yyyy-MM-dd"));
+            if (w.State == PartnerTaxEvidenceAlerts.WindowState.Expired) Assert.True(d < expBefore, d.ToString("yyyy-MM-dd"));
+        }
+    }
 
     // ═══════════ C-02: ที่มาพิสูจน์ได้ ⇒ ยืนยันโดยไม่มีคำตอบ AI ═══════════
 

@@ -58,11 +58,34 @@ public class PartnerConsentService
     // ═══════════ ตัวตรวจตอนใช้ (API ของแพ็ก P3/P5) ═══════════
 
     /// <summary>
-    /// **ขอบเขตนี้ของคู่นี้ใช้ได้ตอนนี้ไหม** — ตรวจสดทุกครั้ง (คู่ค้า · แถว · hash · การระงับ · สิทธิ์ผู้ให้ ณ ตอนนี้ · เพดาน) ·
-    /// ท่ออัตโนมัติต้องเรียกก่อนเขียนทุกครั้ง และใช้ <see cref="PartnerConsent.UseCheck.GrantorUserId"/> เป็นผู้รับผิดชอบใน audit (264-2-3) ·
-    /// ไม่ผ่าน ⇒ ท่อกลับเป็น "ปุ่มเดียว" พร้อม <see cref="PartnerConsent.UseCheck.Reason"/> · ขอบเขตที่ยังตัดสินด้วยค่าตั้งทั้งบริษัท ⇒ <see cref="PartnerConsent.AllowsCompanyWide"/>
+    /// **อ่านอย่างเดียว** — ขอบเขตนี้ของคู่นี้ใช้ได้ตอนนี้ไหม (หน้า/ป้าย/รายงาน) · <b>ท่อที่จะเขียนบัญชีห้ามใช้ตัวนี้</b> — ใช้ <see cref="CheckForWriteAsync"/>
+    /// (ฝ่ายค้าน M1: อ่านแล้วถอนแทรกได้ก่อนท่อเขียน)
     /// </summary>
-    public async Task<PartnerConsent.UseCheck> CheckAsync(Guid companyId, Guid partnershipId, Scope scope, decimal? amount, CancellationToken ct = default)
+    public Task<PartnerConsent.UseCheck> CheckAsync(Guid companyId, Guid partnershipId, Scope scope, PartnerConsent.CapAmount? amount, CancellationToken ct = default)
+        => EvaluateAsync(companyId, partnershipId, scope, amount, ct);
+
+    /// <summary>
+    /// **API ของท่ออัตโนมัติ (P3/P5)** — เรียก<b>ภายในธุรกรรมของท่อ</b> ก่อนเขียนทุกครั้ง: ล็อก <c>FOR SHARE</c> แถวคู่ค้า + แถวความยินยอมที่ใช้อยู่ ⇒
+    /// การถอน (<see cref="WithdrawAsync"/> · UPDATE) และการระงับคู่รอจนท่อ commit/rollback — งานที่เขียนในธุรกรรมนี้จึงเกิดภายใต้ความยินยอมที่ยังใช้อยู่จริง ·
+    /// ไม่มีธุรกรรม = ใช้ผิด ⇒ <see cref="InvalidOperationException"/> (ข้อผิดพลาดของโปรแกรม ไม่ใช่ของผู้ใช้) ·
+    /// ไม่ผ่าน ⇒ ท่อกลับเป็น "ปุ่มเดียว" พร้อม <see cref="PartnerConsent.UseCheck.Reason"/> · ใช้ <see cref="PartnerConsent.UseCheck.GrantorUserId"/>/<c>ConsentId</c> เป็นผู้รับผิดชอบใน audit (264-2-3) ·
+    /// <paramref name="amount"/> = <see cref="PartnerConsent.CapAmount"/> (ยอดรวมบาทก่อนหัก ณ ที่จ่าย — M3)
+    /// </summary>
+    public async Task<PartnerConsent.UseCheck> CheckForWriteAsync(Guid companyId, Guid partnershipId, Scope scope, PartnerConsent.CapAmount? amount, CancellationToken ct = default)
+    {
+        if (_db.Database.CurrentTransaction == null)
+            throw new InvalidOperationException("CheckForWriteAsync ต้องเรียกภายในธุรกรรมของท่อที่จะเขียน (ล็อกความยินยอมไว้จน commit)");
+        var name = scope.ToString();
+        // ล็อกคู่ก่อนแถวความยินยอม (ลำดับเดียวกันทุกผู้เรียก) · ไม่ใช่สมาชิกของคู่ = ไม่ล็อกอะไร (ตัวตรวจคืน NoPartner)
+        await _db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM \"TradingPartnerships\" WHERE \"Id\" = {partnershipId} AND (\"CompanyAId\" = {companyId} OR \"CompanyBId\" = {companyId}) FOR SHARE", ct);
+        await _db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM \"PartnerAutomationConsents\" WHERE \"CompanyId\" = {companyId} AND \"TradingPartnershipId\" = {partnershipId} AND \"Scope\" = {name} AND \"WithdrawnAt\" IS NULL FOR SHARE", ct);
+        return await EvaluateAsync(companyId, partnershipId, scope, amount, ct);
+    }
+
+    /// <summary>ตัวประเมินเดียวของสองทางเข้าข้างบน — อ่านสด (AsNoTracking) ทุกค่า: คู่ · บริษัทคู่ค้า · แถว · สิทธิ์ผู้ให้ · บัญชีจ่ายที่ประกาศ</summary>
+    private async Task<PartnerConsent.UseCheck> EvaluateAsync(Guid companyId, Guid partnershipId, Scope scope, PartnerConsent.CapAmount? amount, CancellationToken ct)
     {
         var p = await _db.TradingPartnerships.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == partnershipId && (x.CompanyAId == companyId || x.CompanyBId == companyId), ct);
@@ -72,11 +95,17 @@ public class PartnerConsentService
             var cfg = await _db.WorkflowAutomationConfigs.AsNoTracking().FirstOrDefaultAsync(c => c.CompanyId == companyId, ct);
             return PartnerConsent.UseCheck.From(PartnerConsent.AllowsCompanyWide(scope, PartnerConsent.CompanyWideToggleOn(scope, cfg), p, companyId), null);
         }
+        // ฝ่ายค้าน L7: บริษัทคู่ค้าถูกลบ (query filter ตัดออก) / ระงับ ⇒ หยุด
+        var partnerActive = p != null && await _db.Companies.AsNoTracking()
+            .AnyAsync(c => c.Id == (p.CompanyAId == companyId ? p.CompanyBId : p.CompanyAId) && c.Status == CompanyStatus.Active, ct);
         var name = scope.ToString();
         var row = await _db.PartnerAutomationConsents.AsNoTracking()
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.TradingPartnershipId == partnershipId && x.Scope == name && x.WithdrawnAt == null, ct);
         var grantorOk = row != null && await GrantProblemForAsync(companyId, row.GrantedByUserId, scope) == null;
-        return PartnerConsent.UseCheck.From(PartnerConsent.Allows(scope, row, p, companyId, amount, grantorOk), row);
+        // ฝ่ายค้าน M2: บัญชีจ่ายที่ประกาศไว้ต้องยังใช้ได้ ณ ตอนนี้ (ของบริษัท · ใช้งาน · ไม่ถูกลบ) — ไม่ได้ ⇒ ไม่ส่งออก + เหตุ
+        var payOk = row?.DefaultPayBankAccountId is not Guid bank
+            || await _db.BankAccounts.AsNoTracking().AnyAsync(b => b.Id == bank && b.CompanyId == companyId && b.IsActive && !b.IsDeleted, ct);
+        return PartnerConsent.UseCheck.From(PartnerConsent.Allows(scope, row, p, companyId, amount, grantorOk, partnerActive), row, payOk);
     }
 
     // ═══════════ หน้า "งานอัตโนมัติกับคู่ค้า" ═══════════
@@ -93,17 +122,23 @@ public class PartnerConsentService
 
     public async Task<PageView> ListAsync(Guid companyId, Guid callerUserId, CancellationToken ct = default)
     {
+        // ฝ่ายค้าน H1: แถว Pending ที่เรามีความยินยอม (เคยเชื่อมแล้วกำลังเชื่อมใหม่) ต้องเห็น/ถอนได้ · Pending อื่นไม่แสดง (ไม่รั่วชื่อผู้ขอ)
         var parts = await _db.TradingPartnerships.AsNoTracking()
             .Where(p => (p.CompanyAId == companyId || p.CompanyBId == companyId)
-                && (p.Status == TradingPartnershipStatus.Accepted || p.Status == TradingPartnershipStatus.Suspended))
+                && (p.Status == TradingPartnershipStatus.Accepted || p.Status == TradingPartnershipStatus.Suspended
+                    || (p.Status == TradingPartnershipStatus.Pending
+                        && _db.PartnerAutomationConsents.Any(x => x.CompanyId == companyId && x.TradingPartnershipId == p.Id))))
             .OrderByDescending(p => p.CreatedAt).Take(200).ToListAsync(ct);
         var partnerIds = parts.Select(p => p.CompanyAId == companyId ? p.CompanyBId : p.CompanyAId).Distinct().ToList();
         var companies = await _db.Companies.AsNoTracking().Where(c => partnerIds.Contains(c.Id))
             .Select(c => new { c.Id, c.Name, c.TaxId }).ToDictionaryAsync(c => c.Id, ct);
         var pids = parts.Select(p => p.Id).ToList();
-        var rows = await _db.PartnerAutomationConsents.AsNoTracking()
-            .Where(x => x.CompanyId == companyId && pids.Contains(x.TradingPartnershipId))
-            .OrderByDescending(x => x.GrantedAt).Take(2000).ToListAsync(ct);
+        // ฝ่ายค้าน L8(a): แถวที่ใช้อยู่ดึงครบเสมอ · จำกัดเฉพาะประวัติ
+        var activeRows = await _db.PartnerAutomationConsents.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && pids.Contains(x.TradingPartnershipId) && x.WithdrawnAt == null).ToListAsync(ct);
+        var rows = activeRows.Concat(await _db.PartnerAutomationConsents.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && pids.Contains(x.TradingPartnershipId) && x.WithdrawnAt != null)
+            .OrderByDescending(x => x.GrantedAt).Take(2000).ToListAsync(ct)).OrderByDescending(x => x.GrantedAt).ToList();
         var userIds = rows.Select(r => r.GrantedByUserId).Concat(rows.Where(r => r.WithdrawnByUserId != null).Select(r => r.WithdrawnByUserId!.Value)).Distinct().ToList();
         var names = await _db.Users.AsNoTracking().Where(u => userIds.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.FullName, ct);
         string NameOf(Guid id) => names.TryGetValue(id, out var n) && !string.IsNullOrWhiteSpace(n) ? n : "ผู้ใช้ที่ไม่อยู่แล้ว";
@@ -142,7 +177,7 @@ public class PartnerConsentService
                             NameOf(active.GrantedByUserId), active.GrantedAt, active.TextVersion);
                     }
                     // ตัวแทนยอด: แสดงสถานะ "ถ้ายอดอยู่ในเพดาน" — ยอดจริงตรวจตอนท่อใช้
-                    v = PartnerConsent.Allows(d.Scope, active, p, companyId, active?.MaxAmount ?? (d.RequiresCap ? 0m : (decimal?)null), ok);
+                    v = PartnerConsent.Allows(d.Scope, active, p, companyId, PartnerConsent.CapAmount.Thb(active?.MaxAmount ?? 0m), ok);
                 }
                 scopes.Add(new ScopeView(d.Scope.ToString(), d.Label, d.RequiresCap, d.AllowsPayAccount, d.NeedsTypedConfirm, d.CompanyWideToggle, d.ReaderWired,
                     PartnerConsent.EffectNote(d), av, v.Ok, v.Code, v.Reason, callerProblem[d.Scope],
@@ -173,7 +208,7 @@ public class PartnerConsentService
 
     public sealed record PreviewRequest(Guid PartnershipId, string? Scope, decimal? MaxAmount, Guid? DefaultPayBankAccountId);
     public sealed record PreviewView(string Scope, string Label, int TextVersion, string Text, string EvidenceHash, bool NeedsTypedConfirm, string ConfirmPhrase,
-        decimal? MaxAmount, Guid? DefaultPayBankAccountId);
+        decimal? MaxAmount, Guid? DefaultPayBankAccountId, string? PayAccountLabel = null);
     public sealed record GrantRequest(Guid PartnershipId, string? Scope, decimal? MaxAmount, Guid? DefaultPayBankAccountId,
         int TextVersion, string? EvidenceHash, string? TypedConfirm);
 
@@ -204,9 +239,11 @@ public class PartnerConsentService
         var (p, scope, max) = await ValidateAsync(companyId, userId, req.PartnershipId, req.Scope, req.MaxAmount, req.DefaultPayBankAccountId, ct);
         var text = PartnerConsent.TextFor(scope, PartnerConsent.CurrentTextVersion)!;
         var d = PartnerConsent.Def(scope);
+        var payLabel = req.DefaultPayBankAccountId is Guid b
+            ? (await PayAccountOptionsAsync(companyId, ct)).FirstOrDefault(o => o.Value == b.ToString())?.Label : null;
         return new PreviewView(scope.ToString(), d.Label, PartnerConsent.CurrentTextVersion, text,
             PartnerConsent.Hash(companyId, p.Id, scope, max, req.DefaultPayBankAccountId, PartnerConsent.CurrentTextVersion, text),
-            d.NeedsTypedConfirm, PartnerConsent.ConfirmPhrase, max, req.DefaultPayBankAccountId);
+            d.NeedsTypedConfirm, PartnerConsent.ConfirmPhrase, max, req.DefaultPayBankAccountId, payLabel);
     }
 
     /// <summary>
@@ -222,11 +259,13 @@ public class PartnerConsentService
             throw new BusinessRuleException(cp, PartnerConsent.RuleCode, 409);
 
         var partnerId = p.CompanyAId == companyId ? p.CompanyBId : p.CompanyAId;
-        var now = DateTime.UtcNow;
+        var now = PartnerConsent.TruncateToSecond(DateTime.UtcNow);
         var name = scope.ToString();
         var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync(ct) : null;
         try
         {
+            // ฝ่ายค้าน M4: ล็อกแถวที่ใช้อยู่ก่อนอ่าน — แทนที่/ถอนพร้อมกันรอกัน แล้วอ่านค่าล่าสุด (ไม่ชน trigger เป็น 500)
+            await LockActiveForUpdateAsync(companyId, p.Id, name, ct);
             var prev = await _db.PartnerAutomationConsents
                 .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.TradingPartnershipId == p.Id && x.Scope == name && x.WithdrawnAt == null, ct);
             if (prev != null)
@@ -238,7 +277,8 @@ public class PartnerConsentService
             {
                 CompanyId = companyId, TradingPartnershipId = p.Id, PartnerCompanyId = partnerId, Scope = name,
                 MaxAmount = max, DefaultPayBankAccountId = req.DefaultPayBankAccountId, TextVersion = PartnerConsent.CurrentTextVersion,
-                EvidenceHash = hash, GrantedByUserId = userId, GrantedAt = now, CreatedBy = userId.ToString(),
+                GrantedByUserId = userId, GrantedAt = now, CreatedBy = userId.ToString(), HashVersion = PartnerConsent.CurrentHashVersion,
+                EvidenceHash = PartnerConsent.HashV2(companyId, p.Id, partnerId, scope, max, req.DefaultPayBankAccountId, PartnerConsent.CurrentTextVersion, text, userId, now),
             };
             _db.PartnerAutomationConsents.Add(row);
             _db.AddChainedAuditLog(new AuditLog
@@ -248,7 +288,7 @@ public class PartnerConsentService
                 NewValues = JsonSerializer.Serialize(new
                 {
                     @event = "PartnerConsentGranted", partnershipId = p.Id, partnerCompanyId = partnerId, scope = name, maxAmount = max,
-                    defaultPayBankAccountId = req.DefaultPayBankAccountId, textVersion = row.TextVersion, evidenceHash = hash,
+                    defaultPayBankAccountId = req.DefaultPayBankAccountId, textVersion = row.TextVersion, shownHash = hash, evidenceHash = row.EvidenceHash, hashVersion = row.HashVersion,
                     ruleCode = PartnerConsent.RuleCode, legalReference = PartnerConsent.LegalReference,
                 }),
                 Timestamp = now,
@@ -257,9 +297,9 @@ public class PartnerConsentService
             if (ownTx != null) await ownTx.CommitAsync(ct);
             return row;
         }
-        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" or PartnerConsentMigration.TriggerSqlState })
         {
-            throw new BusinessRuleException("มีการให้ความยินยอมขอบเขตนี้พร้อมกันอีกรายการ — รีเฟรชหน้าแล้วตรวจอีกครั้ง", PartnerConsent.RuleCode, 409);
+            throw new BusinessRuleException("มีการเปลี่ยนความยินยอมขอบเขตนี้พร้อมกันอีกรายการ — รีเฟรชหน้าแล้วตรวจอีกครั้ง", PartnerConsent.RuleCode, 409);
         }
         finally
         {
@@ -273,23 +313,63 @@ public class PartnerConsentService
     /// การถอน = แคบลง ⇒ ต้องการแค่สิทธิ์ตั้งค่าบริษัท (ด่านของ controller) ไม่ต้องมีสิทธิ์ของขอบเขต · แถวของบริษัทอื่น = ไม่พบ</summary>
     public async Task<PartnerAutomationConsent> WithdrawAsync(Guid companyId, Guid userId, Guid consentId, string? reason, CancellationToken ct = default)
     {
-        var row = await _db.PartnerAutomationConsents.FirstOrDefaultAsync(x => x.Id == consentId && x.CompanyId == companyId, ct)
-            ?? throw new KeyNotFoundException("ไม่พบความยินยอมนี้");
-        if (row.WithdrawnAt != null)
-            throw new BusinessRuleException("ถอนความยินยอมนี้ไปแล้ว", PartnerConsent.RuleCode, 409);
-        MarkWithdrawn(row, userId, DateTime.UtcNow, PartnerConsent.CleanReason(reason), replaced: false);
-        await _db.SaveChangesAsync(ct);
-        return row;
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync(ct) : null;
+        try
+        {
+            // ฝ่ายค้าน M1/M4: FOR UPDATE — รอท่อที่ถือ FOR SHARE (CheckForWriteAsync) จนจบ · ถอนซ้อนกันอ่านค่าล่าสุดหลังได้ล็อก ⇒ 409 ไม่ใช่ 500
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM \"PartnerAutomationConsents\" WHERE \"Id\" = {consentId} AND \"CompanyId\" = {companyId} FOR UPDATE", ct);
+            var row = await _db.PartnerAutomationConsents.FirstOrDefaultAsync(x => x.Id == consentId && x.CompanyId == companyId, ct)
+                ?? throw new KeyNotFoundException("ไม่พบความยินยอมนี้");
+            if (row.WithdrawnAt != null)
+                throw new BusinessRuleException("ถอนความยินยอมนี้ไปแล้ว (หรือถูกแทนที่พร้อมกัน) — รีเฟรชหน้า", PartnerConsent.RuleCode, 409);
+            MarkWithdrawn(row, userId, DateTime.UtcNow, PartnerConsent.CleanReason(reason), replaced: false);
+            await _db.SaveChangesAsync(ct);
+            if (ownTx != null) await ownTx.CommitAsync(ct);
+            return row;
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: PartnerConsentMigration.TriggerSqlState })
+        {
+            throw new BusinessRuleException("ความยินยอมนี้เปลี่ยนไปพร้อมกัน — รีเฟรชหน้าแล้วตรวจอีกครั้ง", PartnerConsent.RuleCode, 409);
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
     }
 
+    private Task<int> LockActiveForUpdateAsync(Guid companyId, Guid partnershipId, string scope, CancellationToken ct)
+        => _db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM \"PartnerAutomationConsents\" WHERE \"CompanyId\" = {companyId} AND \"TradingPartnershipId\" = {partnershipId} AND \"Scope\" = {scope} AND \"WithdrawnAt\" IS NULL FOR UPDATE", ct);
+
+    /// <summary>
+    /// ฝ่ายค้าน H1 — ระงับการเชื่อม ⇒ ถอนความยินยอมที่ใช้อยู่ทุกแถวของคู่นี้ (<b>ทั้งสองบริษัท</b> — ความยินยอมของอีกฝ่ายก็ใช้ไม่ได้แล้ว) ในธุรกรรมเดียวกับการระงับ ·
+    /// audit ลง chain ของบริษัทเจ้าของแถวแต่ละแถว (replaced=false · เหตุ "ระงับการเชื่อม") · ผู้เรียกต้อง SaveChanges เอง ·
+    /// ผู้เรียกเดียว: <c>CrossTenantWorkflowService.SuspendPartnershipAsync</c> · คู่กับ <see cref="PartnerConsent.Allows"/> ที่ตัดแถวที่ให้ก่อนการยอมรับครั้งล่าสุด (กันสองชั้น)
+    /// </summary>
+    public static async Task<int> WithdrawAllOnSuspendAsync(AccountingDbContext db, Guid partnershipId, Guid userId, CancellationToken ct = default)
+    {
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM \"PartnerAutomationConsents\" WHERE \"TradingPartnershipId\" = {partnershipId} AND \"WithdrawnAt\" IS NULL FOR UPDATE", ct);
+        var rows = await db.PartnerAutomationConsents.Where(x => x.TradingPartnershipId == partnershipId && x.WithdrawnAt == null).ToListAsync(ct);
+        var now = DateTime.UtcNow;
+        foreach (var r in rows) MarkWithdrawnCore(db, r, userId, now, SuspendReason, replaced: false);
+        return rows.Count;
+    }
+
+    public const string SuspendReason = "ระงับการเชื่อมกับคู่ค้า — ความยินยอมหยุดทุกขอบเขต (ให้ใหม่ได้หลังเชื่อมกลับ)";
+
     private void MarkWithdrawn(PartnerAutomationConsent row, Guid userId, DateTime now, string? reason, bool replaced)
+        => MarkWithdrawnCore(_db, row, userId, now, reason, replaced);
+
+    private static void MarkWithdrawnCore(AccountingDbContext db, PartnerAutomationConsent row, Guid userId, DateTime now, string? reason, bool replaced)
     {
         row.WithdrawnAt = now;
         row.WithdrawnByUserId = userId;
         row.WithdrawReason = reason;
         row.UpdatedAt = now;
         row.UpdatedBy = userId.ToString();
-        _db.AddChainedAuditLog(new AuditLog
+        db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = row.CompanyId, UserId = userId, Action = AuditAction.Update, EntityType = nameof(PartnerAutomationConsent), EntityId = row.Id.ToString(),
             OldValues = JsonSerializer.Serialize(new { withdrawnAt = (DateTime?)null }),
@@ -306,7 +386,8 @@ public class PartnerConsentService
 
     /// <summary>บริษัท <paramref name="companyId"/> ขอให้คู่ค้าเปิดงานอัตโนมัติ — แจ้งกระดิ่งของคู่ค้าพร้อมลิงก์หน้าความยินยอมของเขา · ไม่เขียนอะไรในบริษัทคู่ค้านอกจากการแจ้ง ·
     /// ส่งไม่สำเร็จ = ผู้เรียกได้ข้อผิดพลาด (ไม่ตอบ "ส่งแล้ว" ทั้งที่ไม่ได้ส่ง)</summary>
-    public async Task RequestFromPartnerAsync(Guid companyId, Guid userId, Guid partnershipId, IReadOnlyList<string>? scopeNames, CancellationToken ct = default)
+    public async Task RequestFromPartnerAsync(Guid companyId, Guid userId, Guid partnershipId, IReadOnlyList<string>? scopeNames,
+        Func<Task<bool>>? consumeQuota = null, CancellationToken ct = default)
     {
         var scopes = new List<Scope>();
         foreach (var n in scopeNames ?? Array.Empty<string>())
@@ -322,9 +403,23 @@ public class PartnerConsentService
         if (p.Status != TradingPartnershipStatus.Accepted)
             throw new BusinessRuleException("ขอได้เฉพาะคู่ค้าที่เชื่อมอยู่", PartnerConsent.RuleCode, 409);
         if (_notify == null) throw new BusinessRuleException("ระบบแจ้งเตือนไม่พร้อม — ส่งคำขอไม่ได้ในตอนนี้", PartnerConsent.RuleCode, 503);
+        // ฝ่ายค้าน L8(d): นับโควตาหลังคำขอผ่านการตรวจแล้วเท่านั้น (คำขอผิดไม่กินโควตา)
+        if (consumeQuota != null && !await consumeQuota())
+            throw new BusinessRuleException($"ส่งคำขอถึงคู่ค้ารายนี้ครบ {RequestsPerPartnerPerDay} ครั้งของวันนี้แล้ว — ลองใหม่พรุ่งนี้", PartnerConsent.RuleCode, 429);
         var partnerId = p.CompanyAId == companyId ? p.CompanyBId : p.CompanyAId;
         var me = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "คู่ค้า";
         var labels = string.Join(" · ", scopes.Select(s => PartnerConsent.Def(s).Label));
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = userId, Action = AuditAction.Create, EntityType = nameof(TradingPartnership), EntityId = p.Id.ToString(),
+            NewValues = JsonSerializer.Serialize(new
+            {
+                @event = "PartnerConsentRequested", scopes = scopes.Select(s => s.ToString()).ToList(),
+                ruleCode = PartnerConsent.RuleCode, legalReference = PartnerConsent.LegalReference,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
         try
         {
             await _notify.DispatchAsync(partnerId, NotificationEvents.AutopilotPartnerExchange, new NotificationContext
@@ -338,18 +433,15 @@ public class PartnerConsentService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "ส่งคำขอความยินยอมจากบริษัท {Company} ถึงคู่ค้า {Partner} ไม่สำเร็จ", companyId, partnerId);
+            // ฝ่ายค้าน L8(c): audit "ขอ" เขียนก่อนส่ง · ส่งล้ม ⇒ แถวที่สองบอกว่าล้ม (ร่องรอยครบทั้งสองทาง)
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = userId, Action = AuditAction.Update, EntityType = nameof(TradingPartnership), EntityId = p.Id.ToString(),
+                NewValues = JsonSerializer.Serialize(new { @event = "PartnerConsentRequestFailed", ruleCode = PartnerConsent.RuleCode }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync(CancellationToken.None);
             throw new BusinessRuleException("ส่งคำขอถึงคู่ค้าไม่สำเร็จ — ลองใหม่ภายหลัง", PartnerConsent.RuleCode, 502);
         }
-        _db.AddChainedAuditLog(new AuditLog
-        {
-            CompanyId = companyId, UserId = userId, Action = AuditAction.Create, EntityType = nameof(TradingPartnership), EntityId = p.Id.ToString(),
-            NewValues = JsonSerializer.Serialize(new
-            {
-                @event = "PartnerConsentRequested", scopes = scopes.Select(s => s.ToString()).ToList(),
-                ruleCode = PartnerConsent.RuleCode, legalReference = PartnerConsent.LegalReference,
-            }),
-            Timestamp = DateTime.UtcNow,
-        });
-        await _db.SaveChangesAsync(ct);
     }
 }
