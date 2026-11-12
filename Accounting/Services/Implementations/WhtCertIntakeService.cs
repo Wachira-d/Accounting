@@ -115,6 +115,16 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             gates.Add(WhtCreditFiledYearGuard.IntakeReviewGate(filedFy));
         if (possibleDuplicate) gates.Add(PossibleDuplicateGate(certNo!));   // B-M2: ไม่ยืนยันอัตโนมัติ · คนตรวจว่าใบซ้ำหรือใบของลูกค้าอีกราย
 
+        // รอบ 264 P5 (C-02 · B8 · คำตัดสิน 264-5-1): ช่องคู่ค้า NextAcc ⇒ พิสูจน์ที่มาด้วยฐาน (แถว 50 ทวิ ที่ผู้จ่ายออกจริง · เลขภาษี/ยอด/อัตรา/วันที่/แบบ ตรงทุกช่อง) ·
+        // ไม่ตรง/ไม่พบ/ผู้จ่ายยกเลิก ⇒ เป็นด่าน (รอคน) — ช่องนี้ไม่ถาม AI อีกเลย (ข้อมูลที่ถูกแก้ระหว่างทางห้ามให้ AI รับรอง · ปิด provider ทุกตัวแล้วใบจริงยังยืนยันเอง)
+        var provenance = s.Channel == WhtCertIntakeChannel.NextAccLink;
+        if (provenance)
+        {
+            var problems = WhtCertIntakeVerdict.ProvenanceProblems(
+                await LoadProvenanceAsync(companyId, co.TaxId, payerTax, certNo, s, ct));
+            gates.AddRange(problems.Select(x => WhtCertIntakeVerdict.ProvenanceGatePrefix + x));
+        }
+
         var intake = new WhtCertIntake
         {
             CompanyId = companyId,
@@ -150,16 +160,30 @@ public class WhtCertIntakeService : IWhtCertIntakeService
         string? answer = null; decimal? confidence = null; var usable = false;
         if (gates.Count == 0)
         {
-            var resp = await _ai.AskAsync(Accounting.Services.Ai.Prompts.WhtCertAuthenticityPrompt.Build(
-                companyId, intake.Id, s.Channel, intake.PayerName, intake.PayerTaxId, certNo, s.CertificateDate,
-                intake.IncomeTypeCode, intake.IncomeAmount, intake.WhtRate, intake.WhtAmount, s.RawText), ct);
-            intake.WhtCertAuthenticityAiFeedbackId = resp.FeedbackId;
-            intake.WhtCertAuthenticityUsedAi = resp.UsedAi;
-            answer = WhtCertIntakeVerdict.ParseAuthenticity(resp.PrimaryAnswer);   // ด่านกันมั่ว — นอกชุด = ไม่มีคำตอบ
-            confidence = resp.Confidence;
-            usable = answer != null && (resp.UsedAi || OcrAiAugmenter.IsStudentAnswer(resp));
-            intake.AuthenticityAnswer = usable ? answer : null;
-            intake.AuthenticityConfidence = usable && confidence is decimal c0 && c0 >= 0m && c0 <= 1m ? c0 : null;
+            if (provenance)
+            {
+                // ที่มาพิสูจน์แล้ว (ด่านเชิงกำหนดผ่านครบ) — ไม่เรียก orchestrator · ไม่มีแถว feedback (ไม่มีคำตอบ AI ให้สอน) · ป้าย ⚙️ ยืนยันจากระบบของผู้จ่าย
+                answer = WhtCertIntakeVerdict.Genuine;
+                confidence = WhtCertIntakeVerdict.ProvenanceConfidence;
+                usable = true;
+                intake.AuthenticityByProvenance = true;
+                intake.WhtCertAuthenticityUsedAi = false;
+                intake.AuthenticityAnswer = answer;
+                intake.AuthenticityConfidence = confidence;
+            }
+            else
+            {
+                var resp = await _ai.AskAsync(Accounting.Services.Ai.Prompts.WhtCertAuthenticityPrompt.Build(
+                    companyId, intake.Id, s.Channel, intake.PayerName, intake.PayerTaxId, certNo, s.CertificateDate,
+                    intake.IncomeTypeCode, intake.IncomeAmount, intake.WhtRate, intake.WhtAmount, s.RawText), ct);
+                intake.WhtCertAuthenticityAiFeedbackId = resp.FeedbackId;
+                intake.WhtCertAuthenticityUsedAi = resp.UsedAi;
+                answer = WhtCertIntakeVerdict.ParseAuthenticity(resp.PrimaryAnswer);   // ด่านกันมั่ว — นอกชุด = ไม่มีคำตอบ
+                confidence = resp.Confidence;
+                usable = answer != null && (resp.UsedAi || OcrAiAugmenter.IsStudentAnswer(resp));
+                intake.AuthenticityAnswer = usable ? answer : null;
+                intake.AuthenticityConfidence = usable && confidence is decimal c0 && c0 >= 0m && c0 <= 1m ? c0 : null;
+            }
         }
 
         // (5) ตัดสิน
@@ -252,6 +276,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             }
             Audit(companyId, s.SubmittedByUserId, s.SubmittedBy, intake, outcome switch
             {
+                WhtCertIntakeVerdict.Outcome.AutoConfirm when intake.AuthenticityByProvenance => "wht-cert-intake-provenance-confirmed",
                 WhtCertIntakeVerdict.Outcome.AutoConfirm => "wht-cert-intake-auto-confirmed",
                 WhtCertIntakeVerdict.Outcome.Reject => "wht-cert-intake-rejected",
                 _ => "wht-cert-intake-submitted",
@@ -318,6 +343,54 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             .Where(i => i.CompanyId == companyId && i.FileSha256 == sha && i.Status != WhtCertIntakeRecordStatus.Rejected)
             .Select(i => new { i.Id, i.Status }).FirstOrDefaultAsync(ct);
         return dup == null ? null : new WhtCertSubmitResult(dup.Id, dup.Status.ToString(), false, true, "ได้รับไฟล์นี้แล้ว — ไม่สร้างรายการซ้ำ");
+    }
+
+    /// <summary>รอบ 264 P5 (C-02 · คำตัดสิน 264-5-1) — ข้อเท็จจริงของ "ที่มา" ของใบช่องคู่ค้า NextAcc <b>อ่านจากฐาน ไม่ใช่จากผู้ส่ง</b>:
+    /// บริษัทผู้จ่าย = บริษัทที่เลขผู้เสียภาษีตรงใบ <b>และ</b>เป็นคู่ค้าที่เชื่อมอยู่ (Accepted) กับเรา · ใบเลขที่นี้ในบริษัทนั้นที่ผู้ถูกหักคือผู้ติดต่อที่ผูก
+    /// <c>NextAccTenant</c> = บริษัทเรา · ยอด/อัตรา/วันที่คิดด้วยสูตรเดียวกับฝั่งส่ง (<see cref="PartnerExchangeRules.CertRate"/> · <see cref="PartnerExchangeRules.WhtCertificateDate"/>) ·
+    /// อ่านข้ามบริษัทเฉพาะคู่ที่เชื่อมอยู่ (ทุก query ผูก CompanyId ของคู่) · ตัดสินที่ <see cref="WhtCertIntakeVerdict.ProvenanceProblems"/></summary>
+    private async Task<WhtCertIntakeVerdict.ProvenanceFacts> LoadProvenanceAsync(Guid companyId, string? ourTaxId, string payerTax, string? certNo,
+        WhtCertSubmission s, CancellationToken ct)
+    {
+        var submitted = new WhtCertIntakeVerdict.SubmittedCertFacts(s.PayeeTaxId, s.IncomeAmount, s.WhtAmount, s.WhtRate, s.CertificateDate, s.PayerFormType);
+        var none = new WhtCertIntakeVerdict.ProvenanceFacts(false, 0, false, null, ourTaxId, submitted);
+        if (payerTax.Length != 13 || certNo == null) return none;
+        var partners = await _db.TradingPartnerships.AsNoTracking()
+            .Where(t => (t.CompanyAId == companyId || t.CompanyBId == companyId) && t.Status == TradingPartnershipStatus.Accepted)
+            .Select(t => t.CompanyAId == companyId ? t.CompanyBId : t.CompanyAId)
+            .ToListAsync(ct);
+        if (partners.Count == 0) return none;
+        var payerIds = (await _db.Companies.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => partners.Contains(c.Id)).Select(c => new { c.Id, c.TaxId }).ToListAsync(ct))
+            .Where(c => ThaiTaxId.Same(c.TaxId, payerTax)).Select(c => c.Id).ToList();   // กุญแจ = เลขผู้เสียภาษี (ไม่ใช่ชื่อ)
+        if (payerIds.Count == 0) return none;
+        var us = companyId.ToString();
+        var rows = await _db.WithholdingTaxCerts.AsNoTracking().IgnoreQueryFilters()
+            .Where(w => payerIds.Contains(w.CompanyId) && w.CertificateNumber == certNo
+                && w.PayeeContact.CompanyId == w.CompanyId
+                && w.PayeeContact.ExternalSystem == PartnerWhtCertExchangeService.ExternalSystem && w.PayeeContact.ExternalId == us)
+            .Select(w => new
+            {
+                w.IsDeleted, w.Status, w.TotalIncomeAmount, w.TotalTaxAmount, w.TaxFormType, w.IssuedDate, PayeeTaxId = w.PayeeContact.TaxId,
+                Lines = w.Lines.Select(l => new { l.TaxRate, l.PaymentDate }).ToList(),
+            })
+            .ToListAsync(ct);
+        var live = rows.Where(r => !r.IsDeleted
+            && (r.Status == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued || r.Status == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Printed)).ToList();
+        var src = live.Count == 1 ? live[0] : null;
+        return new WhtCertIntakeVerdict.ProvenanceFacts(true, live.Count, rows.Count > live.Count,
+            src == null ? null : new WhtCertIntakeVerdict.SourceCertFacts(
+                src.TotalIncomeAmount, src.TotalTaxAmount,
+                PartnerExchangeRules.CertRate(src.Lines.Select(l => l.TaxRate).ToList(), src.TotalIncomeAmount, src.TotalTaxAmount),
+                PartnerExchangeRules.WhtCertificateDate(src.Lines.Select(l => l.PaymentDate), src.IssuedDate),
+                src.TaxFormType switch
+                {
+                    TaxType.WithholdingTax53 => (WhtPayerFormType?)WhtPayerFormType.Pnd53,
+                    TaxType.WithholdingTax3 => WhtPayerFormType.Pnd3,
+                    _ => null,
+                },
+                src.PayeeTaxId),
+            ourTaxId, submitted);
     }
 
     /// <param name="Duplicate">ใบเดิม (ผู้จ่ายเดียวกันตามกุญแจ) ⇒ ผลเดิม · null = ไม่ซ้ำ</param>
@@ -810,7 +883,8 @@ public class WhtCertIntakeService : IWhtCertIntakeService
             i.MatchLevel, i.MatchReason,
             string.IsNullOrWhiteSpace(i.GateProblems) ? Array.Empty<string>() : i.GateProblems.Split(" · "),
             i.AuthenticityAnswer, i.AuthenticityConfidence, i.WhtCertAuthenticityUsedAi,
-            WhtCertIntakeVerdict.AuthenticityLabel(i.AuthenticityAnswer, i.AuthenticityConfidence, i.WhtCertAuthenticityUsedAi, PriorConfirmed(i)),
+            WhtCertIntakeVerdict.AuthenticityLabel(i.AuthenticityAnswer, i.AuthenticityConfidence, i.WhtCertAuthenticityUsedAi, PriorConfirmed(i),
+                byProvenance: i.AuthenticityByProvenance),
             i.AutoConfirmed, i.SubmittedByName, i.CreatedAt, i.ConfirmedAt, i.RejectedReason, i.RejectedAt,
             byIntake.TryGetValue(i.Id, out var list) ? list : new List<WhtCertAllocationDto>(),
             i.EvidenceReference, WhtEvidenceReference.Label(i.EvidenceKind, i.EvidenceReference)))
@@ -995,7 +1069,7 @@ public class WhtCertIntakeService : IWhtCertIntakeService
                 status = intake.Status.ToString(), channel = intake.Channel.ToString(), intake.CertificateNumber, intake.PayerTaxId,
                 intake.WhtAmount, matchLevel = intake.MatchLevel, gateProblems = intake.GateProblems,
                 authenticity = intake.AuthenticityAnswer, authenticityConfidence = intake.AuthenticityConfidence,
-                usedAi = intake.WhtCertAuthenticityUsedAi, autoConfirmed = intake.AutoConfirmed, detail,
+                usedAi = intake.WhtCertAuthenticityUsedAi, byProvenance = intake.AuthenticityByProvenance, autoConfirmed = intake.AutoConfirmed, detail,
             }),
             Timestamp = DateTime.UtcNow,
         });

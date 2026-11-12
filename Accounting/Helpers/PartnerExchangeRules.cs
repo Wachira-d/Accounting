@@ -100,6 +100,62 @@ public static class PartnerExchangeRules
             : !string.IsNullOrWhiteSpace(deliveryError) ? "ส่งผ่านคู่ค้าไม่สำเร็จ: " + deliveryError.Trim()
             : null;
 
+    // ═══════════ รอบ 264 P5 (C-10 · B10 · B12 · คำตัดสิน 264-5-2/264-5-3): ตรวจก่อนส่ง — ไม่ข้ามเงียบ ═══════════
+
+    public enum WhtDeliveryAction
+    {
+        /// <summary>ผู้ถูกหักไม่ใช่บริษัทคู่ค้า NextAcc (ไม่มีหลักฐานใดชี้ว่าเป็น) — ใบส่งทางเดิม · ไม่ประทับอะไร (ไม่ใช่งานของเส้นนี้)</summary>
+        NotPartner,
+        /// <summary>เป็นคู่ค้า (หรือมีหลักฐานว่าน่าจะเป็น) แต่ยังส่งไม่ได้ — ประทับเหตุบนใบ (ไม่นับครั้ง · แก้แล้วส่งรอบถัดไปเอง)</summary>
+        Skip,
+        Send,
+    }
+
+    public readonly record struct WhtDeliveryCheck(WhtDeliveryAction Action, string? Reason);
+
+    /// <param name="ContactExternalSystem">ระบบที่ผู้ติดต่อผู้ถูกหักผูกไว้ (<c>Contact.ExternalSystem</c>)</param>
+    /// <param name="LinkedPartnerAccepted">ผู้ติดต่อผูก <c>NextAccTenant</c> และบริษัทที่ผูกเป็นคู่ค้าที่เชื่อมอยู่ (Accepted)</param>
+    /// <param name="TaxIdMatchesAcceptedPartner">ผู้ติดต่อ<b>ไม่ได้</b>ผูก NextAccTenant แต่เลขผู้เสียภาษีตรงบริษัทคู่ค้าที่เชื่อมอยู่ (หลักฐานว่าน่าจะเป็นคู่ค้า)</param>
+    /// <param name="PartnerTaxId">เลขผู้เสียภาษีของบริษัทคู่ค้าที่ผูกไว้ (ผู้รับ)</param>
+    /// <param name="ContactHasAddress">ผลของ <see cref="PayeeAddressPresent"/></param>
+    /// <param name="ReturnAllowed">จุดเรียกความยินยอมของเส้นนี้ (ตอนนี้ = ค่าตั้งบริษัท <c>SendWhtCertsToPartners</c> · P1/P3 สลับตัวอ่านได้ที่จุดเดียว)</param>
+    public sealed record WhtDeliveryFacts(string? ContactExternalSystem, bool LinkedPartnerAccepted, bool TaxIdMatchesAcceptedPartner,
+        string? ContactTaxId, string? ContactBranch, string? PartnerTaxId, string? PartnerBranch, bool ContactHasAddress, bool ReturnAllowed);
+
+    /// <summary>ส่งใบ 50 ทวิ ใบนี้ผ่านคู่ค้าได้ไหม — ตัวตัดสินเดียวก่อนส่ง (ผู้รับต้องตรง · ที่อยู่ต้องมี · ผูกระบบอื่น = เหตุ ไม่ใช่ข้ามเงียบ) · pure</summary>
+    public static WhtDeliveryCheck WhtDeliveryCheckOf(WhtDeliveryFacts f)
+    {
+        const string fix = " แล้วระบบส่งให้รอบถัดไปเอง (หรือส่งหนังสือรับรองให้ผู้ขายทางเดิม)";
+        if (string.Equals(f.ContactExternalSystem, NextAccTenantSystem, StringComparison.Ordinal))
+        {
+            if (!f.LinkedPartnerAccepted)
+                return Skip("ผู้ติดต่อนี้ผูกกับบริษัทใน NextAcc ที่ไม่ได้เชื่อมเป็นคู่ค้าอยู่ (รอยอมรับ/ถูกระงับ/ยกเลิก) — เชื่อมคู่ค้าที่หน้า \"คู่ค้า\"" + fix);
+            if (!ThaiTaxId.Same(f.ContactTaxId, f.PartnerTaxId))
+                return Skip("เลขผู้เสียภาษีของผู้ถูกหักบนใบไม่ตรงบริษัทคู่ค้าที่ผู้ติดต่อผูกไว้ — ระบบไม่ส่งใบที่ผู้ถูกหักไม่ใช่ผู้รับ · แก้เลขที่หน้าผู้ติดต่อแล้วออกใบใหม่");
+            if (TaxBranchCode.Normalize(f.ContactBranch) != TaxBranchCode.Normalize(f.PartnerBranch))
+                return Skip($"สาขาของผู้ถูกหักบนใบ ({TaxBranchCode.Normalize(f.ContactBranch)}) ไม่ตรงสาขาของบริษัทคู่ค้า ({TaxBranchCode.Normalize(f.PartnerBranch)}) — แก้สาขาที่หน้าผู้ติดต่อ" + fix);
+            if (!f.ContactHasAddress)
+                return Skip("ที่อยู่ผู้ถูกหักว่าง — หนังสือรับรอง 50 ทวิ และ ภ.ง.ด.3/53 ต้องมีที่อยู่ผู้ถูกหัก · เติมที่หน้าผู้ติดต่อ (ระบบไม่เติมเอง)" + fix);
+            if (!f.ReturnAllowed)
+                return Skip("ปิดการส่ง 50 ทวิ ให้คู่ค้า NextAcc อยู่ — เปิดที่หน้าตั้งค่าอัตโนมัติ" + fix);
+            return new(WhtDeliveryAction.Send, null);
+        }
+        if (f.TaxIdMatchesAcceptedPartner)
+            return Skip(string.IsNullOrWhiteSpace(f.ContactExternalSystem)
+                ? "ผู้ติดต่อนี้ยังไม่ผูกกับคู่ค้า NextAcc (เลขผู้เสียภาษีตรงบริษัทคู่ค้าที่เชื่อมอยู่) — ผูกกับคู่ค้า NextAcc ที่หน้าผู้ติดต่อ" + fix
+                : $"ผู้ติดต่อนี้ผูกกับระบบ {f.ContactExternalSystem!.Trim()} — ผูกกับคู่ค้า NextAcc ที่หน้าผู้ติดต่อ (เลขผู้เสียภาษีตรงบริษัทคู่ค้าที่เชื่อมอยู่)" + fix);
+        return new(WhtDeliveryAction.NotPartner, null);
+
+        static WhtDeliveryCheck Skip(string reason) => new(WhtDeliveryAction.Skip, reason);
+    }
+
+    /// <summary>ชื่อระบบของผู้ติดต่อที่ผูกบริษัทใน NextAcc (ตัวเดียวกับ <c>PartnerWhtCertExchangeService.ExternalSystem</c>)</summary>
+    public const string NextAccTenantSystem = "NextAccTenant";
+
+    /// <summary>ผู้ติดต่อมีที่อยู่พอสำหรับหนังสือรับรอง/แบบยื่นไหม — ช่องที่อยู่ (ข้อความ) หรือ อำเภอ+จังหวัด · ไม่เติมเอง</summary>
+    public static bool PayeeAddressPresent(string? address, string? district, string? province)
+        => !string.IsNullOrWhiteSpace(address) || (!string.IsNullOrWhiteSpace(district) && !string.IsNullOrWhiteSpace(province));
+
     /// <summary>อัตราบนใบ (ถ้าทุกบรรทัดอัตราเดียว ใช้อัตรานั้น · ไม่งั้นคิดจากยอดรวม ปัด 2 ตำแหน่ง)</summary>
     public static decimal CertRate(IReadOnlyCollection<decimal> lineRates, decimal income, decimal tax)
     {

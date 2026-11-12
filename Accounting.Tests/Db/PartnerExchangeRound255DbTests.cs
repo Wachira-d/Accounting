@@ -288,6 +288,8 @@ public class PartnerExchangeRound255DbTests
         var contact = new Contact
         {
             CompanyId = payer.Id, Name = payee.Name, TaxId = payee.TaxId, BranchCode = "00000", IsSupplier = true,
+            // รอบ 264 P5 (B12): ที่อยู่ผู้ถูกหักต้องมีก่อนส่ง — ไม่มี ⇒ เหตุบนใบ ไม่ส่ง (เทสต์ WhtCertPartnerReturnRound264DbTests)
+            Address = "1 ถนนสาทร กรุงเทพฯ 10120",
             ExternalSystem = PartnerWhtCertExchangeService.ExternalSystem, ExternalId = payee.Id.ToString(),
         };
         db.Contacts.Add(contact);

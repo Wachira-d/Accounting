@@ -215,8 +215,73 @@ public class AutopilotService : IAutopilotService
         list.AddRange(await LineChatSlipIssuesAsync(companyId, nowUtc, ct));
         // รอบ 259 P6: ใบที่ต้องออกใบเสร็จ ([RECEIPT-PENDING]) · เงินรอจัดสรรค้างเกิน 30 วัน — ตัวอ่านเดียวกับหน้า "เงินรอจัดสรร"
         list.AddRange(await CustomerCreditWorkQueue.AutopilotIssuesAsync(_db, companyId, nowUtc, ct));
+        // รอบ 264 P5 (คำตัดสิน 264-5-4): หลักฐานภาษีจากคู่ค้า NextAcc — ม.82/3 ใกล้ครบ · การแจ้งชำระที่ค้าง (ด่วนเมื่อ ภ.ง.ด.53 ใกล้กำหนด) · 50 ทวิ ที่ส่งให้คู่ค้าไม่ได้ (เหตุบนใบ)
+        list.AddRange(await PartnerTaxEvidenceIssuesAsync(companyId, nowUtc, ct));
 
         return list.OrderByDescending(i => i.At).ToList();
+    }
+
+    /// <summary>รอบ 264 P5 (คำตัดสิน 264-5-4) — อ่านอย่างเดียว · ทุก query ผูก CompanyId · ตัวตัดสิน <see cref="PartnerTaxEvidenceAlerts"/> ·
+    /// (a) ใบซื้อจากคู่ค้าที่รอยืนยันต้นฉบับใบกำกับ ใกล้ครบ/เลยกรอบ ม.82/3 · (b) การแจ้งชำระจากคู่ค้าที่ค้าง (<see cref="PartnerPayBlockedIssuesAsync"/>) ·
+    /// (c) 50 ทวิ ที่เราออกแต่ส่งเข้ากล่องรับของคู่ค้าไม่ได้ (เหตุ <c>PartnerDeliveryError</c> — รวมเหตุก่อนส่ง C-10/B12)</summary>
+    private async Task<List<AutopilotIssueDto>> PartnerTaxEvidenceIssuesAsync(Guid companyId, DateTime nowUtc, CancellationToken ct)
+    {
+        var list = new List<AutopilotIssueDto>();
+        var pending = new[] { PartnerInputVatEvidence.AwaitingTimestamp, PartnerInputVatEvidence.PaperRequired };
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.PartnerInputVatEvidence != null && pending.Contains(d.PartnerInputVatEvidence)
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected && d.VatAmount > 0m)
+            .OrderBy(d => d.SupplierTaxInvoiceDate ?? d.DocumentDate).Take(200)
+            .Select(d => new { d.Id, d.DocumentNumber, Date = d.SupplierTaxInvoiceDate ?? d.DocumentDate, d.CreatedAt })
+            .ToListAsync(ct);
+        foreach (var d in docs)
+        {
+            var w = PartnerTaxEvidenceAlerts.InputVatWindowOf(d.Date, nowUtc);
+            if (!PartnerTaxEvidenceAlerts.ShowsRow(w)) continue;
+            list.Add(new AutopilotIssueDto("PartnerInputVatWindow", PartnerTaxEvidenceAlerts.WindowTitle(d.DocumentNumber, w),
+                PartnerTaxEvidenceAlerts.WindowDetail(w), d.CreatedAt, d.Id, "เปิดหน้าคู่ค้า (ยืนยันต้นฉบับ)", "/pages/partners.html", null,
+                "เปิดเอกสาร", DocHref(d.Id)));
+        }
+
+        list.AddRange(await PartnerPayBlockedIssuesAsync(companyId, nowUtc, ct));
+
+        var certs = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(w => w.CompanyId == companyId && !w.IsDeleted && w.PartnerDeliveredAt == null && w.PartnerDeliveryError != null
+                && (w.Status == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Issued || w.Status == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Printed))
+            .OrderByDescending(w => w.IssuedDate).Take(50)
+            .Select(w => new { w.Id, w.CertificateNumber, w.PartnerDeliveryError, At = w.UpdatedAt ?? w.IssuedDate ?? w.CreatedAt })
+            .ToListAsync(ct);
+        list.AddRange(certs.Select(c => new AutopilotIssueDto("PartnerWhtCertUndelivered",
+            $"50 ทวิ เลขที่ {c.CertificateNumber}: ยังส่งเข้ากล่องรับของคู่ค้าไม่ได้",
+            PartnerExchangeRules.WhtDeliveryLabel(null, c.PartnerDeliveryError) ?? "", c.At, null, "เปิดหน้าหนังสือรับรอง 50 ทวิ", "/pages/wht.html", null, null, null)));
+        return list;
+    }
+
+    /// <summary>รอบ 264 P5 — แถว "การแจ้งชำระจากคู่ค้าค้าง" (<c>PartnerPayBlocked</c>) · <b>จุดเดียวที่แพ็ก P3 สลับเป็น query ของท่อฝั่ง B</b>
+    /// (ตอนนี้ = การแจ้งสถานะ Open ที่ค้างเกิน 1 วัน + Recording ที่ค้างเกิน <see cref="PartnerPaymentNoticeRule.RecordingStale"/>) · มี WHT ค้างหลังสิ้นเดือนที่จ่าย ⇒
+    /// หัวเรื่อง "ด่วน" พร้อมกำหนดยื่น ภ.ง.ด.53 (264-2-15) · อ่านอย่างเดียว · ผูก CompanyId</summary>
+    private async Task<List<AutopilotIssueDto>> PartnerPayBlockedIssuesAsync(Guid companyId, DateTime nowUtc, CancellationToken ct)
+    {
+        var openCut = nowUtc.AddDays(-1);
+        var staleCut = nowUtc - PartnerPaymentNoticeRule.RecordingStale;
+        var notices = await _db.PartnerPaymentNotices.AsNoTracking()
+            .Where(n => n.CompanyId == companyId && !n.IsDeleted
+                && ((n.Status == PartnerPaymentNoticeRule.StatusOpen && n.CreatedAt < openCut)
+                    || (n.Status == PartnerPaymentNoticeRule.StatusRecording && (n.UpdatedAt ?? n.CreatedAt) < staleCut)))
+            .OrderBy(n => n.PaidAt).Take(50)
+            .Select(n => new { n.Id, n.SourceDocumentNumber, n.TargetDocumentId, n.CashAmount, n.SellerRecordedWht, n.PaidAt, n.Note, n.CreatedAt })
+            .ToListAsync(ct);
+        return notices.Select(n =>
+        {
+            var due = PartnerTaxEvidenceAlerts.PayNoticeWhtUrgent(n.PaidAt, n.SellerRecordedWht, nowUtc);
+            var title = (due is DateTime ? "ด่วน: " : "") + $"ผู้ขายแจ้งว่ารับเงิน {n.CashAmount:N2} บาท ({n.SourceDocumentNumber}) — ยังไม่ได้บันทึกจ่าย";
+            var detail = (string.IsNullOrWhiteSpace(n.Note) ? "การแจ้งชำระจากคู่ค้ายังค้าง — ตรวจแล้วบันทึกจ่ายหรือปิดการแจ้งที่หน้าคู่ค้า" : n.Note!.Trim())
+                + (due is DateTime d
+                    ? $" · มีภาษีหัก ณ ที่จ่าย {n.SellerRecordedWht:N2} บาท — ภ.ง.ด.53 ของเดือนที่จ่ายครบกำหนดยื่น {d:dd/MM}/{d.Year + 543} (บันทึกจ่ายเพื่อออก 50 ทวิ ลงวันจ่ายได้ — ท.ป.4/2528)"
+                    : "");
+            return new AutopilotIssueDto("PartnerPayBlocked", title, detail, n.CreatedAt, n.TargetDocumentId,
+                "เปิดหน้าคู่ค้า (การแจ้งชำระ)", "/pages/partners.html", null, "เปิดใบซื้อ", DocHref(n.TargetDocumentId));
+        }).ToList();
     }
 
     /// <summary>รอบ 258-3 (F-M2 · F-M3) — (7) ออกใบเสร็จตอนรับชำระล้ม (ป้าย <see cref="SettlementReceiptFailedNote"/>) · (8) การ์ด LINE ถึงผู้ติดต่อส่งไม่ออก ·

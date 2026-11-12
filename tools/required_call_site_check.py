@@ -18855,6 +18855,55 @@ REVIEWER_CASES += [
     ("R260c", "RunAsync", "if (!ShouldStamp(outcome))", "if (false)", True),
 ]
 
+# รอบ 264 P5 (team-264-a2b-design §6.3 · C-02 · C-10 · B12 · คำตัดสิน 264-5-1…264-5-5): ขากลับ 50 ทวิ ระหว่างคู่ค้า NextAcc —
+# ใบช่องคู่ค้ายืนยันด้วย "ที่มา" (อ่านจากฐาน · ไม่ถาม AI) · ตรวจก่อนส่ง (ผูกระบบอื่น/ที่อยู่ว่าง/ผู้รับไม่ตรง = เหตุบนใบ) · จุดความยินยอมเดียว · แถว Autopilot ม.82/3
+_R264_P5_WHY = "รอบ 264 P5 (C-02 · C-10 · B12 · 264-5-x): "
+_R264_P5_X = "Services/Implementations/PartnerWhtCertExchangeService.cs"
+_R264_P5_AP = "Services/Implementations/AutopilotService.cs"
+RULES += [
+    dict(file=_R252_SVC, method="SubmitAsync",
+         must=["WhtCertIntakeVerdict.ProvenanceProblems(", "LoadProvenanceAsync(", "WhtCertIntakeVerdict.ProvenanceGatePrefix",
+               "WhtCertIntakeVerdict.ProvenanceConfidence"],
+         must_re=[r"s\s*\.\s*Channel\s*==\s*WhtCertIntakeChannel\s*\.\s*NextAccLink", r"intake\s*\.\s*AuthenticityByProvenance\s*=\s*true"],
+         before=[("WhtCertIntakeVerdict.ProvenanceProblems(", "_ai.AskAsync("), ("WhtCertIntakeVerdict.ProvenanceProblems(", "WhtCertIntakeVerdict.Decide(")],
+         why=_R264_P5_WHY + "ช่องคู่ค้าพิสูจน์ที่มาก่อนถึงตัวตัดสิน · ปัญหาของที่มา = ด่าน (ไม่ถาม AI) · ผ่าน = ของจริงโดยไม่เรียก orchestrator (kill-switch)"),
+    dict(file=_R252_SVC, method="LoadProvenanceAsync",
+         must=["TradingPartnershipStatus.Accepted", "ThaiTaxId.Same(", "PartnerWhtCertExchangeService.ExternalSystem",
+               "PartnerExchangeRules.CertRate(", "PartnerExchangeRules.WhtCertificateDate(", "w.PayeeContact.ExternalId == us"],
+         forbid=["_ai.", "AskAsync", "s.PayerName"],
+         why=_R264_P5_WHY + "ที่มาอ่านจากแถวจริงของคู่ที่เชื่อมอยู่ (กุญแจ = เลขผู้เสียภาษี + ผู้ติดต่อที่ผูกเรา) · สูตรอัตรา/วันที่ตัวเดียวกับฝั่งส่ง · ไม่ใช้ชื่อ"),
+    dict(file=_R264_P5_X, method="DeliverForPayerAsync",
+         must=["PartnerExchangeRules.WhtDeliveryCheckOf(", "PartnerExchangeRules.PayeeAddressPresent(", "ReturnWhtCertsAllowedAsync(",
+               "StampSkipAsync(", "PartnerExchangeRules.WhtDeliveryAction.Skip", "PartnerExchangeRules.WhtDeliveryAction.NotPartner"],
+         before=[("PartnerExchangeRules.WhtDeliveryCheckOf(", "_intake.SubmitAsync(")],
+         why=_R264_P5_WHY + "ตรวจก่อนส่งตัวเดียว (C-10 ผูกระบบอื่น · B12 ที่อยู่ · ผู้รับไม่ตรง · ความยินยอม) ก่อนถึงกล่องรับของคู่ค้า · Skip = เหตุบนใบ ไม่ข้ามเงียบ"),
+    dict(file=_R264_P5_X, method="StampSkipAsync", must=["w.CompanyId == payerId", "w.PartnerDeliveredAt == null"],
+         forbid=["PartnerDeliveryAttempts"],
+         why=_R264_P5_WHY + "เหตุก่อนส่งไม่นับครั้ง (แก้ต้นเหตุแล้วส่งรอบถัดไปเอง) · ไม่ทับใบที่ส่งแล้ว"),
+    dict(file=_R264_P5_X, method="ReturnWhtCertsAllowedAsync", must=["SendWhtCertsToPartners", "c.CompanyId == payerId"],
+         why=_R264_P5_WHY + "264-5-5 จุดเรียกความยินยอมเดียวของขอบเขต ReturnWhtCerts — P1 สลับตัวอ่านที่นี่ที่เดียว"),
+    dict(file=_R264_P5_AP, method="IssuesAsync", must=["PartnerTaxEvidenceIssuesAsync("],
+         why=_R264_P5_WHY + "264-5-4 แถวหลักฐานภาษีจากคู่ค้าอยู่ในรายการเรื่องค้างของ Autopilot"),
+    dict(file=_R264_P5_AP, method="PartnerTaxEvidenceIssuesAsync",
+         must=["PartnerTaxEvidenceAlerts.InputVatWindowOf(", "PartnerTaxEvidenceAlerts.ShowsRow(", "PartnerPayBlockedIssuesAsync(",
+               "d.CompanyId == companyId", "w.CompanyId == companyId", "PartnerInputVatEvidence.PaperRequired"],
+         forbid=["SaveChangesAsync", "ExecuteUpdateAsync"],
+         why=_R264_P5_WHY + "ม.82/3 ตัดสินที่ตัวช่วยเดียว (นับเดือนสูตรรายงานภาษี) · อ่านอย่างเดียว · ผูก CompanyId"),
+    dict(file=_R264_P5_AP, method="PartnerPayBlockedIssuesAsync",
+         must=["n.CompanyId == companyId", "PartnerTaxEvidenceAlerts.PayNoticeWhtUrgent("],
+         forbid=["SaveChangesAsync", "ExecuteUpdateAsync"],
+         why=_R264_P5_WHY + "264-2-15 ด่วนเมื่อ ภ.ง.ด.53 ใกล้กำหนด (ตัวคิดกำหนดยื่นเดิม) · อ่านอย่างเดียว · จุดที่ P3 สลับ query"),
+]
+REVIEWER_CASES += [
+    # ช่องคู่ค้ายังถาม AI (ตัดเงื่อนไขที่มา) ⇒ ต้องฟ้อง
+    ("R264a", "SubmitAsync", "intake.AuthenticityByProvenance = true;", "", True),
+    # เหตุก่อนส่งกลับไปข้ามเงียบ ⇒ ต้องฟ้อง
+    ("R264b", "DeliverForPayerAsync", "await StampSkipAsync(payerId, cert.Id, check.Reason!, ct);", "", True),
+    # เหตุก่อนส่งนับครั้งเหมือนการล้ม ⇒ ต้องฟ้อง
+    ("R264c", "StampSkipAsync", ".ExecuteUpdateAsync(s => s.SetProperty(w => w.PartnerDeliveryError, reason), ct);",
+     ".ExecuteUpdateAsync(s => s.SetProperty(w => w.PartnerDeliveryError, reason).SetProperty(w => w.PartnerDeliveryAttempts, w => w.PartnerDeliveryAttempts + 1), ct);", True),
+]
+
 # ── รอบ 263: ผลรอบล่าสุดของรายการประจำ = ตัวประเมินสด (ไม่ใช่ข้อความแช่แข็งตอนรัน) · คำตัดสิน 263-1-1..5 ──
 _R263_WHY = "รอบ 263 (กล่อง 'มีเรื่องต้องทำต่อ' เตือนอนุมัติทั้งที่อนุมัติ+รับชำระแล้ว): "
 RULES += [
