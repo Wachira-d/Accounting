@@ -18816,6 +18816,39 @@ REVIEWER_CASES += [
     ("R260c", "RunAsync", "if (!ShouldStamp(outcome))", "if (false)", True),
 ]
 
+# ── รอบ 263: ผลรอบล่าสุดของรายการประจำ = ตัวประเมินสด (ไม่ใช่ข้อความแช่แข็งตอนรัน) · คำตัดสิน 263-1-1..5 ──
+_R263_WHY = "รอบ 263 (กล่อง 'มีเรื่องต้องทำต่อ' เตือนอนุมัติทั้งที่อนุมัติ+รับชำระแล้ว): "
+RULES += [
+    dict(file=RECURRING, method="MapWithOutcomeAsync",
+         must=["LoadRunLiveAsync(", "RecurringRunOutcome.Build(", "live: live.GetValueOrDefault(r.Id)"],
+         before=[("LoadRunLiveAsync(", "RecurringRunOutcome.Build(")],
+         why=_R263_WHY + "263-1-1 หน้าได้หลักฐาน 'ตอนนี้' ทุกครั้ง (ถอด live = กลับไปโชว์ข้อความแช่แข็ง)"),
+    dict(file=RECURRING, method="LoadRunLiveAsync",
+         must=["AutoApproveFailure.LastResolution(", "_db.DocumentEmailLogs", "_db.EmailQueues", "_db.LineQueues", "_db.JournalEntries",
+               "RecurringRunOutcome.FactsFromLegacyNotice(", "l.CompanyId == companyId", "q.CompanyId == companyId", "j.CompanyId == companyId"],
+         why=_R263_WHY + "263-1-1/2 หลักฐานจากฐาน (ผู้อนุมัติ · ส่งอีเมล · LINE · สมุดรายวัน · แถวเก่า) + กรองบริษัททุก query"),
+    dict(file=RECURRING, method="MarkRunAsync",
+         must=["SkipCarry(", "Property(r => r.LastRunOutcome).IsModified = true"],
+         forbid=["recurring.LastRunOutcome = null;"],
+         why=_R263_WHY + "263-1-3 งวดที่ข้ามที่ยังค้างพาข้ามรอบ (เดิมรอบถัดไปล้างทิ้ง) · เขียนค่าจริงแม้ entity ค้าง"),
+    dict(file=RECURRING, method="SetRunNoticeAsync",
+         must=["SkipCarry(issuedOneNow: false)", "RecurringRunOutcome.SkipCarryNotice("],
+         why=_R263_WHY + "263-1-3 เรื่องอื่นของรอบไม่ลบงวดที่ข้ามที่ยังค้าง"),
+    dict(file=RECURRING, method="DismissSkippedPeriodsAsync",
+         must=["SkippedRemaining <= 0", "BusinessRuleException(", "SkippedDismissedAt = DateTime.UtcNow", "r.CompanyId == companyId"],
+         why=_R263_WHY + "263-1-3 ปิดเรื่องงวดที่ข้าม: ไม่มีงวดค้าง = ปฏิเสธพร้อมเหตุ (ไม่ใช่สำเร็จเงียบ) + ประทับเวลา/ชื่อ"),
+    dict(file="Controllers/RecurringController.cs", method="DismissSkipped",
+         must=["DenyRecurringWriteAsync(", "DismissSkippedPeriodsAsync("],
+         before=[("DenyRecurringWriteAsync(", "DismissSkippedPeriodsAsync(")],
+         why=_R263_WHY + "263-1-3 ด่านสิทธิ์ก่อนเขียน"),
+    dict(file=DOC, method="ApproveDocumentAsync#2",
+         must=["AutoApproveFailure.HasOpenFailure(", "ActorLabelAsync(approvedBy)"],
+         why=_R263_WHY + "263-1-4 หมายเหตุ 'แก้แล้ว' ประทับชื่อผู้อนุมัติ ไม่ใช่ id ผู้ใช้ดิบ"),
+    dict(file=DOC, method="GetDocumentAsync",
+         must=["AutoApproveFailure.ApproverIds(", "AutoApproveFailure.WithApproverNames("],
+         why=_R263_WHY + "263-1-4 หมายเหตุเก่าที่มี id ผู้ใช้ แสดงเป็นชื่อ"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
