@@ -62,8 +62,13 @@ public class SiteBookingPaymentHandler : IPaymentCompletionHandler
         var moneyIn = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
         // ฝ่ายค้านรอบ 218 (B2): วันรับเงิน = เวลาที่เงินเข้าตามหลักฐาน (สลิป: วันที่โอนที่ร้านยืนยัน) ไม่ใช่วันที่กดยืนยัน — tax point §78/1 ของใบรับมัดจำ
         var isSlip = intent.ProviderCode == Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code;
+        // รอบ 260-2: สลิปโอน ⇒ บัญชีธนาคารที่เงินเข้า จากตัวตัดสินเดียว Helpers/SlipReceivingAccount (หน้าการจองเลือกไม่ได้ ⇒ ค่าแนะนำ: บัญชีรับโอนของเว็บนี้ →
+        // บัญชีรับโอนบัญชีเดียว) — เดิมส่ง null ⇒ ใบรับมัดจำไม่มีแหล่งเงิน ⇒ เงินสด · เงินผ่านผู้ให้บริการ (moneyIn มีค่า) ไม่ใช้ตัวนี้
+        var receivingBank = moneyIn == null
+            ? await Accounting.Helpers.SlipReceivingAccount.OverrideForHandlerAsync(_db, null, intent, ct)
+            : null;
         await _bookings.RecordDepositPaymentAsync(intent.CompanyId, b.SiteId, b.Id,
-            new RecordBookingPaymentRequest(intent.Amount, intent.PaidAt ?? intent.ConfirmedAt ?? DateTime.UtcNow, reference, null,
+            new RecordBookingPaymentRequest(intent.Amount, intent.PaidAt ?? intent.ConfirmedAt ?? DateTime.UtcNow, reference, receivingBank,
                 isSlip ? "โอนเงิน (ตรวจสลิป)" : "ชำระมัดจำออนไลน์ผ่านระบบรับชำระเงิน"),
             intent.ConfirmedBy ?? "payment-gateway", moneyInAccountId: moneyIn, fromOnlinePayment: true, ct: ct);
     }

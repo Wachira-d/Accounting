@@ -1407,8 +1407,11 @@ const API = {
       getPaymentIntentEvents: (id) => API.get(`${base}/pay/intents/${id}/events`),
       // ยืนยันด้วยมือ (เห็นเงินเข้าบัญชีจริงแต่ระบบยังไม่รู้) — เดินผ่าน endpoint
       // เดียวกับ webhook ⇒ ต้นทางถูกดำเนินการต่อครบเหมือนกัน · บังคับเหตุผล
-      confirmPaymentIntentManually: (id, reason, receivedDate) =>
-        API.post(`${base}/pay/intents/${id}/confirm-manually`, { reason, receivedDate: receivedDate || null }),
+      // รอบ 260-2: bankAccountId = บัญชีที่เงินตามสลิปเข้า (ว่าง = ค่าแนะนำของเซิร์ฟเวอร์)
+      confirmPaymentIntentManually: (id, reason, receivedDate, bankAccountId) =>
+        API.post(`${base}/pay/intents/${id}/confirm-manually`, { reason, receivedDate: receivedDate || null, bankAccountId: bankAccountId || null }),
+      // รอบ 260-2: ตัวเลือก "บัญชีที่เงินเข้า" + ค่าแนะนำ + เหตุผล (เซิร์ฟเวอร์ตัดสิน)
+      getPaymentIntentReceivingAccounts: (id) => API.get(`${base}/pay/intents/${id}/receiving-accounts`),
       // รอบ 250 ฝ่ายค้าน H1: ปฏิเสธสลิปโอนของเอกสาร (เหตุผลบังคับ)
       rejectPaymentIntentSlip: (id, reason) => API.post(`${base}/pay/intents/${id}/reject-slip`, { reason }),
       // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ให้ handler ของต้นทาง — เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง (redispatchPending)
