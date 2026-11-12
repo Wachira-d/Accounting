@@ -57,6 +57,9 @@ public class WhtCertIntake : TenantEntity
     public bool WhtCertAuthenticityUsedAi { get; set; }
     /// <summary>แถว feedback ของการตรวจ — ปิดลูปตอนผู้ใช้ยืนยัน/ตีกลับว่าไม่ใช่ของจริง (<c>RecordUserChoiceAsync</c>)</summary>
     public Guid? WhtCertAuthenticityAiFeedbackId { get; set; }
+    /// <summary>รอบ 264 P5 (คำตัดสิน 264-5-1): คำตอบ "ของจริง" มาจากการพิสูจน์ที่มาในบริษัทผู้จ่าย (คู่ค้า NextAcc) — ไม่ได้ถาม orchestrator ·
+    /// ผู้เขียนเดียว <c>WhtCertIntakeService.SubmitAsync</c> · ผู้อ่าน: ป้าย <c>WhtCertIntakeVerdict.AuthenticityLabel</c></summary>
+    public bool AuthenticityByProvenance { get; set; }
     /// <summary>ยืนยันอัตโนมัติ (ไม่มีคนกด) — ป้ายบนหน้าเว็บ</summary>
     public bool AutoConfirmed { get; set; }
 

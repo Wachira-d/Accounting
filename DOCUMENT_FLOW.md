@@ -3641,6 +3641,15 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ภ.ง.ด.3/53 ⇒ **ประตูเดียวของผู้ขาย** `WhtCertIntakeService.SubmitAsync(ผู้ขาย, Channel = NextAccLink)` (กันซ้ำเลขที่+ผู้จ่าย · ด่านเชิงกำหนด — เลขภาษีผู้ถูกหักต้องเป็นของผู้ขาย ·
   ตรวจของจริง local-first · WP-09) · เอกสารฝั่งผู้ขายที่ใบครอบ = ใบต้นทางของใบซื้อร่าง (แถวกล่องเข้า) · `WithholdingTaxCert.PartnerDeliveredAt/PartnerIntakeId` ประทับ**เฉพาะเมื่อกล่องรับตอบผลจริง** ·
   ล้ม ⇒ `PartnerDeliveryError` + `PartnerDeliveryAttempts` (≤ 8 ครั้ง) · ผู้จ่ายยกเลิกใบที่ส่งแล้ว ⇒ แจ้งผู้ขายครั้งเดียว `autopilot.partner_exchange` (E-11 · ไม่ตีกลับรายการของผู้ขายเอง)
+- **รอบ 264 P5 — ขากลับ 50 ทวิ ยืนยันด้วยที่มา + ตรวจก่อนส่ง (C-02 · C-10 · B8/B10/B12 · คำตัดสิน 264-5-1…264-5-5)**:
+  ฝั่งผู้รับ: ช่อง `NextAccLink` ⇒ `WhtCertIntakeService.LoadProvenanceAsync` อ่านแถว 50 ทวิ ในบริษัทผู้จ่าย**จากฐาน** (คู่ Accepted ที่เลขผู้เสียภาษีตรงใบ · ผู้ติดต่อผู้ถูกหักผูก `NextAccTenant` = เรา) →
+  `WhtCertIntakeVerdict.ProvenanceProblems` (ออกแล้ว · ไม่ยกเลิก · ไม่กำกวม · เลขภาษีผู้ถูกหัก · ภาษี/เงินได้/อัตรา ±0.005 · วันที่ · แบบ) · ผ่าน + ด่านเดิมผ่าน ⇒ ยืนยันอัตโนมัติ**โดยไม่เรียก orchestrator**
+  (`AuthenticityByProvenance=true` · `UsedAi=false` · ไม่มีแถว feedback · ป้าย "⚙️ ยืนยันจากระบบของผู้จ่าย" · audit `wht-cert-intake-provenance-confirmed`) ⇒ **ปิด provider ทุกตัวแล้วใบจริงยังยืนยันเอง** ·
+  ไม่ผ่าน ⇒ ด่าน "ยืนยันจากระบบของผู้จ่ายไม่ได้: …" (รอคน · ไม่ถาม AI) · ช่องอื่นเดินเส้นตรวจของจริงเดิม ·
+  ฝั่งผู้จ่าย: ก่อนส่ง `PartnerExchangeRules.WhtDeliveryCheckOf` — ผู้ติดต่อผูกระบบอื่น/ยังไม่ผูกแต่เลขตรงคู่ค้า · คู่ไม่ได้เชื่อม · เลข/สาขาผู้ถูกหักไม่ตรงบริษัทคู่ค้า · ที่อยู่ว่าง · ปิดค่าตั้ง ⇒
+  เหตุบน `PartnerDeliveryError` (**ไม่นับครั้ง** · แก้แล้วรอบถัดไปส่งเองและล้างเหตุ) · ไม่มีหลักฐานว่าเป็นคู่ค้า ⇒ ไม่ประทับ · ความยินยอม = จุดเดียว `ReturnWhtCertsAllowedAsync` (ค่าตั้งเดิม — P1 สลับ) ·
+  Autopilot `PartnerTaxEvidenceIssuesAsync`: ใบซื้อจากคู่ค้ารอต้นฉบับใกล้ครบ/เลยกรอบ ม.82/3 (`PartnerTaxEvidenceAlerts` · เหลือ ≤ 2 เดือน) · `PartnerPayBlocked` (การแจ้งค้าง · ด่วนเมื่อ ภ.ง.ด.53 ใกล้กำหนด) ·
+  `PartnerWhtCertUndelivered` (เหตุก่อนส่ง/ส่งไม่สำเร็จ)
 - **พอร์ทัลลูกค้าไม่ต้องจำรหัสผ่าน (ข้อ 8 · AUTOPILOT §8.1)**: `POST api/portal/magic-link {companyId, email}` — ส่งเฉพาะอีเมลที่ผู้ขายเปิด `PortalAccess` ไว้ (ใช้งานอยู่) ·
   **คำตอบเดียวทุกกรณี** (`PortalMagicLinkPolicy.AckMessage` · 202) · เพดานต่ออีเมล 1/นาที 5/วัน + ต่อบริษัท 10/นาที 200/วัน (ตัวนับในฐาน fail-closed) · เวลาตอบขั้นต่ำคงที่ ·
   โทเคนสุ่ม 32 ไบต์ เก็บ SHA-256 ใน `PortalMagicLinks` · อายุ 15 นาที · ใช้ครั้งเดียว (compare-and-set `UsedAt`) · ไม่มี URL ของระบบ/SMTP ⇒ ไม่ส่ง (log error · ไม่แต่งโดเมน) ·
