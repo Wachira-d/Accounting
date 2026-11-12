@@ -16,10 +16,24 @@ public partial class DocumentService
     private Task NotifyPartnerOfSellerPaymentAsync(Guid companyId, Guid paymentId, PaymentEntrySource source)
         => PartnerPaymentNoticeService.NotifyForSellerPaymentAsync(_db, _notify, _logger, companyId, paymentId, source, CancellationToken.None);
 
+    /// <summary>การรับชำระที่ตัวกลับรายการร่วม (<c>ReversePaymentInternalAsync</c> · <c>ReverseMultiDocPaymentInternalAsync</c>) แตะในคำขอนี้ — รอถอนการแจ้งหลัง commit ·
+    /// ฝ่ายค้าน 264-P3 M2: เดิมเรียกเฉพาะ <see cref="VoidPaymentAsync"/> ⇒ ยกเลิกทั้งใบ (cascade) ไม่ถอน/ไม่ป้าย</summary>
+    private readonly List<Guid> _reversedPaymentsForPartnerNotice = new();
+
+    private void QueuePartnerNoticeWithdrawal(Guid paymentId)
+    {
+        if (!_reversedPaymentsForPartnerNotice.Contains(paymentId)) _reversedPaymentsForPartnerNotice.Add(paymentId);
+    }
+
     /// <summary>
-    /// หลัง commit ของ <see cref="VoidPaymentAsync"/> — การแจ้งที่ผู้ซื้อยังไม่บันทึก ⇒ ถอน · ที่บันทึกแล้ว ⇒ ป้ายบนใบซื้อ + แจ้ง (ไม่ยกเลิกการจ่ายของผู้ซื้อแทน · E6) ·
-    /// ไม่มีการแจ้งที่อ้างการรับชำระนี้ = ไม่ทำอะไร (C-03)
+    /// หลัง commit ของ <see cref="VoidPaymentAsync"/> / <see cref="VoidDocumentAsync"/> — การแจ้งที่ผู้ซื้อยังไม่บันทึก ⇒ ถอน · ที่บันทึกแล้ว ⇒ ป้ายบนใบซื้อ + แจ้ง
+    /// (ไม่ยกเลิกการจ่ายของผู้ซื้อแทน · E6) · ตัวถอน<b>ตรวจในฐานว่าการรับชำระถูกกลับจริง</b> (ธุรกรรมที่ rollback/วนใหม่ไม่ถอนผิด) · ไม่มีการแจ้งที่อ้าง = ไม่ทำอะไร · ไม่โยน
     /// </summary>
-    private Task WithdrawPartnerNoticesForVoidedPaymentAsync(Guid companyId, Guid paymentId)
-        => PartnerPaymentNoticeService.WithdrawForSellerPaymentAsync(_db, _notify, _logger, companyId, paymentId, DateTime.UtcNow, CancellationToken.None);
+    private async Task FlushPartnerNoticeWithdrawalsAsync(Guid companyId)
+    {
+        var ids = _reversedPaymentsForPartnerNotice.ToList();
+        _reversedPaymentsForPartnerNotice.Clear();
+        foreach (var paymentId in ids)
+            await PartnerPaymentNoticeService.WithdrawForSellerPaymentAsync(_db, _notify, _logger, companyId, paymentId, DateTime.UtcNow, CancellationToken.None);
+    }
 }

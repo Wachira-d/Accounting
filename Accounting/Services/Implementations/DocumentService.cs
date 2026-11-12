@@ -10691,6 +10691,7 @@ public partial class DocumentService : IDocumentService
                 creditVoidNotices.Clear();   // execution strategy อาจวนใหม่ — เก็บเฉพาะรอบที่ commit
                 await Accounting.Helpers.CustomerCreditLedger.ReleaseForVoidedDocumentAsync(_db, companyId, doc.Id, doc.UpdatedBy, notices: creditVoidNotices);
                 await transaction.CommitAsync();
+                await FlushPartnerNoticeWithdrawalsAsync(companyId);   // รอบ 264 P3 ฝ่ายค้าน M2: ยกเลิกทั้งใบ (cascade) ก็ถอน/ป้ายการแจ้งคู่ค้า · ไม่โยน
             }
             catch
             {
@@ -11931,7 +11932,7 @@ public partial class DocumentService : IDocumentService
                 "ปลดการจับคู่ธนาคารของการชำระที่ยกเลิก {PayId} ไม่สำเร็จ — " +
                 "ตรวจรายการเดินบัญชีที่ยังค้างสถานะกระทบยอดด้วยมือ", paymentId);
         }
-        await WithdrawPartnerNoticesForVoidedPaymentAsync(companyId, paymentId);   // รอบ 264 P3 (C-03): ถอน/ติดป้ายการแจ้งของผู้ซื้อคู่ค้า · ไม่โยน
+        await FlushPartnerNoticeWithdrawalsAsync(companyId);   // รอบ 264 P3 (C-03 · M2): ถอน/ติดป้ายการแจ้งของผู้ซื้อคู่ค้า (เฉพาะการชำระที่ถูกกลับจริง) · ไม่โยน
         return etaxCancellationFlag == null && outputVatNotice == null
             ? PaymentVoidResult.None
             : new PaymentVoidResult(etaxCancellationFlag, outputVatNotice);
@@ -12157,6 +12158,7 @@ public partial class DocumentService : IDocumentService
     private async Task<(string? EtaxFlag, string? VatNotice)> ReversePaymentInternalAsync(Guid companyId, Payment payment, Document doc, string reason,
         DateTime? reversalDate = null, PaymentVoidCause cause = PaymentVoidCause.User)
     {
+        QueuePartnerNoticeWithdrawal(payment.Id);   // รอบ 264 P3 ฝ่ายค้าน M2: ทุกเส้นที่กลับการรับชำระ (ยกเลิกการชำระ · ยกเลิกทั้งใบ) ⇒ ถอน/ป้ายการแจ้งคู่ค้าหลัง commit
         // รอบ 250 ฝ่ายค้าน M3: แถวสลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจ ไม่เคยบวก PaidAmount/ลง JE/แตะธนาคาร ⇒ ยกเลิก = soft-delete อย่างเดียว
         // (เดิมเดินเส้นถอยยอด ⇒ หัก PaidAmount ที่ไม่เคยบวก — ใบที่จ่ายจริงแล้วกลับมามียอดค้าง) · ตัวตัดสินเดียว PortalSlipPending
         if (!Accounting.Helpers.PortalSlipPending.WasCountedAsReceived(payment))
@@ -12430,6 +12432,7 @@ public partial class DocumentService : IDocumentService
     private async Task<(string? EtaxFlag, string? VatNotice)> ReverseMultiDocPaymentInternalAsync(Guid companyId, Payment payment, string reason,
         DateTime? reversalDate = null, PaymentVoidCause cause = PaymentVoidCause.User)
     {
+        QueuePartnerNoticeWithdrawal(payment.Id);   // รอบ 264 P3 ฝ่ายค้าน M2 (คู่กับเส้นใบเดียว)
         // รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ตัดสินใบเสร็จอัตโนมัติก่อนแตะอะไร — ปฏิเสธ = throw ก่อนกลับ JE
         var (receiptDecision, receiptDoc) = await DecideAutoReceiptOnPaymentVoidAsync(companyId, payment, cause);
         // ฝ่ายค้านรอบ 258 H2: ใบเสร็จ "รายใบ" ของใบอื่นที่การชำระนี้จัดสรรให้ (ไม่ใช่ใบหลัก) — ตัดสินด้วยตัวเดียวกัน ก่อนแตะอะไร (ถึงกรมสรรพากรแล้ว + ผู้ใช้กด = throw)

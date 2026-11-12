@@ -118,6 +118,9 @@ public class PartnerWhtCertExchangeService
             var linked = contact.ExternalSystem == ExternalSystem && Guid.TryParse(contact.ExternalId, out var linkedId) && accepted.Contains(linkedId)
                 ? linkedId : (Guid?)null;
             var partner = linked is Guid lp && partnerCos.TryGetValue(lp, out var pc) ? pc : null;
+            // รอบ 264 P3 ฝ่ายค้าน M6: ธุรกรรมของใบนี้เปิดก่อนตรวจความยินยอม และถือไว้จนกล่องรับตอบ + ประทับผล — FOR SHARE ของ CheckForWriteAsync คุ้มการเขียนจริง
+            // (ระงับคู่/ปิดค่าตั้งรอจนใบนี้จบ) · กล่องรับ (WhtCertIntakeService.SubmitAsync) ใช้ธุรกรรมที่เปิดอยู่ · ทุกทางออกของรอบ commit/rollback ชัด
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
             var check = PartnerExchangeRules.WhtDeliveryCheckOf(new PartnerExchangeRules.WhtDeliveryFacts(
                 contact.ExternalSystem, partner != null,
                 partner == null && partnerCos.Values.Any(c => ThaiTaxId.Same(c.TaxId, contact.TaxId)),
@@ -128,12 +131,14 @@ public class PartnerWhtCertExchangeService
             if (check.Action == PartnerExchangeRules.WhtDeliveryAction.NotPartner)
             {
                 await ClearSkipAsync(payerId, cert.Id, ct);
+                await tx.CommitAsync(ct);
                 continue;
             }
             // C-10 · B12 · ผู้รับไม่ตรง · คู่ไม่ได้เชื่อม ⇒ เหตุบนใบ (ไม่นับครั้ง — แก้แล้วส่งรอบถัดไปเอง) · ไม่ข้ามเงียบ
             if (check.Action == PartnerExchangeRules.WhtDeliveryAction.Skip)
             {
                 await StampSkipAsync(payerId, cert.Id, check.Reason!, ct);
+                await tx.CommitAsync(ct);
                 continue;
             }
             var payeeCompanyId = partner!.Id;
@@ -146,6 +151,7 @@ public class PartnerWhtCertExchangeService
             if (form == null)
             {
                 await StampFailureAsync(payerId, cert.Id, "แบบนี้ไม่ส่งผ่านคู่ค้า NextAcc (ส่งเฉพาะ ภ.ง.ด.3/53) — ส่งหนังสือรับรองให้ผู้ขายทางเดิม", ct);
+                await tx.CommitAsync(ct);
                 continue;
             }
 
@@ -194,6 +200,7 @@ public class PartnerWhtCertExchangeService
                 if (PartnerExchangeRules.IntakeRejected(r.Status))
                 {
                     await StampFailureAsync(payerId, cert.Id, PartnerExchangeRules.IntakeRejectedReason(r.Message), ct, giveUp: true);
+                    await tx.CommitAsync(ct);
                     continue;
                 }
                 // ฝ่ายค้าน L4 (คำตัดสิน 264-5-9): กล่องรับตอบ "ซ้ำ" กับรายการที่ใบ<b>อื่น</b>ของผู้จ่ายส่งไปแล้ว (เลขที่เดียวกันจากสาขา/ปีอื่นที่เลขภาษีเดียวกัน) ⇒
@@ -202,6 +209,7 @@ public class PartnerWhtCertExchangeService
                         .AnyAsync(w => w.PartnerIntakeId == r.IntakeId && w.Id != cert.Id, ct))
                 {
                     await StampFailureAsync(payerId, cert.Id, PartnerExchangeRules.DuplicateOfOtherCertReason, ct, giveUp: true);
+                    await tx.CommitAsync(ct);
                     continue;
                 }
                 // ภายนอก (กล่องรับของผู้ขาย) ตอบผลจริงแล้วเท่านั้นจึงประทับ "ส่งแล้ว" · compare-and-set (หลายเครื่อง = ครั้งเดียว)
@@ -211,11 +219,14 @@ public class PartnerWhtCertExchangeService
                         .SetProperty(w => w.PartnerDeliveredAt, nowUtc)
                         .SetProperty(w => w.PartnerIntakeId, (Guid?)r.IntakeId)
                         .SetProperty(w => w.PartnerDeliveryError, (string?)null), ct);
+                await tx.CommitAsync(ct);
                 if (n > 0) sent++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // ด่าน 409 ของกล่องรับ (ใบอยู่ในทะเบียนแล้ว) = ข้อความไทยถึงผู้ใช้ · อื่น ๆ = ข้อความกลาง · ใบยังไม่ "ส่งแล้ว"
+                // ย้อนธุรกรรมของใบนี้ก่อน (กล่องรับเขียนครึ่งทางไม่ค้าง) แล้วประทับเหตุนอกธุรกรรม
+                try { await tx.RollbackAsync(CancellationToken.None); } catch (Exception rex) when (rex is not OperationCanceledException) { _ = rex; }
                 _db.ChangeTracker.Clear();
                 var reason = ex is BusinessRuleException ? ex.Message : "ส่งเข้ากล่องรับของผู้ขายไม่สำเร็จ — ระบบลองใหม่รอบถัดไป";
                 _logger.LogError(ex, "ส่ง 50 ทวิ {Cert} ของบริษัท {Payer} ถึงคู่ค้า {Payee} ไม่สำเร็จ", cert.Id, payerId, payeeCompanyId);
@@ -246,7 +257,7 @@ public class PartnerWhtCertExchangeService
     /// <summary>รอบ 264 P5 — <b>จุดเรียกความยินยอมเดียว</b>ของเส้น "ส่ง 50 ทวิ กลับให้คู่ค้า" (ขอบเขต ReturnWhtCerts · คำตัดสิน 264-5-5) ·
     /// รอบ 264 P3: สลับเป็นตัวตรวจความยินยอมของ P1 แล้ว — <see cref="PartnerConsentService.CheckForWriteAsync"/> (ขอบเขตนี้ตัดสินด้วยค่าตั้งทั้งบริษัท +
     /// คู่ต้อง Accepted ณ ตอนนี้ — 264-2-1) · watermark <c>SendWhtCertsToPartnersSince</c> ของค่าตั้งเดิมยังเป็นเงื่อนไข (ส่งเฉพาะใบหลังเปิด) ·
-    /// ธุรกรรมสั้นของการตรวจ: ขอบเขตทั้งบริษัทไม่มีแถวความยินยอมให้ถือล็อก และการส่งเข้ากล่องรับ (บริษัทผู้รับ) เปิดธุรกรรมของตัวเอง</summary>
+    /// ฝ่ายค้าน 264-P3 M6: ล็อก FOR SHARE ของแถวคู่ค้าถือไว้ในธุรกรรมของใบ (ผู้เรียก) จนส่งเข้ากล่องรับและประทับผลเสร็จ — ระงับคู่แทรกระหว่างนั้นไม่ได้</summary>
     private async Task<bool> ReturnWhtCertsAllowedAsync(Guid payerId, Guid payeeCompanyId, CancellationToken ct)
     {
         var on = await _db.WorkflowAutomationConfigs.AsNoTracking()
@@ -256,17 +267,9 @@ public class PartnerWhtCertExchangeService
             .Where(p => (p.CompanyAId == payerId && p.CompanyBId == payeeCompanyId) || (p.CompanyAId == payeeCompanyId && p.CompanyBId == payerId))
             .Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct);
         if (pid is not Guid partnershipId) return false;
-        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync(ct) : null;
-        try
-        {
-            var v = await _consent.CheckForWriteAsync(payerId, partnershipId, PartnerConsent.Scope.ReturnWhtCerts, null, ct);
-            if (ownTx != null) await ownTx.CommitAsync(ct);
-            return v.Ok;
-        }
-        finally
-        {
-            if (ownTx != null) await ownTx.DisposeAsync();
-        }
+        // ต้องอยู่ในธุรกรรมของผู้เรียก (DeliverForPayerAsync เปิดต่อใบและถือไว้จนกล่องรับตอบ) — ไม่มี = CheckForWriteAsync โยน (ข้อผิดพลาดของโปรแกรม)
+        var v = await _consent.CheckForWriteAsync(payerId, partnershipId, PartnerConsent.Scope.ReturnWhtCerts, null, ct);
+        return v.Ok;
     }
 
     /// <param name="giveUp">รอบ 257 ชุด 2 (B-L4): ผลเชิงกำหนด (กล่องรับตีกลับ) ⇒ ตั้งจำนวนครั้งเต็มเพดาน (ไม่ส่งซ้ำ) · false = ล้มชั่วคราว นับ +1</param>

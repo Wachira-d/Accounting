@@ -85,6 +85,10 @@ public static class PartnerPaySourceAccount
         public bool UsedAi => false;
     }
 
+    /// <summary>ฝ่ายค้าน M3: ป้ายซื่อสัตย์ของชั้นที่ 4 — หลักฐาน = "ค่าตั้งของเรา + คำบอกของผู้ขาย" ไม่ใช่หลักฐานว่าเงินออกจากบัญชีนั้นจริง (ตัวเดียว: หน้า · audit · หมายเหตุการจ่าย)</summary>
+    public const string ConsentDefaultLabelPrefix = "บัญชีตั้งต้นที่ตั้งไว้ตอนยินยอม + ผู้ขายแจ้งรับเงิน — ";
+    public const string ConsentDefaultCaveat = " (ยังไม่ได้ตรวจกับรายการเดินบัญชีของเรา)";
+
     public const string UnknownReason = "ไม่ทราบแหล่งเงินออก — เลือกบัญชีที่จ่ายจริง หรือรอรายการเดินบัญชีของเรา (ระบบไม่เดาบัญชีให้ · ไม่ใช้เงินสด/บัญชีแรกแทน)";
     public const string SlipNotOursReason = "บัญชีบนสลิปไม่ใช่บัญชีของบริษัท (อาจเป็นกรรมการ/พนักงานจ่ายแทน) — เลือกเองว่าเงินออกจากไหน (เช่น กรรมการจ่ายแทน 21230)";
     public const string SlipVsConsentReason = "สลิปตรงบัญชีหนึ่ง แต่บัญชีที่ตั้งไว้ในความยินยอมเป็นอีกบัญชี — หลักฐานขัดกัน ระบบไม่บันทึกเอง (เลือกบัญชีที่จ่ายจริง)";
@@ -102,7 +106,7 @@ public static class PartnerPaySourceAccount
         if (f.SlipMatch is { Kind: SlipKind.Unique, AccountId: Guid slipId } && f.Usable.ContainsKey(slipId))
             present.Add(new(Origin.SlipUnique, slipId, "จากสลิป: " + L(slipId)));
         if (InUsableSet(f.Usable, f.ConsentDefault))
-            present.Add(new(Origin.ConsentDefault, f.ConsentDefault!.Value, "บัญชีจ่ายคู่ค้านี้ที่ตั้งไว้ — " + L(f.ConsentDefault.Value)));
+            present.Add(new(Origin.ConsentDefault, f.ConsentDefault!.Value, ConsentDefaultLabelPrefix + L(f.ConsentDefault.Value) + ConsentDefaultCaveat));
 
         // คำแนะนำ (ไม่อัตโนมัติ · ไม่ preselect): ประวัติก่อน แล้วบัญชีบนใบซื้อ
         var hint = InUsableSet(f.Usable, f.History) ? f.History : InUsableSet(f.Usable, f.PurchaseDocBank) ? f.PurchaseDocBank : null;

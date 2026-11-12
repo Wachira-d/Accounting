@@ -25,9 +25,12 @@ public static class PartnerPaymentNoticeRule
     public const string SellerVoidedMarker = "[PARTNER-PAYMENT-VOIDED]";
 
     /// <summary>ข้อความป้ายบนใบซื้อ (หนึ่งบรรทัด) — ผู้อ่าน: หน้าเอกสาร (หมายเหตุภายใน) + Autopilot</summary>
-    public static string SellerVoidedNote(string sellerName, string sourceDocumentNumber, decimal cash, DateTime atUtc)
-        => $"{SellerVoidedMarker} {atUtc.AddHours(7):dd/MM/yyyy}: {sellerName} ยกเลิกการรับเงิน {cash:N2} บาท ของ {sourceDocumentNumber} ที่เราบันทึกจ่ายไปแล้ว — "
-           + "ตรวจรายการเดินบัญชี แล้วยกเลิกการจ่าย/ขอเงินคืนเอง (ระบบไม่ยกเลิกการจ่ายแทน)";
+    public static string SellerVoidedNote(string sellerName, string sourceDocumentNumber, decimal cash, DateTime atUtc, string key)
+        => $"{key} {atUtc.AddHours(7):dd/MM/yyyy}: {sellerName} ยกเลิกรายการรับเงิน {cash:N2} บาท ของ {sourceDocumentNumber} ที่เราบันทึกจ่ายไปแล้ว — "
+           + "ตรวจกับผู้ขาย/รายการเดินบัญชี (ผู้ขายอาจบันทึกรับใหม่ — อย่าบันทึกจ่ายซ้ำ) แล้วยกเลิกการจ่าย/ขอเงินคืนเองถ้าจำเป็น (ระบบไม่ยกเลิกการจ่ายแทน)";
+
+    /// <summary>กุญแจกันป้ายซ้ำ — ต่อ<b>การรับชำระของผู้ขาย</b> (ฝ่ายค้าน L2: เดิมวัน+ชื่อผู้ขาย ⇒ ยกเลิกสองรายการของใบเดียวกันในวันเดียว ป้ายที่สองหาย)</summary>
+    public static string SellerVoidedKey(Guid? sellerPaymentId, Guid noticeId) => $"{SellerVoidedMarker}#{(sellerPaymentId ?? noticeId).ToString("N")[..8]}";
 
     public const decimal Tolerance = 0.01m;
 
@@ -133,7 +136,7 @@ public static class PartnerPaymentNoticeRule
     /// <param name="sellerRecordedWht">รอบ 264 P3 (264-3-5 · D2): ภาษีหักที่ผู้ขายบันทึกในการรับชำระนี้ — ใช้<b>ยืนยันไขว้</b>เท่านั้น (ไม่คัดลอกเป็นคำตอบ) · null = ไม่ใช้กติกาจ่ายบางส่วนที่มีภาษีหัก</param>
     /// <param name="singleWhtRatePercent">อัตราหักของใบซื้อเมื่อทั้งใบมีอัตราเดียว (เช่น 3) · null = หลายอัตรา/ไม่มี ⇒ ไม่เดาสัดส่วน</param>
     public static Plan For(DocumentStatus purchaseStatus, decimal balanceDue, decimal whtRemaining, decimal cashReceivedBySeller, string? purchaseNumber,
-        decimal? sellerRecordedWht = null, decimal? singleWhtRatePercent = null)
+        decimal? sellerRecordedWht = null, decimal? singleWhtRatePercent = null, bool purchaseHasVat = false)
     {
         var no = string.IsNullOrWhiteSpace(purchaseNumber) ? "ใบซื้อ" : purchaseNumber!.Trim();
         if (purchaseStatus is DocumentStatus.Draft or DocumentStatus.WaitingApproval)
@@ -150,7 +153,7 @@ public static class PartnerPaymentNoticeRule
         if (Math.Abs(cashReceivedBySeller - balanceDue) <= Tolerance)
             // ฝ่ายค้าน M3: ใบซื้อมีภาษีหักค้างตามกติกาของเรา แต่จ่ายเต็มผ่านลิงก์ ⇒ บันทึกจ่ายตามเงินจริง (หัก 0) แต่ต้องเตือน: หน้าที่หัก/นำส่งยังอยู่ (ม.50 · ม.54 ผู้จ่ายรับผิดร่วม)
             return new(cashReceivedBySeller, 0m, null, wht > 0m ? FullPaidWhtWarning(wht, no) : null);
-        if (PartialPlan(balanceDue, wht, cashReceivedBySeller, sellerRecordedWht, singleWhtRatePercent) is Plan partial)
+        if (PartialPlan(balanceDue, wht, cashReceivedBySeller, sellerRecordedWht, singleWhtRatePercent, purchaseHasVat) is Plan partial)
             return partial;
         return new(null, null,
             $"ยอดที่ผู้ขายรับ {cashReceivedBySeller:N2} บาท + ภาษีหัก ณ ที่จ่ายตามกติกาของเรา {wht:N2} บาท ไม่ตรงยอดค้างของ {no} ({balanceDue:N2} บาท) — "
@@ -162,11 +165,15 @@ public static class PartnerPaymentNoticeRule
     /// ไม่มีภาษีหักค้าง ⇒ จ่ายตามเงินจริง หัก 0 · มีภาษีหักค้าง ⇒ เฉพาะเมื่อใบซื้อมี<b>อัตราเดียว</b> r และ <c>round(เงิน × r/(100−r), 2)</c> ตรงกับภาษีหักที่ผู้ขายบันทึก
     /// (สองฝั่งยืนยันกัน) และไม่เกินภาษีหักที่เหลือ ⇒ หักยอดนั้น · อื่น ๆ ⇒ null (ไม่เดาสัดส่วน)
     /// </summary>
-    internal static Plan? PartialPlan(decimal balanceDue, decimal whtRemaining, decimal cash, decimal? sellerRecordedWht, decimal? singleWhtRatePercent)
+    /// <remarks>ฝ่ายค้าน 264-P3 H2: ใบซื้อของเราไม่มีภาษีหักค้าง แต่ผู้ขายบันทึกว่าถูกหัก (&gt; 0) ⇒ สองฝั่งขัดกัน ⇒ null (ไม่บันทึกหัก 0 เงียบ ๆ) ·
+    /// L9: สูตร <c>เงิน × r/(100−r)</c> ถูกเฉพาะใบ<b>ไม่มี VAT</b> (ฐานภาษีหักไม่รวม VAT) ⇒ ใบซื้อมี VAT + มีภาษีหัก ⇒ null (ไม่เดา · สองฝั่งอาจ "ยืนยันกัน" บนเลขผิด)</remarks>
+    internal static Plan? PartialPlan(decimal balanceDue, decimal whtRemaining, decimal cash, decimal? sellerRecordedWht, decimal? singleWhtRatePercent,
+        bool purchaseHasVat = false)
     {
         if (cash <= 0m) return null;
         if (whtRemaining <= 0m)
-            return cash < balanceDue - Tolerance ? new Plan(cash, 0m, null) : null;
+            return (sellerRecordedWht ?? 0m) <= 0m && cash < balanceDue - Tolerance ? new Plan(cash, 0m, null) : null;
+        if (purchaseHasVat) return null;
         if (sellerRecordedWht is not decimal sellerWht || sellerWht <= 0m || singleWhtRatePercent is not decimal r || r <= 0m || r >= 100m) return null;
         var wht = Math.Round(cash * r / (100m - r), 2, MidpointRounding.AwayFromZero);
         if (Math.Abs(wht - sellerWht) > Tolerance) return null;
