@@ -32,7 +32,8 @@ public class SlipReceivingAccountRound260DbTests
         => new(db, DocSvc(db), F4Proxy<IGatewayAccountResolver>.Create((_, _) => null),
             NullLogger<Accounting.Services.Payments.Handlers.DocumentPaymentHandler>.Instance);
 
-    private static async Task<Seed> SeedAsync(Accounting.Data.AccountingDbContext db, bool twoBanks = true, bool docBankA = false)
+    private static async Task<Seed> SeedAsync(Accounting.Data.AccountingDbContext db, bool twoBanks = true, bool docBankA = false,
+        bool docGlOfBankA = false, bool docCashGl = false)
     {
         var tag = Guid.NewGuid().ToString("N")[..6];
         var company = new Company { Name = "บริษัท 260-2 " + tag, TaxId = "0105556000007", IsVatRegistered = true };
@@ -71,6 +72,7 @@ public class SlipReceivingAccountRound260DbTests
             SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, WithholdingTaxAmount = 0m,
             PaidAmount = 0m, BalanceDue = 1_070m, Currency = "THB",
             BankAccountId = docBankA ? bankA.Id : null,
+            PaymentAccountId = docGlOfBankA ? glA.Id : docCashGl ? cash.Id : null,
         };
         inv.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7m, VatAmount = 70m });
         db.Documents.Add(inv);
@@ -192,6 +194,86 @@ public class SlipReceivingAccountRound260DbTests
         // บัญชีของบริษัทอื่นไม่โผล่ในตัวเลือก (tenant)
         Assert.DoesNotContain(cross.Accounts, a => a.Id == other.BankA.Id);
         Assert.Equal(0, await db.Payments.CountAsync(p => p.CompanyId == s.CompanyId));
+    }
+
+    // ═══ ฝ่ายค้าน 260-2 ═══
+
+    [Fact]
+    public async Task M1_แหล่งเงินเป็นผังที่ผูกธนาคาร_ไม่เลือก_ยอดธนาคารขยับ_การชำระผูกบัญชี_ผู้สมัครกระทบยอด()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, docGlOfBankA: true);
+        var r = await SlipReceivingAccount.ResolveAsync(db, null, SlipIntent(s, null, null, PaymentIntentStatus.Pending), s.BankA.Id);
+        Assert.True(r.Decision.Ok, r.Decision.Problem);
+        Assert.Equal(s.BankA.Id, r.Decision.BankAccountId);   // เลือกตรงค่าแนะนำ ⇒ ยังส่ง override (ไม่ยุบเป็น "ตามเอกสาร")
+        await Handler(db).HandleSucceededAsync(SlipIntent(s, r.Decision.BankAccountId, r.Decision.Origin.ToString()));
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var pay = await check.Payments.AsNoTracking().SingleAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == s.Invoice.Id);
+        Assert.Equal(s.BankA.Id, pay.BankAccountId);
+        Assert.Equal(1_070m, (await check.BankAccounts.AsNoTracking().SingleAsync(b => b.Id == s.BankA.Id)).CurrentBalance);
+        Assert.Equal(1_070m, (await LinesAsync(check, s.CompanyId, s.Invoice.Id)).Where(l => l.AccountId == s.BankA.LinkedAccountId).Sum(l => l.DebitAmount));
+        Assert.True(await check.Payments.AnyAsync(p => p.CompanyId == s.CompanyId && p.BankAccountId == s.BankA.Id));
+    }
+
+    [Fact]
+    public async Task M1_ทิศตรงข้าม_แหล่งเงินเป็นผังเงินสด_เหมือนเดิม_ไม่แตะธนาคาร()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, docCashGl: true);
+        await Handler(db).HandleSucceededAsync(SlipIntent(s, null, null));
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var pay = await check.Payments.AsNoTracking().SingleAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == s.Invoice.Id);
+        Assert.Null(pay.BankAccountId);
+        Assert.Equal(1_070m, (await LinesAsync(check, s.CompanyId, s.Invoice.Id)).Where(l => l.AccountId == s.CashGlId).Sum(l => l.DebitAmount));
+    }
+
+    [Fact]
+    public async Task M3_บัญชีรับโอนของเว็บไม่ตรงบัญชีใด_ไม่ตกไปบัญชีเดียว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, twoBanks: false);   // เหลือ A บัญชีเดียว
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var site = new Site { CompanyId = s.CompanyId, Name = "เว็บ 260-2", Slug = "w-" + tag, Subdomain = "w-" + tag, Status = SiteStatus.Published };
+        db.Sites.Add(site);
+        await db.SaveChangesAsync();
+        db.SitePaymentGateways.Add(new SitePaymentGateway
+        {
+            CompanyId = s.CompanyId, SiteId = site.Id, GatewayType = PaymentGatewayType.BankTransfer, Name = "โอน", IsActive = true,
+            BankName = "ธนาคารกรุงไทย (KTB)", BankAccountNumber = "9999999999", BankAccountName = "ร้าน", IsTestMode = false,
+        });
+        await db.SaveChangesAsync();
+        var r = await SlipReceivingAccount.ResolveAsync(db, null, SlipIntent(s, null, null, PaymentIntentStatus.Pending), null);
+        Assert.Equal(SlipReceivingAccount.Origin.None, r.Decision.Origin);
+        Assert.Null(r.Decision.BankAccountId);
+        // ทิศตรงข้าม: เลขบนเว็บตรงบัญชี A ⇒ บัญชีที่แสดงให้ลูกค้าโอน
+        await db.SitePaymentGateways.Where(g => g.CompanyId == s.CompanyId).ExecuteUpdateAsync(u => u
+            .SetProperty(g => g.BankAccountNumber, "111-111-1111").SetProperty(g => g.BankName, "ธนาคารกสิกรไทย (KBANK)"));
+        var hit = await SlipReceivingAccount.ResolveAsync(db, null, SlipIntent(s, null, null, PaymentIntentStatus.Pending), null);
+        Assert.Equal(SlipReceivingAccount.Origin.ShownToCustomer, hit.Decision.Origin);
+        Assert.Equal(s.BankA.Id, hit.Decision.BankAccountId);
+    }
+
+    [Fact]
+    public async Task M4_แหล่งเงินเอกสารเป็นบัญชีที่ถูกปิดใช้_ไม่เลือก_ปฏิเสธพร้อมเหตุ_เลือกบัญชีอื่นผ่าน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, docBankA: true);
+        await db.BankAccounts.Where(b => b.Id == s.BankA.Id).ExecuteUpdateAsync(u => u.SetProperty(b => b.IsActive, false));
+        var pending = SlipIntent(s, null, null, PaymentIntentStatus.Pending);
+        var none = await SlipReceivingAccount.ResolveAsync(db, null, pending, null);
+        Assert.False(none.Decision.Ok);
+        Assert.Contains("ใช้ลงบัญชีไม่ได้", none.Decision.Problem);
+        var other = await SlipReceivingAccount.ResolveAsync(db, null, pending, s.BankB.Id);
+        Assert.True(other.Decision.Ok, other.Decision.Problem);
+        Assert.Equal(s.BankB.Id, other.Decision.BankAccountId);
+        // ค่าที่ประทับใหม่ (ส่งต่อใหม่พร้อมบัญชีใหม่) ⇒ handler ลงบัญชี B
+        await Handler(db).HandleSucceededAsync(SlipIntent(s, s.BankB.Id, other.Decision.Origin.ToString()));
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(s.BankB.Id, (await check.Payments.AsNoTracking().SingleAsync(p => p.CompanyId == s.CompanyId && p.DocumentId == s.Invoice.Id)).BankAccountId);
     }
 
     [Fact]

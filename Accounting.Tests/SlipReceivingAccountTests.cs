@@ -36,7 +36,7 @@ public class SlipReceivingAccountTests
     public void เลือกบัญชีที่ใช้ได้_ไม่มีปัญหา_และผลตัดสินใช้ตามที่เลือก()
     {
         Assert.Null(SlipReceivingAccount.ChoiceProblem(true, Facts(B), "THB"));
-        var s = SlipReceivingAccount.Suggest(true, false, null, A, new[] { A, B });
+        var s = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, A, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B });
         var d = SlipReceivingAccount.Decide(true, B, Facts(B), "THB", s);
         Assert.True(d.Ok);
         Assert.Equal(B, d.BankAccountId);
@@ -47,7 +47,7 @@ public class SlipReceivingAccountTests
     [Fact]
     public void เลือกตรงกับคำแนะนำ_ไม่นับว่าแทนคำแนะนำ()
     {
-        var s = SlipReceivingAccount.Suggest(true, false, null, A, new[] { A, B });
+        var s = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, A, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B });
         var d = SlipReceivingAccount.Decide(true, A, Facts(A), "THB", s);
         Assert.Equal(A, d.BankAccountId);
         Assert.False(d.Overridden);
@@ -56,7 +56,7 @@ public class SlipReceivingAccountTests
     [Fact]
     public void เลือกบัญชีเดียวกับแหล่งเงินของเอกสาร_ไม่ส่ง_override_ผลเท่าเดิม()
     {
-        var s = SlipReceivingAccount.Suggest(true, true, A, null, new[] { A, B });
+        var s = SlipReceivingAccount.Suggest(true, BankDoc(A), null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B });
         var d = SlipReceivingAccount.Decide(true, A, Facts(A), "THB", s);
         Assert.True(d.Ok);
         Assert.Null(d.BankAccountId);
@@ -70,7 +70,7 @@ public class SlipReceivingAccountTests
     {
         var p = SlipReceivingAccount.ChoiceProblem(true, null, "THB");
         Assert.Contains("ไม่พบบัญชีธนาคาร", p);
-        var s = SlipReceivingAccount.Suggest(true, false, null, null, new[] { A });
+        var s = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A });
         var d = SlipReceivingAccount.Decide(true, C, null, "THB", s);
         Assert.False(d.Ok);
         Assert.Null(d.BankAccountId);
@@ -93,7 +93,7 @@ public class SlipReceivingAccountTests
     public void เงินผ่านผู้ให้บริการ_เลือกธนาคารไม่ได้_แต่ไม่เลือกยังยืนยันได้()
     {
         Assert.Contains("ผู้ให้บริการ", SlipReceivingAccount.ChoiceProblem(false, Facts(A), "THB"));
-        var s = SlipReceivingAccount.Suggest(false, false, null, A, new[] { A });
+        var s = SlipReceivingAccount.Suggest(false, SlipReceivingAccount.DocChannel.None, A, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A });
         Assert.Equal(SlipReceivingAccount.Origin.NotApplicable, s.Origin);
         Assert.Null(s.BankAccountId);
         Assert.False(SlipReceivingAccount.Decide(false, A, Facts(A), "THB", s).Ok);
@@ -107,7 +107,7 @@ public class SlipReceivingAccountTests
     [Fact]
     public void ไม่เลือก_เอกสารมีแหล่งเงิน_สืบทอดตามเดิม_ไม่ส่ง_override()
     {
-        var s = SlipReceivingAccount.Suggest(true, true, A, B, new[] { A, B });
+        var s = SlipReceivingAccount.Suggest(true, BankDoc(A), B, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B });
         Assert.Equal(SlipReceivingAccount.Origin.DocumentChannel, s.Origin);
         Assert.Null(s.BankAccountId);
         Assert.Equal(A, s.DisplayBankAccountId);
@@ -118,7 +118,7 @@ public class SlipReceivingAccountTests
     [Fact]
     public void ไม่เลือก_แหล่งเงินของเอกสารเป็นผังตรงไม่ใช่ธนาคาร_สืบทอดตามเดิม_ไม่มีบัญชีให้แสดง()
     {
-        var s = SlipReceivingAccount.Suggest(true, true, null, B, new[] { A, B });
+        var s = SlipReceivingAccount.Suggest(true, new SlipReceivingAccount.DocChannel(true, false, null, null), B, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B });
         Assert.Equal(SlipReceivingAccount.Origin.DocumentChannel, s.Origin);
         Assert.Null(s.BankAccountId);
         Assert.Null(s.DisplayBankAccountId);
@@ -127,7 +127,7 @@ public class SlipReceivingAccountTests
     [Fact]
     public void ไม่เลือก_ไม่มีแหล่งเงิน_ใช้บัญชีที่แสดงให้ลูกค้าโอน()
     {
-        var s = SlipReceivingAccount.Suggest(true, false, null, B, new[] { A, B });
+        var s = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, B, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B });
         Assert.Equal(SlipReceivingAccount.Origin.ShownToCustomer, s.Origin);
         Assert.Equal(B, s.BankAccountId);
     }
@@ -135,7 +135,7 @@ public class SlipReceivingAccountTests
     [Fact]
     public void บัญชีที่แสดงให้ลูกค้าใช้ไม่ได้_ไปชั้นถัดไป_บัญชีเดียว()
     {
-        var s = SlipReceivingAccount.Suggest(true, false, null, C, new[] { A });
+        var s = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, C, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A });
         Assert.Equal(SlipReceivingAccount.Origin.SoleTransferAccount, s.Origin);
         Assert.Equal(A, s.BankAccountId);
     }
@@ -143,11 +143,11 @@ public class SlipReceivingAccountTests
     [Fact]
     public void หลายบัญชีไม่มีหลักฐาน_ไม่เดา_คงพฤติกรรมเดิม()
     {
-        var s = SlipReceivingAccount.Suggest(true, false, null, null, new[] { A, B });
+        var s = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B });
         Assert.Equal(SlipReceivingAccount.Origin.None, s.Origin);
         Assert.Null(s.BankAccountId);
         Assert.Contains("ไม่เดา", s.Reason);
-        var zero = SlipReceivingAccount.Suggest(true, false, null, null, Array.Empty<Guid>());
+        var zero = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, null, SlipReceivingAccount.SiteRowMatch.NoRow, Array.Empty<Guid>());
         Assert.Equal(SlipReceivingAccount.Origin.None, zero.Origin);
         Assert.Contains("ยังไม่มีบัญชีธนาคารที่รับโอนได้", zero.Reason);
     }
@@ -175,12 +175,71 @@ public class SlipReceivingAccountTests
     [Fact]
     public void เลขบัญชีของเว็บ_จับคู่ด้วยตัวเลขเท่านั้น_ซ้ำหรือสั้นไม่เดา()
     {
-        var banks = new (Guid, string?)[] { (A, "123-4-56789-0"), (B, "999 888 7777") };
-        Assert.Equal(A, SlipReceivingAccount.MatchByAccountNumber("1234567890", banks));
-        Assert.Equal(B, SlipReceivingAccount.MatchByAccountNumber("999-888-7777", banks));
-        Assert.Null(SlipReceivingAccount.MatchByAccountNumber("000", banks));
-        Assert.Null(SlipReceivingAccount.MatchByAccountNumber(null, banks));
-        Assert.Null(SlipReceivingAccount.MatchByAccountNumber("1234567890", new (Guid, string?)[] { (A, "1234567890"), (C, "123-456-7890") }));
+        var banks = new (Guid, string?, string?)[] { (A, "123-4-56789-0", "กสิกร"), (B, "999 888 7777", null) };
+        Assert.Equal(A, SlipReceivingAccount.MatchByAccountNumber("1234567890", "ธนาคารกสิกรไทย (KBANK)", banks));
+        Assert.Equal(B, SlipReceivingAccount.MatchByAccountNumber("999-888-7777", "ไทยพาณิชย์", banks));
+        Assert.Null(SlipReceivingAccount.MatchByAccountNumber("000", null, banks));
+        Assert.Null(SlipReceivingAccount.MatchByAccountNumber(null, null, banks));
+        Assert.Null(SlipReceivingAccount.MatchByAccountNumber("1234567890", null, new (Guid, string?, string?)[] { (A, "1234567890", null), (C, "123-456-7890", null) }));
+        // ฝ่ายค้าน L4: เลขตรงแต่ธนาคารคนละเจ้า ⇒ ไม่ตรง
+        Assert.Null(SlipReceivingAccount.MatchByAccountNumber("1234567890", "ธนาคารกรุงไทย (KTB)", banks));
+        Assert.True(SlipReceivingAccount.SameBank("ธนาคารกสิกรไทย (KBANK)", "กสิกร"));
+        Assert.False(SlipReceivingAccount.SameBank("ธนาคารกสิกรไทย (KBANK)", "ธนาคารกรุงไทย (KTB)"));
+        Assert.True(SlipReceivingAccount.SameBank(null, "อะไรก็ได้"));
+    }
+
+    private static SlipReceivingAccount.DocChannel BankDoc(Guid bank) => new(true, true, bank, null);
+
+    // ═══ ฝ่ายค้าน 260-2 ═══
+
+    [Fact]
+    public void M1_ผังตรงที่ผูกธนาคาร_ส่งธนาคารเป็น_override_ทั้งไม่เลือกและเลือกตรงค่าแนะนำ()
+    {
+        var doc = new SlipReceivingAccount.DocChannel(true, false, B, null);
+        var s = SlipReceivingAccount.Suggest(true, doc, null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B });
+        Assert.Equal(SlipReceivingAccount.Origin.DocumentChannel, s.Origin);
+        Assert.Equal(B, s.BankAccountId);
+        Assert.Equal(B, SlipReceivingAccount.Decide(true, null, null, "THB", s).BankAccountId);
+        var accepted = SlipReceivingAccount.Decide(true, B, Facts(B), "THB", s);
+        Assert.Equal(B, accepted.BankAccountId);
+        Assert.True(accepted.AcceptedSuggestion);
+        // ทิศตรงข้าม: แหล่งเงินเป็นธนาคารเอง ⇒ สืบทอด (ไม่ override)
+        var own = SlipReceivingAccount.Suggest(true, BankDoc(A), null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B });
+        Assert.Null(SlipReceivingAccount.Decide(true, A, Facts(A), "THB", own).BankAccountId);
+    }
+
+    [Fact]
+    public void M3_บัญชีรับโอนของเว็บมีแต่ไม่ตรง_ไม่ตกไปบัญชีเดียว_ไม่มีแถว_ยังใช้บัญชีเดียว()
+    {
+        var mismatch = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, null, SlipReceivingAccount.SiteRowMatch.Unmatched, new[] { A });
+        Assert.Equal(SlipReceivingAccount.Origin.None, mismatch.Origin);
+        Assert.Null(mismatch.BankAccountId);
+        var noRow = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A });
+        Assert.Equal(SlipReceivingAccount.Origin.SoleTransferAccount, noRow.Origin);
+    }
+
+    [Fact]
+    public void M4_แหล่งเงินเอกสารใช้ไม่ได้_ไม่เลือก_ปฏิเสธพร้อมเหตุ_เลือกบัญชีอื่นผ่าน()
+    {
+        var doc = new SlipReceivingAccount.DocChannel(true, true, A, "บัญชีธนาคาร “x” ถูกปิดใช้งาน");
+        var s = SlipReceivingAccount.Suggest(true, doc, null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { B });
+        Assert.Equal(SlipReceivingAccount.Origin.None, s.Origin);
+        var none = SlipReceivingAccount.Decide(true, null, null, "THB", s);
+        Assert.False(none.Ok);
+        Assert.Contains("ปิดใช้งาน", none.Problem);
+        var other = SlipReceivingAccount.Decide(true, B, Facts(B), "THB", s);
+        Assert.True(other.Ok);
+        Assert.Equal(B, other.BankAccountId);
+    }
+
+    [Fact]
+    public void L2_ยอมรับค่าแนะนำ_คงที่มาของค่าแนะนำ()
+    {
+        var s = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, A, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B });
+        var d = SlipReceivingAccount.Decide(true, A, Facts(A), "THB", s);
+        Assert.Equal(SlipReceivingAccount.Origin.ShownToCustomer, d.Origin);
+        Assert.True(d.AcceptedSuggestion);
+        Assert.False(d.Overridden);
     }
 
     [Fact]

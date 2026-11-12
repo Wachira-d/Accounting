@@ -1415,7 +1415,8 @@ const API = {
       // รอบ 250 ฝ่ายค้าน H1: ปฏิเสธสลิปโอนของเอกสาร (เหตุผลบังคับ)
       rejectPaymentIntentSlip: (id, reason) => API.post(`${base}/pay/intents/${id}/reject-slip`, { reason }),
       // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ให้ handler ของต้นทาง — เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง (redispatchPending)
-      redispatchPaymentIntent: (id) => API.post(`${base}/pay/intents/${id}/redispatch`, {}),
+      // รอบ 260-2 ฝ่ายค้าน M4: bankAccountId (ไม่บังคับ) = บัญชีที่เงินเข้าใหม่ของสลิปโอนที่ส่งต่อค้าง
+      redispatchPaymentIntent: (id, bankAccountId) => API.post(`${base}/pay/intents/${id}/redispatch`, bankAccountId ? { bankAccountId } : {}),
       // รอบ 235 (คำตัดสิน 235-3): เงินโหมดทดสอบที่ลงบัญชีไปแล้ว — รายงาน + กลับรายการรับชำระผ่านเส้นยกเลิกเดิม
       listTestModeLegacyPayments: () => API.get(`${base}/pay/intents/test-mode-legacy`),
       reverseTestModeLegacyPayment: (intentId, paymentId) => API.post(`${base}/pay/intents/${intentId}/test-mode-legacy/reverse/${paymentId}`, {}),

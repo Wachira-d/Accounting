@@ -296,10 +296,26 @@
       // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ — ปุ่มโผล่เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง · ผล/เหตุผลมาจากเซิร์ฟเวอร์ทั้งหมด
       async redispatch(id) {
         const api = Layout.api(); if (!api) return;
-        if (!await Layout.confirm({ title: 'ส่งต่อรายการนี้ให้ต้นทางอีกครั้ง?', okText: 'ส่งต่อ',
+        const r = this.rows.find(x => x.id === id) || {};
+        let bankAccountId = null;
+        // รอบ 260-2 ฝ่ายค้าน M4: สลิปโอนที่ส่งต่อค้าง (บัญชีที่ประทับอาจใช้ไม่ได้แล้ว) ⇒ เลือกบัญชีที่เงินเข้าใหม่ได้ (canRestampReceivingAccount จากเซิร์ฟเวอร์)
+        if (r.canRestampReceivingAccount === true) {
+          let ra = null;
+          try { ra = (await api.getPaymentIntentReceivingAccounts(id))?.data || null; }
+          catch (e) { Layout.toast(e.message || 'โหลดรายการบัญชีไม่สำเร็จ', 'error'); return; }
+          const opts = [{ value: '', label: 'ใช้บัญชีเดิมที่บันทึกไว้' + (r.receivingAccountLabel ? ' (' + r.receivingAccountLabel + ')' : '') }]
+            .concat(((ra && ra.options) || []).filter(o => o.usable === true).map(o => ({ value: o.value, label: o.label })));
+          const form = await Layout.formDialog({ title: 'ส่งต่อรายการนี้ให้ต้นทางอีกครั้ง?', okText: 'ส่งต่อ', fields: [
+            { key: 'note', label: 'ขั้นต่อไป', type: 'readonly', value: 'ระบบจะเรียกตัวจัดการเดิม (ออกใบเสร็จ / ตัดหนี้) — ถ้าเคยบันทึกแล้วจะไม่บันทึกซ้ำ' },
+            { key: 'bankAccountId', label: 'บัญชีที่เงินเข้า', type: 'select', options: opts, value: '',
+              hint: 'เปลี่ยนเมื่อบัญชีเดิมถูกปิดใช้/ผิด — ระบบตรวจบัญชีใหม่ก่อนบันทึก' },
+          ] });
+          if (!form) return;
+          bankAccountId = form.bankAccountId || null;
+        } else if (!await Layout.confirm({ title: 'ส่งต่อรายการนี้ให้ต้นทางอีกครั้ง?', okText: 'ส่งต่อ',
           message: 'ระบบจะเรียกตัวจัดการเดิม (ออกใบเสร็จ / ตัดหนี้ / ยืนยันการจอง) — ถ้าเคยบันทึกแล้วจะไม่บันทึกซ้ำ' })) return;
         try {
-          const res = await api.redispatchPaymentIntent(id);
+          const res = await api.redispatchPaymentIntent(id, bankAccountId);
           await Layout.notice({ title: 'ส่งต่อแล้ว', message: res?.message || 'ส่งต่อแล้ว' });
         } catch (e) {
           // ต้นทางยังบันทึกไม่สำเร็จ — ข้อความจากเซิร์ฟเวอร์บอกเหตุ + ทางไปต่อ ต้องให้ผู้ใช้อ่านครบ

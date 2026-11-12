@@ -212,6 +212,7 @@ public class PaymentGatewayController : ControllerBase
                 canRejectSlip = DocumentSlipIntents.IsDocumentSlip(r.SourceKindValue, r.MethodValue) && PaymentIntentPolicy.IsOpen(r.StatusValue),
                 // รอบ 260-2: ช่อง "บัญชีที่เงินเข้า" ในหน้าต่างยืนยัน (สลิปโอนเท่านั้น) + ค่าที่ใช้จริงหลังยืนยัน (echo)
                 canChooseReceivingAccount = SlipReceivingAccount.Applies(r.ProviderCode, r.MethodValue) && PaymentIntentPolicy.IsOpen(r.StatusValue),
+                canRestampReceivingAccount = SlipReceivingAccount.Applies(r.ProviderCode, r.MethodValue) && redispatchPending.Contains(r.Id),
                 receivingBankAccountId = r.ReceivingBankAccountId,
                 receivingAccountLabel = r.ReceivingBankAccountId is Guid rb && receivingLabels.TryGetValue(rb, out var rl) ? rl : null,
                 receivingAccountOriginLabel = SlipReceivingAccount.OriginLabel(r.ReceivingAccountOrigin),
@@ -365,6 +366,8 @@ public class PaymentGatewayController : ControllerBase
     /// <summary>รอบ 250 ฝ่ายค้าน H1: ปฏิเสธสลิปโอนของเอกสาร (เหตุผลบังคับ)</summary>
     public sealed record RejectSlipRequest(string Reason);
     public sealed record RefundRequest(decimal? Amount, string? Reason);
+    /// <summary>รอบ 260-2 ฝ่ายค้าน M4: ส่งต่อใหม่พร้อมบัญชีที่เงินเข้าใหม่ (สลิปโอนที่บัญชีเดิมใช้ไม่ได้แล้ว) · ว่าง = ใช้ค่าที่ประทับเดิม</summary>
+    public sealed record RedispatchRequest(Guid? BankAccountId);
 
     /// <summary>**ยืนยันด้วยมือ** — เงินเข้าจริงแล้ว (เห็นในบัญชีธนาคาร/แดชบอร์ดผู้ให้บริการ)
     /// แต่ระบบยังไม่รู้ เพราะ webhook หายและถามสถานะสดก็ยังไม่ขึ้น
@@ -430,43 +433,27 @@ public class PaymentGatewayController : ControllerBase
         if (!receiving.Decision.Ok)
             return BadRequest(new ApiResponse<IntentResponse>(false, null, receiving.Decision.Problem));
 
-        var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
+        var actorUserId = JwtHelper.GetUserIdFromClaims(User);
+        var actor = $"manual:{actorUserId}";
+        var chosenId = req.BankAccountId is Guid cb && cb != Guid.Empty ? cb : (Guid?)null;
         PaymentIntent? updated = null;
         var alreadyClosed = false;
-        // ประทับบัญชี + ยืนยัน ภายใต้ล็อกต่อรายการ — สองคนกดพร้อมกันคนละบัญชี ⇒ ค่าที่ประทับ = บัญชีที่ JE ใช้จริงเสมอ (คนที่สองเห็นว่ายืนยันแล้ว)
-        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.PaymentIntent, $"{intentId:N}:confirm", async () =>
+        string? lockProblem = null;
+        (Guid? Bank, string? Origin)? previousStamp = null;
+        // ประทับบัญชี + ยืนยัน ภายใต้ล็อกต่อรายการ (ปฏิเสธสลิปถือคีย์เดียวกัน — ฝ่ายค้าน L1) — สองคนกดพร้อมกันคนละบัญชี ⇒ ค่าที่ประทับ = บัญชีที่ JE ใช้จริงเสมอ
+        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.PaymentIntent, ConfirmLockPart(intentId), async () =>
         {
-            var status = await _db.PaymentIntents.AsNoTracking().Where(i => i.Id == intentId && i.CompanyId == companyId)
-                .Select(i => i.Status).FirstAsync(ct);
+            var current = await _db.PaymentIntents.AsNoTracking().Where(i => i.Id == intentId && i.CompanyId == companyId)
+                .Select(i => new { i.Status, i.ReceivingBankAccountId, i.ReceivingAccountOrigin }).FirstAsync(ct);
             // กติกาการเปลี่ยนสถานะตัวเดียว (รายการหมดอายุ/ล้มที่เงินเข้าจริงภายหลังยังยืนยันได้ · สำเร็จ/คืนเงินแล้ว = ไม่ประทับทับ ไม่ยืนยันซ้ำ)
-            if (!PaymentIntentPolicy.Evaluate(status, PaymentIntentStatus.Succeeded).Apply) { alreadyClosed = true; return; }
+            if (!PaymentIntentPolicy.Evaluate(current.Status, PaymentIntentStatus.Succeeded).Apply) { alreadyClosed = true; return; }
             if (receiving.Applies)
             {
-                var d = receiving.Decision;
-                var originName = d.Origin.ToString();
-                var usedBank = d.BankAccountId;
-                await _db.PaymentIntents.Where(i => i.Id == intentId && i.CompanyId == companyId)
-                    .ExecuteUpdateAsync(u => u.SetProperty(i => i.ReceivingBankAccountId, usedBank)
-                        .SetProperty(i => i.ReceivingAccountOrigin, originName), ct);
-                _db.AddChainedAuditLog(new AuditLog
-                {
-                    CompanyId = companyId, UserEmail = actor, Action = AuditAction.Update,
-                    EntityType = "PaymentIntent", EntityId = intentId.ToString(),
-                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
-                    {
-                        @event = "SlipReceivingAccountDecided",
-                        chosenBankAccountId = req.BankAccountId,
-                        usedBankAccountId = d.BankAccountId,
-                        origin = d.Origin.ToString(),
-                        suggestedBankAccountId = d.Suggested.DisplayBankAccountId ?? d.Suggested.BankAccountId,
-                        suggestedOrigin = d.Suggested.Origin.ToString(),
-                        suggestedReason = d.Suggested.Reason,
-                        overridden = d.Overridden,
-                        ruleCode = SlipReceivingAccount.RuleCode,
-                    }),
-                    Timestamp = DateTime.UtcNow,
-                });
-                await _db.SaveChangesAsync(ct);
+                // ฝ่ายค้าน M4: ตรวจผลสุดท้ายซ้ำใต้ล็อก (บัญชีอาจถูกปิดใช้ระหว่างเปิดหน้าต่างกับกดยืนยัน) — ใช้ไม่ได้ = 400 พร้อมเหตุ ไม่ยืนยัน
+                var final = await SlipReceivingAccount.ResolveAsync(_db, storage.Locator.AttachmentsRoot, intent, chosenId, ct);
+                if (!final.Decision.Ok) { lockProblem = final.Decision.Problem; return; }
+                previousStamp = (current.ReceivingBankAccountId, current.ReceivingAccountOrigin);
+                await StampReceivingAccountAsync(companyId, intentId, final.Decision, chosenId, actorUserId, actor, "SlipReceivingAccountStamped", ct);
             }
             updated = await _intents.ApplyChargeAsync(intentId,
                 new ProviderCharge(
@@ -476,15 +463,82 @@ public class PaymentGatewayController : ControllerBase
                     Amount: intent.Amount,
                     PaidAtUtc: slipPaidAt),
                 PaymentEventSource.Manual, $"{actor} · {req.Reason.Trim()}", ct);
+            // ฝ่ายค้าน L3: ApplyChargeAsync ไม่เปลี่ยนสถานะ (เช่นโหมดไม่ตรง) ⇒ คืนค่าที่ประทับเดิม + audit "ไม่ได้ยืนยัน" · คำตอบไม่ใช่ 200
+            if (updated.Status != PaymentIntentStatus.Succeeded && previousStamp is { } prev)
+                await RevertReceivingAccountAsync(companyId, intentId, prev.Bank, prev.Origin, actorUserId, actor, updated.Status, ct);
         }, null, companyId, ct);
         if (!ran)
-            return Conflict(new ApiResponse<IntentResponse>(false, null, "กำลังมีผู้ยืนยันรายการนี้อยู่ — รอสักครู่แล้วโหลดหน้าใหม่"));
+            return Conflict(new ApiResponse<IntentResponse>(false, null, "กำลังมีผู้ยืนยัน/ปฏิเสธรายการนี้อยู่ — รอสักครู่แล้วโหลดหน้าใหม่"));
+        if (lockProblem != null)
+            return BadRequest(new ApiResponse<IntentResponse>(false, null, lockProblem));
         if (alreadyClosed || updated == null)
             return Conflict(new ApiResponse<IntentResponse>(false, null, "รายการนี้รับเงินแล้วหรือคืนเงินแล้ว (อาจมีผู้ยืนยันไปก่อน) — ยืนยันซ้ำไม่ได้ · โหลดหน้าใหม่เพื่อดูบัญชีที่ใช้"));
+        if (updated.Status != PaymentIntentStatus.Succeeded)
+            return Conflict(new ApiResponse<IntentResponse>(false, Map(updated, await IsTestModeAsync(updated, ct)),
+                "ระบบไม่ได้เปลี่ยนรายการนี้เป็นรับเงินแล้ว — ดูเหตุในปุ่ม “ประวัติ” ของรายการ (เช่น โหมดทดสอบ/ใช้งานจริงไม่ตรงกัน)"));
 
         return Ok(new ApiResponse<IntentResponse>(true,
             Map(updated, await IsTestModeAsync(updated, ct)),
             "ยืนยันการรับเงินแล้ว — ระบบดำเนินการต่อให้ต้นทางเรียบร้อย"));
+    }
+
+    /// <summary>รอบ 260-2 ฝ่ายค้าน L1: คีย์ล็อกต่อรายการของ "ยืนยันด้วยมือ" · "ปฏิเสธสลิป" · "ส่งต่อใหม่พร้อมบัญชีใหม่" (ตัวเดียว)</summary>
+    private static string ConfirmLockPart(Guid intentId) => $"{intentId:N}:confirm";
+
+    /// <summary>รอบ 260-2 (ฝ่ายค้าน L3): ประทับบัญชีที่เงินเข้า + audit ในธุรกรรมเดียว (UserId · RuleCode · LegalReference · เลือก vs แนะนำ)</summary>
+    private async Task StampReceivingAccountAsync(Guid companyId, Guid intentId, SlipReceivingAccount.Decision d, Guid? chosen,
+        Guid actorUserId, string actor, string eventName, CancellationToken ct)
+    {
+        var originName = d.Origin.ToString();
+        var usedBank = d.BankAccountId;
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _db.PaymentIntents.Where(i => i.Id == intentId && i.CompanyId == companyId)
+            .ExecuteUpdateAsync(u => u.SetProperty(i => i.ReceivingBankAccountId, usedBank)
+                .SetProperty(i => i.ReceivingAccountOrigin, originName), ct);
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = actorUserId == Guid.Empty ? null : actorUserId, UserEmail = actor, Action = AuditAction.Update,
+            EntityType = "PaymentIntent", EntityId = intentId.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                @event = eventName,
+                chosenBankAccountId = chosen,
+                usedBankAccountId = d.BankAccountId,
+                origin = originName,
+                acceptedSuggestion = d.AcceptedSuggestion,
+                suggestedBankAccountId = d.Suggested.DisplayBankAccountId ?? d.Suggested.BankAccountId,
+                suggestedOrigin = d.Suggested.Origin.ToString(),
+                suggestedReason = d.Suggested.Reason,
+                overridden = d.Overridden,
+                ruleCode = SlipReceivingAccount.RuleCode,
+                legalReference = SlipReceivingAccount.LegalReference,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+    }
+
+    /// <summary>ยืนยันไม่เปลี่ยนสถานะ ⇒ คืนค่าที่ประทับก่อนหน้า + audit ในธุรกรรมเดียว (ค่าที่ echo ต้องไม่บอกบัญชีที่ไม่เคยถูกใช้)</summary>
+    private async Task RevertReceivingAccountAsync(Guid companyId, Guid intentId, Guid? bank, string? origin, Guid actorUserId, string actor,
+        PaymentIntentStatus statusAfter, CancellationToken ct)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _db.PaymentIntents.Where(i => i.Id == intentId && i.CompanyId == companyId)
+            .ExecuteUpdateAsync(u => u.SetProperty(i => i.ReceivingBankAccountId, bank).SetProperty(i => i.ReceivingAccountOrigin, origin), ct);
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = actorUserId == Guid.Empty ? null : actorUserId, UserEmail = actor, Action = AuditAction.Update,
+            EntityType = "PaymentIntent", EntityId = intentId.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                @event = "SlipReceivingAccountConfirmNotApplied", statusAfter = statusAfter.ToString(), restoredBankAccountId = bank, restoredOrigin = origin,
+                ruleCode = SlipReceivingAccount.RuleCode, legalReference = SlipReceivingAccount.LegalReference,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
     }
 
     /// <summary>รอบ 260-2: ตัวเลือก "บัญชีที่เงินเข้า" ของหน้าต่างยืนยันสลิป — บัญชีธนาคารของบริษัท (ใช้ได้/ใช้ไม่ได้ + เหตุ) · ค่าแนะนำ + เหตุผล ·
@@ -545,15 +599,28 @@ public class PaymentGatewayController : ControllerBase
             return Conflict(new ApiResponse<IntentResponse>(false, null, "รายการนี้ไม่ได้รอตรวจแล้ว — รีเฟรชหน้า"));
         var reason = req.Reason.Trim();
         var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
-        var updated = await _intents.ApplyChargeAsync(intentId,
-            new ProviderCharge(
-                ProviderRef: intent.ProviderRef ?? $"slip:{intentId:N}",
-                Status: PaymentIntentStatus.Failed,
-                RawStatus: "slip_rejected",
-                Amount: intent.Amount,
-                FailureCode: "slip_rejected",
-                FailureMessage: reason.Length > 300 ? reason[..300] : reason),
-            PaymentEventSource.Manual, $"{actor} · {reason}", ct);
+        PaymentIntent? updated = null;
+        var notOpen = false;
+        // รอบ 260-2 ฝ่ายค้าน L1: ล็อกคีย์เดียวกับ "ยืนยันด้วยมือ" + ตรวจสถานะซ้ำใต้ล็อก — ปฏิเสธพร้อมยืนยันไม่ทำให้สลิปที่ปฏิเสธกลายเป็นรับเงินเงียบ ๆ
+        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.PaymentIntent, ConfirmLockPart(intentId), async () =>
+        {
+            var status = await _db.PaymentIntents.AsNoTracking().Where(i => i.Id == intentId && i.CompanyId == companyId)
+                .Select(i => i.Status).FirstAsync(ct);
+            if (!PaymentIntentPolicy.IsOpen(status)) { notOpen = true; return; }
+            updated = await _intents.ApplyChargeAsync(intentId,
+                new ProviderCharge(
+                    ProviderRef: intent.ProviderRef ?? $"slip:{intentId:N}",
+                    Status: PaymentIntentStatus.Failed,
+                    RawStatus: "slip_rejected",
+                    Amount: intent.Amount,
+                    FailureCode: "slip_rejected",
+                    FailureMessage: reason.Length > 300 ? reason[..300] : reason),
+                PaymentEventSource.Manual, $"{actor} · {reason}", ct);
+        }, null, companyId, ct);
+        if (!ran)
+            return Conflict(new ApiResponse<IntentResponse>(false, null, "กำลังมีผู้ยืนยัน/ปฏิเสธรายการนี้อยู่ — รอสักครู่แล้วโหลดหน้าใหม่"));
+        if (notOpen || updated == null)
+            return Conflict(new ApiResponse<IntentResponse>(false, null, "รายการนี้ไม่ได้รอตรวจแล้ว (อาจมีผู้ยืนยันไปก่อน) — รีเฟรชหน้า"));
         return Ok(new ApiResponse<IntentResponse>(true, Map(updated, await IsTestModeAsync(updated, ct)), "ปฏิเสธสลิปแล้ว"));
     }
 
@@ -678,13 +745,36 @@ public class PaymentGatewayController : ControllerBase
     [HttpPost("intents/{intentId:guid}/redispatch")]
     [Accounting.Filters.RejectApiKey("ส่งต่อรายการรับเงินให้ต้นทางใหม่")]
     [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.ConfirmManually)]
-    public async Task<ActionResult<ApiResponse<object>>> Redispatch(Guid companyId, Guid intentId, CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<object>>> Redispatch(Guid companyId, Guid intentId, [FromBody] RedispatchRequest? req,
+        [FromServices] Accounting.Services.Storage.IFileStorage storage, CancellationToken ct)
     {
         var intent = await _intents.FindAsync(companyId, intentId, ct);
         if (intent == null)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระเงิน"));
         if (await DenyPlatformRevenueStaffAsync(companyId, intentId, PlatformRevenueSource.StaffAction.Redispatch, ct) is { } platformDeny) return platformDeny;
-        var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
+        var actorUserId = JwtHelper.GetUserIdFromClaims(User);
+        var actor = $"manual:{actorUserId}";
+        // รอบ 260-2 ฝ่ายค้าน M4: บัญชีที่ประทับใช้ไม่ได้แล้ว (ส่งต่อล้มซ้ำ) ⇒ เลือกบัญชีใหม่ได้เฉพาะรายการที่ "เงินเข้าแต่ยังไม่บันทึกให้ต้นทาง" — ตัวตัดสินเดียวกับยืนยัน ·
+        // ใต้ล็อกเดียวกับยืนยัน/ปฏิเสธ · ประทับ + audit ธุรกรรมเดียว · รายการที่บันทึกแล้วห้ามเปลี่ยน (ค่า echo ต้องตรงกับ JE ที่ลงไปแล้ว)
+        if (req?.BankAccountId is Guid newBank && newBank != Guid.Empty)
+        {
+            if (!SlipReceivingAccount.Applies(intent.ProviderCode, intent.MethodKind))
+                return BadRequest(new ApiResponse<object>(false, null, SlipReceivingAccount.ChoiceProblem(false, null, intent.Currency)));
+            string? problem = null;
+            var ranStamp = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.PaymentIntent, ConfirmLockPart(intentId), async () =>
+            {
+                var states = await _intents.RedispatchStatesAsync(companyId, new List<Guid> { intentId }, ct);
+                if (!states.TryGetValue(intentId, out var st) || st != PaymentRedispatchState.Pending)
+                { problem = "เปลี่ยนบัญชีที่เงินเข้าได้เฉพาะรายการที่เงินเข้าแล้วแต่ยังไม่ได้บันทึกให้ต้นทาง — รายการนี้บันทึกแล้ว (แก้ด้วยการยกเลิกการชำระที่หน้าเอกสาร)"; return; }
+                var r = await SlipReceivingAccount.ResolveAsync(_db, storage.Locator.AttachmentsRoot, intent, newBank, ct);
+                if (!r.Decision.Ok) { problem = r.Decision.Problem; return; }
+                await StampReceivingAccountAsync(companyId, intentId, r.Decision, newBank, actorUserId, actor, "SlipReceivingAccountRestampedForRedispatch", ct);
+            }, null, companyId, ct);
+            if (!ranStamp)
+                return Conflict(new ApiResponse<object>(false, null, "กำลังมีผู้ทำรายการนี้อยู่ — รอสักครู่แล้วลองใหม่"));
+            if (problem != null)
+                return BadRequest(new ApiResponse<object>(false, null, problem));
+        }
         var result = await _intents.RedispatchAsync(companyId, intentId, actor, ct);
         var body = new { ok = result.Ok, noOp = result.NoOp, state = result.State.ToString() };
         // ล้มดัง 3 ที่ (F2 #7): คำตอบผู้เรียก (success=false) · ประวัติของรายการ (⚠️) · แจ้งเจ้าของ (NotifyUnfulfilledAsync) — ไม่ใช่ 200 กับของว่าง
