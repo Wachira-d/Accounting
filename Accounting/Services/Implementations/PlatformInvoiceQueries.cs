@@ -62,22 +62,59 @@ public static class PlatformInvoiceQueries
                 && issued.Contains(d.Status) && contactIds.Contains(d.ContactId));
     }
 
-    /// <summary>รอบ 262 (คำตัดสิน 262-1-3): ผู้ติดต่อของบริษัทผู้เช่าในบริษัทผู้ให้บริการ (กุญแจเดียวกับ <see cref="ForBuyer"/>) — หลายแถว ⇒ แถวแรกตามเวลาสร้าง ·
-    /// ไม่มี (ยังไม่เคยออกใบ) ⇒ null</summary>
-    public static Task<Guid?> BuyerContactIdAsync(AccountingDbContext db, Guid platformId, Guid buyerCompanyId, CancellationToken ct = default)
+    /// <summary>รอบ 262 ฝ่ายค้าน M2 (คำตัดสิน 262-1-11): ผู้ติดต่อ<b>ทุกแถว</b>ของบริษัทผู้เช่าในบริษัทผู้ให้บริการ (กุญแจเดียวกับ <see cref="ForBuyer"/>) —
+    /// ผู้เช่าหนึ่งรายมีได้หลายแถวตามออกแบบ (เปลี่ยนเลขภาษี/สาขา ⇒ ตัวออกใบสร้างแถวใหม่ §86/4) · ผู้อ่าน: คิวการ์ดค่าบริการ (รวมปลายทางทุกแถว) · ศูนย์บิล (รายการ/ยกเลิก)</summary>
+    public static Task<List<Guid>> BuyerContactIdsAsync(AccountingDbContext db, Guid platformId, Guid buyerCompanyId, CancellationToken ct = default)
     {
         var key = buyerCompanyId.ToString();
         return db.Contacts.AsNoTracking()
             .Where(c => c.CompanyId == platformId && !c.IsDeleted && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId == key)
-            .OrderBy(c => c.CreatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+            .OrderByDescending(c => c.CreatedAt).Select(c => c.Id).ToListAsync(ct);
+    }
+
+    /// <summary>รอบ 262 ฝ่ายค้าน M2: ผู้ติดต่อที่คำเชิญผูกเองควรลง = ผู้ติดต่อของ<b>ใบล่าสุด</b>ที่ตัวออกใบใช้ (แถวที่ถือเลขภาษี/สาขาปัจจุบัน) · ยังไม่มีใบ ⇒ แถวใหม่สุด ·
+    /// ไม่มีแถวเลย (ยังไม่เคยออกใบ) ⇒ null · แถวอื่นของผู้เช่าเดียวกันยังรับการ์ดได้ (คิวรวมทุกแถว)</summary>
+    public static async Task<Guid?> BuyerContactIdAsync(AccountingDbContext db, Guid platformId, Guid buyerCompanyId, CancellationToken ct = default)
+    {
+        var all = await BuyerContactIdsAsync(db, platformId, buyerCompanyId, ct);
+        if (all.Count == 0) return null;
+        var latest = await db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == platformId && !d.IsDeleted && all.Contains(d.ContactId))
+            .OrderByDescending(d => d.DocumentDate).ThenByDescending(d => d.CreatedAt).Select(d => (Guid?)d.ContactId).FirstOrDefaultAsync(ct);
+        return latest ?? all[0];
     }
 
     /// <summary>รอบ 262: เอกสารนี้เป็นใบของบริษัทผู้เช่า (ผู้ติดต่อผูก tenant) ในบริษัทผู้ให้บริการไหม — ปุ่มชำระของการ์ด LINE ไปศูนย์บิล ไม่ใช่ลิงก์ชำระทั่วไป</summary>
     public static async Task<bool> IsTenantDocumentAsync(AccountingDbContext db, Guid companyId, Guid contactId, CancellationToken ct = default)
+        => await TenantBuyerIdAsync(db, companyId, contactId, ct) != null;
+
+    /// <summary>รอบ 262 ฝ่ายค้าน L4: บริษัทผู้ซื้อของใบค่าบริการ (จาก <c>ExternalId</c> ของผู้ติดต่อ) · ไม่ใช่ใบผู้เช่า ⇒ null</summary>
+    public static async Task<Guid?> TenantBuyerIdAsync(AccountingDbContext db, Guid companyId, Guid contactId, CancellationToken ct = default)
     {
-        if (await PlatformTenantIdAsync(db, ct) is not Guid platformId || platformId != companyId) return false;
-        return await db.Contacts.AsNoTracking().IgnoreQueryFilters()
-            .AnyAsync(c => c.Id == contactId && c.CompanyId == platformId && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId != null, ct);
+        if (await PlatformTenantIdAsync(db, ct) is not Guid platformId || platformId != companyId) return null;
+        var ext = await db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.Id == contactId && c.CompanyId == platformId && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId != null)
+            .Select(c => c.ExternalId).FirstOrDefaultAsync(ct);
+        return Guid.TryParse(ext, out var buyer) ? buyer : null;
+    }
+
+    /// <summary>รอบ 262 ฝ่ายค้าน M3/L1 (คำตัดสิน 262-1-12/262-1-13): ปลายทางที่ได้การ์ด trigger เดียวกันของใบนี้แล้ว (ยังไม่ตาย · ในหน้าต่างกันซ้ำ) —
+    /// <paramref name="fromPlatform"/> true = เฉพาะการ์ดค่าบริการ (กุญแจ <c>ProviderCentralOa.QueueBasePrefix</c>) · false = เฉพาะการ์ดของทางอื่น (กฎตารางส่ง/ส่งเอง) ·
+    /// ตัวเทียบเดียวของทั้งสองทาง: การ์ดค่าบริการเลี่ยงการ์ดของกฎ · กฎเลี่ยงการ์ดค่าบริการ · การ์ดค่าบริการไม่กลบขั้นถัดไปของตัวเอง</summary>
+    public static async Task<List<Guid>> CardedEndpointsAsync(AccountingDbContext db, Guid companyId, Guid documentId, string trigger,
+        IReadOnlyCollection<Guid> endpointIds, bool fromPlatform, CancellationToken ct = default)
+    {
+        if (endpointIds.Count == 0) return new List<Guid>();
+        var window = ProviderCentralOa.DuplicateWindow(trigger);
+        var since = window is TimeSpan w ? DateTime.UtcNow - w : DateTime.MinValue;
+        var prefix = ProviderCentralOa.QueueBasePrefix(documentId, trigger);
+        var dead = new[] { ContactLineChannel.StatusCancelled, ContactLineChannel.StatusFailed, ContactLineChannel.StatusSkipped };
+        var ids = endpointIds.ToList();
+        var q = db.LineQueues.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.EntityId == documentId && x.Trigger == trigger && !x.IsDeleted && x.EndpointId != null
+                && ids.Contains(x.EndpointId.Value) && !dead.Contains(x.Status) && x.CreatedAt >= since);
+        q = fromPlatform ? q.Where(x => x.BaseKey.StartsWith(prefix)) : q.Where(x => !x.BaseKey.StartsWith(prefix));
+        return await q.Select(x => x.EndpointId!.Value).Distinct().ToListAsync(ct);
     }
 
     /// <summary>project เป็นแถวมุมผู้จ่าย — ใช้เป็น<b>ขั้นสุดท้าย</b>ของ query เท่านั้น (ห้ามต่อ Where/OrderBy/Contains หลังจากนี้)</summary>

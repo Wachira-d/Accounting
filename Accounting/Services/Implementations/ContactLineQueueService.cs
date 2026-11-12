@@ -532,9 +532,10 @@ public class ContactLineQueueService : IContactLineQueueService
     {
         // รอบ 262 (คำตัดสิน 262-1-6): ใบค่าบริการ NextAcc ของผู้เช่า (ผู้ติดต่อผูก tenant ในบริษัทผู้ให้บริการ) ⇒ ปุ่มไปศูนย์บิลของผู้เช่า — เงินเข้าบัญชีของระบบผ่านเส้นชำระ
         // ของแพลตฟอร์ม (ต่ออายุ/ตัดชำระผ่าน SubscriptionPayment) · ห้ามใช้ลิงก์ชำระเอกสารทั่วไปของบริษัท (ข้ามการต่ออายุแพ็กเกจ)
-        if (await PlatformInvoiceQueries.IsTenantDocumentAsync(_db, item.CompanyId, doc.ContactId, ct))
+        // ฝ่ายค้าน L4: ศูนย์บิลของบริษัทผู้ซื้อ (?company=) — ผู้ใช้หลายบริษัทไม่เจอศูนย์บิลของบริษัทที่เปิดค้างไว้
+        if (await PlatformInvoiceQueries.TenantBuyerIdAsync(_db, item.CompanyId, doc.ContactId, ct) is Guid buyerId)
             return ProviderCentralOa.BillingPayUrl(item.IncludePayLink,
-                NotificationLink.Absolute(await SystemBaseUrl.ResolveAsync(_db, _config, ct), PlatformBillingNotifier.BillingPath));
+                NotificationLink.Absolute(await SystemBaseUrl.ResolveAsync(_db, _config, ct), ProviderCentralOa.BillingPath(buyerId)));
         if (_payLinks == null) return null;
         // รอบ 259 (E-H3): ส่งเองจากหน้าเอกสาร — ผู้ใช้เลือกเอง (ติ๊ก = ลิงก์ออกไว้แล้วตอนกด · ไม่ติ๊ก = ไม่มีปุ่ม)
         if (item.IncludePayLink is bool manual) return manual ? await _payLinks.CurrentUrlAsync(item.CompanyId, doc.Id, ct) : null;

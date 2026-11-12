@@ -33,18 +33,37 @@ public sealed record RecurringRunFacts
     /// <summary>รอบ 263: ผู้ใช้กด "ออกเองแล้ว/ไม่ต้องออก" ของงวดที่ข้าม (คำตัดสิน 263-1-3) — เวลา UTC + ชื่อผู้กด</summary>
     public DateTime? SkippedDismissedAt { get; init; }
     public string? SkippedDismissedBy { get; init; }
-    /// <summary>รอบ 263: สมุดรายวันของรอบนี้ลงบัญชีอัตโนมัติไม่ได้ (ค้างร่าง) — เหตุผล + ใบ (ตัวประเมินดูสถานะใบ "ตอนนี้")</summary>
+    /// <summary>รอบ 263: สมุดรายวันของรอบนี้ลงบัญชีอัตโนมัติไม่ได้ (ค้างร่าง) — เหตุผล + ใบ (ตัวประเมินดูสถานะใบ "ตอนนี้") ·
+    /// ฝ่ายค้าน 263 F2: ช่องเดี่ยวคงไว้ให้แถวที่เขียนก่อนแก้ — แถวใหม่ใช้ <see cref="JournalBlocks"/> (ทุกงวดของรอบไล่งวด)</summary>
     public string? JournalPostBlockedReason { get; init; }
     public Guid? JournalEntryId { get; init; }
     public string? JournalEntryNumber { get; init; }
-    /// <summary>รอบ 263: ส่วนของข้อความแถวเก่าที่ตัวอ่าน <see cref="RecurringRunOutcome.FactsFromLegacyNotice"/> ไม่รู้จัก — แสดงเป็นข้อความจากรอบนั้นเท่านั้น
-    /// (ระบบตรวจสถานะปัจจุบันให้ไม่ได้ ⇒ ไม่นับเป็นเรื่องที่ต้องทำ และไม่บอกว่าแก้แล้ว)</summary>
-    [JsonIgnore]
-    public IReadOnlyList<string>? LegacyOther { get; init; }
+    /// <summary>ฝ่ายค้าน 263 F2: สมุดรายวันทุกใบของรอบ (รวมรอบไล่งวด) ที่ลงบัญชีอัตโนมัติไม่ได้ — จบเมื่อ<b>ทุกใบ</b>ลงบัญชี/ยกเลิก/ถูกลบ</summary>
+    public IReadOnlyList<RecurringJournalBlock>? JournalBlocks { get; init; }
+    /// <summary>รอบ 263 + ฝ่ายค้าน F1: ข้อความของรอบที่ระบบ<b>ตรวจสถานะปัจจุบันให้ไม่ได้</b> (ส่วนแถวเก่าที่ตัวอ่านไม่รู้จัก · งวดบัญชีปิด/ลงย้อนหลัง ·
+    /// นโยบายอนุมัติหยุดมีผล ฯลฯ) — แสดงเป็นขั้นตอน "ข้อความจากรอบนั้น" เสมอ และ<b>กันไม่ให้บอกว่าแก้ครบ</b> · บันทึกลง JSON (ปิดเรื่องงวดที่ข้ามแล้วไม่หาย)</summary>
+    public IReadOnlyList<string>? UnverifiedNotes { get; init; }
 
     [JsonIgnore]
     public bool IsEmpty => ApproveBlockedReason == null && !EmailHeldForDraft && !EmailSkippedNoContactEmail && !EmailEnqueueFailed
-        && EmailNotSentReason == null && FollowUpError == null && SkippedPeriods <= 0 && JournalPostBlockedReason == null;
+        && EmailNotSentReason == null && FollowUpError == null && SkippedPeriods <= 0 && JournalPostBlockedReason == null
+        && (JournalBlocks == null || JournalBlocks.Count == 0) && (UnverifiedNotes == null || UnverifiedNotes.Count == 0);
+
+    /// <summary>ฝ่ายค้าน 263 F2: รายการสมุดรายวันที่ค้าง — รวมช่องเดี่ยวของแถวเก่า</summary>
+    [JsonIgnore]
+    public IReadOnlyList<RecurringJournalBlock> AllJournalBlocks
+        => JournalBlocks is { Count: > 0 } list ? list
+            : JournalPostBlockedReason != null ? new[] { new RecurringJournalBlock(JournalEntryId, JournalEntryNumber ?? "", JournalPostBlockedReason) }
+            : Array.Empty<RecurringJournalBlock>();
+
+    /// <summary>ฝ่ายค้าน 263 F1: เติมข้อความที่ตรวจสถานะให้ไม่ได้ (ไม่ซ้ำ)</summary>
+    public RecurringRunFacts WithUnverifiedNote(string note)
+    {
+        if (string.IsNullOrWhiteSpace(note)) return this;
+        var list = UnverifiedNotes?.ToList() ?? new List<string>();
+        if (!list.Contains(note, StringComparer.Ordinal)) list.Add(note.Trim());
+        return this with { UnverifiedNotes = list };
+    }
 
     /// <summary>รอบ 263: งวดที่ข้ามที่ยังค้าง (ไม่ติดลบ) — ปิดเรื่องแล้ว = 0</summary>
     [JsonIgnore]
@@ -72,8 +91,12 @@ public sealed record RecurringRunLive
     public bool EmailQueued { get; init; }
     /// <summary>มีคิว LINE ของเอกสารนี้ที่ส่งถึงผู้ติดต่อแล้ว (สถานะส่งแล้ว — เข้มกว่า "ไม่ใช่ข้าม" ของรอบ 258 เพราะที่นี่คือการบอกว่าจบ)</summary>
     public bool LineSent { get; init; }
-    /// <summary>สมุดรายวันของรอบ (เฉพาะเมื่อข้อเท็จจริงอ้างใบ) — null = ไม่พบ/ถูกลบ</summary>
-    public RecurringRunJournal? Journal { get; init; }
+    /// <summary>สมุดรายวันที่ข้อเท็จจริงอ้าง (ฝ่ายค้าน 263 F2: หลายใบ) — ดู <see cref="JournalsLoaded"/></summary>
+    public IReadOnlyList<RecurringRunJournal> Journals { get; init; } = Array.Empty<RecurringRunJournal>();
+    /// <summary>ฝ่ายค้าน 263 F7: ค้นสมุดรายวันจากฐานแล้วจริง ⇒ ใบที่อ้างด้วย id แต่ไม่พบ = ถูกลบ (ไม่ได้ค้น = ไม่รู้ ⇒ ยังค้าง)</summary>
+    public bool JournalsLoaded { get; init; }
+    /// <summary>ฝ่ายค้าน 263 F6: ผู้รับของบันทึกส่งอีเมลที่ตรงกับผู้รับเรื่อง "เอกสาร" ของผู้ติดต่อ (แสดงในข้อความ)</summary>
+    public string? EmailSentTo { get; init; }
 
     public static readonly RecurringRunLive None = new();
 }
@@ -81,8 +104,12 @@ public sealed record RecurringRunLive
 /// <summary>รอบ 263: สมุดรายวันของรอบ "ตอนนี้"</summary>
 public sealed record RecurringRunJournal(Guid Id, string EntryNumber, JournalEntryStatus Status);
 
+/// <summary>ฝ่ายค้าน 263 F2: สมุดรายวันหนึ่งใบของรอบที่ลงบัญชีอัตโนมัติไม่ได้ (id null = แถวเก่ามีแต่เลขที่)</summary>
+public sealed record RecurringJournalBlock(Guid? Id, string EntryNumber, string Reason);
+
 /// <summary>สถานะ "ตอนนี้" ของเอกสารล่าสุดที่รอบสร้าง — อ่านจากฐานข้อมูลทุกครั้งที่เปิดดู (ผู้ใช้อนุมัติเองแล้ว ⇒ ขั้นอนุมัติหายไปเอง)</summary>
-public sealed record RecurringRunDoc(Guid Id, string? DocumentNumber, DocumentStatus Status, DocumentType Type, DateTime DocumentDate);
+/// <param name="IsTaxInvoice">ฝ่ายค้าน 263 F3: ใบนี้เป็นใบกำกับภาษี (ชนิดใบกำกับ หรือใบแจ้งหนี้/ใบกำกับรวม) — ต้องส่งมอบผู้ซื้อแม้ชำระแล้ว (§86)</param>
+public sealed record RecurringRunDoc(Guid Id, string? DocumentNumber, DocumentStatus Status, DocumentType Type, DateTime DocumentDate, bool IsTaxInvoice = false);
 
 /// <summary>ปุ่มทางไปต่อ — <c>Kind</c>: <c>openDocument</c> · <c>openContact</c> · <c>openJournal</c> · <c>runNow</c> (เรียก "สร้างทันที" ของรายการนี้) ·
 /// <c>dismissSkipped</c> (รอบ 263: "ออกเองแล้ว/ไม่ต้องออก" ของงวดที่ข้าม) · URL ประกอบที่เซิร์ฟเวอร์</summary>
@@ -167,6 +194,20 @@ public static class RecurringRunOutcome
         return prev with { SkippedPeriods = count, SkippedFrom = from, SkippedIssued = 0, SkippedDismissedAt = null, SkippedDismissedBy = null };
     }
 
+    /// <summary>ฝ่ายค้าน 263 F6: ผู้รับของบันทึกส่ง (<paramref name="sentTo"/> · คั่น , หรือ ;) ตรงกับผู้รับเรื่อง "เอกสาร" ของผู้ติดต่อ (<paramref name="recipients"/>) อย่างน้อยหนึ่งที่อยู่ ·
+    /// ไม่มีผู้รับของผู้ติดต่อ = ไม่นับ (ไม่เดาว่าส่งถึงลูกค้า)</summary>
+    public static bool SentToRecipient(string? sentTo, string? recipients)
+    {
+        static IEnumerable<string> Split(string? v) => (v ?? "").Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.ToLowerInvariant());
+        var want = Split(recipients).ToHashSet();
+        return want.Count > 0 && Split(sentTo).Any(want.Contains);
+    }
+
+    /// <summary>ฝ่ายค้าน 263 F3: เอกสารเรียกเก็บล้วน (ใบแจ้งหนี้/ใบวางบิล ที่ไม่ใช่ใบกำกับภาษี) — ชำระครบแล้วไม่ต้องส่งอีก</summary>
+    private static bool IsBillingOnly(RecurringRunDoc doc)
+        => doc.Type is DocumentType.Invoice or DocumentType.BillingNote && !doc.IsTaxInvoice;
+
     private static string JournalUrl(Guid journalEntryId) => "/pages/journals.html?entryId=" + journalEntryId.ToString("D");
 
     /// <summary>เวลาไทยของหลักฐาน UTC (dd/MM/พ.ศ. HH:mm)</summary>
@@ -176,7 +217,7 @@ public static class RecurringRunOutcome
         return $"{t:dd/MM}/{t.Year + 543} {t:HH:mm}";
     }
 
-    // ── รอบ 263: ตัวอ่านข้อความแถวเก่า (ก่อนรอบ 247 ไม่มี LastRunOutcome) — รู้จักเฉพาะประโยคที่โค้ดของเราเองเคยเขียน · ที่ไม่รู้จัก = LegacyOther ──
+    // ── รอบ 263: ตัวอ่านข้อความแถวเก่า (ก่อนรอบ 247 ไม่มี LastRunOutcome) — รู้จักเฉพาะประโยคที่โค้ดของเราเองเคยเขียน · ที่ไม่รู้จัก = UnverifiedNotes ──
     private static readonly Regex LegacySkip = new(
         @"ข้าม (?<n>[0-9]+) งวดที่ค้าง \(ตั้งแต่งวด (?<d>[0-9]{2})/(?<m>[0-9]{2})/(?<y>[0-9]{4})\)", RegexOptions.CultureInvariant);
     // ข้อความของ AutoApproveFailure.Message (StillDraft) — เหตุผลอาจมี " · " อยู่ข้างใน ⇒ จับทั้งก้อนจากข้อความเต็มก่อนแยกส่วน
@@ -191,7 +232,7 @@ public static class RecurringRunOutcome
     private const string LegacySkipTail = "ถ้างวดที่ข้ามยังไม่ได้ออกเอง";
 
     /// <summary>รอบ 263: แปลงข้อความแถวเก่า (คั่น " · ") เป็นข้อเท็จจริง เพื่อให้ตัวประเมินตรวจกับสถานะ "ตอนนี้" ได้ (เดิมแถวเก่าแสดงข้อความแช่แข็งตลอดไป) ·
-    /// ไม่รู้จักสักส่วน = null (ผู้เรียกแสดงข้อความเดิมแบบเดิม — ไม่แต่งว่าจบแล้ว) · ส่วนที่ไม่รู้จัก = <see cref="RecurringRunFacts.LegacyOther"/></summary>
+    /// ไม่รู้จักสักส่วน = null (ผู้เรียกแสดงข้อความเดิมแบบเดิม — ไม่แต่งว่าจบแล้ว) · ส่วนที่ไม่รู้จัก = <see cref="RecurringRunFacts.UnverifiedNotes"/> (ฝ่ายค้าน 263 F1: กันไม่ให้บอกว่าแก้ครบ)</summary>
     public static RecurringRunFacts? FactsFromLegacyNotice(string? notice)
     {
         if (string.IsNullOrWhiteSpace(notice)) return null;
@@ -242,7 +283,7 @@ public static class RecurringRunOutcome
             }
             else other.Add(part);
         }
-        return known ? facts with { LegacyOther = other.Count > 0 ? other : null } : null;
+        return known ? facts with { UnverifiedNotes = other.Count > 0 ? other : null } : null;
     }
 
     /// <summary>ประกอบผลรอบล่าสุด — <b>ตัวประเมินสด</b> (รอบ 263): ทุกเรื่องตรวจกับสถานะ "ตอนนี้" (<paramref name="doc"/> · <paramref name="live"/>) ·
@@ -311,7 +352,8 @@ public static class RecurringRunOutcome
         var warnings = facts.ApproveWarnings?.Where(w => !string.IsNullOrWhiteSpace(w)).ToList() ?? new List<string>();
         var docFacts = facts.ApproveBlockedReason != null || facts.EmailHeldForDraft || facts.EmailSkippedNoContactEmail
                        || facts.EmailEnqueueFailed || facts.EmailNotSentReason != null || facts.FollowUpError != null;
-        var docGone = doc == null && docFacts && facts.JournalPostBlockedReason == null;
+        var journalBlocks = facts.AllJournalBlocks;
+        var docGone = doc == null && docFacts && journalBlocks.Count == 0;
         if (docGone) resolved.Add("ไม่พบเอกสารของรอบนี้แล้ว (ถูกลบ) — เรื่องอนุมัติ/ส่งเอกสารของใบนั้นไม่ต้องทำต่อ");
         if (isClosed && docFacts) resolved.Add($"{docRef} ถูกยกเลิก/ปฏิเสธแล้ว — เรื่องอนุมัติ/ส่งเอกสารของใบนี้ไม่ต้องทำต่อ");
 
@@ -355,10 +397,13 @@ public static class RecurringRunOutcome
         var emailFact = facts.EmailHeldForDraft || facts.EmailSkippedNoContactEmail || facts.EmailEnqueueFailed || facts.EmailNotSentReason != null;
         string? emailDone = !emailFact || isDraft ? null
             : doc == null || isClosed ? ""   // บอกไว้ข้างบนแล้ว
-            : live.EmailSentAtUtc is { } sentAt ? $"ส่งอีเมล{docRef} ถึงผู้ติดต่อแล้ว เมื่อ {ThaiDateTime(sentAt)} (เวลาไทย)"
+            // ฝ่ายค้าน 263 F6: หลักฐานกรองผู้รับให้ตรงผู้รับเรื่อง "เอกสาร" ของผู้ติดต่อแล้ว (ฝั่งเซิร์ฟเวอร์) · บอกปลายทางตรงตัว
+            : live.EmailSentAtUtc is { } sentAt ? $"มีบันทึกส่งอีเมล{docRef}"
+                + (string.IsNullOrWhiteSpace(live.EmailSentTo) ? "" : $" ถึง {live.EmailSentTo}") + $" แล้ว เมื่อ {ThaiDateTime(sentAt)} (เวลาไทย)"
             : live.EmailQueued ? $"อีเมล{docRef} อยู่ในคิวส่งแล้ว (ดูสถานะที่หน้าตารางส่งอีเมล)"
             : live.LineSent ? $"ส่ง{docRef} ทาง LINE ถึงผู้ติดต่อแล้ว"
-            : isPaid ? $"{docRef} รับชำระครบแล้ว — ไม่ต้องส่งเอกสารเรียกเก็บทางอีเมลอีก"
+            // ฝ่ายค้าน 263 F3 (แคบคำตัดสิน 263-1-2): ชำระครบจบเรื่องอีเมลเฉพาะ "เอกสารเรียกเก็บ" ที่ไม่ใช่ใบกำกับภาษี — ใบกำกับต้องส่งมอบผู้ซื้อ (§86)
+            : isPaid && IsBillingOnly(doc) ? $"{docRef} รับชำระครบแล้ว — ไม่ต้องส่งเอกสารเรียกเก็บทางอีเมลอีก"
             : null;
         if (emailDone != null)
         {
@@ -403,24 +448,30 @@ public static class RecurringRunOutcome
             OpenDoc(isDraft ? "เปิดใบร่างเพื่ออนุมัติ" : "เปิดเอกสารล่าสุด");
         }
 
-        // ── 3b) รอบ 263: สมุดรายวันลงบัญชีอัตโนมัติไม่ได้ — ตรวจสถานะใบตอนนี้ (ลงบัญชีแล้ว/ยกเลิก = จบ · ไม่พบ = ค้าง ไม่เดาว่าจบ) ──
-        if (facts.JournalPostBlockedReason != null)
+        // ── 3b) รอบ 263 + ฝ่ายค้าน F2/F7: สมุดรายวันลงบัญชีอัตโนมัติไม่ได้ — ทุกใบของรอบ · ลงบัญชี/ยกเลิก/ถูกลบ = จบ · ไม่ได้ค้น/ไม่พบด้วยเลขที่ = ค้าง (ไม่เดา) ──
+        if (journalBlocks.Count > 0)
         {
-            var jNo = live.Journal?.EntryNumber ?? facts.JournalEntryNumber ?? "";
-            switch (live.Journal?.Status)
+            var pending = new List<string>();
+            foreach (var b in journalBlocks)
             {
-                case JournalEntryStatus.Posted:
-                    resolved.Add($"สมุดรายวัน {jNo} ลงบัญชีแล้ว");
-                    break;
-                case JournalEntryStatus.Voided or JournalEntryStatus.Reversed:
+                var j = b.Id is Guid bid ? live.Journals.FirstOrDefault(x => x.Id == bid)
+                    : live.Journals.Where(x => x.EntryNumber == b.EntryNumber).ToList() is { Count: 1 } one ? one[0] : null;
+                var jNo = j?.EntryNumber ?? b.EntryNumber;
+                if (j?.Status == JournalEntryStatus.Posted) resolved.Add($"สมุดรายวัน {jNo} ลงบัญชีแล้ว");
+                else if (j?.Status is JournalEntryStatus.Voided or JournalEntryStatus.Reversed)
                     resolved.Add($"สมุดรายวัน {jNo} ถูกยกเลิก/กลับรายการแล้ว — ไม่ต้องลงบัญชี");
-                    break;
-                default:
-                    steps.Add($"สมุดรายวัน {jNo} ยังเป็นร่าง (ลงบัญชีอัตโนมัติไม่ได้: {facts.JournalPostBlockedReason}) — เปิดสมุดรายวันแล้วกด \"ลงบัญชี\"");
-                    if (live.Journal is { } j) actions.Add(new RecurringRunAction("openJournal", "เปิดสมุดรายวัน", JournalUrl(j.Id)));
-                    headline ??= $"สมุดรายวัน {jNo} ยังไม่ได้ลงบัญชี";
-                    break;
+                else if (j == null && b.Id != null && live.JournalsLoaded)
+                    resolved.Add($"ไม่พบสมุดรายวัน {jNo} แล้ว (ถูกลบ) — ไม่มีอะไรต้องลงบัญชี");
+                else
+                {
+                    pending.Add(jNo);
+                    steps.Add($"สมุดรายวัน {jNo} ยังเป็นร่าง (ลงบัญชีอัตโนมัติไม่ได้: {b.Reason}) — เปิดสมุดรายวันแล้วกด \"ลงบัญชี\"");
+                    if (j != null && actions.All(a => a.Url != JournalUrl(j.Id)))
+                        actions.Add(new RecurringRunAction("openJournal", $"เปิดสมุดรายวัน {jNo}", JournalUrl(j.Id)));
+                }
             }
+            if (pending.Count > 0)
+                headline ??= pending.Count == 1 ? $"สมุดรายวัน {pending[0]} ยังไม่ได้ลงบัญชี" : $"สมุดรายวัน {pending.Count} ใบยังไม่ได้ลงบัญชี";
         }
 
         // ── 4) งวดที่ข้าม — รอบ 263 (คำตัดสิน 263-1-3): ค้างจนออกครบ ("สร้างงวดที่ข้าม" นับทีละงวด) หรือผู้ใช้กด "ออกเองแล้ว/ไม่ต้องออก" ──
@@ -447,6 +498,10 @@ public static class RecurringRunOutcome
                     : $"สร้าง{period}แล้ว แต่ข้าม {facts.SkippedPeriods} งวดที่ค้าง";
             }
         }
+
+        // ── 5) ฝ่ายค้าน 263 F1: ข้อความที่ระบบตรวจสถานะให้ไม่ได้ — แสดงเป็นขั้นตอนเสมอ (ไม่ซ่อนในรายละเอียด) และกันไม่ให้บอกว่าแก้ครบ ──
+        foreach (var note in facts.UnverifiedNotes ?? Array.Empty<string>())
+            steps.Add("ข้อความจากรอบนั้นที่ระบบตรวจสถานะให้ไม่ได้ (ตรวจเองแล้วไม่ต้องทำอะไร ข้อความนี้จะหายในรอบถัดไป): " + note);
 
         if (steps.Count == 0)
         {

@@ -16,6 +16,8 @@ public class PartnerConsentTests
     private static readonly Guid Pid = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid Bank = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
+    private static PartnerConsent.CapAmount T(decimal v) => PartnerConsent.CapAmount.Thb(v);
+
     private static TradingPartnership Partner(TradingPartnershipStatus st = TradingPartnershipStatus.Accepted, DateTime? suspendedAt = null)
         => new() { Id = Pid, CompanyAId = A, CompanyBId = B, InvitedByCompanyId = A, Status = st, SuspendedAt = suspendedAt };
 
@@ -146,30 +148,30 @@ public class PartnerConsentTests
     [Fact]
     public void Allows_ผ่านเมื่อครบ_ทิศตรงข้าม_ทีละด่าน()
     {
-        var ok = PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, 4_999m, true);
+        var ok = PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, T(4_999m), true);
         Assert.True(ok.Ok);
         Assert.Equal(PartnerConsent.Codes.Ok, ok.Code);
 
-        Assert.Equal(PartnerConsent.Codes.NoConsent, PartnerConsent.Allows(Scope.AutoRecordPayment, null, Partner(), B, 1m, true).Code);
-        Assert.Equal(PartnerConsent.Codes.NoPartner, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), null, B, 1m, true).Code);
-        Assert.Equal(PartnerConsent.Codes.NoPartner, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), Guid.NewGuid(), 1m, true).Code);
-        Assert.Equal(PartnerConsent.Codes.PartnerNotActive, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(TradingPartnershipStatus.Suspended), B, 1m, true).Code);
-        Assert.Equal(PartnerConsent.Codes.PartnerNotActive, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(TradingPartnershipStatus.Pending), B, 1m, true).Code);
+        Assert.Equal(PartnerConsent.Codes.NoConsent, PartnerConsent.Allows(Scope.AutoRecordPayment, null, Partner(), B, T(1m), true).Code);
+        Assert.Equal(PartnerConsent.Codes.NoPartner, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), null, B, T(1m), true).Code);
+        Assert.Equal(PartnerConsent.Codes.NoPartner, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), Guid.NewGuid(), T(1m), true).Code);
+        Assert.Equal(PartnerConsent.Codes.PartnerNotActive, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(TradingPartnershipStatus.Suspended), B, T(1m), true).Code);
+        Assert.Equal(PartnerConsent.Codes.PartnerNotActive, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(TradingPartnershipStatus.Pending), B, T(1m), true).Code);
 
         var w = Row(); w.WithdrawnAt = DateTime.UtcNow;
-        Assert.Equal(PartnerConsent.Codes.Withdrawn, PartnerConsent.Allows(Scope.AutoRecordPayment, w, Partner(), B, 1m, true).Code);
+        Assert.Equal(PartnerConsent.Codes.Withdrawn, PartnerConsent.Allows(Scope.AutoRecordPayment, w, Partner(), B, T(1m), true).Code);
 
         // แถวของขอบเขตอื่น/บริษัทอื่น ⇒ ไม่ใช่หลักฐาน
-        Assert.Equal(PartnerConsent.Codes.WrongRow, PartnerConsent.Allows(Scope.AutoApprovePurchase, Row(), Partner(), B, 1m, true).Code);
-        Assert.Equal(PartnerConsent.Codes.WrongRow, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), A, 1m, true).Code);
+        Assert.Equal(PartnerConsent.Codes.WrongRow, PartnerConsent.Allows(Scope.AutoApprovePurchase, Row(), Partner(), B, T(1m), true).Code);
+        Assert.Equal(PartnerConsent.Codes.WrongRow, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), A, T(1m), true).Code);
 
         var t = Row(); t.MaxAmount = 9_999_999m;   // แก้เพดานทับโดยไม่ผ่านเส้นให้
-        Assert.Equal(PartnerConsent.Codes.Tampered, PartnerConsent.Allows(Scope.AutoRecordPayment, t, Partner(), B, 1m, true).Code);
+        Assert.Equal(PartnerConsent.Codes.Tampered, PartnerConsent.Allows(Scope.AutoRecordPayment, t, Partner(), B, T(1m), true).Code);
 
-        Assert.Equal(PartnerConsent.Codes.GrantorLostPermission, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, 1m, false).Code);
+        Assert.Equal(PartnerConsent.Codes.GrantorLostPermission, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, T(1m), false).Code);
         Assert.Equal(PartnerConsent.Codes.AmountUnknown, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, null, true).Code);
-        Assert.Equal(PartnerConsent.Codes.OverCap, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, 5_000.01m, true).Code);
-        Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, 5_000m, true).Ok);   // เท่าเพดาน = ผ่าน
+        Assert.Equal(PartnerConsent.Codes.OverCap, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, T(5_000.01m), true).Code);
+        Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, T(5_000m), true).Ok);   // เท่าเพดาน = ผ่าน
     }
 
     [Fact]
@@ -178,8 +180,8 @@ public class PartnerConsentTests
         var granted = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
         var suspended = new DateTime(2026, 11, 5, 0, 0, 0, DateTimeKind.Utc);
         Assert.Equal(PartnerConsent.Codes.StaleAfterSuspend,
-            PartnerConsent.Allows(Scope.AutoRecordPayment, Row(grantedAt: granted), Partner(TradingPartnershipStatus.Accepted, suspended), B, 1m, true).Code);
-        Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(grantedAt: suspended.AddDays(1)), Partner(TradingPartnershipStatus.Accepted, suspended), B, 1m, true).Ok);
+            PartnerConsent.Allows(Scope.AutoRecordPayment, Row(grantedAt: granted), Partner(TradingPartnershipStatus.Accepted, suspended), B, T(1m), true).Code);
+        Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(grantedAt: suspended.AddDays(1)), Partner(TradingPartnershipStatus.Accepted, suspended), B, T(1m), true).Ok);
     }
 
     [Fact]
@@ -187,7 +189,7 @@ public class PartnerConsentTests
     {
         var r = Row(Scope.ReceiveSlipCopy, max: null);
         Assert.True(PartnerConsent.Allows(Scope.ReceiveSlipCopy, r, Partner(), B, null, true).Ok);
-        Assert.True(PartnerConsent.Allows(Scope.ReceiveSlipCopy, r, Partner(), B, 10_000_000m, true).Ok);
+        Assert.True(PartnerConsent.Allows(Scope.ReceiveSlipCopy, r, Partner(), B, T(10_000_000m), true).Ok);
     }
 
     [Fact]
@@ -207,11 +209,11 @@ public class PartnerConsentTests
     public void UseCheck_ไม่ผ่าน_ไม่ส่งบัญชีจ่ายออกไป_ผ่าน_ส่งผู้ให้และแถว()
     {
         var r = Row(bank: Bank);
-        var ok = PartnerConsent.UseCheck.From(PartnerConsent.Allows(Scope.AutoRecordPayment, r, Partner(), B, 10m, true), r);
+        var ok = PartnerConsent.UseCheck.From(PartnerConsent.Allows(Scope.AutoRecordPayment, r, Partner(), B, T(10m), true), r);
         Assert.True(ok.Ok);
         Assert.Equal(Bank, ok.DefaultPayBankAccountId);
         Assert.Equal(r.GrantedByUserId, ok.GrantorUserId);
-        var no = PartnerConsent.UseCheck.From(PartnerConsent.Allows(Scope.AutoRecordPayment, r, Partner(), B, 10m, false), r);
+        var no = PartnerConsent.UseCheck.From(PartnerConsent.Allows(Scope.AutoRecordPayment, r, Partner(), B, T(10m), false), r);
         Assert.False(no.Ok);
         Assert.Null(no.DefaultPayBankAccountId);
     }
@@ -239,5 +241,107 @@ public class PartnerConsentTests
         Assert.Equal("true", after["createPurchaseDraftsFromPartners"]);
         c.AutoApproveMaxAmount = 100m;
         Assert.Equal("100.00", PartnerConsent.ConfigSnapshot(c, true)["autoApproveMaxAmount"]);
+    }
+
+    // ═══ ฝ่ายค้านรอบ 264 P1 ═══
+
+    [Fact]
+    public void H1_ยอมรับการเชื่อมใหม่หลังให้ความยินยอม_แถวเดิมไม่ฟื้น_ทิศตรงข้าม_ให้หลังยอมรับผ่าน()
+    {
+        var granted = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
+        var p = Partner();
+        p.AcceptedAt = granted.AddDays(10);   // เส้นเชิญใหม่ล้าง SuspendedAt แล้วประทับ AcceptedAt ใหม่
+        Assert.Equal(PartnerConsent.Codes.StaleAfterSuspend, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(grantedAt: granted), p, B, T(1m), true).Code);
+        Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(grantedAt: granted.AddDays(11)), p, B, T(1m), true).Ok);
+        // ให้ในวินาทีเดียวกับการยอมรับ (เวลาให้ตัดเป็นวินาที) ยังผ่าน
+        var acc = new DateTime(2026, 11, 20, 1, 2, 3, DateTimeKind.Utc).AddTicks(4_567_890);
+        p.AcceptedAt = acc;
+        Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(grantedAt: PartnerConsent.TruncateToSecond(acc)), p, B, T(1m), true).Ok);
+    }
+
+    [Fact]
+    public void M3_ยอดต้องเป็นบาทก่อนหัก_สกุลอื่นหรือติดลบไม่รู้ยอด_L5_ตั้งเพดานไว้แล้วไม่รู้ยอดไม่ผ่าน()
+    {
+        Assert.Equal(PartnerConsent.Codes.AmountUnknown,
+            PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, new PartnerConsent.CapAmount(100m, "USD"), true).Code);
+        Assert.Equal(PartnerConsent.Codes.AmountUnknown, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, T(-1m), true).Code);
+        Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, new PartnerConsent.CapAmount(100m, " thb "), true).Ok);
+        var slipCapped = Row(Scope.ReceiveSlipCopy, max: 1_000m);
+        Assert.Equal(PartnerConsent.Codes.AmountUnknown, PartnerConsent.Allows(Scope.ReceiveSlipCopy, slipCapped, Partner(), B, null, true).Code);
+        Assert.Equal(PartnerConsent.Codes.OverCap, PartnerConsent.Allows(Scope.ReceiveSlipCopy, slipCapped, Partner(), B, T(1_000.01m), true).Code);
+        Assert.True(PartnerConsent.Allows(Scope.ReceiveSlipCopy, Row(Scope.ReceiveSlipCopy, max: null), Partner(), B, null, true).Ok);
+    }
+
+    [Fact]
+    public void L7_บริษัทคู่ค้าถูกลบหรือระงับ_หยุด()
+        => Assert.Equal(PartnerConsent.Codes.PartnerNotActive,
+            PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, T(1m), true, partnerCompanyActive: false).Code);
+
+    [Fact]
+    public void M2_บัญชีจ่ายที่ประกาศใช้ไม่ได้แล้ว_ไม่ส่งออกพร้อมเหตุ_ทิศตรงข้าม_ใช้ได้ส่งออก()
+    {
+        var r = Row(bank: Bank);
+        var v = PartnerConsent.Allows(Scope.AutoRecordPayment, r, Partner(), B, T(10m), true);
+        var dead = PartnerConsent.UseCheck.From(v, r, payAccountUsable: false);
+        Assert.True(dead.Ok);
+        Assert.Null(dead.DefaultPayBankAccountId);
+        Assert.Equal(PartnerConsent.PayAccountInactive, dead.PayAccountProblem);
+        var live = PartnerConsent.UseCheck.From(v, r, payAccountUsable: true);
+        Assert.Equal(Bank, live.DefaultPayBankAccountId);
+        Assert.Null(live.PayAccountProblem);
+        Assert.Null(PartnerConsent.UseCheck.From(v, Row(), payAccountUsable: false).PayAccountProblem);   // ไม่ได้ประกาศ = ไม่มีปัญหา
+    }
+
+    [Fact]
+    public void L2_PAC2_ผูกผู้ให้_เวลา_คู่ค้า_round_trip_ทิศตรงข้ามแก้แล้วไม่ผ่าน_PAC1_เดิมยังตรวจได้()
+    {
+        var granted = PartnerConsent.TruncateToSecond(new DateTime(2026, 11, 12, 5, 6, 7, DateTimeKind.Utc).AddTicks(123));
+        static PartnerAutomationConsent V2Of(DateTime g)
+        {
+            var r = Row(bank: Bank, grantedAt: g);
+            r.HashVersion = 2;
+            r.EvidenceHash = PartnerConsent.HashV2(B, Pid, A, Scope.AutoRecordPayment, r.MaxAmount, Bank, 1,
+                PartnerConsent.TextFor(Scope.AutoRecordPayment, 1)!, r.GrantedByUserId, g);
+            return r;
+        }
+        PartnerAutomationConsent V2() => V2Of(granted);
+        Assert.True(PartnerConsent.HashMatches(V2()));
+        var who = V2(); who.GrantedByUserId = Guid.NewGuid();
+        Assert.False(PartnerConsent.HashMatches(who));
+        var when = V2(); when.GrantedAt = granted.AddSeconds(1);
+        Assert.False(PartnerConsent.HashMatches(when));
+        var partner = V2(); partner.PartnerCompanyId = Guid.NewGuid();
+        Assert.False(PartnerConsent.HashMatches(partner));
+        var unknown = V2(); unknown.HashVersion = 9;
+        Assert.False(PartnerConsent.HashMatches(unknown));
+        // อ่านกลับจากฐานได้ Kind Unspecified — ผลเท่าเดิม
+        var unspec = V2(); unspec.GrantedAt = DateTime.SpecifyKind(granted, DateTimeKind.Unspecified);
+        Assert.True(PartnerConsent.HashMatches(unspec));
+        Assert.True(PartnerConsent.HashMatches(Row()));   // PAC1
+        Assert.Equal(0, PartnerConsent.TruncateToSecond(DateTime.UtcNow).Ticks % TimeSpan.TicksPerSecond);
+    }
+
+    [Fact]
+    public void L6_อีเมลแจ้งเตือนไม่เข้า_audit_เป็นค่าจริง_แต่ยังเห็นว่าเปลี่ยน()
+    {
+        var c = new WorkflowAutomationConfig { CompanyId = B, NotifyEmail = "a@x.com" };
+        var before = PartnerConsent.ConfigSnapshot(c, false);
+        Assert.DoesNotContain("a@x.com", before["notifyEmail"]);
+        Assert.StartsWith("sha256:", before["notifyEmail"]);
+        c.NotifyEmail = "b@x.com";
+        Assert.Equal(new[] { "notifyEmail" }, PartnerConsent.ConfigDiff(before, PartnerConsent.ConfigSnapshot(c, false)));
+        c.NotifyEmail = " A@X.com ";
+        Assert.Empty(PartnerConsent.ConfigDiff(before, PartnerConsent.ConfigSnapshot(c, false)));
+    }
+
+    [Fact]
+    public void L3_L4_ทุกขอบเขตมีเวอร์ชันต่ำสุดที่มีข้อความ_ขอบเขตที่ต่อสายแล้วโดยไม่ใช่ค่าตั้งทั้งบริษัทต้องมีวันเริ่มทำงาน()
+    {
+        foreach (var d in PartnerConsent.Scopes)
+        {
+            Assert.NotNull(PartnerConsent.TextFor(d.Scope, d.MinTextVersion));
+            Assert.InRange(d.MinTextVersion, 1, PartnerConsent.CurrentTextVersion);
+            if (d.ReaderWired && !d.CompanyWideToggle) Assert.NotNull(d.WiredSince);   // ด่านของแพ็กที่พลิกธง (L4)
+        }
     }
 }
