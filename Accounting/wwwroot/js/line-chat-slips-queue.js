@@ -36,7 +36,7 @@ const LineChatSlipQueue = {
 
   row(r) {
     const opts = (r.options || []).map(o =>
-      `<option value="${Layout.esc(o.documentId)}">${o.amountMatches ? '✓ ' : ''}${Layout.esc(o.documentNumber)} · ค้าง ${Layout.money(o.balanceDue)}${Number(o.netDue) > 0 && Number(o.netDue) !== Number(o.balanceDue) ? ' · หลังหัก ณ ที่จ่าย ' + Layout.money(o.netDue) : ''}</option>`).join('');
+      `<option value="${Layout.esc(o.documentId)}">${o.amountMatches ? '✓ ' : ''}${Layout.esc(o.documentNumber)} · ต้องโอน ${Layout.money(o.netDue)}${Number(o.grossDue) > Number(o.netDue) ? ' · ก่อนหัก ณ ที่จ่าย ' + Layout.money(o.grossDue) : ''}</option>`).join('');
     return `<tr>
       <td>${Layout.date(r.receivedAt)}</td>
       <td>${Layout.esc(r.contactName || 'ไม่ทราบผู้ติดต่อ')}<div style="color:#94a3b8;font-size:11px">${Layout.esc(r.sourceLabel || '')}</div></td>

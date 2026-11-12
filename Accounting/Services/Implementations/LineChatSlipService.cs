@@ -200,7 +200,7 @@ public sealed class LineChatSlipService : ILineChatSlipService
         {
             var due = await _payLinks.DueAmountsForDocumentAsync(companyId, d.Id, ct);
             if (due == null || due.Refusal != null) continue;
-            list.Add(new LineChatSlipRule.Candidate(d.Id, d.ContactId, d.DocumentNumber, d.DocumentDate, d.Status, d.BalanceDue, due.Net));
+            list.Add(new LineChatSlipRule.Candidate(d.Id, d.ContactId, d.DocumentNumber, d.DocumentDate, d.Status, d.BalanceDue, due.Net, due.Gross));
         }
         return list;
     }
@@ -348,8 +348,8 @@ public sealed class LineChatSlipService : ILineChatSlipService
             return new LineChatSlipRow(r.Id, r.CreatedAt, r.Status, r.SourceKind == LineChatSource.KindGroup ? "กลุ่ม LINE ของผู้ติดต่อ" : "แชต LINE 1:1",
                 r.ContactId, r.ContactId is Guid n && names.TryGetValue(n, out var name) ? name : null,
                 LineChatSlipRule.Reasons.Label(r.Reason), r.ReasonDetail, r.OcrAmount, r.OcrAmounts, r.OcrDate, r.OcrRef,
-                opts.Take(LineChatSlipRule.MaxChoices).Select(o => new LineChatSlipDocOption(o.DocumentId, o.Number, o.Date, o.BalanceDue, o.NetDue,
-                    r.OcrAmount is decimal a && (a == Math.Round(o.BalanceDue, 2, MidpointRounding.AwayFromZero) || a == Math.Round(o.NetDue, 2, MidpointRounding.AwayFromZero)))).ToList());
+                opts.Take(LineChatSlipRule.MaxChoices).Select(o => new LineChatSlipDocOption(o.DocumentId, o.Number, o.Date, o.NetDue, o.GrossDue,
+                    r.OcrAmount is decimal a && a == Math.Round(o.NetDue, 2, MidpointRounding.AwayFromZero))).ToList());
         }).ToList();
         return new LineChatSlipListResponse(items.Count, items);
     }

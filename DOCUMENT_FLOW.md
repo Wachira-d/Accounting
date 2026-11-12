@@ -3167,8 +3167,9 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **กันซ้ำ** — แฮชไฟล์ หรือเลขอ้างอิง ตรงกับแถวแชตที่ยังเปิด (`LineChatSlipRule.Statuses.Live`) หรือรายการรอยืนยัน/รับเงินแล้ว (`SlipEvidenceRule.DuplicateStatuses`) ⇒
   ตอบ "ส่งเข้ามาแล้ว" · ไม่มีแถวใหม่
 - **ตัดสิน** `LineChatSlipRule.Decide` — ผู้สมัคร = เอกสารค้างชำระของผู้ติดต่อที่ผูก LINE นั้น (บริษัทเดียวกัน · ใบที่ `DocumentPayLinkPolicy.IssueRefusal` ปฏิเสธไม่เป็นผู้สมัคร ·
-  ร่าง/รออนุมัติ/ยกเลิก/ปฏิเสธ/ชำระครบ ตัดโดย `DocumentSlipIntents.UploadProblem`) · ตรงยอดค้าง หรือยอดสุทธิหลังหัก ณ ที่จ่าย จาก
-  `IDocumentPayLinkService.DueAmountsForDocumentAsync` (ตัวคิดเดียวกับหน้าชำระ/พอร์ทัล — ไม่สร้าง QR) ตรงถึงสตางค์ (AwayFromZero) · ไม่จับผลรวมหลายใบ (260-1-3)
+  ร่าง/รออนุมัติ/ยกเลิก/ปฏิเสธ/ชำระครบ ตัดโดย `DocumentSlipIntents.UploadProblem`) · ตรง "ยอดที่ลูกค้าต้องโอน" (= ยอดค้าง ซึ่งเป็นยอดหลังหัก ณ ที่จ่ายแล้ว) จาก
+  `IDocumentPayLinkService.DueAmountsForDocumentAsync` (ตัวคิดเดียวกับหน้าชำระ/พอร์ทัล — ไม่สร้าง QR) ตรงถึงสตางค์ (AwayFromZero) · ไม่จับผลรวมหลายใบ (260-1-3) ·
+  ยอดเต็มก่อนหัก (ลูกค้าไม่หัก — เกินยอดค้าง) ⇒ คิวพนักงานเหตุ `GrossBeforeWht` (ไม่ผูกเอง · แบบเดียวกับ BankReceiptAutoSettle "เสนอเท่านั้น")
   - **ใบเดียว + ยอดมั่นใจ** ⇒ `SlipEvidenceService.SubmitAsync` (ช่องทาง `line-chat-customer` · ไฟล์โฟลเดอร์ไม่เสิร์ฟตรง · ไฟล์แนบของเอกสาร · แจ้งทีม E-06) =
     `PaymentIntent(ManualSlip)` **รอยืนยัน** ในคิวเดียว (`payment-intents.html?status=Pending` · Autopilot `SlipPending`) · ไม่สร้าง Payment · ไม่ประทับชำระ ·
     ปิดหนี้ทางเดิมเท่านั้น: คนยืนยัน หรือรายการเดินบัญชีจริงที่ `BankReceiptAutoSettle` จับเลขอ้างอิงได้ ⇒ ใบเสร็จ/ใบกำกับ/ส่งอัตโนมัติตามเดิม ·
@@ -8909,6 +8910,6 @@ _Last verified against codebase: 2026-11-12 (รอบ 260-4 LINE ที่เ�
 
 _Last verified against codebase: 2026-11-11 (รอบ 259 ชุด D ฝ่ายค้าน — §2.12g-259d: H1/H2 · M1–M4 · L1–L6 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d493044a)_
 
-_Last verified against codebase: 2026-11-12 (รอบ 260-2 — §2.12g-259c: บัญชีที่เงินตามสลิปเข้า (`Helpers/SlipReceivingAccount` · confirm-manually รับ bankAccountId · ประทับบนรายการ · handler เอกสาร/การจองส่งต่อ) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
+_Last verified against codebase: 2026-11-12 (รอบ 260-2 — §2.12g-259c: บัญชีที่เงินตามสลิปเข้า (`Helpers/SlipReceivingAccount` · confirm-manually รับ bankAccountId · ประทับบนรายการ · handler เอกสาร/การจองส่งต่อ) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit abce9847)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-3 — §3.4b เงินรอจัดสรรบนพอร์ทัล/อีเมลใบแจ้งยอด + กระดิ่งค้างนาน · §2.6b การ์ดความพร้อมรับเงิน · §OCR กล่องใบซื้อร่างกล่องเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 86193689)_
 _Last verified against codebase: 2026-11-12 (รอบ 260-5 ทีมตัดสินใจ — §3.4b ใบกำกับ ณ วันรับเงินที่รับก่อนใบแจ้งหนี้ · §2.12g-258 ชุด 5 คืนค่าสแกน API v1 ที่ล้ม · 50 ทวิ ไม่หักโควตา — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit ccbc0de2)_

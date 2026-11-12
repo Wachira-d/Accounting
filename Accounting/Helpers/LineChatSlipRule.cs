@@ -69,6 +69,7 @@ public static class LineChatSlipRule
         public const string CustomerDeclined = "CustomerDeclined";
         public const string ChoiceExpired = "ChoiceExpired";
         public const string SubmitFailed = "SubmitFailed";
+        public const string GrossBeforeWht = "GrossBeforeWht";
 
         public static string Label(string? code) => code switch
         {
@@ -78,15 +79,17 @@ public static class LineChatSlipRule
             CustomerDeclined => "ลูกค้าบอกว่าไม่ใช่ใบที่ระบบเสนอ",
             ChoiceExpired => "ลูกค้าไม่ได้เลือกใบภายในเวลา",
             SubmitFailed => "ผูกกับเอกสารที่ตรงยอดไม่สำเร็จ",
+            GrossBeforeWht => "ยอดสลิปเท่ายอดเต็มก่อนหัก ณ ที่จ่าย (ลูกค้าอาจไม่ได้หัก) — เกินยอดค้าง: ตรวจว่าจะรับส่วนเกินเป็นเงินรอจัดสรร หรือรอหนังสือ 50 ทวิ",
             _ => "ยังไม่ผูกเอกสาร",
         };
     }
 
-    /// <summary>เอกสารผู้สมัครหนึ่งใบ — <paramref name="NetDue"/> = ยอดที่ลูกค้าต้องโอนหลังหัก ณ ที่จ่าย (ตัวคิดของหน้าชำระ · 0 = ไม่รู้/ใบรับโอนไม่ได้)</summary>
-    public sealed record Candidate(Guid DocumentId, Guid ContactId, string Number, DateTime Date, DocumentStatus Status, decimal BalanceDue, decimal NetDue);
+    /// <summary>เอกสารผู้สมัครหนึ่งใบ — ยอดจากตัวคิดของหน้าชำระ (<c>DocumentPayLinkPolicy.AmountsFor</c>): <paramref name="NetDue"/> = ยอดที่ลูกค้าต้องโอน
+    /// (= ยอดค้าง ซึ่งเป็นยอดหลังหัก ณ ที่จ่ายแล้ว) · <paramref name="GrossDue"/> = ยอดก่อนหัก (ยอดค้าง + WHT ที่คาดว่าจะหัก · ผู้ซื้อไม่มีหน้าที่หัก = เท่ายอดค้าง)</summary>
+    public sealed record Candidate(Guid DocumentId, Guid ContactId, string Number, DateTime Date, DocumentStatus Status, decimal BalanceDue, decimal NetDue, decimal GrossDue);
 
-    /// <summary>ใบที่ตรงยอด · <paramref name="Amount"/> = ยอดที่แจ้งโอน (ยอดค้าง หรือยอดสุทธิหลังหัก) · <paramref name="ViaNet"/> = ตรงด้วยยอดหลังหัก ณ ที่จ่าย</summary>
-    public sealed record SlipMatch(Candidate Doc, decimal Amount, bool ViaNet);
+    /// <summary>ใบที่ตรงยอด · <paramref name="Amount"/> = ยอดที่แจ้งโอน (ยอดที่ลูกค้าต้องโอนหลังหัก ณ ที่จ่าย)</summary>
+    public sealed record SlipMatch(Candidate Doc, decimal Amount);
 
     public enum Outcome { None, One, Many }
 
@@ -102,17 +105,19 @@ public static class LineChatSlipRule
         if (reading == null || !reading.HasAnyAmount) return new Decision(Outcome.None, Array.Empty<SlipMatch>(), Reasons.Unreadable);
         var amounts = reading.Amount is decimal sure ? new[] { R(sure) } : reading.Amounts.Select(R).Where(a => a > 0m).Distinct().ToArray();
         var matches = new List<SlipMatch>();
+        var grossHit = false;
+        static decimal? gross(Candidate c) => R(c.GrossDue) > R(c.NetDue > 0m ? c.NetDue : c.BalanceDue) + 0.005m ? R(c.GrossDue) : null;
         foreach (var c in candidates)
         {
             if (!ownContactIds.Contains(c.ContactId)) continue;                       // ใบของผู้ติดต่ออื่น — ไม่เคยเป็นผู้สมัคร
             if (DocumentSlipIntents.UploadProblem(c.Status, c.BalanceDue, c.BalanceDue) != null) continue;   // ร่าง/ยกเลิก/ชำระครบ ฯลฯ
             if (matches.Any(m => m.Doc.DocumentId == c.DocumentId)) continue;
-            var balance = R(c.BalanceDue);
-            var net = R(c.NetDue);
-            if (amounts.Contains(balance)) matches.Add(new SlipMatch(c, balance, false));
-            else if (net > 0m && net < balance && amounts.Contains(net)) matches.Add(new SlipMatch(c, net, true));
+            var net = R(c.NetDue > 0m ? c.NetDue : c.BalanceDue);
+            if (amounts.Contains(net)) matches.Add(new SlipMatch(c, net));
+            else if (gross(c) is decimal g && amounts.Contains(g)) grossHit = true;
         }
-        if (matches.Count == 0) return new Decision(Outcome.None, matches, Reasons.NoMatch);
+        // ยอดเต็มก่อนหัก ณ ที่จ่าย (ลูกค้าไม่หัก?) — เกินยอดค้าง ⇒ แจ้งโอนไม่ได้ · ไม่เดาว่าเงินส่วนเกินคืออะไร (คนตัดสิน: เงินรอจัดสรร/50 ทวิ) · แบบเดียวกับ BankReceiptAutoSettle "เสนอเท่านั้น"
+        if (matches.Count == 0) return new Decision(Outcome.None, matches, grossHit ? Reasons.GrossBeforeWht : Reasons.NoMatch);
         var ordered = matches.OrderBy(m => m.Doc.Date).ThenBy(m => m.Doc.Number, StringComparer.Ordinal).Take(MaxChoices).ToList();
         return reading.Amount != null && matches.Count == 1
             ? new Decision(Outcome.One, ordered, null)

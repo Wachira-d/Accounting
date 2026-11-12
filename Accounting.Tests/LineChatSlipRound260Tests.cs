@@ -13,9 +13,10 @@ public class LineChatSlipRound260Tests
 {
     private static readonly Guid Me = Guid.NewGuid(), Other = Guid.NewGuid();
 
-    private static LineChatSlipRule.Candidate Doc(string no, decimal balance, decimal net = 0m, Guid? contact = null,
+    /// <param name="wht">WHT ที่คาดว่าลูกค้าจะหัก — ยอดค้างในระบบเป็นยอดหลังหักแล้ว ⇒ ยอดก่อนหัก = ยอดค้าง + wht</param>
+    private static LineChatSlipRule.Candidate Doc(string no, decimal balance, decimal wht = 0m, Guid? contact = null,
         DocumentStatus status = DocumentStatus.Approved, int day = 1)
-        => new(Guid.NewGuid(), contact ?? Me, no, new DateTime(2026, 11, day, 0, 0, 0, DateTimeKind.Utc), status, balance, net);
+        => new(Guid.NewGuid(), contact ?? Me, no, new DateTime(2026, 11, day, 0, 0, 0, DateTimeKind.Utc), status, balance, balance, balance + wht);
 
     private static OcrSlipText.Reading Sure(decimal amount) => new(new[] { amount }, amount, null, null);
     private static OcrSlipText.Reading Unsure(params decimal[] amounts) => new(amounts, null, null, null);
@@ -59,23 +60,32 @@ public class LineChatSlipRound260Tests
     [Fact]
     public void ยอดมั่นใจตรงใบเดียว_ผลOne_ยอดค้าง()
     {
-        var a = Doc("INV-001", 1070m, 1040m);
+        var a = Doc("INV-001", 1070m);
         var d = LineChatSlipRule.Decide(Sure(1070m), new[] { a, Doc("INV-002", 500m) }, new[] { Me });
         Assert.Equal(LineChatSlipRule.Outcome.One, d.Outcome);
         var m = Assert.Single(d.Matches);
         Assert.Equal(a.DocumentId, m.Doc.DocumentId);
         Assert.Equal(1070m, m.Amount);
-        Assert.False(m.ViaNet);
     }
 
     [Fact]
-    public void ยอดหลังหักณที่จ่าย_ตรงใบเดียว_แจ้งด้วยยอดสุทธิ()
+    public void ยอดหลังหักณที่จ่าย_ตรงใบเดียว_แจ้งด้วยยอดที่ต้องโอน()
     {
-        var a = Doc("INV-001", 1070m, 1040m);
+        // ใบ 1,070 (ก่อนหัก) หัก 3% ของ 1,000 = 30 ⇒ ยอดค้าง/ยอดที่ต้องโอน 1,040
+        var a = Doc("INV-001", 1040m, wht: 30m);
         var d = LineChatSlipRule.Decide(Sure(1040m), new[] { a }, new[] { Me });
         Assert.Equal(LineChatSlipRule.Outcome.One, d.Outcome);
-        Assert.True(d.Matches[0].ViaNet);
         Assert.Equal(1040m, d.Matches[0].Amount);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_ลูกค้าโอนยอดเต็มก่อนหัก_ไม่ผูกเอง_เข้าคิวพร้อมเหตุ()
+    {
+        var d = LineChatSlipRule.Decide(Sure(1070m), new[] { Doc("INV-001", 1040m, wht: 30m) }, new[] { Me });
+        Assert.Equal(LineChatSlipRule.Outcome.None, d.Outcome);
+        Assert.Equal(LineChatSlipRule.Reasons.GrossBeforeWht, d.Reason);
+        // ไม่มี WHT ⇒ ยอดก่อนหัก = ยอดค้าง ⇒ ไม่ใช่เหตุนี้
+        Assert.Equal(LineChatSlipRule.Reasons.NoMatch, LineChatSlipRule.Decide(Sure(1070m), new[] { Doc("INV-002", 1040m) }, new[] { Me }).Reason);
     }
 
     [Fact]

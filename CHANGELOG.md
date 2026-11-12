@@ -7004,7 +7004,7 @@ _รอบ 260-2 ยืนยันสลิป: เลือกบัญชี�
 `confirm-manually` รับ `bankAccountId` + ประทับ `PaymentIntent.ReceivingBankAccountId/ReceivingAccountOrigin` + audit ใต้ล็อกต่อรายการ · `GET receiving-accounts` ·
 `DocumentPaymentHandler`/`SiteBookingPaymentHandler` ส่งบัญชีนั้นต่อ (เดิม JE สลิปโอนลงเงินสด 111) · `PaymentQrService.PickForDocumentAsync` ตัวเลือกบัญชีของใบตัวเดียว (หน้าชำระ + ค่าแนะนำ) ·
 ช่องเลือกใน formDialog ของ payment-intents + echo บนแถว · migration 2 คอลัมน์ · ยังไม่ได้คอมไพล์ในเครื่องนี้_
-_Last verified against codebase: 2026-11-12 (รอบ 260-2 — §2.12g-259c บัญชีที่เงินตามสลิปเข้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <pending>)_
+_Last verified against codebase: 2026-11-12 (รอบ 260-2 — §2.12g-259c บัญชีที่เงินตามสลิปเข้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit abce9847)_
 _รอบ 260 "สลิปในแชต LINE ⇒ ผูกเอกสาร" (คำตัดสินเจ้าของ 260-1-1 · ทีม 260-1-2…6 · DOCUMENT_FLOW §2.12g-260 · TEST_PLAN P260): รูปในแชต OA บริษัท (1:1 · กลุ่มของผู้ติดต่อที่แสดงยอด) ⇒
 อ่านยอดในเครื่อง (`Helpers/OcrSlipText` — ย้ายตัวแยกจาก `SlipOcrAssistService` · แก้ "1500.00" ถูกอ่านเป็น 500.00) ⇒ ตัวตัดสินเดียว `LineChatSlipRule.Decide`
 (ใบของผู้ติดต่อที่ผูก LINE · ยอดค้างหรือยอดสุทธิหลังหัก ณ ที่จ่าย จาก `DueAmountsForDocumentAsync` ใหม่ · ไม่จับผลรวม) ⇒ ใบเดียว = รายการรอยืนยันผ่าน `SlipEvidenceService.SubmitAsync`
