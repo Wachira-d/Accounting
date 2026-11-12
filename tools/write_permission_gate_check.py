@@ -170,6 +170,8 @@ WATCHED = [
     # รอบ 258 (A-H3 · A-H2) — ตารางแจ้งเตือนทั้งบริษัท (PUT settings) เดิมไม่มีด่าน · ทางผูก LINE ด้วย userId ดิบ (PUT line-binding/me) ถูกถอด ·
     # ค่าส่วนตัวของผู้ใช้เอง (preferences/me · ถอดการผูกของตัวเอง) อยู่ใน SELF_SERVICE_POSTS
     "Accounting/Controllers/NotificationConfigController.cs",
+    # รอบ 266 แพ็ก A — ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้: ผูก = ลง JE/ลดยอดค้าง (ระดับอนุมัติ) · ถอด = กลับ JE (ระดับ Void) · ใส่ตอนเขียวตั้งแต่ไฟล์เกิด
+    "Accounting/Controllers/ReceiptLinkController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -297,6 +299,9 @@ READ_ONLY_POSTS_IN_FILE = {
     # รอบ 254 WP-11 L2: หน้าเชิญผูก LINE (public · สิทธิ์ = token) — GetJoinViewAsync อ่านอย่างเดียว (ไม่มี SaveChanges · ตรวจด้วยตาตอนเพิ่ม) ·
     # POST เพื่อไม่ให้ token อยู่ใน URL ของ API/log
     ("ContactLineJoinController.cs", "View"),
+    # รอบ 266: พรีวิวผลการผูกใบเสร็จ — ReceiptLinkService.PreviewAsync อ่านอย่างเดียว (AsNoTracking ทั้งหมด · ไม่มี SaveChanges · ตรวจด้วยตาตอนเพิ่ม) ·
+    # POST เพราะรับ body (คู่ใบ + ยอด) · ด่านอ่าน = DenyViewAsync (เห็นเอกสารฝั่งขาย)
+    ("ReceiptLinkController.cs", "Preview"),
 }
 
 # POST ที่เป็น "งานของผู้ใช้เอง" (ไม่มีข้อมูลของคนอื่นให้แตะ) — ระบุเป็น (ไฟล์, เมธอด) ไม่ใช่ชื่อเมธอดลอย ๆ

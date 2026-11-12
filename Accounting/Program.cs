@@ -345,6 +345,8 @@ builder.Services.AddScoped<ISlipOcrAssistService, SlipOcrAssistService>();
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 // รอบ 258 — เงินรอจัดสรร (เงินรับจากลูกค้าที่ยังไม่ผูกกับใบ · ผัง 21630): รายการ · จัดสรรทีหลัง · ยกเลิกการจัดสรร (ขั้นภาษีผ่าน IDocumentService)
 builder.Services.AddScoped<ICustomerCreditService, CustomerCreditService>();
+// รอบ 266 แพ็ก A — ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ (เจ้าเดียวกัน) · ตัวตัดสิน Helpers/ReceiptLinkPolicy
+builder.Services.AddScoped<IReceiptLinkService, ReceiptLinkService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 // ทะเบียนภาษีที่เราถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.51/50 (WHT_CREDIT_PLAN.md)
 builder.Services.AddScoped<Accounting.Services.Implementations.WhtCreditService>();

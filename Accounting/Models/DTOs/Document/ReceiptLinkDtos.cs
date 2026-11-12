@@ -1,0 +1,44 @@
+namespace Accounting.Models.DTOs.Document;
+
+/// <summary>รอบ 266 แพ็ก A — ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ (เจ้าเดียวกัน) · ตัวตัดสิน <c>Helpers/ReceiptLinkPolicy</c> ·
+/// enum ออกเป็น "ชื่อ" เสมอ (F2 ข้อ 5)</summary>
+/// <param name="Route">เส้นที่ใช้ (ชื่อ <c>ReceiptLinkRoute</c>) — แถวที่ไม่อนุญาตอาจมีเส้นของแพ็กถัดไป (ยังไม่เปิด)</param>
+/// <param name="Kind">ชนิดฝั่งใบเสร็จ/เงิน (ชื่อ <c>ReceiptLinkKind</c>)</param>
+/// <param name="ReceiptDocumentId">ใบเสร็จ/ใบมัดจำ (null = เงินรอจัดสรรที่ไม่มีใบเสร็จ)</param>
+/// <param name="PaymentId">การชำระของเงินรอจัดสรร (null = ไม่เกี่ยว)</param>
+/// <param name="Available">ยอดฝั่งเงินที่ใช้ได้ (ใบเสร็จร่าง = ยอดของใบ)</param>
+/// <param name="Suggested">ยอดเสนอ (≤ ยอดค้าง) · ผู้ใช้แก้ได้เฉพาะ <paramref name="AmountEditable"/></param>
+public record ReceiptLinkCandidate(
+    Guid InvoiceId, string InvoiceNumber, Guid? ReceiptDocumentId, Guid? PaymentId, string Number, DateTime Date,
+    string Kind, string? Route, decimal Available, decimal Suggested, bool AmountEditable,
+    bool Allowed, string? RuleCode, string? Reason, string? WayForward, string Label);
+
+/// <summary>ผู้สมัครของใบที่เปิดอยู่ — <paramref name="Side"/> = "invoice" (เปิดจากใบแจ้งหนี้) · "receipt" (เปิดจากใบเสร็จ) · null = ใบนี้ไม่ใช่ทั้งสอง</summary>
+/// <param name="Notice">ข้อความระดับใบ (เช่น ใบเสร็จขายสด/ของการชำระใบอื่น — เหตุที่ผูกไม่ได้ + ทางไปต่อ) · null = ไม่มี</param>
+/// <param name="ShowButton">หน้าเว็บวาดปุ่มไหม (มีแถว หรือมีข้อความระดับใบที่ต้องบอก) — เซิร์ฟเวอร์ตัดสิน</param>
+/// <param name="CanUndoDraftSource">ใบเสร็จร่างนี้ผูกใบต้นทางอยู่ ⇒ แสดงปุ่มถอด</param>
+public record ReceiptLinkCandidatesResponse(
+    Guid DocumentId, string DocumentNumber, string? Side, string? Kind, string? Notice, string? WayForward,
+    bool ShowButton, List<ReceiptLinkCandidate> Items,
+    // ใบเสร็จร่างที่ผูกใบต้นทางอยู่ ⇒ ถอดได้ (เส้น SetDraftSource) — เซิร์ฟเวอร์ตัดสิน
+    bool CanUndoDraftSource = false);
+
+/// <summary>คำขอพรีวิว/ผูก — <paramref name="ReceiptDocumentId"/> หรือ <paramref name="PaymentId"/> (เงินรอจัดสรรที่ไม่มีใบเสร็จ) อย่างใดอย่างหนึ่ง</summary>
+/// <param name="Amount">ยอด (เงินรอจัดสรร/มัดจำ) · null = ยอดเสนอ · ใบเสร็จร่างใช้ยอดของใบเสมอ</param>
+/// <param name="PreviewToken">กุญแจจากพรีวิว (ต้องส่งตอนผูก — ข้อเท็จจริงเปลี่ยน = 409 RL-STALE)</param>
+/// <param name="ApplyDate">วันที่จัดสรร/หักมัดจำ · null = วันนี้</param>
+public record ReceiptLinkRequest(Guid InvoiceId, Guid? ReceiptDocumentId, Guid? PaymentId, decimal? Amount = null,
+    string? PreviewToken = null, DateTime? ApplyDate = null);
+
+public record ReceiptLinkEffectRow(string Label, string Detail);
+
+public record ReceiptLinkPreviewResponse(
+    bool Allowed, string Kind, string? Route, string RuleCode, string? Message, string? WayForward, string LegalReference,
+    decimal Amount, decimal InvoiceBalanceBefore, decimal InvoiceBalanceAfter, List<ReceiptLinkEffectRow> Effects, string? PreviewToken);
+
+/// <param name="AllocationId">แถวจัดสรร (เส้นเงินรอจัดสรร) — ใช้ถอดการผูก</param>
+public record ReceiptLinkResult(string Route, Guid InvoiceId, string InvoiceNumber, decimal InvoiceBalanceDue, string InvoiceStatus,
+    Guid? ReceiptDocumentId, Guid? PaymentId, Guid? AllocationId, IReadOnlyList<string> Notices);
+
+/// <summary>ถอดการผูก (แพ็ก A): ใบเสร็จร่าง ⇒ <paramref name="ReceiptDocumentId"/> · เงินรอจัดสรร ⇒ <paramref name="PaymentId"/> + <paramref name="AllocationId"/></summary>
+public record ReceiptLinkUndoRequest(string Route, Guid? ReceiptDocumentId = null, Guid? PaymentId = null, Guid? AllocationId = null);

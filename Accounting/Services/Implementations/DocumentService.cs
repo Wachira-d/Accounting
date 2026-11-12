@@ -1569,6 +1569,8 @@ public partial class DocumentService : IDocumentService
             // ซ้ำแทนตัดเจ้าหนี้
             if (request.RelatedDocumentId.HasValue)
                 doc.RelatedDocumentId = request.RelatedDocumentId;
+            // รอบ 266 G-1 (266-1-13): ใบเสร็จที่อ้างใบต้นทาง — ผู้ติดต่อ/สกุล/ชนิดต้องตรง (เดิมกรองแค่หน้าจอ · API ผ่านได้)
+            await GuardReceiptSourceAsync(companyId, doc, checkCurrency: true);
 
             // ฝั่งภาษีของ CN/DN ที่ผู้ใช้เลือกไว้บนฟอร์ม — เก็บตั้งแต่สร้าง
             // AutoPost/รายงานภาษีอ่านค่านี้เป็นชั้นแรก จึงไม่ต้องเดาอีกต่อไป
@@ -3789,6 +3791,9 @@ public partial class DocumentService : IDocumentService
                 });
             }
         }
+
+        // รอบ 266 (266-1-2 · G-1): ใบต้นทางของใบเสร็จร่าง (เปลี่ยน/ล้างได้เฉพาะใบร่างที่สร้างเอง) + ตรวจผู้ติดต่อซ้ำหลังแก้
+        await ApplyReceiptSourceOnUpdateAsync(companyId, doc, request.RelatedDocumentId, doc.UpdatedBy);
 
         await _db.SaveChangesAsync();
         // ปิดลูปการสอน local model — บรรทัดที่มี FeedbackId + AccountId สุดท้าย
@@ -7132,6 +7137,9 @@ public partial class DocumentService : IDocumentService
         //
         // block ที่ approve (ไม่ใช่ตอนสร้าง) — ร่างยังลองผิดลองถูกได้ และข้อความ
         // ต้องบอก **เลขใบที่ควรผูก** ไม่ใช่แค่ปฏิเสธ (ห้ามให้ผู้ใช้ตัน)
+        // รอบ 266 G-1 (266-1-13): ใบเสร็จอ้างใบของผู้ติดต่ออื่น (ร่างเก่า/API) ต้องไม่ผ่านการอนุมัติ — ก่อนลง JE/ตัดยอดค้างใบต้นทาง
+        await GuardReceiptSourceAsync(companyId, doc, checkCurrency: !doc.IsSettlementReceipt);
+
         if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
             && doc.VatAmount > 0 && !doc.RelatedDocumentId.HasValue
             // ⚠️ Document.ContactId เป็น Guid (ไม่ใช่ Guid?) — "ไม่มีคู่ค้า"
@@ -21725,6 +21733,7 @@ public partial class DocumentService : IDocumentService
         SourceLinkedAt: d.SourceLinkedAt,
         CanLinkToSource: Accounting.Helpers.DocumentLinkPolicy.ChildBlockReason(LinkFacts(d, upstream?.DocumentType)) is null,   // ตัวประกอบข้อเท็จจริงตัวเดียวกับด่านผูก
         CanUnlinkSource: d.SourceLinkedAt != null && Accounting.Helpers.DocumentLinkPolicy.UnlinkBlockReason(d.DocumentType, d.Status) is null,
+        CanChangeReceiptSource: Accounting.Helpers.ReceiptLinkPolicy.Classify(ReceiptLinkFacts.Source(d)) == Accounting.Helpers.ReceiptLinkKind.DraftReceipt,   // รอบ 266 — ตัวจัดชนิดเดียวกับด่านแก้ไข
         IsRollupBillingNote: BillingNoteKind.IsRollup(d.DocumentType, d.Lines.Any(l => l.SourceDocumentId != null)),
         // คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A) + ป้าย "ออก 50 ทวิ อัตโนมัติไม่สำเร็จ" (ล้มดัง)
         WhtCertAutoIssue: d.WhtCertAutoIssue,
@@ -22941,6 +22950,27 @@ public partial class DocumentService : IDocumentService
                 warnings.Add($"ลูกค้ารายนี้มีเอกสารค้างชำระอยู่ (เช่น {string.Join(", ", arOutstanding.Select(a => $"{a.DocumentNumber} คงค้าง {a.BalanceDue:N2}"))}) " +
                     "— ใบเสร็จอิสระใบนี้จะลง 'รายได้ + VAT ใหม่ทั้งใบ' ไม่ตัดยอดใบเดิม. " +
                     "ถ้าตั้งใจรับชำระใบค้าง ให้ใช้ช่อง 'รับชำระใบค้างของลูกค้า' ตอนสร้างใบเสร็จ หรือกด 'บันทึกชำระเงิน'/'แปลงเอกสาร' จากใบเดิมแทน — มิฉะนั้นรายได้และภาษีขายจะซ้ำ 2 รอบ");
+        }
+
+        // รอบ 266 G-2 (266-1-14): ทิศกลับของคำเตือนข้างบน — ออกใบแจ้งหนี้/ใบกำกับ *หลัง* ใบขายสดของผู้ติดต่อเดียวกันยอดเท่ากัน (±30 วัน) ⇒
+        // ถ้าเป็นการขายเดียวกัน รายได้ + ภาษีขาย (+สต็อก) นับสองครั้งเงียบ ๆ (ตัวตรวจ "ใบซ้ำ" ข้อ 6 เทียบเฉพาะชนิดเดียวกัน) · **เตือน ไม่บล็อก**
+        // (ขายสดแล้วออกใบแจ้งหนี้งานใหม่ยอดเท่ากันมีจริง) · ใบขายสด = ใบเสร็จไม่อ้างใบ/ไม่ใช่มัดจำ/ไม่ใช่ของการชำระ หรือใบกำกับขายเงินสด
+        if (doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice && !doc.IssuedAsCashReceipt
+            && !doc.ReplacesDocumentId.HasValue && doc.ContactId != Guid.Empty && doc.TotalAmount > 0.005m)
+        {
+            var g2From = doc.DocumentDate.Date.AddDays(-Accounting.Helpers.ReceiptLinkPolicy.DuplicateWindowDays);
+            var g2To = doc.DocumentDate.Date.AddDays(Accounting.Helpers.ReceiptLinkPolicy.DuplicateWindowDays + 1);
+            var cashSales = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.Id != doc.Id && !d.IsDeleted && d.ContactId == doc.ContactId
+                    && d.TotalAmount == doc.TotalAmount && d.DocumentDate >= g2From && d.DocumentDate < g2To
+                    && d.ReplacedByDocumentId == null
+                    && (d.Status == DocumentStatus.Approved || d.Status == DocumentStatus.Sent || d.Status == DocumentStatus.Paid)
+                    && (((d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.ReceiptVoucher)
+                            && d.RelatedDocumentId == null && !d.IsDeposit && !d.IsSettlementReceipt && d.SettlementPaymentId == null)
+                        || (d.DocumentType == DocumentType.TaxInvoice && d.IssuedAsCashReceipt)))
+                .OrderBy(d => d.DocumentDate).Select(d => d.DocumentNumber).Take(3).ToListAsync();
+            if (cashSales.Count > 0)
+                warnings.Add(Accounting.Helpers.ReceiptLinkPolicy.DuplicateCashSaleWarning(cashSales, doc.TotalAmount));
         }
 
         // Per-line VAT + WHT rate sanity. The 0/7 hard block sits in the
