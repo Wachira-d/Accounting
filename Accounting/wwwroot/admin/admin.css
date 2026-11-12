@@ -94,6 +94,9 @@ body { font-family: 'Noto Sans Thai', 'Inter', sans-serif; background: #f1f5f9; 
 .admin-btn-outline { background: #fff; color: var(--admin-text); border: 1px solid var(--admin-border); }
 .admin-btn-outline:hover { background: #f8fafc; }
 .admin-btn-sm { padding: 4px 10px; font-size: 12px; }
+/* รอบ 261: ปุ่มที่ถูกปิดต้องดูออกว่ากดไม่ได้ — เดิมไม่มีสไตล์ ⇒ ปุ่ม "เปิดรับเงินจริง" ดูกดได้แต่กดแล้วเงียบ (กฎ #4 A ห้าม silent no-op) */
+.admin-btn:disabled, .admin-btn[disabled] { opacity: .45; cursor: not-allowed; filter: grayscale(.4); }
+.admin-btn:disabled:hover, .admin-btn[disabled]:hover { background: inherit; }
 
 /* Forms */
 .admin-input { width: 100%; padding: 8px 12px; border: 1px solid var(--admin-border); border-radius: 6px; font-size: 14px; font-family: inherit; }
