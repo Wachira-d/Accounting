@@ -57,7 +57,7 @@ public class WhtCertIntakeController : ControllerBase
     [HttpPost("inbox")]
     [RequirePermission(PermissionKeys.TaxFile)]
     public async Task<ActionResult<ApiResponse<WhtCertSubmitResult>>> Upload(Guid companyId, [FromBody] UploadBody body,
-        [FromServices] IAttachmentAccessGate gate, [FromServices] ILogger<WhtCertIntakeController> log, CancellationToken ct)
+        [FromServices] IAttachmentAccessGate gate, [FromServices] ILogger<WhtCertIntakeController> log, [FromServices] IChatRateLimiter limiter, CancellationToken ct)
     {
         var uid = JwtHelper.GetUserIdFromClaims(User);
         // ด่านไฟล์แนบกลาง — ไฟล์ในถัง "ภาษีถูกหัก" ก่อนบันทึก: ผู้อัปโหลดเอง หรือผู้ถือ Tax.File (ก่อนอ่าน/สแกนไฟล์ใด ๆ)
@@ -84,16 +84,23 @@ public class WhtCertIntakeController : ControllerBase
         var hints = body.DocumentId is Guid d ? new[] { d } : null;
         var kind = WhtEvidenceReference.KindFor(body.EWithholding);
         Guid? scanId = null;
-        try { scanId = (await _ocr.ScanAsync(companyId, body.FileAttachmentId, actingUserId: uid)).Id; }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // คำตัดสิน 260-5-7: เพดานสแกนต่อบริษัท (ไม่หักโควตา OCR แต่ไม่ไม่จำกัด) · ตัวนับใช้ไม่ได้ = สแกนตามเดิม (ไม่ปิดทางเก็บหลักฐานภาษี)
+        var withinCap = await limiter.TryConsumeAsync(WhtCertUploadLinkPolicy.InternalScanKey(companyId),
+            WhtCertUploadLinkPolicy.InternalScansPerMinute, WhtCertUploadLinkPolicy.InternalScansPerDay, ct);
+        if (withinCap)
         {
-            // รอบ 257 ชุด 2 (B-L3): OCR ล้ม (ผู้ให้บริการล่ม · ไฟล์อ่านไม่ได้ · โควตา) — เดิม error ดิบถึงผู้ใช้และไฟล์ค้างในถัง ⇒ เข้ากล่องรับแบบรอตรวจจากไฟล์
-            log.LogWarning(ex, "สแกนใบ 50 ทวิ ที่อัปโหลดเองไม่สำเร็จ ไฟล์ {File} บริษัท {Company} — เข้ากล่องรับแบบรอตรวจ", body.FileAttachmentId, companyId);
+            try { scanId = (await _ocr.ScanAsync(companyId, body.FileAttachmentId, actingUserId: uid)).Id; }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // รอบ 257 ชุด 2 (B-L3): OCR ล้ม (ผู้ให้บริการล่ม · ไฟล์อ่านไม่ได้ · โควตา) — เดิม error ดิบถึงผู้ใช้และไฟล์ค้างในถัง ⇒ เข้ากล่องรับแบบรอตรวจจากไฟล์
+                log.LogWarning(ex, "สแกนใบ 50 ทวิ ที่อัปโหลดเองไม่สำเร็จ ไฟล์ {File} บริษัท {Company} — เข้ากล่องรับแบบรอตรวจ", body.FileAttachmentId, companyId);
+            }
         }
         var r = scanId is Guid sid
             ? await _intake.SubmitFromScanAsync(companyId, sid, WhtCertIntakeChannel.Manual, hints, name, uid, ct, kind, body.EvidenceReference)
             : await _intake.SubmitUnreadableAsync(companyId, WhtCertIntakeChannel.Manual, body.FileAttachmentId, null, hints, name, uid, ct,
                 evidenceKind: kind, evidenceReference: body.EvidenceReference);
+        if (!withinCap) r = r with { Message = r.Message + WhtCertUploadLinkPolicy.InternalScanCapNotice };
         return StatusCode(r.Duplicate ? 200 : 201, new ApiResponse<WhtCertSubmitResult>(true, r, r.Message));
     }
 

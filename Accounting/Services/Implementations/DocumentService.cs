@@ -15049,9 +15049,13 @@ public partial class DocumentService : IDocumentService
                     (carryVatFromSource ? " — ทำหน้าที่ใบกำกับภาษี ณ วันรับเงิน (§78/1)" : ""),
             CreatedBy = createdBy,
         };
-        // คำตัดสิน 260-5-1 — รับเงินก่อนวันที่ใบที่อ้าง (เงินก้อนเข้าก่อนออกใบ) ⇒ วันที่ใบคงเป็นวันรับเงิน (ม.105 · ม.78/1 · ม.86) แต่ใบที่ถือ VAT ออกช้า ⇒ หมายเหตุภายใน
+        // ฝ่ายค้าน 260-5 H1 — ใบที่ถือ VAT ของใบต้นทางที่ภาษีถูกย้ายจาก 21913 แล้ว: งวดรายงาน = วันที่ระบบลงภาษี (OutputVatDueAt — งวดรับเงิน หรืองวดปัจจุบันเมื่อ
+        // งวดรับเงินปิด/เลยกำหนด) ไม่ใช่วันที่บนกระดาษ · OutputVatOwnership ให้ใบเสร็จนี้เป็นเจ้าของภาษี ณ TaxPointDate ?? DocumentDate ⇒ ไม่ตั้ง = ภาษีหายจากทุกงวด
+        if (carryVatFromSource && invoice.OutputVatDueAt is DateTime vatDueAt)
+            receipt.TaxPointDate = vatDueAt.Date;
+        // คำตัดสิน 260-5-1 — รับเงินก่อนวันที่ใบที่อ้าง ⇒ วันที่ใบคงเป็นวันรับเงิน (ม.105) · ใบที่ถือ VAT ออกช้ากว่า ม.86 ⇒ หมายเหตุภายใน (งวดจาก OutputVatDueAt · M1)
         var issuedLateNote = Accounting.Helpers.LateReceiptTaxPoint.IssuedAfterMoneyNote(
-            payment.PaymentDate, invoice.DocumentDate, carriesTaxInvoiceRole, receipt.VatAmount);
+            payment.PaymentDate, invoice.DocumentDate, carriesTaxInvoiceRole, receipt.VatAmount, invoice.OutputVatDueAt);
         if (issuedLateNote != null) AppendInternalNote(receipt, issuedLateNote);
         _db.Documents.Add(receipt);
         if (carryVatFromSource && srcLines != null)

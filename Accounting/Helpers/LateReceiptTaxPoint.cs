@@ -34,22 +34,28 @@ public static class LateReceiptTaxPoint
         => ReceiptDrivesTaxPoint(storedReason) ? receiptDate.Date : applyDate.Date;
 
     /// <summary>
-    /// <b>ใบเสร็จ/ใบกำกับ ณ วันรับเงิน ที่วันรับเงินมาก่อนวันที่ของใบที่อ้าง — คำตัดสิน 260-5-1</b>
-    /// <para>วันที่บนใบ = <b>วันรับเงินจริง</b> (ไม่เลื่อนไปวันที่ใบแจ้งหนี้): ม.105 ใบรับลงวันที่ที่รับเงิน · ม.78/1(1) ค่าบริการ ความรับผิดเกิดเมื่อรับเงิน ·
-    /// ม.86 ใบกำกับออก ณ จุดความรับผิด ⇒ ทั้งสามมาตราชี้วันเดียวกัน · เลื่อนเป็นวันที่ใบแจ้งหนี้ = ใบรับที่ลงวันที่เท็จ (<see cref="ReceiptIssuePolicy"/>)
-    /// และงวด VAT ของกระดาษไม่ตรงงวดที่ <see cref="Decide"/> ลงไว้</para>
-    /// <para>สิ่งที่ผิดจริงคือ <b>ออกช้า</b> (ม.86 "ทันที") — ใบที่ถือ VAT ได้หมายเหตุภายใน <see cref="IssuedAfterMoneyMarker"/> ให้นักบัญชีเห็น · ใบเสร็จเปล่า
-    /// (VAT อยู่ที่ใบกำกับต้นทาง) ไม่มีหมายเหตุที่นี่ — ความล่าช้าของใบกำกับต้นทางถูกบอกที่ <see cref="IssuedAfterReceiptNote"/> แล้ว</para>
-    /// null = ไม่มีอะไรต้องบอก (ไม่ถือ VAT · VAT 0 · รับเงินไม่ก่อนวันที่ใบที่อ้าง)
+    /// <b>ใบเสร็จ/ใบกำกับ ณ วันรับเงิน ที่วันรับเงินมาก่อนวันที่ของใบที่อ้าง — คำตัดสิน 260-5-1 (แก้ตามฝ่ายค้าน M1 · 260-5-5)</b>
+    /// <para>วันที่บนใบ = <b>วันรับเงินจริง</b> (ไม่เลื่อนไปวันที่ใบแจ้งหนี้ · ม.105) · <b>งวดภาษีไม่ได้มาจากวันที่บนกระดาษ</b> แต่มาจาก
+    /// <paramref name="outputVatDueAt"/> = วันที่ระบบย้ายภาษีขายพัก 21913 → 21911 ของใบต้นทาง (ตัดสินแล้วที่ <see cref="Decide"/> — งวดรับเงิน
+    /// หรืองวดปัจจุบัน + <see cref="DepositPolicyResolver.LateVatMarker"/>) · ใบเสร็จถูกประทับ <c>TaxPointDate</c> = ค่านี้ (H1) ⇒ หมายเหตุบอกงวดเดียวกับรายงาน</para>
+    /// <para><paramref name="outputVatDueAt"/> = null ⇒ ภาษีของใบต้นทาง<b>ไม่ได้พัก</b> (เช่นขายสินค้า ม.78 ที่ลงภาษีตามวันที่ใบ) — เงินไม่ใช่ตัวย้ายภาษี
+    /// ⇒ ไม่มีหมายเหตุนี้ (ความล่าช้าของใบต้นทางบอกที่ <see cref="IssuedAfterReceiptNote"/> แล้ว · ไม่อ้าง ม.78/1 กับสินค้า)</para>
+    /// null = ไม่มีอะไรต้องบอก (ไม่ถือ VAT · VAT 0 · รับเงินไม่ก่อนวันที่ใบที่อ้าง · ภาษีไม่ได้พัก)
     /// </summary>
-    public static string? IssuedAfterMoneyNote(DateTime moneyReceivedDate, DateTime sourceDocumentDate, bool carriesTaxInvoiceRole, decimal vatAmount)
+    public static string? IssuedAfterMoneyNote(DateTime moneyReceivedDate, DateTime sourceDocumentDate, bool carriesTaxInvoiceRole, decimal vatAmount,
+        DateTime? outputVatDueAt)
     {
-        if (!carriesTaxInvoiceRole || vatAmount <= 0.005m) return null;
+        if (!carriesTaxInvoiceRole || vatAmount <= 0.005m || outputVatDueAt is not DateTime due) return null;
         if (moneyReceivedDate.Date >= sourceDocumentDate.Date) return null;
         var received = moneyReceivedDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
         var source = sourceDocumentDate.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
-        return $"{IssuedAfterMoneyMarker} ใบกำกับภาษี/ใบเสร็จนี้ลงวันที่รับเงิน {received} (ม.105 · จุดความรับผิด ม.78/1) ซึ่งก่อนใบที่อ้าง ({source}) — "
-            + "ภาษีขายเป็นของงวดเดือนที่รับเงิน · ม.86 ให้ออกใบกำกับภาษีทันทีที่รับเงินค่าบริการ แต่ใบนี้ออกภายหลัง · "
+        var dueMonth = due.ToString("MM/yyyy", CultureInfo.InvariantCulture);
+        var late = !DepositPolicyResolver.SameVatPeriod(moneyReceivedDate, due);
+        return $"{IssuedAfterMoneyMarker} ใบกำกับภาษี/ใบเสร็จนี้ลงวันที่รับเงิน {received} (ม.105) ซึ่งก่อนใบที่อ้าง ({source}) — "
+            + (late
+                ? $"ภาษีขายนำส่งในงวด ภ.พ.30 เดือน {dueMonth} ตามธง {DepositPolicyResolver.LateVatMarker} บนใบต้นทาง (งวดเดือนที่รับเงินยื่น/ปิด/เลยกำหนดแล้ว) · "
+                : $"ภาษีขายอยู่ในงวด ภ.พ.30 เดือน {dueMonth} (วันที่ระบบลงภาษีของใบต้นทาง) · ")
+            + "ม.86 ให้ออกใบกำกับภาษีทันทีที่ความรับผิดเกิด แต่ใบนี้ออกภายหลัง · "
             + "ครั้งหน้า: รับเงินก่อนออกใบ ⇒ ออกใบกำกับ/ใบเสร็จ ณ วันรับเงิน (หรือย้ายเป็นเงินมัดจำ) ตอนรับเงิน · ปรึกษานักบัญชีเรื่องเบี้ยปรับ/เงินเพิ่ม";
     }
 
