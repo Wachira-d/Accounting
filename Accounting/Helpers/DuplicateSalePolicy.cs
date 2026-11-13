@@ -322,6 +322,53 @@ public static class DuplicateSalePolicy
     public static CreditNoteReason CreditNoteReasonForDuplicate => CreditNoteReason.Adjustment;
     public const string CreditNoteReasonLabel = "ปรับยอด";
 
+    // ═══ รอบ 270 (ฝ่ายค้าน 266-C L2 · คำตัดสิน 270-1-4): คิวตามใบลดหนี้ร่างที่ตัวช่วยสร้างแล้วยังไม่อนุมัติ ═══
+
+    /// <summary>ชื่อขั้นใน audit ของเส้น "ใบลดหนี้เต็มใบ" — ตัวเขียน (<c>DuplicateSaleService</c>) กับตัวอ่านคิว (<see cref="CreditNoteFromAudit"/>) ใช้ค่าเดียวกัน</summary>
+    public const string CreditNoteAuditAction = "CreditNoteForDuplicateInvoice";
+
+    /// <summary>ชนิดเรื่องใน Autopilot "เรื่องที่ระบบทำต่อไม่ได้"</summary>
+    public const string CreditNoteDraftIssueKind = "DuplicateSaleCreditNoteDraft";
+
+    /// <summary>ข้อเท็จจริงจากแถว audit ของเส้น "ใบลดหนี้เต็มใบ" (ใบลดหนี้ · เลขใบแจ้งหนี้ · เลขใบขายสด ณ ตอนสร้าง)</summary>
+    public sealed record CreditNoteAuditFacts(Guid CreditNoteId, string? InvoiceNumber, string? CashSaleNumber);
+
+    /// <summary>ใบลดหนี้ที่แถว audit ของตัวช่วยสร้าง (<c>extra.creditNote</c>) · แถวของขั้นอื่น/JSON เสีย ⇒ null (ไม่เดา) ·
+    /// อ่านจาก audit (append-only) ⇒ ครอบใบร่างที่สร้างก่อนรอบ 270 ด้วยโดยไม่ต้อง migrate</summary>
+    public static CreditNoteAuditFacts? CreditNoteFromAudit(string? newValues)
+    {
+        if (string.IsNullOrWhiteSpace(newValues)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(newValues);
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !root.TryGetProperty("action", out var a) || a.ValueKind != System.Text.Json.JsonValueKind.String
+                || a.GetString() != CreditNoteAuditAction) return null;
+            if (!root.TryGetProperty("extra", out var extra) || extra.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !extra.TryGetProperty("creditNote", out var cn) || cn.ValueKind != System.Text.Json.JsonValueKind.String
+                || !Guid.TryParse(cn.GetString(), out var id)) return null;
+            static string? Str(System.Text.Json.JsonElement r, string name)
+                => r.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+            return new CreditNoteAuditFacts(id, Str(root, "Invoice"), Str(root, "CashSale"));
+        }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
+    /// <summary>ใบลดหนี้ยังค้าง (ยังไม่ออก) — ร่าง/รออนุมัติ · อนุมัติแล้ว/ยกเลิก/ปฏิเสธ = ไม่ค้าง (ปฏิเสธแล้วผู้ปฏิเสธรู้อยู่แล้ว)</summary>
+    public static readonly DocumentStatus[] CreditNotePendingStatuses = { DocumentStatus.Draft, DocumentStatus.WaitingApproval };
+    public static bool CreditNoteStillPending(DocumentStatus status) => Array.IndexOf(CreditNotePendingStatuses, status) >= 0;
+
+    public static string CreditNoteDraftTitle(string creditNoteNumber, string? invoiceNumber)
+        => $"ใบลดหนี้ร่าง {creditNoteNumber} จากตัวช่วยใบซ้ำยังไม่อนุมัติ" + (string.IsNullOrEmpty(invoiceNumber) ? "" : $" (ลดหนี้ {invoiceNumber})");
+
+    public static string CreditNoteDraftDetail(string? invoiceNumber, string? cashSaleNumber, DateTime createdAtUtc, DateTime nowUtc)
+    {
+        var days = Math.Max(0, (int)(ThaiDate.CalendarDateUtc(nowUtc) - ThaiDate.CalendarDateUtc(createdAtUtc)).TotalDays);
+        return $"ระหว่างที่ใบลดหนี้ยังเป็นร่าง ภาษีขายของการขายเดียวกันยังนับสองครั้ง ({invoiceNumber ?? "ใบแจ้งหนี้"} + ใบขายสด {cashSaleNumber ?? "-"}) · ค้าง {days} วัน — "
+               + "ตรวจเหตุผล/ยอดแล้วอนุมัติตามขั้นตอนปกติ หรือยกเลิกใบร่างแล้วเปิดตัวช่วยใหม่";
+    }
+
     /// <summary>หมายเหตุบนใบลดหนี้ร่าง (ข้อความถึงผู้อ่านเอกสาร)</summary>
     public static string CreditNoteNote(string invoiceNumber, string cashSaleNumber) =>
         $"ลดหนี้เต็มใบของ {invoiceNumber} ซึ่งออกซ้ำกับใบขายสด {cashSaleNumber} ของการขายเดียวกัน (ยกเลิกการขายที่บันทึกซ้ำ)";

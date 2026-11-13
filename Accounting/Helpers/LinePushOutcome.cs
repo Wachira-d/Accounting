@@ -14,7 +14,7 @@ public sealed record LinePushClass(LinePushVerdict Verdict, string Code, string?
 
 /// <summary>
 /// รอบ 254 WP-11 L2 (LINE_MULTICHANNEL_DESIGN §3.e ตาราง "การจำแนกผลจาก LINE") — <b>ตัวตัดสินเดียว</b> (pure) ว่าผลจาก <c>LineNotifyService</c>
-/// แปลว่า "ส่งแล้ว / ลองใหม่ / ล้มถาวร" · ผู้เรียก: <c>ContactLineQueueService.ProcessPendingAsync</c> เท่านั้น
+/// แปลว่า "ส่งแล้ว / ลองใหม่ / ล้มถาวร" · ผู้เรียก: <c>ContactLineQueueService.ProcessPendingAsync</c> · <c>LineChatSlipService.NotifyChatLinkedAsync</c> (รอบ 270 — แจ้งแชตหลังผูกสลิป: ลองซ้ำเฉพาะ <see cref="LinePushVerdict.Retry"/>)
 /// <list type="bullet">
 /// <item>200 ⇒ Sent · <b>409</b> (ส่งซ้ำด้วย <c>X-Line-Retry-Key</c> เดิม) ⇒ Sent — LINE รับคำขอนั้นไปแล้ว (ไม่ส่งสองข้อความ · ไม่ใช่สถานะที่ระบบประทับเอง: LINE เป็นผู้ตอบ)</item>
 /// <item>นโยบายปฏิเสธ (<c>RuleCode</c> มีค่า — เช่น กลุ่มกลางของแอดมิน · OA กลางยังไม่เปิด) ⇒ Failed ถาวร</item>

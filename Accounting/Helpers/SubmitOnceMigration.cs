@@ -48,6 +48,8 @@ public static class SubmitOnceMigration
         """,
         // ฝ่ายค้าน S4: เหตุที่ปิดแถวโดยไม่ส่ง (ยกเลิกก่อนถึงคิว)
         """ALTER TABLE "DeferredNotifications" ADD COLUMN IF NOT EXISTS "Note" varchar(300) NULL;""",
+        // รอบ 270 (คำตัดสิน 270-1-2): สถานะที่ข้อความพูดถึง ประทับตอนเข้าคิว (แจ้งแชตหลังผูกสลิป — ผูกใหม่/ปิดแล้ว ⇒ ไม่ส่ง)
+        """ALTER TABLE "DeferredNotifications" ADD COLUMN IF NOT EXISTS "ExpectedKey" varchar(100) NULL;""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_DeferredNotifications_Kind_Entity" ON "DeferredNotifications" ("Kind", "EntityId");""",
         """CREATE INDEX IF NOT EXISTS "IX_DeferredNotifications_Pending" ON "DeferredNotifications" ("DoneAt", "DueAt");""",
     };

@@ -510,7 +510,7 @@ public class LineChatSlipRound260DbTests
 
     private sealed record Push(string To, string Text, Guid RetryKey, string OaScope);
 
-    private static LineChatSlipService SvcWithPush(AccountingDbContext db, Seed s, List<Push> pushes, bool ok = true)
+    private static LineChatSlipService SvcWithPush(AccountingDbContext db, Seed s, List<Push> pushes, bool ok = true, LinePushResult? result = null)
     {
         var intents = new PaymentIntentService(db, new IPaymentProvider[] { new ManualSlipPaymentProvider() },
             Array.Empty<IPaymentCompletionHandler>(), NullLogger<PaymentIntentService>.Instance);
@@ -518,7 +518,7 @@ public class LineChatSlipRound260DbTests
         {
             if (m != nameof(ILineNotifyService.TryPushContactTextAsync)) return null;
             pushes.Add(new Push((string)a[3]!, (string)a[4]!, (Guid)a[5]!, (string)a[1]!));
-            return ok ? LinePushResult.Success : LinePushResult.Fail("LINE 429");
+            return result ?? (ok ? LinePushResult.Success : LinePushResult.Fail("LINE 429"));
         });
         return new LineChatSlipService(db, Secrets, Line(Png("x")), Reader(Sure(535m)), PayLinks(db, s), new SlipEvidenceService(db, intents, s.Storage), s.Storage,
             NullLogger<LineChatSlipService>.Instance, null, line);
@@ -642,5 +642,102 @@ public class LineChatSlipRound260DbTests
         Assert.Null(await SvcWithPush(c3, s, pushes).DispatchLinkedNoticeAsync(s.CompanyId, row.Id));
         Assert.Single(pushes);
         Assert.NotNull(await SvcWithPush(c3, s, new List<Push>(), ok: false).DispatchLinkedNoticeAsync(s.CompanyId, row.Id));
+    }
+
+    // ═══ รอบ 270 (268 ตามต่อ · คำตัดสิน 270-1-2/3) ═══
+
+    /// <summary>สลิปที่ผูกแล้วและมีแถวคิวแจ้งตามหลัง (ชั่วโมงเงียบ) — ตัวช่วยร่วมของสองเทสต์ด้านล่าง</summary>
+    private async Task<(Seed S, LineChatSlip Row, Guid DocId)> QueuedLinkedNoticeAsync(AccountingDbContext db, string tag)
+    {
+        var (s, a, _, reply, row) = await ManyAsync(db, tag);
+        var decline = PostbackData(reply).Single(d => d.Contains("|" + LineChatSlipRule.DeclineToken + "|"));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Svc(c, s, Png("x"), Sure(535m)).HandlePostbackAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), decline);
+        var hourTh = DateTime.UtcNow.AddHours(7).Hour;
+        await db.LineChatSlips.Where(x => x.Id == row.Id).ExecuteUpdateAsync(x => x.SetProperty(r => r.CreatedAt, DateTime.UtcNow.AddHours(-3)));
+        await db.CompanySettings.Where(x => x.CompanyId == s.CompanyId).ExecuteUpdateAsync(x => x.SetProperty(c => c.LineQuietHoursEnabled, true)
+            .SetProperty(c => c.LineQuietStartHour, hourTh).SetProperty(c => c.LineQuietEndHour, (hourTh + 2) % 24));
+        using (var c2 = DbTestDatabase.TryCreateContext()!)
+            await SvcWithPush(c2, s, new List<Push>()).AssignAsync(s.CompanyId, row.Id, new AssignLineChatSlipRequest(a.Id, null, null), "user:test");
+        return (s, row, a.Id);
+    }
+
+    [Fact]
+    public async Task C270_1_2_คิวแจ้งหลังผูก_ประทับการผูก_ถึงคิวแล้วยังผูกเดิม_ส่ง_ทิศตรงข้าม_ปฏิเสธสลิปหรือผูกใหม่_ปิดแถวพร้อมเหตุไม่ส่ง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        // ทิศตรง: การผูกยังเหมือนตอนเข้าคิว ⇒ ส่ง
+        var (s, row, docId) = await QueuedLinkedNoticeAsync(db, "stale270-ok");
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var live = await c.LineChatSlips.AsNoTracking().SingleAsync(x => x.Id == row.Id);
+            var q = await c.DeferredNotifications.AsNoTracking().SingleAsync(d => d.CompanyId == s.CompanyId && d.Kind == DeferredNotifyPolicy.LineChatSlipLinked && d.EntityId == row.Id);
+            Assert.Equal(LineChatSlipRule.LinkKey(live.DocumentId, live.PaymentIntentId), q.ExpectedKey);
+            var pushes = new List<Push>();
+            Assert.Null(await SvcWithPush(c, s, pushes).DispatchLinkedNoticeAsync(s.CompanyId, row.Id));
+            Assert.Single(pushes);
+        }
+        // ทิศตรงข้าม 1: พนักงานปฏิเสธสลิป (รายการรอยืนยันล้ม) ก่อนถึงคิว ⇒ ไม่ส่ง + เหตุ + audit
+        var (s2, row2, _) = await QueuedLinkedNoticeAsync(db, "stale270-rej");
+        var intent2 = await db.LineChatSlips.AsNoTracking().Where(x => x.Id == row2.Id).Select(x => x.PaymentIntentId).SingleAsync();
+        await db.PaymentIntents.Where(i => i.Id == intent2).ExecuteUpdateAsync(x => x.SetProperty(i => i.Status, PaymentIntentStatus.Failed));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var pushes = new List<Push>();
+            var why = await SvcWithPush(c, s2, pushes).DispatchLinkedNoticeAsync(s2.CompanyId, row2.Id);
+            Assert.Empty(pushes);
+            Assert.Contains("ปฏิเสธ", why);
+            Assert.Contains(await c.AuditLogs.AsNoTracking().Where(x => x.CompanyId == s2.CompanyId && x.EntityId == row2.Id.ToString()).Select(x => x.NewValues!).ToListAsync(),
+                v => v.Contains("assign-notice-stale"));
+        }
+        // ทิศตรงข้าม 2: สลิปถูกผูกใหม่กับเอกสารอื่น (ค่าบนแถวเปลี่ยน) ⇒ ไม่ส่งข้อความของการผูกเดิม
+        var (s3, row3, _) = await QueuedLinkedNoticeAsync(db, "stale270-relink");
+        var otherDoc = await InvoiceAsync(db, s3.CompanyId, s3.ContactId, 400m);
+        await db.LineChatSlips.Where(x => x.Id == row3.Id).ExecuteUpdateAsync(x => x.SetProperty(r => r.DocumentId, (Guid?)otherDoc.Id));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var pushes = new List<Push>();
+            Assert.Contains("ผูกใหม่", await SvcWithPush(c, s3, pushes).DispatchLinkedNoticeAsync(s3.CompanyId, row3.Id));
+            Assert.Empty(pushes);
+        }
+        // ทิศตรงข้าม 3: พนักงานปิดสลิป ⇒ ไม่ส่ง
+        var (s4, row4, _) = await QueuedLinkedNoticeAsync(db, "stale270-dismiss");
+        await db.LineChatSlips.Where(x => x.Id == row4.Id).ExecuteUpdateAsync(x => x.SetProperty(r => r.Status, LineChatSlipRule.Statuses.Dismissed));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var pushes = new List<Push>();
+            Assert.Contains("ปิดสลิป", await SvcWithPush(c, s4, pushes).DispatchLinkedNoticeAsync(s4.CompanyId, row4.Id));
+            Assert.Empty(pushes);
+        }
+        _ = docId;
+    }
+
+    [Fact]
+    public async Task C270_1_3_ผลLINEไม่มีสถานะHTTP_เหตุถาวร_ไม่เข้าคิวส่งซ้ำ_ทิศตรงข้าม_เครือข่ายล้ม_เข้าคิวส่งซ้ำครั้งเดียว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        async Task<(Seed S, Guid Row, LineChatSlipAssignResult R)> AssignWith(string tag, LinePushResult result)
+        {
+            var (s, a, _, reply, row) = await ManyAsync(db, tag);
+            var decline = PostbackData(reply).Single(d => d.Contains("|" + LineChatSlipRule.DeclineToken + "|"));
+            using (var c = DbTestDatabase.TryCreateContext()!)
+                await Svc(c, s, Png("x"), Sure(535m)).HandlePostbackAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), decline);
+            using var c2 = DbTestDatabase.TryCreateContext()!;
+            var r = await SvcWithPush(c2, s, new List<Push>(), result: result).AssignAsync(s.CompanyId, row.Id, new AssignLineChatSlipRequest(a.Id, null, null), "user:test");
+            return (s, row.Id, r);
+        }
+        // ไม่มีสถานะ HTTP + ไม่ใช่เครือข่ายล้ม (เช่น ไม่มี token ของ OA) ⇒ ล้มถาวร ⇒ ไม่เข้าคิวส่งซ้ำ
+        var (s1, row1, r1) = await AssignWith("push270-perm", LinePushResult.Fail("ยังไม่ได้ตั้ง token ของ LINE OA"));
+        Assert.StartsWith("แจ้งลูกค้าในแชตไม่สำเร็จ", r1.CustomerNotice);
+        Assert.DoesNotContain("ลองส่งอีกครั้ง", r1.CustomerNotice);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.False(await c.DeferredNotifications.AnyAsync(d => d.CompanyId == s1.CompanyId && d.EntityId == row1));
+        // ทิศตรงข้าม: เครือข่ายล้ม ⇒ ชั่วคราว ⇒ เข้าคิวส่งซ้ำครั้งเดียว
+        var (s2, row2, r2) = await AssignWith("push270-net", new LinePushResult(false, "timeout", TransportError: true));
+        Assert.Contains("ลองส่งอีกครั้ง", r2.CustomerNotice);
+        using var c3 = DbTestDatabase.TryCreateContext()!;
+        Assert.True(await c3.DeferredNotifications.AnyAsync(d => d.CompanyId == s2.CompanyId && d.Kind == DeferredNotifyPolicy.LineChatSlipLinked && d.EntityId == row2));
     }
 }
