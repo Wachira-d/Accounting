@@ -24,6 +24,9 @@ namespace Accounting.Tests.Db;
 /// (3) เพดานการแจ้งต่อปลายทาง · ส่งล้ม ⇒ ลองใหม่ ไม่ประทับว่าแจ้งแล้ว · (4) tenant: บริษัทอื่น/ผู้ขอเปิดการ์ดของปลายทางไม่ได้
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 269 (CI db-test 43376320015 + 43380265759 · "InviteNoticeDueAt does not have a value"): CrossTenantWorkflowService.DispatchPendingLinkRequestNoticesAsync
+// กวาดคำขอเชื่อมคู่ค้าที่ถึงกำหนดของทุกบริษัทในฐานร่วม ⇒ คลาสที่รันขนานส่ง/ล้างคิวแจ้งของคำเชิญที่อีกคลาสเพิ่งสร้าง · คลาสที่สร้างคำเชิญหรือกวาดคิวอยู่ collection เดียวกัน
+[Collection("PartnerLinkRequestSweep")]
 public class PartnerLinkRequestRound264DbTests
 {
     private readonly ITestOutputHelper _out;
