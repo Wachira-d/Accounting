@@ -32,6 +32,8 @@ public static class OutputVatOwnership
     /// <summary>รอบ 269 H2 — ช่อง 0%/ยกเว้นรับเฉพาะใบที่ถือภาษีขายเป็นการขาย (ใบกำกับ หรือใบที่เป็นเจ้าของ VAT) ·
     /// ใบเจ้าของที่ไม่มี VAT และไม่ใช่ใบกำกับ ⇒ ไม่นับ + บรรทัดเตือนบนรายงาน (ผู้ทำบัญชีตัดสินเอง)</summary>
     public const string RuleZeroVatNotTaxInvoice = "PP30-ZERO-VAT-NOT-TAX-INVOICE";
+    /// <summary>รอบ 269 ชุดสอง M5 — ใบแจ้งหนี้ที่ถูกใบกำกับแทน<b>บางส่วน</b> (ใบกำกับที่ออกแล้วถือยอดยกเว้นน้อยกว่าใบแจ้งหนี้) ⇒ ใบแจ้งหนี้ยังถือยอดยกเว้นส่วนที่เหลือ</summary>
+    public const string RuleSupersededExemptRemainder = "PP30-EXEMPT-REMAINDER-AFTER-SUPERSEDE";
 
     /// <summary>ใบนี้อยู่นอก ภ.พ.30 ทุกช่องทั้งสองฝั่งไหม (ตัวตัดสินเดียว — loop หลัก · ปุ่มดึง · ช่องยอดขาย/ซื้อ)</summary>
     public static bool IsOutsidePp30(Document d) => d.IsOpeningBalance;
@@ -56,14 +58,17 @@ public static class OutputVatOwnership
         bool OwnedByVatReceipt,            // มีใบเสร็จที่มี VAT อ้างใบแจ้งหนี้นี้
         decimal Gl21913Net,                // ยอด Cr−Dr บน 21913 ของ JE ที่ใบนี้เป็นต้นทาง
         bool IsOpeningBalance = false,     // รอบ 269 H1 — ใบยอดยกมา
-        bool RelatedIsRollupBillingNote = false);   // รอบ 269 H2 — ใบอ้างเป็นใบวางบิลรวม (BillingNoteKind.IsRollup)
+        bool RelatedIsRollupBillingNote = false,    // รอบ 269 H2 — ใบอ้างเป็นใบวางบิลรวม (BillingNoteKind.IsRollup)
+        decimal? SupersedingExemptBase = null);     // รอบ 269 ชุดสอง M5 — ยอดยกเว้นรวมบนใบกำกับที่ออกแล้วซึ่งอ้างใบแจ้งหนี้นี้ (null = ไม่ถูกแทน/ไม่รู้)
 
     public static Facts FactsOf(Document d, bool supersededByTaxInvoice, bool ownedByVatReceipt, decimal gl21913Net,
-        DocumentType? relatedType, DateTime? relatedOutputVatDueAt, bool relatedIsRollupBillingNote = false)
+        DocumentType? relatedType, DateTime? relatedOutputVatDueAt, bool relatedIsRollupBillingNote = false,
+        decimal? supersedingExemptBase = null)
         => new(d.DocumentType, d.VatAmount, d.TaxPointDate ?? d.DocumentDate, d.OutputVatDueAt,
             d.RelatedDocumentId.HasValue, relatedType, relatedOutputVatDueAt,
             d.IsDeposit, d.DepositOutputVatDeferred, d.DepositAppliedToDocumentId.HasValue, d.DepositOutputVatRecognizedAt,
-            supersededByTaxInvoice, ownedByVatReceipt, gl21913Net, IsOutsidePp30(d), relatedIsRollupBillingNote);
+            supersededByTaxInvoice, ownedByVatReceipt, gl21913Net, IsOutsidePp30(d), relatedIsRollupBillingNote,
+            supersedingExemptBase);
 
     /// <param name="Owns">ใบนี้เป็นเจ้าของภาษีขาย และ VAT ถึงกำหนดแล้ว</param>
     /// <param name="EffectivelyDeferred">มัดจำที่ VAT พัก (ธง หรือ GL 21913 ค้าง) — วันที่ถึงกำหนด = วันรับรู้</param>
@@ -178,7 +183,32 @@ public static class OutputVatOwnership
     {
         var d = Decide(f);
         if (d.Owns) return d;
-        return IsZeroVatSaleOrigin(f) ? Own(d.Branch, f.TaxPoint) : d;
+        if (IsZeroVatSaleOrigin(f)) return Own(d.Branch, f.TaxPoint);
+        // M5: ใบแจ้งหนี้ที่ถูกแปลงเป็นใบกำกับบางส่วน — บรรทัดยกเว้นที่ไม่ได้ไปอยู่บนใบกำกับยังเป็นของใบแจ้งหนี้ (ผู้เรียกนับเฉพาะส่วนที่เหลือ <see cref="ExemptRemainder"/>)
+        if (f.Type == DocumentType.Invoice && f.SupersededByTaxInvoice && !f.IsOpeningBalance && f.SupersedingExemptBase is decimal)
+            return new Decision(d.Branch, true, false, f.TaxPoint, RuleSupersededExemptRemainder,
+                "ใบแจ้งหนี้นี้ถูกแปลงเป็นใบกำกับบางส่วน — ยอดยกเว้นที่ไม่ได้อยู่บนใบกำกับยังนับที่ใบแจ้งหนี้");
+        return d;
+    }
+
+    /// <summary>ยอดยกเว้นที่ใบแจ้งหนี้ยังถือหลังถูกใบกำกับแทนบางส่วน (ไม่ติดลบ)</summary>
+    public static decimal ExemptRemainder(decimal invoiceExemptBase, decimal supersedingExemptBase)
+        => Math.Max(0m, invoiceExemptBase - supersedingExemptBase);
+
+    /// <summary>รอบ 269 ชุดสอง M6 — กติกา<b>รุ่น 269-1</b> (`76130af2` … `0dfaded9`) สำหรับตัวทบทวนเท่านั้น: เจ้าของตาม Decide รุ่นก่อนปิดทางตก
+    /// (ยอดยกมา/ใบวางบิลรวม/ใบสำคัญรับเดี่ยวยังเป็นเจ้าของ) + ใบแจ้งหนี้ VAT 0 ที่ไม่ถูกแทนถือการขายเอง · ช่อง 0% และยกเว้นใช้กติกาเดียวกัน</summary>
+    public static Decision SalesBoxOwnerRule2691(Facts f)
+    {
+        var old = f with
+        {
+            IsOpeningBalance = false, RelatedIsRollupBillingNote = false,
+            Type = f.Type == DocumentType.ReceiptVoucher ? DocumentType.Receipt : f.Type,   // รุ่นนั้น RV = Receipt ทุกเงื่อนไขของ BranchOf
+        };
+        var d = Decide(old);
+        if (d.Owns) return d;
+        if (old.Type == DocumentType.Invoice && old.VatAmount <= 0m && !old.SupersededByTaxInvoice && !old.OwnedByVatReceipt)
+            return Own(Branch.None, old.TaxPoint);
+        return d;
     }
 
     /// <summary>รอบ 269 L3 — ใบลดหนี้/เพิ่มหนี้ฝั่งขายนับเข้าช่อง 0%/ยกเว้นได้เมื่อ (1) ใบเดิมถึงจุดความรับผิดแล้ว (ไม่ใช่ใบที่ VAT ยังพัก — ผู้เรียกส่ง
@@ -186,14 +216,17 @@ public static class OutputVatOwnership
     /// ใบเดิมเป็นใบเสร็จรับชำระ/ใบวางบิล/ใบเสนอราคา/ใบยอดยกมา/ใบไม่มี VAT ⇒ ไม่นับ (ใบเดิมไม่เคยอยู่ในช่อง) · ไม่มีใบเดิม ⇒ นับตามเดิม</summary>
     /// <param name="exemptBox">true = ตัดสินช่อง 3 (ยกเว้น · 269-2-9): ใบแจ้งหนี้เดิมที่ไม่มี VAT (ขายยกเว้นตรง) นับได้ด้วย · ใบเสร็จ/ใบสำคัญรับที่ไม่มี VAT
     /// ไม่นับ (แยกใบรับชำระกับขายสดจากใบลดหนี้ไม่ได้ — ไม่เดา)</param>
+    /// <param name="relatedHasRelated">ใบเดิมเองอ้างใบอื่นไหม (รอบ 269 ชุดสอง M2) — ใบเสร็จ/ใบสำคัญรับที่ไม่มี VAT และ<b>ไม่อ้างใบใด</b> = ขายสด
+    /// (ใบที่ <see cref="ExemptBoxOwner"/> นับ) ⇒ ใบลดหนี้ของมันลดช่อง 3 · ใบที่อ้างใบอื่น = ใบรับชำระ ⇒ ไม่นับ (DocumentService กันแปลงใบรับชำระเป็น CN อยู่แล้ว)</param>
     public static bool AdjustmentNoteCounts(bool hasRelated, DocumentType? relatedType, decimal relatedVatAmount,
-        bool relatedOpeningBalance, bool relatedPendingTaxPoint, bool exemptBox = false)
+        bool relatedOpeningBalance, bool relatedPendingTaxPoint, bool exemptBox = false, bool relatedHasRelated = true)
     {
         if (relatedPendingTaxPoint) return false;
         if (!hasRelated) return true;
         if (relatedOpeningBalance || relatedType == null) return false;
         if (relatedType == DocumentType.TaxInvoice) return true;
         if (exemptBox && relatedType == DocumentType.Invoice) return true;
+        if (exemptBox && (relatedType is DocumentType.Receipt or DocumentType.ReceiptVoucher) && !relatedHasRelated) return true;
         return relatedType is DocumentType.Invoice or DocumentType.Receipt or DocumentType.ReceiptVoucher or DocumentType.DebitNote
             && relatedVatAmount > 0.005m;
     }

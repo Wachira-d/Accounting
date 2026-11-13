@@ -383,6 +383,11 @@ public class TaxFilingExportService : ITaxFilingExportService
         summary.AppendLine($"ภาษีขาย (Output VAT),{report.OutputVat:F2}");
         summary.AppendLine($"ภาษีซื้อ (Input VAT),{report.InputVat:F2}");
         summary.AppendLine($"ภาษีที่ต้องชำระ/ขอคืน (Net VAT),{report.NetVat:F2}");
+        // รอบ 269 ชุดสอง M3/L3 — ยอดตามช่องของแบบ ภ.พ.30 ทางการ (สูตรเดียวกับจอ/PDF/Excel/e-Filing)
+        foreach (var (box, amount) in Accounting.Helpers.Pp30FormBoxes.Figures(
+                     (report.Lines ?? new List<Accounting.Models.Entities.TaxReportLine>()).Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount, l.IsExcluded)),
+                     report.OutputVat, report.InputVat))
+            summary.AppendLine($"{Csv(Accounting.Helpers.Pp30FormBoxes.Label(box))},{amount:F2}");
 
         // §87(3) Chronological — flag เอกสารที่ tax point ย้อนกลับ
         DateTime? prevDate = null;

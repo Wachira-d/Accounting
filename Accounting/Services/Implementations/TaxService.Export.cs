@@ -299,7 +299,7 @@ public partial class TaxService
                 // รอบ 269 M3 — ยอดตามช่องของแบบ ภ.พ.30 ทางการ (เลข/ชื่อ/สูตรจาก Helpers/Pp30FormBoxes ตัวเดียวกับ PDF)
                 if (report.TaxType == TaxType.VAT)
                     foreach (var (box, amount) in Accounting.Helpers.Pp30FormBoxes.Figures(
-                                 (report.Lines ?? new List<TaxReportLine>()).Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.IsExcluded)), report.OutputVat, report.InputVat, report.NetVat))
+                                 (report.Lines ?? new List<TaxReportLine>()).Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount, l.IsExcluded)), report.OutputVat, report.InputVat))
                         rows.Add(Row(W, Accounting.Helpers.Pp30FormBoxes.Label(box), Round2(amount)));
                 break;
         }

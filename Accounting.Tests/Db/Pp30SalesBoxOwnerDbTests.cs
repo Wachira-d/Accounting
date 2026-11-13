@@ -72,7 +72,7 @@ public class Pp30SalesBoxOwnerDbTests
     private static decimal Box(TaxReport r, string code) => r.Lines.Where(l => !l.IsExcluded && l.IncomeTypeCode == code).Sum(l => l.IncomeAmount);
     private static string[] Rows(TaxReport r) => r.Lines.Where(l => !l.IsExcluded && l.DocumentId != null).Select(l => l.Description ?? "").ToArray();
     private static Dictionary<Pp30FormBox, decimal> Form(TaxReport r)
-        => Pp30FormBoxes.Figures(r.Lines.Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.IsExcluded)), r.OutputVat, r.InputVat, r.NetVat).ToDictionary(x => x.Box, x => x.Amount);
+        => Pp30FormBoxes.Figures(r.Lines.Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount, l.IsExcluded)), r.OutputVat, r.InputVat).ToDictionary(x => x.Box, x => x.Amount);
 
     private static async Task<TaxReport> Pp30Async(Seed s)
     {

@@ -1,7 +1,9 @@
 namespace Accounting.Helpers;
 
 /// <summary>บรรทัดของเอกสารเท่าที่ ภ.พ.30 ต้องใช้ (ตัดส่วนที่ไม่เกี่ยวออก)</summary>
-public readonly record struct Pp30Line(decimal VatRate, decimal Amount, decimal VatAmount);
+/// <param name="PosRounding">รอบ 269 ชุดสอง L2 — บรรทัด "ปัดเศษขึ้น" ของใบกำกับจาก POS (VatRate 0 ตามรูปบรรทัด) ไม่ใช่ยอดขาย 0% §80/1 ⇒ นับเป็นฐานเสียภาษี
+/// (ตัวตัดสินเดียว <c>PosTaxInvoiceLines.IsRoundingLine</c>)</param>
+public readonly record struct Pp30Line(decimal VatRate, decimal Amount, decimal VatAmount, bool PosRounding = false);
 
 /// <summary>ยอดขายของเอกสาร 1 ใบ แยกตามช่องของ ภ.พ.30</summary>
 public readonly record struct Pp30SalesSplit(
@@ -63,7 +65,8 @@ public static class Pp30SalesClassifier
         decimal taxable = 0m, zero = 0m, exempt = 0m, vat = 0m;
         foreach (var l in lines)
         {
-            if (l.VatRate == ExemptRate) exempt += l.Amount;
+            if (l.PosRounding) taxable += l.Amount;
+            else if (l.VatRate == ExemptRate) exempt += l.Amount;
             else if (l.VatRate == 0m) zero += l.Amount;
             else { taxable += l.Amount; }
             vat += l.VatAmount;

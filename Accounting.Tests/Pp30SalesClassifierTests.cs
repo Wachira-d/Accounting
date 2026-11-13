@@ -8,8 +8,8 @@ namespace Accounting.Tests;
 ///
 /// ═══ บั๊กจริงที่เทสต์ชุดนี้ล็อกไว้ ═══
 /// รายงานคัดเอกสารด้วย <c>VatAmount != 0</c> ⇒ ใบที่ทั้งใบเป็น 0% หรือยกเว้นมี
-/// <c>VatAmount == 0</c> จึง<b>ไม่เคยเข้ารายงานเลย</b> — ช่อง 7 (ส่งออก §80/1)
-/// หายทั้งช่อง · ช่อง 8 (ยกเว้น §81) นับได้เฉพาะใบที่บังเอิญมีบรรทัด 7% ปนอยู่
+/// <c>VatAmount == 0</c> จึง<b>ไม่เคยเข้ารายงานเลย</b> — ช่อง 2 (ส่งออก §80/1 · Pp30FormBox.ZeroRatedSales)
+/// หายทั้งช่อง · ช่อง 3 (ยกเว้น §81) นับได้เฉพาะใบที่บังเอิญมีบรรทัด 7% ปนอยู่
 /// </summary>
 public class Pp30SalesClassifierTests
 {
@@ -37,7 +37,7 @@ public class Pp30SalesClassifierTests
         Assert.Equal(0m, s.TaxableBase);
         Assert.Equal(0m, s.ExemptBase);
         Assert.True(Pp30SalesClassifier.ShouldReport(s),
-            "ใบส่งออกต้องเข้ารายงาน — ไม่งั้นช่อง 7 ว่างทั้งช่อง (§80/1)");
+            "ใบส่งออกต้องเข้ารายงาน — ไม่งั้นช่อง 2 (0%) ว่างทั้งช่อง (§80/1)");
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public class Pp30SalesClassifierTests
         Assert.Equal(1000m, s.TaxableBase);
         Assert.Equal(300m, s.ExemptBase);
         Assert.Equal(0m, s.ZeroRatedBase);
-        Assert.Equal(1300m, s.TotalSales);   // ช่อง 6
+        Assert.Equal(1300m, s.TotalSales);   // ช่อง 1 (ยอดขายรวม)
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public class Pp30SalesClassifierTests
     public void อัตราอื่นที่ไม่ใช่_7_ก็ยังเป็นฐานที่ต้องเสียภาษี()
     {
         // เผื่ออนาคตอัตราเปลี่ยน (เคยมี 10% ก่อนลดเหลือ 7%) — ทุกอัตรา > 0
-        // ต้องเข้าช่อง 9 ไม่ใช่ตกไปช่องอื่น
+        // ต้องเข้าช่อง 4 (ยอดขายที่ต้องเสียภาษี) ไม่ใช่ตกไปช่องอื่น
         var s = Pp30SalesClassifier.Split(new[] { L(10m, 1000m, 100m) });
         Assert.Equal(1000m, s.TaxableBase);
         Assert.Equal(0m, s.ZeroRatedBase);
@@ -130,7 +130,7 @@ public class Pp30SalesClassifierTests
     [Fact]
     public void ยอดติดลบ_ใบลดหนี้_ยังแยกช่องได้ตามปกติ()
     {
-        // ใบลดหนี้ส่งออก: ฐานช่อง 7 ติดลบ ไม่ใช่ถูกโยนทิ้ง
+        // ใบลดหนี้ส่งออก: ฐานช่อง 2 (0%) ติดลบ ไม่ใช่ถูกโยนทิ้ง
         var s = Pp30SalesClassifier.Split(new[] { L(0m, -20000m) });
         Assert.Equal(-20000m, s.ZeroRatedBase);
         Assert.True(Pp30SalesClassifier.ShouldReport(s));

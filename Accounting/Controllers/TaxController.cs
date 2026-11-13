@@ -224,6 +224,17 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<string>(true, "ลบรายงานภาษีสำเร็จ"));
     }
 
+    /// <summary>รอบ 269 ชุดสอง H1 — ร่างรายงานภาษีที่ล้าสมัยของ N เดือนล่าสุด (อ่านอย่างเดียว · สูงสุด 12) · กด "สร้างใหม่" ที่แถบเพื่อคำนวณใหม่</summary>
+    [HttpGet("stale-drafts")]
+    public async Task<ActionResult<ApiResponse<List<StaleDraftReportRow>>>> GetStaleDrafts(Guid companyId, [FromQuery] int months = 2)
+    {
+        if (await RequireTaxAsync(companyId, "ดูรายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
+        var result = await _taxService.GetStaleDraftReportsAsync(companyId, months);
+        return Ok(new ApiResponse<List<StaleDraftReportRow>>(true, result,
+            result.Count == 0 ? "ร่างทุกงวดตรงกับข้อมูลปัจจุบัน" : $"พบร่างล้าสมัย {result.Count} งวด"));
+    }
+
+    /// <summary>สร้างร่างที่ยังไม่มีของ N เดือนล่าสุด (สูงสุด 12) — รอบ 269 ชุดสอง H1: ไม่ลบ/ไม่สร้างทับร่างเดิมแล้ว</summary>
     [HttpPost("auto-refresh")]
     public async Task<ActionResult<ApiResponse<object>>> AutoRefresh(Guid companyId, [FromQuery] int months = 2)
     {

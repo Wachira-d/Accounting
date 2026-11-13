@@ -84,6 +84,10 @@ public static class PosTaxInvoiceLines
     public const string ServiceChargeLabel = "ค่าบริการ";
     public const string RoundingLabel = "ปัดเศษ";
 
+    /// <summary>บรรทัด "ปัดเศษขึ้น" ที่ตัวนี้สร้าง (คำอธิบาย = <see cref="RoundingLabel"/> · ไม่มีรหัสสินค้า · VatRate 0) — ภ.พ.30 ไม่นับเป็นยอดขาย 0% (รอบ 269 ชุดสอง L2)</summary>
+    public static bool IsRoundingLine(string? description, string? productCode, decimal vatRate)
+        => vatRate == 0m && string.IsNullOrEmpty(productCode) && string.Equals(description?.Trim(), RoundingLabel, StringComparison.Ordinal);
+
     private const string AdjustmentUnit = "ครั้ง";
 
     /// <summary>ยอดรวมที่ใบกำกับต้องแสดง (รวม VAT) = เงินที่ลูกค้าจ่ายสำหรับสินค้า/บริการ

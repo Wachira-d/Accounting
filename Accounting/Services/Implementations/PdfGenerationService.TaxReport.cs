@@ -206,7 +206,7 @@ public partial class PdfGenerationService
         var active = report.Lines.Where(l => !l.IsExcluded).ToList();
         // รอบ 269 M3 — ยอดทุกช่องจากสูตรเดียวกับ Excel (Helpers/Pp30FormBoxes.Figures)
         var figures = Accounting.Helpers.Pp30FormBoxes.Figures(
-                report.Lines.Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.IsExcluded)), report.OutputVat, report.InputVat, report.NetVat)
+                report.Lines.Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount, l.IsExcluded)), report.OutputVat, report.InputVat)
             .ToDictionary(x => x.Box, x => x.Amount);
         // ยอดซื้อยกเว้น §81 ไม่มีช่องในแบบ — แสดงเป็นหมายเหตุ (เดิมถูกนับเป็น
         // ยอดขายยกเว้นช่องยกเว้น). รายงานที่สร้าง**ก่อน**การแยกช่อง 0%/ยกเว้น รหัสนี้รวม
@@ -216,8 +216,8 @@ public partial class PdfGenerationService
             .Sum(l => l.IncomeAmount);
 
         string M(decimal v) => v.ToString("N2");
-        var payable = figures[Accounting.Helpers.Pp30FormBox.TaxPayable];
-        var credit = figures[Accounting.Helpers.Pp30FormBox.TaxOverpaid];
+        var payable = figures[Accounting.Helpers.Pp30FormBox.NetTaxPayable];
+        var credit = figures[Accounting.Helpers.Pp30FormBox.NetTaxOverpaid];
 
         page.Content().PaddingTop(12).Column(col =>
         {
@@ -241,12 +241,12 @@ public partial class PdfGenerationService
                 => Box(Accounting.Helpers.Pp30FormBoxes.No(b), Accounting.Helpers.Pp30FormBoxes.Name(b), value, strong, color);
             foreach (var (b, amount) in figures)
             {
-                if (b == Accounting.Helpers.Pp30FormBox.Purchases || b == Accounting.Helpers.Pp30FormBox.TaxPayable) col.Item().PaddingVertical(6);
+                if (b is Accounting.Helpers.Pp30FormBox.Purchases or Accounting.Helpers.Pp30FormBox.TaxPayable or Accounting.Helpers.Pp30FormBox.OverpaidBroughtForward) col.Item().PaddingVertical(6);
                 var isVat = b is Accounting.Helpers.Pp30FormBox.OutputVat or Accounting.Helpers.Pp30FormBox.InputVat;
-                var strong = (b == Accounting.Helpers.Pp30FormBox.TaxPayable && payable > 0) || (b == Accounting.Helpers.Pp30FormBox.TaxOverpaid && credit > 0);
+                var strong = (b == Accounting.Helpers.Pp30FormBox.NetTaxPayable && payable > 0) || (b == Accounting.Helpers.Pp30FormBox.NetTaxOverpaid && credit > 0);
                 var color = isVat ? theme
-                    : b == Accounting.Helpers.Pp30FormBox.TaxPayable ? (payable > 0 ? "#DC2626" : "#0F172A")
-                    : b == Accounting.Helpers.Pp30FormBox.TaxOverpaid ? (credit > 0 ? "#16A34A" : "#0F172A") : null;
+                    : b == Accounting.Helpers.Pp30FormBox.NetTaxPayable ? (payable > 0 ? "#DC2626" : "#0F172A")
+                    : b == Accounting.Helpers.Pp30FormBox.NetTaxOverpaid ? (credit > 0 ? "#16A34A" : "#0F172A") : null;
                 FormBox(b, M(amount), strong, color);
             }
 
