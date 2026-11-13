@@ -57,12 +57,12 @@ public interface IDocumentPayLinkService
     /// <summary>เหมือน <see cref="RequestNewLinkAsync"/> สำหรับผู้เรียกที่พิสูจน์สิทธิ์ด้วยทางอื่นแล้ว (การ์ด LINE)</summary>
     Task<CustomerLinkRequestResult> RequestLinkForDocumentAsync(Guid companyId, Guid documentId, string source, CancellationToken ct = default);
 
-    /// <summary>รอบ 267 P4 (267-1-43): ผู้ถือลิงก์ของใบ (เช่นใบวางบิล) ขอเปิด<b>หน้าเอกสารของใบที่เกี่ยวข้อง</b>เพื่อชำระรายใบ — ใบนั้นต้องอยู่ในชุดที่หน้า
+    /// <summary>รอบ 267 P4 (267-1-47): ผู้ถือลิงก์ของใบ (เช่นใบวางบิล) ขอเปิด<b>หน้าเอกสารของใบที่เกี่ยวข้อง</b>เพื่อชำระรายใบ — ใบนั้นต้องอยู่ในชุดที่หน้า
     /// แสดงและมีปุ่ม "ชำระใบนี้" (<c>CustomerDocPageRelated.PayOffered</c>) · ออกลิงก์ผ่านตัวออกเดียว (<see cref="EnsureCustomerLinkAsync"/>) ·
     /// <c>Found</c> false = ข้อความเดียว (ไม่พบ) · <c>Path</c> = ที่อยู่ภายในเว็บของหน้าเอกสารใบนั้น · <c>Message</c> = เหตุที่เปิดไม่ได้</summary>
     Task<(bool Found, string? Path, string? Message)> RelatedPageLinkAsync(Guid companyId, string token, Guid relatedId, CancellationToken ct = default);
 
-    /// <summary>รอบ 267 P4 (267-1-44): เอกสาร + ผู้ติดต่อ ที่ token นี้ส่งหนังสือรับรอง 50 ทวิ ได้ ณ ตอนนี้ (หน้าเสนอฟอร์มจริง) · null = ไม่ได้</summary>
+    /// <summary>รอบ 267 P4 (267-1-48): เอกสาร + ผู้ติดต่อ ที่ token นี้ส่งหนังสือรับรอง 50 ทวิ ได้ ณ ตอนนี้ (หน้าเสนอฟอร์มจริง) · null = ไม่ได้</summary>
     Task<(Guid DocumentId, Guid ContactId)?> WhtCertTargetAsync(Guid companyId, string token, CancellationToken ct = default);
 
     /// <summary>บล็อกลิงก์ชำระเงินสำหรับอีเมลตามตาราง — null เมื่อไม่แนบ (ปิด · ใบไม่เข้าเงื่อนไข · บริษัทยังไม่ตั้งรับชำระออนไลน์)</summary>
@@ -105,7 +105,7 @@ public interface IPostPaymentAutomationService
     /// <summary>ลองแถวที่หยุด/ล้มใหม่ (ผู้ใช้กดหลังแก้ข้อมูล)</summary>
     Task RetryAsync(Guid companyId, Guid runId, CancellationToken ct = default);
 
-    /// <summary>รอบ 267 P4 (267-1-40): ตั้งค่า "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบของใบที่ออกแล้ว — ชื่อ Inherit · On · Off (null = ไม่แตะช่องนั้น) ·
+    /// <summary>รอบ 267 P4 (267-1-44): ตั้งค่า "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบของใบที่ออกแล้ว — ชื่อ Inherit · On · Off (null = ไม่แตะช่องนั้น) ·
     /// ตัวตัดสินเดียวกับฟอร์มเอกสาร · มีผลกับการรับชำระครั้งถัดไป · งานที่ยังรอประมวลผล/กดลองใหม่ใช้ค่าปัจจุบัน (ปิดที่ใบ = งานที่ค้างจบพร้อมเหตุ) · เปิดทีหลังไม่ออกใบเสร็จย้อนหลังของการชำระที่ผ่านไปแล้ว · ลง audit chain</summary>
     Task SetDocumentLayerAsync(Guid companyId, Guid documentId, string? receiptMode, string? partialMode, Guid? userId, string actor,
         CancellationToken ct = default);
@@ -189,6 +189,13 @@ public sealed record CustomerDocPageView(
     public string? RelatedPdfBase { get; init; }
     /// <summary>ที่อยู่เส้น "ขอลิงก์ใหม่/ขอลิงก์ทำรายการ" ของโหมดนี้ (POST) · null = ไม่มี</summary>
     public string? RequestLinkPath { get; init; }
+    /// <summary>รอบ 267 P2: ฟอร์มผู้ลงนามของปุ่มตอบรับที่เปิดอยู่ (ข้อความรับรอง/ยินยอม/ป้าย จากเซิร์ฟเวอร์) · null = ไม่มีปุ่มตอบรับที่เปิด</summary>
+    public CustomerDocRespondForm? Respond { get; init; }
+    /// <summary>รอบ 267 P2: คำตอบที่ลูกค้าเคยทำบนใบนี้ (ใหม่ → เก่า · ชื่อ/เวลา/Rev — ไม่มี IP) + ฐานของที่อยู่ดาวน์โหลดฉบับที่ลงนาม (ต่อท้ายด้วย <c>{actionId}</c>)</summary>
+    public IReadOnlyList<CustomerDocResponseItem> Responses { get; init; } = Array.Empty<CustomerDocResponseItem>();
+    public string? SignedCopyBase { get; init; }
+    /// <summary>รอบ 267 P2: เส้นขอรหัสยืนยันอีเมล (POST) — ใช้เมื่อ <c>Respond.Actions[].OtpRequired</c></summary>
+    public string? OtpPath { get; init; }
 
     // ── รอบ 267 P4 (หลังจ่าย) ──
     /// <summary>สถานะสลิป · ข้อความใบเสร็จ · การ์ด 50 ทวิ (โหมดลิงก์/พอร์ทัล) · null = โหมดนี้ไม่มีส่วนหลังจ่าย</summary>
@@ -206,6 +213,35 @@ public sealed record CustomerDocPageView(
         0m, 0m, 0m, 0m, 0m, 0m, 0m, Array.Empty<CustomerDocPageLine>(), Array.Empty<CustomerDocPage.PageAction>(),
         Array.Empty<CustomerDocPageRelated>(), CustomerDocPage.Labels(false, Accounting.Models.Enums.DocumentType.Invoice), null, null, null);
 }
+
+/// <summary>รอบ 267 P2 — ฟอร์มผู้ลงนามของหน้าเอกสาร: เลข Rev + hash เนื้อหาที่หน้าแสดง (ส่งกลับตอนกด — ตอบรับได้เฉพาะฉบับที่เห็น) ·
+/// รุ่นข้อความรับรอง · ปุ่มที่เปิดพร้อมข้อความของแต่ละปุ่ม · ป้ายของฟอร์ม — ทุกค่าจาก <c>CustomerSignText</c>/<c>CustomerSignRule</c></summary>
+public sealed record CustomerDocRespondForm(
+    int RevisionNumber, string ContentHash, string AttestationVersion, bool TitleRequired,
+    IReadOnlyList<CustomerDocRespondAction> Actions, IReadOnlyList<CustomerDocRespondReason> DeclineReasons,
+    string PrivacyNotice, string LegalReference, IReadOnlyDictionary<string, string> Labels);
+
+/// <summary>ปุ่มตอบรับหนึ่งปุ่ม — <paramref name="Signature"/>: required · optional · none</summary>
+public sealed record CustomerDocRespondAction(
+    string Id, string Label, string Attestation, string Consent, string Signature, bool OtpRequired, bool NeedsReason, bool NeedsMessage);
+
+public sealed record CustomerDocRespondReason(string Code, string Label);
+
+/// <summary>คำตอบของลูกค้าหนึ่งครั้งบนหน้าเอกสาร — <paramref name="SignedCopyExpected"/> = คำตอบชนิดที่มีฉบับที่ลงนาม (ยังไม่ Ready = กำลังเตรียม)</summary>
+public sealed record CustomerDocResponseItem(
+    Guid ActionId, string Action, string Label, int RevisionNumber, string SignerName, string? SignerTitle, DateTime At,
+    bool SignedCopyReady, bool SignedCopyExpected);
+
+/// <summary>รอบ 267 P2 — หลักฐานการตอบรับของลูกค้าสำหรับพนักงาน (หน้าเอกสารของพนักงาน/ไทม์ไลน์ของ P3) + คำแนะนำหลังยอมรับ + คำเตือนอากรแสตมป์ (เตือนเท่านั้น)</summary>
+public sealed record CustomerDocEvidenceView(
+    IReadOnlyList<CustomerDocEvidenceItem> Items, string? CustomerResponse, string? ConvertSuggestion, IReadOnlyList<string> ConvertTo,
+    string? StampDutyWarning, string? StampDutyPage, string LegalReference);
+
+public sealed record CustomerDocEvidenceItem(
+    Guid ActionId, string Action, string Label, int RevisionNumber, string Channel, string IdentityLevel,
+    string? SignerFirstName, string? SignerLastName, string? SignerTitle, string? SignerOrgName, string? SignerEmail, bool EmailVerified,
+    string? AttestationVersion, string? ReasonCode, string? ReasonLabel, string? Message, string ContentHash, string? Ip,
+    bool HasSignature, string? SignedPdfSha256, DateTime? SignedPdfAt, DateTime At, DateTime? ErasedAt, bool IsCurrentRevision);
 
 /// <summary>ผลของการขอลิงก์ใหม่ — <paramref name="Found"/> false = ข้อความเดียว (ไม่พบ/เพิกถอน/เกินช่วงขอ) ·
 /// <paramref name="Recorded"/> true = บันทึกคำขอครั้งนี้ (ผู้เรียกแจ้งพนักงาน) · false = วันนี้ขอไปแล้ว (ไม่แจ้งซ้ำ)</summary>
@@ -225,7 +261,7 @@ public sealed record DocumentAutoSendSettingsDto(
     // รอบ 259-3 ฝ่ายค้าน L5: ผู้เรียกแก้ค่าชุดนี้ได้ไหม (PUT = เจ้าของบริษัท) — หน้าที่แสดงสวิตช์ล็อกช่อง + บอกเหตุ · null = ไม่ได้ตรวจ
     bool? CanEdit = null)
 {
-    /// <summary>รอบ 267 P4 (267-1-40): ชนิดเอกสาร (ชื่อ enum) ที่ตั้งค่า "ออกใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบได้ — ฟอร์มเอกสารแสดงช่องตามชุดนี้
+    /// <summary>รอบ 267 P4 (267-1-44): ชนิดเอกสาร (ชื่อ enum) ที่ตั้งค่า "ออกใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบได้ — ฟอร์มเอกสารแสดงช่องตามชุดนี้
     /// (ตัวตัดสิน <c>PostPaymentAutomationPolicy.DocumentLayerAllowed</c> · หน้าเว็บไม่มีรายการชนิดของตัวเอง)</summary>
     public IReadOnlyList<string> PostPayDocumentTypes { get; init; } =
         DocumentPayLinkPolicy.PayableTypes.Where(PostPaymentAutomationPolicy.DocumentLayerAllowed).Select(t => t.ToString()).ToList();
@@ -268,7 +304,7 @@ public sealed record DocumentPayLinkStatusDto(
     public string? PageUrl { get; init; }
     public string? PageLinkNote { get; init; }
 
-    /// <summary>รอบ 267 P4 (267-1-40): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ (ชื่อ Inherit · On · Off) + ข้อความค่าที่มีผลตอนนี้ (เซิร์ฟเวอร์ประกอบ —
+    /// <summary>รอบ 267 P4 (267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ (ชื่อ Inherit · On · Off) + ข้อความค่าที่มีผลตอนนี้ (เซิร์ฟเวอร์ประกอบ —
     /// ชั้นไหนตัดสิน) · <see cref="PostPaySettingApplies"/> false = ใบชนิดนี้ตั้งไม่ได้ (หน้าไม่แสดงช่อง)</summary>
     public bool PostPaySettingApplies { get; init; }
     public string PostPayReceiptMode { get; init; } = AutopilotSettingsResolver.Inherit;

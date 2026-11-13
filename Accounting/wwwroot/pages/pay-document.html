@@ -52,7 +52,17 @@
     .rel.st-ok { border-color: #bbf7d0; background: #f0fdf4; }
     .rel.st-bad { border-color: #fecaca; background: #fef2f2; }
     .rel .btn { margin-top: 6px; padding: 9px; font-size: 14px; }
-    .linkbtn { background: none; border: 0; padding: 0; color: #1d4ed8; font-weight: 600; font-family: inherit; font-size: inherit; cursor: pointer; text-decoration: underline; }
+    .aplink { background: none; border: 0; padding: 0; color: #1d4ed8; font-weight: 600; font-family: inherit; font-size: inherit; cursor: pointer; text-decoration: underline; }
+    /* รอบ 267 P2 — ฟอร์มผู้ลงนามบนหน้าเอกสาร */
+    .sign { border: 1px solid #c7d2fe; background: #f8fafc; border-radius: 10px; padding: 12px; margin-top: 10px; font-size: 14px; }
+    .sign label { display: block; font-size: 13px; margin: 8px 0 3px; }
+    .sign input[type=text], .sign input[type=email], .sign select, .sign textarea { width: 100%; font-family: inherit; font-size: 14px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+    .sign .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .sign .tick { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px; font-size: 13px; line-height: 1.5; }
+    .sign .tick input { margin-top: 3px; }
+    .sign canvas { width: 100%; height: 140px; border: 1px dashed #94a3b8; border-radius: 8px; background: #fff; touch-action: none; display: block; }
+    .sign .fine { font-size: 12px; color: #64748b; line-height: 1.5; margin-top: 8px; }
+    .linkbtn { background: none; border: 0; color: #1d4ed8; font-family: inherit; font-size: 12px; cursor: pointer; padding: 2px 0; text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -177,7 +187,7 @@
     function pdfLinkHtml(path, label, cls, fileName) {
       if (!path) return '';
       return portalDoc
-        ? `<button type="button" class="${cls || 'linkbtn'}" data-auth-download="${esc(path)}" data-auth-name="${esc(fileName || '')}">${esc(label)}</button>`
+        ? `<button type="button" class="${cls || 'aplink'}" data-auth-download="${esc(path)}" data-auth-name="${esc(fileName || '')}">${esc(label)}</button>`
         : `<a ${cls ? `class="${cls}" ` : ''}href="${esc(path)}" target="_blank" rel="noopener">${esc(label)}</a>`;
     }
 
@@ -342,9 +352,10 @@
           const rp = safePath(p.requestLinkPath);
           if (a.enabled && rp) out.push(`<button type="button" class="btn alt" id="reqLinkBtn">${esc(a.label)}</button><div id="reqLinkMsg" role="status"></div>`);
         } else {
-          // ตอบรับ (ยอมรับใบเสนอราคา · เซ็นรับสินค้า) — ช่วงเปลี่ยนผ่าน: เซิร์ฟเวอร์ให้ที่อยู่หน้าตอบรับเดิม (token ตัวเดียวกัน)
+          // รอบ 267 P2 — ตอบรับ (ยอมรับ · ไม่รับ · ขอแก้ ใบเสนอราคา · เซ็นรับสินค้า): ปุ่มเปิดฟอร์มผู้ลงนามบนหน้านี้ ·
+          // ปุ่มไหนเปิด/ข้อความ/ฟอร์มของแต่ละปุ่ม มาจากเซิร์ฟเวอร์ (page.actions + page.respond) · ส่งคำตอบที่เส้นที่เซิร์ฟเวอร์ให้ (a.href)
           const href = safePath(a.href);
-          if (a.enabled && href) out.push(`<a class="btn go" href="${esc(href)}">${esc(a.label)}</a>`);
+          if (a.enabled && href && respondSpec(p, a.id)) out.push(`<button type="button" class="btn ${a.id === 'accept' || a.id === 'sign-delivery' ? 'go' : 'alt'}" data-respond="${esc(a.id)}">${esc(a.label)}</button>`);
           else if (p.respondedAt) out.push(`<div class="ok">✓ ${esc(a.disabledReason || a.label)}${p.respondedBy ? ' — ' + esc(p.respondedBy) : ''} · ${esc(dateText(p.respondedAt))}</div>`);
           else out.push(`<button type="button" class="btn go" disabled>${esc(a.label)}</button>${a.disabledReason ? `<div class="why">${esc(a.disabledReason)}</div>` : ''}`);
         }
@@ -422,6 +433,8 @@
         ${linesHtml(p, L)}
         ${totalsHtml(p, L)}
         ${actionButtonsHtml(p)}
+        <div id="respondBox"></div>
+        ${respondHistoryHtml(p)}
         ${paySection}
         ${afterPayHtml(p, L)}
         ${relatedHtml(p, L)}
@@ -435,6 +448,152 @@
       const rb = document.getElementById('reqLinkBtn');
       if (rb) rb.addEventListener('click', () => requestLink(safePath(p.requestLinkPath), rb));
       bindAfterPay(p);   // รอบ 267 P4
+      card.querySelectorAll('[data-respond]').forEach(b => b.addEventListener('click', () => openRespondForm(b.dataset.respond)));
+    }
+
+    // ═══════════════ รอบ 267 P2 — ผู้ลงนามบนหน้าเอกสาร ═══════════════
+    // ข้อความรับรอง/ยินยอม/ป้าย/รายการเหตุผล/ต้องเซ็นไหม/ต้องใช้รหัสอีเมลไหม มาจากเซิร์ฟเวอร์ (page.respond — CustomerSignText/CustomerSignRule) ·
+    // หน้านี้ไม่ตัดสินอะไร: ส่งสิ่งที่ผู้ลงนามกรอก + เลข Rev/hash เนื้อหาที่หน้านี้แสดง แล้วแสดงคำตอบของเซิร์ฟเวอร์ (ช่องขาด/เอกสารถูกแก้ = ข้อความจากเซิร์ฟเวอร์)
+    function respondSpec(p, id) {
+      const f = p && p.respond;
+      return f && Array.isArray(f.actions) ? f.actions.find(x => x.id === id) || null : null;
+    }
+
+    // จำข้อมูลผู้ลงนาม "บนเครื่องนี้เท่านั้น" (localStorage — ไม่ส่งไปเก็บที่ระบบเพิ่ม · ไม่ติ๊กไว้ก่อน) · เบราว์เซอร์ที่ปิด storage = ไม่จำ
+    const SIGNER_KEY = 'nextacc.docpage.signer';
+    function loadRemembered() {
+      try { const v = JSON.parse(localStorage.getItem(SIGNER_KEY) || 'null'); return v && typeof v === 'object' ? v : null; } catch { return null; }
+    }
+    function saveRemembered(remember, signer) {
+      try {
+        if (remember) localStorage.setItem(SIGNER_KEY, JSON.stringify({ firstName: signer.firstName, lastName: signer.lastName, title: signer.title, email: signer.email }));
+        else localStorage.removeItem(SIGNER_KEY);
+      } catch { /* จำไม่ได้ = ไม่จำ (ไม่กระทบการลงนาม) */ }
+    }
+
+    function respondHistoryHtml(p) {
+      const list = p.responses || [];
+      if (!list.length) return '';
+      const F = (p.respond && p.respond.labels) || {};
+      const base = safePath(p.signedCopyBase);
+      const dl = (p.labels && p.labels.signedCopy) || F.signedCopy;
+      const pending = (p.labels && p.labels.signedCopyPending) || F.signedCopyPending;
+      return `<h2>${esc((p.labels && p.labels.history) || F.history || '')}</h2>` + list.map(r => `<div class="rel">
+          <b>${esc(r.label)}</b> · Rev.${esc(r.revisionNumber)} · ${esc(dateText(r.at))}<br>
+          ${esc(r.signerName)}${r.signerTitle ? ' · ' + esc(r.signerTitle) : ''}
+          ${r.signedCopyReady && base ? `<br><a href="${esc(base + encodeURIComponent(r.actionId))}" target="_blank" rel="noopener">${esc(dl || '')}</a>`
+            : r.signedCopyExpected ? `<br><span style="color:#92400e">${esc(pending || '')}</span>` : ''}
+        </div>`).join('');
+    }
+
+    let signPad = null;   // { canvas, ink } ของฟอร์มที่เปิดอยู่
+    function openRespondForm(actionId) {
+      const p = view.page;
+      const spec = respondSpec(p, actionId);
+      const act = (p.actions || []).find(a => a.id === actionId);
+      const box = document.getElementById('respondBox');
+      if (!spec || !act || !box) return;
+      const F = p.respond.labels || {};
+      const mem = loadRemembered() || {};
+      const sig = spec.signature;   // required · optional · none
+      box.innerHTML = `<form class="sign" id="respondForm" novalidate>
+          <b>${esc(spec.label)}</b>
+          <div class="row2">
+            <div><label for="sgFirst">${esc(F.firstName)}</label><input type="text" id="sgFirst" maxlength="100" autocomplete="given-name" value="${esc(mem.firstName || '')}"></div>
+            <div><label for="sgLast">${esc(F.lastName)}</label><input type="text" id="sgLast" maxlength="100" autocomplete="family-name" value="${esc(mem.lastName || '')}"></div>
+          </div>
+          <label for="sgTitle">${esc(F.title)}</label><input type="text" id="sgTitle" maxlength="100" autocomplete="organization-title" value="${esc(mem.title || '')}">
+          <label for="sgEmail">${esc(spec.otpRequired ? F.emailRequired : F.email)}</label><input type="email" id="sgEmail" maxlength="254" autocomplete="email" value="${esc(mem.email || '')}">
+          ${spec.otpRequired ? `<div class="info">${esc(F.otpNote)}</div>
+            <button type="button" class="btn alt" id="sgOtpSend">${esc(F.otpSend)}</button><div id="sgOtpMsg" role="status"></div>
+            <label for="sgOtp">${esc(F.otpCode)}</label><input type="text" id="sgOtp" maxlength="6" inputmode="numeric" autocomplete="one-time-code">` : ''}
+          ${spec.needsReason ? `<label for="sgReason">${esc(F.reason)}</label><select id="sgReason"><option value=""></option>${(p.respond.declineReasons || []).map(r => `<option value="${esc(r.code)}">${esc(r.label)}</option>`).join('')}</select>` : ''}
+          ${spec.needsReason || spec.needsMessage ? `<label for="sgMessage">${esc(spec.needsMessage ? F.changeMessage : F.message)}</label><textarea id="sgMessage" maxlength="1000" rows="3"></textarea>`
+            : `<label for="sgNote">${esc(F.note)}</label><input type="text" id="sgNote" maxlength="500">`}
+          ${sig !== 'none' ? `<label>${esc(sig === 'required' ? F.signature : F.signatureOptional)}</label><canvas id="sgCanvas" width="600" height="180"></canvas>
+            <button type="button" class="linkbtn" id="sgClear">${esc(F.clear)}</button>` : ''}
+          <label class="tick"><input type="checkbox" id="sgAttest"><span>${esc(spec.attestation)}</span></label>
+          <label class="tick"><input type="checkbox" id="sgRemember"${mem.firstName ? ' checked' : ''}><span>${esc(F.remember)}</span></label>
+          <div class="fine">${esc(spec.consent)}</div>
+          <div class="fine">${esc(p.respond.privacyNotice)}</div>
+          <div id="sgMsg" role="alert"></div>
+          <button type="submit" class="btn ${actionId === 'accept' || actionId === 'sign-delivery' ? 'go' : ''}" id="sgSubmit">${esc(F.submit)} — ${esc(spec.label)}</button>
+          <button type="button" class="btn alt" id="sgCancel">${esc(F.cancel)}</button>
+        </form>`;
+      signPad = sig !== 'none' ? initSignPad(document.getElementById('sgCanvas')) : null;
+      const clear = document.getElementById('sgClear');
+      if (clear && signPad) clear.addEventListener('click', () => signPad.clear());
+      document.getElementById('sgCancel').addEventListener('click', () => { box.innerHTML = ''; signPad = null; });
+      document.getElementById('respondForm').addEventListener('submit', (e) => { e.preventDefault(); submitRespond(actionId, safePath(act.href)); });
+      const otpBtn = document.getElementById('sgOtpSend');
+      if (otpBtn) otpBtn.addEventListener('click', () => sendOtp(otpBtn));
+      box.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+
+    // ช่องวาดลายเซ็น (pointer events — เมาส์/นิ้ว/ปากกา) · ส่งเป็น PNG เฉพาะเมื่อมีเส้นจริง (เซิร์ฟเวอร์ตรวจรูปซ้ำด้วยตัวตรวจเดียว)
+    function initSignPad(canvas) {
+      if (!canvas) return null;
+      const ctx = canvas.getContext('2d');
+      const pad = { canvas, ink: false, clear() { ctx.clearRect(0, 0, canvas.width, canvas.height); pad.ink = false; } };
+      ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0f172a';
+      let drawing = false;
+      const pos = (e) => { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * canvas.width / r.width, y: (e.clientY - r.top) * canvas.height / r.height }; };
+      canvas.addEventListener('pointerdown', (e) => { drawing = true; canvas.setPointerCapture(e.pointerId); const q = pos(e); ctx.beginPath(); ctx.moveTo(q.x, q.y); e.preventDefault(); });
+      canvas.addEventListener('pointermove', (e) => { if (!drawing) return; const q = pos(e); ctx.lineTo(q.x, q.y); ctx.stroke(); pad.ink = true; e.preventDefault(); });
+      const stop = () => { drawing = false; };
+      canvas.addEventListener('pointerup', stop); canvas.addEventListener('pointercancel', stop); canvas.addEventListener('pointerleave', stop);
+      return pad;
+    }
+
+    function signerFromForm() {
+      const val = (id) => (document.getElementById(id)?.value || '').trim();
+      return { firstName: val('sgFirst'), lastName: val('sgLast'), title: val('sgTitle'), email: val('sgEmail'),
+        attestationChecked: !!document.getElementById('sgAttest')?.checked, attestationVersion: view.page.respond.attestationVersion };
+    }
+
+    async function sendOtp(btn) {
+      const msg = document.getElementById('sgOtpMsg');
+      const path = safePath(view.page.otpPath);
+      const F = view.page.respond.labels || {};
+      if (!path || !msg) return;
+      btn.disabled = true; msg.className = 'msg'; msg.textContent = '...';
+      let r, j = null;
+      try { r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: signerFromForm().email }) }); j = await r.json().catch(() => null); }
+      catch { msg.className = 'msg bad'; msg.textContent = F.connection || ''; btn.disabled = false; return; }
+      if (!r.ok || !j || !j.success) { msg.className = 'msg bad'; msg.textContent = (j && j.message) || F.connection || ''; btn.disabled = false; return; }
+      msg.className = 'msg ok'; msg.textContent = j.message || F.otpSent || '';
+      setTimeout(() => { btn.disabled = false; }, 60000);
+    }
+
+    async function submitRespond(actionId, path) {
+      const msg = document.getElementById('sgMsg');
+      const btn = document.getElementById('sgSubmit');
+      const F = view.page.respond.labels || {};
+      if (!path || !msg || !btn) return;
+      const signer = signerFromForm();
+      const body = {
+        action: actionId, signer,
+        signatureBase64: signPad && signPad.ink ? signPad.canvas.toDataURL('image/png') : null,
+        note: (document.getElementById('sgNote')?.value || '').trim() || null,
+        reasonCode: document.getElementById('sgReason')?.value || null,
+        message: (document.getElementById('sgMessage')?.value || '').trim() || null,
+        otpCode: (document.getElementById('sgOtp')?.value || '').trim() || null,
+        // ฉบับที่หน้านี้แสดง — เซิร์ฟเวอร์ปฏิเสธถ้าเอกสารถูกแก้หลังจากเปิดหน้านี้ (ตอบรับได้เฉพาะฉบับที่เห็น)
+        revisionNumber: view.page.respond.revisionNumber, contentHash: view.page.respond.contentHash,
+      };
+      btn.disabled = true; msg.className = 'msg'; msg.textContent = '...';
+      let r, j = null;
+      try { r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); j = await r.json().catch(() => null); }
+      catch { msg.className = 'msg bad'; msg.textContent = F.connection || ''; btn.disabled = false; return; }
+      if (!r.ok || !j || !j.success) {
+        msg.className = 'msg bad'; msg.textContent = (j && j.message) || F.connection || ''; btn.disabled = false;
+        // 409 = เอกสาร/สถานะเปลี่ยนไปแล้ว ⇒ โหลดฉบับล่าสุดพร้อมเหตุจากเซิร์ฟเวอร์ (ไม่ค้างฟอร์มของฉบับเก่า)
+        if (r.status === 409 || r.status === 404) setTimeout(() => load(), 2500);
+        return;
+      }
+      saveRemembered(!!document.getElementById('sgRemember')?.checked, signer);
+      signPad = null;
+      load(j.message || '');
     }
 
     // รอบ 255 WP-12B ข้อ 1 — คัดลอกเลขบัญชี (ตัวเลขล้วน วางในแอปธนาคารได้ทันที) · เบราว์เซอร์ที่ไม่มี clipboard API ⇒ บอกให้คัดลอกเอง

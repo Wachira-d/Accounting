@@ -67,6 +67,9 @@ public partial class PdfGenerationService
         if (src != null)
             sb.Append($"<img src='{src}' alt='signature' style='height:14mm;max-width:60mm;object-fit:contain;display:block;margin:4px 0'/>");
         sb.Append($"<div>{WebUtility.HtmlEncode(L.QtAcceptBy)}: {WebUtility.HtmlEncode(s.Name ?? "")}</div>");
+        // รอบ 267 P2: ตำแหน่ง · ในนามของ · รหัสอ้างอิงหลักฐาน (บรรทัดชุดเดียวกับ QuestPDF ComposeQuotationAcceptanceBlock)
+        foreach (var signerLine in CustomerSignerLines(s, L, includeTitle: true))
+            sb.Append($"<div>{WebUtility.HtmlEncode(signerLine)}</div>");
         sb.Append($"<div>{WebUtility.HtmlEncode(L.QtAcceptedOnline(acceptedAtUtc))}</div>");
         if (!string.IsNullOrWhiteSpace(s.AcceptNote))
             sb.Append($"<div>{WebUtility.HtmlEncode(L.QtAcceptNote)}: {WebUtility.HtmlEncode(s.AcceptNote!)}</div>");

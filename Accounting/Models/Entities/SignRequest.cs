@@ -42,4 +42,8 @@ public class SignEventOutboxEntry : TenantEntity
     public DateTime? RegistrationsDispatchedAt { get; set; }
     /// <summary>แจ้งผู้ขาย (กระดิ่ง/LINE กลุ่มตามค่าตั้งแจ้งเตือน) แล้ว — ครั้งเดียว</summary>
     public DateTime? SellerNotifiedAt { get; set; }
+    /// <summary>รอบ 267 P2: แถวหลักฐาน (<c>CustomerDocumentActions</c>) ของเหตุการณ์นี้ · null = เหตุการณ์ก่อนรอบ 267</summary>
+    public Guid? CustomerActionId { get; set; }
+    /// <summary>รอบ 267 P2: ขั้น "สร้างฉบับที่ลูกค้าเซ็น + ส่งสำเนาให้ผู้ลงนาม" จบแล้วเมื่อ (สำเร็จ หรือเลิกลองแล้วแจ้งพนักงาน)</summary>
+    public DateTime? SignedCopyDoneAt { get; set; }
 }

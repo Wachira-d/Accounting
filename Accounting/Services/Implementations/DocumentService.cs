@@ -1446,7 +1446,7 @@ public partial class DocumentService : IDocumentService
                 throw new Accounting.Helpers.BusinessRuleException(
                     Accounting.Helpers.DepositPolicyResolver.DrivesUnsupportedMessage, "DEPOSIT-DRIVES-UNSUPPORTED");
 
-            // รอบ 267 P4 (267-1-40): ค่าตั้งหลังรับชำระต่อใบ — ตัวตัดสินเดียวกับตอนแก้ไข/ปุ่มบนหน้าเอกสาร (รหัสไม่รู้จัก/ชนิดที่ตั้งไม่ได้ = ปฏิเสธก่อนสร้าง)
+            // รอบ 267 P4 (267-1-44): ค่าตั้งหลังรับชำระต่อใบ — ตัวตัดสินเดียวกับตอนแก้ไข/ปุ่มบนหน้าเอกสาร (รหัสไม่รู้จัก/ชนิดที่ตั้งไม่ได้ = ปฏิเสธก่อนสร้าง)
             var postPayLayer = PostPayDocumentLayerOrThrow(request.DocumentType, null, null, request.PostPayReceiptMode, request.PostPayPartialMode);
 
             var doc = new Document
@@ -3190,7 +3190,7 @@ public partial class DocumentService : IDocumentService
             var dl = request.DocumentLanguage.Trim().ToLowerInvariant();
             doc.DocumentLanguage = dl is "th" or "en" ? dl : null;
         }
-        // รอบ 267 P4 (267-1-40): ค่าตั้งหลังรับชำระต่อใบ — ตัวเดียวกับตอนสร้าง/ปุ่มบนหน้าเอกสาร · null = ไม่แตะ · "" = กลับไปตามค่าตั้ง
+        // รอบ 267 P4 (267-1-44): ค่าตั้งหลังรับชำระต่อใบ — ตัวเดียวกับตอนสร้าง/ปุ่มบนหน้าเอกสาร · null = ไม่แตะ · "" = กลับไปตามค่าตั้ง
         ApplyPostPayDocumentLayer(doc, request.PostPayReceiptMode, request.PostPayPartialMode);
 
         // Tax Point §78 inputs (Draft edit)

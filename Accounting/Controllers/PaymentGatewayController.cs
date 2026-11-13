@@ -364,7 +364,7 @@ public class PaymentGatewayController : ControllerBase
     public sealed record ManualConfirmRequest(string Reason, DateTime? ReceivedDate = null, Guid? BankAccountId = null);
 
     /// <summary>รอบ 250 ฝ่ายค้าน H1: ปฏิเสธสลิปโอนของเอกสาร (เหตุผลบังคับ)</summary>
-    /// <param name="CustomerMessage">รอบ 267 P4 (267-1-41): ข้อความถึงลูกค้า (แสดงบนหน้าเอกสารของลูกค้า · ไม่บังคับ) — ว่าง = ข้อความกลาง ·
+    /// <param name="CustomerMessage">รอบ 267 P4 (267-1-45): ข้อความถึงลูกค้า (แสดงบนหน้าเอกสารของลูกค้า · ไม่บังคับ) — ว่าง = ข้อความกลาง ·
     /// <paramref name="Reason"/> เป็นเหตุผลภายใน (ลงประวัติ) ไม่ส่งออกหน้าเอกสาร</param>
     public sealed record RejectSlipRequest(string Reason, string? CustomerMessage = null);
     public sealed record RefundRequest(decimal? Amount, string? Reason);
@@ -618,7 +618,7 @@ public class PaymentGatewayController : ControllerBase
                     FailureCode: "slip_rejected",
                     FailureMessage: reason.Length > 300 ? reason[..300] : reason),
                 PaymentEventSource.Manual, $"{actor} · {reason}", ct);
-            // รอบ 267 P4 (267-1-41): เหตุที่ลูกค้าเห็นบนหน้าเอกสาร — เขียนใต้ล็อกเดียวกับการปฏิเสธ · เฉพาะรายการที่ปฏิเสธสำเร็จ (สถานะ Failed) ·
+            // รอบ 267 P4 (267-1-45): เหตุที่ลูกค้าเห็นบนหน้าเอกสาร — เขียนใต้ล็อกเดียวกับการปฏิเสธ · เฉพาะรายการที่ปฏิเสธสำเร็จ (สถานะ Failed) ·
             // ว่าง = null (หน้าเอกสารใช้ข้อความกลาง — เหตุผลภายในด้านบนไม่ถูกส่งออก)
             var customerNote = CustomerDocPageAfterPay.NormalizeRejectReason(req.CustomerMessage);
             if (updated is { Status: PaymentIntentStatus.Failed })

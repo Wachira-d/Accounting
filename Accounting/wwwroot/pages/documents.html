@@ -797,7 +797,7 @@
               <div id="fDocLanguageHint" style="display:none;font-size:11px;line-height:1.5;padding-bottom:9px;color:#1e40af"></div>
             </div>
           </div>
-          <!-- รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-40): ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" ของใบนี้ใบเดียว (Document.PostPayEmailReceipt /
+          <!-- รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" ของใบนี้ใบเดียว (Document.PostPayEmailReceipt /
                PostPayIncludePartial) — สามสถานะ: ตามค่าตั้ง (ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท) · เปิด · ปิด · แสดงเฉพาะชนิดที่เซิร์ฟเวอร์บอกว่าตั้งได้
                (document-auto-send/settings → postPayDocumentTypes — หน้านี้ไม่มีรายการชนิดของตัวเอง) · ไม่สืบทอดไปใบลูก/โคลน -->
           <div class="form-row-1-2" id="postPayRow" style="display:none">
@@ -11468,6 +11468,8 @@
           this.loadApprovalStatus(d.id);
           // รอบ 239: ลูกค้ายอมรับใบเสนอราคาออนไลน์ — ชื่อ · เวลา · หมายเหตุ · ลายเซ็น (ดึงรูปด้วย JWT ผ่าน endpoint ที่ตรวจสิทธิ์อ่าน)
           this.renderQuotationAcceptance(d);
+          // รอบ 267 P2: หลักฐานการตอบรับของลูกค้า (ผู้ลงนาม · ตำแหน่ง · ฉบับที่ลงนาม) + ขั้นต่อไปหลังยอมรับ + คำเตือนอากรแสตมป์ — ทั้งหมดจากเซิร์ฟเวอร์
+          this.renderCustomerResponses(d);
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button data-g="primary" class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
@@ -12889,7 +12891,7 @@
         try {
           const r = await api.get(`/api/companies/${cid}/document/sign-request/statuses?ids=${encodeURIComponent(ids.slice(0, 200).join(','))}`);
           const map = (r && r.data) || {};
-          const tone = { success: '#047857', info: '#1d4ed8', muted: '#64748b' };
+          const tone = { success: '#047857', info: '#1d4ed8', muted: '#64748b', danger: '#b91c1c', warning: '#b45309' };
           for (const id of ids) {
             const slot = document.querySelector(`[data-sign-chip="${CSS.escape(String(id))}"]`);
             if (!slot) continue;
@@ -14778,6 +14780,63 @@
           img.style.cssText = 'max-height:90px;max-width:100%;background:#fff;border:1px solid #e2e8f0;border-radius:6px;display:block';
           if (slot) { slot.textContent = ''; slot.appendChild(img); }
         } catch (e) { if (slot) slot.textContent = e.message; }
+      },
+
+      /** รอบ 267 P2: แผง "หลักฐานการตอบรับของลูกค้า" (ใบเสนอราคา · ใบส่งของ) — GET …/customer-responses (เซิร์ฟเวอร์ตรวจสิทธิ์อ่านเอกสาร +
+       *  ลงบันทึกการเข้าถึงข้อมูลส่วนบุคคล) · ข้อความ/ป้าย/คำแนะนำ/คำเตือนมาจากเซิร์ฟเวอร์ทั้งหมด (หน้านี้ไม่มีกติกา) · ไม่มีแถว = ไม่แสดงแผง ·
+       *  โหลดไม่ได้ = บอกในแผง (ไม่เงียบ) */
+      async renderCustomerResponses(d) {
+        const host = document.getElementById('detailContent');
+        if (!host || !d || (d.documentType !== 'Quotation' && d.documentType !== 'DeliveryNote')) return;
+        const old = document.getElementById('custRespPanel');
+        if (old) old.remove();
+        const cid = Layout.getCompanyId();
+        let v = null;
+        try {
+          const r = await API.get(`/api/companies/${cid}/document/${d.id}/customer-responses`);
+          v = r && r.data;
+        } catch (e) {
+          const err = document.createElement('div');
+          err.id = 'custRespPanel';
+          err.style.cssText = 'background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;color:#991b1b';
+          err.textContent = 'โหลดหลักฐานการตอบรับของลูกค้าไม่ได้: ' + (e && e.message ? e.message : 'ลองใหม่อีกครั้ง');
+          host.insertAdjacentElement('afterbegin', err);
+          return;
+        }
+        if (!v || !Array.isArray(v.items) || v.items.length === 0) return;
+        const when = (t) => new Date(t).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) + ' น.';
+        const rows = v.items.map(a => {
+          const name = [a.signerFirstName, a.signerLastName].filter(Boolean).join(' ');
+          return `<div style="border-top:1px solid #e2e8f0;padding:6px 0">
+            <b>${Layout.esc(a.label)}</b> · Rev.${Layout.esc(a.revisionNumber)}${a.isCurrentRevision ? '' : ' <span style="color:#b45309">(ฉบับก่อนหน้า)</span>'} · ${Layout.esc(when(a.at))}<br>
+            ${Layout.esc(name || '-')}${a.signerTitle ? ' · ตำแหน่ง ' + Layout.esc(a.signerTitle) : ''}${a.signerOrgName ? ' · ในนาม ' + Layout.esc(a.signerOrgName) : ''}
+            ${a.signerEmail ? ' · ' + Layout.esc(a.signerEmail) + (a.emailVerified ? ' (ยืนยันด้วยรหัสแล้ว)' : '') : ''}
+            ${a.identityLevel === 'NameOnly' ? '<br><span style="color:#64748b">ลิงก์รุ่นก่อน — ผู้ลงนามพิมพ์ชื่ออย่างเดียว (ไม่มีตำแหน่ง/การรับรอง)</span>' : ''}
+            ${a.reasonLabel ? '<br>เหตุผล: ' + Layout.esc(a.reasonLabel) : ''}${a.message ? '<br>ข้อความจากลูกค้า: ' + Layout.esc(a.message) : ''}
+            ${a.erasedAt ? '<br><span style="color:#64748b">ข้อมูลผู้ลงนามถูกลบตามคำขอของเจ้าของข้อมูลแล้ว</span>' : ''}
+            <br><span style="color:#64748b;font-size:11px">IP ${Layout.esc(a.ip || '-')} · รหัสเนื้อหา ${Layout.esc(String(a.contentHash || '').slice(0, 19))}…</span>
+            ${a.signedPdfSha256 && !a.erasedAt ? `<br><a href="#" data-signed-copy="${Layout.esc(a.actionId)}">ดาวน์โหลดฉบับที่ลูกค้าลงนาม</a> <span style="color:#64748b;font-size:11px">SHA-256 ${Layout.esc(a.signedPdfSha256.slice(0, 16))}…</span>` : ''}
+          </div>`;
+        }).join('');
+        const box = document.createElement('div');
+        box.id = 'custRespPanel';
+        box.style.cssText = 'background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;color:#0f172a';
+        // rows = HTML ที่ประกอบจากค่าที่ผ่าน Layout.esc() ทุกตัวข้างบน — ต่อด้วย + (ไม่สอดเข้า template ซ้ำ)
+        box.innerHTML = `<b>หลักฐานการตอบรับของลูกค้า</b> <span style="color:#64748b;font-size:11px">(${Layout.esc(v.legalReference || '')})</span>` + rows + `
+          ${v.convertSuggestion ? `<div style="margin-top:6px;background:#eff6ff;border-radius:6px;padding:6px 8px">${Layout.esc(v.convertSuggestion)}</div>` : ''}
+          ${v.stampDutyWarning ? `<div style="margin-top:6px;background:#fef3c7;color:#92400e;border-radius:6px;padding:6px 8px">⚠️ ${Layout.esc(v.stampDutyWarning)}
+            ${v.stampDutyPage && /^\/pages\/[a-z-]+\.html$/.test(v.stampDutyPage) ? ` <a href="${Layout.esc(v.stampDutyPage)}">เปิดหน้าอากรแสตมป์</a>` : ''}</div>` : ''}`;
+        host.insertAdjacentElement('afterbegin', box);
+        box.querySelectorAll('[data-signed-copy]').forEach(a => a.addEventListener('click', async (ev) => {
+          ev.preventDefault();
+          try {
+            const f = await API.fetchFile(`/api/companies/${cid}/document/${d.id}/customer-responses/${encodeURIComponent(a.dataset.signedCopy)}/signed-pdf`, 'signed.pdf');
+            if (!f) return;   // 401 ⇒ fetchFile พากลับหน้า login แล้ว
+            const url = URL.createObjectURL(f.blob);
+            window.open(url, '_blank', 'noopener');
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+          } catch (e) { Layout.toast ? Layout.toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'error') : alert(e.message || 'ดาวน์โหลดไม่สำเร็จ'); }
+        }));
       },
 
       /** แผง "รออนุมัติจากใคร" ในหน้ารายละเอียด — โหลดหลัง render (best-effort)

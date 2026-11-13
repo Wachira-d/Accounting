@@ -67,7 +67,7 @@ public static class DocumentAutoSendMigration
         """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OutboundCheckAt" timestamptz NULL;""",
         """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OutboundCheckOk" boolean NULL;""",
         """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "OutboundCheckMessage" varchar(500) NULL;""",
-        // รอบ 267 P4 (267-1-8 · 267-1-40/41): ชั้นค่าตั้งหลังรับชำระ "ต่อเอกสาร" (NULL = ตามชั้นถัดไป = พฤติกรรมเดิมทุกใบ) · เหตุผลปฏิเสธสลิปที่ลูกค้าเห็น
+        // รอบ 267 P4 (267-1-8 · 267-1-44/45): ชั้นค่าตั้งหลังรับชำระ "ต่อเอกสาร" (NULL = ตามชั้นถัดไป = พฤติกรรมเดิมทุกใบ) · เหตุผลปฏิเสธสลิปที่ลูกค้าเห็น
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PostPayEmailReceipt" boolean NULL;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PostPayIncludePartial" boolean NULL;""",
         """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "CustomerVisibleRejectReason" character varying(300) NULL;""",

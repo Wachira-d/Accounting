@@ -63,7 +63,7 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
 
     /// <summary>ชั้นค่าตั้งของใบ ณ ตอนนี้ (ช่องของใบเอง + ผลของตัวต่อชั้น + ชั้นที่ตัดสิน) — ตัวโหลดเดียวของ <see cref="SettingsForAsync"/>,
     /// หน้าเอกสารของพนักงาน (<c>DocumentPayLinkService.StatusAsync</c>) และ <see cref="SetDocumentLayerAsync"/> ·
-    /// รอบ 267 P4 (267-1-8 · 267-1-40): ชั้น "เอกสารใบนี้" บนสุด — ใบ › ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท</summary>
+    /// รอบ 267 P4 (267-1-8 · 267-1-44): ชั้น "เอกสารใบนี้" บนสุด — ใบ › ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท</summary>
     internal sealed record DocumentLayerState(bool Found, DocumentType Type, bool? DocEmailReceipt, bool? DocIncludePartial,
         PostPaymentAutomationPolicy.Resolution Resolution);
 
@@ -104,7 +104,7 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
     }
 
     /// <summary>
-    /// รอบ 267 P4 (267-1-40): ตั้งค่าต่อใบของ<b>ใบที่ออกแล้ว</b> (ฟอร์มแก้ไขใช้ไม่ได้กับใบที่ออกเลขแล้ว) — ตัวตัดสินเดียวกับฟอร์ม
+    /// รอบ 267 P4 (267-1-44): ตั้งค่าต่อใบของ<b>ใบที่ออกแล้ว</b> (ฟอร์มแก้ไขใช้ไม่ได้กับใบที่ออกเลขแล้ว) — ตัวตัดสินเดียวกับฟอร์ม
     /// (<see cref="PostPaymentAutomationPolicy.ApplyDocumentLayer"/>) · มีผลกับการรับชำระครั้งถัดไป · งานที่ยังรอประมวลผล/กดลองใหม่ใช้ค่าปัจจุบัน (ปิดที่ใบ = งานที่ค้างจบพร้อมเหตุ) · เปิดทีหลังไม่ออกใบเสร็จย้อนหลังของการชำระที่ผ่านไปแล้ว ·
     /// ลง audit chain · ไม่แตะเนื้อหา/ยอด/เลขของใบ (ไม่ใช่การแก้ไขเอกสารย้อนหลัง)
     /// </summary>

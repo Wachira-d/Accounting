@@ -8,7 +8,7 @@ namespace Accounting.Tests;
 
 /// <summary>
 /// รอบ 267 แพ็ก P4 — "หลังจ่าย" (pure · ทั้งสองทิศ): ชั้นค่าตั้งต่อเอกสารของงานหลังรับชำระ (<see cref="PostPaymentAutomationPolicy"/> — ตัวต่อชั้นเดียว)
-/// + ส่วนหลังจ่ายของหน้าเอกสารสำหรับลูกค้า (<see cref="CustomerDocPageAfterPay"/>) — DOCUMENT_FLOW §2.12n-P4 · คำตัดสิน 267-1-8 · 267-1-40…46 ·
+/// + ส่วนหลังจ่ายของหน้าเอกสารสำหรับลูกค้า (<see cref="CustomerDocPageAfterPay"/>) — DOCUMENT_FLOW §2.12n-P4 · คำตัดสิน 267-1-8 · 267-1-44…50 ·
 /// สถานการณ์ S16 S17 S18 S19 S20 S24 ของ team-267-doc-pages-design.md §17 (เส้นจริงบนฐาน: <c>PostPayRound267DbTests</c>)
 /// </summary>
 public class PostPayRound267Tests

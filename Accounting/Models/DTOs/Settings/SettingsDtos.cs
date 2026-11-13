@@ -148,7 +148,9 @@ public record UpdateCompanySettingsRequest(
     // 2026-11-02 (PETTY_CASH_AUDIT ส่วน C): เติมเงินสดย่อยต้องแนบสลิป (null = ไม่แก้)
     bool? PettyCashTopUpEvidenceRequired = null,
     // รอบ 239: ลูกค้าต้องเซ็นลายมือชื่อก่อนยอมรับใบเสนอราคาออนไลน์ (null = ไม่แก้)
-    bool? RequireSignatureForQuotationAccept = null);
+    bool? RequireSignatureForQuotationAccept = null,
+    // รอบ 267 P2 (267-1-6): ยอดขั้นต่ำที่ลูกค้าต้องยืนยันอีเมลด้วยรหัสก่อนยอมรับใบเสนอราคา (null = ไม่แก้ · ≤ 0 = ปิด)
+    decimal? CustomerSignOtpMinAmount = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -311,6 +313,8 @@ public record CompanySettingsResponse(
     public bool PettyCashTopUpEvidenceRequired { get; init; }
     /// <summary>รอบ 239: "ต้องเซ็นเพื่อยอมรับใบเสนอราคา" (<c>CompanySettings.RequireSignatureForQuotationAccept</c>) · เก็บแล้วต้อง echo กลับ</summary>
     public bool RequireSignatureForQuotationAccept { get; init; }
+    /// <summary>รอบ 267 P2: ยอดขั้นต่ำที่ต้องยืนยันอีเมลด้วยรหัสก่อนยอมรับใบเสนอราคา (<c>CompanySettings.CustomerSignOtpMinAmount</c>) · null = ปิด</summary>
+    public decimal? CustomerSignOtpMinAmount { get; init; }
 }
 
 // ===== Landing Page Services (Public) =====

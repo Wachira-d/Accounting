@@ -30,10 +30,14 @@ public partial class PublicDocumentPageController : ControllerBase
     /// <summary>รอบ 267 ฝ่ายค้าน M7 (267-1-31 · PDPA ม.37): บันทึกการดาวน์โหลด PDF ทางลิงก์สาธารณะ · null (สร้างนอก DI) = ไม่บันทึก</summary>
     private readonly Accounting.Services.Implementations.Pdpa.IPdpaService? _pdpa;
 
+    /// <summary>รอบ 267 P2: ผู้เขียนเดียวของการตอบรับ (ยอมรับ · ไม่รับ · ขอแก้ · เซ็นรับ) · null (สร้างนอก DI) = ไม่มีเส้นตอบรับ (ตอบ 404)</summary>
+    private readonly Accounting.Services.Implementations.CustomerDocumentResponseService? _responses;
+
     public PublicDocumentPageController(IDocumentPayLinkService links, IPdfGenerationService pdf, IChatRateLimiter limiter,
         ILogger<PublicDocumentPageController> logger, INotificationEngine? notify = null,
-        Accounting.Services.Implementations.Pdpa.IPdpaService? pdpa = null)
-    { _links = links; _pdf = pdf; _limiter = limiter; _logger = logger; _notify = notify; _pdpa = pdpa; }
+        Accounting.Services.Implementations.Pdpa.IPdpaService? pdpa = null,
+        Accounting.Services.Implementations.CustomerDocumentResponseService? responses = null)
+    { _links = links; _pdf = pdf; _limiter = limiter; _logger = logger; _notify = notify; _pdpa = pdpa; _responses = responses; }
 
     private string Ip => HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
@@ -92,8 +96,13 @@ public partial class PublicDocumentPageController : ControllerBase
         await _links.MarkOpenedAsync(companyId, token, ct);
         return Ok(new ApiResponse<PublicDocumentPayView>(true, view with
         {
-            // รอบ 267 P4: + ที่อยู่เส้นหลังจ่าย (ส่ง 50 ทวิ · เปิดหน้าของใบที่เกี่ยวข้อง) เฉพาะเมื่อหน้าเสนอจริง — WithAfterPayPaths
-            Page = WithAfterPayPaths(view.Page! with { PdfPath = basePath + "/pdf", RelatedPdfBase = basePath + "/related/", RequestLinkPath = basePath + "/request-link" }, basePath),
+            // รอบ 267 P4: + ที่อยู่เส้นหลังจ่าย (ส่ง 50 ทวิ · เปิดหน้าของใบที่เกี่ยวข้อง) เฉพาะเมื่อหน้าเสนอจริง — WithAfterPayPaths ·
+            // รอบ 267 P2: + ฉบับที่ลงนาม/รหัสอีเมล
+            Page = WithAfterPayPaths(view.Page! with
+            {
+                PdfPath = basePath + "/pdf", RelatedPdfBase = basePath + "/related/", RequestLinkPath = basePath + "/request-link",
+                SignedCopyBase = basePath + "/signed/", OtpPath = basePath + "/respond/otp",
+            }, basePath),
         }));
     }
 
@@ -126,20 +135,76 @@ public partial class PublicDocumentPageController : ControllerBase
 
     /// <summary>รอบ 267 ฝ่ายค้าน M7 (PDPA ม.37): PDF ของเอกสารมีชื่อ/ที่อยู่/เลขผู้เสียภาษีของคู่ค้า — ทุกการดาวน์โหลดทางลิงก์สาธารณะลงบันทึกการเข้าถึง
     /// (ใบไหน · เมื่อไร · hash ของ IP/เบราว์เซอร์ — ไม่เก็บ IP ตรงของคนนอก) · บันทึกล้ม = log ระดับ error (ไม่เงียบ) แต่ไม่กันลูกค้าจากเอกสารของตัวเอง</summary>
-    private async Task LogPdfAccessAsync(Guid companyId, Guid documentId, bool related, CancellationToken ct)
+    private async Task LogPdfAccessAsync(Guid companyId, Guid documentId, bool related, CancellationToken ct, string? field = null)
     {
         if (_pdpa == null) return;
         try
         {
             var ua = HttpContext?.Request.Headers.UserAgent.ToString();
             await _pdpa.LogPiiAccessAsync(companyId, Guid.Empty, "ผู้ถือลิงก์เอกสาร (ไม่ได้ล็อกอิน)", "Document", documentId,
-                related ? "DocumentPdf.Related" : "DocumentPdf", "PublicLinkDownload", "ลูกค้าดาวน์โหลดเอกสารผ่านลิงก์หน้าเอกสาร (" + CustomerDocPage.RuleCode + ")",
+                field ?? (related ? "DocumentPdf.Related" : "DocumentPdf"), "PublicLinkDownload", "ลูกค้าดาวน์โหลดเอกสารผ่านลิงก์หน้าเอกสาร (" + CustomerDocPage.RuleCode + ")",
                 "sha256:" + QuotationAcceptance.Sha256Hex(Ip)![..24], string.IsNullOrEmpty(ua) ? null : "sha256:" + QuotationAcceptance.Sha256Hex(ua)![..24], ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "บันทึกการเข้าถึง PDF ทางลิงก์สาธารณะไม่สำเร็จ doc={DocId} company={CompanyId}", documentId, companyId);
         }
+    }
+
+    // ═══════════════ รอบ 267 P2 — ตอบรับบนหน้าเอกสาร (ผู้เขียนเดียว CustomerDocumentResponseService) ═══════════════
+
+    private Accounting.Services.Implementations.CustomerDocumentResponseService.Caller Caller()
+        => new(HttpContext?.Connection.RemoteIpAddress?.ToString(), HttpContext?.Request.Headers.UserAgent.ToString());
+
+    private ActionResult<ApiResponse<object>> FromOutcome(Accounting.Services.Implementations.CustomerDocumentResponseService.Outcome r)
+    {
+        if (r.Status == 429) Response.Headers.Append("Retry-After", "60");
+        return StatusCode(r.Status, new ApiResponse<object>(r.Success, r.Success ? r.Data : null, r.Message));
+    }
+
+    /// <summary>คำตอบของลูกค้าบนหน้าเอกสาร: ยอมรับ · ไม่รับ (เหตุผล) · ขอแก้ ใบเสนอราคา และเซ็นรับสินค้า — ผู้ลงนาม = ชื่อ + นามสกุล + ตำแหน่ง + ติ๊กรับรอง ·
+    /// ทำได้เฉพาะเมื่อปุ่มนั้นเปิดอยู่ตาม <see cref="CustomerDocPage.Actions"/> ณ ตอนนี้ · เลข Rev + hash เนื้อหาที่หน้าแสดงต้องตรงกับใบ (ไม่ตรง = 409) ·
+    /// หลักฐานลงตารางเดียว + audit chain ในธุรกรรมเดียว (ที่นี่ไม่มีตรรกะ)</summary>
+    [HttpPost("documents/{token}/respond")]
+    [RequestSizeLimit(512 * 1024)]
+    public async Task<ActionResult<ApiResponse<object>>> Respond(Guid companyId, string token,
+        [FromBody] Accounting.Services.Implementations.CustomerDocumentResponseService.RespondRequest? request, CancellationToken ct)
+    {
+        NoStore();
+        if (await OverIpAsync("respond", failClosed: true, ct)) return TooMany<object>();
+        if (_responses == null) return NotFound(new ApiResponse<object>(false, null, CustomerDocPage.NotFoundMessage));
+        // เพดานของการเขียน: ต่อ IP 10/นาที · 60/วัน ภายใน service (ก่อนแตะฐาน — token สุ่มไม่สร้างถังตัวนับใหม่ · 267-1-29) + ธุรกรรมจองแบบอะตอมมิก
+        return FromOutcome(await _responses.RespondAsync(companyId, token, request, Caller()));
+    }
+
+    public sealed record OtpRequest(string? Email);
+
+    /// <summary>ขอรหัสยืนยันอีเมลก่อนยอมรับใบเสนอราคา (เฉพาะเมื่อบริษัทตั้งยอดขั้นต่ำ — 267-1-6) · เพดานต่อ IP + ต่อ token</summary>
+    [HttpPost("documents/{token}/respond/otp")]
+    public async Task<ActionResult<ApiResponse<object>>> RespondOtp(Guid companyId, string token, [FromBody] OtpRequest? request, CancellationToken ct)
+    {
+        NoStore();
+        if (await OverIpAsync("otp", failClosed: true, ct)) return TooMany<object>();
+        if (_responses == null) return NotFound(new ApiResponse<object>(false, null, CustomerDocPage.NotFoundMessage));
+        // เพดานของรหัส: ต่อ IP 5/นาที · 30/วัน + หนึ่งรหัสต่อใบต่อนาที (แถวในฐาน — หลายเครื่อง) ภายใน service
+        return FromOutcome(await _responses.RequestOtpAsync(companyId, token, request?.Email, Caller()));
+    }
+
+    /// <summary>ฉบับที่ลูกค้าเซ็น (ไฟล์ ณ ตอนลงนาม) ของคำตอบหนึ่งครั้งบนใบของ token นี้ — ตรวจ SHA-256 กับที่บันทึกก่อนส่งทุกครั้ง · ลงบันทึกการเข้าถึง (PDPA ม.37)</summary>
+    [HttpGet("documents/{token}/signed/{actionId:guid}")]
+    public async Task<IActionResult> SignedCopy(Guid companyId, string token, Guid actionId, CancellationToken ct)
+    {
+        NoStore();
+        if (await OverIpAsync("pdf", failClosed: true, ct)) return TooMany<object>();
+        IActionResult Missing() => NotFound(new ApiResponse<object>(false, null, CustomerDocPage.NotFoundMessage));
+        if (_responses == null) return Missing();
+        var file = await _responses.SignedCopyForTokenAsync(companyId, token, actionId, ct);
+        if (file == null) return Missing();
+        if (await OverTokenIpAsync("pdf", token, CustomerDocPage.Limits.PdfPerMinute, CustomerDocPage.Limits.PdfPerDay, failClosed: true, ct))
+            return TooMany<object>();
+        await LogPdfAccessAsync(companyId, file.Value.DocumentId, false, ct, "DocumentPdf.SignedCopy");
+        Response.Headers.ContentDisposition = $"inline; filename=\"{SafeFileName(file.Value.FileName)}\"";
+        return File(file.Value.Bytes, "application/pdf");
     }
 
     /// <summary>ผลของการขอลิงก์ — ไม่มีรหัสภายใน</summary>

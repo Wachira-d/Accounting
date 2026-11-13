@@ -253,6 +253,11 @@ public class Document : TenantEntity
     public string? SignLinkEmailedTo { get; set; }
     /// <summary>ลูกค้าเปิดหน้าลิงก์ครั้งแรกเมื่อ — นับจากการโหลดหน้าสาธารณะเท่านั้น (ไม่มี tracking pixel)</summary>
     public DateTime? SignLinkOpenedAt { get; set; }
+    /// <summary>รอบ 267 P2: คำตอบล่าสุดของลูกค้าต่อ Rev ปัจจุบัน (ชื่อ <c>CustomerSignRule.Kind</c>: Accepted · Declined · ChangeRequested) —
+    /// ภาพฉายของแถวล่าสุดใน <c>CustomerDocumentActions</c> (เขียนในธุรกรรมเดียวกัน) · ผู้อ่าน: ปุ่มบนหน้าเอกสาร (<c>CustomerDocPage.Actions</c>) ·
+    /// ป้ายบนรายการเอกสาร (<c>SignRequestKinds.Status</c>) · ออก Rev ใหม่/ส่งให้ตอบรับใหม่ = ล้าง · ไม่สืบทอดไปใบลูก</summary>
+    public string? CustomerResponse { get; set; }
+    public DateTime? CustomerResponseAt { get; set; }
     /// <summary>ส่งอีเมลเตือนอัตโนมัติแล้วเมื่อ (หนึ่งครั้งต่อลิงก์)</summary>
     public DateTime? SignReminderSentAt { get; set; }
 
@@ -278,7 +283,7 @@ public class Document : TenantEntity
     /// ไม่สืบทอดไปใบลูก · null = ใบที่ไม่ได้มาจากรอบรายการประจำ/ใบก่อนรอบ 259/รอบพิเศษที่ผู้ใช้ยืนยันออกเพิ่ม</summary>
     public string? RecurringRunKey { get; set; }
 
-    // ── รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-40): ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" ต่อใบ — ชั้นบนสุดของตัวต่อชั้นเดียว ──
+    // ── รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" ต่อใบ — ชั้นบนสุดของตัวต่อชั้นเดียว ──
     /// <summary>หลังลูกค้าชำระใบนี้ ออกและส่งใบเสร็จ/ใบกำกับภาษีอัตโนมัติไหม — null = ตามชั้นถัดไป (ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท) ·
     /// ผู้เขียน: ฟอร์มเอกสาร (สร้าง/แก้ไข) · <c>PUT …/document-auto-send/documents/{id}/post-pay</c> (ใบที่ออกแล้ว) ผ่าน
     /// <c>PostPaymentAutomationPolicy.ApplyDocumentLayer</c> · ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c> ผ่าน

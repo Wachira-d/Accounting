@@ -301,7 +301,7 @@ public class PortalPublicController : ControllerBase
         var view = await links.PageForDocumentAsync(companyId, documentId, Accounting.Helpers.CustomerDocPage.Mode.Portal, ct);
         if (view?.Page == null) return NotFound(new ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>(false, null, "ไม่พบเอกสาร"));
         var pdfOk = await DenyPortalAsync(companyId, "pdf", ct) == null;
-        // รอบ 267 P4 (267-1-45): พอร์ทัลเปิดหน้าเอกสารหน้าเดียวกับลิงก์ — ใบเสร็จของการชำระดาวน์โหลดด้วยเส้น PDF เดิมของพอร์ทัล (ด่านผู้ติดต่อ/ธงสิทธิ์เดิม) ·
+        // รอบ 267 P4 (267-1-49): พอร์ทัลเปิดหน้าเอกสารหน้าเดียวกับลิงก์ — ใบเสร็จของการชำระดาวน์โหลดด้วยเส้น PDF เดิมของพอร์ทัล (ด่านผู้ติดต่อ/ธงสิทธิ์เดิม) ·
         // ชำระ = เส้นขอลิงก์หน้าชำระเดิมของพอร์ทัล (ธง "pay") เมื่อใบยังมียอดที่ชำระได้ — หน้านี้ไม่รับเงินเอง
         var payOk = view.Net > 0.005m && await DenyPortalAsync(companyId, "pay", ct) == null;
         return Ok(new ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>(true, view with

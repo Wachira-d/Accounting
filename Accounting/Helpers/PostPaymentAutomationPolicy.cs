@@ -69,7 +69,7 @@ public static class PostPaymentAutomationPolicy
     public static Settings EffectiveLayers(Settings company, Overrides? schedule, Overrides? recurring, Overrides? contact)
         => EffectiveLayers(company, null, schedule, recurring, contact);
 
-    /// <summary>รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-40): ชั้น "เอกสารใบนี้" อยู่บนสุด — ใบ › ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท (ทีละช่อง) ·
+    /// <summary>รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-44): ชั้น "เอกสารใบนี้" อยู่บนสุด — ใบ › ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท (ทีละช่อง) ·
     /// <paramref name="document"/> null/ทุกช่อง null = ตามชั้นถัดไป ⇒ ใบที่ไม่ได้ตั้ง = ผลเท่าเดิมเป๊ะ · ตัวต่อชั้นตัวเดียว (ผู้เรียก:
     /// <c>PostPaymentAutomationService.SettingsForAsync</c> · พรีวิวรายการประจำใช้ overload 4 ชั้น — ยังไม่มีใบ)</summary>
     public static Settings EffectiveLayers(Settings company, Overrides? document, Overrides? schedule, Overrides? recurring, Overrides? contact)

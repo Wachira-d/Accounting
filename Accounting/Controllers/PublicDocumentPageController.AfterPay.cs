@@ -9,9 +9,9 @@ namespace Accounting.Controllers;
 /// รอบ 267 แพ็ก P4 — เส้น "หลังจ่าย" ของหน้าเอกสารสำหรับลูกค้า (ไม่ล็อกอิน · สิทธิ์ = token ของใบ · DOCUMENT_FLOW §2.12n-P4):
 /// <list type="bullet">
 /// <item><c>POST documents/{token}/wht-cert</c> — ส่งหนังสือรับรอง 50 ทวิ ของใบนี้ (แกนเดียวกับลิงก์อัปโหลด 50 ทวิ เดิม —
-/// <see cref="IWhtCertUploadLinkService.UploadForDocumentAsync"/> · ไม่มีระบบอัปโหลดที่สอง · 267-1-44)</item>
+/// <see cref="IWhtCertUploadLinkService.UploadForDocumentAsync"/> · ไม่มีระบบอัปโหลดที่สอง · 267-1-48)</item>
 /// <item><c>POST documents/{token}/related/{relId}/page-link</c> — เปิดหน้าเอกสารของใบที่เกี่ยวข้องเพื่อชำระรายใบ (ใบวางบิล → ใบแจ้งหนี้ในบิล ·
-/// 267-1-9 v1 · 267-1-43) — ออกลิงก์ผ่านตัวออกเดียว</item>
+/// 267-1-9 v1 · 267-1-47) — ออกลิงก์ผ่านตัวออกเดียว</item>
 /// </list>
 /// ไม่มีเส้นออกใบเสร็จ/ยืนยันสลิป/บันทึกรับชำระที่นี่ (R267d) · เพดานต่อ IP ก่อนแตะฐาน + ต่อ token หลังยืนยันว่า token มีจริง (failClosed)
 /// </summary>

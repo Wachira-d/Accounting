@@ -39,7 +39,7 @@ public interface IWhtCertUploadLinkService
     Task<WhtUploadPublicResult?> PublicUploadAsync(Guid companyId, string token, byte[] content, IReadOnlyList<Guid>? documentIds, string? senderName,
         CancellationToken ct = default);
 
-    /// <summary>รอบ 267 P4 (267-1-44): ลูกค้าส่ง 50 ทวิ จาก<b>หน้าเอกสาร</b> (สิทธิ์ = token ของใบ — ผู้เรียกพิสูจน์แล้ว) — แกนเดียวกับ
+    /// <summary>รอบ 267 P4 (267-1-48): ลูกค้าส่ง 50 ทวิ จาก<b>หน้าเอกสาร</b> (สิทธิ์ = token ของใบ — ผู้เรียกพิสูจน์แล้ว) — แกนเดียวกับ
     /// <see cref="PublicUploadAsync"/> (ประตูเดียว · ช่องทาง UploadLink) · ใบที่ไม่ได้รอใบ/ส่งแล้วรอตรวจ ⇒ <c>BusinessRuleException</c> 409</summary>
     Task<WhtUploadPublicResult> UploadForDocumentAsync(Guid companyId, Guid contactId, Guid documentId, byte[] content, string? senderName,
         CancellationToken ct = default);

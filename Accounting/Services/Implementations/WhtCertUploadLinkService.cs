@@ -230,7 +230,7 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
     }
 
     /// <summary>
-    /// รอบ 267 P4 (267-1-44): อัปโหลด 50 ทวิ <b>จากหน้าเอกสารของลูกค้า</b> — สิทธิ์พิสูจน์แล้วโดยผู้เรียก (token ของใบ ·
+    /// รอบ 267 P4 (267-1-48): อัปโหลด 50 ทวิ <b>จากหน้าเอกสารของลูกค้า</b> — สิทธิ์พิสูจน์แล้วโดยผู้เรียก (token ของใบ ·
     /// <c>DocumentPayLinkService.WhtCertTargetAsync</c>) · เดินแกนเดียวกับลิงก์อัปโหลดเดิม (<see cref="UploadCoreAsync"/> — ตรวจไบต์ · กันซ้ำ ·
     /// ที่เก็บกลาง · OCR · ประตูเดียว <c>WhtCertIntakeService</c> ช่องทาง UploadLink) · ไม่มีระบบอัปโหลดที่สอง · ใบที่ไม่ได้รอหนังสือรับรอง = ปฏิเสธ
     /// </summary>

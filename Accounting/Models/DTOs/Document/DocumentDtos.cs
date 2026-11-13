@@ -191,7 +191,7 @@ public record CreateDocumentRequest(
     // ทีม U — ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง": บรรทัดเงิน (แหล่ง + ยอด) + บรรทัดหักหลัง VAT (ผัง + ยอด) รวม = ยอดรวมทั้งสิ้น ·
     // ย่อยเป็น ActualPaidAmount (Σ เงิน) + PostVatDeductionAmount (Σ หัก) · ตัวตรวจ Helpers/PaymentSourceSplit.Check · null/ว่าง = ไม่ติ๊ก
     List<PaymentSourceLineRequest>? PaymentSources = null,
-    // รอบ 267 P4 (267-1-8 · 267-1-40): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ — ชื่อสามสถานะ Inherit · On · Off
+    // รอบ 267 P4 (267-1-8 · 267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ — ชื่อสามสถานะ Inherit · On · Off
     // (PostPaymentAutomationPolicy.ParseMode) · null/ว่าง = ตามค่าตั้ง (ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท) · เฉพาะชนิดที่รับชำระ
     string? PostPayReceiptMode = null,
     // ส่งทุกงวดที่รับ (off = เฉพาะงวดที่ชำระครบ) — รหัสเดียวกัน
@@ -396,7 +396,7 @@ public record UpdateDocumentRequest(
     // รอบ 266 (266-1-2): ใบต้นทางของ "ใบเสร็จร่างที่สร้างเอง" — null = คงค่าเดิม · Guid.Empty = ล้าง (กลับเป็นใบเสร็จอิสระ) · ค่าอื่น = ตั้ง/เปลี่ยน
     // (ตัวตัดสิน ReceiptLinkPolicy.Decide เส้น SetDraftSource · ใบที่ออกเลขแล้ว/ใบเสร็จอัตโนมัติ/ใบมัดจำ ส่งค่าใหม่มา = ปฏิเสธดัง 409)
     Guid? RelatedDocumentId = null,
-    // รอบ 267 P4 (267-1-8 · 267-1-40): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ — null = คงค่าเดิม · "" หรือ "Inherit" = ล้างกลับไปตามค่าตั้ง ·
+    // รอบ 267 P4 (267-1-8 · 267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ — null = คงค่าเดิม · "" หรือ "Inherit" = ล้างกลับไปตามค่าตั้ง ·
     // "On"/"Off" = ตั้งที่ใบ (PostPaymentAutomationPolicy.ApplyDocumentLayer — ตัวเดียวกับตอนสร้างและปุ่มบนหน้าเอกสาร)
     string? PostPayReceiptMode = null,
     string? PostPayPartialMode = null);

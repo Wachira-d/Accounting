@@ -766,6 +766,7 @@ builder.Services.AddScoped<IDocumentEmailService, DocumentEmailService>();
 // รอบ 240: ลิงก์ให้ลูกค้าเซ็น — ออกลิงก์/อีเมลในนามบริษัท/ป้ายสถานะ/ค่าตั้ง + ผู้ส่งเหตุการณ์จาก outbox (webhook ต่อเอกสาร · webhook ที่ลงทะเบียน · แจ้งผู้ขาย)
 builder.Services.AddScoped<ISignRequestService, SignRequestService>();
 builder.Services.AddScoped<SignEventDispatcher>();
+builder.Services.AddScoped<CustomerDocumentResponseService>();   // รอบ 267 P2 — ผู้เขียนเดียวของ "ลูกค้าตอบรับเอกสาร" (ยอมรับ/ไม่รับ/ขอแก้/เซ็นรับ + แถวหลักฐาน + ฉบับที่ลงนาม)
 builder.Services.AddHostedService<Accounting.Services.Background.SignEventOutboxJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.SignRequestAutomationJob>();
 

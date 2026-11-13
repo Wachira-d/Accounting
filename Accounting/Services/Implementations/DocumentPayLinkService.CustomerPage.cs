@@ -47,6 +47,7 @@ public partial class DocumentPayLinkService
         public string? QuotationAcceptedBy { get; init; }
         public DateTime? DeliverySignedAt { get; init; }
         public string? DeliverySignedBy { get; init; }
+        public string? CustomerResponse { get; init; }
         public bool ContactSupplierOnly { get; set; }
         public bool ContactCustomerOnly { get; set; }
         /// <summary>ลูกค้าเห็นใบนี้ได้ไหม — ตัวตัดสินฝั่งเดียวกับพอร์ทัล/ลิงก์ชำระ (<see cref="DocumentPayLinkPolicy.IsCustomerFacing"/>)</summary>
@@ -80,7 +81,7 @@ public partial class DocumentPayLinkService
                 RelatedDocumentId = x.RelatedDocumentId, ReplacedByDocumentId = x.ReplacedByDocumentId, CnDnPurchaseSideOverride = x.CnDnPurchaseSideOverride,
                 SignLinkIssuedAt = x.SignLinkIssuedAt, PayLinkIssuedAt = x.PayLinkIssuedAt, PayLinkExpiresAt = x.PayLinkExpiresAt,
                 QuotationAcceptedAt = x.QuotationAcceptedAt, QuotationAcceptedBy = x.QuotationAcceptedBy,
-                DeliverySignedAt = x.DeliverySignedAt, DeliverySignedBy = x.DeliverySignedBy,
+                DeliverySignedAt = x.DeliverySignedAt, DeliverySignedBy = x.DeliverySignedBy, CustomerResponse = x.CustomerResponse,
             })
             .FirstOrDefaultAsync(ct);
         if (row == null) return null;
@@ -135,12 +136,16 @@ public partial class DocumentPayLinkService
                 .ToListAsync(ct);
         var respondedAt = d.Type == DocumentType.Quotation ? row.QuotationAcceptedAt : d.Type == DocumentType.DeliveryNote ? row.DeliverySignedAt : null;
         var respondedBy = d.Type == DocumentType.Quotation ? row.QuotationAcceptedBy : d.Type == DocumentType.DeliveryNote ? row.DeliverySignedBy : null;
-        // ช่วงเปลี่ยนผ่าน P1→P2: ปุ่มตอบรับพาไปหน้ายอมรับ/เซ็นรับเดิมด้วย token ตัวเดียวกัน (หน้าเดิมรับ token ของหน้าเอกสาร — PublicQuotationController)
-        var respondHref = mode == CustomerDocPage.Mode.Link && token != null ? CustomerDocPage.LegacyRespondPath(d.Type, token) : null;
+        // รอบ 267 P2: ปุ่มตอบรับส่งคำตอบที่เส้นเดียวของหน้า (ฟอร์มผู้ลงนามอยู่บนหน้าเอกสาร — ผู้เขียนเดียว CustomerDocumentResponseService)
+        var respondHref = mode == CustomerDocPage.Mode.Link && token != null ? CustomerDocPage.RespondPath(companyId, token) : null;
         // ฝ่ายค้าน 267 M1: ช่วงตอบรับเริ่มเมื่อผู้ขายส่งให้ตอบรับ (SignLinkIssuedAt) เท่านั้น — ไม่ถอยไปใช้วันออกลิงก์ (ลิงก์ดู ≠ สิทธิ์ยอมรับ)
         var actions = CustomerDocPage.Actions(new CustomerDocPage.Facts(
             d.Type, d.Status, mode, isEnglish, payOffered, payBlockedNote, slipOffered,
-            d.DueDate, row.SignLinkIssuedAt, respondedAt, respondHref, PayOnly: payOnly), nowUtc);
+            d.DueDate, row.SignLinkIssuedAt, respondedAt, respondHref, PayOnly: payOnly, CustomerResponse: row.CustomerResponse), nowUtc);
+        // รอบ 267 P2: ฟอร์มผู้ลงนามของปุ่มที่เปิด + คำตอบที่ลูกค้าเคยทำ (เฉพาะโหมดลิงก์ของใบ — โหมดอื่นตอบรับไม่ได้และไม่เห็นชื่อผู้ลงนามของคนอื่น)
+        var linkPage = mode == CustomerDocPage.Mode.Link && !payOnly && _responses != null;
+        var respondForm = linkPage ? await _responses!.FormAsync(companyId, d.Id, actions, isEnglish, ct) : null;
+        var responses = linkPage ? await _responses!.HistoryAsync(companyId, d.Id, isEnglish, ct) : Array.Empty<CustomerDocResponseItem>();
         // ใบที่เกี่ยวข้อง: เฉพาะโหมดลิงก์ของใบ — ฝ่ายค้าน 267 M2 (โหมด LINE-ดู = ใบเดียวเท่าลิงก์การ์ดเดิม) · L5 (พรีวิวของพนักงานไม่ผ่านด่านชั้นความลับ
         // ของใบที่เกี่ยวข้อง) · M7 (ลิงก์ชำระรุ่นก่อน) · พอร์ทัลมีรายการเอกสารของตัวเองอยู่แล้ว
         var related = mode == CustomerDocPage.Mode.Link && !payOnly
@@ -176,9 +181,7 @@ public partial class DocumentPayLinkService
             RespondedBy: respondedBy,
             RespondedAt: respondedAt,
             ExpiresAt: mode == CustomerDocPage.Mode.Link ? row.PayLinkExpiresAt : null)
-        {
-            AfterPay = afterPay,
-        };
+        { Respond = respondForm, Responses = responses, AfterPay = afterPay };
     }
 
     /// <summary>
@@ -235,7 +238,7 @@ public partial class DocumentPayLinkService
             try { title = (await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, r.Id)).Title; }
             catch (KeyNotFoundException) { continue; }
             var show = CustomerDocPage.ShowsAmounts(r.DocumentType);
-            // รอบ 267 P4 (267-1-9 v1 · 267-1-43): ใบที่เกี่ยวข้องที่ยังค้างชำระ ⇒ ปุ่ม "ชำระใบนี้" (พาไปหน้าเอกสารของใบนั้น — ไม่มีจ่ายรวมทั้งบิล)
+            // รอบ 267 P4 (267-1-9 v1 · 267-1-47): ใบที่เกี่ยวข้องที่ยังค้างชำระ ⇒ ปุ่ม "ชำระใบนี้" (พาไปหน้าเอกสารของใบนั้น — ไม่มีจ่ายรวมทั้งบิล)
             var payOffered = CustomerDocPageAfterPay.RelatedPayOffered(CustomerDocPage.Mode.Link, r.DocumentType, r.Status, r.BalanceDue);
             result.Add(new CustomerDocPageRelated(r.Id, kind, RelatedKindLabel(isEnglish, kind), title, r.DocumentNumber, r.DocumentDate,
                 show ? r.TotalAmount : null, show && CustomerDocPage.IsPayableType(r.DocumentType) ? r.BalanceDue : null,

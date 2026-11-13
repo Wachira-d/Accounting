@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Services.Implementations;
 
 /// <summary>
-/// รอบ 267 แพ็ก P4 — <b>ส่วน "หลังจ่าย" ของหน้าเอกสารสำหรับลูกค้า</b> (คำตัดสิน 267-1-41…267-1-46 · DOCUMENT_FLOW §2.12n-P4) ·
+/// รอบ 267 แพ็ก P4 — <b>ส่วน "หลังจ่าย" ของหน้าเอกสารสำหรับลูกค้า</b> (คำตัดสิน 267-1-45…267-1-50 · DOCUMENT_FLOW §2.12n-P4) ·
 /// ทุกข้อความ/สถานะ/การตัดสินอยู่ที่ <see cref="CustomerDocPageAfterPay"/> — ที่นี่โหลดข้อเท็จจริงแล้วส่งต่อ
 ///
 /// <para><b>อ่านอย่างเดียว</b> ยกเว้นทางเดียว: <see cref="RelatedPageLinkAsync"/> ออกลิงก์หน้าเอกสารของใบที่เกี่ยวข้อง (ผ่านตัวออกเดียว

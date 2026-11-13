@@ -5,7 +5,7 @@ using Accounting.Models.Enums;
 namespace Accounting.Services.Implementations;
 
 /// <summary>
-/// รอบ 267 แพ็ก P4 (คำตัดสิน 267-1-8 · 267-1-40) — ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" <b>ต่อเอกสาร</b> ตอนสร้าง/แก้ไขใบ ·
+/// รอบ 267 แพ็ก P4 (คำตัดสิน 267-1-8 · 267-1-44) — ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" <b>ต่อเอกสาร</b> ตอนสร้าง/แก้ไขใบ ·
 /// ตัวตัดสินเดียว <see cref="PostPaymentAutomationPolicy.ApplyDocumentLayer"/> (ปุ่มบนหน้าเอกสารของใบที่ออกแล้วใช้ตัวเดียวกันที่
 /// <c>PostPaymentAutomationService.SetDocumentLayerAsync</c>) · ผู้อ่านเชิงธุรกิจ = <c>PostPaymentAutomationService.SettingsForAsync</c> ·
 /// <b>ไม่สืบทอด</b>ไปใบลูก/โคลน/ใบแทน: ทางสร้างใบลูกทุกทางไม่ส่งสองช่องนี้ ⇒ ใบลูก = ตามค่าตั้ง (เจตนาของใบต้นทางไม่ไหลตาม)

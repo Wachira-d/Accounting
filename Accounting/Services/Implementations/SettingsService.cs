@@ -304,6 +304,10 @@ public class SettingsService : ISettingsService
         // รอบ 239 — ผู้อ่าน: PublicQuotationController.Accept (ด่าน QuotationAcceptance.DecideAccept) + View (บอกหน้าลูกค้าว่าต้องเซ็น)
         if (request.RequireSignatureForQuotationAccept.HasValue)
             settings.RequireSignatureForQuotationAccept = request.RequireSignatureForQuotationAccept.Value;
+        // รอบ 267 P2 (267-1-6) — ผู้อ่าน: CustomerSignRule.OtpRequired (CustomerDocumentResponseService: ฟอร์มของหน้า + ด่านตอนรับคำตอบ) · ≤ 0 = ปิด
+        if (request.CustomerSignOtpMinAmount.HasValue)
+            settings.CustomerSignOtpMinAmount = request.CustomerSignOtpMinAmount.Value > 0m
+                ? Math.Round(request.CustomerSignOtpMinAmount.Value, 2, MidpointRounding.AwayFromZero) : null;
         // คำตัดสินเจ้าของข้อ 162 (Q2) — ผู้อ่าน: DocumentFx.WhtRateFor (CreatePaymentJournalAsync + 50 ทวิ รายงวด) · DocumentFx.PickBotRate (ResolveExchangeRateAsync + OCR)
         if (request.WhtFxRateBasis.HasValue)
             settings.WhtFxRateBasis = request.WhtFxRateBasis.Value;
@@ -805,6 +809,7 @@ public class SettingsService : ISettingsService
         PenaltyExpenseAccountCodeEffective = Accounting.Helpers.PenaltyExpenseAccount.EffectiveCode(s.PenaltyExpenseAccountCode),
         PettyCashTopUpEvidenceRequired = s.PettyCashTopUpEvidenceRequired,
         RequireSignatureForQuotationAccept = s.RequireSignatureForQuotationAccept,
+        CustomerSignOtpMinAmount = s.CustomerSignOtpMinAmount,
     };
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(
