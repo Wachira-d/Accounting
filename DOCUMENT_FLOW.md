@@ -3278,7 +3278,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   โปรไฟล์ต่อแอปของ K+ ที่โอนในธนาคารเดียวกัน (ไม่มีป้าย · QR ตรงทั้งสองบล็อก ⇒ ไม่รู้บทบาท)
 - **migration** `Round264SlipReadMigration` (ADD COLUMN IF NOT EXISTS · แถวเดิม NULL = ผลเท่าเดิม · ไม่ backfill)
 - เทสต์ `ThaiSlipQrTests` · `OcrSlipTextPartiesTests` · `SlipAccountMatchTests` · `SlipReceivingAccountTests` (ชั้นสลิป) · `PartnerPaySourceSlipRound264Tests` ·
-  ชุดกระดาษจริง 10 ใบ `Accounting.Tests/SlipCorpusRound264.cs` (redact) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit (เติมในคอมมิตตามหลัง)
+  ชุดกระดาษจริง 10 ใบ `Accounting.Tests/SlipCorpusRound264.cs` (redact) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit e6caad8c
 
 ### 2.12g-264-P1 รอบ 264 แพ็ก P1 "ความยินยอมงานอัตโนมัติกับคู่ค้า" (erp-review/2026-11-12/team-264-a2b-design.md §2 · คำตัดสิน 264-2-1…3)
 
