@@ -32,7 +32,6 @@ OcrPredecessorMatcher.cs ReferenceAppears
 OcrScanPii.cs UndecidedTextFields
 PayrollRunFilingScope.cs CanRemit
 ReceiptIssuePolicy.cs AllowsCashReceiptPapers
-SettlementReceiptPolicy.cs IsReceivableSource
 SsoIdentityPolicy.cs ProvidesEmailVerification
 SsoRateSchedule.cs GetMaxContribution
 SsoRateSchedule.cs RangesOverlap
