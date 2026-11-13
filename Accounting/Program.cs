@@ -347,6 +347,8 @@ builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ICustomerCreditService, CustomerCreditService>();
 // รอบ 266 แพ็ก A — ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ (เจ้าเดียวกัน) · ตัวตัดสิน Helpers/ReceiptLinkPolicy
 builder.Services.AddScoped<IReceiptLinkService, ReceiptLinkService>();
+// รอบ 266 แพ็ก C — ตัวช่วย "ใบซ้ำ" (ใบขายสด ↔ ใบแจ้งหนี้ของการขายเดียวกัน) · ตัวตัดสิน Helpers/DuplicateSalePolicy · เส้นเดิมเท่านั้น (ยกเลิก/ใบลดหนี้ร่าง/รับชำระ)
+builder.Services.AddScoped<IDuplicateSaleService, DuplicateSaleService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 // ทะเบียนภาษีที่เราถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.51/50 (WHT_CREDIT_PLAN.md)
 builder.Services.AddScoped<Accounting.Services.Implementations.WhtCreditService>();

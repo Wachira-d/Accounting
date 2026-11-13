@@ -5,7 +5,7 @@ namespace Accounting.Services.Interfaces;
 /// <summary>
 /// รอบ 266 แพ็ก A — "เลือกผูกใบเสร็จรับเงิน/เงินที่รับไว้แล้วกับใบแจ้งหนี้เอง (เจ้าเดียวกัน)" ทั้งจากหน้าใบแจ้งหนี้และหน้าใบเสร็จ ·
 /// ตัวตัดสินเดียว <c>Helpers/ReceiptLinkPolicy</c> · เส้นที่เปิด: ใบเสร็จร่าง (ตั้งใบต้นทาง) · เงินรอจัดสรร (<c>CustomerCreditService.AllocateAsync</c>) ·
-/// มัดจำ (<c>ApplyDepositToInvoiceAsync</c>) · ย้ายการรับชำระ = แพ็ก B · ตัวช่วยใบซ้ำ = แพ็ก C (ปฏิเสธพร้อมทางไปต่อ)
+/// มัดจำ (<c>ApplyDepositToInvoiceAsync</c>) · ย้ายการรับชำระ = แพ็ก B · ใบขายสด = ปฏิเสธพร้อมทางไปต่อไปตัวช่วยใบซ้ำ (แพ็ก C · <c>IDuplicateSaleService</c>)
 /// </summary>
 public interface IReceiptLinkService
 {

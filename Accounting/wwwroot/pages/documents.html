@@ -9385,8 +9385,11 @@
        *  • depth เดียวกันหลายใบ (แตก partial) ซ้อนเป็นกลุ่มในขั้นเดียวกัน
        *  • คลิกใบไหน = เปิด detail ใบนั้นทันที
        */
-      renderChainStepper(nodes, currentId) {
-        if (!nodes || nodes.length < 2) return;   // ใบเดี่ยว — ไม่มีสายให้วาด
+      renderChainStepper(allNodes, currentId) {
+        // รอบ 266 แพ็ก C (266-1-40): โหนดชนิด "เงิน" (เงินรอจัดสรร/การย้ายการรับชำระ/มัดจำ) วาดเป็นแถบแยกใต้สาย — ป้ายมาจากเซิร์ฟเวอร์
+        const money = (allNodes || []).filter(n => n.nodeKind && n.nodeKind !== 'Document');
+        const nodes = (allNodes || []).filter(n => !n.nodeKind || n.nodeKind === 'Document');
+        if (nodes.length < 2 && !money.length) return;   // ใบเดี่ยวไม่มีเงินผูก — ไม่มีสายให้วาด
         const host = document.createElement('div');
         host.id = 'chainStepper';
         host.style.cssText = 'margin:0 0 14px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;overflow-x:auto';
@@ -9426,6 +9429,19 @@
               ? `<div style="align-self:center;padding:0 6px;color:#94a3b8;font-size:16px;flex:none">→</div>` : '';
             return `<div style="display:flex;flex-direction:column;flex:none">${cards}</div>${arrow}`;
           }).join('') + `</div>`;
+
+        if (money.length) {
+          const moneyHtml = money.map(m => {
+            const open = m.openDocumentId ? ` onclick="Page.detail('${Layout.jsArg(m.openDocumentId)}')"` : '';
+            const advice = m.hasAdvice && m.allocationId
+              ? ` <button type="button" class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="event.stopPropagation();Page.downloadPaymentAdvice('${Layout.jsArg(m.allocationId)}')" title="ใบแจ้งเพื่อทราบ — ไม่ใช่ใบเสร็จ/ใบกำกับภาษี (ใบรับออกไว้แล้วตอนรับเงิน)">📄 ใบแจ้งการตัดชำระ</button>` : '';
+            return `<div${open /* html — onclick ประกอบจาก Layout.jsArg แล้ว */} style="min-width:150px;padding:7px 10px;background:#fff;border:1px dashed #0891b2;border-radius:8px;${m.openDocumentId ? 'cursor:pointer;' : ''}margin:0 6px 4px 0">
+              <div style="font-size:10.5px;color:#0e7490">💰 เงินที่ตัดชำระ · ${Layout.date(m.documentDate)}</div>
+              <div style="font-size:12px;font-weight:600">${Layout.esc(m.label || m.documentNumber)}</div>${advice /* html — ปุ่มคงที่ + Layout.jsArg */}
+            </div>`;
+          }).join('');
+          host.insertAdjacentHTML('beforeend', `<div style="font-weight:700;font-size:12px;margin:8px 0 6px;color:#475569">💰 เงินที่ผูกกับใบในสาย (${money.length})</div><div style="display:flex;flex-wrap:wrap">${/*html — ประกอบจาก Layout.esc/jsArg แล้ว*/ moneyHtml}</div>`);
+        }
 
         const dc = document.getElementById('detailContent');
         if (dc) dc.prepend(host);
@@ -11518,6 +11534,10 @@
             const rlInvoiceSide = !['Receipt', 'ReceiptVoucher'].includes(d.documentType);   // ป้ายปุ่มเท่านั้น — เงื่อนไขอยู่ที่เซิร์ฟเวอร์
             actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openReceiptLink('${Layout.jsArg(d.id)}')" title="เลือกใบเสร็จร่าง · เงินรอจัดสรร · ใบมัดจำ ของผู้ติดต่อเดียวกันมาตัดยอดค้าง — ระบบแสดงผลก่อนยืนยัน">${rlInvoiceSide ? '🔗 ผูกใบเสร็จ/เงินที่รับไว้แล้ว' : '🔗 ผูกกับใบแจ้งหนี้'}</button>`;
           }
+          // รอบ 266 แพ็ก C — ตัวช่วยใบซ้ำ (ใบขายสด ↔ ใบแจ้งหนี้ของการขายเดียวกัน) · เซิร์ฟเวอร์ตัดสินจากข้อมูลบนใบ (canOpenDuplicateSale) — ผู้สมัครโหลดเมื่อกด
+          if (d.canOpenDuplicateSale === true) {
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openDuplicateSale('${Layout.jsArg(d.id)}')" title="ใบขายสดใบนี้กับใบแจ้งหนี้ของผู้ติดต่อเดียวกันเป็นการขายเดียวกันไหม — ผู้ทำบัญชีเลือกใบที่คงไว้ ระบบแสดงผลก่อนยืนยัน">🧾 ใบนี้ซ้ำกับใบแจ้งหนี้?</button>`;
+          }
           if (d.canChangeReceiptSource === true && d.relatedDocumentId) {
             actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.undoDraftReceiptSource('${Layout.jsArg(d.id)}')" title="ใบเสร็จร่างนี้กลับเป็นใบเสร็จอิสระ">✂️ ถอดใบต้นทางของใบร่าง</button>`;
           }
@@ -11648,7 +11668,8 @@
           // มีเอกสารเกี่ยวข้อง (แม่หรือลูก) เมื่อไร ให้วาดทั้งเส้นบนสุดของ modal
           // ผู้ใช้เห็นทันทีว่าใบนี้อยู่ขั้นไหนของ flow และคลิกกระโดดไปใบไหนก็ได้
           // — จบปัญหา "ต้องจดเลขแล้วไปค้นเอง"
-          if (d.relatedDocumentId || (d.convertedToDocuments && d.convertedToDocuments.length)) {
+          // รอบ 266 แพ็ก C: ใบที่มียอดรับแล้ว/ใบมัดจำ อาจมีเงินผูก (เงินรอจัดสรร/ย้ายการรับชำระ/หักมัดจำ) ที่ไม่อยู่ในสาย RelatedDocumentId — ขอสายด้วย
+          if (d.relatedDocumentId || (d.convertedToDocuments && d.convertedToDocuments.length) || Number(d.paidAmount || 0) > 0 || d.isDeposit) {
             (async () => {
               try {
                 const cres = await API.get(`/api/companies/${Layout.getCompanyId()}/document/${d.id}/chain`);
@@ -13619,6 +13640,77 @@
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ผูกไม่สำเร็จ', 'error', 12000); }
         finally { this._rlBusy = false; }
+      },
+      /** รอบ 266 แพ็ก C — ตัวช่วย "ใบซ้ำ" (Helpers/DuplicateSalePolicy · คำตัดสิน 266-1-5 · 266-1-36…38): เลือกใบแจ้งหนี้ที่อาจซ้ำ → พรีวิวสองตัวเลือก
+       *  (คงใบขายสด / คงใบแจ้งหนี้) พร้อมผลที่จะเกิด → เหตุผล → ยืนยัน · ทุกเงื่อนไข/ข้อความมาจากเซิร์ฟเวอร์ (F2 ข้อ 5) · ค่าทุกจุดผ่าน Layout.esc */
+      async openDuplicateSale(docId) {
+        const api = Layout.api(); if (!api || !api.getDuplicateSaleCandidates) return;
+        if (this._dsLoading) return;
+        this._dsLoading = true;
+        let c = null;
+        try { c = (await api.getDuplicateSaleCandidates(docId))?.data; }
+        catch (e) { Layout.toast(e.message || 'โหลดใบที่อาจซ้ำไม่สำเร็จ', 'error', 10000); return; }
+        finally { this._dsLoading = false; }
+        if (!c) return;
+        const items = c.items || [];
+        if (!items.length) {
+          await Layout.notice({ title: 'ตัวช่วยใบซ้ำ', messageHtml: Layout.esc(c.notice || 'ไม่พบใบที่อาจซ้ำ (ผู้ติดต่อเดียวกัน · ยอดเท่ากัน)') });
+          return;
+        }
+        const v = await Layout.formDialog({ title: `ใบซ้ำของ ${c.documentNumber}?`,
+          messageHtml: `<div class="text-sm" style="margin-bottom:6px">เลือกใบที่เป็นการขายเดียวกัน (ผู้ติดต่อเดียวกัน · ยอดเท่ากัน) — ขั้นถัดไปแสดงผลของแต่ละทางก่อนยืนยัน</div>`,
+          okText: 'ดูผลก่อนยืนยัน',
+          fields: [{ key: 'pick', label: 'ใบที่อาจซ้ำ', type: 'select', required: true, value: '0', options: items.map((x, i) => ({ value: String(i), label: x.label })) }] });
+        if (!v) return;
+        const pick = items[Number(v.pick)]; if (!pick) return;
+        await this._dsPreviewAndResolve(pick.cashSaleId, pick.invoiceId);
+      },
+      async _dsPreviewAndResolve(cashSaleId, invoiceId) {
+        const api = Layout.api(); if (!api) return;
+        let p;
+        try { p = (await api.previewDuplicateSale(cashSaleId, invoiceId))?.data; }
+        catch (e) { Layout.toast(e.message || 'ดูผลไม่สำเร็จ', 'error', 10000); return; }
+        if (!p) return;
+        const opts = p.options || [];
+        const keepLabel = k => k === 'CashSale' ? `คง ${p.cashSaleNumber} (ใบขายสด) — ${p.invoiceNumber} คือใบที่ซ้ำ` : `คง ${p.invoiceNumber} (ใบแจ้งหนี้) — ${p.cashSaleNumber} คือใบที่ซ้ำ`;
+        const optHtml = opts.map(o => {
+          const body = o.allowed
+            ? `<table style="font-size:12.5px;width:100%">${(o.effects || []).map(x => `<tr><td style="padding:2px 8px 2px 0;vertical-align:top;white-space:nowrap"><b>${Layout.esc(x.label)}</b></td><td style="padding:2px 0">${Layout.esc(x.detail)}</td></tr>`).join('')}</table>`
+            : `${/*html — หนีแล้วใน _rlReasonHtml*/ this._rlReasonHtml({ reason: o.message, wayForward: o.wayForward })}<div class="text-xs text-gray-500">${Layout.esc(o.ruleCode || '')}</div>`;
+          return `<div style="border:1px solid ${o.allowed ? '#a7f3d0' : '#e2e8f0'};background:${o.allowed ? '#f0fdf4' : '#f8fafc'};border-radius:8px;padding:8px 10px;margin-bottom:8px">
+            <div style="font-weight:700;margin-bottom:4px">${o.allowed ? '✅' : '⛔'} ${Layout.esc(keepLabel(o.keep))}</div>${/*html — ประกอบจาก Layout.esc แล้ว*/ body}</div>`;
+        }).join('');
+        const allowed = opts.filter(o => o.allowed);
+        const headHtml = `<div class="text-sm" style="margin-bottom:8px">${Layout.esc(p.cashSaleNumber)} กับ ${Layout.esc(p.invoiceNumber)} ยอด ${Layout.money(p.totalAmount)} — ใบกำกับสองใบต่อการขายเดียว = รายได้/ภาษีขาย (+สต็อก) นับสองครั้ง · เลือกใบที่ลูกค้าใช้เคลมภาษีซื้อคงไว้</div>`;
+        const legal = `<div class="text-xs text-gray-500" style="margin-top:4px">${Layout.esc(p.legalReference || '')}</div>`;
+        if (!allowed.length) {
+          await Layout.notice({ title: 'ตัวช่วยใบซ้ำ — ทำอัตโนมัติไม่ได้', messageHtml: headHtml + optHtml + legal });
+          return;
+        }
+        const f = await Layout.formDialog({ title: 'ตัวช่วยใบซ้ำ — ตรวจผลก่อนยืนยัน', messageHtml: headHtml + optHtml + legal, okText: 'ยืนยัน',
+          fields: [
+            { key: 'keep', label: 'ใบที่คงไว้', type: 'select', required: true, value: '0', options: allowed.map((o, i) => ({ value: String(i), label: keepLabel(o.keep) })) },
+            { key: 'reason', label: 'เหตุผลว่าทำไมเป็นการขายเดียวกัน (เก็บให้ผู้สอบบัญชี)', type: 'textarea', required: true },
+          ] });
+        if (!f || !String(f.reason || '').trim()) return;
+        const chosen = allowed[Number(f.keep)]; if (!chosen) return;
+        if (this._dsBusy) return;
+        this._dsBusy = true;   // กันกดซ้ำระหว่างรอคำตอบ (เซิร์ฟเวอร์กันซ้ำอีกชั้นด้วยกุญแจพรีวิว + ยอดที่เห็นใต้ล็อก)
+        try {
+          const res = await api.resolveDuplicateSale({ cashSaleId, invoiceId, keep: chosen.keep, previewToken: chosen.previewToken, reason: String(f.reason).trim() });
+          const notices = res?.data?.notices || [];
+          Layout.toast(res?.message || 'ทำรายการแล้ว', 'success', notices.length > 1 ? 14000 : 7000);
+          Layout.closeModal('detailModal');
+          await this.load();
+          if (res?.data?.creditNoteId) this.detail(res.data.creditNoteId);   // ใบลดหนี้ร่าง — เปิดให้เลือกเหตุผลแล้วอนุมัติ
+        } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error', 15000); }
+        finally { this._dsBusy = false; }
+      },
+      /** รอบ 266 แพ็ก C (266-1-6) — ดาวน์โหลด "ใบแจ้งการนำเงินไปตัดชำระ" (ไม่ใช่ใบรับ/ใบกำกับภาษี) ของแถวจัดสรร */
+      async downloadPaymentAdvice(allocationId) {
+        const api = Layout.api(); if (!api || !api.downloadPaymentAdvice) return;
+        try { await api.downloadPaymentAdvice(allocationId); }
+        catch (e) { Layout.toast(e.message || 'ดาวน์โหลดใบแจ้งไม่สำเร็จ', 'error', 10000); }
       },
       async undoDraftReceiptSource(docId) {
         const ok = await Layout.confirm({ title: 'ถอดใบต้นทางของใบเสร็จร่าง',

@@ -20194,6 +20194,90 @@ REVIEWER_CASES += [
      "            await _db.SaveChangesAsync();\n            rows.Add(new Pp30SalesBoxReviewRow(", True),
 ]
 
+# ── รอบ 266 แพ็ก C: ตัวช่วยใบซ้ำ + ใบแจ้งการนำเงินไปตัดชำระ + สายเอกสารเห็นเงิน (คำตัดสิน 266-1-5 · 266-1-6 · 266-1-36…40) ──
+_R266C_WHY = "รอบ 266 แพ็ก C (คำตัดสิน 266-1-36…40): "
+_R266C_SVC = "Services/Implementations/DuplicateSaleService.cs"
+_R266C_FACTS = "Services/Implementations/DocumentService.DuplicateSale.cs"
+_R266C_ADVICE = "Services/Implementations/PdfGenerationService.PaymentApplicationAdvice.cs"
+RULES += [
+    dict(file=_R266C_SVC, method="ExecuteAsync",
+         must=["_documents.LoadDuplicateSaleFactsAsync(", "DuplicateSalePolicy.Decide(", "DuplicateSalePolicy.PreviewToken(", "EnsurePermittedAsync(",
+               "DuplicateSalePolicy.ReasonCode", "expectedPaidAmount: snap.Invoice.PaidAmount", "expectedPaidAmount: snap.Cash.PaidAmount",
+               "_documents.ConvertDocumentAsync(companyId, snap.Invoice.Id, DocumentType.CreditNote", "WithholdingTaxAmount: 0m",
+               "OverrideBankAccountId: snap.CashBankAccountId", "snap.PaymentDate", "DuplicateSalePolicy.PartialCode", "AuditAsync("],
+         forbid=["RelatedDocumentId =", "catch { }", "catch {}", "ApproveDocumentAsync(", "AddChainedAuditLog("],
+         before=[("DuplicateSalePolicy.Decide(", "_documents.VoidDocumentAsync("), ("DuplicateSalePolicy.PreviewToken(", "_documents.VoidDocumentAsync("),
+                 ("EnsurePermittedAsync(", "_documents.VoidDocumentAsync("), ("EnsurePermittedAsync(", "_documents.ConvertDocumentAsync("),
+                 ("_documents.VoidDocumentAsync(companyId, snap.Cash.Id", "_documents.CreatePaymentAsync(")],
+         why=_R266C_WHY + "ตัวช่วยใบซ้ำตัดสินซ้ำจากข้อเท็จจริงล่าสุด + กุญแจพรีวิว + สิทธิ์ของเส้นที่เดินจริง ก่อนแตะใบใด · เส้นเดิมเท่านั้น (ยกเลิกพร้อมยอดที่เห็นใต้ล็อก · "
+             "ใบลดหนี้ฉบับร่าง (ไม่อนุมัติแทนคน) · รับชำระลงวันที่รับเงินจริงเข้าบัญชีเงินเดิม) · ห้ามเขียน FK ใบที่ออกเลขแล้ว/แปลงความหมายใบกำกับ (266-1-5) · ขั้นที่สองล้ม = ล้มดัง"),
+    dict(file=_R266C_SVC, method="AuditAsync", must=["_db.AddChainedAuditLog(", "DuplicateSalePolicy.RuleCode", "DuplicateSalePolicy.LegalReference", "reason"],
+         why=_R266C_WHY + "ร่องรอย DOC-DUP-SALE ผ่าน hash chain ตัวเดียว + เหตุผลของผู้กด"),
+    dict(file=_R266C_SVC, method="EnsurePermittedAsync",
+         must=["DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userId, snap.Invoice.Type)",
+               "DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userId, DocumentType.CreditNote)",
+               "DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userId, snap.Cash.Type)",
+               "DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, snap.Invoice.Type)", "DuplicateSalePolicy.PermissionCode, 403"],
+         why=_R266C_WHY + "สิทธิ์ตัดสินจากเส้นที่จะเดินจริง (ยกเลิกใบที่ซ้ำ · สร้างใบลดหนี้ · รับเงินเข้าใบแจ้งหนี้) ไม่ใช่จากตัวเลือกที่ส่งมา"),
+    dict(file=_R266C_SVC, method="PreviewAsync", must=["LoadVisibleAsync(", "DuplicateSalePolicy.Options(", "DuplicateSalePolicy.Effects(", "DuplicateSalePolicy.PreviewToken("],
+         forbid=["SaveChangesAsync(", "VoidDocumentAsync("],
+         why=_R266C_WHY + "พรีวิวอ่านอย่างเดียว · ใบลับที่ผู้ใช้ไม่เห็น = ไม่พบ · ผลที่จะเกิดเซิร์ฟเวอร์คิด"),
+    dict(file=_R266C_SVC, method="CandidatesAsync", must=["d.CompanyId == companyId", "d.ContactId == origin.ContactId", "Visible(kinds", "IsCashSale(origin)", "IsCashSale(d)", "IsInvoiceSide(d)"],
+         why=_R266C_WHY + "ผู้สมัคร = เจ้าเดียวกัน · tenant · ชั้นความลับ · ใบขายสดตามตัวจัดชนิดเดียว"),
+    dict(file=_R266C_FACTS, method="LoadDuplicateSaleFactsAsync",
+         must=["ReceiptLinkPolicy.Classify(ReceiptLinkFacts.Source(cash))", "ReceiptLinkService.CreditReceiptIdsAsync(", "GetValidConversionTargets(inv.DocumentType)",
+               "JournalEntryBuilder.ClosedPeriodReasonAsync(", "ContactTaxBranchKey.SameEntityIdsAsync(", "d.CompanyId == companyId", "DuplicateSaleDocFactsAsync(",
+               "InvoiceWithholdingTax: inv.WithholdingTaxAmount"],
+         why=_R266C_WHY + "ข้อเท็จจริงจากตัวจัดชนิด/ตัวอ่านเดิม (ไม่เขียนสำเนา) · tenant ทุก query"),
+    dict(file=_R266C_FACTS, method="DuplicateSaleDocFactsAsync",
+         must=["IsDocumentFilingLockedAsync(", "DocumentVoidPreconditions.EffectiveEtaxAsync(", "DocumentVoidPreconditions.DocumentVoidEtaxBlock(",
+               "PostedOutputVatAsync(", "OutputVatPeriodLockReasonAsync(", "DocumentVoidPreconditions.ChildBlocksAsync(", "WhtCertVoidGuard.CheckDocumentAsync("],
+         why=_R266C_WHY + "ยกเลิกได้ไหมตัดสินด้วยตัวโหลด/ตัวตัดสินเดียวกับเส้นยกเลิก · ภาษีติด (ยื่น/ถึงกรมสรรพากร/ภ.พ.30 ของเดือนที่ภาษีลงจริง) แยกจากเหตุอื่น"),
+    dict(file=DOC, method="VoidDocumentAsync", must=["expectedPaidAmount is decimal expectPaid", "DuplicateSalePolicy.StaleCode"],
+         before=[("expectedPaidAmount is decimal expectPaid", "ReverseMultiDocPaymentInternalAsync(")],
+         why=_R266C_WHY + "266-1-37 ยอดรับชำระที่ตัวช่วยเห็นตรวจใต้ล็อกแถวก่อนยกเลิกการรับชำระแบบ cascade (รับชำระซ้อน = 409 ไม่ยกเลิกเงียบ)"),
+    dict(file=DOC, method="GetDocumentChainAsync", must=["LoadChainMoneyNodesAsync(companyId, ids)"],
+         why=_R266C_WHY + "266-1-40 สายเอกสารเห็นเงิน (เงินรอจัดสรร/การย้ายการรับชำระ/มัดจำ)"),
+    dict(file=_R266C_FACTS, method="LoadChainMoneyNodesAsync",
+         must=["DocumentChainMoney.Nodes(", "a.CompanyId == companyId", "p.CompanyId == companyId", "a.ReleasedAt == null", "d.CompanyId == companyId"],
+         forbid=["SaveChangesAsync("],
+         why=_R266C_WHY + "โหนดเงินจากแถวที่ยังมีผลเท่านั้น · tenant · อ่านอย่างเดียว"),
+    dict(file=DOC, method="MapDocumentToResponse", must=["DuplicateSalePolicy.OffersWizardButton(ReceiptLinkFacts.Source(d))"],
+         why=_R266C_WHY + "ปุ่มตัวช่วยใบซ้ำตัดสินที่เซิร์ฟเวอร์ (ตัวจัดชนิดเดียวกับปุ่มผูก)"),
+    dict(file=_R266C_ADVICE, method="LoadPaymentApplicationAdviceAsync",
+         must=["PaymentApplicationAdvice.Build(", "x.CompanyId == companyId", "c.CompanyId == companyId", "ResolveDocumentLanguage("],
+         forbid=["SaveChangesAsync(", "Documents.Add(", "TaxReport"],
+         why=_R266C_WHY + "266-1-6 ใบแจ้งผ่านตัวตัดสินเดียว (แถวที่ยังมีผลและเกิดหลังรับเงิน) · ไม่บันทึกเป็นแถวเอกสาร/ไม่แตะรายงานภาษี · tenant · ภาษาผ่านตัวตัดสินกลาง"),
+    dict(file=_R266C_ADVICE, method="GeneratePaymentApplicationAdviceHtmlAsync", must=["WebUtility.HtmlEncode(", "AdviceRows(", "PartyLines("], must_lit=["advice_not_tax_document"],
+         why=_R266C_WHY + "renderer HTML: เนื้อหาเดียวกับ QuestPDF · HtmlEncode ทุกค่า (กฎเหล็ก #4 C) · พิมพ์ \"ไม่ใช่ใบรับ/ใบกำกับภาษี\" เสมอ"),
+    dict(file=_R266C_ADVICE, method="GeneratePaymentApplicationAdvicePdfAsync", must=["AdviceRows(", "PartyLines("], must_lit=["advice_not_tax_document"],
+         why=_R266C_WHY + "renderer QuestPDF: เนื้อหาเดียวกับ HTML (สอง renderer ห้าม drift)"),
+    dict(file="Controllers/ReceiptLinkController.cs", method="DuplicateSaleExecute",
+         must=["OwnerActionGuard.IsApiKeyRequest(", "DocumentPermissionHelper.CanApproveAsync("],
+         before=[("OwnerActionGuard.IsApiKeyRequest(", "_duplicates.ExecuteAsync("), ("DocumentPermissionHelper.CanApproveAsync(", "_duplicates.ExecuteAsync(")],
+         why=_R266C_WHY + "API key = 403 · ระดับอนุมัติของใบแจ้งหนี้ก่อนเรียกบริการ"),
+    dict(file="Controllers/ReceiptLinkController.cs", method="Advice",
+         must=["DenyViewAsync(", "_sensitivity.CanViewAsync(", "a.CompanyId == companyId"],
+         before=[("_sensitivity.CanViewAsync(", "_pdf.GeneratePaymentApplicationAdvice")],
+         why=_R266C_WHY + "ใบแจ้งเปิดได้เฉพาะผู้เห็นเอกสารฝั่งขาย + ชั้นความลับของใบ · tenant"),
+]
+REVIEWER_CASES += [
+    # คงใบแจ้งหนี้แต่บันทึกรับชำระก่อนยกเลิกใบขายสด (ช่วงหนึ่งรายได้/เงินนับสองครั้ง) ⇒ ต้องฟ้อง
+    ("R266C-1", "ExecuteAsync", "var voided = await _documents.VoidDocumentAsync(companyId, snap.Cash.Id, reversalDate: null, expectedPaidAmount: snap.Cash.PaidAmount);",
+     "var voided = PaymentVoidResult.None;", True),
+    # ยกเลิกใบแจ้งหนี้โดยไม่ส่งยอดที่พรีวิวเห็น (การรับชำระที่เกิดระหว่างนั้นถูกยกเลิกเงียบ) ⇒ ต้องฟ้อง
+    ("R266C-2", "ExecuteAsync", "expectedPaidAmount: snap.Invoice.PaidAmount", "expectedPaidAmount: null", True),
+    # อนุมัติใบลดหนี้แทนผู้ทำบัญชี (เหตุผลของใบลดหนี้ต้องเป็นคนเลือก) ⇒ ต้องฟ้อง
+    ("R266C-3", "ExecuteAsync", "_db.ChangeTracker.Clear();\n                var note = await AuditAsync(companyId, userId, \"CreditNoteForDuplicateInvoice\"",
+     "await _documents.ApproveDocumentAsync(companyId, cn.Id, actor);\n                _db.ChangeTracker.Clear();\n                var note = await AuditAsync(companyId, userId, \"CreditNoteForDuplicateInvoice\"", True),
+    # ใบแจ้งถูกบันทึกเป็นแถวเอกสาร (เข้าเล่มเลข/รายงานภาษีได้) ⇒ ต้องฟ้อง
+    ("R266C-4", "LoadPaymentApplicationAdviceAsync", "var model = PaymentApplicationAdvice.Build(facts);",
+     "var model = PaymentApplicationAdvice.Build(facts); _db.Documents.Add(new Accounting.Models.Entities.Document()); await _db.SaveChangesAsync();", True),
+    # ทิศตรงข้าม: จัดบรรทัดใหม่ของการเรียกตัวตัดสิน ⇒ ต้องไม่ฟ้อง
+    ("R266C-5", "ExecuteAsync", "var v = DuplicateSalePolicy.Decide(snap.Cash, snap.Invoice, snap.Context, keep);",
+     "var v = DuplicateSalePolicy.Decide(\n            snap.Cash, snap.Invoice, snap.Context, keep);", False),
+]
+
 
 def main() -> int:
     errs = []

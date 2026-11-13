@@ -1070,6 +1070,8 @@ public record DocumentResponse(
     /// <summary>รอบ 266 (ฝ่ายค้าน M6): วาดปุ่ม "ผูกใบเสร็จ/เงินที่รับไว้แล้ว" (ใบตั้งลูกหนี้ที่ค้าง) / "ผูกกับใบแจ้งหนี้" (ใบเสร็จร่าง · ใบมัดจำ) ไหม — ตัดสินจากข้อมูลบนใบ
     /// (ReceiptLinkPolicy.OffersLinkButton) · ผู้สมัครโหลดเมื่อกดปุ่ม ไม่ใช่ทุกครั้งที่เปิดเอกสาร</summary>
     bool CanOpenReceiptLink = false,
+    /// <summary>รอบ 266 แพ็ก C: วาดปุ่ม "ใบนี้ซ้ำกับใบแจ้งหนี้?" (ตัวช่วยใบซ้ำ) ไหม — ใบขายสดที่ออกเลขแล้ว + ระบุผู้ติดต่อ (DuplicateSalePolicy.OffersWizardButton · ไม่แตะฐาน)</summary>
+    bool CanOpenDuplicateSale = false,
     // ทีมตรวจงานค้าง 2026-10-08 (C-02): ใบวางบิลรวมใบแจ้งหนี้ — หน้าเว็บซ่อนแปลง/รับชำระที่ใบวางบิล แล้วโชว์ "รับชำระตามใบวางบิล" (เซิร์ฟเวอร์ตัดสิน)
     bool IsRollupBillingNote = false,
     /// <summary>คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A): ติ๊ก "สร้าง 50 ทวิ อัตโนมัติ" ของใบ</summary>
@@ -1223,17 +1225,26 @@ public sealed record PaymentVoidResult(string? EtaxCancellationFlag, string? Out
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)
 /// เรียงจากต้นน้ำ → ปลายน้ำ; Depth 0 = รากของสาย</summary>
+/// <remarks>รอบ 266 แพ็ก C (คำตัดสิน 266-1-40): โหนดชนิด "เงิน" (<paramref name="NodeKind"/> ≠ "Document") — เงินรอจัดสรร/การย้ายการรับชำระ/ใบมัดจำที่ตัดชำระใบในสาย ·
+/// <paramref name="DocumentType"/>/<paramref name="Status"/> = null (ไม่ใช่เอกสาร — ไม่แต่งชนิดขึ้นมา) · <paramref name="ParentId"/> = ใบที่เงินนี้ตัดชำระ ·
+/// ป้ายจากเซิร์ฟเวอร์ (<c>Helpers/DocumentChainMoney</c>) · <paramref name="HasAdvice"/> = ออก "ใบแจ้งการนำเงินไปตัดชำระ" ของแถวนี้ได้</remarks>
 public record DocumentChainNode(
     Guid Id,
     string DocumentNumber,
-    DocumentType DocumentType,
-    DocumentStatus Status,
+    DocumentType? DocumentType,
+    DocumentStatus? Status,
     DateTime DocumentDate,
     decimal TotalAmount,
     decimal PaidAmount,
     int Depth,               // ระยะจากราก (0 = ต้นทางสุด)
     Guid? ParentId,          // ใบก่อนหน้าในสาย (null = ราก)
-    bool IsCurrent);         // ใบที่ผู้ใช้กำลังเปิดอยู่
+    bool IsCurrent,          // ใบที่ผู้ใช้กำลังเปิดอยู่
+    string NodeKind = "Document",
+    string? Label = null,
+    Guid? PaymentId = null,
+    Guid? AllocationId = null,
+    Guid? OpenDocumentId = null,
+    bool HasAdvice = false);
 
 public record DocumentRevisionListItem(
     int RevisionNumber,

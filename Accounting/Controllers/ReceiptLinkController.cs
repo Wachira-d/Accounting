@@ -24,12 +24,19 @@ public class ReceiptLinkController : ControllerBase
     private readonly IReceiptLinkService _links;
     private readonly IPermissionService _permissions;
     private readonly AccountingDbContext _db;
+    private readonly IDuplicateSaleService _duplicates;
+    private readonly IPdfGenerationService _pdf;
+    private readonly ISensitivityService _sensitivity;
 
-    public ReceiptLinkController(IReceiptLinkService links, IPermissionService permissions, AccountingDbContext db)
+    public ReceiptLinkController(IReceiptLinkService links, IPermissionService permissions, AccountingDbContext db,
+        IDuplicateSaleService duplicates, IPdfGenerationService pdf, ISensitivityService sensitivity)
     {
         _links = links;
         _permissions = permissions;
         _db = db;
+        _duplicates = duplicates;
+        _pdf = pdf;
+        _sensitivity = sensitivity;
     }
 
     private ActionResult<ApiResponse<T>> Forbid403<T>(string th) => StatusCode(403, new ApiResponse<T>(false, default, th));
@@ -110,5 +117,60 @@ public class ReceiptLinkController : ControllerBase
         }
         var r = await _links.UndoAsync(companyId, request, userId, ct);
         return Ok(new ApiResponse<ReceiptLinkResult>(true, r, string.Join(" · ", r.Notices.DefaultIfEmpty("ถอดการผูกแล้ว"))));
+    }
+
+    // ── รอบ 266 แพ็ก C: ตัวช่วย "ใบซ้ำ" (Helpers/DuplicateSalePolicy · คำตัดสิน 266-1-5 · 266-1-36…38) ──
+
+    /// <summary>คู่ใบที่อาจซ้ำของใบที่เปิดอยู่ (ใบขายสด ⇒ ใบแจ้งหนี้ · ใบแจ้งหนี้ ⇒ ใบขายสด) — อ่านอย่างเดียว</summary>
+    [HttpGet("duplicate-sale/candidates")]
+    public async Task<ActionResult<ApiResponse<DuplicateSaleCandidatesResponse>>> DuplicateSaleCandidates(Guid companyId, [FromQuery] Guid documentId,
+        CancellationToken ct = default)
+    {
+        if (await DenyViewAsync(companyId) is { } deny) return Forbid403<DuplicateSaleCandidatesResponse>(deny);
+        var r = await _duplicates.CandidatesAsync(companyId, documentId, JwtHelper.GetUserIdFromClaims(User), ct);
+        return Ok(new ApiResponse<DuplicateSaleCandidatesResponse>(true, r));
+    }
+
+    /// <summary>พรีวิวผลของทั้งสองตัวเลือก (อ่านอย่างเดียว — ไม่เขียนอะไร)</summary>
+    [HttpGet("duplicate-sale/preview")]
+    public async Task<ActionResult<ApiResponse<DuplicateSalePreviewResponse>>> DuplicateSalePreview(Guid companyId, [FromQuery] Guid cashSaleId,
+        [FromQuery] Guid invoiceId, CancellationToken ct = default)
+    {
+        if (await DenyViewAsync(companyId) is { } deny) return Forbid403<DuplicateSalePreviewResponse>(deny);
+        var r = await _duplicates.PreviewAsync(companyId, cashSaleId, invoiceId, JwtHelper.GetUserIdFromClaims(User), ct);
+        return Ok(new ApiResponse<DuplicateSalePreviewResponse>(true, r));
+    }
+
+    /// <summary>ทำตามตัวเลือก — ระดับอนุมัติของใบแจ้งหนี้ (ระดับเดียวกับปุ่มผูก 266-1-10) · สิทธิ์ของเส้นที่เดินจริง (ยกเลิก/สร้างใบลดหนี้/รับชำระ)
+    /// ตัดสินในบริการจากผลตัดสินล่าสุด · API key ใช้ไม่ได้</summary>
+    [HttpPost("duplicate-sale")]
+    public async Task<ActionResult<ApiResponse<DuplicateSaleResult>>> DuplicateSaleExecute(Guid companyId, [FromBody] DuplicateSaleRequest request,
+        CancellationToken ct = default)
+    {
+        if (OwnerActionGuard.IsApiKeyRequest(HttpContext)) return Forbid403<DuplicateSaleResult>(ApiKeyDenied);
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var invType = await TypeAsync(companyId, request.InvoiceId);
+        if (invType == null) return NotFound(new ApiResponse<DuplicateSaleResult>(false, null, "ไม่พบใบแจ้งหนี้"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, invType.Value))
+            return Forbid403<DuplicateSaleResult>($"ไม่มีสิทธิ์จัดการใบซ้ำของเอกสาร {invType.Value} (ต้องการ Document.Approve หรือ Document.Revenue.Approve)");
+        var r = await _duplicates.ExecuteAsync(companyId, request, userId, ct);
+        return Ok(new ApiResponse<DuplicateSaleResult>(true, r, string.Join(" · ", r.Notices.DefaultIfEmpty("ทำรายการแล้ว"))));
+    }
+
+    /// <summary>"ใบแจ้งการนำเงินไปตัดชำระ" (266-1-6) ของแถวจัดสรรที่เกิดหลังรับเงิน — format=html (พรีวิว) / pdf · อ่านอย่างเดียว · ไม่ใช่ใบรับ/ใบกำกับภาษี</summary>
+    [HttpGet("advice/{allocationId:guid}")]
+    public async Task<ActionResult> Advice(Guid companyId, Guid allocationId, [FromQuery] string? format = "pdf",
+        [FromQuery] string? lang = null)
+    {
+        if (await DenyViewAsync(companyId) is { } deny) return StatusCode(403, new ApiResponse<string>(false, null, deny));
+        // ใบลับที่ผู้ใช้ไม่เห็น = ไม่พบ (ชุดเดียวกับทางอ่านเอกสารอื่น) · tenant
+        var sensitivity = await _db.PaymentAllocations.AsNoTracking().IgnoreQueryFilters()
+            .Where(a => a.Id == allocationId && a.CompanyId == companyId).Select(a => (SensitivityKind?)a.Document.Sensitivity).FirstOrDefaultAsync();
+        if (sensitivity == null || !await _sensitivity.CanViewAsync(companyId, JwtHelper.GetUserIdFromClaims(User), sensitivity.Value))
+            return NotFound(new ApiResponse<string>(false, null, "ไม่พบการตัดชำระ"));
+        if (string.Equals(format, "html", StringComparison.OrdinalIgnoreCase))
+            return Content(await _pdf.GeneratePaymentApplicationAdviceHtmlAsync(companyId, allocationId, lang), "text/html; charset=utf-8");
+        var file = await _pdf.GeneratePaymentApplicationAdvicePdfAsync(companyId, allocationId, lang);
+        return File(file.PdfData, file.ContentType, file.FileName);
     }
 }

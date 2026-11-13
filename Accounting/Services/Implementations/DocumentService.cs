@@ -4363,6 +4363,14 @@ public partial class DocumentService : IDocumentService
                 parentOf.GetValueOrDefault(d.Id),
                 d.Id == documentId));
 
+        // รอบ 266 แพ็ก C (266-1-40): สายเอกสารเห็นเงิน — เงินรอจัดสรร/การย้ายการรับชำระ/มัดจำที่ตัดชำระใบในสาย (ไม่ผ่าน RelatedDocumentId) เป็นโหนดชนิด "เงิน"
+        foreach (var m in await LoadChainMoneyNodesAsync(companyId, ids))
+            nodes.Add(new DocumentChainNode(
+                m.Fact.Id, m.Fact.Number, null, null, m.Fact.Date, m.Fact.Amount, m.Fact.Amount,
+                depthOf.GetValueOrDefault(m.Fact.AttachedDocumentId) + 1, m.Fact.AttachedDocumentId, false,
+                NodeKind: m.Fact.Kind.ToString(), Label: m.Label, PaymentId: m.Fact.PaymentId, AllocationId: m.Fact.AllocationId,
+                OpenDocumentId: m.Fact.OpenDocumentId, HasAdvice: m.HasAdvice));
+
         // เรียง: ตามลึกก่อน แล้ววันที่/เลขที่ — อ่านเป็นเส้นเวลาได้ทันที
         return nodes.OrderBy(n => n.Depth).ThenBy(n => n.DocumentDate)
             .ThenBy(n => n.DocumentNumber, StringComparer.Ordinal).ToList();
@@ -10071,7 +10079,8 @@ public partial class DocumentService : IDocumentService
     /// ตั้งใจลงงวดอื่น (เช่น งวดเดิมปิดแล้ว)</param>
     /// <returns>รอบ 201 ทีม DV (A-DV4 · คำตัดสินข้อ 68): ข้อความธง/ภาษีจากการยกเลิกการชำระใน cascade (ใบกำกับทาง ค ที่เสียยอดครอบ · ภาษีขายที่ถอยไม่ได้) —
     /// ต้องถึงผู้กด (เดิมทิ้งผล ตอบแค่ "สำเร็จ") · ไม่มี = <see cref="PaymentVoidResult.None"/></returns>
-    public async Task<PaymentVoidResult> VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null)
+    public async Task<PaymentVoidResult> VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null,
+        decimal? expectedPaidAmount = null)
     {
         var creditVoidNotices = new List<string>();   // รอบ 265 ฝ่ายค้าน M3 (ข้อความจาก CustomerCreditLedger ถึงผู้กด)
         // Lines must be Include'd here so ApplyStockMovementsAsync (called
@@ -10237,7 +10246,20 @@ public partial class DocumentService : IDocumentService
                 if (lockedStatus == DocumentStatus.Voided)
                 {
                     await transaction.RollbackAsync();
+                    // รอบ 266 แพ็ก C: ผู้เรียกที่ระบุยอดที่เห็น (ตัวช่วยใบซ้ำ) ต้องรู้ว่าใบถูกยกเลิกไปก่อนแล้ว — ห้าม no-op เงียบ (ขั้นถัดไปของมันจะเดินบนข้อเท็จจริงเก่า)
+                    if (expectedPaidAmount != null)
+                        throw new BusinessRuleException(DuplicateSalePolicy.StaleMessage, DuplicateSalePolicy.StaleCode, 409);
                     return;
+                }
+                // รอบ 266 แพ็ก C (266-1-37): ตัวช่วยใบซ้ำยกเลิกใบที่ "ไม่มีการรับชำระ" ตามที่พรีวิวเห็น — ตรวจซ้ำใต้ล็อกแถวก่อนขั้นยกเลิกการรับชำระแบบ cascade
+                // (มีคนรับชำระระหว่างพรีวิวกับยืนยัน ⇒ 409 ไม่ใช่ยกเลิกการรับชำระนั้นเงียบ ๆ)
+                if (expectedPaidAmount is decimal expectPaid)
+                {
+                    var lockedPaid = await _db.Documents.AsNoTracking()
+                        .Where(d => d.Id == documentId && d.CompanyId == companyId)
+                        .Select(d => d.PaidAmount).FirstAsync();
+                    if (Math.Abs(lockedPaid - expectPaid) > 0.005m)
+                        throw new BusinessRuleException(DuplicateSalePolicy.StaleMessage, DuplicateSalePolicy.StaleCode, 409);
                 }
                 // ทีม L ฝ่ายค้านข้อ 1: ใบขายบัตรคอร์สที่ใช้แล้ว ⇒ บล็อก · ยังไม่ใช้ ⇒ ปิดบัตรในธุรกรรมนี้ · ใบลดหนี้ที่ปิดบัตรแล้ว ⇒ บล็อก
                 await CreditPassDocumentHook.OnVoidAsync(_db, companyId, doc, doc.UpdatedBy ?? "document-void");
@@ -21829,6 +21851,7 @@ public partial class DocumentService : IDocumentService
         CanUnlinkSource: d.SourceLinkedAt != null && Accounting.Helpers.DocumentLinkPolicy.UnlinkBlockReason(d.DocumentType, d.Status) is null,
         CanChangeReceiptSource: Accounting.Helpers.ReceiptLinkPolicy.Classify(ReceiptLinkFacts.Source(d)) == Accounting.Helpers.ReceiptLinkKind.DraftReceipt,   // รอบ 266 — ตัวจัดชนิดเดียวกับด่านแก้ไข
         CanOpenReceiptLink: Accounting.Helpers.ReceiptLinkPolicy.OffersLinkButton(ReceiptLinkFacts.Source(d), ReceiptLinkFacts.Invoice(d)),   // ฝ่ายค้าน M6 — ไม่แตะฐาน
+        CanOpenDuplicateSale: Accounting.Helpers.DuplicateSalePolicy.OffersWizardButton(ReceiptLinkFacts.Source(d)),   // รอบ 266 แพ็ก C — ตัวจัดชนิดเดียวกับปุ่มผูก
         IsRollupBillingNote: BillingNoteKind.IsRollup(d.DocumentType, d.Lines.Any(l => l.SourceDocumentId != null)),
         // คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A) + ป้าย "ออก 50 ทวิ อัตโนมัติไม่สำเร็จ" (ล้มดัง)
         WhtCertAutoIssue: d.WhtCertAutoIssue,

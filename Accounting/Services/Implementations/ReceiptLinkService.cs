@@ -68,10 +68,14 @@ public class ReceiptLinkService : IReceiptLinkService
 
     private static readonly string ToReceiptKind = nameof(PaymentCreditMovementKind.ToReceipt);
 
-    private async Task<HashSet<Guid>> CreditReceiptIdsAsync(Guid companyId, IReadOnlyCollection<Guid> receiptIds, CancellationToken ct)
+    private Task<HashSet<Guid>> CreditReceiptIdsAsync(Guid companyId, IReadOnlyCollection<Guid> receiptIds, CancellationToken ct)
+        => CreditReceiptIdsAsync(_db, companyId, receiptIds, ct);
+
+    /// <summary>ใบเสร็จขายสดที่ออกจากเงินรอจัดสรร (รอบ 265 · ขาออก ToReceipt ที่ยังมีผล) — ตัวอ่านเดียวของปุ่มผูก (แพ็ก A) และตัวช่วยใบซ้ำ (แพ็ก C) · tenant</summary>
+    internal static async Task<HashSet<Guid>> CreditReceiptIdsAsync(AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> receiptIds, CancellationToken ct)
         => receiptIds.Count == 0
             ? new HashSet<Guid>()
-            : (await _db.PaymentCreditMovements.AsNoTracking()
+            : (await db.PaymentCreditMovements.AsNoTracking()
                 .Where(m => m.CompanyId == companyId && m.TargetDocumentId != null && receiptIds.Contains(m.TargetDocumentId.Value)
                     && m.Kind == ToReceiptKind && m.ReleasedAt == null)
                 .Select(m => m.TargetDocumentId!.Value).ToListAsync(ct)).ToHashSet();

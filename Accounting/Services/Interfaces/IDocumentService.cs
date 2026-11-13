@@ -146,7 +146,9 @@ public interface IDocumentService
     /// <param name="reversalDate">วันที่ลงรายการกลับบัญชี — null = วันที่ของ
     /// เอกสารเอง (ไม่ใช่วันที่กดยกเลิก) เพื่อให้รายการกลับอยู่งวดเดียวกับต้นฉบับ</param>
     /// <returns>รอบ 201 ทีม DV (A-DV4): ข้อความธง/ภาษีจากการยกเลิกการชำระใน cascade — ผู้เรียกที่มีผู้กดต้องแสดง (ไม่มี = <c>PaymentVoidResult.None</c>)</returns>
-    Task<PaymentVoidResult> VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null);
+    /// <param name="expectedPaidAmount">รอบ 266 แพ็ก C: ยอดรับชำระที่ผู้เรียกเห็นตอนพรีวิว (ตัวช่วยใบซ้ำ) — ใต้ล็อกแถวต่างไป หรือใบถูกยกเลิกไปก่อนแล้ว = 409 DS-STALE
+    /// (ไม่ยกเลิกการรับชำระที่เกิดระหว่างนั้นแบบ cascade เงียบ ๆ) · null = ไม่ตรวจ (พฤติกรรมเดิม)</param>
+    Task<PaymentVoidResult> VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null, decimal? expectedPaidAmount = null);
     /// <summary>ย้ายวันที่ JE กลับรายการของเอกสารที่ยกเลิกไปแล้ว ให้ไปอยู่งวดที่
     /// ถูกต้อง — สำหรับใบที่ถูกยกเลิกก่อนระบบใช้ "วันที่เอกสาร" เป็นค่าเริ่มต้น
     /// (รายการกลับไปตกเดือนที่กด). คืนจำนวน JE ที่ย้าย</summary>
@@ -352,6 +354,9 @@ public interface IDocumentService
 
     /// <summary>รอบ 266 แพ็ก B — ข้อเท็จจริงของ "ย้ายการรับชำระไปอีกใบ" (อ่านอย่างเดียว · พรีวิว/ผู้สมัคร) · null = ไม่พบการรับชำระ/ใบของการรับชำระในบริษัทนี้</summary>
     Task<SettlementMoveSnapshot?> LoadSettlementMoveFactsAsync(Guid companyId, Guid paymentId, Guid targetDocumentId, string actor);
+
+    /// <summary>รอบ 266 แพ็ก C — ข้อเท็จจริงของคู่ใบซ้ำ (ใบขายสด ↔ ใบแจ้งหนี้) สำหรับ <c>Helpers/DuplicateSalePolicy</c> (อ่านอย่างเดียว · tenant) · ไม่พบใบ = KeyNotFound</summary>
+    Task<DuplicateSaleSnapshot> LoadDuplicateSaleFactsAsync(Guid companyId, Guid cashSaleId, Guid invoiceId);
 
     /// <summary>รอบ 266 แพ็ก B — ย้ายการรับชำระที่ตัดผิดใบไปใบที่ถูก (ผู้ติดต่อเดียวกัน): สองขาผ่าน 21630 อ้างเลขการรับชำระเดิม · ขาเงินสดไม่ถูกแตะ ·
     /// ใบเสร็จที่อ้างใบเดิมถูกยกเลิก + ออกใบแทนลงวันที่รับเงินเดิม · ตัดสินซ้ำใต้ล็อกด้วย <c>ReceiptLinkPolicy.Decide</c> · ล้ม = ไม่มีอะไรถูกบันทึก</summary>

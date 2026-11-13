@@ -28,6 +28,10 @@ public interface IPdfGenerationService
     /// the output matches the PDF exactly minus driver-specific
     /// rendering differences.</summary>
     Task<string> GenerateDocumentHtmlAsync(Guid companyId, GeneratePdfRequest request);
+    /// <summary>รอบ 266 แพ็ก C (266-1-6): "ใบแจ้งการนำเงินไปตัดชำระ" ของแถวจัดสรรที่เกิดหลังรับเงิน — HTML (พรีวิว/พิมพ์) · ไม่ใช่ใบรับ/ใบกำกับภาษี (ไม่มีเลขชุดภาษี · ไม่เข้า ภ.พ.30)</summary>
+    Task<string> GeneratePaymentApplicationAdviceHtmlAsync(Guid companyId, Guid allocationId, string? language);
+    /// <summary>รอบ 266 แพ็ก C: ใบแจ้งเดียวกันเป็น PDF (QuestPDF — เนื้อหาเดียวกับ HTML)</summary>
+    Task<GeneratePdfResponse> GeneratePaymentApplicationAdvicePdfAsync(Guid companyId, Guid allocationId, string? language);
 
     /// <summary>Convert raw HTML string to PDF bytes (for use by other services)</summary>
     byte[] ConvertHtmlToPdfBytes(string html);

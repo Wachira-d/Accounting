@@ -5022,7 +5022,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 | R2 ใบมัดจำ (อนุมัติแล้ว) | 217xx | **ApplyDeposit** → `ApplyDepositToInvoiceAsync` เดิม (ด่าน VAT ซ้ำ `DepositPolicyResolver.GrossApplyBlocked`) · ไม่มีปุ่มถอด (ยกเลิกใบแจ้งหนี้ ⇒ คืนยอดมัดจำ — เส้นเดิม) |
 | R3 ใบเสร็จของการรับชำระใบอื่น (และการรับชำระของใบอื่นที่ไม่มีใบเสร็จแยก) | เงินอยู่ที่การรับชำระ · JE ตัดลูกหนี้ใบอื่นแล้ว | **ย้ายได้ (แพ็ก B · §3.4c-B)** — `MoveSettlement` / `MoveSettlementWithReissue` |
 | R4 ใบเสร็จที่สร้างเองซึ่งอ้างใบอื่น | JE ของตัวใบตัดลูกหนี้ใบอื่นแล้ว | **ปฏิเสธ** `RL-MOVE-NOT-YET` + ทางไปต่อ (ยกเลิกใบเสร็จ → บันทึกรับชำระที่ใบที่ถูกลงวันที่รับเงินเดิม → จับคู่ธนาคารใหม่ · 266-1-28) |
-| R5/R6 ใบขายสด (ใบเสร็จไม่อ้างใบ · ใบกำกับขายเงินสด) | รายได้+VAT ลงเองแล้ว | **ปฏิเสธ** `RL-DUPLICATE-SALE` (ผูกแล้วรายได้/VAT/สต็อกยังเบิ้ล · 266-1-5) — ตัวช่วยใบซ้ำ = แพ็ก C |
+| R5/R6 ใบขายสด (ใบเสร็จไม่อ้างใบ · ใบกำกับขายเงินสด) | รายได้+VAT ลงเองแล้ว | **ปฏิเสธ** `RL-DUPLICATE-SALE` (ผูกแล้วรายได้/VAT/สต็อกยังเบิ้ล · 266-1-5) — ทางไปต่อ = ตัวช่วยใบซ้ำ (§3.4c-C) |
 | ใบเสร็จสร้างเองที่รออนุมัติ (WaitingApproval) | ยังไม่มี JE | **ปฏิเสธ** `RL-PENDING-APPROVAL` (ตีกลับเป็นร่างแล้วผูก หรืออนุมัติก่อน) · ไม่มีชนิด "ใบเสร็จของเงินเครดิต"/"ใบเสร็จรวม" — ไม่มีผู้สร้างในระบบ (266-1-20) |
 
 - **ด่านร่วมทุกเส้น**: ใบปลายทาง = ใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้ฝั่งขาย อนุมัติแล้ว ยังค้าง ไม่ถูกยกเลิก/แทน · **`ContactId` เท่ากันเท่านั้น** (เลขภาษีเดียวกันคนละสาขา = `RL-BRANCH` + ทางไปต่อ "รวมผู้ติดต่อ" · 266-1-4) ·
@@ -5073,7 +5073,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 
 > สถานะปัจจุบัน — ชนิด "ใบเสร็จของการรับชำระใบอื่น" (และการรับชำระของใบอื่นที่ไม่มีใบเสร็จแยก) **ย้ายได้** ผ่านปุ่มเดิม "🔗 ผูกใบเสร็จ/เงินที่รับไว้แล้ว" (หน้าใบแจ้งหนี้) / "🔗 ผูกกับใบแจ้งหนี้" (หน้าใบเสร็จ) ·
 > เส้น `MoveSettlement` (ไม่มีใบเสร็จแยก) / `MoveSettlementWithReissue` (ยกเลิกใบเสร็จเดิม + ออกใบแทน) · ผู้ทำ: `DocumentService.MoveSettlementAsync` (`DocumentService.ReceiptLink.cs`) — ตัดสินซ้ำใต้ล็อกด้วย `ReceiptLinkPolicy.Decide` ·
-> ใบเสร็จที่สร้างเองซึ่งลงบัญชีตัดลูกหนี้ใบอื่น (R4) ยังต้องยกเลิกแล้วออกใหม่เอง (266-1-28) · ตัวช่วยใบซ้ำ/ใบแจ้งการตัดชำระ = แพ็ก C (ยังไม่สร้าง)
+> ใบเสร็จที่สร้างเองซึ่งลงบัญชีตัดลูกหนี้ใบอื่น (R4) ยังต้องยกเลิกแล้วออกใหม่เอง (266-1-28) · ตัวช่วยใบซ้ำ/ใบแจ้งการตัดชำระ/สายเอกสารเห็นเงิน = §3.4c-C (แพ็ก C)
 
 | ขั้น | สิ่งที่เกิด (ธุรกรรมเดียว — ล้ม = ไม่มีอะไรถูกบันทึก) |
 | --- | --- |
@@ -5105,6 +5105,39 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   `Services/Implementations/DocumentService.ReceiptLink.cs` · `ReceiptLinkService.cs` (เส้น Move* · ถอด · ผู้สมัครการรับชำระที่ไม่มีใบเสร็จแยก) · `PdfGenerationService.ReplacementReference.cs` · `Models/Entities/Payment.cs` · `wwwroot/pages/documents.html` (ช่องเหตุผลบังคับเมื่อพรีวิวตอบ `requiresReason`)
 - **เทสต์:** pure `ReceiptLinkPolicyTests` (`Move_*` · `MoveEffects_*` · `MoveJournalReference_*` · `PaymentEffectiveDocument_*` · `ReplacementLine_*` · `ManualReceiptOfOtherInvoice_*`) · Db `ReceiptLinkMoveDbTests` (14) · กติกา R266B ใน `tools/required_call_site_check.py` ·
   Last verified `commit 46ac5463` · ชุดแก้ฝ่ายค้าน `commit 0ec86361` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
+#### 3.4c-C ตัวช่วย "ใบซ้ำ" + ใบแจ้งการนำเงินไปตัดชำระ + สายเอกสารเห็นเงิน (รอบ 266 แพ็ก C · DECISIONS 266-1-36…40)
+
+> สถานะปัจจุบัน — ใบขายสด (R5/R6) กับใบแจ้งหนี้ของการขายเดียวกัน = ใบกำกับสองใบต่อการขายเดียว (ภ.พ.30 เบิ้ล · ผู้ซื้อเคลมสองครั้ง · สต็อกตัดสองรอบ) ·
+> "ผูก" ไม่แก้ (266-1-5) ⇒ **ตัวช่วยใบซ้ำ**ให้ผู้ทำบัญชีเลือกใบที่คงไว้ แล้วเอาใบที่ซ้ำออกผ่าน**เส้นเดิมเท่านั้น** · ตัวตัดสินเดียว `Helpers/DuplicateSalePolicy` ·
+> ปุ่ม "🧾 ใบนี้ซ้ำกับใบแจ้งหนี้?" บนใบขายสดที่ออกเลขแล้ว (`DocumentResponse.CanOpenDuplicateSale` · ตัวจัดชนิดเดียว `ReceiptLinkPolicy.Classify`) ·
+> API `api/companies/{cid}/receipt-links/duplicate-sale` (`GET candidates?documentId=` · `GET preview?cashSaleId=&invoiceId=` · `POST`) · บริการ `DuplicateSaleService`
+
+| ตัวเลือก | สภาพ | สิ่งที่ระบบทำ |
+| --- | --- | --- |
+| คงใบขายสด | ใบแจ้งหนี้ยกเลิกได้ | `VoidDocumentAsync(ใบแจ้งหนี้, expectedPaidAmount: ยอดที่พรีวิวเห็น)` — กลับลูกหนี้/รายได้/ภาษีขาย/สต็อก ลงวันที่ของใบ · คงแถว Voided · ใต้ล็อกแถว: ยอดรับชำระต่างไป/ใบถูกยกเลิกไปก่อน = 409 `DS-STALE` (ไม่ยกเลิกการรับชำระแบบ cascade เงียบ) |
+| คงใบขายสด | ใบแจ้งหนี้ติดภาษี (รายงานภาษีที่ยื่น/ล็อก · e-Tax ถึงกรมสรรพากร · ภ.พ.30 ของเดือนที่ภาษีขายลงจริง [Cr 21911 ใน GL] ยื่น/ปิด) และเป็นใบกำกับ | `ConvertDocumentAsync(ใบแจ้งหนี้ → CreditNote)` = **ใบลดหนี้ฉบับร่างเต็มใบ** ลงวันที่วันนี้ (งวดปัจจุบัน · §86/10) · ระบบไม่อนุมัติแทน — ผู้ทำบัญชีเลือกเหตุผล (คืนสินค้า/ปรับยอด) แล้วอนุมัติ (ด่าน §86/10 เดิม) · ใบเดิมไม่ถูกแตะ |
+| คงใบแจ้งหนี้ | ใบขายสดยกเลิกได้ · ไม่มีภาษีถูกหักทั้งสองใบ · งวดบัญชีของวันรับเงินเปิด | ① `VoidDocumentAsync(ใบขายสด, expectedPaidAmount)` (กลับรายได้/ภาษีขาย/เงินสด/สต็อก) ② `CreatePaymentAsync(ใบแจ้งหนี้)` ลงวันที่ `max(วันใบขายสด, วันใบแจ้งหนี้)` (266-1-38 · สูตรเดียวกับ 266-1-24) บัญชีเงินเดิม (`BankAccountId`/`PaymentAccountId` ของใบขายสด) อ้างอิง = เลขใบขายสด · ภาษีถูกหัก 0 · ใบเสร็จออกตามกติกาเดิม · สองขั้นมีธุรกรรมของตัวเอง ⇒ ขั้นที่ ② ล้ม = **ล้มดัง** `DS-PARTIAL` + ทางไปต่อ (บันทึกรับชำระวันเดิมเอง) · คู่จับคู่ธนาคารต้องจับใหม่ (พรีวิวบอก) |
+| ทั้งสอง | ยกเลิกไม่ได้/ภาษีติดแต่ออกใบลดหนี้ไม่ได้ (ใบแจ้งหนี้ไม่ใช่ใบกำกับ) · เหตุอื่น (เอกสารลูก · 50 ทวิ ในแบบที่ยื่น) · ภาษีถูกหัก · งวดปิด | **ผู้ทำบัญชีตัดสิน** (`RequiresAccountant` · ไม่อัตโนมัติ · 266-1-5) — มีข้อความ + ทางไปต่อ |
+
+- **ไม่ใช่ใบซ้ำ = ปฏิเสธ + ทางไปต่อ (ไม่แตะใบใด)**: คนละผู้ติดต่อ `DS-CONTACT` / คนละสาขา `DS-BRANCH` · ยอดต่าง > 0.01 `DS-AMOUNT` · ใบแจ้งหนี้มีการรับชำระ/จัดสรร/หักมัดจำ `DS-INVOICE-PAID` ·
+  มีใบลดหนี้อ้างอยู่ (รวมร่าง) `DS-INVOICE-CN` · ใบแจ้งหนี้ร่าง/รออนุมัติ `DS-DRAFT-TARGET` · ยกเลิก/แทนแล้ว `DS-VOIDED` · สกุลต่างประเทศ `DS-CURRENCY` · ใบเสร็จที่ออกจากเงินรอจัดสรร `DS-FROM-CREDIT` ·
+  ไม่ใช่ใบขายสดที่ออกเลขแล้ว `DS-NOT-CASH-SALE` · ใบเพิ่มหนี้/ใบกำกับขายเงินสดเป็นปลายทาง `DS-TARGET`
+- **ยืนยัน**: ตัดสินซ้ำจากข้อเท็จจริงล่าสุด (`DocumentService.LoadDuplicateSaleFactsAsync` ตัวเดียวกับพรีวิว) + กุญแจพรีวิว (`DuplicateSalePolicy.PreviewToken` — เปลี่ยน = 409) + เหตุผลบังคับ ·
+  สิทธิ์: ตัวควบคุม = API key 403 + อนุมัติใบแจ้งหนี้ · บริการ = สิทธิ์ของเส้นที่เดินจริง (ยกเลิกใบที่ซ้ำ · สร้างใบลดหนี้ · อนุมัติใบที่รับเงินเข้า) 403 `DS-PERMISSION` · audit chain `DOC-DUP-SALE` ต่อขั้น
+- **ใบแจ้งการนำเงินไปตัดชำระ (266-1-39)** — `GET receipt-links/advice/{allocationId}?format=pdf|html`: แถวจัดสรรที่**ยังมีผลและเกิดหลังรับเงิน** (จัดสรรเงินรอจัดสรรทีหลัง · ย้ายการรับชำระ) ·
+  **ไม่ใช่ใบรับ/ใบกำกับภาษี** (พิมพ์เสมอ) · ไม่บันทึกเป็นแถวเอกสาร ⇒ ไม่มีเลขชุดภาษี/ไม่เข้า ภ.พ.30 · เลขอ้างอิง `ADV-{เลขสมุดรายวันของการตัดชำระ}` · HTML + QuestPDF จากตัวโหลด/แถวข้อความเดียว
+  (`PdfGenerationService.PaymentApplicationAdvice.cs` · `DocumentLabels` `advice_*` ไทย/อังกฤษ) · ตัดพร้อมรับเงิน/ถูกปล่อย/ยกเลิก = ปฏิเสธ `DS-ADVICE-NA` · ชั้นความลับของใบแจ้งหนี้ · ไม่ส่งอัตโนมัติ
+- **สายเอกสารเห็นเงิน (266-1-40)** — `GetDocumentChainAsync` เพิ่มโหนด `NodeKind` = `CreditAllocation` / `MovedPayment` / `DepositApplied` (ป้ายจาก `Helpers/DocumentChainMoney` · `ParentId` = ใบที่เงินตัด ·
+  `DocumentType`/`Status` = null) · แถวที่ถูกปล่อย/ยกเลิกไม่แสดง · หน้าเอกสารวาดแถบ "💰 เงินที่ผูกกับใบในสาย" + ปุ่ม "📄 ใบแจ้งการตัดชำระ" · ขอสายเมื่อใบมียอดรับแล้ว/เป็นใบมัดจำด้วย ·
+  ข้อจำกัด: มัดจำที่ตัดชำระหลายใบผ่าน JV แสดงเฉพาะใบที่ `DepositAppliedToDocumentId` ชี้
+- **ไฟล์:** `Helpers/DuplicateSalePolicy.cs` · `Helpers/PaymentApplicationAdvice.cs` · `Helpers/DocumentChainMoney.cs` · `Services/Implementations/DuplicateSaleService.cs` ·
+  `Services/Implementations/DocumentService.DuplicateSale.cs` · `PdfGenerationService.PaymentApplicationAdvice.cs` · `ReceiptLinkController` (3 เส้นใหม่) · `documents.html` (`openDuplicateSale` · แถบเงินในสาย) ·
+  `VoidDocumentAsync(…, expectedPaidAmount)` (พารามิเตอร์ใหม่ — ผู้เรียกเดิมไม่ส่ง = พฤติกรรมเดิมทุกตัวอักษร)
+- **เทสต์:** pure `DuplicateSalePolicyTests` (`KeepCashSale_VoidsInvoiceWhenAllowed` · `KeepCashSale_CreditNoteWhenFiled` · `KeepInvoice_VoidsCashSaleAndRecordsPaymentOnSameDate` ·
+  `NeitherVoidable_RequiresAccountant` · `Advice_NotInVatReport_NoTaxSeries` · `Chain_ShowsCreditAllocationNode` + ทิศตรงข้าม) · Db `DuplicateSaleDbTests` (ชื่อเดียวกัน 5 ชื่อบนฐานจริง — ยกเว้น NeitherVoidable +
+  `Stale_InvoicePaidAfterPreview_Refused_NothingVoided` · `OtherContact_Refused_NothingTouched` · `Candidates_SameContactSameAmountOnly_TenantIsolated`) · กติกา R266C ใน `tools/required_call_site_check.py`
+  Last verified commit (เติมในคอมมิตตามหลัง) — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 3.5 Void / Cancel
 - **Method**: `VoidDocumentAsync` (`:1959`) — **cascade 7+ขั้น**:

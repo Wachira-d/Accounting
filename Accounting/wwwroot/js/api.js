@@ -825,6 +825,11 @@ const API = {
       previewReceiptLink: (d) => API.post(`${base}/receipt-links/preview`, d),
       linkReceipt: (d) => API.post(`${base}/receipt-links`, d),
       undoReceiptLink: (d) => API.post(`${base}/receipt-links/undo`, d),
+      // รอบ 266 แพ็ก C — ตัวช่วยใบซ้ำ (DuplicateSalePolicy) + ใบแจ้งการนำเงินไปตัดชำระ (ไม่ใช่ใบรับ/ใบกำกับภาษี)
+      getDuplicateSaleCandidates: (docId) => API.get(`${base}/receipt-links/duplicate-sale/candidates?documentId=${encodeURIComponent(docId)}`),
+      previewDuplicateSale: (cashSaleId, invoiceId) => API.get(`${base}/receipt-links/duplicate-sale/preview?cashSaleId=${encodeURIComponent(cashSaleId)}&invoiceId=${encodeURIComponent(invoiceId)}`),
+      resolveDuplicateSale: (d) => API.post(`${base}/receipt-links/duplicate-sale`, d),
+      downloadPaymentAdvice: (allocationId) => API.download(`${base}/receipt-links/advice/${encodeURIComponent(allocationId)}?format=pdf`, 'payment-advice.pdf'),
       getConversionTargets: (id) => API.get(`${base}/document/${id}/conversion-targets`),
       batchConvertDocuments: (ids, t) => API.post(`${base}/document/batch-convert/${t}`, { documentIds: ids }),
       createInvoiceFromObligation: (obligationId) => API.post(`${base}/document/from-obligation/${obligationId}`),
