@@ -183,13 +183,15 @@ public static class CustomerDocPage
     public const string RespondStaleMessage = "เอกสารถูกแก้ไข — เปิดดูฉบับล่าสุด";
 
     /// <summary>
-    /// ฝ่ายค้าน 267 H1 — การตอบรับ (ยอมรับ/เซ็นรับ) ผูกกับ "ฉบับที่ลูกค้าเห็น": เลข Rev ที่หน้าแสดงต้องตรงกับใบ ณ ตอนกด และ hash เนื้อหา (ถ้าหน้าส่งมา)
+    /// ฝ่ายค้าน 267 H1 — การตอบรับ (ยอมรับ/เซ็นรับ) ผูกกับ "ฉบับที่ลูกค้าเห็น": เลข Rev ที่หน้าแสดงต้องตรงกับใบ ณ ตอนกด และ hash เนื้อหา (ลิงก์หน้าเอกสาร = บังคับ · ลิงก์รุ่นก่อน = ถ้าส่งมา)
     /// ต้องตรงกับเนื้อหาปัจจุบัน · <paramref name="requireSeen"/> = เปิดด้วย token ของหน้าเอกสาร (token ไม่ถูกล้างตอนออก Rev ⇒ ต้องส่งเลข Rev เสมอ) ·
     /// ลิงก์รุ่นก่อน (ถูกล้างตอนออก Rev อยู่แล้ว) ไม่บังคับ แต่ถ้าส่งมาก็ตรวจ · null = ตรง
     /// </summary>
     public static string? RespondStaleReason(bool requireSeen, int? seenRevision, int currentRevision, string? seenContentHash, string? currentContentHash)
     {
         if (seenRevision == null && requireSeen) return RespondStaleMessage;
+        // ฝ่ายค้าน 267-P2 L5: ลิงก์หน้าเอกสารต้องส่ง hash เนื้อหาที่เห็นด้วย (ช่องที่แก้ได้โดยไม่ขยับ Rev ⇒ เลข Rev อย่างเดียวไม่พอพิสูจน์ "ฉบับที่เห็น")
+        if (requireSeen && string.IsNullOrWhiteSpace(seenContentHash)) return RespondStaleMessage;
         if (seenRevision != null && seenRevision.Value != currentRevision) return RespondStaleMessage;
         if (!string.IsNullOrWhiteSpace(seenContentHash)
             && !string.Equals(seenContentHash.Trim(), currentContentHash, StringComparison.OrdinalIgnoreCase)) return RespondStaleMessage;

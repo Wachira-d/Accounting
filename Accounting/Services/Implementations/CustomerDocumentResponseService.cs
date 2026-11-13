@@ -129,7 +129,8 @@ public class CustomerDocumentResponseService
         var en = viaPage && await IsEnglishAsync(doc);
         var buyer = BuyerOf(doc);
         // รอบ 267 P2: ลิงก์หน้าเอกสาร ⇒ ผู้ลงนามครบ (ชื่อ · นามสกุล · ตำแหน่ง · ติ๊กรับรอง) · ยอดถึงเกณฑ์ของบริษัท ⇒ ยืนยันอีเมลด้วยรหัส (267-1-6)
-        var otpRequired = viaPage && CustomerSignRule.OtpRequired(await OtpMinAmountAsync(doc.CompanyId), doc.TotalAmount, CustomerSignRule.Kind.Accepted);
+        var otpThreshold = CustomerSignRule.OtpRequired(await OtpMinAmountAsync(doc.CompanyId), doc.TotalAmount, CustomerSignRule.Kind.Accepted);
+        var otpRequired = viaPage && otpThreshold;
         CustomerSignRule.Signer? signer = null;
         string? signerError = null;
         if (viaPage && doc.QuotationAcceptedAt == null)
@@ -138,6 +139,10 @@ public class CustomerDocumentResponseService
             request?.SignatureBase64, requireSignature);
         if (decision.Outcome == QuotationAcceptance.Outcome.AlreadyAccepted)
             return Ok(AcceptedState(doc), decision.Message);
+        // ฝ่ายค้าน 267-P2 M2: ลิงก์รุ่นก่อน (L1) เดินด่านเดียวกับหน้าเอกสาร — (ก) หนึ่งคำตอบต่อ Rev: ลูกค้าแจ้งไม่รับ/ขอแก้ไปแล้ว ⇒ ยอมรับทับไม่ได้ ·
+        // (ข) ยอดถึงเกณฑ์รหัสยืนยันอีเมลของบริษัท ⇒ ลิงก์รุ่นก่อนไม่มีฟอร์มรหัส ⇒ 409 พร้อมทางไปต่อ (ใช้ลิงก์หน้าเอกสารจากผู้ขาย)
+        if (!viaPage && CustomerSignRule.LegacyAcceptClosedReason(doc.CustomerResponse, otpThreshold) is { } legacyClosed)
+            return Conflict(legacyClosed);
         // ฝ่ายค้าน 267 L3: ช่วงตอบรับตรวจทั้งสองรุ่นของลิงก์ (รุ่นก่อน = เฉพาะวันยืนราคา — วันหมดอายุของตัวเองตรวจใน FindByTokenAsync แล้ว)
         if (RespondClosedReason(doc, viaPage) is { } closed)
             return Conflict(closed);
@@ -198,7 +203,7 @@ public class CustomerDocumentResponseService
                     && d.QuotationAcceptedAt == null && d.QuotationAcceptToken == doc.QuotationAcceptToken
                     && (seenRevision == null || d.RevisionNumber == seenRevision)
                     // 267-1-11 หนึ่งคำตอบต่อ Rev: ลูกค้าแจ้งไม่รับ/ขอแก้ไประหว่างนี้ = ไม่จอง
-                    && (!viaPage || d.CustomerResponse == null)
+                    && d.CustomerResponse == null   // ฝ่ายค้าน 267-P2 M2: ทุกเส้น (รวมลิงก์รุ่นก่อน)
                     // รอบ 267: token ของหน้าเอกสาร ⇒ ลิงก์ต้องยังเป็น token นี้และไม่ถูกเพิกถอน ณ ตอนจอง (เพิกถอนระหว่างทาง = ไม่จอง)
                     && (!viaPage || (d.PayLinkTokenHash == pageHash && d.PayLinkRevokedAt == null)))
                 .ExecuteUpdateAsync(u => u
@@ -234,14 +239,15 @@ public class CustomerDocumentResponseService
                     NewValues = System.Text.Json.JsonSerializer.Serialize(new
                     {
                         @event = "QuotationAcceptedOnline", documentNumber = doc.DocumentNumber, revisionNumber = doc.RevisionNumber,
-                        acceptedBy = name, acceptedAt = now, note, hasSignature = sigPath != null, signatureSha256 = sigSha,
-                        contentHash, tokenSha256 = tokenHash, userAgentSha256 = uaHash,
-                        customerActionId = evidence.Id, identityLevel = evidence.IdentityLevel, signerTitle = evidence.SignerTitle,
-                        signerOrgName = evidence.SignerOrgName, attestationVersion = evidence.AttestationVersion,
+                        // ฝ่ายค้าน 267-P2 H1: audit (append-only · ลบตามคำขอไม่ได้) ไม่คัดลอกข้อมูลผู้ลงนาม — ชื่อ/ตำแหน่ง/บริษัท/ข้อความ/IP อยู่ในแถวหลักฐาน
+                        // (ลบตาม DSR ได้) · audit อ้างแถวด้วย customerActionId + hash ที่พิสูจน์เนื้อหา
+                        acceptedAt = now, hasNote = note != null, hasSignature = sigPath != null, signatureSha256 = sigSha,
+                        contentHash, tokenSha256 = tokenHash,
+                        customerActionId = evidence.Id, identityLevel = evidence.IdentityLevel, attestationVersion = evidence.AttestationVersion,
                         attestationTextHash = evidence.AttestationTextHash, emailVerified = evidence.EmailVerified,
                         ruleCode = CustomerSignText.RuleCode, legalReference = CustomerSignText.LegalReference,
                     }),
-                    IpAddress = ip, Timestamp = now,
+                    IpAddress = null, Timestamp = now,
                 });
                 // รอบ 240 (คำตัดสิน 240-3): เหตุการณ์ quotation.accepted ลง outbox ในธุรกรรมเดียวกัน — ส่งจริงในงานเบื้องหลัง
                 // (callback ต่อเอกสาร · webhook ที่ลงทะเบียน · แจ้งผู้ขาย · ฉบับที่ลูกค้าเซ็น) ⇒ ปลายทางล่มไม่ทำให้การยอมรับล้ม/ช้า ·
@@ -283,7 +289,7 @@ public class CustomerDocumentResponseService
         {
             acceptedAt = (DateTime?)now, acceptedBy = name, acceptedNote = note, hasSignature = sigPath != null,
             actionId = evidence.Id, signedCopyReady,
-        }, viaPage ? CustomerSignText.Done(en, CustomerSignRule.Kind.Accepted) : decision.Message);
+        }, viaPage ? CustomerSignText.Done(en, CustomerSignRule.Kind.Accepted, signedCopyReady) : decision.Message);
     }
 
     // ═══════════════ ไม่รับ / ขอแก้ใบเสนอราคา (เฉพาะลิงก์หน้าเอกสาร) ═══════════════
@@ -345,13 +351,12 @@ public class CustomerDocumentResponseService
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
                 @event = kind == CustomerSignRule.Kind.Declined ? "QuotationDeclinedOnline" : "QuotationChangeRequestedOnline",
-                documentNumber = doc.DocumentNumber, revisionNumber = doc.RevisionNumber, respondedBy = signer.FullName, respondedAt = now,
-                reasonCode, message, contentHash, tokenSha256 = tokenHash, customerActionId = evidence.Id,
-                signerTitle = evidence.SignerTitle, signerOrgName = evidence.SignerOrgName,
+                documentNumber = doc.DocumentNumber, revisionNumber = doc.RevisionNumber, respondedAt = now,
+                reasonCode, hasMessage = message != null, contentHash, tokenSha256 = tokenHash, customerActionId = evidence.Id,   // H1: ไม่มีชื่อ/ตำแหน่ง/ข้อความ/IP
                 attestationVersion = evidence.AttestationVersion, attestationTextHash = evidence.AttestationTextHash,
                 ruleCode = CustomerSignText.RuleCode, legalReference = CustomerSignText.LegalReference,
             }),
-            IpAddress = caller.Ip, Timestamp = now,
+            IpAddress = null, Timestamp = now,
         });
         SignEventOutbox.EnqueueEvent(_db, doc, SignRequestKinds.EventFor(kind), now, signer.FullName, false, contentHash, EventRef(tokenHash, evidence.Id))
             .CustomerActionId = evidence.Id;
@@ -445,12 +450,12 @@ public class CustomerDocumentResponseService
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
                 @event = "DeliverySignedOnline", documentNumber = doc.DocumentNumber, revisionNumber = doc.RevisionNumber,
-                signedBy = doc.DeliverySignedBy, signedAt = now, note, signatureSha256 = evidence.SignatureSha256, contentHash, tokenSha256 = tokenHash,
-                customerActionId = evidence.Id, identityLevel = evidence.IdentityLevel, signerTitle = evidence.SignerTitle,
-                signerOrgName = evidence.SignerOrgName, attestationVersion = evidence.AttestationVersion, attestationTextHash = evidence.AttestationTextHash,
+                signedAt = now, hasNote = note != null, signatureSha256 = evidence.SignatureSha256, contentHash, tokenSha256 = tokenHash,   // H1: ไม่มีชื่อ/ตำแหน่ง/ข้อความ/IP
+                customerActionId = evidence.Id, identityLevel = evidence.IdentityLevel,
+                attestationVersion = evidence.AttestationVersion, attestationTextHash = evidence.AttestationTextHash,
                 ruleCode = CustomerSignText.RuleCode, legalReference = CustomerSignText.LegalReference,
             }),
-            IpAddress = caller.Ip, Timestamp = now,
+            IpAddress = null, Timestamp = now,
         });
         var eventRef = EventRef(tokenHash!, evidence.Id);
         SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.DeliverySign, now, doc.DeliverySignedBy, hasSignature: true, contentHash, eventRef).CustomerActionId = evidence.Id;
@@ -461,7 +466,7 @@ public class CustomerDocumentResponseService
 
         var signedCopyReady = await TrySnapshotNowAsync(evidence);
         return Ok(new { signedAt = doc.DeliverySignedAt, signedBy = doc.DeliverySignedBy, actionId = evidence.Id, signedCopyReady },
-            viaPage ? CustomerSignText.Done(en, CustomerSignRule.Kind.DeliverySigned) : "เซ็นรับสินค้าเรียบร้อย — ลายเซ็นถูกประทับลงเอกสารแล้ว");
+            viaPage ? CustomerSignText.Done(en, CustomerSignRule.Kind.DeliverySigned, signedCopyReady) : "เซ็นรับสินค้าเรียบร้อย — ลายเซ็นถูกประทับลงเอกสารแล้ว");
     }
 
     // ═══════════════ แถวหลักฐาน ═══════════════
@@ -550,6 +555,11 @@ public class CustomerDocumentResponseService
             .OrderByDescending(a => a.CreatedAt).Take(20)
             .Select(a => new { a.Id, a.Action, a.RevisionNumber, a.SignerFirstName, a.SignerLastName, a.SignerTitle, a.CreatedAt, a.SignedPdfSha256, a.Channel, a.ErasedAt })
             .ToListAsync(ct);
+        // ฝ่ายค้าน 267-P2 M3: งานสร้างฉบับที่ลงนาม "เลิกแล้ว" (ขั้นของ outbox จบ แต่ไม่มีไฟล์ — เช่นเอกสารถูกแก้ก่อนสร้างทัน) ⇒ ไม่ใช่ "กำลังเตรียม" อีกต่อไป
+        var ids = rows.Select(r => r.Id).ToList();
+        var stepDone = (await _db.SignEventOutbox.AsNoTracking()
+            .Where(o => o.CompanyId == companyId && o.DocumentId == documentId && o.CustomerActionId != null && ids.Contains(o.CustomerActionId.Value) && o.SignedCopyDoneAt != null)
+            .Select(o => o.CustomerActionId!.Value).ToListAsync(ct)).ToHashSet();
         return rows.Select(a =>
         {
             var kind = Enum.TryParse<CustomerSignRule.Kind>(a.Action, out var k) ? k : CustomerSignRule.Kind.Accepted;
@@ -557,7 +567,7 @@ public class CustomerDocumentResponseService
             return new CustomerDocResponseItem(a.Id, a.Action, CustomerSignText.KindLabel(en, kind), a.RevisionNumber,
                 string.Join(" ", new[] { a.SignerFirstName, a.SignerLastName }.Where(s => !string.IsNullOrWhiteSpace(s))), a.SignerTitle, a.CreatedAt,
                 SignedCopyReady: a.SignedPdfSha256 != null && a.ErasedAt == null,
-                SignedCopyExpected: signs && a.Channel == CustomerSignRule.ChannelLink && a.ErasedAt == null);
+                SignedCopyExpected: signs && a.Channel == CustomerSignRule.ChannelLink && a.ErasedAt == null && (a.SignedPdfSha256 != null || !stepDone.Contains(a.Id)));
         }).ToList();
     }
 
@@ -582,6 +592,11 @@ public class CustomerDocumentResponseService
         if (emailError != null || email == null) return BadRequest(emailError ?? (en ? "Please enter your email" : "กรุณากรอกอีเมล"));
         var now = DateTime.UtcNow;
         var recent = now.AddSeconds(-CustomerSignRule.OtpResendSeconds);
+        // ฝ่ายค้าน 267-P2 L7: เพดานต่อใบต่อวัน (อีเมลปลายทางยังไม่ยืนยัน — กันใช้เป็นช่องส่งอีเมลขยะในนามผู้ขาย)
+        var dayAgo = now.AddDays(-1);
+        if (await _db.CustomerSignOtps.AsNoTracking().CountAsync(o => o.CompanyId == companyId && o.DocumentId == doc.Id && o.CreatedAt > dayAgo) >= CustomerSignRule.OtpMaxPerDocumentPerDay)
+            return new Outcome(429, null, en ? "Too many codes were requested for this document today — please try again tomorrow or contact the seller"
+                : "ขอรหัสของเอกสารนี้ครบจำนวนต่อวันแล้ว — กรุณาลองใหม่พรุ่งนี้หรือติดต่อผู้ขาย");
         if (await _db.CustomerSignOtps.AsNoTracking().AnyAsync(o => o.CompanyId == companyId && o.DocumentId == doc.Id && o.CreatedAt > recent))
             return new Outcome(429, null, en ? "A code was just sent — please wait a minute before requesting another" : "เพิ่งส่งรหัสไป — กรุณารอ 1 นาทีก่อนขอรหัสใหม่");
         if (_email == null || !await _email.IsSystemEmailConfiguredAsync())
@@ -596,11 +611,8 @@ public class CustomerDocumentResponseService
         _db.CustomerSignOtps.Add(row);
         await _db.SaveChangesAsync();
         var seller = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
-        Func<string?, string?> enc = System.Net.WebUtility.HtmlEncode;
-        var body = en
-            ? $"<p>Your verification code for quotation <b>{enc(doc.DocumentNumber)}</b> from {enc(seller)} is</p><p style=\"font-size:24px;letter-spacing:4px\"><b>{code}</b></p><p>The code is valid for {CustomerSignRule.OtpTtlMinutes} minutes. If you did not request it, ignore this email.</p>"
-            : $"<p>รหัสยืนยันสำหรับใบเสนอราคา <b>{enc(doc.DocumentNumber)}</b> ของ {enc(seller)} คือ</p><p style=\"font-size:24px;letter-spacing:4px\"><b>{code}</b></p><p>รหัสใช้ได้ {CustomerSignRule.OtpTtlMinutes} นาที หากท่านไม่ได้ขอรหัสนี้ ไม่ต้องดำเนินการใด ๆ</p>";
-        if (!await _email.TrySendAsync(email, CustomerSignText.OtpSubject(en, doc.DocumentNumber), body))
+        var body = CustomerSignText.OtpBody(en, seller, code, CustomerSignRule.OtpTtlMinutes);
+        if (!await _email.TrySendAsync(email, CustomerSignText.OtpSubject(en, seller), body))
         {
             // ส่งไม่ถึง ⇒ รหัสที่เพิ่งออกใช้ไม่ได้ (ไม่ทิ้งรหัสที่ไม่มีใครได้รับไว้ให้เดา)
             await _db.CustomerSignOtps.Where(o => o.Id == row.Id && o.CompanyId == companyId).ExecuteUpdateAsync(u => u.SetProperty(o => o.ConsumedAt, now));
@@ -618,18 +630,23 @@ public class CustomerDocumentResponseService
         var row = await _db.CustomerSignOtps.AsNoTracking()
             .Where(o => o.CompanyId == doc.CompanyId && o.DocumentId == doc.Id && o.EmailHash == emailHash && o.ConsumedAt == null)
             .OrderByDescending(o => o.CreatedAt).FirstOrDefaultAsync();
+        // ฝ่ายค้าน 267-P2 L3: จองหนึ่งครั้งของการลองแบบมีเงื่อนไข "ก่อน" เทียบรหัส — คำขอขนานจากหลาย IP ผ่านด่านจำนวนครั้งพร้อมกันไม่ได้
+        // (0 แถว = ครบจำนวนครั้งแล้ว) · ครั้งที่ถูกก็นับ (ใช้แล้วรหัสถูกประทับ ConsumedAt อยู่ดี)
+        if (row != null && row.ExpiresAt > now
+            && await _db.CustomerSignOtps
+                .Where(o => o.Id == row.Id && o.CompanyId == doc.CompanyId && o.ConsumedAt == null && o.Attempts < CustomerSignRule.OtpMaxAttempts)
+                .ExecuteUpdateAsync(u => u.SetProperty(o => o.Attempts, o => o.Attempts + 1)) == 0)
+            return (null, CustomerSignRule.OtpMessage(en, CustomerSignRule.OtpOutcome.TooManyAttempts));
         var outcome = CustomerSignRule.VerifyOtp(row?.CodeHash, row?.ExpiresAt, row?.Attempts ?? 0, row?.ConsumedAt, doc.Id, email, code, now);
         if (outcome == CustomerSignRule.OtpOutcome.Ok) return (row!.Id, null);
-        if (outcome == CustomerSignRule.OtpOutcome.Wrong)
-            await _db.CustomerSignOtps.Where(o => o.Id == row!.Id && o.CompanyId == doc.CompanyId)
-                .ExecuteUpdateAsync(u => u.SetProperty(o => o.Attempts, o => o.Attempts + 1));
         return (null, CustomerSignRule.OtpMessage(en, outcome));
     }
 
     // ═══════════════ ฉบับที่ลูกค้าเซ็น (ไฟล์ + SHA-256) ═══════════════
 
     /// <summary>ผลของขั้น "ฉบับที่ลูกค้าเซ็น" — <paramref name="Done"/> = ไม่ต้องลองอีก (สำเร็จ หรือไม่มีอะไรให้ทำ) · ไม่ Done = ลองใหม่ได้ (เหตุใน <paramref name="Note"/>)</summary>
-    public sealed record SignedCopyResult(bool Done, bool HasFile, string? Note);
+    /// <param name="Abandoned">ฝ่ายค้าน 267-P2 M3: เลิกสร้างโดยไม่มีไฟล์ทั้งที่ควรมี (เอกสารถูกแก้ก่อนสร้างทัน) — ผู้เรียกแจ้งพนักงาน (ล้มดัง)</param>
+    public sealed record SignedCopyResult(bool Done, bool HasFile, string? Note, bool Abandoned = false);
 
     /// <summary>ลองสร้างฉบับที่ลูกค้าเซ็นทันทีหลังบันทึก (ลูกค้าดาวน์โหลดจากหน้าได้เลย) — ล้ม = ไม่กระทบคำตอบที่บันทึกแล้ว · งาน outbox ลองใหม่และแจ้งพนักงานเมื่อเลิกลอง</summary>
     private async Task<bool> TrySnapshotNowAsync(CustomerDocumentAction evidence)
@@ -662,13 +679,23 @@ public class CustomerDocumentResponseService
             .FirstOrDefaultAsync(d => d.Id == a.DocumentId && d.CompanyId == companyId, ct);
         if (doc == null) return new(true, false, "ไม่พบเอกสาร");
         if (!CustomerSignRule.SnapshotStillValid(a.RevisionNumber, a.ContentHash, doc.RevisionNumber, DocumentSignedContent.Hash(doc, doc.Lines)))
-            return new(true, false, "เอกสารถูกแก้หลังลูกค้าลงนามก่อนที่ระบบจะสร้างฉบับที่ลงนามได้ — ไม่สร้างไฟล์จากเนื้อหาที่ลูกค้าไม่ได้เห็น");
+            return new(true, false, "เอกสารถูกแก้หลังลูกค้าลงนามก่อนที่ระบบจะสร้างฉบับที่ลงนามได้ — ไม่สร้างไฟล์จากเนื้อหาที่ลูกค้าไม่ได้เห็น", Abandoned: true);
         var gen = await _pdf.GenerateDocumentPdfAsync(companyId, new Models.DTOs.DocumentTemplate.GeneratePdfRequest(doc.Id, null, null, null, null));
         if (gen?.PdfData is not { Length: > 0 } bytes) return new(false, false, "สร้างไฟล์ PDF ไม่สำเร็จ");
         var path = CustomerSignRule.SignedCopyLocation(SignatureStore.Locator.AttachmentsRoot, companyId, doc.Id, a.Id);
         var sha = CustomerSignRule.FileSha256(bytes);
         var now = DateTime.UtcNow;
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        // ฝ่ายค้าน 267-P2 L1: ตรวจ "ยังเป็นฉบับที่ลูกค้าเห็น" ซ้ำใต้ล็อกแถวของใบ — ผู้ขายออก Rev ระหว่างเรนเดอร์ (หลายวินาที) ⇒ PDF ที่ได้ไม่ใช่ฉบับที่ลงนาม ⇒ ไม่ประทับ
+        if (_db.Database.IsNpgsql())
+            await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"Documents\" WHERE \"Id\" = {doc.Id} AND \"CompanyId\" = {companyId} FOR UPDATE", ct);
+        var docNow = await _db.Documents.AsNoTracking().Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == a.DocumentId && d.CompanyId == companyId, ct);
+        if (docNow == null || !CustomerSignRule.SnapshotStillValid(a.RevisionNumber, a.ContentHash, docNow.RevisionNumber, DocumentSignedContent.Hash(docNow, docNow.Lines)))
+        {
+            await tx.RollbackAsync(ct);
+            return new(true, false, "เอกสารถูกแก้ระหว่างสร้างฉบับที่ลงนาม — ไม่ประทับไฟล์จากเนื้อหาที่ลูกค้าไม่ได้เห็น", Abandoned: true);
+        }
         var claimed = await _db.CustomerDocumentActions
             .Where(x => x.Id == a.Id && x.CompanyId == companyId && x.SignedPdfSha256 == null && x.ErasedAt == null)
             .ExecuteUpdateAsync(u => u.SetProperty(x => x.SignedPdfPath, path).SetProperty(x => x.SignedPdfSha256, sha).SetProperty(x => x.SignedPdfAt, now), ct);
@@ -694,6 +721,32 @@ public class CustomerDocumentResponseService
         await tx.CommitAsync(ct);
         return new(true, true, null);
     }
+
+    /// <summary>
+    /// ฝ่ายค้าน 267-P2 M3: ก่อนผู้ขายออก Rev ใหม่ — สร้างฉบับที่ลูกค้าเซ็นของ Rev ปัจจุบันที่ยังค้างให้เสร็จ (หลัง Rev ขยับ เนื้อหาไม่ใช่ฉบับที่ลูกค้าเห็นอีกแล้ว ⇒ สร้างไม่ได้ถาวร) ·
+    /// คืนจำนวนแถวที่ยังค้าง (ผู้เรียกปฏิเสธการออก Rev พร้อมทางไปต่อ) · ผู้เรียกเดียว <c>DocumentService.UpdateDocumentAsync</c> (เส้น revision · นอกธุรกรรม)
+    /// </summary>
+    public async Task<int> EnsureSnapshotsBeforeRevisionAsync(Guid companyId, Guid documentId, int revisionNumber, CancellationToken ct = default)
+    {
+        var pending = await PendingSignedCopyIdsAsync(_db, companyId, documentId, revisionNumber, ct);
+        foreach (var id in pending)
+        {
+            try { await EnsureSnapshotAsync(companyId, id, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "สร้างฉบับที่ลูกค้าเซ็นก่อนออก Rev ไม่สำเร็จ action={ActionId} company={CompanyId}", id, companyId);
+            }
+        }
+        return pending.Count == 0 ? 0 : (await PendingSignedCopyIdsAsync(_db, companyId, documentId, revisionNumber, ct)).Count;
+    }
+
+    /// <summary>แถวหลักฐานของ Rev นี้ที่ควรมีฉบับที่ลงนามแต่ยังไม่มี (ยอมรับ/เซ็นรับ · ลิงก์หน้าเอกสาร · ไม่ถูกลบตามคำขอ)</summary>
+    public static Task<List<Guid>> PendingSignedCopyIdsAsync(AccountingDbContext db, Guid companyId, Guid documentId, int revisionNumber, CancellationToken ct = default)
+        => db.CustomerDocumentActions.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.DocumentId == documentId && a.RevisionNumber == revisionNumber
+                && (a.Action == nameof(CustomerSignRule.Kind.Accepted) || a.Action == nameof(CustomerSignRule.Kind.DeliverySigned))
+                && a.Channel == CustomerSignRule.ChannelLink && a.SignedPdfSha256 == null && a.ErasedAt == null)
+            .Select(a => a.Id).ToListAsync(ct);
 
     /// <summary>อ่านไฟล์ฉบับที่ลูกค้าเซ็นของแถวหลักฐาน — ตำแหน่งต้องเป็นของบริษัท/เอกสาร/แถวนี้ และ SHA-256 ต้องตรงกับที่บันทึก (ไฟล์ถูกแก้ = ไม่ส่งออก + log error)</summary>
     public async Task<(byte[] Bytes, string FileName)?> ReadSignedCopyAsync(Guid companyId, Guid documentId, Guid actionId, CancellationToken ct = default)

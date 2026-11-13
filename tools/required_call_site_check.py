@@ -20042,9 +20042,12 @@ _R267B_WHY = "รอบ 267 P2 (R267b · 267-1-4…6/11/33…): "
 _R267B_PDF = "Services/Implementations/PdfGenerationService.cs"
 RULES += [
     dict(file=_R267_RESP, method="Accept",
-         must=["CustomerSignRule.DecideSigner(", "PageActionClosedReason(", "CustomerSignRule.OtpRequired(", "_db.CustomerDocumentActions.Add(", "EnsureRopaAsync("],
-         must_re=[r"!viaPage\s*\|\|\s*d\.CustomerResponse\s*==\s*null"],
-         before=[("PageActionClosedReason(", "ExecuteUpdateAsync("), ("ExecuteUpdateAsync(", "_db.CustomerDocumentActions.Add("),
+         must=["CustomerSignRule.DecideSigner(", "PageActionClosedReason(", "CustomerSignRule.OtpRequired(", "_db.CustomerDocumentActions.Add(", "EnsureRopaAsync(",
+               "CustomerSignRule.LegacyAcceptClosedReason("],
+         # ฝ่ายค้าน 267-P2 M2: หนึ่งคำตอบต่อ Rev ทุกเส้น (ไม่มี "!viaPage ||" ข้างหน้าอีก) · H1: audit ไม่คัดลอกชื่อ/ตำแหน่ง/IP
+         must_re=[r"&&\s*d\.CustomerResponse\s*==\s*null"],
+         forbid=["!viaPage || d.CustomerResponse == null", "acceptedBy = name, acceptedAt = now", "IpAddress = ip,", "signerTitle = evidence.SignerTitle"],
+         before=[("CustomerSignRule.LegacyAcceptClosedReason(", "ExecuteUpdateAsync("), ("PageActionClosedReason(", "ExecuteUpdateAsync("), ("ExecuteUpdateAsync(", "_db.CustomerDocumentActions.Add("),
                  ("_db.CustomerDocumentActions.Add(", "tx.CommitAsync(")],
          why=_R267B_WHY + "ยอมรับผ่านลิงก์หน้าเอกสาร: ผู้ลงนามครบ + ปุ่มต้องเปิดตามตัวตัดสินของหน้า + หนึ่งคำตอบต่อ Rev + แถวหลักฐานในธุรกรรมเดียวกับการจอง"),
     dict(file=_R267_RESP, method="SignDelivery",
@@ -20075,6 +20078,22 @@ RULES += [
                "x.SignedPdfSha256 == null", "x.CompanyId == companyId"],
          before=[("CustomerSignRule.SnapshotStillValid(", "GenerateDocumentPdfAsync("), ("ExecuteUpdateAsync(", "SignatureStore.WriteAsync(")],
          why=_R267B_WHY + "ฉบับที่ลูกค้าเซ็น: สร้างเฉพาะเมื่อ Rev/เนื้อหายังเป็นฉบับที่ลงนาม · เติมครั้งเดียว (ยังว่างเท่านั้น) · SHA-256 + audit chain"),
+    # ฝ่ายค้าน 267-P2 L1: ตรวจ Rev/hash ซ้ำใต้ล็อกแถวของใบก่อนจองแถวหลักฐาน
+    dict(file=_R267_RESP, method="EnsureSnapshotAsync", must=["ExecuteSqlInterpolatedAsync(", "docNow.RevisionNumber"],
+         before=[("ExecuteSqlInterpolatedAsync(", "SignatureStore.WriteAsync(")],
+         why=_R267B_WHY + "267-1-55 L1: PDF ที่เรนเดอร์ระหว่างผู้ขายออก Rev ห้ามถูกประทับเป็นฉบับที่ลงนามของ Rev เดิม"),
+    # ฝ่ายค้าน 267-P2 M3: ออก Rev ต้องสร้างฉบับที่ลงนามของ Rev เดิมก่อน RevisionNumber++
+    dict(file="Services/Implementations/DocumentService.cs", method="UpdateDocumentAsync",
+         must=["EnsureSnapshotsBeforeRevisionAsync(", "PendingSignedCopyIdsAsync(", "stillPending > 0"],
+         before=[("EnsureSnapshotsBeforeRevisionAsync(", "doc.RevisionNumber++;")],
+         why=_R267B_WHY + "267-1-54 M3: หลัง Rev ขยับ เนื้อหาไม่ใช่ฉบับที่ลูกค้าเห็นอีกแล้ว ⇒ สร้างฉบับที่ลงนามไม่ได้ถาวร"),
+    dict(file="Services/Implementations/SignEventDispatcher.cs", method="ProcessOneAsync",
+         must=["if (copy.Abandoned) await NotifySignedCopyFailedAsync("],
+         why=_R267B_WHY + "267-1-54 M3: เลิกสร้างฉบับที่ลงนามทั้งที่ควรมี = แจ้งพนักงาน (ล้มดัง)"),
+    # ฝ่ายค้าน 267-P2 L3: จองการลองก่อนเทียบรหัส
+    dict(file=_R267_RESP, method="CheckOtpAsync", must=["o.Attempts < CustomerSignRule.OtpMaxAttempts", "CustomerSignRule.VerifyOtp("],
+         before=[("o.Attempts < CustomerSignRule.OtpMaxAttempts", "CustomerSignRule.VerifyOtp(")],
+         why=_R267B_WHY + "267-1-55 L3: คำขอขนานผ่านด่านจำนวนครั้งพร้อมกันไม่ได้"),
     dict(file=_R267_RESP, method="ReadSignedCopyAsync",
          must=["CustomerSignRule.IsOwnSignedCopyLocation(", "CustomerSignRule.SignedCopyIntact(", "x.CompanyId == companyId", "x.DocumentId == documentId", "LogError("],
          before=[("CustomerSignRule.IsOwnSignedCopyLocation(", "ReadAllBytesAsync(")],
@@ -20145,6 +20164,10 @@ REVIEWER_CASES += [
     ("R267b-g", "QuotationAcceptanceBlockHtml", "sb.Append($\"<div>{WebUtility.HtmlEncode(signerLine)}</div>\");", "sb.Append($\"<div>{signerLine}</div>\");", True),
     # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อนเรียกตัวตัดสินปุ่ม ⇒ ต้องไม่ฟ้อง
     ("R267b-h", "PageActionClosedReason", "var actions = CustomerDocPage.Actions(", "var actions =\n            CustomerDocPage.Actions(", False),
+    # ฝ่ายค้าน 267-P2 M2: ลิงก์รุ่นก่อนข้ามหนึ่งคำตอบต่อ Rev อีก ⇒ ต้องฟ้อง
+    ("R267b-i", "Accept", "&& d.CustomerResponse == null   // ฝ่ายค้าน 267-P2 M2", "&& (!viaPage || d.CustomerResponse == null)   // ฝ่ายค้าน 267-P2 M2", True),
+    # ฝ่ายค้าน 267-P2 L3: นับครั้งแบบไม่มีเงื่อนไขอีก ⇒ ต้องฟ้อง
+    ("R267b-j", "CheckOtpAsync", "&& o.Attempts < CustomerSignRule.OtpMaxAttempts", "", True),
 ]
 
 

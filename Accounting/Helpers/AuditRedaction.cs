@@ -57,6 +57,15 @@ public static class AuditRedaction
         // รอบ 245 L1: ปลายทาง LINE ของผู้ติดต่อ — ค่าเข้ารหัส/แฮชของตัวระบุบุคคล ห้ามลง audit (append-only)
         // ฝ่ายค้าน S3: อีเมล/ป้าย (มักเป็นชื่อคน)/ชื่อกลุ่ม ก็เป็นข้อมูลส่วนบุคคล — ค่าอยู่ในแถวปลายทาง (ลบตามคำขอได้) ไม่ใช่ใน audit
         ["ContactNotifyEndpoint"] = new HashSet<string> { "LineUserId", "LineGroupId", "LineIdHash", "OaDestination", "Email", "Label", "GroupNameSnapshot" },
+        // ฝ่ายค้าน 267-P2 H1/M1: บัญชีหลักฐานการตอบรับของลูกค้า — ข้อมูลผู้ลงนามอยู่ในแถวหลักฐาน (ลบตามคำขอเมื่อพ้นอายุเก็บ) ไม่ใช่ใน audit ·
+        // แถว audit เก่าที่เก็บค่าไปแล้วแก้ไม่ได้ (hash chain) แต่ปิดตอนแสดงด้วยรายชื่อนี้ (RedactJson) — คำตัดสิน 267-1-51
+        ["CustomerDocumentAction"] = new HashSet<string>
+        {
+            "SignerFirstName", "SignerLastName", "SignerTitle", "SignerOrgName", "SignerEmail", "Message", "Ip", "UserAgentHash",
+            "SignatureFilePath", "SignedPdfPath",
+        },
+        // รหัสยืนยันอีเมล: hash ของอีเมล/รหัส ห้ามลง audit (กู้รหัส 6 หลักจาก hash ได้)
+        ["CustomerSignOtp"] = new HashSet<string> { "EmailHash", "CodeHash" },
     };
 
     /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: ค่าในการบันทึกที่อยู่ใต้ "ขอบเขตการลบตามคำขอ" (<c>AccountingDbContext.AuditErasureScope</c>) —

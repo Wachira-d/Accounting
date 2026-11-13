@@ -153,6 +153,8 @@ public class SignEventDispatcher
                 row.SignedCopyDoneAt = nowUtc;
                 if (copy.Note != null) row.LastError = Trim("ฉบับที่ลูกค้าเซ็น: " + copy.Note);
                 await _db.SaveChangesAsync(ct);
+                // ฝ่ายค้าน 267-P2 M3: เลิกสร้างทั้งที่ควรมีไฟล์ ⇒ แจ้งพนักงานเหมือนเส้นครบจำนวนครั้ง (ล้มดัง 3 ที่: แถว outbox · กระดิ่ง · หน้าลูกค้าเลิกแสดง "กำลังเตรียม")
+                if (copy.Abandoned) await NotifySignedCopyFailedAsync(row, copy.Note, ct);
             }
             else
             {

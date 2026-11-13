@@ -4189,6 +4189,12 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 | API v1 `GET /api/v1/documents/{id}/sign-status` | สัญญาเดิมคงทุกช่อง + เพิ่ม `customerResponse` · `customerResponseAt` · `signerTitle` · `signerOrgName` · `identityLevel` · `signedCopyReady` จากแถวหลักฐานล่าสุดของ Rev ปัจจุบัน (แถวที่ลบตามคำขอแล้ว = ตำแหน่ง/บริษัทเป็น null · ไม่มี IP/UA/token) | `DocumentsV1Controller.SignStatus` |
 | กดพร้อมกัน (S3) | สองเครื่องกดยอมรับใบเดียวกัน = จองแบบ compare-and-set ได้ผู้ชนะคนเดียว · คนที่สองได้ 200 "ถูกยอมรับไปแล้ว" · แถวหลักฐาน/เหตุการณ์/audit เดียว | Db `CSR267Db_ConcurrentAcceptOneRow_…` |
 
+- **ชุดแก้ฝ่ายค้าน P2 (`erp-review/2026-11-13/review-267-P2.md` · คำตัดสิน 267-1-51…60)**: audit ไม่มีข้อมูลผู้ลงนาม (`AuditRedaction.PiiFields` ครอบ `CustomerDocumentAction`/`CustomerSignOtp` · audit ที่เขียนเองอ้าง `customerActionId` · แถวเก่าปิดตอนแสดง + หมายเหตุในรายงานผลกระทบการลบ) ·
+  รหัสยืนยัน = HMAC ด้วยกุญแจเซิร์ฟเวอร์ (production fail-fast) · จองการลองก่อนเทียบรหัส · อีเมลรหัสไม่มีเลขเอกสาร + 5 รหัส/ใบ/วัน ·
+  ลิงก์รุ่นก่อนเคารพหนึ่งคำตอบต่อ Rev + เกณฑ์รหัส (409 + ทางไปต่อ) · ลิงก์หน้าเอกสารต้องส่ง hash ที่เห็น (ว่าง = 409) ·
+  **ออก Rev ใบที่ลูกค้ายอมรับ/เซ็นรับ: สร้างฉบับที่ลงนามของ Rev เดิมก่อน — สร้างไม่ได้ = ไม่ออก Rev** (`DOCPAGE-267-SNAPSHOT`) · ตรวจ Rev/hash ซ้ำใต้ `FOR UPDATE` ตอนประทับไฟล์ ·
+  เลิกสร้าง = แจ้งพนักงาน + หน้าเลิกแสดง "กำลังเตรียม" · ข้อความยินยอมต่อชนิด (รุ่น `267-2`) · "ระบบจะแจ้งผู้ขาย" · trigger: ลบตามคำขอล้างค่าเท่านั้น + ห้ามแก้ `CreatedBy` + กัน `TRUNCATE` ·
+  ฝั่งพนักงาน: IP/อีเมลผู้ลงนามค่าเต็มเฉพาะ `Pii.View` · ดาวน์โหลดฉบับที่ลงนามลง `PiiAccessLog` · Last verified `commit (เติมในคอมมิตตามหลัง)`
 - **ไม่สืบทอด:** `CustomerResponse` · แถวหลักฐาน · ฉบับที่ลงนาม เป็นของใบ/Rev นั้น — convert/clone/recurring ไม่คัดลอก (เท่ากับลายเซ็นยอมรับ รอบ 239)
 - เทสต์ `CustomerSignRound267Tests` (pure สองทิศ) · `Db/CustomerSignRound267DbTests` · ล็อก R267b (`tools/required_call_site_check.py` — กติกาของเมธอดที่ย้ายชี้ `CustomerDocumentResponseService`) · Last verified `commit 8b6861de` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 

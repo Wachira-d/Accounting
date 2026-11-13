@@ -311,8 +311,13 @@ public class DocumentController : ControllerBase
         var visible = await _documentService.GetDocumentForUserAsync(companyId, documentId, userId);
         if (visible.IsRedacted) return NotFound(new ApiResponse<Accounting.Services.Interfaces.CustomerDocEvidenceView>(false, null, "ไม่พบเอกสาร"));
         var view = await responses.EvidenceForStaffAsync(companyId, documentId, ct);
+        // ฝ่ายค้าน 267-P2 L6 (267-1-59): IP + อีเมลของผู้ลงนาม = ค่าเต็มเฉพาะสิทธิ์ Pii.View (กฎ #2 J) · คนอื่นเห็นชื่อ/ตำแหน่ง/เวลา/hash (หลักฐานการตกลงที่งานขายต้องใช้)
+        var canPii = await _permissions.HasPermissionAsync(companyId, userId, Models.Constants.PermissionKeys.PiiView);
+        if (!canPii)
+            view = view with { Items = view.Items.Select(i => i with { Ip = null, SignerEmail = CustomerSignRule.MaskEmail(i.SignerEmail) }).ToList() };
         if (view.Items.Count > 0)
-            await pdpa.LogPiiAccessAsync(companyId, userId, User.Identity?.Name ?? "", "Document", documentId, "CustomerDocumentActions", "View",
+            await pdpa.LogPiiAccessAsync(companyId, userId, User.Identity?.Name ?? "", "Document", documentId,
+                canPii ? "CustomerDocumentActions (รวม IP/อีเมล)" : "CustomerDocumentActions", "View",
                 "พนักงานเปิดดูหลักฐานการตอบรับของลูกค้า (" + CustomerSignRule.RuleCode + ")",
                 HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
         Response.Headers["Cache-Control"] = "private, no-store";
@@ -322,12 +327,18 @@ public class DocumentController : ControllerBase
     /// <summary>รอบ 267 P2: ฉบับที่ลูกค้าเซ็น (ไฟล์ ณ ตอนลงนาม) ของแถวหลักฐาน — สิทธิ์อ่านเอกสารของผู้ใช้ · ตรวจ SHA-256 กับที่บันทึกก่อนส่ง (ไม่ตรง = ไม่พบ)</summary>
     [HttpGet("{documentId:guid}/customer-responses/{actionId:guid}/signed-pdf")]
     public async Task<IActionResult> GetCustomerSignedCopy(Guid companyId, Guid documentId, Guid actionId,
-        [FromServices] Accounting.Services.Implementations.CustomerDocumentResponseService responses, CancellationToken ct)
+        [FromServices] Accounting.Services.Implementations.CustomerDocumentResponseService responses,
+        [FromServices] Accounting.Services.Implementations.Pdpa.IPdpaService pdpa, CancellationToken ct)
     {
-        var visible = await _documentService.GetDocumentForUserAsync(companyId, documentId, JwtHelper.GetUserIdFromClaims(User));
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var visible = await _documentService.GetDocumentForUserAsync(companyId, documentId, userId);
         if (visible.IsRedacted) return NotFound(new ApiResponse<object>(false, null, "ไม่พบไฟล์"));
         var file = await responses.ReadSignedCopyAsync(companyId, documentId, actionId, ct);
         if (file == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบฉบับที่ลูกค้าลงนาม (ยังไม่ถูกสร้าง หรือไฟล์ไม่ตรงกับที่บันทึก)"));
+        // ฝ่ายค้าน 267-P2 L6: PDF มีชื่อ/ตำแหน่ง/ลายเซ็นของผู้ลงนาม ⇒ ร่องรอยการเข้าถึง (ม.37) เหมือนแผงหลักฐาน
+        await pdpa.LogPiiAccessAsync(companyId, userId, User.Identity?.Name ?? "", "Document", documentId, "CustomerDocumentActions.SignedPdf", "Export",
+            "พนักงานดาวน์โหลดฉบับที่ลูกค้าลงนาม (" + CustomerSignRule.RuleCode + ")",
+            HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
         Response.Headers["Cache-Control"] = "private, no-store";
         return File(file.Value.Bytes, "application/pdf", PublicDocumentPageController.SafeFileName(file.Value.FileName));
     }

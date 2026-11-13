@@ -3082,6 +3082,21 @@ public partial class DocumentService : IDocumentService
                     + "ยืนยันการแก้ไขโดยส่ง acknowledgeRevisionResetsAcceptance = true "
                     + "(หลักฐานเดิมถูกเก็บไว้ในประวัติ revision)");
 
+            // (2b) ฝ่ายค้าน 267-P2 M3: ฉบับที่ลูกค้าเซ็นของ Rev นี้ต้องถูกสร้างก่อนเนื้อหาเปลี่ยน (หลังแก้แล้วสร้างจากเนื้อหาที่ลูกค้าเห็นไม่ได้อีก) ·
+            //      สร้างไม่ได้ = ไม่ออก Rev (ไม่ทิ้งหลักฐานที่สัญญาไว้กับลูกค้าว่าจะเก็บ) พร้อมทางไปต่อ
+            if (bindingEvidence != null)
+            {
+                var responder = _db.Database.CurrentTransaction == null
+                    ? _services?.GetService(typeof(CustomerDocumentResponseService)) as CustomerDocumentResponseService : null;
+                var stillPending = responder != null
+                    ? await responder.EnsureSnapshotsBeforeRevisionAsync(companyId, doc.Id, doc.RevisionNumber)
+                    : (await CustomerDocumentResponseService.PendingSignedCopyIdsAsync(_db, companyId, doc.Id, doc.RevisionNumber)).Count;
+                if (stillPending > 0)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"ระบบยังสร้างฉบับที่ลูกค้าลงนามของ{label} Rev.{doc.RevisionNumber} ไม่สำเร็จ — ต้องเก็บฉบับนั้นไว้ก่อนแก้ไข "
+                        + "กรุณาลองใหม่ในอีกสักครู่ (ถ้ายังไม่ได้ ตรวจที่แผง \"หลักฐานการตอบรับของลูกค้า\" หรือแจ้งผู้ดูแลระบบ)", "DOCPAGE-267-SNAPSHOT");
+            }
+
             // (3) snapshot สภาพปัจจุบัน "ก่อนแก้" — commit พร้อมการแก้ใน
             //     SaveChanges เดียว (apply ล้มเหลว = ไม่มีอะไรถูกบันทึกเลย)
             _db.DocumentRevisions.Add(new DocumentRevision

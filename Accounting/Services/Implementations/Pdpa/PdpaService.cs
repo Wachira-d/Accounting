@@ -312,6 +312,11 @@ public partial class PdpaService : IPdpaService
             notes.Add("§95: เอกสารทางบัญชี/ภาษี ห้ามลบจนกว่าจะพ้นระยะเก็บรักษา (5 ปี ตามประมวลรัษฎากร)");
             notes.Add("ทางเลือก: anonymise field ที่ระบุตัวบุคคล (ชื่อ/อีเมล/ที่อยู่) แต่คงเอกสารไว้");
         }
+        // ฝ่ายค้าน 267-P2 H1 (คำตัดสิน 267-1-51): audit เป็น append-only + hash chain ⇒ แถว audit ที่บันทึกการตอบรับออนไลน์ก่อนการแก้นี้
+        // อาจมีสำเนาข้อมูลผู้ลงนามที่ลบไม่ได้ — ปิดค่าตอนแสดงทุกบทบาทแล้ว (AuditRedaction.PiiFields) · แจ้งผู้ดูแลข้อมูลให้ตอบเจ้าของข้อมูลตามจริง
+        if (contactId.HasValue && await _db.CustomerDocumentActions.AnyAsync(a => a.CompanyId == companyId
+                && _db.Documents.Any(d => d.Id == a.DocumentId && d.CompanyId == companyId && d.ContactId == contactId.Value), ct))
+            notes.Add(Accounting.Helpers.CustomerSignText.ErasureAuditNote);
         if (userCount == 0 && contactCount == 0)
             notes.Add("ไม่พบ User/Contact ที่ตรงกับ id ที่ระบุ");
 
