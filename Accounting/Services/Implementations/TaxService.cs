@@ -482,8 +482,11 @@ public partial class TaxService : ITaxService
                 var relInfoFound = doc.RelatedDocumentId.HasValue && relatedDocInfos.ContainsKey(doc.RelatedDocumentId.Value);
                 var boxRel = relInfoFound ? relatedDocInfos[doc.RelatedDocumentId!.Value] : default;
                 // ฝั่งขาย (ไม่ใช่ CN/DN): ใบที่ถือการขาย + งวดของวันที่ VAT ถึงกำหนด
+                // ช่อง 2 (0%): ใบกำกับ/ใบเจ้าของที่มี VAT เท่านั้น (§80/1 ต้องออกใบกำกับ) · ช่อง 3 (ยกเว้น): บรรทัด −1 ของใบต้นทางของการขาย (269-2-9)
                 var salesOwner = !isAdjNote && !side.IsPurchase
                     ? Accounting.Helpers.OutputVatOwnership.SalesBoxOwner(ownFacts) : null;
+                var exemptOwner = !isAdjNote && !side.IsPurchase
+                    ? Accounting.Helpers.OutputVatOwnership.ExemptBoxOwner(ownFacts) : null;
                 // CN/DN (L3): ใบเดิมต้องถึง tax point และเป็นใบที่ช่องยอดขาย/ซื้อนับได้ — ด่านเดียวกับแถว CN/DN
                 var adjCounts = isAdjNote && !side.Unknown
                     && (side.IsPurchase
@@ -491,9 +494,16 @@ public partial class TaxService : ITaxService
                         : Accounting.Helpers.OutputVatOwnership.AdjustmentNoteCounts(
                             doc.RelatedDocumentId.HasValue, relInfoFound ? boxRel.Type : null, relInfoFound ? boxRel.VatAmount : 0m,
                             relInfoFound && boxRel.IsOpeningBalance, RelatedPendingTaxPoint(doc)));
+                var adjCountsExempt = isAdjNote && !side.Unknown && !side.IsPurchase
+                    && Accounting.Helpers.OutputVatOwnership.AdjustmentNoteCounts(
+                        doc.RelatedDocumentId.HasValue, relInfoFound ? boxRel.Type : null, relInfoFound ? boxRel.VatAmount : 0m,
+                        relInfoFound && boxRel.IsOpeningBalance, RelatedPendingTaxPoint(doc), exemptBox: true);
                 var countSales = isAdjNote
                     ? inSaleMonth && adjCounts && !side.IsPurchase
                     : salesOwner is { Owns: true, VatDueDate: DateTime due } && due >= startDate && due < endStampExclusive;
+                var countExempt = isAdjNote
+                    ? inSaleMonth && adjCountsExempt
+                    : exemptOwner is { Owns: true, VatDueDate: DateTime exDue } && exDue >= startDate && exDue < endStampExclusive;
                 // ฝั่งซื้อ (L1): เฉพาะใบที่ถือการซื้อ = ชุดเดียวกับใบที่เคลมภาษีซื้อ (InputVatGateScope) — ไม่ใช่ใบสั่งซื้อ/ใบขอซื้อ/ใบรับสินค้า/ใบส่งของ
                 var countPurchase = inSaleMonth && side.IsPurchase
                     && (isAdjNote
@@ -502,7 +512,7 @@ public partial class TaxService : ITaxService
                             hasTaxInvoiceReference: doc.HasTaxInvoiceReference, hasRelatedDocument: doc.RelatedDocumentId != null));
                 var legacySales = inSaleMonth && !side.IsPurchase && !(isAdjNote && side.Unknown);
 
-                if (countSales || countPurchase || legacySales)
+                if (countSales || countExempt || countPurchase || legacySales)
                 {
                     var split = Pp30SalesClassifier.Split(doc.Lines
                         .Where(l => !l.IsDeleted)
@@ -513,20 +523,21 @@ public partial class TaxService : ITaxService
                         legacyExempt += adjSign * Thb(doc, split.ExemptBase);
                     }
                     if (countPurchase) exemptPurchases += adjSign * Thb(doc, split.ExemptBase);
-                    else if (countSales)
+                    else
                     {
-                        zeroRatedSales += adjSign * Thb(doc, split.ZeroRatedBase);
-                        exemptSales += adjSign * Thb(doc, split.ExemptBase);
+                        if (countSales) zeroRatedSales += adjSign * Thb(doc, split.ZeroRatedBase);
+                        if (countExempt) exemptSales += adjSign * Thb(doc, split.ExemptBase);
                     }
                 }
-                // H2 — ใบเจ้าของที่ไม่มี VAT และไม่ใช่ใบกำกับ แต่มียอด 0%/ยกเว้นในงวด: ไม่นับเข้าแบบ — และไม่เงียบ (หลักการ #3/#7) ⇒ บรรทัดเตือนที่ติ๊กออก
+                // H2 — ใบที่ไม่มี VAT และไม่ใช่ใบกำกับ แต่มียอด 0% ในงวด: ไม่นับเข้าช่อง 2 (§80/1 ต้องออกใบกำกับ) — และไม่เงียบ (หลักการ #3/#7) ⇒ บรรทัดเตือนที่ติ๊กออก ·
+                // ยอดยกเว้น (−1) ของใบเดียวกันนับเข้าช่อง 3 ตาม ExemptBoxOwner แล้ว จึงไม่อยู่ในบรรทัดเตือน (269-2-9)
                 if (salesOwner is { Owns: false, RuleCode: Accounting.Helpers.OutputVatOwnership.RuleZeroVatNotTaxInvoice, VatDueDate: DateTime warnDue }
                     && warnDue >= startDate && warnDue < endStampExclusive)
                 {
                     var warnSplit = Pp30SalesClassifier.Split(doc.Lines
                         .Where(l => !l.IsDeleted)
                         .Select(l => new Pp30Line(l.VatRate, l.Amount, l.VatAmount)));
-                    var notCounted = Thb(doc, warnSplit.ZeroRatedBase + warnSplit.ExemptBase);
+                    var notCounted = Thb(doc, warnSplit.ZeroRatedBase);
                     if (notCounted != 0m)
                         report.Lines.Add(new TaxReportLine
                         {
@@ -535,7 +546,7 @@ public partial class TaxService : ITaxService
                             TaxPayerId = doc.Contact?.TaxId,
                             TaxPayerName = doc.Contact?.Name ?? "",
                             TransactionDate = warnDue,
-                            Description = $"⚠️ [ยอด 0%/ยกเว้น ไม่นับเข้าแบบ — ไม่ใช่ใบกำกับภาษี] {doc.DocumentNumber} — {salesOwner.Reason}",
+                            Description = $"⚠️ [ยอด 0% ไม่นับเข้าแบบ — ไม่ใช่ใบกำกับภาษี (§80/1)] {doc.DocumentNumber} — {salesOwner.Reason}",
                             IncomeAmount = notCounted,
                             TaxRate = 0,
                             TaxAmount = 0,

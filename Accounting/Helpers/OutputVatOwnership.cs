@@ -148,7 +148,7 @@ public static class OutputVatOwnership
     /// <para>ใบลดหนี้/เพิ่มหนี้ใช้ <see cref="AdjustmentNoteCounts"/></para></summary>
     public static Decision SalesBoxOwner(Facts f)
     {
-        const string zeroVatReason = "ใบนี้ไม่มี VAT และไม่ใช่ใบกำกับภาษี — ยอด 0%/ยกเว้นบนใบนี้ไม่นับเข้าแบบอัตโนมัติ (ถ้าเป็นการขายยกเว้น §81 หรือส่งออก §80/1 จริง ให้ผู้ทำบัญชียืนยันและกรอกในแบบ)";
+        const string zeroVatReason = "ใบนี้ไม่มี VAT และไม่ใช่ใบกำกับภาษี — ยอดอัตรา 0% บนใบนี้ไม่นับเข้าช่องยอดขาย 0% (ขาย §80/1 ต้องออกใบกำกับภาษี) · ถ้าเป็นส่งออกจริงให้ออกใบกำกับ หรือถ้าเป็นขายยกเว้นให้แก้บรรทัดเป็น \"ยกเว้น\" (ผู้ทำบัญชียืนยัน)";
         var d = Decide(f);
         if (d.Owns)
             return f.Type == DocumentType.TaxInvoice || f.VatAmount > 0.005m
@@ -157,21 +157,43 @@ public static class OutputVatOwnership
                 : d with { Owns = false, RuleCode = RuleZeroVatNotTaxInvoice, Reason = zeroVatReason };
         // ใบแจ้งหนี้ที่ไม่มี VAT ทั้งใบ (ไม่ถูกใบกำกับ/ใบเสร็จแทน · ไม่ใช่ยอดยกมา) = การขายที่ไม่มีใบกำกับ ⇒ ไม่นับ + เตือนแบบเดียวกัน
         // (เดิม 269-1-2 ให้นับเอง — ถอดตามคำตัดสิน 269-2-2 เพราะยอดยกมา/ใบฝากขายอัตโนมัติก็เป็นรูปนี้)
-        if (f.Type == DocumentType.Invoice && f.VatAmount <= 0.005m && !f.SupersededByTaxInvoice && !f.OwnedByVatReceipt && !f.IsOpeningBalance)
+        if (IsZeroVatSaleOrigin(f))
             return new Decision(d.Branch, false, false, f.TaxPoint, RuleZeroVatNotTaxInvoice, zeroVatReason);
         return d;
+    }
+
+    /// <summary>ใบต้นทางของการขายที่ไม่มี VAT และไม่ใช่ใบกำกับ (ไม่เป็นเจ้าของแถว §87 เพราะไม่มีภาษี) — ใบแจ้งหนี้ตรงที่ไม่ถูกใบกำกับ/ใบเสร็จถือ VAT แทน ·
+    /// ใบสำคัญรับเดี่ยว (ไม่อ้างใบใด · ไม่ใช่มัดจำที่ถูกหัก) · ไม่ใช่ยอดยกมา — ใช้ร่วมกันโดย <see cref="SalesBoxOwner"/> (เตือน 0%) และ <see cref="ExemptBoxOwner"/></summary>
+    private static bool IsZeroVatSaleOrigin(Facts f)
+        => !f.IsOpeningBalance && f.VatAmount <= 0.005m
+           && ((f.Type == DocumentType.Invoice && !f.SupersededByTaxInvoice && !f.OwnedByVatReceipt)
+               || (f.Type == DocumentType.ReceiptVoucher && !f.HasRelated && !(f.IsDeposit && f.DepositApplied)));
+
+    /// <summary>รอบ 269 คำตัดสิน 269-2-9 — <b>ช่อง 3 (ยกเว้น §81)</b>: บรรทัด VatRate −1 ของ<b>ใบต้นทางของการขาย</b> · ขายยกเว้นออกใบกำกับไม่ได้ (§81 · §86)
+    /// ⇒ อยู่บนใบแจ้งหนี้/ใบเสร็จ/ใบสำคัญรับเท่านั้น จึงต้องไม่ผูกกับ "ต้องมี VAT" แบบช่อง 2 (§80/1 ต้องออกใบกำกับ ⇒ ช่อง 2 = <see cref="SalesBoxOwner"/>)
+    ///
+    /// <para>นับ: ใบที่ <see cref="Decide"/> เป็นเจ้าของ (ใบกำกับผสม · ใบเสร็จขายสด · ใบเสร็จถือ VAT ของใบแจ้งหนี้) + ใบต้นทางที่ไม่มี VAT (<see cref="IsZeroVatSaleOrigin"/>) ·
+    /// ไม่นับ: ใบเสร็จรับชำระใบอื่น · ใบวางบิล/ใบส่งของ/ใบเสนอราคา · ยอดยกมา · ใบแจ้งหนี้ที่ถูกแทน · มัดจำที่ถูกหัก — ตัวตัดสินเดียวกับแถว §87 (Decide/BranchOf/IsOutsidePp30)</para></summary>
+    public static Decision ExemptBoxOwner(Facts f)
+    {
+        var d = Decide(f);
+        if (d.Owns) return d;
+        return IsZeroVatSaleOrigin(f) ? Own(d.Branch, f.TaxPoint) : d;
     }
 
     /// <summary>รอบ 269 L3 — ใบลดหนี้/เพิ่มหนี้ฝั่งขายนับเข้าช่อง 0%/ยกเว้นได้เมื่อ (1) ใบเดิมถึงจุดความรับผิดแล้ว (ไม่ใช่ใบที่ VAT ยังพัก — ผู้เรียกส่ง
     /// <paramref name="relatedPendingTaxPoint"/> จากด่านเดียวกับแถว CN/DN) และ (2) ใบเดิม (ถ้ามี) เป็นใบที่ช่องยอดขายนับได้ = ใบกำกับภาษี หรือใบที่มี VAT ·
     /// ใบเดิมเป็นใบเสร็จรับชำระ/ใบวางบิล/ใบเสนอราคา/ใบยอดยกมา/ใบไม่มี VAT ⇒ ไม่นับ (ใบเดิมไม่เคยอยู่ในช่อง) · ไม่มีใบเดิม ⇒ นับตามเดิม</summary>
+    /// <param name="exemptBox">true = ตัดสินช่อง 3 (ยกเว้น · 269-2-9): ใบแจ้งหนี้เดิมที่ไม่มี VAT (ขายยกเว้นตรง) นับได้ด้วย · ใบเสร็จ/ใบสำคัญรับที่ไม่มี VAT
+    /// ไม่นับ (แยกใบรับชำระกับขายสดจากใบลดหนี้ไม่ได้ — ไม่เดา)</param>
     public static bool AdjustmentNoteCounts(bool hasRelated, DocumentType? relatedType, decimal relatedVatAmount,
-        bool relatedOpeningBalance, bool relatedPendingTaxPoint)
+        bool relatedOpeningBalance, bool relatedPendingTaxPoint, bool exemptBox = false)
     {
         if (relatedPendingTaxPoint) return false;
         if (!hasRelated) return true;
         if (relatedOpeningBalance || relatedType == null) return false;
         if (relatedType == DocumentType.TaxInvoice) return true;
+        if (exemptBox && relatedType == DocumentType.Invoice) return true;
         return relatedType is DocumentType.Invoice or DocumentType.Receipt or DocumentType.ReceiptVoucher or DocumentType.DebitNote
             && relatedVatAmount > 0.005m;
     }

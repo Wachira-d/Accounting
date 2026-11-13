@@ -20224,9 +20224,11 @@ _R269_WHY = "รอบ 269 (269-1-1…4): "
 RULES += [
     dict(file="Services/Implementations/TaxService.cs", method="GenerateVatReport",
          must=["OutputVatOwnership.SalesBoxOwner(", "Pp30SalesClassifier.Split(", "OutputVatOwnership.IsOutsidePp30(",
-               "OutputVatOwnership.AdjustmentNoteCounts(", "RelatedPendingTaxPoint("],
+               "OutputVatOwnership.AdjustmentNoteCounts(", "RelatedPendingTaxPoint(", "OutputVatOwnership.ExemptBoxOwner("],
          must_re=[r"salesOwner\s+is\s+\{\s*Owns:\s*true\s*,\s*VatDueDate:\s*DateTime\s+due\s*\}\s*&&\s*due\s*>=\s*startDate\s*&&\s*due\s*<\s*endStampExclusive",
-                  r"else\s+if\s*\(\s*countSales\s*\)",
+                  r"if\s*\(\s*countSales\s*\)\s*zeroRatedSales\s*\+=",
+                  r"if\s*\(\s*countExempt\s*\)\s*exemptSales\s*\+=",
+                  r"exemptOwner\s+is\s+\{\s*Owns:\s*true\s*,\s*VatDueDate:\s*DateTime\s+exDue\s*\}\s*&&\s*exDue\s*>=\s*startDate\s*&&\s*exDue\s*<\s*endStampExclusive",
                   r"countPurchase\s*=\s*inSaleMonth[\s\S]{0,400}?InputVatGateScope\.ClaimsInputVat\(",
                   r"RuleCode:\s*Accounting\.Helpers\.OutputVatOwnership\.RuleZeroVatNotTaxInvoice"],
          before=[("OutputVatOwnership.IsOutsidePp30(", "OutputVatOwnership.FactsOf(")],
@@ -20251,7 +20253,11 @@ REVIEWER_CASES += [
     ("R269a", "GenerateVatReport",
      "salesOwner is { Owns: true, VatDueDate: DateTime due } && due >= startDate && due < endStampExclusive", "true", True),
     # 269-1-1: แยกยอดโดยไม่ผ่านด่านนับ ⇒ ต้องฟ้อง
-    ("R269b", "GenerateVatReport", "else if (countSales)", "else", True),
+    ("R269b", "GenerateVatReport", "if (countSales) zeroRatedSales +=", "zeroRatedSales +=", True),
+    # 269-2-9: ช่อง 3 กลับไปนับทุกใบที่มีบรรทัด −1 (ไม่ถามใบต้นทางของการขาย) ⇒ ต้องฟ้อง
+    ("R269g", "GenerateVatReport",
+     "exemptOwner is { Owns: true, VatDueDate: DateTime exDue } && exDue >= startDate && exDue < endStampExclusive", "true", True),
+    ("R269h", "GenerateVatReport", "if (countExempt) exemptSales +=", "exemptSales +=", True),
     # 269-2-1 (H1): ถอดด่านยอดยกมา ⇒ ต้องฟ้อง
     ("R269d", "GenerateVatReport", "if (Accounting.Helpers.OutputVatOwnership.IsOutsidePp30(doc))", "if (false)", True),
     # L1: ยอดซื้อยกเว้นกลับไปนับทุกใบฝั่งซื้อ ⇒ ต้องฟ้อง

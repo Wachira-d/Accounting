@@ -200,5 +200,39 @@ public class Pp30SalesBoxOwnerDbTests
         Assert.Contains(rows, r => r == "TIV-269-0007");
         Assert.Contains(rows, r => r.StartsWith("RV-269-0008"));      // ป้าย "ไม่ใช่ใบกำกับเต็มรูป" ต่อท้ายได้
         Assert.Equal(80_826.73m + 70m, report.OutputVat);
+        // 269-2-9: ใบสำคัญรับสลิป (บรรทัด 0) ⇒ บรรทัดเตือน ไม่ใช่ช่อง 2
+        Assert.Contains(report.Lines, l => l.IsExcluded && (l.Description ?? "").StartsWith("⚠️") && (l.Description ?? "").Contains("RV-269-0007"));
+    }
+
+    [Fact]
+    public async Task R269_2_9_ขายยกเว้น81บนใบแจ้งหนี้ตรงและใบเสร็จขายสด_เข้าช่อง3ครั้งเดียว_ใบรับชำระและยอดยกมาไม่นับ_ใบสำคัญรับ0เตือน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);
+
+        // ใบแจ้งหนี้ตรงขายผักสด (ยกเว้น §81 — ออกใบกำกับไม่ได้) + ใบเสร็จรับชำระของใบนั้น (บรรทัด −1 คัดลอกมา) ⇒ นับที่ใบแจ้งหนี้ครั้งเดียว
+        var inv = await DocAsync(db, s, DocumentType.Invoice, "INV-269-0009", Day(4), 300m, -1m, status: DocumentStatus.Paid,
+            description: "ผักสด (ยกเว้น §81)");
+        await DocAsync(db, s, DocumentType.Receipt, "REC-269-0009", Day(14), 300m, -1m, inv.Id, DocumentStatus.Paid);
+        // ใบเสร็จขายสดยกเว้น (ไม่อ้างใบใด) ⇒ นับ
+        await DocAsync(db, s, DocumentType.Receipt, "REC-269-0010", Day(15), 400m, -1m, status: DocumentStatus.Paid);
+        // ใบสำคัญรับขายสดยกเว้น ⇒ นับ
+        await DocAsync(db, s, DocumentType.ReceiptVoucher, "RV-269-0010", Day(16), 50m, -1m, status: DocumentStatus.Paid);
+        // ยอดยกมาบรรทัดยกเว้น ⇒ ไม่นับ
+        await DocAsync(db, s, DocumentType.Invoice, "OB-AR:INV-0801", Day(17), 900m, -1m, openingBalance: true);
+        // ใบวางบิลของใบแจ้งหนี้ยกเว้น ⇒ ไม่นับ
+        await DocAsync(db, s, DocumentType.BillingNote, "BN-269-0009", Day(5), 300m, -1m, inv.Id);
+        // ใบสำคัญรับสลิป (บรรทัด 0) ⇒ ไม่เข้าช่อง 2 · เตือน
+        var rv = await DocAsync(db, s, DocumentType.ReceiptVoucher, "RV-269-0011", Day(18), 1_000m, 0m, status: DocumentStatus.Paid,
+            description: "รับโอนจากลูกค้า");
+
+        var report = await Pp30Async(s);
+        Assert.Equal(750m, Box(report, VatReportLineKind.ExemptSales));        // 300 + 400 + 50
+        Assert.Equal(0m, Box(report, VatReportLineKind.ZeroRatedSales));
+        Assert.Equal(750m, Form(report)[Pp30FormBox.ExemptSales]);
+        var warn = Assert.Single(report.Lines, l => l.IsExcluded && l.DocumentId == rv.Id);
+        Assert.Equal(1_000m, warn.IncomeAmount);
+        Assert.DoesNotContain(report.Lines, l => l.IsExcluded && l.DocumentId == inv.Id);   // ยอดยกเว้นนับแล้ว ไม่มีบรรทัดเตือน
     }
 }
