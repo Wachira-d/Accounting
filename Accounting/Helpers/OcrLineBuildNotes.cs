@@ -23,7 +23,9 @@ public static class OcrLineBuildNotes
 
     // ทีม F: แผนหัก ณ ที่จ่ายต่อบรรทัด (OcrLineWhtPlan) เขียนใหม่ทุกครั้งที่สร้างบรรทัด ⇒ ล้างของรอบก่อน (ไม่สะสมซ้ำ · ไม่ค้างหยุดอนุมัติเมื่อแผนไม่ใช้แล้ว)
     // รอบ 232: ผลจับคู่บรรทัดกับใบสั่งซื้อ (OcrSourceLineNote) เขียนใหม่ทุกครั้งที่สร้างบรรทัดเช่นกัน
-    private static readonly string[] Recomputed = { GapTag, OcrHeaderVatEvidence.DerivedTag, OcrLineWhtPlan.AppliedTag, OcrLineWhtPlan.MismatchTag, OcrLineWhtPlan.SuggestTag, OcrSourceLineNote.Tag };
+    private static readonly string[] Recomputed = { GapTag, OcrHeaderVatEvidence.DerivedTag, OcrLineWhtPlan.AppliedTag, OcrLineWhtPlan.MismatchTag, OcrLineWhtPlan.SuggestTag, OcrSourceLineNote.Tag,
+        // รอบ 270: ใบกำกับ VAT 0% ทั้งใบที่กระดาษไม่บอกอัตราศูนย์ — ผลของบรรทัดชุดนี้ (แก้อัตราแล้วสร้างใหม่ ⇒ หายเอง)
+        OcrZeroVatTaxInvoiceGuard.Tag };
 
     /// <summary>ตัดบรรทัดที่ขึ้นต้นด้วยแท็กที่ตัวสร้างบรรทัดคำนวณใหม่ · บรรทัดอื่นคงเดิมทุกตัวอักษร · ไม่มีอะไรให้ตัด = คืนค่าเดิม</summary>
     public static string? StripRecomputed(string? notes)

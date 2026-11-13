@@ -3381,6 +3381,22 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   เลขถูกล้างแล้ว ⇒ `SlipMatchAsync` คืนผลที่เก็บ (NotOurs ยังเปิดตัวเลือกกรรมการจ่ายแทนให้คน)
 - **migration** (`Helpers/PartnerPaymentPlanMigration`): ตาราง `PartnerPaymentPlans` (unique `(CompanyId, SellerIntentId)`) · คอลัมน์ `PartnerPaymentNotices.SlipPayerMatch` · แถวแจ้งเดิมที่มีเลข ⇒ ตาข่าย L3 กวาดรอบแรก
 - **kill-switch**: ไม่มีจุดเรียก AI ในแพ็กนี้ (ตัวตัดสิน pure · อ่านสลิปในเครื่อง) ⇒ ไม่มี AiFeatureKey ใหม่ · เทสต์ `BankPaymentLineMatchTests` · Db `PartnerOutboundRound264P4DbTests`
+### 2.12g-270 รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 ใน `erp-review/2026-09-29/DECISIONS.md`)
+
+- **270-1-1 คืนมัดจำการจองหลายงวด (ฝ่ายค้าน 268 L7)**: `DocumentService.RefundDepositAsync` (ไม่ได้เลือกบัญชี) → `BookingDepositRefundPlanAsync` (ใบผูก `SiteBooking.ErpDocumentId`) →
+  `BookingDepositInstalmentChannel.PlanRefund` ⇒ Cr หนึ่งขาต่อบัญชีที่เงินอยู่จริง (งวดล่าสุดก่อน · งวดก่อนนับผังของงวดเมื่อมี JE `BKDEP-` แล้ว · คืนครั้งก่อนหักจากผังเดิม) ·
+  ไม่รู้บัญชี ⇒ 409 `BOOKING-DEPOSIT-REFUND-CHOOSE-ACCOUNT` (ไม่ลงอะไร) → หน้า `deposits.html`/`deposit-center.html` ช่อง "คืนจากบัญชี" (`MoneyChannel.fill` → `moneyAccountId` = ผัง) ·
+  เลือกเอง = ทั้งยอดจากบัญชีนั้น · ใบไม่ผูกการจอง = 111 ตามเดิม · การหักมัดจำกับใบสุดท้ายไม่มีขาเงิน (ไม่ใช่คลาสนี้)
+- **270-1-2 แจ้งแชตหลังผูกสลิปที่เข้าคิว**: `QueueLinkedNoticeAsync` ประทับ `DeferredNotifications.ExpectedKey` = `LineChatSlipRule.LinkKey` · `DispatchLinkedNoticeAsync` ตรวจ
+  `LineChatSlipRule.LinkedNoticeStaleReason` ก่อนส่ง — ปิด/ผูกใหม่/ปฏิเสธ/หมดอายุ/ย้ายเอกสาร ⇒ ปิดแถวพร้อมเหตุ (Note) + audit `assign-notice-stale` · แถวก่อนรอบ 270 ตรวจสถานะอย่างเดียว
+- **270-1-3 ผล LINE**: `NotifyChatLinkedAsync` → `LinePushOutcome.Classify` (ตัวตัดสินเดียวกับคิว LINE) — ส่งซ้ำเฉพาะ `Retry` (เครือข่ายล้ม · 5xx · 429 ที่ไม่ใช่โควตาเดือน) ·
+  ไม่มีสถานะ HTTP ที่ไม่ใช่เครือข่ายล้ม/4xx/นโยบาย = ถาวร (ไม่เข้าคิว) · 409 = ส่งแล้ว
+- **270-1-4 ใบลดหนี้ร่างของตัวช่วยใบซ้ำ (ฝ่ายค้าน 266-C L2)**: Autopilot issue `DuplicateSaleCreditNoteDraft` (`AutopilotService.DuplicateSaleCreditNoteDraftIssuesAsync` · อ่าน audit
+  `DuplicateSalePolicy.CreditNoteAuditAction` — ใบก่อนรอบนี้ขึ้นด้วย) · ค้าง = ร่าง/รออนุมัติ · ปุ่ม "เปิดใบลดหนี้ร่าง" · อนุมัติแล้วหลุดเอง
+- **270-1-5 ใบกำกับ OCR VAT 0% ทั้งใบ (ฝ่ายค้าน 269 ข้อ 3)**: `OcrService.BuildScanLinesAsync` → `Helpers/OcrZeroVatTaxInvoiceGuard.Check` ⇒ `[VAT-ZERO-UNREAD]`
+  (`OcrPostingReadiness.BlockingTags` · `OcrLineBuildNotes` คำนวณใหม่) — ใบกำกับที่ทุกบรรทัด 0% และกระดาษไม่มีเครื่องหมายอัตราศูนย์/ส่งออก = รอตรวจ ไม่อนุมัติเอง ·
+  ใบส่งออกที่พิมพ์ 0%/ส่งออก/ม.80/1 ผ่านตามเดิม · ไม่แต่งอัตรา 7%
+- **kill-switch**: ไม่มีการเรียก AI ในรอบนี้ · Last verified `commit ee79eb2b`
 
 ### 2.12g-268 รอบ 268 งานคงค้าง (คำตัดสิน 268-1-1…6 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
@@ -9539,3 +9555,4 @@ _Last verified against codebase: 2026-11-13 (รอบ 266 แพ็ก B ชุ
 _Last verified against codebase: 2026-11-13 (รอบ 268 งานคงค้าง — §2.12g-268: 268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง · 268-1-2 สลิปออเดอร์หน้าเว็บลงธนาคาร · 268-1-3 มัดจำการจองต่องวด · 268-1-4 แจ้งแชตหลังผูกสลิป + PDF · 268-1-5 ศูนย์บิล LINE (นำออก/ใบเสร็จส่วนเสริม) · 268-1-6 รับหลายใบแจ้งคู่ค้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3dad4ab2)_
 _Last verified against codebase: 2026-11-13 (รอบ 268 ชุดแก้ฝ่ายค้าน — §2.12g-268: M1–M6 · L1/L2/L5/L6/L7 (คำตัดสิน 268-1-7…14) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b960b19f)_
 _Last verified against codebase: 2026-11-13 (รอบ 264 P4 — §2.12g-264-P4: รายการเดินบัญชีฝั่งเงินออกตรงเป๊ะ ⇒ บันทึกเอง + ผูกบรรทัด · สลิปยกเป็นอัตโนมัติผ่านรายการเดินบัญชีเท่านั้น · จ่ายจากระบบของเรา (แผน + รายการของผู้ขาย ไม่ประทับชำระแล้ว) · แจ้งโอน (PV ของเรา + สำเนาสลิปภายใต้ความยินยอมผู้ขาย · ไม่มี PV ที่สอง) · L3 ล้างเลขผู้โอน — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-13 (รอบ 270 งานค้าง 266/268/269 — §2.12g-270: 270-1-1 คืนมัดจำตามบัญชีของแต่ละงวด · 270-1-2 คิวแจ้งแชตตรวจการผูกเดิม · 270-1-3 จำแนกผล LINE · 270-1-4 คิวใบลดหนี้ร่างตัวช่วยใบซ้ำ · 270-1-5 ใบกำกับ OCR VAT 0% — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit ee79eb2b)_
