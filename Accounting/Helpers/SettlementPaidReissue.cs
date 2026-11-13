@@ -415,6 +415,8 @@ public static class SettlementPaidReissue
         nameof(Document.SettlementOrphanAckReasonHash), // รอบ 201 ทีม ST (A-ST5) — การรับรู้ของกำพร้าเป็นของใบเดิม
         nameof(Document.SettlementPieceFingerprint),     // รอบ 201 ทีม ST (A-ST8) — ใบแทนไม่ได้ออกโดยผู้ลงบัญชีรอบโอน (ไม่มีป้าย CreatedBy ของรอบ)
         nameof(Document.ReplacementReason), nameof(Document.ReplacedAt), nameof(Document.ReplacementCarriesPostings),
+        // รอบ 266 แพ็ก B (transient · คำนวณตอน render จาก ReplacesDocumentId ของใบนั้นเอง) — ไม่ตามไปใบแทน
+        nameof(Document.ReplacementOfNumber), nameof(Document.ReplacementOfDate),
         nameof(Document.EtaxCancelRequiredAt), nameof(Document.EtaxCancelRequiredReason), nameof(Document.InternalNotes),
         nameof(Document.WhtAdviceAiFeedbackId), nameof(Document.WhtAdviceAnswer), nameof(Document.WhtAdviceUsedAi),
         nameof(Document.Pp36RdReceiptNumber), nameof(Document.Pp36RdReceiptDate), nameof(Document.OcrIntelTrainedAt),
