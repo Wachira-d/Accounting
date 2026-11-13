@@ -30,11 +30,17 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
     /// <summary>รอบ 246 QR — ที่เก็บกลาง (อ่านรูป QR ของบัญชีให้หน้าชำระสาธารณะ) · null = ใช้บัญชีรับโอนของเว็บอย่างเดียว (พฤติกรรมเดิม)</summary>
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
 
+    /// <summary>รอบ 267 P2: ฟอร์มผู้ลงนาม + คำตอบที่ลูกค้าเคยทำ ของหน้าเอกสาร (อ่านอย่างเดียวจากที่นี่ — ผู้เขียนคือ service นั้นเอง) ·
+    /// ประกอบเอง ไม่รับจาก DI: ตัวสร้าง PDF พึ่ง <c>IPaymentQrService</c> ซึ่งพึ่ง service นี้ ⇒ รับจาก DI = วงพึ่งพา (ที่นี่ใช้แค่ส่วนอ่านซึ่งต้องการฐานข้อมูลอย่างเดียว)</summary>
+    private readonly CustomerDocumentResponseService? _responses;
+
     public DocumentPayLinkService(AccountingDbContext db, IEnumerable<IPaymentProvider> providers, ISecretProtector secrets,
         IConfiguration? config = null, ILogger<DocumentPayLinkService>? logger = null,
         Accounting.Services.Storage.IFileStorage? storage = null)
     {
         _storage = storage;
+        _responses = new CustomerDocumentResponseService(db,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<CustomerDocumentResponseService>.Instance, storage: storage);
         _db = db;
         _providers = providers;
         _secrets = secrets;

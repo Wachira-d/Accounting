@@ -107,6 +107,20 @@ public class EmailService : IEmailService
         return await SendInternalAsync(cfg, to, subject, htmlBody, null, null);
     }
 
+    /// <summary>รอบ 267 P2: ส่งพร้อมไฟล์แนบ PDF แล้วบอกผลจริง — ชื่อไฟล์แนบถูกทำให้ปลอดภัย (ตัวอักษร/ตัวเลข/ขีด/จุด) ก่อนใส่หัวอีเมล</summary>
+    public async Task<bool> TrySendWithAttachmentAsync(string to, string subject, string htmlBody, string attachmentName, byte[] attachment, string contentType = "application/pdf")
+    {
+        if (string.IsNullOrWhiteSpace(to) || attachment is not { Length: > 0 }) return false;
+        var cfg = await ResolveConfigAsync();
+        if (string.IsNullOrEmpty(cfg.SmtpHost))
+        {
+            _logger.LogWarning("System email not configured. Skipping send to {To}: {Subject}", to, subject);
+            return false;
+        }
+        var safe = new string((attachmentName ?? "document.pdf").Where(c => c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '-' or '_' or '.').ToArray());
+        return await SendInternalAsync(cfg, to, subject, htmlBody, attachment, safe.Length == 0 ? "document.pdf" : safe);
+    }
+
     /// <returns>true = SMTP รับข้อความแล้ว · false = ส่งล้ม (log + ErrorLog แล้ว · ไม่โยน — ผู้เรียกเดิมทุกจุดคาดว่าไม่โยน)</returns>
     private async Task<bool> SendInternalAsync(SystemEmailConfig cfg, string to, string subject,
         string htmlBody, byte[]? attachmentData, string? attachmentName)

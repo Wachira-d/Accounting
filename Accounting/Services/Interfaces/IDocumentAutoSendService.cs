@@ -165,6 +165,13 @@ public sealed record CustomerDocPageView(
     public string? RelatedPdfBase { get; init; }
     /// <summary>ที่อยู่เส้น "ขอลิงก์ใหม่/ขอลิงก์ทำรายการ" ของโหมดนี้ (POST) · null = ไม่มี</summary>
     public string? RequestLinkPath { get; init; }
+    /// <summary>รอบ 267 P2: ฟอร์มผู้ลงนามของปุ่มตอบรับที่เปิดอยู่ (ข้อความรับรอง/ยินยอม/ป้าย จากเซิร์ฟเวอร์) · null = ไม่มีปุ่มตอบรับที่เปิด</summary>
+    public CustomerDocRespondForm? Respond { get; init; }
+    /// <summary>รอบ 267 P2: คำตอบที่ลูกค้าเคยทำบนใบนี้ (ใหม่ → เก่า · ชื่อ/เวลา/Rev — ไม่มี IP) + ฐานของที่อยู่ดาวน์โหลดฉบับที่ลงนาม (ต่อท้ายด้วย <c>{actionId}</c>)</summary>
+    public IReadOnlyList<CustomerDocResponseItem> Responses { get; init; } = Array.Empty<CustomerDocResponseItem>();
+    public string? SignedCopyBase { get; init; }
+    /// <summary>รอบ 267 P2: เส้นขอรหัสยืนยันอีเมล (POST) — ใช้เมื่อ <c>Respond.Actions[].OtpRequired</c></summary>
+    public string? OtpPath { get; init; }
 
     /// <summary>ลิงก์ใช้ไม่ได้ — ไม่มีข้อมูลของใบเลย (มีแค่สถานะลิงก์ + ขอลิงก์ใหม่ได้ไหม)</summary>
     public static CustomerDocPageView Unusable(CustomerDocPage.LinkState state, bool canRequestLink) => new(
@@ -172,6 +179,35 @@ public sealed record CustomerDocPageView(
         0m, 0m, 0m, 0m, 0m, 0m, 0m, Array.Empty<CustomerDocPageLine>(), Array.Empty<CustomerDocPage.PageAction>(),
         Array.Empty<CustomerDocPageRelated>(), CustomerDocPage.Labels(false, Accounting.Models.Enums.DocumentType.Invoice), null, null, null);
 }
+
+/// <summary>รอบ 267 P2 — ฟอร์มผู้ลงนามของหน้าเอกสาร: เลข Rev + hash เนื้อหาที่หน้าแสดง (ส่งกลับตอนกด — ตอบรับได้เฉพาะฉบับที่เห็น) ·
+/// รุ่นข้อความรับรอง · ปุ่มที่เปิดพร้อมข้อความของแต่ละปุ่ม · ป้ายของฟอร์ม — ทุกค่าจาก <c>CustomerSignText</c>/<c>CustomerSignRule</c></summary>
+public sealed record CustomerDocRespondForm(
+    int RevisionNumber, string ContentHash, string AttestationVersion, bool TitleRequired,
+    IReadOnlyList<CustomerDocRespondAction> Actions, IReadOnlyList<CustomerDocRespondReason> DeclineReasons,
+    string PrivacyNotice, string LegalReference, IReadOnlyDictionary<string, string> Labels);
+
+/// <summary>ปุ่มตอบรับหนึ่งปุ่ม — <paramref name="Signature"/>: required · optional · none</summary>
+public sealed record CustomerDocRespondAction(
+    string Id, string Label, string Attestation, string Consent, string Signature, bool OtpRequired, bool NeedsReason, bool NeedsMessage);
+
+public sealed record CustomerDocRespondReason(string Code, string Label);
+
+/// <summary>คำตอบของลูกค้าหนึ่งครั้งบนหน้าเอกสาร — <paramref name="SignedCopyExpected"/> = คำตอบชนิดที่มีฉบับที่ลงนาม (ยังไม่ Ready = กำลังเตรียม)</summary>
+public sealed record CustomerDocResponseItem(
+    Guid ActionId, string Action, string Label, int RevisionNumber, string SignerName, string? SignerTitle, DateTime At,
+    bool SignedCopyReady, bool SignedCopyExpected);
+
+/// <summary>รอบ 267 P2 — หลักฐานการตอบรับของลูกค้าสำหรับพนักงาน (หน้าเอกสารของพนักงาน/ไทม์ไลน์ของ P3) + คำแนะนำหลังยอมรับ + คำเตือนอากรแสตมป์ (เตือนเท่านั้น)</summary>
+public sealed record CustomerDocEvidenceView(
+    IReadOnlyList<CustomerDocEvidenceItem> Items, string? CustomerResponse, string? ConvertSuggestion, IReadOnlyList<string> ConvertTo,
+    string? StampDutyWarning, string? StampDutyPage, string LegalReference);
+
+public sealed record CustomerDocEvidenceItem(
+    Guid ActionId, string Action, string Label, int RevisionNumber, string Channel, string IdentityLevel,
+    string? SignerFirstName, string? SignerLastName, string? SignerTitle, string? SignerOrgName, string? SignerEmail, bool EmailVerified,
+    string? AttestationVersion, string? ReasonCode, string? ReasonLabel, string? Message, string ContentHash, string? Ip,
+    bool HasSignature, string? SignedPdfSha256, DateTime? SignedPdfAt, DateTime At, DateTime? ErasedAt, bool IsCurrentRevision);
 
 /// <summary>ผลของการขอลิงก์ใหม่ — <paramref name="Found"/> false = ข้อความเดียว (ไม่พบ/เพิกถอน/เกินช่วงขอ) ·
 /// <paramref name="Recorded"/> true = บันทึกคำขอครั้งนี้ (ผู้เรียกแจ้งพนักงาน) · false = วันนี้ขอไปแล้ว (ไม่แจ้งซ้ำ)</summary>

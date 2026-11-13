@@ -96,19 +96,25 @@ public static class SignEventOutbox
     /// <summary>เพิ่มแถว outbox ลง context (ผู้เรียก SaveChanges ในธุรกรรมเดียวกับการบันทึกการเซ็น) · คืนแถวที่เพิ่ม</summary>
     public static SignEventOutboxEntry Enqueue(AccountingDbContext db, Document doc, SignRequestKinds.Kind kind, DateTime signedAtUtc,
         string? signedBy, bool hasSignature, string? contentHash, string? tokenSha256)
+        => EnqueueEvent(db, doc, kind.EventType, signedAtUtc, signedBy, hasSignature, contentHash, tokenSha256);
+
+    /// <summary>รอบ 267 P2: เหตุการณ์ที่ไม่ใช่ "เซ็นแล้ว" (ลูกค้าไม่รับ/ขอแก้ใบเสนอราคา — <c>SignRequestKinds.EventFor</c>) ใช้ payload/กุญแจ/จังหวะลองใหม่ชุดเดียวกัน ·
+    /// <paramref name="keyRef"/> = ส่วนท้ายของกุญแจกันซ้ำ (รอบ 267: ผูกกับแถวหลักฐาน — token ของหน้าเอกสารอยู่ข้าม Rev)</summary>
+    public static SignEventOutboxEntry EnqueueEvent(AccountingDbContext db, Document doc, string eventType, DateTime signedAtUtc,
+        string? signedBy, bool hasSignature, string? contentHash, string? keyRef)
     {
-        var key = EventKey(kind.EventType, doc.Id, tokenSha256);
+        var key = EventKey(eventType, doc.Id, keyRef);
         var id = EventIdFor(doc.CompanyId, key);
         var row = new SignEventOutboxEntry
         {
             CompanyId = doc.CompanyId,
             EventId = id,
             EventKey = key,
-            EventType = kind.EventType,
+            EventType = eventType,
             DocumentId = doc.Id,
             CallbackUrl = string.IsNullOrWhiteSpace(doc.SignCallbackUrl) ? null : doc.SignCallbackUrl,
             CallbackRef = doc.SignCallbackRef,
-            PayloadJson = BuildPayload(new PayloadInput(id, kind.EventType, signedAtUtc, doc.CompanyId, doc.Id, doc.DocumentNumber,
+            PayloadJson = BuildPayload(new PayloadInput(id, eventType, signedAtUtc, doc.CompanyId, doc.Id, doc.DocumentNumber,
                 doc.DocumentType.ToString(), doc.RevisionNumber, signedBy, hasSignature, contentHash, doc.SignCallbackRef)),
             Status = SignEventStatus.Pending,
             NextAttemptAt = signedAtUtc,

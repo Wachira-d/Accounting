@@ -464,6 +464,12 @@
             </span>
           </label>
         </div>
+        <!-- รอบ 267 P2 (267-1-6): ยอดขั้นต่ำที่ลูกค้าต้องยืนยันอีเมลด้วยรหัสก่อนยอมรับใบเสนอราคา (CompanySettings.CustomerSignOtpMinAmount · ว่าง/0 = ปิด) -->
+        <div class="form-group" style="grid-column:1/3;padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+          <label for="sCustomerSignOtpMinAmount" style="font-weight:600">ยืนยันอีเมลด้วยรหัสก่อนยอมรับใบเสนอราคา — เมื่อยอดรวมตั้งแต่ (บาท)</label>
+          <input type="number" id="sCustomerSignOtpMinAmount" class="form-input" min="0" step="0.01" placeholder="ว่าง = ไม่ใช้รหัสยืนยัน" style="max-width:240px;margin-top:6px">
+          <span style="display:block;font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">ค่าตั้งต้น = ไม่ใช้รหัส (ลูกค้ากรอกชื่อ นามสกุล ตำแหน่ง แล้วติ๊กรับรองก็ยอมรับได้) · ตั้งยอดไว้ ⇒ ใบเสนอราคาที่ยอดรวมถึงจำนวนนี้ ลูกค้าต้องกรอกอีเมลและรหัส 6 หลักที่ระบบส่งให้ก่อนกดยอมรับ (ต้องตั้งค่าอีเมลของระบบให้ส่งได้)</span>
+        </div>
         <!-- รอบ 240: ลิงก์ให้ลูกค้าเซ็น — อีเมลอัตโนมัติ/เตือน/webhook ต่อเอกสาร (API: /sign-requests/settings · เจ้าของบริษัทเท่านั้นที่บันทึกได้) -->
         <div class="form-group" id="signRequestCard" style="grid-column:1/3;padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
           <div style="font-weight:600;margin-bottom:6px">ลิงก์ให้ลูกค้าเซ็น / ยอมรับเอกสาร (ใบเสนอราคา · ใบส่งของ)</div>
@@ -2985,6 +2991,9 @@
         if (pev) { pev.checked = !!s?.pettyCashTopUpEvidenceRequired; this._pettyEvidenceLoaded = !!s; }
         const rqs = document.getElementById('sRequireQuotationSignature');
         if (rqs) { rqs.checked = !!s?.requireSignatureForQuotationAccept; this._quotationSignatureLoaded = !!s; }
+        // รอบ 267 P2: ยอดขั้นต่ำของรหัสยืนยันอีเมล (null = ปิด ⇒ ช่องว่าง) · ส่งกลับเฉพาะเมื่อโหลดค่าจากเซิร์ฟเวอร์แล้ว (ไม่ทับด้วยค่าว่างของฟอร์มที่ยังไม่ได้เติม)
+        const otpMin = document.getElementById('sCustomerSignOtpMinAmount');
+        if (otpMin) { otpMin.value = s?.customerSignOtpMinAmount != null ? s.customerSignOtpMinAmount : ''; this._signOtpLoaded = !!s; }
       },
       /** canEdit มาจาก server (สิทธิ์ CompanySettings.Edit / คำขอจากคีย์) · undefined/null = ไม่ได้ตรวจ ⇒ ไม่ล็อก
        *  (ไม่เดาแทน server) · false = บอกเหตุผล+ทางไปต่อ และปิดปุ่มบันทึกของฟอร์มหลัก */
@@ -3459,6 +3468,7 @@
             ...(this._pettyEvidenceLoaded ? { pettyCashTopUpEvidenceRequired: !!document.getElementById('sPettyTopUpEvidenceRequired')?.checked } : {}),
             // รอบ 239: โหลดค่าเดิมไม่ได้ ⇒ ไม่ส่ง (ไม่บันทึก false ทับ)
             ...(this._quotationSignatureLoaded ? { requireSignatureForQuotationAccept: !!document.getElementById('sRequireQuotationSignature')?.checked } : {}),
+            ...(this._signOtpLoaded ? { customerSignOtpMinAmount: Number(document.getElementById('sCustomerSignOtpMinAmount')?.value || 0) } : {}),
             // กองทุนเงินทดแทน (กท.20ก)
             workersCompensationEnabled: document.getElementById('sWorkersCompEnabled')?.checked || false,
             workersCompensationRatePercent: parseFloat(document.getElementById('sWorkersCompRate')?.value || '0.2'),

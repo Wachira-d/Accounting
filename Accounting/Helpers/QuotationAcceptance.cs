@@ -119,11 +119,37 @@ public static class QuotationAcceptance
 
     /// <summary>ฝ่ายค้านรอบ 239 N (PDPA) — เอกสารยังอยู่ในอายุเก็บไหม: MAX(<c>RetentionUntil</c>, วันที่เอกสาร + 5 ปี) (พ.ร.บ.การบัญชี ม.14 ·
     /// ป.รัษฎากร §87/3 · กฎ M "MAX(retention)") — อยู่ ⇒ legal hold: คงหลักฐานลายเซ็น/การยอมรับ (หลักฐานสัญญา) แม้มีคำขอลบ</summary>
-    public static bool UnderLegalHold(Document doc, DateTime nowUtc)
+    public static bool UnderLegalHold(Document doc, DateTime nowUtc) => UnderLegalHold(doc.DocumentDate, doc.RetentionUntil, nowUtc);
+
+    /// <summary>สูตรเดียวของ "เอกสารยังอยู่ในอายุเก็บไหม" (ผู้เรียกที่มีแค่วันที่/RetentionUntil ของใบ — รอบ 267 P2: แถวหลักฐานการตอบรับของลูกค้า)</summary>
+    public static bool UnderLegalHold(DateTime documentDate, DateTime? retentionUntil, DateTime nowUtc)
     {
-        var byDate = doc.DocumentDate.AddYears(5);
-        var until = doc.RetentionUntil is { } r && r > byDate ? r : byDate;
+        var byDate = documentDate.AddYears(5);
+        var until = retentionUntil is { } r && r > byDate ? r : byDate;
         return until > nowUtc;
+    }
+
+    /// <summary>รอบ 267 P2 (PDPA ม.33) — ล้างข้อมูลส่วนบุคคลของผู้ลงนามในแถวหลักฐาน (<see cref="CustomerDocumentAction"/>) ของเอกสารที่พ้นอายุเก็บแล้ว:
+    /// ชื่อ → <see cref="Anonymized"/> · นามสกุล/ตำแหน่ง/ชื่อผู้ซื้อ/อีเมล/ข้อความ/IP/hash เบราว์เซอร์ → ว่าง · ประทับ <c>ErasedAt</c> ·
+    /// คงเวลา · ชนิด · Rev · hash เนื้อหา/token/ไฟล์ (ไม่ระบุตัวบุคคล) · คืนตำแหน่งไฟล์ (ลายเซ็น · ฉบับที่ลงนาม) ที่ผู้เรียกต้องลบหลังบันทึกแถวสำเร็จ</summary>
+    public static IReadOnlyList<string> EraseEvidencePii(CustomerDocumentAction row, DateTime nowUtc)
+    {
+        var files = new List<string>();
+        if (row.ErasedAt != null) return files;
+        if (!string.IsNullOrWhiteSpace(row.SignatureFilePath)) files.Add(row.SignatureFilePath!);
+        if (!string.IsNullOrWhiteSpace(row.SignedPdfPath)) files.Add(row.SignedPdfPath!);
+        row.SignerFirstName = Anonymized;
+        row.SignerLastName = null;
+        row.SignerTitle = null;
+        row.SignerOrgName = null;
+        row.SignerEmail = null;
+        row.Message = null;
+        row.Ip = null;
+        row.UserAgentHash = null;
+        row.SignatureFilePath = null;
+        row.SignedPdfPath = null;
+        row.ErasedAt = nowUtc;
+        return files;
     }
 
     public const string Anonymized = "[ANONYMIZED]";

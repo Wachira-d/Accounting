@@ -197,6 +197,21 @@ public sealed class DocumentLabels
             : $"{t.Day}/{t.Month}/{t.Year + 543} {t.ToString("HH:mm", inv)}";
         return string.Format(this["qt_accepted_online"], when);
     }
+    /// <summary>รอบ 267 P2 (267-1-17): ผู้ลงนามของลูกค้าบนกระดาษ — ตำแหน่ง · ลงนามในนามของ (ชื่อผู้ซื้อ) · เวลาเซ็นรับสินค้า · รหัสอ้างอิงหลักฐาน
+    /// (ไม่พิมพ์ IP) · ทั้งสอง renderer ใช้ข้อความชุดนี้ผ่าน <c>PdfGenerationService.CustomerSignerLines</c> (ห้าม literal)</summary>
+    public string SignerPosition(string title) => string.Format(this["signer_position"], title);
+    public string SignedOnBehalfOf(string org) => string.Format(this["signed_on_behalf_of"], org);
+    public string SignedOnlineEvidenceRef(string reference) => string.Format(this["signed_online_evidence_ref"], reference);
+    /// <summary>"เซ็นรับออนไลน์ 5/11/2569 14:05 น." (ไทย = พ.ศ. · เวลาไทย) / "Signed online 05 Nov 2026 14:05 (GMT+7)" — รับเวลา UTC</summary>
+    public string DnSignedOnline(DateTime utc)
+    {
+        var t = Accounting.Helpers.QuotationAcceptance.BangkokLocal(utc);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var when = IsEnglish
+            ? t.ToString("dd MMM yyyy HH:mm", inv)
+            : $"{t.Day}/{t.Month}/{t.Year + 543} {t.ToString("HH:mm", inv)}";
+        return string.Format(this["dn_signed_online"], when);
+    }
     public string TaxId => this["tax_id"];
     public string TaxIdShort => this["tax_id_short"];
     public string Terms => this["terms"];
@@ -244,6 +259,10 @@ public sealed class DocumentLabels
         ["qt_accept_note"] = "หมายเหตุลูกค้า",
         ["qt_accepted_online"] = "ยอมรับออนไลน์ {0} น.",
         ["qt_accept_content_changed"] = "เนื้อหาเปลี่ยนหลังลูกค้ายอมรับ — ไม่ประทับลายเซ็น",
+        ["signer_position"] = "ตำแหน่ง: {0}",
+        ["signed_on_behalf_of"] = "ลงนามในนามของ {0}",
+        ["signed_online_evidence_ref"] = "ลงนามออนไลน์ · รหัสอ้างอิง {0}",
+        ["dn_signed_online"] = "เซ็นรับออนไลน์ {0} น.",
 
         // ── หัวข้อมูลเอกสาร ──
         ["doc_number"] = "เลขที่",
@@ -373,6 +392,10 @@ public sealed class DocumentLabels
         ["qt_accept_note"] = "Customer note",
         ["qt_accepted_online"] = "Accepted online {0} (GMT+7)",
         ["qt_accept_content_changed"] = "Content changed after customer acceptance — signature not applied",
+        ["signer_position"] = "Position: {0}",
+        ["signed_on_behalf_of"] = "Signed on behalf of {0}",
+        ["signed_online_evidence_ref"] = "Signed online · reference {0}",
+        ["dn_signed_online"] = "Signed online {0} (GMT+7)",
 
         ["doc_number"] = "No.",
         ["doc_date"] = "Date",

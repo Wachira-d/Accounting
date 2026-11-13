@@ -388,6 +388,33 @@ public partial class PdpaService : IPdpaService
         }).ToList() ?? new List<Dictionary<string, object?>>();
 
         var docIds = docs?.Select(x => x.Id).ToList() ?? new List<Guid>();
+        // รอบ 267 P2 (ม.30/31): แถวหลักฐานการตอบรับเอกสารออนไลน์ของคู่ค้ารายนี้ (ผู้ลงนาม · ตำแหน่ง · อีเมล · IP · เหตุผล/ข้อความ) — แนบใต้เอกสารแต่ละใบ ·
+        // ไม่ฝังไฟล์ลายเซ็น/ฉบับที่ลงนาม (ไฟล์ส่งออกเดินทางไปที่อื่นได้ — ขอสำเนาผ่านหน้าเอกสารที่ตรวจสิทธิ์)
+        if (docIds.Count > 0)
+        {
+            var signActions = await _db.CustomerDocumentActions.AsNoTracking()
+                .Where(sa => sa.CompanyId == companyId && docIds.Contains(sa.DocumentId))
+                .OrderBy(sa => sa.CreatedAt)
+                .Select(sa => new
+                {
+                    sa.Id, sa.DocumentId, sa.RevisionNumber, sa.Action, sa.CreatedAt, sa.SignerFirstName, sa.SignerLastName, sa.SignerTitle, sa.SignerOrgName,
+                    sa.SignerEmail, sa.EmailVerified, sa.AttestationVersion, sa.ReasonCode, sa.Message, sa.Ip, sa.UserAgentHash, sa.ContentHash,
+                    HasSignature = sa.SignatureSha256 != null, HasSignedCopy = sa.SignedPdfSha256 != null, sa.ErasedAt,
+                }).ToListAsync(ct);
+            foreach (var docEntry in docRows)
+            {
+                if (docEntry["id"] is not Guid signedDocId) continue;
+                docEntry["customerResponses"] = signActions.Where(sa => sa.DocumentId == signedDocId)
+                    .Select(sa => new Dictionary<string, object?> {
+                        ["id"] = sa.Id, ["revisionNumber"] = sa.RevisionNumber, ["action"] = sa.Action, ["at"] = sa.CreatedAt,
+                        ["signerFirstName"] = sa.SignerFirstName, ["signerLastName"] = sa.SignerLastName, ["signerTitle"] = sa.SignerTitle,
+                        ["signerOrgName"] = sa.SignerOrgName, ["signerEmail"] = sa.SignerEmail, ["emailVerified"] = sa.EmailVerified,
+                        ["attestationVersion"] = sa.AttestationVersion, ["reasonCode"] = sa.ReasonCode, ["message"] = sa.Message,
+                        ["ip"] = sa.Ip, ["userAgentSha256"] = sa.UserAgentHash, ["contentHash"] = sa.ContentHash,
+                        ["hasSignature"] = sa.HasSignature, ["hasSignedCopy"] = sa.HasSignedCopy, ["erasedAt"] = sa.ErasedAt,
+                    }).ToList();
+            }
+        }
         var payments = docIds.Count > 0
             ? await _db.Payments.AsNoTracking()
                 .Where(p => docIds.Contains(p.DocumentId) && !p.IsDeleted)
@@ -931,6 +958,30 @@ public partial class PdpaService : IPdpaService
                 d.UpdatedBy = actor;
                 changed++;
                 if (file != null && _storage != null) _erasedSignatureFiles.Add(file);
+            }
+
+            // ── รอบ 267 P2: แถวหลักฐานการตอบรับของลูกค้า (CustomerDocumentActions — ชื่อ/ตำแหน่ง/อีเมล/IP ของผู้ลงนาม ซึ่งเป็นบุคคลของคู่ค้ารายนี้) ──
+            // กติกาเดียวกับภาพฉายบนใบข้างบน: ใบที่ยังอยู่ในอายุเก็บ = legal hold คงไว้ (หลักฐานสัญญา) · พ้นแล้ว = ล้างข้อมูลส่วนบุคคล + ลบไฟล์ลายเซ็น/ฉบับที่ลงนาม
+            // (เวลา · ชนิด · hash คงไว้ — แถวยังบอกได้ว่ามีการตอบรับ) · ตัวล้างเดียว QuotationAcceptance.EraseEvidencePii · trigger ของตารางยอมเฉพาะการลบแบบนี้
+            var evidenceDocs = await _db.Documents.AsNoTracking()
+                .Where(ed => ed.CompanyId == companyId && ed.ContactId == contactId.Value)
+                .Select(ed => new { ed.Id, ed.DocumentDate, ed.RetentionUntil }).ToListAsync(ct);
+            var erasableDocIds = evidenceDocs
+                .Where(ed => !Accounting.Helpers.QuotationAcceptance.UnderLegalHold(ed.DocumentDate, ed.RetentionUntil, nowUtc))
+                .Select(ed => ed.Id).ToList();
+            if (erasableDocIds.Count > 0)
+            {
+                var evidenceRows = await _db.CustomerDocumentActions
+                    .Where(ev => ev.CompanyId == companyId && erasableDocIds.Contains(ev.DocumentId) && ev.ErasedAt == null)
+                    .ToListAsync(ct);
+                foreach (var evidenceRow in evidenceRows)
+                {
+                    foreach (var evidenceFile in Accounting.Helpers.QuotationAcceptance.EraseEvidencePii(evidenceRow, nowUtc))
+                        if (_storage != null && !_erasedSignatureFiles.Contains(evidenceFile)) _erasedSignatureFiles.Add(evidenceFile);   // ไฟล์ลายเซ็นเดียวกับภาพฉายบนใบ — ลบครั้งเดียว
+                    evidenceRow.UpdatedAt = nowUtc;
+                    evidenceRow.UpdatedBy = actor;
+                    changed++;
+                }
             }
 
             // ── ผลสแกน OCR ของคู่ค้ารายนี้ (ม.33) ──
