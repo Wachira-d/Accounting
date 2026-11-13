@@ -1283,7 +1283,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **923 ไฟล์ · 9,989 `[Fact]` + 1,400 `[Theory]` (6,618 `InlineData`)** ณ 2026-11-13 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **923 ไฟล์ · 9,991 `[Fact]` + 1,400 `[Theory]` (6,622 `InlineData`)** ณ 2026-11-13 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
@@ -8898,3 +8898,9 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | SP264-11 | ฝั่ง B: ผู้โอนบนสลิปตรงบัญชีเดียว · ขัดบัญชีในความยินยอม · ไม่ใช่ของเรา · ไม่มีผลอ่าน · บัตร/ไม่รู้บทบาท | SlipUnique อัตโนมัติได้ · ไม่อัตโนมัติ · เปิดตัวเลือกกรรมการ · เท่าเดิม · ไม่ส่งต่อ | `PartnerPaySourceSlipRound264Tests` |
 | SP264-12 | ผลอ่านที่เก็บ: ไม่มีชื่อ · อ่านกลับ · JSON เสีย/รุ่นอื่น · mask ถูกแก้ | ไม่มีชื่อ · ครบ · null · ทิ้ง mask | `OcrSlipTextPartiesTests.ผลอ่านที่เก็บลงฐาน_…` |
 | SP264-13 | ถอด QR ออกจากตัวอ่าน · ไม่คัดลอกไป intent · ชั้นสลิปไม่ส่งเข้า Suggest · ไม่บังคับเลือกเมื่อไม่ใช่ของเรา · ผู้ซื้อส่ง null | checker ฟ้อง (R264P2a–e) | `tools/required_call_site_check.py` self-test |
+| SP264-14 | (ฝ่ายค้าน M1) สลิปตรงบัญชีเดียวของผู้ซื้อ | preselect · ไม่บันทึกเอง · เหตุ `SlipUniqueNotAutoReason` | `PartnerPaySourceSlipRound264Tests` · `PartnerPayableRound264Tests` (ตารางชั้น) |
+| SP264-15 | (ฝ่ายค้าน M2) เลขบัญชีเต็ม/PAN เต็มบนภาพ · เห็นเกิน 4 หลัก · เลขที่ปิดแล้ว | ไม่เก็บ · เก็บ 4 ขวาสุด · เท่าเดิม | `OcrSlipTextPartiesTests.ฝ่ายค้าน_M2_…` · `ClassifyMask` |
+| SP264-16 | (ฝ่ายค้าน L1) ต่างหนึ่งหลักจากบัญชีธนาคารเดียวกัน / สองหลัก / ธนาคารอื่น | Unreadable / NotOurs / NotOurs | `SlipAccountMatchTests.ฝ่ายค้าน_L1_…` |
+| SP264-17 | (ฝ่ายค้าน L7) ผู้รับตรงบัญชีที่ใช้รับโอนไม่ได้ | ต้องเลือกเอง (ไม่แนะนำบัญชีเดียวที่เป็นอีกบัญชี) · ไม่มีผลอ่าน ⇒ เท่าเดิม | `SlipReceivingAccountTests.ชั้นสลิป_ตรงบัญชีที่ใช้รับโอนไม่ได้_…` |
+| SP264-18 | (ฝ่ายค้าน H1) ค่าจริงจากสลิป (ตรงแฮช) · รูปเลขที่รายการ K+/QR ที่ไม่ได้แทนค่า | checker ฟ้อง · ค่าที่แทนแล้วไม่ฟ้อง | `tools/slip_secret_check.py` (negative test ในตัว) |
+| SP264-19 | (ฝ่ายค้าน M3) ZXing.Net กับรูปจริง 10 ใบ (ในเครื่อง · ไม่ commit รูป) | 6/6 ใบที่มี QR ถอด+parse ผ่าน · 4 ใบไม่มี QR = null | บันทึกผลใน DECISIONS 264-4-11 (เทสต์ CI = QRCoder round-trip `ThaiSlipQrTests`) |

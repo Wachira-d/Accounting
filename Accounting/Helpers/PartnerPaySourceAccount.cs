@@ -41,7 +41,7 @@ public static class PartnerPaySourceAccount
     {
         new PrecedenceRow(Origin.BankLine, 1, true, 1.00m, "ข้อเท็จจริง — เงินออกจากบัญชีนั้นจริง (รายการเดินบัญชี)"),
         new PrecedenceRow(Origin.PayerDeclared, 2, true, 0.95m, "ประกาศของคนก่อนจ่าย (เลือกตอนชำระจากระบบของเรา)"),
-        new PrecedenceRow(Origin.SlipUnique, 3, true, 0.90m, "สัญญาณแข็ง — สลิปตรงบัญชีเดียวของเรา"),
+        new PrecedenceRow(Origin.SlipUnique, 3, false, 0.90m, "สลิปตรงบัญชีเดียวของเรา (preselect เท่านั้น · ไม่บันทึกเอง — ฝ่ายค้าน 264-P2 M1 · แบบ 268-1-1 จนกว่ารายการเดินบัญชี P4 ยืนยัน)"),
         // คำตัดสิน 268-1-1 (แทน 264-3-14): ชั้นนี้ไม่ใช่หลักฐานว่าเงินออกจากบัญชีนั้นจริง ⇒ preselect บนปุ่มเดียวได้ แต่ไม่บันทึกเอง จนกว่าจะมีชั้นรายการเดินบัญชี (P4)
         new PrecedenceRow(Origin.ConsentDefault, 4, false, 0.85m, "ค่าตั้งของคน — บัญชีจ่ายคู่ค้านี้ที่ตั้งไว้ในความยินยอม (preselect เท่านั้น · ไม่บันทึกเอง — 268-1-1)"),
         new PrecedenceRow(Origin.HistoryHint, 5, false, 0.50m, "สัญญาณอ่อน — เคยจ่ายผู้ขายนี้จากบัญชีนี้ / บัญชีบนใบซื้อ (คำแนะนำเท่านั้น)"),
@@ -93,6 +93,10 @@ public static class PartnerPaySourceAccount
 
     /// <summary>คำตัดสิน 268-1-1: เหตุที่ท่อไม่บันทึกเองเมื่อหลักฐานบัญชีมีแค่บัญชีตั้งต้นในความยินยอม (ตัวเดียว: เหตุบนแถว · หน้า · ป้ายหน้าความยินยอม)</summary>
     public const string ConsentDefaultNotAutoReason = "ยังไม่บันทึกเอง — หลักฐานบัญชีที่จ่ายมีแค่บัญชีตั้งต้นที่ตั้งไว้ตอนยินยอม (ยังไม่มีรายการเดินบัญชีของเรายืนยันว่าเงินออกจากบัญชีนั้น) · "
+        + "บัญชีนั้นถูกเลือกไว้ให้แล้ว ตรวจแล้วกด “บันทึกจ่าย” ครั้งเดียว";
+
+    /// <summary>ฝ่ายค้าน 264-P2 M1: เหตุที่ท่อไม่บันทึกเองเมื่อหลักฐานบัญชีคือสลิปตรงบัญชีเดียว (ตัวเดียว: เหตุบนแถว · หน้า)</summary>
+    public const string SlipUniqueNotAutoReason = "ยังไม่บันทึกเอง — บัญชีมาจากเลขท้ายบนสลิปที่ผู้ขายได้รับ (อ่านจากรูป · ยังไม่มีรายการเดินบัญชีของเรายืนยัน) · "
         + "บัญชีนั้นถูกเลือกไว้ให้แล้ว ตรวจแล้วกด “บันทึกจ่าย” ครั้งเดียว";
 
     /// <summary>ป้ายหน้า “งานอัตโนมัติกับคู่ค้า” ของขอบเขตบันทึกจ่าย ขณะชั้นบัญชีตั้งต้นไม่บันทึกเอง (ห้าม silent no-op — ให้ความยินยอมแล้วต้องรู้ว่าผลจริงคืออะไร)</summary>
@@ -162,6 +166,9 @@ public static class PartnerPaySourceAccount
         // 268-1-1: ชนะด้วยบัญชีตั้งต้นอย่างเดียว ⇒ preselect + เหตุที่บอกตรง ๆ ว่าทำไมไม่บันทึกเอง (เหตุ = สิ่งที่ตรวจจริง)
         if (!auto && win.Origin == Origin.ConsentDefault)
             why = ConsentDefaultNotAutoReason + " · " + win.Label;
+        // ฝ่ายค้าน 264-P2 M1: สลิปตรงบัญชีเดียว = อ่านจาก OCR 3–4 หลักของรูปในบริษัทผู้ขาย ⇒ preselect + เหตุตรง ๆ (ไม่บันทึกเองจนกว่ารายการเดินบัญชียืนยัน)
+        if (!auto && win.Origin == Origin.SlipUnique)
+            why = SlipUniqueNotAutoReason + " · " + win.Label;
         return new Decision(win.BankAccountId, win.Origin, auto, row.Confidence, why, win.Label, losers, hint, hintLabel, false);
     }
 
