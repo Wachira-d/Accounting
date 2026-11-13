@@ -316,14 +316,18 @@ public partial class CommissionService : ICommissionService
             {
                 // Sum actual payments received, filtered by employee if assigned
                 var paymentQuery = _db.Payments
-                    .Include(p => p.Document)
                     .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ
                     .Where(p => p.CompanyId == companyId
                         && p.PaymentDate >= periodStart
                         && p.PaymentDate <= periodEnd);
 
+                // รอบ 266 ฝ่ายค้าน B-3: เงินที่ถูกย้ายไปตัดใบอื่น (แพ็ก B) เป็นยอดเก็บได้ของ "ใบที่มีผล" — ผู้สร้างใบนั้นได้ค่าคอม ไม่ใช่ผู้สร้างใบที่บันทึกไว้ตอนแรก
                 if (assignment.EmployeeId.HasValue)
-                    paymentQuery = paymentQuery.Where(p => p.Document != null && p.Document.CreatedBy == assignment.EmployeeId.ToString());
+                {
+                    var employeeKey = assignment.EmployeeId.ToString();
+                    paymentQuery = paymentQuery.Where(p => _db.Documents.Any(d => d.CompanyId == companyId
+                        && d.Id == (p.MovedToDocumentId ?? p.DocumentId) && d.CreatedBy == employeeKey));
+                }
 
                 basisAmount = await paymentQuery.SumAsync(p => p.Amount);
             }

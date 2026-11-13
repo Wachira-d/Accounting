@@ -56,13 +56,20 @@ public class PartnerPayableRound264Tests
     }
 
     [Fact]
-    public void บัญชีในความยินยอม_ใช้ได้_อัตโนมัติ_ความมั่นใจถึงเกณฑ์_ทิศตรงข้าม_ใช้ไม่ได้แล้ว_ไม่เดาบัญชีอื่น()
+    public void บัญชีในความยินยอม_ใช้ได้_preselect_แต่ไม่อัตโนมัติ_268_1_1_ทิศตรงข้าม_ใช้ไม่ได้แล้ว_ไม่เดาบัญชีอื่น()
     {
         var ok = D(new(Usable(), ConsentDefault: BankA));
         Assert.Equal(Origin.ConsentDefault, ok.Origin);
-        Assert.Equal(BankA, ok.BankAccountId);
-        Assert.True(ok.AllowsAuto);
-        Assert.Equal(PartnerPaySourceAccount.AutoThreshold, ok.Confidence);
+        Assert.Equal(BankA, ok.BankAccountId);                       // ปุ่มเดียวยัง preselect บัญชีนี้
+        Assert.False(ok.AllowsAuto);                                 // 268-1-1: ค่าตั้งตอนยินยอมไม่ใช่หลักฐานว่าเงินออกจริง
+        Assert.False(PartnerPaySourceAccount.ConsentDefaultAutoEnabled);
+        Assert.StartsWith(PartnerPaySourceAccount.ConsentDefaultNotAutoReason, ok.Reason);
+        Assert.Contains("รายการเดินบัญชี", ok.Reason);
+        // ทิศตรงข้าม: มีรายการเดินบัญชีตรงบัญชีเดียวกัน ⇒ บันทึกเองได้ (ชั้นที่ 1 ชนะ ไม่ใช่ชั้นที่ 4)
+        var withLine = D(new(Usable(), BankLine: BankA, ConsentDefault: BankA));
+        Assert.Equal(Origin.BankLine, withLine.Origin);
+        Assert.True(withLine.AllowsAuto);
+        Assert.DoesNotContain(PartnerPaySourceAccount.ConsentDefaultNotAutoReason, withLine.Reason);
 
         var gone = D(new(Usable(), ConsentDefault: Foreign));
         Assert.Equal(Origin.Unknown, gone.Origin);
@@ -108,7 +115,7 @@ public class PartnerPayableRound264Tests
     {
         var many = D(new(Usable(), SlipMatch: new(PartnerPaySourceAccount.SlipKind.Many), ConsentDefault: BankA));
         Assert.Equal(Origin.ConsentDefault, many.Origin);
-        Assert.True(many.AllowsAuto);
+        Assert.False(many.AllowsAuto);   // 268-1-1
         Assert.Equal(Origin.Unknown, D(new(Usable(), SlipMatch: new(PartnerPaySourceAccount.SlipKind.Unreadable))).Origin);
         // สลิปอ้างบัญชีที่ไม่อยู่ในชุดของบริษัท ⇒ ไม่ใช่หลักฐาน (ไม่เชื่อ id)
         Assert.Equal(Origin.Unknown, D(new(Usable(), SlipMatch: new(PartnerPaySourceAccount.SlipKind.Unique, Foreign))).Origin);
@@ -137,12 +144,12 @@ public class PartnerPayableRound264Tests
     }
 
     [Fact]
-    public void ตารางลำดับชั้น_เป็นข้อมูล_ชั้นอัตโนมัติคือ_1_ถึง_4_เท่านั้น()
+    public void ตารางลำดับชั้น_เป็นข้อมูล_ชั้นอัตโนมัติคือ_1_ถึง_3_เท่านั้น_ชั้นบัญชีตั้งต้นปิด_268_1_1()
     {
         var t = PartnerPaySourceAccount.Precedence;
         Assert.Equal(Enum.GetValues<Origin>().Length, t.Count);
         Assert.Equal(t.Select(r => r.Tier).OrderBy(x => x), t.Select(r => r.Tier));
-        Assert.All(t, r => Assert.Equal(r.Tier <= 4, r.AllowsAuto));
+        Assert.All(t, r => Assert.Equal(r.Tier <= 3, r.AllowsAuto));
         Assert.All(t.Where(r => r.AllowsAuto), r => Assert.True(r.Confidence >= PartnerPaySourceAccount.AutoThreshold));
         Assert.All(Enum.GetValues<Origin>(), o => Assert.False(string.IsNullOrWhiteSpace(PartnerPaySourceAccount.OriginLabel(o))));
     }
@@ -152,7 +159,7 @@ public class PartnerPayableRound264Tests
     private static PartnerAutoRecordPolicy.Facts Pass() => new(
         NoticeOpen: true, SellerPaymentKnown: true, SellerPaymentLive: true, SourceDocumentVoided: false, ConsentOk: true, ConsentReason: "ใช้ได้",
         Plan: new PartnerPaymentNoticeRule.Plan(1_040m, 30m, null), Currency: "THB", SourceIsAbbreviated: false, PayerBorneWht: false, VatMismatch: false,
-        Source: PartnerPaySourceAccount.Decide(new(Usable(), ConsentDefault: BankA)));
+        Source: PartnerPaySourceAccount.Decide(new(Usable(), PayerDeclared: BankA, ConsentDefault: BankA)));
 
     [Fact]
     public void ทุกช่องมีหลักฐาน_อัตโนมัติ()
@@ -187,6 +194,11 @@ public class PartnerPayableRound264Tests
         Is(Pass() with { PayerBorneWht = true }, O, PartnerAutoRecordPolicy.Codes.PayerBorne);
         Is(Pass() with { VatMismatch = true }, O, PartnerAutoRecordPolicy.Codes.VatMismatch);
         Is(Pass() with { Source = PartnerPaySourceAccount.Decide(new(Usable())) }, O, PartnerAutoRecordPolicy.Codes.Source);
+        // 268-1-1: หลักฐานบัญชีมีแค่บัญชีตั้งต้นในความยินยอม ⇒ ปุ่มเดียว + เหตุที่บอกว่าทำไม
+        var consentOnly = PartnerAutoRecordPolicy.Decide(Pass() with { Source = PartnerPaySourceAccount.Decide(new(Usable(), ConsentDefault: BankA)) });
+        Assert.Equal(O, consentOnly.Kind);
+        Assert.Equal(PartnerAutoRecordPolicy.Codes.Source, consentOnly.Code);
+        Assert.StartsWith(PartnerPaySourceAccount.ConsentDefaultNotAutoReason, consentOnly.Reason);
         // ฝ่ายค้าน H1 / M4
         Is(Pass() with { UnexplainedPurchasePayment = true }, O, PartnerAutoRecordPolicy.Codes.OtherPayment);
         Is(Pass() with { WhtDateInPastMonth = true }, O, PartnerAutoRecordPolicy.Codes.WhtPeriod);
@@ -356,6 +368,6 @@ public class PartnerPayableRound264Tests
         var before = PartnerConsent.Allows(Scope.AutoRecordPayment, Row(PartnerConsent.AutoRecordPaymentWiredSince.AddDays(-1)), p, b, PartnerConsent.CapAmount.Thb(10m), true);
         Assert.Equal(PartnerConsent.Codes.GrantedBeforeWired, before.Code);
         Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(PartnerConsent.AutoRecordPaymentWiredSince.AddHours(1)), p, b, PartnerConsent.CapAmount.Thb(10m), true).Ok);
-        Assert.Null(PartnerConsent.EffectNote(def));
+        Assert.Equal(PartnerPaySourceAccount.ConsentDefaultNotAutoNote, PartnerConsent.EffectNote(def));   // 268-1-1: หน้าความยินยอมบอกผลจริง (ไม่ silent no-op)
     }
 }

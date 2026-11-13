@@ -1004,7 +1004,8 @@ public partial class CmsCommerceService : ICmsCommerceService
         var doc = await _db.Documents.AsNoTracking().Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == erpDocId && d.CompanyId == companyId);
         var hasPayments = doc != null && await _db.Payments.AsNoTracking()
-            .AnyAsync(p => p.CompanyId == companyId && p.DocumentId == erpDocId && !p.IsDeleted);
+            // รอบ 266 ฝ่ายค้าน B-9: นับทั้งการรับชำระที่ตัดใบนี้อยู่ (รวมที่ถูกย้ายเข้ามา) และที่ถูกย้ายออก (ใบนี้ยกเลิกไม่ได้ขณะนั้นยังมีผล · 266-1-31)
+            .AnyAsync(p => p.CompanyId == companyId && (p.DocumentId == erpDocId || p.MovedToDocumentId == erpDocId) && !p.IsDeleted);
         var action = SiteOrderCancelPlan.Decide(doc != null, doc?.Status, hasPayments);
         if (action != SiteOrderCancelErpAction.ProposeCreditNote) return false;
 
@@ -1533,15 +1534,36 @@ public partial class CmsCommerceService : ICmsCommerceService
     /// ทุก step ที่ล้มเหลวจะ log แต่ไม่ rollback step ก่อนหน้า — operator
     /// แก้ใน UI ต่อได้.</summary>
     public Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId,
-        Guid? paymentId, string actor, Guid? moneyInAccountId = null)
+        Guid? paymentId, string actor, Guid? moneyInAccountId = null, Guid? receivingBankAccountId = null)
         // รอบ 208 (ฝ่ายค้านรอบ 2 ข้อ 3): คีย์เดียวกับเส้นเปลี่ยนสถานะ ⇒ ยืนยันเงินกับยกเลิกออเดอร์ไม่สวนกัน (reentrant ถ้าเรียกจากใต้เส้นสถานะ)
         => AdvisorySessionLock.RunAsync(_db, AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsOrderStatus, orderId.ToString("N")),
-            () => ConfirmPaymentLockedAsync(companyId, siteId, orderId, paymentId, actor, moneyInAccountId),
+            () => ConfirmPaymentLockedAsync(companyId, siteId, orderId, paymentId, actor, moneyInAccountId, receivingBankAccountId),
             "มีการเปลี่ยนสถานะออเดอร์นี้กำลังทำงานอยู่ — รอสักครู่แล้วลองใหม่", SiteOrderStatusTransition.RuleCode);
 
-    private async Task<bool> ConfirmPaymentLockedAsync(Guid companyId, Guid siteId, Guid orderId,
-        Guid? paymentId, string actor, Guid? moneyInAccountId)
+    /// <summary>รอบ 268 (268-1-2): ตัวเลือก/ค่าแนะนำ/ผลตัดสินของ "บัญชีที่เงินตามสลิปเข้า" ของแถวรับเงินหนึ่งแถว — ตัวตัดสินเดียว <see cref="Accounting.Helpers.SlipReceivingAccount"/> ·
+    /// แถวที่ไม่ใช่สลิป (เงินผ่านผู้ให้บริการ) ⇒ <c>Applies=false</c> (ผู้เรียกไม่ส่งธนาคาร) · ไม่พบออเดอร์/แถว ⇒ null · ทุก query ผูก CompanyId</summary>
+    public async Task<Accounting.Helpers.SlipReceivingAccount.Resolution?> SlipReceivingAccountsAsync(Guid companyId, Guid siteId, Guid orderId, Guid? paymentId,
+        Guid? chosen, CancellationToken ct = default)
     {
+        var pays = await _db.SiteOrderPayments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.OrderId == orderId && !p.IsDeleted
+                && _db.SiteOrders.Any(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId))
+            .Select(p => new { p.Id, p.CreatedAt, p.SlipUrl, p.GatewayTransactionId, p.PaymentMethod, p.Currency })
+            .ToListAsync(ct);
+        // แถวเดียวกับที่ ConfirmPaymentLockedAsync หยิบ (ระบุ id หรือแถวล่าสุด)
+        var pay = paymentId is Guid pid ? pays.FirstOrDefault(p => p.Id == pid) : pays.OrderByDescending(p => p.CreatedAt).FirstOrDefault();
+        if (pay == null) return null;
+        var applies = Accounting.Helpers.SlipReceivingAccount.AppliesToSiteOrderPayment(!string.IsNullOrWhiteSpace(pay.SlipUrl),
+            !string.IsNullOrWhiteSpace(pay.GatewayTransactionId), pay.PaymentMethod);
+        return await Accounting.Helpers.SlipReceivingAccount.ResolveForSiteOrderAsync(_db, companyId, siteId, applies,
+            string.IsNullOrWhiteSpace(pay.Currency) ? "THB" : pay.Currency, chosen, ct);
+    }
+
+    private async Task<bool> ConfirmPaymentLockedAsync(Guid companyId, Guid siteId, Guid orderId,
+        Guid? paymentId, string actor, Guid? moneyInAccountId, Guid? receivingBankAccountId)
+    {
+        // รอบ 268 (268-1-2): บัญชีธนาคารที่เงินตามสลิปเข้า (ตัดสินแล้วที่ Helpers/SlipReceivingAccount) ใช้เฉพาะเมื่อไม่ได้ลงบัญชีพักของผู้ให้บริการ
+        if (moneyInAccountId != null) receivingBankAccountId = null;
         var order = await _db.SiteOrders
             .Include(o => o.Payments)
             .Include(o => o.Lines)
@@ -1604,7 +1626,7 @@ public partial class CmsCommerceService : ICmsCommerceService
         }
         if (plan.Step is Accounting.Helpers.SiteOrderPaymentStep.DepositReceipt or Accounting.Helpers.SiteOrderPaymentStep.AlreadyDeposited)
         {
-            await IssueOrderDepositReceiptAsync(companyId, siteId, orderId, pay.Id, actor, moneyInAccountId);
+            await IssueOrderDepositReceiptAsync(companyId, siteId, orderId, pay.Id, actor, moneyInAccountId, receivingBankAccountId);
             return true;
         }
 
@@ -1692,7 +1714,9 @@ public partial class CmsCommerceService : ICmsCommerceService
                     // เงินที่รับผ่าน gateway ยังไม่เข้าธนาคาร → ลงบัญชีพัก 11340 แทน
                     // (ตัวตัดสินอยู่ที่ IPaymentIntentService.ResolveMoneyInAccountAsync
                     // ที่เดียว — ที่นี่แค่ส่งต่อ). null = เส้นสลิป เงินอยู่ในธนาคารแล้ว
-                    OverridePaymentAccountId: moneyInAccountId
+                    OverridePaymentAccountId: moneyInAccountId,
+                    // รอบ 268 (268-1-2 · คลาสเดียวกับบั๊ก 260-2): สลิปโอน ⇒ ธนาคารที่เงินเข้า (เดิมไม่ส่ง ⇒ ใบขายของออเดอร์ไม่มีแหล่งเงิน ⇒ JE ลงเงินสด 111)
+                    OverrideBankAccountId: receivingBankAccountId
                 ), actor, source: Accounting.Helpers.PaymentEntrySource.Cms);
                 pay.ErpPaymentId = erpPay.Id;
                 await _db.SaveChangesAsync();
@@ -1799,7 +1823,8 @@ public partial class CmsCommerceService : ICmsCommerceService
     /// [+ Cr ภาษีขาย 21911]) ⇒ ไม่บันทึกรับชำระซ้ำ · ยืนยันซ้ำ ⇒ ไม่สร้างใบที่สอง (อนุมัติใบร่างที่ค้างต่อ) · ล้ม = ประทับบนออเดอร์ (ไม่โยน — webhook)
     /// <para>VAT: จด VAT + สินค้าอัตราเดียว ⇒ VAT ทันทีของยอดมัดจำ (มัดจำค่าสินค้า = ส่วนหนึ่งของราคา · §78(1)(ข) ภาษีถึงกำหนดตอนได้รับชำระ ·
     /// <c>DepositOutputVatDeferred=false</c>) · ไม่จด VAT ⇒ VAT 0 (มัดจำเต็มยอด แล้วตัดชำระใบสุดท้าย)</para></summary>
-    private async Task IssueOrderDepositReceiptAsync(Guid companyId, Guid siteId, Guid orderId, Guid paymentId, string actor, Guid? moneyInAccountId)
+    private async Task IssueOrderDepositReceiptAsync(Guid companyId, Guid siteId, Guid orderId, Guid paymentId, string actor, Guid? moneyInAccountId,
+        Guid? receivingBankAccountId = null)
     {
         var failures = new List<string>();
         try
@@ -1833,6 +1858,7 @@ public partial class CmsCommerceService : ICmsCommerceService
                     },
                     // ขา "เงินเข้า" ของใบมัดจำ: gateway → บัญชีพัก 11340 (ตัวตัดสินเดียวกับเส้นรับชำระ) · null = สลิป (ธนาคาร)
                     PaymentAccountId: moneyInAccountId,
+                    BankAccountId: moneyInAccountId == null ? receivingBankAccountId : null,   // รอบ 268 (268-1-2): สลิป ⇒ ธนาคารที่เงินเข้า (ไม่ใช่เงินสด)
                     Currency: order.Currency,
                     PricesIncludeVat: true,
                     IsDeposit: true,

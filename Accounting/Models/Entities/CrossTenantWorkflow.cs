@@ -197,6 +197,9 @@ public class PartnerPaymentNotice : TenantEntity
     public Guid? PaymentIntentId { get; set; }
     /// <summary>รอบ 264 P3 (264-3-6): <b>กุญแจกันซ้ำ</b> = การรับชำระของผู้ขาย (<c>Payment.Id</c> ในบริษัทผู้ขาย) · แถวเดิมเติมจาก <c>Payments.Reference = PAY-INTENT-{intent}</c> (migration) · null = แถวเก่าที่หาการชำระไม่พบ</summary>
     public Guid? SellerPaymentId { get; set; }
+    /// <summary>รอบ 268 (คำตัดสิน 268-1-6 · backlog D8): การรับชำระหลายใบของผู้ขาย ⇒ <b>หนึ่งการแจ้งต่อแถวจัดสรร</b> (<c>PaymentAllocation.Id</c>) — กุญแจกันซ้ำแทน
+    /// <see cref="SellerPaymentId"/> (การชำระเดียวกันมีหลายแถวแจ้งได้) · null = การชำระใบเดียว (เดิม)</summary>
+    public Guid? SellerAllocationId { get; set; }
     /// <summary>รอบ 264 P3: ผู้ขายยกเลิกการรับชำระนี้แล้ว (เวลา) — Open ⇒ <c>Withdrawn</c> · Recorded ⇒ ป้ายบนใบซื้อ + แจ้ง (ไม่ยกเลิกการจ่ายของผู้ซื้อแทน · E6)</summary>
     public DateTime? SellerVoidedAt { get; set; }
     /// <summary>รอบ 264 P3: เหตุล่าสุดที่ท่ออัตโนมัติไม่บันทึกจ่ายเอง (ข้อความไทยจาก <c>PartnerAutoRecordPolicy</c>) · null = ยังไม่เคยประเมิน/ผ่าน</summary>

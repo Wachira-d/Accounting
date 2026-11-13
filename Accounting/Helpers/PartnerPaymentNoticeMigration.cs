@@ -47,7 +47,11 @@ public static class PartnerPaymentNoticeMigration
         // กุญแจที่ persist แล้ว (F2 ข้อ 9): แถวเดิมเติม SellerPaymentId จากการรับชำระของผู้ขายที่อ้าง intent เดียวกัน
         // (รูปเลขอ้างอิงตาม GatewayPaymentRecord.Reference = PAY-INTENT-{N}) · ตัวที่ยังไม่ถูกยกเลิกก่อน · ครั้งเดียวใต้ marker (ฝ่ายค้าน L4: ไม่สแกนซ้ำทุกบูต)
         BackfillOnceSql(),
-        """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartnerPaymentNotices_Company_SellerPayment" ON "PartnerPaymentNotices" ("CompanyId", "SellerPaymentId") WHERE "SellerPaymentId" IS NOT NULL;""",
+        // รอบ 268 (268-1-6 · D8): การชำระหลายใบ = หนึ่งการแจ้งต่อแถวจัดสรร ⇒ กุญแจเดิม (ต่อการรับชำระ) ใช้เฉพาะการชำระใบเดียว · ดัชนีเดิมถูกแทนที่ (ชื่อใหม่ — ไม่สร้างซ้ำทุกบูต)
+        """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SellerAllocationId" uuid NULL;""",
+        """DROP INDEX IF EXISTS "IX_PartnerPaymentNotices_Company_SellerPayment";""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartnerPaymentNotices_Company_SellerPaymentSingle" ON "PartnerPaymentNotices" ("CompanyId", "SellerPaymentId") WHERE "SellerPaymentId" IS NOT NULL AND "SellerAllocationId" IS NULL;""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartnerPaymentNotices_Company_SellerAllocation" ON "PartnerPaymentNotices" ("CompanyId", "SellerAllocationId") WHERE "SellerAllocationId" IS NOT NULL;""",
         // C-03 ของที่ค้างอยู่แล้ว (ผู้ขายยกเลิกการรับชำระไปก่อนรอบนี้): <b>ไม่แก้ด้วย SQL</b> (ฝ่ายค้าน L4 — เปลี่ยนสถานะโดยไม่มี audit) ⇒
         // ตัวกวาดในโค้ด PartnerPayablePipeline.SweepSellerVoidedAsync เดินตัวถอนตัวเดียวกับเส้นปกติ (audit สองฝั่ง + แจ้ง · ไม่แตะแถวที่ปิด/ถอนแล้ว)
     };

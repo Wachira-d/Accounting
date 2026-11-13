@@ -505,4 +505,77 @@ public class LineChatSlipRound260DbTests
         // เลขที่ซ้ำหลายใบ ⇒ 409: ฐานเทสต์มี unique (CompanyId, DocumentNumber) ทั้งตาราง และฐานจริงมี partial unique ของใบที่ยังไม่ลบ ⇒
         // สร้างกรณีนี้ในฐานไม่ได้ — กิ่ง 409 เป็นด่านสำรองของข้อมูลเก่า (ระบุในรายงาน)
     }
+
+    // ═══ รอบ 268 (คำตัดสิน 268-1-4): แจ้งลูกค้าหลังพนักงานผูก · สลิป PDF ═══
+
+    private sealed record Push(string To, string Text, Guid RetryKey, string OaScope);
+
+    private static LineChatSlipService SvcWithPush(AccountingDbContext db, Seed s, List<Push> pushes, bool ok = true)
+    {
+        var intents = new PaymentIntentService(db, new IPaymentProvider[] { new ManualSlipPaymentProvider() },
+            Array.Empty<IPaymentCompletionHandler>(), NullLogger<PaymentIntentService>.Instance);
+        var line = F4Proxy<ILineNotifyService>.Create((m, a) =>
+        {
+            if (m != nameof(ILineNotifyService.TryPushContactTextAsync)) return null;
+            pushes.Add(new Push((string)a[3]!, (string)a[4]!, (Guid)a[5]!, (string)a[1]!));
+            return ok ? LinePushResult.Success : LinePushResult.Fail("LINE 429");
+        });
+        return new LineChatSlipService(db, Secrets, Line(Png("x")), Reader(Sure(535m)), PayLinks(db, s), new SlipEvidenceService(db, intents, s.Storage), s.Storage,
+            NullLogger<LineChatSlipService>.Instance, null, line);
+    }
+
+    [Fact]
+    public async Task C268_1_4_พนักงานผูกสลิป_แจ้งลูกค้าในแชตเดิม_เลขเอกสารและยอด_retry_key_คือแถว_ทิศตรงข้าม_ส่งล้มบอกพนักงาน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (s, a, _, reply, row) = await ManyAsync(db, "notify268");
+        var decline = PostbackData(reply).Single(d => d.Contains("|" + LineChatSlipRule.DeclineToken + "|"));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Svc(c, s, Png("x"), Sure(535m)).HandlePostbackAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), decline);
+        var pushes = new List<Push>();
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var r = await SvcWithPush(c2, s, pushes).AssignAsync(s.CompanyId, row.Id, new AssignLineChatSlipRequest(null, a.DocumentNumber, null), "user:test");
+        var p = Assert.Single(pushes);
+        Assert.Equal(s.UserId, p.To);                          // แชตที่ส่งสลิป (ปลายทางที่ผูกด้วยกุญแจเดียวกับตอนรับรูป)
+        Assert.Equal(NotifyEndpointKind.ScopeCompany, p.OaScope);
+        Assert.Contains(a.DocumentNumber, p.Text);
+        Assert.Contains("535.00", p.Text);                     // แสดงยอดได้ (ปลายทาง 1:1 เปิดแสดงยอด)
+        Assert.Equal(row.Id, p.RetryKey);
+        Assert.Equal(LineChatSlipRule.LinkedNotice.Sent, r.CustomerNotice);
+        using var c3 = DbTestDatabase.TryCreateContext()!;
+        Assert.Contains(await c3.AuditLogs.AsNoTracking().Where(x => x.CompanyId == s.CompanyId && x.EntityType == LineChatSlipRule.AuditEntityType && x.EntityId == row.Id.ToString())
+            .Select(x => x.NewValues!).ToListAsync(), v => v.Contains("customerNotice"));
+        // ทิศตรงข้าม: LINE ตอบล้ม ⇒ การผูกยังสำเร็จ · คำตอบบอกพนักงานว่าแจ้งไม่สำเร็จ (ไม่เงียบ)
+        var (s2, a2, _, reply2, row2) = await ManyAsync(db, "notify268-fail");
+        var decline2 = PostbackData(reply2).Single(d => d.Contains("|" + LineChatSlipRule.DeclineToken + "|"));
+        using (var c4 = DbTestDatabase.TryCreateContext()!)
+            await Svc(c4, s2, Png("x"), Sure(535m)).HandlePostbackAsync(s2.CompanyId, Bot, LineChatSource.User(s2.UserId), decline2);
+        using var c5 = DbTestDatabase.TryCreateContext()!;
+        var failed = await SvcWithPush(c5, s2, new List<Push>(), ok: false).AssignAsync(s2.CompanyId, row2.Id, new AssignLineChatSlipRequest(a2.Id, null, null), "user:test");
+        Assert.StartsWith("แจ้งลูกค้าในแชตไม่สำเร็จ", failed.CustomerNotice);
+        Assert.Equal(a2.Id, failed.DocumentId);
+    }
+
+    [Fact]
+    public async Task C268_1_4_แชตไม่ได้ผูก_ผูกสลิปได้แต่ไม่ส่ง_บอกเหตุ_สลิป_PDF_เข้าเส้นเดียวกับรูป()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, bind: false);
+        var inv = await InvoiceAsync(db, s.CompanyId, s.ContactId, 500m);
+        var pdf = System.Text.Encoding.ASCII.GetBytes("%PDF-1.4 slip-268 " + Guid.NewGuid());
+        await Svc(db, s, pdf, Sure(535m)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "268001");
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var row = await c2.LineChatSlips.AsNoTracking().SingleAsync(x => x.CompanyId == s.CompanyId);
+        Assert.Equal("application/pdf", row.ContentType);       // PDF ผ่านตัวตรวจไบต์ + ที่เก็บเดียวกับรูป
+        Assert.Equal(LineChatSlipRule.Statuses.Unmatched, row.Status);
+        var pushes = new List<Push>();
+        var r = await SvcWithPush(c2, s, pushes).AssignAsync(s.CompanyId, row.Id, new AssignLineChatSlipRequest(inv.Id, null, 535m), "user:test");
+        Assert.Empty(pushes);                                    // ไม่มี LINE ID ของแชตที่ไม่ได้ผูก — ไม่เดาผู้รับ
+        Assert.Equal(LineChatSlipRule.LinkedNotice.Unbound, r.CustomerNotice);
+        Assert.True(LineChatSlipRule.IsSlipMessage("file", "slip.PDF"));
+        Assert.False(LineChatSlipRule.IsSlipMessage("file", "slip.xlsx"));
+        Assert.False(LineChatSlipRule.IsSlipMessage("video", null));
+    }
 }

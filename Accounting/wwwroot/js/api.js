@@ -1229,7 +1229,16 @@ const API = {
       cmsDeleteProduct: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/commerce/products/${id}`),
       // cmsListOrders/cmsGetOrder/cmsUpdateOrderStatus อยู่ในกลุ่ม "Orders" ด้านบน — ห้ามประกาศซ้ำ (key ซ้ำตัวหลังทับเงียบ)
       cmsSyncOrderToErp: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/sync-erp`, {}),
-      cmsConfirmOrderPayment: (siteId, id, paymentId = null) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/confirm-payment${paymentId ? `?paymentId=${paymentId}` : ''}`, {}),
+      // รอบ 268 (268-1-2): บัญชีที่เงินตามสลิปเข้า — ตัวเลือก/ค่าแนะนำจากเซิร์ฟเวอร์ · ไม่ส่ง bankAccountId = ค่าแนะนำ
+      cmsConfirmOrderPayment: (siteId, id, paymentId = null, bankAccountId = null) => {
+        const q = new URLSearchParams();
+        if (paymentId) q.set('paymentId', paymentId);
+        if (bankAccountId) q.set('bankAccountId', bankAccountId);
+        const qs = q.toString();
+        return API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/confirm-payment${qs ? '?' + qs : ''}`, {});
+      },
+      cmsOrderReceivingAccounts: (siteId, id, paymentId = null) =>
+        API.get(`${base}/cms/sites/${siteId}/commerce/orders/${id}/receiving-accounts${paymentId ? `?paymentId=${paymentId}` : ''}`),
       // รอบ 209 P3: คิวผลิต (A5) + บันทึกรับเงินหน้าร้าน/ปลายทาง (E7) — CmsOrderFulfilmentController
       cmsProductionQueue: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/commerce/orders/production-queue${q}`),
       cmsRecordCounterPayment: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/counter-payment`, d),

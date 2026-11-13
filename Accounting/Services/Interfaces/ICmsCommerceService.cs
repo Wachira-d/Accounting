@@ -63,8 +63,14 @@ public interface ICmsCommerceService
     /// ค่านี้มาจาก <c>IPaymentIntentService.ResolveMoneyInAccountAsync</c> ตัวเดียว
     /// <para><b>เป็นพารามิเตอร์ของเมธอด ไม่ใช่ช่องใน DTO โดยตั้งใจ</b> — เหตุผลเดียวกับ
     /// <c>originModule</c>: ถ้าอยู่ใน DTO ผู้เรียก API จะเลือกผังบัญชีเองได้</para></param>
+    /// <param name="receivingBankAccountId">รอบ 268 (268-1-2): บัญชีธนาคารที่เงินตามสลิปเข้า — ผลของ <c>Helpers/SlipReceivingAccount</c> เท่านั้น (ผู้เรียกตัดสิน · ไม่อยู่ใน DTO) ·
+    /// ไม่ใช้เมื่อ <paramref name="moneyInAccountId"/> มีค่า (เงินผ่านผู้ให้บริการ)</param>
     Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId, Guid? paymentId,
-        string actor, Guid? moneyInAccountId = null);
+        string actor, Guid? moneyInAccountId = null, Guid? receivingBankAccountId = null);
+
+    /// <summary>รอบ 268 (268-1-2): บัญชีที่เงินตามสลิปของแถวรับเงินเข้า (ตัวเลือก + ค่าแนะนำ + ผลตัดสินของ <paramref name="chosen"/>) — null = ไม่พบ</summary>
+    Task<Accounting.Helpers.SlipReceivingAccount.Resolution?> SlipReceivingAccountsAsync(Guid companyId, Guid siteId, Guid orderId, Guid? paymentId,
+        Guid? chosen, CancellationToken ct = default);
 
     // Public payment flow
     Task<UploadSlipResponse?> RecordPaymentSlipAsync(Guid companyId, Guid siteId, Guid orderId, IFormFile file);

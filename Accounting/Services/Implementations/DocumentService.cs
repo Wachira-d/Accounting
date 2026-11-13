@@ -11855,6 +11855,7 @@ public partial class DocumentService : IDocumentService
                     .Select(a => a.DocumentId)
                     .ToListAsync();
                 lockDocIds.Add(payment.DocumentId);
+                if (payment.MovedToDocumentId is Guid movedTo) lockDocIds.Add(movedTo);   // รอบ 266 ฝ่ายค้าน B-5: ใบที่การรับชำระถูกย้ายไปตัด
                 await LockDocumentsForPaymentVoidAsync(companyId, lockDocIds);
 
                 // Lock the payment row INSIDE the transaction เพื่อกัน void ซ้อน
@@ -11874,6 +11875,19 @@ public partial class DocumentService : IDocumentService
                 {
                     await tx.RollbackAsync();
                     return;
+                }
+                // รอบ 266 ฝ่ายค้าน B-5: ชุดใบด้านบนอ่านก่อนล็อก — ถ้าการย้ายการรับชำระ commit ระหว่างนั้น ใบปลายทางยังไม่ถูกล็อก (lost update ของ PaidAmount) ⇒
+                // อ่านแถวจัดสรร + MovedToDocumentId ใหม่ใต้ล็อกแถว Payment แล้วล็อกใบที่ขาด (ORDER BY Id) ก่อนแตะยอดใด
+                var lockedDocIds = await _db.PaymentAllocations.AsNoTracking()
+                    .Where(a => a.PaymentId == locked.Id && a.CompanyId == companyId && !a.IsDeleted)
+                    .Select(a => a.DocumentId)
+                    .ToListAsync();
+                lockedDocIds.Add(Accounting.Helpers.PaymentEffectiveDocument.Of(locked));
+                var missingLocks = lockedDocIds.Except(lockDocIds).ToList();
+                if (missingLocks.Count > 0)
+                {
+                    lockDocIds.AddRange(missingLocks);   // ใบที่ถือล็อกอยู่แล้วล็อกซ้ำในธุรกรรมเดียวกันได้ (ไม่รอ) · ชุดเต็ม ORDER BY Id
+                    await LockDocumentsForPaymentVoidAsync(companyId, lockDocIds);
                 }
                 // รอบ 198 ทีม S4 (review198-S3 S3-8): ด่าน C-5 ซ้ำใต้ธุรกรรม (แถวรอบโอน FOR SHARE — รอการประทับ Posted ที่กำลังทำแล้วเห็นสถานะใหม่)
                 if (await SettlementArtifactGuard.CheckLockedAsync(_db, companyId, locked.SettlementBatchId)
@@ -16425,6 +16439,11 @@ public partial class DocumentService : IDocumentService
                     foreach (var receiptDoc in docs)
                         if (await TryAutoIssueAllocationReceiptAsync(companyId, payment, receiptDoc, request.IssueReceiptDocument, createdBy) is string receiptNotice)
                             multiWhtWarnings.Add(receiptNotice);
+
+                // รอบ 268 (คำตัดสิน 268-1-6 · backlog D8): ผู้ขายรับเงินหลายใบในก้อนเดียว ⇒ แจ้งผู้ซื้อคู่ค้า<b>ต่อแถวจัดสรร</b> (ตัวแจ้งเดียวกับใบเดียว · กุญแจแถวจัดสรร) ·
+                // หลัง commit · ไม่โยน · ฝั่งจ่าย (เงินออก) ไม่ใช่การรับของผู้ขาย ⇒ ไม่แจ้ง
+                if (isInflowDoc)
+                    await NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, Accounting.Helpers.PaymentEntrySource.Manual);
 
                 // Re-load PaymentAllocation rows to pick up generated Ids,
                 // then enrich with the docMap (resolved client-side).

@@ -120,6 +120,12 @@ public sealed record ReceiptLinkContext(
 /// <param name="JournalDate">วันที่ของสมุดรายวันสองขา (266-1-24: วันรับเงินเดิมถ้างวดเปิด · ปิด = วันที่ทำรายการ)</param>
 /// <param name="ClosedPeriodNote">ข้อความเมื่องวดของวันรับเงินปิดแล้ว (ลงวันที่ทำรายการแทน) · null = ลงวันรับเงินเดิม</param>
 /// <param name="ReplacementCarriesVat">ใบแทนจะทำหน้าที่ใบกำกับภาษี ณ วันรับเงิน (ใบแจ้งหนี้บริการปิดยอดงวดเดียว)</param>
+/// <param name="FromServedAsReceipt">รอบ 266 ฝ่ายค้าน B-1: ใบเดิมเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ในตัวของการรับเงินก้อนนี้ (ไม่มีใบเสร็จแยก · รับครบวันเดียวกับวันที่ใบ —
+/// <c>DocumentService.ComputeServedAsReceipt</c> + <c>ReceiptIssuePolicy.CoversPayment</c>) — ย้ายเงินออก = หัวกระดาษที่ลูกค้าถือเปลี่ยนย้อนหลังโดยไม่มีใบยกเลิก ⇒ ปฏิเสธ</param>
+/// <param name="TargetServesAfterMove">หลังย้าย ใบปลายทางจะเป็นใบกำกับภาษี/ใบเสร็จรับเงินในตัวของเงินก้อนนี้ (ตัวตัดสินเดียวกับหัวกระดาษ) — ไม่ออกใบเสร็จแยก · พรีวิวต้องบอกว่าหัวของใบนั้นเปลี่ยน</param>
+/// <param name="IssueReceiptForTarget">การรับชำระไม่มีใบเสร็จแยก แต่ใบปลายทางเป็นใบแจ้งหนี้ที่พักภาษีขายและปิดยอดงวดเดียว (<c>CarriesTaxInvoiceRole</c>) ⇒
+/// ระบบออกใบเสร็จ/ใบกำกับภาษี ณ วันรับเงินให้ใบปลายทาง (ห้ามย้ายภาษีเข้างวดโดยไม่มีกระดาษ · ม.78/1 · ม.86 · คำตัดสิน 266-1-32)</param>
+/// <param name="PermissionProblem">รอบ 266 ฝ่ายค้าน B-2: ผู้กดไม่มีสิทธิ์ของเอกสาร (อนุมัติใบปลายทาง · ยกเลิกใบที่เงินถูกถอนออก) — ตัดสินใต้ล็อกจากชนิดของใบจริง · null = ผ่าน</param>
 public sealed record ReceiptLinkMoveFacts(
     string PaymentNumber,
     DateTime PaymentDate,
@@ -146,7 +152,11 @@ public sealed record ReceiptLinkMoveFacts(
     string? JournalProblem,
     DateTime JournalDate,
     string? ClosedPeriodNote,
-    bool ReplacementCarriesVat);
+    bool ReplacementCarriesVat,
+    bool FromServedAsReceipt = false,
+    bool TargetServesAfterMove = false,
+    bool IssueReceiptForTarget = false,
+    string? PermissionProblem = null);
 
 /// <summary>ผลตัดสิน — <see cref="Allowed"/> = ส่งต่อไป <see cref="Route"/> ได้ · ไม่อนุญาต = <see cref="RuleCode"/> + ข้อความ + ทางไปต่อ (ห้ามคืน "ไม่ได้" เปล่า ๆ · F2 ข้อ 8)</summary>
 /// <param name="Route">เส้นที่ใช้ (อนุญาต) หรือเส้นที่จะใช้ได้เมื่อแพ็กถัดไปเปิด (ไม่อนุญาตเพราะยังไม่เปิด) · null = ไม่มีเส้น</param>
@@ -210,6 +220,8 @@ public static class ReceiptLinkPolicy
     public const string MoveJournalCode = "RL-MOVE-JOURNAL";
     public const string MoveReasonCode = "RL-MOVE-REASON";
     public const string MoveNoUndoCode = "RL-MOVE-NO-UNDO";
+    /// <summary>รอบ 266 ฝ่ายค้าน B-2: สิทธิ์ของเอกสารที่ตัดสินใต้ล็อก (อนุมัติใบปลายทาง · ยกเลิกใบที่เงินถูกถอนออก · สร้าง/อนุมัติ/ยกเลิกใบเสร็จเมื่อเส้นแตะกระดาษ) — คืน 403</summary>
+    public const string MovePermissionCode = "RL-MOVE-PERMISSION";
     /// <summary>ยกเลิกใบที่การรับชำระของมันถูกย้ายไปตัดใบอื่นแล้ว (สมุดรายวันขาเงินสดยังอ้างใบนี้)</summary>
     public const string MoveVoidSourceCode = "RL-MOVE-VOID-SOURCE";
 
@@ -223,6 +235,9 @@ public static class ReceiptLinkPolicy
     public const string MoveLegalReference = "ป.รัษฎากร ม.86/4 (ใบที่ออกแล้วห้ามแก้ — ยกเลิกและออกใบแทน) · ม.105 (ใบรับลงวันที่รับเงิน) · ม.78/1 · ม.87";
     /// <summary>จำนวนวันที่พักหนังสือทวงของใบที่กลับมาค้างเพราะการย้าย (กลไกเดิมของ <c>OverdueDunningJob</c>: เว้น 7 วันจาก <c>LastDunningSentAt</c>)</summary>
     public const int DunningPauseDays = 7;
+    /// <summary>รอบ 266 ฝ่ายค้าน B-6: ข้อความบนงานหลังรับชำระที่ถูกข้ามเพราะการรับชำระถูกย้ายไปตัดใบอื่น (ตัวเดียวของเส้นย้ายและตาข่ายในงาน)</summary>
+    public const string MoveSkippedAutomationMessage =
+        "การรับชำระนี้ถูกย้ายไปตัดใบอื่นแล้ว (ย้ายการรับชำระ) — ไม่ส่งข้อความขอบคุณ/ใบเสร็จที่อ้างใบเดิม (266-1-30)";
     public const string DuplicateSaleCode = "RL-DUPLICATE-SALE";
     public const string DepositCode = "RL-DEPOSIT";
     public const string CreditCode = "RL-CREDIT";
@@ -433,6 +448,8 @@ public static class ReceiptLinkPolicy
             return (VoidedCode, $"การรับชำระ {m.PaymentNumber} ถูกยกเลิกไปแล้ว — ไม่มีเงินให้ย้าย", "รับเงินใหม่ให้กด \"💰 บันทึกชำระเงิน\" ที่ " + inv.Number);
         if (m.FromDocumentId == inv.Id)
             return (AlreadyLinkedCode, $"การรับชำระ {m.PaymentNumber} ตัดยอดของ {inv.Number} อยู่แล้ว", "ไม่ต้องทำอะไร — ถ้าต้องการย้ายไปใบอื่น ให้เปิดจากใบนั้น");
+        if (m.PermissionProblem != null)
+            return (MovePermissionCode, m.PermissionProblem, "ให้ผู้มีสิทธิ์ตามที่ระบุเป็นผู้ย้าย หรือขอสิทธิ์จากผู้ดูแลบริษัท");
         if (!m.IsThb)
             return (CurrencyCode, $"การรับชำระ {m.PaymentNumber} เป็นสกุลเงินต่างประเทศ/มีอัตรา ณ วันชำระ — ย้ายระหว่างใบได้เฉพาะเงินบาทในรุ่นนี้ (กำไร/ขาดทุนอัตราแลกเปลี่ยนของการย้ายยังไม่มีสูตร)", redo);
         if (m.FromSettlementBatch)
@@ -455,6 +472,10 @@ public static class ReceiptLinkPolicy
         if (m.PartnerLinked)
             return (PartnerCode, $"ใบ {m.FromDocumentNumber} หรือ {inv.Number} ส่งเข้าระบบคู่ค้า NextAcc แล้ว (ฝั่งผู้ซื้อมีใบซื้อ/การแจ้งรับชำระของใบนี้) — ย้ายเงินฝั่งเราจะทำให้สถานะจ่ายของผู้ซื้อผิด",
                 "ประสานผู้ซื้อ แล้ว" + redo + " (ระบบถอน/แจ้งการรับชำระให้ผู้ซื้อตามเส้นเดิม)");
+        if (m.FromServedAsReceipt)
+            return (ServedAsReceiptCode, $"ใบ {m.FromDocumentNumber} เป็นใบกำกับภาษี/ใบเสร็จรับเงินในตัวของการรับเงิน {m.PaymentNumber} (ไม่มีใบเสร็จแยก · รับครบวันเดียวกับวันที่ใบ) — "
+                + "ลูกค้าถือใบนั้นเป็นใบรับแล้ว ย้ายเงินออกจะทำให้หัวกระดาษที่ออกไปแล้วเปลี่ยนย้อนหลังโดยไม่มีใบยกเลิก (ม.86/4 · ม.105) ระบบจึงไม่ย้ายให้",
+                redo + $" (ระบบออกใบรับให้ {inv.Number} ตามกติกาการรับชำระปกติ) · แจ้งลูกค้าว่า {m.FromDocumentNumber} กลับเป็นใบกำกับภาษีที่ยังค้างชำระ");
         if (m.ReceiptEtaxReachedRd)
             return (EtaxSentCode, $"ใบเสร็จ {m.LiveReceiptNumber} ของการรับชำระนี้ส่ง e-Tax ถึงกรมสรรพากรแล้ว — ยกเลิกเพื่อออกใบแทนไม่ได้ จึงย้ายเงินไม่ได้ (ห้ามย้ายเงินแล้วปล่อยใบรับอ้างใบผิด · ม.105)",
                 "ให้ผู้ทำบัญชีตัดสิน: ยกเลิกใบนั้นทาง e-Tax ตามขั้นตอนของกรมสรรพากรก่อน หรือปรับด้วยใบลดหนี้/ใบเพิ่มหนี้ในงวดปัจจุบัน");
@@ -470,12 +491,41 @@ public static class ReceiptLinkPolicy
         if (VatInvoiceSettlementGate.PartialRefusal(inv.Type, inv.VatAmount, m.Amount, inv.BalanceDue, inv.Number) is string partial)
             return (PartialVatCode, partial, "แปลงใบแจ้งหนี้เป็นใบกำกับภาษีก่อน หรือย้ายการรับชำระที่ยอดเท่ายอดค้างของใบนี้");
         if (m.ReplacementReceiptBlock != null)
-            return (MoveReceiptCode, $"ออกใบเสร็จแทน {m.LiveReceiptNumber} อ้าง {inv.Number} ไม่ได้ — {m.ReplacementReceiptBlock}", redo);
+            return (MoveReceiptCode, (m.LiveReceiptNumber != null
+                    ? $"ย้ายการรับชำระนี้ต้องยกเลิกใบเสร็จ {m.LiveReceiptNumber}" + (m.TargetServesAfterMove ? "" : $" และออกใบแทนอ้าง {inv.Number}")
+                    : $"ย้ายการรับชำระนี้ต้องออกใบเสร็จ/ใบกำกับภาษี ณ วันรับเงินให้ {inv.Number}")
+                + $" แต่ทำไม่ได้ — {m.ReplacementReceiptBlock}", redo);
         if (m.ApprovalControlProblem != null)
             return (MoveApprovalCode, m.ApprovalControlProblem, "ให้ผู้มีสิทธิ์อนุมัติอีกคนเป็นผู้ย้าย หรือ" + redo + " (ใบเสร็จใหม่เดินขั้นตอนอนุมัติตามปกติ)");
         if (m.JournalProblem != null)
             return (MoveJournalCode, m.JournalProblem, "ให้ผู้ทำบัญชีตรวจการลงบัญชีของใบ/งวดบัญชี แล้วลองใหม่");
         return null;
+    }
+
+    /// <summary>
+    /// รอบ 266 ฝ่ายค้าน B-4: จำนวนวันล่าช้าที่งานคิดค่าปรับใช้ — ใบที่กลับมาค้างเพราะการรับชำระถูกย้ายออก (<paramref name="movedOutAt"/> = <c>PaymentAllocation.ReleasedAt</c> ล่าสุด)
+    /// นับจาก <c>max(วันครบกำหนด, วันที่ย้าย)</c> — ระบบเคยบอกลูกค้าว่าใบนี้ชำระแล้วจนถึงวันที่ย้าย ห้ามคิดค่าปรับของช่วงนั้น · ≤ 0 = ไม่คิด · ไม่เคยย้าย = สูตรเดิมทุกตัวอักษร
+    /// </summary>
+    public static int LateFeeDaysOverdue(DateTime today, DateTime dueDate, DateTime? movedOutAt, int graceDays)
+    {
+        var from = dueDate.Date;
+        if (movedOutAt is DateTime moved && moved.Date > from) from = moved.Date;
+        return (int)(today.Date - from).TotalDays - graceDays;
+    }
+
+    /// <summary>
+    /// รอบ 266 ฝ่ายค้าน B-8: ถอด (ย้ายกลับ) การย้ายครั้งนี้ได้ไหม — การย้ายที่ยกเลิกใบเสร็จ (<paramref name="voidedReceiptNumber"/>) หรือออกใบรับให้ใบปลายทาง
+    /// (<paramref name="issuedReceiptNumber"/>) แล้ว ถอดไม่ได้: ย้ายกลับจะทำให้ใบเดิมชำระครบโดยไม่มีใบรับที่ยังมีผล / ใบที่ออกอ้างใบที่ไม่มีเงินแล้ว · null = ถอดได้
+    /// </summary>
+    public static string? MoveUndoRefusal(string? voidedReceiptNumber, string? issuedReceiptNumber)
+    {
+        if (voidedReceiptNumber == null && issuedReceiptNumber == null) return null;
+        var what = voidedReceiptNumber != null && issuedReceiptNumber != null
+            ? $"ยกเลิกใบเสร็จ {voidedReceiptNumber} และออก {issuedReceiptNumber} ไปแล้ว"
+            : voidedReceiptNumber != null ? $"ยกเลิกใบเสร็จ {voidedReceiptNumber} ไปแล้ว (ใบเดิมจะกลับมาชำระครบโดยไม่มีใบรับที่ยังมีผล)"
+            : $"ออกใบเสร็จ {issuedReceiptNumber} ให้ใบปลายทางไปแล้ว";
+        return $"การย้ายนี้{what} — ถอดไม่ได้ (ใบที่ยกเลิกแล้วไม่กลับมาใช้เลขเดิมเป็นใบรับ) · "
+            + "ทางไปต่อ: ถ้าย้ายผิด ให้เปิดใบเดิมแล้วกด \"🔗 ผูกใบเสร็จ/เงินที่รับไว้แล้ว\" เพื่อย้ายกลับเป็นรายการใหม่ (ระบบยกเลิก/ออกใบรับตามกติกาเดียวกัน)";
     }
 
     /// <summary>เส้นนี้ต้องมีเหตุผลจากผู้ใช้ไหม (เก็บบนใบแทน + audit — ผู้สอบบัญชีต้องรู้ว่าทำไมเงินถูกย้าย)</summary>
@@ -492,6 +542,21 @@ public static class ReceiptLinkPolicy
     {
         var after = Math.Max(0m, inv.BalanceDue - m.Amount);
         var reissue = route == ReceiptLinkRoute.MoveSettlementWithReissue;
+        var issuesPaper = (reissue && !m.TargetServesAfterMove) || (!reissue && m.IssueReceiptForTarget);
+        var selfReceiptLine = $"{inv.Number} จะพิมพ์หัว \"ใบกำกับภาษี/ใบเสร็จรับเงิน\" (รับครบในวันเดียวกับวันที่ใบ) — ใบนี้เป็นใบรับของเงินก้อนนี้ พิมพ์/ส่งให้ลูกค้าแทน";
+        // ฝ่ายค้าน B-1: ข้อความกระดาษต้องตรงกับที่เส้นย้ายทำจริง (ข้อเท็จจริงชุดเดียวกับใต้ล็อก)
+        var paper = reissue
+            ? (m.TargetServesAfterMove
+                ? $"ยกเลิกใบเสร็จ {m.LiveReceiptNumber} (คงแถวไว้เป็นใบที่ยกเลิก — ไม่ลบ) โดยไม่ออกใบเสร็จแยกใบใหม่ · " + selfReceiptLine
+                : $"ยกเลิกใบเสร็จ {m.LiveReceiptNumber} (คงแถวไว้เป็นใบที่ยกเลิก — ไม่ลบ) แล้วออกใบเสร็จใบใหม่ลงวันที่รับเงินเดิม {m.PaymentDate:dd/MM/yyyy} อ้าง {inv.Number} "
+                  + $"พิมพ์ \"ออกแทนใบเลขที่ {m.LiveReceiptNumber}\"" + (m.ReplacementCarriesVat ? " · ใบใหม่ทำหน้าที่ใบกำกับภาษี ณ วันรับเงิน (ม.78/1)" : ""))
+            : m.IssueReceiptForTarget
+                ? $"การรับชำระนี้ไม่มีใบเสร็จแยก — ระบบออกใบเสร็จรับเงิน/ใบกำกับภาษีใบใหม่ให้ {inv.Number} ลงวันที่รับเงินเดิม {m.PaymentDate:dd/MM/yyyy} "
+                  + $"(ใบกำกับภาษี ณ วันรับเงิน ม.78/1 — ภาษีขายที่เข้างวดต้องมีกระดาษ) · {m.FromDocumentNumber} ไม่ได้เป็นใบรับของเงินก้อนนี้ จึงไม่มีกระดาษของใบเดิมถูกแก้"
+                : m.TargetServesAfterMove
+                    ? $"การรับชำระนี้ไม่มีใบเสร็จแยก · {m.FromDocumentNumber} ไม่ได้เป็นใบรับของเงินก้อนนี้ · " + selfReceiptLine
+                    : $"การรับชำระนี้ไม่มีใบเสร็จแยก และ {m.FromDocumentNumber} ไม่ได้เป็นใบรับของเงินก้อนนี้ — ไม่มีกระดาษใดถูกแก้หรือออกใหม่";
+        var undoable = !reissue && !m.IssueReceiptForTarget && !m.TargetServesAfterMove;
         return new List<ReceiptLinkEffect>
         {
             new("ยอดค้างของ " + inv.Number, $"{Money(inv.BalanceDue)} → {Money(after)}" + (after <= Tol ? " (ชำระครบ)" : "")),
@@ -500,20 +565,19 @@ public static class ReceiptLinkPolicy
                 + $"เดบิต 21630 / เครดิต ลูกหนี้ของ {inv.Number} {Money(m.Amount)} — อ้างเลขการรับชำระ {m.PaymentNumber} · ผัง 21630 สุทธิ 0"
                 + (m.ClosedPeriodNote != null ? " · " + m.ClosedPeriodNote : "")),
             new("เงินสด/ธนาคาร", $"ไม่ถูกแตะ — รายการรับเงิน {m.PaymentNumber} วันที่ {m.PaymentDate:dd/MM/yyyy} และคู่จับคู่กับรายการเดินบัญชีธนาคารคงเดิม"),
-            new("กระดาษ", reissue
-                ? $"ยกเลิกใบเสร็จ {m.LiveReceiptNumber} (คงแถวไว้เป็นใบที่ยกเลิก — ไม่ลบ) แล้วออกใบเสร็จใบใหม่ลงวันที่รับเงินเดิม {m.PaymentDate:dd/MM/yyyy} อ้าง {inv.Number} "
-                  + $"พิมพ์ \"ออกแทนใบเลขที่ {m.LiveReceiptNumber}\"" + (m.ReplacementCarriesVat ? " · ใบใหม่ทำหน้าที่ใบกำกับภาษี ณ วันรับเงิน (ม.78/1)" : "")
-                : "การรับชำระนี้ไม่มีใบเสร็จแยก — ไม่มีกระดาษใดถูกแก้หรือออกใหม่"),
+            new("กระดาษ", paper),
             new("ภาษีขาย", $"ภาษีขายของ {m.FromDocumentNumber} ที่ถึงกำหนดเพราะเงินก้อนนี้ถูกถอย (งวดที่ยื่น/ปิดแล้ว = ระบบปฏิเสธทั้งรายการ) · "
                 + $"ถ้า {inv.Number} ยังพักภาษีขาย (21913) ภาษีเข้างวดของวันรับเงินเดิม หรืองวดปัจจุบันพร้อมธงล่าช้าเมื่องวดนั้นยื่น/ปิดแล้ว"),
             new("การทวงเงิน", $"{m.FromDocumentNumber} จะกลับมาค้างชำระ — ระบบพักหนังสือทวงอัตโนมัติของใบนี้ {DunningPauseDays} วัน เพื่อให้แจ้งลูกค้าก่อน "
-                + "(อีเมลเตือนตามกำหนดของกฎเวลาไม่มีการพักรายใบ — ถ้าเปิดใช้อยู่ ให้แจ้งลูกค้าทันที)"),
-            new("แจ้งลูกค้า", reissue
-                ? "ระบบไม่ส่งอัตโนมัติ — ส่งใบเสร็จใบใหม่จากหน้าเอกสาร (อีเมลระบุว่าออกแทนใบเดิม) และแจ้งลูกค้าว่าใบเดิมถูกยกเลิก · ไม่ส่งข้อความขอบคุณ/งานหลังรับชำระซ้ำ"
-                : "ไม่มีเอกสารใหม่ให้ส่ง · ไม่ส่งข้อความขอบคุณ/งานหลังรับชำระซ้ำ"),
-            new("ยกเลิกภายหลัง", reissue
-                ? "ไม่มีปุ่มถอด (ใบที่ยกเลิกแล้วไม่กลับมาใช้เลขเดิม) — ถ้าย้ายผิด ให้ย้ายกลับเป็นรายการใหม่ (ระบบออกใบแทนอีกใบ)"
-                : "ย้ายกลับใบเดิมได้ (รายการใหม่อีกสองขา)"),
+                + "(อีเมลเตือนตามกำหนดของกฎเวลาไม่มีการพักรายใบ — ถ้าเปิดใช้อยู่ ให้แจ้งลูกค้าทันที) · "
+                + "ค่าปรับล่าช้าอัตโนมัติ (ใบจากรายการประจำ) นับวันล่าช้าจากวันที่ย้าย ไม่ใช่วันครบกำหนดเดิม"),
+            new("แจ้งลูกค้า", issuesPaper
+                ? "ระบบไม่ส่งอัตโนมัติ — ส่งใบเสร็จใบใหม่จากหน้าเอกสาร" + (reissue ? " (อีเมลระบุว่าออกแทนใบเดิม) และแจ้งลูกค้าว่าใบเดิมถูกยกเลิก" : "")
+                  + " · ไม่ส่งข้อความขอบคุณ/งานหลังรับชำระซ้ำ (งานหลังรับชำระที่ยังค้างของการรับชำระนี้ถูกข้าม)"
+                : (reissue ? $"แจ้งลูกค้าว่าใบเสร็จ {m.LiveReceiptNumber} ถูกยกเลิก · " : "") + "ไม่มีเอกสารใหม่ให้ส่ง · ไม่ส่งข้อความขอบคุณ/งานหลังรับชำระซ้ำ (งานหลังรับชำระที่ยังค้างของการรับชำระนี้ถูกข้าม)"),
+            new("ยกเลิกภายหลัง", undoable
+                ? "ย้ายกลับใบเดิมได้ (รายการใหม่อีกสองขา)"
+                : "ไม่มีปุ่มถอด (การย้ายนี้ยกเลิก/ออกใบรับ หรือเปลี่ยนหัวกระดาษของใบปลายทาง — ใบที่ยกเลิกแล้วไม่กลับมาใช้เลขเดิม) — ถ้าย้ายผิด ให้ย้ายกลับเป็นรายการใหม่จากหน้าใบเดิม (ระบบยกเลิก/ออกใบรับตามกติกาเดียวกัน)"),
         };
     }
 
