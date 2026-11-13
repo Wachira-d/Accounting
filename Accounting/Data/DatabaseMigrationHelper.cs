@@ -6848,6 +6848,9 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReplacesDocumentId" uuid NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReplacementReason" text NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReplacedAt" timestamp with time zone NULL;""",
+            // รอบ 266 แพ็ก C ฝ่ายค้าน H2 (266-1-45): ใบแจ้งหนี้ที่ตัวช่วยใบซ้ำ "คงไว้" แต่ขั้นรับเงินยังไม่ครบ — ชี้ใบขายสดที่ยกเลิกแล้ว (แถบแดง + ปุ่มทำขั้นที่เหลือ)
+            // NULL = ไม่มีงานค้าง (ทุกใบเดิม) — ไม่ต้องซ่อมข้อมูลเก่า
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DuplicateSalePendingFromDocumentId" uuid NULL;""",
             // ใบหนึ่งใบถูกแทนได้ครั้งเดียว และเป็นใบแทนของใบเดียว
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_Documents_ReplacesDoc" ON "Documents" ("ReplacesDocumentId") WHERE "ReplacesDocumentId" IS NOT NULL;""",
             // รอบ 200 ทีม V1 (คำตัดสินข้อ 9): ใบแทนแบบ "ยกเลิกและออกใบแทน" — ใบเดิม Voided และผลทางบัญชีย้ายมาใบนี้ (ต่างจากใบแทนกระดาษ §86/6→§86/4)

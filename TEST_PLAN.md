@@ -135,6 +135,11 @@
 | P266-39 | (แพ็ก C) เงินรอจัดสรรถูกจัดสรรให้ใบแจ้งหนี้ทีหลัง → เปิดใบแจ้งหนี้ | สายเอกสารมีโหนด "💰 เงินรอจัดสรร … ตัดชำระ" (ParentId = ใบ · DocumentType null) + ปุ่ม "📄 ใบแจ้งการตัดชำระ" · ใบที่ไม่มีเงินผูกไม่มีโหนดเงิน · การย้ายบอกเลขใบเดิม · มัดจำเปิดใบมัดจำได้ | Db `Chain_ShowsCreditAllocationNode` · pure `Chain_ShowsCreditAllocationNode` · `Chain_MovedPaymentNode_NamesSourceDocument` |
 | P266-40 | (แพ็ก C) ใบแจ้งการนำเงินไปตัดชำระ (HTML/PDF) · ชื่อผู้ติดต่อมีแท็ก HTML · ตัดพร้อมรับเงิน · บริษัทอื่น | พิมพ์ "ไม่ใช่ใบเสร็จรับเงินหรือใบกำกับภาษี" · เลข `ADV-{เลขสมุดรายวัน}` คงที่ · ไม่มีแถวเอกสารเพิ่ม (ไม่มีเลขชุดภาษี/ไม่เข้า ภ.พ.30) · ชื่อถูก HtmlEncode · ตัดพร้อมรับเงิน = `DS-ADVICE-NA` · บริษัทอื่น = ไม่พบ | Db `Advice_NotInVatReport_NoTaxSeries` · pure `Advice_NotInVatReport_NoTaxSeries` · `Advice_OnlyForLiveAllocationsMadeAfterReceipt` · `DocumentLabelsTests` (ไทย/อังกฤษครบคู่) |
 | P266-41 | (แพ็ก C · มือ) หน้าใบขายสด: ปุ่ม "🧾 ใบนี้ซ้ำกับใบแจ้งหนี้?" → เลือกใบ → การ์ดสองตัวเลือก (✅ ทำได้พร้อมผล / ⛔ เหตุ + ทางไปต่อ) → เหตุผลบังคับ → ยืนยัน (ปุ่มกันกดซ้ำ) · ใบลดหนี้ร่างเปิดให้ทันที | ข้อความทั้งหมดจากเซิร์ฟเวอร์ · ไม่มีปุ่มบนใบเสร็จร่าง/ของการชำระ/มัดจำ · ยังไม่ได้คอมไพล์ในเครื่องนี้ | มือ |
+| P266-42 | (ฝ่ายค้าน H1) สองคนยืนยันคนละตัวเลือกพร้อมกัน · ใบที่จะคงไว้ถูกยกเลิกจากหน้าเอกสารก่อนยืนยัน | ชนะหนึ่ง อีกคน 409 · ไม่มีกรณียกเลิกทั้งสองใบ · ด่านใต้ล็อกแถวจับได้เอง (ยอดรับชำระที่เห็น · ใบที่คงไว้ยังมีผล) | Db `OppositeOptions_Concurrent_OnlyOneWins_NeverBothVoided` · `VoidUnderLockGates_PaidSinceSeen_AndKeptDocumentVoided_Refused` · pure `KeptDocumentIsLive_OnlyLiveIssued` |
+| P266-43 | (ฝ่ายค้าน H3/M5) RC เดือนก่อน (VAT 70) + ใบแจ้งหนี้บริการ (พัก 21913) เดือนนี้ → คงใบแจ้งหนี้ | เงินสดสุทธิของเดือนรับเงิน = 1,070 · ภ.พ.30 สองเดือนรวมกันมีภาษีขายของการขายนี้ 70 ครั้งเดียว · RC ไม่อยู่ในรายงาน · เงินรอจัดสรรลงวันที่ RC แล้วจัดสรรทีหลัง | Db `KeepInvoice_ServiceInvoiceAfterCashSale_CrossMonth_VatOnceInPp30_CashInMoneyMonth` · `KeepInvoice_VoidsCashSaleAndRecordsPaymentOnSameDate` |
+| P266-44 | (ฝ่ายค้าน H2) ขั้นตัดชำระล้มหลังยกเลิกใบขายสด → เปิดตัวช่วยอีกครั้ง → ทำขั้นที่เหลือ | DS-PARTIAL "ขั้นที่เหลือ" + ข้อความกฎธุรกิจ · งานค้าง/แถบแดงบนใบแจ้งหนี้ · audit `DOC-DUP-SALE-PARTIAL` · เงินอยู่ที่เงินรอจัดสรร · ผู้สมัคร = คู่เดิม · ตัวเลือก ResumeRemainingStep · ทำต่อแล้วชำระครบ ไม่ลงเงินซ้ำ · ไม่ใช่ DS-VOIDED | Db `KeepInvoice_StepThreeFails_LoudThreePlaces_ThenResumeCompletes` · pure `Resume_AfterVoidedCashSale_OffersRemainingStep_NotVoidedNoop` |
+| P266-45 | (ฝ่ายค้าน M1/L1/L3/L5) ใบลดหนี้เต็มใบ · ใบแจ้งหนี้สินค้าที่ไม่ใช่ใบกำกับ · ข้อผิดพลาด framework · ใบแจ้งของใบที่ยกเลิก/ฝั่งซื้อ | ใบลดหนี้เหตุผล "ปรับยอด" (ไม่คืนสต็อก) · คงใบแจ้งหนี้สินค้า = ผู้ทำบัญชีตัดสิน · ไม่ echo ข้อความ framework · ใบแจ้งปฏิเสธ | Db `KeepCashSale_CreditNoteWhenFiled` · pure `CreditNoteReason_IsAdjustment_NotReturn_AndInnerFailureHidesFrameworkText` · `KeepInvoice_GoodsInvoiceNotTaxInvoice_RequiresAccountant` · `Advice_RefusesVoidedOrPurchaseSideInvoice` |
+| P266-46 | (ฝ่ายค้าน M5) คู่ที่ไม่ซ้ำระดับฐาน: ยอดต่าง · ใบแจ้งหนี้รับชำระแล้ว | ปฏิเสธทั้งสองตัวเลือกด้วยรหัสเฉพาะ | Db `NotDuplicate_AmountDiffers_And_InvoicePaid_Refused_Db` |
 
 ## P264 — คำขอเชื่อมคู่ค้าถึงปลายทางจริง (รอบ 264 · ผู้ใช้รายงาน "B หาที่ยอมรับไม่เจอ" · คำตัดสิน 264-1-1…8 · DOCUMENT_FLOW §2.12l)
 
@@ -1304,7 +1309,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **926 ไฟล์ · 10,042 `[Fact]` + 1,401 `[Theory]` (6,626 `InlineData`)** ณ 2026-11-13 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **926 ไฟล์ · 10,052 `[Fact]` + 1,401 `[Theory]` (6,626 `InlineData`)** ณ 2026-11-13 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

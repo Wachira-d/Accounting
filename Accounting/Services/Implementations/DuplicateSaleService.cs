@@ -24,14 +24,17 @@ public class DuplicateSaleService : IDuplicateSaleService
 {
     private readonly AccountingDbContext _db;
     private readonly IDocumentService _documents;
+    private readonly ICustomerCreditService _credits;
     private readonly IPermissionService? _permissions;
     private readonly ISensitivityService? _sensitivity;
     private const int CandidateCap = 20;
 
-    public DuplicateSaleService(AccountingDbContext db, IDocumentService documents, IPermissionService? permissions = null, ISensitivityService? sensitivity = null)
+    public DuplicateSaleService(AccountingDbContext db, IDocumentService documents, ICustomerCreditService credits,
+        IPermissionService? permissions = null, ISensitivityService? sensitivity = null)
     {
         _db = db;
         _documents = documents;
+        _credits = credits;
         _permissions = permissions;
         _sensitivity = sensitivity;
     }
@@ -62,6 +65,21 @@ public class DuplicateSaleService : IDuplicateSaleService
         var kinds = await VisibleKindsAsync(companyId, userId);
         var origin = await LoadVisibleAsync(companyId, documentId, kinds, "เอกสาร", ct);
         var items = new List<DuplicateSaleCandidate>();
+        // ฝ่ายค้าน H2: งานค้างของตัวช่วย (ใบขายสดถูกยกเลิกแล้ว · ขั้นลงเงิน/ตัดชำระยังไม่ครบ) — เสนอคู่เดิมก่อนเสมอ (ใบขายสดที่ยกเลิกแล้วไม่ผ่านตัวกรองข้างล่าง)
+        var pending = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.DuplicateSalePendingFromDocumentId != null
+                && (d.Id == origin.Id || d.DuplicateSalePendingFromDocumentId == origin.Id))
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.TotalAmount, CashId = d.DuplicateSalePendingFromDocumentId!.Value })
+            .FirstOrDefaultAsync(ct);
+        if (pending != null)
+        {
+            var c = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                .Where(d => d.Id == pending.CashId && d.CompanyId == companyId).Select(d => new { d.DocumentNumber, d.DocumentDate }).FirstOrDefaultAsync(ct);
+            if (c != null)
+                items.Add(new DuplicateSaleCandidate(pending.CashId, c.DocumentNumber, c.DocumentDate, pending.Id, pending.DocumentNumber, pending.DocumentDate,
+                    pending.TotalAmount, $"ขั้นที่เหลือ: ลงเงินของ {c.DocumentNumber} (ยกเลิกแล้ว) แล้วตัดชำระ {pending.DocumentNumber} · {Money(pending.TotalAmount)}"));
+            return new DuplicateSaleCandidatesResponse(origin.Id, origin.DocumentNumber, "resume", DuplicateSalePolicy.PendingBanner, items);
+        }
         var lo = origin.TotalAmount - 0.01m;
         var hi = origin.TotalAmount + 0.01m;
         if (IsCashSale(origin))
@@ -132,6 +150,11 @@ public class DuplicateSaleService : IDuplicateSaleService
             if (!await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userId, DocumentType.CreditNote))
                 missing = "สร้างใบลดหนี้ (Document.Create ของ CreditNote)";
         }
+        else if (action == DuplicateSaleAction.ResumeRemainingStep)
+        {
+            if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, snap.Invoice.Type))
+                missing = $"รับชำระ{DocumentTypeNames.Title(snap.Invoice.Type, null)} (Document.Approve หรือ Document.Revenue.Approve)";
+        }
         else if (action == DuplicateSaleAction.VoidCashSaleAndRecordPayment)
         {
             if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userId, snap.Cash.Type))
@@ -146,7 +169,7 @@ public class DuplicateSaleService : IDuplicateSaleService
     /// <summary>แถว audit ของแต่ละขั้น (เส้นเดิม commit ธุรกรรมของตัวเองแล้ว — มี audit ของเส้นเดิมเอง) · บันทึกแถวนี้ไม่สำเร็จ ⇒ ไม่คืนข้อผิดพลาดของการกระทำที่สำเร็จแล้ว
     /// แต่คืนข้อความดังถึงผู้กด (รูปเดียวกับปุ่มผูก · ฝ่ายค้าน L5 รอบ 266 แพ็ก A) · ชื่อช่องใน NewValues ห้ามซ้ำกันแบบไม่สนตัวพิมพ์ (ผล CI run 43370997579 — commit d3567af4)</summary>
     private async Task<string?> AuditAsync(Guid companyId, Guid userId, string action, DuplicateSaleVerdict v, DuplicateSaleSnapshot snap, string reason,
-        object? extra, CancellationToken ct)
+        object? extra, CancellationToken ct, string ruleCode = DuplicateSalePolicy.RuleCode)
     {
         try
         {
@@ -160,7 +183,7 @@ public class DuplicateSaleService : IDuplicateSaleService
                 NewValues = System.Text.Json.JsonSerializer.Serialize(new
                 {
                     action,
-                    RuleCode = DuplicateSalePolicy.RuleCode,
+                    RuleCode = ruleCode,
                     DuplicateSalePolicy.LegalReference,
                     Keep = v.Keep.ToString(),
                     Route = v.Action.ToString(),   // ห้ามชื่อ "Action" — ชนกับ "action" แบบไม่สนตัวพิมพ์ตอนตัวปกปิดข้อมูลอ่าน JSON กลับ (ร่องรอยหายเงียบ)
@@ -184,6 +207,15 @@ public class DuplicateSaleService : IDuplicateSaleService
 
     private static IReadOnlyList<string> Notices(params string?[] xs) => xs.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).ToList();
 
+    /// <summary>ฝ่ายค้าน H1 (266-1-43): ล็อกระดับ session ต่อ "ใบ" ของคู่ (เรียงคีย์ — ใบขายสดใบเดียวกับใบแจ้งหนี้หลายใบ/กลับกัน ก็ชนกัน) ครอบทั้งการตัดสินซ้ำและทุกขั้น ·
+    /// ไม่เปิดธุรกรรม (เส้นเดิมแต่ละเส้นเปิดของตัวเอง) · ใต้ล็อกแถวของเส้นยกเลิกตรวจอีกชั้นว่าใบที่คงไว้ยังมีผล (<c>keepLiveDocumentId</c>)</summary>
+    private Task<T> UnderPairLockAsync<T>(Guid companyId, Guid cashSaleId, Guid invoiceId, Func<Task<T>> work, CancellationToken ct)
+    {
+        var keys = new[] { cashSaleId, invoiceId }.OrderBy(x => x)
+            .Select(id => AdvisoryLockKey.For(companyId, DuplicateSalePolicy.PairLockScope, id.ToString("N"))).ToArray();
+        return SessionAdvisoryLock.RunAsync(_db, keys[0], () => SessionAdvisoryLock.RunAsync(_db, keys[1], work, ct), ct);
+    }
+
     public async Task<DuplicateSaleResult> ExecuteAsync(Guid companyId, DuplicateSaleRequest request, Guid userId, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -195,8 +227,14 @@ public class DuplicateSaleService : IDuplicateSaleService
         var kinds = await VisibleKindsAsync(companyId, userId);
         await LoadVisibleAsync(companyId, request.CashSaleId, kinds, "ใบขายสด", ct);
         await LoadVisibleAsync(companyId, request.InvoiceId, kinds, "ใบแจ้งหนี้", ct);
+        return await UnderPairLockAsync(companyId, request.CashSaleId, request.InvoiceId,
+            () => ExecuteLockedAsync(companyId, request, keep, reason, userId, ct), ct);
+    }
 
-        // ตัดสินซ้ำจากข้อเท็จจริงล่าสุด + เทียบกุญแจพรีวิว (เส้นเดิมแต่ละเส้นตรวจซ้ำใต้ล็อกของตัวเองอีกชั้น)
+    private async Task<DuplicateSaleResult> ExecuteLockedAsync(Guid companyId, DuplicateSaleRequest request, DuplicateSaleKeep keep, string reason,
+        Guid userId, CancellationToken ct)
+    {
+        // ตัดสินซ้ำจากข้อเท็จจริงล่าสุด "ใต้ล็อกของคู่" + เทียบกุญแจพรีวิว (เส้นเดิมแต่ละเส้นตรวจซ้ำใต้ล็อกแถวของตัวเองอีกชั้น)
         var snap = await _documents.LoadDuplicateSaleFactsAsync(companyId, request.CashSaleId, request.InvoiceId);
         var v = DuplicateSalePolicy.Decide(snap.Cash, snap.Invoice, snap.Context, keep);
         if (!v.Allowed) throw Refused(v);
@@ -211,7 +249,8 @@ public class DuplicateSaleService : IDuplicateSaleService
         {
             case DuplicateSaleAction.VoidInvoice:
             {
-                var voided = await _documents.VoidDocumentAsync(companyId, snap.Invoice.Id, reversalDate: null, expectedPaidAmount: snap.Invoice.PaidAmount);
+                var voided = await _documents.VoidDocumentAsync(companyId, snap.Invoice.Id, reversalDate: null, expectedPaidAmount: snap.Invoice.PaidAmount,
+                    keepLiveDocumentId: snap.Cash.Id);
                 _db.ChangeTracker.Clear();
                 var note = await AuditAsync(companyId, userId, "VoidDuplicateInvoice", v, snap, reason, null, ct);
                 return new DuplicateSaleResult(keep.ToString(), v.Action.ToString(), snap.Invoice.Id, snap.Invoice.Number, null, null, null, null,
@@ -222,48 +261,86 @@ public class DuplicateSaleService : IDuplicateSaleService
             {
                 var cn = await _documents.ConvertDocumentAsync(companyId, snap.Invoice.Id, DocumentType.CreditNote, actor);
                 _db.ChangeTracker.Clear();
+                // ฝ่ายค้าน M1 (266-1-42): เหตุผลในรายการปิดที่ตรงข้อเท็จจริง ("ปรับยอด" — ไม่คืนสต็อก) + หมายเหตุว่าเป็นใบซ้ำ · เฉพาะใบร่างที่เพิ่งสร้าง
+                await _db.Documents.Where(d => d.Id == cn.Id && d.CompanyId == companyId && d.Status == DocumentStatus.Draft)
+                    .ExecuteUpdateAsync(x => x
+                        .SetProperty(d => d.CreditNoteReason, DuplicateSalePolicy.CreditNoteReasonForDuplicate)
+                        .SetProperty(d => d.Notes, DuplicateSalePolicy.CreditNoteNote(snap.Invoice.Number, snap.Cash.Number)), ct);
                 var note = await AuditAsync(companyId, userId, "CreditNoteForDuplicateInvoice", v, snap, reason, new { creditNote = cn.Id, cn.DocumentNumber }, ct);
                 return new DuplicateSaleResult(keep.ToString(), v.Action.ToString(), null, null, cn.Id, cn.DocumentNumber, null, null,
-                    Notices($"สร้างใบลดหนี้ฉบับร่าง {cn.DocumentNumber} เต็มใบอ้าง {snap.Invoice.Number} แล้ว — เลือกเหตุผล (คืนสินค้า/ปรับยอด) แล้วอนุมัติตามขั้นตอนปกติ "
+                    Notices($"สร้างใบลดหนี้ฉบับร่าง {cn.DocumentNumber} เต็มใบอ้าง {snap.Invoice.Number} แล้ว (เหตุผล \"{DuplicateSalePolicy.CreditNoteReasonLabel}\" · ไม่คืนสต็อก) — ตรวจแล้วอนุมัติตามขั้นตอนปกติ "
                         + $"({snap.Invoice.Number} ยกเลิกไม่ได้: {snap.Invoice.TaxLockReason})", note));
             }
             case DuplicateSaleAction.VoidCashSaleAndRecordPayment:
             {
-                // ขั้นที่ 1: ยกเลิกใบขายสด (เส้นเดิม — กลับรายได้/ภาษีขาย/เงินสด/สต็อก) · ยอดที่พรีวิวเห็นตรวจใต้ล็อกแถว
-                var voided = await _documents.VoidDocumentAsync(companyId, snap.Cash.Id, reversalDate: null, expectedPaidAmount: snap.Cash.PaidAmount);
-                _db.ChangeTracker.Clear();
-                var voidNote = await AuditAsync(companyId, userId, "VoidDuplicateCashSale", v, snap, reason, new { next = "RecordPayment", snap.PaymentDate }, ct);
-                // ขั้นที่ 2: บันทึกรับชำระใบแจ้งหนี้ลงวันที่รับเงินจริง เข้าบัญชีเงินเดิมของใบขายสด (ภาษีถูกหัก 0 — ใบขายสดรับเงินเต็ม · ตัวตัดสินปฏิเสธเคสที่มีภาษีถูกหักแล้ว)
-                PaymentResponse pay;
+                // ขั้นที่ 0: ตั้งงานค้างบนใบแจ้งหนี้ก่อนแตะเงิน — ขั้นใดล้มหลังจากนี้ ใบยังบอกสภาพจริงเสมอ (ฝ่ายค้าน H2)
+                await _documents.SetDuplicateSalePendingAsync(companyId, snap.Invoice.Id, snap.Cash.Id);
+                PaymentVoidResult voided;
                 try
                 {
-                    pay = await _documents.CreatePaymentAsync(companyId, new CreatePaymentRequest(
-                            snap.Invoice.Id, snap.PaymentDate, snap.Invoice.BalanceDue,
-                            snap.CashBankAccountId != null ? PaymentMethod.BankTransfer : PaymentMethod.Cash,
-                            Reference: snap.Cash.Number, BankAccount: null,
-                            Notes: $"รับชำระด้วยเงินของใบขายสด {snap.Cash.Number} ที่ยกเลิกเพราะออกซ้ำกับใบนี้ (ตัวช่วยใบซ้ำ) · {reason}",
-                            OverrideBankAccountId: snap.CashBankAccountId, OverridePaymentAccountId: snap.CashPaymentAccountId,
-                            WithholdingTaxAmount: 0m),
-                        actor, PaymentEntrySource.Manual);
+                    // ขั้นที่ 1: ยกเลิกใบขายสด (เส้นเดิม) · ใต้ล็อกแถว: ยอดที่เห็น + ใบแจ้งหนี้ (ใบที่คงไว้) ยังมีผล (ฝ่ายค้าน H1)
+                    voided = await _documents.VoidDocumentAsync(companyId, snap.Cash.Id, reversalDate: null, expectedPaidAmount: snap.Cash.PaidAmount,
+                        keepLiveDocumentId: snap.Invoice.Id);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception)
                 {
-                    // ล้มดัง (ไม่กลืน · F4 E): ขั้นที่ 1 commit แล้ว — บอกสภาพจริง + ทางไปต่อ · เงินไม่หาย (เงินสดของใบขายสดถูกกลับ รอลงที่การรับชำระ)
+                    // ยังไม่มีอะไรเปลี่ยน ⇒ ล้างงานค้างแล้วโยนต่อ (ห้ามกลืน)
                     _db.ChangeTracker.Clear();
-                    throw new BusinessRuleException(
-                        $"ยกเลิก {snap.Cash.Number} แล้ว แต่บันทึกรับชำระ {snap.Invoice.Number} ไม่สำเร็จ: {ex.Message} — "
-                        + $"ทางไปต่อ: กด \"💰 บันทึกชำระเงิน\" ที่ {snap.Invoice.Number} ลงวันที่ {DuplicateSalePolicy.Day(snap.PaymentDate)} ยอด {Money(snap.Invoice.BalanceDue)} เข้าบัญชีเงินเดิมของ {snap.Cash.Number}",
-                        ex, DuplicateSalePolicy.PartialCode, 409);
+                    await _documents.SetDuplicateSalePendingAsync(companyId, snap.Invoice.Id, null);
+                    throw;
                 }
                 _db.ChangeTracker.Clear();
-                var payNote = await AuditAsync(companyId, userId, "RecordPaymentForDuplicateCashSale", v, snap, reason, new { payment = pay.Id, pay.PaymentNumber }, ct);
-                return new DuplicateSaleResult(keep.ToString(), v.Action.ToString(), snap.Cash.Id, snap.Cash.Number, null, null, pay.Id, pay.PaymentNumber,
-                    Notices($"ยกเลิก {snap.Cash.Number} และบันทึกรับชำระ {snap.Invoice.Number} ({pay.PaymentNumber}) ลงวันที่ {DuplicateSalePolicy.Day(snap.PaymentDate)} แล้ว",
-                        "ถ้าจับคู่รายการเดินบัญชีธนาคารไว้กับใบขายสด ให้จับคู่ใหม่กับการรับชำระ",
-                        voided.EtaxCancellationFlag, voided.OutputVatNotice, voided.CreditNotice, voidNote, payNote));
+                var voidNote = await AuditAsync(companyId, userId, "VoidDuplicateCashSale", v, snap, reason, new { next = "RecordCreditThenAllocate", snap.AllocationDate }, ct);
+                var step1 = Notices(voided.EtaxCancellationFlag, voided.OutputVatNotice, voided.CreditNotice, voidNote);
+                return await RemainingStepsAsync(companyId, v, snap, reason, userId, keep, step1, ct);
             }
+            case DuplicateSaleAction.ResumeRemainingStep:
+                return await RemainingStepsAsync(companyId, v, snap, reason, userId, keep, Array.Empty<string>(), ct);
             default:
                 throw Refused(v);
+        }
+    }
+
+    /// <summary>ขั้นที่ 2 (ลงเงินเป็นเงินรอจัดสรรลงวันที่รับเงินจริง · ทำซ้ำได้) + ขั้นที่ 3 (จัดสรรให้ใบแจ้งหนี้ผ่านเส้นเงินรอจัดสรรเดิม — ภาษีขายตาม LateReceiptTaxPoint) ·
+    /// ฝ่ายค้าน H2: ล้ม = ดัง 3 ที่ (แถว audit <c>DOC-DUP-SALE-PARTIAL</c> · งานค้างบนใบแจ้งหนี้คงอยู่ + แถบแดง · คำตอบผู้เรียก DS-PARTIAL พร้อมข้อความของขั้นที่ 1)</summary>
+    private async Task<DuplicateSaleResult> RemainingStepsAsync(Guid companyId, DuplicateSaleVerdict v, DuplicateSaleSnapshot snap, string reason, Guid userId,
+        DuplicateSaleKeep keep, IReadOnlyList<string> step1Notices, CancellationToken ct)
+    {
+        var actor = userId.ToString();
+        var stage = "ลงเงินเป็นเงินรอจัดสรร";
+        DuplicateSaleCreditResult? credit = null;
+        try
+        {
+            credit = await _documents.RecordDuplicateSaleCreditAsync(companyId, snap.Cash.Id, snap.Invoice.Id, actor);
+            _db.ChangeTracker.Clear();
+            stage = "ตัดชำระใบแจ้งหนี้";
+            var alloc = await _credits.AllocateAsync(companyId, credit.PaymentId,
+                new AllocateCustomerCreditRequest(snap.Invoice.Id, snap.Invoice.BalanceDue, snap.AllocationDate, ExpectedUnappliedBefore: credit.Unapplied), actor, ct);
+            _db.ChangeTracker.Clear();
+            await _documents.SetDuplicateSalePendingAsync(companyId, snap.Invoice.Id, null);
+            var note = await AuditAsync(companyId, userId, "CreditAndAllocateForDuplicateCashSale", v, snap, reason,
+                new { payment = credit.PaymentId, credit.PaymentNumber, alloc.AllocatedAmount }, ct);
+            return new DuplicateSaleResult(keep.ToString(), v.Action.ToString(), snap.Cash.Id, snap.Cash.Number, null, null, credit.PaymentId, credit.PaymentNumber,
+                Notices(new[]
+                    {
+                        $"ยกเลิก {snap.Cash.Number} แล้ว · ลงเงิน {Money(snap.Cash.TotalAmount)} เป็นเงินรอจัดสรร {credit.PaymentNumber} ลงวันที่รับเงินจริง {DuplicateSalePolicy.Day(snap.Cash.DocumentDate)} "
+                            + $"แล้วตัดชำระ {snap.Invoice.Number} ลงวันที่ {DuplicateSalePolicy.Day(snap.AllocationDate)}",
+                        "ถ้าจับคู่รายการเดินบัญชีธนาคารไว้กับใบขายสด ให้จับคู่ใหม่กับรายการรับเงิน " + credit.PaymentNumber,
+                    }.Concat(step1Notices).Concat(alloc.Notices).Append(note).ToArray()));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // ล้มดัง (ไม่กลืน · F4 E): งานค้างบนใบแจ้งหนี้ยังอยู่ (แถบแดง + ปุ่มทำขั้นที่เหลือ) · ร่องรอยของความล้มเหลว · ข้อความของขั้นที่ 1 ไม่หาย
+            _db.ChangeTracker.Clear();
+            var partialNote = await AuditAsync(companyId, userId, "DuplicateSaleRemainingStepFailed", v, snap, reason,
+                new { stage, creditPayment = credit?.PaymentNumber, error = ex.GetType().Name }, ct, DuplicateSalePolicy.PartialRuleCode);
+            var tail = string.Join(" · ", step1Notices.Append(partialNote).Where(x => !string.IsNullOrWhiteSpace(x)));
+            var cause = DuplicateSalePolicy.InnerFailureText(ex);
+            throw new BusinessRuleException(
+                $"ขั้นที่เหลือ: {snap.Cash.Number} ยกเลิกแล้ว แต่ขั้น \"{stage}\" ไม่สำเร็จ — {cause} · "
+                + $"ทางไปต่อ: เปิด {snap.Invoice.Number} แล้วกด \"ทำขั้นที่เหลือต่อ\" (หรือเปิดตัวช่วยใบซ้ำอีกครั้ง) — ระบบลงเงินลงวันที่ {DuplicateSalePolicy.Day(snap.Cash.DocumentDate)} "
+                + "เข้าบัญชีเงินเดิมแล้วตัดชำระ (ขั้นที่ทำไปแล้วไม่ทำซ้ำ)" + (tail.Length > 0 ? " · " + tail : ""),
+                ex, DuplicateSalePolicy.PartialCode, 409);
         }
     }
 }

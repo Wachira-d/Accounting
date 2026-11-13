@@ -50,7 +50,9 @@ public partial class PdfGenerationService
             (a.AppliedAt ?? a.CreatedAt).Date, journalRef,
             IsLateAllocation: a.IsLateAllocation, IsMovedAllocation: a.MovedFromAllocationId != null,
             Released: a.ReleasedAt != null, AllocationDeleted: a.IsDeleted, PaymentVoided: p.IsDeleted,
-            RemainingUnapplied: Math.Max(0m, p.UnappliedAmount));
+            RemainingUnapplied: Math.Max(0m, p.UnappliedAmount),
+            InvoiceVoided: inv.IsDeleted || inv.Status == Accounting.Models.Enums.DocumentStatus.Voided,
+            InvoiceIsSalesSide: CustomerCreditAllocation.TargetTypes.Contains(inv.DocumentType));
         var model = PaymentApplicationAdvice.Build(facts);   // ไม่ผ่าน = throw (ข้อความไทย + ทางไปต่อ)
 
         var company = await _db.Companies.AsNoTracking().FirstAsync(c => c.Id == companyId);

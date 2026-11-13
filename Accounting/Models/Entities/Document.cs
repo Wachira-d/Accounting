@@ -518,6 +518,9 @@ public class Document : TenantEntity
     public Guid? ReplacesDocumentId { get; set; }
     /// <summary>เหตุผลที่ต้องออกใบแทน (เก็บไว้ให้ผู้สอบบัญชี)</summary>
     public string? ReplacementReason { get; set; }
+    /// <summary>รอบ 266 แพ็ก C ฝ่ายค้าน H2 (266-1-45): ตัวช่วยใบซ้ำ "คงใบนี้ไว้" และยกเลิกใบขายสด (id นี้) แล้ว แต่ขั้นลงเงิน/ตัดชำระยังไม่ครบ —
+    /// หน้าเอกสารวาดแถบแดง + ปุ่ม "ทำขั้นที่เหลือต่อ" · ตัวช่วยเปิดซ้ำตอบ "ขั้นที่เหลือ" · ล้างเมื่อตัดชำระครบ · null = ไม่มีงานค้าง</summary>
+    public Guid? DuplicateSalePendingFromDocumentId { get; set; }
     /// <summary>คำตัดสินข้อ 139: ใบนี้ถูก "ผูก" เข้าใบต้นทางภายหลัง (ไม่ได้แปลงมา) เมื่อไร/โดยใคร — มีค่า = ยกเลิกการผูกได้ ·
     /// null = แปลงมาจริงหรือไม่ได้ผูก (ยกเลิกการผูกไม่ได้ กันแปลงซ้ำแล้วได้สองใบ)</summary>
     public DateTime? SourceLinkedAt { get; set; }

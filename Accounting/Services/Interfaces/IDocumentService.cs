@@ -148,7 +148,9 @@ public interface IDocumentService
     /// <returns>รอบ 201 ทีม DV (A-DV4): ข้อความธง/ภาษีจากการยกเลิกการชำระใน cascade — ผู้เรียกที่มีผู้กดต้องแสดง (ไม่มี = <c>PaymentVoidResult.None</c>)</returns>
     /// <param name="expectedPaidAmount">รอบ 266 แพ็ก C: ยอดรับชำระที่ผู้เรียกเห็นตอนพรีวิว (ตัวช่วยใบซ้ำ) — ใต้ล็อกแถวต่างไป หรือใบถูกยกเลิกไปก่อนแล้ว = 409 DS-STALE
     /// (ไม่ยกเลิกการรับชำระที่เกิดระหว่างนั้นแบบ cascade เงียบ ๆ) · null = ไม่ตรวจ (พฤติกรรมเดิม)</param>
-    Task<PaymentVoidResult> VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null, decimal? expectedPaidAmount = null);
+    /// <param name="keepLiveDocumentId">รอบ 266 แพ็ก C ฝ่ายค้าน H1: ใบคู่ที่ตัวช่วยใบซ้ำ "คงไว้" — ล็อกทั้งคู่เรียง Id แล้วตรวจใต้ล็อกว่ายังมีผล (ไม่มีผล = 409 DS-STALE) · null = ไม่ตรวจ</param>
+    Task<PaymentVoidResult> VoidDocumentAsync(Guid companyId, Guid documentId, DateTime? reversalDate = null, decimal? expectedPaidAmount = null,
+        Guid? keepLiveDocumentId = null);
     /// <summary>ย้ายวันที่ JE กลับรายการของเอกสารที่ยกเลิกไปแล้ว ให้ไปอยู่งวดที่
     /// ถูกต้อง — สำหรับใบที่ถูกยกเลิกก่อนระบบใช้ "วันที่เอกสาร" เป็นค่าเริ่มต้น
     /// (รายการกลับไปตกเดือนที่กด). คืนจำนวน JE ที่ย้าย</summary>
@@ -357,6 +359,11 @@ public interface IDocumentService
 
     /// <summary>รอบ 266 แพ็ก C — ข้อเท็จจริงของคู่ใบซ้ำ (ใบขายสด ↔ ใบแจ้งหนี้) สำหรับ <c>Helpers/DuplicateSalePolicy</c> (อ่านอย่างเดียว · tenant) · ไม่พบใบ = KeyNotFound</summary>
     Task<DuplicateSaleSnapshot> LoadDuplicateSaleFactsAsync(Guid companyId, Guid cashSaleId, Guid invoiceId);
+    /// <summary>รอบ 266 แพ็ก C ฝ่ายค้าน H3 (266-1-41): ลงเงินของใบขายสดที่ตัวช่วยยกเลิกแล้วเป็นเงินรอจัดสรร (21630) ลงวันที่รับเงินจริง เข้าช่องทางเงินเดิม ·
+    /// ธุรกรรมเดียว · ทำซ้ำได้ (ลงไว้แล้ว = คืนรายการเดิม) · ใบขายสดยังไม่ถูกยกเลิก = 409</summary>
+    Task<DuplicateSaleCreditResult> RecordDuplicateSaleCreditAsync(Guid companyId, Guid cashSaleId, Guid invoiceId, string actor);
+    /// <summary>ตั้ง/ล้างงานค้างของตัวช่วยใบซ้ำบนใบแจ้งหนี้ (ฝ่ายค้าน H2 · <c>Document.DuplicateSalePendingFromDocumentId</c>) · null = ล้าง</summary>
+    Task SetDuplicateSalePendingAsync(Guid companyId, Guid invoiceId, Guid? cashSaleId);
 
     /// <summary>รอบ 266 แพ็ก B — ย้ายการรับชำระที่ตัดผิดใบไปใบที่ถูก (ผู้ติดต่อเดียวกัน): สองขาผ่าน 21630 อ้างเลขการรับชำระเดิม · ขาเงินสดไม่ถูกแตะ ·
     /// ใบเสร็จที่อ้างใบเดิมถูกยกเลิก + ออกใบแทนลงวันที่รับเงินเดิม · ตัดสินซ้ำใต้ล็อกด้วย <c>ReceiptLinkPolicy.Decide</c> · ล้ม = ไม่มีอะไรถูกบันทึก</summary>

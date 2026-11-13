@@ -11540,6 +11540,10 @@
             actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openReceiptLink('${Layout.jsArg(d.id)}')" title="เลือกใบเสร็จร่าง · เงินรอจัดสรร · ใบมัดจำ ของผู้ติดต่อเดียวกันมาตัดยอดค้าง — ระบบแสดงผลก่อนยืนยัน">${rlInvoiceSide ? '🔗 ผูกใบเสร็จ/เงินที่รับไว้แล้ว' : '🔗 ผูกกับใบแจ้งหนี้'}</button>`;
           }
           // รอบ 266 แพ็ก C — ตัวช่วยใบซ้ำ (ใบขายสด ↔ ใบแจ้งหนี้ของการขายเดียวกัน) · เซิร์ฟเวอร์ตัดสินจากข้อมูลบนใบ (canOpenDuplicateSale) — ผู้สมัครโหลดเมื่อกด
+          // ฝ่ายค้าน H2 (266-1-45): งานค้างของตัวช่วยใบซ้ำบนใบที่คงไว้ — ปุ่มทำขั้นที่เหลือ (เซิร์ฟเวอร์ตัดสินว่าทำอะไร)
+          if (d.duplicateSalePendingFromDocumentId) {
+            actions += ` <button data-g="more" class="btn btn-danger" onclick="Page._dsPreviewAndResolve('${Layout.jsArg(d.duplicateSalePendingFromDocumentId)}', '${Layout.jsArg(d.id)}')" title="${Layout.esc(d.duplicateSalePendingNotice || '')}">⚠️ ทำขั้นที่เหลือต่อ (ตัวช่วยใบซ้ำ)</button>`;
+          }
           if (d.canOpenDuplicateSale === true) {
             actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openDuplicateSale('${Layout.jsArg(d.id)}')" title="ใบขายสดใบนี้กับใบแจ้งหนี้ของผู้ติดต่อเดียวกันเป็นการขายเดียวกันไหม — ผู้ทำบัญชีเลือกใบที่คงไว้ ระบบแสดงผลก่อนยืนยัน">🧾 ใบนี้ซ้ำกับใบแจ้งหนี้?</button>`;
           }
@@ -11681,6 +11685,17 @@
                 this.renderChainStepper(cres?.data || [], d.id);
               } catch (e) { /* สายโหลดไม่ได้ — ไม่กระทบ detail หลัก */ }
             })();
+          }
+
+          // ฝ่ายค้าน H2: แถบแดงงานค้างของตัวช่วยใบซ้ำ (ข้อความจากเซิร์ฟเวอร์)
+          if (d.duplicateSalePendingFromDocumentId && d.duplicateSalePendingNotice) {
+            const dc0 = document.getElementById('detailContent');
+            if (dc0) {
+              const bar = document.createElement('div');
+              bar.style.cssText = 'margin:0 0 12px;padding:10px 12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;color:#991b1b;font-size:13px';
+              bar.textContent = '⚠️ ' + d.duplicateSalePendingNotice;
+              dc0.prepend(bar);
+            }
           }
 
           // ประวัติ revision ของเอกสาร (async ไม่ block การเปิด modal) —
@@ -13677,13 +13692,14 @@
         catch (e) { Layout.toast(e.message || 'ดูผลไม่สำเร็จ', 'error', 10000); return; }
         if (!p) return;
         const opts = p.options || [];
-        const keepLabel = k => k === 'CashSale' ? `คง ${p.cashSaleNumber} (ใบขายสด) — ${p.invoiceNumber} คือใบที่ซ้ำ` : `คง ${p.invoiceNumber} (ใบแจ้งหนี้) — ${p.cashSaleNumber} คือใบที่ซ้ำ`;
+        const keepLabel = (k, action) => action === 'ResumeRemainingStep' ? `ขั้นที่เหลือ: ลงเงินของ ${p.cashSaleNumber} (ยกเลิกแล้ว) แล้วตัดชำระ ${p.invoiceNumber}`
+          : k === 'CashSale' ? `คง ${p.cashSaleNumber} (ใบขายสด) — ${p.invoiceNumber} คือใบที่ซ้ำ` : `คง ${p.invoiceNumber} (ใบแจ้งหนี้) — ${p.cashSaleNumber} คือใบที่ซ้ำ`;
         const optHtml = opts.map(o => {
           const body = o.allowed
             ? `<table style="font-size:12.5px;width:100%">${(o.effects || []).map(x => `<tr><td style="padding:2px 8px 2px 0;vertical-align:top;white-space:nowrap"><b>${Layout.esc(x.label)}</b></td><td style="padding:2px 0">${Layout.esc(x.detail)}</td></tr>`).join('')}</table>`
             : `${/*html — หนีแล้วใน _rlReasonHtml*/ this._rlReasonHtml({ reason: o.message, wayForward: o.wayForward })}<div class="text-xs text-gray-500">${Layout.esc(o.ruleCode || '')}</div>`;
           return `<div style="border:1px solid ${o.allowed ? '#a7f3d0' : '#e2e8f0'};background:${o.allowed ? '#f0fdf4' : '#f8fafc'};border-radius:8px;padding:8px 10px;margin-bottom:8px">
-            <div style="font-weight:700;margin-bottom:4px">${o.allowed ? '✅' : '⛔'} ${Layout.esc(keepLabel(o.keep))}</div>${/*html — ประกอบจาก Layout.esc แล้ว*/ body}</div>`;
+            <div style="font-weight:700;margin-bottom:4px">${o.allowed ? '✅' : '⛔'} ${Layout.esc(keepLabel(o.keep, o.action))}</div>${/*html — ประกอบจาก Layout.esc แล้ว*/ body}</div>`;
         }).join('');
         const allowed = opts.filter(o => o.allowed);
         const headHtml = `<div class="text-sm" style="margin-bottom:8px">${Layout.esc(p.cashSaleNumber)} กับ ${Layout.esc(p.invoiceNumber)} ยอด ${Layout.money(p.totalAmount)} — ใบกำกับสองใบต่อการขายเดียว = รายได้/ภาษีขาย (+สต็อก) นับสองครั้ง · เลือกใบที่ลูกค้าใช้เคลมภาษีซื้อคงไว้</div>`;
@@ -13694,7 +13710,7 @@
         }
         const f = await Layout.formDialog({ title: 'ตัวช่วยใบซ้ำ — ตรวจผลก่อนยืนยัน', messageHtml: headHtml + optHtml + legal, okText: 'ยืนยัน',
           fields: [
-            { key: 'keep', label: 'ใบที่คงไว้', type: 'select', required: true, value: '0', options: allowed.map((o, i) => ({ value: String(i), label: keepLabel(o.keep) })) },
+            { key: 'keep', label: 'ใบที่คงไว้', type: 'select', required: true, value: '0', options: allowed.map((o, i) => ({ value: String(i), label: keepLabel(o.keep, o.action) })) },
             { key: 'reason', label: 'เหตุผลว่าทำไมเป็นการขายเดียวกัน (เก็บให้ผู้สอบบัญชี)', type: 'textarea', required: true },
           ] });
         if (!f || !String(f.reason || '').trim()) return;
@@ -13708,7 +13724,12 @@
           Layout.closeModal('detailModal');
           await this.load();
           if (res?.data?.creditNoteId) this.detail(res.data.creditNoteId);   // ใบลดหนี้ร่าง — เปิดให้เลือกเหตุผลแล้วอนุมัติ
-        } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error', 15000); }
+        } catch (e) {
+          // ฝ่ายค้าน H2: ความล้มเหลว (รวม "ขั้นที่เหลือ" DS-PARTIAL) ค้างจอจนผู้ใช้ปิด + โหลดใบใหม่ให้เห็นแถบแดง/ปุ่มทำขั้นที่เหลือ — ไม่ใช่ toast ที่หายเอง
+          await Layout.notice({ title: 'ทำรายการไม่ครบ', messageHtml: Layout.esc(e.message || 'ทำรายการไม่สำเร็จ') });
+          Layout.closeModal('detailModal');
+          await this.load();
+        }
         finally { this._dsBusy = false; }
       },
       /** รอบ 266 แพ็ก C (266-1-6) — ดาวน์โหลด "ใบแจ้งการนำเงินไปตัดชำระ" (ไม่ใช่ใบรับ/ใบกำกับภาษี) ของแถวจัดสรร */

@@ -422,6 +422,8 @@ public static class SettlementPaidReissue
         nameof(Document.ReplacementOfNumber), nameof(Document.ReplacementOfDate),
         // รอบ 267 P2: คำตอบของลูกค้าต่อ Rev ของใบเดิม (ภาพฉายของ CustomerDocumentActions) — "ไม่สืบทอดไปใบลูก" ⇒ ไม่ตามไปใบแทน
         nameof(Document.CustomerResponse), nameof(Document.CustomerResponseAt),
+        // รอบ 266 แพ็ก C ฝ่ายค้าน H2: งานค้างของตัวช่วยใบซ้ำ ผูกกับใบเดิม (ชี้ใบขายสดที่ยกเลิกแล้ว) — ใบแทนไม่รับงานค้างไปโดยอัตโนมัติ
+        nameof(Document.DuplicateSalePendingFromDocumentId),
         nameof(Document.EtaxCancelRequiredAt), nameof(Document.EtaxCancelRequiredReason), nameof(Document.InternalNotes),
         nameof(Document.WhtAdviceAiFeedbackId), nameof(Document.WhtAdviceAnswer), nameof(Document.WhtAdviceUsedAi),
         nameof(Document.Pp36RdReceiptNumber), nameof(Document.Pp36RdReceiptDate), nameof(Document.OcrIntelTrainedAt),

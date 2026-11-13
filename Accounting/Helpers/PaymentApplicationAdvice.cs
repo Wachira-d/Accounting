@@ -21,7 +21,9 @@ public sealed record PaymentApplicationAdviceFacts(
     bool Released,
     bool AllocationDeleted,
     bool PaymentVoided,
-    decimal RemainingUnapplied);
+    decimal RemainingUnapplied,
+    bool InvoiceVoided = false,
+    bool InvoiceIsSalesSide = true);
 
 /// <summary>เนื้อหาของใบแจ้ง (ทั้งสอง renderer วาดจากตัวนี้ตัวเดียว — กฎเหล็ก #4 A)</summary>
 /// <param name="IsTaxDocument">false เสมอ — ไม่ใช่ใบกำกับภาษี/ใบรับ (ไม่มีเลขชุดภาษี · ไม่เข้า ภ.พ.30 · 266-1-6)</param>
@@ -57,6 +59,10 @@ public static class PaymentApplicationAdvice
     {
         if (f.PaymentVoided)
             return $"การรับชำระ {f.PaymentNumber} ถูกยกเลิกแล้ว — ไม่มีการตัดชำระให้แจ้ง";
+        if (!f.InvoiceIsSalesSide)
+            return $"{f.InvoiceNumber} ไม่ใช่เอกสารตั้งลูกหนี้ฝั่งขาย — ใบแจ้งการนำเงินไปตัดชำระออกให้ลูกค้าได้เฉพาะเงินรับจากลูกค้า (ฝ่ายค้าน L5)";
+        if (f.InvoiceVoided)
+            return $"{f.InvoiceNumber} ถูกยกเลิก/ลบแล้ว — การตัดชำระไม่มีผลแล้ว จึงออกใบแจ้งไม่ได้";
         if (f.AllocationDeleted || f.Released)
             return $"การตัดชำระ {f.InvoiceNumber} ด้วยเงินของ {f.PaymentNumber} ถูกยกเลิก/ย้ายออกไปแล้ว — ไม่มีผลแล้ว จึงออกใบแจ้งไม่ได้ (เปิดจากใบที่เงินตัดอยู่ตอนนี้)";
         if (!f.IsLateAllocation && !f.IsMovedAllocation)
