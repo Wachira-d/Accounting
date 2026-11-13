@@ -391,6 +391,10 @@ Accounting/Controllers/PublicChatController.cs	Rate	1
 Accounting/Controllers/PublicChatController.cs	RequestAgent	1
 Accounting/Controllers/PublicChatController.cs	Vote	1
 Accounting/Controllers/PublicDocumentPageController.cs	RequestLink	1
+# รอบ 267 P2: ลูกค้าตอบรับเอกสารบนหน้าเอกสาร — ทางเข้าสาธารณะโดยตั้งใจ (สิทธิ์ = token 256 บิตของใบ · ฐานเก็บ hash · ทำได้เฉพาะปุ่มที่ CustomerDocPage.Actions เปิด ณ ตอนนั้น ·
+# ผู้ลงนามครบ + ฉบับที่เห็น · เพดานต่อ IP · ผู้เขียนเดียว CustomerDocumentResponseService — ล็อกด้วย required_call_site_check R267b)
+Accounting/Controllers/PublicDocumentPageController.cs	Respond	1
+Accounting/Controllers/PublicDocumentPageController.cs	RespondOtp	1
 Accounting/Controllers/PublicPaymentController.cs	StartBooking	1
 # รอบ 241: ลิงก์ชำระเงินของเอกสาร — ทางเข้าสาธารณะโดยตั้งใจ (สิทธิ์ = token 256 บิต · ฐานเก็บ hash · ยอด/ช่องทางจากเซิร์ฟเวอร์ · เพดานสร้างรายการ 20/ชม./ใบเดิมของ StartAsync)
 Accounting/Controllers/PublicPaymentController.cs	StartDocument	1
