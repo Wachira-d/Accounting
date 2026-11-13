@@ -54,6 +54,15 @@ public static class SettlementChartSeed
         });
     }
 
+    /// <summary>อ่านอย่างเดียว: <see cref="EnsureStandardAccountAsync"/> จะคืนผังได้ไหม (มีแถวแล้ว รวมที่ลบ/ปิด — กู้คืนได้ · หรือมีกลุ่มแม่ที่ใช้งาน) —
+    /// สำหรับพรีวิว/ด่านก่อนเริ่มเส้นหลายขั้น (รอบ 266 แพ็ก C · ไม่สร้างผังตอนพรีวิว) · เงื่อนไขเดียวกับตัวสร้าง</summary>
+    public static async Task<bool> CanProvideAsync(AccountingDbContext db, Guid companyId, string code, CancellationToken ct = default)
+    {
+        if (await db.ChartOfAccounts.IgnoreQueryFilters().AsNoTracking().AnyAsync(a => a.CompanyId == companyId && a.AccountCode == code, ct)) return true;
+        var parentCode = ParentGroupCode(code);
+        return await db.ChartOfAccounts.AsNoTracking().AnyAsync(a => a.CompanyId == companyId && a.AccountCode == parentCode && a.IsActive, ct);
+    }
+
     private static async Task<Guid?> CreateUnderLockAsync(AccountingDbContext db, Guid companyId, string code, CancellationToken ct)
     {
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", new object[] { AdvisoryLockKey.For(companyId, LockScope, code) }, ct);

@@ -23,8 +23,11 @@ public enum DuplicateSaleAction
     VoidInvoice,
     /// <summary>ใบแจ้งหนี้อยู่ในงวดภาษีที่ยื่นแล้ว/ถึงกรมสรรพากรแล้ว ⇒ สร้างใบลดหนี้ฉบับร่างเต็มใบในงวดปัจจุบัน (เส้นแปลงเอกสารเดิม · §86/10)</summary>
     CreditNoteInvoice,
-    /// <summary>ยกเลิกใบขายสดที่ซ้ำ แล้วบันทึกรับชำระใบแจ้งหนี้ลงวันที่รับเงินจริงด้วยบัญชีเงินเดิม (<c>VoidDocumentAsync</c> + <c>CreatePaymentAsync</c> เดิม)</summary>
+    /// <summary>ยกเลิกใบขายสดที่ซ้ำ → ลงเงินของมันเป็นเงินรอจัดสรร (21630) ลงวันที่รับเงินจริงเข้าบัญชีเงินเดิม → จัดสรรให้ใบแจ้งหนี้ผ่านเส้นเงินรอจัดสรรเดิม
+    /// (ภาษีขายเข้างวดของวันรับเงินตาม <c>LateReceiptTaxPoint</c> · 266-1-41) — ชื่อเดิมคงไว้ให้ผู้เรียก/หน้าเว็บที่อ่านชื่อ</summary>
     VoidCashSaleAndRecordPayment,
+    /// <summary>ฝ่ายค้าน H2 (266-1-45): ตัวช่วยยกเลิกใบขายสดไปแล้วแต่ขั้นลงเงิน/ตัดชำระยังไม่ครบ ⇒ ทำขั้นที่เหลือต่อ (ไม่ยกเลิกอะไรเพิ่ม)</summary>
+    ResumeRemainingStep,
     /// <summary>ทั้งสองทางของตัวเลือกนี้ทำอัตโนมัติไม่ได้ — ผู้ทำบัญชีตัดสิน (266-1-5 "ยกเลิกไม่ได้ทั้งสองทาง ⇒ ไม่อัตโนมัติ")</summary>
     RequiresAccountant,
 }
@@ -57,7 +60,9 @@ public sealed record DuplicateSaleDocFacts(
 /// <param name="InvoiceHasLivePayments">ใบแจ้งหนี้มีการรับชำระ/จัดสรร/หักมัดจำที่ยังมีผล</param>
 /// <param name="InvoiceLiveCreditNoteNumber">ใบลดหนี้ที่ยังมีผล (รวมฉบับร่าง) ที่อ้างใบแจ้งหนี้ · null = ไม่มี</param>
 /// <param name="InvoiceCreditNoteAllowed">ชนิดของใบแจ้งหนี้แปลงเป็นใบลดหนี้ได้ (ตารางแปลงเอกสาร <c>DocumentService.GetValidConversionTargets</c>)</param>
-/// <param name="PaymentDateProblem">บันทึกรับชำระลงวันที่ <see cref="DuplicateSalePolicy.PaymentDate"/> ไม่ได้ (งวดบัญชีปิด) · null = ได้</param>
+/// <param name="PaymentDateProblem">ลงเงินลงวันที่รับเงินจริง หรือจัดสรรลงวันที่ <see cref="DuplicateSalePolicy.AllocationDate"/> ไม่ได้ (งวดบัญชีปิด · ภ.พ.30 ของเดือนที่ภาษีจะลงยื่น/ล็อกแล้ว · ฝ่ายค้าน M3) · null = ได้</param>
+/// <param name="ResumePending">ใบแจ้งหนี้มีงานค้างของตัวช่วยที่ชี้ใบขายสดนี้ (<c>Document.DuplicateSalePendingFromDocumentId</c>) — ใบขายสดถูกยกเลิกแล้ว ขั้นที่เหลือคือลงเงิน/ตัดชำระ</param>
+/// <param name="InvoiceGoodsVatNotTaxInvoice">ใบแจ้งหนี้ชนิด "ใบแจ้งหนี้" (ไม่ใช่ใบกำกับ) ที่ลงภาษีขาย 21911 ไว้แล้ว — คงใบนี้ = ลูกค้าไม่เหลือใบกำกับเต็มรูปที่ยังมีผล (ฝ่ายค้าน L1)</param>
 /// <param name="SameTaxIdOtherBranch">ผู้ติดต่อสองแถวเลขผู้เสียภาษีเดียวกันคนละสาขา</param>
 /// <param name="InvoiceWithholdingTax">ภาษีถูกหัก ณ ที่จ่ายที่ใบแจ้งหนี้คาดไว้ (ใบขายสดรับเงินเต็ม — ระบบไม่เดาว่าลูกค้าหักหรือไม่)</param>
 public sealed record DuplicateSaleContext(
@@ -70,7 +75,9 @@ public sealed record DuplicateSaleContext(
     bool InvoiceCreditNoteAllowed = false,
     string? PaymentDateProblem = null,
     bool SameTaxIdOtherBranch = false,
-    decimal InvoiceWithholdingTax = 0m);
+    decimal InvoiceWithholdingTax = 0m,
+    bool ResumePending = false,
+    bool InvoiceGoodsVatNotTaxInvoice = false);
 
 /// <summary>ผลตัดสินของตัวเลือกหนึ่ง — <see cref="Allowed"/> = ทำได้ด้วย <see cref="Action"/> · ไม่ได้ = รหัส + ข้อความ + ทางไปต่อ (F2 ข้อ 8)</summary>
 public sealed record DuplicateSaleVerdict(
@@ -140,10 +147,24 @@ public static class DuplicateSalePolicy
         => asSource.ContactId != Guid.Empty && Issued(asSource.Status)
            && ReceiptLinkPolicy.Classify(asSource) == ReceiptLinkKind.StandaloneSale;
 
-    /// <summary>วันที่ของการรับชำระเมื่อคงใบแจ้งหนี้ (266-1-38): วันรับเงินจริง (วันที่ของใบขายสด) แต่ไม่ก่อนวันที่ของใบแจ้งหนี้ — ลูกหนี้ของใบนั้นยังไม่เกิด
-    /// (สูตรเดียวกับวันที่ลงของเส้นย้ายการรับชำระ 266-1-24)</summary>
-    public static DateTime PaymentDate(DateTime cashSaleDate, DateTime invoiceDate)
+    /// <summary>ฝ่ายค้าน H3 (266-1-41 แทน 266-1-38): วันที่<b>จัดสรร</b>เงินรอจัดสรรให้ใบแจ้งหนี้ (Dr 21630 / Cr ลูกหนี้) = วันรับเงินจริงแต่ไม่ก่อนวันที่ใบแจ้งหนี้
+    /// (ลูกหนี้ยังไม่เกิด · สูตรเดียวกับ 266-1-24) — <b>เงินสด/ธนาคารลงวันที่ใบขายสดเสมอ</b> (ขาเงินรอจัดสรร) · ภาษีขายตาม <c>LateReceiptTaxPoint</c> (เดือนรับเงิน)</summary>
+    public static DateTime AllocationDate(DateTime cashSaleDate, DateTime invoiceDate)
         => (cashSaleDate.Date > invoiceDate.Date ? cashSaleDate : invoiceDate).Date;
+
+    /// <summary>ฝ่ายค้าน H1: ใบที่ "คงไว้" ยังมีผลไหม (ตรวจใต้ล็อกแถวของเส้นยกเลิก) — ยกเลิก/ลบ/ถูกแทน/ไม่พบ = ไม่มีผล ⇒ ห้ามยกเลิกอีกใบของคู่</summary>
+    public static bool KeptDocumentIsLive(DocumentStatus? status, bool isDeleted, bool isReplaced)
+        => status is DocumentStatus st && st is not (DocumentStatus.Voided or DocumentStatus.Rejected) && !isDeleted && !isReplaced;
+
+    /// <summary>ฝ่ายค้าน H2: แถบแดงบนใบแจ้งหนี้ที่ขั้นลงเงิน/ตัดชำระของตัวช่วยยังไม่ครบ (ข้อความเดียวของ DTO และหน้าเว็บ)</summary>
+    public const string PendingBanner =
+        "ตัวช่วยใบซ้ำยกเลิกใบขายสดของการขายนี้แล้ว แต่ยังลงเงิน/ตัดชำระใบนี้ไม่ครบ (เงินที่รับจริงอาจยังไม่อยู่ในบัญชี) — กด \"ทำขั้นที่เหลือต่อ\" เพื่อลงเงินเป็นเงินรอจัดสรรลงวันที่รับเงินจริงแล้วตัดชำระใบนี้";
+
+    /// <summary>รหัสกฎของแถว audit เมื่อขั้นหลังการยกเลิกล้ม (ฝ่ายค้าน H2 — ร่องรอยของความล้มเหลว ไม่ใช่แค่ "กำลังจะทำ")</summary>
+    public const string PartialRuleCode = "DOC-DUP-SALE-PARTIAL";
+
+    /// <summary>ฝ่ายค้าน H1 (266-1-43): scope ของล็อก advisory ต่อใบของคู่ (ครอบการตัดสินซ้ำ + ทุกขั้นของตัวช่วย)</summary>
+    public const string PairLockScope = "dup-sale-doc";
 
     private static DuplicateSaleVerdict No(DuplicateSaleKeep keep, string code, string message, string way,
         DuplicateSaleAction action = DuplicateSaleAction.Refused)
@@ -197,6 +218,17 @@ public static class DuplicateSalePolicy
     /// <summary>ตัดสินตัวเลือก <paramref name="keep"/> ของคู่ใบ (ใบขายสด <paramref name="cash"/> · ใบแจ้งหนี้ <paramref name="inv"/>)</summary>
     public static DuplicateSaleVerdict Decide(DuplicateSaleDocFacts cash, DuplicateSaleDocFacts inv, DuplicateSaleContext ctx, DuplicateSaleKeep keep)
     {
+        // ฝ่ายค้าน H2: งานค้างของตัวช่วยเอง — ใบขายสดถูกยกเลิกแล้ว ⇒ "ขั้นที่เหลือ" (ไม่ใช่ DS-VOIDED "ไม่ต้องทำอะไร")
+        if (ctx.ResumePending && cash.Status == DocumentStatus.Voided)
+        {
+            if (keep == DuplicateSaleKeep.CashSale)
+                return No(keep, PartialCode, $"ขั้นที่เหลือ: {cash.Number} ถูกตัวช่วยยกเลิกไปแล้ว (เลือกคงใบแจ้งหนี้) — คงใบขายสดไม่ได้อีก",
+                    $"ทำขั้นที่เหลือของ \"คงใบแจ้งหนี้\" ต่อ: ลงเงินของ {cash.Number} เป็นเงินรอจัดสรรแล้วตัดชำระ {inv.Number}");
+            if (inv.IsDeleted || inv.IsReplaced || inv.Status is DocumentStatus.Voided or DocumentStatus.Rejected)
+                return No(keep, AccountantCode, $"ขั้นที่เหลือ: {inv.Number} ไม่มีผลแล้ว — ตัดชำระไม่ได้",
+                    $"ให้ผู้ทำบัญชีตัดสิน: เงินของ {cash.Number} อยู่ที่หน้า \"เงินรอจัดสรร\" (ถ้าลงแล้ว) — คืนเงินหรือจัดสรรให้ใบที่ถูก", DuplicateSaleAction.RequiresAccountant);
+            return Yes(keep, DuplicateSaleAction.ResumeRemainingStep);
+        }
         if (PairRefusal(cash, inv, ctx) is { } pair)
             return No(keep, pair.Code, pair.Message, pair.WayForward);
 
@@ -227,8 +259,11 @@ public static class DuplicateSalePolicy
         if (cash.VoidBlock is string cashBlock)
             return No(keep, AccountantCode, $"ยกเลิก {cash.Number} ไม่ได้ — {cashBlock}",
                 $"เลือก \"คงใบขายสด\" แทน หรือให้ผู้ทำบัญชีจัดการเอกสารที่อ้าง {cash.Number} ก่อน", DuplicateSaleAction.RequiresAccountant);
+        if (ctx.InvoiceGoodsVatNotTaxInvoice)
+            return No(keep, AccountantCode, $"{inv.Number} เป็นใบแจ้งหนี้ (ไม่ใช่ใบกำกับภาษี) ที่ลงภาษีขายไว้แล้ว — ยกเลิก {cash.Number} แล้วลูกค้าจะไม่เหลือใบกำกับภาษีเต็มรูปที่ยังมีผลไว้เคลมภาษีซื้อ (ม.86/4 · ม.82/5(1))",
+                $"เลือก \"คงใบขายสด\" แทน หรือแปลง {inv.Number} เป็นใบกำกับภาษีก่อนแล้วเปิดตัวช่วยใหม่", DuplicateSaleAction.RequiresAccountant);
         if (ctx.PaymentDateProblem is string period)
-            return No(keep, PeriodCode, $"บันทึกรับชำระ {inv.Number} ลงวันที่รับเงินจริง ({Day(PaymentDate(cash.DocumentDate, inv.DocumentDate))}) ไม่ได้ — {period}",
+            return No(keep, PeriodCode, $"ลงเงินของ {cash.Number} ลงวันที่รับเงินจริง ({Day(cash.DocumentDate)}) หรือตัดชำระ {inv.Number} ลงวันที่ {Day(AllocationDate(cash.DocumentDate, inv.DocumentDate))} ไม่ได้ — {period}",
                 "เลือก \"คงใบขายสด\" แทน หรือให้ผู้ทำบัญชีเปิดงวด/ปรับปรุงรายการ (ใบรับต้องลงวันที่รับเงิน · ม.105 ทวิ)", DuplicateSaleAction.RequiresAccountant);
         return Yes(keep, DuplicateSaleAction.VoidCashSaleAndRecordPayment);
     }
@@ -254,27 +289,51 @@ public static class DuplicateSalePolicy
                 list.Add(new("ใบที่คงไว้", $"{cash.Number} (ใบขายสด) — ไม่ถูกแตะ"));
                 list.Add(new("ใบแจ้งหนี้เดิม", $"{inv.Number} ยกเลิกไม่ได้ ({inv.TaxLockReason}) — ไม่ถูกแตะ (ห้ามแก้ย้อนหลัง · ม.86/4)"));
                 list.Add(new("ใบลดหนี้", $"ระบบสร้างใบลดหนี้ฉบับร่างเต็มใบ ({Money(inv.TotalAmount)}) อ้าง {inv.Number} ลงวันที่วันนี้ (งวดปัจจุบัน · ม.86/10) ผ่านเส้นแปลงเอกสารเดิม — "
-                    + "ผู้ทำบัญชีเลือกเหตุผล (\"คืนสินค้า\" เมื่อสต็อกถูกตัดสองรอบ · \"ปรับยอด\" เมื่อไม่มีสินค้า) แล้วอนุมัติตามขั้นตอนปกติ"));
+                    + $"เหตุผล \"{CreditNoteReasonLabel}\" (ออกใบกำกับซ้ำ/ยกเลิกการขายที่บันทึกซ้ำ — ไม่ใช่การคืนสินค้า · ไม่คืนสต็อก) ตั้งให้แล้ว · ผู้ทำบัญชีตรวจแล้วอนุมัติตามขั้นตอนปกติ"));
+                list.Add(new("สต็อก", "ใบลดหนี้นี้ไม่คืนสต็อก (ไม่มีการคืนสินค้าจริง) — ถ้าสต็อกถูกตัดสองรอบ ให้ปรับด้วยใบปรับสต็อกแยกต่างหาก"));
                 list.Add(new("เมื่ออนุมัติใบลดหนี้", $"ลูกหนี้ของ {inv.Number} เป็น 0 · ภาษีขายลดในงวดปัจจุบัน · ใบลดหนี้ส่งให้ลูกค้าได้ตามปกติ"));
                 list.Add(new("แจ้งลูกค้า", "ระบบไม่ส่งอัตโนมัติ — ส่งใบลดหนี้หลังอนุมัติจากหน้าเอกสาร"));
                 break;
             case DuplicateSaleAction.VoidCashSaleAndRecordPayment:
+            case DuplicateSaleAction.ResumeRemainingStep:
             {
-                var payDate = PaymentDate(cash.DocumentDate, inv.DocumentDate);
+                var allocDate = AllocationDate(cash.DocumentDate, inv.DocumentDate);
+                var resume = v.Action == DuplicateSaleAction.ResumeRemainingStep;
                 list.Add(new("ใบที่คงไว้", $"{inv.Number} — ลูกหนี้ {Money(inv.BalanceDue)} จะถูกปิดด้วยเงินที่รับจริง"));
-                list.Add(new("ขั้นที่ 1 ยกเลิกใบขายสด", $"ยกเลิก {cash.Number} ผ่านเส้นยกเลิกเอกสารเดิม — กลับรายได้ + ภาษีขาย + เงินสด/ธนาคาร (+ คืนสต็อก) ลงวันที่ของใบ · คงแถวไว้เป็นใบที่ยกเลิก ไม่ลบ"));
-                list.Add(new("ขั้นที่ 2 บันทึกรับชำระ", $"บันทึกรับชำระ {inv.Number} {Money(inv.BalanceDue)} ลงวันที่ {Day(payDate)} เข้าบัญชีเงินเดิมของ {cash.Number} (อ้างอิง {cash.Number}) — "
-                    + "ใบเสร็จของการรับชำระออกตามกติกาเดิม ลงวันที่รับเงิน"
-                    + (payDate != cash.DocumentDate.Date ? $" · {inv.Number} ลงวันที่หลัง {cash.Number} จึงลงวันที่ของใบแจ้งหนี้ (ลูกหนี้ยังไม่เกิดก่อนวันนั้น)" : "")));
-                list.Add(new("เงินสด/ธนาคาร", $"รายการเงินของ {cash.Number} ถูกกลับแล้วลงใหม่ที่การรับชำระ — ถ้าจับคู่รายการเดินบัญชีธนาคารไว้ ต้องจับคู่ใหม่กับการรับชำระ"));
-                list.Add(new("ภาษีขาย", $"ภาษีขายของการขายนี้เหลือที่ {inv.Number} ใบเดียว (ใบแจ้งหนี้ที่พักภาษีขาย ภาษีเข้างวดของวันรับเงินตามกติกาเดิม)"));
-                list.Add(new("ถ้าขั้นที่ 2 ล้ม", $"ระบบแจ้งทันทีว่า {cash.Number} ยกเลิกแล้วแต่ยังไม่ได้บันทึกรับชำระ — ให้บันทึกรับชำระที่ {inv.Number} ลงวันที่ {Day(payDate)} เอง (ไม่มีอะไรหายเงียบ)"));
-                list.Add(new("แจ้งลูกค้า", $"ระบบไม่ส่งอัตโนมัติ — แจ้งลูกค้าว่า {cash.Number} ถูกยกเลิก และส่งใบเสร็จของ {inv.Number} แทน"));
+                list.Add(new("ขั้นที่ 1 ยกเลิกใบขายสด", resume
+                    ? $"{cash.Number} ถูกยกเลิกแล้ว (ทำไปแล้ว — ไม่ทำซ้ำ)"
+                    : $"ยกเลิก {cash.Number} ผ่านเส้นยกเลิกเอกสารเดิม — กลับรายได้ + ภาษีขาย + เงินสด/ธนาคาร (+ คืนสต็อก) ลงวันที่ของใบ · คงแถวไว้เป็นใบที่ยกเลิก ไม่ลบ"));
+                list.Add(new("ขั้นที่ 2 ลงเงิน", $"ลงเงิน {Money(cash.TotalAmount)} เป็นเงินรอจัดสรร (เดบิต เงินสด/ธนาคารเดิมของ {cash.Number} / เครดิต 21630) ลงวันที่รับเงินจริง {Day(cash.DocumentDate)} "
+                    + "— เงินสด/ธนาคารอยู่เดือนที่เงินเข้าจริง (ลงไว้แล้ว = ไม่ลงซ้ำ)"));
+                list.Add(new("ขั้นที่ 3 ตัดชำระ", $"จัดสรรเงินรอจัดสรรนั้นให้ {inv.Number} ลงวันที่ {Day(allocDate)} (เดบิต 21630 / เครดิต ลูกหนี้) ผ่านเส้นเงินรอจัดสรรเดิม"
+                    + (allocDate != cash.DocumentDate.Date ? $" · {inv.Number} ลงวันที่หลัง {cash.Number} จึงตัดชำระวันที่ของใบแจ้งหนี้ (ลูกหนี้ยังไม่เกิดก่อนวันนั้น)" : "")));
+                list.Add(new("ภาษีขาย", $"ใบแจ้งหนี้ที่พักภาษีขาย (21913): ภาษีเข้างวดของวันรับเงินจริง ({Day(cash.DocumentDate)}) ตาม LateReceiptTaxPoint · ใบกำกับภาษี: ภาษีอยู่ที่วันที่ของใบกำกับตามเดิม · ภ.พ.30 เหลือใบกำกับใบเดียวต่อการขาย"));
+                list.Add(new("เงินสด/ธนาคาร", $"รายการเงินของ {cash.Number} ถูกกลับแล้วลงใหม่ที่เงินรอจัดสรรวันเดียวกัน — ถ้าจับคู่รายการเดินบัญชีธนาคารไว้ ต้องจับคู่ใหม่กับรายการรับเงินใหม่"));
+                list.Add(new("ถ้าขั้นที่ 2/3 ล้ม", $"ใบ {inv.Number} ติดแถบแดง \"ขั้นที่เหลือ\" + ร่องรอย {PartialRuleCode} · เปิดตัวช่วยอีกครั้งได้ปุ่มทำขั้นที่เหลือต่อ (ไม่มีอะไรหายเงียบ)"));
+                list.Add(new("แจ้งลูกค้า", $"ระบบไม่ส่งอัตโนมัติ — แจ้งลูกค้าว่า {cash.Number} ถูกยกเลิก และส่ง \"ใบแจ้งการนำเงินไปตัดชำระ\"/ใบเสร็จของ {inv.Number} แทน"));
                 break;
             }
         }
         return list;
     }
+
+    /// <summary>ฝ่ายค้าน M1 (266-1-42): เหตุผลของใบลดหนี้เมื่อใบแจ้งหนี้ซ้ำกับใบขายสด — ในรายการปิด <c>CreditNoteReason</c> คือ "ปรับยอด" (ไม่กระทบสต็อก)
+    /// ไม่ใช่ "คืนสินค้า" (ไม่มีการคืนจริง = ข้อเท็จจริงบนเอกสารภาษีผิด)</summary>
+    public static CreditNoteReason CreditNoteReasonForDuplicate => CreditNoteReason.Adjustment;
+    public const string CreditNoteReasonLabel = "ปรับยอด";
+
+    /// <summary>หมายเหตุบนใบลดหนี้ร่าง (ข้อความถึงผู้อ่านเอกสาร)</summary>
+    public static string CreditNoteNote(string invoiceNumber, string cashSaleNumber) =>
+        $"ลดหนี้เต็มใบของ {invoiceNumber} ซึ่งออกซ้ำกับใบขายสด {cashSaleNumber} ของการขายเดียวกัน (ยกเลิกการขายที่บันทึกซ้ำ)";
+
+    /// <summary>หมายเหตุของเงินรอจัดสรรที่ลงจากใบขายสดที่ยกเลิกเพราะซ้ำ (เหตุผล "ค้างออกใบ" — ส่งของ/ให้บริการแล้ว ใบแจ้งหนี้คือใบที่คงไว้)</summary>
+    public static string CreditPaymentNote(string cashSaleNumber, string invoiceNumber) =>
+        $"เงินของใบขายสด {cashSaleNumber} ที่ยกเลิกเพราะซ้ำกับ {invoiceNumber} (ตัวช่วยใบซ้ำ) — รอตัดชำระ {invoiceNumber}";
+
+    /// <summary>ฝ่ายค้าน L3: ข้อความถึงผู้ใช้เมื่อขั้นข้างในล้ม — ข้อความของกฎธุรกิจผ่านได้ · ข้อผิดพลาดของระบบ/framework ไม่ echo (F4 E)</summary>
+    public static string InnerFailureText(Exception ex) => ex is BusinessRuleException br
+        ? br.Message
+        : "ระบบบันทึกไม่สำเร็จ (ข้อผิดพลาดภายใน) — ลองอีกครั้ง หรือแจ้งผู้ดูแลระบบ";
 
     /// <summary>กุญแจพรีวิว — hash ของข้อเท็จจริงที่ใช้ตัดสิน (ตัวเดียวทั้งฝั่งพรีวิวและฝั่งยืนยัน) · เปลี่ยน = 409 <see cref="StaleCode"/></summary>
     public static string PreviewToken(DuplicateSaleKeep keep, DuplicateSaleAction action, DuplicateSaleDocFacts cash, DuplicateSaleDocFacts inv)

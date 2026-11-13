@@ -1072,6 +1072,10 @@ public record DocumentResponse(
     bool CanOpenReceiptLink = false,
     /// <summary>รอบ 266 แพ็ก C: วาดปุ่ม "ใบนี้ซ้ำกับใบแจ้งหนี้?" (ตัวช่วยใบซ้ำ) ไหม — ใบขายสดที่ออกเลขแล้ว + ระบุผู้ติดต่อ (DuplicateSalePolicy.OffersWizardButton · ไม่แตะฐาน)</summary>
     bool CanOpenDuplicateSale = false,
+    /// <summary>รอบ 266 แพ็ก C ฝ่ายค้าน H2: ใบขายสดที่ตัวช่วยใบซ้ำยกเลิกไปแล้วแต่ขั้นลงเงิน/ตัดชำระใบนี้ยังไม่ครบ (echo จาก Document) · null = ไม่มีงานค้าง</summary>
+    Guid? DuplicateSalePendingFromDocumentId = null,
+    /// <summary>ข้อความแถบแดงของงานค้าง (เซิร์ฟเวอร์ประกอบ — <c>DuplicateSalePolicy.PendingBanner</c>) · null = ไม่มี</summary>
+    string? DuplicateSalePendingNotice = null,
     // ทีมตรวจงานค้าง 2026-10-08 (C-02): ใบวางบิลรวมใบแจ้งหนี้ — หน้าเว็บซ่อนแปลง/รับชำระที่ใบวางบิล แล้วโชว์ "รับชำระตามใบวางบิล" (เซิร์ฟเวอร์ตัดสิน)
     bool IsRollupBillingNote = false,
     /// <summary>คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A): ติ๊ก "สร้าง 50 ทวิ อัตโนมัติ" ของใบ</summary>

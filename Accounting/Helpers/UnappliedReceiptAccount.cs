@@ -28,6 +28,10 @@ public static class UnappliedReceiptAccount
         return id ?? throw new BusinessRuleException(MissingMessage, RuleCode);
     }
 
+    /// <summary>อ่านอย่างเดียว: ผัง 21630 มีหรือสร้างได้ไหม (ด่านก่อนเส้นหลายขั้นของตัวช่วยใบซ้ำ — ไม่สร้างผังตอนพรีวิว)</summary>
+    public static Task<bool> IsAvailableAsync(AccountingDbContext db, Guid companyId, CancellationToken ct = default)
+        => SettlementChartSeed.CanProvideAsync(db, companyId, Code, ct);
+
     /// <summary>SQL ใส่ผัง 21630 ให้บริษัทเดิมที่มีกลุ่ม 216 (<c>ON CONFLICT DO NOTHING</c> — รันทุกบูตได้)</summary>
     public static string MigrationSeedSql() => SettlementChartSeed.SeedSqlFor(new[] { Code });
 }

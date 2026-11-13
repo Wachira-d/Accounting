@@ -38,7 +38,19 @@ public partial class DocumentService
             .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.DocumentType == DocumentType.CreditNote
                 && d.RelatedDocumentId == inv.Id && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
             .Select(d => d.DocumentNumber).FirstOrDefaultAsync();
-        var payDate = DuplicateSalePolicy.PaymentDate(cash.DocumentDate, inv.DocumentDate);
+        // ฝ่ายค้าน H3 (266-1-41): เงินลงวันที่ใบขายสด (วันรับเงินจริง) · จัดสรรลงวันที่ไม่ก่อนใบแจ้งหนี้ · ฝ่ายค้าน M3: ตรวจทั้งงวดบัญชีและงวด ภ.พ.30 ที่ภาษีจะลง
+        var allocDate = DuplicateSalePolicy.AllocationDate(cash.DocumentDate, inv.DocumentDate);
+        var invPostedVat = inv.VatAmount > 0m && await PostedOutputVatAsync(companyId, inv.Id);
+        var invPendingVat = inv.DocumentType == DocumentType.Invoice && inv.VatAmount > 0.005m && inv.OutputVatDueAt == null && !invPostedVat;
+        var dateProblem = await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, cash.DocumentDate.Date)
+            ?? await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, allocDate);
+        // ขั้นลงเงินต้องมีผังพัก 21630 (หรือกลุ่ม 216 ให้สร้าง) — ไม่มี ⇒ บอกก่อนยกเลิกใบใด (ไม่ให้เกิดงานค้างที่รู้ล่วงหน้าว่าทำต่อไม่ได้)
+        if (dateProblem == null && !await UnappliedReceiptAccount.IsAvailableAsync(_db, companyId))
+            dateProblem = UnappliedReceiptAccount.MissingMessage;
+        if (dateProblem == null && invPendingVat)
+            dateProblem = await OutputVatPeriodLockReasonAsync(companyId, cash.DocumentDate.Date)
+                ?? await CreditAllocationVatLockReasonAsync(companyId, allocDate);
+        var existingCredit = await DuplicateSaleCreditPaymentAsync(companyId, cash.Id);
         var sameEntityOtherBranch = cash.ContactId != inv.ContactId && cash.ContactId != Guid.Empty && inv.ContactId != Guid.Empty
             && (await ContactTaxBranchKey.SameEntityIdsAsync(_db.Contacts.AsNoTracking(), companyId, cash.ContactId)).Contains(inv.ContactId);
 
@@ -50,11 +62,86 @@ public partial class DocumentService
             InvoiceHasLivePayments: invLive,
             InvoiceLiveCreditNoteNumber: liveCn,
             InvoiceCreditNoteAllowed: GetValidConversionTargets(inv.DocumentType).Contains(DocumentType.CreditNote),
-            PaymentDateProblem: await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, payDate),
+            PaymentDateProblem: dateProblem,
             SameTaxIdOtherBranch: sameEntityOtherBranch,
-            InvoiceWithholdingTax: inv.WithholdingTaxAmount);
-        return new DuplicateSaleSnapshot(cashFacts, invFacts, ctx, cash.BankAccountId, cash.PaymentAccountId, payDate);
+            InvoiceWithholdingTax: inv.WithholdingTaxAmount,
+            ResumePending: inv.DuplicateSalePendingFromDocumentId == cash.Id,
+            InvoiceGoodsVatNotTaxInvoice: inv.DocumentType == DocumentType.Invoice && invPostedVat);
+        return new DuplicateSaleSnapshot(cashFacts, invFacts, ctx, cash.BankAccountId, cash.PaymentAccountId, allocDate,
+            existingCredit?.Id, existingCredit?.UnappliedAmount ?? 0m);
     }
+
+    /// <summary>เงินรอจัดสรรที่ตัวช่วยใบซ้ำลงไว้จากใบขายสดนี้ (ยังมีผล) — <c>Payment.DocumentId</c> = ใบขายสด + มีผังพัก · null = ยังไม่ลง</summary>
+    private Task<Payment?> DuplicateSaleCreditPaymentAsync(Guid companyId, Guid cashSaleId)
+        => _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.DocumentId == cashSaleId && p.UnappliedAccountId != null)
+            .OrderBy(p => p.CreatedAt).FirstOrDefaultAsync();
+
+    /// <inheritdoc />
+    public async Task<DuplicateSaleCreditResult> RecordDuplicateSaleCreditAsync(Guid companyId, Guid cashSaleId, Guid invoiceId, string actor)
+    {
+        DuplicateSaleCreditResult? result = null;
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync();
+            // ล็อกใบขายสดก่อนอ่าน — กันลงเงินซ้ำจากสองคำขอ (ทำต่อ/กดซ้ำ) · ทำซ้ำได้: ลงไว้แล้ว = คืนรายการเดิม
+            var cash = await _db.Documents
+                .FromSqlRaw("SELECT * FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", cashSaleId, companyId)
+                .IgnoreQueryFilters().AsNoTracking().FirstOrDefaultAsync()
+                ?? throw new KeyNotFoundException("ไม่พบใบขายสด");
+            if (cash.Status != DocumentStatus.Voided)
+                throw new BusinessRuleException($"ใบ {cash.DocumentNumber} ยังไม่ถูกยกเลิก — ลงเงินของใบนี้เป็นเงินรอจัดสรรไม่ได้ (เงินจะนับสองครั้ง)",
+                    DuplicateSalePolicy.StaleCode, 409);
+            var existing = await DuplicateSaleCreditPaymentAsync(companyId, cash.Id);
+            if (existing != null)
+            {
+                result = new DuplicateSaleCreditResult(existing.Id, existing.PaymentNumber, existing.UnappliedAmount, Created: false);
+                await tx.RollbackAsync();
+                return;
+            }
+            var channel = DocumentMoneyChannel.ForPayment(null, null, cash.BankAccountId, cash.PaymentAccountId);
+            // ฝ่ายค้าน L4: วิธีชำระของการรับเงินเดิม (ใบกำกับขายเงินสดที่มีรายการรับชำระ) — ไม่มี = เดาจากช่องทางเงิน (ใบเสร็จไม่มีช่องวิธีชำระ)
+            var method = await _db.Payments.AsNoTracking().IgnoreQueryFilters()
+                .Where(p => p.CompanyId == companyId && p.DocumentId == cash.Id && p.UnappliedAccountId == null)
+                .OrderBy(p => p.CreatedAt).Select(p => (PaymentMethod?)p.PaymentMethod).FirstOrDefaultAsync()
+                ?? (channel.BankAccountId != null ? PaymentMethod.BankTransfer : PaymentMethod.Cash);
+            var invNumber = await _db.Documents.AsNoTracking().Where(d => d.Id == invoiceId && d.CompanyId == companyId)
+                .Select(d => d.DocumentNumber).FirstOrDefaultAsync() ?? "";
+            var payment = new Payment
+            {
+                CompanyId = companyId,
+                PaymentNumber = await NextPaymentNumberAsync(companyId),
+                // ใบของเงินก้อนนี้ = ใบขายสดที่ยกเลิกแล้ว (ที่มาของเงิน) — ไม่ชี้ใบแจ้งหนี้ (ผู้อ่าน "การชำระของใบ" จะนับซ้ำกับแถวจัดสรร)
+                DocumentId = cash.Id,
+                ContactId = cash.ContactId,
+                PaymentDate = cash.DocumentDate.Date,   // วันรับเงินจริง (ฝ่ายค้าน H3)
+                Amount = cash.TotalAmount,
+                PaymentMethod = method,
+                Reference = cash.DocumentNumber,
+                BankAccountId = channel.BankAccountId,
+                OverridePaymentAccountId = channel.PaymentAccountId,
+                WithholdingTaxAmount = 0m,
+                Notes = DuplicateSalePolicy.CreditPaymentNote(cash.DocumentNumber, invNumber),
+                CreatedBy = actor,
+            };
+            _db.Payments.Add(payment);
+            await _db.SaveChangesAsync();
+            await PostUnappliedCreditAsync(companyId, payment, cash.TotalAmount, UnappliedReason.UninvoicedSupply,
+                DuplicateSalePolicy.CreditPaymentNote(cash.DocumentNumber, invNumber), "เงินของใบขายสดที่ยกเลิกเพราะซ้ำ (รอจัดสรร)", actor);
+            if (payment.BankAccountId is Guid bankId)
+                await _db.BankAccounts.Where(b => b.Id == bankId && b.CompanyId == companyId)
+                    .ExecuteUpdateAsync(x => x.SetProperty(b => b.CurrentBalance, b => b.CurrentBalance + cash.TotalAmount));
+            await tx.CommitAsync();
+            result = new DuplicateSaleCreditResult(payment.Id, payment.PaymentNumber, payment.UnappliedAmount, Created: true);
+        });
+        return result!;
+    }
+
+    /// <inheritdoc />
+    public async Task SetDuplicateSalePendingAsync(Guid companyId, Guid invoiceId, Guid? cashSaleId)
+        => await _db.Documents.Where(d => d.Id == invoiceId && d.CompanyId == companyId)
+            .ExecuteUpdateAsync(x => x.SetProperty(d => d.DuplicateSalePendingFromDocumentId, cashSaleId));
 
     /// <summary>ข้อเท็จจริงของใบหนึ่งใบ — เหตุที่ยกเลิกไม่ได้เพราะภาษี (แยกจากเหตุอื่น: ภาษีติด ⇒ ใบลดหนี้งวดปัจจุบัน · เหตุอื่น ⇒ ผู้ทำบัญชีตัดสิน)</summary>
     private async Task<DuplicateSaleDocFacts> DuplicateSaleDocFactsAsync(Guid companyId, Document doc)

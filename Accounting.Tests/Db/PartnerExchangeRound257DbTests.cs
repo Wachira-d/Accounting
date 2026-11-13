@@ -266,11 +266,8 @@ public class PartnerExchangeRound257DbTests
         {
             var row = await check.TradingPartnerships.AsNoTracking().SingleAsync(p => p.CompanyAId == target.Co.Id || p.CompanyBId == target.Co.Id);
             Assert.Equal(TradingPartnershipStatus.Pending, row.Status);
-            // เข้าคิวแจ้ง — งานส่งของคลาสเทสต์อื่นที่รันขนานบนฐานเดียวกัน (outbox สแกนทั้งฐาน) อาจหยิบแถวไปส่งแล้วก่อนเราอ่าน (CI run 43380265759)
-            // ⇒ "ถูกจัดการโดยงานเบื้องหลังแล้ว" ก็คือเข้าคิวจริง · ด่าน "ไม่เขียนกระดิ่งในคำขอ" ตรวจเฉพาะเมื่อแถวยังรออยู่ (ถ้าส่งแล้ว กระดิ่งมาจากงานส่ง ไม่ใช่จากคำขอ)
-            Assert.True(row.InviteNoticeDueAt != null || row.InviteNotifiedAt != null, "คำขอต้องเข้าคิวแจ้ง (หรือถูกงานส่งหยิบไปแล้ว)");
-            if (row.InviteNotifiedAt == null)
-                Assert.False(await check.Notifications.AnyAsync(n => n.UserId == target.Owner));   // ไม่มีงานแจ้งในคำขอ (เวลาตอบคงที่)
+            Assert.NotNull(row.InviteNoticeDueAt);                                        // เข้าคิวแจ้ง
+            Assert.False(await check.Notifications.AnyAsync(n => n.UserId == target.Owner));   // ไม่มีงานแจ้งในคำขอ (เวลาตอบคงที่)
         }
         // ผู้เชิญไม่ได้รับสัญญาณใดในบริษัทตัวเอง (P-1)
         Assert.False(await check.Notifications.AnyAsync(n => n.CompanyId == inviter.Id));

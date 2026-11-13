@@ -26,8 +26,8 @@ public class DuplicateSalePolicyTests
 
     private static DuplicateSaleContext Ctx(ReceiptLinkKind kind = ReceiptLinkKind.StandaloneSale, bool creditNoteAllowed = true,
         bool invoicePayments = false, string? liveCn = null, decimal cashWht = 0m, decimal invWht = 0m, string? periodProblem = null,
-        bool fromCredit = false, bool branch = false)
-        => new(kind, fromCredit, cashWht, false, invoicePayments, liveCn, creditNoteAllowed, periodProblem, branch, invWht);
+        bool fromCredit = false, bool branch = false, bool resume = false, bool goodsVatNotTaxInvoice = false)
+        => new(kind, fromCredit, cashWht, false, invoicePayments, liveCn, creditNoteAllowed, periodProblem, branch, invWht, resume, goodsVatNotTaxInvoice);
 
     // ───────── คงใบขายสด ─────────
 
@@ -71,7 +71,7 @@ public class DuplicateSalePolicyTests
         var inv = Inv(date: D0.AddDays(-2));   // ใบแจ้งหนี้ออกก่อน — เงินรับวันใบขายสด
         var v = DuplicateSalePolicy.Decide(cash, inv, Ctx(), DuplicateSaleKeep.Invoice);
         Assert.Equal((true, DuplicateSaleAction.VoidCashSaleAndRecordPayment), (v.Allowed, v.Action));
-        Assert.Equal(D0, DuplicateSalePolicy.PaymentDate(cash.DocumentDate, inv.DocumentDate));
+        Assert.Equal(D0, DuplicateSalePolicy.AllocationDate(cash.DocumentDate, inv.DocumentDate));
         Assert.Contains(DuplicateSalePolicy.Effects(v, cash, inv), e => e.Detail.Contains("ลงวันที่ 03/11/2026", StringComparison.Ordinal));
     }
 
@@ -79,7 +79,7 @@ public class DuplicateSalePolicyTests
     public void KeepInvoice_InvoiceAfterCashSale_PaysOnInvoiceDate()
     {
         // 266-1-38: ลูกหนี้ของใบแจ้งหนี้ยังไม่เกิดก่อนวันที่ใบ — รับชำระลงวันที่ใบแจ้งหนี้ (สูตรเดียวกับวันที่ลงของเส้นย้าย 266-1-24)
-        Assert.Equal(D0.AddDays(5), DuplicateSalePolicy.PaymentDate(D0, D0.AddDays(5)));
+        Assert.Equal(D0.AddDays(5), DuplicateSalePolicy.AllocationDate(D0, D0.AddDays(5)));
         var v = DuplicateSalePolicy.Decide(Cash(date: D0), Inv(date: D0.AddDays(5)), Ctx(), DuplicateSaleKeep.Invoice);
         Assert.Contains(DuplicateSalePolicy.Effects(v, Cash(date: D0), Inv(date: D0.AddDays(5))),
             e => e.Detail.Contains("ลงวันที่หลัง", StringComparison.Ordinal));
@@ -237,5 +237,65 @@ public class DuplicateSalePolicyTests
         Assert.True(n.HasAdvice);
         // ไม่มีข้อมูล = ไม่มีโหนด (ทิศตรงข้าม — สายเดิมไม่เปลี่ยน)
         Assert.Empty(DocumentChainMoney.Nodes(Array.Empty<ChainMoneyFact>(), new[] { inv }));
+    }
+
+    // ───────── ฝ่ายค้านรอบ 266-C ─────────
+
+    [Fact]
+    public void Resume_AfterVoidedCashSale_OffersRemainingStep_NotVoidedNoop()
+    {
+        // H2: ใบขายสดถูกตัวช่วยยกเลิกแล้ว + ใบแจ้งหนี้มีงานค้าง ⇒ "ขั้นที่เหลือ" (เดิมได้ DS-VOIDED "ไม่ต้องทำอะไร")
+        var cash = Cash(status: DocumentStatus.Voided);
+        var keepInv = DuplicateSalePolicy.Decide(cash, Inv(), Ctx(resume: true), DuplicateSaleKeep.Invoice);
+        Assert.Equal((true, DuplicateSaleAction.ResumeRemainingStep), (keepInv.Allowed, keepInv.Action));
+        Assert.Contains(DuplicateSalePolicy.Effects(keepInv, cash, Inv()), e => e.Detail.Contains("ทำไปแล้ว", StringComparison.Ordinal));
+        var keepCash = DuplicateSalePolicy.Decide(cash, Inv(), Ctx(resume: true), DuplicateSaleKeep.CashSale);
+        Assert.Equal((false, DuplicateSalePolicy.PartialCode), (keepCash.Allowed, keepCash.RuleCode));
+        Assert.False(string.IsNullOrWhiteSpace(keepCash.WayForward));
+        // ทิศตรงข้าม: ไม่มีงานค้าง ⇒ ใบที่ยกเลิกแล้วคือไม่ใช่ใบซ้ำเหมือนเดิม
+        Assert.Equal(DuplicateSalePolicy.VoidedCode, DuplicateSalePolicy.Decide(cash, Inv(), Ctx(), DuplicateSaleKeep.Invoice).RuleCode);
+        // ใบแจ้งหนี้ถูกยกเลิกระหว่างงานค้าง ⇒ ผู้ทำบัญชีตัดสิน
+        Assert.Equal(DuplicateSaleAction.RequiresAccountant,
+            DuplicateSalePolicy.Decide(cash, Inv(status: DocumentStatus.Voided), Ctx(resume: true), DuplicateSaleKeep.Invoice).Action);
+    }
+
+    [Fact]
+    public void KeepInvoice_GoodsInvoiceNotTaxInvoice_RequiresAccountant()
+    {
+        // L1: ใบแจ้งหนี้ (ไม่ใช่ใบกำกับ) ที่ลงภาษีขายแล้ว — ยกเลิกใบขายสด = ลูกค้าไม่เหลือใบกำกับเต็มรูป
+        var v = DuplicateSalePolicy.Decide(Cash(), Inv(type: DocumentType.Invoice), Ctx(goodsVatNotTaxInvoice: true), DuplicateSaleKeep.Invoice);
+        Assert.Equal((false, DuplicateSaleAction.RequiresAccountant), (v.Allowed, v.Action));
+        // ทิศตรงข้าม: ใบแจ้งหนี้บริการ (พักภาษี) / ใบกำกับ ⇒ ทำได้
+        Assert.True(DuplicateSalePolicy.Decide(Cash(), Inv(type: DocumentType.Invoice), Ctx(), DuplicateSaleKeep.Invoice).Allowed);
+    }
+
+    [Fact]
+    public void KeptDocumentIsLive_OnlyLiveIssued()
+    {
+        Assert.True(DuplicateSalePolicy.KeptDocumentIsLive(DocumentStatus.Approved, false, false));
+        Assert.False(DuplicateSalePolicy.KeptDocumentIsLive(DocumentStatus.Voided, false, false));
+        Assert.False(DuplicateSalePolicy.KeptDocumentIsLive(DocumentStatus.Approved, true, false));
+        Assert.False(DuplicateSalePolicy.KeptDocumentIsLive(DocumentStatus.Approved, false, true));
+        Assert.False(DuplicateSalePolicy.KeptDocumentIsLive(null, false, false));
+    }
+
+    [Fact]
+    public void CreditNoteReason_IsAdjustment_NotReturn_AndInnerFailureHidesFrameworkText()
+    {
+        // M1: ใบกำกับซ้ำ = "ปรับยอด" (ไม่คืนสต็อก) · ห้ามแนะนำ "คืนสินค้า"
+        Assert.Equal(CreditNoteReason.Adjustment, DuplicateSalePolicy.CreditNoteReasonForDuplicate);
+        var v = DuplicateSalePolicy.Decide(Cash(), Inv(taxLock: "ภ.พ.30 ยื่นแล้ว"), Ctx(), DuplicateSaleKeep.CashSale);
+        Assert.DoesNotContain(DuplicateSalePolicy.Effects(v, Cash(), Inv(taxLock: "x")), e => e.Detail.Contains("\"คืนสินค้า\" เมื่อ", StringComparison.Ordinal));
+        // L3: ข้อความ framework ไม่ถึงผู้ใช้ · ข้อความกฎธุรกิจผ่าน
+        Assert.DoesNotContain("Sequence", DuplicateSalePolicy.InnerFailureText(new InvalidOperationException("Sequence contains no elements")), StringComparison.Ordinal);
+        Assert.Equal("กฎ", DuplicateSalePolicy.InnerFailureText(new BusinessRuleException("กฎ")));
+    }
+
+    [Fact]
+    public void Advice_RefusesVoidedOrPurchaseSideInvoice()
+    {
+        Assert.NotNull(PaymentApplicationAdvice.Refusal(Advice() with { InvoiceVoided = true }));
+        Assert.NotNull(PaymentApplicationAdvice.Refusal(Advice() with { InvoiceIsSalesSide = false }));
+        Assert.Null(PaymentApplicationAdvice.Refusal(Advice()));
     }
 }

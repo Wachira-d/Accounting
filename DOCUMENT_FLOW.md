@@ -5128,7 +5128,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 | --- | --- | --- |
 | คงใบขายสด | ใบแจ้งหนี้ยกเลิกได้ | `VoidDocumentAsync(ใบแจ้งหนี้, expectedPaidAmount: ยอดที่พรีวิวเห็น)` — กลับลูกหนี้/รายได้/ภาษีขาย/สต็อก ลงวันที่ของใบ · คงแถว Voided · ใต้ล็อกแถว: ยอดรับชำระต่างไป/ใบถูกยกเลิกไปก่อน = 409 `DS-STALE` (ไม่ยกเลิกการรับชำระแบบ cascade เงียบ) |
 | คงใบขายสด | ใบแจ้งหนี้ติดภาษี (รายงานภาษีที่ยื่น/ล็อก · e-Tax ถึงกรมสรรพากร · ภ.พ.30 ของเดือนที่ภาษีขายลงจริง [Cr 21911 ใน GL] ยื่น/ปิด) และเป็นใบกำกับ | `ConvertDocumentAsync(ใบแจ้งหนี้ → CreditNote)` = **ใบลดหนี้ฉบับร่างเต็มใบ** ลงวันที่วันนี้ (งวดปัจจุบัน · §86/10) · ระบบไม่อนุมัติแทน — ผู้ทำบัญชีเลือกเหตุผล (คืนสินค้า/ปรับยอด) แล้วอนุมัติ (ด่าน §86/10 เดิม) · ใบเดิมไม่ถูกแตะ |
-| คงใบแจ้งหนี้ | ใบขายสดยกเลิกได้ · ไม่มีภาษีถูกหักทั้งสองใบ · งวดบัญชีของวันรับเงินเปิด | ① `VoidDocumentAsync(ใบขายสด, expectedPaidAmount)` (กลับรายได้/ภาษีขาย/เงินสด/สต็อก) ② `CreatePaymentAsync(ใบแจ้งหนี้)` ลงวันที่ `max(วันใบขายสด, วันใบแจ้งหนี้)` (266-1-38 · สูตรเดียวกับ 266-1-24) บัญชีเงินเดิม (`BankAccountId`/`PaymentAccountId` ของใบขายสด) อ้างอิง = เลขใบขายสด · ภาษีถูกหัก 0 · ใบเสร็จออกตามกติกาเดิม · สองขั้นมีธุรกรรมของตัวเอง ⇒ ขั้นที่ ② ล้ม = **ล้มดัง** `DS-PARTIAL` + ทางไปต่อ (บันทึกรับชำระวันเดิมเอง) · คู่จับคู่ธนาคารต้องจับใหม่ (พรีวิวบอก) |
+| คงใบแจ้งหนี้ | ใบขายสดยกเลิกได้ · ไม่มีภาษีถูกหักทั้งสองใบ · งวดบัญชีของวันรับเงิน/วันจัดสรรเปิด · ภ.พ.30 ของเดือนรับเงิน/วันจัดสรรยังไม่ยื่น (ใบแจ้งหนี้ที่พักภาษี) · มีผังพัก 21630 · ใบแจ้งหนี้ไม่ใช่ "ใบแจ้งหนี้สินค้าที่ลงภาษีขายแล้ว" | **(ฝ่ายค้าน H3 · 266-1-41 แทน 266-1-38)** ⓪ ตั้งงานค้างบนใบแจ้งหนี้ (`DuplicateSalePendingFromDocumentId`) ① `VoidDocumentAsync(ใบขายสด, expectedPaidAmount, keepLiveDocumentId: ใบแจ้งหนี้)` ② `RecordDuplicateSaleCreditAsync` = **เงินรอจัดสรร (21630) ลงวันที่ใบขายสด** ช่องทางเงินเดิม เหตุผล "ค้างออกใบ" (`Payment.DocumentId` = ใบขายสด · ตัวเขียนเดียว `PostUnappliedCreditAsync`) ③ `CustomerCreditService.AllocateAsync` ลงวันที่ `AllocationDate = max(วันขายสด, วันใบแจ้งหนี้)` ⇒ เงินสดอยู่เดือนรับเงิน · ภาษีขายของใบแจ้งหนี้ที่พักภาษีตาม `LateReceiptTaxPoint` · แถวจัดสรรทีหลัง = ได้ใบแจ้งการนำเงินไปตัดชำระ · สามขั้นมีธุรกรรมของตัวเอง ⇒ ล้มหลังขั้น ① = **ล้มดัง 3 ที่** (DS-PARTIAL + ข้อความขั้น ① · งานค้าง/แถบแดงบนใบแจ้งหนี้ · audit `DOC-DUP-SALE-PARTIAL`) และเปิดตัวช่วยซ้ำ = "ขั้นที่เหลือ" (`ResumeRemainingStep` — ขั้นที่ทำแล้วไม่ทำซ้ำ) |
 | ทั้งสอง | ยกเลิกไม่ได้/ภาษีติดแต่ออกใบลดหนี้ไม่ได้ (ใบแจ้งหนี้ไม่ใช่ใบกำกับ) · เหตุอื่น (เอกสารลูก · 50 ทวิ ในแบบที่ยื่น) · ภาษีถูกหัก · งวดปิด | **ผู้ทำบัญชีตัดสิน** (`RequiresAccountant` · ไม่อัตโนมัติ · 266-1-5) — มีข้อความ + ทางไปต่อ |
 
 - **ไม่ใช่ใบซ้ำ = ปฏิเสธ + ทางไปต่อ (ไม่แตะใบใด)**: คนละผู้ติดต่อ `DS-CONTACT` / คนละสาขา `DS-BRANCH` · ยอดต่าง > 0.01 `DS-AMOUNT` · ใบแจ้งหนี้มีการรับชำระ/จัดสรร/หักมัดจำ `DS-INVOICE-PAID` ·
@@ -5144,11 +5144,17 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ข้อจำกัด: มัดจำที่ตัดชำระหลายใบผ่าน JV แสดงเฉพาะใบที่ `DepositAppliedToDocumentId` ชี้
 - **ไฟล์:** `Helpers/DuplicateSalePolicy.cs` · `Helpers/PaymentApplicationAdvice.cs` · `Helpers/DocumentChainMoney.cs` · `Services/Implementations/DuplicateSaleService.cs` ·
   `Services/Implementations/DocumentService.DuplicateSale.cs` · `PdfGenerationService.PaymentApplicationAdvice.cs` · `ReceiptLinkController` (3 เส้นใหม่) · `documents.html` (`openDuplicateSale` · แถบเงินในสาย) ·
-  `VoidDocumentAsync(…, expectedPaidAmount)` (พารามิเตอร์ใหม่ — ผู้เรียกเดิมไม่ส่ง = พฤติกรรมเดิมทุกตัวอักษร)
+  `VoidDocumentAsync(…, expectedPaidAmount, keepLiveDocumentId)` (พารามิเตอร์ใหม่ — ผู้เรียกเดิมไม่ส่ง = พฤติกรรมเดิมทุกตัวอักษร) · `Document.DuplicateSalePendingFromDocumentId` (คอลัมน์ใหม่ · NULL = ไม่มีงานค้าง)
 - **เทสต์:** pure `DuplicateSalePolicyTests` (`KeepCashSale_VoidsInvoiceWhenAllowed` · `KeepCashSale_CreditNoteWhenFiled` · `KeepInvoice_VoidsCashSaleAndRecordsPaymentOnSameDate` ·
   `NeitherVoidable_RequiresAccountant` · `Advice_NotInVatReport_NoTaxSeries` · `Chain_ShowsCreditAllocationNode` + ทิศตรงข้าม) · Db `DuplicateSaleDbTests` (ชื่อเดียวกัน 5 ชื่อบนฐานจริง — ยกเว้น NeitherVoidable +
   `Stale_InvoicePaidAfterPreview_Refused_NothingVoided` · `OtherContact_Refused_NothingTouched` · `Candidates_SameContactSameAmountOnly_TenantIsolated`) · กติกา R266C ใน `tools/required_call_site_check.py`
-  Last verified `commit 50482695` — dotnet build + test (pure) ผ่านในเครื่องนี้ · Db test รอผล job db-test บน CI
+- **ชุดแก้ฝ่ายค้าน** (`erp-review/2026-11-13/review-266-C.md` · คำตัดสิน 266-1-41…45): **H1** ล็อก session ต่อใบของคู่ (เรียงคีย์ · `UnderPairLockAsync`) ครอบการตัดสินซ้ำ + ทุกขั้น ·
+  `VoidDocumentAsync(…, keepLiveDocumentId)` ล็อกสองแถวเรียง Id แล้วตรวจใบที่คงไว้ใต้ล็อก (ยกเลิกไปแล้ว = 409) — สองคนกดคนละตัวเลือกพร้อมกัน ชนะหนึ่ง อีกคน 409 ·
+  **H3** คงใบแจ้งหนี้ผ่านเงินรอจัดสรร (แถวตารางข้างบน) · **H2** ล้มดัง 3 ที่ + ขั้นที่เหลือ · **M1** ใบลดหนี้ร่างตั้งเหตุผล "ปรับยอด" (`DuplicateSalePolicy.CreditNoteReasonForDuplicate` — ไม่คืนสต็อก ·
+  สต็อกที่ตัดสองรอบปรับด้วยใบปรับสต็อก) · **M3** ด่านวันที่ครอบงวดบัญชี + ภ.พ.30 ที่ยื่น/ล็อกของวันรับเงินและวันจัดสรร · **L1** ใบแจ้งหนี้สินค้า (ไม่ใช่ใบกำกับ) ที่ลงภาษีขายแล้ว = ผู้ทำบัญชีตัดสิน ·
+  **L3** ข้อความ framework ไม่ถึงผู้ใช้ (`InnerFailureText`) · **L4** วิธีชำระคัดจากการรับชำระของใบขายสด (ถ้ามี) · **L5** ใบแจ้งปฏิเสธใบที่ยกเลิก/ไม่ใช่ฝั่งขาย + ป้าย "คงเหลือ ณ วันพิมพ์" ·
+  **API key** ใช้ endpoint อ่าน (candidates/preview/advice) ได้ — เส้นเขียน 403 (266-1-44)
+  Last verified `commit 50482695` (เส้นเดิม) — ชุดแก้ฝ่ายค้าน: build + test (pure) + Db test ผ่านในเครื่องนี้ (PostgreSQL)
 
 ### 3.5 Void / Cancel
 - **Method**: `VoidDocumentAsync` (`:1959`) — **cascade 7+ขั้น**:
