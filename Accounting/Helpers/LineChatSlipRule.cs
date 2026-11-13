@@ -299,7 +299,7 @@ public static class LineChatSlipRule
     /// <paramref name="expectedKey"/> null = แถวที่เข้าคิวก่อนรอบ 270 (ไม่มีกุญแจ) ⇒ ตรวจเฉพาะสถานะ ·
     /// <paramref name="intentStatus"/> null = ไม่พบรายการรอยืนยัน · รายการที่ถูกปฏิเสธ/หมดอายุ/คืนเงิน = ไม่ใช่การผูกที่มีผลแล้ว</summary>
     public static string? LinkedNoticeStaleReason(string? expectedKey, string? slipStatus, Guid? slipDocumentId, Guid? slipIntentId,
-        Accounting.Models.Enums.PaymentIntentStatus? intentStatus, Guid? intentDocumentId)
+        Accounting.Models.Enums.PaymentIntentStatus? intentStatus, Guid? intentDocumentId, bool documentLive = true)
     {
         if (slipStatus == null) return "ไม่ส่ง: ไม่พบสลิป (ถูกลบก่อนถึงคิวแจ้งเตือน)";
         if (slipStatus == Statuses.Dismissed) return "ไม่ส่ง: พนักงานปิดสลิปนี้แล้วก่อนถึงคิวแจ้งเตือน";
@@ -314,7 +314,17 @@ public static class LineChatSlipRule
             return $"ไม่ส่ง: รายการรอยืนยันของสลิปถูกปฏิเสธ/ปิดแล้ว ({intentStatus}) ก่อนถึงคิวแจ้งเตือน";
         if (intentDocumentId != null && intentDocumentId != slipDocumentId)
             return "ไม่ส่ง: รายการรอยืนยันของสลิปถูกย้ายไปเอกสารอื่นหลังเข้าคิว";
+        if (!documentLive) return "ไม่ส่ง: เอกสารที่ผูกถูกยกเลิก/ลบหลังเข้าคิว";
         return null;
+    }
+
+    /// <summary>ฝ่ายค้าน 270 L5: retry key ของข้อความ "ผูกสลิปแล้ว" ผูกกับ<b>การผูก</b> ไม่ใช่แถวสลิป — ผูกใหม่ = ข้อความใหม่ (LINE ไม่ตอบ 409 ว่าส่งแล้วจากข้อความเก่า) ·
+    /// การผูกเดิมส่งซ้ำ = คีย์เดิม (LINE ไม่ส่งสองครั้ง) · ไม่มีกุญแจ ⇒ id ของแถว (พฤติกรรมเดิม)</summary>
+    public static Guid LinkedNoticeRetryKey(Guid slipId, string? linkKey)
+    {
+        if (linkKey == null) return slipId;
+        var h = SHA256.HashData(Encoding.UTF8.GetBytes(slipId.ToString("N") + "|" + linkKey));
+        return new Guid(h.AsSpan(0, 16));
     }
 
     /// <summary>268-1-8: ผูกภายในช่วงนี้หลังสลิปเข้ามา = ยังเป็น "คำตอบต่อสิ่งที่ลูกค้าเพิ่งส่ง" (ไม่รอชั่วโมงเงียบ) · นานกว่านี้ = ข้อความที่พนักงานส่งทีหลัง (เคารพชั่วโมงเงียบ)</summary>

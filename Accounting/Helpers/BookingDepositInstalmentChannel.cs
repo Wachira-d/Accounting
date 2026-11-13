@@ -28,6 +28,41 @@ public static class BookingDepositInstalmentChannel
 
     public sealed record Plan(IReadOnlyList<Move> Moves, int UnknownCount);
 
+    /// <summary>
+    /// รอบ 270 (ฝ่ายค้าน H1 · คำตัดสิน 270-2-1): <b>แถวรับเงินไหนเป็น "เงินของใบมัดจำ"</b> — ตัวเดียวที่ตัวย้ายเงินรอบ 268 (<c>MoveEarlierInstalmentsCoreAsync</c>)
+    /// และตัววางแผนคืนเงิน (<see cref="PlanRefund"/> ผ่าน <c>BookingDepositRefundPlanAsync</c>) ใช้ร่วมกัน ·
+    /// <paramref name="rowsOldestFirst"/> = แถวรับเงินที่สำเร็จของการจอง (ไม่รวมคืนเงิน) เรียงเก่า → ใหม่ ·
+    /// งวดสุดท้าย = <paramref name="finalPaymentId"/> (งวดที่ทำให้ออก/อนุมัติใบ) เมื่อรู้ · ไม่รู้ ⇒ งวดที่ยอดสะสมถึงยอดใบมัดจำ ·
+    /// แถวหลังงวดสุดท้าย (เงินที่เข้าหลังออกใบ ลงบนการจองอย่างเดียว ไม่มี JE ของใบมัดจำ) <b>ไม่ใช่เงินของใบ</b> ⇒ ตัดออก ·
+    /// ยอดสะสมยังไม่ถึงยอดใบ ⇒ ทุกแถว (ใบยังรอเงิน)
+    /// </summary>
+    public static IReadOnlyList<T> DepositRows<T>(IReadOnlyList<T> rowsOldestFirst, Func<T, Guid> id, Func<T, decimal> amount, decimal depositTotal, Guid? finalPaymentId)
+    {
+        if (finalPaymentId is Guid f)
+            for (var i = 0; i < rowsOldestFirst.Count; i++)
+                if (id(rowsOldestFirst[i]) == f) return rowsOldestFirst.Take(i + 1).ToList();
+        var sum = 0m;
+        for (var i = 0; i < rowsOldestFirst.Count; i++)
+        {
+            sum += Math.Max(0m, amount(rowsOldestFirst[i]));
+            if (depositTotal > 0m && sum + 0.005m >= depositTotal) return rowsOldestFirst.Take(i + 1).ToList();
+        }
+        return rowsOldestFirst;
+    }
+
+    /// <summary>รอบ 270 (H1): ยอดของแต่ละงวดที่เป็นของใบมัดจำ — งวดที่ทำให้ครบอาจรับเกินยอดใบ (ส่วนเกินลงบนการจองอย่างเดียว) ⇒ ตัดให้ยอดสะสมไม่เกินยอดใบ</summary>
+    public static IReadOnlyList<decimal> CapToDeposit(IReadOnlyList<decimal> amountsOldestFirst, decimal depositTotal)
+    {
+        var left = Math.Max(0m, depositTotal);
+        var outp = new List<decimal>(amountsOldestFirst.Count);
+        foreach (var a in amountsOldestFirst)
+        {
+            var t = Math.Min(Math.Max(0m, a), left);
+            outp.Add(t); left -= t;
+        }
+        return outp;
+    }
+
     /// <param name="docBank">แหล่งเงินบนใบเสร็จมัดจำ (หลังตั้งตามงวดสุดท้าย)</param>
     /// <param name="docMoneyIn">ผังตรงบนใบ (ผังตรงชนะธนาคาร — <c>DocumentMoneyChannel.Pick</c>)</param>
     public static Plan For(IReadOnlyList<Instalment> rows, Guid finalPaymentId, Guid? docBank, Guid? docMoneyIn)

@@ -128,6 +128,7 @@ public class Round270Tests
     // ═══ 270-1-5 ใบกำกับ OCR ที่ VAT 0% ทั้งใบ ═══
 
     /// <summary>ใบกำกับส่งออก (รูปแบบใบส่งออกไทยจริง — ใบกำกับภาษี/ใบขนสินค้า · พิมพ์อัตราศูนย์)</summary>
+    internal const string ExportTaxInvoicePaper = ExportTaxInvoice;
     private const string ExportTaxInvoice =
         "บริษัท สยามเอ็กซ์ปอร์ต เทรดดิ้ง จำกัด (สำนักงานใหญ่)\n" +
         "เลขประจำตัวผู้เสียภาษี 0105548012345\n" +
@@ -150,6 +151,80 @@ public class Round270Tests
         Assert.NotNull(OcrZeroVatTaxInvoiceGuard.Check(true, "บริษัท ก จำกัด\nค่าบริการ 1,000.00\nรวม 1,000.00", 0m, new[] { 0m, 0m }, 0m));
         // ผลของบรรทัดชุดนี้ — สร้างใหม่ (แก้อัตราแล้ว) ล้างแท็กเดิม
         Assert.DoesNotContain(OcrZeroVatTaxInvoiceGuard.Tag, OcrLineBuildNotes.StripRecomputed("a\n" + note + "\nb"));
+    }
+
+    /// <summary>ฝ่ายค้าน 270 M2: ใบกำกับ 7% ของผู้ขายที่ชื่อ/ที่อยู่มีคำว่า EXPORT/ส่งออก — กระดาษจริงร้านวัสดุ (HardwareBillDiscount) เปลี่ยนเฉพาะหัวผู้ขาย</summary>
+    private static string ImportExportSeller => OcrPaperSamples.HardwareBillDiscount
+        .Replace("บริษัท ไทยวัสดุภัณฑ์ก่อสร้าง จำกัด (สำนักงานใหญ่)", "บริษัท สยาม อิมพอร์ต-เอ็กซ์ปอร์ต จำกัด / SIAM IMPORT EXPORT CO.,LTD. (สำนักงานใหญ่)")
+        .Replace("99/9 ถนนบางนา-ตราด แขวงบางนา เขตบางนา กรุงเทพฯ 10260", "88/8 นิคมอุตสาหกรรมเพื่อการส่งออก ลาดกระบัง กรุงเทพฯ 10520");
+
+    [Fact]
+    public void M2_270_ผู้ขายชื่อImportExport_ที่อยู่เขตส่งออก_ใบ7ที่อ่านVATไม่ได้_ยังติดแท็ก_ทิศตรงข้าม_ใบส่งออกจริงผ่าน()
+    {
+        Assert.Contains("IMPORT EXPORT", ImportExportSeller);
+        Assert.Contains("เพื่อการส่งออก", ImportExportSeller);
+        Assert.NotNull(OcrZeroVatTaxInvoiceGuard.Check(false, ImportExportSeller, null, new[] { 0m }, 0m));
+        Assert.NotNull(OcrZeroVatTaxInvoiceGuard.Check(true, "ใบกำกับภาษี\nSIAM EXPORT TRADING CO.,LTD.\nค่าสินค้า 1,000.00\nรวม 1,000.00", 0m, new[] { 0m }, 0m));
+        // ใบส่งออกจริง: VAT 0% บนบรรทัด VAT + ม.80/1 · ชนิดใบ "TAX INVOICE (EXPORT)" · อัตราศูนย์ · ส่งออกบนบรรทัด VAT
+        Assert.Null(OcrZeroVatTaxInvoiceGuard.Check(true, ExportTaxInvoice, 0m, new[] { 0m }, 0m));
+        Assert.Null(OcrZeroVatTaxInvoiceGuard.Check(true, "ใบกำกับภาษี / TAX INVOICE (EXPORT)\nGoods 50,000.00\nTotal 50,000.00", 0m, new[] { 0m }, 0m));
+        Assert.Null(OcrZeroVatTaxInvoiceGuard.Check(true, "ใบกำกับภาษี\nบริการ 5,000.00\nภาษีมูลค่าเพิ่ม 0.00 (อัตราศูนย์)", 0m, new[] { 0m }, 0m));
+        Assert.Null(OcrZeroVatTaxInvoiceGuard.Check(true, "ใบกำกับภาษี\nสินค้า 5,000.00\nภาษีมูลค่าเพิ่ม (ส่งออก) 0.00", 0m, new[] { 0m }, 0m));
+        // ส่วนลด 0% ที่ไม่ใช่บรรทัด VAT ไม่ใช่เครื่องหมาย
+        Assert.NotNull(OcrZeroVatTaxInvoiceGuard.Check(true, "ใบกำกับภาษี\nส่วนลด 0% 0.00\nรวม 1,000.00", 0m, new[] { 0m }, 0m));
+    }
+
+    [Fact]
+    public void M3_270_ทางแก้ของใบที่อนุมัติแล้ว_ฝั่งขายยกเลิกออกใหม่_ฝั่งซื้อบันทึกใหม่_งวดยื่นแล้วบอกยื่นเพิ่ม()
+    {
+        Assert.Contains("ออกใบกำกับใหม่", OcrZeroVatTaxInvoiceGuard.HowToFix(true, false));
+        Assert.DoesNotContain("ยื่นแบบเพิ่มเติม", OcrZeroVatTaxInvoiceGuard.HowToFix(true, false));
+        Assert.Contains("ภาษีซื้อ", OcrZeroVatTaxInvoiceGuard.HowToFix(false, true));
+        Assert.Contains("ยื่นแบบเพิ่มเติม", OcrZeroVatTaxInvoiceGuard.HowToFix(false, true));
+    }
+
+    [Fact]
+    public void H1_270_เงินของใบมัดจำ_ตัดที่งวดที่ครบมัดจำ_งวดที่ระบุชนะ_ยังไม่ครบได้ทุกแถว_ยอดงวดสุดท้ายไม่เกินยอดใบ()
+    {
+        var rows = new[] { (Id: A, Amt: 500m), (Id: B, Amt: 500m), (Id: Doc, Amt: 3_000m) };
+        Assert.Equal(new[] { A, B }, BookingDepositInstalmentChannel.DepositRows(rows, r => r.Id, r => r.Amt, 1_000m, null).Select(r => r.Id).ToArray());
+        Assert.Equal(new[] { A }, BookingDepositInstalmentChannel.DepositRows(rows, r => r.Id, r => r.Amt, 1_000m, A).Select(r => r.Id).ToArray());
+        Assert.Equal(3, BookingDepositInstalmentChannel.DepositRows(rows, r => r.Id, r => r.Amt, 10_000m, null).Count);
+        Assert.Equal(new[] { 500m, 500m }, BookingDepositInstalmentChannel.CapToDeposit(new[] { 500m, 3_500m }, 1_000m).ToArray());
+        Assert.Equal(new[] { 60m, 90m }, BookingDepositInstalmentChannel.CapToDeposit(new[] { 60m, 90m }, 150m).ToArray());
+    }
+
+    [Fact]
+    public void L5_270_retry_key_ผูกกับการผูก_การผูกเดิมคีย์เดิม_ผูกใหม่คีย์ใหม่_ไม่มีกุญแจใช้idแถว_L4ใบยกเลิกไม่ส่ง()
+    {
+        var k1 = LineChatSlipRule.LinkedNoticeRetryKey(Doc, LineChatSlipRule.LinkKey(A, Intent));
+        Assert.Equal(k1, LineChatSlipRule.LinkedNoticeRetryKey(Doc, LineChatSlipRule.LinkKey(A, Intent)));
+        Assert.NotEqual(k1, LineChatSlipRule.LinkedNoticeRetryKey(Doc, LineChatSlipRule.LinkKey(B, Intent)));
+        Assert.Equal(Doc, LineChatSlipRule.LinkedNoticeRetryKey(Doc, null));
+        Assert.Contains("ยกเลิก", LineChatSlipRule.LinkedNoticeStaleReason(LineChatSlipRule.LinkKey(Doc, Intent), LineChatSlipRule.Statuses.Assigned, Doc, Intent,
+            PaymentIntentStatus.Pending, Doc, documentLive: false));
+    }
+
+    [Fact]
+    public void L7_270_หัวเรื่องร่างไม่โชว์เลขDRAFT_หมายเหตุของตัวช่วยอ่านกลับได้_หมายเหตุอื่นไม่ใช่()
+    {
+        Assert.DoesNotContain("DRAFT-", DuplicateSalePolicy.CreditNoteDraftTitle("DRAFT-abc", "INV-1"));
+        Assert.Contains("อ้าง INV-1", DuplicateSalePolicy.CreditNoteDraftTitle("DRAFT-abc", "INV-1"));
+        Assert.Contains("CN-0001", DuplicateSalePolicy.CreditNoteDraftTitle("CN-0001", "INV-1"));
+        var f = DuplicateSalePolicy.CreditNoteFromNote(Doc, DuplicateSalePolicy.CreditNoteNote("INV-9", "RC-3"));
+        Assert.Equal(("INV-9", "RC-3"), (f!.InvoiceNumber, f.CashSaleNumber));
+        Assert.Null(DuplicateSalePolicy.CreditNoteFromNote(Doc, "ลดหนี้เพราะสินค้าชำรุด"));
+    }
+
+    [Fact]
+    public void M1_270_ล้มชั่วคราวถอยแล้วลองใหม่_ครบจำนวนครั้งจึงปิด()
+    {
+        var now = new DateTime(2026, 11, 13, 1, 0, 0, DateTimeKind.Utc);
+        var (giveUp1, next1) = DeferredNotifyPolicy.AfterFailure(1, now);
+        Assert.False(giveUp1);
+        Assert.True(next1 > now);
+        Assert.True(DeferredNotifyPolicy.AfterFailure(DeferredNotifyPolicy.MaxAttempts, now).GiveUp);
+        Assert.Equal("LINE 503", new DeferredNotifyRetryException("LINE 503").Message);
     }
 
     [Fact]

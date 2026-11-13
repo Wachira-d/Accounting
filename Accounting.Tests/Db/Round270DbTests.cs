@@ -55,10 +55,13 @@ public class Round270DbTests
 
     // ═══ 270-1-1 คืนมัดจำตามบัญชีของแต่ละงวด ═══
 
-    private static async Task<(Guid BookingId, Guid DocId, List<Guid> PaymentIds)> BookingAsync(AccountingDbContext db, Seed s,
+    private static Task<(Guid BookingId, Guid DocId, List<Guid> PaymentIds)> BookingAsync(AccountingDbContext db, Seed s,
+        params (decimal Amount, bool Stamped, Guid? Bank)[] instalments) => BookingAsync(db, s, null, instalments);
+
+    private static async Task<(Guid BookingId, Guid DocId, List<Guid> PaymentIds)> BookingAsync(AccountingDbContext db, Seed s, decimal? depositTotal,
         params (decimal Amount, bool Stamped, Guid? Bank)[] instalments)
     {
-        var total = instalments.Sum(i => i.Amount);
+        var total = depositTotal ?? instalments.Sum(i => i.Amount);
         var svc = new SiteBookingService
         {
             CompanyId = s.CompanyId, SiteId = s.SiteId, Name = "ทำฟัน 270", Slug = "dent-" + Guid.NewGuid().ToString("N")[..8], SlotMode = BookingSlotMode.Interval,
@@ -167,6 +170,102 @@ public class Round270DbTests
         Assert.Equal(new[] { (s.GlA, 150m) }, (await RefundMoneyLinesAsync(c6, s.CompanyId, doc2)).Select(l => (l.AccountId, l.CreditAmount)).ToArray());
     }
 
+    [Fact]
+    public async Task C270_2_1_มัดจำ500Bบวก500A_แล้วรับเพิ่ม3000C_คืนเต็ม_CrB500และA500_ไม่ใช่A1000_ตัวย้ายเงินตัดที่งวดที่ครบมัดจำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var glC = new ChartOfAccount { CompanyId = s.CompanyId, AccountCode = "11230", AccountName = "เงินฝากไทยพาณิชย์", AccountType = AccountType.Asset, Level = 4, IsActive = true };
+        db.ChartOfAccounts.Add(glC);
+        await db.SaveChangesAsync();
+        var bankC = new BankAccount { CompanyId = s.CompanyId, AccountName = "ร้าน 270", BankName = "ไทยพาณิชย์", AccountNumber = "5555555555", LinkedAccountId = glC.Id };
+        db.BankAccounts.Add(bankC);
+        await db.SaveChangesAsync();
+        // มัดจำ 1,000 = 500 เข้า B + 500 เข้า A (หัวใบ) · หลังออกใบ ลูกค้าโอนค่าบริการที่เหลือ 3,000 เข้า C (ลงบนการจองอย่างเดียว)
+        var (bookingId, docId, ids) = await BookingAsync(db, s, 1_000m, (500m, true, s.BankB), (500m, true, s.BankA), (3_000m, true, bankC.Id));
+        // ตัวย้ายเงินไม่รู้งวดสุดท้าย (เส้น hook) ⇒ งวดสุดท้าย = งวดที่ครบมัดจำ (ids[1]) — ไม่ใช่แถว 3,000 ที่เข้าทีหลัง
+        using (var c1 = DbTestDatabase.TryCreateContext()!)
+            await new CmsBookingService(c1, NullLogger<CmsBookingService>.Instance).MoveEarlierInstalmentsAsync(s.CompanyId, bookingId, docId, null, "staff-270",
+                new List<string>(), new List<string>());
+        using (var c2 = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.True(await c2.JournalEntries.AnyAsync(j => j.CompanyId == s.CompanyId && j.Reference == BookingDepositInstalmentChannel.ReferenceFor(ids[0])));
+            Assert.False(await c2.JournalEntries.AnyAsync(j => j.CompanyId == s.CompanyId && j.Reference == BookingDepositInstalmentChannel.ReferenceFor(ids[1])));
+            Assert.False(await c2.JournalEntries.AnyAsync(j => j.CompanyId == s.CompanyId && j.Reference == BookingDepositInstalmentChannel.ReferenceFor(ids[2])));
+            await Docs(c2).RefundDepositAsync(s.CompanyId, docId, new RefundDepositRequest(1_000m, DateTime.UtcNow, "ยกเลิก"), "staff-270");
+        }
+        using var c3 = DbTestDatabase.TryCreateContext()!;
+        var lines = await RefundMoneyLinesAsync(c3, s.CompanyId, docId);
+        Assert.Equal(500m, lines.Where(l => l.AccountId == s.GlB).Sum(l => l.CreditAmount));
+        Assert.Equal(500m, lines.Where(l => l.AccountId == s.GlA).Sum(l => l.CreditAmount));
+        Assert.DoesNotContain(lines, l => l.AccountId == glC.Id);
+        Assert.Equal(1_000m, lines.Sum(l => l.CreditAmount));
+    }
+
+    [Fact]
+    public async Task C270_2_1_ทิศตรงข้าม_บัญชีธนาคารของงวดก่อนถูกถอดผัง_ไม่400_ให้เลือกบัญชี409_คืนเฉพาะส่วนที่รู้ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var (bookingId, docId, ids) = await BookingAsync(db, s, (60m, true, s.BankB), (90m, true, s.BankA));
+        using (var c1 = DbTestDatabase.TryCreateContext()!)
+            await new CmsBookingService(c1, NullLogger<CmsBookingService>.Instance).MoveEarlierInstalmentsAsync(s.CompanyId, bookingId, docId, ids[1], "staff-270",
+                new List<string>(), new List<string>());
+        // ฝ่ายค้าน 270 L1: ถอดผังของบัญชี B หลังรับเงิน ⇒ ไม่รู้ ⇒ 409 ให้เลือก (เดิม 400 คืนเงินไม่ได้)
+        await db.BankAccounts.Where(b => b.Id == s.BankB).ExecuteUpdateAsync(x => x.SetProperty(b => b.LinkedAccountId, (Guid?)null));
+        using (var c2 = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Docs(c2).RefundDepositAsync(s.CompanyId, docId, new RefundDepositRequest(150m, DateTime.UtcNow, "ยกเลิก"), "staff-270"));
+            Assert.Equal(BookingDepositInstalmentChannel.RefundChoiceCode, ex.RuleCode);
+        }
+        // คืนเฉพาะส่วนที่อยู่บัญชี A (ยังใช้ได้) ⇒ ไม่ต้องถาม
+        using (var c3 = DbTestDatabase.TryCreateContext()!)
+            await Docs(c3).RefundDepositAsync(s.CompanyId, docId, new RefundDepositRequest(90m, DateTime.UtcNow, "คืนบางส่วน"), "staff-270");
+        using var c4 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(new[] { (s.GlA, 90m) }, (await RefundMoneyLinesAsync(c4, s.CompanyId, docId)).Select(l => (l.AccountId, l.CreditAmount)).ToArray());
+    }
+
+    // ═══ 270-2-5 ใบกำกับ OCR VAT 0% ที่อนุมัติไปแล้ว (ตัวตรวจย้อนหลัง อ่านอย่างเดียว) ═══
+
+    [Fact]
+    public async Task C270_2_5_ใบกำกับOCRอนุมัติแล้วVAT0_กระดาษไม่บอกอัตราศูนย์_ขึ้นรายการตรวจ_ไม่แก้ใบ_ทิศตรงข้าม_ใบส่งออก_ร่าง_ใบ7_ไม่ขึ้น()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        async Task<Guid> DocFromScan(string raw, DocumentStatus status, decimal vatRate, decimal vat)
+        {
+            var d = new Document
+            {
+                CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.TaxInvoice, Status = status, Currency = "THB",
+                DocumentNumber = "IV270-" + Guid.NewGuid().ToString("N")[..8], DocumentDate = DateTime.UtcNow.Date, SubTotal = 1_000m, VatAmount = vat, TotalAmount = 1_000m + vat,
+                Lines = new List<DocumentLine> { new() { Description = "สินค้า", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = vatRate, VatAmount = vat, LineOrder = 1 } },
+            };
+            db.Documents.Add(d);
+            db.Set<OcrScanResult>().Add(new OcrScanResult { CompanyId = s.CompanyId, OriginalFileName = "x.jpg", ScanStatus = "Completed", DocumentType = "TaxInvoice",
+                RawTextContent = raw, CreatedDocumentId = d.Id });
+            await db.SaveChangesAsync();
+            return d.Id;
+        }
+        var bad = await DocFromScan(OcrPaperSamples.HardwareBillDiscount, DocumentStatus.Approved, 0m, 0m);
+        var export = await DocFromScan(Round270Tests.ExportTaxInvoicePaper, DocumentStatus.Approved, 0m, 0m);
+        var draft = await DocFromScan(OcrPaperSamples.HardwareBillDiscount, DocumentStatus.Draft, 0m, 0m);
+        var ok = await DocFromScan(OcrPaperSamples.HardwareBillDiscount, DocumentStatus.Approved, 7m, 70m);
+        using var c = DbTestDatabase.TryCreateContext()!;
+        var rows = await new TaxService(c).GetOcrZeroVatReviewAsync(s.CompanyId);
+        var hit = Assert.Single(rows);
+        Assert.Equal(bad, hit.DocumentId);
+        Assert.Contains("ยกเลิก", hit.HowToFix);
+        Assert.False(hit.PeriodFiled);
+        Assert.DoesNotContain(rows, r => r.DocumentId == export || r.DocumentId == draft || r.DocumentId == ok);
+        // อ่านอย่างเดียว: ใบไม่ถูกแตะ
+        var after = await c.Documents.AsNoTracking().SingleAsync(d => d.Id == bad);
+        Assert.Equal((DocumentStatus.Approved, 0m), (after.Status, after.VatAmount));
+    }
+
     // ═══ 270-1-4 คิวใบลดหนี้ร่างของตัวช่วยใบซ้ำ ═══
 
     [Fact]
@@ -184,7 +283,10 @@ public class Round270DbTests
         var fromWizard = Cn(s.CompanyId, s.ContactId, "DRAFT-CN270-" + Guid.NewGuid().ToString("N")[..6]);
         var manual = Cn(s.CompanyId, s.ContactId, "DRAFT-CN270M-" + Guid.NewGuid().ToString("N")[..6]);
         var otherCompanyCn = Cn(other.CompanyId, other.ContactId, "DRAFT-CN270X-" + Guid.NewGuid().ToString("N")[..6]);
-        db.Documents.AddRange(fromWizard, manual, otherCompanyCn);
+        // ฝ่ายค้าน 270 L7: audit ของตัวช่วยบันทึกไม่ได้ ⇒ ทางสำรองจากหมายเหตุที่ตัวช่วยเขียนบนใบ
+        var noAudit = Cn(s.CompanyId, s.ContactId, "DRAFT-CN270N-" + Guid.NewGuid().ToString("N")[..6]);
+        noAudit.Notes = DuplicateSalePolicy.CreditNoteNote("INV270-2", "RC270-2");
+        db.Documents.AddRange(fromWizard, manual, otherCompanyCn, noAudit);
         string Audit(Guid cn) => System.Text.Json.JsonSerializer.Serialize(new
         {
             action = DuplicateSalePolicy.CreditNoteAuditAction, RuleCode = DuplicateSalePolicy.RuleCode, CashSale = "RC270-1", Invoice = "INV270-1",
@@ -196,21 +298,25 @@ public class Round270DbTests
         db.AddChainedAuditLog(new AuditLog { CompanyId = other.CompanyId, UserEmail = "u", Action = AuditAction.Update, EntityType = "Document", EntityId = Guid.NewGuid().ToString(),
             NewValues = Audit(fromWizard.Id), Timestamp = DateTime.UtcNow });
         await db.SaveChangesAsync();
+        // ใบลดหนี้สร้างก่อนแถว audit ของตัวช่วย (ลำดับจริง)
+        await db.Documents.Where(d => d.Id == fromWizard.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.CreatedAt, DateTime.UtcNow.AddDays(-2).AddMinutes(-1)));
 
         var bank = F4Proxy<IBankReceiptSettleService>.Create((_, _) => null);
         using (var c1 = DbTestDatabase.TryCreateContext()!)
         {
             var issues = await new AutopilotService(c1, bank).IssuesAsync(s.CompanyId, DateTime.UtcNow);
-            var hit = Assert.Single(issues, i => i.Kind == DuplicateSalePolicy.CreditNoteDraftIssueKind);
-            Assert.Equal(fromWizard.Id, hit.DocumentId);
+            var hit = Assert.Single(issues, i => i.Kind == DuplicateSalePolicy.CreditNoteDraftIssueKind && i.DocumentId == fromWizard.Id);
             Assert.Contains("INV270-1", hit.Title);
+            Assert.DoesNotContain("DRAFT-", hit.Title);   // ร่างยังไม่มีเลข (§86/4) — ไม่โชว์เลขชั่วคราว
+            var fallback = Assert.Single(issues, i => i.Kind == DuplicateSalePolicy.CreditNoteDraftIssueKind && i.DocumentId == noAudit.Id);
+            Assert.Contains("INV270-2", fallback.Title);
             Assert.Contains("ค้าง 2 วัน", hit.Detail);
             Assert.DoesNotContain(issues, i => i.DocumentId == manual.Id && i.Kind == DuplicateSalePolicy.CreditNoteDraftIssueKind);
             var otherIssues = await new AutopilotService(c1, bank).IssuesAsync(other.CompanyId, DateTime.UtcNow);
             Assert.DoesNotContain(otherIssues, i => i.Kind == DuplicateSalePolicy.CreditNoteDraftIssueKind);
         }
         // ทิศตรงข้าม: อนุมัติแล้ว ⇒ หลุดจากคิวเอง (ไม่มีสถานะให้ประทับ)
-        await db.Documents.Where(d => d.Id == fromWizard.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.Status, DocumentStatus.Approved));
+        await db.Documents.Where(d => d.Id == fromWizard.Id || d.Id == noAudit.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.Status, DocumentStatus.Approved));
         using var c2 = DbTestDatabase.TryCreateContext()!;
         Assert.DoesNotContain(await new AutopilotService(c2, bank).IssuesAsync(s.CompanyId, DateTime.UtcNow), i => i.Kind == DuplicateSalePolicy.CreditNoteDraftIssueKind);
     }

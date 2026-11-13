@@ -78,6 +78,16 @@ public class TaxController : ControllerBase
             result.Count == 0 ? "ยอดขาย 0%/ยกเว้นของรายงานที่บันทึกไว้ตรงกับการคำนวณปัจจุบัน" : $"พบ {result.Count} งวดที่ยอดขาย 0%/ยกเว้นต้องตรวจ"));
     }
 
+    /// <summary>รอบ 270 (ฝ่ายค้าน M3) — ใบกำกับจาก OCR ที่อนุมัติแล้วซึ่ง VAT 0% ทั้งใบและกระดาษไม่บอกอัตราศูนย์ · อ่านอย่างเดียว (ระบบไม่แก้เอง)</summary>
+    [HttpGet("ocr-zero-vat-review")]
+    public async Task<ActionResult<ApiResponse<List<OcrZeroVatReviewRow>>>> GetOcrZeroVatReview(Guid companyId)
+    {
+        if (await RequireTaxAsync(companyId, "ดูรายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
+        var result = await _taxService.GetOcrZeroVatReviewAsync(companyId);
+        return Ok(new ApiResponse<List<OcrZeroVatReviewRow>>(true, result,
+            result.Count == 0 ? "ไม่พบใบกำกับจากการสแกนที่ VAT 0% โดยกระดาษไม่บอกอัตราศูนย์" : $"พบ {result.Count} ใบที่ต้องตรวจกับกระดาษ"));
+    }
+
     [HttpGet("{reportId:guid}")]
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> GetTaxReport(Guid companyId, Guid reportId)
     {

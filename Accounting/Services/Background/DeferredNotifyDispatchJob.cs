@@ -115,6 +115,12 @@ public class DeferredNotifyDispatcher
                             break;
                     }
                 }
+                catch (DeferredNotifyRetryException retry)
+                {
+                    // รอบ 270 (M1): ล้มชั่วคราวที่ผู้ส่งจำแนกแล้ว ⇒ ถอยแล้วลองใหม่ (ไม่ใช่ข้อผิดพลาดของระบบ — Warning ไม่ใช่ Error)
+                    error = retry.Message;
+                    _logger.LogWarning("คิวแจ้งเตือน {Kind} {EntityId} ล้มชั่วคราว (ครั้งที่ {Attempt}) — จะลองใหม่: {Reason}", row.Kind, row.EntityId, row.Attempts, retry.Message);
+                }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     error = ex.Message;

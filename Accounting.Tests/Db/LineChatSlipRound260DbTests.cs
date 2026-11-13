@@ -541,9 +541,11 @@ public class LineChatSlipRound260DbTests
         Assert.Equal(NotifyEndpointKind.ScopeCompany, p.OaScope);
         Assert.Contains(a.DocumentNumber, p.Text);
         Assert.Contains("535.00", p.Text);                     // แสดงยอดได้ (ปลายทาง 1:1 เปิดแสดงยอด)
-        Assert.Equal(row.Id, p.RetryKey);
-        Assert.Equal(LineChatSlipRule.LinkedNotice.Sent, r.CustomerNotice);
         using var c3 = DbTestDatabase.TryCreateContext()!;
+        // ฝ่ายค้าน 270 L5: retry key ผูกกับการผูก (ผูกใหม่ = ข้อความใหม่) · ส่งซ้ำการผูกเดิม = คีย์เดิม
+        var linked = await c3.LineChatSlips.AsNoTracking().SingleAsync(x => x.Id == row.Id);
+        Assert.Equal(LineChatSlipRule.LinkedNoticeRetryKey(row.Id, LineChatSlipRule.LinkKey(linked.DocumentId, linked.PaymentIntentId)), p.RetryKey);
+        Assert.Equal(LineChatSlipRule.LinkedNotice.Sent, r.CustomerNotice);
         Assert.Contains(await c3.AuditLogs.AsNoTracking().Where(x => x.CompanyId == s.CompanyId && x.EntityType == LineChatSlipRule.AuditEntityType && x.EntityId == row.Id.ToString())
             .Select(x => x.NewValues!).ToListAsync(), v => v.Contains("customerNotice"));
         // ทิศตรงข้าม: LINE ตอบล้ม ⇒ การผูกยังสำเร็จ · คำตอบบอกพนักงานว่าแจ้งไม่สำเร็จ (ไม่เงียบ)
@@ -739,5 +741,32 @@ public class LineChatSlipRound260DbTests
         Assert.Contains("ลองส่งอีกครั้ง", r2.CustomerNotice);
         using var c3 = DbTestDatabase.TryCreateContext()!;
         Assert.True(await c3.DeferredNotifications.AnyAsync(d => d.CompanyId == s2.CompanyId && d.Kind == DeferredNotifyPolicy.LineChatSlipLinked && d.EntityId == row2));
+    }
+
+    [Fact]
+    public async Task C270_2_2_คิวแจ้งหลังผูก_LINE503_โยนให้คิวถอยลองใหม่_ไม่ปิดแถว_ทิศตรงข้าม_ล้มถาวรปิดพร้อมเหตุ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        // ล้มชั่วคราว (5xx) ตอนถึงคิวครั้งแรก ⇒ DeferredNotifyRetryException (ตัวเดินคิวถอยตาม AfterFailure) — เดิมปิดแถวทันที ข้อความหาย
+        var (s, row, _) = await QueuedLinkedNoticeAsync(db, "retry270-503");
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<DeferredNotifyRetryException>(() =>
+                SvcWithPush(c, s, new List<Push>(), result: new LinePushResult(false, "busy", HttpStatus: 503)).DispatchLinkedNoticeAsync(s.CompanyId, row.Id));
+            Assert.StartsWith("แจ้งลูกค้าในแชตไม่สำเร็จ", ex.Message);
+        }
+        // รอบถัดไปส่งได้ ⇒ null (ปิดแถวเพราะส่งแล้ว)
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var pushes = new List<Push>();
+            Assert.Null(await SvcWithPush(c, s, pushes).DispatchLinkedNoticeAsync(s.CompanyId, row.Id));
+            Assert.Single(pushes);
+        }
+        // ทิศตรงข้าม: ล้มถาวร (ไม่มีสถานะ HTTP + ไม่ใช่เครือข่าย) ⇒ คืนเหตุ (ปิดแถว) ไม่โยน
+        var (s2, row2, _) = await QueuedLinkedNoticeAsync(db, "retry270-perm");
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var why = await SvcWithPush(c2, s2, new List<Push>(), result: LinePushResult.Fail("ไม่มี token")).DispatchLinkedNoticeAsync(s2.CompanyId, row2.Id);
+        Assert.StartsWith("แจ้งลูกค้าในแชตไม่สำเร็จ", why);
     }
 }

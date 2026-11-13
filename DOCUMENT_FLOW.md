@@ -3396,7 +3396,12 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **270-1-5 ใบกำกับ OCR VAT 0% ทั้งใบ (ฝ่ายค้าน 269 ข้อ 3)**: `OcrService.BuildScanLinesAsync` → `Helpers/OcrZeroVatTaxInvoiceGuard.Check` ⇒ `[VAT-ZERO-UNREAD]`
   (`OcrPostingReadiness.BlockingTags` · `OcrLineBuildNotes` คำนวณใหม่) — ใบกำกับที่ทุกบรรทัด 0% และกระดาษไม่มีเครื่องหมายอัตราศูนย์/ส่งออก = รอตรวจ ไม่อนุมัติเอง ·
   ใบส่งออกที่พิมพ์ 0%/ส่งออก/ม.80/1 ผ่านตามเดิม · ไม่แต่งอัตรา 7%
-- **kill-switch**: ไม่มีการเรียก AI ในรอบนี้ · Last verified `commit ee79eb2b`
+- **ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-270.md` · คำตัดสิน 270-2-1…7)**: (H1) "แถวไหนเป็นเงินของใบมัดจำ" = `BookingDepositInstalmentChannel.DepositRows`
+  ตัวเดียว (ตัวย้ายเงิน 268 + ตัววางแผนคืน) · งวดสุดท้าย = งวดที่ครบยอดใบ · เงินที่เข้าหลังออกใบไม่เข้าแผน · `CapToDeposit` · (L1) บัญชีถอดผัง ⇒ 409 · (L3) ยอดคืนแล้วจากขาที่ยังมีผล ·
+  (M1) คิวแจ้งแชตล้มชั่วคราว ⇒ `DeferredNotifyRetryException` ⇒ backoff ของ `DeferredNotifyDispatcher` · (L4) ใบยกเลิก/ลบ ⇒ ไม่ส่ง · (L5) retry key = `LinkedNoticeRetryKey` ·
+  (M2) เครื่องหมายอัตราศูนย์อ่านทีละบรรทัด (ไม่นับชื่อ/ที่อยู่) · (M3) `GET tax/ocr-zero-vat-review` + แถบหน้า ภาษี (อ่านอย่างเดียว) ·
+  (M4) `IdempotencyMiddleware` ลองซ้ำ → LogError + `Idempotency-Status: unavailable` → เส้นเงิน/เอกสาร 503 (`IdempotencyKeyPolicy.FailClosedWhenStoreUnavailable`) · (L6/L7) คิวใบลดหนี้ร่างเริ่มจากใบที่ค้าง + ทางสำรองจากหมายเหตุ
+- **kill-switch**: ไม่มีการเรียก AI ในรอบนี้ · Last verified `commit ee79eb2b` · ชุดแก้ `commit <pending>`
 
 ### 2.12g-268 รอบ 268 งานคงค้าง (คำตัดสิน 268-1-1…6 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
@@ -9630,3 +9635,4 @@ _Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P5 — �
 _Last verified against codebase: 2026-11-13 (รอบ 264 P4 — §2.12g-264-P4: รายการเดินบัญชีฝั่งเงินออกตรงเป๊ะ ⇒ บันทึกเอง + ผูกบรรทัด · สลิปยกเป็นอัตโนมัติผ่านรายการเดินบัญชีเท่านั้น · จ่ายจากระบบของเรา (แผน + รายการของผู้ขาย ไม่ประทับชำระแล้ว) · แจ้งโอน (PV ของเรา + สำเนาสลิปภายใต้ความยินยอมผู้ขาย · ไม่มี PV ที่สอง) · L3 ล้างเลขผู้โอน — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 7578d6bb)_
 _Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P3 — §2.12n-P3 "📤 ส่งให้ลูกค้า": หน้าต่างเดียวแทน 6 ปุ่ม (share-options · share · CustomerShareService orchestrate EnsureCustomerLinkAsync · IssueLinkAsync · SendDocumentRoutedAsync · DocumentLineSendService.SendAsync · ผลแยกต่อช่องทาง) · ไทม์ไลน์ลูกค้า (customer-timeline) · LINE 1:1 การ์ด "ดู/ยอมรับ" + ฉบับเซ็นกลับ LINE เดิม (s ตรวจกับแถวคิว) · กลุ่ม = ปุ่มดูเท่านั้น (PageLinkAllowed ตัวเดียว) · ลิงก์เซ็นติ๊กให้ LINE 1:1 ได้ (คำตัดสิน 267-1-7 · 267-1-61…67) — build + test + Db test ผ่านในเครื่องนี้ — commit 39c4d582)_
 _Last verified against codebase: 2026-11-13 (รอบ 270 งานค้าง 266/268/269 — §2.12g-270: 270-1-1 คืนมัดจำตามบัญชีของแต่ละงวด · 270-1-2 คิวแจ้งแชตตรวจการผูกเดิม · 270-1-3 จำแนกผล LINE · 270-1-4 คิวใบลดหนี้ร่างตัวช่วยใบซ้ำ · 270-1-5 ใบกำกับ OCR VAT 0% — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit ee79eb2b)_
+_Last verified against codebase: 2026-11-13 (รอบ 270 ชุดแก้ฝ่ายค้าน — §2.12g-270: H1 เงินของใบมัดจำกติกาเดียว · M1 คิวแจ้งแชต backoff · M2 เครื่องหมายอัตราศูนย์ชัด · M3 ตัวตรวจย้อนหลัง OCR 0% · M4 idempotency fail-closed เส้นเงิน/เอกสาร · L1–L7 (คำตัดสิน 270-2-1…7) — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit <pending>)_
