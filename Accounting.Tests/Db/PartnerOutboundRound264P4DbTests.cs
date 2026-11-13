@@ -189,6 +189,8 @@ public class PartnerOutboundRound264P4DbTests
             Assert.Equal(1, await Pipe(c, PayingDocs(calls2)).RunForCompanyAsync(s2.Buyer.Id, DateTime.UtcNow));
         var call = Assert.Single(calls2);
         Assert.Equal(s2.BankB, call.OverrideBankAccountId);   // บัญชีที่เงินออกจริงชนะบัญชีตั้งต้น
+        using (var c = DbTestDatabase.TryCreateContext()!)   // ฝ่ายค้าน L5: PV ลงวันที่ของบรรทัด (เงินออกจริง)
+            Assert.Equal((await c.BankTransactions.AsNoTracking().SingleAsync(t => t.Id == line2)).TransactionDate.Date, call.PaymentDate.Date);
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
             var n = await NoticeAsync(c, s2.Buyer.Id, pay2);
@@ -251,7 +253,7 @@ public class PartnerOutboundRound264P4DbTests
         if (db == null) { _out.WriteLine(Skip); return; }
         var s = await SeedAsync(db);
         var (inv, purchaseId) = await RoutedAsync(db, s);
-        await GrantAsync(s.Seller.Id, s.OwnerA, s.PartnershipId, Scope.ReceiveSlipCopy, null, null);   // ผู้ขายเปิดรับสำเนาสลิป
+        await GrantAsync(s.Seller.Id, s.OwnerA, s.PartnershipId, Scope.AcceptPayerSlipCopy, null, null);   // ฝ่ายค้าน H2: ขอบเขตของผู้ขาย
         var calls = new List<CreatePaymentRequest>();
         PartnerTransferResult r;
         using (var c = DbTestDatabase.TryCreateContext()!)
@@ -277,15 +279,55 @@ public class PartnerOutboundRound264P4DbTests
         // ผู้ขายยืนยันรับเงินจากรายการนั้น ⇒ การแจ้งถึงผู้ซื้อ ⇒ ตาข่ายปิดด้วย PV ของแผน (ผู้ซื้อไม่มีความยินยอมบันทึกจ่าย — ท่อไม่ประเมินแถว)
         var sellerPay = await SellerPaysAsync(s, inv, 1_070m, sellerIntent);
         using (var c = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c, PayingDocs(calls)).CloseFromPlansAsync(DateTime.UtcNow));
+            Assert.True(await Pipe(c, PayingDocs(calls)).CloseFromPlansAsync(DateTime.UtcNow) >= 1);   // ตาข่ายกวาดทุกบริษัท (เทสต์อื่นขนานกันได้)
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
             var n = await NoticeAsync(c, s.Buyer.Id, sellerPay);
             Assert.Equal(PartnerPaymentNoticeRule.StatusRecorded, n.Status);
             Assert.Equal(r.PaymentId, n.RecordedPaymentId);
             Assert.Single(await c.Payments.AsNoTracking().Where(p => p.CompanyId == s.Buyer.Id && p.DocumentId == purchaseId && !p.IsDeleted).ToListAsync());
+            Assert.Equal(PartnerPaymentPlanRule.CopySent, (await c.PartnerPaymentPlans.AsNoTracking().SingleAsync(x => x.Id == r.PlanId)).SlipCopyState);
         }
         Assert.Single(calls);   // ไม่มี PV ที่สอง
+    }
+
+    [Fact]
+    public async Task H1_แจ้งโอน_สลิปเดิมสองครั้ง_และกดพร้อมกัน_PV_หนึ่งใบ_ทิศตรงข้าม_สองสลิปต่างกันยอดเท่ากัน_PV_สองใบ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var (_, purchaseId) = await RoutedAsync(db, s);
+        var calls = new List<CreatePaymentRequest>();
+        var slip = Png();
+        // กดพร้อมกันสองครั้ง (สองคำขอ · คนละ context) ⇒ หนึ่งผ่าน หนึ่ง 409
+        async Task<object> Press()
+        {
+            using var c = DbTestDatabase.TryCreateContext()!;
+            try { return await Outbound(c, s, calls).NotifyTransferAsync(s.Buyer.Id, s.OwnerB, purchaseId, slip, s.BankB, null, 500m, DateTime.UtcNow.Date, null); }
+            catch (BusinessRuleException ex) { return ex; }
+        }
+        var both = await Task.WhenAll(Press(), Press());
+        Assert.Single(both.OfType<PartnerTransferResult>());
+        var dup = Assert.Single(both.OfType<BusinessRuleException>());
+        Assert.StartsWith(PartnerPaymentPlanRule.DuplicateTransferPrefix, dup.Message);
+        // วันรุ่งขึ้นแนบสลิปเดิมยอดเดิมอีกครั้ง ⇒ 409
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var again = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Outbound(c, s, calls).NotifyTransferAsync(s.Buyer.Id, s.OwnerB, purchaseId, slip, s.BankB, null, 500m, DateTime.UtcNow.Date, null));
+            Assert.Equal(409, again.StatusCode);
+        }
+        lock (calls) Assert.Single(calls);
+        // ทิศตรงข้าม: สลิปอีกใบ ยอดเท่ากัน (งวดที่สอง) ⇒ บันทึกได้
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Outbound(c, s, calls).NotifyTransferAsync(s.Buyer.Id, s.OwnerB, purchaseId, Png(), s.BankB, null, 500m, DateTime.UtcNow.Date, null);
+        Assert.Equal(2, calls.Count);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Equal(2, await c.Payments.AsNoTracking().CountAsync(p => p.CompanyId == s.Buyer.Id && p.DocumentId == purchaseId && !p.IsDeleted));
+            Assert.Equal(2, await c.PartnerPaymentPlans.AsNoTracking().CountAsync(x => x.CompanyId == s.Buyer.Id && x.PurchaseDocumentId == purchaseId));
+        }
     }
 
     [Fact]
@@ -300,11 +342,27 @@ public class PartnerOutboundRound264P4DbTests
         using (var c = DbTestDatabase.TryCreateContext()!)
             r = await Outbound(c, s, calls).NotifyTransferAsync(s.Buyer.Id, s.OwnerB, purchaseId, Png(), s.BankB, null, 1_070m, DateTime.UtcNow.Date, null);
         Assert.False(r.SlipCopySent);
-        Assert.StartsWith(PartnerPaymentPlanRule.SlipCopyNotConsentedPrefix, r.SlipCopyNote);
+        Assert.StartsWith(PartnerPaymentPlanRule.SlipCopyFailedPrefix, r.SlipCopyNote);
+        Assert.Contains("ผู้ขายยังไม่เปิดรับ", r.SlipCopyNote);   // M7: ข้อความมุมผู้ซื้อ
         Assert.Single(calls);
-        using var c2 = DbTestDatabase.TryCreateContext()!;
-        Assert.False(await c2.PaymentIntents.AnyAsync(i => i.CompanyId == s.Seller.Id && i.SourceId == inv.Id));
-        Assert.Null((await c2.PartnerPaymentPlans.AsNoTracking().SingleAsync(x => x.Id == r.PlanId)).SellerIntentId);
+        using (var c2 = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.False(await c2.PaymentIntents.AnyAsync(i => i.CompanyId == s.Seller.Id && i.SourceId == inv.Id));
+            var plan = await c2.PartnerPaymentPlans.AsNoTracking().SingleAsync(x => x.Id == r.PlanId);
+            Assert.Null(plan.SellerIntentId);
+            Assert.Equal(PartnerPaymentPlanRule.CopySkipped, plan.SlipCopyState);
+        }
+        // ฝ่ายค้าน M3: ผู้ขายรับรู้เงินเอง (ไม่มีรายการชำระของผู้ขาย) ⇒ การแจ้งปิดด้วย PV ที่มีอยู่ (ยอด/วันตรงตัวเดียว) — ไม่มี PV ที่สอง
+        var sellerPay = await SellerPaysAsync(s, inv, 1_070m);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Pipe(c, PayingDocs(calls)).CloseFromPlansAsync(DateTime.UtcNow);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var n = await NoticeAsync(c, s.Buyer.Id, sellerPay);
+            Assert.Equal(PartnerPaymentNoticeRule.StatusRecorded, n.Status);
+            Assert.Equal(r.PaymentId, n.RecordedPaymentId);
+        }
+        Assert.Single(calls);
     }
 
     [Fact]
@@ -342,56 +400,55 @@ public class PartnerOutboundRound264P4DbTests
         Assert.Single(calls);
     }
 
+    private static IDocumentPayLinkService PayLinks(Seed s, Func<Guid, decimal> due)
+        => F4Proxy<IDocumentPayLinkService>.Create((m, args) => m == nameof(IDocumentPayLinkService.PartnerPayTargetAsync) && (Guid)args[0]! == s.Seller.Id
+            ? new PublicPayTarget(PaymentSourceKind.Document, (Guid)args[1]!, Guid.Empty, due((Guid)args[1]!), "ใบแจ้งหนี้", null, null, "INV",
+                AllowedMethods: new[] { "PromptPay", "MobileBanking" }, ContactId: s.BuyerAtSeller.Id)
+            : null);
+
+    private static IPaymentIntentService Gateway(Action onStart) => F4Proxy<IPaymentIntentService>.Create((m, args) =>
+    {
+        if (m != nameof(IPaymentIntentService.StartAsync)) return null;
+        onStart();
+        var companyId = (Guid)args[0]!;
+        var req = (StartPaymentRequest)args[1]!;
+        async Task<PaymentIntent> Run()
+        {
+            using var other = DbTestDatabase.TryCreateContext()!;
+            var i = new PaymentIntent
+            {
+                CompanyId = companyId, ProviderCode = "test", SourceKind = req.SourceKind, SourceId = req.SourceId, Amount = req.Amount, Currency = "THB",
+                MethodKind = req.Method, Status = PaymentIntentStatus.Pending, QrPayload = "data:image/png;base64,AA==", IdempotencyKey = Guid.NewGuid().ToString("N"),
+            };
+            other.PaymentIntents.Add(i);
+            await other.SaveChangesAsync();
+            return i;
+        }
+        return Run();
+    });
+
     [Fact]
-    public async Task จ่ายจากระบบของเรา_ไม่ยินยอม_409_ไม่เปิดรายการ_ยินยอม_แผน_แล้วการแจ้งบันทึกด้วยบัญชีที่ผู้จ่ายเลือก()
+    public async Task จ่ายจากระบบของเรา_ไม่ยินยอม_เปิดรายการได้_การแจ้งไม่บันทึกเอง_ยินยอมแล้วโมบายแบงก์กิ้งบันทึกด้วยบัญชีที่ผู้จ่ายเลือก_พร้อมเพย์ไม่บันทึกเอง()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
         var s = await SeedAsync(db);
         var (inv, purchaseId) = await RoutedAsync(db, s);
-        var payLinks = F4Proxy<IDocumentPayLinkService>.Create((m, args) => m == nameof(IDocumentPayLinkService.PartnerPayTargetAsync) && (Guid)args[0]! == s.Seller.Id
-            ? new PublicPayTarget(PaymentSourceKind.Document, inv.Id, Guid.Empty, 1_070m, "ใบแจ้งหนี้ " + inv.DocumentNumber, null, null, inv.DocumentNumber,
-                AllowedMethods: new[] { "PromptPay" }, ContactId: s.BuyerAtSeller.Id)
-            : null);
+        var (inv2, purchase2) = await RoutedAsync(db, s);
         var started = 0;
-        var gateway = F4Proxy<IPaymentIntentService>.Create((m, args) =>
-        {
-            if (m != nameof(IPaymentIntentService.StartAsync)) return null;
-            started++;
-            var companyId = (Guid)args[0]!;
-            var req = (StartPaymentRequest)args[1]!;
-            async Task<PaymentIntent> Run()
-            {
-                using var other = DbTestDatabase.TryCreateContext()!;
-                var i = new PaymentIntent
-                {
-                    CompanyId = companyId, ProviderCode = "test", SourceKind = req.SourceKind, SourceId = req.SourceId, Amount = req.Amount, Currency = "THB",
-                    MethodKind = req.Method, Status = PaymentIntentStatus.Pending, QrPayload = "data:image/png;base64,AA==", IdempotencyKey = Guid.NewGuid().ToString("N"),
-                };
-                other.PaymentIntents.Add(i);
-                await other.SaveChangesAsync();
-                return i;
-            }
-            return Run();
-        });
+        var payLinks = PayLinks(s, _ => 1_070m);
+        var gateway = Gateway(() => Interlocked.Increment(ref started));
         var calls = new List<CreatePaymentRequest>();
-        using (var c = DbTestDatabase.TryCreateContext()!)
-        {
-            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
-                Outbound(c, s, calls, null, payLinks, gateway).StartGatewayAsync(s.Buyer.Id, s.OwnerB, purchaseId, s.BankB2, "PromptPay", null));
-            Assert.StartsWith(PartnerPaymentPlanRule.ConsentNeededPrefix, ex.Message);
-        }
-        Assert.Equal(0, started);
-        await GrantAsync(s.Buyer.Id, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, 5_000m, s.BankB);
+        // ฝ่ายค้าน M6 (264-5-11 ถูกกลับ): ไม่มีความยินยอมก็เปิดรายการได้ (สิทธิ์ผู้กด + คู่ Accepted + ผู้ขายเปิดช่องทาง)
         PartnerGatewayStartResult g;
         using (var c = DbTestDatabase.TryCreateContext()!)
         {
             var opts = await Outbound(c, s, calls, null, payLinks, gateway).OptionsAsync(s.Buyer.Id, purchaseId);
             Assert.True(opts.GatewayOffered);
-            Assert.Contains(opts.GatewayMethods, o => o.Value == "PromptPay");
+            Assert.Contains(opts.GatewayMethods, o => o.Value == "MobileBanking");
             await Assert.ThrowsAsync<BusinessRuleException>(() =>   // วิธีที่ไม่อยู่ในชุด ⇒ ปฏิเสธ
                 Outbound(c, s, calls, null, payLinks, gateway).StartGatewayAsync(s.Buyer.Id, s.OwnerB, purchaseId, s.BankB2, "Card", null));
-            g = await Outbound(c, s, calls, null, payLinks, gateway).StartGatewayAsync(s.Buyer.Id, s.OwnerB, purchaseId, s.BankB2, "PromptPay", "https://evil.example");
+            g = await Outbound(c, s, calls, null, payLinks, gateway).StartGatewayAsync(s.Buyer.Id, s.OwnerB, purchaseId, s.BankB2, "MobileBanking", "https://evil.example");
         }
         Assert.Equal(1, started);
         Assert.Empty(calls);   // ไม่ประทับ "จ่ายแล้ว" ฝั่งเรา — รอการแจ้ง
@@ -401,10 +458,15 @@ public class PartnerOutboundRound264P4DbTests
             Assert.Equal(g.IntentId, plan.SellerIntentId);
             Assert.Single(await EventsAsync(c, s.Buyer.Id, "PartnerPaymentPlanStarted"));
         }
-        // ผู้ให้บริการยืนยัน ⇒ ผู้ขายบันทึกรับ (intent เดียวกัน) ⇒ การแจ้ง ⇒ ท่อ: ผู้จ่ายเลือก BankB2 ชนะบัญชีตั้งต้น BankB
+        // ผู้ให้บริการยืนยัน ⇒ ผู้ขายบันทึกรับ (intent เดียวกัน) ⇒ การแจ้ง ⇒ ไม่มีความยินยอม ⇒ ท่อไม่บันทึก (ปุ่มเดียว)
         var sellerPay = await SellerPaysAsync(s, inv, 1_070m, g.IntentId);
         using (var c = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c, PayingDocs(calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(0, await Pipe(c, PayingDocs(calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+        Assert.Empty(calls);
+        // ให้ความยินยอม ⇒ ท่อบันทึกเอง: ผู้จ่ายเลือก BankB2 (โมบายแบงก์กิ้งผูกบัญชี) ชนะบัญชีตั้งต้น BankB
+        await GrantAsync(s.Buyer.Id, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, 5_000m, s.BankB);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(1, await Pipe(c, PayingDocs(calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow.AddHours(1)));
         var call = Assert.Single(calls);
         Assert.Equal(s.BankB2, call.OverrideBankAccountId);
         using (var c = DbTestDatabase.TryCreateContext()!)
@@ -412,6 +474,107 @@ public class PartnerOutboundRound264P4DbTests
             var rec = Assert.Single(await EventsAsync(c, s.Buyer.Id, "PartnerPaymentAutoRecorded"));
             Assert.Contains("\"origin\":\"PayerDeclared\"", rec);
             Assert.Equal(PartnerPaymentNoticeRule.StatusRecorded, (await NoticeAsync(c, s.Buyer.Id, sellerPay)).Status);
+        }
+        // ฝ่ายค้าน M4: พร้อมเพย์ (สแกนจากบัญชีอื่นได้) ⇒ ไม่บันทึกเอง · บัญชีที่เลือกถูก preselect + เหตุ
+        PartnerGatewayStartResult g2;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            g2 = await Outbound(c, s, calls, null, payLinks, gateway).StartGatewayAsync(s.Buyer.Id, s.OwnerB, purchase2, s.BankB2, "PromptPay", null);
+        var sellerPay2 = await SellerPaysAsync(s, inv2, 1_070m, g2.IntentId);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Pipe(c, PayingDocs(calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow.AddHours(2));
+        Assert.Single(calls);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var n2 = await NoticeAsync(c, s.Buyer.Id, sellerPay2);
+            Assert.Equal(PartnerPaymentNoticeRule.StatusOpen, n2.Status);
+            Assert.Contains(PartnerPaySourceAccount.PayerDeclaredUnboundReason, n2.AutoBlockedReason);
+        }
+    }
+
+    [Fact]
+    public async Task M5_จ่ายจากระบบของเรา_ใบมีภาษีหัก_ผู้ขายเรียกเต็ม_ปิดปุ่ม_ไม่เปิดรายการ_ทิศตรงข้าม_ยอดสุทธิใช้ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var (_, purchaseId) = await RoutedAsync(db, s);
+        using (var c = DbTestDatabase.TryCreateContext()!)   // ใบซื้อมีภาษีหัก ณ ที่จ่าย 3% ของ 1,000 (ตามกติกาของเรา)
+            await c.Documents.Where(d => d.Id == purchaseId).ExecuteUpdateAsync(x => x.SetProperty(d => d.WithholdingTaxAmount, 30m));
+        var started = 0;
+        var gateway = Gateway(() => Interlocked.Increment(ref started));
+        var calls = new List<CreatePaymentRequest>();
+        var full = PayLinks(s, _ => 1_070m);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var opts = await Outbound(c, s, calls, null, full, gateway).OptionsAsync(s.Buyer.Id, purchaseId);
+            Assert.False(opts.GatewayOffered);
+            Assert.Contains("ภาษี ณ ที่จ่าย", opts.GatewayProblem);
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                Outbound(c, s, calls, null, full, gateway).StartGatewayAsync(s.Buyer.Id, s.OwnerB, purchaseId, s.BankB, "MobileBanking", null));
+            Assert.Equal(409, ex.StatusCode);
+        }
+        Assert.Equal(0, started);
+        var net = PayLinks(s, _ => 1_040m);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.True((await Outbound(c, s, calls, null, net, gateway).OptionsAsync(s.Buyer.Id, purchaseId)).GatewayOffered);
+            await Outbound(c, s, calls, null, net, gateway).StartGatewayAsync(s.Buyer.Id, s.OwnerB, purchaseId, s.BankB, "MobileBanking", null);
+        }
+        Assert.Equal(1, started);
+    }
+
+    [Fact]
+    public async Task M1_บรรทัดเดียวเป็นหลักฐานได้การจ่ายเดียว_ปุ่มเดียวผูกบรรทัด_การแจ้งที่สองยอดเท่ากันไม่บันทึกเอง_PVที่ไม่ผูกนับในหนึ่งต่อหนึ่ง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        // (ก) ปุ่มเดียวเลือกบัญชีเดียวกับบรรทัด ⇒ ผูกบรรทัด ⇒ การแจ้งที่สองยอดเท่ากันไม่มีหลักฐาน ⇒ ไม่บันทึกเอง
+        var s = await SeedAsync(db);
+        var (inv1, _) = await RoutedAsync(db, s);
+        var (inv2, _) = await RoutedAsync(db, s);
+        var line = await OutflowLineAsync(s, BankReceiptAutoSettle.SourceStatement, "TRANSFER TO X3210 ผู้ขาย", 1_070m);
+        var pay1 = await SellerPaysAsync(s, inv1, 1_070m);
+        var calls = new List<CreatePaymentRequest>();
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var n1 = await NoticeAsync(c, s.Buyer.Id, pay1);
+            await new PartnerPaymentNoticeService(c, PayingDocs(calls), NullLogger<PartnerPaymentNoticeService>.Instance, null, Consent(c),
+                new BankPaymentLineEvidence(c, new PermissionService(c))).RecordAsync(s.Buyer.Id, n1.Id, s.OwnerB, s.BankB, null);
+        }
+        Guid pv1;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            pv1 = (await NoticeAsync(c, s.Buyer.Id, pay1)).RecordedPaymentId!.Value;
+            Assert.Equal(pv1, (await c.BankTransactions.AsNoTracking().SingleAsync(t => t.Id == line)).MatchedPaymentId);
+        }
+        await GrantAsync(s.Buyer.Id, s.OwnerB, s.PartnershipId, Scope.AutoRecordPayment, 5_000m, s.BankB);
+        var pay2 = await SellerPaysAsync(s, inv2, 1_070m);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(0, await Pipe(c, PayingDocs(calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+        Assert.Single(calls);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(PartnerPaymentNoticeRule.StatusOpen, (await NoticeAsync(c, s.Buyer.Id, pay2)).Status);
+
+        // (ข) ปุ่มเดียวเลือกบัญชีอื่น ⇒ ไม่ผูก (บรรทัดไม่ใช่เงินก้อนนี้) แต่ PV ที่ไม่ผูกนับในหนึ่งต่อหนึ่ง ⇒ การแจ้งที่สองได้คำแนะนำ ไม่ใช่หลักฐาน
+        var t = await SeedAsync(db);
+        var (invA, _) = await RoutedAsync(db, t);
+        var (invB, _) = await RoutedAsync(db, t);
+        var lineT = await OutflowLineAsync(t, BankReceiptAutoSettle.SourceStatement, "TRANSFER TO X3210 ผู้ขาย", 1_070m);
+        var payA = await SellerPaysAsync(t, invA, 1_070m);
+        var callsT = new List<CreatePaymentRequest>();
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var nA = await NoticeAsync(c, t.Buyer.Id, payA);
+            await new PartnerPaymentNoticeService(c, PayingDocs(callsT), NullLogger<PartnerPaymentNoticeService>.Instance, null, Consent(c),
+                new BankPaymentLineEvidence(c, new PermissionService(c))).RecordAsync(t.Buyer.Id, nA.Id, t.OwnerB, t.BankB2, null);
+        }
+        var payB = await SellerPaysAsync(t, invB, 1_070m);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            Assert.Null((await c.BankTransactions.AsNoTracking().SingleAsync(x => x.Id == lineT)).MatchedPaymentId);
+            var r = await new BankPaymentLineEvidence(c, new PermissionService(c)).DecideAsync(t.Buyer.Id, await NoticeAsync(c, t.Buyer.Id, payB));
+            Assert.Equal(BankPaymentLineMatch.Kind.Suggest, r.Kind);
+            Assert.Equal(BankPaymentLineMatch.SharedLineReason, r.Reason);
         }
     }
 

@@ -3073,6 +3073,45 @@ public partial class TaxService : ITaxService
         return rows;
     }
 
+    /// <summary>รอบ 270 (ฝ่ายค้าน M3 · คำตัดสิน 270-2-5) — <b>อ่านอย่างเดียว</b>: เอกสารจากสแกน (<c>OcrScanResult.CreatedDocumentId</c>) ที่ออกแล้ว · VAT 0 ทั้งใบ ·
+    /// และตัวตัดสินเดียวกับด่านตอนสร้าง (<see cref="Accounting.Helpers.OcrZeroVatTaxInvoiceGuard.Check"/>) บนข้อความกระดาษเดิมคืนแท็ก ⇒ ครอบใบที่อนุมัติก่อนรอบ 270
+    /// (และใบที่คนอนุมัติเองหลังเห็นแท็ก) · ไม่แก้ตัวเลข/รายงาน · ทุก query ผูก CompanyId</summary>
+    public async Task<List<OcrZeroVatReviewRow>> GetOcrZeroVatReviewAsync(Guid companyId)
+    {
+        var dead = new[] { DocumentStatus.Draft, DocumentStatus.WaitingApproval, DocumentStatus.Voided, DocumentStatus.Rejected };
+        var candidates = await (from sc in _db.OcrScanResults.AsNoTracking()
+                                join d in _db.Documents.AsNoTracking() on sc.CreatedDocumentId equals d.Id
+                                where sc.CompanyId == companyId && d.CompanyId == companyId && !d.IsDeleted && !dead.Contains(d.Status)
+                                      && d.VatAmount == 0m && d.TotalAmount > 0m
+                                orderby d.DocumentDate descending
+                                select new { d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.TotalAmount, sc.RawTextContent, sc.ExtractedVatAmount })
+            .Take(500).ToListAsync();
+        if (candidates.Count == 0) return new List<OcrZeroVatReviewRow>();
+        var ids = candidates.Select(c => c.Id).ToList();
+        var lines = (await _db.DocumentLines.AsNoTracking().Where(l => ids.Contains(l.DocumentId) && !l.IsDeleted)
+                .Select(l => new { l.DocumentId, l.VatRate, l.VatAmount }).ToListAsync())
+            .GroupBy(l => l.DocumentId).ToDictionary(g => g.Key, g => g.ToList());
+        var filed = (await _db.TaxReports.AsNoTracking()
+                .Where(r => r.CompanyId == companyId && r.TaxType == TaxType.VAT && r.Status != TaxReportStatus.Draft)
+                .Select(r => new { r.Year, r.Month }).ToListAsync())
+            .Select(r => (r.Year, r.Month)).ToHashSet();
+        var rows = new List<OcrZeroVatReviewRow>();
+        foreach (var c in candidates)
+        {
+            var ls = lines.TryGetValue(c.Id, out var l0) ? l0 : new();
+            if (Accounting.Helpers.OcrZeroVatTaxInvoiceGuard.Check(c.DocumentType == DocumentType.TaxInvoice,
+                    Accounting.Services.Implementations.Ocr.ThaiTextNormalizer.Normalize(c.RawTextContent), c.ExtractedVatAmount,
+                    ls.Select(x => x.VatRate).ToList(), ls.Sum(x => x.VatAmount)) is null) continue;
+            var thai = Accounting.Helpers.ThaiDate.CalendarDateUtc(c.DocumentDate);
+            var isFiled = filed.Contains((thai.Year, thai.Month));
+            var sales = c.DocumentType == DocumentType.TaxInvoice;
+            rows.Add(new OcrZeroVatReviewRow(c.Id, c.DocumentNumber, c.DocumentType.ToString(), c.DocumentDate, c.TotalAmount,
+                $"{thai.Month:00}/{thai.Year + 543}", isFiled, Accounting.Helpers.OcrZeroVatTaxInvoiceGuard.ApprovedMessage,
+                Accounting.Helpers.OcrZeroVatTaxInvoiceGuard.HowToFix(sales, isFiled), "/pages/documents.html?openDoc=" + c.Id));
+        }
+        return rows;
+    }
+
     /// <summary>
     /// <b>ทบทวนช่อง 0%/ยกเว้น ของรายงาน ภ.พ.30 ที่บันทึกไว้</b> เทียบกับการคำนวณสดด้วยกติกาเจ้าของการขาย (<see cref="Accounting.Helpers.OutputVatOwnership.SalesBoxOwner"/>) —
     /// <b>อ่านอย่างเดียว</b> (รอบ 269 · หลักการ #9) · ตรวจเฉพาะรายงานที่มีแถว ZERO_RATED_SALES/EXEMPT_SALES (บั๊กทำให้ยอด<b>เกิน</b>เท่านั้น ⇒ รายงานที่ไม่มีแถวนี้ไม่ได้รับผล) ·

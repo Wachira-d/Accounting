@@ -227,26 +227,34 @@ public class AutopilotService : IAutopilotService
     /// ที่ยังร่าง/รออนุมัติ · ทุก query ผูก CompanyId · ใบที่อนุมัติ/ยกเลิก/ลบแล้วหลุดจากคิวเอง (ไม่มีสถานะให้ประทับ)</summary>
     private async Task<List<AutopilotIssueDto>> DuplicateSaleCreditNoteDraftIssuesAsync(Guid companyId, DateTime nowUtc, CancellationToken ct)
     {
+        // ฝ่ายค้าน 270 L6: เริ่มจากใบลดหนี้ร่างที่ค้าง (ชุดเล็ก) แล้วอ่าน audit เฉพาะช่วงเวลาของใบเหล่านั้น — เดิม Take(200) ของ audit ก่อนกรองสถานะ ⇒ ใบเก่าหลุดเงียบ
+        var pending = DuplicateSalePolicy.CreditNotePendingStatuses;
+        var drafts = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.DocumentType == DocumentType.CreditNote && pending.Contains(d.Status))
+            .OrderBy(d => d.CreatedAt).Take(500)
+            .Select(d => new { d.Id, d.DocumentNumber, d.Status, d.Notes, d.CreatedAt }).ToListAsync(ct);
+        if (drafts.Count == 0) return new List<AutopilotIssueDto>();
+        var since = drafts.Min(d => d.CreatedAt).AddMinutes(-5);
         var audits = await _db.AuditLogs.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.EntityType == "Document" && a.NewValues != null && a.NewValues.Contains(DuplicateSalePolicy.CreditNoteAuditAction))
-            .OrderByDescending(a => a.Timestamp).Take(200)
+            .Where(a => a.CompanyId == companyId && a.EntityType == "Document" && a.Action == AuditAction.Update && a.Timestamp >= since
+                && a.NewValues != null && a.NewValues.Contains(DuplicateSalePolicy.CreditNoteAuditAction))
             .Select(a => new { a.NewValues, a.Timestamp }).ToListAsync(ct);
         var made = audits.Select(a => (Facts: DuplicateSalePolicy.CreditNoteFromAudit(a.NewValues), a.Timestamp))
             .Where(x => x.Facts != null).GroupBy(x => x.Facts!.CreditNoteId)
             .ToDictionary(g => g.Key, g => (Facts: g.First().Facts!, At: g.Min(x => x.Timestamp)));
-        if (made.Count == 0) return new List<AutopilotIssueDto>();
-        var ids = made.Keys.ToList();
-        var pending = DuplicateSalePolicy.CreditNotePendingStatuses;
-        var cns = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted && ids.Contains(d.Id) && d.DocumentType == DocumentType.CreditNote && pending.Contains(d.Status))
-            .Select(d => new { d.Id, d.DocumentNumber, d.Status }).ToListAsync(ct);
-        return cns.Where(c => DuplicateSalePolicy.CreditNoteStillPending(c.Status)).Take(50).Select(c =>
+        var list = new List<AutopilotIssueDto>();
+        foreach (var c in drafts.Where(d => DuplicateSalePolicy.CreditNoteStillPending(d.Status)))
         {
-            var (facts, at) = made[c.Id];
-            return new AutopilotIssueDto(DuplicateSalePolicy.CreditNoteDraftIssueKind, DuplicateSalePolicy.CreditNoteDraftTitle(c.DocumentNumber, facts.InvoiceNumber),
+            // ฝ่ายค้าน 270 L7: audit ของตัวช่วยบันทึกไม่ได้ ⇒ ทางสำรองจากหมายเหตุที่ตัวช่วยเขียนบนใบ
+            var (facts, at) = made.TryGetValue(c.Id, out var m) ? m
+                : DuplicateSalePolicy.CreditNoteFromNote(c.Id, c.Notes) is { } fromNote ? (fromNote, c.CreatedAt) : (null!, default);
+            if (facts == null) continue;
+            list.Add(new AutopilotIssueDto(DuplicateSalePolicy.CreditNoteDraftIssueKind, DuplicateSalePolicy.CreditNoteDraftTitle(c.DocumentNumber, facts.InvoiceNumber),
                 DuplicateSalePolicy.CreditNoteDraftDetail(facts.InvoiceNumber, facts.CashSaleNumber, at, nowUtc), DateTime.SpecifyKind(at, DateTimeKind.Utc), c.Id,
-                "เปิดใบลดหนี้ร่าง", DocHref(c.Id), null, null, null);
-        }).ToList();
+                "เปิดใบลดหนี้ร่าง", DocHref(c.Id), null, null, null));
+            if (list.Count >= 50) break;
+        }
+        return list;
     }
 
     /// <summary>รอบ 264 P5 (คำตัดสิน 264-5-4) — อ่านอย่างเดียว · ทุก query ผูก CompanyId · ตัวตัดสิน <see cref="PartnerTaxEvidenceAlerts"/> ·

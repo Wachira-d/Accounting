@@ -359,8 +359,27 @@ public static class DuplicateSalePolicy
     public static readonly DocumentStatus[] CreditNotePendingStatuses = { DocumentStatus.Draft, DocumentStatus.WaitingApproval };
     public static bool CreditNoteStillPending(DocumentStatus status) => Array.IndexOf(CreditNotePendingStatuses, status) >= 0;
 
+    /// <summary>ฝ่ายค้าน 270 L7: ร่างยังไม่มีเลข (DRAFT-… §86/4 — เลขออกตอนอนุมัติ) ⇒ ไม่แสดงเลขชั่วคราว ใช้ "อ้าง {ใบแจ้งหนี้}"</summary>
     public static string CreditNoteDraftTitle(string creditNoteNumber, string? invoiceNumber)
-        => $"ใบลดหนี้ร่าง {creditNoteNumber} จากตัวช่วยใบซ้ำยังไม่อนุมัติ" + (string.IsNullOrEmpty(invoiceNumber) ? "" : $" (ลดหนี้ {invoiceNumber})");
+        => creditNoteNumber.StartsWith("DRAFT-", StringComparison.Ordinal)
+            ? "ใบลดหนี้ร่างจากตัวช่วยใบซ้ำยังไม่อนุมัติ" + (string.IsNullOrEmpty(invoiceNumber) ? "" : $" (อ้าง {invoiceNumber})")
+            : $"ใบลดหนี้ร่าง {creditNoteNumber} จากตัวช่วยใบซ้ำยังไม่อนุมัติ" + (string.IsNullOrEmpty(invoiceNumber) ? "" : $" (ลดหนี้ {invoiceNumber})");
+
+    private const string CreditNoteNoteLead = "ลดหนี้เต็มใบของ ";
+    private const string CreditNoteNoteMid = " ซึ่งออกซ้ำกับใบขายสด ";
+
+    /// <summary>ฝ่ายค้าน 270 L7: แถว audit ของตัวช่วยเป็น best-effort (บันทึกไม่ได้ ⇒ ใบร่างไม่ขึ้นคิว) ⇒ ทางสำรองจากหมายเหตุบนใบลดหนี้ร่างที่ตัวช่วยเขียนเอง
+    /// (<see cref="CreditNoteNote"/> — รูปเดียวกัน) · ไม่ตรงรูป ⇒ null</summary>
+    public static CreditNoteAuditFacts? CreditNoteFromNote(Guid creditNoteId, string? notes)
+    {
+        if (string.IsNullOrEmpty(notes) || !notes.StartsWith(CreditNoteNoteLead, StringComparison.Ordinal)) return null;
+        var mid = notes.IndexOf(CreditNoteNoteMid, StringComparison.Ordinal);
+        if (mid < 0) return null;
+        var inv = notes[CreditNoteNoteLead.Length..mid];
+        var rest = notes[(mid + CreditNoteNoteMid.Length)..];
+        var sp = rest.IndexOf(' ');
+        return new CreditNoteAuditFacts(creditNoteId, inv, sp < 0 ? rest : rest[..sp]);
+    }
 
     public static string CreditNoteDraftDetail(string? invoiceNumber, string? cashSaleNumber, DateTime createdAtUtc, DateTime nowUtc)
     {
@@ -371,7 +390,7 @@ public static class DuplicateSalePolicy
 
     /// <summary>หมายเหตุบนใบลดหนี้ร่าง (ข้อความถึงผู้อ่านเอกสาร)</summary>
     public static string CreditNoteNote(string invoiceNumber, string cashSaleNumber) =>
-        $"ลดหนี้เต็มใบของ {invoiceNumber} ซึ่งออกซ้ำกับใบขายสด {cashSaleNumber} ของการขายเดียวกัน (ยกเลิกการขายที่บันทึกซ้ำ)";
+        $"{CreditNoteNoteLead}{invoiceNumber}{CreditNoteNoteMid}{cashSaleNumber} ของการขายเดียวกัน (ยกเลิกการขายที่บันทึกซ้ำ)";
 
     /// <summary>หมายเหตุของเงินรอจัดสรรที่ลงจากใบขายสดที่ยกเลิกเพราะซ้ำ (เหตุผล "ค้างออกใบ" — ส่งของ/ให้บริการแล้ว ใบแจ้งหนี้คือใบที่คงไว้)</summary>
     public static string CreditPaymentNote(string cashSaleNumber, string invoiceNumber) =>

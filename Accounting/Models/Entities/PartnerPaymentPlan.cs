@@ -38,4 +38,21 @@ public class PartnerPaymentPlan : TenantEntity
     public string? SlipCopyNote { get; set; }
     /// <summary>ที่มาของบัญชี (ชื่อ <c>PartnerPaySourceAccount.Origin</c>)</summary>
     public string? AccountOrigin { get; set; }
+
+    // ═══ ฝ่ายค้าน 264-P4 H1/M2 (คำตัดสิน 264-5-15) — แจ้งโอน: กุญแจกันซ้ำ + outbox สำเนาสลิป ═══
+
+    /// <summary>Transfer: <c>PartnerPaymentPlanRule.TransferIdempotencyKey</c> (เอกสารผู้ขาย · แฮชสลิป · ยอด) · unique ต่อบริษัทในแถวที่ไม่ถูกลบ · Gateway = null</summary>
+    public string? IdempotencyKey { get; set; }
+    /// <summary>Transfer: SHA-256 ของไฟล์สลิปต้นฉบับ (ตัวเดียวกับ <c>SlipEvidenceRule.Sha256Hex</c>)</summary>
+    public string? SlipSha256 { get; set; }
+    /// <summary>Transfer: ที่เก็บไฟล์สลิปของเรา (ที่เก็บกลาง · ไม่เสิร์ฟตรง) — outbox อ่านไฟล์นี้ตอนส่งสำเนาให้ผู้ขาย</summary>
+    public string? SlipStoragePath { get; set; }
+    public string? SlipContentType { get; set; }
+    /// <summary>Transfer: เลขอ้างอิงการโอน (ผู้แจ้งกรอก/อ่านจากสลิป)</summary>
+    public string? SlipBankRef { get; set; }
+    /// <summary>Transfer: สถานะ outbox สำเนาสลิป (<c>Pending/Sent/Skipped/Failed</c> — ค่าใน <c>PartnerPaymentPlanRule</c>)</summary>
+    public string? SlipCopyState { get; set; }
+    public int SlipCopyAttempts { get; set; }
+    /// <summary>ฝ่ายค้าน M7: แจ้งผู้ขาย (กระดิ่ง) ว่าต้องให้/ยืนยันความยินยอมรับสลิปเมื่อไร — กันแจ้งซ้ำต่อคู่ค้า</summary>
+    public DateTime? SellerNotifiedAt { get; set; }
 }

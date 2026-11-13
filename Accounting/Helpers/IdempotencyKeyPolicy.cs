@@ -26,6 +26,31 @@ public static class IdempotencyKeyPolicy
     public const string StatusInFlight = "in-flight";
     public const string StatusMismatch = "mismatch";
     public const string StatusReplayed = "replayed";
+    /// <summary>รอบ 270 (ฝ่ายค้าน M4 · คำตัดสิน 270-2-4): ที่เก็บคีย์ใช้ไม่ได้ (ลองซ้ำแล้ว) — ปล่อยผ่าน (เส้นทั่วไป) หรือ 503 (เส้นเงิน/เอกสาร) · บอกผู้เรียกเสมอ</summary>
+    public const string StatusUnavailable = "unavailable";
+    /// <summary>วินาทีที่บอกให้รอเมื่อที่เก็บคีย์ใช้ไม่ได้</summary>
+    public const int UnavailableRetryAfterSeconds = 5;
+    public const string UnavailableMessage = "ระบบกันบันทึกซ้ำใช้งานไม่ได้ชั่วคราว — รายการนี้ยังไม่ได้บันทึก กรุณาลองใหม่อีกครั้งในอีกสักครู่ (ระบบจะไม่บันทึกซ้ำ)";
+
+    /// <summary>รอบ 270 (270-2-4): ความผิดพลาดของที่เก็บคีย์ที่ลองใหม่แล้วอาจหาย (เครือข่าย/หมดเวลา/ฐานรับคำขอไม่ไหว/ฐานกำลังปิด) — ลองซ้ำหนึ่งครั้ง</summary>
+    public static bool IsTransientStoreError(Exception ex) => ex switch
+    {
+        TimeoutException => true,
+        Npgsql.PostgresException pg => pg.SqlState is "53300" or "53400" or "57P01" or "57P03" or "40001" or "40P01" || pg.SqlState.StartsWith("08", StringComparison.Ordinal),
+        Npgsql.NpgsqlException n => n.IsTransient,
+        InvalidOperationException ioe when ioe.InnerException is { } inner => IsTransientStoreError(inner),
+        _ => ex.InnerException is { } i && IsTransientStoreError(i),
+    };
+
+    /// <summary>รอบ 270 (270-2-4): เส้นเงิน/เอกสาร — ที่เก็บคีย์ใช้ไม่ได้ ⇒ <b>ปิด</b> (503 ข้อความไทยให้ลองใหม่) ไม่ปล่อยให้บันทึกซ้ำผ่าน ·
+    /// เส้นอื่น (เช่น จองจากหน้าเว็บ ซึ่งมีด่านซ้ำเชิงความหมาย <c>DuplicateSubmitGuard</c>) ⇒ ปล่อยผ่าน + header <see cref="StatusUnavailable"/></summary>
+    public static bool FailClosedWhenStoreUnavailable(string? path)
+        => !string.IsNullOrEmpty(path) && MoneyOrDocumentPath.IsMatch(path);
+
+    private static readonly System.Text.RegularExpressions.Regex MoneyOrDocumentPath = new(
+        @"/(documents?|payments?|payment-intents|public-pay|pay-link|receipts?|deposits?|refunds?|journal-entries|journal|bank|bank-transactions|"
+        + @"transfers?|payroll|loans?|pos|orders|invoices?|wht|tax|etax|expenses?|purchase|credits?|customer-credits)(/|$|\?)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     public const int MinKeyLength = 8;
     public const int MaxKeyLength = 128;
     public const int MaxCacheKeyLength = 400;

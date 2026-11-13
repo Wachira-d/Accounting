@@ -19,15 +19,16 @@ public partial class DocumentService
             .Where(b => b.CompanyId == companyId && b.ErpDocumentId == doc.Id && !b.IsDeleted)
             .OrderBy(b => b.CreatedAt).Select(b => (Guid?)b.Id).FirstOrDefaultAsync();
         if (bookingId == null) return null;
-        var rows = await _db.SiteBookingPayments.AsNoTracking()
+        var all = await _db.SiteBookingPayments.AsNoTracking()
             .Where(p => p.CompanyId == companyId && p.BookingId == bookingId && !p.IsDeleted && !p.IsRefund && p.Status == SitePaymentStatus.Completed)
             .OrderBy(p => p.CreatedAt).ThenBy(p => p.Id)
             .Select(p => new { p.Id, p.Amount, p.ChannelStamped, p.BankAccountId, p.MoneyInAccountId })
             .ToListAsync();
+        // ฝ่ายค้าน 270 H1 (270-2-1): เฉพาะแถวที่เป็นเงินของใบมัดจำ — ตัวเดียวกับตัวย้ายเงินรอบ 268 · เงินที่เข้าหลังออกใบ (ลงบนการจองอย่างเดียว) ไม่เข้าแผนคืน
+        var rows = BookingDepositInstalmentChannel.DepositRows(all, p => p.Id, p => p.Amount, doc.TotalAmount, null);
         if (rows.Count == 0) return null;
-        const string hint = "แก้บัญชีธนาคาร/ผังที่หน้า “บัญชีธนาคาร” หรือเลือกบัญชีที่จ่ายคืนเอง";
-        var headerGl = await DocumentMoneyChannel.ResolvePostingAccountAsync(_db, companyId, doc.BankAccountId, doc.PaymentAccountId, hint)
-            ?? await DocumentMoneyChannel.DefaultCashAccountIdAsync(_db, companyId);
+        var amounts = BookingDepositInstalmentChannel.CapToDeposit(rows.Select(r => r.Amount).ToList(), doc.TotalAmount);
+        var headerGl = await GlOrUnknownAsync(companyId, doc.BankAccountId, doc.PaymentAccountId);
         var moved = (await _db.JournalEntries.AsNoTracking()
                 .Where(j => j.CompanyId == companyId && j.SourceDocumentId == doc.Id && !j.IsDeleted && j.Status == JournalEntryStatus.Posted
                     && j.ReversedByEntryId == null && j.Reference != null && j.Reference.StartsWith("BKDEP-"))
@@ -41,11 +42,10 @@ public partial class DocumentService
             else if (!r.ChannelStamped) acc = null;
             else
             {
-                var gl = await DocumentMoneyChannel.ResolvePostingAccountAsync(_db, companyId, r.MoneyInAccountId == null ? r.BankAccountId : null, r.MoneyInAccountId, hint)
-                    ?? await DocumentMoneyChannel.DefaultCashAccountIdAsync(_db, companyId);
-                acc = gl == headerGl ? headerGl : moved.Contains(BookingDepositInstalmentChannel.ReferenceFor(r.Id)) ? gl : null;
+                var gl = await GlOrUnknownAsync(companyId, r.MoneyInAccountId == null ? r.BankAccountId : null, r.MoneyInAccountId);
+                acc = gl == null ? null : gl == headerGl ? headerGl : moved.Contains(BookingDepositInstalmentChannel.ReferenceFor(r.Id)) ? gl : null;
             }
-            pools.Add(new BookingDepositInstalmentChannel.RefundPool(acc, r.Amount));
+            pools.Add(new BookingDepositInstalmentChannel.RefundPool(acc, amounts[i]));
         }
         var refunded = await (from l in _db.JournalEntryLines.AsNoTracking()
                               join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
@@ -55,6 +55,19 @@ public partial class DocumentService
                               group l by l.AccountId into g
                               select new { g.Key, Amount = g.Sum(x => x.CreditAmount) })
             .ToDictionaryAsync(x => x.Key, x => x.Amount);
-        return BookingDepositInstalmentChannel.PlanRefund(pools, refunded, doc.DepositRefundedAmount, amount);
+        // ฝ่ายค้าน 270 L3: ยอดที่คืนไปแล้วนับจากขาเงินออกที่ยังมีผล (JE ที่ถูกกลับรายการไม่นับ — เงินกลับเข้าบัญชีเดิมแล้ว)
+        return BookingDepositInstalmentChannel.PlanRefund(pools, refunded, refunded.Values.Sum(), amount);
+    }
+
+    /// <summary>ฝ่ายค้าน 270 L1: ผังของช่องทาง — บัญชีธนาคารที่ปิด/ถอดผังหลังรับเงิน ⇒ ไม่รู้ (null ⇒ ให้ผู้ใช้เลือก · 409 เดียวกัน) แทน 400 ที่คืนเงินไม่ได้</summary>
+    private async Task<Guid?> GlOrUnknownAsync(Guid companyId, Guid? bankAccountId, Guid? moneyInAccountId)
+    {
+        try
+        {
+            return await DocumentMoneyChannel.ResolvePostingAccountAsync(_db, companyId, bankAccountId, moneyInAccountId,
+                       "แก้บัญชีธนาคาร/ผังที่หน้า “บัญชีธนาคาร” หรือเลือกบัญชีที่จ่ายคืนเอง")
+                   ?? await DocumentMoneyChannel.DefaultCashAccountIdAsync(_db, companyId);
+        }
+        catch (BusinessRuleException) { return null; }
     }
 }

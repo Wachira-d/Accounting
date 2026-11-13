@@ -79,21 +79,25 @@ public class IdempotencyMiddleware
         // ── 1) จองคีย์แบบ atomic: INSERT … ON CONFLICT DO NOTHING
         // ได้ 1 แถว = เราเป็นคนแรก → ทำงานจริง
         // ได้ 0 แถว = มีคนถือคีย์นี้อยู่แล้ว → replay (ถ้าเสร็จ) หรือ 409 (ถ้ากำลังทำ/เนื้อต่าง)
+        // รอบ 270 (ฝ่ายค้าน M4 · คำตัดสิน 270-2-4): ที่เก็บล้มชั่วคราว ⇒ ลองซ้ำหนึ่งครั้ง · ยังล้ม ⇒ LogError + header "unavailable" ·
+        // เส้นเงิน/เอกสาร ⇒ 503 ให้ลองใหม่ (ไม่ปล่อยให้บันทึกซ้ำ) · เส้นอื่น ⇒ ปล่อยผ่าน (ชั้นที่สอง = DuplicateSubmitGuard ใน service)
         int inserted;
         try
         {
-            inserted = await db.Database.ExecuteSqlRawAsync(
-                """
-                INSERT INTO "IdempotencyRecords" ("Id","CacheKey","Status","RequestHash","CreatedAt")
-                VALUES (gen_random_uuid(), {0}, 'InFlight', {1}, now())
-                ON CONFLICT ("CacheKey") DO NOTHING
-                """, cacheKey, requestHash);
+            inserted = await ReserveAsync(db, cacheKey, requestHash, ctx.RequestAborted);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // fail-open โดยตั้งใจ: ตารางกันซ้ำใช้ไม่ได้ ≠ เหตุผลที่จะปฏิเสธคำขอ
-            // ของลูกค้าทั้งหมด (พฤติกรรมเดียวกับ ChatRateLimiter) · ชั้นที่สอง = ด่านซ้ำเชิงความหมายใน service (DuplicateSubmitGuard)
-            _logger.LogWarning(ex, "Idempotency store ใช้ไม่ได้ — ปล่อยผ่าน key={Key}", key);
+            _logger.LogError(ex, "Idempotency store ใช้ไม่ได้ (ลองซ้ำแล้ว) — {Mode} key={Key} path={Path}",
+                IdempotencyKeyPolicy.FailClosedWhenStoreUnavailable(path) ? "ปฏิเสธ 503" : "ปล่อยผ่าน", key, path);
+            ctx.Response.Headers[IdempotencyKeyPolicy.StatusHeader] = IdempotencyKeyPolicy.StatusUnavailable;
+            if (IdempotencyKeyPolicy.FailClosedWhenStoreUnavailable(path))
+            {
+                ctx.Response.StatusCode = 503;
+                ctx.Response.Headers["Retry-After"] = IdempotencyKeyPolicy.UnavailableRetryAfterSeconds.ToString();
+                await ctx.Response.WriteAsJsonAsync(new { success = false, message = IdempotencyKeyPolicy.UnavailableMessage });
+                return;
+            }
             await _next(ctx);
             return;
         }
@@ -203,6 +207,27 @@ public class IdempotencyMiddleware
                 {
                     _logger.LogWarning(ex, "ปล่อยคีย์ idempotency ไม่สำเร็จ key={Key}", key);
                 }
+            }
+        }
+    }
+
+    /// <summary>จองคีย์แบบ atomic (INSERT … ON CONFLICT DO NOTHING) · ล้มชั่วคราว ⇒ ลองซ้ำหนึ่งครั้ง (<see cref="IdempotencyKeyPolicy.IsTransientStoreError"/>) · ล้มอีก ⇒ โยน</summary>
+    private static async Task<int> ReserveAsync(AccountingDbContext db, string cacheKey, string requestHash, CancellationToken ct)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await db.Database.ExecuteSqlRawAsync(
+                    """
+                    INSERT INTO "IdempotencyRecords" ("Id","CacheKey","Status","RequestHash","CreatedAt")
+                    VALUES (gen_random_uuid(), {0}, 'InFlight', {1}, now())
+                    ON CONFLICT ("CacheKey") DO NOTHING
+                    """, new object[] { cacheKey, requestHash }, ct);
+            }
+            catch (Exception ex) when (attempt == 0 && ex is not OperationCanceledException && IdempotencyKeyPolicy.IsTransientStoreError(ex))
+            {
+                await Task.Delay(50, ct);
             }
         }
     }

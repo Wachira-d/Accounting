@@ -20,6 +20,8 @@ namespace Accounting.Tests.Db;
 /// ผู้ขายรับทราบ/ไม่รับใบสั่งซื้อ (S31 · หนึ่งคำตอบต่อ Rev) · แถวหลักฐานของเส้น API (append-only) · LINE Login จำข้อมูลผู้ลงนาม
 /// (S34 ไม่ติ๊ก = ไม่มีโปรไฟล์/ความยินยอม · เข้ารหัส · เติมฟอร์ม · S35 ถอน = ลบโปรไฟล์อย่างเดียว · purge 24 เดือน · DSR) · ใบวางบิลจ่ายทั้งใบผ่านเส้นเงินเดิม
 /// </summary>
+// รอบ 267 P5: เทสต์ของ P2 รัน CustomerSignMigration ซ้ำ (DROP/CREATE TRIGGER) — ช่วงนั้น trigger append-only หายชั่วขณะ ⇒ คลาสที่ตรวจ trigger ต้องไม่รันขนานกัน
+[Collection(CustomerDocumentActionsTriggerCollection.Name)]
 [Trait("Category", "Db")]
 public class CustomerDocRound267P5DbTests
 {
@@ -216,7 +218,8 @@ public class CustomerDocRound267P5DbTests
         await Svc.AppendEvidenceAsync(db, Svc.ApiEvidence(qt, null, "v2:x", "คนที่สอง", null, null, null, null, null, "u", DateTime.UtcNow));
         await db.SaveChangesAsync();
         Assert.Equal(1, await db.PdpaProcessingActivities.CountAsync(r => r.CompanyId == s.CompanyId && r.Purpose == CustomerSignText.RopaPurpose));
-        // append-only: แก้ชนิดช่องทาง/วันส่ง = ฐานปฏิเสธ (trigger)
+        // append-only: แก้ชนิดช่องทาง/วันส่ง = ฐานปฏิเสธ (trigger) — ฐานเทสต์สร้างด้วย EnsureCreated (ไม่มี trigger) ⇒ รันมิเกรชันของตารางนี้ก่อน (แบบ CSR267Db · รันซ้ำได้)
+        foreach (var sql in CustomerSignMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
         var ex = await Assert.ThrowsAnyAsync<Exception>(() => db.CustomerDocumentActions.Where(a => a.Id == ev.Id)
             .ExecuteUpdateAsync(u => u.SetProperty(a => a.Channel, CustomerSignRule.ChannelLink)));
         Assert.Contains("append-only", ex.ToString());
@@ -587,4 +590,11 @@ public class CustomerDocRound267P5DbTests
         // ไม่ใช่ใบวางบิล ⇒ null
         Assert.Null(await links.BillingNotePlanAsync(b.CompanyId, w1.Id));
     }
+}
+
+/// <summary>รอบ 267 P5: คลาสที่รันมิเกรชันของตารางหลักฐาน (DROP/CREATE TRIGGER) หรือพึ่ง trigger นั้น — รันทีละคลาส (ไม่ขนาน)</summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class CustomerDocumentActionsTriggerCollection
+{
+    public const string Name = "CustomerDocumentActions triggers";
 }

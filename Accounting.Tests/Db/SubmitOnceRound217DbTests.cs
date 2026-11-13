@@ -293,12 +293,26 @@ public class SubmitOnceRound217DbTests
         foreach (var sql in SubmitOnceMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
     }
 
-    private sealed record HttpResult(int Status, string Body, string? IdemStatus);
+    private sealed record HttpResult(int Status, string Body, string? IdemStatus, IReadOnlyList<string> Logs);
+
+    /// <summary>รอบ 270 (ฝ่ายค้าน M4): เก็บ log ของมิดเดิลแวร์ — fail-open/ล้มของที่เก็บคีย์ต้องเห็นสาเหตุในข้อความเทสต์ (เดิม NullLogger ⇒ SUB09 ล้มแบบไม่รู้เหตุ)</summary>
+    internal sealed class ListLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
+    {
+        public readonly System.Collections.Concurrent.ConcurrentQueue<string> Lines = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= Microsoft.Extensions.Logging.LogLevel.Warning) Lines.Enqueue($"{logLevel}: {formatter(state, exception)} {exception?.GetType().Name}: {exception?.Message}");
+        }
+    }
 
     /// <summary>หนึ่งคำขอผ่านมิดเดิลแวร์จริง — next = controller จำลองที่สร้างการจองด้วย service จริง (หน่วง ⇒ คำขอคู่ซ้อนกันจริง)</summary>
     private static async Task<HttpResult> PostAsync(Guid cid, Guid sid, string key, string json, int holdMs)
     {
         using var db = DbTestDatabase.TryCreateContext()!;
+        var logger = new ListLogger<IdempotencyMiddleware>();
         var ctx = new DefaultHttpContext();
         ctx.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
         ctx.Request.Method = "POST";
@@ -315,13 +329,22 @@ public class SubmitOnceRound217DbTests
             var req = await JsonSerializer.DeserializeAsync<CreateBookingRequest>(http.Request.Body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             await Task.Delay(holdMs);
             using var appDb = DbTestDatabase.TryCreateContext()!;
-            var r = await new CmsBookingService(appDb, NullLogger<CmsBookingService>.Instance).CreateBookingAsync(cid, sid, req!, null);
-            http.Response.StatusCode = 201;
-            await http.Response.WriteAsJsonAsync(new { success = true, data = new { r.Id, r.BookingNumber } });
-        }, NullLogger<IdempotencyMiddleware>.Instance, TestConfig);
+            try
+            {
+                var r = await new CmsBookingService(appDb, NullLogger<CmsBookingService>.Instance).CreateBookingAsync(cid, sid, req!, null);
+                http.Response.StatusCode = 201;
+                await http.Response.WriteAsJsonAsync(new { success = true, data = new { r.Id, r.BookingNumber } });
+            }
+            catch (BusinessRuleException bre)
+            {
+                // แบบ ExceptionMiddleware ของ production — ด่านซ้ำชั้นที่สอง (409) เป็นคำตอบ ไม่ใช่ exception หลุดออกจากเทสต์
+                http.Response.StatusCode = bre.StatusCode;
+                await http.Response.WriteAsJsonAsync(new { success = false, message = bre.Message });
+            }
+        }, logger, TestConfig);
         await mw.InvokeAsync(ctx, db);
         return new HttpResult(ctx.Response.StatusCode, Encoding.UTF8.GetString(responseBody.ToArray()),
-            ctx.Response.Headers[IdempotencyKeyPolicy.StatusHeader].FirstOrDefault());
+            ctx.Response.Headers[IdempotencyKeyPolicy.StatusHeader].FirstOrDefault(), logger.Lines.ToList());
     }
 
     private static string BookingJson(Guid svcId, string start, string phone)
@@ -342,6 +365,9 @@ public class SubmitOnceRound217DbTests
         var json = BookingJson(svcId, "19:00", "0855555555");
 
         var pair = await Task.WhenAll(Task.Run(() => PostAsync(cid, sid, key, json, 800)), Task.Run(() => PostAsync(cid, sid, key, json, 800)));
+        // รอบ 270 (M4): ที่เก็บคีย์ล้ม ⇒ ล้มพร้อมสาเหตุจริง (ไม่ใช่ "จองซ้ำ" ลอย ๆ)
+        var logs = pair.SelectMany(p => p.Logs).ToList();
+        Assert.True(logs.Count == 0, "fail-open/ที่เก็บคีย์ล้ม: " + string.Join(" ‖ ", logs));
 
         Assert.Equal(1, await ActiveBookingsAsync(cid, sid));
         Assert.Contains(pair, r => r.Status == 201);
@@ -398,9 +424,10 @@ public class SubmitOnceRound217DbTests
         ctx.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.9");
         var responseBody = new MemoryStream();
         ctx.Response.Body = responseBody;
-        await new IdempotencyMiddleware(http => next(http), NullLogger<IdempotencyMiddleware>.Instance, TestConfig).InvokeAsync(ctx, db);
+        var logger = new ListLogger<IdempotencyMiddleware>();
+        await new IdempotencyMiddleware(http => next(http), logger, TestConfig).InvokeAsync(ctx, db);
         return new HttpResult(ctx.Response.StatusCode, Encoding.UTF8.GetString(responseBody.ToArray()),
-            ctx.Response.Headers[IdempotencyKeyPolicy.StatusHeader].FirstOrDefault());
+            ctx.Response.Headers[IdempotencyKeyPolicy.StatusHeader].FirstOrDefault(), logger.Lines.ToList());
     }
 
     private static Func<HttpContext, Task> Counting(Box counter, int status = 201, bool success = true, Func<HttpContext, Task>? before = null)

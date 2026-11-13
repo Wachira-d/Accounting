@@ -15,6 +15,8 @@ public interface ITaxService
     Task<List<CitRecomputeReviewRow>> GetCitRecomputeReviewAsync(Guid companyId, bool onlyDiffering = true);
     /// <summary>รอบ 269 — ทบทวนช่อง 0%/ยกเว้น ของ ภ.พ.30 ที่บันทึกไว้ (อ่านอย่างเดียว)</summary>
     Task<List<Pp30SalesBoxReviewRow>> GetPp30SalesBoxReviewAsync(Guid companyId);
+    /// <summary>รอบ 270 (M3): ใบกำกับ OCR ที่อนุมัติแล้วซึ่ง VAT 0% ทั้งใบโดยกระดาษไม่บอกอัตราศูนย์ — อ่านอย่างเดียว</summary>
+    Task<List<OcrZeroVatReviewRow>> GetOcrZeroVatReviewAsync(Guid companyId);
     /// <summary>รอบ 269 ชุดสอง H1 — ร่างที่ล้าสมัย (อ่านอย่างเดียว)</summary>
     Task<List<StaleDraftReportRow>> GetStaleDraftReportsAsync(Guid companyId, int months = 2);
     Task DeleteTaxReportAsync(Guid companyId, Guid reportId);

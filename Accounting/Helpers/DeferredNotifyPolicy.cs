@@ -77,3 +77,10 @@ public static class DeferredNotifyPolicy
         return e.Length > MaxErrorLength ? e[..MaxErrorLength] : e;
     }
 }
+
+/// <summary>รอบ 270 (ฝ่ายค้าน M1 · คำตัดสิน 270-2-2): ผู้ส่งของคิวบอก "ล้มชั่วคราว — ลองใหม่" (เช่น LINE 5xx/429/เครือข่าย) ⇒ ตัวเดินคิวถอยแล้วลองใหม่
+/// ผ่าน <see cref="DeferredNotifyPolicy.AfterFailure"/> (ครบ <see cref="DeferredNotifyPolicy.MaxAttempts"/> ⇒ ปิดพร้อม LastError) · ล้มถาวรคืนเหตุแทน (ปิดแถวทันที)</summary>
+public sealed class DeferredNotifyRetryException : Exception
+{
+    public DeferredNotifyRetryException(string reason) : base(reason) { }
+}
