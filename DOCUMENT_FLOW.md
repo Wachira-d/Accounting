@@ -6123,7 +6123,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 | สร้างร่างใหม่อัตโนมัติ (`AutoRefreshReportsAsync`) | ลบ+สร้างเงียบ | audit chain ยอดเดิม → ยอดใหม่ (`TaxReportRecompute.AuditPayload` · ผู้กระทำ `system:tax-report-auto-refresh`) (269-2-7) |
 
 ล็อกจุดเรียก: `tools/required_call_site_check.py` R269 (+ ฝ่ายค้าน R269a–f) · เทสต์: TEST_PLAN P269 · ไม่แก้ (เหตุผลใน review-269 §การตอบ): ใบกำกับ OCR ที่อ่าน VAT ไม่ได้ (บรรทัดสรุป VatRate 0) ยังเป็น "ใบกำกับ 0%"
-_Last verified against codebase: 2026-11-13 · commit 76130af2 (รอบแรก) · รอบแก้ฝ่ายค้าน (เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-11-13 · commit 76130af2 (รอบแรก) · รอบแก้ฝ่ายค้าน 0dfaded9_
 
 #### 5.3a-1 ฐานยอด ภ.ง.ด.3/53/54 ของหน้า "นำส่งภาษี" + ปฏิทิน (แก้ 2026-09-16)
 
