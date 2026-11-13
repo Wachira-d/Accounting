@@ -252,6 +252,10 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             .FirstOrDefaultAsync(d => d.Id == run.DocumentId && d.CompanyId == cid && !d.IsDeleted, ct);
         if (payment == null || doc == null)
             return new RunResult(PostPaymentAutomationPolicy.StatusSkipped, "ไม่พบการชำระหรือเอกสารต้นทาง (ถูกลบแล้ว)", doc?.DocumentNumber, null);
+        // รอบ 266 ฝ่ายค้าน B-6: ตาข่ายของงานที่ถูกจองไว้ก่อนการย้าย (เส้นย้ายตั้งแถวที่ค้างเป็น Skipped ในธุรกรรมเดียวกันแล้ว) — เงินก้อนนี้ไม่ได้ตัดใบนี้แล้ว
+        // ⇒ ไม่ส่งขอบคุณ/ใบเสร็จอ้างใบเดิม (266-1-30)
+        if (payment.MovedToDocumentId is Guid movedTo && movedTo != run.DocumentId)
+            return new RunResult(PostPaymentAutomationPolicy.StatusSkipped, Accounting.Helpers.ReceiptLinkPolicy.MoveSkippedAutomationMessage, doc.DocumentNumber, null);
 
         var relatedType = doc.RelatedDocumentId is Guid rel
             ? await _db.Documents.AsNoTracking().Where(r => r.Id == rel && r.CompanyId == cid).Select(r => (DocumentType?)r.DocumentType).FirstOrDefaultAsync(ct)

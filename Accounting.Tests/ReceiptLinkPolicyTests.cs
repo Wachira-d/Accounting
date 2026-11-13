@@ -360,6 +360,9 @@ public class ReceiptLinkPolicyTests
             (ReceiptLinkPolicy.MoveReceiptCode, Mv() with { ReplacementReceiptBlock = "ผู้กดไม่มีสิทธิ์อนุมัติใบเสร็จรับเงิน" }, Inv()),
             (ReceiptLinkPolicy.MoveApprovalCode, Mv() with { ApprovalControlProblem = "บริษัทเปิดการแบ่งแยกหน้าที่" }, Inv()),
             (ReceiptLinkPolicy.MoveJournalCode, Mv() with { JournalProblem = "ไม่พบรายการบัญชีตั้งลูกหนี้" }, Inv()),
+            // ฝ่ายค้าน B-2: สิทธิ์ของเอกสารตัดสินจากข้อเท็จจริง (ใต้ล็อก) · B-1: ใบเดิมเป็นใบกำกับภาษี/ใบเสร็จรับเงินในตัวของเงินก้อนนี้
+            (ReceiptLinkPolicy.MovePermissionCode, Mv() with { PermissionProblem = "ผู้กดไม่มีสิทธิ์ยกเลิกใบกำกับภาษี" }, Inv()),
+            (ReceiptLinkPolicy.ServedAsReceiptCode, Mv(receipt: null) with { FromServedAsReceipt = true }, Inv()),
         };
         foreach (var g in gates)
         {
@@ -413,6 +416,69 @@ public class ReceiptLinkPolicyTests
         Assert.DoesNotContain("ออกแทน", plain.Single(x => x.Label == "กระดาษ").Detail, StringComparison.Ordinal);
         Assert.Contains("ย้ายกลับใบเดิมได้", plain.Single(x => x.Label == "ยกเลิกภายหลัง").Detail, StringComparison.Ordinal);
         Assert.Contains("ปิดแล้ว", plain.Single(x => x.Label == "รายการบัญชี").Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Move_FromSelfReceiptTaxInvoice_Refused_WithWayForward_OppositeAllowed()
+    {
+        // ฝ่ายค้าน B-1: ใบกำกับภาษีที่เป็นใบเสร็จในตัวของการรับเงินก้อนนี้ (ไม่มี REC แยก) — ย้ายออก = หัวกระดาษที่ลูกค้าถือเปลี่ยนย้อนหลัง ⇒ ปฏิเสธพร้อมทางไปต่อ
+        var refused = Move(Mv(receipt: null) with { FromServedAsReceipt = true });
+        Assert.Equal((false, ReceiptLinkPolicy.ServedAsReceiptCode), (refused.Allowed, refused.RuleCode));
+        Assert.Contains("ยกเลิกการรับชำระ PAY-202611-0007", refused.WayForward, StringComparison.Ordinal);
+        Assert.Contains("INV002", refused.Message, StringComparison.Ordinal);
+        // ทิศตรงข้าม: ใบเดิมไม่ได้เป็นใบรับของเงินก้อนนี้ (มี REC แยก/รับคนละวัน) = ย้ายได้ตามเดิม
+        Assert.True(Move(Mv(receipt: null)).Allowed);
+        Assert.True(Move(Mv()).Allowed);
+    }
+
+    [Fact]
+    public void MoveEffects_PaperLineMatchesWhatTheMoveDoes()
+    {
+        string Paper(ReceiptLinkRoute route, ReceiptLinkMoveFacts m) => ReceiptLinkPolicy.MoveEffects(route, m, Inv()).Single(x => x.Label == "กระดาษ").Detail;
+        string Undo(ReceiptLinkRoute route, ReceiptLinkMoveFacts m) => ReceiptLinkPolicy.MoveEffects(route, m, Inv()).Single(x => x.Label == "ยกเลิกภายหลัง").Detail;
+        // ไม่มีใบเสร็จแยก + ใบปลายทางถือ VAT ณ วันรับเงิน ⇒ ระบบออกใบใหม่ (ไม่ใช่ "ไม่มีกระดาษ") · ถอดไม่ได้
+        var issue = Mv(receipt: null) with { IssueReceiptForTarget = true, ReplacementCarriesVat = true };
+        Assert.Contains("ออกใบเสร็จรับเงิน/ใบกำกับภาษีใบใหม่ให้ INV001", Paper(ReceiptLinkRoute.MoveSettlement, issue), StringComparison.Ordinal);
+        Assert.Contains("ไม่มีปุ่มถอด", Undo(ReceiptLinkRoute.MoveSettlement, issue), StringComparison.Ordinal);
+        // ใบปลายทางจะเป็นใบรับในตัว ⇒ บอกว่าหัวของใบนั้นเปลี่ยน
+        var selfAfter = Mv(receipt: null) with { TargetServesAfterMove = true };
+        Assert.Contains("ใบกำกับภาษี/ใบเสร็จรับเงิน", Paper(ReceiptLinkRoute.MoveSettlement, selfAfter), StringComparison.Ordinal);
+        Assert.Contains("ไม่มีปุ่มถอด", Undo(ReceiptLinkRoute.MoveSettlement, selfAfter), StringComparison.Ordinal);
+        // มีใบเสร็จเดิม + ใบปลายทางเป็นใบรับในตัว ⇒ ยกเลิกโดยไม่ออกใบแทน (ไม่อ้าง "ออกแทนใบเลขที่")
+        var voidOnly = Mv() with { TargetServesAfterMove = true };
+        Assert.Contains("โดยไม่ออกใบเสร็จแยกใบใหม่", Paper(ReceiptLinkRoute.MoveSettlementWithReissue, voidOnly), StringComparison.Ordinal);
+        Assert.DoesNotContain("ออกแทนใบเลขที่", Paper(ReceiptLinkRoute.MoveSettlementWithReissue, voidOnly), StringComparison.Ordinal);
+        // ทิศตรงข้าม: ไม่มีกระดาษจริง ⇒ พูดว่าไม่มี + ถอดได้
+        Assert.Contains("ไม่มีกระดาษใดถูกแก้", Paper(ReceiptLinkRoute.MoveSettlement, Mv(receipt: null)), StringComparison.Ordinal);
+        Assert.Contains("ย้ายกลับใบเดิมได้", Undo(ReceiptLinkRoute.MoveSettlement, Mv(receipt: null)), StringComparison.Ordinal);
+        // ฝ่ายค้าน B-4: พรีวิวบอกว่าค่าปรับล่าช้านับจากวันที่ย้าย
+        Assert.Contains("ค่าปรับล่าช้า", ReceiptLinkPolicy.MoveEffects(ReceiptLinkRoute.MoveSettlement, Mv(receipt: null), Inv()).Single(x => x.Label == "การทวงเงิน").Detail,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LateFeeDaysOverdue_CountsFromMoveDate_UnmovedUnchanged()
+    {
+        var today = new DateTime(2026, 11, 14);
+        var due = new DateTime(2026, 8, 31);
+        // ไม่เคยย้าย = สูตรเดิม (วันนี้ − ครบกำหนด − ผ่อนผัน)
+        Assert.Equal((int)(today - due).TotalDays - 3, ReceiptLinkPolicy.LateFeeDaysOverdue(today, due, null, 3));
+        // ฝ่ายค้าน B-4: เงินถูกย้ายออก 13 พ.ย. ⇒ นับจากวันที่ย้าย (ไม่ใช่ 74 วันย้อนหลัง) · ผ่อนผัน 0 ⇒ 1 วัน · ผ่อนผัน 3 ⇒ ยังไม่คิด
+        Assert.Equal(1, ReceiptLinkPolicy.LateFeeDaysOverdue(today, due, new DateTime(2026, 11, 13, 9, 30, 0), 0));
+        Assert.True(ReceiptLinkPolicy.LateFeeDaysOverdue(today, due, new DateTime(2026, 11, 13), 3) <= 0);
+        // ย้ายก่อนครบกำหนด ⇒ ครบกำหนดเดิมยังเป็นตัวตั้ง
+        Assert.Equal((int)(today - due).TotalDays, ReceiptLinkPolicy.LateFeeDaysOverdue(today, due, new DateTime(2026, 8, 1), 0));
+    }
+
+    [Fact]
+    public void MoveUndoRefusal_NullWithoutPaper_RefusesWhenReceiptVoidedOrIssued()
+    {
+        Assert.Null(ReceiptLinkPolicy.MoveUndoRefusal(null, null));
+        var voided = ReceiptLinkPolicy.MoveUndoRefusal("REC003", null);
+        Assert.Contains("REC003", voided, StringComparison.Ordinal);
+        Assert.Contains("ทางไปต่อ", voided, StringComparison.Ordinal);
+        Assert.Contains("REC009", ReceiptLinkPolicy.MoveUndoRefusal(null, "REC009"), StringComparison.Ordinal);
+        Assert.Contains("REC009", ReceiptLinkPolicy.MoveUndoRefusal("REC003", "REC009"), StringComparison.Ordinal);
     }
 
     [Fact]

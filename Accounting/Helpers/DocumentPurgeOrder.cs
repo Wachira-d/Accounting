@@ -47,6 +47,9 @@ public static class DocumentPurgeOrder
         Delete("OcrValidationLogs", "DocumentId", "Documents"),
         Delete("DocumentAdjustingJournalLines", "DocumentId", "Documents"),
         Delete("PaymentAllocations", "DocumentId", "Documents"),
+        // รอบ 266 ฝ่ายค้าน B-9: การรับชำระ (ของใบอื่น · ถูกยกเลิกพร้อมใบนี้แล้ว) ที่ถูกย้ายเข้ามาตัดใบนี้ — ไม่ถูกลบกับใบนี้ (ลบตาม DocumentId เดิม) ⇒ ตัวชี้ใบที่มีผลต้องไม่ค้างชี้ใบที่ไม่มีอยู่
+        // (ไม่มี FK — null = กลับไปชี้ใบที่บันทึกตอนแรก ซึ่งเป็นประวัติจริงของแถวที่ยกเลิกแล้ว)
+        Nullify("Payments", "MovedToDocumentId", "Documents"),
         // ฝ่ายค้านรอบ 242 N3 — เครดิตภาษีถูกหัก ณ ที่จ่ายที่ยังรอหนังสือรับรอง (Pending = 0) ลบไปพร้อมใบ · Received/Claimed ถูกตัวตัดสินกันก่อนถึงขั้นนี้ ·
         // รอบ 252 (ฝ่ายค้าน WP-09 M2): แถว Pending ที่ได้ใบบางส่วนแล้ว (ReceivedAmount > 0) ไม่ลบ — ตัวตัดสินกันไว้ก่อน (WhtCreditUsed)
         Delete("WhtCreditsReceived", "DocumentId", "Documents", "\"DocumentId\" = ANY({0}) AND \"Status\" = 0 AND \"ReceivedAmount\" = 0"),

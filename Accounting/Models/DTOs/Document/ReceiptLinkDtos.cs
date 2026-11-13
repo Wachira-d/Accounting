@@ -49,7 +49,9 @@ public record ReceiptLinkResult(string Route, Guid InvoiceId, string InvoiceNumb
 
 /// <summary>ถอดการผูก (แพ็ก A): ใบเสร็จร่าง ⇒ <paramref name="ReceiptDocumentId"/> · เงินรอจัดสรร ⇒ <paramref name="PaymentId"/> + <paramref name="AllocationId"/></summary>
 /// <remarks>แพ็ก B: ถอดการย้ายการรับชำระที่<b>ไม่ได้ออกใบแทน</b> ⇒ <c>Route = MoveSettlement</c> + <paramref name="PaymentId"/> + <paramref name="AllocationId"/> (แถวที่มีผล) + <paramref name="Reason"/></remarks>
-public record ReceiptLinkUndoRequest(string Route, Guid? ReceiptDocumentId = null, Guid? PaymentId = null, Guid? AllocationId = null, string? Reason = null);
+/// <param name="PreviewToken">ฝ่ายค้าน B-2: ถอดการย้ายการรับชำระ = ย้ายกลับ ⇒ ต้องพรีวิวก่อน (POST preview ด้วย invoiceId = ใบเดิม + paymentId) แล้วส่งกุญแจมา</param>
+public record ReceiptLinkUndoRequest(string Route, Guid? ReceiptDocumentId = null, Guid? PaymentId = null, Guid? AllocationId = null, string? Reason = null,
+    string? PreviewToken = null);
 
 /// <summary>รอบ 266 แพ็ก B — ข้อเท็จจริงของการรับชำระที่จะย้าย (อ่านอย่างเดียว · <c>DocumentService.LoadSettlementMoveFactsAsync</c>)</summary>
 /// <param name="Source">ข้อเท็จจริงฝั่ง "ใบเสร็จ/เงิน" ของตัวตัดสิน — ใบเสร็จที่ยังมีผลของการรับชำระ หรือการรับชำระเอง (ไม่มีใบเสร็จแยก)</param>
@@ -57,7 +59,9 @@ public record ReceiptLinkUndoRequest(string Route, Guid? ReceiptDocumentId = nul
 public record SettlementMoveSnapshot(Guid PaymentId, ReceiptLinkSourceFacts Source, ReceiptLinkMoveFacts Move, Guid? LiveReceiptId);
 
 /// <summary>คำสั่งย้ายการรับชำระ — <paramref name="ExpectedFromDocumentId"/> = ใบที่พรีวิวเห็นว่าเงินตัดอยู่ (เปลี่ยนไปแล้ว = 409 · กดซ้ำ/สองคน)</summary>
-public record SettlementMoveCommand(Guid PaymentId, Guid TargetDocumentId, Guid ExpectedFromDocumentId, string? Reason);
+/// <param name="ExpectedRoute">ฝ่ายค้าน B-2: เส้นที่พรีวิวเห็น (มี/ไม่มีใบเสร็จต้องยกเลิกและออกแทน) — ใต้ล็อกต่างไป = 409 พรีวิวใหม่ · null = ไม่ตรวจ (ผู้เรียกภายใน)</param>
+public record SettlementMoveCommand(Guid PaymentId, Guid TargetDocumentId, Guid ExpectedFromDocumentId, string? Reason,
+    Accounting.Helpers.ReceiptLinkRoute? ExpectedRoute = null);
 
 public record SettlementMoveResult(
     Guid PaymentId, string PaymentNumber, Guid FromDocumentId, string FromDocumentNumber, decimal FromBalanceDue,

@@ -158,6 +158,16 @@ public partial class BankService
                      && p.Document.Status != DocumentStatus.Voided
                      && !paymentExclude.Contains(p.Id))
             .ToListAsync();
+        // รอบ 266 ฝ่ายค้าน B-9: การรับชำระที่ถูกย้ายไปตัดใบอื่น — เลขใบ/ชื่อ/สกุลของผู้สมัครเป็นของ "ใบที่มีผล" (แถวไม่ track · Payment.DocumentId ไม่ถูกแตะ)
+        var movedTargetIds = paymentCandidates.Where(p => p.MovedToDocumentId != null).Select(p => p.MovedToDocumentId!.Value).Distinct().ToList();
+        if (movedTargetIds.Count > 0)
+        {
+            var movedTargets = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                .Where(d => d.CompanyId == companyId && movedTargetIds.Contains(d.Id))
+                .ToDictionaryAsync(d => d.Id);
+            foreach (var p in paymentCandidates)
+                if (p.MovedToDocumentId is Guid to && movedTargets.TryGetValue(to, out var effective)) p.Document = effective;
+        }
         await _db.HydratePaymentContactsAsync(companyId, paymentCandidates);
 
         // Pre-fetch all JE lines (with ChartOfAccount) for candidates to derive

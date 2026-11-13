@@ -1004,7 +1004,8 @@ public partial class CmsCommerceService : ICmsCommerceService
         var doc = await _db.Documents.AsNoTracking().Include(d => d.Lines)
             .FirstOrDefaultAsync(d => d.Id == erpDocId && d.CompanyId == companyId);
         var hasPayments = doc != null && await _db.Payments.AsNoTracking()
-            .AnyAsync(p => p.CompanyId == companyId && p.DocumentId == erpDocId && !p.IsDeleted);
+            // รอบ 266 ฝ่ายค้าน B-9: นับทั้งการรับชำระที่ตัดใบนี้อยู่ (รวมที่ถูกย้ายเข้ามา) และที่ถูกย้ายออก (ใบนี้ยกเลิกไม่ได้ขณะนั้นยังมีผล · 266-1-31)
+            .AnyAsync(p => p.CompanyId == companyId && (p.DocumentId == erpDocId || p.MovedToDocumentId == erpDocId) && !p.IsDeleted);
         var action = SiteOrderCancelPlan.Decide(doc != null, doc?.Status, hasPayments);
         if (action != SiteOrderCancelErpAction.ProposeCreditNote) return false;
 

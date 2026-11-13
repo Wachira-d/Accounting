@@ -283,10 +283,16 @@ public partial class PdfGenerationService : IPdfGenerationService
 
     public async Task<GeneratePdfResponse> GenerateReceiptPdfAsync(Guid companyId, Guid paymentId)
     {
-        var payment = await _db.Payments
+        var payment = await _db.Payments.AsNoTracking()
             .Include(p => p.Document)
             .FirstOrDefaultAsync(p => p.Id == paymentId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบการชำระเงิน");
+        // รอบ 266 ฝ่ายค้าน B-7: การรับชำระที่ถูกย้ายไปตัดใบอื่น — "เอกสารอ้างอิง"/ลูกค้าบนใบรับ = ใบที่มีผล (PaymentEffectiveDocument) ไม่ใช่ใบที่บันทึกตอนแรก
+        // (โหลดแบบไม่ track — ไม่แตะ Payment.DocumentId ของแถวจริง)
+        if (Accounting.Helpers.PaymentEffectiveDocument.Of(payment) is var effectiveId && effectiveId != payment.DocumentId)
+            payment.Document = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                .FirstOrDefaultAsync(d => d.Id == effectiveId && d.CompanyId == companyId)
+                ?? throw new KeyNotFoundException("ไม่พบเอกสารที่การรับชำระนี้ตัดหนี้อยู่");
         // ไม่ ThenInclude Contact (INNER JOIN ตัด payment ที่ contact ถูกลบ) — hydrate แยก
         await _db.HydratePaymentContactsAsync(companyId, new[] { payment });
 

@@ -80,26 +80,67 @@ public partial class DocumentService
             || await _db.PartnerPaymentNotices.AsNoTracking()
                 .AnyAsync(n => n.SourceCompanyId == companyId && n.SellerPaymentId == payment.Id && n.SellerVoidedAt == null);
 
-        // ── ใบแทน: ผู้กดต้องอนุมัติใบเสร็จได้ (ไม่งั้นได้ฉบับร่าง = เงินย้ายแล้วแต่ลูกค้ายังไม่มีใบรับที่ถูก) ──
-        string? receiptBlock = null;
-        var carriesVat = false;
-        if (receipt != null)
+        // ── กระดาษ (ฝ่ายค้าน B-1 · คำตัดสิน 266-1-32) — ตัวตัดสินหัวกระดาษเดียว (ComputeServedAsReceipt + ReceiptIssuePolicy.CoversPayment) ทั้งสองใบ:
+        //    ใบเดิมเป็นใบกำกับภาษี/ใบเสร็จรับเงินในตัวของเงินก้อนนี้ (ไม่มี REC แยก) ⇒ ปฏิเสธ (หัวที่ลูกค้าถือจะเปลี่ยนย้อนหลังโดยไม่มีใบยกเลิก) ·
+        //    ใบปลายทางจะเป็นใบรับในตัวหลังย้าย ⇒ ไม่ออกใบแยก + พรีวิวบอก · ใบปลายทางเป็นใบแจ้งหนี้ที่พักภาษีขายปิดยอดงวดเดียว ⇒ ใบแทน/ใบใหม่ถือ VAT ณ วันรับเงิน ──
+        var receiptMode = await GetReceiptIssueModeAsync(companyId);
+        var fromServed = false;
+        if (receipt == null)
         {
-            if (_permissionService != null && Guid.TryParse(actor, out var actorId)
-                && !await DocumentPermissionHelper.CanApproveAsync(_permissionService, companyId, actorId, DocumentType.Receipt))
-                receiptBlock = "ผู้กดไม่มีสิทธิ์อนุมัติใบเสร็จรับเงิน (ใบแทนต้องออกเลขจริงทันที ไม่ใช่ฉบับร่าง)";
-            if (target != null)
-                carriesVat = SettlementReceiptPolicy.CarriesTaxInvoiceRole(target.DocumentType, target.VatAmount,
-                    singleShotFull: target.PaidAmount <= 0.05m && target.BalanceDue - amount <= 0.005m,
-                    liveVatReceiptExists: await LiveVatReceiptExistsAsync(companyId, target.Id, exceptReceiptId: null));
+            var fromServes = ComputeServedAsReceipt(settles,
+                (await LoadDocIdsWithSeparateReceiptAsync(_db, companyId, new[] { settles.Id })).Contains(settles.Id), receiptMode,
+                (await LoadSettlementDatesAsync(_db, companyId, new[] { settles.Id })).TryGetValue(settles.Id, out var fromSettledOn) ? fromSettledOn : null);
+            fromServed = ReceiptIssuePolicy.CoversPayment(fromServes, settles.DocumentDate, payment.PaymentDate);
+        }
+        var targetServesAfter = false;
+        var carriesVat = false;
+        if (target != null)
+        {
+            // สภาพของใบปลายทาง "หลังย้าย" (ไม่ track · ตัวคำนวณสถานะเดียวกับเส้นย้าย DocumentSettlementState.Apply)
+            var after = DocumentSettlementState.Apply(ForeignServiceVat.PayeeAmount(target), target.PaidAmount + amount, target.Status);
+            var targetAfter = new Document
+            {
+                Id = target.Id, DocumentType = target.DocumentType, Status = after.Status, DocumentDate = target.DocumentDate,
+                PaidOnIssue = target.PaidOnIssue, PaidAmount = target.PaidAmount + amount, BalanceDue = after.BalanceDue,
+            };
+            var targetSettled = (await LoadSettlementDatesAsync(_db, companyId, new[] { target.Id })).TryGetValue(target.Id, out var prior) ? prior : (DateTime?)null;
+            var settledAfter = targetSettled is DateTime p0 && p0 > payment.PaymentDate ? p0 : payment.PaymentDate;
+            targetServesAfter = ReceiptIssuePolicy.CoversPayment(
+                ComputeServedAsReceipt(targetAfter, (await LoadDocIdsWithSeparateReceiptAsync(_db, companyId, new[] { target.Id })).Contains(target.Id),
+                    receiptMode, settledAfter),
+                target.DocumentDate, payment.PaymentDate);
+            carriesVat = SettlementReceiptPolicy.CarriesTaxInvoiceRole(target.DocumentType, target.VatAmount,
+                singleShotFull: target.PaidAmount <= 0.05m && target.BalanceDue - amount <= 0.005m,
+                liveVatReceiptExists: await LiveVatReceiptExistsAsync(companyId, target.Id, exceptReceiptId: null));
+        }
+        var issueForTarget = receipt == null && carriesVat && !targetServesAfter;
+        var needVoidReceipt = receipt != null;
+        var needIssueReceipt = (receipt != null && !targetServesAfter) || issueForTarget;
+
+        // ── สิทธิ์ (ฝ่ายค้าน B-2 · 266-1-27 ปรับ) — ตัดสินที่นี่ (ใต้ล็อกของเส้นย้ายด้วย) จากชนิดของใบจริงและเส้นที่จะเดินจริง ไม่ใช่จากพรีวิวนอกล็อก:
+        //    อนุมัติชนิดใบปลายทาง (เงินเข้า) · ยกเลิกชนิดใบที่เงินถูกถอนออก · ยกเลิกใบเสร็จ (มีใบเดิม) · สร้าง+อนุมัติใบเสร็จ (ระบบออกใบใหม่ — ต้องเลขจริงทันที ไม่ใช่ฉบับร่าง) ──
+        string? permissionProblem = null;
+        string? receiptBlock = null;
+        if (_permissionService != null && Guid.TryParse(actor, out var actorId))
+        {
+            if (target != null && !await DocumentPermissionHelper.CanApproveAsync(_permissionService, companyId, actorId, target.DocumentType))
+                permissionProblem = $"ผู้กดไม่มีสิทธิ์อนุมัติ{DocumentTypeNames.Title(target.DocumentType, null)} — การรับเงินเข้าใบ {target.DocumentNumber} ต้องการ Document.Approve หรือ Document.Revenue.Approve";
+            else if (!await DocumentPermissionHelper.CanVoidAsync(_permissionService, companyId, actorId, settles.DocumentType))
+                permissionProblem = $"ผู้กดไม่มีสิทธิ์ยกเลิก{DocumentTypeNames.Title(settles.DocumentType, null)} — การถอนการรับชำระออกจากใบ {settles.DocumentNumber} ต้องการ Document.Void หรือ Document.Revenue.Void";
+            var missing = new List<string>();
+            if (needVoidReceipt && !await DocumentPermissionHelper.CanVoidAsync(_permissionService, companyId, actorId, DocumentType.Receipt)) missing.Add("ยกเลิก");
+            if (needIssueReceipt && !await DocumentPermissionHelper.CanCreateAsync(_permissionService, companyId, actorId, DocumentType.Receipt)) missing.Add("สร้าง");
+            if (needIssueReceipt && !await DocumentPermissionHelper.CanApproveAsync(_permissionService, companyId, actorId, DocumentType.Receipt)) missing.Add("อนุมัติ");
+            if (missing.Count > 0)
+                receiptBlock = $"ผู้กดไม่มีสิทธิ์{string.Join("/", missing)}ใบเสร็จรับเงิน (Document.Create/Approve/Void ของ Receipt — ใบที่ระบบออกต้องเป็นเลขจริงทันที ไม่ใช่ฉบับร่าง)";
         }
 
-        // ── การควบคุมภายใน (266-1-27): SoD = ผู้บันทึกรับชำระย้ายเองไม่ได้ · วงเงินเซ็นหลายขั้น = ใบแทนที่ระบบออกทันทีผ่านขั้นตอนเซ็นไม่ได้ ──
+        // ── การควบคุมภายใน (266-1-27): SoD = ผู้บันทึกรับชำระย้ายเองไม่ได้ · วงเงินเซ็นหลายขั้น = ใบที่ระบบออกทันทีผ่านขั้นตอนเซ็นไม่ได้ ──
         string? approvalProblem = null;
         var settings = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (settings != null)
         {
-            if (receipt != null && ApprovalControlPolicy.NeedsSignatureFlow(settings.RequireApprovalForDocuments, settings.ApprovalThresholdAmount, amount))
+            if (needIssueReceipt && ApprovalControlPolicy.NeedsSignatureFlow(settings.RequireApprovalForDocuments, settings.ApprovalThresholdAmount, amount))
                 approvalProblem = $"ยอด {amount:N2} บาท ถึงเกณฑ์เซ็นอนุมัติหลายขั้นของบริษัท — ใบเสร็จแทนที่ระบบออกให้ทันทีผ่านขั้นตอนเซ็นหลายขั้นไม่ได้";
             else if (ApprovalControlPolicy.SelfApprovalBlocked(settings.SodBlockSelfApproval, payment.CreatedBy, actor))
                 approvalProblem = $"บริษัทเปิดการแบ่งแยกหน้าที่ (SoD) — ผู้บันทึกการรับชำระ {payment.PaymentNumber} ย้ายการรับชำระนั้นเองไม่ได้";
@@ -162,7 +203,11 @@ public partial class DocumentService
             JournalProblem: journalProblem,
             JournalDate: journalDate,
             ClosedPeriodNote: closedNote,
-            ReplacementCarriesVat: carriesVat);
+            ReplacementCarriesVat: carriesVat,
+            FromServedAsReceipt: fromServed,
+            TargetServesAfterMove: targetServesAfter,
+            IssueReceiptForTarget: issueForTarget,
+            PermissionProblem: permissionProblem);
         var source = receipt != null ? ReceiptLinkFacts.Source(receipt) : ReceiptLinkFacts.SettlementPayment(payment, settles, move.Amount);
         return new SettlementMoveSnapshot(payment.Id, source, move, receipt?.Id);
     }
@@ -234,7 +279,10 @@ public partial class DocumentService
                 var verdict = ReceiptLinkPolicy.Decide(snap.Source, ReceiptLinkFacts.Invoice(toDoc), new ReceiptLinkContext(snap.Move.Amount, Move: snap.Move));
                 if (!verdict.Allowed)
                     throw new BusinessRuleException((verdict.Message ?? "ย้ายการรับชำระไม่ได้") + (verdict.WayForward is { } way ? " · ทางไปต่อ: " + way : ""),
-                        verdict.RuleCode, 409);
+                        verdict.RuleCode, verdict.RuleCode == ReceiptLinkPolicy.MovePermissionCode ? 403 : 409);
+                // ฝ่ายค้าน B-2: เส้นใต้ล็อกต้องเป็นเส้นที่ผู้กดเห็นในพรีวิว (มีคนออก/ยกเลิกใบเสร็จของการรับชำระนี้ระหว่างนั้น = ผลกระดาษต่างจากที่ยืนยัน) ⇒ 409 พรีวิวใหม่
+                if (command.ExpectedRoute is ReceiptLinkRoute expectedRoute && verdict.Route != expectedRoute)
+                    throw new BusinessRuleException(ReceiptLinkPolicy.StaleMessage, ReceiptLinkPolicy.StaleCode, 409);
 
                 var amount = snap.Move.Amount;
                 var journalDate = snap.Move.JournalDate;
@@ -373,25 +421,21 @@ public partial class DocumentService
                 notices.AddRange(await ApplyCreditAllocationTaxStepsAsync(companyId, toDoc.Id, nameof(UnappliedReason.UninvoicedSupply),
                     payment.PaymentDate, journalDate, inRef, actor));
 
-                // ── ใบแทน: ตัวสร้างตัวเดียวกับการรับชำระปกติ · วันที่ = วันรับเงินเดิม · อ้างใบปลายทาง · ออกเลขจริงทันที (ผู้กดมีสิทธิ์อนุมัติ — ด่านตรวจแล้ว) ──
-                if (oldReceipt != null)
+                // ── ใบรับของใบปลายทาง (ฝ่ายค้าน B-1 · 266-1-32): ตัดสินจากข้อเท็จจริงชุดเดียวกับพรีวิว (ใต้ล็อก) — ใบปลายทางเป็นใบรับในตัว ⇒ ไม่ออกใบแยก ·
+                //    มีใบเดิม ⇒ ใบแทน · ไม่มีใบเดิมแต่ใบปลายทางถือ VAT ณ วันรับเงิน ⇒ ออกใบใหม่ (ห้ามย้ายภาษีเข้างวดโดยไม่มีกระดาษ) · ตัวสร้างตัวเดียวกับการรับชำระปกติ ·
+                //    วันที่ = วันรับเงินเดิม · อ้างใบปลายทาง · ออกเลขจริงทันที (สิทธิ์สร้าง/อนุมัติใบเสร็จตัดสินในข้อเท็จจริงแล้ว) ──
+                if (oldReceipt != null || snap.Move.IssueReceiptForTarget)
                 {
-                    var targetServes = ComputeServedAsReceipt(toDoc,
-                        (await LoadDocIdsWithSeparateReceiptAsync(_db, companyId, new[] { toDoc.Id })).Contains(toDoc.Id),
-                        await GetReceiptIssueModeAsync(companyId),
-                        (await LoadSettlementDatesAsync(_db, companyId, new[] { toDoc.Id })).TryGetValue(toDoc.Id, out var settledOn) ? settledOn : null);
-                    if (ReceiptIssuePolicy.CoversPayment(targetServes, toDoc.DocumentDate, payment.PaymentDate))
+                    if (snap.Move.TargetServesAfterMove)
                     {
                         // ใบปลายทางเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ของการรับเงินก้อนนี้เอง (รับครบวันเดียวกับวันที่ใบ) — ใบเสร็จแยกอีกใบ = กระดาษสองใบของเงินเดียว
                         payment.ReceiptDocumentId = null;
                         notices.Add($"{toDoc.DocumentNumber} เป็นใบกำกับภาษี/ใบเสร็จรับเงินของการรับเงินก้อนนี้แล้ว (รับครบในวันเดียวกับวันที่ใบ) — "
-                            + $"ยกเลิก {oldReceipt.DocumentNumber} โดยไม่ออกใบเสร็จแยกใบใหม่ · พิมพ์ {toDoc.DocumentNumber} ให้ลูกค้าแทน");
+                            + $"ยกเลิก {oldReceipt?.DocumentNumber} โดยไม่ออกใบเสร็จแยกใบใหม่ · พิมพ์ {toDoc.DocumentNumber} ให้ลูกค้าแทน");
                     }
                     else
                     {
-                        var carryVat = SettlementReceiptPolicy.CarriesTaxInvoiceRole(toDoc.DocumentType, toDoc.VatAmount,
-                            singleShotFull: toDoc.BalanceDue <= 0.005m && toDoc.PaidAmount - amount <= 0.05m,
-                            liveVatReceiptExists: await LiveVatReceiptExistsAsync(companyId, toDoc.Id, exceptReceiptId: null));
+                        var carryVat = snap.Move.ReplacementCarriesVat;
                         // "มุมมองการรับเงินของใบปลายทาง" (ไม่ track) — ยอด = ยอดที่ย้าย · วันที่ = วันรับเงินเดิม (ม.105)
                         var receiptOf = new Payment
                         {
@@ -403,18 +447,48 @@ public partial class DocumentService
                             CreatedBy = payment.CreatedBy,
                         };
                         replacement = await CreateSettlementReceiptAsync(companyId, toDoc, receiptOf, actor, issueApproved: true, carryVatFromSource: carryVat);
-                        replacement.ReplacesDocumentId = oldReceipt.Id;
-                        replacement.ReplacementReason = reason;
-                        AppendInternalNote(replacement,
-                            $"[RCPT-MOVE] ออกแทน {oldReceipt.DocumentNumber} (อ้าง {fromDoc.DocumentNumber}) เพราะการรับชำระ {payment.PaymentNumber} ถูกย้ายมา {toDoc.DocumentNumber} — เหตุผล: {reason}");
+                        if (oldReceipt != null)
+                        {
+                            replacement.ReplacesDocumentId = oldReceipt.Id;
+                            replacement.ReplacementReason = reason;
+                            AppendInternalNote(replacement,
+                                $"[RCPT-MOVE] ออกแทน {oldReceipt.DocumentNumber} (อ้าง {fromDoc.DocumentNumber}) เพราะการรับชำระ {payment.PaymentNumber} ถูกย้ายมา {toDoc.DocumentNumber} — เหตุผล: {reason}");
+                        }
+                        else
+                            AppendInternalNote(replacement,
+                                $"[RCPT-MOVE] ออกให้ {toDoc.DocumentNumber} (ใบกำกับภาษี ณ วันรับเงิน) เพราะการรับชำระ {payment.PaymentNumber} ซึ่งไม่มีใบเสร็จแยก ถูกย้ายมาจาก {fromDoc.DocumentNumber} — เหตุผล: {reason}");
                         await _db.SaveChangesAsync();   // ใบใหม่ต้องอยู่ในฐานก่อนชี้กลับมาหา
-                        oldReceipt.ReplacedByDocumentId = replacement.Id;
-                        oldReceipt.ReplacedAt = now;
+                        if (oldReceipt != null)
+                        {
+                            oldReceipt.ReplacedByDocumentId = replacement.Id;
+                            oldReceipt.ReplacedAt = now;
+                        }
                         payment.ReceiptDocumentId = replacement.Id;
-                        notices.Add($"ยกเลิกใบเสร็จ {oldReceipt.DocumentNumber} และออก {replacement.DocumentNumber} แทน (ลงวันที่รับเงินเดิม {payment.PaymentDate:dd/MM/yyyy} อ้าง {toDoc.DocumentNumber}) — "
-                            + "ส่งใบใหม่ให้ลูกค้าจากหน้าเอกสาร และแจ้งว่าใบเดิมถูกยกเลิก (ระบบไม่ส่งอัตโนมัติ)");
+                        notices.Add(oldReceipt != null
+                            ? $"ยกเลิกใบเสร็จ {oldReceipt.DocumentNumber} และออก {replacement.DocumentNumber} แทน (ลงวันที่รับเงินเดิม {payment.PaymentDate:dd/MM/yyyy} อ้าง {toDoc.DocumentNumber}) — "
+                              + "ส่งใบใหม่ให้ลูกค้าจากหน้าเอกสาร และแจ้งว่าใบเดิมถูกยกเลิก (ระบบไม่ส่งอัตโนมัติ)"
+                            : $"ออกใบเสร็จรับเงิน/ใบกำกับภาษี {replacement.DocumentNumber} ให้ {toDoc.DocumentNumber} ลงวันที่รับเงินเดิม {payment.PaymentDate:dd/MM/yyyy} (ใบกำกับภาษี ณ วันรับเงิน) — "
+                              + "ส่งให้ลูกค้าจากหน้าเอกสาร (ระบบไม่ส่งอัตโนมัติ)");
                     }
                 }
+                // ฝ่ายค้าน B-8: จำกระดาษที่การย้ายครั้งนี้แตะไว้บนแถวที่เกิดจากการย้าย — ถอดภายหลังต้องรู้ (ย้ายกลับหลังยกเลิกใบเสร็จ = ใบเดิมชำระครบโดยไม่มีใบรับ)
+                moved.MoveVoidedReceiptId = oldReceipt?.Id;
+                moved.MoveIssuedReceiptId = replacement?.Id;
+
+                // ── งานหลังรับชำระที่ยังค้างของการรับชำระนี้ (ฝ่ายค้าน B-6 · 266-1-30): บริบทคือใบเดิม ⇒ ข้าม (ไม่ส่งขอบคุณ/ใบเสร็จอ้างใบเดิม) — ธุรกรรมเดียวกับการย้าย ──
+                var pendingRuns = await _db.PostPaymentAutomationRuns
+                    .Where(r => r.CompanyId == companyId && r.PaymentId == payment.Id
+                        && (r.Status == PostPaymentAutomationPolicy.StatusPending || r.Status == PostPaymentAutomationPolicy.StatusBlocked))
+                    .ToListAsync();
+                foreach (var run in pendingRuns)
+                {
+                    run.Status = PostPaymentAutomationPolicy.StatusSkipped;
+                    run.Message = ReceiptLinkPolicy.MoveSkippedAutomationMessage;
+                    run.CompletedAt = now;
+                    run.UpdatedAt = now;
+                }
+                if (pendingRuns.Count > 0)
+                    notices.Add($"ข้ามงานหลังรับชำระที่ยังค้าง {pendingRuns.Count} รายการของ {payment.PaymentNumber} (บริบทเป็นใบเดิม — ไม่ส่งข้อความ/ใบเสร็จอ้างใบผิด)");
 
                 // ── การทวง (266-1-29): ใบเดิมกลับมาค้าง ⇒ พักหนังสือทวงอัตโนมัติด้วยกลไกเดิม (ประทับเวลา ไม่ขยับระดับทวง) ──
                 if (fromDoc.BalanceDue > 0.005m && !DocumentStatusRules.NotIssued.Contains(fromDoc.Status) && fromDoc.Status != DocumentStatus.Voided)
