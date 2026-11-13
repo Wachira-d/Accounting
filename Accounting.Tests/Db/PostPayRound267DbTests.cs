@@ -317,8 +317,10 @@ public class PostPayRound267DbTests
         var token = await PageTokenAsync(s, inv.Id);
         PaymentIntent Slip(Guid docId, PaymentIntentStatus status) => new()
         {
-            CompanyId = s.CompanyId, ProviderCode = "manual_slip", SourceKind = PaymentSourceKind.Document, SourceId = docId, ContactId = s.ContactId,
+            CompanyId = s.CompanyId, ProviderCode = "manual-slip", SourceKind = PaymentSourceKind.Document, SourceId = docId, ContactId = s.ContactId,
             Amount = 1_070m, Currency = "THB", Status = status, MethodKind = PaymentMethodKind.ManualSlip,
+            // NOT NULL + unique ต่อบริษัท (ผล CI รอบแรก) — คีย์ไม่ซ้ำต่อแถวทดสอบ
+            IdempotencyKey = $"t267:{docId:N}:{Guid.NewGuid():N}",
         };
 
         Assert.Empty((await s.Links.PublicViewAsync(s.CompanyId, token))!.Page!.AfterPay!.Slips);
