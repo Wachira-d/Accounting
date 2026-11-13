@@ -204,6 +204,7 @@ public partial class PdfGenerationService
                             ComposeContact(col, doc, template, accent, L);
                         }
                         ComposeAdjustmentRef(col, doc, accent, L);   // ใบลด/เพิ่มหนี้ต้องอ้างเลข+วันที่ใบเดิม (§86/9-10) — บังคับ (D5)
+                        ComposeReplacementRef(col, doc, accent, L);   // รอบ 266 แพ็ก B: ใบเสร็จที่ออกแทนใบเดิม (คู่กับ AppendReplacementReferenceHtml ฝั่ง HTML)
                         Safe(() => ComposeSupplierInvoiceNote(col, doc, accent, L));
                         Safe(() => ComposeCurrencyNote(col, doc, accent, L));
                         // รายการสินค้า + ยอดรวม/VAT/สุทธิ = รายการบังคับ §86/4 (D5) — ไม่ห่อ Safe: ล้มแล้วต้องไม่ได้เอกสารที่ไม่มีตาราง/ไม่มียอด

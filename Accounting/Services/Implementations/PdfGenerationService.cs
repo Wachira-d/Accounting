@@ -1961,6 +1961,7 @@ public partial class PdfGenerationService : IPdfGenerationService
     {
         doc.ServedAsReceipt = false;
         doc.SettlesTaxInvoiceSource = false;
+        await ResolveReplacementReferenceAsync(db, companyId, doc);   // รอบ 266 แพ็ก B: "ออกแทนใบเลขที่ …" (transient ของทั้งสอง renderer)
 
         // ใบเสร็จ settlement: เช็คประเภทเอกสารต้นทางที่อ้าง
         if (doc.DocumentType is DocumentType.Receipt or DocumentType.ReceiptVoucher
@@ -2347,6 +2348,8 @@ public partial class PdfGenerationService : IPdfGenerationService
                 sb.AppendLine($"<div>{L.CnReason}: {WebUtility.HtmlEncode(reasonTxt)}</div>");
             sb.AppendLine("</div>");
         }
+
+        AppendReplacementReferenceHtml(sb, doc, L);   // รอบ 266 แพ็ก B: ใบเสร็จที่ออกแทนใบเดิม (คู่กับ ComposeReplacementRef ฝั่ง QuestPDF)
 
         // ตัวตัดสินคอลัมน์ส่วนลด — ตัวเดียวกับ QuestPDF (หัวตารางกับเซลล์
         // ต้องนับคอลัมน์เท่ากันเป๊ะ ไม่งั้นทั้งตารางเหลื่อม)

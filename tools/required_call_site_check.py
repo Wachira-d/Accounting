@@ -19483,6 +19483,66 @@ RULES += [
          before=[("DocumentPermissionHelper.CanApproveAsync(", "_links.LinkAsync(")],
          why=_R266_WHY + "266-1-10 ผูก = อนุมัติชนิดใบปลายทาง · API key ไม่เปิด v1"),
 ]
+
+# ── รอบ 266 แพ็ก B: ย้ายการรับชำระระหว่างใบ + ใบแทน (คำตัดสิน 266-1-23…30 · erp-review/2026-11-12/team-266-manual-doc-link.md §4.3) ──
+_R266B_WHY = "รอบ 266 แพ็ก B (คำตัดสิน 266-1-23…30): "
+_R266B_ENGINE = "Services/Implementations/DocumentService.ReceiptLink.cs"
+_R266B_RENDER = "Services/Implementations/PdfGenerationService.ReplacementReference.cs"
+RULES += [
+    dict(file=_R266B_ENGINE, method="MoveSettlementAsync",
+         must=["LockDocumentsForPaymentVoidAsync(", "FromSqlRaw(", "BuildSettlementMoveFactsAsync(", "ReceiptLinkPolicy.Decide(",
+               "command.ExpectedFromDocumentId", "UnappliedReceiptAccount.EnsureAsync(", "ReceiptLinkPolicy.MoveJournalReference(",
+               "OriginalArApAccount.LoadAsync(", "released.ReleasedAt = now", "MovedFromAllocationId = released.Id",
+               "PaymentEffectiveDocument.Stamp(payment.DocumentId, toDoc.Id)", "DecideAutoReceiptOnPaymentVoidAsync(",
+               "keepVisible: oldReceiptWasIssued", "UndoOutputVatOnPaymentVoidAsync(", "ApplyCreditAllocationTaxStepsAsync(",
+               "CreateSettlementReceiptAsync(", "issueApproved: true", "replacement.ReplacesDocumentId = oldReceipt.Id",
+               "fromDoc.LastDunningSentAt = now", "AddChainedAuditLog(", "ReceiptLinkPolicy.MoveRuleCode", "tx.RollbackAsync()"],
+         forbid=["payment.DocumentId =", "ReverseJournalEntryAsync(", "CurrentBalance", "MatchedPaymentId", "AfterPaymentRecordedAsync(",
+                 "RelatedDocumentId ="],
+         before=[("LockDocumentsForPaymentVoidAsync(", "ReceiptLinkPolicy.Decide("), ("ReceiptLinkPolicy.Decide(", "JournalEntryBuilder.For("),
+                 ("ReceiptLinkPolicy.Decide(", "released.IsDeleted = true"), ("DecideAutoReceiptOnPaymentVoidAsync(", "CreateSettlementReceiptAsync("),
+                 ("UndoOutputVatOnPaymentVoidAsync(", "tx.CommitAsync()"), ("AddChainedAuditLog(", "tx.CommitAsync()")],
+         why=_R266B_WHY + "ย้ายการรับชำระ: ล็อกใบ → การรับชำระ แล้วตัดสินซ้ำใต้ล็อกก่อนเขียน · สองขาผ่าน 21630 อ้างเลขการรับชำระเดิม · "
+             "ห้ามแตะขาเงินสด/ยอดธนาคาร/คู่จับคู่ธนาคาร/Payment.DocumentId/RelatedDocumentId ของใบที่ออกเลขแล้ว · ใบเสร็จเดิมยกเลิกแบบคงแถว + ใบแทนผ่านตัวสร้างเดียว (ออกเลขจริง) · "
+             "ถอยภาษีขายฝั่งถอน (งวดยื่นแล้ว = throw ทั้งธุรกรรม) · พักการทวง · audit ในธุรกรรมเดียวกัน · ไม่ยิงงานหลังรับชำระซ้ำ"),
+    dict(file=_R266B_ENGINE, method="BuildSettlementMoveFactsAsync",
+         must=["PaymentEffectiveDocument.Of(payment)", "a.CompanyId == companyId", "DocumentVoidPreconditions.EffectiveEtaxAsync(",
+               "DocumentVoidPreconditions.AutoReceiptOnPaymentVoid(", "EtaxKeptOriginalAt", "ReclassLockReasonAsync(", "CrossTenantDocumentLinks",
+               "PartnerPaymentNotices", "DocumentPermissionHelper.CanApproveAsync(", "ApprovalControlPolicy.NeedsSignatureFlow(",
+               "ApprovalControlPolicy.SelfApprovalBlocked(", "OriginalArApAccount.LoadAsync(", "JournalEntryBuilder.ClosedPeriodReasonAsync(",
+               "PortalSlipPending.WasCountedAsReceived("],
+         why=_R266B_WHY + "ข้อเท็จจริงของการย้ายมาจากตัวตัดสิน/ตัวอ่านเดิม (e-Tax ถึงกรมสรรพากร · งวดภาษียื่นแล้ว · คู่ค้า · SoD/วงเงิน · ผังลูกหนี้ที่ใบตั้งไว้จริง · งวดบัญชี) — ไม่เขียนสำเนา · tenant"),
+    dict(file=_R266B_ENGINE, method="MovedOutPaymentVoidBlockAsync", must=["p.CompanyId == companyId", "p.MovedToDocumentId != null", "ReceiptLinkPolicy.MoveVoidSourceMessage("],
+         why=_R266B_WHY + "ยกเลิกใบที่การรับชำระของมันถูกย้ายออกแล้ว = ปฏิเสธพร้อมทางไปต่อ (สมุดรายวันขาเงินสดยังอ้างใบนั้น)"),
+    dict(file=DOC, method="VoidDocumentAsync", must=["MovedOutPaymentVoidBlockAsync(companyId, documentId, doc.DocumentNumber)"],
+         before=[("MovedOutPaymentVoidBlockAsync(", "BeginTransactionAsync(")],
+         why=_R266B_WHY + "ด่านยกเลิกใบต้องถูกเรียกก่อนเปิดธุรกรรม/กลับสมุดรายวันของใบ (ไม่งั้นเงินสดที่รับจริงถูกกลับ)"),
+    dict(file=_R266_SVC, method="LinkAsync", must=["_documents.MoveSettlementAsync(", "ReceiptLinkPolicy.MoveReasonCode"],
+         call_args=[("SettlementMoveCommand(", "e.Move!.FromDocumentId")],
+         why=_R266B_WHY + "ปุ่มผูกส่งใบที่พรีวิวเห็นว่าเงินตัดอยู่ (ExpectedFromDocumentId) เข้าเส้นย้าย + เหตุผลบังคับ"),
+    dict(file=_R266_SVC, method="EvaluateAsync", must=["_documents.LoadSettlementMoveFactsAsync(", "moveSnapshot.LiveReceiptId != receipt.Id"],
+         why=_R266B_WHY + "ผู้สมัคร/พรีวิว/ผูกของเส้นย้ายใช้ข้อเท็จจริงตัวเดียวกับที่เส้นย้ายอ่านซ้ำใต้ล็อก · ใบเสร็จที่ขอต้องเป็นใบที่ยังมีผลของการรับชำระนั้น"),
+    dict(file=_R266_SVC, method="UndoAsync", must=["ReplacesDocumentId != null", "ReceiptLinkPolicy.MoveNoUndoCode", "_documents.MoveSettlementAsync("],
+         before=[("ReplacesDocumentId != null", "_documents.MoveSettlementAsync(")],
+         why=_R266B_WHY + "266-1-26 ถอดการย้าย = ย้ายกลับ (รายการใหม่) เฉพาะที่ไม่ได้ออกใบแทน · ออกใบแทนแล้ว = ปฏิเสธพร้อมทางไปต่อ"),
+    dict(file="Controllers/ReceiptLinkController.cs", method="Link",
+         must=["OwnerActionGuard.IsApiKeyRequest(", "_links.PreviewAsync(", "DocumentPermissionHelper.CanVoidAsync(", "DocumentType.Receipt"],
+         before=[("OwnerActionGuard.IsApiKeyRequest(", "_links.LinkAsync("), ("DocumentPermissionHelper.CanVoidAsync(", "_links.LinkAsync(")],
+         why=_R266B_WHY + "266-1-27 สิทธิ์ของเส้นย้าย: API key = 403 · อนุมัติใบปลายทาง + ยกเลิกฝั่งขาย · ออกใบแทน = สร้าง/อนุมัติ/ยกเลิกใบเสร็จ — ตรวจก่อนเรียกบริการ"),
+    # สอง renderer ห้าม drift (กฎเหล็ก #4 A): ทั้ง HTML และ QuestPDF วาดบรรทัด "ออกแทนใบเลขที่" จากข้อความตัวเดียว
+    dict(file=_R266B_RENDER, method="AppendReplacementReferenceHtml", must=["ReplacementReferenceText(doc, labels)", "WebUtility.HtmlEncode(text)"],
+         why=_R266B_WHY + "renderer HTML ใช้ข้อความตัวเดียวกับ QuestPDF + หนี HTML"),
+    dict(file=_R266B_RENDER, method="ComposeReplacementRef", must=["ReplacementReferenceText(doc, labels)"],
+         why=_R266B_WHY + "renderer QuestPDF ใช้ข้อความตัวเดียวกับ HTML"),
+    dict(file=_R266B_RENDER, method="ReplacementReferenceText", must=["labels.ReplacesDocument", "labels.Date("],
+         why=_R266B_WHY + "ข้อความบนกระดาษมาจาก DocumentLabels (ไทย/อังกฤษ) — ไม่มี literal ใน renderer"),
+    dict(file=PDFSVC, method="BuildDocumentHtml", must=["AppendReplacementReferenceHtml(sb, doc, L)"],
+         why=_R266B_WHY + "จุดเรียกฝั่ง HTML"),
+    dict(file="Services/Implementations/PdfGenerationService.DocumentRenderer.cs", method="RenderDocumentPdfNative", must=["ComposeReplacementRef(col, doc, accent, L)"],
+         why=_R266B_WHY + "จุดเรียกฝั่ง QuestPDF"),
+    dict(file=PDFSVC, method="ResolveServedAsReceiptAsync", must=["ResolveReplacementReferenceAsync(db, companyId, doc)"],
+         why=_R266B_WHY + "ตัวโหลด transient กลางของทั้งสอง renderer เติมเลขที่/วันที่ของใบที่ถูกแทน"),
+]
 REVIEWER_CASES += [
     # ด่าน G-1 ไม่โยนเมื่อพบเหตุปฏิเสธ ⇒ ต้องฟ้อง
     ("R266a", "GuardReceiptSourceAsync", "if (refusal != null)\n            throw", "if (refusal == null)\n            throw", True),

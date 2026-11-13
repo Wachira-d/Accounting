@@ -349,6 +349,13 @@ public interface IDocumentService
     Task<string?> UndoCreditAllocationTaxEffectsAsync(Guid companyId, Guid paymentId, Guid documentId, string paymentNumber);
     /// <summary>ขั้นหลัง commit ของการยกเลิกการจัดสรร: ปรับทะเบียนเครดิตภาษีถูกหักให้ตรง GL (JE ภาษีถูกหักของการจัดสรรถูกกลับแล้ว)</summary>
     Task SyncWhtCreditAfterCreditUndoAsync(Guid companyId, Guid documentId);
+
+    /// <summary>รอบ 266 แพ็ก B — ข้อเท็จจริงของ "ย้ายการรับชำระไปอีกใบ" (อ่านอย่างเดียว · พรีวิว/ผู้สมัคร) · null = ไม่พบการรับชำระ/ใบของการรับชำระในบริษัทนี้</summary>
+    Task<SettlementMoveSnapshot?> LoadSettlementMoveFactsAsync(Guid companyId, Guid paymentId, Guid targetDocumentId, string actor);
+
+    /// <summary>รอบ 266 แพ็ก B — ย้ายการรับชำระที่ตัดผิดใบไปใบที่ถูก (ผู้ติดต่อเดียวกัน): สองขาผ่าน 21630 อ้างเลขการรับชำระเดิม · ขาเงินสดไม่ถูกแตะ ·
+    /// ใบเสร็จที่อ้างใบเดิมถูกยกเลิก + ออกใบแทนลงวันที่รับเงินเดิม · ตัดสินซ้ำใต้ล็อกด้วย <c>ReceiptLinkPolicy.Decide</c> · ล้ม = ไม่มีอะไรถูกบันทึก</summary>
+    Task<SettlementMoveResult> MoveSettlementAsync(Guid companyId, SettlementMoveCommand command, string actor);
     /// <summary>เหตุที่ "ลงรายการภาษีขายในวันนั้นไม่ได้" (งวดบัญชีปิด หรือ ภ.พ.30 เดือนนั้นยื่น/ประกาศว่ายื่น/ล็อก) — ตัวเดียวกับด่านถอย/ย้ายภาษีขาย ·
     /// ผู้จัดสรรเงินรอจัดสรรใช้ตรวจวันที่จัดสรรของใบที่ยังพักภาษีขาย (null = ลงได้)</summary>
     Task<string?> CreditAllocationVatLockReasonAsync(Guid companyId, DateTime date);

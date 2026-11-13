@@ -7132,3 +7132,11 @@ _รอบ 267 แพ็ก P2 "ผู้ลงนาม + บัญชีหล
 สัญญา API ที่เปลี่ยน: `PageAction.Href` ของปุ่มตอบรับ = เส้น `…/respond` (เดิม = หน้ายอมรับรุ่นก่อน) · เส้นรุ่นก่อนที่ใช้ token ของหน้าเอกสารต้องส่ง `signer` ครบ · แพ้การจอง = 409 (เดิม 404) ·
 ล้าง conflict marker ที่ค้างใน DOCUMENT_FLOW/CHANGELOG จาก merge ก่อนหน้า (คงเนื้อหาทั้งสองฝั่ง) · เทสต์ `CustomerSignRound267Tests` + `Db/CustomerSignRound267DbTests` · ล็อก R267b —
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 266 แพ็ก B — ย้ายการรับชำระที่ตัดผิดใบ + ใบแทน (`erp-review/2026-11-12/team-266-manual-doc-link.md` §4.3 · คำตัดสิน 266-1-23…31 · DOCUMENT_FLOW §3.4c-B):
+`DocumentService.MoveSettlementAsync` (partial ใหม่ `DocumentService.ReceiptLink.cs`) — สองขาผ่าน 21630 อ้างเลขการรับชำระเดิม · ขาเงินสด/ยอดธนาคาร/คู่จับคู่ธนาคาร/`Payment.DocumentId` ไม่ถูกแตะ ·
+`Payment.MovedToDocumentId` + `PaymentAllocation.ReleasedAt/ReleasedBy/ReleaseJournalEntryId/MovedFromAllocationId` (`Helpers/ReceiptLinkMoveMigration`) · ผู้อ่าน "การชำระของใบ" 25 จุดใช้ใบที่มีผล (`Helpers/PaymentEffectiveDocument`) ·
+ใบเสร็จเดิมยกเลิก (คงแถว) + ใบแทนผ่าน `CreateSettlementReceiptAsync` ลงวันที่รับเงินเดิม · "ออกแทนใบเลขที่ …" ทั้ง HTML และ QuestPDF (`DocumentLabels.ReplacesDocument`) · ปฏิเสธพร้อมทางไปต่อ: e-Tax ถึงกรมสรรพากร · งวดภาษียื่น/ปิด ·
+คู่ค้า NextAcc · สกุลต่างประเทศ · ภาษีถูกหัก/ค่าธรรมเนียม · หลายใบ · API key · SoD (ผู้บันทึกรับชำระย้ายเองไม่ได้) · ถอด = ย้ายกลับ (ไม่มีถอดหลังออกใบแทน) · พักหนังสือทวงของใบที่กลับมาค้าง 7 วัน ·
+ยกเลิกใบเดิมขณะการรับชำระที่ย้ายออกยังมีผล = ปฏิเสธ · เก็บกวาด: ลบเครื่องหมาย merge conflict ที่ค้างใน DOCUMENT_FLOW/CHANGELOG (คงเนื้อหาทั้งสองฝั่ง) · ไม่สร้าง: ภาษีถูกหักตามเงิน (ปฏิเสธแทน) · ใบเสร็จสร้างเอง R4 · แพ็ก C —
+เทสต์ pure +9 (ปรับ 1) · Db +14 · กติกา R266B 14 ข้อ — ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit 46ac5463_

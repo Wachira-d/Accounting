@@ -84,6 +84,8 @@ public sealed class DocumentLabels
     public string CnDifference => this["cn_difference"];
     public string CnIncrease => this["cn_increase"];
     public string CnOriginalNumber => this["cn_original_number"];
+    /// <summary>รอบ 266 แพ็ก B: บรรทัดบนใบเสร็จที่ออกแทนใบเดิมหลังย้ายการรับชำระ — {0} เลขที่ใบเดิม · {1} วันที่ใบเดิม</summary>
+    public string ReplacesDocument => this["replaces_document"];
     public string CnOriginalValue => this["cn_original_value"];
     public string CnReason => this["cn_reason"];
     public string SupplierInvoiceLabel => this["supplier_invoice_no"];
@@ -321,6 +323,7 @@ public sealed class DocumentLabels
         // ── ใบเพิ่ม/ลดหนี้ (§86/9, §86/10) ──
         ["cn_ref_original"] = "อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{0})",
         ["cn_original_number"] = "เลขที่ {0}  ลงวันที่ {1}",
+        ["replaces_document"] = "ออกแทนใบเลขที่ {0} ลงวันที่ {1} (ใบเดิมถูกยกเลิก)",
         ["cn_original_value"] = "มูลค่าตามใบเดิม",
         ["cn_reason"] = "เหตุผล",
         ["supplier_invoice_no"] = "เลขที่ใบกำกับภาษีของผู้ขาย",
@@ -452,6 +455,7 @@ public sealed class DocumentLabels
 
         ["cn_ref_original"] = "Reference to original tax invoice (Section 86/{0})",
         ["cn_original_number"] = "No. {0} dated {1}",
+        ["replaces_document"] = "Issued in replacement of No. {0} dated {1} (original cancelled)",
         ["cn_original_value"] = "Original value",
         ["cn_reason"] = "Reason",
         ["supplier_invoice_no"] = "Supplier tax invoice no.",

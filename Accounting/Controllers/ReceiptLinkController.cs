@@ -80,6 +80,17 @@ public class ReceiptLinkController : ControllerBase
         if (await TypeAsync(companyId, request.ReceiptDocumentId) is DocumentType rType
             && !await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userId, rType))
             return Forbid403<ReceiptLinkResult>($"ไม่มีสิทธิ์แก้ไขเอกสาร {rType} (ต้องการ Document.Create ของชนิดนี้)");
+        // แพ็ก B (266-1-10 · 266-1-27): เส้นย้ายการรับชำระที่ต้องยกเลิกใบเสร็จเดิมและออกใบแทน = + สร้าง/อนุมัติ/ยกเลิกใบเสร็จรับเงิน ·
+        // เส้นถูกตัดสินจากพรีวิวของเซิร์ฟเวอร์เอง (ไม่เชื่อค่าที่ผู้เรียกส่ง) · การแบ่งแยกหน้าที่/วงเงินเซ็นหลายขั้นตัดสินในตัวตัดสิน (RL-MOVE-APPROVAL)
+        var plannedRoute = (await _links.PreviewAsync(companyId, request, userId, ct)).Route;
+        if (plannedRoute == nameof(ReceiptLinkRoute.MoveSettlementWithReissue)
+            && !(await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userId, DocumentType.Receipt)
+                 && await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userId, DocumentType.Receipt)
+                 && await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userId, DocumentType.Receipt)))
+            return Forbid403<ReceiptLinkResult>("ย้ายการรับชำระนี้ต้องยกเลิกใบเสร็จเดิมและออกใบแทน — ต้องมีสิทธิ์สร้าง อนุมัติ และยกเลิกใบเสร็จรับเงิน (Document.Create/Approve/Void ของ Receipt)");
+        if ((plannedRoute == nameof(ReceiptLinkRoute.MoveSettlement) || plannedRoute == nameof(ReceiptLinkRoute.MoveSettlementWithReissue))
+            && !await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userId, invType.Value))
+            return Forbid403<ReceiptLinkResult>($"ย้ายการรับชำระ = ถอนการรับชำระออกจากใบเดิม — ต้องมีสิทธิ์ยกเลิกของเอกสารฝั่งขาย ({invType.Value}: Document.Void หรือ Document.Revenue.Void)");
         var r = await _links.LinkAsync(companyId, request, userId, ct);
         return Ok(new ApiResponse<ReceiptLinkResult>(true, r, string.Join(" · ", r.Notices.DefaultIfEmpty($"ผูกกับ {r.InvoiceNumber} แล้ว"))));
     }
@@ -94,6 +105,10 @@ public class ReceiptLinkController : ControllerBase
         if (await TypeAsync(companyId, request.ReceiptDocumentId) is DocumentType rType
             && !await DocumentPermissionHelper.CanCreateAsync(_permissions, companyId, userId, rType))
             return Forbid403<ReceiptLinkResult>($"ไม่มีสิทธิ์แก้ไขเอกสาร {rType}");
+        // แพ็ก B: ถอดการย้ายการรับชำระ = ย้ายกลับ (ลงบัญชีใหม่) — ต้องระบุแถวที่มีผล เพื่อให้ด่านสิทธิ์ยกเลิกด้านล่างทำงานเสมอ
+        if (request.AllocationId == null
+            && (request.Route == nameof(ReceiptLinkRoute.MoveSettlement) || request.Route == nameof(ReceiptLinkRoute.MoveSettlementWithReissue)))
+            return BadRequest(new ApiResponse<ReceiptLinkResult>(false, null, "ถอดการย้ายการรับชำระต้องระบุแถวจัดสรรที่มีผล (allocationId)"));
         if (request.AllocationId is Guid aid)
         {
             var t = await _db.PaymentAllocations.AsNoTracking()

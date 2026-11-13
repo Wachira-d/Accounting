@@ -19,7 +19,7 @@ public static class WhtWithheldCounter
         Guid? excludeDocumentId = null, CancellationToken ct = default)
     {
         var withheldViaPayments = await db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted)
+            .Where(p => p.CompanyId == companyId && (p.MovedToDocumentId ?? p.DocumentId) == documentId && !p.IsDeleted)
             .SumAsync(p => (decimal?)p.WithholdingTaxAmount, ct) ?? 0m;
         var withheldViaReceipts = await db.Documents.AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.RelatedDocumentId == documentId
