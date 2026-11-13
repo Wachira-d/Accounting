@@ -256,6 +256,13 @@ public static class CustomerDocPage
     /// <summary>ชนิดที่ "จ่ายได้" บนหน้า (ตัวตัดสินจริง = ชั้นจ่าย <c>DocumentPayLinkPolicy.IssueRefusal</c> — ที่นี่ใช้แค่เลือกว่าจะแสดงปุ่มจ่ายไหม)</summary>
     public static bool IsPayableType(DocumentType type) => Array.IndexOf(DocumentPayLinkPolicy.PayableTypes, type) >= 0;
 
+    /// <summary>รอบ 267 P3: ชนิดนี้มีปุ่ม "ตอบรับ" บนหน้าไหม (ยอมรับใบเสนอราคา · เซ็นรับสินค้า) — ตัวเดียวกับที่ <see cref="Actions"/> ใช้เลือกปุ่ม ·
+    /// ผู้อ่าน: กติกาการ์ด LINE (กลุ่ม = ปุ่มดูเท่านั้น · 267-1-7) · ป้ายปุ่มบนการ์ด/อีเมลของหน้าต่าง "ส่งให้ลูกค้า"</summary>
+    public static bool HasRespondAction(DocumentType type) => RespondActionId(type) != null;
+
+    private static string? RespondActionId(DocumentType type)
+        => type == DocumentType.Quotation ? ActionAccept : type == DocumentType.DeliveryNote ? ActionSignDelivery : null;
+
     private static string T(bool en, string th, string enText) => en ? enText : th;
 
     /// <summary>
@@ -311,7 +318,7 @@ public static class CustomerDocPage
             }
         }
 
-        var respondId = f.Type == DocumentType.Quotation ? ActionAccept : f.Type == DocumentType.DeliveryNote ? ActionSignDelivery : null;
+        var respondId = RespondActionId(f.Type);
         if (respondId != null && !f.PayOnly)
         {
             var label = respondId == ActionAccept ? T(en, "ยอมรับใบเสนอราคา", "Accept the quotation") : T(en, "เซ็นรับสินค้า", "Sign for the delivery");

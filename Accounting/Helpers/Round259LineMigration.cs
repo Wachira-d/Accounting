@@ -20,15 +20,25 @@ public static class Round259LineMigration
         // A-M4 (F2 ข้อ 9 — ค่าที่ persist ผิดต้องซ่อม): ปลายทาง LINE ที่เก็บ "ลิงก์เซ็น"/"อื่น ๆ" ไว้ (ค่าตั้งต้นเดิมของผู้ใช้ LINE ติ๊กลิงก์เซ็น) — เรื่องที่ไม่มีเส้นส่ง ⇒ ตัดออก ·
         // แทนที่ข้อความ (ไม่ cast jsonb — ค่าเสียหายไม่ทำให้ migration ล้ม) · รูปที่ระบบเขียน = JSON array ของชื่อไม่มีช่องว่าง (NotifyTopics.Serialize) ·
         // ทำซ้ำได้ (แถวที่ตัดแล้วไม่ตรงเงื่อนไข)
+        // รอบ 267 P3 (267-1-61): ลิงก์เซ็นส่งทาง LINE 1:1 ได้แล้ว ⇒ คำสั่งนี้ (รันทุกครั้งที่บูต) ตัด "ลิงก์เซ็น" เฉพาะกลุ่ม — ไม่ลบค่าที่ผู้ใช้ 1:1 เพิ่งติ๊ก ·
+        // "อื่น ๆ" ยังไม่มีเส้นส่งทาง LINE ทั้งสองชนิด
         """
         UPDATE "ContactNotifyEndpoints"
         SET "TopicsJson" = replace(regexp_replace("TopicsJson", ',?"(Sign|Other)"', '', 'g'), '[,', '['),
             "UpdatedAt" = (now() at time zone 'utc')
-        WHERE "Kind" IN ('LineUser', 'LineGroup') AND "TopicsJson" ~ '"(Sign|Other)"';
+        WHERE "Kind" = 'LineGroup' AND "TopicsJson" ~ '"(Sign|Other)"';
+        """,
+        """
+        UPDATE "ContactNotifyEndpoints"
+        SET "TopicsJson" = replace(regexp_replace("TopicsJson", ',?"Other"', '', 'g'), '[,', '['),
+            "UpdatedAt" = (now() at time zone 'utc')
+        WHERE "Kind" = 'LineUser' AND "TopicsJson" ~ '"Other"';
         """,
     };
 
-    /// <summary>ตัวเดียวกับคำสั่ง SQL ข้างบน (เทสต์ล็อกทั้งสองทิศ) — ตัดชื่อเรื่องที่ LINE ไม่ส่งออกจาก JSON ที่ระบบเขียน</summary>
-    internal static string StripLineUnsupported(string topicsJson)
-        => System.Text.RegularExpressions.Regex.Replace(topicsJson, ",?\"(Sign|Other)\"", "").Replace("[,", "[");
+    /// <summary>ตัวเดียวกับคำสั่ง SQL ข้างบน (เทสต์ล็อกทั้งสองทิศ) — ตัดชื่อเรื่องที่ LINE ชนิดนั้นไม่ส่งออกจาก JSON ที่ระบบเขียน
+    /// (กลุ่ม: ลิงก์เซ็น + อื่น ๆ · ผู้ใช้ 1:1: อื่น ๆ — รอบ 267 P3)</summary>
+    internal static string StripLineUnsupported(string topicsJson, string kind = NotifyEndpointKind.LineGroup)
+        => System.Text.RegularExpressions.Regex.Replace(topicsJson, kind == NotifyEndpointKind.LineUser ? ",?\"Other\"" : ",?\"(Sign|Other)\"", "")
+            .Replace("[,", "[");
 }

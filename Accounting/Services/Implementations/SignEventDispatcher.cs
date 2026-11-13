@@ -177,6 +177,22 @@ public class SignEventDispatcher
             }
         }
 
+        // รอบ 267 P3 (267-1-36 ส่วน LINE · 267-1-63): ลูกค้าเปิดลิงก์จากการ์ด LINE 1:1 มาลงนาม ⇒ การ์ด "ฉบับเซ็น" กลับไป LINE เดิม (ครั้งเดียว · หลังมีไฟล์แล้ว) ·
+        // ผู้เข้าคิวเดียว DocumentLineSendService.EnqueueSignedCopyAsync — ส่งจริง/ล้มดูที่แถวคิว LINE + ไทม์ไลน์ลูกค้า · ไม่มีไฟล์ (เลิกสร้าง) ⇒ ไม่ส่งการ์ดที่ไม่มีอะไรให้ดาวน์โหลด
+        if (row.SignedCopyDoneAt != null && row.SourceLineQueueId is Guid sourceQueue && row.SignedCopyLineQueuedAt == null && row.CustomerActionId is Guid copyAction)
+        {
+            var hasFile = await _db.CustomerDocumentActions.AsNoTracking()
+                .AnyAsync(a => a.Id == copyAction && a.CompanyId == row.CompanyId && a.SignedPdfSha256 != null && a.ErasedAt == null, ct);
+            if (hasFile)
+            {
+                var (queued, note) = await DocumentLineSendService.EnqueueSignedCopyAsync(_db, row.CompanyId, row.DocumentId, sourceQueue, ct);
+                if (!queued && note != null) row.LastError = Trim("ฉบับเซ็นทาง LINE: " + note);
+            }
+            else row.LastError = Trim("ฉบับเซ็นทาง LINE: ไม่มีไฟล์ฉบับที่ลงนาม — ไม่ส่งการ์ด");
+            row.SignedCopyLineQueuedAt = nowUtc;
+            await _db.SaveChangesAsync(ct);
+        }
+
         if (string.IsNullOrWhiteSpace(row.CallbackUrl))
         {
             row.Status = SignEventStatus.NoCallback;

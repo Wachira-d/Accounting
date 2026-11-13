@@ -4208,6 +4208,49 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **ไม่สืบทอด:** `CustomerResponse` · แถวหลักฐาน · ฉบับที่ลงนาม เป็นของใบ/Rev นั้น — convert/clone/recurring ไม่คัดลอก (เท่ากับลายเซ็นยอมรับ รอบ 239)
 - เทสต์ `CustomerSignRound267Tests` (pure สองทิศ) · `Db/CustomerSignRound267DbTests` · ล็อก R267b (`tools/required_call_site_check.py` — กติกาของเมธอดที่ย้ายชี้ `CustomerDocumentResponseService`) · Last verified `commit 8b6861de` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 2.12n-P3 "📤 ส่งให้ลูกค้า" + ไทม์ไลน์ลูกค้า + LINE เซ็น (รอบ 267 แพ็ก P3 · คำตัดสิน 267-1-7 · 267-1-61…67)
+
+ดีไซน์: `erp-review/2026-11-12/team-267-doc-pages-design.md` §15 / §16 / §19 P3 · ต่อจาก §2.12n (P1) · §2.12n-P2 · **ไม่มีเส้นส่งใหม่** — หน้าต่างเดียว orchestrate บริการเดิม:
+
+- **ปุ่มเดียว** "📤 ส่งให้ลูกค้า" บนหน้ารายละเอียดเอกสาร (`documents.html`) แทน 6 ปุ่มเดิม (🔗 ลิงก์ยอมรับ · 📧 ส่งให้ลูกค้ายอมรับทางอีเมล · ✍️ ลิงก์เซ็นรับ ·
+  📧 ส่งให้ลูกค้าเซ็นรับทางอีเมล · 📧 ส่งอีเมล · 💬 ส่งทาง LINE) · แสดงตาม `DocumentResponse.CanShareToCustomer` (`CustomerShareRule.ButtonOffered` =
+  ด่านชนิด/สถานะเดียวกับ `CustomerDocPage.IssueRefusal`) · หน้าต่างอีเมลแบบแก้ข้อความเอง (`openSendEmailModal`) ยังเปิดได้จากลิงก์ในหน้าต่าง (267-1-65) ·
+  endpoint เดิม (`send-email` · `line-send` · `quotation-accept-link` · `delivery-sign-link` · `sign-request/email`) คงไว้สำหรับ API/มือถือ — หน้าเว็บไม่เรียกแล้ว
+- **`GET …/document/{id}/share-options`** (สิทธิ์สร้างเอกสารชนิดนั้น + ชั้นความลับ — ด่านเดียวกับส่งอีเมล/LINE เดิม · ไม่ออกลิงก์ · ไม่มีผลข้างเคียง) →
+  `CustomerShareService.OptionsAsync`: ลิงก์ (สถานะ `CustomerDocPage.LinkState` · URL เดิมที่ใช้ได้ · เหตุที่ออกไม่ได้ `IDocumentPayLinkService.CustomerLinkRefusalAsync` ·
+  ยกเลิกไว้ ⇒ ช่อง "ออกลิงก์ใหม่แทน") · ปุ่มที่ลูกค้าจะเห็น (view model โหมดพรีวิวเดียวกับหน้าลูกค้า) · ตัวเลือก "เปิดให้ลูกค้ายอมรับ/เซ็นรับ" (`CustomerShareRule.Respond` —
+  ลิงก์ดู ≠ สิทธิ์ตอบรับ 267-1-25) · ช่องทาง + เหตุ · อีเมล (ทาง `RouteAsync` · ผู้รับตั้งต้น · e-Tax by Email = ไม่มีบล็อกลิงก์ `CustomerShareRule.EtaxNoPageLinkNote` · เหตุ/คำเตือนของทาง e-Tax) ·
+  LINE (`DocumentLineSendService.OptionsAsync(forShare: true)` — ปลายทาง + `PageLink`/`PageLinkNote` ต่อปลายทาง) · ค่าตั้งใบเสร็จอัตโนมัติของใบ (P4 · แก้ที่แผงเดิม)
+- **`POST …/document/{id}/share`** `{channels[copy|email|line|qr], openRespond, reissueRevoked, emailTo, emailCc, attachPdf, emailPayLink, lineEndpointIds[], linePayLink}` →
+  `CustomerShareService.ShareAsync` (ล็อก R267c): (1) ลิงก์ = `EnsureCustomerLinkAsync` (ออกไม่ได้/ถูกยกเลิกโดยไม่ติ๊ก ⇒ 409 ทั้งคำขอ — ไม่มีช่องทางใดถูกส่ง) →
+  (2) ติ๊กเปิดตอบรับ + ช่วงยังไม่เปิด ⇒ `ISignRequestService.IssueLinkAsync(Regenerate:false)` (ล้ม ⇒ ปฏิเสธทั้งคำขอ — ไม่ส่ง "ขอให้ยอมรับ" ที่กดไม่ได้) →
+  (3) ทีละช่องทาง: อีเมล = `SendDocumentRoutedAsync` (`IncludePageLink` เมื่อทางนี้ใส่บล็อกได้ — บล็อก `CustomerShareRule.EmailPageBlock` ป้ายตามช่วงตอบรับ/ยอดค้าง) ·
+  LINE = `DocumentLineSendService.SendAsync(includePageLink: true)` · คัดลอก = URL · QR = PNG data URI ของ URL · **ผลแยกต่อช่องทาง** — อีเมลล้มไม่ลาก LINE (และกลับกัน) ·
+  ช่องทางใดล้ม ⇒ `success=false` + ผลของทุกช่องทาง (`CustomerShareRule.Summary` · F2 ข้อ 7) · ช่องทางที่ผ่านไม่ย้อน · LINE = "เข้าคิวแล้ว" (ส่งแล้ว = LINE ตอบรับจริง)
+- **อีเมล:** `SendDocumentEmailRequest.IncludePageLink` (ใหม่) — บล็อกลิงก์ออกผ่าน `EnsureCustomerLinkAsync(allowReissueRevoked:false)` ก่อนสร้างแถวบันทึก ·
+  ทาง e-Tax by Email + ขอบล็อก = 409 `EtaxNoPageLinkNote` (ไม่ทิ้งค่าเงียบ — 267-1-62)
+- **LINE (267-1-7 · 267-1-61):** ตัวตัดสินเดียว `DocumentLineSendRule.PageLinkAllowed(kind, showAmounts, type)` / `PageLinkProblem` — กลุ่มซ่อนยอด = ไม่ได้ (การ์ดไม่มีปุ่ม · S21) ·
+  ใบที่มีปุ่มตอบรับ (`CustomerDocPage.HasRespondAction`: ใบเสนอราคา · ใบส่งของ) ⇒ **1:1 เท่านั้น** · กลุ่ม = ปุ่มดูเท่านั้น (S23) · ตัดสินต่อปลายทางตอนเข้าคิว
+  (`LineQueue.IncludePageLink`) และ**ตรวจซ้ำตอนส่ง** (`ContactLineQueueService` — ปลายทางเปลี่ยนเป็นไม่ได้ = ข้าม `PageLinkNotAllowedAtSend` · ลิงก์ใช้ไม่ได้แล้ว = ข้าม `PageLinkGoneAtSend`) ·
+  การ์ดลิงก์หน้าเอกสาร = ปุ่มเดียว (`LineDocumentCard.PageButtonLabel`: "ดู/ยอมรับ" · "ดู/เซ็นรับ" · "ดู/ชำระเงิน" · "เปิดเอกสาร" — ป้ายผ่าน `DocumentLabels`) ไม่ซ้อนปุ่มชำระ/ดู PDF ·
+  URL ต่อ `s=l{queueId}` · เรื่อง "ลิงก์เซ็น" ของปลายทาง LINE: **1:1 ติ๊กได้** (`NotifyTopics.LineUnsupportedReason(t, kind)`) · กลุ่มยังไม่ได้ · ใบที่ตอบรับได้รวมปลายทาง 1:1
+  ที่ติ๊ก "ลิงก์เซ็น" แต่ไม่ได้ติ๊ก "เอกสาร" (`DocumentLineSendRule.MergeSignTopic` · แถวคิวเก็บเรื่องที่ทำให้ส่งได้) · migration รอบ 259 ที่ตัด "ลิงก์เซ็น" ตอนบูตเหลือเฉพาะกลุ่ม
+- **ตัวระบุแหล่งที่มา `s` + ฉบับเซ็นกลับ LINE เดิม (267-1-63 · ส่วน LINE ของ 267-1-36):** `pay-document.html` ส่ง `s` ไปกับคำตอบ · `CustomerDocumentResponseService.LineSourceAsync`
+  ตรวจกับแถวคิวจริง (`CustomerShareRule.LineSourceValid`: บริษัทนี้ · ใบนี้ · 1:1 · การ์ดลิงก์หน้าเอกสาร · LINE รับแล้ว) — ผิด/หาย/ปลอม = ไม่มีผล (ไม่ใช่สิทธิ์) ·
+  ผ่าน ⇒ `SignEventOutbox.SourceLineQueueId` · งาน outbox (`SignEventDispatcher`) หลังขั้นฉบับที่ลงนามจบ + มีไฟล์ ⇒ `DocumentLineSendService.EnqueueSignedCopyAsync`
+  (ผู้เข้าคิวเดียว · trigger `ContactLineChannel.SignedCopyTrigger` · กุญแจต่อแถวต้นทาง · ไม่เลื่อนช่วงเงียบ) ⇒ การ์ด "ฉบับเซ็น" (ปุ่มไปหน้าเอกสารที่มีปุ่มดาวน์โหลดฉบับที่ลงนาม) ·
+  `SignedCopyLineQueuedAt` ประทับครั้งเดียว · ไม่มีไฟล์ = ไม่ส่งการ์ด + เหตุบนแถว outbox · ไม่มีการระบุแหล่งที่มาของอีเมล (ไม่มี tracking — 267-1-63)
+- **`GET …/document/{id}/customer-timeline`** (ด่านอ่านเอกสาร + ชั้นความลับ) → `CustomerTimelineService` (read model อ่านอย่างเดียว · ทุก query ผูก CompanyId · 50 แถว/แหล่ง · รวม ≤ 200):
+  ออก/ยกเลิกลิงก์ · เปิดช่วงตอบรับ · ลูกค้าเปิดลิงก์ (`SignLinkOpenedAt` — การโหลดหน้าจริง) · `DocumentEmailLogs` · `LineQueues` (รอส่ง ≠ ส่งแล้ว) · `CustomerDocumentActions`
+  (ชื่อ/ตำแหน่งตามสิทธิ์อ่าน — ไม่มี IP/อีเมล · แถวที่ลบตามคำขอไม่มีชื่อ) · คำขอลิงก์ใหม่ (audit) · `PaymentIntents` (สลิปรอตรวจ ⇒ "ตรวจสลิป") · `Payments` · `PostPaymentAutomationRuns` · e-Tax by Email ·
+  ทางไปต่อจากเซิร์ฟเวอร์ (`reshare` · `review-slips`) · แผง "ลูกค้า" บนหน้ารายละเอียด (เหนือแผง "ลิงก์ชำระเงิน & ส่งเอกสารอัตโนมัติ" ที่คงไว้ — 267-1-66) + เหตุการณ์ webhook ลูกค้าเซ็นเดิม
+- **`GET …/document/{id}/customer-page-preview`** (P1) = พรีวิวในหน้าต่าง (iframe `pay-document.html?preview=`) — ไม่ออกลิงก์ · ไม่ประทับเปิด · ปุ่มทั้งหมดปิด (S36)
+- **หน้าเว็บไม่มีตาราง/ป้ายของตัวเอง** (F2 ข้อ 5): ชนิดที่ส่งได้ · ป้ายช่องทาง · เหตุ · ปุ่มที่ลูกค้าเห็น · ป้ายไทม์ไลน์ มาจากเซิร์ฟเวอร์ · หน้าเลือกตัวทำงานจากรหัส (`reshare` · `review-slips`) เท่านั้น ·
+  หน้าผู้ติดต่อเลือกเหตุของเรื่องตามชนิดปลายทาง (`NotifyTopicOption.LineUserUnsupported` / `LineGroupUnsupported`)
+- **schema:** `Helpers/CustomerShareMigration` (`LineQueues.IncludePageLink` · `SignEventOutbox.SourceLineQueueId` · `SignedCopyLineQueuedAt` — NULL = พฤติกรรมเดิม ไม่มีข้อมูลเก่าต้องย้าย)
+- **ไม่ทำในแพ็กนี้ (267-1-67):** รวมแผงลิงก์ชำระเข้าไทม์ไลน์ · ป้ายบนรายการจากไทม์ไลน์ (ยังใช้ `sign-request/statuses`) · `LineDocumentViewController` ตอบ HTML ตาม `Accept` ·
+  ข้อความอีเมลอิสระในหน้าต่างเดียว · มือถือ/บอท LINE ฝั่งพนักงาน · ไม่มี AI ในเส้นนี้ (กฎ #1 ไม่ถูกแตะ)
+
 ### 2.12n-P4 หน้าเอกสารสำหรับลูกค้า — หลังจ่าย (รอบ 267 แพ็ก P4 · คำตัดสิน 267-1-8 · 267-1-44…50)
 
 ดีไซน์: `erp-review/2026-11-12/team-267-doc-pages-design.md` §8 / §19 P4 · ต่อจาก §2.12n (P1) · **ไม่มีเส้นเงินใหม่** — หน้าเอกสาร "แสดงผล" อย่างเดียว:
@@ -9507,3 +9550,4 @@ _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P4 — �
 _Last verified against codebase: 2026-11-13 (รอบ 266 แพ็ก B ชุดแก้ฝ่ายค้าน — §3.4c-B: B-1 ใบรับในตัว (ปฏิเสธ/ออกใบกำกับ ณ วันรับเงิน/พรีวิวตามจริง) · B-2 สิทธิ์ใต้ล็อก + ถอดด้วยกุญแจพรีวิว · B-3…B-9 ผู้อ่าน/งานที่ตามใบที่มีผล · ถอดหลังแตะกระดาษ = ปฏิเสธ (คำตัดสิน 266-1-32…35)) · commit 0ec86361 (+ 57b75d99) — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _Last verified against codebase: 2026-11-13 (รอบ 268 งานคงค้าง — §2.12g-268: 268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง · 268-1-2 สลิปออเดอร์หน้าเว็บลงธนาคาร · 268-1-3 มัดจำการจองต่องวด · 268-1-4 แจ้งแชตหลังผูกสลิป + PDF · 268-1-5 ศูนย์บิล LINE (นำออก/ใบเสร็จส่วนเสริม) · 268-1-6 รับหลายใบแจ้งคู่ค้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3dad4ab2)_
 _Last verified against codebase: 2026-11-13 (รอบ 268 ชุดแก้ฝ่ายค้าน — §2.12g-268: M1–M6 · L1/L2/L5/L6/L7 (คำตัดสิน 268-1-7…14) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b960b19f)_
+_Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P3 — §2.12n-P3 "📤 ส่งให้ลูกค้า": หน้าต่างเดียวแทน 6 ปุ่ม (share-options · share · CustomerShareService orchestrate EnsureCustomerLinkAsync · IssueLinkAsync · SendDocumentRoutedAsync · DocumentLineSendService.SendAsync · ผลแยกต่อช่องทาง) · ไทม์ไลน์ลูกค้า (customer-timeline) · LINE 1:1 การ์ด "ดู/ยอมรับ" + ฉบับเซ็นกลับ LINE เดิม (s ตรวจกับแถวคิว) · กลุ่ม = ปุ่มดูเท่านั้น (PageLinkAllowed ตัวเดียว) · ลิงก์เซ็นติ๊กให้ LINE 1:1 ได้ (คำตัดสิน 267-1-7 · 267-1-61…67) — build + test + Db test ผ่านในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_

@@ -140,16 +140,20 @@ public static class NotifyTopics
     /// <summary>รอบ 259 (A-M4 · ห้าม silent no-op): เรื่องที่ติ๊กบนปลายทาง LINE ได้แต่ระบบไม่มีเส้นส่งทาง LINE ⇒ เหตุ (null = LINE ส่งเรื่องนี้ได้) ·
     /// ตัวเดียวของหน้าเว็บ (ช่องติ๊กล็อกพร้อมเหตุ) · ด่านบันทึก (<see cref="FromRequest"/> ส่งชนิดปลายทาง) · คำตอบบอทในกลุ่ม · เส้นส่ง LINE ที่มีจริง:
     /// เอกสาร/ทวงชำระ (ตารางส่ง · ส่งเองจากหน้าเอกสาร) · ใบเสร็จ (งานหลังรับชำระ) · 50 ทวิ (ทวงอัตโนมัติ)</summary>
-    public static string? LineUnsupportedReason(NotifyTopic t) => t switch
+    /// <remarks>รอบ 267 P3 (คำตัดสิน 267-1-7 · 267-1-61): <b>ลิงก์เซ็น</b> ส่งทาง LINE <b>1:1</b> ได้แล้ว (การ์ด "ดู/ยอมรับ" จากหน้าต่าง "ส่งให้ลูกค้า" ·
+    /// <c>DocumentLineSendRule.PageLinkAllowed</c>) — <b>กลุ่ม</b>ยังเลือกไม่ได้ (ใครในกลุ่มก็กดยอมรับได้ ⇒ กลุ่มได้ปุ่มดูเท่านั้น) ·
+    /// <paramref name="kind"/> = ชนิดปลายทาง LINE (ไม่ใช่ LINE/ไม่รู้ ⇒ ถือว่าเป็นกลุ่ม — เข้มที่สุด ไม่เปิดเกิน)</remarks>
+    public static string? LineUnsupportedReason(NotifyTopic t, string? kind) => t switch
     {
-        NotifyTopic.Sign => "ลิงก์เซ็นยังส่งทาง LINE ไม่ได้ (ส่งทางอีเมลเท่านั้น)",
+        NotifyTopic.Sign when kind == NotifyEndpointKind.LineUser => null,
+        NotifyTopic.Sign => "ลิงก์เซ็นส่งเข้ากลุ่ม LINE ไม่ได้ (ใครในกลุ่มก็กดยอมรับได้) — ส่งทาง LINE 1:1 ของผู้ลงนาม หรืออีเมล",
         NotifyTopic.Other => "ยังไม่มีเรื่องอื่นที่ส่งทาง LINE",
         _ => null,
     };
 
-    /// <summary>เรื่องที่ปลายทางชนิดนี้รับได้จริง — LINE ตัดเรื่องที่ไม่มีเส้นส่ง · อีเมลรับทุกเรื่อง (ผู้เรียก: คำเชิญผูก LINE ที่เก็บเรื่องไว้ก่อนรอบ 259 · ข้อความบอท)</summary>
+    /// <summary>เรื่องที่ปลายทางชนิดนี้รับได้จริง — LINE ตัดเรื่องที่ไม่มีเส้นส่งของชนิดนั้น · อีเมลรับทุกเรื่อง (ผู้เรียก: คำเชิญผูก LINE ที่เก็บเรื่องไว้ก่อนรอบ 259 · ข้อความบอท)</summary>
     public static IReadOnlyList<NotifyTopic> SupportedFor(string? kind, IEnumerable<NotifyTopic> topics)
-        => NotifyEndpointKind.IsLine(kind) ? topics.Where(t => LineUnsupportedReason(t) == null).ToList() : topics.ToList();
+        => NotifyEndpointKind.IsLine(kind) ? topics.Where(t => LineUnsupportedReason(t, kind) == null).ToList() : topics.ToList();
 
     /// <summary>JSON array ของชื่อ (เรียงตามค่า enum · ไม่ซ้ำ)</summary>
     public static string Serialize(IEnumerable<NotifyTopic> topics)
@@ -195,7 +199,7 @@ public static class NotifyTopics
             var n = (raw ?? "").Trim();
             if (int.TryParse(n, out _) || !Enum.TryParse<NotifyTopic>(n, ignoreCase: true, out var t) || !Enum.IsDefined(t))
                 return (null, $"ไม่รู้จักเรื่อง \"{n}\" — เลือกจาก: {string.Join(" · ", All.Select(Label))}");
-            if (NotifyEndpointKind.IsLine(kind) && LineUnsupportedReason(t) is string why)
+            if (NotifyEndpointKind.IsLine(kind) && LineUnsupportedReason(t, kind) is string why)
                 return (null, $"เรื่อง \"{Label(t)}\" เลือกให้ปลายทาง LINE ไม่ได้ — {why}");
             if (!list.Contains(t)) list.Add(t);
         }

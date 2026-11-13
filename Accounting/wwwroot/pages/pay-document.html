@@ -81,6 +81,8 @@
     const lineToken = qs.get('lt');
     const previewDoc = qs.get('preview');
     const portalDoc = qs.get('portal');
+    // รอบ 267 P3 (267-1-63): ตัวระบุแหล่งที่มาของลิงก์บนการ์ด LINE — ไม่ใช่สิทธิ์ (เซิร์ฟเวอร์ตรวจกับแถวคิวจริง) · ใช้ส่งฉบับเซ็นกลับไป LINE เดิม
+    const source = qs.get('s');
     let portalJwt = null;
     const card = document.getElementById('card');
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -582,6 +584,7 @@
         otpCode: (document.getElementById('sgOtp')?.value || '').trim() || null,
         // ฉบับที่หน้านี้แสดง — เซิร์ฟเวอร์ปฏิเสธถ้าเอกสารถูกแก้หลังจากเปิดหน้านี้ (ตอบรับได้เฉพาะฉบับที่เห็น)
         revisionNumber: view.page.respond.revisionNumber, contentHash: view.page.respond.contentHash,
+        source: source || null,
       };
       btn.disabled = true; msg.className = 'msg'; msg.textContent = '...';
       let r, j = null;
