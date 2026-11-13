@@ -23,6 +23,9 @@ namespace Accounting.Tests.Db;
 /// hash เขียน→อ่านจากฐาน→ตรวจ · audit chain ของผู้ให้สะอาด (<c>AuditHashChain.Analyze</c>) · ค่าตั้งเดิมระดับบริษัทเข้า audit (C-06)
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 269 (CI db-test 43376320015 + 43380265759 · "InviteNoticeDueAt does not have a value"): CrossTenantWorkflowService.DispatchPendingLinkRequestNoticesAsync
+// กวาดคำขอเชื่อมคู่ค้าที่ถึงกำหนดของทุกบริษัทในฐานร่วม ⇒ คลาสที่รันขนานส่ง/ล้างคิวแจ้งของคำเชิญที่อีกคลาสเพิ่งสร้าง · คลาสที่สร้างคำเชิญหรือกวาดคิวอยู่ collection เดียวกัน
+[Collection("PartnerLinkRequestSweep")]
 public class PartnerConsentRound264DbTests
 {
     private readonly ITestOutputHelper _out;
