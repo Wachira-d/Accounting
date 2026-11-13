@@ -75,8 +75,13 @@
     // โหมด: ?c=&t= (ลิงก์ของใบ) · ?c=&lq=&lt= (การ์ด LINE — ดูอย่างเดียว) · ?c=&preview= (พนักงานดูตัวอย่าง — ต้องล็อกอิน)
     //       ?c=&portal= (รอบ 267 P4 — ฝังในพอร์ทัลลูกค้า · โทเคนพอร์ทัลรับจากหน้าแม่ทาง postMessage ต้นทางเดียวกัน ไม่อยู่ใน URL)
     const qs = new URLSearchParams(location.search);
-    const companyId = qs.get('c');
-    const token = qs.get('t');
+    // รอบ 267 P5 (267-1-13): กลับจากหน้าอนุญาตของ LINE (?code=&state=) — c/t ของหน้าเก็บใน sessionStorage ก่อนไป (ไม่ส่ง token ของใบให้ LINE)
+    const LINE_RETURN = 'nextacc.docpage.lineReturn', LINE_TICKET = 'nextacc.docpage.lineTicket';
+    const ssGet = (k) => { try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch { return null; } };
+    const ssSet = (k, v) => { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, JSON.stringify(v)); } catch { /* ไม่มี storage = ไม่มี LINE Login (ลงนามได้ตามปกติ) */ } };
+    const lineReturn = (qs.get('code') && qs.get('state') && !qs.get('t')) ? ssGet(LINE_RETURN) : null;
+    const companyId = lineReturn ? lineReturn.c : qs.get('c');
+    const token = lineReturn ? lineReturn.t : qs.get('t');
     const lineQueue = qs.get('lq');
     const lineToken = qs.get('lt');
     const previewDoc = qs.get('preview');
@@ -357,7 +362,7 @@
           // รอบ 267 P2 — ตอบรับ (ยอมรับ · ไม่รับ · ขอแก้ ใบเสนอราคา · เซ็นรับสินค้า): ปุ่มเปิดฟอร์มผู้ลงนามบนหน้านี้ ·
           // ปุ่มไหนเปิด/ข้อความ/ฟอร์มของแต่ละปุ่ม มาจากเซิร์ฟเวอร์ (page.actions + page.respond) · ส่งคำตอบที่เส้นที่เซิร์ฟเวอร์ให้ (a.href)
           const href = safePath(a.href);
-          if (a.enabled && href && respondSpec(p, a.id)) out.push(`<button type="button" class="btn ${a.id === 'accept' || a.id === 'sign-delivery' ? 'go' : 'alt'}" data-respond="${esc(a.id)}">${esc(a.label)}</button>`);
+          if (a.enabled && href && respondSpec(p, a.id)) out.push(`<button type="button" class="btn ${a.id === 'accept' || a.id === 'sign-delivery' || a.id === 'po-acknowledge' ? 'go' : 'alt'}" data-respond="${esc(a.id)}">${esc(a.label)}</button>`);
           else if (p.respondedAt) out.push(`<div class="ok">✓ ${esc(a.disabledReason || a.label)}${p.respondedBy ? ' — ' + esc(p.respondedBy) : ''} · ${esc(dateText(p.respondedAt))}</div>`);
           else out.push(`<button type="button" class="btn go" disabled>${esc(a.label)}</button>${a.disabledReason ? `<div class="why">${esc(a.disabledReason)}</div>` : ''}`);
         }
@@ -496,10 +501,18 @@
       const box = document.getElementById('respondBox');
       if (!spec || !act || !box) return;
       const F = p.respond.labels || {};
-      const mem = loadRemembered() || {};
+      // รอบ 267 P5: เข้าด้วย LINE แล้ว ⇒ ค่าที่ผู้ลงนามยินยอมให้จำ (ชื่อ/นามสกุล/ตำแหน่ง/อีเมลเท่านั้น — ไม่มีช่องรับรอง ต้องติ๊กเองทุกครั้ง)
+      const lt = lineTicket();
+      const mem = (lt && lt.prefill) || loadRemembered() || {};
       const sig = spec.signature;   // required · optional · none
+      const lineBox = safePath(p.signerLoginPath) ? (lt
+        ? `<div class="info">${esc(F.lineLinked)}</div>
+           <label class="tick"><input type="checkbox" id="sgLineRemember"><span>${esc(F.lineRemember)}</span></label>
+           <button type="button" class="linkbtn" id="sgLineForget">${esc(F.lineForget)}</button><div id="sgLineMsg" role="status"></div>`
+        : `<button type="button" class="btn alt" id="sgLineLogin">${esc(F.lineLogin)}</button><div id="sgLineMsg" role="status"></div>`) : '';
       box.innerHTML = `<form class="sign" id="respondForm" novalidate>
           <b>${esc(spec.label)}</b>
+          ${lineBox}
           <div class="row2">
             <div><label for="sgFirst">${esc(F.firstName)}</label><input type="text" id="sgFirst" maxlength="100" autocomplete="given-name" value="${esc(mem.firstName || '')}"></div>
             <div><label for="sgLast">${esc(F.lastName)}</label><input type="text" id="sgLast" maxlength="100" autocomplete="family-name" value="${esc(mem.lastName || '')}"></div>
@@ -510,7 +523,8 @@
             <button type="button" class="btn alt" id="sgOtpSend">${esc(F.otpSend)}</button><div id="sgOtpMsg" role="status"></div>
             <label for="sgOtp">${esc(F.otpCode)}</label><input type="text" id="sgOtp" maxlength="6" inputmode="numeric" autocomplete="one-time-code">` : ''}
           ${spec.needsReason ? `<label for="sgReason">${esc(F.reason)}</label><select id="sgReason"><option value=""></option>${(p.respond.declineReasons || []).map(r => `<option value="${esc(r.code)}">${esc(r.label)}</option>`).join('')}</select>` : ''}
-          ${spec.needsReason || spec.needsMessage ? `<label for="sgMessage">${esc(spec.needsMessage ? F.changeMessage : F.message)}</label><textarea id="sgMessage" maxlength="1000" rows="3"></textarea>`
+          ${spec.needsPromisedDate ? `<label for="sgPromised">${esc(F.promisedDate)}</label><input type="date" id="sgPromised">` : ''}
+          ${spec.needsReason || spec.needsMessage ? `<label for="sgMessage">${esc(spec.needsMessage ? (actionId === 'po-decline' ? F.poDeclineMessage : F.changeMessage) : F.message)}</label><textarea id="sgMessage" maxlength="1000" rows="3"></textarea>`
             : `<label for="sgNote">${esc(F.note)}</label><input type="text" id="sgNote" maxlength="500">`}
           ${sig !== 'none' ? `<label>${esc(sig === 'required' ? F.signature : F.signatureOptional)}</label><canvas id="sgCanvas" width="600" height="180"></canvas>
             <button type="button" class="linkbtn" id="sgClear">${esc(F.clear)}</button>` : ''}
@@ -519,7 +533,7 @@
           <div class="fine">${esc(spec.consent)}</div>
           <div class="fine">${esc(p.respond.privacyNotice)}</div>
           <div id="sgMsg" role="alert"></div>
-          <button type="submit" class="btn ${actionId === 'accept' || actionId === 'sign-delivery' ? 'go' : ''}" id="sgSubmit">${esc(F.submit)} — ${esc(spec.label)}</button>
+          <button type="submit" class="btn ${actionId === 'accept' || actionId === 'sign-delivery' || actionId === 'po-acknowledge' ? 'go' : ''}" id="sgSubmit">${esc(F.submit)} — ${esc(spec.label)}</button>
           <button type="button" class="btn alt" id="sgCancel">${esc(F.cancel)}</button>
         </form>`;
       signPad = sig !== 'none' ? initSignPad(document.getElementById('sgCanvas')) : null;
@@ -529,6 +543,10 @@
       document.getElementById('respondForm').addEventListener('submit', (e) => { e.preventDefault(); submitRespond(actionId, safePath(act.href)); });
       const otpBtn = document.getElementById('sgOtpSend');
       if (otpBtn) otpBtn.addEventListener('click', () => sendOtp(otpBtn));
+      const lineBtn = document.getElementById('sgLineLogin');
+      if (lineBtn) lineBtn.addEventListener('click', () => startLineLogin(lineBtn, actionId));
+      const forgetBtn = document.getElementById('sgLineForget');
+      if (forgetBtn) forgetBtn.addEventListener('click', () => forgetLine(forgetBtn, actionId));
       box.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
 
@@ -580,6 +598,10 @@
         reasonCode: document.getElementById('sgReason')?.value || null,
         message: (document.getElementById('sgMessage')?.value || '').trim() || null,
         otpCode: (document.getElementById('sgOtp')?.value || '').trim() || null,
+        // รอบ 267 P5: วันส่งที่ผู้ขายยืนยัน (ใบสั่งซื้อ) · ตั๋ว LINE + ติ๊ก "จำไว้กับ LINE" (ไม่ติ๊ก = ไม่มีอะไรถูกเก็บ)
+        promisedDate: document.getElementById('sgPromised')?.value || null,
+        signerTicket: (lineTicket() || {}).ticket || null,
+        rememberSigner: !!document.getElementById('sgLineRemember')?.checked,
         // ฉบับที่หน้านี้แสดง — เซิร์ฟเวอร์ปฏิเสธถ้าเอกสารถูกแก้หลังจากเปิดหน้านี้ (ตอบรับได้เฉพาะฉบับที่เห็น)
         revisionNumber: view.page.respond.revisionNumber, contentHash: view.page.respond.contentHash,
       };
@@ -649,7 +671,55 @@
       });
     }
 
-    if (portalDoc) portalHandshake(); else load();   // รอบ 267 P4: โหมดพอร์ทัลรอโทเคนจากหน้าแม่ก่อนโหลด
+    // ═══════════════ รอบ 267 P5 (267-1-13) — เข้าด้วย LINE เพื่อเติมข้อมูลผู้ลงนาม ═══════════════
+    // เส้นทั้งหมดมาจากเซิร์ฟเวอร์ (page.signerLogin*Path) · ตั๋วอยู่ใน sessionStorage ของแท็บนี้ (ผูก token ของใบ · 30 นาที — เซิร์ฟเวอร์ตรวจ)
+    function lineTicket() {
+      const v = ssGet(LINE_TICKET);
+      return v && v.t === token && typeof v.ticket === 'string' ? v : null;
+    }
+    async function startLineLogin(btn, actionId) {
+      const msg = document.getElementById('sgLineMsg');
+      const path = safePath(view.page.signerLoginPath);
+      const F = view.page.respond.labels || {};
+      if (!path) return;
+      btn.disabled = true;
+      let r, j = null;
+      try { r = await fetch(path, { method: 'POST' }); j = await r.json().catch(() => null); } catch { r = null; }
+      const url = j && j.success && j.data && typeof j.data.url === 'string' ? j.data.url : null;
+      // ไปได้เฉพาะหน้าอนุญาตของ LINE (ไม่ตามที่อยู่อื่นที่ได้มา)
+      if (!r || !r.ok || !url || !url.startsWith('https://access.line.me/')) { if (msg) { msg.className = 'msg bad'; msg.textContent = (j && j.message) || F.connection || ''; } btn.disabled = false; return; }
+      ssSet(LINE_RETURN, { c: companyId, t: token, action: actionId });
+      location.href = url;
+    }
+    async function forgetLine(btn, actionId) {
+      const msg = document.getElementById('sgLineMsg');
+      const path = safePath(view.page.signerForgetPath);
+      const F = view.page.respond.labels || {};
+      const lt = lineTicket();
+      if (!path || !lt) return;
+      btn.disabled = true;
+      let r, j = null;
+      try { r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket: lt.ticket }) }); j = await r.json().catch(() => null); } catch { r = null; }
+      if (!r || !r.ok || !j || !j.success) { if (msg) { msg.className = 'msg bad'; msg.textContent = (j && j.message) || F.connection || ''; } btn.disabled = false; return; }
+      ssSet(LINE_TICKET, { t: token, ticket: lt.ticket, prefill: null });
+      openRespondForm(actionId);
+      const m2 = document.getElementById('sgLineMsg');
+      if (m2) { m2.className = 'msg ok'; m2.textContent = F.lineForgotten || j.message || ''; }
+    }
+    async function finishLineLogin() {
+      ssSet(LINE_RETURN, null);
+      try { history.replaceState(null, '', `?c=${encodeURIComponent(companyId || '')}&t=${encodeURIComponent(token || '')}`); } catch { /* คง URL เดิม */ }
+      await load();
+      const path = view && view.page ? safePath(view.page.signerLoginCompletePath) : null;
+      if (!path) return;
+      let r, j = null;
+      try { r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: qs.get('code'), state: qs.get('state') }) }); j = await r.json().catch(() => null); } catch { r = null; }
+      if (r && r.ok && j && j.success && j.data && typeof j.data.ticket === 'string') ssSet(LINE_TICKET, { t: token, ticket: j.data.ticket, prefill: j.data.prefill || null });
+      if (lineReturn && lineReturn.action && respondSpec(view.page, lineReturn.action)) openRespondForm(lineReturn.action);
+      if (!(r && r.ok && j && j.success)) { const m = document.getElementById('sgLineMsg'); if (m) { m.className = 'msg bad'; m.textContent = (j && j.message) || ''; } }
+    }
+
+    if (portalDoc) portalHandshake(); else if (lineReturn) finishLineLogin(); else load();   // รอบ 267 P4: โหมดพอร์ทัลรอโทเคนจากหน้าแม่ก่อนโหลด
   </script>
 </body>
 </html>

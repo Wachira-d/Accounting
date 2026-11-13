@@ -81,6 +81,10 @@ public interface IDocumentPayLinkService
 
     /// <summary>หน้าชำระสาธารณะ — null = ไม่พบ token ของบริษัทนี้ · <see cref="PublicDocumentPayView.Target"/> = เป้าหมายของการสร้างรายการชำระ (ยอด/ช่องทางจากเซิร์ฟเวอร์)</summary>
     Task<PublicDocumentPayView?> PublicViewAsync(Guid companyId, string token, CancellationToken ct = default);
+
+    /// <summary>รอบ 267 P5 (267-1-72): ใบวางบิล "จ่ายทั้งใบ" — ยอดรวม + การจัดสรรรายใบ หรือเหตุที่จ่ายรวมไม่ได้ (ตัวตัดสิน <c>BillingNoteCombinedPay</c>) ·
+    /// ผู้เรียก: หน้าเอกสาร (ยอด/ปุ่ม) · ตัวจัดการเงินเข้า (<c>DocumentPaymentHandler</c> — ตัดสินซ้ำตอนเงินเข้า) · null = ไม่ใช่ใบวางบิล/ไม่พบ</summary>
+    Task<Accounting.Helpers.BillingNoteCombinedPay.Plan?> BillingNotePlanAsync(Guid companyId, Guid billingNoteId, CancellationToken ct = default);
     /// <summary>รอบ 253 (WP-10): ลูกค้าเลือก "ไม่หัก ณ ที่จ่าย" — บันทึกการยอมรับแล้วคืนเป้าหมายยอดเต็ม · <c>Target</c> null = ไม่พบ token</summary>
     Task<NoWhtAcceptResult> AcceptNoWhtAsync(Guid companyId, string token, NoWhtAcceptRequest request, CancellationToken ct = default);
     /// <summary>รอบ 253 (WP-10): ผูกการยอมรับ "ไม่หัก" กับรายการชำระที่สร้างตามมา</summary>
@@ -207,6 +211,14 @@ public sealed record CustomerDocPageView(
     /// <summary>โหมดพอร์ทัล: เส้นขอลิงก์หน้าชำระของใบนี้ (POST · เส้นเดิมของพอร์ทัล) · null = ชำระจากหน้านี้ไม่ได้/ไม่มีสิทธิ์</summary>
     public string? PortalPayLinkPath { get; init; }
 
+    // ── รอบ 267 P5 (267-1-13): จำข้อมูลผู้ลงนามด้วย LINE Login — ที่อยู่เส้นจากเซิร์ฟเวอร์ (null = บริษัท/ระบบไม่เปิด LINE Login · โหมดอื่น) ──
+    /// <summary>POST — เริ่มเข้าด้วย LINE (คืน URL ไปหน้าอนุญาตของ LINE)</summary>
+    public string? SignerLoginPath { get; init; }
+    /// <summary>POST — ส่ง code/state ที่ LINE คืนมา ⇒ ตั๋วผู้ลงนาม (อายุสั้น · ไม่เก็บในฐาน) + ข้อมูลที่จำไว้ (ถ้ามีความยินยอม)</summary>
+    public string? SignerLoginCompletePath { get; init; }
+    /// <summary>POST — ถอนความยินยอม + ลบข้อมูลที่จำไว้ (ต้องมีตั๋ว)</summary>
+    public string? SignerForgetPath { get; init; }
+
     /// <summary>ลิงก์ใช้ไม่ได้ — ไม่มีข้อมูลของใบเลย (มีแค่สถานะลิงก์ + ขอลิงก์ใหม่ได้ไหม)</summary>
     public static CustomerDocPageView Unusable(CustomerDocPage.LinkState state, bool canRequestLink) => new(
         CustomerDocPage.ModeCode(CustomerDocPage.Mode.Link), state.ToString(), false, canRequestLink, false, "", false, 0, false, "THB",
@@ -223,7 +235,9 @@ public sealed record CustomerDocRespondForm(
 
 /// <summary>ปุ่มตอบรับหนึ่งปุ่ม — <paramref name="Signature"/>: required · optional · none</summary>
 public sealed record CustomerDocRespondAction(
-    string Id, string Label, string Attestation, string Consent, string Signature, bool OtpRequired, bool NeedsReason, bool NeedsMessage);
+    string Id, string Label, string Attestation, string Consent, string Signature, bool OtpRequired, bool NeedsReason, bool NeedsMessage,
+    // รอบ 267 P5: ผู้ขายรับทราบใบสั่งซื้อ — ช่อง "วันส่งของที่ยืนยัน" (ไม่บังคับ · ด่าน S31 ที่เซิร์ฟเวอร์)
+    bool NeedsPromisedDate = false);
 
 public sealed record CustomerDocRespondReason(string Code, string Label);
 

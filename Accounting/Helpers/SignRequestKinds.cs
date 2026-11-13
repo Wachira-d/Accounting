@@ -31,13 +31,22 @@ public static class SignRequestKinds
         "เซ็นรับสินค้า", "sign for the delivery", "เปิดดูและเซ็นรับสินค้า", "Review and sign for the delivery",
         "ลูกค้าเซ็นรับแล้ว", "Signed");
 
-    public static readonly IReadOnlyList<Kind> All = new[] { QuotationAccept, DeliverySign };
+    /// <summary>รอบ 267 P5 (267-1-70): ผู้ขาย "รับทราบ/ไม่รับ" ใบสั่งซื้อที่ผู้ซื้อ (บริษัทเรา) ส่งให้ — ลิงก์หน้าเอกสารตัวเดียวของใบ (ไม่มี token รุ่นก่อน) ·
+    /// ไม่อยู่ในงานส่งอีเมลอัตโนมัติ (งานนั้นเลือกเฉพาะใบเสนอราคา) · อีเมลเตือนข้ามใบที่ผู้ขายตอบแล้ว (<c>CustomerResponse</c>)</summary>
+    public static readonly Kind PurchaseOrderAck = new(
+        DocumentType.PurchaseOrder, "purchase_order_ack", "purchase_order.acknowledged", "/pages/pay-document.html", 14,
+        "รับทราบใบสั่งซื้อ", "acknowledge the purchase order", "เปิดดูและรับทราบใบสั่งซื้อ", "Review and acknowledge the purchase order",
+        "ผู้ขายรับทราบแล้ว", "Acknowledged");
+
+    public static readonly IReadOnlyList<Kind> All = new[] { QuotationAccept, DeliverySign, PurchaseOrderAck };
 
     public static Kind? For(DocumentType type) => All.FirstOrDefault(k => k.DocumentType == type);
 
     /// <summary>รอบ 267 P2: เหตุการณ์ของคำตอบที่ไม่ใช่การเซ็น — ลูกค้าไม่รับ / ขอแก้ใบเสนอราคา (ชื่อเหตุการณ์ตัวเดียวของ outbox · webhook · การแจ้งผู้ขาย)</summary>
     public const string QuotationDeclinedEvent = "quotation.declined";
     public const string QuotationChangeRequestedEvent = "quotation.change_requested";
+    /// <summary>รอบ 267 P5: ผู้ขายไม่รับใบสั่งซื้อ (ดีไซน์ §5.2)</summary>
+    public const string PurchaseOrderDeclinedEvent = "purchase_order.declined";
 
     /// <summary>ชื่อเหตุการณ์ outbox ของชนิดคำตอบ (ยอมรับ/เซ็นรับ = เหตุการณ์เดิมของรอบ 240)</summary>
     public static string EventFor(CustomerSignRule.Kind kind) => kind switch
@@ -45,6 +54,8 @@ public static class SignRequestKinds
         CustomerSignRule.Kind.Accepted => QuotationAccept.EventType,
         CustomerSignRule.Kind.DeliverySigned => DeliverySign.EventType,
         CustomerSignRule.Kind.Declined => QuotationDeclinedEvent,
+        CustomerSignRule.Kind.PoAcknowledged => PurchaseOrderAck.EventType,
+        CustomerSignRule.Kind.PoDeclined => PurchaseOrderDeclinedEvent,
         _ => QuotationChangeRequestedEvent,
     };
 
@@ -58,7 +69,7 @@ public static class SignRequestKinds
     public static string? IssueRefusal(DocumentType type, DocumentStatus status)
     {
         var k = For(type);
-        if (k == null) return "ลิงก์ให้ลูกค้าเซ็น/ยอมรับออนไลน์ใช้ได้เฉพาะใบเสนอราคาและใบส่งของ";
+        if (k == null) return "ลิงก์ให้ลูกค้าเซ็น/ยอมรับออนไลน์ใช้ได้เฉพาะใบเสนอราคา ใบส่งของ และใบสั่งซื้อ (ให้ผู้ขายรับทราบ)";
         if (IsIssuableStatus(status)) return null;
         return status is DocumentStatus.Voided or DocumentStatus.Rejected
             ? "เอกสารถูกยกเลิก/ปฏิเสธแล้ว — ส่งลิงก์ให้ลูกค้าเซ็นไม่ได้"
@@ -83,6 +94,9 @@ public static class SignRequestKinds
         {
             DocumentType.Quotation => (d.QuotationAcceptToken, d.QuotationAcceptTokenExpiresAt, d.QuotationAcceptedAt, d.QuotationAcceptedBy),
             DocumentType.DeliveryNote => (d.DeliverySignToken, d.DeliverySignTokenExpiresAt, d.DeliverySignedAt, d.DeliverySignedBy),
+            // รอบ 267 P5: ใบสั่งซื้อไม่มีลิงก์รุ่นก่อน · "ตอบรับแล้ว" = ผู้ขายรับทราบ (ภาพฉาย CustomerResponse — ผู้เขียนเดียว CustomerDocumentResponseService)
+            DocumentType.PurchaseOrder => ((string?)null, (DateTime?)null,
+                d.CustomerResponse == nameof(CustomerSignRule.Kind.PoAcknowledged) ? d.CustomerResponseAt : null, (string?)null),
             _ => ((string?)null, (DateTime?)null, (DateTime?)null, (string?)null),
         };
         if (For(d.DocumentType) == null) return default;
@@ -113,10 +127,12 @@ public static class SignRequestKinds
     {
         if (For(d.DocumentType) == null) throw new InvalidOperationException("ชนิดเอกสารนี้ไม่มีลิงก์ให้ลูกค้าเซ็น");
         if (d.DocumentType == DocumentType.Quotation) { d.QuotationAcceptToken = null; d.QuotationAcceptTokenExpiresAt = null; }
-        else { d.DeliverySignToken = null; d.DeliverySignTokenExpiresAt = null; }
+        else if (d.DocumentType == DocumentType.DeliveryNote) { d.DeliverySignToken = null; d.DeliverySignTokenExpiresAt = null; }
         d.SignLinkIssuedAt = nowUtc;
         // รอบ 267 P2 (267-1-11): ผู้ขายส่งให้ตอบรับใหม่ = เปิดให้ลูกค้าที่เคย "ไม่รับ/ขอแก้" ตอบอีกครั้ง (คำตอบ "ยอมรับ" คงอยู่ — ล้างได้ด้วยการออก Rev ใหม่เท่านั้น)
-        if (d.CustomerResponse != nameof(CustomerSignRule.Kind.Accepted)) { d.CustomerResponse = null; d.CustomerResponseAt = null; }
+        // รอบ 267 P5: "รับทราบใบสั่งซื้อ" คงอยู่เหมือน "ยอมรับ" (ล้างได้ด้วยการออก Rev ใหม่เท่านั้น)
+        if (d.CustomerResponse is not (nameof(CustomerSignRule.Kind.Accepted) or nameof(CustomerSignRule.Kind.PoAcknowledged)))
+        { d.CustomerResponse = null; d.CustomerResponseAt = null; }
         ResetTracking(d);
     }
 
@@ -158,6 +174,7 @@ public static class SignRequestKinds
         // รอบ 267 P2: ลูกค้าตอบแล้วแต่ไม่ใช่ "ยอมรับ" — พนักงานต้องเห็นบนรายการเอกสาร (ทางไปต่อ: ออก Rev ใหม่ หรือส่งให้ตอบรับใหม่)
         if (d.CustomerResponse == nameof(CustomerSignRule.Kind.Declined)) return new("declined", "ลูกค้าไม่รับใบเสนอราคา", "danger");
         if (d.CustomerResponse == nameof(CustomerSignRule.Kind.ChangeRequested)) return new("change_requested", "ลูกค้าขอแก้ไข", "warning");
+        if (d.CustomerResponse == nameof(CustomerSignRule.Kind.PoDeclined)) return new("declined", "ผู้ขายไม่รับใบสั่งซื้อ", "danger");
         if (!s.HasLink) return null;
         if (!LinkUsable(s, nowUtc)) return new("expired", "ลิงก์หมดอายุ", "muted");
         if (d.SignLinkOpenedAt != null) return new("opened", "ลูกค้าเปิดลิงก์แล้ว", "info");

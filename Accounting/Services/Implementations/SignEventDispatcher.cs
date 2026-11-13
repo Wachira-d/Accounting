@@ -314,9 +314,18 @@ public class SignEventDispatcher
             if (_responses != null && CustomerSignRule.StampDutyWarn(type, kind, await _responses.HasServiceLineAsync(companyId, a.DocumentId, ct)))
                 parts.Add($"⚠️ {CustomerSignText.StampDutyWarning} ({CustomerSignText.StampDutyPage})");
         }
+        else if (kind == CustomerSignRule.Kind.PoAcknowledged)
+        {
+            // รอบ 267 P5: วันส่งที่ผู้ขายยืนยัน (ถ้ามี) — พนักงานจัดซื้อตามรับของ
+            var promised = await _db.CustomerDocumentActions.AsNoTracking().Where(x => x.Id == actionId && x.CompanyId == companyId)
+                .Select(x => x.PromisedDate).FirstOrDefaultAsync(ct);
+            if (promised is { } p) parts.Add($"วันส่งที่ผู้ขายยืนยัน: {ThaiDate.ToThaiDisplayString(p)}");
+        }
+        else if (kind == CustomerSignRule.Kind.PoDeclined)
+            parts.Add("ขั้นต่อไป: ติดต่อผู้ขาย แก้ใบสั่งซื้อ (ออก Rev ใหม่) แล้วส่งลิงก์ให้รับทราบใหม่ — หรือยกเลิกใบสั่งซื้อแล้วสั่งผู้ขายรายอื่น");
         else if (kind is CustomerSignRule.Kind.Declined or CustomerSignRule.Kind.ChangeRequested)
             parts.Add("ขั้นต่อไป: แก้ไขใบเสนอราคา (ออก Rev ใหม่) แล้วส่งให้ลูกค้าตอบรับใหม่ — หรือกด \"ส่งลิงก์ให้ลูกค้าตอบรับ\" อีกครั้งเพื่อเปิดให้ลูกค้าตอบใหม่บนฉบับเดิม");
-        var icon = kind switch { CustomerSignRule.Kind.Declined => "🚫", CustomerSignRule.Kind.ChangeRequested => "✏️", _ => "✍️" };
+        var icon = kind switch { CustomerSignRule.Kind.Declined or CustomerSignRule.Kind.PoDeclined => "🚫", CustomerSignRule.Kind.ChangeRequested => "✏️", _ => "✍️" };
         return ($"{icon} {label} — {documentNumber}", string.Join(" · ", parts));
     }
 

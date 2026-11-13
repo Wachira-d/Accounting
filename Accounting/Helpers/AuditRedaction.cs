@@ -49,7 +49,8 @@ public static class AuditRedaction
         ["PlatformPolicyAcceptance"] = new HashSet<string> { "Email", "IpAddress", "UserAgent" },
         // รอบ 219 ส่วน B ฝ่ายค้าน S4: หลักฐานยอมรับนโยบายก่อนชำระ (ผู้ยอมรับ = อีเมล/เบอร์)
         ["PolicyAcceptance"] = new HashSet<string> { "Subject", "IpAddress", "UserAgent" },
-        ["PdpaConsentRecord"] = new HashSet<string> { "SubjectContact", "IpAddress" },
+        // รอบ 267 P5: + UserAgent (ความยินยอมจำข้อมูลผู้ลงนาม — ลายนิ้วมือเบราว์เซอร์ของผู้ลงนาม)
+        ["PdpaConsentRecord"] = new HashSet<string> { "SubjectContact", "IpAddress", "UserAgent" },
         ["UserExternalLogin"] = new HashSet<string> { "ProviderEmail", "LinkedIp", "ProviderUserId" },
         ["PlatformErasureRequest"] = new HashSet<string> { "RequesterEmail", "RequesterIp", "Reason" },
         // ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: ผลสแกน OCR — รายชื่อเดียวกับตัวลบ (OcrScanPii.PersonalDataFields) ห้ามสำเนา
@@ -64,6 +65,8 @@ public static class AuditRedaction
             "SignerFirstName", "SignerLastName", "SignerTitle", "SignerOrgName", "SignerEmail", "Message", "Ip", "UserAgentHash",
             "SignatureFilePath", "SignedPdfPath",
         },
+        // รอบ 267 P5 (267-1-13): ข้อมูลผู้ลงนามที่จำไว้กับ LINE — ถอนความยินยอม = ลบแถวจริง ⇒ ค่าห้ามค้างใน audit (append-only)
+        ["CustomerSignerProfile"] = new HashSet<string> { "FirstName", "LastName", "Title", "Email", "SubjectKey" },
         // รหัสยืนยันอีเมล: hash ของอีเมล/รหัส ห้ามลง audit (กู้รหัส 6 หลักจาก hash ได้)
         ["CustomerSignOtp"] = new HashSet<string> { "EmailHash", "CodeHash" },
     };

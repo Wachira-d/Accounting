@@ -126,11 +126,10 @@ public class CustomerDocPageRound267Tests
     [InlineData(DocumentType.Receipt)]
     [InlineData(DocumentType.ReceiptVoucher)]
     [InlineData(DocumentType.CreditNote)]
-    [InlineData(DocumentType.BillingNote)]
-    [InlineData(DocumentType.PurchaseOrder)]
     public void CDP267_ViewOnlyTypes_มีแค่ดาวน์โหลด_ไม่มีปุ่มจ่ายหรือตอบรับ(DocumentType type)
     {
-        // P1: ใบลดหนี้ไม่มีปุ่มรับทราบ (267-1-10) · ใบวางบิลจ่ายรายใบ/ใบสั่งซื้อรับทราบ = แพ็กถัดไป — แม้ผู้เรียกส่ง pay=true มาก็ไม่มีปุ่มจ่าย
+        // P1: ใบลดหนี้ไม่มีปุ่มรับทราบ (267-1-10) — แม้ผู้เรียกส่ง pay=true มาก็ไม่มีปุ่มจ่าย ·
+        // รอบ 267 P5: ใบวางบิล (จ่ายทั้งใบ — 267-1-72) และใบสั่งซื้อ (ผู้ขายรับทราบ — 267-1-70) ออกจากชุดนี้แล้ว (เทสต์ใน CustomerDocRound267P5Tests)
         var only = Assert.Single(CustomerDocPage.Actions(F(type, pay: true, slip: true), Now));
         Assert.Equal(CustomerDocPage.ActionDownloadPdf, only.Id);
     }

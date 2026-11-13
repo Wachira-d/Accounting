@@ -280,6 +280,69 @@ public class PdpaController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
+    // ===== รอบ 267 P5 (267-1-13 · 267-1-75) — DSR ของผู้ลงนามเอกสารออนไลน์ (บุคคลที่สาม — พนักงานของคู่ค้า) · ระบุด้วยอีเมล และ/หรือ ชื่อ+นามสกุล =====
+    // ข้อมูล: โปรไฟล์ที่จำไว้กับ LINE (ความยินยอม — ลบได้เสมอ) + แถวหลักฐานการลงนาม (ฐานสัญญา — ในอายุเก็บ = legal hold) · ตัวตัดสิน/ตัวเขียนเดียว CustomerSignerProfileService
+
+    private Accounting.Services.Implementations.CustomerSignerProfileService? SignerProfiles
+        => HttpContext?.RequestServices.GetService(typeof(Accounting.Services.Implementations.CustomerSignerProfileService))
+            as Accounting.Services.Implementations.CustomerSignerProfileService;
+
+    /// <summary>ม.30 — ข้อมูลของผู้ลงนามรายนี้ (โปรไฟล์ที่จำไว้ + หลักฐานการลงนาม)</summary>
+    [HttpGet("dsr/signer/access")]
+    public async Task<ActionResult<ApiResponse<Accounting.Services.Implementations.CustomerSignerProfileService.SignerSubjectReport>>> DsrSignerAccess(
+        Guid companyId, [FromQuery] string? email, [FromQuery] string? firstName, [FromQuery] string? lastName, CancellationToken ct)
+    {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
+        if (SignerProfiles is not { } profiles) return StatusCode(503, new ApiResponse<object>(false, null, "บริการข้อมูลผู้ลงนามยังไม่พร้อม"));
+        try
+        {
+            var r = await profiles.AccessAsync(companyId, email, firstName, lastName, ct);
+            await LogPiiAsync(companyId, "CustomerSigner", Guid.Empty, "*", "Read", "DSR ม.30 ผู้ลงนามเอกสารออนไลน์", ct);
+            return Ok(new ApiResponse<Accounting.Services.Implementations.CustomerSignerProfileService.SignerSubjectReport>(true, r, $"DSR ผู้ลงนาม: {r.TotalRecords} แถว"));
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
+    /// <summary>ม.31 portability — ข้อมูลของผู้ลงนามเป็นไฟล์ JSON</summary>
+    [HttpGet("dsr/signer/portability")]
+    public async Task<IActionResult> DsrSignerPortability(
+        Guid companyId, [FromQuery] string? email, [FromQuery] string? firstName, [FromQuery] string? lastName, CancellationToken ct)
+    {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
+        if (SignerProfiles is not { } profiles) return StatusCode(503, new ApiResponse<object>(false, null, "บริการข้อมูลผู้ลงนามยังไม่พร้อม"));
+        try
+        {
+            var r = await profiles.AccessAsync(companyId, email, firstName, lastName, ct);
+            await LogPiiAsync(companyId, "CustomerSigner", Guid.Empty, "*", "Export", "DSR ม.31 portability ผู้ลงนามเอกสารออนไลน์", ct);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(r,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            return File(bytes, "application/json", $"PDPA-DSR-SIGNER-{DateTime.UtcNow:yyyyMMdd}.json");
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
+    public sealed record DsrSignerEraseRequest(string? Email, string? FirstName, string? LastName, string? Acknowledgement);
+
+    /// <summary>ม.33 — ลบโปรไฟล์ที่จำไว้ (เสมอ) + ล้างข้อมูลผู้ลงนามในหลักฐานที่พ้นอายุเก็บ (ในอายุเก็บ = คงไว้พร้อมเหตุ) · ต้องยืนยัน "I confirm"</summary>
+    [HttpPost("dsr/signer/erase")]
+    [Accounting.Filters.RejectApiKey("ลบข้อมูลผู้ลงนามเอกสารถาวร (DSR erase)")]
+    public async Task<ActionResult<ApiResponse<Accounting.Services.Implementations.CustomerSignerProfileService.SignerErasureResult>>> DsrSignerErase(
+        Guid companyId, [FromBody] DsrSignerEraseRequest req, CancellationToken ct)
+    {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
+        if (req.Acknowledgement != "I confirm")
+            return BadRequest(new ApiResponse<object>(false, null, "ต้องยืนยัน Acknowledgement='I confirm' ก่อน erasure (irreversible action)"));
+        if (SignerProfiles is not { } profiles) return StatusCode(503, new ApiResponse<object>(false, null, "บริการข้อมูลผู้ลงนามยังไม่พร้อม"));
+        var actor = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+        try
+        {
+            var r = await profiles.EraseAsync(companyId, req.Email, req.FirstName, req.LastName, actor, ct);
+            await LogPiiAsync(companyId, "CustomerSigner", Guid.Empty, "*", "Erase", "DSR ม.33 สิทธิลบ ผู้ลงนามเอกสารออนไลน์", ct);
+            return Ok(new ApiResponse<Accounting.Services.Implementations.CustomerSignerProfileService.SignerErasureResult>(true, r, string.Join(" · ", r.Notes)));
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
     // ===== Wave 3 — RoPA =====
     [HttpGet("ropa")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<PdpaProcessingActivity>>>> ListRopa(

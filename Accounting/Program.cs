@@ -157,6 +157,10 @@ else
 Accounting.Helpers.CustomerSignRule.ConfigureOtpKey(Accounting.Helpers.EncryptionKeyResolver.RequireUsable(
     Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),
     builder.Environment.IsProduction(), "รหัสยืนยันอีเมลของผู้ลงนามเอกสาร (HMAC)"));
+// รอบ 267 P5 (267-1-13): กุญแจ HMAC ของ state/ตั๋ว LINE Login ของผู้ลงนาม + กุญแจเจ้าของข้อมูล — แหล่งเดียวกัน · production fail-fast (กฎ #4 C)
+Accounting.Helpers.CustomerSignerProfileRule.ConfigureKey(Accounting.Helpers.EncryptionKeyResolver.RequireUsable(
+    Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),
+    builder.Environment.IsProduction(), "ตั๋ว LINE Login ของผู้ลงนามเอกสาร (HMAC)"));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -772,6 +776,8 @@ builder.Services.AddScoped<IDocumentEmailService, DocumentEmailService>();
 // รอบ 240: ลิงก์ให้ลูกค้าเซ็น — ออกลิงก์/อีเมลในนามบริษัท/ป้ายสถานะ/ค่าตั้ง + ผู้ส่งเหตุการณ์จาก outbox (webhook ต่อเอกสาร · webhook ที่ลงทะเบียน · แจ้งผู้ขาย)
 builder.Services.AddScoped<ISignRequestService, SignRequestService>();
 builder.Services.AddScoped<SignEventDispatcher>();
+builder.Services.AddScoped<CustomerSignerProfileService>();   // รอบ 267 P5 (267-1-13) — จำข้อมูลผู้ลงนามด้วย LINE Login (ความยินยอม ม.19 · เข้ารหัส · DSR)
+builder.Services.AddScoped<Accounting.Services.Interfaces.ILineSignerLoginVerifier>(sp => (AuthService)sp.GetRequiredService<IAuthService>());
 builder.Services.AddScoped<CustomerDocumentResponseService>();   // รอบ 267 P2 — ผู้เขียนเดียวของ "ลูกค้าตอบรับเอกสาร" (ยอมรับ/ไม่รับ/ขอแก้/เซ็นรับ + แถวหลักฐาน + ฉบับที่ลงนาม)
 builder.Services.AddHostedService<Accounting.Services.Background.SignEventOutboxJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.SignRequestAutomationJob>();

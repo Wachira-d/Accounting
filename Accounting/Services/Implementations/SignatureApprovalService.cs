@@ -532,6 +532,30 @@ public class SignatureApprovalService : ISignatureApprovalService
                     SignedAt = DateTime.UtcNow,
                     IpAddress = ipAddress
                 });
+
+                // รอบ 267 P5 (267-1-43 ข้อ 2 · 267-1-71): ทุกทางลงนามของลูกค้าลงแถวหลักฐานชุดเดียวกัน — ผู้เขียนเดียว
+                // CustomerDocumentResponseService.AppendEvidenceAsync (แถว append-only + RoPA) ในธุรกรรมเดียวกับลายเซ็น · ช่องทาง Api ·
+                // ระดับตัวตน ApiReported (ชื่อ/ตำแหน่งที่ระบบภายนอกส่งมา — ไม่แต่งว่าผู้ลงนามติ๊กรับรอง) · audit chain อ้างแถว (ไม่คัดลอกข้อมูลผู้ลงนาม — 267-1-51)
+                var buyerName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                    .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId).Select(c => c.Name).FirstOrDefaultAsync();
+                var evidenceAt = DateTime.UtcNow;
+                var evidence = Accounting.Services.Implementations.CustomerDocumentResponseService.ApiEvidence(doc, buyerName, contentHash,
+                    request.ApproverName, request.ApproverTitle, request.ApproverEmail, request.Comments,
+                    Accounting.Helpers.QuotationAcceptance.Sha256Hex(request.SignatureData), ipAddress, actingUserId, evidenceAt);
+                await Accounting.Services.Implementations.CustomerDocumentResponseService.AppendEvidenceAsync(_db, evidence);
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, UserId = Guid.TryParse(actingUserId, out var actorGuid) ? actorGuid : null, Action = AuditAction.Approve,
+                    EntityType = nameof(Document), EntityId = documentId.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        @event = "QuotationApprovedByIntegration", documentNumber = doc.DocumentNumber, revisionNumber = doc.RevisionNumber,
+                        contentHash, customerActionId = evidence.Id, channel = evidence.Channel, identityLevel = evidence.IdentityLevel,
+                        signatureSha256 = evidence.SignatureSha256, ruleCode = Accounting.Helpers.CustomerSignText.RuleCode,
+                        legalReference = Accounting.Helpers.CustomerSignText.LegalReference,
+                    }),
+                    IpAddress = null, Timestamp = evidenceAt,
+                });
             }
 
             await _db.SaveChangesAsync();   // เก็บลายเซ็น/approval row ก่อนอนุมัติ (อนุมัติมี transaction + ล็อกของตัวเอง)

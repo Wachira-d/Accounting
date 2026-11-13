@@ -35,6 +35,9 @@ public static class CustomerDocPage
     /// <summary>ใบส่งของ — เซ็นรับได้กี่วันนับจากวันออกลิงก์ (ค่าเดิม <c>SignRequestKinds.DeliverySign</c>)</summary>
     public static int DeliverySignWindowDays => SignRequestKinds.DeliverySign.TtlDays;
 
+    /// <summary>รอบ 267 P5 (267-1-70): ใบสั่งซื้อ — ผู้ขายรับทราบ/ไม่รับได้กี่วันนับจากผู้ซื้อส่งลิงก์ให้ตอบ (<c>SignRequestKinds.PurchaseOrderAck</c>)</summary>
+    public static int PoAckWindowDays => SignRequestKinds.PurchaseOrderAck.TtlDays;
+
     /// <summary>ข้อความล้มเดียวของทุกเหตุ (ไม่พบ · เพิกถอน · หมดอายุ · ใบกลับเป็นร่าง) — ไม่บอกว่ามีใบ/บริษัท (กันเดา token)</summary>
     public const string NotFoundMessage = "ลิงก์ไม่ถูกต้องหรือหมดอายุ — กรุณาติดต่อผู้ขายเพื่อขอลิงก์ใหม่";
 
@@ -176,6 +179,7 @@ public static class CustomerDocPage
             return start.AddDays(QuotationDefaultWindowDays);
         }
         if (type == DocumentType.DeliveryNote) return start.AddDays(DeliverySignWindowDays);
+        if (type == DocumentType.PurchaseOrder) return start.AddDays(PoAckWindowDays);
         return null;
     }
 
@@ -248,6 +252,24 @@ public static class CustomerDocPage
     /// <summary>รอบ 267 P2: ไม่รับใบเสนอราคา (พร้อมเหตุผล) · ขอแก้ไขใบเสนอราคา</summary>
     public const string ActionDecline = "decline";
     public const string ActionRequestChange = "request-change";
+    /// <summary>รอบ 267 P5 (267-1-70): ผู้ขายรับทราบ/ไม่รับใบสั่งซื้อ (ผู้ถือลิงก์ = ผู้ขายที่ผู้ซื้อส่งใบสั่งซื้อให้)</summary>
+    public const string ActionPoAcknowledge = "po-acknowledge";
+    public const string ActionPoDecline = "po-decline";
+
+    /// <summary>รอบ 267 P5 (267-1-9 v2 · 267-1-72): ใบวางบิล "จ่ายทั้งใบ" ใช้ปุ่มจ่ายออนไลน์ตัวเดิมของหน้า (เส้นจ่ายเดิม · เป้าหมาย = ใบวางบิล ·
+    /// ตัวตัดสินชุดใบ = <see cref="BillingNoteCombinedPay"/>) — ไม่มีฟอร์มสลิปรวม (แจ้งโอนรายใบผ่านปุ่ม "ชำระใบนี้")</summary>
+    public static bool HasPaySection(DocumentType type) => IsPayableType(type) || type == DocumentType.BillingNote;
+
+    /// <summary>"ตอบรับแล้ว" ของใบ (ปิดปุ่มตอบรับ) — ตัวเดียวของหน้าเอกสาร/ตัวเขียน: ใบเสนอราคา = ยอมรับ · ใบส่งของ = เซ็นรับ ·
+    /// ใบสั่งซื้อ (รอบ 267 P5) = ผู้ขายรับทราบ (ภาพฉาย <c>CustomerResponse</c>) · ชนิดอื่น = null</summary>
+    public static DateTime? RespondedAt(DocumentType type, DateTime? quotationAcceptedAt, DateTime? deliverySignedAt, string? customerResponse, DateTime? customerResponseAt)
+        => type switch
+        {
+            DocumentType.Quotation => quotationAcceptedAt,
+            DocumentType.DeliveryNote => deliverySignedAt,
+            DocumentType.PurchaseOrder => customerResponse == nameof(CustomerSignRule.Kind.PoAcknowledged) ? customerResponseAt : null,
+            _ => null,
+        };
 
     /// <summary>เส้นรับคำตอบของหน้า (ยอมรับ · ปฏิเสธ · ขอแก้ · เซ็นรับ) — เส้นเดียว ผู้เขียนเดียว <c>CustomerDocumentResponseService</c></summary>
     public static string RespondPath(Guid companyId, string token)
@@ -284,14 +306,15 @@ public static class CustomerDocPage
             "This needs the document link from the seller — tap \"Request a link\" to notify the seller");
         var wantsLink = false;
 
-        if (IsPayableType(f.Type))
+        if (HasPaySection(f.Type))
         {
-            var payLabel = T(en, "ชำระเงินออนไลน์", "Pay online");
+            var billingNote = f.Type == DocumentType.BillingNote;
+            var payLabel = billingNote ? T(en, "ชำระทั้งใบวางบิล", "Pay the whole billing note") : T(en, "ชำระเงินออนไลน์", "Pay online");
             var slipLabel = T(en, "แจ้งโอน + แนบสลิป", "Report a transfer + attach slip");
             if (preview)
             {
                 list.Add(new PageAction(ActionPayOnline, false, payLabel, previewNote, DocumentPayLinkPolicy.RuleCode));
-                list.Add(new PageAction(ActionSubmitSlip, false, slipLabel, previewNote, DocumentPayLinkPolicy.RuleCode));
+                if (!billingNote) list.Add(new PageAction(ActionSubmitSlip, false, slipLabel, previewNote, DocumentPayLinkPolicy.RuleCode));
             }
             else if (f.Mode != Mode.Link)
             {
@@ -305,21 +328,26 @@ public static class CustomerDocPage
                 list.Add(new PageAction(ActionPayOnline, f.PayOffered, payLabel,
                     f.PayOffered ? null : f.PayBlockedNote ?? T(en, "เอกสารนี้ชำระออนไลน์ไม่ได้ตอนนี้ — กรุณาติดต่อผู้ขาย", "Online payment is not available — please contact the seller"),
                     DocumentPayLinkPolicy.RuleCode));
-                list.Add(new PageAction(ActionSubmitSlip, f.SlipOffered, slipLabel,
+                if (!billingNote) list.Add(new PageAction(ActionSubmitSlip, f.SlipOffered, slipLabel,
                     f.SlipOffered ? null : T(en, "ยังแจ้งโอนจากหน้านี้ไม่ได้ (ไม่มีบัญชีรับโอน หรือไม่มียอดค้าง)", "Transfer reporting is not available (no receiving account or nothing due)"),
                     DocumentPayLinkPolicy.RuleCode));
             }
         }
 
-        var respondId = f.Type == DocumentType.Quotation ? ActionAccept : f.Type == DocumentType.DeliveryNote ? ActionSignDelivery : null;
+        var respondId = f.Type == DocumentType.Quotation ? ActionAccept : f.Type == DocumentType.DeliveryNote ? ActionSignDelivery
+            : f.Type == DocumentType.PurchaseOrder ? ActionPoAcknowledge : null;
         if (respondId != null && !f.PayOnly)
         {
-            var label = respondId == ActionAccept ? T(en, "ยอมรับใบเสนอราคา", "Accept the quotation") : T(en, "เซ็นรับสินค้า", "Sign for the delivery");
+            var label = respondId == ActionAccept ? T(en, "ยอมรับใบเสนอราคา", "Accept the quotation")
+                : respondId == ActionPoAcknowledge ? T(en, "รับทราบใบสั่งซื้อ", "Acknowledge the purchase order")
+                : T(en, "เซ็นรับสินค้า", "Sign for the delivery");
             string? closed = null;
-            // รอบ 267 P2 (267-1-11): หนึ่งคำตอบต่อ Rev — ปฏิเสธ/ขอแก้ไปแล้ว ⇒ ปิดจนผู้ขายส่งให้ตอบรับใหม่หรือออก Rev ใหม่ (ตัวตัดสิน CustomerSignRule.PriorResponseBlock)
-            var answered = f.RespondedAt == null && respondId == ActionAccept ? CustomerSignRule.PriorResponseBlock(en, f.CustomerResponse) : null;
+            // รอบ 267 P2 (267-1-11): หนึ่งคำตอบต่อ Rev — ปฏิเสธ/ขอแก้ไปแล้ว ⇒ ปิดจนผู้ขายส่งให้ตอบรับใหม่หรือออก Rev ใหม่ (ตัวตัดสิน CustomerSignRule.PriorResponseBlock) ·
+            // รอบ 267 P5: ใบสั่งซื้อใช้กติกาเดียวกัน (ไม่รับแล้ว ⇒ ปิดจนผู้ซื้อส่งให้ตอบใหม่)
+            var answered = f.RespondedAt == null && respondId is ActionAccept or ActionPoAcknowledge ? CustomerSignRule.PriorResponseBlock(en, f.CustomerResponse) : null;
             if (f.RespondedAt != null)
                 closed = respondId == ActionAccept ? T(en, "ยอมรับใบเสนอราคานี้แล้ว", "This quotation has been accepted")
+                    : respondId == ActionPoAcknowledge ? T(en, "รับทราบใบสั่งซื้อนี้แล้ว", "This purchase order has been acknowledged")
                     : T(en, "เซ็นรับสินค้าแล้ว", "This delivery has been signed for");
             else if (preview) closed = previewNote;
             else if (answered != null) closed = answered;
@@ -339,6 +367,9 @@ public static class CustomerDocPage
                     list.Add(new PageAction(ActionDecline, true, T(en, "ไม่รับใบเสนอราคา", "Decline the quotation"), null, RuleCode, f.RespondHref));
                 list.Add(new PageAction(ActionRequestChange, true, T(en, "ขอแก้ไขใบเสนอราคา", "Request changes"), null, RuleCode, f.RespondHref));
             }
+            // รอบ 267 P5 (267-1-70): ใบสั่งซื้อ — "ไม่รับ" เปิดพร้อมปุ่มรับทราบเท่านั้น (ไม่มี "ขอแก้" — ผู้ขายติดต่อผู้ซื้อ/ไม่รับพร้อมเหตุ)
+            if (respondId == ActionPoAcknowledge && closed == null)
+                list.Add(new PageAction(ActionPoDecline, true, T(en, "ไม่รับใบสั่งซื้อ", "Decline the purchase order"), null, RuleCode, f.RespondHref));
         }
 
         if (wantsLink)

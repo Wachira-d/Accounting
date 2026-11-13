@@ -214,6 +214,26 @@ public sealed class DocumentLabels
             : $"{t.Day}/{t.Month}/{t.Year + 543} {t.ToString("HH:mm", inv)}";
         return string.Format(this["dn_signed_online"], when);
     }
+    /// <summary>รอบ 267 P5 (267-1-70): บล็อก "ผู้ขายรับทราบใบสั่งซื้อออนไลน์" — ทั้งสอง renderer ผ่าน <c>PdfGenerationService.SupplierAckLines</c> (ห้าม literal)</summary>
+    public string PoAckHeading => this["po_ack_heading"];
+    public string PoAckBy => this["po_ack_by"];
+    /// <summary>"รับทราบออนไลน์ 5/11/2569 14:05 น." (ไทย = พ.ศ. · เวลาไทย) / "Acknowledged online 05 Nov 2026 14:05 (GMT+7)" — รับเวลา UTC</summary>
+    public string PoAckedOnline(DateTime utc)
+    {
+        var t = Accounting.Helpers.QuotationAcceptance.BangkokLocal(utc);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var when = IsEnglish
+            ? t.ToString("dd MMM yyyy HH:mm", inv)
+            : $"{t.Day}/{t.Month}/{t.Year + 543} {t.ToString("HH:mm", inv)}";
+        return string.Format(this["po_acked_online"], when);
+    }
+    /// <summary>"กำหนดส่งที่ผู้ขายยืนยัน 20/11/2569" / "Delivery date confirmed by supplier 20 Nov 2026" — วันปฏิทิน (ไม่แปลงเขตเวลา)</summary>
+    public string PoAckPromisedDate(DateTime date)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var when = IsEnglish ? date.ToString("dd MMM yyyy", inv) : $"{date.Day}/{date.Month}/{date.Year + 543}";
+        return string.Format(this["po_ack_promised_date"], when);
+    }
     public string TaxId => this["tax_id"];
     public string TaxIdShort => this["tax_id_short"];
     public string Terms => this["terms"];
@@ -263,6 +283,10 @@ public sealed class DocumentLabels
         ["qt_accept_content_changed"] = "เนื้อหาเปลี่ยนหลังลูกค้ายอมรับ — ไม่ประทับลายเซ็น",
         ["signer_position"] = "ตำแหน่ง: {0}",
         ["signed_on_behalf_of"] = "ลงนามในนามของ {0}",
+        ["po_ack_heading"] = "ผู้ขายรับทราบใบสั่งซื้อออนไลน์",
+        ["po_ack_by"] = "ผู้รับทราบ",
+        ["po_acked_online"] = "รับทราบออนไลน์ {0} น.",
+        ["po_ack_promised_date"] = "กำหนดส่งที่ผู้ขายยืนยัน {0}",
         ["signed_online_evidence_ref"] = "ลงนามออนไลน์ · รหัสอ้างอิง {0}",
         ["dn_signed_online"] = "เซ็นรับออนไลน์ {0} น.",
 
@@ -415,6 +439,10 @@ public sealed class DocumentLabels
         ["qt_accept_content_changed"] = "Content changed after customer acceptance — signature not applied",
         ["signer_position"] = "Position: {0}",
         ["signed_on_behalf_of"] = "Signed on behalf of {0}",
+        ["po_ack_heading"] = "Purchase order acknowledged online by supplier",
+        ["po_ack_by"] = "Acknowledged by",
+        ["po_acked_online"] = "Acknowledged online {0} (GMT+7)",
+        ["po_ack_promised_date"] = "Delivery date confirmed by supplier {0}",
         ["signed_online_evidence_ref"] = "Signed online · reference {0}",
         ["dn_signed_online"] = "Signed online {0} (GMT+7)",
 

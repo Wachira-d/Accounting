@@ -213,6 +213,7 @@ public partial class PdfGenerationService
                         Safe(() => ComposeFooter(col, doc, template, accent, L, issuer, paymentQr));
                         Safe(() => ComposeSignatures(col, template, b, signers, lang));
                         Safe(() => ComposeQuotationAcceptanceBlock(col, template, signers, lang));   // รอบ 239 — คู่กับ HTML QuotationAcceptanceBlockHtml
+                        Safe(() => ComposePoAcknowledgementBlock(col, signers, lang));   // รอบ 267 P5 — คู่กับ HTML PoAcknowledgementBlockHtml
                         Safe(() => ComposeGlPosting(col, gl, lang, L));
                     });
 
@@ -1260,6 +1261,20 @@ public partial class PdfGenerationService
                 c.Item().Text($"{L.QtAcceptNote}: {s.AcceptNote}").FontSize(10);
             if (s.AcceptContentChanged)
                 c.Item().Text(L.QtAcceptContentChanged).FontSize(10).FontColor("#B45309");
+        });
+    }
+
+    /// <summary>รอบ 267 P5 (267-1-70): บล็อก "ผู้ขายรับทราบใบสั่งซื้อออนไลน์" (QuestPDF) — ข้อมูลจาก signers[SupplierAckSlot] ที่ ResolveSignersAsync ตั้ง ·
+    /// บรรทัดชุดเดียวกับ HTML <c>PoAcknowledgementBlockHtml</c> (<see cref="SupplierAckLines"/>) · ป้ายจาก DocumentLabels</summary>
+    internal static void ComposePoAcknowledgementBlock(ColumnDescriptor col, IReadOnlyList<DocumentSigner>? signers, string lang = "th")
+    {
+        if (SupplierAckOf(signers) is not { } s) return;
+        var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
+        col.Item().ShowEntire().PaddingTop(14).Border(0.5f).BorderColor("#CBD5E1").Padding(8).Column(c =>
+        {
+            c.Item().Text(L.PoAckHeading).Bold().FontSize(10);
+            foreach (var line in SupplierAckLines(s, L))
+                c.Item().Text(line).FontSize(10);
         });
     }
 

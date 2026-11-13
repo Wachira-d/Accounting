@@ -7226,3 +7226,9 @@ _รอบ 269 แก้ตามฝ่ายค้านชุดสอง (`er
 H1 เปิดหน้าไม่ลบ-สร้างร่างแล้ว (สร้างเฉพาะที่ไม่มี · แถบร่างล้าสมัย · สร้างใหม่ใต้ล็อกธุรกรรมเดียว audit ผู้กด) · M1 ช่อง 2/3 คำนวณใหม่หลังติ๊ก/ดึงด้วย `Pp30SalesBoxSummary` ตัวเดียว ·
 M2 ใบลดหนี้ของใบเสร็จขายสดยกเว้นลดช่อง 3 · M3 ช่อง 8–12 ตามแบบทางการทุก renderer + e-Filing · M4 audit มีช่อง ภ.พ.30 · M5 ใบกำกับร่าง/แปลงบางส่วน · M6 ตัวทบทวนบอกรุ่นกติกา ·
 L2 ปัดเศษ POS · L4 ด่านบรรทัดเตือน · เทสต์ pure +7 · Db +7 · กติกา R269 +10 ข้อ + ฝ่ายค้าน R269i–l · build + pure ผ่านในเครื่องนี้ Db รันที่ CI · commit ea15f0dd_
+_รอบ 267 แพ็ก P5 — ตามคำตอบเจ้าของ (`erp-review/2026-11-12/team-267-doc-pages-design.md` §14/§19 P5 · คำตัดสิน 267-1-9 · 267-1-13 · 267-1-70…77 · DOCUMENT_FLOW §2.12n-P5 · TEST_PLAN P267e):
+(1) LINE Login จำข้อมูลผู้ลงนาม — `CustomerSignerProfiles` (เข้ารหัส · ต่อบริษัท · HMAC แทน LINE userId) + ความยินยอม `customer-signer-prefill` + RoPA + ถอน/ลบบนหน้า + purge 24 เดือนใต้ JobLock เดิม + DSR `dsr/signer/*` ·
+เติมฟอร์ม — ติ๊กรับรองยังต้องกดเองทุกครั้ง · (2) `ExternalApprovalController` ลงแถวหลักฐาน (Channel Api · ApiReported) ผ่านผู้เขียนเดียว `AppendEvidenceAsync` ·
+(3) ผู้ขายรับทราบ/ไม่รับใบสั่งซื้อ (`SignRequestKinds.PurchaseOrderAck` · วันส่ง ≥ วันที่ใบ · บล็อกผู้ขายบนกระดาษ HTML + QuestPDF) · (4) ใบวางบิลจ่ายทั้งใบ — เส้นเงินเดิม
+(`PaymentIntent` → `DocumentPaymentHandler` → `CreateMultiDocPaymentAsync`) ด่านชุดใบ `BillingNoteCombinedPay` · (5) อากรแสตมป์เตือนเท่านั้น (ตรวจซ้ำ) ·
+เลื่อน: หลายผู้ลงนาม · PAdES (267-1-77) · เทสต์ pure +20 · Db +10 · กติกา R267e +27 ข้อ + ฝ่ายค้าน R267E-1…6 · build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) · commit <pending>_

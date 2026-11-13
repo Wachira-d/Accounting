@@ -4259,6 +4259,35 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - เทสต์ `PostPayRound267Tests` (pure สองทิศ) · `Db/PostPayRound267DbTests` · `tools/required_call_site_check.py` กติกา R267d (+ ย้าย R250-8/R250L1-7 ไป `ResolveForAsync` · R253b ไป `UploadCoreAsync`) ·
   Last verified `commit 17680548` · ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-267-P4.md` MED-1…3 · LOW-1…4) `commit 6c097df4 (+ ใบแทน: ถอดสำเนาที่ซ้อนใน NotCarried)` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 2.12n-P5 หน้าเอกสารสำหรับลูกค้า — ตามคำตอบเจ้าของ (รอบ 267 แพ็ก P5 · คำตัดสิน 267-1-9 · 267-1-13 · 267-1-70…267-1-77)
+
+ดีไซน์: `erp-review/2026-11-12/team-267-doc-pages-design.md` §14 / §19 P5 · ต่อจาก §2.12n-P2 (ผู้ลงนาม) และ §2.12n-P4 (หลังจ่าย) · ไม่มี AI ในเส้นนี้
+
+1. **LINE Login จำข้อมูลผู้ลงนาม (267-1-13 · 267-1-73 · 267-1-74)** — ฟอร์มลงนามบนหน้าเอกสารมีปุ่ม "เข้าด้วย LINE" เมื่อช่อง LINE Login ของระบบเปิด + ตั้ง URL ระบบแล้ว
+   (`page.signerLoginPath` — `PublicDocumentPageController.SignerProfile`) · `POST …/signer-login` ⇒ URL หน้าอนุญาตของ LINE (state HMAC ผูกบริษัท + hash token ของใบ · 10 นาที · scope `openid`) ·
+   LINE กลับมาที่ `/pages/pay-document.html?code&state` (c/t ของหน้าอยู่ใน sessionStorage) ⇒ `POST …/signer-login/complete` ⇒ ตั๋วผู้ลงนาม (HMAC · 30 นาที · ไม่เก็บในฐาน) + ค่าที่จำไว้ (ถ้ายินยอมไว้) ·
+   เติมชื่อ/นามสกุล/ตำแหน่ง/อีเมล — **ติ๊กรับรองต้องกดเองทุกครั้ง** (ค่าที่เติมไม่มีช่องรับรอง · ด่าน `CustomerSignRule.DecideSigner` เดิม) · ลงนามสำเร็จ + ติ๊ก "จำไว้กับ LINE" ⇒
+   `CustomerSignerProfileService.RememberAsync`: แถว `PdpaConsentRecord` (Purpose `customer-signer-prefill` · รุ่น `267-5` · EvidenceHash canonical) + `CustomerSignerProfiles` (เข้ารหัส `EncryptedColumnConverter` ·
+   หนึ่งแถว/บริษัท/คน · กุญแจเจ้าของข้อมูล = HMAC ไม่เก็บ LINE userId) + RoPA "จำข้อมูลผู้ลงนาม" + audit chain (ไม่มี PII — `AuditRedaction`) · ไม่ติ๊ก = ไม่มีอะไรถูกเก็บ (S34) ·
+   จำไม่สำเร็จ = การลงนามยังมีผล + ข้อความบอกผู้ลงนาม · แถวหลักฐานอ้าง `SignerProfileId` (ที่มาของค่าที่เติม — ไม่ใช่หลักฐานตัวตน) · ถอน = `…/signer-profile/forget` (ลบโปรไฟล์จริง + ประทับถอน — แถวหลักฐานคง · S35) ·
+   ไม่ใช้ 24 เดือน/ถอนแล้ว ⇒ `PdpaRetentionPurgeJob` (JobLock เดิม) ลบ · DSR `dsr/signer/access|portability|erase` (ค้นด้วยอีเมล หรือ ชื่อ+นามสกุล · erase เคารพ legal hold — 267-1-75) ·
+   ปิด LINE Login = ไม่มีปุ่ม ลงนามได้ครบ (จำบนเครื่อง 267-1-41 คงอยู่)
+2. **ExternalApprovalController ลงแถวหลักฐาน (267-1-71)** — `SignatureApprovalService.ExternalApproveQuotationAsync` เรียกผู้เขียนเดียว `CustomerDocumentResponseService.AppendEvidenceAsync`
+   (ทุกทางลงนามใช้ตัวนี้) ในธุรกรรมเดียวกับลายเซ็นของขั้นอนุมัติ + audit chain · Channel `Api` · ระดับตัวตน `ApiReported` · เรียกซ้ำด้วยลายเซ็นเดิม = ไม่ลงแถวใหม่ · กระดาษไม่พิมพ์แถว Api ซ้ำ (ลายเซ็นจากขั้นอนุมัติเดิม)
+3. **ผู้ขายรับทราบ/ไม่รับใบสั่งซื้อ (267-1-70)** — `SignRequestKinds.PurchaseOrderAck` (ปุ่มพนักงาน "📧 ส่งให้ผู้ขายรับทราบทางอีเมล" = เส้นส่งลิงก์ตอบรับเดิม) · ช่วงตอบ 14 วัน ·
+   ปุ่ม `po-acknowledge` / `po-decline` (`CustomerDocPage.Actions`) · ผู้เขียน `CustomerDocumentResponseService.RespondPurchaseOrder`: ปุ่มเปิดจริง → ฉบับที่เห็น → ตัวตนครบ → วันส่งที่ยืนยัน (ไม่บังคับ · ≥ วันที่ใบสั่งซื้อ — S31) /
+   เหตุที่ไม่รับ (บังคับ) → จอง `CustomerResponse` หนึ่งคำตอบต่อ Rev → แถวหลักฐาน (`PromisedDate`) + audit + outbox `purchase_order.acknowledged|declined` ในธุรกรรมเดียว · รับทราบ ⇒ ฉบับที่ลงนาม (ไฟล์ + SHA-256) ·
+   กระดาษ ×2: บล็อก "ผู้ขายรับทราบใบสั่งซื้อออนไลน์" (`PdfGenerationService.SupplierAckLines` ตัวเดียว · HTML `PoAcknowledgementBlockHtml` + QuestPDF `ComposePoAcknowledgementBlock` · ป้าย `DocumentLabels.PoAck*` · ไม่พิมพ์ IP) ·
+   ไม่รับแล้ว ⇒ ผู้ซื้อส่งให้ตอบใหม่ได้ · ออก Rev ⇒ ล้างคำตอบ · ป้ายรายการเอกสาร "ผู้ขายรับทราบแล้ว"/"ผู้ขายไม่รับใบสั่งซื้อ" · อีเมลเตือนข้ามใบที่ตอบแล้ว (`CustomerResponse`)
+4. **ใบวางบิลจ่ายทั้งใบ (267-1-9 v2 · 267-1-72)** — ปุ่ม "ชำระทั้งใบวางบิล" = ปุ่มจ่ายออนไลน์เดิมของหน้า · ยอด = ยอดค้างรวมของใบในบิลที่ค้าง (`DocumentPayLinkService.BillingNotePlanAsync` → `Helpers/BillingNoteCombinedPay.Decide`) ·
+   ด่าน: ทุกใบผ่านชั้นจ่ายเดิม · ผู้ติดต่อเดียวกัน · บาท · ไม่ถูกใบกำกับแทน · ไม่มี WHT ที่ผู้ซื้อต้องหัก · ≤ 50 ใบ · ไม่ผ่าน = ปุ่มปิด + "ชำระรายใบ" · ไม่มีฟอร์มสลิปรวม ·
+   เงินเข้า ⇒ `DocumentPaymentHandler.HandleBillingNoteAsync` ตัดสินชุดใบซ้ำ ⇒ `CreateMultiDocPaymentAsync` เดิม (หนึ่งการรับชำระ · จัดสรรเต็มยอดรายใบ · WHT 0) · ยอดไม่ตรงยอดค้างรวมตอนนั้น = ล้มดัง (ไม่ลงเงินรอจัดสรร) ·
+   ปิดผู้ให้บริการทุกตัว = ปุ่มจ่ายปิด · ปุ่มรายใบ (§2.12n-P4) ยังใช้ได้
+5. **อากรแสตมป์ (267-1-14 · 267-1-76)** — คงตาม P2: เตือนพนักงานอย่างเดียว (ไม่อยู่ในเส้นยอมรับ)
+6. **ไม่ทำในแพ็กนี้ (267-1-77)** — หลายผู้ลงนาม (267-1-11 v2) · PAdES (267-1-6) — เหตุใน DECISIONS
+7. เทสต์: `CustomerDocRound267P5Tests` (pure · ทุกข้อมีทิศตรงข้าม · S31) · Db `CustomerDocRound267P5DbTests` (S34 `CDP267Db_NoConsentNoProfile` · S35 `CDP267Db_WithdrawDeletesProfileOnly` · S33 DSR ·
+   ใบสั่งซื้อ · เส้น API · ใบวางบิลจ่ายทั้งใบผ่าน `DocumentService` จริง) · `tools/required_call_site_check.py` R267e (+ เคสฝ่ายค้าน R267E-1…6)
+
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
 ### 3.1 Create / Update (Draft → Draft)
@@ -9507,3 +9536,4 @@ _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P4 — �
 _Last verified against codebase: 2026-11-13 (รอบ 266 แพ็ก B ชุดแก้ฝ่ายค้าน — §3.4c-B: B-1 ใบรับในตัว (ปฏิเสธ/ออกใบกำกับ ณ วันรับเงิน/พรีวิวตามจริง) · B-2 สิทธิ์ใต้ล็อก + ถอดด้วยกุญแจพรีวิว · B-3…B-9 ผู้อ่าน/งานที่ตามใบที่มีผล · ถอดหลังแตะกระดาษ = ปฏิเสธ (คำตัดสิน 266-1-32…35)) · commit 0ec86361 (+ 57b75d99) — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _Last verified against codebase: 2026-11-13 (รอบ 268 งานคงค้าง — §2.12g-268: 268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง · 268-1-2 สลิปออเดอร์หน้าเว็บลงธนาคาร · 268-1-3 มัดจำการจองต่องวด · 268-1-4 แจ้งแชตหลังผูกสลิป + PDF · 268-1-5 ศูนย์บิล LINE (นำออก/ใบเสร็จส่วนเสริม) · 268-1-6 รับหลายใบแจ้งคู่ค้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3dad4ab2)_
 _Last verified against codebase: 2026-11-13 (รอบ 268 ชุดแก้ฝ่ายค้าน — §2.12g-268: M1–M6 · L1/L2/L5/L6/L7 (คำตัดสิน 268-1-7…14) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b960b19f)_
+_Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P5 — §2.12n-P5: LINE Login จำข้อมูลผู้ลงนาม (ความยินยอม · เข้ารหัส · ถอน · purge · DSR) · ExternalApprovalController ลงแถวหลักฐานผ่านผู้เขียนเดียว · ผู้ขายรับทราบ/ไม่รับใบสั่งซื้อ + บล็อกผู้ขายบนกระดาษ ×2 · ใบวางบิลจ่ายทั้งใบผ่านเส้นเงินเดิม · อากรแสตมป์เตือนเท่านั้น (คำตัดสิน 267-1-9 · 267-1-13 · 267-1-70…77) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>)_

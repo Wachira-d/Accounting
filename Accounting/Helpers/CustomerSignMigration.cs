@@ -52,6 +52,31 @@ public static class CustomerSignMigration
         );
         """,
         """CREATE INDEX IF NOT EXISTS "IX_CustomerDocumentActions_Company_Doc" ON "CustomerDocumentActions" ("CompanyId", "DocumentId", "CreatedAt");""",
+        // รอบ 267 P5: วันส่งที่ผู้ขายยืนยัน (รับทราบใบสั่งซื้อ · S31) · โปรไฟล์ผู้ลงนามที่เติมฟอร์ม (อ้างที่มาเท่านั้น — 267-1-13)
+        """ALTER TABLE "CustomerDocumentActions" ADD COLUMN IF NOT EXISTS "PromisedDate" timestamptz NULL;""",
+        """ALTER TABLE "CustomerDocumentActions" ADD COLUMN IF NOT EXISTS "SignerProfileId" uuid NULL;""",
+        // รอบ 267 P5 (267-1-13): ข้อมูลผู้ลงนามที่ยินยอมให้จำกับ LINE — ชื่อ/ตำแหน่ง/อีเมลเข้ารหัส (EncryptedColumnConverter ⇒ ความยาวเผื่อ ciphertext) · หนึ่งแถว/บริษัท/คน
+        """
+        CREATE TABLE IF NOT EXISTS "CustomerSignerProfiles" (
+            "Id" uuid PRIMARY KEY,
+            "CompanyId" uuid NOT NULL REFERENCES "Companies"("Id"),
+            "SubjectKey" varchar(64) NOT NULL,
+            "ContactId" uuid NULL,
+            "FirstName" varchar(600) NOT NULL,
+            "LastName" varchar(600) NOT NULL,
+            "Title" varchar(600) NULL,
+            "Email" varchar(800) NULL,
+            "ConsentRecordId" uuid NOT NULL,
+            "LastUsedAt" timestamptz NOT NULL,
+            "CreatedAt" timestamptz NOT NULL DEFAULT now(),
+            "UpdatedAt" timestamptz NULL,
+            "CreatedBy" text NULL,
+            "UpdatedBy" text NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT false
+        );
+        """,
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CustomerSignerProfiles_Company_Subject" ON "CustomerSignerProfiles" ("CompanyId", "SubjectKey");""",
+        """CREATE INDEX IF NOT EXISTS "IX_CustomerSignerProfiles_LastUsed" ON "CustomerSignerProfiles" ("LastUsedAt");""",
         """
         CREATE TABLE IF NOT EXISTS "CustomerSignOtps" (
             "Id" uuid PRIMARY KEY,
@@ -94,6 +119,8 @@ public static class CustomerSignMigration
              OR NEW."ReasonCode" IS DISTINCT FROM OLD."ReasonCode"
              OR NEW."ContentHash" IS DISTINCT FROM OLD."ContentHash"
              OR NEW."TokenHash" IS DISTINCT FROM OLD."TokenHash"
+             OR NEW."PromisedDate" IS DISTINCT FROM OLD."PromisedDate"
+             OR NEW."SignerProfileId" IS DISTINCT FROM OLD."SignerProfileId"
              OR NEW."CreatedAt" IS DISTINCT FROM OLD."CreatedAt"
              OR NEW."CreatedBy" IS DISTINCT FROM OLD."CreatedBy"
              OR NEW."IsDeleted" IS DISTINCT FROM OLD."IsDeleted" THEN

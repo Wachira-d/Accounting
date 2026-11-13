@@ -25,6 +25,7 @@ public class AccountingDbContext : DbContext
     public DbSet<CustomerNotifyRule> CustomerNotifyRules => Set<CustomerNotifyRule>();   // รอบ 212 แพ็ก A
     public DbSet<CustomerNotifyLog> CustomerNotifyLogs => Set<CustomerNotifyLog>();   // รอบ 212 แพ็ก A
     public DbSet<PostPaymentAutomationRun> PostPaymentAutomationRuns => Set<PostPaymentAutomationRun>();   // รอบ 241 — งานหลังรับชำระ (Helpers/DocumentAutoSendMigration)
+    public DbSet<CustomerSignerProfile> CustomerSignerProfiles => Set<CustomerSignerProfile>();   // รอบ 267 P5 — ข้อมูลผู้ลงนามที่ยินยอมให้จำกับ LINE (267-1-13 · เข้ารหัส)
     public DbSet<CustomerDocumentAction> CustomerDocumentActions => Set<CustomerDocumentAction>();   // รอบ 267 P2 — บัญชีหลักฐานการตอบรับของลูกค้า (append-only · Helpers/CustomerSignMigration)
     public DbSet<CustomerSignOtp> CustomerSignOtps => Set<CustomerSignOtp>();   // รอบ 267 P2 (267-1-6) — รหัสยืนยันอีเมลก่อนยอมรับ
     public DbSet<SignEventOutboxEntry> SignEventOutbox => Set<SignEventOutboxEntry>();   // รอบ 240 — outbox เหตุการณ์ลูกค้าเซ็น (ตาราง/index ตรงกับ Helpers/SignRequestMigration)
@@ -3977,6 +3978,18 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.SignedPdfPath).HasMaxLength(500);
             e.Property(x => x.SignedPdfSha256).HasMaxLength(64);
             e.HasIndex(x => new { x.CompanyId, x.DocumentId, x.CreatedAt }).HasDatabaseName("IX_CustomerDocumentActions_Company_Doc");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 267 P5 (267-1-13): PII ของผู้ลงนามเข้ารหัสขณะจัดเก็บ — วิธีเดียวกับ PII พนักงาน (PDPA ม.37 · กฎ #2 J)
+        modelBuilder.Entity<CustomerSignerProfile>(e =>
+        {
+            e.ToTable("CustomerSignerProfiles");
+            e.Property(x => x.SubjectKey).HasMaxLength(64);
+            e.Property(x => x.FirstName).HasMaxLength(600).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(x => x.LastName).HasMaxLength(600).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(x => x.Title).HasMaxLength(600).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(x => x.Email).HasMaxLength(800).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.HasIndex(x => new { x.CompanyId, x.SubjectKey }).IsUnique().HasDatabaseName("UX_CustomerSignerProfiles_Company_Subject");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<CustomerSignOtp>(e =>

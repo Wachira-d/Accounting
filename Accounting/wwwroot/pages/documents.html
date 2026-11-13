@@ -11563,6 +11563,10 @@
             } else if (d.cannotReviseReason) {
               actions += ` <button data-g="more" class="btn btn-secondary" disabled title="${Layout.esc(d.cannotReviseReason)}" style="opacity:.55;cursor:not-allowed">✏️ แก้ไข (Rev ใหม่)</button>`;
             }
+            // รอบ 267 P5 (267-1-70): ใบสั่งซื้อ — ส่งให้ผู้ขายรับทราบทางอีเมล (เส้นส่งลิงก์ตอบรับเดิม · ชนิดจาก SignRequestKinds ที่เซิร์ฟเวอร์)
+            if (d.documentType === 'PurchaseOrder') {
+              actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.signRequestEmail('${Layout.jsArg(d.id)}')" title="ส่งอีเมลถึงผู้ขายพร้อมปุ่มเปิดดู/รับทราบใบสั่งซื้อ (ผู้ขายยืนยันวันส่งได้ · ไม่รับพร้อมเหตุผลได้)">📧 ส่งให้ผู้ขายรับทราบทางอีเมล</button>`;
+            }
             if (d.documentType === 'DeliveryNote') {
               actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.deliverySignLink('${d.id}')" title="สร้างลิงก์ให้ลูกค้าเซ็นรับสินค้าออนไลน์ (POD — อายุ 14 วัน) ลายเซ็นประทับลงช่อง ผู้รับของ บน PDF อัตโนมัติ">✍️ ลิงก์เซ็นรับ</button>`;
               actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.signRequestEmail('${Layout.jsArg(d.id)}')" title="ส่งอีเมลถึงลูกค้าพร้อมปุ่มเซ็นรับสินค้า (ใช้อีเมลของบริษัท หรือของระบบ NextAcc ในนามบริษัทถ้ายังไม่ได้ตั้ง)">📧 ส่งให้ลูกค้าเซ็นรับทางอีเมล</button>`;

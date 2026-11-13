@@ -269,7 +269,9 @@ public class SignRequestRound240Tests
         Assert.NotNull(SignRequestKinds.IssueRefusal(DocumentType.Invoice, DocumentStatus.Approved));
         Assert.Equal("quotation.accepted", SignRequestKinds.For(DocumentType.Quotation)!.EventType);
         Assert.Equal("delivery.signed", SignRequestKinds.For(DocumentType.DeliveryNote)!.EventType);
-        Assert.Null(SignRequestKinds.For(DocumentType.PurchaseOrder));
+        // รอบ 267 P5 (267-1-70): ใบสั่งซื้อ — ผู้ขายรับทราบ · ชนิดอื่นยังไม่มีลิงก์ตอบรับ
+        Assert.Equal("purchase_order.acknowledged", SignRequestKinds.For(DocumentType.PurchaseOrder)!.EventType);
+        Assert.Null(SignRequestKinds.For(DocumentType.Invoice));
     }
 
     [Fact]
