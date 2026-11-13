@@ -273,4 +273,41 @@ public class OutputVatOwnershipTests
         Assert.False(same.NeedsAttention);
         Assert.Equal(TaxReportRecompute.ActionNone, same.SuggestedAction);
     }
+
+    [Fact]
+    public void R269_2_9_ช่อง3ยกเว้น_นับที่ใบต้นทางของการขาย_ใบรับชำระ_ยอดยกมา_ใบถูกแทน_มัดจำที่หัก_ไม่นับ()
+    {
+        // นับ: ใบแจ้งหนี้ตรงไม่มี VAT · ใบเสร็จขายสดไม่มี VAT · ใบสำคัญรับเดี่ยวไม่มี VAT · ใบกำกับผสม (เจ้าของ)
+        var inv = Base0 with { Type = DocumentType.Invoice };
+        var cash = Base0 with { Type = DocumentType.Receipt };
+        var rv = Base0 with { Type = DocumentType.ReceiptVoucher };
+        foreach (var f in new[] { inv, cash, rv, Base0 with { VatAmount = 70m } })
+        {
+            var d = OutputVatOwnership.ExemptBoxOwner(f);
+            Assert.True(d.Owns);
+            Assert.Equal(Tp, d.VatDueDate);
+        }
+        // ช่อง 2 ของใบเดียวกันที่ไม่มี VAT และไม่ใช่ใบกำกับ ⇒ ไม่นับ (เตือน)
+        foreach (var f in new[] { inv, cash, rv })
+            Assert.Equal(OutputVatOwnership.RuleZeroVatNotTaxInvoice, OutputVatOwnership.SalesBoxOwner(f).RuleCode);
+        // ไม่นับ: ใบเสร็จรับชำระใบแจ้งหนี้ · ยอดยกมา · ใบแจ้งหนี้ที่ถูกใบกำกับแทน/ใบเสร็จถือ VAT · มัดจำที่ถูกหัก · ใบวางบิล/ใบส่งของ/ใบเสนอราคา
+        var notCounted = new[]
+        {
+            cash with { HasRelated = true, RelatedType = DocumentType.Invoice },
+            inv with { IsOpeningBalance = true },
+            inv with { SupersededByTaxInvoice = true },
+            inv with { OwnedByVatReceipt = true },
+            rv with { IsDeposit = true, DepositApplied = true },
+            Base0 with { Type = DocumentType.BillingNote },
+            Base0 with { Type = DocumentType.DeliveryNote },
+            Base0 with { Type = DocumentType.Quotation },
+            cash with { HasRelated = true, RelatedType = DocumentType.BillingNote, RelatedIsRollupBillingNote = true },
+        };
+        foreach (var f in notCounted)
+            Assert.False(OutputVatOwnership.ExemptBoxOwner(f).Owns);
+        // ใบลดหนี้ของใบแจ้งหนี้ยกเว้น (ไม่มี VAT) ลดช่อง 3 ได้ แต่ไม่ลดช่อง 2
+        Assert.True(OutputVatOwnership.AdjustmentNoteCounts(true, DocumentType.Invoice, 0m, false, false, exemptBox: true));
+        Assert.False(OutputVatOwnership.AdjustmentNoteCounts(true, DocumentType.Invoice, 0m, false, false));
+        Assert.False(OutputVatOwnership.AdjustmentNoteCounts(true, DocumentType.Invoice, 0m, true, false, exemptBox: true));
+    }
 }
