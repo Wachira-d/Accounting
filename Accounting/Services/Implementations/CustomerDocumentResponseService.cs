@@ -596,7 +596,7 @@ public class CustomerDocumentResponseService
         _db.CustomerSignOtps.Add(row);
         await _db.SaveChangesAsync();
         var seller = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
-        var enc = System.Net.WebUtility.HtmlEncode;
+        Func<string?, string?> enc = System.Net.WebUtility.HtmlEncode;
         var body = en
             ? $"<p>Your verification code for quotation <b>{enc(doc.DocumentNumber)}</b> from {enc(seller)} is</p><p style=\"font-size:24px;letter-spacing:4px\"><b>{code}</b></p><p>The code is valid for {CustomerSignRule.OtpTtlMinutes} minutes. If you did not request it, ignore this email.</p>"
             : $"<p>รหัสยืนยันสำหรับใบเสนอราคา <b>{enc(doc.DocumentNumber)}</b> ของ {enc(seller)} คือ</p><p style=\"font-size:24px;letter-spacing:4px\"><b>{code}</b></p><p>รหัสใช้ได้ {CustomerSignRule.OtpTtlMinutes} นาที หากท่านไม่ได้ขอรหัสนี้ ไม่ต้องดำเนินการใด ๆ</p>";
@@ -748,7 +748,7 @@ public class CustomerDocumentResponseService
         var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, a.DocumentId);
         var seller = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
         var number = await _db.Documents.AsNoTracking().Where(d => d.Id == a.DocumentId && d.CompanyId == companyId).Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct) ?? "";
-        var enc = System.Net.WebUtility.HtmlEncode;
+        Func<string?, string?> enc = System.Net.WebUtility.HtmlEncode;
         var body = heading.IsEnglish
             ? $"<p>Dear {enc(a.SignerFirstName)},</p><p>Attached is the copy of {enc(heading.Title)} <b>{enc(number)}</b> from {enc(seller)} as you signed it online.</p>"
             : $"<p>เรียน คุณ{enc(a.SignerFirstName)}</p><p>แนบสำเนา{enc(heading.Title)} <b>{enc(number)}</b> ของ {enc(seller)} ฉบับที่ท่านลงนามออนไลน์</p>";
