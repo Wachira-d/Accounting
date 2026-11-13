@@ -330,6 +330,11 @@ public class CompanySettings : TenantEntity
     /// <c>View</c> (บอกหน้าลูกค้าว่าต้องเซ็นไหม)</summary>
     public bool RequireSignatureForQuotationAccept { get; set; } = false;
 
+    /// <summary>รอบ 267 P2 (คำตัดสิน 267-1-6): ใบเสนอราคาที่ยอดรวมตั้งแต่จำนวนนี้ขึ้นไป ลูกค้าต้อง<b>ยืนยันอีเมลด้วยรหัส</b>ก่อนยอมรับบนหน้าเอกสาร ·
+    /// null (ค่าตั้งต้น) = ไม่ใช้รหัส · ผู้อ่านเดียว: <c>CustomerSignRule.OtpRequired</c> (เรียกจาก <c>CustomerDocumentResponseService</c> —
+    /// ทั้งตอนประกอบฟอร์มของหน้าและตอนรับคำตอบ)</summary>
+    public decimal? CustomerSignOtpMinAmount { get; set; }
+
     // ── รอบ 240: ลิงก์ให้ลูกค้าเซ็น — อีเมลอัตโนมัติ · เตือน · webhook ต่อเอกสาร (หน้า: ตั้งค่า → ลิงก์ให้ลูกค้าเซ็น · API: SignRequestController) ──
     /// <summary>ส่งอีเมลขอยอมรับอัตโนมัติเมื่อใบเสนอราคาที่สร้างหลัง <see cref="SignLinkAutoEmailSince"/> ถูกอนุมัติ (ถึงอีเมลของผู้ติดต่อ) ·
     /// ผู้อ่าน: <c>SignRequestService.RunAutomationAsync</c> (งาน <c>SignRequestAutomationJob</c> — ครอบทุกทางเข้าอนุมัติ: เว็บ/กฎ/มือถือ/LINE/API)</summary>

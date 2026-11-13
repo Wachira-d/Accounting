@@ -459,8 +459,20 @@ public class DocumentsV1Controller : PublicApiControllerBase
         if (doc == null || kind == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบเอกสารที่ลูกค้าเซ็นได้รายการนี้ในบริษัทของคุณ"));
         if (await DenySensitiveForKeyAsync(ctx!, documentId, "ดูสถานะการเซ็นของ", ct) is { } hidden) return hidden;
         var s = Helpers.SignRequestKinds.Read(doc);
+        // รอบ 267 P2 (design §16 · 267-1-4): สัญญาเดิมคง + ช่องผู้ลงนามจากแถวหลักฐานล่าสุดของ Rev ปัจจุบัน (ไม่มี IP/UA/token — กติกาเดียวกับ payload outbox)
+        var ev = await Db.CustomerDocumentActions.AsNoTracking()
+            .Where(a => a.CompanyId == ctx!.CompanyId && a.DocumentId == doc.Id && a.RevisionNumber == doc.RevisionNumber)
+            .OrderByDescending(a => a.CreatedAt)
+            .Select(a => new { a.Action, a.IdentityLevel, a.SignerTitle, a.SignerOrgName, a.ErasedAt, HasCopy = a.SignedPdfSha256 != null })
+            .FirstOrDefaultAsync(ct);
         return Ok(new ApiResponse<object>(true, new
         {
+            customerResponse = doc.CustomerResponse,
+            customerResponseAt = doc.CustomerResponseAt,
+            signerTitle = ev?.ErasedAt == null ? ev?.SignerTitle : null,
+            signerOrgName = ev?.ErasedAt == null ? ev?.SignerOrgName : null,
+            identityLevel = ev?.IdentityLevel,
+            signedCopyReady = ev?.HasCopy ?? false,
             documentId = doc.Id,
             documentNumber = doc.DocumentNumber,
             documentType = doc.DocumentType.ToString(),

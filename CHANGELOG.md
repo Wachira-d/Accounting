@@ -7121,6 +7121,18 @@ M1 "เงินสด" ลงผังเงินสดจริง · M2 ย�
 M4 ภาษีหักลงวันที่เดือนก่อนไม่บันทึกเอง · M5 แจ้งเมื่อระบบบันทึกเอง + หมายเหตุการจ่าย · M6 ส่ง 50 ทวิ ถือล็อกความยินยอมจนกล่องรับตอบ · M7 ไม่ประทับเหตุคู่ค้าที่ไม่ได้ยินยอม · เหตุถาวรประเมินวันละครั้ง ·
 L1–L9 · เทสต์ pure +4 · Db +5 (ปรับ 5) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit 17fefa5a_
 
+_รอบ 267 แพ็ก P2 "ผู้ลงนาม + บัญชีหลักฐาน + ฉบับที่ลูกค้าเซ็น" (`erp-review/2026-11-12/team-267-doc-pages-design.md` §5–§7/§19 · คำตัดสิน 267-1-33…42 · 2026-11-12):
+ลูกค้าตอบรับเอกสารบนหน้าเอกสารเอง — ฟอร์มผู้ลงนาม (ชื่อ · นามสกุล · ตำแหน่ง · ติ๊กรับรอง "เป็นบุคคลของ {ผู้ซื้อ} และมีอำนาจ…" · อีเมลไม่บังคับ · จำข้อมูลบนเครื่องเท่านั้น) ·
+การกระทำ: ยอมรับ · ไม่รับ (เหตุผลจากรายการปิด) · ขอแก้ ใบเสนอราคา และเซ็นรับสินค้า — เส้นเดียว `POST …/documents/{token}/respond` · แกนของ `PublicQuotationController.Accept/SignDelivery`
+ย้ายไป `CustomerDocumentResponseService` (controller ทั้งสองไม่มีตรรกะ) · ตาราง `CustomerDocumentActions` (append-only ด้วย trigger) เขียนในธุรกรรมเดียวกับคอลัมน์เดิมบนใบ + audit chain + outbox ·
+ภาพฉายใหม่ `Document.CustomerResponse/At` (หนึ่งคำตอบต่อ Rev · ป้าย "ลูกค้าไม่รับ/ขอแก้ไข") · ฉบับที่ลูกค้าเซ็น (ไฟล์ + SHA-256 · สร้างทันที/งาน outbox ลองใหม่ · ส่งกลับบนหน้า + อีเมลที่ให้ไว้) ·
+กระดาษสอง renderer พิมพ์ ชื่อ/ตำแหน่ง/ในนาม/รหัสอ้างอิง ผ่าน `CustomerSignerLines` + `DocumentLabels` (ไม่พิมพ์ IP) · รหัสยืนยันอีเมลเมื่อยอดถึงเกณฑ์ที่บริษัทตั้ง (ค่าตั้งต้นไม่ใช้) ·
+หลังยอมรับ: แจ้งพนักงาน + แนะนำแปลงเป็นใบส่งของ/ใบแจ้งหนี้/ใบกำกับ/มัดจำ + คำเตือนอากรแสตมป์ (เตือนเท่านั้น) · PDPA: RoPA · อายุเก็บ · DSR access/erase ของข้อมูลผู้ลงนาม ·
+อ้างกฎหมายเฉพาะ พ.ร.บ.ธุรกรรมทางอิเล็กทรอนิกส์ ม.9/ม.11 · แก้จุดค้างของ P1: กุญแจกันซ้ำของเหตุการณ์ outbox ผูกแถวหลักฐาน (token ของหน้าเอกสารอยู่ข้าม Rev ⇒ ยอมรับ Rev ถัดไปเคยชนดัชนี unique) ·
+สัญญา API ที่เปลี่ยน: `PageAction.Href` ของปุ่มตอบรับ = เส้น `…/respond` (เดิม = หน้ายอมรับรุ่นก่อน) · เส้นรุ่นก่อนที่ใช้ token ของหน้าเอกสารต้องส่ง `signer` ครบ · แพ้การจอง = 409 (เดิม 404) ·
+ล้าง conflict marker ที่ค้างใน DOCUMENT_FLOW/CHANGELOG จาก merge ก่อนหน้า (คงเนื้อหาทั้งสองฝั่ง) · เทสต์ `CustomerSignRound267Tests` + `Db/CustomerSignRound267DbTests` · ล็อก R267b —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8b6861de_
+
 _รอบ 266 แพ็ก B — ย้ายการรับชำระที่ตัดผิดใบ + ใบแทน (`erp-review/2026-11-12/team-266-manual-doc-link.md` §4.3 · คำตัดสิน 266-1-23…31 · DOCUMENT_FLOW §3.4c-B):
 `DocumentService.MoveSettlementAsync` (partial ใหม่ `DocumentService.ReceiptLink.cs`) — สองขาผ่าน 21630 อ้างเลขการรับชำระเดิม · ขาเงินสด/ยอดธนาคาร/คู่จับคู่ธนาคาร/`Payment.DocumentId` ไม่ถูกแตะ ·
 `Payment.MovedToDocumentId` + `PaymentAllocation.ReleasedAt/ReleasedBy/ReleaseJournalEntryId/MovedFromAllocationId` (`Helpers/ReceiptLinkMoveMigration`) · ผู้อ่าน "การชำระของใบ" 25 จุดใช้ใบที่มีผล (`Helpers/PaymentEffectiveDocument`) ·

@@ -11264,7 +11264,7 @@ RULES += [
     dict(file="Services/Implementations/CmsLeadService.cs", method="CreateAsync",
          must_re=[r"var\s+response\s*=\s*MapDetail\(lead\)\s*;\s*await\s+NotifyShopNewLeadAsync\("],
          why=_P3_WHY + "D5 แจ้งร้านหลังบันทึก lead · คำตอบสาธารณะสร้างก่อนประทับ (เหตุส่งไม่ถึง/อีเมลร้านไม่รั่ว)"),
-    dict(file="Controllers/PublicQuotationController.cs", method="Accept", must=["OnQuotationAcceptedAsync("],
+    dict(file="Services/Implementations/CustomerDocumentResponseService.cs", method="Accept", must=["OnQuotationAcceptedAsync("],
          before=[("_db.SaveChangesAsync(", "OnQuotationAcceptedAsync(")],
          why=_P3_WHY + "E2 ยอมรับใบเสนอราคา ⇒ lead ได้งาน + แจ้งร้าน หลังบันทึกการยอมรับ"),
     dict(file="Services/Implementations/Cms/CmsShopNotifier.cs", method="NotifyShopAsync",
@@ -14314,8 +14314,10 @@ REVIEWER_CASES += [
 # ── รอบ 239: ยอมรับใบเสนอราคาออนไลน์ + ลายเซ็น + PDF สาธารณะ (คำตัดสิน 239-1..239-6) — ด่าน token/ลายเซ็น/audit ต้องถูกเรียกจริงในเส้นสาธารณะ ──
 _R239_WHY = "รอบ 239 (คำตัดสิน 239-*): "
 _R239_PUB = "Controllers/PublicQuotationController.cs"
+# รอบ 267 P2: แกนยอมรับ/เซ็นรับ + ด่าน token ย้ายจาก controller ไป service (ผู้เขียนเดียว) — กติกาของเมธอดที่ย้ายชี้ไฟล์นี้
+_R267_RESP = "Services/Implementations/CustomerDocumentResponseService.cs"
 RULES += [
-    dict(file=_R239_PUB, method="Accept",
+    dict(file=_R267_RESP, method="Accept",
          must=["FindByTokenAsync(", "RequireSignatureAsync(", "QuotationAcceptance.DecideAccept(", "DocumentSignedContent.Hash(",
                "AddChainedAuditLog(", "ExecuteUpdateAsync("],
          must_re=[r"SignatureStore\s*\.\s*WriteAsync\(\s*sigPath\s*,\s*png\b", r"d\.QuotationAcceptedAt\s*==\s*null"],
@@ -14334,12 +14336,12 @@ RULES += [
                "SignatureStore.Locator.AttachmentsRoot"],
          before=[("QuotationAcceptance.IsOwnSignatureLocation(", "ReadAllBytesAsync(")],
          why=_R239_WHY + "รูปลายเซ็น (ข้อมูลส่วนบุคคล) อ่านผ่าน token ของใบนั้น + ไฟล์ต้องอยู่ใต้โฟลเดอร์ของบริษัท/เอกสารเดียวกัน"),
-    dict(file=_R239_PUB, method="FindByTokenAsync",
+    dict(file=_R267_RESP, method="FindByTokenAsync",
          must=["Uri.IsHexDigit"],
          must_re=[r"QuotationAcceptTokenExpiresAt\s+is\s*\{\s*\}\s*exp\s*&&\s*exp\s*<\s*DateTime\.UtcNow\s*\)\s*return\s+null",
                   r"d\.DocumentType\s*==\s*DocumentType\.Quotation", r"d\.Status\s*!=\s*DocumentStatus\.Voided"],
          why=_R239_WHY + "ด่าน token ตัวเดียวของทุกเส้นสาธารณะ — หมดอายุ/ไม่ใช่ใบเสนอราคา/ยกเลิก = ไม่พบ"),
-    dict(file=_R239_PUB, method="SignDelivery",
+    dict(file=_R267_RESP, method="SignDelivery",
          must=["SignatureImageValidator.Validate(", "OverRateAsync(", "FindDeliveryByTokenAsync("],
          must_re=[r"DeliverySignatureBase64\s*=\s*sig\.DataUri"],
          before=[("OverRateAsync(", "FindDeliveryByTokenAsync("), ("FindDeliveryByTokenAsync(", "SignatureImageValidator.Validate("),
@@ -14394,12 +14396,12 @@ _R240_SVC = "Services/Implementations/SignRequestService.cs"
 _R240_DISP = "Services/Implementations/SignEventDispatcher.cs"
 _R240_DEC = "Services/Implementations/DocumentEmailService.cs"
 RULES += [
-    dict(file=_R239_PUB, method="Accept",
+    dict(file=_R267_RESP, method="Accept",
          must=["SignEventOutbox.Enqueue(", "SignRequestKinds.QuotationAccept"],
          before=[("ExecuteUpdateAsync(", "SignEventOutbox.Enqueue("), ("SignEventOutbox.Enqueue(", "tx.CommitAsync(")],
          forbid=["TriggerAsync(", "CreateClient("],
          why=_R240_WHY + "240-3 ยอมรับสำเร็จ = เหตุการณ์ quotation.accepted 1 แถวในธุรกรรมเดียวกัน · ห้ามยิง webhook ในคำขอของลูกค้า (ปลายทางล่มต้องไม่ทำให้ยอมรับล้ม)"),
-    dict(file=_R239_PUB, method="SignDelivery",
+    dict(file=_R267_RESP, method="SignDelivery",
          must=["SignEventOutbox.Enqueue(", "SignRequestKinds.DeliverySign", "ExecuteUpdateAsync(", "tx.CommitAsync("],
          must_re=[r"d\.DeliverySignedAt\s*==\s*null"],
          before=[("ExecuteUpdateAsync(", "SignEventOutbox.Enqueue("), ("SignEventOutbox.Enqueue(", "tx.CommitAsync(")],
@@ -14716,7 +14718,7 @@ REVIEWER_CASES += [
     ("R242e", "PurgeOneDocumentCoreAsync", "await Accounting.Helpers.DocumentPurgeOrder.DeleteDocumentChildrenAsync(_db, new[] { documentId });",
      "await Accounting.Helpers.DocumentPurgeOrder\n                .DeleteDocumentChildrenAsync(_db, new[] { documentId });", False),
     # ถอดการลง outbox ออกจากเส้นยอมรับ ⇒ ต้องฟ้อง
-    ("R240a", "Accept", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, tokenHash);", "", True),
+    ("R240a", "Accept", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, eventRef).CustomerActionId = evidence.Id;", "", True),
     # เส้นอีเมลเลือกผู้ส่ง/From เอง (ข้ามตัวตัดสิน) ⇒ ต้องฟ้อง
     ("R240b", "SendEmailAsync", "var (plan, sender) = await DocumentEmailService.ResolveOnBehalfSenderAsync(_db, _senders, companyId, settings, ct);",
      "var sender = _senders.GetGlobalFallbackSender(); var plan = new OnBehalfEmailSender.Plan(\"company\", DocumentEmailService.ResolveFromAddress(settings!), \"x\", null);", True),
@@ -14731,7 +14733,7 @@ REVIEWER_CASES += [
     ("R240f", "Accept", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept",
      "SignEventOutbox\n                    .Enqueue(_db, doc, SignRequestKinds.QuotationAccept", False),
     # เซ็นรับสินค้าไม่ลง outbox ⇒ ต้องฟ้อง
-    ("R240g", "SignDelivery", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.DeliverySign, now, doc.DeliverySignedBy, hasSignature: true, contentHash, tokenHash);", "", True),
+    ("R240g", "SignDelivery", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.DeliverySign, now, doc.DeliverySignedBy, hasSignature: true, contentHash, eventRef).CustomerActionId = evidence.Id;", "", True),
     # อีเมลเอกสารกลับไปใส่ From ของบริษัทผ่านผู้ส่งที่อาจเป็นของระบบ ⇒ ต้องฟ้อง
     ("R240h", "SendDocumentEmailAsync", "var (plan, sender) = await ResolveOnBehalfSenderAsync(_db, _senderFactory, companyId, settings);",
      "var sender = await _senderFactory.GetSenderAsync(companyId); var plan = new OnBehalfEmailSender.Plan(\"company\", ResolveFromAddress(settings), \"x\", null);", True),
@@ -14750,8 +14752,8 @@ REVIEWER_CASES += [
     # ฝ่ายค้าน S5: PDF ผ่าน API ข้ามด่านชั้นความลับ ⇒ ต้องฟ้อง
     ("R240o", "Pdf", "if (await DenySensitiveForKeyAsync(ctx!, documentId, \"ดาวน์โหลด PDF ของ\", ct) is { } hidden) return hidden;", "", True),
     # ยิง webhook ในคำขอของลูกค้า ⇒ ต้องฟ้อง
-    ("R240i", "Accept", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, tokenHash);",
-     "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, tokenHash); await _hooks.TriggerAsync(doc.CompanyId, \"quotation.accepted\", new { });", True),
+    ("R240i", "Accept", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, eventRef).CustomerActionId = evidence.Id;",
+     "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, eventRef).CustomerActionId = evidence.Id; await _hooks.TriggerAsync(doc.CompanyId, \"quotation.accepted\", new { });", True),
 ]
 
 
@@ -19645,29 +19647,29 @@ RULES += [
     dict(file=_R240_SVC, method="EnsurePageLinkAsync",
          must=["_links.EnsureCustomerLinkAsync(", "allowReissueRevoked: staffIntent", "link.Ok"],
          why=_R267_WHY + "267-1-1/259-2-8 ออกลิงก์ผ่าน EnsureCustomerLinkAsync เท่านั้น · ออกใหม่แทนลิงก์ที่เพิกถอนเฉพาะคำสั่งของคน"),
-    dict(file=_R239_PUB, method="FindByTokenAsync",
+    dict(file=_R267_RESP, method="FindByTokenAsync",
          must=["CustomerDocPage.LegacyStored(", "DocumentPayLinkPolicy.TokenHash(", "ViaPageToken(", "PageLinkLive("],
          must_re=[r"d\.QuotationAcceptToken\s*==\s*legacyKey", r"d\.PayLinkRevokedAt\s*==\s*null"],
          forbid=["d.QuotationAcceptToken == token"],
          why=_R267_WHY + "267-1-3 ฐานไม่เก็บ token ดิบ: ค้นด้วย hash (ลิงก์รุ่นก่อน) หรือ token ของหน้าเอกสารที่ยังใช้ได้/ไม่ถูกเพิกถอน"),
-    dict(file=_R239_PUB, method="FindDeliveryByTokenAsync",
+    dict(file=_R267_RESP, method="FindDeliveryByTokenAsync",
          must=["CustomerDocPage.LegacyStored(", "DocumentPayLinkPolicy.TokenHash(", "ViaPageToken(", "PageLinkLive("],
          must_re=[r"d\.DeliverySignToken\s*==\s*legacyKey", r"d\.PayLinkRevokedAt\s*==\s*null",
                   r"DeliverySignTokenExpiresAt\s+is\s*\{\s*\}\s*exp\s*&&\s*exp\s*<\s*DateTime\.UtcNow\s*\)\s*return\s+null"],
          forbid=["d.DeliverySignToken == token"],
          why=_R267_WHY + "267-1-3 เซ็นรับสินค้า: ค้นด้วย hash เหมือนใบเสนอราคา · ลิงก์รุ่นก่อนยังหมดอายุตามเดิม"),
-    dict(file=_R239_PUB, method="PageLinkLive",
+    dict(file=_R267_RESP, method="PageLinkLive",
          must=["DocumentPayLinkPolicy.TokenMatches(", "DocumentPayLinkPolicy.LinkUsable(", "DocumentStatusRules.IsIssued("],
          why=_R267_WHY + "token ของหน้าเอกสารบนหน้าตอบรับเดิม: ยืนยันเวลาคงที่ + ไม่เพิกถอน/ไม่หมดอายุ + ใบออกเลขแล้ว"),
-    dict(file=_R239_PUB, method="Accept",
+    dict(file=_R267_RESP, method="Accept",
          must=["ViaPageToken(", "RespondClosedReason("], must_re=[r"d\.PayLinkTokenHash\s*==\s*pageHash\s*&&\s*d\.PayLinkRevokedAt\s*==\s*null"],
          before=[("RespondClosedReason(", "ExecuteUpdateAsync(")],
          why=_R267_WHY + "ยอมรับด้วย token ของหน้าเอกสาร: ช่วงตอบรับจากตัวตัดสินเดียวกับปุ่มบนหน้า · จองเฉพาะเมื่อลิงก์ยังไม่ถูกเพิกถอน ณ ตอนจอง"),
-    dict(file=_R239_PUB, method="SignDelivery",
+    dict(file=_R267_RESP, method="SignDelivery",
          must=["ViaPageToken(", "RespondClosedReason("], must_re=[r"d\.PayLinkTokenHash\s*==\s*pageHash\s*&&\s*d\.PayLinkRevokedAt\s*==\s*null"],
          before=[("RespondClosedReason(", "ExecuteUpdateAsync(")],
          why=_R267_WHY + "เซ็นรับด้วย token ของหน้าเอกสาร: ช่วงเซ็นรับ + ลิงก์ไม่ถูกเพิกถอน ณ ตอนจอง"),
-    dict(file=_R239_PUB, method="RespondClosedReason", must=["CustomerDocPage.RespondWindowClosedReason("],
+    dict(file=_R267_RESP, method="RespondClosedReason", must=["CustomerDocPage.RespondWindowClosedReason("],
          why=_R267_WHY + "ช่วงตอบรับของหน้าตอบรับเดิม = ตัวตัดสินเดียวกับปุ่มบนหน้าเอกสาร (ไม่มีสูตรที่สอง)"),
     dict(file="Helpers/GatewayWebhookRoute.cs", method="RedactPath", must=["CustomerDocPage.RedactPath("],
          why=_R267_WHY + "log ของทุก middleware ปิดบัง token ของหน้าเอกสาร/หน้าตอบรับเดิม (จุดเรียกเดียว)"),
@@ -19695,15 +19697,15 @@ _R267F_WHY = "รอบ 267 P1 ชุดแก้ฝ่ายค้าน (267-1
 RULES += [
     dict(file=DOC, method="UpdateDocumentAsync", must=["SignRequestKinds.CloseRespondOnRevision("],
          why=_R267F_WHY + "H1 ออก Rev ใหม่ปิดช่วงตอบรับที่ตัวตั้งเดียว (token ของหน้าเอกสารไม่ถูกล้างตอนออก Rev)"),
-    dict(file=_R239_PUB, method="Accept",
+    dict(file=_R267_RESP, method="Accept",
          must=["CustomerDocPage.RespondStaleReason("], must_re=[r"seenRevision\s*==\s*null\s*\|\|\s*d\.RevisionNumber\s*==\s*seenRevision"],
          before=[("CustomerDocPage.RespondStaleReason(", "ExecuteUpdateAsync("), ("CustomerDocPage.RespondStaleReason(", "SignatureStore.WriteAsync(")],
          why=_R267F_WHY + "H1 ยอมรับได้เฉพาะฉบับที่ลูกค้าเห็น: ตรวจเลข Rev/hash ก่อนเขียนอะไร + เลข Rev ในเงื่อนไขจอง"),
-    dict(file=_R239_PUB, method="SignDelivery",
+    dict(file=_R267_RESP, method="SignDelivery",
          must=["CustomerDocPage.RespondStaleReason("], must_re=[r"seenRevision\s*==\s*null\s*\|\|\s*d\.RevisionNumber\s*==\s*seenRevision"],
          before=[("CustomerDocPage.RespondStaleReason(", "ExecuteUpdateAsync(")],
          why=_R267F_WHY + "H1 เซ็นรับได้เฉพาะฉบับที่ลูกค้าเห็น"),
-    dict(file=_R239_PUB, method="RespondClosedReason", must_re=[r"viaPage\s*\?\s*doc\.SignLinkIssuedAt\s*:"], forbid=["doc.PayLinkIssuedAt"],
+    dict(file=_R267_RESP, method="RespondClosedReason", must_re=[r"viaPage\s*\?\s*doc\.SignLinkIssuedAt\s*:"], forbid=["doc.PayLinkIssuedAt"],
          why=_R267F_WHY + "M1 token ของหน้าเอกสารตอบรับได้เมื่อผู้ขายส่งให้ตอบรับแล้วเท่านั้น (ไม่ถอยไปใช้วันออกลิงก์)"),
     dict(file=_R267_PAGE, method="BuildPageAsync",
          must_re=[r"mode\s*==\s*CustomerDocPage\.Mode\.Link\s*&&\s*!payOnly", r"d\.DueDate\s*,\s*row\.SignLinkIssuedAt\s*,"], forbid=["row.PayLinkIssuedAt"],
@@ -19809,6 +19811,119 @@ REVIEWER_CASES += [
     ("R267i", "RecordLinkRequestAsync", "new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.DocumentLinkRequest, entityId) }", "new object[] { 1L }", True),
     # M8: คีย์ API ออกลิงก์แบบคนกด ⇒ ต้องฟ้อง
     ("R267j", "SignLink", "req.CallbackRef, StaffIntent: false)", "req.CallbackRef)", True),
+]
+
+
+# ── รอบ 267 แพ็ก P2 (R267b): ผู้ลงนาม + บัญชีหลักฐาน + ฉบับที่ลูกค้าเซ็น (คำตัดสิน 267-1-4…6 · 267-1-11 · 267-1-33… · DOCUMENT_FLOW §2.12n-P2) ──
+# ทุกทางตอบรับของลูกค้าผ่าน CustomerDocumentResponseService ตัวเดียว · แถวหลักฐาน + audit chain + outbox ในธุรกรรมเดียวกับการจองภาพฉายบนใบ ·
+# controller ไม่มีตรรกะ · ฉบับที่ลงนามสร้างได้เฉพาะเมื่อเนื้อหายังเป็นฉบับที่ลงนาม และส่งออกเฉพาะเมื่อ SHA-256 ตรง · สอง renderer พิมพ์ผู้ลงนามผ่านตัวเดียว
+_R267B_WHY = "รอบ 267 P2 (R267b · 267-1-4…6/11/33…): "
+_R267B_PDF = "Services/Implementations/PdfGenerationService.cs"
+RULES += [
+    dict(file=_R267_RESP, method="Accept",
+         must=["CustomerSignRule.DecideSigner(", "PageActionClosedReason(", "CustomerSignRule.OtpRequired(", "_db.CustomerDocumentActions.Add(", "EnsureRopaAsync("],
+         must_re=[r"!viaPage\s*\|\|\s*d\.CustomerResponse\s*==\s*null"],
+         before=[("PageActionClosedReason(", "ExecuteUpdateAsync("), ("ExecuteUpdateAsync(", "_db.CustomerDocumentActions.Add("),
+                 ("_db.CustomerDocumentActions.Add(", "tx.CommitAsync(")],
+         why=_R267B_WHY + "ยอมรับผ่านลิงก์หน้าเอกสาร: ผู้ลงนามครบ + ปุ่มต้องเปิดตามตัวตัดสินของหน้า + หนึ่งคำตอบต่อ Rev + แถวหลักฐานในธุรกรรมเดียวกับการจอง"),
+    dict(file=_R267_RESP, method="SignDelivery",
+         must=["CustomerSignRule.DecideSigner(", "PageActionClosedReason(", "_db.CustomerDocumentActions.Add(", "AddChainedAuditLog("],
+         before=[("PageActionClosedReason(", "ExecuteUpdateAsync("), ("ExecuteUpdateAsync(", "_db.CustomerDocumentActions.Add("),
+                 ("_db.CustomerDocumentActions.Add(", "tx.CommitAsync("), ("AddChainedAuditLog(", "tx.CommitAsync(")],
+         forbid=["_db.AuditLogs.Add("],
+         why=_R267B_WHY + "เซ็นรับผ่านลิงก์หน้าเอกสาร: ผู้รับของครบ + แถวหลักฐาน + audit chain ในธุรกรรมเดียวกับการจอง"),
+    dict(file=_R267_RESP, method="DeclineOrRequestChange",
+         must=["FindByTokenAsync(", "ViaPageToken(", "PageActionClosedReason(", "CustomerSignRule.DecideSigner(", "CustomerSignRule.DecideReason(",
+               "CustomerDocPage.RespondStaleReason(", "ExecuteUpdateAsync(", "_db.CustomerDocumentActions.Add(", "AddChainedAuditLog(",
+               "SignEventOutbox.EnqueueEvent(", "tx.CommitAsync("],
+         must_re=[r"d\.QuotationAcceptedAt\s*==\s*null\s*&&\s*d\.CustomerResponse\s*==\s*null", r"d\.RevisionNumber\s*==\s*seenRevision",
+                  r"d\.PayLinkTokenHash\s*==\s*pageHash\s*&&\s*d\.PayLinkRevokedAt\s*==\s*null"],
+         before=[("PageActionClosedReason(", "ExecuteUpdateAsync("), ("CustomerDocPage.RespondStaleReason(", "ExecuteUpdateAsync("),
+                 ("ExecuteUpdateAsync(", "_db.CustomerDocumentActions.Add("), ("AddChainedAuditLog(", "tx.CommitAsync("),
+                 ("SignEventOutbox.EnqueueEvent(", "tx.CommitAsync(")],
+         forbid=["_db.AuditLogs.Add(", "TriggerAsync(", "CreateClient("],
+         why=_R267B_WHY + "ไม่รับ/ขอแก้: เฉพาะลิงก์หน้าเอกสาร · ปุ่มต้องเปิด · ฉบับที่เห็น · จองแบบอะตอมมิก (ยังไม่ยอมรับ + ยังไม่เคยตอบ + Rev + ลิงก์ไม่ถูกเพิกถอน) + หลักฐาน/audit/outbox ธุรกรรมเดียว"),
+    dict(file=_R267_RESP, method="PageActionClosedReason",
+         must=["CustomerDocPage.Actions(", "CustomerDocPage.IsPayOnlyLink(", "doc.CustomerResponse", "doc.SignLinkIssuedAt"],
+         why=_R267B_WHY + "ตัวเขียนรับคำตอบเฉพาะเมื่อปุ่มนั้นเปิดอยู่ตามตัวตัดสินเดียวของหน้า (ลิงก์ชำระรุ่นก่อน · ตอบไปแล้ว · ยังไม่เปิดให้ตอบรับ = ปิด)"),
+    dict(file=_R267_RESP, method="RespondAsync", must=["CustomerSignRule.KindFor(", "DocumentPayLinkPolicy.LooksValid("],
+         must_re=[r"d\.CompanyId\s*==\s*companyId\s*&&\s*d\.PayLinkTokenHash\s*==\s*hash"],
+         why=_R267B_WHY + "เส้นเดียวของหน้าเอกสาร: token ต้องเป็นของบริษัทใน URL (tenant) · ชนิดคำตอบจากตัวตัดสินเดียว"),
+    dict(file=_R267_RESP, method="EnsureSnapshotAsync",
+         must=["CustomerSignRule.SnapshotStillValid(", "CustomerSignRule.FileSha256(", "CustomerSignRule.SignedCopyLocation(", "AddChainedAuditLog(",
+               "x.SignedPdfSha256 == null", "x.CompanyId == companyId"],
+         before=[("CustomerSignRule.SnapshotStillValid(", "GenerateDocumentPdfAsync("), ("ExecuteUpdateAsync(", "SignatureStore.WriteAsync(")],
+         why=_R267B_WHY + "ฉบับที่ลูกค้าเซ็น: สร้างเฉพาะเมื่อ Rev/เนื้อหายังเป็นฉบับที่ลงนาม · เติมครั้งเดียว (ยังว่างเท่านั้น) · SHA-256 + audit chain"),
+    dict(file=_R267_RESP, method="ReadSignedCopyAsync",
+         must=["CustomerSignRule.IsOwnSignedCopyLocation(", "CustomerSignRule.SignedCopyIntact(", "x.CompanyId == companyId", "x.DocumentId == documentId", "LogError("],
+         before=[("CustomerSignRule.IsOwnSignedCopyLocation(", "ReadAllBytesAsync(")],
+         why=_R267B_WHY + "ส่งไฟล์ฉบับที่ลงนามออกเฉพาะไฟล์ของบริษัท/เอกสาร/แถวนั้น และ SHA-256 ตรงกับที่บันทึก (ไม่ตรง = ไม่ส่ง + log error)"),
+    dict(file=_R267_RESP, method="SignedCopyForTokenAsync",
+         must=["DocumentPayLinkPolicy.TokenMatches(", "CustomerDocPage.StateOf(", "x.CompanyId == companyId", "ReadSignedCopyAsync("],
+         before=[("DocumentPayLinkPolicy.TokenMatches(", "ReadSignedCopyAsync(")],
+         why=_R267B_WHY + "ผู้ถือลิงก์ดาวน์โหลดฉบับที่ลงนามได้เฉพาะของใบของ token นั้น (ลิงก์ต้องยังใช้ได้)"),
+    dict(file=_R267_RESP, method="RequestOtpAsync",
+         must=["OverRateAsync(", "FindByTokenAsync(", "PageActionClosedReason(", "CustomerSignRule.OtpRequired(", "CustomerSignRule.OtpHash(", "IsSystemEmailConfiguredAsync("],
+         before=[("PageActionClosedReason(", "CustomerSignRule.NewOtpCode("), ("CustomerSignRule.OtpRequired(", "CustomerSignRule.NewOtpCode(")],
+         why=_R267B_WHY + "267-1-6 รหัสยืนยันอีเมล: ออกเฉพาะใบที่ปุ่มยอมรับเปิดและบริษัทตั้งเกณฑ์ · เก็บ hash · ส่งไม่ได้ = บอกตรง ๆ"),
+    dict(file=_R239_PUB, method="Accept", must=["_responses.Accept("], forbid=["ExecuteUpdateAsync(", "_db.", "AddChainedAuditLog("],
+         why=_R267B_WHY + "controller ของลิงก์รุ่นก่อนไม่มีตรรกะ — ผู้เขียนเดียวคือ service"),
+    dict(file=_R239_PUB, method="SignDelivery", must=["_responses.SignDelivery("], forbid=["ExecuteUpdateAsync(", "_db.", "AddChainedAuditLog("],
+         why=_R267B_WHY + "controller ของลิงก์รุ่นก่อนไม่มีตรรกะ — ผู้เขียนเดียวคือ service"),
+    dict(file=_R267_CTL, method="Respond", must=["OverIpAsync(", "_responses.RespondAsync("], forbid=["ExecuteUpdateAsync(", "AddChainedAuditLog("],
+         before=[("OverIpAsync(", "_responses.RespondAsync(")],
+         why=_R267B_WHY + "เส้นตอบรับของหน้าเอกสาร: เพดานต่อ IP ก่อนแตะฐาน · ผู้เขียนเดียวคือ service"),
+    dict(file=_R267_CTL, method="SignedCopy", must=["_responses.SignedCopyForTokenAsync(", "LogPdfAccessAsync("],
+         before=[("_responses.SignedCopyForTokenAsync(", "LogPdfAccessAsync(")],
+         why=_R267B_WHY + "ดาวน์โหลดฉบับที่ลงนามทางลิงก์สาธารณะลงบันทึกการเข้าถึง (PDPA ม.37)"),
+    dict(file=_R267_PAGE, method="BuildPageAsync", must=["CustomerDocPage.RespondPath(", "CustomerResponse: row.CustomerResponse", "_responses!.FormAsync("],
+         why=_R267B_WHY + "หน้าเอกสาร: ปุ่มตอบรับชี้เส้นเดียว · คำตอบเดิมของลูกค้าเข้าตัวตัดสินปุ่ม · ฟอร์มผู้ลงนามจากเซิร์ฟเวอร์"),
+    dict(file=_R267B_PDF, method="ResolveSignersAsync", must=["CustomerEvidenceAsync("],
+         why=_R267B_WHY + "กระดาษ: ผู้ลงนามของลูกค้า (ตำแหน่ง/ในนาม/รหัสอ้างอิง) จากแถวหลักฐานผ่านตัวตั้งเดียวของสอง renderer"),
+    dict(file=_R267B_PDF, method="CustomerEvidenceAsync", must=["a.CompanyId == doc.CompanyId", "a.RevisionNumber == doc.RevisionNumber", "a.ErasedAt == null"],
+         why=_R267B_WHY + "แถวหลักฐานที่พิมพ์ = ของบริษัท/ใบ/Rev ปัจจุบัน และยังไม่ถูกลบตามคำขอ"),
+    dict(file=_R267B_PDF, method="CustomerSignerLines", must=["L.SignerPosition(", "L.SignedOnBehalfOf(", "L.SignedOnlineEvidenceRef(", "L.DnSignedOnline("],
+         forbid=[".Ip"],
+         why=_R267B_WHY + "267-1-17 บรรทัดผู้ลงนามบนกระดาษ: ป้ายจาก DocumentLabels เท่านั้น · ไม่พิมพ์ IP"),
+    dict(file="Services/Implementations/PdfGenerationService.Stamp.cs", method="QuotationAcceptanceBlockHtml", must=["CustomerSignerLines("],
+         must_lit=["WebUtility.HtmlEncode(signerLine)"],
+         why=_R267B_WHY + "renderer HTML พิมพ์ผู้ลงนามผ่านตัวเดียวกับ QuestPDF + HtmlEncode ทุกบรรทัด (ชื่อ/ตำแหน่งมาจากคนนอก)"),
+    dict(file="Services/Implementations/PdfGenerationService.DocumentRenderer.cs", method="ComposeQuotationAcceptanceBlock", must=["CustomerSignerLines("],
+         why=_R267B_WHY + "renderer QuestPDF พิมพ์ผู้ลงนามผ่านตัวเดียวกับ HTML (กฎ #4 A)"),
+    dict(file="Services/Implementations/PdfGenerationService.DocumentRenderer.cs", method="ComposeSignatures", must=["CustomerSignerLines("],
+         why=_R267B_WHY + "ช่องลายเซ็น QuestPDF พิมพ์บรรทัดผู้ลงนามของลูกค้า (คู่กับ HTML Box)"),
+    dict(file="Services/Implementations/SignEventDispatcher.cs", method="ProcessOneAsync",
+         must=["_responses.ProcessSignedCopyAsync(", "NotifySignedCopyFailedAsync(", "row.SignedCopyDoneAt"],
+         why=_R267B_WHY + "งาน outbox สร้าง/ส่งฉบับที่ลงนาม ลองใหม่ได้ · เลิกลอง = แจ้งพนักงาน (ล้มดัง)"),
+    dict(file="Services/Implementations/Pdpa/PdpaService.cs", method="ApplyErasureAsync",
+         must=["QuotationAcceptance.EraseEvidencePii(", "_db.CustomerDocumentActions"],
+         must_re=[r"!\s*Accounting\.Helpers\.QuotationAcceptance\.UnderLegalHold\(\s*ed\.DocumentDate\s*,\s*ed\.RetentionUntil\s*,\s*nowUtc\s*\)"],
+         why=_R267B_WHY + "DSR erase: แถวหลักฐานของใบที่ยังอยู่ในอายุเก็บคงไว้ (legal hold) · พ้นแล้วล้างด้วยตัวล้างเดียว"),
+    dict(file="Helpers/SignRequestKinds.cs", method="CloseRespondOnRevision", must_re=[r"d\.CustomerResponse\s*=\s*null"],
+         why=_R267B_WHY + "267-1-11 ออก Rev ใหม่ = คำตอบของ Rev เดิมไม่ผูก Rev ใหม่"),
+    dict(file="Helpers/SignRequestKinds.cs", method="MarkIssued", must_re=[r"d\.CustomerResponse\s*!=\s*nameof\(CustomerSignRule\.Kind\.Accepted\)"],
+         why=_R267B_WHY + "ส่งให้ตอบรับใหม่เปิดเฉพาะคำตอบที่ไม่ใช่ 'ยอมรับ' (ยอมรับแล้วล้างได้ด้วยการออก Rev ใหม่เท่านั้น)"),
+]
+REVIEWER_CASES += [
+    # ไม่รับ/ขอแก้ทับคำตอบเดิม (ถอดเงื่อนไข "ยังไม่เคยตอบ") ⇒ ต้องฟ้อง
+    ("R267b-a", "DeclineOrRequestChange", "&& d.QuotationAcceptedAt == null && d.CustomerResponse == null", "&& d.QuotationAcceptedAt == null", True),
+    # ยอมรับโดยไม่ลงแถวหลักฐาน ⇒ ต้องฟ้อง
+    ("R267b-b", "Accept", "                _db.CustomerDocumentActions.Add(evidence);\n", "", True),
+    # สร้างฉบับที่ลงนามจากเนื้อหาที่ถูกแก้หลังลงนาม ⇒ ต้องฟ้อง
+    ("R267b-c", "EnsureSnapshotAsync",
+     "if (!CustomerSignRule.SnapshotStillValid(a.RevisionNumber, a.ContentHash, doc.RevisionNumber, DocumentSignedContent.Hash(doc, doc.Lines)))",
+     "if (doc.RevisionNumber < 0)", True),
+    # ส่งไฟล์ฉบับที่ลงนามออกโดยไม่ตรวจ SHA-256 ⇒ ต้องฟ้อง
+    ("R267b-d", "ReadSignedCopyAsync", "if (!CustomerSignRule.SignedCopyIntact(bytes, a.SignedPdfSha256))", "if (bytes == null)", True),
+    # ตัวเขียนไม่ถามตัวตัดสินปุ่มของหน้า (ลิงก์ชำระรุ่นก่อน/ตอบแล้ว ก็ยอมรับได้) ⇒ ต้องฟ้อง
+    ("R267b-e", "Accept", "if (viaPage && PageActionClosedReason(doc, CustomerDocPage.ActionAccept, en) is { } pageClosed)", "if (viaPage && ((string?)null) is { } pageClosed)", True),
+    # controller กลับมาเขียนเอง ⇒ ต้องฟ้อง
+    ("R267b-f", "Respond", "return FromOutcome(await _responses.RespondAsync(companyId, token, request, Caller()));",
+     "return FromOutcome(new(200, null, null));", True),
+    # renderer HTML พิมพ์ชื่อผู้ลงนามโดยไม่ encode ⇒ ต้องฟ้อง
+    ("R267b-g", "QuotationAcceptanceBlockHtml", "sb.Append($\"<div>{WebUtility.HtmlEncode(signerLine)}</div>\");", "sb.Append($\"<div>{signerLine}</div>\");", True),
+    # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อนเรียกตัวตัดสินปุ่ม ⇒ ต้องไม่ฟ้อง
+    ("R267b-h", "PageActionClosedReason", "var actions = CustomerDocPage.Actions(", "var actions =\n            CustomerDocPage.Actions(", False),
 ]
 
 

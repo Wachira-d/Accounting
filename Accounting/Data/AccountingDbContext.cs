@@ -25,6 +25,8 @@ public class AccountingDbContext : DbContext
     public DbSet<CustomerNotifyRule> CustomerNotifyRules => Set<CustomerNotifyRule>();   // รอบ 212 แพ็ก A
     public DbSet<CustomerNotifyLog> CustomerNotifyLogs => Set<CustomerNotifyLog>();   // รอบ 212 แพ็ก A
     public DbSet<PostPaymentAutomationRun> PostPaymentAutomationRuns => Set<PostPaymentAutomationRun>();   // รอบ 241 — งานหลังรับชำระ (Helpers/DocumentAutoSendMigration)
+    public DbSet<CustomerDocumentAction> CustomerDocumentActions => Set<CustomerDocumentAction>();   // รอบ 267 P2 — บัญชีหลักฐานการตอบรับของลูกค้า (append-only · Helpers/CustomerSignMigration)
+    public DbSet<CustomerSignOtp> CustomerSignOtps => Set<CustomerSignOtp>();   // รอบ 267 P2 (267-1-6) — รหัสยืนยันอีเมลก่อนยอมรับ
     public DbSet<SignEventOutboxEntry> SignEventOutbox => Set<SignEventOutboxEntry>();   // รอบ 240 — outbox เหตุการณ์ลูกค้าเซ็น (ตาราง/index ตรงกับ Helpers/SignRequestMigration)
     public DbSet<DeferredNotification> DeferredNotifications => Set<DeferredNotification>();   // รอบ 217 — แจ้งเตือนตามหลัง (Helpers/DeferredNotifyPolicy)
     public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
@@ -3944,6 +3946,41 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => new { x.CompanyId, x.EventKey }).IsUnique().HasDatabaseName("UX_SignEventOutbox_Company_Key");
             e.HasIndex(x => new { x.Status, x.NextAttemptAt }).HasDatabaseName("IX_SignEventOutbox_Status_Next");
             e.HasIndex(x => new { x.CompanyId, x.DocumentId }).HasDatabaseName("IX_SignEventOutbox_Company_Doc");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 267 P2 — บัญชีหลักฐานการตอบรับของลูกค้า + รหัสยืนยันอีเมล (ตรงกับ Helpers/CustomerSignMigration)
+        modelBuilder.Entity<CustomerDocumentAction>(e =>
+        {
+            e.ToTable("CustomerDocumentActions");
+            e.Property(x => x.Action).HasMaxLength(30);
+            e.Property(x => x.Channel).HasMaxLength(20);
+            e.Property(x => x.IdentityLevel).HasMaxLength(20);
+            e.Property(x => x.SignerFirstName).HasMaxLength(200);
+            e.Property(x => x.SignerLastName).HasMaxLength(100);
+            e.Property(x => x.SignerTitle).HasMaxLength(100);
+            e.Property(x => x.SignerOrgName).HasMaxLength(300);
+            e.Property(x => x.SignerEmail).HasMaxLength(254);
+            e.Property(x => x.AttestationVersion).HasMaxLength(40);
+            e.Property(x => x.AttestationTextHash).HasMaxLength(64);
+            e.Property(x => x.SignatureFilePath).HasMaxLength(500);
+            e.Property(x => x.SignatureSha256).HasMaxLength(64);
+            e.Property(x => x.ReasonCode).HasMaxLength(40);
+            e.Property(x => x.Message).HasMaxLength(1000);
+            e.Property(x => x.ContentHash).HasMaxLength(80);
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.Property(x => x.Ip).HasMaxLength(64);
+            e.Property(x => x.UserAgentHash).HasMaxLength(64);
+            e.Property(x => x.SignedPdfPath).HasMaxLength(500);
+            e.Property(x => x.SignedPdfSha256).HasMaxLength(64);
+            e.HasIndex(x => new { x.CompanyId, x.DocumentId, x.CreatedAt }).HasDatabaseName("IX_CustomerDocumentActions_Company_Doc");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<CustomerSignOtp>(e =>
+        {
+            e.ToTable("CustomerSignOtps");
+            e.Property(x => x.EmailHash).HasMaxLength(64);
+            e.Property(x => x.CodeHash).HasMaxLength(64);
+            e.HasIndex(x => new { x.CompanyId, x.DocumentId, x.CreatedAt }).HasDatabaseName("IX_CustomerSignOtps_Company_Doc");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 241 — งานหลังรับชำระ + ลิงก์ชำระเงินต่อเอกสาร (ตรงกับ Helpers/DocumentAutoSendMigration)

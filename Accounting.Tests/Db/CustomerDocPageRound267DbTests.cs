@@ -112,6 +112,10 @@ public class CustomerDocPageRound267DbTests
         };
     }
 
+    /// <summary>รอบ 267 P2: ผู้ลงนามครบ (ชื่อ · นามสกุล · ตำแหน่ง · ติ๊กรับรองข้อความรุ่นปัจจุบัน) — ลิงก์หน้าเอกสารบังคับ</summary>
+    private static CustomerSignRule.SignerInput Sg(string first = "คุณสมหญิง", string last = "ผู้จัดการ")
+        => new(first, last, "ผู้จัดการฝ่ายจัดซื้อ", true, CustomerSignText.Version);
+
     private static CustomerDocPage.PageAction? Act(CustomerDocPageView page, string id) => page.Actions.FirstOrDefault(a => a.Id == id);
 
     // ───────── S1: ลิงก์ชำระเดิม ⇒ หน้าเอกสารเต็ม + ช่องจ่ายเดิม ─────────
@@ -235,7 +239,7 @@ public class CustomerDocPageRound267DbTests
         await OpenForResponseAsync(db, qt.Id);
         var accept = Act((await s.Links.PublicViewAsync(s.CompanyId, a.Token!))!.Page!, CustomerDocPage.ActionAccept)!;
         Assert.True(accept.Enabled, accept.DisabledReason);
-        Assert.Equal("/pages/quotation-accept.html?token=" + a.Token, accept.Href);
+        Assert.Equal(CustomerDocPage.RespondPath(s.CompanyId, a.Token!), accept.Href);   // รอบ 267 P2: ปุ่มส่งคำตอบที่เส้นเดียวของหน้า (ฟอร์มผู้ลงนามอยู่บนหน้าเอกสาร)
 
         // ใบร่าง/ฝั่งซื้อ ⇒ ออกไม่ได้พร้อมเหตุ (ไม่โยน)
         var draft = await AddDocAsync(db, s, DocumentType.Quotation, "QD", DocumentStatus.Draft);
@@ -343,7 +347,7 @@ public class CustomerDocPageRound267DbTests
         var seenHash = SeenContentHash(await LegacyPage(db).View(link.Token!));   // สิ่งที่หน้ายอมรับได้จากเซิร์ฟเวอร์และส่งกลับตอนกด
         db.ChangeTracker.Clear();
         Assert.IsType<OkObjectResult>(await LegacyPage(db).Accept(link.Token!,
-            new PublicQuotationController.AcceptRequest("คุณสมหญิง ผู้จัดการ", RevisionNumber: 1, ContentHash: seenHash)));
+            new PublicQuotationController.AcceptRequest("", RevisionNumber: 1, ContentHash: seenHash, Signer: Sg())));
         var row = await db.Documents.AsNoTracking().SingleAsync(d => d.Id == qt.Id);
         Assert.NotNull(row.QuotationAcceptedAt);
         Assert.Equal("คุณสมหญิง ผู้จัดการ", row.QuotationAcceptedBy);
@@ -413,7 +417,7 @@ public class CustomerDocPageRound267DbTests
         Assert.Equal(0m, page.TotalAmount);
         var sign = Act(page, CustomerDocPage.ActionSignDelivery)!;
         Assert.True(sign.Enabled, sign.DisabledReason);
-        Assert.Equal("/pages/delivery-sign.html?token=" + link.Token, sign.Href);
+        Assert.Equal(CustomerDocPage.RespondPath(s.CompanyId, link.Token!), sign.Href);
 
         db.ChangeTracker.Clear();
         var sig = QuotationAcceptanceRound239Tests.DataUri(QuotationAcceptanceRound239Tests.DrawnSignature());
@@ -429,7 +433,7 @@ public class CustomerDocPageRound267DbTests
         Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == dn.Id).Select(d => d.DeliverySignedAt).SingleAsync());
         // ทิศตรงข้าม: Rev ที่เห็นตรงกับใบ ⇒ เซ็นรับได้
         Assert.IsType<OkObjectResult>(await LegacyPage(db).SignDelivery(link.Token!,
-            new PublicQuotationController.DeliverySignRequest("ผู้รับของ", sig, RevisionNumber: 2)));
+            new PublicQuotationController.DeliverySignRequest("", sig, RevisionNumber: 2, Signer: Sg("สมศักดิ์", "รับของ"))));
         db.ChangeTracker.Clear();
         Assert.NotNull(await db.Documents.AsNoTracking().Where(d => d.Id == dn.Id).Select(d => d.DeliverySignedAt).SingleAsync());
         // พ้น 14 วัน ⇒ ปฏิเสธ
