@@ -409,6 +409,8 @@ public static class SettlementPaidReissue
         nameof(Document.CustomerResponse), nameof(Document.CustomerResponseAt),
         // รอบ 266 แพ็ก B: ช่องชั่วคราวของ renderer (NotMapped · เติมตอนพิมพ์จาก ReplacesDocumentId) — ไม่ใช่ค่าที่คัดลอก
         nameof(Document.ReplacementOfNumber), nameof(Document.ReplacementOfDate),
+        // รอบ 267 P4 (design §8 ข้อ 1): ค่าตั้งหลังรับชำระต่อใบ = เจตนาของใบนั้น "ไม่สืบทอด" ไปใบลูก/โคลน/ใบแทน
+        nameof(Document.PostPayEmailReceipt), nameof(Document.PostPayIncludePartial),
         // รอบ 240: ลิงก์ให้ลูกค้าเซ็น (webhook ต่อเอกสาร · สถานะส่ง/เปิด/เตือน) เป็นของใบเดิม — ใบแทนต้องออกลิงก์/ตั้ง callback ใหม่
         nameof(Document.SignCallbackUrl), nameof(Document.SignCallbackRef), nameof(Document.SignLinkIssuedAt),
         nameof(Document.SignLinkEmailedAt), nameof(Document.SignLinkEmailedTo), nameof(Document.SignLinkOpenedAt),
