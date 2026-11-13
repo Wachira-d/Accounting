@@ -93,6 +93,74 @@ public class Round268Tests
         Assert.DoesNotContain("1,070.00", LineChatSlipRule.Replies.LinkedByStaff("INV-268", 1_070m, showAmounts: false));
         Assert.All(new[] { LineChatSlipRule.LinkedNotice.Sent, LineChatSlipRule.LinkedNotice.CrossContact, LineChatSlipRule.LinkedNotice.Unbound,
             LineChatSlipRule.LinkedNotice.NoLine, LineChatSlipRule.LinkedNotice.Failed("x") }, t => Assert.False(string.IsNullOrWhiteSpace(t)));
-        Assert.Equal("ผู้ผูกถูกนำออกจากบริษัทผู้เช่า", NotifyEndpointKind.UnlinkReasonLabel(NotifyEndpointKind.UnlinkMemberRemoved));
+    }
+
+    // ═══ ชุดแก้ฝ่ายค้าน (268-1-7…14) ═══
+
+    [Fact]
+    public void M3_รู้ช่องทางเฉพาะเมื่อมีบัญชีหรือพนักงานบันทึกเงินสดเอง_สลิปหรือเงินออนไลน์ที่ไม่มีบัญชี_ไม่รู้()
+    {
+        Assert.True(BookingDepositInstalmentChannel.ChannelKnown(null, A, fromOnlinePayment: false, isSlipMoney: true));
+        Assert.True(BookingDepositInstalmentChannel.ChannelKnown(Gw, null, true, false));
+        Assert.True(BookingDepositInstalmentChannel.ChannelKnown(null, null, fromOnlinePayment: false, isSlipMoney: false));   // พนักงานรับเงินสดเอง
+        Assert.False(BookingDepositInstalmentChannel.ChannelKnown(null, null, fromOnlinePayment: false, isSlipMoney: true));
+        Assert.False(BookingDepositInstalmentChannel.ChannelKnown(null, null, fromOnlinePayment: true, isSlipMoney: false));
+    }
+
+    [Fact]
+    public void M5_JE_ย้ายเงินลงวันที่เงินงวดนั้นเข้าเมื่องวดเปิด_ทิศตรงข้าม_งวดปิดลงวันที่ใบพร้อมบอกวันเข้าจริง()
+    {
+        var paid = new DateTime(2026, 1, 28, 3, 0, 0, DateTimeKind.Utc);
+        var doc = new DateTime(2026, 2, 3, 3, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(paid, BookingDepositInstalmentChannel.EntryDate(paid, doc, paidPeriodOpen: true));
+        Assert.Equal(doc, BookingDepositInstalmentChannel.EntryDate(paid, doc, paidPeriodOpen: false));
+        Assert.Equal(doc, BookingDepositInstalmentChannel.EntryDate(null, doc, true));
+        Assert.Contains("เงินเข้าจริง 28/01/2026", BookingDepositInstalmentChannel.MovedNote("RD-1", 60m, "11220", paid, doc));
+        Assert.DoesNotContain("เงินเข้าจริง", BookingDepositInstalmentChannel.MovedNote("RD-1", 60m, "11220", paid, paid));
+    }
+
+    [Fact]
+    public void L5_ผูกภายใน30นาทีส่งเลย_นานกว่านั้นในชั่วโมงเงียบเลื่อน_นอกชั่วโมงเงียบส่งเลย()
+    {
+        var now = new DateTime(2026, 11, 13, 16, 0, 0, DateTimeKind.Utc);   // 23:00 เวลาไทย
+        Assert.Null(LineChatSlipRule.LinkedNoticeDeferUntil(now, now.AddMinutes(-20), true, 21, 8));
+        var until = LineChatSlipRule.LinkedNoticeDeferUntil(now, now.AddHours(-5), true, 21, 8);
+        Assert.Equal(new DateTime(2026, 11, 14, 1, 0, 0, DateTimeKind.Utc), until);    // 08:00 เวลาไทย
+        Assert.Null(LineChatSlipRule.LinkedNoticeDeferUntil(now, now.AddHours(-5), false, 21, 8));
+        Assert.Null(LineChatSlipRule.LinkedNoticeDeferUntil(now.AddHours(-10), now.AddHours(-15), true, 21, 8));   // 13:00 ไทย = นอกช่วง
+    }
+
+    [Fact]
+    public void L6_นับหน้า_PDF_ไม่นับ_Pages_เกินเพดานไม่ใช่สลิป()
+    {
+        var one = System.Text.Encoding.ASCII.GetBytes("%PDF-1.4 1 0 obj << /Type /Pages /Kids [2 0 R] >> 2 0 obj << /Type /Page >>");
+        var four = System.Text.Encoding.ASCII.GetBytes("%PDF-1.4 << /Type /Pages >> " + string.Concat(Enumerable.Repeat("<< /Type/Page /MediaBox [0 0 1 1] >> ", 4)));
+        Assert.Equal(1, LineChatSlipRule.PdfPageCount(one));
+        Assert.Equal(4, LineChatSlipRule.PdfPageCount(four));
+        Assert.True(LineChatSlipRule.PdfPageCount(four) > LineChatSlipRule.MaxPdfPages);
+    }
+
+    [Fact]
+    public void L1_ค่าธรรมเนียมกระจายตามสัดส่วน_รวมเท่าเดิม_ไม่มีค่าธรรมเนียมศูนย์ทุกแถว()
+    {
+        var split = PartnerPaymentNoticeRule.SplitFee(10m, new[] { 1_000m, 2_000m });
+        Assert.Equal(new[] { 3.33m, 6.67m }, split);
+        Assert.Equal(10m, split.Sum());
+        Assert.All(PartnerPaymentNoticeRule.SplitFee(0m, new[] { 1m, 2m }), x => Assert.Equal(0m, x));
+        Assert.Empty(PartnerPaymentNoticeRule.SplitFee(5m, Array.Empty<decimal>()));
+    }
+
+    [Fact]
+    public void M6_ป้ายไม่เลือก_ตามผลตัดสินจริง_ต้องเลือก_แนะนำ_ไม่เดา_ผู้ให้บริการ()
+    {
+        var must = new SlipReceivingAccount.Suggestion(null, null, SlipReceivingAccount.Origin.None, "x", RequiresChoice: true);
+        var shown = new SlipReceivingAccount.Suggestion(A, A, SlipReceivingAccount.Origin.ShownToCustomer, "x");
+        var none = new SlipReceivingAccount.Suggestion(null, null, SlipReceivingAccount.Origin.None, "x");
+        Assert.Contains("ต้องเลือก", SlipReceivingAccount.NoChoiceLabel(true, must, null));
+        Assert.Equal("ตามคำแนะนำ: กสิกร", SlipReceivingAccount.NoChoiceLabel(true, shown, "กสิกร"));
+        Assert.Contains("เงินสดตั้งต้น", SlipReceivingAccount.NoChoiceLabel(true, none, null));
+        Assert.Contains("ผู้ให้บริการ", SlipReceivingAccount.NoChoiceLabel(false, none, null));
+        Assert.Contains("ไม่ได้ยกเลิกเอง", ProviderCentralOa.MemberRemovedReviewMessage(1, 2));
+        Assert.Contains("เพิกถอนลิงก์", ProviderCentralOa.MemberRemovedReviewMessage(1, 0));
     }
 }

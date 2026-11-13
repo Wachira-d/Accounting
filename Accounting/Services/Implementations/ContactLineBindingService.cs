@@ -443,42 +443,44 @@ public class ContactLineBindingService : IContactLineBindingService
     }
 
     /// <summary>
-    /// รอบ 268 (คำตัดสิน 268-1-5 · backlog 262): ผู้ใช้ถูกนำออกจากบริษัทผู้เช่า ⇒ ปลายทาง LINE รับใบค่าบริการ (OA กลาง · ผู้ติดต่อของผู้เช่าในบริษัทผู้ให้บริการ)
-    /// <b>ที่ผู้ใช้คนนั้นสร้างคำเชิญผูก</b> (<c>BoundByUserId</c>) ถูกยกเลิก + ถอนความยินยอม + audit ในบริษัทผู้ให้บริการ — ตัวยกเลิกเดียว <see cref="NotifyEndpointKind.MarkUnlinked"/> ·
-    /// ปลายทางที่คนอื่นผูกไม่ถูกแตะ (ผู้ติดต่อ = บริษัทผู้เช่าเป็นเจ้าของปลายทาง · ผู้รับยินยอมเอง) · ไม่มีบริษัทผู้ให้บริการ/ผู้ติดต่อ ⇒ 0 ·
-    /// ผู้เรียก = <c>CompanyService.RemoveUserAsync</c> (ธุรกรรมเดียวกับการนำออก — ล้ม = ไม่นำออก)
+    /// รอบ 268 (คำตัดสิน 268-1-5 แก้โดย 268-1-9 · ฝ่ายค้าน M2): ผู้ใช้ถูกนำออกจากบริษัทผู้เช่า ⇒ (1) <b>เพิกถอนคำเชิญผูก LINE ศูนย์บิลที่ผู้ใช้คนนั้นสร้างและยังไม่ถูกใช้</b>
+    /// (ลิงก์ค้าง 7 วันผูกใหม่ไม่ได้อีก) (2) <b>แจ้งเจ้าของบริษัทผู้เช่า</b>ให้ตรวจปลายทาง LINE ที่ยังผูกอยู่ (กระดิ่ง + ลิงก์ศูนย์บิล) — <b>ไม่ยกเลิกปลายทางเอง</b>:
+    /// ระบบรู้แค่ "ผู้สร้างคำเชิญ" (<c>BoundByUserId</c>) ไม่รู้ว่า LINE เป็นของใคร (ตัดตามคีย์นี้ = รั่วทางหนึ่ง ตัดเกินอีกทาง) ⇒ คนตัดสินที่ศูนย์บิล ·
+    /// audit ในบริษัทผู้ให้บริการ · ผู้เรียก = <c>CompanyService.RemoveUserAsync</c> (ธุรกรรมเดียวกับการนำออก)
     /// </summary>
-    public static async Task<int> UnlinkBillingEndpointsBoundByAsync(AccountingDbContext db, Guid buyerCompanyId, Guid removedUserId, Guid? actorUserId,
-        CancellationToken ct = default)
+    /// <returns>(คำเชิญที่เพิกถอน, ปลายทางที่ยังผูกอยู่และให้ผู้เช่าตรวจ)</returns>
+    public static async Task<(int RevokedInvites, int EndpointsToReview)> OnTenantMemberRemovedAsync(AccountingDbContext db, Guid buyerCompanyId, Guid removedUserId,
+        Guid? actorUserId, CancellationToken ct = default)
     {
-        if (await PlatformInvoiceQueries.PlatformTenantIdAsync(db, ct) is not Guid providerId || providerId == buyerCompanyId) return 0;
+        if (await PlatformInvoiceQueries.PlatformTenantIdAsync(db, ct) is not Guid providerId || providerId == buyerCompanyId) return (0, 0);
         var contactIds = await PlatformInvoiceQueries.BuyerContactIdsAsync(db, providerId, buyerCompanyId, ct);
-        if (contactIds.Count == 0) return 0;
-        var rows = await db.ContactNotifyEndpoints
-            .Where(e => e.CompanyId == providerId && contactIds.Contains(e.ContactId) && e.OaScope == NotifyEndpointKind.ScopeNextAcc
-                && (e.Kind == NotifyEndpointKind.LineUser || e.Kind == NotifyEndpointKind.LineGroup) && e.BoundByUserId == removedUserId && e.UnlinkedAt == null && !e.IsDeleted)
-            .ToListAsync(ct);
+        if (contactIds.Count == 0) return (0, 0);
         var now = DateTime.UtcNow;
-        foreach (var ep in rows)
+        var revoked = await db.ContactLineInvites
+            .Where(i => i.CompanyId == providerId && contactIds.Contains(i.ContactId) && i.CreatedByUserId == removedUserId
+                && i.UsedAt == null && i.RevokedAt == null && i.ExpiresAt > now)
+            .ExecuteUpdateAsync(u => u.SetProperty(i => i.RevokedAt, (DateTime?)now), ct);
+        var live = await db.ContactNotifyEndpoints.AsNoTracking()
+            .CountAsync(e => e.CompanyId == providerId && contactIds.Contains(e.ContactId) && e.OaScope == NotifyEndpointKind.ScopeNextAcc
+                && (e.Kind == NotifyEndpointKind.LineUser || e.Kind == NotifyEndpointKind.LineGroup) && e.UnlinkedAt == null && !e.IsDeleted, ct);
+        if (revoked == 0 && live == 0) return (0, 0);
+        db.AddChainedAuditLog(new AuditLog
         {
-            await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
-                new object[] { AdvisoryLockKey.For(providerId, AdvisoryLockKey.ContactNotifyEndpoint, ep.ContactId.ToString()) }, ct);
-            var consentId = ep.ConsentRecordId;
-            NotifyEndpointKind.MarkUnlinked(ep, NotifyEndpointKind.UnlinkMemberRemoved, now);
-            if (consentId is Guid cid)
-                await db.PdpaConsentRecords.Where(c => c.Id == cid && c.CompanyId == providerId && c.WithdrawnAt == null)
-                    .ExecuteUpdateAsync(s => s.SetProperty(c => c.WithdrawnAt, (DateTime?)now).SetProperty(c => c.WithdrawnReason, NotifyEndpointKind.UnlinkMemberRemoved), ct);
-            db.AddChainedAuditLog(new AuditLog
+            CompanyId = providerId, UserId = actorUserId, Action = AuditAction.Update, EntityType = ContactRecipientRule.AuditEntityType, EntityId = contactIds[0].ToString(),
+            NewValues = JsonSerializer.Serialize(new { op = "tenant-member-removed", buyerCompanyId, removedUserId, revokedInvites = revoked, endpointsToReview = live,
+                rule = ProviderCentralOa.RuleCode }),
+            Timestamp = now,
+        });
+        // ผู้รับตัวเดียวกับกระดิ่ง LINE ของบริษัท (เจ้าของที่ยังใช้งาน) — ไม่รวมผู้ถูกนำออก
+        foreach (var owner in (await LineAlertRecipients.ForCompanyAsync(db, null, buyerCompanyId, ct)).Where(u => u != removedUserId))
+            db.Notifications.Add(new Notification
             {
-                CompanyId = providerId, UserId = actorUserId, Action = AuditAction.Delete,
-                EntityType = ContactRecipientRule.AuditEntityType, EntityId = ep.ContactId.ToString(),
-                NewValues = JsonSerializer.Serialize(new { op = "line-unlink-member-removed", endpointId = ep.Id, buyerCompanyId, removedUserId, consent = consentId,
-                    rule = ProviderCentralOa.RuleCode }),
-                Timestamp = now,
+                UserId = owner, CompanyId = buyerCompanyId, Type = NotificationType.System,
+                Title = ProviderCentralOa.MemberRemovedReviewTitle, Message = ProviderCentralOa.MemberRemovedReviewMessage(revoked, live),
+                ActionUrl = ProviderCentralOa.BillingPath(buyerCompanyId), EntityType = ProviderCentralOa.MemberRemovedReviewEntity, EntityId = removedUserId,
             });
-        }
-        if (rows.Count > 0) await db.SaveChangesAsync(ct);
-        return rows.Count;
+        await db.SaveChangesAsync(ct);
+        return (revoked, live);
     }
 
     public async Task<ContactLineInviteResponse> CreateBillingInviteAsync(Guid buyerCompanyId, Guid? actorUserId, string? actorEmail, CancellationToken ct = default)

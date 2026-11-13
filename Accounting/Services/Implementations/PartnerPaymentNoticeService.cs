@@ -82,17 +82,24 @@ public class PartnerPaymentNoticeService
                 .FirstOrDefaultAsync(ct);
             if (pay == null) return 0;
             // รอบ 268 (268-1-6): แถวจัดสรรพร้อมรับเงิน (ไม่ใช่จัดสรรทีหลังจากเงินรอจัดสรร) ⇒ แจ้งต่อใบ · ไม่มีแถว ⇒ ใบเดียวตามเดิม
+            // ฝ่ายค้าน L1 (268-1-14): รวมการจัดสรรทีหลังจากเงินรอจัดสรร (วันที่ = วันจัดสรร) · ค่าธรรมเนียมที่ผู้ขายรับภาระกระจายตามสัดส่วนแถวพร้อมรับเงิน (เงินที่ออกจากผู้ซื้อ = เส้นใบเดียว)
             var allocations = await db.PaymentAllocations.AsNoTracking()
-                .Where(a => a.PaymentId == pay.Id && a.CompanyId == sellerCompanyId && !a.IsDeleted && !a.IsLateAllocation)
+                .Where(a => a.PaymentId == pay.Id && a.CompanyId == sellerCompanyId && !a.IsDeleted)
                 .OrderBy(a => a.CreatedAt).ThenBy(a => a.Id)
-                .Select(a => new { a.Id, a.DocumentId, a.AllocatedAmount, a.WithholdingTaxAmount }).ToListAsync(ct);
+                .Select(a => new { a.Id, a.DocumentId, a.AllocatedAmount, a.WithholdingTaxAmount, a.IsLateAllocation, a.AppliedAt }).ToListAsync(ct);
             if (allocations.Count > 0)
             {
                 var channel = PartnerPaymentNoticeRule.ChannelOf(null, source);
+                var onReceipt = allocations.Where(a => !a.IsLateAllocation).Select(a => a.AllocatedAmount).ToList();
+                var fees = PartnerPaymentNoticeRule.SplitFee(pay.FeeAmount, onReceipt);
                 var made = 0;
+                var i = 0;
                 foreach (var a in allocations)
+                {
+                    var fee = a.IsLateAllocation ? 0m : fees[i++];
                     made += await NotifyCoreAsync(db, notify, logger, new SellerReceipt(sellerCompanyId, pay.Id, null, a.DocumentId,
-                        a.AllocatedAmount, a.WithholdingTaxAmount, pay.PaymentDate, channel, a.Id), ct);
+                        a.AllocatedAmount + fee, a.WithholdingTaxAmount, a.IsLateAllocation ? a.AppliedAt ?? pay.PaymentDate : pay.PaymentDate, channel, a.Id), ct);
+                }
                 return made;
             }
             // เฉพาะใบที่ส่งเข้าระบบคู่ค้า (มีลิงก์ InvoiceFlow ที่ผูกใบซื้อปลายทางแล้ว) — ใบทั่วไปจบที่นี่ด้วย query เดียว

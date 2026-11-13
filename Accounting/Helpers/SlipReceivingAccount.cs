@@ -319,6 +319,14 @@ public static class SlipReceivingAccount
     public static bool AppliesToSiteOrderPayment(bool hasSlip, bool hasGatewayTransaction, PaymentMethod method)
         => !hasGatewayTransaction && (hasSlip || method is PaymentMethod.BankTransfer or PaymentMethod.PromptPay);
 
+    /// <summary>ฝ่ายค้าน 268 M6 (pure): ป้ายของตัวเลือก "ไม่เลือก" ตามผลจริงของเซิร์ฟเวอร์ — ต้องเลือก · ตามคำแนะนำ (ชื่อบัญชี) · ไม่มีคำแนะนำ = เงินสดตั้งต้น (ระบบไม่เดา) ·
+    /// เงินผ่านผู้ให้บริการ = บัญชีพัก</summary>
+    public static string NoChoiceLabel(bool applies, Suggestion s, string? suggestedLabel)
+        => !applies ? "บัญชีพักของผู้ให้บริการ (เลือกธนาคารไม่ได้)"
+         : s.RequiresChoice ? "— ต้องเลือกบัญชีที่เงินเข้า —"
+         : (s.DisplayBankAccountId ?? s.BankAccountId) != null ? "ตามคำแนะนำ: " + (suggestedLabel ?? "บัญชีที่แนะนำ")
+         : "ไม่ระบุ — ลงเงินสดตั้งต้นตามเดิม (ระบบไม่เดาบัญชี)";
+
     /// <summary>ตัวเลือก + ค่าแนะนำ + ผลตัดสินของแถวรับเงินของออเดอร์หน้าเว็บ (ลำดับเดียวกับ <see cref="Suggest"/>: ใบขายของออเดอร์สร้างโดยไม่ตั้งแหล่งเงิน ⇒
     /// บัญชีรับโอนของเว็บนั้น → บัญชีรับโอนบัญชีเดียว → ไม่เดา) · ทุก query ผูก <paramref name="companyId"/></summary>
     public static async Task<Resolution> ResolveForSiteOrderAsync(AccountingDbContext db, Guid companyId, Guid siteId, bool applies, string currency,

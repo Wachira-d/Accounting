@@ -3363,11 +3363,16 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **268-1-4 แชต LINE**: พนักงานผูกสลิป (`LineChatSlipService.AssignAsync`) ⇒ `NotifyChatLinkedAsync` push ถึงแชตเดิม (ปลายทางที่ `LineIdHash` = แหล่งสลิป · ยอดเมื่อแสดงยอดได้ · ไม่รอชั่วโมงเงียบ ·
   retry key = แถว) · เอกสารของผู้ติดต่ออื่น/แชตไม่ได้ผูก ⇒ ไม่ส่ง + เหตุ (`LineChatSlipRule.LinkedNotice`) · ผลลง audit + ข้อความถึงพนักงาน · ไฟล์ PDF ในแชต (1:1/กลุ่ม) ⇒ `LineChatSlipRule.IsSlipMessage`
   เข้าเส้นเดียวกับรูป (ตัวตรวจไบต์รับ PDF · ตัวอ่านแปลง PDF→รูปด้วย PDFium) · หน้าคิวมีปุ่มเปิด PDF
-- **268-1-5 ศูนย์บิล LINE**: `CompanyService.RemoveUserAsync` (ธุรกรรมเดียว) → `ContactLineBindingService.UnlinkBillingEndpointsBoundByAsync` — ปลายทาง OA กลางของผู้ติดต่อของผู้เช่าที่ `BoundByUserId` = ผู้ถูกนำออก ⇒
-  `MarkUnlinked` (เหตุ `member-removed`) + ถอนความยินยอม + audit ในบริษัทผู้ให้บริการ · ของคนอื่นไม่ถูกแตะ · ใบเสร็จส่วนเสริม/โควตาเสริม (`IssueAddOnReceiptAsync`) ⇒ `IPlatformBillingNotifier.ReceiptIssuedAsync`
+- **268-1-5/9 ศูนย์บิล LINE**: `CompanyService.RemoveUserAsync` (ธุรกรรมเดียว) → `ContactLineBindingService.OnTenantMemberRemovedAsync` — เพิกถอนคำเชิญค้างที่ผู้ถูกนำออกสร้าง + กระดิ่งถึงเจ้าของให้ตรวจปลายทางที่ยังผูก
+  (ไม่ยกเลิกปลายทางเอง) + audit ในบริษัทผู้ให้บริการ · ใบเสร็จส่วนเสริม/โควตาเสริม (`IssueAddOnReceiptAsync`) ⇒ `IPlatformBillingNotifier.ReceiptIssuedAsync`
 - **268-1-6 รับชำระหลายใบ → แจ้งผู้ซื้อคู่ค้า (D8)**: `CreateMultiDocPaymentAsync` หลัง commit (ฝั่งรับ) → `NotifyForSellerPaymentAsync` → หนึ่งแจ้งต่อ `PaymentAllocation` (จัดสรรพร้อมรับเงินเท่านั้น) ·
   `PartnerPaymentNotice.SellerAllocationId` · ดัชนี `IX_PartnerPaymentNotices_Company_SellerPaymentSingle` (ใบเดียว) + `IX_PartnerPaymentNotices_Company_SellerAllocation` (ดัชนีเดิมถูก DROP) ·
   เลขอ้างอิงฝั่งผู้ซื้อ `PARTNER-PAID-A{alloc}` (กันซ้ำรูปแถวจัดสรรเท่านั้น) · ยกเลิกการรับชำระ ⇒ ตัวถอนต่อการรับชำระครอบทุกแจ้งของก้อน
+- **ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-268.md` · คำตัดสิน 268-1-7…14)**: (M1) แจ้งแชตเฉพาะใบของผู้ติดต่อที่ผูกแชตนั้น · (L5) ผูกนานหลังสลิปเข้า + ชั่วโมงเงียบ ⇒ เลื่อนทาง
+  `DeferredNotifications` ชนิด `linechat.slip-linked` · ล้มชั่วคราว ⇒ ส่งซ้ำครั้งเดียว · audit ก่อนส่ง · (M2 → 268-1-9) นำผู้ใช้ออก ⇒ **ไม่ยกเลิกปลายทาง LINE** (ระบบไม่รู้เจ้าของ LINE) —
+  เพิกถอนคำเชิญค้างที่ผู้ใช้คนนั้นสร้าง + กระดิ่งถึงเจ้าของให้ตรวจที่ศูนย์บิล (`OnTenantMemberRemovedAsync`) · (M3) งวดที่ไม่รู้บัญชีไม่ประทับ (`ChannelKnown`) · (M4) hook หลังอนุมัติทุกใบ
+  `IssuedDocumentHooks` → `MoveEarlierInstalmentsCoreAsync` · (M5) JE ลงวันที่เงินงวดนั้นเข้าเมื่องวดเปิด · (M6/L7) หน้า "คำสั่งซื้อ" ใช้ `formDialog` + `ConfirmSlipPaymentAsync` ตัดสินใต้ล็อก + audit ·
+  (L1) จัดสรรทีหลังแจ้งคู่ค้า + ค่าธรรมเนียมตามสัดส่วน · (L2) ดัชนีใน `DO` เดียว · (L6) PDF > 3 หน้า/ไม่ดูเป็นสลิป ไม่เก็บ + RoPA รวม PDF
 - **kill-switch**: ไม่มีการเรียก AI ในรอบนี้ · Last verified `commit 3dad4ab2`
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
@@ -9421,3 +9426,4 @@ _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P4 — �
 ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit 17680548)_
 _Last verified against codebase: 2026-11-13 (รอบ 266 แพ็ก B ชุดแก้ฝ่ายค้าน — §3.4c-B: B-1 ใบรับในตัว (ปฏิเสธ/ออกใบกำกับ ณ วันรับเงิน/พรีวิวตามจริง) · B-2 สิทธิ์ใต้ล็อก + ถอดด้วยกุญแจพรีวิว · B-3…B-9 ผู้อ่าน/งานที่ตามใบที่มีผล · ถอดหลังแตะกระดาษ = ปฏิเสธ (คำตัดสิน 266-1-32…35)) · commit 0ec86361 (+ 57b75d99) — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _Last verified against codebase: 2026-11-13 (รอบ 268 งานคงค้าง — §2.12g-268: 268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง · 268-1-2 สลิปออเดอร์หน้าเว็บลงธนาคาร · 268-1-3 มัดจำการจองต่องวด · 268-1-4 แจ้งแชตหลังผูกสลิป + PDF · 268-1-5 ศูนย์บิล LINE (นำออก/ใบเสร็จส่วนเสริม) · 268-1-6 รับหลายใบแจ้งคู่ค้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3dad4ab2)_
+_Last verified against codebase: 2026-11-13 (รอบ 268 ชุดแก้ฝ่ายค้าน — §2.12g-268: M1–M6 · L1/L2/L5/L6/L7 (คำตัดสิน 268-1-7…14) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_

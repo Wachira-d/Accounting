@@ -137,6 +137,22 @@ public class Round268DbTests
             Assert.False(foreign!.Decision.Ok);
             Assert.NotNull(foreign.Decision.Problem);
         }
+        // 268-1-13 (ฝ่ายค้าน L7/M6): ทางของหน้า — ตัดสินใต้ล็อกกับแถวที่ยืนยันจริง · บัญชีนอกบริษัท ⇒ 400 ไม่มีการรับชำระ · เลือกได้ ⇒ ธนาคารนั้น + audit ผู้เลือก/ที่มา
+        var before = calls.Count;
+        using (var c3 = DbTestDatabase.TryCreateContext()!)
+        {
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Commerce(c3, Docs(calls)).ConfirmSlipPaymentAsync(s.CompanyId, s.SiteId, order2, pay2, "staff-268", Guid.NewGuid()));
+            Assert.Equal(400, ex.StatusCode);
+        }
+        Assert.Equal(before, calls.Count);
+        using (var c4 = DbTestDatabase.TryCreateContext()!)
+            Assert.True(await Commerce(c4, Docs(calls)).ConfirmSlipPaymentAsync(s.CompanyId, s.SiteId, order2, pay2, "staff-268", s.BankB));
+        Assert.Equal(s.BankB, calls[^1].Req.OverrideBankAccountId);
+        using var chk = DbTestDatabase.TryCreateContext()!;
+        var audit = Assert.Single(await chk.AuditLogs.AsNoTracking().Where(a => a.CompanyId == s.CompanyId && a.EntityId == order2.ToString()).Select(a => a.NewValues!).ToListAsync(),
+            v => v.Contains("slip-receiving-account"));
+        Assert.Contains("Chosen", audit);
+        Assert.Contains(s.BankB.ToString(), audit);
     }
 
     [Fact]
@@ -242,7 +258,9 @@ public class Round268DbTests
             Assert.Equal(60m, lines.Single(l => l.AccountId == s.GlB).DebitAmount);    // เงินงวดแรกอยู่ธนาคารกรุงเทพ
             Assert.Equal(60m, lines.Single(l => l.AccountId == s.GlA).CreditAmount);   // ย้ายออกจากผังของใบ
             Assert.Contains(notices, n => n.Contains(BookingDepositInstalmentChannel.RuleCode));
-            Assert.Equal(1, await c2.JournalEntries.CountAsync(j => j.CompanyId == s.CompanyId && j.Reference == BookingDepositInstalmentChannel.ReferenceFor(ids[0])));
+            var je = await c2.JournalEntries.AsNoTracking().SingleAsync(j => j.CompanyId == s.CompanyId && j.Reference == BookingDepositInstalmentChannel.ReferenceFor(ids[0]));
+            var paid0 = await c2.SiteBookingPayments.AsNoTracking().Where(p => p.Id == ids[0]).Select(p => p.PaidAt).SingleAsync();
+            Assert.Equal(paid0!.Value, je.EntryDate, TimeSpan.FromSeconds(1));   // ฝ่ายค้าน M5: วันที่เงินงวดนั้นเข้า (งวดบัญชีเปิด) ไม่ใช่วันที่ใบ
         }
         // รันซ้ำ (ยืนยันซ้ำ/งานลองใหม่) ⇒ ไม่มี JE ที่สอง
         using (var c3 = DbTestDatabase.TryCreateContext()!)
@@ -274,13 +292,49 @@ public class Round268DbTests
         using (var c2 = DbTestDatabase.TryCreateContext()!)
             await Bookings(c2).RecordDepositPaymentAsync(s.CompanyId, s.SiteId, bookingId, new RecordBookingPaymentRequest(40m, DateTime.UtcNow, "T268-2", s.BankB), "payment-gateway",
                 moneyInAccountId: s.Cash, fromOnlinePayment: true);
+        // ฝ่ายค้าน M3 (268-1-10): เงินออนไลน์/สลิปที่ไม่รู้บัญชี ⇒ ไม่ประทับ (ไม่แต่งเป็นเงินสด)
+        using (var c3 = DbTestDatabase.TryCreateContext()!)
+            await Bookings(c3).RecordDepositPaymentAsync(s.CompanyId, s.SiteId, bookingId, new RecordBookingPaymentRequest(10m, DateTime.UtcNow, "T268-3", null), "payment-gateway",
+                moneyInAccountId: null, fromOnlinePayment: true);
         using var check = DbTestDatabase.TryCreateContext()!;
-        var rows = await check.SiteBookingPayments.AsNoTracking().Where(p => p.CompanyId == s.CompanyId && p.BookingId == bookingId).OrderBy(p => p.Amount).ToListAsync();
-        Assert.Equal(2, rows.Count);
+        var all = await check.SiteBookingPayments.AsNoTracking().Where(p => p.CompanyId == s.CompanyId && p.BookingId == bookingId).OrderBy(p => p.Amount).ToListAsync();
+        Assert.Equal(3, all.Count);
+        Assert.False(all[0].ChannelStamped);                // 10 ไม่รู้บัญชี
+        var rows = all.Skip(1).ToList();
         Assert.All(rows, r => Assert.True(r.ChannelStamped));
         Assert.Null(rows[0].BankAccountId);                 // 40 ผ่านผู้ให้บริการ ⇒ ผังพักชนะธนาคารที่ส่งมา
         Assert.Equal(s.Cash, rows[0].MoneyInAccountId);
         Assert.Equal(s.BankB, rows[1].BankAccountId);       // 60 โอนเข้ากรุงเทพ
         Assert.Null(rows[1].MoneyInAccountId);
+    }
+
+    [Fact]
+    public async Task C268_1_10_ใบเสร็จมัดจำอนุมัติทางอื่น_hook_หลังอนุมัติย้ายเงินงวดก่อน_หมายเหตุบนการจอง_รันซ้ำไม่ซ้ำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var (bookingId, docId, ids) = await BookingAsync(db, s, (60m, true, s.BankB), (90m, true, s.BankA));
+        var etax = F4Proxy<IEtaxInvoiceService>.Create((_, _) => null);
+        for (var i = 0; i < 2; i++)
+        {
+            using var c = DbTestDatabase.TryCreateContext()!;
+            await new IssuedDocumentHooks(c, etax, NullLogger<IssuedDocumentHooks>.Instance).RunAsync(s.CompanyId, docId);   // ตัวเดียวกับหลังอนุมัติทุกทาง
+        }
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(1, await check.JournalEntries.CountAsync(j => j.CompanyId == s.CompanyId && j.Reference == BookingDepositInstalmentChannel.ReferenceFor(ids[0])));
+        var lines = await MoveLinesAsync(check, s.CompanyId, docId);
+        Assert.Equal(60m, lines.Single(l => l.AccountId == s.GlB).DebitAmount);
+        Assert.Contains(BookingDepositInstalmentChannel.RuleCode, (await check.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == bookingId)).InternalNotes);
+        // ทิศตรงข้าม: ใบที่ไม่ใช่ใบมัดจำของการจอง ⇒ hook ไม่แตะ
+        var other = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = s.ContactId, DocumentType = DocumentType.Receipt, IsDeposit = false, Status = DocumentStatus.Approved,
+            DocumentNumber = "RC268-" + Random.Shared.Next(100000, 999999), DocumentDate = DateTime.UtcNow.Date, TotalAmount = 10m, Currency = "THB",
+        };
+        check.Documents.Add(other);
+        await check.SaveChangesAsync();
+        await new IssuedDocumentHooks(check, etax, NullLogger<IssuedDocumentHooks>.Instance).RunAsync(s.CompanyId, other.Id);
+        Assert.Empty(await MoveLinesAsync(check, s.CompanyId, other.Id));
     }
 }

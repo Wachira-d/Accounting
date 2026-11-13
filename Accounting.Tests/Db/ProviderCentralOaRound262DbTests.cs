@@ -488,10 +488,10 @@ public class ProviderCentralOaRound262DbTests
         });
     }
 
-    // ═══ รอบ 268 (คำตัดสิน 268-1-5) ═══
+    // ═══ รอบ 268 (คำตัดสิน 268-1-9 แทน 268-1-5 · ฝ่ายค้าน M2) ═══
 
     [Fact]
-    public async Task C268_1_5_นำผู้ใช้ออกจากบริษัทผู้เช่า_ปลายทาง_LINE_รับใบค่าบริการที่เขาผูก_ถูกยกเลิก_ทิศตรงข้าม_ที่คนอื่นผูกไม่ถูกแตะ()
+    public async Task C268_1_9_นำผู้ใช้ออก_เพิกถอนคำเชิญค้างที่เขาสร้าง_แจ้งเจ้าของให้ตรวจ_ไม่ยกเลิกปลายทางเอง_ทิศตรงข้าม_คำเชิญของคนอื่นไม่ถูกแตะ()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
@@ -504,26 +504,34 @@ public class ProviderCentralOaRound262DbTests
         await db.SaveChangesAsync();
         await PlatformBillingPhase2DbTests.WithPlatformTenantAsync(db, f.PlatformId, async () =>
         {
-            var mine = await SeedCentralEndpointAsync(db, f.PlatformId, f.ContactId, "Umine268" + Guid.NewGuid().ToString("N")[..20]);
-            var other = await SeedCentralEndpointAsync(db, f.PlatformId, f.ContactId, "Uother268" + Guid.NewGuid().ToString("N")[..20]);
-            await db.ContactNotifyEndpoints.Where(e => e.Id == mine.Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.BoundByUserId, (Guid?)member.Id));
-            await db.ContactNotifyEndpoints.Where(e => e.Id == other.Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.BoundByUserId, (Guid?)owner.Id));
+            var bound = await SeedCentralEndpointAsync(db, f.PlatformId, f.ContactId, "Umine268" + Guid.NewGuid().ToString("N")[..20]);
+            await db.ContactNotifyEndpoints.Where(e => e.Id == bound.Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.BoundByUserId, (Guid?)member.Id));
+            ContactLineInvite Invite(Guid by) => new()
+            {
+                CompanyId = f.PlatformId, ContactId = f.ContactId, TokenHash = Guid.NewGuid().ToString("N"), ExpiresAt = DateTime.UtcNow.AddDays(7),
+                OaScope = NotifyEndpointKind.ScopeNextAcc, CreatedByUserId = by,
+            };
+            var mineInvite = Invite(member.Id);
+            var ownerInvite = Invite(owner.Id);
+            db.ContactLineInvites.AddRange(mineInvite, ownerInvite);
+            await db.SaveChangesAsync();
 
             using (var c1 = DbTestDatabase.TryCreateContext()!)
                 await new CompanyService(c1, new AccountingService(c1)).RemoveUserAsync(f.BuyerId, owner.Id, member.Id);
 
             using var check = DbTestDatabase.TryCreateContext()!;
             Assert.False(await check.CompanyUsers.AnyAsync(x => x.CompanyId == f.BuyerId && x.UserId == member.Id));
-            var m = await check.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == mine.Id);
-            Assert.NotNull(m.UnlinkedAt);
-            Assert.Equal(NotifyEndpointKind.UnlinkMemberRemoved, m.UnlinkReason);
-            Assert.Null(m.LineUserId);                                   // ตัวยกเลิกเดียวล้าง LINE id (PDPA ม.22)
-            Assert.NotNull((await check.PdpaConsentRecords.AsNoTracking().SingleAsync(c => c.Id == m.ConsentRecordId)).WithdrawnAt);
-            var o = await check.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == other.Id);
-            Assert.Null(o.UnlinkedAt);                                   // ปลายทางที่เจ้าของผูกเองยังรับใบต่อ
-            Assert.NotNull(o.LineUserId);
-            Assert.Contains(await check.AuditLogs.AsNoTracking().Where(a => a.CompanyId == f.PlatformId && a.EntityId == f.ContactId.ToString())
-                .Select(a => a.NewValues!).ToListAsync(), v => v.Contains("line-unlink-member-removed"));
+            Assert.NotNull((await check.ContactLineInvites.AsNoTracking().SingleAsync(i => i.Id == mineInvite.Id)).RevokedAt);   // ลิงก์ค้างผูกใหม่ไม่ได้
+            Assert.Null((await check.ContactLineInvites.AsNoTracking().SingleAsync(i => i.Id == ownerInvite.Id)).RevokedAt);
+            var ep = await check.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == bound.Id);
+            Assert.Null(ep.UnlinkedAt);                                   // ระบบไม่รู้ว่า LINE เป็นของใคร — ไม่ยกเลิก/ไม่ถอนความยินยอมเอง
+            Assert.NotNull(ep.LineUserId);
+            Assert.Null((await check.PdpaConsentRecords.AsNoTracking().SingleAsync(c => c.Id == ep.ConsentRecordId)).WithdrawnAt);
+            var bell = await check.Notifications.AsNoTracking().SingleAsync(n => n.CompanyId == f.BuyerId && n.EntityType == ProviderCentralOa.MemberRemovedReviewEntity);
+            Assert.Equal(owner.Id, bell.UserId);                          // เจ้าของได้กระดิ่งให้ตรวจที่ศูนย์บิล · ผู้ถูกนำออกไม่ได้
+            Assert.Contains("1 ปลายทาง", bell.Message);
+            Assert.Contains(await check.AuditLogs.AsNoTracking().Where(a => a.CompanyId == f.PlatformId).Select(a => a.NewValues!).ToListAsync(),
+                v => v.Contains("tenant-member-removed"));
         });
     }
 }
