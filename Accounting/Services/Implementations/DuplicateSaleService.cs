@@ -144,7 +144,7 @@ public class DuplicateSaleService : IDuplicateSaleService
     }
 
     /// <summary>แถว audit ของแต่ละขั้น (เส้นเดิม commit ธุรกรรมของตัวเองแล้ว — มี audit ของเส้นเดิมเอง) · บันทึกแถวนี้ไม่สำเร็จ ⇒ ไม่คืนข้อผิดพลาดของการกระทำที่สำเร็จแล้ว
-    /// แต่คืนข้อความดังถึงผู้กด (รูปเดียวกับปุ่มผูก · ฝ่ายค้าน L5 รอบ 266 แพ็ก A)</summary>
+    /// แต่คืนข้อความดังถึงผู้กด (รูปเดียวกับปุ่มผูก · ฝ่ายค้าน L5 รอบ 266 แพ็ก A) · ชื่อช่องใน NewValues ห้ามซ้ำกันแบบไม่สนตัวพิมพ์ (ผล CI run 43370997579 — commit d3567af4)</summary>
     private async Task<string?> AuditAsync(Guid companyId, Guid userId, string action, DuplicateSaleVerdict v, DuplicateSaleSnapshot snap, string reason,
         object? extra, CancellationToken ct)
     {
