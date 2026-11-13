@@ -209,7 +209,10 @@ public class CustomerSignRound267DbTests
         var file = await s.Responses.SignedCopyForTokenAsync(s.CompanyId, token, ev.Id);
         Assert.Equal(PdfBytes, file!.Value.Bytes);
         Assert.Equal(qt.Id, file.Value.DocumentId);
-        Assert.Equal(1, await db.AuditLogs.CountAsync(a => a.CompanyId == s.CompanyId && a.EntityType == nameof(CustomerDocumentAction) && a.EntityId == ev.Id.ToString()));
+        // audit ของแถวหลักฐาน: แถวสร้าง (ตัวเก็บ audit อัตโนมัติของ context) + การเก็บฉบับที่ลงนามครั้งเดียว
+        var evAudit = await db.AuditLogs.AsNoTracking().Where(a => a.CompanyId == s.CompanyId && a.EntityType == nameof(CustomerDocumentAction) && a.EntityId == ev.Id.ToString()).ToListAsync();
+        Assert.Single(evAudit, a => a.NewValues != null && a.NewValues.Contains("CustomerSignedCopyStored"));
+        Assert.Contains(evAudit, a => a.Action == AuditAction.Create && (a.NewValues == null || !a.NewValues.Contains("CustomerSignedCopyStored")));
 
         // หน้าเอกสารหลังยอมรับ: ปุ่มปิด · ไม่มีฟอร์ม · ประวัติ + ฉบับที่ลงนามพร้อมดาวน์โหลด (ไม่มี IP ใน view model)
         var after = await PageAsync(s, token);
@@ -759,8 +762,10 @@ public class CustomerSignRound267DbTests
         var smallToken = await OpenAsync(db, s, small);
         var smallPage = await PageAsync(s, smallToken);
         Assert.False(smallPage.Respond!.Actions.Single(a => a.Id == CustomerDocPage.ActionAccept).OtpRequired);
+        Assert.Equal(400, (await s.Responses.RequestOtpAsync(s.CompanyId, smallToken, email, Who)).Status);   // ยอดต่ำกว่าเกณฑ์ = ไม่ต้องขอรหัส
         Assert.True((await s.Responses.RespondAsync(s.CompanyId, smallToken, Req(smallPage, CustomerDocPage.ActionAccept), Who)).Success);
-        Assert.Equal(400, (await s.Responses.RequestOtpAsync(s.CompanyId, smallToken, email, Who)).Status);
+        // ตอบแล้ว ⇒ ปุ่มยอมรับปิด ⇒ ขอรหัสได้ 409 (ปิดก่อนตรวจเกณฑ์)
+        Assert.Equal(409, (await s.Responses.RequestOtpAsync(s.CompanyId, smallToken, email, Who)).Status);
     }
 
     // ───────── PDPA: ลบตามคำขอเคารพ legal hold (S33) ─────────
