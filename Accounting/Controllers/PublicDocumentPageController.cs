@@ -20,7 +20,7 @@ namespace Accounting.Controllers;
 [ApiController]
 [Route("api/companies/{companyId:guid}/public-pay")]
 [AllowAnonymous]
-public class PublicDocumentPageController : ControllerBase
+public partial class PublicDocumentPageController : ControllerBase
 {
     private readonly IDocumentPayLinkService _links;
     private readonly IPdfGenerationService _pdf;
@@ -92,7 +92,8 @@ public class PublicDocumentPageController : ControllerBase
         await _links.MarkOpenedAsync(companyId, token, ct);
         return Ok(new ApiResponse<PublicDocumentPayView>(true, view with
         {
-            Page = view.Page! with { PdfPath = basePath + "/pdf", RelatedPdfBase = basePath + "/related/", RequestLinkPath = basePath + "/request-link" },
+            // รอบ 267 P4: + ที่อยู่เส้นหลังจ่าย (ส่ง 50 ทวิ · เปิดหน้าของใบที่เกี่ยวข้อง) เฉพาะเมื่อหน้าเสนอจริง — WithAfterPayPaths
+            Page = WithAfterPayPaths(view.Page! with { PdfPath = basePath + "/pdf", RelatedPdfBase = basePath + "/related/", RequestLinkPath = basePath + "/request-link" }, basePath),
         }));
     }
 

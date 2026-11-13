@@ -67,15 +67,90 @@ public static class PostPaymentAutomationPolicy
     /// <summary>รอบ 250 (WP-02 B-13): ชั้นค่าตั้งงานหลังรับชำระ (เฉพาะเจาะจงชนะ): ตารางส่งที่ส่งใบนี้ › รายการประจำที่สร้างใบนี้ › ผู้ติดต่อ › บริษัท ·
     /// null ทุกช่องของชั้น = ตามชั้นถัดไป ⇒ ไม่ตั้งรายการ/ผู้ติดต่อ = ผลเท่ารอบ 241 เป๊ะ</summary>
     public static Settings EffectiveLayers(Settings company, Overrides? schedule, Overrides? recurring, Overrides? contact)
+        => EffectiveLayers(company, null, schedule, recurring, contact);
+
+    /// <summary>รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-40): ชั้น "เอกสารใบนี้" อยู่บนสุด — ใบ › ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท (ทีละช่อง) ·
+    /// <paramref name="document"/> null/ทุกช่อง null = ตามชั้นถัดไป ⇒ ใบที่ไม่ได้ตั้ง = ผลเท่าเดิมเป๊ะ · ตัวต่อชั้นตัวเดียว (ผู้เรียก:
+    /// <c>PostPaymentAutomationService.SettingsForAsync</c> · พรีวิวรายการประจำใช้ overload 4 ชั้น — ยังไม่มีใบ)</summary>
+    public static Settings EffectiveLayers(Settings company, Overrides? document, Overrides? schedule, Overrides? recurring, Overrides? contact)
+        => Resolve(company, document, schedule, recurring, contact).Settings;
+
+    /// <summary>ชั้นที่ตัดสินช่อง "ออก/ส่งใบเสร็จ" (ชื่อคงที่ — หน้าเว็บแสดงป้ายจาก <see cref="EffectiveLabel"/> ไม่แปลเอง)</summary>
+    public const string LayerDocument = "document", LayerSchedule = "schedule", LayerRecurring = "recurring", LayerContact = "contact", LayerCompany = "company";
+
+    /// <summary>ผลของตัวต่อชั้น + ชั้นที่ตัดสินช่อง "ออก/ส่งใบเสร็จ" (ใช้บอกผู้ใช้ว่าค่าที่มีผลมาจากไหน)</summary>
+    public sealed record Resolution(Settings Settings, string EmailReceiptLayer);
+
+    public static Resolution Resolve(Settings company, Overrides? document, Overrides? schedule, Overrides? recurring, Overrides? contact)
     {
-        var layers = new[] { schedule, recurring, contact };
-        bool? email = null, partial = null;
-        foreach (var l in layers)
+        var layers = new (string Name, Overrides? Value)[]
         {
-            if (email == null && l?.EmailReceipt is bool e) email = e;
+            (LayerDocument, document), (LayerSchedule, schedule), (LayerRecurring, recurring), (LayerContact, contact),
+        };
+        bool? email = null, partial = null;
+        var emailLayer = LayerCompany;
+        foreach (var (name, l) in layers)
+        {
+            if (email == null && l?.EmailReceipt is bool e) { email = e; emailLayer = name; }
             if (partial == null && l?.IncludePartial is bool p) partial = p;
         }
-        return new Settings(email ?? company.EmailReceipt, partial ?? company.IncludePartial);
+        return new Resolution(new Settings(email ?? company.EmailReceipt, partial ?? company.IncludePartial), emailLayer);
+    }
+
+    private static string LayerLabel(string layer) => layer switch
+    {
+        LayerDocument => "ตั้งที่เอกสารใบนี้",
+        LayerSchedule => "ตามตารางส่งเอกสารที่ส่งใบนี้",
+        LayerRecurring => "ตามรายการประจำที่สร้างใบนี้",
+        LayerContact => "ตามค่าตั้งของผู้ติดต่อ",
+        _ => "ตามค่าตั้งของบริษัท",
+    };
+
+    /// <summary>ข้อความ "ค่าที่มีผลของใบนี้ตอนนี้" (เซิร์ฟเวอร์ประกอบ — หน้าเว็บแสดงอย่างเดียว)</summary>
+    public static string EffectiveLabel(Resolution r)
+        => (r.Settings.EmailReceipt
+                ? "หลังรับชำระ: ออกและส่งใบเสร็จ/ใบกำกับภาษีอัตโนมัติ" + (r.Settings.IncludePartial ? " ทุกงวดที่รับ" : " เมื่อชำระครบ")
+                : "หลังรับชำระ: ไม่ออก/ไม่ส่งใบเสร็จอัตโนมัติ (ออกเองจากหน้าเอกสารได้)")
+            + " — " + LayerLabel(r.EmailReceiptLayer);
+
+    // ── รอบ 267 P4: ค่าตั้งต่อใบ (สามสถานะ) — ชื่อสถานะชุดเดียวกับรายการประจำ/ผู้ติดต่อ (AutopilotSettingsResolver: Inherit · On · Off) ──
+
+    /// <summary>ผลแปลงชื่อสามสถานะ: <paramref name="Touched"/> false = ไม่ได้ส่งมา (คงค่าเดิม) · <paramref name="Value"/> null = ตามชั้นถัดไป ·
+    /// <paramref name="Problem"/> = ชื่อไม่รู้จัก (ข้อความไทย)</summary>
+    public sealed record ModeParse(bool Touched, bool? Value, string? Problem);
+
+    /// <summary>null = ไม่ส่งมา (ไม่แตะ) · ว่าง หรือ "Inherit" = ล้างกลับไปตามชั้นถัดไป · "On"/"Off" = ตั้งที่ใบ · อื่น ๆ = ปฏิเสธ (ไม่เดา) ·
+    /// ตัวแปลง/ตัวตรวจ = <see cref="AutopilotSettingsResolver.ParseTriState"/> / <see cref="AutopilotSettingsResolver.ValidateTriState"/> (ไม่มีสำเนาชุดชื่อ)</summary>
+    public static ModeParse ParseMode(string? mode)
+    {
+        if (mode == null) return new ModeParse(false, null, null);
+        if (AutopilotSettingsResolver.ValidateTriState(mode) is string bad) return new ModeParse(true, null, bad);
+        return new ModeParse(true, AutopilotSettingsResolver.ParseTriState(mode), null);
+    }
+
+    public static string ModeCode(bool? value) => AutopilotSettingsResolver.TriStateName(value);
+
+    /// <summary>ชนิดเอกสารที่ตั้งค่าต่อใบได้ = ชนิดที่รับชำระแล้วมีงานหลังรับชำระ (ชุดเดียวกับลิงก์ชำระ — <c>DocumentPayLinkPolicy.PayableTypes</c>)</summary>
+    public static bool DocumentLayerAllowed(DocumentType type) => Array.IndexOf(DocumentPayLinkPolicy.PayableTypes, type) >= 0;
+
+    public const string DocumentLayerNotAllowedMessage =
+        "ตั้ง \"ออกใบเสร็จอัตโนมัติหลังรับชำระ\" ได้เฉพาะใบแจ้งหนี้ · ใบกำกับภาษี · ใบเพิ่มหนี้ (เอกสารที่รับชำระ) — เอกสารชนิดนี้ให้ปล่อยเป็น \"ตามค่าตั้ง\"";
+
+    /// <summary>
+    /// ใช้ค่าตั้งต่อใบจากคำขอ (สร้าง/แก้ไข/ปุ่มบนหน้าเอกสาร) — ตัวเดียวทุกทางเข้า · คืน (ค่าใหม่ของสองช่อง, ปัญหา) ·
+    /// ไม่ส่งมา = คงค่าเดิม · ชนิดที่ตั้งไม่ได้ + ขอเปิด/ปิด = ปฏิเสธ (ไม่เก็บค่าที่ไม่มีผู้อ่าน) · ชนิดที่ตั้งไม่ได้ + "ตามค่าตั้ง" = ผ่าน (ไม่มีอะไรเปลี่ยน)
+    /// </summary>
+    public static (bool? EmailReceipt, bool? IncludePartial, string? Problem) ApplyDocumentLayer(
+        DocumentType type, bool? currentEmailReceipt, bool? currentIncludePartial, string? receiptMode, string? partialMode)
+    {
+        var r = ParseMode(receiptMode);
+        var p = ParseMode(partialMode);
+        if ((r.Problem ?? p.Problem) is string bad) return (currentEmailReceipt, currentIncludePartial, bad);
+        var email = r.Touched ? r.Value : currentEmailReceipt;
+        var partial = p.Touched ? p.Value : currentIncludePartial;
+        if (!DocumentLayerAllowed(type) && ((r.Touched && r.Value != null) || (p.Touched && p.Value != null)))
+            return (currentEmailReceipt, currentIncludePartial, DocumentLayerNotAllowedMessage);
+        return (email, partial, null);
     }
 
     /// <summary>ค่าตั้งที่มีผล (บริษัท + ตารางส่งเอกสารที่ส่งใบนี้ทับได้ทีละช่อง)</summary>

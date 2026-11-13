@@ -376,11 +376,17 @@
 
       async rejectSlip(id) {
         const api = Layout.api(); if (!api) return;
-        const reason = await Layout.promptText({ title: 'ปฏิเสธสลิป', label: 'เหตุผล (บันทึกลงประวัติ)', value: 'ไม่พบเงินเข้าตามสลิป',
-          required: true, okText: 'ปฏิเสธสลิป', danger: true });
-        if (!reason) return;
+        // รอบ 267 P4 (267-1-41): เหตุผลภายใน (ลงประวัติ) แยกจากข้อความถึงลูกค้า (แสดงบนหน้าเอกสารของลูกค้า · ไม่กรอก = ข้อความกลางของระบบ)
+        const form = await Layout.formDialog({ title: 'ปฏิเสธสลิป', okText: 'ปฏิเสธสลิป', danger: true, fields: [
+          { key: 'reason', label: 'เหตุผลภายใน (บันทึกลงประวัติ — ลูกค้าไม่เห็น)', type: 'text', value: 'ไม่พบเงินเข้าตามสลิป', required: true },
+          { key: 'customerMessage', label: 'ข้อความถึงลูกค้า (แสดงบนหน้าเอกสารของลูกค้า · ไม่บังคับ)', type: 'textarea',
+            placeholder: 'เช่น ยอดโอนไม่ตรงกับยอดในเอกสาร กรุณาโอนส่วนต่างแล้วแนบสลิปใหม่',
+            hint: 'ไม่กรอก = ลูกค้าเห็นข้อความกลาง "ผู้ขายไม่พบยอดโอนตามสลิปนี้ — แนบใหม่หรือติดต่อผู้ขาย" · ลูกค้าแนบสลิปใหม่ได้หลังปฏิเสธ' },
+        ] });
+        if (!form || !form.reason) return;
+        const reason = form.reason;
         try {
-          const res = await api.rejectPaymentIntentSlip(id, reason);
+          const res = await api.rejectPaymentIntentSlip(id, reason, form.customerMessage);
           Layout.toast(res?.message || 'ปฏิเสธสลิปแล้ว');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ปฏิเสธไม่สำเร็จ', 'error'); }

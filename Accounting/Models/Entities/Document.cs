@@ -271,6 +271,15 @@ public class Document : TenantEntity
     /// ไม่สืบทอดไปใบลูก · null = ใบที่ไม่ได้มาจากรอบรายการประจำ/ใบก่อนรอบ 259/รอบพิเศษที่ผู้ใช้ยืนยันออกเพิ่ม</summary>
     public string? RecurringRunKey { get; set; }
 
+    // ── รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-40): ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" ต่อใบ — ชั้นบนสุดของตัวต่อชั้นเดียว ──
+    /// <summary>หลังลูกค้าชำระใบนี้ ออกและส่งใบเสร็จ/ใบกำกับภาษีอัตโนมัติไหม — null = ตามชั้นถัดไป (ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท) ·
+    /// ผู้เขียน: ฟอร์มเอกสาร (สร้าง/แก้ไข) · <c>PUT …/document-auto-send/documents/{id}/post-pay</c> (ใบที่ออกแล้ว) ผ่าน
+    /// <c>PostPaymentAutomationPolicy.ApplyDocumentLayer</c> · ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c> ผ่าน
+    /// <c>PostPaymentAutomationPolicy.EffectiveLayers</c> · <b>ไม่สืบทอด</b>ไปใบลูก/โคลน/ใบแทน (เจตนาของใบนั้น — แบบ <see cref="QuotationAcceptAutopilot"/>)</summary>
+    public bool? PostPayEmailReceipt { get; set; }
+    /// <summary>ส่งทุกงวดที่รับ (false = เฉพาะงวดที่ชำระครบ) ชั้นเอกสาร — null = ตามชั้นถัดไป · ผู้อ่าน/ผู้เขียนเดียวกับ <see cref="PostPayEmailReceipt"/></summary>
+    public bool? PostPayIncludePartial { get; set; }
+
     // ── รอบ 252 WP-12A (AUTOPILOT §7 · คำตัดสิน §2 #36 Q5): ใบเสนอราคาที่ลูกค้ายอมรับออนไลน์ → แปลงอัตโนมัติ (ตั้งต่อใบ · ค่าตั้งต้น "ไม่แปลง") ──
     /// <summary>โหมดแปลงเมื่อลูกค้ายอมรับ (ชื่อใน <c>Helpers/QuotationAcceptAutopilot.Modes</c>: Off · ToInvoice · ToTaxInvoice) · null = ตามค่าบริษัท
     /// (<c>CompanySettings.QuotationAcceptAutopilotDefault</c> — ค่าตั้งต้น Off) · ผู้เขียน: <c>PUT …/autopilot/quotations/{id}/mode</c> ·

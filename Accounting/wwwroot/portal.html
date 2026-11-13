@@ -394,35 +394,28 @@
              </table></div>`}`;
     },
 
+    // รอบ 267 P4 (267-1-45): รายละเอียดใบในพอร์ทัล = หน้าเอกสารสำหรับลูกค้าหน้าเดียวกับลิงก์ (pay-document.html โหมด portal) — ฝังในหน้าต่างนี้ ·
+    // โทเคนพอร์ทัลส่งให้หน้าที่ฝังทาง postMessage (ต้นทางเดียวกัน · เฉพาะกรอบที่เราเปิด) ไม่ใส่ใน URL · ปุ่ม/ยอด/สถานะทั้งหมดมาจากเซิร์ฟเวอร์
+    // (เส้น /api/portal/{cid}/documents/{id}/page — ด่านผู้ติดต่อ + ธงสิทธิ์เดิม) · เลิก modal รายละเอียดที่หน้านี้ประกอบเอง
     async viewDocument(id) {
-      try {
-        const r = await this.api(`/api/portal/${this.companyId}/documents/${id}`);
-        const j = await r.json();
-        const d = j?.data;
-        if (!d) return;
-        document.getElementById('modalTitle').textContent = `${docTypeLabel(d.documentType)} ${d.documentNumber}`;
-        const overdue = d.isOverdue === true;   // รอบ 259-3: เซิร์ฟเวอร์ตัดสิน
-        document.getElementById('modalBody').innerHTML = `
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;margin-bottom:14px">
-            <div><div style="font-size:11px;color:var(--gray-500)">ประเภท</div><div>${esc(docTypeLabel(d.documentType))}</div></div>
-            <div><div style="font-size:11px;color:var(--gray-500)">สถานะ</div><div>${esc(docStatusText(d))}</div></div>
-            <div><div style="font-size:11px;color:var(--gray-500)">วันที่เอกสาร</div><div>${dateThai(d.documentDate)}</div></div>
-            <div><div style="font-size:11px;color:var(--gray-500)">วันครบกำหนด</div><div>${d.dueDate ? dateThai(d.dueDate) : '-'}</div></div>
-          </div>
-          <div style="background:var(--gray-50);padding:14px 16px;border-radius:8px">
-            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>ยอดรวม</span><span>฿${money(d.totalAmount)}</span></div>
-            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>ชำระแล้ว</span><span style="color:var(--success)">฿${money(d.paidAmount)}</span></div>
-            <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;border-top:1px solid var(--gray-300);margin-top:6px;padding-top:6px">
-              <span>ค้างชำระ</span>
-              <span style="color:${overdue?'var(--danger)':(d.balanceDue>0?'var(--warning)':'var(--success)')}">฿${money(d.balanceDue)}</span>
-            </div>
-          </div>`;
-        document.getElementById('modalFooter').innerHTML = `
-          <button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>
-          ${d.canDownloadPdf ? `<button class="btn btn-primary" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>` : ''}
-        `;
-        this._openModal();
-      } catch (e) { toast(e.message, 'err'); }
+      document.getElementById('modalTitle').textContent = 'เอกสาร';
+      const src = `/pages/pay-document.html?c=${encodeURIComponent(this.companyId)}&portal=${encodeURIComponent(id)}`;
+      document.getElementById('modalBody').innerHTML =
+        `<iframe id="docPageFrame" title="เอกสาร" src="${esc(src)}" style="width:100%;height:70vh;border:0;border-radius:8px" referrerpolicy="no-referrer"></iframe>`;
+      document.getElementById('modalFooter').innerHTML = '<button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>';
+      this._bindDocPageFrame();
+      this._openModal();
+    },
+
+    _bindDocPageFrame() {
+      if (this._docPageListener) return;
+      this._docPageListener = (e) => {
+        const frame = document.getElementById('docPageFrame');
+        if (!frame || e.origin !== location.origin || e.source !== frame.contentWindow) return;
+        if (!e.data || e.data.type !== 'docpage-portal-ready' || !this.auth || !this.auth.accessToken) return;
+        frame.contentWindow.postMessage({ type: 'docpage-portal-token', token: this.auth.accessToken }, location.origin);
+      };
+      window.addEventListener('message', this._docPageListener);
     },
 
     async downloadPdf(id, docNumber) {

@@ -57,6 +57,14 @@ public interface IDocumentPayLinkService
     /// <summary>เหมือน <see cref="RequestNewLinkAsync"/> สำหรับผู้เรียกที่พิสูจน์สิทธิ์ด้วยทางอื่นแล้ว (การ์ด LINE)</summary>
     Task<CustomerLinkRequestResult> RequestLinkForDocumentAsync(Guid companyId, Guid documentId, string source, CancellationToken ct = default);
 
+    /// <summary>รอบ 267 P4 (267-1-43): ผู้ถือลิงก์ของใบ (เช่นใบวางบิล) ขอเปิด<b>หน้าเอกสารของใบที่เกี่ยวข้อง</b>เพื่อชำระรายใบ — ใบนั้นต้องอยู่ในชุดที่หน้า
+    /// แสดงและมีปุ่ม "ชำระใบนี้" (<c>CustomerDocPageRelated.PayOffered</c>) · ออกลิงก์ผ่านตัวออกเดียว (<see cref="EnsureCustomerLinkAsync"/>) ·
+    /// <c>Found</c> false = ข้อความเดียว (ไม่พบ) · <c>Path</c> = ที่อยู่ภายในเว็บของหน้าเอกสารใบนั้น · <c>Message</c> = เหตุที่เปิดไม่ได้</summary>
+    Task<(bool Found, string? Path, string? Message)> RelatedPageLinkAsync(Guid companyId, string token, Guid relatedId, CancellationToken ct = default);
+
+    /// <summary>รอบ 267 P4 (267-1-44): เอกสาร + ผู้ติดต่อ ที่ token นี้ส่งหนังสือรับรอง 50 ทวิ ได้ ณ ตอนนี้ (หน้าเสนอฟอร์มจริง) · null = ไม่ได้</summary>
+    Task<(Guid DocumentId, Guid ContactId)?> WhtCertTargetAsync(Guid companyId, string token, CancellationToken ct = default);
+
     /// <summary>บล็อกลิงก์ชำระเงินสำหรับอีเมลตามตาราง — null เมื่อไม่แนบ (ปิด · ใบไม่เข้าเงื่อนไข · บริษัทยังไม่ตั้งรับชำระออนไลน์)</summary>
     Task<PayLinkResult?> ForScheduledEmailAsync(EmailScheduleRule rule, Document doc, CancellationToken ct = default);
 
@@ -96,6 +104,11 @@ public interface IPostPaymentAutomationService
 
     /// <summary>ลองแถวที่หยุด/ล้มใหม่ (ผู้ใช้กดหลังแก้ข้อมูล)</summary>
     Task RetryAsync(Guid companyId, Guid runId, CancellationToken ct = default);
+
+    /// <summary>รอบ 267 P4 (267-1-40): ตั้งค่า "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบของใบที่ออกแล้ว — ชื่อ Inherit · On · Off (null = ไม่แตะช่องนั้น) ·
+    /// ตัวตัดสินเดียวกับฟอร์มเอกสาร · มีผลกับการรับชำระครั้งถัดไป · งานที่ยังรอประมวลผล/กดลองใหม่ใช้ค่าปัจจุบัน (ปิดที่ใบ = งานที่ค้างจบพร้อมเหตุ) · เปิดทีหลังไม่ออกใบเสร็จย้อนหลังของการชำระที่ผ่านไปแล้ว · ลง audit chain</summary>
+    Task SetDocumentLayerAsync(Guid companyId, Guid documentId, string? receiptMode, string? partialMode, Guid? userId, string actor,
+        CancellationToken ct = default);
 }
 
 public sealed record PayChannelOption(string Code, string Label);
@@ -127,7 +140,18 @@ public sealed record CustomerDocPageLine(string Description, decimal Quantity, s
 /// <summary>ใบที่เกี่ยวข้องของหน้าเอกสาร — <paramref name="RelId"/> ใช้ได้เฉพาะกับ token ของใบที่ส่งมันมา (เซิร์ฟเวอร์ตรวจชุดซ้ำตอนดาวน์โหลด) ·
 /// <paramref name="Kind"/>: parent · child · replacement · billed</summary>
 public sealed record CustomerDocPageRelated(Guid RelId, string Kind, string KindLabel, string Title, string DocumentNumber, DateTime DocumentDate,
-    decimal? TotalAmount, decimal? BalanceDue, string StatusLabel);
+    decimal? TotalAmount, decimal? BalanceDue, string StatusLabel,
+    // รอบ 267 P4: Kind เพิ่ม "receipt" (ใบเสร็จ/ใบกำกับที่ออกจากการชำระของใบนี้) · PayOffered = มีปุ่ม "ชำระใบนี้" (พาไปหน้าเอกสารของใบนั้น —
+    // CustomerDocPageAfterPay.RelatedPayOffered) · Note = ข้อความประกอบจากเซิร์ฟเวอร์ (ป้าย e-Tax เมื่อส่งแล้วจริง)
+    bool PayOffered = false, string? PayLabel = null, string? Note = null);
+
+/// <summary>รอบ 267 P4 — สลิปหนึ่งใบที่ลูกค้าแจ้งโอนของเอกสารนี้ (สถานะ/ข้อความจาก <c>CustomerDocPageAfterPay.SlipState</c> · ไม่มีรหัสรายการ/ที่อยู่ไฟล์)</summary>
+public sealed record CustomerDocPageSlip(DateTime SubmittedAt, decimal Amount, string State, string Label, string? Note);
+
+/// <summary>รอบ 267 P4 — ส่วน "หลังจ่าย" ของหน้าเอกสาร (แสดงผลอย่างเดียว): สถานะสลิป · ข้อความเมื่อยังไม่มีใบเสร็จ · การ์ด 50 ทวิ ·
+/// <paramref name="SlipPending"/> = มีสลิปรอตรวจ (หน้าไม่ชวนแนบซ้ำ — ด่านจริงอยู่ที่เส้นรับสลิปเดิม)</summary>
+public sealed record CustomerDocPageAfterPayView(IReadOnlyList<CustomerDocPageSlip> Slips, bool SlipPending, string? ReceiptNote,
+    Accounting.Helpers.CustomerDocPageAfterPay.WhtCertView? WhtCert, IReadOnlyDictionary<string, string> Labels);
 
 /// <summary>
 /// รอบ 267 P1 — ส่วน "หน้าเอกสาร" ของ view model (หัวใบอยู่ในช่องเดิมของ <see cref="PublicDocumentPayView"/>) ·
@@ -166,6 +190,16 @@ public sealed record CustomerDocPageView(
     /// <summary>ที่อยู่เส้น "ขอลิงก์ใหม่/ขอลิงก์ทำรายการ" ของโหมดนี้ (POST) · null = ไม่มี</summary>
     public string? RequestLinkPath { get; init; }
 
+    // ── รอบ 267 P4 (หลังจ่าย) ──
+    /// <summary>สถานะสลิป · ข้อความใบเสร็จ · การ์ด 50 ทวิ (โหมดลิงก์/พอร์ทัล) · null = โหมดนี้ไม่มีส่วนหลังจ่าย</summary>
+    public CustomerDocPageAfterPayView? AfterPay { get; init; }
+    /// <summary>ที่อยู่เส้นส่งหนังสือรับรอง 50 ทวิ ของโหมดนี้ (POST multipart) · null = ไม่มี — controller เติม</summary>
+    public string? WhtCertPath { get; init; }
+    /// <summary>ฐานของเส้น "เปิดหน้าเอกสารของใบที่เกี่ยวข้อง" (POST · ต่อท้ายด้วย <c>{relId}/page-link</c>) — ปุ่ม "ชำระใบนี้" · null = ไม่มี</summary>
+    public string? RelatedLinkBase { get; init; }
+    /// <summary>โหมดพอร์ทัล: เส้นขอลิงก์หน้าชำระของใบนี้ (POST · เส้นเดิมของพอร์ทัล) · null = ชำระจากหน้านี้ไม่ได้/ไม่มีสิทธิ์</summary>
+    public string? PortalPayLinkPath { get; init; }
+
     /// <summary>ลิงก์ใช้ไม่ได้ — ไม่มีข้อมูลของใบเลย (มีแค่สถานะลิงก์ + ขอลิงก์ใหม่ได้ไหม)</summary>
     public static CustomerDocPageView Unusable(CustomerDocPage.LinkState state, bool canRequestLink) => new(
         CustomerDocPage.ModeCode(CustomerDocPage.Mode.Link), state.ToString(), false, canRequestLink, false, "", false, 0, false, "THB",
@@ -189,7 +223,13 @@ public sealed record DocumentAutoSendSettingsDto(
     // รอบ 253 (WP-10): ทวง 50 ทวิ อัตโนมัติ (ค่าตั้งต้นปิด)
     bool WhtCertReminderEnabled = false,
     // รอบ 259-3 ฝ่ายค้าน L5: ผู้เรียกแก้ค่าชุดนี้ได้ไหม (PUT = เจ้าของบริษัท) — หน้าที่แสดงสวิตช์ล็อกช่อง + บอกเหตุ · null = ไม่ได้ตรวจ
-    bool? CanEdit = null);
+    bool? CanEdit = null)
+{
+    /// <summary>รอบ 267 P4 (267-1-40): ชนิดเอกสาร (ชื่อ enum) ที่ตั้งค่า "ออกใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบได้ — ฟอร์มเอกสารแสดงช่องตามชุดนี้
+    /// (ตัวตัดสิน <c>PostPaymentAutomationPolicy.DocumentLayerAllowed</c> · หน้าเว็บไม่มีรายการชนิดของตัวเอง)</summary>
+    public IReadOnlyList<string> PostPayDocumentTypes { get; init; } =
+        DocumentPayLinkPolicy.PayableTypes.Where(PostPaymentAutomationPolicy.DocumentLayerAllowed).Select(t => t.ToString()).ToList();
+}
 
 /// <summary>null = ไม่แตะช่องนั้น · <see cref="PayLinkDefaultChannels"/> ว่าง = ล้าง (ทุกช่องทางที่บริษัทเปิด)</summary>
 public sealed record UpdateDocumentAutoSendSettings(
@@ -227,6 +267,13 @@ public sealed record DocumentPayLinkStatusDto(
     public bool PageLinkUsable { get; init; }
     public string? PageUrl { get; init; }
     public string? PageLinkNote { get; init; }
+
+    /// <summary>รอบ 267 P4 (267-1-40): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ (ชื่อ Inherit · On · Off) + ข้อความค่าที่มีผลตอนนี้ (เซิร์ฟเวอร์ประกอบ —
+    /// ชั้นไหนตัดสิน) · <see cref="PostPaySettingApplies"/> false = ใบชนิดนี้ตั้งไม่ได้ (หน้าไม่แสดงช่อง)</summary>
+    public bool PostPaySettingApplies { get; init; }
+    public string PostPayReceiptMode { get; init; } = AutopilotSettingsResolver.Inherit;
+    public string PostPayPartialMode { get; init; } = AutopilotSettingsResolver.Inherit;
+    public string? PostPayEffectiveLabel { get; init; }
 }
 
 /// <summary><paramref name="PromptPayQrDataUri"/> — รอบ 246 QR: QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดสุทธิของลิงก์) · null = ไม่มีเลขพร้อมเพย์ที่ใช้ได้</summary>

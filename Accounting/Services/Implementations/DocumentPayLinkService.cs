@@ -436,6 +436,7 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         var runs = await _db.PostPaymentAutomationRuns.AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.DocumentId == documentId)
             .OrderByDescending(r => r.CreatedAt).Take(20).ToListAsync(ct);
+        var postPay = await PostPaymentAutomationService.ResolveForAsync(_db, companyId, documentId, ct);
         return new DocumentPayLinkStatusDto(
             Refusal: Refusal(d) ?? unavailable,
             Url: raw != null && origin != null ? DocumentPayLinkPolicy.Url(origin, companyId, raw) : null,
@@ -452,6 +453,11 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
             PageLinkUsable = pageUrl != null,
             PageUrl = pageUrl,
             PageLinkNote = pageUrl == null ? null : PageLinkStaffNote(d, DateTime.UtcNow),
+            // รอบ 267 P4 (267-1-40): ค่าตั้งหลังรับชำระต่อใบ + ค่าที่มีผลตอนนี้ (ตัวโหลด/ตัวต่อชั้นเดียวกับงานหลังรับชำระ)
+            PostPaySettingApplies = postPay.Found && PostPaymentAutomationPolicy.DocumentLayerAllowed(postPay.Type),
+            PostPayReceiptMode = PostPaymentAutomationPolicy.ModeCode(postPay.DocEmailReceipt),
+            PostPayPartialMode = PostPaymentAutomationPolicy.ModeCode(postPay.DocIncludePartial),
+            PostPayEffectiveLabel = PostPaymentAutomationPolicy.EffectiveLabel(postPay.Resolution),
         };
     }
 

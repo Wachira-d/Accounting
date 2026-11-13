@@ -1446,11 +1446,16 @@ public partial class DocumentService : IDocumentService
                 throw new Accounting.Helpers.BusinessRuleException(
                     Accounting.Helpers.DepositPolicyResolver.DrivesUnsupportedMessage, "DEPOSIT-DRIVES-UNSUPPORTED");
 
+            // รอบ 267 P4 (267-1-40): ค่าตั้งหลังรับชำระต่อใบ — ตัวตัดสินเดียวกับตอนแก้ไข/ปุ่มบนหน้าเอกสาร (รหัสไม่รู้จัก/ชนิดที่ตั้งไม่ได้ = ปฏิเสธก่อนสร้าง)
+            var postPayLayer = PostPayDocumentLayerOrThrow(request.DocumentType, null, null, request.PostPayReceiptMode, request.PostPayPartialMode);
+
             var doc = new Document
             {
                 CompanyId = companyId,
                 DocumentNumber = docNumber,
                 DocumentType = request.DocumentType,
+                PostPayEmailReceipt = postPayLayer.EmailReceipt,
+                PostPayIncludePartial = postPayLayer.IncludePartial,
                 // Normalize เป็น "วันที่ไทย ณ 00:00 UTC" — กัน timestamptz shift
                 // (02/06 ส่งมา → ห้ามเก็บ 01/06 17:00 UTC ที่ทำเลข/ภพ.30 ผิดวัน)
                 DocumentDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DocumentDate),
@@ -3185,6 +3190,8 @@ public partial class DocumentService : IDocumentService
             var dl = request.DocumentLanguage.Trim().ToLowerInvariant();
             doc.DocumentLanguage = dl is "th" or "en" ? dl : null;
         }
+        // รอบ 267 P4 (267-1-40): ค่าตั้งหลังรับชำระต่อใบ — ตัวเดียวกับตอนสร้าง/ปุ่มบนหน้าเอกสาร · null = ไม่แตะ · "" = กลับไปตามค่าตั้ง
+        ApplyPostPayDocumentLayer(doc, request.PostPayReceiptMode, request.PostPayPartialMode);
 
         // Tax Point §78 inputs (Draft edit)
         if (request.DeliveryDate.HasValue) doc.DeliveryDate = request.DeliveryDate.Value;
@@ -21733,6 +21740,10 @@ public partial class DocumentService : IDocumentService
         DeliverySignedBy: d.DeliverySignedBy,
         DocumentLanguage: d.DocumentLanguage,
         ServedAsReceipt: servedAsReceipt,
+        // รอบ 267 P4: ค่าตั้งหลังรับชำระต่อใบ — echo กลับให้ฟอร์ม hydrate (รหัสจากตัวแปลงตัวเดียว)
+        PostPayReceiptMode: Accounting.Helpers.PostPaymentAutomationPolicy.ModeCode(d.PostPayEmailReceipt),
+        PostPayPartialMode: Accounting.Helpers.PostPaymentAutomationPolicy.ModeCode(d.PostPayIncludePartial),
+        PostPaySettingApplies: Accounting.Helpers.PostPaymentAutomationPolicy.DocumentLayerAllowed(d.DocumentType),
         // ── ช่องที่รับตอน Create/Update แต่เดิมไม่เคย echo กลับ ──────────
         // (ดูหมายเหตุใน DocumentResponse — "เก็บแล้วต้อง echo กลับ")
         BuyerDeclinedTaxInvoice: d.BuyerDeclinedTaxInvoice,
