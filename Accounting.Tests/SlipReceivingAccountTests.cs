@@ -319,12 +319,19 @@ public class SlipReceivingAccountTests
     }
 
     [Fact]
-    public void ชั้นสลิป_ตรงบัญชีที่ใช้รับโอนไม่ได้_ไม่แนะนำบัญชีนั้น()
+    public void ชั้นสลิป_ตรงบัญชีที่ใช้รับโอนไม่ได้_ไม่แนะนำบัญชีนั้น_และไม่แนะนำบัญชีอื่นแทน()
     {
         var slip = PayeeOf(SlipCorpusRound264.KtbToKbank, Accts);
-        // A ไม่อยู่ในชุดที่ใช้ได้ (เช่นปิดใช้) ⇒ ตกไปลำดับเดิม (บัญชีเดียว B)
+        // ฝ่ายค้าน 264-P2 L7: A ไม่อยู่ในชุดที่ใช้ได้ (เช่นปิดใช้) ⇒ เดิมตกไป "บัญชีเดียว" B (อีกบัญชี) · ตอนนี้ต้องเลือกเอง + เหตุ
         var s = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { B }, slip);
-        Assert.Equal((B, SlipReceivingAccount.Origin.SoleTransferAccount), (s.BankAccountId!.Value, s.Origin));
+        Assert.Null(s.BankAccountId);
+        Assert.Null(s.DisplayBankAccountId);
+        Assert.True(s.RequiresChoice);
+        Assert.Equal(SlipReceivingAccount.SlipPayeeUnusableReason, s.SlipWarning);
+        Assert.True(SlipReceivingAccount.Decide(true, B, Facts(B), "THB", s).Ok);   // ทางไปต่อ: เลือกเอง
+        // ทิศตรงข้าม: ไม่มีผลอ่าน ⇒ บัญชีเดียวตามเดิม
+        Assert.Equal(SlipReceivingAccount.Origin.SoleTransferAccount,
+            SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { B }).Origin);
     }
 
     [Fact]

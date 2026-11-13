@@ -106,7 +106,8 @@ public class PartnerPayableRound264Tests
 
         var agree = D(new(Usable(), SlipMatch: new(PartnerPaySourceAccount.SlipKind.Unique, BankA), ConsentDefault: BankA));
         Assert.Equal(Origin.SlipUnique, agree.Origin);
-        Assert.True(agree.AllowsAuto);
+        Assert.False(agree.AllowsAuto);   // ฝ่ายค้าน 264-P2 M1: สลิป = preselect เท่านั้น จนกว่ารายการเดินบัญชียืนยัน
+        Assert.Equal(BankA, agree.BankAccountId);
         Assert.Empty(agree.Losers);
     }
 
@@ -144,12 +145,12 @@ public class PartnerPayableRound264Tests
     }
 
     [Fact]
-    public void ตารางลำดับชั้น_เป็นข้อมูล_ชั้นอัตโนมัติคือ_1_ถึง_3_เท่านั้น_ชั้นบัญชีตั้งต้นปิด_268_1_1()
+    public void ตารางลำดับชั้น_เป็นข้อมูล_ชั้นอัตโนมัติคือ_1_ถึง_2_เท่านั้น_สลิปและบัญชีตั้งต้นปิด_268_1_1()
     {
         var t = PartnerPaySourceAccount.Precedence;
         Assert.Equal(Enum.GetValues<Origin>().Length, t.Count);
         Assert.Equal(t.Select(r => r.Tier).OrderBy(x => x), t.Select(r => r.Tier));
-        Assert.All(t, r => Assert.Equal(r.Tier <= 3, r.AllowsAuto));
+        Assert.All(t, r => Assert.Equal(r.Tier <= 2, r.AllowsAuto));   // ฝ่ายค้าน 264-P2 M1: ชั้นสลิป (3) preselect เท่านั้น
         Assert.All(t.Where(r => r.AllowsAuto), r => Assert.True(r.Confidence >= PartnerPaySourceAccount.AutoThreshold));
         Assert.All(Enum.GetValues<Origin>(), o => Assert.False(string.IsNullOrWhiteSpace(PartnerPaySourceAccount.OriginLabel(o))));
     }

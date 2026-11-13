@@ -145,6 +145,13 @@ public sealed class LineChatSlipService : ILineChatSlipService
         var slipRef = SlipEvidenceRule.NormalizeRef(reading.Ref);
         // ฝ่ายค้าน M1: ref ซ้ำแต่รูปต่าง ⇒ ไม่ทิ้ง — เข้าคิวพนักงานเหตุ DuplicateRef (OCR อาจอ่าน Biller ID/Ref1 ที่เหมือนกันทุกใบ)
         var refDuplicate = slipRef != null && await IsDuplicateRefAsync(companyId, slipRef, ct);
+        // ฝ่ายค้าน 264-P2 L5: ref จาก QR ≠ ref จากข้อความของสำเนาเดียวกันที่ครอป QR ออก / แถวก่อนรอบนี้ ⇒ เทียบค่าจากข้อความด้วย
+        var textRef = SlipEvidenceRule.NormalizeRef(reading.TextRef);
+        if (!refDuplicate && textRef != null && textRef != slipRef && await IsDuplicateRefAsync(companyId, textRef, ct))
+        {
+            refDuplicate = true;
+            slipRef ??= textRef;
+        }
 
         var now = DateTime.UtcNow;
         var absPath = Path.Combine(_storage.Locator.RelativeBase, "wwwroot", "uploads", "line-chat-slips", now.ToString("yyyy-MM"), $"{Guid.NewGuid():N}{ext}");
@@ -771,6 +778,8 @@ public sealed class LineChatSlipService : ILineChatSlipService
                 continue;
             }
             r.FileDeletedAt = nowUtc;
+            // ฝ่ายค้าน 264-P2 L2: ผลอ่าน (ธนาคาร + เลขท้ายของผู้โอน/ผู้รับ) ไม่เก็บเกินรูป — แถวที่แจ้งโอนแล้วคัดลอกไป intent แล้ว (ฐานเก็บตามเอกสาร)
+            r.SlipReadJson = null;
             if (!closed.Contains(r.Status))
             {
                 r.Status = LineChatSlipRule.Statuses.Dismissed;

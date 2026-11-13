@@ -73,7 +73,26 @@ public static class SlipAccountMatch
                 : $"เลขท้ายบนสลิปเข้ากันได้ {all.Count} บัญชี — ระบบไม่เดา (เลือกเอง)", label);
         if (incomplete)
             return R(Kind.Unreadable, "ไม่ตรงบัญชีที่มีข้อมูลครบ แต่มีบัญชีที่ไม่มีเลขบัญชี/ธนาคารที่รู้จัก — ตัดสินไม่ได้ว่าไม่ใช่ของบริษัท", label);
+        // ฝ่ายค้าน 264-P2 L1: บัญชีธนาคารเดียวกันที่หลักที่เห็นต่างกันแค่ 1 ตำแหน่ง = อาจเป็น OCR อ่านเพี้ยนหนึ่งตัว ⇒ ไม่กล่าวหาว่า "ไม่ใช่ของบริษัท"
+        // (ไม่ใช่ fuzzy match — ไม่สร้าง Unique · แค่ลดผลจาก NotOurs เป็นอ่านไม่ได้)
+        if (accounts.Any(a => ThaiBankCodes.FromText(a.BankName) == party.BankCode && DigitsOffBy(Digits(a.AccountNumber), digits) <= 1))
+            return R(Kind.Unreadable, "เลขท้ายบนสลิปต่างจากบัญชีของบริษัทเพียงหลักเดียว — อาจอ่านรูปเพี้ยน ตัดสินไม่ได้ (เลือกเอง)", label);
         return R(Kind.NotOurs, "บัญชีบนสลิปไม่ตรงบัญชีใดของบริษัท", label);
+    }
+
+    private static string Digits(string? s) => new((s ?? "").Where(char.IsAsciiDigit).ToArray());
+
+    /// <summary>จำนวนตำแหน่งที่เห็นแต่ไม่ตรง (ตำแหน่งเกินความยาวเลขบัญชีนับเป็นไม่ตรง)</summary>
+    internal static int DigitsOffBy(string accountDigits, IReadOnlyList<(int FromRight, char Digit)> visible)
+    {
+        if (accountDigits.Length == 0) return int.MaxValue;
+        var off = 0;
+        foreach (var (pos, d) in visible)
+        {
+            var i = accountDigits.Length - 1 - pos;
+            if (i < 0 || accountDigits[i] != d) off++;
+        }
+        return off;
     }
 
     /// <summary>หลักที่เห็นทุกตัวตรงตำแหน่งนับจากขวา · เลขบัญชีสั้นกว่าตำแหน่งที่เห็น ⇒ ไม่ตรง</summary>

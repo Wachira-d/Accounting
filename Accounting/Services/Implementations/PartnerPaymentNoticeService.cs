@@ -415,6 +415,8 @@ public class PartnerPaymentNoticeService
                 // 268-1-1: บัญชีตั้งต้นอย่างเดียวไม่บันทึกเอง ⇒ บอกเหตุ + ปุ่มเดียว (บัญชี preselect แล้ว) · หลักฐานชั้นที่บันทึกเองได้ ⇒ ป้ายเดิม
                 autoState = consent is { Ok: true } && source is { AllowsAuto: false, Origin: PartnerPaySourceAccount.Origin.ConsentDefault }
                     ? "ระบบไม่บันทึกเอง — " + PartnerPaySourceAccount.ConsentDefaultNotAutoReason
+                    : consent is { Ok: true } && source is { AllowsAuto: false, Origin: PartnerPaySourceAccount.Origin.SlipUnique }
+                    ? "ระบบไม่บันทึกเอง — " + PartnerPaySourceAccount.SlipUniqueNotAutoReason
                     : consent is { Ok: true }
                     ? "⚙️ ระบบบันทึกเองเมื่อหลักฐานบัญชีที่จ่ายครบ เมื่อผู้ขายแจ้งรับเงิน"
                         + (n.AutoBlockedReason is string br ? " — ยังไม่บันทึก: " + br : " · รอรอบถัดไป")

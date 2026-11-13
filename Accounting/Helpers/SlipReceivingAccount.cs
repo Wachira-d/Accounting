@@ -105,6 +105,10 @@ public static class SlipReceivingAccount
         bool RequiresChoice = false, string? SlipWarning = null);
 
     /// <summary>รอบ 264 P2 (คำตัดสิน 264-4-6 · H2 สลิปปลอม/โอนผิดบริษัท): ผู้รับบนสลิปอ่านได้ชัดแต่ไม่ตรงบัญชีใดของบริษัท</summary>
+    /// <summary>ฝ่ายค้าน 264-P2 L7: ผู้รับบนสลิปตรงบัญชีของบริษัทบัญชีเดียว แต่บัญชีนั้นใช้รับโอนไม่ได้</summary>
+    public const string SlipPayeeUnusableReason = "ปลายทางบนสลิปตรงบัญชีของบริษัทที่ใช้รับโอนไม่ได้ (ปิดใช้/ไม่ผูกผัง/สกุลไม่ตรง ฯลฯ) — แก้บัญชีนั้นที่หน้า “บัญชีธนาคาร” "
+        + "หรือเลือกบัญชีที่เห็นเงินเข้าเอง (ระบบไม่แนะนำบัญชีอื่นแทน)";
+
     public const string SlipPayeeNotOursReason = "ปลายทางบนสลิปไม่ใช่บัญชีของบริษัท (อาจเป็นสลิปปลอม/โอนผิดบริษัท/โอนให้บุคคล) — ตรวจรายการเดินบัญชีก่อน · "
         + "ถ้าเงินเข้าจริงให้เลือกบัญชีที่เห็นเงินเข้าเอง (ระบบไม่แนะนำบัญชีอื่นแทน)";
 
@@ -124,6 +128,10 @@ public static class SlipReceivingAccount
             && !(doc.HasChannel && doc.Problem == null && doc.Bank == sid))
             return new Suggestion(sid, sid, Origin.SlipPayee,
                 "ปลายทางบนสลิป (" + slipPayee.PartyLabel + ") ตรงบัญชีนี้ของบริษัทบัญชีเดียว — ยังเป็นค่าแนะนำ ตรวจเงินเข้าก่อนยืนยัน (สลิปไม่ใช่หลักฐานว่าเงินเข้า)");
+        // ฝ่ายค้าน 264-P2 L7: สลิปชี้บัญชีของเราที่ใช้รับโอนไม่ได้ ⇒ ไม่ตกไปแนะนำ "บัญชีเดียว" ที่เป็นอีกบัญชี · ต้องเลือกเอง
+        if (slipPayee is { Kind: SlipAccountMatch.Kind.Unique, AccountId: Guid bad } && !usable.Contains(bad))
+            return new Suggestion(null, null, Origin.None, SlipPayeeUnusableReason + " · บนสลิป: " + slipPayee.PartyLabel, RequiresChoice: true,
+                SlipWarning: SlipPayeeUnusableReason);
         if (slipPayee?.Kind == SlipAccountMatch.Kind.NotOurs)
             return new Suggestion(null, null, Origin.None, SlipPayeeNotOursReason + " · บนสลิป: " + slipPayee!.PartyLabel, RequiresChoice: true,
                 SlipWarning: SlipPayeeNotOursReason);

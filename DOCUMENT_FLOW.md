@@ -3273,9 +3273,14 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (ไม่เลือก = 400 พร้อมเหตุ · เลือกเองได้ · ไม่แนะนำบัญชีอื่น) · หน้า `payment-intents.html` แสดงเหตุจาก `receiving-accounts` (`slipWarning` · ป้ายตัวเลือกว่าง "ต้องเลือกบัญชีที่เงินเข้าเอง")
 - **ฝั่งผู้จ่าย B (264-4-7)** — `PartnerPaymentNoticeService.NotifyCoreAsync` คัดลอกผู้โอน (ธนาคาร + เลขปิดบาง เท่านั้น) จาก intent ของ A ⇒
   `PartnerPaymentNotices.SlipPayerBankCode/SlipPayerAccountMask` ⇒ `PartnerPayablePipeline.SourceDecisionAsync` ⇒ `SlipMatchAsync` ⇒ `SlipKindOf` ⇒
-  `PartnerPaySourceAccount` ชั้น `SlipUnique` (เดิมส่ง null) · กติกาขัดกันของ 264-3-1 คงเดิม
+  `PartnerPaySourceAccount` ชั้น `SlipUnique` (เดิมส่ง null) — **preselect เท่านั้น ไม่บันทึกเอง** (`AllowsAuto=false` · เหตุ `SlipUniqueNotAutoReason` · คำตัดสิน 264-4-9 แบบ 268-1-1
+  จนกว่ารายการเดินบัญชี P4 ยืนยัน) · กติกาขัดกันของ 264-3-1 คงเดิม
 - **ยังไม่ทำ (backlog)** — OCR สลิปที่แนบผ่านพอร์ทัล/หน้าชำระ · ยืนยันด้วยชื่อ · ตรวจรายการกับธนาคาร/ผู้ให้บริการตรวจสลิป (ความยินยอม + RoPA + kill-switch) ·
   โปรไฟล์ต่อแอปของ K+ ที่โอนในธนาคารเดียวกัน (ไม่มีป้าย · QR ตรงทั้งสองบล็อก ⇒ ไม่รู้บทบาท)
+- **ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-264-P2.md` · คำตัดสิน 264-4-9…12)** — เลขที่ไม่มีตัวปิดไม่ถูกเก็บ · เก็บ/ส่งต่อได้ไม่เกิน 4 หลักที่เห็นขวาสุด · บัตรไม่เก็บเลข (M2) ·
+  ตัวถอด QR: `DecodeMultiple` + `TryInverted` เลือกดวงแรกที่เป็น QR สลิป · เพดานพิกเซลก่อนถอด · ถอดนอกเธรดคำขอ · ไม่ AutoRotate — **รัน ZXing.Net กับรูปจริง 10 ใบแล้ว: ถอดได้ทั้ง 6 ใบที่มี QR (006×2 · 014×3 · 004×1) · ใบไม่มี QR ได้ null** (M3/L4) ·
+  ต่างจากบัญชีธนาคารเดียวกันหนึ่งหลัก ⇒ อ่านไม่ได้ (ไม่กล่าวหา NotOurs — L1) · ลบรูปตามระยะเก็บ ⇒ ล้าง `SlipReadJson` ด้วย (L2) · กันซ้ำเทียบทั้ง ref จาก QR และจากข้อความ (`Reading.TextRef` — L5) ·
+  ผู้รับบนสลิปตรงบัญชีที่ใช้รับโอนไม่ได้ ⇒ ต้องเลือกเอง (`SlipPayeeUnusableReason` · ไม่ตกไป "บัญชีเดียว" ที่เป็นอีกบัญชี — L7) · `tools/slip_secret_check.py` กันค่าจริงจากสลิปเข้าเรพ (H1)
 - **migration** `Round264SlipReadMigration` (ADD COLUMN IF NOT EXISTS · แถวเดิม NULL = ผลเท่าเดิม · ไม่ backfill)
 - เทสต์ `ThaiSlipQrTests` · `OcrSlipTextPartiesTests` · `SlipAccountMatchTests` · `SlipReceivingAccountTests` (ชั้นสลิป) · `PartnerPaySourceSlipRound264Tests` ·
   ชุดกระดาษจริง 10 ใบ `Accounting.Tests/SlipCorpusRound264.cs` (redact) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit e6caad8c

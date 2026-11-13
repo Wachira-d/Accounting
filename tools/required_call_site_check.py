@@ -19916,7 +19916,7 @@ RULES += [
          must=["SlipPayeeMatch(intent.SlipReadJson, accounts)"],
          why=_R264P2_WHY + "264-4-6 ชั้น \"ผู้รับบนสลิป\" ต่อสายเข้าค่าแนะนำจริง (ไม่ใช่แค่พารามิเตอร์ที่ไม่มีใครส่ง)"),
     dict(file="Helpers/SlipReceivingAccount.cs", method="Suggest",
-         must=["SlipAccountMatch.Kind.Unique", "SlipAccountMatch.Kind.NotOurs", "usable.Contains(sid)"],
+         must=["SlipAccountMatch.Kind.Unique", "SlipAccountMatch.Kind.NotOurs", "usable.Contains(sid)", "!usable.Contains(bad)", "SlipPayeeUnusableReason"],
          must_re=[r"SlipPayeeNotOursReason\s*\+[^;]*RequiresChoice:\s*true"],
          before=[("SlipAccountMatch.Kind.NotOurs", "if (doc.HasChannel)")],
          why=_R264P2_WHY + "264-4-6 ผู้รับไม่ใช่บัญชีของบริษัท ⇒ ต้องเลือกเอง (ไม่แนะนำบัญชีอื่น/ไม่สืบทอดแหล่งเงินเงียบ ๆ) · ตรงบัญชีที่ใช้ไม่ได้ ⇒ ไม่แนะนำ"),
@@ -19935,13 +19935,15 @@ RULES += [
 ]
 REVIEWER_CASES += [
     # ถอด QR ออกจากตัวอ่าน (ส่ง null แทน) ⇒ ต้องฟ้อง
-    ("R264P2a", "ReadAsync", "var qr = SlipQrImageDecoder.TryDecode(bytes);", "string? qr = null;", True),
+    ("R264P2a", "ReadAsync", "var qr = await Task.Run(() => SlipQrImageDecoder.TryDecode(bytes), ct);", "string? qr = null;", True),
     # ไม่คัดลอกผลอ่านไป intent ⇒ ต้องฟ้อง
     ("R264P2b", "TrySubmitAsync", "intent.SlipReadJson = row.SlipReadJson", "_ = row.SlipReadJson", True),
     # ชั้นสลิปไม่ถูกส่งเข้าค่าแนะนำ ⇒ ต้องฟ้อง
     ("R264P2c", "ResolveAsync", "SlipPayeeMatch(intent.SlipReadJson, accounts)", "null", True),
     # ผู้รับไม่ใช่ของเราแต่ไม่บังคับเลือก ⇒ ต้องฟ้อง
-    ("R264P2d", "Suggest", "RequiresChoice: true,\n                SlipWarning", "RequiresChoice: false,\n                SlipWarning", True),
+    ("R264P2d", "Suggest", "slipPayee!.PartyLabel, RequiresChoice: true", "slipPayee!.PartyLabel, RequiresChoice: false", True),
+    # ฝ่ายค้าน 264-P2 L7: สลิปชี้บัญชีที่ใช้ไม่ได้แต่ตกไปแนะนำบัญชีอื่น ⇒ ต้องฟ้อง
+    ("R264P2f", "Suggest", "&& !usable.Contains(bad)", "&& false", True),
     # ผู้ซื้อกลับไปส่ง null ⇒ ต้องฟ้อง
     ("R264P2e", "SourceDecisionAsync", "SlipMatch: await SlipMatchAsync(db, companyId, n, ct)", "SlipMatch: null", True),
 ]
