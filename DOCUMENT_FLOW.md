@@ -4257,7 +4257,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **หน้าเว็บ:** `pay-document.html` ส่วน "รอบ 267 P4" (`afterPayHtml` · `relatedHtml` · `portalHandshake`) — สถานะ/ข้อความทั้งหมดจากเซิร์ฟเวอร์ (`afterPay.labels`) · `payment-intents.html` หน้าต่างปฏิเสธสลิปมีสองช่อง
   (เหตุผลภายใน · ข้อความถึงลูกค้า)
 - เทสต์ `PostPayRound267Tests` (pure สองทิศ) · `Db/PostPayRound267DbTests` · `tools/required_call_site_check.py` กติกา R267d (+ ย้าย R250-8/R250L1-7 ไป `ResolveForAsync` · R253b ไป `UploadCoreAsync`) ·
-  Last verified `commit 17680548` · ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-267-P4.md` MED-1…3 · LOW-1…4) `commit (sha เติมในคอมมิตตามหลัง)` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+  Last verified `commit 17680548` · ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-267-P4.md` MED-1…3 · LOW-1…4) `commit 6c097df4 (+ ใบแทน: ถอดสำเนาที่ซ้อนใน NotCarried)` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
