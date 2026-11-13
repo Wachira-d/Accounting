@@ -7231,7 +7231,7 @@ _รอบ 267 แพ็ก P5 — ตามคำตอบเจ้าของ
 เติมฟอร์ม — ติ๊กรับรองยังต้องกดเองทุกครั้ง · (2) `ExternalApprovalController` ลงแถวหลักฐาน (Channel Api · ApiReported) ผ่านผู้เขียนเดียว `AppendEvidenceAsync` ·
 (3) ผู้ขายรับทราบ/ไม่รับใบสั่งซื้อ (`SignRequestKinds.PurchaseOrderAck` · วันส่ง ≥ วันที่ใบ · บล็อกผู้ขายบนกระดาษ HTML + QuestPDF) · (4) ใบวางบิลจ่ายทั้งใบ — เส้นเงินเดิม
 (`PaymentIntent` → `DocumentPaymentHandler` → `CreateMultiDocPaymentAsync`) ด่านชุดใบ `BillingNoteCombinedPay` · (5) อากรแสตมป์เตือนเท่านั้น (ตรวจซ้ำ) ·
-เลื่อน: หลายผู้ลงนาม · PAdES (267-1-77) · เทสต์ pure +20 · Db +10 · กติกา R267e +27 ข้อ + ฝ่ายค้าน R267E-1…6 · build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) · commit <pending>_
+เลื่อน: หลายผู้ลงนาม · PAdES (267-1-77) · เทสต์ pure +20 · Db +10 · กติกา R267e +27 ข้อ + ฝ่ายค้าน R267E-1…6 · build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) · commit 20628ad0_
 
 _รอบ 264 แพ็ก P4 (`erp-review/2026-11-12/team-264-a2b-design.md` §5.4/§6.1/§6.2 · คำตัดสิน 264-5-10…13 · DOCUMENT_FLOW §2.12g-264-P4 · TEST_PLAN P264-4): ผู้ป้อนชั้นรายการเดินบัญชีของท่อผู้ซื้อ
 (`BankPaymentLineEvidence` → `BankPaymentLineMatch` บนตาราง `BankTransactions` เดิม · ตรงยอด ±0.00 / ±3 วัน / บัญชีปลายทาง / หนึ่งต่อหนึ่ง / แหล่ง H1 · ผูกบรรทัดกับการจ่าย) ·
