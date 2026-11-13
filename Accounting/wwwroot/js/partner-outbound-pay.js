@@ -55,6 +55,7 @@ const PartnerOutboundPay = {
           <select class="form-input" id="popGwAcc" style="margin-top:6px">${acc}</select>
           <select class="form-input" id="popGwMethod" style="margin-top:6px">${this.options(o.gatewayMethods, '')}</select>
           <div class="hint" style="margin-top:4px">${Layout.esc(o.gatewayCaveat || '')}</div>
+          ${o.gatewayAfterNote ? `<div class="hint" style="margin-top:2px">${Layout.esc(o.gatewayAfterNote)}</div>` : ''}
           <button type="button" class="btn btn-primary btn-sm" id="popGwGo" style="margin-top:6px">เปิดรายการชำระ</button><div id="popGwOut"></div></div>`
       : `<div class="card" style="margin-bottom:10px"><b>จ่ายจากระบบของเรา</b><div class="hint">${Layout.esc(o.gatewayProblem || '')}</div></div>`;
     const transfer = `<div class="card"><b>แจ้งโอนให้ผู้ขาย</b> <span class="hint">(โอนเองแล้ว แนบสลิปของเรา)</span>
@@ -65,7 +66,7 @@ const PartnerOutboundPay = {
         ${o.transferWht ? `<div class="hint">ภาษีหัก ณ ที่จ่ายของใบ ${Layout.money(o.transferWht)} (ตามกติกาของเรา)</div>` : ''}
         <input class="form-input" id="popTrDate" type="date" style="margin-top:6px">
         <input class="form-input" id="popTrFile" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" style="margin-top:6px">
-        <button type="button" class="btn btn-primary btn-sm" id="popTrGo" style="margin-top:6px">บันทึกจ่าย + ส่งสลิปให้ผู้ขาย</button><div id="popTrOut"></div></div>`;
+        <button type="button" class="btn btn-primary btn-sm" id="popTrGo" style="margin-top:6px">${Layout.esc(o.transferButtonLabel || 'บันทึกจ่าย')}</button><div id="popTrOut"></div></div>`;
     body.innerHTML = head + gateway + transfer + (plans ? `<div style="margin-top:10px;font-weight:600">ที่ทำไปแล้ว</div><ul style="font-size:12px">${plans}</ul>` : '');
     const gw = document.getElementById('popGwGo');
     if (gw) gw.addEventListener('click', () => this.startGateway());
@@ -76,33 +77,51 @@ const PartnerOutboundPay = {
     const out = document.getElementById('popGwOut');
     const bank = document.getElementById('popGwAcc').value;
     if (!bank) { out.innerHTML = '<div class="banner warn">เลือกบัญชีที่เงินออกจริง — ระบบไม่เดาบัญชีให้</div>'; return; }
+    const btn = document.getElementById('popGwGo');
+    if (btn.disabled) return;
+    btn.disabled = true;
     try {
       const j = await API.post(this.base() + '/gateway', { bankAccountId: bank, method: document.getElementById('popGwMethod').value, returnUrl: '/pages/documents.html' });
       if (!j || j.success === false) throw new Error((j && j.message) || 'ไม่สำเร็จ');
       const r = j.data;
-      const qr = r.qrPayload ? `<img src="${Layout.esc(r.qrPayload)}" alt="QR สำหรับชำระเงิน" style="max-width:220px;display:block;margin:6px auto">` : '';
+      // ฝ่ายค้าน L8: รูป QR เฉพาะ data:image/…;base64 หรือ https (แบบ pay-link.html — เซิร์ฟเวอร์กรองแล้วอีกชั้น)
+      const qrOk = r.qrPayload && /^(data:image\/(png|jpe?g|gif|webp);base64,|https:\/\/)/i.test(String(r.qrPayload));
+      const qr = qrOk ? `<img src="${Layout.esc(r.qrPayload)}" alt="QR สำหรับชำระเงิน" style="max-width:220px;display:block;margin:6px auto">` : '';
       const link = r.authorizeUrl && /^https:\/\//i.test(String(r.authorizeUrl))
         ? `<a class="btn btn-sm btn-secondary" href="${Layout.esc(r.authorizeUrl)}" target="_blank" rel="noopener">ไปหน้าชำระของผู้ให้บริการ</a>` : '';
       out.innerHTML = `<div class="banner info" style="margin-top:6px">${Layout.esc(j.message || '')}</div>${qr}${link}`;
     } catch (e) { out.innerHTML = `<div class="banner warn">${Layout.esc(e.message || 'ไม่สำเร็จ')}</div>`; }
+    finally { btn.disabled = false; }
   },
 
   async transfer() {
     const out = document.getElementById('popTrOut');
+    const btn = document.getElementById('popTrGo');
+    // ฝ่ายค้าน H1: ปิดปุ่มระหว่างส่ง (เซิร์ฟเวอร์กันซ้ำด้วยกุญแจ + ล็อกอยู่แล้ว — นี่กันกดรัวบนหน้า)
+    if (btn.disabled) return;
+    btn.disabled = true;
     const file = document.getElementById('popTrFile').files[0];
     const fd = new FormData();
     if (file) fd.append('file', file);
     fd.append('bankAccountId', document.getElementById('popTrAcc').value);
     fd.append('method', document.getElementById('popTrMethod').value);
-    fd.append('amount', document.getElementById('popTrAmt').value);
+    fd.append('amount', String(document.getElementById('popTrAmt').value || '').replace(/,/g, '').trim());
     fd.append('transferredAt', document.getElementById('popTrDate').value);
     try {
       const j = await API.upload(this.base() + '/transfer', fd);
       if (!j || j.success === false) throw new Error((j && j.message) || 'ไม่สำเร็จ');
       const r = j.data;
-      out.innerHTML = `<div class="banner info" style="margin-top:6px">${Layout.esc(j.message || '')}</div>`
+      const msg = `<div class="banner info" style="margin-top:6px">${Layout.esc(j.message || '')}</div>`
         + (r.warning ? `<div class="banner warn">${Layout.esc(r.warning)}</div>` : '');
-    } catch (e) { out.innerHTML = `<div class="banner warn">${Layout.esc(e.message || 'ไม่สำเร็จ')}</div>`; }
+      // สำเร็จแล้วโหลดตัวเลือกใหม่ (ยอดค้าง/ที่ทำไปแล้ว) — ไม่ปล่อยฟอร์มเดิมให้กดซ้ำ
+      await this.open(this.docId);
+      const box = document.getElementById('popTrOut');
+      if (box) box.innerHTML = msg;
+      else { const body = document.getElementById('popBody'); if (body) body.insertAdjacentHTML('afterbegin', msg); }
+    } catch (e) {
+      out.innerHTML = `<div class="banner warn">${Layout.esc(e.message || 'ไม่สำเร็จ')}</div>`;
+      btn.disabled = false;
+    }
   },
 };
 

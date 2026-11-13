@@ -3351,36 +3351,42 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   รายการเดินบัญชีของ B ที่นำเข้าทีหลัง: ไม่มีเส้นสร้างการจ่ายฝั่งซื้อจากรายการเดินบัญชี ⇒ ไม่เกิดการจ่ายใบที่สอง (อ่านโค้ด — 264-3-22)
 - **kill-switch**: เส้นเงินไม่มีการเรียก AI (ตัวตัดสิน pure) · ผังใบร่าง: AI ปิด + นักเรียนไม่มีคำตอบ ⇒ ใบร่างเท่าเดิม · เทสต์ `PartnerPayableRound264Tests` · Db `PartnerPayableRound264DbTests`
 
-### 2.12g-264-P4 รอบ 264 แพ็ก P4 "ผู้ซื้อเป็นผู้เริ่มจ่าย + รายการเดินบัญชีฝั่งเงินออก" (`erp-review/2026-11-12/team-264-a2b-design.md` §5.4 · §6.1 · §6.2 · คำตัดสิน 264-5-10…264-5-13)
+### 2.12g-264-P4 รอบ 264 แพ็ก P4 "ผู้ซื้อเป็นผู้เริ่มจ่าย + รายการเดินบัญชีฝั่งเงินออก" (`erp-review/2026-11-12/team-264-a2b-design.md` §5.4 · §6.1 · §6.2 · คำตัดสิน 264-5-10…264-5-13 · ชุดแก้ฝ่ายค้าน `erp-review/2026-11-13/review-264-P4.md` ⇒ 264-5-14…21)
 
-- **รายการเดินบัญชีฝั่งเงินออก (G1 · 264-5-10)**: ผู้ป้อน `PartnerPayablePipeline.IBankLineEvidence` = `Services/Implementations/BankPaymentLineEvidence` (ลงทะเบียนใน DI แล้ว) อ่าน**ตาราง `BankTransactions` เดิม**
-  (ไม่มีตารางบรรทัดธนาคารที่สอง) ⇒ ตัวตัดสินเดียว `Helpers/BankPaymentLineMatch.Decide` (pure · ไม่มี AI): บรรทัดถอน/โอนออกที่ยังไม่จับคู่ของบัญชีผู้ซื้อ · ยอด = เงินของการแจ้ง **±0.00** ·
-  วันที่ (เวลาไทย) ห่างวันที่ผู้ขายรับเงิน ≤ 3 วัน · **เลขบัญชีรับเงินของผู้ขาย** (บัญชีของการรับชำระฝั่งผู้ขาย — อ่านด้วย CompanyId ผู้ขาย) ปรากฏบนข้อความบรรทัด
-  (เลขปิดบางเห็น ≥ 4 หลักตรงตำแหน่ง — ตัวเทียบ `SlipAccountMatch.DigitsFit` · หรือเลขเต็มเท่ากันทั้งหมด) · การแจ้งนี้ตรงบรรทัดเดียว **และ** บรรทัดนั้นตรงการแจ้งเดียว ·
-  แหล่งของบรรทัดตามกติกา H1 เดิม (`BankReceiptAutoSettle.EvidenceProblem` — statement หน้าบัญชีธนาคารที่ผู้อัปโหลดมีสิทธิ์อนุมัติใบซื้อ = หลักฐาน · feed/ไฟล์ศูนย์นำเข้า/API/พิมพ์มือ = คำแนะนำ) ·
-  ผล Match ⇒ ชั้น `BankLine` ของ `PartnerPaySourceAccount` · ท่อบันทึกจ่ายแล้ว ⇒ `BindAsync` ผูกบรรทัดกับการจ่าย (Matched · `MatchedPaymentId` · `ReconciledBy = system:partner-pay-line` ·
-  `MatchRuleCode = BANK-PAY-LINE-MATCH` · audit `BankLinePartnerPaymentMatched`) ใต้ล็อกความยินยอมเดียวกัน · ผูกไม่ได้ (ถูกจับคู่ไปก่อน) ⇒ `bankLineBound=false` ใน audit + LogError ·
-  ปุ่มเดียว (`ListAsync`) preselect จากชั้นเดียวกัน
-- **สลิปยกเป็นบันทึกเองได้ทางเดียว (264-5-10 · 264-4-9 คงเดิม)**: `PartnerPaySourceAccount.SlipConfirmedByBankLine` = สลิปตรงบัญชีเดียว **และ** รายการเดินบัญชียืนยันบัญชีเดียวกัน ⇒ ผู้ชนะ = `BankLine`
-  (บันทึกเองได้) + เหตุ "สลิปตรงบัญชีเดียวกัน (ยืนยันกัน)" · แถว `SlipUnique` ในตาราง `Precedence` ยัง `AllowsAuto=false` · ไม่มีรายการเดินบัญชี ⇒ preselect เหมือนเดิม
-- **"จ่ายจากระบบของเรา" (A2 · 264-5-11)**: ปุ่มบนแถวใบซื้อจากคู่ค้า (`documents.html` → `wwwroot/js/partner-outbound-pay.js`) · `PartnerOutboundPaymentController` (สิทธิ์อนุมัติใบซื้อตามชนิด + ชั้นความลับ · ไม่รับ API key) →
-  `PartnerOutboundPaymentService.StartGatewayAsync`: ลิงก์ InvoiceFlow ที่ใบปลายทางคือใบซื้อนี้ + คู่ Accepted · บัญชีในชุด `UsablePayAccountsAsync` · วิธี = พร้อมเพย์/โมบายแบงก์กิ้ง/อินเทอร์เน็ตแบงก์กิ้ง/TrueMoney
-  (บัตรต้องจ่ายที่หน้าผู้ให้บริการ) · ≤ 5 ครั้ง/ใบ/ชม. · ความยินยอม `AutoRecordPayment` ของผู้ซื้อ `CheckForWriteAsync` ในธุรกรรมล็อกที่ถือไว้จนเปิดรายการ ·
-  เป้าหมาย = `IDocumentPayLinkService.PartnerPayTargetAsync` (= `PublicViewAsync` ตัวเดียวกับหน้าชำระ บนโทเคนของลิงก์ที่ใช้อยู่) ⇒ `IPaymentIntentService.StartAsync` ของ**บริษัทผู้ขาย** ⇒
-  แถว `PartnerPaymentPlans` (Kind `Gateway` · บัญชี · วิธี · ผู้เลือก · `SellerIntentId`) + audit `PartnerPaymentPlanStarted` · **ไม่ประทับ "ชำระแล้ว"** ทั้งสองฝั่ง ·
-  ผู้ให้บริการยืนยัน ⇒ ผู้ขายบันทึกรับ ⇒ การแจ้ง (intent เดียวกัน) ⇒ `SourceDecisionAsync` อ่านแผน ⇒ ชั้น `PayerDeclared` (บันทึกเองได้ · รายการเดินบัญชีที่ขัดชนะ)
-- **"แจ้งโอนให้ผู้ขาย" (A7 · 264-5-12)**: `NotifyTransferAsync` — คนแนบสลิปของเรา + **เลือกบัญชีเสมอ** + ยอด + วันที่ · สลิปตรวจไขว้ผ่าน `PartnerPaymentPlanRule.TransferAccount` (→ `PartnerPaySourceAccount.Decide`:
-  สลิปเป็นอีกบัญชี/ไม่ใช่บัญชีบริษัท ⇒ 409 ไม่มี PV) · ยอด/ภาษีหักจาก `PlanForAsync` ตัวเดียว ⇒ (1) PV ของเราผ่าน `CreatePaymentAsync` (คนกด · `PARTNER-PLAN-{plan}`) + สลิปแนบใบซื้อ ⇒
-  (2) ความยินยอม `ReceiveSlipCopy` ของ**ผู้ขาย** `CheckForWriteAsync` ในธุรกรรมล็อก ⇒ `SlipEvidenceService.SubmitAsync` ช่อง `partner-nextacc` (รายการ ManualSlip รอยืนยันในคิวเดิมของผู้ขาย — ยังไม่ใช่เงินเข้า) ·
-  ผู้ขายไม่ยินยอม/ส่งไม่สำเร็จ ⇒ PV คงอยู่ + `SlipCopyNote` บอกเหตุ (ไม่เงียบ) · audit `PartnerTransferNotified` ·
-  (3) ผู้ขายยืนยันทีหลัง ⇒ การแจ้งพบ PV ของแผน (`PlanPaymentForNoticeAsync` — ท่อ · ปุ่มเดียว · ตาข่าย `CloseFromPlansAsync` สำหรับผู้ซื้อที่ไม่มีความยินยอมบันทึกจ่าย) ⇒ ปิดเป็นบันทึกแล้ว **ไม่สร้าง PV ที่สอง** ·
-  `ReceiveSlipCopy` `ReaderWired=true` · `WiredSince = 2026-11-13 UTC` (`PartnerConsent.ReceiveSlipCopyWiredSince`)
-- **L3 ล้างเลขผู้โอน (264-5-13)**: ตัวเขียนเดียว `PartnerPayablePipeline.ScrubSlipPayerAsync` — ผลจับคู่ (`SlipMatchAsync` ตัวอ่านเดียว) = ไม่ใช่บัญชีของผู้ซื้อ หรือการแจ้งจบแล้ว ⇒ ล้าง
-  `SlipPayerBankCode`/`SlipPayerAccountMask` เหลือ `SlipPayerMatch` (ชนิด) + audit `PartnerPaymentNoticeSlipPayerCleared` (ไม่มีเลข) · บัญชีของเราและยังเปิด ⇒ คงไว้ (ประทับชนิดเป็น watermark) ·
-  ผู้เรียก: ตาข่าย `SweepSlipPayerAsync` (ทุกรอบ `RunOnceAsync`) · `MarkRecordedAsync` · ปุ่มเดียว `RecordAsync` · `DismissAsync` · เส้นตัดสิน (`SourceDecisionAsync`/`SlipMatchAsync`) อ่านอย่างเดียว ·
-  เลขถูกล้างแล้ว ⇒ `SlipMatchAsync` คืนผลที่เก็บ (NotOurs ยังเปิดตัวเลือกกรรมการจ่ายแทนให้คน)
-- **migration** (`Helpers/PartnerPaymentPlanMigration`): ตาราง `PartnerPaymentPlans` (unique `(CompanyId, SellerIntentId)`) · คอลัมน์ `PartnerPaymentNotices.SlipPayerMatch` · แถวแจ้งเดิมที่มีเลข ⇒ ตาข่าย L3 กวาดรอบแรก
+- **รายการเดินบัญชีฝั่งเงินออก (G1 · 264-5-10)**: ผู้ป้อน `PartnerPayablePipeline.IBankLineEvidence` = `Services/Implementations/BankPaymentLineEvidence` อ่าน**ตาราง `BankTransactions` เดิม** ⇒
+  ตัวตัดสินเดียว `Helpers/BankPaymentLineMatch.Decide` (pure · ไม่มี AI): บรรทัดถอน/โอนออกที่ยังไม่จับคู่ · ยอด **±0.00** · วันที่ (เวลาไทย) ห่างวันที่ผู้ขายรับเงิน ≤ 3 วัน ·
+  **เลขบัญชีรับเงินของผู้ขาย** (บัญชีของการรับชำระฝั่งผู้ขาย — อ่านด้วย CompanyId ผู้ขาย) อยู่บนข้อความบรรทัด (ปิดบางเห็น ≥ 4 หลักตรงตำแหน่ง หรือเลขเต็มเท่ากัน) ·
+  หนึ่งต่อหนึ่งสองทิศ — **ฝั่ง "บรรทัดตรงการแจ้งเดียว" นับทั้งการแจ้งที่เปิดอยู่และการแจ้งที่บันทึกแล้วแต่ PV ยังไม่ผูกบรรทัดใด** (264-5-19 · M1) · เกินเพดาน 50 รายการ ⇒ คำแนะนำ (L4) ·
+  แหล่งของบรรทัดตามกติกา H1 เดิม (`BankReceiptAutoSettle.EvidenceProblem`) · ผล Match ⇒ ชั้น `BankLine` (บันทึกเองได้ · **PV ลงวันที่ของบรรทัด** — งวดปิด = เส้นจ่ายเดิมปฏิเสธ ⇒ ปุ่มเดียว + เหตุ · L5)
+- **บรรทัดเดียวเป็นหลักฐานได้การจ่ายเดียว (264-5-19 · M1)**: ตัวเขียนเดียว `BankPaymentLineEvidence.BindAsync` ผูกบรรทัดกับ PV ทุกทางที่ปิดการแจ้งด้วย PV —
+  ท่อ (`MarkRecordedAsync` → `BindLineAsync`: บันทึกเองทุกชั้น · PV ของแผนแจ้งโอน · ตาข่าย `CloseFromPlansAsync`) และปุ่มเดียว (`RecordAsync`) · ผูกเฉพาะเมื่อผล Match ·
+  PV ตัดบัญชีเดียวกับบรรทัด · PV ยังไม่ผูกบรรทัดอื่น · บรรทัดยังไม่ถูกจับคู่/ตัดยอดฝั่งรับ (`AutoSettleDocumentId == null` · L2) · ผล `bankLineBound` ลง audit · ล้ม = LogError
+- **สลิปไม่บันทึกเอง (ฝ่ายค้าน L1)**: ชั้น `SlipUnique` เป็น preselect เท่านั้น · ผู้บันทึกเองคือ `BankLine` (ไม่ต้องมีสลิป) — ตัวช่วย "สลิปยืนยันกับรายการเดินบัญชี" รุ่นแรกถูกลบ (เปลี่ยนแค่ป้าย ไม่เปลี่ยนผล)
+- **"จ่ายจากระบบของเรา" (A2 · 264-5-11 ถูกกลับโดย 264-5-20)**: ปุ่มบนแถวใบซื้อจากคู่ค้า (`documents.html` → `wwwroot/js/partner-outbound-pay.js`) ·
+  `PartnerOutboundPaymentController` (สิทธิ์อนุมัติใบซื้อตามชนิด + ชั้นความลับ · ไม่รับ API key) → `PartnerOutboundPaymentService.StartGatewayAsync`:
+  เปิดได้ด้วย **สิทธิ์ผู้กด + คู่ Accepted + ผู้ขายเปิดช่องทาง (`CanPayNow`)** — **ไม่ใช้ความยินยอม** (`AutoRecordPayment` ตัดสินแค่ว่าการแจ้งที่ตามมาบันทึกเองไหม · M6) ·
+  **ยอดของผู้ขายต้องตรงแผนยอด/ภาษีหักของเรา** (`PartnerPaymentPlanRule.GatewayAmountProblem` บนผล `PlanForAsync` — ผู้ขายไม่หักภาษีที่เราต้องหัก ⇒ ปิดปุ่ม 409 + ทางไปต่อ "แจ้งโอน" · M5) ·
+  วิธี = โมบาย/อินเทอร์เน็ตแบงก์กิ้ง/พร้อมเพย์/TrueMoney · ≤ 5 ครั้ง/ใบ/ชม. · เป้าหมาย = `IDocumentPayLinkService.PartnerPayTargetAsync` (`PublicViewAsync` ตัวเดียวกับหน้าชำระ) ⇒
+  `IPaymentIntentService.StartAsync` ของบริษัทผู้ขาย (ไม่ถือธุรกรรมข้ามการเรียกผู้ให้บริการ · ผู้ให้บริการล่ม ⇒ 409 ข้อความไทย · L7) ⇒ แถว `PartnerPaymentPlans` (Kind `Gateway`) + audit ·
+  QR ส่งเฉพาะ `data:image/…;base64` / https (`SafeQrPayload` + หน้าตรวจซ้ำ · L8) · **ไม่ประทับ "ชำระแล้ว"** ·
+  การแจ้งที่ตามมา ⇒ ชั้น `PayerDeclared` — **บันทึกเองเฉพาะช่องทางที่ผูกบัญชีต้นทาง (โมบาย/อินเทอร์เน็ตแบงก์กิ้ง)** · พร้อมเพย์/วอลเล็ต ⇒ preselect + เหตุ `PayerDeclaredUnboundReason` (264-5-17 · M4)
+- **"แจ้งโอนให้ผู้ขาย" (A7 · 264-5-12 · 264-5-15 · 264-5-18)**: `NotifyTransferAsync` — คนแนบสลิปของเรา + **เลือกบัญชีเสมอ** (สลิปตรวจไขว้ผ่าน `PartnerPaymentPlanRule.TransferAccount`) ·
+  **กุญแจกันซ้ำ** `TransferIdempotencyKey(เอกสารผู้ขาย · แฮชสลิป · ยอด)` + unique index `IX_PartnerPaymentPlans_Company_IdemKey` + ล็อก advisory ต่อใบซื้อ ⇒ กดซ้ำ/สลิปเดิมยอดเดิม = 409
+  (สลิปต่างกันยอดเท่ากัน = บันทึกได้ · H1) · ไฟล์สลิปเข้าที่เก็บก่อนแตะฐาน ⇒ **จองแถวแผนก่อน PV** ⇒ PV ผ่าน `CreatePaymentAsync` (คนกด · `PARTNER-PLAN-{plan}`) ⇒ ผูก PV + ไฟล์แนบ + audit
+  (`CreatePaymentAsync` เปิดธุรกรรมของตัวเอง ⇒ ความ atomic มาจากแถวจอง: PV ของแผนหาเจอเสมอด้วยเลขอ้างอิง · ล้มก่อน PV ⇒ แถวจองถูกปลด/ใช้ซ้ำ · M2) ·
+  **outbox สำเนาสลิป** `DeliverSlipCopyAsync` (ทันทีหนึ่งครั้ง + งานเบื้องหลัง `AutopilotJob` ขั้น `PartnerSlipCopies` · ≤ 5 ครั้ง): ความยินยอม **`AcceptPayerSlipCopy` ของผู้ขาย**
+  `CheckForWriteAsync` ⇒ `SlipEvidenceService.SubmitAsync` ช่อง `partner-nextacc` (รายการ ManualSlip รอยืนยัน — ยังไม่ใช่เงินเข้า) · ผู้ขายไม่ยินยอม ⇒ `Skipped` + ข้อความมุมผู้ซื้อ +
+  กระดิ่งถึงผู้ขาย (ครั้งเดียวต่อคู่ค้าต่อ 7 วัน · M7) · การแจ้งที่ตามมาปิดด้วย PV ของแผน (`PlanPaymentForNoticeAsync`: ผูกรายการชำระของผู้ขายเดียวกัน หรือ — เมื่อไม่มีรายการของผู้ขาย —
+  ยอดเท่ากัน วันห่าง ≤ 3 วัน **ตัวเดียว** ที่ยังไม่ถูกการแจ้งอื่นอ้าง · M3) ⇒ ไม่มี PV ที่สอง (ท่อ · ปุ่มเดียว · ตาข่าย) · หน้าปิดปุ่มระหว่างส่ง + โหลดใหม่หลังสำเร็จ
+- **ความยินยอม (264-5-14 · H2/M7)**: ขอบเขตใหม่ของ**ผู้ขาย** `AcceptPayerSlipCopy` (Need = ตั้งค่าบริษัท + อนุมัติเอกสารขาย · ข้อความพูดถึงคิวรอยืนยันรับเงินและข้อมูลผู้โอน ·
+  `ReaderWired` ตั้งแต่เกิด `WiredFromStart` — ยืนยันใหม่ในอนาคตใช้ `MinTextVersion` ไม่ใช้นาฬิกา) · `ReceiveSlipCopy` กลับเป็นขอบเขตของผู้ซื้อตาม design §4.4(ข) (ยังไม่มีผู้อ่าน · `WiredSince` ของรอบแรกถูกถอด)
+- **L3 ล้างเลขผู้โอน (264-5-13)**: ตัวเขียนเดียว `ScrubSlipPayerAsync` — ไม่ใช่บัญชีของผู้ซื้อ · **อ่านไม่ได้** (L9ก) · หรือการแจ้งจบแล้ว ⇒ ล้างธนาคาร+เลข เหลือชนิด + audit ไม่มีเลข ·
+  บัญชีของเรา (Unique/Many) และยังเปิด ⇒ คงไว้ · เส้นตัดสินอ่านอย่างเดียว
+- **migration** (`Helpers/PartnerPaymentPlanMigration`): ตาราง `PartnerPaymentPlans` (unique `(CompanyId, SellerIntentId)` · unique `(CompanyId, IdempotencyKey)` ในแถวไม่ถูกลบ) ·
+  คอลัมน์ outbox (`SlipSha256` · `SlipStoragePath` · `SlipContentType` · `SlipBankRef` · `SlipCopyState` · `SlipCopyAttempts` · `SellerNotifiedAt`) · `PartnerPaymentNotices.SlipPayerMatch` ·
+  แผนแจ้งโอนรุ่นแรก (ก่อนชุดแก้) ไม่มีกุญแจ/สถานะ outbox ⇒ ไม่ถูก outbox หยิบ (สำเนาสลิปรุ่นแรกส่งในคำขอแล้วหรือมีเหตุบนแผน)
 - **kill-switch**: ไม่มีจุดเรียก AI ในแพ็กนี้ (ตัวตัดสิน pure · อ่านสลิปในเครื่อง) ⇒ ไม่มี AiFeatureKey ใหม่ · เทสต์ `BankPaymentLineMatchTests` · Db `PartnerOutboundRound264P4DbTests`
+
 ### 2.12g-270 รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
 - **270-1-1 คืนมัดจำการจองหลายงวด (ฝ่ายค้าน 268 L7)**: `DocumentService.RefundDepositAsync` (ไม่ได้เลือกบัญชี) → `BookingDepositRefundPlanAsync` (ใบผูก `SiteBooking.ErpDocumentId`) →
@@ -9636,3 +9642,4 @@ _Last verified against codebase: 2026-11-13 (รอบ 264 P4 — §2.12g-264-P4
 _Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P3 — §2.12n-P3 "📤 ส่งให้ลูกค้า": หน้าต่างเดียวแทน 6 ปุ่ม (share-options · share · CustomerShareService orchestrate EnsureCustomerLinkAsync · IssueLinkAsync · SendDocumentRoutedAsync · DocumentLineSendService.SendAsync · ผลแยกต่อช่องทาง) · ไทม์ไลน์ลูกค้า (customer-timeline) · LINE 1:1 การ์ด "ดู/ยอมรับ" + ฉบับเซ็นกลับ LINE เดิม (s ตรวจกับแถวคิว) · กลุ่ม = ปุ่มดูเท่านั้น (PageLinkAllowed ตัวเดียว) · ลิงก์เซ็นติ๊กให้ LINE 1:1 ได้ (คำตัดสิน 267-1-7 · 267-1-61…67) — build + test + Db test ผ่านในเครื่องนี้ — commit 39c4d582)_
 _Last verified against codebase: 2026-11-13 (รอบ 270 งานค้าง 266/268/269 — §2.12g-270: 270-1-1 คืนมัดจำตามบัญชีของแต่ละงวด · 270-1-2 คิวแจ้งแชตตรวจการผูกเดิม · 270-1-3 จำแนกผล LINE · 270-1-4 คิวใบลดหนี้ร่างตัวช่วยใบซ้ำ · 270-1-5 ใบกำกับ OCR VAT 0% — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit ee79eb2b)_
 _Last verified against codebase: 2026-11-13 (รอบ 270 ชุดแก้ฝ่ายค้าน — §2.12g-270: H1 เงินของใบมัดจำกติกาเดียว · M1 คิวแจ้งแชต backoff · M2 เครื่องหมายอัตราศูนย์ชัด · M3 ตัวตรวจย้อนหลัง OCR 0% · M4 idempotency fail-closed เส้นเงิน/เอกสาร · L1–L7 (คำตัดสิน 270-2-1…7) — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit <pending>)_
+_Last verified against codebase: 2026-11-13 (รอบ 264 P4 ชุดแก้ฝ่ายค้าน — §2.12g-264-P4: H1 กุญแจกันซ้ำแจ้งโอน · H2 ขอบเขต AcceptPayerSlipCopy ของผู้ขาย · M1 บรรทัดเดียวต่อการจ่ายเดียว · M2 จองแผนก่อน PV + outbox · M3 ปิดการแจ้งด้วย PV ของแผน · M4 พร้อมเพย์ไม่บันทึกเอง · M5 ภาษีหักของเรา · M6 A2 ไม่ใช้ความยินยอม · M7 TextVersion + กระดิ่งผู้ขาย · L1/L2/L4–L9 — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 11e00f10)_

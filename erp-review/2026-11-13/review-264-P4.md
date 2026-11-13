@@ -193,3 +193,32 @@ caveat บนหน้ายอมรับเองว่า "พร้อม�
 - A7: PV ของผู้ซื้อเกิดทันทีจากคำยืนยันของคนพร้อมสลิปของตัวเอง ⇒ เป็นการกระทำของคน ไม่ใช่สถานะภายนอก ⇒ ผ่าน (ยอดอ่านจากสลิปไม่ตรงก็แค่เตือน)
 - ท่อ: BankLine/PayerDeclared บันทึกเองหลังการแจ้งของผู้ขายเท่านั้น (เงินเข้าผู้ขายยืนยันแล้ว) ⇒ ผ่าน
   แต่ "บัญชีที่เงินออก" ของ PayerDeclared เป็นค่าที่ระบบประทับโดยไม่มีหลักฐาน ⇒ M4
+
+---
+
+## การแก้ (ผู้พัฒนา · 2026-11-13 · คำตัดสิน 264-5-14…21)
+
+| # | สถานะ | ที่แก้ |
+| --- | --- | --- |
+| H1 | แก้แล้ว | `PartnerPaymentPlanRule.TransferIdempotencyKey` + unique index `IX_PartnerPaymentPlans_Company_IdemKey` + `pg_advisory_xact_lock` ต่อใบซื้อ · JS ปิดปุ่ม + `open()` ใหม่หลังสำเร็จ · Db `H1_แจ้งโอน_สลิปเดิมสองครั้ง_และกดพร้อมกัน_*` (ทิศตรงข้าม: สลิปอื่นยอดเท่ากัน ⇒ PV ที่สอง) |
+| H2 | แก้แล้ว | ขอบเขตใหม่ของผู้ขาย `AcceptPayerSlipCopy` (Need อนุมัติเอกสารขาย · ข้อความของตัวเอง · ผู้อ่าน `DeliverSlipCopyAsync`) · `ReceiveSlipCopy` กลับเป็นของผู้ซื้อ (ไม่มีผู้อ่าน) · 264-5-14 |
+| M1 | แก้แล้ว | ตัวเขียนเดียว `BindAsync` ถูกเรียกจาก `MarkRecordedAsync` (ท่อทุกชั้น · PV ของแผน · ตาข่าย) และ `RecordAsync` (ปุ่มเดียว) · ผูกเฉพาะ PV บัญชีเดียวกับบรรทัด · `DecideAsync` นับการแจ้งที่บันทึกแล้วแต่ PV ไม่ผูกบรรทัด · ข้อเสนอ (2) "นับ PV ใด ๆ ในกรอบวัน" ไม่ทำ — ใช้ PV ที่มาจากการแจ้งของผู้ขายรายนั้น (มีบัญชีรับเงินให้เทียบ) แทน เพราะ PV ทั่วไปไม่มีบัญชีปลายทางให้ตัดสินว่าเป็นเงินก้อนเดียวกัน |
+| M2 | แก้แล้ว (ทางเลือก) | `CreatePaymentAsync` เปิดธุรกรรมของตัวเอง ⇒ รวม PV กับแผนในธุรกรรมเดียวไม่ได้ · ใช้ข้อเสนอของผู้ตรวจ: จองแถวแผนก่อน PV + เลขอ้างอิง canonical (`PlanPaymentByReferenceAsync`) + ไฟล์เข้าที่เก็บก่อนแตะฐาน + outbox สำเนาสลิป (`SlipCopyState` · AutopilotJob `PartnerSlipCopies`) · ล้มหลัง PV ⇒ 200 + คำเตือน |
+| M3 | แก้แล้ว | `PartnerPaymentPlanRule.PlanPaymentFor` (ยอด/วัน ≤ 3 วัน ตัวเดียว ยังไม่ถูกอ้าง) ใช้ทั้งท่อ · ปุ่มเดียว · ตาข่าย · ข้อเสนอ "ไม่ให้กดบันทึกใหม่ทับโดยไม่ยืนยันซ้ำ" ไม่ทำแยก — ปุ่มเดียวปิดด้วย PV ของแผนเองเมื่อจับคู่ได้ตัวเดียว · หลายตัวยังมีคำเตือน OtherPayment เดิม |
+| M4 | แก้แล้ว | `PartnerPaySourceAccount.Facts.PayerDeclaredBindsAccount` (`AccountBoundMethods` = โมบาย/อินเทอร์เน็ตแบงก์กิ้ง) · พร้อมเพย์/TrueMoney คงอยู่ในรายการแต่ preselect อย่างเดียว · 264-5-17 |
+| M5 | แก้แล้ว | `GatewayAmountProblem` บนผล `PlanForAsync` (ภาษีหักของเรา) ทั้ง `OptionsAsync` และ `StartGatewayAsync` · Db `M5_*` |
+| M6 | แก้แล้ว | 264-5-11 ส่วนความยินยอมถูกกลับโดย 264-5-20 · Db `จ่ายจากระบบของเรา_ไม่ยินยอม_เปิดรายการได้_การแจ้งไม่บันทึกเอง_*` |
+| M7 | แก้แล้ว | ขอบเขตใหม่ `WiredFromStart` (ไม่ผูกนาฬิกา · ยืนยันใหม่ = `MinTextVersion`) · ข้อความมุมผู้ซื้อ `SellerNotAcceptingNoteForBuyer` · กระดิ่งถึงผู้ขาย (`SellerNotifiedAt` ครั้งเดียวต่อคู่ค้าต่อ 7 วัน) |
+| L1 | แก้แล้ว | ลบ `SlipConfirmedByBankLine` + ถ้อยคำใน DOCUMENT_FLOW/DECISIONS |
+| L2 | แก้แล้ว | `BindAsync` มี `AutoSettleDocumentId == null` |
+| L3 | ไม่แก้รอบนี้ | ผูกบรรทัดล้ม ⇒ `bankLineBound=false` ใน audit + LogError · ป้ายบน PV/ใบซื้อต้องเพิ่มคอลัมน์บน `Payment` (ห้ามยืมฟิลด์ — กฎ #4 E) · บรรทัดยัง Unmatched อยู่ในคิวกระทบยอดของหน้าธนาคาร (ผู้ใช้เห็นที่นั่น) |
+| L4 | แก้แล้ว | `Take(MaxOthers + 1)` เกิน ⇒ คำแนะนำ |
+| L5 | แก้แล้ว | `IBankLineEvidence.EvidenceDateAsync` ⇒ PV ลงวันที่ของบรรทัด · งวดปิด ⇒ `CreatePaymentAsync` ปฏิเสธ ⇒ ปุ่มเดียว + เหตุ (กติกาเดียวกับทั้งระบบ) |
+| L6 | แก้แล้ว | สถานะแผนเมื่อการแจ้งถอน/ปิด · `PlanPaymentForNoticeAsync` กรอง `!x.IsDeleted` |
+| L7 | แก้แล้ว | `StartGatewayAsync` ไม่ถือธุรกรรมแล้ว (ไม่มีความยินยอมให้ล็อก — M6) · จับ `HttpRequestException`/timeout เป็น 409 ข้อความไทย |
+| L8 | แก้แล้ว | `SafeQrPayload` (เซิร์ฟเวอร์) + regex บนหน้า · ป้ายปุ่มจากเซิร์ฟเวอร์ (`TransferButtonLabel`) · ตัดจุลภาคก่อนส่งยอด |
+| L9ก | แก้แล้ว | `ShouldClearSlipPayer` รวม `Unreadable` |
+| L9ข | ไม่แก้รอบนี้ | อ่านเลขบัญชีรับเงินของผู้ขายเพื่อเทียบเท่านั้น (ไม่เก็บ/ไม่ส่งออก) · แถว RoPA เป็นงานของโมดูล PDPA (`ProcessingActivity`) ไม่ใช่ของแพ็กนี้ |
+| L9ค | แก้แล้ว | ข้อความยินยอม `AcceptPayerSlipCopy` v1 พูดถึงชื่อ/เลขบัญชีของผู้โอน (กรรมการ/พนักงานของคู่ค้า) |
+| Q4 | ไม่แก้รอบนี้ | ตาข่าย `SweepSlipPayerAsync`/`CloseFromPlansAsync` ไม่มี watermark ต่อบริษัท: `CloseFromPlansAsync` หยิบเฉพาะใบซื้อที่มีแผนซึ่ง PV ยังไม่ถูกอ้าง (แถวที่ใช้แล้วไม่วน) · `PayerCompanyId` ใน `StartPaymentRequest` ต้องเปลี่ยนสัญญาของ `IPaymentIntentService` ทุกผู้ให้บริการ — แผนฝั่งผู้ซื้อเก็บผู้เลือกแล้ว |
+

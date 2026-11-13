@@ -41,6 +41,7 @@ public class PartnerConsentService
         Need.PurchaseCreate => await DocumentPermissionHelper.CanCreateAsync(_perms, companyId, userId, DocumentType.PurchaseInvoice),
         Need.PurchaseApprove => await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.PurchaseInvoice),
         Need.TaxFile => await _perms.HasPermissionAsync(companyId, userId, PermissionKeys.TaxFile),
+        Need.SalesApprove => await DocumentPermissionHelper.CanApproveAsync(_perms, companyId, userId, DocumentType.Invoice),
         _ => false,
         };
     }
