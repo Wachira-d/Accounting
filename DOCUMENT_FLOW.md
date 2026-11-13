@@ -3407,7 +3407,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (M1) คิวแจ้งแชตล้มชั่วคราว ⇒ `DeferredNotifyRetryException` ⇒ backoff ของ `DeferredNotifyDispatcher` · (L4) ใบยกเลิก/ลบ ⇒ ไม่ส่ง · (L5) retry key = `LinkedNoticeRetryKey` ·
   (M2) เครื่องหมายอัตราศูนย์อ่านทีละบรรทัด (ไม่นับชื่อ/ที่อยู่) · (M3) `GET tax/ocr-zero-vat-review` + แถบหน้า ภาษี (อ่านอย่างเดียว) ·
   (M4) `IdempotencyMiddleware` ลองซ้ำ → LogError + `Idempotency-Status: unavailable` → เส้นเงิน/เอกสาร 503 (`IdempotencyKeyPolicy.FailClosedWhenStoreUnavailable`) · (L6/L7) คิวใบลดหนี้ร่างเริ่มจากใบที่ค้าง + ทางสำรองจากหมายเหตุ
-- **kill-switch**: ไม่มีการเรียก AI ในรอบนี้ · Last verified `commit ee79eb2b` · ชุดแก้ `commit <pending>`
+- **kill-switch**: ไม่มีการเรียก AI ในรอบนี้ · Last verified `commit ee79eb2b` · ชุดแก้ `commit a9d8f384`
 
 ### 2.12g-268 รอบ 268 งานคงค้าง (คำตัดสิน 268-1-1…6 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
@@ -9652,4 +9652,5 @@ _Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P3 — �
 _Last verified against codebase: 2026-11-13 (รอบ 270 งานค้าง 266/268/269 — §2.12g-270: 270-1-1 คืนมัดจำตามบัญชีของแต่ละงวด · 270-1-2 คิวแจ้งแชตตรวจการผูกเดิม · 270-1-3 จำแนกผล LINE · 270-1-4 คิวใบลดหนี้ร่างตัวช่วยใบซ้ำ · 270-1-5 ใบกำกับ OCR VAT 0% — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit ee79eb2b)_
 _Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P3 ชุดแก้ฝ่ายค้าน — §2.12n-P3: MED-1 ป้ายปุ่มตัวตัดสินเดียว · MED-2 ปุ่มชำระคู่ปุ่มหน้าเอกสาร/ต่อปลายทาง · MED-3 ส่งแบบเดิมเมื่อไม่มีลิงก์หน้าเอกสาร · LOW-1…9 (คำตัดสิน 267-1-78…82) — build + test + Db test ผ่านในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_
 _Last verified against codebase: 2026-11-13 (รอบ 270 ชุดแก้ฝ่ายค้าน — §2.12g-270: H1 เงินของใบมัดจำกติกาเดียว · M1 คิวแจ้งแชต backoff · M2 เครื่องหมายอัตราศูนย์ชัด · M3 ตัวตรวจย้อนหลัง OCR 0% · M4 idempotency fail-closed เส้นเงิน/เอกสาร · L1–L7 (คำตัดสิน 270-2-1…7) — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit <pending>)_
+_Last verified against codebase: 2026-11-13 (รอบ 270 ชุดแก้ฝ่ายค้าน — §2.12g-270: H1 เงินของใบมัดจำกติกาเดียว · M1 คิวแจ้งแชต backoff · M2 เครื่องหมายอัตราศูนย์ชัด · M3 ตัวตรวจย้อนหลัง OCR 0% · M4 idempotency fail-closed เส้นเงิน/เอกสาร · L1–L7 (คำตัดสิน 270-2-1…7) — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit a9d8f384)_
 _Last verified against codebase: 2026-11-13 (รอบ 264 P4 ชุดแก้ฝ่ายค้าน — §2.12g-264-P4: H1 กุญแจกันซ้ำแจ้งโอน · H2 ขอบเขต AcceptPayerSlipCopy ของผู้ขาย · M1 บรรทัดเดียวต่อการจ่ายเดียว · M2 จองแผนก่อน PV + outbox · M3 ปิดการแจ้งด้วย PV ของแผน · M4 พร้อมเพย์ไม่บันทึกเอง · M5 ภาษีหักของเรา · M6 A2 ไม่ใช้ความยินยอม · M7 TextVersion + กระดิ่งผู้ขาย · L1/L2/L4–L9 — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 11e00f10)_
