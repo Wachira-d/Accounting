@@ -1225,10 +1225,11 @@
         const row = (ep) => {
           const key = ep.id || 'primary';
           // รอบ 259 (A-M4): เรื่องที่ LINE ไม่มีเส้นส่ง ⇒ ช่องของปลายทาง LINE ล็อก + เหตุจากเซิร์ฟเวอร์ (ไม่ใช่ติ๊กได้แล้วไม่มีวันส่ง)
-          const lineEp = ep.kind === 'LineUser' || ep.kind === 'LineGroup';
+          // รอบ 267 P3: เหตุต่อชนิดปลายทาง (ลิงก์เซ็น = 1:1 ได้ · กลุ่มไม่ได้) — เซิร์ฟเวอร์ส่งเหตุแยกชนิด หน้าเลือกตามชนิดของแถวเท่านั้น
+          const why = (t) => ep.kind === 'LineUser' ? t.lineUserUnsupported : ep.kind === 'LineGroup' ? t.lineGroupUnsupported : null;
           const topicBoxes = (o.topics || []).map(t => {
-            const off = lineEp && t.lineUnsupported;
-            return `<label style="display:inline-flex;align-items:center;gap:3px;margin-right:10px;font-size:12px${off ? ';color:#94a3b8' : ''}" ${off ? `title="${esc(t.lineUnsupported)}"` : ''}>
+            const off = why(t);
+            return `<label style="display:inline-flex;align-items:center;gap:3px;margin-right:10px;font-size:12px${off ? ';color:#94a3b8' : ''}" ${off ? `title="${esc(off)}"` : ''}>
               <input type="checkbox" data-ep="${esc(key)}" data-topic="${esc(t.key)}" ${!off && (ep.topics || []).includes(t.key) ? 'checked' : ''} ${ep.canEditTopics && !off ? '' : 'disabled'}
                 onchange="Page.onNotifyTopic(this)"> ${esc(t.label)}${off ? ' (ไม่ส่งทาง LINE)' : ''}</label>`;
           }).join('');
@@ -1390,8 +1391,8 @@
           const res = await API.post(this._notifyUrl('/line-group/preview'), { code, topics: null, showAmounts: null, acceptResponsibility: false });
           const p = res && res.data;
           if (!res || !res.success || !p) { out.innerHTML = `<div class="text-red" style="font-size:12px">${esc((res && res.message) || 'ผูกไม่ได้')}</div>`; return; }
-          const topicBoxes = (this._notify?.topics || []).map(t => t.lineUnsupported
-            ? `<label style="font-size:12px;margin-right:8px;color:#94a3b8" title="${esc(t.lineUnsupported)}"><input type="checkbox" disabled> ${esc(t.label)} (ไม่ส่งทาง LINE)</label>`
+          const topicBoxes = (this._notify?.topics || []).map(t => t.lineGroupUnsupported
+            ? `<label style="font-size:12px;margin-right:8px;color:#94a3b8" title="${esc(t.lineGroupUnsupported)}"><input type="checkbox" disabled> ${esc(t.label)} (ไม่ส่งทาง LINE)</label>`
             : `<label style="font-size:12px;margin-right:8px"><input type="checkbox" data-group-topic="${esc(t.key)}" ${t.key === 'Document' || t.key === 'Dunning' ? 'checked' : ''}> ${esc(t.label)}</label>`).join('');
           out.innerHTML = `<div style="font-size:13px"><b>${esc(p.groupName || 'กลุ่ม LINE')}</b> · ${Number(p.memberCount || 0)} คน · ผูกกับผู้ติดต่อ <b>${esc(p.contactName)}</b></div>
             <div style="margin-top:4px">${topicBoxes /* html — หนีแล้ว */}</div>

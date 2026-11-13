@@ -26,7 +26,8 @@ public static class LineQuietHours
 
     /// <summary>ส่งทันทีแม้อยู่ในช่วงเงียบไหม — ส่งเองจากหน้าเอกสาร ⇒ ใช่ · ใบเสร็จหลังรับชำระ ⇒ เฉพาะลูกค้าชำระเอง (<paramref name="customerInitiated"/>) · ที่เหลือเลื่อน</summary>
     public static bool IsExempt(string? trigger, bool customerInitiated = false)
-        => trigger == ContactLineChannel.ManualTrigger || (trigger == ContactLineChannel.ReceiptTrigger && customerInitiated);
+        => trigger == ContactLineChannel.ManualTrigger || trigger == ContactLineChannel.SignedCopyTrigger   // รอบ 267 P3: ลูกค้าเพิ่งลงนามเอง
+           || (trigger == ContactLineChannel.ReceiptTrigger && customerInitiated);
 
     /// <summary>ด่านตอนบันทึก — null = ผ่าน (ชั่วโมง 0–23 · เริ่ม ≠ สิ้นสุด)</summary>
     public static string? Problem(int startHour, int endHour)

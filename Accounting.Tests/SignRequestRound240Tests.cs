@@ -444,7 +444,8 @@ public class SignRequestRound240Tests
         using var db = new Accounting.Data.AccountingDbContext(new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<Accounting.Data.AccountingDbContext>()
             .UseNpgsql("Host=127.0.0.1;Port=1;Database=offline;Username=none;Password=none").Options);
         // รอบ 267 P2: คอลัมน์ใหม่ของ outbox (CustomerActionId · SignedCopyDoneAt) อยู่ใน CustomerSignMigration ⇒ ตรวจรวมสองชุด
-        var migration = string.Join("\n", SignRequestMigration.Statements().Concat(CustomerSignMigration.Statements()));
+        // รอบ 267 P3: SourceLineQueueId · SignedCopyLineQueuedAt อยู่ใน CustomerShareMigration
+        var migration = string.Join("\n", SignRequestMigration.Statements().Concat(CustomerSignMigration.Statements()).Concat(CustomerShareMigration.Statements()));
         var et = db.Model.FindEntityType(typeof(SignEventOutboxEntry))!;
         Assert.Contains($"CREATE TABLE IF NOT EXISTS \"{et.GetTableName()}\"", migration);
         foreach (var p in et.GetProperties()) Assert.Contains($"\"{p.GetColumnName()}\"", migration);

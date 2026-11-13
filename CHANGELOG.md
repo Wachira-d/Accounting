@@ -7233,7 +7233,12 @@ _รอบ 264 แพ็ก P4 (`erp-review/2026-11-12/team-264-a2b-design.md` �
 ความยินยอม AutoRecordPayment ตรวจเพื่อเขียน · ชั้น PayerDeclared) · "แจ้งโอนให้ผู้ขาย" (PV ของเราจากหลักฐานของเรา · สำเนาสลิปเข้าคิวผู้ขายภายใต้ ReceiveSlipCopy ของผู้ขาย ·
 ไม่มี PV ที่สอง) · L3 ล้างเลขผู้โอน (ตัวเขียนแยก · เส้นตัดสินอ่านอย่างเดียว) · `ReceiveSlipCopy` ต่อสาย (WiredSince 2026-11-13) · กติกา R264P4 +23 ข้อ + ฝ่ายค้าน R264P4a–l ·
 build + pure + Db ผ่านในเครื่องนี้ · commit 7578d6bb_
+_รอบ 267 แพ็ก P3 "📤 ส่งให้ลูกค้า" + ไทม์ไลน์ + LINE เซ็น (`erp-review/2026-11-12/team-267-doc-pages-design.md` §15/§19 P3 · คำตัดสิน 267-1-7 · 267-1-61…67 · DOCUMENT_FLOW §2.12n-P3 · TEST_PLAN P267c):
+ปุ่มเดียวแทน 6 ปุ่ม · `share-options` / `share` / `customer-timeline` · `CustomerShareService` orchestrate ลิงก์ (`EnsureCustomerLinkAsync`) · เปิดช่วงตอบรับ (`IssueLinkAsync`) · อีเมล (`SendDocumentRoutedAsync` + บล็อกลิงก์หน้าเอกสาร) · LINE (`DocumentLineSendService.SendAsync`) ผลแยกต่อช่องทาง ·
+`DocumentLineSendRule.PageLinkAllowed` ตัวเดียว (กลุ่มซ่อนยอด = ไม่มีปุ่ม · ใบที่ตอบรับได้ = 1:1 เท่านั้น) · การ์ด "ดู/ยอมรับ" + `s` แถวคิว · ฉบับเซ็นกลับ LINE เดิม (งาน outbox) · ลิงก์เซ็นติ๊กให้ LINE 1:1 ได้ ·
+เทสต์ pure +13 (ปรับ LineRound259 3) · Db +2 · กติกา R267c +12 ข้อ + 6 เคสฝ่ายค้าน — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) · commit 39c4d582_
 _รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 · DOCUMENT_FLOW §2.12g-270 · TEST_PLAN P270-1…6): 268 L7 คืนมัดจำการจองหลายงวดตามบัญชีของแต่ละงวด (ไม่รู้ ⇒ 409 ให้เลือก · ช่อง "คืนจากบัญชี" สองหน้า) ·
 คิว `linechat.slip-linked` ประทับ/ตรวจการผูกเดิมก่อนส่ง (คอลัมน์ `DeferredNotifications.ExpectedKey`) · ผล LINE ไม่มีสถานะ HTTP จำแนกด้วย `LinePushOutcome` (ถาวรไม่ส่งซ้ำ) ·
 266-C L2 ใบลดหนี้ร่างของตัวช่วยใบซ้ำขึ้น Autopilot · 269 ข้อ 3 ใบกำกับ OCR VAT 0% ทั้งใบที่กระดาษไม่บอกอัตราศูนย์ ⇒ `[VAT-ZERO-UNREAD]` รอตรวจ ·
 เทสต์ pure +8 · Db +7 · กติกา R270 +9 ข้อ + ฝ่ายค้าน R270-1…4 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) · commit ee79eb2b_
+_รอบ 270 (ทางผ่าน CI run 43487318055): `ContactNotifyEndpointRound245DbTests.N6_*` deadlock 40P01 — ตารางทดลองตัด FK ไป Companies/Contacts (เทสต์ตรวจรายชื่อคอลัมน์เท่านั้น) · `SubmitOnceRound217DbTests.SUB09` ล้มครั้งเดียวในรอบเดียวกัน (การแข่งของคำขอพร้อมกัน — ไม่แตะโค้ดหลัก · ไม่เกี่ยวกับรอบ 270) — ไม่แตะโค้ดหลัก_

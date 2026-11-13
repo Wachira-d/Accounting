@@ -127,6 +127,13 @@ public partial class DocumentPayLinkService
         return raw == null ? null : (await PublicViewAsync(companyId, raw, ct))?.Target;
     }
 
+    public async Task<string?> CustomerLinkRefusalAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+    {
+        var d = await LoadDocAsync(companyId, documentId, null, ct);
+        if (d == null) return "ไม่พบเอกสาร";
+        return CustomerDocPage.IssueRefusal(d.Type, d.Status, await CustomerFacingAsync(companyId, d, ct), d.PlatformTenantDocument);
+    }
+
     // ═══════════════ view model ═══════════════
 
     /// <summary>ส่วนหน้าเอกสาร — บรรทัด · ยอด · ใบที่เกี่ยวข้อง · ปุ่ม (ตัวตัดสินเดียว <see cref="CustomerDocPage.Actions"/>) ·

@@ -19688,6 +19688,86 @@ REVIEWER_CASES += [
 ]
 
 
+# ── รอบ 267 แพ็ก P3 — "📤 ส่งให้ลูกค้า" + ไทม์ไลน์ + LINE เซ็น (กติกา R267c · คำตัดสิน 267-1-61…67 · DOCUMENT_FLOW §2.12n-P3) ──
+# หน้าต่างเดียว orchestrate บริการเดิม (ห้ามประกอบเส้นส่งเอง) · ผลแยกต่อช่องทาง · ลิงก์หน้าเอกสารบนการ์ด LINE ตัดสินที่ PageLinkAllowed ตัวเดียว ·
+# ตัวระบุแหล่งที่มา s ตรวจกับแถวคิวจริง · ฉบับเซ็นกลับ LINE ผ่านผู้เข้าคิวเดียว
+_R267C_WHY = "รอบ 267 P3 / R267c (คำตัดสิน 267-1-61…67): "
+_R267C_SHARE = "Services/Implementations/CustomerShareService.cs"
+_R267C_LINE = "Services/Implementations/DocumentLineSendService.cs"
+RULES += [
+    dict(file=_R267C_SHARE, method="ShareAsync",
+         must=["_links.EnsureCustomerLinkAsync(", "_sign.IssueLinkAsync(", "SendEmailAsync(", "SendLineAsync(", "CustomerShareRule.Summary(",
+               "CustomerShareRule.ParseChannels("],
+         before=[("_links.EnsureCustomerLinkAsync(", "SendEmailAsync("), ("_links.EnsureCustomerLinkAsync(", "SendLineAsync("),
+                 ("_sign.IssueLinkAsync(", "SendEmailAsync(")],
+         forbid=["_db.LineQueues", "SendDocumentEmailAsync(", "EnsureLinkAsync(", "DocumentPayLinkPolicy.NewToken(", "SignRequestKinds.MarkIssued("],
+         why=_R267C_WHY + "ส่งให้ลูกค้า = ลิงก์จากตัวออกเดียว → เปิดช่วงตอบรับผ่าน SignRequestService → ช่องทางผ่านบริการเดิม (ห้ามประกอบเอง) · สรุปผลต่อช่องทาง"),
+    dict(file=_R267C_SHARE, method="SendEmailAsync",
+         must=["_email.SendDocumentRoutedAsync(", "IncludePageLink: carries", "CustomerShareRule.EmailCarriesPageLink(", "CustomerShareRule.Failed("],
+         forbid=["SendDocumentEmailAsync(", "SendEtaxByEmailAsync(", "IEmailSender", "throw;"],
+         why=_R267C_WHY + "อีเมล = ทางเข้าเดียว (ทาง e-Tax ไม่มีบล็อกลิงก์) · ล้ม = ผลของช่องทางนี้ (ไม่โยนต่อ — LINE ไม่ถูกลาก)"),
+    dict(file=_R267C_SHARE, method="SendLineAsync",
+         must=["_line.SendAsync(", "includePageLink: true", "CustomerShareRule.Queued(", "CustomerShareRule.Failed("],
+         forbid=["_db.LineQueues", "new LineQueue", "CustomerShareRule.Ok(", "throw;"],
+         why=_R267C_WHY + "LINE = ทางเข้าเดียว (เข้าคิว ≠ ส่งแล้ว — ห้ามรายงาน ok) · ล้ม = ผลของช่องทางนี้"),
+    dict(file=_R267C_LINE, method="SendAsync",
+         must=["DocumentLineSendRule.PageLinkProblem(", "_payLinks.EnsureCustomerLinkAsync(", "IncludePageLink = includePageLink ? pageLink : null",
+               "DocumentLineSendRule.MergeSignTopic("],
+         before=[("_payLinks.EnsureCustomerLinkAsync(", "_db.LineQueues.Add(")],
+         why=_R267C_WHY + "267-1-61 ลิงก์หน้าเอกสารต่อปลายทางจากกติกาเดียว · ออกลิงก์ผ่านตัวออกเดียวก่อนเขียนแถวคิว"),
+    dict(file=_R267C_LINE, method="EnqueueSignedCopyAsync",
+         must=["CustomerShareRule.LineSourceValid(", "q.CompanyId == companyId", "ContactLineChannel.SignedCopyTrigger"],
+         before=[("CustomerShareRule.LineSourceValid(", "db.LineQueues.Add(")],
+         why=_R267C_WHY + "267-1-63 ฉบับเซ็นกลับเฉพาะ LINE 1:1 เดิมของใบนี้ที่ได้การ์ดลิงก์หน้าเอกสารแล้ว (tenant)"),
+    dict(file="Services/Implementations/ContactLineQueueService.cs", method="SendOneAsync",
+         must=["DocumentLineSendRule.PageLinkAllowed(", "CurrentCustomerUrlAsync(", "CustomerShareRule.LineSource(item.Id)",
+               "DocumentLineSendRule.PageLinkGoneAtSend"],
+         before=[("DocumentLineSendRule.PageLinkAllowed(", "BuildCardAsync(")],
+         why=_R267C_WHY + "ตอนส่งตรวจกติกาปลายทาง + ลิงก์ยังใช้ได้ซ้ำ (ไม่ส่งการ์ดไม่มีปุ่มแล้วขึ้น \"ส่งแล้ว\") · s = แถวนี้"),
+    dict(file="Services/Implementations/CustomerDocumentResponseService.cs", method="LineSourceAsync",
+         must=["CustomerShareRule.ParseLineSource(", "CustomerShareRule.LineSourceValid(", "x.CompanyId == companyId"],
+         why=_R267C_WHY + "267-1-63 s ไม่ใช่สิทธิ์ — ตรวจกับแถวคิวจริงของบริษัท/ใบนี้ก่อนจำเป็นแหล่งที่มา"),
+    dict(file="Services/Implementations/CustomerDocumentResponseService.cs", method="RespondAsync", must=["LineSourceAsync("],
+         why=_R267C_WHY + "คำตอบจากหน้าเอกสารจำแหล่งที่มาที่ตรวจแล้ว (ฉบับเซ็นกลับ LINE เดิม)"),
+    dict(file="Services/Implementations/SignEventDispatcher.cs", method="ProcessOneAsync",
+         must=["DocumentLineSendService.EnqueueSignedCopyAsync(", "a.SignedPdfSha256 != null"],
+         forbid=["new LineQueue"],
+         why=_R267C_WHY + "การ์ดฉบับเซ็นผ่านผู้เข้าคิวเดียว · เฉพาะเมื่อมีไฟล์ฉบับที่ลงนามแล้ว"),
+    dict(file="Controllers/DocumentController.cs", method="Share",
+         must=["DenyDocAsync(", "DenySensitiveAsync(", "share.ShareAsync("],
+         before=[("DenyDocAsync(", "share.ShareAsync("), ("DenySensitiveAsync(", "share.ShareAsync(")],
+         forbid=["SendDocumentRoutedAsync(", "EnsureCustomerLinkAsync("],
+         why=_R267C_WHY + "ส่งให้ลูกค้า = สิทธิ์สร้างเอกสารชนิดนั้น + ชั้นความลับก่อน · controller ไม่ประกอบเส้นส่งเอง"),
+    dict(file="Controllers/DocumentController.cs", method="ShareOptions",
+         must=["DenyDocAsync(", "DenySensitiveAsync(", "share.OptionsAsync("],
+         before=[("DenySensitiveAsync(", "share.OptionsAsync(")], forbid=["EnsureCustomerLinkAsync("],
+         why=_R267C_WHY + "หน้าต่างส่งให้ลูกค้า: ด่านเดียวกับส่งอีเมล/LINE เดิม · ไม่ออกลิงก์"),
+    dict(file="Controllers/DocumentController.cs", method="CustomerTimeline",
+         must=["GetDocumentForUserAsync(", "visible.IsRedacted", "timeline.TimelineAsync("],
+         before=[("GetDocumentForUserAsync(", "timeline.TimelineAsync(")],
+         why=_R267C_WHY + "ไทม์ไลน์ลูกค้า: ด่านอ่านเอกสาร (ฝั่ง + ชั้นความลับ) ก่อน"),
+]
+REVIEWER_CASES += [
+    # หน้าต่างประกอบแถวคิว LINE เอง (ข้าม DocumentLineSendService) ⇒ ต้องฟ้อง
+    ("R267c-1", "SendLineAsync", "var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: true);",
+     "_db.LineQueues.Add(new LineQueue()); var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: true);", True),
+    # อีเมลล้มแล้วโยนต่อ (ลาก LINE ล้มตาม) ⇒ ต้องฟ้อง
+    ("R267c-2", "SendEmailAsync", "return CustomerShareRule.Failed(ch, \"ส่งอีเมลไม่สำเร็จ — \" + ex.Message, (ex as BusinessRuleException)?.RuleCode);",
+     "throw;", True),
+    # รายงาน LINE ว่า "ทำแล้ว" ตอนเพิ่งเข้าคิว ⇒ ต้องฟ้อง
+    ("R267c-3", "SendLineAsync", "return CustomerShareRule.Queued(ch,", "return CustomerShareRule.Ok(ch,", True),
+    # ส่งก่อนออกลิงก์ ⇒ ต้องฟ้อง (ลำดับ)
+    ("R267c-4", "ShareAsync", "        CustomerLinkResult link;\n",
+     "        var early = await SendEmailAsync(companyId, documentId, req, actor);\n        CustomerLinkResult link;\n", True),
+    # ใช้ s โดยไม่ตรวจกับแถวคิว ⇒ ต้องฟ้อง
+    ("R267c-5", "LineSourceAsync", "return q != null && CustomerShareRule.LineSourceValid(true, q.EntityType, q.EntityId, documentId, q.EndpointKind, q.IncludePageLink, q.Status)",
+     "return q != null && true", True),
+    # ทิศตรงข้าม: จัดบรรทัดใหม่ของการเรียกบริการ LINE ⇒ ต้องไม่ฟ้อง
+    ("R267c-6", "SendLineAsync", "var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: true);",
+     "var r =\n                await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: true);", False),
+]
+
+
 # ── รอบ 266 แพ็ก A (erp-review/2026-11-12/team-266-manual-doc-link.md · คำตัดสิน 266-1-x) — ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ (เจ้าเดียวกัน) ──
 # ตัวตัดสินเดียว ReceiptLinkPolicy ต้องถูกเรียกทุกทางเข้า · ใบร่างตัดสินซ้ำใต้ล็อกก่อนเขียน · ด่าน G-1 (ผู้ติดต่อเดียวกัน) ที่สร้าง/แก้ไข/อนุมัติ · G-2 คำเตือน
 _R266_WHY = "รอบ 266 แพ็ก A (คำตัดสิน 266-1-x): "

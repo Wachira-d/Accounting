@@ -103,7 +103,8 @@ public class ContactRecipientResolver : IContactRecipientResolver
         var etaxNote = etaxMode == null ? null : EtaxByEmailFormat.ContactRecipientsNote(etaxMode.EtaxEnabled, etaxMode.EtaxMode);
 
         return new ContactNotifyOverviewResponse(contact.Id, facts.ContactName, string.IsNullOrWhiteSpace(contact.Email) ? null : contact.Email!.Trim(), list,
-            NotifyTopics.All.Select(t => new NotifyTopicOption(t.ToString(), NotifyTopics.Label(t), NotifyTopics.LineUnsupportedReason(t))).ToList(),
+            NotifyTopics.All.Select(t => new NotifyTopicOption(t.ToString(), NotifyTopics.Label(t),
+                NotifyTopics.LineUnsupportedReason(t, NotifyEndpointKind.LineUser), NotifyTopics.LineUnsupportedReason(t, NotifyEndpointKind.LineGroup))).ToList(),
             _secrets != null && LineDeliveryOpen,
             new List<ContactNotifyComingSoon>
             {

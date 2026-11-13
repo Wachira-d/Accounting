@@ -21847,6 +21847,7 @@ public partial class DocumentService : IDocumentService
         PostPayReceiptMode: Accounting.Helpers.PostPaymentAutomationPolicy.ModeCode(d.PostPayEmailReceipt),
         PostPayPartialMode: Accounting.Helpers.PostPaymentAutomationPolicy.ModeCode(d.PostPayIncludePartial),
         PostPaySettingApplies: Accounting.Helpers.PostPaymentAutomationPolicy.DocumentLayerAllowed(d.DocumentType),
+        CanShareToCustomer: Accounting.Helpers.CustomerShareRule.ButtonOffered(d.DocumentType, d.Status),   // รอบ 267 P3 — ไม่แตะฐาน
         // ── ช่องที่รับตอน Create/Update แต่เดิมไม่เคย echo กลับ ──────────
         // (ดูหมายเหตุใน DocumentResponse — "เก็บแล้วต้อง echo กลับ")
         BuyerDeclinedTaxInvoice: d.BuyerDeclinedTaxInvoice,

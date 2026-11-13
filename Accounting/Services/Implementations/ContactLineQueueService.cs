@@ -366,9 +366,27 @@ public class ContactLineQueueService : IContactLineQueueService
             Finish(item, ContactLineChannel.StatusSkipped, DocumentLineSendRule.PayLinkGoneAtSend, DocumentLineSendRule.RuleCode);
             return false;
         }
+        // รอบ 267 P3 (267-1-61): การ์ดลิงก์หน้าเอกสาร (ส่งให้ลูกค้า · ฉบับเซ็น) — ตรวจกติกาของปลายทางซ้ำตอนส่ง (ค่าตั้งปลายทางเปลี่ยนได้หลังเข้าคิว) +
+        // ลิงก์ยังใช้ได้ (ถูกเพิกถอน/หมดอายุ ⇒ ไม่ส่ง พร้อมเหตุ — ไม่ใช่การ์ดไม่มีปุ่มแล้วขึ้น "ส่งแล้ว") · URL ต่อ s = แถวนี้ (ฉบับเซ็นกลับ LINE เดิม)
+        string? pageUrl = null;
+        if (item.IncludePageLink == true)
+        {
+            if (!DocumentLineSendRule.PageLinkAllowed(ep.Kind, ep.ShowAmounts, doc.DocumentType))
+            {
+                Finish(item, ContactLineChannel.StatusSkipped, DocumentLineSendRule.PageLinkNotAllowedAtSend, DocumentLineSendRule.RuleCode);
+                return false;
+            }
+            var url = _payLinks == null ? null : await _payLinks.CurrentCustomerUrlAsync(item.CompanyId, doc.Id, ct);
+            if (url == null)
+            {
+                Finish(item, ContactLineChannel.StatusSkipped, DocumentLineSendRule.PageLinkGoneAtSend, DocumentLineSendRule.RuleCode);
+                return false;
+            }
+            pageUrl = CustomerShareRule.WithSource(url, CustomerShareRule.LineSource(item.Id));
+        }
         // 3) การ์ด (ภาษา/หัวเดียวกับ PDF · ยอดซ่อนได้ต่อกลุ่ม — Q5)
         var card = await BuildCardAsync(item, doc, showAmounts: !isGroup || ep.ShowAmounts, isGroup,
-            viaNextAcc: ep.OaScope == NotifyEndpointKind.ScopeNextAcc, ct);
+            viaNextAcc: ep.OaScope == NotifyEndpointKind.ScopeNextAcc, ct, pageUrl);
         return await PushAsync(item, ep, isGroup, to, card, ct);
     }
 
@@ -489,7 +507,8 @@ public class ContactLineQueueService : IContactLineQueueService
         return false;
     }
 
-    private async Task<LineDocumentCard.Card> BuildCardAsync(LineQueue item, Document doc, bool showAmounts, bool isGroup, bool viaNextAcc, CancellationToken ct)
+    private async Task<LineDocumentCard.Card> BuildCardAsync(LineQueue item, Document doc, bool showAmounts, bool isGroup, bool viaNextAcc, CancellationToken ct,
+        string? pageUrl = null)
     {
         var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, item.CompanyId, doc.Id);
         var company = await _db.Companies.AsNoTracking().Where(c => c.Id == item.CompanyId)
@@ -499,15 +518,18 @@ public class ContactLineQueueService : IContactLineQueueService
             .Where(c => c.Id == doc.ContactId && c.CompanyId == item.CompanyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
         var outstanding = doc.BalanceDue > 0;
         // ฝ่ายค้าน 259 M1: กลุ่มซ่อนยอดไม่ได้ปุ่มชำระ (หน้าชำระแสดงยอด/รายการ/ชื่อผู้ซื้อ) — ตัวตัดสินเดียวกับปุ่มดู PDF
-        var payUrl = outstanding && DocumentLineSendRule.PayLinkAllowed(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts)
+        // รอบ 267 P3: มีลิงก์หน้าเอกสาร ⇒ ปุ่มเดียวไปหน้า (หน้ามีดาวน์โหลด/จ่าย/ตอบรับ) — ไม่ออก/อ่านลิงก์ชำระ/ลิงก์ดู PDF ซ้อน
+        var payUrl = pageUrl == null && outstanding && DocumentLineSendRule.PayLinkAllowed(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts)
             ? await PayUrlAsync(item, doc, ct) : null;
         return LineDocumentCard.Build(new LineDocumentCard.Input(companyName, viaNextAcc, heading.Language, heading.Title, doc.DocumentNumber,
             showAmounts ? (outstanding ? doc.BalanceDue : doc.TotalAmount) : null, doc.Currency, outstanding ? doc.DueDate : null,
             contactName, payUrl, isGroup, outstanding,
             // ฝ่ายค้าน M1: กลุ่ม "ซ่อนยอด" ไม่ได้ปุ่มดู PDF (ตัวตัดสินเดียว LineDocumentViewLink.EndpointAllows — showAmounts = !isGroup || ep.ShowAmounts)
-            ViewUrl: LineDocumentViewLink.EndpointAllows(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts, null, null)
+            ViewUrl: pageUrl == null && LineDocumentViewLink.EndpointAllows(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts, null, null)
                 ? await ViewUrlAsync(item, ct) : null,
-            PaymentReceived: item.Trigger == ContactLineChannel.ReceiptTrigger));
+            PaymentReceived: item.Trigger == ContactLineChannel.ReceiptTrigger,
+            PageUrl: pageUrl, PageButton: pageUrl == null ? null : LineDocumentCard.PageButtonLabel(heading.Language, doc.DocumentType, outstanding),
+            SignedCopy: item.Trigger == ContactLineChannel.SignedCopyTrigger));
     }
 
     /// <summary>รอบ 258-3 (F-H1 · A-L8): ลิงก์ดู/ดาวน์โหลด PDF ของแถวนี้ — token คำนวณซ้ำได้ (ลองใหม่ = URL เดิม) · ไม่มีความลับ/URL ของระบบ ⇒ ไม่มีปุ่ม (ไม่ใช่ลิงก์เสีย)
@@ -596,7 +618,8 @@ public class ContactLineQueueService : IContactLineQueueService
             var number = r.EntityType == "Document" && numbers.TryGetValue(r.EntityId, out var n) ? n : null;
             var subject = r.EntityType == LineWhtCertCard.QueueEntityType
                 ? "ทวง 50 ทวิ · " + (contactNames.TryGetValue(r.ContactId, out var cn) ? cn : "ผู้ติดต่อ")
-                : r.Trigger == ContactLineChannel.ManualTrigger ? "ส่งเอง · " + (number ?? "-") : number;
+                : r.Trigger == ContactLineChannel.ManualTrigger ? "ส่งเอง · " + (number ?? "-")
+                : r.Trigger == ContactLineChannel.SignedCopyTrigger ? "ฉบับเซ็น · " + (number ?? "-") : number;
             return new LineQueueItemDto(r.Id, r.EntityId, number, r.Trigger,
                 r.EndpointKind, string.IsNullOrEmpty(r.EndpointKind) ? "LINE (ไม่มีปลายทาง)" : NotifyEndpointKind.Label(r.EndpointKind),
                 r.Status, ContactLineChannel.StatusLabel(r.Status), r.ScheduledFor, r.SentAt, r.RetryCount, r.ErrorMessage, r.RuleCode,
