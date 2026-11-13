@@ -33,8 +33,10 @@ public interface IPaymentIntentService
 
     /// <summary>บันทึกผลจาก provider — **idempotent** · ปลอดภัยที่จะเรียกซ้ำจาก
     /// webhook/poll/คนกด</summary>
+    /// <param name="customerVisibleRejectReason">รอบ 267 P4 ฝ่ายค้าน LOW-2: ข้อความถึงลูกค้าเมื่อพนักงานปฏิเสธสลิป (<c>FailureCode</c> = slip_rejected) —
+    /// เขียนลง <c>PaymentIntent.CustomerVisibleRejectReason</c> + บันทึกในประวัติของรายการ<b>ในธุรกรรมเดียวกับการปฏิเสธ</b> · null = ข้อความกลาง</param>
     Task<PaymentIntent> ApplyChargeAsync(Guid intentId, ProviderCharge charge,
-        PaymentEventSource source, string confirmedBy, CancellationToken ct = default);
+        PaymentEventSource source, string confirmedBy, CancellationToken ct = default, string? customerVisibleRejectReason = null);
 
     /// <summary>ถามสถานะสดจาก provider แล้ว sync — ใช้เมื่อ webhook ไม่มา</summary>
     Task<PaymentIntent> RefreshAsync(Guid companyId, Guid intentId, CancellationToken ct = default);
@@ -397,7 +399,7 @@ public class PaymentIntentService : IPaymentIntentService
     }
 
     public async Task<PaymentIntent> ApplyChargeAsync(Guid intentId, ProviderCharge charge,
-        PaymentEventSource source, string confirmedBy, CancellationToken ct = default)
+        PaymentEventSource source, string confirmedBy, CancellationToken ct = default, string? customerVisibleRejectReason = null)
     {
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
@@ -455,8 +457,14 @@ public class PaymentIntentService : IPaymentIntentService
             intent.ConfirmedBy ??= PaymentIntentPolicy.CapConfirmedBy(confirmedBy);   // varchar(200) — ฝ่ายค้านรอบ 218 รอบ 2 (K2)
             intent.PaidAt ??= charge.PaidAtUtc;   // ฝ่ายค้านรอบ 218 (B2): วันที่เงินเข้าตามหลักฐาน (สลิป) — ไม่ระบุ = null (handler ใช้ ConfirmedAt)
         }
+        // รอบ 267 P4 ฝ่ายค้าน LOW-2: เหตุที่ลูกค้าเห็นตอนพนักงานปฏิเสธสลิป — ธุรกรรมเดียวกับการปฏิเสธ + อยู่ในประวัติ (ใครบอกอะไรลูกค้า ตรวจย้อนได้) ·
+        // ปฏิเสธครั้งใหม่ล้างข้อความเก่าเสมอ (null = ข้อความกลาง)
+        var customerNote = charge.Status == PaymentIntentStatus.Failed && charge.FailureCode == CustomerDocPageAfterPay.SlipRejectedCode
+            ? CustomerDocPageAfterPay.NormalizeRejectReason(customerVisibleRejectReason) : null;
+        if (charge.Status == PaymentIntentStatus.Failed && charge.FailureCode == CustomerDocPageAfterPay.SlipRejectedCode)
+            intent.CustomerVisibleRejectReason = customerNote;
         AddEvent(intent, source, from, charge.Status, payload: charge.RawStatus,
-            note: $"ยืนยันโดย {confirmedBy}");
+            note: customerNote == null ? $"ยืนยันโดย {confirmedBy}" : $"ยืนยันโดย {confirmedBy} · ข้อความถึงลูกค้า: {customerNote}");
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);

@@ -176,9 +176,10 @@ public class PostPayRound267Tests
         Assert.True(Policy.DocumentLayerAllowed(DocumentType.TaxInvoice));
     }
 
-    // ───────── S18: ไม่สืบทอดไปใบลูก/โคลน/ใบแทน ─────────
+    // ───────── S18: ไม่สืบทอดไปใบลูก/โคลน (ใบแทนจากการยกเลิก-ออกใหม่ = พาไป — ฝ่ายค้าน MED-3) ─────────
 
-    /// <summary>ค่าตั้งต่อใบเป็นเจตนาของใบนั้น — ทางสร้างใบลูก (แปลง · โคลน · ใบเสร็จของการชำระ · CN อัตโนมัติ · รายการประจำ · ออกใบแทน) ต้องไม่คัดลอก ·
+    /// <summary>ค่าตั้งต่อใบเป็นเจตนาของใบนั้น — ทางสร้างใบลูก (แปลง · โคลน · ใบเสร็จของการชำระ · CN อัตโนมัติ · รายการประจำ) ต้องไม่คัดลอก ·
+    /// ใบแทน (ยกเลิก-ออกใหม่) พาไปผ่าน <c>SettlementPaidReissue.CopyDocumentForReissue</c> เท่านั้น (เทสต์ PostPay267_MED3_*) ·
     /// ผู้เขียนช่องนี้มีได้เฉพาะ: ตัวสร้างใบจากคำขอ (<c>postPayLayer</c>) · ตัวใช้ค่าตั้งต่อใบ · ปุ่มบนหน้าเอกสาร</summary>
     [Fact]
     public void PostPay267_DocLayerNotInherited_ไม่มีทางสร้างใบลูกที่คัดลอกค่าตั้งต่อใบ()
@@ -211,6 +212,17 @@ public class PostPayRound267Tests
         var svc = File.ReadAllText(Path.Combine(root, "Services", "Implementations", "DocumentService.cs"));
         Assert.Contains("PostPayDocumentLayerOrThrow(request.DocumentType, null, null, request.PostPayReceiptMode, request.PostPayPartialMode)", svc);
         Assert.Contains("PostPayEmailReceipt = postPayLayer.EmailReceipt", svc);
+        // ฝ่ายค้าน MED-3 ทิศตรงข้าม: โคลน/แปลง ไม่ส่งค่าตั้งต่อใบเข้าคำขอสร้างใบใหม่ (ใบใหม่ = ตามค่าตั้ง)
+        var clone = File.ReadAllText(Path.Combine(root, "Controllers", "DocumentCloneController.cs"));
+        Assert.DoesNotContain("PostPayReceiptMode", clone);
+        Assert.DoesNotContain("PostPayEmailReceipt", clone);
+        var convertStart = svc.IndexOf("public async Task<DocumentResponse> ConvertDocumentAsync(", StringComparison.Ordinal);
+        Assert.True(convertStart > 0);
+        var convertBody = svc.Substring(convertStart, Math.Min(20_000, svc.Length - convertStart));
+        var convertEnd = convertBody.IndexOf("\n    public ", 10, StringComparison.Ordinal);
+        if (convertEnd > 0) convertBody = convertBody[..convertEnd];
+        Assert.DoesNotContain("PostPayEmailReceipt", convertBody);
+        Assert.DoesNotContain("PostPayReceiptMode", convertBody);
     }
 
     // ───────── S19: สถานะสลิปที่ลูกค้าเห็น ─────────
@@ -220,29 +232,29 @@ public class PostPayRound267Tests
     {
         foreach (var open in new[] { PaymentIntentStatus.Created, PaymentIntentStatus.Pending })
         {
-            var pending = CustomerDocPageAfterPay.SlipState(false, open, null);
+            var pending = CustomerDocPageAfterPay.SlipState(false, open, CustomerDocPageAfterPay.SlipRejectedCode, null);
             Assert.Equal(CustomerDocPageAfterPay.SlipPending, pending.State);
             Assert.Contains("รอผู้ขายตรวจ", pending.Label);
             Assert.Contains("ผู้ขายยืนยันเท่านั้น", pending.Note);     // สลิปอย่างเดียวไม่ใช่ "ชำระแล้ว"
         }
-        var ok = CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Succeeded, "ไม่ควรแสดง");
+        var ok = CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Succeeded, CustomerDocPageAfterPay.SlipRejectedCode, "ไม่ควรแสดง");
         Assert.Equal(CustomerDocPageAfterPay.SlipConfirmed, ok.State);
         Assert.Null(ok.Note);
 
-        var typed = CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Failed, "  ยอดโอนขาด 70 บาท กรุณาโอนเพิ่ม  ");
+        var typed = CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Failed, CustomerDocPageAfterPay.SlipRejectedCode, "  ยอดโอนขาด 70 บาท กรุณาโอนเพิ่ม  ");
         Assert.Equal(CustomerDocPageAfterPay.SlipRejected, typed.State);
         Assert.Equal("ยอดโอนขาด 70 บาท กรุณาโอนเพิ่ม", typed.Note);
 
         // ทิศตรงข้าม: พนักงานไม่พิมพ์ถึงลูกค้า ⇒ ข้อความกลาง (ไม่ว่าง · มีทางไปต่อ)
         foreach (var blank in new[] { null, "", "   " })
         {
-            var d = CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Failed, blank);
-            Assert.Equal(CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Failed, null).Note, d.Note);
+            var d = CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Failed, CustomerDocPageAfterPay.SlipRejectedCode, blank);
+            Assert.Equal(CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Failed, CustomerDocPageAfterPay.SlipRejectedCode, null).Note, d.Note);
             Assert.Contains("แนบใหม่", d.Note);
         }
-        Assert.Equal(CustomerDocPageAfterPay.SlipState(true, PaymentIntentStatus.Failed, "  ").Note, CustomerDocPageAfterPay.SlipState(true, PaymentIntentStatus.Failed, null).Note);
+        Assert.Equal(CustomerDocPageAfterPay.SlipState(true, PaymentIntentStatus.Failed, CustomerDocPageAfterPay.SlipRejectedCode, "  ").Note, CustomerDocPageAfterPay.SlipState(true, PaymentIntentStatus.Failed, CustomerDocPageAfterPay.SlipRejectedCode, null).Note);
         foreach (var closed in new[] { PaymentIntentStatus.Expired, PaymentIntentStatus.Refunded, PaymentIntentStatus.PartiallyRefunded })
-            Assert.Equal(CustomerDocPageAfterPay.SlipClosed, CustomerDocPageAfterPay.SlipState(false, closed, null).State);
+            Assert.Equal(CustomerDocPageAfterPay.SlipClosed, CustomerDocPageAfterPay.SlipState(false, closed, CustomerDocPageAfterPay.SlipRejectedCode, null).State);
     }
 
     [Fact]
@@ -358,5 +370,49 @@ public class PostPayRound267Tests
         var d = new DirectoryInfo(AppContext.BaseDirectory);
         while (d != null && !File.Exists(Path.Combine(d.FullName, "Accounting.sln"))) d = d.Parent;
         return d?.FullName ?? throw new InvalidOperationException("ไม่พบ Accounting.sln");
+    }
+
+    // ───────── ฝ่ายค้าน P4 (review-267-P4.md) ─────────
+
+    [Fact]
+    public void PostPay267_MED1_ReceiptBelongsTo_ผูกใบนี้_หรือใบเสร็จของการชำระที่ไม่กระจาย_ใบเสร็จของใบอื่นไม่ใช่ของใบนี้()
+    {
+        Guid x = Guid.NewGuid(), y = Guid.NewGuid();
+        Assert.True(CustomerDocPageAfterPay.ReceiptBelongsTo(x, x, false));            // ใบเสร็จรายใบของ X
+        Assert.True(CustomerDocPageAfterPay.ReceiptBelongsTo(x, null, true));          // ใบเสร็จของการชำระของ X ที่ไม่ได้จัดสรรไปใบอื่น (ข้อมูลเก่าไม่ผูก)
+        // ทิศตรงข้าม: ใบเสร็จของ Y ในการชำระเดียวกัน · ใบเสร็จรวมของการชำระที่กระจาย · ใบเสร็จที่ผูกใบอื่นแม้เป็น ReceiptDocumentId ของการชำระนี้
+        Assert.False(CustomerDocPageAfterPay.ReceiptBelongsTo(x, y, false));
+        Assert.False(CustomerDocPageAfterPay.ReceiptBelongsTo(x, null, false));
+        Assert.False(CustomerDocPageAfterPay.ReceiptBelongsTo(x, y, true));
+    }
+
+    [Fact]
+    public void PostPay267_LOW1_SlipFailedBySystem_ไม่บอกว่าผู้ขายปฏิเสธ_เฉพาะรหัสปฏิเสธของพนักงาน()
+    {
+        var sys = CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Failed, "create_charge_failed", "ไม่ควรแสดง");
+        Assert.Equal(CustomerDocPageAfterPay.SlipFailed, sys.State);
+        Assert.DoesNotContain("ผู้ขาย", sys.Label);
+        Assert.DoesNotContain("ไม่ควรแสดง", sys.Note);
+        Assert.Equal(CustomerDocPageAfterPay.SlipFailed, CustomerDocPageAfterPay.SlipState(true, PaymentIntentStatus.Failed, null, null).State);
+        // ทิศตรงข้าม: พนักงานปฏิเสธจริง ⇒ ป้ายปฏิเสธ + ข้อความที่พิมพ์ถึงลูกค้า
+        var rej = CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Failed, CustomerDocPageAfterPay.SlipRejectedCode, "ยอดขาด 70 บาท");
+        Assert.Equal(CustomerDocPageAfterPay.SlipRejected, rej.State);
+        Assert.Equal("ยอดขาด 70 บาท", rej.Note);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, null)]
+    [InlineData(null, true)]
+    [InlineData(null, null)]
+    public void PostPay267_MED3_ReissueCarriesDocLayer_ใบแทนพาค่าตั้งของใบเดิม_nullเป็นnull(bool? email, bool? partial)
+    {
+        var from = new Accounting.Models.Entities.Document { DocumentType = DocumentType.TaxInvoice, PostPayEmailReceipt = email, PostPayIncludePartial = partial };
+        var to = new Accounting.Models.Entities.Document { PostPayEmailReceipt = true, PostPayIncludePartial = true };
+        SettlementPaidReissue.CopyDocumentForReissue(from, to);
+        Assert.Equal(email, to.PostPayEmailReceipt);
+        Assert.Equal(partial, to.PostPayIncludePartial);
+        Assert.Contains(nameof(Accounting.Models.Entities.Document.PostPayEmailReceipt), SettlementPaidReissue.DocumentCarriedFields);
+        Assert.DoesNotContain(nameof(Accounting.Models.Entities.Document.PostPayEmailReceipt), SettlementPaidReissue.DocumentNotCarriedFields);
     }
 }
