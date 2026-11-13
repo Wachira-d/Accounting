@@ -389,7 +389,8 @@ public class CustomerSignRound267DbTests
             Req(page, CustomerDocPage.ActionAccept, new CustomerSignRule.SignerInput("สมหญิง", "ใจดี", "ผจก.", true, "รุ่นที่ไม่มี")), Who);
         Assert.Equal(400, oldText.Status);
         // เส้นของลิงก์รุ่นก่อนใช้ token ของหน้าเอกสารแล้วพิมพ์ชื่ออย่างเดียว = ไม่ผ่านเหมือนกัน (ไม่มีทางอ้อมข้ามด่านผู้ลงนาม)
-        var bypass = await s.Responses.Accept(token, new PublicQuotationController.AcceptRequest("ชื่ออย่างเดียว", RevisionNumber: page.Respond.RevisionNumber), Who);
+        var bypass = await s.Responses.Accept(token, new PublicQuotationController.AcceptRequest("ชื่ออย่างเดียว", RevisionNumber: page.Respond.RevisionNumber,
+            ContentHash: page.Respond.ContentHash), Who);   // ส่ง hash ที่เห็นด้วย (L5) — ด่านที่ทดสอบคือผู้ลงนาม
         Assert.Equal(400, bypass.Status);
         db.ChangeTracker.Clear();
         Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == qt.Id).Select(d => d.QuotationAcceptedAt).SingleAsync());
