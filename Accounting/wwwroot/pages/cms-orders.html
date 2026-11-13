@@ -501,9 +501,26 @@
         // ทีม Q: ขั้นที่ระบบทำขึ้นกับวิธีออกเอกสารที่ตรึงบนออเดอร์ — ข้อความวิธีมาจากเซิร์ฟเวอร์ (ไม่เดาขั้นเองในหน้าเว็บ)
         const how = this._currentOrder?.depositInvoicingLabel ? `\n\nวิธีออกเอกสารของออเดอร์นี้: ${this._currentOrder.depositInvoicingLabel}` : '';
         // ทีม Q (ฝ่ายค้านข้อ 2): ปุ่มทำขั้นที่ค้างส่งป้ายจากเซิร์ฟเวอร์ (p.pendingAction) มาเป็น retry
+        // รอบ 268 (268-1-2): สลิปโอน ⇒ ถามบัญชีที่เงินเข้า (ค่าแนะนำ/ตัวเลือกจากเซิร์ฟเวอร์ — หน้าไม่ตัดสินเอง) · เงินผ่านผู้ให้บริการ ⇒ ไม่ถาม
+        let bankAccountId = null;
+        try {
+          const ra = await api.cmsOrderReceivingAccounts(this._sid(), orderId, paymentId);
+          const r = ra && ra.data;
+          if (r && r.applies) {
+            const usable = (r.options || []).filter(o => o.usable);
+            const lines = usable.map((o, i) => `${i + 1}. ${o.label}${o.value === r.suggestedBankAccountId ? '  ← แนะนำ' : ''}`).join('\n');
+            const pick = prompt(`บัญชีที่เงินตามสลิปเข้า\n${r.reason || ''}\n\n${lines || '(ไม่มีบัญชีรับโอนที่ใช้ได้)'}\n\nพิมพ์หมายเลขบัญชี หรือเว้นว่าง = ${r.defaultLabel}`, '');
+            if (pick === null) return;
+            const n = parseInt(pick.trim(), 10);
+            if (pick.trim()) {
+              if (!(n >= 1 && n <= usable.length)) { Layout.toast('หมายเลขบัญชีไม่ถูกต้อง', 'error'); return; }
+              bankAccountId = usable[n - 1].value;
+            }
+          }
+        } catch (e) { Layout.toast('โหลดบัญชีที่เงินเข้าไม่สำเร็จ: ' + e.message, 'error'); return; }
         if (!confirm((retry ? `${retry} — ทำกับรายการรับเงินนี้?` : 'ยืนยันรับเงินจากออเดอร์นี้แล้ว?\n\nระบบจะออกเอกสาร + ลงบัญชี + บันทึกรับเงิน (ตัดสต็อก/ออก e-Tax ตามวิธีของออเดอร์)') + how)) return;
         try {
-          await api.cmsConfirmOrderPayment(this._sid(), orderId, paymentId);
+          await api.cmsConfirmOrderPayment(this._sid(), orderId, paymentId, bankAccountId);
           Layout.toast('ยืนยันรับเงิน + ลงบัญชีสำเร็จ', 'success');
           Layout.closeModal('orderModal');
           await this.load();

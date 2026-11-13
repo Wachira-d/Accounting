@@ -253,6 +253,13 @@ public static class SlipReceivingAccount
             if (!docChannel.HasChannel && shown == null)
                 (siteRow, shown) = await SiteTransferMatchAsync(db, companyId, null, ct);
         }
+        else if (applies && intent.SourceKind == PaymentSourceKind.SiteOrder)
+        {
+            // รอบ 268 (268-1-2): สลิปของออเดอร์หน้าเว็บผ่านคิวรายการชำระ ⇒ บัญชีรับโอนของเว็บนั้น (แถวเดียวกับที่ลูกค้าเห็น) → บัญชีเดียว · เดิมไม่มีชั้นนี้
+            var siteId = intent.SiteId ?? await db.SiteOrders.AsNoTracking()
+                .Where(o => o.Id == intent.SourceId && o.CompanyId == companyId).Select(o => (Guid?)o.SiteId).FirstOrDefaultAsync(ct);
+            (siteRow, shown) = await SiteTransferMatchAsync(db, companyId, siteId, ct);
+        }
         else if (applies && intent.SourceKind == PaymentSourceKind.SiteBooking)
         {
             var siteId = intent.SiteId ?? await db.SiteBookings.AsNoTracking()
@@ -272,6 +279,26 @@ public static class SlipReceivingAccount
         if (!Applies(intent.ProviderCode, intent.MethodKind)) return null;
         if (StampedDecision(intent.ReceivingBankAccountId, intent.ReceivingAccountOrigin) is { } s) return s.BankAccountId;
         return (await ResolveAsync(db, attachmentsRoot, intent, null, ct)).Decision.BankAccountId;
+    }
+
+    // ═══════════════ รอบ 268 (268-1-2): ยืนยันสลิปของออเดอร์หน้าเว็บที่หน้า "คำสั่งซื้อ" (ไม่มีรายการชำระ PaymentIntent) ═══════════════
+
+    /// <summary>แถวรับเงินของออเดอร์หน้าเว็บเป็น "สลิปโอน" ไหม (pure) — ไม่มีรหัสธุรกรรมของผู้ให้บริการ และ (แนบสลิป หรือวิธีโอน/พร้อมเพย์) ·
+    /// เงินผ่านผู้ให้บริการ (มีรหัสธุรกรรม) = บัญชีพักของ <c>IGatewayAccountResolver</c> ตามเดิม</summary>
+    public static bool AppliesToSiteOrderPayment(bool hasSlip, bool hasGatewayTransaction, PaymentMethod method)
+        => !hasGatewayTransaction && (hasSlip || method is PaymentMethod.BankTransfer or PaymentMethod.PromptPay);
+
+    /// <summary>ตัวเลือก + ค่าแนะนำ + ผลตัดสินของแถวรับเงินของออเดอร์หน้าเว็บ (ลำดับเดียวกับ <see cref="Suggest"/>: ใบขายของออเดอร์สร้างโดยไม่ตั้งแหล่งเงิน ⇒
+    /// บัญชีรับโอนของเว็บนั้น → บัญชีรับโอนบัญชีเดียว → ไม่เดา) · ทุก query ผูก <paramref name="companyId"/></summary>
+    public static async Task<Resolution> ResolveForSiteOrderAsync(AccountingDbContext db, Guid companyId, Guid siteId, bool applies, string currency,
+        Guid? chosen, CancellationToken ct = default)
+    {
+        var accounts = await LoadAccountsAsync(db, companyId, ct);
+        var usable = accounts.Where(a => UsableProblem(a, currency) == null).ToList();
+        var (siteRow, shown) = applies ? await SiteTransferMatchAsync(db, companyId, siteId, ct) : (SiteRowMatch.NoRow, (Guid?)null);
+        var suggestion = Suggest(applies, DocChannel.None, shown, siteRow, usable.Select(a => a.Id).ToList());
+        var chosenFacts = chosen is Guid c ? accounts.FirstOrDefault(a => a.Id == c) : null;
+        return new Resolution(applies, accounts, usable, Decide(applies, chosen, chosenFacts, currency, suggestion));
     }
 
     private static async Task<List<AccountFacts>> LoadAccountsAsync(AccountingDbContext db, Guid companyId, CancellationToken ct)

@@ -442,6 +442,45 @@ public class ContactLineBindingService : IContactLineBindingService
         return await BillingLineViewAsync(buyerCompanyId, canManage: true, ct);
     }
 
+    /// <summary>
+    /// รอบ 268 (คำตัดสิน 268-1-5 · backlog 262): ผู้ใช้ถูกนำออกจากบริษัทผู้เช่า ⇒ ปลายทาง LINE รับใบค่าบริการ (OA กลาง · ผู้ติดต่อของผู้เช่าในบริษัทผู้ให้บริการ)
+    /// <b>ที่ผู้ใช้คนนั้นสร้างคำเชิญผูก</b> (<c>BoundByUserId</c>) ถูกยกเลิก + ถอนความยินยอม + audit ในบริษัทผู้ให้บริการ — ตัวยกเลิกเดียว <see cref="NotifyEndpointKind.MarkUnlinked"/> ·
+    /// ปลายทางที่คนอื่นผูกไม่ถูกแตะ (ผู้ติดต่อ = บริษัทผู้เช่าเป็นเจ้าของปลายทาง · ผู้รับยินยอมเอง) · ไม่มีบริษัทผู้ให้บริการ/ผู้ติดต่อ ⇒ 0 ·
+    /// ผู้เรียก = <c>CompanyService.RemoveUserAsync</c> (ธุรกรรมเดียวกับการนำออก — ล้ม = ไม่นำออก)
+    /// </summary>
+    public static async Task<int> UnlinkBillingEndpointsBoundByAsync(AccountingDbContext db, Guid buyerCompanyId, Guid removedUserId, Guid? actorUserId,
+        CancellationToken ct = default)
+    {
+        if (await PlatformInvoiceQueries.PlatformTenantIdAsync(db, ct) is not Guid providerId || providerId == buyerCompanyId) return 0;
+        var contactIds = await PlatformInvoiceQueries.BuyerContactIdsAsync(db, providerId, buyerCompanyId, ct);
+        if (contactIds.Count == 0) return 0;
+        var rows = await db.ContactNotifyEndpoints
+            .Where(e => e.CompanyId == providerId && contactIds.Contains(e.ContactId) && e.OaScope == NotifyEndpointKind.ScopeNextAcc
+                && (e.Kind == NotifyEndpointKind.LineUser || e.Kind == NotifyEndpointKind.LineGroup) && e.BoundByUserId == removedUserId && e.UnlinkedAt == null && !e.IsDeleted)
+            .ToListAsync(ct);
+        var now = DateTime.UtcNow;
+        foreach (var ep in rows)
+        {
+            await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                new object[] { AdvisoryLockKey.For(providerId, AdvisoryLockKey.ContactNotifyEndpoint, ep.ContactId.ToString()) }, ct);
+            var consentId = ep.ConsentRecordId;
+            NotifyEndpointKind.MarkUnlinked(ep, NotifyEndpointKind.UnlinkMemberRemoved, now);
+            if (consentId is Guid cid)
+                await db.PdpaConsentRecords.Where(c => c.Id == cid && c.CompanyId == providerId && c.WithdrawnAt == null)
+                    .ExecuteUpdateAsync(s => s.SetProperty(c => c.WithdrawnAt, (DateTime?)now).SetProperty(c => c.WithdrawnReason, NotifyEndpointKind.UnlinkMemberRemoved), ct);
+            db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = providerId, UserId = actorUserId, Action = AuditAction.Delete,
+                EntityType = ContactRecipientRule.AuditEntityType, EntityId = ep.ContactId.ToString(),
+                NewValues = JsonSerializer.Serialize(new { op = "line-unlink-member-removed", endpointId = ep.Id, buyerCompanyId, removedUserId, consent = consentId,
+                    rule = ProviderCentralOa.RuleCode }),
+                Timestamp = now,
+            });
+        }
+        if (rows.Count > 0) await db.SaveChangesAsync(ct);
+        return rows.Count;
+    }
+
     public async Task<ContactLineInviteResponse> CreateBillingInviteAsync(Guid buyerCompanyId, Guid? actorUserId, string? actorEmail, CancellationToken ct = default)
     {
         // ฝ่ายค้าน L5 (262-1-17): จำกัดความถี่ต่อบริษัทผู้เช่า (DB · หลายเครื่อง) — แต่ละครั้งเขียน audit ในบริษัทผู้ให้บริการ + เพิกถอนลิงก์เดิมของผู้ติดต่อ

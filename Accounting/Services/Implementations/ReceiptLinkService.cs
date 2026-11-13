@@ -389,7 +389,8 @@ public class ReceiptLinkService : IReceiptLinkService
     }
 
     private static BusinessRuleException Refused(ReceiptLinkVerdict v) =>
-        new((v.Message ?? "ผูกไม่ได้") + (v.WayForward is { } w ? " · ทางไปต่อ: " + w : ""), v.RuleCode, 409);
+        new((v.Message ?? "ผูกไม่ได้") + (v.WayForward is { } w ? " · ทางไปต่อ: " + w : ""), v.RuleCode,
+            v.RuleCode == ReceiptLinkPolicy.MovePermissionCode ? 403 : 409);   // ฝ่ายค้าน B-2: สิทธิ์ที่ตัดสินจากข้อเท็จจริง = 403 เหมือนด่านของตัวควบคุม
 
     private static void EnsureFresh(Evaluation e, string? token)
     {
@@ -504,7 +505,7 @@ public class ReceiptLinkService : IReceiptLinkService
                 if (string.IsNullOrWhiteSpace(request.Reason))
                     throw new BusinessRuleException("กรุณาระบุเหตุผลที่ย้ายการรับชำระ (เก็บบนใบแทนและร่องรอยตรวจสอบให้ผู้สอบบัญชี)", ReceiptLinkPolicy.MoveReasonCode, 400);
                 var moved = await _documents.MoveSettlementAsync(companyId,
-                    new SettlementMoveCommand(e.PaymentId!.Value, e.Invoice.Id, e.Move!.FromDocumentId, request.Reason), actor);
+                    new SettlementMoveCommand(e.PaymentId!.Value, e.Invoice.Id, e.Move!.FromDocumentId, request.Reason, ExpectedRoute: e.Verdict.Route), actor);
                 var headline = $"ย้ายการรับชำระ {moved.PaymentNumber} ({Money(moved.Amount)}) จาก {moved.FromDocumentNumber} ไป {moved.TargetDocumentNumber} แล้ว";
                 return new ReceiptLinkResult(e.Verdict.Route.Value.ToString(), moved.TargetDocumentId, moved.TargetDocumentNumber, moved.TargetBalanceDue,
                     moved.TargetStatus.ToString(), moved.ReplacementReceiptId, moved.PaymentId, moved.AllocationId, moved.Notices.Prepend(headline).ToList());
@@ -577,13 +578,12 @@ public class ReceiptLinkService : IReceiptLinkService
             }
             case ReceiptLinkRoute.MoveSettlement or ReceiptLinkRoute.MoveSettlementWithReissue when request.PaymentId is Guid movedPaymentId:
             {
-                // แพ็ก B (266-1-26): ถอดการย้าย = ย้ายกลับใบเดิมเป็นรายการใหม่ (สองขาใหม่) — เฉพาะการย้ายที่ไม่ได้ออกใบแทน · ออกใบแทนแล้ว = ไม่มีถอด
-                var kinds = await VisibleKindsAsync(companyId, userId);
+                // แพ็ก B (266-1-26): ถอดการย้าย = ย้ายกลับใบเดิมเป็นรายการใหม่ (สองขาใหม่) — เฉพาะการย้ายที่ไม่ได้แตะกระดาษ · ยกเลิก/ออกใบรับแล้ว = ไม่มีถอด (ฝ่ายค้าน B-8)
                 var current = await _db.PaymentAllocations.AsNoTracking()
                     .Where(a => a.CompanyId == companyId && a.PaymentId == movedPaymentId && a.MovedFromAllocationId != null
                         && (request.AllocationId == null || a.Id == request.AllocationId))
                     .OrderByDescending(a => a.CreatedAt)
-                    .Select(a => new { a.Id, a.DocumentId, a.MovedFromAllocationId })
+                    .Select(a => new { a.Id, a.DocumentId, a.MovedFromAllocationId, a.MoveVoidedReceiptId, a.MoveIssuedReceiptId })
                     .FirstOrDefaultAsync(ct)
                     ?? throw new BusinessRuleException("ไม่พบการย้ายการรับชำระที่ยังมีผลของรายการนี้ (อาจถูกย้ายต่อ หรือการรับชำระถูกยกเลิกไปแล้ว)",
                         ReceiptLinkPolicy.MoveNoUndoCode, 409);
@@ -600,10 +600,25 @@ public class ReceiptLinkService : IReceiptLinkService
                         $"การย้ายนี้ออกใบเสร็จแทน ({replacementNumber}) ไปแล้ว — ถอดไม่ได้ (ใบที่ยกเลิกแล้วไม่กลับมาใช้เลขเดิมเป็นใบรับ) · "
                         + "ทางไปต่อ: ถ้าย้ายผิด ให้เปิดใบเดิมแล้วกด \"🔗 ผูกใบเสร็จ/เงินที่รับไว้แล้ว\" เพื่อย้ายกลับเป็นรายการใหม่ (ระบบออกใบแทนอีกใบ)",
                         ReceiptLinkPolicy.MoveNoUndoCode, 409);
-                await LoadDocAsync(companyId, current.DocumentId, kinds, "ใบแจ้งหนี้", ct);
-                await LoadDocAsync(companyId, originalDocumentId, kinds, "ใบแจ้งหนี้", ct);
+                // ฝ่ายค้าน B-8: การย้ายครั้งนี้ยกเลิกใบเสร็จของใบเดิม (ไม่ออกใบแทนเพราะใบปลายทางเป็นใบรับในตัว) หรือออกใบรับให้ใบปลายทาง ⇒ ย้ายกลับจะทิ้งใบเดิมไว้โดยไม่มีใบรับที่ยังมีผล
+                var paperIds = new[] { current.MoveVoidedReceiptId, current.MoveIssuedReceiptId }.Where(x => x != null).Select(x => x!.Value).ToList();
+                var paperNumbers = paperIds.Count == 0
+                    ? new Dictionary<Guid, string>()
+                    : await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                        .Where(d => d.CompanyId == companyId && paperIds.Contains(d.Id)).ToDictionaryAsync(d => d.Id, d => d.DocumentNumber, ct);
+                string? NumberOf(Guid? id) => id is Guid g ? (paperNumbers.TryGetValue(g, out var no) ? no : g.ToString("N")[..8]) : null;
+                if (ReceiptLinkPolicy.MoveUndoRefusal(NumberOf(current.MoveVoidedReceiptId), NumberOf(current.MoveIssuedReceiptId)) is string undoBlock)
+                    throw new BusinessRuleException(undoBlock, ReceiptLinkPolicy.MoveNoUndoCode, 409);
+                // ฝ่ายค้าน B-2: ถอด = ย้ายกลับ ⇒ ด่านเดียวกับการย้าย (ตัวตัดสิน + สิทธิ์อนุมัติใบที่เงินกลับเข้า/ยกเลิกใบที่เงินถูกถอน ใต้ล็อก) + กุญแจพรีวิว
+                //    (POST preview ด้วย invoiceId = ใบเดิม + paymentId) — ไม่มีทางลัดข้ามพรีวิว
+                var reason = string.IsNullOrWhiteSpace(request.Reason) ? "ถอดการย้ายการรับชำระ (ย้ายกลับใบเดิม)" : request.Reason;
+                var back0 = await EvaluateRequestAsync(companyId, new ReceiptLinkRequest(originalDocumentId, null, movedPaymentId, Reason: reason), userId, ct);
+                if (!back0.Verdict.Allowed) throw Refused(back0.Verdict);
+                if (back0.Move?.FromDocumentId != current.DocumentId)
+                    throw new BusinessRuleException(ReceiptLinkPolicy.StaleMessage, ReceiptLinkPolicy.StaleCode, 409);
+                EnsureFresh(back0, request.PreviewToken);
                 var back = await _documents.MoveSettlementAsync(companyId, new SettlementMoveCommand(movedPaymentId, originalDocumentId, current.DocumentId,
-                    string.IsNullOrWhiteSpace(request.Reason) ? "ถอดการย้ายการรับชำระ (ย้ายกลับใบเดิม)" : request.Reason), actor);
+                    reason, ExpectedRoute: back0.Verdict.Route), actor);
                 return new ReceiptLinkResult(route.ToString(), back.TargetDocumentId, back.TargetDocumentNumber, back.TargetBalanceDue, back.TargetStatus.ToString(),
                     back.ReplacementReceiptId, back.PaymentId, back.AllocationId,
                     back.Notices.Prepend($"ย้ายการรับชำระ {back.PaymentNumber} กลับ {back.TargetDocumentNumber} แล้ว").ToList());

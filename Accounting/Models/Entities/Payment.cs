@@ -208,4 +208,8 @@ public class PaymentAllocation : TenantEntity
     public Guid? ReleaseJournalEntryId { get; set; }
     /// <summary>แถวนี้เกิดจากการย้ายมาจากแถวไหน (แถวที่ถูกปล่อย) — null = ไม่ได้เกิดจากการย้าย</summary>
     public Guid? MovedFromAllocationId { get; set; }
+    /// <summary>รอบ 266 ฝ่ายค้าน B-8: ใบเสร็จที่การย้ายครั้งนี้ (แถวที่เกิดจากการย้าย) ยกเลิกไป — มีค่า = ถอด (ย้ายกลับ) ไม่ได้ เพราะใบเดิมจะกลับมาชำระครบโดยไม่มีใบรับที่ยังมีผล</summary>
+    public Guid? MoveVoidedReceiptId { get; set; }
+    /// <summary>รอบ 266 ฝ่ายค้าน B-1/B-8: ใบเสร็จที่การย้ายครั้งนี้ออกให้ใบปลายทาง (ใบแทน หรือใบกำกับภาษี ณ วันรับเงินของใบแจ้งหนี้ที่พักภาษี) — มีค่า = ถอดไม่ได้</summary>
+    public Guid? MoveIssuedReceiptId { get; set; }
 }

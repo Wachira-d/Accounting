@@ -46,12 +46,14 @@ public sealed class LineChatSlipService : ILineChatSlipService
     private readonly Accounting.Services.Storage.IFileStorage _storage;
     private readonly ILogger<LineChatSlipService> _logger;
     private readonly INotificationEngine? _notify;
+    private readonly ILineNotifyService? _line;
 
     public LineChatSlipService(AccountingDbContext db, ISecretProtector secrets, ICustomerLineLinkService links, ISlipImageReader reader,
         IDocumentPayLinkService payLinks, SlipEvidenceService slips, Accounting.Services.Storage.IFileStorage storage,
-        ILogger<LineChatSlipService> logger, INotificationEngine? notify = null)
+        ILogger<LineChatSlipService> logger, INotificationEngine? notify = null, ILineNotifyService? line = null)
     {
         _db = db; _secrets = secrets; _links = links; _reader = reader; _payLinks = payLinks; _slips = slips; _storage = storage; _logger = logger; _notify = notify;
+        _line = line;
     }
 
     public const string ActorAuto = "line-chat:auto";
@@ -587,16 +589,47 @@ public sealed class LineChatSlipService : ILineChatSlipService
                         .SetProperty(x => x.UpdatedAt, (DateTime?)DateTime.UtcNow), CancellationToken.None);
             }
         }
+        // รอบ 268 (268-1-4): แจ้งลูกค้าในแชตเดิมว่าผูกแล้ว (หลังรายการรอยืนยันเกิดจริง) · ผลอยู่ใน audit + คำตอบถึงพนักงาน (ไม่เงียบ)
+        var notice = crossContact ? LineChatSlipRule.LinkedNotice.CrossContact : await NotifyChatLinkedAsync(row, doc.DocumentNumber, amount, ct);
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId, UserEmail = actor, Action = AuditAction.Update, EntityType = LineChatSlipRule.AuditEntityType, EntityId = row.Id.ToString(),
             NewValues = JsonSerializer.Serialize(new { op = "assign", documentId = doc.Id, doc.DocumentNumber, amount, paymentIntentId = row.PaymentIntentId,
-                crossContact, chatContactId = row.ContactId, documentContactId = doc.ContactId, rule = LineChatSlipRule.RuleCode }),
+                crossContact, chatContactId = row.ContactId, documentContactId = doc.ContactId, customerNotice = notice, rule = LineChatSlipRule.RuleCode }),
             Timestamp = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync(ct);
         await DropFileAsync(row, ct);
-        return new LineChatSlipAssignResult(row.Id, doc.Id, doc.DocumentNumber, row.PaymentIntentId!.Value, amount, crossContact);
+        return new LineChatSlipAssignResult(row.Id, doc.Id, doc.DocumentNumber, row.PaymentIntentId!.Value, amount, crossContact, notice);
+    }
+
+    /// <summary>รอบ 268 (คำตัดสิน 268-1-4): ข้อความถึงแชตที่ส่งสลิป — ปลายทางของผู้ติดต่อที่ผูกแหล่งแชตนี้ (กุญแจ = <c>LineIdHash</c> เดียวกับ <see cref="BindingAsync"/>) ·
+    /// ยอดเฉพาะเมื่อแสดงยอดได้ทั้งแถว (ค่าที่ประทับตอนรับรูป) และทุกปลายทาง · ไม่รอชั่วโมงเงียบ (คำตอบต่อสลิปที่ลูกค้าส่งเอง — แบบเดียวกับใบเสร็จหลังลูกค้าจ่าย · push ตรง ไม่ผ่านคิวการ์ด) ·
+    /// retry key = id ของแถว (ผูกซ้ำไม่ได้ · LINE ไม่ส่งสองครั้ง) · ไม่โยน (ผูกแล้ว — ผลกลับเป็นข้อความถึงพนักงาน)</summary>
+    private async Task<string> NotifyChatLinkedAsync(LineChatSlip row, string documentNumber, decimal amount, CancellationToken ct)
+    {
+        if (_line == null) return LineChatSlipRule.LinkedNotice.NoLine;
+        try
+        {
+            var eps = await _db.ContactNotifyEndpoints.AsNoTracking()
+                .Where(e => e.CompanyId == row.CompanyId && e.LineIdHash == row.SourceKey && e.UnlinkedAt == null && e.BlockedAt == null && !e.IsDeleted
+                    && (e.Kind == NotifyEndpointKind.LineUser || e.Kind == NotifyEndpointKind.LineGroup))
+                .OrderBy(e => e.LinkedAt).ToListAsync(ct);
+            var ep = eps.FirstOrDefault();
+            if (ep == null) return LineChatSlipRule.LinkedNotice.Unbound;
+            var isGroup = ep.Kind == NotifyEndpointKind.LineGroup;
+            var to = _secrets.Unprotect(isGroup ? ep.LineGroupId : ep.LineUserId);
+            if (string.IsNullOrWhiteSpace(to)) return LineChatSlipRule.LinkedNotice.Failed("ถอดรหัสปลายทางไม่ได้");
+            var showAmounts = row.ShowAmounts && eps.All(e => e.ShowAmounts);
+            var r = await _line.TryPushContactTextAsync(row.CompanyId, ep.OaScope, isGroup ? LineTargetKind.ContactGroup : LineTargetKind.TenantMember, to,
+                LineChatSlipRule.Replies.LinkedByStaff(documentNumber, amount, showAmounts), row.Id);
+            return r.Ok ? LineChatSlipRule.LinkedNotice.Sent : LineChatSlipRule.LinkedNotice.Failed(r.Error);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งลูกค้าในแชตหลังผูกสลิป {Slip} ไม่สำเร็จ", row.Id);
+            return LineChatSlipRule.LinkedNotice.Failed(null);
+        }
     }
 
     public async Task DismissAsync(Guid companyId, Guid slipId, string? reason, string actor, CancellationToken ct = default)

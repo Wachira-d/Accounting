@@ -239,6 +239,11 @@ public static class LineChatSlipRule
 
         public const string Duplicate = "สลิปนี้ส่งเข้ามาแล้วค่ะ — ไม่ต้องส่งซ้ำ ทางร้านกำลังตรวจ";
 
+        /// <summary>รอบ 268 (268-1-4): พนักงานผูกสลิปที่ระบบจับคู่เองไม่ได้กับเอกสารแล้ว — แจ้งลูกค้าในแชตเดิม (ยอดเฉพาะเมื่อแสดงยอดได้)</summary>
+        public static string LinkedByStaff(string documentNumber, decimal amount, bool showAmounts)
+            => LineMessageLimits.Truncate($"ทางร้านผูกสลิปที่ส่งมากับ {documentNumber}{AmountPart(amount, showAmounts)} แล้วค่ะ — "
+               + "รอทางร้านตรวจรายการเงินเข้า แล้วจะส่งใบเสร็จให้", 300);
+
         public const string StaffWillCheck = "ได้รับรูปแล้วค่ะ — ถ้าเป็นสลิปโอนเงิน ทางร้านจะตรวจและผูกกับเอกสารให้";
 
         public const string DownloadFailed = "ได้รับรูปแล้ว แต่ระบบดึงรูปไม่สำเร็จค่ะ — กรุณาส่งสลิปอีกครั้ง";
@@ -257,6 +262,24 @@ public static class LineChatSlipRule
         /// <summary>ข้อความที่ขึ้นในแชตเมื่อกดปุ่ม — เลขที่ + วันที่ (พ.ศ.) · ยอดเฉพาะเมื่อแสดงยอด</summary>
         public static string ChoiceDisplay(string documentNumber, DateTime date, decimal amount, bool showAmounts)
             => LineMessageLimits.Truncate($"เลือก {documentNumber} ลงวันที่ {ThaiDate.ToThaiDisplayString(date)}{AmountPart(amount, showAmounts)}", 300);
+    }
+
+    /// <summary>รอบ 268 (268-1-4): ข้อความ LINE ชนิดนี้เข้าเส้นสลิปไหม — รูป · ไฟล์ PDF (ชื่อลงท้าย .pdf — ตัวบริการตรวจไบต์ซ้ำ <c>SlipEvidenceRule.DetectPublicType</c>
+    /// แล้วอ่านผ่านทาง PDF→รูปเดิมของ <c>EmbeddedTesseractOcrService</c>) · ไฟล์ชนิดอื่น/วิดีโอ/เสียง = ไม่ใช่</summary>
+    public static bool IsSlipMessage(string? messageType, string? fileName)
+        => messageType == "image"
+           || (messageType == "file" && !string.IsNullOrWhiteSpace(fileName) && fileName.Trim().EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
+
+    // ═══ รอบ 268 (268-1-4): แจ้งลูกค้าหลังพนักงานผูกสลิป ═══
+
+    /// <summary>ผลการแจ้งลูกค้า (ข้อความถึงพนักงาน + audit) — ไม่แจ้ง = บอกเหตุเสมอ</summary>
+    public static class LinkedNotice
+    {
+        public const string Sent = "แจ้งลูกค้าในแชตแล้วว่าผูกสลิปกับเอกสารแล้ว";
+        public const string CrossContact = "ไม่ได้แจ้งลูกค้าในแชต — เอกสารเป็นของผู้ติดต่ออื่น (ไม่ส่งเลขเอกสารของคนอื่นเข้าแชตนี้)";
+        public const string Unbound = "ไม่ได้แจ้งลูกค้าในแชต — แชตนี้ไม่ได้ผูกกับผู้ติดต่อ (ระบบไม่เก็บ LINE ID ของแชตที่ไม่ได้ผูก จึงส่งหาไม่ได้)";
+        public const string NoLine = "ไม่ได้แจ้งลูกค้าในแชต — ไม่มีบริการส่ง LINE";
+        public static string Failed(string? why) => "แจ้งลูกค้าในแชตไม่สำเร็จ" + (string.IsNullOrWhiteSpace(why) ? "" : " (" + why + ")") + " — แจ้งลูกค้าเองได้";
     }
 
     // ═══ ความพร้อม (แท็บ LINE ของหน้าตั้งค่า) ═══
