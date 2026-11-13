@@ -100,9 +100,11 @@ public partial class DocumentService
             var after = DocumentSettlementState.Apply(ForeignServiceVat.PayeeAmount(target), target.PaidAmount + amount, target.Status);
             var targetAfter = new Document
             {
-                Id = target.Id, DocumentType = target.DocumentType, Status = after.Status, DocumentDate = target.DocumentDate,
+                Id = target.Id, DocumentType = target.DocumentType, DocumentDate = target.DocumentDate,
                 PaidOnIssue = target.PaidOnIssue, PaidAmount = target.PaidAmount + amount, BalanceDue = after.BalanceDue,
             };
+            // มุมมองในหน่วยความจำ (ไม่ถูก Add/บันทึก — ไม่ใช่การออกเอกสาร) · สถานะ "หลังย้าย" ตามตัวคำนวณเดียว
+            targetAfter.Status = after.Status;
             var targetSettled = (await LoadSettlementDatesAsync(_db, companyId, new[] { target.Id })).TryGetValue(target.Id, out var prior) ? prior : (DateTime?)null;
             var settledAfter = targetSettled is DateTime p0 && p0 > payment.PaymentDate ? p0 : payment.PaymentDate;
             targetServesAfter = ReceiptIssuePolicy.CoversPayment(

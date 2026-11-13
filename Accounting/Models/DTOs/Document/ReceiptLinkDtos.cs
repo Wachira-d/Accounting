@@ -61,7 +61,7 @@ public record SettlementMoveSnapshot(Guid PaymentId, ReceiptLinkSourceFacts Sour
 /// <summary>คำสั่งย้ายการรับชำระ — <paramref name="ExpectedFromDocumentId"/> = ใบที่พรีวิวเห็นว่าเงินตัดอยู่ (เปลี่ยนไปแล้ว = 409 · กดซ้ำ/สองคน)</summary>
 /// <param name="ExpectedRoute">ฝ่ายค้าน B-2: เส้นที่พรีวิวเห็น (มี/ไม่มีใบเสร็จต้องยกเลิกและออกแทน) — ใต้ล็อกต่างไป = 409 พรีวิวใหม่ · null = ไม่ตรวจ (ผู้เรียกภายใน)</param>
 public record SettlementMoveCommand(Guid PaymentId, Guid TargetDocumentId, Guid ExpectedFromDocumentId, string? Reason,
-    Accounting.Helpers.ReceiptLinkRoute? ExpectedRoute = null);
+    ReceiptLinkRoute? ExpectedRoute = null);
 
 public record SettlementMoveResult(
     Guid PaymentId, string PaymentNumber, Guid FromDocumentId, string FromDocumentNumber, decimal FromBalanceDue,
