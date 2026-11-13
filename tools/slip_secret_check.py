@@ -29,7 +29,7 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9]{8,}|[฀-๿]{5,}")
 KPLUS_REF_RE = re.compile(r"(?<![A-Za-z0-9])0\d{11}[A-Z]{3}\d{5}(?![A-Za-z0-9])")
 SLIP_QR_RE = re.compile(r"(?<![0-9])00\d\d000600000101\d{2}[0-9A-Za-z]{6,}")
 TEXT_EXT = (".cs", ".md", ".py", ".js", ".html", ".json", ".txt", ".sh", ".yml", ".yaml", ".csproj", ".css", ".sql", ".xml")
-SKIP = {"tools/slip_secret_hashes.txt"}
+SKIP = {"tools/slip_secret_hashes.txt", "tools/slip_secret_check.py"}   # ตัวเองมีค่าปลอมของ negative test
 
 
 def load_hashes(path=HASHES):
