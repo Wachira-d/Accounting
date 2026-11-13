@@ -114,6 +114,13 @@ public class Document : TenantEntity
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public bool SettlesTaxInvoiceSource { get; set; }
 
+    /// <summary>รอบ 266 แพ็ก B (transient · renderer ×2): เลขที่/วันที่ของใบเสร็จที่ใบนี้ "ออกแทน" หลังย้ายการรับชำระ — เติมโดย
+    /// <c>PdfGenerationService.ResolveReplacementReferenceAsync</c> เฉพาะใบเสร็จของการรับชำระที่ <c>ReplacesDocumentId</c> มีค่า (ใบแทนชนิดอื่นพิมพ์ในหมายเหตุตามเดิม — กระดาษที่ออกแล้วไม่เปลี่ยน)</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? ReplacementOfNumber { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public DateTime? ReplacementOfDate { get; set; }
+
     /// <summary>Transient (ไม่เก็บ DB) — ข้อมูลใบต้นฉบับสำหรับกล่อง §86/9-10 บน
     /// ใบลดหนี้/ใบเพิ่มหนี้ (เลขที่+วันที่+มูลค่าใบเดิม → มูลค่าที่ถูกต้อง+ผลต่าง)
     /// โหลดตอน render ใน ResolveServedAsReceiptAsync ทั้ง HTML และ QuestPDF.</summary>

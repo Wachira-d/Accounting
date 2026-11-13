@@ -28,7 +28,9 @@ public partial class DocumentPayLinkService
         var docId = d.Id;
         var contactId = d.ContactId;
         var payments = await _db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && p.DocumentId == docId && !p.IsDeleted)
+            // รอบ 266 B (merge กับ P4): ใบที่มีผลของการรับชำระ = (MovedToDocumentId ?? DocumentId) — PaymentEffectiveDocument ·
+            // การชำระที่ย้ายออกไปใบอื่นแล้วไม่นับเป็นของใบนี้ · ที่ย้ายเข้ามา (ใบแทน) ขึ้นบนหน้าของใบปลายทาง
+            .Where(p => p.CompanyId == companyId && (p.MovedToDocumentId ?? p.DocumentId) == docId && !p.IsDeleted)
             .Select(p => new { p.Id, p.ReceiptDocumentId })
             .ToListAsync(ct);
         if (payments.Count == 0) return result;

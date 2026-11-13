@@ -75,8 +75,8 @@ public class AutopilotService : IAutopilotService
             .Where(l => l.CompanyId == companyId && l.DocumentId != null && ids.Contains(l.DocumentId.Value))
             .Select(l => new { DocumentId = l.DocumentId!.Value, l.Status }).ToListAsync(ct);
         var payments = await _db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && !p.IsDeleted && ids.Contains(p.DocumentId))
-            .Select(p => new { p.DocumentId, p.PaymentIntentId, p.Reference, p.CreatedAt }).ToListAsync(ct);
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && ids.Contains(p.MovedToDocumentId ?? p.DocumentId))
+            .Select(p => new { DocumentId = p.MovedToDocumentId ?? p.DocumentId, p.PaymentIntentId, p.Reference, p.CreatedAt }).ToListAsync(ct);
         var runs = await _db.PostPaymentAutomationRuns.AsNoTracking()
             .Where(r => r.CompanyId == companyId && ids.Contains(r.DocumentId))
             .Select(r => new { r.DocumentId, r.Status, r.Message, r.ReceiptDocumentId, r.CreatedAt }).ToListAsync(ct);

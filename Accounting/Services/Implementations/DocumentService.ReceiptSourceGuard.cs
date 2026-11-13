@@ -138,6 +138,12 @@ public static class ReceiptLinkFacts
         IsBareCredit: true, DocumentType.Receipt, DocumentStatus.Approved, p.IsDeleted, false, false, false, true, null, false,
         p.ContactId ?? Guid.Empty, "THB", 1m, p.UnappliedAmount, p.PaymentNumber);
 
+    /// <summary>รอบ 266 แพ็ก B: การรับชำระของใบอื่นที่<b>ไม่มีใบเสร็จแยก</b> — จัดชนิดเดียวกับใบเสร็จของการรับชำระ (เงินอยู่ที่ Payment) ·
+    /// ผู้ติดต่อ/สกุลเงิน = ของใบที่เงินตัดอยู่ตอนนี้</summary>
+    public static ReceiptLinkSourceFacts SettlementPayment(Payment p, Document settles, decimal amount) => new(
+        IsBareCredit: false, DocumentType.Receipt, DocumentStatus.Paid, p.IsDeleted, false, false, true, true, settles.Id, false,
+        settles.ContactId, settles.Currency, settles.ExchangeRate, amount, p.PaymentNumber);
+
     public static ReceiptLinkInvoiceFacts Invoice(Document d) => new(
         d.Id, d.DocumentType, d.Status, d.IsDeleted, d.ReplacedByDocumentId.HasValue, d.ContactId, d.Currency, d.ExchangeRate,
         d.BalanceDue, d.VatAmount, ServesAsReceipt: d.DocumentType == DocumentType.TaxInvoice && d.IssuedAsCashReceipt, d.DocumentNumber);
