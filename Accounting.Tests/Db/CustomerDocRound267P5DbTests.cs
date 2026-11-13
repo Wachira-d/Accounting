@@ -20,6 +20,8 @@ namespace Accounting.Tests.Db;
 /// ผู้ขายรับทราบ/ไม่รับใบสั่งซื้อ (S31 · หนึ่งคำตอบต่อ Rev) · แถวหลักฐานของเส้น API (append-only) · LINE Login จำข้อมูลผู้ลงนาม
 /// (S34 ไม่ติ๊ก = ไม่มีโปรไฟล์/ความยินยอม · เข้ารหัส · เติมฟอร์ม · S35 ถอน = ลบโปรไฟล์อย่างเดียว · purge 24 เดือน · DSR) · ใบวางบิลจ่ายทั้งใบผ่านเส้นเงินเดิม
 /// </summary>
+// รอบ 267 P5: เทสต์ของ P2 รัน CustomerSignMigration ซ้ำ (DROP/CREATE TRIGGER) — ช่วงนั้น trigger append-only หายชั่วขณะ ⇒ คลาสที่ตรวจ trigger ต้องไม่รันขนานกัน
+[Collection(CustomerDocumentActionsTriggerCollection.Name)]
 [Trait("Category", "Db")]
 public class CustomerDocRound267P5DbTests
 {
@@ -587,4 +589,11 @@ public class CustomerDocRound267P5DbTests
         // ไม่ใช่ใบวางบิล ⇒ null
         Assert.Null(await links.BillingNotePlanAsync(b.CompanyId, w1.Id));
     }
+}
+
+/// <summary>รอบ 267 P5: คลาสที่รันมิเกรชันของตารางหลักฐาน (DROP/CREATE TRIGGER) หรือพึ่ง trigger นั้น — รันทีละคลาส (ไม่ขนาน)</summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class CustomerDocumentActionsTriggerCollection
+{
+    public const string Name = "CustomerDocumentActions triggers";
 }
