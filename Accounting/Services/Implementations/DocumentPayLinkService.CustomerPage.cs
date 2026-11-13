@@ -118,6 +118,15 @@ public partial class DocumentPayLinkService
         return raw == null || string.IsNullOrWhiteSpace(origin) ? null : DocumentPayLinkPolicy.Url(origin, companyId, raw);
     }
 
+    /// <summary>รอบ 264 P4 (264-5-11): ตัวตัดสินเดียวกับหน้าชำระ (<see cref="PublicViewAsync"/>) บนโทเคนของลิงก์ที่ใช้อยู่ — ไม่มีลิงก์/กู้โทเคนไม่ได้ ⇒ null</summary>
+    public async Task<Accounting.Services.Payments.PublicPayTarget?> PartnerPayTargetAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+    {
+        var d = await LoadDocAsync(companyId, documentId, null, ct);
+        if (d == null) return null;
+        var raw = Recover(d.PayLinkTokenProtected, d.PayLinkTokenHash);
+        return raw == null ? null : (await PublicViewAsync(companyId, raw, ct))?.Target;
+    }
+
     // ═══════════════ view model ═══════════════
 
     /// <summary>ส่วนหน้าเอกสาร — บรรทัด · ยอด · ใบที่เกี่ยวข้อง · ปุ่ม (ตัวตัดสินเดียว <see cref="CustomerDocPage.Actions"/>) ·

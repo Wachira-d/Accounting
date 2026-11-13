@@ -225,4 +225,8 @@ public class PartnerPaymentNotice : TenantEntity
     public string? SlipPayerBankCode { get; set; }
     /// <summary>รอบ 264 P2: เลขบัญชีผู้โอนแบบปิดบาง<b>ตามที่ธนาคารปิดมาแล้ว</b> (เช่น <c>xxx-x-x0621-x</c>) · ไม่มีชื่อ/รูปสลิป (ข้อมูลน้อยที่สุดที่ใช้จับคู่)</summary>
     public string? SlipPayerAccountMask { get; set; }
+    /// <summary>รอบ 264 P4 (ฝ่ายค้าน 264-P2 L3 · คำตัดสิน 264-5-13): ผลจับคู่สลิปฝั่งผู้ซื้อครั้งล่าสุด (ชื่อ <c>PartnerPaySourceAccount.SlipKind</c>) — ตัวเขียนเดียว
+    /// <c>PartnerPayablePipeline.ScrubSlipPayerAsync</c> · ผู้โอนไม่ใช่บัญชีของผู้ซื้อ (NotOurs) หรือการแจ้งจบแล้ว ⇒ ล้าง <see cref="SlipPayerAccountMask"/>/<see cref="SlipPayerBankCode"/>
+    /// เหลือแค่ชนิดนี้ (ตัวตัดสินอ่านชนิดแทนเลข) · null = ยังไม่เคยตรวจ</summary>
+    public string? SlipPayerMatch { get; set; }
 }

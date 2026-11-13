@@ -22,6 +22,8 @@ public static class SystemActor
     public const string PostPayment = "system:post-payment";
     /// <summary>ตารางส่งเอกสาร (เดิม <c>"email-schedule"</c>)</summary>
     public const string EmailSchedule = "system:email-schedule";
+    /// <summary>รอบ 264 P4 (คำตัดสิน 264-5-10): รายการเงินออกในรายการเดินบัญชีผูกกับการจ่ายที่ท่อคู่ค้าบันทึกจากหลักฐานบรรทัดนั้น (<c>BankPaymentLineEvidence.BindAsync</c>)</summary>
+    public const string PartnerPayLine = "system:partner-pay-line";
 
     /// <summary>ค่าเดิมก่อนรอบ 259 ที่ยังอยู่ในฐาน — อ่านได้ ห้ามเขียนใหม่</summary>
     public static readonly IReadOnlySet<string> Legacy = new HashSet<string>(StringComparer.Ordinal)
@@ -41,6 +43,7 @@ public static class SystemActor
         BankAutoSettle or "bank-auto-settle" => "ระบบ (เงินโอนปิดหนี้อัตโนมัติ)",
         PostPayment or "ระบบ (ส่งอัตโนมัติหลังรับชำระ)" => "ระบบ (ส่งอัตโนมัติหลังรับชำระ)",
         EmailSchedule or "email-schedule" => "ระบบ (ตารางส่งเอกสาร)",
+        PartnerPayLine => "ระบบ (รายการเดินบัญชียืนยันการจ่ายคู่ค้า)",
         _ when IsSystem(actor) => "ระบบ",
         _ => actor,
     };

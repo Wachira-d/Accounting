@@ -1766,6 +1766,7 @@
   <script src="/js/layout.js"></script>
   <script src="/js/export.js"></script>
   <script src="/js/product-lookup.js"></script>
+  <script src="/js/partner-outbound-pay.js"></script>
   <script>
     const Page = {
       page: 1, docType: '', side: '', contacts: [], projects: [], selectedDocs: new Set(),
@@ -8308,7 +8309,9 @@
             if (d.partnerInputVatEvidence) {
               const pnBg = d.partnerNeedsOriginal ? '#d97706' : '#64748b';
               partnerBadge = `<span title="${Layout.esc(d.partnerInputVatEvidenceLabel || '')}" style="margin-left:6px;padding:1px 6px;background:${Layout.esc(pnBg)};color:#fff;border-radius:6px;font-size:10px;font-weight:600">🤝 ${Layout.esc(d.partnerInputVatEvidenceLabel || 'ใบจากคู่ค้า')}</span>`
-                + (d.partnerNeedsOriginal ? ` <a href="/pages/partners.html#ptDraftBody" onclick="event.stopPropagation()" style="font-size:11px;color:#b45309;text-decoration:underline" title="ยืนยันว่าได้รับต้นฉบับใบกำกับแล้ว (หน้าคู่ค้า)">ยืนยันต้นฉบับ</a>` : '');
+                + (d.partnerNeedsOriginal ? ` <a href="/pages/partners.html#ptDraftBody" onclick="event.stopPropagation()" style="font-size:11px;color:#b45309;text-decoration:underline" title="ยืนยันว่าได้รับต้นฉบับใบกำกับแล้ว (หน้าคู่ค้า)">ยืนยันต้นฉบับ</a>` : '')
+                // รอบ 264 P4 (264-5-11/12): จ่าย/แจ้งโอนจากระบบของเรา — ตัวเลือก/เหตุจากเซิร์ฟเวอร์ (partner-outbound-pay.js)
+                + ` <a href="#" data-pop-doc="${Layout.esc(d.id)}" style="font-size:11px;color:#1d4ed8;text-decoration:underline" title="จ่ายผ่านช่องทางของผู้ขาย หรือแจ้งโอนพร้อมสลิป">💸 จ่าย/แจ้งโอน</a>`;
             }
             // ป้ายเคลมภาษีซื้อ (ฝั่งซื้อ) — บอกใน list ทันทีว่าใบไหนเคลม ภ.พ.30 ได้
             // (รายละเอียด "เคลมแล้วงวดไหน" ดูใน modal ซึ่งอ่านจากรายงานจริง)
