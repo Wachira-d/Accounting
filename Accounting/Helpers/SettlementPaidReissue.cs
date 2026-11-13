@@ -408,10 +408,6 @@ public static class SettlementPaidReissue
         // รอบ 239: หลักฐานการยอมรับใบเสนอราคาออนไลน์ (ลายเซ็น/IP/hash) เป็นของใบเดิม — ไม่ตามไปใบแทน
         nameof(Document.QuotationAcceptSignaturePath), nameof(Document.QuotationAcceptNote), nameof(Document.QuotationAcceptContentHash),
         nameof(Document.QuotationAcceptIp), nameof(Document.QuotationAcceptUserAgentHash), nameof(Document.QuotationAcceptTokenHash),
-        // รอบ 267 P2: คำตอบของลูกค้า (ภาพฉายของแถวหลักฐาน) เป็นของใบ/Rev เดิม — ไม่ตามไปใบแทน (DOCUMENT_FLOW §2.12n-P2 "ไม่สืบทอด")
-        nameof(Document.CustomerResponse), nameof(Document.CustomerResponseAt),
-        // รอบ 266 แพ็ก B: ช่องชั่วคราวของ renderer (NotMapped · เติมตอนพิมพ์จาก ReplacesDocumentId) — ไม่ใช่ค่าที่คัดลอก
-        nameof(Document.ReplacementOfNumber), nameof(Document.ReplacementOfDate),
         // รอบ 240: ลิงก์ให้ลูกค้าเซ็น (webhook ต่อเอกสาร · สถานะส่ง/เปิด/เตือน) เป็นของใบเดิม — ใบแทนต้องออกลิงก์/ตั้ง callback ใหม่
         nameof(Document.SignCallbackUrl), nameof(Document.SignCallbackRef), nameof(Document.SignLinkIssuedAt),
         nameof(Document.SignLinkEmailedAt), nameof(Document.SignLinkEmailedTo), nameof(Document.SignLinkOpenedAt),

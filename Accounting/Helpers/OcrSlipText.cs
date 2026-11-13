@@ -28,8 +28,10 @@ public static class OcrSlipText
     /// <param name="Roles">บทบาทของสองบล็อกมาจากอะไร (ป้าย · QR · ไม่รู้)</param>
     /// <param name="Qr">QR ตรวจสลิปที่ถอดได้และ CRC ถูก (<see cref="ThaiSlipQr"/>) · null = ไม่มี/อ่านไม่ได้</param>
     /// <param name="Memo">ข้อความบันทึกช่วยจำ (KBIZ "Memo …") · ไม่เก็บลงฐาน (ใช้ในหน่วยความจำเท่านั้น)</param>
+    /// <param name="TextRef">ฝ่ายค้าน 264-P2 L5: เลขอ้างอิงจากข้อความ (ตัวอ่านเดิม) แม้มี QR — ผู้กันซ้ำเทียบทั้งสองค่า (สำเนาที่ครอป QR ออก/แถวก่อนรอบนี้เก็บค่าจากข้อความ)</param>
     public sealed record Reading(IReadOnlyList<decimal> Amounts, decimal? Amount, DateTime? Date, string? Ref, bool LooksLikeSlip = false,
-        SlipParty? Payer = null, SlipParty? Payee = null, RoleSource Roles = RoleSource.None, ThaiSlipQr.Payload? Qr = null, string? Memo = null)
+        SlipParty? Payer = null, SlipParty? Payee = null, RoleSource Roles = RoleSource.None, ThaiSlipQr.Payload? Qr = null, string? Memo = null,
+        string? TextRef = null)
     {
         public static readonly Reading Empty = new(Array.Empty<decimal>(), null, null, null);
         public bool HasAnyAmount => Amounts.Count > 0;
@@ -87,14 +89,32 @@ public static class OcrSlipText
         var m = sb.ToString();
         var g = m.Split('-');
         if (g.Length is < 3 or > 4 || g.Any(p => p.Length == 0)) return (PartyKind.Unknown, null);
-        if (g.Length == 4 && g[0].Length == 4 && g[0].All(char.IsAsciiDigit)) return (PartyKind.Card, m);
-        var masked = m.Contains('x');
-        if (masked && g[0].Any(char.IsAsciiDigit)) return (PartyKind.Unknown, null);
+        // ฝ่ายค้าน 264-P2 M2: บัตร ⇒ ไม่เก็บเลขเลย (ไม่ใช้จับคู่ · PAN อาจถูกพิมพ์เต็ม) · ชนิดยังบอกว่าเป็นบัตร
+        if (g.Length == 4 && g[0].Length == 4 && g[0].All(char.IsAsciiDigit)) return (PartyKind.Card, null);
+        // ฝ่ายค้าน 264-P2 M2: ต้องมีตัวปิดอย่างน้อยหนึ่งตัว — เลขเต็มที่ไม่ได้ปิด (สมุดบัญชี/หน้าบัญชีที่ส่งผิด) ไม่ใช่ "เลขที่ธนาคารปิดมาแล้ว" ⇒ ไม่เก็บ
+        if (!m.Contains('x')) return (PartyKind.Unknown, null);
+        if (g[0].Any(char.IsAsciiDigit)) return (PartyKind.Unknown, null);
         if (g.Length == 3 && g[2].Length == 4 && g[2].All(char.IsAsciiDigit) && g[0].All(c => c == 'x') && g[1].All(c => c == 'x'))
             return (PartyKind.PromptPay, m);
         var shapeOk = g[^1].Length == 1 && ((g.Length == 4 && g[1].Length == 1 && g[2].Length == 5) || (g.Length == 3 && g[1].Length == 6));
         if (!shapeOk || !g.All(p => Regex.IsMatch(p, "^x*[0-9]*$"))) return (PartyKind.Unknown, null);
-        return (PartyKind.BankAccount, m);
+        return (PartyKind.BankAccount, KeepTrailingVisible(m, MaxStoredDigits));
+    }
+
+    /// <summary>ฝ่ายค้าน 264-P2 M2: เก็บ/ส่งต่อได้ไม่เกินกี่หลักที่เห็น (ขวาสุด) — สลิปจริงทุกใบเห็น 4 หลัก</summary>
+    public const int MaxStoredDigits = 4;
+
+    /// <summary>คงเฉพาะหลักที่เห็น <paramref name="max"/> ตัวขวาสุด ตัวอื่นเป็น <c>x</c> (รูปกลุ่มคงเดิม)</summary>
+    private static string KeepTrailingVisible(string mask, int max)
+    {
+        var chars = mask.ToCharArray();
+        var seen = 0;
+        for (var i = chars.Length - 1; i >= 0; i--)
+        {
+            if (!char.IsAsciiDigit(chars[i])) continue;
+            if (++seen > max) chars[i] = 'x';
+        }
+        return new string(chars);
     }
 
     /// <summary>หลักที่เห็นของ mask (นับจากขวา · ข้ามขีด) — ผู้ใช้: <see cref="SlipParty.VisibleDigits"/> · <c>SlipAccountMatch</c></summary>
@@ -171,7 +191,7 @@ public static class OcrSlipText
             var bm = BillerRx.Match(l);
             if (bm.Success) { biller ??= bm.Groups[1].Value; continue; }
             var (k, m) = MaskOn(l);
-            if (k != PartyKind.Unknown) { if (mask == null) { mask = m; kind = k; } continue; }
+            if (k != PartyKind.Unknown) { if (kind == PartyKind.Unknown) { mask = m; kind = k; } continue; }
             if (CardWordRx.IsMatch(l)) cardWord = true;
             name ??= CleanName(l);
         }
@@ -297,11 +317,12 @@ public static class OcrSlipText
         if (string.IsNullOrWhiteSpace(text))
             return qr == null ? Reading.Empty : new Reading(Array.Empty<decimal>(), null, null, qr.TransactionRef, LooksLikeSlip: true, Qr: qr);
         var all = Amounts(text);
-        var reference = qr?.TransactionRef ?? ExtractRef(text);
+        var textRef = ExtractRef(text);
+        var reference = qr?.TransactionRef ?? textRef;
         var (payer, payee, roles) = Parties(text, qr);
         return new Reading(all, ConfidentAmount(text, all), ExtractDate(text, nowYear), reference,
             LooksLikeSlip: reference != null || SlipKeyword.IsMatch(text),
-            Payer: payer, Payee: payee, Roles: roles, Qr: qr, Memo: ExtractMemo(text));
+            Payer: payer, Payee: payee, Roles: roles, Qr: qr, Memo: ExtractMemo(text), TextRef: textRef);
     }
 
     /// <summary>รอบ 260 (ฝ่ายค้าน L7): badge "ยอดตรงกับที่แจ้ง" ของสลิปค่าบริการ (<c>SlipOcrAssistService</c>) — ยอดที่แจ้งอยู่บนสลิป (± 0.01) ⇒ (ยอดที่แจ้ง, true) ·

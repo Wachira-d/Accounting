@@ -118,7 +118,11 @@ public class QuotationAcceptanceRound239DbTests
         Assert.NotNull(audit.RowHash);   // อยู่ใน hash chain ของบริษัท
         Assert.Contains("QuotationAcceptedOnline", audit.NewValues);
         Assert.Contains(expectedHash, audit.NewValues);
-        Assert.Equal("203.0.113.9", audit.IpAddress);
+        // ฝ่ายค้าน 267-P2 H1: IP/ชื่อผู้ยอมรับอยู่บนใบ + แถวหลักฐาน (ลบตามคำขอได้) — ไม่คัดลอกลง audit ที่ลบไม่ได้
+        Assert.Null(audit.IpAddress);
+        Assert.DoesNotContain("203.0.113.9", audit.NewValues);
+        Assert.DoesNotContain("คุณเอ", audit.NewValues);
+        Assert.DoesNotContain("ส่งของวันจันทร์", audit.NewValues);
 
         // ยอมรับซ้ำ (ชื่อ/ลายเซ็นใหม่) ⇒ สถานะเดิม · ไม่ทับ · ไม่มี audit/ไฟล์เพิ่ม
         var again = await Controller(db, storage).Accept(LegacySignLinkSeed.RawOf(doc),

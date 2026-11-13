@@ -15,11 +15,18 @@ public static class SlipQrImageDecoder
     /// <summary>ด้านยาวสุดที่ลองถอด (รูปสลิปจริง 750–2400 px) — ใหญ่กว่านี้ย่อก่อน ลดเวลา · ลองขนาดเต็มก่อนแล้วย่อครึ่งเมื่อหาไม่พบ</summary>
     public const int MaxEdge = 2400;
 
+    /// <summary>ฝ่ายค้าน 264-P2 M3: ถอด QR ทุกดวงในรูปแล้วคืน<b>ดวงแรกที่ <see cref="ThaiSlipQr.Parse"/> รับ</b> (สลิปที่มี QR โฆษณา/QR ร้านปนไม่ทำให้ได้ดวงผิด) ·
+    /// ไม่มีดวงที่เป็น QR สลิป ⇒ ข้อความดวงแรก (ผู้ตีความตัดสินว่า null) · ไม่มี QR ⇒ null</summary>
     public static string? TryDecode(byte[] bytes)
     {
         if (bytes == null || bytes.Length == 0) return null;
         try
         {
+            // ฝ่ายค้าน L4: เพดานพิกเซลก่อนถอดเต็มรูป (ตัวเดียวกับรูป QR ของบัญชี — PNG บีบอัดสูงขนาดยักษ์ไม่ทำให้จองหน่วยความจำมหาศาล)
+            using (var codec = SKCodec.Create(new SKMemoryStream(bytes)))
+            {
+                if (codec == null || (long)codec.Info.Width * codec.Info.Height > PaymentQrImageValidator.MaxPixels) return null;
+            }
             using var decoded = SkiaImageOps.DecodeUpright(bytes);
             if (decoded == null) return null;
             var src = decoded.Bitmap;
@@ -51,7 +58,7 @@ public static class SlipQrImageDecoder
         }
     }
 
-    /// <summary>ความสว่าง BT.709 ต่อพิกเซล ⇒ ZXing (QR อย่างเดียว · TryHarder) · คืนข้อความของ QR แรกที่ถอดได้</summary>
+    /// <summary>ความสว่าง BT.709 ต่อพิกเซล ⇒ ZXing (QR อย่างเดียว · TryHarder · TryInverted · DecodeMultiple) · คืนดวงแรกที่เป็น QR สลิป ไม่มี ⇒ ดวงแรก</summary>
     internal static string? DecodeBitmap(SKBitmap bmp)
     {
         var w = bmp.Width; var h = bmp.Height;
@@ -66,12 +73,14 @@ public static class SlipQrImageDecoder
             lum[i] = (byte)Math.Clamp((int)Math.Round(y * a + 255 * (1 - a), MidpointRounding.AwayFromZero), 0, 255);
         }
         var source = new RGBLuminanceSource(lum, w, h, RGBLuminanceSource.BitmapFormat.Gray8);
+        // AutoRotate ไม่ใช้ (รูปตั้งตรงหลัง EXIF แล้ว — ฝ่ายค้าน L4) · TryInverted รับ QR สีกลับด้าน (ฝ่ายค้าน M3)
         var reader = new BarcodeReaderGeneric
         {
-            AutoRotate = true,
-            Options = new DecodingOptions { TryHarder = true, PossibleFormats = new List<BarcodeFormat> { BarcodeFormat.QR_CODE } },
+            AutoRotate = false,
+            Options = new DecodingOptions { TryHarder = true, TryInverted = true, PossibleFormats = new List<BarcodeFormat> { BarcodeFormat.QR_CODE } },
         };
-        var result = reader.Decode(source);
-        return string.IsNullOrWhiteSpace(result?.Text) ? null : result!.Text;
+        var texts = (reader.DecodeMultiple(source) ?? Array.Empty<ZXing.Result>())
+            .Select(r => r?.Text).Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t!).ToList();
+        return texts.FirstOrDefault(t => ThaiSlipQr.Parse(t) != null) ?? texts.FirstOrDefault();
     }
 }

@@ -578,4 +578,69 @@ public class LineChatSlipRound260DbTests
         Assert.False(LineChatSlipRule.IsSlipMessage("file", "slip.xlsx"));
         Assert.False(LineChatSlipRule.IsSlipMessage("video", null));
     }
+
+    [Fact]
+    public async Task C268_1_7_แชตผูกสองผู้ติดต่อ_พนักงานผูกใบของรายที่สาม_ไม่ส่งเลขเอกสารเข้าแชต_ทิศตรงข้าม_ใบของรายที่ผูก_ส่ง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var second = new Contact { CompanyId = s.CompanyId, Name = "ลูกค้าคนที่สอง 268", IsCustomer = true, ContactType = ContactType.JuristicPerson };
+        var third = new Contact { CompanyId = s.CompanyId, Name = "ลูกค้าคนที่สาม 268", IsCustomer = true, ContactType = ContactType.JuristicPerson };
+        db.Contacts.AddRange(second, third);
+        await db.SaveChangesAsync();
+        // สำนักบัญชีใช้ LINE เดียวผูกสองลูกค้า ⇒ แถวสลิปไม่มี ContactId
+        db.ContactNotifyEndpoints.Add(new ContactNotifyEndpoint
+        {
+            CompanyId = s.CompanyId, ContactId = second.Id, Kind = NotifyEndpointKind.LineUser, LineUserId = Secrets.Protect(s.UserId),
+            LineIdHash = NotifyEndpointKind.LineIdHash(Bot, s.UserId), OaScope = NotifyEndpointKind.ScopeCompany, OaDestination = Bot,
+            Verified = true, Source = "test", ShowAmounts = true, TopicsJson = NotifyTopics.Serialize(NotifyTopics.All),
+        });
+        await db.SaveChangesAsync();
+        var theirs = await InvoiceAsync(db, s.CompanyId, third.Id, 500m);
+        var mine = await InvoiceAsync(db, s.CompanyId, second.Id, 700m);
+        await Svc(db, s, Png("m1"), Sure(999m)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "268701");
+        await Svc(db, s, Png("m1b"), Sure(998m)).HandleImageAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), "268702");
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var rows = await c2.LineChatSlips.AsNoTracking().Where(x => x.CompanyId == s.CompanyId).OrderBy(x => x.LineMessageId).ToListAsync();
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Null(r.ContactId));
+        var pushes = new List<Push>();
+        var r1 = await SvcWithPush(c2, s, pushes).AssignAsync(s.CompanyId, rows[0].Id, new AssignLineChatSlipRequest(theirs.Id, null, 535m), "user:test");
+        Assert.Empty(pushes);
+        Assert.Equal(LineChatSlipRule.LinkedNotice.CrossContact, r1.CustomerNotice);
+        using var c3 = DbTestDatabase.TryCreateContext()!;
+        var r2 = await SvcWithPush(c3, s, pushes).AssignAsync(s.CompanyId, rows[1].Id, new AssignLineChatSlipRequest(mine.Id, null, 749m), "user:test");
+        Assert.Single(pushes);
+        Assert.Contains(mine.DocumentNumber, pushes[0].Text);
+        Assert.Equal(LineChatSlipRule.LinkedNotice.Sent, r2.CustomerNotice);
+    }
+
+    [Fact]
+    public async Task C268_1_8_ผูกนานหลังสลิปเข้าในชั่วโมงเงียบ_ไม่ส่งตอนนี้_เข้าคิวเลื่อน_คิวส่งครั้งเดียว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var (s, a, _, reply, row) = await ManyAsync(db, "quiet268");
+        var decline = PostbackData(reply).Single(d => d.Contains("|" + LineChatSlipRule.DeclineToken + "|"));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Svc(c, s, Png("x"), Sure(535m)).HandlePostbackAsync(s.CompanyId, Bot, LineChatSource.User(s.UserId), decline);
+        // สลิปเข้ามาเมื่อ 3 ชม.ก่อน · ชั่วโมงเงียบ = ชั่วโมงปัจจุบัน (เวลาไทย) ถึงอีก 2 ชม. ⇒ ตอนนี้อยู่ในช่วงเงียบแน่นอน
+        var hourTh = DateTime.UtcNow.AddHours(7).Hour;
+        await db.LineChatSlips.Where(x => x.Id == row.Id).ExecuteUpdateAsync(x => x.SetProperty(r => r.CreatedAt, DateTime.UtcNow.AddHours(-3)));
+        await db.CompanySettings.Where(x => x.CompanyId == s.CompanyId).ExecuteUpdateAsync(x => x.SetProperty(c => c.LineQuietHoursEnabled, true)
+            .SetProperty(c => c.LineQuietStartHour, hourTh).SetProperty(c => c.LineQuietEndHour, (hourTh + 2) % 24));
+        var pushes = new List<Push>();
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var r = await SvcWithPush(c2, s, pushes).AssignAsync(s.CompanyId, row.Id, new AssignLineChatSlipRequest(a.Id, null, null), "user:test");
+        Assert.Empty(pushes);
+        Assert.StartsWith("จะแจ้งลูกค้าในแชตหลังชั่วโมงเงียบ", r.CustomerNotice);
+        using var c3 = DbTestDatabase.TryCreateContext()!;
+        var q = await c3.DeferredNotifications.AsNoTracking().SingleAsync(d => d.CompanyId == s.CompanyId && d.Kind == DeferredNotifyPolicy.LineChatSlipLinked && d.EntityId == row.Id);
+        Assert.True(q.DueAt > DateTime.UtcNow);
+        // ถึงคิว (เครื่องเบื้องหลังเรียก) ⇒ ส่งครั้งเดียว · ล้ม ⇒ ปิดแถวพร้อมเหตุ (ไม่วน)
+        Assert.Null(await SvcWithPush(c3, s, pushes).DispatchLinkedNoticeAsync(s.CompanyId, row.Id));
+        Assert.Single(pushes);
+        Assert.NotNull(await SvcWithPush(c3, s, new List<Push>(), ok: false).DispatchLinkedNoticeAsync(s.CompanyId, row.Id));
+    }
 }

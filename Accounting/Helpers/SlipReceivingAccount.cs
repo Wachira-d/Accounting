@@ -105,6 +105,10 @@ public static class SlipReceivingAccount
         bool RequiresChoice = false, string? SlipWarning = null);
 
     /// <summary>รอบ 264 P2 (คำตัดสิน 264-4-6 · H2 สลิปปลอม/โอนผิดบริษัท): ผู้รับบนสลิปอ่านได้ชัดแต่ไม่ตรงบัญชีใดของบริษัท</summary>
+    /// <summary>ฝ่ายค้าน 264-P2 L7: ผู้รับบนสลิปตรงบัญชีของบริษัทบัญชีเดียว แต่บัญชีนั้นใช้รับโอนไม่ได้</summary>
+    public const string SlipPayeeUnusableReason = "ปลายทางบนสลิปตรงบัญชีของบริษัทที่ใช้รับโอนไม่ได้ (ปิดใช้/ไม่ผูกผัง/สกุลไม่ตรง ฯลฯ) — แก้บัญชีนั้นที่หน้า “บัญชีธนาคาร” "
+        + "หรือเลือกบัญชีที่เห็นเงินเข้าเอง (ระบบไม่แนะนำบัญชีอื่นแทน)";
+
     public const string SlipPayeeNotOursReason = "ปลายทางบนสลิปไม่ใช่บัญชีของบริษัท (อาจเป็นสลิปปลอม/โอนผิดบริษัท/โอนให้บุคคล) — ตรวจรายการเดินบัญชีก่อน · "
         + "ถ้าเงินเข้าจริงให้เลือกบัญชีที่เห็นเงินเข้าเอง (ระบบไม่แนะนำบัญชีอื่นแทน)";
 
@@ -124,6 +128,10 @@ public static class SlipReceivingAccount
             && !(doc.HasChannel && doc.Problem == null && doc.Bank == sid))
             return new Suggestion(sid, sid, Origin.SlipPayee,
                 "ปลายทางบนสลิป (" + slipPayee.PartyLabel + ") ตรงบัญชีนี้ของบริษัทบัญชีเดียว — ยังเป็นค่าแนะนำ ตรวจเงินเข้าก่อนยืนยัน (สลิปไม่ใช่หลักฐานว่าเงินเข้า)");
+        // ฝ่ายค้าน 264-P2 L7: สลิปชี้บัญชีของเราที่ใช้รับโอนไม่ได้ ⇒ ไม่ตกไปแนะนำ "บัญชีเดียว" ที่เป็นอีกบัญชี · ต้องเลือกเอง
+        if (slipPayee is { Kind: SlipAccountMatch.Kind.Unique, AccountId: Guid bad } && !usable.Contains(bad))
+            return new Suggestion(null, null, Origin.None, SlipPayeeUnusableReason + " · บนสลิป: " + slipPayee.PartyLabel, RequiresChoice: true,
+                SlipWarning: SlipPayeeUnusableReason);
         if (slipPayee?.Kind == SlipAccountMatch.Kind.NotOurs)
             return new Suggestion(null, null, Origin.None, SlipPayeeNotOursReason + " · บนสลิป: " + slipPayee!.PartyLabel, RequiresChoice: true,
                 SlipWarning: SlipPayeeNotOursReason);
@@ -318,6 +326,14 @@ public static class SlipReceivingAccount
     /// เงินผ่านผู้ให้บริการ (มีรหัสธุรกรรม) = บัญชีพักของ <c>IGatewayAccountResolver</c> ตามเดิม</summary>
     public static bool AppliesToSiteOrderPayment(bool hasSlip, bool hasGatewayTransaction, PaymentMethod method)
         => !hasGatewayTransaction && (hasSlip || method is PaymentMethod.BankTransfer or PaymentMethod.PromptPay);
+
+    /// <summary>ฝ่ายค้าน 268 M6 (pure): ป้ายของตัวเลือก "ไม่เลือก" ตามผลจริงของเซิร์ฟเวอร์ — ต้องเลือก · ตามคำแนะนำ (ชื่อบัญชี) · ไม่มีคำแนะนำ = เงินสดตั้งต้น (ระบบไม่เดา) ·
+    /// เงินผ่านผู้ให้บริการ = บัญชีพัก</summary>
+    public static string NoChoiceLabel(bool applies, Suggestion s, string? suggestedLabel)
+        => !applies ? "บัญชีพักของผู้ให้บริการ (เลือกธนาคารไม่ได้)"
+         : s.RequiresChoice ? "— ต้องเลือกบัญชีที่เงินเข้า —"
+         : (s.DisplayBankAccountId ?? s.BankAccountId) != null ? "ตามคำแนะนำ: " + (suggestedLabel ?? "บัญชีที่แนะนำ")
+         : "ไม่ระบุ — ลงเงินสดตั้งต้นตามเดิม (ระบบไม่เดาบัญชี)";
 
     /// <summary>ตัวเลือก + ค่าแนะนำ + ผลตัดสินของแถวรับเงินของออเดอร์หน้าเว็บ (ลำดับเดียวกับ <see cref="Suggest"/>: ใบขายของออเดอร์สร้างโดยไม่ตั้งแหล่งเงิน ⇒
     /// บัญชีรับโอนของเว็บนั้น → บัญชีรับโอนบัญชีเดียว → ไม่เดา) · ทุก query ผูก <paramref name="companyId"/></summary>

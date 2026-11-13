@@ -17,6 +17,8 @@ public static class DeferredNotifyPolicy
     public const string OrderCreated = "order.created";
     /// <summary>รอบ 226: การจองยืนยันเพราะรับเงินล่วงหน้าครบ ⇒ ข้อความ "ชำระแล้ว — ยืนยันการจอง" ถึงลูกค้า (เข้าคิวในธุรกรรมรับเงิน)</summary>
     public const string BookingPaidConfirmed = "booking.paid-confirmed";
+    /// <summary>รอบ 268 (268-1-8): แจ้งแชต LINE ว่าพนักงานผูกสลิปแล้ว — เลื่อนพ้นชั่วโมงเงียบ หรือส่งซ้ำหนึ่งครั้งเมื่อครั้งแรกล้ม (EntityId = <c>LineChatSlip.Id</c> · SiteId = Guid.Empty)</summary>
+    public const string LineChatSlipLinked = "linechat.slip-linked";
     public const int MaxAttempts = 5;
     public const int BatchSize = 50;
     public const int MaxErrorLength = 500;
@@ -25,7 +27,7 @@ public static class DeferredNotifyPolicy
     /// <summary>ระยะ lease ของแถวที่หยิบไปแล้ว (เครื่องล้มกลางทาง ⇒ หมด lease แล้วหยิบใหม่ได้)</summary>
     public static readonly TimeSpan Lease = TimeSpan.FromMinutes(2);
 
-    public static bool IsKnownKind(string? kind) => kind is BookingCreated or OrderCreated or BookingPaidConfirmed;
+    public static bool IsKnownKind(string? kind) => kind is BookingCreated or OrderCreated or BookingPaidConfirmed or LineChatSlipLinked;
 
     /// <summary>แถวคิวใหม่ — ผู้เรียก Add เข้า DbContext <b>ก่อน SaveChanges/Commit ของรายการเดียวกัน</b> (หนึ่งธุรกรรม)</summary>
     public static DeferredNotification New(Guid companyId, Guid siteId, string kind, Guid entityId, DateTime nowUtc)

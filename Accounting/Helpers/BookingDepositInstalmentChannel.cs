@@ -21,10 +21,10 @@ public static class BookingDepositInstalmentChannel
     public const string LegalReference = "พ.ร.บ.การบัญชี 2543 ม.8 (บันทึกตามเอกสารประกอบ) · TFRS for NPAEs (เงินสดและรายการเทียบเท่าเงินสด)";
 
     /// <summary>แถวรับเงินหนึ่งงวด (ไม่รวมคืนเงิน · เฉพาะที่รับแล้ว)</summary>
-    public sealed record Instalment(Guid PaymentId, decimal Amount, bool Stamped, Guid? BankAccountId, Guid? MoneyInAccountId);
+    public sealed record Instalment(Guid PaymentId, decimal Amount, bool Stamped, Guid? BankAccountId, Guid? MoneyInAccountId, DateTime? PaidAt = null);
 
     /// <summary>งวดที่ต้องย้ายเงินออกจากผังของใบไปผังของช่องทางงวดนั้น</summary>
-    public sealed record Move(Guid PaymentId, decimal Amount, Guid? BankAccountId, Guid? MoneyInAccountId);
+    public sealed record Move(Guid PaymentId, decimal Amount, Guid? BankAccountId, Guid? MoneyInAccountId, DateTime? PaidAt = null);
 
     public sealed record Plan(IReadOnlyList<Move> Moves, int UnknownCount);
 
@@ -40,10 +40,19 @@ public static class BookingDepositInstalmentChannel
             if (r.PaymentId == finalPaymentId || r.Amount <= 0m) continue;
             if (!r.Stamped) { unknown++; continue; }
             if (Norm(r.BankAccountId, r.MoneyInAccountId) == docChannel) continue;
-            moves.Add(new Move(r.PaymentId, r.Amount, r.MoneyInAccountId == null ? r.BankAccountId : null, r.MoneyInAccountId));
+            moves.Add(new Move(r.PaymentId, r.Amount, r.MoneyInAccountId == null ? r.BankAccountId : null, r.MoneyInAccountId, r.PaidAt));
         }
         return new Plan(moves, unknown);
     }
+
+    /// <summary>ฝ่ายค้าน 268 M3 (268-1-10): รู้ช่องทางของงวดนี้ไหม — มีผังตรง/ธนาคาร · หรือพนักงานบันทึกเงินสดเอง (ไม่ใช่สลิป · ไม่ใช่เงินออนไลน์) ·
+    /// สลิป/เงินออนไลน์ที่ไม่มีบัญชี = ไม่รู้ (ห้ามแต่งเป็นเงินสด)</summary>
+    public static bool ChannelKnown(Guid? moneyInAccountId, Guid? bankAccountId, bool fromOnlinePayment, bool isSlipMoney)
+        => moneyInAccountId != null || bankAccountId != null || (!fromOnlinePayment && !isSlipMoney);
+
+    /// <summary>ฝ่ายค้าน 268 M5 (268-1-11): วันที่ของ JE ย้ายเงิน — วันที่เงินงวดนั้นเข้าเมื่องวดบัญชีเปิด · ไม่อย่างนั้นวันที่ใบ</summary>
+    public static DateTime EntryDate(DateTime? paidAt, DateTime documentDate, bool paidPeriodOpen)
+        => paidAt is DateTime p && paidPeriodOpen ? p : documentDate;
 
     /// <summary>ช่องทางเทียบได้ (ผังตรงชนะธนาคาร — ลำดับเดียวกับตัวลงบัญชี)</summary>
     private static (Guid? Bank, Guid? MoneyIn) Norm(Guid? bank, Guid? moneyIn) => moneyIn != null ? (null, moneyIn) : (bank, null);
@@ -55,6 +64,8 @@ public static class BookingDepositInstalmentChannel
         => $"มีเงินมัดจำ {count} งวดที่บันทึกก่อนรอบ 268 (ระบบไม่ได้จดว่าเข้าบัญชีไหน) — ใบเสร็จมัดจำลงตามช่องทางของงวดสุดท้ายทั้งก้อน · "
            + "ถ้างวดนั้นเข้าบัญชีอื่น ให้บันทึกสมุดรายวันย้ายเงินเองที่หน้า “สมุดรายวัน”";
 
-    public static string MovedNote(string documentNumber, decimal amount, string toAccount)
-        => $"[{RuleCode}] ย้ายเงินมัดจำงวดก่อน {amount:N2} บาท ของ {documentNumber} ไปผัง {toAccount} (ช่องทางที่งวดนั้นเข้าจริง)";
+    public static string MovedNote(string documentNumber, decimal amount, string toAccount, DateTime? paidAt = null, DateTime? entryDate = null)
+        => $"[{RuleCode}] ย้ายเงินมัดจำงวดก่อน {amount:N2} บาท ของ {documentNumber} ไปผัง {toAccount} (ช่องทางที่งวดนั้นเข้าจริง)"
+           + (paidAt is DateTime p && entryDate is DateTime e && ThaiDate.CalendarDateUtc(p) != ThaiDate.CalendarDateUtc(e)
+               ? $" · เงินเข้าจริง {ThaiDate.CalendarDateUtc(p):dd/MM/yyyy} (งวดบัญชีปิด — ลงวันที่ใบ {ThaiDate.CalendarDateUtc(e):dd/MM/yyyy})" : "");
 }

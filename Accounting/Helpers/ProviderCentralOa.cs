@@ -136,6 +136,17 @@ public static class ProviderCentralOa
     /// <summary>รอบ 262 ฝ่ายค้าน L4: ทางศูนย์บิล<b>ของบริษัทผู้ซื้อ</b> (<c>?company=</c> — layout.js สลับบริษัทตามลิงก์) · ผู้ใช้หลายบริษัทไม่เจอศูนย์บิลของบริษัทที่เปิดค้างไว้</summary>
     public static string BillingPath(Guid buyerCompanyId) => $"/pages/billing.html?company={buyerCompanyId:D}";
 
+    // ═══ รอบ 268 (268-1-9 · ฝ่ายค้าน M2): ผู้ใช้ถูกนำออกจากบริษัทผู้เช่า ═══
+    public const string MemberRemovedReviewEntity = "BillingLineMemberRemoved";
+    public const string MemberRemovedReviewTitle = "ตรวจ LINE ที่รับใบค่าบริการ — มีผู้ใช้ถูกนำออกจากบริษัท";
+    /// <summary>ข้อความกระดิ่งถึงเจ้าของผู้เช่า — บอกตรง ๆ ว่าระบบไม่ได้ยกเลิกปลายทางเอง (ไม่รู้ว่า LINE ที่ผูกเป็นของใคร)</summary>
+    public static string MemberRemovedReviewMessage(int revokedInvites, int endpointsToReview)
+        => (revokedInvites > 0 ? $"เพิกถอนลิงก์ผูก LINE ที่ผู้ใช้คนนั้นสร้างค้างไว้ {revokedInvites} ลิงก์แล้ว · " : "")
+           + (endpointsToReview > 0
+               ? $"ยังมี LINE ที่รับใบแจ้งหนี้/ใบเสร็จค่าบริการของบริษัทนี้ {endpointsToReview} ปลายทาง — ระบบไม่รู้ว่าเป็น LINE ของใคร จึงไม่ได้ยกเลิกเอง · "
+                 + "ตรวจที่ศูนย์บิลแล้วกดยกเลิกปลายทางที่ไม่ควรรับต่อ"
+               : "ไม่มี LINE ที่ผูกรับใบค่าบริการอยู่");
+
     /// <summary>รอบ 262 ฝ่ายค้าน L3 (คำตัดสิน 262-1-15): คำตอบ "หยุด" บน OA กลาง — บอกว่าหยุดการรับของผู้ติดต่อใดบ้าง (หยุดทุกรายที่ LINE นี้ผูกไว้กับบริษัทผู้ให้บริการ) + ทางกลับมารับ</summary>
     public static string StopScopeNote(IReadOnlyCollection<string> contactNames)
         => contactNames.Count == 0 ? ""

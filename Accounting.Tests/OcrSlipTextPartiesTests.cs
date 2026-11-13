@@ -218,7 +218,11 @@ public class OcrSlipTextPartiesTests
     [InlineData("XXX-X-KX395-2", K.BankAccount, "xxx-x-xx395-2")]   // OCR อ่าน X เป็น K
     [InlineData("%%%<-%-%2577-%", K.BankAccount, "xxxx-x-x2577-x")]
     [InlineData("xxx-xxx-0035", K.PromptPay, "xxx-xxx-0035")]
-    [InlineData("4000-00xx-xxxx-1154", K.Card, "4000-00xx-xxxx-1154")]
+    [InlineData("4000-00xx-xxxx-9999", K.Card, null)]               // ฝ่ายค้าน 264-P2 M2: บัตร ⇒ ไม่เก็บเลขเลย
+    [InlineData("4417-7012-3456-1154", K.Card, null)]               // PAN เต็มจาก OCR ⇒ ไม่เก็บ
+    [InlineData("123-4-56789-0", K.Unknown, null)]                  // เลขบัญชีเต็มที่ไม่ได้ปิด ⇒ ไม่ใช่เลขที่ธนาคารปิดแล้ว ⇒ ไม่เก็บ
+    [InlineData("123-456789-0", K.Unknown, null)]
+    [InlineData("xxx-x-12345-6", K.BankAccount, "xxx-x-xx345-6")]   // เห็นเกิน 4 หลัก ⇒ เก็บแค่ 4 ขวาสุด
     [InlineData("2%60%<-%%<6<189-5", K.Unknown, null)]
     [InlineData("XXX-X-X8177-xX", K.Unknown, null)]                 // กลุ่มท้าย 2 ตัว (OCR) ⇒ ไม่เชื่อ
     [InlineData("12 พ.ย. 2569", K.Unknown, null)]
@@ -242,6 +246,23 @@ public class OcrSlipTextPartiesTests
         // mask ที่ถูกแก้ในฐานจนจัดชนิดไม่ตรง ⇒ ทิ้ง (ไม่ใช่หลักฐาน)
         var tampered = json.Replace("xxx-x-xx168-1", "1234567890");
         Assert.Null(OcrSlipText.FromStoredJson(tampered)!.Payee!.AccountMask);
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน_M2_สลิปที่พิมพ์เลขเต็ม_ไม่ถูกเก็บเต็มทั้งในฐานและที่ส่งต่อ_ใบที่ปิดแล้วเก็บเท่าเดิม()
+    {
+        // ทิศที่พัง: เลขบัญชีเต็ม/เลขบัตรเต็มบนภาพ (สมุดบัญชี/หน้าบัญชีที่ส่งผิดในแชต)
+        var full = OcrSlipText.Parse("โอนเงินสำเร็จ\nจาก\nนาย ก\nกสิกรไทย\n123-4-56789-0\nไปยัง\nบริษัท ข\nบัตร\n4417-7012-3456-1154\nจำนวนเงิน 500.00", 2026);
+        Assert.Equal(K.Unknown, full.Payer!.Kind);
+        Assert.Null(full.Payer.AccountMask);
+        Assert.Equal(K.Card, full.Payee!.Kind);
+        Assert.Null(full.Payee.AccountMask);
+        var json = OcrSlipText.ToStoredJson(full)!;
+        Assert.DoesNotContain("56789", json);
+        Assert.DoesNotContain("3456", json);
+        // ทิศที่ถูกอยู่แล้ว: เลขที่ธนาคารปิดมาแล้ว (4 หลัก) เก็บเท่าเดิม
+        Assert.Equal("xxx-x-xx168-1", OcrSlipText.FromStoredJson(OcrSlipText.ToStoredJson(Read(C.KtbToKbank)))!.Payee!.AccountMask);
+        Assert.Equal("xxx-xxxx-0035", Read(C.ScbPromptPayMobile).Payee!.AccountMask);
     }
 
     private static C.Slip Slip(string name) => (C.Slip)typeof(C).GetField(name)!.GetValue(null)!;
