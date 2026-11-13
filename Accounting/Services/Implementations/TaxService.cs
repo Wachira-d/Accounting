@@ -1137,7 +1137,10 @@ public partial class TaxService : ITaxService
             var lateWindowStart = startDate.AddMonths(-6);
             var anyLineDocIds = (await _db.TaxReportLines.AsNoTracking()
                 .Where(l => l.DocumentId != null
-                    && l.TaxReport.CompanyId == companyId && l.TaxReport.TaxType == TaxType.VAT)
+                    && l.TaxReport.CompanyId == companyId && l.TaxReport.TaxType == TaxType.VAT
+                    // งวดเดียวกันไม่นับ (กติกาเดียวกับ claimedElsewhere ด้านบน) — การคำนวณสดเพื่อเทียบร่างล้าสมัย/ไฟล์ยื่น
+                    // ต้องยกใบมาช้าที่ร่างงวดนี้ถืออยู่มาเหมือนตอนสร้างร่าง มิฉะนั้นใบที่ผู้ใช้ติ๊ก "ใช้" ถูกนับเป็น "หายไป" (รอบ 269 ชุดสอง H1)
+                    && !(l.TaxReport.Year == report.Year && l.TaxReport.Month == report.Month))
                 .Select(l => l.DocumentId!.Value).ToListAsync()).ToHashSet();
             var filedPeriods = (await _db.TaxReports.AsNoTracking()
                 .Where(t => t.CompanyId == companyId && t.TaxType == TaxType.VAT
