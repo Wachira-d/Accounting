@@ -72,6 +72,10 @@ public interface ICmsCommerceService
     Task<Accounting.Helpers.SlipReceivingAccount.Resolution?> SlipReceivingAccountsAsync(Guid companyId, Guid siteId, Guid orderId, Guid? paymentId,
         Guid? chosen, CancellationToken ct = default);
 
+    /// <summary>รอบ 268 (ฝ่ายค้าน L7/M6 · 268-1-13): ยืนยันสลิปจากหน้า "คำสั่งซื้อ" — ตัดสินบัญชีที่เงินเข้าใต้ล็อกออเดอร์กับแถวที่ยืนยันจริง + audit แล้วเดินเส้นยืนยันเดิม ·
+    /// ใช้ไม่ได้/ต้องเลือก ⇒ <c>BusinessRuleException</c> 400</summary>
+    Task<bool> ConfirmSlipPaymentAsync(Guid companyId, Guid siteId, Guid orderId, Guid? paymentId, string actor, Guid? chosenBankAccountId);
+
     // Public payment flow
     Task<UploadSlipResponse?> RecordPaymentSlipAsync(Guid companyId, Guid siteId, Guid orderId, IFormFile file);
     Task<ConvertToQuotationResponse?> ConvertOrderToQuotationAsync(Guid companyId, Guid siteId, Guid orderId, string? customerNotes, IDocumentService docService);

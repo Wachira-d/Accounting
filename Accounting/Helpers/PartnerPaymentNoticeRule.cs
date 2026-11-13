@@ -110,6 +110,22 @@ public static class PartnerPaymentNoticeRule
     /// <summary>รอบ 264 P3 (264-3-6): รูปใหม่ — กุญแจ = การรับชำระของผู้ขาย</summary>
     internal static string PaymentReferenceForSellerPayment(Guid sellerPaymentId) => $"PARTNER-PAID-P{sellerPaymentId:N}";
 
+    /// <summary>ฝ่ายค้าน 268 L1 (pure): ค่าธรรมเนียมที่ผู้ขายรับภาระ กระจายตามสัดส่วนยอดของแถวจัดสรร (ปัด 2 ตำแหน่งแบบปัดครึ่งขึ้น · เศษอยู่แถวสุดท้าย · รวมเท่าเดิมทุกสตางค์)</summary>
+    public static IReadOnlyList<decimal> SplitFee(decimal fee, IReadOnlyList<decimal> amounts)
+    {
+        var result = new decimal[amounts.Count];
+        var total = amounts.Sum();
+        if (fee == 0m || amounts.Count == 0 || total <= 0m) return result;
+        var used = 0m;
+        for (var k = 0; k < amounts.Count - 1; k++)
+        {
+            result[k] = Math.Round(fee * amounts[k] / total, 2, MidpointRounding.AwayFromZero);
+            used += result[k];
+        }
+        result[^1] = fee - used;
+        return result;
+    }
+
     /// <summary>รอบ 268 (268-1-6): การแจ้งของการชำระหลายใบ — กุญแจ = แถวจัดสรรของผู้ขาย (การชำระเดียวกันมีหลายแจ้ง ⇒ ห้ามใช้รูปต่อการรับชำระ ไม่งั้นใบที่สอง "พบการจ่ายแล้ว" ผิดใบ)</summary>
     internal static string PaymentReferenceForSellerAllocation(Guid sellerAllocationId) => $"PARTNER-PAID-A{sellerAllocationId:N}";
 

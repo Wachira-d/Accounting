@@ -295,14 +295,9 @@ public class CmsCommerceController : ControllerBase
         Guid companyId, Guid siteId, Guid orderId, [FromQuery] Guid? paymentId = null, [FromQuery] Guid? bankAccountId = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        // รอบ 268 (268-1-2 · คลาสเดียวกับ 260-2): สลิปโอน ⇒ บัญชีธนาคารที่เงินเข้า จากตัวตัดสินเดียว (พนักงานเลือก หรือค่าแนะนำ) · ใช้ไม่ได้ ⇒ 400 พร้อมเหตุ (ไม่ตกไปเงินสด)
-        var receiving = await _commerceService.SlipReceivingAccountsAsync(companyId, siteId, orderId, paymentId, bankAccountId);
-        if (receiving is { Decision.Ok: false })
-            return BadRequest(new ApiResponse<bool>(false, false, receiving.Decision.Problem!));
-        if (receiving is { Applies: false } && bankAccountId is Guid)
-            return BadRequest(new ApiResponse<bool>(false, false, receiving.Decision.Problem ?? "รายการนี้รับเงินผ่านผู้ให้บริการ — เลือกบัญชีธนาคารไม่ได้"));
-        var ok = await _commerceService.ConfirmPaymentAsync(companyId, siteId, orderId, paymentId, userId,
-            receivingBankAccountId: receiving is { Applies: true } ? receiving.Decision.BankAccountId : null);
+        // รอบ 268 (268-1-2 · ฝ่ายค้าน L7/M6 → 268-1-13): บัญชีที่เงินตามสลิปเข้า ตัดสินใต้ล็อกออเดอร์กับแถวที่ยืนยันจริง (ตัวตัดสินเดียว) + audit ผู้เลือก/ที่มา ·
+        // ใช้ไม่ได้/ต้องเลือก ⇒ 400 พร้อมเหตุ (BusinessRuleException) · ไม่มีคำแนะนำและไม่เลือก ⇒ เงินสดตั้งต้นตามเดิม (ระบบไม่เดา — ป้ายบนหน้าบอกตรง)
+        var ok = await _commerceService.ConfirmSlipPaymentAsync(companyId, siteId, orderId, paymentId, userId, bankAccountId);
         if (!ok) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบออเดอร์"));
         return Ok(new ApiResponse<bool>(true, true,
             "ยืนยันรับเงินสำเร็จ — สร้าง JE, ตัด stock, e-Tax (ถ้าเปิด) เรียบร้อย"));
@@ -323,7 +318,9 @@ public class CmsCommerceController : ControllerBase
             suggestedOrigin = sug.Origin.ToString(),
             suggestedOriginLabel = SlipReceivingAccount.OriginLabel(sug.Origin.ToString()),
             reason = sug.Reason,
-            defaultLabel = sug.BankAccountId != null ? "ตามคำแนะนำของระบบ" : "ไม่ระบุ — ลงเงินสดตั้งต้น (เหมือนเดิม · ไม่แนะนำ)",
+            // ฝ่ายค้าน M6: ป้ายของ "ไม่เลือก" คำนวณจากผลตัดสินจริง (ต้องเลือก ⇒ บอกว่าต้องเลือก · ไม่ใช่ป้ายเงินสดที่เซิร์ฟเวอร์จะปฏิเสธ)
+            requiresChoice = r.Applies && sug.RequiresChoice,
+            defaultLabel = SlipReceivingAccount.NoChoiceLabel(r.Applies, sug, r.Accounts.FirstOrDefault(a => a.Id == (sug.DisplayBankAccountId ?? sug.BankAccountId))?.Label),
             options = r.Accounts.Select(a => new { value = a.Id, label = a.Label, usable = r.Usable.Any(u => u.Id == a.Id),
                 problem = r.Usable.Any(u => u.Id == a.Id) ? null : "ใช้รับโอนไม่ได้ (ดูหน้า “บัญชีธนาคาร”)" }),
         }));

@@ -1559,6 +1559,39 @@ public partial class CmsCommerceService : ICmsCommerceService
             string.IsNullOrWhiteSpace(pay.Currency) ? "THB" : pay.Currency, chosen, ct);
     }
 
+    public async Task<bool> ConfirmSlipPaymentAsync(Guid companyId, Guid siteId, Guid orderId, Guid? paymentId, string actor, Guid? chosenBankAccountId)
+    {
+        return await AdvisorySessionLock.RunAsync(_db, AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsOrderStatus, orderId.ToString("N")), async () =>
+        {
+            // ใต้ล็อก: แถวเดียวกับที่ ConfirmPaymentLockedAsync จะหยิบ (ลูกค้าอัปสลิปใหม่ระหว่างทางไม่เปลี่ยนแถวที่ตรวจ)
+            var r = await SlipReceivingAccountsAsync(companyId, siteId, orderId, paymentId, chosenBankAccountId);
+            if (r == null) return await ConfirmPaymentLockedAsync(companyId, siteId, orderId, paymentId, actor, null, null);
+            if (!r.Decision.Ok)
+                throw new BusinessRuleException(r.Decision.Problem!, Accounting.Helpers.SlipReceivingAccount.RuleCode, 400);
+            if (r.Applies)
+                await AuditSlipReceivingChoiceAsync(companyId, orderId, paymentId, chosenBankAccountId, r.Decision, actor);
+            return await ConfirmPaymentLockedAsync(companyId, siteId, orderId, paymentId, actor, null, r.Applies ? r.Decision.BankAccountId : null);
+        }, "มีการเปลี่ยนสถานะออเดอร์นี้กำลังทำงานอยู่ — รอสักครู่แล้วลองใหม่", SiteOrderStatusTransition.RuleCode);
+    }
+
+    /// <summary>ฝ่ายค้าน 268 M6: ผู้เลือก · ที่มา · บัญชีที่ใช้ของการยืนยันสลิปออเดอร์ (ไม่มีคอลัมน์บนแถวรับเงิน — ร่องรอยอยู่ใน audit chain)</summary>
+    private async Task AuditSlipReceivingChoiceAsync(Guid companyId, Guid orderId, Guid? paymentId, Guid? chosen,
+        Accounting.Helpers.SlipReceivingAccount.Decision d, string actor)
+    {
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserEmail = actor, Action = AuditAction.Update, EntityType = nameof(SiteOrder), EntityId = orderId.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                op = "slip-receiving-account", paymentId, chosenBankAccountId = chosen, bankAccountId = d.BankAccountId, origin = d.Origin.ToString(),
+                acceptedSuggestion = d.AcceptedSuggestion, ruleCode = Accounting.Helpers.SlipReceivingAccount.RuleCode,
+                legalReference = Accounting.Helpers.SlipReceivingAccount.LegalReference,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+    }
+
     private async Task<bool> ConfirmPaymentLockedAsync(Guid companyId, Guid siteId, Guid orderId,
         Guid? paymentId, string actor, Guid? moneyInAccountId, Guid? receivingBankAccountId)
     {

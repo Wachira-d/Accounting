@@ -91,7 +91,9 @@ public partial class CmsBookingService
                 {
                     CompanyId = companyId, BookingId = booking.Id, Amount = amount, Currency = booking.Currency,
                     // รอบ 268 (268-1-3): ช่องทางที่เงินงวดนี้เข้าจริง (ผังตรงของผู้ให้บริการชนะธนาคาร — ลำดับเดียวกับตัวลงบัญชี)
-                    ChannelStamped = true, MoneyInAccountId = moneyInAccountId, BankAccountId = moneyInAccountId == null ? request.BankAccountId : null,
+                    // ฝ่ายค้าน 268 M3 (268-1-10): ไม่รู้บัญชี (สลิป/เงินออนไลน์ที่ตัวตัดสินไม่มีคำแนะนำ) ⇒ ไม่ประทับ — ห้ามแต่งเป็น "เงินสด" · พนักงานบันทึกเงินสดเอง = รู้
+                    ChannelStamped = BookingDepositInstalmentChannel.ChannelKnown(moneyInAccountId, request.BankAccountId, fromOnlinePayment, isSlipMoney),
+                    MoneyInAccountId = moneyInAccountId, BankAccountId = moneyInAccountId == null ? request.BankAccountId : null,
                     // ฝ่ายค้านรอบ 218: เงินของสลิป = โอนเงิน (ไม่ใช่ "ออนไลน์")
                     PaymentMethod = isSlipMoney ? PaymentMethod.BankTransfer
                         : fromOnlinePayment ? PaymentMethod.Other : (request.BankAccountId != null ? PaymentMethod.BankTransfer : PaymentMethod.Cash),
@@ -246,22 +248,32 @@ public partial class CmsBookingService
         notices.Add(issued); bookingNotes.Add(issued);
     }
 
-    /// <summary>รอบ 268 (268-1-3): ใบเสร็จมัดจำอนุมัติแล้วตามช่องทางของงวดสุดท้าย ⇒ ย้ายเงินของงวดก่อนหน้าที่เข้าช่องทางอื่นไปผังของงวดนั้น
-    /// (แผนจาก <see cref="BookingDepositInstalmentChannel.For"/> · JE ผูกใบ หนึ่งใบต่องวด · กุญแจกันซ้ำ) · ล้ม = หมายเหตุบนการจอง + คำตอบ + LogError (ไม่ย้อนใบที่อนุมัติแล้ว)</summary>
-    internal async Task MoveEarlierInstalmentsAsync(Guid companyId, Guid bookingId, Guid depositDocId, Guid finalPaymentId, string actor,
+    /// <summary>รอบ 268 (268-1-3): ใบเสร็จมัดจำอนุมัติแล้วตามช่องทางของงวดสุดท้าย ⇒ ย้ายเงินของงวดก่อนหน้าที่เข้าช่องทางอื่นไปผังของงวดนั้น — ตัวกลาง
+    /// <see cref="MoveEarlierInstalmentsCoreAsync"/> (ผู้เรียก: เส้นรับเงินนี้ + hook หลังอนุมัติทุกทาง <c>IssuedDocumentHooks</c> — ฝ่ายค้าน M4)</summary>
+    internal Task MoveEarlierInstalmentsAsync(Guid companyId, Guid bookingId, Guid depositDocId, Guid? finalPaymentId, string actor,
         List<string> notices, List<string> bookingNotes)
+        => MoveEarlierInstalmentsCoreAsync(_db, _logger, companyId, bookingId, depositDocId, finalPaymentId, actor, notices, bookingNotes);
+
+    /// <summary>ตัวกลางของการย้ายเงินมัดจำต่องวด (แผนจาก <see cref="BookingDepositInstalmentChannel.For"/> · JE ผูกใบ หนึ่งใบต่องวด · กุญแจกันซ้ำ <c>BKDEP-</c> ⇒ เรียกซ้ำได้) ·
+    /// งวดสุดท้าย = <paramref name="finalPaymentId"/> หรือแถวที่บันทึกหลังสุด (ช่องทางของใบตั้งจากงวดนั้น) · JE ลงวันที่เงินงวดนั้นเข้าเมื่องวดบัญชียังเปิด (ฝ่ายค้าน M5)
+    /// ไม่อย่างนั้นวันที่ใบ + หมายเหตุวันเข้าจริง · ล้ม = หมายเหตุ + LogError (ไม่ย้อนใบ · ถอดเฉพาะ JE ที่ตัวนี้เพิ่ม — scope ใช้ร่วมกับผู้เรียก)</summary>
+    public static async Task MoveEarlierInstalmentsCoreAsync(Accounting.Data.AccountingDbContext db, ILogger logger, Guid companyId, Guid bookingId, Guid depositDocId,
+        Guid? finalPaymentId, string actor, List<string> notices, List<string> bookingNotes)
     {
-        var doc = await _db.Documents.AsNoTracking()
+        var doc = await db.Documents.AsNoTracking()
             .Where(d => d.Id == depositDocId && d.CompanyId == companyId)
             .Select(d => new { d.Status, d.BankAccountId, d.PaymentAccountId, d.DocumentNumber, d.DocumentDate, d.ProjectId })
             .FirstOrDefaultAsync();
         if (doc == null || doc.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Voided or DocumentStatus.Rejected) return;
-        var rows = await _db.SiteBookingPayments.AsNoTracking()
+        var raw = await db.SiteBookingPayments.AsNoTracking()
             .Where(p => p.CompanyId == companyId && p.BookingId == bookingId && !p.IsDeleted && !p.IsRefund && p.Status == SitePaymentStatus.Completed)
-            .OrderBy(p => p.PaidAt).ThenBy(p => p.CreatedAt)
-            .Select(p => new BookingDepositInstalmentChannel.Instalment(p.Id, p.Amount, p.ChannelStamped, p.BankAccountId, p.MoneyInAccountId))
+            .OrderBy(p => p.CreatedAt).ThenBy(p => p.Id)
+            .Select(p => new { p.Id, p.Amount, p.ChannelStamped, p.BankAccountId, p.MoneyInAccountId, p.PaidAt })
             .ToListAsync();
-        var plan = BookingDepositInstalmentChannel.For(rows, finalPaymentId, doc.BankAccountId, doc.PaymentAccountId);
+        if (raw.Count == 0) return;
+        var final = finalPaymentId ?? raw[^1].Id;
+        var rows = raw.Select(p => new BookingDepositInstalmentChannel.Instalment(p.Id, p.Amount, p.ChannelStamped, p.BankAccountId, p.MoneyInAccountId, p.PaidAt)).ToList();
+        var plan = BookingDepositInstalmentChannel.For(rows, final, doc.BankAccountId, doc.PaymentAccountId);
         if (plan.UnknownCount > 0)
         {
             var unknown = BookingDepositInstalmentChannel.UnknownNote(plan.UnknownCount);
@@ -269,41 +281,49 @@ public partial class CmsBookingService
         }
         if (plan.Moves.Count == 0) return;
         const string hint = "แก้บัญชีธนาคาร/ผังที่หน้า “บัญชีธนาคาร” แล้วบันทึกสมุดรายวันย้ายเงินเอง";
+        var added = new List<JournalEntry>();
         try
         {
-            var docGl = await DocumentMoneyChannel.ResolvePostingAccountAsync(_db, companyId, doc.BankAccountId, doc.PaymentAccountId, hint)
-                ?? await DocumentMoneyChannel.DefaultCashAccountIdAsync(_db, companyId)
+            var docGl = await DocumentMoneyChannel.ResolvePostingAccountAsync(db, companyId, doc.BankAccountId, doc.PaymentAccountId, hint)
+                ?? await DocumentMoneyChannel.DefaultCashAccountIdAsync(db, companyId)
                 ?? throw new BusinessRuleException(DocumentMoneyChannel.NoDefaultCashMessage(hint), BookingDepositInstalmentChannel.RuleCode);
-            await using var tx = await _db.Database.BeginTransactionAsync();
+            await using var tx = await db.Database.BeginTransactionAsync();
             var written = new List<string>();
             foreach (var m in plan.Moves)
             {
                 var key = BookingDepositInstalmentChannel.ReferenceFor(m.PaymentId);
-                if (await _db.JournalEntries.AnyAsync(j => j.CompanyId == companyId && j.SourceDocumentId == depositDocId && j.Reference == key && !j.IsDeleted))
+                if (await db.JournalEntries.AnyAsync(j => j.CompanyId == companyId && j.SourceDocumentId == depositDocId && j.Reference == key && !j.IsDeleted))
                     continue;
-                var gl = await DocumentMoneyChannel.ResolvePostingAccountAsync(_db, companyId, m.BankAccountId, m.MoneyInAccountId, hint)
-                    ?? await DocumentMoneyChannel.DefaultCashAccountIdAsync(_db, companyId)
+                var gl = await DocumentMoneyChannel.ResolvePostingAccountAsync(db, companyId, m.BankAccountId, m.MoneyInAccountId, hint)
+                    ?? await DocumentMoneyChannel.DefaultCashAccountIdAsync(db, companyId)
                     ?? throw new BusinessRuleException(DocumentMoneyChannel.NoDefaultCashMessage(hint), BookingDepositInstalmentChannel.RuleCode);
                 if (gl == docGl) continue;   // สองช่องทางผูกผังเดียวกัน ⇒ ไม่มีเงินให้ย้าย
-                var code = await _db.ChartOfAccounts.AsNoTracking().Where(a => a.Id == gl && a.CompanyId == companyId).Select(a => a.AccountCode).FirstAsync();
-                await Journal.JournalEntryBuilder.For(_db, companyId, doc.DocumentDate)
+                var code = await db.ChartOfAccounts.AsNoTracking().Where(a => a.Id == gl && a.CompanyId == companyId).Select(a => a.AccountCode).FirstAsync();
+                // ฝ่ายค้าน M5 (268-1-11): วันที่เงินงวดนั้นเข้า (งวดบัญชีเปิด) — กระทบยอดธนาคารของงวดก่อนตรงวัน · งวดปิด ⇒ วันที่ใบ + หมายเหตุวันเข้าจริง
+                var entryDate = BookingDepositInstalmentChannel.EntryDate(m.PaidAt, doc.DocumentDate,
+                    m.PaidAt is DateTime pd && await Journal.JournalEntryBuilder.ClosedPeriodReasonAsync(db, companyId, pd) == null);
+                added.Add(await Journal.JournalEntryBuilder.For(db, companyId, entryDate)
                     .Description($"ย้ายเงินมัดจำงวดก่อนไปช่องทางที่เข้าจริง — {doc.DocumentNumber}")
                     .Reference(key)
                     .SourceDocument(depositDocId)
                     .Project(doc.ProjectId)
                     .Debit(gl, m.Amount, $"Dr {code} — เงินมัดจำงวดนี้เข้าช่องทางนี้")
                     .Credit(docGl, m.Amount, "Cr ผังเงินเข้าของใบเสร็จมัดจำ (ย้ายออก)")
-                    .PostAsync(actor);
-                written.Add(BookingDepositInstalmentChannel.MovedNote(doc.DocumentNumber, m.Amount, code));
+                    .PostAsync(actor));
+                written.Add(BookingDepositInstalmentChannel.MovedNote(doc.DocumentNumber, m.Amount, code, m.PaidAt, entryDate));
             }
-            await _db.SaveChangesAsync();
+            await db.SaveChangesAsync();
             await tx.CommitAsync();
             foreach (var w in written) { notices.Add(w); bookingNotes.Add(w); }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _db.ChangeTracker.Clear();
-            _logger.LogError(ex, "ย้ายเงินมัดจำงวดก่อนของการจอง {Booking} (ใบ {Doc}) ไม่สำเร็จ", bookingId, doc.DocumentNumber);
+            foreach (var je in added)
+            {
+                foreach (var l in je.Lines) { var le = db.Entry(l); if (le.State != EntityState.Detached) le.State = EntityState.Detached; }
+                var e = db.Entry(je); if (e.State != EntityState.Detached) e.State = EntityState.Detached;
+            }
+            logger.LogError(ex, "ย้ายเงินมัดจำงวดก่อนของการจอง {Booking} (ใบ {Doc}) ไม่สำเร็จ", bookingId, doc.DocumentNumber);
             var fail = CmsBookingCancelPolicy.FailureNote("การย้ายเงินมัดจำงวดก่อนไปช่องทางที่เข้าจริง", doc.DocumentNumber, ReasonOf(ex)
                 + " — ใบเสร็จมัดจำลงตามช่องทางของงวดสุดท้ายทั้งก้อน · บันทึกสมุดรายวันย้ายเงินเองที่หน้า “สมุดรายวัน”");
             notices.Add(fail); bookingNotes.Add(fail);

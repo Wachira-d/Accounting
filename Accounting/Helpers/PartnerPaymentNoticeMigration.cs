@@ -49,8 +49,13 @@ public static class PartnerPaymentNoticeMigration
         BackfillOnceSql(),
         // รอบ 268 (268-1-6 · D8): การชำระหลายใบ = หนึ่งการแจ้งต่อแถวจัดสรร ⇒ กุญแจเดิม (ต่อการรับชำระ) ใช้เฉพาะการชำระใบเดียว · ดัชนีเดิมถูกแทนที่ (ชื่อใหม่ — ไม่สร้างซ้ำทุกบูต)
         """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SellerAllocationId" uuid NULL;""",
-        """DROP INDEX IF EXISTS "IX_PartnerPaymentNotices_Company_SellerPayment";""",
-        """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartnerPaymentNotices_Company_SellerPaymentSingle" ON "PartnerPaymentNotices" ("CompanyId", "SellerPaymentId") WHERE "SellerPaymentId" IS NOT NULL AND "SellerAllocationId" IS NULL;""",
+        // ฝ่ายค้าน 268 L2: DROP + CREATE ใน statement เดียว (DO block = ธุรกรรมเดียว) — CREATE ล้มหลัง DROP ไม่ทิ้งตารางไว้โดยไม่มีดัชนี unique
+        """
+        DO $$ BEGIN
+            DROP INDEX IF EXISTS "IX_PartnerPaymentNotices_Company_SellerPayment";
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartnerPaymentNotices_Company_SellerPaymentSingle" ON "PartnerPaymentNotices" ("CompanyId", "SellerPaymentId") WHERE "SellerPaymentId" IS NOT NULL AND "SellerAllocationId" IS NULL;
+        END $$;
+        """,
         """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartnerPaymentNotices_Company_SellerAllocation" ON "PartnerPaymentNotices" ("CompanyId", "SellerAllocationId") WHERE "SellerAllocationId" IS NOT NULL;""",
         // C-03 ของที่ค้างอยู่แล้ว (ผู้ขายยกเลิกการรับชำระไปก่อนรอบนี้): <b>ไม่แก้ด้วย SQL</b> (ฝ่ายค้าน L4 — เปลี่ยนสถานะโดยไม่มี audit) ⇒
         // ตัวกวาดในโค้ด PartnerPayablePipeline.SweepSellerVoidedAsync เดินตัวถอนตัวเดียวกับเส้นปกติ (audit สองฝั่ง + แจ้ง · ไม่แตะแถวที่ปิด/ถอนแล้ว)
