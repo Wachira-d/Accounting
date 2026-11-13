@@ -43,6 +43,9 @@ public class AutopilotJob : BackgroundService
             // รอบ 264 P3 (คำตัดสิน 264-3-8): การแจ้ง "ผู้ขายคู่ค้ารับเงินแล้ว" ⇒ ระบบของผู้ซื้อบันทึกจ่ายเองภายใต้ความยินยอม (ไม่ทำในคำขอของผู้ขาย) + ผังบัญชีใบซื้อร่าง
             await StepAsync("PartnerPayable", async sp => await sp.GetRequiredService<PartnerPayablePipeline>().RunOnceAsync(DateTime.UtcNow, stoppingToken),
                 n => $"ท่อฝั่งผู้ซื้อคู่ค้า NextAcc ทำ {n} รายการ (บันทึกจ่าย/เติมผังใบร่าง)", stoppingToken);
+            // ฝ่ายค้าน 264-P4 M2 (คำตัดสิน 264-5-15): outbox สำเนาสลิปของ "แจ้งโอนให้ผู้ขาย" ที่ยังค้าง (ความยินยอมของผู้ขายตรวจใหม่ทุกครั้ง)
+            await StepAsync("PartnerSlipCopies", async sp => await sp.GetRequiredService<PartnerOutboundPaymentService>().DeliverPendingSlipCopiesAsync(DateTime.UtcNow, stoppingToken),
+                n => $"ส่งสำเนาสลิปแจ้งโอนให้ผู้ขายคู่ค้า NextAcc {n} รายการ", stoppingToken);
             try { await Task.Delay(Cycle, stoppingToken); } catch { return; }
         }
     }

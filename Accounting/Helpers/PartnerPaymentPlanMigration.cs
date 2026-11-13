@@ -37,5 +37,16 @@ public static class PartnerPaymentPlanMigration
         """CREATE INDEX IF NOT EXISTS "IX_PartnerPaymentPlans_Company_Purchase" ON "PartnerPaymentPlans" ("CompanyId", "PurchaseDocumentId");""",
         // ฝ่ายค้าน 264-P2 L3 (คำตัดสิน 264-5-13): ผลจับคู่สลิปของผู้ซื้อหลังล้างเลขปิดบาง (ชื่อ PartnerPaySourceAccount.SlipKind)
         """ALTER TABLE "PartnerPaymentNotices" ADD COLUMN IF NOT EXISTS "SlipPayerMatch" varchar(16) NULL;""",
+        // ฝ่ายค้าน 264-P4 H1/M2 (คำตัดสิน 264-5-15): กุญแจกันซ้ำของแจ้งโอน + outbox สำเนาสลิป
+        """ALTER TABLE "PartnerPaymentPlans" ADD COLUMN IF NOT EXISTS "IdempotencyKey" varchar(64) NULL;""",
+        """ALTER TABLE "PartnerPaymentPlans" ADD COLUMN IF NOT EXISTS "SlipSha256" varchar(64) NULL;""",
+        """ALTER TABLE "PartnerPaymentPlans" ADD COLUMN IF NOT EXISTS "SlipStoragePath" varchar(500) NULL;""",
+        """ALTER TABLE "PartnerPaymentPlans" ADD COLUMN IF NOT EXISTS "SlipContentType" varchar(64) NULL;""",
+        """ALTER TABLE "PartnerPaymentPlans" ADD COLUMN IF NOT EXISTS "SlipBankRef" varchar(64) NULL;""",
+        """ALTER TABLE "PartnerPaymentPlans" ADD COLUMN IF NOT EXISTS "SlipCopyState" varchar(16) NULL;""",
+        """ALTER TABLE "PartnerPaymentPlans" ADD COLUMN IF NOT EXISTS "SlipCopyAttempts" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "PartnerPaymentPlans" ADD COLUMN IF NOT EXISTS "SellerNotifiedAt" timestamp without time zone NULL;""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PartnerPaymentPlans_Company_IdemKey" ON "PartnerPaymentPlans" ("CompanyId", "IdempotencyKey") WHERE "IdempotencyKey" IS NOT NULL AND NOT "IsDeleted";""",
+        """CREATE INDEX IF NOT EXISTS "IX_PartnerPaymentPlans_SlipCopyPending" ON "PartnerPaymentPlans" ("SlipCopyState") WHERE "SlipCopyState" = 'Pending';""",
     };
 }

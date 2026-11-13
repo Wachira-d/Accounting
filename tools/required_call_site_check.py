@@ -19270,7 +19270,7 @@ _R264P3_SVC = "Services/Implementations/PartnerPaymentNoticeService.cs"
 RULES += [
     dict(file=_R264P3_PIPE, method="ProcessAsync",
          must=["consentSvc.CheckForWriteAsync(companyId, n.TradingPartnershipId, Scope.AutoRecordPayment, CapOf(doc)",
-               "PartnerPaymentNoticeService.UnexplainedPurchasePaymentAsync(", "PartnerAutoRecordPolicy.WhtDateInPastMonthOf(n.PaidAt, plan.Wht, nowUtc)",
+               "PartnerPaymentNoticeService.UnexplainedPurchasePaymentAsync(", "PartnerAutoRecordPolicy.WhtDateInPastMonthOf(paymentDate, plan.Wht, nowUtc)",
                "UserMessageOf(ex)", "NotifyAutoRecordedAsync(",
                "lockDb.Database.BeginTransactionAsync(", "PartnerAutoRecordPolicy.Decide(", "SourceDecisionAsync(", "PartnerPaymentNoticeService.PlanForAsync(",
                "PartnerPaymentNoticeService.SellerPaymentLiveAsync(", "PaymentEntrySource.PartnerAuto", "grantor.ToString()",
@@ -19402,7 +19402,7 @@ REVIEWER_CASES += [
 # ── รอบ 264 P4 (team-264-a2b-design §5.4 · §6.1 · §6.2 · คำตัดสิน 264-5-10…264-5-13) — ผู้ซื้อเริ่มจ่าย + รายการเดินบัญชีฝั่งเงินออก + L3 ──
 # ชั้นรายการเดินบัญชีตรงเป๊ะ (ยอด · วัน · บัญชีปลายทาง · หนึ่งต่อหนึ่ง · แหล่ง H1) · สลิปยกเป็นอัตโนมัติได้ผ่านรายการเดินบัญชีเท่านั้น ·
 # ไม่ประทับ "ชำระแล้ว" · ความยินยอมตรวจเพื่อเขียนทุกเส้นเขียน · เส้นตัดสินอ่านอย่างเดียว (ผู้ล้างเลขผู้โอนแยกเป็นตัวเขียน)
-_R264P4_WHY = "รอบ 264 P4 (264-5-x): "
+_R264P4_WHY = "รอบ 264 P4 (264-5-x · ฝ่ายค้าน review-264-P4 ⇒ 264-5-14…18): "
 _R264P4_PIPE = "Services/Implementations/PartnerPayablePipeline.cs"
 _R264P4_EV = "Services/Implementations/BankPaymentLineEvidence.cs"
 _R264P4_OUT = "Services/Implementations/PartnerOutboundPaymentService.cs"
@@ -19419,31 +19419,37 @@ RULES += [
     dict(file="Helpers/BankPaymentLineMatch.cs", method="PayeeOnLine",
          must=["SlipAccountMatch.DigitsFit(", "MinVisibleDigits", "digits == payeeDigits"],
          why=_R264P4_WHY + "เลขบัญชีปลายทางเทียบตามตำแหน่ง (ตัวเทียบเดียวกับสลิป) · เลขเต็มต้องเท่ากันทั้งหมด · ห้าม fuzzy"),
-    dict(file="Helpers/PartnerPaySourceAccount.cs", method="SlipConfirmedByBankLine",
-         must=["SlipKind.Unique", "line == slip", "f.Usable.ContainsKey("],
-         why=_R264P4_WHY + "264-5-10 ทางเดียวที่ชั้นสลิปถูกยก = รายการเดินบัญชียืนยันบัญชีเดียวกัน (264-4-9 · 268-1-1 คงเดิม)"),
+    dict(file="Helpers/PartnerPaySourceAccount.cs", method="Decide",
+         must=["win.Origin == Origin.PayerDeclared && !f.PayerDeclaredBindsAccount", "PayerDeclaredUnboundReason"],
+         why=_R264P4_WHY + "M4 (264-5-17) ผู้จ่ายเลือกบัญชีแต่ช่องทางไม่ผูกบัญชีต้นทาง ⇒ preselect ไม่บันทึกเอง"),
     dict(file=_R264P4_EV, method="DecideAsync",
          must=["t.CompanyId == companyId", "t.BankAccount.CompanyId == companyId", "BankReceiptAutoSettle.EvidenceProblem(r.EntrySource, mayApprove)",
-               "DocumentPermissionHelper.CanApproveAsync(", "BankPaymentLineMatch.Decide(", "x.CompanyId == companyId", "BankTransactionType.Withdrawal"],
+               "DocumentPermissionHelper.CanApproveAsync(", "BankPaymentLineMatch.Decide(", "x.CompanyId == companyId", "BankTransactionType.Withdrawal",
+               "x.Status == PartnerPaymentNoticeRule.StatusRecorded && x.RecordedPaymentId != null", "near.Count > MaxOthers"],
          forbid=["SaveChangesAsync", "ExecuteUpdateAsync", "BankTransactionType.Deposit", "AskAsync"],
-         why=_R264P4_WHY + "อ่านอย่างเดียว · ตารางรายการเดินบัญชีเดิม · ฝั่งเงินออกเท่านั้น (ไม่แย่งบรรทัดเงินเข้า) · ผู้นำเข้าต้องมีสิทธิ์อนุมัติ (H1)"),
+         why=_R264P4_WHY + "อ่านอย่างเดียว · ฝั่งเงินออก · ผู้นำเข้ามีสิทธิ์อนุมัติ (H1) · M1 นับ PV ที่ยังไม่ผูกบรรทัดในหนึ่งต่อหนึ่ง · L4 เกินเพดาน ⇒ คำแนะนำ"),
     dict(file=_R264P4_EV, method="BindAsync",
          must=["r.IsEvidence", "t.CompanyId == companyId", "ReconciliationStatus.Unmatched", "t.MatchedPaymentId == null", "BankMatchAttribution.PartnerPayLine",
-               "_db.AddChainedAuditLog("],
+               "_db.AddChainedAuditLog(", "payBank.BankAccountId != r.BankAccountId", "t.AutoSettleDocumentId == null", "t.MatchedPaymentId == paymentId"],
          before=[("DecideAsync(", "ExecuteUpdateAsync(")],
-         why=_R264P4_WHY + "ผูกบรรทัดเฉพาะหลักฐานที่ยังตรง · มีเงื่อนไข (ชนกับคนจับคู่มือได้คนเดียว) · ผู้กระทบยอด = ค่าคงที่ของระบบ · audit chain"),
+         why=_R264P4_WHY + "ตัวเขียนเดียว: ผูกเฉพาะหลักฐานที่ยังตรง + PV บัญชีเดียวกับบรรทัด + PV ยังไม่ผูกบรรทัดอื่น (M1) · มีเงื่อนไข · L2 · audit chain"),
     dict(file=_R264P4_EV, method="PayeeDigitsAsync",
          must=["p.CompanyId == n.SourceCompanyId", "b.CompanyId == n.SourceCompanyId"],
          why=_R264P4_WHY + "อ่านบัญชีรับเงินของผู้ขายผูก CompanyId ผู้ขายทุก query"),
     dict(file=_R264P4_PIPE, method="ProcessAsync",
-         must=["_bankLine.BindAsync(companyId, n, pay.Id, ct)", "PlanPaymentForNoticeAsync(_db, companyId, n, ct)", "PartnerPaySourceAccount.Origin.BankLine"],
-         before=[("_docs.CreatePaymentAsync(", "_bankLine.BindAsync("), ("_bankLine.BindAsync(", "lockTx.CommitAsync("),
-                 ("PlanPaymentForNoticeAsync(", "_docs.CreatePaymentAsync(")],
-         why=_R264P4_WHY + "264-5-10 บันทึกจากรายการเดินบัญชี ⇒ ผูกบรรทัดใต้ล็อกเดียวกัน · 264-5-12 แผนแจ้งโอนมี PV แล้ว ⇒ ไม่สร้างที่สอง"),
+         must=["PlanPaymentForNoticeAsync(_db, companyId, n, ct)", "_bankLine.EvidenceDateAsync(companyId, n, ct)", "PaymentDate: paymentDate",
+               "WhtDateInPastMonthOf(paymentDate"],
+         before=[("PlanPaymentForNoticeAsync(", "_docs.CreatePaymentAsync("), ("_docs.CreatePaymentAsync(", "MarkRecordedAsync(companyId, noticeId, pay.Id")],
+         why=_R264P4_WHY + "264-5-12 แผนแจ้งโอนมี PV แล้ว ⇒ ไม่สร้างที่สอง · L5 PV ลงวันที่ของบรรทัดเมื่อรายการเดินบัญชีชนะ"),
+    dict(file=_R264P4_PIPE, method="MarkRecordedAsync", must=["BindLineAsync(companyId, fresh, paymentId, ct)", "bankLineBound"],
+         why=_R264P4_WHY + "M1 ผูกบรรทัดทุกทางที่ปิดการแจ้งด้วย PV (ท่อ · PV ของแผน · ตาข่าย) ผ่านตัวเขียนเดียว"),
+    dict(file=_R264P4_PIPE, method="BindLineAsync", must=["_bankLine.BindAsync(companyId, n, paymentId, ct)", "_logger.LogError("],
+         why=_R264P4_WHY + "M1 ตัวเขียนเดียวของการผูกบรรทัด · ล้มดัง"),
     dict(file=_R264P4_PIPE, method="SourceDecisionAsync",
-         must=["x.CompanyId == companyId", "PartnerPaymentPlanRule.KindGateway", "PayerDeclared: declared?.BankAccountId", "cu.CompanyId == companyId"],
+         must=["x.CompanyId == companyId", "PartnerPaymentPlanRule.KindGateway", "PayerDeclared: declared?.BankAccountId", "cu.CompanyId == companyId",
+               "PartnerPaymentPlanRule.MethodBindsAccount(declared.Method)"],
          forbid=["SaveChangesAsync", "ExecuteUpdateAsync", "ScrubSlipPayerAsync("],
-         why=_R264P4_WHY + "264-5-11 ชั้นผู้จ่ายเลือกจากแผนของบริษัทเรา · L3: เส้นตัดสินอ่านอย่างเดียว (ตัวล้างเป็นตัวเขียนแยก)"),
+         why=_R264P4_WHY + "264-5-11 ชั้นผู้จ่ายเลือกจากแผนของบริษัทเรา · M4 ช่องทางผูกบัญชีไหม · L3 อ่านอย่างเดียว"),
     dict(file=_R264P4_PIPE, method="SlipMatchAsync",
          must=["PartnerPaymentPlanRule.SlipFromStoredKind(n.SlipPayerMatch)", "b.CompanyId == companyId"],
          forbid=["SaveChangesAsync", "ExecuteUpdateAsync"],
@@ -19454,9 +19460,10 @@ RULES += [
          forbid=["n.SlipPayerAccountMask,", "AskAsync"],
          why=_R264P4_WHY + "264-5-13 (L3) ตัวเขียนเดียว: ล้างเลข+ธนาคารเหลือชนิด · audit ไม่มีเลข"),
     dict(file=_R264P4_PIPE, method="PlanPaymentForNoticeAsync",
-         must=["x.CompanyId == companyId", "p.CompanyId == companyId", "!p.IsDeleted", "PartnerPaymentPlanRule.KindTransfer", "x.PurchaseDocumentId == n.TargetDocumentId"],
+         must=["x.CompanyId == companyId", "!x.IsDeleted", "p.CompanyId == companyId", "!p.IsDeleted", "PartnerPaymentPlanRule.KindTransfer",
+               "x.PurchaseDocumentId == n.TargetDocumentId", "PartnerPaymentPlanRule.PlanPaymentFor(", "PlanPaymentByReferenceAsync(", "o.RecordedPaymentId == id"],
          forbid=["SaveChangesAsync", "ExecuteUpdateAsync"],
-         why=_R264P4_WHY + "264-5-12 PV ของแผนแจ้งโอนที่ยังมีผล ของบริษัทเรา ใบซื้อเดียวกัน"),
+         why=_R264P4_WHY + "264-5-18 (M2/M3) PV ของแผนหาด้วย id หรือเลขอ้างอิง · ไม่มีรายการของผู้ขาย ⇒ ยอด/วันตรงตัวเดียวที่ยังไม่ถูกอ้าง"),
     dict(file=_R264P4_PIPE, method="CloseFromPlansAsync",
          must=["PlanPaymentForNoticeAsync(", "PartnerPaymentNoticeRule.StatusOpen", "MarkRecordedAsync("],
          forbid=["CreatePaymentAsync(", "VoidPaymentAsync("],
@@ -19465,9 +19472,10 @@ RULES += [
          must=["SweepSlipPayerAsync(nowUtc, ct)", "CloseFromPlansAsync(nowUtc, ct)"],
          why=_R264P4_WHY + "L3 + ตาข่ายแผนแจ้งโอนเดินทุกรอบของงานเบื้องหลัง"),
     dict(file=_R264P3_SVC, method="RecordAsync",
-         must=["PartnerPayablePipeline.PlanPaymentForNoticeAsync(_db, companyId, n, ct)", "PartnerPayablePipeline.ScrubSlipPayerAsync("],
+         must=["PartnerPayablePipeline.PlanPaymentForNoticeAsync(_db, companyId, n, ct)", "PartnerPayablePipeline.ScrubSlipPayerAsync(",
+               "_bankLine.BindAsync(companyId, fresh, boundPay, ct)"],
          before=[("PlanPaymentForNoticeAsync(", "_docs.CreatePaymentAsync(")],
-         why=_R264P4_WHY + "264-5-12 ปุ่มเดียวไม่สร้าง PV ที่สองเมื่อเราแจ้งโอนไปแล้ว · L3 จบแล้วล้างเลข"),
+         why=_R264P4_WHY + "264-5-12 ปุ่มเดียวไม่สร้าง PV ที่สองเมื่อเราแจ้งโอนไปแล้ว · M1 ผูกบรรทัดด้วยตัวเขียนเดียว · L3 จบแล้วล้างเลข"),
     dict(file=_R264P3_SVC, method="DismissAsync", must=["PartnerPayablePipeline.ScrubSlipPayerAsync("],
          why=_R264P4_WHY + "L3 ปิดการแจ้ง ⇒ ล้างเลขผู้โอน"),
     dict(file=_R264P3_SVC, method="ListAsync", must=["_bankLine.FindAsync(companyId, n, ct)"],
@@ -19477,22 +19485,31 @@ RULES += [
                "d.CompanyId == link.SourceCompanyId", "PartnerPaymentPlanRule.StartProblem(", "DocumentPermissionHelper.IsPurchase("],
          why=_R264P4_WHY + "ผูกได้เฉพาะลิงก์ InvoiceFlow ที่ใบปลายทางคือใบซื้อนี้ + คู่ Accepted · tenant"),
     dict(file=_R264P4_OUT, method="StartGatewayAsync",
-         must=["consentSvc.CheckForWriteAsync(companyId, c.PartnershipId, Scope.AutoRecordPayment", "lockDb.Database.BeginTransactionAsync(", "_payLinks.PartnerPayTargetAsync(",
-               "_intents.StartAsync(", "lockTx.CommitAsync(", "AuditPlan(", "usable.ContainsKey(bank)", "GatewayKinds.Contains(kind)", "MaxStartsPerHour", "SafeReturnUrl("],
-         must_re=[r"if\s*\(\s*!\s*consent\s*\.\s*Ok\s*\)"],
-         must_lit=["idle_in_transaction_session_timeout"],
-         before=[("CheckForWriteAsync(", "_intents.StartAsync("), ("_intents.StartAsync(", "lockTx.CommitAsync(")],
-         forbid=[".CheckAsync(", "CreatePaymentAsync(", "PaymentIntentStatus.Succeeded", "ApplyChargeAsync("],
-         why=_R264P4_WHY + "264-5-11 ความยินยอมตรวจเพื่อเขียนในธุรกรรมที่ถือจนเปิดรายการเสร็จ · เป้าหมายจากตัวตัดสินหน้าชำระตัวเดียว · IPaymentIntentService เดิม · "
-             "ไม่บันทึกจ่าย/ไม่ประทับสำเร็จเอง (F2 ข้อ 3)"),
+         must=["_payLinks.PartnerPayTargetAsync(", "_intents.StartAsync(", "AuditPlan(", "usable.ContainsKey(bank)", "GatewayKinds.Contains(kind)",
+               "MaxStartsPerHour", "SafeReturnUrl(", "PartnerPaymentPlanRule.GatewayAmountProblem(", "PartnerPaymentNoticeService.PlanForAsync(",
+               "PartnerPaymentPlanRule.SafeQrPayload(", "HttpRequestException"],
+         before=[("PartnerPaymentPlanRule.GatewayAmountProblem(", "_intents.StartAsync(")],
+         forbid=[".CheckAsync(", "CheckForWriteAsync(", "CreatePaymentAsync(", "PaymentIntentStatus.Succeeded", "ApplyChargeAsync(", "BeginTransactionAsync("],
+         why=_R264P4_WHY + "M6 (264-5-11 ถูกกลับ) ไม่ใช้ความยินยอม · M5 ยอดผู้ขายตรงแผนภาษีหักของเรา · L7 ไม่ถือธุรกรรมข้ามผู้ให้บริการ · L8 QR · ไม่ประทับสำเร็จเอง"),
     dict(file=_R264P4_OUT, method="NotifyTransferAsync",
-         must=["consentSvc.CheckForWriteAsync(c.SourceCompanyId, c.PartnershipId, Scope.ReceiveSlipCopy", "PartnerPaymentPlanRule.TransferAccount(", "_slips.SubmitAsync(",
-               "SlipEvidenceService.ChannelPartnerNextAcc", "PartnerPaymentPlanRule.BuyerReference(planId)", "PartnerPaymentNoticeService.PlanForAsync(", "AuditPlan(",
-               "b.CompanyId == companyId", "lockDb.Database.BeginTransactionAsync("],
-         must_re=[r"if\s*\(\s*!\s*sellerConsent\s*\.\s*Ok\b"],
-         before=[("PartnerPaymentPlanRule.TransferAccount(", "_docs.CreatePaymentAsync("), ("CheckForWriteAsync(", "_slips.SubmitAsync(")],
-         forbid=[".CheckAsync(", "PaymentIntentStatus.Succeeded", "ApplyChargeAsync(", "RecordExternalSuccessAsync("],
-         why=_R264P4_WHY + "264-5-12 บัญชีคนเลือก+สลิปตรวจไขว้ก่อนบันทึก · สำเนาสลิปถึงผู้ขายเฉพาะเมื่อผู้ขายยินยอม (ตรวจเพื่อเขียน) · ฝั่งผู้ขายเป็นรายการรอยืนยันเท่านั้น"),
+         must=["PartnerPaymentPlanRule.TransferAccount(", "PartnerPaymentPlanRule.TransferIdempotencyKey(",
+               "RefuseIfDuplicateAsync(companyId, key, lockTx, ct)", "PartnerPaymentPlanRule.BuyerReference(planId)", "PartnerPaymentNoticeService.PlanForAsync(",
+               "b.CompanyId == companyId", "DeliverSlipCopyAsync(companyId, planId", "IdempotencyKey = key", "x.BuyerPaymentId == null"],
+         must_lit=["pg_advisory_xact_lock"],
+         before=[("PartnerPaymentPlanRule.TransferAccount(", "_docs.CreatePaymentAsync("), ("RefuseIfDuplicateAsync(companyId, key, lockTx, ct)", "_docs.CreatePaymentAsync("),
+                 ("_db.PartnerPaymentPlans.Add(row)", "_docs.CreatePaymentAsync("), ("_docs.CreatePaymentAsync(", "lockTx.CommitAsync(")],
+         forbid=[".CheckAsync(", "PaymentIntentStatus.Succeeded", "ApplyChargeAsync(", "RecordExternalSuccessAsync(", "_slips.SubmitAsync("],
+         why=_R264P4_WHY + "H1 กุญแจกันซ้ำ + ล็อกต่อใบซื้อ · M2 จองแผนก่อน PV · สำเนาสลิปผ่าน outbox เท่านั้น"),
+    dict(file=_R264P4_OUT, method="DeliverSlipCopyAsync",
+         must=["consentSvc.CheckForWriteAsync(p.SourceCompanyId, p.TradingPartnershipId, Scope.AcceptPayerSlipCopy", "if (!consent.Ok)", "_slips.SubmitAsync(",
+               "SlipEvidenceService.ChannelPartnerNextAcc", "x.CompanyId == companyId", "PartnerPaymentPlanRule.SellerNotAcceptingNoteForBuyer(",
+               "x.SlipCopyState == PartnerPaymentPlanRule.CopyPending"],
+         must_lit=["pg_advisory_xact_lock"],
+         before=[("CheckForWriteAsync(", "_slips.SubmitAsync(")],
+         forbid=[".CheckAsync(", "Scope.ReceiveSlipCopy", "PaymentIntentStatus.Succeeded", "CreatePaymentAsync("],
+         why=_R264P4_WHY + "H2 (264-5-14) ความยินยอมของผู้ขาย (ขอบเขตของผู้ขาย) ตรวจเพื่อเขียนก่อนส่ง · M7 ข้อความมุมผู้ซื้อ · รายการรอยืนยันเท่านั้น"),
+    dict(file="Services/Background/AutopilotJob.cs", method="ExecuteAsync", must=["DeliverPendingSlipCopiesAsync("],
+         why=_R264P4_WHY + "M2 outbox สำเนาสลิปเดินทุกรอบ"),
     dict(file="Services/Implementations/DocumentPayLinkService.CustomerPage.cs", method="PartnerPayTargetAsync",
          must=["PublicViewAsync(companyId, raw, ct)", "Recover("], forbid=["new PublicPayTarget", "new Accounting.Services.Payments.PublicPayTarget"],
          why=_R264P4_WHY + "264-5-11 เป้าหมายของ \"จ่ายจากระบบของเรา\" = ตัวตัดสินหน้าชำระตัวเดียว (ไม่ประกอบยอด/ช่องทางเอง)"),
@@ -19504,20 +19521,20 @@ RULES += [
          why=_R264P4_WHY + "สิทธิ์เดียวกับบันทึกการชำระที่หน้าเอกสาร (อนุมัติตามชนิดใบซื้อ + ชั้นความลับ)"),
 ]
 REVIEWER_CASES += [
-    # ถอดการผูกบรรทัดหลังบันทึกจากรายการเดินบัญชี ⇒ ต้องฟ้อง
-    ("R264P4a", "ProcessAsync", "lineBound = await _bankLine.BindAsync(companyId, n, pay.Id, ct) == 1;", "lineBound = false;", True),
-    # เปิดรายการชำระโดยไม่ดูผลความยินยอม ⇒ ต้องฟ้อง
-    ("R264P4b", "StartGatewayAsync", "if (!consent.Ok)", "if (false)", True),
+    # ถอดการผูกบรรทัดจากทางปิดการแจ้งร่วม ⇒ ต้องฟ้อง
+    ("R264P4a", "MarkRecordedAsync", "var bankLineBound = await BindLineAsync(companyId, fresh, paymentId, ct);", "bool? bankLineBound = null;", True),
+    # เปิดรายการชำระโดยไม่เทียบยอดกับแผนภาษีหักของเรา ⇒ ต้องฟ้อง
+    ("R264P4b", "StartGatewayAsync", "if (PartnerPaymentPlanRule.GatewayAmountProblem(target.AmountDue, gwPlan) is string amountProblem)", "if (false is true && \"\" is string amountProblem)", True),
     # ส่งสำเนาสลิปทั้งที่ผู้ขายไม่ยินยอม ⇒ ต้องฟ้อง
-    ("R264P4c", "NotifyTransferAsync", "if (!sellerConsent.Ok || _slips == null)", "if (_slips == null)", True),
+    ("R264P4c", "DeliverSlipCopyAsync", "if (!consent.Ok)", "if (false)", True),
     # เส้นตัดสินเขียนฐาน (L3 ต้องเป็นตัวเขียนแยก) ⇒ ต้องฟ้อง
     ("R264P4d", "SourceDecisionAsync", "        Guid? history = null;", "        Guid? history = null; await db.SaveChangesAsync(ct);", True),
     # ถอดกติกาแหล่งของบรรทัด (พิมพ์มือกลายเป็นหลักฐาน) ⇒ ต้องฟ้อง
     ("R264P4e", "DecideAsync", "BankReceiptAutoSettle.EvidenceProblem(r.EntrySource, mayApprove)", "null", True),
-    # ยกสลิปโดยไม่ต้องตรงบัญชีเดียวกับรายการเดินบัญชี ⇒ ต้องฟ้อง
-    ("R264P4f", "SlipConfirmedByBankLine", "line == slip", "line != Guid.Empty", True),
-    # ใช้ตัวตรวจอ่านอย่างเดียวในเส้นเขียน ⇒ ต้องฟ้อง
-    ("R264P4g", "NotifyTransferAsync", "consentSvc.CheckForWriteAsync(c.SourceCompanyId", "consentSvc.CheckAsync(c.SourceCompanyId", True),
+    # พร้อมเพย์บันทึกเองได้ (ถอดด่าน M4) ⇒ ต้องฟ้อง
+    ("R264P4f", "Decide", "win.Origin == Origin.PayerDeclared && !f.PayerDeclaredBindsAccount", "false", True),
+    # ใช้ขอบเขตของผู้ซื้อแทนของผู้ขาย ⇒ ต้องฟ้อง
+    ("R264P4g", "DeliverSlipCopyAsync", "Scope.AcceptPayerSlipCopy, null, ct)", "Scope.ReceiveSlipCopy, null, ct)", True),
     # ปุ่มเดียวไม่ดู PV ของแผนแจ้งโอน (PV ที่สอง) ⇒ ต้องฟ้อง
     ("R264P4h", "RecordAsync", "paymentId ??= await PartnerPayablePipeline.PlanPaymentForNoticeAsync(_db, companyId, n, ct);", "", True),
     # ประกอบเป้าหมายรายการชำระเอง (ข้ามตัวตัดสินหน้าชำระ) ⇒ ต้องฟ้อง
@@ -19529,6 +19546,12 @@ REVIEWER_CASES += [
      "Math.Abs(Math.Abs(l.Amount) - Math.Round(t.Cash, 2, MidpointRounding.AwayFromZero)) <= 0.01m", True),
     # ตัวล้างไม่ล้างธนาคาร ⇒ ต้องฟ้อง
     ("R264P4l", "ScrubSlipPayerAsync", ".SetProperty(x => x.SlipPayerBankCode, (string?)null)", "", True),
+    # แจ้งโอนข้ามด่านกุญแจกันซ้ำใต้ล็อก ⇒ ต้องฟ้อง
+    ("R264P4m", "NotifyTransferAsync", "var reserved = await RefuseIfDuplicateAsync(companyId, key, lockTx, ct);", "PartnerPaymentPlan? reserved = null;", True),
+    # ผูกบรรทัดกับ PV คนละบัญชี ⇒ ต้องฟ้อง
+    ("R264P4n", "BindAsync", "if (payBank == null || payBank.BankAccountId != r.BankAccountId) return 0;", "if (payBank == null) return 0;", True),
+    # หนึ่งต่อหนึ่งไม่นับ PV ที่ยังไม่ผูกบรรทัด ⇒ ต้องฟ้อง
+    ("R264P4o", "DecideAsync", "|| (x.Status == PartnerPaymentNoticeRule.StatusRecorded && x.RecordedPaymentId != null", "|| (false && x.RecordedPaymentId != null", True),
 ]
 
 # รอบ 264 P1 ฝ่ายค้าน M1 — ท่อที่เขียนบัญชีต้องใช้ CheckForWriteAsync (ในธุรกรรม · FOR SHARE) ไม่ใช่ CheckAsync (อ่านอย่างเดียว)

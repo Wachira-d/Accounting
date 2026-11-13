@@ -63,6 +63,8 @@ public static class PartnerPaySourceAccount
     /// <param name="ConsentDefaultProblem">ประกาศไว้แต่ใช้ไม่ได้แล้ว (<c>UseCheck.PayAccountProblem</c>) ⇒ ใช้หลักฐานเท่านั้น ไม่เดาบัญชีอื่น</param>
     /// <param name="History">บัญชีที่จ่ายผู้ขายรายนี้บ่อยสุด (คำแนะนำ)</param>
     /// <param name="PurchaseDocBank">บัญชีที่ตั้งบนใบซื้อ (คำแนะนำ — ทิศตรงข้ามของการถอด "บัญชีแรก": ใบที่ตั้งธนาคารไว้ยังเห็นธนาคารนั้นเป็นคำแนะนำ)</param>
+    /// <param name="PayerDeclaredBindsAccount">ฝ่ายค้าน 264-P4 M4: ช่องทางที่ผู้จ่ายเลือกผูกบัญชีต้นทางไหม (โมบาย/อินเทอร์เน็ตแบงก์กิ้ง = ใช่ ·
+    /// พร้อมเพย์/วอลเล็ต = ไม่ — สแกนจากบัญชีอื่นได้) · false ⇒ ชั้น PayerDeclared preselect อย่างเดียว ไม่บันทึกเอง (ผู้เรียก: <c>PartnerPaymentPlanRule.MethodBindsAccount</c>)</param>
     public sealed record Facts(
         IReadOnlyDictionary<Guid, string> Usable,
         Guid? BankLine = null, string? BankLineLabel = null,
@@ -70,7 +72,8 @@ public static class PartnerPaySourceAccount
         Slip? SlipMatch = null,
         Guid? ConsentDefault = null, string? ConsentDefaultProblem = null,
         Guid? History = null,
-        Guid? PurchaseDocBank = null);
+        Guid? PurchaseDocBank = null,
+        bool PayerDeclaredBindsAccount = true);
 
     /// <summary>หลักฐานหนึ่งชั้นที่มีจริง (ชนะหรือแพ้)</summary>
     public sealed record Candidate(Origin Origin, Guid BankAccountId, string Label);
@@ -159,12 +162,16 @@ public static class PartnerPaySourceAccount
             return Conflict(PayerVsSlipReason, false);
 
         var why = win.Label;
-        // รอบ 264 P4 (คำตัดสิน 264-5-10): สลิปตรงบัญชีเดียวกับที่รายการเดินบัญชียืนยัน ⇒ ทางเดียวที่ชั้นสลิปถูกยกเป็นบันทึกเองได้ (ผ่านชั้นที่ 1) — บอกในเหตุ
-        if (SlipConfirmedByBankLine(f)) why += " · สลิปตรงบัญชีเดียวกัน (ยืนยันกัน)";
         // ชั้น 1 ขัดชั้นอื่น ⇒ เงินออกจริงชนะ + ป้ายเตือน (ผู้แพ้ลง audit)
         if (win.Origin == Origin.BankLine && losers.Count > 0)
             why += " · ไม่ตรง" + string.Join("/", losers.Select(l => OriginLabel(l.Origin))) + " (รายการเดินบัญชีชนะ — เงินออกจริง)";
         var auto = row.AllowsAuto && row.Confidence >= AutoThreshold;
+        // ฝ่ายค้าน 264-P4 M4: ผู้จ่ายเลือกบัญชีแต่ช่องทางไม่ผูกบัญชีต้นทาง (พร้อมเพย์/วอลเล็ต) ⇒ ไม่ใช่หลักฐานว่าเงินออกจากบัญชีนั้น ⇒ preselect + คนยืนยัน (หลักเดียวกับ 268-1-1)
+        if (win.Origin == Origin.PayerDeclared && !f.PayerDeclaredBindsAccount)
+        {
+            auto = false;
+            why = PayerDeclaredUnboundReason + " · " + win.Label;
+        }
         // 268-1-1: ชนะด้วยบัญชีตั้งต้นอย่างเดียว ⇒ preselect + เหตุที่บอกตรง ๆ ว่าทำไมไม่บันทึกเอง (เหตุ = สิ่งที่ตรวจจริง)
         if (!auto && win.Origin == Origin.ConsentDefault)
             why = ConsentDefaultNotAutoReason + " · " + win.Label;
@@ -174,13 +181,9 @@ public static class PartnerPaySourceAccount
         return new Decision(win.BankAccountId, win.Origin, auto, row.Confidence, why, win.Label, losers, hint, hintLabel, false);
     }
 
-    /// <summary>รอบ 264 P4 (คำตัดสิน 264-5-10 · ฝ่ายค้าน 264-P2 M1 · 264-4-9): <b>ทางเดียว</b>ที่ชั้นสลิปถูกยกจาก preselect เป็นบันทึกเองได้ =
-    /// รายการเดินบัญชีฝั่งเงินออก (<see cref="BankPaymentLineMatch"/> ผล Match) ยืนยันบัญชี<b>เดียวกับ</b>ที่สลิปตรง · ไม่มีรายการเดินบัญชี/คนละบัญชี/สลิปไม่ Unique ⇒ false
-    /// (แถว <see cref="Origin.SlipUnique"/> ในตารางคง <c>AllowsAuto=false</c> — การยกเกิดผ่านชั้นที่ 1 เท่านั้น ไม่ใช่แก้ตาราง)</summary>
-    internal static bool SlipConfirmedByBankLine(Facts f)
-    {
-        return f.SlipMatch is { Kind: SlipKind.Unique, AccountId: Guid slip } && f.BankLine is Guid line && line == slip && f.Usable.ContainsKey(slip);
-    }
+    /// <summary>ฝ่ายค้าน 264-P4 M4: เหตุที่ไม่บันทึกเองเมื่อหลักฐานบัญชีคือบัญชีที่ผู้จ่ายเลือก แต่ช่องทางไม่ผูกบัญชีต้นทาง (ตัวเดียว: เหตุบนแถว · หน้า)</summary>
+    public const string PayerDeclaredUnboundReason = "ยังไม่บันทึกเอง — จ่ายผ่านพร้อมเพย์/วอลเล็ต ซึ่งสแกนจากบัญชีอื่นได้ (บัญชีที่เลือกไว้ยังไม่ใช่หลักฐานว่าเงินออกจากบัญชีนั้น) · "
+        + "บัญชีนั้นถูกเลือกไว้ให้แล้ว ตรวจกับรายการเดินบัญชีแล้วกด “บันทึกจ่าย” ครั้งเดียว";
 
     /// <summary>บัญชีนี้อยู่ในชุดที่ใช้จ่ายได้ของบริษัทผู้เรียกไหม (null/นอกชุด = ไม่ใช่หลักฐาน)</summary>
     private static bool InUsableSet(IReadOnlyDictionary<Guid, string> usable, Guid? id) => id is Guid g && usable.ContainsKey(g);
