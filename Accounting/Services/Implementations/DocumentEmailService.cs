@@ -77,6 +77,8 @@ public class DocumentEmailService : IDocumentEmailService
         var subject = string.IsNullOrWhiteSpace(req.Subject) ? template.Subject : req.Subject!;
         // รอบ 259 (E-H3): บล็อกลิงก์ชำระที่ผู้ใช้ติ๊ก — ออกก่อนสร้างแถวบันทึก (ออกไม่ได้ ⇒ โยนพร้อมเหตุ · ยังไม่มีอะไรส่ง)
         var payBlock = req.IncludePayLink ? await ManualPayBlockAsync(companyId, doc.Id, heading.IsEnglish) : "";
+        // รอบ 267 P3 (267-1-62): บล็อกลิงก์หน้าเอกสาร — ออกก่อนสร้างแถวบันทึก (ออกไม่ได้ ⇒ โยนพร้อมเหตุ · ยังไม่มีอะไรส่ง)
+        if (req.IncludePageLink) payBlock = await ManualPageBlockAsync(companyId, doc, heading.IsEnglish) + payBlock;
         var body = (string.IsNullOrWhiteSpace(req.Body) ? template.HtmlBody : req.Body!) + payBlock;
 
         var log = new DocumentEmailLog
@@ -237,6 +239,20 @@ public class DocumentEmailService : IDocumentEmailService
         return DocumentPayLinkPolicy.EmailBlock(r.Url, r.Amounts, isEnglish);
     }
 
+    /// <summary>รอบ 267 P3 (267-1-62): บล็อก "เปิดหน้าเอกสาร" ของอีเมลที่ส่งจากหน้าต่าง "ส่งให้ลูกค้า" — ตัวออกลิงก์หน้าเอกสารเดียว
+    /// (<see cref="IDocumentPayLinkService.EnsureCustomerLinkAsync"/> · ลิงก์ที่ถูกเพิกถอนไม่ถูกออกใหม่ทับ — 259-2-8) · ป้ายปุ่ม/ข้อความจาก
+    /// <see cref="CustomerShareRule.EmailPageBlock"/> + <see cref="CustomerShareRule.PageButtonLabel(string, Accounting.Models.Entities.Document, DateTime, bool)"/> · ออกไม่ได้ ⇒ โยน <see cref="BusinessRuleException"/> พร้อมเหตุ</summary>
+    private async Task<string> ManualPageBlockAsync(Guid companyId, Document doc, bool isEnglish)
+    {
+        if (_payLinks == null)
+            throw new BusinessRuleException("บริการลิงก์หน้าเอกสารยังไม่พร้อม — ส่งโดยไม่ใส่ลิงก์หน้าเอกสาร", CustomerShareRule.RuleCode, 503);
+        var r = await _payLinks.EnsureCustomerLinkAsync(companyId, doc.Id, "share-email", default, allowReissueRevoked: false);
+        if (!r.Ok)
+            throw new BusinessRuleException("ใส่ลิงก์หน้าเอกสารไม่ได้ — " + (r.Refusal ?? "ไม่ทราบเหตุ"), CustomerShareRule.RuleCode, 409);
+        // ฝ่ายค้าน 267-P3 MED-1: ป้ายปุ่มจากตัวตัดสินเดียวกับการ์ด LINE (ตอบรับได้จริงตอนนี้ · ยอดค้าง · ดูอย่างเดียว)
+        return CustomerShareRule.EmailPageBlock(r.Url!, CustomerShareRule.PageButtonLabel(isEnglish ? "en" : "th", doc, DateTime.UtcNow), isEnglish);
+    }
+
     public async Task<DocumentEmailLog> SendDocumentRoutedAsync(Guid companyId, Guid documentId,
         SendDocumentEmailRequest req, string? actorEmail = null)
     {
@@ -248,6 +264,9 @@ public class DocumentEmailService : IDocumentEmailService
         // ฝ่ายค้าน 259 L1: เนื้อ e-Tax by Email ตามรูปแบบสรรพากร — ไม่มีบล็อกลิงก์ชำระ ⇒ ติ๊กมา = ปฏิเสธ (ห้ามทิ้งค่าเงียบ)
         if (req.IncludePayLink)
             throw new BusinessRuleException(EtaxPayLinkRefusal, "DOC-EMAIL-PAYLINK", 409);
+        // รอบ 267 P3: เนื้อ e-Tax by Email ไม่มีบล็อกลิงก์หน้าเอกสาร ⇒ ขอมา = ปฏิเสธ (ห้ามทิ้งค่าเงียบ)
+        if (req.IncludePageLink)
+            throw new BusinessRuleException(CustomerShareRule.EtaxNoPageLinkNote, CustomerShareRule.RuleCode, 409);
         // ฝ่ายค้าน N5: ด่านผู้ส่งก่อนออกแถว e-Tax — ค่าตั้งผู้ส่งไม่พร้อม ⇒ ไม่สร้างแถว e-Tax ค้าง · ปฏิเสธดังพร้อมแถว Failed บนเอกสาร
         var settings = await GetOrCreateSettings(companyId);
         if (EtaxByEmailSenderGate.Refusal(EtaxByEmailSenderGate.From(settings,

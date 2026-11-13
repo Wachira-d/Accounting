@@ -64,6 +64,11 @@ public class PdpaRetentionPurgeJob : BackgroundService
         // รอบ 211 ฝ่ายค้าน ข้อ 3: รหัสผูก LINE ที่หมดอายุเกิน 7 วัน (ไม่ให้ hash ค้างใน unique index ตลอดไป) +
         // LINE userId ที่ค้างบนลิงก์ที่ปิดแล้ว — ใต้ JobLock เดียวกับงานนี้ (ไม่เพิ่ม BackgroundService ใหม่ · F4 #6)
         var (codesDeleted, linksCleared) = await Accounting.Helpers.CustomerLineLinkClosure.PurgeAsync(db, DateTime.UtcNow, ct);
+        // รอบ 267 P5 (267-1-13 · ดีไซน์ §14.3): ข้อมูลผู้ลงนามที่จำไว้กับ LINE — ไม่ได้ใช้ 24 เดือน / ถอนความยินยอม ⇒ ลบจริง (ใต้ JobLock เดียวกับงานนี้ · ไม่เพิ่ม BackgroundService)
+        var signerProfilesPurged = await Accounting.Services.Implementations.CustomerSignerProfileService.PurgeAsync(db, DateTime.UtcNow, ct);
+        if (signerProfilesPurged > 0)
+            _logger.LogInformation("PDPA retention purge: ลบข้อมูลผู้ลงนามที่จำไว้กับ LINE (ไม่ได้ใช้ {Months} เดือน/ถอนความยินยอม) {Rows} รายการ",
+                Accounting.Helpers.CustomerSignerProfileRule.RetentionMonths, signerProfilesPurged);
         // รอบ 254 WP-11 L3: รหัสผูกกลุ่มหมดอายุเกิน 1 วัน + webhookEventId เก่ากว่า 7 วัน (ใต้ JobLock เดียวกัน · ไม่เพิ่ม BackgroundService)
         var groupCodeCutoff = DateTime.UtcNow.AddDays(-1);
         var seenCutoff = DateTime.UtcNow - Accounting.Helpers.LineGroupBindRule.SeenRetention;

@@ -25,6 +25,7 @@ public class AccountingDbContext : DbContext
     public DbSet<CustomerNotifyRule> CustomerNotifyRules => Set<CustomerNotifyRule>();   // รอบ 212 แพ็ก A
     public DbSet<CustomerNotifyLog> CustomerNotifyLogs => Set<CustomerNotifyLog>();   // รอบ 212 แพ็ก A
     public DbSet<PostPaymentAutomationRun> PostPaymentAutomationRuns => Set<PostPaymentAutomationRun>();   // รอบ 241 — งานหลังรับชำระ (Helpers/DocumentAutoSendMigration)
+    public DbSet<CustomerSignerProfile> CustomerSignerProfiles => Set<CustomerSignerProfile>();   // รอบ 267 P5 — ข้อมูลผู้ลงนามที่ยินยอมให้จำกับ LINE (267-1-13 · เข้ารหัส)
     public DbSet<CustomerDocumentAction> CustomerDocumentActions => Set<CustomerDocumentAction>();   // รอบ 267 P2 — บัญชีหลักฐานการตอบรับของลูกค้า (append-only · Helpers/CustomerSignMigration)
     public DbSet<CustomerSignOtp> CustomerSignOtps => Set<CustomerSignOtp>();   // รอบ 267 P2 (267-1-6) — รหัสยืนยันอีเมลก่อนยอมรับ
     public DbSet<SignEventOutboxEntry> SignEventOutbox => Set<SignEventOutboxEntry>();   // รอบ 240 — outbox เหตุการณ์ลูกค้าเซ็น (ตาราง/index ตรงกับ Helpers/SignRequestMigration)
@@ -458,6 +459,7 @@ public class AccountingDbContext : DbContext
     public DbSet<TradingPartnership> TradingPartnerships => Set<TradingPartnership>();
     public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
     public DbSet<PartnerLinkRequest> PartnerLinkRequests => Set<PartnerLinkRequest>();   // รอบ 264 (Helpers/PartnerLinkRequestMigration)
+    public DbSet<PartnerPaymentPlan> PartnerPaymentPlans => Set<PartnerPaymentPlan>();   // รอบ 264 P4 (Helpers/PartnerPaymentPlanMigration)
     public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
     public DbSet<PartnerAutomationConsent> PartnerAutomationConsents => Set<PartnerAutomationConsent>();   // รอบ 264 P1 (Helpers/PartnerConsentMigration)
     public DbSet<WorkflowAutomationConfig> WorkflowAutomationConfigs => Set<WorkflowAutomationConfig>();
@@ -1193,6 +1195,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<PaymentIntent>().Property(x => x.CustomerVisibleRejectReason).HasMaxLength(300);   // รอบ 267 P4
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerBankCode).HasMaxLength(3);   // รอบ 264 P2
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerAccountMask).HasMaxLength(32);   // รอบ 264 P2
+        modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerMatch).HasMaxLength(16);   // รอบ 264 P4 (L3)
         modelBuilder.Entity<PdpaConsentRecord>().Property(x => x.UserAgent).HasMaxLength(500);   // ฝ่ายค้านรอบ 230 S2
         modelBuilder.Entity<PlatformAutoChargeSettings>(e =>
         {
@@ -3812,6 +3815,28 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_PartnerPaymentNotices_Company_Status");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
+        // รอบ 264 P4 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerPaymentPlanMigration
+        modelBuilder.Entity<PartnerPaymentPlan>(e =>
+        {
+            e.Property(x => x.Kind).HasMaxLength(16);
+            e.Property(x => x.Method).HasMaxLength(32);
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.Property(x => x.SlipCopyNote).HasMaxLength(500);
+            e.Property(x => x.AccountOrigin).HasMaxLength(32);
+            e.HasIndex(x => new { x.CompanyId, x.SellerIntentId }).IsUnique().HasFilter("\"SellerIntentId\" IS NOT NULL").HasDatabaseName("IX_PartnerPaymentPlans_Company_SellerIntent");
+            e.HasIndex(x => new { x.CompanyId, x.PurchaseDocumentId }).HasDatabaseName("IX_PartnerPaymentPlans_Company_Purchase");
+            // ฝ่ายค้าน 264-P4 H1: กุญแจกันซ้ำของแจ้งโอน (แถวที่ไม่ถูกลบ)
+            e.Property(x => x.IdempotencyKey).HasMaxLength(64);
+            e.Property(x => x.SlipSha256).HasMaxLength(64);
+            e.Property(x => x.SlipStoragePath).HasMaxLength(500);
+            e.Property(x => x.SlipContentType).HasMaxLength(64);
+            e.Property(x => x.SlipBankRef).HasMaxLength(64);
+            e.Property(x => x.SlipCopyState).HasMaxLength(16);
+            e.HasIndex(x => new { x.CompanyId, x.IdempotencyKey }).IsUnique().HasFilter("\"IdempotencyKey\" IS NOT NULL AND NOT \"IsDeleted\"")
+                .HasDatabaseName("IX_PartnerPaymentPlans_Company_IdemKey");
+            e.HasIndex(x => x.SlipCopyState).HasFilter("\"SlipCopyState\" = 'Pending'").HasDatabaseName("IX_PartnerPaymentPlans_SlipCopyPending");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
         // รอบ 254 WP-11 L2 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactLineDeliveryMigration
         modelBuilder.Entity<LineQueue>(e =>
         {
@@ -3979,6 +4004,18 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => new { x.CompanyId, x.DocumentId, x.CreatedAt }).HasDatabaseName("IX_CustomerDocumentActions_Company_Doc");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
+        // รอบ 267 P5 (267-1-13): PII ของผู้ลงนามเข้ารหัสขณะจัดเก็บ — วิธีเดียวกับ PII พนักงาน (PDPA ม.37 · กฎ #2 J)
+        modelBuilder.Entity<CustomerSignerProfile>(e =>
+        {
+            e.ToTable("CustomerSignerProfiles");
+            e.Property(x => x.SubjectKey).HasMaxLength(64);
+            e.Property(x => x.FirstName).HasMaxLength(600).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(x => x.LastName).HasMaxLength(600).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(x => x.Title).HasMaxLength(600).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.Property(x => x.Email).HasMaxLength(800).HasConversion(new Accounting.Helpers.EncryptedColumnConverter());
+            e.HasIndex(x => new { x.CompanyId, x.SubjectKey }).IsUnique().HasDatabaseName("UX_CustomerSignerProfiles_Company_Subject");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
         modelBuilder.Entity<CustomerSignOtp>(e =>
         {
             e.ToTable("CustomerSignOtps");
@@ -4012,6 +4049,7 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.Kind).HasMaxLength(32);
             e.Property(x => x.LastError).HasMaxLength(500);
             e.Property(x => x.Note).HasMaxLength(300);
+            e.Property(x => x.ExpectedKey).HasMaxLength(100);   // รอบ 270
             e.Property(x => x.Attempts).HasDefaultValue(0);
             e.HasIndex(x => new { x.Kind, x.EntityId }).IsUnique().HasDatabaseName("UX_DeferredNotifications_Kind_Entity");
             e.HasIndex(x => new { x.DoneAt, x.DueAt }).HasDatabaseName("IX_DeferredNotifications_Pending");

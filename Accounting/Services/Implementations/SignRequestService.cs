@@ -340,6 +340,7 @@ public class SignRequestService : ISignRequestService
                 QuotationAcceptedAt = d.QuotationAcceptedAt, QuotationAcceptedBy = d.QuotationAcceptedBy,
                 DeliverySignToken = d.DeliverySignToken, DeliverySignTokenExpiresAt = d.DeliverySignTokenExpiresAt,
                 DeliverySignedAt = d.DeliverySignedAt, DeliverySignedBy = d.DeliverySignedBy,
+                CustomerResponse = d.CustomerResponse, CustomerResponseAt = d.CustomerResponseAt,   // รอบ 267 P5: ป้ายของใบสั่งซื้อ/คำตอบที่ไม่ใช่การเซ็น
                 SignLinkEmailedAt = d.SignLinkEmailedAt, SignLinkOpenedAt = d.SignLinkOpenedAt, SignReminderSentAt = d.SignReminderSentAt,
             })
             .ToListAsync(ct);
@@ -499,6 +500,8 @@ public class SignRequestService : ISignRequestService
                     && d.SignLinkEmailedAt != null && d.SignLinkEmailedAt <= before && d.SignReminderSentAt == null
                     && d.SignLinkEmailedTo != null
                     && d.QuotationAcceptedAt == null && d.DeliverySignedAt == null
+                    // รอบ 267 P5: ตอบแล้ว (รวมผู้ขายรับทราบ/ไม่รับใบสั่งซื้อ · ลูกค้าไม่รับ/ขอแก้) = ไม่เตือน
+                    && d.CustomerResponse == null
                     && !_db.DocumentEmailLogs.Any(l => l.CompanyId == c.CompanyId && l.DocumentId == d.Id && l.Purpose == SignRequestPurposes.Reminder
                         && l.CreatedAt >= d.SignLinkEmailedAt))
                 .OrderBy(d => d.SignLinkEmailedAt).Select(d => new { d.Id, d.SignLinkEmailedTo }).Take(20).ToListAsync(ct);

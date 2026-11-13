@@ -216,3 +216,8 @@ public record TaxReportLineResponse(
     /// อย่างเดียว</b> ห้ามจำแนกจาก <c>IncomeTypeCode</c> เอง (เดิม tax.html มีสำเนา
     /// กติกา 2 ชุด ซึ่งเป็นทางที่รหัสใหม่หลุดออกจากการจัดฝั่งโดยไม่มีอะไรฟ้อง)</para></summary>
     string Side = "output");
+
+/// <summary>รอบ 270 (ฝ่ายค้าน M3 · คำตัดสิน 270-2-5): เอกสารจาก OCR ที่อนุมัติแล้วซึ่งเป็นใบกำกับ VAT 0% ทั้งใบ และกระดาษไม่บอกอัตราศูนย์ — อ่านอย่างเดียว
+/// (ระบบไม่แก้เอง) · <see cref="HowToFix"/> = ทางไปต่อจากเซิร์ฟเวอร์ · <see cref="PeriodFiled"/> = งวด ภ.พ.30 ของใบนั้นยื่นแล้ว</summary>
+public record OcrZeroVatReviewRow(Guid DocumentId, string DocumentNumber, string DocumentType, DateTime DocumentDate, decimal TotalAmount,
+    string PeriodLabel, bool PeriodFiled, string Message, string HowToFix, string OpenHref);

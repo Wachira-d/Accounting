@@ -1766,6 +1766,7 @@
   <script src="/js/layout.js"></script>
   <script src="/js/export.js"></script>
   <script src="/js/product-lookup.js"></script>
+  <script src="/js/partner-outbound-pay.js"></script>
   <script>
     const Page = {
       page: 1, docType: '', side: '', contacts: [], projects: [], selectedDocs: new Set(),
@@ -8308,7 +8309,9 @@
             if (d.partnerInputVatEvidence) {
               const pnBg = d.partnerNeedsOriginal ? '#d97706' : '#64748b';
               partnerBadge = `<span title="${Layout.esc(d.partnerInputVatEvidenceLabel || '')}" style="margin-left:6px;padding:1px 6px;background:${Layout.esc(pnBg)};color:#fff;border-radius:6px;font-size:10px;font-weight:600">🤝 ${Layout.esc(d.partnerInputVatEvidenceLabel || 'ใบจากคู่ค้า')}</span>`
-                + (d.partnerNeedsOriginal ? ` <a href="/pages/partners.html#ptDraftBody" onclick="event.stopPropagation()" style="font-size:11px;color:#b45309;text-decoration:underline" title="ยืนยันว่าได้รับต้นฉบับใบกำกับแล้ว (หน้าคู่ค้า)">ยืนยันต้นฉบับ</a>` : '');
+                + (d.partnerNeedsOriginal ? ` <a href="/pages/partners.html#ptDraftBody" onclick="event.stopPropagation()" style="font-size:11px;color:#b45309;text-decoration:underline" title="ยืนยันว่าได้รับต้นฉบับใบกำกับแล้ว (หน้าคู่ค้า)">ยืนยันต้นฉบับ</a>` : '')
+                // รอบ 264 P4 (264-5-11/12): จ่าย/แจ้งโอนจากระบบของเรา — ตัวเลือก/เหตุจากเซิร์ฟเวอร์ (partner-outbound-pay.js)
+                + ` <a href="#" data-pop-doc="${Layout.esc(d.id)}" style="font-size:11px;color:#1d4ed8;text-decoration:underline" title="จ่ายผ่านช่องทางของผู้ขาย หรือแจ้งโอนพร้อมสลิป">💸 จ่าย/แจ้งโอน</a>`;
             }
             // ป้ายเคลมภาษีซื้อ (ฝั่งซื้อ) — บอกใน list ทันทีว่าใบไหนเคลม ภ.พ.30 ได้
             // (รายละเอียด "เคลมแล้วงวดไหน" ดูใน modal ซึ่งอ่านจากรายงานจริง)
@@ -11394,6 +11397,8 @@
             <div id="docAdjustingLines_${d.id}" style="margin-top:20px"></div>
             <!-- Attachments section — file upload/list/delete for this document -->
             <div id="docAttachments_${d.id}" style="margin-top:20px"></div>
+            <!-- รอบ 267 P3: แผง "ลูกค้า" — ไทม์ไลน์ ส่งแล้ว → เปิดแล้ว → ตอบรับ/จ่าย → ใบเสร็จ (แถวจริงจากเซิร์ฟเวอร์) -->
+            <div id="docCustomerTimeline_${d.id}" style="margin-top:20px"></div>
             <!-- รอบ 241: ลิงก์ชำระเงิน + งานส่งเอกสารหลังรับชำระ (สถานะ/เหตุผลจากเซิร์ฟเวอร์) -->
             <div id="docAutoSend_${d.id}" style="margin-top:20px"></div>
             <!-- รอบ 246 QR (ฝ่ายค้าน S4): เหตุที่ใบนี้ไม่พิมพ์ QR ชำระเงิน + คำเตือน (เซิร์ฟเวอร์ตัดสิน) -->
@@ -11402,6 +11407,7 @@
           // Load attachments asynchronously (doesn't block other sections)
           this.renderAttachmentSection(d.id);
           this.renderAutoSendSection(d.id);
+          this.renderCustomerTimeline(d.id);   // รอบ 267 P3
           this.renderPayQrNotice(d.id);
           this.renderAdjustingLinesSection(d.id, d.status);
           // Partial-fulfilment status (delivery / billing progress per line)
@@ -11551,10 +11557,6 @@
             actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.undoDraftReceiptSource('${Layout.jsArg(d.id)}')" title="ใบเสร็จร่างนี้กลับเป็นใบเสร็จอิสระ">✂️ ถอดใบต้นทางของใบร่าง</button>`;
           }
           if (d.status === 'Approved' || d.status === 'Sent') {
-            if (d.documentType === 'Quotation') {
-              actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.quotationAcceptLink('${d.id}')" title="สร้างลิงก์สาธารณะให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ (อายุ 30 วัน) — คัดลอกลิงก์อัตโนมัติ">🔗 ลิงก์ยอมรับ</button>`;
-              actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.signRequestEmail('${Layout.jsArg(d.id)}')" title="ส่งอีเมลถึงลูกค้าพร้อมปุ่มเปิดดู/ดาวน์โหลด PDF/ยอมรับ (ใช้อีเมลของบริษัท หรือของระบบ NextAcc ในนามบริษัทถ้ายังไม่ได้ตั้ง)">📧 ส่งให้ลูกค้ายอมรับทางอีเมล</button>`;
-            }
             // แก้เอกสาร operational ที่อนุมัติ/ส่งแล้ว — เลขที่คงเดิม Rev เพิ่มทีละ 1.
             // เกณฑ์อยู่ที่ server (canRevise) ไม่ hard-code ชนิดที่นี่ เพิ่มชนิดใหม่ใน
             // DocumentService.RevisableTypes แล้วปุ่มขึ้นเองอัตโนมัติ
@@ -11562,10 +11564,6 @@
               actions += ` <button data-g="more" class="btn btn-warning" onclick="Page.reviseDocument('${d.id}')" title="แก้ไข${Layout.docTypeLabel(d.documentType)}ที่ส่งแล้ว — เลขที่เดิม Rev เพิ่มทีละ 1 สภาพก่อนแก้ถูกเก็บเป็นประวัติเปิดดูย้อนหลังได้">✏️ แก้ไข (Rev ใหม่)</button>`;
             } else if (d.cannotReviseReason) {
               actions += ` <button data-g="more" class="btn btn-secondary" disabled title="${Layout.esc(d.cannotReviseReason)}" style="opacity:.55;cursor:not-allowed">✏️ แก้ไข (Rev ใหม่)</button>`;
-            }
-            if (d.documentType === 'DeliveryNote') {
-              actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.deliverySignLink('${d.id}')" title="สร้างลิงก์ให้ลูกค้าเซ็นรับสินค้าออนไลน์ (POD — อายุ 14 วัน) ลายเซ็นประทับลงช่อง ผู้รับของ บน PDF อัตโนมัติ">✍️ ลิงก์เซ็นรับ</button>`;
-              actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.signRequestEmail('${Layout.jsArg(d.id)}')" title="ส่งอีเมลถึงลูกค้าพร้อมปุ่มเซ็นรับสินค้า (ใช้อีเมลของบริษัท หรือของระบบ NextAcc ในนามบริษัทถ้ายังไม่ได้ตั้ง)">📧 ส่งให้ลูกค้าเซ็นรับทางอีเมล</button>`;
             }
           }
           // e-Tax generation: shown for VAT-eligible types (TaxInvoice / Receipt /
@@ -11580,17 +11578,10 @@
               && !hasEtaxId) {
             actions += ` <button data-g="more" class="btn btn-primary" onclick="Page.generateEtax('${d.id}')" title="สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) — หลังจากนั้นจะดาวน์โหลด PDF/A-3 ที่ฝัง XML ได้">🧾 สร้าง e-Tax</button>`;
           }
-          // ส่งอีเมล — เปิดหน้าต่างกรอก ผู้รับ/CC/หัวข้อ/ข้อความ + ติ๊กส่งแบบ e-Tax ได้.
-          // เอกสารฝั่งขายที่อนุมัติแล้วเท่านั้น (กันส่ง Draft). e-Tax option แสดง
-          // เมื่อชนิดเอกสารออก e-Tax ได้ (§86) — ติ๊กแล้วระบบสร้าง e-Tax + แนบ XML ให้
-          // รอบ 259 (E-H3): ชนิดที่ส่งได้มาจากเซิร์ฟเวอร์ (DocumentLineSendRule.SendableTypes · GET document/send-types) — เดิมเป็นรายการในหน้า
-          const salesEmailTypes = this._sendTypes || [];
-          const _approvedForEmail = _postedStates.includes(d.status);
-          if (salesEmailTypes.includes(d.documentType) && _approvedForEmail) {
-            // รอบ 244: ช่องทาง (อีเมลธรรมดา / e-Tax by Email) เซิร์ฟเวอร์ตัดสินในหน้าต่าง (email-route) — ไม่มีช่องติ๊กเลือกเอง
-            actions += ` <button data-g="primary" class="btn btn-secondary" onclick="Page.openSendEmailModal('${d.id}')" title="ส่งเอกสารให้ลูกค้าทางอีเมล — ใบกำกับของบริษัทที่ใช้ e-Tax by Email ส่งแบบ e-Tax ให้เอง">📧 ส่งอีเมล</button>`;
-            // รอบ 259 (E-H3): ส่งทาง LINE เอง — ปลายทาง/เหตุ/ลิงก์ชำระจากเซิร์ฟเวอร์ (GET document/{id}/line-send)
-            actions += ` <button data-g="primary" class="btn btn-secondary" onclick="Page.openSendLineModal('${Layout.jsArg(d.id)}')" title="ส่งการ์ดเอกสารถึง LINE ผู้ใช้/กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท) — มีปุ่มดู PDF และเลือกใส่ลิงก์ชำระได้">💬 ส่งทาง LINE</button>`;
+          // รอบ 267 P3: ปุ่มเดียว "📤 ส่งให้ลูกค้า" แทน 6 ปุ่มเดิม (ลิงก์ยอมรับ · อีเมลขอยอมรับ · ลิงก์เซ็นรับ · อีเมลขอเซ็นรับ · ส่งอีเมล · ส่งทาง LINE) —
+          // แสดงตามค่าที่เซิร์ฟเวอร์ตัดสิน (canShareToCustomer · CustomerShareRule.ButtonOffered) · ช่องทาง/เหตุ/ปุ่มที่ลูกค้าเห็นอยู่ในหน้าต่าง (share-options)
+          if (d.canShareToCustomer) {
+            actions += ` <button data-g="primary" class="btn btn-primary" onclick="Page.openShare('${Layout.jsArg(d.id)}')" title="ส่งลิงก์หน้าเอกสารให้ลูกค้า — คัดลอกลิงก์ · อีเมล · LINE · QR · ดูตัวอย่างหน้าที่ลูกค้าเห็น">📤 ส่งให้ลูกค้า</button>`;
           }
           // PDF/A-3 (ฝัง XML สรรพากร) เป็น default download ของทุก
           // เอกสาร e-Tax อยู่แล้ว — กดปุ่ม "PDF" ในตาราง action
@@ -12245,72 +12236,189 @@
           this._sendTypes = (j && j.success !== false && Array.isArray(j.data)) ? j.data : [];
         } catch (e) { this._sendTypes = []; }
       },
-      /** รอบ 259 (E-H3): หน้าต่าง "ส่งทาง LINE" — ปลายทาง/เหตุ/ลิงก์ชำระคำนวณที่เซิร์ฟเวอร์ (หน้าแสดงอย่างเดียว) · ผลจริงดูที่คิว LINE */
-      async openSendLineModal(id) {
-        let wrap = document.getElementById('sendLineModal');
+      // ══════ รอบ 267 P3 — "📤 ส่งให้ลูกค้า" (หน้าต่างเดียวแทน 6 ปุ่มเดิม) + ไทม์ไลน์ลูกค้า ══════
+      // ทุกค่า/ป้าย/เหตุ/ปุ่มที่ลูกค้าเห็น มาจากเซิร์ฟเวอร์ (GET document/{id}/share-options · CustomerShareService) — หน้าไม่มีตารางชนิดเอกสาร/ป้ายของตัวเอง (F2 ข้อ 5) ·
+      // ส่ง = POST document/{id}/share (ผลแยกต่อช่องทาง: อีเมลล้มไม่ลาก LINE · LINE = "เข้าคิวแล้ว" ไม่ใช่ "ส่งแล้ว")
+      async openShare(id) {
+        const esc = Layout.esc;
+        let wrap = document.getElementById('shareModal');
         if (!wrap) {
           wrap = document.createElement('div');
-          wrap.id = 'sendLineModal';
+          wrap.id = 'shareModal';
           wrap.className = 'modal-overlay';
           wrap.innerHTML = `
-            <div class="modal" style="max-width:520px">
+            <div class="modal" style="max-width:980px;width:96vw">
               <div class="modal-header">
-                <h3 class="modal-title">💬 ส่งเอกสารทาง LINE</h3>
-                <button class="modal-close" onclick="document.getElementById('sendLineModal').classList.remove('active')">&times;</button>
+                <h3 class="modal-title" id="shTitle">📤 ส่งให้ลูกค้า</h3>
+                <button class="modal-close" onclick="document.getElementById('shareModal').classList.remove('active')">&times;</button>
               </div>
-              <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
-                <div id="slBody" style="font-size:13px">กำลังโหลด...</div>
-                <label id="slPayRow" style="display:none;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="slPay"> ใส่ปุ่มชำระเงินออนไลน์บนการ์ด</label>
-                <div id="slPayNote" style="display:none;font-size:12px;color:#64748b"></div>
-                <div id="slError" style="display:none;color:#dc2626;font-size:12px"></div>
+              <div class="modal-body" style="display:flex;flex-wrap:wrap;gap:14px;font-size:13px">
+                <div id="shLeft" style="flex:1 1 300px;min-width:260px;display:flex;flex-direction:column;gap:10px">กำลังโหลด...</div>
+                <div style="flex:1 1 380px;min-width:280px;display:flex;flex-direction:column;gap:6px">
+                  <div style="font-weight:600">พรีวิวหน้าที่ลูกค้าเห็น</div>
+                  <iframe id="shPreview" title="พรีวิวหน้าลูกค้า" sandbox="allow-scripts" style="width:100%;height:520px;border:1px solid #e2e8f0;border-radius:8px;background:#fff"></iframe>
+                </div>
               </div>
+              <div id="shResult" style="display:none;margin:0 20px 10px;font-size:13px"></div>
               <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
-                <button class="btn btn-outline" onclick="document.getElementById('sendLineModal').classList.remove('active')">ยกเลิก</button>
-                <button data-g="primary" class="btn btn-primary" id="slSendBtn" disabled>ส่งทาง LINE</button>
+                <button class="btn btn-outline" onclick="document.getElementById('shareModal').classList.remove('active')">ปิด</button>
+                <button data-g="primary" class="btn btn-primary" id="shSendBtn" disabled>📤 ส่ง</button>
               </div>
             </div>`;
           document.body.appendChild(wrap);
         }
-        const esc = Layout.esc;
-        const body = wrap.querySelector('#slBody');
-        const err = wrap.querySelector('#slError');
-        const btn = wrap.querySelector('#slSendBtn');
-        body.textContent = 'กำลังโหลด...';
-        err.style.display = 'none';
+        const left = wrap.querySelector('#shLeft');
+        const result = wrap.querySelector('#shResult');
+        const btn = wrap.querySelector('#shSendBtn');
+        left.textContent = 'กำลังโหลด...';
+        result.style.display = 'none';
+        result.innerHTML = '';
         btn.disabled = true;
-        wrap.querySelector('#slPay').checked = false;
-        wrap.querySelector('#slPayRow').style.display = 'none';
-        wrap.querySelector('#slPayNote').style.display = 'none';
+        wrap.querySelector('#shPreview').src = 'about:blank';
         wrap.classList.add('active');
-        const seq = (this._slSeq = (this._slSeq || 0) + 1);
+        const seq = (this._shSeq = (this._shSeq || 0) + 1);
+        const cid = Layout.getCompanyId();
         let o = null;
         try {
-          const j = await API.get(`/api/companies/${Layout.getCompanyId()}/document/${encodeURIComponent(id)}/line-send`);
-          if (j && j.success === false) throw new Error(j.message || 'โหลดปลายทาง LINE ไม่สำเร็จ');
+          const j = await API.get(`/api/companies/${cid}/document/${encodeURIComponent(id)}/share-options`);
           o = j && j.data;
-        } catch (e) { if (seq === this._slSeq) body.innerHTML = `<div style="color:#dc2626">${esc(e.message)}</div>`; return; }
-        if (seq !== this._slSeq || !o) return;
-        const rows = (o.targets || []).map(t => `<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #f1f5f9;${t.available ? '' : 'color:#94a3b8'}">
-            <input type="checkbox" data-sl-ep="${esc(t.endpointId)}" ${t.available ? '' : 'disabled'}>
-            <span><b>${esc(t.display)}</b> <span style="font-size:11px;color:#64748b">· ${esc(t.kindLabel)}${t.showAmounts ? '' : ' · ซ่อนยอด'}${t.pdfLink ? ' · มีปุ่มดู PDF' : ''}${t.payLink ? '' : ' · ไม่มีปุ่มชำระ'}</span>
-            ${t.reason ? `<div style="font-size:11px;color:#b45309">${esc(t.reason)}</div>` : ''}</span></label>`).join('');
-        body.innerHTML = (o.problem ? `<div style="color:#b45309;margin-bottom:6px">${esc(o.problem)}</div>` : '') + rows;
-        if (o.payLinkOffered) wrap.querySelector('#slPayRow').style.display = 'flex';
-        else if (o.payLinkNote) { const n = wrap.querySelector('#slPayNote'); n.textContent = o.payLinkNote; n.style.display = 'block'; }
-        const sync = () => { btn.disabled = !wrap.querySelector('input[data-sl-ep]:checked'); };
-        body.querySelectorAll('input[data-sl-ep]').forEach(cb => cb.addEventListener('change', sync));
+          if (!o) throw new Error((j && j.message) || 'โหลดหน้าต่างส่งให้ลูกค้าไม่สำเร็จ');
+        } catch (e) { if (seq === this._shSeq) left.innerHTML = `<div style="color:#dc2626">${esc(e.message)}</div>`; return; }
+        if (seq !== this._shSeq) return;
+        wrap.querySelector('#shTitle').textContent = `📤 ส่งให้ลูกค้า — ${o.title || ''} ${o.documentNumber || ''}`;
+        // ฝ่ายค้าน 267-P3 LOW-6: iframe sandbox ไม่มี allow-same-origin ⇒ หน้าพรีวิวอ่าน JWT ไม่ได้ — หน้านี้ดึงข้อมูลพรีวิวด้วยสิทธิ์ของตัวเองแล้วส่งเข้า iframe
+        const frame = wrap.querySelector('#shPreview');
+        if (this._shPreviewHandler) window.removeEventListener('message', this._shPreviewHandler);
+        this._shPreviewHandler = async (e) => {
+          if (!frame.contentWindow || e.source !== frame.contentWindow || !e.data || e.data.type !== 'docpage-preview-ready') return;
+          let msg = { type: 'docpage-preview-data', data: null, message: null };
+          try {
+            const pj = await API.get(`/api/companies/${cid}/document/${encodeURIComponent(id)}/customer-page-preview`);
+            msg.data = (pj && pj.success !== false && pj.data) || null; msg.message = pj && pj.message;
+          } catch (err) { msg.message = err.message; }
+          if (frame.contentWindow) frame.contentWindow.postMessage(msg, '*');   // ปลายทางคือ iframe ตัวนี้ (ต้นทาง opaque ⇒ ระบุต้นทางไม่ได้)
+        };
+        window.addEventListener('message', this._shPreviewHandler);
+        if (!(o.link && o.link.issueRefusal)) frame.src = `/pages/pay-document.html?c=${encodeURIComponent(cid)}&preview=${encodeURIComponent(id)}`;
+        const list = (arr, color) => (arr || []).map(t => `<div style="color:${esc(color)}">• ${esc(t)}</div>`).join('');
+        const box = (title, inner) => `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px"><div style="font-weight:600;margin-bottom:4px">${esc(title)}</div>${inner /* html — หนีแล้ว */}</div>`;
+        const L = o.link || {};
+        const linkHtml = `<div style="color:#475569">${esc(L.note || '')}</div>`
+          + (L.url ? `<code style="display:block;word-break:break-all;user-select:all;margin-top:4px">${esc(L.url)}</code>` : '')
+          + (L.reissueOffered ? `<label style="display:flex;gap:6px;margin-top:4px"><input type="checkbox" id="shReissue"> ออกลิงก์ใหม่แทนลิงก์ที่ยกเลิกไว้</label>` : '');
+        const R = o.respond || {};
+        const respondHtml = R.applies
+          ? `<label style="display:flex;gap:6px;align-items:flex-start;${R.offered ? '' : 'color:#94a3b8'}"><input type="checkbox" id="shRespond" ${R.offered ? '' : 'disabled'} ${R.open ? 'checked' : ''}>
+               <span>${esc(R.label || '')}${R.note ? `<div style="font-size:11px;color:#64748b">${esc(R.note)}</div>` : ''}</span></label>` : '';
+        const actionsHtml = (o.customerActions || []).length
+          ? (o.customerActions || []).map(a => `<span style="display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:999px;background:#f1f5f9">${esc(a.label)}</span>`).join('')
+          : '<span style="color:#64748b">—</span>';
+        const chHtml = (o.channels || []).map(c => `<label style="display:flex;gap:6px;align-items:flex-start;${c.available ? '' : 'color:#94a3b8'}" title="${esc(c.hint || '')}">
+            <input type="checkbox" data-sh-ch="${esc(c.code)}" ${c.available ? '' : 'disabled'}><span>${esc(c.label)}${c.note ? `<div style="font-size:11px;color:#b45309">${esc(c.note)}</div>` : ''}</span></label>`).join('');
+        const E = o.email || {};
+        const emailHtml = `<div data-sh-sec="email" style="display:none;flex-direction:column;gap:6px">
+            <input id="shTo" class="form-input" type="email" placeholder="อีเมลผู้รับ" value="${esc(E.defaultTo || '')}">
+            <input id="shCc" class="form-input" type="text" placeholder="สำเนา (CC) — ไม่บังคับ">
+            <label style="display:flex;gap:6px"><input type="checkbox" id="shAttach" checked> แนบไฟล์ PDF</label>
+            ${E.payLinkOffered ? `<label style="display:flex;gap:6px"><input type="checkbox" id="shEmailPay"> ใส่ลิงก์ชำระเงินออนไลน์</label>` : (E.payLinkNote ? `<div style="font-size:11px;color:#64748b">${esc(E.payLinkNote)}</div>` : '')}
+            <div style="font-size:11px;color:#475569">${esc(E.routeNote || '')}</div>
+            ${E.pageLinkNote ? `<div style="font-size:11px;color:#b45309">${esc(E.pageLinkNote)}</div>` : ''}
+            ${list(E.problems, '#dc2626') /* html — หนีแล้ว */}${list(E.warnings, '#92400e') /* html — หนีแล้ว */}</div>`;
+        // ฝ่ายค้าน 267-P3 MED-3: เขียนอีเมลเอง (หัวข้อ/ข้อความ/ส่ง e-Tax ซ้ำ) แสดงตลอด — ไม่ซ่อนไว้ใต้ช่องอีเมลที่อาจติ๊กไม่ได้
+        const customHtml = `<button type="button" class="btn btn-sm btn-secondary" id="shEmailCustom" style="align-self:flex-start;margin-top:6px">✏️ เขียนอีเมลเอง (แก้หัวข้อ/ข้อความ)</button>`;
+        const N = o.line || {};
+        const lineHtml = `<div data-sh-sec="line" style="display:none;flex-direction:column;gap:4px">
+            ${N.problem ? `<div style="color:#b45309">${esc(N.problem)}</div>` : ''}
+            ${(N.targets || []).map(t => `<label style="display:flex;gap:6px;align-items:flex-start;${t.available ? '' : 'color:#94a3b8'}">
+              <input type="checkbox" data-sh-ep="${esc(t.endpointId)}" ${t.available ? '' : 'disabled'}>
+              <span><b>${esc(t.display)}</b> <span style="font-size:11px;color:#64748b">· ${esc(t.kindLabel)}</span>
+              ${t.reason ? `<div style="font-size:11px;color:#b45309">${esc(t.reason)}</div>` : ''}
+              ${t.available && t.pageLinkNote ? `<div style="font-size:11px;color:#64748b">${esc(t.pageLinkNote)}</div>` : ''}
+              ${t.available && t.payLinkNote ? `<div style="font-size:11px;color:#64748b">${esc(t.payLinkNote)}</div>` : ''}</span></label>`).join('')}
+            ${N.payLinkOffered ? `<label style="display:flex;gap:6px" id="shLinePayRow"><input type="checkbox" id="shLinePay"> ใส่ปุ่มชำระเงินบนการ์ด</label><div id="shLinePayNote" style="display:none;font-size:11px;color:#b45309"></div>`
+              : (N.payLinkNote ? `<div style="font-size:11px;color:#64748b">${esc(N.payLinkNote)}</div>` : '')}</div>`;
+        const P = o.postPay || {};
+        const postPayHtml = P.applies && P.effectiveLabel ? box('หลังลูกค้าชำระ', `<div>${esc(P.effectiveLabel)}</div><div style="font-size:11px;color:#64748b">เปลี่ยนค่าต่อใบได้ที่แผง "ลิงก์ชำระเงิน &amp; ส่งเอกสารอัตโนมัติ"</div>`) : '';
+        left.innerHTML = (o.problem ? `<div style="color:#dc2626">${esc(o.problem)}</div>` : '')
+          + box('ลิงก์หน้าเอกสาร', linkHtml)
+          + box('ลูกค้าจะทำอะไรได้บนหน้า', actionsHtml + respondHtml)
+          + box('ช่องทาง', chHtml + emailHtml + lineHtml + customHtml)
+          + postPayHtml + list(o.warnings, '#92400e');
+        const sec = (name) => left.querySelector(`[data-sh-sec="${name}"]`);
+        const sync = () => {
+          const picked = Array.from(left.querySelectorAll('input[data-sh-ch]:checked')).map(c => c.dataset.shCh);
+          ['email', 'line'].forEach(n => { const s = sec(n); if (s) s.style.display = picked.includes(n) ? 'flex' : 'none'; });
+          btn.disabled = !o.canShare || picked.length === 0;
+          // ฝ่ายค้าน 267-P3 MED-2: ปลายทางที่เลือกไม่มีตัวไหนรับปุ่มชำระได้ (กลุ่มซ่อนยอด) ⇒ ล็อกช่อง + เหตุจากเซิร์ฟเวอร์
+          const pay = left.querySelector('#shLinePay'), payNote = left.querySelector('#shLinePayNote');
+          if (pay && payNote) {
+            const sel = Array.from(left.querySelectorAll('input[data-sh-ep]:checked')).map(c => (N.targets || []).find(t => t.endpointId === c.dataset.shEp)).filter(Boolean);
+            const blocked = sel.length > 0 && sel.every(t => !t.payLink);
+            pay.disabled = blocked; if (blocked) pay.checked = false;
+            payNote.textContent = blocked ? (sel[0].payLinkNote || '') : ''; payNote.style.display = blocked ? 'block' : 'none';
+          }
+        };
+        left.querySelectorAll('input[data-sh-ch], input[data-sh-ep]').forEach(c => c.addEventListener('change', sync));
+        const custom = left.querySelector('#shEmailCustom');
+        if (custom) custom.addEventListener('click', (ev) => { ev.preventDefault(); wrap.classList.remove('active'); this.openSendEmailModal(id); });
         sync();
         btn.onclick = async () => {
-          const endpointIds = Array.from(body.querySelectorAll('input[data-sl-ep]:checked')).map(cb => cb.dataset.slEp);
-          btn.disabled = true; err.style.display = 'none';
-          try {
-            const j = await API.post(`/api/companies/${Layout.getCompanyId()}/document/${encodeURIComponent(id)}/line-send`,
-              { endpointIds, includePayLink: !!wrap.querySelector('#slPay').checked });
-            if (!j || j.success === false) throw new Error((j && j.message) || 'ส่งทาง LINE ไม่สำเร็จ');
-            Layout.toast(j.message || 'เข้าคิว LINE แล้ว', 'success', 8000);
-            wrap.classList.remove('active');
-          } catch (e) { err.textContent = e.message || 'ส่งทาง LINE ไม่สำเร็จ'; err.style.display = 'block'; sync(); }
+          const val = (sel) => !!left.querySelector(sel)?.checked;
+          const body = {
+            channels: Array.from(left.querySelectorAll('input[data-sh-ch]:checked')).map(c => c.dataset.shCh),
+            openRespond: val('#shRespond'), reissueRevoked: val('#shReissue'),
+            emailTo: (left.querySelector('#shTo')?.value || '').trim() || null, emailCc: (left.querySelector('#shCc')?.value || '').trim() || null,
+            attachPdf: val('#shAttach'), emailPayLink: val('#shEmailPay'),
+            lineEndpointIds: Array.from(left.querySelectorAll('input[data-sh-ep]:checked')).map(c => c.dataset.shEp), linePayLink: val('#shLinePay'),
+          };
+          btn.disabled = true;
+          result.style.display = 'block';
+          result.textContent = 'กำลังส่ง...';
+          let j = null;
+          try { j = await API.post(`/api/companies/${cid}/document/${encodeURIComponent(id)}/share`, body); }
+          catch (e) { result.innerHTML = `<div style="color:#dc2626">${esc(e.message || 'ส่งไม่สำเร็จ')}</div>`; sync(); return; }
+          const r = (j && j.data) || {};
+          const color = { ok: '#047857', queued: '#1d4ed8', failed: '#b91c1c', skipped: '#b45309' };
+          result.innerHTML = `<div style="font-weight:600;color:${j && j.success ? '#047857' : '#b91c1c'}">${esc((j && j.message) || '')}</div>`
+            + (r.outcomes || []).map(x => `<div style="color:${esc(color[x.status] || '#334155')}">• ${esc(x.label)}: ${esc(x.message)}</div>`).join('')
+            + (r.url ? `<code style="display:block;word-break:break-all;user-select:all;margin-top:4px">${esc(r.url)}</code>` : '')
+            + (r.qrDataUri ? `<div style="margin-top:6px"><img src="${esc(r.qrDataUri)}" alt="QR ลิงก์หน้าเอกสาร" style="width:180px;height:180px"> <button class="btn btn-sm btn-secondary" id="shPrintQr">พิมพ์ QR</button></div>` : '');
+          if (r.url && body.channels.includes('copy')) {
+            try { await navigator.clipboard.writeText(r.url); Layout.toast('คัดลอกลิงก์แล้ว', 'success'); } catch (e) { /* เบราว์เซอร์ไม่อนุญาต — ลิงก์แสดงด้านบนให้คัดลอกเอง */ }
+          }
+          const pq = result.querySelector('#shPrintQr');
+          if (pq) pq.addEventListener('click', () => { const w = window.open('', '_blank'); if (w) { w.document.write(`<img src="${esc(r.qrDataUri)}" style="width:320px" onload="window.print()">`); w.document.close(); } });
+          this.renderCustomerTimeline(id);
+          this._loadSignChips([id]);
+          sync();
         };
+      },
+
+      /** รอบ 267 P3: แผง "ลูกค้า" — ไทม์ไลน์จากแถวจริง (GET document/{id}/customer-timeline) · ป้าย/ทางไปต่อจากเซิร์ฟเวอร์ · ล้มดังในแผง */
+      async renderCustomerTimeline(docId) {
+        const host = document.getElementById(`docCustomerTimeline_${docId}`);
+        if (!host) return;
+        const esc = Layout.esc;
+        let v = null;
+        try {
+          const j = await API.get(`/api/companies/${Layout.getCompanyId()}/document/${encodeURIComponent(docId)}/customer-timeline`);
+          v = j && j.data;
+          if (!v) throw new Error((j && j.message) || 'โหลดไทม์ไลน์ลูกค้าไม่สำเร็จ');
+        } catch (e) { Layout.panelError(host, 'โหลดไทม์ไลน์ลูกค้าไม่สำเร็จ', () => this.renderCustomerTimeline(docId), e && e.message); return; }
+        const tone = { ok: '#047857', info: '#1d4ed8', warn: '#b45309', bad: '#b91c1c' };
+        const rows = (v.items || []).map(i => `<div style="display:flex;gap:10px;padding:4px 0;border-bottom:1px solid #f1f5f9">
+            <div style="min-width:130px;color:#64748b;font-size:12px">${esc(new Date(i.at).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }))}</div>
+            <div style="flex:1"><span style="color:${esc(tone[i.tone] || '#334155')};font-weight:600">${esc(i.label)}</span>${i.detail ? ` <span style="font-size:12px;color:#475569">${esc(i.detail)}</span>` : ''}
+            ${i.actionId ? ` <button class="btn btn-sm btn-ghost" data-tl-action="${esc(i.actionId)}">${esc(i.actionLabel || '')}</button>` : ''}</div></div>`).join('');
+        host.innerHTML = `<h4 style="font-size:14px;margin-bottom:8px">ลูกค้า</h4>
+          ${rows /* html — หนีแล้ว */ || '<div class="text-sm" style="color:#64748b">ยังไม่มีการส่งให้ลูกค้า</div>'}
+          ${v.truncated ? '<div class="text-sm" style="color:#64748b">แสดงเฉพาะรายการล่าสุด</div>' : ''}
+          <div id="srEvents" style="margin-top:6px;font-size:12px"></div>`;
+        host.querySelectorAll('[data-tl-action]').forEach(b => b.addEventListener('click', () => {
+          if (b.dataset.tlAction === 'reshare') this.openShare(docId);
+          else if (b.dataset.tlAction === 'review-slips') window.location.href = '/pages/payment-intents.html';
+        }));
+        this._signRequestEvents(docId);
       },
       async generateEtax(id) {
         if (!(await Layout.confirm('สร้าง e-Tax Invoice (XML ตามมาตรฐาน ETDA) สำหรับเอกสารนี้?\n\nหลังจากสร้างแล้วจะสามารถดาวน์โหลด PDF/A-3 พร้อม XML ฝังในตัวได้'))) return;
@@ -12796,110 +12904,6 @@
           setTimeout(() => $('#pgTyped').focus(), 40);
         });
       },
-      // สร้างลิงก์ลูกค้าเซ็นรับสินค้าออนไลน์ (POD) → คัดลอกเข้า clipboard
-      async deliverySignLink(docId) {
-        const cid = Layout.getCompanyId(); if (!cid) return;
-        try {
-          const j = await API.post(`/api/companies/${cid}/document/${encodeURIComponent(docId)}/delivery-sign-link`, {});   // WP-13 H
-          if (!j || !j.success) throw new Error((j && j.message) || 'สร้างลิงก์ไม่สำเร็จ');
-          const url = j.data.url;
-          try { await navigator.clipboard.writeText(url); } catch {}
-          if (j.data.signedAt) {
-            Layout.toast(`ลูกค้าเซ็นรับไปแล้วโดย ${j.data.signedBy} — ลิงก์ใหม่คัดลอกแล้ว`, 'info');
-          } else {
-            Layout.toast('คัดลอกลิงก์แล้ว — ส่งให้ลูกค้าเซ็นรับสินค้าได้เลย (อายุ 14 วัน)', 'success');
-          }
-          (await Layout.notice({ title: 'ลิงก์เซ็นรับสินค้า', messageHtml: 'คัดลอกแล้ว (ถ้าเบราว์เซอร์อนุญาต) — เลือกข้อความด้านล่างเพื่อคัดลอกเองได้<br><code style="word-break:break-all;user-select:all">' + Layout.esc(url) + '</code>' }));
-        } catch (e) { Layout.toast(e.message, 'error'); }
-      },
-
-      // สร้างลิงก์ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ → คัดลอกเข้า clipboard
-      async quotationAcceptLink(docId) {
-        const cid = Layout.getCompanyId(); if (!cid) return;
-        try {
-          const j = await API.post(`/api/companies/${cid}/document/${encodeURIComponent(docId)}/quotation-accept-link`, {});   // WP-13 H
-          if (!j || !j.success) throw new Error((j && j.message) || 'สร้างลิงก์ไม่สำเร็จ');
-          const url = j.data.url;
-          try { await navigator.clipboard.writeText(url); } catch {}
-          if (j.data.acceptedAt) {
-            Layout.toast(`ลูกค้ายอมรับใบนี้ไปแล้วเมื่อ ${new Date(j.data.acceptedAt).toLocaleString('th-TH')} — ลิงก์ใหม่คัดลอกแล้ว`, 'info');
-          } else {
-            Layout.toast('คัดลอกลิงก์แล้ว — ส่งให้ลูกค้ากดยอมรับได้เลย (อายุ 30 วัน)', 'success');
-          }
-          (await Layout.notice({ title: 'ลิงก์ยอมรับใบเสนอราคา', messageHtml: 'คัดลอกแล้ว (ถ้าเบราว์เซอร์อนุญาต) — เลือกข้อความด้านล่างเพื่อคัดลอกเองได้<br><code style="word-break:break-all;user-select:all">' + Layout.esc(url) + '</code>' }));
-        } catch (e) { Layout.toast(e.message, 'error'); }
-      },
-
-      // รอบ 240: ส่งลิงก์ให้ลูกค้าเซ็น/ยอมรับทางอีเมล — หัว/เนื้อ/ผู้ส่ง/ผู้รับที่แนะนำ/เพดาน มาจากเซิร์ฟเวอร์ทั้งหมด (หน้าเว็บแสดงอย่างเดียว)
-      async signRequestEmail(docId) {
-        const cid = Layout.getCompanyId(); if (!cid) return;
-        const api = Layout.api(); if (!api) return;
-        let p;
-        try {
-          const r = await api.post(`/api/companies/${cid}/document/${docId}/sign-request/email-preview`, {});
-          p = r && r.data;
-          if (!p) throw new Error((r && r.message) || 'โหลดตัวอย่างอีเมลไม่สำเร็จ');
-        } catch (e) { Layout.toast(e.message, 'error'); return; }
-        let wrap = document.getElementById('srModal');
-        if (!wrap) {
-          wrap = document.createElement('div');
-          wrap.id = 'srModal';
-          wrap.className = 'modal-overlay';
-          document.body.appendChild(wrap);
-        }
-        const platform = p.senderMode === 'platform';
-        const senderNote = platform
-          ? `ส่งด้วยอีเมลของระบบ NextAcc <b>ในนามบริษัท</b> — ผู้ส่ง: ${Layout.esc(p.fromName)} &lt;${Layout.esc(p.fromAddress)}&gt;${p.replyTo ? ` · ลูกค้าตอบกลับถึง ${Layout.esc(p.replyTo)}` : ' · <b>ยังไม่มีอีเมลตอบกลับของบริษัท</b> (ตั้งที่ ตั้งค่า → อีเมล)'} · วันนี้ส่งผ่านระบบแล้ว ${Number(p.platformSentToday)}/${Number(p.platformDailyCap)} ฉบับ<br><span style="font-size:12px">ตั้งค่าอีเมลของบริษัท (ตั้งค่า → อีเมล → ทดสอบผ่าน) เพื่อส่งจากที่อยู่ของบริษัทเอง</span>`
-          : `ส่งจากอีเมลของบริษัท: ${Layout.esc(p.fromName)} &lt;${Layout.esc(p.fromAddress)}&gt;`;
-        wrap.innerHTML = `
-          <div class="modal" style="max-width:720px">
-            <div class="modal-header">
-              <h3 class="modal-title">📧 ส่งลิงก์ให้ลูกค้าเซ็นทางอีเมล</h3>
-              <button class="modal-close" onclick="document.getElementById('srModal').classList.remove('active')">&times;</button>
-            </div>
-            <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
-              <div style="background:${platform ? '#fffbeb' : '#ecfdf5'};border:1px solid ${platform ? '#fde68a' : '#a7f3d0'};padding:10px 12px;border-radius:8px;font-size:13px">${senderNote}</div>
-              ${p.status ? `<div style="font-size:13px">สถานะลิงก์: <b>${Layout.esc(p.status.label)}</b></div>` : ''}
-              <div class="form-group">
-                <label class="form-label">อีเมลผู้รับ <span class="req">*</span> <span class="text-xs text-gray-500">(คั่นด้วย , · ส่งแยกฉบับละคน)</span></label>
-                <input id="srTo" class="form-input" type="text" value="${Layout.esc((p.suggestedRecipients || []).join(', '))}" placeholder="customer@example.com">
-              </div>
-              <div class="form-group">
-                <label class="form-label">ข้อความถึงลูกค้า (ไม่บังคับ)</label>
-                <textarea id="srMsg" class="form-input" rows="2" maxlength="1000"></textarea>
-              </div>
-              <div class="text-xs text-gray-500">หัวเรื่อง: ${Layout.esc(p.subject)}</div>
-              <iframe id="srPreview" sandbox="" style="width:100%;height:320px;border:1px solid var(--gray-200);border-radius:8px;background:#fff"></iframe>
-              <div id="srEvents" class="text-xs text-gray-600"></div>
-            </div>
-            <div class="modal-footer">
-              <button class="btn btn-secondary" onclick="document.getElementById('srModal').classList.remove('active')">ปิด</button>
-              <button class="btn btn-primary" id="srSend" onclick="Page._signRequestSend('${Layout.jsArg(docId)}')">ส่งอีเมล</button>
-            </div>
-          </div>`;
-        document.getElementById('srPreview').srcdoc = p.html || '';
-        wrap.classList.add('active');
-        this._signRequestEvents(docId);
-      },
-
-      async _signRequestSend(docId) {
-        const cid = Layout.getCompanyId(); if (!cid) return;
-        const api = Layout.api(); if (!api) return;
-        const to = (document.getElementById('srTo').value || '').split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
-        const message = document.getElementById('srMsg').value || null;
-        const btn = document.getElementById('srSend');
-        if (btn) btn.disabled = true;
-        try {
-          const r = await api.post(`/api/companies/${cid}/document/${docId}/sign-request/email`, { to, message });
-          Layout.toast((r && r.message) || 'ส่งอีเมลแล้ว', r && r.success ? 'success' : 'error');
-          if (r && r.success) {
-            document.getElementById('srModal').classList.remove('active');
-            this._loadSignChips([docId]);
-          }
-        } catch (e) { Layout.toast(e.message, 'error'); }
-        finally { if (btn) btn.disabled = false; }
-      },
-
       // ประวัติเหตุการณ์ลูกค้าเซ็น (webhook ต่อเอกสาร · webhook ที่ลงทะเบียน · แจ้งผู้ขาย) + ปุ่มส่งซ้ำ — สถานะ/ข้อความจากเซิร์ฟเวอร์
       async _signRequestEvents(docId) {
         const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;

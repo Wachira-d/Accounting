@@ -1149,7 +1149,10 @@ public record DocumentResponse(
     string PostPayReceiptMode = global::Accounting.Helpers.AutopilotSettingsResolver.Inherit,
     string PostPayPartialMode = global::Accounting.Helpers.AutopilotSettingsResolver.Inherit,
     /// <summary>ใบชนิดนี้ตั้งค่าต่อใบได้ไหม (เซิร์ฟเวอร์ตัดสิน — <c>PostPaymentAutomationPolicy.DocumentLayerAllowed</c>) · หน้าเว็บแสดง/ซ่อนช่องตามค่านี้</summary>
-    bool PostPaySettingApplies = false);
+    bool PostPaySettingApplies = false,
+    /// <summary>รอบ 267 P3: แสดงปุ่ม "📤 ส่งให้ลูกค้า" ไหม (เซิร์ฟเวอร์ตัดสิน — <c>CustomerShareRule.ButtonOffered</c> · ด่านชนิด/สถานะเดียวกับตัวออกลิงก์หน้าเอกสาร) ·
+    /// เหตุละเอียด (ฝั่งใบลดหนี้ · ใบค่าบริการผู้เช่า) อยู่ในหน้าต่าง <c>share-options</c></summary>
+    bool CanShareToCustomer = false);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);
@@ -1787,7 +1790,10 @@ public record CreatePaymentRequest(
     string? ExcessNote = null,
     /// <summary>ฝ่ายค้านรอบ 258 M2: เงินส่วนเกินที่หน้าจอแสดงให้ผู้ใช้ยืนยัน — เซิร์ฟเวอร์คิดใหม่จากคำขอแล้วต้องตรงกัน ไม่งั้นปฏิเสธ
     /// (<c>PaymentExcessPlan.ExpectedExcessMismatch</c>) · null = ไม่ตรวจ (API เดิม)</summary>
-    decimal? ExpectedExcess = null);
+    decimal? ExpectedExcess = null,
+    /// <summary>ฝ่ายค้าน 267-P5 MED-5: เส้นหลายใบ — ผู้เรียกจะเรียก <c>AfterPaymentRecordedAsync</c> พร้อมทางเข้าจริงเอง (งานหลังรับชำระ + แจ้งผู้ซื้อคู่ค้า) ·
+    /// false (ค่าเดิม) = เส้นหลายใบแจ้งผู้ซื้อคู่ค้าเองแบบบันทึกมือ</summary>
+    bool AfterCommitByCaller = false);
 
 /// <summary>บรรทัดปรับหนึ่งบรรทัดของการชำระ — <c>Amount</c> มีเครื่องหมาย: + = จ่ายเกินยอดหนี้ด้วยรายการนี้ (Dr ผังนี้) ·
 /// − = ปิดหนี้โดยไม่ต้องจ่ายเงิน (Cr ผังนี้)</summary>

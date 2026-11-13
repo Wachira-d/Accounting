@@ -48,6 +48,7 @@ public partial class DocumentPayLinkService
         public DateTime? DeliverySignedAt { get; init; }
         public string? DeliverySignedBy { get; init; }
         public string? CustomerResponse { get; init; }
+        public DateTime? CustomerResponseAt { get; init; }
         public bool ContactSupplierOnly { get; set; }
         public bool ContactCustomerOnly { get; set; }
         /// <summary>ลูกค้าเห็นใบนี้ได้ไหม — ตัวตัดสินฝั่งเดียวกับพอร์ทัล/ลิงก์ชำระ (<see cref="DocumentPayLinkPolicy.IsCustomerFacing"/>)</summary>
@@ -82,6 +83,7 @@ public partial class DocumentPayLinkService
                 SignLinkIssuedAt = x.SignLinkIssuedAt, PayLinkIssuedAt = x.PayLinkIssuedAt, PayLinkExpiresAt = x.PayLinkExpiresAt,
                 QuotationAcceptedAt = x.QuotationAcceptedAt, QuotationAcceptedBy = x.QuotationAcceptedBy,
                 DeliverySignedAt = x.DeliverySignedAt, DeliverySignedBy = x.DeliverySignedBy, CustomerResponse = x.CustomerResponse,
+                CustomerResponseAt = x.CustomerResponseAt,
             })
             .FirstOrDefaultAsync(ct);
         if (row == null) return null;
@@ -118,6 +120,22 @@ public partial class DocumentPayLinkService
         return raw == null || string.IsNullOrWhiteSpace(origin) ? null : DocumentPayLinkPolicy.Url(origin, companyId, raw);
     }
 
+    /// <summary>รอบ 264 P4 (264-5-11): ตัวตัดสินเดียวกับหน้าชำระ (<see cref="PublicViewAsync"/>) บนโทเคนของลิงก์ที่ใช้อยู่ — ไม่มีลิงก์/กู้โทเคนไม่ได้ ⇒ null</summary>
+    public async Task<Accounting.Services.Payments.PublicPayTarget?> PartnerPayTargetAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+    {
+        var d = await LoadDocAsync(companyId, documentId, null, ct);
+        if (d == null) return null;
+        var raw = Recover(d.PayLinkTokenProtected, d.PayLinkTokenHash);
+        return raw == null ? null : (await PublicViewAsync(companyId, raw, ct))?.Target;
+    }
+
+    public async Task<string?> CustomerLinkRefusalAsync(Guid companyId, Guid documentId, CancellationToken ct = default)
+    {
+        var d = await LoadDocAsync(companyId, documentId, null, ct);
+        if (d == null) return "ไม่พบเอกสาร";
+        return CustomerDocPage.IssueRefusal(d.Type, d.Status, await CustomerFacingAsync(companyId, d, ct), d.PlatformTenantDocument);
+    }
+
     // ═══════════════ view model ═══════════════
 
     /// <summary>ส่วนหน้าเอกสาร — บรรทัด · ยอด · ใบที่เกี่ยวข้อง · ปุ่ม (ตัวตัดสินเดียว <see cref="CustomerDocPage.Actions"/>) ·
@@ -134,7 +152,7 @@ public partial class DocumentPayLinkService
                 .OrderBy(l => l.LineOrder).Take(MaxLines)
                 .Select(l => new { l.Description, l.Quantity, l.Unit, l.UnitPrice, l.DiscountAmount, l.Amount })
                 .ToListAsync(ct);
-        var respondedAt = d.Type == DocumentType.Quotation ? row.QuotationAcceptedAt : d.Type == DocumentType.DeliveryNote ? row.DeliverySignedAt : null;
+        var respondedAt = CustomerDocPage.RespondedAt(d.Type, row.QuotationAcceptedAt, row.DeliverySignedAt, row.CustomerResponse, row.CustomerResponseAt);
         var respondedBy = d.Type == DocumentType.Quotation ? row.QuotationAcceptedBy : d.Type == DocumentType.DeliveryNote ? row.DeliverySignedBy : null;
         // รอบ 267 P2: ปุ่มตอบรับส่งคำตอบที่เส้นเดียวของหน้า (ฟอร์มผู้ลงนามอยู่บนหน้าเอกสาร — ผู้เขียนเดียว CustomerDocumentResponseService)
         var respondHref = mode == CustomerDocPage.Mode.Link && token != null ? CustomerDocPage.RespondPath(companyId, token) : null;

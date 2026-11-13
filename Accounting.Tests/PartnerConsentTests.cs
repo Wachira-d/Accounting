@@ -86,7 +86,7 @@ public class PartnerConsentTests
         }
         Assert.Null(PartnerConsent.TextFor(Scope.AutoRecordPayment, 0));
         Assert.Contains("ไม่เดาบัญชีที่จ่าย", PartnerConsent.TextFor(Scope.AutoRecordPayment, 1));
-        Assert.Equal(5, PartnerConsent.Scopes.Count);
+        Assert.Equal(6, PartnerConsent.Scopes.Count);   // ฝ่ายค้าน 264-P4 H2: + AcceptPayerSlipCopy (ของผู้ขาย)
     }
 
     // ═══ ความยินยอมกว้างกว่าสิทธิ์ผู้ให้ไม่ได้ (F5) ═══
@@ -189,6 +189,8 @@ public class PartnerConsentTests
     public void Allows_ขอบเขตที่ไม่ใช้ยอด_ไม่ต้องรู้ยอด_เพดานว่าง_ไม่จำกัด()
     {
         var r = Row(Scope.ReceiveSlipCopy, max: null);
+        // ฝ่ายค้าน 264-P4 M7: ขอบเขตที่เกิดพร้อมผู้อ่าน ไม่มีวันต่อสาย ⇒ แถวใดก็ไม่ติด GrantedBeforeWired (ยืนยันใหม่ใช้ MinTextVersion)
+        Assert.True(PartnerConsent.Allows(Scope.AcceptPayerSlipCopy, Row(Scope.AcceptPayerSlipCopy, max: null, grantedAt: new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)), Partner(), B, null, true).Ok);
         Assert.True(PartnerConsent.Allows(Scope.ReceiveSlipCopy, r, Partner(), B, null, true).Ok);
         Assert.True(PartnerConsent.Allows(Scope.ReceiveSlipCopy, r, Partner(), B, T(10_000_000m), true).Ok);
     }
@@ -269,10 +271,11 @@ public class PartnerConsentTests
             PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, new PartnerConsent.CapAmount(100m, "USD"), true).Code);
         Assert.Equal(PartnerConsent.Codes.AmountUnknown, PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, T(-1m), true).Code);
         Assert.True(PartnerConsent.Allows(Scope.AutoRecordPayment, Row(), Partner(), B, new PartnerConsent.CapAmount(100m, " thb "), true).Ok);
-        var slipCapped = Row(Scope.ReceiveSlipCopy, max: 1_000m);
+        var wired = new DateTime(2026, 11, 13, 1, 0, 0, DateTimeKind.Utc);   // รอบ 264 P4: ขอบเขตนี้ต่อสายแล้ว (WiredSince 2026-11-13)
+        var slipCapped = Row(Scope.ReceiveSlipCopy, max: 1_000m, grantedAt: wired);
         Assert.Equal(PartnerConsent.Codes.AmountUnknown, PartnerConsent.Allows(Scope.ReceiveSlipCopy, slipCapped, Partner(), B, null, true).Code);
         Assert.Equal(PartnerConsent.Codes.OverCap, PartnerConsent.Allows(Scope.ReceiveSlipCopy, slipCapped, Partner(), B, T(1_000.01m), true).Code);
-        Assert.True(PartnerConsent.Allows(Scope.ReceiveSlipCopy, Row(Scope.ReceiveSlipCopy, max: null), Partner(), B, null, true).Ok);
+        Assert.True(PartnerConsent.Allows(Scope.ReceiveSlipCopy, Row(Scope.ReceiveSlipCopy, max: null, grantedAt: wired), Partner(), B, null, true).Ok);
     }
 
     [Fact]
@@ -344,7 +347,8 @@ public class PartnerConsentTests
         {
             Assert.NotNull(PartnerConsent.TextFor(d.Scope, d.MinTextVersion));
             Assert.InRange(d.MinTextVersion, 1, PartnerConsent.CurrentTextVersion);
-            if (d.ReaderWired && !d.CompanyWideToggle) Assert.NotNull(d.WiredSince);   // ด่านของแพ็กที่พลิกธง (L4)
+            if (d.ReaderWired && !d.CompanyWideToggle && !d.WiredFromStart) Assert.NotNull(d.WiredSince);   // ด่านของแพ็กที่พลิกธง (L4)
+            if (d.WiredFromStart) Assert.Null(d.WiredSince);   // ฝ่ายค้าน 264-P4 M7: ไม่ผูกนาฬิกา deploy
         }
     }
 }

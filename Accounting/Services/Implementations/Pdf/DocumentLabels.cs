@@ -153,6 +153,14 @@ public sealed class DocumentLabels
     /// <summary>รอบ 258-3 (F-H1): ปุ่มดู/ดาวน์โหลด PDF + บรรทัดยืนยันรับเงินบนการ์ดใบเสร็จ</summary>
     public string LineCardViewPdf => this["line_card_view_pdf"];
     public string LineCardPaymentReceived => this["line_card_payment_received"];
+    /// <summary>รอบ 267 P3: ปุ่มลิงก์หน้าเอกสารบนการ์ด LINE (ตามสิ่งที่ลูกค้าทำได้บนหน้า) + การ์ด "ฉบับเซ็น" กลับทาง LINE (<c>LineDocumentCard</c>)</summary>
+    public string LineCardOpenAccept => this["line_card_open_accept"];
+    public string LineCardOpenSign => this["line_card_open_sign"];
+    public string LineCardOpenPay => this["line_card_open_pay"];
+    public string LineCardOpenRespond => this["line_card_open_respond"];
+    public string LineCardOpen => this["line_card_open"];
+    public string LineCardSignedCopy => this["line_card_signed_copy"];
+    public string LineCardSignedReceived => this["line_card_signed_received"];
     public string LineCardStopUser => this["line_card_stop_user"];
     public string LineCardStopGroup => this["line_card_stop_group"];
     public string LineCardFrom(string company) => string.Format(this["line_card_from"], company);
@@ -214,6 +222,26 @@ public sealed class DocumentLabels
             : $"{t.Day}/{t.Month}/{t.Year + 543} {t.ToString("HH:mm", inv)}";
         return string.Format(this["dn_signed_online"], when);
     }
+    /// <summary>รอบ 267 P5 (267-1-70): บล็อก "ผู้ขายรับทราบใบสั่งซื้อออนไลน์" — ทั้งสอง renderer ผ่าน <c>PdfGenerationService.SupplierAckLines</c> (ห้าม literal)</summary>
+    public string PoAckHeading => this["po_ack_heading"];
+    public string PoAckBy => this["po_ack_by"];
+    /// <summary>"รับทราบออนไลน์ 5/11/2569 14:05 น." (ไทย = พ.ศ. · เวลาไทย) / "Acknowledged online 05 Nov 2026 14:05 (GMT+7)" — รับเวลา UTC</summary>
+    public string PoAckedOnline(DateTime utc)
+    {
+        var t = Accounting.Helpers.QuotationAcceptance.BangkokLocal(utc);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var when = IsEnglish
+            ? t.ToString("dd MMM yyyy HH:mm", inv)
+            : $"{t.Day}/{t.Month}/{t.Year + 543} {t.ToString("HH:mm", inv)}";
+        return string.Format(this["po_acked_online"], when);
+    }
+    /// <summary>"กำหนดส่งที่ผู้ขายยืนยัน 20/11/2569" / "Delivery date confirmed by supplier 20 Nov 2026" — วันปฏิทิน (ไม่แปลงเขตเวลา)</summary>
+    public string PoAckPromisedDate(DateTime date)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var when = IsEnglish ? date.ToString("dd MMM yyyy", inv) : $"{date.Day}/{date.Month}/{date.Year + 543}";
+        return string.Format(this["po_ack_promised_date"], when);
+    }
     public string TaxId => this["tax_id"];
     public string TaxIdShort => this["tax_id_short"];
     public string Terms => this["terms"];
@@ -263,6 +291,10 @@ public sealed class DocumentLabels
         ["qt_accept_content_changed"] = "เนื้อหาเปลี่ยนหลังลูกค้ายอมรับ — ไม่ประทับลายเซ็น",
         ["signer_position"] = "ตำแหน่ง: {0}",
         ["signed_on_behalf_of"] = "ลงนามในนามของ {0}",
+        ["po_ack_heading"] = "ผู้ขายรับทราบใบสั่งซื้อออนไลน์",
+        ["po_ack_by"] = "ผู้รับทราบ",
+        ["po_acked_online"] = "รับทราบออนไลน์ {0} น.",
+        ["po_ack_promised_date"] = "กำหนดส่งที่ผู้ขายยืนยัน {0}",
         ["signed_online_evidence_ref"] = "ลงนามออนไลน์ · รหัสอ้างอิง {0}",
         ["dn_signed_online"] = "เซ็นรับออนไลน์ {0} น.",
 
@@ -385,6 +417,13 @@ public sealed class DocumentLabels
         ["line_card_pay"] = "ชำระเงินออนไลน์",
         ["line_card_view_pdf"] = "ดู/ดาวน์โหลด PDF",
         ["line_card_payment_received"] = "ได้รับชำระเงินแล้ว ขอบคุณค่ะ",
+        ["line_card_open_accept"] = "ดู/ยอมรับ",
+        ["line_card_open_sign"] = "ดู/เซ็นรับ",
+        ["line_card_open_pay"] = "ดู/ชำระเงิน",
+        ["line_card_open_respond"] = "ดู/ตอบรับ",
+        ["line_card_open"] = "ดูเอกสาร",
+        ["line_card_signed_copy"] = "ฉบับเซ็น",
+        ["line_card_signed_received"] = "เอกสารนี้ลงนามแล้ว — ดาวน์โหลดฉบับที่ลงนามได้จากปุ่มด้านล่าง",
         ["line_card_stop_user"] = "ไม่ต้องการรับทาง LINE? พิมพ์ \"หยุด\" ในแชตนี้",
         ["line_card_stop_group"] = "ไม่ต้องการรับในกลุ่มนี้? แจ้งผู้ส่งเพื่อยกเลิกการผูกกลุ่ม",
         ["terms"] = "เงื่อนไข",
@@ -415,6 +454,10 @@ public sealed class DocumentLabels
         ["qt_accept_content_changed"] = "Content changed after customer acceptance — signature not applied",
         ["signer_position"] = "Position: {0}",
         ["signed_on_behalf_of"] = "Signed on behalf of {0}",
+        ["po_ack_heading"] = "Purchase order acknowledged online by supplier",
+        ["po_ack_by"] = "Acknowledged by",
+        ["po_acked_online"] = "Acknowledged online {0} (GMT+7)",
+        ["po_ack_promised_date"] = "Delivery date confirmed by supplier {0}",
         ["signed_online_evidence_ref"] = "Signed online · reference {0}",
         ["dn_signed_online"] = "Signed online {0} (GMT+7)",
 
@@ -533,6 +576,13 @@ public sealed class DocumentLabels
         ["line_card_pay"] = "Pay online",
         ["line_card_view_pdf"] = "View / download PDF",
         ["line_card_payment_received"] = "Payment received — thank you",
+        ["line_card_open_accept"] = "View / accept",
+        ["line_card_open_sign"] = "View / sign",
+        ["line_card_open_pay"] = "View / pay",
+        ["line_card_open_respond"] = "View / respond",
+        ["line_card_open"] = "View document",
+        ["line_card_signed_copy"] = "Signed copy",
+        ["line_card_signed_received"] = "This document has been signed. Download the signed copy below.",
         ["line_card_stop_user"] = "Don't want these on LINE? Reply STOP in this chat",
         ["line_card_stop_group"] = "Don't want these in this group? Ask the sender to unlink it",
         ["terms"] = "Terms",

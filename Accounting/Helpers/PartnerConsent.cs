@@ -42,6 +42,9 @@ public static class PartnerConsent
         ReceiveSlipCopy = 4,
         /// <summary>ส่ง 50 ทวิ ที่เราออกกลับเข้าระบบของคู่ค้า</summary>
         ReturnWhtCerts = 5,
+        /// <summary>ฝ่ายค้าน 264-P4 H2 (คำตัดสิน 264-5-14): ขอบเขตของ<b>ผู้ขาย</b> — ยอมรับสำเนาสลิปที่ผู้ซื้อคู่ค้าแนบจากระบบของเขา เข้าคิวรายการรอยืนยันรับเงินของเรา
+        /// (ยังไม่ใช่เงินเข้า) · แยกจาก <see cref="ReceiveSlipCopy"/> (ของผู้ซื้อ — design §4.4(ข)) · ผู้อ่าน: <c>PartnerOutboundPaymentService.DeliverSlipCopyAsync</c></summary>
+        AcceptPayerSlipCopy = 6,
     }
 
     /// <summary>สิ่งที่ผู้ให้ต้องมี — service แปลงเป็นด่านสิทธิ์ตัวเดิม (<c>DocumentPermissionHelper</c> · <c>IPermissionService</c>) ไม่เขียนกติกาสิทธิ์ซ้ำ</summary>
@@ -52,6 +55,8 @@ public static class PartnerConsent
         PurchaseCreate = 3,
         PurchaseApprove = 4,
         TaxFile = 5,
+        /// <summary>อนุมัติเอกสารฝั่งขาย (ผู้ยอมรับสลิปของผู้ซื้อเข้าคิวรับชำระ — 264-5-14)</summary>
+        SalesApprove = 6,
     }
 
     /// <summary>คีย์สิทธิ์ที่ใช้ "เล่า" ในข้อความปฏิเสธ (ข้อความตัวเดียว <see cref="PermissionKeys.DeniedMessage"/>)</summary>
@@ -62,6 +67,7 @@ public static class PartnerConsent
         Need.PurchaseCreate => PermissionKeys.DocumentPurchaseCreate,
         Need.PurchaseApprove => PermissionKeys.DocumentPurchaseApprove,
         Need.TaxFile => PermissionKeys.TaxFile,
+        Need.SalesApprove => PermissionKeys.DocumentRevenueApprove,
         _ => PermissionKeys.CompanySettingsEdit,
     };
 
@@ -70,8 +76,10 @@ public static class PartnerConsent
     /// <param name="MinTextVersion">ฝ่ายค้าน L3: เวอร์ชันข้อความต่ำสุดที่ยังยอมรับ — ข้อความใหม่ที่ขยายสิ่งที่ท่อทำ ⇒ ขยับค่านี้ ⇒ แถวเก่าได้ TextOutdated</param>
     /// <param name="WiredSince">ฝ่ายค้าน L4: วันที่ท่ออ่านขอบเขตนี้เริ่มทำงาน (UTC) — แพ็กที่พลิก ReaderWired ต้องตั้งค่านี้ในคอมมิตเดียวกัน ⇒
     /// แถวที่ให้ไว้ "ล่วงหน้า" ก่อนวันนั้นต้องยืนยันใหม่ (GrantedBeforeWired) — ไม่เริ่มมีผลเองโดยที่ผู้ให้ไม่รู้</param>
+    /// <param name="WiredFromStart">ฝ่ายค้าน 264-P4 M7: ขอบเขตที่เกิดพร้อมผู้อ่าน (ไม่เคยมีแถว "ให้ล่วงหน้า") ⇒ ไม่ต้องมี <paramref name="WiredSince"/> ·
+    /// การบังคับยืนยันใหม่ในอนาคตใช้ <paramref name="MinTextVersion"/> (ไม่ผูกนาฬิกา deploy)</param>
     public sealed record ScopeDef(Scope Scope, string Label, IReadOnlyList<Need> Needs, bool RequiresCap, bool AllowsPayAccount,
-        bool NeedsTypedConfirm, bool CompanyWideToggle, bool ReaderWired, int MinTextVersion = 1, DateTime? WiredSince = null);
+        bool NeedsTypedConfirm, bool CompanyWideToggle, bool ReaderWired, int MinTextVersion = 1, DateTime? WiredSince = null, bool WiredFromStart = false);
 
     /// <summary>รอบ 264 P3 — วันที่ท่อบันทึกจ่ายอัตโนมัติเริ่มอ่านขอบเขต <see cref="Scope.AutoRecordPayment"/> (UTC · go-live ของแพ็ก P3) · <b>ประกาศก่อน <see cref="Scopes"/></b> (ตัวเริ่มค่า static เรียงตามบรรทัด)</summary>
     public static readonly DateTime AutoRecordPaymentWiredSince = new(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc);
@@ -88,12 +96,18 @@ public static class PartnerConsent
         new(Scope.AutoRecordPayment, "บันทึกจ่ายใบซื้อเองเมื่อคู่ค้ารับเงินแล้ว",
             new[] { Need.CompanySettingsEdit, Need.PurchaseApprove }, RequiresCap: true, AllowsPayAccount: true, NeedsTypedConfirm: true,
             CompanyWideToggle: false, ReaderWired: true, WiredSince: AutoRecordPaymentWiredSince),
+        // ฝ่ายค้าน 264-P4 H2: ขอบเขตของผู้ซื้อตาม design §4.4(ข) — ยังไม่มีผู้อ่าน (P4 รอบแรกอ่านผิดฝ่าย ⇒ ถอดกลับ · ฝั่งผู้ขายใช้ AcceptPayerSlipCopy)
         new(Scope.ReceiveSlipCopy, "รับสำเนาสลิปการโอนจากคู่ค้าเป็นหลักฐาน",
             new[] { Need.CompanySettingsEdit, Need.PurchaseView }, RequiresCap: false, AllowsPayAccount: false, NeedsTypedConfirm: false,
             CompanyWideToggle: false, ReaderWired: false),
         new(Scope.ReturnWhtCerts, "ส่ง 50 ทวิ ที่เราออกเข้าระบบของคู่ค้า",
             new[] { Need.CompanySettingsEdit, Need.TaxFile }, RequiresCap: false, AllowsPayAccount: false, NeedsTypedConfirm: false,
             CompanyWideToggle: true, ReaderWired: true),
+        // ฝ่ายค้าน 264-P4 H2 (คำตัดสิน 264-5-14): ขอบเขตของผู้ขาย · ผู้อ่าน = PartnerOutboundPaymentService.DeliverSlipCopyAsync (CheckForWriteAsync) ·
+        // ผู้ให้ต้องอนุมัติเอกสารขายได้ (เป็นผู้ที่ยืนยันรับเงินจากคิวนั้น) · เกิดพร้อมผู้อ่าน ⇒ WiredFromStart (M7: ยืนยันใหม่ในอนาคตด้วย MinTextVersion)
+        new(Scope.AcceptPayerSlipCopy, "รับสลิปที่คู่ค้าแนบตอนแจ้งโอนเข้าคิวรอยืนยันรับเงิน",
+            new[] { Need.CompanySettingsEdit, Need.SalesApprove }, RequiresCap: false, AllowsPayAccount: false, NeedsTypedConfirm: false,
+            CompanyWideToggle: false, ReaderWired: true, WiredFromStart: true),
     };
 
     public static ScopeDef Def(Scope s) => Scopes.First(d => d.Scope == s);
@@ -130,6 +144,11 @@ public static class PartnerConsent
         [(Scope.ReceiveSlipCopy, 1)] =
             "ข้าพเจ้าในนามบริษัทอนุญาตให้คู่ค้ารายนี้ส่ง “สำเนาสลิป/หลักฐานการโอน” ของการชำระที่เกี่ยวกับเราเข้าระบบของเรา เพื่อใช้เป็นหลักฐานแหล่งเงิน · "
             + "สลิปอาจมีชื่อและเลขบัญชีบางส่วน (ข้อมูลส่วนบุคคล) เก็บตามระยะเวลาเอกสารบัญชี · สลิปเพียงอย่างเดียวไม่ใช่หลักฐานว่าเงินออกจากบัญชีแล้ว · " + Withdraw,
+        [(Scope.AcceptPayerSlipCopy, 1)] =
+            "ข้าพเจ้าในนามบริษัทอนุญาตให้คู่ค้ารายนี้ (ในฐานะผู้ซื้อของเรา) ส่ง “สลิปการโอน” ที่เขาแนบตอนแจ้งโอนจากระบบของเขา เข้าคิว “รายการรอยืนยันรับเงิน” ของเอกสารขายของเรา · "
+            + "รายการนั้นยังไม่ใช่การรับเงิน — ผู้มีสิทธิ์ของเรายังต้องตรวจกับบัญชีธนาคารแล้วกดยืนยันเหมือนสลิปทุกช่องทาง · "
+            + "สลิปอาจมีชื่อและเลขบัญชีบางส่วนของผู้โอน (กรรมการ/พนักงานของคู่ค้า — ข้อมูลส่วนบุคคล) เก็บตามระยะเวลาเอกสารบัญชี และใช้เพื่อยืนยันการรับชำระเท่านั้น · "
+            + "ข้าพเจ้ามีสิทธิ์อนุมัติเอกสารขายในบริษัทนี้ และความยินยอมจะหยุดเองถ้าข้าพเจ้าไม่มีสิทธิ์นั้นแล้ว · " + Withdraw,
         [(Scope.ReturnWhtCerts, 1)] =
             "ข้าพเจ้าในนามบริษัทอนุญาตให้ระบบของบริษัทเราส่งหนังสือรับรองการหักภาษี ณ ที่จ่าย (50 ทวิ) ที่เราออกให้คู่ค้ารายนี้ เข้ากล่องรับในระบบของคู่ค้า · "
             + "ข้อมูลในใบเป็นข้อมูลที่ผู้รับต้องได้ตาม ม.50 ทวิ อยู่แล้ว · " + Withdraw,

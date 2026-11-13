@@ -94,11 +94,13 @@ public partial class PublicDocumentPageController : ControllerBase
             return NotFound(new ApiResponse<PublicDocumentPayView>(false, stub, CustomerDocPage.NotFoundMessage));
         }
         await _links.MarkOpenedAsync(companyId, token, ct);
+        // รอบ 267 P5 (267-1-13): + เส้นเข้าด้วย LINE เพื่อเติมข้อมูลผู้ลงนาม (เฉพาะเมื่อมีฟอร์มตอบรับ + LINE Login ของระบบเปิด)
+        var signerPage = await WithSignerPathsAsync(view.Page!, basePath, ct);
         return Ok(new ApiResponse<PublicDocumentPayView>(true, view with
         {
             // รอบ 267 P4: + ที่อยู่เส้นหลังจ่าย (ส่ง 50 ทวิ · เปิดหน้าของใบที่เกี่ยวข้อง) เฉพาะเมื่อหน้าเสนอจริง — WithAfterPayPaths ·
             // รอบ 267 P2: + ฉบับที่ลงนาม/รหัสอีเมล
-            Page = WithAfterPayPaths(view.Page! with
+            Page = WithAfterPayPaths(signerPage with
             {
                 PdfPath = basePath + "/pdf", RelatedPdfBase = basePath + "/related/", RequestLinkPath = basePath + "/request-link",
                 SignedCopyBase = basePath + "/signed/", OtpPath = basePath + "/respond/otp",

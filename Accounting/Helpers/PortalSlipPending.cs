@@ -52,6 +52,10 @@ public static class PortalSlipPending
         => IntentDescription(documentNumber, slipUrl, fromPayLink: false);
 
     /// <summary>รอบ 255 WP-12B (ฝ่ายค้าน LOW): ป้ายช่องทางตามที่มาจริง — หน้าชำระของเอกสาร ≠ พอร์ทัล · สลิปจากหน้าชำระไม่ได้เสิร์ฟตรง ⇒ บอกให้เปิดจากไฟล์แนบของเอกสาร</summary>
+    /// <summary>รอบ 264 P4 (264-5-12): สำเนาสลิปที่ผู้ซื้อคู่ค้า NextAcc แจ้งโอนจากระบบของเขา — ยังไม่ใช่เงินเข้า (คนยืนยัน/รายการเดินบัญชีเหมือนสลิปทุกช่อง)</summary>
+    public static string PartnerIntentDescription(string documentNumber)
+        => $"สำเนาสลิปจากคู่ค้า NextAcc (ผู้ซื้อแจ้งโอนจากระบบของเขา · รอตรวจ) — {documentNumber} · ไฟล์: แท็บไฟล์แนบของเอกสาร";
+
     public static string IntentDescription(string documentNumber, string slipUrl, bool fromPayLink)
         => fromPayLink
             ? $"สลิปจากหน้าชำระของเอกสาร (รอตรวจ) — {documentNumber} · ไฟล์: แท็บไฟล์แนบของเอกสาร"

@@ -62,7 +62,9 @@ public static class SignEventOutbox
 
     public sealed record PayloadInput(
         Guid EventId, string EventType, DateTime OccurredAtUtc, Guid CompanyId, Guid DocumentId, string? DocumentNumber,
-        string DocumentType, int RevisionNumber, string? AcceptedBy, bool HasSignature, string? ContentHash, string? CallbackRef);
+        string DocumentType, int RevisionNumber, string? AcceptedBy, bool HasSignature, string? ContentHash, string? CallbackRef,
+        // ฝ่ายค้าน 267-P5 LOW-10: วันส่งที่ผู้ขายยืนยัน (purchase_order.acknowledged) — วันปฏิทิน yyyy-MM-dd · null = ไม่ได้ยืนยัน/ไม่ใช่เหตุการณ์ใบสั่งซื้อ
+        DateTime? PromisedDate = null);
 
     /// <summary>payload ตัวเดียว (camelCase) — ลิงก์ชี้ API ที่ต้องใช้ API key (ไม่ฝังไฟล์/ลายเซ็น)</summary>
     public static string BuildPayload(PayloadInput p)
@@ -83,6 +85,7 @@ public static class SignEventOutbox
                 hasSignature = p.HasSignature,
                 contentHash = p.ContentHash,
                 callbackRef = p.CallbackRef,
+                promisedDate = p.PromisedDate?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
             },
             links = new
             {
@@ -101,7 +104,7 @@ public static class SignEventOutbox
     /// <summary>รอบ 267 P2: เหตุการณ์ที่ไม่ใช่ "เซ็นแล้ว" (ลูกค้าไม่รับ/ขอแก้ใบเสนอราคา — <c>SignRequestKinds.EventFor</c>) ใช้ payload/กุญแจ/จังหวะลองใหม่ชุดเดียวกัน ·
     /// <paramref name="keyRef"/> = ส่วนท้ายของกุญแจกันซ้ำ (รอบ 267: ผูกกับแถวหลักฐาน — token ของหน้าเอกสารอยู่ข้าม Rev)</summary>
     public static SignEventOutboxEntry EnqueueEvent(AccountingDbContext db, Document doc, string eventType, DateTime signedAtUtc,
-        string? signedBy, bool hasSignature, string? contentHash, string? keyRef)
+        string? signedBy, bool hasSignature, string? contentHash, string? keyRef, DateTime? promisedDate = null)
     {
         var key = EventKey(eventType, doc.Id, keyRef);
         var id = EventIdFor(doc.CompanyId, key);
@@ -115,7 +118,7 @@ public static class SignEventOutbox
             CallbackUrl = string.IsNullOrWhiteSpace(doc.SignCallbackUrl) ? null : doc.SignCallbackUrl,
             CallbackRef = doc.SignCallbackRef,
             PayloadJson = BuildPayload(new PayloadInput(id, eventType, signedAtUtc, doc.CompanyId, doc.Id, doc.DocumentNumber,
-                doc.DocumentType.ToString(), doc.RevisionNumber, signedBy, hasSignature, contentHash, doc.SignCallbackRef)),
+                doc.DocumentType.ToString(), doc.RevisionNumber, signedBy, hasSignature, contentHash, doc.SignCallbackRef, promisedDate)),
             Status = SignEventStatus.Pending,
             NextAttemptAt = signedAtUtc,
             CreatedAt = signedAtUtc,

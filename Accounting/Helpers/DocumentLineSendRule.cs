@@ -42,8 +42,35 @@ public static class DocumentLineSendRule
     /// <summary>หนึ่งปลายทาง LINE ของผู้ติดต่อบนหน้าต่าง "ส่งทาง LINE" — <paramref name="PdfLink"/> = การ์ดมีปุ่มดู PDF ·
     /// <paramref name="PayLink"/> = การ์ดมีปุ่มชำระได้ (ฝ่ายค้าน 259 M1 — หน้าชำระแสดงยอด/รายการ/ชื่อผู้ซื้อ ⇒ ตัวตัดสินเดียวกับปุ่ม PDF) ·
     /// <paramref name="ShowAmounts"/> false = กลุ่มซ่อนยอด (การ์ดไม่แสดงยอด/ไม่มีปุ่มดู PDF/ไม่มีปุ่มชำระ)</summary>
+    /// <param name="PageLink">รอบ 267 P3: การ์ดของปลายทางนี้ได้ปุ่มลิงก์หน้าเอกสาร ("ดู/ยอมรับ" ฯลฯ — <see cref="PageLinkAllowed"/>) ·
+    /// <paramref name="PageLinkNote"/> = เหตุเมื่อไม่ได้ (หน้าเว็บแสดงข้อความนี้ตรงตัว)</param>
     public sealed record Target(Guid EndpointId, string Kind, string KindLabel, string Display, bool Available, string? Reason,
-        bool ShowAmounts, bool PdfLink, bool PayLink);
+        bool ShowAmounts, bool PdfLink, bool PayLink, bool PageLink = false, string? PageLinkNote = null, string? PayLinkNote = null);
+
+    /// <summary>
+    /// รอบ 267 P3 (คำตัดสิน 267-1-7 · 267-1-61) — <b>ตัวตัดสินเดียว</b>ว่าการ์ด LINE ของปลายทางนี้ได้ <b>ลิงก์หน้าเอกสาร</b> (token ของใบ = สิทธิ์ดู · จ่าย ·
+    /// ตอบรับเมื่อผู้ขายเปิดช่วงตอบรับ) ไหม:
+    /// <list type="bullet">
+    /// <item>หน้าเอกสารแสดงยอด/รายการ/ชื่อผู้ซื้อ ⇒ กลุ่มที่ซ่อนยอด/ยกเลิกผูก/บล็อก = ไม่ได้ (ตัวเดิมของปุ่มดู PDF <see cref="CustomerDocPage.PageLinkAllowedForLineEndpoint"/>)</item>
+    /// <item>ใบที่มีปุ่มตอบรับ (ใบเสนอราคา · ใบส่งของ — <see cref="CustomerDocPage.HasRespondAction"/>) ⇒ <b>1:1 เท่านั้น</b> · กลุ่ม = ปุ่มดูเท่านั้น
+    /// (ใครในกลุ่มก็กดยอมรับได้ — ผู้ขายไม่รู้ว่าใคร)</item>
+    /// </list>
+    /// ผู้เรียก: หน้าต่างส่ง (<c>DocumentLineSendService.OptionsAsync</c>) · ตอนเข้าคิว (<c>SendAsync</c>) · ตอนส่งจริง (<c>ContactLineQueueService</c> ตรวจซ้ำ — ค่าตั้งของปลายทางเปลี่ยนได้หลังเข้าคิว)
+    /// </summary>
+    public static bool PageLinkAllowed(string? kind, bool showAmounts, DocumentType type)
+        => PageLinkProblem(kind, showAmounts, type) == null;
+
+    /// <summary>เหตุที่ปลายทางนี้ไม่ได้ลิงก์หน้าเอกสาร (null = ได้) — ข้อความถึงพนักงานบนหน้าต่าง "ส่งให้ลูกค้า"</summary>
+    public static string? PageLinkProblem(string? kind, bool showAmounts, DocumentType type)
+    {
+        if (!NotifyEndpointKind.IsLine(kind)) return "ไม่ใช่ปลายทาง LINE";
+        var show = kind != NotifyEndpointKind.LineGroup || showAmounts;
+        if (!CustomerDocPage.PageLinkAllowedForLineEndpoint(kind, show, null, null))
+            return "กลุ่มนี้ตั้ง \"ซ่อนยอด\" — หน้าเอกสารแสดงยอดและรายการ ⇒ การ์ดไม่มีปุ่มลิงก์ (ส่งลิงก์ทาง LINE 1:1 หรืออีเมลแทน)";
+        if (kind == NotifyEndpointKind.LineGroup && CustomerDocPage.HasRespondAction(type))
+            return "กลุ่ม LINE ได้ปุ่มดูเท่านั้น — ใครในกลุ่มก็กดยอมรับ/เซ็นรับได้ (ส่งให้ผู้ลงนามทาง LINE 1:1 หรืออีเมล)";
+        return null;
+    }
 
     /// <summary>ฝ่ายค้าน 259 M1: ปลายทางนี้ได้ปุ่มชำระไหม — ตัวเดียวกับปุ่มดู PDF/ปุ่มอัปโหลด 50 ทวิ (กลุ่มซ่อนยอด ⇒ ไม่ได้)</summary>
     public static bool PayLinkAllowed(string? kind, bool showAmounts)
@@ -74,17 +101,49 @@ public static class DocumentLineSendRule
     }
 
     /// <summary>ฝ่ายค้าน 259 L2: แถวที่ผู้ใช้ติ๊กลิงก์ชำระ แต่ตอนส่งลิงก์ใช้ไม่ได้แล้ว ⇒ ไม่ส่ง (ไม่ใช่ส่งโดยไม่มีปุ่มแล้วขึ้น "ส่งแล้ว")</summary>
+    /// <summary>รอบ 267 P3: แถวที่ส่งลิงก์หน้าเอกสาร แต่ตอนส่งลิงก์ใช้ไม่ได้แล้ว (เพิกถอน/หมดอายุ/ใบที่ลูกค้าไม่เห็นแล้ว) ⇒ ไม่ส่ง</summary>
+    public const string PageLinkGoneAtSend =
+        "ไม่ส่ง — ลิงก์หน้าเอกสารของใบนี้ใช้ไม่ได้แล้ว (ถูกยกเลิก/หมดอายุ) · ออกลิงก์ใหม่แล้วส่งจาก \"📤 ส่งให้ลูกค้า\" อีกครั้ง";
+
+    /// <summary>รอบ 267 P3: ค่าตั้งของปลายทางเปลี่ยนหลังเข้าคิว (เช่น กลุ่มเปลี่ยนเป็นซ่อนยอด) จนไม่ได้ลิงก์หน้าเอกสารแล้ว ⇒ ไม่ส่ง</summary>
+    public const string PageLinkNotAllowedAtSend =
+        "ไม่ส่ง — ปลายทางนี้รับลิงก์หน้าเอกสารไม่ได้แล้ว (ค่าตั้งเปลี่ยนหลังเข้าคิว เช่น กลุ่มตั้งซ่อนยอด) · ส่งใหม่จาก \"📤 ส่งให้ลูกค้า\"";
+
+    /// <summary>ฝ่ายค้าน 267-P3 MED-2: เหตุต่อปลายทางที่ไม่ได้ปุ่มชำระ (หน้าต่างล็อกช่อง + การ์ดของปลายทางนี้ไม่มีปุ่มชำระ — ส่งการ์ดได้ตามปกติ)</summary>
+    public const string PayLinkHiddenGroupNote = "ไม่ใส่ปุ่มชำระ — กลุ่มนี้ตั้ง \"ซ่อนยอด\" (หน้าชำระแสดงยอดและรายการ)";
+
     public const string PayLinkGoneAtSend =
         "ไม่ส่ง — ลิงก์ชำระที่เลือกใส่ใช้ไม่ได้แล้ว (ถูกเพิกถอน/หมดอายุ/บริษัทปิดช่องทาง) · ส่งใหม่จากหน้าเอกสาร (ติ๊กหรือไม่ติ๊กลิงก์ชำระ)";
 
-    public static IReadOnlyList<Target> Targets(IReadOnlyList<ContactRecipientRule.RecipientOption> options)
+    public static IReadOnlyList<Target> Targets(IReadOnlyList<ContactRecipientRule.RecipientOption> options, DocumentType? type = null)
         => options.Where(o => o.EndpointId != null && NotifyEndpointKind.IsLine(o.Kind))
             .Select(o =>
             {
                 var show = o.Kind != NotifyEndpointKind.LineGroup || o.ShowAmounts;
+                var pageProblem = type is DocumentType t ? PageLinkProblem(o.Kind, o.ShowAmounts, t) : "ไม่ได้ตรวจ";
                 return new Target(o.EndpointId!.Value, o.Kind, NotifyEndpointKind.Label(o.Kind), o.Display, o.Available, o.Available ? null : o.Reason,
-                    show, LineDocumentViewLink.EndpointAllows(o.Kind, show, null, null), PayLinkAllowed(o.Kind, o.ShowAmounts));
+                    show, LineDocumentViewLink.EndpointAllows(o.Kind, show, null, null), PayLinkAllowed(o.Kind, o.ShowAmounts),
+                    type != null && pageProblem == null, type == null ? null : pageProblem,
+                    PayLinkAllowed(o.Kind, o.ShowAmounts) ? null : PayLinkHiddenGroupNote);
             }).ToList();
+
+    /// <summary>รอบ 267 P3 (267-1-61): ใบที่มีปุ่มตอบรับ + ส่งลิงก์หน้าเอกสาร ⇒ ปลายทาง 1:1 ที่ติ๊กเรื่อง "ลิงก์เซ็น" (แต่ไม่ได้ติ๊ก "เอกสาร") ก็รับได้ ·
+    /// รวมสองชุดของตัวหาผู้รับ: ส่งได้ในชุดใดชุดหนึ่ง ⇒ ส่งได้ (เรื่องที่บันทึกบนแถวคิว = เรื่องที่ทำให้ส่งได้ — ผู้ส่งคิวตรวจซ้ำด้วยเรื่องนั้น)</summary>
+    public static IReadOnlyList<(ContactRecipientRule.RecipientOption Option, NotifyTopic Topic)> MergeSignTopic(
+        IReadOnlyList<ContactRecipientRule.RecipientOption> document, IReadOnlyList<ContactRecipientRule.RecipientOption>? sign)
+    {
+        var list = new List<(ContactRecipientRule.RecipientOption, NotifyTopic)>();
+        foreach (var o in document)
+        {
+            var viaSign = !o.Available && o.Kind == NotifyEndpointKind.LineUser
+                ? sign?.FirstOrDefault(x => x.EndpointId == o.EndpointId && x.Available) : null;
+            list.Add(viaSign != null ? (viaSign, NotifyTopic.Sign) : (o, Topic));
+        }
+        foreach (var x in sign ?? Array.Empty<ContactRecipientRule.RecipientOption>())
+            if (x.Available && x.Kind == NotifyEndpointKind.LineUser && document.All(o => o.EndpointId != x.EndpointId))
+                list.Add((x, NotifyTopic.Sign));
+        return list;
+    }
 
     /// <summary>ปลายทางที่ผู้ใช้เลือก ⇒ ตัวเลือกที่ส่งได้ · เลือกว่าง / ไม่ใช่ LINE ของผู้ติดต่อนี้ / ใช้ไม่ได้ ⇒ เหตุ (ไม่ส่งบางส่วนเงียบ ๆ — ทั้งคำขอถูกปฏิเสธ)</summary>
     public static (IReadOnlyList<ContactRecipientRule.RecipientOption> Chosen, string? Problem) Pick(
@@ -105,7 +164,8 @@ public static class DocumentLineSendRule
     }
 
     /// <summary>ฝ่ายค้าน 259 L4: ข้อความผลต่อปลายทาง (เข้าคิว / มีแล้วในนาทีนี้)</summary>
-    public sealed record EndpointOutcome(Guid EndpointId, string Display, bool Queued);
+    /// <param name="PageLink">รอบ 267 P3: แถวนี้มีปุ่มลิงก์หน้าเอกสาร · <paramref name="Note"/> = เหตุที่ไม่มี (กลุ่มซ่อนยอด · กลุ่มของใบที่ตอบรับได้)</param>
+    public sealed record EndpointOutcome(Guid EndpointId, string Display, bool Queued, bool PageLink = false, string? Note = null);
 
     /// <summary>กุญแจเหตุการณ์ — ใบ + นาที (UTC) ⇒ กดซ้ำในนาทีเดียวกันได้แถวเดิม (unique ต่อปลายทางผ่าน <see cref="ContactLineChannel.QueueKey"/>)</summary>
     public static string BaseKey(Guid documentId, DateTime nowUtc) => $"doc:{documentId}:{ContactLineChannel.ManualTrigger}:{nowUtc:yyyyMMddHHmm}";

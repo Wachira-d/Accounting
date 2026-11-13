@@ -186,6 +186,13 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
     /// <summary>ยอดของลิงก์ — ยอดค้าง · WHT ที่คาดว่าจะหักจริง (ผู้ซื้อไม่มีหน้าที่ = 0) · ที่หักไปแล้วจากตัวนับเดียวกับตัวบันทึกรับชำระ</summary>
     private async Task<(DocumentPayLinkPolicy.Amounts Amounts, string? WhtNote)> AmountsAsync(Guid companyId, DocFacts d, CancellationToken ct)
     {
+        // รอบ 267 P5 (267-1-72): ใบวางบิล = ยอดค้างรวมของใบที่ค้าง (ตัวตัดสินชุดใบเดียว — จ่ายรวมได้เฉพาะชุดที่ไม่มีภาษีหัก ณ ที่จ่าย) · จ่ายรวมไม่ได้ = 0
+        if (d.Type == DocumentType.BillingNote)
+        {
+            var plan = await BillingNotePlanAsync(companyId, d.Id, ct);
+            var total = plan is { Payable: true } ? plan.Total : 0m;
+            return (new DocumentPayLinkPolicy.Amounts(total, 0m, total), null);
+        }
         var withholds = await BuyerWithholdsAsync(companyId, d.ContactId, ct);
         // รอบ 244 (ฝ่ายค้าน S2): WHT ที่เหลือจากตัวคิดเดียวกับตัวบันทึกรับชำระ (ใบลดหนี้ที่มีผล · ที่หักไปแล้ว) — NetCap
         var doc = await _db.Documents.AsNoTracking().FirstAsync(x => x.Id == d.Id && x.CompanyId == companyId, ct);
@@ -226,7 +233,8 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         if (d == null) return new PayLinkResult(null, null, Array.Empty<string>(), "ไม่พบเอกสาร");
         // รอบ 267 (267-1-1): ลิงก์หน้าเอกสาร — ด่านของ "หน้า" (ชนิด/ฝั่ง/สถานะ/ใบค่าบริการผู้เช่า) แทนด่านของ "การจ่าย" ·
         // ปุ่มจ่ายบนหน้ายังตัดสินสดด้วย Refusal(d) ทุกครั้งที่เปิด (PublicViewAsync) — ออกลิงก์ได้ ≠ จ่ายได้
-        var payRefusal = Refusal(d);
+        // รอบ 267 P5 (267-1-72): ใบวางบิล = ด่านของชุดใบ (จ่ายทั้งใบได้ไหม) · ชนิดอื่น = ด่านเดิม
+        var payRefusal = await PayRefusalAsync(companyId, d, ct);
         if (customerPage)
         {
             if (CustomerDocPage.IssueRefusal(d.Type, d.Status, await CustomerFacingAsync(companyId, d, ct), d.PlatformTenantDocument) is { } noPage)
@@ -476,6 +484,8 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
 
     public async Task<PublicDocumentPayView?> PublicViewAsync(Guid companyId, string token, CancellationToken ct = default)
     {
+        // ฝ่ายค้าน 267-P5 LOW-9: หน้าเดียวถามชุดใบของใบวางบิลหลายรอบ (ยอด · ด่านจ่าย ×2) ⇒ จำผลไว้ช่วงสั้นของคำขอเปิดหน้านี้ (เส้นสาธารณะ — ไม่ยิง query ซ้ำหลายร้อย)
+        BeginPlanMemo();
         // ค้นด้วย hash (ฐานไม่มี token ตรง) แล้วยืนยันซ้ำแบบเวลาคงที่ · รูปผิด = "ไม่พบ" เหมือน token ผิด
         if (!DocumentPayLinkPolicy.LooksValid(token)) return null;
         var d = await LoadDocAsync(companyId, null, DocumentPayLinkPolicy.TokenHash(token), ct);
@@ -498,13 +508,14 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         var allowed = DocumentPayLinkPolicy.Allowed(all, DocumentPayLinkPolicy.ParseChannels(d.PayLinkChannelsJson), companyDefault);
         var online = DocumentPayLinkPolicy.OnlineOnly(allowed);
         // ใบที่ไม่ใช่ชนิดตั้งหนี้ (ใบเสนอราคา · ใบส่งของ · ใบเสร็จ ฯลฯ) ไม่มียอดของลิงก์ — ไม่เรียกตัวคิด WHT ของการรับชำระ
-        var payType = CustomerDocPage.IsPayableType(d.Type);
+        // รอบ 267 P5 (267-1-72): ใบวางบิลมีส่วนชำระ (จ่ายทั้งใบ) — ยอด/ด่านจากตัวตัดสินชุดใบ (AmountsAsync · PayRefusalAsync)
+        var payType = CustomerDocPage.HasPaySection(d.Type);
         var amounts = payType ? (await AmountsAsync(companyId, d, ct)).Amounts : new DocumentPayLinkPolicy.Amounts(0m, 0m, 0m);
 
         // ตัดสินสดทุกครั้ง: ใบแจ้งหนี้ที่ออกใบกำกับแล้ว (ลิงก์ใช้จ่ายไม่ได้ทันที — รอบ 250) · ใบยกเลิก/ชำระครบ · บริษัทปิดรับออนไลน์ · ช่องทางของใบไม่เหลือ
         var payLinkUsable = DocumentPayLinkPolicy.LinkUsable(d.PayLinkTokenHash, d.PayLinkExpiresAt, d.PayLinkRevokedAt, now, d.SupersedingTaxInvoice);
         var blocked = (payLinkUsable ? null : DocumentPayLinkPolicy.UnusableNote(d.SupersedingTaxInvoice, UnusableLinkNote))
-            ?? Refusal(d)
+            ?? await PayRefusalAsync(companyId, d, ct)
             // ฝ่ายค้าน 267 M3: ลิงก์ที่ยังไม่เคยถูกเปิดให้จ่าย (ไม่มีช่องทางที่ตรึงไว้ — ออกเป็นลิงก์หน้าเอกสารขณะบริษัท/ผู้ติดต่อไม่เปิดรับชำระทางลิงก์)
             // ⇒ ไม่มีปุ่มจ่าย/บัญชีรับโอน/ฟอร์มสลิป จนกว่าทางจ่ายจะตรึงช่องทาง (ปุ่มออกลิงก์ชำระ · ตารางส่ง)
             ?? (d.PayLinkChannelsJson == null ? PayNotOpenedNote : null)

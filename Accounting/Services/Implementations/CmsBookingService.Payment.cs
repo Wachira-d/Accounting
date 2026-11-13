@@ -262,16 +262,18 @@ public partial class CmsBookingService
     {
         var doc = await db.Documents.AsNoTracking()
             .Where(d => d.Id == depositDocId && d.CompanyId == companyId)
-            .Select(d => new { d.Status, d.BankAccountId, d.PaymentAccountId, d.DocumentNumber, d.DocumentDate, d.ProjectId })
+            .Select(d => new { d.Status, d.BankAccountId, d.PaymentAccountId, d.DocumentNumber, d.DocumentDate, d.ProjectId, d.TotalAmount })
             .FirstOrDefaultAsync();
         if (doc == null || doc.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Voided or DocumentStatus.Rejected) return;
-        var raw = await db.SiteBookingPayments.AsNoTracking()
+        var all = await db.SiteBookingPayments.AsNoTracking()
             .Where(p => p.CompanyId == companyId && p.BookingId == bookingId && !p.IsDeleted && !p.IsRefund && p.Status == SitePaymentStatus.Completed)
             .OrderBy(p => p.CreatedAt).ThenBy(p => p.Id)
             .Select(p => new { p.Id, p.Amount, p.ChannelStamped, p.BankAccountId, p.MoneyInAccountId, p.PaidAt })
             .ToListAsync();
+        // รอบ 270 (ฝ่ายค้าน H1): เฉพาะแถวที่เป็นเงินของใบมัดจำ (ตัวเดียวกับตัววางแผนคืนเงิน) — เงินที่เข้าหลังออกใบไม่ใช่งวดของใบนี้
+        var raw = BookingDepositInstalmentChannel.DepositRows(all, p => p.Id, p => p.Amount, doc.TotalAmount, finalPaymentId);
         if (raw.Count == 0) return;
-        var final = finalPaymentId ?? raw[^1].Id;
+        var final = raw[^1].Id;
         var rows = raw.Select(p => new BookingDepositInstalmentChannel.Instalment(p.Id, p.Amount, p.ChannelStamped, p.BankAccountId, p.MoneyInAccountId, p.PaidAt)).ToList();
         var plan = BookingDepositInstalmentChannel.For(rows, final, doc.BankAccountId, doc.PaymentAccountId);
         if (plan.UnknownCount > 0)

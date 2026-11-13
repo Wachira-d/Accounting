@@ -545,7 +545,12 @@ public class CustomerDocPageRound267DbTests
         Assert.Equal(new[] { inv1.Id, inv2.Id }.OrderBy(x => x), page.Related.Select(r => r.RelId).OrderBy(x => x));
         Assert.All(page.Related, r => Assert.Equal("billed", r.Kind));
         Assert.Equal(1_070m, page.Related.Single(r => r.RelId == inv1.Id).BalanceDue);
-        Assert.Null(Act(page, CustomerDocPage.ActionPayOnline));                         // ใบวางบิล: ไม่มีปุ่มจ่ายรวมใน P1
+        // รอบ 267 P5 (267-1-72): ใบวางบิลมีปุ่ม "ชำระทั้งใบวางบิล" — ชุดนี้มีใบของผู้ติดต่ออื่น ⇒ ปิดพร้อมเหตุ + ทางไปต่อรายใบ (ไม่ใช่ปุ่มเทาที่ไม่บอกเหตุ)
+        var payAll = Act(page, CustomerDocPage.ActionPayOnline);
+        Assert.NotNull(payAll);
+        Assert.False(payAll!.Enabled);
+        Assert.Contains("ชำระรายใบ", payAll.DisabledReason);
+        Assert.Null(Act(page, CustomerDocPage.ActionSubmitSlip));                        // ไม่มีฟอร์มสลิปรวม
 
         Assert.Equal(bn.Id, await s.Links.ResolvePdfDocumentAsync(s.CompanyId, link.Token!, null));
         Assert.Equal(inv1.Id, await s.Links.ResolvePdfDocumentAsync(s.CompanyId, link.Token!, inv1.Id));

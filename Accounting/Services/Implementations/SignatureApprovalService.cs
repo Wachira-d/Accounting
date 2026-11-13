@@ -333,6 +333,35 @@ public class SignatureApprovalService : ISignatureApprovalService
             });
         }
 
+        // ฝ่ายค้าน 267-P5 MED-6: ขั้นบทบาทลูกค้าที่พนักงานบันทึกแทน ⇒ แถวหลักฐานผ่านผู้เขียนเดียว (ช่องทาง Staff · ระดับ StaffRecorded — ไม่อ้างว่าลูกค้าลงนามเอง) ·
+        // ไม่ตั้งภาพฉายคำตอบ (ลูกค้าไม่ได้ตอบเอง — ช่องตอบรับของลูกค้าบนหน้าเอกสารยังเปิดตามเดิม)
+        if (approval.ApproverRole == "Customer")
+        {
+            var doc = approval.Document;
+            var lines = await _db.DocumentLines.AsNoTracking().Where(l => l.DocumentId == doc.Id && !l.IsDeleted).ToListAsync();
+            var buyerName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId).Select(c => c.Name).FirstOrDefaultAsync();
+            var kind = doc.DocumentType == DocumentType.DeliveryNote ? Accounting.Helpers.CustomerSignRule.Kind.DeliverySigned
+                : doc.DocumentType == DocumentType.PurchaseOrder ? Accounting.Helpers.CustomerSignRule.Kind.PoAcknowledged
+                : Accounting.Helpers.CustomerSignRule.Kind.Accepted;
+            var ev = Accounting.Services.Implementations.CustomerDocumentResponseService.ExternalEvidence(doc, kind,
+                Accounting.Helpers.CustomerSignRule.ChannelStaff, Accounting.Helpers.CustomerSignRule.IdentityStaffRecorded, buyerName,
+                DocumentSignedContent.Hash(doc, lines), approval.ApproverName, approval.ApproverTitle, approval.ApproverEmail, request.Comments,
+                Accounting.Helpers.QuotationAcceptance.Sha256Hex(sigData), ipAddress, userId, DateTime.UtcNow);
+            await Accounting.Services.Implementations.CustomerDocumentResponseService.AppendEvidenceAsync(_db, ev);
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = Guid.TryParse(userId, out var staffGuid) ? staffGuid : null, Action = AuditAction.Approve,
+                EntityType = nameof(Document), EntityId = doc.Id.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    @event = "CustomerStepRecordedByStaff", documentNumber = doc.DocumentNumber, revisionNumber = doc.RevisionNumber,
+                    customerActionId = ev.Id, channel = ev.Channel, identityLevel = ev.IdentityLevel, ruleCode = Accounting.Helpers.CustomerSignText.RuleCode,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+        }
+
         await _db.SaveChangesAsync();
 
         // Check if all steps approved → update document + run post-action
@@ -531,6 +560,33 @@ public class SignatureApprovalService : ISignatureApprovalService
                     SignatureFormat = request.SignatureFormat,
                     SignedAt = DateTime.UtcNow,
                     IpAddress = ipAddress
+                });
+
+                // รอบ 267 P5 (267-1-43 ข้อ 2 · 267-1-71): ทุกทางลงนามของลูกค้าลงแถวหลักฐานชุดเดียวกัน — ผู้เขียนเดียว
+                // CustomerDocumentResponseService.AppendEvidenceAsync (แถว append-only + RoPA) ในธุรกรรมเดียวกับลายเซ็น · ช่องทาง Api ·
+                // ระดับตัวตน ApiReported (ชื่อ/ตำแหน่งที่ระบบภายนอกส่งมา — ไม่แต่งว่าผู้ลงนามติ๊กรับรอง) · audit chain อ้างแถว (ไม่คัดลอกข้อมูลผู้ลงนาม — 267-1-51)
+                var buyerName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                    .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId).Select(c => c.Name).FirstOrDefaultAsync();
+                var evidenceAt = DateTime.UtcNow;
+                var evidence = Accounting.Services.Implementations.CustomerDocumentResponseService.ApiEvidence(doc, buyerName, contentHash,
+                    request.ApproverName, request.ApproverTitle, request.ApproverEmail, request.Comments,
+                    Accounting.Helpers.QuotationAcceptance.Sha256Hex(request.SignatureData), ipAddress, actingUserId, evidenceAt);
+                await Accounting.Services.Implementations.CustomerDocumentResponseService.AppendEvidenceAsync(_db, evidence);
+                // ฝ่ายค้าน 267-P5 MED-6: ภาพฉายคำตอบบนใบ (ตัวอ่านของแผงหลักฐาน/คำเตือนอากรแสตมป์ 267-1-14 · ปุ่มตอบรับบนหน้าปิด) — ตัวตั้งเดียวกับเส้นหน้าเอกสาร
+                doc.CustomerResponse = nameof(Accounting.Helpers.CustomerSignRule.Kind.Accepted);
+                doc.CustomerResponseAt = evidenceAt;
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, UserId = Guid.TryParse(actingUserId, out var actorGuid) ? actorGuid : null, Action = AuditAction.Approve,
+                    EntityType = nameof(Document), EntityId = documentId.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        @event = "QuotationApprovedByIntegration", documentNumber = doc.DocumentNumber, revisionNumber = doc.RevisionNumber,
+                        contentHash, customerActionId = evidence.Id, channel = evidence.Channel, identityLevel = evidence.IdentityLevel,
+                        signatureSha256 = evidence.SignatureSha256, ruleCode = Accounting.Helpers.CustomerSignText.RuleCode,
+                        legalReference = Accounting.Helpers.CustomerSignText.LegalReference,
+                    }),
+                    IpAddress = null, Timestamp = evidenceAt,
                 });
             }
 

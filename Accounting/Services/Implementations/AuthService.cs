@@ -10,7 +10,7 @@ using System.Text.RegularExpressions;
 
 namespace Accounting.Services.Implementations;
 
-public class AuthService : IAuthService
+public class AuthService : IAuthService, ILineSignerLoginVerifier
 {
     private readonly AccountingDbContext _db;
     private readonly IConfiguration _config;
@@ -1349,12 +1349,38 @@ public class AuthService : IAuthService
         return url;
     }
 
+    // ═══════════════ รอบ 267 P5 (267-1-13): LINE Login ของผู้ลงนามเอกสาร (ไม่ใช่การเข้าสู่ระบบ — ไม่ออก JWT · ไม่สร้างผู้ใช้) ═══════════════
+
+    /// <summary>ช่อง LINE Login ของระบบเปิดใช้ไหม (ตัวตัดสินเดียวกับปุ่มเข้าสู่ระบบ <see cref="GetSsoSettingsAsync"/>) · null = ปิด/ไม่ได้ตั้ง</summary>
+    public async Task<string?> SignerLineChannelIdAsync()
+    {
+        var sso = await GetSsoSettingsAsync();
+        return sso.LineEnabled && !string.IsNullOrWhiteSpace(sso.LineChannelId) ? sso.LineChannelId : null;
+    }
+
+    /// <summary>แลก code ที่ LINE คืนมาที่หน้าเอกสาร ⇒ LINE userId (sub) ที่ LINE ยืนยันแล้ว (aud = ช่องของเรา) · ไม่สำเร็จ = null (ผู้เรียกตอบข้อความเดียว)</summary>
+    public async Task<string?> ResolveSignerLineUserAsync(string code, string redirectUri, CancellationToken ct = default)
+    {
+        var channelId = await SignerLineChannelIdAsync();
+        if (channelId == null || string.IsNullOrWhiteSpace(code) || code.Count(ch => ch == '.') == 2) return null;   // รับ code เท่านั้น (ไม่รับ id_token จากเบราว์เซอร์)
+        try
+        {
+            var identity = await ValidateLineTokenAsync(code, channelId, redirectUri);
+            return string.IsNullOrWhiteSpace(identity.Id) ? null : identity.Id;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or HttpRequestException or JsonException or TaskCanceledException)
+        {
+            _logger.LogWarning("LINE Login ของผู้ลงนามไม่สำเร็จ: {Reason}", ex.Message);
+            return null;
+        }
+    }
+
     /// <summary>LINE Login — verify id_token กับ LINE Platform (§ตรวจ audience
     /// ด้วย Channel ID ของเราเอง กัน token ของแอปอื่นเอามาใช้). อีเมลมาก็ต่อเมื่อ
     /// channel ขอ scope `email` และผู้ใช้อนุญาต — ถ้าไม่มี ตัวเรียกจะ throw
     /// พร้อมข้อความบอกให้อนุญาตอีเมล (เหมือน provider อื่น)</summary>
     private async Task<SsoIdentity> ValidateLineTokenAsync(
-        string idToken, string channelId)
+        string idToken, string channelId, string? redirectUriOverride = null)
     {
         if (string.IsNullOrWhiteSpace(channelId))
             throw new UnauthorizedAccessException("ยังไม่ได้ตั้งค่า LINE Channel ID");
@@ -1373,7 +1399,8 @@ public class AuthService : IAuthService
                 {
                     ["grant_type"] = "authorization_code",
                     ["code"] = idToken,
-                    ["redirect_uri"] = await GetSsoRedirectUriAsync("LINE"),
+                    // รอบ 267 P5: เข้าด้วย LINE จากหน้าเอกสาร (จำข้อมูลผู้ลงนาม) กลับมาที่หน้าเอกสาร — Callback URL ต้องตรงกับที่พาไป
+                    ["redirect_uri"] = redirectUriOverride ?? await GetSsoRedirectUriAsync("LINE"),
                     ["client_id"] = channelId,
                     ["client_secret"] = secret,
                 }));

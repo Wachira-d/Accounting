@@ -594,6 +594,23 @@ public partial class CrossTenantWorkflowService
         };
         _db.DocumentApprovals.Add(approval);
 
+        // ฝ่ายค้าน 267-P5 MED-6: การอนุมัติของคู่ค้า = ทางลงนามของลูกค้าอีกทาง ⇒ แถวหลักฐานผ่านผู้เขียนเดียว ฝั่งเอกสารของผู้ขาย (บริษัทต้นทาง) ·
+        // ช่องทาง Partner · ระดับ PartnerMember (ผู้ใช้ที่ล็อกอินของบริษัทผู้ซื้อ — ไม่ได้ติ๊กรับรองบนหน้าเอกสาร) · ใบเสนอราคา ⇒ ตั้งภาพฉายคำตอบ (คำเตือนอากรแสตมป์ 267-1-14)
+        var buyerOrg = await _db.Companies.AsNoTracking().Where(x => x.Id == approvingCompanyId).Select(x => x.Name).FirstOrDefaultAsync();
+        var partnerKind = link.SourceDocument.DocumentType == DocumentType.DeliveryNote ? Accounting.Helpers.CustomerSignRule.Kind.DeliverySigned
+            : link.SourceDocument.DocumentType == DocumentType.PurchaseOrder ? Accounting.Helpers.CustomerSignRule.Kind.PoAcknowledged
+            : Accounting.Helpers.CustomerSignRule.Kind.Accepted;
+        var partnerEvidence = Accounting.Services.Implementations.CustomerDocumentResponseService.ExternalEvidence(link.SourceDocument, partnerKind,
+            Accounting.Helpers.CustomerSignRule.ChannelPartner, Accounting.Helpers.CustomerSignRule.IdentityPartnerMember, buyerOrg,
+            approval.SignedContentHash!, signer?.FullName, null, signer?.Email, comment, Accounting.Helpers.QuotationAcceptance.Sha256Hex(signature?.SignatureData),
+            null, actingUserId.ToString(), DateTime.UtcNow);
+        await Accounting.Services.Implementations.CustomerDocumentResponseService.AppendEvidenceAsync(_db, partnerEvidence);
+        if (link.SourceDocument.DocumentType == DocumentType.Quotation && link.SourceDocument.CustomerResponse == null)
+        {
+            link.SourceDocument.CustomerResponse = nameof(Accounting.Helpers.CustomerSignRule.Kind.Accepted);
+            link.SourceDocument.CustomerResponseAt = DateTime.UtcNow;
+        }
+
         // Also stamp a rendered DocumentSignature row at the source side
         // (matches how the existing approval flow works for in-tenant
         // approvals, so PDF rendering / display logic is identical).

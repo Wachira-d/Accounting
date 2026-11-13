@@ -33,6 +33,8 @@ public static class CustomerSignText
         CustomerSignRule.Kind.Accepted => T(en, "ยอมรับใบเสนอราคา", "accept this quotation"),
         CustomerSignRule.Kind.Declined => T(en, "แจ้งไม่รับใบเสนอราคา", "decline this quotation"),
         CustomerSignRule.Kind.ChangeRequested => T(en, "ขอแก้ไขใบเสนอราคา", "request changes to this quotation"),
+        CustomerSignRule.Kind.PoAcknowledged => T(en, "รับทราบและยืนยันใบสั่งซื้อ", "acknowledge and confirm this purchase order"),
+        CustomerSignRule.Kind.PoDeclined => T(en, "แจ้งไม่รับใบสั่งซื้อ", "decline this purchase order"),
         _ => T(en, "รับสินค้า", "receive the goods"),
     };
 
@@ -57,7 +59,7 @@ public static class CustomerSignText
     public static string Consent(bool en, CustomerSignRule.Kind kind)
     {
         var verb = Verb(en, kind);
-        var signs = kind is CustomerSignRule.Kind.Accepted or CustomerSignRule.Kind.DeliverySigned;
+        var signs = CustomerSignRule.IsSigningKind(kind);
         var head = T(en,
             $"การกดปุ่มเพื่อ{verb} พร้อมชื่อ นามสกุล ตำแหน่ง และการติ๊กรับรองข้างต้น ถือเป็นการลงลายมือชื่ออิเล็กทรอนิกส์ของท่าน "
             + "(พ.ร.บ.ว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 มาตรา 9) — ",
@@ -116,6 +118,8 @@ public static class CustomerSignText
         CustomerSignRule.Kind.Accepted => T(en, "ยอมรับใบเสนอราคา", "Quotation accepted"),
         CustomerSignRule.Kind.Declined => T(en, "ไม่รับใบเสนอราคา", "Quotation declined"),
         CustomerSignRule.Kind.ChangeRequested => T(en, "ขอแก้ไขใบเสนอราคา", "Changes requested"),
+        CustomerSignRule.Kind.PoAcknowledged => T(en, "ผู้ขายรับทราบใบสั่งซื้อ", "Purchase order acknowledged"),
+        CustomerSignRule.Kind.PoDeclined => T(en, "ผู้ขายไม่รับใบสั่งซื้อ", "Purchase order declined"),
         _ => T(en, "เซ็นรับสินค้า", "Delivery signed for"),
     };
 
@@ -129,6 +133,12 @@ public static class CustomerSignText
             : T(en, "ยอมรับใบเสนอราคาเรียบร้อย — ระบบจะแจ้งผู้ขาย · ฉบับที่ลงนามกำลังจัดเตรียม เปิดหน้านี้อีกครั้งภายหลัง",
                 "Quotation accepted — the seller will be notified · the signed copy is being prepared, please reopen this page later"),
         CustomerSignRule.Kind.Declined => T(en, "บันทึกการไม่รับใบเสนอราคาแล้ว — ระบบจะแจ้งผู้ขายพร้อมเหตุผลของท่าน", "Your decline has been recorded — the seller will be notified with your reason"),
+        CustomerSignRule.Kind.PoAcknowledged => signedCopyReady
+            ? T(en, "รับทราบใบสั่งซื้อเรียบร้อย — ระบบจะแจ้งผู้ซื้อ และท่านดาวน์โหลดฉบับที่ลงนามได้จากหน้านี้",
+                "Purchase order acknowledged — the buyer will be notified and you can download the signed copy from this page")
+            : T(en, "รับทราบใบสั่งซื้อเรียบร้อย — ระบบจะแจ้งผู้ซื้อ · ฉบับที่ลงนามกำลังจัดเตรียม เปิดหน้านี้อีกครั้งภายหลัง",
+                "Purchase order acknowledged — the buyer will be notified · the signed copy is being prepared, please reopen this page later"),
+        CustomerSignRule.Kind.PoDeclined => T(en, "บันทึกการไม่รับใบสั่งซื้อแล้ว — ระบบจะแจ้งผู้ซื้อพร้อมเหตุผลของท่าน", "Your decline has been recorded — the buyer will be notified with your reason"),
         CustomerSignRule.Kind.ChangeRequested => T(en, "บันทึกคำขอแก้ไขแล้ว — ระบบจะแจ้งผู้ขาย และผู้ขายจะส่งใบเสนอราคาฉบับแก้ไขให้ท่าน", "Your change request was recorded — the seller will be notified and will send you a revised quotation"),
         _ => signedCopyReady
             ? T(en, "เซ็นรับสินค้าเรียบร้อย — ท่านดาวน์โหลดฉบับที่ลงนามได้จากหน้านี้", "Delivery signed for — you can download the signed copy from this page")
@@ -166,6 +176,16 @@ public static class CustomerSignText
         ["responded"] = T(en, "ผู้ขายได้รับคำตอบของท่านแล้ว — หากต้องการเปลี่ยนคำตอบ กรุณาติดต่อผู้ขายให้ส่งลิงก์ตอบรับใหม่",
             "The seller has received your response — to change it, ask the seller to reopen the document for a response"),
         ["connection"] = T(en, "เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง", "Connection failed — please try again"),
+        // รอบ 267 P5 — ใบสั่งซื้อ (ผู้ขายรับทราบ) + จำข้อมูลผู้ลงนามด้วย LINE (267-1-13)
+        ["promisedDate"] = T(en, "วันส่งของที่ยืนยัน (ไม่บังคับ)", "Confirmed delivery date (optional)"),
+        ["poDeclineMessage"] = T(en, "เหตุที่ไม่รับใบสั่งซื้อ", "Why the purchase order is declined"),
+        ["lineLogin"] = T(en, "เข้าด้วย LINE เพื่อเติมข้อมูลผู้ลงนาม", "Sign in with LINE to fill in your details"),
+        ["lineLinked"] = T(en, "เข้าด้วย LINE แล้ว — ข้อมูลที่จำไว้ถูกเติมให้ (ท่านยังต้องตรวจและติ๊กรับรองเองทุกครั้ง)",
+            "Signed in with LINE — your saved details were filled in (you still need to check them and tick the confirmation every time)"),
+        // "lineRemember" (ข้อความยินยอมฉบับเต็ม) มาจาก CustomerSignerProfileRule.ConsentText ผ่าน CustomerDocumentResponseService.FormLabelsWithConsent (ฝ่ายค้าน 267-P5 MED-2)
+        ["lineNotMe"] = T(en, "ไม่ใช่ฉัน — ออกจาก LINE บนหน้านี้", "Not me — sign out of LINE on this page"),
+        ["lineForget"] = T(en, "ลบข้อมูลที่จำไว้กับ LINE และถอนความยินยอม", "Delete my saved details and withdraw consent"),
+        ["lineForgotten"] = T(en, "ลบข้อมูลที่จำไว้และถอนความยินยอมแล้ว", "Your saved details were deleted and consent withdrawn"),
     };
 
     /// <summary>ข้อความของอีเมลรหัสยืนยัน (หัวเรื่อง · เนื้อ HTML — ค่าที่ผู้ใช้คุมได้ถูก encode ที่ผู้เรียก)</summary>

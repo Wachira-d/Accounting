@@ -269,7 +269,9 @@ public class SignRequestRound240Tests
         Assert.NotNull(SignRequestKinds.IssueRefusal(DocumentType.Invoice, DocumentStatus.Approved));
         Assert.Equal("quotation.accepted", SignRequestKinds.For(DocumentType.Quotation)!.EventType);
         Assert.Equal("delivery.signed", SignRequestKinds.For(DocumentType.DeliveryNote)!.EventType);
-        Assert.Null(SignRequestKinds.For(DocumentType.PurchaseOrder));
+        // รอบ 267 P5 (267-1-70): ใบสั่งซื้อ — ผู้ขายรับทราบ · ชนิดอื่นยังไม่มีลิงก์ตอบรับ
+        Assert.Equal("purchase_order.acknowledged", SignRequestKinds.For(DocumentType.PurchaseOrder)!.EventType);
+        Assert.Null(SignRequestKinds.For(DocumentType.Invoice));
     }
 
     [Fact]
@@ -444,7 +446,8 @@ public class SignRequestRound240Tests
         using var db = new Accounting.Data.AccountingDbContext(new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<Accounting.Data.AccountingDbContext>()
             .UseNpgsql("Host=127.0.0.1;Port=1;Database=offline;Username=none;Password=none").Options);
         // รอบ 267 P2: คอลัมน์ใหม่ของ outbox (CustomerActionId · SignedCopyDoneAt) อยู่ใน CustomerSignMigration ⇒ ตรวจรวมสองชุด
-        var migration = string.Join("\n", SignRequestMigration.Statements().Concat(CustomerSignMigration.Statements()));
+        // รอบ 267 P3: SourceLineQueueId · SignedCopyLineQueuedAt อยู่ใน CustomerShareMigration
+        var migration = string.Join("\n", SignRequestMigration.Statements().Concat(CustomerSignMigration.Statements()).Concat(CustomerShareMigration.Statements()));
         var et = db.Model.FindEntityType(typeof(SignEventOutboxEntry))!;
         Assert.Contains($"CREATE TABLE IF NOT EXISTS \"{et.GetTableName()}\"", migration);
         foreach (var p in et.GetProperties()) Assert.Contains($"\"{p.GetColumnName()}\"", migration);

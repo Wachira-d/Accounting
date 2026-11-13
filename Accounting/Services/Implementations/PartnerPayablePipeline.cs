@@ -32,12 +32,20 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public class PartnerPayablePipeline
 {
-    /// <summary>คำตัดสิน 268-1-1 — จุดเสียบของชั้นที่ 1 (รายการเดินบัญชีฝั่งเงินออกที่ตรงการแจ้งเดียว · ผู้ป้อนจริง = แพ็ก P4 <c>BankPaymentLineMatch</c>) ·
-    /// วันนี้<b>ไม่มีตัวใน DI</b> ⇒ null ⇒ ท่อตัดสินจากชั้นที่มีจริง (บัญชีตั้งต้นในความยินยอม = preselect ไม่บันทึกเอง) · เทสต์ Db ป้อนตัวปลอมเพื่อเดินเส้นบันทึกเอง</summary>
+    /// <summary>คำตัดสิน 268-1-1 — จุดเสียบของชั้นที่ 1 (รายการเดินบัญชีฝั่งเงินออกที่ตรงการแจ้งเดียว) · รอบ 264 P4 (คำตัดสิน 264-5-10): ผู้ป้อนจริง =
+    /// <see cref="BankPaymentLineEvidence"/> (ตาราง <c>BankTransactions</c> เดิม ⇒ <see cref="BankPaymentLineMatch"/>) ลงทะเบียนใน DI แล้ว ·
+    /// ไม่มีบรรทัดที่ตรง ⇒ (null, null) ⇒ ท่อตัดสินจากชั้นที่มีจริง (สลิป/บัญชีตั้งต้น = preselect ไม่บันทึกเอง — 264-4-9 · 268-1-1)</summary>
     public interface IBankLineEvidence
     {
         /// <returns>บัญชีของบริษัทผู้ซื้อที่รายการเดินบัญชีแสดงว่าเงินออกจริง + ป้าย (วันที่) · ไม่พบ/ไม่ชัด ⇒ (null, null) — ห้ามเดา</returns>
         Task<(Guid? BankAccountId, string? Label)> FindAsync(Guid companyId, PartnerPaymentNotice notice, CancellationToken ct);
+
+        /// <summary>หลังท่อบันทึกจ่ายจากหลักฐานบรรทัด ⇒ ผูกบรรทัดกับการจ่ายนั้น (กระทบยอดปิดในตัว) · คืน 1 = ผูกแล้ว · 0 = ผูกไม่ได้ (ถูกจับคู่ไปก่อน) ·
+        /// ตัวปลอมในเทสต์ที่ไม่มีบรรทัดจริงใช้ค่าตั้งต้น (0)</summary>
+        Task<int> BindAsync(Guid companyId, PartnerPaymentNotice notice, Guid paymentId, CancellationToken ct) => Task.FromResult(0);
+
+        /// <summary>ฝ่ายค้าน 264-P4 L5: วันที่ของบรรทัดที่เป็นหลักฐาน (วันที่เงินออกจริง) — PV ลงวันนั้นเมื่อชั้นรายการเดินบัญชีชนะ · ไม่มี ⇒ null (ใช้วันที่ผู้ขายรับเงิน)</summary>
+        Task<DateTime?> EvidenceDateAsync(Guid companyId, PartnerPaymentNotice notice, CancellationToken ct) => Task.FromResult<DateTime?>(null);
     }
 
     private readonly AccountingDbContext _db;
@@ -70,6 +78,10 @@ public class PartnerPayablePipeline
     public async Task<int> RunOnceAsync(DateTime nowUtc, CancellationToken ct = default)
     {
         var done = await SweepSellerVoidedAsync(nowUtc, ct);
+        // รอบ 264 P4 (ฝ่ายค้าน 264-P2 L3 · คำตัดสิน 264-5-13): ล้างเลขผู้โอนบนการแจ้งที่ไม่ใช่บัญชีของผู้ซื้อ/จบแล้ว (ทุกบริษัท · ไม่ขึ้นกับความยินยอม — ลดข้อมูล ไม่ใช่งานอัตโนมัติทางเงิน)
+        done += await SweepSlipPayerAsync(nowUtc, ct);
+        // รอบ 264 P4 (264-5-12): การแจ้งที่ตรงแผน "แจ้งโอน" ซึ่งผู้ซื้อบันทึก PV ไว้แล้ว ⇒ ปิดเป็นบันทึกแล้ว (ไม่สร้าง PV ที่สอง · ทุกบริษัท)
+        done += await CloseFromPlansAsync(nowUtc, ct);
         var name = Scope.AutoRecordPayment.ToString();
         // บริษัทที่มีความยินยอมบันทึกจ่ายที่ยังใช้อยู่ — ไม่มี = ไม่มีงาน (ปุ่มเดียวเดิมทำงานเหมือนเดิม)
         var payers = await _db.PartnerAutomationConsents.AsNoTracking()
@@ -158,6 +170,8 @@ public class PartnerPayablePipeline
             var existing = await _db.Payments.AsNoTracking()
                 .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Reference != null && refs.Contains(p.Reference))
                 .Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct);
+            // รอบ 264 P4 (264-5-12): ผู้ซื้อแจ้งโอนจากระบบของเราแล้ว (PV ของแผนเดียวกัน) ⇒ ปิดด้วย PV นั้น (ไม่สร้างที่สอง)
+            existing ??= await PlanPaymentForNoticeAsync(_db, companyId, n, ct);
             if (existing is Guid already)
             {
                 await MarkRecordedAsync(companyId, noticeId, already, null, null, null, nowUtc, ct);
@@ -184,6 +198,10 @@ public class PartnerPayablePipeline
                 : await consentSvc.CheckForWriteAsync(companyId, n.TradingPartnershipId, Scope.AutoRecordPayment, CapOf(doc), ct);
             (Guid? BankAccountId, string? Label) line = _bankLine == null ? default : await _bankLine.FindAsync(companyId, n, ct);
             var source = await SourceDecisionAsync(_db, companyId, n, doc, usable, consent, nowUtc, ct, line.BankAccountId, line.Label);
+            // ฝ่ายค้าน 264-P4 L5: ชั้นรายการเดินบัญชีชนะ ⇒ PV ลงวันที่เงินออกจริง (งวดปิด = เส้นจ่ายเดิมปฏิเสธ ⇒ ปุ่มเดียว + เหตุ — กติกาเดียวกับทั้งระบบ)
+            var paymentDate = n.PaidAt;
+            if (source.Origin == PartnerPaySourceAccount.Origin.BankLine && _bankLine != null && await _bankLine.EvidenceDateAsync(companyId, n, ct) is DateTime lineDate)
+                paymentDate = PaymentDateOfLine(lineDate);
             var verdict = PartnerAutoRecordPolicy.Decide(new PartnerAutoRecordPolicy.Facts(
                 NoticeOpen: true,
                 SellerPaymentKnown: live != null,
@@ -198,7 +216,7 @@ public class PartnerPayablePipeline
                 VatMismatch: doc != null && src != null && !PartnerInputVatEvidence.VatMatches(src.VatAmount, doc.VatAmount),
                 Source: source,
                 UnexplainedPurchasePayment: otherPayment,
-                WhtDateInPastMonth: PartnerAutoRecordPolicy.WhtDateInPastMonthOf(n.PaidAt, plan.Wht, nowUtc)));
+                WhtDateInPastMonth: PartnerAutoRecordPolicy.WhtDateInPastMonthOf(paymentDate, plan.Wht, nowUtc)));
             if (!verdict.Auto || consent?.GrantorUserId is not Guid grantor || source.BankAccountId is not Guid bank || plan.Amount is not decimal amount)
             {
                 await lockTx.RollbackAsync(ct);
@@ -224,7 +242,7 @@ public class PartnerPayablePipeline
             try
             {
                 pay = await _docs.CreatePaymentAsync(companyId, new Models.DTOs.Document.CreatePaymentRequest(
-                    DocumentId: n.TargetDocumentId, PaymentDate: n.PaidAt, Amount: amount, PaymentMethod: PartnerPaymentNoticeRule.DefaultMethod(n.SourceChannel),
+                    DocumentId: n.TargetDocumentId, PaymentDate: paymentDate, Amount: amount, PaymentMethod: PartnerPaymentNoticeRule.DefaultMethod(n.SourceChannel),
                     Reference: reference, BankAccount: null, Notes: notes,
                     OverrideBankAccountId: bank, WithholdingTaxAmount: plan.Wht), grantor.ToString(), PaymentEntrySource.PartnerAuto);
             }
@@ -238,6 +256,7 @@ public class PartnerPayablePipeline
                 return false;
             }
             await lockTx.CommitAsync(ct);
+            // ฝ่ายค้าน 264-P4 M1: ผูกบรรทัดเกิดใน MarkRecordedAsync (ทุกทางที่ปิดการแจ้งด้วย PV — ตัวเขียนเดียว BindAsync)
             await MarkRecordedAsync(companyId, noticeId, pay.Id, consent, source, plan, nowUtc, ct);
             await NotifyAutoRecordedAsync(companyId, n, amount, plan.Wht ?? 0m, source, grantorName, ct);
             return true;
@@ -287,6 +306,9 @@ public class PartnerPayablePipeline
         PartnerPaymentNoticeRule.Plan? plan, DateTime nowUtc, CancellationToken ct)
     {
         var fresh = await _db.PartnerPaymentNotices.FirstAsync(x => x.Id == noticeId && x.CompanyId == companyId, ct);
+        // ฝ่ายค้าน 264-P4 M1: บรรทัดเงินออกที่ตรงการแจ้งนี้ (และบัญชีเดียวกับ PV) ⇒ ผูกกับ PV ทุกทาง (ท่อ · PV ของแผน · ตาข่าย) — ตัวเขียนเดียว ·
+        // ไม่มีบรรทัด/คนละบัญชี ⇒ null/false ลง audit · ล้ม = LogError (การจ่ายบันทึกแล้ว)
+        var bankLineBound = await BindLineAsync(companyId, fresh, paymentId, ct);
         fresh.Status = PartnerPaymentNoticeRule.StatusRecorded;
         fresh.RecordedPaymentId = paymentId;
         fresh.ResolvedAt = nowUtc;
@@ -302,9 +324,10 @@ public class PartnerPayablePipeline
                 evidence = source?.Label, confidence = source?.Confidence, losers = source?.Losers.Select(l => new { origin = l.Origin.ToString(), l.BankAccountId }),
                 amount = plan?.Amount, wht = plan?.Wht, entrySource = nameof(PaymentEntrySource.PartnerAuto),
                 ruleCode = PartnerAutoRecordPolicy.RuleCode, legalReference = PartnerAutoRecordPolicy.LegalReference,
-                consentRuleCode = PartnerConsent.RuleCode, usedAi = false,
+                consentRuleCode = PartnerConsent.RuleCode, usedAi = false, bankLineBound,
             });
         await _db.SaveChangesAsync(ct);
+        await ScrubSlipPayerAsync(_db, fresh, nowUtc, ct);
         if (fresh.SellerVoidedAt != null || await PartnerPaymentNoticeService.SellerPaymentLiveAsync(_db, fresh, ct) == false)
             await PartnerPaymentNoticeService.FlagRecordedVoidedAsync(_db, fresh, "ผู้ขาย", nowUtc, ct);
     }
@@ -380,6 +403,15 @@ public class PartnerPayablePipeline
         Guid? bankLine = null, string? bankLineLabel = null)
     {
         Guid? history = null;
+        // รอบ 264 P4 (264-5-11): ชั้น PayerDeclared = แผน "จ่ายจากระบบของเรา" ที่เปิดรายการชำระของผู้ขายตัวเดียวกับการแจ้งนี้ (บริษัทผู้เรียกเท่านั้น)
+        var declared = n.PaymentIntentId is Guid intentId
+            ? await db.PartnerPaymentPlans.AsNoTracking()
+                .Where(x => x.CompanyId == companyId && x.SellerIntentId == intentId && x.Kind == PartnerPaymentPlanRule.KindGateway)
+                .Select(x => new { x.BankAccountId, x.ChosenByUserId, x.Method }).FirstOrDefaultAsync(ct)
+            : null;
+        var declaredBy = declared == null ? null
+            : await db.CompanyUsers.AsNoTracking().Where(cu => cu.CompanyId == companyId && cu.UserId == declared.ChosenByUserId)
+                .Select(cu => cu.User.FullName).FirstOrDefaultAsync(ct);
         if (purchase != null)
         {
             var since = nowUtc.AddMonths(-12);
@@ -395,22 +427,145 @@ public class PartnerPayablePipeline
             Usable: usable,
             BankLine: bankLine,    // ผู้ป้อน = IBankLineEvidence ของท่อ (backlog แพ็ก P4 BankPaymentLineMatch — วันนี้ไม่มีตัวใน DI ⇒ null) · ตัวตัดสินกรองด้วยชุดที่ใช้ได้เอง
             BankLineLabel: bankLineLabel,
-            PayerDeclared: null,   // backlog แพ็ก P4 ("จ่ายจากระบบของเรา" — PartnerPaymentPlans)
+            PayerDeclared: declared?.BankAccountId,   // รอบ 264 P4: "จ่ายจากระบบของเรา" (PartnerPaymentPlans) · ตัวตัดสินกรองด้วยชุดที่ใช้ได้เอง
+            PayerName: declaredBy,
             SlipMatch: await SlipMatchAsync(db, companyId, n, ct),   // รอบ 264 P2: ผู้โอนบนสลิปที่ผู้ขายได้รับ ⇒ SlipAccountMatch กับบัญชีของเรา
             ConsentDefault: consent is { Ok: true } ? consent.DefaultPayBankAccountId : null,
             ConsentDefaultProblem: consent?.PayAccountProblem,
             History: history,
-            PurchaseDocBank: purchase?.BankAccountId));
+            PurchaseDocBank: purchase?.BankAccountId,
+            // ฝ่ายค้าน 264-P4 M4: พร้อมเพย์/วอลเล็ตไม่ผูกบัญชีต้นทาง ⇒ PayerDeclared preselect อย่างเดียว
+            PayerDeclaredBindsAccount: declared == null || PartnerPaymentPlanRule.MethodBindsAccount(declared.Method)));
     }
 
     /// <summary>รอบ 264 P2 (คำตัดสิน 264-4-7): ผู้โอนบนสลิป (คอลัมน์บนแถวแจ้ง) ⇒ <see cref="SlipAccountMatch.Match"/> กับ<b>ทุกบัญชีที่ไม่ถูกลบ</b>ของผู้ซื้อ ·
     /// ไม่มีข้อมูล ⇒ null (ชั้นไม่เกิด — ผลเท่าเดิม) · บัตร/บิล/พร้อมเพย์ ⇒ <see cref="PartnerPaySourceAccount.SlipKind.None"/></summary>
     internal static async Task<PartnerPaySourceAccount.Slip?> SlipMatchAsync(AccountingDbContext db, Guid companyId, PartnerPaymentNotice n, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(n.SlipPayerBankCode) || string.IsNullOrWhiteSpace(n.SlipPayerAccountMask)) return null;
+        // รอบ 264 P4 (L3 · 264-5-13): เลขถูกล้างแล้ว ⇒ อ่านผลที่เก็บแทน (NotOurs คงผล — ยังเปิดตัวเลือกกรรมการจ่ายแทนให้คน)
+        if (string.IsNullOrWhiteSpace(n.SlipPayerBankCode) || string.IsNullOrWhiteSpace(n.SlipPayerAccountMask)) return PartnerPaymentPlanRule.SlipFromStoredKind(n.SlipPayerMatch);
         var accounts = await db.BankAccounts.AsNoTracking().Where(b => b.CompanyId == companyId && !b.IsDeleted)
             .Select(b => new SlipAccountMatch.AccountKey(b.Id, b.BankName, b.AccountNumber)).ToListAsync(ct);
         return SlipKindOf(n.SlipPayerBankCode, n.SlipPayerAccountMask, accounts);
+    }
+
+    // ═══════════ รอบ 264 P4 — ตัวเขียนของ L3 (ล้างเลขผู้โอน) + ปิดการแจ้งด้วย PV ของแผนแจ้งโอน ═══════════
+
+    public const int SlipSweepBatch = 100;
+
+    /// <summary>ฝ่ายค้าน 264-P2 L3 (คำตัดสิน 264-5-13) — <b>ตัวเขียนเดียว</b>ของการล้างผู้โอนบนการแจ้ง: ตรวจผลจับคู่ (<see cref="SlipMatchAsync"/> ตัวอ่านเดียว) ·
+    /// ไม่ใช่บัญชีของผู้ซื้อ หรือการแจ้งจบแล้ว (<see cref="PartnerPaymentPlanRule.ShouldClearSlipPayer"/>) ⇒ ล้างธนาคาร+เลข เหลือชนิด · อื่น ๆ ⇒ ประทับชนิดอย่างเดียว (watermark) ·
+    /// เส้นตัดสิน (<see cref="SourceDecisionAsync"/>) ยังอ่านอย่างเดียว · audit chain เมื่อล้าง (ไม่มีเลขใน audit) · คืน 1 = ล้าง</summary>
+    public static async Task<int> ScrubSlipPayerAsync(AccountingDbContext db, PartnerPaymentNotice n, DateTime nowUtc, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(n.SlipPayerAccountMask) && string.IsNullOrWhiteSpace(n.SlipPayerBankCode)) return 0;
+        var slip = await SlipMatchAsync(db, n.CompanyId, n, ct);
+        var kind = slip?.Kind;
+        var stored = kind?.ToString();
+        var status = await db.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters().Where(x => x.Id == n.Id && x.CompanyId == n.CompanyId)
+            .Select(x => x.Status).FirstOrDefaultAsync(ct);
+        if (!PartnerPaymentPlanRule.ShouldClearSlipPayer(kind, status))
+        {
+            await db.PartnerPaymentNotices.IgnoreQueryFilters().Where(x => x.Id == n.Id && x.CompanyId == n.CompanyId)
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.SlipPayerMatch, stored), ct);
+            return 0;
+        }
+        var cleared = await db.PartnerPaymentNotices.IgnoreQueryFilters()
+            .Where(x => x.Id == n.Id && x.CompanyId == n.CompanyId && (x.SlipPayerAccountMask != null || x.SlipPayerBankCode != null))
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(x => x.SlipPayerAccountMask, (string?)null)
+                .SetProperty(x => x.SlipPayerBankCode, (string?)null)
+                .SetProperty(x => x.SlipPayerMatch, stored)
+                .SetProperty(x => x.UpdatedAt, (DateTime?)nowUtc), ct);
+        if (cleared != 1) return 0;
+        db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = n.CompanyId, Action = AuditAction.Update, EntityType = nameof(PartnerPaymentNotice), EntityId = n.Id.ToString(),
+            NewValues = JsonSerializer.Serialize(new
+            {
+                @event = "PartnerPaymentNoticeSlipPayerCleared", slipMatch = stored, status, ruleCode = PartnerPaymentPlanRule.RuleCode,
+                legalReference = "พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล 2562 ม.22 (เก็บเท่าที่จำเป็น) · ม.37(3) (ลบเมื่อพ้นความจำเป็น)",
+            }),
+            Timestamp = nowUtc,
+        });
+        await db.SaveChangesAsync(ct);
+        return 1;
+    }
+
+    /// <summary>ตาข่ายของ <see cref="ScrubSlipPayerAsync"/> (ทุกบริษัท · batch): แถวที่ยังมีเลข และ (ยังไม่เคยตรวจ หรือจบแล้ว) — แถวที่ตรวจแล้วและยังเปิดไม่ถูกหยิบซ้ำ (watermark = <c>SlipPayerMatch</c>)</summary>
+    public async Task<int> SweepSlipPayerAsync(DateTime nowUtc, CancellationToken ct = default)
+    {
+        var terminal = new[] { PartnerPaymentNoticeRule.StatusRecorded, PartnerPaymentNoticeRule.StatusDismissed, PartnerPaymentNoticeRule.StatusWithdrawn };
+        var rows = await _db.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters()
+            .Where(x => x.SlipPayerAccountMask != null && (x.SlipPayerMatch == null || terminal.Contains(x.Status)))
+            .OrderBy(x => x.CreatedAt).Take(SlipSweepBatch).ToListAsync(ct);
+        var done = 0;
+        foreach (var n in rows) done += await ScrubSlipPayerAsync(_db, n, nowUtc, ct);
+        return done;
+    }
+
+    /// <summary>รอบ 264 P4 (264-5-12): PV ของผู้ซื้อจากแผน "แจ้งโอน" ของใบซื้อเดียวกัน (บริษัทผู้เรียกเท่านั้น · PV ยังไม่ถูกยกเลิก) · ไม่พบ ⇒ null ·
+    /// ฝ่ายค้าน 264-P4 M2/M3 (คำตัดสิน 264-5-18): PV ของแผนหาจาก <c>BuyerPaymentId</c> หรือเลขอ้างอิง canonical ของแผน (ขั้นผูกล้มก็ยังเจอ) · แผนที่ผู้ขายไม่ได้รับสำเนาสลิป
+    /// (ไม่มีรายการของผู้ขาย) จับคู่ด้วยยอด/วันที่ตัวเดียวที่ยังไม่ถูกการแจ้งอื่นอ้าง (ตัวตัดสิน pure <see cref="PartnerPaymentPlanRule.PlanPaymentFor"/>) · L6: แผนที่ถูกลบไม่นับ</summary>
+    public static async Task<Guid?> PlanPaymentForNoticeAsync(AccountingDbContext db, Guid companyId, PartnerPaymentNotice n, CancellationToken ct = default)
+    {
+        var rows = await db.PartnerPaymentPlans.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.Kind == PartnerPaymentPlanRule.KindTransfer && x.PurchaseDocumentId == n.TargetDocumentId)
+            .Select(x => new { x.Id, x.BuyerPaymentId, x.SellerIntentId, x.Amount, x.TransferredAt }).ToListAsync(ct);
+        if (rows.Count == 0) return null;
+        var facts = new List<PartnerPaymentPlanRule.TransferPlanFact>();
+        foreach (var r in rows)
+        {
+            var pv = r.BuyerPaymentId ?? await PartnerOutboundPaymentService.PlanPaymentByReferenceAsync(db, companyId, r.Id, ct);
+            if (pv is not Guid id || !await db.Payments.AsNoTracking().AnyAsync(p => p.Id == id && p.CompanyId == companyId && !p.IsDeleted, ct)) continue;
+            var claimed = await db.PartnerPaymentNotices.AsNoTracking().AnyAsync(o => o.CompanyId == companyId && o.Id != n.Id && !o.IsDeleted
+                && o.RecordedPaymentId == id && o.Status == PartnerPaymentNoticeRule.StatusRecorded, ct);
+            facts.Add(new PartnerPaymentPlanRule.TransferPlanFact(r.Id, id, r.SellerIntentId, r.Amount, r.TransferredAt, claimed));
+        }
+        return PartnerPaymentPlanRule.PlanPaymentFor(n.CashAmount, n.PaidAt, n.PaymentIntentId, facts);
+    }
+
+    /// <summary>ฝ่ายค้าน 264-P4 L5: วันที่ของบรรทัดธนาคาร ⇒ วันที่ของ PV (วันตามปฏิทินไทย เก็บเป็นวันที่ไม่มีเวลา แบบวันที่การชำระของหน้าเอกสาร)</summary>
+    internal static DateTime PaymentDateOfLine(DateTime lineDate)
+        => DateTime.SpecifyKind((lineDate.TimeOfDay == TimeSpan.Zero ? lineDate : lineDate.AddHours(7)).Date, DateTimeKind.Utc);
+
+    /// <summary>ฝ่ายค้าน 264-P4 M1: ผูกบรรทัดผ่านตัวเขียนเดียว (<see cref="IBankLineEvidence.BindAsync"/>) — ผู้เรียก: <see cref="MarkRecordedAsync"/> · คืน null = ไม่มีตัวผูก</summary>
+    private async Task<bool?> BindLineAsync(Guid companyId, PartnerPaymentNotice n, Guid paymentId, CancellationToken ct)
+    {
+        if (_bankLine == null) return null;
+        try { return await _bankLine.BindAsync(companyId, n, paymentId, ct) == 1; }
+        catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
+        {
+            _logger.LogError(ex, "ผูกรายการเดินบัญชีกับการจ่าย {Payment} ของการแจ้ง {Notice} ไม่สำเร็จ — กระทบยอดเองที่หน้าธนาคาร", paymentId, n.Id);
+            return false;
+        }
+    }
+
+    /// <summary>ตาข่ายของบริษัทที่ไม่มีความยินยอมบันทึกจ่าย (ท่อไม่ประเมินแถวของเขา): การแจ้งที่ยังเปิดซึ่งตรงแผนแจ้งโอนที่มี PV แล้ว ⇒ ปิดเป็นบันทึกแล้วด้วย PV นั้น
+    /// (สถานะการแจ้งเท่านั้น — ไม่มีการเขียนเงิน) · จองแบบมีเงื่อนไขเหมือนท่อ</summary>
+    public async Task<int> CloseFromPlansAsync(DateTime nowUtc, CancellationToken ct = default)
+    {
+        var hits = await _db.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters()
+            .Where(n => !n.IsDeleted && n.Status == PartnerPaymentNoticeRule.StatusOpen && n.SellerVoidedAt == null
+                && _db.PartnerPaymentPlans.Any(x => x.CompanyId == n.CompanyId && x.PurchaseDocumentId == n.TargetDocumentId
+                    && x.Kind == PartnerPaymentPlanRule.KindTransfer && !x.IsDeleted && x.BuyerPaymentId != null
+                    // แผนที่ PV ยังไม่ถูกการแจ้งใดอ้าง (แถวที่ไม่ตรงไม่ถูกหยิบวนทุกรอบเมื่อแผนถูกใช้แล้ว)
+                    && !_db.PartnerPaymentNotices.Any(o => o.CompanyId == x.CompanyId && o.RecordedPaymentId == x.BuyerPaymentId
+                        && o.Status == PartnerPaymentNoticeRule.StatusRecorded)))
+            .Select(n => new { n.Id, n.CompanyId }).Take(SweepBatch).ToListAsync(ct);
+        var done = 0;
+        foreach (var h in hits)
+        {
+            var n = await _db.PartnerPaymentNotices.AsNoTracking().FirstAsync(x => x.Id == h.Id && x.CompanyId == h.CompanyId, ct);
+            if (await PlanPaymentForNoticeAsync(_db, h.CompanyId, n, ct) is not Guid pv) continue;
+            var claimed = await _db.PartnerPaymentNotices
+                .Where(x => x.Id == h.Id && x.CompanyId == h.CompanyId && x.Status == PartnerPaymentNoticeRule.StatusOpen)
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, PartnerPaymentNoticeRule.StatusRecording).SetProperty(x => x.UpdatedAt, (DateTime?)nowUtc), ct);
+            if (claimed != 1) continue;
+            await MarkRecordedAsync(h.CompanyId, h.Id, pv, null, null, null, nowUtc, ct);
+            done++;
+        }
+        return done;
     }
 
     /// <summary>pure: ค่าบนแถวแจ้ง ⇒ ผลจับคู่ ⇒ ชนิดของชั้นสลิป (ตารางแปลงเดียว)</summary>

@@ -41,8 +41,12 @@ public static class ContactLineChannel
     /// ใบต้องออกแล้ว (ตัวตัดสินตอนส่งเดียวกับกฎ "เมื่ออนุมัติ") · ปุ่มชำระตามที่ผู้ใช้เลือก (<c>LineQueue.IncludePayLink</c>)</summary>
     public const string ManualTrigger = "ManualSend";
 
-    /// <summary>trigger ที่ผู้ส่งคิว LINE รับได้ = กฎตารางส่ง + ใบเสร็จหลังรับชำระ + ส่งเองจากหน้าเอกสาร</summary>
-    public static bool SenderSupports(string? trigger) => SupportsLine(trigger) || trigger == ReceiptTrigger || trigger == ManualTrigger;
+    /// <summary>รอบ 267 P3 (267-1-36 ส่วน LINE · 267-1-63): การ์ด "ฉบับเซ็น" กลับไปที่ LINE 1:1 เดิมที่ลูกค้าเปิดลิงก์มาลงนาม — ผู้เข้าคิวเดียว
+    /// <c>DocumentLineSendService.EnqueueSignedCopyAsync</c> (งาน outbox หลังสร้างฉบับที่ลงนามแล้ว) · ลูกค้าเป็นผู้เริ่ม ⇒ ไม่เลื่อนช่วงเงียบ</summary>
+    public const string SignedCopyTrigger = "CustomerSignedCopy";
+
+    /// <summary>trigger ที่ผู้ส่งคิว LINE รับได้ = กฎตารางส่ง + ใบเสร็จหลังรับชำระ + ส่งเองจากหน้าเอกสาร + ฉบับเซ็นกลับทาง LINE (รอบ 267 P3)</summary>
+    public static bool SenderSupports(string? trigger) => SupportsLine(trigger) || trigger == ReceiptTrigger || trigger == ManualTrigger || trigger == SignedCopyTrigger;
 
     /// <summary>รอบ 259 (A-L5): กด "ส่งอีกครั้ง" แถว LINE ที่อีเมลถอยไปแล้ว ⇒ บอกก่อนยืนยัน (ลูกค้าได้ทั้งอีเมลและ LINE — ตั้งใจได้ แต่ต้องรู้) · null = ไม่มีหมายเหตุ</summary>
     public static string? RetryNote(DateTime? fallbackQueuedAt)

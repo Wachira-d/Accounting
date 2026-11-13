@@ -38,13 +38,14 @@ public class PartnerPaymentNoticeService
     private readonly INotificationEngine? _notify;
     private readonly ILogger<PartnerPaymentNoticeService> _logger;
     private readonly PartnerConsentService? _consent;
+    private readonly PartnerPayablePipeline.IBankLineEvidence? _bankLine;
 
     /// <summary>ค่าในกล่องเลือกบัญชีที่แปลว่า "จ่ายด้วยเงินสด" — ต้องเลือกเอง (C-01: เงินสด 111 ไม่เคยเป็นค่าตั้งต้น)</summary>
     public const string CashChoice = "cash";
 
     public PartnerPaymentNoticeService(AccountingDbContext db, IDocumentService docs, ILogger<PartnerPaymentNoticeService> logger, INotificationEngine? notify = null,
-        PartnerConsentService? consent = null)
-    { _db = db; _docs = docs; _logger = logger; _notify = notify; _consent = consent; }
+        PartnerConsentService? consent = null, PartnerPayablePipeline.IBankLineEvidence? bankLine = null)
+    { _db = db; _docs = docs; _logger = logger; _notify = notify; _consent = consent; _bankLine = bankLine; }
 
     /// <summary>ข้อเท็จจริงของการรับชำระฝั่งผู้ขายที่ทำให้เกิดการแจ้ง</summary>
     /// <param name="SellerPaymentId">การรับชำระของผู้ขาย (กุญแจกันซ้ำ · ตรวจสดตอนบันทึกจ่าย) · null = เส้นเก่าที่ไม่รู้แถว</param>
@@ -410,13 +411,17 @@ public class PartnerPaymentNoticeService
                 PartnerConsent.UseCheck? consent = null;
                 if (_consent != null && doc != null)
                     consent = await _consent.CheckAsync(companyId, n.TradingPartnershipId, PartnerConsent.Scope.AutoRecordPayment, PartnerPayablePipeline.CapOf(doc), ct);
-                source = await PartnerPayablePipeline.SourceDecisionAsync(_db, companyId, n, doc, usable, consent, DateTime.UtcNow, ct);
+                // รอบ 264 P4 (264-5-10): ชั้นรายการเดินบัญชีตัวเดียวกับท่อ (อ่านอย่างเดียว) ⇒ ปุ่มเดียว preselect บัญชีที่เงินออกจริง
+                (Guid? BankAccountId, string? Label) line = _bankLine == null ? default : await _bankLine.FindAsync(companyId, n, ct);
+                source = await PartnerPayablePipeline.SourceDecisionAsync(_db, companyId, n, doc, usable, consent, DateTime.UtcNow, ct, line.BankAccountId, line.Label);
                 // ฝ่ายค้าน M3: ถ้อยคำตรงกับหลักฐานที่มีจริงวันนี้ (ค่าตั้งของเรา + คำบอกของผู้ขาย — ยังไม่ตรวจกับรายการเดินบัญชี)
                 // 268-1-1: บัญชีตั้งต้นอย่างเดียวไม่บันทึกเอง ⇒ บอกเหตุ + ปุ่มเดียว (บัญชี preselect แล้ว) · หลักฐานชั้นที่บันทึกเองได้ ⇒ ป้ายเดิม
                 autoState = consent is { Ok: true } && source is { AllowsAuto: false, Origin: PartnerPaySourceAccount.Origin.ConsentDefault }
                     ? "ระบบไม่บันทึกเอง — " + PartnerPaySourceAccount.ConsentDefaultNotAutoReason
                     : consent is { Ok: true } && source is { AllowsAuto: false, Origin: PartnerPaySourceAccount.Origin.SlipUnique }
                     ? "ระบบไม่บันทึกเอง — " + PartnerPaySourceAccount.SlipUniqueNotAutoReason
+                    : consent is { Ok: true } && source is { AllowsAuto: false, Origin: PartnerPaySourceAccount.Origin.PayerDeclared }
+                    ? "ระบบไม่บันทึกเอง — " + PartnerPaySourceAccount.PayerDeclaredUnboundReason
                     : consent is { Ok: true }
                     ? "⚙️ ระบบบันทึกเองเมื่อหลักฐานบัญชีที่จ่ายครบ เมื่อผู้ขายแจ้งรับเงิน"
                         + (n.AutoBlockedReason is string br ? " — ยังไม่บันทึก: " + br : " · รอรอบถัดไป")
@@ -516,6 +521,8 @@ public class PartnerPaymentNoticeService
         {
             paymentId = await _db.Payments.AsNoTracking()
                 .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Reference != null && references.Contains(p.Reference)).Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct);
+            // รอบ 264 P4 (264-5-12): เราแจ้งโอนจากระบบของเราแล้ว (PV ของแผนเดียวกัน) ⇒ ปิดด้วย PV นั้น — ไม่สร้าง PV ที่สอง
+            paymentId ??= await PartnerPayablePipeline.PlanPaymentForNoticeAsync(_db, companyId, n, ct);
             if (paymentId == null)
             {
                 var (plan, _) = await PlanForAsync(_db, companyId, n, ct);
@@ -554,8 +561,20 @@ public class PartnerPaymentNoticeService
         fresh.ResolvedAt = DateTime.UtcNow;
         fresh.ResolvedBy = userId.ToString();
         fresh.UpdatedAt = DateTime.UtcNow;
-        Audit(_db, companyId, userId, "PartnerPaymentNoticeRecorded", fresh);
+        // ฝ่ายค้าน 264-P4 M1: บรรทัดเงินออกที่ตรงการแจ้งนี้และบัญชีเดียวกับ PV ⇒ ผูกด้วยตัวเขียนเดียว (บรรทัดนั้นไม่เป็นหลักฐานของการแจ้งอื่นอีก)
+        bool? lineBound = null;
+        if (paymentId is Guid boundPay && _bankLine != null)
+        {
+            try { lineBound = await _bankLine.BindAsync(companyId, fresh, boundPay, ct) == 1; }
+            catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
+            {
+                lineBound = false;
+                _logger.LogError(ex, "ผูกรายการเดินบัญชีกับการจ่าย {Payment} ของการแจ้ง {Notice} ไม่สำเร็จ — กระทบยอดเองที่หน้าธนาคาร", boundPay, noticeId);
+            }
+        }
+        Audit(_db, companyId, userId, "PartnerPaymentNoticeRecorded", fresh, extra: new { bankLineBound = lineBound });
         await _db.SaveChangesAsync(ct);
+        await PartnerPayablePipeline.ScrubSlipPayerAsync(_db, fresh, DateTime.UtcNow, ct);   // L3 (264-5-13): การแจ้งจบแล้ว ⇒ ไม่เก็บเลขผู้โอนต่อ
         // ผู้ขายยกเลิกระหว่างที่เรากำลังบันทึก ⇒ ป้ายบนใบซื้อ (ไม่ยกเลิกการจ่ายแทน)
         if (fresh.SellerVoidedAt != null || await SellerPaymentLiveAsync(_db, fresh, ct) == false)
             await FlagRecordedVoidedAsync(_db, fresh, "ผู้ขาย", DateTime.UtcNow, ct);
@@ -576,6 +595,7 @@ public class PartnerPaymentNoticeService
         n.UpdatedAt = DateTime.UtcNow;
         Audit(_db, companyId, userId, "PartnerPaymentNoticeDismissed", n);
         await _db.SaveChangesAsync(ct);
+        await PartnerPayablePipeline.ScrubSlipPayerAsync(_db, n, DateTime.UtcNow, ct);   // L3 (264-5-13)
     }
 
     /// <summary>แถว audit (คืนตัวแถวให้ผู้เรียกถอดได้) · <paramref name="sellerSide"/> = แถวของผู้ขาย ⇒ ไม่มี id ภายในของผู้ซื้อ (บริษัท/ใบซื้อ/การจ่าย — ฝ่ายค้าน L5) ·

@@ -14,9 +14,9 @@ public class CustomerDocumentAction : TenantEntity
     public Guid DocumentId { get; set; }
     /// <summary>เลข Rev ของใบที่ผู้ลงนามเห็น ณ ตอนกด (หนึ่งผู้ลงนามต่อ Rev — 267-1-11)</summary>
     public int RevisionNumber { get; set; }
-    /// <summary>ชื่อ <c>CustomerSignRule.Kind</c>: Accepted · Declined · ChangeRequested · DeliverySigned</summary>
+    /// <summary>ชื่อ <c>CustomerSignRule.Kind</c>: Accepted · Declined · ChangeRequested · DeliverySigned · PoAcknowledged · PoDeclined (รอบ 267 P5)</summary>
     public string Action { get; set; } = "";
-    /// <summary>ทางที่มา: Link (ลิงก์หน้าเอกสาร) · LegacyLink (ลิงก์ยอมรับ/เซ็นรับที่ออกก่อนรอบ 267)</summary>
+    /// <summary>ทางที่มา: Link (ลิงก์หน้าเอกสาร) · LegacyLink (ลิงก์ยอมรับ/เซ็นรับที่ออกก่อนรอบ 267) · Api (ระบบภายนอกผ่าน ExternalApprovalController — รอบ 267 P5)</summary>
     public string Channel { get; set; } = "";
     /// <summary>Full = ชื่อ+นามสกุล+ตำแหน่ง+ติ๊กรับรอง · NameOnly = ลิงก์รุ่นก่อน (พิมพ์ชื่ออย่างเดียว — ไม่แต่งช่องที่ไม่ได้เก็บ)</summary>
     public string IdentityLevel { get; set; } = "";
@@ -53,6 +53,11 @@ public class CustomerDocumentAction : TenantEntity
     public string? SignedPdfPath { get; set; }
     public string? SignedPdfSha256 { get; set; }
     public DateTime? SignedPdfAt { get; set; }
+
+    /// <summary>รอบ 267 P5 (S31): วันส่งของที่ผู้ขายยืนยันตอนรับทราบใบสั่งซื้อ (วันปฏิทิน · ไม่ก่อนวันที่ใบสั่งซื้อ) · ชนิดอื่น = null</summary>
+    public DateTime? PromisedDate { get; set; }
+    /// <summary>รอบ 267 P5 (267-1-13): โปรไฟล์ผู้ลงนาม (LINE Login) ที่เติมฟอร์มของคำตอบนี้ — อ้างที่มาของค่าที่เติมเท่านั้น (ไม่ใช่หลักฐานตัวตน · โปรไฟล์ถูกลบได้ แถวนี้คงอยู่)</summary>
+    public Guid? SignerProfileId { get; set; }
 
     /// <summary>ลบข้อมูลส่วนบุคคลตามคำขอแล้วเมื่อ (PDPA ม.33 — หลังพ้นอายุเก็บ) · แถวยังอยู่เป็นร่องรอยว่ามีการกระทำ</summary>
     public DateTime? ErasedAt { get; set; }

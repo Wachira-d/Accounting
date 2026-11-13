@@ -177,6 +177,22 @@ public class SignEventDispatcher
             }
         }
 
+        // รอบ 267 P3 (267-1-36 ส่วน LINE · 267-1-63): ลูกค้าเปิดลิงก์จากการ์ด LINE 1:1 มาลงนาม ⇒ การ์ด "ฉบับเซ็น" กลับไป LINE เดิม (ครั้งเดียว · หลังมีไฟล์แล้ว) ·
+        // ผู้เข้าคิวเดียว DocumentLineSendService.EnqueueSignedCopyAsync — ส่งจริง/ล้มดูที่แถวคิว LINE + ไทม์ไลน์ลูกค้า · ไม่มีไฟล์ (เลิกสร้าง) ⇒ ไม่ส่งการ์ดที่ไม่มีอะไรให้ดาวน์โหลด
+        if (row.SignedCopyDoneAt != null && row.SourceLineQueueId is Guid sourceQueue && row.SignedCopyLineQueuedAt == null && row.CustomerActionId is Guid copyAction)
+        {
+            var hasFile = await _db.CustomerDocumentActions.AsNoTracking()
+                .AnyAsync(a => a.Id == copyAction && a.CompanyId == row.CompanyId && a.SignedPdfSha256 != null && a.ErasedAt == null, ct);
+            if (hasFile)
+            {
+                var (queued, note) = await DocumentLineSendService.EnqueueSignedCopyAsync(_db, row.CompanyId, row.DocumentId, sourceQueue, ct);
+                if (!queued && note != null) row.LastError = Trim("ฉบับเซ็นทาง LINE: " + note);
+            }
+            else row.LastError = Trim("ฉบับเซ็นทาง LINE: ไม่มีไฟล์ฉบับที่ลงนาม — ไม่ส่งการ์ด");
+            row.SignedCopyLineQueuedAt = nowUtc;
+            await _db.SaveChangesAsync(ct);
+        }
+
         if (string.IsNullOrWhiteSpace(row.CallbackUrl))
         {
             row.Status = SignEventStatus.NoCallback;
@@ -314,9 +330,18 @@ public class SignEventDispatcher
             if (_responses != null && CustomerSignRule.StampDutyWarn(type, kind, await _responses.HasServiceLineAsync(companyId, a.DocumentId, ct)))
                 parts.Add($"⚠️ {CustomerSignText.StampDutyWarning} ({CustomerSignText.StampDutyPage})");
         }
+        else if (kind == CustomerSignRule.Kind.PoAcknowledged)
+        {
+            // รอบ 267 P5: วันส่งที่ผู้ขายยืนยัน (ถ้ามี) — พนักงานจัดซื้อตามรับของ
+            var promised = await _db.CustomerDocumentActions.AsNoTracking().Where(x => x.Id == actionId && x.CompanyId == companyId)
+                .Select(x => x.PromisedDate).FirstOrDefaultAsync(ct);
+            if (promised is { } p) parts.Add($"วันส่งที่ผู้ขายยืนยัน: {ThaiDate.ToThaiDisplayString(p)}");
+        }
+        else if (kind == CustomerSignRule.Kind.PoDeclined)
+            parts.Add("ขั้นต่อไป: ติดต่อผู้ขาย แก้ใบสั่งซื้อ (ออก Rev ใหม่) แล้วส่งลิงก์ให้รับทราบใหม่ — หรือยกเลิกใบสั่งซื้อแล้วสั่งผู้ขายรายอื่น");
         else if (kind is CustomerSignRule.Kind.Declined or CustomerSignRule.Kind.ChangeRequested)
             parts.Add("ขั้นต่อไป: แก้ไขใบเสนอราคา (ออก Rev ใหม่) แล้วส่งให้ลูกค้าตอบรับใหม่ — หรือกด \"ส่งลิงก์ให้ลูกค้าตอบรับ\" อีกครั้งเพื่อเปิดให้ลูกค้าตอบใหม่บนฉบับเดิม");
-        var icon = kind switch { CustomerSignRule.Kind.Declined => "🚫", CustomerSignRule.Kind.ChangeRequested => "✏️", _ => "✍️" };
+        var icon = kind switch { CustomerSignRule.Kind.Declined or CustomerSignRule.Kind.PoDeclined => "🚫", CustomerSignRule.Kind.ChangeRequested => "✏️", _ => "✍️" };
         return ($"{icon} {label} — {documentNumber}", string.Join(" · ", parts));
     }
 

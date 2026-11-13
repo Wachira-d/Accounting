@@ -24,6 +24,8 @@ namespace Accounting.Tests.Db;
 /// เอกสารถูกแก้ = 409 · ไม่รับ/ขอแก้ + หนึ่งคำตอบต่อ Rev · แถวหลักฐานแก้/ลบไม่ได้ (trigger) · ฉบับที่ลงนาม SHA-256 คงที่ + ถูกแก้ไม่ส่งออก ·
 /// แยกบริษัท · ลิงก์รุ่นก่อนลงบัญชีหลักฐานด้วย · รหัสยืนยันอีเมล · ลบตามคำขอเคารพ legal hold
 /// </summary>
+// รอบ 267 P5: เทสต์ของ P2 รัน CustomerSignMigration ซ้ำ (DROP/CREATE TRIGGER) — ช่วงนั้น trigger append-only หายชั่วขณะ ⇒ คลาสที่ตรวจ trigger ต้องไม่รันขนานกัน
+[Collection(CustomerDocumentActionsTriggerCollection.Name)]
 [Trait("Category", "Db")]
 public class CustomerSignRound267DbTests
 {

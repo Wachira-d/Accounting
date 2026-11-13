@@ -429,7 +429,33 @@ public partial class PdfGenerationService : IPdfGenerationService
         // เวลาเซ็นรับสินค้าออนไลน์ · ตำแหน่งอยู่ใน Title · ค่าจาก ResolveSignersAsync ตัวเดียว · ทั้งสอง renderer พิมพ์ผ่าน CustomerSignerLines (ไม่พิมพ์ IP)
         string? OnBehalfOf = null,
         string? EvidenceRef = null,
-        DateTime? DeliverySignedOnlineAt = null);
+        DateTime? DeliverySignedOnlineAt = null,
+        // รอบ 267 P5 (267-1-70): ช่อง "ผู้ขายรับทราบใบสั่งซื้อ" (signers[SupplierAckSlot]) — เวลารับทราบ + วันส่งที่ผู้ขายยืนยัน · ค่าจาก ResolveSignersAsync ตัวเดียว ·
+        // ทั้งสอง renderer พิมพ์ผ่าน SupplierAckLines (ป้ายจาก DocumentLabels · ไม่พิมพ์ IP)
+        DateTime? SupplierAckAt = null,
+        DateTime? SupplierPromisedDate = null);
+
+    /// <summary>รอบ 267 P5: ตำแหน่งของผู้ขายที่รับทราบใบสั่งซื้อใน signers (ต่อจากช่อง 0–2 ของเทมเพลต — ไม่ใช้ช่องลายเซ็นของเทมเพลต)</summary>
+    internal const int SupplierAckSlot = 3;
+
+    /// <summary>รอบ 267 P5 — บรรทัดของบล็อก "ผู้ขายรับทราบใบสั่งซื้อ" (ตัวเดียวของ HTML และ QuestPDF — กฎ #4 A): ผู้รับทราบ · ตำแหน่ง · ในนามของ ·
+    /// รับทราบออนไลน์ {เวลา} · วันส่งที่ยืนยัน · รหัสอ้างอิงหลักฐาน — ข้อความดิบ (ฝั่ง HTML ต้อง HtmlEncode) · ป้ายจาก <see cref="Pdf.DocumentLabels"/> เท่านั้น</summary>
+    internal static IReadOnlyList<string> SupplierAckLines(DocumentSigner? s, Pdf.DocumentLabels L)
+    {
+        var lines = new List<string>();
+        if (s?.SupplierAckAt is not { } at) return lines;
+        lines.Add($"{L.PoAckBy}: {s.Name}");
+        if (!string.IsNullOrWhiteSpace(s.Title)) lines.Add(L.SignerPosition(s.Title!));
+        if (!string.IsNullOrWhiteSpace(s.OnBehalfOf)) lines.Add(L.SignedOnBehalfOf(s.OnBehalfOf!));
+        lines.Add(L.PoAckedOnline(at));
+        if (s.SupplierPromisedDate is { } promised) lines.Add(L.PoAckPromisedDate(promised));
+        if (!string.IsNullOrWhiteSpace(s.EvidenceRef)) lines.Add(L.SignedOnlineEvidenceRef(s.EvidenceRef!));
+        return lines;
+    }
+
+    /// <summary>รอบ 267 P5: ผู้รับทราบของใบสั่งซื้อ (จาก signers) — null = ไม่มีการรับทราบที่ยังมีผลกับ Rev นี้</summary>
+    internal static DocumentSigner? SupplierAckOf(IReadOnlyList<DocumentSigner>? signers)
+        => signers is { Count: > SupplierAckSlot } && signers[SupplierAckSlot].SupplierAckAt != null ? signers[SupplierAckSlot] : null;
 
     /// <summary>รอบ 267 P2 — บรรทัดของ "ผู้ลงนามฝั่งลูกค้า" ที่พิมพ์ใต้ชื่อ (ตัวเดียวของทั้ง HTML และ QuestPDF — กฎ #4 A สอง renderer ห้าม drift):
     /// [ตำแหน่ง — เฉพาะบล็อกที่ไม่ได้พิมพ์ Title เอง] · ลงนามในนามของ {ผู้ซื้อ} · เซ็นรับออนไลน์ {เวลา} · ลงนามออนไลน์ รหัสอ้างอิง {…} ·
@@ -1025,7 +1051,9 @@ public partial class PdfGenerationService : IPdfGenerationService
         var action = kind.ToString();
         return await _db.Set<CustomerDocumentAction>().AsNoTracking()
             .Where(a => a.CompanyId == doc.CompanyId && a.DocumentId == doc.Id && a.Action == action
-                && a.RevisionNumber == doc.RevisionNumber && a.ErasedAt == null)
+                && a.RevisionNumber == doc.RevisionNumber && a.ErasedAt == null
+                // รอบ 267 P5: แถวจากระบบภายนอก (ExternalApprovalController) ไม่พิมพ์ผ่านบล็อกนี้ — ลายเซ็นของเส้นนั้นพิมพ์จากขั้นอนุมัติ (ไม่ซ้ำสองที่)
+                && a.Channel != Accounting.Helpers.CustomerSignRule.ChannelApi)
             .OrderByDescending(a => a.CreatedAt).FirstOrDefaultAsync();
     }
 
@@ -1343,6 +1371,20 @@ public partial class PdfGenerationService : IPdfGenerationService
             .Where(c => c.CompanyId == doc.CompanyId && !c.IsDeleted)
             .FirstOrDefaultAsync();
         await ApplySignerPolicyAsync(doc.CompanyId, StampDecisionFor(doc, stampSettings), signers, slotUsers, customerSlots);
+
+        // รอบ 267 P5 (267-1-70): ผู้ขายรับทราบใบสั่งซื้อผ่านหน้าเอกสาร — ช่องของผู้ขายบนกระดาษ (หลังกฎผู้ลงนามของบริษัท: ช่องนี้ไม่ใช่ผู้ใช้ในระบบ — กฎไม่แตะ) ·
+        // เฉพาะแถวหลักฐานของ Rev นี้ที่ตัวตนครบ (ไม่ใช่ลิงก์รุ่นก่อน/ถูกลบตามคำขอ) · ภาพฉาย CustomerResponse ต้องยังเป็น "รับทราบ" (ออก Rev ใหม่ = ล้าง)
+        if (doc.DocumentType == DocumentType.PurchaseOrder && doc.CustomerResponse == nameof(Accounting.Helpers.CustomerSignRule.Kind.PoAcknowledged))
+        {
+            var ack = await CustomerEvidenceAsync(doc, Accounting.Helpers.CustomerSignRule.Kind.PoAcknowledged);
+            if (ack is { IdentityLevel: Accounting.Helpers.CustomerSignRule.IdentityFull })
+            {
+                while (signers.Count < SupplierAckSlot) signers.Add(new DocumentSigner(null, null, null, null));
+                var name = string.Join(" ", new[] { ack.SignerFirstName, ack.SignerLastName }.Where(x => !string.IsNullOrWhiteSpace(x)));
+                signers.Add(new DocumentSigner(null, null, name, ack.SignerTitle, OnBehalfOf: ack.SignerOrgName,
+                    EvidenceRef: Accounting.Helpers.CustomerSignRule.EvidenceRef(ack.ContentHash), SupplierAckAt: ack.CreatedAt, SupplierPromisedDate: ack.PromisedDate));
+            }
+        }
 
         return signers;
     }
@@ -2665,6 +2707,10 @@ public partial class PdfGenerationService : IPdfGenerationService
             && !Accounting.Helpers.QuotationAcceptance.CustomerBoxShown(template.ShowSignature, template.SignatureCount,
                 PickLangText(template.SignatureLabel3, template.SignatureLabel3En, lang)))
             sb.AppendLine(QuotationAcceptanceBlockHtml(signers[2], qtAt, L));
+
+        // รอบ 267 P5 (267-1-70): ใบสั่งซื้อที่ผู้ขายรับทราบออนไลน์ ⇒ บล็อกผู้ขาย (คู่กับ QuestPDF ComposePoAcknowledgementBlock — บรรทัดชุดเดียว SupplierAckLines)
+        if (SupplierAckOf(signers) is { } supplierAck)
+            sb.AppendLine(PoAcknowledgementBlockHtml(supplierAck, L));
 
         // ── การลงบัญชี (Dr./Cr.) — compact internal-audit footnote ─────────
         // One tight line per posting: "Dr 5xx ชื่อบัญชี ........ 1,940.00".

@@ -2,7 +2,6 @@
 # ทุกแถวต้องถูกตัดสิน "ต่อสาย หรือ ลบ" แล้วตัดออก — ห้ามเพิ่มแถวใหม่เพื่อให้ checker เขียว
 AiCallBilling.cs IsProviderAttemptStatus
 AiCallBilling.cs LooksLikeMislabelledLocalRow
-ArApScope.cs IsPayable
 BranchScope.cs ToCsv
 CmsRetiredSlug.cs IsRetired
 CmsSecurityHelper.cs IsValidDomain
@@ -33,7 +32,6 @@ OcrPredecessorMatcher.cs ReferenceAppears
 OcrScanPii.cs UndecidedTextFields
 PayrollRunFilingScope.cs CanRemit
 ReceiptIssuePolicy.cs AllowsCashReceiptPapers
-SettlementReceiptPolicy.cs IsReceivableSource
 SsoIdentityPolicy.cs ProvidesEmailVerification
 SsoRateSchedule.cs GetMaxContribution
 SsoRateSchedule.cs RangesOverlap

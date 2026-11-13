@@ -79,6 +79,19 @@ public partial class PdfGenerationService
         return sb.ToString();
     }
 
+    /// <summary>รอบ 267 P5 (267-1-70): บล็อก "ผู้ขายรับทราบใบสั่งซื้อออนไลน์" (HTML) — คู่กับ QuestPDF <c>ComposePoAcknowledgementBlock</c>
+    /// (บรรทัดชุดเดียว <see cref="SupplierAckLines"/> · ป้ายจาก <see cref="Pdf.DocumentLabels"/>) · ทุกค่าที่ผู้ขายพิมพ์ HtmlEncode (กฎ #4 C)</summary>
+    internal static string PoAcknowledgementBlockHtml(DocumentSigner s, Pdf.DocumentLabels L)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("<div class='po-acknowledgement' style='margin-top:14px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:10pt;break-inside:avoid'>");
+        sb.Append($"<div style='font-weight:700'>{WebUtility.HtmlEncode(L.PoAckHeading)}</div>");
+        foreach (var line in SupplierAckLines(s, L))
+            sb.Append($"<div>{WebUtility.HtmlEncode(line)}</div>");
+        sb.Append("</div>");
+        return sb.ToString();
+    }
+
     /// <summary>บล็อกตราเหนือช่องลงนามของเอกสารขาย/ซื้อ (HTML) — ตำแหน่ง/ขนาด/ระยะเลื่อนจากกฎ · คู่กับ QuestPDF
     /// <c>BuildSignatureArea</c> ที่อ่าน <see cref="PdfBranding"/> ชุดเดียวกัน</summary>
     internal static string DocumentStampBlockHtml(DocumentStampPolicy.Decision d, string src)

@@ -105,4 +105,7 @@ public class DeferredNotification : TenantEntity
     public string? LastError { get; set; }
     /// <summary>ฝ่ายค้าน S4: ปิดแถวโดยไม่ส่ง (ยกเลิก/คืนเงิน/ถูกลบก่อนถึงคิว) — เหตุจาก <c>DeferredNotifyPolicy.BookingSkipReason/OrderSkipReason</c></summary>
     public string? Note { get; set; }
+    /// <summary>รอบ 270 (คำตัดสิน 270-1-2): สถานะที่ข้อความนี้พูดถึง ประทับตอนเข้าคิว — ชนิด <c>linechat.slip-linked</c> = <c>LineChatSlipRule.LinkKey</c>
+    /// (เอกสาร:รายการรอยืนยัน) · ตอนส่งเทียบกับค่าปัจจุบัน ไม่ตรง ⇒ ปิดแถวพร้อมเหตุ (ไม่ส่ง) · null = แถวก่อนรอบ 270 / ชนิดที่ไม่ใช้</summary>
+    public string? ExpectedKey { get; set; }
 }

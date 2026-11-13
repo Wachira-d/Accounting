@@ -3351,6 +3351,64 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   รายการเดินบัญชีของ B ที่นำเข้าทีหลัง: ไม่มีเส้นสร้างการจ่ายฝั่งซื้อจากรายการเดินบัญชี ⇒ ไม่เกิดการจ่ายใบที่สอง (อ่านโค้ด — 264-3-22)
 - **kill-switch**: เส้นเงินไม่มีการเรียก AI (ตัวตัดสิน pure) · ผังใบร่าง: AI ปิด + นักเรียนไม่มีคำตอบ ⇒ ใบร่างเท่าเดิม · เทสต์ `PartnerPayableRound264Tests` · Db `PartnerPayableRound264DbTests`
 
+### 2.12g-264-P4 รอบ 264 แพ็ก P4 "ผู้ซื้อเป็นผู้เริ่มจ่าย + รายการเดินบัญชีฝั่งเงินออก" (`erp-review/2026-11-12/team-264-a2b-design.md` §5.4 · §6.1 · §6.2 · คำตัดสิน 264-5-10…264-5-13 · ชุดแก้ฝ่ายค้าน `erp-review/2026-11-13/review-264-P4.md` ⇒ 264-5-14…21)
+
+- **รายการเดินบัญชีฝั่งเงินออก (G1 · 264-5-10)**: ผู้ป้อน `PartnerPayablePipeline.IBankLineEvidence` = `Services/Implementations/BankPaymentLineEvidence` อ่าน**ตาราง `BankTransactions` เดิม** ⇒
+  ตัวตัดสินเดียว `Helpers/BankPaymentLineMatch.Decide` (pure · ไม่มี AI): บรรทัดถอน/โอนออกที่ยังไม่จับคู่ · ยอด **±0.00** · วันที่ (เวลาไทย) ห่างวันที่ผู้ขายรับเงิน ≤ 3 วัน ·
+  **เลขบัญชีรับเงินของผู้ขาย** (บัญชีของการรับชำระฝั่งผู้ขาย — อ่านด้วย CompanyId ผู้ขาย) อยู่บนข้อความบรรทัด (ปิดบางเห็น ≥ 4 หลักตรงตำแหน่ง หรือเลขเต็มเท่ากัน) ·
+  หนึ่งต่อหนึ่งสองทิศ — **ฝั่ง "บรรทัดตรงการแจ้งเดียว" นับทั้งการแจ้งที่เปิดอยู่และการแจ้งที่บันทึกแล้วแต่ PV ยังไม่ผูกบรรทัดใด** (264-5-19 · M1) · เกินเพดาน 50 รายการ ⇒ คำแนะนำ (L4) ·
+  แหล่งของบรรทัดตามกติกา H1 เดิม (`BankReceiptAutoSettle.EvidenceProblem`) · ผล Match ⇒ ชั้น `BankLine` (บันทึกเองได้ · **PV ลงวันที่ของบรรทัด** — งวดปิด = เส้นจ่ายเดิมปฏิเสธ ⇒ ปุ่มเดียว + เหตุ · L5)
+- **บรรทัดเดียวเป็นหลักฐานได้การจ่ายเดียว (264-5-19 · M1)**: ตัวเขียนเดียว `BankPaymentLineEvidence.BindAsync` ผูกบรรทัดกับ PV ทุกทางที่ปิดการแจ้งด้วย PV —
+  ท่อ (`MarkRecordedAsync` → `BindLineAsync`: บันทึกเองทุกชั้น · PV ของแผนแจ้งโอน · ตาข่าย `CloseFromPlansAsync`) และปุ่มเดียว (`RecordAsync`) · ผูกเฉพาะเมื่อผล Match ·
+  PV ตัดบัญชีเดียวกับบรรทัด · PV ยังไม่ผูกบรรทัดอื่น · บรรทัดยังไม่ถูกจับคู่/ตัดยอดฝั่งรับ (`AutoSettleDocumentId == null` · L2) · ผล `bankLineBound` ลง audit · ล้ม = LogError
+- **สลิปไม่บันทึกเอง (ฝ่ายค้าน L1)**: ชั้น `SlipUnique` เป็น preselect เท่านั้น · ผู้บันทึกเองคือ `BankLine` (ไม่ต้องมีสลิป) — ตัวช่วย "สลิปยืนยันกับรายการเดินบัญชี" รุ่นแรกถูกลบ (เปลี่ยนแค่ป้าย ไม่เปลี่ยนผล)
+- **"จ่ายจากระบบของเรา" (A2 · 264-5-11 ถูกกลับโดย 264-5-20)**: ปุ่มบนแถวใบซื้อจากคู่ค้า (`documents.html` → `wwwroot/js/partner-outbound-pay.js`) ·
+  `PartnerOutboundPaymentController` (สิทธิ์อนุมัติใบซื้อตามชนิด + ชั้นความลับ · ไม่รับ API key) → `PartnerOutboundPaymentService.StartGatewayAsync`:
+  เปิดได้ด้วย **สิทธิ์ผู้กด + คู่ Accepted + ผู้ขายเปิดช่องทาง (`CanPayNow`)** — **ไม่ใช้ความยินยอม** (`AutoRecordPayment` ตัดสินแค่ว่าการแจ้งที่ตามมาบันทึกเองไหม · M6) ·
+  **ยอดของผู้ขายต้องตรงแผนยอด/ภาษีหักของเรา** (`PartnerPaymentPlanRule.GatewayAmountProblem` บนผล `PlanForAsync` — ผู้ขายไม่หักภาษีที่เราต้องหัก ⇒ ปิดปุ่ม 409 + ทางไปต่อ "แจ้งโอน" · M5) ·
+  วิธี = โมบาย/อินเทอร์เน็ตแบงก์กิ้ง/พร้อมเพย์/TrueMoney · ≤ 5 ครั้ง/ใบ/ชม. · เป้าหมาย = `IDocumentPayLinkService.PartnerPayTargetAsync` (`PublicViewAsync` ตัวเดียวกับหน้าชำระ) ⇒
+  `IPaymentIntentService.StartAsync` ของบริษัทผู้ขาย (ไม่ถือธุรกรรมข้ามการเรียกผู้ให้บริการ · ผู้ให้บริการล่ม ⇒ 409 ข้อความไทย · L7) ⇒ แถว `PartnerPaymentPlans` (Kind `Gateway`) + audit ·
+  QR ส่งเฉพาะ `data:image/…;base64` / https (`SafeQrPayload` + หน้าตรวจซ้ำ · L8) · **ไม่ประทับ "ชำระแล้ว"** ·
+  การแจ้งที่ตามมา ⇒ ชั้น `PayerDeclared` — **บันทึกเองเฉพาะช่องทางที่ผูกบัญชีต้นทาง (โมบาย/อินเทอร์เน็ตแบงก์กิ้ง)** · พร้อมเพย์/วอลเล็ต ⇒ preselect + เหตุ `PayerDeclaredUnboundReason` (264-5-17 · M4)
+- **"แจ้งโอนให้ผู้ขาย" (A7 · 264-5-12 · 264-5-15 · 264-5-18)**: `NotifyTransferAsync` — คนแนบสลิปของเรา + **เลือกบัญชีเสมอ** (สลิปตรวจไขว้ผ่าน `PartnerPaymentPlanRule.TransferAccount`) ·
+  **กุญแจกันซ้ำ** `TransferIdempotencyKey(เอกสารผู้ขาย · แฮชสลิป · ยอด)` + unique index `IX_PartnerPaymentPlans_Company_IdemKey` + ล็อก advisory ต่อใบซื้อ ⇒ กดซ้ำ/สลิปเดิมยอดเดิม = 409
+  (สลิปต่างกันยอดเท่ากัน = บันทึกได้ · H1) · ไฟล์สลิปเข้าที่เก็บก่อนแตะฐาน ⇒ **จองแถวแผนก่อน PV** ⇒ PV ผ่าน `CreatePaymentAsync` (คนกด · `PARTNER-PLAN-{plan}`) ⇒ ผูก PV + ไฟล์แนบ + audit
+  (`CreatePaymentAsync` เปิดธุรกรรมของตัวเอง ⇒ ความ atomic มาจากแถวจอง: PV ของแผนหาเจอเสมอด้วยเลขอ้างอิง · ล้มก่อน PV ⇒ แถวจองถูกปลด/ใช้ซ้ำ · M2) ·
+  **outbox สำเนาสลิป** `DeliverSlipCopyAsync` (ทันทีหนึ่งครั้ง + งานเบื้องหลัง `AutopilotJob` ขั้น `PartnerSlipCopies` · ≤ 5 ครั้ง): ความยินยอม **`AcceptPayerSlipCopy` ของผู้ขาย**
+  `CheckForWriteAsync` ⇒ `SlipEvidenceService.SubmitAsync` ช่อง `partner-nextacc` (รายการ ManualSlip รอยืนยัน — ยังไม่ใช่เงินเข้า) · ผู้ขายไม่ยินยอม ⇒ `Skipped` + ข้อความมุมผู้ซื้อ +
+  กระดิ่งถึงผู้ขาย (ครั้งเดียวต่อคู่ค้าต่อ 7 วัน · M7) · การแจ้งที่ตามมาปิดด้วย PV ของแผน (`PlanPaymentForNoticeAsync`: ผูกรายการชำระของผู้ขายเดียวกัน หรือ — เมื่อไม่มีรายการของผู้ขาย —
+  ยอดเท่ากัน วันห่าง ≤ 3 วัน **ตัวเดียว** ที่ยังไม่ถูกการแจ้งอื่นอ้าง · M3) ⇒ ไม่มี PV ที่สอง (ท่อ · ปุ่มเดียว · ตาข่าย) · หน้าปิดปุ่มระหว่างส่ง + โหลดใหม่หลังสำเร็จ
+- **ความยินยอม (264-5-14 · H2/M7)**: ขอบเขตใหม่ของ**ผู้ขาย** `AcceptPayerSlipCopy` (Need = ตั้งค่าบริษัท + อนุมัติเอกสารขาย · ข้อความพูดถึงคิวรอยืนยันรับเงินและข้อมูลผู้โอน ·
+  `ReaderWired` ตั้งแต่เกิด `WiredFromStart` — ยืนยันใหม่ในอนาคตใช้ `MinTextVersion` ไม่ใช้นาฬิกา) · `ReceiveSlipCopy` กลับเป็นขอบเขตของผู้ซื้อตาม design §4.4(ข) (ยังไม่มีผู้อ่าน · `WiredSince` ของรอบแรกถูกถอด)
+- **L3 ล้างเลขผู้โอน (264-5-13)**: ตัวเขียนเดียว `ScrubSlipPayerAsync` — ไม่ใช่บัญชีของผู้ซื้อ · **อ่านไม่ได้** (L9ก) · หรือการแจ้งจบแล้ว ⇒ ล้างธนาคาร+เลข เหลือชนิด + audit ไม่มีเลข ·
+  บัญชีของเรา (Unique/Many) และยังเปิด ⇒ คงไว้ · เส้นตัดสินอ่านอย่างเดียว
+- **migration** (`Helpers/PartnerPaymentPlanMigration`): ตาราง `PartnerPaymentPlans` (unique `(CompanyId, SellerIntentId)` · unique `(CompanyId, IdempotencyKey)` ในแถวไม่ถูกลบ) ·
+  คอลัมน์ outbox (`SlipSha256` · `SlipStoragePath` · `SlipContentType` · `SlipBankRef` · `SlipCopyState` · `SlipCopyAttempts` · `SellerNotifiedAt`) · `PartnerPaymentNotices.SlipPayerMatch` ·
+  แผนแจ้งโอนรุ่นแรก (ก่อนชุดแก้) ไม่มีกุญแจ/สถานะ outbox ⇒ ไม่ถูก outbox หยิบ (สำเนาสลิปรุ่นแรกส่งในคำขอแล้วหรือมีเหตุบนแผน)
+- **kill-switch**: ไม่มีจุดเรียก AI ในแพ็กนี้ (ตัวตัดสิน pure · อ่านสลิปในเครื่อง) ⇒ ไม่มี AiFeatureKey ใหม่ · เทสต์ `BankPaymentLineMatchTests` · Db `PartnerOutboundRound264P4DbTests`
+
+### 2.12g-270 รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 ใน `erp-review/2026-09-29/DECISIONS.md`)
+
+- **270-1-1 คืนมัดจำการจองหลายงวด (ฝ่ายค้าน 268 L7)**: `DocumentService.RefundDepositAsync` (ไม่ได้เลือกบัญชี) → `BookingDepositRefundPlanAsync` (ใบผูก `SiteBooking.ErpDocumentId`) →
+  `BookingDepositInstalmentChannel.PlanRefund` ⇒ Cr หนึ่งขาต่อบัญชีที่เงินอยู่จริง (งวดล่าสุดก่อน · งวดก่อนนับผังของงวดเมื่อมี JE `BKDEP-` แล้ว · คืนครั้งก่อนหักจากผังเดิม) ·
+  ไม่รู้บัญชี ⇒ 409 `BOOKING-DEPOSIT-REFUND-CHOOSE-ACCOUNT` (ไม่ลงอะไร) → หน้า `deposits.html`/`deposit-center.html` ช่อง "คืนจากบัญชี" (`MoneyChannel.fill` → `moneyAccountId` = ผัง) ·
+  เลือกเอง = ทั้งยอดจากบัญชีนั้น · ใบไม่ผูกการจอง = 111 ตามเดิม · การหักมัดจำกับใบสุดท้ายไม่มีขาเงิน (ไม่ใช่คลาสนี้)
+- **270-1-2 แจ้งแชตหลังผูกสลิปที่เข้าคิว**: `QueueLinkedNoticeAsync` ประทับ `DeferredNotifications.ExpectedKey` = `LineChatSlipRule.LinkKey` · `DispatchLinkedNoticeAsync` ตรวจ
+  `LineChatSlipRule.LinkedNoticeStaleReason` ก่อนส่ง — ปิด/ผูกใหม่/ปฏิเสธ/หมดอายุ/ย้ายเอกสาร ⇒ ปิดแถวพร้อมเหตุ (Note) + audit `assign-notice-stale` · แถวก่อนรอบ 270 ตรวจสถานะอย่างเดียว
+- **270-1-3 ผล LINE**: `NotifyChatLinkedAsync` → `LinePushOutcome.Classify` (ตัวตัดสินเดียวกับคิว LINE) — ส่งซ้ำเฉพาะ `Retry` (เครือข่ายล้ม · 5xx · 429 ที่ไม่ใช่โควตาเดือน) ·
+  ไม่มีสถานะ HTTP ที่ไม่ใช่เครือข่ายล้ม/4xx/นโยบาย = ถาวร (ไม่เข้าคิว) · 409 = ส่งแล้ว
+- **270-1-4 ใบลดหนี้ร่างของตัวช่วยใบซ้ำ (ฝ่ายค้าน 266-C L2)**: Autopilot issue `DuplicateSaleCreditNoteDraft` (`AutopilotService.DuplicateSaleCreditNoteDraftIssuesAsync` · อ่าน audit
+  `DuplicateSalePolicy.CreditNoteAuditAction` — ใบก่อนรอบนี้ขึ้นด้วย) · ค้าง = ร่าง/รออนุมัติ · ปุ่ม "เปิดใบลดหนี้ร่าง" · อนุมัติแล้วหลุดเอง
+- **270-1-5 ใบกำกับ OCR VAT 0% ทั้งใบ (ฝ่ายค้าน 269 ข้อ 3)**: `OcrService.BuildScanLinesAsync` → `Helpers/OcrZeroVatTaxInvoiceGuard.Check` ⇒ `[VAT-ZERO-UNREAD]`
+  (`OcrPostingReadiness.BlockingTags` · `OcrLineBuildNotes` คำนวณใหม่) — ใบกำกับที่ทุกบรรทัด 0% และกระดาษไม่มีเครื่องหมายอัตราศูนย์/ส่งออก = รอตรวจ ไม่อนุมัติเอง ·
+  ใบส่งออกที่พิมพ์ 0%/ส่งออก/ม.80/1 ผ่านตามเดิม · ไม่แต่งอัตรา 7%
+- **ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-270.md` · คำตัดสิน 270-2-1…7)**: (H1) "แถวไหนเป็นเงินของใบมัดจำ" = `BookingDepositInstalmentChannel.DepositRows`
+  ตัวเดียว (ตัวย้ายเงิน 268 + ตัววางแผนคืน) · งวดสุดท้าย = งวดที่ครบยอดใบ · เงินที่เข้าหลังออกใบไม่เข้าแผน · `CapToDeposit` · (L1) บัญชีถอดผัง ⇒ 409 · (L3) ยอดคืนแล้วจากขาที่ยังมีผล ·
+  (M1) คิวแจ้งแชตล้มชั่วคราว ⇒ `DeferredNotifyRetryException` ⇒ backoff ของ `DeferredNotifyDispatcher` · (L4) ใบยกเลิก/ลบ ⇒ ไม่ส่ง · (L5) retry key = `LinkedNoticeRetryKey` ·
+  (M2) เครื่องหมายอัตราศูนย์อ่านทีละบรรทัด (ไม่นับชื่อ/ที่อยู่) · (M3) `GET tax/ocr-zero-vat-review` + แถบหน้า ภาษี (อ่านอย่างเดียว) ·
+  (M4) `IdempotencyMiddleware` ลองซ้ำ → LogError + `Idempotency-Status: unavailable` → เส้นเงิน/เอกสาร 503 (`IdempotencyKeyPolicy.FailClosedWhenStoreUnavailable`) · (L6/L7) คิวใบลดหนี้ร่างเริ่มจากใบที่ค้าง + ทางสำรองจากหมายเหตุ
+- **kill-switch**: ไม่มีการเรียก AI ในรอบนี้ · Last verified `commit ee79eb2b` · ชุดแก้ `commit a9d8f384`
+
 ### 2.12g-268 รอบ 268 งานคงค้าง (คำตัดสิน 268-1-1…6 ใน `erp-review/2026-09-29/DECISIONS.md`)
 
 - **268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง**: แถว `ConsentDefault` ของ `PartnerPaySourceAccount.Precedence` = `AllowsAuto=false` ⇒ ท่อฝั่งผู้ซื้อประทับเหตุ `ConsentDefaultNotAutoReason`
@@ -4208,6 +4266,58 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **ไม่สืบทอด:** `CustomerResponse` · แถวหลักฐาน · ฉบับที่ลงนาม เป็นของใบ/Rev นั้น — convert/clone/recurring ไม่คัดลอก (เท่ากับลายเซ็นยอมรับ รอบ 239)
 - เทสต์ `CustomerSignRound267Tests` (pure สองทิศ) · `Db/CustomerSignRound267DbTests` · ล็อก R267b (`tools/required_call_site_check.py` — กติกาของเมธอดที่ย้ายชี้ `CustomerDocumentResponseService`) · Last verified `commit 8b6861de` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 2.12n-P3 "📤 ส่งให้ลูกค้า" + ไทม์ไลน์ลูกค้า + LINE เซ็น (รอบ 267 แพ็ก P3 · คำตัดสิน 267-1-7 · 267-1-61…67)
+
+ดีไซน์: `erp-review/2026-11-12/team-267-doc-pages-design.md` §15 / §16 / §19 P3 · ต่อจาก §2.12n (P1) · §2.12n-P2 · **ไม่มีเส้นส่งใหม่** — หน้าต่างเดียว orchestrate บริการเดิม:
+
+- **ปุ่มเดียว** "📤 ส่งให้ลูกค้า" บนหน้ารายละเอียดเอกสาร (`documents.html`) แทน 6 ปุ่มเดิม (🔗 ลิงก์ยอมรับ · 📧 ส่งให้ลูกค้ายอมรับทางอีเมล · ✍️ ลิงก์เซ็นรับ ·
+  📧 ส่งให้ลูกค้าเซ็นรับทางอีเมล · 📧 ส่งอีเมล · 💬 ส่งทาง LINE) · แสดงตาม `DocumentResponse.CanShareToCustomer` (`CustomerShareRule.ButtonOffered` =
+  ด่านชนิด/สถานะเดียวกับ `CustomerDocPage.IssueRefusal`) · หน้าต่างอีเมลแบบแก้ข้อความเอง (`openSendEmailModal`) ยังเปิดได้จากลิงก์ในหน้าต่าง (267-1-65) ·
+  endpoint เดิม (`send-email` · `line-send` · `quotation-accept-link` · `delivery-sign-link` · `sign-request/email`) คงไว้สำหรับ API/มือถือ — หน้าเว็บไม่เรียกแล้ว
+- **`GET …/document/{id}/share-options`** (สิทธิ์สร้างเอกสารชนิดนั้น + ชั้นความลับ — ด่านเดียวกับส่งอีเมล/LINE เดิม · ไม่ออกลิงก์ · ไม่มีผลข้างเคียง) →
+  `CustomerShareService.OptionsAsync`: ลิงก์ (สถานะ `CustomerDocPage.LinkState` · URL เดิมที่ใช้ได้ · เหตุที่ออกไม่ได้ `IDocumentPayLinkService.CustomerLinkRefusalAsync` ·
+  ยกเลิกไว้ ⇒ ช่อง "ออกลิงก์ใหม่แทน") · ปุ่มที่ลูกค้าจะเห็น (view model โหมดพรีวิวเดียวกับหน้าลูกค้า) · ตัวเลือก "เปิดให้ลูกค้ายอมรับ/เซ็นรับ" (`CustomerShareRule.Respond` —
+  ลิงก์ดู ≠ สิทธิ์ตอบรับ 267-1-25) · ช่องทาง + เหตุ · อีเมล (ทาง `RouteAsync` · ผู้รับตั้งต้น · e-Tax by Email = ไม่มีบล็อกลิงก์ `CustomerShareRule.EtaxNoPageLinkNote` · เหตุ/คำเตือนของทาง e-Tax) ·
+  LINE (`DocumentLineSendService.OptionsAsync(forShare: true)` — ปลายทาง + `PageLink`/`PageLinkNote` ต่อปลายทาง) · ค่าตั้งใบเสร็จอัตโนมัติของใบ (P4 · แก้ที่แผงเดิม)
+- **`POST …/document/{id}/share`** `{channels[copy|email|line|qr], openRespond, reissueRevoked, emailTo, emailCc, attachPdf, emailPayLink, lineEndpointIds[], linePayLink}` →
+  `CustomerShareService.ShareAsync` (ล็อก R267c): (1) ลิงก์ = `EnsureCustomerLinkAsync` (ออกไม่ได้/ถูกยกเลิกโดยไม่ติ๊ก ⇒ 409 ทั้งคำขอ — ไม่มีช่องทางใดถูกส่ง) →
+  (2) ติ๊กเปิดตอบรับ + ช่วงยังไม่เปิด ⇒ `ISignRequestService.IssueLinkAsync(Regenerate:false)` (ล้ม ⇒ ปฏิเสธทั้งคำขอ — ไม่ส่ง "ขอให้ยอมรับ" ที่กดไม่ได้) →
+  (3) ทีละช่องทาง: อีเมล = `SendDocumentRoutedAsync` (`IncludePageLink` เมื่อทางนี้ใส่บล็อกได้ — บล็อก `CustomerShareRule.EmailPageBlock` ป้ายตามช่วงตอบรับ/ยอดค้าง) ·
+  LINE = `DocumentLineSendService.SendAsync(includePageLink: true)` · คัดลอก = URL · QR = PNG data URI ของ URL · **ผลแยกต่อช่องทาง** — อีเมลล้มไม่ลาก LINE (และกลับกัน) ·
+  ช่องทางใดล้ม ⇒ `success=false` + ผลของทุกช่องทาง (`CustomerShareRule.Summary` · F2 ข้อ 7) · ช่องทางที่ผ่านไม่ย้อน · LINE = "เข้าคิวแล้ว" (ส่งแล้ว = LINE ตอบรับจริง)
+- **อีเมล:** `SendDocumentEmailRequest.IncludePageLink` (ใหม่) — บล็อกลิงก์ออกผ่าน `EnsureCustomerLinkAsync(allowReissueRevoked:false)` ก่อนสร้างแถวบันทึก ·
+  ทาง e-Tax by Email + ขอบล็อก = 409 `EtaxNoPageLinkNote` (ไม่ทิ้งค่าเงียบ — 267-1-62)
+- **LINE (267-1-7 · 267-1-61):** ตัวตัดสินเดียว `DocumentLineSendRule.PageLinkAllowed(kind, showAmounts, type)` / `PageLinkProblem` — กลุ่มซ่อนยอด = ไม่ได้ (การ์ดไม่มีปุ่ม · S21) ·
+  ใบที่มีปุ่มตอบรับ (`CustomerDocPage.HasRespondAction`: ใบเสนอราคา · ใบส่งของ) ⇒ **1:1 เท่านั้น** · กลุ่ม = ปุ่มดูเท่านั้น (S23) · ตัดสินต่อปลายทางตอนเข้าคิว
+  (`LineQueue.IncludePageLink`) และ**ตรวจซ้ำตอนส่ง** (`ContactLineQueueService` — ปลายทางเปลี่ยนเป็นไม่ได้ = ข้าม `PageLinkNotAllowedAtSend` · ลิงก์ใช้ไม่ได้แล้ว = ข้าม `PageLinkGoneAtSend`) ·
+  การ์ดลิงก์หน้าเอกสาร = ปุ่มเดียว (`LineDocumentCard.PageButtonLabel`: "ดู/ยอมรับ" · "ดู/เซ็นรับ" · "ดู/ชำระเงิน" · "เปิดเอกสาร" — ป้ายผ่าน `DocumentLabels`) ไม่ซ้อนปุ่มชำระ/ดู PDF ·
+  URL ต่อ `s=l{queueId}` · เรื่อง "ลิงก์เซ็น" ของปลายทาง LINE: **1:1 ติ๊กได้** (`NotifyTopics.LineUnsupportedReason(t, kind)`) · กลุ่มยังไม่ได้ · ใบที่ตอบรับได้รวมปลายทาง 1:1
+  ที่ติ๊ก "ลิงก์เซ็น" แต่ไม่ได้ติ๊ก "เอกสาร" (`DocumentLineSendRule.MergeSignTopic` · แถวคิวเก็บเรื่องที่ทำให้ส่งได้) · migration รอบ 259 ที่ตัด "ลิงก์เซ็น" ตอนบูตเหลือเฉพาะกลุ่ม
+- **ตัวระบุแหล่งที่มา `s` + ฉบับเซ็นกลับ LINE เดิม (267-1-63 · ส่วน LINE ของ 267-1-36):** `pay-document.html` ส่ง `s` ไปกับคำตอบ · `CustomerDocumentResponseService.LineSourceAsync`
+  ตรวจกับแถวคิวจริง (`CustomerShareRule.LineSourceValid`: บริษัทนี้ · ใบนี้ · 1:1 · การ์ดลิงก์หน้าเอกสาร · LINE รับแล้ว) — ผิด/หาย/ปลอม = ไม่มีผล (ไม่ใช่สิทธิ์) ·
+  ผ่าน ⇒ `SignEventOutbox.SourceLineQueueId` · งาน outbox (`SignEventDispatcher`) หลังขั้นฉบับที่ลงนามจบ + มีไฟล์ ⇒ `DocumentLineSendService.EnqueueSignedCopyAsync`
+  (ผู้เข้าคิวเดียว · trigger `ContactLineChannel.SignedCopyTrigger` · กุญแจต่อแถวต้นทาง · ไม่เลื่อนช่วงเงียบ) ⇒ การ์ด "ฉบับเซ็น" (ปุ่มไปหน้าเอกสารที่มีปุ่มดาวน์โหลดฉบับที่ลงนาม) ·
+  `SignedCopyLineQueuedAt` ประทับครั้งเดียว · ไม่มีไฟล์ = ไม่ส่งการ์ด + เหตุบนแถว outbox · ไม่มีการระบุแหล่งที่มาของอีเมล (ไม่มี tracking — 267-1-63)
+- **`GET …/document/{id}/customer-timeline`** (ด่านอ่านเอกสาร + ชั้นความลับ) → `CustomerTimelineService` (read model อ่านอย่างเดียว · ทุก query ผูก CompanyId · 50 แถว/แหล่ง · รวม ≤ 200):
+  ออก/ยกเลิกลิงก์ · เปิดช่วงตอบรับ · ลูกค้าเปิดลิงก์ (`SignLinkOpenedAt` — การโหลดหน้าจริง) · `DocumentEmailLogs` · `LineQueues` (รอส่ง ≠ ส่งแล้ว) · `CustomerDocumentActions`
+  (ชื่อ/ตำแหน่งตามสิทธิ์อ่าน — ไม่มี IP/อีเมล · แถวที่ลบตามคำขอไม่มีชื่อ) · คำขอลิงก์ใหม่ (audit) · `PaymentIntents` (สลิปรอตรวจ ⇒ "ตรวจสลิป") · `Payments` · `PostPaymentAutomationRuns` · e-Tax by Email ·
+  ทางไปต่อจากเซิร์ฟเวอร์ (`reshare` · `review-slips`) · แผง "ลูกค้า" บนหน้ารายละเอียด (เหนือแผง "ลิงก์ชำระเงิน & ส่งเอกสารอัตโนมัติ" ที่คงไว้ — 267-1-66) + เหตุการณ์ webhook ลูกค้าเซ็นเดิม
+- **`GET …/document/{id}/customer-page-preview`** (P1) = พรีวิวในหน้าต่าง (iframe `pay-document.html?preview=`) — ไม่ออกลิงก์ · ไม่ประทับเปิด · ปุ่มทั้งหมดปิด (S36)
+- **หน้าเว็บไม่มีตาราง/ป้ายของตัวเอง** (F2 ข้อ 5): ชนิดที่ส่งได้ · ป้ายช่องทาง · เหตุ · ปุ่มที่ลูกค้าเห็น · ป้ายไทม์ไลน์ มาจากเซิร์ฟเวอร์ · หน้าเลือกตัวทำงานจากรหัส (`reshare` · `review-slips`) เท่านั้น ·
+  หน้าผู้ติดต่อเลือกเหตุของเรื่องตามชนิดปลายทาง (`NotifyTopicOption.LineUserUnsupported` / `LineGroupUnsupported`)
+- **schema:** `Helpers/CustomerShareMigration` (`LineQueues.IncludePageLink` · `SignEventOutbox.SourceLineQueueId` · `SignedCopyLineQueuedAt` — NULL = พฤติกรรมเดิม ไม่มีข้อมูลเก่าต้องย้าย)
+- **ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-267-P3.md` · คำตัดสิน 267-1-78…82):**
+  ป้ายปุ่มลิงก์หน้าเอกสาร = ตัวตัดสินเดียว `CustomerShareRule.PageButtonLabel` (อีเมล `ManualPageBlockAsync` + การ์ด `BuildCardAsync` ตอนส่ง) — ตอบรับได้เฉพาะ
+  `CanRespondNow` (ช่วงเปิด + ยังไม่ตอบ) · อื่น ๆ "ดูเอกสาร" (MED-1) · ปุ่มชำระที่ติ๊กอยู่คู่ปุ่มหน้าเอกสาร · ตัดสินต่อปลายทาง (`Target.PayLinkNote` · กลุ่มซ่อนยอด = ล็อก + เหตุ) ·
+  ออกลิงก์ชำระไม่ได้ = การ์ดไม่มีปุ่มชำระ + เหตุ (ไม่ล้มทั้งช่อง · `SendAsync(fromShare)`) · ผู้ส่งคิวไม่ข้ามการ์ดลิงก์หน้าเอกสารด้วย `PayLinkGoneAtSend` (MED-2) ·
+  ออกลิงก์หน้าเอกสารไม่ได้/ถูกยกเลิกโดยไม่ติ๊ก ⇒ อีเมล (แนบ PDF) + LINE (การ์ดแบบเดิม) ส่งต่อ + `NoPageLinkNote` ในผลทุกช่องทาง/`CustomerShareResult.NoPageLinkNote` ·
+  คัดลอก/QR ล้มพร้อมเหตุ · `ButtonOffered` รวมชนิดที่ส่งแบบเดิมได้ · ปุ่ม "เขียนอีเมลเอง" แสดงตลอด (MED-3) · ฉบับเซ็นถ้อยคำกลาง (LOW-1) · e-Tax โหมดทดสอบบอกตามจริง
+  (`EmailSentMessage` · LOW-2) · ถอดแถวที่เส้นอีเมลค้างใน context ก่อน LINE (`DetachPending` · LOW-3) · audit chain `customer-share` ต่อคำสั่ง (LOW-4) ·
+  พรีวิว `sandbox="allow-scripts"` (ไม่มี allow-same-origin) — หน้าแม่ดึง `customer-page-preview` แล้ว postMessage เข้า iframe (LOW-6) · คำสั่งซ่อมเรื่อง LINE ของรอบ 259 ผูกรุ่นด้วย
+  marker `r267-line-topic-strip-v2` (LOW-7) · ลิงก์เซ็นรวมปลายทาง 1:1 เฉพาะเมื่อตอบรับได้จริง (LOW-8)
+- **ไม่ทำในแพ็กนี้ (267-1-67):** รวมแผงลิงก์ชำระเข้าไทม์ไลน์ · ป้ายบนรายการจากไทม์ไลน์ (ยังใช้ `sign-request/statuses`) · `LineDocumentViewController` ตอบ HTML ตาม `Accept` ·
+  ข้อความอีเมลอิสระในหน้าต่างเดียว · มือถือ/บอท LINE ฝั่งพนักงาน · ไม่มี AI ในเส้นนี้ (กฎ #1 ไม่ถูกแตะ)
+
 ### 2.12n-P4 หน้าเอกสารสำหรับลูกค้า — หลังจ่าย (รอบ 267 แพ็ก P4 · คำตัดสิน 267-1-8 · 267-1-44…50)
 
 ดีไซน์: `erp-review/2026-11-12/team-267-doc-pages-design.md` §8 / §19 P4 · ต่อจาก §2.12n (P1) · **ไม่มีเส้นเงินใหม่** — หน้าเอกสาร "แสดงผล" อย่างเดียว:
@@ -4258,6 +4368,50 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   (เหตุผลภายใน · ข้อความถึงลูกค้า)
 - เทสต์ `PostPayRound267Tests` (pure สองทิศ) · `Db/PostPayRound267DbTests` · `tools/required_call_site_check.py` กติกา R267d (+ ย้าย R250-8/R250L1-7 ไป `ResolveForAsync` · R253b ไป `UploadCoreAsync`) ·
   Last verified `commit 17680548` · ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-267-P4.md` MED-1…3 · LOW-1…4) `commit 6c097df4 (+ ใบแทน: ถอดสำเนาที่ซ้อนใน NotCarried)` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
+### 2.12n-P5 หน้าเอกสารสำหรับลูกค้า — ตามคำตอบเจ้าของ (รอบ 267 แพ็ก P5 · คำตัดสิน 267-1-9 · 267-1-13 · 267-1-70…267-1-77)
+
+ดีไซน์: `erp-review/2026-11-12/team-267-doc-pages-design.md` §14 / §19 P5 · ต่อจาก §2.12n-P2 (ผู้ลงนาม) และ §2.12n-P4 (หลังจ่าย) · ไม่มี AI ในเส้นนี้
+
+1. **LINE Login จำข้อมูลผู้ลงนาม (267-1-13 · 267-1-73 · 267-1-74)** — ฟอร์มลงนามบนหน้าเอกสารมีปุ่ม "เข้าด้วย LINE" เมื่อช่อง LINE Login ของระบบเปิด + ตั้ง URL ระบบแล้ว
+   (`page.signerLoginPath` — `PublicDocumentPageController.SignerProfile`) · `POST …/signer-login` ⇒ URL หน้าอนุญาตของ LINE (state HMAC ผูกบริษัท + hash token ของใบ · 10 นาที · scope `openid`) ·
+   LINE กลับมาที่ `/pages/pay-document.html?code&state` (c/t ของหน้าอยู่ใน sessionStorage) ⇒ `POST …/signer-login/complete` ⇒ ตั๋วผู้ลงนาม (HMAC · 30 นาที · ไม่เก็บในฐาน) + ค่าที่จำไว้ (ถ้ายินยอมไว้) ·
+   เติมชื่อ/นามสกุล/ตำแหน่ง/อีเมล — **ติ๊กรับรองต้องกดเองทุกครั้ง** (ค่าที่เติมไม่มีช่องรับรอง · ด่าน `CustomerSignRule.DecideSigner` เดิม) · ลงนามสำเร็จ + ติ๊ก "จำไว้กับ LINE" ⇒
+   `CustomerSignerProfileService.RememberAsync`: แถว `PdpaConsentRecord` (Purpose `customer-signer-prefill` · รุ่น `267-5` · EvidenceHash canonical) + `CustomerSignerProfiles` (เข้ารหัส `EncryptedColumnConverter` ·
+   หนึ่งแถว/บริษัท/คน · กุญแจเจ้าของข้อมูล = HMAC ไม่เก็บ LINE userId) + RoPA "จำข้อมูลผู้ลงนาม" + audit chain (ไม่มี PII — `AuditRedaction`) · ไม่ติ๊ก = ไม่มีอะไรถูกเก็บ (S34) ·
+   จำไม่สำเร็จ = การลงนามยังมีผล + ข้อความบอกผู้ลงนาม · แถวหลักฐานอ้าง `SignerProfileId` (ที่มาของค่าที่เติม — ไม่ใช่หลักฐานตัวตน) · ถอน = `…/signer-profile/forget` (ลบโปรไฟล์จริง + ประทับถอน — แถวหลักฐานคง · S35) ·
+   ไม่ใช้ 24 เดือน/ถอนแล้ว ⇒ `PdpaRetentionPurgeJob` (JobLock เดิม) ลบ · DSR `dsr/signer/access|portability|erase` (ค้นด้วยอีเมล หรือ ชื่อ+นามสกุล · erase เคารพ legal hold — 267-1-75) ·
+   ปิด LINE Login = ไม่มีปุ่ม ลงนามได้ครบ (จำบนเครื่อง 267-1-41 คงอยู่)
+2. **ExternalApprovalController ลงแถวหลักฐาน (267-1-71)** — `SignatureApprovalService.ExternalApproveQuotationAsync` เรียกผู้เขียนเดียว `CustomerDocumentResponseService.AppendEvidenceAsync`
+   (ทุกทางลงนามใช้ตัวนี้) ในธุรกรรมเดียวกับลายเซ็นของขั้นอนุมัติ + audit chain · Channel `Api` · ระดับตัวตน `ApiReported` · เรียกซ้ำด้วยลายเซ็นเดิม = ไม่ลงแถวใหม่ · กระดาษไม่พิมพ์แถว Api ซ้ำ (ลายเซ็นจากขั้นอนุมัติเดิม)
+3. **ผู้ขายรับทราบ/ไม่รับใบสั่งซื้อ (267-1-70)** — `SignRequestKinds.PurchaseOrderAck` (ปุ่มพนักงาน "📧 ส่งให้ผู้ขายรับทราบทางอีเมล" = เส้นส่งลิงก์ตอบรับเดิม) · ช่วงตอบ 14 วัน ·
+   ปุ่ม `po-acknowledge` / `po-decline` (`CustomerDocPage.Actions`) · ผู้เขียน `CustomerDocumentResponseService.RespondPurchaseOrder`: ปุ่มเปิดจริง → ฉบับที่เห็น → ตัวตนครบ → วันส่งที่ยืนยัน (ไม่บังคับ · ≥ วันที่ใบสั่งซื้อ — S31) /
+   เหตุที่ไม่รับ (บังคับ) → จอง `CustomerResponse` หนึ่งคำตอบต่อ Rev → แถวหลักฐาน (`PromisedDate`) + audit + outbox `purchase_order.acknowledged|declined` ในธุรกรรมเดียว · รับทราบ ⇒ ฉบับที่ลงนาม (ไฟล์ + SHA-256) ·
+   กระดาษ ×2: บล็อก "ผู้ขายรับทราบใบสั่งซื้อออนไลน์" (`PdfGenerationService.SupplierAckLines` ตัวเดียว · HTML `PoAcknowledgementBlockHtml` + QuestPDF `ComposePoAcknowledgementBlock` · ป้าย `DocumentLabels.PoAck*` · ไม่พิมพ์ IP) ·
+   ไม่รับแล้ว ⇒ ผู้ซื้อส่งให้ตอบใหม่ได้ · ออก Rev ⇒ ล้างคำตอบ · ป้ายรายการเอกสาร "ผู้ขายรับทราบแล้ว"/"ผู้ขายไม่รับใบสั่งซื้อ" · อีเมลเตือนข้ามใบที่ตอบแล้ว (`CustomerResponse`)
+4. **ใบวางบิลจ่ายทั้งใบ (267-1-9 v2 · 267-1-72)** — ปุ่ม "ชำระทั้งใบวางบิล" = ปุ่มจ่ายออนไลน์เดิมของหน้า · ยอด = ยอดค้างรวมของใบในบิลที่ค้าง (`DocumentPayLinkService.BillingNotePlanAsync` → `Helpers/BillingNoteCombinedPay.Decide`) ·
+   ด่าน: ทุกใบผ่านชั้นจ่ายเดิม · ผู้ติดต่อเดียวกัน · บาท · ไม่ถูกใบกำกับแทน · ไม่มี WHT ที่ผู้ซื้อต้องหัก · ≤ 50 ใบ · ไม่ผ่าน = ปุ่มปิด + "ชำระรายใบ" · ไม่มีฟอร์มสลิปรวม ·
+   เงินเข้า ⇒ `DocumentPaymentHandler.HandleBillingNoteAsync` ตัดสินชุดใบซ้ำ ⇒ `CreateMultiDocPaymentAsync` เดิม (หนึ่งการรับชำระ · จัดสรรเต็มยอดรายใบ · WHT 0) · ยอดไม่ตรงยอดค้างรวมตอนนั้น = ล้มดัง (ไม่ลงเงินรอจัดสรร) ·
+   ปิดผู้ให้บริการทุกตัว = ปุ่มจ่ายปิด · ปุ่มรายใบ (§2.12n-P4) ยังใช้ได้
+5. **อากรแสตมป์ (267-1-14 · 267-1-76)** — คงตาม P2: เตือนพนักงานอย่างเดียว (ไม่อยู่ในเส้นยอมรับ)
+6. **ไม่ทำในแพ็กนี้ (267-1-77)** — หลายผู้ลงนาม (267-1-11 v2) · PAdES (267-1-6) — เหตุใน DECISIONS
+7. **ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-267-P5.md` · คำตัดสิน 267-1-78…85):**
+   - LINE: `max_age=0` + `disable_auto_login=true` (เครื่องใช้ร่วม) · ลงนามเสร็จ/"ไม่ใช่ฉัน" ล้างตั๋ว+ค่าที่เติมของแท็บ · แถวหลักฐานอ้างโปรไฟล์เฉพาะเมื่อลงนามด้วยชื่อในโปรไฟล์ ·
+     state ผูกเบราว์เซอร์ด้วย cookie `na_signer_line_nonce` (HttpOnly · SameSite=Lax) · กุญแจเจ้าของข้อมูลผูกบริษัท + ตั๋วเข้ารหัส (AES-GCM — ไม่มีกุญแจดิบในเบราว์เซอร์) ·
+     แถวรุ่นแรกย้ายกุญแจเมื่อเจ้าของคนเดิมกลับมา (LINE ยืนยัน) · **runbook หมุน ENCRYPTION_KEY:** กุญแจเจ้าของข้อมูล/ตั๋วได้มาจากคีย์นี้ ⇒ หลังหมุน ผู้ลงนามทุกคนหาโปรไฟล์เดิมไม่เจอ
+     (ไม่เติม · กรอกใหม่แล้วติ๊กจำได้) แถวเดิมถูกลบเมื่อครบ 24 เดือน — ตั้งใจ (ข้อมูลตามความยินยอม ไม่ใช่หลักฐาน)
+   - ความยินยอม: ป้ายช่องติ๊ก = ข้อความยินยอมฉบับเต็ม (`CustomerSignerProfileRule.ConsentText` ภาษาเดียวกับหน้า — `FormLabelsWithConsent`) · หน้าส่ง `signerConsentVersion` กลับ ·
+     เก็บ `PolicyVersion` = รุ่น/ภาษา (`267-5.1/th`) · hash ครอบรุ่น + ภาษา + ข้อความ + เวลาแบบที่ฐานเก็บ · รุ่นไม่ตรง = ลงนามได้ แต่ไม่จำ + ข้อความ ·
+     ถอน/ลบตามคำขอ/ลบอัตโนมัติ ⇒ ล้างอีเมล · IP · UA บนแถวความยินยอม (`PseudonymisedAt` · hash + เวลาคง)
+   - DSR ผู้ลงนาม: ตัวระบุ = อีเมล หรือ ชื่อ+นามสกุล+เลขเอกสาร (`documentNumber`) · ชื่ออย่างเดียว = 400 · พบหลายคน = 409 + อีเมลปิดบังให้ DPO เลือก ·
+     รายงานมีแถวความยินยอม · เกิน 5,000 แถว = ล้มดัง · PiiAccessLog ระบุเจ้าของข้อมูลเป็น hash ของตัวระบุ
+   - เงิน: ใบวางบิลจ่ายทั้งใบเรียก `AfterPaymentRecordedAsync(Gateway)` ⇒ งานหลังรับชำระส่ง**ใบเสร็จรายใบ**ที่เส้นหลายใบออกไว้ (ทางเข้าอื่นของการชำระหลายใบไม่ส่งเหมือนเดิม) +
+     แจ้งผู้ซื้อคู่ค้าด้วยทางเข้าจริง · ยอดต้องเท่ากันพอดี · คืนเงิน: ตัวติดตามใบลดหนี้นับใบลดหนี้ของใบในบิล (`BillingNoteChildren` ตัวโหลดเดียว) · หน้าใบวางบิลจำผลชุดใบช่วงสั้น
+   - หลักฐาน: การอนุมัติข้ามบริษัท (Channel `Partner` · `PartnerMember`) และขั้นบทบาทลูกค้าที่พนักงานบันทึกแทน (`Staff` · `StaffRecorded`) ลงแถวผ่านผู้เขียนเดียว ·
+     เส้น API และข้ามบริษัทตั้ง `CustomerResponse = Accepted` (คำเตือนอากรแสตมป์ขึ้น) · ใบสั่งซื้อที่รับทราบแล้ว: ออก Rev ต้องยืนยัน + ฉบับที่ลงนามถูกสร้างก่อน ·
+     webhook `purchase_order.acknowledged` มี `promisedDate` · วันส่งเทียบวันปฏิทินไทยของวันที่ใบ
+8. เทสต์: `CustomerDocRound267P5Tests` (pure · ทุกข้อมีทิศตรงข้าม · S31) · Db `CustomerDocRound267P5DbTests` (S34 `CDP267Db_NoConsentNoProfile` · S35 `CDP267Db_WithdrawDeletesProfileOnly` · S33 DSR ·
+   ใบสั่งซื้อ · เส้น API · ใบวางบิลจ่ายทั้งใบผ่าน `DocumentService` จริง) · `tools/required_call_site_check.py` R267e (+ เคสฝ่ายค้าน R267E-1…6)
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -9507,3 +9661,12 @@ _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P4 — �
 _Last verified against codebase: 2026-11-13 (รอบ 266 แพ็ก B ชุดแก้ฝ่ายค้าน — §3.4c-B: B-1 ใบรับในตัว (ปฏิเสธ/ออกใบกำกับ ณ วันรับเงิน/พรีวิวตามจริง) · B-2 สิทธิ์ใต้ล็อก + ถอดด้วยกุญแจพรีวิว · B-3…B-9 ผู้อ่าน/งานที่ตามใบที่มีผล · ถอดหลังแตะกระดาษ = ปฏิเสธ (คำตัดสิน 266-1-32…35)) · commit 0ec86361 (+ 57b75d99) — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _Last verified against codebase: 2026-11-13 (รอบ 268 งานคงค้าง — §2.12g-268: 268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง · 268-1-2 สลิปออเดอร์หน้าเว็บลงธนาคาร · 268-1-3 มัดจำการจองต่องวด · 268-1-4 แจ้งแชตหลังผูกสลิป + PDF · 268-1-5 ศูนย์บิล LINE (นำออก/ใบเสร็จส่วนเสริม) · 268-1-6 รับหลายใบแจ้งคู่ค้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3dad4ab2)_
 _Last verified against codebase: 2026-11-13 (รอบ 268 ชุดแก้ฝ่ายค้าน — §2.12g-268: M1–M6 · L1/L2/L5/L6/L7 (คำตัดสิน 268-1-7…14) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b960b19f)_
+_Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P5 — §2.12n-P5: LINE Login จำข้อมูลผู้ลงนาม (ความยินยอม · เข้ารหัส · ถอน · purge · DSR) · ExternalApprovalController ลงแถวหลักฐานผ่านผู้เขียนเดียว · ผู้ขายรับทราบ/ไม่รับใบสั่งซื้อ + บล็อกผู้ขายบนกระดาษ ×2 · ใบวางบิลจ่ายทั้งใบผ่านเส้นเงินเดิม · อากรแสตมป์เตือนเท่านั้น (คำตัดสิน 267-1-9 · 267-1-13 · 267-1-70…77) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 20628ad0)_
+_Last verified against codebase: 2026-11-13 (รอบ 264 P4 — §2.12g-264-P4: รายการเดินบัญชีฝั่งเงินออกตรงเป๊ะ ⇒ บันทึกเอง + ผูกบรรทัด · สลิปยกเป็นอัตโนมัติผ่านรายการเดินบัญชีเท่านั้น · จ่ายจากระบบของเรา (แผน + รายการของผู้ขาย ไม่ประทับชำระแล้ว) · แจ้งโอน (PV ของเรา + สำเนาสลิปภายใต้ความยินยอมผู้ขาย · ไม่มี PV ที่สอง) · L3 ล้างเลขผู้โอน — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 7578d6bb)_
+_Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P3 — §2.12n-P3 "📤 ส่งให้ลูกค้า": หน้าต่างเดียวแทน 6 ปุ่ม (share-options · share · CustomerShareService orchestrate EnsureCustomerLinkAsync · IssueLinkAsync · SendDocumentRoutedAsync · DocumentLineSendService.SendAsync · ผลแยกต่อช่องทาง) · ไทม์ไลน์ลูกค้า (customer-timeline) · LINE 1:1 การ์ด "ดู/ยอมรับ" + ฉบับเซ็นกลับ LINE เดิม (s ตรวจกับแถวคิว) · กลุ่ม = ปุ่มดูเท่านั้น (PageLinkAllowed ตัวเดียว) · ลิงก์เซ็นติ๊กให้ LINE 1:1 ได้ (คำตัดสิน 267-1-7 · 267-1-61…67) — build + test + Db test ผ่านในเครื่องนี้ — commit 39c4d582)_
+_Last verified against codebase: 2026-11-13 (รอบ 270 งานค้าง 266/268/269 — §2.12g-270: 270-1-1 คืนมัดจำตามบัญชีของแต่ละงวด · 270-1-2 คิวแจ้งแชตตรวจการผูกเดิม · 270-1-3 จำแนกผล LINE · 270-1-4 คิวใบลดหนี้ร่างตัวช่วยใบซ้ำ · 270-1-5 ใบกำกับ OCR VAT 0% — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit ee79eb2b)_
+_Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P3 ชุดแก้ฝ่ายค้าน — §2.12n-P3: MED-1 ป้ายปุ่มตัวตัดสินเดียว · MED-2 ปุ่มชำระคู่ปุ่มหน้าเอกสาร/ต่อปลายทาง · MED-3 ส่งแบบเดิมเมื่อไม่มีลิงก์หน้าเอกสาร · LOW-1…9 (คำตัดสิน 267-1-78…82) — build + test + Db test ผ่านในเครื่องนี้ — commit dbab668a)_
+_Last verified against codebase: 2026-11-13 (รอบ 270 ชุดแก้ฝ่ายค้าน — §2.12g-270: H1 เงินของใบมัดจำกติกาเดียว · M1 คิวแจ้งแชต backoff · M2 เครื่องหมายอัตราศูนย์ชัด · M3 ตัวตรวจย้อนหลัง OCR 0% · M4 idempotency fail-closed เส้นเงิน/เอกสาร · L1–L7 (คำตัดสิน 270-2-1…7) — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit <pending>)_
+_Last verified against codebase: 2026-11-13 (รอบ 270 ชุดแก้ฝ่ายค้าน — §2.12g-270: H1 เงินของใบมัดจำกติกาเดียว · M1 คิวแจ้งแชต backoff · M2 เครื่องหมายอัตราศูนย์ชัด · M3 ตัวตรวจย้อนหลัง OCR 0% · M4 idempotency fail-closed เส้นเงิน/เอกสาร · L1–L7 (คำตัดสิน 270-2-1…7) — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit a9d8f384)_
+_Last verified against codebase: 2026-11-13 (รอบ 264 P4 ชุดแก้ฝ่ายค้าน — §2.12g-264-P4: H1 กุญแจกันซ้ำแจ้งโอน · H2 ขอบเขต AcceptPayerSlipCopy ของผู้ขาย · M1 บรรทัดเดียวต่อการจ่ายเดียว · M2 จองแผนก่อน PV + outbox · M3 ปิดการแจ้งด้วย PV ของแผน · M4 พร้อมเพย์ไม่บันทึกเอง · M5 ภาษีหักของเรา · M6 A2 ไม่ใช้ความยินยอม · M7 TextVersion + กระดิ่งผู้ขาย · L1/L2/L4–L9 — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 11e00f10)_
+_Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P5 ชุดแก้ฝ่ายค้าน — §2.12n-P5 ข้อ 7: MED-1…7 · LOW-1…10 (คำตัดสิน 267-1-78…85) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 69875c09)_

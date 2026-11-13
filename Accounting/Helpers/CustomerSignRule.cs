@@ -18,12 +18,29 @@ public static class CustomerSignRule
     public const string RuleCode = "DOCSIGN-267";
 
     /// <summary>ชนิดของแถวหลักฐาน — ชื่อที่เก็บ/ส่งออก = ชื่อ enum</summary>
-    public enum Kind { Accepted = 0, Declined = 1, ChangeRequested = 2, DeliverySigned = 3 }
+    /// <remarks>รอบ 267 P5: ผู้ขาย (ผู้รับใบสั่งซื้อ) รับทราบ/ไม่รับใบสั่งซื้อ — แถวหลักฐานชุดเดียวกัน (267-1-70)</remarks>
+    public enum Kind { Accepted = 0, Declined = 1, ChangeRequested = 2, DeliverySigned = 3, PoAcknowledged = 4, PoDeclined = 5 }
 
     public const string ChannelLink = "Link";
     public const string ChannelLegacyLink = "LegacyLink";
+    /// <summary>รอบ 267 P5 (267-1-43 ข้อ 2 · 267-1-71): ระบบภายนอกบันทึกการอนุมัติของลูกค้าผ่าน <c>ExternalApprovalController</c> — แถวหลักฐานชุดเดียวกัน</summary>
+    public const string ChannelApi = "Api";
     public const string IdentityFull = "Full";
     public const string IdentityNameOnly = "NameOnly";
+    /// <summary>รอบ 267 P5: ชื่อ/ตำแหน่งที่ระบบภายนอกส่งมา — ผู้ลงนามไม่ได้ติ๊กรับรองบนหน้าของเรา (ไม่แต่งว่า "ครบ" — F2 ข้อ 3)</summary>
+    public const string IdentityApiReported = "ApiReported";
+    /// <summary>ฝ่ายค้าน 267-P5 MED-6: คู่ค้าในระบบ (ผู้ใช้ของบริษัทผู้ซื้อที่ล็อกอิน) อนุมัติผ่านลิงก์ข้ามบริษัท — ตัวตน = บัญชีสมาชิกของบริษัทนั้น (ไม่ได้ติ๊กรับรองบนหน้าเอกสาร)</summary>
+    public const string ChannelPartner = "Partner";
+    public const string IdentityPartnerMember = "PartnerMember";
+    /// <summary>ฝ่ายค้าน 267-P5 MED-6: พนักงานของผู้ขายบันทึกขั้นอนุมัติบทบาทลูกค้าแทนลูกค้า (ขั้นอนุมัติภายใน) — ตัวตนของลูกค้า = ที่พนักงานพิมพ์ (ไม่ใช่ลูกค้าลงนามเอง)</summary>
+    public const string ChannelStaff = "Staff";
+    public const string IdentityStaffRecorded = "StaffRecorded";
+
+    /// <summary>ชนิดคำตอบของผู้ขายต่อใบสั่งซื้อ</summary>
+    public static bool IsPoKind(Kind kind) => kind is Kind.PoAcknowledged or Kind.PoDeclined;
+
+    /// <summary>คำตอบที่ "ลงนาม" (มีฉบับที่ลงนาม + พิมพ์บนกระดาษ) — ไม่รับ/ขอแก้ ไม่ใช่</summary>
+    public static bool IsSigningKind(Kind kind) => kind is Kind.Accepted or Kind.DeliverySigned or Kind.PoAcknowledged;
 
     public const int NamePartMax = 100;
     public const int TitleMax = 100;
@@ -37,8 +54,28 @@ public static class CustomerSignRule
         (CustomerDocPage.ActionDecline, DocumentType.Quotation) => Kind.Declined,
         (CustomerDocPage.ActionRequestChange, DocumentType.Quotation) => Kind.ChangeRequested,
         (CustomerDocPage.ActionSignDelivery, DocumentType.DeliveryNote) => Kind.DeliverySigned,
+        (CustomerDocPage.ActionPoAcknowledge, DocumentType.PurchaseOrder) => Kind.PoAcknowledged,
+        (CustomerDocPage.ActionPoDecline, DocumentType.PurchaseOrder) => Kind.PoDeclined,
         _ => null,
     };
+
+    /// <summary>
+    /// รอบ 267 P5 (S31 · 267-1-70): วันส่งของที่ผู้ขายยืนยันตอนรับทราบใบสั่งซื้อ (ไม่บังคับ) — ต้องไม่ก่อนวันที่ใบสั่งซื้อ ·
+    /// ว่าง = (null, null) · เก็บเป็นวันปฏิทิน (ไม่มีเวลา) · ผิด = ข้อความ (ไม่บันทึกอะไร)
+    /// </summary>
+    public static (DateTime? Date, string? Error) DecidePromisedDate(DateTime? promised, DateTime poDate, bool en)
+    {
+        if (promised == null) return (null, null);
+        var d = DateTime.SpecifyKind(promised.Value.Date, DateTimeKind.Utc);
+        // ฝ่ายค้าน 267-P5 LOW ปลีกย่อย: วันที่ใบเทียบเป็นวันปฏิทินไทย (ค่าที่เก็บเป็นเที่ยงคืนเวลาไทย = 17:00Z ของวันก่อน ⇒ .Date ให้วันก่อนผิด)
+        var poDay = ThaiDate.CalendarDateUtc(poDate);
+        if (d < poDay)
+            return (null, T(en, $"วันส่งที่ยืนยันต้องไม่ก่อนวันที่ใบสั่งซื้อ ({ThaiDate.ToThaiDisplayString(poDate)})",
+                $"The confirmed delivery date cannot be before the purchase order date ({poDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)})"));
+        if (d > poDay.AddYears(3))
+            return (null, T(en, "วันส่งที่ยืนยันไกลเกินไป — กรุณาตรวจปีอีกครั้ง", "The confirmed delivery date is too far ahead — please check the year"));
+        return (d, null);
+    }
 
     /// <summary>สิ่งที่ผู้ลงนามกรอก (ดิบจากคำขอ)</summary>
     public sealed record SignerInput(string? FirstName = null, string? LastName = null, string? Title = null,
@@ -103,8 +140,10 @@ public static class CustomerSignRule
                 return (null, null, T(en, "กรุณาระบุรายละเอียดของเหตุผล", "Please describe the reason"));
             return (code, msg, null);
         }
-        if (kind == Kind.ChangeRequested)
-            return msg == null
+        if (kind is Kind.ChangeRequested or Kind.PoDeclined)
+            return msg == null && kind == Kind.PoDeclined
+                ? (null, null, T(en, "กรุณาระบุเหตุที่ไม่รับใบสั่งซื้อ", "Please describe why the purchase order is declined"))
+                : msg == null
                 ? (null, null, T(en, "กรุณาระบุสิ่งที่ต้องการให้แก้ไข", "Please describe what should be changed"))
                 : (null, msg, null);
         return (null, msg, null);
@@ -118,6 +157,9 @@ public static class CustomerSignRule
     {
         null or "" => null,
         nameof(Kind.Accepted) => T(en, "ยอมรับใบเสนอราคานี้แล้ว", "This quotation has been accepted"),
+        nameof(Kind.PoAcknowledged) => T(en, "รับทราบใบสั่งซื้อนี้แล้ว", "This purchase order has been acknowledged"),
+        nameof(Kind.PoDeclined) => T(en, "ท่านแจ้งไม่รับใบสั่งซื้อนี้แล้ว — หากเปลี่ยนใจ กรุณาติดต่อผู้ซื้อให้ส่งลิงก์ใหม่",
+            "You declined this purchase order — to change your answer, ask the buyer to reopen it for a response"),
         nameof(Kind.Declined) => T(en, "ท่านแจ้งไม่รับใบเสนอราคานี้แล้ว — หากเปลี่ยนใจ กรุณาติดต่อผู้ขายให้ส่งลิงก์ตอบรับใหม่",
             "You declined this quotation — to change your answer, ask the seller to reopen it for a response"),
         _ => T(en, "ท่านส่งคำขอแก้ไขแล้ว — รอผู้ขายส่งใบเสนอราคาฉบับแก้ไข", "Your change request was sent — please wait for the seller's revised quotation"),

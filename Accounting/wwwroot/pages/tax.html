@@ -65,6 +65,7 @@
     <div id="citReviewBanner" style="display:none;margin-bottom:12px"></div>
     <!-- รอบ 269: ภ.พ.30 ที่บันทึกไว้ซึ่งยอดขาย 0%/ยกเว้นต่างจากการคำนวณปัจจุบัน — เซิร์ฟเวอร์ตัดสิน (สาเหตุ/ป้ายช่อง/ข้อความ) หน้าแสดงอย่างเดียว -->
     <div id="pp30SalesBoxBanner" style="display:none;margin-bottom:12px"></div>
+    <div id="ocrZeroVatBanner" style="display:none;margin-bottom:12px"></div>
     <!-- รอบ 269 ชุดสอง H1: ร่างล้าสมัย (อ่านอย่างเดียว) — ระบบไม่ลบ-สร้างร่างใหม่เองตอนเปิดหน้าแล้ว · กด "สร้างใหม่" เอง (ใต้ล็อก · คืนติ๊ก/บรรทัดดึง · audit ผู้กด) -->
     <div id="staleDraftBanner" style="display:none;margin-bottom:12px"></div>
 
@@ -448,6 +449,7 @@
           this.render();
           this.loadCitReview();
           this.loadPp30SalesBoxReview();
+          this.loadOcrZeroVatReview();
           const totalPages = data?.totalPages || 1;
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -508,6 +510,32 @@
 
       /** รอบ 269 — แถบ "ภ.พ.30 ที่บันทึกไว้ซึ่งยอดขาย 0%/ยกเว้นต่างจากการคำนวณปัจจุบัน" (อ่านอย่างเดียว · GET tax/pp30-sales-box-review) ·
        *  ข้อความ/งวด พ.ศ./คำแนะนำมาจากเซิร์ฟเวอร์ทั้งหมด · ร่าง ⇒ ปุ่มสร้างใหม่ · ยื่นแล้ว ⇒ บอกให้พิจารณายื่นเพิ่มเติม ไม่มีปุ่มแตะตัวเลข */
+      /** รอบ 270 (ฝ่ายค้าน M3) — ใบกำกับจากการสแกนที่อนุมัติแล้ว VAT 0% ทั้งใบ และกระดาษไม่บอกอัตราศูนย์ (อ่านอย่างเดียว · GET tax/ocr-zero-vat-review) ·
+       *  เหตุ/ทางแก้/งวด พ.ศ. มาจากเซิร์ฟเวอร์ · ปุ่มเปิดเอกสารเท่านั้น — ระบบไม่แก้ใบเอง */
+      async loadOcrZeroVatReview() {
+        const box = document.getElementById('ocrZeroVatBanner');
+        if (!box) return;
+        if (this.taxType !== 'VAT') { box.style.display = 'none'; box.innerHTML = ''; return; }
+        const esc = s => Layout.esc(s);
+        try {
+          const r = await API.get(`/api/companies/${Layout.getCompanyId()}/tax/ocr-zero-vat-review`);
+          const rows = r?.data || [];
+          if (!rows.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+          const items = rows.map(x => `<tr><td>${esc(x.documentNumber)}</td><td>${esc(x.periodLabel)}${x.periodFiled ? ' (ยื่นแล้ว)' : ''}</td>`
+            + `<td class="text-right">${Layout.money(x.totalAmount)}</td>`
+            + `<td><a class="btn btn-sm btn-secondary" href="${esc(x.openHref)}">เปิดเอกสาร</a></td></tr>`
+            + `<tr><td colspan="4" style="font-size:12px;color:#92400e">${esc(x.howToFix)}</td></tr>`).join('');
+          box.innerHTML = `<div class="card" style="font-size:13px;line-height:1.7;border-left:4px solid #d97706;background:#fffbeb">
+            <div>⚠️ ${esc(rows[0].message)} — ${rows.length} ใบ · ระบบไม่แก้ใบเหล่านี้เอง</div>
+            <table class="table" style="margin-top:8px"><thead><tr><th>เลขที่</th><th>งวด</th><th class="text-right">ยอดรวม</th><th></th></tr></thead><tbody>${items}</tbody></table>
+          </div>`;
+          box.style.display = '';
+        } catch (e) {
+          box.innerHTML = `<div class="card" style="font-size:13px;border-left:4px solid #dc2626">ตรวจใบกำกับจากการสแกนที่ VAT 0% ไม่สำเร็จ: ${esc(e.message)}</div>`;
+          box.style.display = '';
+        }
+      },
+
       async loadPp30SalesBoxReview() {
         const box = document.getElementById('pp30SalesBoxBanner');
         if (!box) return;

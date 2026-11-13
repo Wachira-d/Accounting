@@ -27,8 +27,12 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
 
     public DocumentPaymentHandler(AccountingDbContext db, IDocumentService docs,
         IGatewayAccountResolver accounts, ILogger<DocumentPaymentHandler> logger,
-        Accounting.Services.Storage.IFileStorage? storage = null)
-    { _db = db; _docs = docs; _accounts = accounts; _logger = logger; _storage = storage; }
+        Accounting.Services.Storage.IFileStorage? storage = null,
+        IDocumentPayLinkService? links = null)
+    { _db = db; _docs = docs; _accounts = accounts; _logger = logger; _storage = storage; _links = links; }
+
+    /// <summary>รอบ 267 P5 (267-1-72): ตัวตัดสินชุดใบของใบวางบิล "จ่ายทั้งใบ" (null = สร้างนอก DI — ใบวางบิลล้มดังแทนการเดา)</summary>
+    private readonly IDocumentPayLinkService? _links;
 
     /// <summary>รอบ 260-2: ที่เก็บไฟล์ — ตรวจรูป QR ของบัญชีตอนหาค่าแนะนำ "บัญชีที่แสดงให้ลูกค้าโอน" (null = นับเฉพาะพร้อมเพย์ · เทสต์)</summary>
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
@@ -56,7 +60,7 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
 
         var doc = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == intent.SourceId && d.CompanyId == intent.CompanyId && !d.IsDeleted)
-            .Select(d => new { d.Id, d.DocumentNumber, d.BalanceDue, d.Status, d.WithholdingTaxAmount, d.ContactId })
+            .Select(d => new { d.Id, d.DocumentNumber, d.BalanceDue, d.Status, d.WithholdingTaxAmount, d.ContactId, d.DocumentType })
             .FirstOrDefaultAsync(ct);
         if (doc == null)
         {
@@ -68,6 +72,14 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
             // รอบ 205 ทีม E: โยนแทน return เงียบ — PaymentIntentService บันทึกลงประวัติของรายการชำระ + แจ้งเจ้าของ
             throw new Accounting.Helpers.BusinessRuleException(
                 Accounting.Helpers.GatewayPaymentRecord.SourceMissingMessage("เอกสาร", intent.Id, intent.Amount), Accounting.Helpers.GatewayPaymentRecord.SourceMissingRuleCode);
+        }
+
+        // รอบ 267 P5 (267-1-9 v2 · 267-1-72): ใบวางบิล "จ่ายทั้งใบ" — ไม่มีเส้นเงินใหม่: ตัดสินชุดใบซ้ำ ณ ตอนเงินเข้า (ตัวตัดสินเดียว BillingNoteCombinedPay)
+        // แล้วเรียกการรับชำระหลายใบตัวเดิม (CreateMultiDocPaymentAsync — ล็อกแถว · JE · ตัดลูกหนี้ · ใบเสร็จรายใบ) · ยอดไม่ตรงกับยอดค้างรวมตอนนี้ = ล้มดัง (ไม่เดา)
+        if (doc.DocumentType == DocumentType.BillingNote)
+        {
+            await HandleBillingNoteAsync(intent, doc.Id, doc.DocumentNumber, reference, ct);
+            return;
         }
 
         // จ่ายเกินยอดค้าง = ข้อมูลขัดกัน ห้ามเดา — CreatePaymentAsync จะปฏิเสธเองอยู่แล้ว
@@ -122,5 +134,45 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
         ), intent.ConfirmedBy ?? "payment-gateway", source: Accounting.Helpers.PaymentEntrySource.Gateway);
         // รอบ 258-3 (F-H3) → รอบ 264 P3 (C-04): การแจ้งผู้ซื้อคู่ค้าย้ายเข้าขั้นหลัง commit ของ CreatePaymentAsync (ทุกทางเข้า · กุญแจ = การรับชำระ) — handler ไม่เรียกเองแล้ว
         // รอบ 250 (WP-02 §2.1): งานส่งเอกสารหลังรับชำระเข้าคิวในแกน CreatePaymentAsync (หลัง commit · แถวเดียวต่อการชำระ — webhook ซ้ำไม่เพิ่ม)
+    }
+
+    /// <summary>
+    /// รอบ 267 P5 (267-1-72): เงินเข้าสำหรับใบวางบิล "จ่ายทั้งใบ" ⇒ การรับชำระหนึ่งรายการจัดสรรให้ใบแจ้งหนี้แต่ละใบเต็มยอดค้าง ผ่าน
+    /// <c>IDocumentService.CreateMultiDocPaymentAsync</c> ตัวเดิม · ภาษีหัก ณ ที่จ่ายของทุกใบ = 0 ชัด ๆ (ชุดที่ผู้ซื้อต้องหักจ่ายรวมไม่ได้ตั้งแต่ต้น — ตัวตัดสินเดียว) ·
+    /// ชุดใบเปลี่ยนระหว่างลูกค้าจ่าย (ใบถูกชำระ/ยกเลิก/แก้ยอด) ⇒ โยนพร้อมเหตุ (ประวัติรายการชำระ + แจ้งเจ้าของ — ไม่ลงเงินรอจัดสรรเอง · 258-1-7)
+    /// </summary>
+    private async Task HandleBillingNoteAsync(PaymentIntent intent, Guid billingNoteId, string billingNoteNumber, string reference, CancellationToken ct)
+    {
+        var plan = _links == null ? null : await _links.BillingNotePlanAsync(intent.CompanyId, billingNoteId, ct);
+        if (plan == null)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"เงินเข้าแล้ว {intent.Amount:N2} บาทสำหรับใบวางบิล {billingNoteNumber} แต่ระบบตัดสินชุดใบไม่ได้ — บันทึกรับชำระด้วยมือ",
+                Accounting.Helpers.BillingNoteCombinedPay.RuleCode, 409);
+        if (Accounting.Helpers.BillingNoteCombinedPay.SettleRefusal(intent.Amount, plan, billingNoteNumber) is string refusal)
+            throw new Accounting.Helpers.BusinessRuleException(refusal, Accounting.Helpers.BillingNoteCombinedPay.RuleCode, 409);
+        var moneyIn = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
+        var receivingBank = moneyIn == null
+            ? await Accounting.Helpers.SlipReceivingAccount.OverrideForHandlerAsync(_db, _storage?.Locator.AttachmentsRoot, intent, ct)
+            : null;
+        var recorded = await _docs.CreateMultiDocPaymentAsync(intent.CompanyId, new Models.DTOs.Document.CreatePaymentRequest(
+            DocumentId: plan.Allocations[0].DocumentId,
+            PaymentDate: intent.PaidAt ?? intent.ConfirmedAt ?? DateTime.UtcNow,
+            Amount: intent.Amount,
+            PaymentMethod: PaymentMethod.BankTransfer,
+            Reference: reference,
+            BankAccount: null,
+            Notes: $"ชำระออนไลน์ทั้งใบวางบิล {billingNoteNumber} ผ่านระบบรับชำระเงิน",
+            OverrideBankAccountId: receivingBank,
+            OverridePaymentAccountId: moneyIn,
+            Allocations: plan.Allocations
+                .Select(a => new Models.DTOs.Document.PaymentAllocationRequest(a.DocumentId, a.Amount, WithholdingTaxAmount: 0m,
+                    Note: $"ใบวางบิล {billingNoteNumber}"))
+                .ToList(),
+            AfterCommitByCaller: true
+        ), intent.ConfirmedBy ?? "payment-gateway");
+        // ฝ่ายค้าน 267-P5 MED-5: ทุกทางเข้า 1:1 — งานหลังรับชำระ (ส่งใบเสร็จรายใบตามค่าตั้ง) + แจ้งผู้ซื้อคู่ค้า ด้วยทางเข้าจริง (ผู้ให้บริการรับชำระ)
+        await _docs.AfterPaymentRecordedAsync(intent.CompanyId, recorded.Id, Accounting.Helpers.PaymentEntrySource.Gateway, intent.ConfirmedBy ?? "payment-gateway");
+        _logger.LogInformation("บันทึกรับชำระทั้งใบวางบิล {Bn} ({Count} ใบ · {Amount:N2}) จาก intent {Intent}",
+            billingNoteNumber, plan.Allocations.Count, intent.Amount, intent.Id);
     }
 }
