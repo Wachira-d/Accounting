@@ -35,6 +35,19 @@ public static class SignRequestKinds
 
     public static Kind? For(DocumentType type) => All.FirstOrDefault(k => k.DocumentType == type);
 
+    /// <summary>รอบ 267 P2: เหตุการณ์ของคำตอบที่ไม่ใช่การเซ็น — ลูกค้าไม่รับ / ขอแก้ใบเสนอราคา (ชื่อเหตุการณ์ตัวเดียวของ outbox · webhook · การแจ้งผู้ขาย)</summary>
+    public const string QuotationDeclinedEvent = "quotation.declined";
+    public const string QuotationChangeRequestedEvent = "quotation.change_requested";
+
+    /// <summary>ชื่อเหตุการณ์ outbox ของชนิดคำตอบ (ยอมรับ/เซ็นรับ = เหตุการณ์เดิมของรอบ 240)</summary>
+    public static string EventFor(CustomerSignRule.Kind kind) => kind switch
+    {
+        CustomerSignRule.Kind.Accepted => QuotationAccept.EventType,
+        CustomerSignRule.Kind.DeliverySigned => DeliverySign.EventType,
+        CustomerSignRule.Kind.Declined => QuotationDeclinedEvent,
+        _ => QuotationChangeRequestedEvent,
+    };
+
     public static Kind? ForEvent(string? eventType) => All.FirstOrDefault(k => string.Equals(k.EventType, eventType, StringComparison.Ordinal));
 
     /// <summary>สถานะที่ "ออกเลขจริงแล้ว" ส่งให้ลูกค้าได้ — ร่าง/รออนุมัติยังเป็นเลข DRAFT (§86/4 ห้ามส่งออก) · ยกเลิก/ถูกปฏิเสธส่งไม่ได้</summary>
@@ -102,6 +115,8 @@ public static class SignRequestKinds
         if (d.DocumentType == DocumentType.Quotation) { d.QuotationAcceptToken = null; d.QuotationAcceptTokenExpiresAt = null; }
         else { d.DeliverySignToken = null; d.DeliverySignTokenExpiresAt = null; }
         d.SignLinkIssuedAt = nowUtc;
+        // รอบ 267 P2 (267-1-11): ผู้ขายส่งให้ตอบรับใหม่ = เปิดให้ลูกค้าที่เคย "ไม่รับ/ขอแก้" ตอบอีกครั้ง (คำตอบ "ยอมรับ" คงอยู่ — ล้างได้ด้วยการออก Rev ใหม่เท่านั้น)
+        if (d.CustomerResponse != nameof(CustomerSignRule.Kind.Accepted)) { d.CustomerResponse = null; d.CustomerResponseAt = null; }
         ResetTracking(d);
     }
 
@@ -111,6 +126,9 @@ public static class SignRequestKinds
     public static void CloseRespondOnRevision(Document d)
     {
         d.SignLinkIssuedAt = null;
+        // รอบ 267 P2: คำตอบของลูกค้าเป็นของ Rev เดิม (แถวหลักฐานใน CustomerDocumentActions คงอยู่เป็นประวัติ)
+        d.CustomerResponse = null;
+        d.CustomerResponseAt = null;
         d.QuotationAcceptToken = null;
         d.QuotationAcceptTokenExpiresAt = null;
         d.DeliverySignToken = null;
@@ -137,6 +155,9 @@ public static class SignRequestKinds
         if (k == null) return null;
         var s = Read(d);
         if (s.SignedAt != null) return new("signed", k.SignedTh, "success");
+        // รอบ 267 P2: ลูกค้าตอบแล้วแต่ไม่ใช่ "ยอมรับ" — พนักงานต้องเห็นบนรายการเอกสาร (ทางไปต่อ: ออก Rev ใหม่ หรือส่งให้ตอบรับใหม่)
+        if (d.CustomerResponse == nameof(CustomerSignRule.Kind.Declined)) return new("declined", "ลูกค้าไม่รับใบเสนอราคา", "danger");
+        if (d.CustomerResponse == nameof(CustomerSignRule.Kind.ChangeRequested)) return new("change_requested", "ลูกค้าขอแก้ไข", "warning");
         if (!s.HasLink) return null;
         if (!LinkUsable(s, nowUtc)) return new("expired", "ลิงก์หมดอายุ", "muted");
         if (d.SignLinkOpenedAt != null) return new("opened", "ลูกค้าเปิดลิงก์แล้ว", "info");

@@ -424,7 +424,26 @@ public partial class PdfGenerationService : IPdfGenerationService
         DateTime? AcceptedOnlineAt = null,
         string? AcceptNote = null,
         // ฝ่ายค้าน S3: เนื้อหาเปลี่ยนหลังลูกค้ายอมรับ ⇒ ไม่มีรูป + renderer พิมพ์ DocumentLabels.QtAcceptContentChanged
-        bool AcceptContentChanged = false);
+        bool AcceptContentChanged = false,
+        // รอบ 267 P2 (267-1-17): ผู้ลงนามของลูกค้าจากแถวหลักฐาน (CustomerDocumentActions) — ชื่อผู้ซื้อที่ลงนามในนาม · รหัสอ้างอิงหลักฐาน ·
+        // เวลาเซ็นรับสินค้าออนไลน์ · ตำแหน่งอยู่ใน Title · ค่าจาก ResolveSignersAsync ตัวเดียว · ทั้งสอง renderer พิมพ์ผ่าน CustomerSignerLines (ไม่พิมพ์ IP)
+        string? OnBehalfOf = null,
+        string? EvidenceRef = null,
+        DateTime? DeliverySignedOnlineAt = null);
+
+    /// <summary>รอบ 267 P2 — บรรทัดของ "ผู้ลงนามฝั่งลูกค้า" ที่พิมพ์ใต้ชื่อ (ตัวเดียวของทั้ง HTML และ QuestPDF — กฎ #4 A สอง renderer ห้าม drift):
+    /// [ตำแหน่ง — เฉพาะบล็อกที่ไม่ได้พิมพ์ Title เอง] · ลงนามในนามของ {ผู้ซื้อ} · เซ็นรับออนไลน์ {เวลา} · ลงนามออนไลน์ รหัสอ้างอิง {…} ·
+    /// ข้อความดิบ (ผู้เรียกฝั่ง HTML ต้อง HtmlEncode) · ป้ายจาก <see cref="Pdf.DocumentLabels"/> เท่านั้น</summary>
+    internal static IReadOnlyList<string> CustomerSignerLines(DocumentSigner? s, Pdf.DocumentLabels L, bool includeTitle = false)
+    {
+        var lines = new List<string>();
+        if (s == null) return lines;
+        if (includeTitle && !string.IsNullOrWhiteSpace(s.Title)) lines.Add(L.SignerPosition(s.Title!));
+        if (!string.IsNullOrWhiteSpace(s.OnBehalfOf)) lines.Add(L.SignedOnBehalfOf(s.OnBehalfOf!));
+        if (s.DeliverySignedOnlineAt is { } signedAt) lines.Add(L.DnSignedOnline(signedAt));
+        if (!string.IsNullOrWhiteSpace(s.EvidenceRef)) lines.Add(L.SignedOnlineEvidenceRef(s.EvidenceRef!));
+        return lines;
+    }
 
     /// <summary>The document's posted journal entry, summarised for the
     /// "การลงบัญชี (Dr./Cr.)" block printed at the end of the document when the
@@ -988,12 +1007,26 @@ public partial class PdfGenerationService : IPdfGenerationService
     /// <summary>รอบ 239 (ฝ่ายค้าน S3): ผู้ลงนามช่องลูกค้าจากการยอมรับออนไลน์ — เนื้อหาไม่ตรงกับฉบับที่ยอมรับ
     /// (<see cref="Accounting.Helpers.QuotationAcceptance.ContentMatches"/> = false) ⇒ ไม่ใส่รูป + <c>AcceptContentChanged</c> (renderer พิมพ์
     /// <c>DocumentLabels.QtAcceptContentChanged</c>) · null (ไม่มี hash — ใบก่อนรอบ 239) ⇒ พิมพ์ตามเดิม</summary>
-    internal static DocumentSigner QuotationAcceptanceSigner(Document doc, IEnumerable<DocumentLine>? lines, byte[]? signaturePng)
+    /// <param name="evidence">รอบ 267 P2: แถวหลักฐานของการยอมรับนี้ (ตำแหน่ง · ชื่อผู้ซื้อ · รหัสอ้างอิง) — null = ยอมรับก่อนรอบ 267/ลิงก์รุ่นก่อน (พิมพ์ชื่ออย่างเดียวตามเดิม)</param>
+    internal static DocumentSigner QuotationAcceptanceSigner(Document doc, IEnumerable<DocumentLine>? lines, byte[]? signaturePng,
+        CustomerDocumentAction? evidence = null)
     {
         var changed = Accounting.Helpers.QuotationAcceptance.ContentMatches(doc, lines) == false;
         var png = changed ? null : signaturePng;
-        return new DocumentSigner(png == null ? null : ImageDataUri(png), png, doc.QuotationAcceptedBy, null,
-            AcceptedOnlineAt: doc.QuotationAcceptedAt, AcceptNote: doc.QuotationAcceptNote, AcceptContentChanged: changed);
+        return new DocumentSigner(png == null ? null : ImageDataUri(png), png, doc.QuotationAcceptedBy, evidence?.SignerTitle,
+            AcceptedOnlineAt: doc.QuotationAcceptedAt, AcceptNote: doc.QuotationAcceptNote, AcceptContentChanged: changed,
+            OnBehalfOf: evidence?.SignerOrgName, EvidenceRef: evidence == null ? null : Accounting.Helpers.CustomerSignRule.EvidenceRef(evidence.ContentHash));
+    }
+
+    /// <summary>รอบ 267 P2: แถวหลักฐานล่าสุดของ Rev ปัจจุบันของใบ (ชนิดที่ระบุ · ยังไม่ถูกลบตามคำขอ) — ผู้อ่านเดียวของกระดาษ (สอง renderer ผ่าน ResolveSignersAsync) ·
+    /// ไม่มี = ยอมรับ/เซ็นรับก่อนรอบ 267 ⇒ กระดาษพิมพ์ตามเดิม</summary>
+    private async Task<CustomerDocumentAction?> CustomerEvidenceAsync(Document doc, Accounting.Helpers.CustomerSignRule.Kind kind)
+    {
+        var action = kind.ToString();
+        return await _db.Set<CustomerDocumentAction>().AsNoTracking()
+            .Where(a => a.CompanyId == doc.CompanyId && a.DocumentId == doc.Id && a.Action == action
+                && a.RevisionNumber == doc.RevisionNumber && a.ErasedAt == null)
+            .OrderByDescending(a => a.CreatedAt).FirstOrDefaultAsync();
     }
 
     /// <summary>รอบ 239: วางผู้ยอมรับออนไลน์ลงช่องลูกค้า (slot 2) · ฝ่ายค้าน N: ยอมรับแบบไม่มีรูป (ไม่เซ็น/เนื้อหาเปลี่ยน) แต่ช่องนี้มีรูปลายเซ็นลูกค้าเดิม
@@ -1109,8 +1142,15 @@ public partial class PdfGenerationService : IPdfGenerationService
             var signedTitle = doc.DeliverySignedAt is { } at
                 ? $"เซ็นรับออนไลน์ {at.AddHours(7):dd/MM/yyyy HH:mm} น."
                 : signers[1].Title;
-            signers[1] = new DocumentSigner(sigUri, TryDecodeBase64Image(rawSig),
-                doc.DeliverySignedBy ?? signers[1].Name, signedTitle);
+            // รอบ 267 P2: เซ็นรับผ่านหน้าเอกสาร ⇒ มีแถวหลักฐาน (ตำแหน่ง · ชื่อผู้ซื้อ · รหัสอ้างอิง) — ตำแหน่งลงช่อง Title · เวลา/ในนาม/รหัสอ้างอิงพิมพ์ผ่าน
+            // CustomerSignerLines (ป้ายจาก DocumentLabels ตามภาษาเอกสาร) · ไม่มีแถว (เซ็นก่อนรอบ 267/ลิงก์รุ่นก่อนที่พิมพ์ชื่ออย่างเดียว) = พิมพ์ตามเดิม
+            var dnEvidence = await CustomerEvidenceAsync(doc, Accounting.Helpers.CustomerSignRule.Kind.DeliverySigned);
+            signers[1] = dnEvidence is { IdentityLevel: Accounting.Helpers.CustomerSignRule.IdentityFull }
+                ? new DocumentSigner(sigUri, TryDecodeBase64Image(rawSig), doc.DeliverySignedBy ?? signers[1].Name, dnEvidence.SignerTitle,
+                    OnBehalfOf: dnEvidence.SignerOrgName, EvidenceRef: Accounting.Helpers.CustomerSignRule.EvidenceRef(dnEvidence.ContentHash),
+                    DeliverySignedOnlineAt: doc.DeliverySignedAt)
+                : new DocumentSigner(sigUri, TryDecodeBase64Image(rawSig),
+                    doc.DeliverySignedBy ?? signers[1].Name, signedTitle);
             slotUsers[1] = null; customerSlots[1] = true;   // ลูกค้าเซ็นรับของจริง — กฎของบริษัทไม่แตะ
         }
 
@@ -1208,7 +1248,9 @@ public partial class PdfGenerationService : IPdfGenerationService
                 var b = TryReadImage(doc.QuotationAcceptSignaturePath);
                 if (Accounting.Helpers.SignatureImageValidator.LooksLikeStoredPng(b)) qtSig = b;
             }
-            PlaceQuotationAcceptance(signers, QuotationAcceptanceSigner(doc, doc.Lines, qtSig));
+            var qtEvidence = await CustomerEvidenceAsync(doc, Accounting.Helpers.CustomerSignRule.Kind.Accepted);
+            PlaceQuotationAcceptance(signers, QuotationAcceptanceSigner(doc, doc.Lines, qtSig,
+                qtEvidence is { IdentityLevel: Accounting.Helpers.CustomerSignRule.IdentityFull } ? qtEvidence : null));
         }
 
         // AUTHORIZED-SIGNATORY FALLBACK. The "ผู้อนุมัติ / ผู้มีอำนาจลงนาม"
@@ -2602,6 +2644,9 @@ public partial class PdfGenerationService : IPdfGenerationService
                     sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(L.QtAcceptNote)}: {WebUtility.HtmlEncode(s.AcceptNote!)}</div>");
                 if (s is { AcceptContentChanged: true })
                     sb.Append($"<div class='sig-title' style='color:#b45309'>{WebUtility.HtmlEncode(L.QtAcceptContentChanged)}</div>");
+                // รอบ 267 P2: ผู้ลงนามฝั่งลูกค้า — ในนามของ · เวลาเซ็นรับ · รหัสอ้างอิงหลักฐาน (บรรทัดชุดเดียวกับ QuestPDF ComposeSignatures)
+                foreach (var signerLine in CustomerSignerLines(s, L))
+                    sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(signerLine)}</div>");
                 sb.AppendLine("</td>");
             }
             // ป้ายลายเซ็น (EN) ที่ผู้ใช้ตั้งไว้ — ใช้เมื่อพิมพ์เอกสารภาษาอังกฤษ

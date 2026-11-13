@@ -14,8 +14,9 @@ namespace Accounting.Helpers;
 /// <c>PublicDocumentPageController</c> · <c>PublicQuotationController</c> (หน้ายอมรับ/เซ็นรับเดิมรับ token ของหน้าเอกสารในช่วงเปลี่ยนผ่าน) ·
 /// <c>SignRequestKinds</c> (ป้ายสถานะลิงก์เซ็น)</para>
 ///
-/// <para>P1 = อ่านอย่างเดียว + ทางเดิม: ยอมรับใบเสนอราคา/เซ็นรับสินค้า ยังทำที่หน้าเดิมของรอบ 239/240 (ปุ่มบนหน้าเอกสารพาไป) ·
-/// ผู้ลงนาม/หลักฐาน/ฉบับเซ็น = P2 · ไม่มี AI ในเส้นนี้ (กฎเหล็ก #1 ไม่ถูกแตะ)</para>
+/// <para>P1 = อ่านอย่างเดียว · P2 (รอบ 267): ยอมรับ/ปฏิเสธ/ขอแก้ใบเสนอราคา และเซ็นรับสินค้า ทำบนหน้านี้ (ฟอร์มผู้ลงนามในหน้า — กติกา
+/// <see cref="CustomerSignRule"/> · ข้อความ <see cref="CustomerSignText"/> · ผู้เขียนเดียว <c>CustomerDocumentResponseService</c> ซึ่งรับคำตอบเฉพาะเมื่อ
+/// <see cref="Actions"/> เปิดปุ่มนั้น ณ ตอนนั้น) · ไม่มี AI ในเส้นนี้ (กฎเหล็ก #1 ไม่ถูกแตะ)</para>
 /// </summary>
 public static class CustomerDocPage
 {
@@ -224,15 +225,16 @@ public static class CustomerDocPage
     /// <summary>ข้อเท็จจริงของใบ ณ ตอนถาม (ตัวโหลดเดียว <c>DocumentPayLinkService</c>) —
     /// <paramref name="PayOffered"/> = ชั้นจ่ายเปิด (<c>DocumentPayLinkPolicy.IssueRefusal == null</c> + มีช่องทางออนไลน์ + ยังไม่รับเงินผ่านลิงก์) ·
     /// <paramref name="PayBlockedNote"/> = เหตุที่จ่ายไม่ได้ (ข้อความเดิมของหน้าชำระ) · <paramref name="SlipOffered"/> = ฟอร์มแจ้งโอนเปิด
-    /// (<c>SlipEvidenceRule.PayLinkSlipAllowed</c>) · <paramref name="RespondHref"/> = ที่อยู่หน้าตอบรับเดิม (null = ไม่มีทางตอบรับในโหมดนี้)</summary>
+    /// (<c>SlipEvidenceRule.PayLinkSlipAllowed</c>) · <paramref name="RespondHref"/> = ที่อยู่เส้นตอบรับของหน้า (<see cref="RespondPath"/> ·
+    /// null = ไม่มีทางตอบรับในโหมดนี้) · <paramref name="CustomerResponse"/> = คำตอบล่าสุดของลูกค้าต่อ Rev นี้ (<c>Document.CustomerResponse</c>)</summary>
     public sealed record Facts(
         DocumentType Type, DocumentStatus Status, Mode Mode, bool IsEnglish,
         bool PayOffered, string? PayBlockedNote, bool SlipOffered,
         DateTime? DueDate, DateTime? RespondStartUtc, DateTime? RespondedAt, string? RespondHref,
-        bool PdfAvailable = true, bool PayOnly = false);
+        bool PdfAvailable = true, bool PayOnly = false, string? CustomerResponse = null);
 
-    /// <summary>ปุ่มหนึ่งปุ่มบนหน้า — <paramref name="Id"/> = รหัสที่หน้าเว็บใช้เลือกตัววาด (ไม่ใช่ข้อความ) · <paramref name="Href"/> = ที่ไปต่อ
-    /// (หน้าตอบรับเดิมในช่วงเปลี่ยนผ่าน) · ปิด = <paramref name="DisabledReason"/> ต้องมีเสมอ (ไม่มีปุ่มเทาที่ไม่บอกเหตุ)</summary>
+    /// <summary>ปุ่มหนึ่งปุ่มบนหน้า — <paramref name="Id"/> = รหัสที่หน้าเว็บใช้เลือกตัววาด (ไม่ใช่ข้อความ) · <paramref name="Href"/> = เส้นที่หน้าส่งคำตอบ
+    /// ของปุ่มตอบรับ (POST <see cref="RespondPath"/> — รอบ 267 P2: ฟอร์มผู้ลงนามอยู่บนหน้าเอกสารเอง) · ปิด = <paramref name="DisabledReason"/> ต้องมีเสมอ (ไม่มีปุ่มเทาที่ไม่บอกเหตุ)</summary>
     public sealed record PageAction(string Id, bool Enabled, string Label, string? DisabledReason, string RuleCode, string? Href = null);
 
     public const string ActionDownloadPdf = "download-pdf";
@@ -241,6 +243,13 @@ public static class CustomerDocPage
     public const string ActionAccept = "accept";
     public const string ActionSignDelivery = "sign-delivery";
     public const string ActionRequestLink = "request-link";
+    /// <summary>รอบ 267 P2: ไม่รับใบเสนอราคา (พร้อมเหตุผล) · ขอแก้ไขใบเสนอราคา</summary>
+    public const string ActionDecline = "decline";
+    public const string ActionRequestChange = "request-change";
+
+    /// <summary>เส้นรับคำตอบของหน้า (ยอมรับ · ปฏิเสธ · ขอแก้ · เซ็นรับ) — เส้นเดียว ผู้เขียนเดียว <c>CustomerDocumentResponseService</c></summary>
+    public static string RespondPath(Guid companyId, string token)
+        => $"/api/companies/{companyId:D}/public-pay/documents/{Uri.EscapeDataString(token)}/respond";
 
     /// <summary>ชนิดที่ "จ่ายได้" บนหน้า (ตัวตัดสินจริง = ชั้นจ่าย <c>DocumentPayLinkPolicy.IssueRefusal</c> — ที่นี่ใช้แค่เลือกว่าจะแสดงปุ่มจ่ายไหม)</summary>
     public static bool IsPayableType(DocumentType type) => Array.IndexOf(DocumentPayLinkPolicy.PayableTypes, type) >= 0;
@@ -305,16 +314,29 @@ public static class CustomerDocPage
         {
             var label = respondId == ActionAccept ? T(en, "ยอมรับใบเสนอราคา", "Accept the quotation") : T(en, "เซ็นรับสินค้า", "Sign for the delivery");
             string? closed = null;
+            // รอบ 267 P2 (267-1-11): หนึ่งคำตอบต่อ Rev — ปฏิเสธ/ขอแก้ไปแล้ว ⇒ ปิดจนผู้ขายส่งให้ตอบรับใหม่หรือออก Rev ใหม่ (ตัวตัดสิน CustomerSignRule.PriorResponseBlock)
+            var answered = f.RespondedAt == null && respondId == ActionAccept ? CustomerSignRule.PriorResponseBlock(en, f.CustomerResponse) : null;
             if (f.RespondedAt != null)
                 closed = respondId == ActionAccept ? T(en, "ยอมรับใบเสนอราคานี้แล้ว", "This quotation has been accepted")
                     : T(en, "เซ็นรับสินค้าแล้ว", "This delivery has been signed for");
             else if (preview) closed = previewNote;
+            else if (answered != null) closed = answered;
             else if (RespondWindowClosedReason(en, f.Type, f.DueDate, f.RespondStartUtc, nowUtc) is { } windowClosed) closed = windowClosed;
             else if (f.Mode != Mode.Link || string.IsNullOrEmpty(f.RespondHref)) closed = needsLinkNote;
 
             list.Add(new PageAction(respondId, closed == null, label, closed, RuleCode, closed == null ? f.RespondHref : null));
             // ปิดเพราะพ้นกำหนด/ไม่มีลิงก์ทำรายการ (ไม่ใช่เพราะตอบรับแล้ว/พรีวิว) ⇒ มีทางไปต่อ: แจ้งผู้ขาย
             wantsLink |= closed != null && f.RespondedAt == null && !preview;
+
+            // รอบ 267 P2: ใบเสนอราคา — "ไม่รับ" เปิดพร้อมปุ่มยอมรับ · "ขอแก้" เปิดแม้พ้นวันยืนราคา (ขอให้ผู้ขายออกฉบับใหม่) ตราบที่ผู้ขายเปิดให้ตอบรับแล้ว
+            // และยังไม่เคยตอบ · โหมดอื่น/ยังไม่เปิดให้ตอบรับ/ตอบแล้ว = ไม่แสดง (ไม่มีปุ่มเทาเพิ่ม — เหตุอยู่ที่ปุ่มยอมรับแล้ว)
+            if (respondId == ActionAccept && f.RespondedAt == null && answered == null && !preview
+                && f.Mode == Mode.Link && !string.IsNullOrEmpty(f.RespondHref) && f.RespondStartUtc != null)
+            {
+                if (closed == null)
+                    list.Add(new PageAction(ActionDecline, true, T(en, "ไม่รับใบเสนอราคา", "Decline the quotation"), null, RuleCode, f.RespondHref));
+                list.Add(new PageAction(ActionRequestChange, true, T(en, "ขอแก้ไขใบเสนอราคา", "Request changes"), null, RuleCode, f.RespondHref));
+            }
         }
 
         if (wantsLink)
@@ -347,6 +369,10 @@ public static class CustomerDocPage
         ["requestSent"] = T(en, "แจ้งผู้ขายแล้ว — ผู้ขายจะส่งลิงก์ใหม่ให้ท่าน", "The seller has been notified and will send you a new link"),
         ["requestAlready"] = T(en, "วันนี้แจ้งผู้ขายไปแล้ว — กรุณารอผู้ขายติดต่อกลับ", "The seller was already notified today — please wait for their reply"),
         ["currency"] = T(en, "บาท", "THB"),
+        // รอบ 267 P2: ประวัติคำตอบของลูกค้า + ฉบับที่ลงนาม (ข้อความชุดเดียวกับฟอร์ม — CustomerSignText)
+        ["history"] = CustomerSignText.FormLabels(en)["history"],
+        ["signedCopy"] = CustomerSignText.FormLabels(en)["signedCopy"],
+        ["signedCopyPending"] = CustomerSignText.FormLabels(en)["signedCopyPending"],
     };
 
     /// <summary>ป้ายวันที่ตัวที่สองตามชนิด — ข้อความเดียวกับกระดาษ (<c>DocumentLabels.DueDateFor</c>: ใบเสนอราคา = ยืนราคาถึง · ใบสั่งซื้อ = กำหนดส่งมอบ)</summary>
@@ -387,10 +413,6 @@ public static class CustomerDocPage
         """UPDATE "Documents" SET "QuotationAcceptToken" = 'h1:' || encode(sha256(convert_to(lower("QuotationAcceptToken"), 'UTF8')), 'hex') WHERE "QuotationAcceptToken" IS NOT NULL AND "QuotationAcceptToken" NOT LIKE 'h1:%';""",
         """UPDATE "Documents" SET "DeliverySignToken" = 'h1:' || encode(sha256(convert_to(lower("DeliverySignToken"), 'UTF8')), 'hex') WHERE "DeliverySignToken" IS NOT NULL AND "DeliverySignToken" NOT LIKE 'h1:%';""",
     };
-
-    /// <summary>ที่อยู่หน้าตอบรับเดิมของชนิดนี้ (ช่วงเปลี่ยนผ่าน P1→P2) — token ของหน้าเอกสารตัวเดียวกัน · ชนิดอื่น = null</summary>
-    public static string? LegacyRespondPath(DocumentType type, string token) => SignRequestKinds.For(type) is { } k
-        ? $"{k.PagePath}?token={Uri.EscapeDataString(token)}" : null;
 
     // ═══════════════ log — ไม่เขียน token ลง log (token อยู่ใน path ของเส้น API สาธารณะ) ═══════════════
 
