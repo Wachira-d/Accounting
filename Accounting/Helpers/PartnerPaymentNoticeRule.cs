@@ -110,14 +110,21 @@ public static class PartnerPaymentNoticeRule
     /// <summary>รอบ 264 P3 (264-3-6): รูปใหม่ — กุญแจ = การรับชำระของผู้ขาย</summary>
     internal static string PaymentReferenceForSellerPayment(Guid sellerPaymentId) => $"PARTNER-PAID-P{sellerPaymentId:N}";
 
-    /// <summary>เลขอ้างอิงที่<b>เขียน</b>สำหรับการแจ้งนี้ — แถวที่รู้การรับชำระของผู้ขาย ⇒ รูปใหม่ · แถวเก่าที่มีแต่ intent ⇒ รูปเดิม · ไม่มีทั้งคู่ ⇒ null (บันทึกไม่ได้)</summary>
-    public static string? PaymentReferenceFor(Guid? sellerPaymentId, Guid? paymentIntentId)
-        => sellerPaymentId is Guid sp ? PaymentReferenceForSellerPayment(sp) : paymentIntentId is Guid i ? PaymentReference(i) : null;
+    /// <summary>รอบ 268 (268-1-6): การแจ้งของการชำระหลายใบ — กุญแจ = แถวจัดสรรของผู้ขาย (การชำระเดียวกันมีหลายแจ้ง ⇒ ห้ามใช้รูปต่อการรับชำระ ไม่งั้นใบที่สอง "พบการจ่ายแล้ว" ผิดใบ)</summary>
+    internal static string PaymentReferenceForSellerAllocation(Guid sellerAllocationId) => $"PARTNER-PAID-A{sellerAllocationId:N}";
 
-    /// <summary>เลขอ้างอิงทุกรูปที่<b>กันซ้ำ</b>ต้องตรวจ (แถวที่ migration เติม SellerPaymentId อาจบันทึกจ่ายไปแล้วด้วยรูปเดิม)</summary>
-    public static IReadOnlyList<string> PaymentReferencesToCheck(Guid? sellerPaymentId, Guid? paymentIntentId)
+    /// <summary>เลขอ้างอิงที่<b>เขียน</b>สำหรับการแจ้งนี้ — แถวจัดสรร (ชำระหลายใบ) ⇒ รูปแถวจัดสรร · แถวที่รู้การรับชำระของผู้ขาย ⇒ รูปใหม่ · แถวเก่าที่มีแต่ intent ⇒ รูปเดิม ·
+    /// ไม่มีทั้งหมด ⇒ null (บันทึกไม่ได้)</summary>
+    public static string? PaymentReferenceFor(Guid? sellerPaymentId, Guid? paymentIntentId, Guid? sellerAllocationId = null)
+        => sellerAllocationId is Guid sa ? PaymentReferenceForSellerAllocation(sa)
+         : sellerPaymentId is Guid sp ? PaymentReferenceForSellerPayment(sp) : paymentIntentId is Guid i ? PaymentReference(i) : null;
+
+    /// <summary>เลขอ้างอิงทุกรูปที่<b>กันซ้ำ</b>ต้องตรวจ (แถวที่ migration เติม SellerPaymentId อาจบันทึกจ่ายไปแล้วด้วยรูปเดิม) ·
+    /// แถวจัดสรร ⇒ รูปแถวจัดสรรเท่านั้น (รูปต่อการรับชำระเป็นของแจ้งใบอื่นในการชำระเดียวกัน)</summary>
+    public static IReadOnlyList<string> PaymentReferencesToCheck(Guid? sellerPaymentId, Guid? paymentIntentId, Guid? sellerAllocationId = null)
     {
         var list = new List<string>();
+        if (sellerAllocationId is Guid sa) { list.Add(PaymentReferenceForSellerAllocation(sa)); return list; }
         if (sellerPaymentId is Guid sp) list.Add(PaymentReferenceForSellerPayment(sp));
         if (paymentIntentId is Guid i) list.Add(PaymentReference(i));
         return list;

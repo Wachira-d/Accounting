@@ -487,4 +487,43 @@ public class ProviderCentralOaRound262DbTests
             Assert.True((await portal.GetMyDocumentsAsync(f.PlatformId, plain.Id)).Single(d => d.Id == plainInv.Id).CanPay);
         });
     }
+
+    // ═══ รอบ 268 (คำตัดสิน 268-1-5) ═══
+
+    [Fact]
+    public async Task C268_1_5_นำผู้ใช้ออกจากบริษัทผู้เช่า_ปลายทาง_LINE_รับใบค่าบริการที่เขาผูก_ถูกยกเลิก_ทิศตรงข้าม_ที่คนอื่นผูกไม่ถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var f = await PlatformBillingPhase2DbTests.SeedAsync(db);
+        var owner = new User { Email = $"o268-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "เจ้าของผู้เช่า 268" };
+        var member = new User { Email = $"m268-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "พนักงานที่ออก 268" };
+        db.Users.AddRange(owner, member);
+        db.CompanyUsers.Add(new CompanyUser { UserId = owner.Id, CompanyId = f.BuyerId, Role = UserRole.Owner });
+        db.CompanyUsers.Add(new CompanyUser { UserId = member.Id, CompanyId = f.BuyerId, Role = UserRole.Accountant });
+        await db.SaveChangesAsync();
+        await PlatformBillingPhase2DbTests.WithPlatformTenantAsync(db, f.PlatformId, async () =>
+        {
+            var mine = await SeedCentralEndpointAsync(db, f.PlatformId, f.ContactId, "Umine268" + Guid.NewGuid().ToString("N")[..20]);
+            var other = await SeedCentralEndpointAsync(db, f.PlatformId, f.ContactId, "Uother268" + Guid.NewGuid().ToString("N")[..20]);
+            await db.ContactNotifyEndpoints.Where(e => e.Id == mine.Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.BoundByUserId, (Guid?)member.Id));
+            await db.ContactNotifyEndpoints.Where(e => e.Id == other.Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.BoundByUserId, (Guid?)owner.Id));
+
+            using (var c1 = DbTestDatabase.TryCreateContext()!)
+                await new CompanyService(c1, new AccountingService(c1)).RemoveUserAsync(f.BuyerId, owner.Id, member.Id);
+
+            using var check = DbTestDatabase.TryCreateContext()!;
+            Assert.False(await check.CompanyUsers.AnyAsync(x => x.CompanyId == f.BuyerId && x.UserId == member.Id));
+            var m = await check.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == mine.Id);
+            Assert.NotNull(m.UnlinkedAt);
+            Assert.Equal(NotifyEndpointKind.UnlinkMemberRemoved, m.UnlinkReason);
+            Assert.Null(m.LineUserId);                                   // ตัวยกเลิกเดียวล้าง LINE id (PDPA ม.22)
+            Assert.NotNull((await check.PdpaConsentRecords.AsNoTracking().SingleAsync(c => c.Id == m.ConsentRecordId)).WithdrawnAt);
+            var o = await check.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == other.Id);
+            Assert.Null(o.UnlinkedAt);                                   // ปลายทางที่เจ้าของผูกเองยังรับใบต่อ
+            Assert.NotNull(o.LineUserId);
+            Assert.Contains(await check.AuditLogs.AsNoTracking().Where(a => a.CompanyId == f.PlatformId && a.EntityId == f.ContactId.ToString())
+                .Select(a => a.NewValues!).ToListAsync(), v => v.Contains("line-unlink-member-removed"));
+        });
+    }
 }

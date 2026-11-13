@@ -19807,6 +19807,84 @@ REVIEWER_CASES += [
     ("R267j", "SignLink", "req.CallbackRef, StaffIntent: false)", "req.CallbackRef)", True),
 ]
 
+# ── รอบ 268 (backlog cleanup · คำตัดสิน 268-1-1…6 ใน erp-review/2026-09-29/DECISIONS.md) ──
+_R268_WHY = "รอบ 268: "
+_R268_CMS = "Services/Implementations/CmsCommerceService.cs"
+_R268_BK = "Services/Implementations/CmsBookingService.Payment.cs"
+_R268_LCS = "Services/Implementations/LineChatSlipService.cs"
+_R268_PPN = "Services/Implementations/PartnerPaymentNoticeService.cs"
+RULES += [
+    dict(file="Helpers/PartnerPaySourceAccount.cs", method="Decide",
+         must=["row.AllowsAuto && row.Confidence >= AutoThreshold", "ConsentDefaultNotAutoReason"],
+         why=_R268_WHY + "268-1-1 บันทึกเองตามตาราง (ชั้นบัญชีตั้งต้นปิด) + เหตุที่บอกว่าทำไมบนแถว/หน้า"),
+    dict(file="Controllers/CmsCommerceController.cs", method="ConfirmPayment",
+         must=["_commerceService.SlipReceivingAccountsAsync(", "Decision.Ok: false", "receivingBankAccountId:"],
+         before=[("_commerceService.SlipReceivingAccountsAsync(", "_commerceService.ConfirmPaymentAsync(")],
+         why=_R268_WHY + "268-1-2 สลิปออเดอร์หน้าเว็บ: บัญชีที่เงินเข้าจากตัวตัดสินเดียวก่อนยืนยัน · ใช้ไม่ได้ = 400 (เดิมไม่ส่ง ⇒ เงินสด 111)"),
+    dict(file="Controllers/CmsCommerceController.cs", method="ReceivingAccounts",
+         must=["_commerceService.SlipReceivingAccountsAsync("],
+         why=_R268_WHY + "268-1-2 ตัวเลือก/ค่าแนะนำของหน้ามาจากเซิร์ฟเวอร์"),
+    dict(file=_R268_CMS, method="SlipReceivingAccountsAsync",
+         must=["SlipReceivingAccount.AppliesToSiteOrderPayment(", "SlipReceivingAccount.ResolveForSiteOrderAsync(", "p.CompanyId == companyId"],
+         why=_R268_WHY + "268-1-2 ตัวตัดสินเดียว (ไม่มีสำเนากติกา) · tenant"),
+    dict(file=_R268_CMS, method="ConfirmPaymentLockedAsync",
+         must=["OverrideBankAccountId: receivingBankAccountId", "if (moneyInAccountId != null) receivingBankAccountId = null;"],
+         why=_R268_WHY + "268-1-2 ธนาคารที่ตัดสินแล้วถึง CreatePaymentAsync · ผังพักของผู้ให้บริการชนะ"),
+    dict(file="Services/Payments/Handlers/SiteOrderPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["SlipReceivingAccount.OverrideForHandlerAsync(", "receivingBankAccountId: receivingBank"],
+         before=[("SlipReceivingAccount.OverrideForHandlerAsync(", "_commerce.ConfirmPaymentAsync(")],
+         why=_R268_WHY + "268-1-2 สลิปออเดอร์ผ่านคิวรายการชำระ: ค่าที่ประทับตอนยืนยันถึงใบขาย (คู่สมมาตรของ DocumentPaymentHandler)"),
+    dict(file="Helpers/SlipReceivingAccount.cs", method="ResolveForSiteOrderAsync",
+         must=["LoadAccountsAsync(", "SiteTransferMatchAsync(", "Suggest(", "Decide("],
+         why=_R268_WHY + "268-1-2 ลำดับเดียวกับค่าแนะนำของสลิปเอกสาร"),
+    dict(file=_R268_BK, method="RecordDepositPaymentAsync", must=["ChannelStamped = true"],
+         why=_R268_WHY + "268-1-3 ช่องทางของแต่ละงวดประทับตอนรับ (ไม่เดาย้อนหลัง)"),
+    dict(file=_R268_BK, method="IssueDepositReceiptAfterPaymentAsync", must=["MoveEarlierInstalmentsAsync("],
+         why=_R268_WHY + "268-1-3 ใบเสร็จมัดจำอนุมัติแล้วย้ายเงินงวดก่อนไปช่องทางของงวดนั้น"),
+    dict(file=_R268_BK, method="MoveEarlierInstalmentsAsync",
+         must=["BookingDepositInstalmentChannel.For(", "BookingDepositInstalmentChannel.ReferenceFor(", "DocumentMoneyChannel.ResolvePostingAccountAsync(",
+               "BeginTransactionAsync(", "tx.CommitAsync(", "p.CompanyId == companyId", "LogError("],
+         before=[("BookingDepositInstalmentChannel.ReferenceFor(", ".PostAsync(")],
+         why=_R268_WHY + "268-1-3 แผนจากตัวตัดสินเดียว · กันซ้ำก่อนเขียน JE · ผังจากตัวแปลงแหล่งเงินเดียว · ล้มดัง"),
+    dict(file=_R268_LCS, method="AssignAsync", must=["NotifyChatLinkedAsync(", "LineChatSlipRule.LinkedNotice.CrossContact"],
+         before=[("NotifyChatLinkedAsync(", "AddChainedAuditLog(")],
+         why=_R268_WHY + "268-1-4 แจ้งลูกค้าหลังผูก (ไม่ส่งเลขเอกสารของผู้ติดต่ออื่น) · ผลลง audit"),
+    dict(file=_R268_LCS, method="NotifyChatLinkedAsync",
+         must=["e.LineIdHash == row.SourceKey", "e.CompanyId == row.CompanyId", "row.ShowAmounts && eps.All(e => e.ShowAmounts)", "_line.TryPushContactTextAsync("],
+         why=_R268_WHY + "268-1-4 ส่งถึงแชตเดิมด้วยกุญแจเดียวกับตอนรับรูป · เคารพการแสดงยอด · ผ่านด่านปลายทางของผู้ติดต่อ"),
+    dict(file="Controllers/CustomerLineWebhookController.cs", method="GroupSlipRepliesAsync",
+         must=["LineChatSlipRule.IsSlipMessage("],
+         why=_R268_WHY + "268-1-4 สลิป PDF จากกลุ่มเข้าเส้นเดียวกับรูป"),
+    dict(file="Services/Implementations/CompanyService.cs", method="RemoveUserAsync",
+         must=["ContactLineBindingService.UnlinkBillingEndpointsBoundByAsync(", "BeginTransactionAsync(", "tx.CommitAsync("],
+         before=[("_db.CompanyUsers.Remove(", "ContactLineBindingService.UnlinkBillingEndpointsBoundByAsync("),
+                 ("ContactLineBindingService.UnlinkBillingEndpointsBoundByAsync(", "tx.CommitAsync(")],
+         why=_R268_WHY + "268-1-5 นำออก + ยกเลิกปลายทางรับใบค่าบริการที่ผู้ใช้คนนั้นผูก ในธุรกรรมเดียว"),
+    dict(file="Services/Implementations/ContactLineBindingService.cs", method="UnlinkBillingEndpointsBoundByAsync",
+         must=["NotifyEndpointKind.MarkUnlinked(", "e.BoundByUserId == removedUserId", "e.CompanyId == providerId", "AddChainedAuditLog(",
+               "PlatformInvoiceQueries.BuyerContactIdsAsync("],
+         why=_R268_WHY + "268-1-5 ตัวยกเลิกเดียว (ล้าง LINE id) · เฉพาะที่ผู้ใช้คนนั้นผูก · ผู้ติดต่อของผู้เช่ารายนี้ · audit"),
+    dict(file="Services/Implementations/PlatformBillingDocumentIssuer.cs", method="IssueAddOnReceiptAsync", must=["QueueReceiptToLineAsync("],
+         before=[("ApproveDocumentAsync(", "QueueReceiptToLineAsync(")],
+         why=_R268_WHY + "268-1-5 ใบเสร็จส่วนเสริม/โควตาเสริมเข้าคิว LINE เหมือนใบเสร็จค่าแพ็กเกจ"),
+    dict(file="Services/Implementations/PlatformBillingDocumentIssuer.cs", method="QueueReceiptToLineAsync", must=["ReceiptIssuedAsync(", "LogError("],
+         why=_R268_WHY + "268-1-5 ผู้เรียกเดียวของคิวใบเสร็จค่าบริการ · ล้มไม่ทำให้การออกใบล้ม"),
+    dict(file=DOC, method="CreateMultiDocPaymentAsync", must=["NotifyPartnerOfSellerPaymentAsync("],
+         before=[("transaction.CommitAsync(", "NotifyPartnerOfSellerPaymentAsync(")],
+         why=_R268_WHY + "268-1-6 (D8) การรับหลายใบแจ้งผู้ซื้อคู่ค้าหลัง commit (ตัวแจ้งเดียวกับใบเดียว)"),
+    dict(file=_R268_PPN, method="NotifyForSellerPaymentAsync",
+         must=["db.PaymentAllocations", "!a.IsLateAllocation", "a.CompanyId == sellerCompanyId", "NotifyCoreAsync("],
+         why=_R268_WHY + "268-1-6 หนึ่งการแจ้งต่อแถวจัดสรร (กุญแจแถวจัดสรร) · tenant"),
+]
+REVIEWER_CASES += [
+    # 268-1-2: กลับไปไม่ส่งธนาคารที่ตัดสินแล้ว ⇒ ต้องฟ้อง
+    ("R268a", "ConfirmPaymentLockedAsync", "OverrideBankAccountId: receivingBankAccountId", "OverrideBankAccountId: null", True),
+    # 268-1-4: ส่งยอดทั้งที่ปลายทางปิดแสดงยอด ⇒ ต้องฟ้อง
+    ("R268b", "NotifyChatLinkedAsync", "row.ShowAmounts && eps.All(e => e.ShowAmounts)", "true", True),
+    # 268-1-5: ยกเลิกทุกปลายทางของผู้เช่า (ไม่ใช่เฉพาะที่ผู้ใช้คนนั้นผูก) ⇒ ต้องฟ้อง
+    ("R268c", "UnlinkBillingEndpointsBoundByAsync", "e.BoundByUserId == removedUserId", "true", True),
+]
+
 
 # ── รอบ 267 แพ็ก P2 (R267b): ผู้ลงนาม + บัญชีหลักฐาน + ฉบับที่ลูกค้าเซ็น (คำตัดสิน 267-1-4…6 · 267-1-11 · 267-1-33… · DOCUMENT_FLOW §2.12n-P2) ──
 # ทุกทางตอบรับของลูกค้าผ่าน CustomerDocumentResponseService ตัวเดียว · แถวหลักฐาน + audit chain + outbox ในธุรกรรมเดียวกับการจองภาพฉายบนใบ ·

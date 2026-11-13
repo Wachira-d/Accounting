@@ -3801,8 +3801,11 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.AutoBlockedCode).HasMaxLength(40);
             e.HasIndex(x => new { x.CompanyId, x.PaymentIntentId }).IsUnique().HasDatabaseName("IX_PartnerPaymentNotices_Company_Intent");
             // รอบ 264 P3 (264-3-6): กุญแจกันซ้ำใหม่ = การรับชำระของผู้ขาย (ชื่อ/เงื่อนไขตรง PartnerPaymentNoticeMigration)
+            // รอบ 268 (268-1-6): การชำระใบเดียว = กุญแจการรับชำระ · การชำระหลายใบ = กุญแจแถวจัดสรร (หนึ่งการแจ้งต่อใบ)
             e.HasIndex(x => new { x.CompanyId, x.SellerPaymentId }).IsUnique()
-                .HasFilter("\"SellerPaymentId\" IS NOT NULL").HasDatabaseName("IX_PartnerPaymentNotices_Company_SellerPayment");
+                .HasFilter("\"SellerPaymentId\" IS NOT NULL AND \"SellerAllocationId\" IS NULL").HasDatabaseName("IX_PartnerPaymentNotices_Company_SellerPaymentSingle");
+            e.HasIndex(x => new { x.CompanyId, x.SellerAllocationId }).IsUnique()
+                .HasFilter("\"SellerAllocationId\" IS NOT NULL").HasDatabaseName("IX_PartnerPaymentNotices_Company_SellerAllocation");
             e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_PartnerPaymentNotices_Company_Status");
             e.HasQueryFilter(x => !x.IsDeleted);
         });

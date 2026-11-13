@@ -63,9 +63,13 @@ const LineChatSlipQueue = {
       if (!this.previews[id]) {
         const f = await API.fetchFile(`${this.base()}/${id}/file`, 'slip');
         if (!f) return;
-        this.previews[id] = URL.createObjectURL(f.blob);
+        this.previews[id] = { url: URL.createObjectURL(f.blob), isImage: (f.blob.type || '').startsWith('image/') };
       }
-      holder.innerHTML = `<a href="${this.previews[id]}" target="_blank" rel="noopener"><img src="${this.previews[id]}" alt="สลิป" style="max-width:220px;max-height:320px;margin-top:6px;border:1px solid #e2e8f0;border-radius:6px"></a>`;
+      const p = this.previews[id];
+      // รอบ 268 (268-1-4): สลิป PDF จากแชต — แสดงเป็นลิงก์เปิดไฟล์ (รูปแสดงตัวอย่างเหมือนเดิม)
+      holder.innerHTML = p.isImage
+        ? `<a href="${p.url}" target="_blank" rel="noopener"><img src="${p.url}" alt="สลิป" style="max-width:220px;max-height:320px;margin-top:6px;border:1px solid #e2e8f0;border-radius:6px"></a>`
+        : `<a href="${p.url}" target="_blank" rel="noopener" class="btn btn-sm btn-outline" style="margin-top:6px">📄 เปิดสลิป (PDF)</a>`;
     } catch (e) { Layout.toast('เปิดสลิปไม่สำเร็จ: ' + (e.message || ''), 'error'); }
   },
 

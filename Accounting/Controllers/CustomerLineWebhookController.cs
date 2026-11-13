@@ -73,7 +73,9 @@ public class CustomerLineWebhookController : ControllerBase
                 ? await _chatSlips.HandlePostbackAsync(companyId, destination, source, data.GetString(), ct)
                 : Array.Empty<object>();   // เกินเพดาน ⇒ ไม่ตอบ (ไม่ส่งต่อเส้นกลุ่มเดิม)
         // ฝ่ายค้าน L3: ตรวจว่ากลุ่มเป็นงานของเส้นสลิป (อ่านอย่างเดียว) ก่อนกินเพดาน — กลุ่มอื่นไม่เขียนตัวนับ
-        if (type == "message" && ev.TryGetProperty("message", out var msg) && msg.TryGetProperty("type", out var mt) && mt.GetString() == "image"
+        // รอบ 268 (268-1-4): ไฟล์ PDF ก็เป็นสลิปได้ (ตัวตัดสินเดียว LineChatSlipRule.IsSlipMessage)
+        if (type == "message" && ev.TryGetProperty("message", out var msg) && msg.TryGetProperty("type", out var mt)
+            && LineChatSlipRule.IsSlipMessage(mt.GetString(), msg.TryGetProperty("fileName", out var gfn) ? gfn.GetString() : null)
             && msg.TryGetProperty("id", out var mid) && await _chatSlips.IsSlipGroupAsync(companyId, destination, groupId, ct)
             && await ConsumeMediaAsync(destination, groupId, ct))
             return await _chatSlips.HandleImageAsync(companyId, destination, source, mid.GetString() ?? "", ct);
@@ -181,7 +183,8 @@ public class CustomerLineWebhookController : ControllerBase
                         else if (ev.TryGetProperty("message", out var media) && media.TryGetProperty("type", out var mediaType)
                                  && LineOaHealth.IsChatMedia(mediaType.GetString()) && await ConsumeMediaAsync(destination, userId, ct))
                         {
-                            if (_chatSlips != null && mediaType.GetString() == "image" && media.TryGetProperty("id", out var mid))
+                            if (_chatSlips != null && LineChatSlipRule.IsSlipMessage(mediaType.GetString(),
+                                    media.TryGetProperty("fileName", out var ufn) ? ufn.GetString() : null) && media.TryGetProperty("id", out var mid))
                                 replyMessages = await _chatSlips.HandleImageAsync(companyId, destination,
                                     Accounting.Models.DTOs.Line.LineChatSource.User(userId), mid.GetString() ?? "", ct);
                             if (replyMessages == null) reply = LineOaHealth.ChatMediaReply;

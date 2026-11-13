@@ -49,8 +49,9 @@ public class PartnerPaymentNoticeService
     /// <summary>ข้อเท็จจริงของการรับชำระฝั่งผู้ขายที่ทำให้เกิดการแจ้ง</summary>
     /// <param name="SellerPaymentId">การรับชำระของผู้ขาย (กุญแจกันซ้ำ · ตรวจสดตอนบันทึกจ่าย) · null = เส้นเก่าที่ไม่รู้แถว</param>
     /// <param name="Cash">เงินที่ผู้ขายได้รับจริงจากผู้ซื้อ (ยอดรับ + ค่าธรรมเนียมที่ผู้ขายรับภาระ = เงินที่ออกจากผู้ซื้อ)</param>
+    /// <param name="SellerAllocationId">รอบ 268 (268-1-6): แถวจัดสรรของการชำระหลายใบ (กุญแจกันซ้ำต่อใบ) · null = ชำระใบเดียว</param>
     public sealed record SellerReceipt(Guid SellerCompanyId, Guid? SellerPaymentId, Guid? PaymentIntentId, Guid SourceDocumentId, decimal Cash, decimal SellerWht,
-        DateTime PaidAtUtc, string Channel);
+        DateTime PaidAtUtc, string Channel, Guid? SellerAllocationId = null);
 
     /// <summary>
     /// เส้นเดิม (รอบ 258-3 — ผู้เรียกที่ยังรู้แค่ intent) · คืนจำนวนแถวแจ้งที่สร้าง · ไม่โยน · หาการรับชำระของผู้ขายจากเลขอ้างอิงเพื่อเติมกุญแจใหม่
@@ -67,7 +68,8 @@ public class PartnerPaymentNoticeService
 
     /// <summary>
     /// รอบ 264 P3 (C-04 · คำตัดสิน 264-3-6) — <b>ผู้เรียกเดียว</b> = ขั้นหลัง commit ของการรับชำระฝั่งผู้ขาย (<c>DocumentService.NotifyPartnerOfSellerPaymentAsync</c>) ·
-    /// ครอบทุกทางเข้า (มือ · gateway · สลิป · รายการเดินบัญชี · นำเข้า · integration) · ไม่โยน (เงินบันทึกแล้ว) · การชำระหลายใบไม่เข้าเส้นนี้ (backlog D8)
+    /// ครอบทุกทางเข้า (มือ · gateway · สลิป · รายการเดินบัญชี · นำเข้า · integration) · ไม่โยน (เงินบันทึกแล้ว) ·
+    /// รอบ 268 (268-1-6 · D8): การชำระหลายใบ (<c>CreateMultiDocPaymentAsync</c>) ⇒ หนึ่งการแจ้งต่อแถวจัดสรร (เงินของใบนั้น = <c>AllocatedAmount</c> · ภาษีหักของแถว)
     /// </summary>
     public static async Task<int> NotifyForSellerPaymentAsync(AccountingDbContext db, INotificationEngine? notify, ILogger logger, Guid sellerCompanyId, Guid sellerPaymentId,
         PaymentEntrySource source, CancellationToken ct = default)
@@ -79,6 +81,20 @@ public class PartnerPaymentNoticeService
                 .Select(p => new { p.Id, p.DocumentId, p.Amount, p.FeeAmount, p.WithholdingTaxAmount, p.PaymentDate, p.Reference, p.PaymentIntentId })
                 .FirstOrDefaultAsync(ct);
             if (pay == null) return 0;
+            // รอบ 268 (268-1-6): แถวจัดสรรพร้อมรับเงิน (ไม่ใช่จัดสรรทีหลังจากเงินรอจัดสรร) ⇒ แจ้งต่อใบ · ไม่มีแถว ⇒ ใบเดียวตามเดิม
+            var allocations = await db.PaymentAllocations.AsNoTracking()
+                .Where(a => a.PaymentId == pay.Id && a.CompanyId == sellerCompanyId && !a.IsDeleted && !a.IsLateAllocation)
+                .OrderBy(a => a.CreatedAt).ThenBy(a => a.Id)
+                .Select(a => new { a.Id, a.DocumentId, a.AllocatedAmount, a.WithholdingTaxAmount }).ToListAsync(ct);
+            if (allocations.Count > 0)
+            {
+                var channel = PartnerPaymentNoticeRule.ChannelOf(null, source);
+                var made = 0;
+                foreach (var a in allocations)
+                    made += await NotifyCoreAsync(db, notify, logger, new SellerReceipt(sellerCompanyId, pay.Id, null, a.DocumentId,
+                        a.AllocatedAmount, a.WithholdingTaxAmount, pay.PaymentDate, channel, a.Id), ct);
+                return made;
+            }
             // เฉพาะใบที่ส่งเข้าระบบคู่ค้า (มีลิงก์ InvoiceFlow ที่ผูกใบซื้อปลายทางแล้ว) — ใบทั่วไปจบที่นี่ด้วย query เดียว
             var routed = await db.CrossTenantDocumentLinks.AsNoTracking()
                 .AnyAsync(l => l.SourceCompanyId == sellerCompanyId && l.SourceDocumentId == pay.DocumentId
@@ -138,15 +154,18 @@ public class PartnerPaymentNoticeService
                     .Select(d => new { d.DocumentNumber, d.DocumentType }).FirstOrDefaultAsync(ct);
                 if (!accepted || target == null || !DocumentPermissionHelper.IsPurchase(target.DocumentType)) continue;
                 // กันซ้ำทั้งกุญแจใหม่ (การรับชำระของผู้ขาย) และกุญแจเดิม (intent) — webhook ซ้ำ/สองทางเข้ารายงานการชำระเดียวกัน
+                // รอบ 268 (268-1-6): แถวจัดสรร ⇒ กันซ้ำด้วยแถวจัดสรรเท่านั้น (การชำระเดียวกันมีแจ้งของใบอื่นได้) · ใบเดียว ⇒ กุญแจเดิม
                 if (await db.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters()
                         .AnyAsync(n => n.CompanyId == l.TargetCompanyId
-                            && ((r.SellerPaymentId != null && n.SellerPaymentId == r.SellerPaymentId)
-                                || (r.PaymentIntentId != null && n.PaymentIntentId == r.PaymentIntentId)), ct)) continue;
+                            && (r.SellerAllocationId != null
+                                ? n.SellerAllocationId == r.SellerAllocationId
+                                : (r.SellerPaymentId != null && n.SellerPaymentId == r.SellerPaymentId && n.SellerAllocationId == null)
+                                  || (r.PaymentIntentId != null && n.PaymentIntentId == r.PaymentIntentId)), ct)) continue;
                 var notice = new PartnerPaymentNotice
                 {
                     CompanyId = l.TargetCompanyId, TradingPartnershipId = l.TradingPartnershipId, LinkId = l.Id,
                     SourceCompanyId = sellerCompanyId, SourceDocumentId = r.SourceDocumentId, SourceDocumentNumber = Trunc(docNo, 60),
-                    TargetDocumentId = l.TargetDocumentId, PaymentIntentId = r.PaymentIntentId, SellerPaymentId = r.SellerPaymentId,
+                    TargetDocumentId = l.TargetDocumentId, PaymentIntentId = r.PaymentIntentId, SellerPaymentId = r.SellerPaymentId, SellerAllocationId = r.SellerAllocationId,
                     CashAmount = R(r.Cash), SellerRecordedWht = R(r.SellerWht), PaidAt = r.PaidAtUtc, SourceChannel = Trunc(r.Channel, 32),
                     Status = PartnerPaymentNoticeRule.StatusOpen, CreatedBy = "partner-payment-notice",
                 };
@@ -370,8 +389,11 @@ public class PartnerPaymentNoticeService
                     consent = await _consent.CheckAsync(companyId, n.TradingPartnershipId, PartnerConsent.Scope.AutoRecordPayment, PartnerPayablePipeline.CapOf(doc), ct);
                 source = await PartnerPayablePipeline.SourceDecisionAsync(_db, companyId, n, doc, usable, consent, DateTime.UtcNow, ct);
                 // ฝ่ายค้าน M3: ถ้อยคำตรงกับหลักฐานที่มีจริงวันนี้ (ค่าตั้งของเรา + คำบอกของผู้ขาย — ยังไม่ตรวจกับรายการเดินบัญชี)
-                autoState = consent is { Ok: true }
-                    ? "⚙️ ระบบบันทึกเองตามบัญชีตั้งต้นที่ตั้งไว้ตอนยินยอม เมื่อผู้ขายแจ้งรับเงิน (ยังไม่ตรวจกับรายการเดินบัญชีของเรา)"
+                // 268-1-1: บัญชีตั้งต้นอย่างเดียวไม่บันทึกเอง ⇒ บอกเหตุ + ปุ่มเดียว (บัญชี preselect แล้ว) · หลักฐานชั้นที่บันทึกเองได้ ⇒ ป้ายเดิม
+                autoState = consent is { Ok: true } && source is { AllowsAuto: false, Origin: PartnerPaySourceAccount.Origin.ConsentDefault }
+                    ? "ระบบไม่บันทึกเอง — " + PartnerPaySourceAccount.ConsentDefaultNotAutoReason
+                    : consent is { Ok: true }
+                    ? "⚙️ ระบบบันทึกเองเมื่อหลักฐานบัญชีที่จ่ายครบ เมื่อผู้ขายแจ้งรับเงิน"
                         + (n.AutoBlockedReason is string br ? " — ยังไม่บันทึก: " + br : " · รอรอบถัดไป")
                     : "ระบบไม่บันทึกเอง" + (consent != null ? " — " + consent.Reason : "") + " · กดบันทึกจ่ายเอง หรือเปิด “งานอัตโนมัติกับคู่ค้า”";
                 // ฝ่ายค้าน H1: ใบซื้อมีการจ่ายที่อาจเป็นเงินก้อนเดียวกัน ⇒ เตือนในกล่องยืนยันของปุ่มเดียวด้วย (ตัวตรวจเดียวกับท่อ)
@@ -451,8 +473,8 @@ public class PartnerPaymentNoticeService
         }
         if (n.SellerVoidedAt != null || await SellerPaymentLiveAsync(_db, n, ct) == false)
             throw new BusinessRuleException(PartnerAutoRecordPolicy.SellerVoidedReason, PartnerPaymentNoticeRule.RuleCode, 409);
-        var references = PartnerPaymentNoticeRule.PaymentReferencesToCheck(n.SellerPaymentId, n.PaymentIntentId);
-        var reference = PartnerPaymentNoticeRule.PaymentReferenceFor(n.SellerPaymentId, n.PaymentIntentId)
+        var references = PartnerPaymentNoticeRule.PaymentReferencesToCheck(n.SellerPaymentId, n.PaymentIntentId, n.SellerAllocationId);
+        var reference = PartnerPaymentNoticeRule.PaymentReferenceFor(n.SellerPaymentId, n.PaymentIntentId, n.SellerAllocationId)
             ?? throw new BusinessRuleException("การแจ้งนี้ไม่ผูกการรับชำระของผู้ขาย — บันทึกจ่ายเองที่หน้าใบซื้อ", PartnerPaymentNoticeRule.RuleCode, 409);
 
         var now = DateTime.UtcNow;
