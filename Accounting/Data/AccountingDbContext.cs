@@ -3825,6 +3825,16 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.AccountOrigin).HasMaxLength(32);
             e.HasIndex(x => new { x.CompanyId, x.SellerIntentId }).IsUnique().HasFilter("\"SellerIntentId\" IS NOT NULL").HasDatabaseName("IX_PartnerPaymentPlans_Company_SellerIntent");
             e.HasIndex(x => new { x.CompanyId, x.PurchaseDocumentId }).HasDatabaseName("IX_PartnerPaymentPlans_Company_Purchase");
+            // ฝ่ายค้าน 264-P4 H1: กุญแจกันซ้ำของแจ้งโอน (แถวที่ไม่ถูกลบ)
+            e.Property(x => x.IdempotencyKey).HasMaxLength(64);
+            e.Property(x => x.SlipSha256).HasMaxLength(64);
+            e.Property(x => x.SlipStoragePath).HasMaxLength(500);
+            e.Property(x => x.SlipContentType).HasMaxLength(64);
+            e.Property(x => x.SlipBankRef).HasMaxLength(64);
+            e.Property(x => x.SlipCopyState).HasMaxLength(16);
+            e.HasIndex(x => new { x.CompanyId, x.IdempotencyKey }).IsUnique().HasFilter("\"IdempotencyKey\" IS NOT NULL AND NOT \"IsDeleted\"")
+                .HasDatabaseName("IX_PartnerPaymentPlans_Company_IdemKey");
+            e.HasIndex(x => x.SlipCopyState).HasFilter("\"SlipCopyState\" = 'Pending'").HasDatabaseName("IX_PartnerPaymentPlans_SlipCopyPending");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 254 WP-11 L2 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactLineDeliveryMigration

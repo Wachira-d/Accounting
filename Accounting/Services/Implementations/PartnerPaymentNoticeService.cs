@@ -420,6 +420,8 @@ public class PartnerPaymentNoticeService
                     ? "ระบบไม่บันทึกเอง — " + PartnerPaySourceAccount.ConsentDefaultNotAutoReason
                     : consent is { Ok: true } && source is { AllowsAuto: false, Origin: PartnerPaySourceAccount.Origin.SlipUnique }
                     ? "ระบบไม่บันทึกเอง — " + PartnerPaySourceAccount.SlipUniqueNotAutoReason
+                    : consent is { Ok: true } && source is { AllowsAuto: false, Origin: PartnerPaySourceAccount.Origin.PayerDeclared }
+                    ? "ระบบไม่บันทึกเอง — " + PartnerPaySourceAccount.PayerDeclaredUnboundReason
                     : consent is { Ok: true }
                     ? "⚙️ ระบบบันทึกเองเมื่อหลักฐานบัญชีที่จ่ายครบ เมื่อผู้ขายแจ้งรับเงิน"
                         + (n.AutoBlockedReason is string br ? " — ยังไม่บันทึก: " + br : " · รอรอบถัดไป")
@@ -559,7 +561,18 @@ public class PartnerPaymentNoticeService
         fresh.ResolvedAt = DateTime.UtcNow;
         fresh.ResolvedBy = userId.ToString();
         fresh.UpdatedAt = DateTime.UtcNow;
-        Audit(_db, companyId, userId, "PartnerPaymentNoticeRecorded", fresh);
+        // ฝ่ายค้าน 264-P4 M1: บรรทัดเงินออกที่ตรงการแจ้งนี้และบัญชีเดียวกับ PV ⇒ ผูกด้วยตัวเขียนเดียว (บรรทัดนั้นไม่เป็นหลักฐานของการแจ้งอื่นอีก)
+        bool? lineBound = null;
+        if (paymentId is Guid boundPay && _bankLine != null)
+        {
+            try { lineBound = await _bankLine.BindAsync(companyId, fresh, boundPay, ct) == 1; }
+            catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
+            {
+                lineBound = false;
+                _logger.LogError(ex, "ผูกรายการเดินบัญชีกับการจ่าย {Payment} ของการแจ้ง {Notice} ไม่สำเร็จ — กระทบยอดเองที่หน้าธนาคาร", boundPay, noticeId);
+            }
+        }
+        Audit(_db, companyId, userId, "PartnerPaymentNoticeRecorded", fresh, extra: new { bankLineBound = lineBound });
         await _db.SaveChangesAsync(ct);
         await PartnerPayablePipeline.ScrubSlipPayerAsync(_db, fresh, DateTime.UtcNow, ct);   // L3 (264-5-13): การแจ้งจบแล้ว ⇒ ไม่เก็บเลขผู้โอนต่อ
         // ผู้ขายยกเลิกระหว่างที่เรากำลังบันทึก ⇒ ป้ายบนใบซื้อ (ไม่ยกเลิกการจ่ายแทน)

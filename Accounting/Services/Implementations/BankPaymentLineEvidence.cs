@@ -12,7 +12,8 @@ namespace Accounting.Services.Implementations;
 /// รอบ 264 P4 (team-264-a2b-design §5.4 · G1 · คำตัดสิน 264-5-10) — <b>ผู้ป้อนชั้นรายการเดินบัญชี</b> ของ <see cref="PartnerPayablePipeline.IBankLineEvidence"/> ·
 /// อ่าน<b>ตารางรายการเดินบัญชีเดิม</b> (<c>BankTransactions</c> — ไม่มีตารางบรรทัดธนาคารที่สอง) ของบริษัทผู้ซื้อ แล้วตัดสินด้วย <see cref="BankPaymentLineMatch.Decide"/> ตัวเดียว
 /// <list type="bullet">
-/// <item><see cref="DecideAsync"/>/<see cref="FindAsync"/> = <b>อ่านอย่างเดียว</b> (ผู้เรียก: ท่อ + หน้า) · <see cref="BindAsync"/> = ตัวเขียนเดียว (ผูกบรรทัดกับการจ่ายที่ท่อเพิ่งบันทึก — กระทบยอดปิดในตัว)</item>
+/// <item><see cref="DecideAsync"/>/<see cref="FindAsync"/> = <b>อ่านอย่างเดียว</b> (ผู้เรียก: ท่อ + หน้า) · <see cref="BindAsync"/> = <b>ตัวเขียนเดียว</b> ผูกบรรทัดกับ PV
+/// ทุกทางที่ปิดการแจ้งด้วย PV (ท่อ · ปุ่มเดียว · PV ของแผนแจ้งโอน · ตาข่าย — ฝ่ายค้าน 264-P4 M1) · หนึ่งบรรทัดเป็นหลักฐานได้หนึ่งการจ่าย</item>
 /// <item>เลขบัญชีรับเงินของผู้ขาย = บัญชีของการรับชำระฝั่งผู้ขาย (<c>Payment.BankAccountId</c> ในบริษัทผู้ขาย — อ่านด้วย CompanyId ผู้ขายทุก query) · ใช้เทียบเท่านั้น ไม่ส่งออก/ไม่เก็บ</item>
 /// <item>ไม่มีจุดเรียก AI ⇒ ไม่มี AiFeatureKey · kill-switch ไม่มีผล</item>
 /// </list>
@@ -63,11 +64,17 @@ public sealed class BankPaymentLineEvidence : PartnerPayablePipeline.IBankLineEv
         var others = new List<BankPaymentLineMatch.Target>();
         if (lines.Count > 0)
         {
+            // ฝ่ายค้าน 264-P4 M1: นับทั้งการแจ้งที่ยังเปิด และการแจ้งที่บันทึกแล้วแต่ PV ยังไม่ผูกบรรทัดใด (เงินก้อนนั้นอาจเป็นบรรทัดนี้ — บรรทัดเดียวเป็นหลักฐานได้การจ่ายเดียว)
             var near = await _db.PartnerPaymentNotices.AsNoTracking()
                 .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.Id != n.Id && x.SellerVoidedAt == null && x.CashAmount == n.CashAmount
-                    && (x.Status == PartnerPaymentNoticeRule.StatusOpen || x.Status == PartnerPaymentNoticeRule.StatusRecording)
+                    && (x.Status == PartnerPaymentNoticeRule.StatusOpen || x.Status == PartnerPaymentNoticeRule.StatusRecording
+                        || (x.Status == PartnerPaymentNoticeRule.StatusRecorded && x.RecordedPaymentId != null
+                            && !_db.BankTransactions.Any(t => t.CompanyId == companyId && !t.IsDeleted && t.MatchedPaymentId == x.RecordedPaymentId)))
                     && x.PaidAt >= from.AddDays(-span) && x.PaidAt < to.AddDays(span))
-                .OrderBy(x => x.PaidAt).Take(MaxOthers).ToListAsync(ct);
+                .OrderBy(x => x.PaidAt).Take(MaxOthers + 1).ToListAsync(ct);
+            // ฝ่ายค้าน L4: เกินเพดาน ⇒ ตัดสินหนึ่งต่อหนึ่งไม่ได้ ⇒ คำแนะนำ (ไม่ตัดคู่ที่ชนกันทิ้งเงียบ ๆ)
+            if (near.Count > MaxOthers)
+                return new BankPaymentLineMatch.Result(BankPaymentLineMatch.Kind.Suggest, null, null, null, BankPaymentLineMatch.SharedLineReason, BankPaymentLineMatch.RuleSuggest);
             foreach (var o in near)
                 others.Add(new BankPaymentLineMatch.Target(o.Id, o.CashAmount, o.PaidAt, await PayeeDigitsAsync(_db, o, ct)));
         }
@@ -80,6 +87,13 @@ public sealed class BankPaymentLineEvidence : PartnerPayablePipeline.IBankLineEv
         return r.IsEvidence ? (r.BankAccountId, LabelOf(r)) : (null, null);
     }
 
+    /// <summary>ฝ่ายค้าน 264-P4 L5: วันที่ของบรรทัดที่เป็นหลักฐาน (ผล Match เท่านั้น)</summary>
+    public async Task<DateTime?> EvidenceDateAsync(Guid companyId, PartnerPaymentNotice notice, CancellationToken ct)
+    {
+        var r = await DecideAsync(companyId, notice, ct);
+        return r.IsEvidence ? r.LineDate : null;
+    }
+
     /// <summary>ป้ายของบรรทัด (วันที่ไทย) — ไม่มีเลขบัญชีของผู้ขาย</summary>
     public static string LabelOf(BankPaymentLineMatch.Result r)
         => r.LineDate is DateTime d ? "วันที่ " + (d.TimeOfDay == TimeSpan.Zero ? d : d.AddHours(7)).ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture) : "";
@@ -90,11 +104,16 @@ public sealed class BankPaymentLineEvidence : PartnerPayablePipeline.IBankLineEv
     {
         var r = await DecideAsync(companyId, notice, ct);
         if (!r.IsEvidence || r.LineId is not Guid lineId) return 0;
+        // ฝ่ายค้าน 264-P4 M1: ผูกเฉพาะเมื่อ PV ตัดบัญชีเดียวกับบรรทัด (คนเลือกบัญชีอื่น/เงินสด ⇒ ไม่ผูก — บรรทัดนั้นไม่ใช่เงินก้อนนี้) · PV ของบริษัทผู้เรียก · ยังไม่ถูกผูกกับบรรทัดอื่น
+        var payBank = await _db.Payments.AsNoTracking().Where(p => p.Id == paymentId && p.CompanyId == companyId && !p.IsDeleted)
+            .Select(p => new { p.BankAccountId }).FirstOrDefaultAsync(ct);
+        if (payBank == null || payBank.BankAccountId != r.BankAccountId) return 0;
+        if (await _db.BankTransactions.AsNoTracking().AnyAsync(t => t.CompanyId == companyId && !t.IsDeleted && t.MatchedPaymentId == paymentId, ct)) return 0;
         var now = DateTime.UtcNow;
         var reason = BankPaymentLineMatch.MatchReason + " · การแจ้ง " + notice.SourceDocumentNumber;
         var n = await _db.BankTransactions
             .Where(t => t.Id == lineId && t.CompanyId == companyId && !t.IsDeleted && t.ReconciliationStatus == ReconciliationStatus.Unmatched
-                && t.MatchedPaymentId == null && t.MatchedJournalEntryId == null && t.ReconciliationGroupId == null)
+                && t.MatchedPaymentId == null && t.MatchedJournalEntryId == null && t.ReconciliationGroupId == null && t.AutoSettleDocumentId == null)
             .ExecuteUpdateAsync(u => u
                 .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Matched)
                 .SetProperty(t => t.MatchedPaymentId, (Guid?)paymentId)
