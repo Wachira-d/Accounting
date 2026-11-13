@@ -245,7 +245,10 @@ public class ReceiptLinkPolicyTests
         Assert.True(Offers(Rc(), AsInv(Rc())));                                                // ใบเสร็จร่าง
         var dep = Rc(DocumentStatus.Paid, deposit: true);
         Assert.True(Offers(dep, AsInv(dep)));
-        foreach (var no in new[] { Rc(DocumentStatus.Paid), Rc(DocumentStatus.Paid, settlement: true, related: Guid.NewGuid()),
+        // รอบ 266 แพ็ก B: ใบเสร็จของการรับชำระที่ออกเลขแล้ว = มีปุ่ม (ย้ายไปใบที่ถูกได้) · ฉบับร่างของการรับชำระยังไม่ใช่กระดาษที่ลูกค้าถือ = ไม่มีปุ่ม
+        var settled = Rc(DocumentStatus.Paid, settlement: true, related: Guid.NewGuid());
+        Assert.True(Offers(settled, AsInv(settled)));
+        foreach (var no in new[] { Rc(DocumentStatus.Paid), Rc(DocumentStatus.Draft, settlement: true, related: Guid.NewGuid()),
                      Rc(DocumentStatus.WaitingApproval), Rc(DocumentStatus.Draft, deposit: true), Rc(type: DocumentType.PurchaseInvoice) })
             Assert.False(Offers(no, AsInv(no)), $"{no.Type}/{no.Status} ไม่ควรมีปุ่ม");
     }
@@ -292,5 +295,222 @@ public class ReceiptLinkPolicyTests
         Assert.DoesNotContain(ReceiptLinkPolicy.Effects(ReceiptLinkRoute.SetDraftSource, Rc(), Inv(), 1_000m, null), x => x.Label == "ใบต้นทางเดิม");
         Assert.Equal(1_070m, ReceiptLinkPolicy.DepositGrossOutstanding(1_000m, 1_070m, 1_000m));
         Assert.Equal(500m, ReceiptLinkPolicy.DepositGrossOutstanding(500m, 500m, 500m));
+    }
+
+    // ───────── รอบ 266 แพ็ก B: ย้ายการรับชำระระหว่างใบ (คำตัดสิน 266-1-23…30) ─────────
+
+    private static readonly Guid FromId = Guid.NewGuid();
+
+    /// <summary>การรับชำระ 1,000 บาทที่ตัดใบ INV002 (ผิดใบ) มีใบเสร็จ REC003 — ทุกธงอยู่ในสภาพ "ย้ายได้"</summary>
+    private static ReceiptLinkMoveFacts Mv(decimal amount = 1_000m, string? receipt = "REC003") => new(
+        PaymentNumber: "PAY-202611-0007", PaymentDate: new DateTime(2026, 11, 3), Amount: amount, FromDocumentId: FromId, FromDocumentNumber: "INV002",
+        FromBalanceDue: 0m, PaymentVoided: false, IsThb: true, HasWithholdingTax: false, HasFeeOrAdjustment: false, FromSettlementBatch: false,
+        FromGateway: false, HasUnappliedCredit: false, LiveAllocationDocuments: 0, FromLateAllocation: false, PartnerLinked: false,
+        LiveReceiptNumber: receipt, ReceiptEtaxReachedRd: false, KeptOriginalReceiptNumber: null, SourceVatLockReason: null,
+        ReplacementReceiptBlock: null, ApprovalControlProblem: null, JournalProblem: null, JournalDate: new DateTime(2026, 11, 3),
+        ClosedPeriodNote: null, ReplacementCarriesVat: false);
+
+    private static ReceiptLinkSourceFacts SettlementReceipt => Rc(DocumentStatus.Paid, settlement: true, related: FromId);
+
+    private static ReceiptLinkVerdict Move(ReceiptLinkMoveFacts? m, ReceiptLinkInvoiceFacts? inv = null)
+        => ReceiptLinkPolicy.Decide(SettlementReceipt, inv ?? Inv(), new ReceiptLinkContext(m?.Amount ?? 1_000m, Move: m));
+
+    [Fact]
+    public void Move_AllowsSameContactOpenInvoice_ReissueWhenReceiptExists_PlainWhenNot()
+    {
+        var withReceipt = Move(Mv());
+        Assert.Equal((true, ReceiptLinkRoute.MoveSettlementWithReissue), (withReceipt.Allowed, withReceipt.Route));
+        var noReceipt = Move(Mv(receipt: null));
+        Assert.Equal((true, ReceiptLinkRoute.MoveSettlement), (noReceipt.Allowed, noReceipt.Route));
+        // ยอดน้อยกว่ายอดค้างของใบกำกับสินค้า (ไม่มีภาษีพัก) = รับบางส่วนได้
+        Assert.True(Move(Mv(400m)).Allowed);
+        Assert.True(ReceiptLinkPolicy.RequiresReason(withReceipt.Route));
+        Assert.False(ReceiptLinkPolicy.RequiresReason(ReceiptLinkRoute.AllocateCredit));
+    }
+
+    [Fact]
+    public void Move_RefusesWithoutPaymentFacts_ไม่รู้ไม่ย้าย()
+    {
+        var v = Move(null);
+        Assert.Equal((false, ReceiptLinkPolicy.MoveNoPaymentCode), (v.Allowed, v.RuleCode));
+        Assert.False(string.IsNullOrWhiteSpace(v.WayForward));
+    }
+
+    [Fact]
+    public void Move_EveryGateRefusesWithWayForward_AndOppositeDirectionAllowed()
+    {
+        var gates = new (string Code, ReceiptLinkMoveFacts Facts, ReceiptLinkInvoiceFacts Target)[]
+        {
+            (ReceiptLinkPolicy.VoidedCode, Mv() with { PaymentVoided = true }, Inv()),
+            (ReceiptLinkPolicy.AlreadyLinkedCode, Mv() with { FromDocumentId = InvId }, Inv()),
+            (ReceiptLinkPolicy.CurrencyCode, Mv() with { IsThb = false }, Inv()),
+            (ReceiptLinkPolicy.MoveSourceCode, Mv() with { FromSettlementBatch = true }, Inv()),
+            (ReceiptLinkPolicy.MoveSourceCode, Mv() with { FromGateway = true }, Inv()),
+            (ReceiptLinkPolicy.CombinedCode, Mv() with { HasUnappliedCredit = true }, Inv()),
+            (ReceiptLinkPolicy.CombinedCode, Mv() with { LiveAllocationDocuments = 2 }, Inv()),
+            (ReceiptLinkPolicy.MoveLateAllocationCode, Mv() with { LiveAllocationDocuments = 1, FromLateAllocation = true }, Inv()),
+            (ReceiptLinkPolicy.MoveWhtCode, Mv() with { HasWithholdingTax = true }, Inv()),
+            (ReceiptLinkPolicy.MoveFeeCode, Mv() with { HasFeeOrAdjustment = true }, Inv()),
+            (ReceiptLinkPolicy.PartnerCode, Mv() with { PartnerLinked = true }, Inv()),
+            (ReceiptLinkPolicy.EtaxSentCode, Mv() with { ReceiptEtaxReachedRd = true }, Inv()),
+            (ReceiptLinkPolicy.EtaxSentCode, Mv() with { KeptOriginalReceiptNumber = "REC001" }, Inv()),
+            (ReceiptLinkPolicy.VatFiledCode, Mv() with { SourceVatLockReason = "ภ.พ.30 เดือน 10/2026 ที่ยื่นแล้ว" }, Inv()),
+            (ReceiptLinkPolicy.OverpayCode, Mv(1_500m), Inv()),
+            (ReceiptLinkPolicy.PartialVatCode, Mv(400m), Inv(type: DocumentType.Invoice, vat: 70m)),
+            (ReceiptLinkPolicy.MoveReceiptCode, Mv() with { ReplacementReceiptBlock = "ผู้กดไม่มีสิทธิ์อนุมัติใบเสร็จรับเงิน" }, Inv()),
+            (ReceiptLinkPolicy.MoveApprovalCode, Mv() with { ApprovalControlProblem = "บริษัทเปิดการแบ่งแยกหน้าที่" }, Inv()),
+            (ReceiptLinkPolicy.MoveJournalCode, Mv() with { JournalProblem = "ไม่พบรายการบัญชีตั้งลูกหนี้" }, Inv()),
+            // ฝ่ายค้าน B-2: สิทธิ์ของเอกสารตัดสินจากข้อเท็จจริง (ใต้ล็อก) · B-1: ใบเดิมเป็นใบกำกับภาษี/ใบเสร็จรับเงินในตัวของเงินก้อนนี้
+            (ReceiptLinkPolicy.MovePermissionCode, Mv() with { PermissionProblem = "ผู้กดไม่มีสิทธิ์ยกเลิกใบกำกับภาษี" }, Inv()),
+            (ReceiptLinkPolicy.ServedAsReceiptCode, Mv(receipt: null) with { FromServedAsReceipt = true }, Inv()),
+        };
+        foreach (var g in gates)
+        {
+            var v = Move(g.Facts, g.Target);
+            Assert.False(v.Allowed, g.Code);
+            Assert.Equal(g.Code, v.RuleCode);
+            Assert.False(string.IsNullOrWhiteSpace(v.Message), g.Code);
+            Assert.False(string.IsNullOrWhiteSpace(v.WayForward), g.Code + " ต้องมีทางไปต่อ");
+        }
+        // ทิศตรงข้าม: ธงทุกตัวปกติ = ย้ายได้ · ใบแจ้งหนี้บริการ (มีภาษีพัก) ย้ายเต็มยอดค้างได้
+        Assert.True(Move(Mv()).Allowed);
+        Assert.True(Move(Mv(1_070m), Inv(type: DocumentType.Invoice, vat: 70m, balance: 1_070m)).Allowed);
+    }
+
+    [Fact]
+    public void Move_TargetAndContactGatesStillApply()
+    {
+        // ด่านเจ้าเดียวกัน/สกุลเงิน/สถานะใบปลายทางของแพ็ก A ครอบเส้นย้ายด้วย (ตัวตัดสินเดียว)
+        Assert.Equal(ReceiptLinkPolicy.ContactCode, Move(Mv(), Inv(contact: B)).RuleCode);
+        Assert.Equal(ReceiptLinkPolicy.CurrencyCode, Move(Mv(), Inv(currency: "USD")).RuleCode);
+        Assert.Equal(ReceiptLinkPolicy.DraftTargetCode, Move(Mv(), Inv(DocumentStatus.Draft)).RuleCode);
+        Assert.Equal(ReceiptLinkPolicy.ServedAsReceiptCode, Move(Mv(), Inv(servesAsReceipt: true)).RuleCode);
+        Assert.Equal(ReceiptLinkPolicy.AlreadyPaidCode, Move(Mv(), Inv(balance: 0m)).RuleCode);
+    }
+
+    [Fact]
+    public void ManualReceiptOfOtherInvoice_StaysRefusedWithWayForward()
+    {
+        // 266-1-28: ใบเสร็จที่สร้างเอง (สมุดรายวันของตัวเอง) ไม่มีการรับชำระให้ย้าย — แม้ส่งข้อเท็จจริงของการย้ายมาก็ไม่เปิดเส้น
+        var v = ReceiptLinkPolicy.Decide(Rc(DocumentStatus.Paid, related: FromId), Inv(), new ReceiptLinkContext(1_000m, Move: Mv()));
+        Assert.Equal((false, ReceiptLinkPolicy.MoveNotYetCode), (v.Allowed, v.RuleCode));
+        Assert.Contains("ยกเลิกใบเสร็จนี้", v.WayForward, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MoveEffects_PreviewTellsBothBalances_JournalThrough21630_BankUntouched_Paper_Dunning()
+    {
+        var reissue = ReceiptLinkPolicy.MoveEffects(ReceiptLinkRoute.MoveSettlementWithReissue, Mv(), Inv());
+        string Detail(string label) => reissue.Single(x => x.Label == label).Detail;
+        Assert.Contains("1,000.00 → 0.00", Detail("ยอดค้างของ INV001"), StringComparison.Ordinal);
+        Assert.Contains("0.00 → 1,000.00", Detail("ยอดค้างของ INV002"), StringComparison.Ordinal);
+        Assert.Contains("21630", Detail("รายการบัญชี"), StringComparison.Ordinal);
+        Assert.Contains("03/11/2026", Detail("รายการบัญชี"), StringComparison.Ordinal);
+        Assert.Contains("ไม่ถูกแตะ", Detail("เงินสด/ธนาคาร"), StringComparison.Ordinal);
+        Assert.Contains("ออกแทนใบเลขที่ REC003", Detail("กระดาษ"), StringComparison.Ordinal);
+        Assert.Contains("พักหนังสือทวง", Detail("การทวงเงิน"), StringComparison.Ordinal);
+        Assert.Contains("ไม่มีปุ่มถอด", Detail("ยกเลิกภายหลัง"), StringComparison.Ordinal);
+        // ไม่มีใบเสร็จแยก: ไม่อ้างว่าจะออกใบแทน · บอกว่าย้ายกลับได้ · งวดปิด = บอกว่าลงวันที่ทำรายการ
+        var plain = ReceiptLinkPolicy.MoveEffects(ReceiptLinkRoute.MoveSettlement,
+            Mv(receipt: null) with { ClosedPeriodNote = "งวดบัญชีของวันที่ 03/11/2026 ปิดแล้ว — ลงวันที่ทำรายการ" }, Inv());
+        Assert.DoesNotContain("ออกแทน", plain.Single(x => x.Label == "กระดาษ").Detail, StringComparison.Ordinal);
+        Assert.Contains("ย้ายกลับใบเดิมได้", plain.Single(x => x.Label == "ยกเลิกภายหลัง").Detail, StringComparison.Ordinal);
+        Assert.Contains("ปิดแล้ว", plain.Single(x => x.Label == "รายการบัญชี").Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Move_FromSelfReceiptTaxInvoice_Refused_WithWayForward_OppositeAllowed()
+    {
+        // ฝ่ายค้าน B-1: ใบกำกับภาษีที่เป็นใบเสร็จในตัวของการรับเงินก้อนนี้ (ไม่มี REC แยก) — ย้ายออก = หัวกระดาษที่ลูกค้าถือเปลี่ยนย้อนหลัง ⇒ ปฏิเสธพร้อมทางไปต่อ
+        var refused = Move(Mv(receipt: null) with { FromServedAsReceipt = true });
+        Assert.Equal((false, ReceiptLinkPolicy.ServedAsReceiptCode), (refused.Allowed, refused.RuleCode));
+        Assert.Contains("ยกเลิกการรับชำระ PAY-202611-0007", refused.WayForward, StringComparison.Ordinal);
+        Assert.Contains("INV002", refused.Message, StringComparison.Ordinal);
+        // ทิศตรงข้าม: ใบเดิมไม่ได้เป็นใบรับของเงินก้อนนี้ (มี REC แยก/รับคนละวัน) = ย้ายได้ตามเดิม
+        Assert.True(Move(Mv(receipt: null)).Allowed);
+        Assert.True(Move(Mv()).Allowed);
+    }
+
+    [Fact]
+    public void MoveEffects_PaperLineMatchesWhatTheMoveDoes()
+    {
+        string Paper(ReceiptLinkRoute route, ReceiptLinkMoveFacts m) => ReceiptLinkPolicy.MoveEffects(route, m, Inv()).Single(x => x.Label == "กระดาษ").Detail;
+        string Undo(ReceiptLinkRoute route, ReceiptLinkMoveFacts m) => ReceiptLinkPolicy.MoveEffects(route, m, Inv()).Single(x => x.Label == "ยกเลิกภายหลัง").Detail;
+        // ไม่มีใบเสร็จแยก + ใบปลายทางถือ VAT ณ วันรับเงิน ⇒ ระบบออกใบใหม่ (ไม่ใช่ "ไม่มีกระดาษ") · ถอดไม่ได้
+        var issue = Mv(receipt: null) with { IssueReceiptForTarget = true, ReplacementCarriesVat = true };
+        Assert.Contains("ออกใบเสร็จรับเงิน/ใบกำกับภาษีใบใหม่ให้ INV001", Paper(ReceiptLinkRoute.MoveSettlement, issue), StringComparison.Ordinal);
+        Assert.Contains("ไม่มีปุ่มถอด", Undo(ReceiptLinkRoute.MoveSettlement, issue), StringComparison.Ordinal);
+        // ใบปลายทางจะเป็นใบรับในตัว ⇒ บอกว่าหัวของใบนั้นเปลี่ยน
+        var selfAfter = Mv(receipt: null) with { TargetServesAfterMove = true };
+        Assert.Contains("ใบกำกับภาษี/ใบเสร็จรับเงิน", Paper(ReceiptLinkRoute.MoveSettlement, selfAfter), StringComparison.Ordinal);
+        Assert.Contains("ไม่มีปุ่มถอด", Undo(ReceiptLinkRoute.MoveSettlement, selfAfter), StringComparison.Ordinal);
+        // มีใบเสร็จเดิม + ใบปลายทางเป็นใบรับในตัว ⇒ ยกเลิกโดยไม่ออกใบแทน (ไม่อ้าง "ออกแทนใบเลขที่")
+        var voidOnly = Mv() with { TargetServesAfterMove = true };
+        Assert.Contains("โดยไม่ออกใบเสร็จแยกใบใหม่", Paper(ReceiptLinkRoute.MoveSettlementWithReissue, voidOnly), StringComparison.Ordinal);
+        Assert.DoesNotContain("ออกแทนใบเลขที่", Paper(ReceiptLinkRoute.MoveSettlementWithReissue, voidOnly), StringComparison.Ordinal);
+        // ทิศตรงข้าม: ไม่มีกระดาษจริง ⇒ พูดว่าไม่มี + ถอดได้
+        Assert.Contains("ไม่มีกระดาษใดถูกแก้", Paper(ReceiptLinkRoute.MoveSettlement, Mv(receipt: null)), StringComparison.Ordinal);
+        Assert.Contains("ย้ายกลับใบเดิมได้", Undo(ReceiptLinkRoute.MoveSettlement, Mv(receipt: null)), StringComparison.Ordinal);
+        // ฝ่ายค้าน B-4: พรีวิวบอกว่าค่าปรับล่าช้านับจากวันที่ย้าย
+        Assert.Contains("ค่าปรับล่าช้า", ReceiptLinkPolicy.MoveEffects(ReceiptLinkRoute.MoveSettlement, Mv(receipt: null), Inv()).Single(x => x.Label == "การทวงเงิน").Detail,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LateFeeDaysOverdue_CountsFromMoveDate_UnmovedUnchanged()
+    {
+        var today = new DateTime(2026, 11, 14);
+        var due = new DateTime(2026, 8, 31);
+        // ไม่เคยย้าย = สูตรเดิม (วันนี้ − ครบกำหนด − ผ่อนผัน)
+        Assert.Equal((int)(today - due).TotalDays - 3, ReceiptLinkPolicy.LateFeeDaysOverdue(today, due, null, 3));
+        // ฝ่ายค้าน B-4: เงินถูกย้ายออก 13 พ.ย. ⇒ นับจากวันที่ย้าย (ไม่ใช่ 74 วันย้อนหลัง) · ผ่อนผัน 0 ⇒ 1 วัน · ผ่อนผัน 3 ⇒ ยังไม่คิด
+        Assert.Equal(1, ReceiptLinkPolicy.LateFeeDaysOverdue(today, due, new DateTime(2026, 11, 13, 9, 30, 0), 0));
+        Assert.True(ReceiptLinkPolicy.LateFeeDaysOverdue(today, due, new DateTime(2026, 11, 13), 3) <= 0);
+        // ย้ายก่อนครบกำหนด ⇒ ครบกำหนดเดิมยังเป็นตัวตั้ง
+        Assert.Equal((int)(today - due).TotalDays, ReceiptLinkPolicy.LateFeeDaysOverdue(today, due, new DateTime(2026, 8, 1), 0));
+    }
+
+    [Fact]
+    public void MoveUndoRefusal_NullWithoutPaper_RefusesWhenReceiptVoidedOrIssued()
+    {
+        Assert.Null(ReceiptLinkPolicy.MoveUndoRefusal(null, null));
+        var voided = ReceiptLinkPolicy.MoveUndoRefusal("REC003", null);
+        Assert.Contains("REC003", voided, StringComparison.Ordinal);
+        Assert.Contains("ทางไปต่อ", voided, StringComparison.Ordinal);
+        Assert.Contains("REC009", ReceiptLinkPolicy.MoveUndoRefusal(null, "REC009"), StringComparison.Ordinal);
+        Assert.Contains("REC009", ReceiptLinkPolicy.MoveUndoRefusal("REC003", "REC009"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MoveJournalReference_StartsWithPaymentNumberSlash_SoPaymentVoidReversesBothLegs()
+    {
+        Assert.Equal("PAY-202611-0007/M1-OUT", ReceiptLinkPolicy.MoveJournalReference("PAY-202611-0007", 1, outLeg: true));
+        Assert.Equal("PAY-202611-0007/M2-IN", ReceiptLinkPolicy.MoveJournalReference("PAY-202611-0007", 2, outLeg: false));
+        Assert.StartsWith("PAY-202611-0007/", ReceiptLinkPolicy.MoveJournalReference("PAY-202611-0007", 3, outLeg: true), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PaymentEffectiveDocument_MovedWins_MoveBackClearsPointer()
+    {
+        var original = Guid.NewGuid();
+        var target = Guid.NewGuid();
+        Assert.Equal(original, PaymentEffectiveDocument.Of(original, null));          // ไม่เคยย้าย = ใบเดิม (ข้อมูลก่อนรอบ 266 ทุกแถว)
+        Assert.Equal(target, PaymentEffectiveDocument.Of(original, target));
+        Assert.Equal((Guid?)target, PaymentEffectiveDocument.Stamp(original, target));
+        Assert.Null(PaymentEffectiveDocument.Stamp(original, original));              // ย้ายกลับใบเดิม = ไม่มีตัวชี้ค้าง
+    }
+
+    [Fact]
+    public void ReplacementLine_SameTextForBothRenderers_ThaiAndEnglish_NullWhenNotAReplacement()
+    {
+        var th = Accounting.Services.Implementations.Pdf.DocumentLabels.For("th");
+        var en = Accounting.Services.Implementations.Pdf.DocumentLabels.For("en");
+        var doc = new Accounting.Models.Entities.Document { ReplacementOfNumber = "REC003", ReplacementOfDate = new DateTime(2026, 11, 3) };
+        Assert.Equal("ออกแทนใบเลขที่ REC003 ลงวันที่ 03/11/2026 (ใบเดิมถูกยกเลิก)",
+            Accounting.Services.Implementations.PdfGenerationService.ReplacementReferenceText(doc, th));
+        Assert.Equal("Issued in replacement of No. REC003 dated 03 Nov 2026 (original cancelled)",
+            Accounting.Services.Implementations.PdfGenerationService.ReplacementReferenceText(doc, en));
+        // ทิศตรงข้าม: ใบที่ไม่ได้ออกแทนใคร ไม่มีบรรทัดนี้ (กระดาษของใบอื่นไม่เปลี่ยน)
+        Assert.Null(Accounting.Services.Implementations.PdfGenerationService.ReplacementReferenceText(new Accounting.Models.Entities.Document(), th));
     }
 }

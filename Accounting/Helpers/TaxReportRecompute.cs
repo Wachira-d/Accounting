@@ -47,6 +47,12 @@ public static class TaxReportRecompute
             outputVat = r.OutputVat,
             inputVat = r.InputVat,
             totalTaxWithheld = r.TotalTaxWithheld,
-            ruleCode = ReportableJournal.RuleCode,
+            // รอบ 269 ชุดสอง M4 — ภ.พ.30: ยอดทุกช่องของแบบ (ช่อง 2/3/4 เปลี่ยนได้โดยภาษีไม่เปลี่ยน ⇒ ต้องอยู่ในหลักฐาน) · ไม่มี PII
+            pp30Boxes = r.TaxType == Accounting.Models.Enums.TaxType.VAT
+                ? Pp30FormBoxes.Figures((r.Lines ?? new List<TaxReportLine>()).Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount, l.IsExcluded)),
+                        r.OutputVat, r.InputVat)
+                    .ToDictionary(x => Pp30FormBoxes.No(x.Box), x => x.Amount)
+                : null,
+            ruleCode = r.TaxType == Accounting.Models.Enums.TaxType.VAT ? Pp30SalesBoxReview.RuleCode : ReportableJournal.RuleCode,
         });
 }

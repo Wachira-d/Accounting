@@ -292,13 +292,38 @@ public class CmsCommerceController : ControllerBase
     [HttpPost("orders/{orderId:guid}/confirm-payment")]
     [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<bool>>> ConfirmPayment(
-        Guid companyId, Guid siteId, Guid orderId, [FromQuery] Guid? paymentId = null)
+        Guid companyId, Guid siteId, Guid orderId, [FromQuery] Guid? paymentId = null, [FromQuery] Guid? bankAccountId = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var ok = await _commerceService.ConfirmPaymentAsync(companyId, siteId, orderId, paymentId, userId);
+        // รอบ 268 (268-1-2 · ฝ่ายค้าน L7/M6 → 268-1-13): บัญชีที่เงินตามสลิปเข้า ตัดสินใต้ล็อกออเดอร์กับแถวที่ยืนยันจริง (ตัวตัดสินเดียว) + audit ผู้เลือก/ที่มา ·
+        // ใช้ไม่ได้/ต้องเลือก ⇒ 400 พร้อมเหตุ (BusinessRuleException) · ไม่มีคำแนะนำและไม่เลือก ⇒ เงินสดตั้งต้นตามเดิม (ระบบไม่เดา — ป้ายบนหน้าบอกตรง)
+        var ok = await _commerceService.ConfirmSlipPaymentAsync(companyId, siteId, orderId, paymentId, userId, bankAccountId);
         if (!ok) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบออเดอร์"));
         return Ok(new ApiResponse<bool>(true, true,
             "ยืนยันรับเงินสำเร็จ — สร้าง JE, ตัด stock, e-Tax (ถ้าเปิด) เรียบร้อย"));
+    }
+
+    /// <summary>รอบ 268 (268-1-2): ตัวเลือก "บัญชีที่เงินเข้า" ของการยืนยันสลิปออเดอร์ — เซิร์ฟเวอร์ตัดสิน (หน้าแสดงอย่างเดียว · F2 ข้อ 5) · สิทธิ์เท่าปุ่มยืนยัน</summary>
+    [HttpGet("orders/{orderId:guid}/receiving-accounts")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    public async Task<ActionResult<ApiResponse<object>>> ReceivingAccounts(Guid companyId, Guid siteId, Guid orderId, [FromQuery] Guid? paymentId = null)
+    {
+        var r = await _commerceService.SlipReceivingAccountsAsync(companyId, siteId, orderId, paymentId, null);
+        if (r == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการรับเงินของออเดอร์นี้"));
+        var sug = r.Decision.Suggested;
+        return Ok(new ApiResponse<object>(true, new
+        {
+            applies = r.Applies,
+            suggestedBankAccountId = sug.DisplayBankAccountId ?? sug.BankAccountId,
+            suggestedOrigin = sug.Origin.ToString(),
+            suggestedOriginLabel = SlipReceivingAccount.OriginLabel(sug.Origin.ToString()),
+            reason = sug.Reason,
+            // ฝ่ายค้าน M6: ป้ายของ "ไม่เลือก" คำนวณจากผลตัดสินจริง (ต้องเลือก ⇒ บอกว่าต้องเลือก · ไม่ใช่ป้ายเงินสดที่เซิร์ฟเวอร์จะปฏิเสธ)
+            requiresChoice = r.Applies && sug.RequiresChoice,
+            defaultLabel = SlipReceivingAccount.NoChoiceLabel(r.Applies, sug, r.Accounts.FirstOrDefault(a => a.Id == (sug.DisplayBankAccountId ?? sug.BankAccountId))?.Label),
+            options = r.Accounts.Select(a => new { value = a.Id, label = a.Label, usable = r.Usable.Any(u => u.Id == a.Id),
+                problem = r.Usable.Any(u => u.Id == a.Id) ? null : "ใช้รับโอนไม่ได้ (ดูหน้า “บัญชีธนาคาร”)" }),
+        }));
     }
 
     // ====================================================================

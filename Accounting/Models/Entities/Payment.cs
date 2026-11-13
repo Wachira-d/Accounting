@@ -152,6 +152,14 @@ public class Payment : TenantEntity
     /// null = ยังไม่แจ้ง · แจ้งครั้งเดียวต่อการรับชำระ (ไม่แจ้งซ้ำทุกวัน) · ผู้เขียนเดียว <c>Helpers/CustomerCreditAgedNotice</c></summary>
     public DateTime? UnappliedAgedNoticeAt { get; set; }
 
+    /// <summary>
+    /// รอบ 266 แพ็ก B (คำตัดสิน 266-1-23): <b>ใบที่การรับชำระนี้ตัดหนี้อยู่จริงหลังถูก "ย้ายการรับชำระ"</b> — null = ไม่เคยย้าย (ใบของการชำระ = <see cref="DocumentId"/>) ·
+    /// <see cref="DocumentId"/> <b>ไม่ถูกแก้</b> (ประวัติ · สมุดรายวันขาเงินสดอ้างใบเดิม · คู่จับคู่ธนาคารคงเดิม) ·
+    /// ผู้เขียนเดียว <c>DocumentService.MoveSettlementAsync</c> (ธุรกรรมเดียวกับแถวจัดสรรที่ปล่อย/สร้างใหม่) · ผู้อ่าน "การชำระของใบ X" ต้องใช้
+    /// <c>(MovedToDocumentId ?? DocumentId)</c> — ตัวอ่านในหน่วยความจำ <c>Helpers/PaymentEffectiveDocument.Of</c>
+    /// </summary>
+    public Guid? MovedToDocumentId { get; set; }
+
     /// <summary>Per-document allocation lines — populated when ONE
     /// payment settles MULTIPLE documents (e.g. a single ฿15,000
     /// cheque that pays invoice A 5K + B 6K + C 4K). When this list
@@ -190,4 +198,18 @@ public class PaymentAllocation : TenantEntity
     /// <summary>การจัดสรรนี้ประทับ <c>Document.PaymentDate</c> = วันรับเงินให้ใบปลายทาง (ใบที่ออกหลังเงินเข้า · §78/1) —
     /// ยกเลิกการจัดสรรต้องคืนค่าเป็น null เฉพาะเมื่อธงนี้เป็น true (ไม่ล้างค่าที่ผู้ใช้กรอกเอง)</summary>
     public bool StampedDocumentPaymentDate { get; set; }
+
+    // ── รอบ 266 แพ็ก B "ย้ายการรับชำระระหว่างใบ" (คำตัดสิน 266-1-23) — แถวที่ถูก "ปล่อย" ไม่ถูกลบจริง: IsDeleted = true (พ้นผลจากผู้อ่านทุกตัวผ่าน query filter เดิม) + ตราประทับด้านล่าง ──
+    /// <summary>เวลาที่แถวนี้ถูกปล่อยเพราะเงินถูกย้ายไปใบอื่น — null = ไม่เคยถูกย้ายออก</summary>
+    public DateTime? ReleasedAt { get; set; }
+    /// <summary>ผู้ย้าย (user id)</summary>
+    public string? ReleasedBy { get; set; }
+    /// <summary>สมุดรายวันขาถอน (Dr ลูกหนี้ใบเดิม / Cr 21630) ของการย้าย</summary>
+    public Guid? ReleaseJournalEntryId { get; set; }
+    /// <summary>แถวนี้เกิดจากการย้ายมาจากแถวไหน (แถวที่ถูกปล่อย) — null = ไม่ได้เกิดจากการย้าย</summary>
+    public Guid? MovedFromAllocationId { get; set; }
+    /// <summary>รอบ 266 ฝ่ายค้าน B-8: ใบเสร็จที่การย้ายครั้งนี้ (แถวที่เกิดจากการย้าย) ยกเลิกไป — มีค่า = ถอด (ย้ายกลับ) ไม่ได้ เพราะใบเดิมจะกลับมาชำระครบโดยไม่มีใบรับที่ยังมีผล</summary>
+    public Guid? MoveVoidedReceiptId { get; set; }
+    /// <summary>รอบ 266 ฝ่ายค้าน B-1/B-8: ใบเสร็จที่การย้ายครั้งนี้ออกให้ใบปลายทาง (ใบแทน หรือใบกำกับภาษี ณ วันรับเงินของใบแจ้งหนี้ที่พักภาษี) — มีค่า = ถอดไม่ได้</summary>
+    public Guid? MoveIssuedReceiptId { get; set; }
 }

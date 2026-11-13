@@ -30,11 +30,17 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
     /// <summary>รอบ 246 QR — ที่เก็บกลาง (อ่านรูป QR ของบัญชีให้หน้าชำระสาธารณะ) · null = ใช้บัญชีรับโอนของเว็บอย่างเดียว (พฤติกรรมเดิม)</summary>
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
 
+    /// <summary>รอบ 267 P2: ฟอร์มผู้ลงนาม + คำตอบที่ลูกค้าเคยทำ ของหน้าเอกสาร (อ่านอย่างเดียวจากที่นี่ — ผู้เขียนคือ service นั้นเอง) ·
+    /// ประกอบเอง ไม่รับจาก DI: ตัวสร้าง PDF พึ่ง <c>IPaymentQrService</c> ซึ่งพึ่ง service นี้ ⇒ รับจาก DI = วงพึ่งพา (ที่นี่ใช้แค่ส่วนอ่านซึ่งต้องการฐานข้อมูลอย่างเดียว)</summary>
+    private readonly CustomerDocumentResponseService? _responses;
+
     public DocumentPayLinkService(AccountingDbContext db, IEnumerable<IPaymentProvider> providers, ISecretProtector secrets,
         IConfiguration? config = null, ILogger<DocumentPayLinkService>? logger = null,
         Accounting.Services.Storage.IFileStorage? storage = null)
     {
         _storage = storage;
+        _responses = new CustomerDocumentResponseService(db,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<CustomerDocumentResponseService>.Instance, storage: storage);
         _db = db;
         _providers = providers;
         _secrets = secrets;
@@ -436,6 +442,7 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
         var runs = await _db.PostPaymentAutomationRuns.AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.DocumentId == documentId)
             .OrderByDescending(r => r.CreatedAt).Take(20).ToListAsync(ct);
+        var postPay = await PostPaymentAutomationService.ResolveForAsync(_db, companyId, documentId, ct);
         return new DocumentPayLinkStatusDto(
             Refusal: Refusal(d) ?? unavailable,
             Url: raw != null && origin != null ? DocumentPayLinkPolicy.Url(origin, companyId, raw) : null,
@@ -452,6 +459,11 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
             PageLinkUsable = pageUrl != null,
             PageUrl = pageUrl,
             PageLinkNote = pageUrl == null ? null : PageLinkStaffNote(d, DateTime.UtcNow),
+            // รอบ 267 P4 (267-1-44): ค่าตั้งหลังรับชำระต่อใบ + ค่าที่มีผลตอนนี้ (ตัวโหลด/ตัวต่อชั้นเดียวกับงานหลังรับชำระ)
+            PostPaySettingApplies = postPay.Found && PostPaymentAutomationPolicy.DocumentLayerAllowed(postPay.Type),
+            PostPayReceiptMode = PostPaymentAutomationPolicy.ModeCode(postPay.DocEmailReceipt),
+            PostPayPartialMode = PostPaymentAutomationPolicy.ModeCode(postPay.DocIncludePartial),
+            PostPayEffectiveLabel = PostPaymentAutomationPolicy.EffectiveLabel(postPay.Resolution),
         };
     }
 

@@ -18,6 +18,10 @@ namespace Accounting.Tests.Db;
 /// ผู้ส่งคิวส่งการ์ดทวง (ปุ่มอัปโหลด = URL ของแถวนั้น) และหยุดเมื่อได้ใบครบ · ส่งทาง LINE เองจากหน้าเอกสาร (เข้าคิว · ใบร่าง = ปฏิเสธ · กดซ้ำนาทีเดียว = แถวเดิม)
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 269 (CI db-test run 43359763858 · Expected "Sent" Actual "Sending"): ContactLineQueueService.ProcessPendingAsync จองแถว "Pending" ที่ถึงเวลา
+// ของทุกบริษัทในฐานร่วม (ORDER BY ScheduledFor · FOR UPDATE SKIP LOCKED) — เทสต์ตั้ง ScheduledFor ย้อน 5 ปีให้แถวตัวเองมาก่อน ⇒ ผู้ส่งของคลาสอื่น
+// ที่รันขนานจองแถวนี้ไปก่อน (สถานะ "กำลังส่ง") แล้วเทสต์นี้อ่านเจอกลางทาง · คลาสที่เรียกผู้ส่งคิว/กวาดทุกบริษัทอยู่ collection เดียวกัน (ไม่รันขนาน)
+[Collection("SubscriptionExpirySweep")]
 public class LineRound259DbTests
 {
     private readonly ITestOutputHelper _out;

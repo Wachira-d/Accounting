@@ -3257,6 +3257,34 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   L8 ปีสองหลักตัวเดียว `OcrSlipText.TwoDigitYear` · L9 ปิดสวิตช์ ⇒ ปุ่มเดิมกดไม่ได้ (คิวพนักงาน) · ป้ายไฟล์แนบ `line-chat-staff`
 - เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde (ฝ่ายค้าน: 65c031ed)
 
+### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
+
+- **QR (264-4-1)** — `TesseractSlipImageReader.ReadAsync` ถอด QR ในเครื่องก่อน OCR (`SlipQrImageDecoder` = SkiaSharp → ZXing.Net 0.16.9 · ไม่เรียกเครือข่าย · ล้ม = null) ⇒
+  `OcrSlipText.Parse(text, year, qr)` ⇒ `ThaiSlipQr.Parse` (TLV `00`{`00`=`000001` · `01`=ธนาคาร**ผู้โอน** · `02`=เลขอ้างอิงของธนาคาร} `51`=TH `91`=CRC-16/CCITT-FALSE —
+  ยืนยันกับสลิปจริง 6 ใบ) · QR ถูก ⇒ `Reading.Ref` = เลขจาก QR + `LooksLikeSlip` · ไม่มี tessdata แต่ QR ถอดได้ ⇒ ผลอ่านมีแต่ QR (ไม่มียอด ⇒ คิวพนักงานตามเดิม) ·
+  ธนาคารที่มี QR บนกระดาษจริง: กรุงไทย · SCB · K+ โอน · ไม่มี: K+ จ่ายบัตร · ttb · KBIZ · **QR ไม่มียอด/เลขบัญชี/ชื่อ** · ไม่มี AI (เลขบัญชี) ⇒ kill-switch ไม่มีผล
+- **คู่กรณี (264-4-3)** — `OcrSlipText.Parties`: บทบาทจากป้ายคู่ (จาก/From → ไปยัง/To) หรือ QR ตรงบล็อกธนาคารเดียว · ไม่มีทั้งสอง ⇒ ไม่รู้ (ไม่เดาจากลำดับ) ·
+  บล็อก = ธนาคาร (`ThaiBankCodes.FromBankLine`) + เลขปิดบาง (`ClassifyMask` — เก็บเฉพาะหลักที่เห็น + ตำแหน่ง) + Biller ID + ชนิด (บัญชี/พร้อมเพย์/บัตร/บิล) ·
+  ผลอ่าน (ไม่มีชื่อ) เก็บที่ `LineChatSlips.SlipReadJson` ⇒ คัดลอกไป `PaymentIntents.SlipReadJson` ใน `LineChatSlipService.TrySubmitAsync` (ทุกทางของ LINE) · ตัวเขียน/อ่านเดียว `OcrSlipText.ToStoredJson/FromStoredJson` (264-4-5)
+- **จับคู่ (264-4-4)** — `SlipAccountMatch.Match` ตัวเดียวทั้งสองฝั่ง: ธนาคารตรง + หลักที่เห็น ≥ 3 ตรงตำแหน่งนับจากขวา + เหลือบัญชีเดียว ⇒ Unique ·
+  หลาย ⇒ Many · อ่านชัดแต่ไม่ตรง (บัญชีของเราข้อมูลครบ) ⇒ NotOurs · บัตร/บิล/พร้อมเพย์ไปเบอร์ ⇒ NotAnAccount · อื่น ๆ ⇒ Unreadable
+- **ฝั่งผู้รับเงิน A (264-4-6)** — `SlipReceivingAccount.ResolveAsync` ⇒ `SlipPayeeMatch(intent.SlipReadJson, บัญชีที่ไม่ถูกลบ)` ⇒ `Suggest` ชั้นบนสุด:
+  Unique + ใช้รับโอนได้ ⇒ ค่าแนะนำ origin `SlipPayee` (ยังต้องกดยืนยัน · ตรงแหล่งเงินของเอกสาร ⇒ กิ่งเดิม) · NotOurs ⇒ `SlipWarning` + `RequiresChoice`
+  (ไม่เลือก = 400 พร้อมเหตุ · เลือกเองได้ · ไม่แนะนำบัญชีอื่น) · หน้า `payment-intents.html` แสดงเหตุจาก `receiving-accounts` (`slipWarning` · ป้ายตัวเลือกว่าง "ต้องเลือกบัญชีที่เงินเข้าเอง")
+- **ฝั่งผู้จ่าย B (264-4-7)** — `PartnerPaymentNoticeService.NotifyCoreAsync` คัดลอกผู้โอน (ธนาคาร + เลขปิดบาง เท่านั้น) จาก intent ของ A ⇒
+  `PartnerPaymentNotices.SlipPayerBankCode/SlipPayerAccountMask` ⇒ `PartnerPayablePipeline.SourceDecisionAsync` ⇒ `SlipMatchAsync` ⇒ `SlipKindOf` ⇒
+  `PartnerPaySourceAccount` ชั้น `SlipUnique` (เดิมส่ง null) — **preselect เท่านั้น ไม่บันทึกเอง** (`AllowsAuto=false` · เหตุ `SlipUniqueNotAutoReason` · คำตัดสิน 264-4-9 แบบ 268-1-1
+  จนกว่ารายการเดินบัญชี P4 ยืนยัน) · กติกาขัดกันของ 264-3-1 คงเดิม
+- **ยังไม่ทำ (backlog)** — OCR สลิปที่แนบผ่านพอร์ทัล/หน้าชำระ · ยืนยันด้วยชื่อ · ตรวจรายการกับธนาคาร/ผู้ให้บริการตรวจสลิป (ความยินยอม + RoPA + kill-switch) ·
+  โปรไฟล์ต่อแอปของ K+ ที่โอนในธนาคารเดียวกัน (ไม่มีป้าย · QR ตรงทั้งสองบล็อก ⇒ ไม่รู้บทบาท)
+- **ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-264-P2.md` · คำตัดสิน 264-4-9…12)** — เลขที่ไม่มีตัวปิดไม่ถูกเก็บ · เก็บ/ส่งต่อได้ไม่เกิน 4 หลักที่เห็นขวาสุด · บัตรไม่เก็บเลข (M2) ·
+  ตัวถอด QR: `DecodeMultiple` + `TryInverted` เลือกดวงแรกที่เป็น QR สลิป · เพดานพิกเซลก่อนถอด · ถอดนอกเธรดคำขอ · ไม่ AutoRotate — **รัน ZXing.Net กับรูปจริง 10 ใบแล้ว: ถอดได้ทั้ง 6 ใบที่มี QR (006×2 · 014×3 · 004×1) · ใบไม่มี QR ได้ null** (M3/L4) ·
+  ต่างจากบัญชีธนาคารเดียวกันหนึ่งหลัก ⇒ อ่านไม่ได้ (ไม่กล่าวหา NotOurs — L1) · ลบรูปตามระยะเก็บ ⇒ ล้าง `SlipReadJson` ด้วย (L2) · กันซ้ำเทียบทั้ง ref จาก QR และจากข้อความ (`Reading.TextRef` — L5) ·
+  ผู้รับบนสลิปตรงบัญชีที่ใช้รับโอนไม่ได้ ⇒ ต้องเลือกเอง (`SlipPayeeUnusableReason` · ไม่ตกไป "บัญชีเดียว" ที่เป็นอีกบัญชี — L7) · `tools/slip_secret_check.py` กันค่าจริงจากสลิปเข้าเรพ (H1)
+- **migration** `Round264SlipReadMigration` (ADD COLUMN IF NOT EXISTS · แถวเดิม NULL = ผลเท่าเดิม · ไม่ backfill)
+- เทสต์ `ThaiSlipQrTests` · `OcrSlipTextPartiesTests` · `SlipAccountMatchTests` · `SlipReceivingAccountTests` (ชั้นสลิป) · `PartnerPaySourceSlipRound264Tests` ·
+  ชุดกระดาษจริง 10 ใบ `Accounting.Tests/SlipCorpusRound264.cs` (redact) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit e6caad8c
+
 ### 2.12g-264-P1 รอบ 264 แพ็ก P1 "ความยินยอมงานอัตโนมัติกับคู่ค้า" (erp-review/2026-11-12/team-264-a2b-design.md §2 · คำตัดสิน 264-2-1…3)
 
 - **หลัก**: ไม่มีใครลงบัญชีในสมุดของอีกบริษัท — การบันทึกในสมุด B เกิดจากท่อของ B เองภายใต้ความยินยอมของ B เท่านั้น · A ได้แค่ "ขอ" (F9)
@@ -3287,7 +3315,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **การแจ้งจากทุกทางเข้าของ A (C-04 · 264-3-6)**: ขั้นหลัง commit ของ `CreatePaymentAsync` (มือ · gateway · สลิป · รายการเดินบัญชี · นำเข้า) และ `AfterPaymentRecordedAsync` (integration) →
   `DocumentService.NotifyPartnerOfSellerPaymentAsync` (partial `DocumentService.PartnerNotice.cs`) → `PartnerPaymentNoticeService.NotifyForSellerPaymentAsync` (ใบที่ไม่ได้ส่งเข้าระบบคู่ค้าจบที่ query เดียว) ·
   `DocumentPaymentHandler` ไม่แจ้งเองแล้ว · เงินที่ผู้ซื้อจ่าย = `Payment.Amount + FeeAmount` · ช่องทาง = `PaymentMethodKind` เมื่อมี intent (หาได้จาก `Payment.PaymentIntentId` หรือเลขอ้างอิง `PAY-INTENT-{N}`) ไม่งั้น `Entry:Manual/BankAutoSettle/Import/Other` ·
-  **กุญแจ = `SellerPaymentId`** (unique บางส่วน `IX_PartnerPaymentNotices_Company_SellerPayment`) + intent เดิม · `PaymentIntentId` nullable · การชำระหลายใบไม่แจ้ง (backlog D8)
+  **กุญแจ = `SellerPaymentId`** (unique บางส่วน `IX_PartnerPaymentNotices_Company_SellerPaymentSingle` — ชำระใบเดียว) + intent เดิม · `PaymentIntentId` nullable · การชำระหลายใบ ⇒ หนึ่งแจ้งต่อแถวจัดสรร (รอบ 268 — §2.12g-268)
 - **ผู้ขายยกเลิกการรับชำระ (C-03 · 264-3-7)**: ขั้นหลัง commit ของ `VoidPaymentAsync` → `WithdrawPartnerNoticesForVoidedPaymentAsync` → `PartnerPaymentNoticeService.WithdrawForSellerPaymentAsync`:
   รอบันทึก ⇒ สถานะใหม่ `Withdrawn` (compare-and-set) · กำลังบันทึก ⇒ ประทับ `SellerVoidedAt` · บันทึกแล้ว ⇒ ป้าย `[PARTNER-PAYMENT-VOIDED]` บนหมายเหตุภายในของใบซื้อ + แจ้ง B + แถว Autopilot จนกว่า B ยกเลิกการจ่ายเอง ·
   **ไม่ยกเลิกการจ่ายของ B แทน** (E6) · audit `PartnerPaymentNoticeWithdrawn` / `PartnerPaymentSellerVoided` ทั้งสองฝั่ง · ปุ่มเดียวและท่อตรวจการรับชำระของ A สด (ยกเลิกแล้ว ⇒ 409 / ท่อถอนเอง)
@@ -3322,6 +3350,35 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (L7) เหตุของใบซื้อมาก่อน "ยังไม่ได้ยินยอม" · (L8) ข้อความฐานข้อมูลไม่ถึงผู้ใช้ · "ผู้ขายยกเลิก" ไม่สรุปว่าไม่ต้องจ่าย ·
   รายการเดินบัญชีของ B ที่นำเข้าทีหลัง: ไม่มีเส้นสร้างการจ่ายฝั่งซื้อจากรายการเดินบัญชี ⇒ ไม่เกิดการจ่ายใบที่สอง (อ่านโค้ด — 264-3-22)
 - **kill-switch**: เส้นเงินไม่มีการเรียก AI (ตัวตัดสิน pure) · ผังใบร่าง: AI ปิด + นักเรียนไม่มีคำตอบ ⇒ ใบร่างเท่าเดิม · เทสต์ `PartnerPayableRound264Tests` · Db `PartnerPayableRound264DbTests`
+
+### 2.12g-268 รอบ 268 งานคงค้าง (คำตัดสิน 268-1-1…6 ใน `erp-review/2026-09-29/DECISIONS.md`)
+
+- **268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง**: แถว `ConsentDefault` ของ `PartnerPaySourceAccount.Precedence` = `AllowsAuto=false` ⇒ ท่อฝั่งผู้ซื้อประทับเหตุ `ConsentDefaultNotAutoReason`
+  (รหัส `Source`) · ปุ่มเดียว preselect บัญชีนั้น (`DefaultBankAccountId`) · `AutoState` บอกว่าไม่บันทึกเองเพราะอะไร · หน้า "งานอัตโนมัติกับคู่ค้า" `EffectNote` = `ConsentDefaultNotAutoNote` ·
+  ชั้นรายการเดินบัญชีเสียบที่ `PartnerPayablePipeline.IBankLineEvidence` (ไม่มีตัวใน DI วันนี้ ⇒ production ไม่บันทึกเอง) · ชั้นผู้จ่ายเลือก/สลิปเดิม (ยังไม่มีผู้ป้อน)
+- **268-1-2 สลิปออเดอร์หน้าเว็บ**: `POST cms/sites/{site}/commerce/orders/{id}/confirm-payment?bankAccountId=` → `ICmsCommerceService.SlipReceivingAccountsAsync`
+  (`SlipReceivingAccount.AppliesToSiteOrderPayment` + `ResolveForSiteOrderAsync` — บัญชีรับโอนของเว็บ → บัญชีเดียว → ไม่เดา · เลือกเองตรวจด้วยตัวตรวจเดียว · ใช้ไม่ได้ 400) →
+  `ConfirmPaymentAsync(…, receivingBankAccountId)` ⇒ `CreatePaymentRequest.OverrideBankAccountId` (ใบขาย) / `CreateDocumentRequest.BankAccountId` (ใบรับมัดจำออเดอร์) · ผังพักของผู้ให้บริการชนะเสมอ ·
+  `GET …/orders/{id}/receiving-accounts` = ตัวเลือก + ค่าแนะนำ (หน้า "คำสั่งซื้อ" ถามก่อนยืนยัน) · สลิปออเดอร์ผ่านคิวรายการชำระ: `SiteOrderPaymentHandler` ใช้ `OverrideForHandlerAsync`
+  (ค่าที่ประทับ/ค่าแนะนำ · `ResolveAsync` รู้จัก `SiteOrder` แล้ว)
+- **268-1-3 มัดจำการจองหลายงวด**: `RecordDepositPaymentAsync` ประทับช่องทางบนแถวรับเงิน (`ChannelStamped` · `BankAccountId` · `MoneyInAccountId` — ผังตรงชนะ) · ใบเสร็จมัดจำ (ใบเดียว) อนุมัติตามงวดสุดท้าย
+  (ร่างที่ได้ธนาคารล้างผังตรงค้าง) แล้ว `MoveEarlierInstalmentsAsync` → `BookingDepositInstalmentChannel.For` ⇒ JE ต่องวด Dr ผังของงวด / Cr ผังของใบ (ผูก SourceDocument · Reference `BKDEP-{payment}` กันซ้ำ ·
+  ผังจาก `DocumentMoneyChannel.ResolvePostingAccountAsync`) · ผังเดียวกัน = ไม่มี JE · งวดก่อนรอบ 268 = ไม่เดา + หมายเหตุ · ล้ม = หมายเหตุบนการจอง + คำตอบ (ใบอนุมัติแล้วไม่ถูกย้อน) ·
+  ที่พักออกใบเสร็จมัดจำต่องวดอยู่แล้ว (ไม่ใช่คลาสนี้) · migration `Helpers/Round268Migration`
+- **268-1-4 แชต LINE**: พนักงานผูกสลิป (`LineChatSlipService.AssignAsync`) ⇒ `NotifyChatLinkedAsync` push ถึงแชตเดิม (ปลายทางที่ `LineIdHash` = แหล่งสลิป · ยอดเมื่อแสดงยอดได้ · ไม่รอชั่วโมงเงียบ ·
+  retry key = แถว) · เอกสารของผู้ติดต่ออื่น/แชตไม่ได้ผูก ⇒ ไม่ส่ง + เหตุ (`LineChatSlipRule.LinkedNotice`) · ผลลง audit + ข้อความถึงพนักงาน · ไฟล์ PDF ในแชต (1:1/กลุ่ม) ⇒ `LineChatSlipRule.IsSlipMessage`
+  เข้าเส้นเดียวกับรูป (ตัวตรวจไบต์รับ PDF · ตัวอ่านแปลง PDF→รูปด้วย PDFium) · หน้าคิวมีปุ่มเปิด PDF
+- **268-1-5/9 ศูนย์บิล LINE**: `CompanyService.RemoveUserAsync` (ธุรกรรมเดียว) → `ContactLineBindingService.OnTenantMemberRemovedAsync` — เพิกถอนคำเชิญค้างที่ผู้ถูกนำออกสร้าง + กระดิ่งถึงเจ้าของให้ตรวจปลายทางที่ยังผูก
+  (ไม่ยกเลิกปลายทางเอง) + audit ในบริษัทผู้ให้บริการ · ใบเสร็จส่วนเสริม/โควตาเสริม (`IssueAddOnReceiptAsync`) ⇒ `IPlatformBillingNotifier.ReceiptIssuedAsync`
+- **268-1-6 รับชำระหลายใบ → แจ้งผู้ซื้อคู่ค้า (D8)**: `CreateMultiDocPaymentAsync` หลัง commit (ฝั่งรับ) → `NotifyForSellerPaymentAsync` → หนึ่งแจ้งต่อ `PaymentAllocation` (จัดสรรพร้อมรับเงินเท่านั้น) ·
+  `PartnerPaymentNotice.SellerAllocationId` · ดัชนี `IX_PartnerPaymentNotices_Company_SellerPaymentSingle` (ใบเดียว) + `IX_PartnerPaymentNotices_Company_SellerAllocation` (ดัชนีเดิมถูก DROP) ·
+  เลขอ้างอิงฝั่งผู้ซื้อ `PARTNER-PAID-A{alloc}` (กันซ้ำรูปแถวจัดสรรเท่านั้น) · ยกเลิกการรับชำระ ⇒ ตัวถอนต่อการรับชำระครอบทุกแจ้งของก้อน
+- **ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-268.md` · คำตัดสิน 268-1-7…14)**: (M1) แจ้งแชตเฉพาะใบของผู้ติดต่อที่ผูกแชตนั้น · (L5) ผูกนานหลังสลิปเข้า + ชั่วโมงเงียบ ⇒ เลื่อนทาง
+  `DeferredNotifications` ชนิด `linechat.slip-linked` · ล้มชั่วคราว ⇒ ส่งซ้ำครั้งเดียว · audit ก่อนส่ง · (M2 → 268-1-9) นำผู้ใช้ออก ⇒ **ไม่ยกเลิกปลายทาง LINE** (ระบบไม่รู้เจ้าของ LINE) —
+  เพิกถอนคำเชิญค้างที่ผู้ใช้คนนั้นสร้าง + กระดิ่งถึงเจ้าของให้ตรวจที่ศูนย์บิล (`OnTenantMemberRemovedAsync`) · (M3) งวดที่ไม่รู้บัญชีไม่ประทับ (`ChannelKnown`) · (M4) hook หลังอนุมัติทุกใบ
+  `IssuedDocumentHooks` → `MoveEarlierInstalmentsCoreAsync` · (M5) JE ลงวันที่เงินงวดนั้นเข้าเมื่องวดเปิด · (M6/L7) หน้า "คำสั่งซื้อ" ใช้ `formDialog` + `ConfirmSlipPaymentAsync` ตัดสินใต้ล็อก + audit ·
+  (L1) จัดสรรทีหลังแจ้งคู่ค้า + ค่าธรรมเนียมตามสัดส่วน · (L2) ดัชนีใน `DO` เดียว · (L6) PDF > 3 หน้า/ไม่ดูเป็นสลิป ไม่เก็บ + RoPA รวม PDF
+- **kill-switch**: ไม่มีการเรียก AI ในรอบนี้ · Last verified `commit 3dad4ab2`
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
 
@@ -3365,7 +3422,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   มีเลขบัญชี/พร้อมเพย์ · ผูกผังที่ลงรายการได้ (`DocumentMoneyChannel.EvaluateAsync`) · ใช้ไม่ได้ = 400 พร้อมเหตุ (ไม่ตกไปเงินสด) ·
   ค่าแนะนำ (ลำดับตายตัว): **แหล่งเงินของเอกสาร** (สืบทอดตามเดิม — ไม่ส่ง override) → **บัญชีที่แสดงให้ลูกค้าโอน** (`PaymentQrService.PickForDocumentAsync` ตัวเดียวกับกล่องโอนของหน้าชำระ
   → บัญชีรับโอนของเว็บแถวแรกที่เลขบัญชีตรงบัญชีธนาคาร) → **บัญชีรับโอนบัญชีเดียว**ของบริษัท → ไม่แนะนำ (หลายบัญชี = ไม่เดา ⇒ แหล่งเงินของเอกสาร/เงินสด 111 ตามเดิม) ·
-  บัญชีผู้รับที่อ่านจากสลิปเองยังไม่มีตัวอ่าน (ไม่แต่ง) · ตัดสินแล้ว**ประทับ** `PaymentIntent.ReceivingBankAccountId` + `ReceivingAccountOrigin` + audit `SlipReceivingAccountDecided`
+  รอบ 264 P2: ชั้นบนสุด **ผู้รับบนสลิป** (`SlipPayee` · ตรงบัญชีเดียว ⇒ แนะนำ · ไม่ใช่บัญชีของบริษัท ⇒ เตือน + ต้องเลือกเอง — ดู §2.12g-264-P2) · ตัดสินแล้ว**ประทับ** `PaymentIntent.ReceivingBankAccountId` + `ReceivingAccountOrigin` + audit `SlipReceivingAccountDecided`
   (เลือก vs แนะนำ) ใต้ล็อกต่อรายการก่อน `ApplyChargeAsync` ⇒ `DocumentPaymentHandler` ส่ง `OverrideBankAccountId` ⇒ `CreatePaymentAsync` (JE Dr ผังที่บัญชีผูก · `Payment.BankAccountId` ·
   ยอดธนาคาร · ใบเสร็จอัตโนมัติสืบทอด `BankAccountId` = "ชำระโดย" · ผู้สมัครกระทบยอดธนาคารของบัญชีนั้น) · ส่งต่อใหม่ใช้ค่าที่ประทับ · รายการที่ยังไม่ประทับ (ก่อนรอบนี้) = ค่าแนะนำ ·
   สลิปการจองนัดหมาย (`SiteBookingPaymentHandler` — หน้าการจองเลือกไม่ได้) = ค่าแนะนำตัวเดียวกัน (บัญชีรับโอนของเว็บนั้น → บัญชีเดียว) ส่งเป็น `RecordBookingPaymentRequest.BankAccountId` ·
@@ -4072,7 +4129,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   `link` = token ของใบ (`GET api/companies/{c}/public-pay/documents/{token}` — `PublicDocumentPageController`) ทุกปุ่ม ·
   `line-view` = HMAC แถวคิว LINE (`GET …/line-doc/{queueId}/{token}/page` — ด่านเดียวกับ PDF เดิม `ResolveAsync`) ดู + PDF + "ขอลิงก์ทำรายการ" ·
   `preview` = พนักงาน (`GET …/document/{id}/customer-page-preview` — ด่านอ่านเอกสาร + ชั้นความลับ) ปุ่มทั้งหมดปิด · ไม่ออกลิงก์ · ไม่ประทับเปิด ·
-  `portal` = JWT พอร์ทัล (`GET api/portal/{c}/documents/{id}/page` — ด่านรายละเอียดเดิม + ธงสิทธิ์) ดู + PDF ของพอร์ทัล (**ทางเข้าบน portal.html ต่อสายใน P4**) ·
+  `portal` = JWT พอร์ทัล (`GET api/portal/{c}/documents/{id}/page` — ด่านรายละเอียดเดิม + ธงสิทธิ์) ดู + PDF ของพอร์ทัล (ทางเข้าบน portal.html = ฝังหน้าเดียวกัน — §2.12n-P4) ·
   โหมดที่ไม่ใช่ `link` ไม่มีเป้าหมายรายการชำระ (จ่าย/สลิปทำได้จากลิงก์ของใบเท่านั้น)
 - **ซ่อนยอด:** ใบส่งของไม่ส่งราคา/ยอด (`ShowsAmounts`) · กลุ่ม LINE ที่ตั้งซ่อนยอด/ยกเลิกผูก/บล็อก ไม่ได้หน้าเอกสาร (`PageLinkAllowedForLineEndpoint` = ตัวตัดสินเดิม `LineDocumentViewLink.EndpointAllows`) ·
   view model ไม่มี id ภายใน (ยกเว้น `relId` ของชุดใบที่เกี่ยวข้อง) · ผังบัญชี · หมายเหตุภายใน · ผู้สร้าง · IP · ที่อยู่/เลขภาษี (ฉบับตามกฎหมาย = PDF — resolver ที่อยู่ไม่มีสำเนาที่สอง)
@@ -4114,6 +4171,93 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   - เทสต์เพิ่ม: pure `CDP267_H1_…` · `CDP267_H1_M1_…` · `CDP267_L3_…` · `CDP267_M7_…` · `CDP267_M6_…` · Db เคส H1/H2/M1–M5/M7/M8 ใน `CustomerDocPageRound267DbTests` · ล็อก R267g–j · Last verified `commit 22bb5074` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 - เทสต์ `CustomerDocPageRound267Tests` (pure สองทิศ) · `Db/CustomerDocPageRound267DbTests` · เทสต์เดิมของ 239/240/250 จำลองลิงก์รุ่นก่อนผ่าน `LegacySignLinkSeed` (ฐานเก็บ hash) ·
   `tools/required_call_site_check.py` R267a–f · Last verified `commit 67eddfe6` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
+### 2.12n-P2 ผู้ลงนาม + บัญชีหลักฐาน + ฉบับที่ลูกค้าเซ็น (รอบ 267 แพ็ก P2 · `erp-review/2026-11-12/team-267-doc-pages-design.md` §5–§7 · คำตัดสิน 267-1-4…6 · 267-1-11 · 267-1-14 · 267-1-17 · 267-1-18 · 267-1-33…42)
+
+> ลูกค้าตอบรับเอกสาร**บนหน้าเอกสารเอง** (ไม่พาไปหน้ายอมรับ/เซ็นรับรุ่นก่อนแล้ว) · ไม่มี AI ในเส้นนี้ · ยังไม่ทำ: หน้าต่าง "ส่งให้ลูกค้า"/ไทม์ไลน์/เซ็นทาง LINE (P3) · หลังจ่าย (P4) · LINE Login/หลายผู้ลงนาม/PAdES (P5)
+
+| เรื่อง | พฤติกรรมปัจจุบัน | ตัวตั้ง |
+|---|---|---|
+| ทางเข้า | ปุ่มจาก `page.actions` (`accept` · `decline` · `request-change` · `sign-delivery`) เปิดฟอร์มในหน้า → `POST …/public-pay/documents/{token}/respond` เส้นเดียว (`PageAction.Href` = เส้นนี้) · หน้าตอบรับรุ่นก่อน (`/api/public/quotation|delivery/{token}`) คงไว้ให้**ลิงก์ที่ออกก่อนรอบ 267** จนหมดอายุ — ทั้งสอง controller ไม่มีตรรกะ เรียก service ตัวเดียว | `CustomerDocumentResponseService` (ผู้เขียนเดียว) · `CustomerDocPage.RespondPath` |
+| ผู้ลงนาม (ลิงก์หน้าเอกสาร) | **ชื่อ + นามสกุล + ตำแหน่ง + ติ๊กรับรอง** "ข้าพเจ้าเป็นบุคคลของ {ผู้ซื้อ} และมีอำนาจหรือได้รับมอบหมายให้…ในนามของ {ผู้ซื้อ}" (บุคคลธรรมดา: "ข้าพเจ้าคือ {ผู้ซื้อ} หรือผู้ได้รับมอบอำนาจ" · เว้นตำแหน่งได้) · อีเมลไม่บังคับ · ลายเซ็นวาด: ยอมรับ = ตามค่าตั้ง `RequireSignatureForQuotationAccept` · เซ็นรับ = บังคับ · ขาดช่องใด/ข้อความรับรองคนละรุ่น = 400 (ไม่มีทางยอมรับแบบไม่ครบ — เส้นรุ่นก่อนที่ใช้ token ของหน้าเอกสารก็ต้องครบ) | `CustomerSignRule.DecideSigner` · `CustomerSignText.Attestation/Version` |
+| ลิงก์รุ่นก่อน (L1/L2) | พิมพ์ชื่ออย่างเดียวตามเดิมจนหมดอายุ (≤ 30/14 วัน) แต่**ลงแถวหลักฐาน**ด้วย (`IdentityLevel = NameOnly` · `Channel = LegacyLink` — ไม่แต่งช่องที่ไม่ได้เก็บ) · ไม่มีฉบับที่ลงนาม · ไม่รับ/ขอแก้ทำไม่ได้ (409) | คำตัดสิน 267-1-33 |
+| ปุ่มเปิดเมื่อไร | เซิร์ฟเวอร์รับคำตอบเฉพาะเมื่อ**ปุ่มนั้นเปิดอยู่ตาม `CustomerDocPage.Actions` ณ ตอนนั้น** (ผู้ขายส่งให้ตอบรับแล้ว · ในช่วงตอบรับ · ไม่ใช่ลิงก์ชำระรุ่นก่อน · ไม่ยกเลิก) · "ไม่รับ" เปิดพร้อมปุ่มยอมรับ · "ขอแก้" เปิดแม้พ้นวันยืนราคา (ทางไปต่อ: ขอให้ผู้ขายออกฉบับใหม่) | `PageActionClosedReason` |
+| ฉบับที่เห็น | คำตอบต้องส่งเลข Rev + hash เนื้อหาที่หน้าแสดง (`page.respond.revisionNumber/contentHash`) — ไม่ตรงกับใบ ณ ตอนกด = 409 "เอกสารถูกแก้ไข — เปิดดูฉบับล่าสุด" (ตรวจก่อนด่านช่องกรอก) · เลข Rev อยู่ในเงื่อนไขจอง | `CustomerDocPage.RespondStaleReason` (เดิม · 267-1-24) |
+| หนึ่งคำตอบต่อ Rev (267-1-11) | ยอมรับ · ไม่รับ · ขอแก้ — ตอบได้อย่างเดียวต่อ Rev (จองแบบอะตอมมิก: ยังไม่ยอมรับ + `CustomerResponse` ว่าง + Rev + ลิงก์ไม่ถูกเพิกถอน) · ตอบแล้วปุ่มตอบรับปิดพร้อมเหตุ + ปุ่ม "ขอลิงก์ทำรายการ" · ผู้ขาย "ส่งให้ตอบรับ" ใหม่ (`SignRequestKinds.MarkIssued`) ล้างคำตอบที่ไม่ใช่ยอมรับ · ออก Rev ใหม่ (`CloseRespondOnRevision`) ล้างทั้งหมด · แถวหลักฐานเดิมคงอยู่ | `Document.CustomerResponse/CustomerResponseAt` (ภาพฉาย · ไม่สืบทอดไปใบลูก) · `CustomerSignRule.PriorResponseBlock` |
+| บัญชีหลักฐาน | ตาราง `CustomerDocumentActions` — หนึ่งแถวต่อคำตอบ: ชนิด · Rev · ผู้ลงนาม (ชื่อ/นามสกุล/ตำแหน่ง/ชื่อผู้ซื้อ ณ ตอนนั้น/อีเมล) · รุ่น + SHA-256 ของข้อความรับรองที่ติ๊ก · เหตุผล/ข้อความ · hash เนื้อหา · SHA-256 ของ token · IP · SHA-256 ของ User-Agent · ลายเซ็น (ไฟล์ + SHA-256) · ฉบับที่ลงนาม (ไฟล์ + SHA-256) · **ธุรกรรมเดียว**กับภาพฉายบนใบ (`QuotationAccept*` · `DeliverySigned*` · `CustomerResponse`) + แถว audit chain (`AddChainedAuditLog` · RuleCode `ETA-9`) + เหตุการณ์ outbox + แถว RoPA ครั้งแรก | entity `CustomerDocumentAction` · `Helpers/CustomerSignMigration` |
+| append-only | trigger ในฐาน: แก้/ลบแถวไม่ได้ ยกเว้น (1) เติม `SignedPdf*` ครั้งเดียว (2) ลบข้อมูลส่วนบุคคลพร้อมประทับ `ErasedAt` ครั้งเดียว (hash/เวลา/ชนิดคง) | `customer_document_actions_guard` / `_no_delete` |
+| น้ำหนักทางกฎหมาย | อ้างได้เฉพาะ **พ.ร.บ.ว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ม.9 (ลายมือชื่อ) · ม.11 (น้ำหนักพยาน)** — ไม่อ้างเกินนี้ทุกที่ (ป้าย · กระดาษ · API · อีเมล) | `CustomerSignText.LegalReference` · เทสต์ `CSR267_LegalBasisOnlySection9And11` |
+| รหัสยืนยันอีเมล (267-1-6) | ค่าตั้งต้น = **ไม่ใช้** · บริษัทตั้ง "ยอดรวมตั้งแต่ N บาท" (`CompanySettings.CustomerSignOtpMinAmount` — หน้าตั้งค่า) ⇒ **ยอมรับ**ใบเสนอราคาที่ยอดถึงเกณฑ์ต้องกรอกอีเมล + รหัส 6 หลัก (`POST …/respond/otp` · อายุ 10 นาที · ผิดได้ 5 ครั้ง · ขอใหม่ได้ทุก 1 นาที · ฐานเก็บ hash ผูกใบ+อีเมล · ใช้ครั้งเดียว) · ส่งอีเมลไม่ได้ = 503 พร้อมข้อความ (ไม่มีทางข้ามรหัส — ลูกค้าติดต่อผู้ขาย) · แถวหลักฐานจด `EmailVerified` | `CustomerSignRule.OtpRequired/OtpHash/VerifyOtp` · ตาราง `CustomerSignOtps` |
+| ฉบับที่ลูกค้าเซ็น | หลัง commit: สร้าง PDF ของใบ (renderer เดิม · ภาษาตาม resolver กลาง) เก็บใต้ `{AttachmentsRoot}/customer-signed/{companyId}/{docId}-{actionId}.pdf` (นอก allow-list `/uploads`) + SHA-256 + แถว audit chain — **ทันทีในคำขอ** ถ้าทำได้ · ไม่ได้ = งาน outbox (`SignEventDispatcher` · ลองใหม่ตามจังหวะเดิม 8 ครั้ง · เลิกลอง = กระดิ่งถึงพนักงาน) · สร้างเฉพาะเมื่อ Rev + เนื้อหายังเป็นฉบับที่ลงนาม (ผู้ขายแก้ก่อนสร้างได้ = ไม่สร้างไฟล์จากเนื้อหาที่ลูกค้าไม่ได้เห็น) · ส่งออกทุกครั้งต้องผ่าน SHA-256 (ไฟล์ถูกแก้ = ไม่ส่ง + log error) | `EnsureSnapshotAsync` · `ReadSignedCopyAsync` · `CustomerSignRule.SnapshotStillValid/SignedCopyIntact` |
+| ส่งกลับผู้ลงนาม | (ก) บนหน้า: หัวข้อ "ประวัติการตอบรับของท่าน" + ลิงก์ดาวน์โหลด `…/signed/{actionId}` (ยังไม่เสร็จ = "กำลังเตรียม") · (ข) อีเมลแนบไฟล์ถึงอีเมลที่ผู้ลงนามให้ไว้ (อีเมลระบบ — `IEmailService.TrySendWithAttachmentAsync`) · ไม่ให้อีเมล = รับจากหน้า · ส่งกลับทาง LINE = P3 | `ProcessSignedCopyAsync` |
+| กระดาษ (สอง renderer) | ช่องลูกค้า/บล็อกยอมรับ และช่อง "ผู้รับของ" พิมพ์: ชื่อ นามสกุล · ตำแหน่ง · "ลงนามในนามของ {ผู้ซื้อ}" · เวลา · "ลงนามออนไลน์ · รหัสอ้างอิง {8 ตัวแรกของ hash เนื้อหา}" — **ไม่พิมพ์ IP** · HTML + QuestPDF ใช้บรรทัดชุดเดียวจาก `PdfGenerationService.CustomerSignerLines` · ป้ายจาก `DocumentLabels` (`SignerPosition` · `SignedOnBehalfOf` · `SignedOnlineEvidenceRef` · `DnSignedOnline`) · ใบที่ยอมรับ/เซ็นก่อนรอบ 267 หรือผ่านลิงก์รุ่นก่อน = พิมพ์ตามเดิม | `ResolveSignersAsync` → `CustomerEvidenceAsync` |
+| เซ็นรับสินค้า | ผ่านหน้าเอกสาร: **ไม่ต่อข้อความลง `Notes`** (เนื้อหาใบห้ามเปลี่ยนหลังเซ็น — หมายเหตุของผู้รับอยู่ในแถวหลักฐาน) · ลิงก์รุ่นก่อนต่อข้อความตามเดิม | 267-1-37 |
+| หลังลูกค้าตอบ | เหตุการณ์ outbox ต่อแถวหลักฐาน (`quotation.accepted` · `delivery.signed` · ใหม่ `quotation.declined` · `quotation.change_requested` — กุญแจกันซ้ำผูกแถวหลักฐาน เพราะ token ของหน้าเอกสารอยู่ข้าม Rev) → แจ้งพนักงาน (กระดิ่ง/ช่องทางตามค่าตั้ง): ผู้ลงนาม · ตำแหน่ง · ในนาม · เหตุผล/ข้อความ · **ยอมรับ**: คำแนะนำ "แปลงเป็น ใบส่งของ · ใบแจ้งหนี้ · ใบกำกับภาษี หรือออกใบแจ้งหนี้มัดจำ" (ไม่มีชนิดใบสั่งขาย · ระบบไม่แปลงเองนอกจาก Autopilot เดิม) + **คำเตือนอากรแสตมป์** เมื่อมีบรรทัดงานบริการ/บรรทัดพิมพ์เอง (เตือนเท่านั้น — ระบบไม่ตัดสินว่าเป็นตราสาร) · ป้ายบนรายการเอกสาร: "ลูกค้าไม่รับใบเสนอราคา" / "ลูกค้าขอแก้ไข" | `SignRequestKinds.EventFor/Status` · `CustomerSignText.ConvertSuggestionText/StampDutyWarning` |
+| ฝั่งพนักงาน | หน้ารายละเอียดเอกสาร: แผง "หลักฐานการตอบรับของลูกค้า" (`GET …/document/{id}/customer-responses` — สิทธิ์อ่านเอกสาร + ลง `PdpaPiiAccessLogs`) + ดาวน์โหลดฉบับที่ลงนาม (`…/customer-responses/{actionId}/signed-pdf`) | `EvidenceForStaffAsync` |
+| จำข้อมูลผู้ลงนาม | **บนเครื่องของผู้ลงนามเท่านั้น** (`localStorage` · ไม่ติ๊กไว้ก่อน · ไม่ส่งไปเก็บที่ระบบเพิ่ม) · โปรไฟล์ผ่าน LINE Login = P5 | หน้า `pay-document.html` |
+| PDPA | แจ้งเมื่อเก็บ (ม.23) ใต้ฟอร์ม · RoPA (ม.39): แถว "ลงนาม/ตอบรับเอกสารออนไลน์ของคู่ค้า" สร้างพร้อมแถวหลักฐานแรก · อายุเก็บ `MAX(RetentionUntil, วันที่เอกสาร + 5 ปี)` · DSR access: แถวหลักฐานแนบใต้เอกสารแต่ละใบ · DSR erase: ใบในอายุเก็บ = คงไว้ (legal hold) · พ้นแล้ว = ล้างชื่อ/ตำแหน่ง/อีเมล/IP/ข้อความ + ลบไฟล์ลายเซ็น/ฉบับที่ลงนาม (hash/เวลาคง) · ดาวน์โหลดฉบับที่ลงนามทางลิงก์ลงบันทึกการเข้าถึง | `QuotationAcceptance.EraseEvidencePii/UnderLegalHold` · `PdpaService.ApplyErasureAsync/GenerateAccessReportAsync` |
+| API v1 `GET /api/v1/documents/{id}/sign-status` | สัญญาเดิมคงทุกช่อง + เพิ่ม `customerResponse` · `customerResponseAt` · `signerTitle` · `signerOrgName` · `identityLevel` · `signedCopyReady` จากแถวหลักฐานล่าสุดของ Rev ปัจจุบัน (แถวที่ลบตามคำขอแล้ว = ตำแหน่ง/บริษัทเป็น null · ไม่มี IP/UA/token) | `DocumentsV1Controller.SignStatus` |
+| กดพร้อมกัน (S3) | สองเครื่องกดยอมรับใบเดียวกัน = จองแบบ compare-and-set ได้ผู้ชนะคนเดียว · คนที่สองได้ 200 "ถูกยอมรับไปแล้ว" · แถวหลักฐาน/เหตุการณ์/audit เดียว | Db `CSR267Db_ConcurrentAcceptOneRow_…` |
+
+- **ชุดแก้ฝ่ายค้าน P2 (`erp-review/2026-11-13/review-267-P2.md` · คำตัดสิน 267-1-51…60)**: audit ไม่มีข้อมูลผู้ลงนาม (`AuditRedaction.PiiFields` ครอบ `CustomerDocumentAction`/`CustomerSignOtp` · audit ที่เขียนเองอ้าง `customerActionId` · แถวเก่าปิดตอนแสดง + หมายเหตุในรายงานผลกระทบการลบ) ·
+  รหัสยืนยัน = HMAC ด้วยกุญแจเซิร์ฟเวอร์ (production fail-fast) · จองการลองก่อนเทียบรหัส · อีเมลรหัสไม่มีเลขเอกสาร + 5 รหัส/ใบ/วัน ·
+  ลิงก์รุ่นก่อนเคารพหนึ่งคำตอบต่อ Rev + เกณฑ์รหัส (409 + ทางไปต่อ) · ลิงก์หน้าเอกสารต้องส่ง hash ที่เห็น (ว่าง = 409) ·
+  **ออก Rev ใบที่ลูกค้ายอมรับ/เซ็นรับ: สร้างฉบับที่ลงนามของ Rev เดิมก่อน — สร้างไม่ได้ = ไม่ออก Rev** (`DOCPAGE-267-SNAPSHOT`) · ตรวจ Rev/hash ซ้ำใต้ `FOR UPDATE` ตอนประทับไฟล์ ·
+  เลิกสร้าง = แจ้งพนักงาน + หน้าเลิกแสดง "กำลังเตรียม" · ข้อความยินยอมต่อชนิด (รุ่น `267-2`) · "ระบบจะแจ้งผู้ขาย" · trigger: ลบตามคำขอล้างค่าเท่านั้น + ห้ามแก้ `CreatedBy` + กัน `TRUNCATE` ·
+  ฝั่งพนักงาน: IP/อีเมลผู้ลงนามค่าเต็มเฉพาะ `Pii.View` · ดาวน์โหลดฉบับที่ลงนามลง `PiiAccessLog` · Last verified `commit 072354e8`
+- **ไม่สืบทอด:** `CustomerResponse` · แถวหลักฐาน · ฉบับที่ลงนาม เป็นของใบ/Rev นั้น — convert/clone/recurring ไม่คัดลอก (เท่ากับลายเซ็นยอมรับ รอบ 239)
+- เทสต์ `CustomerSignRound267Tests` (pure สองทิศ) · `Db/CustomerSignRound267DbTests` · ล็อก R267b (`tools/required_call_site_check.py` — กติกาของเมธอดที่ย้ายชี้ `CustomerDocumentResponseService`) · Last verified `commit 8b6861de` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
+### 2.12n-P4 หน้าเอกสารสำหรับลูกค้า — หลังจ่าย (รอบ 267 แพ็ก P4 · คำตัดสิน 267-1-8 · 267-1-44…50)
+
+ดีไซน์: `erp-review/2026-11-12/team-267-doc-pages-design.md` §8 / §19 P4 · ต่อจาก §2.12n (P1) · **ไม่มีเส้นเงินใหม่** — หน้าเอกสาร "แสดงผล" อย่างเดียว:
+ใบเสร็จออกจากงานหลังรับชำระ/พนักงานเท่านั้น · สลิป = รอผู้ขายยืนยัน (กติการอบ 255 เดิม — สลิปอย่างเดียวไม่ประทับ "ชำระแล้ว") · ไม่มี AI ในเส้นนี้
+
+- **ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" ต่อเอกสาร (267-1-8 · 267-1-44):** `Document.PostPayEmailReceipt` / `Document.PostPayIncludePartial`
+  (`bool?` · null = ตามชั้นถัดไป) = **ชั้นบนสุด**ของตัวต่อชั้นเดียว `PostPaymentAutomationPolicy.Resolve/EffectiveLayers`:
+  **เอกสารใบนี้ › ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท** (ทีละช่อง) · ตัวโหลดเดียว `PostPaymentAutomationService.ResolveForAsync`
+  (ผู้อ่าน: `SettingsForAsync` → `EnqueueCoreAsync` (ตอนรับชำระ) + `ExecuteAsync` (ตอนงานรัน) · `DocumentPayLinkService.StatusAsync` · `SetDocumentLayerAsync`) ·
+  ชื่อสามสถานะ `Inherit · On · Off` = ชุดเดียวกับรายการประจำ/ผู้ติดต่อ (`AutopilotSettingsResolver.ParseTriState/ValidateTriState/TriStateName` — ไม่มีสำเนา) ·
+  ตั้งได้เฉพาะชนิดที่รับชำระ (`PostPaymentAutomationPolicy.DocumentLayerAllowed` = `DocumentPayLinkPolicy.PayableTypes`: ใบแจ้งหนี้ · ใบกำกับภาษี · ใบเพิ่มหนี้) —
+  ชนิดอื่นส่ง On/Off = 400 (ไม่เก็บค่าที่ไม่มีผู้อ่าน) · ส่ง Inherit/ว่าง = ผ่าน
+  - **checklist "เพิ่ม field ระดับเอกสาร" (กฎ #4 B):** ฟอร์ม `documents.html` (`#postPayRow` · `fPostPayReceiptMode` / `fPostPayPartialMode` — แสดงเฉพาะชนิดที่เซิร์ฟเวอร์บอก
+    `document-auto-send/settings.postPayDocumentTypes`) → payload `postPayReceiptMode` / `postPayPartialMode` (สร้าง: ตามค่าตั้ง = null · แก้ไข: `Inherit` = ล้าง · ช่องไม่แสดง = null = ไม่แตะ)
+    → `CreateDocumentRequest` + `UpdateDocumentRequest` → `DocumentService.PostPayLayer.cs` (`PostPaymentAutomationPolicy.ApplyDocumentLayer` ตัวเดียว) → entity →
+    `DocumentAutoSendMigration` (`ADD COLUMN IF NOT EXISTS` · NULL = พฤติกรรมเดิมทุกใบ — ไม่มีข้อมูลเก่าต้องย้าย) → `DocumentResponse.PostPayReceiptMode/PostPayPartialMode/PostPaySettingApplies`
+    → hydrate ตอนเปิดแก้ (`_setPostPayModes`) → reset ตอนฟอร์มใหม่ → **ไม่พิมพ์บนเอกสาร** (renderer ×2 ไม่ถูกแตะ) →
+    **ไม่สืบทอด**ไปใบลูก/โคลน/แปลง/ใบเสร็จของการชำระ/CN อัตโนมัติ/รายการประจำ (เจตนาของใบนั้น — แบบ `QuotationAcceptAutopilot` · ทางสร้างใบลูกไม่ส่งสองช่องนี้ ⇒ ใบลูก = ตามค่าตั้ง ·
+    ล็อกด้วย `PostPay267_DocLayerNotInherited`) · **ใบแทนจากการยกเลิก-ออกใหม่พาไป** (ฝ่ายค้าน MED-3 · 267-1-44: `SettlementPaidReissue.DocumentCarriedFields` · null เป็น null — ผู้ขายตั้ง "ปิด" ใบแทนต้องไม่ส่งใบเสร็จเอง · ล็อก `PostPay267_MED3_*` + partition R200_V1F_R7)
+  - **ใบที่ออกเลขแล้ว** (แก้ผ่านฟอร์มไม่ได้): `PUT …/document-auto-send/documents/{id}/post-pay` `{receiptMode, partialMode}` — สิทธิ์สร้างเอกสารชนิดนั้น · คีย์ API ไม่ได้ ·
+    `PostPaymentAutomationService.SetDocumentLayerAsync` (ตัวตัดสินเดียวกับฟอร์ม · audit chain `post-pay-document-layer` · ไม่แตะเนื้อหา/ยอด/เลขของใบ · ใบยกเลิก = 409) ·
+    **มีผลกับการรับชำระครั้งถัดไป · งานที่ยังรอประมวลผล/กดลองใหม่ใช้ค่าปัจจุบัน (ปิดที่ใบ = งานที่ค้างจบพร้อมเหตุ) · เปิดทีหลังไม่ออกใบเสร็จย้อนหลังของการชำระที่ผ่านไปแล้ว** · แผง "ลิงก์ชำระเงิน & ส่งเอกสารอัตโนมัติ" แสดงตัวเลือก + ข้อความ "ค่าที่มีผลตอนนี้ — ชั้นไหนตัดสิน"
+    (`PostPaymentAutomationPolicy.EffectiveLabel` — เซิร์ฟเวอร์ประกอบ)
+  - "ไม่ส่งอัตโนมัติ" ของผู้ติดต่อ (`AutoSendDisabled`) ยังห้ามเฉพาะขั้นส่งอีเมล (ทุกชั้น — `Decide`) · ทางเข้าที่มีเส้นใบเสร็จของตัวเอง/การชำระหลายใบ/นำเข้าไฟล์ = กติกาเดิมของ `ForEnqueue`
+- **ส่วนหลังจ่ายของหน้า (`page.afterPay` · โหมด `link` และ `portal` · ตัวตัดสิน/ข้อความเดียว `Helpers/CustomerDocPageAfterPay.cs` · ตัวโหลด `DocumentPayLinkService.AfterPay.cs`):**
+  - **ใบเสร็จ/ใบกำกับของการชำระ (267-1-46):** เข้าชุด "ใบที่เกี่ยวข้อง" ชนิด `receipt` (ขึ้นบนสุด · ดาวน์โหลดด้วยเส้น `related/{relId}/pdf` เดิม) = ใบที่ `Payment.ReceiptDocumentId` หรือ
+    `Document.SettlementPaymentId` ชี้การรับชำระที่มีผลกับใบนี้ (`MovedToDocumentId ?? DocumentId`) หรือ**จัดสรร**ให้ใบนี้ (`PaymentAllocations` ยังไม่ถอน) · **เป็นของใบนี้** (`CustomerDocPageAfterPay.ReceiptBelongsTo`: `RelatedDocumentId` = ใบนี้ หรือใบเสร็จของการชำระของใบนี้ที่ไม่กระจาย — ฝ่ายค้าน MED-1: การชำระก้อนเดียวหลายใบ แต่ละใบเห็นเฉพาะของตัวเอง) · บริษัทเดียวกัน + ผู้ติดต่อเดียวกัน + ออกแล้วยังมีผล + ลูกค้าเห็นได้ · มีใบเสร็จรวมครอบอยู่แล้ว = ไม่บอกว่า "ยังไม่ออก" ·
+    ขึ้นทันทีที่ออก (ไม่รอส่งอีเมล) · **การเปิดหน้าไม่ออกใบเสร็จ** · รับชำระแล้วยังไม่มีใบเสร็จ (ใบแจ้งหนี้) ⇒ ข้อความ "ผู้ขายยังไม่ได้ออกใบเสร็จ…" (ไม่แต่งใบเสร็จ) ·
+    ป้าย e-Tax เฉพาะเมื่อ `EtaxInvoice.ByEmailSentAt` มีค่า ("ฉบับที่มีผลทางภาษีส่งทางอีเมลแล้วเมื่อ … — ไฟล์บนหน้านี้เป็นสำเนาสำหรับอ้างอิง")
+  - **สถานะสลิป (267-1-45):** สลิปล่าสุด ≤ 5 ใบของใบนี้ (`PaymentIntent(Document, ManualSlip)`): รอผู้ขายตรวจ → ยืนยันแล้ว / ไม่รับ (เหตุถึงลูกค้า · เฉพาะ `FailureCode = slip_rejected` — ล้มด้วยเหตุอื่น = "ส่งสลิปไม่สำเร็จ" ฝ่ายค้าน LOW-1) ·
+    เหตุถึงลูกค้า = ช่องใหม่ `PaymentIntent.CustomerVisibleRejectReason` (พนักงานพิมพ์ตอน "ปฏิเสธสลิป" — `RejectSlipRequest.CustomerMessage` · ไม่บังคับ · ≤ 300 · เขียนใน `ApplyChargeAsync` ธุรกรรมเดียวกับการปฏิเสธ + ประวัติของรายการ ฝ่ายค้าน LOW-2) ·
+    ไม่พิมพ์ = ข้อความกลางของ `CustomerDocPageAfterPay.SlipState` · **เหตุผลภายใน (`FailureMessage`) ไม่ส่งออกหน้าเอกสาร** ·
+    มีสลิปรอตรวจ ⇒ หน้าไม่ชวนแนบซ้ำ (`afterPay.slipPending` — ด่านจริงคือ `SlipEvidenceRule.PayLinkSlipProblem` เดิม) · ปฏิเสธแล้ว ⇒ ฟอร์มแนบกลับมา (แนบใหม่ได้)
+  - **50 ทวิ จากหน้าเอกสาร (267-1-48 · โหมด `link`):** การ์ดขึ้นเมื่อทะเบียน "ภาษีถูกหัก" มีแถวของใบนี้ที่ยังตามใบ (ตัวโหลดเดียวกับหน้าอัปโหลด 50 ทวิ เดิม —
+    `WhtCertUploadLinkService.ItemsForContactAsync`) · `POST …/public-pay/documents/{token}/wht-cert` (multipart `file` + `senderName`) →
+    `IWhtCertUploadLinkService.UploadForDocumentAsync` → **แกนเดียว** `UploadCoreAsync` ของลิงก์อัปโหลดเดิม (ตรวจไบต์ · กันซ้ำ · ที่เก็บกลาง · OCR · ประตูเดียว `WhtCertIntakeService`
+    ช่องทาง `UploadLink` · ใบจากคนที่ไม่ล็อกอิน = รอผู้ขายตรวจเสมอ) · ไม่มีแถว `WhtCertUploadLink` ใหม่ (สิทธิ์ = token ของใบ) · ส่งแล้วรอตรวจ = ไม่ชวนส่งซ้ำ (409) ·
+    เพดานต่อ IP + ต่อ token ตัวเลขเดียวกับลิงก์อัปโหลด (failClosed)
+  - **ใบวางบิล → จ่ายรายใบ (267-1-9 v1 · 267-1-47):** ใบที่เกี่ยวข้องที่เป็นชนิดรับชำระ + ยังมีผล + ยังค้าง มี `payOffered` (ปุ่ม "ชำระใบนี้") →
+    `POST …/documents/{token}/related/{relId}/page-link` → `RelatedPageLinkAsync`: ใบต้องอยู่ในชุดที่หน้าแสดงและมีปุ่มจริง → **คืนเฉพาะลิงก์ที่ผู้ขายออกไว้และยังใช้ได้** (ฝ่ายค้าน MED-2 · ไม่ออก/หมุน token ให้ผู้ถือลิงก์)
+    · ไม่เคยออก/หมดอายุ ⇒ บันทึกคำขอลิงก์ใหม่ของใบนั้น (`RecordLinkRequestAsync` · audit + กระดิ่ง ≤ 1/วัน · 200 + ข้อความ) · ผู้ขายยกเลิกไว้ ⇒ 409 "ติดต่อผู้ขาย" (ไม่กดกระดิ่ง) → หน้าพาไปหน้าเอกสารของใบนั้น (ด่านจ่าย/ช่องทางที่ตรึง 267-1-27 อยู่ที่หน้านั้น) ·
+    **ไม่มีการจ่ายรวมทั้งบิล** (267-1-9 ยังรอเจ้าของ) · ใช้กับใบเสนอราคา → ใบแจ้งหนี้ที่ออกต่อด้วย (กติกาเดียว)
+  - ลิงก์ชำระรุ่นก่อน (payOnly — 267-1-30): ได้เฉพาะสถานะสลิป (ขอบเขตการจ่ายเดิม) — ไม่มีใบเสร็จ/50 ทวิ/ปุ่มของใบที่เกี่ยวข้อง
+- **พอร์ทัลเปิดหน้าเดียวกัน (267-1-49):** ปุ่ม "ดู" บน `portal.html` ฝัง `pay-document.html?c=…&portal={docId}` (เลิก modal รายละเอียดที่หน้าพอร์ทัลประกอบเอง) ·
+  โทเคนพอร์ทัลส่งให้หน้าที่ฝังทาง `postMessage` ต้นทางเดียวกัน (เฉพาะกรอบที่เปิดเอง · ไม่อยู่ใน URL) → `GET api/portal/{c}/documents/{id}/page` (ด่านผู้ติดต่อ + ธงสิทธิ์เดิม) ·
+  `relatedPdfBase` = เส้น PDF ของพอร์ทัล (ธง "pdf") · `portalPayLinkPath` = เส้นขอลิงก์หน้าชำระเดิมของพอร์ทัล (ธง "pay" · เฉพาะใบที่ยังมียอดชำระได้) · ใบที่เกี่ยวข้องในโหมดนี้ = ใบเสร็จของการชำระเท่านั้น
+- **หน้าเว็บ:** `pay-document.html` ส่วน "รอบ 267 P4" (`afterPayHtml` · `relatedHtml` · `portalHandshake`) — สถานะ/ข้อความทั้งหมดจากเซิร์ฟเวอร์ (`afterPay.labels`) · `payment-intents.html` หน้าต่างปฏิเสธสลิปมีสองช่อง
+  (เหตุผลภายใน · ข้อความถึงลูกค้า)
+- เทสต์ `PostPayRound267Tests` (pure สองทิศ) · `Db/PostPayRound267DbTests` · `tools/required_call_site_check.py` กติกา R267d (+ ย้าย R250-8/R250L1-7 ไป `ResolveForAsync` · R253b ไป `UploadCoreAsync`) ·
+  Last verified `commit 17680548` · ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-267-P4.md` MED-1…3 · LOW-1…4) `commit 6c097df4 (+ ใบแทน: ถอดสำเนาที่ซ้อนใน NotCarried)` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -4887,8 +5031,9 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 | R0 ใบเสร็จร่างที่สร้างเอง (Draft/Rejected · ไม่ใช่ของการชำระ/มัดจำ) | ไม่มี JE | **SetDraftSource** — เขียน `RelatedDocumentId` ของใบร่างใต้ล็อกสองแถว (ตัดสินซ้ำใต้ล็อก + กุญแจพรีวิว) · ผลบัญชีเกิดตอนอนุมัติใบเสร็จ (Dr เงิน / Cr ลูกหนี้ใบต้นทาง) · ถอดได้ (ปุ่ม/ฟอร์ม) |
 | เงินรอจัดสรร (แถว `Payment` ที่มียอดคงเหลือ · ไม่มีใบเสร็จ) | เงินอยู่ที่ 21630 | **AllocateCredit** → `CustomerCreditService.AllocateAsync` เดิม (ส่ง `ExpectedUnappliedBefore` ที่พรีวิวเห็น) · ถอด = `UndoAllocationAsync` เดิม (API `receipt-links/undo` หรือหน้าเงินรอจัดสรร) |
 | R2 ใบมัดจำ (อนุมัติแล้ว) | 217xx | **ApplyDeposit** → `ApplyDepositToInvoiceAsync` เดิม (ด่าน VAT ซ้ำ `DepositPolicyResolver.GrossApplyBlocked`) · ไม่มีปุ่มถอด (ยกเลิกใบแจ้งหนี้ ⇒ คืนยอดมัดจำ — เส้นเดิม) |
-| R3/R4 ใบเสร็จของการรับชำระใบอื่น / ใบเสร็จมืออ้างใบอื่น | JE ตัดลูกหนี้ใบอื่นแล้ว | **ปฏิเสธ** `RL-MOVE-NOT-YET` + ทางไปต่อ (ยกเลิกการรับชำระ/ใบเสร็จแล้วบันทึกใหม่) — ย้ายเงิน + ใบแทน = แพ็ก B |
-| R5/R6 ใบขายสด (ใบเสร็จไม่อ้างใบ · ใบกำกับขายเงินสด) | รายได้+VAT ลงเองแล้ว | **ปฏิเสธ** `RL-DUPLICATE-SALE` (ผูกแล้วรายได้/VAT/สต็อกยังเบิ้ล · 266-1-5) — ตัวช่วยใบซ้ำ = แพ็ก C |
+| R3 ใบเสร็จของการรับชำระใบอื่น (และการรับชำระของใบอื่นที่ไม่มีใบเสร็จแยก) | เงินอยู่ที่การรับชำระ · JE ตัดลูกหนี้ใบอื่นแล้ว | **ย้ายได้ (แพ็ก B · §3.4c-B)** — `MoveSettlement` / `MoveSettlementWithReissue` |
+| R4 ใบเสร็จที่สร้างเองซึ่งอ้างใบอื่น | JE ของตัวใบตัดลูกหนี้ใบอื่นแล้ว | **ปฏิเสธ** `RL-MOVE-NOT-YET` + ทางไปต่อ (ยกเลิกใบเสร็จ → บันทึกรับชำระที่ใบที่ถูกลงวันที่รับเงินเดิม → จับคู่ธนาคารใหม่ · 266-1-28) |
+| R5/R6 ใบขายสด (ใบเสร็จไม่อ้างใบ · ใบกำกับขายเงินสด) | รายได้+VAT ลงเองแล้ว | **ปฏิเสธ** `RL-DUPLICATE-SALE` (ผูกแล้วรายได้/VAT/สต็อกยังเบิ้ล · 266-1-5) — ทางไปต่อ = ตัวช่วยใบซ้ำ (§3.4c-C) |
 | ใบเสร็จสร้างเองที่รออนุมัติ (WaitingApproval) | ยังไม่มี JE | **ปฏิเสธ** `RL-PENDING-APPROVAL` (ตีกลับเป็นร่างแล้วผูก หรืออนุมัติก่อน) · ไม่มีชนิด "ใบเสร็จของเงินเครดิต"/"ใบเสร็จรวม" — ไม่มีผู้สร้างในระบบ (266-1-20) |
 
 - **ด่านร่วมทุกเส้น**: ใบปลายทาง = ใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้ฝั่งขาย อนุมัติแล้ว ยังค้าง ไม่ถูกยกเลิก/แทน · **`ContactId` เท่ากันเท่านั้น** (เลขภาษีเดียวกันคนละสาขา = `RL-BRANCH` + ทางไปต่อ "รวมผู้ติดต่อ" · 266-1-4) ·
@@ -4910,7 +5055,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ข้อมูลเก่า: หมวดรายงานตรวจข้อมูล `ReceiptsWithMismatchedSourceContact` (อ่านอย่างเดียว · ไม่แก้อัตโนมัติ · F2 ข้อ 9)
 - **G-2 (266-1-14)** — อนุมัติใบแจ้งหนี้/ใบกำกับที่ยอดเท่ากับใบขายสดของผู้ติดต่อเดียวกัน (±30 วัน · ใบเสร็จไม่อ้างใบ/ไม่ใช่มัดจำ/ไม่ใช่ของการชำระ หรือใบกำกับขายเงินสด) ⇒ **คำเตือน**
   `[RL-DUP-CASH-SALE]` ใน `CollectApprovalWarningsAsync` (ไม่บล็อก — งานใหม่ยอดบังเอิญเท่ากันมีจริง)
-- **ยังไม่ทำ (แพ็ก B/C)**: ย้ายการรับชำระระหว่างใบ + ยกเลิกและออกใบแทน · ตัวช่วยใบซ้ำ · ใบแจ้งการนำเงินไปตัดชำระ · สายเอกสารเห็นการผูกผ่านเงิน ·
+- **ยังไม่ทำ (แพ็ก C)**: ตัวช่วยใบซ้ำ · ใบแจ้งการนำเงินไปตัดชำระ · สายเอกสารเห็นแถวเงิน — ย้ายการรับชำระระหว่างใบ + ยกเลิกและออกใบแทน ทำแล้วในแพ็ก B (§3.4c-B)
   **สัญญากับรอบ 265 (ตรวจหลัง merge)**: ใบเสร็จจากเงินรอจัดสรรของ 265 (`CustomerCreditService.Receipt.cs`) เป็น**ใบเสร็จขายสด** (ไม่อ้างใบ · ไม่ใช่ของการชำระ ·
   `PaymentAccountId` = 21630 · JE Dr 21630 / Cr รายได้ + ภาษีขาย · เงินถูกตัดด้วยขาออก `ToReceipt` แล้ว) ⇒ ตัวจัดชนิดเห็นเป็น **R5 ขายสด** ⇒ ผูกกับใบแจ้งหนี้ = ปฏิเสธ `RL-DUPLICATE-SALE`
   (ถูกต้อง: ผูกแล้วรายได้/VAT เบิ้ล) และ G-2 เตือนเมื่อออกใบแจ้งหนี้ยอดเท่ากันทีหลัง · ชนิด R1 (`SettlementPaymentId` + ไม่อ้างใบ) ไม่มีผู้สร้างในระบบ ⇒ ถอดออกจากตัวจัดชนิดแล้ว (266-1-20) · ปัญหา "ใบเสร็จใบที่สองตอนจัดสรร" ไม่เกิด
@@ -4934,6 +5079,82 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ทางอนุมัติอัตโนมัติทิ้งคำเตือนลงหมายเหตุภายในของใบ · **L10** รายงานตรวจข้อมูล: ใบรออนุมัติได้ข้อความ "ยังไม่ลงบัญชี" · index `IX_Documents_RelatedDocument` มีอยู่แล้ว ·
   เทสต์ Db `H1_*` · `M2_*` · `M3_*` · `L7_M6_L1_*` + pure `SourceStateRefusal_*` · `OffersLinkButton_*` · `G2_ยอดประจำ*` · กติกา R266 เพิ่ม 7 ข้อ + เคสฝ่ายค้าน R266c/d
   ผู้ติดต่อเดียวกันยังสร้าง/ล้าง/ตั้งกลับได้ · G-2 สองทิศ · ชั้นความลับ · tenant) · `tools/required_call_site_check.py` (กติกา R266) · Last verified `commit 1cb439c0` — build + test + db-test เขียวบน CI (run 43277387917)
+
+#### 3.4c-B ย้ายการรับชำระที่ตัดผิดใบไปใบที่ถูก + ใบแทน (รอบ 266 แพ็ก B · DECISIONS 266-1-23…31)
+
+> สถานะปัจจุบัน — ชนิด "ใบเสร็จของการรับชำระใบอื่น" (และการรับชำระของใบอื่นที่ไม่มีใบเสร็จแยก) **ย้ายได้** ผ่านปุ่มเดิม "🔗 ผูกใบเสร็จ/เงินที่รับไว้แล้ว" (หน้าใบแจ้งหนี้) / "🔗 ผูกกับใบแจ้งหนี้" (หน้าใบเสร็จ) ·
+> เส้น `MoveSettlement` (ไม่มีใบเสร็จแยก) / `MoveSettlementWithReissue` (ยกเลิกใบเสร็จเดิม + ออกใบแทน) · ผู้ทำ: `DocumentService.MoveSettlementAsync` (`DocumentService.ReceiptLink.cs`) — ตัดสินซ้ำใต้ล็อกด้วย `ReceiptLinkPolicy.Decide` ·
+> ใบเสร็จที่สร้างเองซึ่งลงบัญชีตัดลูกหนี้ใบอื่น (R4) ยังต้องยกเลิกแล้วออกใหม่เอง (266-1-28) · ตัวช่วยใบซ้ำ/ใบแจ้งการตัดชำระ/สายเอกสารเห็นเงิน = §3.4c-C (แพ็ก C)
+
+| ขั้น | สิ่งที่เกิด (ธุรกรรมเดียว — ล้ม = ไม่มีอะไรถูกบันทึก) |
+| --- | --- |
+| ล็อก | ใบเดิม + ใบปลายทาง (`ORDER BY Id FOR UPDATE`) → แถวการรับชำระ · เงินไม่ได้อยู่ที่ใบที่พรีวิวเห็นแล้ว (กดซ้ำ/สองคน) = 409 `RL-STALE` |
+| ด่าน | `ReceiptLinkPolicy.Decide` → `MoveRefusal` จากข้อเท็จจริงของ `BuildSettlementMoveFactsAsync` (ตัวเดียวกับพรีวิว) — รายการปฏิเสธด้านล่าง |
+| เงิน | `Dr ลูกหนี้(ใบเดิม) / Cr 21630` อ้าง `{เลขการรับชำระ}/M{n}-OUT` แล้ว `Dr 21630 / Cr ลูกหนี้(ใบปลายทาง)` อ้าง `{เลข}/M{n}-IN` · ผังลูกหนี้ = ที่ใบตั้งไว้จริง · วันที่ = วันรับเงินเดิม (ไม่ก่อนวันที่ใบปลายทาง) ถ้างวดเปิด · ปิด = วันที่ทำรายการ + ข้อความ · **ขาเงินสด/ธนาคาร · ยอดธนาคาร · คู่จับคู่รายการเดินบัญชี ไม่ถูกแตะ** |
+| แถวเงิน | `Payment.DocumentId` คงเดิม · `Payment.MovedToDocumentId` = ใบปลายทาง (ย้ายกลับใบเดิม = null) · แถวจัดสรรเดิมถูกปล่อย (`IsDeleted` + `ReleasedAt/ReleasedBy/ReleaseJournalEntryId`) · แถวใหม่ `MovedFromAllocationId` · ยอด/สถานะของทั้งสองใบผ่าน `DocumentSettlementState.Apply` |
+| กระดาษ | ใบเสร็จที่อ้างใบเดิม ⇒ ยกเลิก (คงแถว Voided · ไม่ซ่อน) + ใบแทนผ่าน `CreateSettlementReceiptAsync` ลงวันที่รับเงินเดิม อ้างใบปลายทาง เลขจริงทันที `ReplacesDocumentId`/`ReplacedByDocumentId`/`ReplacementReason` · พิมพ์ "ออกแทนใบเลขที่ … ลงวันที่ … (ใบเดิมถูกยกเลิก)" ทั้ง HTML และ QuestPDF (`PdfGenerationService.ReplacementReference.cs` · ข้อความ `DocumentLabels.ReplacesDocument`) · ใบปลายทางเป็นใบกำกับภาษี/ใบเสร็จรับเงินของเงินก้อนนี้เอง ⇒ ไม่ออกใบแยก · **ฝ่ายค้าน B-1 (266-1-32)**: ใบเดิมเป็นใบรับในตัวของเงินก้อนนี้ (ไม่มี REC) ⇒ ปฏิเสธ `RL-SERVED-AS-RECEIPT` · ไม่มี REC แต่ใบปลายทางเป็นใบแจ้งหนี้ที่พักภาษีปิดยอดงวดเดียว ⇒ ออกใบเสร็จ/ใบกำกับภาษี ณ วันรับเงินให้ใบปลายทาง · ทั้งสามกรณีตัดสินในข้อเท็จจริงชุดเดียวกับพรีวิว (`FromServedAsReceipt`/`TargetServesAfterMove`/`IssueReceiptForTarget`) |
+| ภาษี | ใบเดิมไม่เหลือเงินรับ ⇒ ถอยภาษีขายถึงกำหนด (`UndoOutputVatOnPaymentVoidAsync` · งวดยื่น/ปิด = ปฏิเสธทั้งรายการ) · ใบปลายทาง = ตัวตัดสินของเงิน "ค้างออกใบ" (`ApplyCreditAllocationTaxStepsAsync` → `LateReceiptTaxPoint`: งวดวันรับเงิน หรืองวดปัจจุบัน + ธงเมื่องวดนั้นยื่น/ปิด — เดือนใน GL = เดือน ภ.พ.30) + ภาษีถูกหักตอนปิดยอดครบ (เมธอดเดิม) |
+| ผลข้างเคียง | ใบเดิมกลับมาค้าง ⇒ พักหนังสือทวงอัตโนมัติ 7 วัน (`LastDunningSentAt` · ไม่ขยับระดับ) + หมายเหตุภายใน · audit chain `DOC-RCPT-LINK-MOVE` (ยอดก่อน/หลังของทั้งสองใบ · เลขอ้างอิงสองขา · ใบเสร็จเดิม/ใบแทน · เหตุผล) · **ไม่ส่งลูกค้าอัตโนมัติ · ไม่ยิงงานหลังรับชำระซ้ำ** (266-1-30) · งานหลังรับชำระที่ยังค้างของการรับชำระนี้ = Skipped ในธุรกรรมเดียวกัน (B-6) · ค่าปรับล่าช้าของใบเดิมนับจากวันที่ย้าย (B-4 · `ReceiptLinkPolicy.LateFeeDaysOverdue`) |
+
+**ปฏิเสธพร้อมทางไปต่อ** (`ReceiptLinkPolicy.MoveRefusal`): การรับชำระถูกยกเลิก · สกุลต่างประเทศ `RL-CURRENCY` · รอบโอน/ช่องทางชำระออนไลน์ `RL-MOVE-SOURCE` · หลายใบ/มีเงินรอจัดสรร `RL-COMBINED` ·
+มาจากการจัดสรรเงินรอจัดสรร `RL-MOVE-LATE-ALLOC` · มีภาษีถูกหัก `RL-MOVE-WHT` · ค่าธรรมเนียม/บรรทัดปรับ `RL-MOVE-FEE` · ใบผูกคู่ค้า NextAcc/การรับชำระถูกแจ้งผู้ซื้อ `RL-PARTNER` · e-Tax ของใบเสร็จถึงกรมสรรพากร/ใบที่ยืนยันว่าใบกำกับเดิมยังใช้ได้ `RL-ETAX-SENT` ·
+ภาษีขายของใบเดิมอยู่ในงวดที่ยื่น/ปิด `RL-VAT-FILED` · ยอดเกินยอดค้าง `RL-OVERPAY` · บางส่วนของใบแจ้งหนี้ที่มีภาษีพัก `RL-PARTIAL-VAT` · ผู้กดอนุมัติใบเสร็จไม่ได้ `RL-MOVE-RECEIPT` · SoD/วงเงินเซ็นหลายขั้น `RL-MOVE-APPROVAL` ·
+ไม่พบผังลูกหนี้/สมุดรายวันของการรับชำระ/งวดปิดทั้งคู่ `RL-MOVE-JOURNAL` · ไม่มีเหตุผล `RL-MOVE-REASON` (400)
+
+**สิทธิ์** (266-1-27 ปรับโดย 266-1-33): ตัวควบคุม = API key 403 + อนุมัติชนิดใบปลายทาง · สิทธิ์เฉพาะของเส้นย้ายตัดสินใน `BuildSettlementMoveFactsAsync` (ใต้ล็อก): อนุมัติชนิดใบที่เงินเข้า + ยกเลิกชนิดใบที่เงินถูกถอน · มีใบเสร็จเดิม = + ยกเลิกใบเสร็จ · ระบบออกใบใหม่ = + สร้าง/อนุมัติใบเสร็จ ⇒ 403 `RL-MOVE-PERMISSION`/`RL-MOVE-RECEIPT` · เส้นใต้ล็อกต้องเท่าที่พรีวิวเห็น (`ExpectedRoute` · ต่าง = 409 `RL-STALE`) · SoD: ผู้บันทึกการรับชำระย้ายเองไม่ได้
+**ถอด** (`POST undo` · `Route = MoveSettlement` + `paymentId` + `allocationId` + `previewToken` จาก `POST preview` ด้วย invoiceId = ใบเดิม): เดินด่านเดียวกับการย้าย (ย้ายกลับ = อนุมัติใบเดิม + ยกเลิกใบปัจจุบัน) · ไม่มีกุญแจ = 400 · การย้ายที่ยกเลิกใบเสร็จ/ออกใบรับ (`PaymentAllocation.MoveVoidedReceiptId`/`MoveIssuedReceiptId` · หรือใบแทน `ReplacesDocumentId`) = 409 `RL-MOVE-NO-UNDO` (B-8 — ย้ายกลับเป็นรายการใหม่จากหน้าใบเดิม)
+**หลังย้าย**: ยกเลิกการรับชำระ = กลับขาเงินสด + สองขาของการย้าย (เลขอ้างอิงขึ้นต้นด้วยเลขการรับชำระ) และคืนยอดให้ใบปลายทาง (เส้นการชำระที่มีแถวจัดสรรเดิม) · ยกเลิกใบเดิมขณะการรับชำระที่ย้ายออกยังมีผล = 409 `RL-MOVE-VOID-SOURCE` (266-1-31)
+
+**ผู้อ่าน `Payment.DocumentId` ที่เปลี่ยนเป็น "ใบที่มีผล" `(MovedToDocumentId ?? DocumentId)`** (25 จุด · 7 ไฟล์ — ตอบ "การชำระของใบ X"): `DocumentService.cs` — วันชำระของงวดภาษีหัก/งวดยื่น (2) · ตัวหาการชำระของ `VoidDocumentAsync` (3) ·
+ผลรวมภาษีถูกหักของใบต้นทางตอนอนุมัติใบเสร็จ/ใบสำคัญจ่าย (2) · `IssueReceiptForPaymentAsync` (ใบเป้าหมาย · นับงวด · 3) · ภาษีที่หักไปแล้วของเส้นรับชำระหลายใบ (1) · `GetPaymentsAsync` (4) · `LoadSettlementDatesAsync` (2) ·
+`Helpers/WhtWithheldCounter` · `PortalService` (ใบแจ้งยอดลูกค้า) · `AutopilotService` (2) · `UnifiedPaymentQueryService` · ด่าน "ใบนี้มีการชำระ" ก่อนเปลี่ยนฝั่ง/แหล่งเงิน/ลบใบ (4 — นับทั้งที่ตัดใบนี้และที่ถูกย้ายออก) ·
+**ไม่เปลี่ยนโดยตั้งใจ**: ผู้อ่านฝั่งซื้อ/ภ.พ.36/50 ทวิ ขาออก/รอบโอน settlement/gateway/นำเข้า (การรับชำระกลุ่มนั้นย้ายไม่ได้ — ด่าน) · ตัวกลับรายการของการชำระ (ต้องใช้ใบเดิมเพื่อหาสมุดรายวันขาเงินสด) · purge · "ยกเลิกและออกใบแทน" (ถูกด่านชำระร่วมกับเอกสารอื่นปฏิเสธ) ·
+งานหลังรับชำระ/หน้าหลังจ่าย (คีย์ด้วยการรับชำระ — ไม่ถูกเรียกจากการย้าย) · รายงานที่แสดงเลขใบของการรับชำระในประวัติ (จอง/DataIntegrity) ยังแสดงใบที่บันทึกไว้ตอนแรก · ตัวกันบันทึกซ้ำของ CMS (คีย์ด้วยใบที่บันทึกตอนแรก)
+**เพิ่มจากฝ่ายค้านรอบ 266-B (266-1-35)**: `CommissionService.CalculateAsync` (ยอดที่เก็บได้ = ผู้สร้างใบที่มีผล) · `PdfGenerationService.GenerateReceiptPdfAsync` · `ArApAnalysisService.GetContactDetailAsync` · `BankService.GetMatchCandidatesAsync` · CMS แผนยกเลิกออเดอร์ `hasPayments` (นับย้ายเข้า+ออก · 2 จุด) · `VoidPaymentAsync` (ล็อกใบที่มีผล + อ่านชุดใบซ้ำใต้ล็อกแถว Payment) · `PostPaymentAutomationService.ExecuteAsync` (ตาข่าย) · `RecurringLateFeeAccrualJob` · purge ล้าง `Payments.MovedToDocumentId` ที่ชี้ใบที่ถูกลบ (`DocumentPurgeOrder` — แถวจัดสรรถูกลบตาม `DocumentId` อยู่แล้ว)
+
+- **ไฟล์:** `Helpers/ReceiptLinkPolicy.cs` (`ReceiptLinkMoveFacts` · `MoveRefusal` · `MoveEffects` · `MoveJournalReference`) · `Helpers/PaymentEffectiveDocument.cs` · `Helpers/ReceiptLinkMoveMigration.cs` ·
+  `Services/Implementations/DocumentService.ReceiptLink.cs` · `ReceiptLinkService.cs` (เส้น Move* · ถอด · ผู้สมัครการรับชำระที่ไม่มีใบเสร็จแยก) · `PdfGenerationService.ReplacementReference.cs` · `Models/Entities/Payment.cs` · `wwwroot/pages/documents.html` (ช่องเหตุผลบังคับเมื่อพรีวิวตอบ `requiresReason`)
+- **เทสต์:** pure `ReceiptLinkPolicyTests` (`Move_*` · `MoveEffects_*` · `MoveJournalReference_*` · `PaymentEffectiveDocument_*` · `ReplacementLine_*` · `ManualReceiptOfOtherInvoice_*`) · Db `ReceiptLinkMoveDbTests` (14) · กติกา R266B ใน `tools/required_call_site_check.py` ·
+  Last verified `commit 46ac5463` · ชุดแก้ฝ่ายค้าน `commit 0ec86361` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
+#### 3.4c-C ตัวช่วย "ใบซ้ำ" + ใบแจ้งการนำเงินไปตัดชำระ + สายเอกสารเห็นเงิน (รอบ 266 แพ็ก C · DECISIONS 266-1-36…40)
+
+> สถานะปัจจุบัน — ใบขายสด (R5/R6) กับใบแจ้งหนี้ของการขายเดียวกัน = ใบกำกับสองใบต่อการขายเดียว (ภ.พ.30 เบิ้ล · ผู้ซื้อเคลมสองครั้ง · สต็อกตัดสองรอบ) ·
+> "ผูก" ไม่แก้ (266-1-5) ⇒ **ตัวช่วยใบซ้ำ**ให้ผู้ทำบัญชีเลือกใบที่คงไว้ แล้วเอาใบที่ซ้ำออกผ่าน**เส้นเดิมเท่านั้น** · ตัวตัดสินเดียว `Helpers/DuplicateSalePolicy` ·
+> ปุ่ม "🧾 ใบนี้ซ้ำกับใบแจ้งหนี้?" บนใบขายสดที่ออกเลขแล้ว (`DocumentResponse.CanOpenDuplicateSale` · ตัวจัดชนิดเดียว `ReceiptLinkPolicy.Classify`) ·
+> API `api/companies/{cid}/receipt-links/duplicate-sale` (`GET candidates?documentId=` · `GET preview?cashSaleId=&invoiceId=` · `POST`) · บริการ `DuplicateSaleService`
+
+| ตัวเลือก | สภาพ | สิ่งที่ระบบทำ |
+| --- | --- | --- |
+| คงใบขายสด | ใบแจ้งหนี้ยกเลิกได้ | `VoidDocumentAsync(ใบแจ้งหนี้, expectedPaidAmount: ยอดที่พรีวิวเห็น)` — กลับลูกหนี้/รายได้/ภาษีขาย/สต็อก ลงวันที่ของใบ · คงแถว Voided · ใต้ล็อกแถว: ยอดรับชำระต่างไป/ใบถูกยกเลิกไปก่อน = 409 `DS-STALE` (ไม่ยกเลิกการรับชำระแบบ cascade เงียบ) |
+| คงใบขายสด | ใบแจ้งหนี้ติดภาษี (รายงานภาษีที่ยื่น/ล็อก · e-Tax ถึงกรมสรรพากร · ภ.พ.30 ของเดือนที่ภาษีขายลงจริง [Cr 21911 ใน GL] ยื่น/ปิด) และเป็นใบกำกับ | `ConvertDocumentAsync(ใบแจ้งหนี้ → CreditNote)` = **ใบลดหนี้ฉบับร่างเต็มใบ** ลงวันที่วันนี้ (งวดปัจจุบัน · §86/10) · ระบบไม่อนุมัติแทน — ผู้ทำบัญชีเลือกเหตุผล (คืนสินค้า/ปรับยอด) แล้วอนุมัติ (ด่าน §86/10 เดิม) · ใบเดิมไม่ถูกแตะ |
+| คงใบแจ้งหนี้ | ใบขายสดยกเลิกได้ · ไม่มีภาษีถูกหักทั้งสองใบ · งวดบัญชีของวันรับเงิน/วันจัดสรรเปิด · ภ.พ.30 ของเดือนรับเงิน/วันจัดสรรยังไม่ยื่น (ใบแจ้งหนี้ที่พักภาษี) · มีผังพัก 21630 · ใบแจ้งหนี้ไม่ใช่ "ใบแจ้งหนี้สินค้าที่ลงภาษีขายแล้ว" | **(ฝ่ายค้าน H3 · 266-1-41 แทน 266-1-38)** ⓪ ตั้งงานค้างบนใบแจ้งหนี้ (`DuplicateSalePendingFromDocumentId`) ① `VoidDocumentAsync(ใบขายสด, expectedPaidAmount, keepLiveDocumentId: ใบแจ้งหนี้)` ② `RecordDuplicateSaleCreditAsync` = **เงินรอจัดสรร (21630) ลงวันที่ใบขายสด** ช่องทางเงินเดิม เหตุผล "ค้างออกใบ" (`Payment.DocumentId` = ใบขายสด · ตัวเขียนเดียว `PostUnappliedCreditAsync`) ③ `CustomerCreditService.AllocateAsync` ลงวันที่ `AllocationDate = max(วันขายสด, วันใบแจ้งหนี้)` ⇒ เงินสดอยู่เดือนรับเงิน · ภาษีขายของใบแจ้งหนี้ที่พักภาษีตาม `LateReceiptTaxPoint` · แถวจัดสรรทีหลัง = ได้ใบแจ้งการนำเงินไปตัดชำระ · สามขั้นมีธุรกรรมของตัวเอง ⇒ ล้มหลังขั้น ① = **ล้มดัง 3 ที่** (DS-PARTIAL + ข้อความขั้น ① · งานค้าง/แถบแดงบนใบแจ้งหนี้ · audit `DOC-DUP-SALE-PARTIAL`) และเปิดตัวช่วยซ้ำ = "ขั้นที่เหลือ" (`ResumeRemainingStep` — ขั้นที่ทำแล้วไม่ทำซ้ำ) |
+| ทั้งสอง | ยกเลิกไม่ได้/ภาษีติดแต่ออกใบลดหนี้ไม่ได้ (ใบแจ้งหนี้ไม่ใช่ใบกำกับ) · เหตุอื่น (เอกสารลูก · 50 ทวิ ในแบบที่ยื่น) · ภาษีถูกหัก · งวดปิด | **ผู้ทำบัญชีตัดสิน** (`RequiresAccountant` · ไม่อัตโนมัติ · 266-1-5) — มีข้อความ + ทางไปต่อ |
+
+- **ไม่ใช่ใบซ้ำ = ปฏิเสธ + ทางไปต่อ (ไม่แตะใบใด)**: คนละผู้ติดต่อ `DS-CONTACT` / คนละสาขา `DS-BRANCH` · ยอดต่าง > 0.01 `DS-AMOUNT` · ใบแจ้งหนี้มีการรับชำระ/จัดสรร/หักมัดจำ `DS-INVOICE-PAID` ·
+  มีใบลดหนี้อ้างอยู่ (รวมร่าง) `DS-INVOICE-CN` · ใบแจ้งหนี้ร่าง/รออนุมัติ `DS-DRAFT-TARGET` · ยกเลิก/แทนแล้ว `DS-VOIDED` · สกุลต่างประเทศ `DS-CURRENCY` · ใบเสร็จที่ออกจากเงินรอจัดสรร `DS-FROM-CREDIT` ·
+  ไม่ใช่ใบขายสดที่ออกเลขแล้ว `DS-NOT-CASH-SALE` · ใบเพิ่มหนี้/ใบกำกับขายเงินสดเป็นปลายทาง `DS-TARGET`
+- **ยืนยัน**: ตัดสินซ้ำจากข้อเท็จจริงล่าสุด (`DocumentService.LoadDuplicateSaleFactsAsync` ตัวเดียวกับพรีวิว) + กุญแจพรีวิว (`DuplicateSalePolicy.PreviewToken` — เปลี่ยน = 409) + เหตุผลบังคับ ·
+  สิทธิ์: ตัวควบคุม = API key 403 + อนุมัติใบแจ้งหนี้ · บริการ = สิทธิ์ของเส้นที่เดินจริง (ยกเลิกใบที่ซ้ำ · สร้างใบลดหนี้ · อนุมัติใบที่รับเงินเข้า) 403 `DS-PERMISSION` · audit chain `DOC-DUP-SALE` ต่อขั้น
+- **ใบแจ้งการนำเงินไปตัดชำระ (266-1-39)** — `GET receipt-links/advice/{allocationId}?format=pdf|html`: แถวจัดสรรที่**ยังมีผลและเกิดหลังรับเงิน** (จัดสรรเงินรอจัดสรรทีหลัง · ย้ายการรับชำระ) ·
+  **ไม่ใช่ใบรับ/ใบกำกับภาษี** (พิมพ์เสมอ) · ไม่บันทึกเป็นแถวเอกสาร ⇒ ไม่มีเลขชุดภาษี/ไม่เข้า ภ.พ.30 · เลขอ้างอิง `ADV-{เลขสมุดรายวันของการตัดชำระ}` · HTML + QuestPDF จากตัวโหลด/แถวข้อความเดียว
+  (`PdfGenerationService.PaymentApplicationAdvice.cs` · `DocumentLabels` `advice_*` ไทย/อังกฤษ) · ตัดพร้อมรับเงิน/ถูกปล่อย/ยกเลิก = ปฏิเสธ `DS-ADVICE-NA` · ชั้นความลับของใบแจ้งหนี้ · ไม่ส่งอัตโนมัติ
+- **สายเอกสารเห็นเงิน (266-1-40)** — `GetDocumentChainAsync` เพิ่มโหนด `NodeKind` = `CreditAllocation` / `MovedPayment` / `DepositApplied` (ป้ายจาก `Helpers/DocumentChainMoney` · `ParentId` = ใบที่เงินตัด ·
+  `DocumentType`/`Status` = null) · แถวที่ถูกปล่อย/ยกเลิกไม่แสดง · หน้าเอกสารวาดแถบ "💰 เงินที่ผูกกับใบในสาย" + ปุ่ม "📄 ใบแจ้งการตัดชำระ" · ขอสายเมื่อใบมียอดรับแล้ว/เป็นใบมัดจำด้วย ·
+  ข้อจำกัด: มัดจำที่ตัดชำระหลายใบผ่าน JV แสดงเฉพาะใบที่ `DepositAppliedToDocumentId` ชี้
+- **ไฟล์:** `Helpers/DuplicateSalePolicy.cs` · `Helpers/PaymentApplicationAdvice.cs` · `Helpers/DocumentChainMoney.cs` · `Services/Implementations/DuplicateSaleService.cs` ·
+  `Services/Implementations/DocumentService.DuplicateSale.cs` · `PdfGenerationService.PaymentApplicationAdvice.cs` · `ReceiptLinkController` (3 เส้นใหม่) · `documents.html` (`openDuplicateSale` · แถบเงินในสาย) ·
+  `VoidDocumentAsync(…, expectedPaidAmount, keepLiveDocumentId)` (พารามิเตอร์ใหม่ — ผู้เรียกเดิมไม่ส่ง = พฤติกรรมเดิมทุกตัวอักษร) · `Document.DuplicateSalePendingFromDocumentId` (คอลัมน์ใหม่ · NULL = ไม่มีงานค้าง)
+- **เทสต์:** pure `DuplicateSalePolicyTests` (`KeepCashSale_VoidsInvoiceWhenAllowed` · `KeepCashSale_CreditNoteWhenFiled` · `KeepInvoice_VoidsCashSaleAndRecordsPaymentOnSameDate` ·
+  `NeitherVoidable_RequiresAccountant` · `Advice_NotInVatReport_NoTaxSeries` · `Chain_ShowsCreditAllocationNode` + ทิศตรงข้าม) · Db `DuplicateSaleDbTests` (ชื่อเดียวกัน 5 ชื่อบนฐานจริง — ยกเว้น NeitherVoidable +
+  `Stale_InvoicePaidAfterPreview_Refused_NothingVoided` · `OtherContact_Refused_NothingTouched` · `Candidates_SameContactSameAmountOnly_TenantIsolated`) · กติกา R266C ใน `tools/required_call_site_check.py`
+- **ชุดแก้ฝ่ายค้าน** (`erp-review/2026-11-13/review-266-C.md` · คำตัดสิน 266-1-41…45): **H1** ล็อก session ต่อใบของคู่ (เรียงคีย์ · `UnderPairLockAsync`) ครอบการตัดสินซ้ำ + ทุกขั้น ·
+  `VoidDocumentAsync(…, keepLiveDocumentId)` ล็อกสองแถวเรียง Id แล้วตรวจใบที่คงไว้ใต้ล็อก (ยกเลิกไปแล้ว = 409) — สองคนกดคนละตัวเลือกพร้อมกัน ชนะหนึ่ง อีกคน 409 ·
+  **H3** คงใบแจ้งหนี้ผ่านเงินรอจัดสรร (แถวตารางข้างบน) · **H2** ล้มดัง 3 ที่ + ขั้นที่เหลือ · **M1** ใบลดหนี้ร่างตั้งเหตุผล "ปรับยอด" (`DuplicateSalePolicy.CreditNoteReasonForDuplicate` — ไม่คืนสต็อก ·
+  สต็อกที่ตัดสองรอบปรับด้วยใบปรับสต็อก) · **M3** ด่านวันที่ครอบงวดบัญชี + ภ.พ.30 ที่ยื่น/ล็อกของวันรับเงินและวันจัดสรร · **L1** ใบแจ้งหนี้สินค้า (ไม่ใช่ใบกำกับ) ที่ลงภาษีขายแล้ว = ผู้ทำบัญชีตัดสิน ·
+  **L3** ข้อความ framework ไม่ถึงผู้ใช้ (`InnerFailureText`) · **L4** วิธีชำระคัดจากการรับชำระของใบขายสด (ถ้ามี) · **L5** ใบแจ้งปฏิเสธใบที่ยกเลิก/ไม่ใช่ฝั่งขาย + ป้าย "คงเหลือ ณ วันพิมพ์" ·
+  **API key** ใช้ endpoint อ่าน (candidates/preview/advice) ได้ — เส้นเขียน 403 (266-1-44)
+  Last verified `commit 50482695` (เส้นเดิม) · ชุดแก้ฝ่ายค้าน `commit 642d3648` — build + test (pure) + Db test ผ่านในเครื่องนี้ (PostgreSQL)
 
 ### 3.5 Void / Cancel
 - **Method**: `VoidDocumentAsync` (`:1959`) — **cascade 7+ขั้น**:
@@ -5929,6 +6150,36 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 > เขียนไว้ใน `ReopenPaidRunAsync` ที่เดียว ⇒ รอบที่ import แล้วเดินตรงไป "จ่าย"
 > ไม่เคยผ่านการซ่อมเลย. **ห้ามซ่อมตอน Paid** — ตัวเลขจะไม่ตรงกับ JE ที่ลงไปแล้ว
 > (ต้องกลับรายการจ่ายก่อน)_
+
+#### 5.3-269 ช่องยอดขาย 0% / ยกเว้น ของ ภ.พ.30 — นับเฉพาะใบที่ถือการขาย (รอบ 269 · คำตัดสิน 269-1-1…5 · 269-2-1…8 หลังฝ่ายค้าน `erp-review/2026-11-13/review-269.md`)
+
+> **ที่มา (ผู้ใช้รายงาน ก.ย. 2569):** บริษัทที่ไม่มีขาย 0% เลย ขึ้นหมายเหตุ "ยอดขายที่เสียภาษีอัตราร้อยละ 0 (ส่งออก §80/1) 1,235,494.24" ทั้งที่ตาราง §87 มีแต่ใบกำกับ TIV-… ·
+> ยอดนั้น = ยอดรวม VAT ของใบกำกับ 1,154,667.51 + 7% บนใบฝั่งขายที่ไม่ใช่การขาย — ผู้ต้องสงสัย (ทุกตัวปิดแล้ว): ใบเสร็จรับชำระที่ระบบสร้าง ("รับชำระเงินตาม…" VatRate 0) ·
+> ลูกหนี้ยกมา `OB-AR:` (Invoice · VatRate 0 · ยอดค้างรวม VAT) · ใบเสร็จจากใบวางบิลรวม (ก่อน 2026-10-08) · ใบสำคัญรับเดี่ยวจากสลิป · **ยังไม่ได้ยืนยันกับข้อมูลจริงของผู้ใช้** (ไม่มีสิทธิ์เข้าฐาน — query ใน review-269 §H1)
+
+เลขช่องตามแบบ ภ.พ.30 ทางการ (`Helpers/Pp30FormBox` — ตัวเดียว ห้ามพิมพ์เลขเอง): 1 ยอดขาย · 2 ยอดขาย 0% · 3 ยอดขายยกเว้น · 4 ยอดขายที่ต้องเสียภาษี · 5 ภาษีขาย · 6 ยอดซื้อ · 7 ภาษีซื้อ · 8 ต้องชำระ · 9 ชำระเกิน
+
+| ข้อ | เดิม | ตอนนี้ |
+| --- | --- | --- |
+| ใบที่นับเข้าช่อง 2 (0%) | ทุกใบฝั่งขายที่ออกแล้วและมีบรรทัด `VatRate` 0 | `OutputVatOwnership.SalesBoxOwner`: ใบที่ `Decide` เป็นเจ้าของแถว §87 **และ** เป็นใบกำกับภาษี (รวมใบกำกับ 0% ล้วน) หรือใบเจ้าของที่มี VAT — §80/1 ต้องออกใบกำกับ ⇒ บรรทัด 0 บนใบที่ไม่มี VAT และไม่ใช่ใบกำกับ (ใบเสร็จ/ใบแจ้งหนี้/ใบสำคัญรับ) **ไม่นับ + บรรทัดเตือนที่ติ๊กออก** "⚠️ [ยอด 0% ไม่นับเข้าแบบ — ไม่ใช่ใบกำกับภาษี (§80/1)]" (269-2-2) |
+| ใบที่นับเข้าช่อง 3 (ยกเว้น §81) | ทุกใบฝั่งขายที่มีบรรทัด −1 | `OutputVatOwnership.ExemptBoxOwner`: บรรทัด −1 ของ**ใบต้นทางของการขาย** = เจ้าของแถว §87 (ใบกำกับผสม · ใบเสร็จขายสด · ใบเสร็จถือ VAT) + ใบแจ้งหนี้ตรง/ใบสำคัญรับเดี่ยวที่ไม่มี VAT (ขายยกเว้นออกใบกำกับไม่ได้) · ไม่นับ ใบเสร็จรับชำระใบอื่น · ใบวางบิล/ใบส่งของ/ใบเสนอราคา · ยอดยกมา · ใบแจ้งหนี้ที่ถูกแทน · มัดจำที่ถูกหัก (269-2-9 · แทนส่วนช่อง 3 ของ 269-2-2) |
+| ใบยอดยกมา (`IsOpeningBalance` · OB-AR/OB-AP) | นับเป็น 0%/ยกเว้น/ยอดซื้อยกเว้น | **นอก ภ.พ.30 ทุกช่องทั้งสองฝั่ง** — `OutputVatOwnership.IsOutsidePp30` ที่หัว loop + `Decide` (RuleOpeningBalance) + ปุ่มดึง (269-2-1) |
+| ใบเสร็จจากใบวางบิลรวม · ใบสำคัญรับเดี่ยวไม่มี VAT | `BranchOf` ให้เป็นเจ้าของ (แถว §87 VAT 0 + ช่อง 0%) | ไม่ใช่เจ้าของ (`RuleRollupBillingNoteReceipt` · `RuleZeroVatReceiptVoucher`) — ไม่มีแถว §87 ไม่เข้าช่อง (269-2-2) |
+| งวดของยอดช่อง 0%/ยกเว้น | วันที่ขาย | `Decision.VatDueDate` (วันเดียวกับแถว §87) |
+| ใบลดหนี้/เพิ่มหนี้ | นับเสมอในเดือนขาย | `OutputVatOwnership.AdjustmentNoteCounts` — ใบเดิมต้องถึง tax point (ด่านเดียวกับแถว CN/DN `RelatedPendingTaxPoint`) และเป็นใบกำกับ/ใบที่มี VAT · ช่อง 3 (`exemptBox: true`) รับใบแจ้งหนี้เดิมที่ไม่มี VAT ด้วย · ใบเดิมเป็นใบเสร็จรับชำระ/ใบวางบิล/ยอดยกมา/หาไม่เจอ ⇒ ไม่นับ (269-2-6 · 269-2-9) |
+| ยอดซื้อยกเว้น (หมายเหตุ ไม่ใช่ช่อง) | ทุกใบฝั่งซื้อ (รวม PO/PR/GRN/ใบส่งของ) | ใบที่ `InputVatGateScope.ClaimsInputVat` (ชุดเดียวกับใบที่เคลมภาษีซื้อ) + CN/DN ฝั่งซื้อที่ใบเดิมถึง tax point (269-2-5) |
+| ช่อง 4 ยอดขายที่ต้องเสียภาษี | `StandardBase(แถว, ยอด 0%)` ⇒ 0% ของใบที่ไม่มีแถวทำช่อง 4 ต่ำ/ติดลบ | สูตรเดิม แต่ทุกบาทในช่อง 0% มาจากใบที่มีแถว §87 แล้ว ⇒ ถูกเสมอ (เทสต์ `R269_M1_*`) |
+| renderer | PDF พิมพ์เลขเอง (0% = 3 · ยกเว้น = 4) · แถวสรุป "— ช่อง 7/8" · Excel ไม่มีช่อง | PDF + Excel ใช้ `Pp30FormBoxes.Figures` (สูตรเดียว) + `No/Name/Label` · ป้ายแถวสรุป = `Pp30FormBoxes.Label` (269-2-4) |
+| รายงานที่บันทึกไว้ (หลักการ #9) | — | `GetPp30SalesBoxReviewAsync` ตรวจ**ทุก**รายงาน ภ.พ.30 ที่บันทึกไว้ (รวมงวดที่ยอดย้ายเข้าเพราะ `VatDueDate`) เทียบการคำนวณสด + กติกาเดิมบนข้อมูลวันนี้ (`Pp30LegacySalesBoxTrace`) ⇒ สาเหตุ RuleChange/DataChanged ตามที่ตรวจจริง · ร่าง ⇒ สร้างใหม่ · ยื่นแล้ว ⇒ พิจารณายื่นเพิ่มเติม (269-2-3) |
+| สร้างร่างอัตโนมัติตอนเปิดหน้า (`AutoRefreshReportsAsync`) | ลบ+สร้างร่าง 2 เดือนล่าสุดทุกครั้งที่เปิด tax.html นอกล็อก นอกธุรกรรม ไม่คืนบรรทัดดึง/ติ๊ก กลืน error (269-2-7 เพิ่มแค่ audit) | **สร้างเฉพาะร่างที่ยังไม่มี** (ใต้ล็อก ภ.พ.30 · ≤ 12 เดือน · ล้มดัง `TaxReportAutoDraftException`) · ร่างเดิมตรวจอย่างเดียว `GetStaleDraftReportsAsync` (GET `tax/stale-drafts` · `Helpers/TaxReportDraftFreshness`) ⇒ แถบ "ร่างล้าสมัย" + ปุ่ม "สร้างใหม่" = `RegenerateTaxReportAsync` (ใต้ล็อก · ธุรกรรมเดียว · คืนติ๊ก/บรรทัดดึง · audit ผู้กดจริงหลังคืนค่า) (269-3-1) |
+| แก้รายงานหลังสร้าง (ติ๊กแถว · ดึงเอกสาร · สร้างใหม่คืนติ๊ก · ตัวทบทวน) | แถวสรุปช่อง 2/3 คงค่าตอนสร้าง ⇒ ติ๊กแถว 0% ออกแล้วช่อง 4 = แถว − ช่อง 2 ผิด/ติดลบ | `Helpers/Pp30SalesBoxSummary.Totals` ตัวเดียว: ส่วนของแต่ละใบ (loop เดียวกับตอนสร้างผ่าน `ComputeSalesBoxPartsAsync` + ใบที่ดึงเข้าผ่าน `LoadSalesBoxPartsOfDocumentsAsync`) นับเมื่อใบไม่มีแถวรายการ หรือมีแถวที่ยังใช้ · `RecomputeSalesBoxSummaryAsync` ใน Update/Pull/Regenerate (269-3-2) |
+| ใบลดหนี้ของใบเสร็จขายสดยกเว้น | ไม่ลดช่อง 3 | ลด — `AdjustmentNoteCounts(exemptBox, relatedHasRelated: false)` · ใบรับชำระ (อ้างใบอื่น) ไม่ลด (269-3-3) |
+| ช่อง 8–12 | 8/9 = หลังหักชำระเกินยกมา · ไม่มี 10–12 | 8 = 5 − 7 (> 0) · 9 = 7 − 5 (> 0) · 10 = ชำระเกินยกมา (`VAT_CREDIT_CF`) · 11/12 = สุทธิ — `Pp30FormBoxes.Figures` ตัวเดียวของจอ (`TaxReportResponse.Pp30Boxes`) · PDF · Excel · e-Filing (8 ฟิลด์เดิม + ช่อง 1–12) · Summary.csv (269-3-4) |
+| ใบกำกับที่แทนใบแจ้งหนี้ | ร่าง/รออนุมัติก็นับว่า "แทน" · แปลงบางส่วนตัดยอดยกเว้นทั้งใบ | เฉพาะใบกำกับที่ออกแล้ว · ใบแจ้งหนี้ถือยอดยกเว้นที่เหลือ (`ExemptRemainder` · `LoadSupersedingExemptBaseAsync`) (269-3-6) |
+| บรรทัดปัดเศษขึ้นของใบกำกับ POS (VatRate 0) | ช่อง 2 | ฐานเสียภาษี (`PosTaxInvoiceLines.IsRoundingLine` → `Pp30Line.PosRounding`) (269-3-6) |
+
+ล็อกจุดเรียก: `tools/required_call_site_check.py` R269 (+ ฝ่ายค้าน R269a–l) · เทสต์: TEST_PLAN P269 · ไม่แก้ (เหตุผลใน review-269 §การตอบ): ใบกำกับ OCR ที่อ่าน VAT ไม่ได้ (บรรทัดสรุป VatRate 0) ยังเป็น "ใบกำกับ 0%"
+_Last verified against codebase: 2026-11-13 · commit 76130af2 (รอบแรก) · รอบแก้ฝ่ายค้าน 0dfaded9_
 
 #### 5.3a-1 ฐานยอด ภ.ง.ด.3/53/54 ของหน้า "นำส่งภาษี" + ปฏิทิน (แก้ 2026-09-16)
 
@@ -7188,7 +7439,7 @@ VAT พอดี**
 | 1 | `EtaxInvoiceService.cs:1272-1325` | XML ปล่อย**ยอดติดลบ 5 จุด** (`ChargeAmount` · `BasisAmount` · `CalculatedAmount` · `NetLineTotalAmount` · `NetIncludingTaxes…`) ทั้งที่โปรไฟล์มีช่องของส่วนลดอยู่แล้วคือ `SpecifiedTradeAllowanceCharge` (`:1310-1315`) ซึ่งรับ `line.DiscountAmount` |
 | 2 | `EtaxInvoiceService.cs:843-855` | หัวใบตรึง `AllowanceTotalAmount = "0.00"` **พร้อมเหตุผลที่เขียนไว้เอง** ว่าส่วนลดเป็น line-level ⇒ มีสองช่องทางสำหรับแนวคิดเดียวกัน |
 | 3 | `DocumentService.cs:13417-13422` | JE ได้ **เครดิตติดลบ** (contra ที่ไม่มีใครประกาศ) · `AddLine` ไม่ตรวจเครื่องหมาย ขณะที่เส้น JV ที่คีย์มือตรวจ (`:5808` `:6541`) = กฎสองชุดในไฟล์เดียว |
-| 4 | `Helpers/Pp30SalesClassifier.cs:68-70` | บรรทัดที่ `VatRate == 0` ตกเข้า **ช่อง 7 "ยอดขายอัตราร้อยละ 0 (§80/1 ส่งออก)"** ⇒ บรรทัดส่วนลดของ CMS ถูกรายงานเป็น**ยอดส่งออกติดลบ** |
+| 4 | `Helpers/Pp30SalesClassifier.cs:68-70` | บรรทัดที่ `VatRate == 0` ตกเข้า **ช่อง 2 (เดิมเขียน "ช่อง 7") "ยอดขายอัตราร้อยละ 0 (§80/1 ส่งออก)"** ⇒ บรรทัดส่วนลดของ CMS ถูกรายงานเป็น**ยอดส่งออกติดลบ** |
 | 5 | §86/4(5) | บังคับ "ปริมาณ + มูลค่า" ของสิ่งที่**ขายจริง** — บรรทัดติดลบไม่ใช่รายการที่ขาย |
 
 > ⚠️ **สิ่งที่ตรวจแล้วไม่จริง**: ยอด**หัวใบ** XML ยังบาลานซ์ (`LineTotalAmount =
@@ -7561,7 +7812,7 @@ CN/DN เดิมไม่ส่ง `doc.Contact` ต่างจากทุ�
 - `43060` เปลี่ยน**ชื่อ**เป็น "ส่วนลดรับ (ส่วนลดเงินสด)" · **`AccountType` ไม่เปลี่ยน**
   เพราะการย้ายหมวดจะ re-sign งบของงวดที่ปิด/ยื่นไปแล้วทั้งประวัติ
 
-**ช่อง 7/8 ของ ภ.พ.30 (ยอดขาย 0% §80/1 · ยอดยกเว้น §81)** — แก้ 2 อย่างรอบ 185:
+**ช่อง 2/3 ของ ภ.พ.30 (เลขช่องทางการ — Helpers/Pp30FormBox · เดิมเขียน 7/8) (ยอดขาย 0% §80/1 · ยอดยกเว้น §81)** — แก้ 2 อย่างรอบ 185:
 1. ฝั่งของ CN/DN เคยตัดสินด้วย `doc.CnDnPurchaseSideOverride ?? DocumentSide.IsPurchase(type)`
    ซึ่ง **ไม่ส่ง `ourRole`** ⇒ `IsPurchase(CreditNote)` = **true เสมอ** ⇒ ใบลดหนี้
    ฝั่งขายที่ยังไม่มี override ถูกนับยอดยกเว้นเข้าช่องฝั่ง**ซื้อ** · ตอนนี้ใช้
@@ -9246,8 +9497,13 @@ _Last verified against codebase: 2026-11-12 (รอบ 262-1-18 — §2.12g-262:
 _Last verified against codebase: 2026-11-12 (รอบ 264 P3 ท่อฝั่งผู้ซื้อ — §2.12g-264-P3: แหล่งเงินไม่มีค่าที่แต่งขึ้น · ด่านบันทึกเอง · ความยินยอมล็อกตลอดการบันทึก · แจ้งจากทุกทางเข้า · ถอนเมื่อผู้ขายยกเลิก · จ่ายบางส่วน · ผังใบร่าง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b1e3b2a0)_
 _Last verified against codebase: 2026-11-12 (รอบ 262-1-18 — §2.12g-262: เงินเข้าบัญชีไม่ตัดชำระใบค่าบริการผู้เช่าอัตโนมัติ (เหตุ + ทางไปต่อ) · พอร์ทัลไม่ขึ้นปุ่มชำระใบผู้เช่า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 61297d41)_
 _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P1 — §2.12n หน้าเอกสารสำหรับลูกค้า: ลิงก์เดียวต่อใบบน token ของลิงก์ชำระ · หน้า pay-document เป็นหน้าเอกสาร 4 โหมด · ขอลิงก์ใหม่เมื่อหมดอายุ · ลิงก์ยอมรับ/เซ็นรับรุ่นก่อนเก็บเป็น hash + หยุดออก (§2.8 · §2.8b · §2.12f · §2.12g) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 67eddfe6)_
-<<<<<<< HEAD
 _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P1 ชุดแก้ฝ่ายค้าน — §2.12n: H1 ยอมรับ/เซ็นรับผูกเลข Rev + ออก Rev ปิดช่วงตอบรับ · H2 เพิกถอนได้ทุกชนิด + ออกใหม่หมุน token · M1–M8 · L1–L8 (คำตัดสิน 267-1-24…32) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 22bb5074)_
-=======
 _Last verified against codebase: 2026-11-12 (รอบ 264 P3 ชุดแก้ฝ่ายค้าน — §2.12g-264-P3: H1 การจ่ายอื่นของใบซื้อ · H2/L9 จ่ายบางส่วน · M1 เงินสด · M2 ยกเลิกทั้งใบ + ตัวกวาด · M3 ถ้อยคำ · M4 เดือนภาษีหัก · M5 แจ้งเมื่อบันทึกเอง · M6 ล็อกตอนส่ง 50 ทวิ · M7 · L1–L9 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 17fefa5a)_
->>>>>>> d8a0e9f9fc183cf6d10471b27ffd110d4054eaa8
+_Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P2 — §2.12n-P2 ผู้ลงนาม + บัญชีหลักฐาน + ฉบับที่ลูกค้าเซ็น: ฟอร์มผู้ลงนามบนหน้าเอกสาร (ชื่อ · นามสกุล · ตำแหน่ง · ติ๊กรับรอง) · ยอมรับ/ไม่รับ/ขอแก้/เซ็นรับ ผ่าน `CustomerDocumentResponseService` ตัวเดียว · ตาราง `CustomerDocumentActions` append-only ในธุรกรรมเดียวกับภาพฉายบนใบ · ฉบับที่ลงนาม (ไฟล์ + SHA-256) · สอง renderer พิมพ์ผู้ลงนามผ่าน `CustomerSignerLines` · รหัสยืนยันอีเมลตามยอดขั้นต่ำของบริษัท · PDPA (RoPA · อายุเก็บ · DSR) (คำตัดสิน 267-1-33…42) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8b6861de)_
+_Last verified against codebase: 2026-11-12 (รอบ 266 แพ็ก B — §3.4c-B ย้ายการรับชำระที่ตัดผิดใบผ่าน 21630 สองขา (ขาเงินสด/คู่ธนาคารไม่ถูกแตะ) · `Payment.MovedToDocumentId` + แถวจัดสรรที่ปล่อย · ยกเลิกใบเสร็จเดิม + ใบแทน "ออกแทนใบเลขที่ …" สอง renderer · ด่าน e-Tax/งวดภาษี/คู่ค้า/ภาษีถูกหัก/SoD · พักการทวง) · commit 46ac5463 — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P4 — §2.12n-P4 หลังจ่าย: ค่าตั้งใบเสร็จอัตโนมัติหลังรับชำระต่อเอกสาร (ชั้นบนสุดของตัวต่อชั้นเดียว · ฟอร์ม + ปุ่มของใบที่ออกแล้ว · ไม่สืบทอด) ·
+ใบเสร็จของการชำระบนหน้าเอกสาร · สถานะสลิป + เหตุถึงลูกค้า · 50 ทวิ จากหน้าเอกสาร (แกนเดียวกับลิงก์อัปโหลด) · ใบวางบิลจ่ายรายใบ · พอร์ทัลเปิดหน้าเดียวกัน (คำตัดสิน 267-1-44…50) —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit 17680548)_
+_Last verified against codebase: 2026-11-13 (รอบ 266 แพ็ก B ชุดแก้ฝ่ายค้าน — §3.4c-B: B-1 ใบรับในตัว (ปฏิเสธ/ออกใบกำกับ ณ วันรับเงิน/พรีวิวตามจริง) · B-2 สิทธิ์ใต้ล็อก + ถอดด้วยกุญแจพรีวิว · B-3…B-9 ผู้อ่าน/งานที่ตามใบที่มีผล · ถอดหลังแตะกระดาษ = ปฏิเสธ (คำตัดสิน 266-1-32…35)) · commit 0ec86361 (+ 57b75d99) — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_Last verified against codebase: 2026-11-13 (รอบ 268 งานคงค้าง — §2.12g-268: 268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง · 268-1-2 สลิปออเดอร์หน้าเว็บลงธนาคาร · 268-1-3 มัดจำการจองต่องวด · 268-1-4 แจ้งแชตหลังผูกสลิป + PDF · 268-1-5 ศูนย์บิล LINE (นำออก/ใบเสร็จส่วนเสริม) · 268-1-6 รับหลายใบแจ้งคู่ค้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3dad4ab2)_
+_Last verified against codebase: 2026-11-13 (รอบ 268 ชุดแก้ฝ่ายค้าน — §2.12g-268: M1–M6 · L1/L2/L5/L6/L7 (คำตัดสิน 268-1-7…14) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b960b19f)_

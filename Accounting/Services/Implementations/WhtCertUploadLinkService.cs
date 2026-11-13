@@ -178,9 +178,15 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
     }
 
     /// <summary>รายการรอใบของลูกค้าที่ถือลิงก์ (ตัวโหลด/ตัวตัดสินเดียวกับป้าย 50 ทวิ) — เฉพาะที่ผูกเอกสาร</summary>
-    private async Task<List<WhtUploadItemDto>> ItemsAsync(Guid companyId, WhtCertUploadLink link, CancellationToken ct)
+    private Task<List<WhtUploadItemDto>> ItemsAsync(Guid companyId, WhtCertUploadLink link, CancellationToken ct)
+        => ItemsForContactAsync(_db, companyId, link.ContactId, link.DocumentId, ct);
+
+    /// <summary>รายการรอใบของผู้ติดต่อหนึ่งราย — ตัวโหลดเดียวของหน้าอัปโหลด 50 ทวิ (ลิงก์อัปโหลด) และการ์ด 50 ทวิ บนหน้าเอกสาร
+    /// (รอบ 267 P4 · <c>DocumentPayLinkService.AfterPayAsync</c>) · <paramref name="preselectDocumentId"/> = เอกสารที่ติ๊กไว้ให้ (null = ทุกใบ)</summary>
+    internal static async Task<List<WhtUploadItemDto>> ItemsForContactAsync(AccountingDbContext db, Guid companyId, Guid contactId,
+        Guid? preselectDocumentId, CancellationToken ct)
     {
-        var rows = await WhtCertTracking.LoadAsync(_db, companyId, DateTime.UtcNow, contactId: link.ContactId,
+        var rows = await WhtCertTracking.LoadAsync(db, companyId, DateTime.UtcNow, contactId: contactId,
             statuses: WhtCertTracking.FollowUpStatuses, ct: ct);
         return rows
             .Where(r => r.DocumentId != null && WhtCertIntakeStatus.NeedsFollowUp(r.Verdict.State))
@@ -189,7 +195,7 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
                 Math.Round(g.Sum(x => WhtCreditableAmount.Missing(x.Status, x.WhtAmount, x.ReceivedAmount)), 2, MidpointRounding.AwayFromZero),
                 g.Any(x => AwaitsCustomer(x.Verdict.State)) ? "รอหนังสือรับรอง" : "ส่งแล้ว — รอผู้ขายตรวจ",
                 !g.Any(x => AwaitsCustomer(x.Verdict.State)),
-                link.DocumentId == null || link.DocumentId == g.Key))
+                preselectDocumentId == null || preselectDocumentId == g.Key))
             .OrderBy(i => i.WithheldSince ?? DateTime.MaxValue).ToList();
     }
 
@@ -216,6 +222,34 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
         if (!WhtCertUploadLinkPolicy.Usable(link.ExpiresAt, link.RevokedAt, DateTime.UtcNow))
             throw new BusinessRuleException(WhtCertUploadLinkPolicy.UnusableMessage, WhtCertUploadLinkPolicy.RuleCode, 410);
 
+        var r = await UploadCoreAsync(companyId, link.ContactId, link.DocumentId, content, documentIds, senderName, ct);
+        await _db.WhtCertUploadLinks.Where(l => l.Id == link.Id && l.CompanyId == companyId)
+            .ExecuteUpdateAsync(x => x.SetProperty(l => l.LastUsedAt, (DateTime?)DateTime.UtcNow)
+                .SetProperty(l => l.UploadCount, l => l.UploadCount + 1), ct);
+        return r;
+    }
+
+    /// <summary>
+    /// รอบ 267 P4 (267-1-48): อัปโหลด 50 ทวิ <b>จากหน้าเอกสารของลูกค้า</b> — สิทธิ์พิสูจน์แล้วโดยผู้เรียก (token ของใบ ·
+    /// <c>DocumentPayLinkService.WhtCertTargetAsync</c>) · เดินแกนเดียวกับลิงก์อัปโหลดเดิม (<see cref="UploadCoreAsync"/> — ตรวจไบต์ · กันซ้ำ ·
+    /// ที่เก็บกลาง · OCR · ประตูเดียว <c>WhtCertIntakeService</c> ช่องทาง UploadLink) · ไม่มีระบบอัปโหลดที่สอง · ใบที่ไม่ได้รอหนังสือรับรอง = ปฏิเสธ
+    /// </summary>
+    public async Task<WhtUploadPublicResult> UploadForDocumentAsync(Guid companyId, Guid contactId, Guid documentId, byte[] content, string? senderName,
+        CancellationToken ct = default)
+    {
+        var open = (await ItemsForContactAsync(_db, companyId, contactId, documentId, ct)).FirstOrDefault(i => i.DocumentId == documentId);
+        if (open == null || open.Submitted)
+            throw new BusinessRuleException(open == null
+                ? "เอกสารนี้ไม่ได้รอหนังสือรับรองการหักภาษี ณ ที่จ่าย — ถ้ามีข้อสงสัย กรุณาติดต่อผู้ขาย"
+                : "ได้รับหนังสือรับรองของเอกสารนี้แล้ว — รอผู้ขายตรวจ (ไม่ต้องส่งซ้ำ)", WhtCertUploadLinkPolicy.RuleCode, 409);
+        return await UploadCoreAsync(companyId, contactId, documentId, content, new[] { documentId }, senderName, ct);
+    }
+
+    /// <summary>แกนรับไฟล์ 50 ทวิ จากลูกค้า (ไม่ล็อกอิน) — ตัวเดียวของลิงก์อัปโหลดและหน้าเอกสาร · <paramref name="scopeDocumentId"/> = เอกสารที่ลิงก์ผูก
+    /// (null = ทุกใบของผู้ติดต่อ) · <paramref name="documentIds"/> กรองให้อยู่ในชุดรอใบของผู้ติดต่อนี้เท่านั้น</summary>
+    private async Task<WhtUploadPublicResult> UploadCoreAsync(Guid companyId, Guid contactId, Guid? scopeDocumentId, byte[] content,
+        IReadOnlyList<Guid>? documentIds, string? senderName, CancellationToken ct)
+    {
         // ไบต์ตัดสิน (MagicBytes) — ก่อนเก็บ/สแกนอะไรทั้งนั้น
         var verdict = WhtCertUploadLinkPolicy.Inspect(content);
         if (verdict.Kind is not { } kind)
@@ -227,7 +261,7 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
             return new WhtUploadPublicResult(true, true, dup.Status, "ได้รับไฟล์นี้แล้ว — ไม่ต้องส่งซ้ำ ขอบคุณค่ะ");
 
         var name = WhtCertUploadLinkPolicy.SanitizeSenderName(senderName);
-        var allowed = (await ItemsAsync(companyId, link, ct)).Select(i => i.DocumentId).ToList();
+        var allowed = (await ItemsForContactAsync(_db, companyId, contactId, scopeDocumentId, ct)).Select(i => i.DocumentId).ToList();
         var hints = WhtCertUploadLinkPolicy.FilterHints(documentIds, allowed);
 
         // ที่เก็บกลาง (ห้ามแตะดิสก์ตรง) · ถัง "ภาษีถูกหัก" ก่อนบันทึก — ประตูเดียวผูกไฟล์กับแถวเครดิตตอนยืนยัน (AdoptBucketFileAsync)
@@ -245,11 +279,11 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
         {
             if (scanId is Guid sid)
                 r = await _intake.SubmitFromScanAsync(companyId, sid, WhtCertIntakeChannel.UploadLink, hints,
-                    WhtCertUploadLinkPolicy.SubmittedBy(name), null, ct, fileSha256: sha, expectedPayerContactId: link.ContactId);
+                    WhtCertUploadLinkPolicy.SubmittedBy(name), null, ct, fileSha256: sha, expectedPayerContactId: contactId);
             else
                 // รอบ 257 ชุด 2 (B-L3): ตัวเดียวกับอัปโหลดเอง (ประตูเดียว · ไม่มีค่าที่อ่านได้ · รอคนตรวจ)
                 r = await _intake.SubmitUnreadableAsync(companyId, WhtCertIntakeChannel.UploadLink, saved.Id, sha, hints,
-                    WhtCertUploadLinkPolicy.SubmittedBy(name), null, ct, expectedPayerContactId: link.ContactId);
+                    WhtCertUploadLinkPolicy.SubmittedBy(name), null, ct, expectedPayerContactId: contactId);
         }
         catch (BusinessRuleException ex) when (ex.StatusCode == 409)
         {
@@ -264,10 +298,6 @@ public class WhtCertUploadLinkService : IWhtCertUploadLinkService
         // รอบ 257 ชุด 2 (B-M2): ประตูเดียวคืน "ใบเดิม" (ไฟล์/ใบเดียวกันของผู้จ่ายรายนี้) ⇒ ไฟล์ที่เพิ่งเก็บไม่มีแถวใดอ้าง — ลบ (เดิมค้างเป็นไฟล์กำพร้าในถัง)
         if (r.Duplicate)
             await DeleteOrphanAsync(companyId, saved.Id);
-
-        await _db.WhtCertUploadLinks.Where(l => l.Id == link.Id && l.CompanyId == companyId)
-            .ExecuteUpdateAsync(x => x.SetProperty(l => l.LastUsedAt, (DateTime?)DateTime.UtcNow)
-                .SetProperty(l => l.UploadCount, l => l.UploadCount + 1), ct);
 
         var ourName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
         return new WhtUploadPublicResult(true, r.Duplicate, r.Status, PublicMessage(r, ourName));

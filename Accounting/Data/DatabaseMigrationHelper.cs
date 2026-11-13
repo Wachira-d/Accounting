@@ -258,6 +258,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PlatformUpgradeModeMigration.Statements());   // รอบ 237 — อัปเกรดกลางรอบ 2 แบบ: ค่าตั้งแพลตฟอร์ม + แบบที่ลูกค้าเลือกบนรายการชำระ
         list.AddRange(Accounting.Helpers.SignRequestMigration.Statements());   // รอบ 240 — ลิงก์ให้ลูกค้าเซ็น: webhook ต่อเอกสาร · อีเมลขอเซ็น/เตือน · outbox เหตุการณ์ลูกค้าเซ็น
         list.AddRange(Accounting.Helpers.DocumentAutoSendMigration.Statements());   // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · งานหลังรับชำระ (ใบเสร็จ/ขอ 50 ทวิ)
+        list.AddRange(Accounting.Helpers.CustomerSignMigration.Statements());   // รอบ 267 P2 — ผู้ลงนาม + บัญชีหลักฐาน (append-only) + ฉบับที่ลูกค้าเซ็น
         list.AddRange(Accounting.Helpers.CustomerDocPage.LegacyTokenHashSql);   // รอบ 267 P1 (267-1-3) — token ดิบของลิงก์ยอมรับ/เซ็นรับรุ่นก่อน ⇒ hash ในที่เดิม (รันซ้ำได้ · ฐานไม่เหลือ token ดิบ)
         list.Add(OneShotDataFixesTableSql);   // รอบ 250 WP-04 — ตาราง marker ของงานย้ายข้อมูลครั้งเดียว (ตัวเดียว · ก่อนทุกบล็อกที่อ่าน/เขียน marker)
         list.AddRange(Round250ScheduleSettingsStatements());   // รอบ 250 WP-04 ต่อยอด — แจ้งก่อนรอบรายการประจำ · วันเปิดส่งซ้ำของกฎทวง · ปิดแจ้งก่อนรอบของแถวเดิม (ครั้งเดียว)
@@ -275,12 +276,15 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.CustomerCreditMigration.Statements());   // รอบ 258 — เงินรอจัดสรร: คอลัมน์ Payments/PaymentAllocations · ผัง 21630 · backfill ครั้งเดียว (หลัง OneShotDataFixesTableSql)
         // ฝ่ายค้านรอบ 258 M4 — หลัง backfill: แถวที่ backfill รุ่นแรกประทับไปแล้ว (ผังพักไม่ใช่ 21630) ติดธง "ต้องตรวจ" ครั้งเดียวใต้ marker
         list.Add(Accounting.Helpers.CustomerCreditMigration.LegacyReviewSql());
+        list.AddRange(Accounting.Helpers.ReceiptLinkMoveMigration.Statements());   // รอบ 266 แพ็ก B — ย้ายการรับชำระระหว่างใบ (Payments.MovedToDocumentId · PaymentAllocations.Released*/MovedFromAllocationId)
         list.AddRange(Accounting.Helpers.Round259AutopilotMigration.Statements());   // รอบ 259 ชุด D — กุญแจกันซ้ำรอบรายการประจำ · คิวนำส่ง e-Tax ต่อกรมสรรพากร
         list.AddRange(Accounting.Helpers.Round259LineMigration.Statements());   // รอบ 259 แพ็ก B — LINE: webhook ล่าสุด · การ์ดทวง 50 ทวิ · ส่งเองจากหน้าเอกสาร · ตัดเรื่องที่ LINE ไม่ส่ง
         list.AddRange(Accounting.Helpers.Round260LineMigration.Statements());   // รอบ 260-4 — LINE: ชั่วโมงเงียบของการ์ดถึงลูกค้า
         list.AddRange(Accounting.Helpers.Round260SlipReceivingMigration.Statements());   // รอบ 260-2 — บัญชีที่เงินตามสลิปเข้า (ประทับบนรายการชำระตอนยืนยัน)
         list.AddRange(Accounting.Helpers.Round260LineSlipMigration.Statements());   // รอบ 260 — สลิปจากแชต LINE OA ของบริษัท (ตาราง + สวิตช์รับสลิป)
         list.AddRange(Accounting.Helpers.PartnerConsentMigration.Statements());   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ต่อคู่ × ขอบเขต · append-only)
+        list.AddRange(Accounting.Helpers.Round264SlipReadMigration.Statements());   // รอบ 264 P2 — ผลอ่านสลิป (QR + คู่กรณี) บน intent/สลิป LINE · ธนาคาร/เลขปิดบางผู้โอนบนแถวแจ้งคู่ค้า
+        list.AddRange(Accounting.Helpers.Round268Migration.Statements());   // รอบ 268 — ช่องทางของเงินมัดจำการจองต่องวด (268-1-3)
         return list;
     }
 
@@ -6844,6 +6848,9 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReplacesDocumentId" uuid NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReplacementReason" text NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ReplacedAt" timestamp with time zone NULL;""",
+            // รอบ 266 แพ็ก C ฝ่ายค้าน H2 (266-1-45): ใบแจ้งหนี้ที่ตัวช่วยใบซ้ำ "คงไว้" แต่ขั้นรับเงินยังไม่ครบ — ชี้ใบขายสดที่ยกเลิกแล้ว (แถบแดง + ปุ่มทำขั้นที่เหลือ)
+            // NULL = ไม่มีงานค้าง (ทุกใบเดิม) — ไม่ต้องซ่อมข้อมูลเก่า
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DuplicateSalePendingFromDocumentId" uuid NULL;""",
             // ใบหนึ่งใบถูกแทนได้ครั้งเดียว และเป็นใบแทนของใบเดียว
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_Documents_ReplacesDoc" ON "Documents" ("ReplacesDocumentId") WHERE "ReplacesDocumentId" IS NOT NULL;""",
             // รอบ 200 ทีม V1 (คำตัดสินข้อ 9): ใบแทนแบบ "ยกเลิกและออกใบแทน" — ใบเดิม Voided และผลทางบัญชีย้ายมาใบนี้ (ต่างจากใบแทนกระดาษ §86/6→§86/4)

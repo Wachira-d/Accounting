@@ -196,37 +196,28 @@ public partial class PdfGenerationService
         // ไฟล์ e-Filing ที่ระบบสร้างแยก). แยก 7% / 0% / ยกเว้น จาก TaxRate ของ line.
         // ต้องตัด VAT_CREDIT_CF (เครดิตภาษีซื้อยกมา — TaxRate=0 แต่ไม่ใช่ยอดขาย)
         // และ JE_INPUT ออกด้วย ไม่งั้นเครดิตยกมาถูกนับเป็น "ยอดขายที่ได้รับยกเว้น"
-        // ในช่อง 1/§81. อีกทั้งขายอัตรา 0% (§80/1) เก็บ TaxRate = 0 เหมือนยกเว้น →
+        // ในช่องยกเว้น/§81. อีกทั้งขายอัตรา 0% (§80/1) เก็บ TaxRate = 0 เหมือนยกเว้น →
         // แยกไม่ได้ด้วยอัตรา ต้องดู IncomeTypeCode ("EXEMPT" = §81, ที่เหลือ 0% = ส่งออก)
         // ⚠️ เดิมแยกช่องด้วย `TaxRate < 6.5 && IncomeTypeCode == "EXEMPT"` ซึ่งเขียน
         // ไว้ตอนที่ "EXEMPT" ยังหมายถึงยอดยกเว้นของ**ทั้งสองฝั่ง** — หลังแยกเป็น
         // EXEMPT_SALES (ขาย) / EXEMPT (ซื้อ) รหัสเดิมกลายเป็นฝั่ง**ซื้อ** ⇒
-        // ช่อง 8 ได้ยอด**ซื้อ**ยกเว้น และยอด**ขาย**ยกเว้นตกไปอยู่ช่อง 7 แทน
-        // (ช่อง 7/8 สลับกัน) · ตัวแมปช่องอยู่ที่ Helpers/VatReportLineKind ตัวเดียว
+        // ช่องยกเว้น ได้ยอด**ซื้อ**ยกเว้น และยอด**ขาย**ยกเว้นตกไปอยู่ช่อง 0% แทน
+        // (ช่อง 0%/ยกเว้น สลับกัน) · ตัวแมปช่องอยู่ที่ Helpers/VatReportLineKind ตัวเดียว
         var active = report.Lines.Where(l => !l.IsExcluded).ToList();
-        decimal BoxOf(Accounting.Helpers.Pp30SalesBox box) => active
-            .Where(l => Accounting.Helpers.VatReportLineKind.SalesBoxOf(l.IncomeTypeCode) == box)
-            .Sum(l => l.IncomeAmount);
-        var zero = BoxOf(Accounting.Helpers.Pp30SalesBox.ZeroRated);
-        var exempt = BoxOf(Accounting.Helpers.Pp30SalesBox.Exempt);
-        // แถวรายการเอกสารเก็บฐานที่ "ไม่ยกเว้น" (7% + 0%) ⇒ ช่อง 5 ต้องหักยอด 0%
-        // ออก ไม่ใช่คัดแถวตามอัตรา (ใบผสม 7%+0% เก็บ TaxRate = อัตราสูงสุดของใบ
-        // ⇒ ฐาน 0% ของใบนั้นจะถูกนับเข้าช่อง 5 แล้วซ้ำกับแถวยอดรวมช่อง 7 อีกที)
-        var std = Accounting.Helpers.VatReportLineKind.StandardBase(
-            BoxOf(Accounting.Helpers.Pp30SalesBox.Standard7), zero);
-        var totalSales = std + zero + exempt;
-        var purchaseBase = active.Where(l => Accounting.Helpers.VatReportLineKind
-            .SideOf(l.IncomeTypeCode) == Accounting.Helpers.VatReportSide.Input).Sum(l => l.IncomeAmount);
+        // รอบ 269 M3 — ยอดทุกช่องจากสูตรเดียวกับ Excel (Helpers/Pp30FormBoxes.Figures)
+        var figures = Accounting.Helpers.Pp30FormBoxes.Figures(
+                report.Lines.Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount, l.IsExcluded)), report.OutputVat, report.InputVat)
+            .ToDictionary(x => x.Box, x => x.Amount);
         // ยอดซื้อยกเว้น §81 ไม่มีช่องในแบบ — แสดงเป็นหมายเหตุ (เดิมถูกนับเป็น
-        // ยอดขายยกเว้นช่อง 8). รายงานที่สร้าง**ก่อน**การแยกช่อง 7/8 รหัสนี้รวม
+        // ยอดขายยกเว้นช่องยกเว้น). รายงานที่สร้าง**ก่อน**การแยกช่อง 0%/ยกเว้น รหัสนี้รวม
         // ยอดขายยกเว้นไว้ด้วย → บอกให้กดสร้างรายงานใหม่ ไม่ใช่เดาแทนผู้ใช้
         var exemptPurchaseNote = active
             .Where(l => l.IncomeTypeCode == Accounting.Helpers.VatReportLineKind.ExemptPurchases)
             .Sum(l => l.IncomeAmount);
 
         string M(decimal v) => v.ToString("N2");
-        var payable = report.NetVat >= 0 ? report.NetVat : 0;
-        var credit = report.NetVat < 0 ? -report.NetVat : 0;
+        var payable = figures[Accounting.Helpers.Pp30FormBox.NetTaxPayable];
+        var credit = figures[Accounting.Helpers.Pp30FormBox.NetTaxOverpaid];
 
         page.Content().PaddingTop(12).Column(col =>
         {
@@ -245,17 +236,19 @@ public partial class PdfGenerationService
             }
 
             col.Item().PaddingBottom(6).Text("การคำนวณภาษีมูลค่าเพิ่ม").FontSize(11).Bold().FontColor(theme);
-            Box("1", "ยอดขายในเดือนภาษีนี้ (รวมทุกอัตรา)", M(totalSales));
-            Box("2", "  • ยอดขายที่ต้องเสียภาษี (อัตรา 7%)", M(std));
-            Box("3", "  • ยอดขายที่เสียภาษีอัตรา 0% (ส่งออก §80/1)", M(zero));
-            Box("4", "  • ยอดขายที่ได้รับยกเว้น (§81)", M(exempt));
-            Box("5", "ภาษีขาย (Output VAT)", M(report.OutputVat), color: theme);
-            col.Item().PaddingVertical(6);
-            Box("6", "ยอดซื้อที่มีสิทธินำภาษีซื้อมาหัก", M(purchaseBase));
-            Box("7", "ภาษีซื้อ (Input VAT)", M(report.InputVat), color: theme);
-            col.Item().PaddingVertical(6);
-            Box("8", "ภาษีที่ต้องชำระในเดือนนี้", M(payable), strong: payable > 0, color: payable > 0 ? "#DC2626" : "#0F172A");
-            Box("9", "ภาษีที่ชำระเกิน (ยกไปเดือนถัดไป/ขอคืน)", M(credit), strong: credit > 0, color: credit > 0 ? "#16A34A" : "#0F172A");
+            // รอบ 269 M3 — เลข/ชื่อช่องตามแบบ ภ.พ.30 ทางการจาก Helpers/Pp30FormBoxes ตัวเดียว (เดิมพิมพ์เลขเองและเรียง 0%/ยกเว้นเป็น 3/4)
+            void FormBox(Accounting.Helpers.Pp30FormBox b, string value, bool strong = false, string? color = null)
+                => Box(Accounting.Helpers.Pp30FormBoxes.No(b), Accounting.Helpers.Pp30FormBoxes.Name(b), value, strong, color);
+            foreach (var (b, amount) in figures)
+            {
+                if (b is Accounting.Helpers.Pp30FormBox.Purchases or Accounting.Helpers.Pp30FormBox.TaxPayable or Accounting.Helpers.Pp30FormBox.OverpaidBroughtForward) col.Item().PaddingVertical(6);
+                var isVat = b is Accounting.Helpers.Pp30FormBox.OutputVat or Accounting.Helpers.Pp30FormBox.InputVat;
+                var strong = (b == Accounting.Helpers.Pp30FormBox.NetTaxPayable && payable > 0) || (b == Accounting.Helpers.Pp30FormBox.NetTaxOverpaid && credit > 0);
+                var color = isVat ? theme
+                    : b == Accounting.Helpers.Pp30FormBox.NetTaxPayable ? (payable > 0 ? "#DC2626" : "#0F172A")
+                    : b == Accounting.Helpers.Pp30FormBox.NetTaxOverpaid ? (credit > 0 ? "#16A34A" : "#0F172A") : null;
+                FormBox(b, M(amount), strong, color);
+            }
 
             if (exemptPurchaseNote != 0)
             {

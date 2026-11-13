@@ -225,18 +225,19 @@ public class ArApAnalysisService : IArApAnalysisService
             d.TotalAmount, d.PaidAmount, d.BalanceDue, 0, d.Status.ToString())).ToList();
 
         // Payments
-        var payments = await _db.Payments
-            .Include(p => p.Document)
-            .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ
-            .Where(p => p.CompanyId == companyId && p.Document != null && p.Document.ContactId == contactId
-                && docTypes.Contains(p.Document.DocumentType))
-            .OrderByDescending(p => p.PaymentDate)
+        // รอบ 266 ฝ่ายค้าน B-9: การรับชำระที่ถูกย้ายไปตัดใบอื่น (แพ็ก B) แสดงเลขของ "ใบที่มีผล" (MovedToDocumentId ?? DocumentId) — ผู้ติดต่อเดียวกันเสมอ (266-1-4)
+        var payments = await (
+                from p in _db.Payments.AsNoTracking().Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ
+                join d in _db.Documents.AsNoTracking() on (p.MovedToDocumentId ?? p.DocumentId) equals d.Id
+                where p.CompanyId == companyId && d.CompanyId == companyId && d.ContactId == contactId && docTypes.Contains(d.DocumentType)
+                orderby p.PaymentDate descending
+                select new { p.Id, p.PaymentNumber, p.PaymentDate, p.Amount, d.DocumentNumber, p.PaymentMethod })
             .Take(30)
             .ToListAsync();
 
         var paymentItems = payments.Select(p => new ContactPaymentItem(
             p.Id, p.PaymentNumber, p.PaymentDate, p.Amount,
-            p.Document?.DocumentNumber, p.PaymentMethod.ToString())).ToList();
+            p.DocumentNumber, p.PaymentMethod.ToString())).ToList();
 
         // Monthly history (last 12 months)
         var monthly = new List<ContactMonthlyItem>();

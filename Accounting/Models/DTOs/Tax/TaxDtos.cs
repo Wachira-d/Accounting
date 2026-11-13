@@ -48,7 +48,12 @@ public record TaxReportResponse(
     bool NeedsFilingNumber = false,
     /// <summary>ความสดของตัวเลข ภ.ง.ด.50/51 (Q12) — null สำหรับรายงานชนิดอื่น
     /// และเมื่อตรวจไม่สำเร็จ (หน้าเว็บต้องแสดง "ยังไม่ได้ตรวจ" ไม่ใช่ "ตรงแล้ว")</summary>
-    TaxReportFreshnessResponse? Freshness = null);
+    TaxReportFreshnessResponse? Freshness = null,
+    /// <summary>รอบ 269 ชุดสอง M3 — ยอดตามช่องของแบบ ภ.พ.30 ทางการ (1–12 · เลข/ชื่อ/ยอดจาก Helpers/Pp30FormBoxes) · null = ไม่ใช่ ภ.พ.30</summary>
+    List<Pp30FormBoxValue>? Pp30Boxes = null);
+
+/// <summary>ยอดหนึ่งช่องของแบบ ภ.พ.30 (เซิร์ฟเวอร์ตัดสินเลข/ชื่อ/ยอด หน้าแสดงอย่างเดียว)</summary>
+public record Pp30FormBoxValue(string No, string Name, decimal Amount);
 
 /// <summary>
 /// "ตัวเลขบนรายงาน ภ.ง.ด.50/51 ยังตรงกับข้อมูลต้นทางไหม" — เซิร์ฟเวอร์ตัดสิน
@@ -145,6 +150,18 @@ public record PullableDocumentListResponse(
     List<PullableMonthBucket> Months,
     // เดือนในกรอบ "ย้อน 6 เดือน" ที่ไม่มีรายงาน ภ.พ.30 ในระบบ (ป้าย พ.ศ.) — หน้าเตือน "ถ้ายื่นนอกระบบแล้ว อย่าดึงซ้ำ"
     List<string> MonthsWithoutReport);
+
+/// <summary>รอบ 269 ชุดสอง H1 — ร่างรายงานภาษีที่ล้าสมัย (อ่านอย่างเดียว · แทนการลบ-สร้างใหม่อัตโนมัติ) · ป้ายงวด พ.ศ. + ข้อความจาก server</summary>
+public record StaleDraftReportRow(Guid ReportId, string TaxType, int Year, int Month, string PeriodLabel,
+    int AddedDocuments, int RemovedDocuments, int ChangedDocuments, string? Message, string RuleCode);
+
+/// <summary>รอบ 269 — รายงาน ภ.พ.30 ที่บันทึกไว้ซึ่งยอดขาย 0%/ยกเว้นต่างจากการคำนวณสด (กติกาเจ้าของการขาย) · อ่านอย่างเดียว ·
+/// <paramref name="PeriodLabel"/> = "ดด/พ.ศ." คำนวณที่ server · <paramref name="SuggestedAction"/> = Regenerate / ConsiderAmendedFiling ·
+/// <paramref name="Cause"/> = RuleChange (ยอดที่บันทึก = กติกาเดิมบนข้อมูลวันนี้) / DataChanged (ไม่ตรงทั้งสองกติกา) · ป้ายช่องจาก Helpers/Pp30FormBoxes</summary>
+public record Pp30SalesBoxReviewRow(Guid ReportId, int Year, int Month, string PeriodLabel, string Status, bool AlreadyFiled,
+    decimal StoredZeroRated, decimal FreshZeroRated, decimal StoredExempt, decimal FreshExempt,
+    string SuggestedAction, string? Message, string RuleCode,
+    string Cause, string ZeroRatedBoxRef, string ExemptBoxRef);
 
 /// <summary>บรรทัด "ดึงเข้างวด" ในรายงานร่างที่ตอนนี้ไม่ผ่านด่านดึง (รอบ 225 S3 — อ่านอย่างเดียว)</summary>
 public record IneligiblePulledLineDto(Guid ReportId, int Year, int Month, Guid LineId, Guid DocumentId, string? DocumentNumber,

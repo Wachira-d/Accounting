@@ -442,6 +442,47 @@ public class ContactLineBindingService : IContactLineBindingService
         return await BillingLineViewAsync(buyerCompanyId, canManage: true, ct);
     }
 
+    /// <summary>
+    /// รอบ 268 (คำตัดสิน 268-1-5 แก้โดย 268-1-9 · ฝ่ายค้าน M2): ผู้ใช้ถูกนำออกจากบริษัทผู้เช่า ⇒ (1) <b>เพิกถอนคำเชิญผูก LINE ศูนย์บิลที่ผู้ใช้คนนั้นสร้างและยังไม่ถูกใช้</b>
+    /// (ลิงก์ค้าง 7 วันผูกใหม่ไม่ได้อีก) (2) <b>แจ้งเจ้าของบริษัทผู้เช่า</b>ให้ตรวจปลายทาง LINE ที่ยังผูกอยู่ (กระดิ่ง + ลิงก์ศูนย์บิล) — <b>ไม่ยกเลิกปลายทางเอง</b>:
+    /// ระบบรู้แค่ "ผู้สร้างคำเชิญ" (<c>BoundByUserId</c>) ไม่รู้ว่า LINE เป็นของใคร (ตัดตามคีย์นี้ = รั่วทางหนึ่ง ตัดเกินอีกทาง) ⇒ คนตัดสินที่ศูนย์บิล ·
+    /// audit ในบริษัทผู้ให้บริการ · ผู้เรียก = <c>CompanyService.RemoveUserAsync</c> (ธุรกรรมเดียวกับการนำออก)
+    /// </summary>
+    /// <returns>(คำเชิญที่เพิกถอน, ปลายทางที่ยังผูกอยู่และให้ผู้เช่าตรวจ)</returns>
+    public static async Task<(int RevokedInvites, int EndpointsToReview)> OnTenantMemberRemovedAsync(AccountingDbContext db, Guid buyerCompanyId, Guid removedUserId,
+        Guid? actorUserId, CancellationToken ct = default)
+    {
+        if (await PlatformInvoiceQueries.PlatformTenantIdAsync(db, ct) is not Guid providerId || providerId == buyerCompanyId) return (0, 0);
+        var contactIds = await PlatformInvoiceQueries.BuyerContactIdsAsync(db, providerId, buyerCompanyId, ct);
+        if (contactIds.Count == 0) return (0, 0);
+        var now = DateTime.UtcNow;
+        var revoked = await db.ContactLineInvites
+            .Where(i => i.CompanyId == providerId && contactIds.Contains(i.ContactId) && i.CreatedByUserId == removedUserId
+                && i.UsedAt == null && i.RevokedAt == null && i.ExpiresAt > now)
+            .ExecuteUpdateAsync(u => u.SetProperty(i => i.RevokedAt, (DateTime?)now), ct);
+        var live = await db.ContactNotifyEndpoints.AsNoTracking()
+            .CountAsync(e => e.CompanyId == providerId && contactIds.Contains(e.ContactId) && e.OaScope == NotifyEndpointKind.ScopeNextAcc
+                && (e.Kind == NotifyEndpointKind.LineUser || e.Kind == NotifyEndpointKind.LineGroup) && e.UnlinkedAt == null && !e.IsDeleted, ct);
+        if (revoked == 0 && live == 0) return (0, 0);
+        db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = providerId, UserId = actorUserId, Action = AuditAction.Update, EntityType = ContactRecipientRule.AuditEntityType, EntityId = contactIds[0].ToString(),
+            NewValues = JsonSerializer.Serialize(new { op = "tenant-member-removed", buyerCompanyId, removedUserId, revokedInvites = revoked, endpointsToReview = live,
+                rule = ProviderCentralOa.RuleCode }),
+            Timestamp = now,
+        });
+        // ผู้รับตัวเดียวกับกระดิ่ง LINE ของบริษัท (เจ้าของที่ยังใช้งาน) — ไม่รวมผู้ถูกนำออก
+        foreach (var owner in (await LineAlertRecipients.ForCompanyAsync(db, null, buyerCompanyId, ct)).Where(u => u != removedUserId))
+            db.Notifications.Add(new Notification
+            {
+                UserId = owner, CompanyId = buyerCompanyId, Type = NotificationType.System,
+                Title = ProviderCentralOa.MemberRemovedReviewTitle, Message = ProviderCentralOa.MemberRemovedReviewMessage(revoked, live),
+                ActionUrl = ProviderCentralOa.BillingPath(buyerCompanyId), EntityType = ProviderCentralOa.MemberRemovedReviewEntity, EntityId = removedUserId,
+            });
+        await db.SaveChangesAsync(ct);
+        return (revoked, live);
+    }
+
     public async Task<ContactLineInviteResponse> CreateBillingInviteAsync(Guid buyerCompanyId, Guid? actorUserId, string? actorEmail, CancellationToken ct = default)
     {
         // ฝ่ายค้าน L5 (262-1-17): จำกัดความถี่ต่อบริษัทผู้เช่า (DB · หลายเครื่อง) — แต่ละครั้งเขียน audit ในบริษัทผู้ให้บริการ + เพิกถอนลิงก์เดิมของผู้ติดต่อ

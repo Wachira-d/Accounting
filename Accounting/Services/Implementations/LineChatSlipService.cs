@@ -27,6 +27,9 @@ public interface ILineChatSlipService
     Task<LineChatSlipAssignResult> AssignAsync(Guid companyId, Guid slipId, AssignLineChatSlipRequest request, string actor, CancellationToken ct = default);
     Task DismissAsync(Guid companyId, Guid slipId, string? reason, string actor, CancellationToken ct = default);
     Task<(byte[] Bytes, string ContentType)?> ReadFileAsync(Guid companyId, Guid slipId, CancellationToken ct = default);
+
+    /// <summary>รอบ 268 (268-1-8): ผู้เรียกเดียว = คิวเบื้องหลัง <c>DeferredNotifyDispatchJob</c> (เลื่อนพ้นชั่วโมงเงียบ / ส่งซ้ำครั้งเดียว) · คืน null = ส่งแล้ว · ข้อความ = ปิดแถวพร้อมเหตุ</summary>
+    Task<string?> DispatchLinkedNoticeAsync(Guid companyId, Guid slipId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -46,12 +49,14 @@ public sealed class LineChatSlipService : ILineChatSlipService
     private readonly Accounting.Services.Storage.IFileStorage _storage;
     private readonly ILogger<LineChatSlipService> _logger;
     private readonly INotificationEngine? _notify;
+    private readonly ILineNotifyService? _line;
 
     public LineChatSlipService(AccountingDbContext db, ISecretProtector secrets, ICustomerLineLinkService links, ISlipImageReader reader,
         IDocumentPayLinkService payLinks, SlipEvidenceService slips, Accounting.Services.Storage.IFileStorage storage,
-        ILogger<LineChatSlipService> logger, INotificationEngine? notify = null)
+        ILogger<LineChatSlipService> logger, INotificationEngine? notify = null, ILineNotifyService? line = null)
     {
         _db = db; _secrets = secrets; _links = links; _reader = reader; _payLinks = payLinks; _slips = slips; _storage = storage; _logger = logger; _notify = notify;
+        _line = line;
     }
 
     public const string ActorAuto = "line-chat:auto";
@@ -129,12 +134,24 @@ public sealed class LineChatSlipService : ILineChatSlipService
         var ext = SlipEvidenceRule.ExtensionFor(sniffed);
         if (sniffed == null || ext == null) return null;
 
+        // รอบ 268 (268-1-12 · ฝ่ายค้าน L6): PDF เกินจำนวนหน้าของสลิป ⇒ ไม่ใช่สลิป — ไม่อ่าน ไม่เก็บ (PDPA ม.22 เก็บเท่าที่จำเป็น)
+        var isPdf = sniffed == "application/pdf";
+        if (isPdf && LineChatSlipRule.PdfPageCount(bytes) > LineChatSlipRule.MaxPdfPages) return One(LineChatSlipRule.Replies.PdfNotSlip);
         var sha = SlipEvidenceRule.Sha256Hex(bytes);
         if (await IsDuplicateFileAsync(companyId, sha, ct)) return One(LineChatSlipRule.Replies.Duplicate);
         var reading = await _reader.ReadAsync(bytes, sniffed, ct);
+        // PDF ที่อ่านแล้วไม่ดูเป็นสลิป (สำเนาบัตร/สัญญา) ⇒ ไม่เก็บไฟล์ ไม่เข้าคิว (รูปยังเข้าคิวพนักงานตามเดิม)
+        if (isPdf && !reading.LooksLikeSlip) return One(LineChatSlipRule.Replies.PdfNotSlip);
         var slipRef = SlipEvidenceRule.NormalizeRef(reading.Ref);
         // ฝ่ายค้าน M1: ref ซ้ำแต่รูปต่าง ⇒ ไม่ทิ้ง — เข้าคิวพนักงานเหตุ DuplicateRef (OCR อาจอ่าน Biller ID/Ref1 ที่เหมือนกันทุกใบ)
         var refDuplicate = slipRef != null && await IsDuplicateRefAsync(companyId, slipRef, ct);
+        // ฝ่ายค้าน 264-P2 L5: ref จาก QR ≠ ref จากข้อความของสำเนาเดียวกันที่ครอป QR ออก / แถวก่อนรอบนี้ ⇒ เทียบค่าจากข้อความด้วย
+        var textRef = SlipEvidenceRule.NormalizeRef(reading.TextRef);
+        if (!refDuplicate && textRef != null && textRef != slipRef && await IsDuplicateRefAsync(companyId, textRef, ct))
+        {
+            refDuplicate = true;
+            slipRef ??= textRef;
+        }
 
         var now = DateTime.UtcNow;
         var absPath = Path.Combine(_storage.Locator.RelativeBase, "wwwroot", "uploads", "line-chat-slips", now.ToString("yyyy-MM"), $"{Guid.NewGuid():N}{ext}");
@@ -143,6 +160,8 @@ public sealed class LineChatSlipService : ILineChatSlipService
             CompanyId = companyId, SourceKind = source.Kind, SourceKey = sourceKey, ContactId = contactIds.Count == 1 ? contactIds[0] : (Guid?)null,
             LineMessageId = msgId, FileSha256 = sha, StoragePath = absPath, ContentType = sniffed,
             OcrAmount = reading.Amount, OcrAmounts = LineChatSlipRule.AmountsText(reading.Amounts), OcrDate = reading.Date, OcrRef = slipRef,
+            // รอบ 264 P2: ผลอ่าน QR + คู่กรณี (ไม่มีชื่อ) — คัดลอกไป intent ตอนแจ้งโอน (TrySubmitAsync) ⇒ SlipReceivingAccount ชั้น "ผู้รับบนสลิป"
+            SlipReadJson = OcrSlipText.ToStoredJson(reading),
             ShowAmounts = showAmounts, CreatedBy = "line-webhook",
         };
         // เก็บไฟล์ผ่านที่เก็บกลาง (Local/S3) ในโฟลเดอร์ที่ไม่เสิร์ฟตรง · ฝ่ายค้าน M2: ล้มก่อนแถวถูกบันทึก ⇒ ลบไฟล์ (ไม่มีไฟล์กำพร้า)
@@ -337,6 +356,12 @@ public sealed class LineChatSlipService : ILineChatSlipService
         {
             return (false, ex.Message);
         }
+        // รอบ 264 P2 (คำตัดสิน 264-4-5): ผลอ่านของสลิปนี้ไปอยู่บนรายการชำระ — ตัวตัดสินบัญชีที่เงินเข้า/การแจ้งคู่ค้าอ่านจากที่เดียว (ทั้งสามทางเข้าของ LINE เดินผ่านตรงนี้)
+        if (row.SlipReadJson != null)
+        {
+            var intent = await _db.PaymentIntents.FirstOrDefaultAsync(i => i.Id == r.Intent.Id && i.CompanyId == companyId, ct);
+            if (intent != null && intent.SlipReadJson == null) intent.SlipReadJson = row.SlipReadJson;
+        }
         row.Status = doneStatus;
         row.DocumentId = documentId;
         row.PaymentIntentId = r.Intent.Id;
@@ -394,6 +419,10 @@ public sealed class LineChatSlipService : ILineChatSlipService
     /// <summary>ฝ่ายค้าน M4 (PDPA ม.39): แถว RoPA ของกิจกรรมนี้ — ครั้งเดียวต่อบริษัท (บันทึกพร้อมแถวสลิป) · ไม่ทับที่บริษัทแก้ไว้</summary>
     private async Task EnsureRopaAsync(Guid companyId, CancellationToken ct)
     {
+        // รอบ 268 (268-1-12): แถวเดิมที่ยังไม่รวม PDF ⇒ ปรับประเภทข้อมูลให้ตรงสิ่งที่ประมวลผลจริง (RoPA ม.39)
+        await _db.PdpaProcessingActivities
+            .Where(r => r.CompanyId == companyId && r.Purpose == LineChatSlipRule.RopaPurpose && r.DataCategories != LineChatSlipRule.RopaDataCategories)
+            .ExecuteUpdateAsync(u => u.SetProperty(r => r.DataCategories, LineChatSlipRule.RopaDataCategories), ct);
         if (await _db.PdpaProcessingActivities.AsNoTracking().AnyAsync(r => r.CompanyId == companyId && r.Purpose == LineChatSlipRule.RopaPurpose, ct)) return;
         if (_db.ChangeTracker.Entries<PdpaProcessingActivity>().Any(e => e.Entity.CompanyId == companyId && e.Entity.Purpose == LineChatSlipRule.RopaPurpose)) return;
         _db.PdpaProcessingActivities.Add(new PdpaProcessingActivity
@@ -587,6 +616,7 @@ public sealed class LineChatSlipService : ILineChatSlipService
                         .SetProperty(x => x.UpdatedAt, (DateTime?)DateTime.UtcNow), CancellationToken.None);
             }
         }
+        // ฝ่ายค้าน 268 L5: audit ของการผูกบันทึกก่อนส่งข้อความ (ส่งแล้ว save ล้ม = ลูกค้าได้ข้อความแต่ไม่มีร่องรอย)
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId, UserEmail = actor, Action = AuditAction.Update, EntityType = LineChatSlipRule.AuditEntityType, EntityId = row.Id.ToString(),
@@ -596,7 +626,101 @@ public sealed class LineChatSlipService : ILineChatSlipService
         });
         await _db.SaveChangesAsync(ct);
         await DropFileAsync(row, ct);
-        return new LineChatSlipAssignResult(row.Id, doc.Id, doc.DocumentNumber, row.PaymentIntentId!.Value, amount, crossContact);
+        // รอบ 268 (268-1-4 · ฝ่ายค้าน M1/L5 → 268-1-7/8): แจ้งลูกค้าในแชตเดิม — ใบต้องเป็นของผู้ติดต่อที่ผูกแชตนี้ · ผูกนานหลังสลิปเข้า + ชั่วโมงเงียบ ⇒ เลื่อน · ล้ม ⇒ ส่งซ้ำครั้งเดียว
+        var notice = crossContact ? LineChatSlipRule.LinkedNotice.CrossContact : await NoticeAfterAssignAsync(row, doc.DocumentNumber, doc.ContactId, amount, ct);
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserEmail = actor, Action = AuditAction.Update, EntityType = LineChatSlipRule.AuditEntityType, EntityId = row.Id.ToString(),
+            NewValues = JsonSerializer.Serialize(new { op = "assign-notice", documentId = doc.Id, customerNotice = notice, rule = LineChatSlipRule.RuleCode }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        return new LineChatSlipAssignResult(row.Id, doc.Id, doc.DocumentNumber, row.PaymentIntentId!.Value, amount, crossContact, notice);
+    }
+
+    /// <summary>268-1-8: ส่งเลย / เลื่อนพ้นชั่วโมงเงียบ / ล้มแล้วเข้าคิวส่งซ้ำครั้งเดียว (คิวเบื้องหลังเดิม <c>DeferredNotifications</c>)</summary>
+    private async Task<string> NoticeAfterAssignAsync(LineChatSlip row, string documentNumber, Guid documentContactId, decimal amount, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var quiet = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == row.CompanyId)
+            .Select(x => new { x.LineQuietHoursEnabled, x.LineQuietStartHour, x.LineQuietEndHour }).FirstOrDefaultAsync(ct);
+        var defer = quiet == null ? null
+            : LineChatSlipRule.LinkedNoticeDeferUntil(now, row.CreatedAt, quiet.LineQuietHoursEnabled, quiet.LineQuietStartHour, quiet.LineQuietEndHour);
+        if (defer is DateTime until)
+        {
+            await QueueLinkedNoticeAsync(row, until, ct);
+            return LineChatSlipRule.LinkedNotice.Deferred(until);
+        }
+        var (notice, retryable) = await NotifyChatLinkedAsync(row, documentNumber, documentContactId, amount, ct);
+        if (!retryable) return notice;
+        await QueueLinkedNoticeAsync(row, now.AddMinutes(1), ct);
+        return LineChatSlipRule.LinkedNotice.FailedWillRetry(notice);
+    }
+
+    private async Task QueueLinkedNoticeAsync(LineChatSlip row, DateTime dueUtc, CancellationToken ct)
+    {
+        if (await _db.DeferredNotifications.IgnoreQueryFilters()
+                .AnyAsync(d => d.CompanyId == row.CompanyId && d.Kind == DeferredNotifyPolicy.LineChatSlipLinked && d.EntityId == row.Id, ct)) return;
+        var q = DeferredNotifyPolicy.New(row.CompanyId, Guid.Empty, DeferredNotifyPolicy.LineChatSlipLinked, row.Id, dueUtc);
+        _db.DeferredNotifications.Add(q);
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<string?> DispatchLinkedNoticeAsync(Guid companyId, Guid slipId, CancellationToken ct = default)
+    {
+        var row = await _db.LineChatSlips.AsNoTracking().FirstOrDefaultAsync(x => x.Id == slipId && x.CompanyId == companyId, ct);
+        if (row?.DocumentId is not Guid docId || row.PaymentIntentId is not Guid intentId) return "ไม่พบสลิปที่ผูกแล้ว — ไม่แจ้ง";
+        var doc = await _db.Documents.AsNoTracking().Where(d => d.Id == docId && d.CompanyId == companyId)
+            .Select(d => new { d.DocumentNumber, d.ContactId }).FirstOrDefaultAsync(ct);
+        var amount = await _db.PaymentIntents.AsNoTracking().Where(i => i.Id == intentId && i.CompanyId == companyId).Select(i => (decimal?)i.Amount).FirstOrDefaultAsync(ct);
+        if (doc == null || amount == null) return "ไม่พบเอกสาร/รายการรอยืนยันของสลิป — ไม่แจ้ง";
+        var (notice, _) = await NotifyChatLinkedAsync(row, doc.DocumentNumber, doc.ContactId, amount.Value, ct);
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserEmail = ActorAuto, Action = AuditAction.Update, EntityType = LineChatSlipRule.AuditEntityType, EntityId = row.Id.ToString(),
+            NewValues = JsonSerializer.Serialize(new { op = "assign-notice-deferred", documentId = docId, customerNotice = notice, rule = LineChatSlipRule.RuleCode }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        // ส่งซ้ำครั้งเดียว: ไม่สำเร็จ ⇒ ปิดแถวคิวพร้อมเหตุ (ไม่วนลองต่อ)
+        return notice == LineChatSlipRule.LinkedNotice.Sent ? null : notice;
+    }
+
+    /// <summary>รอบ 268 (คำตัดสิน 268-1-4): ข้อความถึงแชตที่ส่งสลิป — ปลายทางของผู้ติดต่อที่ผูกแหล่งแชตนี้ (กุญแจ = <c>LineIdHash</c> เดียวกับ <see cref="BindingAsync"/>) ·
+    /// ยอดเฉพาะเมื่อแสดงยอดได้ทั้งแถว (ค่าที่ประทับตอนรับรูป) และทุกปลายทาง · ไม่รอชั่วโมงเงียบ (คำตอบต่อสลิปที่ลูกค้าส่งเอง — แบบเดียวกับใบเสร็จหลังลูกค้าจ่าย · push ตรง ไม่ผ่านคิวการ์ด) ·
+    /// retry key = id ของแถว (ผูกซ้ำไม่ได้ · LINE ไม่ส่งสองครั้ง) · ไม่โยน (ผูกแล้ว — ผลกลับเป็นข้อความถึงพนักงาน)</summary>
+    private async Task<(string Notice, bool Retryable)> NotifyChatLinkedAsync(LineChatSlip row, string documentNumber, Guid documentContactId, decimal amount,
+        CancellationToken ct)
+    {
+        if (_line == null) return (LineChatSlipRule.LinkedNotice.NoLine, false);
+        try
+        {
+            var eps = await _db.ContactNotifyEndpoints.AsNoTracking()
+                .Where(e => e.CompanyId == row.CompanyId && e.LineIdHash == row.SourceKey && e.UnlinkedAt == null && e.BlockedAt == null && !e.IsDeleted
+                    && (e.Kind == NotifyEndpointKind.LineUser || e.Kind == NotifyEndpointKind.LineGroup))
+                .OrderBy(e => e.LinkedAt).ToListAsync(ct);
+            if (eps.Count == 0) return (LineChatSlipRule.LinkedNotice.Unbound, false);
+            // ฝ่ายค้าน 268 M1 (268-1-7): ใบต้องเป็นของผู้ติดต่อที่ผูกแชตนี้ (ผู้ติดต่อยังอยู่) — แถวสลิปที่ไม่มี ContactId (LINE ผูกหลายราย/ผูกทีหลัง) ไม่ใช่ใบอนุญาต
+            var boundContacts = eps.Select(e => e.ContactId).Distinct().ToList();
+            if (!boundContacts.Contains(documentContactId)
+                || !await _db.Contacts.AsNoTracking().AnyAsync(c => c.Id == documentContactId && c.CompanyId == row.CompanyId && !c.IsDeleted, ct))
+                return (LineChatSlipRule.LinkedNotice.CrossContact, false);
+            var ep = eps.First(e => e.ContactId == documentContactId);
+            var isGroup = ep.Kind == NotifyEndpointKind.LineGroup;
+            var to = _secrets.Unprotect(isGroup ? ep.LineGroupId : ep.LineUserId);
+            if (string.IsNullOrWhiteSpace(to)) return (LineChatSlipRule.LinkedNotice.Failed("ถอดรหัสปลายทางไม่ได้"), false);
+            var showAmounts = row.ShowAmounts && eps.All(e => e.ShowAmounts);
+            var r = await _line.TryPushContactTextAsync(row.CompanyId, ep.OaScope, isGroup ? LineTargetKind.ContactGroup : LineTargetKind.TenantMember, to,
+                LineChatSlipRule.Replies.LinkedByStaff(documentNumber, amount, showAmounts), row.Id);
+            // ล้มชั่วคราว (เครือข่าย/5xx/429/ไม่รู้สถานะ) ⇒ ส่งซ้ำได้ (retry key เดิม ⇒ LINE ไม่ส่งสองครั้ง) · ปฏิเสธถาวร (4xx อื่น) ⇒ ไม่ซ้ำ
+            var retryable = !r.Ok && (r.TransportError || r.HttpStatus is null or >= 500 or 429);
+            return (r.Ok ? LineChatSlipRule.LinkedNotice.Sent : LineChatSlipRule.LinkedNotice.Failed(r.Error), retryable);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งลูกค้าในแชตหลังผูกสลิป {Slip} ไม่สำเร็จ", row.Id);
+            return (LineChatSlipRule.LinkedNotice.Failed(null), true);
+        }
     }
 
     public async Task DismissAsync(Guid companyId, Guid slipId, string? reason, string actor, CancellationToken ct = default)
@@ -654,6 +778,8 @@ public sealed class LineChatSlipService : ILineChatSlipService
                 continue;
             }
             r.FileDeletedAt = nowUtc;
+            // ฝ่ายค้าน 264-P2 L2: ผลอ่าน (ธนาคาร + เลขท้ายของผู้โอน/ผู้รับ) ไม่เก็บเกินรูป — แถวที่แจ้งโอนแล้วคัดลอกไป intent แล้ว (ฐานเก็บตามเอกสาร)
+            r.SlipReadJson = null;
             if (!closed.Contains(r.Status))
             {
                 r.Status = LineChatSlipRule.Statuses.Dismissed;

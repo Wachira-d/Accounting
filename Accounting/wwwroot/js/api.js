@@ -825,6 +825,11 @@ const API = {
       previewReceiptLink: (d) => API.post(`${base}/receipt-links/preview`, d),
       linkReceipt: (d) => API.post(`${base}/receipt-links`, d),
       undoReceiptLink: (d) => API.post(`${base}/receipt-links/undo`, d),
+      // รอบ 266 แพ็ก C — ตัวช่วยใบซ้ำ (DuplicateSalePolicy) + ใบแจ้งการนำเงินไปตัดชำระ (ไม่ใช่ใบรับ/ใบกำกับภาษี)
+      getDuplicateSaleCandidates: (docId) => API.get(`${base}/receipt-links/duplicate-sale/candidates?documentId=${encodeURIComponent(docId)}`),
+      previewDuplicateSale: (cashSaleId, invoiceId) => API.get(`${base}/receipt-links/duplicate-sale/preview?cashSaleId=${encodeURIComponent(cashSaleId)}&invoiceId=${encodeURIComponent(invoiceId)}`),
+      resolveDuplicateSale: (d) => API.post(`${base}/receipt-links/duplicate-sale`, d),
+      downloadPaymentAdvice: (allocationId) => API.download(`${base}/receipt-links/advice/${encodeURIComponent(allocationId)}?format=pdf`, 'payment-advice.pdf'),
       getConversionTargets: (id) => API.get(`${base}/document/${id}/conversion-targets`),
       batchConvertDocuments: (ids, t) => API.post(`${base}/document/batch-convert/${t}`, { documentIds: ids }),
       createInvoiceFromObligation: (obligationId) => API.post(`${base}/document/from-obligation/${obligationId}`),
@@ -1229,7 +1234,16 @@ const API = {
       cmsDeleteProduct: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/commerce/products/${id}`),
       // cmsListOrders/cmsGetOrder/cmsUpdateOrderStatus อยู่ในกลุ่ม "Orders" ด้านบน — ห้ามประกาศซ้ำ (key ซ้ำตัวหลังทับเงียบ)
       cmsSyncOrderToErp: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/sync-erp`, {}),
-      cmsConfirmOrderPayment: (siteId, id, paymentId = null) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/confirm-payment${paymentId ? `?paymentId=${paymentId}` : ''}`, {}),
+      // รอบ 268 (268-1-2): บัญชีที่เงินตามสลิปเข้า — ตัวเลือก/ค่าแนะนำจากเซิร์ฟเวอร์ · ไม่ส่ง bankAccountId = ค่าแนะนำ
+      cmsConfirmOrderPayment: (siteId, id, paymentId = null, bankAccountId = null) => {
+        const q = new URLSearchParams();
+        if (paymentId) q.set('paymentId', paymentId);
+        if (bankAccountId) q.set('bankAccountId', bankAccountId);
+        const qs = q.toString();
+        return API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/confirm-payment${qs ? '?' + qs : ''}`, {});
+      },
+      cmsOrderReceivingAccounts: (siteId, id, paymentId = null) =>
+        API.get(`${base}/cms/sites/${siteId}/commerce/orders/${id}/receiving-accounts${paymentId ? `?paymentId=${paymentId}` : ''}`),
       // รอบ 209 P3: คิวผลิต (A5) + บันทึกรับเงินหน้าร้าน/ปลายทาง (E7) — CmsOrderFulfilmentController
       cmsProductionQueue: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/commerce/orders/production-queue${q}`),
       cmsRecordCounterPayment: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/counter-payment`, d),
@@ -1432,7 +1446,8 @@ const API = {
       // รอบ 260-2: ตัวเลือก "บัญชีที่เงินเข้า" + ค่าแนะนำ + เหตุผล (เซิร์ฟเวอร์ตัดสิน)
       getPaymentIntentReceivingAccounts: (id) => API.get(`${base}/pay/intents/${id}/receiving-accounts`),
       // รอบ 250 ฝ่ายค้าน H1: ปฏิเสธสลิปโอนของเอกสาร (เหตุผลบังคับ)
-      rejectPaymentIntentSlip: (id, reason) => API.post(`${base}/pay/intents/${id}/reject-slip`, { reason }),
+      // รอบ 267 P4: customerMessage = ข้อความถึงลูกค้าบนหน้าเอกสาร (ไม่บังคับ) · reason = เหตุผลภายใน
+      rejectPaymentIntentSlip: (id, reason, customerMessage) => API.post(`${base}/pay/intents/${id}/reject-slip`, { reason, customerMessage: customerMessage || null }),
       // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ให้ handler ของต้นทาง — เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง (redispatchPending)
       // รอบ 260-2 ฝ่ายค้าน M4: bankAccountId (ไม่บังคับ) = บัญชีที่เงินเข้าใหม่ของสลิปโอนที่ส่งต่อค้าง
       redispatchPaymentIntent: (id, bankAccountId) => API.post(`${base}/pay/intents/${id}/redispatch`, bankAccountId ? { bankAccountId } : {}),

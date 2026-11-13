@@ -57,14 +57,28 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
     /// <see cref="PostPaymentAutomationPolicy.EffectiveLayers"/> (ไม่คำนวณเอง) · static ⇒ <c>DocumentService.CreatePaymentAsync</c> เรียกด้วย context ของตัวเองได้</summary>
     internal static async Task<PostPaymentAutomationPolicy.Settings> SettingsForAsync(AccountingDbContext db, Guid companyId, Guid documentId, CancellationToken ct)
     {
+        var state = await ResolveForAsync(db, companyId, documentId, ct);
+        return state.Resolution.Settings;
+    }
+
+    /// <summary>ชั้นค่าตั้งของใบ ณ ตอนนี้ (ช่องของใบเอง + ผลของตัวต่อชั้น + ชั้นที่ตัดสิน) — ตัวโหลดเดียวของ <see cref="SettingsForAsync"/>,
+    /// หน้าเอกสารของพนักงาน (<c>DocumentPayLinkService.StatusAsync</c>) และ <see cref="SetDocumentLayerAsync"/> ·
+    /// รอบ 267 P4 (267-1-8 · 267-1-44): ชั้น "เอกสารใบนี้" บนสุด — ใบ › ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท</summary>
+    internal sealed record DocumentLayerState(bool Found, DocumentType Type, bool? DocEmailReceipt, bool? DocIncludePartial,
+        PostPaymentAutomationPolicy.Resolution Resolution);
+
+    internal static async Task<DocumentLayerState> ResolveForAsync(AccountingDbContext db, Guid companyId, Guid documentId, CancellationToken ct)
+    {
         var s = await db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
             .Select(x => new PostPaymentAutomationPolicy.Settings(x.PostPayEmailReceipt, x.PostPayIncludePartial))
             .FirstOrDefaultAsync(ct) ?? new PostPaymentAutomationPolicy.Settings(false, false);
         var doc = await db.Documents.AsNoTracking().IgnoreQueryFilters()
             .Where(d => d.Id == documentId && d.CompanyId == companyId)
-            .Select(d => new { d.AutoSendRuleId, d.RecurringTransactionId, d.ContactId })
+            .Select(d => new { d.AutoSendRuleId, d.RecurringTransactionId, d.ContactId, d.DocumentType, d.PostPayEmailReceipt, d.PostPayIncludePartial })
             .FirstOrDefaultAsync(ct);
-        if (doc == null) return s;
+        if (doc == null)
+            return new DocumentLayerState(false, default, null, null,
+                PostPaymentAutomationPolicy.Resolve(s, null, null, null, null));
         PostPaymentAutomationPolicy.Overrides? schedule = null, recurring = null, contact = null;
         if (doc.AutoSendRuleId is Guid rid)
             schedule = await db.EmailScheduleRules.AsNoTracking()
@@ -82,7 +96,45 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
             .Select(c => new PostPaymentAutomationPolicy.Overrides(c.PostPayEmailReceipt, c.PostPayIncludePartial))
             .FirstOrDefaultAsync(ct);
-        return PostPaymentAutomationPolicy.EffectiveLayers(s, schedule, recurring, contact);
+        // ชั้นเอกสาร: อ่านเฉพาะชนิดที่ตั้งได้ (ค่าที่หลงอยู่บนชนิดอื่นไม่มีผล — ตัวเขียนปฏิเสธอยู่แล้ว)
+        var document = PostPaymentAutomationPolicy.DocumentLayerAllowed(doc.DocumentType)
+            ? new PostPaymentAutomationPolicy.Overrides(doc.PostPayEmailReceipt, doc.PostPayIncludePartial) : null;
+        return new DocumentLayerState(true, doc.DocumentType, doc.PostPayEmailReceipt, doc.PostPayIncludePartial,
+            PostPaymentAutomationPolicy.Resolve(s, document, schedule, recurring, contact));
+    }
+
+    /// <summary>
+    /// รอบ 267 P4 (267-1-44): ตั้งค่าต่อใบของ<b>ใบที่ออกแล้ว</b> (ฟอร์มแก้ไขใช้ไม่ได้กับใบที่ออกเลขแล้ว) — ตัวตัดสินเดียวกับฟอร์ม
+    /// (<see cref="PostPaymentAutomationPolicy.ApplyDocumentLayer"/>) · มีผลกับการรับชำระครั้งถัดไป · งานที่ยังรอประมวลผล/กดลองใหม่ใช้ค่าปัจจุบัน (ปิดที่ใบ = งานที่ค้างจบพร้อมเหตุ) · เปิดทีหลังไม่ออกใบเสร็จย้อนหลังของการชำระที่ผ่านไปแล้ว ·
+    /// ลง audit chain · ไม่แตะเนื้อหา/ยอด/เลขของใบ (ไม่ใช่การแก้ไขเอกสารย้อนหลัง)
+    /// </summary>
+    public async Task SetDocumentLayerAsync(Guid companyId, Guid documentId, string? receiptMode, string? partialMode, Guid? userId, string actor,
+        CancellationToken ct = default)
+    {
+        var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted, ct)
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+        if (doc.Status == DocumentStatus.Voided)
+            throw new BusinessRuleException("เอกสารนี้ถูกยกเลิกแล้ว — ไม่มีการรับชำระให้ตั้งค่า", PostPaymentAutomationPolicy.RuleCode, 409);
+        var r = PostPaymentAutomationPolicy.ApplyDocumentLayer(doc.DocumentType, doc.PostPayEmailReceipt, doc.PostPayIncludePartial, receiptMode, partialMode);
+        if (r.Problem != null) throw new BusinessRuleException(r.Problem, PostPaymentAutomationPolicy.RuleCode, 400);
+        if (r.EmailReceipt == doc.PostPayEmailReceipt && r.IncludePartial == doc.PostPayIncludePartial) return;   // ไม่มีอะไรเปลี่ยน = ไม่ลง audit ซ้ำ
+        var before = new { postPayEmailReceipt = doc.PostPayEmailReceipt, postPayIncludePartial = doc.PostPayIncludePartial };
+        doc.PostPayEmailReceipt = r.EmailReceipt;
+        doc.PostPayIncludePartial = r.IncludePartial;
+        var now = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = userId, UserEmail = actor, Action = AuditAction.Update,
+            EntityType = nameof(Document), EntityId = doc.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                @event = "post-pay-document-layer", postPayEmailReceipt = r.EmailReceipt, postPayIncludePartial = r.IncludePartial,
+                doc.DocumentNumber, ruleCode = PostPaymentAutomationPolicy.RuleCode,
+            }),
+            Timestamp = now,
+        });
+        await _db.SaveChangesAsync(ct);
     }
 
     public Task<bool> EnqueueAsync(Guid companyId, Guid paymentId, PaymentEntrySource source, string? actor, CancellationToken ct = default)
@@ -96,9 +148,15 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
     {
         try
         {
-            var pay = await db.Payments.AsNoTracking()
+            // รอบ 267 P4 ฝ่ายค้าน LOW-3: ใบที่มีผลของการรับชำระ = (MovedToDocumentId ?? DocumentId) — PaymentEffectiveDocument (รอบ 266 B)
+            var payDoc = await db.Payments.AsNoTracking()
                 .Where(p => p.Id == paymentId && p.CompanyId == companyId)
-                .Select(p => new { p.DocumentId, p.Document.BalanceDue })
+                .Select(p => (Guid?)(p.MovedToDocumentId ?? p.DocumentId))
+                .FirstOrDefaultAsync(ct);
+            if (payDoc is not Guid effectiveDocId) return false;
+            var pay = await db.Documents.AsNoTracking()
+                .Where(d => d.Id == effectiveDocId && d.CompanyId == companyId)
+                .Select(d => new { DocumentId = d.Id, d.BalanceDue })
                 .FirstOrDefaultAsync(ct);
             if (pay == null) return false;
             // ฝ่ายค้าน N: "ชำระครบ" ตัดสิน ณ เหตุการณ์ชำระนี้ (หลัง commit ของการชำระ) — ไม่ใช่ตอนงานรัน (งวดถัดไปอาจเข้ามาก่อน)
@@ -252,6 +310,10 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             .FirstOrDefaultAsync(d => d.Id == run.DocumentId && d.CompanyId == cid && !d.IsDeleted, ct);
         if (payment == null || doc == null)
             return new RunResult(PostPaymentAutomationPolicy.StatusSkipped, "ไม่พบการชำระหรือเอกสารต้นทาง (ถูกลบแล้ว)", doc?.DocumentNumber, null);
+        // รอบ 266 ฝ่ายค้าน B-6: ตาข่ายของงานที่ถูกจองไว้ก่อนการย้าย (เส้นย้ายตั้งแถวที่ค้างเป็น Skipped ในธุรกรรมเดียวกันแล้ว) — เงินก้อนนี้ไม่ได้ตัดใบนี้แล้ว
+        // ⇒ ไม่ส่งขอบคุณ/ใบเสร็จอ้างใบเดิม (266-1-30)
+        if (payment.MovedToDocumentId is Guid movedTo && movedTo != run.DocumentId)
+            return new RunResult(PostPaymentAutomationPolicy.StatusSkipped, Accounting.Helpers.ReceiptLinkPolicy.MoveSkippedAutomationMessage, doc.DocumentNumber, null);
 
         var relatedType = doc.RelatedDocumentId is Guid rel
             ? await _db.Documents.AsNoTracking().Where(r => r.Id == rel && r.CompanyId == cid).Select(r => (DocumentType?)r.DocumentType).FirstOrDefaultAsync(ct)
@@ -274,7 +336,7 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         var allocations = await _db.PaymentAllocations.AsNoTracking()
             .CountAsync(a => a.PaymentId == payment.Id && a.CompanyId == cid && !a.IsDeleted, ct);
         var paymentCount = await _db.Payments.AsNoTracking()
-            .CountAsync(p => p.DocumentId == doc.Id && p.CompanyId == cid && !p.IsDeleted, ct);
+            .CountAsync(p => (p.MovedToDocumentId ?? p.DocumentId) == doc.Id && p.CompanyId == cid && !p.IsDeleted, ct);   // ฝ่ายค้าน LOW-3 (PaymentEffectiveDocument)
         var fullyPaid = run.FullyPaid;   // ฝ่ายค้าน N: ค่า ณ ตอนเข้าคิว
 
         var servesAsReceipt = false;

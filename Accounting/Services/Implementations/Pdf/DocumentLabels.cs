@@ -84,6 +84,8 @@ public sealed class DocumentLabels
     public string CnDifference => this["cn_difference"];
     public string CnIncrease => this["cn_increase"];
     public string CnOriginalNumber => this["cn_original_number"];
+    /// <summary>รอบ 266 แพ็ก B: บรรทัดบนใบเสร็จที่ออกแทนใบเดิมหลังย้ายการรับชำระ — {0} เลขที่ใบเดิม · {1} วันที่ใบเดิม</summary>
+    public string ReplacesDocument => this["replaces_document"];
     public string CnOriginalValue => this["cn_original_value"];
     public string CnReason => this["cn_reason"];
     public string SupplierInvoiceLabel => this["supplier_invoice_no"];
@@ -197,6 +199,21 @@ public sealed class DocumentLabels
             : $"{t.Day}/{t.Month}/{t.Year + 543} {t.ToString("HH:mm", inv)}";
         return string.Format(this["qt_accepted_online"], when);
     }
+    /// <summary>รอบ 267 P2 (267-1-17): ผู้ลงนามของลูกค้าบนกระดาษ — ตำแหน่ง · ลงนามในนามของ (ชื่อผู้ซื้อ) · เวลาเซ็นรับสินค้า · รหัสอ้างอิงหลักฐาน
+    /// (ไม่พิมพ์ IP) · ทั้งสอง renderer ใช้ข้อความชุดนี้ผ่าน <c>PdfGenerationService.CustomerSignerLines</c> (ห้าม literal)</summary>
+    public string SignerPosition(string title) => string.Format(this["signer_position"], title);
+    public string SignedOnBehalfOf(string org) => string.Format(this["signed_on_behalf_of"], org);
+    public string SignedOnlineEvidenceRef(string reference) => string.Format(this["signed_online_evidence_ref"], reference);
+    /// <summary>"เซ็นรับออนไลน์ 5/11/2569 14:05 น." (ไทย = พ.ศ. · เวลาไทย) / "Signed online 05 Nov 2026 14:05 (GMT+7)" — รับเวลา UTC</summary>
+    public string DnSignedOnline(DateTime utc)
+    {
+        var t = Accounting.Helpers.QuotationAcceptance.BangkokLocal(utc);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var when = IsEnglish
+            ? t.ToString("dd MMM yyyy HH:mm", inv)
+            : $"{t.Day}/{t.Month}/{t.Year + 543} {t.ToString("HH:mm", inv)}";
+        return string.Format(this["dn_signed_online"], when);
+    }
     public string TaxId => this["tax_id"];
     public string TaxIdShort => this["tax_id_short"];
     public string Terms => this["terms"];
@@ -244,6 +261,10 @@ public sealed class DocumentLabels
         ["qt_accept_note"] = "หมายเหตุลูกค้า",
         ["qt_accepted_online"] = "ยอมรับออนไลน์ {0} น.",
         ["qt_accept_content_changed"] = "เนื้อหาเปลี่ยนหลังลูกค้ายอมรับ — ไม่ประทับลายเซ็น",
+        ["signer_position"] = "ตำแหน่ง: {0}",
+        ["signed_on_behalf_of"] = "ลงนามในนามของ {0}",
+        ["signed_online_evidence_ref"] = "ลงนามออนไลน์ · รหัสอ้างอิง {0}",
+        ["dn_signed_online"] = "เซ็นรับออนไลน์ {0} น.",
 
         // ── หัวข้อมูลเอกสาร ──
         ["doc_number"] = "เลขที่",
@@ -302,6 +323,25 @@ public sealed class DocumentLabels
         // ── ใบเพิ่ม/ลดหนี้ (§86/9, §86/10) ──
         ["cn_ref_original"] = "อ้างอิงใบกำกับภาษีเดิม (มาตรา 86/{0})",
         ["cn_original_number"] = "เลขที่ {0}  ลงวันที่ {1}",
+        ["replaces_document"] = "ออกแทนใบเลขที่ {0} ลงวันที่ {1} (ใบเดิมถูกยกเลิก)",
+        // ── รอบ 266 แพ็ก C: ใบแจ้งการนำเงินไปตัดชำระ (ไม่ใช่ใบรับ/ใบกำกับภาษี · 266-1-6) ──
+        ["advice_title"] = "ใบแจ้งการนำเงินไปตัดชำระ",
+        ["advice_not_tax_document"] = "เอกสารนี้เป็นใบแจ้งเพื่อทราบ ไม่ใช่ใบเสร็จรับเงินหรือใบกำกับภาษี — ใบรับของเงินก้อนนี้ออกไว้แล้วตอนรับเงิน",
+        ["advice_intro"] = "บริษัทได้นำเงินที่ท่านชำระไว้ไปตัดชำระใบแจ้งหนี้ตามรายละเอียดด้านล่าง",
+        ["advice_customer"] = "ลูกค้า",
+        ["advice_tax_id"] = "เลขประจำตัวผู้เสียภาษี",
+        ["advice_reference"] = "เลขที่อ้างอิง",
+        ["advice_applied_on"] = "วันที่ตัดชำระ",
+        ["advice_payment"] = "เลขที่รับชำระของเงินที่รับไว้",
+        ["advice_payment_date"] = "วันที่รับเงิน",
+        ["advice_payment_amount"] = "ยอดเงินที่รับ",
+        ["advice_receipt_no"] = "ใบรับที่ออกตอนรับเงิน",
+        ["advice_invoice"] = "ใบแจ้งหนี้ที่ตัดชำระ",
+        ["advice_invoice_date"] = "วันที่ใบแจ้งหนี้",
+        ["advice_invoice_total"] = "ยอดใบแจ้งหนี้",
+        ["advice_applied_amount"] = "ยอดที่นำไปตัดชำระ",
+        ["advice_invoice_balance"] = "ยอดค้างของใบแจ้งหนี้ ณ วันพิมพ์",
+        ["advice_remaining_credit"] = "เงินรอจัดสรรคงเหลือ ณ วันพิมพ์",
         ["cn_original_value"] = "มูลค่าตามใบเดิม",
         ["cn_reason"] = "เหตุผล",
         ["supplier_invoice_no"] = "เลขที่ใบกำกับภาษีของผู้ขาย",
@@ -373,6 +413,10 @@ public sealed class DocumentLabels
         ["qt_accept_note"] = "Customer note",
         ["qt_accepted_online"] = "Accepted online {0} (GMT+7)",
         ["qt_accept_content_changed"] = "Content changed after customer acceptance — signature not applied",
+        ["signer_position"] = "Position: {0}",
+        ["signed_on_behalf_of"] = "Signed on behalf of {0}",
+        ["signed_online_evidence_ref"] = "Signed online · reference {0}",
+        ["dn_signed_online"] = "Signed online {0} (GMT+7)",
 
         ["doc_number"] = "No.",
         ["doc_date"] = "Date",
@@ -429,6 +473,24 @@ public sealed class DocumentLabels
 
         ["cn_ref_original"] = "Reference to original tax invoice (Section 86/{0})",
         ["cn_original_number"] = "No. {0} dated {1}",
+        ["replaces_document"] = "Issued in replacement of No. {0} dated {1} (original cancelled)",
+        ["advice_title"] = "Payment Application Advice",
+        ["advice_not_tax_document"] = "This advice is for information only and is not a receipt or a tax invoice. The receipt for this money was issued when it was received.",
+        ["advice_intro"] = "We have applied the payment you made in advance to the invoice detailed below.",
+        ["advice_customer"] = "Customer",
+        ["advice_tax_id"] = "Tax ID",
+        ["advice_reference"] = "Reference",
+        ["advice_applied_on"] = "Applied on",
+        ["advice_payment"] = "Payment received (No.)",
+        ["advice_payment_date"] = "Date received",
+        ["advice_payment_amount"] = "Amount received",
+        ["advice_receipt_no"] = "Receipt issued when received",
+        ["advice_invoice"] = "Invoice settled",
+        ["advice_invoice_date"] = "Invoice date",
+        ["advice_invoice_total"] = "Invoice total",
+        ["advice_applied_amount"] = "Amount applied",
+        ["advice_invoice_balance"] = "Invoice balance as of printing",
+        ["advice_remaining_credit"] = "Remaining unapplied credit as of printing",
         ["cn_original_value"] = "Original value",
         ["cn_reason"] = "Reason",
         ["supplier_invoice_no"] = "Supplier tax invoice no.",

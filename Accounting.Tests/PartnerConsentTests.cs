@@ -223,7 +223,8 @@ public class PartnerConsentTests
     public void ป้ายผล_ขอบเขตที่ยังไม่มีท่ออ่าน_บอกว่ายังไม่มีผล_ขอบเขตทั้งบริษัท_บอกที่ตั้ง()
     {
         Assert.Contains("ยังไม่มีงานอัตโนมัติ", PartnerConsent.EffectNote(PartnerConsent.Def(Scope.AutoApprovePurchase)));
-        Assert.Null(PartnerConsent.EffectNote(PartnerConsent.Def(Scope.AutoRecordPayment)));   // รอบ 264 P3: ท่อบันทึกจ่ายอ่านขอบเขตนี้แล้ว
+        // รอบ 264 P3: ท่อบันทึกจ่ายอ่านขอบเขตนี้แล้ว · 268-1-1: ชั้นบัญชีตั้งต้นไม่บันทึกเอง ⇒ ป้ายบอกผลจริง
+        Assert.Equal(PartnerPaySourceAccount.ConsentDefaultNotAutoNote, PartnerConsent.EffectNote(PartnerConsent.Def(Scope.AutoRecordPayment)));
         Assert.Contains("ทั้งบริษัท", PartnerConsent.EffectNote(PartnerConsent.Def(Scope.PurchaseDrafts)));
         Assert.Equal("/pages/partner-automation.html?partnership=" + Pid.ToString("D"), PartnerConsent.PageUrl(Pid));
     }

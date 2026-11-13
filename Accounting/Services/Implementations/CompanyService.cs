@@ -620,8 +620,13 @@ public class CompanyService : ICompanyService
         if (removeBlock != null)
             throw new Accounting.Helpers.BusinessRuleException(removeBlock, Accounting.Helpers.LastOwnerGuard.RuleCode);
 
+        // รอบ 268 (268-1-9 แทน 268-1-5): ธุรกรรมเดียว — นำออก + เพิกถอนคำเชิญผูก LINE ศูนย์บิลที่ผู้ใช้คนนี้สร้างค้างไว้ + แจ้งเจ้าของให้ตรวจปลายทางที่ยังผูก
+        // (ไม่ยกเลิกปลายทางเอง — ระบบไม่รู้ว่า LINE ที่ผูกเป็นของใคร)
+        await using var tx = await _db.Database.BeginTransactionAsync();
         _db.CompanyUsers.Remove(cu);
         await _db.SaveChangesAsync();
+        await ContactLineBindingService.OnTenantMemberRemovedAsync(_db, companyId, targetUserId, ownerId);
+        await tx.CommitAsync();
     }
 
     public async Task UpdateUserRoleAsync(Guid companyId, Guid ownerId, Guid targetUserId, UserRole newRole)

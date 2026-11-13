@@ -47,7 +47,7 @@ public class UnifiedPaymentQueryService : IUnifiedPaymentQueryService
                 .Where(Accounting.Helpers.PortalSlipPending.CountsAsReceived)   // รอบ 250 ฝ่ายค้าน M2: สลิปพอร์ทัลรุ่นเก่าที่ยังไม่ตรวจไม่ใช่เงินรับ
                 .Where(p => p.CompanyId == companyId && !p.IsDeleted
                     && p.PaymentDate >= from && p.PaymentDate <= to)
-                .Join(_db.Documents.AsNoTracking(), p => p.DocumentId, d => d.Id,
+                .Join(_db.Documents.AsNoTracking(), p => p.MovedToDocumentId ?? p.DocumentId, d => d.Id,
                     (p, d) => new {
                         p.Id, p.PaymentDate, p.Amount, p.PaymentMethod, p.Reference,
                         d.Currency, d.DocumentType,

@@ -797,6 +797,27 @@
               <div id="fDocLanguageHint" style="display:none;font-size:11px;line-height:1.5;padding-bottom:9px;color:#1e40af"></div>
             </div>
           </div>
+          <!-- รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" ของใบนี้ใบเดียว (Document.PostPayEmailReceipt /
+               PostPayIncludePartial) — สามสถานะ: ตามค่าตั้ง (ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท) · เปิด · ปิด · แสดงเฉพาะชนิดที่เซิร์ฟเวอร์บอกว่าตั้งได้
+               (document-auto-send/settings → postPayDocumentTypes — หน้านี้ไม่มีรายการชนิดของตัวเอง) · ไม่สืบทอดไปใบลูก/โคลน -->
+          <div class="form-row-1-2" id="postPayRow" style="display:none">
+            <div class="form-group">
+              <label for="fPostPayReceiptMode" class="form-label" data-help="หลังลูกค้าชำระใบนี้ ให้ระบบออกและส่งใบเสร็จ/ใบกำกับภาษีอัตโนมัติไหม — ตั้งเฉพาะใบนี้ · ไม่ตั้ง = ใช้ค่าตั้งของตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท · ไม่สืบทอดไปใบที่แปลง/คัดลอกจากใบนี้">ใบเสร็จอัตโนมัติหลังรับชำระ</label>
+              <select class="form-select" id="fPostPayReceiptMode" onchange="Page.onPostPayModeChange()">
+                <option value="Inherit">— ตามค่าตั้ง (ผู้ติดต่อ/บริษัท) —</option>
+                <option value="On">ออกและส่งอัตโนมัติ (ใบนี้)</option>
+                <option value="Off">ไม่ออก/ไม่ส่งอัตโนมัติ (ใบนี้)</option>
+              </select>
+            </div>
+            <div class="form-group" id="postPayPartialGroup" style="display:none">
+              <label for="fPostPayPartialMode" class="form-label" data-help="รับชำระเป็นงวด: ส่งใบเสร็จทุกงวดที่รับ หรือเฉพาะเมื่อชำระครบ">รับชำระบางส่วน</label>
+              <select class="form-select" id="fPostPayPartialMode">
+                <option value="Inherit">— ตามค่าตั้ง —</option>
+                <option value="On">ส่งทุกงวดที่รับ</option>
+                <option value="Off">ส่งเฉพาะเมื่อชำระครบ</option>
+              </select>
+            </div>
+          </div>
           <!-- ตัวเลือกขั้นสูง: เปลี่ยนผังบัญชีปลายทางของ VAT (กรณีไม่เคลม VAT —
                ลงเป็นต้นทุน/ค่าใช้จ่ายแทน ตาม §82/5). ย้ายออกจากกล่อง "ใช้งานใบ
                กำกับภาษี/เคลม VAT" มาเป็น block อิสระระดับเอกสาร (.input-vat-only)
@@ -6446,7 +6467,56 @@
           this.applyContactCreditTerms(this._creditTermsContact);
       },
 
+      // ══════ รอบ 267 P4 — ค่าตั้ง "ใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ (ฟอร์ม) ══════
+      // ชุดชนิดที่ตั้งได้มาจากเซิร์ฟเวอร์ครั้งเดียว (document-auto-send/settings.postPayDocumentTypes) · โหลดไม่ได้ = ไม่แสดงช่อง (และไม่ส่งค่า)
+      async _loadPostPayTypes() {
+        if (this._postPayTypes !== undefined) return this._postPayTypes;
+        if (!this._postPayTypesLoading) {
+          const api = Layout.api(); const cid = Layout.getCompanyId();
+          this._postPayTypesLoading = (api && cid ? api.get(`/api/companies/${cid}/document-auto-send/settings`) : Promise.reject(new Error('no api')))
+            .then(r => { this._postPayTypes = (r && r.data && r.data.postPayDocumentTypes) || []; })
+            .catch(() => { this._postPayTypes = null; })   // ไม่รู้ชุดชนิด = ไม่แสดงช่อง (ค่าของใบไม่ถูกแตะ)
+            .then(() => { this._postPayTypesLoading = null; this._refreshPostPayRow(); });
+        }
+        await this._postPayTypesLoading;
+        return this._postPayTypes;
+      },
+      _refreshPostPayRow() {
+        const row = document.getElementById('postPayRow');
+        if (!row) return;
+        const type = document.getElementById('fDocType')?.value || '';
+        if (this._postPayTypes === undefined) { row.style.display = 'none'; this._loadPostPayTypes(); return; }
+        const applies = Array.isArray(this._postPayTypes) && this._postPayTypes.includes(type);
+        row.style.display = applies ? '' : 'none';
+        this.onPostPayModeChange();
+      },
+      onPostPayModeChange() {
+        const g = document.getElementById('postPayPartialGroup');
+        const m = document.getElementById('fPostPayReceiptMode');
+        // "งวด" มีความหมายเมื่อใบนี้ไม่ได้ปิดการออกใบเสร็จ (ปิด = ไม่มีใบเสร็จอัตโนมัติให้เลือกงวด)
+        if (g && m) g.style.display = m.value === 'Off' ? 'none' : '';
+      },
+      _setPostPayModes(receipt, partial) {
+        const ok = v => (v === 'On' || v === 'Off') ? v : 'Inherit';   // ชื่อสถานะจากเซิร์ฟเวอร์ (AutopilotSettingsResolver)
+        const a = document.getElementById('fPostPayReceiptMode'); if (a) a.value = ok(receipt);
+        const b = document.getElementById('fPostPayPartialMode'); if (b) b.value = ok(partial);
+        this._refreshPostPayRow();
+      },
+      _postPayPayload(id) {
+        const row = document.getElementById('postPayRow');
+        if (!row) return null;
+        if (row.style.display === 'none') {
+          // ฝ่ายค้าน LOW-4: รู้ชุดชนิดแล้วและชนิดนี้ตั้งไม่ได้ ⇒ แก้ไข = ล้างค่า ("Inherit" — ไม่เก็บค่าที่ไม่มีผู้อ่าน) · สร้าง = ไม่ส่ง ·
+          // ยังไม่รู้ชุดชนิด (โหลดไม่ได้) = ไม่แตะค่าของใบ
+          return Array.isArray(this._postPayTypes) && this.editingId ? 'Inherit' : null;
+        }
+        const v = document.getElementById(id)?.value || 'Inherit';
+        return v === 'Inherit' ? (this.editingId ? 'Inherit' : null) : v;
+      },
+      // ══════ จบส่วนรอบ 267 P4 (ฟอร์ม) ══════
+
       onDocTypeChange() {
+        this._refreshPostPayRow();   // รอบ 267 P4: ช่องค่าตั้งใบเสร็จต่อใบ แสดงตามชนิด (ชุดจากเซิร์ฟเวอร์)
         this._applyBrandHint();   // ชนิดเปลี่ยน = ป้ายแบรนด์ต้องเปลี่ยนตาม
         this._renderTemplateOptions();   // และตัวเลือกรูปแบบต้องกรองตามชนิดใหม่
         this.refreshEmailTemplate();
@@ -9228,6 +9298,8 @@
             this.onDocLanguageChange();
           }
         }
+        // รอบ 267 P4: ค่าตั้งใบเสร็จหลังรับชำระต่อใบ — ใบใหม่กลับไป "ตามค่าตั้ง" เสมอ (ห้ามค้างค่าใบก่อน)
+        this._setPostPayModes('Inherit', 'Inherit');
         // รหัสสาขาผู้ขาย: reset กลับ default 00000 (สำนักงานใหญ่)
         { const br = document.getElementById('fSupplierBranchCode'); if (br) br.value = '00000'; }
         // ติ๊ก "มีใบกำกับภาษีซื้อ" + กล่องเตือน §86/4 — เดิมไม่ถูกล้าง ⇒ ใบใหม่เปิดมาพร้อมติ๊ก
@@ -9318,8 +9390,11 @@
        *  • depth เดียวกันหลายใบ (แตก partial) ซ้อนเป็นกลุ่มในขั้นเดียวกัน
        *  • คลิกใบไหน = เปิด detail ใบนั้นทันที
        */
-      renderChainStepper(nodes, currentId) {
-        if (!nodes || nodes.length < 2) return;   // ใบเดี่ยว — ไม่มีสายให้วาด
+      renderChainStepper(allNodes, currentId) {
+        // รอบ 266 แพ็ก C (266-1-40): โหนดชนิด "เงิน" (เงินรอจัดสรร/การย้ายการรับชำระ/มัดจำ) วาดเป็นแถบแยกใต้สาย — ป้ายมาจากเซิร์ฟเวอร์
+        const money = (allNodes || []).filter(n => n.nodeKind && n.nodeKind !== 'Document');
+        const nodes = (allNodes || []).filter(n => !n.nodeKind || n.nodeKind === 'Document');
+        if (nodes.length < 2 && !money.length) return;   // ใบเดี่ยวไม่มีเงินผูก — ไม่มีสายให้วาด
         const host = document.createElement('div');
         host.id = 'chainStepper';
         host.style.cssText = 'margin:0 0 14px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;overflow-x:auto';
@@ -9359,6 +9434,19 @@
               ? `<div style="align-self:center;padding:0 6px;color:#94a3b8;font-size:16px;flex:none">→</div>` : '';
             return `<div style="display:flex;flex-direction:column;flex:none">${cards}</div>${arrow}`;
           }).join('') + `</div>`;
+
+        if (money.length) {
+          const moneyHtml = money.map(m => {
+            const open = m.openDocumentId ? ` onclick="Page.detail('${Layout.jsArg(m.openDocumentId)}')"` : '';
+            const advice = m.hasAdvice && m.allocationId
+              ? ` <button type="button" class="btn btn-sm btn-secondary" style="margin-top:4px" onclick="event.stopPropagation();Page.downloadPaymentAdvice('${Layout.jsArg(m.allocationId)}')" title="ใบแจ้งเพื่อทราบ — ไม่ใช่ใบเสร็จ/ใบกำกับภาษี (ใบรับออกไว้แล้วตอนรับเงิน)">📄 ใบแจ้งการตัดชำระ</button>` : '';
+            return `<div${open /* html — onclick ประกอบจาก Layout.jsArg แล้ว */} style="min-width:150px;padding:7px 10px;background:#fff;border:1px dashed #0891b2;border-radius:8px;${m.openDocumentId ? 'cursor:pointer;' : ''}margin:0 6px 4px 0">
+              <div style="font-size:10.5px;color:#0e7490">💰 เงินที่ตัดชำระ · ${Layout.date(m.documentDate)}</div>
+              <div style="font-size:12px;font-weight:600">${Layout.esc(m.label || m.documentNumber)}</div>${advice /* html — ปุ่มคงที่ + Layout.jsArg */}
+            </div>`;
+          }).join('');
+          host.insertAdjacentHTML('beforeend', `<div style="font-weight:700;font-size:12px;margin:8px 0 6px;color:#475569">💰 เงินที่ผูกกับใบในสาย (${money.length})</div><div style="display:flex;flex-wrap:wrap">${/*html — ประกอบจาก Layout.esc/jsArg แล้ว*/ moneyHtml}</div>`);
+        }
 
         const dc = document.getElementById('detailContent');
         if (dc) dc.prepend(host);
@@ -9578,6 +9666,8 @@
               this.onDocLanguageChange();
             }
           }
+          // รอบ 267 P4: ค่าตั้งใบเสร็จหลังรับชำระต่อใบ (เซิร์ฟเวอร์ echo ชื่อ Inherit/On/Off — ไม่ hydrate = เปิดแก้แล้วบันทึก ค่าหายเงียบ ๆ)
+          this._setPostPayModes(d.postPayReceiptMode, d.postPayPartialMode);
           const fPayType = document.getElementById('fPaymentType');
           if (fPayType && d.paymentType) fPayType.value = d.paymentType;
           const fPiv = document.getElementById('fPricesIncludeVat');
@@ -10236,6 +10326,10 @@
             const v = document.getElementById('fDocumentLanguage')?.value || '';
             return v || (this.editingId ? '' : null);
           })(),
+          // รอบ 267 P4: ค่าตั้งใบเสร็จหลังรับชำระต่อใบ — ช่องแสดงอยู่เท่านั้นที่ส่ง (ชนิดที่ตั้งไม่ได้/ยังไม่รู้ชุดชนิดจากเซิร์ฟเวอร์ = null = ไม่แตะ) ·
+          // สร้าง: "ตามค่าตั้ง" = null · แก้ไข: "Inherit" = ล้างกลับไปตามค่าตั้ง
+          postPayReceiptMode: this._postPayPayload('fPostPayReceiptMode'),
+          postPayPartialMode: this._postPayPayload('fPostPayPartialMode'),
           // Only send paymentType for Payment Voucher (the only type whose
           // form exposes the selector); null elsewhere.
           paymentType: document.getElementById('fDocType').value === 'PaymentVoucher'
@@ -11395,6 +11489,8 @@
           this.loadApprovalStatus(d.id);
           // รอบ 239: ลูกค้ายอมรับใบเสนอราคาออนไลน์ — ชื่อ · เวลา · หมายเหตุ · ลายเซ็น (ดึงรูปด้วย JWT ผ่าน endpoint ที่ตรวจสิทธิ์อ่าน)
           this.renderQuotationAcceptance(d);
+          // รอบ 267 P2: หลักฐานการตอบรับของลูกค้า (ผู้ลงนาม · ตำแหน่ง · ฉบับที่ลงนาม) + ขั้นต่อไปหลังยอมรับ + คำเตือนอากรแสตมป์ — ทั้งหมดจากเซิร์ฟเวอร์
+          this.renderCustomerResponses(d);
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button data-g="primary" class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
@@ -11442,6 +11538,14 @@
           if (d.canOpenReceiptLink === true) {
             const rlInvoiceSide = !['Receipt', 'ReceiptVoucher'].includes(d.documentType);   // ป้ายปุ่มเท่านั้น — เงื่อนไขอยู่ที่เซิร์ฟเวอร์
             actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openReceiptLink('${Layout.jsArg(d.id)}')" title="เลือกใบเสร็จร่าง · เงินรอจัดสรร · ใบมัดจำ ของผู้ติดต่อเดียวกันมาตัดยอดค้าง — ระบบแสดงผลก่อนยืนยัน">${rlInvoiceSide ? '🔗 ผูกใบเสร็จ/เงินที่รับไว้แล้ว' : '🔗 ผูกกับใบแจ้งหนี้'}</button>`;
+          }
+          // รอบ 266 แพ็ก C — ตัวช่วยใบซ้ำ (ใบขายสด ↔ ใบแจ้งหนี้ของการขายเดียวกัน) · เซิร์ฟเวอร์ตัดสินจากข้อมูลบนใบ (canOpenDuplicateSale) — ผู้สมัครโหลดเมื่อกด
+          // ฝ่ายค้าน H2 (266-1-45): งานค้างของตัวช่วยใบซ้ำบนใบที่คงไว้ — ปุ่มทำขั้นที่เหลือ (เซิร์ฟเวอร์ตัดสินว่าทำอะไร)
+          if (d.duplicateSalePendingFromDocumentId) {
+            actions += ` <button data-g="more" class="btn btn-danger" onclick="Page._dsPreviewAndResolve('${Layout.jsArg(d.duplicateSalePendingFromDocumentId)}', '${Layout.jsArg(d.id)}')" title="${Layout.esc(d.duplicateSalePendingNotice || '')}">⚠️ ทำขั้นที่เหลือต่อ (ตัวช่วยใบซ้ำ)</button>`;
+          }
+          if (d.canOpenDuplicateSale === true) {
+            actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.openDuplicateSale('${Layout.jsArg(d.id)}')" title="ใบขายสดใบนี้กับใบแจ้งหนี้ของผู้ติดต่อเดียวกันเป็นการขายเดียวกันไหม — ผู้ทำบัญชีเลือกใบที่คงไว้ ระบบแสดงผลก่อนยืนยัน">🧾 ใบนี้ซ้ำกับใบแจ้งหนี้?</button>`;
           }
           if (d.canChangeReceiptSource === true && d.relatedDocumentId) {
             actions += ` <button data-g="more" class="btn btn-secondary" onclick="Page.undoDraftReceiptSource('${Layout.jsArg(d.id)}')" title="ใบเสร็จร่างนี้กลับเป็นใบเสร็จอิสระ">✂️ ถอดใบต้นทางของใบร่าง</button>`;
@@ -11573,13 +11677,25 @@
           // มีเอกสารเกี่ยวข้อง (แม่หรือลูก) เมื่อไร ให้วาดทั้งเส้นบนสุดของ modal
           // ผู้ใช้เห็นทันทีว่าใบนี้อยู่ขั้นไหนของ flow และคลิกกระโดดไปใบไหนก็ได้
           // — จบปัญหา "ต้องจดเลขแล้วไปค้นเอง"
-          if (d.relatedDocumentId || (d.convertedToDocuments && d.convertedToDocuments.length)) {
+          // รอบ 266 แพ็ก C: ใบที่มียอดรับแล้ว/ใบมัดจำ อาจมีเงินผูก (เงินรอจัดสรร/ย้ายการรับชำระ/หักมัดจำ) ที่ไม่อยู่ในสาย RelatedDocumentId — ขอสายด้วย
+          if (d.relatedDocumentId || (d.convertedToDocuments && d.convertedToDocuments.length) || Number(d.paidAmount || 0) > 0 || d.isDeposit) {
             (async () => {
               try {
                 const cres = await API.get(`/api/companies/${Layout.getCompanyId()}/document/${d.id}/chain`);
                 this.renderChainStepper(cres?.data || [], d.id);
               } catch (e) { /* สายโหลดไม่ได้ — ไม่กระทบ detail หลัก */ }
             })();
+          }
+
+          // ฝ่ายค้าน H2: แถบแดงงานค้างของตัวช่วยใบซ้ำ (ข้อความจากเซิร์ฟเวอร์)
+          if (d.duplicateSalePendingFromDocumentId && d.duplicateSalePendingNotice) {
+            const dc0 = document.getElementById('detailContent');
+            if (dc0) {
+              const bar = document.createElement('div');
+              bar.style.cssText = 'margin:0 0 12px;padding:10px 12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;color:#991b1b;font-size:13px';
+              bar.textContent = '⚠️ ' + d.duplicateSalePendingNotice;
+              dc0.prepend(bar);
+            }
           }
 
           // ประวัติ revision ของเอกสาร (async ไม่ block การเปิด modal) —
@@ -12816,7 +12932,7 @@
         try {
           const r = await api.get(`/api/companies/${cid}/document/sign-request/statuses?ids=${encodeURIComponent(ids.slice(0, 200).join(','))}`);
           const map = (r && r.data) || {};
-          const tone = { success: '#047857', info: '#1d4ed8', muted: '#64748b' };
+          const tone = { success: '#047857', info: '#1d4ed8', muted: '#64748b', danger: '#b91c1c', warning: '#b45309' };
           for (const id of ids) {
             const slot = document.querySelector(`[data-sign-chip="${CSS.escape(String(id))}"]`);
             if (!slot) continue;
@@ -13522,19 +13638,105 @@
           return;
         }
         const rows = (p.effects || []).map(x => `<tr><td style="padding:3px 10px 3px 0;vertical-align:top;white-space:nowrap"><b>${Layout.esc(x.label)}</b></td><td style="padding:3px 0">${Layout.esc(x.detail)}</td></tr>`).join('');
-        const ok = await Layout.confirm({ title: 'ผลของการผูก — ตรวจก่อนยืนยัน',
-          messageHtml: `<table style="font-size:13px;width:100%">${/*html — แถวประกอบจาก Layout.esc แล้ว*/ rows}</table><div class="text-xs text-gray-500" style="margin-top:6px">${Layout.esc(p.legalReference || '')}</div>`,
-          okText: 'ยืนยันผูก' });
-        if (!ok || this._rlBusy) return;
+        const effectsHtml = `<table style="font-size:13px;width:100%">${/*html — แถวประกอบจาก Layout.esc แล้ว*/ rows}</table><div class="text-xs text-gray-500" style="margin-top:6px">${Layout.esc(p.legalReference || '')}</div>`;
+        // รอบ 266 แพ็ก B: เส้นที่เซิร์ฟเวอร์บอกว่าต้องมีเหตุผล (ย้ายการรับชำระ — เก็บบนใบแทน + ร่องรอยตรวจสอบ) ⇒ ช่องเหตุผลบังคับในหน้าต่างยืนยัน
+        let reason = null;
+        if (p.requiresReason === true) {
+          const v = await Layout.formDialog({ title: 'ผลของการย้ายการรับชำระ — ตรวจก่อนยืนยัน', messageHtml: effectsHtml, okText: 'ยืนยันย้าย',
+            fields: [{ key: 'reason', label: 'เหตุผลที่ย้าย (เก็บให้ผู้สอบบัญชี)', type: 'textarea', required: true }] });
+          if (!v || !String(v.reason || '').trim()) return;
+          reason = String(v.reason).trim();
+        } else {
+          const ok = await Layout.confirm({ title: 'ผลของการผูก — ตรวจก่อนยืนยัน', messageHtml: effectsHtml, okText: 'ยืนยันผูก' });
+          if (!ok) return;
+        }
+        if (this._rlBusy) return;
         this._rlBusy = true;   // กันกดซ้ำระหว่างรอคำตอบ (เซิร์ฟเวอร์กันซ้ำอีกชั้นด้วยกุญแจพรีวิว)
         try {
-          const res = await api.linkReceipt(Object.assign({}, req, { amount: p.amount, previewToken: p.previewToken }));
+          const res = await api.linkReceipt(Object.assign({}, req, { amount: p.amount, previewToken: p.previewToken, reason }));
           const notices = res?.data?.notices || [];
           Layout.toast(res?.message || 'ผูกแล้ว', 'success', notices.length > 1 ? 12000 : 6000);
           Layout.closeModal('detailModal');
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ผูกไม่สำเร็จ', 'error', 12000); }
         finally { this._rlBusy = false; }
+      },
+      /** รอบ 266 แพ็ก C — ตัวช่วย "ใบซ้ำ" (Helpers/DuplicateSalePolicy · คำตัดสิน 266-1-5 · 266-1-36…38): เลือกใบแจ้งหนี้ที่อาจซ้ำ → พรีวิวสองตัวเลือก
+       *  (คงใบขายสด / คงใบแจ้งหนี้) พร้อมผลที่จะเกิด → เหตุผล → ยืนยัน · ทุกเงื่อนไข/ข้อความมาจากเซิร์ฟเวอร์ (F2 ข้อ 5) · ค่าทุกจุดผ่าน Layout.esc */
+      async openDuplicateSale(docId) {
+        const api = Layout.api(); if (!api || !api.getDuplicateSaleCandidates) return;
+        if (this._dsLoading) return;
+        this._dsLoading = true;
+        let c = null;
+        try { c = (await api.getDuplicateSaleCandidates(docId))?.data; }
+        catch (e) { Layout.toast(e.message || 'โหลดใบที่อาจซ้ำไม่สำเร็จ', 'error', 10000); return; }
+        finally { this._dsLoading = false; }
+        if (!c) return;
+        const items = c.items || [];
+        if (!items.length) {
+          await Layout.notice({ title: 'ตัวช่วยใบซ้ำ', messageHtml: Layout.esc(c.notice || 'ไม่พบใบที่อาจซ้ำ (ผู้ติดต่อเดียวกัน · ยอดเท่ากัน)') });
+          return;
+        }
+        const v = await Layout.formDialog({ title: `ใบซ้ำของ ${c.documentNumber}?`,
+          messageHtml: `<div class="text-sm" style="margin-bottom:6px">เลือกใบที่เป็นการขายเดียวกัน (ผู้ติดต่อเดียวกัน · ยอดเท่ากัน) — ขั้นถัดไปแสดงผลของแต่ละทางก่อนยืนยัน</div>`,
+          okText: 'ดูผลก่อนยืนยัน',
+          fields: [{ key: 'pick', label: 'ใบที่อาจซ้ำ', type: 'select', required: true, value: '0', options: items.map((x, i) => ({ value: String(i), label: x.label })) }] });
+        if (!v) return;
+        const pick = items[Number(v.pick)]; if (!pick) return;
+        await this._dsPreviewAndResolve(pick.cashSaleId, pick.invoiceId);
+      },
+      async _dsPreviewAndResolve(cashSaleId, invoiceId) {
+        const api = Layout.api(); if (!api) return;
+        let p;
+        try { p = (await api.previewDuplicateSale(cashSaleId, invoiceId))?.data; }
+        catch (e) { Layout.toast(e.message || 'ดูผลไม่สำเร็จ', 'error', 10000); return; }
+        if (!p) return;
+        const opts = p.options || [];
+        const keepLabel = (k, action) => action === 'ResumeRemainingStep' ? `ขั้นที่เหลือ: ลงเงินของ ${p.cashSaleNumber} (ยกเลิกแล้ว) แล้วตัดชำระ ${p.invoiceNumber}`
+          : k === 'CashSale' ? `คง ${p.cashSaleNumber} (ใบขายสด) — ${p.invoiceNumber} คือใบที่ซ้ำ` : `คง ${p.invoiceNumber} (ใบแจ้งหนี้) — ${p.cashSaleNumber} คือใบที่ซ้ำ`;
+        const optHtml = opts.map(o => {
+          const body = o.allowed
+            ? `<table style="font-size:12.5px;width:100%">${(o.effects || []).map(x => `<tr><td style="padding:2px 8px 2px 0;vertical-align:top;white-space:nowrap"><b>${Layout.esc(x.label)}</b></td><td style="padding:2px 0">${Layout.esc(x.detail)}</td></tr>`).join('')}</table>`
+            : `${/*html — หนีแล้วใน _rlReasonHtml*/ this._rlReasonHtml({ reason: o.message, wayForward: o.wayForward })}<div class="text-xs text-gray-500">${Layout.esc(o.ruleCode || '')}</div>`;
+          return `<div style="border:1px solid ${o.allowed ? '#a7f3d0' : '#e2e8f0'};background:${o.allowed ? '#f0fdf4' : '#f8fafc'};border-radius:8px;padding:8px 10px;margin-bottom:8px">
+            <div style="font-weight:700;margin-bottom:4px">${o.allowed ? '✅' : '⛔'} ${Layout.esc(keepLabel(o.keep, o.action))}</div>${/*html — ประกอบจาก Layout.esc แล้ว*/ body}</div>`;
+        }).join('');
+        const allowed = opts.filter(o => o.allowed);
+        const headHtml = `<div class="text-sm" style="margin-bottom:8px">${Layout.esc(p.cashSaleNumber)} กับ ${Layout.esc(p.invoiceNumber)} ยอด ${Layout.money(p.totalAmount)} — ใบกำกับสองใบต่อการขายเดียว = รายได้/ภาษีขาย (+สต็อก) นับสองครั้ง · เลือกใบที่ลูกค้าใช้เคลมภาษีซื้อคงไว้</div>`;
+        const legal = `<div class="text-xs text-gray-500" style="margin-top:4px">${Layout.esc(p.legalReference || '')}</div>`;
+        if (!allowed.length) {
+          await Layout.notice({ title: 'ตัวช่วยใบซ้ำ — ทำอัตโนมัติไม่ได้', messageHtml: headHtml + optHtml + legal });
+          return;
+        }
+        const f = await Layout.formDialog({ title: 'ตัวช่วยใบซ้ำ — ตรวจผลก่อนยืนยัน', messageHtml: headHtml + optHtml + legal, okText: 'ยืนยัน',
+          fields: [
+            { key: 'keep', label: 'ใบที่คงไว้', type: 'select', required: true, value: '0', options: allowed.map((o, i) => ({ value: String(i), label: keepLabel(o.keep, o.action) })) },
+            { key: 'reason', label: 'เหตุผลว่าทำไมเป็นการขายเดียวกัน (เก็บให้ผู้สอบบัญชี)', type: 'textarea', required: true },
+          ] });
+        if (!f || !String(f.reason || '').trim()) return;
+        const chosen = allowed[Number(f.keep)]; if (!chosen) return;
+        if (this._dsBusy) return;
+        this._dsBusy = true;   // กันกดซ้ำระหว่างรอคำตอบ (เซิร์ฟเวอร์กันซ้ำอีกชั้นด้วยกุญแจพรีวิว + ยอดที่เห็นใต้ล็อก)
+        try {
+          const res = await api.resolveDuplicateSale({ cashSaleId, invoiceId, keep: chosen.keep, previewToken: chosen.previewToken, reason: String(f.reason).trim() });
+          const notices = res?.data?.notices || [];
+          Layout.toast(res?.message || 'ทำรายการแล้ว', 'success', notices.length > 1 ? 14000 : 7000);
+          Layout.closeModal('detailModal');
+          await this.load();
+          if (res?.data?.creditNoteId) this.detail(res.data.creditNoteId);   // ใบลดหนี้ร่าง — เปิดให้เลือกเหตุผลแล้วอนุมัติ
+        } catch (e) {
+          // ฝ่ายค้าน H2: ความล้มเหลว (รวม "ขั้นที่เหลือ" DS-PARTIAL) ค้างจอจนผู้ใช้ปิด + โหลดใบใหม่ให้เห็นแถบแดง/ปุ่มทำขั้นที่เหลือ — ไม่ใช่ toast ที่หายเอง
+          await Layout.notice({ title: 'ทำรายการไม่ครบ', messageHtml: Layout.esc(e.message || 'ทำรายการไม่สำเร็จ') });
+          Layout.closeModal('detailModal');
+          await this.load();
+        }
+        finally { this._dsBusy = false; }
+      },
+      /** รอบ 266 แพ็ก C (266-1-6) — ดาวน์โหลด "ใบแจ้งการนำเงินไปตัดชำระ" (ไม่ใช่ใบรับ/ใบกำกับภาษี) ของแถวจัดสรร */
+      async downloadPaymentAdvice(allocationId) {
+        const api = Layout.api(); if (!api || !api.downloadPaymentAdvice) return;
+        try { await api.downloadPaymentAdvice(allocationId); }
+        catch (e) { Layout.toast(e.message || 'ดาวน์โหลดใบแจ้งไม่สำเร็จ', 'error', 10000); }
       },
       async undoDraftReceiptSource(docId) {
         const ok = await Layout.confirm({ title: 'ถอดใบต้นทางของใบเสร็จร่าง',
@@ -13795,6 +13997,43 @@
         host.innerHTML = lines.join('');
       },
 
+      // ══════ รอบ 267 P4 — ค่าตั้ง "ใบเสร็จอัตโนมัติหลังรับชำระ" ของใบที่ออกแล้ว (แผงลิงก์ชำระ) ══════
+      // ค่า/ป้าย "ค่าที่มีผลตอนนี้ (ชั้นไหนตัดสิน)" มาจากเซิร์ฟเวอร์ (postPay* ของ DocumentPayLinkStatusDto) · มีผลกับการรับชำระครั้งถัดไป
+      _postPaySettingHtml(s) {
+        if (!s || !s.postPaySettingApplies) return '';
+        const esc = Layout.esc;
+        const opt = (v, cur, label) => `<option value="${esc(v)}"${cur === v ? ' selected' : ''}>${esc(label)}</option>`;
+        const receiptOpts = opt('Inherit', s.postPayReceiptMode, '— ตามค่าตั้ง (ผู้ติดต่อ/บริษัท) —') + opt('On', s.postPayReceiptMode, 'ออกและส่งอัตโนมัติ') + opt('Off', s.postPayReceiptMode, 'ไม่ออก/ไม่ส่งอัตโนมัติ');
+        const partialOpts = opt('Inherit', s.postPayPartialMode, '— งวด: ตามค่าตั้ง —') + opt('On', s.postPayPartialMode, 'ส่งทุกงวดที่รับ') + opt('Off', s.postPayPartialMode, 'ส่งเฉพาะเมื่อชำระครบ');
+        return `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #e2e8f0">
+          <label class="text-sm" for="postPayDocMode" style="font-weight:600">ใบเสร็จ/ใบกำกับอัตโนมัติหลังรับชำระ (เฉพาะใบนี้)</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+            <select class="form-select" id="postPayDocMode" style="max-width:260px">
+              ${receiptOpts /* html — ตัวเลือกคงที่ หนีแล้วใน opt() */}
+            </select>
+            <select class="form-select" id="postPayDocPartial" style="max-width:220px" aria-label="รับชำระบางส่วน">
+              ${partialOpts /* html — ตัวเลือกคงที่ หนีแล้วใน opt() */}
+            </select>
+            <button class="btn btn-sm btn-secondary" data-postpay-save="1">บันทึก</button>
+          </div>
+          ${s.postPayEffectiveLabel ? `<div class="text-sm text-gray-500" style="margin-top:4px">${esc(s.postPayEffectiveLabel)}</div>` : ''}
+        </div>`;
+      },
+      _bindPostPaySetting(host, docId) {
+        const btn = host.querySelector('[data-postpay-save]');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+          const api = Layout.api(); const cid = Layout.getCompanyId();
+          try {
+            const r = await api.put(`/api/companies/${cid}/document-auto-send/documents/${docId}/post-pay`, {
+              receiptMode: host.querySelector('#postPayDocMode').value, partialMode: host.querySelector('#postPayDocPartial').value });
+            Layout.toast((r && r.message) || 'บันทึกแล้ว', 'success');
+            await this.renderAutoSendSection(docId);
+          } catch (e) { Layout.toast(e.message, 'error', 8000); }
+        });
+      },
+      // ══════ จบส่วนรอบ 267 P4 (แผง) ══════
+
       // รอบ 241: ลิงก์ชำระเงิน + งานส่งเอกสารหลังรับชำระ — ทุกค่า/ป้าย/เหตุผลจากเซิร์ฟเวอร์ (DocumentAutoSendController) · ไม่มีสิทธิ์/ไม่เกี่ยว = ไม่แสดง
       async renderAutoSendSection(docId) {
         const host = document.getElementById(`docAutoSend_${docId}`);
@@ -13815,6 +14054,7 @@
         const esc = Layout.esc;
         const runs = (s.runs || []).map(r => `<tr><td>${Layout.date(r.createdAt)}</td><td>${esc(r.statusLabel)}</td><td>${esc(r.message || '')}</td>
           <td>${(r.status === 'Blocked' || r.status === 'Failed') ? `<button class="btn btn-sm btn-secondary" data-autosend-retry="${esc(r.id)}">ลองใหม่</button>` : ''}</td></tr>`).join('');
+        const postPayHtml = this._postPaySettingHtml(s);   // รอบ 267 P4
         host.innerHTML = `<h4 style="font-size:14px;margin-bottom:8px">ลิงก์ชำระเงิน &amp; ส่งเอกสารอัตโนมัติ</h4>
           ${s.refusal ? `<div class="text-sm text-gray-500">${esc(s.refusal)}</div>${s.pageLinkUsable ? `
           <div class="text-sm" style="margin-top:6px">ลิงก์หน้าเอกสารของลูกค้ายังเปิดได้${s.pageLinkNote ? ' — ' + esc(s.pageLinkNote) : ''}</div>
@@ -13828,7 +14068,9 @@
             <button class="btn btn-sm btn-secondary" data-autosend-issue="1">${s.url ? 'คัดลอก/ใช้ลิงก์เดิม' : 'สร้างลิงก์ชำระเงิน'}</button>
             ${s.url ? '<button class="btn btn-sm btn-danger-outline" data-autosend-revoke="1">ยกเลิกลิงก์</button>' : ''}
           </div>`}
+          ${postPayHtml /* html — หนีแล้วใน _postPaySettingHtml */}
           ${runs ? `<table class="table" style="font-size:12px;margin-top:8px"><thead><tr><th>วันที่</th><th>สถานะ</th><th>รายละเอียด</th><th></th></tr></thead><tbody>${runs /* html — แถวหนีแล้ว */}</tbody></table>` : ''}`;
+        this._bindPostPaySetting(host, docId);
         const issue = host.querySelector('[data-autosend-issue]');
         if (issue) issue.addEventListener('click', async () => {
           try {
@@ -14656,6 +14898,63 @@
           img.style.cssText = 'max-height:90px;max-width:100%;background:#fff;border:1px solid #e2e8f0;border-radius:6px;display:block';
           if (slot) { slot.textContent = ''; slot.appendChild(img); }
         } catch (e) { if (slot) slot.textContent = e.message; }
+      },
+
+      /** รอบ 267 P2: แผง "หลักฐานการตอบรับของลูกค้า" (ใบเสนอราคา · ใบส่งของ) — GET …/customer-responses (เซิร์ฟเวอร์ตรวจสิทธิ์อ่านเอกสาร +
+       *  ลงบันทึกการเข้าถึงข้อมูลส่วนบุคคล) · ข้อความ/ป้าย/คำแนะนำ/คำเตือนมาจากเซิร์ฟเวอร์ทั้งหมด (หน้านี้ไม่มีกติกา) · ไม่มีแถว = ไม่แสดงแผง ·
+       *  โหลดไม่ได้ = บอกในแผง (ไม่เงียบ) */
+      async renderCustomerResponses(d) {
+        const host = document.getElementById('detailContent');
+        if (!host || !d || (d.documentType !== 'Quotation' && d.documentType !== 'DeliveryNote')) return;
+        const old = document.getElementById('custRespPanel');
+        if (old) old.remove();
+        const cid = Layout.getCompanyId();
+        let v = null;
+        try {
+          const r = await API.get(`/api/companies/${cid}/document/${d.id}/customer-responses`);
+          v = r && r.data;
+        } catch (e) {
+          const err = document.createElement('div');
+          err.id = 'custRespPanel';
+          err.style.cssText = 'background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;color:#991b1b';
+          err.textContent = 'โหลดหลักฐานการตอบรับของลูกค้าไม่ได้: ' + (e && e.message ? e.message : 'ลองใหม่อีกครั้ง');
+          host.insertAdjacentElement('afterbegin', err);
+          return;
+        }
+        if (!v || !Array.isArray(v.items) || v.items.length === 0) return;
+        const when = (t) => new Date(t).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) + ' น.';
+        const rows = v.items.map(a => {
+          const name = [a.signerFirstName, a.signerLastName].filter(Boolean).join(' ');
+          return `<div style="border-top:1px solid #e2e8f0;padding:6px 0">
+            <b>${Layout.esc(a.label)}</b> · Rev.${Layout.esc(a.revisionNumber)}${a.isCurrentRevision ? '' : ' <span style="color:#b45309">(ฉบับก่อนหน้า)</span>'} · ${Layout.esc(when(a.at))}<br>
+            ${Layout.esc(name || '-')}${a.signerTitle ? ' · ตำแหน่ง ' + Layout.esc(a.signerTitle) : ''}${a.signerOrgName ? ' · ในนาม ' + Layout.esc(a.signerOrgName) : ''}
+            ${a.signerEmail ? ' · ' + Layout.esc(a.signerEmail) + (a.emailVerified ? ' (ยืนยันด้วยรหัสแล้ว)' : '') : ''}
+            ${a.identityLevel === 'NameOnly' ? '<br><span style="color:#64748b">ลิงก์รุ่นก่อน — ผู้ลงนามพิมพ์ชื่ออย่างเดียว (ไม่มีตำแหน่ง/การรับรอง)</span>' : ''}
+            ${a.reasonLabel ? '<br>เหตุผล: ' + Layout.esc(a.reasonLabel) : ''}${a.message ? '<br>ข้อความจากลูกค้า: ' + Layout.esc(a.message) : ''}
+            ${a.erasedAt ? '<br><span style="color:#64748b">ข้อมูลผู้ลงนามถูกลบตามคำขอของเจ้าของข้อมูลแล้ว</span>' : ''}
+            <br><span style="color:#64748b;font-size:11px">IP ${Layout.esc(a.ip || '-')} · รหัสเนื้อหา ${Layout.esc(String(a.contentHash || '').slice(0, 19))}…</span>
+            ${a.signedPdfSha256 && !a.erasedAt ? `<br><a href="#" data-signed-copy="${Layout.esc(a.actionId)}">ดาวน์โหลดฉบับที่ลูกค้าลงนาม</a> <span style="color:#64748b;font-size:11px">SHA-256 ${Layout.esc(a.signedPdfSha256.slice(0, 16))}…</span>` : ''}
+          </div>`;
+        }).join('');
+        const box = document.createElement('div');
+        box.id = 'custRespPanel';
+        box.style.cssText = 'background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;color:#0f172a';
+        // rows = HTML ที่ประกอบจากค่าที่ผ่าน Layout.esc() ทุกตัวข้างบน — ต่อด้วย + (ไม่สอดเข้า template ซ้ำ)
+        box.innerHTML = `<b>หลักฐานการตอบรับของลูกค้า</b> <span style="color:#64748b;font-size:11px">(${Layout.esc(v.legalReference || '')})</span>` + rows + `
+          ${v.convertSuggestion ? `<div style="margin-top:6px;background:#eff6ff;border-radius:6px;padding:6px 8px">${Layout.esc(v.convertSuggestion)}</div>` : ''}
+          ${v.stampDutyWarning ? `<div style="margin-top:6px;background:#fef3c7;color:#92400e;border-radius:6px;padding:6px 8px">⚠️ ${Layout.esc(v.stampDutyWarning)}
+            ${v.stampDutyPage && /^\/pages\/[a-z-]+\.html$/.test(v.stampDutyPage) ? ` <a href="${Layout.esc(v.stampDutyPage)}">เปิดหน้าอากรแสตมป์</a>` : ''}</div>` : ''}`;
+        host.insertAdjacentElement('afterbegin', box);
+        box.querySelectorAll('[data-signed-copy]').forEach(a => a.addEventListener('click', async (ev) => {
+          ev.preventDefault();
+          try {
+            const f = await API.fetchFile(`/api/companies/${cid}/document/${d.id}/customer-responses/${encodeURIComponent(a.dataset.signedCopy)}/signed-pdf`, 'signed.pdf');
+            if (!f) return;   // 401 ⇒ fetchFile พากลับหน้า login แล้ว
+            const url = URL.createObjectURL(f.blob);
+            window.open(url, '_blank', 'noopener');
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+          } catch (e) { Layout.toast ? Layout.toast(e.message || 'ดาวน์โหลดไม่สำเร็จ', 'error') : alert(e.message || 'ดาวน์โหลดไม่สำเร็จ'); }
+        }));
       },
 
       /** แผง "รออนุมัติจากใคร" ในหน้ารายละเอียด — โหลดหลัง render (best-effort)

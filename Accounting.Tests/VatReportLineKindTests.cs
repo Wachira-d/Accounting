@@ -76,8 +76,8 @@ public class VatReportLineKindTests
     }
 
     [Theory]
-    [InlineData("ZERO_RATED_SALES", Pp30SalesBox.ZeroRated)]   // ช่อง 7
-    [InlineData("EXEMPT_SALES", Pp30SalesBox.Exempt)]          // ช่อง 8
+    [InlineData("ZERO_RATED_SALES", Pp30SalesBox.ZeroRated)]   // ช่อง 2 (Pp30FormBox)
+    [InlineData("EXEMPT_SALES", Pp30SalesBox.Exempt)]          // ช่อง 3 (Pp30FormBox)
     [InlineData("EXEMPT", Pp30SalesBox.None)]                  // ยอด "ซื้อ" — ไม่เข้าช่องใด
     [InlineData("VAT_CREDIT_CF", Pp30SalesBox.None)]
     [InlineData("INPUT", Pp30SalesBox.None)]

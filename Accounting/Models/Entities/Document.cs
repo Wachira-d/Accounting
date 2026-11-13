@@ -114,6 +114,13 @@ public class Document : TenantEntity
     [System.ComponentModel.DataAnnotations.Schema.NotMapped]
     public bool SettlesTaxInvoiceSource { get; set; }
 
+    /// <summary>รอบ 266 แพ็ก B (transient · renderer ×2): เลขที่/วันที่ของใบเสร็จที่ใบนี้ "ออกแทน" หลังย้ายการรับชำระ — เติมโดย
+    /// <c>PdfGenerationService.ResolveReplacementReferenceAsync</c> เฉพาะใบเสร็จของการรับชำระที่ <c>ReplacesDocumentId</c> มีค่า (ใบแทนชนิดอื่นพิมพ์ในหมายเหตุตามเดิม — กระดาษที่ออกแล้วไม่เปลี่ยน)</summary>
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string? ReplacementOfNumber { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public DateTime? ReplacementOfDate { get; set; }
+
     /// <summary>Transient (ไม่เก็บ DB) — ข้อมูลใบต้นฉบับสำหรับกล่อง §86/9-10 บน
     /// ใบลดหนี้/ใบเพิ่มหนี้ (เลขที่+วันที่+มูลค่าใบเดิม → มูลค่าที่ถูกต้อง+ผลต่าง)
     /// โหลดตอน render ใน ResolveServedAsReceiptAsync ทั้ง HTML และ QuestPDF.</summary>
@@ -246,6 +253,11 @@ public class Document : TenantEntity
     public string? SignLinkEmailedTo { get; set; }
     /// <summary>ลูกค้าเปิดหน้าลิงก์ครั้งแรกเมื่อ — นับจากการโหลดหน้าสาธารณะเท่านั้น (ไม่มี tracking pixel)</summary>
     public DateTime? SignLinkOpenedAt { get; set; }
+    /// <summary>รอบ 267 P2: คำตอบล่าสุดของลูกค้าต่อ Rev ปัจจุบัน (ชื่อ <c>CustomerSignRule.Kind</c>: Accepted · Declined · ChangeRequested) —
+    /// ภาพฉายของแถวล่าสุดใน <c>CustomerDocumentActions</c> (เขียนในธุรกรรมเดียวกัน) · ผู้อ่าน: ปุ่มบนหน้าเอกสาร (<c>CustomerDocPage.Actions</c>) ·
+    /// ป้ายบนรายการเอกสาร (<c>SignRequestKinds.Status</c>) · ออก Rev ใหม่/ส่งให้ตอบรับใหม่ = ล้าง · ไม่สืบทอดไปใบลูก</summary>
+    public string? CustomerResponse { get; set; }
+    public DateTime? CustomerResponseAt { get; set; }
     /// <summary>ส่งอีเมลเตือนอัตโนมัติแล้วเมื่อ (หนึ่งครั้งต่อลิงก์)</summary>
     public DateTime? SignReminderSentAt { get; set; }
 
@@ -270,6 +282,15 @@ public class Document : TenantEntity
     /// <summary>รอบ 259 (B-L2/L3): กุญแจกันซ้ำ "รายการประจำ + งวด" (<c>Helpers/RecurringRunKey</c>) — ประทับใน INSERT เดียวกับใบ · unique ต่อบริษัท ·
     /// ไม่สืบทอดไปใบลูก · null = ใบที่ไม่ได้มาจากรอบรายการประจำ/ใบก่อนรอบ 259/รอบพิเศษที่ผู้ใช้ยืนยันออกเพิ่ม</summary>
     public string? RecurringRunKey { get; set; }
+
+    // ── รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" ต่อใบ — ชั้นบนสุดของตัวต่อชั้นเดียว ──
+    /// <summary>หลังลูกค้าชำระใบนี้ ออกและส่งใบเสร็จ/ใบกำกับภาษีอัตโนมัติไหม — null = ตามชั้นถัดไป (ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท) ·
+    /// ผู้เขียน: ฟอร์มเอกสาร (สร้าง/แก้ไข) · <c>PUT …/document-auto-send/documents/{id}/post-pay</c> (ใบที่ออกแล้ว) ผ่าน
+    /// <c>PostPaymentAutomationPolicy.ApplyDocumentLayer</c> · ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c> ผ่าน
+    /// <c>PostPaymentAutomationPolicy.EffectiveLayers</c> · <b>ไม่สืบทอด</b>ไปใบลูก/โคลน/ใบแทน (เจตนาของใบนั้น — แบบ <see cref="QuotationAcceptAutopilot"/>)</summary>
+    public bool? PostPayEmailReceipt { get; set; }
+    /// <summary>ส่งทุกงวดที่รับ (false = เฉพาะงวดที่ชำระครบ) ชั้นเอกสาร — null = ตามชั้นถัดไป · ผู้อ่าน/ผู้เขียนเดียวกับ <see cref="PostPayEmailReceipt"/></summary>
+    public bool? PostPayIncludePartial { get; set; }
 
     // ── รอบ 252 WP-12A (AUTOPILOT §7 · คำตัดสิน §2 #36 Q5): ใบเสนอราคาที่ลูกค้ายอมรับออนไลน์ → แปลงอัตโนมัติ (ตั้งต่อใบ · ค่าตั้งต้น "ไม่แปลง") ──
     /// <summary>โหมดแปลงเมื่อลูกค้ายอมรับ (ชื่อใน <c>Helpers/QuotationAcceptAutopilot.Modes</c>: Off · ToInvoice · ToTaxInvoice) · null = ตามค่าบริษัท
@@ -497,6 +518,9 @@ public class Document : TenantEntity
     public Guid? ReplacesDocumentId { get; set; }
     /// <summary>เหตุผลที่ต้องออกใบแทน (เก็บไว้ให้ผู้สอบบัญชี)</summary>
     public string? ReplacementReason { get; set; }
+    /// <summary>รอบ 266 แพ็ก C ฝ่ายค้าน H2 (266-1-45): ตัวช่วยใบซ้ำ "คงใบนี้ไว้" และยกเลิกใบขายสด (id นี้) แล้ว แต่ขั้นลงเงิน/ตัดชำระยังไม่ครบ —
+    /// หน้าเอกสารวาดแถบแดง + ปุ่ม "ทำขั้นที่เหลือต่อ" · ตัวช่วยเปิดซ้ำตอบ "ขั้นที่เหลือ" · ล้างเมื่อตัดชำระครบ · null = ไม่มีงานค้าง</summary>
+    public Guid? DuplicateSalePendingFromDocumentId { get; set; }
     /// <summary>คำตัดสินข้อ 139: ใบนี้ถูก "ผูก" เข้าใบต้นทางภายหลัง (ไม่ได้แปลงมา) เมื่อไร/โดยใคร — มีค่า = ยกเลิกการผูกได้ ·
     /// null = แปลงมาจริงหรือไม่ได้ผูก (ยกเลิกการผูกไม่ได้ กันแปลงซ้ำแล้วได้สองใบ)</summary>
     public DateTime? SourceLinkedAt { get; set; }

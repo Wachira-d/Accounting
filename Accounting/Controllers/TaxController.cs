@@ -67,6 +67,17 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<List<CitRecomputeReviewRow>>(true, result));
     }
 
+    /// <summary>รอบ 269 — ทบทวนยอดขาย 0% (§80/1) / ยกเว้น (§81) ของ ภ.พ.30 ที่บันทึกไว้ เทียบการคำนวณสด (เดิมนับใบเสร็จรับชำระ/ใบวางบิล/ใบส่งของ/
+    /// ใบเสนอราคาเป็นยอดขาย 0%) · อ่านอย่างเดียว · ร่าง ⇒ "สร้างใหม่" · ยื่นแล้ว ⇒ พิจารณายื่น ภ.พ.30 เพิ่มเติม</summary>
+    [HttpGet("pp30-sales-box-review")]
+    public async Task<ActionResult<ApiResponse<List<Pp30SalesBoxReviewRow>>>> GetPp30SalesBoxReview(Guid companyId)
+    {
+        if (await RequireTaxAsync(companyId, "ดูรายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
+        var result = await _taxService.GetPp30SalesBoxReviewAsync(companyId);
+        return Ok(new ApiResponse<List<Pp30SalesBoxReviewRow>>(true, result,
+            result.Count == 0 ? "ยอดขาย 0%/ยกเว้นของรายงานที่บันทึกไว้ตรงกับการคำนวณปัจจุบัน" : $"พบ {result.Count} งวดที่ยอดขาย 0%/ยกเว้นต้องตรวจ"));
+    }
+
     [HttpGet("{reportId:guid}")]
     public async Task<ActionResult<ApiResponse<TaxReportResponse>>> GetTaxReport(Guid companyId, Guid reportId)
     {
@@ -213,6 +224,17 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<string>(true, "ลบรายงานภาษีสำเร็จ"));
     }
 
+    /// <summary>รอบ 269 ชุดสอง H1 — ร่างรายงานภาษีที่ล้าสมัยของ N เดือนล่าสุด (อ่านอย่างเดียว · สูงสุด 12) · กด "สร้างใหม่" ที่แถบเพื่อคำนวณใหม่</summary>
+    [HttpGet("stale-drafts")]
+    public async Task<ActionResult<ApiResponse<List<StaleDraftReportRow>>>> GetStaleDrafts(Guid companyId, [FromQuery] int months = 2)
+    {
+        if (await RequireTaxAsync(companyId, "ดูรายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
+        var result = await _taxService.GetStaleDraftReportsAsync(companyId, months);
+        return Ok(new ApiResponse<List<StaleDraftReportRow>>(true, result,
+            result.Count == 0 ? "ร่างทุกงวดตรงกับข้อมูลปัจจุบัน" : $"พบร่างล้าสมัย {result.Count} งวด"));
+    }
+
+    /// <summary>สร้างร่างที่ยังไม่มีของ N เดือนล่าสุด (สูงสุด 12) — รอบ 269 ชุดสอง H1: ไม่ลบ/ไม่สร้างทับร่างเดิมแล้ว</summary>
     [HttpPost("auto-refresh")]
     public async Task<ActionResult<ApiResponse<object>>> AutoRefresh(Guid companyId, [FromQuery] int months = 2)
     {

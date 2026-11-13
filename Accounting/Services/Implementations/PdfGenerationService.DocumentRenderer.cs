@@ -204,6 +204,7 @@ public partial class PdfGenerationService
                             ComposeContact(col, doc, template, accent, L);
                         }
                         ComposeAdjustmentRef(col, doc, accent, L);   // ใบลด/เพิ่มหนี้ต้องอ้างเลข+วันที่ใบเดิม (§86/9-10) — บังคับ (D5)
+                        ComposeReplacementRef(col, doc, accent, L);   // รอบ 266 แพ็ก B: ใบเสร็จที่ออกแทนใบเดิม (คู่กับ AppendReplacementReferenceHtml ฝั่ง HTML)
                         Safe(() => ComposeSupplierInvoiceNote(col, doc, accent, L));
                         Safe(() => ComposeCurrencyNote(col, doc, accent, L));
                         // รายการสินค้า + ยอดรวม/VAT/สุทธิ = รายการบังคับ §86/4 (D5) — ไม่ห่อ Safe: ล้มแล้วต้องไม่ได้เอกสารที่ไม่มีตาราง/ไม่มียอด
@@ -1223,6 +1224,9 @@ public partial class PdfGenerationService
                         c.Item().AlignCenter().Text($"{L.QtAcceptNote}: {s.AcceptNote}").FontSize(9).FontColor("#666");
                     if (s is { AcceptContentChanged: true })
                         c.Item().AlignCenter().Text(L.QtAcceptContentChanged).FontSize(9).FontColor("#B45309");
+                    // รอบ 267 P2: ผู้ลงนามฝั่งลูกค้า — ในนามของ · เวลาเซ็นรับ · รหัสอ้างอิงหลักฐาน (บรรทัดชุดเดียวกับ HTML Box)
+                    foreach (var signerLine in CustomerSignerLines(s, L))
+                        c.Item().AlignCenter().Text(signerLine).FontSize(9).FontColor("#666");
                 });
             }
         });
@@ -1248,6 +1252,9 @@ public partial class PdfGenerationService
                 catch { c.Item().Height(14, Unit.Millimetre).Text(""); }
             }
             c.Item().Text($"{L.QtAcceptBy}: {s.Name}").FontSize(10);
+            // รอบ 267 P2: ตำแหน่ง · ในนามของ · รหัสอ้างอิงหลักฐาน (บรรทัดชุดเดียวกับ HTML QuotationAcceptanceBlockHtml)
+            foreach (var signerLine in CustomerSignerLines(s, L, includeTitle: true))
+                c.Item().Text(signerLine).FontSize(10);
             c.Item().Text(L.QtAcceptedOnline(acceptedAt)).FontSize(10);
             if (!string.IsNullOrWhiteSpace(s.AcceptNote))
                 c.Item().Text($"{L.QtAcceptNote}: {s.AcceptNote}").FontSize(10);

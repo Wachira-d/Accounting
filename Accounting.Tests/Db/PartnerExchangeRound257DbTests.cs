@@ -17,6 +17,9 @@ namespace Accounting.Tests.Db;
 /// <para>seed: บริษัทใหม่ทุกเทสต์ · เลขภาษีสุ่ม (ฐานร่วม)</para>
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 269 (CI db-test 43376320015 + 43380265759 · "InviteNoticeDueAt does not have a value"): CrossTenantWorkflowService.DispatchPendingLinkRequestNoticesAsync
+// กวาดคำขอเชื่อมคู่ค้าที่ถึงกำหนดของทุกบริษัทในฐานร่วม ⇒ คลาสที่รันขนานส่ง/ล้างคิวแจ้งของคำเชิญที่อีกคลาสเพิ่งสร้าง · คลาสที่สร้างคำเชิญหรือกวาดคิวอยู่ collection เดียวกัน
+[Collection("PartnerLinkRequestSweep")]
 public class PartnerExchangeRound257DbTests
 {
     private readonly ITestOutputHelper _out;

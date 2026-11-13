@@ -95,11 +95,23 @@ public class RecurringLateFeeAccrualJob : BackgroundService
                     && d.DueDate != null)
                 .ToListAsync(ct);
 
+            // รอบ 266 ฝ่ายค้าน B-4: ใบที่กลับมาค้างเพราะการรับชำระถูกย้ายไปตัดใบอื่น (แพ็ก B) — ระบบเคยบอกลูกค้าว่าชำระแล้วจนถึงวันที่ย้าย ⇒ นับวันล่าช้าจากวันที่ย้าย
+            // (แถวจัดสรรที่ถูกปล่อย ReleasedAt) ไม่ใช่วันครบกำหนดเดิม · ตัวตัดสินเดียว ReceiptLinkPolicy.LateFeeDaysOverdue
+            var docIds = docs.Select(d => d.Id).ToList();
+            var movedOutAt = docIds.Count == 0
+                ? new Dictionary<Guid, DateTime>()
+                : (await db.PaymentAllocations.IgnoreQueryFilters().AsNoTracking()
+                    .Where(a => a.CompanyId == rec.CompanyId && docIds.Contains(a.DocumentId) && a.ReleasedAt != null)
+                    .Select(a => new { a.DocumentId, ReleasedAt = a.ReleasedAt!.Value })
+                    .ToListAsync(ct))
+                    .GroupBy(a => a.DocumentId).ToDictionary(g => g.Key, g => g.Max(a => a.ReleasedAt));
+
             foreach (var doc in docs)
             {
                 processed++;
                 var due = doc.DueDate!.Value.Date;
-                var daysOverdue = (int)(today - due).TotalDays - rec.LateFeeGraceDays;
+                var daysOverdue = Accounting.Helpers.ReceiptLinkPolicy.LateFeeDaysOverdue(today, due,
+                    movedOutAt.TryGetValue(doc.Id, out var releasedAt) ? releasedAt : null, rec.LateFeeGraceDays);
                 if (daysOverdue <= 0) continue;
 
                 // กัน double accrue: ดู Notes ถ้า contains LATE_FEE_ACCRUED_<today>

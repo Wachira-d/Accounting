@@ -387,11 +387,11 @@ public class CustomerDocPageRound267Tests
     }
 
     [Fact]
-    public void CDP267_LegacyRespondPath_เฉพาะชนิดที่มีหน้าตอบรับเดิม()
+    public void CDP267_RespondPath_เส้นตอบรับเดียวของหน้าเอกสาร()
     {
-        Assert.Equal("/pages/quotation-accept.html?token=ab12", CustomerDocPage.LegacyRespondPath(DocumentType.Quotation, "ab12"));
-        Assert.Equal("/pages/delivery-sign.html?token=ab12", CustomerDocPage.LegacyRespondPath(DocumentType.DeliveryNote, "ab12"));
-        Assert.Null(CustomerDocPage.LegacyRespondPath(DocumentType.Invoice, "ab12"));
+        // รอบ 267 P2: ปุ่มตอบรับไม่พาไปหน้ายอมรับ/เซ็นรับรุ่นก่อนแล้ว — ส่งคำตอบที่เส้นเดียวของหน้า (ผู้เขียนเดียว CustomerDocumentResponseService)
+        var cid = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        Assert.Equal("/api/companies/11111111-2222-3333-4444-555555555555/public-pay/documents/ab12/respond", CustomerDocPage.RespondPath(cid, "ab12"));
     }
 
     // ───────── log ไม่เก็บ token ─────────
@@ -447,7 +447,9 @@ public class CustomerDocPageRound267Tests
         Assert.Equal(CustomerDocPage.RespondStaleMessage, CustomerDocPage.RespondStaleReason(true, 1, 1, "x", "h"));     // hash เนื้อหาไม่ตรง
         Assert.Contains("เอกสารถูกแก้ไข", CustomerDocPage.RespondStaleMessage);
         // ทิศตรงข้าม: ฉบับที่เห็น = ฉบับปัจจุบัน ⇒ ผ่าน (hash ไม่ส่งมา = ไม่บังคับ · ตัวพิมพ์ไม่มีผล)
-        Assert.Null(CustomerDocPage.RespondStaleReason(true, 1, 1, null, "h"));
+        // ฝ่ายค้าน 267-P2 L5: ลิงก์หน้าเอกสารไม่ส่ง hash ที่เห็น = ไม่ผ่าน (เดิม null)
+        Assert.Equal(CustomerDocPage.RespondStaleMessage, CustomerDocPage.RespondStaleReason(true, 1, 1, null, "h"));
+        Assert.Null(CustomerDocPage.RespondStaleReason(true, 1, 1, "h", "h"));
         Assert.Null(CustomerDocPage.RespondStaleReason(true, 1, 1, "AB", "ab"));
         // ลิงก์รุ่นก่อน (ถูกล้างตอนออก Rev อยู่แล้ว) ไม่บังคับเลข Rev — หน้าที่แคชไว้ยังใช้ได้ · แต่ถ้าส่งมาต้องตรง
         Assert.Null(CustomerDocPage.RespondStaleReason(false, null, 3, null, "h"));

@@ -299,6 +299,50 @@ public class DocumentController : ControllerBase
         return File(bytes!, "image/png");
     }
 
+    /// <summary>รอบ 267 P2: หลักฐานการตอบรับของลูกค้าบนใบนี้ (ยอมรับ · ไม่รับ · ขอแก้ · เซ็นรับ — ผู้ลงนาม · ตำแหน่ง · เวลา · IP · hash) สำหรับพนักงาน +
+    /// คำแนะนำหลังลูกค้ายอมรับ (แปลงเป็นใบส่งของ/ใบแจ้งหนี้/ใบกำกับ/มัดจำ) + คำเตือนอากรแสตมป์ (เตือนเท่านั้น) ·
+    /// สิทธิ์อ่านเอกสารของผู้ใช้ (ฝั่งเอกสาร + ชั้นความลับ) · ทุกครั้งที่เปิดลงบันทึกการเข้าถึงข้อมูลส่วนบุคคล (PDPA ม.37)</summary>
+    [HttpGet("{documentId:guid}/customer-responses")]
+    public async Task<ActionResult<ApiResponse<Accounting.Services.Interfaces.CustomerDocEvidenceView>>> GetCustomerResponses(Guid companyId, Guid documentId,
+        [FromServices] Accounting.Services.Implementations.CustomerDocumentResponseService responses,
+        [FromServices] Accounting.Services.Implementations.Pdpa.IPdpaService pdpa, CancellationToken ct)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var visible = await _documentService.GetDocumentForUserAsync(companyId, documentId, userId);
+        if (visible.IsRedacted) return NotFound(new ApiResponse<Accounting.Services.Interfaces.CustomerDocEvidenceView>(false, null, "ไม่พบเอกสาร"));
+        var view = await responses.EvidenceForStaffAsync(companyId, documentId, ct);
+        // ฝ่ายค้าน 267-P2 L6 (267-1-59): IP + อีเมลของผู้ลงนาม = ค่าเต็มเฉพาะสิทธิ์ Pii.View (กฎ #2 J) · คนอื่นเห็นชื่อ/ตำแหน่ง/เวลา/hash (หลักฐานการตกลงที่งานขายต้องใช้)
+        var canPii = await _permissions.HasPermissionAsync(companyId, userId, Models.Constants.PermissionKeys.PiiView);
+        if (!canPii)
+            view = view with { Items = view.Items.Select(i => i with { Ip = null, SignerEmail = CustomerSignRule.MaskEmail(i.SignerEmail) }).ToList() };
+        if (view.Items.Count > 0)
+            await pdpa.LogPiiAccessAsync(companyId, userId, User.Identity?.Name ?? "", "Document", documentId,
+                canPii ? "CustomerDocumentActions (รวม IP/อีเมล)" : "CustomerDocumentActions", "View",
+                "พนักงานเปิดดูหลักฐานการตอบรับของลูกค้า (" + CustomerSignRule.RuleCode + ")",
+                HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
+        Response.Headers["Cache-Control"] = "private, no-store";
+        return Ok(new ApiResponse<Accounting.Services.Interfaces.CustomerDocEvidenceView>(true, view));
+    }
+
+    /// <summary>รอบ 267 P2: ฉบับที่ลูกค้าเซ็น (ไฟล์ ณ ตอนลงนาม) ของแถวหลักฐาน — สิทธิ์อ่านเอกสารของผู้ใช้ · ตรวจ SHA-256 กับที่บันทึกก่อนส่ง (ไม่ตรง = ไม่พบ)</summary>
+    [HttpGet("{documentId:guid}/customer-responses/{actionId:guid}/signed-pdf")]
+    public async Task<IActionResult> GetCustomerSignedCopy(Guid companyId, Guid documentId, Guid actionId,
+        [FromServices] Accounting.Services.Implementations.CustomerDocumentResponseService responses,
+        [FromServices] Accounting.Services.Implementations.Pdpa.IPdpaService pdpa, CancellationToken ct)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var visible = await _documentService.GetDocumentForUserAsync(companyId, documentId, userId);
+        if (visible.IsRedacted) return NotFound(new ApiResponse<object>(false, null, "ไม่พบไฟล์"));
+        var file = await responses.ReadSignedCopyAsync(companyId, documentId, actionId, ct);
+        if (file == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบฉบับที่ลูกค้าลงนาม (ยังไม่ถูกสร้าง หรือไฟล์ไม่ตรงกับที่บันทึก)"));
+        // ฝ่ายค้าน 267-P2 L6: PDF มีชื่อ/ตำแหน่ง/ลายเซ็นของผู้ลงนาม ⇒ ร่องรอยการเข้าถึง (ม.37) เหมือนแผงหลักฐาน
+        await pdpa.LogPiiAccessAsync(companyId, userId, User.Identity?.Name ?? "", "Document", documentId, "CustomerDocumentActions.SignedPdf", "Export",
+            "พนักงานดาวน์โหลดฉบับที่ลูกค้าลงนาม (" + CustomerSignRule.RuleCode + ")",
+            HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
+        Response.Headers["Cache-Control"] = "private, no-store";
+        return File(file.Value.Bytes, "application/pdf", PublicDocumentPageController.SafeFileName(file.Value.FileName));
+    }
+
     /// <summary>ส่งลิงก์ "ลูกค้าเซ็นรับสินค้าออนไลน์" (POD) — เฉพาะใบส่งของที่อนุมัติแล้ว · รอบ 267 P1: คืน URL หน้าเอกสารของใบ
     /// (ลิงก์เดียวต่อใบ) + เปิดช่วงเซ็นรับ 14 วัน · เรียกซ้ำ = ออก token ใหม่ (ลิงก์เดิมใช้ไม่ได้ทันที — 267-1-24) + เริ่มช่วงใหม่</summary>
     [HttpPost("{documentId:guid}/delivery-sign-link")]

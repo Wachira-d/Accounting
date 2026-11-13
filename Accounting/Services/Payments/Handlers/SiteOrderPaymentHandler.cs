@@ -102,9 +102,14 @@ public class SiteOrderPaymentHandler : IPaymentCompletionHandler
         // (ห้าม handler ไปหาผังเอง — 5 ทางเข้าจะได้กติกา 5 ชุดที่ drift แน่นอน)
         var moneyIn = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
 
+        // รอบ 268 (268-1-2): สลิปโอนของออเดอร์ผ่านคิวรายการชำระ ⇒ บัญชีธนาคารที่เงินเข้าจากตัวตัดสินเดียว (ค่าที่ประทับตอนยืนยัน หรือค่าแนะนำ) —
+        // เดิมส่งแค่ moneyIn (= null สำหรับสลิป) ⇒ ใบขายของออเดอร์ไม่มีแหล่งเงิน ⇒ เงินสด 111 · เงินผ่านผู้ให้บริการ (moneyIn มีค่า) ไม่ใช้ตัวนี้
+        var receivingBank = moneyIn == null
+            ? await Accounting.Helpers.SlipReceivingAccount.OverrideForHandlerAsync(_db, null, intent, ct)
+            : null;
         var ok = await _commerce.ConfirmPaymentAsync(intent.CompanyId, sid, intent.SourceId,
             paymentId: pay.Id, actor: intent.ConfirmedBy ?? "payment-gateway",
-            moneyInAccountId: moneyIn);
+            moneyInAccountId: moneyIn, receivingBankAccountId: receivingBank);
         if (!ok)
             throw new BusinessRuleException(GatewayPaymentRecord.SourceMissingMessage("คำสั่งซื้อ", intent.Id, intent.Amount),
                 Accounting.Helpers.GatewayPaymentRecord.SourceMissingRuleCode);

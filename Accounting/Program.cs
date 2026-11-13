@@ -153,6 +153,10 @@ else
 {
     Accounting.Helpers.EncryptedColumnConverter.Configure(encryptionKey);
 }
+// ฝ่ายค้าน 267-P2 M1: กุญแจ HMAC ของรหัสยืนยันอีเมลผู้ลงนาม — แหล่งเดียวกับข้างบน · production ไม่มีคีย์/เป็น dev key = boot ไม่ขึ้น
+Accounting.Helpers.CustomerSignRule.ConfigureOtpKey(Accounting.Helpers.EncryptionKeyResolver.RequireUsable(
+    Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),
+    builder.Environment.IsProduction(), "รหัสยืนยันอีเมลของผู้ลงนามเอกสาร (HMAC)"));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -347,6 +351,8 @@ builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ICustomerCreditService, CustomerCreditService>();
 // รอบ 266 แพ็ก A — ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ (เจ้าเดียวกัน) · ตัวตัดสิน Helpers/ReceiptLinkPolicy
 builder.Services.AddScoped<IReceiptLinkService, ReceiptLinkService>();
+// รอบ 266 แพ็ก C — ตัวช่วย "ใบซ้ำ" (ใบขายสด ↔ ใบแจ้งหนี้ของการขายเดียวกัน) · ตัวตัดสิน Helpers/DuplicateSalePolicy · เส้นเดิมเท่านั้น (ยกเลิก/ใบลดหนี้ร่าง/รับชำระ)
+builder.Services.AddScoped<IDuplicateSaleService, DuplicateSaleService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 // ทะเบียนภาษีที่เราถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.51/50 (WHT_CREDIT_PLAN.md)
 builder.Services.AddScoped<Accounting.Services.Implementations.WhtCreditService>();
@@ -766,6 +772,7 @@ builder.Services.AddScoped<IDocumentEmailService, DocumentEmailService>();
 // รอบ 240: ลิงก์ให้ลูกค้าเซ็น — ออกลิงก์/อีเมลในนามบริษัท/ป้ายสถานะ/ค่าตั้ง + ผู้ส่งเหตุการณ์จาก outbox (webhook ต่อเอกสาร · webhook ที่ลงทะเบียน · แจ้งผู้ขาย)
 builder.Services.AddScoped<ISignRequestService, SignRequestService>();
 builder.Services.AddScoped<SignEventDispatcher>();
+builder.Services.AddScoped<CustomerDocumentResponseService>();   // รอบ 267 P2 — ผู้เขียนเดียวของ "ลูกค้าตอบรับเอกสาร" (ยอมรับ/ไม่รับ/ขอแก้/เซ็นรับ + แถวหลักฐาน + ฉบับที่ลงนาม)
 builder.Services.AddHostedService<Accounting.Services.Background.SignEventOutboxJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.SignRequestAutomationJob>();
 

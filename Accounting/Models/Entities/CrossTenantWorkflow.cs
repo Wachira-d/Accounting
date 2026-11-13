@@ -197,6 +197,9 @@ public class PartnerPaymentNotice : TenantEntity
     public Guid? PaymentIntentId { get; set; }
     /// <summary>รอบ 264 P3 (264-3-6): <b>กุญแจกันซ้ำ</b> = การรับชำระของผู้ขาย (<c>Payment.Id</c> ในบริษัทผู้ขาย) · แถวเดิมเติมจาก <c>Payments.Reference = PAY-INTENT-{intent}</c> (migration) · null = แถวเก่าที่หาการชำระไม่พบ</summary>
     public Guid? SellerPaymentId { get; set; }
+    /// <summary>รอบ 268 (คำตัดสิน 268-1-6 · backlog D8): การรับชำระหลายใบของผู้ขาย ⇒ <b>หนึ่งการแจ้งต่อแถวจัดสรร</b> (<c>PaymentAllocation.Id</c>) — กุญแจกันซ้ำแทน
+    /// <see cref="SellerPaymentId"/> (การชำระเดียวกันมีหลายแถวแจ้งได้) · null = การชำระใบเดียว (เดิม)</summary>
+    public Guid? SellerAllocationId { get; set; }
     /// <summary>รอบ 264 P3: ผู้ขายยกเลิกการรับชำระนี้แล้ว (เวลา) — Open ⇒ <c>Withdrawn</c> · Recorded ⇒ ป้ายบนใบซื้อ + แจ้ง (ไม่ยกเลิกการจ่ายของผู้ซื้อแทน · E6)</summary>
     public DateTime? SellerVoidedAt { get; set; }
     /// <summary>รอบ 264 P3: เหตุล่าสุดที่ท่ออัตโนมัติไม่บันทึกจ่ายเอง (ข้อความไทยจาก <c>PartnerAutoRecordPolicy</c>) · null = ยังไม่เคยประเมิน/ผ่าน</summary>
@@ -217,4 +220,9 @@ public class PartnerPaymentNotice : TenantEntity
     public DateTime? ResolvedAt { get; set; }
     public string? ResolvedBy { get; set; }
     public string? Note { get; set; }
+    /// <summary>รอบ 264 P2 (คำตัดสิน 264-4-7): ธนาคารของ<b>ผู้โอน</b>บนสลิปที่ผู้ขายได้รับ (รหัส 3 หลัก <c>ThaiBankCodes</c>) — บัญชีของผู้ซื้อเอง ·
+    /// ผู้อ่าน: <c>PartnerPayablePipeline.SourceDecisionAsync</c> ⇒ <c>SlipAccountMatch</c> ⇒ ชั้น <c>SlipUnique</c> · null = ไม่มีสลิป/อ่านไม่ได้</summary>
+    public string? SlipPayerBankCode { get; set; }
+    /// <summary>รอบ 264 P2: เลขบัญชีผู้โอนแบบปิดบาง<b>ตามที่ธนาคารปิดมาแล้ว</b> (เช่น <c>xxx-x-x0621-x</c>) · ไม่มีชื่อ/รูปสลิป (ข้อมูลน้อยที่สุดที่ใช้จับคู่)</summary>
+    public string? SlipPayerAccountMask { get; set; }
 }

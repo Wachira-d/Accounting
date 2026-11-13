@@ -140,6 +140,8 @@ public partial class DocumentService
         if (payment != null && doc != null
             && await TryAutoIssueAllocationReceiptAsync(companyId, payment, doc, issueRequested: null, actor) is string receiptNotice)
             notices.Add(receiptNotice);
+        // รอบ 268 (ฝ่ายค้าน L1 · 268-1-14): จัดสรรทีหลังจากเงินรอจัดสรร ⇒ แจ้งผู้ซื้อคู่ค้าของใบนั้น (ตัวแจ้งเดียว · กุญแจแถวจัดสรร ⇒ แถวเดิมไม่แจ้งซ้ำ) · ไม่โยน
+        await NotifyPartnerOfSellerPaymentAsync(companyId, paymentId, Accounting.Helpers.PaymentEntrySource.Manual);
         return notices;
     }
 

@@ -28,6 +28,9 @@ public class LineChatSlip : TenantEntity
     public DateTime? OcrDate { get; set; }
     /// <summary>เลขอ้างอิงโอนหลังปรับรูป (<c>SlipEvidenceRule.NormalizeRef</c>)</summary>
     public string? OcrRef { get; set; }
+    /// <summary>รอบ 264 P2: ผลอ่านคู่กรณี + QR ตรวจสลิป (JSON จาก <c>OcrSlipText.ToStoredJson</c> — ธนาคาร · เลขปิดบาง · Biller ID · ไม่มีชื่อ) ·
+    /// คัดลอกไปที่ <c>PaymentIntent.SlipReadJson</c> ตอนแจ้งโอน (ทุกทางของ <c>LineChatSlipService.TrySubmitAsync</c>) · null = ไม่มีผลอ่าน/แถวก่อนรอบนี้</summary>
+    public string? SlipReadJson { get; set; }
 
     /// <summary><c>LineChatSlipRule.Statuses</c></summary>
     public string Status { get; set; } = "";

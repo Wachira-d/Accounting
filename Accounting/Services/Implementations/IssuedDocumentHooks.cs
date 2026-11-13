@@ -46,7 +46,31 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
         if (doc.CompanyId != companyId) return IssuedDocumentHookResult.Nothing;   // tenant isolation
         var result = await TryAutoGenerateEtaxAsync(companyId, doc, ct);
         await TryActivateCoursePassAsync(companyId, doc, ct);
+        await TryMoveBookingDepositInstalmentsAsync(companyId, doc, ct);
         return result;
+    }
+
+    /// <summary>รอบ 268 (ฝ่ายค้าน M4 · คำตัดสิน 268-1-10): ใบเสร็จมัดจำของการจองนัดหมายอนุมัติ<b>ทางใดก็ได้</b> (อนุมัติอัตโนมัติล้มแล้วพนักงานกดที่หน้าเอกสาร ฯลฯ) ⇒
+    /// ย้ายเงินงวดก่อนไปช่องทางที่เข้าจริง (ตัวกลางเดียว <see cref="CmsBookingService.MoveEarlierInstalmentsCoreAsync"/> · กันซ้ำด้วย <c>BKDEP-</c>) · หมายเหตุลงการจอง ·
+    /// ไม่โยน (ตัวกลางล้มดังด้วยหมายเหตุ + LogError เอง)</summary>
+    private async Task TryMoveBookingDepositInstalmentsAsync(Guid companyId, Document doc, CancellationToken ct)
+    {
+        if (!doc.IsDeposit || doc.DocumentType != DocumentType.Receipt || !DocumentStatusRules.IsIssued(doc.Status)) return;
+        try
+        {
+            var booking = await _db.SiteBookings.FirstOrDefaultAsync(b => b.CompanyId == companyId && b.ErpDocumentId == doc.Id, ct);
+            if (booking == null) return;
+            var notices = new List<string>();
+            var notes = new List<string>();
+            await CmsBookingService.MoveEarlierInstalmentsCoreAsync(_db, _logger, companyId, booking.Id, doc.Id, null, "system:booking-deposit-move", notices, notes);
+            if (notes.Count == 0) return;
+            foreach (var n in notes) booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, n);
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "ย้ายเงินมัดจำงวดก่อนหลังอนุมัติใบ {Doc} ไม่สำเร็จ", doc.DocumentNumber);
+        }
     }
 
     private static readonly DocumentType[] CourseSaleTypes = { DocumentType.TaxInvoice, DocumentType.Receipt, DocumentType.Invoice };

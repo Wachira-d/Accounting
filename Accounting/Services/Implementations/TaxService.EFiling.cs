@@ -213,23 +213,30 @@ public partial class TaxService
                 $"ไม่พบรายงาน ภพ.30 ของงวด {year}/{month:D2}");
 
         var sb = new StringBuilder();
-        // PP.30 header: TaxId | Branch | Form | Year | Month | OutputVat | InputVat | NetVat
-        sb.Append(string.Join("|",
+        // รอบ 269 ชุดสอง M3/L3 — ยอดทุกช่องจาก Pp30FormBoxes.Figures (สูตรเดียวกับจอ/PDF/Excel) · 8 ฟิลด์แรกคงรูปเดิม
+        // (ภาษีขาย · ภาษีซื้อ · สุทธิ = ช่อง 11 − ช่อง 12 หลังหักชำระเกินยกมา) แล้วต่อท้ายด้วยช่อง 1–12 ตามเลขช่องของแบบ
+        var boxes = Accounting.Helpers.Pp30FormBoxes.Figures(
+                report.Lines.Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount, l.IsExcluded)), report.OutputVat, report.InputVat)
+            .ToDictionary(x => x.Box, x => x.Amount);
+        var net = boxes[Accounting.Helpers.Pp30FormBox.NetTaxPayable] - boxes[Accounting.Helpers.Pp30FormBox.NetTaxOverpaid];
+        // PP.30 header: TaxId | Branch | Form | Year | Month | OutputVat | InputVat | NetVat | Box1 … Box12
+        sb.Append(string.Join("|", new[]
+        {
             company.TaxId ?? "",
             (company.BranchCode ?? "00000").PadLeft(5, '0'),
             "PP30",
             year.ToString(),
             month.ToString("D2"),
-            F(report.OutputVat),
-            F(report.InputVat),
-            F(report.NetVat)
-        )).Append("\r\n");
+            F(boxes[Accounting.Helpers.Pp30FormBox.OutputVat]),
+            F(boxes[Accounting.Helpers.Pp30FormBox.InputVat]),
+            F(net),
+        }.Concat(boxes.OrderBy(b => (int)b.Key).Select(b => F(b.Value))))).Append("\r\n");
 
         // PP.30 has no per-document detail lines in the file format (those
         // live in the supporting purchase/sales reports). The single-line
         // body is what the portal accepts for the summary submission.
 
-        return (sb.ToString(), report.OutputVat + report.InputVat, report.NetVat, 1);
+        return (sb.ToString(), report.OutputVat + report.InputVat, net, 1);
     }
 
     private async Task<(string body, decimal amount, decimal tax, int lines)> BuildPp36Async(

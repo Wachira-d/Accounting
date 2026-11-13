@@ -487,4 +487,51 @@ public class ProviderCentralOaRound262DbTests
             Assert.True((await portal.GetMyDocumentsAsync(f.PlatformId, plain.Id)).Single(d => d.Id == plainInv.Id).CanPay);
         });
     }
+
+    // ═══ รอบ 268 (คำตัดสิน 268-1-9 แทน 268-1-5 · ฝ่ายค้าน M2) ═══
+
+    [Fact]
+    public async Task C268_1_9_นำผู้ใช้ออก_เพิกถอนคำเชิญค้างที่เขาสร้าง_แจ้งเจ้าของให้ตรวจ_ไม่ยกเลิกปลายทางเอง_ทิศตรงข้าม_คำเชิญของคนอื่นไม่ถูกแตะ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var f = await PlatformBillingPhase2DbTests.SeedAsync(db);
+        var owner = new User { Email = $"o268-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "เจ้าของผู้เช่า 268" };
+        var member = new User { Email = $"m268-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "พนักงานที่ออก 268" };
+        db.Users.AddRange(owner, member);
+        db.CompanyUsers.Add(new CompanyUser { UserId = owner.Id, CompanyId = f.BuyerId, Role = UserRole.Owner });
+        db.CompanyUsers.Add(new CompanyUser { UserId = member.Id, CompanyId = f.BuyerId, Role = UserRole.Accountant });
+        await db.SaveChangesAsync();
+        await PlatformBillingPhase2DbTests.WithPlatformTenantAsync(db, f.PlatformId, async () =>
+        {
+            var bound = await SeedCentralEndpointAsync(db, f.PlatformId, f.ContactId, "Umine268" + Guid.NewGuid().ToString("N")[..20]);
+            await db.ContactNotifyEndpoints.Where(e => e.Id == bound.Id).ExecuteUpdateAsync(x => x.SetProperty(e => e.BoundByUserId, (Guid?)member.Id));
+            ContactLineInvite Invite(Guid by) => new()
+            {
+                CompanyId = f.PlatformId, ContactId = f.ContactId, TokenHash = Guid.NewGuid().ToString("N"), ExpiresAt = DateTime.UtcNow.AddDays(7),
+                OaScope = NotifyEndpointKind.ScopeNextAcc, CreatedByUserId = by,
+            };
+            var mineInvite = Invite(member.Id);
+            var ownerInvite = Invite(owner.Id);
+            db.ContactLineInvites.AddRange(mineInvite, ownerInvite);
+            await db.SaveChangesAsync();
+
+            using (var c1 = DbTestDatabase.TryCreateContext()!)
+                await new CompanyService(c1, new AccountingService(c1)).RemoveUserAsync(f.BuyerId, owner.Id, member.Id);
+
+            using var check = DbTestDatabase.TryCreateContext()!;
+            Assert.False(await check.CompanyUsers.AnyAsync(x => x.CompanyId == f.BuyerId && x.UserId == member.Id));
+            Assert.NotNull((await check.ContactLineInvites.AsNoTracking().SingleAsync(i => i.Id == mineInvite.Id)).RevokedAt);   // ลิงก์ค้างผูกใหม่ไม่ได้
+            Assert.Null((await check.ContactLineInvites.AsNoTracking().SingleAsync(i => i.Id == ownerInvite.Id)).RevokedAt);
+            var ep = await check.ContactNotifyEndpoints.AsNoTracking().SingleAsync(e => e.Id == bound.Id);
+            Assert.Null(ep.UnlinkedAt);                                   // ระบบไม่รู้ว่า LINE เป็นของใคร — ไม่ยกเลิก/ไม่ถอนความยินยอมเอง
+            Assert.NotNull(ep.LineUserId);
+            Assert.Null((await check.PdpaConsentRecords.AsNoTracking().SingleAsync(c => c.Id == ep.ConsentRecordId)).WithdrawnAt);
+            var bell = await check.Notifications.AsNoTracking().SingleAsync(n => n.CompanyId == f.BuyerId && n.EntityType == ProviderCentralOa.MemberRemovedReviewEntity);
+            Assert.Equal(owner.Id, bell.UserId);                          // เจ้าของได้กระดิ่งให้ตรวจที่ศูนย์บิล · ผู้ถูกนำออกไม่ได้
+            Assert.Contains("1 ปลายทาง", bell.Message);
+            Assert.Contains(await check.AuditLogs.AsNoTracking().Where(a => a.CompanyId == f.PlatformId).Select(a => a.NewValues!).ToListAsync(),
+                v => v.Contains("tenant-member-removed"));
+        });
+    }
 }

@@ -51,8 +51,8 @@ public static class LineChatSlipRule
     // ── ฝ่ายค้าน M4 (PDPA ม.39): แถว RoPA ของ "รับรูปสลิปจากแชต LINE" — ระบบสร้างครั้งแรกที่รับรูป (ไม่ทับที่บริษัทแก้ไว้) ──
     public const string RopaPurpose = "รับรูปสลิปโอนเงินที่ลูกค้าส่งในแชต LINE OA ของบริษัท เพื่อผูกกับเอกสารค้างชำระ";
     public const string RopaLegalBasis = "Contract";
-    public const string RopaDataCategories = "รูปสลิป (ชื่อผู้โอน · เลขบัญชีบางส่วน · ยอด · วันที่ · เลขอ้างอิง) · hash ของ LINE userId/groupId · รูปอื่นที่ผู้ใช้ส่งมา";
-    public const string RopaRetention = "ผูกเอกสารแล้ว/ปิดรายการ ⇒ ลบสำเนาในแชตทันที (หลักฐานอยู่ที่ไฟล์แนบเอกสารตามอายุเอกสารบัญชี) · ไม่ได้ผูก ⇒ ลบรูปเมื่อครบ 90 วัน";
+    public const string RopaDataCategories = "รูป/ไฟล์ PDF สลิป (ชื่อผู้โอน · เลขบัญชีบางส่วน · ยอด · วันที่ · เลขอ้างอิง) · ผลอ่านในเครื่อง: ธนาคาร + เลขบัญชีที่ธนาคารปิดแล้ว ≤4 หลัก + QR ตรวจสลิป (ไม่มีชื่อ) · hash ของ LINE userId/groupId · รูปอื่นที่ผู้ใช้ส่งมา (PDF ที่ไม่ใช่สลิปไม่เก็บ)";
+    public const string RopaRetention = "ผูกเอกสารแล้ว/ปิดรายการ ⇒ ลบสำเนาในแชตทันที (หลักฐานอยู่ที่ไฟล์แนบเอกสารตามอายุเอกสารบัญชี) · ไม่ได้ผูก ⇒ ลบรูปเมื่อครบ 90 วัน · ผลอ่านลบพร้อมรูป";
     public const string RopaRecipients = "พนักงานผู้มีสิทธิ์ดูรายการรับชำระของบริษัท · LY Corporation (LINE — ผู้ส่งรูปผ่านแพลตฟอร์ม)";
     public const string RopaNote = "ระบบสร้างอัตโนมัติเมื่อรับรูปจากแชต LINE ครั้งแรก (รอบ 260) — ผู้ดูแลข้อมูลทบทวนได้ที่หน้า PDPA";
 
@@ -239,6 +239,14 @@ public static class LineChatSlipRule
 
         public const string Duplicate = "สลิปนี้ส่งเข้ามาแล้วค่ะ — ไม่ต้องส่งซ้ำ ทางร้านกำลังตรวจ";
 
+        /// <summary>รอบ 268 (268-1-4): พนักงานผูกสลิปที่ระบบจับคู่เองไม่ได้กับเอกสารแล้ว — แจ้งลูกค้าในแชตเดิม (ยอดเฉพาะเมื่อแสดงยอดได้)</summary>
+        public static string LinkedByStaff(string documentNumber, decimal amount, bool showAmounts)
+            => LineMessageLimits.Truncate($"ทางร้านผูกสลิปที่ส่งมากับ {documentNumber}{AmountPart(amount, showAmounts)} แล้วค่ะ — "
+               + "รอทางร้านตรวจรายการเงินเข้า แล้วจะส่งใบเสร็จให้", 300);
+
+        /// <summary>268-1-12: ไฟล์ PDF ที่ไม่ใช่สลิป (หลายหน้า/ไม่ดูเป็นสลิป) — ไม่เก็บไฟล์</summary>
+        public const string PdfNotSlip = "ได้รับไฟล์แล้วค่ะ — ไฟล์นี้ไม่ใช่สลิปโอนเงิน ระบบจึงไม่ได้เก็บไว้ · ถ้าต้องการแจ้งโอน กรุณาส่งรูปหรือ PDF ของสลิปหน้าเดียว";
+
         public const string StaffWillCheck = "ได้รับรูปแล้วค่ะ — ถ้าเป็นสลิปโอนเงิน ทางร้านจะตรวจและผูกกับเอกสารให้";
 
         public const string DownloadFailed = "ได้รับรูปแล้ว แต่ระบบดึงรูปไม่สำเร็จค่ะ — กรุณาส่งสลิปอีกครั้ง";
@@ -257,6 +265,47 @@ public static class LineChatSlipRule
         /// <summary>ข้อความที่ขึ้นในแชตเมื่อกดปุ่ม — เลขที่ + วันที่ (พ.ศ.) · ยอดเฉพาะเมื่อแสดงยอด</summary>
         public static string ChoiceDisplay(string documentNumber, DateTime date, decimal amount, bool showAmounts)
             => LineMessageLimits.Truncate($"เลือก {documentNumber} ลงวันที่ {ThaiDate.ToThaiDisplayString(date)}{AmountPart(amount, showAmounts)}", 300);
+    }
+
+    /// <summary>รอบ 268 (268-1-4): ข้อความ LINE ชนิดนี้เข้าเส้นสลิปไหม — รูป · ไฟล์ PDF (ชื่อลงท้าย .pdf — ตัวบริการตรวจไบต์ซ้ำ <c>SlipEvidenceRule.DetectPublicType</c>
+    /// แล้วอ่านผ่านทาง PDF→รูปเดิมของ <c>EmbeddedTesseractOcrService</c>) · ไฟล์ชนิดอื่น/วิดีโอ/เสียง = ไม่ใช่</summary>
+    public static bool IsSlipMessage(string? messageType, string? fileName)
+        => messageType == "image"
+           || (messageType == "file" && !string.IsNullOrWhiteSpace(fileName) && fileName.Trim().EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
+
+    // ═══ รอบ 268 (268-1-4): แจ้งลูกค้าหลังพนักงานผูกสลิป ═══
+
+    /// <summary>ผลการแจ้งลูกค้า (ข้อความถึงพนักงาน + audit) — ไม่แจ้ง = บอกเหตุเสมอ</summary>
+    public static class LinkedNotice
+    {
+        public const string Sent = "แจ้งลูกค้าในแชตแล้วว่าผูกสลิปกับเอกสารแล้ว";
+        public const string CrossContact = "ไม่ได้แจ้งลูกค้าในแชต — เอกสารเป็นของผู้ติดต่ออื่น (ไม่ส่งเลขเอกสารของคนอื่นเข้าแชตนี้)";
+        public const string Unbound = "ไม่ได้แจ้งลูกค้าในแชต — แชตนี้ไม่ได้ผูกกับผู้ติดต่อ (ระบบไม่เก็บ LINE ID ของแชตที่ไม่ได้ผูก จึงส่งหาไม่ได้)";
+        public const string NoLine = "ไม่ได้แจ้งลูกค้าในแชต — ไม่มีบริการส่ง LINE";
+        public static string Failed(string? why) => "แจ้งลูกค้าในแชตไม่สำเร็จ" + (string.IsNullOrWhiteSpace(why) ? "" : " (" + why + ")") + " — แจ้งลูกค้าเองได้";
+        /// <summary>268-1-8: ครั้งแรกล้ม ⇒ ส่งซ้ำอีกครั้งเดียวทางคิวเบื้องหลัง</summary>
+        public static string FailedWillRetry(string? why) => "แจ้งลูกค้าในแชตไม่สำเร็จ" + (string.IsNullOrWhiteSpace(why) ? "" : " (" + why + ")") + " — ระบบจะลองส่งอีกครั้ง";
+        /// <summary>268-1-8: ผูกหลังสลิปเข้ามานาน + อยู่ในชั่วโมงเงียบ ⇒ เลื่อน</summary>
+        public static string Deferred(DateTime untilUtc) => "จะแจ้งลูกค้าในแชตหลังชั่วโมงเงียบ (" + ThaiDate.ToThaiDisplayString(untilUtc) + " เวลา "
+            + untilUtc.AddHours(7).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture) + " น.)";
+    }
+
+    /// <summary>268-1-8: ผูกภายในช่วงนี้หลังสลิปเข้ามา = ยังเป็น "คำตอบต่อสิ่งที่ลูกค้าเพิ่งส่ง" (ไม่รอชั่วโมงเงียบ) · นานกว่านี้ = ข้อความที่พนักงานส่งทีหลัง (เคารพชั่วโมงเงียบ)</summary>
+    public static readonly TimeSpan LinkedNoticeReplyWindow = TimeSpan.FromMinutes(30);
+
+    /// <summary>268-1-8 (pure): เลื่อนการแจ้งไปเมื่อไร — null = ส่งได้เลย · ตัวตัดสินชั่วโมงเงียบตัวเดียว <see cref="LineQuietHours.DeferUntilUtc"/></summary>
+    public static DateTime? LinkedNoticeDeferUntil(DateTime nowUtc, DateTime slipReceivedUtc, bool quietEnabled, int quietStart, int quietEnd)
+        => nowUtc - slipReceivedUtc <= LinkedNoticeReplyWindow ? null
+         : LineQuietHours.DeferUntilUtc(nowUtc, quietEnabled, quietStart, quietEnd, null, customerInitiated: false);
+
+    /// <summary>268-1-12 (L6): จำนวนหน้า PDF สูงสุดที่รับเป็นสลิป — มากกว่านี้ไม่ใช่สลิป (ไม่อ่าน · ไม่เก็บ)</summary>
+    public const int MaxPdfPages = 3;
+
+    /// <summary>268-1-12 (pure · ประมาณ): นับหน้าของ PDF จากวัตถุ <c>/Type /Page</c> (ไม่นับ <c>/Pages</c>) — 0 = นับไม่ได้</summary>
+    public static int PdfPageCount(ReadOnlySpan<byte> pdf)
+    {
+        var text = System.Text.Encoding.Latin1.GetString(pdf);
+        return System.Text.RegularExpressions.Regex.Matches(text, @"/Type\s*/Page(?![s\w])").Count;
     }
 
     // ═══ ความพร้อม (แท็บ LINE ของหน้าตั้งค่า) ═══

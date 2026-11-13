@@ -14,6 +14,8 @@ namespace Accounting.Services.Implementations;
 /// รอบ 264 P3 (team-264-a2b-design §5 · คำตัดสิน 264-3-1…264-3-22) — <b>ท่อฝั่งผู้ซื้อ (B)</b>: การแจ้ง "ผู้ขายคู่ค้ารับเงินแล้ว" ⇒ ระบบของ B บันทึกจ่ายใบซื้อเอง
 /// ภายใต้ความยินยอม <c>AutoRecordPayment</c> ของ B · ไม่ผ่าน ⇒ กลับเป็นปุ่มเดียวเดิม + เหตุบนแถว + แถว Autopilot
 /// <list type="bullet">
+/// <item><b>คำตัดสิน 268-1-1 (แทน 264-3-14)</b>: บัญชีตั้งต้นที่ B ตั้งไว้ตอนยินยอม<b>ไม่บันทึกเองแล้ว</b> (preselect บนปุ่มเดียวเท่านั้น) — บันทึกเองต้องมีชั้นที่ 1–3
+/// (รายการเดินบัญชีผ่าน <see cref="IBankLineEvidence"/> · ผู้จ่ายเลือก · สลิป) ⇒ วันนี้ production ไม่มีผู้ป้อน ⇒ ท่อประทับเหตุ <see cref="PartnerPaySourceAccount.ConsentDefaultNotAutoReason"/></item>
 /// <item><b>หลักฐานที่มีจริงวันนี้ (ฝ่ายค้าน M3 — พูดตรง ๆ)</b>: ยอด = เงินที่ผู้ขายบันทึกรับ (คำบอกของผู้ขาย) · บัญชีที่จ่าย = บัญชีตั้งต้นที่ B ตั้งไว้ตอนยินยอม ·
 /// <b>ยังไม่มีการตรวจกับรายการเดินบัญชีของ B</b> — ชั้นรายการเดินบัญชี/ผู้จ่ายเลือก/สลิปของ <see cref="PartnerPaySourceAccount"/> ยังไม่มีผู้ป้อน
 /// (backlog: แพ็ก P2 สลิป · แพ็ก P4 รายการเดินบัญชี/จ่ายจากระบบของเรา — ป้อนที่ <see cref="SourceDecisionAsync"/>) · ป้าย/หมายเหตุการจ่ายบอกข้อนี้</item>
@@ -30,12 +32,21 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public class PartnerPayablePipeline
 {
+    /// <summary>คำตัดสิน 268-1-1 — จุดเสียบของชั้นที่ 1 (รายการเดินบัญชีฝั่งเงินออกที่ตรงการแจ้งเดียว · ผู้ป้อนจริง = แพ็ก P4 <c>BankPaymentLineMatch</c>) ·
+    /// วันนี้<b>ไม่มีตัวใน DI</b> ⇒ null ⇒ ท่อตัดสินจากชั้นที่มีจริง (บัญชีตั้งต้นในความยินยอม = preselect ไม่บันทึกเอง) · เทสต์ Db ป้อนตัวปลอมเพื่อเดินเส้นบันทึกเอง</summary>
+    public interface IBankLineEvidence
+    {
+        /// <returns>บัญชีของบริษัทผู้ซื้อที่รายการเดินบัญชีแสดงว่าเงินออกจริง + ป้าย (วันที่) · ไม่พบ/ไม่ชัด ⇒ (null, null) — ห้ามเดา</returns>
+        Task<(Guid? BankAccountId, string? Label)> FindAsync(Guid companyId, PartnerPaymentNotice notice, CancellationToken ct);
+    }
+
     private readonly AccountingDbContext _db;
     private readonly IDocumentService _docs;
     private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<PartnerPayablePipeline> _logger;
     private readonly Accounting.Services.Ai.IOcrAiAugmenter? _glAi;
     private readonly INotificationEngine? _notify;
+    private readonly IBankLineEvidence? _bankLine;
 
     public const int BatchPerCompany = 50;
     public const int DraftBatchPerCompany = 20;
@@ -52,8 +63,8 @@ public class PartnerPayablePipeline
     public static readonly TimeSpan DraftGlRetryEvery = TimeSpan.FromHours(6);
 
     public PartnerPayablePipeline(AccountingDbContext db, IDocumentService docs, IServiceScopeFactory scopes, ILogger<PartnerPayablePipeline> logger,
-        Accounting.Services.Ai.IOcrAiAugmenter? glAi = null, INotificationEngine? notify = null)
-    { _db = db; _docs = docs; _scopes = scopes; _logger = logger; _glAi = glAi; _notify = notify; }
+        Accounting.Services.Ai.IOcrAiAugmenter? glAi = null, INotificationEngine? notify = null, IBankLineEvidence? bankLine = null)
+    { _db = db; _docs = docs; _scopes = scopes; _logger = logger; _glAi = glAi; _notify = notify; _bankLine = bankLine; }
 
     /// <summary>หนึ่งรอบของงานเบื้องหลัง (ผู้เรียกเดียว = <c>AutopilotJob</c> ขั้น PartnerPayable) — คืนจำนวนงานที่ทำ (ถอน/ป้าย + บันทึกจ่าย + ใบร่างที่เติมผัง)</summary>
     public async Task<int> RunOnceAsync(DateTime nowUtc, CancellationToken ct = default)
@@ -143,7 +154,7 @@ public class PartnerPayablePipeline
         try
         {
             // กันซ้ำก่อนทุกอย่าง: การจ่ายที่อ้างการแจ้งนี้มีอยู่แล้ว (รอบก่อนล้มหลังบันทึก) ⇒ ปิดแถว
-            var refs = PartnerPaymentNoticeRule.PaymentReferencesToCheck(n.SellerPaymentId, n.PaymentIntentId);
+            var refs = PartnerPaymentNoticeRule.PaymentReferencesToCheck(n.SellerPaymentId, n.PaymentIntentId, n.SellerAllocationId);
             var existing = await _db.Payments.AsNoTracking()
                 .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.Reference != null && refs.Contains(p.Reference))
                 .Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct);
@@ -171,7 +182,8 @@ public class PartnerPayablePipeline
             var consent = doc == null
                 ? null
                 : await consentSvc.CheckForWriteAsync(companyId, n.TradingPartnershipId, Scope.AutoRecordPayment, CapOf(doc), ct);
-            var source = await SourceDecisionAsync(_db, companyId, n, doc, usable, consent, nowUtc, ct);
+            (Guid? BankAccountId, string? Label) line = _bankLine == null ? default : await _bankLine.FindAsync(companyId, n, ct);
+            var source = await SourceDecisionAsync(_db, companyId, n, doc, usable, consent, nowUtc, ct, line.BankAccountId, line.Label);
             var verdict = PartnerAutoRecordPolicy.Decide(new PartnerAutoRecordPolicy.Facts(
                 NoticeOpen: true,
                 SellerPaymentKnown: live != null,
@@ -203,7 +215,7 @@ public class PartnerPayablePipeline
                 return false;
             }
 
-            var reference = PartnerPaymentNoticeRule.PaymentReferenceFor(n.SellerPaymentId, n.PaymentIntentId)!;
+            var reference = PartnerPaymentNoticeRule.PaymentReferenceFor(n.SellerPaymentId, n.PaymentIntentId, n.SellerAllocationId)!;
             var grantorName = await _db.Users.AsNoTracking().Where(u => u.Id == grantor).Select(u => u.FullName).FirstOrDefaultAsync(ct) ?? "ผู้ให้ความยินยอม";
             // ฝ่ายค้าน M3/M5: หมายเหตุของการจ่ายบอกตรง ๆ ว่าระบบบันทึกเอง · ตามความยินยอมของใคร · ด้วยหลักฐานอะไร (ผู้บันทึก = ผู้ให้ความยินยอม ไม่ใช่ผู้กด)
             var notes = $"⚙️ ระบบบันทึกเอง (ไม่มีผู้กด) ตามความยินยอมของ {grantorName} — {source.Label} · {PartnerPaymentNoticeRule.ChannelLabel(n.SourceChannel)} · "
@@ -361,12 +373,12 @@ public class PartnerPayablePipeline
     }
 
     /// <summary>ตัวตัดสินแหล่งเงินของการแจ้งหนึ่งแถว — โหลดข้อเท็จจริงแล้วเรียก <see cref="PartnerPaySourceAccount.Decide"/> (ตัวเดียว · ผู้เรียก: ท่อ + หน้า) ·
-    /// <b>ชั้นที่ 1–3 ยังไม่มีผู้ป้อน</b> (ส่ง null ตรง ๆ — backlog P2/P4 · ไม่มีเมธอดว่างที่ดูเหมือนตรวจแล้ว — ฝ่ายค้าน M3) ·
+    /// <b>ชั้นที่ 1–2 ยังไม่มีผู้ป้อน</b> (ส่ง null ตรง ๆ — backlog P4 · ไม่มีเมธอดว่างที่ดูเหมือนตรวจแล้ว — ฝ่ายค้าน M3) · ชั้นที่ 3 (สลิป) = <see cref="SlipMatchAsync"/> (รอบ 264 P2) ·
     /// คำแนะนำจากประวัติ = การ<b>จ่าย</b>เอกสารฝั่งซื้อของผู้ติดต่อนี้เท่านั้น (ฝ่ายค้าน L5)</summary>
     public static async Task<PartnerPaySourceAccount.Decision> SourceDecisionAsync(AccountingDbContext db, Guid companyId, PartnerPaymentNotice n, Document? purchase,
-        IReadOnlyDictionary<Guid, string> usable, PartnerConsent.UseCheck? consent, DateTime nowUtc, CancellationToken ct = default)
+        IReadOnlyDictionary<Guid, string> usable, PartnerConsent.UseCheck? consent, DateTime nowUtc, CancellationToken ct = default,
+        Guid? bankLine = null, string? bankLineLabel = null)
     {
-        _ = n;
         Guid? history = null;
         if (purchase != null)
         {
@@ -381,13 +393,41 @@ public class PartnerPayablePipeline
         }
         return PartnerPaySourceAccount.Decide(new PartnerPaySourceAccount.Facts(
             Usable: usable,
-            BankLine: null,        // backlog แพ็ก P4 (BankPaymentLineMatch — รายการเดินบัญชีฝั่งเงินออกที่ตรงการแจ้งเดียว)
+            BankLine: bankLine,    // ผู้ป้อน = IBankLineEvidence ของท่อ (backlog แพ็ก P4 BankPaymentLineMatch — วันนี้ไม่มีตัวใน DI ⇒ null) · ตัวตัดสินกรองด้วยชุดที่ใช้ได้เอง
+            BankLineLabel: bankLineLabel,
             PayerDeclared: null,   // backlog แพ็ก P4 ("จ่ายจากระบบของเรา" — PartnerPaymentPlans)
-            SlipMatch: null,       // backlog แพ็ก P2 (SlipAccountMatch — สลิปตรงบัญชีเดียวของเรา)
+            SlipMatch: await SlipMatchAsync(db, companyId, n, ct),   // รอบ 264 P2: ผู้โอนบนสลิปที่ผู้ขายได้รับ ⇒ SlipAccountMatch กับบัญชีของเรา
             ConsentDefault: consent is { Ok: true } ? consent.DefaultPayBankAccountId : null,
             ConsentDefaultProblem: consent?.PayAccountProblem,
             History: history,
             PurchaseDocBank: purchase?.BankAccountId));
+    }
+
+    /// <summary>รอบ 264 P2 (คำตัดสิน 264-4-7): ผู้โอนบนสลิป (คอลัมน์บนแถวแจ้ง) ⇒ <see cref="SlipAccountMatch.Match"/> กับ<b>ทุกบัญชีที่ไม่ถูกลบ</b>ของผู้ซื้อ ·
+    /// ไม่มีข้อมูล ⇒ null (ชั้นไม่เกิด — ผลเท่าเดิม) · บัตร/บิล/พร้อมเพย์ ⇒ <see cref="PartnerPaySourceAccount.SlipKind.None"/></summary>
+    internal static async Task<PartnerPaySourceAccount.Slip?> SlipMatchAsync(AccountingDbContext db, Guid companyId, PartnerPaymentNotice n, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(n.SlipPayerBankCode) || string.IsNullOrWhiteSpace(n.SlipPayerAccountMask)) return null;
+        var accounts = await db.BankAccounts.AsNoTracking().Where(b => b.CompanyId == companyId && !b.IsDeleted)
+            .Select(b => new SlipAccountMatch.AccountKey(b.Id, b.BankName, b.AccountNumber)).ToListAsync(ct);
+        return SlipKindOf(n.SlipPayerBankCode, n.SlipPayerAccountMask, accounts);
+    }
+
+    /// <summary>pure: ค่าบนแถวแจ้ง ⇒ ผลจับคู่ ⇒ ชนิดของชั้นสลิป (ตารางแปลงเดียว)</summary>
+    internal static PartnerPaySourceAccount.Slip? SlipKindOf(string? bankCode, string? mask, IReadOnlyList<SlipAccountMatch.AccountKey> accounts)
+    {
+        if (string.IsNullOrWhiteSpace(bankCode) || string.IsNullOrWhiteSpace(mask)) return null;
+        var (kind, m) = OcrSlipText.ClassifyMask(mask);
+        var party = new OcrSlipText.SlipParty(kind, bankCode, false, m, null, null);
+        var r = SlipAccountMatch.Match(party, accounts);
+        return r.Kind switch
+        {
+            SlipAccountMatch.Kind.Unique => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Unique, r.AccountId),
+            SlipAccountMatch.Kind.Many => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Many),
+            SlipAccountMatch.Kind.NotOurs => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.NotOurs),
+            SlipAccountMatch.Kind.Unreadable => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.Unreadable),
+            _ => new PartnerPaySourceAccount.Slip(PartnerPaySourceAccount.SlipKind.None),
+        };
     }
 
     // ═══════════ แถว Autopilot "การแจ้งชำระจากคู่ค้าค้าง" (query ของท่อ — ผู้อ่าน: AutopilotService.PartnerPayBlockedIssuesAsync) ═══════════

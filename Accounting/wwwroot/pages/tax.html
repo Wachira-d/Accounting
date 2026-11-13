@@ -63,6 +63,10 @@
 
     <!-- ทีม O 2026-10-22: ภ.ง.ด.50 ที่บันทึกไว้แต่ยอดสดต่าง (หลังแก้การนับคู่กลับรายการ) — เซิร์ฟเวอร์ตัดสิน หน้าแสดงอย่างเดียว -->
     <div id="citReviewBanner" style="display:none;margin-bottom:12px"></div>
+    <!-- รอบ 269: ภ.พ.30 ที่บันทึกไว้ซึ่งยอดขาย 0%/ยกเว้นต่างจากการคำนวณปัจจุบัน — เซิร์ฟเวอร์ตัดสิน (สาเหตุ/ป้ายช่อง/ข้อความ) หน้าแสดงอย่างเดียว -->
+    <div id="pp30SalesBoxBanner" style="display:none;margin-bottom:12px"></div>
+    <!-- รอบ 269 ชุดสอง H1: ร่างล้าสมัย (อ่านอย่างเดียว) — ระบบไม่ลบ-สร้างร่างใหม่เองตอนเปิดหน้าแล้ว · กด "สร้างใหม่" เอง (ใต้ล็อก · คืนติ๊ก/บรรทัดดึง · audit ผู้กด) -->
+    <div id="staleDraftBanner" style="display:none;margin-bottom:12px"></div>
 
     <div id="taxSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
       <span>เลือกแล้ว <b id="taxSelCount">0</b> รายงาน</span>
@@ -281,12 +285,15 @@
         sel.value = String(curYear);
         const api = Layout.api();
         if (api) {
-          // รอบ 193 (B-04): คำนวณร่างใหม่ต้องมีสิทธิ์ Tax.File — ผู้ที่ไม่มีสิทธิ์ต้อง "รู้" ว่าร่างที่เห็นอาจไม่ใช่ล่าสุด (ห้ามเงียบ)
+          // รอบ 193 (B-04): สร้างร่างต้องมีสิทธิ์ Tax.File — ผู้ที่ไม่มีสิทธิ์ต้อง "รู้" ว่าร่างที่เห็นอาจไม่ใช่ล่าสุด (ห้ามเงียบ)
+          // รอบ 269 ชุดสอง H1: เส้นนี้สร้างเฉพาะร่างที่ยังไม่มี (ไม่ลบ/ไม่สร้างทับร่างเดิม) · ร่างเดิมที่ล้าสมัยขึ้นแถบให้กด "สร้างใหม่" เอง
           try { await api.autoRefreshTaxReports(2); } catch (e) {
             console.error('autoRefresh:', e);
-            if (String(e?.message || '').includes('Tax.File'))
-              Layout.toast('รายงานภาษีร่างที่แสดงอาจยังไม่ใช่ยอดล่าสุด — การคำนวณใหม่ต้องมีสิทธิ์ Tax.File', 'info');
+            Layout.toast(String(e?.message || '').includes('Tax.File')
+              ? 'รายงานภาษีร่างที่แสดงอาจยังไม่ใช่ยอดล่าสุด — การสร้างร่างต้องมีสิทธิ์ Tax.File'
+              : ('สร้างร่างรายงานภาษีอัตโนมัติไม่สำเร็จ: ' + (e?.message || '')), String(e?.message || '').includes('Tax.File') ? 'info' : 'error');
           }
+          this.loadStaleDrafts();
         }
         await this.load();
       },
@@ -440,6 +447,7 @@
           this.updateStats();
           this.render();
           this.loadCitReview();
+          this.loadPp30SalesBoxReview();
           const totalPages = data?.totalPages || 1;
           document.getElementById('pagination').innerHTML = Layout.renderPagination(this.page, totalPages, 'Page.goPage');
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -474,6 +482,61 @@
         } catch (e) {
           // ไม่ทำให้แท็บพัง แต่ห้ามเงียบ — แถบนี้คือคำเตือนว่าอาจต้องยื่นเพิ่มเติม
           box.innerHTML = `<div class="card" style="font-size:13px;border-left:4px solid #dc2626">ตรวจยอด ภ.ง.ด.50 ที่บันทึกไว้ไม่สำเร็จ: ${esc(e.message)}</div>`;
+          box.style.display = '';
+        }
+      },
+
+      /** รอบ 269 ชุดสอง H1 — แถบ "ร่างล้าสมัย" (อ่านอย่างเดียว · GET tax/stale-drafts) · ข้อความ/งวด พ.ศ. จากเซิร์ฟเวอร์ · ปุ่มสร้างใหม่ = เส้นเดียวกับปุ่มในรายการ */
+      async loadStaleDrafts() {
+        const box = document.getElementById('staleDraftBanner');
+        if (!box) return;
+        const esc = s => Layout.esc(s);
+        try {
+          const r = await API.get(`/api/companies/${Layout.getCompanyId()}/tax/stale-drafts?months=2`);
+          const rows = r?.data || [];
+          if (!rows.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+          const items = rows.map(x => `<div style="margin-top:6px">${esc(x.message || '')}
+              <button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${Layout.jsArg(x.reportId)}')">สร้างใหม่</button></div>`).join('');
+          box.innerHTML = `<div class="card" style="font-size:13px;line-height:1.7;border-left:4px solid #d97706;background:#fffbeb">
+            <div>⚠️ ร่างล้าสมัย ${rows.length} รายการ — ระบบไม่คำนวณร่างใหม่ทับให้เอง (กันบรรทัดที่ดึงเข้า/ติ๊กไว้หาย)</div>${items}</div>`;
+          box.style.display = '';
+        } catch (e) {
+          box.innerHTML = `<div class="card" style="font-size:13px;border-left:4px solid #dc2626">ตรวจร่างล้าสมัยไม่สำเร็จ: ${esc(e.message)}</div>`;
+          box.style.display = '';
+        }
+      },
+
+      /** รอบ 269 — แถบ "ภ.พ.30 ที่บันทึกไว้ซึ่งยอดขาย 0%/ยกเว้นต่างจากการคำนวณปัจจุบัน" (อ่านอย่างเดียว · GET tax/pp30-sales-box-review) ·
+       *  ข้อความ/งวด พ.ศ./คำแนะนำมาจากเซิร์ฟเวอร์ทั้งหมด · ร่าง ⇒ ปุ่มสร้างใหม่ · ยื่นแล้ว ⇒ บอกให้พิจารณายื่นเพิ่มเติม ไม่มีปุ่มแตะตัวเลข */
+      async loadPp30SalesBoxReview() {
+        const box = document.getElementById('pp30SalesBoxBanner');
+        if (!box) return;
+        if (this.taxType !== 'VAT') { box.style.display = 'none'; box.innerHTML = ''; return; }
+        const esc = s => Layout.esc(s);
+        const fmt = n => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        try {
+          const r = await API.get(`/api/companies/${Layout.getCompanyId()}/tax/pp30-sales-box-review`);
+          const rows = r?.data || [];
+          if (!rows.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+          const items = rows.map(x => {
+            const act = x.suggestedAction === 'Regenerate'
+              ? `<button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${Layout.jsArg(x.reportId)}')">สร้างใหม่จากข้อมูลปัจจุบัน</button>`
+              : (x.suggestedAction === 'ConsiderAmendedFiling' ? '<b>ยื่นแล้ว — พิจารณายื่น ภ.พ.30 เพิ่มเติม</b>' : '');
+            return `<tr><td>${esc(x.periodLabel)}</td><td>${esc(x.status)}</td>`
+              + `<td class="text-right">${fmt(x.storedZeroRated)} → ${fmt(x.freshZeroRated)}</td>`
+              + `<td class="text-right">${fmt(x.storedExempt)} → ${fmt(x.freshExempt)}</td>`
+              + `<td>${act}</td></tr>`
+              + `<tr><td colspan="5" style="font-size:12px;color:#92400e">${esc(x.message || '')}</td></tr>`;
+          }).join('');
+          const z = esc(rows[0].zeroRatedBoxRef), ex = esc(rows[0].exemptBoxRef);
+          box.innerHTML = `<div class="card" style="font-size:13px;line-height:1.7;border-left:4px solid #d97706;background:#fffbeb">
+            <div>⚠️ รายงาน ภ.พ.30 ที่บันทึกไว้ ${rows.length} งวด ยอด ${z} (0% §80/1) / ${ex} (ยกเว้น §81) ต่างจากการคำนวณปัจจุบัน — สาเหตุของแต่ละงวดอยู่ใต้แถว · ระบบไม่แก้ตัวเลขของรายงานที่ยื่นแล้ว</div>
+            <table class="table" style="margin-top:8px"><thead><tr><th>งวด</th><th>สถานะ</th><th class="text-right">${z} (เดิม → ปัจจุบัน)</th><th class="text-right">${ex} (เดิม → ปัจจุบัน)</th><th></th></tr></thead><tbody>${items}</tbody></table>
+          </div>`;
+          box.style.display = '';
+        } catch (e) {
+          // ไม่ทำให้แท็บพัง แต่ห้ามเงียบ — แถบนี้คือคำเตือนว่าอาจต้องยื่นเพิ่มเติม
+          box.innerHTML = `<div class="card" style="font-size:13px;border-left:4px solid #dc2626">ตรวจยอดขาย 0%/ยกเว้นของ ภ.พ.30 ที่บันทึกไว้ไม่สำเร็จ: ${esc(e.message)}</div>`;
           box.style.display = '';
         }
       },
@@ -726,6 +789,11 @@
                 `}
               </div>
             </div>
+            ${Array.isArray(d.pp30Boxes) && d.pp30Boxes.length ? `
+            <div class="card" style="margin-bottom:16px;font-size:13px">
+              <div style="font-weight:600;margin-bottom:6px">ยอดตามช่องของแบบ ภ.พ.30 (เลข/ชื่อ/ยอดจากเซิร์ฟเวอร์)</div>
+              <table class="table"><tbody>${d.pp30Boxes.map(b => `<tr><td style="width:60px">${Layout.esc(b.no)}</td><td>${Layout.esc(b.name)}</td><td class="text-right">${Layout.money(b.amount)}</td></tr>`).join('')}</tbody></table>
+            </div>` : ''}
             ${(d.freshness && d.freshness.message) ? `
             <div class="card" style="margin-bottom:16px;font-size:13px;line-height:1.7;border-left:4px solid ${d.freshness.needsAttention ? '#d97706' : '#94a3b8'};background:${d.freshness.needsAttention ? '#fffbeb' : 'var(--bg-secondary)'}">
               <div>${d.freshness.needsAttention ? '⚠️' : 'ℹ️'} ${_esc(d.freshness.message)}</div>

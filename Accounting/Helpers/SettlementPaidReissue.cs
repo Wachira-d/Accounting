@@ -391,6 +391,9 @@ public static class SettlementPaidReissue
         // รอบ 250 WP-02 (ฝ่ายค้าน ข้อ 1): ใบแทน = การขายเดียวกัน ⇒ รายการประจำที่สร้างใบตามไป (ชั้น "รายการประจำ" ของค่าตั้งงานหลังรับชำระ) ·
         // หมายเหตุ: AutoSendRuleId ไม่ตามไป (อยู่ใน NotCarried) ⇒ ชั้น "ตารางส่ง" หายบนใบแทน — ใบแทนใช้ชั้นรายการประจำ › ผู้ติดต่อ › บริษัท
         nameof(Document.RecurringTransactionId),
+        // รอบ 267 P4 ฝ่ายค้าน MED-3 (267-1-44): ใบแทน = ธุรกรรมเดิมฉบับแก้ ⇒ ค่าตั้ง "ใบเสร็จอัตโนมัติหลังรับชำระ" ของใบเดิมตามไป (null เป็น null ·
+        // ผู้ขายตั้ง "ปิด" ไว้ ใบแทนต้องไม่ส่งใบเสร็จถึงลูกค้าเอง) · โคลน/แปลง/ใบลูก ไม่สืบทอด (ทางสร้างเหล่านั้นไม่ส่งสองช่องนี้)
+        nameof(Document.PostPayEmailReceipt), nameof(Document.PostPayIncludePartial),
     };
 
     /// <summary>ช่องของเอกสารที่ "ไม่ตามไป" — ตัวตน/เวลา/เลข · สถานะ (ตั้งด้วย <see cref="ReplacementStatus"/>) · หลักฐานของลูกค้าเดิม (ลายเซ็นรับของ ·
@@ -415,6 +418,12 @@ public static class SettlementPaidReissue
         nameof(Document.SettlementOrphanAckReasonHash), // รอบ 201 ทีม ST (A-ST5) — การรับรู้ของกำพร้าเป็นของใบเดิม
         nameof(Document.SettlementPieceFingerprint),     // รอบ 201 ทีม ST (A-ST8) — ใบแทนไม่ได้ออกโดยผู้ลงบัญชีรอบโอน (ไม่มีป้าย CreatedBy ของรอบ)
         nameof(Document.ReplacementReason), nameof(Document.ReplacedAt), nameof(Document.ReplacementCarriesPostings),
+        // รอบ 266 แพ็ก B (transient · คำนวณตอน render จาก ReplacesDocumentId ของใบนั้นเอง) — ไม่ตามไปใบแทน
+        nameof(Document.ReplacementOfNumber), nameof(Document.ReplacementOfDate),
+        // รอบ 267 P2: คำตอบของลูกค้าต่อ Rev ของใบเดิม (ภาพฉายของ CustomerDocumentActions) — "ไม่สืบทอดไปใบลูก" ⇒ ไม่ตามไปใบแทน
+        nameof(Document.CustomerResponse), nameof(Document.CustomerResponseAt),
+        // รอบ 266 แพ็ก C ฝ่ายค้าน H2: งานค้างของตัวช่วยใบซ้ำ ผูกกับใบเดิม (ชี้ใบขายสดที่ยกเลิกแล้ว) — ใบแทนไม่รับงานค้างไปโดยอัตโนมัติ
+        nameof(Document.DuplicateSalePendingFromDocumentId),
         nameof(Document.EtaxCancelRequiredAt), nameof(Document.EtaxCancelRequiredReason), nameof(Document.InternalNotes),
         nameof(Document.WhtAdviceAiFeedbackId), nameof(Document.WhtAdviceAnswer), nameof(Document.WhtAdviceUsedAi),
         nameof(Document.Pp36RdReceiptNumber), nameof(Document.Pp36RdReceiptDate), nameof(Document.OcrIntelTrainedAt),

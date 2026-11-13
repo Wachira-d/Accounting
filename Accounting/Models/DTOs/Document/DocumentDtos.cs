@@ -190,7 +190,12 @@ public record CreateDocumentRequest(
     string? PostVatDeductionAccountCode = null,
     // ทีม U — ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง": บรรทัดเงิน (แหล่ง + ยอด) + บรรทัดหักหลัง VAT (ผัง + ยอด) รวม = ยอดรวมทั้งสิ้น ·
     // ย่อยเป็น ActualPaidAmount (Σ เงิน) + PostVatDeductionAmount (Σ หัก) · ตัวตรวจ Helpers/PaymentSourceSplit.Check · null/ว่าง = ไม่ติ๊ก
-    List<PaymentSourceLineRequest>? PaymentSources = null);
+    List<PaymentSourceLineRequest>? PaymentSources = null,
+    // รอบ 267 P4 (267-1-8 · 267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ — ชื่อสามสถานะ Inherit · On · Off
+    // (PostPaymentAutomationPolicy.ParseMode) · null/ว่าง = ตามค่าตั้ง (ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท) · เฉพาะชนิดที่รับชำระ
+    string? PostPayReceiptMode = null,
+    // ส่งทุกงวดที่รับ (off = เฉพาะงวดที่ชำระครบ) — รหัสเดียวกัน
+    string? PostPayPartialMode = null);
 
 /// <summary>บรรทัดหนึ่งของการแยกยอดจ่ายจริงตามแหล่ง — <c>Kind</c> = "Money" (เงินออกจริง) หรือ "PostVatDeduction" (หักหลัง VAT ไม่ใช่เงิน) ·
 /// <c>Amount</c> บวกเสมอ · ตัวตัดสิน <c>Helpers/PaymentSourceSplit</c></summary>
@@ -390,7 +395,11 @@ public record UpdateDocumentRequest(
     List<PaymentSourceLineRequest>? PaymentSources = null,
     // รอบ 266 (266-1-2): ใบต้นทางของ "ใบเสร็จร่างที่สร้างเอง" — null = คงค่าเดิม · Guid.Empty = ล้าง (กลับเป็นใบเสร็จอิสระ) · ค่าอื่น = ตั้ง/เปลี่ยน
     // (ตัวตัดสิน ReceiptLinkPolicy.Decide เส้น SetDraftSource · ใบที่ออกเลขแล้ว/ใบเสร็จอัตโนมัติ/ใบมัดจำ ส่งค่าใหม่มา = ปฏิเสธดัง 409)
-    Guid? RelatedDocumentId = null);
+    Guid? RelatedDocumentId = null,
+    // รอบ 267 P4 (267-1-8 · 267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ — null = คงค่าเดิม · "" หรือ "Inherit" = ล้างกลับไปตามค่าตั้ง ·
+    // "On"/"Off" = ตั้งที่ใบ (PostPaymentAutomationPolicy.ApplyDocumentLayer — ตัวเดียวกับตอนสร้างและปุ่มบนหน้าเอกสาร)
+    string? PostPayReceiptMode = null,
+    string? PostPayPartialMode = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -1061,6 +1070,12 @@ public record DocumentResponse(
     /// <summary>รอบ 266 (ฝ่ายค้าน M6): วาดปุ่ม "ผูกใบเสร็จ/เงินที่รับไว้แล้ว" (ใบตั้งลูกหนี้ที่ค้าง) / "ผูกกับใบแจ้งหนี้" (ใบเสร็จร่าง · ใบมัดจำ) ไหม — ตัดสินจากข้อมูลบนใบ
     /// (ReceiptLinkPolicy.OffersLinkButton) · ผู้สมัครโหลดเมื่อกดปุ่ม ไม่ใช่ทุกครั้งที่เปิดเอกสาร</summary>
     bool CanOpenReceiptLink = false,
+    /// <summary>รอบ 266 แพ็ก C: วาดปุ่ม "ใบนี้ซ้ำกับใบแจ้งหนี้?" (ตัวช่วยใบซ้ำ) ไหม — ใบขายสดที่ออกเลขแล้ว + ระบุผู้ติดต่อ (DuplicateSalePolicy.OffersWizardButton · ไม่แตะฐาน)</summary>
+    bool CanOpenDuplicateSale = false,
+    /// <summary>รอบ 266 แพ็ก C ฝ่ายค้าน H2: ใบขายสดที่ตัวช่วยใบซ้ำยกเลิกไปแล้วแต่ขั้นลงเงิน/ตัดชำระใบนี้ยังไม่ครบ (echo จาก Document) · null = ไม่มีงานค้าง</summary>
+    Guid? DuplicateSalePendingFromDocumentId = null,
+    /// <summary>ข้อความแถบแดงของงานค้าง (เซิร์ฟเวอร์ประกอบ — <c>DuplicateSalePolicy.PendingBanner</c>) · null = ไม่มี</summary>
+    string? DuplicateSalePendingNotice = null,
     // ทีมตรวจงานค้าง 2026-10-08 (C-02): ใบวางบิลรวมใบแจ้งหนี้ — หน้าเว็บซ่อนแปลง/รับชำระที่ใบวางบิล แล้วโชว์ "รับชำระตามใบวางบิล" (เซิร์ฟเวอร์ตัดสิน)
     bool IsRollupBillingNote = false,
     /// <summary>คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A): ติ๊ก "สร้าง 50 ทวิ อัตโนมัติ" ของใบ</summary>
@@ -1128,7 +1143,13 @@ public record DocumentResponse(
     string? PartnerInputVatEvidenceLabel = null,
     /// <summary>รอบ 257 ชุด 3 (D-M5): ใบนี้รอผู้รับกด "ได้รับต้นฉบับแล้ว" ไหม (ตัวตัดสินเดียว <c>PartnerInputVatEvidence.ConfirmProblem</c> == null) ·
     /// null = ไม่ใช่ใบจากคู่ค้า · หน้าเอกสารแสดงลิงก์ไปปุ่มยืนยัน (หน้าคู่ค้า) ตามค่านี้</summary>
-    bool? PartnerNeedsOriginal = null);
+    bool? PartnerNeedsOriginal = null,
+    /// <summary>รอบ 267 P4 (กฎ #4 A "เก็บแล้วต้อง echo กลับ"): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ที่ตรึงกับใบนี้ — ชื่อ Inherit · On · Off
+    /// (<c>PostPaymentAutomationPolicy.ModeCode</c>) · ฟอร์มแก้ไข hydrate จากค่านี้ (ไม่งั้นเปิดแก้แล้วบันทึก ค่ากลับเป็น "ตามค่าตั้ง" เงียบ ๆ)</summary>
+    string PostPayReceiptMode = global::Accounting.Helpers.AutopilotSettingsResolver.Inherit,
+    string PostPayPartialMode = global::Accounting.Helpers.AutopilotSettingsResolver.Inherit,
+    /// <summary>ใบชนิดนี้ตั้งค่าต่อใบได้ไหม (เซิร์ฟเวอร์ตัดสิน — <c>PostPaymentAutomationPolicy.DocumentLayerAllowed</c>) · หน้าเว็บแสดง/ซ่อนช่องตามค่านี้</summary>
+    bool PostPaySettingApplies = false);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);
@@ -1208,17 +1229,26 @@ public sealed record PaymentVoidResult(string? EtaxCancellationFlag, string? Out
 /// <summary>1 รายการประวัติ revision ของใบเสนอราคา (list — ไม่รวม snapshot เต็ม)</summary>
 /// <summary>1 ใบในสายการแปลงเอกสาร (ดู GetDocumentChainAsync)
 /// เรียงจากต้นน้ำ → ปลายน้ำ; Depth 0 = รากของสาย</summary>
+/// <remarks>รอบ 266 แพ็ก C (คำตัดสิน 266-1-40): โหนดชนิด "เงิน" (<paramref name="NodeKind"/> ≠ "Document") — เงินรอจัดสรร/การย้ายการรับชำระ/ใบมัดจำที่ตัดชำระใบในสาย ·
+/// <paramref name="DocumentType"/>/<paramref name="Status"/> = null (ไม่ใช่เอกสาร — ไม่แต่งชนิดขึ้นมา) · <paramref name="ParentId"/> = ใบที่เงินนี้ตัดชำระ ·
+/// ป้ายจากเซิร์ฟเวอร์ (<c>Helpers/DocumentChainMoney</c>) · <paramref name="HasAdvice"/> = ออก "ใบแจ้งการนำเงินไปตัดชำระ" ของแถวนี้ได้</remarks>
 public record DocumentChainNode(
     Guid Id,
     string DocumentNumber,
-    DocumentType DocumentType,
-    DocumentStatus Status,
+    DocumentType? DocumentType,
+    DocumentStatus? Status,
     DateTime DocumentDate,
     decimal TotalAmount,
     decimal PaidAmount,
     int Depth,               // ระยะจากราก (0 = ต้นทางสุด)
     Guid? ParentId,          // ใบก่อนหน้าในสาย (null = ราก)
-    bool IsCurrent);         // ใบที่ผู้ใช้กำลังเปิดอยู่
+    bool IsCurrent,          // ใบที่ผู้ใช้กำลังเปิดอยู่
+    string NodeKind = "Document",
+    string? Label = null,
+    Guid? PaymentId = null,
+    Guid? AllocationId = null,
+    Guid? OpenDocumentId = null,
+    bool HasAdvice = false);
 
 public record DocumentRevisionListItem(
     int RevisionNumber,

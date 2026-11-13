@@ -17,7 +17,9 @@ namespace Accounting.Services.Implementations;
 /// <item><b>AllocateCredit</b> — <see cref="ICustomerCreditService.AllocateAsync"/> (ล็อก/ด่าน/JE/ภาษีของเส้นเดิม · ส่งยอดคงเหลือที่พรีวิวเห็นเป็น <c>ExpectedUnappliedBefore</c>)</item>
 /// <item><b>ApplyDeposit</b> — <see cref="IDocumentService.ApplyDepositToInvoiceAsync"/> (ล็อก/ด่าน VAT ซ้ำของเส้นเดิม)</item>
 /// </list>
-/// เส้นที่มีธุรกรรมของตัวเอง (สองเส้นหลัง) ตัดสินก่อนส่งต่อ แล้วตัวเส้นเดิมตรวจซ้ำใต้ล็อกของมันเอง — ไม่ห่อธุรกรรมซ้อน · ล้ม = throw (ห้าม <c>catch {}</c> ในเส้นเงิน · F4 E)</para>
+/// <b>MoveSettlement / MoveSettlementWithReissue</b> (แพ็ก B · 266-1-23…30) — <see cref="IDocumentService.MoveSettlementAsync"/>: ย้ายการรับชำระที่ตัดผิดใบผ่าน 21630 สองขา
+/// (ขาเงินสด/คู่ธนาคารไม่ถูกแตะ) + ยกเลิกใบเสร็จที่อ้างใบเดิมและออกใบแทน · เส้นนั้นล็อกใบ → การรับชำระ แล้วตัดสินซ้ำใต้ล็อกด้วย <see cref="ReceiptLinkPolicy.Decide"/> เอง
+/// เส้นที่มีธุรกรรมของตัวเอง (สามเส้นหลัง) ตัดสินก่อนส่งต่อ แล้วตัวเส้นเดิมตรวจซ้ำใต้ล็อกของมันเอง — ไม่ห่อธุรกรรมซ้อน · ล้ม = throw (ห้าม <c>catch {}</c> ในเส้นเงิน · F4 E)</para>
 /// <para>ทุก query กรอง <c>CompanyId</c> · ผู้สมัครกรองชั้นความลับ (<see cref="ISensitivityService"/>) · ไม่แตะไฟล์ของรอบ 265 (ออกใบเสร็จจากเงินเครดิต/ใบเสร็จรวม)</para>
 /// </summary>
 public class ReceiptLinkService : IReceiptLinkService
@@ -40,7 +42,8 @@ public class ReceiptLinkService : IReceiptLinkService
 
     private sealed record Evaluation(
         ReceiptLinkVerdict Verdict, ReceiptLinkSourceFacts Source, ReceiptLinkInvoiceFacts Invoice, decimal Amount, decimal? Available,
-        Guid SourceId, Guid? ReceiptDocumentId, Guid? PaymentId, Guid? DepositDocumentId, DocumentType InvoiceType, DocumentType? ReceiptType);
+        Guid SourceId, Guid? ReceiptDocumentId, Guid? PaymentId, Guid? DepositDocumentId, DocumentType InvoiceType, DocumentType? ReceiptType,
+        ReceiptLinkMoveFacts? Move = null);
 
     // ───────── การอ่าน ─────────
 
@@ -65,10 +68,14 @@ public class ReceiptLinkService : IReceiptLinkService
 
     private static readonly string ToReceiptKind = nameof(PaymentCreditMovementKind.ToReceipt);
 
-    private async Task<HashSet<Guid>> CreditReceiptIdsAsync(Guid companyId, IReadOnlyCollection<Guid> receiptIds, CancellationToken ct)
+    private Task<HashSet<Guid>> CreditReceiptIdsAsync(Guid companyId, IReadOnlyCollection<Guid> receiptIds, CancellationToken ct)
+        => CreditReceiptIdsAsync(_db, companyId, receiptIds, ct);
+
+    /// <summary>ใบเสร็จขายสดที่ออกจากเงินรอจัดสรร (รอบ 265 · ขาออก ToReceipt ที่ยังมีผล) — ตัวอ่านเดียวของปุ่มผูก (แพ็ก A) และตัวช่วยใบซ้ำ (แพ็ก C) · tenant</summary>
+    internal static async Task<HashSet<Guid>> CreditReceiptIdsAsync(AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> receiptIds, CancellationToken ct)
         => receiptIds.Count == 0
             ? new HashSet<Guid>()
-            : (await _db.PaymentCreditMovements.AsNoTracking()
+            : (await db.PaymentCreditMovements.AsNoTracking()
                 .Where(m => m.CompanyId == companyId && m.TargetDocumentId != null && receiptIds.Contains(m.TargetDocumentId.Value)
                     && m.Kind == ToReceiptKind && m.ReleasedAt == null)
                 .Select(m => m.TargetDocumentId!.Value).ToListAsync(ct)).ToHashSet();
@@ -83,14 +90,25 @@ public class ReceiptLinkService : IReceiptLinkService
     }
 
     /// <summary>ตัดสินคู่ (ใบเสร็จ/เงิน, ใบแจ้งหนี้) จากข้อเท็จจริงในฐาน — ตัวเดียวที่ผู้สมัคร · พรีวิว · ผูก ใช้</summary>
+    /// <param name="settlementPayment">แพ็ก B: การรับชำระของใบอื่นที่<b>ไม่มีใบเสร็จแยก</b> (ไม่ใช่เงินรอจัดสรร) — ย้ายได้เหมือนใบเสร็จของการรับชำระ</param>
+    /// <param name="actor">ผู้กด (ด่านสิทธิ์อนุมัติใบเสร็จ/การแบ่งแยกหน้าที่ของเส้นย้าย)</param>
     private async Task<Evaluation> EvaluateAsync(Guid companyId, Document inv, Document? receipt, Payment? bareCredit, decimal? requestedAmount,
-        CancellationToken ct, Preloaded? pre = null, bool withDetail = false)
+        CancellationToken ct, Preloaded? pre = null, bool withDetail = false, Payment? settlementPayment = null, string actor = "")
     {
         pre ??= new Preloaded();
         var invFacts = ReceiptLinkFacts.Invoice(inv);
         ReceiptLinkSourceFacts src;
         Guid? paymentId = null;
-        if (receipt != null)
+        SettlementMoveSnapshot? moveSnapshot = null;
+        if (settlementPayment != null)
+        {
+            // แพ็ก B: ข้อเท็จจริงของการรับชำระ (ตัวเดียวกับที่เส้นย้ายอ่านซ้ำใต้ล็อก) — ใบของการรับชำระหาย = ไม่พบ
+            moveSnapshot = await _documents.LoadSettlementMoveFactsAsync(companyId, settlementPayment.Id, inv.Id, actor)
+                ?? throw new KeyNotFoundException("ไม่พบเอกสารของการรับชำระ");
+            src = moveSnapshot.Source;
+            paymentId = settlementPayment.Id;
+        }
+        else if (receipt != null)
         {
             src = ReceiptLinkFacts.Source(receipt);
             // ฝ่ายค้าน L1: ใบเสร็จขายสดที่ออกจากเงินรอจัดสรร (รอบ 265) — ทางไปต่อคนละแบบ
@@ -123,8 +141,26 @@ public class ReceiptLinkService : IReceiptLinkService
         string? creditRefusal = null;
         string? depositBlocked = null;
         Guid? depositId = null;
+        ReceiptLinkMoveFacts? move = null;
         switch (kind)
         {
+            case ReceiptLinkKind.SettlementOfOther:
+            {
+                // แพ็ก B: ใบเสร็จของการรับชำระ — หาการรับชำระของมัน (ข้อมูลเก่าที่ SettlementPaymentId ว่าง หาเจอด้วย Payment.ReceiptDocumentId) แล้วโหลดข้อเท็จจริงของการย้าย
+                if (moveSnapshot == null && receipt != null)
+                {
+                    paymentId ??= await _db.Payments.AsNoTracking()
+                        .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.ReceiptDocumentId == receipt.Id)
+                        .Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct);
+                    if (paymentId is Guid ofReceipt)
+                        moveSnapshot = await _documents.LoadSettlementMoveFactsAsync(companyId, ofReceipt, inv.Id, actor);
+                    // ใบเสร็จที่ขอต้องเป็นใบที่ยังมีผลของการรับชำระนั้น ณ ใบที่เงินตัดอยู่ (ไม่ใช่ = ไม่รู้ว่าเงินก้อนไหน ⇒ ไม่ย้าย)
+                    if (moveSnapshot != null && moveSnapshot.LiveReceiptId != receipt.Id) moveSnapshot = null;
+                }
+                move = moveSnapshot?.Move;
+                amount = move?.Amount ?? src.TotalAmount;
+                break;
+            }
             case ReceiptLinkKind.UnappliedCredit:
             {
                 // ด่านของเส้นจัดสรรเดิม (CustomerCreditAllocation.Check ผ่าน ForDocumentAsync) — ไม่เขียนสำเนา · โหลดครั้งเดียวต่อใบแจ้งหนี้ (M6)
@@ -157,13 +193,13 @@ public class ReceiptLinkService : IReceiptLinkService
         }
         amount = Math.Round(amount, 2, MidpointRounding.AwayFromZero);
         var verdict = ReceiptLinkPolicy.Decide(src, invFacts, new ReceiptLinkContext(amount, sameEntity, creditRefusal,
-            creditRefusal == null ? null : CustomerCreditAllocation.RuleCode, available ?? 0m, depositBlocked));
-        return new Evaluation(verdict, src, invFacts, amount, available, receipt?.Id ?? bareCredit!.Id,
-            receipt?.Id, paymentId, depositId, inv.DocumentType, receipt?.DocumentType);
+            creditRefusal == null ? null : CustomerCreditAllocation.RuleCode, available ?? 0m, depositBlocked, move));
+        return new Evaluation(verdict, src, invFacts, amount, available, receipt?.Id ?? settlementPayment?.Id ?? bareCredit!.Id,
+            receipt?.Id ?? moveSnapshot?.LiveReceiptId, paymentId, depositId, inv.DocumentType, receipt?.DocumentType, move);
     }
 
     private static ReceiptLinkCandidate ToCandidate(Evaluation e, string number, DateTime date, string label) => new(
-        e.Invoice.Id, e.Invoice.Number, e.ReceiptDocumentId, e.Verdict.Kind == ReceiptLinkKind.UnappliedCredit ? e.PaymentId : null,
+        e.Invoice.Id, e.Invoice.Number, e.ReceiptDocumentId, e.ReceiptDocumentId == null ? e.PaymentId : null,
         number, date, e.Verdict.Kind.ToString(), e.Verdict.Route?.ToString(), e.Available ?? e.Source.TotalAmount, e.Amount,
         AmountEditable: e.Verdict.Route is ReceiptLinkRoute.AllocateCredit or ReceiptLinkRoute.ApplyDeposit,
         e.Verdict.Allowed, e.Verdict.Allowed ? null : e.Verdict.RuleCode, e.Verdict.Message, e.Verdict.WayForward, label);
@@ -237,6 +273,20 @@ public class ReceiptLinkService : IReceiptLinkService
                     && (d.RelatedDocumentId == null || d.RelatedDocumentId != origin.Id))
                 .OrderByDescending(d => d.DocumentDate).Take(10).ToListAsync(ct);
             pre.CreditReceiptIds = await CreditReceiptIdsAsync(companyId, issued.Select(d => d.Id).ToList(), ct);
+            // แพ็ก B: การรับชำระของใบอื่นของผู้ติดต่อเดียวกันที่ "ไม่มีใบเสร็จแยก" (ไม่ใช่เงินรอจัดสรร/รอบโอน) — ย้ายมาใบนี้ได้โดยไม่มีกระดาษให้ออกแทน
+            var receiptTargetTypes = ReceiptLinkPolicy.TargetTypes.ToArray();
+            var looseSettlements = await (
+                    from p in _db.Payments.AsNoTracking()
+                    join d in _db.Documents.AsNoTracking() on (p.MovedToDocumentId ?? p.DocumentId) equals d.Id
+                    where p.CompanyId == companyId && !p.IsDeleted && d.CompanyId == companyId && !d.IsDeleted
+                          && d.ContactId == origin.ContactId && d.Id != origin.Id && receiptTargetTypes.Contains(d.DocumentType)
+                          && p.UnappliedAccountId == null && p.SettlementBatchId == null
+                          && !_db.Documents.Any(r => r.CompanyId == companyId && !r.IsDeleted && r.IsSettlementReceipt
+                              && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected
+                              && (r.SettlementPaymentId == p.Id || r.Id == p.ReceiptDocumentId))
+                    orderby p.PaymentDate descending
+                    select new { Payment = p, d.DocumentNumber, d.Sensitivity })
+                .Take(10).ToListAsync(ct);
 
             foreach (var r in drafts.Where(d => Visible(kinds, d.Sensitivity)))
                 items.Add(ToCandidate(await EvaluateAsync(companyId, origin, r, null, null, ct, pre), r.DocumentNumber, r.DocumentDate,
@@ -253,13 +303,20 @@ public class ReceiptLinkService : IReceiptLinkService
             }
             foreach (var d in issued.Where(d => Visible(kinds, d.Sensitivity)))
             {
-                var e = await EvaluateAsync(companyId, origin, d, null, null, ct, pre);
+                var e = await EvaluateAsync(companyId, origin, d, null, null, ct, pre, actor: userId.ToString());
                 items.Add(ToCandidate(e, d.DocumentNumber, d.DocumentDate, $"{KindLabel(e.Verdict.Kind)} {d.DocumentNumber} · {Money(d.TotalAmount)}"));
+            }
+            foreach (var row in looseSettlements.Where(x => Visible(kinds, x.Sensitivity)))
+            {
+                var e = await EvaluateAsync(companyId, origin, null, null, null, ct, pre, settlementPayment: row.Payment, actor: userId.ToString());
+                if (e.ReceiptDocumentId != null) continue;   // มีใบเสร็จที่ยังมีผล — แสดงในกลุ่มใบเสร็จข้างบนแล้ว
+                items.Add(ToCandidate(e, row.Payment.PaymentNumber, row.Payment.PaymentDate,
+                    $"การรับชำระ {row.Payment.PaymentNumber} ของ {row.DocumentNumber} (ไม่มีใบเสร็จแยก) · {Money(e.Amount)}"));
             }
             // ฝ่ายค้าน M6: ปุ่ม/หน้าต่างมีความหมายเมื่อมีแถวที่ผูกได้ — ไม่มี = ประกาศเดียว (รายการที่ผูกไม่ได้ยังแนบไปพร้อมเหตุผล)
             var anyAllowed = items.Any(x => x.Allowed);
             return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "invoice", null,
-                anyAllowed ? null : "ไม่มีใบเสร็จร่าง · เงินรอจัดสรร · ใบมัดจำ ของผู้ติดต่อรายนี้ที่ผูกกับใบนี้ได้",
+                anyAllowed ? null : "ไม่มีใบเสร็จร่าง · เงินรอจัดสรร · ใบมัดจำ · การรับชำระของใบอื่น ของผู้ติดต่อรายนี้ที่ผูก/ย้ายมาใบนี้ได้",
                 anyAllowed ? null : "รับเงินใหม่ให้กด \"💰 บันทึกชำระเงิน\" ที่ใบนี้", anyAllowed, items);
         }
 
@@ -276,19 +333,19 @@ public class ReceiptLinkService : IReceiptLinkService
         if (open.Count == 0)
             return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "receipt", originKind.ToString(),
                 "ผู้ติดต่อรายนี้ไม่มีใบแจ้งหนี้/ใบกำกับที่ค้างชำระให้ผูก", null, false, items, canUndo);
-        if (originKind is ReceiptLinkKind.DraftReceipt or ReceiptLinkKind.DepositReceipt)
+        if (originKind is ReceiptLinkKind.DraftReceipt or ReceiptLinkKind.DepositReceipt or ReceiptLinkKind.SettlementOfOther)
         {
             foreach (var inv in open)
             {
-                var e = await EvaluateAsync(companyId, inv, origin, null, null, ct, pre);
+                var e = await EvaluateAsync(companyId, inv, origin, null, null, ct, pre, actor: userId.ToString());
                 items.Add(ToCandidate(e, inv.DocumentNumber, inv.DocumentDate,
                     $"{DocumentTypeNames.Title(inv.DocumentType, null)} {inv.DocumentNumber} · ค้าง {Money(inv.BalanceDue)}"));
             }
             return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "receipt", originKind.ToString(), null, null,
                 items.Any(x => x.Allowed), items, canUndo);
         }
-        // ชนิดที่ผูกไม่ได้ในแพ็ก A (ของการชำระใบอื่น · ขายสด · รออนุมัติ) — บอกเหตุผล + ทางไปต่อระดับใบ
-        var sample = await EvaluateAsync(companyId, open[0], origin, null, null, ct, pre);
+        // ชนิดที่ผูกไม่ได้ (ใบเสร็จที่สร้างเองซึ่งตัดลูกหนี้ใบอื่น · ขายสด · รออนุมัติ) — บอกเหตุผล + ทางไปต่อระดับใบ
+        var sample = await EvaluateAsync(companyId, open[0], origin, null, null, ct, pre, actor: userId.ToString());
         return new ReceiptLinkCandidatesResponse(origin.Id, origin.DocumentNumber, "receipt", originKind.ToString(),
             sample.Verdict.Message, sample.Verdict.WayForward, false, items);
     }
@@ -299,11 +356,18 @@ public class ReceiptLinkService : IReceiptLinkService
         var kinds = await VisibleKindsAsync(companyId, userId);
         var inv = await LoadDocAsync(companyId, request.InvoiceId, kinds, "ใบแจ้งหนี้", ct);
         if (request.ReceiptDocumentId is Guid rid)
-            return await EvaluateAsync(companyId, inv, await LoadDocAsync(companyId, rid, kinds, "ใบเสร็จ", ct), null, request.Amount, ct, withDetail: true);
+            return await EvaluateAsync(companyId, inv, await LoadDocAsync(companyId, rid, kinds, "ใบเสร็จ", ct), null, request.Amount, ct, withDetail: true,
+                actor: userId.ToString());
         if (request.PaymentId is Guid pid)
         {
             var pay = await _db.Payments.AsNoTracking().FirstOrDefaultAsync(p => p.Id == pid && p.CompanyId == companyId && !p.IsDeleted, ct)
                       ?? throw new KeyNotFoundException("ไม่พบการรับชำระ");
+            // แพ็ก B: การรับชำระที่ไม่ใช่เงินรอจัดสรร (ไม่เคยมีเงินเกินลงผังพัก) = การรับชำระของใบอื่น ⇒ เส้นย้าย · ใบของมันเป็นใบลับที่ผู้ใช้ไม่เห็น = ไม่พบ
+            if (pay.UnappliedAccountId == null && !UnappliedCreditBalance.HasBalance(pay.UnappliedAmount))
+            {
+                await LoadDocAsync(companyId, PaymentEffectiveDocument.Of(pay), kinds, "เอกสารของการรับชำระ", ct);
+                return await EvaluateAsync(companyId, inv, null, null, null, ct, settlementPayment: pay, actor: userId.ToString());
+            }
             return await EvaluateAsync(companyId, inv, null, pay, request.Amount, ct);
         }
         throw new BusinessRuleException("ระบุใบเสร็จ (receiptDocumentId) หรือเงินรอจัดสรร (paymentId) ที่จะผูก", ReceiptLinkPolicy.RuleCode);
@@ -318,15 +382,19 @@ public class ReceiptLinkService : IReceiptLinkService
         var e = await EvaluateRequestAsync(companyId, request, userId, ct);
         var v = e.Verdict;
         var effects = v.Allowed && v.Route is ReceiptLinkRoute route
-            ? ReceiptLinkPolicy.Effects(route, e.Source, e.Invoice, e.Amount, e.Available is decimal a ? a - e.Amount : null)
+            ? (e.Move != null && ReceiptLinkPolicy.RequiresReason(route)
+                    ? ReceiptLinkPolicy.MoveEffects(route, e.Move, e.Invoice)
+                    : ReceiptLinkPolicy.Effects(route, e.Source, e.Invoice, e.Amount, e.Available is decimal a ? a - e.Amount : null))
                 .Select(x => new ReceiptLinkEffectRow(x.Label, x.Detail)).ToList()
             : new List<ReceiptLinkEffectRow>();
         return new ReceiptLinkPreviewResponse(v.Allowed, v.Kind.ToString(), v.Route?.ToString(), v.RuleCode, v.Message, v.WayForward, v.LegalReference,
-            e.Amount, e.Invoice.BalanceDue, v.Allowed ? Math.Max(0m, e.Invoice.BalanceDue - e.Amount) : e.Invoice.BalanceDue, effects, Token(e));
+            e.Amount, e.Invoice.BalanceDue, v.Allowed ? Math.Max(0m, e.Invoice.BalanceDue - e.Amount) : e.Invoice.BalanceDue, effects, Token(e),
+            RequiresReason: v.Allowed && ReceiptLinkPolicy.RequiresReason(v.Route));
     }
 
     private static BusinessRuleException Refused(ReceiptLinkVerdict v) =>
-        new((v.Message ?? "ผูกไม่ได้") + (v.WayForward is { } w ? " · ทางไปต่อ: " + w : ""), v.RuleCode, 409);
+        new((v.Message ?? "ผูกไม่ได้") + (v.WayForward is { } w ? " · ทางไปต่อ: " + w : ""), v.RuleCode,
+            v.RuleCode == ReceiptLinkPolicy.MovePermissionCode ? 403 : 409);   // ฝ่ายค้าน B-2: สิทธิ์ที่ตัดสินจากข้อเท็จจริง = 403 เหมือนด่านของตัวควบคุม
 
     private static void EnsureFresh(Evaluation e, string? token)
     {
@@ -433,6 +501,19 @@ public class ReceiptLinkService : IReceiptLinkService
                 return new ReceiptLinkResult(ReceiptLinkRoute.ApplyDeposit.ToString(), res.Id, res.DocumentNumber, res.BalanceDue,
                     res.Status.ToString(), e.DepositDocumentId, null, null, WithNote(Array.Empty<string>(), auditNote));
             }
+            case ReceiptLinkRoute.MoveSettlement:
+            case ReceiptLinkRoute.MoveSettlementWithReissue:
+            {
+                // แพ็ก B: เส้นย้ายล็อกใบ (เรียง Id) → การรับชำระ แล้วตัดสินซ้ำใต้ล็อกด้วย ReceiptLinkPolicy.Decide เอง (DocumentService.MoveSettlementAsync) ·
+                // เงินไม่ได้อยู่ที่ใบที่พรีวิวเห็นแล้ว (กดซ้ำ/สองคน) = 409 · แถว audit DOC-RCPT-LINK-MOVE อยู่ในธุรกรรมเดียวกับการย้าย
+                if (string.IsNullOrWhiteSpace(request.Reason))
+                    throw new BusinessRuleException("กรุณาระบุเหตุผลที่ย้ายการรับชำระ (เก็บบนใบแทนและร่องรอยตรวจสอบให้ผู้สอบบัญชี)", ReceiptLinkPolicy.MoveReasonCode, 400);
+                var moved = await _documents.MoveSettlementAsync(companyId,
+                    new SettlementMoveCommand(e.PaymentId!.Value, e.Invoice.Id, e.Move!.FromDocumentId, request.Reason, ExpectedRoute: e.Verdict.Route), actor);
+                var headline = $"ย้ายการรับชำระ {moved.PaymentNumber} ({Money(moved.Amount)}) จาก {moved.FromDocumentNumber} ไป {moved.TargetDocumentNumber} แล้ว";
+                return new ReceiptLinkResult(e.Verdict.Route.Value.ToString(), moved.TargetDocumentId, moved.TargetDocumentNumber, moved.TargetBalanceDue,
+                    moved.TargetStatus.ToString(), moved.ReplacementReceiptId, moved.PaymentId, moved.AllocationId, moved.Notices.Prepend(headline).ToList());
+            }
             default:
                 throw Refused(e.Verdict);
         }
@@ -498,6 +579,53 @@ public class ReceiptLinkService : IReceiptLinkService
                 await _db.SaveChangesAsync(ct);
                 return new ReceiptLinkResult(route.ToString(), r.DocumentId, r.DocumentNumber, r.DocumentBalanceDue, r.DocumentStatus.ToString(),
                     null, r.PaymentId, aid, r.Notices);
+            }
+            case ReceiptLinkRoute.MoveSettlement or ReceiptLinkRoute.MoveSettlementWithReissue when request.PaymentId is Guid movedPaymentId:
+            {
+                // แพ็ก B (266-1-26): ถอดการย้าย = ย้ายกลับใบเดิมเป็นรายการใหม่ (สองขาใหม่) — เฉพาะการย้ายที่ไม่ได้แตะกระดาษ · ยกเลิก/ออกใบรับแล้ว = ไม่มีถอด (ฝ่ายค้าน B-8)
+                var current = await _db.PaymentAllocations.AsNoTracking()
+                    .Where(a => a.CompanyId == companyId && a.PaymentId == movedPaymentId && a.MovedFromAllocationId != null
+                        && (request.AllocationId == null || a.Id == request.AllocationId))
+                    .OrderByDescending(a => a.CreatedAt)
+                    .Select(a => new { a.Id, a.DocumentId, a.MovedFromAllocationId, a.MoveVoidedReceiptId, a.MoveIssuedReceiptId })
+                    .FirstOrDefaultAsync(ct)
+                    ?? throw new BusinessRuleException("ไม่พบการย้ายการรับชำระที่ยังมีผลของรายการนี้ (อาจถูกย้ายต่อ หรือการรับชำระถูกยกเลิกไปแล้ว)",
+                        ReceiptLinkPolicy.MoveNoUndoCode, 409);
+                var originalDocumentId = await _db.PaymentAllocations.IgnoreQueryFilters().AsNoTracking()
+                    .Where(a => a.Id == current.MovedFromAllocationId && a.CompanyId == companyId)
+                    .Select(a => (Guid?)a.DocumentId).FirstOrDefaultAsync(ct)
+                    ?? throw new BusinessRuleException("ไม่พบแถวเดิมของการย้ายนี้ — ถอดอัตโนมัติไม่ได้ ให้ย้ายกลับจากหน้าใบเดิม", ReceiptLinkPolicy.MoveNoUndoCode, 409);
+                var replacementNumber = await _db.Documents.AsNoTracking()
+                    .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.IsSettlementReceipt && r.SettlementPaymentId == movedPaymentId
+                        && r.RelatedDocumentId == current.DocumentId && r.ReplacesDocumentId != null && r.Status != DocumentStatus.Voided)
+                    .Select(r => r.DocumentNumber).FirstOrDefaultAsync(ct);
+                if (replacementNumber != null)
+                    throw new BusinessRuleException(
+                        $"การย้ายนี้ออกใบเสร็จแทน ({replacementNumber}) ไปแล้ว — ถอดไม่ได้ (ใบที่ยกเลิกแล้วไม่กลับมาใช้เลขเดิมเป็นใบรับ) · "
+                        + "ทางไปต่อ: ถ้าย้ายผิด ให้เปิดใบเดิมแล้วกด \"🔗 ผูกใบเสร็จ/เงินที่รับไว้แล้ว\" เพื่อย้ายกลับเป็นรายการใหม่ (ระบบออกใบแทนอีกใบ)",
+                        ReceiptLinkPolicy.MoveNoUndoCode, 409);
+                // ฝ่ายค้าน B-8: การย้ายครั้งนี้ยกเลิกใบเสร็จของใบเดิม (ไม่ออกใบแทนเพราะใบปลายทางเป็นใบรับในตัว) หรือออกใบรับให้ใบปลายทาง ⇒ ย้ายกลับจะทิ้งใบเดิมไว้โดยไม่มีใบรับที่ยังมีผล
+                var paperIds = new[] { current.MoveVoidedReceiptId, current.MoveIssuedReceiptId }.Where(x => x != null).Select(x => x!.Value).ToList();
+                var paperNumbers = paperIds.Count == 0
+                    ? new Dictionary<Guid, string>()
+                    : await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                        .Where(d => d.CompanyId == companyId && paperIds.Contains(d.Id)).ToDictionaryAsync(d => d.Id, d => d.DocumentNumber, ct);
+                string? NumberOf(Guid? id) => id is Guid g ? (paperNumbers.TryGetValue(g, out var no) ? no : g.ToString("N")[..8]) : null;
+                if (ReceiptLinkPolicy.MoveUndoRefusal(NumberOf(current.MoveVoidedReceiptId), NumberOf(current.MoveIssuedReceiptId)) is string undoBlock)
+                    throw new BusinessRuleException(undoBlock, ReceiptLinkPolicy.MoveNoUndoCode, 409);
+                // ฝ่ายค้าน B-2: ถอด = ย้ายกลับ ⇒ ด่านเดียวกับการย้าย (ตัวตัดสิน + สิทธิ์อนุมัติใบที่เงินกลับเข้า/ยกเลิกใบที่เงินถูกถอน ใต้ล็อก) + กุญแจพรีวิว
+                //    (POST preview ด้วย invoiceId = ใบเดิม + paymentId) — ไม่มีทางลัดข้ามพรีวิว
+                var reason = string.IsNullOrWhiteSpace(request.Reason) ? "ถอดการย้ายการรับชำระ (ย้ายกลับใบเดิม)" : request.Reason;
+                var back0 = await EvaluateRequestAsync(companyId, new ReceiptLinkRequest(originalDocumentId, null, movedPaymentId, Reason: reason), userId, ct);
+                if (!back0.Verdict.Allowed) throw Refused(back0.Verdict);
+                if (back0.Move?.FromDocumentId != current.DocumentId)
+                    throw new BusinessRuleException(ReceiptLinkPolicy.StaleMessage, ReceiptLinkPolicy.StaleCode, 409);
+                EnsureFresh(back0, request.PreviewToken);
+                var back = await _documents.MoveSettlementAsync(companyId, new SettlementMoveCommand(movedPaymentId, originalDocumentId, current.DocumentId,
+                    reason, ExpectedRoute: back0.Verdict.Route), actor);
+                return new ReceiptLinkResult(route.ToString(), back.TargetDocumentId, back.TargetDocumentNumber, back.TargetBalanceDue, back.TargetStatus.ToString(),
+                    back.ReplacementReceiptId, back.PaymentId, back.AllocationId,
+                    back.Notices.Prepend($"ย้ายการรับชำระ {back.PaymentNumber} กลับ {back.TargetDocumentNumber} แล้ว").ToList());
             }
             case ReceiptLinkRoute.ApplyDeposit:
                 throw new BusinessRuleException("การหักมัดจำไม่มีปุ่มถอดในรุ่นนี้ — ยกเลิกใบแจ้งหนี้แล้วระบบคืนยอดมัดจำให้ (เส้นเดิม) หรือให้ผู้ทำบัญชีบันทึกปรับปรุง",

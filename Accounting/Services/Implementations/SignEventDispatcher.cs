@@ -31,10 +31,13 @@ public class SignEventDispatcher
     private readonly ILogger<SignEventDispatcher> _logger;
     private readonly IWebhookService? _webhooks;
     private readonly INotificationEngine? _notify;
+    /// <summary>รอบ 267 P2: ขั้น "ฉบับที่ลูกค้าเซ็น + ส่งสำเนาให้ผู้ลงนาม" ของแถวหลักฐาน · null (ประกอบนอก DI) = ข้ามขั้นนี้</summary>
+    private readonly CustomerDocumentResponseService? _responses;
 
     public SignEventDispatcher(AccountingDbContext db, IHttpClientFactory http, ISecretProtector secrets, ILogger<SignEventDispatcher> logger,
-        IWebhookService? webhooks = null, INotificationEngine? notify = null)
+        IWebhookService? webhooks = null, INotificationEngine? notify = null, CustomerDocumentResponseService? responses = null)
     {
+        _responses = responses;
         _db = db;
         _http = http;
         _secrets = secrets;
@@ -132,6 +135,46 @@ public class SignEventDispatcher
             }
             row.RegistrationsDispatchedAt = nowUtc;
             await _db.SaveChangesAsync(ct);
+        }
+
+        // รอบ 267 P2: ฉบับที่ลูกค้าเซ็น (ไฟล์ + SHA-256) + สำเนาทางอีเมลถึงผู้ลงนาม — ทำก่อนขั้น callback · ยังไม่สำเร็จ = แถวค้างเป็น Pending แล้วลองใหม่ตามจังหวะ
+        // ของ outbox · ครบจำนวนครั้ง = เลิกลอง + แจ้งพนักงาน (ล้มดัง: เหตุบนแถว outbox + กระดิ่ง + หน้าลูกค้าแสดง "กำลังเตรียม")
+        if (row.CustomerActionId is Guid actionId && row.SignedCopyDoneAt == null && _responses != null)
+        {
+            CustomerDocumentResponseService.SignedCopyResult copy;
+            try { copy = await _responses.ProcessSignedCopyAsync(row.CompanyId, actionId, ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "สร้าง/ส่งฉบับที่ลูกค้าเซ็นล้ม action={ActionId} (company {CompanyId})", actionId, row.CompanyId);
+                copy = new(false, false, "ข้อผิดพลาดของระบบ: " + ex.Message);
+            }
+            if (copy.Done)
+            {
+                row.SignedCopyDoneAt = nowUtc;
+                if (copy.Note != null) row.LastError = Trim("ฉบับที่ลูกค้าเซ็น: " + copy.Note);
+                await _db.SaveChangesAsync(ct);
+                // ฝ่ายค้าน 267-P2 M3: เลิกสร้างทั้งที่ควรมีไฟล์ ⇒ แจ้งพนักงานเหมือนเส้นครบจำนวนครั้ง (ล้มดัง 3 ที่: แถว outbox · กระดิ่ง · หน้าลูกค้าเลิกแสดง "กำลังเตรียม")
+                if (copy.Abandoned) await NotifySignedCopyFailedAsync(row, copy.Note, ct);
+            }
+            else
+            {
+                row.Attempts++;
+                row.LastAttemptAt = nowUtc;
+                row.LastError = Trim("ฉบับที่ลูกค้าเซ็น: " + (copy.Note ?? "ยังไม่สำเร็จ"));
+                row.UpdatedAt = nowUtc;
+                if (row.Attempts >= SignEventOutbox.MaxAttempts)
+                {
+                    row.SignedCopyDoneAt = nowUtc;   // เลิกลอง — เหตุอยู่บนแถว + แจ้งพนักงาน (ไม่ประทับว่าสำเร็จ: ไม่มี SignedPdfSha256 บนแถวหลักฐาน)
+                    row.Attempts = 0;                // จำนวนครั้งของขั้น callback นับใหม่
+                    await _db.SaveChangesAsync(ct);
+                    await NotifySignedCopyFailedAsync(row, copy.Note, ct);
+                }
+                else
+                {
+                    row.NextAttemptAt = SignEventOutbox.AfterAttempt(false, row.Attempts, nowUtc).NextAttemptAt;
+                    return;
+                }
+            }
         }
 
         if (string.IsNullOrWhiteSpace(row.CallbackUrl))
@@ -248,6 +291,58 @@ public class SignEventDispatcher
         }
     }
 
+    /// <summary>รอบ 267 P2: หัวเรื่อง + ข้อความแจ้งพนักงานจากแถวหลักฐาน — ยอมรับ ⇒ แนะนำแปลงเอกสาร (ไม่มีชนิด "ใบสั่งขาย" — 267-1-15) +
+    /// คำเตือนอากรแสตมป์เมื่อมีบรรทัดงานบริการ (267-1-14 · ระบบไม่ตัดสินว่าเป็นตราสาร) · ไม่รับ/ขอแก้ ⇒ เหตุผล + ทางไปต่อ</summary>
+    private async Task<(string? Title, string? Message)> CustomerActionNoticeAsync(Guid companyId, Guid actionId, string? documentNumber,
+        Models.Enums.DocumentType type, CancellationToken ct)
+    {
+        var a = await _db.CustomerDocumentActions.AsNoTracking()
+            .Where(x => x.Id == actionId && x.CompanyId == companyId)
+            .Select(x => new { x.Action, x.DocumentId, x.SignerFirstName, x.SignerLastName, x.SignerTitle, x.SignerOrgName, x.ReasonCode, x.Message })
+            .FirstOrDefaultAsync(ct);
+        if (a == null || !Enum.TryParse<CustomerSignRule.Kind>(a.Action, out var kind)) return (null, null);
+        var name = string.Join(" ", new[] { a.SignerFirstName, a.SignerLastName }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        var who = name + (string.IsNullOrWhiteSpace(a.SignerTitle) ? "" : $" ({a.SignerTitle})")
+            + (string.IsNullOrWhiteSpace(a.SignerOrgName) ? "" : $" ในนาม {a.SignerOrgName}");
+        var label = CustomerSignText.KindLabel(false, kind);
+        var parts = new List<string> { $"{who} — {label} {documentNumber} ออนไลน์" };
+        if (CustomerSignText.ReasonLabel(false, a.ReasonCode) is { } reason) parts.Add("เหตุผล: " + reason);
+        if (!string.IsNullOrWhiteSpace(a.Message)) parts.Add("ข้อความจากลูกค้า: " + a.Message);
+        if (kind == CustomerSignRule.Kind.Accepted)
+        {
+            parts.Add(CustomerSignText.ConvertSuggestionText);
+            if (_responses != null && CustomerSignRule.StampDutyWarn(type, kind, await _responses.HasServiceLineAsync(companyId, a.DocumentId, ct)))
+                parts.Add($"⚠️ {CustomerSignText.StampDutyWarning} ({CustomerSignText.StampDutyPage})");
+        }
+        else if (kind is CustomerSignRule.Kind.Declined or CustomerSignRule.Kind.ChangeRequested)
+            parts.Add("ขั้นต่อไป: แก้ไขใบเสนอราคา (ออก Rev ใหม่) แล้วส่งให้ลูกค้าตอบรับใหม่ — หรือกด \"ส่งลิงก์ให้ลูกค้าตอบรับ\" อีกครั้งเพื่อเปิดให้ลูกค้าตอบใหม่บนฉบับเดิม");
+        var icon = kind switch { CustomerSignRule.Kind.Declined => "🚫", CustomerSignRule.Kind.ChangeRequested => "✏️", _ => "✍️" };
+        return ($"{icon} {label} — {documentNumber}", string.Join(" · ", parts));
+    }
+
+    /// <summary>รอบ 267 P2: เลิกลองสร้าง/ส่งฉบับที่ลูกค้าเซ็นแล้ว ⇒ แจ้งพนักงาน (คำตอบของลูกค้ายังมีผล — หลักฐานอยู่ในแถวหลักฐาน/บนเอกสาร)</summary>
+    private async Task NotifySignedCopyFailedAsync(SignEventOutboxEntry row, string? reason, CancellationToken ct)
+    {
+        if (_notify == null) return;
+        try
+        {
+            var number = await _db.Documents.AsNoTracking().Where(d => d.Id == row.DocumentId && d.CompanyId == row.CompanyId)
+                .Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct);
+            await _notify.DispatchAsync(row.CompanyId, NotificationEvents.DocumentCustomerSigned, new NotificationContext
+            {
+                Title = $"⚠️ สร้าง/ส่งฉบับที่ลูกค้าลงนามไม่สำเร็จ — {number}",
+                Message = $"ลูกค้าลงนามเอกสาร {number} แล้ว (คำตอบมีผลและมีหลักฐานครบ) แต่ระบบสร้างหรือส่งสำเนาฉบับที่ลงนามไม่สำเร็จ: {reason ?? "ไม่ทราบสาเหตุ"} — เปิดเอกสารแล้วส่ง PDF ให้ลูกค้าเอง",
+                ActionUrl = $"/pages/documents.html?id={row.DocumentId}",
+                EntityType = nameof(Document),
+                EntityId = row.DocumentId,
+            });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งพนักงานเรื่องฉบับที่ลูกค้าเซ็นไม่สำเร็จ ล้ม doc={DocId} (company {CompanyId})", row.DocumentId, row.CompanyId);
+        }
+    }
+
     private async Task NotifySellerAsync(SignEventOutboxEntry row, CancellationToken ct)
     {
         if (_notify == null) return;
@@ -260,10 +355,13 @@ public class SignEventDispatcher
             if (doc == null) return;
             var kind = SignRequestKinds.ForEvent(row.EventType);
             var who = doc.QuotationAcceptedBy ?? doc.DeliverySignedBy ?? "ลูกค้า";
+            // รอบ 267 P2: มีแถวหลักฐาน ⇒ ข้อความจากแถวนั้น (ชื่อ · ตำแหน่ง · ในนาม · เหตุผล/ข้อความ) + ขั้นต่อไป (แปลงเอกสาร) + คำเตือนอากรแสตมป์ (เตือนเท่านั้น)
+            var (title, message) = row.CustomerActionId is Guid actionId
+                ? await CustomerActionNoticeAsync(row.CompanyId, actionId, doc.DocumentNumber, doc.DocumentType, ct) : (null, null);
             await _notify.DispatchAsync(row.CompanyId, NotificationEvents.DocumentCustomerSigned, new NotificationContext
             {
-                Title = $"✍️ {kind?.SignedTh ?? "ลูกค้าเซ็นแล้ว"} — {doc.DocumentNumber}",
-                Message = $"{who} {(kind?.ActionTh ?? "เซ็น")}เอกสาร {doc.DocumentNumber} ออนไลน์แล้ว",
+                Title = title ?? $"✍️ {kind?.SignedTh ?? "ลูกค้าเซ็นแล้ว"} — {doc.DocumentNumber}",
+                Message = message ?? $"{who} {(kind?.ActionTh ?? "เซ็น")}เอกสาร {doc.DocumentNumber} ออนไลน์แล้ว",
                 ActionUrl = $"/pages/documents.html?id={row.DocumentId}",
                 EntityType = nameof(Document),
                 EntityId = row.DocumentId,
