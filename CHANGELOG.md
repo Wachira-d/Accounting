@@ -7230,3 +7230,4 @@ _รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิ
 คิว `linechat.slip-linked` ประทับ/ตรวจการผูกเดิมก่อนส่ง (คอลัมน์ `DeferredNotifications.ExpectedKey`) · ผล LINE ไม่มีสถานะ HTTP จำแนกด้วย `LinePushOutcome` (ถาวรไม่ส่งซ้ำ) ·
 266-C L2 ใบลดหนี้ร่างของตัวช่วยใบซ้ำขึ้น Autopilot · 269 ข้อ 3 ใบกำกับ OCR VAT 0% ทั้งใบที่กระดาษไม่บอกอัตราศูนย์ ⇒ `[VAT-ZERO-UNREAD]` รอตรวจ ·
 เทสต์ pure +8 · Db +7 · กติกา R270 +9 ข้อ + ฝ่ายค้าน R270-1…4 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) · commit ee79eb2b_
+_รอบ 270 (ทางผ่าน CI run 43487318055): `ContactNotifyEndpointRound245DbTests.N6_*` deadlock 40P01 — ตารางทดลองตัด FK ไป Companies/Contacts (เทสต์ตรวจรายชื่อคอลัมน์เท่านั้น) · `SubmitOnceRound217DbTests.SUB09` ล้มครั้งเดียวในรอบเดียวกัน (การแข่งของคำขอพร้อมกัน — ไม่แตะโค้ดหลัก · ไม่เกี่ยวกับรอบ 270) — ไม่แตะโค้ดหลัก_
