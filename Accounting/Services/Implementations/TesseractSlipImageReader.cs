@@ -14,7 +14,8 @@ public interface ISlipImageReader
 }
 
 /// <summary>Tesseract ในเครื่อง (<see cref="EmbeddedTesseractOcrService"/>) + ตัวแยกข้อความสลิปตัวเดียว <see cref="OcrSlipText"/> ·
-/// ยังไม่มีตัวถอด QR จากรูปในระบบ (คำตัดสิน 260-1-2 — QR บนสลิปไทยเป็นรหัสตรวจสอบรายการ ไม่มียอด ⇒ ต้องเรียกบริการธนาคารภายนอก ยังไม่ทำ)</summary>
+/// รอบ 264 P2 (คำตัดสิน 264-4-1): ถอด QR ตรวจสลิปในเครื่องด้วย <see cref="SlipQrImageDecoder"/> ⇒ ธนาคารผู้โอน + เลขอ้างอิงของธนาคาร (QR <b>ไม่มี</b>ยอด/เลขบัญชี —
+/// การตรวจรายการกับธนาคารยังเป็น backlog 260-1-2) · ไม่มี tessdata แต่ถอด QR ได้ ⇒ ผลอ่านมีแต่ QR (ไม่มียอด ⇒ ผู้เรียกส่งเข้าคิวพนักงานตามเดิม)</summary>
 public sealed class TesseractSlipImageReader : ISlipImageReader
 {
     private readonly EmbeddedTesseractOcrService _ocr;
@@ -29,17 +30,20 @@ public sealed class TesseractSlipImageReader : ISlipImageReader
 
     public async Task<OcrSlipText.Reading> ReadAsync(byte[] bytes, string contentType, CancellationToken ct = default)
     {
-        if (!_ocr.IsAvailable || bytes.Length == 0) return OcrSlipText.Reading.Empty;
+        if (bytes.Length == 0) return OcrSlipText.Reading.Empty;
+        // QR ก่อน (ถูก · ไม่พึ่ง tessdata) — ถอดไม่ได้ = null ⇒ ผลอ่านเท่าเดิมทุกประการ
+        var qr = SlipQrImageDecoder.TryDecode(bytes);
+        if (!_ocr.IsAvailable) return OcrSlipText.Parse(null, null, qr);
         try
         {
             var r = await _ocr.ExtractTextAsync(bytes, contentType);
-            return r.Success ? OcrSlipText.Parse(r.Text) : OcrSlipText.Reading.Empty;
+            return OcrSlipText.Parse(r.Success ? r.Text : null, null, qr);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // อ่านไม่ได้ = สลิปเข้าคิวพนักงานพร้อมเหตุ "อ่านยอดไม่ได้" (ผู้เรียกบันทึกเหตุในแถว — ไม่ใช่ความเงียบ)
             _logger.LogError(ex, "อ่านรูปสลิปด้วย OCR ในเครื่องล้ม");
-            return OcrSlipText.Reading.Empty;
+            return OcrSlipText.Parse(null, null, qr);
         }
     }
 }

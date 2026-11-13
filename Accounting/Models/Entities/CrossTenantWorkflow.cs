@@ -220,4 +220,9 @@ public class PartnerPaymentNotice : TenantEntity
     public DateTime? ResolvedAt { get; set; }
     public string? ResolvedBy { get; set; }
     public string? Note { get; set; }
+    /// <summary>รอบ 264 P2 (คำตัดสิน 264-4-7): ธนาคารของ<b>ผู้โอน</b>บนสลิปที่ผู้ขายได้รับ (รหัส 3 หลัก <c>ThaiBankCodes</c>) — บัญชีของผู้ซื้อเอง ·
+    /// ผู้อ่าน: <c>PartnerPayablePipeline.SourceDecisionAsync</c> ⇒ <c>SlipAccountMatch</c> ⇒ ชั้น <c>SlipUnique</c> · null = ไม่มีสลิป/อ่านไม่ได้</summary>
+    public string? SlipPayerBankCode { get; set; }
+    /// <summary>รอบ 264 P2: เลขบัญชีผู้โอนแบบปิดบาง<b>ตามที่ธนาคารปิดมาแล้ว</b> (เช่น <c>xxx-x-x0621-x</c>) · ไม่มีชื่อ/รูปสลิป (ข้อมูลน้อยที่สุดที่ใช้จับคู่)</summary>
+    public string? SlipPayerAccountMask { get; set; }
 }
