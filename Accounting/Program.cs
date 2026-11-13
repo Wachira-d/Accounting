@@ -909,6 +909,9 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Payroll.ITipPayou
     Accounting.Services.Implementations.Payroll.TipPayoutService>();
 // รอบ 259 (A-L1): DocumentLineDeliveryService ถูกลบ (ไม่มีผู้เรียก · อ่าน Contact.LineUserId ที่ย้ายออกแล้ว) — ส่งเอกสารทาง LINE เองจากหน้าเอกสาร = DocumentLineSendService
 builder.Services.AddScoped<IDocumentLineSendService, DocumentLineSendService>();
+// รอบ 267 P3: หน้าต่าง "📤 ส่งให้ลูกค้า" (orchestrate ลิงก์ · ช่วงตอบรับ · อีเมล · LINE ตัวเดิม) + ไทม์ไลน์ลูกค้า (read model)
+builder.Services.AddScoped<ICustomerShareService, CustomerShareService>();
+builder.Services.AddScoped<ICustomerTimelineService, CustomerTimelineService>();
 builder.Services.AddScoped<IPayslipLineDeliveryService, PayslipLineDeliveryService>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินต่อเอกสาร (ไม่พึ่ง IDocumentService — EmailScheduleService ใช้ได้) + งานหลังรับชำระ (ออก/ส่งใบเสร็จ)
@@ -917,6 +920,8 @@ builder.Services.AddScoped<IPostPaymentAutomationService, PostPaymentAutomationS
 builder.Services.AddScoped<PartnerPaymentNoticeService>();   // รอบ 258-3 F-H3 — แจ้งผู้ซื้อคู่ค้าว่าผู้ขายรับเงินแล้ว (ผู้ซื้อกดบันทึกจ่ายเอง)
 builder.Services.AddScoped<PartnerConsentService>();   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ผู้เขียนเดียว + CheckAsync ที่ท่อ P3/P5 เรียก)
 builder.Services.AddScoped<PartnerPayablePipeline>();   // รอบ 264 P3 — ท่อฝั่งผู้ซื้อ: บันทึกจ่ายเองภายใต้ความยินยอม AutoRecordPayment (AutopilotJob ขั้น PartnerPayable)
+builder.Services.AddScoped<PartnerPayablePipeline.IBankLineEvidence, BankPaymentLineEvidence>();   // รอบ 264 P4 (264-5-10) — ชั้นรายการเดินบัญชีฝั่งเงินออก (ตาราง BankTransactions เดิม)
+builder.Services.AddScoped<PartnerOutboundPaymentService>();   // รอบ 264 P4 (264-5-11/12) — ผู้ซื้อเริ่มจ่าย: จ่ายจากระบบของเรา · แจ้งโอนให้ผู้ขาย
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
 builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();
 

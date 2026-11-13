@@ -153,6 +153,13 @@ public sealed class DocumentLabels
     /// <summary>รอบ 258-3 (F-H1): ปุ่มดู/ดาวน์โหลด PDF + บรรทัดยืนยันรับเงินบนการ์ดใบเสร็จ</summary>
     public string LineCardViewPdf => this["line_card_view_pdf"];
     public string LineCardPaymentReceived => this["line_card_payment_received"];
+    /// <summary>รอบ 267 P3: ปุ่มลิงก์หน้าเอกสารบนการ์ด LINE (ตามสิ่งที่ลูกค้าทำได้บนหน้า) + การ์ด "ฉบับเซ็น" กลับทาง LINE (<c>LineDocumentCard</c>)</summary>
+    public string LineCardOpenAccept => this["line_card_open_accept"];
+    public string LineCardOpenSign => this["line_card_open_sign"];
+    public string LineCardOpenPay => this["line_card_open_pay"];
+    public string LineCardOpen => this["line_card_open"];
+    public string LineCardSignedCopy => this["line_card_signed_copy"];
+    public string LineCardSignedReceived => this["line_card_signed_received"];
     public string LineCardStopUser => this["line_card_stop_user"];
     public string LineCardStopGroup => this["line_card_stop_group"];
     public string LineCardFrom(string company) => string.Format(this["line_card_from"], company);
@@ -409,6 +416,12 @@ public sealed class DocumentLabels
         ["line_card_pay"] = "ชำระเงินออนไลน์",
         ["line_card_view_pdf"] = "ดู/ดาวน์โหลด PDF",
         ["line_card_payment_received"] = "ได้รับชำระเงินแล้ว ขอบคุณค่ะ",
+        ["line_card_open_accept"] = "ดู/ยอมรับ",
+        ["line_card_open_sign"] = "ดู/เซ็นรับ",
+        ["line_card_open_pay"] = "ดู/ชำระเงิน",
+        ["line_card_open"] = "เปิดเอกสาร",
+        ["line_card_signed_copy"] = "ฉบับเซ็น",
+        ["line_card_signed_received"] = "ได้รับการลงนามของท่านแล้ว ขอบคุณค่ะ — ดาวน์โหลดฉบับที่ลงนามได้จากปุ่มด้านล่าง",
         ["line_card_stop_user"] = "ไม่ต้องการรับทาง LINE? พิมพ์ \"หยุด\" ในแชตนี้",
         ["line_card_stop_group"] = "ไม่ต้องการรับในกลุ่มนี้? แจ้งผู้ส่งเพื่อยกเลิกการผูกกลุ่ม",
         ["terms"] = "เงื่อนไข",
@@ -561,6 +574,12 @@ public sealed class DocumentLabels
         ["line_card_pay"] = "Pay online",
         ["line_card_view_pdf"] = "View / download PDF",
         ["line_card_payment_received"] = "Payment received — thank you",
+        ["line_card_open_accept"] = "View / accept",
+        ["line_card_open_sign"] = "View / sign",
+        ["line_card_open_pay"] = "View / pay",
+        ["line_card_open"] = "Open document",
+        ["line_card_signed_copy"] = "Signed copy",
+        ["line_card_signed_received"] = "We have received your signature — thank you. Download the signed copy below.",
         ["line_card_stop_user"] = "Don't want these on LINE? Reply STOP in this chat",
         ["line_card_stop_group"] = "Don't want these in this group? Ask the sender to unlink it",
         ["terms"] = "Terms",

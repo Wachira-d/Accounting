@@ -53,6 +53,10 @@ public static class BankReceiptAutoSettle
         _ => "รายการนี้ไม่ได้มาจากธนาคาร (พิมพ์มือ · ไฟล์/API ที่ผู้ใช้ส่งเอง · หรือไม่ทราบแหล่ง) — ระบบไม่ปิดหนี้เอง",
     };
 
+    /// <summary>รอบ 264 P4 (คำตัดสิน 264-5-10): กติกาแหล่งของบรรทัด (H1) ตัวเดียวกันสำหรับฝั่งเงินออก (<c>BankPaymentLineMatch</c>) — null = บรรทัดเป็นหลักฐานได้ ·
+    /// <paramref name="creatorMayApprove"/> = ผู้นำเข้ามีสิทธิ์อนุมัติเอกสารชนิดนั้น (ฝั่งเงินออก = ใบซื้อ) ณ ตอนนี้</summary>
+    public static string? EvidenceProblem(string? entrySource, bool creatorMayApprove) => SourceProblem(entrySource, creatorMayApprove);
+
     /// <summary>ทางจับคู่ด้วยมือของหน้าธนาคารต้องไม่แตะบรรทัดที่ระบบกำลังบันทึกรับชำระ (ฝ่ายค้าน M5) — null = ทำได้</summary>
     public static string? ManualMatchBlock(string? verdict)
         => verdict == Stamps.Applying ? "รายการนี้กำลังถูกบันทึกรับชำระอัตโนมัติ — รอสักครู่แล้วโหลดหน้าใหม่" : null;

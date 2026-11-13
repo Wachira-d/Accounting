@@ -46,4 +46,8 @@ public class SignEventOutboxEntry : TenantEntity
     public Guid? CustomerActionId { get; set; }
     /// <summary>รอบ 267 P2: ขั้น "สร้างฉบับที่ลูกค้าเซ็น + ส่งสำเนาให้ผู้ลงนาม" จบแล้วเมื่อ (สำเร็จ หรือเลิกลองแล้วแจ้งพนักงาน)</summary>
     public DateTime? SignedCopyDoneAt { get; set; }
+    /// <summary>รอบ 267 P3 (267-1-63): แถวคิว LINE ที่ลูกค้าเปิดลิงก์หน้าเอกสารมาลงนาม (ตัวระบุแหล่งที่มา <c>s</c> ที่ตรวจแล้ว) · null = ไม่ได้มาจากการ์ด LINE 1:1</summary>
+    public Guid? SourceLineQueueId { get; set; }
+    /// <summary>รอบ 267 P3: การ์ด "ฉบับเซ็น" เข้าคิวกลับไป LINE เดิมแล้วเมื่อ (ครั้งเดียว — ส่งจริง/ล้มดูที่แถวคิว LINE)</summary>
+    public DateTime? SignedCopyLineQueuedAt { get; set; }
 }

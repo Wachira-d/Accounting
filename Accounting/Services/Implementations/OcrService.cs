@@ -8387,6 +8387,11 @@ public class OcrService : IOcrService
         // 2026-10-16 (Makro 2/2 — ใบสำคัญจ่าย 11,846.50 ทั้งที่กระดาษยืนยัน 10,980): ทุกสาขาข้างบนเทียบกับยอดหัวสแกน ⇒ ถ้าหัวสแกนเองเกินกระดาษ
         // (ยอดรวม VAT ก่อนส่วนลดถูกอ่านเป็นฐาน + VAT ซ้ำ) ไม่มีด่านไหนเห็น · ตัวตัดสิน Helpers/OcrTotalAnchor.DocumentOverstatement (pure) อ่านข้อความดิบ
         // ทุกครั้ง ⇒ สแกนเก่าที่ persist ยอดผิดได้คำเตือนด้วย · ไม่เปลี่ยนตัวเลข — [Σ-GAP] = รับทราบตอนอนุมัติ + ไม่อนุมัติเอง
+        // รอบ 270 (ฝ่ายค้าน 269 ข้อ 3 · คำตัดสิน 270-1-5): ใบกำกับที่ทุกบรรทัด VAT 0% และกระดาษไม่บอกว่าเป็นอัตราศูนย์/ส่งออก = อ่านแถว VAT ไม่ได้ (ไม่ใช่ §80/1) ⇒
+        // [VAT-ZERO-UNREAD] หยุดการอนุมัติเอง (OcrPostingReadiness) · ไม่แต่งอัตรา 7% เอง · ใบส่งออกจริงที่พิมพ์ 0%/ส่งออก ⇒ ไม่ติด · ตัวตัดสินเดียว Helpers/OcrZeroVatTaxInvoiceGuard
+        if (Accounting.Helpers.OcrZeroVatTaxInvoiceGuard.Check(document.DocumentType == DocumentType.TaxInvoice, normalizedRawText, result.ExtractedVatAmount,
+                document.Lines.Select(l => l.VatRate).ToList(), document.Lines.Sum(l => l.VatAmount)) is string zeroVatNote)
+            result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + zeroVatNote;
         var builtTotal = document.Lines.Sum(l => l.Amount + l.VatAmount) + document.RoundingAdjustment;
         if (Accounting.Helpers.OcrTotalAnchor.DocumentOverstatement(
                 normalizedRawText, result.ExtractedTotalAmount, builtTotal) is { } overstated)

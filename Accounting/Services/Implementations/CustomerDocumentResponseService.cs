@@ -40,6 +40,8 @@ public class CustomerDocumentResponseService
     private Caller _caller = new(null, null);
     /// <summary>โปรไฟล์ผู้ลงนามที่เติมฟอร์มของคำขอนี้ (ตั๋ว LINE ถูกต้อง + มีความยินยอม) — แถวหลักฐานอ้างที่มาเท่านั้น (ไม่ใช่หลักฐานตัวตน)</summary>
     private Guid? _signerProfileId;
+    /// <summary>รอบ 267 P3 (267-1-63): แถวคิว LINE ที่ลูกค้าเปิดลิงก์มา (ค่า <c>s</c> ที่ตรวจกับแถวจริงแล้ว) — งาน outbox ส่งฉบับเซ็นกลับไป LINE เดิม · null = ไม่ได้มาจาก LINE 1:1</summary>
+    private Guid? _sourceLineQueueId;
 
     public CustomerDocumentResponseService(AccountingDbContext db, ILogger<CustomerDocumentResponseService> logger,
         CmsLeadService? leads = null, IPdfGenerationService? pdf = null, IFileStorage? storage = null, IChatRateLimiter? rate = null,
@@ -69,7 +71,8 @@ public class CustomerDocumentResponseService
     public sealed record RespondRequest(string? Action, CustomerSignRule.SignerInput? Signer = null, string? SignatureBase64 = null,
         string? Note = null, string? ReasonCode = null, string? Message = null, int? RevisionNumber = null, string? ContentHash = null, string? OtpCode = null,
         // รอบ 267 P5: วันส่งของที่ผู้ขายยืนยัน (รับทราบใบสั่งซื้อ) · ตั๋วผู้ลงนามจาก LINE Login + ติ๊ก "จำข้อมูลไว้กับ LINE" (ไม่ติ๊ก = ไม่สร้างโปรไฟล์ — S34)
-        DateTime? PromisedDate = null, string? SignerTicket = null, bool RememberSigner = false);
+        DateTime? PromisedDate = null, string? SignerTicket = null, bool RememberSigner = false,
+        string? Source = null);
 
     public IFileStorage SignatureStore => _storage ?? FileStorageDefaults.Local;
 
@@ -104,10 +107,13 @@ public class CustomerDocumentResponseService
         if (request == null || string.IsNullOrWhiteSpace(request.Action)) return BadRequest("ไม่ได้ระบุรายการที่ต้องการทำ");
         if (!DocumentPayLinkPolicy.LooksValid(token)) return NotFound(CustomerDocPage.NotFoundMessage);
         var hash = DocumentPayLinkPolicy.TokenHash(token);
-        var type = await _db.Documents.AsNoTracking()
+        var found = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId && d.PayLinkTokenHash == hash && d.PayLinkRevokedAt == null && !d.IsDeleted)
-            .Select(d => (DocumentType?)d.DocumentType).FirstOrDefaultAsync();
-        if (type == null) return NotFound(CustomerDocPage.NotFoundMessage);
+            .Select(d => new { d.Id, d.DocumentType }).FirstOrDefaultAsync();
+        if (found == null) return NotFound(CustomerDocPage.NotFoundMessage);
+        var type = (DocumentType?)found.DocumentType;
+        // รอบ 267 P3 (267-1-63): s ไม่ใช่สิทธิ์ — ตรวจกับแถวคิวจริง (ใบนี้ · 1:1 · การ์ดลิงก์หน้าเอกสารที่ LINE รับแล้ว) · ผิด/หาย = ไม่มีผล
+        _sourceLineQueueId = await LineSourceAsync(companyId, found.Id, request.Source);
         var kind = CustomerSignRule.KindFor(request.Action.Trim(), type.Value);
         // รอบ 267 P5 (267-1-13): ตั๋ว LINE ที่ถูกต้องของลิงก์นี้ + มีโปรไฟล์ที่ยินยอมไว้ ⇒ แถวหลักฐานอ้างโปรไฟล์ (ที่มาของค่าที่เติม — ไม่ใช่หลักฐานตัวตน)
         _signerProfileId = _profiles != null && !string.IsNullOrWhiteSpace(request.SignerTicket)
@@ -236,6 +242,25 @@ public class CustomerDocumentResponseService
         if (doc == null || !PageLinkLive(doc, token)) return null;
         await _db.HydrateContactAsync(companyId, doc);
         return doc;
+    }
+
+    /// <summary>รอบ 267 P3 (267-1-63): ค่า <c>s</c> ของคำขอ ⇒ แถวคิว LINE ต้นทาง เมื่อผ่าน <see cref="CustomerShareRule.LineSourceValid"/> เท่านั้น (tenant + ใบเดียวกัน) · อื่น ๆ ⇒ null</summary>
+    private async Task<Guid?> LineSourceAsync(Guid companyId, Guid documentId, string? source)
+    {
+        if (CustomerShareRule.ParseLineSource(source) is not Guid qid) return null;
+        var q = await _db.LineQueues.AsNoTracking()
+            .Where(x => x.Id == qid && x.CompanyId == companyId && !x.IsDeleted)
+            .Select(x => new { x.EntityType, x.EntityId, x.EndpointKind, x.IncludePageLink, x.Status }).FirstOrDefaultAsync();
+        return q != null && CustomerShareRule.LineSourceValid(true, q.EntityType, q.EntityId, documentId, q.EndpointKind, q.IncludePageLink, q.Status)
+            ? qid : null;
+    }
+
+    /// <summary>รอบ 267 P3: ประทับแหล่งที่มา (แถวคิว LINE ที่ตรวจแล้ว) บนแถว outbox ของคำตอบนี้ — ในธุรกรรมเดียวกับการบันทึกคำตอบ</summary>
+    private void StampLineSource(Guid evidenceId)
+    {
+        if (_sourceLineQueueId == null) return;
+        var row = _db.ChangeTracker.Entries<SignEventOutboxEntry>().Select(e => e.Entity).FirstOrDefault(e => e.CustomerActionId == evidenceId);
+        if (row != null) row.SourceLineQueueId = _sourceLineQueueId;
     }
 
     // ═══════════════ ยอมรับใบเสนอราคา ═══════════════
@@ -378,6 +403,7 @@ public class CustomerDocumentResponseService
                 // กุญแจกันซ้ำผูกกับแถวหลักฐาน (token ของหน้าเอกสารไม่เปลี่ยนตอนออก Rev ⇒ ยอมรับ Rev ถัดไปต้องได้เหตุการณ์ใหม่)
                 var eventRef = EventRef(tokenHash!, evidence.Id);
                 SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, eventRef).CustomerActionId = evidence.Id;
+                StampLineSource(evidence.Id);   // รอบ 267 P3: ฉบับเซ็นกลับไป LINE 1:1 เดิม (ตรวจแล้วใน RespondAsync)
                 await _db.SaveChangesAsync();
                 await tx.CommitAsync();
             }
@@ -581,6 +607,7 @@ public class CustomerDocumentResponseService
         });
         var eventRef = EventRef(tokenHash!, evidence.Id);
         SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.DeliverySign, now, doc.DeliverySignedBy, hasSignature: true, contentHash, eventRef).CustomerActionId = evidence.Id;
+        StampLineSource(evidence.Id);   // รอบ 267 P3: ฉบับเซ็นกลับไป LINE 1:1 เดิม (ตรวจแล้วใน RespondAsync)
         await _db.SaveChangesAsync();
         await tx.CommitAsync();
 

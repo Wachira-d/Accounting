@@ -459,6 +459,7 @@ public class AccountingDbContext : DbContext
     public DbSet<TradingPartnership> TradingPartnerships => Set<TradingPartnership>();
     public DbSet<CrossTenantDocumentLink> CrossTenantDocumentLinks => Set<CrossTenantDocumentLink>();
     public DbSet<PartnerLinkRequest> PartnerLinkRequests => Set<PartnerLinkRequest>();   // รอบ 264 (Helpers/PartnerLinkRequestMigration)
+    public DbSet<PartnerPaymentPlan> PartnerPaymentPlans => Set<PartnerPaymentPlan>();   // รอบ 264 P4 (Helpers/PartnerPaymentPlanMigration)
     public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
     public DbSet<PartnerAutomationConsent> PartnerAutomationConsents => Set<PartnerAutomationConsent>();   // รอบ 264 P1 (Helpers/PartnerConsentMigration)
     public DbSet<WorkflowAutomationConfig> WorkflowAutomationConfigs => Set<WorkflowAutomationConfig>();
@@ -1194,6 +1195,7 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<PaymentIntent>().Property(x => x.CustomerVisibleRejectReason).HasMaxLength(300);   // รอบ 267 P4
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerBankCode).HasMaxLength(3);   // รอบ 264 P2
         modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerAccountMask).HasMaxLength(32);   // รอบ 264 P2
+        modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerMatch).HasMaxLength(16);   // รอบ 264 P4 (L3)
         modelBuilder.Entity<PdpaConsentRecord>().Property(x => x.UserAgent).HasMaxLength(500);   // ฝ่ายค้านรอบ 230 S2
         modelBuilder.Entity<PlatformAutoChargeSettings>(e =>
         {
@@ -3813,6 +3815,18 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_PartnerPaymentNotices_Company_Status");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
+        // รอบ 264 P4 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerPaymentPlanMigration
+        modelBuilder.Entity<PartnerPaymentPlan>(e =>
+        {
+            e.Property(x => x.Kind).HasMaxLength(16);
+            e.Property(x => x.Method).HasMaxLength(32);
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.Property(x => x.SlipCopyNote).HasMaxLength(500);
+            e.Property(x => x.AccountOrigin).HasMaxLength(32);
+            e.HasIndex(x => new { x.CompanyId, x.SellerIntentId }).IsUnique().HasFilter("\"SellerIntentId\" IS NOT NULL").HasDatabaseName("IX_PartnerPaymentPlans_Company_SellerIntent");
+            e.HasIndex(x => new { x.CompanyId, x.PurchaseDocumentId }).HasDatabaseName("IX_PartnerPaymentPlans_Company_Purchase");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
         // รอบ 254 WP-11 L2 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactLineDeliveryMigration
         modelBuilder.Entity<LineQueue>(e =>
         {
@@ -4025,6 +4039,7 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.Kind).HasMaxLength(32);
             e.Property(x => x.LastError).HasMaxLength(500);
             e.Property(x => x.Note).HasMaxLength(300);
+            e.Property(x => x.ExpectedKey).HasMaxLength(100);   // รอบ 270
             e.Property(x => x.Attempts).HasDefaultValue(0);
             e.HasIndex(x => new { x.Kind, x.EntityId }).IsUnique().HasDatabaseName("UX_DeferredNotifications_Kind_Entity");
             e.HasIndex(x => new { x.DoneAt, x.DueAt }).HasDatabaseName("IX_DeferredNotifications_Pending");

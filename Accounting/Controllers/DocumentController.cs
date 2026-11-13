@@ -244,6 +244,52 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<PublicDocumentPayView>(true, view));
     }
 
+    // ===== รอบ 267 P3: "📤 ส่งให้ลูกค้า" (หน้าต่างเดียว) + ไทม์ไลน์ลูกค้า =====
+
+    /// <summary>หน้าต่าง "ส่งให้ลูกค้า": ลิงก์ · ปุ่มที่ลูกค้าจะเห็น · เปิดช่วงตอบรับ · ช่องทาง (อีเมล/LINE/คัดลอก/QR) + เหตุ · ค่าตั้งใบเสร็จอัตโนมัติ —
+    /// เซิร์ฟเวอร์ประกอบทั้งหมด (หน้าแสดงอย่างเดียว) · ด่านเดียวกับส่งอีเมล/LINE เดิม (สร้างเอกสารชนิดนั้น + ชั้นความลับ) · ไม่ออกลิงก์</summary>
+    [HttpGet("{documentId:guid}/share-options")]
+    public async Task<ActionResult<ApiResponse<CustomerShareOptions>>> ShareOptions(Guid companyId, Guid documentId,
+        [FromServices] ICustomerShareService share, CancellationToken ct)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<CustomerShareOptions>(false, null, "ไม่พบเอกสาร"));
+        if (await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User), docType.Value, DocPerm.Create, "ส่งให้ลูกค้า") is { } deny)
+            return Forbid403<CustomerShareOptions>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ส่งให้ลูกค้า") is { } hidden) return Forbid403<CustomerShareOptions>(hidden);
+        var o = await share.OptionsAsync(companyId, documentId, ct);
+        return Ok(new ApiResponse<CustomerShareOptions>(true, o, o.Problem));
+    }
+
+    /// <summary>ส่งให้ลูกค้า — ออก/ใช้ลิงก์เดิม · เปิดช่วงตอบรับ (ติ๊ก) · อีเมล · LINE · คัดลอก · QR ผ่านบริการเดิมทั้งหมด (<c>CustomerShareService</c>) ·
+    /// <b>ผลแยกต่อช่องทาง</b> (อีเมลล้มไม่ลาก LINE) · ช่องทางใดล้ม ⇒ <c>success=false</c> พร้อมผลของทุกช่องทาง · LINE = "เข้าคิวแล้ว" ไม่ใช่ "ส่งแล้ว"</summary>
+    [HttpPost("{documentId:guid}/share")]
+    public async Task<ActionResult<ApiResponse<CustomerShareResult>>> Share(Guid companyId, Guid documentId,
+        [FromBody] CustomerShareRequest request, [FromServices] ICustomerShareService share, [FromServices] IConfiguration config, CancellationToken ct)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<CustomerShareResult>(false, null, "ไม่พบเอกสาร"));
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await DenyDocAsync(companyId, userId, docType.Value, DocPerm.Create, "ส่งให้ลูกค้า") is { } deny)
+            return Forbid403<CustomerShareResult>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ส่งให้ลูกค้า") is { } hidden) return Forbid403<CustomerShareResult>(hidden);
+        var origin = await SystemBaseUrl.OriginForRequestAsync(_db, config, Request.Scheme, Request.Host.ToString());
+        var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? userId.ToString();
+        var r = await share.ShareAsync(companyId, documentId, request, userId, actor, origin, ct);
+        return Ok(new ApiResponse<CustomerShareResult>(r.Success, r, r.Message));
+    }
+
+    /// <summary>ไทม์ไลน์ลูกค้าของใบ (ส่งแล้ว → เปิดแล้ว → ตอบรับ/จ่าย → ใบเสร็จ) — แถวจริงเท่านั้น · ด่านอ่านเอกสารของผู้ใช้ (ฝั่ง + ชั้นความลับ)</summary>
+    [HttpGet("{documentId:guid}/customer-timeline")]
+    public async Task<ActionResult<ApiResponse<CustomerTimelineView>>> CustomerTimeline(Guid companyId, Guid documentId,
+        [FromServices] ICustomerTimelineService timeline, CancellationToken ct)
+    {
+        var visible = await _documentService.GetDocumentForUserAsync(companyId, documentId, JwtHelper.GetUserIdFromClaims(User));
+        if (visible.IsRedacted) return NotFound(new ApiResponse<CustomerTimelineView>(false, null, "ไม่พบเอกสาร"));
+        Response.Headers.CacheControl = "private, no-store";
+        return Ok(new ApiResponse<CustomerTimelineView>(true, await timeline.TimelineAsync(companyId, documentId, ct)));
+    }
+
     /// <summary>ส่งลิงก์ให้ลูกค้ากดยอมรับใบเสนอราคาออนไลน์ — รอบ 267 P1: คืน URL <b>หน้าเอกสารของใบ</b> (ลิงก์เดียวต่อใบ ·
     /// ไม่มี token ยอมรับของตัวเองอีก) + เปิดช่วงตอบรับ (ถึงวันยืนราคา · ไม่มีวันที่ = 30 วัน) · เรียกซ้ำ = <b>ออก token ใหม่</b>
     /// (ลิงก์เดิมใช้ไม่ได้ทันที — ฝ่ายค้าน 267 H2 · 267-1-24) + เริ่มช่วงตอบรับใหม่</summary>

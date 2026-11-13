@@ -43,6 +43,9 @@ public class SlipEvidenceService
     public const string ChannelLineChat = "line-chat-customer";
     /// <summary>ฝ่ายค้าน 260-1 L9: สลิปจากแชตที่<b>พนักงาน</b>ผูกกับเอกสารเอง (ป้ายไฟล์แนบบอกว่าใครผูก — ไม่ใช่ลูกค้า)</summary>
     public const string ChannelLineChatStaff = "line-chat-staff";
+    /// <summary>รอบ 264 P4 (design §6.2 · คำตัดสิน 264-5-12): ผู้ซื้อคู่ค้า NextAcc แจ้งโอนจากระบบของเขาเอง ⇒ สำเนาสลิปเข้าคิวรอยืนยันของเรา (ยังไม่ใช่เงินเข้า) ·
+    /// ผู้เรียกเดียว <c>PartnerOutboundPaymentService.NotifyTransferAsync</c> ภายใต้ความยินยอม <c>ReceiveSlipCopy</c> ของเรา · ไฟล์ไม่เสิร์ฟตรง (มาจากนอกบริษัท)</summary>
+    public const string ChannelPartnerNextAcc = "partner-nextacc";
 
     /// <param name="contactId">พอร์ทัล = ผู้ติดต่อในโทเคน (ด่านความเป็นเจ้าของ) · ลิงก์ชำระ = ผู้ติดต่อของใบ (โทเคนพิสูจน์แล้ว)</param>
     /// <param name="amount">null = ยอดค้างของใบ</param>
@@ -62,7 +65,7 @@ public class SlipEvidenceService
         var fromPayLink = channel == ChannelPayLink;
         // รอบ 260: สลิปจากแชต LINE ก็มาจากคนนอกระบบ ⇒ โฟลเดอร์ที่ไม่เสิร์ฟตรง (แบบหน้าชำระ) · ป้ายช่องทางของตัวเอง
         var fromLineChat = channel is ChannelLineChat or ChannelLineChatStaff;
-        var nonServed = fromPayLink || fromLineChat;
+        var nonServed = fromPayLink || fromLineChat || channel == ChannelPartnerNextAcc;
 
         SlipEvidenceResult? result = null;
         // รอบ 255 ฝ่ายค้าน LOW: ตรวจซ้ำ + ยอดสลิปรอตรวจ + สร้างรายการ ภายใต้ล็อกต่อบริษัท — สองคำขอพร้อมกันไม่ผ่านด่านทั้งคู่
@@ -123,7 +126,8 @@ public class SlipEvidenceService
             {
                 intent = await _intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
                     PaymentSourceKind.Document, doc.Id, pay, PaymentMethodKind.ManualSlip,
-                    Description: fromLineChat ? PortalSlipPending.LineChatIntentDescription(doc.DocumentNumber)
+                    Description: channel == ChannelPartnerNextAcc ? PortalSlipPending.PartnerIntentDescription(doc.DocumentNumber)
+                        : fromLineChat ? PortalSlipPending.LineChatIntentDescription(doc.DocumentNumber)
                         : PortalSlipPending.IntentDescription(doc.DocumentNumber, relUrl, fromPayLink),
                     ContactId: doc.ContactId),
                     providerCode: Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code, ct: ct);

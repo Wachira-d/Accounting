@@ -493,7 +493,12 @@ public class ContactNotifyEndpointRound245DbTests
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var table = "r245_cols_" + Guid.NewGuid().ToString("N")[..10];
-        var create = ContactNotifyEndpointMigration.Statements()[0].Replace("\"ContactNotifyEndpoints\" (", $"\"{table}\" (");
+        // ทางผ่าน CI (รอบ 270 · run 43487318055 deadlock 40P01): FK ไป Companies/Contacts ทำให้ CREATE/DROP ตารางทดลองต้องล็อกตารางหลักที่เทสต์ขนานกำลัง INSERT ⇒
+        // ตัด FK ออก (เทสต์นี้ตรวจรายชื่อคอลัมน์เท่านั้น — FK ตรวจด้วยฐานจริงที่สร้างจากโมเดล)
+        var create = System.Text.RegularExpressions.Regex.Replace(
+            ContactNotifyEndpointMigration.Statements()[0].Replace("\"ContactNotifyEndpoints\" (", $"\"{table}\" ("),
+            @",\s*CONSTRAINT ""FK_[^""]+"" FOREIGN KEY \([^)]*\) REFERENCES ""[^""]+""\(""Id""\) ON DELETE CASCADE", "");
+        Assert.DoesNotContain("REFERENCES", create);
         Assert.Contains(table, create);
         await db.Database.ExecuteSqlRawAsync(create);
         try

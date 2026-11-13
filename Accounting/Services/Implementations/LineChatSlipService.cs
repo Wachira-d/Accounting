@@ -662,6 +662,8 @@ public sealed class LineChatSlipService : ILineChatSlipService
         if (await _db.DeferredNotifications.IgnoreQueryFilters()
                 .AnyAsync(d => d.CompanyId == row.CompanyId && d.Kind == DeferredNotifyPolicy.LineChatSlipLinked && d.EntityId == row.Id, ct)) return;
         var q = DeferredNotifyPolicy.New(row.CompanyId, Guid.Empty, DeferredNotifyPolicy.LineChatSlipLinked, row.Id, dueUtc);
+        // รอบ 270 (270-1-2): ประทับการผูกที่ข้อความนี้พูดถึง — ตอนส่งต้องยังเป็นอันเดิม
+        q.ExpectedKey = LineChatSlipRule.LinkKey(row.DocumentId, row.PaymentIntentId);
         _db.DeferredNotifications.Add(q);
         await _db.SaveChangesAsync(ct);
     }
@@ -669,10 +671,33 @@ public sealed class LineChatSlipService : ILineChatSlipService
     public async Task<string?> DispatchLinkedNoticeAsync(Guid companyId, Guid slipId, CancellationToken ct = default)
     {
         var row = await _db.LineChatSlips.AsNoTracking().FirstOrDefaultAsync(x => x.Id == slipId && x.CompanyId == companyId, ct);
-        if (row?.DocumentId is not Guid docId || row.PaymentIntentId is not Guid intentId) return "ไม่พบสลิปที่ผูกแล้ว — ไม่แจ้ง";
+        // รอบ 270 (270-1-2): ถึงคิวแล้วการผูกต้องยังเป็นอันเดิม — พนักงานปิด/ผูกใหม่/ปฏิเสธสลิประหว่างรอ ⇒ ปิดแถวพร้อมเหตุ (ไม่ส่งข้อความที่ไม่จริงแล้ว)
+        var expected = await _db.DeferredNotifications.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.Kind == DeferredNotifyPolicy.LineChatSlipLinked && d.EntityId == slipId)
+            .Select(d => d.ExpectedKey).FirstOrDefaultAsync(ct);
+        var intentFacts = row?.PaymentIntentId is Guid pid
+            ? await _db.PaymentIntents.AsNoTracking().Where(i => i.Id == pid && i.CompanyId == companyId)
+                .Select(i => new { i.Status, i.Amount, DocId = i.SourceKind == PaymentSourceKind.Document ? (Guid?)i.SourceId : null }).FirstOrDefaultAsync(ct)
+            : null;
+        if (LineChatSlipRule.LinkedNoticeStaleReason(expected, row?.Status, row?.DocumentId, row?.PaymentIntentId, intentFacts?.Status, intentFacts?.DocId) is string stale)
+        {
+            if (row != null)
+            {
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, UserEmail = ActorAuto, Action = AuditAction.Update, EntityType = LineChatSlipRule.AuditEntityType, EntityId = row.Id.ToString(),
+                    NewValues = JsonSerializer.Serialize(new { op = "assign-notice-stale", expected, current = LineChatSlipRule.LinkKey(row.DocumentId, row.PaymentIntentId),
+                        customerNotice = stale, rule = LineChatSlipRule.RuleCode }),
+                    Timestamp = DateTime.UtcNow,
+                });
+                await _db.SaveChangesAsync(ct);
+            }
+            return stale;
+        }
+        var docId = row!.DocumentId!.Value;
         var doc = await _db.Documents.AsNoTracking().Where(d => d.Id == docId && d.CompanyId == companyId)
             .Select(d => new { d.DocumentNumber, d.ContactId }).FirstOrDefaultAsync(ct);
-        var amount = await _db.PaymentIntents.AsNoTracking().Where(i => i.Id == intentId && i.CompanyId == companyId).Select(i => (decimal?)i.Amount).FirstOrDefaultAsync(ct);
+        var amount = intentFacts?.Amount;
         if (doc == null || amount == null) return "ไม่พบเอกสาร/รายการรอยืนยันของสลิป — ไม่แจ้ง";
         var (notice, _) = await NotifyChatLinkedAsync(row, doc.DocumentNumber, doc.ContactId, amount.Value, ct);
         _db.AddChainedAuditLog(new AuditLog
@@ -712,9 +737,11 @@ public sealed class LineChatSlipService : ILineChatSlipService
             var showAmounts = row.ShowAmounts && eps.All(e => e.ShowAmounts);
             var r = await _line.TryPushContactTextAsync(row.CompanyId, ep.OaScope, isGroup ? LineTargetKind.ContactGroup : LineTargetKind.TenantMember, to,
                 LineChatSlipRule.Replies.LinkedByStaff(documentNumber, amount, showAmounts), row.Id);
-            // ล้มชั่วคราว (เครือข่าย/5xx/429/ไม่รู้สถานะ) ⇒ ส่งซ้ำได้ (retry key เดิม ⇒ LINE ไม่ส่งสองครั้ง) · ปฏิเสธถาวร (4xx อื่น) ⇒ ไม่ซ้ำ
-            var retryable = !r.Ok && (r.TransportError || r.HttpStatus is null or >= 500 or 429);
-            return (r.Ok ? LineChatSlipRule.LinkedNotice.Sent : LineChatSlipRule.LinkedNotice.Failed(r.Error), retryable);
+            // รอบ 270 (270-1-3): จำแนกด้วยตัวตัดสินเดียวของ LINE (LinePushOutcome) — เดิม "ไม่มีสถานะ HTTP" = ชั่วคราวเสมอ ทั้งที่ส่วนใหญ่เป็นเหตุถาวร
+            // (ไม่มี token/ช่องเสีย/นโยบายปฏิเสธ) ⇒ ลองซ้ำไม่ช่วย · ชั่วคราวจริง = เครือข่ายล้ม · 5xx · 429 ที่ไม่ใช่โควตาเดือน · 409 (retry key เดิม) = LINE รับไปแล้ว
+            var cls = LinePushOutcome.Classify(r.Ok, r.HttpStatus, r.Error, r.RuleCode, r.TransportError);
+            return cls.Verdict == LinePushVerdict.Sent ? (LineChatSlipRule.LinkedNotice.Sent, false)
+                : (LineChatSlipRule.LinkedNotice.Failed(cls.Reason ?? r.Error), cls.Verdict == LinePushVerdict.Retry);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

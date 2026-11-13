@@ -75,6 +75,9 @@ public static class PartnerConsent
 
     /// <summary>รอบ 264 P3 — วันที่ท่อบันทึกจ่ายอัตโนมัติเริ่มอ่านขอบเขต <see cref="Scope.AutoRecordPayment"/> (UTC · go-live ของแพ็ก P3) · <b>ประกาศก่อน <see cref="Scopes"/></b> (ตัวเริ่มค่า static เรียงตามบรรทัด)</summary>
     public static readonly DateTime AutoRecordPaymentWiredSince = new(2026, 11, 12, 0, 0, 0, DateTimeKind.Utc);
+    /// <summary>รอบ 264 P4 (คำตัดสิน 264-5-12) — วันที่เส้น "แจ้งโอนให้ผู้ขาย" ของคู่ค้าเริ่มอ่านขอบเขต <see cref="Scope.ReceiveSlipCopy"/> ของ<b>ผู้รับสลิป</b> (UTC) ·
+    /// แถวที่ให้ไว้ล่วงหน้าก่อนวันนี้ต้องยืนยันใหม่ (GrantedBeforeWired · L4)</summary>
+    public static readonly DateTime ReceiveSlipCopyWiredSince = new(2026, 11, 13, 0, 0, 0, DateTimeKind.Utc);
 
     public static IReadOnlyList<ScopeDef> Scopes { get; } = new List<ScopeDef>
     {
@@ -88,9 +91,10 @@ public static class PartnerConsent
         new(Scope.AutoRecordPayment, "บันทึกจ่ายใบซื้อเองเมื่อคู่ค้ารับเงินแล้ว",
             new[] { Need.CompanySettingsEdit, Need.PurchaseApprove }, RequiresCap: true, AllowsPayAccount: true, NeedsTypedConfirm: true,
             CompanyWideToggle: false, ReaderWired: true, WiredSince: AutoRecordPaymentWiredSince),
+        // รอบ 264 P4: ผู้อ่าน = PartnerOutboundPaymentService.NotifyTransferAsync (สำเนาสลิปของผู้ซื้อคู่ค้าเข้าคิวรอยืนยันของผู้ขาย — ยังไม่ใช่เงินเข้า)
         new(Scope.ReceiveSlipCopy, "รับสำเนาสลิปการโอนจากคู่ค้าเป็นหลักฐาน",
             new[] { Need.CompanySettingsEdit, Need.PurchaseView }, RequiresCap: false, AllowsPayAccount: false, NeedsTypedConfirm: false,
-            CompanyWideToggle: false, ReaderWired: false),
+            CompanyWideToggle: false, ReaderWired: true, WiredSince: ReceiveSlipCopyWiredSince),
         new(Scope.ReturnWhtCerts, "ส่ง 50 ทวิ ที่เราออกเข้าระบบของคู่ค้า",
             new[] { Need.CompanySettingsEdit, Need.TaxFile }, RequiresCap: false, AllowsPayAccount: false, NeedsTypedConfirm: false,
             CompanyWideToggle: true, ReaderWired: true),

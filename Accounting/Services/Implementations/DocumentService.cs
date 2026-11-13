@@ -5934,8 +5934,21 @@ public partial class DocumentService : IDocumentService
             ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == moneyAccId && a.CompanyId == companyId)
                 ?? throw new Accounting.Helpers.BusinessRuleException(
                     "ไม่พบบัญชีเงินที่เลือกสำหรับคืนมัดจำ หรือไม่ใช่ของบริษัทนี้ — เลือกบัญชีใหม่", "DEPOSIT-REFUND-MONEY-ACCOUNT")
-            : await FindAccountAsync(companyId, "111");
-        if (deferredAcc == null || moneyAcc == null)
+            : null;
+        // รอบ 270 (ฝ่ายค้าน 268 L7 · คำตัดสิน 270-1-1): มัดจำของการจองที่รับหลายงวด ⇒ ขาเงินออกตามบัญชีที่เงินแต่ละงวดอยู่จริง (ไม่ใช่หัวใบทั้งก้อน) ·
+        // ส่วนที่ไม่รู้บัญชี ⇒ ให้ผู้ใช้เลือก (ไม่เดา) · ผู้ใช้เลือกบัญชีเอง ⇒ ทั้งยอดจากบัญชีนั้น · ใบที่ไม่ผูกการจอง ⇒ 111 ตามเดิม
+        var moneyLegs = new List<Accounting.Helpers.BookingDepositInstalmentChannel.RefundLeg>();
+        if (moneyAcc != null) moneyLegs.Add(new(moneyAcc.Id, request.Amount));
+        else if (await BookingDepositRefundPlanAsync(companyId, doc, request.Amount) is { } refundPlan)
+        {
+            if (refundPlan.RequiresChoice)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    Accounting.Helpers.BookingDepositInstalmentChannel.RefundChoiceMessage(refundPlan.UnknownAmount),
+                    Accounting.Helpers.BookingDepositInstalmentChannel.RefundChoiceCode, 409);
+            moneyLegs.AddRange(refundPlan.Legs);
+        }
+        else if (await FindAccountAsync(companyId, "111") is { } cash111) moneyLegs.Add(new(cash111.Id, request.Amount));
+        if (deferredAcc == null || moneyLegs.Count == 0 || moneyLegs.Sum(l => l.Amount) != request.Amount)
             throw new InvalidOperationException("ไม่พบผังบัญชีขายรอรับรู้/เงินสดสำหรับคืนมัดจำ");
         // ⚠️ ผลตรวจทีม C · C-01: บรรทัดภาษีขายถูกใส่แบบมีเงื่อนไข
         // (`if (refundVat > 0 && outVatAcc != null)`) แต่หัว JE ประกาศ
@@ -5974,11 +5987,12 @@ public partial class DocumentService : IDocumentService
                 JournalEntryId = je.Id, AccountId = outVatAcc.Id,
                 DebitAmount = refundVat, CreditAmount = 0,
                 Description = "คืนมัดจำ - กลับภาษีขาย (ใบลดหนี้)", LineOrder = ln++ });
-        // Cr เงินสด/ธนาคาร
-        _db.JournalEntryLines.Add(new JournalEntryLine {
-            JournalEntryId = je.Id, AccountId = moneyAcc.Id,
-            DebitAmount = 0, CreditAmount = request.Amount,
-            Description = "คืนเงินมัดจำให้ลูกค้า", LineOrder = ln++ });
+        // Cr เงินสด/ธนาคาร — หนึ่งขาต่อบัญชีที่เงินอยู่จริง (รอบ 270)
+        foreach (var leg in moneyLegs)
+            _db.JournalEntryLines.Add(new JournalEntryLine {
+                JournalEntryId = je.Id, AccountId = leg.AccountId,
+                DebitAmount = 0, CreditAmount = leg.Amount,
+                Description = Accounting.Helpers.BookingDepositInstalmentChannel.RefundMoneyLineDescription, LineOrder = ln++ });
 
         doc.DepositRefundedAmount += request.Amount;
         doc.DepositRefundedAt = when;
@@ -21833,6 +21847,7 @@ public partial class DocumentService : IDocumentService
         PostPayReceiptMode: Accounting.Helpers.PostPaymentAutomationPolicy.ModeCode(d.PostPayEmailReceipt),
         PostPayPartialMode: Accounting.Helpers.PostPaymentAutomationPolicy.ModeCode(d.PostPayIncludePartial),
         PostPaySettingApplies: Accounting.Helpers.PostPaymentAutomationPolicy.DocumentLayerAllowed(d.DocumentType),
+        CanShareToCustomer: Accounting.Helpers.CustomerShareRule.ButtonOffered(d.DocumentType, d.Status),   // รอบ 267 P3 — ไม่แตะฐาน
         // ── ช่องที่รับตอน Create/Update แต่เดิมไม่เคย echo กลับ ──────────
         // (ดูหมายเหตุใน DocumentResponse — "เก็บแล้วต้อง echo กลับ")
         BuyerDeclinedTaxInvoice: d.BuyerDeclinedTaxInvoice,

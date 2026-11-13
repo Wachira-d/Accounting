@@ -38,6 +38,10 @@ public interface IDocumentPayLinkService
     /// ต่างจาก <see cref="CurrentUrlAsync"/> (ชั้นจ่าย — ใบที่จ่ายไม่ได้คืน null)</summary>
     Task<string?> CurrentCustomerUrlAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
 
+    /// <summary>รอบ 267 P3 — เหตุที่ออกลิงก์หน้าเอกสารให้ใบนี้ไม่ได้ (null = ได้ · อ่านอย่างเดียว) — ด่านเดียวกับ <see cref="EnsureCustomerLinkAsync"/>
+    /// (<see cref="CustomerDocPage.IssueRefusal"/> บนข้อเท็จจริงชุดเดียวกัน) · หน้าต่าง "ส่งให้ลูกค้า" แสดงเหตุก่อนผู้ใช้กดส่ง</summary>
+    Task<string?> CustomerLinkRefusalAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
+
     /// <summary>รอบ 267 P1 — view model ของหน้าเอกสารในโหมดที่ไม่ใช้ token ของใบ (พอร์ทัล · การ์ด LINE · พรีวิวของพนักงาน) ·
     /// <b>ผู้เรียกต้องพิสูจน์สิทธิ์ก่อน</b> (JWT พอร์ทัล + ลูกค้าเห็นได้ · HMAC แถวคิว LINE · สิทธิ์อ่านเอกสารของพนักงาน) ·
     /// ไม่มีเป้าหมายรายการชำระ (จ่าย/สลิปทำได้เฉพาะโหมดลิงก์) · null = ไม่พบ/ใบที่ลูกค้าไม่เห็น</summary>
@@ -85,6 +89,9 @@ public interface IDocumentPayLinkService
     /// <summary>รอบ 267 P5 (267-1-72): ใบวางบิล "จ่ายทั้งใบ" — ยอดรวม + การจัดสรรรายใบ หรือเหตุที่จ่ายรวมไม่ได้ (ตัวตัดสิน <c>BillingNoteCombinedPay</c>) ·
     /// ผู้เรียก: หน้าเอกสาร (ยอด/ปุ่ม) · ตัวจัดการเงินเข้า (<c>DocumentPaymentHandler</c> — ตัดสินซ้ำตอนเงินเข้า) · null = ไม่ใช่ใบวางบิล/ไม่พบ</summary>
     Task<Accounting.Helpers.BillingNoteCombinedPay.Plan?> BillingNotePlanAsync(Guid companyId, Guid billingNoteId, CancellationToken ct = default);
+    /// <summary>รอบ 264 P4 (คำตัดสิน 264-5-11): เป้าหมายรายการชำระของเอกสารสำหรับ "จ่ายจากระบบของคู่ค้า" — ตัดสินด้วย <see cref="PublicViewAsync"/> ตัวเดียวกับหน้าชำระ
+    /// (โทเคนของลิงก์ที่ใช้อยู่ของใบ — ไม่มีลิงก์/ใช้ไม่ได้ ⇒ null) · ผู้เรียกต้องตรวจว่าเป็นคู่ค้าที่ใบนี้ถูกส่งถึงแล้ว</summary>
+    Task<Accounting.Services.Payments.PublicPayTarget?> PartnerPayTargetAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
     /// <summary>รอบ 253 (WP-10): ลูกค้าเลือก "ไม่หัก ณ ที่จ่าย" — บันทึกการยอมรับแล้วคืนเป้าหมายยอดเต็ม · <c>Target</c> null = ไม่พบ token</summary>
     Task<NoWhtAcceptResult> AcceptNoWhtAsync(Guid companyId, string token, NoWhtAcceptRequest request, CancellationToken ct = default);
     /// <summary>รอบ 253 (WP-10): ผูกการยอมรับ "ไม่หัก" กับรายการชำระที่สร้างตามมา</summary>

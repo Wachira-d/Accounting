@@ -266,7 +266,7 @@ public class DuplicateSaleService : IDuplicateSaleService
                     .ExecuteUpdateAsync(x => x
                         .SetProperty(d => d.CreditNoteReason, DuplicateSalePolicy.CreditNoteReasonForDuplicate)
                         .SetProperty(d => d.Notes, DuplicateSalePolicy.CreditNoteNote(snap.Invoice.Number, snap.Cash.Number)), ct);
-                var note = await AuditAsync(companyId, userId, "CreditNoteForDuplicateInvoice", v, snap, reason, new { creditNote = cn.Id, cn.DocumentNumber }, ct);
+                var note = await AuditAsync(companyId, userId, DuplicateSalePolicy.CreditNoteAuditAction, v, snap, reason, new { creditNote = cn.Id, cn.DocumentNumber }, ct);
                 return new DuplicateSaleResult(keep.ToString(), v.Action.ToString(), null, null, cn.Id, cn.DocumentNumber, null, null,
                     Notices($"สร้างใบลดหนี้ฉบับร่าง {cn.DocumentNumber} เต็มใบอ้าง {snap.Invoice.Number} แล้ว (เหตุผล \"{DuplicateSalePolicy.CreditNoteReasonLabel}\" · ไม่คืนสต็อก) — ตรวจแล้วอนุมัติตามขั้นตอนปกติ "
                         + $"({snap.Invoice.Number} ยกเลิกไม่ได้: {snap.Invoice.TaxLockReason})", note));

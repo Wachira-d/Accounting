@@ -12,7 +12,7 @@ namespace Accounting.Helpers;
 /// <item>ประวัติ (บัญชีที่จ่ายผู้ขายรายนี้บ่อยสุด) + บัญชีที่ตั้งบนใบซื้อ = <b>คำแนะนำมีป้าย</b> เท่านั้น ไม่อัตโนมัติ ไม่ preselect</item>
 /// <item>บัญชีทุกตัวต้องอยู่ในชุด <see cref="Facts.Usable"/> ของบริษัทผู้เรียก (ผู้เรียกกรองด้วยตัวตรวจบัญชีเดิม) — id ที่ไม่อยู่ในชุด = ไม่ใช่หลักฐาน</item>
 /// <item><b>ไม่มีจุดเรียก AI</b> (ตัวเลขล้วน ห้าม fuzzy) ⇒ ไม่มี <c>AiFeatureKey</c> ใหม่ · ไม่ต้อง distillation · <see cref="Decision.UsedAi"/> = false เสมอ (แบบ 260-1-2) ·
-/// ชั้น BankLine/PayerDeclared ยังไม่มีผู้ป้อน (แพ็ก P4) — ผู้เรียกส่ง null ⇒ ตัดสินจากชั้นที่มีจริง · ชั้น Slip ป้อนแล้ว (รอบ 264 P2 ·
+/// ชั้น BankLine ป้อนแล้ว (รอบ 264 P4 · <c>BankPaymentLineEvidence</c> ⇒ <see cref="BankPaymentLineMatch"/>) · ชั้น PayerDeclared ป้อนแล้ว (P4 "จ่ายจากระบบของเรา" — <c>PartnerPaymentPlans</c>) · ชั้น Slip ป้อนแล้ว (รอบ 264 P2 ·
 /// <c>PartnerPayablePipeline.SlipMatchAsync</c> ⇒ <c>SlipAccountMatch</c> จากผู้โอนบนสลิปที่ผู้ขายได้รับ)</item>
 /// </list>
 /// </summary>
@@ -159,6 +159,8 @@ public static class PartnerPaySourceAccount
             return Conflict(PayerVsSlipReason, false);
 
         var why = win.Label;
+        // รอบ 264 P4 (คำตัดสิน 264-5-10): สลิปตรงบัญชีเดียวกับที่รายการเดินบัญชียืนยัน ⇒ ทางเดียวที่ชั้นสลิปถูกยกเป็นบันทึกเองได้ (ผ่านชั้นที่ 1) — บอกในเหตุ
+        if (SlipConfirmedByBankLine(f)) why += " · สลิปตรงบัญชีเดียวกัน (ยืนยันกัน)";
         // ชั้น 1 ขัดชั้นอื่น ⇒ เงินออกจริงชนะ + ป้ายเตือน (ผู้แพ้ลง audit)
         if (win.Origin == Origin.BankLine && losers.Count > 0)
             why += " · ไม่ตรง" + string.Join("/", losers.Select(l => OriginLabel(l.Origin))) + " (รายการเดินบัญชีชนะ — เงินออกจริง)";
@@ -170,6 +172,14 @@ public static class PartnerPaySourceAccount
         if (!auto && win.Origin == Origin.SlipUnique)
             why = SlipUniqueNotAutoReason + " · " + win.Label;
         return new Decision(win.BankAccountId, win.Origin, auto, row.Confidence, why, win.Label, losers, hint, hintLabel, false);
+    }
+
+    /// <summary>รอบ 264 P4 (คำตัดสิน 264-5-10 · ฝ่ายค้าน 264-P2 M1 · 264-4-9): <b>ทางเดียว</b>ที่ชั้นสลิปถูกยกจาก preselect เป็นบันทึกเองได้ =
+    /// รายการเดินบัญชีฝั่งเงินออก (<see cref="BankPaymentLineMatch"/> ผล Match) ยืนยันบัญชี<b>เดียวกับ</b>ที่สลิปตรง · ไม่มีรายการเดินบัญชี/คนละบัญชี/สลิปไม่ Unique ⇒ false
+    /// (แถว <see cref="Origin.SlipUnique"/> ในตารางคง <c>AllowsAuto=false</c> — การยกเกิดผ่านชั้นที่ 1 เท่านั้น ไม่ใช่แก้ตาราง)</summary>
+    internal static bool SlipConfirmedByBankLine(Facts f)
+    {
+        return f.SlipMatch is { Kind: SlipKind.Unique, AccountId: Guid slip } && f.BankLine is Guid line && line == slip && f.Usable.ContainsKey(slip);
     }
 
     /// <summary>บัญชีนี้อยู่ในชุดที่ใช้จ่ายได้ของบริษัทผู้เรียกไหม (null/นอกชุด = ไม่ใช่หลักฐาน)</summary>
