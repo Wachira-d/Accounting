@@ -110,13 +110,41 @@ public static class OutputVatOwnership
                 return Own(branch, f.TaxPoint);
 
             default:
-                if (f.Type == DocumentType.Invoice && f.SupersededByTaxInvoice)
-                    return Not(branch, RuleSuperseded,
-                        "ออกใบกำกับภาษีอ้างใบแจ้งหนี้นี้แล้ว — ภาษีขายอยู่ที่ใบกำกับ ดึงใบกำกับแทน");
-                if (f.Type is DocumentType.Receipt or DocumentType.ReceiptVoucher)
-                    return Not(branch, RuleSettlementOnly,
-                        "ใบเสร็จนี้รับชำระใบแจ้งหนี้/ใบกำกับ — ภาษีขายอยู่ที่ใบต้นทาง ไม่ใช่ใบเสร็จ");
-                return Not(branch, RuleNotOutputDocument, "เอกสารนี้ไม่ได้เป็นผู้ถือภาษีขาย");
+                return NotOwner(f, branch);
         }
+    }
+
+    /// <summary>รอบ 269 (ผู้ใช้รายงาน ก.ย. 2569: ช่อง 7 "ส่งออก §80/1" 1,235,494.24 ทั้งที่บริษัทไม่มีขาย 0% เลย) —
+    /// <b>ตัวตัดสินเดียว</b>ของ "บรรทัดของใบไหนนับเข้าช่องยอดขาย 5/7/8 ของ ภ.พ.30"
+    ///
+    /// <para>เดิม <c>GenerateVatReport</c> บวก <c>Pp30SalesClassifier.Split</c> ของ<b>ทุกใบฝั่งขาย</b>ที่ออกแล้ว ⇒ ใบเสร็จรับชำระ
+    /// ("รับชำระเงินตามใบกำกับภาษีเลขที่ …" บรรทัด VatRate 0) · ใบวางบิล · ใบส่งของ · ใบเสนอราคาที่อนุมัติ · ใบแจ้งหนี้ที่ออกใบกำกับแทนแล้ว ·
+    /// ใบแจ้งหนี้ที่ใบเสร็จถือ VAT · มัดจำที่ถูกหักแล้ว ถูกนับเป็นยอดขาย 0%/ยกเว้น ซ้ำกับใบที่ถือการขายจริง</para>
+    ///
+    /// <para>กติกา: นับเฉพาะใบที่ <see cref="Decide"/> บอกว่าเป็นเจ้าของภาษีขาย (ชุดเดียวกับแถว §87) — งวด = <see cref="Decision.VatDueDate"/>
+    /// (วันเดียวกับวันที่ของแถว §87) · <b>ยกเว้นข้อเดียว</b> (คำตัดสิน 269-1-2): ใบแจ้งหนี้ที่<b>ไม่มี VAT ทั้งใบ</b> (0%/ยกเว้นล้วน) และไม่ถูก
+    /// ใบกำกับแทน = ใบที่ถือการขายนั้นเอง (การขายยกเว้น §81 ออกใบกำกับไม่ได้ จึงอยู่บนใบแจ้งหนี้/ใบเสร็จเท่านั้น) — <see cref="BranchOf"/>
+    /// ไม่ให้แถว §87 เพราะไม่มีภาษีให้รายงาน แต่ยอดต้องอยู่ช่อง 7/8 (ถ้าไม่นับ = ช่อง 8 หายทั้งช่อง · ผลตรวจ C-T01)</para>
+    ///
+    /// <para>ใบลดหนี้/เพิ่มหนี้ไม่ผ่านตัวนี้ — ผู้เรียกตัดสินฝั่งด้วย <c>ResolveCnDnSide</c> แยก</para></summary>
+    public static Decision SalesBoxOwner(Facts f)
+    {
+        var d = Decide(f);
+        if (d.Owns) return d;
+        if (d.Branch == Branch.None && f.Type == DocumentType.Invoice && f.VatAmount <= 0m
+            && !f.SupersededByTaxInvoice && !f.OwnedByVatReceipt)
+            return Own(Branch.None, f.TaxPoint);
+        return d;
+    }
+
+    private static Decision NotOwner(Facts f, Branch branch)
+    {
+        if (f.Type == DocumentType.Invoice && f.SupersededByTaxInvoice)
+            return Not(branch, RuleSuperseded,
+                "ออกใบกำกับภาษีอ้างใบแจ้งหนี้นี้แล้ว — ภาษีขายอยู่ที่ใบกำกับ ดึงใบกำกับแทน");
+        if (f.Type is DocumentType.Receipt or DocumentType.ReceiptVoucher)
+            return Not(branch, RuleSettlementOnly,
+                "ใบเสร็จนี้รับชำระใบแจ้งหนี้/ใบกำกับ — ภาษีขายอยู่ที่ใบต้นทาง ไม่ใช่ใบเสร็จ");
+        return Not(branch, RuleNotOutputDocument, "เอกสารนี้ไม่ได้เป็นผู้ถือภาษีขาย");
     }
 }

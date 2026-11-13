@@ -102,4 +102,83 @@ public class OutputVatOwnershipTests
         Assert.Equal(OutputVatOwnership.Branch.None, d.Branch);
         Assert.Equal(OutputVatOwnership.RuleSuperseded, d.RuleCode);
     }
+
+    // ═══ รอบ 269 — ช่องยอดขาย 5/7/8 (SalesBoxOwner) ═══
+    private static readonly OutputVatOwnership.Facts Base0 =
+        new(DocumentType.TaxInvoice, 0m, Tp, null, false, null, null, false, false, false, null, false, false, 0m);
+
+    [Theory]
+    [InlineData(DocumentType.Quotation)]
+    [InlineData(DocumentType.BillingNote)]
+    [InlineData(DocumentType.DeliveryNote)]
+    public void R269_ใบที่ไม่ถือการขาย_ไม่เข้าช่องยอดขาย(DocumentType t)
+    {
+        Assert.False(OutputVatOwnership.SalesBoxOwner(Base0 with { Type = t }).Owns);
+        Assert.False(OutputVatOwnership.SalesBoxOwner(Base0 with { Type = t, HasRelated = true, RelatedType = DocumentType.TaxInvoice }).Owns);
+    }
+
+    [Fact]
+    public void R269_ใบเสร็จรับชำระใบกำกับหรือใบแจ้งหนี้_ไม่เข้าช่องยอดขาย()
+    {
+        foreach (var rel in new[] { DocumentType.TaxInvoice, DocumentType.Invoice, DocumentType.DebitNote })
+        {
+            var d = OutputVatOwnership.SalesBoxOwner(Base0 with { Type = DocumentType.Receipt, HasRelated = true, RelatedType = rel });
+            Assert.False(d.Owns);
+            Assert.Equal(OutputVatOwnership.RuleSettlementOnly, d.RuleCode);
+        }
+    }
+
+    [Fact]
+    public void R269_ใบแจ้งหนี้VATศูนย์_ถือการขายเอง_เว้นแต่ถูกใบกำกับแทน()
+    {
+        var inv = Base0 with { Type = DocumentType.Invoice };
+        Assert.Equal(OutputVatOwnership.Branch.None, OutputVatOwnership.Decide(inv).Branch);   // แถว §87 ยังไม่มี (ไม่มีภาษี) — พฤติกรรมเดิม
+        var own = OutputVatOwnership.SalesBoxOwner(inv);
+        Assert.True(own.Owns);
+        Assert.Equal(Tp, own.VatDueDate);
+        var replaced = OutputVatOwnership.SalesBoxOwner(inv with { SupersededByTaxInvoice = true });
+        Assert.False(replaced.Owns);
+        Assert.Equal(OutputVatOwnership.RuleSuperseded, replaced.RuleCode);
+    }
+
+    [Fact]
+    public void R269_เจ้าของแถว87_คือเจ้าของช่องยอดขาย_วันที่เดียวกัน()
+    {
+        // ใบกำกับ 0% · ใบเสร็จเดี่ยว · ใบเสร็จถือ VAT ของใบแจ้งหนี้บริการ · มัดจำรับรู้แล้ว
+        var cases = new[]
+        {
+            Base0,
+            Base0 with { Type = DocumentType.Receipt },
+            Base0 with { Type = DocumentType.Receipt, VatAmount = 70m, HasRelated = true, RelatedType = DocumentType.Invoice, RelatedOutputVatDueAt = Due },
+            Base0 with { Type = DocumentType.Receipt, VatAmount = 70m, IsDeposit = true, DepositOutputVatDeferred = true, DepositOutputVatRecognizedAt = Rec },
+        };
+        foreach (var f in cases)
+        {
+            var row = OutputVatOwnership.Decide(f);
+            var box = OutputVatOwnership.SalesBoxOwner(f);
+            Assert.True(row.Owns);
+            Assert.Equal(row, box);
+        }
+        // มัดจำที่ถูกหักแล้ว · ใบแจ้งหนี้ที่ใบเสร็จถือ VAT — ไม่เป็นเจ้าของทั้งสองที่
+        var applied = Base0 with { Type = DocumentType.Receipt, VatAmount = 70m, IsDeposit = true, DepositApplied = true };
+        var ownedByRec = Base0 with { Type = DocumentType.Invoice, VatAmount = 70m, OutputVatDueAt = Due, OwnedByVatReceipt = true };
+        Assert.False(OutputVatOwnership.SalesBoxOwner(applied).Owns);
+        Assert.False(OutputVatOwnership.SalesBoxOwner(ownedByRec).Owns);
+    }
+
+    [Fact]
+    public void R269_ทบทวนรายงานที่บันทึกไว้_ร่างสร้างใหม่_ยื่นแล้วพิจารณายื่นเพิ่มเติม_ยอดตรงไม่เตือน()
+    {
+        var draft = Pp30SalesBoxReview.Evaluate(1_235_494.24m, 0m, 0m, 0m, alreadyFiled: false, "09/2569");
+        Assert.True(draft.NeedsAttention);
+        Assert.Equal(TaxReportRecompute.ActionRegenerate, draft.SuggestedAction);
+        var filed = Pp30SalesBoxReview.Evaluate(1_235_494.24m, 0m, 0m, 0m, alreadyFiled: true, "09/2569");
+        Assert.Equal(TaxReportRecompute.ActionConsiderAmendedFiling, filed.SuggestedAction);
+        Assert.Contains("ภ.พ.30 เพิ่มเติม", filed.Message);
+        Assert.Contains("1,235,494.24", filed.Message);
+        // ทิศตรงข้าม: ยอดตรง (ต่างไม่ถึงครึ่งสตางค์) ⇒ ไม่เตือน
+        var same = Pp30SalesBoxReview.Evaluate(2_000m, 2_000.004m, 300m, 300m, alreadyFiled: true, "09/2569");
+        Assert.False(same.NeedsAttention);
+        Assert.Equal(TaxReportRecompute.ActionNone, same.SuggestedAction);
+    }
 }

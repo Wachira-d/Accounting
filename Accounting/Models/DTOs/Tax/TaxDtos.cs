@@ -146,6 +146,12 @@ public record PullableDocumentListResponse(
     // เดือนในกรอบ "ย้อน 6 เดือน" ที่ไม่มีรายงาน ภ.พ.30 ในระบบ (ป้าย พ.ศ.) — หน้าเตือน "ถ้ายื่นนอกระบบแล้ว อย่าดึงซ้ำ"
     List<string> MonthsWithoutReport);
 
+/// <summary>รอบ 269 — รายงาน ภ.พ.30 ที่บันทึกไว้ซึ่งช่อง 7/8 ต่างจากการคำนวณสด (กติกาเจ้าของการขาย) · อ่านอย่างเดียว ·
+/// <paramref name="PeriodLabel"/> = "ดด/พ.ศ." คำนวณที่ server · <paramref name="SuggestedAction"/> = Regenerate / ConsiderAmendedFiling</summary>
+public record Pp30SalesBoxReviewRow(Guid ReportId, int Year, int Month, string PeriodLabel, string Status, bool AlreadyFiled,
+    decimal StoredZeroRated, decimal FreshZeroRated, decimal StoredExempt, decimal FreshExempt,
+    string SuggestedAction, string? Message, string RuleCode);
+
 /// <summary>บรรทัด "ดึงเข้างวด" ในรายงานร่างที่ตอนนี้ไม่ผ่านด่านดึง (รอบ 225 S3 — อ่านอย่างเดียว)</summary>
 public record IneligiblePulledLineDto(Guid ReportId, int Year, int Month, Guid LineId, Guid DocumentId, string? DocumentNumber,
     bool LineExcluded, string? RuleCode, string? Reason);
