@@ -6111,7 +6111,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 | รายงานที่บันทึกไว้ก่อนแก้ (หลักการ #9) | — | `TaxService.GetPp30SalesBoxReviewAsync` (GET `tax/pp30-sales-box-review` · อ่านอย่างเดียว · ตรวจเฉพาะรายงานที่มีแถว 7/8) เทียบ `ComputeVatReportAsync` · แถบเตือนแท็บ ภ.พ.30 · ร่าง ⇒ "สร้างใหม่" (audit · `AutoRefreshReportsAsync` สร้างร่าง 2 เดือนล่าสุดใหม่เอง) · ยื่นแล้ว ⇒ พิจารณายื่น ภ.พ.30 เพิ่มเติม (`Helpers/Pp30SalesBoxReview`) — 269-1-4 |
 
 ล็อกจุดเรียก: `tools/required_call_site_check.py` R269 (+ ฝ่ายค้าน R269a–c) · เทสต์: TEST_PLAN P269 · ยังไม่แก้: ยอดซื้อยกเว้น (หมายเหตุ ไม่ใช่ช่องในแบบ) ยังนับจากทุกใบฝั่งซื้อรวมใบสั่งซื้อ/ใบรับสินค้า — backlog 269-1-5
-_Last verified against codebase: 2026-11-13 · commit (เติมในคอมมิตตามหลัง)_
+_Last verified against codebase: 2026-11-13 · commit 76130af2_
 
 #### 5.3a-1 ฐานยอด ภ.ง.ด.3/53/54 ของหน้า "นำส่งภาษี" + ปฏิทิน (แก้ 2026-09-16)
 
