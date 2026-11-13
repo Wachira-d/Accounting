@@ -1101,7 +1101,7 @@ public partial class TaxService : ITaxService
                         TaxPayerId = src.TaxPayerId,
                         TaxPayerName = src.TaxPayerName,
                         TransactionDate = src.TransactionDate,
-                        Description = $"[ยกมา §82/3 — ติ๊ก 'ใช้' เพื่อเคลมเดือนนี้] {src.Description}",
+                        Description = $"{CarryForwardLinePrefix} — ติ๊ก 'ใช้' เพื่อเคลมเดือนนี้] {src.Description}",
                         IncomeAmount = src.IncomeAmount,
                         TaxRate = src.TaxRate,
                         TaxAmount = src.TaxAmount,
@@ -4181,6 +4181,9 @@ public partial class TaxService : ITaxService
     /// <summary>คำนำหน้าบรรทัดที่ดึงด้วยมือ — "สร้างใหม่" ใช้หาบรรทัดดึงเพื่อคืน (ตัวตั้งเดียว)</summary>
     internal const string PulledLinePrefix = "[ดึงเข้างวด-";
 
+    /// <summary>คำนำหน้าบรรทัด "ยกมา §82/3" (ภาษีซื้อที่ติ๊กออกงวดก่อน — ผู้ใช้ตัดสินว่าจะใช้งวดนี้ไหม) — ตัวตั้งเดียวของตัวสร้างและตัวตรวจร่างล้าสมัย</summary>
+    internal const string CarryForwardLinePrefix = "[ยกมา §82/3";
+
     /// <summary>ตรวจรายงานร่างที่ถือบรรทัด "ดึงเข้างวด" ซึ่ง<b>ตอนนี้</b>ไม่ผ่านด่าน (เช่น CIL ที่เคยดึงเป็นฝั่งขาย · ภาษีขายย้อนเดือน ·
     /// ใบแจ้งหนี้ที่ใบกำกับเป็นเจ้าของ VAT) — <b>อ่านอย่างเดียว</b> ไม่แก้อะไร (รอบ 225 S3) · ผู้ใช้เปิดรายงานแล้วติ๊กออก/สร้างใหม่เอง</summary>
     public async Task<List<IneligiblePulledLineDto>> FindIneligiblePulledLinesAsync(Guid companyId)
@@ -4602,9 +4605,9 @@ public partial class TaxService : ITaxService
                 await GenerateWhtReport(companyId, start, start.AddMonths(1).AddDays(-1), fresh);
             }
             var stored = Accounting.Helpers.TaxReportDraftFreshness.Signature(
-                d.Lines.Select(l => (l.DocumentId, l.Description, l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount)), PulledLinePrefix);
+                d.Lines.Select(l => (l.DocumentId, l.Description, l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount)), PulledLinePrefix, CarryForwardLinePrefix);
             var now2 = Accounting.Helpers.TaxReportDraftFreshness.Signature(
-                fresh.Lines.Select(l => (l.DocumentId, l.Description, l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount)), PulledLinePrefix);
+                fresh.Lines.Select(l => (l.DocumentId, l.Description, l.IncomeTypeCode, l.IncomeAmount, l.TaxAmount)), PulledLinePrefix, CarryForwardLinePrefix);
             var verdict = Accounting.Helpers.TaxReportDraftFreshness.Compare(stored, now2);
             if (!verdict.Stale) continue;
             rows.Add(new StaleDraftReportRow(d.Id, d.TaxType.ToString(), d.Year, d.Month, $"{d.Month:00}/{d.Year + 543}",

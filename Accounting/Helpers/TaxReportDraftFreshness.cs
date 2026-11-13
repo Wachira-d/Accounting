@@ -17,13 +17,15 @@ public static class TaxReportDraftFreshness
 
     public static Dictionary<Guid, Entry> Signature(
         IEnumerable<(Guid? DocumentId, string? Description, string? IncomeTypeCode, decimal IncomeAmount, decimal TaxAmount)> lines,
-        string pulledLinePrefix)
+        string pulledLinePrefix, string? carryForwardPrefix = null)
     {
         var result = new Dictionary<Guid, Entry>();
         foreach (var l in lines)
         {
             if (!l.DocumentId.HasValue) continue;
             if ((l.Description ?? "").Contains(pulledLinePrefix, StringComparison.Ordinal)) continue;
+            // บรรทัด "ยกมา §82/3" = งานตัดสินของผู้ใช้ (ติ๊กแล้วใบถูกนับว่า "ใช้" ⇒ การคำนวณสดไม่ยกมาให้อีก) — ไม่ใช่ความต่างของเอกสาร
+            if (carryForwardPrefix != null && (l.Description ?? "").StartsWith(carryForwardPrefix, StringComparison.Ordinal)) continue;
             if (VatReportLineKind.SideOf(l.IncomeTypeCode) == VatReportSide.Summary) continue;
             var id = l.DocumentId.Value;
             var add = new Entry(id, l.IncomeTypeCode, Round(l.IncomeAmount), Round(l.TaxAmount));

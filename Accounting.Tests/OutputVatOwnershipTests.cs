@@ -427,7 +427,8 @@ public class OutputVatOwnershipTests
             (pulled, prefix + "ภาษีซื้อ] PI", "INPUT", 100_000m, 7_000m),   // บรรทัดดึง — ไม่เทียบ
             (null, "[เลื่อนเคลม]", "INPUT", 0m, 50m),                        // ไม่มีเอกสาร — ไม่เทียบ
             (null, "ช่อง 2", VatReportLineKind.ZeroRatedSales, 9m, 0m),
-        }, prefix);
+            (Guid.NewGuid(), "[ยกมา §82/3 — ติ๊ก 'ใช้' เพื่อเคลมเดือนนี้] PI", "INPUT", 100_000m, 7_000m),   // ติ๊กแล้วการคำนวณสดไม่ยกมาอีก — ไม่ใช่ความต่าง
+        }, prefix, "[ยกมา §82/3");
         var same = TaxReportDraftFreshness.Signature(new (Guid?, string?, string?, decimal, decimal)[]
         {
             (a, "TIV-A", null, 1_000m, 70m), (b, "TIV-B", null, 2_000m, 140m),
