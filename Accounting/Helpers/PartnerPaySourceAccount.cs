@@ -12,7 +12,8 @@ namespace Accounting.Helpers;
 /// <item>ประวัติ (บัญชีที่จ่ายผู้ขายรายนี้บ่อยสุด) + บัญชีที่ตั้งบนใบซื้อ = <b>คำแนะนำมีป้าย</b> เท่านั้น ไม่อัตโนมัติ ไม่ preselect</item>
 /// <item>บัญชีทุกตัวต้องอยู่ในชุด <see cref="Facts.Usable"/> ของบริษัทผู้เรียก (ผู้เรียกกรองด้วยตัวตรวจบัญชีเดิม) — id ที่ไม่อยู่ในชุด = ไม่ใช่หลักฐาน</item>
 /// <item><b>ไม่มีจุดเรียก AI</b> (ตัวเลขล้วน ห้าม fuzzy) ⇒ ไม่มี <c>AiFeatureKey</c> ใหม่ · ไม่ต้อง distillation · <see cref="Decision.UsedAi"/> = false เสมอ (แบบ 260-1-2) ·
-/// ชั้น BankLine/PayerDeclared/Slip ยังไม่มีผู้ป้อน (แพ็ก P2/P4) — ผู้เรียกส่ง null ⇒ ตัดสินจากชั้นที่มีจริง</item>
+/// ชั้น BankLine/PayerDeclared ยังไม่มีผู้ป้อน (แพ็ก P4) — ผู้เรียกส่ง null ⇒ ตัดสินจากชั้นที่มีจริง · ชั้น Slip ป้อนแล้ว (รอบ 264 P2 ·
+/// <c>PartnerPayablePipeline.SlipMatchAsync</c> ⇒ <c>SlipAccountMatch</c> จากผู้โอนบนสลิปที่ผู้ขายได้รับ)</item>
 /// </list>
 /// </summary>
 public static class PartnerPaySourceAccount
@@ -25,7 +26,7 @@ public static class PartnerPaySourceAccount
     /// <summary>ที่มาของบัญชี (ชื่อคงที่ — หน้า/audit ใช้ชื่อ · ไม่ใช่ตัวเลข)</summary>
     public enum Origin { BankLine, PayerDeclared, SlipUnique, ConsentDefault, HistoryHint, Unknown }
 
-    /// <summary>ผลจับคู่สลิปของผู้ซื้อ (ผล <c>SlipAccountMatch</c> ของแพ็ก P2 · ยังไม่มีผู้ป้อน ⇒ <see cref="SlipKind.None"/>)</summary>
+    /// <summary>ผลจับคู่สลิปของผู้ซื้อ (ผล <c>SlipAccountMatch</c> ของแพ็ก P2 · ตัวแปลงเดียว <c>PartnerPayablePipeline.SlipKindOf</c> · ไม่มีผลอ่าน ⇒ null)</summary>
     public enum SlipKind { None, Unique, Many, NotOurs, Unreadable }
 
     public sealed record Slip(SlipKind Kind, Guid? AccountId = null);

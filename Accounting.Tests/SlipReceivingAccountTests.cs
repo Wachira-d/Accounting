@@ -249,4 +249,99 @@ public class SlipReceivingAccountTests
         Assert.Contains("ADD COLUMN IF NOT EXISTS \"ReceivingBankAccountId\"", sql);
         Assert.Contains("ADD COLUMN IF NOT EXISTS \"ReceivingAccountOrigin\"", sql);
     }
+
+    // ═══ รอบ 264 แพ็ก P2 (คำตัดสิน 264-4-6): ชั้นบนสุด "ผู้รับบนสลิป" — สลิปจริงกรุงไทย → กสิกร ••1681 ═══
+
+    private static readonly SlipReceivingAccount.AccountFacts[] Accts =
+    {
+        new(A, "กสิกร", true, "THB", "Savings", true, null, "ธนาคารกสิกรไทย (KBANK)", "123-4-56168-1"),
+        new(B, "กรุงไทย", true, "THB", "Savings", true, null, "กรุงไทย", "987-6-54321-0"),
+    };
+
+    private static SlipAccountMatch.Result? PayeeOf(SlipCorpusRound264.Slip s, IReadOnlyList<SlipReceivingAccount.AccountFacts> accts)
+        => SlipReceivingAccount.SlipPayeeMatch(OcrSlipText.ToStoredJson(OcrSlipText.Parse(s.Text, 2026, s.Qr)), accts);
+
+    [Fact]
+    public void ชั้นสลิป_ผู้รับตรงบัญชีเดียว_ชนะบัญชีที่แสดงให้ลูกค้า_และบัญชีเดียว()
+    {
+        var slip = PayeeOf(SlipCorpusRound264.KtbToKbank, Accts);
+        Assert.Equal(SlipAccountMatch.Kind.Unique, slip!.Kind);
+        var s = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, B, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B }, slip);
+        Assert.Equal((A, A, SlipReceivingAccount.Origin.SlipPayee), (s.BankAccountId!.Value, s.DisplayBankAccountId!.Value, s.Origin));
+        Assert.Contains("กสิกรไทย ••1681", s.Reason);
+        Assert.Contains("สลิปไม่ใช่หลักฐานว่าเงินเข้า", s.Reason);   // ยังเป็นค่าแนะนำ (260-1-6)
+        Assert.Equal("บัญชีผู้รับบนสลิป", SlipReceivingAccount.OriginLabel("SlipPayee"));
+        // ชนะแหล่งเงินของเอกสารที่เป็นอีกบัญชี (ปลายทางจริงบนสลิป)
+        var overDoc = SlipReceivingAccount.Suggest(true, BankDoc(B), null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B }, slip);
+        Assert.Equal((A, SlipReceivingAccount.Origin.SlipPayee), (overDoc.BankAccountId!.Value, overDoc.Origin));
+        // ตรงบัญชีเดียวกับแหล่งเงินของเอกสาร ⇒ กิ่งเดิมทุกประการ (ไม่ส่ง override เพิ่ม)
+        var same = SlipReceivingAccount.Suggest(true, BankDoc(A), null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B }, slip);
+        Assert.Equal(SlipReceivingAccount.Suggest(true, BankDoc(A), null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B }), same);
+    }
+
+    [Fact]
+    public void ชั้นสลิป_ผู้รับไม่ใช่บัญชีของบริษัท_เตือนและต้องเลือกเอง_ไม่แนะนำบัญชีอื่นแทน()
+    {
+        var others = new SlipReceivingAccount.AccountFacts[]
+        {
+            new(A, "กสิกร", true, "THB", "Savings", true, null, "กสิกรไทย", "123-4-56000-0"),
+            new(B, "กรุงไทย", true, "THB", "Savings", true, null, "กรุงไทย", "987-6-54321-0"),
+        };
+        var slip = PayeeOf(SlipCorpusRound264.KtbToKbank, others);
+        Assert.Equal(SlipAccountMatch.Kind.NotOurs, slip!.Kind);
+        var s = SlipReceivingAccount.Suggest(true, BankDoc(A), A, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B }, slip);
+        Assert.Null(s.BankAccountId);
+        Assert.Null(s.DisplayBankAccountId);
+        Assert.True(s.RequiresChoice);
+        Assert.Equal(SlipReceivingAccount.SlipPayeeNotOursReason, s.SlipWarning);
+        // ไม่เลือก ⇒ ปฏิเสธพร้อมเหตุ · เลือกเอง ⇒ ผ่าน (ทางไปต่อของพนักงาน)
+        Assert.False(SlipReceivingAccount.Decide(true, null, null, "THB", s).Ok);
+        var chosen = SlipReceivingAccount.Decide(true, B, Facts(B), "THB", s);
+        Assert.True(chosen.Ok);
+        Assert.Equal(B, chosen.BankAccountId);
+    }
+
+    [Fact]
+    public void ชั้นสลิป_ไม่มีผลอ่าน_หรือผู้รับเป็นบิล_พร้อมเพย์_ไม่รู้บทบาท_ผลเท่าเดิมทุกประการ()
+    {
+        Assert.Null(SlipReceivingAccount.SlipPayeeMatch(null, Accts));
+        foreach (var slip in new[] { SlipCorpusRound264.ScbBillStore, SlipCorpusRound264.ScbPromptPayMobile, SlipCorpusRound264.KplusSameBank, SlipCorpusRound264.TtbCardEnglish })
+        {
+            var m = PayeeOf(slip, Accts);
+            foreach (var (doc, shown) in new[] { (SlipReceivingAccount.DocChannel.None, (Guid?)B), (BankDoc(A), (Guid?)null), (SlipReceivingAccount.DocChannel.None, (Guid?)null) })
+                Assert.Equal(SlipReceivingAccount.Suggest(true, doc, shown, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B }),
+                    SlipReceivingAccount.Suggest(true, doc, shown, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A, B }, m));
+        }
+        // ผ่านผู้ให้บริการ ⇒ ไม่ใช่เรื่องของสลิป
+        var unique = PayeeOf(SlipCorpusRound264.KtbToKbank, Accts);
+        Assert.Equal(SlipReceivingAccount.Origin.NotApplicable,
+            SlipReceivingAccount.Suggest(false, SlipReceivingAccount.DocChannel.None, null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { A }, unique).Origin);
+    }
+
+    [Fact]
+    public void ชั้นสลิป_ตรงบัญชีที่ใช้รับโอนไม่ได้_ไม่แนะนำบัญชีนั้น()
+    {
+        var slip = PayeeOf(SlipCorpusRound264.KtbToKbank, Accts);
+        // A ไม่อยู่ในชุดที่ใช้ได้ (เช่นปิดใช้) ⇒ ตกไปลำดับเดิม (บัญชีเดียว B)
+        var s = SlipReceivingAccount.Suggest(true, SlipReceivingAccount.DocChannel.None, null, SlipReceivingAccount.SiteRowMatch.NoRow, new[] { B }, slip);
+        Assert.Equal((B, SlipReceivingAccount.Origin.SoleTransferAccount), (s.BankAccountId!.Value, s.Origin));
+    }
+
+    [Fact]
+    public void SameBank_ยุบมาใช้ตารางกลาง_ชื่อนอกตารางคงกติกาเดิม()
+    {
+        Assert.True(SlipReceivingAccount.SameBank("Kasikornbank", "ธนาคารกสิกรไทย (KBANK)"));   // เดิม: ไม่มีรหัสในวงเล็บฝั่งหนึ่ง + ชื่อไม่ซ้อน ⇒ false
+        Assert.False(SlipReceivingAccount.SameBank("ttb", "ไทยพาณิชย์"));
+        Assert.True(SlipReceivingAccount.SameBank("ธนาคารนอกตาราง จำกัด", "นอกตาราง"));          // กติกาเดิม (ชื่อซ้อนกัน)
+    }
+
+    [Fact]
+    public void Migration_รอบ264_ผลอ่านสลิป()
+    {
+        var sql = string.Join("\n", Round264SlipReadMigration.Statements());
+        Assert.Contains("\"PaymentIntents\" ADD COLUMN IF NOT EXISTS \"SlipReadJson\"", sql);
+        Assert.Contains("\"LineChatSlips\" ADD COLUMN IF NOT EXISTS \"SlipReadJson\"", sql);
+        Assert.Contains("\"SlipPayerBankCode\"", sql);
+        Assert.Contains("\"SlipPayerAccountMask\"", sql);
+    }
 }

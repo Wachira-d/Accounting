@@ -125,6 +125,8 @@ public class PartnerPaymentNoticeService
             var docNo = await db.Documents.AsNoTracking().Where(d => d.Id == r.SourceDocumentId && d.CompanyId == sellerCompanyId)
                 .Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct) ?? "";
             var sellerName = await db.Companies.AsNoTracking().Where(c => c.Id == sellerCompanyId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "ผู้ขาย";
+            // รอบ 264 P2 (คำตัดสิน 264-4-7): ผู้โอนบนสลิปที่ผู้ขายได้รับ = บัญชีของผู้ซื้อเอง ⇒ ส่งเฉพาะ ธนาคาร + เลขปิดบางที่ธนาคารปิดมาแล้ว (ไม่มีชื่อ/รูป) ให้ชั้น SlipUnique ของผู้ซื้อ
+            var payer = await SlipPayerForNoticeAsync(db, sellerCompanyId, r.PaymentIntentId, ct);
             var created = 0;
             foreach (var l in links)
             {
@@ -149,6 +151,7 @@ public class PartnerPaymentNoticeService
                     TargetDocumentId = l.TargetDocumentId, PaymentIntentId = r.PaymentIntentId, SellerPaymentId = r.SellerPaymentId,
                     CashAmount = R(r.Cash), SellerRecordedWht = R(r.SellerWht), PaidAt = r.PaidAtUtc, SourceChannel = Trunc(r.Channel, 32),
                     Status = PartnerPaymentNoticeRule.StatusOpen, CreatedBy = "partner-payment-notice",
+                    SlipPayerBankCode = payer?.BankCode, SlipPayerAccountMask = payer?.AccountMask,
                 };
                 db.PartnerPaymentNotices.Add(notice);
                 mine.Add(notice);
@@ -175,6 +178,19 @@ public class PartnerPaymentNoticeService
             return 0;
         }
     }
+
+    /// <summary>รอบ 264 P2: บล็อกผู้โอนจากผลอ่านสลิปบน intent ของผู้ขาย (CompanyId = ผู้ขาย) — เฉพาะชนิดบัญชีธนาคารที่มีธนาคาร + เลขปิดบาง · อื่น ๆ = null</summary>
+    internal static async Task<OcrSlipText.SlipParty?> SlipPayerForNoticeAsync(AccountingDbContext db, Guid sellerCompanyId, Guid? intentId, CancellationToken ct)
+    {
+        if (intentId is not Guid iid) return null;
+        var json = await db.PaymentIntents.AsNoTracking().Where(i => i.Id == iid && i.CompanyId == sellerCompanyId)
+            .Select(i => i.SlipReadJson).FirstOrDefaultAsync(ct);
+        return SlipPayerForNotice(OcrSlipText.FromStoredJson(json));
+    }
+
+    /// <summary>pure: ผู้โอนที่ส่งต่อได้ (บัญชีธนาคาร + รหัสธนาคาร + mask) · บัตร/พร้อมเพย์/ไม่รู้บทบาท ⇒ null</summary>
+    internal static OcrSlipText.SlipParty? SlipPayerForNotice(OcrSlipText.Stored? stored)
+        => stored?.Payer is { Kind: OcrSlipText.PartyKind.BankAccount, BankCode: not null, AccountMask: not null } p ? p : null;
 
     private static async Task NotifyBuyerAsync(INotificationEngine? notify, ILogger logger, Guid buyerCompanyId, PartnerPaymentNotice n, string sellerName, string? purchaseNumber,
         CancellationToken ct)

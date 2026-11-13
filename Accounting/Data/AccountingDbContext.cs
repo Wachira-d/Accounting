@@ -1188,6 +1188,8 @@ public class AccountingDbContext : DbContext
         });
         modelBuilder.Entity<PaymentIntent>().Property(x => x.SavedCardRef).HasMaxLength(100);   // ฝ่ายค้านรอบ 230 B2
         modelBuilder.Entity<PaymentIntent>().Property(x => x.ReceivingAccountOrigin).HasMaxLength(32);   // รอบ 260-2
+        modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerBankCode).HasMaxLength(3);   // รอบ 264 P2
+        modelBuilder.Entity<PartnerPaymentNotice>().Property(x => x.SlipPayerAccountMask).HasMaxLength(32);   // รอบ 264 P2
         modelBuilder.Entity<PdpaConsentRecord>().Property(x => x.UserAgent).HasMaxLength(500);   // ฝ่ายค้านรอบ 230 S2
         modelBuilder.Entity<PlatformAutoChargeSettings>(e =>
         {

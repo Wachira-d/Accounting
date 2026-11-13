@@ -562,7 +562,10 @@ public class PaymentGatewayController : ControllerBase
             suggestedOriginLabel = SlipReceivingAccount.OriginLabel(s.Origin.ToString()),
             reason = s.Reason,
             // ไม่เลือก = ค่าแนะนำ — ป้ายของตัวเลือกว่างบอกผลจริง (ไม่ใช่ "ไม่ระบุ" ลอย ๆ)
-            defaultLabel = s.Origin == SlipReceivingAccount.Origin.DocumentChannel ? "ตามแหล่งเงินที่ตั้งไว้บนเอกสาร (เหมือนเดิม)"
+            // รอบ 264 P2: คำเตือนจากผลอ่านสลิป (ผู้รับบนสลิปไม่ใช่บัญชีของบริษัท) — ต้องเลือกเอง (ไม่เลือก = ปฏิเสธพร้อมเหตุเดียวกัน)
+            slipWarning = s.SlipWarning,
+            defaultLabel = s.RequiresChoice ? "ต้องเลือกบัญชีที่เงินเข้าเอง — " + (s.SlipWarning != null ? "ปลายทางบนสลิปไม่ใช่บัญชีของบริษัท" : "แหล่งเงินของเอกสารใช้ไม่ได้")
+                : s.Origin == SlipReceivingAccount.Origin.DocumentChannel ? "ตามแหล่งเงินที่ตั้งไว้บนเอกสาร (เหมือนเดิม)"
                 : s.BankAccountId != null ? "ตามคำแนะนำของระบบ"
                 : "ไม่ระบุ — ลงตามแหล่งเงินของเอกสาร/เงินสดตั้งต้น (เหมือนเดิม)",
             options = r.Accounts.Select(a => new
