@@ -19916,7 +19916,7 @@ RULES += [
          must=["SlipPayeeMatch(intent.SlipReadJson, accounts)"],
          why=_R264P2_WHY + "264-4-6 ชั้น \"ผู้รับบนสลิป\" ต่อสายเข้าค่าแนะนำจริง (ไม่ใช่แค่พารามิเตอร์ที่ไม่มีใครส่ง)"),
     dict(file="Helpers/SlipReceivingAccount.cs", method="Suggest",
-         must=["SlipAccountMatch.Kind.Unique", "SlipAccountMatch.Kind.NotOurs", "usable.Contains(sid)"],
+         must=["SlipAccountMatch.Kind.Unique", "SlipAccountMatch.Kind.NotOurs", "usable.Contains(sid)", "!usable.Contains(bad)", "SlipPayeeUnusableReason"],
          must_re=[r"SlipPayeeNotOursReason\s*\+[^;]*RequiresChoice:\s*true"],
          before=[("SlipAccountMatch.Kind.NotOurs", "if (doc.HasChannel)")],
          why=_R264P2_WHY + "264-4-6 ผู้รับไม่ใช่บัญชีของบริษัท ⇒ ต้องเลือกเอง (ไม่แนะนำบัญชีอื่น/ไม่สืบทอดแหล่งเงินเงียบ ๆ) · ตรงบัญชีที่ใช้ไม่ได้ ⇒ ไม่แนะนำ"),
@@ -19935,13 +19935,15 @@ RULES += [
 ]
 REVIEWER_CASES += [
     # ถอด QR ออกจากตัวอ่าน (ส่ง null แทน) ⇒ ต้องฟ้อง
-    ("R264P2a", "ReadAsync", "var qr = SlipQrImageDecoder.TryDecode(bytes);", "string? qr = null;", True),
+    ("R264P2a", "ReadAsync", "var qr = await Task.Run(() => SlipQrImageDecoder.TryDecode(bytes), ct);", "string? qr = null;", True),
     # ไม่คัดลอกผลอ่านไป intent ⇒ ต้องฟ้อง
     ("R264P2b", "TrySubmitAsync", "intent.SlipReadJson = row.SlipReadJson", "_ = row.SlipReadJson", True),
     # ชั้นสลิปไม่ถูกส่งเข้าค่าแนะนำ ⇒ ต้องฟ้อง
     ("R264P2c", "ResolveAsync", "SlipPayeeMatch(intent.SlipReadJson, accounts)", "null", True),
     # ผู้รับไม่ใช่ของเราแต่ไม่บังคับเลือก ⇒ ต้องฟ้อง
-    ("R264P2d", "Suggest", "RequiresChoice: true,\n                SlipWarning", "RequiresChoice: false,\n                SlipWarning", True),
+    ("R264P2d", "Suggest", "slipPayee!.PartyLabel, RequiresChoice: true", "slipPayee!.PartyLabel, RequiresChoice: false", True),
+    # ฝ่ายค้าน 264-P2 L7: สลิปชี้บัญชีที่ใช้ไม่ได้แต่ตกไปแนะนำบัญชีอื่น ⇒ ต้องฟ้อง
+    ("R264P2f", "Suggest", "&& !usable.Contains(bad)", "&& false", True),
     # ผู้ซื้อกลับไปส่ง null ⇒ ต้องฟ้อง
     ("R264P2e", "SourceDecisionAsync", "SlipMatch: await SlipMatchAsync(db, companyId, n, ct)", "SlipMatch: null", True),
 ]
@@ -20196,22 +20198,42 @@ REVIEWER_CASES += [
 _R269_WHY = "รอบ 269 (269-1-1…4): "
 RULES += [
     dict(file="Services/Implementations/TaxService.cs", method="GenerateVatReport",
-         must=["OutputVatOwnership.SalesBoxOwner(", "Pp30SalesClassifier.Split("],
+         must=["OutputVatOwnership.SalesBoxOwner(", "Pp30SalesClassifier.Split(", "OutputVatOwnership.IsOutsidePp30(",
+               "OutputVatOwnership.AdjustmentNoteCounts(", "RelatedPendingTaxPoint("],
          must_re=[r"salesOwner\s+is\s+\{\s*Owns:\s*true\s*,\s*VatDueDate:\s*DateTime\s+due\s*\}\s*&&\s*due\s*>=\s*startDate\s*&&\s*due\s*<\s*endStampExclusive",
-                  r"if\s*\(\s*countSales\s*\|\|\s*countPurchase\s*\)"],
-         before=[("OutputVatOwnership.SalesBoxOwner(", "Pp30SalesClassifier.Split(")],
+                  r"else\s+if\s*\(\s*countSales\s*\)",
+                  r"countPurchase\s*=\s*inSaleMonth[\s\S]{0,400}?InputVatGateScope\.ClaimsInputVat\(",
+                  r"RuleCode:\s*Accounting\.Helpers\.OutputVatOwnership\.RuleZeroVatNotTaxInvoice"],
+         before=[("OutputVatOwnership.IsOutsidePp30(", "OutputVatOwnership.FactsOf(")],
          why=_R269_WHY + "ช่อง 7/8 ฝั่งขายนับเฉพาะใบที่ถือการขาย (ตัวตัดสินเดียวกับแถว §87) — ห้ามกลับไปนับทุกใบที่มีบรรทัด VatRate 0/-1"),
     dict(file="Services/Implementations/TaxService.cs", method="GetPp30SalesBoxReviewAsync",
-         must=["ComputeVatReportAsync(", "Pp30SalesBoxReview.Evaluate(", "TaxFilingLockPolicy.DeclaredOrFiled("],
+         must=["ComputeVatReportAsync(", "Pp30SalesBoxReview.Evaluate(", "TaxFilingLockPolicy.DeclaredOrFiled(", "Pp30LegacySalesBoxTrace("],
          forbid=["SaveChangesAsync("],
-         why=_R269_WHY + "รายงานที่บันทึกไว้ (หลักการ #9): ทบทวนอ่านอย่างเดียว เทียบการคำนวณสดตัวเดียวกับไฟล์ยื่น · ยื่นแล้ว ⇒ พิจารณายื่นเพิ่มเติม ไม่แก้เอง"),
+         why=_R269_WHY + "รายงานที่บันทึกไว้ (หลักการ #9): ทบทวนอ่านอย่างเดียว เทียบการคำนวณสดตัวเดียวกับไฟล์ยื่น + กติกาเดิม (สาเหตุที่ตรวจจริง · M2) · ยื่นแล้ว ⇒ พิจารณายื่นเพิ่มเติม ไม่แก้เอง"),
+    dict(file="Services/Implementations/TaxService.cs", method="AutoRefreshReportsAsync",
+         must=["AddChainedAuditLog(", "TaxReportRecompute.AuditPayload("],
+         why=_R269_WHY + "สร้างร่างใหม่อัตโนมัติต้องไม่เงียบ — audit ยอดเดิม → ยอดใหม่ใน chain (ฝ่ายค้านข้อ 1/4)"),
+    dict(file="Services/Implementations/PdfGenerationService.TaxReport.cs", method="ComposePp30",
+         must=["Pp30FormBoxes.Figures(", "Pp30FormBoxes.No(", "Pp30FormBoxes.Name("],
+         forbid=["VatReportLineKind.StandardBase(", "VatReportLineKind.SalesBoxOf("],
+         why=_R269_WHY + "M3 — เลข/ชื่อ/ยอดช่องของ ภ.พ.30 มาจาก Helpers/Pp30FormBoxes ตัวเดียว (สูตรเดียวกับ Excel)"),
+    dict(file="Services/Implementations/TaxService.Export.cs", method="BuildSummarySheet",
+         must=["Pp30FormBoxes.Figures(", "Pp30FormBoxes.Label("],
+         why=_R269_WHY + "M3 — Excel ใช้สูตร/ป้ายช่องเดียวกับ PDF"),
 ]
 REVIEWER_CASES += [
     # 269-1-1: ถอดเงื่อนไขเจ้าของการขาย (นับทุกใบฝั่งขายเหมือนเดิม) ⇒ ต้องฟ้อง
     ("R269a", "GenerateVatReport",
      "salesOwner is { Owns: true, VatDueDate: DateTime due } && due >= startDate && due < endStampExclusive", "true", True),
     # 269-1-1: แยกยอดโดยไม่ผ่านด่านนับ ⇒ ต้องฟ้อง
-    ("R269b", "GenerateVatReport", "if (countSales || countPurchase)", "if (true)", True),
+    ("R269b", "GenerateVatReport", "else if (countSales)", "else", True),
+    # 269-2-1 (H1): ถอดด่านยอดยกมา ⇒ ต้องฟ้อง
+    ("R269d", "GenerateVatReport", "if (Accounting.Helpers.OutputVatOwnership.IsOutsidePp30(doc))", "if (false)", True),
+    # L1: ยอดซื้อยกเว้นกลับไปนับทุกใบฝั่งซื้อ ⇒ ต้องฟ้อง
+    ("R269e", "GenerateVatReport", "                        : Accounting.Helpers.InputVatGateScope.ClaimsInputVat(doc.DocumentType, cnDnPurchaseSide: false,",
+     "                        : true || Accounting.Helpers.InputVatGateScope.Equals(doc.DocumentType, cnDnPurchaseSide: false,", True),
+    # AutoRefresh กลับไปสร้างใหม่เงียบ ⇒ ต้องฟ้อง
+    ("R269f", "AutoRefreshReportsAsync", "                            _db.AddChainedAuditLog(new AuditLog", "                            _ = (new AuditLog", True),
     # 269-1-3: ทบทวนแล้วเขียนทับรายงานเอง ⇒ ต้องฟ้อง
     ("R269c", "GetPp30SalesBoxReviewAsync", "            rows.Add(new Pp30SalesBoxReviewRow(",
      "            await _db.SaveChangesAsync();\n            rows.Add(new Pp30SalesBoxReviewRow(", True),

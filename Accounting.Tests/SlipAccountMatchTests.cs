@@ -124,5 +124,19 @@ public class SlipAccountMatchTests
         Assert.Equal(3, SlipAccountMatch.MinVisibleDigits);
     }
 
+    [Fact]
+    public void ฝ่ายค้าน_L1_เลขท้ายต่างจากบัญชีธนาคารเดียวกันหนึ่งหลัก_ไม่กล่าวหา_สองหลักหรือธนาคารอื่น_ยังไม่ใช่ของเรา()
+    {
+        var payee = Read(C.KtbToKbank).Payee;   // กสิกร ••1681
+        // หนึ่งหลักต่าง (OCR 8↔3) ⇒ อ่านไม่ได้ (ไม่ใช่ NotOurs · ไม่ใช่ Unique)
+        var one = SlipAccountMatch.Match(payee, new[] { Acc(Kb, "กสิกรไทย", "123-4-56163-1") });
+        Assert.Equal(Kind.Unreadable, one.Kind);
+        Assert.Null(one.AccountId);
+        // สองหลักต่าง ⇒ ไม่ใช่ของเรา
+        Assert.Equal(Kind.NotOurs, SlipAccountMatch.Match(payee, new[] { Acc(Kb, "กสิกรไทย", "123-4-56133-1") }).Kind);
+        // หนึ่งหลักต่างแต่คนละธนาคาร ⇒ ไม่ใช่ของเรา
+        Assert.Equal(Kind.NotOurs, SlipAccountMatch.Match(payee, new[] { Acc(Ktb, "กรุงไทย", "123-4-56163-1") }).Kind);
+    }
+
     private static C.Slip Slip(string name) => (C.Slip)typeof(C).GetField(name)!.GetValue(null)!;
 }

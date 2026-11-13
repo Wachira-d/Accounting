@@ -32,7 +32,8 @@ public sealed class TesseractSlipImageReader : ISlipImageReader
     {
         if (bytes.Length == 0) return OcrSlipText.Reading.Empty;
         // QR ก่อน (ถูก · ไม่พึ่ง tessdata) — ถอดไม่ได้ = null ⇒ ผลอ่านเท่าเดิมทุกประการ
-        var qr = SlipQrImageDecoder.TryDecode(bytes);
+        // ฝ่ายค้าน L4: ถอดนอกเธรดคำขอ + ยกเลิกได้ · ยังถอดเมื่อไม่มี tessdata (QR ให้เลขอ้างอิง/ธนาคารผู้โอนได้โดยไม่พึ่ง OCR — ผลไม่มียอด ⇒ คิวพนักงานตามเดิม)
+        var qr = await Task.Run(() => SlipQrImageDecoder.TryDecode(bytes), ct);
         if (!_ocr.IsAvailable) return OcrSlipText.Parse(null, null, qr);
         try
         {

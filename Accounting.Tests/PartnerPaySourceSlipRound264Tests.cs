@@ -52,12 +52,14 @@ public class PartnerPaySourceSlipRound264Tests
     }
 
     [Fact]
-    public void ชั้นสลิปป้อนแล้ว_ตัดสินแหล่งเงินได้_และขัดบัญชีที่ตั้งไว้_ไม่อัตโนมัติ()
+    public void ชั้นสลิปป้อนแล้ว_preselect_ไม่บันทึกเอง_และขัดบัญชีที่ตั้งไว้_ไม่อัตโนมัติ()
     {
         var usable = new Dictionary<Guid, string> { [BKb] = "กสิกรไทย ••0621", [BScb] = "SCB ••1895" };
         var slip = PartnerPayablePipeline.SlipKindOf("004", "xxx-x-x0621-x", Accounts);
         var d = PartnerPaySourceAccount.Decide(new(usable, SlipMatch: slip));
-        Assert.Equal((BKb, Origin.SlipUnique, true), (d.BankAccountId!.Value, d.Origin, d.AllowsAuto));
+        // ฝ่ายค้าน 264-P2 M1: preselect เท่านั้น (ไม่บันทึกเอง) + เหตุตรง ๆ
+        Assert.Equal((BKb, Origin.SlipUnique, false), (d.BankAccountId!.Value, d.Origin, d.AllowsAuto));
+        Assert.StartsWith(PartnerPaySourceAccount.SlipUniqueNotAutoReason, d.Reason);
         Assert.False(d.UsedAi);
         var conflict = PartnerPaySourceAccount.Decide(new(usable, SlipMatch: slip, ConsentDefault: BScb));
         Assert.Null(conflict.BankAccountId);

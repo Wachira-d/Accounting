@@ -5,7 +5,7 @@ namespace Accounting.Tests;
 /// สีเทา + ขยายกว้าง 1500 px เท่า <c>EmbeddedTesseractOcrService</c>) <b>ตามที่อ่านได้จริง รวมตัวเพี้ยน</b> · QR = ผลถอดด้วย ZXing/OpenCV ในเครื่อง
 /// <para>PDPA: ชื่อคน/บริษัท/ร้าน ⇒ <c>&lt;PAYER_NAME&gt;</c>/<c>&lt;PAYEE_NAME&gt;</c> · บันทึกช่วยจำ ⇒ <c>&lt;MEMO&gt;</c> · เลขอ้างอิงรายการ (ทั้งข้อความและใน QR) ถูกแทนกลางด้วยตัวอักษรชนิดเดิม
 /// แล้วคำนวณ CRC ของ QR ใหม่ (กันการนำไปตรวจกับธนาคาร) · BIN บัตร ⇒ 4000-00 · <b>คงไว้</b>: ชื่อธนาคาร · เลขบัญชีที่ธนาคารปิดมาแล้ว · ยอด · วันที่ · Biller ID ·
-/// MID/TID ร้าน · <b>ไม่ commit รูป</b></para>
+/// <b>ไม่ commit รูป</b> · ฝ่ายค้าน 264-P2 L6: Ref1 ของบิล · เลขท้ายบัตร · MID/TID ร้าน ถูกแทนด้วยค่าแทน (790246…/9999) ด้วย</para>
 /// </summary>
 public static class SlipCorpusRound264
 {
@@ -108,11 +108,11 @@ public static class SlipCorpusRound264
         XXX-X-KX395-2
         ttb
         ttb credit card
-        (0699)
+        (9999)
         Lib
         Details
-        Card Number                4000-00XX-XXXX-671
-        4
+        Card Number                4000-00XX-XXXX-999
+        9
         Reference no.: 261790246801357968
         K
         i
@@ -176,7 +176,7 @@ public static class SlipCorpusRound264
         ไปยัง  <PAYEE_NAME>
         CO.,LTD
         Biller ID : 010753600037401
-        หมายเลขร้านค้า1 : 000002206965014
+        หมายเลขร้านค้า1 : 000790246801354
         เลขที่อ้างอิง2 : 4717902468QWER790200
         เลขที่อ้างอิง 3 : 47179070
         จํานวนเงิน                                               161.50
@@ -193,10 +193,10 @@ public static class SlipCorpusRound264
         12 พ.ย. 69 13:32 น.
         ย ฮี บัตรเดอะแพสชัน
         <PAYER_NAME>
-        ง/ 4000-00%*-%๐๓%-1154
+        ง/ 4000-00%*-%๐๓%-9999
            <PAYEE_NAME>
-        MID: 4787720004900175
-        TID: 62815506
+        MID: 4790246801357975
+        TID: 62790246
         จํานวน:                        แป
         159.00 บาท
         ค่าธรรมเนียม:           | ee  :

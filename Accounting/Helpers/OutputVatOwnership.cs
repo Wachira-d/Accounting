@@ -23,6 +23,18 @@ public static class OutputVatOwnership
     public const string RuleDepositApplied = "OUT-VAT-DEPOSIT-APPLIED";
     public const string RuleDepositNotRecognized = "OUT-VAT-DEPOSIT-NOT-RECOGNIZED";
     public const string RuleNotOutputDocument = "OUT-VAT-NOT-OUTPUT-DOC";
+    /// <summary>รอบ 269 H1 — ใบยอดยกมา (ลูกหนี้/เจ้าหนี้ยกมา OB-AR/OB-AP) ไม่ใช่การขาย/การซื้อของงวดใด ⇒ ไม่เข้าช่องใดของ ภ.พ.30 ทั้งสองฝั่ง</summary>
+    public const string RuleOpeningBalance = "PP30-OPENING-BALANCE";
+    /// <summary>รอบ 269 H2 — ใบเสร็จที่แปลงจากใบวางบิลรวม = รับชำระใบแจ้งหนี้ที่รวมไว้ (ไม่ใช่การขาย)</summary>
+    public const string RuleRollupBillingNoteReceipt = "OUT-VAT-ROLLUP-BN-RECEIPT";
+    /// <summary>รอบ 269 H2 — ใบสำคัญรับเดี่ยวที่ไม่มี VAT (สลิปรับโอน/50 ทวิ ที่เราถูกหัก) = รับเงิน ไม่ใช่การขาย</summary>
+    public const string RuleZeroVatReceiptVoucher = "OUT-VAT-RV-NO-VAT";
+    /// <summary>รอบ 269 H2 — ช่อง 0%/ยกเว้นรับเฉพาะใบที่ถือภาษีขายเป็นการขาย (ใบกำกับ หรือใบที่เป็นเจ้าของ VAT) ·
+    /// ใบเจ้าของที่ไม่มี VAT และไม่ใช่ใบกำกับ ⇒ ไม่นับ + บรรทัดเตือนบนรายงาน (ผู้ทำบัญชีตัดสินเอง)</summary>
+    public const string RuleZeroVatNotTaxInvoice = "PP30-ZERO-VAT-NOT-TAX-INVOICE";
+
+    /// <summary>ใบนี้อยู่นอก ภ.พ.30 ทุกช่องทั้งสองฝั่งไหม (ตัวตัดสินเดียว — loop หลัก · ปุ่มดึง · ช่องยอดขาย/ซื้อ)</summary>
+    public static bool IsOutsidePp30(Document d) => d.IsOpeningBalance;
 
     /// <summary>สาขาของ loop หลัก — Invoice = "ใบกำกับ/ใบแจ้งหนี้" · Receipt = "ใบเสร็จ/ใบสำคัญรับที่ถือ VAT เอง" · None = ไม่ใช่ทั้งสอง</summary>
     public enum Branch { None, Invoice, Receipt }
@@ -42,27 +54,34 @@ public static class OutputVatOwnership
         DateTime? DepositOutputVatRecognizedAt,
         bool SupersededByTaxInvoice,       // มีใบกำกับ (ไม่ยกเลิก/ไม่ถูกตีกลับ) อ้างใบแจ้งหนี้นี้
         bool OwnedByVatReceipt,            // มีใบเสร็จที่มี VAT อ้างใบแจ้งหนี้นี้
-        decimal Gl21913Net);               // ยอด Cr−Dr บน 21913 ของ JE ที่ใบนี้เป็นต้นทาง
+        decimal Gl21913Net,                // ยอด Cr−Dr บน 21913 ของ JE ที่ใบนี้เป็นต้นทาง
+        bool IsOpeningBalance = false,     // รอบ 269 H1 — ใบยอดยกมา
+        bool RelatedIsRollupBillingNote = false);   // รอบ 269 H2 — ใบอ้างเป็นใบวางบิลรวม (BillingNoteKind.IsRollup)
 
     public static Facts FactsOf(Document d, bool supersededByTaxInvoice, bool ownedByVatReceipt, decimal gl21913Net,
-        DocumentType? relatedType, DateTime? relatedOutputVatDueAt)
+        DocumentType? relatedType, DateTime? relatedOutputVatDueAt, bool relatedIsRollupBillingNote = false)
         => new(d.DocumentType, d.VatAmount, d.TaxPointDate ?? d.DocumentDate, d.OutputVatDueAt,
             d.RelatedDocumentId.HasValue, relatedType, relatedOutputVatDueAt,
             d.IsDeposit, d.DepositOutputVatDeferred, d.DepositAppliedToDocumentId.HasValue, d.DepositOutputVatRecognizedAt,
-            supersededByTaxInvoice, ownedByVatReceipt, gl21913Net);
+            supersededByTaxInvoice, ownedByVatReceipt, gl21913Net, IsOutsidePp30(d), relatedIsRollupBillingNote);
 
     /// <param name="Owns">ใบนี้เป็นเจ้าของภาษีขาย และ VAT ถึงกำหนดแล้ว</param>
     /// <param name="EffectivelyDeferred">มัดจำที่ VAT พัก (ธง หรือ GL 21913 ค้าง) — วันที่ถึงกำหนด = วันรับรู้</param>
-    /// <param name="VatDueDate">วันที่ VAT ถึงกำหนด (ใช้หาเดือนภาษี) · null เมื่อไม่ Owns</param>
+    /// <param name="VatDueDate">วันที่ VAT ถึงกำหนด (ใช้หาเดือนภาษี) · null เมื่อไม่ Owns — ยกเว้น <see cref="RuleZeroVatNotTaxInvoice"/> ของ
+    /// <see cref="SalesBoxOwner"/> ซึ่งคงวันที่ของใบไว้สำหรับบรรทัดเตือน</param>
     public sealed record Decision(Branch Branch, bool Owns, bool EffectivelyDeferred, DateTime? VatDueDate,
         string? RuleCode, string? Reason);
 
     private static Decision Own(Branch b, DateTime due, bool deferred = false) => new(b, true, deferred, due, null, null);
     private static Decision Not(Branch b, string rule, string reason, bool deferred = false) => new(b, false, deferred, null, rule, reason);
 
-    /// <summary>สาขาของ loop หลัก (เงื่อนไขเดิมทุกตัวอักษร — เทสต์ <c>OutputVatOwnershipTests</c> เทียบกับสำเนาโค้ดเดิม)</summary>
+    /// <summary>สาขาของ loop หลัก (เงื่อนไขเดิมทุกตัวอักษร — เทสต์ <c>OutputVatOwnershipTests</c> เทียบกับสำเนาโค้ดเดิม ·
+    /// รอบ 269 H1/H2 ปิดทางตกสามทางโดยตั้งใจ: ใบยอดยกมา · ใบเสร็จจากใบวางบิลรวม · ใบสำคัญรับเดี่ยวที่ไม่มี VAT)</summary>
     private static Branch BranchOf(Facts f)
     {
+        if (f.IsOpeningBalance) return Branch.None;
+        if ((f.Type is DocumentType.Receipt or DocumentType.ReceiptVoucher) && f.RelatedIsRollupBillingNote) return Branch.None;
+        if (f.Type == DocumentType.ReceiptVoucher && !f.HasRelated && f.VatAmount <= 0.005m) return Branch.None;
         if (f.Type == DocumentType.TaxInvoice
             || (f.Type == DocumentType.Invoice && f.VatAmount > 0 && !f.SupersededByTaxInvoice))
             return Branch.Invoice;
@@ -114,31 +133,59 @@ public static class OutputVatOwnership
         }
     }
 
-    /// <summary>รอบ 269 (ผู้ใช้รายงาน ก.ย. 2569: ช่อง 7 "ส่งออก §80/1" 1,235,494.24 ทั้งที่บริษัทไม่มีขาย 0% เลย) —
-    /// <b>ตัวตัดสินเดียว</b>ของ "บรรทัดของใบไหนนับเข้าช่องยอดขาย 5/7/8 ของ ภ.พ.30"
+    /// <summary>รอบ 269 (ผู้ใช้รายงาน ก.ย. 2569: ช่อง 0% "ส่งออก §80/1" 1,235,494.24 ทั้งที่บริษัทไม่มีขาย 0% เลย) —
+    /// <b>ตัวตัดสินเดียว</b>ของ "บรรทัดของใบไหนนับเข้าช่องยอดขาย (0% / ยกเว้น) ของ ภ.พ.30"
     ///
     /// <para>เดิม <c>GenerateVatReport</c> บวก <c>Pp30SalesClassifier.Split</c> ของ<b>ทุกใบฝั่งขาย</b>ที่ออกแล้ว ⇒ ใบเสร็จรับชำระ
     /// ("รับชำระเงินตามใบกำกับภาษีเลขที่ …" บรรทัด VatRate 0) · ใบวางบิล · ใบส่งของ · ใบเสนอราคาที่อนุมัติ · ใบแจ้งหนี้ที่ออกใบกำกับแทนแล้ว ·
-    /// ใบแจ้งหนี้ที่ใบเสร็จถือ VAT · มัดจำที่ถูกหักแล้ว ถูกนับเป็นยอดขาย 0%/ยกเว้น ซ้ำกับใบที่ถือการขายจริง</para>
+    /// ใบแจ้งหนี้ที่ใบเสร็จถือ VAT · มัดจำที่ถูกหักแล้ว · ลูกหนี้ยกมา (OB-AR) ถูกนับเป็นยอดขาย 0%/ยกเว้น</para>
     ///
-    /// <para>กติกา: นับเฉพาะใบที่ <see cref="Decide"/> บอกว่าเป็นเจ้าของภาษีขาย (ชุดเดียวกับแถว §87) — งวด = <see cref="Decision.VatDueDate"/>
-    /// (วันเดียวกับวันที่ของแถว §87) · <b>ยกเว้นข้อเดียว</b> (คำตัดสิน 269-1-2): ใบแจ้งหนี้ที่<b>ไม่มี VAT ทั้งใบ</b> (0%/ยกเว้นล้วน) และไม่ถูก
-    /// ใบกำกับแทน = ใบที่ถือการขายนั้นเอง (การขายยกเว้น §81 ออกใบกำกับไม่ได้ จึงอยู่บนใบแจ้งหนี้/ใบเสร็จเท่านั้น) — <see cref="BranchOf"/>
-    /// ไม่ให้แถว §87 เพราะไม่มีภาษีให้รายงาน แต่ยอดต้องอยู่ช่อง 7/8 (ถ้าไม่นับ = ช่อง 8 หายทั้งช่อง · ผลตรวจ C-T01)</para>
+    /// <para>กติกา (คำตัดสิน 269-1-1 · 269-2-1/2 หลังฝ่ายค้าน H1/H2): นับเฉพาะใบที่ <see cref="Decide"/> บอกว่าเป็นเจ้าของภาษีขาย (ชุดเดียวกับแถว §87 —
+    /// <b>ทุกใบที่นับจึงมีแถว §87 เสมอ</b> ซึ่งเป็นเงื่อนไขที่ <c>VatReportLineKind.StandardBase</c> ต้องการ · ฝ่ายค้าน M1) <b>และ</b> ถือภาษีขายเป็นการขาย =
+    /// ใบกำกับภาษี (รวมใบกำกับ 0% ล้วน) หรือใบเจ้าของที่มี VAT · ใบเจ้าของที่ไม่มี VAT และไม่ใช่ใบกำกับ (ใบเสร็จเดี่ยว VAT 0) ⇒ ไม่นับ
+    /// (<see cref="RuleZeroVatNotTaxInvoice"/> — ผู้เรียกใส่บรรทัดเตือน) · ใบยอดยกมาไม่นับเสมอ · งวด = <see cref="Decision.VatDueDate"/></para>
     ///
-    /// <para>ใบลดหนี้/เพิ่มหนี้ไม่ผ่านตัวนี้ — ผู้เรียกตัดสินฝั่งด้วย <c>ResolveCnDnSide</c> แยก</para></summary>
+    /// <para>ใบลดหนี้/เพิ่มหนี้ใช้ <see cref="AdjustmentNoteCounts"/></para></summary>
     public static Decision SalesBoxOwner(Facts f)
     {
+        const string zeroVatReason = "ใบนี้ไม่มี VAT และไม่ใช่ใบกำกับภาษี — ยอด 0%/ยกเว้นบนใบนี้ไม่นับเข้าแบบอัตโนมัติ (ถ้าเป็นการขายยกเว้น §81 หรือส่งออก §80/1 จริง ให้ผู้ทำบัญชียืนยันและกรอกในแบบ)";
         var d = Decide(f);
-        if (d.Owns) return d;
-        if (d.Branch == Branch.None && f.Type == DocumentType.Invoice && f.VatAmount <= 0m
-            && !f.SupersededByTaxInvoice && !f.OwnedByVatReceipt)
-            return Own(Branch.None, f.TaxPoint);
+        if (d.Owns)
+            return f.Type == DocumentType.TaxInvoice || f.VatAmount > 0.005m
+                ? d
+                // ไม่นับ แต่คงวันที่ของการขายไว้ให้ผู้เรียกใส่บรรทัดเตือนในงวดที่ถูก (Owns=false · VatDueDate = วันที่ของใบ)
+                : d with { Owns = false, RuleCode = RuleZeroVatNotTaxInvoice, Reason = zeroVatReason };
+        // ใบแจ้งหนี้ที่ไม่มี VAT ทั้งใบ (ไม่ถูกใบกำกับ/ใบเสร็จแทน · ไม่ใช่ยอดยกมา) = การขายที่ไม่มีใบกำกับ ⇒ ไม่นับ + เตือนแบบเดียวกัน
+        // (เดิม 269-1-2 ให้นับเอง — ถอดตามคำตัดสิน 269-2-2 เพราะยอดยกมา/ใบฝากขายอัตโนมัติก็เป็นรูปนี้)
+        if (f.Type == DocumentType.Invoice && f.VatAmount <= 0.005m && !f.SupersededByTaxInvoice && !f.OwnedByVatReceipt && !f.IsOpeningBalance)
+            return new Decision(d.Branch, false, false, f.TaxPoint, RuleZeroVatNotTaxInvoice, zeroVatReason);
         return d;
+    }
+
+    /// <summary>รอบ 269 L3 — ใบลดหนี้/เพิ่มหนี้ฝั่งขายนับเข้าช่อง 0%/ยกเว้นได้เมื่อ (1) ใบเดิมถึงจุดความรับผิดแล้ว (ไม่ใช่ใบที่ VAT ยังพัก — ผู้เรียกส่ง
+    /// <paramref name="relatedPendingTaxPoint"/> จากด่านเดียวกับแถว CN/DN) และ (2) ใบเดิม (ถ้ามี) เป็นใบที่ช่องยอดขายนับได้ = ใบกำกับภาษี หรือใบที่มี VAT ·
+    /// ใบเดิมเป็นใบเสร็จรับชำระ/ใบวางบิล/ใบเสนอราคา/ใบยอดยกมา/ใบไม่มี VAT ⇒ ไม่นับ (ใบเดิมไม่เคยอยู่ในช่อง) · ไม่มีใบเดิม ⇒ นับตามเดิม</summary>
+    public static bool AdjustmentNoteCounts(bool hasRelated, DocumentType? relatedType, decimal relatedVatAmount,
+        bool relatedOpeningBalance, bool relatedPendingTaxPoint)
+    {
+        if (relatedPendingTaxPoint) return false;
+        if (!hasRelated) return true;
+        if (relatedOpeningBalance || relatedType == null) return false;
+        if (relatedType == DocumentType.TaxInvoice) return true;
+        return relatedType is DocumentType.Invoice or DocumentType.Receipt or DocumentType.ReceiptVoucher or DocumentType.DebitNote
+            && relatedVatAmount > 0.005m;
     }
 
     private static Decision NotOwner(Facts f, Branch branch)
     {
+        if (f.IsOpeningBalance)
+            return Not(branch, RuleOpeningBalance, "ใบยอดยกมา (ลูกหนี้/เจ้าหนี้ยกมา) ไม่ใช่การขาย/การซื้อของงวดใด — ไม่เข้า ภ.พ.30");
+        if ((f.Type is DocumentType.Receipt or DocumentType.ReceiptVoucher) && f.RelatedIsRollupBillingNote)
+            return Not(branch, RuleRollupBillingNoteReceipt,
+                "ใบเสร็จนี้แปลงจากใบวางบิลรวม = รับชำระใบแจ้งหนี้/ใบกำกับที่รวมไว้ — ภาษีขาย/ยอดขายอยู่ที่ใบต้นทางแต่ละใบ");
+        if (f.Type == DocumentType.ReceiptVoucher && !f.HasRelated && f.VatAmount <= 0.005m)
+            return Not(branch, RuleZeroVatReceiptVoucher,
+                "ใบสำคัญรับนี้ไม่มี VAT และไม่ได้อ้างการขาย (เช่น สลิปรับโอน) — เป็นการรับเงิน ไม่ใช่ยอดขาย 0%/ยกเว้น");
         if (f.Type == DocumentType.Invoice && f.SupersededByTaxInvoice)
             return Not(branch, RuleSuperseded,
                 "ออกใบกำกับภาษีอ้างใบแจ้งหนี้นี้แล้ว — ภาษีขายอยู่ที่ใบกำกับ ดึงใบกำกับแทน");
