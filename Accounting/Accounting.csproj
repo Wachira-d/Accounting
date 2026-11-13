@@ -53,6 +53,9 @@
          license. Version MUST match the SkiaSharp that PDFtoImage below pulls in
          (native assets for linux/win32/macos arrive transitively through it). -->
     <PackageReference Include="SkiaSharp" Version="3.119.0" />
+    <!-- รอบ 264 P2 (คำตัดสิน 264-4-1): ถอด QR "ตรวจสอบสลิป" ในเครื่อง — แพ็กเกจหลักเท่านั้น (managed · ไม่มี native · ไม่มี dependency ต่อ) ·
+         พิกเซลมาจาก SkiaSharp ด้านบนผ่าน Services/Implementations/SlipQrImageDecoder · ห้ามใช้ ZXing.Net.Bindings.SkiaSharp (ผูก SkiaSharp รุ่นอื่น) -->
+    <PackageReference Include="ZXing.Net" Version="0.16.9" />
     <!-- PDF → image rasterization for the embedded OCR path. Pure-managed wrapper
          around SkiaSharp + PDFium; cross-platform native libs ship with NuGet.
          5.1.0 is the lowest version compatible with the API we use. -->

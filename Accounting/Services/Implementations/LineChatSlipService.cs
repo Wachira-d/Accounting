@@ -145,6 +145,8 @@ public sealed class LineChatSlipService : ILineChatSlipService
             CompanyId = companyId, SourceKind = source.Kind, SourceKey = sourceKey, ContactId = contactIds.Count == 1 ? contactIds[0] : (Guid?)null,
             LineMessageId = msgId, FileSha256 = sha, StoragePath = absPath, ContentType = sniffed,
             OcrAmount = reading.Amount, OcrAmounts = LineChatSlipRule.AmountsText(reading.Amounts), OcrDate = reading.Date, OcrRef = slipRef,
+            // รอบ 264 P2: ผลอ่าน QR + คู่กรณี (ไม่มีชื่อ) — คัดลอกไป intent ตอนแจ้งโอน (TrySubmitAsync) ⇒ SlipReceivingAccount ชั้น "ผู้รับบนสลิป"
+            SlipReadJson = OcrSlipText.ToStoredJson(reading),
             ShowAmounts = showAmounts, CreatedBy = "line-webhook",
         };
         // เก็บไฟล์ผ่านที่เก็บกลาง (Local/S3) ในโฟลเดอร์ที่ไม่เสิร์ฟตรง · ฝ่ายค้าน M2: ล้มก่อนแถวถูกบันทึก ⇒ ลบไฟล์ (ไม่มีไฟล์กำพร้า)
@@ -338,6 +340,12 @@ public sealed class LineChatSlipService : ILineChatSlipService
         catch (Exception ex) when (ex is BusinessRuleException or KeyNotFoundException or ArgumentException)
         {
             return (false, ex.Message);
+        }
+        // รอบ 264 P2 (คำตัดสิน 264-4-5): ผลอ่านของสลิปนี้ไปอยู่บนรายการชำระ — ตัวตัดสินบัญชีที่เงินเข้า/การแจ้งคู่ค้าอ่านจากที่เดียว (ทั้งสามทางเข้าของ LINE เดินผ่านตรงนี้)
+        if (row.SlipReadJson != null)
+        {
+            var intent = await _db.PaymentIntents.FirstOrDefaultAsync(i => i.Id == r.Intent.Id && i.CompanyId == companyId, ct);
+            if (intent != null && intent.SlipReadJson == null) intent.SlipReadJson = row.SlipReadJson;
         }
         row.Status = doneStatus;
         row.DocumentId = documentId;

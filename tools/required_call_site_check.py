@@ -19898,6 +19898,53 @@ RULES += [
     dict(file=_R241_LINK, method="StatusAsync", must=["CustomerDocPage.StateOf(", "PageLinkUsable ="],
          why=_R267F_WHY + "H2 หน้าพนักงานรู้สถานะลิงก์ระดับหน้า (ปุ่มยกเลิกลิงก์ของใบที่จ่ายไม่ได้)"),
 ]
+# ── รอบ 264 แพ็ก P2: อ่านบัญชีจากสลิป (QR ตรวจสลิป + คู่กรณี · คำตัดสิน 264-4-1..7) ──
+# ตัวอ่านเดียว OcrSlipText.Parse(text, year, qr) · ตัวถอด QR เดียว SlipQrImageDecoder → ThaiSlipQr · ตัวจับคู่เดียว SlipAccountMatch ทั้งสองฝั่ง ·
+# ผลอ่านเดินจาก LINE → intent → SlipReceivingAccount (ชั้นบนสุด) และ → แถวแจ้งคู่ค้า → PartnerPaySourceAccount (ชั้น SlipUnique)
+_R264P2_WHY = "รอบ 264 P2 อ่านบัญชีจากสลิป: "
+RULES += [
+    dict(file="Services/Implementations/TesseractSlipImageReader.cs", method="ReadAsync",
+         must=["SlipQrImageDecoder.TryDecode(bytes)", "OcrSlipText.Parse("], forbid=["OcrSlipText.Parse(r.Text)"],
+         must_re=[r"OcrSlipText\.Parse\([^;]*,\s*qr\)"],
+         why=_R264P2_WHY + "264-4-1 QR ถอดในเครื่องแล้วส่งเข้าตัวอ่านเดียว (ทุกกิ่ง รวม OCR ล้ม/ไม่มี tessdata) — ถอดสายแล้วเทสต์ helper ยังเขียว"),
+    dict(file="Services/Implementations/LineChatSlipService.cs", method="TrySubmitAsync",
+         must=["row.SlipReadJson", "intent.SlipReadJson = row.SlipReadJson"],
+         must_re=[r"i\.Id\s*==\s*r\.Intent\.Id\s*&&\s*i\.CompanyId\s*==\s*companyId"],
+         before=[("intent.SlipReadJson = row.SlipReadJson", "SaveChangesAsync(")],
+         why=_R264P2_WHY + "264-4-5 ผลอ่านไปอยู่บน intent ทุกทางของ LINE (อัตโนมัติ · ลูกค้าเลือก · พนักงานผูก) · tenant"),
+    dict(file="Helpers/SlipReceivingAccount.cs", method="ResolveAsync",
+         must=["SlipPayeeMatch(intent.SlipReadJson, accounts)"],
+         why=_R264P2_WHY + "264-4-6 ชั้น \"ผู้รับบนสลิป\" ต่อสายเข้าค่าแนะนำจริง (ไม่ใช่แค่พารามิเตอร์ที่ไม่มีใครส่ง)"),
+    dict(file="Helpers/SlipReceivingAccount.cs", method="Suggest",
+         must=["SlipAccountMatch.Kind.Unique", "SlipAccountMatch.Kind.NotOurs", "usable.Contains(sid)"],
+         must_re=[r"SlipPayeeNotOursReason\s*\+[^;]*RequiresChoice:\s*true"],
+         before=[("SlipAccountMatch.Kind.NotOurs", "if (doc.HasChannel)")],
+         why=_R264P2_WHY + "264-4-6 ผู้รับไม่ใช่บัญชีของบริษัท ⇒ ต้องเลือกเอง (ไม่แนะนำบัญชีอื่น/ไม่สืบทอดแหล่งเงินเงียบ ๆ) · ตรงบัญชีที่ใช้ไม่ได้ ⇒ ไม่แนะนำ"),
+    dict(file="Services/Implementations/PartnerPaymentNoticeService.cs", method="NotifyCoreAsync",
+         must=["SlipPayerForNoticeAsync(", "SlipPayerBankCode = payer?.BankCode", "SlipPayerAccountMask = payer?.AccountMask"],
+         why=_R264P2_WHY + "264-4-7 ผู้โอนบนสลิป (ธนาคาร + เลขปิดบางเท่านั้น) ไปถึงแถวแจ้งของผู้ซื้อ"),
+    dict(file="Services/Implementations/PartnerPaymentNoticeService.cs", method="SlipPayerForNoticeAsync",
+         must_re=[r"i\.Id\s*==\s*iid\s*&&\s*i\.CompanyId\s*==\s*sellerCompanyId"], must=["SlipPayerForNotice("],
+         why=_R264P2_WHY + "อ่าน intent ของผู้ขายด้วย CompanyId ของผู้ขาย (กฎ M)"),
+    dict(file="Services/Implementations/PartnerPayablePipeline.cs", method="SourceDecisionAsync",
+         must=["SlipMatch: await SlipMatchAsync(db, companyId, n, ct)"], forbid=["SlipMatch: null"],
+         why=_R264P2_WHY + "264-4-7 ชั้น SlipUnique ของ C-01 ป้อนจากสลิปจริง (เดิมส่ง null ตรง ๆ)"),
+    dict(file="Services/Implementations/PartnerPayablePipeline.cs", method="SlipMatchAsync",
+         must=["SlipKindOf("], must_re=[r"b\.CompanyId\s*==\s*companyId\s*&&\s*!b\.IsDeleted"],
+         why=_R264P2_WHY + "จับคู่กับบัญชีของผู้ซื้อเท่านั้น (กฎ M) · ตัวแปลงผลเดียว"),
+]
+REVIEWER_CASES += [
+    # ถอด QR ออกจากตัวอ่าน (ส่ง null แทน) ⇒ ต้องฟ้อง
+    ("R264P2a", "ReadAsync", "var qr = SlipQrImageDecoder.TryDecode(bytes);", "string? qr = null;", True),
+    # ไม่คัดลอกผลอ่านไป intent ⇒ ต้องฟ้อง
+    ("R264P2b", "TrySubmitAsync", "intent.SlipReadJson = row.SlipReadJson", "_ = row.SlipReadJson", True),
+    # ชั้นสลิปไม่ถูกส่งเข้าค่าแนะนำ ⇒ ต้องฟ้อง
+    ("R264P2c", "ResolveAsync", "SlipPayeeMatch(intent.SlipReadJson, accounts)", "null", True),
+    # ผู้รับไม่ใช่ของเราแต่ไม่บังคับเลือก ⇒ ต้องฟ้อง
+    ("R264P2d", "Suggest", "RequiresChoice: true,\n                SlipWarning", "RequiresChoice: false,\n                SlipWarning", True),
+    # ผู้ซื้อกลับไปส่ง null ⇒ ต้องฟ้อง
+    ("R264P2e", "SourceDecisionAsync", "SlipMatch: await SlipMatchAsync(db, companyId, n, ct)", "SlipMatch: null", True),
+]
 REVIEWER_CASES += [
     # H1: จองการยอมรับโดยไม่ผูกเลข Rev ที่ลูกค้าเห็น ⇒ ต้องฟ้อง
     ("R267g", "Accept", "&& (seenRevision == null || d.RevisionNumber == seenRevision)", "", True),

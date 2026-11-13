@@ -19,7 +19,8 @@ namespace Accounting.Helpers;
 ///   <c>IGatewayAccountResolver</c> ตัวเดิม — <b>เลือกธนาคารไม่ได้</b> (ลงธนาคารด้วยเงินที่ยังไม่เข้า)</item>
 /// <item><see cref="ChoiceProblem"/> — บัญชีที่พนักงานเลือก: ของบริษัทนี้ · เปิดใช้ · สกุลเดียวกับรายการ · ไม่ใช่บัญชีฝากประจำ · มีเลขบัญชี/พร้อมเพย์ ·
 ///   ผูกผังที่ลงรายการได้ (ตัวตรวจเดียวกับแหล่งเงินของเอกสาร <see cref="DocumentMoneyChannel.EvaluateAsync"/>) — ใช้ไม่ได้ = ปฏิเสธพร้อมเหตุ ไม่ตกไปเงินสด</item>
-/// <item><see cref="Suggest"/> — ค่าแนะนำเมื่อไม่ได้เลือก (ลำดับตายตัว · บัญชีผู้รับที่อ่านจากสลิปเองยังไม่มีตัวอ่าน — ไม่แต่งชั้นนี้): <b>แหล่งเงินของเอกสาร</b>
+/// <item><see cref="Suggest"/> — ค่าแนะนำเมื่อไม่ได้เลือก (ลำดับตายตัว): รอบ 264 P2 ชั้นบนสุด <b>ผู้รับบนสลิป</b> (<see cref="SlipAccountMatch"/> ตรงบัญชีเดียว ⇒ แนะนำ ·
+///   อ่านชัดแต่ไม่ใช่บัญชีของบริษัท ⇒ <b>เตือน + ต้องเลือกเอง</b> ไม่แนะนำบัญชีอื่นแทน — คำตัดสิน 264-4-6) → <b>แหล่งเงินของเอกสาร</b>
 ///   (สืบทอดตามเดิม = พฤติกรรมก่อนรอบนี้) → <b>บัญชีที่ระบบแสดงให้ลูกค้าโอน</b> (ตัวเลือกบัญชีของกระดาษ/หน้าชำระ → บัญชีรับโอนของเว็บ) →
 ///   <b>บัญชีรับโอนบัญชีเดียว</b>ของบริษัท → ไม่แนะนำ (หลายบัญชี = ไม่เดา · คงพฤติกรรมเดิม)</item>
 /// <item>ผลที่ตัดสินแล้วถูก<b>ประทับบนรายการชำระ</b> (<c>ReceivingBankAccountId</c> + <c>ReceivingAccountOrigin</c>) ⇒ handler · ส่งต่อใหม่ · หน้ารายการ อ่านค่าเดียวกัน</item>
@@ -46,6 +47,8 @@ public static class SlipReceivingAccount
         SoleTransferAccount = 4,
         /// <summary>เงินผ่านผู้ให้บริการ — ไม่ใช่เรื่องของตัวนี้ (บัญชีพักของ IGatewayAccountResolver)</summary>
         NotApplicable = 5,
+        /// <summary>รอบ 264 P2: ผู้รับบนสลิป (ธนาคาร + เลขท้ายที่เห็น) ตรงบัญชีเดียวของบริษัท — ยังเป็นค่าแนะนำ (สลิปไม่ใช่หลักฐานว่าเงินเข้า · 260-1-6)</summary>
+        SlipPayee = 6,
     }
 
     /// <summary>ใช้กับรายการนี้ไหม — สลิปโอน (ผู้ให้บริการ manual-slip + วิธีแนบสลิป) เท่านั้น</summary>
@@ -54,8 +57,9 @@ public static class SlipReceivingAccount
 
     /// <summary>ข้อเท็จจริงของบัญชีธนาคาร (โหลดด้วย CompanyId · ไม่นับแถวที่ลบ) · <c>LinkedGlProblem</c> = ข้อความจาก
     /// <see cref="DocumentMoneyChannel.EvaluateAsync"/> (null = ผูกผังที่ลงรายการได้)</summary>
+    /// <param name="BankName">รอบ 264 P2: ช่องธนาคาร/เลขบัญชีดิบ ให้ <see cref="SlipAccountMatch"/> (null = ไม่ส่ง — ผู้เรียกเดิมไม่ต้องแก้)</param>
     public sealed record AccountFacts(Guid Id, string Label, bool IsActive, string Currency, string AccountType,
-        bool HasTransferId, string? LinkedGlProblem);
+        bool HasTransferId, string? LinkedGlProblem, string? BankName = null, string? AccountNumber = null);
 
     /// <summary>ใช้รับโอนจากลูกค้าได้ไหม (ไม่สนใจว่าเลือกหรือแนะนำ) — null = ได้</summary>
     public static string? UsableProblem(AccountFacts a, string intentCurrency)
@@ -96,18 +100,33 @@ public static class SlipReceivingAccount
 
     /// <summary>ค่าแนะนำ · <c>BankAccountId</c> = ค่าที่ส่งเป็น <c>OverrideBankAccountId</c> (null = ไม่ส่ง ⇒ สืบทอดแหล่งเงินของเอกสาร/เงินสดตั้งต้น) ·
     /// <c>DisplayBankAccountId</c> = บัญชีที่หน้าแสดงเป็นค่าตั้งต้นของช่อง · <c>InheritsBank</c> = แหล่งเงินของเอกสารเป็นธนาคารเอง (สืบทอดแล้วยอดธนาคารขยับเอง — ไม่ต้อง override)</summary>
+    /// <param name="SlipWarning">รอบ 264 P2: คำเตือนจากผลอ่านสลิป (ผู้รับบนสลิปไม่ใช่บัญชีของบริษัท) · null = ไม่มี</param>
     public sealed record Suggestion(Guid? BankAccountId, Guid? DisplayBankAccountId, Origin Origin, string Reason, bool InheritsBank = false,
-        bool RequiresChoice = false);
+        bool RequiresChoice = false, string? SlipWarning = null);
+
+    /// <summary>รอบ 264 P2 (คำตัดสิน 264-4-6 · H2 สลิปปลอม/โอนผิดบริษัท): ผู้รับบนสลิปอ่านได้ชัดแต่ไม่ตรงบัญชีใดของบริษัท</summary>
+    public const string SlipPayeeNotOursReason = "ปลายทางบนสลิปไม่ใช่บัญชีของบริษัท (อาจเป็นสลิปปลอม/โอนผิดบริษัท/โอนให้บุคคล) — ตรวจรายการเดินบัญชีก่อน · "
+        + "ถ้าเงินเข้าจริงให้เลือกบัญชีที่เห็นเงินเข้าเอง (ระบบไม่แนะนำบัญชีอื่นแทน)";
 
     /// <summary>
     /// **ค่าแนะนำ (pure)** — (หลักฐานจากสลิปเอง เช่นบัญชีผู้รับใน QR ท้ายสลิป ยังไม่มีตัวอ่าน ⇒ ไม่มีชั้นนี้จนกว่าจะอ่านได้จริง · ห้ามแต่ง — F2 ข้อ 3) ·
     /// <paramref name="doc"/> = แหล่งเงินของเอกสาร · <paramref name="shownToCustomer"/> = บัญชีที่ระบบ<b>แสดงจริง</b>ให้ลูกค้าโอน (QR/กล่องโอนของใบ หรือบัญชีรับโอนของเว็บที่เลขตรง) ·
     /// <paramref name="siteRow"/> = สถานะบัญชีรับโอนของเว็บ (มีแถวแต่ไม่ตรง ⇒ ไม่เดา) · <paramref name="usable"/> = บัญชีที่ผ่าน <see cref="UsableProblem"/>
     /// </summary>
-    public static Suggestion Suggest(bool applies, DocChannel doc, Guid? shownToCustomer, SiteRowMatch siteRow, IReadOnlyCollection<Guid> usable)
+    /// <param name="slipPayee">รอบ 264 P2: ผล <see cref="SlipAccountMatch.Match"/> ของ<b>ผู้รับ</b>บนสลิป · null = ไม่มีผลอ่าน ⇒ ผลเท่าเดิมทุกประการ</param>
+    public static Suggestion Suggest(bool applies, DocChannel doc, Guid? shownToCustomer, SiteRowMatch siteRow, IReadOnlyCollection<Guid> usable,
+        SlipAccountMatch.Result? slipPayee = null)
     {
         if (!applies)
             return new Suggestion(null, null, Origin.NotApplicable, "เงินผ่านผู้ให้บริการรับชำระ — ลงบัญชีพักของผู้ให้บริการ (รอรอบโอน)");
+        // รอบ 264 P2 ชั้นบนสุด: ผู้รับบนสลิป · ตรงบัญชีเดียวกับแหล่งเงินของเอกสาร ⇒ ใช้กิ่งเดิม (ผลเท่าเดิม — ไม่ส่ง override เพิ่ม)
+        if (slipPayee is { Kind: SlipAccountMatch.Kind.Unique, AccountId: Guid sid } && usable.Contains(sid)
+            && !(doc.HasChannel && doc.Problem == null && doc.Bank == sid))
+            return new Suggestion(sid, sid, Origin.SlipPayee,
+                "ปลายทางบนสลิป (" + slipPayee.PartyLabel + ") ตรงบัญชีนี้ของบริษัทบัญชีเดียว — ยังเป็นค่าแนะนำ ตรวจเงินเข้าก่อนยืนยัน (สลิปไม่ใช่หลักฐานว่าเงินเข้า)");
+        if (slipPayee?.Kind == SlipAccountMatch.Kind.NotOurs)
+            return new Suggestion(null, null, Origin.None, SlipPayeeNotOursReason + " · บนสลิป: " + slipPayee!.PartyLabel, RequiresChoice: true,
+                SlipWarning: SlipPayeeNotOursReason);
         if (doc.HasChannel)
         {
             // ฝ่ายค้าน 260-2 M4: แหล่งเงินของเอกสารใช้ไม่ได้ ⇒ ไม่แนะนำ (ไม่ปล่อยให้ยืนยันแล้ว "สำเร็จแต่ไม่บันทึกรับชำระ")
@@ -171,6 +190,7 @@ public static class SlipReceivingAccount
         Origin.SoleTransferAccount => "บัญชีรับโอนบัญชีเดียว",
         Origin.None => "ตามแหล่งเงินของเอกสาร/เงินสดตั้งต้น (ไม่มีคำแนะนำ)",
         Origin.NotApplicable => "บัญชีพักของผู้ให้บริการ",
+        Origin.SlipPayee => "บัญชีผู้รับบนสลิป",
         _ => null,
     } : null;
 
@@ -193,6 +213,8 @@ public static class SlipReceivingAccount
     internal static bool SameBank(string? a, string? b)
     {
         if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return true;
+        // รอบ 264 P2 (F2 ข้อ 4): ทั้งสองชื่ออยู่ในตารางกลาง ThaiBankCodes ⇒ เทียบรหัส ธปท. · อื่น ๆ ⇒ กติกาเดิม (คงผลของชื่อที่ไม่อยู่ในตาราง)
+        if (ThaiBankCodes.SameByTable(a, b) is bool byTable) return byTable;
         static string Code(string s) { var m = System.Text.RegularExpressions.Regex.Match(s, @"\(([A-Za-z]{2,10})\)"); return m.Success ? m.Groups[1].Value.ToUpperInvariant() : ""; }
         static string Core(string s) => System.Text.RegularExpressions.Regex.Replace(s, @"\([^)]*\)", "").Replace("ธนาคาร", "").Replace("จำกัด", "").Replace("(มหาชน)", "")
             .Replace(" ", "").Trim().ToLowerInvariant();
@@ -267,7 +289,7 @@ public static class SlipReceivingAccount
             (siteRow, shown) = await SiteTransferMatchAsync(db, companyId, siteId, ct);
         }
 
-        var suggestion = Suggest(applies, docChannel, shown, siteRow, usableIds);
+        var suggestion = Suggest(applies, docChannel, shown, siteRow, usableIds, applies ? SlipPayeeMatch(intent.SlipReadJson, accounts) : null);
         var chosenFacts = chosen is Guid c ? accounts.FirstOrDefault(a => a.Id == c) : null;
         return new Resolution(applies, accounts, usable, Decide(applies, chosen, chosenFacts, intent.Currency, suggestion));
     }
@@ -279,6 +301,15 @@ public static class SlipReceivingAccount
         if (!Applies(intent.ProviderCode, intent.MethodKind)) return null;
         if (StampedDecision(intent.ReceivingBankAccountId, intent.ReceivingAccountOrigin) is { } s) return s.BankAccountId;
         return (await ResolveAsync(db, attachmentsRoot, intent, null, ct)).Decision.BankAccountId;
+    }
+
+    /// <summary>รอบ 264 P2: ผู้รับบนสลิป (ผลอ่านที่ประทับบน intent) ⇒ <see cref="SlipAccountMatch"/> กับ<b>ทุกบัญชีที่ไม่ถูกลบ</b>ของบริษัท (ปิดใช้ยังนับเป็น "ของเรา" —
+    /// กันเตือนผิดว่าไม่ใช่ของบริษัท) · ไม่มีผลอ่าน/ไม่รู้บทบาท ⇒ null (ผลเท่าเดิม)</summary>
+    internal static SlipAccountMatch.Result? SlipPayeeMatch(string? slipReadJson, IReadOnlyList<AccountFacts> accounts)
+    {
+        var stored = OcrSlipText.FromStoredJson(slipReadJson);
+        if (stored?.Payee == null) return null;
+        return SlipAccountMatch.Match(stored.Payee, accounts.Select(a => new SlipAccountMatch.AccountKey(a.Id, a.BankName, a.AccountNumber)).ToList());
     }
 
     // ═══════════════ รอบ 268 (268-1-2): ยืนยันสลิปของออเดอร์หน้าเว็บที่หน้า "คำสั่งซื้อ" (ไม่มีรายการชำระ PaymentIntent) ═══════════════
@@ -314,7 +345,8 @@ public static class SlipReceivingAccount
             var gl = await DocumentMoneyChannel.EvaluateAsync(db, companyId, b.Id, null, MoneyChannelCheck.Post,
                 "แก้ที่หน้า “บัญชีธนาคาร” หรือเลือกบัญชีอื่น", ct);
             list.Add(new AccountFacts(b.Id, $"{b.BankName} {b.AccountNumber} ({b.AccountName})".Trim(), b.IsActive, b.Currency ?? "THB",
-                b.AccountType ?? "", !string.IsNullOrWhiteSpace(b.AccountNumber) || !string.IsNullOrWhiteSpace(b.PromptPayId), gl.Problem));
+                b.AccountType ?? "", !string.IsNullOrWhiteSpace(b.AccountNumber) || !string.IsNullOrWhiteSpace(b.PromptPayId), gl.Problem,
+                b.BankName, b.AccountNumber));
         }
         return list;
     }

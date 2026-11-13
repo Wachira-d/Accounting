@@ -228,6 +228,10 @@ public class PaymentIntent : TenantEntity
     public Guid? ReceivingBankAccountId { get; set; }
     /// <summary>รอบ 260-2: ที่มาของ <see cref="ReceivingBankAccountId"/> (ชื่อ <c>SlipReceivingAccount.Origin</c>) · null = ยังไม่ตัดสิน (รายการก่อนรอบนี้/ยังไม่ยืนยัน)</summary>
     public string? ReceivingAccountOrigin { get; set; }
+    /// <summary>รอบ 264 P2 (คำตัดสิน 264-4-5): ผลอ่านสลิปในเครื่อง (JSON <c>OcrSlipText.ToStoredJson</c> — ธนาคารผู้โอนจาก QR · เลขอ้างอิงจาก QR · บล็อกผู้โอน/ผู้รับ:
+    /// ธนาคาร + เลขปิดบาง + Biller ID · <b>ไม่มีชื่อ</b>) · ผู้เขียน: แชต LINE (<c>LineChatSlipService.TrySubmitAsync</c>) · ผู้อ่าน: <c>SlipReceivingAccount.ResolveAsync</c>
+    /// (ชั้น "ผู้รับบนสลิป") · <c>PartnerPaymentNoticeService.NotifyCoreAsync</c> (ผู้โอน ⇒ แถวแจ้งของผู้ซื้อ) · null = ไม่มีผลอ่าน (ผลเท่าเดิม)</summary>
+    public string? SlipReadJson { get; set; }
 
     public int AttemptCount { get; set; }
     public DateTime? LastPolledAt { get; set; }

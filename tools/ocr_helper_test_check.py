@@ -38,13 +38,18 @@ CLASS_RE = re.compile(r"^\s*public\s+(?:static\s+|sealed\s+|partial\s+)*class\s+
 IDENT = r"(?<![A-Za-z0-9_]){}(?![A-Za-z0-9_])"
 
 
+# รอบ 264 แพ็ก P2: ตัวตัดสินบนสลิปที่ชื่อไม่ขึ้นต้นด้วย Ocr แต่ตัดสินตัวเลข/บทบาทบนสแกนเหมือนกัน — ต้องมีเทสต์จากกระดาษจริงเช่นกัน
+# (QR ตรวจสลิป · ตารางธนาคาร · ตัวจับคู่เลขบัญชีปิดบาง) — เพิ่มไฟล์ที่นี่เมื่อมีตัวตัดสินสลิปตัวใหม่
+EXTRA_SCAN_HELPERS = ("ThaiSlipQr.cs", "ThaiBankCodes.cs", "SlipAccountMatch.cs")
+
+
 def ocr_helper_classes(helpers_dir=HELPERS):
-    """คืน list ของ (ไฟล์, ชื่อคลาส) สำหรับทุก public class ใน Helpers/Ocr*.cs"""
+    """คืน list ของ (ไฟล์, ชื่อคลาส) สำหรับทุก public class ใน Helpers/Ocr*.cs + EXTRA_SCAN_HELPERS"""
     out = []
     if not os.path.isdir(helpers_dir):
         return out
     for f in sorted(os.listdir(helpers_dir)):
-        if not (f.startswith("Ocr") and f.endswith(".cs")):
+        if not ((f.startswith("Ocr") or f in EXTRA_SCAN_HELPERS) and f.endswith(".cs")):
             continue
         txt = open(os.path.join(helpers_dir, f), encoding="utf-8").read()
         for m in CLASS_RE.finditer(txt):
@@ -142,6 +147,9 @@ def self_test():
             "namespace X;\npublic static class OcrOrphan { public static int F() => 1; }\n")
         open(os.path.join(h, "NotOcrHelper.cs"), "w", encoding="utf-8").write(
             "namespace X;\npublic static class NotOcrHelper { }\n")
+        # รอบ 264 P2: ตัวตัดสินสลิปในรายการเพิ่ม ต้องถูกตรวจแม้ชื่อไม่ขึ้นต้นด้วย Ocr
+        open(os.path.join(h, "SlipAccountMatch.cs"), "w", encoding="utf-8").write(
+            "namespace X;\npublic static class SlipAccountMatch { }\n")
         open(os.path.join(t, "OcrGoodThingTests.cs"), "w", encoding="utf-8").write(
             "public class OcrGoodThingTests { void T() { var x = OcrGoodThing.F(); } }\n")
         # ชื่อที่เป็นแค่ prefix ของอีกชื่อ ต้องไม่นับว่าอ้างถึง (OcrOrphan vs OcrOrphanage)
@@ -161,7 +169,11 @@ def self_test():
         if "NotOcrHelper" in names:
             print("❌ self-test: ไฟล์ที่ไม่ใช่ Ocr* ถูกตรวจ"); ok = False
         else:
-            print("✅ self-test: ตรวจเฉพาะ Helpers/Ocr*.cs")
+            print("✅ self-test: ตรวจเฉพาะ Helpers/Ocr*.cs (+ รายการตัวตัดสินสลิป)")
+        if "SlipAccountMatch" not in names:
+            print("❌ self-test: ตัวตัดสินสลิปในรายการเพิ่ม (SlipAccountMatch) ที่ไม่มีเทสต์ไม่ถูกฟ้อง"); ok = False
+        else:
+            print("✅ self-test: ตัวตัดสินสลิปในรายการเพิ่มที่ไม่มีเทสต์ถูกฟ้อง")
         if not ratchet_self_test(verbose=True):
             ok = False
         return 0 if ok else 1

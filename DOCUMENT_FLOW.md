@@ -3257,6 +3257,29 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   L8 ปีสองหลักตัวเดียว `OcrSlipText.TwoDigitYear` · L9 ปิดสวิตช์ ⇒ ปุ่มเดิมกดไม่ได้ (คิวพนักงาน) · ป้ายไฟล์แนบ `line-chat-staff`
 - เทสต์ `LineChatSlipRound260Tests` · Db `LineChatSlipRound260DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 91d7fdde (ฝ่ายค้าน: 65c031ed)
 
+### 2.12g-264-P2 รอบ 264 แพ็ก P2 "อ่านบัญชีจากสลิป — QR ตรวจสลิป + ผู้โอน/ผู้รับ" (`erp-review/2026-11-12/team-264-a2b-design.md` §3.2/§4 · คำตัดสิน 264-4-1…8)
+
+- **QR (264-4-1)** — `TesseractSlipImageReader.ReadAsync` ถอด QR ในเครื่องก่อน OCR (`SlipQrImageDecoder` = SkiaSharp → ZXing.Net 0.16.9 · ไม่เรียกเครือข่าย · ล้ม = null) ⇒
+  `OcrSlipText.Parse(text, year, qr)` ⇒ `ThaiSlipQr.Parse` (TLV `00`{`00`=`000001` · `01`=ธนาคาร**ผู้โอน** · `02`=เลขอ้างอิงของธนาคาร} `51`=TH `91`=CRC-16/CCITT-FALSE —
+  ยืนยันกับสลิปจริง 6 ใบ) · QR ถูก ⇒ `Reading.Ref` = เลขจาก QR + `LooksLikeSlip` · ไม่มี tessdata แต่ QR ถอดได้ ⇒ ผลอ่านมีแต่ QR (ไม่มียอด ⇒ คิวพนักงานตามเดิม) ·
+  ธนาคารที่มี QR บนกระดาษจริง: กรุงไทย · SCB · K+ โอน · ไม่มี: K+ จ่ายบัตร · ttb · KBIZ · **QR ไม่มียอด/เลขบัญชี/ชื่อ** · ไม่มี AI (เลขบัญชี) ⇒ kill-switch ไม่มีผล
+- **คู่กรณี (264-4-3)** — `OcrSlipText.Parties`: บทบาทจากป้ายคู่ (จาก/From → ไปยัง/To) หรือ QR ตรงบล็อกธนาคารเดียว · ไม่มีทั้งสอง ⇒ ไม่รู้ (ไม่เดาจากลำดับ) ·
+  บล็อก = ธนาคาร (`ThaiBankCodes.FromBankLine`) + เลขปิดบาง (`ClassifyMask` — เก็บเฉพาะหลักที่เห็น + ตำแหน่ง) + Biller ID + ชนิด (บัญชี/พร้อมเพย์/บัตร/บิล) ·
+  ผลอ่าน (ไม่มีชื่อ) เก็บที่ `LineChatSlips.SlipReadJson` ⇒ คัดลอกไป `PaymentIntents.SlipReadJson` ใน `LineChatSlipService.TrySubmitAsync` (ทุกทางของ LINE) · ตัวเขียน/อ่านเดียว `OcrSlipText.ToStoredJson/FromStoredJson` (264-4-5)
+- **จับคู่ (264-4-4)** — `SlipAccountMatch.Match` ตัวเดียวทั้งสองฝั่ง: ธนาคารตรง + หลักที่เห็น ≥ 3 ตรงตำแหน่งนับจากขวา + เหลือบัญชีเดียว ⇒ Unique ·
+  หลาย ⇒ Many · อ่านชัดแต่ไม่ตรง (บัญชีของเราข้อมูลครบ) ⇒ NotOurs · บัตร/บิล/พร้อมเพย์ไปเบอร์ ⇒ NotAnAccount · อื่น ๆ ⇒ Unreadable
+- **ฝั่งผู้รับเงิน A (264-4-6)** — `SlipReceivingAccount.ResolveAsync` ⇒ `SlipPayeeMatch(intent.SlipReadJson, บัญชีที่ไม่ถูกลบ)` ⇒ `Suggest` ชั้นบนสุด:
+  Unique + ใช้รับโอนได้ ⇒ ค่าแนะนำ origin `SlipPayee` (ยังต้องกดยืนยัน · ตรงแหล่งเงินของเอกสาร ⇒ กิ่งเดิม) · NotOurs ⇒ `SlipWarning` + `RequiresChoice`
+  (ไม่เลือก = 400 พร้อมเหตุ · เลือกเองได้ · ไม่แนะนำบัญชีอื่น) · หน้า `payment-intents.html` แสดงเหตุจาก `receiving-accounts` (`slipWarning` · ป้ายตัวเลือกว่าง "ต้องเลือกบัญชีที่เงินเข้าเอง")
+- **ฝั่งผู้จ่าย B (264-4-7)** — `PartnerPaymentNoticeService.NotifyCoreAsync` คัดลอกผู้โอน (ธนาคาร + เลขปิดบาง เท่านั้น) จาก intent ของ A ⇒
+  `PartnerPaymentNotices.SlipPayerBankCode/SlipPayerAccountMask` ⇒ `PartnerPayablePipeline.SourceDecisionAsync` ⇒ `SlipMatchAsync` ⇒ `SlipKindOf` ⇒
+  `PartnerPaySourceAccount` ชั้น `SlipUnique` (เดิมส่ง null) · กติกาขัดกันของ 264-3-1 คงเดิม
+- **ยังไม่ทำ (backlog)** — OCR สลิปที่แนบผ่านพอร์ทัล/หน้าชำระ · ยืนยันด้วยชื่อ · ตรวจรายการกับธนาคาร/ผู้ให้บริการตรวจสลิป (ความยินยอม + RoPA + kill-switch) ·
+  โปรไฟล์ต่อแอปของ K+ ที่โอนในธนาคารเดียวกัน (ไม่มีป้าย · QR ตรงทั้งสองบล็อก ⇒ ไม่รู้บทบาท)
+- **migration** `Round264SlipReadMigration` (ADD COLUMN IF NOT EXISTS · แถวเดิม NULL = ผลเท่าเดิม · ไม่ backfill)
+- เทสต์ `ThaiSlipQrTests` · `OcrSlipTextPartiesTests` · `SlipAccountMatchTests` · `SlipReceivingAccountTests` (ชั้นสลิป) · `PartnerPaySourceSlipRound264Tests` ·
+  ชุดกระดาษจริง 10 ใบ `Accounting.Tests/SlipCorpusRound264.cs` (redact) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit e6caad8c
+
 ### 2.12g-264-P1 รอบ 264 แพ็ก P1 "ความยินยอมงานอัตโนมัติกับคู่ค้า" (erp-review/2026-11-12/team-264-a2b-design.md §2 · คำตัดสิน 264-2-1…3)
 
 - **หลัก**: ไม่มีใครลงบัญชีในสมุดของอีกบริษัท — การบันทึกในสมุด B เกิดจากท่อของ B เองภายใต้ความยินยอมของ B เท่านั้น · A ได้แค่ "ขอ" (F9)
@@ -3389,7 +3412,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   มีเลขบัญชี/พร้อมเพย์ · ผูกผังที่ลงรายการได้ (`DocumentMoneyChannel.EvaluateAsync`) · ใช้ไม่ได้ = 400 พร้อมเหตุ (ไม่ตกไปเงินสด) ·
   ค่าแนะนำ (ลำดับตายตัว): **แหล่งเงินของเอกสาร** (สืบทอดตามเดิม — ไม่ส่ง override) → **บัญชีที่แสดงให้ลูกค้าโอน** (`PaymentQrService.PickForDocumentAsync` ตัวเดียวกับกล่องโอนของหน้าชำระ
   → บัญชีรับโอนของเว็บแถวแรกที่เลขบัญชีตรงบัญชีธนาคาร) → **บัญชีรับโอนบัญชีเดียว**ของบริษัท → ไม่แนะนำ (หลายบัญชี = ไม่เดา ⇒ แหล่งเงินของเอกสาร/เงินสด 111 ตามเดิม) ·
-  บัญชีผู้รับที่อ่านจากสลิปเองยังไม่มีตัวอ่าน (ไม่แต่ง) · ตัดสินแล้ว**ประทับ** `PaymentIntent.ReceivingBankAccountId` + `ReceivingAccountOrigin` + audit `SlipReceivingAccountDecided`
+  รอบ 264 P2: ชั้นบนสุด **ผู้รับบนสลิป** (`SlipPayee` · ตรงบัญชีเดียว ⇒ แนะนำ · ไม่ใช่บัญชีของบริษัท ⇒ เตือน + ต้องเลือกเอง — ดู §2.12g-264-P2) · ตัดสินแล้ว**ประทับ** `PaymentIntent.ReceivingBankAccountId` + `ReceivingAccountOrigin` + audit `SlipReceivingAccountDecided`
   (เลือก vs แนะนำ) ใต้ล็อกต่อรายการก่อน `ApplyChargeAsync` ⇒ `DocumentPaymentHandler` ส่ง `OverrideBankAccountId` ⇒ `CreatePaymentAsync` (JE Dr ผังที่บัญชีผูก · `Payment.BankAccountId` ·
   ยอดธนาคาร · ใบเสร็จอัตโนมัติสืบทอด `BankAccountId` = "ชำระโดย" · ผู้สมัครกระทบยอดธนาคารของบัญชีนั้น) · ส่งต่อใหม่ใช้ค่าที่ประทับ · รายการที่ยังไม่ประทับ (ก่อนรอบนี้) = ค่าแนะนำ ·
   สลิปการจองนัดหมาย (`SiteBookingPaymentHandler` — หน้าการจองเลือกไม่ได้) = ค่าแนะนำตัวเดียวกัน (บัญชีรับโอนของเว็บนั้น → บัญชีเดียว) ส่งเป็น `RecordBookingPaymentRequest.BankAccountId` ·
