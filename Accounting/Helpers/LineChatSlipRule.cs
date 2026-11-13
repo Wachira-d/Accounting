@@ -290,6 +290,33 @@ public static class LineChatSlipRule
             + untilUtc.AddHours(7).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture) + " น.)";
     }
 
+    /// <summary>รอบ 270 (268 ตามต่อ · คำตัดสิน 270-1-2): กุญแจของ "การผูกที่ข้อความนี้พูดถึง" — ประทับบนแถวคิวตอนเข้าคิว ·
+    /// ตอนส่งเทียบกับค่าปัจจุบันของสลิป (ผูกใหม่ = กุญแจเปลี่ยน) · ไม่ได้ผูก = null</summary>
+    public static string? LinkKey(Guid? documentId, Guid? paymentIntentId)
+        => documentId is Guid d && paymentIntentId is Guid i ? d.ToString("N") + ":" + i.ToString("N") : null;
+
+    /// <summary>รอบ 270 (pure): ถึงคิวแล้ว "การผูกยังเป็นอันเดิมไหม" — null = ส่งได้ · ไม่ใช่ null = ปิดแถวคิวพร้อมเหตุนี้ (ไม่ส่ง) ·
+    /// <paramref name="expectedKey"/> null = แถวที่เข้าคิวก่อนรอบ 270 (ไม่มีกุญแจ) ⇒ ตรวจเฉพาะสถานะ ·
+    /// <paramref name="intentStatus"/> null = ไม่พบรายการรอยืนยัน · รายการที่ถูกปฏิเสธ/หมดอายุ/คืนเงิน = ไม่ใช่การผูกที่มีผลแล้ว</summary>
+    public static string? LinkedNoticeStaleReason(string? expectedKey, string? slipStatus, Guid? slipDocumentId, Guid? slipIntentId,
+        Accounting.Models.Enums.PaymentIntentStatus? intentStatus, Guid? intentDocumentId)
+    {
+        if (slipStatus == null) return "ไม่ส่ง: ไม่พบสลิป (ถูกลบก่อนถึงคิวแจ้งเตือน)";
+        if (slipStatus == Statuses.Dismissed) return "ไม่ส่ง: พนักงานปิดสลิปนี้แล้วก่อนถึงคิวแจ้งเตือน";
+        if (slipStatus != Statuses.Assigned) return $"ไม่ส่ง: สลิปไม่ได้อยู่ในสถานะ \"ผูกเอกสารแล้ว\" ({slipStatus}) ก่อนถึงคิวแจ้งเตือน";
+        var current = LinkKey(slipDocumentId, slipIntentId);
+        if (current == null) return "ไม่ส่ง: สลิปไม่ได้ผูกเอกสาร/รายการรอยืนยันแล้ว";
+        if (expectedKey != null && !string.Equals(expectedKey, current, StringComparison.Ordinal))
+            return "ไม่ส่ง: สลิปถูกผูกใหม่กับเอกสาร/รายการอื่นหลังเข้าคิว (ข้อความเดิมพูดถึงการผูกที่ไม่มีผลแล้ว)";
+        if (intentStatus == null) return "ไม่ส่ง: ไม่พบรายการรอยืนยันของสลิป (ถูกลบก่อนถึงคิวแจ้งเตือน)";
+        if (intentStatus is Accounting.Models.Enums.PaymentIntentStatus.Failed or Accounting.Models.Enums.PaymentIntentStatus.Expired
+            or Accounting.Models.Enums.PaymentIntentStatus.Refunded or Accounting.Models.Enums.PaymentIntentStatus.PartiallyRefunded)
+            return $"ไม่ส่ง: รายการรอยืนยันของสลิปถูกปฏิเสธ/ปิดแล้ว ({intentStatus}) ก่อนถึงคิวแจ้งเตือน";
+        if (intentDocumentId != null && intentDocumentId != slipDocumentId)
+            return "ไม่ส่ง: รายการรอยืนยันของสลิปถูกย้ายไปเอกสารอื่นหลังเข้าคิว";
+        return null;
+    }
+
     /// <summary>268-1-8: ผูกภายในช่วงนี้หลังสลิปเข้ามา = ยังเป็น "คำตอบต่อสิ่งที่ลูกค้าเพิ่งส่ง" (ไม่รอชั่วโมงเงียบ) · นานกว่านี้ = ข้อความที่พนักงานส่งทีหลัง (เคารพชั่วโมงเงียบ)</summary>
     public static readonly TimeSpan LinkedNoticeReplyWindow = TimeSpan.FromMinutes(30);
 

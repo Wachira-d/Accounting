@@ -217,8 +217,36 @@ public class AutopilotService : IAutopilotService
         list.AddRange(await CustomerCreditWorkQueue.AutopilotIssuesAsync(_db, companyId, nowUtc, ct));
         // รอบ 264 P5 (คำตัดสิน 264-5-4): หลักฐานภาษีจากคู่ค้า NextAcc — ม.82/3 ใกล้ครบ · การแจ้งชำระที่ค้าง (ด่วนเมื่อ ภ.ง.ด.53 ใกล้กำหนด) · 50 ทวิ ที่ส่งให้คู่ค้าไม่ได้ (เหตุบนใบ)
         list.AddRange(await PartnerTaxEvidenceIssuesAsync(companyId, nowUtc, ct));
+        // รอบ 270 (ฝ่ายค้าน 266-C L2 · คำตัดสิน 270-1-4): ใบลดหนี้ร่างที่ตัวช่วยใบซ้ำสร้างแล้วยังไม่อนุมัติ (ภาษีขายนับสองครั้งระหว่างนั้น) — คิวเดิมของ Autopilot ไม่ใช่ระบบใหม่
+        list.AddRange(await DuplicateSaleCreditNoteDraftIssuesAsync(companyId, nowUtc, ct));
 
         return list.OrderByDescending(i => i.At).ToList();
+    }
+
+    /// <summary>รอบ 270 (270-1-4) — อ่านอย่างเดียว · ใบลดหนี้ที่ audit ของตัวช่วยใบซ้ำสร้าง (<see cref="DuplicateSalePolicy.CreditNoteFromAudit"/> — ครอบใบก่อนรอบนี้ด้วย)
+    /// ที่ยังร่าง/รออนุมัติ · ทุก query ผูก CompanyId · ใบที่อนุมัติ/ยกเลิก/ลบแล้วหลุดจากคิวเอง (ไม่มีสถานะให้ประทับ)</summary>
+    private async Task<List<AutopilotIssueDto>> DuplicateSaleCreditNoteDraftIssuesAsync(Guid companyId, DateTime nowUtc, CancellationToken ct)
+    {
+        var audits = await _db.AuditLogs.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.EntityType == "Document" && a.NewValues != null && a.NewValues.Contains(DuplicateSalePolicy.CreditNoteAuditAction))
+            .OrderByDescending(a => a.Timestamp).Take(200)
+            .Select(a => new { a.NewValues, a.Timestamp }).ToListAsync(ct);
+        var made = audits.Select(a => (Facts: DuplicateSalePolicy.CreditNoteFromAudit(a.NewValues), a.Timestamp))
+            .Where(x => x.Facts != null).GroupBy(x => x.Facts!.CreditNoteId)
+            .ToDictionary(g => g.Key, g => (Facts: g.First().Facts!, At: g.Min(x => x.Timestamp)));
+        if (made.Count == 0) return new List<AutopilotIssueDto>();
+        var ids = made.Keys.ToList();
+        var pending = DuplicateSalePolicy.CreditNotePendingStatuses;
+        var cns = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && ids.Contains(d.Id) && d.DocumentType == DocumentType.CreditNote && pending.Contains(d.Status))
+            .Select(d => new { d.Id, d.DocumentNumber, d.Status }).ToListAsync(ct);
+        return cns.Where(c => DuplicateSalePolicy.CreditNoteStillPending(c.Status)).Take(50).Select(c =>
+        {
+            var (facts, at) = made[c.Id];
+            return new AutopilotIssueDto(DuplicateSalePolicy.CreditNoteDraftIssueKind, DuplicateSalePolicy.CreditNoteDraftTitle(c.DocumentNumber, facts.InvoiceNumber),
+                DuplicateSalePolicy.CreditNoteDraftDetail(facts.InvoiceNumber, facts.CashSaleNumber, at, nowUtc), DateTime.SpecifyKind(at, DateTimeKind.Utc), c.Id,
+                "เปิดใบลดหนี้ร่าง", DocHref(c.Id), null, null, null);
+        }).ToList();
     }
 
     /// <summary>รอบ 264 P5 (คำตัดสิน 264-5-4) — อ่านอย่างเดียว · ทุก query ผูก CompanyId · ตัวตัดสิน <see cref="PartnerTaxEvidenceAlerts"/> ·

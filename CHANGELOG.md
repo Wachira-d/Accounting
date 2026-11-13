@@ -7230,3 +7230,7 @@ _รอบ 267 แพ็ก P3 "📤 ส่งให้ลูกค้า" + ไ
 ปุ่มเดียวแทน 6 ปุ่ม · `share-options` / `share` / `customer-timeline` · `CustomerShareService` orchestrate ลิงก์ (`EnsureCustomerLinkAsync`) · เปิดช่วงตอบรับ (`IssueLinkAsync`) · อีเมล (`SendDocumentRoutedAsync` + บล็อกลิงก์หน้าเอกสาร) · LINE (`DocumentLineSendService.SendAsync`) ผลแยกต่อช่องทาง ·
 `DocumentLineSendRule.PageLinkAllowed` ตัวเดียว (กลุ่มซ่อนยอด = ไม่มีปุ่ม · ใบที่ตอบรับได้ = 1:1 เท่านั้น) · การ์ด "ดู/ยอมรับ" + `s` แถวคิว · ฉบับเซ็นกลับ LINE เดิม (งาน outbox) · ลิงก์เซ็นติ๊กให้ LINE 1:1 ได้ ·
 เทสต์ pure +13 (ปรับ LineRound259 3) · Db +2 · กติกา R267c +12 ข้อ + 6 เคสฝ่ายค้าน — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) · commit (เติมในคอมมิตตามหลัง)_
+_รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 · DOCUMENT_FLOW §2.12g-270 · TEST_PLAN P270-1…6): 268 L7 คืนมัดจำการจองหลายงวดตามบัญชีของแต่ละงวด (ไม่รู้ ⇒ 409 ให้เลือก · ช่อง "คืนจากบัญชี" สองหน้า) ·
+คิว `linechat.slip-linked` ประทับ/ตรวจการผูกเดิมก่อนส่ง (คอลัมน์ `DeferredNotifications.ExpectedKey`) · ผล LINE ไม่มีสถานะ HTTP จำแนกด้วย `LinePushOutcome` (ถาวรไม่ส่งซ้ำ) ·
+266-C L2 ใบลดหนี้ร่างของตัวช่วยใบซ้ำขึ้น Autopilot · 269 ข้อ 3 ใบกำกับ OCR VAT 0% ทั้งใบที่กระดาษไม่บอกอัตราศูนย์ ⇒ `[VAT-ZERO-UNREAD]` รอตรวจ ·
+เทสต์ pure +8 · Db +7 · กติกา R270 +9 ข้อ + ฝ่ายค้าน R270-1…4 — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) · commit ee79eb2b_

@@ -20519,6 +20519,55 @@ REVIEWER_CASES += [
      "await _documents.CreatePaymentAsync(companyId, null!, actor, PaymentEntrySource.Manual); credit = null!;", True),
 ]
 
+# ── รอบ 270 (งานค้าง 266/268/269 · คำตัดสิน 270-1-1…5 ใน erp-review/2026-09-29/DECISIONS.md) ──
+_R270_WHY = "รอบ 270: "
+RULES += [
+    dict(file=DOC, method="RefundDepositAsync",
+         must=["BookingDepositRefundPlanAsync(", "BookingDepositInstalmentChannel.RefundChoiceCode", "foreach (var leg in moneyLegs)",
+               "BookingDepositInstalmentChannel.RefundMoneyLineDescription"],
+         before=[("BookingDepositRefundPlanAsync(", "_db.JournalEntries.Add(je)")],
+         why=_R270_WHY + "270-1-1 (ฝ่ายค้าน 268 L7) คืนมัดจำการจองหลายงวด: ขาเงินออกตามบัญชีของแต่ละงวด · ไม่รู้บัญชี ⇒ ให้ผู้ใช้เลือก (ไม่ใช่หัวใบทั้งก้อน)"),
+    dict(file="Services/Implementations/DocumentService.BookingDepositRefund.cs", method="BookingDepositRefundPlanAsync",
+         must=["BookingDepositInstalmentChannel.PlanRefund(", "BookingDepositInstalmentChannel.ReferenceFor(", "DocumentMoneyChannel.ResolvePostingAccountAsync(",
+               "b.CompanyId == companyId", "p.CompanyId == companyId", "j.CompanyId == companyId", "BookingDepositInstalmentChannel.RefundMoneyLineDescription",
+               "!r.ChannelStamped"],
+         forbid=["SaveChangesAsync("],
+         why=_R270_WHY + "270-1-1 แผนจากตัวแบ่งเดียว · งวดก่อนนับผังของงวดเมื่อ JE ย้ายเงินลงแล้วเท่านั้น · ไม่ประทับ = ไม่รู้ · อ่านอย่างเดียว · tenant"),
+    dict(file=_R268_LCS, method="DispatchLinkedNoticeAsync",
+         must=["LineChatSlipRule.LinkedNoticeStaleReason(", "d.CompanyId == companyId", "AddChainedAuditLog(", "i.CompanyId == companyId"],
+         before=[("LineChatSlipRule.LinkedNoticeStaleReason(", "NotifyChatLinkedAsync(")],
+         why=_R270_WHY + "270-1-2 ถึงคิวแล้วการผูกต้องยังเป็นอันเดิม (ปิด/ผูกใหม่/ปฏิเสธ ⇒ ปิดแถวพร้อมเหตุ ไม่ส่ง) · ตรวจก่อนส่ง"),
+    dict(file=_R268_LCS, method="QueueLinkedNoticeAsync", must=["LineChatSlipRule.LinkKey(row.DocumentId, row.PaymentIntentId)"],
+         why=_R270_WHY + "270-1-2 ประทับการผูกที่ข้อความพูดถึงบนแถวคิว"),
+    dict(file=_R268_LCS, method="NotifyChatLinkedAsync", must=["LinePushOutcome.Classify(", "LinePushVerdict.Retry"], forbid=["r.HttpStatus is null"],
+         why=_R270_WHY + "270-1-3 จำแนกผล LINE ด้วยตัวตัดสินเดียว — ไม่มีสถานะ HTTP ที่ไม่ใช่เครือข่ายล้ม = ถาวร ไม่ลองซ้ำ"),
+    dict(file="Services/Implementations/AutopilotService.cs", method="IssuesAsync", must=["DuplicateSaleCreditNoteDraftIssuesAsync("],
+         why=_R270_WHY + "270-1-4 (ฝ่ายค้าน 266-C L2) ใบลดหนี้ร่างของตัวช่วยใบซ้ำอยู่ในคิวเรื่องที่ระบบทำต่อไม่ได้"),
+    dict(file="Services/Implementations/AutopilotService.cs", method="DuplicateSaleCreditNoteDraftIssuesAsync",
+         must=["DuplicateSalePolicy.CreditNoteFromAudit(", "a.CompanyId == companyId", "d.CompanyId == companyId", "DuplicateSalePolicy.CreditNoteStillPending(",
+               "DuplicateSalePolicy.CreditNotePendingStatuses"],
+         forbid=["SaveChangesAsync("],
+         why=_R270_WHY + "270-1-4 อ่านจาก audit ของตัวช่วย (ครอบใบก่อนรอบนี้) · ค้าง = ร่าง/รออนุมัติจากตัวตัดสินเดียว · tenant · อ่านอย่างเดียว"),
+    dict(file=_R266C_SVC, method="ExecuteLockedAsync", must=["DuplicateSalePolicy.CreditNoteAuditAction"],
+         why=_R270_WHY + "270-1-4 ชื่อขั้นใน audit ตัวเดียวกับตัวอ่านคิว (สะกดต่าง = คิวว่างเงียบ)"),
+    dict(file="Services/Implementations/OcrService.cs", method="BuildScanLinesAsync",
+         must=["OcrZeroVatTaxInvoiceGuard.Check(", "document.DocumentType == DocumentType.TaxInvoice"],
+         before=[("OcrZeroVatTaxInvoiceGuard.Check(", "OcrTotalAnchor.DocumentOverstatement(")],
+         why=_R270_WHY + "270-1-5 (ฝ่ายค้าน 269 ข้อ 3) ใบกำกับ VAT 0% ทั้งใบที่กระดาษไม่บอกอัตราศูนย์ ⇒ หยุดอนุมัติเอง (ทุกเส้นสร้างบรรทัด)"),
+]
+REVIEWER_CASES += [
+    # 270-1-1: กลับไปคืนจากหัวใบ/111 ทั้งก้อน (ข้ามแผนต่องวด) ⇒ ต้องฟ้อง
+    ("R270-1", "RefundDepositAsync", "else if (await BookingDepositRefundPlanAsync(companyId, doc, request.Amount) is { } refundPlan)",
+     "else if (await Task.FromResult<Accounting.Helpers.BookingDepositInstalmentChannel.RefundPlan?>(null) is { } refundPlan)", True),
+    # 270-1-2 ทิศตรงข้าม: จัดบรรทัดใหม่ของการเรียกตัวตรวจ ⇒ ต้องไม่ฟ้อง
+    ("R270-2", "DispatchLinkedNoticeAsync", "if (LineChatSlipRule.LinkedNoticeStaleReason(expected, row?.Status,",
+     "if (LineChatSlipRule.LinkedNoticeStaleReason(\n                expected, row?.Status,", False),
+    # 270-1-3: กลับไปถือ "ไม่มีสถานะ HTTP" เป็นชั่วคราว ⇒ ต้องฟ้อง
+    ("R270-3", "NotifyChatLinkedAsync", "cls.Verdict == LinePushVerdict.Retry);", "!r.Ok && (r.TransportError || r.HttpStatus is null or >= 500 or 429));", True),
+    # 270-1-5: ถอดด่านใบกำกับ VAT 0% ⇒ ต้องฟ้อง
+    ("R270-4", "BuildScanLinesAsync", "if (Accounting.Helpers.OcrZeroVatTaxInvoiceGuard.Check(", "if (NoGuard(", True),
+]
+
 
 def main() -> int:
     errs = []
