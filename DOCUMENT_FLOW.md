@@ -5148,7 +5148,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **เทสต์:** pure `DuplicateSalePolicyTests` (`KeepCashSale_VoidsInvoiceWhenAllowed` · `KeepCashSale_CreditNoteWhenFiled` · `KeepInvoice_VoidsCashSaleAndRecordsPaymentOnSameDate` ·
   `NeitherVoidable_RequiresAccountant` · `Advice_NotInVatReport_NoTaxSeries` · `Chain_ShowsCreditAllocationNode` + ทิศตรงข้าม) · Db `DuplicateSaleDbTests` (ชื่อเดียวกัน 5 ชื่อบนฐานจริง — ยกเว้น NeitherVoidable +
   `Stale_InvoicePaidAfterPreview_Refused_NothingVoided` · `OtherContact_Refused_NothingTouched` · `Candidates_SameContactSameAmountOnly_TenantIsolated`) · กติกา R266C ใน `tools/required_call_site_check.py`
-  Last verified commit (เติมในคอมมิตตามหลัง) — ยังไม่ได้คอมไพล์ในเครื่องนี้
+  Last verified `commit 50482695` — dotnet build + test (pure) ผ่านในเครื่องนี้ · Db test รอผล job db-test บน CI
 
 ### 3.5 Void / Cancel
 - **Method**: `VoidDocumentAsync` (`:1959`) — **cascade 7+ขั้น**:
