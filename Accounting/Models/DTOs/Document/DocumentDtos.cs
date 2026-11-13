@@ -1149,7 +1149,10 @@ public record DocumentResponse(
     string PostPayReceiptMode = global::Accounting.Helpers.AutopilotSettingsResolver.Inherit,
     string PostPayPartialMode = global::Accounting.Helpers.AutopilotSettingsResolver.Inherit,
     /// <summary>ใบชนิดนี้ตั้งค่าต่อใบได้ไหม (เซิร์ฟเวอร์ตัดสิน — <c>PostPaymentAutomationPolicy.DocumentLayerAllowed</c>) · หน้าเว็บแสดง/ซ่อนช่องตามค่านี้</summary>
-    bool PostPaySettingApplies = false);
+    bool PostPaySettingApplies = false,
+    /// <summary>รอบ 267 P3: แสดงปุ่ม "📤 ส่งให้ลูกค้า" ไหม (เซิร์ฟเวอร์ตัดสิน — <c>CustomerShareRule.ButtonOffered</c> · ด่านชนิด/สถานะเดียวกับตัวออกลิงก์หน้าเอกสาร) ·
+    /// เหตุละเอียด (ฝั่งใบลดหนี้ · ใบค่าบริการผู้เช่า) อยู่ในหน้าต่าง <c>share-options</c></summary>
+    bool CanShareToCustomer = false);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);

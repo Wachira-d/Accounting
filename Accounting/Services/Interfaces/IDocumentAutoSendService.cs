@@ -38,6 +38,10 @@ public interface IDocumentPayLinkService
     /// ต่างจาก <see cref="CurrentUrlAsync"/> (ชั้นจ่าย — ใบที่จ่ายไม่ได้คืน null)</summary>
     Task<string?> CurrentCustomerUrlAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
 
+    /// <summary>รอบ 267 P3 — เหตุที่ออกลิงก์หน้าเอกสารให้ใบนี้ไม่ได้ (null = ได้ · อ่านอย่างเดียว) — ด่านเดียวกับ <see cref="EnsureCustomerLinkAsync"/>
+    /// (<see cref="CustomerDocPage.IssueRefusal"/> บนข้อเท็จจริงชุดเดียวกัน) · หน้าต่าง "ส่งให้ลูกค้า" แสดงเหตุก่อนผู้ใช้กดส่ง</summary>
+    Task<string?> CustomerLinkRefusalAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
+
     /// <summary>รอบ 267 P1 — view model ของหน้าเอกสารในโหมดที่ไม่ใช้ token ของใบ (พอร์ทัล · การ์ด LINE · พรีวิวของพนักงาน) ·
     /// <b>ผู้เรียกต้องพิสูจน์สิทธิ์ก่อน</b> (JWT พอร์ทัล + ลูกค้าเห็นได้ · HMAC แถวคิว LINE · สิทธิ์อ่านเอกสารของพนักงาน) ·
     /// ไม่มีเป้าหมายรายการชำระ (จ่าย/สลิปทำได้เฉพาะโหมดลิงก์) · null = ไม่พบ/ใบที่ลูกค้าไม่เห็น</summary>

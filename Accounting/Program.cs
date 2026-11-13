@@ -903,6 +903,9 @@ builder.Services.AddScoped<Accounting.Services.Implementations.Payroll.ITipPayou
     Accounting.Services.Implementations.Payroll.TipPayoutService>();
 // รอบ 259 (A-L1): DocumentLineDeliveryService ถูกลบ (ไม่มีผู้เรียก · อ่าน Contact.LineUserId ที่ย้ายออกแล้ว) — ส่งเอกสารทาง LINE เองจากหน้าเอกสาร = DocumentLineSendService
 builder.Services.AddScoped<IDocumentLineSendService, DocumentLineSendService>();
+// รอบ 267 P3: หน้าต่าง "📤 ส่งให้ลูกค้า" (orchestrate ลิงก์ · ช่วงตอบรับ · อีเมล · LINE ตัวเดิม) + ไทม์ไลน์ลูกค้า (read model)
+builder.Services.AddScoped<ICustomerShareService, CustomerShareService>();
+builder.Services.AddScoped<ICustomerTimelineService, CustomerTimelineService>();
 builder.Services.AddScoped<IPayslipLineDeliveryService, PayslipLineDeliveryService>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
 // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินต่อเอกสาร (ไม่พึ่ง IDocumentService — EmailScheduleService ใช้ได้) + งานหลังรับชำระ (ออก/ส่งใบเสร็จ)

@@ -259,6 +259,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.SignRequestMigration.Statements());   // รอบ 240 — ลิงก์ให้ลูกค้าเซ็น: webhook ต่อเอกสาร · อีเมลขอเซ็น/เตือน · outbox เหตุการณ์ลูกค้าเซ็น
         list.AddRange(Accounting.Helpers.DocumentAutoSendMigration.Statements());   // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · งานหลังรับชำระ (ใบเสร็จ/ขอ 50 ทวิ)
         list.AddRange(Accounting.Helpers.CustomerSignMigration.Statements());   // รอบ 267 P2 — ผู้ลงนาม + บัญชีหลักฐาน (append-only) + ฉบับที่ลูกค้าเซ็น
+        list.AddRange(Accounting.Helpers.CustomerShareMigration.Statements());   // รอบ 267 P3 — ส่งให้ลูกค้า: ลิงก์หน้าเอกสารบนการ์ด LINE · ฉบับเซ็นกลับทาง LINE
         list.AddRange(Accounting.Helpers.CustomerDocPage.LegacyTokenHashSql);   // รอบ 267 P1 (267-1-3) — token ดิบของลิงก์ยอมรับ/เซ็นรับรุ่นก่อน ⇒ hash ในที่เดิม (รันซ้ำได้ · ฐานไม่เหลือ token ดิบ)
         list.Add(OneShotDataFixesTableSql);   // รอบ 250 WP-04 — ตาราง marker ของงานย้ายข้อมูลครั้งเดียว (ตัวเดียว · ก่อนทุกบล็อกที่อ่าน/เขียน marker)
         list.AddRange(Round250ScheduleSettingsStatements());   // รอบ 250 WP-04 ต่อยอด — แจ้งก่อนรอบรายการประจำ · วันเปิดส่งซ้ำของกฎทวง · ปิดแจ้งก่อนรอบของแถวเดิม (ครั้งเดียว)

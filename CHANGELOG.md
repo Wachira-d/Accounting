@@ -7226,6 +7226,10 @@ _รอบ 269 แก้ตามฝ่ายค้านชุดสอง (`er
 H1 เปิดหน้าไม่ลบ-สร้างร่างแล้ว (สร้างเฉพาะที่ไม่มี · แถบร่างล้าสมัย · สร้างใหม่ใต้ล็อกธุรกรรมเดียว audit ผู้กด) · M1 ช่อง 2/3 คำนวณใหม่หลังติ๊ก/ดึงด้วย `Pp30SalesBoxSummary` ตัวเดียว ·
 M2 ใบลดหนี้ของใบเสร็จขายสดยกเว้นลดช่อง 3 · M3 ช่อง 8–12 ตามแบบทางการทุก renderer + e-Filing · M4 audit มีช่อง ภ.พ.30 · M5 ใบกำกับร่าง/แปลงบางส่วน · M6 ตัวทบทวนบอกรุ่นกติกา ·
 L2 ปัดเศษ POS · L4 ด่านบรรทัดเตือน · เทสต์ pure +7 · Db +7 · กติกา R269 +10 ข้อ + ฝ่ายค้าน R269i–l · build + pure ผ่านในเครื่องนี้ Db รันที่ CI · commit ea15f0dd_
+_รอบ 267 แพ็ก P3 "📤 ส่งให้ลูกค้า" + ไทม์ไลน์ + LINE เซ็น (`erp-review/2026-11-12/team-267-doc-pages-design.md` §15/§19 P3 · คำตัดสิน 267-1-7 · 267-1-61…67 · DOCUMENT_FLOW §2.12n-P3 · TEST_PLAN P267c):
+ปุ่มเดียวแทน 6 ปุ่ม · `share-options` / `share` / `customer-timeline` · `CustomerShareService` orchestrate ลิงก์ (`EnsureCustomerLinkAsync`) · เปิดช่วงตอบรับ (`IssueLinkAsync`) · อีเมล (`SendDocumentRoutedAsync` + บล็อกลิงก์หน้าเอกสาร) · LINE (`DocumentLineSendService.SendAsync`) ผลแยกต่อช่องทาง ·
+`DocumentLineSendRule.PageLinkAllowed` ตัวเดียว (กลุ่มซ่อนยอด = ไม่มีปุ่ม · ใบที่ตอบรับได้ = 1:1 เท่านั้น) · การ์ด "ดู/ยอมรับ" + `s` แถวคิว · ฉบับเซ็นกลับ LINE เดิม (งาน outbox) · ลิงก์เซ็นติ๊กให้ LINE 1:1 ได้ ·
+เทสต์ pure +13 (ปรับ LineRound259 3) · Db +2 · กติกา R267c +12 ข้อ + 6 เคสฝ่ายค้าน — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) · commit 39c4d582_
 _รอบ 270 งานค้างจาก 266/268/269 (คำตัดสิน 270-1-1…5 · DOCUMENT_FLOW §2.12g-270 · TEST_PLAN P270-1…6): 268 L7 คืนมัดจำการจองหลายงวดตามบัญชีของแต่ละงวด (ไม่รู้ ⇒ 409 ให้เลือก · ช่อง "คืนจากบัญชี" สองหน้า) ·
 คิว `linechat.slip-linked` ประทับ/ตรวจการผูกเดิมก่อนส่ง (คอลัมน์ `DeferredNotifications.ExpectedKey`) · ผล LINE ไม่มีสถานะ HTTP จำแนกด้วย `LinePushOutcome` (ถาวรไม่ส่งซ้ำ) ·
 266-C L2 ใบลดหนี้ร่างของตัวช่วยใบซ้ำขึ้น Autopilot · 269 ข้อ 3 ใบกำกับ OCR VAT 0% ทั้งใบที่กระดาษไม่บอกอัตราศูนย์ ⇒ `[VAT-ZERO-UNREAD]` รอตรวจ ·

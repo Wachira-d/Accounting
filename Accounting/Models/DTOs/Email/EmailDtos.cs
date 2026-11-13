@@ -14,7 +14,10 @@ public record SendDocumentEmailRequest(
     bool AttachXml = false,
     bool ConfirmEtaxResend = false,
     // รอบ 259 (E-H3): ใส่บล็อก "ชำระเงินออนไลน์" (ลิงก์ชำระตัวเดียวของใบ — DocumentPayLinkService.EnsureLinkAsync) · ออกลิงก์ไม่ได้ ⇒ ไม่ส่ง + บอกเหตุ (ไม่ส่งเงียบโดยไม่มีลิงก์)
-    bool IncludePayLink = false);
+    bool IncludePayLink = false,
+    // รอบ 267 P3 (267-1-62): ใส่บล็อก "เปิดหน้าเอกสาร" (ลิงก์หน้าเอกสารตัวเดียวของใบ — EnsureCustomerLinkAsync) · ออกไม่ได้/ถูกเพิกถอน ⇒ ไม่ส่ง + บอกเหตุ ·
+    // ทาง e-Tax by Email ⇒ ปฏิเสธ (รูปแบบสรรพากร) — หน้าต่าง "ส่งให้ลูกค้า" ตัดสินให้ก่อน (CustomerShareRule.EmailCarriesPageLink)
+    bool IncludePageLink = false);
 
 // ===== Send e-Tax via email (RD spec · รอบ 244 — รูปแบบจาก Helpers/EtaxByEmailFormat ตัวเดียว) =====
 /// <summary>คำขอส่ง e-Tax by Email — <paramref name="Subject"/> <b>ไม่ถูกใช้</b> (หัวเรื่องตามกรมสรรพากรคำนวณที่เซิร์ฟเวอร์เสมอ · ข้อความของผู้ใช้ใส่ใน <paramref name="Body"/>) ·

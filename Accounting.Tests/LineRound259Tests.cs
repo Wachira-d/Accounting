@@ -14,16 +14,22 @@ public class LineRound259Tests
     // ─────────── A-M4 ───────────
 
     [Fact]
-    public void ลิงก์เซ็น_ติ๊กให้_LINE_ไม่ได้_แต่อีเมลได้_และ_50ทวิ_ติ๊กให้_LINE_ได้()
+    public void ลิงก์เซ็น_ติ๊กให้กลุ่ม_LINE_ไม่ได้_แต่อีเมลได้_และ_50ทวิ_ติ๊กให้_LINE_ได้()
     {
-        Assert.NotNull(NotifyTopics.LineUnsupportedReason(NotifyTopic.Sign));
-        Assert.NotNull(NotifyTopics.LineUnsupportedReason(NotifyTopic.Other));
-        Assert.Null(NotifyTopics.LineUnsupportedReason(NotifyTopic.Wht));
-        Assert.Null(NotifyTopics.LineUnsupportedReason(NotifyTopic.Receipt));
+        // รอบ 267 P3 (267-1-7 · 267-1-61): ลิงก์เซ็นส่งทาง LINE 1:1 ได้แล้ว — กลุ่มยังไม่ได้ (ไม่รู้ชนิด = ถือเป็นกลุ่ม)
+        Assert.NotNull(NotifyTopics.LineUnsupportedReason(NotifyTopic.Sign, NotifyEndpointKind.LineGroup));
+        Assert.NotNull(NotifyTopics.LineUnsupportedReason(NotifyTopic.Sign, null));
+        Assert.Null(NotifyTopics.LineUnsupportedReason(NotifyTopic.Sign, NotifyEndpointKind.LineUser));
+        Assert.NotNull(NotifyTopics.LineUnsupportedReason(NotifyTopic.Other, NotifyEndpointKind.LineUser));
+        Assert.Null(NotifyTopics.LineUnsupportedReason(NotifyTopic.Wht, NotifyEndpointKind.LineGroup));
+        Assert.Null(NotifyTopics.LineUnsupportedReason(NotifyTopic.Receipt, NotifyEndpointKind.LineUser));
 
-        var (lineSign, lineProblem) = NotifyTopics.FromRequest(new[] { "Document", "Sign" }, allowEmpty: false, NotifyEndpointKind.LineUser);
+        var (lineSign, lineProblem) = NotifyTopics.FromRequest(new[] { "Document", "Sign" }, allowEmpty: false, NotifyEndpointKind.LineGroup);
         Assert.Null(lineSign);
         Assert.Contains("ลิงก์เซ็น", lineProblem);
+        // ทิศตรงข้าม (รอบ 267 P3): ผู้ใช้ LINE 1:1 ติ๊กลิงก์เซ็นได้
+        Assert.Equal(new[] { NotifyTopic.Document, NotifyTopic.Sign },
+            NotifyTopics.FromRequest(new[] { "Document", "Sign" }, allowEmpty: false, NotifyEndpointKind.LineUser).Topics);
         var (groupWht, groupProblem) = NotifyTopics.FromRequest(new[] { "Document", "Wht" }, allowEmpty: false, NotifyEndpointKind.LineGroup);
         Assert.Null(groupProblem);
         Assert.Equal(new[] { NotifyTopic.Document, NotifyTopic.Wht }, groupWht);
@@ -38,8 +44,11 @@ public class LineRound259Tests
         Assert.DoesNotContain(NotifyTopic.Sign, NotifyTopics.DefaultsFor(NotifyEndpointKind.LineUser));
         Assert.Contains(NotifyTopic.Receipt, NotifyTopics.DefaultsFor(NotifyEndpointKind.LineUser));
         Assert.Contains(NotifyTopic.Sign, NotifyTopics.DefaultsFor(NotifyEndpointKind.Email));
-        Assert.Equal(new[] { NotifyTopic.Document, NotifyTopic.Receipt },
+        // รอบ 267 P3: ผู้ใช้ 1:1 รับลิงก์เซ็นได้ (ค่าตั้งต้นยังไม่ติ๊ก — ผู้ใช้เลือกเอง) · กลุ่มตัดลิงก์เซ็นออก
+        Assert.Equal(new[] { NotifyTopic.Document, NotifyTopic.Receipt, NotifyTopic.Sign },
             NotifyTopics.SupportedFor(NotifyEndpointKind.LineUser, new[] { NotifyTopic.Document, NotifyTopic.Receipt, NotifyTopic.Sign }));
+        Assert.Equal(new[] { NotifyTopic.Document, NotifyTopic.Receipt },
+            NotifyTopics.SupportedFor(NotifyEndpointKind.LineGroup, new[] { NotifyTopic.Document, NotifyTopic.Receipt, NotifyTopic.Sign }));
         Assert.Equal(3, NotifyTopics.SupportedFor(NotifyEndpointKind.Email, new[] { NotifyTopic.Document, NotifyTopic.Receipt, NotifyTopic.Sign }).Count);
     }
 
@@ -51,10 +60,16 @@ public class LineRound259Tests
     [InlineData("[\"Document\",\"Dunning\"]", "[\"Document\",\"Dunning\"]")]   // ใบที่ถูกอยู่แล้วไม่ถูกแตะ
     public void ซ่อมค่าที่เก็บไว้_ตัดเฉพาะเรื่องที่_LINE_ไม่ส่ง(string before, string after)
     {
-        var fixedJson = Round259LineMigration.StripLineUnsupported(before);
+        var fixedJson = Round259LineMigration.StripLineUnsupported(before, NotifyEndpointKind.LineGroup);
         Assert.Equal(after, fixedJson);
         Assert.NotNull(NotifyTopics.Parse(fixedJson));
     }
+
+    [Theory]
+    [InlineData("[\"Document\",\"Sign\"]", "[\"Document\",\"Sign\"]")]   // รอบ 267 P3: ผู้ใช้ 1:1 ที่ติ๊กลิงก์เซ็นไม่ถูกตัดทุกครั้งที่บูต
+    [InlineData("[\"Other\",\"Document\"]", "[\"Document\"]")]
+    public void ซ่อมค่าที่เก็บไว้ของผู้ใช้_LINE_ตัดเฉพาะอื่นๆ(string before, string after)
+        => Assert.Equal(after, Round259LineMigration.StripLineUnsupported(before, NotifyEndpointKind.LineUser));
 
     // ─────────── 258-3-6 ทวง 50 ทวิ ทาง LINE ───────────
 
