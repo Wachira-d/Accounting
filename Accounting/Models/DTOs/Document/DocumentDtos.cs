@@ -1140,8 +1140,8 @@ public record DocumentResponse(
     bool? PartnerNeedsOriginal = null,
     /// <summary>รอบ 267 P4 (กฎ #4 A "เก็บแล้วต้อง echo กลับ"): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ที่ตรึงกับใบนี้ — ชื่อ Inherit · On · Off
     /// (<c>PostPaymentAutomationPolicy.ModeCode</c>) · ฟอร์มแก้ไข hydrate จากค่านี้ (ไม่งั้นเปิดแก้แล้วบันทึก ค่ากลับเป็น "ตามค่าตั้ง" เงียบ ๆ)</summary>
-    string PostPayReceiptMode = Accounting.Helpers.AutopilotSettingsResolver.Inherit,
-    string PostPayPartialMode = Accounting.Helpers.AutopilotSettingsResolver.Inherit,
+    string PostPayReceiptMode = global::Accounting.Helpers.AutopilotSettingsResolver.Inherit,
+    string PostPayPartialMode = global::Accounting.Helpers.AutopilotSettingsResolver.Inherit,
     /// <summary>ใบชนิดนี้ตั้งค่าต่อใบได้ไหม (เซิร์ฟเวอร์ตัดสิน — <c>PostPaymentAutomationPolicy.DocumentLayerAllowed</c>) · หน้าเว็บแสดง/ซ่อนช่องตามค่านี้</summary>
     bool PostPaySettingApplies = false);
 

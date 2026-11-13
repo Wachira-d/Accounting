@@ -7138,4 +7138,4 @@ _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P4 — �
 (5) ใบวางบิล: ปุ่ม "ชำระใบนี้" รายใบ `POST …/documents/{token}/related/{relId}/page-link` (ออกลิงก์หน้าเอกสารของใบนั้นผ่านตัวออกเดียว · ไม่มีจ่ายรวม)
 (6) พอร์ทัลลูกค้า: ปุ่ม "ดู" ฝังหน้าเอกสารเดียวกัน (โทเคนทาง postMessage) · **พฤติกรรมที่เปลี่ยน:** `WhtCertUploadLink.UploadCount/LastUsedAt` นับการส่งไฟล์ซ้ำด้วย (เดิมนับเฉพาะไฟล์ใหม่) ·
 modal รายละเอียดเอกสารของ portal.html ถูกแทนด้วยหน้าเอกสาร · เทสต์ pure `PostPayRound267Tests` · Db `PostPayRound267DbTests` · ล็อก R267d —
-ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit (sha เติมในคอมมิตตามหลัง))_
+ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit 17680548)_

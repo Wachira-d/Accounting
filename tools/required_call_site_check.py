@@ -19456,7 +19456,7 @@ RULES += [
          must=["ApplyPostPayDocumentLayer(doc, request.PostPayReceiptMode, request.PostPayPartialMode)"],
          why=_R267D_WHY + "267-1-40 ช่องของ UpdateDocumentRequest มีผู้อ่าน (ไม่ใช่ silent no-op)"),
     dict(file=_R267D_AFTER, method="PaymentReceiptsAsync",
-         must=["p.CompanyId == companyId", "p.DocumentId == docId", "x.CompanyId == companyId", "x.ContactId == contactId",
+         must=["p.CompanyId == companyId", "(p.MovedToDocumentId ?? p.DocumentId) == docId", "x.CompanyId == companyId", "x.ContactId == contactId",
                "DocumentStatusRules.IsEffective(", "DocumentPayLinkPolicy.IsCustomerFacing(", "CustomerDocPageAfterPay.EtaxSentNote("],
          forbid=_R267D_NO_MONEY + ["IgnoreQueryFilters("],
          why=_R267D_WHY + "267-1-42 ใบเสร็จบนหน้า = ของการรับชำระของใบนี้เท่านั้น (บริษัท + ผู้ติดต่อ + ออกแล้ว + ลูกค้าเห็นได้) · อ่านอย่างเดียว — ไม่ออกใบเสร็จจากเส้น public"),
