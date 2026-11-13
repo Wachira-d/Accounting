@@ -622,6 +622,22 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         return intent == null ? null : await _gatewayAccounts.ResolveMoneyInAccountAsync(intent);
     }
 
+    /// <summary>รอบ 268 (268-1-5 · backlog 262 §5): ใบเสร็จส่วนเสริม/โควตาเสริมเข้าคิว LINE ของผู้ติดต่อของผู้เช่า<b>เหมือนใบเสร็จค่าแพ็กเกจ</b> —
+    /// ผู้เรียกเดียว <see cref="IPlatformBillingNotifier.ReceiptIssuedAsync"/> (ช่อง LINE ของการแจ้งค่าบริการ · คีย์กันซ้ำต่อใบ · ไม่รอชั่วโมงเงียบ เพราะผู้เช่าเพิ่งจ่าย) ·
+    /// resolve ตอนใช้ (ไม่มีวงพึ่งกันใน DI) · ล้ม = LogError (ใบออกแล้ว — ห้ามทำให้การออกใบถูกนับว่าล้ม)</summary>
+    private async Task QueueReceiptToLineAsync(Guid buyerCompanyId, Guid receiptDocumentId)
+    {
+        try
+        {
+            if (_services.GetService(typeof(IPlatformBillingNotifier)) is IPlatformBillingNotifier notifier)
+                await notifier.ReceiptIssuedAsync(buyerCompanyId, receiptDocumentId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "เข้าคิวการ์ดใบเสร็จส่วนเสริมทาง LINE ไม่สำเร็จ (company {Company} · ใบ {Doc}) — ใบออกแล้ว", buyerCompanyId, receiptDocumentId);
+        }
+    }
+
     public async Task<PlatformDocResult?> IssueAddOnReceiptAsync(Guid buyerCompanyId, string description, decimal amountReceived, DateTime paidAt,
         string reference, Guid? gatewayIntentId, decimal discountReceived = 0m, decimal withholdingReceived = 0m)
     {
@@ -692,6 +708,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 Accounting.Helpers.ApprovalAckSource.SystemWorkflow, withAiHints: false);
             _logger.LogInformation("ออกเอกสารค่าส่วนเสริมใน tenant ผู้ให้บริการ {DocNo} (อ้างอิง {Ref} · ฐาน {Base} · VAT {Vat} · gateway {Intent})",
                 approved.DocumentNumber, reference, baseAmount, isVat, gatewayIntentId);
+            await QueueReceiptToLineAsync(buyerCompanyId, approved.Id);
             return new PlatformDocResult(approved.Id, approved.DocumentNumber, isVat);
         }
         catch (Exception ex)

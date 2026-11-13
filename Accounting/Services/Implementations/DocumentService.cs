@@ -16426,6 +16426,11 @@ public partial class DocumentService : IDocumentService
                         if (await TryAutoIssueAllocationReceiptAsync(companyId, payment, receiptDoc, request.IssueReceiptDocument, createdBy) is string receiptNotice)
                             multiWhtWarnings.Add(receiptNotice);
 
+                // รอบ 268 (คำตัดสิน 268-1-6 · backlog D8): ผู้ขายรับเงินหลายใบในก้อนเดียว ⇒ แจ้งผู้ซื้อคู่ค้า<b>ต่อแถวจัดสรร</b> (ตัวแจ้งเดียวกับใบเดียว · กุญแจแถวจัดสรร) ·
+                // หลัง commit · ไม่โยน · ฝั่งจ่าย (เงินออก) ไม่ใช่การรับของผู้ขาย ⇒ ไม่แจ้ง
+                if (isInflowDoc)
+                    await NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, Accounting.Helpers.PaymentEntrySource.Manual);
+
                 // Re-load PaymentAllocation rows to pick up generated Ids,
                 // then enrich with the docMap (resolved client-side).
                 var rawAllocs = await _db.PaymentAllocations

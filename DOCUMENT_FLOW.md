@@ -3287,7 +3287,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **การแจ้งจากทุกทางเข้าของ A (C-04 · 264-3-6)**: ขั้นหลัง commit ของ `CreatePaymentAsync` (มือ · gateway · สลิป · รายการเดินบัญชี · นำเข้า) และ `AfterPaymentRecordedAsync` (integration) →
   `DocumentService.NotifyPartnerOfSellerPaymentAsync` (partial `DocumentService.PartnerNotice.cs`) → `PartnerPaymentNoticeService.NotifyForSellerPaymentAsync` (ใบที่ไม่ได้ส่งเข้าระบบคู่ค้าจบที่ query เดียว) ·
   `DocumentPaymentHandler` ไม่แจ้งเองแล้ว · เงินที่ผู้ซื้อจ่าย = `Payment.Amount + FeeAmount` · ช่องทาง = `PaymentMethodKind` เมื่อมี intent (หาได้จาก `Payment.PaymentIntentId` หรือเลขอ้างอิง `PAY-INTENT-{N}`) ไม่งั้น `Entry:Manual/BankAutoSettle/Import/Other` ·
-  **กุญแจ = `SellerPaymentId`** (unique บางส่วน `IX_PartnerPaymentNotices_Company_SellerPayment`) + intent เดิม · `PaymentIntentId` nullable · การชำระหลายใบไม่แจ้ง (backlog D8)
+  **กุญแจ = `SellerPaymentId`** (unique บางส่วน `IX_PartnerPaymentNotices_Company_SellerPaymentSingle` — ชำระใบเดียว) + intent เดิม · `PaymentIntentId` nullable · การชำระหลายใบ ⇒ หนึ่งแจ้งต่อแถวจัดสรร (รอบ 268 — §2.12g-268)
 - **ผู้ขายยกเลิกการรับชำระ (C-03 · 264-3-7)**: ขั้นหลัง commit ของ `VoidPaymentAsync` → `WithdrawPartnerNoticesForVoidedPaymentAsync` → `PartnerPaymentNoticeService.WithdrawForSellerPaymentAsync`:
   รอบันทึก ⇒ สถานะใหม่ `Withdrawn` (compare-and-set) · กำลังบันทึก ⇒ ประทับ `SellerVoidedAt` · บันทึกแล้ว ⇒ ป้าย `[PARTNER-PAYMENT-VOIDED]` บนหมายเหตุภายในของใบซื้อ + แจ้ง B + แถว Autopilot จนกว่า B ยกเลิกการจ่ายเอง ·
   **ไม่ยกเลิกการจ่ายของ B แทน** (E6) · audit `PartnerPaymentNoticeWithdrawn` / `PartnerPaymentSellerVoided` ทั้งสองฝั่ง · ปุ่มเดียวและท่อตรวจการรับชำระของ A สด (ยกเลิกแล้ว ⇒ 409 / ท่อถอนเอง)
@@ -3322,6 +3322,30 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (L7) เหตุของใบซื้อมาก่อน "ยังไม่ได้ยินยอม" · (L8) ข้อความฐานข้อมูลไม่ถึงผู้ใช้ · "ผู้ขายยกเลิก" ไม่สรุปว่าไม่ต้องจ่าย ·
   รายการเดินบัญชีของ B ที่นำเข้าทีหลัง: ไม่มีเส้นสร้างการจ่ายฝั่งซื้อจากรายการเดินบัญชี ⇒ ไม่เกิดการจ่ายใบที่สอง (อ่านโค้ด — 264-3-22)
 - **kill-switch**: เส้นเงินไม่มีการเรียก AI (ตัวตัดสิน pure) · ผังใบร่าง: AI ปิด + นักเรียนไม่มีคำตอบ ⇒ ใบร่างเท่าเดิม · เทสต์ `PartnerPayableRound264Tests` · Db `PartnerPayableRound264DbTests`
+
+### 2.12g-268 รอบ 268 งานคงค้าง (คำตัดสิน 268-1-1…6 ใน `erp-review/2026-09-29/DECISIONS.md`)
+
+- **268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง**: แถว `ConsentDefault` ของ `PartnerPaySourceAccount.Precedence` = `AllowsAuto=false` ⇒ ท่อฝั่งผู้ซื้อประทับเหตุ `ConsentDefaultNotAutoReason`
+  (รหัส `Source`) · ปุ่มเดียว preselect บัญชีนั้น (`DefaultBankAccountId`) · `AutoState` บอกว่าไม่บันทึกเองเพราะอะไร · หน้า "งานอัตโนมัติกับคู่ค้า" `EffectNote` = `ConsentDefaultNotAutoNote` ·
+  ชั้นรายการเดินบัญชีเสียบที่ `PartnerPayablePipeline.IBankLineEvidence` (ไม่มีตัวใน DI วันนี้ ⇒ production ไม่บันทึกเอง) · ชั้นผู้จ่ายเลือก/สลิปเดิม (ยังไม่มีผู้ป้อน)
+- **268-1-2 สลิปออเดอร์หน้าเว็บ**: `POST cms/sites/{site}/commerce/orders/{id}/confirm-payment?bankAccountId=` → `ICmsCommerceService.SlipReceivingAccountsAsync`
+  (`SlipReceivingAccount.AppliesToSiteOrderPayment` + `ResolveForSiteOrderAsync` — บัญชีรับโอนของเว็บ → บัญชีเดียว → ไม่เดา · เลือกเองตรวจด้วยตัวตรวจเดียว · ใช้ไม่ได้ 400) →
+  `ConfirmPaymentAsync(…, receivingBankAccountId)` ⇒ `CreatePaymentRequest.OverrideBankAccountId` (ใบขาย) / `CreateDocumentRequest.BankAccountId` (ใบรับมัดจำออเดอร์) · ผังพักของผู้ให้บริการชนะเสมอ ·
+  `GET …/orders/{id}/receiving-accounts` = ตัวเลือก + ค่าแนะนำ (หน้า "คำสั่งซื้อ" ถามก่อนยืนยัน) · สลิปออเดอร์ผ่านคิวรายการชำระ: `SiteOrderPaymentHandler` ใช้ `OverrideForHandlerAsync`
+  (ค่าที่ประทับ/ค่าแนะนำ · `ResolveAsync` รู้จัก `SiteOrder` แล้ว)
+- **268-1-3 มัดจำการจองหลายงวด**: `RecordDepositPaymentAsync` ประทับช่องทางบนแถวรับเงิน (`ChannelStamped` · `BankAccountId` · `MoneyInAccountId` — ผังตรงชนะ) · ใบเสร็จมัดจำ (ใบเดียว) อนุมัติตามงวดสุดท้าย
+  (ร่างที่ได้ธนาคารล้างผังตรงค้าง) แล้ว `MoveEarlierInstalmentsAsync` → `BookingDepositInstalmentChannel.For` ⇒ JE ต่องวด Dr ผังของงวด / Cr ผังของใบ (ผูก SourceDocument · Reference `BKDEP-{payment}` กันซ้ำ ·
+  ผังจาก `DocumentMoneyChannel.ResolvePostingAccountAsync`) · ผังเดียวกัน = ไม่มี JE · งวดก่อนรอบ 268 = ไม่เดา + หมายเหตุ · ล้ม = หมายเหตุบนการจอง + คำตอบ (ใบอนุมัติแล้วไม่ถูกย้อน) ·
+  ที่พักออกใบเสร็จมัดจำต่องวดอยู่แล้ว (ไม่ใช่คลาสนี้) · migration `Helpers/Round268Migration`
+- **268-1-4 แชต LINE**: พนักงานผูกสลิป (`LineChatSlipService.AssignAsync`) ⇒ `NotifyChatLinkedAsync` push ถึงแชตเดิม (ปลายทางที่ `LineIdHash` = แหล่งสลิป · ยอดเมื่อแสดงยอดได้ · ไม่รอชั่วโมงเงียบ ·
+  retry key = แถว) · เอกสารของผู้ติดต่ออื่น/แชตไม่ได้ผูก ⇒ ไม่ส่ง + เหตุ (`LineChatSlipRule.LinkedNotice`) · ผลลง audit + ข้อความถึงพนักงาน · ไฟล์ PDF ในแชต (1:1/กลุ่ม) ⇒ `LineChatSlipRule.IsSlipMessage`
+  เข้าเส้นเดียวกับรูป (ตัวตรวจไบต์รับ PDF · ตัวอ่านแปลง PDF→รูปด้วย PDFium) · หน้าคิวมีปุ่มเปิด PDF
+- **268-1-5 ศูนย์บิล LINE**: `CompanyService.RemoveUserAsync` (ธุรกรรมเดียว) → `ContactLineBindingService.UnlinkBillingEndpointsBoundByAsync` — ปลายทาง OA กลางของผู้ติดต่อของผู้เช่าที่ `BoundByUserId` = ผู้ถูกนำออก ⇒
+  `MarkUnlinked` (เหตุ `member-removed`) + ถอนความยินยอม + audit ในบริษัทผู้ให้บริการ · ของคนอื่นไม่ถูกแตะ · ใบเสร็จส่วนเสริม/โควตาเสริม (`IssueAddOnReceiptAsync`) ⇒ `IPlatformBillingNotifier.ReceiptIssuedAsync`
+- **268-1-6 รับชำระหลายใบ → แจ้งผู้ซื้อคู่ค้า (D8)**: `CreateMultiDocPaymentAsync` หลัง commit (ฝั่งรับ) → `NotifyForSellerPaymentAsync` → หนึ่งแจ้งต่อ `PaymentAllocation` (จัดสรรพร้อมรับเงินเท่านั้น) ·
+  `PartnerPaymentNotice.SellerAllocationId` · ดัชนี `IX_PartnerPaymentNotices_Company_SellerPaymentSingle` (ใบเดียว) + `IX_PartnerPaymentNotices_Company_SellerAllocation` (ดัชนีเดิมถูก DROP) ·
+  เลขอ้างอิงฝั่งผู้ซื้อ `PARTNER-PAID-A{alloc}` (กันซ้ำรูปแถวจัดสรรเท่านั้น) · ยกเลิกการรับชำระ ⇒ ตัวถอนต่อการรับชำระครอบทุกแจ้งของก้อน
+- **kill-switch**: ไม่มีการเรียก AI ในรอบนี้ · Last verified `commit (เติมในคอมมิตตามหลัง)`
 
 ### 2.12g-259d รอบ 259 ชุด D "Autopilot + OCR ส่วนที่เหลือ" (erp-review/2026-11-11/team-B-autopilot.md · team-C-ocr.md · คำตัดสิน 259-4-*)
 
@@ -9286,3 +9310,4 @@ _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P1 — �
 _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P1 ชุดแก้ฝ่ายค้าน — §2.12n: H1 ยอมรับ/เซ็นรับผูกเลข Rev + ออก Rev ปิดช่วงตอบรับ · H2 เพิกถอนได้ทุกชนิด + ออกใหม่หมุน token · M1–M8 · L1–L8 (คำตัดสิน 267-1-24…32) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 22bb5074)_
 _Last verified against codebase: 2026-11-12 (รอบ 264 P3 ชุดแก้ฝ่ายค้าน — §2.12g-264-P3: H1 การจ่ายอื่นของใบซื้อ · H2/L9 จ่ายบางส่วน · M1 เงินสด · M2 ยกเลิกทั้งใบ + ตัวกวาด · M3 ถ้อยคำ · M4 เดือนภาษีหัก · M5 แจ้งเมื่อบันทึกเอง · M6 ล็อกตอนส่ง 50 ทวิ · M7 · L1–L9 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 17fefa5a)_
 _Last verified against codebase: 2026-11-12 (รอบ 266 แพ็ก B — §3.4c-B ย้ายการรับชำระที่ตัดผิดใบผ่าน 21630 สองขา (ขาเงินสด/คู่ธนาคารไม่ถูกแตะ) · `Payment.MovedToDocumentId` + แถวจัดสรรที่ปล่อย · ยกเลิกใบเสร็จเดิม + ใบแทน "ออกแทนใบเลขที่ …" สอง renderer · ด่าน e-Tax/งวดภาษี/คู่ค้า/ภาษีถูกหัก/SoD · พักการทวง) · commit 46ac5463 — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_Last verified against codebase: 2026-11-13 (รอบ 268 งานคงค้าง — §2.12g-268: 268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง · 268-1-2 สลิปออเดอร์หน้าเว็บลงธนาคาร · 268-1-3 มัดจำการจองต่องวด · 268-1-4 แจ้งแชตหลังผูกสลิป + PDF · 268-1-5 ศูนย์บิล LINE (นำออก/ใบเสร็จส่วนเสริม) · 268-1-6 รับหลายใบแจ้งคู่ค้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_

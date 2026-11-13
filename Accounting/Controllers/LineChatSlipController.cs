@@ -60,7 +60,8 @@ public class LineChatSlipController : ControllerBase
             var r = await _slips.AssignAsync(companyId, slipId, request, Actor(), ct);
             return Ok(new ApiResponse<LineChatSlipAssignResult>(true, r,
                 $"ผูกสลิปกับ {r.DocumentNumber} แล้ว — อยู่ในรายการรอยืนยันด้านล่าง (ยังไม่ใช่การรับชำระ)"
-                + (r.CrossContact ? " · ⚠️ เอกสารนี้เป็นของผู้ติดต่ออื่นที่ไม่ใช่เจ้าของแชต — ตรวจก่อนยืนยัน (บันทึกในประวัติแล้ว)" : "")));
+                + (r.CrossContact ? " · ⚠️ เอกสารนี้เป็นของผู้ติดต่ออื่นที่ไม่ใช่เจ้าของแชต — ตรวจก่อนยืนยัน (บันทึกในประวัติแล้ว)" : "")
+                + (string.IsNullOrWhiteSpace(r.CustomerNotice) ? "" : " · " + r.CustomerNotice)));
         }
         catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<LineChatSlipAssignResult>(false, null, ex.Message)); }
         catch (BusinessRuleException ex) { return StatusCode(ex.StatusCode, new ApiResponse<LineChatSlipAssignResult>(false, null, ex.Message)); }

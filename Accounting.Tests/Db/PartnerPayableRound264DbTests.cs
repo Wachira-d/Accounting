@@ -154,8 +154,15 @@ public class PartnerPayableRound264DbTests
         }
     }
 
-    private static PartnerPayablePipeline Pipe(AccountingDbContext db, IDocumentService docs, IOcrAiAugmenter? ai = null)
-        => new(db, docs, new PipelineScopes(), NullLogger<PartnerPayablePipeline>.Instance, ai);
+    /// <param name="bankLine">268-1-1: ชั้นรายการเดินบัญชี (ตัวปลอมของจุดเสียบ P4) — ไม่ส่ง = เหมือน production วันนี้ (มีแค่บัญชีตั้งต้น ⇒ ไม่บันทึกเอง)</param>
+    private static PartnerPayablePipeline Pipe(AccountingDbContext db, IDocumentService docs, IOcrAiAugmenter? ai = null, Guid? bankLine = null)
+        => new(db, docs, new PipelineScopes(), NullLogger<PartnerPayablePipeline>.Instance, ai, null, bankLine is Guid b ? new FixedBankLine(b) : null);
+
+    private sealed class FixedBankLine(Guid account) : PartnerPayablePipeline.IBankLineEvidence
+    {
+        public Task<(Guid? BankAccountId, string? Label)> FindAsync(Guid companyId, PartnerPaymentNotice notice, CancellationToken ct)
+            => Task.FromResult<(Guid?, string?)>((account, "(เทสต์)"));
+    }
 
     private static Task<PartnerPaymentNotice> NoticeAsync(AccountingDbContext db, Guid buyerId, Guid sellerPaymentId)
         => db.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters().SingleAsync(n => n.CompanyId == buyerId && n.SellerPaymentId == sellerPaymentId);
@@ -191,11 +198,11 @@ public class PartnerPayableRound264DbTests
         }
         var calls = new List<Call>();
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         var call = Assert.Single(calls);
         Assert.Equal(s.OwnerB.ToString(), call.CreatedBy);                    // 264-2-3: GUID ผู้ให้ ไม่ใช่สตริงระบบ
         Assert.Equal(PaymentEntrySource.PartnerAuto, call.Source);
-        Assert.Equal(s.BankB, call.Req.OverrideBankAccountId);               // ชั้น ConsentDefault (ไม่ใช่เงินสด/บัญชีแรก)
+        Assert.Equal(s.BankB, call.Req.OverrideBankAccountId);               // ชั้นรายการเดินบัญชี (268-1-1 · ไม่ใช่เงินสด/บัญชีแรก)
         Assert.Equal(1_040m, call.Req.Amount);
         Assert.Equal(30m, call.Req.WithholdingTaxAmount);                    // ภาษีหักของผู้ซื้อเข้าเส้นจ่ายเดิม ⇒ 50 ทวิ ออกตามเส้นเดิม (WhtCertAutoIssue)
         Assert.Equal(PartnerPaymentNoticeRule.PaymentReferenceForSellerPayment(payId), call.Req.Reference);
@@ -209,14 +216,14 @@ public class PartnerPayableRound264DbTests
             Assert.NotNull(n.RecordedPaymentId);
             var auto = Assert.Single(await EventsAsync(c2, s.Buyer.Id, "PartnerPaymentAutoRecorded"));
             Assert.Contains(consentId.ToString(), auto);
-            Assert.Contains("ConsentDefault", auto);
+            Assert.Contains("BankLine", auto);
             Assert.Contains(PartnerAutoRecordPolicy.RuleCode, auto);
         }
         // รันซ้ำ (watermark ถูกล้าง) ⇒ ยังการจ่ายเดียว
         using (var c3 = DbTestDatabase.TryCreateContext()!)
         {
             await ResetWatermarkAsync(c3, noticeId);
-            Assert.Equal(0, await Pipe(c3, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(0, await Pipe(c3, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         }
         Assert.Single(calls);
         using var check = DbTestDatabase.TryCreateContext()!;
@@ -278,6 +285,43 @@ public class PartnerPayableRound264DbTests
     }
 
     [Fact]
+    public async Task C268_1_1_ยินยอมและตั้งบัญชีจ่าย_ไม่มีรายการเดินบัญชี_ไม่บันทึกเอง_เหตุบอกว่าทำไม_ปุ่มเดียว_preselect_บัญชีนั้น_กดครั้งเดียวบันทึกได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var (inv, purchaseId) = await RoutedAsync(db, s);
+        await GrantAsync(s, 5_000m, s.BankB);
+        var (payId, _) = await SellerPaysAsync(s, inv, 1_070m, 0m);
+        var calls = new List<Call>();
+        using (var c1 = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(0, await Pipe(c1, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));   // production วันนี้: ไม่มีผู้ป้อนรายการเดินบัญชี
+        Assert.Empty(calls);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var n = await NoticeAsync(check, s.Buyer.Id, payId);
+        Assert.Equal(PartnerPaymentNoticeRule.StatusOpen, n.Status);
+        Assert.Equal(PartnerAutoRecordPolicy.Codes.Source, n.AutoBlockedCode);
+        Assert.StartsWith(PartnerPaySourceAccount.ConsentDefaultNotAutoReason, n.AutoBlockedReason);
+        Assert.Single(await EventsAsync(check, s.Buyer.Id, "PartnerPaymentAutoBlocked"));
+        Assert.Equal(0, await check.Payments.CountAsync(p => p.CompanyId == s.Buyer.Id && p.DocumentId == purchaseId));
+        // หน้า: บัญชีตั้งต้นถูก preselect · ป้ายสถานะบอกเหตุ (ไม่อ้างว่าระบบจะบันทึกเอง)
+        var row = (await new PartnerPaymentNoticeService(check, F4Proxy<IDocumentService>.Create((_, _) => null), NullLogger<PartnerPaymentNoticeService>.Instance, null, Consent(check))
+            .ListAsync(s.Buyer.Id)).Single(x => x.Id == n.Id);
+        Assert.Equal(s.BankB, row.DefaultBankAccountId);
+        Assert.Equal(nameof(PartnerPaySourceAccount.Origin.ConsentDefault), row.SourceOrigin);
+        Assert.Contains(PartnerPaySourceAccount.ConsentDefaultNotAutoReason, row.AutoState);
+        Assert.DoesNotContain("⚙️ ระบบบันทึกเอง", row.AutoState);
+        // ทางไปต่อ: กดครั้งเดียวด้วยบัญชีที่ preselect ⇒ บันทึก (ผู้บันทึก = ผู้กด · ที่มา Manual)
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        var ok = await new PartnerPaymentNoticeService(c2, PayingDocs(s.Buyer.Id, calls), NullLogger<PartnerPaymentNoticeService>.Instance)
+            .RecordAsync(s.Buyer.Id, n.Id, s.OwnerB, row.DefaultBankAccountId, null);
+        Assert.Equal(PartnerPaymentNoticeRule.StatusRecorded, ok.Status);
+        var call = Assert.Single(calls);
+        Assert.Equal(PaymentEntrySource.Manual, call.Source);
+        Assert.Equal(s.BankB, call.Req.OverrideBankAccountId);
+    }
+
+    [Fact]
     public async Task ไม่ยินยอม_ไม่มีการจ่าย_เกินเพดาน_ไม่มีการจ่าย_พร้อมเหตุ()
     {
         using var db = DbTestDatabase.TryCreateContext();
@@ -332,7 +376,7 @@ public class PartnerPayableRound264DbTests
             blocked = await Record.ExceptionAsync(() => Consent(other).WithdrawAsync(s.Buyer.Id, s.OwnerB, consentId, "ระหว่างท่อ"));
         }
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls, TryWithdraw)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls, TryWithdraw), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         Assert.NotNull(blocked);   // FOR SHARE ของท่อกันการถอน (FOR UPDATE) จนการบันทึก commit (ฝ่ายค้าน P1 M1)
 
         // หลังท่อจบ ถอนได้ · การแจ้งใบถัดไปไม่บันทึกเอง
@@ -341,7 +385,7 @@ public class PartnerPayableRound264DbTests
         var (inv2, _) = await RoutedAsync(db, s);
         var (pay2, _) = await SellerPaysAsync(s, inv2, 1_070m, 0m);
         using (var c3 = DbTestDatabase.TryCreateContext()!)
-            await Pipe(c3, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow);
+            await Pipe(c3, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow);
         Assert.Single(calls);
         using var check = DbTestDatabase.TryCreateContext()!;
         var n2 = await NoticeAsync(check, s.Buyer.Id, pay2);
@@ -380,7 +424,7 @@ public class PartnerPayableRound264DbTests
         var (inv2, purchase2) = await RoutedAsync(db, s);
         var (pay2, _) = await SellerPaysAsync(s, inv2, 1_070m, 0m);
         using (var c3 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c3, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(1, await Pipe(c3, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         await db.Payments.IgnoreQueryFilters().Where(p => p.Id == pay2).ExecuteUpdateAsync(x => x.SetProperty(p => p.IsDeleted, true));
         using (var c4 = DbTestDatabase.TryCreateContext()!)
             Assert.Equal(1, await PartnerPaymentNoticeService.WithdrawForSellerPaymentAsync(c4, null, NullLogger.Instance, s.Seller.Id, pay2, DateTime.UtcNow));
@@ -405,7 +449,7 @@ public class PartnerPayableRound264DbTests
         await db.Payments.IgnoreQueryFilters().Where(p => p.Id == pay3).ExecuteUpdateAsync(x => x.SetProperty(p => p.IsDeleted, true));
         var before = calls.Count;
         using (var c6 = DbTestDatabase.TryCreateContext()!)
-            await Pipe(c6, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow);
+            await Pipe(c6, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow);
         Assert.Equal(before, calls.Count);
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(PartnerPaymentNoticeRule.StatusWithdrawn, (await NoticeAsync(check, s.Buyer.Id, pay3)).Status);
@@ -424,7 +468,7 @@ public class PartnerPayableRound264DbTests
         await SellerPaysAsync(s, inv, 500m, 0m);
         var calls = new List<Call>();
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         var call = Assert.Single(calls);
         Assert.Equal(500m, call.Req.Amount);
         Assert.Equal(0m, call.Req.WithholdingTaxAmount);
@@ -444,7 +488,7 @@ public class PartnerPayableRound264DbTests
         await SellerPaysAsync(s, inv, 1_070m, 0m);
         var calls = new List<Call>();
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls), none).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls), none, bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         Assert.Single(calls);
 
         var (_, draftNone) = await RoutedAsync(db, s, approve: false);
@@ -640,21 +684,21 @@ public class PartnerPayableRound264DbTests
         var (invOk, _) = await RoutedAsync(db, s);
         await SellerPaysAsync(s, invOk, 500m, 0m);
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         await SellerPaysAsync(s, invOk, 570m, 0m);
         using (var c2 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c2, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(1, await Pipe(c2, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         Assert.Equal(new[] { 500m, 570m }, calls.Select(x => x.Req.Amount));
 
         // สถานการณ์ ก: ระบบบันทึกจ่าย 500 แล้ว · ผู้ขายยกเลิก (แก้รายการ) แล้วบันทึกรับ 500 ใหม่ ⇒ การแจ้งใหม่ไม่ถูกบันทึกเอง (เงินก้อนเดียวกัน)
         var (inv, purchaseId) = await RoutedAsync(db, s);
         var (pay1, _) = await SellerPaysAsync(s, inv, 500m, 0m);
         using (var c3 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c3, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(1, await Pipe(c3, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         await SellerVoidsAsync(s, pay1);
         var (pay2, _) = await SellerPaysAsync(s, inv, 500m, 0m);
         using (var c4 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(0, await Pipe(c4, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(0, await Pipe(c4, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         Assert.Equal(3, calls.Count);
         using var check = DbTestDatabase.TryCreateContext()!;
         var n2 = await NoticeAsync(check, s.Buyer.Id, pay2);
@@ -688,7 +732,7 @@ public class PartnerPayableRound264DbTests
         var (payId, _) = await SellerPaysAsync(s, inv, 500m, 0m);
         var calls = new List<Call>();
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(0, await Pipe(c1, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(0, await Pipe(c1, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         Assert.Empty(calls);
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(PartnerAutoRecordPolicy.Codes.OtherPayment, (await NoticeAsync(check, s.Buyer.Id, payId)).AutoBlockedCode);
@@ -737,25 +781,25 @@ public class PartnerPayableRound264DbTests
         await SellerPaysAsync(s, invPlain, 1_070m, 0m, date: lastMonth);
         var calls = new List<Call>();
         using (var c1 = DbTestDatabase.TryCreateContext()!)
-            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
+            Assert.Equal(1, await Pipe(c1, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow));
         var call = Assert.Single(calls);
         Assert.Equal(1_070m, call.Req.Amount);
-        // M3/M5: หมายเหตุของการจ่ายบอกว่าระบบบันทึกเอง · ตามความยินยอมของใคร · หลักฐาน = บัญชีตั้งต้น + คำบอกของผู้ขาย (ยังไม่ตรวจรายการเดินบัญชี)
+        // M3/M5: หมายเหตุของการจ่ายบอกว่าระบบบันทึกเอง · ตามความยินยอมของใคร · หลักฐาน = รายการเดินบัญชี (268-1-1 — บัญชีตั้งต้นอย่างเดียวไม่บันทึกเองแล้ว)
         Assert.Contains("ระบบบันทึกเอง", call.Req.Notes);
         Assert.Contains("เจ้าของผู้ซื้อ P3", call.Req.Notes);
-        Assert.Contains(PartnerPaySourceAccount.ConsentDefaultLabelPrefix, call.Req.Notes);
-        Assert.Contains(PartnerPaySourceAccount.ConsentDefaultCaveat, call.Req.Notes);
+        Assert.Contains("จากรายการเดินบัญชี", call.Req.Notes);
+        Assert.DoesNotContain(PartnerPaySourceAccount.ConsentDefaultLabelPrefix, call.Req.Notes);
         using var check = DbTestDatabase.TryCreateContext()!;
         var blocked = await NoticeAsync(check, s.Buyer.Id, payWht);
         Assert.Equal(PartnerPaymentNoticeRule.StatusOpen, blocked.Status);
         Assert.Equal(PartnerAutoRecordPolicy.Codes.WhtPeriod, blocked.AutoBlockedCode);
         // M7: เหตุถาวรไม่ถูกประเมินซ้ำทุก 15 นาที — รอบถัดไป (อีก 1 ชม.) ไม่แตะ · พ้น 24 ชม. ประเมินใหม่
         using (var c2 = DbTestDatabase.TryCreateContext()!)
-            await Pipe(c2, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow.AddHours(1));
+            await Pipe(c2, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow.AddHours(1));
         using (var c3 = DbTestDatabase.TryCreateContext()!)
             Assert.Equal(blocked.AutoEvaluatedAt, (await NoticeAsync(c3, s.Buyer.Id, payWht)).AutoEvaluatedAt);
         using (var c4 = DbTestDatabase.TryCreateContext()!)
-            await Pipe(c4, PayingDocs(s.Buyer.Id, calls)).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow.AddHours(25));
+            await Pipe(c4, PayingDocs(s.Buyer.Id, calls), bankLine: s.BankB).RunForCompanyAsync(s.Buyer.Id, DateTime.UtcNow.AddHours(25));
         using (var c5 = DbTestDatabase.TryCreateContext()!)
             Assert.NotEqual(blocked.AutoEvaluatedAt, (await NoticeAsync(c5, s.Buyer.Id, payWht)).AutoEvaluatedAt);
         Assert.Single(calls);
@@ -792,5 +836,63 @@ public class PartnerPayableRound264DbTests
         Assert.Contains(PartnerPaymentNoticeRule.SellerVoidedKey(payId, noticeId), await check.Documents.AsNoTracking().Where(d => d.Id == purchaseId).Select(d => d.InternalNotes).SingleAsync());
         Assert.Contains(await PartnerPayablePipeline.BlockedRowsAsync(check, s.Buyer.Id, DateTime.UtcNow), r => r.Id == noticeId && r.SellerVoidedAfterRecord);
         Assert.Single(await EventsAsync(check, s.Buyer.Id, "PartnerPaymentSellerVoided"));
+    }
+
+    // ═══ รอบ 268 (คำตัดสิน 268-1-6 · backlog D8): ผู้ขายรับเงินหลายใบในก้อนเดียว ═══
+
+    [Fact]
+    public async Task C268_1_6_รับชำระหลายใบ_แจ้งต่อแถวจัดสรร_กุญแจแถวจัดสรร_รันซ้ำไม่เพิ่ม_ปุ่มเดียวบันทึกแยกใบ_ไม่ถือว่าใบที่สองจ่ายแล้ว()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db);
+        var (inv1, purchase1) = await RoutedAsync(db, s);
+        var (inv2, purchase2) = await RoutedAsync(db, s);
+        Guid payId, alloc1, alloc2;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            var pay = new Payment
+            {
+                CompanyId = s.Seller.Id, PaymentNumber = "RCM268-" + Random.Shared.Next(100000, 999999), DocumentId = inv1.Id, PaymentDate = DateTime.UtcNow.Date,
+                Amount = 2_140m, PaymentMethod = PaymentMethod.BankTransfer, Reference = "MULTI-" + Guid.NewGuid().ToString("N")[..6],
+            };
+            c.Payments.Add(pay);
+            var a1 = new PaymentAllocation { CompanyId = s.Seller.Id, PaymentId = pay.Id, DocumentId = inv1.Id, AllocatedAmount = 1_070m };
+            var a2 = new PaymentAllocation { CompanyId = s.Seller.Id, PaymentId = pay.Id, DocumentId = inv2.Id, AllocatedAmount = 1_070m };
+            c.PaymentAllocations.AddRange(a1, a2);
+            await c.SaveChangesAsync();
+            (payId, alloc1, alloc2) = (pay.Id, a1.Id, a2.Id);
+        }
+        using (var c1 = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(2, await PartnerPaymentNoticeService.NotifyForSellerPaymentAsync(c1, null, NullLogger.Instance, s.Seller.Id, payId, PaymentEntrySource.Manual));
+        Assert.Equal(0, await SellerPaysAsyncAgain(s, payId));   // ขั้นหลัง commit ซ้ำ ⇒ ไม่แจ้งซ้ำ (กุญแจ = แถวจัดสรร)
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var notices = await check.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters()
+            .Where(n => n.CompanyId == s.Buyer.Id && n.SellerPaymentId == payId).OrderBy(n => n.CashAmount).ThenBy(n => n.TargetDocumentId).ToListAsync();
+        Assert.Equal(2, notices.Count);
+        Assert.Equal(new[] { alloc1, alloc2 }.OrderBy(x => x), notices.Select(n => n.SellerAllocationId!.Value).OrderBy(x => x));
+        Assert.Equal(new[] { purchase1, purchase2 }.OrderBy(x => x), notices.Select(n => n.TargetDocumentId).OrderBy(x => x));
+        Assert.All(notices, n => Assert.Equal(1_070m, n.CashAmount));
+        Assert.Equal(PartnerPaymentNoticeRule.PaymentReferenceFor(payId, null, alloc1), PartnerPaymentNoticeRule.PaymentReferenceForSellerAllocation(alloc1));
+        Assert.DoesNotContain(PartnerPaymentNoticeRule.PaymentReferenceForSellerPayment(payId), PartnerPaymentNoticeRule.PaymentReferencesToCheck(payId, null, alloc1));
+
+        // ปุ่มเดียวของสองใบ ⇒ สองการจ่าย (เลขอ้างอิงต่อแถวจัดสรร) — ใบที่สองไม่ถูกปิดด้วย "พบการจ่ายแล้ว" ของใบแรก
+        var calls = new List<Call>();
+        foreach (var n in notices)
+        {
+            using var cx = DbTestDatabase.TryCreateContext()!;
+            var ok = await new PartnerPaymentNoticeService(cx, PayingDocs(s.Buyer.Id, calls), NullLogger<PartnerPaymentNoticeService>.Instance)
+                .RecordAsync(s.Buyer.Id, n.Id, s.OwnerB, s.BankB, null);
+            Assert.Equal(PartnerPaymentNoticeRule.StatusRecorded, ok.Status);
+        }
+        Assert.Equal(2, calls.Count);
+        Assert.Equal(2, calls.Select(x => x.Req.Reference).Distinct().Count());
+        Assert.Equal(new[] { purchase1, purchase2 }.OrderBy(x => x), calls.Select(x => x.Req.DocumentId).OrderBy(x => x));
+        // ผู้ขายยกเลิกการรับชำระก้อนนั้น ⇒ ทุกแจ้งของก้อนถูกติดป้าย (ตัวถอนต่อการรับชำระ — ครอบทุกแถวจัดสรร)
+        await SellerVoidsAsync(s, payId);
+        using var after = DbTestDatabase.TryCreateContext()!;
+        Assert.All(await after.PartnerPaymentNotices.AsNoTracking().IgnoreQueryFilters().Where(n => n.CompanyId == s.Buyer.Id && n.SellerPaymentId == payId).ToListAsync(),
+            n => Assert.NotNull(n.SellerVoidedAt));
     }
 }

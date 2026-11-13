@@ -265,4 +265,11 @@ public class SiteBookingPayment : TenantEntity
     // Refund tracking
     public bool IsRefund { get; set; } = false;
     public string? RefundReason { get; set; }
+
+    /// <summary>รอบ 268 (268-1-3): ช่องทางที่เงินงวดนี้เข้า ประทับตอนรับ (<c>Helpers/BookingDepositInstalmentChannel</c>) · false = แถวก่อนรอบ 268 (ไม่รู้ — ห้ามเดา)</summary>
+    public bool ChannelStamped { get; set; }
+    /// <summary>บัญชีธนาคารที่เงินงวดนี้เข้า (null + ไม่มีผังตรง = เงินสดตั้งต้น)</summary>
+    public Guid? BankAccountId { get; set; }
+    /// <summary>ผังตรงของเงินเข้า (บัญชีพักของผู้ให้บริการรับชำระ ฯลฯ)</summary>
+    public Guid? MoneyInAccountId { get; set; }
 }

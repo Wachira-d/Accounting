@@ -41,7 +41,8 @@ public static class PartnerPaySourceAccount
         new PrecedenceRow(Origin.BankLine, 1, true, 1.00m, "ข้อเท็จจริง — เงินออกจากบัญชีนั้นจริง (รายการเดินบัญชี)"),
         new PrecedenceRow(Origin.PayerDeclared, 2, true, 0.95m, "ประกาศของคนก่อนจ่าย (เลือกตอนชำระจากระบบของเรา)"),
         new PrecedenceRow(Origin.SlipUnique, 3, true, 0.90m, "สัญญาณแข็ง — สลิปตรงบัญชีเดียวของเรา"),
-        new PrecedenceRow(Origin.ConsentDefault, 4, true, 0.85m, "ค่าตั้งของคน — บัญชีจ่ายคู่ค้านี้ที่ตั้งไว้ในความยินยอม"),
+        // คำตัดสิน 268-1-1 (แทน 264-3-14): ชั้นนี้ไม่ใช่หลักฐานว่าเงินออกจากบัญชีนั้นจริง ⇒ preselect บนปุ่มเดียวได้ แต่ไม่บันทึกเอง จนกว่าจะมีชั้นรายการเดินบัญชี (P4)
+        new PrecedenceRow(Origin.ConsentDefault, 4, false, 0.85m, "ค่าตั้งของคน — บัญชีจ่ายคู่ค้านี้ที่ตั้งไว้ในความยินยอม (preselect เท่านั้น · ไม่บันทึกเอง — 268-1-1)"),
         new PrecedenceRow(Origin.HistoryHint, 5, false, 0.50m, "สัญญาณอ่อน — เคยจ่ายผู้ขายนี้จากบัญชีนี้ / บัญชีบนใบซื้อ (คำแนะนำเท่านั้น)"),
         new PrecedenceRow(Origin.Unknown, 6, false, 0m, "ไม่ทราบ"),
     };
@@ -88,6 +89,17 @@ public static class PartnerPaySourceAccount
     /// <summary>ฝ่ายค้าน M3: ป้ายซื่อสัตย์ของชั้นที่ 4 — หลักฐาน = "ค่าตั้งของเรา + คำบอกของผู้ขาย" ไม่ใช่หลักฐานว่าเงินออกจากบัญชีนั้นจริง (ตัวเดียว: หน้า · audit · หมายเหตุการจ่าย)</summary>
     public const string ConsentDefaultLabelPrefix = "บัญชีตั้งต้นที่ตั้งไว้ตอนยินยอม + ผู้ขายแจ้งรับเงิน — ";
     public const string ConsentDefaultCaveat = " (ยังไม่ได้ตรวจกับรายการเดินบัญชีของเรา)";
+
+    /// <summary>คำตัดสิน 268-1-1: เหตุที่ท่อไม่บันทึกเองเมื่อหลักฐานบัญชีมีแค่บัญชีตั้งต้นในความยินยอม (ตัวเดียว: เหตุบนแถว · หน้า · ป้ายหน้าความยินยอม)</summary>
+    public const string ConsentDefaultNotAutoReason = "ยังไม่บันทึกเอง — หลักฐานบัญชีที่จ่ายมีแค่บัญชีตั้งต้นที่ตั้งไว้ตอนยินยอม (ยังไม่มีรายการเดินบัญชีของเรายืนยันว่าเงินออกจากบัญชีนั้น) · "
+        + "บัญชีนั้นถูกเลือกไว้ให้แล้ว ตรวจแล้วกด “บันทึกจ่าย” ครั้งเดียว";
+
+    /// <summary>ป้ายหน้า “งานอัตโนมัติกับคู่ค้า” ของขอบเขตบันทึกจ่าย ขณะชั้นบัญชีตั้งต้นไม่บันทึกเอง (ห้าม silent no-op — ให้ความยินยอมแล้วต้องรู้ว่าผลจริงคืออะไร)</summary>
+    public const string ConsentDefaultNotAutoNote = "ตอนนี้ระบบยังไม่บันทึกจ่ายเองจากบัญชีตั้งต้นที่ตั้งไว้ที่นี่ (คำตัดสิน 268-1-1) — จนกว่าจะตรวจกับรายการเดินบัญชีของเราได้ · "
+        + "ระหว่างนี้บัญชีนี้ถูกเลือกไว้ให้ในปุ่ม “บันทึกจ่าย” ของการแจ้งแต่ละรายการ (กดครั้งเดียว) · เพดานและการถอนยังมีผลตามเดิม";
+
+    /// <summary>ชั้นบัญชีตั้งต้นบันทึกเองได้ไหม (อ่านจากตาราง — ผู้อ่าน: ป้ายหน้า/ความยินยอม)</summary>
+    public static bool ConsentDefaultAutoEnabled => Row(Origin.ConsentDefault).AllowsAuto;
 
     public const string UnknownReason = "ไม่ทราบแหล่งเงินออก — เลือกบัญชีที่จ่ายจริง หรือรอรายการเดินบัญชีของเรา (ระบบไม่เดาบัญชีให้ · ไม่ใช้เงินสด/บัญชีแรกแทน)";
     public const string SlipNotOursReason = "บัญชีบนสลิปไม่ใช่บัญชีของบริษัท (อาจเป็นกรรมการ/พนักงานจ่ายแทน) — เลือกเองว่าเงินออกจากไหน (เช่น กรรมการจ่ายแทน 21230)";
@@ -146,6 +158,9 @@ public static class PartnerPaySourceAccount
         if (win.Origin == Origin.BankLine && losers.Count > 0)
             why += " · ไม่ตรง" + string.Join("/", losers.Select(l => OriginLabel(l.Origin))) + " (รายการเดินบัญชีชนะ — เงินออกจริง)";
         var auto = row.AllowsAuto && row.Confidence >= AutoThreshold;
+        // 268-1-1: ชนะด้วยบัญชีตั้งต้นอย่างเดียว ⇒ preselect + เหตุที่บอกตรง ๆ ว่าทำไมไม่บันทึกเอง (เหตุ = สิ่งที่ตรวจจริง)
+        if (!auto && win.Origin == Origin.ConsentDefault)
+            why = ConsentDefaultNotAutoReason + " · " + win.Label;
         return new Decision(win.BankAccountId, win.Origin, auto, row.Confidence, why, win.Label, losers, hint, hintLabel, false);
     }
 
