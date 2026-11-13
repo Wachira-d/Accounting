@@ -241,7 +241,7 @@ public class DocumentEmailService : IDocumentEmailService
 
     /// <summary>รอบ 267 P3 (267-1-62): บล็อก "เปิดหน้าเอกสาร" ของอีเมลที่ส่งจากหน้าต่าง "ส่งให้ลูกค้า" — ตัวออกลิงก์หน้าเอกสารเดียว
     /// (<see cref="IDocumentPayLinkService.EnsureCustomerLinkAsync"/> · ลิงก์ที่ถูกเพิกถอนไม่ถูกออกใหม่ทับ — 259-2-8) · ป้ายปุ่ม/ข้อความจาก
-    /// <see cref="CustomerShareRule.EmailPageBlock"/> (ตามช่วงตอบรับ/ยอดค้าง) · ออกไม่ได้ ⇒ โยน <see cref="BusinessRuleException"/> พร้อมเหตุ</summary>
+    /// <see cref="CustomerShareRule.EmailPageBlock"/> + <see cref="CustomerShareRule.PageButtonLabel(string, Accounting.Models.Entities.Document, DateTime, bool)"/> · ออกไม่ได้ ⇒ โยน <see cref="BusinessRuleException"/> พร้อมเหตุ</summary>
     private async Task<string> ManualPageBlockAsync(Guid companyId, Document doc, bool isEnglish)
     {
         if (_payLinks == null)
@@ -249,8 +249,8 @@ public class DocumentEmailService : IDocumentEmailService
         var r = await _payLinks.EnsureCustomerLinkAsync(companyId, doc.Id, "share-email", default, allowReissueRevoked: false);
         if (!r.Ok)
             throw new BusinessRuleException("ใส่ลิงก์หน้าเอกสารไม่ได้ — " + (r.Refusal ?? "ไม่ทราบเหตุ"), CustomerShareRule.RuleCode, 409);
-        var respondOpen = SignRequestKinds.LinkUsable(SignRequestKinds.Read(doc), DateTime.UtcNow);
-        return CustomerShareRule.EmailPageBlock(r.Url!, CustomerShareRule.EmailPageButton(isEnglish, doc.DocumentType, respondOpen, doc.BalanceDue > 0), isEnglish);
+        // ฝ่ายค้าน 267-P3 MED-1: ป้ายปุ่มจากตัวตัดสินเดียวกับการ์ด LINE (ตอบรับได้จริงตอนนี้ · ยอดค้าง · ดูอย่างเดียว)
+        return CustomerShareRule.EmailPageBlock(r.Url!, CustomerShareRule.PageButtonLabel(isEnglish ? "en" : "th", doc, DateTime.UtcNow), isEnglish);
     }
 
     public async Task<DocumentEmailLog> SendDocumentRoutedAsync(Guid companyId, Guid documentId,

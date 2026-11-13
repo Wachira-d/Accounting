@@ -162,24 +162,29 @@ public class CustomerShareRound267Tests
     // ─────────── การ์ด LINE · อีเมล ───────────
 
     [Fact]
-    public void การ์ดลิงก์หน้าเอกสาร_ปุ่มเดียวตามสิ่งที่ลูกค้าทำได้_การ์ดฉบับเซ็นมีปุ่มฉบับเซ็น()
+    public void การ์ดลิงก์หน้าเอกสาร_ปุ่มตามสิ่งที่ลูกค้าทำได้_ปุ่มชำระที่ติ๊กอยู่คู่กัน_การ์ดฉบับเซ็นมีปุ่มฉบับเซ็น()
     {
         const string page = "https://app.test/pages/pay-document.html?c=1&t=2&s=l1";
+        var respond = CustomerShareRule.PageButtonLabel("th", DocumentType.Quotation, CustomerShareRule.PageButtonKind.Respond);
         var accept = LineDocumentCard.Build(new LineDocumentCard.Input("บริษัท ก", false, "th", "ใบเสนอราคา", "QT-1", 1000m, "THB", null, "ลูกค้า",
-            "https://pay.test/x", false, ViewUrl: "https://view.test/x", PageUrl: page,
-            PageButton: LineDocumentCard.PageButtonLabel("th", DocumentType.Quotation, outstanding: false)));
+            "https://pay.test/x", false, ViewUrl: "https://view.test/x", PageUrl: page, PageButton: respond));
         var json = Json(accept.Contents);
         Assert.Contains("ดู/ยอมรับ", json);
-        Assert.DoesNotContain("pay.test", json);   // ไม่ซ้อนปุ่มชำระ/ดู PDF เมื่อมีหน้า
-        Assert.DoesNotContain("view.test", json);
-        Assert.Equal("ดู/เซ็นรับ", LineDocumentCard.PageButtonLabel("th", DocumentType.DeliveryNote, false));
-        Assert.Equal("ดู/ชำระเงิน", LineDocumentCard.PageButtonLabel("th", DocumentType.Invoice, true));
-        Assert.Equal("Open document", LineDocumentCard.PageButtonLabel("en", DocumentType.Receipt, false));
+        Assert.Contains("pay.test", json);          // ฝ่ายค้าน MED-2: ปุ่มชำระที่ผู้ใช้ติ๊กอยู่คู่กับปุ่มหน้าเอกสาร
+        Assert.DoesNotContain("view.test", json);   // ไม่ซ้อนปุ่มดู PDF (หน้ามีดาวน์โหลด)
+        Assert.Equal("ดู/เซ็นรับ", CustomerShareRule.PageButtonLabel("th", DocumentType.DeliveryNote, CustomerShareRule.PageButtonKind.Respond));
+        Assert.Equal("ดู/ตอบรับ", CustomerShareRule.PageButtonLabel("th", DocumentType.PurchaseOrder, CustomerShareRule.PageButtonKind.Respond));
+        Assert.Equal("ดู/ชำระเงิน", CustomerShareRule.PageButtonLabel("th", DocumentType.Invoice, CustomerShareRule.PageButtonKind.Pay));
+        Assert.Equal("View document", CustomerShareRule.PageButtonLabel("en", DocumentType.Receipt, CustomerShareRule.PageButtonKind.View));
+        // ทิศตรงข้าม: ไม่มีลิงก์ชำระ ⇒ ไม่มีปุ่มชำระ
+        Assert.DoesNotContain("pay.test", Json(LineDocumentCard.Build(new LineDocumentCard.Input("บริษัท ก", false, "th", "ใบเสนอราคา", "QT-1", 1000m, "THB", null,
+            "ลูกค้า", null, false, PageUrl: page, PageButton: respond)).Contents));
 
         var signed = LineDocumentCard.Build(new LineDocumentCard.Input("บริษัท ก", false, "th", "ใบเสนอราคา", "QT-1", 1000m, "THB", null, "ลูกค้า",
             null, false, PageUrl: page, SignedCopy: true));
         Assert.Contains("ฉบับเซ็น", Json(signed.Contents));
         Assert.Contains("ฉบับเซ็น", signed.AltText);
+        Assert.DoesNotContain("ของท่าน", Json(signed.Contents));   // ฝ่ายค้าน LOW-1: ถ้อยคำกลาง (ผู้รับต้นทางอาจไม่ใช่ผู้ลงนาม)
 
         // ทิศตรงข้าม: การ์ดเดิม (ไม่มีหน้า) คงปุ่มชำระ + ดู PDF
         var legacy = Json(LineDocumentCard.Build(new LineDocumentCard.Input("บริษัท ก", false, "th", "ใบแจ้งหนี้", "INV-1", 1000m, "THB", null, "ลูกค้า",
@@ -195,9 +200,6 @@ public class CustomerShareRound267Tests
         Assert.DoesNotContain("<script>", block);
         Assert.DoesNotContain("t=<b>", block);
         Assert.StartsWith(CustomerShareRule.PageBlockStart, block);
-        Assert.Equal(SignRequestKinds.QuotationAccept.ButtonTh, CustomerShareRule.EmailPageButton(false, DocumentType.Quotation, respondOpen: true, false));
-        Assert.Equal("เปิดดูเอกสาร", CustomerShareRule.EmailPageButton(false, DocumentType.Quotation, respondOpen: false, false));
-        Assert.Equal("เปิดดูเอกสารและชำระเงิน", CustomerShareRule.EmailPageButton(false, DocumentType.Invoice, false, outstanding: true));
         Assert.False(CustomerShareRule.EmailCarriesPageLink(EtaxEmailChannel.EtaxByEmail));
         Assert.True(CustomerShareRule.EmailCarriesPageLink(EtaxEmailChannel.PlainEmail));
         Assert.True(CustomerShareRule.EmailCarriesPageLink(EtaxEmailChannel.PlainCopyAfterEtax));
@@ -230,5 +232,73 @@ public class CustomerShareRound267Tests
         Assert.Contains("SMTP 550", mail.Detail);
         Assert.Null(CustomerShareRule.EmailItem(at, true, "a@b.co", null, false).ActionId);
         Assert.Contains("ไม่รับ", CustomerShareRule.CustomerActionItem(at, nameof(CustomerSignRule.Kind.Declined), "สมชาย ใจดี", "ผู้จัดการ", 2).Label);
+    }
+
+    // ─────────── ฝ่ายค้าน 267-P3 ───────────
+
+    private static Accounting.Models.Entities.Document Quote(DateTime now, bool windowOpen, string? response = null, DateTime? acceptedAt = null) => new()
+    {
+        DocumentType = DocumentType.Quotation, Status = DocumentStatus.Approved, DueDate = now.AddDays(20), BalanceDue = 1_070m,
+        PayLinkTokenHash = "h", PayLinkExpiresAt = now.AddDays(300), SignLinkIssuedAt = windowOpen ? now.AddMinutes(-5) : null,
+        CustomerResponse = response, QuotationAcceptedAt = acceptedAt,
+    };
+
+    [Fact]
+    public void MED1_ป้ายปุ่มตัวตัดสินเดียว_ช่วงตอบรับปิดหรือตอบแล้ว_ดูเอกสารเท่านั้น()
+    {
+        var now = DateTime.UtcNow;
+        Assert.Equal("ดู/ยอมรับ", CustomerShareRule.PageButtonLabel("th", Quote(now, windowOpen: true), now));
+        // ทิศตรงข้าม: ไม่ได้เปิดให้ตอบรับ · ยอมรับแล้ว · ไม่รับ/ขอแก้แล้ว ⇒ "ดูเอกสาร" (ไม่ชวนกดปุ่มที่หน้าไม่มี)
+        Assert.Equal("ดูเอกสาร", CustomerShareRule.PageButtonLabel("th", Quote(now, windowOpen: false), now));
+        Assert.Equal("ดูเอกสาร", CustomerShareRule.PageButtonLabel("th", Quote(now, true, acceptedAt: now.AddMinutes(-1)), now));
+        Assert.Equal("ดูเอกสาร", CustomerShareRule.PageButtonLabel("th", Quote(now, true, response: nameof(CustomerSignRule.Kind.Declined)), now));
+        Assert.Equal("ดูเอกสาร", CustomerShareRule.PageButtonLabel("th", Quote(now, true, response: nameof(CustomerSignRule.Kind.ChangeRequested)), now));
+        // ใบแจ้งหนี้: ยอดค้าง ⇒ ดู/ชำระ · มีปุ่มชำระแยกบนการ์ด ⇒ ดูเอกสาร · จ่ายครบ ⇒ ดูเอกสาร
+        var inv = new Accounting.Models.Entities.Document { DocumentType = DocumentType.Invoice, Status = DocumentStatus.Approved, BalanceDue = 500m };
+        Assert.Equal("ดู/ชำระเงิน", CustomerShareRule.PageButtonLabel("th", inv, now));
+        Assert.Equal("ดูเอกสาร", CustomerShareRule.PageButtonLabel("th", inv, now, separatePayButton: true));
+        inv.BalanceDue = 0m;
+        Assert.Equal("ดูเอกสาร", CustomerShareRule.PageButtonLabel("th", inv, now));
+    }
+
+    [Fact]
+    public void MED2_ปุ่มชำระต่อปลายทาง_กลุ่มซ่อนยอดล็อกพร้อมเหตุ_ผู้ใช้11ได้()
+    {
+        Guid u = Guid.NewGuid(), g = Guid.NewGuid();
+        var t = DocumentLineSendRule.Targets(new[] { Opt(u, NotifyEndpointKind.LineUser), Opt(g, NotifyEndpointKind.LineGroup, showAmounts: false) }, DocumentType.Invoice);
+        var user = t.Single(x => x.EndpointId == u);
+        var group = t.Single(x => x.EndpointId == g);
+        Assert.True(user.PayLink);
+        Assert.Null(user.PayLinkNote);
+        Assert.False(group.PayLink);
+        Assert.Equal(DocumentLineSendRule.PayLinkHiddenGroupNote, group.PayLinkNote);
+    }
+
+    [Fact]
+    public void MED3_ไม่มีลิงก์หน้าเอกสาร_บอกเหตุ_ปุ่มขึ้นสำหรับใบที่ส่งแบบเดิมได้()
+    {
+        Assert.Equal("ครั้งนี้ไม่มีลิงก์หน้าเอกสาร เพราะ ใบนี้เป็นใบค่าบริการ", CustomerShareRule.NoPageLinkNote("ใบนี้เป็นใบค่าบริการ."));
+        Assert.True(CustomerShareRule.ButtonOffered(DocumentType.CreditNote, DocumentStatus.Approved));
+        Assert.True(CustomerShareRule.ButtonOffered(DocumentType.BillingNote, DocumentStatus.Approved));
+        Assert.False(CustomerShareRule.ButtonOffered(DocumentType.CreditNote, DocumentStatus.Draft));
+    }
+
+    [Fact]
+    public void LOW2_eTaxโหมดทดสอบ_บอกตามจริง()
+    {
+        Assert.Contains("โหมดทดสอบ", CustomerShareRule.EmailSentMessage(true, includedRdTimestamp: false));
+        Assert.DoesNotContain("รอประทับเวลา", CustomerShareRule.EmailSentMessage(true, false));
+        Assert.Contains("รอประทับเวลา", CustomerShareRule.EmailSentMessage(true, true));
+        Assert.Equal("ส่งอีเมลแล้ว", CustomerShareRule.EmailSentMessage(false, false));
+    }
+
+    [Fact]
+    public void LOW7_ซ่อมเรื่องLINE_ผูกรุ่นด้วยmarker_ไม่ตัดลิงก์เซ็นของผู้ใช้11()
+    {
+        var sql = string.Join("\n", Round259LineMigration.Statements());
+        Assert.Contains($"NOT EXISTS (SELECT 1 FROM \"OneShotDataFixes\" WHERE \"Key\" = '{Round259LineMigration.TopicStripMarkerKey}')", sql);
+        Assert.Contains($"INSERT INTO \"OneShotDataFixes\" (\"Key\", \"AppliedAt\") VALUES ('{Round259LineMigration.TopicStripMarkerKey}'", sql);
+        var userBlock = sql[sql.IndexOf("WHERE \"Kind\" = 'LineGroup'", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("Sign", userBlock[userBlock.IndexOf("UPDATE", StringComparison.Ordinal)..userBlock.IndexOf("INSERT", StringComparison.Ordinal)]);
     }
 }

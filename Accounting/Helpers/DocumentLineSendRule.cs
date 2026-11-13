@@ -45,7 +45,7 @@ public static class DocumentLineSendRule
     /// <param name="PageLink">รอบ 267 P3: การ์ดของปลายทางนี้ได้ปุ่มลิงก์หน้าเอกสาร ("ดู/ยอมรับ" ฯลฯ — <see cref="PageLinkAllowed"/>) ·
     /// <paramref name="PageLinkNote"/> = เหตุเมื่อไม่ได้ (หน้าเว็บแสดงข้อความนี้ตรงตัว)</param>
     public sealed record Target(Guid EndpointId, string Kind, string KindLabel, string Display, bool Available, string? Reason,
-        bool ShowAmounts, bool PdfLink, bool PayLink, bool PageLink = false, string? PageLinkNote = null);
+        bool ShowAmounts, bool PdfLink, bool PayLink, bool PageLink = false, string? PageLinkNote = null, string? PayLinkNote = null);
 
     /// <summary>
     /// รอบ 267 P3 (คำตัดสิน 267-1-7 · 267-1-61) — <b>ตัวตัดสินเดียว</b>ว่าการ์ด LINE ของปลายทางนี้ได้ <b>ลิงก์หน้าเอกสาร</b> (token ของใบ = สิทธิ์ดู · จ่าย ·
@@ -109,6 +109,9 @@ public static class DocumentLineSendRule
     public const string PageLinkNotAllowedAtSend =
         "ไม่ส่ง — ปลายทางนี้รับลิงก์หน้าเอกสารไม่ได้แล้ว (ค่าตั้งเปลี่ยนหลังเข้าคิว เช่น กลุ่มตั้งซ่อนยอด) · ส่งใหม่จาก \"📤 ส่งให้ลูกค้า\"";
 
+    /// <summary>ฝ่ายค้าน 267-P3 MED-2: เหตุต่อปลายทางที่ไม่ได้ปุ่มชำระ (หน้าต่างล็อกช่อง + การ์ดของปลายทางนี้ไม่มีปุ่มชำระ — ส่งการ์ดได้ตามปกติ)</summary>
+    public const string PayLinkHiddenGroupNote = "ไม่ใส่ปุ่มชำระ — กลุ่มนี้ตั้ง \"ซ่อนยอด\" (หน้าชำระแสดงยอดและรายการ)";
+
     public const string PayLinkGoneAtSend =
         "ไม่ส่ง — ลิงก์ชำระที่เลือกใส่ใช้ไม่ได้แล้ว (ถูกเพิกถอน/หมดอายุ/บริษัทปิดช่องทาง) · ส่งใหม่จากหน้าเอกสาร (ติ๊กหรือไม่ติ๊กลิงก์ชำระ)";
 
@@ -120,7 +123,8 @@ public static class DocumentLineSendRule
                 var pageProblem = type is DocumentType t ? PageLinkProblem(o.Kind, o.ShowAmounts, t) : "ไม่ได้ตรวจ";
                 return new Target(o.EndpointId!.Value, o.Kind, NotifyEndpointKind.Label(o.Kind), o.Display, o.Available, o.Available ? null : o.Reason,
                     show, LineDocumentViewLink.EndpointAllows(o.Kind, show, null, null), PayLinkAllowed(o.Kind, o.ShowAmounts),
-                    type != null && pageProblem == null, type == null ? null : pageProblem);
+                    type != null && pageProblem == null, type == null ? null : pageProblem,
+                    PayLinkAllowed(o.Kind, o.ShowAmounts) ? null : PayLinkHiddenGroupNote);
             }).ToList();
 
     /// <summary>รอบ 267 P3 (267-1-61): ใบที่มีปุ่มตอบรับ + ส่งลิงก์หน้าเอกสาร ⇒ ปลายทาง 1:1 ที่ติ๊กเรื่อง "ลิงก์เซ็น" (แต่ไม่ได้ติ๊ก "เอกสาร") ก็รับได้ ·

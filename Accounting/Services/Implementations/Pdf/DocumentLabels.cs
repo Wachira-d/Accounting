@@ -157,6 +157,7 @@ public sealed class DocumentLabels
     public string LineCardOpenAccept => this["line_card_open_accept"];
     public string LineCardOpenSign => this["line_card_open_sign"];
     public string LineCardOpenPay => this["line_card_open_pay"];
+    public string LineCardOpenRespond => this["line_card_open_respond"];
     public string LineCardOpen => this["line_card_open"];
     public string LineCardSignedCopy => this["line_card_signed_copy"];
     public string LineCardSignedReceived => this["line_card_signed_received"];
@@ -419,9 +420,10 @@ public sealed class DocumentLabels
         ["line_card_open_accept"] = "ดู/ยอมรับ",
         ["line_card_open_sign"] = "ดู/เซ็นรับ",
         ["line_card_open_pay"] = "ดู/ชำระเงิน",
-        ["line_card_open"] = "เปิดเอกสาร",
+        ["line_card_open_respond"] = "ดู/ตอบรับ",
+        ["line_card_open"] = "ดูเอกสาร",
         ["line_card_signed_copy"] = "ฉบับเซ็น",
-        ["line_card_signed_received"] = "ได้รับการลงนามของท่านแล้ว ขอบคุณค่ะ — ดาวน์โหลดฉบับที่ลงนามได้จากปุ่มด้านล่าง",
+        ["line_card_signed_received"] = "เอกสารนี้ลงนามแล้ว — ดาวน์โหลดฉบับที่ลงนามได้จากปุ่มด้านล่าง",
         ["line_card_stop_user"] = "ไม่ต้องการรับทาง LINE? พิมพ์ \"หยุด\" ในแชตนี้",
         ["line_card_stop_group"] = "ไม่ต้องการรับในกลุ่มนี้? แจ้งผู้ส่งเพื่อยกเลิกการผูกกลุ่ม",
         ["terms"] = "เงื่อนไข",
@@ -577,9 +579,10 @@ public sealed class DocumentLabels
         ["line_card_open_accept"] = "View / accept",
         ["line_card_open_sign"] = "View / sign",
         ["line_card_open_pay"] = "View / pay",
-        ["line_card_open"] = "Open document",
+        ["line_card_open_respond"] = "View / respond",
+        ["line_card_open"] = "View document",
         ["line_card_signed_copy"] = "Signed copy",
-        ["line_card_signed_received"] = "We have received your signature — thank you. Download the signed copy below.",
+        ["line_card_signed_received"] = "This document has been signed. Download the signed copy below.",
         ["line_card_stop_user"] = "Don't want these on LINE? Reply STOP in this chat",
         ["line_card_stop_group"] = "Don't want these in this group? Ask the sender to unlink it",
         ["terms"] = "Terms",

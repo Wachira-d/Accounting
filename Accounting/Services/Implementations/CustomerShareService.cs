@@ -1,6 +1,7 @@
 using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs.Email;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -61,6 +62,8 @@ public class CustomerShareService : ICustomerShareService
             CustomerDocPage.LinkState.None => "ยังไม่มีลิงก์ — ส่งครั้งแรกระบบออกลิงก์ให้ (ลิงก์เดียวต่อใบ)",
             _ => "ใช้ลิงก์เดิมของใบนี้ (ลิงก์ที่ส่งไปก่อนหน้ายังใช้ได้)",
         };
+        // ฝ่ายค้าน 267-P3 MED-3: ออกลิงก์หน้าเอกสารไม่ได้ ⇒ ยังส่ง PDF/อีเมล/LINE แบบเดิมได้ (ไม่มีลิงก์หน้าเอกสาร) — บอกเหตุตรง ๆ
+        if (refusal != null) linkNote = CustomerShareRule.NoPageLinkNote(refusal);
         var link = new CustomerShareLink(state.ToString(), url, state == CustomerDocPage.LinkState.Usable ? d.PayLinkExpiresAt : null, refusal, linkNote,
             ReissueOffered: state == CustomerDocPage.LinkState.Revoked && refusal == null);
 
@@ -72,6 +75,7 @@ public class CustomerShareService : ICustomerShareService
         var full = await _db.Documents.AsNoTracking().FirstAsync(x => x.Id == d.Id && x.CompanyId == companyId, ct);
         var sign = SignRequestKinds.Read(full);
         var respond = CustomerShareRule.Respond(d.Type, d.Status, SignRequestKinds.LinkUsable(sign, now), sign.SignedAt);
+        if (refusal != null && respond.Applies) respond = respond with { Offered = false, Note = CustomerShareRule.NoPageLinkNote(refusal) };
 
         // อีเมล — ทางเลือกตัวเดียว (e-Tax by Email ⇒ ไม่มีบล็อกลิงก์) · ผู้รับตั้งต้น = อีเมลผู้ติดต่อ
         var route = await _email.RouteAsync(companyId, documentId);
@@ -87,8 +91,9 @@ public class CustomerShareService : ICustomerShareService
         }
 
         var line = await _line.OptionsAsync(companyId, documentId, ct, forShare: true);
+        var pageInEmail = carries && refusal == null;
         var email = new CustomerShareEmail(route.Channel.ToString(), route.Reason, string.IsNullOrWhiteSpace(defaultTo) ? null : defaultTo!.Trim(),
-            carries, carries ? null : CustomerShareRule.EtaxNoPageLinkNote,
+            pageInEmail, !carries ? CustomerShareRule.EtaxNoPageLinkNote : refusal != null ? CustomerShareRule.NoPageLinkNote(refusal) : null,
             carries && line.PayLinkOffered, carries ? line.PayLinkNote : CustomerShareRule.EtaxNoPageLinkNote, problems, warnings);
 
         var channels = CustomerShareRule.Channels.Select(c => c.Code switch
@@ -96,16 +101,21 @@ public class CustomerShareService : ICustomerShareService
             CustomerShareRule.ChannelLine => new CustomerShareChannelOption(c.Code, c.Label, c.Hint, line.CanSend, line.Problem),
             CustomerShareRule.ChannelEmail => new CustomerShareChannelOption(c.Code, c.Label, c.Hint, problems.Count == 0,
                 problems.Count == 0 ? null : string.Join(" · ", problems)),
-            _ => new CustomerShareChannelOption(c.Code, c.Label, c.Hint, true, null),
+            // คัดลอกลิงก์ / QR ต้องมีลิงก์หน้าเอกสาร
+            _ => new CustomerShareChannelOption(c.Code, c.Label, c.Hint, refusal == null, refusal == null ? null : CustomerShareRule.NoPageLinkNote(refusal)),
         }).ToList();
+        var lineTargets = refusal == null ? line.Targets
+            : line.Targets.Select(t => t with { PageLink = false, PageLinkNote = t.Available ? CustomerShareRule.NoPageLinkNote(refusal) : t.PageLinkNote }).ToList();
 
         var status = await _links.StatusAsync(companyId, documentId, ct);
         var postPay = new CustomerSharePostPay(status.PostPaySettingApplies, status.PostPayReceiptMode, status.PostPayPartialMode, status.PostPayEffectiveLabel);
 
         var warn = new List<string>();
         if (preview != null && preview.Page?.ShowAmounts == false) warn.Add("หน้าเอกสารของใบส่งของไม่แสดงราคา/ยอด (รายการ + จำนวนเท่านั้น)");
-        return new CustomerShareOptions(d.Id, d.Number, heading.Title, refusal == null, refusal, link, actions, respond, channels, email,
-            new CustomerShareLine(line.Problem, line.Targets, line.PayLinkOffered, line.PayLinkNote), postPay, warn);
+        // ส่งได้ = มีช่องทางใดช่องทางหนึ่งใช้ได้ (ลิงก์หน้าเอกสาร หรือการส่งแบบเดิม)
+        var canShare = channels.Any(c => c.Available);
+        return new CustomerShareOptions(d.Id, d.Number, heading.Title, canShare, canShare ? null : refusal ?? "ใบนี้ยังส่งให้ลูกค้าไม่ได้", link, actions, respond, channels, email,
+            new CustomerShareLine(line.Problem, lineTargets, line.PayLinkOffered, line.PayLinkNote), postPay, warn);
     }
 
     // ═══════════════ ส่ง ═══════════════
@@ -118,27 +128,34 @@ public class CustomerShareService : ICustomerShareService
         var req = request!;
         var d = await LoadAsync(companyId, documentId, ct) ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
-        // 1) ลิงก์ (ตัวออกเดียว) — ออกไม่ได้ ⇒ ไม่มีช่องทางใดทำงานได้ ⇒ ปฏิเสธทั้งคำขอก่อนส่งอะไรออกไป
-        CustomerLinkResult link;
+        // 1) ลิงก์ (ตัวออกเดียว) — ฝ่ายค้าน 267-P3 MED-3: ออกไม่ได้ / ถูกยกเลิกไว้โดยไม่ติ๊ก "ออกใหม่แทน" ⇒ ไม่ปฏิเสธทั้งคำขอ:
+        //    อีเมล/LINE ส่งแบบเดิม (ไม่มีลิงก์หน้าเอกสาร) + บอกเหตุในผลทุกช่องทาง · คัดลอกลิงก์/QR = ล้มพร้อมเหตุ
+        CustomerLinkResult? link = null;
+        string? noPage = null;
         try
         {
-            link = await _links.EnsureCustomerLinkAsync(companyId, documentId, "share", ct, allowReissueRevoked: req.ReissueRevoked, actor: actor,
+            var r = await _links.EnsureCustomerLinkAsync(companyId, documentId, "share", ct, allowReissueRevoked: req.ReissueRevoked, actor: actor,
                 fallbackOrigin: origin);
+            if (r.Ok && r.Url != null) link = r; else noPage = r.Refusal ?? "ออกลิงก์หน้าเอกสารไม่สำเร็จ";
         }
         catch (PayLinkRevokedException)
         {
-            throw new BusinessRuleException("ลิงก์ของใบนี้ถูกยกเลิกไว้ — ติ๊ก \"ออกลิงก์ใหม่แทน\" ถ้าตั้งใจส่งใหม่ (ไม่มีช่องทางใดถูกส่ง)",
-                CustomerShareRule.RuleCode, 409);
+            noPage = "ลิงก์ของใบนี้ถูกยกเลิกไว้ (ติ๊ก \"ออกลิงก์ใหม่แทน\" ถ้าตั้งใจส่งลิงก์ใหม่)";
         }
-        if (!link.Ok) throw new BusinessRuleException(link.Refusal ?? "ออกลิงก์หน้าเอกสารไม่สำเร็จ — ไม่มีช่องทางใดถูกส่ง", CustomerShareRule.RuleCode, 409);
+        var notes = new List<string>();
+        if (noPage != null) notes.Add(CustomerShareRule.NoPageLinkNote(noPage));
 
-        // 2) เปิดช่วงตอบรับ (ผู้ใช้ติ๊ก) — ล้ม ⇒ ไม่ส่ง "ขอให้ยอมรับ" ที่ลูกค้ากดไม่ได้ (ปฏิเสธทั้งคำขอพร้อมเหตุ)
+        // 2) เปิดช่วงตอบรับ (ผู้ใช้ติ๊ก · ต้องมีลิงก์หน้าเอกสาร) — ล้ม ⇒ ไม่ส่ง "ขอให้ยอมรับ" ที่ลูกค้ากดไม่ได้ (ปฏิเสธทั้งคำขอพร้อมเหตุ)
         if (req.OpenRespond && SignRequestKinds.For(d.Type) != null)
         {
-            if (_sign == null) throw new BusinessRuleException("บริการลิงก์ให้ลูกค้าตอบรับยังไม่พร้อม", CustomerShareRule.RuleCode, 503);
-            var full = await _db.Documents.AsNoTracking().FirstAsync(x => x.Id == d.Id && x.CompanyId == companyId, ct);
-            if (!SignRequestKinds.LinkUsable(SignRequestKinds.Read(full), DateTime.UtcNow))
-                await _sign.IssueLinkAsync(companyId, documentId, new IssueSignLinkOptions(Regenerate: false, StaffIntent: true), origin, ct);
+            if (link == null) notes.Add("ไม่ได้เปิดให้ลูกค้าตอบรับ — ครั้งนี้ไม่มีลิงก์หน้าเอกสาร");
+            else
+            {
+                if (_sign == null) throw new BusinessRuleException("บริการลิงก์ให้ลูกค้าตอบรับยังไม่พร้อม", CustomerShareRule.RuleCode, 503);
+                var full = await _db.Documents.AsNoTracking().FirstAsync(x => x.Id == d.Id && x.CompanyId == companyId, ct);
+                if (!SignRequestKinds.LinkUsable(SignRequestKinds.Read(full), DateTime.UtcNow))
+                    await _sign.IssueLinkAsync(companyId, documentId, new IssueSignLinkOptions(Regenerate: false, StaffIntent: true), origin, ct);
+            }
         }
 
         // 3) ช่องทาง — ทีละช่องทาง · ผลแยกกัน (ช่องทางหนึ่งล้มไม่หยุดช่องทางถัดไป)
@@ -149,26 +166,41 @@ public class CustomerShareService : ICustomerShareService
             switch (ch)
             {
                 case CustomerShareRule.ChannelCopy:
-                    outcomes.Add(CustomerShareRule.Ok(ch, "ลิงก์พร้อมคัดลอก"));
+                    outcomes.Add(link != null ? CustomerShareRule.Ok(ch, "ลิงก์พร้อมคัดลอก") : CustomerShareRule.Failed(ch, CustomerShareRule.NoPageLinkNote(noPage!)));
                     break;
                 case CustomerShareRule.ChannelQr:
-                    qr = QrDataUri(link.Url!);
-                    outcomes.Add(CustomerShareRule.Ok(ch, "QR พร้อมพิมพ์"));
+                    if (link != null) { qr = QrDataUri(link.Url!); outcomes.Add(CustomerShareRule.Ok(ch, "QR พร้อมพิมพ์")); }
+                    else outcomes.Add(CustomerShareRule.Failed(ch, CustomerShareRule.NoPageLinkNote(noPage!)));
                     break;
                 case CustomerShareRule.ChannelEmail:
-                    outcomes.Add(await SendEmailAsync(companyId, documentId, req, actor));
+                    outcomes.Add(await SendEmailAsync(companyId, documentId, req, actor, link != null, noPage));
                     break;
                 case CustomerShareRule.ChannelLine:
-                    outcomes.Add(await SendLineAsync(companyId, documentId, req, userId, actor, ct));
+                    outcomes.Add(await SendLineAsync(companyId, documentId, req, userId, actor, ct, link != null, noPage));
                     break;
             }
         }
         var (allOk, message) = CustomerShareRule.Summary(outcomes);
-        return new CustomerShareResult(allOk, message, link.Url, link.ExpiresAt, qr, outcomes);
+        if (notes.Count > 0) message = string.Join(" · ", notes) + " — " + message;
+
+        // ฝ่ายค้าน 267-P3 LOW-4: ร่องรอยของคำสั่ง "ส่งให้ลูกค้า" เอง (ใครแจกลิงก์/QR เมื่อไร · ช่องทาง · ผล) — audit chain ตัวเดียว
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = userId, EntityType = "Document", EntityId = documentId.ToString(), Action = AuditAction.Export,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = CustomerShareRule.AuditAction, ruleCode = CustomerShareRule.RuleCode, by = actor, pageLink = link != null, noPageLinkReason = noPage,
+                openRespond = req.OpenRespond, outcomes = outcomes.Select(o => new { o.Channel, o.Status }),
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        return new CustomerShareResult(allOk, message, link?.Url, link?.ExpiresAt, qr, outcomes, noPage == null ? null : CustomerShareRule.NoPageLinkNote(noPage));
     }
 
     /// <summary>อีเมล — ทางเข้าเดียว <see cref="IDocumentEmailService.SendDocumentRoutedAsync"/> · ล้ม ⇒ ผลของช่องทางนี้เป็น "ล้ม" พร้อมเหตุ (ไม่โยนต่อ — LINE ยังส่ง)</summary>
-    private async Task<CustomerShareRule.ChannelOutcome> SendEmailAsync(Guid companyId, Guid documentId, CustomerShareRequest req, string? actor)
+    private async Task<CustomerShareRule.ChannelOutcome> SendEmailAsync(Guid companyId, Guid documentId, CustomerShareRequest req, string? actor,
+        bool hasPageLink, string? noPage)
     {
         const string ch = CustomerShareRule.ChannelEmail;
         var to = (req.EmailTo ?? "").Trim();
@@ -177,12 +209,20 @@ public class CustomerShareService : ICustomerShareService
         {
             var route = await _email.RouteAsync(companyId, documentId);
             var carries = CustomerShareRule.EmailCarriesPageLink(route.Channel);
+            var page = carries && hasPageLink;
             var log = await _email.SendDocumentRoutedAsync(companyId, documentId,
                 new SendDocumentEmailRequest(to, string.IsNullOrWhiteSpace(req.EmailCc) ? null : req.EmailCc.Trim(), null, null, null,
-                    AttachPdf: req.AttachPdf || !carries, IncludePayLink: carries && req.EmailPayLink, IncludePageLink: carries), actor);
+                    AttachPdf: req.AttachPdf || !page, IncludePayLink: carries && req.EmailPayLink, IncludePageLink: page), actor);
+            var tail = carries && !hasPageLink && noPage != null ? " · " + CustomerShareRule.NoPageLinkNote(noPage) + " (แนบ PDF แทน)" : "";
             if (log.Status == EmailLogStatus.Sent)
-                return CustomerShareRule.Ok(ch, (log.IsEtaxByEmail ? "ส่ง e-Tax by Email แล้ว (รอประทับเวลา)" : "ส่งอีเมลแล้ว") + " ถึง " + to);
-            return CustomerShareRule.Failed(ch, "ส่งอีเมลไม่สำเร็จ — " + (log.ErrorMessage ?? "ผู้ให้บริการอีเมลไม่รับ"));
+                return CustomerShareRule.Ok(ch, CustomerShareRule.EmailSentMessage(log.IsEtaxByEmail, log.IncludedRdTimestamp) + " ถึง " + to + tail);
+            return CustomerShareRule.Failed(ch, "ส่งอีเมลไม่สำเร็จ — " + (log.ErrorMessage ?? "ผู้ให้บริการอีเมลไม่รับ") + tail);
+        }
+        catch (DbUpdateException ex)
+        {
+            // ฝ่ายค้าน 267-P3 LOW-3: บันทึกผลอีเมลล้มหลังผู้ให้บริการอาจรับแล้ว ⇒ ไม่บอกว่า "ส่งไม่สำเร็จ" เฉย ๆ (ผู้ใช้จะส่งซ้ำ)
+            _logger.LogError(ex, "บันทึกผลส่งอีเมล (ส่งให้ลูกค้า) ไม่สำเร็จ doc={DocumentId} company={CompanyId}", documentId, companyId);
+            return CustomerShareRule.Failed(ch, "บันทึกผลส่งอีเมลไม่สำเร็จ — อีเมลอาจออกไปแล้ว ตรวจกล่องขาออก/บันทึกอีเมลของเอกสารก่อนส่งซ้ำ");
         }
         catch (Exception ex) when (ex is BusinessRuleException or InvalidOperationException or KeyNotFoundException)
         {
@@ -193,18 +233,31 @@ public class CustomerShareService : ICustomerShareService
             _logger.LogError(ex, "ส่งให้ลูกค้าทางอีเมลล้ม doc={DocumentId} company={CompanyId}", documentId, companyId);
             return CustomerShareRule.Failed(ch, "ส่งอีเมลไม่สำเร็จ — ข้อผิดพลาดของระบบ (ลองใหม่ หรือดูบันทึกอีเมลของเอกสาร)");
         }
+        finally
+        {
+            // ฝ่ายค้าน 267-P3 LOW-3: อีเมลกับ LINE ใช้ context เดียวกัน — แถวที่เส้นอีเมลค้างไว้ (บันทึกไม่สำเร็จ) ต้องไม่ถูกบันทึกซ้ำ/ลาก LINE ล้มตาม
+            DetachPending();
+        }
+    }
+
+    /// <summary>ถอดทุกแถวที่ค้าง (Added/Modified/Deleted) ออกจาก context — เส้นอีเมลบันทึกของตัวเองแล้วเมื่อสำเร็จ · ที่ค้างคือของที่บันทึกไม่สำเร็จ</summary>
+    private void DetachPending()
+    {
+        foreach (var e in _db.ChangeTracker.Entries().Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted).ToList())
+            e.State = EntityState.Detached;
     }
 
     /// <summary>LINE — ทางเข้าเดียว <see cref="IDocumentLineSendService.SendAsync"/> (ลิงก์หน้าเอกสารต่อปลายทาง) · ล้ม ⇒ ผลของช่องทางนี้เป็น "ล้ม" พร้อมเหตุ</summary>
     private async Task<CustomerShareRule.ChannelOutcome> SendLineAsync(Guid companyId, Guid documentId, CustomerShareRequest req, Guid? userId, string? actor,
-        CancellationToken ct)
+        CancellationToken ct, bool hasPageLink, string? noPage)
     {
         const string ch = CustomerShareRule.ChannelLine;
         try
         {
-            var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: true);
+            var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: hasPageLink, fromShare: true);
             var notes = (r.Endpoints ?? Array.Empty<DocumentLineSendRule.EndpointOutcome>())
-                .Where(e => e.Note != null).Select(e => $"{e.Display}: {e.Note}");
+                .Where(e => e.Note != null).Select(e => $"{e.Display}: {e.Note}").ToList();
+            if (!hasPageLink && noPage != null) notes.Add(CustomerShareRule.NoPageLinkNote(noPage) + " (การ์ดแบบเดิม)");
             return CustomerShareRule.Queued(ch, string.Join(" · ", new[] { r.Message }.Concat(notes)));
         }
         catch (Exception ex) when (ex is BusinessRuleException or PayLinkRevokedException)

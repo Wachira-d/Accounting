@@ -359,7 +359,8 @@ public class ContactLineQueueService : IContactLineQueueService
 
         // ฝ่ายค้าน 259 L2: ผู้ใช้ติ๊กลิงก์ชำระ (ส่งเอง) แต่ตอนส่งลิงก์ใช้ไม่ได้แล้ว ⇒ ไม่ส่ง (ไม่ใช่การ์ดไม่มีปุ่มแล้วขึ้น "ส่งแล้ว")
         // รอบ 262 (262-1-6): ใบค่าบริการของผู้เช่า ⇒ ปุ่มไปศูนย์บิล (ไม่ใช้ลิงก์ชำระทั่วไป) — ไม่มีลิงก์ทั่วไปไม่ใช่เหตุข้าม
-        if (item.IncludePayLink == true && doc.BalanceDue > 0 && DocumentLineSendRule.PayLinkAllowed(ep.Kind, ep.ShowAmounts)
+        // ฝ่ายค้าน 267-P3 MED-2: การ์ดลิงก์หน้าเอกสาร (หน้ามีปุ่มจ่ายเอง) ⇒ ลิงก์ชำระใช้ไม่ได้แล้วไม่ใช่เหตุข้าม — ส่งโดยไม่มีปุ่มชำระแยก
+        if (item.IncludePayLink == true && item.IncludePageLink != true && doc.BalanceDue > 0 && DocumentLineSendRule.PayLinkAllowed(ep.Kind, ep.ShowAmounts)
             && !await PlatformInvoiceQueries.IsTenantDocumentAsync(_db, item.CompanyId, doc.ContactId, ct)
             && (_payLinks == null || await _payLinks.CurrentUrlAsync(item.CompanyId, doc.Id, ct) == null))
         {
@@ -519,7 +520,9 @@ public class ContactLineQueueService : IContactLineQueueService
         var outstanding = doc.BalanceDue > 0;
         // ฝ่ายค้าน 259 M1: กลุ่มซ่อนยอดไม่ได้ปุ่มชำระ (หน้าชำระแสดงยอด/รายการ/ชื่อผู้ซื้อ) — ตัวตัดสินเดียวกับปุ่มดู PDF
         // รอบ 267 P3: มีลิงก์หน้าเอกสาร ⇒ ปุ่มเดียวไปหน้า (หน้ามีดาวน์โหลด/จ่าย/ตอบรับ) — ไม่ออก/อ่านลิงก์ชำระ/ลิงก์ดู PDF ซ้อน
-        var payUrl = pageUrl == null && outstanding && DocumentLineSendRule.PayLinkAllowed(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts)
+        // ฝ่ายค้าน 267-P3 MED-2: การ์ดลิงก์หน้าเอกสาร + ผู้ใช้ติ๊กปุ่มชำระ ⇒ ปุ่มชำระคู่กับปุ่มหน้าเอกสาร (แถวที่ไม่ติ๊ก IncludePayLink=false ⇒ ไม่มี)
+        var payUrl = item.Trigger != ContactLineChannel.SignedCopyTrigger && outstanding
+            && DocumentLineSendRule.PayLinkAllowed(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts)
             ? await PayUrlAsync(item, doc, ct) : null;
         return LineDocumentCard.Build(new LineDocumentCard.Input(companyName, viaNextAcc, heading.Language, heading.Title, doc.DocumentNumber,
             showAmounts ? (outstanding ? doc.BalanceDue : doc.TotalAmount) : null, doc.Currency, outstanding ? doc.DueDate : null,
@@ -528,7 +531,8 @@ public class ContactLineQueueService : IContactLineQueueService
             ViewUrl: pageUrl == null && LineDocumentViewLink.EndpointAllows(isGroup ? NotifyEndpointKind.LineGroup : NotifyEndpointKind.LineUser, showAmounts, null, null)
                 ? await ViewUrlAsync(item, ct) : null,
             PaymentReceived: item.Trigger == ContactLineChannel.ReceiptTrigger,
-            PageUrl: pageUrl, PageButton: pageUrl == null ? null : LineDocumentCard.PageButtonLabel(heading.Language, doc.DocumentType, outstanding),
+            // ฝ่ายค้าน 267-P3 MED-1: ป้ายจากตัวตัดสินเดียวกับอีเมล — คำนวณตอนส่ง (ช่วงตอบรับ/คำตอบของลูกค้า ณ ตอนนี้) · ตอบไม่ได้ ⇒ "ดูเอกสาร"
+            PageUrl: pageUrl, PageButton: pageUrl == null ? null : CustomerShareRule.PageButtonLabel(heading.Language, doc, DateTime.UtcNow, separatePayButton: payUrl != null),
             SignedCopy: item.Trigger == ContactLineChannel.SignedCopyTrigger));
     }
 

@@ -39,7 +39,7 @@ public class CustomerTimelineService : ICustomerTimelineService
         if (d.SignLinkIssuedAt is DateTime respond)
             items.Add(new(respond, CustomerShareRule.KindRespondOpened, CustomerShareRule.KindLabel(CustomerShareRule.KindRespondOpened), null, CustomerShareRule.ToneInfo));
         if (d.SignLinkOpenedAt is DateTime opened)
-            items.Add(new(opened, CustomerShareRule.KindCustomerOpened, "ลูกค้าเปิดลิงก์ครั้งแรก", "นับจากการโหลดหน้าเอกสารจริง (ไม่มี tracking ในอีเมล)", CustomerShareRule.ToneInfo));
+            items.Add(new(opened, CustomerShareRule.KindCustomerOpened, "ลูกค้าเปิดลิงก์ครั้งแรก (รอบที่เปิดให้ตอบรับ)", "นับจากการโหลดหน้าเอกสารจริงหลังเปิดให้ตอบรับรอบล่าสุด — ใบที่ไม่ได้เปิดให้ตอบรับไม่มีแถวนี้ (ไม่มี tracking ในอีเมล)", CustomerShareRule.ToneInfo));
 
         var emails = await _db.DocumentEmailLogs.AsNoTracking()
             .Where(e => e.CompanyId == companyId && e.DocumentId == documentId && !e.IsDeleted)

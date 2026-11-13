@@ -26,21 +26,12 @@ public static class LineDocumentCard
     /// <param name="AmountIsOutstanding">true = ยอดค้างชำระ ("ยอดชำระ") · false = ยอดรวมของใบที่ไม่มียอดค้าง ("ยอดรวมทั้งสิ้น")</param>
     /// <param name="ViewUrl">รอบ 258-3 (F-H1 · A-L8): ลิงก์ดู/ดาวน์โหลด PDF (<see cref="LineDocumentViewLink"/> · https เท่านั้น · null = ไม่มีปุ่ม)</param>
     /// <param name="PaymentReceived">รอบ 258-3 (F-L2): การ์ดใบเสร็จหลังรับชำระ ⇒ บรรทัด "ได้รับชำระเงินแล้ว ขอบคุณ"</param>
-    /// <param name="PageUrl">รอบ 267 P3: ลิงก์หน้าเอกสาร (https · null = ไม่มี) — มีค่า ⇒ ปุ่มเดียว <paramref name="PageButton"/> (หน้ามีทั้งดาวน์โหลด/จ่าย/ตอบรับ ·
-    /// ไม่ซ้อนปุ่มชำระ/ดู PDF) · ผู้เรียกตัดสินสิทธิ์ของปลายทางด้วย <c>DocumentLineSendRule.PageLinkAllowed</c> ก่อนส่งค่ามา</param>
+    /// <param name="PageUrl">รอบ 267 P3: ลิงก์หน้าเอกสาร (https · null = ไม่มี) — มีค่า ⇒ ปุ่ม <paramref name="PageButton"/> (ป้ายจาก <c>CustomerShareRule.PageButtonLabel</c>) +
+    /// ปุ่มชำระเมื่อผู้ใช้ติ๊ก (<paramref name="PayUrl"/>) · ไม่ซ้อนปุ่มดู PDF (หน้ามีดาวน์โหลด) · ผู้เรียกตัดสินสิทธิ์ของปลายทางด้วย <c>DocumentLineSendRule.PageLinkAllowed</c> ก่อนส่งค่ามา</param>
     /// <param name="SignedCopy">รอบ 267 P3: การ์ด "ฉบับเซ็น" กลับไป LINE เดิมหลังลูกค้าลงนาม (บรรทัดขอบคุณ + ปุ่ม "ฉบับเซ็น" ไปหน้าเอกสาร)</param>
     public sealed record Input(string CompanyName, bool ViaNextAcc, string Language, string Title, string DocNumber,
         decimal? Amount, string? Currency, DateTime? DueDate, string? ContactName, string? PayUrl, bool IsGroup, bool AmountIsOutstanding = true,
         string? ViewUrl = null, bool PaymentReceived = false, string? PageUrl = null, string? PageButton = null, bool SignedCopy = false);
-
-    /// <summary>รอบ 267 P3: ป้ายปุ่มลิงก์หน้าเอกสาร — ตามสิ่งที่ลูกค้าทำได้บนหน้า (ตัวเลือกปุ่มตอบรับเดียวกับหน้า <see cref="CustomerDocPage.HasRespondAction"/>)</summary>
-    public static string PageButtonLabel(string language, Accounting.Models.Enums.DocumentType type, bool outstanding)
-    {
-        var l = DocumentLabels.For(language);
-        if (CustomerDocPage.HasRespondAction(type))
-            return type == Accounting.Models.Enums.DocumentType.Quotation ? l.LineCardOpenAccept : l.LineCardOpenSign;
-        return outstanding && CustomerDocPage.IsPayableType(type) ? l.LineCardOpenPay : l.LineCardOpen;
-    }
 
     public sealed record Card(string AltText, object Contents);
 
@@ -71,8 +62,10 @@ public static class LineDocumentCard
         if (page != null)
             footer.Add(new { type = "button", style = "primary", height = "sm",
                 action = new { type = "uri", label = Clean(i.SignedCopy ? l.LineCardSignedCopy : i.PageButton ?? l.LineCardOpen, MaxButtonLabel), uri = page } });
-        else if (SafeUrl(i.PayUrl) is string pay)
-            footer.Add(new { type = "button", style = "primary", height = "sm", action = new { type = "uri", label = Clean(l.LineCardPay, MaxButtonLabel), uri = pay } });
+        // ฝ่ายค้าน 267-P3 MED-2: ผู้ใช้ติ๊ก "ใส่ปุ่มชำระ" ⇒ ปุ่มชำระอยู่คู่กับปุ่มหน้าเอกสาร (ไม่ทิ้งค่าที่ติ๊กเงียบ ๆ)
+        if (SafeUrl(i.PayUrl) is string pay)
+            footer.Add(new { type = "button", style = footer.Count == 0 ? "primary" : "secondary", height = "sm",
+                action = new { type = "uri", label = Clean(l.LineCardPay, MaxButtonLabel), uri = pay } });
         if (page == null && SafeUrl(i.ViewUrl) is string view)
             footer.Add(new { type = "button", style = footer.Count == 0 ? "primary" : "secondary", height = "sm",
                 action = new { type = "uri", label = Clean(l.LineCardViewPdf, MaxButtonLabel), uri = view } });

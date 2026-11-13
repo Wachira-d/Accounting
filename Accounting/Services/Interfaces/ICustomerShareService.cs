@@ -39,9 +39,10 @@ public sealed record CustomerShareRequest(List<string>? Channels, bool OpenRespo
     List<Guid>? LineEndpointIds = null, bool LinePayLink = false);
 
 /// <summary>ผล — <paramref name="Success"/> = ทุกช่องทางที่เลือกผ่าน (ช่องทางหนึ่งล้ม ⇒ false พร้อมผลของทุกช่องทาง · ช่องทางที่ผ่านแล้วไม่ย้อน) ·
-/// <paramref name="QrDataUri"/> = เมื่อเลือก QR</summary>
+/// <paramref name="QrDataUri"/> = เมื่อเลือก QR · <paramref name="NoPageLinkNote"/> = ฝ่ายค้าน 267-P3 MED-3: ครั้งนี้ไม่มีลิงก์หน้าเอกสาร (เหตุ) —
+/// อีเมล/LINE ส่งแบบเดิม · <paramref name="Url"/> null</summary>
 public sealed record CustomerShareResult(bool Success, string Message, string? Url, DateTime? ExpiresAt, string? QrDataUri,
-    IReadOnlyList<CustomerShareRule.ChannelOutcome> Outcomes);
+    IReadOnlyList<CustomerShareRule.ChannelOutcome> Outcomes, string? NoPageLinkNote = null);
 
 /// <summary>ไทม์ไลน์ลูกค้าของใบ (อ่านอย่างเดียว · แถวจริงเท่านั้น)</summary>
 public sealed record CustomerTimelineView(Guid DocumentId, IReadOnlyList<CustomerShareRule.TimelineItem> Items, bool Truncated);

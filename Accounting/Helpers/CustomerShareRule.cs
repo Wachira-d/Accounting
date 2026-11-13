@@ -55,8 +55,22 @@ public static class CustomerShareRule
 
     /// <summary>ปุ่ม "📤 ส่งให้ลูกค้า" บนรายการ/หน้ารายละเอียดเอกสาร แสดงไหม — ด่านชนิด/สถานะเดียวกับตัวออกลิงก์หน้าเอกสาร
     /// (<see cref="CustomerDocPage.IssueRefusal"/> · ฝั่งของใบลดหนี้/เพิ่มหนี้และใบค่าบริการผู้เช่าตัดสินในหน้าต่างพร้อมเหตุ)</summary>
+    /// <remarks>ฝ่ายค้าน 267-P3 MED-3: ใบที่ออกลิงก์หน้าเอกสารไม่ได้แต่ส่งแบบเดิมได้ (ชนิดที่ส่งอีเมล/LINE ได้ + ออกเลขแล้ว) ก็แสดงปุ่ม — หน้าต่างส่งแบบเดิมพร้อมเหตุ</remarks>
     public static bool ButtonOffered(DocumentType type, DocumentStatus status)
-        => CustomerDocPage.IssueRefusal(type, status, customerFacing: true, platformTenantDocument: false) == null;
+        => CustomerDocPage.IssueRefusal(type, status, customerFacing: true, platformTenantDocument: false) == null
+           || DocumentLineSendRule.DocumentProblem(true, type, status) == null;
+
+    /// <summary>ฝ่ายค้าน 267-P3 MED-3: ข้อความเดียวของ "ครั้งนี้ไม่มีลิงก์หน้าเอกสาร เพราะ X" (หน้าต่าง · ผลต่อช่องทาง · ผลรวม)</summary>
+    public static string NoPageLinkNote(string reason) => "ครั้งนี้ไม่มีลิงก์หน้าเอกสาร เพราะ " + reason.TrimEnd('.', ' ');
+
+    /// <summary>ฝ่ายค้าน 267-P3 LOW-2: ผลของอีเมลที่ส่งแล้ว — e-Tax by Email โหมดทดสอบ (ไม่ได้ส่งสำเนาถึงที่อยู่ประทับเวลาจริง) บอกตามจริง ไม่ให้รอการประทับเวลาที่จะไม่มา</summary>
+    public static string EmailSentMessage(bool etaxByEmail, bool includedRdTimestamp)
+        => !etaxByEmail ? "ส่งอีเมลแล้ว"
+            : includedRdTimestamp ? "ส่ง e-Tax by Email แล้ว (รอประทับเวลา)"
+            : "ส่ง e-Tax by Email เข้าสภาพแวดล้อมทดสอบของ ETDA แล้ว (โหมดทดสอบ — ไม่ถูกประทับเวลาจริง)";
+
+    /// <summary>ฝ่ายค้าน 267-P3 LOW-4: ชื่อการกระทำของแถว audit "ส่งให้ลูกค้า" (รวมคัดลอกลิงก์/QR)</summary>
+    public const string AuditAction = "customer-share";
 
     // ═══════════════ ผลต่อช่องทาง ═══════════════
 
@@ -116,13 +130,47 @@ public static class CustomerShareRule
     public const string EtaxNoPageLinkNote =
         "ใบนี้ส่งแบบ e-Tax by Email (เนื้ออีเมลตามรูปแบบสรรพากร) — อีเมลไม่มีปุ่มลิงก์หน้าเอกสาร · ส่งลิงก์ทาง LINE หรือคัดลอกลิงก์แยก";
 
-    /// <summary>ป้ายปุ่มในอีเมล — ช่วงตอบรับเปิด ⇒ ป้ายของการตอบรับ (<see cref="SignRequestKinds.Kind.ButtonTh"/>) · ใบที่จ่ายได้ + มียอดค้าง ⇒ ดู/ชำระ · อื่น ๆ ⇒ เปิดดู</summary>
-    public static string EmailPageButton(bool en, DocumentType type, bool respondOpen, bool outstanding)
+    // ═══════════════ ป้ายปุ่มลิงก์หน้าเอกสาร — ตัวตัดสินเดียวของอีเมล + การ์ด LINE (ฝ่ายค้าน 267-P3 MED-1) ═══════════════
+
+    /// <summary>ปุ่มลิงก์หน้าเอกสารพาลูกค้าไปทำอะไร — ตอบรับ (เฉพาะเมื่อตอบได้จริงตอนนี้) · ดู/ชำระ (ใบที่จ่ายได้ + ยอดค้าง + ไม่มีปุ่มชำระแยก) · ดูอย่างเดียว</summary>
+    public enum PageButtonKind { Respond, Pay, View }
+
+    /// <summary>ลูกค้า "ตอบรับได้ตอนนี้" — ชนิดที่มีการตอบรับ · ช่วงตอบรับเปิดอยู่ (<see cref="SignRequestKinds.LinkUsable"/>) · ยังไม่มีคำตอบของรอบนี้
+    /// (ยอมรับ/เซ็นรับแล้ว = <c>SignedAt</c> · ไม่รับ/ขอแก้/ผู้ขายตอบ PO = <c>CustomerResponse</c>) — หน้าเอกสารปิดปุ่มตอบรับในกรณีเดียวกัน</summary>
+    public static bool CanRespondNow(Accounting.Models.Entities.Document d, DateTime nowUtc)
     {
-        if (respondOpen && SignRequestKinds.For(type) is { } k) return en ? k.ButtonEn : k.ButtonTh;
-        if (outstanding && CustomerDocPage.IsPayableType(type)) return en ? "View and pay the document" : "เปิดดูเอกสารและชำระเงิน";
-        return en ? "View the document" : "เปิดดูเอกสาร";
+        if (SignRequestKinds.For(d.DocumentType) == null) return false;
+        var s = SignRequestKinds.Read(d);
+        return s.SignedAt == null && string.IsNullOrEmpty(d.CustomerResponse) && SignRequestKinds.LinkUsable(s, nowUtc);
     }
+
+    private static PageButtonKind PageButtonFor(DocumentType type, bool canRespond, bool outstanding, bool separatePayButton = false)
+    {
+        if (canRespond && SignRequestKinds.For(type) != null) return PageButtonKind.Respond;
+        if (outstanding && !separatePayButton && CustomerDocPage.IsPayableType(type)) return PageButtonKind.Pay;
+        return PageButtonKind.View;
+    }
+
+    /// <summary>ป้ายปุ่ม (ผ่าน <c>DocumentLabels</c> — ชุดเดียวทั้งอีเมลและการ์ด LINE) · ตอบรับไม่ได้ ⇒ "ดูเอกสาร" เท่านั้น (ไม่ชวนกดยอมรับที่หน้าไม่มีปุ่ม)</summary>
+    public static string PageButtonLabel(string language, DocumentType type, PageButtonKind kind)
+    {
+        var l = Accounting.Services.Implementations.Pdf.DocumentLabels.For(language);
+        return kind switch
+        {
+            PageButtonKind.Respond => type switch
+            {
+                DocumentType.Quotation => l.LineCardOpenAccept,
+                DocumentType.DeliveryNote => l.LineCardOpenSign,
+                _ => l.LineCardOpenRespond,
+            },
+            PageButtonKind.Pay => l.LineCardOpenPay,
+            _ => l.LineCardOpen,
+        };
+    }
+
+    /// <summary>ทางเข้าเดียวของผู้เรียก (อีเมล <c>DocumentEmailService</c> · การ์ด <c>ContactLineQueueService.BuildCardAsync</c> ตอนส่ง) — ข้อเท็จจริงจากใบ ณ ตอนนี้</summary>
+    public static string PageButtonLabel(string language, Accounting.Models.Entities.Document d, DateTime nowUtc, bool separatePayButton = false)
+        => PageButtonLabel(language, d.DocumentType, PageButtonFor(d.DocumentType, CanRespondNow(d, nowUtc), d.BalanceDue > 0, separatePayButton));
 
     /// <summary>เครื่องหมายครอบบล็อกลิงก์หน้าเอกสาร (หาเจอ/ถอดได้ — แบบเดียวกับบล็อกลิงก์ชำระ)</summary>
     public const string PageBlockStart = "<!--nextacc-page-link-->";

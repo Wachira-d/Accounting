@@ -4295,6 +4295,15 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - **หน้าเว็บไม่มีตาราง/ป้ายของตัวเอง** (F2 ข้อ 5): ชนิดที่ส่งได้ · ป้ายช่องทาง · เหตุ · ปุ่มที่ลูกค้าเห็น · ป้ายไทม์ไลน์ มาจากเซิร์ฟเวอร์ · หน้าเลือกตัวทำงานจากรหัส (`reshare` · `review-slips`) เท่านั้น ·
   หน้าผู้ติดต่อเลือกเหตุของเรื่องตามชนิดปลายทาง (`NotifyTopicOption.LineUserUnsupported` / `LineGroupUnsupported`)
 - **schema:** `Helpers/CustomerShareMigration` (`LineQueues.IncludePageLink` · `SignEventOutbox.SourceLineQueueId` · `SignedCopyLineQueuedAt` — NULL = พฤติกรรมเดิม ไม่มีข้อมูลเก่าต้องย้าย)
+- **ชุดแก้ฝ่ายค้าน (`erp-review/2026-11-13/review-267-P3.md` · คำตัดสิน 267-1-78…82):**
+  ป้ายปุ่มลิงก์หน้าเอกสาร = ตัวตัดสินเดียว `CustomerShareRule.PageButtonLabel` (อีเมล `ManualPageBlockAsync` + การ์ด `BuildCardAsync` ตอนส่ง) — ตอบรับได้เฉพาะ
+  `CanRespondNow` (ช่วงเปิด + ยังไม่ตอบ) · อื่น ๆ "ดูเอกสาร" (MED-1) · ปุ่มชำระที่ติ๊กอยู่คู่ปุ่มหน้าเอกสาร · ตัดสินต่อปลายทาง (`Target.PayLinkNote` · กลุ่มซ่อนยอด = ล็อก + เหตุ) ·
+  ออกลิงก์ชำระไม่ได้ = การ์ดไม่มีปุ่มชำระ + เหตุ (ไม่ล้มทั้งช่อง · `SendAsync(fromShare)`) · ผู้ส่งคิวไม่ข้ามการ์ดลิงก์หน้าเอกสารด้วย `PayLinkGoneAtSend` (MED-2) ·
+  ออกลิงก์หน้าเอกสารไม่ได้/ถูกยกเลิกโดยไม่ติ๊ก ⇒ อีเมล (แนบ PDF) + LINE (การ์ดแบบเดิม) ส่งต่อ + `NoPageLinkNote` ในผลทุกช่องทาง/`CustomerShareResult.NoPageLinkNote` ·
+  คัดลอก/QR ล้มพร้อมเหตุ · `ButtonOffered` รวมชนิดที่ส่งแบบเดิมได้ · ปุ่ม "เขียนอีเมลเอง" แสดงตลอด (MED-3) · ฉบับเซ็นถ้อยคำกลาง (LOW-1) · e-Tax โหมดทดสอบบอกตามจริง
+  (`EmailSentMessage` · LOW-2) · ถอดแถวที่เส้นอีเมลค้างใน context ก่อน LINE (`DetachPending` · LOW-3) · audit chain `customer-share` ต่อคำสั่ง (LOW-4) ·
+  พรีวิว `sandbox="allow-scripts"` (ไม่มี allow-same-origin) — หน้าแม่ดึง `customer-page-preview` แล้ว postMessage เข้า iframe (LOW-6) · คำสั่งซ่อมเรื่อง LINE ของรอบ 259 ผูกรุ่นด้วย
+  marker `r267-line-topic-strip-v2` (LOW-7) · ลิงก์เซ็นรวมปลายทาง 1:1 เฉพาะเมื่อตอบรับได้จริง (LOW-8)
 - **ไม่ทำในแพ็กนี้ (267-1-67):** รวมแผงลิงก์ชำระเข้าไทม์ไลน์ · ป้ายบนรายการจากไทม์ไลน์ (ยังใช้ `sign-request/statuses`) · `LineDocumentViewController` ตอบ HTML ตาม `Accept` ·
   ข้อความอีเมลอิสระในหน้าต่างเดียว · มือถือ/บอท LINE ฝั่งพนักงาน · ไม่มี AI ในเส้นนี้ (กฎ #1 ไม่ถูกแตะ)
 
@@ -9630,3 +9639,4 @@ _Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P5 — �
 _Last verified against codebase: 2026-11-13 (รอบ 264 P4 — §2.12g-264-P4: รายการเดินบัญชีฝั่งเงินออกตรงเป๊ะ ⇒ บันทึกเอง + ผูกบรรทัด · สลิปยกเป็นอัตโนมัติผ่านรายการเดินบัญชีเท่านั้น · จ่ายจากระบบของเรา (แผน + รายการของผู้ขาย ไม่ประทับชำระแล้ว) · แจ้งโอน (PV ของเรา + สำเนาสลิปภายใต้ความยินยอมผู้ขาย · ไม่มี PV ที่สอง) · L3 ล้างเลขผู้โอน — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 7578d6bb)_
 _Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P3 — §2.12n-P3 "📤 ส่งให้ลูกค้า": หน้าต่างเดียวแทน 6 ปุ่ม (share-options · share · CustomerShareService orchestrate EnsureCustomerLinkAsync · IssueLinkAsync · SendDocumentRoutedAsync · DocumentLineSendService.SendAsync · ผลแยกต่อช่องทาง) · ไทม์ไลน์ลูกค้า (customer-timeline) · LINE 1:1 การ์ด "ดู/ยอมรับ" + ฉบับเซ็นกลับ LINE เดิม (s ตรวจกับแถวคิว) · กลุ่ม = ปุ่มดูเท่านั้น (PageLinkAllowed ตัวเดียว) · ลิงก์เซ็นติ๊กให้ LINE 1:1 ได้ (คำตัดสิน 267-1-7 · 267-1-61…67) — build + test + Db test ผ่านในเครื่องนี้ — commit 39c4d582)_
 _Last verified against codebase: 2026-11-13 (รอบ 270 งานค้าง 266/268/269 — §2.12g-270: 270-1-1 คืนมัดจำตามบัญชีของแต่ละงวด · 270-1-2 คิวแจ้งแชตตรวจการผูกเดิม · 270-1-3 จำแนกผล LINE · 270-1-4 คิวใบลดหนี้ร่างตัวช่วยใบซ้ำ · 270-1-5 ใบกำกับ OCR VAT 0% — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit ee79eb2b)_
+_Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P3 ชุดแก้ฝ่ายค้าน — §2.12n-P3: MED-1 ป้ายปุ่มตัวตัดสินเดียว · MED-2 ปุ่มชำระคู่ปุ่มหน้าเอกสาร/ต่อปลายทาง · MED-3 ส่งแบบเดิมเมื่อไม่มีลิงก์หน้าเอกสาร · LOW-1…9 (คำตัดสิน 267-1-78…82) — build + test + Db test ผ่านในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง))_

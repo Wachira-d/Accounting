@@ -24,6 +24,8 @@ public interface IDocumentLineSendService
     /// <summary>เข้าคิว LINE ถึงปลายทางที่เลือก — ใบไม่พร้อม/ปลายทางใช้ไม่ได้/ลิงก์ชำระออกไม่ได้ ⇒ <see cref="BusinessRuleException"/> (ไม่ส่งบางส่วน)</summary>
     /// <param name="includePageLink">รอบ 267 P3 (267-1-61): การ์ดมีปุ่มลิงก์หน้าเอกสาร (ตัดสิน<b>ต่อปลายทาง</b>ด้วย <see cref="DocumentLineSendRule.PageLinkAllowed"/> —
     /// ปลายทางที่ไม่ได้ ⇒ การ์ดดูอย่างเดียว/ไม่มีปุ่ม พร้อมเหตุในผลต่อปลายทาง) · ลิงก์ออกผ่าน <c>EnsureCustomerLinkAsync</c> ตัวเดียว (เพิกถอนไว้ ⇒ 409)</param>
+    /// <param name="fromShare">ฝ่ายค้าน 267-P3 MED-2: หน้าต่าง "ส่งให้ลูกค้า" — ปุ่มชำระตัดสินต่อปลายทาง (กลุ่มซ่อนยอด = ไม่ใส่ + เหตุ · ลิงก์ชำระออกไม่ได้ =
+    /// การ์ดไม่มีปุ่มชำระ + เหตุ) แทนการปฏิเสธช่องทาง LINE ทั้งช่อง · เส้นเดิม (<c>line-send</c>) = false</param>
     Task<DocumentLineSendResult> SendAsync(Guid companyId, Guid documentId, IReadOnlyCollection<Guid>? endpointIds, bool includePayLink,
-        Guid? userId, string? actor, CancellationToken ct = default, bool includePageLink = false);
+        Guid? userId, string? actor, CancellationToken ct = default, bool includePageLink = false, bool fromShare = false);
 }

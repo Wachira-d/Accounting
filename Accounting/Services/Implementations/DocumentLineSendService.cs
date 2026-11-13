@@ -60,25 +60,46 @@ public class DocumentLineSendService : IDocumentLineSendService
     }
 
     public async Task<DocumentLineSendResult> SendAsync(Guid companyId, Guid documentId, IReadOnlyCollection<Guid>? endpointIds, bool includePayLink,
-        Guid? userId, string? actor, CancellationToken ct = default, bool includePageLink = false)
+        Guid? userId, string? actor, CancellationToken ct = default, bool includePageLink = false, bool fromShare = false)
     {
         var doc = await _db.Documents.AsNoTracking()
-            .Where(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
-            .Select(d => new { d.ContactId, d.DocumentType, d.Status }).FirstOrDefaultAsync(ct);
+            .Where(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted).FirstOrDefaultAsync(ct);
         var docProblem = DocumentLineSendRule.DocumentProblem(doc != null, doc?.DocumentType ?? default, doc?.Status ?? default);
         if (doc == null || docProblem != null)
             throw new BusinessRuleException(docProblem ?? "ไม่พบเอกสาร", DocumentLineSendRule.RuleCode, doc == null ? 404 : 409);
-        // ตัวหาผู้รับเดียว (เรื่อง "เอกสาร") · รอบ 267 P3: ลิงก์หน้าเอกสารของใบที่ตอบรับได้ ⇒ รวม 1:1 ที่ติ๊ก "ลิงก์เซ็น" (267-1-61)
+        // ตัวหาผู้รับเดียว (เรื่อง "เอกสาร") · รอบ 267 P3: ลิงก์หน้าเอกสารของใบที่ตอบรับได้ ⇒ รวม 1:1 ที่ติ๊ก "ลิงก์เซ็น" (267-1-61) ·
+        // ฝ่ายค้าน 267-P3 LOW-8: เฉพาะเมื่อลูกค้าตอบรับได้จริงตอนนี้ (ช่วงตอบรับเปิด + ยังไม่ตอบ) — ไม่ส่งการ์ดดูอย่างเดียวถึงผู้ที่ติ๊กแค่ "ลิงก์เซ็น"
         var docSet = await _recipients.ResolveAsync(companyId, doc.ContactId, DocumentLineSendRule.Topic, ct);
-        var signSet = includePageLink && CustomerDocPage.HasRespondAction(doc.DocumentType)
+        var signSet = includePageLink && CustomerDocPage.HasRespondAction(doc.DocumentType) && CustomerShareRule.CanRespondNow(doc, DateTime.UtcNow)
             ? (await _recipients.ResolveAsync(companyId, doc.ContactId, NotifyTopic.Sign, ct)).Options : null;
         var merged = DocumentLineSendRule.MergeSignTopic(docSet.Options, signSet);
         var (chosen, pickProblem) = DocumentLineSendRule.Pick(merged.Select(m => m.Option).ToList(), endpointIds);
         if (pickProblem != null) throw new BusinessRuleException(pickProblem, DocumentLineSendRule.RuleCode, 400);
         // ฝ่ายค้าน 259 M1: ปุ่มชำระไม่เข้ากลุ่มซ่อนยอด · L5: ไม่ออกลิงก์ใหม่ทับลิงก์ที่ถูกเพิกถอน
-        if (DocumentLineSendRule.PayLinkProblem(includePayLink, chosen) is string hiddenGroup)
+        // ฝ่ายค้าน 267-P3 MED-2: หน้าต่าง "ส่งให้ลูกค้า" (includePageLink) ⇒ ปุ่มชำระตัดสินต่อปลายทาง (กลุ่มซ่อนยอด = ไม่ใส่ + เหตุ) · ลิงก์ชำระออกไม่ได้ =
+        // ส่งการ์ดโดยไม่มีปุ่มชำระ + เหตุ (หน้าเอกสารมีปุ่มจ่ายอยู่แล้ว) — ไม่ปฏิเสธช่องทาง LINE ทั้งช่อง · เส้นเดิม (line-send) ปฏิเสธทั้งคำขอเหมือนเดิม
+        string? payDropped = null;
+        var perEndpointPay = fromShare || includePageLink;
+        if (!perEndpointPay && DocumentLineSendRule.PayLinkProblem(includePayLink, chosen) is string hiddenGroup)
             throw new BusinessRuleException(hiddenGroup, DocumentLineSendRule.RuleCode, 400);
-        if (includePayLink)
+        if (perEndpointPay && includePayLink)
+        {
+            if (!chosen.Any(o => DocumentLineSendRule.PayLinkAllowed(o.Kind, o.ShowAmounts))) { /* ทุกปลายทางเป็นกลุ่มซ่อนยอด — เหตุต่อปลายทางข้างล่าง */ }
+            else if (_payLinks == null) payDropped = "บริการลิงก์ชำระเงินยังไม่พร้อม — การ์ดไม่มีปุ่มชำระแยก (ลูกค้าจ่ายจากหน้าเอกสารได้)";
+            else
+            {
+                try
+                {
+                    var link = await _payLinks.EnsureLinkAsync(companyId, documentId, null, ct, allowReissueRevoked: false, actor: actor);
+                    if (link.Url == null) payDropped = "ไม่ใส่ปุ่มชำระ — " + (link.Refusal ?? "ออกลิงก์ชำระไม่ได้") + " (ลูกค้าจ่ายจากหน้าเอกสารได้ถ้าหน้าเปิดให้จ่าย)";
+                }
+                catch (PayLinkRevokedException ex)
+                {
+                    payDropped = "ไม่ใส่ปุ่มชำระ — " + ex.Message;
+                }
+            }
+        }
+        if (includePayLink && !perEndpointPay)
         {
             if (_payLinks == null) throw new BusinessRuleException("บริการลิงก์ชำระเงินยังไม่พร้อม — ส่งโดยไม่ติ๊กลิงก์ชำระ", DocumentLineSendRule.RuleCode, 503);
             // ลิงก์ที่ถูกเพิกถอน ⇒ ตัวออกลิงก์โยน PayLinkRevokedException (409 · 259-2-8) — ไม่ออกใหม่ทับ
@@ -106,9 +127,14 @@ public class DocumentLineSendService : IDocumentLineSendService
             var key = ContactLineChannel.QueueKey(baseKey, o.EndpointId);
             var pageProblem = includePageLink ? DocumentLineSendRule.PageLinkProblem(o.Kind, o.ShowAmounts, doc.DocumentType) : null;
             var pageLink = includePageLink && pageProblem == null;
+            var payHere = includePayLink && (!perEndpointPay || (payDropped == null && DocumentLineSendRule.PayLinkAllowed(o.Kind, o.ShowAmounts)));
+            var payNote = perEndpointPay && includePayLink && !payHere
+                ? (DocumentLineSendRule.PayLinkAllowed(o.Kind, o.ShowAmounts) ? payDropped : DocumentLineSendRule.PayLinkHiddenGroupNote) : null;
+            var notes = new[] { pageProblem, payNote }.Where(x => x != null).ToList();
+            string? note = notes.Count == 0 ? null : string.Join(" · ", notes);
             if (await _db.LineQueues.AnyAsync(q => q.CompanyId == companyId && q.IdempotencyKey == key, ct))
             {
-                outcomes.Add(new(o.EndpointId!.Value, o.Display, false, pageLink, pageProblem));
+                outcomes.Add(new(o.EndpointId!.Value, o.Display, false, pageLink, note));
                 continue;
             }
             var topic = merged.First(m => m.Option.EndpointId == o.EndpointId).Topic;
@@ -117,7 +143,7 @@ public class DocumentLineSendService : IDocumentLineSendService
                 CompanyId = companyId, RuleId = null, EntityType = "Document", EntityId = documentId, ContactId = doc.ContactId,
                 EndpointId = o.EndpointId, EndpointKind = o.Kind, Topic = topic.ToString(), Trigger = ContactLineChannel.ManualTrigger,
                 ScheduledFor = now, Status = ContactLineChannel.StatusPending, RetryKey = ContactLineChannel.RetryKey(companyId, key),
-                IdempotencyKey = key, BaseKey = baseKey, FallbackToEmail = false, IncludePayLink = includePayLink,
+                IdempotencyKey = key, BaseKey = baseKey, FallbackToEmail = false, IncludePayLink = payHere,
                 IncludePageLink = includePageLink ? pageLink : null,
                 RequestedByUserId = userId, CreatedBy = actor ?? "document-line-send",
             };
@@ -125,13 +151,13 @@ public class DocumentLineSendService : IDocumentLineSendService
             try
             {
                 await _db.SaveChangesAsync(ct);
-                outcomes.Add(new(o.EndpointId!.Value, o.Display, true, pageLink, pageProblem));
+                outcomes.Add(new(o.EndpointId!.Value, o.Display, true, pageLink, note));
             }
             catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
                 // คำขอพร้อมกันเข้าคิวปลายทางนี้ไปก่อน — ถอดเฉพาะแถวนี้ (ไม่ส่งซ้ำ) แล้วไปต่อปลายทางถัดไป
                 _db.Entry(row).State = EntityState.Detached;
-                outcomes.Add(new(o.EndpointId!.Value, o.Display, false, pageLink, pageProblem));
+                outcomes.Add(new(o.EndpointId!.Value, o.Display, false, pageLink, note));
             }
         }
         var queued = outcomes.Count(x => x.Queued);

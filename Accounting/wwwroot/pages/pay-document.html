@@ -107,11 +107,8 @@
       if (portalDoc) {
         return portalJwt ? { url: `/api/portal/${c()}/documents/${encodeURIComponent(portalDoc)}/page`, headers: { Authorization: 'Bearer ' + portalJwt } } : null;
       }
-      if (previewDoc) {
-        let jwt = null;
-        try { jwt = localStorage.getItem('token'); } catch { jwt = null; }
-        return { url: `/api/companies/${c()}/document/${encodeURIComponent(previewDoc)}/customer-page-preview`, headers: jwt ? { Authorization: 'Bearer ' + jwt } : {} };
-      }
+      // ฝ่ายค้าน 267-P3 LOW-6: โหมดพรีวิวไม่อ่าน JWT จาก storage อีก — หน้าแม่ (documents.html) ดึงข้อมูลพรีวิวด้วยสิทธิ์ของตัวเองแล้วส่งเข้ามา (previewHandshake) ·
+      // iframe จึงใช้ sandbox="allow-scripts" ได้จริง (ต้นทาง opaque — อ่าน storage/คุกกี้ของพนักงานไม่ได้)
       return null;
     }
     let view = null;
@@ -345,6 +342,21 @@
         load();
       });
       window.parent.postMessage({ type: 'docpage-portal-ready', doc: portalDoc }, location.origin);
+    }
+    // ฝ่ายค้าน 267-P3 LOW-6: โหมดพรีวิว — รับ view model จากหน้าแม่ (หน้าต่าง "ส่งให้ลูกค้า") เท่านั้น · ไม่ fetch เอง ไม่อ่าน storage
+    function previewHandshake() {
+      if (window.parent === window) { card.innerHTML = '<div class="err">หน้าพรีวิวเปิดจากหน้าต่าง "ส่งให้ลูกค้า" เท่านั้น</div>'; return; }
+      window.addEventListener('message', (e) => {
+        if (e.source !== window.parent) return;
+        const m = e.data;
+        if (!m || m.type !== 'docpage-preview-data') return;
+        if (!m.data) { renderUnusable({ message: m.message || 'โหลดพรีวิวไม่สำเร็จ' }, 0); return; }
+        view = m.data;
+        english = !!(view.page && view.page.isEnglish);
+        render('');
+      });
+      // ต้นทางของ iframe เป็น opaque ("null") ⇒ ระบุปลายทางเป็น '*' — ข้อความนี้ไม่มีข้อมูล (หน้าแม่ตรวจ e.source เอง)
+      window.parent.postMessage({ type: 'docpage-preview-ready', doc: previewDoc }, '*');
     }
     // ══════════ จบส่วนรอบ 267 P4 ══════════
 
@@ -722,7 +734,7 @@
       if (!(r && r.ok && j && j.success)) { const m = document.getElementById('sgLineMsg'); if (m) { m.className = 'msg bad'; m.textContent = (j && j.message) || ''; } }
     }
 
-    if (portalDoc) portalHandshake(); else if (lineReturn) finishLineLogin(); else load();   // รอบ 267 P4: โหมดพอร์ทัลรอโทเคนจากหน้าแม่ก่อนโหลด
+    if (portalDoc) portalHandshake(); else if (previewDoc) previewHandshake(); else if (lineReturn) finishLineLogin(); else load();   // รอบ 267 P4: โหมดพอร์ทัลรอโทเคนจากหน้าแม่ก่อนโหลด
   </script>
 </body>
 </html>

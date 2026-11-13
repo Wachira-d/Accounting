@@ -19697,17 +19697,18 @@ _R267C_LINE = "Services/Implementations/DocumentLineSendService.cs"
 RULES += [
     dict(file=_R267C_SHARE, method="ShareAsync",
          must=["_links.EnsureCustomerLinkAsync(", "_sign.IssueLinkAsync(", "SendEmailAsync(", "SendLineAsync(", "CustomerShareRule.Summary(",
-               "CustomerShareRule.ParseChannels("],
+               "CustomerShareRule.ParseChannels(", "_db.AddChainedAuditLog(", "CustomerShareRule.NoPageLinkNote("],
          before=[("_links.EnsureCustomerLinkAsync(", "SendEmailAsync("), ("_links.EnsureCustomerLinkAsync(", "SendLineAsync("),
                  ("_sign.IssueLinkAsync(", "SendEmailAsync(")],
          forbid=["_db.LineQueues", "SendDocumentEmailAsync(", "EnsureLinkAsync(", "DocumentPayLinkPolicy.NewToken(", "SignRequestKinds.MarkIssued("],
          why=_R267C_WHY + "ส่งให้ลูกค้า = ลิงก์จากตัวออกเดียว → เปิดช่วงตอบรับผ่าน SignRequestService → ช่องทางผ่านบริการเดิม (ห้ามประกอบเอง) · สรุปผลต่อช่องทาง"),
     dict(file=_R267C_SHARE, method="SendEmailAsync",
-         must=["_email.SendDocumentRoutedAsync(", "IncludePageLink: carries", "CustomerShareRule.EmailCarriesPageLink(", "CustomerShareRule.Failed("],
+         must=["_email.SendDocumentRoutedAsync(", "IncludePageLink: page", "CustomerShareRule.EmailCarriesPageLink(", "CustomerShareRule.Failed(",
+               "CustomerShareRule.EmailSentMessage(", "DetachPending("],
          forbid=["SendDocumentEmailAsync(", "SendEtaxByEmailAsync(", "IEmailSender", "throw;"],
          why=_R267C_WHY + "อีเมล = ทางเข้าเดียว (ทาง e-Tax ไม่มีบล็อกลิงก์) · ล้ม = ผลของช่องทางนี้ (ไม่โยนต่อ — LINE ไม่ถูกลาก)"),
     dict(file=_R267C_SHARE, method="SendLineAsync",
-         must=["_line.SendAsync(", "includePageLink: true", "CustomerShareRule.Queued(", "CustomerShareRule.Failed("],
+         must=["_line.SendAsync(", "includePageLink: hasPageLink, fromShare: true", "CustomerShareRule.Queued(", "CustomerShareRule.Failed("],
          forbid=["_db.LineQueues", "new LineQueue", "CustomerShareRule.Ok(", "throw;"],
          why=_R267C_WHY + "LINE = ทางเข้าเดียว (เข้าคิว ≠ ส่งแล้ว — ห้ามรายงาน ok) · ล้ม = ผลของช่องทางนี้"),
     dict(file=_R267C_LINE, method="SendAsync",
@@ -19715,6 +19716,12 @@ RULES += [
                "DocumentLineSendRule.MergeSignTopic("],
          before=[("_payLinks.EnsureCustomerLinkAsync(", "_db.LineQueues.Add(")],
          why=_R267C_WHY + "267-1-61 ลิงก์หน้าเอกสารต่อปลายทางจากกติกาเดียว · ออกลิงก์ผ่านตัวออกเดียวก่อนเขียนแถวคิว"),
+    dict(file="Services/Implementations/ContactLineQueueService.cs", method="BuildCardAsync",
+         must=["CustomerShareRule.PageButtonLabel("], forbid=["LineCardOpenAccept", "LineCardOpenSign", "HasRespondAction("],
+         why=_R267C_WHY + "ฝ่ายค้าน MED-1: ป้ายปุ่มการ์ดจากตัวตัดสินเดียวกับอีเมล (ตอบรับได้จริงตอนนี้) — ห้ามคิดเองตามชนิด"),
+    dict(file="Services/Implementations/DocumentEmailService.cs", method="ManualPageBlockAsync",
+         must=["CustomerShareRule.PageButtonLabel(", "CustomerShareRule.EmailPageBlock("], forbid=["LinkUsable("],
+         why=_R267C_WHY + "ฝ่ายค้าน MED-1: ป้ายปุ่มอีเมลจากตัวตัดสินเดียวกับการ์ด LINE"),
     dict(file=_R267C_LINE, method="EnqueueSignedCopyAsync",
          must=["CustomerShareRule.LineSourceValid(", "q.CompanyId == companyId", "ContactLineChannel.SignedCopyTrigger"],
          before=[("CustomerShareRule.LineSourceValid(", "db.LineQueues.Add(")],
@@ -19749,22 +19756,29 @@ RULES += [
 ]
 REVIEWER_CASES += [
     # หน้าต่างประกอบแถวคิว LINE เอง (ข้าม DocumentLineSendService) ⇒ ต้องฟ้อง
-    ("R267c-1", "SendLineAsync", "var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: true);",
-     "_db.LineQueues.Add(new LineQueue()); var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: true);", True),
+    ("R267c-1", "SendLineAsync", "var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: hasPageLink, fromShare: true);",
+     "_db.LineQueues.Add(new LineQueue()); var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: hasPageLink, fromShare: true);", True),
     # อีเมลล้มแล้วโยนต่อ (ลาก LINE ล้มตาม) ⇒ ต้องฟ้อง
     ("R267c-2", "SendEmailAsync", "return CustomerShareRule.Failed(ch, \"ส่งอีเมลไม่สำเร็จ — \" + ex.Message, (ex as BusinessRuleException)?.RuleCode);",
      "throw;", True),
     # รายงาน LINE ว่า "ทำแล้ว" ตอนเพิ่งเข้าคิว ⇒ ต้องฟ้อง
     ("R267c-3", "SendLineAsync", "return CustomerShareRule.Queued(ch,", "return CustomerShareRule.Ok(ch,", True),
     # ส่งก่อนออกลิงก์ ⇒ ต้องฟ้อง (ลำดับ)
-    ("R267c-4", "ShareAsync", "        CustomerLinkResult link;\n",
-     "        var early = await SendEmailAsync(companyId, documentId, req, actor);\n        CustomerLinkResult link;\n", True),
+    ("R267c-4", "ShareAsync", "        CustomerLinkResult? link = null;\n",
+     "        var early = await SendEmailAsync(companyId, documentId, req, actor, false, null);\n        CustomerLinkResult? link = null;\n", True),
     # ใช้ s โดยไม่ตรวจกับแถวคิว ⇒ ต้องฟ้อง
     ("R267c-5", "LineSourceAsync", "return q != null && CustomerShareRule.LineSourceValid(true, q.EntityType, q.EntityId, documentId, q.EndpointKind, q.IncludePageLink, q.Status)",
      "return q != null && true", True),
     # ทิศตรงข้าม: จัดบรรทัดใหม่ของการเรียกบริการ LINE ⇒ ต้องไม่ฟ้อง
-    ("R267c-6", "SendLineAsync", "var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: true);",
-     "var r =\n                await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: true);", False),
+    ("R267c-6", "SendLineAsync", "var r = await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: hasPageLink, fromShare: true);",
+     "var r =\n                await _line.SendAsync(companyId, documentId, req.LineEndpointIds, req.LinePayLink, userId, actor, ct, includePageLink: hasPageLink, fromShare: true);", False),
+    # ฝ่ายค้าน 267-P3 MED-1: การ์ดคิดป้ายเองตามชนิด (ไม่ดูช่วงตอบรับ) ⇒ ต้องฟ้อง
+    ("R267c-7", "BuildCardAsync", "CustomerShareRule.PageButtonLabel(heading.Language, doc, DateTime.UtcNow, separatePayButton: payUrl != null)",
+     "(doc.DocumentType == DocumentType.Quotation ? \"ดู/ยอมรับ\" : \"ดูเอกสาร\")", True),
+    # ฝ่ายค้าน 267-P3 LOW-4: ถอด audit ของคำสั่งส่งให้ลูกค้า ⇒ ต้องฟ้อง
+    ("R267c-8", "ShareAsync", "        _db.AddChainedAuditLog(new AuditLog\n", "        var __noAudit = (new AuditLog\n", True),
+    # ฝ่ายค้าน 267-P3 LOW-3: ไม่ถอดแถวที่เส้นอีเมลค้างไว้ ⇒ ต้องฟ้อง
+    ("R267c-9", "SendEmailAsync", "            DetachPending();\n", "\n", True),
 ]
 
 

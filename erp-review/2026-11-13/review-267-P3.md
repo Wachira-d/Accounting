@@ -118,3 +118,23 @@
 6. **migration** — `regexp_replace(',?"Other"')` + `replace('[,', '[')` จัดการตำแหน่งแรก/กลาง/ตัวเดียวได้ถูก · คอลัมน์ใหม่ของ `CustomerShareMigration` เป็น nullable
    (null = พฤติกรรมเดิม) · แถวคิวเก่าที่ `IncludePageLink = null` ไม่ถูกแตะ
 7. **ด่านของ API key** — `ApiKeyScopeFilter` ปิดไว้เป็นค่าตั้งต้น (fail closed) ตาม method · NameIdentifier = ผู้สร้างคีย์ ⇒ `DenyDocAsync` ใช้สิทธิ์ของผู้สร้างคีย์เหมือน send-email เดิม
+
+---
+
+## ผลการแก้ (ทีมผู้พัฒนา · คำตัดสิน 267-1-78…82)
+
+| ข้อ | สถานะ | ที่แก้ / เหตุที่ไม่แก้ |
+| --- | --- | --- |
+| MED-1 | ✅ แก้ | `CustomerShareRule.PageButtonLabel` + `CanRespondNow` ตัวเดียว (อีเมล `ManualPageBlockAsync` · การ์ด `BuildCardAsync` ตอนส่ง) · ตอบรับไม่ได้ = "ดูเอกสาร" · `LineDocumentCard.PageButtonLabel` เดิมลบแล้ว · กติกา R267c (BuildCardAsync/ManualPageBlockAsync) + เคส R267c-7 · เทสต์ `MED1_…` · Db `CDP267Db_MED1_MED2_…` |
+| MED-2 | ✅ แก้ | ปุ่มชำระคู่ปุ่มหน้าเอกสาร (`LineDocumentCard.Build`) · ต่อปลายทาง (`Target.PayLinkNote` · หน้าต่างล็อกช่องเมื่อปลายทางที่เลือกรับปุ่มชำระไม่ได้) · `SendAsync(fromShare)` ไม่ปฏิเสธทั้งช่อง · ผู้ส่งคิวไม่ข้ามการ์ดลิงก์หน้าเอกสารด้วย `PayLinkGoneAtSend` · Db `CDP267Db_MED1_MED2_…` · `CDP267Db_MED3_…` |
+| MED-3 | ✅ แก้ (ทาง ก) | ลิงก์ออกไม่ได้/ถูกยกเลิก ⇒ อีเมล (แนบ PDF) + LINE (การ์ดแบบเดิม) ส่งต่อพร้อม `NoPageLinkNote` · คัดลอก/QR ล้มพร้อมเหตุ · `ButtonOffered` รวมชนิดที่ส่งแบบเดิมได้ · `CanShare` = มีช่องทางใช้ได้ · ปุ่ม "เขียนอีเมลเอง" แสดงตลอด · Db `CDP267Db_MED3_…` |
+| LOW-1 | ✅ แก้ (ถ้อยคำ) | "เอกสารนี้ลงนามแล้ว — ดาวน์โหลดฉบับที่ลงนาม…" — ไม่ตรวจ LINE userId ของผู้เปิด: หน้าเอกสารไม่รู้ตัวตน LINE ของผู้เปิด (ต้อง LINE Login ก่อนเปิดหน้า = เปลี่ยน UX ของลูกค้าทุกคน) |
+| LOW-2 | ✅ แก้ | `CustomerShareRule.EmailSentMessage(etax, includedRdTimestamp)` — ข้อความเดียวกับ endpoint เดิม · เทสต์ `LOW2_…` |
+| LOW-3 | ✅ แก้ | `DetachPending()` ใน finally ของเส้นอีเมล + `DbUpdateException` ⇒ "อาจออกไปแล้ว ตรวจก่อนส่งซ้ำ" · Db `CDP267Db_LOW3_…` · เคส R267c-9 |
+| LOW-4 | ✅ แก้ | `AddChainedAuditLog` หนึ่งแถวต่อคำสั่ง (`customer-share` · ช่องทาง + ผล + มีลิงก์หน้าเอกสารไหม + เหตุ) · Db ใน `CDP267Db_LineSignRoundTrip_…` · เคส R267c-8 |
+| LOW-5 | ⚠️ แก้ถ้อยคำ | แถวไทม์ไลน์บอกตรง ๆ ว่ามีเฉพาะรอบที่เปิดให้ตอบรับ · การประทับ "เปิดแล้ว" ของทุกชนิดต้องมีคอลัมน์และผู้เขียนใหม่บนเส้นสาธารณะ — แพ็กถัดไป (267-1-82) |
+| LOW-6 | ✅ แก้ | `sandbox="allow-scripts"` · หน้าพรีวิวไม่อ่าน storage — หน้าแม่ดึง `customer-page-preview` ด้วยสิทธิ์ของตัวเองแล้ว postMessage (ตรวจ `e.source`) |
+| LOW-7 | ✅ แก้ | คำสั่งซ่อมเรื่อง LINE ของรอบ 259 อยู่ใต้ marker `r267-line-topic-strip-v2` (รันครั้งเดียวต่อฐาน) · เทสต์ `LOW7_…` · ความเสี่ยงที่เหลือ: เครื่องรุ่นก่อน 267 ที่บูตระหว่าง rollout ยังรันคำสั่งเดิมของตัวเองได้ (แก้โค้ดเก่าย้อนหลังไม่ได้) — ช่วงนั้นหน้าผู้ติดต่อของเครื่องรุ่นเก่ายังล็อกช่องลิงก์เซ็น ⇒ ค่าที่ติ๊กใหม่มาจากเครื่องรุ่นใหม่หลังเริ่ม rollout เท่านั้น · สองสำเนา (SQL/`StripLineUnsupported`) ยังล็อกด้วยเทสต์ทั้งสองทิศ |
+| LOW-8 | ✅ แก้ | `SendAsync` รวม "ลิงก์เซ็น" เฉพาะเมื่อ `CustomerShareRule.CanRespondNow` (หลังเปิดช่วงตอบรับในคำขอเดียวกัน) |
+| LOW-9 | ⚠️ แก้บางส่วน | doc comment `ContactNotifyEndpointDtos` + `NotifyEndpointKind.DefaultsFor` แก้แล้ว · ปุ่มขึ้นให้ผู้ไม่มีสิทธิ์ส่ง: `DocumentResponse` ประกอบโดยไม่รู้สิทธิ์ของผู้ใช้ (เหมือนปุ่มเดิม — กดแล้ว 403 พร้อมเหตุ) · Db test `s` ของแถวจริงใบอื่น/กลุ่ม/รอส่ง: ทุกเงื่อนไขของ `LineSourceValid` ครอบด้วยเทสต์ pure + `LineSourceAsync` ล็อกด้วยกติกา R267c-5 |
+

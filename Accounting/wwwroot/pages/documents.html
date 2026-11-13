@@ -12256,7 +12256,7 @@
                 <div id="shLeft" style="flex:1 1 300px;min-width:260px;display:flex;flex-direction:column;gap:10px">กำลังโหลด...</div>
                 <div style="flex:1 1 380px;min-width:280px;display:flex;flex-direction:column;gap:6px">
                   <div style="font-weight:600">พรีวิวหน้าที่ลูกค้าเห็น</div>
-                  <iframe id="shPreview" title="พรีวิวหน้าลูกค้า" sandbox="allow-scripts allow-same-origin" style="width:100%;height:520px;border:1px solid #e2e8f0;border-radius:8px;background:#fff"></iframe>
+                  <iframe id="shPreview" title="พรีวิวหน้าลูกค้า" sandbox="allow-scripts" style="width:100%;height:520px;border:1px solid #e2e8f0;border-radius:8px;background:#fff"></iframe>
                 </div>
               </div>
               <div id="shResult" style="display:none;margin:0 20px 10px;font-size:13px"></div>
@@ -12286,7 +12286,20 @@
         } catch (e) { if (seq === this._shSeq) left.innerHTML = `<div style="color:#dc2626">${esc(e.message)}</div>`; return; }
         if (seq !== this._shSeq) return;
         wrap.querySelector('#shTitle').textContent = `📤 ส่งให้ลูกค้า — ${o.title || ''} ${o.documentNumber || ''}`;
-        if (o.canShare) wrap.querySelector('#shPreview').src = `/pages/pay-document.html?c=${encodeURIComponent(cid)}&preview=${encodeURIComponent(id)}`;
+        // ฝ่ายค้าน 267-P3 LOW-6: iframe sandbox ไม่มี allow-same-origin ⇒ หน้าพรีวิวอ่าน JWT ไม่ได้ — หน้านี้ดึงข้อมูลพรีวิวด้วยสิทธิ์ของตัวเองแล้วส่งเข้า iframe
+        const frame = wrap.querySelector('#shPreview');
+        if (this._shPreviewHandler) window.removeEventListener('message', this._shPreviewHandler);
+        this._shPreviewHandler = async (e) => {
+          if (!frame.contentWindow || e.source !== frame.contentWindow || !e.data || e.data.type !== 'docpage-preview-ready') return;
+          let msg = { type: 'docpage-preview-data', data: null, message: null };
+          try {
+            const pj = await API.get(`/api/companies/${cid}/document/${encodeURIComponent(id)}/customer-page-preview`);
+            msg.data = (pj && pj.success !== false && pj.data) || null; msg.message = pj && pj.message;
+          } catch (err) { msg.message = err.message; }
+          if (frame.contentWindow) frame.contentWindow.postMessage(msg, '*');   // ปลายทางคือ iframe ตัวนี้ (ต้นทาง opaque ⇒ ระบุต้นทางไม่ได้)
+        };
+        window.addEventListener('message', this._shPreviewHandler);
+        if (!(o.link && o.link.issueRefusal)) frame.src = `/pages/pay-document.html?c=${encodeURIComponent(cid)}&preview=${encodeURIComponent(id)}`;
         const list = (arr, color) => (arr || []).map(t => `<div style="color:${esc(color)}">• ${esc(t)}</div>`).join('');
         const box = (title, inner) => `<div style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px"><div style="font-weight:600;margin-bottom:4px">${esc(title)}</div>${inner /* html — หนีแล้ว */}</div>`;
         const L = o.link || {};
@@ -12310,8 +12323,9 @@
             ${E.payLinkOffered ? `<label style="display:flex;gap:6px"><input type="checkbox" id="shEmailPay"> ใส่ลิงก์ชำระเงินออนไลน์</label>` : (E.payLinkNote ? `<div style="font-size:11px;color:#64748b">${esc(E.payLinkNote)}</div>` : '')}
             <div style="font-size:11px;color:#475569">${esc(E.routeNote || '')}</div>
             ${E.pageLinkNote ? `<div style="font-size:11px;color:#b45309">${esc(E.pageLinkNote)}</div>` : ''}
-            ${list(E.problems, '#dc2626') /* html — หนีแล้ว */}${list(E.warnings, '#92400e') /* html — หนีแล้ว */}
-            <a href="#" id="shEmailCustom" style="font-size:12px">แก้หัวข้อ/ข้อความอีเมลเอง…</a></div>`;
+            ${list(E.problems, '#dc2626') /* html — หนีแล้ว */}${list(E.warnings, '#92400e') /* html — หนีแล้ว */}</div>`;
+        // ฝ่ายค้าน 267-P3 MED-3: เขียนอีเมลเอง (หัวข้อ/ข้อความ/ส่ง e-Tax ซ้ำ) แสดงตลอด — ไม่ซ่อนไว้ใต้ช่องอีเมลที่อาจติ๊กไม่ได้
+        const customHtml = `<button type="button" class="btn btn-sm btn-secondary" id="shEmailCustom" style="align-self:flex-start;margin-top:6px">✏️ เขียนอีเมลเอง (แก้หัวข้อ/ข้อความ)</button>`;
         const N = o.line || {};
         const lineHtml = `<div data-sh-sec="line" style="display:none;flex-direction:column;gap:4px">
             ${N.problem ? `<div style="color:#b45309">${esc(N.problem)}</div>` : ''}
@@ -12319,22 +12333,32 @@
               <input type="checkbox" data-sh-ep="${esc(t.endpointId)}" ${t.available ? '' : 'disabled'}>
               <span><b>${esc(t.display)}</b> <span style="font-size:11px;color:#64748b">· ${esc(t.kindLabel)}</span>
               ${t.reason ? `<div style="font-size:11px;color:#b45309">${esc(t.reason)}</div>` : ''}
-              ${t.available && t.pageLinkNote ? `<div style="font-size:11px;color:#64748b">${esc(t.pageLinkNote)}</div>` : ''}</span></label>`).join('')}
-            ${N.payLinkOffered ? `<label style="display:flex;gap:6px"><input type="checkbox" id="shLinePay"> ใส่ปุ่มชำระเงินบนการ์ด</label>` : ''}</div>`;
+              ${t.available && t.pageLinkNote ? `<div style="font-size:11px;color:#64748b">${esc(t.pageLinkNote)}</div>` : ''}
+              ${t.available && t.payLinkNote ? `<div style="font-size:11px;color:#64748b">${esc(t.payLinkNote)}</div>` : ''}</span></label>`).join('')}
+            ${N.payLinkOffered ? `<label style="display:flex;gap:6px" id="shLinePayRow"><input type="checkbox" id="shLinePay"> ใส่ปุ่มชำระเงินบนการ์ด</label><div id="shLinePayNote" style="display:none;font-size:11px;color:#b45309"></div>`
+              : (N.payLinkNote ? `<div style="font-size:11px;color:#64748b">${esc(N.payLinkNote)}</div>` : '')}</div>`;
         const P = o.postPay || {};
         const postPayHtml = P.applies && P.effectiveLabel ? box('หลังลูกค้าชำระ', `<div>${esc(P.effectiveLabel)}</div><div style="font-size:11px;color:#64748b">เปลี่ยนค่าต่อใบได้ที่แผง "ลิงก์ชำระเงิน &amp; ส่งเอกสารอัตโนมัติ"</div>`) : '';
         left.innerHTML = (o.problem ? `<div style="color:#dc2626">${esc(o.problem)}</div>` : '')
           + box('ลิงก์หน้าเอกสาร', linkHtml)
           + box('ลูกค้าจะทำอะไรได้บนหน้า', actionsHtml + respondHtml)
-          + box('ช่องทาง', chHtml + emailHtml + lineHtml)
+          + box('ช่องทาง', chHtml + emailHtml + lineHtml + customHtml)
           + postPayHtml + list(o.warnings, '#92400e');
         const sec = (name) => left.querySelector(`[data-sh-sec="${name}"]`);
         const sync = () => {
           const picked = Array.from(left.querySelectorAll('input[data-sh-ch]:checked')).map(c => c.dataset.shCh);
           ['email', 'line'].forEach(n => { const s = sec(n); if (s) s.style.display = picked.includes(n) ? 'flex' : 'none'; });
           btn.disabled = !o.canShare || picked.length === 0;
+          // ฝ่ายค้าน 267-P3 MED-2: ปลายทางที่เลือกไม่มีตัวไหนรับปุ่มชำระได้ (กลุ่มซ่อนยอด) ⇒ ล็อกช่อง + เหตุจากเซิร์ฟเวอร์
+          const pay = left.querySelector('#shLinePay'), payNote = left.querySelector('#shLinePayNote');
+          if (pay && payNote) {
+            const sel = Array.from(left.querySelectorAll('input[data-sh-ep]:checked')).map(c => (N.targets || []).find(t => t.endpointId === c.dataset.shEp)).filter(Boolean);
+            const blocked = sel.length > 0 && sel.every(t => !t.payLink);
+            pay.disabled = blocked; if (blocked) pay.checked = false;
+            payNote.textContent = blocked ? (sel[0].payLinkNote || '') : ''; payNote.style.display = blocked ? 'block' : 'none';
+          }
         };
-        left.querySelectorAll('input[data-sh-ch]').forEach(c => c.addEventListener('change', sync));
+        left.querySelectorAll('input[data-sh-ch], input[data-sh-ep]').forEach(c => c.addEventListener('change', sync));
         const custom = left.querySelector('#shEmailCustom');
         if (custom) custom.addEventListener('click', (ev) => { ev.preventDefault(); wrap.classList.remove('active'); this.openSendEmailModal(id); });
         sync();

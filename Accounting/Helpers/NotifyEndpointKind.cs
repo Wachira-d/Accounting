@@ -128,10 +128,11 @@ public static class NotifyTopics
         _ => t.ToString(),
     };
 
-    /// <summary>ค่าตั้งต้นต่อชนิด (DESIGN §4.1): อีเมล = ทุกเรื่อง · ผู้ใช้ LINE = เอกสาร/ทวงชำระ/ใบเสร็จ/ลิงก์เซ็น · กลุ่ม LINE = เอกสาร/ทวงชำระ</summary>
+    /// <summary>ค่าตั้งต้นต่อชนิด (DESIGN §4.1): อีเมล = ทุกเรื่อง · ผู้ใช้ LINE = เอกสาร/ทวงชำระ/ใบเสร็จ · กลุ่ม LINE = เอกสาร/ทวงชำระ</summary>
     public static IReadOnlyList<NotifyTopic> DefaultsFor(string? kind) => kind switch
     {
-        // รอบ 259 (A-M4): ลิงก์เซ็นไม่มีเส้นส่งทาง LINE ⇒ ไม่อยู่ในค่าตั้งต้น (ติ๊กไม่ได้ — LineUnsupportedReason) · 50 ทวิ ส่งทาง LINE ได้แล้ว แต่ผู้ใช้เลือกเอง
+        // รอบ 267 P3 (267-1-61): ลิงก์เซ็นส่งถึง LINE 1:1 ได้แล้ว (กลุ่มไม่ได้ — LineUnsupportedReason) แต่ไม่อยู่ในค่าตั้งต้น — ผู้ใช้ติ๊กเอง ·
+        // 50 ทวิ ส่งทาง LINE ได้ แต่ผู้ใช้เลือกเอง
         NotifyEndpointKind.LineUser => new[] { NotifyTopic.Document, NotifyTopic.Dunning, NotifyTopic.Receipt },
         NotifyEndpointKind.LineGroup => new[] { NotifyTopic.Document, NotifyTopic.Dunning },
         _ => All,

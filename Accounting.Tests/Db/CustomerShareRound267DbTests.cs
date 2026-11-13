@@ -4,6 +4,7 @@ using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
+using Accounting.Services.Implementations.Pdf;
 using Accounting.Services.Interfaces;
 using Accounting.Services.Payments;
 using Accounting.Services.Storage;
@@ -149,6 +150,11 @@ public class CustomerShareRound267DbTests
         Assert.Contains("SMTP", r.Outcomes.Single(o => o.Channel == CustomerShareRule.ChannelEmail).Message);
         Assert.True(r.Outcomes.Single(o => o.Channel == CustomerShareRule.ChannelLine).Status == CustomerShareRule.StatusQueued, r.Message);   // ไม่ถูกลาก
         Assert.Equal(new[] { "ap@buyer267.co.th|page=True" }, emailCalls);          // อีเมลเดินทางเข้าเดียวพร้อมบล็อกลิงก์หน้าเอกสาร
+        // ฝ่ายค้าน LOW-4: แถว audit chain ของคำสั่ง "ส่งให้ลูกค้า" (ช่องทาง + ผล + มีลิงก์หน้าเอกสาร)
+        var shareAudit = await db.AuditLogs.AsNoTracking().SingleAsync(a => a.CompanyId == company.Id && a.EntityId == qt.Id.ToString()
+            && a.NewValues != null && a.NewValues.Contains(CustomerShareRule.AuditAction));
+        Assert.Contains("\"pageLink\":true", shareAudit.NewValues);
+        Assert.NotNull(shareAudit.RowHash);
         Assert.NotNull(r.Url);
         db.ChangeTracker.Clear();
         Assert.NotNull(await db.Documents.AsNoTracking().Where(d => d.Id == qt.Id).Select(d => d.SignLinkIssuedAt).SingleAsync());
@@ -246,5 +252,175 @@ public class CustomerShareRound267DbTests
         Assert.True(r.Success, r.Message);                                            // s ปลอม ไม่กระทบการยอมรับ
         var outbox = await db.SignEventOutbox.AsNoTracking().SingleAsync(e => e.CompanyId == company.Id && e.DocumentId == qt.Id);
         Assert.Null(outbox.SourceLineQueueId);
+    }
+
+    // ═══════════════ ฝ่ายค้าน 267-P3 ═══════════════
+
+    private sealed record Arranged(Company Company, ContactNotifyEndpoint Endpoint, Document Doc, DocumentPayLinkService Links, CustomerShareService Share,
+        ContactLineQueueService Sender, PushProbe Probe);
+
+    private static async Task<Arranged> ArrangeAsync(Accounting.Data.AccountingDbContext db, DocumentType type, string prefix,
+        Func<Accounting.Data.AccountingDbContext, IDocumentEmailService> email)
+    {
+        var company = new Company { Name = "บริษัท ผู้ขาย 267P3x " + Guid.NewGuid().ToString("N")[..6], TaxId = "0105556000007", Email = "office@seller267.co.th" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        db.CompanySettings.Add(new CompanySettings { CompanyId = company.Id });
+        var contact = new Contact
+        {
+            CompanyId = company.Id, Name = "บริษัท ลูกค้า 267P3x จำกัด", IsCustomer = true, ContactType = ContactType.JuristicPerson,
+            TaxId = "0107537000017", Email = "ap@buyer267.co.th",
+        };
+        db.Contacts.Add(contact);
+        await db.SaveChangesAsync();
+        var uid = "U267p3x" + Guid.NewGuid().ToString("N");
+        var ep = new ContactNotifyEndpoint
+        {
+            CompanyId = company.Id, ContactId = contact.Id, Kind = NotifyEndpointKind.LineUser, LineUserId = Secrets.Protect(uid),
+            LineIdHash = NotifyEndpointKind.LineIdHash(Bot, uid), OaScope = NotifyEndpointKind.ScopeCompany, OaDestination = Bot,
+            TopicsJson = NotifyTopics.Serialize(new[] { NotifyTopic.Document, NotifyTopic.Sign }), ShowAmounts = true, Verified = true,
+            Source = ContactLineBindRule.SourceLineInvite, LinkedAt = DateTime.UtcNow,
+        };
+        db.ContactNotifyEndpoints.Add(ep);
+        var doc = new Document
+        {
+            CompanyId = company.Id, ContactId = contact.Id, DocumentType = type,
+            DocumentNumber = prefix + "267P3x-" + Random.Shared.Next(100000, 999999), Status = DocumentStatus.Approved,
+            DocumentDate = DateTime.UtcNow.Date.AddDays(-1), DueDate = DateTime.UtcNow.Date.AddDays(20),
+            SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, BalanceDue = 1_070m, Currency = "THB",
+        };
+        doc.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, Unit = "งาน", UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7m, VatAmount = 70m });
+        db.Documents.Add(doc);
+        await db.SaveChangesAsync();
+        var root = Path.Combine(Path.GetTempPath(), "cs267p3x-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var storage = new LocalDiskFileStorage(new FileStorageLocator(Path.Combine(root, "uploads"), Path.Combine(root, "wwwroot"), root, root));
+        var links = new DocumentPayLinkService(db, new[] { Provider() }, Secrets, Config(), NullLogger<DocumentPayLinkService>.Instance, storage);
+        var recipients = Recipients(ep.Id);
+        var line = new DocumentLineSendService(db, recipients, links);
+        var sign = new SignRequestService(db, F4Proxy<IEmailSenderFactory>.Create((_, _) => null), Secrets, NullLogger<SignRequestService>.Instance,
+            Config(), recipients: null, notifyQuota: null, links: links);
+        var share = new CustomerShareService(db, links, email(db), line, NullLogger<CustomerShareService>.Instance, sign);
+        var probe = new PushProbe();
+        var sender = new ContactLineQueueService(db, FakeLine(probe), recipients, Secrets, NoEmail(), NullLogger<ContactLineQueueService>.Instance,
+            payLinks: links, config: Config());
+        return new Arranged(company, ep, doc, links, share, sender, probe);
+    }
+
+    private static async Task SendQueuedAsync(Accounting.Data.AccountingDbContext db, Arranged a)
+    {
+        await db.LineQueues.Where(q => q.CompanyId == a.Company.Id).ExecuteUpdateAsync(x => x.SetProperty(q => q.ScheduledFor, DateTime.UtcNow.AddYears(-5)));
+        db.ChangeTracker.Clear();
+        await a.Sender.ProcessPendingAsync();
+    }
+
+    /// <summary>ฝ่ายค้าน MED-1: ใบเสนอราคาส่งทาง LINE 1:1 โดยไม่เปิดให้ตอบรับ ⇒ ปุ่ม "ดูเอกสาร" (ไม่ใช่ "ดู/ยอมรับ") ·
+    /// ฝ่ายค้าน MED-2: ติ๊กปุ่มชำระ ⇒ การ์ดมีปุ่มชำระคู่ปุ่มหน้าเอกสาร</summary>
+    [Fact]
+    public async Task CDP267Db_MED1_MED2_ไม่เปิดตอบรับ_ปุ่มดูเอกสาร_ปุ่มชำระที่ติ๊กอยู่บนการ์ด()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var calls = new List<string>();
+        var a = await ArrangeAsync(db, DocumentType.Quotation, "QTv", _ => BrokenEmail(calls));
+        var r = await a.Share.ShareAsync(a.Company.Id, a.Doc.Id, new CustomerShareRequest(new List<string> { CustomerShareRule.ChannelLine }, OpenRespond: false,
+            LineEndpointIds: new List<Guid> { a.Endpoint.Id }), null, "staff@seller267.co.th", "https://app.nextacc.test");
+        Assert.True(r.Success, r.Message);
+        await SendQueuedAsync(db, a);
+        var push = Assert.Single(a.Probe.Pushes, p => p.Alt.Contains(a.Doc.DocumentNumber));
+        Assert.Contains("ดูเอกสาร", push.Json);
+        Assert.DoesNotContain("ดู/ยอมรับ", push.Json);
+        Assert.Contains("s=" + CustomerShareRule.LineSource((await db.LineQueues.AsNoTracking().SingleAsync(q => q.CompanyId == a.Company.Id)).Id), push.Json);
+        Assert.DoesNotContain(DocumentLabels.For("th").LineCardPay, push.Json);   // ไม่ได้ติ๊ก = ไม่มีปุ่มชำระ
+
+        // MED-2: ใบแจ้งหนี้ + ติ๊กปุ่มชำระ ⇒ ปุ่มชำระคู่ปุ่มหน้าเอกสาร (ป้ายหน้า = "ดูเอกสาร" — ไม่ซ้ำกับปุ่มชำระ)
+        var inv = await ArrangeAsync(db, DocumentType.Invoice, "INVp", _ => BrokenEmail(calls));
+        db.PaymentProviderConfigs.Add(new PaymentProviderConfig { CompanyId = inv.Company.Id, ProviderCode = "gw267p3", IsActive = true, Mode = PaymentProviderMode.Test });
+        await db.SaveChangesAsync();
+        var ri = await inv.Share.ShareAsync(inv.Company.Id, inv.Doc.Id, new CustomerShareRequest(new List<string> { CustomerShareRule.ChannelLine },
+            LineEndpointIds: new List<Guid> { inv.Endpoint.Id }, LinePayLink: true), null, "staff@seller267.co.th", "https://app.nextacc.test");
+        Assert.True(ri.Success, ri.Message + " | " + string.Join(" ; ", ri.Outcomes.Select(o => o.Message)));
+        Assert.True((await db.LineQueues.AsNoTracking().SingleAsync(q => q.CompanyId == inv.Company.Id)).IncludePayLink, string.Join(" ; ", ri.Outcomes.Select(o => o.Message)));
+        await SendQueuedAsync(db, inv);
+        var ipush = Assert.Single(inv.Probe.Pushes, p => p.Alt.Contains(inv.Doc.DocumentNumber));
+        Assert.Contains(DocumentLabels.For("th").LineCardPay, ipush.Json);
+        Assert.Contains("ดูเอกสาร", ipush.Json);
+    }
+
+    /// <summary>ฝ่ายค้าน MED-3: ลิงก์หน้าเอกสารถูกยกเลิกไว้ (ไม่ติ๊กออกใหม่) ⇒ ไม่ปฏิเสธทั้งคำขอ — LINE ส่งการ์ดแบบเดิม (ไม่มีลิงก์หน้าเอกสาร) +
+    /// เหตุในผล · คัดลอกลิงก์ = ล้มพร้อมเหตุ · ปุ่มชำระที่ติ๊ก (ลิงก์ถูกเพิกถอน) = การ์ดไม่มีปุ่มชำระ + เหตุ ไม่ล้มทั้งช่อง</summary>
+    [Fact]
+    public async Task CDP267Db_MED3_ลิงก์ถูกยกเลิก_ส่งแบบเดิมพร้อมเหตุ_ไม่ปฏิเสธทั้งคำขอ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var calls = new List<string>();
+        var a = await ArrangeAsync(db, DocumentType.Invoice, "INVr", _ => BrokenEmail(calls));
+        Assert.True((await a.Links.EnsureCustomerLinkAsync(a.Company.Id, a.Doc.Id, "test")).Ok);
+        await db.Documents.Where(d => d.Id == a.Doc.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.PayLinkRevokedAt, (DateTime?)DateTime.UtcNow));
+        db.ChangeTracker.Clear();
+
+        var opts = await a.Share.OptionsAsync(a.Company.Id, a.Doc.Id);
+        Assert.True(opts.CanShare, opts.Problem);
+
+        var r = await a.Share.ShareAsync(a.Company.Id, a.Doc.Id, new CustomerShareRequest(
+            new List<string> { CustomerShareRule.ChannelCopy, CustomerShareRule.ChannelLine },
+            LineEndpointIds: new List<Guid> { a.Endpoint.Id }, LinePayLink: true), null, "staff@seller267.co.th", "https://app.nextacc.test");
+        Assert.False(r.Success);                                                     // คัดลอกลิงก์ล้ม — บอกดัง
+        Assert.Null(r.Url);
+        Assert.Contains("ครั้งนี้ไม่มีลิงก์หน้าเอกสาร", r.NoPageLinkNote);
+        Assert.Contains("ครั้งนี้ไม่มีลิงก์หน้าเอกสาร", r.Message);
+        Assert.Equal(CustomerShareRule.StatusFailed, r.Outcomes.Single(o => o.Channel == CustomerShareRule.ChannelCopy).Status);
+        var lineOut = r.Outcomes.Single(o => o.Channel == CustomerShareRule.ChannelLine);
+        Assert.Equal(CustomerShareRule.StatusQueued, lineOut.Status);
+        Assert.Contains("ไม่ใส่ปุ่มชำระ", lineOut.Message);
+        var row = await db.LineQueues.AsNoTracking().SingleAsync(q => q.CompanyId == a.Company.Id);
+        Assert.NotEqual(true, row.IncludePageLink);
+        Assert.NotEqual(true, row.IncludePayLink);
+        // ทิศตรงข้าม: ติ๊ก "ออกลิงก์ใหม่แทน" ⇒ มีลิงก์หน้าเอกสาร
+        var again = await a.Share.ShareAsync(a.Company.Id, a.Doc.Id, new CustomerShareRequest(new List<string> { CustomerShareRule.ChannelCopy }, ReissueRevoked: true),
+            null, "staff@seller267.co.th", "https://app.nextacc.test");
+        Assert.True(again.Success, again.Message);
+        Assert.NotNull(again.Url);
+        Assert.Null(again.NoPageLinkNote);
+        await ParkPendingAsync(db, a.Company.Id);
+    }
+
+    /// <summary>แถวคิวที่เทสต์นี้ไม่ได้ส่ง ⇒ ปิดไว้ (ผู้ส่งคิวจองแถว Pending ของทุกบริษัท — ไม่ให้ไปโผล่ในเทสต์คลาสอื่นใน collection เดียวกัน)</summary>
+    private static Task ParkPendingAsync(Accounting.Data.AccountingDbContext db, Guid companyId)
+        => db.LineQueues.Where(q => q.CompanyId == companyId && q.Status == ContactLineChannel.StatusPending)
+            .ExecuteUpdateAsync(x => x.SetProperty(q => q.Status, ContactLineChannel.StatusSkipped));
+
+    /// <summary>ฝ่ายค้าน LOW-3: เส้นอีเมลบันทึกแถวไม่สำเร็จ (แถวค้างใน context เดียวกัน) ⇒ LINE ไม่ถูกลาก และแถวค้างไม่ถูกบันทึกเงียบ ๆ ตอน LINE บันทึก</summary>
+    [Fact]
+    public async Task CDP267Db_LOW3_แถวอีเมลที่ค้าง_ไม่ลาก_LINE_ไม่ถูกบันทึกซ้ำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var a = await ArrangeAsync(db, DocumentType.Invoice, "INVd", ctx => F4Proxy<IDocumentEmailService>.Create((m, args) => m switch
+        {
+            nameof(IDocumentEmailService.RouteAsync) => new EtaxEmailRoute(EtaxEmailChannel.PlainEmail, "อีเมลธรรมดา"),
+            nameof(IDocumentEmailService.SendDocumentRoutedAsync) => StuckLog(ctx, (Guid)args[0]!, (Guid)args[1]!),
+            _ => null,
+        }));
+        var r = await a.Share.ShareAsync(a.Company.Id, a.Doc.Id, new CustomerShareRequest(
+            new List<string> { CustomerShareRule.ChannelEmail, CustomerShareRule.ChannelLine }, EmailTo: "ap@buyer267.co.th",
+            LineEndpointIds: new List<Guid> { a.Endpoint.Id }), null, "staff@seller267.co.th", "https://app.nextacc.test");
+        var mail = r.Outcomes.Single(o => o.Channel == CustomerShareRule.ChannelEmail);
+        Assert.Equal(CustomerShareRule.StatusFailed, mail.Status);
+        Assert.Contains("อาจออกไปแล้ว", mail.Message);                             // ไม่บอก "ส่งไม่สำเร็จ" เฉย ๆ
+        Assert.Equal(CustomerShareRule.StatusQueued, r.Outcomes.Single(o => o.Channel == CustomerShareRule.ChannelLine).Status);
+        db.ChangeTracker.Clear();
+        Assert.Equal(1, await db.LineQueues.CountAsync(q => q.CompanyId == a.Company.Id));
+        Assert.False(await db.DocumentEmailLogs.AnyAsync(l => l.CompanyId == a.Company.Id && l.Subject == "ค้าง-267P3"));
+        await ParkPendingAsync(db, a.Company.Id);
+    }
+
+    /// <summary>จำลองเส้นอีเมลที่ผู้ให้บริการรับแล้ว แต่บันทึกบันทึกอีเมลล้ม — แถวยังค้าง Added ใน context</summary>
+    private static object StuckLog(Accounting.Data.AccountingDbContext ctx, Guid companyId, Guid documentId)
+    {
+        ctx.DocumentEmailLogs.Add(new DocumentEmailLog { CompanyId = companyId, DocumentId = documentId, ToEmail = "ap@buyer267.co.th", Subject = "ค้าง-267P3", Body = "x",
+            Status = EmailLogStatus.Sent, SentAt = DateTime.UtcNow });
+        return Task.FromException<DocumentEmailLog>(new DbUpdateException("บันทึกบันทึกอีเมลไม่สำเร็จ (จำลอง)"));
     }
 }
