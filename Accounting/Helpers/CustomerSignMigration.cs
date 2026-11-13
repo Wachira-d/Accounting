@@ -74,9 +74,7 @@ public static class CustomerSignMigration
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomerResponseAt" timestamptz NULL;""",
         // 267-1-6: ยอดขั้นต่ำที่ต้องยืนยันอีเมลด้วยรหัสก่อนยอมรับใบเสนอราคา (null = ไม่ใช้รหัส — ค่าตั้งต้น)
         """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "CustomerSignOtpMinAmount" numeric(18,2) NULL;""",
-        // outbox: ผูกเหตุการณ์กับแถวหลักฐาน + ขั้น "สร้างฉบับเซ็น/ส่งสำเนา" (ทำครั้งเดียว · ลองใหม่ตามจังหวะของ outbox)
-        """ALTER TABLE "SignEventOutbox" ADD COLUMN IF NOT EXISTS "CustomerActionId" uuid NULL;""",
-        """ALTER TABLE "SignEventOutbox" ADD COLUMN IF NOT EXISTS "SignedCopyDoneAt" timestamptz NULL;""",
+        // outbox: ช่อง CustomerActionId/SignedCopyDoneAt อยู่ใน SignRequestMigration (เจ้าของตาราง SignEventOutbox — รันก่อนไฟล์นี้)
         // ── append-only: แก้ได้เฉพาะ (1) เติม SignedPdf* ครั้งเดียว (2) ลบข้อมูลส่วนบุคคลพร้อมประทับ ErasedAt · ลบแถวไม่ได้ ──
         $$"""
         CREATE OR REPLACE FUNCTION "{{GuardFunction}}"() RETURNS trigger AS $fn$
