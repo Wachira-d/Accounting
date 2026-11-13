@@ -421,6 +421,10 @@ public static class SettlementPaidReissue
         nameof(Document.SettlementOrphanAckReasonHash), // รอบ 201 ทีม ST (A-ST5) — การรับรู้ของกำพร้าเป็นของใบเดิม
         nameof(Document.SettlementPieceFingerprint),     // รอบ 201 ทีม ST (A-ST8) — ใบแทนไม่ได้ออกโดยผู้ลงบัญชีรอบโอน (ไม่มีป้าย CreatedBy ของรอบ)
         nameof(Document.ReplacementReason), nameof(Document.ReplacedAt), nameof(Document.ReplacementCarriesPostings),
+        // รอบ 266 แพ็ก B (transient · คำนวณตอน render จาก ReplacesDocumentId ของใบนั้นเอง) — ไม่ตามไปใบแทน
+        nameof(Document.ReplacementOfNumber), nameof(Document.ReplacementOfDate),
+        // รอบ 267 P2: คำตอบของลูกค้าต่อ Rev ของใบเดิม (ภาพฉายของ CustomerDocumentActions) — "ไม่สืบทอดไปใบลูก" ⇒ ไม่ตามไปใบแทน
+        nameof(Document.CustomerResponse), nameof(Document.CustomerResponseAt),
         nameof(Document.EtaxCancelRequiredAt), nameof(Document.EtaxCancelRequiredReason), nameof(Document.InternalNotes),
         nameof(Document.WhtAdviceAiFeedbackId), nameof(Document.WhtAdviceAnswer), nameof(Document.WhtAdviceUsedAi),
         nameof(Document.Pp36RdReceiptNumber), nameof(Document.Pp36RdReceiptDate), nameof(Document.OcrIntelTrainedAt),
@@ -449,6 +453,9 @@ public static class SettlementPaidReissue
         // รอบ 252 WP-12A: โหมด/ผลแปลงใบเสนอราคาอัตโนมัติเป็นของใบเดิม (ใบแทนไม่แปลงซ้ำเอง — ทางปลอดภัย)
         nameof(Document.QuotationAcceptAutopilot), nameof(Document.QuotationAutopilotAt), nameof(Document.QuotationAutopilotOutcome),
         nameof(Document.QuotationAutopilotMessage), nameof(Document.QuotationAutopilotChildId),
+        // รอบ 267 P4 (267-1-44): ค่าตั้ง "ใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ เป็นเจตนาของใบนั้น — ไม่สืบทอดไปใบลูก/โคลน/ใบแทน
+        // (ใบแทน = ตามค่าตั้งของชั้นถัดไป · ตั้งใหม่ได้จากแผงลิงก์ชำระของใบแทน)
+        nameof(Document.PostPayEmailReceipt), nameof(Document.PostPayIncludePartial),
     };
 
     /// <summary>ช่องของบรรทัดที่ตามไป — ทุกอย่างของรายการ ยกเว้นตัวตน/เวลา/ใบแม่ และ feedback AI ของผังบัญชี (สองบรรทัดชี้แถวเดียว)</summary>
