@@ -4209,7 +4209,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
     → `CreateDocumentRequest` + `UpdateDocumentRequest` → `DocumentService.PostPayLayer.cs` (`PostPaymentAutomationPolicy.ApplyDocumentLayer` ตัวเดียว) → entity →
     `DocumentAutoSendMigration` (`ADD COLUMN IF NOT EXISTS` · NULL = พฤติกรรมเดิมทุกใบ — ไม่มีข้อมูลเก่าต้องย้าย) → `DocumentResponse.PostPayReceiptMode/PostPayPartialMode/PostPaySettingApplies`
     → hydrate ตอนเปิดแก้ (`_setPostPayModes`) → reset ตอนฟอร์มใหม่ → **ไม่พิมพ์บนเอกสาร** (renderer ×2 ไม่ถูกแตะ) →
-    **ไม่สืบทอด**ไปใบลูก/โคลน/ใบเสร็จของการชำระ/CN อัตโนมัติ/รายการประจำ/ใบแทน (เจตนาของใบนั้น — แบบ `QuotationAcceptAutopilot` · ทางสร้างใบลูกไม่ส่งสองช่องนี้ ⇒ ใบลูก = ตามค่าตั้ง ·
+    **ไม่สืบทอด**ไปใบลูก (ใบแทนจากการยกเลิก-ออกใหม่: อยู่ใน `SettlementPaidReissue.DocumentNotCarriedFields` — ล็อกด้วยเทสต์ partition R200_V1F_R7)/โคลน/ใบเสร็จของการชำระ/CN อัตโนมัติ/รายการประจำ/ใบแทน (เจตนาของใบนั้น — แบบ `QuotationAcceptAutopilot` · ทางสร้างใบลูกไม่ส่งสองช่องนี้ ⇒ ใบลูก = ตามค่าตั้ง ·
     ล็อกด้วย `PostPay267_DocLayerNotInherited`)
   - **ใบที่ออกเลขแล้ว** (แก้ผ่านฟอร์มไม่ได้): `PUT …/document-auto-send/documents/{id}/post-pay` `{receiptMode, partialMode}` — สิทธิ์สร้างเอกสารชนิดนั้น · คีย์ API ไม่ได้ ·
     `PostPaymentAutomationService.SetDocumentLayerAsync` (ตัวตัดสินเดียวกับฟอร์ม · audit chain `post-pay-document-layer` · ไม่แตะเนื้อหา/ยอด/เลขของใบ · ใบยกเลิก = 409) ·

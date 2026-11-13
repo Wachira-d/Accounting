@@ -447,6 +447,9 @@ public static class SettlementPaidReissue
         // รอบ 252 WP-12A: โหมด/ผลแปลงใบเสนอราคาอัตโนมัติเป็นของใบเดิม (ใบแทนไม่แปลงซ้ำเอง — ทางปลอดภัย)
         nameof(Document.QuotationAcceptAutopilot), nameof(Document.QuotationAutopilotAt), nameof(Document.QuotationAutopilotOutcome),
         nameof(Document.QuotationAutopilotMessage), nameof(Document.QuotationAutopilotChildId),
+        // รอบ 267 P4 (267-1-44): ค่าตั้ง "ใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ เป็นเจตนาของใบนั้น — ไม่สืบทอดไปใบลูก/โคลน/ใบแทน
+        // (ใบแทน = ตามค่าตั้งของชั้นถัดไป · ตั้งใหม่ได้จากแผงลิงก์ชำระของใบแทน)
+        nameof(Document.PostPayEmailReceipt), nameof(Document.PostPayIncludePartial),
     };
 
     /// <summary>ช่องของบรรทัดที่ตามไป — ทุกอย่างของรายการ ยกเว้นตัวตน/เวลา/ใบแม่ และ feedback AI ของผังบัญชี (สองบรรทัดชี้แถวเดียว)</summary>
