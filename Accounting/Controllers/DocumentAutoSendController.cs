@@ -100,6 +100,34 @@ public class DocumentAutoSendController : ControllerBase
             "ยกเลิกลิงก์แล้ว — ลิงก์เดิมใช้จ่ายไม่ได้ทันที · อีเมลรอบถัดไปจะได้ลิงก์ใหม่"));
     }
 
+    /// <summary>รอบ 267 P4 (267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ — ชื่อ Inherit · On · Off (null = ไม่แตะช่องนั้น)</summary>
+    public sealed record PostPayDocumentSettingRequest(string? ReceiptMode, string? PartialMode);
+
+    /// <summary>รอบ 267 P4 (267-1-44): ตั้งค่าใบเสร็จอัตโนมัติหลังรับชำระของ<b>ใบนี้</b> (ใบที่ออกแล้วแก้ผ่านฟอร์มไม่ได้) — สิทธิ์สร้างเอกสารชนิดนั้น ·
+    /// ตัวตัดสินเดียวกับฟอร์ม · มีผลกับการรับชำระครั้งถัดไป · งานที่ยังรอประมวลผล/กดลองใหม่ใช้ค่าปัจจุบัน (ปิดที่ใบ = งานที่ค้างจบพร้อมเหตุ) · เปิดทีหลังไม่ออกใบเสร็จย้อนหลังของการชำระที่ผ่านไปแล้ว · audit chain · คีย์ API ไม่ได้ (เปลี่ยนพฤติกรรมส่งเอกสารถึงลูกค้า — ต้องเป็นคน)</summary>
+    [HttpPut("documents/{documentId:guid}/post-pay")]
+    [Accounting.Filters.RejectApiKey("ตั้งค่าใบเสร็จอัตโนมัติหลังรับชำระของเอกสาร")]
+    public async Task<ActionResult<ApiResponse<DocumentPayLinkStatusDto>>> SetPostPay(Guid companyId, Guid documentId,
+        [FromBody] PostPayDocumentSettingRequest request)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        var t = await DocTypeAsync(companyId, documentId);
+        if (t == null) return NotFound(new ApiResponse<DocumentPayLinkStatusDto>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanCreateAsync(_perms, companyId, uid, t.Value))
+            return StatusCode(403, new ApiResponse<DocumentPayLinkStatusDto>(false, null, "ไม่มีสิทธิ์ตั้งค่าการส่งเอกสารของเอกสารชนิดนี้"));
+        try
+        {
+            await _postPay.SetDocumentLayerAsync(companyId, documentId, request?.ReceiptMode, request?.PartialMode, uid,
+                User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? uid.ToString());
+        }
+        catch (BusinessRuleException ex)
+        {
+            return StatusCode(ex.StatusCode, new ApiResponse<DocumentPayLinkStatusDto>(false, null, ex.Message));
+        }
+        return Ok(new ApiResponse<DocumentPayLinkStatusDto>(true, await _links.StatusAsync(companyId, documentId),
+            "บันทึกแล้ว — มีผลกับการรับชำระครั้งถัดไปของเอกสารนี้ (การชำระที่ผ่านไปแล้ว: ออก/ส่งใบเสร็จเองจากหน้าเอกสาร)"));
+    }
+
     /// <summary>ลองงานหลังรับชำระใหม่ (หลังเติมอีเมล/ข้อมูลผู้ซื้อ/อนุมัติใบเสร็จ) — สิทธิ์อนุมัติของชนิดเอกสารต้นทาง (ระดับเดียวกับบันทึกรับชำระ)</summary>
     [HttpPost("post-payment-runs/{runId:guid}/retry")]
     public async Task<ActionResult<ApiResponse<object>>> Retry(Guid companyId, Guid runId)

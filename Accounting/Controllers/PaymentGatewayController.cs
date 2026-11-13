@@ -364,7 +364,9 @@ public class PaymentGatewayController : ControllerBase
     public sealed record ManualConfirmRequest(string Reason, DateTime? ReceivedDate = null, Guid? BankAccountId = null);
 
     /// <summary>รอบ 250 ฝ่ายค้าน H1: ปฏิเสธสลิปโอนของเอกสาร (เหตุผลบังคับ)</summary>
-    public sealed record RejectSlipRequest(string Reason);
+    /// <param name="CustomerMessage">รอบ 267 P4 (267-1-45): ข้อความถึงลูกค้า (แสดงบนหน้าเอกสารของลูกค้า · ไม่บังคับ) — ว่าง = ข้อความกลาง ·
+    /// <paramref name="Reason"/> เป็นเหตุผลภายใน (ลงประวัติ) ไม่ส่งออกหน้าเอกสาร</param>
+    public sealed record RejectSlipRequest(string Reason, string? CustomerMessage = null);
     public sealed record RefundRequest(decimal? Amount, string? Reason);
     /// <summary>รอบ 260-2 ฝ่ายค้าน M4: ส่งต่อใหม่พร้อมบัญชีที่เงินเข้าใหม่ (สลิปโอนที่บัญชีเดิมใช้ไม่ได้แล้ว) · ว่าง = ใช้ค่าที่ประทับเดิม</summary>
     public sealed record RedispatchRequest(Guid? BankAccountId);
@@ -619,6 +621,12 @@ public class PaymentGatewayController : ControllerBase
                     FailureCode: "slip_rejected",
                     FailureMessage: reason.Length > 300 ? reason[..300] : reason),
                 PaymentEventSource.Manual, $"{actor} · {reason}", ct);
+            // รอบ 267 P4 (267-1-45): เหตุที่ลูกค้าเห็นบนหน้าเอกสาร — เขียนใต้ล็อกเดียวกับการปฏิเสธ · เฉพาะรายการที่ปฏิเสธสำเร็จ (สถานะ Failed) ·
+            // ว่าง = null (หน้าเอกสารใช้ข้อความกลาง — เหตุผลภายในด้านบนไม่ถูกส่งออก)
+            var customerNote = CustomerDocPageAfterPay.NormalizeRejectReason(req.CustomerMessage);
+            if (updated is { Status: PaymentIntentStatus.Failed })
+                await _db.PaymentIntents.Where(i => i.Id == intentId && i.CompanyId == companyId && i.Status == PaymentIntentStatus.Failed)
+                    .ExecuteUpdateAsync(x => x.SetProperty(i => i.CustomerVisibleRejectReason, customerNote), ct);
         }, null, companyId, ct);
         if (!ran)
             return Conflict(new ApiResponse<IntentResponse>(false, null, "กำลังมีผู้ยืนยัน/ปฏิเสธรายการนี้อยู่ — รอสักครู่แล้วโหลดหน้าใหม่"));

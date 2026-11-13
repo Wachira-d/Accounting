@@ -144,6 +144,10 @@ public class PaymentIntent : TenantEntity
 
     public string? FailureCode { get; set; }
     public string? FailureMessage { get; set; }
+    /// <summary>รอบ 267 P4 (267-1-45): เหตุผลปฏิเสธสลิป<b>ที่ลูกค้าเห็น</b>บนหน้าเอกสาร (พนักงานพิมพ์ตอนปฏิเสธ — ไม่บังคับ) ·
+    /// แยกจาก <see cref="FailureMessage"/> (เหตุผลภายในลงประวัติ — ไม่ส่งออกหน้าเอกสาร) · null = ข้อความกลาง
+    /// (ข้อความกลางใน <c>CustomerDocPageAfterPay.SlipState</c>) · ผู้เขียน: <c>PaymentGatewayController.RejectSlip</c> · ผู้อ่าน: <c>DocumentPayLinkService.AfterPayAsync</c></summary>
+    public string? CustomerVisibleRejectReason { get; set; }
 
     public decimal FeeEstimated { get; set; }
     public decimal? FeeActual { get; set; }

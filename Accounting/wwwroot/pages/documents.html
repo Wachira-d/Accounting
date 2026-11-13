@@ -797,6 +797,27 @@
               <div id="fDocLanguageHint" style="display:none;font-size:11px;line-height:1.5;padding-bottom:9px;color:#1e40af"></div>
             </div>
           </div>
+          <!-- รอบ 267 P4 (คำตัดสิน 267-1-8 · 267-1-44): ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" ของใบนี้ใบเดียว (Document.PostPayEmailReceipt /
+               PostPayIncludePartial) — สามสถานะ: ตามค่าตั้ง (ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท) · เปิด · ปิด · แสดงเฉพาะชนิดที่เซิร์ฟเวอร์บอกว่าตั้งได้
+               (document-auto-send/settings → postPayDocumentTypes — หน้านี้ไม่มีรายการชนิดของตัวเอง) · ไม่สืบทอดไปใบลูก/โคลน -->
+          <div class="form-row-1-2" id="postPayRow" style="display:none">
+            <div class="form-group">
+              <label for="fPostPayReceiptMode" class="form-label" data-help="หลังลูกค้าชำระใบนี้ ให้ระบบออกและส่งใบเสร็จ/ใบกำกับภาษีอัตโนมัติไหม — ตั้งเฉพาะใบนี้ · ไม่ตั้ง = ใช้ค่าตั้งของตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท · ไม่สืบทอดไปใบที่แปลง/คัดลอกจากใบนี้">ใบเสร็จอัตโนมัติหลังรับชำระ</label>
+              <select class="form-select" id="fPostPayReceiptMode" onchange="Page.onPostPayModeChange()">
+                <option value="Inherit">— ตามค่าตั้ง (ผู้ติดต่อ/บริษัท) —</option>
+                <option value="On">ออกและส่งอัตโนมัติ (ใบนี้)</option>
+                <option value="Off">ไม่ออก/ไม่ส่งอัตโนมัติ (ใบนี้)</option>
+              </select>
+            </div>
+            <div class="form-group" id="postPayPartialGroup" style="display:none">
+              <label for="fPostPayPartialMode" class="form-label" data-help="รับชำระเป็นงวด: ส่งใบเสร็จทุกงวดที่รับ หรือเฉพาะเมื่อชำระครบ">รับชำระบางส่วน</label>
+              <select class="form-select" id="fPostPayPartialMode">
+                <option value="Inherit">— ตามค่าตั้ง —</option>
+                <option value="On">ส่งทุกงวดที่รับ</option>
+                <option value="Off">ส่งเฉพาะเมื่อชำระครบ</option>
+              </select>
+            </div>
+          </div>
           <!-- ตัวเลือกขั้นสูง: เปลี่ยนผังบัญชีปลายทางของ VAT (กรณีไม่เคลม VAT —
                ลงเป็นต้นทุน/ค่าใช้จ่ายแทน ตาม §82/5). ย้ายออกจากกล่อง "ใช้งานใบ
                กำกับภาษี/เคลม VAT" มาเป็น block อิสระระดับเอกสาร (.input-vat-only)
@@ -6446,7 +6467,51 @@
           this.applyContactCreditTerms(this._creditTermsContact);
       },
 
+      // ══════ รอบ 267 P4 — ค่าตั้ง "ใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ (ฟอร์ม) ══════
+      // ชุดชนิดที่ตั้งได้มาจากเซิร์ฟเวอร์ครั้งเดียว (document-auto-send/settings.postPayDocumentTypes) · โหลดไม่ได้ = ไม่แสดงช่อง (และไม่ส่งค่า)
+      async _loadPostPayTypes() {
+        if (this._postPayTypes !== undefined) return this._postPayTypes;
+        if (!this._postPayTypesLoading) {
+          const api = Layout.api(); const cid = Layout.getCompanyId();
+          this._postPayTypesLoading = (api && cid ? api.get(`/api/companies/${cid}/document-auto-send/settings`) : Promise.reject(new Error('no api')))
+            .then(r => { this._postPayTypes = (r && r.data && r.data.postPayDocumentTypes) || []; })
+            .catch(() => { this._postPayTypes = null; })   // ไม่รู้ชุดชนิด = ไม่แสดงช่อง (ค่าของใบไม่ถูกแตะ)
+            .then(() => { this._postPayTypesLoading = null; this._refreshPostPayRow(); });
+        }
+        await this._postPayTypesLoading;
+        return this._postPayTypes;
+      },
+      _refreshPostPayRow() {
+        const row = document.getElementById('postPayRow');
+        if (!row) return;
+        const type = document.getElementById('fDocType')?.value || '';
+        if (this._postPayTypes === undefined) { row.style.display = 'none'; this._loadPostPayTypes(); return; }
+        const applies = Array.isArray(this._postPayTypes) && this._postPayTypes.includes(type);
+        row.style.display = applies ? '' : 'none';
+        this.onPostPayModeChange();
+      },
+      onPostPayModeChange() {
+        const g = document.getElementById('postPayPartialGroup');
+        const m = document.getElementById('fPostPayReceiptMode');
+        // "งวด" มีความหมายเมื่อใบนี้ไม่ได้ปิดการออกใบเสร็จ (ปิด = ไม่มีใบเสร็จอัตโนมัติให้เลือกงวด)
+        if (g && m) g.style.display = m.value === 'Off' ? 'none' : '';
+      },
+      _setPostPayModes(receipt, partial) {
+        const ok = v => (v === 'On' || v === 'Off') ? v : 'Inherit';   // ชื่อสถานะจากเซิร์ฟเวอร์ (AutopilotSettingsResolver)
+        const a = document.getElementById('fPostPayReceiptMode'); if (a) a.value = ok(receipt);
+        const b = document.getElementById('fPostPayPartialMode'); if (b) b.value = ok(partial);
+        this._refreshPostPayRow();
+      },
+      _postPayPayload(id) {
+        const row = document.getElementById('postPayRow');
+        if (!row || row.style.display === 'none') return null;   // ช่องไม่แสดง = ไม่แตะค่าของใบ
+        const v = document.getElementById(id)?.value || 'Inherit';
+        return v === 'Inherit' ? (this.editingId ? 'Inherit' : null) : v;
+      },
+      // ══════ จบส่วนรอบ 267 P4 (ฟอร์ม) ══════
+
       onDocTypeChange() {
+        this._refreshPostPayRow();   // รอบ 267 P4: ช่องค่าตั้งใบเสร็จต่อใบ แสดงตามชนิด (ชุดจากเซิร์ฟเวอร์)
         this._applyBrandHint();   // ชนิดเปลี่ยน = ป้ายแบรนด์ต้องเปลี่ยนตาม
         this._renderTemplateOptions();   // และตัวเลือกรูปแบบต้องกรองตามชนิดใหม่
         this.refreshEmailTemplate();
@@ -9228,6 +9293,8 @@
             this.onDocLanguageChange();
           }
         }
+        // รอบ 267 P4: ค่าตั้งใบเสร็จหลังรับชำระต่อใบ — ใบใหม่กลับไป "ตามค่าตั้ง" เสมอ (ห้ามค้างค่าใบก่อน)
+        this._setPostPayModes('Inherit', 'Inherit');
         // รหัสสาขาผู้ขาย: reset กลับ default 00000 (สำนักงานใหญ่)
         { const br = document.getElementById('fSupplierBranchCode'); if (br) br.value = '00000'; }
         // ติ๊ก "มีใบกำกับภาษีซื้อ" + กล่องเตือน §86/4 — เดิมไม่ถูกล้าง ⇒ ใบใหม่เปิดมาพร้อมติ๊ก
@@ -9578,6 +9645,8 @@
               this.onDocLanguageChange();
             }
           }
+          // รอบ 267 P4: ค่าตั้งใบเสร็จหลังรับชำระต่อใบ (เซิร์ฟเวอร์ echo ชื่อ Inherit/On/Off — ไม่ hydrate = เปิดแก้แล้วบันทึก ค่าหายเงียบ ๆ)
+          this._setPostPayModes(d.postPayReceiptMode, d.postPayPartialMode);
           const fPayType = document.getElementById('fPaymentType');
           if (fPayType && d.paymentType) fPayType.value = d.paymentType;
           const fPiv = document.getElementById('fPricesIncludeVat');
@@ -10236,6 +10305,10 @@
             const v = document.getElementById('fDocumentLanguage')?.value || '';
             return v || (this.editingId ? '' : null);
           })(),
+          // รอบ 267 P4: ค่าตั้งใบเสร็จหลังรับชำระต่อใบ — ช่องแสดงอยู่เท่านั้นที่ส่ง (ชนิดที่ตั้งไม่ได้/ยังไม่รู้ชุดชนิดจากเซิร์ฟเวอร์ = null = ไม่แตะ) ·
+          // สร้าง: "ตามค่าตั้ง" = null · แก้ไข: "Inherit" = ล้างกลับไปตามค่าตั้ง
+          postPayReceiptMode: this._postPayPayload('fPostPayReceiptMode'),
+          postPayPartialMode: this._postPayPayload('fPostPayPartialMode'),
           // Only send paymentType for Payment Voucher (the only type whose
           // form exposes the selector); null elsewhere.
           paymentType: document.getElementById('fDocType').value === 'PaymentVoucher'
@@ -13806,6 +13879,43 @@
         host.innerHTML = lines.join('');
       },
 
+      // ══════ รอบ 267 P4 — ค่าตั้ง "ใบเสร็จอัตโนมัติหลังรับชำระ" ของใบที่ออกแล้ว (แผงลิงก์ชำระ) ══════
+      // ค่า/ป้าย "ค่าที่มีผลตอนนี้ (ชั้นไหนตัดสิน)" มาจากเซิร์ฟเวอร์ (postPay* ของ DocumentPayLinkStatusDto) · มีผลกับการรับชำระครั้งถัดไป
+      _postPaySettingHtml(s) {
+        if (!s || !s.postPaySettingApplies) return '';
+        const esc = Layout.esc;
+        const opt = (v, cur, label) => `<option value="${esc(v)}"${cur === v ? ' selected' : ''}>${esc(label)}</option>`;
+        const receiptOpts = opt('Inherit', s.postPayReceiptMode, '— ตามค่าตั้ง (ผู้ติดต่อ/บริษัท) —') + opt('On', s.postPayReceiptMode, 'ออกและส่งอัตโนมัติ') + opt('Off', s.postPayReceiptMode, 'ไม่ออก/ไม่ส่งอัตโนมัติ');
+        const partialOpts = opt('Inherit', s.postPayPartialMode, '— งวด: ตามค่าตั้ง —') + opt('On', s.postPayPartialMode, 'ส่งทุกงวดที่รับ') + opt('Off', s.postPayPartialMode, 'ส่งเฉพาะเมื่อชำระครบ');
+        return `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #e2e8f0">
+          <label class="text-sm" for="postPayDocMode" style="font-weight:600">ใบเสร็จ/ใบกำกับอัตโนมัติหลังรับชำระ (เฉพาะใบนี้)</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+            <select class="form-select" id="postPayDocMode" style="max-width:260px">
+              ${receiptOpts /* html — ตัวเลือกคงที่ หนีแล้วใน opt() */}
+            </select>
+            <select class="form-select" id="postPayDocPartial" style="max-width:220px" aria-label="รับชำระบางส่วน">
+              ${partialOpts /* html — ตัวเลือกคงที่ หนีแล้วใน opt() */}
+            </select>
+            <button class="btn btn-sm btn-secondary" data-postpay-save="1">บันทึก</button>
+          </div>
+          ${s.postPayEffectiveLabel ? `<div class="text-sm text-gray-500" style="margin-top:4px">${esc(s.postPayEffectiveLabel)}</div>` : ''}
+        </div>`;
+      },
+      _bindPostPaySetting(host, docId) {
+        const btn = host.querySelector('[data-postpay-save]');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+          const api = Layout.api(); const cid = Layout.getCompanyId();
+          try {
+            const r = await api.put(`/api/companies/${cid}/document-auto-send/documents/${docId}/post-pay`, {
+              receiptMode: host.querySelector('#postPayDocMode').value, partialMode: host.querySelector('#postPayDocPartial').value });
+            Layout.toast((r && r.message) || 'บันทึกแล้ว', 'success');
+            await this.renderAutoSendSection(docId);
+          } catch (e) { Layout.toast(e.message, 'error', 8000); }
+        });
+      },
+      // ══════ จบส่วนรอบ 267 P4 (แผง) ══════
+
       // รอบ 241: ลิงก์ชำระเงิน + งานส่งเอกสารหลังรับชำระ — ทุกค่า/ป้าย/เหตุผลจากเซิร์ฟเวอร์ (DocumentAutoSendController) · ไม่มีสิทธิ์/ไม่เกี่ยว = ไม่แสดง
       async renderAutoSendSection(docId) {
         const host = document.getElementById(`docAutoSend_${docId}`);
@@ -13826,6 +13936,7 @@
         const esc = Layout.esc;
         const runs = (s.runs || []).map(r => `<tr><td>${Layout.date(r.createdAt)}</td><td>${esc(r.statusLabel)}</td><td>${esc(r.message || '')}</td>
           <td>${(r.status === 'Blocked' || r.status === 'Failed') ? `<button class="btn btn-sm btn-secondary" data-autosend-retry="${esc(r.id)}">ลองใหม่</button>` : ''}</td></tr>`).join('');
+        const postPayHtml = this._postPaySettingHtml(s);   // รอบ 267 P4
         host.innerHTML = `<h4 style="font-size:14px;margin-bottom:8px">ลิงก์ชำระเงิน &amp; ส่งเอกสารอัตโนมัติ</h4>
           ${s.refusal ? `<div class="text-sm text-gray-500">${esc(s.refusal)}</div>${s.pageLinkUsable ? `
           <div class="text-sm" style="margin-top:6px">ลิงก์หน้าเอกสารของลูกค้ายังเปิดได้${s.pageLinkNote ? ' — ' + esc(s.pageLinkNote) : ''}</div>
@@ -13839,7 +13950,9 @@
             <button class="btn btn-sm btn-secondary" data-autosend-issue="1">${s.url ? 'คัดลอก/ใช้ลิงก์เดิม' : 'สร้างลิงก์ชำระเงิน'}</button>
             ${s.url ? '<button class="btn btn-sm btn-danger-outline" data-autosend-revoke="1">ยกเลิกลิงก์</button>' : ''}
           </div>`}
+          ${postPayHtml /* html — หนีแล้วใน _postPaySettingHtml */}
           ${runs ? `<table class="table" style="font-size:12px;margin-top:8px"><thead><tr><th>วันที่</th><th>สถานะ</th><th>รายละเอียด</th><th></th></tr></thead><tbody>${runs /* html — แถวหนีแล้ว */}</tbody></table>` : ''}`;
+        this._bindPostPaySetting(host, docId);
         const issue = host.querySelector('[data-autosend-issue]');
         if (issue) issue.addEventListener('click', async () => {
           try {
