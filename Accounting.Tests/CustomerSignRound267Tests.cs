@@ -624,7 +624,8 @@ public class CustomerSignRound267Tests
         Assert.Contains("append-only", sql);
         Assert.Contains("\"CustomerResponse\"", sql);
         Assert.Contains("\"CustomerSignOtpMinAmount\"", sql);
-        Assert.Contains("\"SignedCopyDoneAt\"", sql);
+        // ช่องของ outbox อยู่กับเจ้าของตาราง (SignRequestMigration — เทสต์รอบ 240 ตรวจทุกคอลัมน์ของโมเดลกับไฟล์นั้น)
+        Assert.Contains("\"SignedCopyDoneAt\"", string.Join("\n", SignRequestMigration.Statements()));
         // รันตอนบูต (ไม่ใช่ EF Migrations)
         var helper = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting", "Data", "DatabaseMigrationHelper.cs"));
         Assert.Contains("CustomerSignMigration.Statements()", helper);

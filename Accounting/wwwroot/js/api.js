@@ -1441,7 +1441,8 @@ const API = {
       // รอบ 260-2: ตัวเลือก "บัญชีที่เงินเข้า" + ค่าแนะนำ + เหตุผล (เซิร์ฟเวอร์ตัดสิน)
       getPaymentIntentReceivingAccounts: (id) => API.get(`${base}/pay/intents/${id}/receiving-accounts`),
       // รอบ 250 ฝ่ายค้าน H1: ปฏิเสธสลิปโอนของเอกสาร (เหตุผลบังคับ)
-      rejectPaymentIntentSlip: (id, reason) => API.post(`${base}/pay/intents/${id}/reject-slip`, { reason }),
+      // รอบ 267 P4: customerMessage = ข้อความถึงลูกค้าบนหน้าเอกสาร (ไม่บังคับ) · reason = เหตุผลภายใน
+      rejectPaymentIntentSlip: (id, reason, customerMessage) => API.post(`${base}/pay/intents/${id}/reject-slip`, { reason, customerMessage: customerMessage || null }),
       // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ให้ handler ของต้นทาง — เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง (redispatchPending)
       // รอบ 260-2 ฝ่ายค้าน M4: bankAccountId (ไม่บังคับ) = บัญชีที่เงินเข้าใหม่ของสลิปโอนที่ส่งต่อค้าง
       redispatchPaymentIntent: (id, bankAccountId) => API.post(`${base}/pay/intents/${id}/redispatch`, bankAccountId ? { bankAccountId } : {}),

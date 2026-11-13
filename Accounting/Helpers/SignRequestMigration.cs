@@ -59,5 +59,8 @@ public static class SignRequestMigration
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_SignEventOutbox_Company_Key" ON "SignEventOutbox" ("CompanyId", "EventKey");""",
         """CREATE INDEX IF NOT EXISTS "IX_SignEventOutbox_Status_Next" ON "SignEventOutbox" ("Status", "NextAttemptAt");""",
         """CREATE INDEX IF NOT EXISTS "IX_SignEventOutbox_Company_Doc" ON "SignEventOutbox" ("CompanyId", "DocumentId");""",
+        // รอบ 267 P2: ผูกเหตุการณ์กับแถวหลักฐาน CustomerDocumentActions + ขั้น "สร้างฉบับเซ็น/ส่งสำเนา" (ทำครั้งเดียว · ลองใหม่ตามจังหวะของ outbox)
+        """ALTER TABLE "SignEventOutbox" ADD COLUMN IF NOT EXISTS "CustomerActionId" uuid NULL;""",
+        """ALTER TABLE "SignEventOutbox" ADD COLUMN IF NOT EXISTS "SignedCopyDoneAt" timestamptz NULL;""",
     };
 }

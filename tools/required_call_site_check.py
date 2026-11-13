@@ -16277,8 +16277,9 @@ RULES += [
     dict(file="Services/Implementations/PostPaymentAutomationService.cs", method="EnqueueCoreAsync",
          must=["StatusSkipped"], forbid=["catch { }"],
          why=_R250_WHY + "§2.1 ข้อ 3 ทางเข้าที่มีเส้นใบเสร็จของตัวเอง = แถว Skipped พร้อมเหตุ (ไม่ใช่ไม่มีแถว)"),
-    dict(file="Services/Implementations/PostPaymentAutomationService.cs", method="SettingsForAsync",
-         must=["PostPaymentAutomationPolicy.EffectiveLayers(", "d.RecurringTransactionId", "c.PostPayEmailReceipt", "r.PostPayEmailReceipt",
+    # รอบ 267 P4 (267-1-44): ตัวโหลดชั้นย้ายไป ResolveForAsync (เพิ่มชั้น "เอกสารใบนี้" บนสุด) — SettingsForAsync เรียกตัวนั้นตัวเดียว (กติกา R267d ด้านล่าง)
+    dict(file="Services/Implementations/PostPaymentAutomationService.cs", method="ResolveForAsync",
+         must=["PostPaymentAutomationPolicy.Resolve(", "d.RecurringTransactionId", "c.PostPayEmailReceipt", "r.PostPayEmailReceipt",
                "c.CompanyId == companyId", "r.CompanyId == companyId"],
          forbid=["PostPaymentAutomationPolicy.Effective(s"],
          why=_R250_WHY + "B-13 ชั้นค่าตั้ง ตาราง › รายการประจำ › ผู้ติดต่อ › บริษัท ผ่านตัวต่อชั้นเดียว (ไม่คำนวณเอง) · tenant"),
@@ -16447,9 +16448,9 @@ REVIEWER_CASES += [
      "etax.EtdaTimestampToken = string.IsNullOrEmpty(token) ? null : token;",
      "etax.EtdaTimestampToken = string.IsNullOrEmpty(token) ? null : (token.Length > 500 ? token[..500] : token);", True),
     # ตัวต่อชั้นค่าตั้งถูกแทนด้วยสูตรสองชั้นเดิม ⇒ ต้องฟ้อง
-    ("R250-8", "SettingsForAsync",
-     "return PostPaymentAutomationPolicy.EffectiveLayers(s, schedule, recurring, contact);",
-     "return PostPaymentAutomationPolicy.Effective(s, schedule);", True),
+    ("R250-8", "ResolveForAsync",
+     "PostPaymentAutomationPolicy.Resolve(s, document, schedule, recurring, contact));",
+     "new PostPaymentAutomationPolicy.Resolution(PostPaymentAutomationPolicy.Effective(s, schedule), \"company\"));", True),
 ]
 
 # ── รอบ 250 WP-08: L1 ต่อสาย (LINE_MULTICHANNEL_DESIGN §3.e/§3.g/§8 L1) · ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" (250-29) · สินทรัพย์ P2 (250-26/27) ──
@@ -16486,7 +16487,7 @@ RULES += [
          must=["_recipients.ResolveAsync(", "NotifyTopic.Receipt", "ContactRecipientRule.ForEmail(", "EmailOptOutReason:", "AutoSendBlockedReason:"],
          forbid=["contact?.Email", "contact!.Email", "contact.Email"],
          why=_R250L1_WHY + "ใบเสร็จหลังรับชำระ = เรื่อง Receipt · ยกเลิกรับ ⇒ งานหยุดพร้อมเหตุ (ไม่ใช่ \"ไม่มีอีเมล\")"),
-    dict(file=_R250L1_PPA, method="SettingsForAsync", forbid=["AutoSendDisabled"],
+    dict(file=_R250L1_PPA, method="ResolveForAsync", forbid=["AutoSendDisabled"],
          why=_R250L1_WHY + "ฝ่ายค้าน HIGH-2: \"ไม่ส่งอัตโนมัติ\" ห้ามอยู่ในชั้นค่าตั้ง (ทำให้ไม่ออกใบเสร็จเงียบ) — ตัดสินที่ขั้นส่งอีเมลใน Decide"),
     dict(file=_R250L1_PPA, method="SendReceiptAsync",
          must=["ContactRecipientRule.ForChannel(", "DocumentEmailService.RouteForAsync(", "ContactRecipientRule.CapForSender("],
@@ -16549,7 +16550,7 @@ REVIEWER_CASES += [
     ("R250L1-6", "SendReceiptAsync", "var channel = ContactRecipientRule.ForChannel(delivery, etaxDoc);",
      "var channel = new ContactRecipientRule.ChannelRecipients(delivery.To, Array.Empty<string>(), null, null);", True),
     # ฝ่ายค้าน HIGH-2: ไม่ส่งอัตโนมัติกลับไปอยู่ในชั้นค่าตั้ง ⇒ ต้องฟ้อง
-    ("R250L1-7", "SettingsForAsync", ".Select(c => new PostPaymentAutomationPolicy.Overrides(c.PostPayEmailReceipt, c.PostPayIncludePartial))",
+    ("R250L1-7", "ResolveForAsync", ".Select(c => new PostPaymentAutomationPolicy.Overrides(c.PostPayEmailReceipt, c.PostPayIncludePartial))",
      ".Select(c => new PostPaymentAutomationPolicy.Overrides(c.AutoSendDisabled ? false : c.PostPayEmailReceipt, c.PostPayIncludePartial))", True),
     # ฝ่ายค้าน MED-6: นับแถว "ข้าม" เป็นครอบแล้ว ⇒ ต้องฟ้อง
     ("R250L1-8", "OnRecurringDocumentCreatedAsync", "&& q.Status != ScheduledEmailSendCheck.SkippedStatus, ct);", ", ct);", True),
@@ -17450,13 +17451,18 @@ RULES += [
     dict(file=_R253_LINK, method="FindAsync",
          must=["WhtCertUploadLinkPolicy.LooksValid(", "WhtCertUploadLinkPolicy.TokenHash(", "WhtCertUploadLinkPolicy.TokenMatches(", "l.CompanyId == companyId"],
          why=_R253_WHY + "token ค้นด้วย hash ของบริษัทนี้ แล้วยืนยันซ้ำแบบเวลาคงที่ (ฐานไม่มี token ดิบ)"),
+    # รอบ 267 P4 (267-1-48): แกนรับไฟล์แยกเป็น UploadCoreAsync (ลิงก์อัปโหลด + หน้าเอกสารของลูกค้าเดินตัวเดียว) — ด่านลิงก์อยู่ที่ PublicUploadAsync
     dict(file=_R253_LINK, method="PublicUploadAsync",
-         must=["FindAsync(", "WhtCertUploadLinkPolicy.Usable(", "WhtCertUploadLinkPolicy.Inspect(", "_intake.FindDuplicateShaAsync(",
+         must=["FindAsync(", "WhtCertUploadLinkPolicy.Usable(", "UploadCoreAsync("],
+         before=[("FindAsync(", "UploadCoreAsync("), ("WhtCertUploadLinkPolicy.Usable(", "UploadCoreAsync(")],
+         forbid=["WhtCreditsReceived.Add(", "_files.UploadAnonymousBytesAsync(", "_intake.Submit"],
+         why=_R253_WHY + "ลิงก์อัปโหลด: token + ลิงก์ยังใช้ได้ ก่อนเข้าแกนรับไฟล์ตัวเดียว (ไม่รับไฟล์เอง)"),
+    dict(file=_R253_LINK, method="UploadCoreAsync",
+         must=["WhtCertUploadLinkPolicy.Inspect(", "_intake.FindDuplicateShaAsync(",
                "WhtCertUploadLinkPolicy.FilterHints(", "_files.UploadAnonymousBytesAsync(", "_intake.SubmitFromScanAsync(", "_intake.SubmitUnreadableAsync(",
-               "WhtCertIntakeChannel.UploadLink", "PublicMessage(", "DeleteOrphanAsync("],   # รอบ 257 ชุด 2: B-L3 ตัวเดียวกับอัปโหลดเอง · B-M2 ไฟล์กำพร้า
+               "WhtCertIntakeChannel.UploadLink", "PublicMessage(", "DeleteOrphanAsync(", "ItemsForContactAsync(", "expectedPayerContactId: contactId"],   # รอบ 257 ชุด 2: B-L3 ตัวเดียวกับอัปโหลดเอง · B-M2 ไฟล์กำพร้า
          must_re=[r"if\s*\(\s*r\s*\.\s*Duplicate\s*\)"],
-         before=[("WhtCertUploadLinkPolicy.Usable(", "WhtCertUploadLinkPolicy.Inspect("),
-                 ("WhtCertUploadLinkPolicy.Inspect(", "_files.UploadAnonymousBytesAsync("),
+         before=[("WhtCertUploadLinkPolicy.Inspect(", "_files.UploadAnonymousBytesAsync("),
                  ("_intake.FindDuplicateShaAsync(", "_files.UploadAnonymousBytesAsync("),
                  ("_files.UploadAnonymousBytesAsync(", "_ocr.ScanAsync(")],
          forbid=["WhtCreditsReceived.Add(", "IEmailService", "_ai."],
@@ -17546,7 +17552,7 @@ REVIEWER_CASES += [
     ("R253a", "Upload", "WhtCertUploadLinkPolicy.UploadsPerMinute, WhtCertUploadLinkPolicy.UploadsPerTokenPerDay",
      "WhtCertUploadLinkPolicy.UploadsPerMinute, WhtCertUploadLinkPolicy.UploadsPerDay", True),
     # เก็บไฟล์ก่อนตรวจไบต์ ⇒ ต้องฟ้อง
-    ("R253b", "PublicUploadAsync", "        var verdict = WhtCertUploadLinkPolicy.Inspect(content);", "        var verdict = new WhtCertUploadLinkPolicy.FileVerdict(new UploadFileKind(\".pdf\", \"application/pdf\", false), null);", True),
+    ("R253b", "UploadCoreAsync", "        var verdict = WhtCertUploadLinkPolicy.Inspect(content);", "        var verdict = new WhtCertUploadLinkPolicy.FileVerdict(new UploadFileKind(\".pdf\", \"application/pdf\", false), null);", True),
     # งานทวงไม่ผ่าน JobLock ⇒ ต้องฟ้อง
     ("R253c", "RunOnceAsync", "return await Accounting.Helpers.JobLock.RunExclusiveAsync(db,", "return await NoLock(db,", True),
     # ทวงโดยไม่ถามตัวหาผู้รับ (ส่งถึง Contact.Email ตรง) ⇒ ต้องฟ้อง
@@ -19420,6 +19426,102 @@ def consent_check_caller_self_test() -> list:
     if consent_check_caller_errors(good) or consent_check_caller_errors(other):
         fails.append("self-test: CheckForWriteAsync / CheckAsync ของคลาสอื่น ถูกฟ้องผิด")
     return fails
+
+# ── รอบ 267 แพ็ก P4 — หลังจ่าย (กติกา R267d · คำตัดสิน 267-1-8 · 267-1-44…50 · DOCUMENT_FLOW §2.12n-P4) ──
+# ชั้นค่าตั้งต่อใบผ่านตัวต่อชั้นเดียว · เส้นสาธารณะของหน้าเอกสาร "แสดงผลอย่างเดียว" (ไม่ออกใบเสร็จ · ไม่ยืนยันสลิป · ไม่บันทึกรับชำระ) ·
+# 50 ทวิ จากหน้าเอกสาร = แกนเดียวกับลิงก์อัปโหลดเดิม · ปุ่มจ่ายของใบที่เกี่ยวข้องออกลิงก์ผ่านตัวออกเดียว
+_R267D_WHY = "รอบ 267 P4 / R267d (คำตัดสิน 267-1-44…50): "
+_R267D_AFTER = "Services/Implementations/DocumentPayLinkService.AfterPay.cs"
+_R267D_CTL = "Controllers/PublicDocumentPageController.AfterPay.cs"
+_R267D_PPA = "Services/Implementations/PostPaymentAutomationService.cs"
+_R267D_DOCLAYER = "Services/Implementations/DocumentService.PostPayLayer.cs"
+_R267D_NO_MONEY = ["IssueReceiptForPaymentAsync(", "CreatePaymentAsync(", "ApplyChargeAsync(", "_db.Payments.Add(", "Documents.Add(",
+                   "PostPaymentAutomationService.EnqueueCoreAsync(", "SaveChangesAsync("]
+RULES += [
+    dict(file=_R267D_PPA, method="SettingsForAsync", must=["ResolveForAsync("],
+         forbid=["PostPaymentAutomationPolicy.EffectiveLayers(", "PostPaymentAutomationPolicy.Effective(", "db.CompanySettings"],
+         why=_R267D_WHY + "267-1-44 ค่าที่มีผลของงานหลังรับชำระ = ตัวโหลดชั้นเดียว (ไม่มีสำเนาตัวต่อชั้น)"),
+    dict(file=_R267D_PPA, method="ResolveForAsync",
+         must=["d.PostPayEmailReceipt", "d.PostPayIncludePartial", "PostPaymentAutomationPolicy.DocumentLayerAllowed(",
+               "PostPaymentAutomationPolicy.Resolve(s, document, schedule, recurring, contact)", "d.CompanyId == companyId"],
+         why=_R267D_WHY + "267-1-8/40 ชั้น \"เอกสารใบนี้\" อยู่บนสุดของตัวต่อชั้นเดียว · ช่องต่อใบมีผู้อ่านเชิงธุรกิจ (ไม่ใช่ค่าตั้งที่เก็บแล้วไม่มีผล) · tenant"),
+    dict(file=_R267D_PPA, method="SetDocumentLayerAsync",
+         must=["PostPaymentAutomationPolicy.ApplyDocumentLayer(", "AddChainedAuditLog(", "d.CompanyId == companyId"],
+         before=[("PostPaymentAutomationPolicy.ApplyDocumentLayer(", "SaveChangesAsync(")],
+         why=_R267D_WHY + "267-1-44 ปุ่มบนหน้าเอกสารของใบที่ออกแล้ว = ตัวตัดสินเดียวกับฟอร์ม + audit chain · tenant"),
+    dict(file=_R267D_DOCLAYER, method="PostPayDocumentLayerOrThrow", must=["PostPaymentAutomationPolicy.ApplyDocumentLayer("],
+         why=_R267D_WHY + "267-1-44 ฟอร์มสร้าง/แก้ไขใช้ตัวตัดสินเดียว (รหัสไม่รู้จัก/ชนิดที่ตั้งไม่ได้ = ปฏิเสธ)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="CreateDocumentAsync",
+         must=["PostPayDocumentLayerOrThrow(request.DocumentType, null, null, request.PostPayReceiptMode, request.PostPayPartialMode)"],
+         why=_R267D_WHY + "267-1-44 ช่องของ CreateDocumentRequest มีผู้อ่าน (หน้าเว็บ · API · มือถือ เดินเมธอดนี้) · ใบลูกที่ไม่ส่งช่องนี้ = ตามค่าตั้ง (ไม่สืบทอด)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="UpdateDocumentAsync",
+         must=["ApplyPostPayDocumentLayer(doc, request.PostPayReceiptMode, request.PostPayPartialMode)"],
+         why=_R267D_WHY + "267-1-44 ช่องของ UpdateDocumentRequest มีผู้อ่าน (ไม่ใช่ silent no-op)"),
+    dict(file=_R267D_AFTER, method="PaymentReceiptsAsync",
+         must=["p.CompanyId == companyId", "(p.MovedToDocumentId ?? p.DocumentId) == docId", "x.CompanyId == companyId", "x.ContactId == contactId",
+               "DocumentStatusRules.IsEffective(", "DocumentPayLinkPolicy.IsCustomerFacing(", "CustomerDocPageAfterPay.EtaxSentNote("],
+         forbid=_R267D_NO_MONEY + ["IgnoreQueryFilters("],
+         why=_R267D_WHY + "267-1-46 ใบเสร็จบนหน้า = ของการรับชำระของใบนี้เท่านั้น (บริษัท + ผู้ติดต่อ + ออกแล้ว + ลูกค้าเห็นได้) · อ่านอย่างเดียว — ไม่ออกใบเสร็จจากเส้น public"),
+    dict(file=_R267D_AFTER, method="AfterPayAsync",
+         must=["i.CompanyId == companyId", "i.SourceId == docId", "CustomerDocPageAfterPay.SlipState(", "i.CustomerVisibleRejectReason",
+               "CustomerDocPageAfterPay.ReceiptPendingNote(", "WhtCertUploadLinkService.ItemsForContactAsync(", "CustomerDocPageAfterPay.WhtCert("],
+         forbid=_R267D_NO_MONEY + ["i.FailureMessage", "ExecuteUpdateAsync("],
+         why=_R267D_WHY + "267-1-45 สถานะสลิป/ใบเสร็จ/50 ทวิ จากตัวตัดสินเดียว · เหตุผลภายในของพนักงานไม่ส่งออก · แสดงผลอย่างเดียว (สลิปไม่ประทับชำระแล้ว)"),
+    dict(file=_R267D_AFTER, method="RelatedPageLinkAsync",
+         must=["PublicViewAsync(", "PayOffered: true", "EnsureCustomerLinkAsync(", "allowReissueRevoked: false"],
+         before=[("PublicViewAsync(", "EnsureCustomerLinkAsync("), ("PayOffered: true", "EnsureCustomerLinkAsync(")],
+         forbid=["EnsureLinkAsync(companyId", "NewToken("] + _R267D_NO_MONEY,
+         why=_R267D_WHY + "267-1-47 ปุ่มจ่ายรายใบของใบวางบิล: ใบต้องอยู่ในชุดที่หน้าแสดงและมีปุ่มจ่าย ก่อนออกลิงก์ผ่านตัวออกเดียว · ไม่ออกใหม่แทนลิงก์ที่ผู้ขายยกเลิก"),
+    dict(file=_R267D_AFTER, method="WhtCertTargetAsync", must=["PublicViewAsync(", "CanUpload: true"],
+         forbid=_R267D_NO_MONEY, why=_R267D_WHY + "267-1-48 ส่ง 50 ทวิ ได้เฉพาะเมื่อหน้าเสนอฟอร์มจริง (ด่านเดียวกับการเปิดหน้า)"),
+    dict(file=_R267D_CTL, method="UploadWhtCert",
+         must=["_limiter.TryConsumeAsync(", "failClosed: true", "_links.WhtCertTargetAsync(", "wht.UploadForDocumentAsync(",
+               "WhtCertUploadLinkPolicy.UploadsPerTokenPerDay", "WhtCertUploadLinkPolicy.MaxBytes"],
+         before=[("_limiter.TryConsumeAsync(", "file.OpenReadStream("), ("_links.WhtCertTargetAsync(", "file.OpenReadStream("),
+                 ("_links.WhtCertTargetAsync(", "wht.UploadForDocumentAsync(")],
+         forbid=["_db.", "SubmitFromScanAsync(", "UploadAnonymousBytesAsync("],
+         why=_R267D_WHY + "267-1-48 50 ทวิ จากหน้าเอกสาร: เพดาน + สิทธิ์ของ token ก่อนอ่านไฟล์ · เข้าแกนเดียวของลิงก์อัปโหลดเดิม (ไม่มีระบบอัปโหลดที่สอง)"),
+    dict(file=_R267D_CTL, method="RelatedPageLink",
+         must=["OverIpAsync(", "_links.RelatedPageLinkAsync(", "CustomerDocPage.NotFoundMessage"],
+         before=[("OverIpAsync(", "_links.RelatedPageLinkAsync(")], forbid=["_db.", "EnsureCustomerLinkAsync(", "EnsureLinkAsync("],
+         why=_R267D_WHY + "267-1-47 เส้นเปิดหน้าของใบที่เกี่ยวข้อง: เพดานก่อนแตะฐาน · ตัดสินที่ service ตัวเดียว · ข้อความล้มเดียว"),
+    dict(file="Services/Implementations/WhtCertUploadLinkService.cs", method="UploadForDocumentAsync",
+         must=["ItemsForContactAsync(", "UploadCoreAsync(", "open.Submitted"],
+         before=[("ItemsForContactAsync(", "UploadCoreAsync(")], forbid=["WhtCreditsReceived.Add(", "_files.", "_intake.Submit"],
+         why=_R267D_WHY + "267-1-48 ใบต้องรอหนังสือรับรองจริง (ตัวโหลดเดียวกับหน้าอัปโหลดเดิม) ก่อนเข้าแกนรับไฟล์ตัวเดียว"),
+    dict(file="Controllers/PaymentGatewayController.cs", method="RejectSlip",
+         must=["CustomerDocPageAfterPay.NormalizeRejectReason(req.CustomerMessage)", "i.CustomerVisibleRejectReason", "i.CompanyId == companyId",
+               "JobLock.RunExclusiveAsync("],
+         before=[("_intents.ApplyChargeAsync(", "i.CustomerVisibleRejectReason")],
+         forbid=["CustomerVisibleRejectReason, reason"],
+         why=_R267D_WHY + "267-1-45 เหตุที่ลูกค้าเห็น = ข้อความที่พนักงานพิมพ์ถึงลูกค้าเท่านั้น (ไม่ใช่เหตุผลภายใน) · เขียนหลังปฏิเสธสำเร็จ ใต้ล็อกเดียวกัน · tenant"),
+    dict(file="Controllers/PortalController.cs", method="DocumentPage",
+         must=["RelatedPdfBase = pdfOk", "PortalPayLinkPath = payOk"], must_lit=['DenyPortalAsync(companyId, "pay", ct)'],
+         why=_R267D_WHY + "267-1-49 พอร์ทัลเปิดหน้าเดียวกัน: ดาวน์โหลด/ชำระตามธงสิทธิ์พอร์ทัลเดิม (ไม่มีทางลัด)"),
+]
+REVIEWER_CASES += [
+    # ชั้นต่อใบถูกถอดออกจากตัวต่อชั้น (ค่าตั้งเก็บได้ echo ได้ แต่ไม่มีผล) ⇒ ต้องฟ้อง
+    ("R267d-1", "ResolveForAsync", "PostPaymentAutomationPolicy.Resolve(s, document, schedule, recurring, contact));",
+     "PostPaymentAutomationPolicy.Resolve(s, null, schedule, recurring, contact));", True),
+    # เส้นหลังจ่ายสาธารณะออกใบเสร็จเอง ⇒ ต้องฟ้อง
+    ("R267d-2", "PaymentReceiptsAsync", "if (payments.Count == 0) return result;",
+     "if (payments.Count == 0) { await _docs.IssueReceiptForPaymentAsync(companyId, docId); return result; }", True),
+    # ใบเสร็จไม่ผูกผู้ติดต่อของใบ (เห็นใบเสร็จของลูกค้ารายอื่นได้) ⇒ ต้องฟ้อง
+    ("R267d-3", "PaymentReceiptsAsync", "&& x.ContactId == contactId && x.Id != docId", "&& x.Id != docId", True),
+    # ส่งเหตุผลภายในของพนักงานให้ลูกค้า ⇒ ต้องฟ้อง
+    ("R267d-4", "AfterPayAsync", ".Select(i => new { i.CreatedAt, i.Amount, i.Status, i.CustomerVisibleRejectReason })",
+     ".Select(i => new { i.CreatedAt, i.Amount, i.Status, CustomerVisibleRejectReason = i.FailureMessage })", True),
+    # ออกลิงก์ของใบที่เกี่ยวข้องโดยไม่ตรวจว่าอยู่ในชุดของหน้า ⇒ ต้องฟ้อง
+    ("R267d-5", "RelatedPageLinkAsync",
+     "if (page.Related.FirstOrDefault(r => r.RelId == relatedId) is not { PayOffered: true }) return (false, null, null);", "", True),
+    # อ่านไฟล์ก่อนพิสูจน์สิทธิ์ของ token ⇒ ต้องฟ้อง
+    ("R267d-6", "UploadWhtCert", "var target = await _links.WhtCertTargetAsync(companyId, token, ct);",
+     "var target = ((Guid DocumentId, Guid ContactId)?)(Guid.Empty, Guid.Empty);", True),
+    # ทิศตรงข้าม: เปลี่ยนชื่อตัวแปรผลลัพธ์ ⇒ ต้องไม่ฟ้อง
+    ("R267d-7", "RelatedPageLink", "var r = await _links.RelatedPageLinkAsync(companyId, token, relId, ct);",
+     "var r =\n            await _links.RelatedPageLinkAsync(companyId, token, relId, ct);", False),
+]
+
 
 # ── รอบ 266 แพ็ก A (erp-review/2026-11-12/team-266-manual-doc-link.md · คำตัดสิน 266-1-x) — ผูกใบเสร็จ/เงินที่รับไว้แล้วกับใบแจ้งหนี้ (เจ้าเดียวกัน) ──
 # ตัวตัดสินเดียว ReceiptLinkPolicy ต้องถูกเรียกทุกทางเข้า · ใบร่างตัดสินซ้ำใต้ล็อกก่อนเขียน · ด่าน G-1 (ผู้ติดต่อเดียวกัน) ที่สร้าง/แก้ไข/อนุมัติ · G-2 คำเตือน

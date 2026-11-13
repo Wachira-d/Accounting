@@ -4119,7 +4119,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   `link` = token ของใบ (`GET api/companies/{c}/public-pay/documents/{token}` — `PublicDocumentPageController`) ทุกปุ่ม ·
   `line-view` = HMAC แถวคิว LINE (`GET …/line-doc/{queueId}/{token}/page` — ด่านเดียวกับ PDF เดิม `ResolveAsync`) ดู + PDF + "ขอลิงก์ทำรายการ" ·
   `preview` = พนักงาน (`GET …/document/{id}/customer-page-preview` — ด่านอ่านเอกสาร + ชั้นความลับ) ปุ่มทั้งหมดปิด · ไม่ออกลิงก์ · ไม่ประทับเปิด ·
-  `portal` = JWT พอร์ทัล (`GET api/portal/{c}/documents/{id}/page` — ด่านรายละเอียดเดิม + ธงสิทธิ์) ดู + PDF ของพอร์ทัล (**ทางเข้าบน portal.html ต่อสายใน P4**) ·
+  `portal` = JWT พอร์ทัล (`GET api/portal/{c}/documents/{id}/page` — ด่านรายละเอียดเดิม + ธงสิทธิ์) ดู + PDF ของพอร์ทัล (ทางเข้าบน portal.html = ฝังหน้าเดียวกัน — §2.12n-P4) ·
   โหมดที่ไม่ใช่ `link` ไม่มีเป้าหมายรายการชำระ (จ่าย/สลิปทำได้จากลิงก์ของใบเท่านั้น)
 - **ซ่อนยอด:** ใบส่งของไม่ส่งราคา/ยอด (`ShowsAmounts`) · กลุ่ม LINE ที่ตั้งซ่อนยอด/ยกเลิกผูก/บล็อก ไม่ได้หน้าเอกสาร (`PageLinkAllowedForLineEndpoint` = ตัวตัดสินเดิม `LineDocumentViewLink.EndpointAllows`) ·
   view model ไม่มี id ภายใน (ยกเว้น `relId` ของชุดใบที่เกี่ยวข้อง) · ผังบัญชี · หมายเหตุภายใน · ผู้สร้าง · IP · ที่อยู่/เลขภาษี (ฉบับตามกฎหมาย = PDF — resolver ที่อยู่ไม่มีสำเนาที่สอง)
@@ -4191,6 +4191,57 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 
 - **ไม่สืบทอด:** `CustomerResponse` · แถวหลักฐาน · ฉบับที่ลงนาม เป็นของใบ/Rev นั้น — convert/clone/recurring ไม่คัดลอก (เท่ากับลายเซ็นยอมรับ รอบ 239)
 - เทสต์ `CustomerSignRound267Tests` (pure สองทิศ) · `Db/CustomerSignRound267DbTests` · ล็อก R267b (`tools/required_call_site_check.py` — กติกาของเมธอดที่ย้ายชี้ `CustomerDocumentResponseService`) · Last verified `commit 8b6861de` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
+### 2.12n-P4 หน้าเอกสารสำหรับลูกค้า — หลังจ่าย (รอบ 267 แพ็ก P4 · คำตัดสิน 267-1-8 · 267-1-44…50)
+
+ดีไซน์: `erp-review/2026-11-12/team-267-doc-pages-design.md` §8 / §19 P4 · ต่อจาก §2.12n (P1) · **ไม่มีเส้นเงินใหม่** — หน้าเอกสาร "แสดงผล" อย่างเดียว:
+ใบเสร็จออกจากงานหลังรับชำระ/พนักงานเท่านั้น · สลิป = รอผู้ขายยืนยัน (กติการอบ 255 เดิม — สลิปอย่างเดียวไม่ประทับ "ชำระแล้ว") · ไม่มี AI ในเส้นนี้
+
+- **ค่าตั้ง "ออก/ส่งใบเสร็จ-ใบกำกับอัตโนมัติหลังรับชำระ" ต่อเอกสาร (267-1-8 · 267-1-44):** `Document.PostPayEmailReceipt` / `Document.PostPayIncludePartial`
+  (`bool?` · null = ตามชั้นถัดไป) = **ชั้นบนสุด**ของตัวต่อชั้นเดียว `PostPaymentAutomationPolicy.Resolve/EffectiveLayers`:
+  **เอกสารใบนี้ › ตารางส่ง › รายการประจำ › ผู้ติดต่อ › บริษัท** (ทีละช่อง) · ตัวโหลดเดียว `PostPaymentAutomationService.ResolveForAsync`
+  (ผู้อ่าน: `SettingsForAsync` → `EnqueueCoreAsync` (ตอนรับชำระ) + `ExecuteAsync` (ตอนงานรัน) · `DocumentPayLinkService.StatusAsync` · `SetDocumentLayerAsync`) ·
+  ชื่อสามสถานะ `Inherit · On · Off` = ชุดเดียวกับรายการประจำ/ผู้ติดต่อ (`AutopilotSettingsResolver.ParseTriState/ValidateTriState/TriStateName` — ไม่มีสำเนา) ·
+  ตั้งได้เฉพาะชนิดที่รับชำระ (`PostPaymentAutomationPolicy.DocumentLayerAllowed` = `DocumentPayLinkPolicy.PayableTypes`: ใบแจ้งหนี้ · ใบกำกับภาษี · ใบเพิ่มหนี้) —
+  ชนิดอื่นส่ง On/Off = 400 (ไม่เก็บค่าที่ไม่มีผู้อ่าน) · ส่ง Inherit/ว่าง = ผ่าน
+  - **checklist "เพิ่ม field ระดับเอกสาร" (กฎ #4 B):** ฟอร์ม `documents.html` (`#postPayRow` · `fPostPayReceiptMode` / `fPostPayPartialMode` — แสดงเฉพาะชนิดที่เซิร์ฟเวอร์บอก
+    `document-auto-send/settings.postPayDocumentTypes`) → payload `postPayReceiptMode` / `postPayPartialMode` (สร้าง: ตามค่าตั้ง = null · แก้ไข: `Inherit` = ล้าง · ช่องไม่แสดง = null = ไม่แตะ)
+    → `CreateDocumentRequest` + `UpdateDocumentRequest` → `DocumentService.PostPayLayer.cs` (`PostPaymentAutomationPolicy.ApplyDocumentLayer` ตัวเดียว) → entity →
+    `DocumentAutoSendMigration` (`ADD COLUMN IF NOT EXISTS` · NULL = พฤติกรรมเดิมทุกใบ — ไม่มีข้อมูลเก่าต้องย้าย) → `DocumentResponse.PostPayReceiptMode/PostPayPartialMode/PostPaySettingApplies`
+    → hydrate ตอนเปิดแก้ (`_setPostPayModes`) → reset ตอนฟอร์มใหม่ → **ไม่พิมพ์บนเอกสาร** (renderer ×2 ไม่ถูกแตะ) →
+    **ไม่สืบทอด**ไปใบลูก (ใบแทนจากการยกเลิก-ออกใหม่: อยู่ใน `SettlementPaidReissue.DocumentNotCarriedFields` — ล็อกด้วยเทสต์ partition R200_V1F_R7)/โคลน/ใบเสร็จของการชำระ/CN อัตโนมัติ/รายการประจำ/ใบแทน (เจตนาของใบนั้น — แบบ `QuotationAcceptAutopilot` · ทางสร้างใบลูกไม่ส่งสองช่องนี้ ⇒ ใบลูก = ตามค่าตั้ง ·
+    ล็อกด้วย `PostPay267_DocLayerNotInherited`)
+  - **ใบที่ออกเลขแล้ว** (แก้ผ่านฟอร์มไม่ได้): `PUT …/document-auto-send/documents/{id}/post-pay` `{receiptMode, partialMode}` — สิทธิ์สร้างเอกสารชนิดนั้น · คีย์ API ไม่ได้ ·
+    `PostPaymentAutomationService.SetDocumentLayerAsync` (ตัวตัดสินเดียวกับฟอร์ม · audit chain `post-pay-document-layer` · ไม่แตะเนื้อหา/ยอด/เลขของใบ · ใบยกเลิก = 409) ·
+    **มีผลกับการรับชำระครั้งถัดไป · งานที่ยังรอประมวลผล/กดลองใหม่ใช้ค่าปัจจุบัน (ปิดที่ใบ = งานที่ค้างจบพร้อมเหตุ) · เปิดทีหลังไม่ออกใบเสร็จย้อนหลังของการชำระที่ผ่านไปแล้ว** · แผง "ลิงก์ชำระเงิน & ส่งเอกสารอัตโนมัติ" แสดงตัวเลือก + ข้อความ "ค่าที่มีผลตอนนี้ — ชั้นไหนตัดสิน"
+    (`PostPaymentAutomationPolicy.EffectiveLabel` — เซิร์ฟเวอร์ประกอบ)
+  - "ไม่ส่งอัตโนมัติ" ของผู้ติดต่อ (`AutoSendDisabled`) ยังห้ามเฉพาะขั้นส่งอีเมล (ทุกชั้น — `Decide`) · ทางเข้าที่มีเส้นใบเสร็จของตัวเอง/การชำระหลายใบ/นำเข้าไฟล์ = กติกาเดิมของ `ForEnqueue`
+- **ส่วนหลังจ่ายของหน้า (`page.afterPay` · โหมด `link` และ `portal` · ตัวตัดสิน/ข้อความเดียว `Helpers/CustomerDocPageAfterPay.cs` · ตัวโหลด `DocumentPayLinkService.AfterPay.cs`):**
+  - **ใบเสร็จ/ใบกำกับของการชำระ (267-1-46):** เข้าชุด "ใบที่เกี่ยวข้อง" ชนิด `receipt` (ขึ้นบนสุด · ดาวน์โหลดด้วยเส้น `related/{relId}/pdf` เดิม) = ใบที่ `Payment.ReceiptDocumentId` หรือ
+    `Document.SettlementPaymentId` ชี้การรับชำระที่ `Payment.DocumentId` = ใบนี้ · บริษัทเดียวกัน + ผู้ติดต่อเดียวกัน + ออกแล้วยังมีผล + ลูกค้าเห็นได้ · การชำระที่กระจายหลายใบไม่นับ ·
+    ขึ้นทันทีที่ออก (ไม่รอส่งอีเมล) · **การเปิดหน้าไม่ออกใบเสร็จ** · รับชำระแล้วยังไม่มีใบเสร็จ (ใบแจ้งหนี้) ⇒ ข้อความ "ผู้ขายยังไม่ได้ออกใบเสร็จ…" (ไม่แต่งใบเสร็จ) ·
+    ป้าย e-Tax เฉพาะเมื่อ `EtaxInvoice.ByEmailSentAt` มีค่า ("ฉบับที่มีผลทางภาษีส่งทางอีเมลแล้วเมื่อ … — ไฟล์บนหน้านี้เป็นสำเนาสำหรับอ้างอิง")
+  - **สถานะสลิป (267-1-45):** สลิปล่าสุด ≤ 5 ใบของใบนี้ (`PaymentIntent(Document, ManualSlip)`): รอผู้ขายตรวจ → ยืนยันแล้ว / ไม่รับ (เหตุถึงลูกค้า) ·
+    เหตุถึงลูกค้า = ช่องใหม่ `PaymentIntent.CustomerVisibleRejectReason` (พนักงานพิมพ์ตอน "ปฏิเสธสลิป" — `RejectSlipRequest.CustomerMessage` · ไม่บังคับ · ≤ 300) ·
+    ไม่พิมพ์ = ข้อความกลางของ `CustomerDocPageAfterPay.SlipState` · **เหตุผลภายใน (`FailureMessage`) ไม่ส่งออกหน้าเอกสาร** ·
+    มีสลิปรอตรวจ ⇒ หน้าไม่ชวนแนบซ้ำ (`afterPay.slipPending` — ด่านจริงคือ `SlipEvidenceRule.PayLinkSlipProblem` เดิม) · ปฏิเสธแล้ว ⇒ ฟอร์มแนบกลับมา (แนบใหม่ได้)
+  - **50 ทวิ จากหน้าเอกสาร (267-1-48 · โหมด `link`):** การ์ดขึ้นเมื่อทะเบียน "ภาษีถูกหัก" มีแถวของใบนี้ที่ยังตามใบ (ตัวโหลดเดียวกับหน้าอัปโหลด 50 ทวิ เดิม —
+    `WhtCertUploadLinkService.ItemsForContactAsync`) · `POST …/public-pay/documents/{token}/wht-cert` (multipart `file` + `senderName`) →
+    `IWhtCertUploadLinkService.UploadForDocumentAsync` → **แกนเดียว** `UploadCoreAsync` ของลิงก์อัปโหลดเดิม (ตรวจไบต์ · กันซ้ำ · ที่เก็บกลาง · OCR · ประตูเดียว `WhtCertIntakeService`
+    ช่องทาง `UploadLink` · ใบจากคนที่ไม่ล็อกอิน = รอผู้ขายตรวจเสมอ) · ไม่มีแถว `WhtCertUploadLink` ใหม่ (สิทธิ์ = token ของใบ) · ส่งแล้วรอตรวจ = ไม่ชวนส่งซ้ำ (409) ·
+    เพดานต่อ IP + ต่อ token ตัวเลขเดียวกับลิงก์อัปโหลด (failClosed)
+  - **ใบวางบิล → จ่ายรายใบ (267-1-9 v1 · 267-1-47):** ใบที่เกี่ยวข้องที่เป็นชนิดรับชำระ + ยังมีผล + ยังค้าง มี `payOffered` (ปุ่ม "ชำระใบนี้") →
+    `POST …/documents/{token}/related/{relId}/page-link` → `RelatedPageLinkAsync`: ใบต้องอยู่ในชุดที่หน้าแสดงและมีปุ่มจริง → ออกลิงก์หน้าเอกสารของใบนั้นผ่านตัวออกเดียว
+    (`EnsureCustomerLinkAsync` · ไม่ออกใหม่แทนลิงก์ที่ผู้ขายยกเลิก ⇒ 409 "ติดต่อผู้ขาย") → หน้าพาไปหน้าเอกสารของใบนั้น (ด่านจ่าย/ช่องทางที่ตรึง 267-1-27 อยู่ที่หน้านั้น) ·
+    **ไม่มีการจ่ายรวมทั้งบิล** (267-1-9 ยังรอเจ้าของ) · ใช้กับใบเสนอราคา → ใบแจ้งหนี้ที่ออกต่อด้วย (กติกาเดียว)
+  - ลิงก์ชำระรุ่นก่อน (payOnly — 267-1-30): ได้เฉพาะสถานะสลิป (ขอบเขตการจ่ายเดิม) — ไม่มีใบเสร็จ/50 ทวิ/ปุ่มของใบที่เกี่ยวข้อง
+- **พอร์ทัลเปิดหน้าเดียวกัน (267-1-49):** ปุ่ม "ดู" บน `portal.html` ฝัง `pay-document.html?c=…&portal={docId}` (เลิก modal รายละเอียดที่หน้าพอร์ทัลประกอบเอง) ·
+  โทเคนพอร์ทัลส่งให้หน้าที่ฝังทาง `postMessage` ต้นทางเดียวกัน (เฉพาะกรอบที่เปิดเอง · ไม่อยู่ใน URL) → `GET api/portal/{c}/documents/{id}/page` (ด่านผู้ติดต่อ + ธงสิทธิ์เดิม) ·
+  `relatedPdfBase` = เส้น PDF ของพอร์ทัล (ธง "pdf") · `portalPayLinkPath` = เส้นขอลิงก์หน้าชำระเดิมของพอร์ทัล (ธง "pay" · เฉพาะใบที่ยังมียอดชำระได้) · ใบที่เกี่ยวข้องในโหมดนี้ = ใบเสร็จของการชำระเท่านั้น
+- **หน้าเว็บ:** `pay-document.html` ส่วน "รอบ 267 P4" (`afterPayHtml` · `relatedHtml` · `portalHandshake`) — สถานะ/ข้อความทั้งหมดจากเซิร์ฟเวอร์ (`afterPay.labels`) · `payment-intents.html` หน้าต่างปฏิเสธสลิปมีสองช่อง
+  (เหตุผลภายใน · ข้อความถึงลูกค้า)
+- เทสต์ `PostPayRound267Tests` (pure สองทิศ) · `Db/PostPayRound267DbTests` · `tools/required_call_site_check.py` กติกา R267d (+ ย้าย R250-8/R250L1-7 ไป `ResolveForAsync` · R253b ไป `UploadCoreAsync`) ·
+  Last verified `commit 17680548` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -9382,5 +9433,8 @@ _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P1 ช�
 _Last verified against codebase: 2026-11-12 (รอบ 264 P3 ชุดแก้ฝ่ายค้าน — §2.12g-264-P3: H1 การจ่ายอื่นของใบซื้อ · H2/L9 จ่ายบางส่วน · M1 เงินสด · M2 ยกเลิกทั้งใบ + ตัวกวาด · M3 ถ้อยคำ · M4 เดือนภาษีหัก · M5 แจ้งเมื่อบันทึกเอง · M6 ล็อกตอนส่ง 50 ทวิ · M7 · L1–L9 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 17fefa5a)_
 _Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P2 — §2.12n-P2 ผู้ลงนาม + บัญชีหลักฐาน + ฉบับที่ลูกค้าเซ็น: ฟอร์มผู้ลงนามบนหน้าเอกสาร (ชื่อ · นามสกุล · ตำแหน่ง · ติ๊กรับรอง) · ยอมรับ/ไม่รับ/ขอแก้/เซ็นรับ ผ่าน `CustomerDocumentResponseService` ตัวเดียว · ตาราง `CustomerDocumentActions` append-only ในธุรกรรมเดียวกับภาพฉายบนใบ · ฉบับที่ลงนาม (ไฟล์ + SHA-256) · สอง renderer พิมพ์ผู้ลงนามผ่าน `CustomerSignerLines` · รหัสยืนยันอีเมลตามยอดขั้นต่ำของบริษัท · PDPA (RoPA · อายุเก็บ · DSR) (คำตัดสิน 267-1-33…42) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8b6861de)_
 _Last verified against codebase: 2026-11-12 (รอบ 266 แพ็ก B — §3.4c-B ย้ายการรับชำระที่ตัดผิดใบผ่าน 21630 สองขา (ขาเงินสด/คู่ธนาคารไม่ถูกแตะ) · `Payment.MovedToDocumentId` + แถวจัดสรรที่ปล่อย · ยกเลิกใบเสร็จเดิม + ใบแทน "ออกแทนใบเลขที่ …" สอง renderer · ด่าน e-Tax/งวดภาษี/คู่ค้า/ภาษีถูกหัก/SoD · พักการทวง) · commit 46ac5463 — ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_Last verified against codebase: 2026-11-12 (รอบ 267 แพ็ก P4 — §2.12n-P4 หลังจ่าย: ค่าตั้งใบเสร็จอัตโนมัติหลังรับชำระต่อเอกสาร (ชั้นบนสุดของตัวต่อชั้นเดียว · ฟอร์ม + ปุ่มของใบที่ออกแล้ว · ไม่สืบทอด) ·
+ใบเสร็จของการชำระบนหน้าเอกสาร · สถานะสลิป + เหตุถึงลูกค้า · 50 ทวิ จากหน้าเอกสาร (แกนเดียวกับลิงก์อัปโหลด) · ใบวางบิลจ่ายรายใบ · พอร์ทัลเปิดหน้าเดียวกัน (คำตัดสิน 267-1-44…50) —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit 17680548)_
 _Last verified against codebase: 2026-11-13 (รอบ 266 แพ็ก B ชุดแก้ฝ่ายค้าน — §3.4c-B: B-1 ใบรับในตัว (ปฏิเสธ/ออกใบกำกับ ณ วันรับเงิน/พรีวิวตามจริง) · B-2 สิทธิ์ใต้ล็อก + ถอดด้วยกุญแจพรีวิว · B-3…B-9 ผู้อ่าน/งานที่ตามใบที่มีผล · ถอดหลังแตะกระดาษ = ปฏิเสธ (คำตัดสิน 266-1-32…35)) · commit 0ec86361 (+ 57b75d99) — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _Last verified against codebase: 2026-11-13 (รอบ 268 งานคงค้าง — §2.12g-268: 268-1-1 บัญชีตั้งต้นในความยินยอมไม่บันทึกเอง · 268-1-2 สลิปออเดอร์หน้าเว็บลงธนาคาร · 268-1-3 มัดจำการจองต่องวด · 268-1-4 แจ้งแชตหลังผูกสลิป + PDF · 268-1-5 ศูนย์บิล LINE (นำออก/ใบเสร็จส่วนเสริม) · 268-1-6 รับหลายใบแจ้งคู่ค้า — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 3dad4ab2)_
