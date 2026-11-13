@@ -13,14 +13,25 @@ public partial class DocumentPayLinkService
     /// <summary>จำนวนใบในใบวางบิลสูงสุดที่จ่ายรวมได้ (เกิน = ชำระรายใบ — ไม่ล็อกแถวเป็นร้อยในการชำระเดียว)</summary>
     public const int BillingNoteMaxChildren = 50;
 
+    /// <summary>ฝ่ายค้าน 267-P5 LOW-9: ผลชุดใบที่จำไว้ระหว่างคำขอเปิดหน้าเอกสาร (<c>PublicViewAsync</c> เริ่มจำ) — อายุสั้น (<see cref="PlanMemoTtl"/>) ·
+    /// ไม่เริ่ม = ไม่จำ (ตัวจัดการเงินเข้า/ออกลิงก์ ถามสดทุกครั้ง)</summary>
+    private Dictionary<Guid, BillingNoteCombinedPay.Plan?>? _planMemo;
+    private DateTime _planMemoUntil;
+    private static readonly TimeSpan PlanMemoTtl = TimeSpan.FromSeconds(5);
+
+    private void BeginPlanMemo()
+    {
+        _planMemo = new Dictionary<Guid, BillingNoteCombinedPay.Plan?>();
+        _planMemoUntil = DateTime.UtcNow.Add(PlanMemoTtl);
+    }
+
     public async Task<BillingNoteCombinedPay.Plan?> BillingNotePlanAsync(Guid companyId, Guid billingNoteId, CancellationToken ct = default)
     {
+        if (_planMemo != null && DateTime.UtcNow > _planMemoUntil) _planMemo = null;
+        if (_planMemo != null && _planMemo.TryGetValue(billingNoteId, out var memo)) return memo;
         var bn = await LoadDocAsync(companyId, billingNoteId, null, ct);
         if (bn == null || bn.Type != DocumentType.BillingNote) return null;
-        var lineIds = await _db.DocumentLines.AsNoTracking()
-            .Where(l => l.DocumentId == bn.Id && l.Document.CompanyId == companyId && l.SourceDocumentId != null)
-            .OrderBy(l => l.LineOrder).Select(l => l.SourceDocumentId!.Value).ToListAsync(ct);
-        var ids = lineIds.Distinct().ToList();
+        var ids = (await BillingNoteChildren.MapAsync(_db, companyId, new[] { bn.Id }, ct)).TryGetValue(bn.Id, out var kids) ? kids : new List<Guid>();
         if (ids.Count == 0)
             return new BillingNoteCombinedPay.Plan(0m, Array.Empty<(Guid, decimal)>(),
                 "ใบวางบิลนี้ยังไม่ได้รวมใบแจ้งหนี้ — กรุณาติดต่อผู้ขาย");
@@ -39,7 +50,9 @@ public partial class DocumentPayLinkService
             children.Add(new BillingNoteCombinedPay.Child(d.Id, d.DocumentNumber, d.Type, d.Status, d.ContactId, d.Currency, d.BalanceDue,
                 wht, refusal, d.SupersedingTaxInvoice != null));
         }
-        return BillingNoteCombinedPay.Decide(bn.ContactId, children);
+        var plan = BillingNoteCombinedPay.Decide(bn.ContactId, children);
+        if (_planMemo != null) _planMemo[billingNoteId] = plan;
+        return plan;
     }
 
     /// <summary>เหตุที่ "จ่ายทั้งใบวางบิล" ไม่ได้ ณ ตอนนี้ (null = จ่ายได้) — ใบค่าบริการผู้เช่า · ชุดใบไม่ผ่าน · ชำระครบทุกใบแล้ว</summary>

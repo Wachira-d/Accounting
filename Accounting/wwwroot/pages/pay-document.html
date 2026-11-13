@@ -520,8 +520,10 @@
       const mem = (lt && lt.prefill) || loadRemembered() || {};
       const sig = spec.signature;   // required · optional · none
       const lineBox = safePath(p.signerLoginPath) ? (lt
+        // ฝ่ายค้าน 267-P5 MED-2: ป้ายช่องติ๊ก = ข้อความยินยอมฉบับเต็มจากเซิร์ฟเวอร์ (ข้อความเดียวกับที่ถูก hash) · MED-1: ปุ่ม "ไม่ใช่ฉัน" ล้างตั๋ว/ค่าที่เติม
         ? `<div class="info">${esc(F.lineLinked)}</div>
            <label class="tick"><input type="checkbox" id="sgLineRemember"><span>${esc(F.lineRemember)}</span></label>
+           <button type="button" class="linkbtn" id="sgLineNotMe">${esc(F.lineNotMe)}</button>
            <button type="button" class="linkbtn" id="sgLineForget">${esc(F.lineForget)}</button><div id="sgLineMsg" role="status"></div>`
         : `<button type="button" class="btn alt" id="sgLineLogin">${esc(F.lineLogin)}</button><div id="sgLineMsg" role="status"></div>`) : '';
       box.innerHTML = `<form class="sign" id="respondForm" novalidate>
@@ -559,6 +561,8 @@
       if (otpBtn) otpBtn.addEventListener('click', () => sendOtp(otpBtn));
       const lineBtn = document.getElementById('sgLineLogin');
       if (lineBtn) lineBtn.addEventListener('click', () => startLineLogin(lineBtn, actionId));
+      const notMeBtn = document.getElementById('sgLineNotMe');
+      if (notMeBtn) notMeBtn.addEventListener('click', () => { ssSet(LINE_TICKET, null); openRespondForm(actionId); });
       const forgetBtn = document.getElementById('sgLineForget');
       if (forgetBtn) forgetBtn.addEventListener('click', () => forgetLine(forgetBtn, actionId));
       box.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -616,6 +620,7 @@
         promisedDate: document.getElementById('sgPromised')?.value || null,
         signerTicket: (lineTicket() || {}).ticket || null,
         rememberSigner: !!document.getElementById('sgLineRemember')?.checked,
+        signerConsentVersion: F.lineConsentVersion || null,
         // ฉบับที่หน้านี้แสดง — เซิร์ฟเวอร์ปฏิเสธถ้าเอกสารถูกแก้หลังจากเปิดหน้านี้ (ตอบรับได้เฉพาะฉบับที่เห็น)
         revisionNumber: view.page.respond.revisionNumber, contentHash: view.page.respond.contentHash,
         source: source || null,
@@ -631,6 +636,8 @@
         return;
       }
       saveRemembered(!!document.getElementById('sgRemember')?.checked, signer);
+      // ฝ่ายค้าน 267-P5 MED-1: ลงนามเสร็จ ⇒ ล้างตั๋ว LINE + ค่าที่เติมของแท็บนี้ (เครื่องใช้ร่วม — คนถัดไปไม่ได้ข้อมูลของคนก่อน)
+      ssSet(LINE_TICKET, null);
       signPad = null;
       load(j.message || '');
     }

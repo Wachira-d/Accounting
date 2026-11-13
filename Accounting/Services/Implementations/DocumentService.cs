@@ -3075,6 +3075,11 @@ public partial class DocumentService : IDocumentService
             else if (doc.DeliverySignedAt.HasValue)
                 bindingEvidence = $"ลูกค้า ({doc.DeliverySignedBy}) เซ็นรับของแล้วเมื่อ "
                     + $"{doc.DeliverySignedAt:dd/MM/yyyy HH:mm}";
+            //       • ใบสั่งซื้อ — ผู้ขายรับทราบออนไลน์ (ฝ่ายค้าน 267-P5 MED-7 · 267-1-70 — ภาพฉาย CustomerResponse)
+            else if (doc.DocumentType == DocumentType.PurchaseOrder
+                     && doc.CustomerResponse == nameof(Accounting.Helpers.CustomerSignRule.Kind.PoAcknowledged))
+                bindingEvidence = "ผู้ขายรับทราบใบสั่งซื้อออนไลน์แล้วเมื่อ "
+                    + $"{(doc.CustomerResponseAt.HasValue ? Accounting.Helpers.QuotationAcceptance.BangkokLocal(doc.CustomerResponseAt.Value) : (DateTime?)null):dd/MM/yyyy HH:mm}";
             if (bindingEvidence != null && request.AcknowledgeRevisionResetsAcceptance != true)
                 throw new InvalidOperationException(
                     $"{bindingEvidence} — การแก้ไขจะทำให้หลักฐานเดิมใช้ไม่ได้ "
@@ -16444,7 +16449,8 @@ public partial class DocumentService : IDocumentService
 
                 // รอบ 268 (คำตัดสิน 268-1-6 · backlog D8): ผู้ขายรับเงินหลายใบในก้อนเดียว ⇒ แจ้งผู้ซื้อคู่ค้า<b>ต่อแถวจัดสรร</b> (ตัวแจ้งเดียวกับใบเดียว · กุญแจแถวจัดสรร) ·
                 // หลัง commit · ไม่โยน · ฝั่งจ่าย (เงินออก) ไม่ใช่การรับของผู้ขาย ⇒ ไม่แจ้ง
-                if (isInflowDoc)
+                // ฝ่ายค้าน 267-P5 MED-5: ผู้เรียกที่ทำขั้นหลัง commit เอง (AfterPaymentRecordedAsync — ใบวางบิลจ่ายทั้งใบผ่านผู้ให้บริการ) ⇒ แจ้งที่นั่นด้วยทางเข้าจริง (ไม่ติดป้าย "บันทึกมือ")
+                if (isInflowDoc && !request.AfterCommitByCaller)
                     await NotifyPartnerOfSellerPaymentAsync(companyId, payment.Id, Accounting.Helpers.PaymentEntrySource.Manual);
 
                 // Re-load PaymentAllocation rows to pick up generated Ids,

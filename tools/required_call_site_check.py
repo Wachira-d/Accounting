@@ -20867,7 +20867,7 @@ RULES += [
          must=["OverIpAsync(", "Profiles.CompleteLoginAsync("], before=[("OverIpAsync(", "Profiles.CompleteLoginAsync(")], forbid=["_db."],
          why=_R267E_WHY + "เส้นสาธารณะ: เพดานก่อนแตะฐาน · ตัดสินที่ service ตัวเดียว"),
     dict(file=_R267E_BN, method="BillingNotePlanAsync",
-         must=["l.Document.CompanyId == companyId", "Refusal(d)", "AmountsAsync(", "BillingNoteCombinedPay.Decide(", "BillingNoteMaxChildren"],
+         must=["BillingNoteChildren.MapAsync(", "Refusal(d)", "AmountsAsync(", "BillingNoteCombinedPay.Decide(", "BillingNoteMaxChildren"],
          forbid=["SaveChangesAsync(", "ExecuteUpdateAsync("],
          why=_R267E_WHY + "267-1-72 ชุดใบของใบวางบิล: ด่านชั้นจ่ายเดิมรายใบ + ตัวคิด WHT เดิม → ตัวตัดสินเดียว · อ่านอย่างเดียว · tenant"),
     dict(file=_R267E_LINKS, method="PublicViewAsync", must=["PayRefusalAsync("],
@@ -20903,6 +20903,99 @@ REVIEWER_CASES += [
     # ทิศตรงข้าม: จัดบรรทัดใหม่ของการเรียกผู้เขียนเดียว ⇒ ต้องไม่ฟ้อง
     ("R267E-6", "ExternalApproveQuotationAsync", "await Accounting.Services.Implementations.CustomerDocumentResponseService.AppendEvidenceAsync(_db, evidence);",
      "await Accounting.Services.Implementations.CustomerDocumentResponseService.AppendEvidenceAsync(\n                    _db, evidence);", False),
+]
+
+
+# ── รอบ 267 P5 ชุดแก้ฝ่ายค้าน (กติกา R267f · erp-review/2026-11-13/review-267-P5.md · คำตัดสิน 267-1-78…267-1-85) ──
+_R267F_WHY = "รอบ 267 P5 ฝ่ายค้าน / R267f: "
+_R267F_RULE = "Helpers/CustomerSignerProfileRule.cs"
+RULES += [
+    dict(file=_R267F_RULE, method="AuthorizeUrl", must_lit=["&max_age=0&disable_auto_login=true"],
+         why=_R267F_WHY + "MED-1 เครื่องใช้ร่วม: LINE ให้ล็อกอินใหม่ทุกครั้ง (เซสชันของคนก่อนไม่ทำให้คนถัดไปได้ข้อมูล)"),
+    dict(file=_R267F_RULE, method="StateValid", must=["MacEquals(parts[1], browserNonce)", "string.IsNullOrEmpty(browserNonce)"],
+         why=_R267F_WHY + "LOW-1 state ผูกเบราว์เซอร์ที่เริ่มเข้าด้วย LINE (cookie) ฝั่งเซิร์ฟเวอร์"),
+    dict(file=_R267F_RULE, method="SubjectKey", must_lit=["subject|line|{companyId:N}|"],
+         why=_R267F_WHY + "LOW-2 กุญแจเจ้าของข้อมูลผูกบริษัท (ไม่เป็นตัวระบุข้ามบริษัท)"),
+    dict(file=_R267F_RULE, method="IssueTicket", must=["aes.Encrypt("], forbid=["{subjectKey}.{"],
+         why=_R267F_WHY + "LOW-2 ตั๋วไม่มีกุญแจดิบ (เข้ารหัส)"),
+    dict(file=_R267F_RULE, method="ConsentEvidenceHash", must=["storedVersion", "StoredInstant(grantedAtUtc)"],
+         why=_R267F_WHY + "MED-2 หลักฐานความยินยอมครอบรุ่น + ภาษา + เวลาแบบที่ฐานเก็บ (ตรวจกลับจากแถวได้)"),
+    dict(file=_R267E_PROF, method="RememberAsync",
+         must=["CustomerSignerProfileRule.LanguageOfShownVersion(shownConsentVersion)", "CustomerSignerProfileRule.ConsentText(en, link.SellerName)",
+               "CustomerSignerProfileRule.StoredVersion(en)", "CustomerSignerProfileRule.StoredInstant(now)"],
+         forbid=["ConsentText(false,"],
+         why=_R267F_WHY + "MED-2 ข้อความที่ถูก hash = ข้อความที่หน้าแสดง (ภาษาเดียวกับหน้า · รุ่นที่หน้าส่งกลับ)"),
+    dict(file=_R267_RESP, method="FormLabelsWithConsent", must=["CustomerSignerProfileRule.ConsentText(en, sellerName)", "CustomerSignerProfileRule.StoredVersion(en)"],
+         why=_R267F_WHY + "MED-2 ป้ายช่องติ๊กบนหน้า = ข้อความยินยอมฉบับเต็มตัวเดียวกับที่ถูก hash"),
+    dict(file=_R267E_PROF, method="ActiveProfileIdAsync", must=["CustomerSignerProfileRule.SignedAsProfile("],
+         why=_R267F_WHY + "MED-1 แถวหลักฐานอ้างโปรไฟล์เฉพาะเมื่อลงนามด้วยชื่อในโปรไฟล์"),
+    dict(file=_R267E_PROF, method="CompleteLoginAsync", must=["CustomerSignerProfileRule.LegacySubjectKey(", "x.CompanyId == companyId && x.SubjectKey == legacy"],
+         why=_R267F_WHY + "LOW-2 migration: ย้ายแถวกุญแจรุ่นแรกเมื่อเจ้าของคนเดิม (LINE ยืนยันแล้ว) กลับมา — บริษัทนี้เท่านั้น"),
+    dict(file=_R267E_PROF, method="RemoveAsync", must=["AnonymizeConsentsAsync("],
+         why=_R267F_WHY + "MED-4 ถอน ⇒ ล้างอีเมล/IP/UA บนแถวความยินยอม"),
+    dict(file=_R267E_PROF, method="PurgeAsync", must=["AnonymizeConsentsAsync(", "x.LastUsedAt < cutoff"],
+         before=[("ExecuteDeleteAsync(", "AnonymizeConsentsAsync(")],
+         why=_R267F_WHY + "MED-4 + LOW-6 ลบอัตโนมัติ: ตรวจเงื่อนไขซ้ำใน WHERE ของการลบ แล้วถอน/ล้างเฉพาะความยินยอมของแถวที่ลบจริง"),
+    dict(file=_R267E_PROF, method="AnonymizeConsentsAsync",
+         must=["c.CompanyId == companyId", "c.Purpose == CustomerSignerProfileRule.ConsentPurpose", "c.SubjectContact, (string?)null", "c.IpAddress, (string?)null", "c.UserAgent, (string?)null"],
+         forbid=["c.EvidenceHash,"],
+         why=_R267F_WHY + "MED-4 ล้างค่าที่ระบุตัว · คง hash + เวลา"),
+    dict(file=_R267E_PROF, method="EraseAsync", must=["ResolveAsync(", "AnonymizeConsentsAsync(", "MatchingConsentsAsync("],
+         before=[("MatchingEvidenceAsync(", "RemoveAsync(")],
+         why=_R267F_WHY + "MED-3/MED-4 ลบตามคำขอ: เจ้าของข้อมูลคนเดียว · ตรวจเพดานก่อนลบ · ล้างแถวความยินยอมด้วย"),
+    dict(file=_R267E_PROF, method="AccessAsync", must=["ResolveAsync(", "MatchingConsentsAsync("],
+         why=_R267F_WHY + "MED-3/MED-4 รายงาน ม.30: เจ้าของข้อมูลคนเดียว + แถวความยินยอม"),
+    dict(file=_R267E_PROF, method="ResolveAsync",
+         must=["SignerSubjectAmbiguousException(", "d.CompanyId == companyId && d.DocumentNumber == docNo", "a.CompanyId == companyId"],
+         why=_R267F_WHY + "MED-3 ชื่ออย่างเดียวไม่พอ · ชื่อ+เลขเอกสารหลายคน = ให้ DPO เลือก (ไม่รวมเอง)"),
+    dict(file=_R267E_PROF, method="MatchingEvidenceAsync", must=["DsrEvidenceCap + 1", "rows.Count > DsrEvidenceCap"],
+         why=_R267F_WHY + "LOW-5 เกินเพดาน = ล้มดัง (ไม่ส่ง/ไม่ลบไม่ครบแบบเงียบ)"),
+    dict(file="Controllers/PdpaController.cs", method="DsrSignerErase", must=["CustomerSignerProfileService.LogSubject("], why=_R267F_WHY + "LOW-4 PiiAccessLog ระบุเจ้าของข้อมูล (hash ของตัวระบุ)"),
+    dict(file="Controllers/PdpaController.cs", method="DsrSignerAccess", must=["CustomerSignerProfileService.LogSubject("], why=_R267F_WHY + "LOW-4"),
+    dict(file="Controllers/PdpaController.cs", method="DsrSignerPortability", must=["CustomerSignerProfileService.LogSubject("], why=_R267F_WHY + "LOW-4"),
+    dict(file="Controllers/PublicDocumentPageController.SignerProfile.cs", method="SignerLogin",
+         must=["CustomerSignerProfileRule.NonceCookie", "HttpOnly = true", "SameSiteMode.Lax"], why=_R267F_WHY + "LOW-1 nonce ใน cookie ของเบราว์เซอร์"),
+    dict(file=_R267E_HANDLER, method="HandleBillingNoteAsync",
+         must=["AfterCommitByCaller: true", "_docs.AfterPaymentRecordedAsync(", "PaymentEntrySource.Gateway"],
+         before=[("_docs.CreateMultiDocPaymentAsync(", "_docs.AfterPaymentRecordedAsync(")],
+         why=_R267F_WHY + "MED-5 ทุกทางเข้า 1:1: งานหลังรับชำระ + แจ้งคู่ค้าด้วยทางเข้าจริง"),
+    dict(file="Helpers/PostPaymentAutomationPolicy.cs", method="Decide", must=["f.Source != PaymentEntrySource.Gateway || f.AllocationReceiptsReady == 0"],
+         why=_R267F_WHY + "MED-5 ส่งใบเสร็จรายใบเฉพาะการชำระหลายใบจากผู้ให้บริการ (ทางเข้าอื่นไม่ส่งเหมือนเดิม)"),
+    dict(file=SIGN, method="ExternalApproveQuotationAsync", must=["doc.CustomerResponse = nameof(Accounting.Helpers.CustomerSignRule.Kind.Accepted)"],
+         why=_R267F_WHY + "MED-6 เส้น API ตั้งภาพฉายคำตอบ (คำเตือนอากรแสตมป์ 267-1-14)"),
+    dict(file=SIGN, method="ApproveAsync", must=["CustomerDocumentResponseService.ExternalEvidence(", "CustomerSignRule.IdentityStaffRecorded",
+                                                  "CustomerDocumentResponseService.AppendEvidenceAsync("],
+         why=_R267F_WHY + "MED-6 ขั้นบทบาทลูกค้าที่พนักงานบันทึกแทน ลงแถวหลักฐานผ่านผู้เขียนเดียว ระดับตัวตนตามจริง"),
+    dict(file="Services/Implementations/CrossTenantWorkflowService.cs", method="ApproveIncomingAsync",
+         must=["CustomerDocumentResponseService.ExternalEvidence(", "CustomerSignRule.IdentityPartnerMember", "CustomerDocumentResponseService.AppendEvidenceAsync("],
+         forbid=["CustomerDocumentActions.Add("],
+         why=_R267F_WHY + "MED-6 การอนุมัติข้ามบริษัทลงแถวหลักฐานผ่านผู้เขียนเดียว"),
+    dict(file="Services/Implementations/DocumentService.cs", method="UpdateDocumentAsync",
+         must=["doc.CustomerResponse == nameof(Accounting.Helpers.CustomerSignRule.Kind.PoAcknowledged)"],
+         why=_R267F_WHY + "MED-7 ใบสั่งซื้อที่ผู้ขายรับทราบ: ออก Rev ต้องยืนยัน + สร้างฉบับที่ลงนามก่อน"),
+    dict(file=_R267_RESP, method="PendingSignedCopyIdsAsync", must=["nameof(CustomerSignRule.Kind.PoAcknowledged)"],
+         why=_R267F_WHY + "MED-7 ฉบับที่ลงนามของการรับทราบใบสั่งซื้อถูกสร้างก่อนออก Rev"),
+    dict(file="Services/Payments/GatewayRefundService.cs", method="CreditNoteStatesAsync", must=["BillingNoteChildren.MapAsync("],
+         why=_R267F_WHY + "LOW-7 คืนเงินของใบวางบิล: นับใบลดหนี้ของใบในบิล (ออกครบ = งานปิดได้)"),
+    dict(file="Helpers/BillingNoteChildren.cs", method="MapAsync", must=["d.CompanyId == companyId", "l.Document.CompanyId == companyId"],
+         why=_R267F_WHY + "ตัวโหลดใบในบิลตัวเดียว · tenant"),
+    dict(file="Helpers/BillingNoteCombinedPay.cs", method="SettleRefusal", must=["received != plan.Total"], forbid=["0.01m"],
+         why=_R267F_WHY + "LOW-8 ยอดต้องเท่ากันพอดี"),
+]
+REVIEWER_CASES += [
+    # ถอด max_age ออก ⇒ เครื่องใช้ร่วมกลับมารั่ว ⇒ ต้องฟ้อง
+    ("R267F-1", "AuthorizeUrl", '+ "&max_age=0&disable_auto_login=true";', ';', True),
+    # hash ความยินยอมกลับไปใช้ข้อความไทยเสมอ ⇒ ต้องฟ้อง
+    ("R267F-2", "RememberAsync", "CustomerSignerProfileRule.ConsentText(en, link.SellerName)", "CustomerSignerProfileRule.ConsentText(false, link.SellerName)", True),
+    # ถอนแล้วไม่ล้างอีเมล/IP ⇒ ต้องฟ้อง
+    ("R267F-3", "RemoveAsync", "        await AnonymizeConsentsAsync(_db, companyId, consentIds, now, ct);\n", "", True),
+    # ใบวางบิลจ่ายทั้งใบข้ามงานหลังรับชำระ ⇒ ต้องฟ้อง
+    ("R267F-4", "HandleBillingNoteAsync", "await _docs.AfterPaymentRecordedAsync(", "await Task.CompletedTask; _ = (", True),
+    # ใบสั่งซื้อที่รับทราบแล้วไม่ต้องยืนยันก่อนออก Rev ⇒ ต้องฟ้อง
+    ("R267F-5", "UpdateDocumentAsync", "doc.CustomerResponse == nameof(Accounting.Helpers.CustomerSignRule.Kind.PoAcknowledged)", "false", True),
+    # ทิศตรงข้าม: จัดบรรทัดใหม่ของการล้างความยินยอม ⇒ ต้องไม่ฟ้อง
+    ("R267F-6", "RemoveAsync", "        await AnonymizeConsentsAsync(_db, companyId, consentIds, now, ct);\n",
+     "        await AnonymizeConsentsAsync(\n            _db, companyId, consentIds, now, ct);\n", False),
 ]
 
 

@@ -111,7 +111,9 @@ public class CustomerDocRound267P5DbTests
     private static Svc.RespondRequest Req(CustomerDocPageView page, string action, CustomerSignRule.SignerInput? signer = null, string? message = null,
         DateTime? promised = null, string? ticket = null, bool remember = false)
         => new(action, signer ?? Sg(), null, null, null, message, page.Respond?.RevisionNumber ?? page.RevisionNumber, page.Respond?.ContentHash, null,
-            promised, ticket, remember);
+            promised, ticket, remember,
+            // ฝ่ายค้าน 267-P5 MED-2: รุ่น/ภาษาของข้อความยินยอมที่หน้าแสดง (ค่าจากเซิร์ฟเวอร์ — หน้าส่งกลับ)
+            SignerConsentVersion: page.Respond?.Labels.GetValueOrDefault("lineConsentVersion"));
 
     // ───────── ใบสั่งซื้อ: ผู้ขายรับทราบ / ไม่รับ ─────────
 
@@ -165,6 +167,22 @@ public class CustomerDocRound267P5DbTests
         Assert.False(again.Actions.Single(a => a.Id == CustomerDocPage.ActionPoAcknowledge).Enabled);
         Assert.Equal(409, (await s.Responses.RespondAsync(s.CompanyId, token, Req(page, CustomerDocPage.ActionPoDecline, message: "ของหมด"), Who)).Status);
         Assert.Equal(1, await db.CustomerDocumentActions.CountAsync(a => a.CompanyId == s.CompanyId && a.DocumentId == po.Id));
+
+        // ฝ่ายค้าน 267-P5 MED-7: แก้ใบสั่งซื้อที่ผู้ขายรับทราบแล้ว (ออก Rev) ⇒ ต้องยืนยันก่อน · ยืนยันแล้วยังต้องมีฉบับที่ลงนามของ Rev เดิมก่อน
+        var none = new Accounting.Models.DTOs.Document.UpdateDocumentRequest(null, null, null, null, null, null) with { Notes = "แก้ราคา" };
+        using (var r1 = DbTestDatabase.TryCreateContext()!)
+        {
+            var noAck = await Assert.ThrowsAsync<InvalidOperationException>(() => Docs(r1).UpdateDocumentAsync(s.CompanyId, po.Id, none));
+            Assert.Contains("ผู้ขายรับทราบใบสั่งซื้อออนไลน์แล้ว", noAck.Message);
+        }
+        using (var r2 = DbTestDatabase.TryCreateContext()!)
+        {
+            var snap = await Assert.ThrowsAsync<BusinessRuleException>(() => Docs(r2).UpdateDocumentAsync(s.CompanyId, po.Id,
+                none with { AcknowledgeRevisionResetsAcceptance = true }));
+            Assert.Equal("DOCPAGE-267-SNAPSHOT", snap.RuleCode);   // ฉบับที่ลงนามยังไม่ถูกสร้าง (ไม่มีตัวสร้าง PDF ในเทสต์) ⇒ ไม่ออก Rev
+        }
+        db.ChangeTracker.Clear();
+        Assert.Equal(0, (await db.Documents.AsNoTracking().SingleAsync(d => d.Id == po.Id)).RevisionNumber);
     }
 
     [Fact]
@@ -238,12 +256,17 @@ public class CustomerDocRound267P5DbTests
         return q["state"];
     }
 
+    private static async Task<CustomerSignerProfileService.LoginResult> LoginResultAsync(Seed s, string token, string user = "good-signer1")
+    {
+        var start = await s.Profiles.LoginUrlAsync(s.CompanyId, token);
+        Assert.NotNull(start);
+        Assert.Contains(Uri.EscapeDataString("https://app.nextacc.test/pages/pay-document.html"), start!.Url);
+        return await s.Profiles.CompleteLoginAsync(s.CompanyId, token, user, StateOf(start.Url), start.BrowserNonce);
+    }
+
     private static async Task<string> LoginAsync(Seed s, string token, string user = "good-signer1")
     {
-        var url = await s.Profiles.LoginUrlAsync(s.CompanyId, token);
-        Assert.NotNull(url);
-        Assert.Contains(Uri.EscapeDataString("https://app.nextacc.test/pages/pay-document.html"), url);
-        var r = await s.Profiles.CompleteLoginAsync(s.CompanyId, token, user, StateOf(url!));
+        var r = await LoginResultAsync(s, token, user);
         Assert.NotNull(r.Ticket);
         return r.Ticket!;
     }
@@ -271,7 +294,7 @@ public class CustomerDocRound267P5DbTests
         Assert.True(r2.Success, r2.Message);
         Assert.False(await db.CustomerSignerProfiles.IgnoreQueryFilters().AnyAsync(p => p.CompanyId == s.CompanyId));
         // ตั๋วของใบอื่นใช้กับใบนี้ไม่ได้
-        Assert.Null(await s.Profiles.ActiveProfileIdAsync(s.CompanyId, token2, ticket));
+        Assert.Null(await s.Profiles.ActiveProfileIdAsync(s.CompanyId, token2, ticket, Sg()));
     }
 
     [Fact]
@@ -292,14 +315,17 @@ public class CustomerDocRound267P5DbTests
         Assert.Equal("สมศักดิ์", profile.FirstName);
         Assert.Equal("somsak@party267p5.co.th", profile.Email);
         Assert.Equal(s.ContactId, profile.ContactId);
-        Assert.Equal(CustomerSignerProfileRule.SubjectKey("1650000267", "Usigner1"), profile.SubjectKey);
+        Assert.Equal(CustomerSignerProfileRule.SubjectKey(s.CompanyId, "1650000267", "Usigner1"), profile.SubjectKey);
         // เข้ารหัสขณะจัดเก็บ (PDPA ม.37) — ค่าดิบในฐานไม่ใช่ชื่อ
         var raw = await db.Database.SqlQuery<string>($"SELECT \"FirstName\" AS \"Value\" FROM \"CustomerSignerProfiles\" WHERE \"Id\" = {profile.Id}").SingleAsync();
         Assert.NotEqual("สมศักดิ์", raw);
         Assert.DoesNotContain("สมศักดิ์", raw);
         var consent = await db.PdpaConsentRecords.AsNoTracking().SingleAsync(c => c.Id == profile.ConsentRecordId && c.CompanyId == s.CompanyId);
         Assert.Equal(CustomerSignerProfileRule.ConsentPurpose, consent.Purpose);
-        Assert.Equal(CustomerSignerProfileRule.PolicyVersion, consent.PolicyVersion);
+        Assert.Equal(CustomerSignerProfileRule.StoredVersion(false), consent.PolicyVersion);   // MED-2: รุ่น + ภาษาของข้อความที่หน้าแสดง
+        Assert.Equal(CustomerSignerProfileRule.ConsentEvidenceHash(s.CompanyId, profile.SubjectKey,
+            CustomerSignerProfileRule.ConsentText(false, await db.Companies.AsNoTracking().Where(c => c.Id == s.CompanyId).Select(c => c.Name).SingleAsync()),
+            consent.PolicyVersion, consent.GrantedAt), consent.EvidenceHash);
         Assert.Equal("system", consent.EvidenceSource);
         Assert.Null(consent.WithdrawnAt);
         Assert.Equal(1, await db.PdpaProcessingActivities.CountAsync(x => x.CompanyId == s.CompanyId && x.Purpose == CustomerSignerProfileRule.RopaPurpose));
@@ -313,8 +339,7 @@ public class CustomerDocRound267P5DbTests
         // ครั้งหน้า (ใบใหม่): เข้าด้วย LINE ⇒ ค่าที่เติม = ที่จำไว้ (ไม่มีช่องรับรอง) · ส่งโดยไม่ติ๊ก = ยังปฏิเสธ
         var qt2 = await AddDocAsync(db, s, DocumentType.Quotation, "QT");
         var token2 = await OpenAsync(db, s, qt2);
-        var url = await s.Profiles.LoginUrlAsync(s.CompanyId, token2);
-        var login = await s.Profiles.CompleteLoginAsync(s.CompanyId, token2, "good-signer1", StateOf(url!));
+        var login = await LoginResultAsync(s, token2);
         Assert.Equal(new CustomerSignerProfileRule.Prefill("สมศักดิ์", "ส่งไว", "ผู้จัดการฝ่ายขาย", "somsak@party267p5.co.th"), login.Prefill);
         var page2 = await PageAsync(s, token2);
         var noTick = await s.Responses.RespondAsync(s.CompanyId, token2, Req(page2, CustomerDocPage.ActionAccept, Sg(tick: false), ticket: login.Ticket), Who);
@@ -324,10 +349,30 @@ public class CustomerDocRound267P5DbTests
         Assert.Equal(profile.Id, (await db.CustomerDocumentActions.AsNoTracking().SingleAsync(a => a.CompanyId == s.CompanyId && a.DocumentId == qt2.Id)).SignerProfileId);
 
         // LINE คนอื่น ⇒ ไม่มีค่าที่เติม · state ปลอม/code ที่ LINE ปฏิเสธ ⇒ ไม่มีตั๋ว
-        var other = await s.Profiles.CompleteLoginAsync(s.CompanyId, token2, "good-someoneelse", StateOf((await s.Profiles.LoginUrlAsync(s.CompanyId, token2))!));
+        var other = await LoginResultAsync(s, token2, "good-someoneelse");
         Assert.Null(other.Prefill);
-        Assert.Null((await s.Profiles.CompleteLoginAsync(s.CompanyId, token2, "good-x", "bad.state.value")).Ticket);
-        Assert.Null((await s.Profiles.CompleteLoginAsync(s.CompanyId, token2, "bad-code", StateOf((await s.Profiles.LoginUrlAsync(s.CompanyId, token2))!))).Ticket);
+        var st = (await s.Profiles.LoginUrlAsync(s.CompanyId, token2))!;
+        Assert.Null((await s.Profiles.CompleteLoginAsync(s.CompanyId, token2, "good-x", "bad.state.value", st.BrowserNonce)).Ticket);
+        Assert.Null((await s.Profiles.CompleteLoginAsync(s.CompanyId, token2, "bad-code", StateOf(st.Url), st.BrowserNonce)).Ticket);
+        // LOW-1: state ถูกต้องแต่มาจากเบราว์เซอร์อื่น (ไม่มี cookie ของ nonce) ⇒ ไม่มีตั๋ว
+        Assert.Null((await s.Profiles.CompleteLoginAsync(s.CompanyId, token2, "good-signer1", StateOf(st.Url), null)).Ticket);
+
+        // MED-1: คนอื่นบนตั๋วเดิม (เครื่องใช้ร่วม) ลงนามด้วยชื่อตัวเอง ⇒ แถวหลักฐานไม่อ้างโปรไฟล์ของเจ้าของตั๋ว
+        var qt3 = await AddDocAsync(db, s, DocumentType.Quotation, "QT");
+        var token3 = await OpenAsync(db, s, qt3);
+        var t3 = await LoginAsync(s, token3);
+        Assert.True((await s.Responses.RespondAsync(s.CompanyId, token3, Req(await PageAsync(s, token3), CustomerDocPage.ActionAccept, Sg("สมหญิง", "คนอื่น"), ticket: t3), Who)).Success);
+        Assert.Null((await db.CustomerDocumentActions.AsNoTracking().SingleAsync(a => a.CompanyId == s.CompanyId && a.DocumentId == qt3.Id)).SignerProfileId);
+
+        // MED-2: หน้าค้างจากรุ่นก่อน (ไม่ส่งรุ่น/ส่งรุ่นเก่า) ⇒ ลงนามสำเร็จ แต่ไม่จำ + บอกตรง ๆ
+        var qt4 = await AddDocAsync(db, s, DocumentType.Quotation, "QT");
+        var token4 = await OpenAsync(db, s, qt4);
+        var t4 = await LoginAsync(s, token4, "good-newperson");
+        var stale = await s.Responses.RespondAsync(s.CompanyId, token4,
+            Req(await PageAsync(s, token4), CustomerDocPage.ActionAccept, Sg("ใหม่", "คนใหม่"), ticket: t4, remember: true) with { SignerConsentVersion = "267-5/th" }, Who);
+        Assert.True(stale.Success, stale.Message);
+        Assert.Contains("รุ่นเก่า", stale.Message);
+        Assert.Equal(1, await db.CustomerSignerProfiles.IgnoreQueryFilters().CountAsync(p => p.CompanyId == s.CompanyId));
     }
 
     /// <summary>S35 — ถอนความยินยอม ⇒ โปรไฟล์ถูกลบ (ลบจริง) + แถวความยินยอมถูกประทับถอน · แถวหลักฐานการลงนามคงอยู่</summary>
@@ -352,7 +397,14 @@ public class CustomerDocRound267P5DbTests
         var ev = await db.CustomerDocumentActions.AsNoTracking().SingleAsync(a => a.CompanyId == s.CompanyId && a.DocumentId == qt.Id);
         Assert.Equal("สมศักดิ์", ev.SignerFirstName);                                         // หลักฐานการลงนามไม่ถูกแตะ
         Assert.Null(ev.ErasedAt);
-        Assert.Null(await s.Profiles.ActiveProfileIdAsync(s.CompanyId, token, ticket));
+        Assert.Null(await s.Profiles.ActiveProfileIdAsync(s.CompanyId, token, ticket, Sg()));
+        // MED-4: ถอนแล้ว ⇒ อีเมล/IP/UA บนแถวความยินยอมถูกล้าง · hash + เวลาให้/ถอน คงเป็นหลักฐาน
+        Assert.Null(consent.SubjectContact);
+        Assert.Null(consent.IpAddress);
+        Assert.Null(consent.UserAgent);
+        Assert.NotNull(consent.PseudonymisedAt);
+        Assert.False(string.IsNullOrEmpty(consent.EvidenceHash));
+        Assert.Contains("ล้างอีเมล/IP/UA", consent.WithdrawnReason);
     }
 
     [Fact]
@@ -400,16 +452,35 @@ public class CustomerDocRound267P5DbTests
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
 
-        var report = await s.Profiles.AccessAsync(s.CompanyId, "somsak@party267p5.co.th", null, null);
-        Assert.Single(report.Profiles);
-        Assert.Equal(2, report.Evidence.Count);
-        Assert.Equal(3, report.TotalRecords);
-        Assert.Throws<InvalidOperationException>(() => s.Profiles.AccessAsync(s.CompanyId, null, "สมศักดิ์", null).GetAwaiter().GetResult());
-        // บริษัทอื่นไม่เห็น (tenant)
-        Assert.Equal(0, (await s.Profiles.AccessAsync(Guid.NewGuid(), "somsak@party267p5.co.th", null, null)).TotalRecords);
+        // MED-3: คนชื่อซ้ำ (อีเมลอื่น) บนเอกสารอื่น — ต้องไม่ถูกดึง/ลบ
+        var twin = await AddDocAsync(db, s, DocumentType.Quotation, "QT", docDate: Today.AddYears(-6));
+        var twinEv = Svc.ApiEvidence(twin, "บริษัท อื่น จำกัด", "v2:twin", "สมศักดิ์", null, "somsak.other@elsewhere.co.th", null, null, "198.51.100.2", "u", DateTime.UtcNow);
+        twinEv.SignerLastName = "ส่งไว";
+        await Svc.AppendEvidenceAsync(db, twinEv);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
 
-        var erase = await s.Profiles.EraseAsync(s.CompanyId, "somsak@party267p5.co.th", null, null, "dpo@test");
+        var byEmail = new CustomerSignerProfileService.SignerQuery("somsak@party267p5.co.th", null, null, null);
+        var report = await s.Profiles.AccessAsync(s.CompanyId, byEmail);
+        Assert.Single(report.Profiles);
+        Assert.Single(report.Consents);                                                          // MED-4: แถวความยินยอม (อีเมล/IP/UA) อยู่ในรายงาน
+        Assert.Equal("somsak@party267p5.co.th", report.Consents[0]["email"]);
+        Assert.Equal("203.0.113.15", report.Consents[0]["ip"]);
+        Assert.Equal(2, report.Evidence.Count);
+        Assert.Equal(4, report.TotalRecords);
+        Assert.DoesNotContain(report.Evidence, e => (Guid)e["id"]! == twinEv.Id);
+        // ชื่ออย่างเดียว = ปฏิเสธ · ชื่อ + เลขเอกสาร ⇒ เฉพาะคนนั้น (อีเมลบนแถวนั้น)
+        await Assert.ThrowsAsync<InvalidOperationException>(() => s.Profiles.AccessAsync(s.CompanyId, new(null, "สมศักดิ์", "ส่งไว", null)));
+        var byNameDoc = await s.Profiles.AccessAsync(s.CompanyId, new(null, "สมศักดิ์", "ส่งไว", twin.DocumentNumber));
+        Assert.Equal("somsak.other@elsewhere.co.th", byNameDoc.Email);
+        Assert.Equal(new[] { twinEv.Id }, byNameDoc.Evidence.Select(e => (Guid)e["id"]!));
+        Assert.Empty(byNameDoc.Profiles);
+        // บริษัทอื่นไม่เห็น (tenant)
+        Assert.Equal(0, (await s.Profiles.AccessAsync(Guid.NewGuid(), byEmail)).TotalRecords);
+
+        var erase = await s.Profiles.EraseAsync(s.CompanyId, byEmail, "dpo@test");
         Assert.Equal(1, erase.ProfilesDeleted);
+        Assert.Equal(1, erase.ConsentsAnonymized);
         Assert.Equal(1, erase.EvidenceErased);
         Assert.Equal(1, erase.EvidenceHeld);
         Assert.Contains(erase.Notes, n => n.Contains("legal hold"));
@@ -422,6 +493,36 @@ public class CustomerDocRound267P5DbTests
         var heldRow = await db.CustomerDocumentActions.AsNoTracking().SingleAsync(a => a.CompanyId == s.CompanyId && a.DocumentId == qt.Id);
         Assert.Null(heldRow.ErasedAt);                                                           // ทิศตรงข้าม: ในอายุเก็บ = คงไว้
         Assert.Equal("สมศักดิ์", heldRow.SignerFirstName);
+        var twinRow = await db.CustomerDocumentActions.AsNoTracking().SingleAsync(a => a.Id == twinEv.Id);
+        Assert.Null(twinRow.ErasedAt);                                                           // MED-3 ทิศตรงข้าม: คนชื่อซ้ำไม่ถูกแตะ
+        Assert.Equal("somsak.other@elsewhere.co.th", twinRow.SignerEmail);
+        var consentAfter = await db.PdpaConsentRecords.AsNoTracking().SingleAsync(c => c.CompanyId == s.CompanyId && c.Purpose == CustomerSignerProfileRule.ConsentPurpose);
+        Assert.Null(consentAfter.SubjectContact);                                                // MED-4: erase ล้างแถวความยินยอม
+        Assert.Null(consentAfter.IpAddress);
+        Assert.NotNull(consentAfter.WithdrawnAt);
+    }
+
+    /// <summary>MED-3: ชื่อ + เลขเอกสารพบหลายคน (อีเมลต่างกัน) ⇒ ให้ DPO เลือก — ไม่รวมเอง ไม่ลบอะไร</summary>
+    [Fact]
+    public async Task CDP267P5Db_SignerDsr_ชื่อซ้ำบนเอกสารเดียว_ให้DPOเลือก_ไม่ลบ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "dsr2 " + Guid.NewGuid().ToString("N")[..6]);
+        var old = await AddDocAsync(db, s, DocumentType.Quotation, "QT", docDate: Today.AddYears(-6));
+        foreach (var e in new[] { "a@one.co.th", "b@two.co.th" })
+        {
+            var ev = Svc.ApiEvidence(old, "x", "v2:" + e, "สมชาย", null, e, null, null, null, "u", DateTime.UtcNow);
+            ev.SignerLastName = "ใจดี";
+            await Svc.AppendEvidenceAsync(db, ev);
+        }
+        await db.SaveChangesAsync();
+        var q = new CustomerSignerProfileService.SignerQuery(null, "สมชาย", "ใจดี", old.DocumentNumber);
+        var ex = await Assert.ThrowsAsync<CustomerSignerProfileService.SignerSubjectAmbiguousException>(() => s.Profiles.EraseAsync(s.CompanyId, q, "dpo@test"));
+        Assert.Equal(2, ex.Candidates.Count);
+        Assert.DoesNotContain(ex.Candidates, c => c.Contains("one.co.th") && c.StartsWith("a@"));   // ปิดบังอีเมล
+        db.ChangeTracker.Clear();
+        Assert.False(await db.CustomerDocumentActions.AnyAsync(a => a.CompanyId == s.CompanyId && a.DocumentId == old.Id && a.ErasedAt != null));
     }
 
     [Fact]
@@ -531,6 +632,8 @@ public class CustomerDocRound267P5DbTests
         var i1 = await InvoiceAsync(db, b, 1_000m);
         var i2 = await InvoiceAsync(db, b, 500m);
         var bn = await BillingNoteAsync(db, b, i1, i2);
+        await db.CompanySettings.Where(x => x.CompanyId == b.CompanyId).ExecuteUpdateAsync(x => x.SetProperty(c => c.PostPayEmailReceipt, true));
+        Assert.Equal(new[] { i1.Id, i2.Id }, (await BillingNoteChildren.MapAsync(db, b.CompanyId, new[] { bn.Id, i1.Id }, default))[bn.Id]);
         var links = new DocumentPayLinkService(db, new[] { Provider() }, Secrets, Config(), NullLogger<DocumentPayLinkService>.Instance);
         var plan = await links.BillingNotePlanAsync(b.CompanyId, bn.Id);
         Assert.NotNull(plan);
@@ -548,6 +651,11 @@ public class CustomerDocRound267P5DbTests
         var allocations = await db.PaymentAllocations.AsNoTracking().Where(a => a.PaymentId == payment.Id).ToListAsync();
         Assert.Equal(2, allocations.Count);
         Assert.Equal(1_000m, allocations.Single(a => a.DocumentId == i1.Id).AllocatedAmount);
+
+        // ฝ่ายค้าน 267-P5 MED-5: งานหลังรับชำระเข้าคิวด้วยทางเข้าจริง (ผู้ให้บริการรับชำระ) — ทุกทางเข้า 1:1
+        var run = await db.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.CompanyId == b.CompanyId && r.PaymentId == payment.Id);
+        Assert.Equal(nameof(PaymentEntrySource.Gateway), run.Source);
+        Assert.Equal(PostPaymentAutomationPolicy.StatusPending, run.Status);
 
         // webhook ซ้ำ ⇒ ไม่มีการรับชำระที่สอง
         using (var db3 = DbTestDatabase.TryCreateContext()!) await Handler(db3).HandleSucceededAsync(intent);

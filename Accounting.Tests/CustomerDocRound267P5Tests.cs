@@ -212,35 +212,44 @@ public class CustomerDocRound267P5Tests
     // ───────── LINE Login จำข้อมูลผู้ลงนาม (267-1-13) ─────────
 
     [Fact]
-    public void CDP267P5_SignerState_ผูกบริษัทและใบ_หมดอายุ_แก้ไม่ได้()
+    public void CDP267P5_SignerState_ผูกบริษัทและใบ_หมดอายุ_แก้ไม่ได้_ผูกเบราว์เซอร์()
     {
         var cid = Guid.NewGuid();
-        var state = CustomerSignerProfileRule.NewState(cid, "hashA", Now);
-        Assert.True(CustomerSignerProfileRule.StateValid(state, cid, "hashA", Now.AddMinutes(5)));
-        Assert.False(CustomerSignerProfileRule.StateValid(state, cid, "hashB", Now));                 // ใบอื่น
-        Assert.False(CustomerSignerProfileRule.StateValid(state, Guid.NewGuid(), "hashA", Now));      // บริษัทอื่น
-        Assert.False(CustomerSignerProfileRule.StateValid(state, cid, "hashA", Now.AddMinutes(CustomerSignerProfileRule.StateTtlMinutes + 1)));
-        Assert.False(CustomerSignerProfileRule.StateValid(state[..^1] + (state[^1] == 'a' ? 'b' : 'a'), cid, "hashA", Now));
-        Assert.False(CustomerSignerProfileRule.StateValid(null, cid, "hashA", Now));
-        Assert.NotEqual(state, CustomerSignerProfileRule.NewState(cid, "hashA", Now));               // nonce สุ่ม
+        var nonce = CustomerSignerProfileRule.NewNonce();
+        var state = CustomerSignerProfileRule.NewState(cid, "hashA", Now, nonce);
+        Assert.True(CustomerSignerProfileRule.StateValid(state, cid, "hashA", Now.AddMinutes(5), nonce));
+        Assert.False(CustomerSignerProfileRule.StateValid(state, cid, "hashB", Now, nonce));                 // ใบอื่น
+        Assert.False(CustomerSignerProfileRule.StateValid(state, Guid.NewGuid(), "hashA", Now, nonce));      // บริษัทอื่น
+        Assert.False(CustomerSignerProfileRule.StateValid(state, cid, "hashA", Now.AddMinutes(CustomerSignerProfileRule.StateTtlMinutes + 1), nonce));
+        Assert.False(CustomerSignerProfileRule.StateValid(state[..^1] + (state[^1] == 'a' ? 'b' : 'a'), cid, "hashA", Now, nonce));
+        Assert.False(CustomerSignerProfileRule.StateValid(null, cid, "hashA", Now, nonce));
+        // ฝ่ายค้าน 267-P5 LOW-1: เบราว์เซอร์อื่น (ไม่มี cookie / nonce อื่น) ใช้ state นี้ไม่ได้ — กัน login CSRF ฝั่งเซิร์ฟเวอร์
+        Assert.False(CustomerSignerProfileRule.StateValid(state, cid, "hashA", Now, null));
+        Assert.False(CustomerSignerProfileRule.StateValid(state, cid, "hashA", Now, CustomerSignerProfileRule.NewNonce()));
+        Assert.NotEqual(nonce, CustomerSignerProfileRule.NewNonce());
     }
 
     [Fact]
-    public void CDP267P5_SignerTicket_ไปกลับ_ผิดใบ_หมดอายุ()
+    public void CDP267P5_SignerTicket_ไปกลับ_ผิดใบ_หมดอายุ_ไม่มีกุญแจดิบ_ผูกบริษัท()
     {
         var cid = Guid.NewGuid();
-        var subject = CustomerSignerProfileRule.SubjectKey("1650000000", "U1234");
+        var subject = CustomerSignerProfileRule.SubjectKey(cid, "1650000000", "U1234");
         Assert.Equal(64, subject.Length);
-        Assert.Equal(subject, CustomerSignerProfileRule.SubjectKey("1650000000", "U1234"));
-        Assert.NotEqual(subject, CustomerSignerProfileRule.SubjectKey("1650000001", "U1234"));      // ช่องอื่น = คนละกุญแจ
+        Assert.Equal(subject, CustomerSignerProfileRule.SubjectKey(cid, "1650000000", "U1234"));
+        Assert.NotEqual(subject, CustomerSignerProfileRule.SubjectKey(cid, "1650000001", "U1234"));        // ช่องอื่น = คนละกุญแจ
+        Assert.NotEqual(subject, CustomerSignerProfileRule.SubjectKey(Guid.NewGuid(), "1650000000", "U1234"));   // LOW-2: บริษัทอื่น = คนละกุญแจ
+        Assert.NotEqual(subject, CustomerSignerProfileRule.LegacySubjectKey("1650000000", "U1234"));
         Assert.DoesNotContain("U1234", subject);                                                     // ไม่เก็บ LINE userId ตรง
         var ticket = CustomerSignerProfileRule.IssueTicket(cid, "hashA", subject, Now);
+        Assert.DoesNotContain(subject, ticket);                                                      // LOW-2: กุญแจดิบไม่อยู่ในตั๋ว
+        Assert.NotEqual(ticket, CustomerSignerProfileRule.IssueTicket(cid, "hashA", subject, Now));   // nonce สุ่ม — ตั๋วสองใบไม่เหมือนกัน
         Assert.Equal(subject, CustomerSignerProfileRule.ReadTicket(ticket, cid, "hashA", Now.AddMinutes(10)));
         Assert.Null(CustomerSignerProfileRule.ReadTicket(ticket, cid, "hashB", Now));
         Assert.Null(CustomerSignerProfileRule.ReadTicket(ticket, Guid.NewGuid(), "hashA", Now));
         Assert.Null(CustomerSignerProfileRule.ReadTicket(ticket, cid, "hashA", Now.AddMinutes(CustomerSignerProfileRule.TicketTtlMinutes + 1)));
-        var forged = ticket.Split('.');
-        Assert.Null(CustomerSignerProfileRule.ReadTicket($"{forged[0]}.{CustomerSignerProfileRule.SubjectKey("x", "y")}.{forged[2]}", cid, "hashA", Now));
+        var parts = ticket.Split('.');
+        var flipped = parts[1][..^1] + (parts[1][^1] == '0' ? '1' : '0');
+        Assert.Null(CustomerSignerProfileRule.ReadTicket($"{parts[0]}.{flipped}.{parts[2]}", cid, "hashA", Now));
     }
 
     [Fact]
@@ -265,10 +274,58 @@ public class CustomerDocRound267P5Tests
         Assert.Contains("scope=openid", url);
         Assert.DoesNotContain("profile", url);       // ไม่ขอชื่อ/อีเมลจาก LINE (§14.1)
         Assert.Contains(Uri.EscapeDataString("https://app.nextacc.test/pages/pay-document.html"), url);
+        // ฝ่ายค้าน 267-P5 MED-1: LINE ให้ล็อกอินใหม่ทุกครั้ง (เครื่องใช้ร่วม — เซสชันของคนก่อนไม่ทำให้คนถัดไปได้ข้อมูล)
+        Assert.Contains("&max_age=0", url);
+        Assert.Contains("&disable_auto_login=true", url);
 
-        var h1 = CustomerSignerProfileRule.ConsentEvidenceHash(Guid.Empty, "k", text, Now);
-        Assert.Equal(h1, CustomerSignerProfileRule.ConsentEvidenceHash(Guid.Empty, "k", text, Now));
-        Assert.NotEqual(h1, CustomerSignerProfileRule.ConsentEvidenceHash(Guid.Empty, "k", text + ".", Now));
+        // MED-2: hash ครอบรุ่น + ภาษา + ข้อความ
+        var th = CustomerSignerProfileRule.StoredVersion(false);
+        var h1 = CustomerSignerProfileRule.ConsentEvidenceHash(Guid.Empty, "k", text, th, Now);
+        Assert.Equal(h1, CustomerSignerProfileRule.ConsentEvidenceHash(Guid.Empty, "k", text, th, Now));
+        Assert.NotEqual(h1, CustomerSignerProfileRule.ConsentEvidenceHash(Guid.Empty, "k", text + ".", th, Now));
+        Assert.NotEqual(h1, CustomerSignerProfileRule.ConsentEvidenceHash(Guid.Empty, "k", text, CustomerSignerProfileRule.StoredVersion(true), Now));
+    }
+
+    /// <summary>ฝ่ายค้าน 267-P5 MED-2: ข้อความข้างช่องติ๊กบนหน้า = ข้อความที่ถูก hash (ภาษาเดียวกับหน้า) · รุ่นที่หน้าส่งกลับ ⇒ ภาษา · รุ่นเก่า = ไม่จำ</summary>
+    [Fact]
+    public void CDP267P5_ConsentShownEqualsHashed_รุ่นและภาษา()
+    {
+        foreach (var en in new[] { false, true })
+        {
+            var labels = CustomerDocumentResponseService.FormLabelsWithConsent(en, "บริษัท ผู้ขาย จำกัด");
+            Assert.Equal(CustomerSignerProfileRule.ConsentText(en, "บริษัท ผู้ขาย จำกัด"), labels["lineRemember"]);
+            Assert.Equal(CustomerSignerProfileRule.StoredVersion(en), labels["lineConsentVersion"]);
+            Assert.Equal(en, CustomerSignerProfileRule.LanguageOfShownVersion(labels["lineConsentVersion"]));
+        }
+        Assert.Equal("267-5.1/th", CustomerSignerProfileRule.StoredVersion(false));
+        Assert.Null(CustomerSignerProfileRule.LanguageOfShownVersion("267-5/th"));   // รุ่นก่อน
+        Assert.Null(CustomerSignerProfileRule.LanguageOfShownVersion(null));
+        Assert.False(CustomerSignText.FormLabels(false).ContainsKey("lineRemember"));   // ไม่มีข้อความสั้นอีกชุด (ไม่มีสองความจริง)
+        var html = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/wwwroot/pages/pay-document.html"));
+        Assert.Contains("signerConsentVersion: F.lineConsentVersion", html);
+        Assert.Contains("ssSet(LINE_TICKET, null);", html);   // MED-1: ลงนามเสร็จ/ไม่ใช่ฉัน ⇒ ล้างค่าที่เติม
+    }
+
+    [Fact]
+    public void CDP267P5_SignedAsProfile_อ้างโปรไฟล์เฉพาะชื่อเดียวกัน()
+    {
+        Assert.True(CustomerSignerProfileRule.SignedAsProfile("สมศักดิ์", "ส่งไว", " สมศักดิ์ ", "ส่งไว"));
+        Assert.False(CustomerSignerProfileRule.SignedAsProfile("สมศักดิ์", "ส่งไว", "สมหญิง", "ส่งไว"));   // คนอื่นพิมพ์ชื่อตัวเองบนตั๋วเดิม
+        Assert.False(CustomerSignerProfileRule.SignedAsProfile(null, null, "ก", "ข"));
+    }
+
+    [Fact]
+    public void CDP267P5_SignerDsr_ปิดบังอีเมล_ตัวระบุในบันทึกการเข้าถึง()
+    {
+        Assert.Equal("s***@buyer.co.th", CustomerSignerProfileService.MaskEmail("somsak@buyer.co.th"));
+        var cid = Guid.NewGuid();
+        var a = CustomerSignerProfileService.LogSubject(cid, new("Somsak@Buyer.co.th", null, null, null));
+        Assert.Equal(a, CustomerSignerProfileService.LogSubject(cid, new("somsak@buyer.co.th", "x", "y", null)));
+        Assert.NotEqual(Guid.Empty, a.SubjectId);
+        Assert.StartsWith("email-sha256:", a.FieldName);
+        Assert.DoesNotContain("somsak", a.FieldName);
+        Assert.NotEqual(a, CustomerSignerProfileService.LogSubject(Guid.NewGuid(), new("somsak@buyer.co.th", null, null, null)));
+        Assert.StartsWith("name-doc-sha256:", CustomerSignerProfileService.LogSubject(cid, new(null, "ก", "ข", "QT-1")).FieldName);
     }
 
     [Fact]
@@ -363,5 +420,71 @@ public class CustomerDocRound267P5Tests
         var src = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting/Services/Implementations/CustomerDocumentResponseService.cs"));
         var accept = src[src.IndexOf("public async Task<Outcome> Accept(", StringComparison.Ordinal)..src.IndexOf("public async Task<Outcome> DeclineOrRequestChange(", StringComparison.Ordinal)];
         Assert.DoesNotContain("StampDuty", accept);
+    }
+
+    // ───────── ฝ่ายค้าน 267-P5 (LOW-8 · MED-5 · LOW ปลีกย่อย) ─────────
+
+    [Fact]
+    public void CDP267P5_SettleRefusal_ต้องเท่ากันพอดี()
+    {
+        var plan = BillingNoteCombinedPay.Decide(Buyer, new[] { Inv("INV-1", 1_000m) });
+        Assert.Null(BillingNoteCombinedPay.SettleRefusal(1_000m, plan, "BN-1"));
+        Assert.NotNull(BillingNoteCombinedPay.SettleRefusal(1_000.01m, plan, "BN-1"));   // เดิมยอม ±0.01
+        Assert.NotNull(BillingNoteCombinedPay.SettleRefusal(999.99m, plan, "BN-1"));
+    }
+
+    private static PostPaymentAutomationPolicy.Facts MultiFacts(PaymentEntrySource source, int ready, bool draft = false)
+        => new(true, DocumentStatus.Paid, false, true, 2, ready > 0, draft, false, false, false, "buyer@x.co.th", null, 0m, true, source, null,
+            AllocationReceiptsReady: ready, AllocationReceiptDraft: draft);
+
+    private static PostPaymentAutomationPolicy.Settings On()
+        => new(EmailReceipt: true, IncludePartial: true);
+
+    [Fact]
+    public void CDP267P5_ใบวางบิลจ่ายทั้งใบ_งานหลังรับชำระส่งใบเสร็จรายใบ_ทางเข้าอื่นของหลายใบไม่ส่งเหมือนเดิม()
+    {
+        var gw = PostPaymentAutomationPolicy.Decide(On(), MultiFacts(PaymentEntrySource.Gateway, ready: 2));
+        Assert.Contains(PostPaymentAutomationPolicy.Step.EmailReceipt, gw.Steps);
+        Assert.DoesNotContain(PostPaymentAutomationPolicy.Step.IssueReceipt, gw.Steps);   // ใบเสร็จรายใบออกตอนบันทึกแล้ว — ไม่ออกซ้ำ
+        Assert.Empty(gw.Blocked);
+        // ทิศตรงข้าม: ทางเข้าอื่น / ยังไม่มีใบเสร็จรายใบ / มีร่าง ⇒ ไม่ส่ง + เหตุ
+        Assert.Contains(PostPaymentAutomationPolicy.AllocationNoAutoSendBlock,
+            PostPaymentAutomationPolicy.Decide(On(), MultiFacts(PaymentEntrySource.Manual, ready: 2)).Blocked);
+        Assert.Contains(PostPaymentAutomationPolicy.AllocationNoAutoSendBlock,
+            PostPaymentAutomationPolicy.Decide(On(), MultiFacts(PaymentEntrySource.Gateway, ready: 0)).Blocked);
+        var draft = PostPaymentAutomationPolicy.Decide(On(), MultiFacts(PaymentEntrySource.Gateway, ready: 2, draft: true));
+        Assert.Empty(draft.Steps);
+        Assert.Contains(draft.Blocked, b => b.Contains("ฉบับร่าง"));
+    }
+
+    [Fact]
+    public void CDP267P5_PromisedDate_เทียบวันปฏิทินไทย()
+    {
+        // ใบลงวันที่ 10 พ.ย. เวลาไทย เก็บเป็น 17:00Z ของวันที่ 9 ⇒ วันส่ง 9 พ.ย. ต้องถูกปฏิเสธ (เดิม .Date ให้วันที่ 9 ⇒ ผ่าน)
+        var poAtThaiMidnight = new DateTime(2026, 11, 9, 17, 0, 0, DateTimeKind.Utc);
+        Assert.NotNull(CustomerSignRule.DecidePromisedDate(new DateTime(2026, 11, 9), poAtThaiMidnight, false).Error);
+        Assert.Null(CustomerSignRule.DecidePromisedDate(new DateTime(2026, 11, 10), poAtThaiMidnight, false).Error);
+    }
+
+    [Fact]
+    public void CDP267P5_ExternalEvidence_ระดับตัวตนตามจริงของทาง_ไม่มีทางใดอ้างครบ()
+    {
+        var doc = new Document { Id = Guid.NewGuid(), CompanyId = Guid.NewGuid(), DocumentType = DocumentType.Quotation, RevisionNumber = 1 };
+        foreach (var (ch, id) in new[] { (CustomerSignRule.ChannelPartner, CustomerSignRule.IdentityPartnerMember), (CustomerSignRule.ChannelStaff, CustomerSignRule.IdentityStaffRecorded) })
+        {
+            var ev = CustomerDocumentResponseService.ExternalEvidence(doc, CustomerSignRule.Kind.Accepted, ch, id, "ผู้ซื้อ", "v2:h", "ก ข", null, null, null, null, null, "u", Now);
+            Assert.Equal(ch, ev.Channel);
+            Assert.Equal(id, ev.IdentityLevel);
+            Assert.NotEqual(CustomerSignRule.IdentityFull, ev.IdentityLevel);
+            Assert.Null(ev.AttestationTextHash);
+        }
+        // สามทางที่ไม่ใช่หน้าเอกสารเขียนผ่านผู้เขียนเดียว (ไม่ประกอบแถวเอง)
+        var root = RepoRoot();
+        foreach (var f in new[] { "Accounting/Services/Implementations/SignatureApprovalService.cs", "Accounting/Services/Implementations/CrossTenantWorkflowService.cs" })
+        {
+            var src = File.ReadAllText(Path.Combine(root, f));
+            Assert.Contains("CustomerDocumentResponseService.AppendEvidenceAsync(_db,", src);
+            Assert.DoesNotContain("CustomerDocumentActions.Add(", src);
+        }
     }
 }

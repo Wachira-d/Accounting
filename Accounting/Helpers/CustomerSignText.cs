@@ -182,8 +182,8 @@ public static class CustomerSignText
         ["lineLogin"] = T(en, "เข้าด้วย LINE เพื่อเติมข้อมูลผู้ลงนาม", "Sign in with LINE to fill in your details"),
         ["lineLinked"] = T(en, "เข้าด้วย LINE แล้ว — ข้อมูลที่จำไว้ถูกเติมให้ (ท่านยังต้องตรวจและติ๊กรับรองเองทุกครั้ง)",
             "Signed in with LINE — your saved details were filled in (you still need to check them and tick the confirmation every time)"),
-        ["lineRemember"] = T(en, "จำชื่อ นามสกุล ตำแหน่ง และอีเมลไว้กับบัญชี LINE ของฉัน สำหรับเอกสารของผู้ส่งรายนี้ (ถอนได้ทุกเมื่อ)",
-            "Remember my name, position and email with my LINE account for documents from this sender (you can withdraw at any time)"),
+        // "lineRemember" (ข้อความยินยอมฉบับเต็ม) มาจาก CustomerSignerProfileRule.ConsentText ผ่าน CustomerDocumentResponseService.FormLabelsWithConsent (ฝ่ายค้าน 267-P5 MED-2)
+        ["lineNotMe"] = T(en, "ไม่ใช่ฉัน — ออกจาก LINE บนหน้านี้", "Not me — sign out of LINE on this page"),
         ["lineForget"] = T(en, "ลบข้อมูลที่จำไว้กับ LINE และถอนความยินยอม", "Delete my saved details and withdraw consent"),
         ["lineForgotten"] = T(en, "ลบข้อมูลที่จำไว้และถอนความยินยอมแล้ว", "Your saved details were deleted and consent withdrawn"),
     };

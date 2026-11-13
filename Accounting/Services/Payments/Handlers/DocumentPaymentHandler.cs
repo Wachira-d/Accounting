@@ -154,7 +154,7 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
         var receivingBank = moneyIn == null
             ? await Accounting.Helpers.SlipReceivingAccount.OverrideForHandlerAsync(_db, _storage?.Locator.AttachmentsRoot, intent, ct)
             : null;
-        await _docs.CreateMultiDocPaymentAsync(intent.CompanyId, new Models.DTOs.Document.CreatePaymentRequest(
+        var recorded = await _docs.CreateMultiDocPaymentAsync(intent.CompanyId, new Models.DTOs.Document.CreatePaymentRequest(
             DocumentId: plan.Allocations[0].DocumentId,
             PaymentDate: intent.PaidAt ?? intent.ConfirmedAt ?? DateTime.UtcNow,
             Amount: intent.Amount,
@@ -167,8 +167,11 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
             Allocations: plan.Allocations
                 .Select(a => new Models.DTOs.Document.PaymentAllocationRequest(a.DocumentId, a.Amount, WithholdingTaxAmount: 0m,
                     Note: $"ใบวางบิล {billingNoteNumber}"))
-                .ToList()
+                .ToList(),
+            AfterCommitByCaller: true
         ), intent.ConfirmedBy ?? "payment-gateway");
+        // ฝ่ายค้าน 267-P5 MED-5: ทุกทางเข้า 1:1 — งานหลังรับชำระ (ส่งใบเสร็จรายใบตามค่าตั้ง) + แจ้งผู้ซื้อคู่ค้า ด้วยทางเข้าจริง (ผู้ให้บริการรับชำระ)
+        await _docs.AfterPaymentRecordedAsync(intent.CompanyId, recorded.Id, Accounting.Helpers.PaymentEntrySource.Gateway, intent.ConfirmedBy ?? "payment-gateway");
         _logger.LogInformation("บันทึกรับชำระทั้งใบวางบิล {Bn} ({Count} ใบ · {Amount:N2}) จาก intent {Intent}",
             billingNoteNumber, plan.Allocations.Count, intent.Amount, intent.Id);
     }

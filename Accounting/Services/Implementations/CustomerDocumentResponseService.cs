@@ -72,7 +72,9 @@ public class CustomerDocumentResponseService
         string? Note = null, string? ReasonCode = null, string? Message = null, int? RevisionNumber = null, string? ContentHash = null, string? OtpCode = null,
         // รอบ 267 P5: วันส่งของที่ผู้ขายยืนยัน (รับทราบใบสั่งซื้อ) · ตั๋วผู้ลงนามจาก LINE Login + ติ๊ก "จำข้อมูลไว้กับ LINE" (ไม่ติ๊ก = ไม่สร้างโปรไฟล์ — S34)
         DateTime? PromisedDate = null, string? SignerTicket = null, bool RememberSigner = false,
-        string? Source = null);
+        string? Source = null,
+        // ฝ่ายค้าน 267-P5 MED-2: รุ่น + ภาษาของข้อความยินยอมที่หน้าแสดงข้างช่องติ๊ก (labels.lineConsentVersion) — ความยินยอมผูกกับข้อความนั้น
+        string? SignerConsentVersion = null);
 
     public IFileStorage SignatureStore => _storage ?? FileStorageDefaults.Local;
 
@@ -117,7 +119,7 @@ public class CustomerDocumentResponseService
         var kind = CustomerSignRule.KindFor(request.Action.Trim(), type.Value);
         // รอบ 267 P5 (267-1-13): ตั๋ว LINE ที่ถูกต้องของลิงก์นี้ + มีโปรไฟล์ที่ยินยอมไว้ ⇒ แถวหลักฐานอ้างโปรไฟล์ (ที่มาของค่าที่เติม — ไม่ใช่หลักฐานตัวตน)
         _signerProfileId = _profiles != null && !string.IsNullOrWhiteSpace(request.SignerTicket)
-            ? await _profiles.ActiveProfileIdAsync(companyId, token, request.SignerTicket) : null;
+            ? await _profiles.ActiveProfileIdAsync(companyId, token, request.SignerTicket, request.Signer) : null;
         var outcome = kind switch
         {
             CustomerSignRule.Kind.Accepted => await Accept(token, new PublicQuotationController.AcceptRequest("", request.Note, request.SignatureBase64,
@@ -133,7 +135,7 @@ public class CustomerDocumentResponseService
         if (outcome.Success && request.RememberSigner && _profiles != null && !string.IsNullOrWhiteSpace(request.SignerTicket))
         {
             string? rememberError;
-            try { rememberError = (await _profiles.RememberAsync(companyId, token, request.SignerTicket, request.Signer, caller)).Error; }
+            try { rememberError = (await _profiles.RememberAsync(companyId, token, request.SignerTicket, request.Signer, caller, request.SignerConsentVersion)).Error; }
             catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
             {
                 // การลงนาม commit แล้ว — ล้มดังที่ log + ข้อความถึงผู้ลงนาม (ไม่ตอบ 500 ทั้งที่ลงนามสำเร็จ)
@@ -219,7 +221,8 @@ public class CustomerDocumentResponseService
             }),
             IpAddress = null, Timestamp = now,
         });
-        SignEventOutbox.EnqueueEvent(_db, doc, SignRequestKinds.EventFor(kind), now, signer.FullName, false, contentHash, EventRef(tokenHash, evidence.Id))
+        SignEventOutbox.EnqueueEvent(_db, doc, SignRequestKinds.EventFor(kind), now, signer.FullName, false, contentHash, EventRef(tokenHash, evidence.Id),
+                promisedDate: promised)   // ฝ่ายค้าน 267-P5 LOW-10: วันส่งที่ยืนยันอยู่ใน payload
             .CustomerActionId = evidence.Id;
         await _db.SaveChangesAsync();
         await tx.CommitAsync();
@@ -673,17 +676,25 @@ public class CustomerDocumentResponseService
     /// </summary>
     public static CustomerDocumentAction ApiEvidence(Document doc, string? buyerName, string contentHash, string? approverName, string? approverTitle,
         string? approverEmail, string? comments, string? signatureSha256, string? ip, string actingUserId, DateTime nowUtc)
+        => ExternalEvidence(doc, CustomerSignRule.Kind.Accepted, CustomerSignRule.ChannelApi, CustomerSignRule.IdentityApiReported, buyerName, contentHash,
+            approverName, approverTitle, approverEmail, comments, signatureSha256, ip, actingUserId, nowUtc);
+
+    /// <summary>ฝ่ายค้าน 267-P5 MED-6: แถวหลักฐานของทางลงนามที่ไม่ใช่หน้าเอกสาร (API · คู่ค้าข้ามบริษัท · พนักงานบันทึกแทน) — ระดับตัวตนตามจริงของทางนั้น
+    /// (ไม่มีทางใดอ้าง <see cref="CustomerSignRule.IdentityFull"/> — ผู้ลงนามไม่ได้ติ๊กรับรองบนหน้าของเรา) · ผู้เขียนเดียว <see cref="AppendEvidenceAsync"/></summary>
+    public static CustomerDocumentAction ExternalEvidence(Document doc, CustomerSignRule.Kind kind, string channel, string identityLevel, string? buyerName,
+        string contentHash, string? approverName, string? approverTitle, string? approverEmail, string? comments, string? signatureSha256, string? ip,
+        string actingUserId, DateTime nowUtc)
         => new()
         {
-            CompanyId = doc.CompanyId, DocumentId = doc.Id, RevisionNumber = doc.RevisionNumber, Action = nameof(CustomerSignRule.Kind.Accepted),
-            Channel = CustomerSignRule.ChannelApi, IdentityLevel = CustomerSignRule.IdentityApiReported,
+            CompanyId = doc.CompanyId, DocumentId = doc.Id, RevisionNumber = doc.RevisionNumber, Action = kind.ToString(),
+            Channel = channel, IdentityLevel = identityLevel,
             SignerFirstName = QuotationAcceptance.CleanText(approverName, 200) ?? "-",
             SignerTitle = QuotationAcceptance.CleanText(approverTitle, CustomerSignRule.TitleMax),
             SignerOrgName = QuotationAcceptance.CleanText(buyerName, 300),
             SignerEmail = CustomerSignRule.CleanEmail(approverEmail, false).Email,
             Message = QuotationAcceptance.CleanText(comments, CustomerSignRule.MessageMax),
             SignatureSha256 = signatureSha256, ContentHash = contentHash,
-            TokenHash = QuotationAcceptance.Sha256Hex("api|" + actingUserId)!, Ip = ip,
+            TokenHash = QuotationAcceptance.Sha256Hex(channel.ToLowerInvariant() + "|" + actingUserId)!, Ip = ip,
             CreatedAt = nowUtc, CreatedBy = actingUserId,
         };
 
@@ -736,7 +747,19 @@ public class CustomerDocumentResponseService
         return new CustomerDocRespondForm(doc.RevisionNumber, DocumentSignedContent.Hash(doc, doc.Lines), CustomerSignText.Version,
             TitleRequired: buyer.IsJuristic, items,
             CustomerSignText.DeclineReasons.Select(r => new CustomerDocRespondReason(r.Code, en ? r.En : r.Th)).ToList(),
-            CustomerSignText.PrivacyNotice(en, sellerName), CustomerSignText.LegalReference, CustomerSignText.FormLabels(en));
+            CustomerSignText.PrivacyNotice(en, sellerName), CustomerSignText.LegalReference, FormLabelsWithConsent(en, sellerName));
+    }
+
+    /// <summary>ฝ่ายค้าน 267-P5 MED-2: ป้ายช่องติ๊ก "จำไว้กับ LINE" = ข้อความยินยอมฉบับเต็มตัวเดียวกับที่ถูก hash (<see cref="CustomerSignerProfileRule.ConsentText"/> ·
+    /// ภาษาเดียวกับหน้า) + รุ่น/ภาษาที่หน้าส่งกลับมากับคำตอบ</summary>
+    internal static IReadOnlyDictionary<string, string> FormLabelsWithConsent(bool en, string sellerName)
+    {
+        var labels = new Dictionary<string, string>(CustomerSignText.FormLabels(en))
+        {
+            ["lineRemember"] = CustomerSignerProfileRule.ConsentText(en, sellerName),
+            ["lineConsentVersion"] = CustomerSignerProfileRule.StoredVersion(en),
+        };
+        return labels;
     }
 
     /// <summary>คำตอบที่ลูกค้าเคยทำบนใบนี้ (ใหม่ → เก่า) สำหรับหน้าเอกสาร — ชื่อ/เวลา/Rev เท่านั้น (ไม่ส่ง IP · ไม่ส่งพาธไฟล์)</summary>
@@ -934,11 +957,15 @@ public class CustomerDocumentResponseService
 
     /// <summary>แถวหลักฐานของ Rev นี้ที่ควรมีฉบับที่ลงนามแต่ยังไม่มี (ยอมรับ/เซ็นรับ · ลิงก์หน้าเอกสาร · ไม่ถูกลบตามคำขอ)</summary>
     public static Task<List<Guid>> PendingSignedCopyIdsAsync(AccountingDbContext db, Guid companyId, Guid documentId, int revisionNumber, CancellationToken ct = default)
-        => db.CustomerDocumentActions.AsNoTracking()
+    {
+        return db.CustomerDocumentActions.AsNoTracking()
             .Where(a => a.CompanyId == companyId && a.DocumentId == documentId && a.RevisionNumber == revisionNumber
-                && (a.Action == nameof(CustomerSignRule.Kind.Accepted) || a.Action == nameof(CustomerSignRule.Kind.DeliverySigned))
+                // ฝ่ายค้าน 267-P5 MED-7: + ผู้ขายรับทราบใบสั่งซื้อ (ทางที่สร้างฉบับที่ลงนาม — IsSigningKind)
+                && (a.Action == nameof(CustomerSignRule.Kind.Accepted) || a.Action == nameof(CustomerSignRule.Kind.DeliverySigned)
+                    || a.Action == nameof(CustomerSignRule.Kind.PoAcknowledged))
                 && a.Channel == CustomerSignRule.ChannelLink && a.SignedPdfSha256 == null && a.ErasedAt == null)
             .Select(a => a.Id).ToListAsync(ct);
+    }
 
     /// <summary>อ่านไฟล์ฉบับที่ลูกค้าเซ็นของแถวหลักฐาน — ตำแหน่งต้องเป็นของบริษัท/เอกสาร/แถวนี้ และ SHA-256 ต้องตรงกับที่บันทึก (ไฟล์ถูกแก้ = ไม่ส่งออก + log error)</summary>
     public async Task<(byte[] Bytes, string FileName)?> ReadSignedCopyAsync(Guid companyId, Guid documentId, Guid actionId, CancellationToken ct = default)

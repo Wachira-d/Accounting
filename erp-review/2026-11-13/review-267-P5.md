@@ -257,3 +257,28 @@
 11. **เส้นแต่ละส่วนไม่พึ่งกัน**
     - จำข้อมูลไม่สำเร็จไม่ย้อนการลงนาม และบอกผู้ลงนามตรง ๆ
     - ปิด LINE Login ⇒ ไม่มีปุ่ม แต่ลงนามได้ครบ (kill-switch ผ่าน · ไม่มี AI ในเส้นนี้)
+
+---
+
+## สถานะการแก้ (ชุดแก้ฝ่ายค้าน — คำตัดสิน 267-1-78…85)
+
+| ข้อ | สถานะ | ที่แก้ / เหตุที่ไม่แก้ |
+|---|---|---|
+| MED-1 | แก้แล้ว | `AuthorizeUrl` + `max_age=0&disable_auto_login=true` · หน้าล้างตั๋วหลังลงนาม + ปุ่ม "ไม่ใช่ฉัน" · `SignedAsProfile` ก่อนอ้างโปรไฟล์ · เขียนทับได้เฉพาะ LINE identity เดียวกัน (กุญแจ) |
+| MED-2 | แก้แล้ว | `FormLabelsWithConsent` (ป้ายช่องติ๊ก = `ConsentText` ภาษาของหน้า) · `signerConsentVersion` · `PolicyVersion` = รุ่น/ภาษา · hash ครอบรุ่น + เวลาแบบที่ฐานเก็บ |
+| MED-3 | แก้แล้ว | `SignerQuery` (อีเมล หรือ ชื่อ+นามสกุล+เลขเอกสาร) · `SignerSubjectAmbiguousException` ⇒ 409 + อีเมลปิดบัง · เทสต์ทิศตรงข้ามคนชื่อซ้ำ |
+| MED-4 | แก้แล้ว | `AnonymizeConsentsAsync` ในถอน / erase / purge · รายงาน access มีแถวความยินยอม |
+| MED-5 | แก้แล้ว | `AfterPaymentRecordedAsync(Gateway)` + `AfterCommitByCaller` · งานหลังรับชำระส่งใบเสร็จรายใบ · Db test แถวงาน Source Gateway |
+| MED-6 | แก้แล้ว (บางส่วนตามเหตุ) | ข้ามบริษัท + พนักงานบันทึกแทน ลงแถวผ่าน `ExternalEvidence` → `AppendEvidenceAsync` · API/ข้ามบริษัทตั้ง `CustomerResponse` · ไม่ทำ superseded บนแถวเดิม / แถวเมื่ออนุมัติล้ม / outbox ของ API — เหตุใน 267-1-83 |
+| MED-7 | แก้แล้ว | `bindingEvidence` รวม `PoAcknowledged` · `PendingSignedCopyIdsAsync` รวม `PoAcknowledged` · Db test |
+| LOW-1 | แก้แล้ว | nonce ใน cookie `na_signer_line_nonce` (HttpOnly · Secure · SameSite=Lax) · `StateValid` ตรวจ nonce |
+| LOW-2 | แก้แล้ว | `SubjectKey(companyId, …)` · ตั๋ว AES-GCM · ย้ายแถวกุญแจรุ่นแรกเมื่อเจ้าของกลับมา |
+| LOW-3 | ไม่แก้โค้ด (เหตุ) | ไม่แยกคีย์อิสระ — เพิ่มคีย์ที่ต้องดูแลโดยไม่ได้ประโยชน์ (ข้อมูลตามความยินยอม กรอกใหม่ได้) · บันทึก runbook ใน DOCUMENT_FLOW §2.12n-P5 ข้อ 7 + doc-comment ของ `ConfigureKey` |
+| LOW-4 | แก้แล้ว | `LogSubject` (Guid จาก hash ของตัวระบุ + ชื่อช่อง) |
+| LOW-5 | แก้แล้ว | `DsrEvidenceCap` — เกิน = ล้มดังก่อนลบอะไร |
+| LOW-6 | แก้แล้ว | เงื่อนไขซ้ำใน WHERE ของการลบ · ถอน/ล้างเฉพาะความยินยอมของแถวที่ลบจริง |
+| LOW-7 | แก้แล้ว | `BillingNoteChildren` — ใบลดหนี้ของใบในบิลนับ (ออกครบ = งานปิดได้) · `GatewaySourceEvidence` ดูการจัดสรรของใบในบิล |
+| LOW-8 | แก้แล้ว | `SettleRefusal` เท่ากันพอดี |
+| LOW-9 | แก้แล้ว | จำผลชุดใบ 5 วินาทีต่อการเปิดหน้า (`BeginPlanMemo`) |
+| LOW-10 | แก้แล้ว | `promisedDate` ใน payload · คำอธิบาย event ไม่รับ แก้ให้ตรง (เหตุไม่อยู่ใน payload) |
+| LOW ปลีกย่อย | แก้แล้ว | `DecidePromisedDate` เทียบ `ThaiDate.CalendarDateUtc(poDate)` |

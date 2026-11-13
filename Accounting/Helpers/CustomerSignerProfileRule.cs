@@ -25,8 +25,16 @@ public static class CustomerSignerProfileRule
     public const string RuleCode = "PDPA-19-SIGNER";
     /// <summary>วัตถุประสงค์ของความยินยอม (ค่าที่เก็บใน <c>PdpaConsentRecord.Purpose</c>)</summary>
     public const string ConsentPurpose = "customer-signer-prefill";
-    /// <summary>รุ่นของข้อความยินยอม — แก้ <see cref="ConsentText"/> ต้องขยับ</summary>
-    public const string PolicyVersion = "267-5";
+    /// <summary>รุ่นของข้อความยินยอม — แก้ <see cref="ConsentText"/> ต้องขยับ · ฝ่ายค้าน 267-P5 MED-2: ข้อความนี้คือข้อความเดียวที่หน้าแสดงข้างช่องติ๊ก
+    /// (ภาษาเดียวกับหน้า) · ค่าที่เก็บใน <c>PdpaConsentRecord.PolicyVersion</c> = <see cref="StoredVersion"/> (รุ่น + ภาษา)</summary>
+    public const string PolicyVersion = "267-5.1";
+
+    /// <summary>รุ่น + ภาษาของข้อความที่ผู้ลงนามเห็น ("267-5.1/th" · "267-5.1/en") — หน้าส่งค่านี้กลับมากับคำตอบ · เซิร์ฟเวอร์ตรวจว่าเป็นรุ่นปัจจุบัน</summary>
+    public static string StoredVersion(bool en) => $"{PolicyVersion}/{(en ? "en" : "th")}";
+
+    /// <summary>ค่ารุ่นที่หน้าส่งกลับ ⇒ ภาษาของข้อความที่ผู้ลงนามเห็น · รุ่นเก่า/ค่าแปลก = null (ไม่จำ — หน้าค้างจากรุ่นก่อน ต้องโหลดใหม่)</summary>
+    public static bool? LanguageOfShownVersion(string? shown)
+        => shown == StoredVersion(false) ? false : shown == StoredVersion(true) ? true : null;
     public const string Channel = "line-login";
     /// <summary>ไม่ได้ใช้โปรไฟล์ (เข้าด้วย LINE แล้วเติม/บันทึก) นานเท่านี้ ⇒ ลบ (ดีไซน์ §14.3)</summary>
     public const int RetentionMonths = 24;
@@ -37,15 +45,22 @@ public static class CustomerSignerProfileRule
     public const string LineAuthorizeEndpoint = "https://access.line.me/oauth2/v2.1/authorize";
 
     private static byte[] _key = DeriveKey(EncryptionKeyResolver.DevKey);
+    private static byte[] _encKey = DeriveEncKey(EncryptionKeyResolver.DevKey);
 
     private static byte[] DeriveKey(string serverKey)
         => SHA256.HashData(Encoding.UTF8.GetBytes("nextacc/customer-signer-profile/v1|" + serverKey));
 
-    /// <summary>ตั้งกุญแจ HMAC (ครั้งเดียวตอนบูต — <c>Program.cs</c>) · ว่าง = throw (ห้าม fallback เงียบ ๆ — กฎ #4 C)</summary>
+    private static byte[] DeriveEncKey(string serverKey)
+        => SHA256.HashData(Encoding.UTF8.GetBytes("nextacc/customer-signer-ticket-enc/v1|" + serverKey));
+
+    /// <summary>ตั้งกุญแจ HMAC (ครั้งเดียวตอนบูต — <c>Program.cs</c>) · ว่าง = throw (ห้าม fallback เงียบ ๆ — กฎ #4 C) ·
+    /// ฝ่ายค้าน 267-P5 LOW-3: กุญแจได้มาจาก ENCRYPTION_KEY ⇒ หมุนคีย์ = กุญแจเจ้าของข้อมูลเปลี่ยน ⇒ ผู้ลงนามทุกคนหาโปรไฟล์เดิมไม่เจอ (ไม่เติม · แถวเดิมถูกลบเมื่อครบ 24 เดือน) —
+    /// เป็นพฤติกรรมที่ตั้งใจ (ข้อมูลตามความยินยอม · เติมใหม่ได้) บันทึกใน runbook การหมุนคีย์ (DOCUMENT_FLOW §2.12n-P5 ข้อ 1)</summary>
     public static void ConfigureKey(string serverKey)
     {
         if (string.IsNullOrWhiteSpace(serverKey)) throw new InvalidOperationException("ต้องมีกุญแจฝั่งเซิร์ฟเวอร์สำหรับตั๋วผู้ลงนาม (ENCRYPTION_KEY)");
         _key = DeriveKey(serverKey);
+        _encKey = DeriveEncKey(serverKey);
     }
 
     private static string Mac(string message)
@@ -60,45 +75,85 @@ public static class CustomerSignerProfileRule
         => DateTime.TryParseExact(s, "yyyyMMddHHmmss", CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var d)
             ? DateTime.SpecifyKind(d, DateTimeKind.Utc) : null;
 
-    /// <summary>กุญแจเจ้าของข้อมูล = HMAC ของ (ช่อง LINE + userId) — ฐานไม่เก็บ LINE userId ตรง ๆ · ช่องเดียวกัน + คนเดียวกัน = กุญแจเดียวกันเสมอ</summary>
-    public static string SubjectKey(string channelId, string lineUserId)
-        => Mac($"subject|line|{channelId.Trim()}|{lineUserId.Trim()}");
-
-    /// <summary>state ของ OAuth — ผูกบริษัท + token ของหน้าเอกสาร (hash) + เวลาหมดอายุ + nonce สุ่ม (กัน CSRF/ใช้ state ของใบอื่น)</summary>
-    public static string NewState(Guid companyId, string pageTokenHash, DateTime nowUtc)
+    /// <summary>กุญแจเจ้าของข้อมูล = HMAC ของ (บริษัท + ช่อง LINE + userId) — ฐานไม่เก็บ LINE userId ตรง ๆ · ฝ่ายค้าน 267-P5 LOW-2: ผูกบริษัท
+    /// (คนเดียวกันต่างบริษัท = คนละกุญแจ — ไม่เป็นตัวระบุข้ามบริษัท · 267-1-13 "ต่อบริษัท") · บริษัทเดียวกัน + ช่องเดียวกัน + คนเดียวกัน = กุญแจเดียวกันเสมอ</summary>
+    public static string SubjectKey(Guid companyId, string channelId, string lineUserId)
     {
-        var exp = Stamp(nowUtc.AddMinutes(StateTtlMinutes));
-        var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-        return $"{exp}.{nonce}.{Mac($"state|{companyId:N}|{pageTokenHash}|{exp}|{nonce}")}";
+        return Mac($"subject|line|{companyId:N}|{channelId.Trim()}|{lineUserId.Trim()}");
     }
 
-    /// <summary>state ถูกต้อง (ของบริษัท/ใบนี้ · ยังไม่หมดอายุ · ลายเซ็นตรง) ไหม</summary>
-    public static bool StateValid(string? state, Guid companyId, string pageTokenHash, DateTime nowUtc)
+    /// <summary>กุญแจรุ่นแรก (ก่อนฝ่ายค้าน LOW-2 — ไม่ผูกบริษัท) — ใช้ย้ายแถวเดิมเมื่อเจ้าของคนเดิมเข้าด้วย LINE ครั้งถัดไปเท่านั้น (migration แบบเจ้าของยืนยันเอง · F2 ข้อ 9)</summary>
+    public static string LegacySubjectKey(string channelId, string lineUserId)
+        => Mac($"subject|line|{channelId.Trim()}|{lineUserId.Trim()}");
+
+    /// <summary>nonce สุ่มของ state — เก็บใน cookie ของเบราว์เซอร์ที่เริ่มเข้าด้วย LINE (ฝ่ายค้าน 267-P5 LOW-1 — กัน login CSRF ฝั่งเซิร์ฟเวอร์)</summary>
+    public static string NewNonce() => Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+
+    /// <summary>ชื่อ cookie ที่ผูก state กับเบราว์เซอร์ (HttpOnly · Secure · SameSite=Lax — กลับจาก LINE เป็น top-level GET จึงยังส่ง)</summary>
+    public const string NonceCookie = "na_signer_line_nonce";
+
+    /// <summary>state ของ OAuth — ผูกบริษัท + token ของหน้าเอกสาร (hash) + เวลาหมดอายุ + nonce ของเบราว์เซอร์ (กัน CSRF/ใช้ state ของใบอื่น/ของเบราว์เซอร์อื่น)</summary>
+    public static string NewState(Guid companyId, string pageTokenHash, DateTime nowUtc, string browserNonce)
+    {
+        var exp = Stamp(nowUtc.AddMinutes(StateTtlMinutes));
+        return $"{exp}.{browserNonce}.{Mac($"state|{companyId:N}|{pageTokenHash}|{exp}|{browserNonce}")}";
+    }
+
+    /// <summary>state ถูกต้อง (ของบริษัท/ใบนี้ · ยังไม่หมดอายุ · ลายเซ็นตรง · nonce ตรงกับ cookie ของเบราว์เซอร์นี้) ไหม</summary>
+    public static bool StateValid(string? state, Guid companyId, string pageTokenHash, DateTime nowUtc, string? browserNonce)
     {
         var parts = (state ?? "").Split('.');
         if (parts.Length != 3 || ParseStamp(parts[0]) is not DateTime exp || exp <= nowUtc) return false;
+        if (string.IsNullOrEmpty(browserNonce) || !MacEquals(parts[1], browserNonce)) return false;
         return MacEquals(parts[2], Mac($"state|{companyId:N}|{pageTokenHash}|{parts[0]}|{parts[1]}"));
     }
 
-    /// <summary>ตั๋วผู้ลงนาม (หลังเข้าด้วย LINE สำเร็จ) — ใช้ได้กับหน้าเอกสารใบนี้ของบริษัทนี้เท่านั้น · อายุ <see cref="TicketTtlMinutes"/> นาที</summary>
+    /// <summary>ตั๋วผู้ลงนาม (หลังเข้าด้วย LINE สำเร็จ) — ใช้ได้กับหน้าเอกสารใบนี้ของบริษัทนี้เท่านั้น · อายุ <see cref="TicketTtlMinutes"/> นาที ·
+    /// ฝ่ายค้าน 267-P5 LOW-2: กุญแจเจ้าของข้อมูลเข้ารหัส (AES-GCM · nonce สุ่ม) — ตั๋วสองใบของคนเดียวกันไม่เหมือนกัน · เบราว์เซอร์/ล็อกเครือข่ายไม่เห็นกุญแจดิบ</summary>
     public static string IssueTicket(Guid companyId, string pageTokenHash, string subjectKey, DateTime nowUtc)
     {
         var exp = Stamp(nowUtc.AddMinutes(TicketTtlMinutes));
-        return $"{exp}.{subjectKey}.{Mac($"ticket|{companyId:N}|{pageTokenHash}|{subjectKey}|{exp}")}";
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var plain = Encoding.ASCII.GetBytes(subjectKey);
+        var cipher = new byte[plain.Length];
+        var tag = new byte[16];
+        using (var aes = new AesGcm(_encKey, 16)) aes.Encrypt(nonce, plain, cipher, tag, Encoding.ASCII.GetBytes($"{companyId:N}|{pageTokenHash}|{exp}"));
+        var body = Convert.ToHexString(nonce.Concat(cipher).Concat(tag).ToArray()).ToLowerInvariant();
+        return $"{exp}.{body}.{Mac($"ticket|{companyId:N}|{pageTokenHash}|{body}|{exp}")}";
     }
 
     /// <summary>กุญแจเจ้าของข้อมูลจากตั๋ว · ตั๋วผิดใบ/ผิดบริษัท/หมดอายุ/ถูกแก้ = null</summary>
     public static string? ReadTicket(string? ticket, Guid companyId, string pageTokenHash, DateTime nowUtc)
     {
         var parts = (ticket ?? "").Split('.');
-        if (parts.Length != 3 || parts[1].Length != 64 || ParseStamp(parts[0]) is not DateTime exp || exp <= nowUtc) return null;
-        return MacEquals(parts[2], Mac($"ticket|{companyId:N}|{pageTokenHash}|{parts[1]}|{parts[0]}")) ? parts[1] : null;
+        if (parts.Length != 3 || parts[1].Length != (12 + 64 + 16) * 2 || ParseStamp(parts[0]) is not DateTime exp || exp <= nowUtc) return null;
+        if (!MacEquals(parts[2], Mac($"ticket|{companyId:N}|{pageTokenHash}|{parts[1]}|{parts[0]}"))) return null;
+        try
+        {
+            var raw = Convert.FromHexString(parts[1]);
+            var plain = new byte[64];
+            using var aes = new AesGcm(_encKey, 16);
+            aes.Decrypt(raw.AsSpan(0, 12), raw.AsSpan(12, 64), raw.AsSpan(76, 16), plain, Encoding.ASCII.GetBytes($"{companyId:N}|{pageTokenHash}|{parts[0]}"));
+            return Encoding.ASCII.GetString(plain);
+        }
+        catch (Exception ex) when (ex is FormatException or CryptographicException) { return null; }
     }
 
-    /// <summary>URL หน้าอนุญาตของ LINE (scope openid เท่านั้น — ไม่ขอโปรไฟล์/อีเมลจาก LINE: ค่าที่เติมมาจากสิ่งที่ผู้ลงนามพิมพ์เองและยินยอมให้จำ · §14.1)</summary>
+    /// <summary>URL หน้าอนุญาตของ LINE (scope openid เท่านั้น — ไม่ขอโปรไฟล์/อีเมลจาก LINE: ค่าที่เติมมาจากสิ่งที่ผู้ลงนามพิมพ์เองและยินยอมให้จำ · §14.1) ·
+    /// ฝ่ายค้าน 267-P5 MED-1: <c>max_age=0</c> + <c>disable_auto_login=true</c> ⇒ LINE ให้ล็อกอินใหม่ทุกครั้ง (เครื่องใช้ร่วม: เซสชัน LINE ของคนก่อนที่ค้างใน
+    /// access.line.me ไม่ทำให้คนถัดไปได้ข้อมูลของคนก่อน)</summary>
     public static string AuthorizeUrl(string channelId, string redirectUri, string state)
-        => $"{LineAuthorizeEndpoint}?response_type=code&client_id={Uri.EscapeDataString(channelId)}"
-           + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}&state={Uri.EscapeDataString(state)}&scope=openid";
+    {
+        return $"{LineAuthorizeEndpoint}?response_type=code&client_id={Uri.EscapeDataString(channelId)}"
+           + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}&state={Uri.EscapeDataString(state)}&scope=openid"
+           + "&max_age=0&disable_auto_login=true";
+    }
+
+    /// <summary>ฝ่ายค้าน 267-P5 MED-1: แถวหลักฐานอ้างโปรไฟล์ (ที่มาของค่าที่เติม) เฉพาะเมื่อชื่อที่ลงนามคือชื่อในโปรไฟล์ — คนอื่นพิมพ์ชื่อตัวเองบนตั๋วเดิม = ไม่อ้าง</summary>
+    public static bool SignedAsProfile(string? profileFirst, string? profileLast, string? signedFirst, string? signedLast)
+        => !string.IsNullOrWhiteSpace(profileFirst) && !string.IsNullOrWhiteSpace(profileLast)
+           && string.Equals(profileFirst.Trim(), signedFirst?.Trim(), StringComparison.OrdinalIgnoreCase)
+           && string.Equals(profileLast.Trim(), signedLast?.Trim(), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>ที่อยู่กลับจาก LINE — หน้าเอกสาร (ต้องลงทะเบียนเป็น Callback URL ของช่อง LINE Login ของระบบ — 267-1-74)</summary>
     public static string RedirectUri(string origin) => origin.TrimEnd('/') + "/pages/pay-document.html";
@@ -114,10 +169,23 @@ public static class CustomerSignerProfileRule
               + "โดยข้าพเจ้ายังต้องตรวจและติ๊กรับรองเองทุกครั้ง · ถอนความยินยอมได้ทุกเมื่อบนหน้าเอกสาร · ข้อมูลที่ไม่ได้ใช้ 24 เดือนจะถูกลบ";
     }
 
-    /// <summary>EvidenceHash ของความยินยอม (canonical ของระบบ — ตรวจกลับได้ · EvidenceSource = "system")</summary>
-    public static string ConsentEvidenceHash(Guid companyId, string subjectKey, string consentText, DateTime grantedAtUtc)
-        => QuotationAcceptance.Sha256Hex(string.Join("|", "signer-prefill-consent", companyId.ToString("N"), subjectKey, ConsentPurpose, PolicyVersion,
-            CustomerSignText.TextHash(consentText), grantedAtUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture)))!;
+    /// <summary>EvidenceHash ของความยินยอม (canonical ของระบบ — ตรวจกลับได้ · EvidenceSource = "system") · ฝ่ายค้าน 267-P5 MED-2: ครอบรุ่น + ภาษา
+    /// (<see cref="StoredVersion"/>) และข้อความที่หน้าแสดงจริง (<see cref="ConsentText"/> ภาษาเดียวกับหน้า)</summary>
+    public static string ConsentEvidenceHash(Guid companyId, string subjectKey, string consentText, string storedVersion, DateTime grantedAtUtc)
+    {
+        return QuotationAcceptance.Sha256Hex(string.Join("|", "signer-prefill-consent", companyId.ToString("N"), subjectKey, ConsentPurpose, storedVersion,
+            CustomerSignText.TextHash(consentText), StoredInstant(grantedAtUtc).ToString("O", CultureInfo.InvariantCulture)))!;
+    }
+
+    /// <summary>เวลาแบบที่ PostgreSQL เก็บได้ (ไมโครวินาที · UTC) — ผู้เขียนตั้ง GrantedAt ด้วยค่านี้ และ hash ใช้ค่านี้ ⇒ ตรวจกลับจากแถวในฐานได้</summary>
+    public static DateTime StoredInstant(DateTime utc)
+    {
+        var u = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+        return new DateTime(u.Ticks - u.Ticks % 10, DateTimeKind.Utc);
+    }
+
+    /// <summary>ฝ่ายค้าน 267-P5 MED-4: ค่าที่ระบุตัวบนแถวความยินยอมถูกล้างเมื่อถอน/ลบตามคำขอ/ลบอัตโนมัติ (hash + เวลา คงไว้เป็นหลักฐานการให้และการถอน)</summary>
+    public const string ConsentAnonymizedReasonSuffix = " · ล้างอีเมล/IP/UA แล้ว (คง hash + เวลาเป็นหลักฐาน)";
 
     /// <summary>ไม่ได้ใช้ตั้งแต่ก่อนวันนี้ ⇒ ลบ</summary>
     public static DateTime PurgeCutoff(DateTime nowUtc) => nowUtc.AddMonths(-RetentionMonths);

@@ -274,8 +274,8 @@ public class WebhookService : IWebhookService
             // รอบ 267 P5 (267-1-70): ผู้ขายรับทราบ/ไม่รับใบสั่งซื้อผ่านหน้าเอกสาร (payload ชุดเดียวกับเหตุการณ์ลงนามอื่น — ไม่มี IP/UA/token/รูป)
             new(SignRequestKinds.PurchaseOrderAck.EventType, "Fired when the supplier acknowledges a purchase order through the online document page (optional confirmed delivery date).",
                 SignEventOutbox.BuildPayload(new SignEventOutbox.PayloadInput(Guid.Empty, SignRequestKinds.PurchaseOrderAck.EventType, DateTime.UtcNow,
-                    Guid.Empty, Guid.Empty, "PO-0001", "PurchaseOrder", 0, "Somchai J.", false, "sha256-hex", null))),
-            new(SignRequestKinds.PurchaseOrderDeclinedEvent, "Fired when the supplier declines a purchase order through the online document page (with a reason).",
+                    Guid.Empty, Guid.Empty, "PO-0001", "PurchaseOrder", 0, "Somchai J.", false, "sha256-hex", null, new DateTime(2026, 11, 20)))),
+            new(SignRequestKinds.PurchaseOrderDeclinedEvent, "Fired when the supplier declines a purchase order through the online document page (the supplier's reason is not in the payload — it is free text written by a person; read it on the document in NextAcc).",
                 SignEventOutbox.BuildPayload(new SignEventOutbox.PayloadInput(Guid.Empty, SignRequestKinds.PurchaseOrderDeclinedEvent, DateTime.UtcNow,
                     Guid.Empty, Guid.Empty, "PO-0001", "PurchaseOrder", 0, "Somchai J.", false, "sha256-hex", null))),
             new("webhook.test", "Test event fired when you use the test endpoint.",

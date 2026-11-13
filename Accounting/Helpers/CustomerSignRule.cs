@@ -29,6 +29,12 @@ public static class CustomerSignRule
     public const string IdentityNameOnly = "NameOnly";
     /// <summary>รอบ 267 P5: ชื่อ/ตำแหน่งที่ระบบภายนอกส่งมา — ผู้ลงนามไม่ได้ติ๊กรับรองบนหน้าของเรา (ไม่แต่งว่า "ครบ" — F2 ข้อ 3)</summary>
     public const string IdentityApiReported = "ApiReported";
+    /// <summary>ฝ่ายค้าน 267-P5 MED-6: คู่ค้าในระบบ (ผู้ใช้ของบริษัทผู้ซื้อที่ล็อกอิน) อนุมัติผ่านลิงก์ข้ามบริษัท — ตัวตน = บัญชีสมาชิกของบริษัทนั้น (ไม่ได้ติ๊กรับรองบนหน้าเอกสาร)</summary>
+    public const string ChannelPartner = "Partner";
+    public const string IdentityPartnerMember = "PartnerMember";
+    /// <summary>ฝ่ายค้าน 267-P5 MED-6: พนักงานของผู้ขายบันทึกขั้นอนุมัติบทบาทลูกค้าแทนลูกค้า (ขั้นอนุมัติภายใน) — ตัวตนของลูกค้า = ที่พนักงานพิมพ์ (ไม่ใช่ลูกค้าลงนามเอง)</summary>
+    public const string ChannelStaff = "Staff";
+    public const string IdentityStaffRecorded = "StaffRecorded";
 
     /// <summary>ชนิดคำตอบของผู้ขายต่อใบสั่งซื้อ</summary>
     public static bool IsPoKind(Kind kind) => kind is Kind.PoAcknowledged or Kind.PoDeclined;
@@ -61,10 +67,12 @@ public static class CustomerSignRule
     {
         if (promised == null) return (null, null);
         var d = DateTime.SpecifyKind(promised.Value.Date, DateTimeKind.Utc);
-        if (d < poDate.Date)
+        // ฝ่ายค้าน 267-P5 LOW ปลีกย่อย: วันที่ใบเทียบเป็นวันปฏิทินไทย (ค่าที่เก็บเป็นเที่ยงคืนเวลาไทย = 17:00Z ของวันก่อน ⇒ .Date ให้วันก่อนผิด)
+        var poDay = ThaiDate.CalendarDateUtc(poDate);
+        if (d < poDay)
             return (null, T(en, $"วันส่งที่ยืนยันต้องไม่ก่อนวันที่ใบสั่งซื้อ ({ThaiDate.ToThaiDisplayString(poDate)})",
                 $"The confirmed delivery date cannot be before the purchase order date ({poDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)})"));
-        if (d > poDate.Date.AddYears(3))
+        if (d > poDay.AddYears(3))
             return (null, T(en, "วันส่งที่ยืนยันไกลเกินไป — กรุณาตรวจปีอีกครั้ง", "The confirmed delivery date is too far ahead — please check the year"));
         return (d, null);
     }

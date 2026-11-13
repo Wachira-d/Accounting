@@ -945,17 +945,24 @@ public class GatewayRefundService : IGatewayRefundService
 
         // ต้นทางที่เป็นเอกสารในระบบเท่านั้นที่ใบลดหนี้อ้างถึงได้ — อย่างอื่น "ตรวจย้อนไม่ได้" (ไม่ใช่ "ครบ")
         var docIds = rows.Where(r => r.SourceKind == PaymentSourceKind.Document).Select(r => r.SourceId).Distinct().ToList();
-        var cnTotals = docIds.Count == 0
+        // ฝ่ายค้าน 267-P5 LOW-7: ใบวางบิลจ่ายทั้งใบ — ใบลดหนี้ออกที่ใบแจ้งหนี้ในบิล (ไม่มีวันอ้างใบวางบิล) ⇒ นับใบลดหนี้ของใบในบิลแทน
+        // (เดิมฟ้อง "ต้องออกใบลดหนี้" ถาวรแม้ออกครบแล้ว — ตอนนี้ออกครบ = งานปิดได้)
+        var childrenOf = await Accounting.Helpers.BillingNoteChildren.MapAsync(_db, companyId, docIds, ct);
+        var cnTargets = docIds.Concat(childrenOf.Values.SelectMany(x => x)).Distinct().ToList();
+        var cnByDoc = cnTargets.Count == 0
             ? new Dictionary<Guid, decimal>()
             : await _db.Documents.AsNoTracking()
                 .Where(d => d.CompanyId == companyId && !d.IsDeleted
                     && d.DocumentType == DocumentType.CreditNote
-                    && d.RelatedDocumentId != null && docIds.Contains(d.RelatedDocumentId.Value)
+                    && d.RelatedDocumentId != null && cnTargets.Contains(d.RelatedDocumentId.Value)
                     && !DocumentStatusRules.NotIssued.Contains(d.Status)
                     && d.Status != DocumentStatus.Voided)
                 .GroupBy(d => d.RelatedDocumentId!.Value)
                 .Select(g => new { DocId = g.Key, Total = g.Sum(d => d.TotalAmount) })
                 .ToDictionaryAsync(x => x.DocId, x => x.Total, ct);
+        var cnTotals = docIds.ToDictionary(id => id, id => childrenOf.TryGetValue(id, out var kids)
+            ? kids.Sum(k => cnByDoc.TryGetValue(k, out var t) ? t : 0m)
+            : cnByDoc.TryGetValue(id, out var own) ? own : 0m);
 
         var result = new Dictionary<Guid, GatewayRefundCreditNoteView>();
         foreach (var r in rows)

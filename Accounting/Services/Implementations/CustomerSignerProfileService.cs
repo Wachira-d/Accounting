@@ -41,6 +41,8 @@ public class CustomerSignerProfileService
     private Task<string?> OriginAsync(CancellationToken ct) => SystemBaseUrl.ResolveAsync(_db, _config, ct);
 
     public sealed record LoginResult(string? Ticket, CustomerSignerProfileRule.Prefill? Prefill, string? Error);
+    /// <summary>URL หน้าอนุญาตของ LINE + nonce ที่ผู้เรียก (controller) ต้องตั้งเป็น cookie ของเบราว์เซอร์นี้ (ฝ่ายค้าน 267-P5 LOW-1)</summary>
+    public sealed record LoginStart(string Url, string BrowserNonce);
     public sealed record RememberResult(Guid? ProfileId, string? Error);
 
     private sealed record LinkFacts(Guid DocumentId, Guid ContactId, string TokenHash, string SellerName);
@@ -66,7 +68,7 @@ public class CustomerSignerProfileService
         => _line != null && await _line.SignerLineChannelIdAsync() != null && !string.IsNullOrWhiteSpace(await OriginAsync(ct));
 
     /// <summary>(1) URL หน้าอนุญาตของ LINE — null = ปิด LINE Login / ลิงก์ใช้ไม่ได้</summary>
-    public async Task<string?> LoginUrlAsync(Guid companyId, string token, CancellationToken ct = default)
+    public async Task<LoginStart?> LoginUrlAsync(Guid companyId, string token, CancellationToken ct = default)
     {
         var origin = await OriginAsync(ct);
         if (_line == null || string.IsNullOrWhiteSpace(origin)) return null;
@@ -74,24 +76,31 @@ public class CustomerSignerProfileService
         if (channel == null) return null;
         var link = await LinkAsync(companyId, token, ct);
         if (link == null) return null;
-        return CustomerSignerProfileRule.AuthorizeUrl(channel, CustomerSignerProfileRule.RedirectUri(origin),
-            CustomerSignerProfileRule.NewState(companyId, link.TokenHash, DateTime.UtcNow));
+        var nonce = CustomerSignerProfileRule.NewNonce();
+        return new LoginStart(CustomerSignerProfileRule.AuthorizeUrl(channel, CustomerSignerProfileRule.RedirectUri(origin),
+            CustomerSignerProfileRule.NewState(companyId, link.TokenHash, DateTime.UtcNow, nonce)), nonce);
     }
 
     /// <summary>(2) LINE คืน code ⇒ ตั๋วผู้ลงนาม + ค่าที่เติม (ถ้าเคยยินยอมไว้ — ไม่มีช่องรับรอง) · ข้อความล้มเดียวทุกเหตุ</summary>
-    public async Task<LoginResult> CompleteLoginAsync(Guid companyId, string token, string? code, string? state, CancellationToken ct = default)
+    public async Task<LoginResult> CompleteLoginAsync(Guid companyId, string token, string? code, string? state, string? browserNonce, CancellationToken ct = default)
     {
         const string fail = "เข้าด้วย LINE ไม่สำเร็จ — กรุณาลองใหม่ หรือกรอกข้อมูลเอง";
         var origin = await OriginAsync(ct);
         if (_line == null || string.IsNullOrWhiteSpace(origin)) return new(null, null, fail);
         var link = await LinkAsync(companyId, token, ct);
         var now = DateTime.UtcNow;
-        if (link == null || !CustomerSignerProfileRule.StateValid(state, companyId, link.TokenHash, now) || string.IsNullOrWhiteSpace(code))
+        if (link == null || !CustomerSignerProfileRule.StateValid(state, companyId, link.TokenHash, now, browserNonce) || string.IsNullOrWhiteSpace(code))
             return new(null, null, fail);
         var channel = await _line.SignerLineChannelIdAsync();
         var sub = channel == null ? null : await _line.ResolveSignerLineUserAsync(code, CustomerSignerProfileRule.RedirectUri(origin), ct);
         if (channel == null || sub == null) return new(null, null, fail);
-        var subject = CustomerSignerProfileRule.SubjectKey(channel, sub);
+        var subject = CustomerSignerProfileRule.SubjectKey(companyId, channel, sub);
+        // ฝ่ายค้าน 267-P5 LOW-2 (migration แบบเจ้าของยืนยันเอง): แถวรุ่นแรกใช้กุญแจที่ไม่ผูกบริษัท — LINE เพิ่งยืนยันว่าคนนี้คือเจ้าของกุญแจเดิม ⇒ ย้ายแถวของบริษัทนี้มากุญแจใหม่
+        // (คนเดียวกันเท่านั้น — ไม่มีทางย้ายแถวของคนอื่น) · แถวที่เจ้าของไม่กลับมาอีกถูกลบเมื่อครบ 24 เดือนตามเดิม
+        var legacy = CustomerSignerProfileRule.LegacySubjectKey(channel, sub);
+        if (!await _db.CustomerSignerProfiles.AnyAsync(x => x.CompanyId == companyId && x.SubjectKey == subject, ct))
+            await _db.CustomerSignerProfiles.Where(x => x.CompanyId == companyId && x.SubjectKey == legacy)
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.SubjectKey, subject), ct);
         var ticket = CustomerSignerProfileRule.IssueTicket(companyId, link.TokenHash, subject, now);
         var profile = await ActiveProfileAsync(companyId, subject, ct);
         if (profile != null)
@@ -113,12 +122,14 @@ public class CustomerSignerProfileService
         return consentActive ? p : null;
     }
 
-    /// <summary>โปรไฟล์ที่เติมฟอร์มของคำขอนี้ (ตั๋วถูกต้อง + ยินยอมอยู่) — ผู้เรียก: <c>CustomerDocumentResponseService.RespondAsync</c> (อ้างที่มาในแถวหลักฐาน)</summary>
-    public async Task<Guid?> ActiveProfileIdAsync(Guid companyId, string token, string ticket, CancellationToken ct = default)
+    /// <summary>โปรไฟล์ที่เติมฟอร์มของคำขอนี้ (ตั๋วถูกต้อง + ยินยอมอยู่ + ลงนามด้วยชื่อในโปรไฟล์ — ฝ่ายค้าน 267-P5 MED-1) —
+    /// ผู้เรียก: <c>CustomerDocumentResponseService.RespondAsync</c> (อ้างที่มาในแถวหลักฐาน · คนอื่นพิมพ์ชื่อตัวเองบนตั๋วเดิม = ไม่อ้าง)</summary>
+    public async Task<Guid?> ActiveProfileIdAsync(Guid companyId, string token, string ticket, CustomerSignRule.SignerInput? signer, CancellationToken ct = default)
     {
         var link = await LinkAsync(companyId, token, ct);
         var subject = link == null ? null : CustomerSignerProfileRule.ReadTicket(ticket, companyId, link.TokenHash, DateTime.UtcNow);
-        return subject == null ? null : (await ActiveProfileAsync(companyId, subject, ct))?.Id;
+        var p = subject == null ? null : await ActiveProfileAsync(companyId, subject, ct);
+        return p != null && CustomerSignerProfileRule.SignedAsProfile(p.FirstName, p.LastName, signer?.FirstName, signer?.LastName) ? p.Id : null;
     }
 
     /// <summary>
@@ -126,12 +137,15 @@ public class CustomerSignerProfileService
     /// ตั๋วหมดอายุ/ผิดใบ = ไม่เก็บอะไร + ข้อความ · เคยยินยอมไว้ ⇒ ใช้ความยินยอมเดิม แก้ค่าเป็นค่าล่าสุดที่ผู้ลงนามพิมพ์
     /// </summary>
     public async Task<RememberResult> RememberAsync(Guid companyId, string token, string ticket, CustomerSignRule.SignerInput? signer,
-        CustomerDocumentResponseService.Caller caller, CancellationToken ct = default)
+        CustomerDocumentResponseService.Caller caller, string? shownConsentVersion, CancellationToken ct = default)
     {
         var link = await LinkAsync(companyId, token, ct);
         var now = DateTime.UtcNow;
         var subject = link == null ? null : CustomerSignerProfileRule.ReadTicket(ticket, companyId, link.TokenHash, now);
         if (link == null || subject == null) return new(null, "จำข้อมูลกับ LINE ไม่สำเร็จ (การเข้าด้วย LINE หมดอายุ) — เข้าด้วย LINE ใหม่ครั้งหน้า");
+        // ฝ่ายค้าน 267-P5 MED-2: ความยินยอมผูกกับข้อความที่หน้าแสดงจริง (รุ่น + ภาษาที่หน้าส่งกลับ) — รุ่นไม่ตรง = ไม่จำ (หน้าค้างจากรุ่นก่อน)
+        if (CustomerSignerProfileRule.LanguageOfShownVersion(shownConsentVersion) is not bool en)
+            return new(null, "จำข้อมูลกับ LINE ไม่สำเร็จ (ข้อความยินยอมบนหน้าเป็นรุ่นเก่า) — โหลดหน้าใหม่แล้วติ๊กจำอีกครั้งครั้งหน้า");
         var first = QuotationAcceptance.CleanText(signer?.FirstName, CustomerSignRule.NamePartMax);
         var last = QuotationAcceptance.CleanText(signer?.LastName, CustomerSignRule.NamePartMax);
         if (first == null || last == null) return new(null, "จำข้อมูลกับ LINE ไม่สำเร็จ (ไม่มีชื่อ-นามสกุล)");
@@ -146,12 +160,13 @@ public class CustomerSignerProfileService
         if (consentActive) consentId = profile!.ConsentRecordId;
         else
         {
-            var text = CustomerSignerProfileRule.ConsentText(false, link.SellerName);
+            var text = CustomerSignerProfileRule.ConsentText(en, link.SellerName);
+            var version = CustomerSignerProfileRule.StoredVersion(en);
             var consent = new PdpaConsentRecord
             {
                 CompanyId = companyId, SubjectContactId = link.ContactId, SubjectContact = email,
-                Purpose = CustomerSignerProfileRule.ConsentPurpose, PolicyVersion = CustomerSignerProfileRule.PolicyVersion, GrantedAt = now,
-                EvidenceHash = CustomerSignerProfileRule.ConsentEvidenceHash(companyId, subject, text, now), EvidenceSource = "system",
+                Purpose = CustomerSignerProfileRule.ConsentPurpose, PolicyVersion = version, GrantedAt = CustomerSignerProfileRule.StoredInstant(now),
+                EvidenceHash = CustomerSignerProfileRule.ConsentEvidenceHash(companyId, subject, text, version, now), EvidenceSource = "system",
                 Channel = CustomerSignerProfileRule.Channel, IpAddress = caller.Ip, UserAgent = QuotationAcceptance.CleanText(caller.UserAgent, 500),
                 CreatedBy = "ผู้ลงนามผ่านหน้าเอกสาร (LINE Login)",
             };
@@ -180,7 +195,7 @@ public class CustomerSignerProfileService
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
                 @event = "CustomerSignerProfileSaved", documentId = link.DocumentId, consentRecordId = consentId, newConsent = !consentActive,
-                policyVersion = CustomerSignerProfileRule.PolicyVersion, ruleCode = CustomerSignerProfileRule.RuleCode,
+                policyVersion = CustomerSignerProfileRule.StoredVersion(en), ruleCode = CustomerSignerProfileRule.RuleCode,
             }),
             Timestamp = now,
         });
@@ -199,6 +214,20 @@ public class CustomerSignerProfileService
         return null;
     }
 
+    /// <summary>
+    /// ฝ่ายค้าน 267-P5 MED-4: แถวความยินยอมของการจำข้อมูลผู้ลงนามที่ถูกถอน/ลบตามคำขอ/ลบอัตโนมัติ ⇒ ล้างอีเมล · IP · UA (ประทับ <c>PseudonymisedAt</c>) ·
+    /// คง EvidenceHash + เวลาให้/ถอน เป็นหลักฐาน (ภาระพิสูจน์ ม.19) · เฉพาะ Purpose ของเส้นนี้ · ทำซ้ำได้
+    /// </summary>
+    internal static Task<int> AnonymizeConsentsAsync(AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> consentIds, DateTime nowUtc, CancellationToken ct)
+    {
+        return consentIds.Count == 0 ? Task.FromResult(0)
+            : db.PdpaConsentRecords.IgnoreQueryFilters()
+                .Where(c => c.CompanyId == companyId && consentIds.Contains(c.Id) && c.Purpose == CustomerSignerProfileRule.ConsentPurpose && c.PseudonymisedAt == null)
+                .ExecuteUpdateAsync(u => u.SetProperty(c => c.SubjectContact, (string?)null).SetProperty(c => c.IpAddress, (string?)null)
+                    .SetProperty(c => c.UserAgent, (string?)null).SetProperty(c => c.PseudonymisedAt, (DateTime?)nowUtc)
+                    .SetProperty(c => c.WithdrawnReason, c => (c.WithdrawnReason ?? "") + CustomerSignerProfileRule.ConsentAnonymizedReasonSuffix), ct);
+    }
+
     /// <summary>ลบโปรไฟล์ตามเงื่อนไข (ลบจริง ไม่ใช่ soft delete — ข้อมูลตามความยินยอมไม่มีภาระเก็บ) + ถอนความยินยอม + audit · คืนจำนวนที่ลบ</summary>
     private async Task<int> RemoveAsync(Guid companyId, System.Linq.Expressions.Expression<Func<CustomerSignerProfile, bool>> which, string reason, string actor, CancellationToken ct)
     {
@@ -211,6 +240,7 @@ public class CustomerSignerProfileService
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         await _db.PdpaConsentRecords.Where(c => c.CompanyId == companyId && consentIds.Contains(c.Id) && c.WithdrawnAt == null)
             .ExecuteUpdateAsync(u => u.SetProperty(c => c.WithdrawnAt, (DateTime?)now).SetProperty(c => c.WithdrawnReason, reason), ct);
+        await AnonymizeConsentsAsync(_db, companyId, consentIds, now, ct);
         var deleted = await _db.CustomerSignerProfiles.IgnoreQueryFilters().Where(x => x.CompanyId == companyId && ids.Contains(x.Id)).ExecuteDeleteAsync(ct);
         _db.AddChainedAuditLog(new AuditLog
         {
@@ -245,10 +275,20 @@ public class CustomerSignerProfileService
             var ids = company.Select(p => p.Id).ToList();
             var consentIds = company.Select(p => p.ConsentRecordId).ToList();
             await using var tx = await db.Database.BeginTransactionAsync(ct);
-            await db.PdpaConsentRecords.IgnoreQueryFilters().Where(c => c.CompanyId == company.Key && consentIds.Contains(c.Id) && c.WithdrawnAt == null)
+            // ฝ่ายค้าน 267-P5 LOW-6: ตรวจเงื่อนไขซ้ำใน WHERE ของการลบ — ผู้ลงนามที่เพิ่งใช้ระหว่างงานรัน (LastUsedAt ใหม่ + ยินยอมอยู่) ไม่ถูกลบ ·
+            // ถอน/ล้างเฉพาะความยินยอมที่ไม่มีโปรไฟล์อ้างแล้ว (= แถวที่ลบจริง)
+            var n = await db.CustomerSignerProfiles.IgnoreQueryFilters()
+                .Where(x => x.CompanyId == company.Key && ids.Contains(x.Id)
+                    && (x.LastUsedAt < cutoff || !db.PdpaConsentRecords.IgnoreQueryFilters().Any(c => c.Id == x.ConsentRecordId && c.CompanyId == x.CompanyId && c.WithdrawnAt == null)))
+                .ExecuteDeleteAsync(ct);
+            var orphaned = await db.PdpaConsentRecords.IgnoreQueryFilters()
+                .Where(c => c.CompanyId == company.Key && consentIds.Contains(c.Id)
+                    && !db.CustomerSignerProfiles.IgnoreQueryFilters().Any(p => p.CompanyId == c.CompanyId && p.ConsentRecordId == c.Id))
+                .Select(c => c.Id).ToListAsync(ct);
+            await db.PdpaConsentRecords.IgnoreQueryFilters().Where(c => c.CompanyId == company.Key && orphaned.Contains(c.Id) && c.WithdrawnAt == null)
                 .ExecuteUpdateAsync(u => u.SetProperty(c => c.WithdrawnAt, (DateTime?)nowUtc)
                     .SetProperty(c => c.WithdrawnReason, $"ไม่ได้ใช้ข้อมูลที่จำไว้เกิน {CustomerSignerProfileRule.RetentionMonths} เดือน — ลบอัตโนมัติ"), ct);
-            var n = await db.CustomerSignerProfiles.IgnoreQueryFilters().Where(x => x.CompanyId == company.Key && ids.Contains(x.Id)).ExecuteDeleteAsync(ct);
+            await AnonymizeConsentsAsync(db, company.Key, orphaned, nowUtc, ct);
             db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = company.Key, UserEmail = "ระบบ (ลบข้อมูลผู้ลงนามที่หมดอายุ)", Action = AuditAction.Delete,
@@ -263,66 +303,134 @@ public class CustomerSignerProfileService
         return total;
     }
 
-    // ═══════════════ DSR (PDPA ม.30 · ม.31 · ม.33) — ผู้ลงนามเป็นบุคคลที่สาม: ค้นด้วยอีเมล และ/หรือ ชื่อ+นามสกุล (267-1-40 ยกมาแพ็กนี้ · 267-1-75) ═══════════════
+    // ═══════════════ DSR (PDPA ม.30 · ม.31 · ม.33) — ผู้ลงนามเป็นบุคคลที่สาม (267-1-40 · 267-1-75 · ฝ่ายค้าน 267-P5 MED-3/MED-4/LOW-4/LOW-5) ═══════════════
+    // ตัวระบุเจ้าของข้อมูล: อีเมล หรือ ชื่อ+นามสกุล+เลขเอกสารที่ผู้นั้นลงนาม (ชื่ออย่างเดียวไม่พอ — คนชื่อซ้ำ) · ชื่อ+เลขเอกสารพบหลายคน ⇒ ให้ DPO เลือกด้วยอีเมล (ไม่รวมเอง)
 
-    public sealed record SignerSubjectReport(string? Email, string? FirstName, string? LastName,
-        IReadOnlyList<Dictionary<string, object?>> Profiles, IReadOnlyList<Dictionary<string, object?>> Evidence, int TotalRecords);
+    /// <summary>คำขอ DSR ของผู้ลงนาม — ต้องมี <see cref="Email"/> หรือ (<see cref="FirstName"/> + <see cref="LastName"/> + <see cref="DocumentNumber"/>)</summary>
+    public sealed record SignerQuery(string? Email, string? FirstName, string? LastName, string? DocumentNumber);
 
-    public sealed record SignerErasureResult(int ProfilesDeleted, int EvidenceErased, int EvidenceHeld, IReadOnlyList<string> Notes);
+    public sealed record SignerSubjectReport(string? Email, string? FirstName, string? LastName, string? DocumentNumber,
+        IReadOnlyList<Dictionary<string, object?>> Profiles, IReadOnlyList<Dictionary<string, object?>> Consents,
+        IReadOnlyList<Dictionary<string, object?>> Evidence, int TotalRecords);
+
+    public sealed record SignerErasureResult(int ProfilesDeleted, int ConsentsAnonymized, int EvidenceErased, int EvidenceHeld, IReadOnlyList<string> Notes);
+
+    /// <summary>ชื่อ+เลขเอกสารพบผู้ลงนามหลายคน (อีเมลต่างกัน) — DPO ต้องเลือกด้วยอีเมล · ไม่รวมข้อมูลของหลายคนเอง</summary>
+    public sealed class SignerSubjectAmbiguousException : Exception
+    {
+        public IReadOnlyList<string> Candidates { get; }
+        public SignerSubjectAmbiguousException(IReadOnlyList<string> candidates)
+            : base($"พบผู้ลงนามชื่อนี้บนเอกสารนี้ {candidates.Count} คน (อีเมลต่างกัน) — ระบุอีเมลของเจ้าของข้อมูลเพื่อเลือก (ระบบไม่รวมข้อมูลของหลายคนให้เอง)")
+            => Candidates = candidates;
+    }
+
+    /// <summary>เพดานแถวหลักฐานต่อคำขอ — เกิน = ล้มดัง (ไม่ส่ง/ไม่ลบไม่ครบแบบเงียบ · LOW-5)</summary>
+    public const int DsrEvidenceCap = 5000;
 
     private static string Norm(string? s) => (s ?? "").Trim().ToLowerInvariant();
 
-    private static (string? Email, string? First, string? Last) Subject(string? email, string? first, string? last)
+    /// <summary>อีเมลแบบปิดบังสำหรับให้ DPO เลือก ("s***@buyer.co.th")</summary>
+    public static string MaskEmail(string email)
     {
-        var e = CustomerSignRule.CleanEmail(email, false).Email;
-        var f = QuotationAcceptance.CleanText(first, CustomerSignRule.NamePartMax);
-        var l = QuotationAcceptance.CleanText(last, CustomerSignRule.NamePartMax);
-        if (e == null && (f == null || l == null))
-            throw new InvalidOperationException("ระบุอีเมล หรือ ชื่อและนามสกุลของผู้ลงนาม อย่างน้อยหนึ่งชุด");
-        return (e, f, l);
+        var at = email.IndexOf('@');
+        return at <= 0 ? "***" : email[..1] + "***" + email[at..];
     }
 
-    private static bool Matches(string? email, string? first, string? last, string? rowEmail, string? rowFirst, string? rowLast)
-        => (email != null && Norm(rowEmail) == email)
-           || (first != null && last != null && Norm(rowFirst) == Norm(first) && Norm(rowLast) == Norm(last));
+    /// <summary>LOW-4: ตัวระบุเจ้าของข้อมูลใน PiiAccessLog — Guid ที่ได้จาก hash ของตัวระบุ (ไม่เก็บอีเมล/ชื่อดิบใน log · ค้นย้อนได้ด้วยตัวระบุเดิม) + ชื่อช่อง</summary>
+    public static (Guid SubjectId, string FieldName) LogSubject(Guid companyId, SignerQuery q)
+    {
+        var e = CustomerSignRule.CleanEmail(q.Email, false).Email;
+        var key = e != null ? "email|" + e : $"name|{Norm(q.FirstName)}|{Norm(q.LastName)}|doc|{Norm(q.DocumentNumber)}";
+        var h = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"signer-dsr|{companyId:N}|{key}"));
+        return (new Guid(h.AsSpan(0, 16)), (e != null ? "email-sha256:" : "name-doc-sha256:") + Convert.ToHexString(h, 16, 8).ToLowerInvariant());
+    }
 
-    /// <summary>โปรไฟล์ของบริษัทนี้ที่ตรงเจ้าของข้อมูล — ชื่อ/อีเมลเข้ารหัสในฐาน ⇒ ถอดแล้วกรองในหน่วยความจำ (ต่อบริษัท)</summary>
-    private async Task<List<CustomerSignerProfile>> MatchingProfilesAsync(Guid companyId, string? email, string? first, string? last, CancellationToken ct)
-        => (await _db.CustomerSignerProfiles.AsNoTracking().Where(p => p.CompanyId == companyId).ToListAsync(ct))
-            .Where(p => Matches(email, first, last, p.Email, p.FirstName, p.LastName)).ToList();
+    private sealed record Resolved(string? Email, string? First, string? Last, string? DocumentNumber, IReadOnlyList<Guid> NameOnlyRowIds);
 
-    private async Task<List<CustomerDocumentAction>> MatchingEvidenceAsync(Guid companyId, string? email, string? first, string? last, bool track, CancellationToken ct)
+    /// <summary>ตัวระบุ ⇒ เจ้าของข้อมูลคนเดียว · อีเมล = ตัวระบุ · ชื่อ+เลขเอกสาร ⇒ หาแถวบนเอกสารนั้น: อีเมลเดียว = ใช้อีเมลนั้น · หลายอีเมล = ให้ DPO เลือก ·
+    /// ไม่มีอีเมล = เฉพาะแถวบนเอกสารนั้น (ไม่ขยายไปแถว/โปรไฟล์อื่นที่ชื่อตรง)</summary>
+    private async Task<Resolved> ResolveAsync(Guid companyId, SignerQuery q, CancellationToken ct)
+    {
+        var e = CustomerSignRule.CleanEmail(q.Email, false).Email;
+        var f = QuotationAcceptance.CleanText(q.FirstName, CustomerSignRule.NamePartMax);
+        var l = QuotationAcceptance.CleanText(q.LastName, CustomerSignRule.NamePartMax);
+        var docNo = QuotationAcceptance.CleanText(q.DocumentNumber, 100);
+        if (e != null) return new Resolved(e, f, l, docNo, Array.Empty<Guid>());
+        if (f == null || l == null || docNo == null)
+            throw new InvalidOperationException("ระบุอีเมลของผู้ลงนาม หรือ ชื่อ + นามสกุล + เลขเอกสารที่ผู้นั้นลงนาม (ชื่ออย่างเดียวไม่พอ — อาจมีคนชื่อซ้ำ)");
+        var docIds = await _db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && d.DocumentNumber == docNo && !d.IsDeleted)
+            .Select(d => d.Id).ToListAsync(ct);
+        if (docIds.Count == 0) throw new InvalidOperationException($"ไม่พบเอกสารเลข {docNo} ของบริษัทนี้");
+        var rows = (await _db.CustomerDocumentActions.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && docIds.Contains(a.DocumentId) && a.ErasedAt == null)
+                .Select(a => new { a.Id, a.SignerFirstName, a.SignerLastName, a.SignerEmail }).ToListAsync(ct))
+            .Where(a => Norm(a.SignerFirstName) == Norm(f) && Norm(a.SignerLastName) == Norm(l)).ToList();
+        if (rows.Count == 0) throw new InvalidOperationException($"ไม่พบผู้ลงนามชื่อนี้บนเอกสารเลข {docNo}");
+        var emails = rows.Select(r => Norm(r.SignerEmail)).Where(x => x.Length > 0).Distinct().ToList();
+        if (emails.Count > 1) throw new SignerSubjectAmbiguousException(emails.Select(MaskEmail).ToList());
+        return emails.Count == 1
+            ? new Resolved(emails[0], f, l, docNo, Array.Empty<Guid>())
+            : new Resolved(null, f, l, docNo, rows.Select(r => r.Id).ToList());
+    }
+
+    /// <summary>โปรไฟล์ของบริษัทนี้ของเจ้าของข้อมูล (อีเมลเท่านั้น — ชื่ออย่างเดียวไม่ใช่ตัวระบุ) · ชื่อ/อีเมลเข้ารหัสในฐาน ⇒ ถอดแล้วกรองในหน่วยความจำ</summary>
+    private async Task<List<CustomerSignerProfile>> MatchingProfilesAsync(Guid companyId, Resolved r, CancellationToken ct)
+        => r.Email == null ? new List<CustomerSignerProfile>()
+            : (await _db.CustomerSignerProfiles.AsNoTracking().Where(p => p.CompanyId == companyId).ToListAsync(ct))
+                .Where(p => Norm(p.Email) == r.Email).ToList();
+
+    private async Task<List<CustomerDocumentAction>> MatchingEvidenceAsync(Guid companyId, Resolved r, bool track, CancellationToken ct)
     {
         var q = _db.CustomerDocumentActions.Where(a => a.CompanyId == companyId && a.ErasedAt == null);
         if (!track) q = q.AsNoTracking();
-        var lowerFirst = first?.ToLowerInvariant();
-        var rows = await q.Where(a => (email != null && a.SignerEmail != null && a.SignerEmail.ToLower() == email)
-                || (lowerFirst != null && last != null && a.SignerFirstName != null && a.SignerFirstName.ToLower() == lowerFirst))
-            .OrderBy(a => a.CreatedAt).Take(5000).ToListAsync(ct);
-        return rows.Where(a => Matches(email, first, last, a.SignerEmail, a.SignerFirstName, a.SignerLastName)).ToList();
+        var ids = r.NameOnlyRowIds;
+        var email = r.Email;
+        var rows = await (email != null
+                ? q.Where(a => a.SignerEmail != null && a.SignerEmail.ToLower() == email)
+                : q.Where(a => ids.Contains(a.Id)))
+            .OrderBy(a => a.CreatedAt).Take(DsrEvidenceCap + 1).ToListAsync(ct);
+        if (rows.Count > DsrEvidenceCap)
+            throw new InvalidOperationException($"หลักฐานการลงนามของเจ้าของข้อมูลนี้เกิน {DsrEvidenceCap} แถว — ระบบไม่ส่ง/ไม่ลบแบบไม่ครบ · ติดต่อผู้ดูแลระบบเพื่อดำเนินการเป็นชุด");
+        return rows;
     }
 
-    /// <summary>ม.30/31 — โปรไฟล์ที่จำไว้ + แถวหลักฐานการลงนามของผู้ลงนามรายนี้ (ไม่ฝังไฟล์ลายเซ็น/ฉบับที่ลงนาม) · ผู้เรียกตรวจสิทธิ์ DPO + บันทึก PiiAccessLog</summary>
-    public async Task<SignerSubjectReport> AccessAsync(Guid companyId, string? email, string? firstName, string? lastName, CancellationToken ct = default)
+    /// <summary>แถวความยินยอมของเส้นนี้ของเจ้าของข้อมูล — ของโปรไฟล์ที่พบ + ที่บันทึกอีเมลนี้ไว้ (รวมที่ถอนแล้วแต่ยังไม่ถูกล้าง)</summary>
+    private async Task<List<PdpaConsentRecord>> MatchingConsentsAsync(Guid companyId, Resolved r, IReadOnlyCollection<Guid> profileConsentIds, CancellationToken ct)
     {
-        var (e, f, l) = Subject(email, firstName, lastName);
-        var profiles = await MatchingProfilesAsync(companyId, e, f, l, ct);
-        var consentIds = profiles.Select(p => p.ConsentRecordId).ToList();
-        var consents = await _db.PdpaConsentRecords.AsNoTracking().Where(c => c.CompanyId == companyId && consentIds.Contains(c.Id))
-            .ToDictionaryAsync(c => c.Id, ct);
-        var evidence = await MatchingEvidenceAsync(companyId, e, f, l, false, ct);
+        var email = r.Email;
+        if (email == null && profileConsentIds.Count == 0) return new List<PdpaConsentRecord>();
+        return await _db.PdpaConsentRecords.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && c.Purpose == CustomerSignerProfileRule.ConsentPurpose
+                && (profileConsentIds.Contains(c.Id) || (email != null && c.SubjectContact != null && c.SubjectContact.ToLower() == email)))
+            .OrderBy(c => c.GrantedAt).ToListAsync(ct);
+    }
+
+    /// <summary>ม.30/31 — โปรไฟล์ที่จำไว้ + แถวความยินยอม (อีเมล · IP · UA ที่ยังไม่ถูกล้าง) + แถวหลักฐานการลงนาม (ไม่ฝังไฟล์) · ผู้เรียกตรวจสิทธิ์ DPO + บันทึก PiiAccessLog</summary>
+    public async Task<SignerSubjectReport> AccessAsync(Guid companyId, SignerQuery query, CancellationToken ct = default)
+    {
+        var r = await ResolveAsync(companyId, query, ct);
+        var profiles = await MatchingProfilesAsync(companyId, r, ct);
+        var consents = await MatchingConsentsAsync(companyId, r, profiles.Select(p => p.ConsentRecordId).ToList(), ct);
+        var byId = consents.ToDictionary(c => c.Id);
+        var evidence = await MatchingEvidenceAsync(companyId, r, false, ct);
         var docIds = evidence.Select(a => a.DocumentId).Distinct().ToList();
         var numbers = await _db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
             .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType }).ToDictionaryAsync(d => d.Id, ct);
-        return new SignerSubjectReport(e, f, l,
+        return new SignerSubjectReport(r.Email, r.First, r.Last, r.DocumentNumber,
             profiles.Select(p => new Dictionary<string, object?>
             {
                 ["id"] = p.Id, ["firstName"] = p.FirstName, ["lastName"] = p.LastName, ["title"] = p.Title, ["email"] = p.Email,
                 ["contactId"] = p.ContactId, ["lastUsedAt"] = p.LastUsedAt, ["createdAt"] = p.CreatedAt,
                 ["consentPurpose"] = CustomerSignerProfileRule.ConsentPurpose,
-                ["consentGrantedAt"] = consents.TryGetValue(p.ConsentRecordId, out var c) ? c.GrantedAt : null,
-                ["consentVersion"] = consents.TryGetValue(p.ConsentRecordId, out var c2) ? c2.PolicyVersion : null,
+                ["consentGrantedAt"] = byId.TryGetValue(p.ConsentRecordId, out var c) ? c.GrantedAt : null,
+                ["consentVersion"] = byId.TryGetValue(p.ConsentRecordId, out var c2) ? c2.PolicyVersion : null,
                 ["linkedTo"] = "บัญชี LINE (เก็บเป็น HMAC — ระบบไม่มี LINE userId)",
+            }).ToList(),
+            consents.Select(x => new Dictionary<string, object?>
+            {
+                ["id"] = x.Id, ["purpose"] = x.Purpose, ["version"] = x.PolicyVersion, ["grantedAt"] = x.GrantedAt, ["withdrawnAt"] = x.WithdrawnAt,
+                ["withdrawnReason"] = x.WithdrawnReason, ["email"] = x.SubjectContact, ["ip"] = x.IpAddress, ["userAgent"] = x.UserAgent,
+                ["channel"] = x.Channel, ["evidenceHash"] = x.EvidenceHash, ["anonymizedAt"] = x.PseudonymisedAt,
             }).ToList(),
             evidence.Select(a => new Dictionary<string, object?>
             {
@@ -334,24 +442,30 @@ public class CustomerSignerProfileService
                 ["ip"] = a.Ip, ["userAgentSha256"] = a.UserAgentHash, ["contentHash"] = a.ContentHash,
                 ["hasSignature"] = a.SignatureSha256 != null, ["hasSignedCopy"] = a.SignedPdfSha256 != null,
             }).ToList(),
-            profiles.Count + evidence.Count);
+            profiles.Count + consents.Count + evidence.Count);
     }
 
     /// <summary>
-    /// ม.33 — ลบโปรไฟล์ที่จำไว้ทั้งหมดของผู้ลงนามรายนี้ (ความยินยอม — ลบได้เสมอ) · แถวหลักฐานการลงนาม: เอกสารยังอยู่ในอายุเก็บ = คงไว้ (legal hold · S33)
-    /// พ้นแล้ว = ตัวล้างเดียว <see cref="QuotationAcceptance.EraseEvidencePii"/> + ลบไฟล์ลายเซ็น/ฉบับที่ลงนาม (hash/เวลา/ชนิดคงไว้)
+    /// ม.33 — ลบโปรไฟล์ที่จำไว้ทั้งหมดของผู้ลงนามรายนี้ (ความยินยอม — ลบได้เสมอ) + ถอน/ล้างอีเมล·IP·UA บนแถวความยินยอม (คง hash + เวลา) ·
+    /// แถวหลักฐานการลงนาม: เอกสารยังอยู่ในอายุเก็บ = คงไว้ (legal hold · S33) · พ้นแล้ว = ตัวล้างเดียว <see cref="QuotationAcceptance.EraseEvidencePii"/> + ลบไฟล์
     /// </summary>
-    public async Task<SignerErasureResult> EraseAsync(Guid companyId, string? email, string? firstName, string? lastName, string actor, CancellationToken ct = default)
+    public async Task<SignerErasureResult> EraseAsync(Guid companyId, SignerQuery query, string actor, CancellationToken ct = default)
     {
-        var (e, f, l) = Subject(email, firstName, lastName);
-        var profileIds = (await MatchingProfilesAsync(companyId, e, f, l, ct)).Select(p => p.Id).ToList();
+        var r = await ResolveAsync(companyId, query, ct);
+        var profiles = await MatchingProfilesAsync(companyId, r, ct);
+        var profileIds = profiles.Select(p => p.Id).ToList();
+        var consentIds = (await MatchingConsentsAsync(companyId, r, profiles.Select(p => p.ConsentRecordId).ToList(), ct)).Select(c => c.Id).ToList();
+        var evidence = await MatchingEvidenceAsync(companyId, r, true, ct);   // ตรวจเพดานก่อนลบอะไร (ล้มก่อน = ไม่ลบครึ่งทาง)
+        var now = DateTime.UtcNow;
+        // ความยินยอมก่อน (นับแถวที่ล้าง) แล้วจึงลบโปรไฟล์ (RemoveAsync เจอแถวที่ถอน/ล้างแล้ว = ไม่ทำซ้ำ)
+        await _db.PdpaConsentRecords.Where(c => c.CompanyId == companyId && consentIds.Contains(c.Id) && c.WithdrawnAt == null)
+            .ExecuteUpdateAsync(u => u.SetProperty(c => c.WithdrawnAt, (DateTime?)now).SetProperty(c => c.WithdrawnReason, "เจ้าของข้อมูลขอลบ (DSR ม.33)"), ct);
+        var anonymized = await AnonymizeConsentsAsync(_db, companyId, consentIds, now, ct);
         var profilesDeleted = profileIds.Count == 0 ? 0
             : await RemoveAsync(companyId, x => profileIds.Contains(x.Id), "เจ้าของข้อมูลขอลบ (DSR ม.33)", actor, ct);
-        var evidence = await MatchingEvidenceAsync(companyId, e, f, l, true, ct);
         var docIds = evidence.Select(a => a.DocumentId).Distinct().ToList();
         var docs = await _db.Documents.AsNoTracking().Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
             .Select(d => new { d.Id, d.DocumentDate, d.RetentionUntil }).ToDictionaryAsync(d => d.Id, ct);
-        var now = DateTime.UtcNow;
         var files = new List<string>();
         int erased = 0, held = 0;
         foreach (var row in evidence)
@@ -362,12 +476,12 @@ public class CustomerSignerProfileService
             row.UpdatedBy = actor;
             erased++;
         }
-        if (erased > 0)
+        if (erased > 0 || anonymized > 0)
         {
             _db.AddChainedAuditLog(new AuditLog
             {
                 CompanyId = companyId, UserEmail = actor, Action = AuditAction.Update, EntityType = nameof(CustomerDocumentAction), EntityId = "dsr-signer",
-                NewValues = System.Text.Json.JsonSerializer.Serialize(new { @event = "CustomerSignerEvidenceErased", erased, held, ruleCode = "PDPA-33" }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { @event = "CustomerSignerEvidenceErased", erased, held, consentsAnonymized = anonymized, ruleCode = "PDPA-33" }),
                 Timestamp = now,
             });
             await _db.SaveChangesAsync(ct);
@@ -384,11 +498,14 @@ public class CustomerSignerProfileService
         var notes = new List<string>
         {
             $"ลบข้อมูลที่จำไว้กับ LINE {profilesDeleted} รายการ (ถอนความยินยอมแล้ว)",
+            $"ล้างอีเมล/IP/UA บนแถวความยินยอม {anonymized} แถว (คง hash + เวลาเป็นหลักฐานการให้และการถอน)",
             $"ล้างข้อมูลผู้ลงนามในหลักฐานการลงนามที่พ้นอายุเก็บ {erased} แถว",
         };
         if (held > 0)
             notes.Add($"คงไว้ {held} แถว — เอกสารยังอยู่ในอายุเก็บตาม พ.ร.บ.การบัญชี ม.14 / ป.รัษฎากร §87/3 (legal hold) · ลบได้เมื่อพ้นอายุเก็บ");
-        return new SignerErasureResult(profilesDeleted, erased, held, notes);
+        if (r.Email == null)
+            notes.Add("ค้นด้วยชื่อ + เลขเอกสาร (แถวบนเอกสารนั้นไม่มีอีเมล) — ดำเนินการเฉพาะแถวบนเอกสารนั้น · มีอีเมลของเจ้าของข้อมูล ให้ค้นด้วยอีเมลเพื่อครอบคลุมเอกสารอื่น");
+        return new SignerErasureResult(profilesDeleted, anonymized, erased, held, notes);
     }
 
     /// <summary>RoPA (ม.39) แถว "จำข้อมูลผู้ลงนาม" ครั้งแรกของบริษัท (ไม่ทับที่บริษัทแก้ไว้) — ในธุรกรรมเดียวกับโปรไฟล์แรก</summary>

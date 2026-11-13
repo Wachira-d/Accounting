@@ -207,7 +207,12 @@ public static class PostPaymentAutomationPolicy
         int LineReceiptEndpoints = 0,
         // รอบ 258-3 ฝ่ายค้าน M2: บริษัทโหมด e-Tax by Email + ใบเสร็จ(ที่จะออก/มีอยู่/ใบต้นทาง) อาจถือ VAT (ประมาณแบบระวัง) ⇒ ใบกำกับต้องไปทางอีเมล e-Tax ·
         // LINE อย่างเดียวไม่พอ (ไม่ผ่าน ETDA) และ LINE ต้องตามหลังขั้นอีเมล (อีเมลถูกปฏิเสธ ⇒ ไม่ส่ง PDF ธรรมดาไปก่อน)
-        bool EtaxEmailRequired = false);
+        bool EtaxEmailRequired = false,
+        // ฝ่ายค้าน 267-P5 MED-5: การชำระหลายใบจากผู้ให้บริการรับชำระ (ใบวางบิลจ่ายทั้งใบ) — ใบเสร็จรายใบที่เส้นหลายใบออกไว้แล้ว (อนุมัติแล้ว) ·
+        // มีร่าง · มีใบที่ถือ VAT ⇒ ส่งใบเสร็จทุกใบ (ไม่ออกเอง) · ทางเข้าอื่นของการชำระหลายใบ = ไม่ส่งอัตโนมัติเหมือนเดิม
+        int AllocationReceiptsReady = 0,
+        bool AllocationReceiptDraft = false,
+        bool AllocationReceiptCarriesVat = false);
 
     /// <summary>ผล — ขั้นที่ทำ + เหตุที่ต้องหยุด (ข้อความไทยพร้อมทางไปต่อ · ส่งเข้าการแจ้งเตือน) · <paramref name="Notes"/> = ข้อสังเกตที่ไม่หยุดงาน ·
     /// <paramref name="Skipped"/> = ไม่มีอะไรต้องทำ (ไม่ใช่ความผิดพลาด)</summary>
@@ -215,6 +220,10 @@ public static class PostPaymentAutomationPolicy
 
     public const string WhtCreditMissingNote =
         "การชำระนี้มีหัก ณ ที่จ่าย แต่ไม่พบแถวรอ 50 ทวิ ในทะเบียนเครดิตภาษีที่ถูกหัก — ตรวจที่ ภาษี → ภาษีถูกหัก ณ ที่จ่าย (เพิ่มรายการรอหนังสือรับรองเอง)";
+
+    /// <summary>การชำระหลายใบที่ระบบไม่ส่งใบเสร็จเอง (ทางเข้าที่ไม่ใช่ผู้ให้บริการรับชำระ · ยังไม่มีใบเสร็จรายใบ) — ตัวเดียว (เทสต์อ้างได้)</summary>
+    public const string AllocationNoAutoSendBlock =
+        "การชำระนี้กระจายไปหลายเอกสาร — ระบบไม่ออก/ส่งใบเสร็จอัตโนมัติ (ยอดต่อใบเป็นการจัดสรร) · ออกใบเสร็จที่เอกสารแต่ละใบแล้วส่งเอง";
 
     public static Plan Decide(Settings s, Facts f)
     {
@@ -254,7 +263,15 @@ public static class PostPaymentAutomationPolicy
                 ? "ยังไม่ได้ส่งใบเสร็จ — " + f.EmailOptOutReason + " · แก้แล้วกด \"ลองใหม่\" หรือส่งอีเมลที่ใบเสร็จ"
                 : "ลูกค้าไม่มีอีเมลที่ใช้ได้ — ยังไม่ได้ส่งใบเสร็จ · เติมอีเมลที่ผู้ติดต่อ (หรือผูก LINE ที่แท็บช่องทางแจ้งเตือนแล้วติ๊กเรื่อง “ใบเสร็จ”) แล้วกด \"ลองใหม่\" หรือส่งอีเมลที่ใบเสร็จ");
         else if (f.AllocationCount > 0)
-            blocked.Add("การชำระนี้กระจายไปหลายเอกสาร — ระบบไม่ออก/ส่งใบเสร็จอัตโนมัติ (ยอดต่อใบเป็นการจัดสรร) · ออกใบเสร็จที่เอกสารแต่ละใบแล้วส่งเอง");
+        {
+            if (f.Source != PaymentEntrySource.Gateway || f.AllocationReceiptsReady == 0)
+                blocked.Add(AllocationNoAutoSendBlock);
+            else if (f.AllocationReceiptDraft)
+                blocked.Add("ใบเสร็จรายใบของการชำระนี้บางใบยังเป็นฉบับร่าง — อนุมัติใบเสร็จก่อน แล้วกด \"ลองใหม่\" (§86/4 ห้ามส่งเลข DRAFT)");
+            else if (f.AllocationReceiptCarriesVat && f.BuyerBlockingFields is { Count: > 0 })
+                blocked.Add("ใบเสร็จรับเงิน/ใบกำกับภาษี ขาดข้อมูลผู้ซื้อ (" + string.Join(", ", f.BuyerBlockingFields) + ") — ยังไม่ส่งอัตโนมัติ · แก้ข้อมูลผู้ติดต่อแล้วกด \"ลองใหม่\"");
+            else AddSends(steps, emailOk, lineOk, Step.EmailReceipt, f.EtaxEmailRequired);
+        }
         else if (f.HasReceipt)
         {
             if (f.ReceiptIsDraft)

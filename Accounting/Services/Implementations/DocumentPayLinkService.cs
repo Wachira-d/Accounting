@@ -484,6 +484,8 @@ public partial class DocumentPayLinkService : IDocumentPayLinkService
 
     public async Task<PublicDocumentPayView?> PublicViewAsync(Guid companyId, string token, CancellationToken ct = default)
     {
+        // ฝ่ายค้าน 267-P5 LOW-9: หน้าเดียวถามชุดใบของใบวางบิลหลายรอบ (ยอด · ด่านจ่าย ×2) ⇒ จำผลไว้ช่วงสั้นของคำขอเปิดหน้านี้ (เส้นสาธารณะ — ไม่ยิง query ซ้ำหลายร้อย)
+        BeginPlanMemo();
         // ค้นด้วย hash (ฐานไม่มี token ตรง) แล้วยืนยันซ้ำแบบเวลาคงที่ · รูปผิด = "ไม่พบ" เหมือน token ผิด
         if (!DocumentPayLinkPolicy.LooksValid(token)) return null;
         var d = await LoadDocAsync(companyId, null, DocumentPayLinkPolicy.TokenHash(token), ct);

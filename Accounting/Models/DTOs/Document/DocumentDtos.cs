@@ -1790,7 +1790,10 @@ public record CreatePaymentRequest(
     string? ExcessNote = null,
     /// <summary>ฝ่ายค้านรอบ 258 M2: เงินส่วนเกินที่หน้าจอแสดงให้ผู้ใช้ยืนยัน — เซิร์ฟเวอร์คิดใหม่จากคำขอแล้วต้องตรงกัน ไม่งั้นปฏิเสธ
     /// (<c>PaymentExcessPlan.ExpectedExcessMismatch</c>) · null = ไม่ตรวจ (API เดิม)</summary>
-    decimal? ExpectedExcess = null);
+    decimal? ExpectedExcess = null,
+    /// <summary>ฝ่ายค้าน 267-P5 MED-5: เส้นหลายใบ — ผู้เรียกจะเรียก <c>AfterPaymentRecordedAsync</c> พร้อมทางเข้าจริงเอง (งานหลังรับชำระ + แจ้งผู้ซื้อคู่ค้า) ·
+    /// false (ค่าเดิม) = เส้นหลายใบแจ้งผู้ซื้อคู่ค้าเองแบบบันทึกมือ</summary>
+    bool AfterCommitByCaller = false);
 
 /// <summary>บรรทัดปรับหนึ่งบรรทัดของการชำระ — <c>Amount</c> มีเครื่องหมาย: + = จ่ายเกินยอดหนี้ด้วยรายการนี้ (Dr ผังนี้) ·
 /// − = ปิดหนี้โดยไม่ต้องจ่ายเงิน (Cr ผังนี้)</summary>

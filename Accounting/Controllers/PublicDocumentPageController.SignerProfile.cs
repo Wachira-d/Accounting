@@ -36,10 +36,15 @@ public partial class PublicDocumentPageController
     {
         NoStore();
         if (await OverIpAsync("signer-login", failClosed: true, ct)) return TooMany<object>();
-        var url = Profiles == null ? null : await Profiles.LoginUrlAsync(companyId, token, ct);
-        return url == null
-            ? NotFound(new ApiResponse<object>(false, null, CustomerDocPage.NotFoundMessage))
-            : Ok(new ApiResponse<object>(true, new { url }, null));
+        var start = Profiles == null ? null : await Profiles.LoginUrlAsync(companyId, token, ct);
+        if (start == null) return NotFound(new ApiResponse<object>(false, null, CustomerDocPage.NotFoundMessage));
+        // ฝ่ายค้าน 267-P5 LOW-1: ผูก state กับเบราว์เซอร์นี้ฝั่งเซิร์ฟเวอร์ (cookie HttpOnly · SameSite=Lax — กลับจาก LINE เป็น top-level ยังส่ง) — กัน login CSRF
+        Response.Cookies.Append(CustomerSignerProfileRule.NonceCookie, start.BrowserNonce, new Microsoft.AspNetCore.Http.CookieOptions
+        {
+            HttpOnly = true, Secure = true, SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Lax,
+            Path = "/api/companies/", MaxAge = TimeSpan.FromMinutes(CustomerSignerProfileRule.StateTtlMinutes),
+        });
+        return Ok(new ApiResponse<object>(true, new { url = start.Url }, null));
     }
 
     /// <summary>LINE คืน code/state มาที่หน้าเอกสาร ⇒ ตั๋วผู้ลงนาม (30 นาที · ไม่เก็บในฐาน) + ค่าที่จำไว้ (ถ้ายินยอมไว้) — <b>ไม่มีช่องรับรอง</b></summary>
@@ -49,7 +54,9 @@ public partial class PublicDocumentPageController
         NoStore();
         if (await OverIpAsync("signer-login", failClosed: true, ct)) return TooMany<object>();
         if (Profiles == null) return NotFound(new ApiResponse<object>(false, null, CustomerDocPage.NotFoundMessage));
-        var r = await Profiles.CompleteLoginAsync(companyId, token, request?.Code, request?.State, ct);
+        var r = await Profiles.CompleteLoginAsync(companyId, token, request?.Code, request?.State,
+            Request.Cookies.TryGetValue(CustomerSignerProfileRule.NonceCookie, out var nonce) ? nonce : null, ct);
+        Response.Cookies.Delete(CustomerSignerProfileRule.NonceCookie, new Microsoft.AspNetCore.Http.CookieOptions { Path = "/api/companies/" });
         return r.Ticket == null
             ? BadRequest(new ApiResponse<object>(false, null, r.Error))
             : Ok(new ApiResponse<object>(true, new { ticket = r.Ticket, prefill = r.Prefill }, null));

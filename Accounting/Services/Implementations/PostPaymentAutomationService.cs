@@ -295,6 +295,21 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         return run;
     }
 
+    /// <summary>ฝ่ายค้าน 267-P5 MED-5: ขั้นย่อยต่อใบเสร็จ (ใบเสร็จรายใบของการชำระหลายใบ) — จำใน StepsDone ด้วยกุญแจ "{ขั้น}:{id}"</summary>
+    private static bool DoneToken(PostPaymentAutomationRun run, string token)
+        => (run.StepsDone ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Contains(token);
+
+    private async Task<PostPaymentAutomationRun> MarkTokenAsync(Guid runId, string token, CancellationToken ct)
+    {
+        var run = await ReloadAsync(runId, ct);
+        run.StepsDone = string.IsNullOrEmpty(run.StepsDone) ? token : run.StepsDone + "," + token;
+        run.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return run;
+    }
+
+    private sealed record AllocationReceipt(Guid Id, bool Draft, bool CarriesVat);
+
     private async Task<PostPaymentAutomationRun> ReloadAsync(Guid runId, CancellationToken ct)
         => _db.PostPaymentAutomationRuns.Local.FirstOrDefault(r => r.Id == runId)
            ?? await _db.PostPaymentAutomationRuns.FirstAsync(r => r.Id == runId, ct);
@@ -335,6 +350,15 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             .FirstOrDefaultAsync(ct);
         var allocations = await _db.PaymentAllocations.AsNoTracking()
             .CountAsync(a => a.PaymentId == payment.Id && a.CompanyId == cid && !a.IsDeleted, ct);
+        // ฝ่ายค้าน 267-P5 MED-5: ใบเสร็จรายใบของการชำระหลายใบ (เส้นหลายใบออกไว้ตอนบันทึก — TryAutoIssueAllocationReceiptAsync) — ส่งทุกใบ ไม่ออกเอง
+        var allocationReceipts = allocations == 0 ? new List<AllocationReceipt>()
+            : await _db.Documents.AsNoTracking()
+                .Where(r => r.CompanyId == cid && !r.IsDeleted && r.SettlementPaymentId == payment.Id && r.IsSettlementReceipt
+                    && r.Status != DocumentStatus.Voided && r.Status != DocumentStatus.Rejected)
+                .OrderBy(r => r.DocumentNumber)
+                .Select(r => new AllocationReceipt(r.Id, r.Status == DocumentStatus.Draft || r.Status == DocumentStatus.WaitingApproval,
+                    r.IsTaxInvoiceByLaw == true || r.VatAmount > 0m))
+                .ToListAsync(ct);
         var paymentCount = await _db.Payments.AsNoTracking()
             .CountAsync(p => (p.MovedToDocumentId ?? p.DocumentId) == doc.Id && p.CompanyId == cid && !p.IsDeleted, ct);   // ฝ่ายค้าน LOW-3 (PaymentEffectiveDocument)
         var fullyPaid = run.FullyPaid;   // ฝ่ายค้าน N: ค่า ณ ตอนเข้าคิว
@@ -365,7 +389,8 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         var etaxCfg = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == cid)
             .Select(x => new { x.EtaxEnabled, x.EtaxMode }).FirstOrDefaultAsync(ct);
         var etaxEmailRequired = etaxCfg != null && EtaxDeliveryRouter.ByEmailActive(etaxCfg.EtaxEnabled, etaxCfg.EtaxMode)
-            && (receipt != null ? (receipt.IsTaxInvoiceByLaw == true || receipt.VatAmount > 0m)
+            && (allocationReceipts.Count > 0 ? allocationReceipts.Any(r => r.CarriesVat)
+                : receipt != null ? (receipt.IsTaxInvoiceByLaw == true || receipt.VatAmount > 0m)
                 : servesAsReceipt ? doc.VatAmount > 0m : mayCarryVat);
         var plan = PostPaymentAutomationPolicy.Decide(settings, new PostPaymentAutomationPolicy.Facts(
             SaleSide: saleSide, SourceStatus: doc.Status, PaymentVoided: payment.IsDeleted,
@@ -381,7 +406,10 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
             // ฝ่ายค้าน HIGH-2/MED-4: ไม่ส่งอัตโนมัติชนะทุกชั้น (รวมตาราง/รายการประจำที่ตั้ง On) แต่ห้ามแค่ขั้นส่งอีเมล — ออกใบเสร็จยังเดินตามค่าตั้ง
             AutoSendBlockedReason: AutopilotSettingsResolver.AutoSendBlock(contact?.AutoSendDisabled == true),
             LineReceiptEndpoints: lineEndpoints.Count,
-            EtaxEmailRequired: etaxEmailRequired));
+            EtaxEmailRequired: etaxEmailRequired,
+            AllocationReceiptsReady: allocationReceipts.Count,
+            AllocationReceiptDraft: allocationReceipts.Any(r => r.Draft),
+            AllocationReceiptCarriesVat: allocationReceipts.Any(r => r.CarriesVat)));
         if (plan.Skipped != null)
             return new RunResult(PostPaymentAutomationPolicy.StatusSkipped, plan.Skipped, doc.DocumentNumber, receipt?.Id);
 
@@ -417,6 +445,27 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
                         blocked.Add("ออกใบเสร็จอัตโนมัติไม่ได้: " + ex.Message);
                         halt = true;
                     }
+                    break;
+                case PostPaymentAutomationPolicy.Step.EmailReceipt when allocationReceipts.Count > 0:
+                    // ใบเสร็จรายใบ — จำทีละใบ (ลองใหม่ไม่ส่งซ้ำใบที่ส่งแล้ว)
+                    foreach (var ar in allocationReceipts)
+                    {
+                        var token = $"{step}:{ar.Id:N}";
+                        if (DoneToken(run, token)) continue;
+                        var sentA = await SendReceiptAsync(cid, ar.Id, payment.Id, receiptDelivery, ct);
+                        if (sentA.Refusal is { } etaxBlockA) { blocked.Add(etaxBlockA); halt = true; break; }
+                        run = await MarkTokenAsync(run.Id, token, ct);
+                        done.Add("ส่งใบเสร็จถึง " + sentA.To);
+                    }
+                    if (!halt) run = await MarkDoneAsync(run.Id, step, receiptId, ct);
+                    break;
+                case PostPaymentAutomationPolicy.Step.LineReceipt when allocationReceipts.Count > 0:
+                    var queuedAll = 0;
+                    foreach (var ar in allocationReceipts)
+                        queuedAll += await EnqueueReceiptLineAsync(cid, ar.Id, doc.ContactId, lineEndpoints, ct,
+                            customerInitiated: PostPaymentAutomationPolicy.ParseSource(run.Source) == PaymentEntrySource.Gateway);
+                    run = await MarkDoneAsync(run.Id, step, receiptId, ct);
+                    done.Add(queuedAll > 0 ? $"เข้าคิวส่งใบเสร็จ {allocationReceipts.Count} ใบทาง LINE (สถานะการส่งดูที่ ตารางส่ง › คิว LINE)" : "ใบเสร็จเหล่านี้เข้าคิว LINE ไปแล้ว (ไม่ส่งซ้ำ)");
                     break;
                 case PostPaymentAutomationPolicy.Step.EmailReceipt:
                     if (receiptId is not Guid rid) { blocked.Add("ไม่พบใบเสร็จของการชำระนี้ — ยังไม่ได้ส่งอีเมล"); halt = true; break; }

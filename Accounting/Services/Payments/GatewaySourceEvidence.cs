@@ -50,10 +50,18 @@ public static class GatewaySourceEvidence
                     .Select(p => new SourceRecordedPayment(p.Amount, p.PaidAt ?? p.CreatedAt, p.Reference))
                     .ToListAsync(ct);
             case PaymentSourceKind.Document:
+            {
+                // ฝ่ายค้าน 267-P5 LOW-7: ใบวางบิล — การชำระที่บันทึกไว้แล้วอยู่ที่ใบแจ้งหนี้ในบิล (ไม่ใช่ที่ใบวางบิล) ⇒ ดูการชำระ/การจัดสรรของใบในบิลด้วย
+                var targets = new List<Guid> { intent.SourceId };
+                if ((await Accounting.Helpers.BillingNoteChildren.MapAsync(db, companyId, targets, ct)).TryGetValue(intent.SourceId, out var kids))
+                    targets.AddRange(kids);
                 return await db.Payments.AsNoTracking()
-                    .Where(p => p.CompanyId == companyId && p.DocumentId == intent.SourceId && !p.IsDeleted && p.PaymentIntentId != intent.Id)
+                    .Where(p => p.CompanyId == companyId && !p.IsDeleted && p.PaymentIntentId != intent.Id
+                        && (targets.Contains(p.DocumentId)
+                            || db.PaymentAllocations.Any(a => a.PaymentId == p.Id && a.CompanyId == companyId && !a.IsDeleted && targets.Contains(a.DocumentId))))
                     .Select(p => new SourceRecordedPayment(p.Amount, p.PaymentDate, p.Reference))
                     .ToListAsync(ct);
+            }
             case PaymentSourceKind.SiteBooking:
             {
                 // รอบ 205 W2 (R-08): ยอดรับบนการจอง + ใบมัดจำที่ออกแล้วของเลขการจองนี้ (พนักงานบันทึกมือ/ออกใบเองหลังเงินเข้า)
