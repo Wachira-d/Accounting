@@ -80,8 +80,16 @@ public class Pp30Round269SecondReviewDbTests
         TaxReportResponse draft;
         using (var c = DbTestDatabase.TryCreateContext()!)
             draft = await new TaxService(c).GenerateTaxReportAsync(s.CompanyId, new CreateTaxReportRequest(TaxType.VAT, ThisMonth.Year, ThisMonth.Month));
+        // ใบที่มาช้าในกรอบ §82/3 ระบบใส่เป็นบรรทัดรอ (ยังไม่ติ๊กใช้) ให้แล้ว ⇒ ผู้ใช้ติ๊ก "ใช้" · ถ้าไม่มีบรรทัดรอ ⇒ กด "ดึงเอกสาร" (งานมือทั้งสองแบบต้องไม่หาย)
+        var pending = (await LoadAsync(s.CompanyId, draft.Id)).Lines.FirstOrDefault(l => l.DocumentId == pi.Id);
         using (var c = DbTestDatabase.TryCreateContext()!)
-            await new TaxService(c).PullDocumentIntoReportAsync(s.CompanyId, draft.Id, pi.Id, Guid.NewGuid(), "puller@test");
+        {
+            if (pending != null)
+                await new TaxService(c).UpdateTaxReportAsync(s.CompanyId, draft.Id,
+                    new UpdateTaxReportRequest(null, new List<UpdateTaxReportLineRequest> { new(pending.Id, null, null, null, null, Excluded: false) }));
+            else
+                await new TaxService(c).PullDocumentIntoReportAsync(s.CompanyId, draft.Id, pi.Id, Guid.NewGuid(), "puller@test");
+        }
         Assert.Equal(7_000m, (await LoadAsync(s.CompanyId, draft.Id)).InputVat);
 
         // เปิดหน้า tax.html = AutoRefresh — ต้องไม่ลบ/สร้างทับร่างเดิม
