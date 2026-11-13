@@ -20046,6 +20046,34 @@ REVIEWER_CASES += [
 ]
 
 
+# ── รอบ 269 (ผู้ใช้รายงาน ก.ย. 2569: ช่อง 7 "ส่งออก §80/1" 1,235,494.24 ทั้งที่ไม่มีขาย 0%) — คำตัดสิน 269-1-1…4 · DOCUMENT_FLOW §5 ──
+# ช่องยอดขาย 5/7/8 ของ ภ.พ.30 นับเฉพาะใบที่ OutputVatOwnership.SalesBoxOwner ตัดสินว่าถือการขาย (ชุดเดียวกับแถว §87) ในงวดของวันที่ VAT ถึงกำหนด ·
+# เดิมบวก Pp30SalesClassifier.Split ของทุกใบฝั่งขาย ⇒ ใบเสร็จรับชำระ/ใบวางบิล/ใบส่งของ/ใบเสนอราคา/ใบแจ้งหนี้ที่ถูกแทน กลายเป็นยอดขาย 0%/ยกเว้น
+_R269_WHY = "รอบ 269 (269-1-1…4): "
+RULES += [
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateVatReport",
+         must=["OutputVatOwnership.SalesBoxOwner(", "Pp30SalesClassifier.Split("],
+         must_re=[r"salesOwner\s+is\s+\{\s*Owns:\s*true\s*,\s*VatDueDate:\s*DateTime\s+due\s*\}\s*&&\s*due\s*>=\s*startDate\s*&&\s*due\s*<\s*endStampExclusive",
+                  r"if\s*\(\s*countSales\s*\|\|\s*countPurchase\s*\)"],
+         before=[("OutputVatOwnership.SalesBoxOwner(", "Pp30SalesClassifier.Split(")],
+         why=_R269_WHY + "ช่อง 7/8 ฝั่งขายนับเฉพาะใบที่ถือการขาย (ตัวตัดสินเดียวกับแถว §87) — ห้ามกลับไปนับทุกใบที่มีบรรทัด VatRate 0/-1"),
+    dict(file="Services/Implementations/TaxService.cs", method="GetPp30SalesBoxReviewAsync",
+         must=["ComputeVatReportAsync(", "Pp30SalesBoxReview.Evaluate(", "TaxFilingLockPolicy.DeclaredOrFiled("],
+         forbid=["SaveChangesAsync("],
+         why=_R269_WHY + "รายงานที่บันทึกไว้ (หลักการ #9): ทบทวนอ่านอย่างเดียว เทียบการคำนวณสดตัวเดียวกับไฟล์ยื่น · ยื่นแล้ว ⇒ พิจารณายื่นเพิ่มเติม ไม่แก้เอง"),
+]
+REVIEWER_CASES += [
+    # 269-1-1: ถอดเงื่อนไขเจ้าของการขาย (นับทุกใบฝั่งขายเหมือนเดิม) ⇒ ต้องฟ้อง
+    ("R269a", "GenerateVatReport",
+     "salesOwner is { Owns: true, VatDueDate: DateTime due } && due >= startDate && due < endStampExclusive", "true", True),
+    # 269-1-1: แยกยอดโดยไม่ผ่านด่านนับ ⇒ ต้องฟ้อง
+    ("R269b", "GenerateVatReport", "if (countSales || countPurchase)", "if (true)", True),
+    # 269-1-3: ทบทวนแล้วเขียนทับรายงานเอง ⇒ ต้องฟ้อง
+    ("R269c", "GetPp30SalesBoxReviewAsync", "            rows.Add(new Pp30SalesBoxReviewRow(",
+     "            await _db.SaveChangesAsync();\n            rows.Add(new Pp30SalesBoxReviewRow(", True),
+]
+
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
