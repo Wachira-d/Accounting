@@ -147,6 +147,7 @@ public class DuplicateSaleDbTests
 
         var res = await PreviewThenResolveAsync(s.CompanyId, cash.Id, inv.Id, DuplicateSaleKeep.CashSale, nameof(DuplicateSaleAction.VoidInvoice));
         Assert.Equal(inv.Id, res.VoidedDocumentId);
+        Assert.False(res.Notices.Any(n => n.Contains(DuplicateSalePolicy.RuleCode, StringComparison.Ordinal)), string.Join(" | ", res.Notices));   // ร่องรอยบันทึกสำเร็จ (ไม่มีข้อความ "บันทึกร่องรอยไม่สำเร็จ")
 
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(DocumentStatus.Voided, (await DocAsync(check, inv.Id)).Status);
@@ -345,7 +346,7 @@ public class DuplicateSaleDbTests
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
-        var s = await SeedAsync(db, customerName: "บริษัท <b>ลูกค้า</b> ก จำกัด");
+        var s = await SeedAsync(db, customerName: "บริษัท <script>x()</script> ก จำกัด");
         var inv = await InvoiceAsync(db, s, s.CustomerId, 400m);
         var (pay, alloc) = await LateAllocationAsync(db, s, inv, 400m);
         var docsBefore = await db.Documents.AsNoTracking().CountAsync(d => d.CompanyId == s.CompanyId);
@@ -356,7 +357,8 @@ public class DuplicateSaleDbTests
         Assert.Contains("ไม่ใช่ใบเสร็จรับเงินหรือใบกำกับภาษี", html, StringComparison.Ordinal);
         Assert.Contains(System.Net.WebUtility.HtmlEncode("ADV-" + pay.PaymentNumber + "/A1"), html, StringComparison.Ordinal);
         Assert.Contains(inv.DocumentNumber, html, StringComparison.Ordinal);
-        Assert.DoesNotContain("<b>ลูกค้า</b>", html, StringComparison.Ordinal);   // ชื่อผู้ติดต่อผ่าน HtmlEncode (กฎเหล็ก #4 C)
+        Assert.DoesNotContain("<script>", html, StringComparison.Ordinal);
+        Assert.Contains("&lt;script&gt;", html, StringComparison.Ordinal);   // ชื่อผู้ติดต่อผ่าน HtmlEncode (กฎเหล็ก #4 C)
         // ไม่ใช่แถวเอกสาร ⇒ ไม่มีเลขชุด/ไม่เข้า ภ.พ.30 โดยโครงสร้าง
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(docsBefore, await check.Documents.AsNoTracking().CountAsync(d => d.CompanyId == s.CompanyId));

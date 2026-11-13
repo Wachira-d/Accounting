@@ -163,7 +163,7 @@ public class DuplicateSaleService : IDuplicateSaleService
                     RuleCode = DuplicateSalePolicy.RuleCode,
                     DuplicateSalePolicy.LegalReference,
                     Keep = v.Keep.ToString(),
-                    Action = v.Action.ToString(),
+                    Route = v.Action.ToString(),   // ห้ามชื่อ "Action" — ชนกับ "action" แบบไม่สนตัวพิมพ์ตอนตัวปกปิดข้อมูลอ่าน JSON กลับ (ร่องรอยหายเงียบ)
                     CashSale = snap.Cash.Number,
                     Invoice = snap.Invoice.Number,
                     snap.Cash.TotalAmount,
@@ -178,7 +178,7 @@ public class DuplicateSaleService : IDuplicateSaleService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _db.ChangeTracker.Clear();
-            return $"รายการสำเร็จแล้ว แต่บันทึกร่องรอย {DuplicateSalePolicy.RuleCode} ไม่สำเร็จ ({ex.GetType().Name}) — ร่องรอยของการยกเลิก/รับชำระเดิมยังอยู่ครบ · แจ้งผู้ดูแลระบบ";
+            return $"รายการสำเร็จแล้ว แต่บันทึกร่องรอย {DuplicateSalePolicy.RuleCode} ไม่สำเร็จ ({ex.GetType().Name}: {ex.GetBaseException().Message}) — ร่องรอยของการยกเลิก/รับชำระเดิมยังอยู่ครบ · แจ้งผู้ดูแลระบบ";
         }
     }
 
