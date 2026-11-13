@@ -273,6 +273,8 @@
       try { r = await fetch(linkBase + encodeURIComponent(relId) + '/page-link', { method: 'POST' }); j = await r.json().catch(() => null); }
       catch { msg.className = 'msg bad'; msg.textContent = A.offline || ''; btn.disabled = false; return; }
       const path = r.ok && j && j.success && j.data ? safePath(j.data.path) : null;
+      // ฝ่ายค้าน MED-2: ใบนั้นยังไม่มีลิงก์ที่ใช้ได้ ⇒ เซิร์ฟเวอร์บันทึกคำขอถึงผู้ขายแล้ว (ข้อความจากเซิร์ฟเวอร์) — ไม่ใช่ความผิดพลาด
+      if (!path && r.ok && j && j.success) { msg.className = 'msg'; msg.textContent = j.message || ''; return; }
       if (!path) { msg.className = 'msg bad'; msg.textContent = (j && j.message) || A.failed || ''; btn.disabled = false; return; }
       location.href = path;
     }

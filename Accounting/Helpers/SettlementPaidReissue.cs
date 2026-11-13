@@ -391,6 +391,9 @@ public static class SettlementPaidReissue
         // รอบ 250 WP-02 (ฝ่ายค้าน ข้อ 1): ใบแทน = การขายเดียวกัน ⇒ รายการประจำที่สร้างใบตามไป (ชั้น "รายการประจำ" ของค่าตั้งงานหลังรับชำระ) ·
         // หมายเหตุ: AutoSendRuleId ไม่ตามไป (อยู่ใน NotCarried) ⇒ ชั้น "ตารางส่ง" หายบนใบแทน — ใบแทนใช้ชั้นรายการประจำ › ผู้ติดต่อ › บริษัท
         nameof(Document.RecurringTransactionId),
+        // รอบ 267 P4 ฝ่ายค้าน MED-3 (267-1-44): ใบแทน = ธุรกรรมเดิมฉบับแก้ ⇒ ค่าตั้ง "ใบเสร็จอัตโนมัติหลังรับชำระ" ของใบเดิมตามไป (null เป็น null ·
+        // ผู้ขายตั้ง "ปิด" ไว้ ใบแทนต้องไม่ส่งใบเสร็จถึงลูกค้าเอง) · โคลน/แปลง/ใบลูก ไม่สืบทอด (ทางสร้างเหล่านั้นไม่ส่งสองช่องนี้)
+        nameof(Document.PostPayEmailReceipt), nameof(Document.PostPayIncludePartial),
     };
 
     /// <summary>ช่องของเอกสารที่ "ไม่ตามไป" — ตัวตน/เวลา/เลข · สถานะ (ตั้งด้วย <see cref="ReplacementStatus"/>) · หลักฐานของลูกค้าเดิม (ลายเซ็นรับของ ·
@@ -447,9 +450,6 @@ public static class SettlementPaidReissue
         // รอบ 252 WP-12A: โหมด/ผลแปลงใบเสนอราคาอัตโนมัติเป็นของใบเดิม (ใบแทนไม่แปลงซ้ำเอง — ทางปลอดภัย)
         nameof(Document.QuotationAcceptAutopilot), nameof(Document.QuotationAutopilotAt), nameof(Document.QuotationAutopilotOutcome),
         nameof(Document.QuotationAutopilotMessage), nameof(Document.QuotationAutopilotChildId),
-        // รอบ 267 P4 (267-1-44): ค่าตั้ง "ใบเสร็จอัตโนมัติหลังรับชำระ" ต่อใบ เป็นเจตนาของใบนั้น — ไม่สืบทอดไปใบลูก/โคลน/ใบแทน
-        // (ใบแทน = ตามค่าตั้งของชั้นถัดไป · ตั้งใหม่ได้จากแผงลิงก์ชำระของใบแทน)
-        nameof(Document.PostPayEmailReceipt), nameof(Document.PostPayIncludePartial),
     };
 
     /// <summary>ช่องของบรรทัดที่ตามไป — ทุกอย่างของรายการ ยกเว้นตัวตน/เวลา/ใบแม่ และ feedback AI ของผังบัญชี (สองบรรทัดชี้แถวเดียว)</summary>

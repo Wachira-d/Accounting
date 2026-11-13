@@ -612,21 +612,18 @@ public class PaymentGatewayController : ControllerBase
             var status = await _db.PaymentIntents.AsNoTracking().Where(i => i.Id == intentId && i.CompanyId == companyId)
                 .Select(i => i.Status).FirstAsync(ct);
             if (!PaymentIntentPolicy.IsOpen(status)) { notOpen = true; return; }
+            // รอบ 267 P4 ฝ่ายค้าน LOW-2 (267-1-45): ข้อความถึงลูกค้าเข้า ApplyChargeAsync — ลงธุรกรรมเดียวกับการปฏิเสธ + ประวัติของรายการ ·
+            // เหตุผลภายใน (reason) ไม่ถูกส่งออกหน้าเอกสาร · ว่าง = ข้อความกลาง
             updated = await _intents.ApplyChargeAsync(intentId,
                 new ProviderCharge(
                     ProviderRef: intent.ProviderRef ?? $"slip:{intentId:N}",
                     Status: PaymentIntentStatus.Failed,
-                    RawStatus: "slip_rejected",
+                    RawStatus: CustomerDocPageAfterPay.SlipRejectedCode,
                     Amount: intent.Amount,
-                    FailureCode: "slip_rejected",
+                    FailureCode: CustomerDocPageAfterPay.SlipRejectedCode,
                     FailureMessage: reason.Length > 300 ? reason[..300] : reason),
-                PaymentEventSource.Manual, $"{actor} · {reason}", ct);
-            // รอบ 267 P4 (267-1-45): เหตุที่ลูกค้าเห็นบนหน้าเอกสาร — เขียนใต้ล็อกเดียวกับการปฏิเสธ · เฉพาะรายการที่ปฏิเสธสำเร็จ (สถานะ Failed) ·
-            // ว่าง = null (หน้าเอกสารใช้ข้อความกลาง — เหตุผลภายในด้านบนไม่ถูกส่งออก)
-            var customerNote = CustomerDocPageAfterPay.NormalizeRejectReason(req.CustomerMessage);
-            if (updated is { Status: PaymentIntentStatus.Failed })
-                await _db.PaymentIntents.Where(i => i.Id == intentId && i.CompanyId == companyId && i.Status == PaymentIntentStatus.Failed)
-                    .ExecuteUpdateAsync(x => x.SetProperty(i => i.CustomerVisibleRejectReason, customerNote), ct);
+                PaymentEventSource.Manual, $"{actor} · {reason}", ct,
+                customerVisibleRejectReason: CustomerDocPageAfterPay.NormalizeRejectReason(req.CustomerMessage));
         }, null, companyId, ct);
         if (!ran)
             return Conflict(new ApiResponse<IntentResponse>(false, null, "กำลังมีผู้ยืนยัน/ปฏิเสธรายการนี้อยู่ — รอสักครู่แล้วโหลดหน้าใหม่"));
