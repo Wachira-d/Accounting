@@ -296,6 +296,11 @@ public partial class TaxService
                 rows.Add(Row(W, "ภาษีขาย (Output VAT)", Round2(report.OutputVat)));
                 rows.Add(Row(W, "ภาษีซื้อ (Input VAT)", Round2(report.InputVat)));
                 rows.Add(Row(W, "ภาษีสุทธิ", Round2(report.NetVat)));
+                // รอบ 269 M3 — ยอดตามช่องของแบบ ภ.พ.30 ทางการ (เลข/ชื่อ/สูตรจาก Helpers/Pp30FormBoxes ตัวเดียวกับ PDF)
+                if (report.TaxType == TaxType.VAT)
+                    foreach (var (box, amount) in Accounting.Helpers.Pp30FormBoxes.Figures(
+                                 (report.Lines ?? new List<TaxReportLine>()).Select(l => (l.IncomeTypeCode, l.IncomeAmount, l.IsExcluded)), report.OutputVat, report.InputVat, report.NetVat))
+                        rows.Add(Row(W, Accounting.Helpers.Pp30FormBoxes.Label(box), Round2(amount)));
                 break;
         }
         return rows;

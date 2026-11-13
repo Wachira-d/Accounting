@@ -67,7 +67,7 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<List<CitRecomputeReviewRow>>(true, result));
     }
 
-    /// <summary>รอบ 269 — ทบทวนช่อง 7 (0% §80/1) / ช่อง 8 (ยกเว้น §81) ของ ภ.พ.30 ที่บันทึกไว้ เทียบการคำนวณสด (เดิมนับใบเสร็จรับชำระ/ใบวางบิล/ใบส่งของ/
+    /// <summary>รอบ 269 — ทบทวนยอดขาย 0% (§80/1) / ยกเว้น (§81) ของ ภ.พ.30 ที่บันทึกไว้ เทียบการคำนวณสด (เดิมนับใบเสร็จรับชำระ/ใบวางบิล/ใบส่งของ/
     /// ใบเสนอราคาเป็นยอดขาย 0%) · อ่านอย่างเดียว · ร่าง ⇒ "สร้างใหม่" · ยื่นแล้ว ⇒ พิจารณายื่น ภ.พ.30 เพิ่มเติม</summary>
     [HttpGet("pp30-sales-box-review")]
     public async Task<ActionResult<ApiResponse<List<Pp30SalesBoxReviewRow>>>> GetPp30SalesBoxReview(Guid companyId)
@@ -75,7 +75,7 @@ public class TaxController : ControllerBase
         if (await RequireTaxAsync(companyId, "ดูรายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
         var result = await _taxService.GetPp30SalesBoxReviewAsync(companyId);
         return Ok(new ApiResponse<List<Pp30SalesBoxReviewRow>>(true, result,
-            result.Count == 0 ? "ช่อง 7/8 ของรายงานที่บันทึกไว้ตรงกับการคำนวณปัจจุบัน" : $"พบ {result.Count} งวดที่ช่อง 7/8 ต้องตรวจ"));
+            result.Count == 0 ? "ยอดขาย 0%/ยกเว้นของรายงานที่บันทึกไว้ตรงกับการคำนวณปัจจุบัน" : $"พบ {result.Count} งวดที่ยอดขาย 0%/ยกเว้นต้องตรวจ"));
     }
 
     [HttpGet("{reportId:guid}")]

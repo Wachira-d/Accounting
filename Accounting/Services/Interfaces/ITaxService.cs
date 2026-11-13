@@ -13,7 +13,7 @@ public interface ITaxService
     Task<TaxReportResponse> RegenerateTaxReportAsync(Guid companyId, Guid reportId, Guid? actorId = null, string? actorEmail = null);
     /// <summary>ทบทวนรายงาน ภ.ง.ด.50 ที่บันทึกไว้ทุกปีเทียบยอดสด (อ่านอย่างเดียว · ทีม O 2026-10-22) — เฉพาะปีที่ยอดต่าง เมื่อ <paramref name="onlyDiffering"/></summary>
     Task<List<CitRecomputeReviewRow>> GetCitRecomputeReviewAsync(Guid companyId, bool onlyDiffering = true);
-    /// <summary>รอบ 269 — ทบทวนช่อง 7/8 ของ ภ.พ.30 ที่บันทึกไว้ (อ่านอย่างเดียว)</summary>
+    /// <summary>รอบ 269 — ทบทวนช่อง 0%/ยกเว้น ของ ภ.พ.30 ที่บันทึกไว้ (อ่านอย่างเดียว)</summary>
     Task<List<Pp30SalesBoxReviewRow>> GetPp30SalesBoxReviewAsync(Guid companyId);
     Task DeleteTaxReportAsync(Guid companyId, Guid reportId);
     Task<int> AutoRefreshReportsAsync(Guid companyId, int months = 2);

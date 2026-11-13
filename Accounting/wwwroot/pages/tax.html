@@ -63,7 +63,7 @@
 
     <!-- ทีม O 2026-10-22: ภ.ง.ด.50 ที่บันทึกไว้แต่ยอดสดต่าง (หลังแก้การนับคู่กลับรายการ) — เซิร์ฟเวอร์ตัดสิน หน้าแสดงอย่างเดียว -->
     <div id="citReviewBanner" style="display:none;margin-bottom:12px"></div>
-    <!-- รอบ 269: ภ.พ.30 ที่บันทึกไว้ซึ่งช่อง 7/8 เคยนับใบเสร็จรับชำระ/ใบวางบิล/ใบส่งของเป็นยอดขาย 0% — เซิร์ฟเวอร์ตัดสิน หน้าแสดงอย่างเดียว -->
+    <!-- รอบ 269: ภ.พ.30 ที่บันทึกไว้ซึ่งยอดขาย 0%/ยกเว้นต่างจากการคำนวณปัจจุบัน — เซิร์ฟเวอร์ตัดสิน (สาเหตุ/ป้ายช่อง/ข้อความ) หน้าแสดงอย่างเดียว -->
     <div id="pp30SalesBoxBanner" style="display:none;margin-bottom:12px"></div>
 
     <div id="taxSelectionBar" style="display:none;align-items:center;gap:12px;padding:10px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px">
@@ -481,7 +481,7 @@
         }
       },
 
-      /** รอบ 269 — แถบ "ภ.พ.30 ที่บันทึกไว้ซึ่งช่อง 7/8 ต่างจากการคำนวณปัจจุบัน" (อ่านอย่างเดียว · GET tax/pp30-sales-box-review) ·
+      /** รอบ 269 — แถบ "ภ.พ.30 ที่บันทึกไว้ซึ่งยอดขาย 0%/ยกเว้นต่างจากการคำนวณปัจจุบัน" (อ่านอย่างเดียว · GET tax/pp30-sales-box-review) ·
        *  ข้อความ/งวด พ.ศ./คำแนะนำมาจากเซิร์ฟเวอร์ทั้งหมด · ร่าง ⇒ ปุ่มสร้างใหม่ · ยื่นแล้ว ⇒ บอกให้พิจารณายื่นเพิ่มเติม ไม่มีปุ่มแตะตัวเลข */
       async loadPp30SalesBoxReview() {
         const box = document.getElementById('pp30SalesBoxBanner');
@@ -497,20 +497,21 @@
             const act = x.suggestedAction === 'Regenerate'
               ? `<button class="btn btn-sm btn-warning" onclick="Page.regenerateReport('${Layout.jsArg(x.reportId)}')">สร้างใหม่จากข้อมูลปัจจุบัน</button>`
               : (x.suggestedAction === 'ConsiderAmendedFiling' ? '<b>ยื่นแล้ว — พิจารณายื่น ภ.พ.30 เพิ่มเติม</b>' : '');
-            return `<tr title="${esc(x.message || '')}"><td>${esc(x.periodLabel)}</td><td>${esc(x.status)}</td>`
+            return `<tr><td>${esc(x.periodLabel)}</td><td>${esc(x.status)}</td>`
               + `<td class="text-right">${fmt(x.storedZeroRated)} → ${fmt(x.freshZeroRated)}</td>`
               + `<td class="text-right">${fmt(x.storedExempt)} → ${fmt(x.freshExempt)}</td>`
-              + `<td>${act}</td></tr>`;
+              + `<td>${act}</td></tr>`
+              + `<tr><td colspan="5" style="font-size:12px;color:#92400e">${esc(x.message || '')}</td></tr>`;
           }).join('');
+          const z = esc(rows[0].zeroRatedBoxRef), ex = esc(rows[0].exemptBoxRef);
           box.innerHTML = `<div class="card" style="font-size:13px;line-height:1.7;border-left:4px solid #d97706;background:#fffbeb">
-            <div>⚠️ รายงาน ภ.พ.30 ที่บันทึกไว้ ${rows.length} งวด ช่อง 7 (0% ส่งออก §80/1) / ช่อง 8 (ยกเว้น §81) เคยนับใบที่ไม่ได้ถือการขาย (ใบเสร็จรับชำระ ใบวางบิล ใบส่งของ ใบเสนอราคา) —
-              ภาษีขาย/ภาษีที่ต้องชำระไม่เปลี่ยน แต่ยอดในแบบผิด · ระบบไม่แก้ตัวเลขของรายงานที่ยื่นแล้ว</div>
-            <table class="table" style="margin-top:8px"><thead><tr><th>งวด</th><th>สถานะ</th><th class="text-right">ช่อง 7 (เดิม → ปัจจุบัน)</th><th class="text-right">ช่อง 8 (เดิม → ปัจจุบัน)</th><th></th></tr></thead><tbody>${items}</tbody></table>
+            <div>⚠️ รายงาน ภ.พ.30 ที่บันทึกไว้ ${rows.length} งวด ยอด ${z} (0% §80/1) / ${ex} (ยกเว้น §81) ต่างจากการคำนวณปัจจุบัน — สาเหตุของแต่ละงวดอยู่ใต้แถว · ระบบไม่แก้ตัวเลขของรายงานที่ยื่นแล้ว</div>
+            <table class="table" style="margin-top:8px"><thead><tr><th>งวด</th><th>สถานะ</th><th class="text-right">${z} (เดิม → ปัจจุบัน)</th><th class="text-right">${ex} (เดิม → ปัจจุบัน)</th><th></th></tr></thead><tbody>${items}</tbody></table>
           </div>`;
           box.style.display = '';
         } catch (e) {
           // ไม่ทำให้แท็บพัง แต่ห้ามเงียบ — แถบนี้คือคำเตือนว่าอาจต้องยื่นเพิ่มเติม
-          box.innerHTML = `<div class="card" style="font-size:13px;border-left:4px solid #dc2626">ตรวจช่อง 7/8 ของ ภ.พ.30 ที่บันทึกไว้ไม่สำเร็จ: ${esc(e.message)}</div>`;
+          box.innerHTML = `<div class="card" style="font-size:13px;border-left:4px solid #dc2626">ตรวจยอดขาย 0%/ยกเว้นของ ภ.พ.30 ที่บันทึกไว้ไม่สำเร็จ: ${esc(e.message)}</div>`;
           box.style.display = '';
         }
       },

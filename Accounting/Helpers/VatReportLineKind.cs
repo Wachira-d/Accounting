@@ -13,9 +13,9 @@ public enum VatReportSide
 public enum Pp30SalesBox
 {
     None = 0,       // ไม่ใช่ยอดขาย (ฝั่งซื้อ / เครดิตยกมา / ยอดซื้อยกเว้น)
-    Standard7 = 1,  // ช่อง 5 — ยอดขายที่ต้องเสียภาษี
-    ZeroRated = 2,  // ช่อง 7 — ส่งออก §80/1
-    Exempt = 3,     // ช่อง 8 — ยกเว้น §81
+    Standard7 = 1,  // Pp30FormBox.TaxableSales — ยอดขายที่ต้องเสียภาษี (เลขช่องอยู่ที่ Helpers/Pp30FormBox เท่านั้น)
+    ZeroRated = 2,  // Pp30FormBox.ZeroRatedSales — ส่งออก §80/1
+    Exempt = 3,     // Pp30FormBox.ExemptSales — ยกเว้น §81
 }
 
 /// <summary>
@@ -36,7 +36,7 @@ public enum Pp30SalesBox
 /// </list>
 /// และรหัสยอดรวมถูกแยกเป็น <c>EXEMPT_SALES</c>/<c>ZERO_RATED_SALES</c> ทีหลัง
 /// แต่ <c>ComposePp30</c> ยังอ่าน <c>"EXEMPT"</c> ว่าเป็น "ยอดขายยกเว้น" ⇒
-/// <b>ช่อง 7 กับ 8 สลับกัน</b> (ยอดซื้อยกเว้นไปอยู่ช่อง 8 · ยอดขายยกเว้นไปอยู่ช่อง 7)</para>
+/// <b>ช่อง 0% กับช่องยกเว้น สลับกัน</b> (ยอดซื้อยกเว้นไปอยู่ช่องยกเว้น · ยอดขายยกเว้นไปอยู่ช่อง 0%)</para>
 ///
 /// <para>กติกา: ทุกจุดที่ต้องรู้ฝั่ง/ช่อง ต้องเรียกตัวนี้ — ห้ามเทียบ
 /// <c>IncomeTypeCode</c> เองอีก (กฎเหล็ก #4 A "รายการที่คัดลอกมาด้วยมือ = drift
@@ -51,7 +51,7 @@ public static class VatReportLineKind
     public const string Output = "OUTPUT";
     public const string JeOutput = "JE_OUTPUT";
     /// <summary>ยอด<b>ซื้อ</b>ยกเว้น §81 — รหัสเดิมที่คงไว้ให้รายงานเก่าอ่านออก
-    /// (⚠️ รายงานที่สร้าง<b>ก่อน</b>การแยกช่อง 7/8 รหัสนี้รวมยอด<b>ขาย</b>ยกเว้น
+    /// (⚠️ รายงานที่สร้าง<b>ก่อน</b>การแยกช่อง 0%/ยกเว้น รหัสนี้รวมยอด<b>ขาย</b>ยกเว้น
     /// ไว้ด้วย — ต้องกดสร้างรายงานใหม่ถึงจะแยกช่องถูก)</summary>
     public const string ExemptPurchases = "EXEMPT";
     public const string ExemptSales = "EXEMPT_SALES";
@@ -103,7 +103,7 @@ public static class VatReportLineKind
     /// <para>⚠️ ยอด<b>ขาย</b>ที่เป็น 0%/ยกเว้น มาจาก<b>แถวยอดรวม</b>เท่านั้น
     /// (<c>Pp30SalesClassifier.Split</c> แยกให้รายบรรทัดตอน generate) — แถวรายการ
     /// เอกสารเก็บ <c>IncomeAmount = SubTotal − ยอดยกเว้น</c> ซึ่ง<b>ยังรวมฐาน 0%</b>
-    /// ไว้ ⇒ ถ้านับแถวเอกสารเข้าช่อง 7 ด้วยจะได้ยอดซ้ำสองเท่า. ตัวเลขช่อง 5
+    /// ไว้ ⇒ ถ้านับแถวเอกสารเข้าช่อง 0% ด้วยจะได้ยอดซ้ำสองเท่า. ตัวเลขช่อง 5
     /// จึงต้องคิดแบบลบ (ดู <see cref="StandardBase"/>) ไม่ใช่คัดแถวตามอัตรา</para></summary>
     public static Pp30SalesBox SalesBoxOf(string? incomeTypeCode)
     {
@@ -116,10 +116,14 @@ public static class VatReportLineKind
         };
     }
 
-    /// <summary>ช่อง 5 (ยอดขายที่ต้องเสียภาษี) = Σ แถวรายการฝั่งขาย − ยอดขาย 0%
+    /// <summary>ยอดขายที่ต้องเสียภาษี (<see cref="Pp30FormBox.TaxableSales"/>) = Σ แถวรายการฝั่งขาย − ยอดขาย 0%
+    ///
+    /// <para>รอบ 269 ฝ่ายค้าน M1: สูตรนี้ถูกเฉพาะเมื่อ<b>ยอด 0% ทุกบาทมาจากใบที่มีแถว §87</b> — เดิมใบแจ้งหนี้/ใบเสร็จที่ไม่มี VAT (ไม่มีแถว) ถูกนับเข้า 0%
+    /// แล้วถูกลบออกจากแถวของใบอื่น ⇒ ยอดขายที่ต้องเสียภาษีต่ำไป (ติดลบได้) · ตอนนี้ <c>OutputVatOwnership.SalesBoxOwner</c> นับ 0%/ยกเว้น
+    /// เฉพาะใบที่ <c>Decide</c> เป็นเจ้าของแถว §87 ⇒ เงื่อนไขเป็นจริงเสมอ (เทสต์ <c>R269_ยอดขายที่ต้องเสียภาษี_*</c>)</para>
     ///
     /// <para>แถวรายการเก็บ "ฐานที่ไม่ยกเว้น" (= ฐาน 7% + ฐาน 0%) ⇒ ลบยอด 0% ออก
-    /// ได้ช่อง 5 พอดี และรวมสามช่องกลับมาได้ยอดขายทั้งหมดเป๊ะ — ไม่ต้องคัด
+    /// ได้ช่องยอดขายที่ต้องเสียภาษี พอดี และรวมสามช่องกลับมาได้ยอดขายทั้งหมดเป๊ะ — ไม่ต้องคัด
     /// แถวตาม <c>TaxRate</c> ซึ่งใช้ไม่ได้กับใบที่มีทั้ง 7% และ 0% ในใบเดียว
     /// (<c>TaxRate</c> ของแถวคืออัตรา<b>สูงสุด</b>ในใบ)</para></summary>
     public static decimal StandardBase(decimal documentRowsBase, decimal zeroRatedBase)

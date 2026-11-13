@@ -129,7 +129,16 @@ public partial class TaxService : ITaxService
         }
     }
 
-    private async Task GenerateVatReport(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report)
+    /// <summary>รอบ 269 M2 — ยอดช่อง 0%/ยกเว้นตามกติกา<b>ก่อน</b>รอบ 269 (ทุกใบฝั่งขาย · งวดตามวันขาย) คำนวณจากข้อมูลวันนี้คู่กับกติกาปัจจุบัน —
+    /// ใช้แยกสาเหตุในตัวทบทวนรายงานที่บันทึกไว้ (ยอดที่บันทึก = กติกาเดิม ⇒ สาเหตุคือการเปลี่ยนกติกา · ไม่ตรงทั้งคู่ ⇒ ข้อมูลเปลี่ยนหลังบันทึก) · ไม่ persist</summary>
+    internal sealed class Pp30LegacySalesBoxTrace
+    {
+        public decimal ZeroRated { get; set; }
+        public decimal Exempt { get; set; }
+    }
+
+    private async Task GenerateVatReport(Guid companyId, DateTime startDate, DateTime endDate, TaxReport report,
+        Pp30LegacySalesBoxTrace? legacyTrace = null)
     {
         var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId);
         var companyVatRate = company?.VatRate ?? 7m;
@@ -158,8 +167,8 @@ public partial class TaxService : ITaxService
                 && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
                 // ⚠️ เดิมเงื่อนไขคือ `VatAmount != 0` เท่านั้น ⇒ ใบที่**ทั้งใบเป็น 0%
                 // หรือยกเว้น** มี VatAmount = 0 จึงไม่เคยเข้ารายงานเลย:
-                //   • ช่อง 7 ยอดขายอัตราร้อยละ 0 (ส่งออก §80/1) — หายทั้งช่อง
-                //   • ช่อง 8 ยอดขายยกเว้น (§81) — นับได้เฉพาะใบที่บังเอิญมีบรรทัด 7%
+                //   • ช่อง 0% ยอดขายอัตราร้อยละ 0 (ส่งออก §80/1) — หายทั้งช่อง
+                //   • ช่องยกเว้น ยอดขายยกเว้น (§81) — นับได้เฉพาะใบที่บังเอิญมีบรรทัด 7%
                 //     ปนอยู่ (บิล Makro/BigC) ส่วนใบยกเว้นล้วนหายหมด
                 // ที่ถูกคือ "มีอะไรให้รายงานไหม" ไม่ใช่ "มีภาษีไหม" — ดู
                 // Helpers/Pp30SalesClassifier ซึ่งเป็นตัวตัดสินเดียวกันฝั่งคำนวณ
@@ -327,7 +336,7 @@ public partial class TaxService : ITaxService
         // ═══ ตัวตัดสิน "ฝั่งของใบลดหนี้/ใบเพิ่มหนี้" **ตัวเดียวของไฟล์นี้** ═══
         // เดิมมี 2 ชุดที่ให้คำตอบ**ต่างกัน**: ชุดเต็ม 4 ชั้น (ใช้กับรายงานภาษีซื้อ/ขาย)
         // กับชุดสั้น `doc.CnDnPurchaseSideOverride ?? DocumentSide.IsPurchase(type)`
-        // ที่ใช้กับช่อง 7/8 — ชุดสั้นผิดเพราะ `DocumentSide.IsPurchase(CreditNote)`
+        // ที่ใช้กับช่อง 0%/ยกเว้น — ชุดสั้นผิดเพราะ `DocumentSide.IsPurchase(CreditNote)`
         // **ไม่ได้รับ `ourRole`** และ CN อยู่ใน `BothSides` ⇒ `IsSales` คืน false
         // ⇒ `IsPurchase` = **true เสมอ** ⇒ ใบลดหนี้ฝั่ง**ขาย**ที่ยังไม่มี override
         // ถูกนับยอดยกเว้นเข้าช่องฝั่ง**ซื้อ** (`AgingReportService:85-89` เขียนเตือน
@@ -375,7 +384,7 @@ public partial class TaxService : ITaxService
         // ด้วยใบกำกับภาษี (แปลง Invoice→TaxInvoice, ใบกำกับลูกรับ VAT ไปรายงานแล้ว)
         // มิฉะนั้นนับซ้ำ. (ใบแจ้งหนี้→ใบเสร็จ = settlement ไม่ใช่การแทนที่ tax point
         // → ใบแจ้งหนี้ยังเป็นเจ้าของ VAT, Receipt ลูกถูก exclude ที่ branch ด้านล่างแล้ว)
-        // รอบ 269: ใบแจ้งหนี้ VAT 0 (0%/ยกเว้นล้วน) ต้องรู้ด้วยว่าถูกใบกำกับแทนไหม — ช่อง 7/8 นับใบแจ้งหนี้นั้นเฉพาะเมื่อไม่ถูกแทน
+        // รอบ 269: ใบแจ้งหนี้ VAT 0 (0%/ยกเว้นล้วน) ต้องรู้ด้วยว่าถูกใบกำกับแทนไหม — ช่อง 0%/ยกเว้น นับใบแจ้งหนี้นั้นเฉพาะเมื่อไม่ถูกแทน
         // (OutputVatOwnership.SalesBoxOwner) · เดิมคัดเฉพาะ VatAmount != 0 ⇒ ใบแจ้งหนี้ 0% ที่ออกใบกำกับแทนแล้วถูกนับซ้ำกับใบกำกับ
         var invoiceIds = docs
             .Where(d => d.DocumentType == DocumentType.Invoice)
@@ -398,16 +407,40 @@ public partial class TaxService : ITaxService
         var invGl21913Net = await Load21913NetBySourceAsync(companyId, invoiceIds);
 
         decimal outputVat = 0, inputVat = 0;
-        // ═══ ช่อง 7/8 ของ ภ.พ.30 — แยกฝั่งขาย/ฝั่งซื้อ และแยก 0% ออกจากยกเว้น ═══
+        // ═══ ช่อง 0%/ยกเว้น ของ ภ.พ.30 — แยกฝั่งขาย/ฝั่งซื้อ และแยก 0% ออกจากยกเว้น ═══
         // เดิมมีตัวแปรเดียว (`vatExemptAmount`) ที่รวมยอดยกเว้นของ**ทั้งสองฝั่ง**
         // เข้าด้วยกันแล้วออกเป็นบรรทัดชื่อ "ยอดขาย/ซื้อยกเว้นภาษี" ⇒ ยอดฝั่งซื้อ
         // ปนเข้าช่องฝั่งขาย ซึ่ง ภ.พ.30 แยกกันคนละช่อง · และ 0% (§80/1) ไม่เคยมี
         // ที่เก็บเลยทั้งที่เป็นคนละช่องกับยกเว้น (§81)
         decimal zeroRatedSales = 0, exemptSales = 0, exemptPurchases = 0;
+        decimal legacyZeroRated = 0, legacyExempt = 0;   // รอบ 269 M2 — กติกาเดิม (ไม่ persist)
         var lineOrder = 1;
+
+        // ใบเดิมของใบลดหนี้/เพิ่มหนี้ยังไม่ถึง tax point (VAT พัก 21913/11640) — ด่านเดียวของแถว CN/DN และช่องยอดขาย/ซื้อ (รอบ 269 L3)
+        bool RelatedPendingTaxPoint(Document d)
+            => d.RelatedDocumentId.HasValue
+               && relatedDocInfos.TryGetValue(d.RelatedDocumentId.Value, out var ri)
+               && (ri.InputVatPendingUndue
+                   || (ri.Type == DocumentType.Invoice && ri.OutputVatDueAt == null
+                       && relatedInv21913Net.GetValueOrDefault(d.RelatedDocumentId.Value) > 0.005m));
 
         foreach (var doc in docs)
         {
+            // รอบ 269 H1 — ใบยอดยกมา (OB-AR/OB-AP) ไม่ใช่การขาย/การซื้อของงวดใด ⇒ ไม่เข้าช่องใดของ ภ.พ.30 ทั้งสองฝั่ง (ตัวตัดสินเดียว)
+            // ยอดตามกติกาเดิม (M2) ยังนับใบนี้ — เพราะกติกาเดิมนับจริง
+            if (Accounting.Helpers.OutputVatOwnership.IsOutsidePp30(doc))
+            {
+                var legacySaleDate = doc.TaxPointDate ?? doc.DocumentDate;
+                if (legacyTrace != null && legacySaleDate >= startDate && legacySaleDate <= endDate
+                    && !DocumentSide.IsPurchase(doc.DocumentType))
+                {
+                    var obSplit = Pp30SalesClassifier.Split(doc.Lines.Where(l => !l.IsDeleted)
+                        .Select(l => new Pp30Line(l.VatRate, l.Amount, l.VatAmount)));
+                    legacyZeroRated += Thb(doc, obSplit.ZeroRatedBase);
+                    legacyExempt += Thb(doc, obSplit.ExemptBase);
+                }
+                continue;
+            }
             // รอบ 225 B1 + รอบ 269: ข้อเท็จจริงเจ้าของภาษีขายชุดเดียว — ใช้ทั้งแถว §87 (Decide) และช่องยอดขาย 5/7/8 (SalesBoxOwner)
             var ownFacts = Accounting.Helpers.OutputVatOwnership.FactsOf(doc,
                 supersededByTaxInvoice: supersededInvoiceIds.Contains(doc.Id),
@@ -416,13 +449,15 @@ public partial class TaxService : ITaxService
                 relatedType: doc.RelatedDocumentId.HasValue && relatedDocInfos.TryGetValue(doc.RelatedDocumentId.Value, out var ownRel)
                     ? ownRel.Type : null,
                 relatedOutputVatDueAt: doc.RelatedDocumentId.HasValue && relatedDocInfos.TryGetValue(doc.RelatedDocumentId.Value, out var ownRel2)
-                    ? ownRel2.OutputVatDueAt : null);
+                    ? ownRel2.OutputVatDueAt : null,
+                relatedIsRollupBillingNote: doc.RelatedDocumentId.HasValue && relatedDocInfos.TryGetValue(doc.RelatedDocumentId.Value, out var ownRel3)
+                    && ownRel3.IsRollupBillingNote);
             var own = Accounting.Helpers.OutputVatOwnership.Decide(ownFacts);
 
-            // ─ ช่อง 7/8: ยอดขาย 0% และยอดยกเว้น ─
-            // ★ รอบ 269 (ผู้ใช้รายงาน ก.ย. 2569: ช่อง 7 "ส่งออก §80/1" 1,235,494.24 ทั้งที่ไม่มีขาย 0%): เดิมบวกทุกใบฝั่งขายที่มีบรรทัด VatRate 0/-1 ⇒
+            // ─ ช่อง 0%/ยกเว้น: ยอดขาย 0% และยอดยกเว้น ─
+            // ★ รอบ 269 (ผู้ใช้รายงาน ก.ย. 2569: ช่อง 0% "ส่งออก §80/1" 1,235,494.24 ทั้งที่ไม่มีขาย 0%): เดิมบวกทุกใบฝั่งขายที่มีบรรทัด VatRate 0/-1 ⇒
             // ใบเสร็จรับชำระ ("รับชำระเงินตาม…" VAT 0) · ใบวางบิล · ใบส่งของ · ใบเสนอราคา · ใบแจ้งหนี้ที่ใบกำกับ/ใบเสร็จถือ VAT แทน · มัดจำที่ถูกหัก
-            // กลายเป็นยอดขาย 0%/ยกเว้น (และช่อง 5 ถูกหักด้วยยอด 0% ปลอมผ่าน StandardBase) · ตอนนี้ฝั่งขายนับเฉพาะใบที่
+            // กลายเป็นยอดขาย 0%/ยกเว้น (และช่องยอดขายที่ต้องเสียภาษี ถูกหักด้วยยอด 0% ปลอมผ่าน StandardBase) · ตอนนี้ฝั่งขายนับเฉพาะใบที่
             // OutputVatOwnership.SalesBoxOwner ตัดสินว่าถือการขาย (ชุดเดียวกับแถว §87) ในงวดของวันที่ VAT ถึงกำหนด (วันเดียวกับแถว §87)
             // ใบลดหนี้/เพิ่มหนี้ + ฝั่งซื้อ: นับครั้งเดียวใน "เดือนที่ขาย" ตามเดิม — เอกสารที่ถูกดึงเข้ามาด้วย OR-เงื่อนไข
             // (InputVatBecameClaimableAt/OutputVatDueAt) โผล่ในรายงาน 2 งวด → guard กันบวกซ้ำ
@@ -441,28 +476,72 @@ public partial class TaxService : ITaxService
                     ? ResolveCnDnSide(doc)
                     : (DocumentSide.IsPurchase(doc.DocumentType), false);
                 // ใบลดหนี้ = **ลด**ยอดของงวด ไม่ใช่เพิ่ม — เดิมบวกเข้าไปทุกใบ
-                // ⇒ ลดหนี้ยอดยกเว้น/0% ทำให้ช่อง 7/8 สูงกว่าความจริงเป็นสองเท่าของยอดลด
+                // ⇒ ลดหนี้ยอดยกเว้น/0% ทำให้ช่อง 0%/ยกเว้น สูงกว่าความจริงเป็นสองเท่าของยอดลด
                 var adjSign = doc.DocumentType == DocumentType.CreditNote ? -1m : 1m;
                 var inSaleMonth = saleDate >= startDate && saleDate <= endDate;
+                var relInfoFound = doc.RelatedDocumentId.HasValue && relatedDocInfos.ContainsKey(doc.RelatedDocumentId.Value);
+                var boxRel = relInfoFound ? relatedDocInfos[doc.RelatedDocumentId!.Value] : default;
                 // ฝั่งขาย (ไม่ใช่ CN/DN): ใบที่ถือการขาย + งวดของวันที่ VAT ถึงกำหนด
                 var salesOwner = !isAdjNote && !side.IsPurchase
                     ? Accounting.Helpers.OutputVatOwnership.SalesBoxOwner(ownFacts) : null;
+                // CN/DN (L3): ใบเดิมต้องถึง tax point และเป็นใบที่ช่องยอดขาย/ซื้อนับได้ — ด่านเดียวกับแถว CN/DN
+                var adjCounts = isAdjNote && !side.Unknown
+                    && (side.IsPurchase
+                        ? !RelatedPendingTaxPoint(doc)
+                        : Accounting.Helpers.OutputVatOwnership.AdjustmentNoteCounts(
+                            doc.RelatedDocumentId.HasValue, relInfoFound ? boxRel.Type : null, relInfoFound ? boxRel.VatAmount : 0m,
+                            relInfoFound && boxRel.IsOpeningBalance, RelatedPendingTaxPoint(doc)));
                 var countSales = isAdjNote
-                    ? inSaleMonth && !side.Unknown && !side.IsPurchase
+                    ? inSaleMonth && adjCounts && !side.IsPurchase
                     : salesOwner is { Owns: true, VatDueDate: DateTime due } && due >= startDate && due < endStampExclusive;
-                var countPurchase = inSaleMonth && side.IsPurchase && !(isAdjNote && side.Unknown);
+                // ฝั่งซื้อ (L1): เฉพาะใบที่ถือการซื้อ = ชุดเดียวกับใบที่เคลมภาษีซื้อ (InputVatGateScope) — ไม่ใช่ใบสั่งซื้อ/ใบขอซื้อ/ใบรับสินค้า/ใบส่งของ
+                var countPurchase = inSaleMonth && side.IsPurchase
+                    && (isAdjNote
+                        ? adjCounts
+                        : Accounting.Helpers.InputVatGateScope.ClaimsInputVat(doc.DocumentType, cnDnPurchaseSide: false,
+                            hasTaxInvoiceReference: doc.HasTaxInvoiceReference, hasRelatedDocument: doc.RelatedDocumentId != null));
+                var legacySales = inSaleMonth && !side.IsPurchase && !(isAdjNote && side.Unknown);
 
-                if (countSales || countPurchase)
+                if (countSales || countPurchase || legacySales)
                 {
                     var split = Pp30SalesClassifier.Split(doc.Lines
                         .Where(l => !l.IsDeleted)
                         .Select(l => new Pp30Line(l.VatRate, l.Amount, l.VatAmount)));
+                    if (legacySales)
+                    {
+                        legacyZeroRated += adjSign * Thb(doc, split.ZeroRatedBase);
+                        legacyExempt += adjSign * Thb(doc, split.ExemptBase);
+                    }
                     if (countPurchase) exemptPurchases += adjSign * Thb(doc, split.ExemptBase);
-                    else
+                    else if (countSales)
                     {
                         zeroRatedSales += adjSign * Thb(doc, split.ZeroRatedBase);
                         exemptSales += adjSign * Thb(doc, split.ExemptBase);
                     }
+                }
+                // H2 — ใบเจ้าของที่ไม่มี VAT และไม่ใช่ใบกำกับ แต่มียอด 0%/ยกเว้นในงวด: ไม่นับเข้าแบบ — และไม่เงียบ (หลักการ #3/#7) ⇒ บรรทัดเตือนที่ติ๊กออก
+                if (salesOwner is { Owns: false, RuleCode: Accounting.Helpers.OutputVatOwnership.RuleZeroVatNotTaxInvoice, VatDueDate: DateTime warnDue }
+                    && warnDue >= startDate && warnDue < endStampExclusive)
+                {
+                    var warnSplit = Pp30SalesClassifier.Split(doc.Lines
+                        .Where(l => !l.IsDeleted)
+                        .Select(l => new Pp30Line(l.VatRate, l.Amount, l.VatAmount)));
+                    var notCounted = Thb(doc, warnSplit.ZeroRatedBase + warnSplit.ExemptBase);
+                    if (notCounted != 0m)
+                        report.Lines.Add(new TaxReportLine
+                        {
+                            TaxReportId = report.Id,
+                            LineOrder = lineOrder++,
+                            TaxPayerId = doc.Contact?.TaxId,
+                            TaxPayerName = doc.Contact?.Name ?? "",
+                            TransactionDate = warnDue,
+                            Description = $"⚠️ [ยอด 0%/ยกเว้น ไม่นับเข้าแบบ — ไม่ใช่ใบกำกับภาษี] {doc.DocumentNumber} — {salesOwner.Reason}",
+                            IncomeAmount = notCounted,
+                            TaxRate = 0,
+                            TaxAmount = 0,
+                            DocumentId = doc.Id,
+                            IsExcluded = true
+                        });
                 }
                 // CN/DN ที่แยกฝั่งไม่ได้: ไม่นับ — และไม่เงียบ: บรรทัดเตือนของใบนี้ถูกสร้างในส่วนรายงาน
                 // ภาษีซื้อ/ขายด้านล่างอยู่แล้ว (ป้าย "⚠️ แยกฝั่งไม่ได้")
@@ -608,7 +687,7 @@ public partial class TaxService : ITaxService
                 // ไม่มีทั้งคู่ = คงพฤติกรรมเดิม (ฝั่งขาย) แต่ติดธงไว้เตือนด้านล่าง
                 // ผู้ใช้สั่งย้ายฝั่งเอง = ชนะทุกชั้น (ตอนสั่งย้าย ระบบกลับ JE เดิม
                 // แล้วลงใหม่ให้ตรงฝั่งด้วย รายงานกับ GL จึงยังตรงกันเสมอ)
-                // ตัวตัดสินเดียวกับช่อง 7/8 (`ResolveCnDnSide`) — เดิมเป็นสำเนาที่สอง
+                // ตัวตัดสินเดียวกับช่อง 0%/ยกเว้น (`ResolveCnDnSide`) — เดิมเป็นสำเนาที่สอง
                 var cnSide = ResolveCnDnSide(doc);
                 var isPurchaseSide = cnSide.IsPurchase;
                 var sideUnknown = cnSide.Unknown;
@@ -616,11 +695,7 @@ public partial class TaxService : ITaxService
                 // ภ.พ.30) → CN ห้ามหักยอดงวดนี้ (จะเป็นการขอคืน VAT ที่ไม่เคยนำส่ง/
                 // ไม่เคยเคลม) — ใส่บรรทัดเตือน excluded คู่ไว้ ยอดสุทธิจะถูกนับตอน
                 // ใบเดิมถึง tax point (reclass สุทธิหลัง CN ผ่าน GL)
-                if (doc.RelatedDocumentId.HasValue
-                    && relatedDocInfos.TryGetValue(doc.RelatedDocumentId.Value, out var cnRelInfo)
-                    && (cnRelInfo.InputVatPendingUndue
-                        || (cnRelInfo.Type == DocumentType.Invoice && cnRelInfo.OutputVatDueAt == null
-                            && relatedInv21913Net.GetValueOrDefault(doc.RelatedDocumentId.Value) > 0.005m)))
+                if (RelatedPendingTaxPoint(doc))
                 {
                     report.Lines.Add(new TaxReportLine
                     {
@@ -694,11 +769,7 @@ public partial class TaxService : ITaxService
                     dnSideUnknown = false;
                 }
                 // ใบเดิมยังไม่ถึง tax point (VAT พัก 21913/11640) — เหมือน CN
-                if (doc.RelatedDocumentId.HasValue
-                    && relatedDocInfos.TryGetValue(doc.RelatedDocumentId.Value, out var dnRelInfo)
-                    && (dnRelInfo.InputVatPendingUndue
-                        || (dnRelInfo.Type == DocumentType.Invoice && dnRelInfo.OutputVatDueAt == null
-                            && relatedInv21913Net.GetValueOrDefault(doc.RelatedDocumentId.Value) > 0.005m)))
+                if (RelatedPendingTaxPoint(doc))
                 {
                     report.Lines.Add(new TaxReportLine
                     {
@@ -1269,20 +1340,21 @@ public partial class TaxService : ITaxService
             }
         }
 
-        // ═══ ช่อง 7/8 ของ ภ.พ.30 — แยกบรรทัดตามช่องจริง ═══
+        // ═══ ช่อง 0%/ยกเว้น ของ ภ.พ.30 — แยกบรรทัดตามช่องจริง ═══
         // เดิมเป็นบรรทัดเดียวชื่อ "ยอดขาย/ซื้อยกเว้นภาษี" (IncomeTypeCode=EXEMPT)
         // ที่รวมทั้งสองฝั่งเข้าด้วยกัน ⇒ ผู้กรอกแบบเอาไปใส่ช่อง 8 ทั้งก้อนแล้ว
         // ยอดฝั่งซื้อปนเข้าไป · และ 0% (§80/1) ไม่เคยมีบรรทัดของตัวเองเลย
         //
         // ⚠️ รหัสเดิม "EXEMPT" ยังใช้กับ**ฝั่งซื้อ**ต่อไป เพื่อไม่ให้รายงานเก่าที่
         // persist ไว้แล้วอ่านไม่ออก — ของใหม่ใช้รหัสที่บอกช่องตรง ๆ
+        if (legacyTrace != null) { legacyTrace.ZeroRated = legacyZeroRated; legacyTrace.Exempt = legacyExempt; }
         if (zeroRatedSales != 0)
         {
             report.Lines.Add(new TaxReportLine
             {
                 TaxReportId = report.Id,
                 LineOrder = lineOrder++,
-                Description = "ยอดขายที่เสียภาษีอัตราร้อยละ 0 (ส่งออก §80/1) — ช่อง 7",
+                Description = Accounting.Helpers.Pp30FormBoxes.Label(Accounting.Helpers.Pp30FormBox.ZeroRatedSales),   // รอบ 269 M3 — เลขช่องตามแบบทางการ
                 IncomeAmount = zeroRatedSales,
                 TaxRate = 0,
                 TaxAmount = 0,
@@ -1295,7 +1367,7 @@ public partial class TaxService : ITaxService
             {
                 TaxReportId = report.Id,
                 LineOrder = lineOrder++,
-                Description = "ยอดขายที่ได้รับยกเว้นภาษี (§81) — ช่อง 8",
+                Description = Accounting.Helpers.Pp30FormBoxes.Label(Accounting.Helpers.Pp30FormBox.ExemptSales),
                 IncomeAmount = exemptSales,
                 TaxRate = 0,
                 TaxAmount = 0,
@@ -1432,7 +1504,11 @@ public partial class TaxService : ITaxService
     /// "ไฟล์ที่ยื่น (CSV) == ที่ผู้ใช้เห็นบนจอ" (กันเคส screen ≠ filed).
     /// dedup กับ report อื่นที่ persist แล้ว, รวม CN/DN, หักภาษีซื้อต้องห้าม
     /// §82/5, มัดจำ deferred, JE ที่ไม่มี source doc — ครบเหมือน GenerateVatReport.</summary>
-    public async Task<TaxReport> ComputeVatReportAsync(Guid companyId, int year, int month)
+    public Task<TaxReport> ComputeVatReportAsync(Guid companyId, int year, int month)
+        => ComputeVatReportAsync(companyId, year, month, legacyTrace: null);
+
+    /// <summary>รอบ 269 M2 — คำนวณสด + ยอดช่อง 0%/ยกเว้นตามกติกาเดิม (<paramref name="legacyTrace"/>) ในรอบเดียว</summary>
+    internal async Task<TaxReport> ComputeVatReportAsync(Guid companyId, int year, int month, Pp30LegacySalesBoxTrace? legacyTrace)
     {
         var startDate = new DateTime(year, month, 1);
         var endDate = startDate.AddMonths(1).AddDays(-1);
@@ -1446,7 +1522,7 @@ public partial class TaxService : ITaxService
             Year = year,
             Month = month,
         };
-        await GenerateVatReport(companyId, startDate, endDate, report);
+        await GenerateVatReport(companyId, startDate, endDate, report, legacyTrace);
         // Deferral ต้องเข้าไฟล์ยื่นด้วย (จอกับไฟล์ต้องตรงกัน) — โหมด preview:
         // markClaims=false ห้ามไป stamp ClaimedAt กับ report ชั่วคราวที่ไม่ persist
         await ApplyVatDeferralsAsync(companyId, year, month, report, markClaims: false);
@@ -2951,17 +3027,17 @@ public partial class TaxService : ITaxService
     }
 
     /// <summary>
-    /// <b>ทบทวนช่อง 7/8 ของรายงาน ภ.พ.30 ที่บันทึกไว้</b> เทียบกับการคำนวณสดด้วยกติกาเจ้าของการขาย (<see cref="Accounting.Helpers.OutputVatOwnership.SalesBoxOwner"/>) —
+    /// <b>ทบทวนช่อง 0%/ยกเว้น ของรายงาน ภ.พ.30 ที่บันทึกไว้</b> เทียบกับการคำนวณสดด้วยกติกาเจ้าของการขาย (<see cref="Accounting.Helpers.OutputVatOwnership.SalesBoxOwner"/>) —
     /// <b>อ่านอย่างเดียว</b> (รอบ 269 · หลักการ #9) · ตรวจเฉพาะรายงานที่มีแถว ZERO_RATED_SALES/EXEMPT_SALES (บั๊กทำให้ยอด<b>เกิน</b>เท่านั้น ⇒ รายงานที่ไม่มีแถวนี้ไม่ได้รับผล) ·
     /// ร่าง ⇒ "สร้างใหม่" · ยื่นแล้ว ⇒ พิจารณายื่น ภ.พ.30 เพิ่มเติม (ตัวตัดสินข้อความ <see cref="Accounting.Helpers.Pp30SalesBoxReview"/>)
     /// </summary>
     public async Task<List<Pp30SalesBoxReviewRow>> GetPp30SalesBoxReviewAsync(Guid companyId)
     {
+        // รอบ 269 M2 — ทุกรายงาน ภ.พ.30 ที่บันทึกไว้ (ไม่ใช่เฉพาะที่มีแถว 0%/ยกเว้น): กติกาใหม่ย้ายงวดของยอด (VatDueDate) ⇒ งวดที่เดิมไม่มีแถวก็เปลี่ยนได้
         var zeroCode = Accounting.Helpers.VatReportLineKind.ZeroRatedSales;
         var exemptCode = Accounting.Helpers.VatReportLineKind.ExemptSales;
         var stored = await _db.TaxReports.AsNoTracking()
-            .Where(r => r.CompanyId == companyId && r.TaxType == TaxType.VAT
-                && r.Lines.Any(l => l.IncomeTypeCode == zeroCode || l.IncomeTypeCode == exemptCode))
+            .Where(r => r.CompanyId == companyId && r.TaxType == TaxType.VAT)
             .Select(r => new
             {
                 r.Id, r.Year, r.Month, r.Status,
@@ -2973,15 +3049,19 @@ public partial class TaxService : ITaxService
         var rows = new List<Pp30SalesBoxReviewRow>();
         foreach (var r in stored)
         {
-            var fresh = await ComputeVatReportAsync(companyId, r.Year, r.Month);
+            var legacy = new Pp30LegacySalesBoxTrace();
+            var fresh = await ComputeVatReportAsync(companyId, r.Year, r.Month, legacy);
             var freshZero = fresh.Lines.Where(l => !l.IsExcluded && l.IncomeTypeCode == zeroCode).Sum(l => l.IncomeAmount);
             var freshExempt = fresh.Lines.Where(l => !l.IsExcluded && l.IncomeTypeCode == exemptCode).Sum(l => l.IncomeAmount);
             var filed = Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(r.Status);
             var label = $"{r.Month:00}/{r.Year + 543}";
-            var v = Accounting.Helpers.Pp30SalesBoxReview.Evaluate(r.Zero, freshZero, r.Exempt, freshExempt, filed, label);
+            var v = Accounting.Helpers.Pp30SalesBoxReview.Evaluate(
+                new(r.Zero, r.Exempt), new(freshZero, freshExempt), new(legacy.ZeroRated, legacy.Exempt), filed, label);
             if (!v.NeedsAttention) continue;
             rows.Add(new Pp30SalesBoxReviewRow(r.Id, r.Year, r.Month, label, r.Status.ToString(), filed,
-                r.Zero, freshZero, r.Exempt, freshExempt, v.SuggestedAction, v.Message, Accounting.Helpers.Pp30SalesBoxReview.RuleCode));
+                r.Zero, freshZero, r.Exempt, freshExempt, v.SuggestedAction, v.Message, Accounting.Helpers.Pp30SalesBoxReview.RuleCode,
+                v.Cause, Accounting.Helpers.Pp30FormBoxes.Ref(Accounting.Helpers.Pp30FormBox.ZeroRatedSales),
+                Accounting.Helpers.Pp30FormBoxes.Ref(Accounting.Helpers.Pp30FormBox.ExemptSales)));
         }
         return rows;
     }
@@ -3330,7 +3410,7 @@ public partial class TaxService : ITaxService
         if (report.TaxType != TaxType.VAT) return;
         var active = report.Lines.Where(l => !l.IsExcluded).ToList();
         // บรรทัด "สรุป" ที่ไม่ใช่ภาษีขาย/ซื้อ — ต้องไม่เข้าสูตร OutputVat/InputVat
-        // (ZERO_RATED_SALES / EXEMPT_SALES เป็นช่อง 7/8 ของแบบ ไม่ใช่ตัวภาษี)
+        // (ZERO_RATED_SALES / EXEMPT_SALES เป็นช่อง 0%/ยกเว้น ของแบบ ไม่ใช่ตัวภาษี)
         var summaryCodes = new[] { "VAT_CREDIT_CF", "EXEMPT", "EXEMPT_SALES", "ZERO_RATED_SALES" };
         var nonSummary = active.Where(l => !summaryCodes.Contains(l.IncomeTypeCode));
         // F11 — ภาษีซื้อจาก JE ล้วน (ไม่มี source doc) tag "JE_INPUT" ต้องนับเป็น
@@ -3354,7 +3434,7 @@ public partial class TaxService : ITaxService
     /// internal: DocumentService เรียกตอน void เอกสารที่มีภาษีหัก ณ ที่จ่าย —
     /// ต้องใช้สูตรเดียวกันเพื่อไม่ให้ยอดหัวรายงาน drift จากบรรทัดจริง.</summary>
     /// <summary>ฐาน "มูลค่าสินค้า/บริการที่คิดภาษี" ของเอกสาร = SubTotal หักบรรทัด
-    /// ยกเว้น (VatRate == -1) ออก — ยอดยกเว้นถูกนับแยกไว้ที่บรรทัดช่อง 8
+    /// ยกเว้น (VatRate == -1) ออก — ยอดยกเว้นถูกนับแยกไว้ที่บรรทัดช่องยกเว้น
     /// (EXEMPT_SALES/EXEMPT) อยู่แล้ว การใช้ doc.SubTotal ทั้งใบจึงนับยอดยกเว้นซ้ำสองที่ และทำ
     /// ให้ "ฐาน × 7% ≠ ภาษีขาย" ในรายงาน/ไฟล์ยื่น (RD cross-check ไม่ผ่าน).
     /// ใบที่ไม่มีบรรทัดยกเว้นจะได้ค่าเท่า SubTotal เหมือนเดิม.
@@ -3622,7 +3702,7 @@ public partial class TaxService : ITaxService
             var rel = hasRel ? related[d.RelatedDocumentId!.Value] : default;
             var output = Accounting.Helpers.OutputVatOwnership.Decide(Accounting.Helpers.OutputVatOwnership.FactsOf(d,
                 superseded.Contains(d.Id), ownedByReceipt.Contains(d.Id), gl21913.GetValueOrDefault(d.Id),
-                hasRel ? rel.Type : null, hasRel ? rel.OutputVatDueAt : null));
+                hasRel ? rel.Type : null, hasRel ? rel.OutputVatDueAt : null, hasRel && rel.IsRollupBillingNote));
             var claimable = d.VatAmount - ProhibitedInputVat(d, nonClaimable);
             var facts = new TaxReportPullEligibility.PullFacts(
                 LineInThisReport: inThisReport.TryGetValue(d.Id, out var ex) ? ex : null,
@@ -3747,17 +3827,21 @@ public partial class TaxService : ITaxService
 
     /// <summary>ชนิด + วันที่ VAT ถึงกำหนด + ภาษีซื้อพักของใบต้นทาง — <c>IgnoreQueryFilters</c> (B13: ใบต้นทางที่ถูก soft-delete ยังต้องรู้ชนิด
     /// ไม่งั้นใบเสร็จที่อ้างใบนั้นตกเงื่อนไข ⇒ ภาษีขายหายเงียบ) · กรอง CompanyId เอง</summary>
-    private async Task<Dictionary<Guid, (DocumentType Type, DateTime? OutputVatDueAt, bool InputVatPendingUndue)>> LoadRelatedDocInfosAsync(
+    private async Task<Dictionary<Guid, (DocumentType Type, DateTime? OutputVatDueAt, bool InputVatPendingUndue, decimal VatAmount, bool IsOpeningBalance, bool IsRollupBillingNote)>> LoadRelatedDocInfosAsync(
         Guid companyId, List<Guid> relatedDocIds)
         => relatedDocIds.Count == 0
-            ? new Dictionary<Guid, (DocumentType Type, DateTime? OutputVatDueAt, bool InputVatPendingUndue)>()
+            ? new Dictionary<Guid, (DocumentType Type, DateTime? OutputVatDueAt, bool InputVatPendingUndue, decimal VatAmount, bool IsOpeningBalance, bool IsRollupBillingNote)>()
             : (await _db.Documents.AsNoTracking().IgnoreQueryFilters()
                 .Where(d => d.CompanyId == companyId && relatedDocIds.Contains(d.Id))
                 .Select(d => new { d.Id, d.DocumentType, d.OutputVatDueAt,
-                    Pending = d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null })
+                    Pending = d.InputVatPostedAsUndue && d.InputVatBecameClaimableAt == null,
+                    d.VatAmount, d.IsOpeningBalance,
+                    // รอบ 269 H2 — ใบวางบิลรวม (ตัวตัดสิน BillingNoteKind.IsRollup — บรรทัดอ้างใบตั้งหนี้)
+                    AnyLineSource = d.Lines.Any(l => !l.IsDeleted && l.SourceDocumentId != null) })
                 .ToListAsync())
                 .ToDictionary(x => x.Id, x => (Type: x.DocumentType, x.OutputVatDueAt,
-                    InputVatPendingUndue: x.Pending));
+                    InputVatPendingUndue: x.Pending, VatAmount: x.VatAmount, IsOpeningBalance: x.IsOpeningBalance,
+                    IsRollupBillingNote: Accounting.Helpers.BillingNoteKind.IsRollup(x.DocumentType, x.AnyLineSource)));
 
     /// <summary>วันที่ใช้เป็น "เดือนภาษี" ของเอกสารเวลาตัดสินสิทธิ์เคลม —
     /// ฝั่งซื้อยึดวันที่ใบกำกับของผู้ขายก่อน (อาจต่างจากวันที่เราบันทึก)
@@ -4336,6 +4420,9 @@ public partial class TaxService : ITaxService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>ผู้กระทำในแถว audit ของการสร้างร่างใหม่อัตโนมัติ (ไม่มีผู้ใช้)</summary>
+    internal const string AutoRefreshAuditActor = "system:tax-report-auto-refresh";
+
     public async Task<int> AutoRefreshReportsAsync(Guid companyId, int months = 2)
     {
         var now = DateTime.UtcNow;
@@ -4361,6 +4448,9 @@ public partial class TaxService : ITaxService
                     && Accounting.Helpers.TaxFilingLockPolicy.DeclaredOrFiled(existing.Status))
                     continue;
 
+                // รอบ 269 (ฝ่ายค้านข้อ 1/4): สร้างร่างใหม่อัตโนมัติต้องไม่เงียบ — audit ยอดเดิม → ยอดใหม่ใน chain เดียวกับปุ่ม "สร้างใหม่"
+                var autoBefore = existing != null ? Accounting.Helpers.TaxReportRecompute.AuditPayload(existing, "before") : null;
+                var autoReplacesId = existing?.Id;
                 if (existing != null)
                 {
                     // ปลด claim VatDeferral ของรายงานที่จะลบ — เหมือน Regenerate/
@@ -4378,8 +4468,29 @@ public partial class TaxService : ITaxService
 
                 try
                 {
-                    await GenerateTaxReportAsync(companyId, new CreateTaxReportRequest(taxType, year, month));
+                    var autoResp = await GenerateTaxReportAsync(companyId, new CreateTaxReportRequest(taxType, year, month));
                     refreshed++;
+                    if (autoBefore != null)
+                    {
+                        var autoFresh = await _db.TaxReports.AsNoTracking()
+                            .FirstOrDefaultAsync(r => r.Id == autoResp.Id && r.CompanyId == companyId);
+                        if (autoFresh != null)
+                        {
+                            _db.AddChainedAuditLog(new AuditLog
+                            {
+                                CompanyId = companyId,
+                                UserId = null,
+                                UserEmail = AutoRefreshAuditActor,
+                                EntityType = nameof(TaxReport),
+                                EntityId = autoFresh.Id.ToString(),
+                                Action = AuditAction.Update,
+                                OldValues = autoBefore,
+                                NewValues = Accounting.Helpers.TaxReportRecompute.AuditPayload(autoFresh, "after", replacesReportId: autoReplacesId),
+                                Timestamp = DateTime.UtcNow,
+                            });
+                            await _db.SaveChangesAsync();
+                        }
+                    }
                 }
                 catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Failed to regenerate tax report for {taxType} {year}/{month}: {ex.Message}"); }
             }
