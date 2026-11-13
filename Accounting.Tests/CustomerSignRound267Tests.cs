@@ -647,6 +647,108 @@ public class CustomerSignRound267Tests
         Assert.DoesNotContain("id=\"sgRemember\" checked", page);                           // ไม่ติ๊กไว้ก่อน
     }
 
+    // ───────── ชุดแก้ฝ่ายค้าน 267-P2 (erp-review/2026-11-13/review-267-P2.md · คำตัดสิน 267-1-51…) ─────────
+
+    [Fact]
+    public void CSR267_H1_AuditRedaction_แถวหลักฐานและรหัสยืนยัน_ปิดค่าผู้ลงนามทั้งตอนเขียนและตอนแสดง()
+    {
+        foreach (var f in new[] { "SignerFirstName", "SignerLastName", "SignerTitle", "SignerOrgName", "SignerEmail", "Message", "Ip", "UserAgentHash", "SignatureFilePath", "SignedPdfPath" })
+            Assert.Equal(AuditRedaction.PiiMask, AuditRedaction.Value(nameof(CustomerDocumentAction), f, "ค่า"));
+        Assert.Equal(AuditRedaction.PiiMask, AuditRedaction.Value(nameof(CustomerSignOtp), "CodeHash", "abc"));
+        Assert.Equal(AuditRedaction.PiiMask, AuditRedaction.Value(nameof(CustomerSignOtp), "EmailHash", "abc"));
+        // ทิศตรงข้าม: hash เนื้อหา / ชนิด / Rev ไม่ใช่ข้อมูลส่วนบุคคล — audit ยังพิสูจน์การตอบรับได้
+        Assert.Equal("v2:abc", AuditRedaction.Value(nameof(CustomerDocumentAction), "ContentHash", "v2:abc"));
+        Assert.Equal("Accepted", AuditRedaction.Value(nameof(CustomerDocumentAction), "Action", "Accepted"));
+        // แถวเก่าที่เก็บค่าไปแล้ว: ปิดตอนแสดง
+        var shown = AuditRedaction.RedactJson("{\"SignerFirstName\":\"สมหญิง\",\"Ip\":\"203.0.113.9\",\"ContentHash\":\"v2:x\"}", nameof(CustomerDocumentAction))!;
+        Assert.DoesNotContain("สมหญิง", shown);
+        Assert.DoesNotContain("203.0.113.9", shown);
+        Assert.Contains("v2:x", shown);
+        // audit ที่เขียนเองในตัวเขียนเดียวไม่คัดลอกชื่อ/ตำแหน่ง/IP (ถอดออกแล้วเทสต์นี้ต้องล้ม)
+        var svc = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting", "Services", "Implementations", "CustomerDocumentResponseService.cs"));
+        Assert.DoesNotContain("acceptedBy = name, acceptedAt = now", svc);
+        Assert.DoesNotContain("respondedBy = signer.FullName, respondedAt", svc);
+        Assert.DoesNotContain("signerTitle = evidence.SignerTitle", svc);
+        Assert.DoesNotContain("IpAddress = ip,", svc);
+        Assert.DoesNotContain("IpAddress = caller.Ip", svc);
+    }
+
+    [Fact]
+    public void CSR267_M1_OtpHash_เป็นHMACด้วยกุญแจเซิร์ฟเวอร์_ไม่ใช่SHA256เปล่า()
+    {
+        var doc = Guid.NewGuid();
+        var plain = QuotationAcceptance.Sha256Hex($"{doc:N}|a@b.co|123456");
+        var h = CustomerSignRule.OtpHash(doc, "a@b.co", "123456");
+        Assert.NotEqual(plain, h);
+        Assert.Matches("^[0-9a-f]{64}$", h);
+        Assert.Equal(h, CustomerSignRule.OtpHash(doc, "a@b.co", " 123456 "));
+        Assert.Throws<InvalidOperationException>(() => CustomerSignRule.ConfigureOtpKey(" "));   // ห้ามกุญแจว่าง
+        var program = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting", "Program.cs"));
+        Assert.Contains("CustomerSignRule.ConfigureOtpKey(Accounting.Helpers.EncryptionKeyResolver.RequireUsable(", program);
+    }
+
+    [Fact]
+    public void CSR267_M2_LegacyLink_ตอบแล้วหรือถึงเกณฑ์รหัส_ปิดพร้อมทางไปต่อ_ทิศตรงข้ามเปิด()
+    {
+        Assert.NotNull(CustomerSignRule.LegacyAcceptClosedReason(nameof(CustomerSignRule.Kind.Declined), false));
+        Assert.NotNull(CustomerSignRule.LegacyAcceptClosedReason(nameof(CustomerSignRule.Kind.ChangeRequested), false));
+        Assert.Contains("ลิงก์", CustomerSignRule.LegacyAcceptClosedReason(null, true));
+        Assert.Null(CustomerSignRule.LegacyAcceptClosedReason(null, false));
+        Assert.Null(CustomerSignRule.LegacyAcceptClosedReason(nameof(CustomerSignRule.Kind.Accepted), false));   // ยอมรับแล้ว = ตอบสถานะเดิม (idempotent) ที่ด่านก่อนหน้า
+    }
+
+    [Fact]
+    public void CSR267_L4L8M3_ข้อความยินยอมต่อชนิด_ไม่อ้างว่าแจ้งแล้ว_ดาวน์โหลดเฉพาะเมื่อพร้อม()
+    {
+        foreach (var en in new[] { false, true })
+        {
+            var accept = CustomerSignText.Consent(en, CustomerSignRule.Kind.Accepted);
+            var decline = CustomerSignText.Consent(en, CustomerSignRule.Kind.Declined);
+            Assert.Contains(en ? "copy of the document" : "สำเนาเอกสารฉบับที่ท่านเห็น", accept);
+            Assert.DoesNotContain(en ? "copy of the document" : "สำเนาเอกสารฉบับที่ท่านเห็น", decline);
+            Assert.DoesNotContain(en ? "are printed on this document" : "จะพิมพ์บนเอกสาร", decline);
+            Assert.DoesNotContain(en ? "copy of the document" : "สำเนาเอกสารฉบับที่ท่านเห็น", CustomerSignText.Consent(en, CustomerSignRule.Kind.ChangeRequested));
+            foreach (var k in Enum.GetValues<CustomerSignRule.Kind>())
+                Assert.DoesNotContain(en ? "has been notified" : "ได้รับแจ้งแล้ว", CustomerSignText.Done(en, k, true));
+            Assert.DoesNotContain(en ? "download" : "ดาวน์โหลด", CustomerSignText.Done(en, CustomerSignRule.Kind.Accepted, false));
+            Assert.Contains(en ? "download" : "ดาวน์โหลด", CustomerSignText.Done(en, CustomerSignRule.Kind.Accepted, true));
+            Assert.DoesNotContain(en ? "download" : "ดาวน์โหลด", CustomerSignText.Done(en, CustomerSignRule.Kind.DeliverySigned, false));
+        }
+        Assert.NotEqual("267-1", CustomerSignText.Version);   // ข้อความเปลี่ยน ⇒ รุ่นขยับ
+    }
+
+    [Fact]
+    public void CSR267_L6L7_อีเมลปิดบัง_อีเมลรหัสไม่มีเลขเอกสาร_มีเพดานต่อใบ()
+    {
+        Assert.Equal("s***@buyer.co.th", CustomerSignRule.MaskEmail("somying@buyer.co.th"));
+        Assert.Null(CustomerSignRule.MaskEmail(null));
+        Assert.Null(CustomerSignRule.MaskEmail("ไม่ใช่อีเมล"));
+        Assert.DoesNotContain("QT-", CustomerSignText.OtpSubject(false, "บริษัท ผู้ขาย"));
+        Assert.Contains("&lt;b&gt;", CustomerSignText.OtpBody(false, "<b>", "123456", 10));   // ชื่อผู้ขาย encode
+        Assert.True(CustomerSignRule.OtpMaxPerDocumentPerDay is > 0 and <= 10);
+    }
+
+    [Fact]
+    public void CSR267_L2L9_triggerลบล้างค่าเท่านั้น_กันTRUNCATE_รายการช่องใบแทนไม่ซ้ำ()
+    {
+        var sql = string.Join("\n", CustomerSignMigration.Statements());
+        Assert.Contains("BEFORE TRUNCATE ON \"CustomerDocumentActions\"", sql);
+        Assert.Contains("NEW.\"CreatedBy\" IS DISTINCT FROM OLD.\"CreatedBy\"", sql);
+        Assert.Contains("IS DISTINCT FROM '" + QuotationAcceptance.Anonymized + "'", sql);
+        var notCarried = SettlementPaidReissue.DocumentNotCarriedFields;
+        Assert.Equal(notCarried.Count, notCarried.Distinct().Count());
+        Assert.Equal(SettlementPaidReissue.DocumentCarriedFields.Count, SettlementPaidReissue.DocumentCarriedFields.Distinct().Count());
+    }
+
+    [Fact]
+    public void CSR267_M3_ออกRevสร้างฉบับที่ลงนามก่อน_ล็อกลำดับในเส้นแก้เอกสาร()
+    {
+        var src = File.ReadAllText(Path.Combine(RepoRoot(), "Accounting", "Services", "Implementations", "DocumentService.cs"));
+        var ensure = src.IndexOf("EnsureSnapshotsBeforeRevisionAsync(", StringComparison.Ordinal);
+        var bump = src.IndexOf("doc.RevisionNumber++;", StringComparison.Ordinal);
+        Assert.True(ensure > 0 && bump > ensure, "ต้องสร้างฉบับที่ลงนามก่อน RevisionNumber++");
+    }
+
     /// <summary>ทุกข้อความที่หน้าลูกค้า/กระดาษ/อีเมล/แจ้งเตือนใช้จาก <c>CustomerSignText</c> (ไทย + อังกฤษ · ทุกชนิดคำตอบ)</summary>
     private static IEnumerable<string> AllSignTexts()
     {
@@ -659,7 +761,9 @@ public class CustomerSignRound267Tests
                 yield return CustomerSignText.Consent(en, k);
                 yield return CustomerSignText.KindLabel(en, k);
                 yield return CustomerSignText.Done(en, k);
+                yield return CustomerSignText.Done(en, k, signedCopyReady: true);
             }
+            yield return CustomerSignText.OtpBody(en, "ผู้ขาย", "123456", 10);
             yield return CustomerSignText.PrivacyNotice(en, "ผู้ขาย");
             yield return CustomerSignText.IndividualTitle(en);
             foreach (var v in CustomerSignText.FormLabels(en).Values) yield return v;
@@ -668,6 +772,9 @@ public class CustomerSignRound267Tests
             yield return CustomerSignText.SignedCopySubject(en, "ใบเสนอราคา", "QT-1");
         }
         yield return CustomerSignText.LegalReference;
+        yield return CustomerSignText.ErasureAuditNote;
+        yield return CustomerSignRule.LegacyAcceptClosedReason(nameof(CustomerSignRule.Kind.Declined), false)!;
+        yield return CustomerSignRule.LegacyAcceptClosedReason(null, true)!;
         yield return CustomerSignText.StampDutyWarning;
         yield return CustomerSignText.ConvertSuggestionText;
         yield return CustomerSignText.RopaPurpose;

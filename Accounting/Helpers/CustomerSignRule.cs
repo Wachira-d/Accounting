@@ -129,17 +129,54 @@ public static class CustomerSignRule
     public const int OtpMaxAttempts = 5;
     /// <summary>ขอรหัสใหม่ได้ไม่ถี่กว่า (วินาที) ต่อใบ</summary>
     public const int OtpResendSeconds = 60;
+    /// <summary>ฝ่ายค้าน 267-P2 L7: รหัสต่อใบต่อ 24 ชั่วโมง</summary>
+    public const int OtpMaxPerDocumentPerDay = 5;
 
     /// <summary>ต้องยืนยันอีเมลด้วยรหัสไหม — เฉพาะ "ยอมรับ" ใบเสนอราคาที่ยอดรวมถึงเกณฑ์ของบริษัท (ไม่ตั้งเกณฑ์ = ไม่ใช้)</summary>
     public static bool OtpRequired(decimal? companyMinAmount, decimal documentTotal, Kind kind)
         => kind == Kind.Accepted && companyMinAmount is decimal min && min > 0m && documentTotal >= min;
 
+    /// <summary>ฝ่ายค้าน 267-P2 L6: อีเมลผู้ลงนามสำหรับผู้ไม่มีสิทธิ์ Pii.View — "s***@buyer.co.th" (คงโดเมนให้รู้ว่าเป็นคนของบริษัทไหน) · null/ไม่มี @ = null</summary>
+    public static string? MaskEmail(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return null;
+        var at = email.IndexOf('@');
+        if (at <= 0) return null;
+        return email[..1] + "***" + email[at..];
+    }
+
+    /// <summary>ฝ่ายค้าน 267-P2 M2: ลิงก์ยอมรับรุ่นก่อนรอบ 267 (พิมพ์ชื่ออย่างเดียว) ปิดเมื่อ (ก) ลูกค้าตอบใบ/Rev นี้ไปแล้ว (หนึ่งคำตอบต่อ Rev — 267-1-11)
+    /// (ข) ยอดถึงเกณฑ์รหัสยืนยันอีเมล (ลิงก์รุ่นก่อนยืนยันอีเมลไม่ได้) · ข้อความบอกทางไปต่อเสมอ · null = เปิด</summary>
+    public static string? LegacyAcceptClosedReason(string? customerResponse, bool otpThresholdReached)
+    {
+        if (!string.IsNullOrEmpty(customerResponse) && customerResponse != nameof(Kind.Accepted))
+            return "ท่านแจ้งคำตอบของใบเสนอราคาฉบับนี้ไปแล้ว — หากต้องการเปลี่ยนคำตอบ กรุณาติดต่อผู้ขายให้เปิดให้ตอบใหม่หรือส่งฉบับแก้ไข";
+        if (otpThresholdReached)
+            return "ใบเสนอราคานี้ต้องยืนยันอีเมลก่อนยอมรับ — กรุณาเปิดลิงก์หน้าเอกสารล่าสุดจากผู้ขาย (หรือขอลิงก์ใหม่จากผู้ขาย)";
+        return null;
+    }
+
     /// <summary>รหัส 6 หลักจากตัวสุ่มเชิงเข้ารหัส</summary>
     public static string NewOtpCode() => RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6", System.Globalization.CultureInfo.InvariantCulture);
 
-    /// <summary>hash ของรหัส ผูกกับใบ + อีเมล (รหัสของใบหนึ่ง/อีเมลหนึ่งใช้กับอีกใบ/อีกอีเมลไม่ได้) — ตัวเดียวทั้งฝั่งออกและฝั่งตรวจ</summary>
+    // ฝ่ายค้าน 267-P2 M1: รหัส 6 หลักมีแค่ 10⁶ ค่า ⇒ SHA-256 เปล่ากู้รหัสได้ทันทีจาก hash ⇒ HMAC-SHA256 ด้วยกุญแจฝั่งเซิร์ฟเวอร์ ·
+    // กุญแจ = แยกโดเมนจาก ENCRYPTION_KEY (แหล่งเดียวกับ SecretProtector — production fail-fast ใน Program.cs ผ่าน EncryptionKeyResolver.RequireUsable)
+    private static byte[] _otpKey = DeriveOtpKey(EncryptionKeyResolver.DevKey);
+
+    private static byte[] DeriveOtpKey(string serverKey)
+        => SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("nextacc/customer-sign-otp/v1|" + serverKey));
+
+    /// <summary>ตั้งกุญแจของ HMAC รหัสยืนยัน (เรียกครั้งเดียวตอนบูต — <c>Program.cs</c>) · ว่าง = throw (ห้าม fallback เงียบ ๆ — กฎ #4 C)</summary>
+    public static void ConfigureOtpKey(string serverKey)
+    {
+        if (string.IsNullOrWhiteSpace(serverKey)) throw new InvalidOperationException("ต้องมีกุญแจฝั่งเซิร์ฟเวอร์สำหรับรหัสยืนยันอีเมล (ENCRYPTION_KEY)");
+        _otpKey = DeriveOtpKey(serverKey);
+    }
+
+    /// <summary>HMAC ของรหัส ผูกกับใบ + อีเมล (รหัสของใบหนึ่ง/อีเมลหนึ่งใช้กับอีกใบ/อีกอีเมลไม่ได้) — ตัวเดียวทั้งฝั่งออกและฝั่งตรวจ</summary>
     public static string OtpHash(Guid documentId, string emailLower, string code)
-        => QuotationAcceptance.Sha256Hex($"{documentId:N}|{emailLower}|{(code ?? "").Trim()}")!;
+        => Convert.ToHexString(HMACSHA256.HashData(_otpKey,
+            System.Text.Encoding.UTF8.GetBytes($"{documentId:N}|{emailLower}|{(code ?? "").Trim()}"))).ToLowerInvariant();
 
     public static string EmailHash(string emailLower) => QuotationAcceptance.Sha256Hex(emailLower)!;
 

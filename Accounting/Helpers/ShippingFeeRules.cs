@@ -155,7 +155,7 @@ public static class ShippingFeeRules
     ///   ให้ชัด · เลือก "ยกเว้น/0%" กับบิลที่มีของต้องเสียภาษี = เสี่ยงภาษีขายขาด (ประเมินย้อนหลัง + เงินเพิ่ม) ขณะที่ 7% เสี่ยงแค่ผู้ขายเสียเกิน ·
     ///   ผู้ทำบัญชีแยกบิลได้ถ้าต้องการ (บันทึกใน docs/POS_MTO_DESIGN.md)</item>
     /// <item>ไม่มีอัตราบวก แต่มีสินค้า 0% (ส่งออก §80/1) ⇒ 0</item>
-    /// <item>สินค้าทั้งบิล<b>ยกเว้น</b> (§81 · −1) ⇒ ยกเว้น (−1) — <b>ไม่ใช่ 0%</b> (0% = ยอดส่งออกใน ภ.พ.30 ช่อง 7)</item>
+    /// <item>สินค้าทั้งบิล<b>ยกเว้น</b> (§81 · −1) ⇒ ยกเว้น (−1) — <b>ไม่ใช่ 0%</b> (0% = ยอดส่งออกใน ภ.พ.30 ช่อง 0%)</item>
     /// </list></summary>
     public static decimal VatRateForShipping(bool sellerVatRegistered, IEnumerable<decimal> goodsLineVatRates)
     {

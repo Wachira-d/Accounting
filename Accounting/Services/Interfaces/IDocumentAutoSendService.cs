@@ -58,9 +58,9 @@ public interface IDocumentPayLinkService
     Task<CustomerLinkRequestResult> RequestLinkForDocumentAsync(Guid companyId, Guid documentId, string source, CancellationToken ct = default);
 
     /// <summary>รอบ 267 P4 (267-1-47): ผู้ถือลิงก์ของใบ (เช่นใบวางบิล) ขอเปิด<b>หน้าเอกสารของใบที่เกี่ยวข้อง</b>เพื่อชำระรายใบ — ใบนั้นต้องอยู่ในชุดที่หน้า
-    /// แสดงและมีปุ่ม "ชำระใบนี้" (<c>CustomerDocPageRelated.PayOffered</c>) · ออกลิงก์ผ่านตัวออกเดียว (<see cref="EnsureCustomerLinkAsync"/>) ·
+    /// แสดงและมีปุ่ม "ชำระใบนี้" (<c>CustomerDocPageRelated.PayOffered</c>) · คืนเฉพาะลิงก์ที่ผู้ขายออกไว้และยังใช้ได้ — ไม่ออก token ให้ผู้ถือลิงก์ (ฝ่ายค้าน MED-2) ·
     /// <c>Found</c> false = ข้อความเดียว (ไม่พบ) · <c>Path</c> = ที่อยู่ภายในเว็บของหน้าเอกสารใบนั้น · <c>Message</c> = เหตุที่เปิดไม่ได้</summary>
-    Task<(bool Found, string? Path, string? Message)> RelatedPageLinkAsync(Guid companyId, string token, Guid relatedId, CancellationToken ct = default);
+    Task<RelatedPageLinkResult> RelatedPageLinkAsync(Guid companyId, string token, Guid relatedId, CancellationToken ct = default);
 
     /// <summary>รอบ 267 P4 (267-1-48): เอกสาร + ผู้ติดต่อ ที่ token นี้ส่งหนังสือรับรอง 50 ทวิ ได้ ณ ตอนนี้ (หน้าเสนอฟอร์มจริง) · null = ไม่ได้</summary>
     Task<(Guid DocumentId, Guid ContactId)?> WhtCertTargetAsync(Guid companyId, string token, CancellationToken ct = default);
@@ -245,6 +245,11 @@ public sealed record CustomerDocEvidenceItem(
 
 /// <summary>ผลของการขอลิงก์ใหม่ — <paramref name="Found"/> false = ข้อความเดียว (ไม่พบ/เพิกถอน/เกินช่วงขอ) ·
 /// <paramref name="Recorded"/> true = บันทึกคำขอครั้งนี้ (ผู้เรียกแจ้งพนักงาน) · false = วันนี้ขอไปแล้ว (ไม่แจ้งซ้ำ)</summary>
+/// <summary>รอบ 267 P4 (ฝ่ายค้าน MED-2 · 267-1-47): ผลของปุ่ม "ชำระใบนี้" — <paramref name="Path"/> = หน้าเอกสารของใบนั้น (ลิงก์ที่ผู้ขายออกไว้และยังใช้ได้เท่านั้น) ·
+/// <paramref name="Path"/> null + <paramref name="Request"/> = บันทึกคำขอลิงก์ใหม่ถึงผู้ขายแล้ว (ผู้เรียกแจ้งพนักงานเมื่อ <c>Recorded</c>) ·
+/// <paramref name="Request"/> null = ผู้ขายยกเลิกลิงก์ของใบนั้นไว้ (ติดต่อผู้ขาย)</summary>
+public sealed record RelatedPageLinkResult(bool Found, string? Path, string? Message, CustomerLinkRequestResult? Request);
+
 public sealed record CustomerLinkRequestResult(bool Found, bool Recorded, Guid DocumentId, string DocumentNumber, string Message);
 
 public sealed record DocumentAutoSendSettingsDto(

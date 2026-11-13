@@ -148,9 +148,15 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
     {
         try
         {
-            var pay = await db.Payments.AsNoTracking()
+            // รอบ 267 P4 ฝ่ายค้าน LOW-3: ใบที่มีผลของการรับชำระ = (MovedToDocumentId ?? DocumentId) — PaymentEffectiveDocument (รอบ 266 B)
+            var payDoc = await db.Payments.AsNoTracking()
                 .Where(p => p.Id == paymentId && p.CompanyId == companyId)
-                .Select(p => new { p.DocumentId, p.Document.BalanceDue })
+                .Select(p => (Guid?)(p.MovedToDocumentId ?? p.DocumentId))
+                .FirstOrDefaultAsync(ct);
+            if (payDoc is not Guid effectiveDocId) return false;
+            var pay = await db.Documents.AsNoTracking()
+                .Where(d => d.Id == effectiveDocId && d.CompanyId == companyId)
+                .Select(d => new { DocumentId = d.Id, d.BalanceDue })
                 .FirstOrDefaultAsync(ct);
             if (pay == null) return false;
             // ฝ่ายค้าน N: "ชำระครบ" ตัดสิน ณ เหตุการณ์ชำระนี้ (หลัง commit ของการชำระ) — ไม่ใช่ตอนงานรัน (งวดถัดไปอาจเข้ามาก่อน)
@@ -330,7 +336,7 @@ public class PostPaymentAutomationService : IPostPaymentAutomationService
         var allocations = await _db.PaymentAllocations.AsNoTracking()
             .CountAsync(a => a.PaymentId == payment.Id && a.CompanyId == cid && !a.IsDeleted, ct);
         var paymentCount = await _db.Payments.AsNoTracking()
-            .CountAsync(p => p.DocumentId == doc.Id && p.CompanyId == cid && !p.IsDeleted, ct);
+            .CountAsync(p => (p.MovedToDocumentId ?? p.DocumentId) == doc.Id && p.CompanyId == cid && !p.IsDeleted, ct);   // ฝ่ายค้าน LOW-3 (PaymentEffectiveDocument)
         var fullyPaid = run.FullyPaid;   // ฝ่ายค้าน N: ค่า ณ ตอนเข้าคิว
 
         var servesAsReceipt = false;

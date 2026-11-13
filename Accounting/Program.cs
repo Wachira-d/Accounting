@@ -153,6 +153,10 @@ else
 {
     Accounting.Helpers.EncryptedColumnConverter.Configure(encryptionKey);
 }
+// ฝ่ายค้าน 267-P2 M1: กุญแจ HMAC ของรหัสยืนยันอีเมลผู้ลงนาม — แหล่งเดียวกับข้างบน · production ไม่มีคีย์/เป็น dev key = boot ไม่ขึ้น
+Accounting.Helpers.CustomerSignRule.ConfigureOtpKey(Accounting.Helpers.EncryptionKeyResolver.RequireUsable(
+    Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),
+    builder.Environment.IsProduction(), "รหัสยืนยันอีเมลของผู้ลงนามเอกสาร (HMAC)"));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>

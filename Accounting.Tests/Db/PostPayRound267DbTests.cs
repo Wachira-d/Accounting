@@ -366,13 +366,13 @@ public class PostPayRound267DbTests
         Assert.True(again.AfterPay!.SlipPending);
         Assert.Equal(2, again.AfterPay.Slips.Count);
         Assert.Contains(again.AfterPay.Slips, x => x.State == CustomerDocPageAfterPay.SlipPending);
-        Assert.Equal(CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Failed, null).Note, again.AfterPay.Slips.Single(x => x.State == CustomerDocPageAfterPay.SlipRejected).Note);
+        Assert.Equal(CustomerDocPageAfterPay.SlipState(false, PaymentIntentStatus.Failed, CustomerDocPageAfterPay.SlipRejectedCode, null).Note, again.AfterPay.Slips.Single(x => x.State == CustomerDocPageAfterPay.SlipRejected).Note);
     }
 
     // ───────── S24: ใบวางบิล ─────────
 
     [Fact]
-    public async Task CDP267Db_BillingNoteListsInvoices_เฉพาะใบในบิล_ปุ่มจ่ายเฉพาะใบที่ค้าง_เปิดหน้าของใบนั้นผ่านตัวออกเดียว_ยกเลิกลิงก์แล้วไม่ออกใหม่()
+    public async Task CDP267Db_BillingNoteListsInvoices_เฉพาะใบในบิล_ปุ่มจ่ายเฉพาะใบที่ค้าง_คืนเฉพาะลิงก์ที่ผู้ขายออกไว้_ไม่มีลิงก์ขอผู้ขาย_ยกเลิกลิงก์แล้วไม่ออกใหม่()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
@@ -407,35 +407,109 @@ public class PostPayRound267DbTests
         // ใบวางบิลเองไม่มีการจ่ายรวม (267-1-9 v1)
         Assert.DoesNotContain(page.Actions, a => a.Id == CustomerDocPage.ActionPayOnline && a.Enabled);
 
-        // ปุ่ม "ชำระใบนี้": ได้ที่อยู่หน้าเอกสารของใบนั้น (token ของใบนั้นเอง — ผ่านตัวออกเดียว)
-        Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == inv1.Id).Select(d => d.PayLinkTokenHash).SingleAsync());
-        var open = await s.Links.RelatedPageLinkAsync(s.CompanyId, token, inv1.Id);
-        Assert.True(open.Found);
-        Assert.StartsWith(DocumentPayLinkPolicy.PagePath + "?c=" + s.CompanyId.ToString("D") + "&t=", open.Path);
-        var invToken = open.Path![(open.Path!.IndexOf("&t=", StringComparison.Ordinal) + 3)..];
-        Assert.NotEqual(token, invToken);
-        var invView = (await s.Links.PublicViewAsync(s.CompanyId, invToken))!;
-        Assert.Equal(inv1.DocumentNumber, invView.DocumentNumber);
-        Assert.Equal(DocumentPayLinkPolicy.TokenHash(invToken),
-            await db.Documents.AsNoTracking().Where(d => d.Id == inv1.Id).Select(d => d.PayLinkTokenHash).SingleAsync());
-        // กดซ้ำ = ลิงก์เดิม (ไม่ออก token ใหม่ทุกครั้ง)
-        Assert.Equal(open.Path, (await s.Links.RelatedPageLinkAsync(s.CompanyId, token, inv1.Id)).Path);
+        // ฝ่ายค้าน MED-2 (267-1-47): ใบที่ผู้ขายยังไม่เคยออกลิงก์ ⇒ ไม่ออก token ให้ผู้ถือลิงก์ใบวางบิล — บันทึกคำขอถึงผู้ขาย (audit + กระดิ่ง ≤ 1/วัน)
+        Task<string?> HashOf(Guid id) => db.Documents.AsNoTracking().Where(d => d.Id == id).Select(d => d.PayLinkTokenHash).SingleAsync();
+        Task<int> RequestsOf(Guid id) => db.AuditLogs.AsNoTracking().CountAsync(a => a.CompanyId == s.CompanyId
+            && a.EntityType == DocumentPayLinkService.LinkRequestEntity && a.EntityId == id.ToString());
+        Assert.Null(await HashOf(inv1.Id));
+        var never = await s.Links.RelatedPageLinkAsync(s.CompanyId, token, inv1.Id);
+        Assert.True(never.Found);
+        Assert.Null(never.Path);
+        Assert.True(never.Request is { Recorded: true });
+        Assert.Equal(CustomerDocPageAfterPay.RelatedLinkRequestedMessage(false, true), never.Message);
+        Assert.Null(await HashOf(inv1.Id));                                                           // ไม่มี token เกิดขึ้น
+        Assert.Equal(1, await RequestsOf(inv1.Id));
+        var again = await s.Links.RelatedPageLinkAsync(s.CompanyId, token, inv1.Id);                  // กดซ้ำในวันเดียวกัน = ไม่กดกระดิ่งซ้ำ
+        Assert.True(again.Request is { Recorded: false });
+        Assert.Null(again.Path);
+        Assert.Equal(1, await RequestsOf(inv1.Id));
+        Assert.Null(await HashOf(inv1.Id));
 
-        // ทิศตรงข้าม: ใบที่จ่ายแล้ว · ใบนอกบิล · ใบของผู้ติดต่ออื่น · รหัสมั่ว · บริษัทอื่น ⇒ ไม่พบ และไม่มีลิงก์ถูกออก
+        // ทิศตรงข้าม: ผู้ขายออกลิงก์ของใบนั้นไว้แล้วและยังใช้ได้ ⇒ คืนลิงก์เดิมตัวนั้น (ไม่หมุน · ไม่บันทึกคำขอ)
+        var staffToken = await PageTokenAsync(s, inv2.Id);
+        var hashBefore = await HashOf(inv2.Id);
+        var open = await s.Links.RelatedPageLinkAsync(s.CompanyId, token, inv2.Id);
+        Assert.True(open.Found);
+        Assert.Null(open.Request);
+        Assert.Equal(DocumentPayLinkPolicy.PagePath + "?c=" + s.CompanyId.ToString("D") + "&t=" + Uri.EscapeDataString(staffToken), open.Path);
+        Assert.Equal(inv2.DocumentNumber, (await s.Links.PublicViewAsync(s.CompanyId, staffToken))!.DocumentNumber);
+        Assert.Equal(hashBefore, await HashOf(inv2.Id));
+        Assert.Equal(0, await RequestsOf(inv2.Id));
+
+        // ลิงก์ของใบนั้นหมดอายุ ⇒ ไม่ต่ออายุ/ไม่หมุนให้คนนอก — ขอผู้ขายแทน
+        await db.Documents.Where(d => d.Id == inv2.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.PayLinkExpiresAt, (DateTime?)DateTime.UtcNow.AddDays(-1)));
+        var expired = await s.Links.RelatedPageLinkAsync(s.CompanyId, token, inv2.Id);
+        Assert.Null(expired.Path);
+        Assert.True(expired.Request is { Recorded: true });
+        Assert.Equal(hashBefore, await HashOf(inv2.Id));
+
+        // ทิศตรงข้าม: ใบที่จ่ายแล้ว · ใบนอกบิล · ใบของผู้ติดต่ออื่น · รหัสมั่ว · บริษัทอื่น ⇒ ไม่พบ และไม่มีลิงก์/คำขอถูกสร้าง
         foreach (var id in new[] { paid.Id, notBilled.Id, foreign.Id, Guid.NewGuid() })
             Assert.False((await s.Links.RelatedPageLinkAsync(s.CompanyId, token, id)).Found);
-        Assert.False((await s.Links.RelatedPageLinkAsync(other.CompanyId, token, inv2.Id)).Found);
-        Assert.False((await s.Links.RelatedPageLinkAsync(s.CompanyId, DocumentPayLinkPolicy.TokenHash(token), inv2.Id)).Found);
-        foreach (var id in new[] { paid.Id, notBilled.Id, foreign.Id, inv2.Id })
-            Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == id).Select(d => d.PayLinkTokenHash).SingleAsync());
+        Assert.False((await s.Links.RelatedPageLinkAsync(other.CompanyId, token, inv1.Id)).Found);
+        Assert.False((await s.Links.RelatedPageLinkAsync(s.CompanyId, DocumentPayLinkPolicy.TokenHash(token), inv1.Id)).Found);
+        foreach (var id in new[] { paid.Id, notBilled.Id, foreign.Id })
+        {
+            Assert.Null(await HashOf(id));
+            Assert.Equal(0, await RequestsOf(id));
+        }
 
-        // ผู้ขายยกเลิกลิงก์ของใบนั้นไว้ ⇒ คำขอของลูกค้าไม่ออกใหม่ทับ (บอกให้ติดต่อผู้ขาย)
-        await s.Links.RevokeAsync(s.CompanyId, inv1.Id, "tester");
-        var revoked = await s.Links.RelatedPageLinkAsync(s.CompanyId, token, inv1.Id);
+        // ผู้ขายยกเลิกลิงก์ของใบนั้นไว้ ⇒ ไม่ออกใหม่ทับ · ไม่กดกระดิ่ง (บอกให้ติดต่อผู้ขาย)
+        await s.Links.RevokeAsync(s.CompanyId, inv2.Id, "tester");
+        var revoked = await s.Links.RelatedPageLinkAsync(s.CompanyId, token, inv2.Id);
         Assert.True(revoked.Found);
         Assert.Null(revoked.Path);
+        Assert.Null(revoked.Request);
         Assert.Equal(CustomerDocPageAfterPay.RelatedLinkRefusedMessage(false), revoked.Message);
-        Assert.NotNull(await db.Documents.AsNoTracking().Where(d => d.Id == inv1.Id).Select(d => d.PayLinkRevokedAt).SingleAsync());
+        Assert.NotNull(await db.Documents.AsNoTracking().Where(d => d.Id == inv2.Id).Select(d => d.PayLinkRevokedAt).SingleAsync());
+    }
+
+    // ───────── MED-1: การชำระก้อนเดียวจัดสรรหลายใบ (X/Y/Z) ─────────
+
+    [Fact]
+    public async Task CDP267Db_SpreadPaymentReceipts_ชำระก้อนเดียวหลายใบ_แต่ละใบเห็นเฉพาะใบเสร็จของตัวเอง_ไม่บอกว่ายังไม่ออกเมื่อมีใบเสร็จรวม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "spread " + Guid.NewGuid().ToString("N")[..6]);
+        var x = await AddDocAsync(db, s, DocumentType.Invoice, "INVX", DocumentStatus.Paid, balance: 0m);
+        var y = await AddDocAsync(db, s, DocumentType.Invoice, "INVY", DocumentStatus.Paid, balance: 0m);
+        var z = await AddDocAsync(db, s, DocumentType.Invoice, "INVZ", DocumentStatus.Paid, balance: 0m);
+        // การชำระ P บันทึกบน X แล้วจัดสรรให้ X, Y, Z (รูปเดียวกับรับชำระหลายใบ)
+        var p = await AddPaymentAsync(db, s, x, 3_210m);
+        foreach (var d in new[] { x, y, z })
+            db.PaymentAllocations.Add(new PaymentAllocation { CompanyId = s.CompanyId, PaymentId = p.Id, DocumentId = d.Id, AllocatedAmount = 1_070m });
+        await db.SaveChangesAsync();
+        // ใบเสร็จรายใบของ X และ Y (IssueReceiptForPaymentAsync(forDocumentId): RelatedDocumentId = ใบนั้น · SettlementPaymentId = P · ไม่ตั้ง ReceiptDocumentId)
+        var recX = await AddReceiptAsync(db, s, x, p, linkOnPayment: false);
+        var recY = await AddReceiptAsync(db, s, y, p, linkOnPayment: false);
+        var tx = await PageTokenAsync(s, x.Id);
+        var ty = await PageTokenAsync(s, y.Id);
+        var tz = await PageTokenAsync(s, z.Id);
+
+        // X เห็นเฉพาะของตัวเอง — ไม่ได้ใบกำกับของ Y (ทั้งรายการและดาวน์โหลด)
+        var px = (await s.Links.PublicViewAsync(s.CompanyId, tx))!.Page!;
+        Assert.Equal(recX.Id, Assert.Single(px.Related, r => r.Kind == CustomerDocPageAfterPay.KindReceipt).RelId);
+        Assert.DoesNotContain(px.Related, r => r.RelId == recY.Id);
+        Assert.Null(await s.Links.ResolvePdfDocumentAsync(s.CompanyId, tx, recY.Id));
+        // ทิศตรงข้าม: Y (การชำระบันทึกบนใบอื่น แต่จัดสรรมา) เห็นใบเสร็จของตัวเอง และไม่มีข้อความ "ยังไม่ออก" ที่ไม่จริง
+        var py = (await s.Links.PublicViewAsync(s.CompanyId, ty))!.Page!;
+        Assert.Equal(recY.Id, Assert.Single(py.Related, r => r.Kind == CustomerDocPageAfterPay.KindReceipt).RelId);
+        Assert.DoesNotContain(py.Related, r => r.RelId == recX.Id);
+        Assert.Null(py.AfterPay!.ReceiptNote);
+        Assert.Equal(recY.Id, await s.Links.ResolvePdfDocumentAsync(s.CompanyId, ty, recY.Id));
+        // Z ยังไม่มีใบเสร็จของตัวเอง ⇒ ไม่เห็นของ X/Y
+        var pz = (await s.Links.PublicViewAsync(s.CompanyId, tz))!.Page!;
+        Assert.DoesNotContain(pz.Related, r => r.Kind == CustomerDocPageAfterPay.KindReceipt);
+        Assert.Null(await s.Links.ResolvePdfDocumentAsync(s.CompanyId, tz, recX.Id));
+
+        // ใบเสร็จรวมของการชำระ (ReceiptDocumentId บนการชำระที่กระจายหลายใบ · ไม่ผูกใบใด) ⇒ ไม่ขึ้นบนหน้าใบเดียว แต่ก็ไม่บอกว่า "ยังไม่ออก"
+        var combined = await AddReceiptAsync(db, s, x, p);
+        await db.Documents.Where(d => d.Id == combined.Id).ExecuteUpdateAsync(u => u.SetProperty(d => d.RelatedDocumentId, (Guid?)null));
+        var pz2 = (await s.Links.PublicViewAsync(s.CompanyId, tz))!.Page!;
+        Assert.DoesNotContain(pz2.Related, r => r.RelId == combined.Id);
+        Assert.Null(pz2.AfterPay!.ReceiptNote);
+        Assert.DoesNotContain((await s.Links.PublicViewAsync(s.CompanyId, tx))!.Page!.Related, r => r.RelId == combined.Id);
     }
 
     // ───────── 50 ทวิ จากหน้าเอกสาร ─────────

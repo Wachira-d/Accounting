@@ -11,6 +11,7 @@ public static class CustomerSignMigration
     public const string TriggerSqlState = "P0001";
     public const string GuardFunction = "customer_document_actions_guard";
     public const string NoDeleteFunction = "customer_document_actions_no_delete";
+    public const string NoTruncateFunction = "customer_document_actions_no_truncate";
 
     public static IEnumerable<string> Statements() => new[]
     {
@@ -94,6 +95,7 @@ public static class CustomerSignMigration
              OR NEW."ContentHash" IS DISTINCT FROM OLD."ContentHash"
              OR NEW."TokenHash" IS DISTINCT FROM OLD."TokenHash"
              OR NEW."CreatedAt" IS DISTINCT FROM OLD."CreatedAt"
+             OR NEW."CreatedBy" IS DISTINCT FROM OLD."CreatedBy"
              OR NEW."IsDeleted" IS DISTINCT FROM OLD."IsDeleted" THEN
             RAISE EXCEPTION 'CustomerDocumentActions: แก้แถวหลักฐานการตอบรับของลูกค้าไม่ได้ (append-only)';
           END IF;
@@ -111,6 +113,17 @@ public static class CustomerSignMigration
             OR NEW."Ip" IS DISTINCT FROM OLD."Ip"
             OR NEW."UserAgentHash" IS DISTINCT FROM OLD."UserAgentHash") THEN
             RAISE EXCEPTION 'CustomerDocumentActions: แก้ข้อมูลผู้ลงนามไม่ได้ (append-only) — ลบได้เฉพาะตามคำขอของเจ้าของข้อมูลหลังพ้นอายุเก็บ';
+          END IF;
+          -- ฝ่ายค้าน 267-P2 L2: "ลบตามคำขอ" ล้างได้อย่างเดียว (ชื่อ = ค่าคงที่ของการปิดบัง · ช่องอื่น = NULL) — ใช้เป็นทางเขียนชื่อปลอมพร้อมประทับ ErasedAt ไม่ได้ ·
+          -- และห้ามแตะ hash/เวลาของฉบับที่ลงนามในคำสั่งเดียวกัน
+          IF erasing AND (
+               NEW."SignerFirstName" IS DISTINCT FROM '{{QuotationAcceptance.Anonymized}}'
+            OR NEW."SignerLastName" IS NOT NULL OR NEW."SignerTitle" IS NOT NULL OR NEW."SignerOrgName" IS NOT NULL
+            OR NEW."SignerEmail" IS NOT NULL OR NEW."SignatureFilePath" IS NOT NULL OR NEW."Message" IS NOT NULL
+            OR NEW."Ip" IS NOT NULL OR NEW."UserAgentHash" IS NOT NULL OR NEW."SignedPdfPath" IS NOT NULL
+            OR NEW."SignedPdfSha256" IS DISTINCT FROM OLD."SignedPdfSha256"
+            OR NEW."SignedPdfAt" IS DISTINCT FROM OLD."SignedPdfAt") THEN
+            RAISE EXCEPTION 'CustomerDocumentActions: การลบข้อมูลส่วนบุคคลล้างค่าได้อย่างเดียว (append-only)';
           END IF;
           IF NEW."SignedPdfSha256" IS DISTINCT FROM OLD."SignedPdfSha256" AND OLD."SignedPdfSha256" IS NOT NULL THEN
             RAISE EXCEPTION 'CustomerDocumentActions: ฉบับที่ลูกค้าเซ็นถูกบันทึกแล้ว เขียนทับไม่ได้ (append-only)';
@@ -135,6 +148,16 @@ public static class CustomerSignMigration
         """,
         """DROP TRIGGER IF EXISTS "TR_CustomerDocumentActions_NoDelete" ON "CustomerDocumentActions";""",
         $$"""CREATE TRIGGER "TR_CustomerDocumentActions_NoDelete" BEFORE DELETE ON "CustomerDocumentActions" FOR EACH ROW EXECUTE FUNCTION "{{NoDeleteFunction}}"();""",
+        // ฝ่ายค้าน 267-P2 L2: TRUNCATE ข้าม trigger ระดับแถว ⇒ กันระดับคำสั่ง
+        $$"""
+        CREATE OR REPLACE FUNCTION "{{NoTruncateFunction}}"() RETURNS trigger AS $fn$
+        BEGIN
+          RAISE EXCEPTION 'CustomerDocumentActions: ล้างตารางหลักฐานการตอบรับของลูกค้าไม่ได้ (append-only)';
+        END
+        $fn$ LANGUAGE plpgsql;
+        """,
+        """DROP TRIGGER IF EXISTS "TR_CustomerDocumentActions_NoTruncate" ON "CustomerDocumentActions";""",
+        $$"""CREATE TRIGGER "TR_CustomerDocumentActions_NoTruncate" BEFORE TRUNCATE ON "CustomerDocumentActions" FOR EACH STATEMENT EXECUTE FUNCTION "{{NoTruncateFunction}}"();""",
         """DROP TRIGGER IF EXISTS "TR_CustomerDocumentActions_Guard" ON "CustomerDocumentActions";""",
         $$"""CREATE TRIGGER "TR_CustomerDocumentActions_Guard" BEFORE UPDATE ON "CustomerDocumentActions" FOR EACH ROW EXECUTE FUNCTION "{{GuardFunction}}"();""",
     };

@@ -11,7 +11,7 @@ namespace Accounting.Controllers;
 /// <item><c>POST documents/{token}/wht-cert</c> — ส่งหนังสือรับรอง 50 ทวิ ของใบนี้ (แกนเดียวกับลิงก์อัปโหลด 50 ทวิ เดิม —
 /// <see cref="IWhtCertUploadLinkService.UploadForDocumentAsync"/> · ไม่มีระบบอัปโหลดที่สอง · 267-1-48)</item>
 /// <item><c>POST documents/{token}/related/{relId}/page-link</c> — เปิดหน้าเอกสารของใบที่เกี่ยวข้องเพื่อชำระรายใบ (ใบวางบิล → ใบแจ้งหนี้ในบิล ·
-/// 267-1-9 v1 · 267-1-47) — ออกลิงก์ผ่านตัวออกเดียว</item>
+/// 267-1-9 v1 · 267-1-47) — คืนเฉพาะลิงก์ที่ผู้ขายออกไว้และยังใช้ได้ · ไม่มี = ขอลิงก์ใหม่ถึงผู้ขาย (ไม่ออก token เอง)</item>
 /// </list>
 /// ไม่มีเส้นออกใบเสร็จ/ยืนยันสลิป/บันทึกรับชำระที่นี่ (R267d) · เพดานต่อ IP ก่อนแตะฐาน + ต่อ token หลังยืนยันว่า token มีจริง (failClosed)
 /// </summary>
@@ -24,10 +24,12 @@ public partial class PublicDocumentPageController
         RelatedLinkBase = page.Related.Any(r => r.PayOffered) ? basePath + "/related/" : null,
     };
 
-    public sealed record RelatedPageLinkResponse(string Path);
+    /// <summary><paramref name="Path"/> = หน้าเอกสารของใบนั้น · null = ยังไม่มีลิงก์ที่ใช้ได้ (บันทึกคำขอถึงผู้ขายแล้ว — ข้อความอยู่ใน message)</summary>
+    public sealed record RelatedPageLinkResponse(string? Path, bool Requested);
 
-    /// <summary>ปุ่ม "ชำระใบนี้" ของใบที่เกี่ยวข้อง — คืนที่อยู่ภายในเว็บของหน้าเอกสารใบนั้น (หน้าเว็บพาไป · ด่านจ่ายทั้งหมดอยู่ที่หน้านั้น) ·
-    /// ใบนอกชุด/ไม่มีปุ่มจ่าย = 404 ข้อความเดียว · ผู้ขายยกเลิกลิงก์ของใบนั้นไว้ = 409 พร้อมข้อความ</summary>
+    /// <summary>ปุ่ม "ชำระใบนี้" ของใบที่เกี่ยวข้อง — คืนที่อยู่ภายในเว็บของหน้าเอกสารใบนั้น <b>เฉพาะลิงก์ที่ผู้ขายออกไว้และยังใช้ได้</b> (ไม่ออก token ให้ผู้ถือลิงก์ ·
+    /// ฝ่ายค้าน MED-2 · 267-1-47) · ยังไม่มี/หมดอายุ = บันทึกคำขอ + กระดิ่งพนักงาน (200 · Path null) · ใบนอกชุด/ไม่มีปุ่มจ่าย = 404 ข้อความเดียว ·
+    /// ผู้ขายยกเลิกลิงก์ของใบนั้นไว้ = 409 พร้อมข้อความ</summary>
     [HttpPost("documents/{token}/related/{relId:guid}/page-link")]
     public async Task<ActionResult<ApiResponse<RelatedPageLinkResponse>>> RelatedPageLink(Guid companyId, string token, Guid relId, CancellationToken ct)
     {
@@ -37,8 +39,11 @@ public partial class PublicDocumentPageController
         if (!r.Found) return NotFound(new ApiResponse<RelatedPageLinkResponse>(false, null, CustomerDocPage.NotFoundMessage));
         if (await OverTokenIpAsync("rellink", token, CustomerDocPage.Limits.ViewPerMinute, CustomerDocPage.Limits.ViewPerDay, failClosed: true, ct))
             return TooMany<RelatedPageLinkResponse>();
-        if (r.Path == null) return Conflict(new ApiResponse<RelatedPageLinkResponse>(false, null, r.Message));
-        return Ok(new ApiResponse<RelatedPageLinkResponse>(true, new RelatedPageLinkResponse(r.Path)));
+        if (r.Path != null) return Ok(new ApiResponse<RelatedPageLinkResponse>(true, new RelatedPageLinkResponse(r.Path, false)));
+        if (r.Request == null) return Conflict(new ApiResponse<RelatedPageLinkResponse>(false, null, r.Message));
+        // คำขอถูกบันทึกลง audit chain แล้ว — แจ้งพนักงานด้วยตัวแจ้งเดียวกับปุ่ม "ขอลิงก์ใหม่"
+        if (r.Request.Recorded) await NotifyLinkRequestedAsync(_notify, _logger, companyId, r.Request);
+        return Ok(new ApiResponse<RelatedPageLinkResponse>(true, new RelatedPageLinkResponse(null, true), r.Message));
     }
 
     /// <summary>ส่งหนังสือรับรอง 50 ทวิ ของใบนี้ (PDF/JPG/PNG ≤ 10 MB · ทีละไฟล์) — ด่านไฟล์/เพดาน/ประตูเดียวของลิงก์อัปโหลด 50 ทวิ เดิม ·

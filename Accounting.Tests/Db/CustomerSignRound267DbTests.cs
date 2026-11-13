@@ -213,6 +213,19 @@ public class CustomerSignRound267DbTests
         var evAudit = await db.AuditLogs.AsNoTracking().Where(a => a.CompanyId == s.CompanyId && a.EntityType == nameof(CustomerDocumentAction) && a.EntityId == ev.Id.ToString()).ToListAsync();
         Assert.Single(evAudit, a => a.NewValues != null && a.NewValues.Contains("CustomerSignedCopyStored"));
         Assert.Contains(evAudit, a => a.Action == AuditAction.Create && (a.NewValues == null || !a.NewValues.Contains("CustomerSignedCopyStored")));
+        // ฝ่ายค้าน 267-P2 H1: audit (ลบตามคำขอไม่ได้) ไม่มีข้อมูลผู้ลงนาม — ทั้งแถว Create อัตโนมัติของแถวหลักฐาน และ audit ที่เขียนเองบนใบ
+        var allAudit = await db.AuditLogs.AsNoTracking().Where(a => a.CompanyId == s.CompanyId
+            && (a.EntityId == ev.Id.ToString() || a.EntityId == qt.Id.ToString())).ToListAsync();
+        Assert.NotEmpty(allAudit);
+        foreach (var row in allAudit)
+        {
+            var text = (row.OldValues ?? "") + (row.NewValues ?? "") + (row.IpAddress ?? "");
+            foreach (var pii in new[] { "สมหญิง", "ใจดี", "ผู้จัดการฝ่ายจัดซื้อ", "somying@buyer267.co.th", "203.0.113.9", ev.UserAgentHash! })
+                Assert.DoesNotContain(pii, text);
+        }
+        // ตอนแสดง: แถว audit เก่า (ก่อนการแก้) ที่มีค่าเหล่านี้ถูกปิดด้วยรายชื่อเดียวกัน
+        Assert.Equal(AuditRedaction.PiiMask, System.Text.Json.Nodes.JsonNode.Parse(
+            AuditRedaction.RedactJson("{\"SignerFirstName\":\"สมหญิง\",\"Ip\":\"203.0.113.9\"}", nameof(CustomerDocumentAction))!)!["SignerFirstName"]!.GetValue<string>());
 
         // หน้าเอกสารหลังยอมรับ: ปุ่มปิด · ไม่มีฟอร์ม · ประวัติ + ฉบับที่ลงนามพร้อมดาวน์โหลด (ไม่มี IP ใน view model)
         var after = await PageAsync(s, token);
@@ -278,6 +291,80 @@ public class CustomerSignRound267DbTests
         Assert.Equal(1, await db.AuditLogs.CountAsync(a => a.CompanyId == s.CompanyId && a.EntityId == qt.Id.ToString() && a.Action == AuditAction.Approve));
     }
 
+    // ───────── ฝ่ายค้าน 267-P2 M2: ลิงก์รุ่นก่อนเคารพหนึ่งคำตอบต่อ Rev + เกณฑ์รหัสยืนยัน ─────────
+
+    [Fact]
+    public async Task CSR267Db_LegacyLinkObeysOneAnswerAndOtp_ไม่รับทางหน้าแล้วยอมรับทางลิงก์เก่า409_ถึงเกณฑ์รหัส409_ทิศตรงข้ามผ่าน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "legacy-m2 " + Guid.NewGuid().ToString("N")[..6]);
+        var qt = await AddDocAsync(db, s, DocumentType.Quotation, "QT", due: DateTime.UtcNow.Date.AddDays(5), tweak: d => LegacySignLinkSeed.Seed(d));
+        var token = await OpenAsync(db, s, qt);
+        var page = await PageAsync(s, token);
+        var declined = await s.Responses.RespondAsync(s.CompanyId, token, Req(page, CustomerDocPage.ActionDecline, reason: "price"), Who);
+        Assert.True(declined.Success, declined.Message);
+        db.ChangeTracker.Clear();
+        var legacy = await s.Responses.Accept(LegacySignLinkSeed.RawOf(qt), new PublicQuotationController.AcceptRequest("คุณอีกคน"), Who);
+        Assert.Equal(409, legacy.Status);
+        Assert.Contains("ติดต่อผู้ขาย", legacy.Message);                                  // ทางไปต่อ
+        db.ChangeTracker.Clear();
+        Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == qt.Id).Select(d => d.QuotationAcceptedAt).SingleAsync());
+        Assert.Equal(1, await db.CustomerDocumentActions.CountAsync(a => a.CompanyId == s.CompanyId && a.DocumentId == qt.Id));
+
+        // ยอดถึงเกณฑ์รหัสของบริษัท ⇒ ลิงก์รุ่นก่อน (ไม่มีฟอร์มรหัส) ยอมรับไม่ได้
+        await db.CompanySettings.Where(x => x.CompanyId == s.CompanyId).ExecuteUpdateAsync(u => u.SetProperty(x => x.CustomerSignOtpMinAmount, (decimal?)1_000m));
+        var big = await AddDocAsync(db, s, DocumentType.Quotation, "QL", tweak: d => LegacySignLinkSeed.Seed(d));
+        db.ChangeTracker.Clear();
+        var bigR = await s.Responses.Accept(LegacySignLinkSeed.RawOf(big), new PublicQuotationController.AcceptRequest("คุณเดิม"), Who);
+        Assert.Equal(409, bigR.Status);
+        Assert.Contains("ลิงก์", bigR.Message);
+        // ทิศตรงข้าม: ยอดต่ำกว่าเกณฑ์ ⇒ ลิงก์รุ่นก่อนยอมรับได้ตามเดิม
+        var small = await AddDocAsync(db, s, DocumentType.Quotation, "QM", tweak: d => { LegacySignLinkSeed.Seed(d); d.TotalAmount = 500m; });
+        db.ChangeTracker.Clear();
+        Assert.True((await s.Responses.Accept(LegacySignLinkSeed.RawOf(small), new PublicQuotationController.AcceptRequest("คุณเดิม"), Who)).Success);
+    }
+
+    // ───────── ฝ่ายค้าน 267-P2 M3: ฉบับที่ลงนามต้องสร้างก่อนออก Rev · เลิกสร้างแล้วหน้าเลิกบอก "กำลังเตรียม" ─────────
+
+    [Fact]
+    public async Task CSR267Db_SnapshotBeforeRevision_ค้างอยู่สร้างให้เสร็จก่อน_ล้มคืนจำนวนค้าง_เลิกสร้างแล้วไม่ค้างกำลังเตรียม()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "rev-snap " + Guid.NewGuid().ToString("N")[..6]);
+        var qt = await AddDocAsync(db, s, DocumentType.Quotation, "QT", due: DateTime.UtcNow.Date.AddDays(5));
+        var token = await OpenAsync(db, s, qt);
+        s.Pdf.Fail = true;
+        var r = await s.Responses.RespondAsync(s.CompanyId, token, Req(await PageAsync(s, token), CustomerDocPage.ActionAccept), Who);
+        Assert.True(r.Success, r.Message);
+        Assert.DoesNotContain("ดาวน์โหลด", r.Message);                                    // ยังไม่มีไฟล์ = ไม่บอกว่าดาวน์โหลดได้
+        db.ChangeTracker.Clear();
+        Assert.Equal(1, await s.Responses.EnsureSnapshotsBeforeRevisionAsync(s.CompanyId, qt.Id, 0));   // ยังล้ม ⇒ ผู้เรียกไม่ออก Rev
+        s.Pdf.Fail = false;
+        Assert.Equal(0, await s.Responses.EnsureSnapshotsBeforeRevisionAsync(s.CompanyId, qt.Id, 0));
+        db.ChangeTracker.Clear();
+        Assert.NotNull((await db.CustomerDocumentActions.AsNoTracking().SingleAsync(a => a.CompanyId == s.CompanyId && a.DocumentId == qt.Id)).SignedPdfSha256);
+
+        // ใบที่เนื้อหาเปลี่ยนก่อนสร้างทัน ⇒ เลิกสร้าง (Abandoned) · ขั้นของ outbox จบ ⇒ หน้าไม่แสดง "กำลังเตรียม" ค้าง
+        var qt2 = await AddDocAsync(db, s, DocumentType.Quotation, "QB", due: DateTime.UtcNow.Date.AddDays(5));
+        var token2 = await OpenAsync(db, s, qt2);
+        s.Pdf.Fail = true;
+        Assert.True((await s.Responses.RespondAsync(s.CompanyId, token2, Req(await PageAsync(s, token2), CustomerDocPage.ActionAccept), Who)).Success);
+        s.Pdf.Fail = false;
+        await db.Documents.Where(d => d.Id == qt2.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.TotalAmount, 9_000m));
+        db.ChangeTracker.Clear();
+        var ev2 = await db.CustomerDocumentActions.AsNoTracking().SingleAsync(a => a.CompanyId == s.CompanyId && a.DocumentId == qt2.Id);
+        var gone = await s.Responses.ProcessSignedCopyAsync(s.CompanyId, ev2.Id);
+        Assert.True(gone.Done && gone.Abandoned && !gone.HasFile);
+        Assert.True(Assert.Single(await s.Responses.HistoryAsync(s.CompanyId, qt2.Id, false)).SignedCopyExpected);   // ขั้นของ outbox ยังไม่ประทับ
+        await db.SignEventOutbox.Where(o => o.CompanyId == s.CompanyId && o.CustomerActionId == ev2.Id)
+            .ExecuteUpdateAsync(u => u.SetProperty(o => o.SignedCopyDoneAt, (DateTime?)DateTime.UtcNow));            // สิ่งที่ SignEventDispatcher ประทับเมื่อ Done
+        var item = Assert.Single(await s.Responses.HistoryAsync(s.CompanyId, qt2.Id, false));
+        Assert.False(item.SignedCopyExpected);
+        Assert.False(item.SignedCopyReady);
+    }
+
     // ───────── ขาดติ๊กรับรอง / ขาดตำแหน่ง = ปฏิเสธ (ทิศตรงข้าม: ครบ = ผ่าน) ─────────
 
     [Fact]
@@ -302,7 +389,8 @@ public class CustomerSignRound267DbTests
             Req(page, CustomerDocPage.ActionAccept, new CustomerSignRule.SignerInput("สมหญิง", "ใจดี", "ผจก.", true, "รุ่นที่ไม่มี")), Who);
         Assert.Equal(400, oldText.Status);
         // เส้นของลิงก์รุ่นก่อนใช้ token ของหน้าเอกสารแล้วพิมพ์ชื่ออย่างเดียว = ไม่ผ่านเหมือนกัน (ไม่มีทางอ้อมข้ามด่านผู้ลงนาม)
-        var bypass = await s.Responses.Accept(token, new PublicQuotationController.AcceptRequest("ชื่ออย่างเดียว", RevisionNumber: page.Respond.RevisionNumber), Who);
+        var bypass = await s.Responses.Accept(token, new PublicQuotationController.AcceptRequest("ชื่ออย่างเดียว", RevisionNumber: page.Respond.RevisionNumber,
+            ContentHash: page.Respond.ContentHash), Who);   // ส่ง hash ที่เห็นด้วย (L5) — ด่านที่ทดสอบคือผู้ลงนาม
         Assert.Equal(400, bypass.Status);
         db.ChangeTracker.Clear();
         Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == qt.Id).Select(d => d.QuotationAcceptedAt).SingleAsync());
@@ -491,6 +579,17 @@ public class CustomerSignRound267DbTests
         var row = await db.CustomerDocumentActions.AsNoTracking().SingleAsync(a => a.Id == id);
         Assert.Equal("สมหญิง", row.SignerFirstName);
         Assert.Equal(CustomerSignRule.FileSha256(PdfBytes), row.SignedPdfSha256);
+
+        // ฝ่ายค้าน 267-P2 L2: "ลบ" ที่เขียนค่าใหม่ (ชื่อปลอม) / แตะ hash ฉบับเซ็นในคำสั่งเดียวกัน / แก้ CreatedBy / TRUNCATE = ฐานปฏิเสธ
+        await Refused(() => mine.ExecuteUpdateAsync(u => u.SetProperty(a => a.SignerFirstName, "ชื่อปลอม").SetProperty(a => a.ErasedAt, (DateTime?)DateTime.UtcNow)));
+        await Refused(() => mine.ExecuteUpdateAsync(u => u.SetProperty(a => a.SignerFirstName, QuotationAcceptance.Anonymized)
+            .SetProperty(a => a.SignerLastName, (string?)null).SetProperty(a => a.SignerTitle, (string?)null).SetProperty(a => a.SignerOrgName, (string?)null)
+            .SetProperty(a => a.SignerEmail, (string?)null).SetProperty(a => a.SignatureFilePath, (string?)null).SetProperty(a => a.Message, (string?)null)
+            .SetProperty(a => a.Ip, (string?)null).SetProperty(a => a.UserAgentHash, (string?)null).SetProperty(a => a.SignedPdfPath, (string?)null)
+            .SetProperty(a => a.SignedPdfSha256, new string('1', 64)).SetProperty(a => a.ErasedAt, (DateTime?)DateTime.UtcNow)));
+        await Refused(() => mine.ExecuteUpdateAsync(u => u.SetProperty(a => a.CreatedBy, "ใครก็ได้")));
+        await Refused(() => db.Database.ExecuteSqlRawAsync("TRUNCATE \"CustomerDocumentActions\""));
+        db.ChangeTracker.Clear();
 
         // ทางเดียวที่แก้ได้: ลบข้อมูลส่วนบุคคลตามคำขอ (ประทับ ErasedAt พร้อมกัน) — และทำได้ครั้งเดียว
         var tracked = await db.CustomerDocumentActions.SingleAsync(a => a.Id == id && a.CompanyId == s.CompanyId);
@@ -739,7 +838,14 @@ public class CustomerSignRound267DbTests
         Assert.Equal(email, mail.To);
         var code = Regex.Match(mail.Body, @"<b>(\d{6})</b>").Groups[1].Value;
         Assert.Matches("^[0-9]{6}$", code);
+        // ฝ่ายค้าน 267-P2 L7: อีเมลที่ยังไม่ยืนยันไม่เห็นเลขเอกสาร · M1: hash เป็น HMAC (ไม่ใช่ SHA-256 เปล่าที่กู้รหัสได้)
+        Assert.DoesNotContain(qt.DocumentNumber, mail.Subject + mail.Body);
         var stored = await db.CustomerSignOtps.AsNoTracking().SingleAsync(o => o.CompanyId == s.CompanyId);
+        Assert.NotEqual(QuotationAcceptance.Sha256Hex($"{qt.Id:N}|{email}|{code}"), stored.CodeHash);
+        Assert.Equal(CustomerSignRule.OtpHash(qt.Id, email, code), stored.CodeHash);
+        // H1/M1: แถว Create ของรหัสใน audit ไม่มี hash ของรหัส/อีเมล
+        var otpAudit = await db.AuditLogs.AsNoTracking().Where(a => a.CompanyId == s.CompanyId && a.EntityType == nameof(CustomerSignOtp)).ToListAsync();
+        Assert.All(otpAudit, a => { Assert.DoesNotContain(stored.CodeHash, a.NewValues ?? ""); Assert.DoesNotContain(stored.EmailHash, a.NewValues ?? ""); });
         Assert.DoesNotContain(code, stored.CodeHash);                                     // ฐานเก็บ hash
         Assert.DoesNotContain(email, stored.EmailHash);
         Assert.Equal(429, (await s.Responses.RequestOtpAsync(s.CompanyId, token, email, Who)).Status);          // ขอซ้ำถี่เกิน

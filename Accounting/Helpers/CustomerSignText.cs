@@ -16,7 +16,7 @@ namespace Accounting.Helpers;
 public static class CustomerSignText
 {
     /// <summary>รุ่นของชุดข้อความ — หน้าแสดงรุ่นนี้ · คำตอบที่ส่งรุ่นอื่นถูกปฏิเสธ (ผู้ลงนามต้องติ๊กข้อความปัจจุบัน)</summary>
-    public const string Version = "267-1";
+    public const string Version = "267-2";   // ฝ่ายค้าน 267-P2 L4: ข้อความยินยอมต่อชนิด
     /// <summary>รุ่นของแถวที่มาจากลิงก์ยอมรับ/เซ็นรับก่อนรอบ 267 (พิมพ์ชื่ออย่างเดียว — ไม่มีการติ๊กรับรอง)</summary>
     public const string LegacyVersion = "239-name-only";
 
@@ -52,18 +52,34 @@ public static class CustomerSignText
     /// <summary>SHA-256 ของข้อความที่ผู้ลงนามติ๊ก (เก็บลงแถวหลักฐาน — พิสูจน์ได้ว่าติ๊กข้อความใด แม้ข้อความรุ่นถัดไปจะเปลี่ยน)</summary>
     public static string TextHash(string text) => QuotationAcceptance.Sha256Hex(text)!;
 
-    /// <summary>ข้อความยินยอม/แจ้งผลของการกดปุ่ม — บอกตรง ๆ ว่าเก็บอะไรเป็นหลักฐาน (PDPA ม.23) และอ้างกฎหมายเท่าที่อ้างได้</summary>
+    /// <summary>ข้อความยินยอม/แจ้งผลของการกดปุ่ม — บอกตรง ๆ ว่าเก็บอะไรเป็นหลักฐาน (PDPA ม.23) และอ้างกฎหมายเท่าที่อ้างได้ ·
+    /// ฝ่ายค้าน 267-P2 L4: <b>ต่อชนิด</b> — ไม่รับ/ขอแก้ ไม่สร้างฉบับที่ลงนามและไม่พิมพ์ชื่อบนเอกสาร ⇒ ไม่บอกว่าทำ (รุ่นข้อความ 267-2)</summary>
     public static string Consent(bool en, CustomerSignRule.Kind kind)
     {
         var verb = Verb(en, kind);
-        return T(en,
+        var signs = kind is CustomerSignRule.Kind.Accepted or CustomerSignRule.Kind.DeliverySigned;
+        var head = T(en,
             $"การกดปุ่มเพื่อ{verb} พร้อมชื่อ นามสกุล ตำแหน่ง และการติ๊กรับรองข้างต้น ถือเป็นการลงลายมือชื่ออิเล็กทรอนิกส์ของท่าน "
-            + "(พ.ร.บ.ว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 มาตรา 9) — ระบบบันทึกชื่อ นามสกุล ตำแหน่ง เวลา ที่อยู่ IP ข้อมูลอุปกรณ์ (แบบแฮช) "
-            + "ลายนิ้วมือของเนื้อหาเอกสาร และสำเนาเอกสารฉบับที่ท่านเห็น ไว้เป็นพยานหลักฐาน (มาตรา 11) ชื่อ ตำแหน่ง และวันเวลาจะพิมพ์บนเอกสารฉบับนี้",
+            + "(พ.ร.บ.ว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 มาตรา 9) — ",
             $"Pressing the button to {verb}, together with your name, position and the confirmation above, is your electronic signature "
-            + "(Electronic Transactions Act B.E. 2544, section 9). The system records your name, position, time, IP address, device fingerprint (hashed), "
-            + "a fingerprint of the document content and a copy of the document as you saw it, as evidence (section 11). Your name, position and the time are printed on this document.");
+            + "(Electronic Transactions Act B.E. 2544, section 9). ");
+        return head + (signs
+            ? T(en,
+                "ระบบบันทึกชื่อ นามสกุล ตำแหน่ง เวลา ที่อยู่ IP ข้อมูลอุปกรณ์ (แบบแฮช) ลายนิ้วมือของเนื้อหาเอกสาร และสำเนาเอกสารฉบับที่ท่านเห็น "
+                + "ไว้เป็นพยานหลักฐาน (มาตรา 11) ชื่อ ตำแหน่ง และวันเวลาจะพิมพ์บนเอกสารฉบับนี้",
+                "The system records your name, position, time, IP address, device fingerprint (hashed), a fingerprint of the document content "
+                + "and a copy of the document as you saw it, as evidence (section 11). Your name, position and the time are printed on this document.")
+            : T(en,
+                "ระบบบันทึกชื่อ นามสกุล ตำแหน่ง เวลา ที่อยู่ IP ข้อมูลอุปกรณ์ (แบบแฮช) ลายนิ้วมือของเนื้อหาเอกสาร และเหตุผล/ข้อความของท่าน "
+                + "ไว้เป็นพยานหลักฐาน (มาตรา 11) และส่งให้ผู้ขาย — ไม่มีการพิมพ์ชื่อของท่านบนเอกสาร",
+                "The system records your name, position, time, IP address, device fingerprint (hashed), a fingerprint of the document content "
+                + "and your reason/message as evidence (section 11) and passes them to the seller. Your name is not printed on the document."));
     }
+
+    /// <summary>ฝ่ายค้าน 267-P2 H1 (267-1-51): หมายเหตุในรายงานผลกระทบการลบ — แถว audit เก่าอาจมีสำเนาข้อมูลผู้ลงนามที่ลบไม่ได้ (ปิดตอนแสดงแล้ว)</summary>
+    public const string ErasureAuditNote =
+        "ประวัติระบบ (audit · ห้ามแก้/ลบ — ห่วงโซ่ hash) ของการตอบรับเอกสารออนไลน์ที่บันทึกก่อนรอบ 267-P2 ชุดแก้ อาจมีสำเนาชื่อ/ตำแหน่ง/IP ของผู้ลงนาม — "
+        + "ลบไม่ได้แต่ไม่แสดงค่าต่อผู้ใช้ทุกบทบาทแล้ว (แจ้งเจ้าของข้อมูลตามจริง) · แถวใหม่ไม่คัดลอกข้อมูลนี้ลง audit";
 
     /// <summary>แจ้งการเก็บข้อมูล (PDPA ม.23) — ใครเก็บ · เพื่ออะไร · นานเท่าไร · สิทธิ</summary>
     public static string PrivacyNotice(bool en, string sellerName)
@@ -103,14 +119,20 @@ public static class CustomerSignText
         _ => T(en, "เซ็นรับสินค้า", "Delivery signed for"),
     };
 
-    /// <summary>ข้อความตอบผู้ลงนามเมื่อบันทึกสำเร็จ</summary>
-    public static string Done(bool en, CustomerSignRule.Kind kind) => kind switch
+    /// <summary>ข้อความตอบผู้ลงนามเมื่อบันทึกสำเร็จ — ฝ่ายค้าน 267-P2 L8: การแจ้งผู้ขายอยู่ในคิว (ยังไม่เกิด) ⇒ "ระบบจะแจ้ง" ·
+    /// M3: บอกว่าดาวน์โหลดได้เฉพาะเมื่อฉบับที่ลงนามพร้อมจริง (<paramref name="signedCopyReady"/>)</summary>
+    public static string Done(bool en, CustomerSignRule.Kind kind, bool signedCopyReady = false) => kind switch
     {
-        CustomerSignRule.Kind.Accepted => T(en, "ยอมรับใบเสนอราคาเรียบร้อย — ผู้ขายได้รับแจ้งแล้ว และท่านดาวน์โหลดฉบับที่ลงนามได้จากหน้านี้",
-            "Quotation accepted — the seller has been notified and you can download the signed copy from this page"),
-        CustomerSignRule.Kind.Declined => T(en, "บันทึกการไม่รับใบเสนอราคาแล้ว — ผู้ขายได้รับแจ้งพร้อมเหตุผลของท่าน", "Your decline has been recorded — the seller has been notified with your reason"),
-        CustomerSignRule.Kind.ChangeRequested => T(en, "ส่งคำขอแก้ไขให้ผู้ขายแล้ว — ผู้ขายจะส่งใบเสนอราคาฉบับแก้ไขให้ท่าน", "Your change request was sent — the seller will send you a revised quotation"),
-        _ => T(en, "เซ็นรับสินค้าเรียบร้อย — ท่านดาวน์โหลดฉบับที่ลงนามได้จากหน้านี้", "Delivery signed for — you can download the signed copy from this page"),
+        CustomerSignRule.Kind.Accepted => signedCopyReady
+            ? T(en, "ยอมรับใบเสนอราคาเรียบร้อย — ระบบจะแจ้งผู้ขาย และท่านดาวน์โหลดฉบับที่ลงนามได้จากหน้านี้",
+                "Quotation accepted — the seller will be notified and you can download the signed copy from this page")
+            : T(en, "ยอมรับใบเสนอราคาเรียบร้อย — ระบบจะแจ้งผู้ขาย · ฉบับที่ลงนามกำลังจัดเตรียม เปิดหน้านี้อีกครั้งภายหลัง",
+                "Quotation accepted — the seller will be notified · the signed copy is being prepared, please reopen this page later"),
+        CustomerSignRule.Kind.Declined => T(en, "บันทึกการไม่รับใบเสนอราคาแล้ว — ระบบจะแจ้งผู้ขายพร้อมเหตุผลของท่าน", "Your decline has been recorded — the seller will be notified with your reason"),
+        CustomerSignRule.Kind.ChangeRequested => T(en, "บันทึกคำขอแก้ไขแล้ว — ระบบจะแจ้งผู้ขาย และผู้ขายจะส่งใบเสนอราคาฉบับแก้ไขให้ท่าน", "Your change request was recorded — the seller will be notified and will send you a revised quotation"),
+        _ => signedCopyReady
+            ? T(en, "เซ็นรับสินค้าเรียบร้อย — ท่านดาวน์โหลดฉบับที่ลงนามได้จากหน้านี้", "Delivery signed for — you can download the signed copy from this page")
+            : T(en, "เซ็นรับสินค้าเรียบร้อย — ฉบับที่ลงนามกำลังจัดเตรียม เปิดหน้านี้อีกครั้งภายหลัง", "Delivery signed for — the signed copy is being prepared, please reopen this page later"),
     };
 
     /// <summary>ป้ายของฟอร์มลงนามบนหน้า (ไทย/อังกฤษตามภาษาเอกสาร)</summary>
@@ -147,8 +169,18 @@ public static class CustomerSignText
     };
 
     /// <summary>ข้อความของอีเมลรหัสยืนยัน (หัวเรื่อง · เนื้อ HTML — ค่าที่ผู้ใช้คุมได้ถูก encode ที่ผู้เรียก)</summary>
-    public static string OtpSubject(bool en, string documentNumber)
-        => T(en, $"รหัสยืนยันสำหรับใบเสนอราคา {documentNumber}", $"Verification code for quotation {documentNumber}");
+    /// <summary>ฝ่ายค้าน 267-P2 L7 (267-1-58): อีเมลไปที่อยู่ที่ผู้ถือลิงก์พิมพ์เอง (ยังไม่ยืนยัน) ⇒ ไม่ใส่เลขเอกสาร/ยอดในหัวเรื่องและเนื้อหา</summary>
+    public static string OtpSubject(bool en, string sellerName)
+        => T(en, $"รหัสยืนยันการลงนามเอกสารออนไลน์ — {sellerName}", $"Verification code for signing a document online — {sellerName}");
+
+    /// <summary>เนื้อหาอีเมลรหัส (HTML · ค่าที่ผู้ใช้คุมถูก encode) — ไม่มีเลขเอกสาร (L7)</summary>
+    public static string OtpBody(bool en, string sellerName, string code, int ttlMinutes)
+    {
+        var seller = System.Net.WebUtility.HtmlEncode(sellerName);
+        return en
+            ? $"<p>Your verification code for signing a document from {seller} is</p><p style=\"font-size:24px;letter-spacing:4px\"><b>{code}</b></p><p>The code is valid for {ttlMinutes} minutes. If you did not request it, ignore this email.</p>"
+            : $"<p>รหัสยืนยันสำหรับลงนามเอกสารของ {seller} คือ</p><p style=\"font-size:24px;letter-spacing:4px\"><b>{code}</b></p><p>รหัสใช้ได้ {ttlMinutes} นาที หากท่านไม่ได้ขอรหัสนี้ ไม่ต้องดำเนินการใด ๆ</p>";
+    }
 
     /// <summary>หัวเรื่องอีเมลส่งสำเนาฉบับที่ลงนาม</summary>
     public static string SignedCopySubject(bool en, string documentTitle, string documentNumber)

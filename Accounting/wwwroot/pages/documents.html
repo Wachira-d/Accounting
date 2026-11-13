@@ -6504,7 +6504,12 @@
       },
       _postPayPayload(id) {
         const row = document.getElementById('postPayRow');
-        if (!row || row.style.display === 'none') return null;   // ช่องไม่แสดง = ไม่แตะค่าของใบ
+        if (!row) return null;
+        if (row.style.display === 'none') {
+          // ฝ่ายค้าน LOW-4: รู้ชุดชนิดแล้วและชนิดนี้ตั้งไม่ได้ ⇒ แก้ไข = ล้างค่า ("Inherit" — ไม่เก็บค่าที่ไม่มีผู้อ่าน) · สร้าง = ไม่ส่ง ·
+          // ยังไม่รู้ชุดชนิด (โหลดไม่ได้) = ไม่แตะค่าของใบ
+          return Array.isArray(this._postPayTypes) && this.editingId ? 'Inherit' : null;
+        }
         const v = document.getElementById(id)?.value || 'Inherit';
         return v === 'Inherit' ? (this.editingId ? 'Inherit' : null) : v;
       },

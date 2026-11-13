@@ -130,6 +130,10 @@ public static class TaxReportPullEligibility
                 $"เอกสาร {doc.DocumentNumber} ยังไม่ได้อนุมัติ (สถานะ {doc.Status}) — อนุมัติก่อนจึงจะดึงเข้ารายงานได้", isInput);
         if (doc.VatAmount == 0)
             return Verdict.Fail(RuleNoVat, "เอกสารนี้ไม่มี VAT", isInput);
+        // รอบ 269 H1 — ใบยอดยกมาไม่เข้า ภ.พ.30 ทั้งสองฝั่ง (ตัวตัดสินเดียว OutputVatOwnership.IsOutsidePp30)
+        if (OutputVatOwnership.IsOutsidePp30(doc))
+            return Verdict.Fail(OutputVatOwnership.RuleOpeningBalance,
+                $"{doc.DocumentNumber} เป็นใบยอดยกมา (ลูกหนี้/เจ้าหนี้ยกมา) — ไม่ใช่การขาย/การซื้อของงวดใด จึงดึงเข้า ภ.พ.30 ไม่ได้", isInput);
         if (doc.ReplacedByDocumentId.HasValue)
             return Verdict.Fail(RuleReplaced,
                 $"เอกสาร {doc.DocumentNumber} ออกใบกำกับภาษีเต็มรูปแทนไปแล้ว"

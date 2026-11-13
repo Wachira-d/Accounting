@@ -44,11 +44,18 @@ public static class CustomerDocPageAfterPay
     /// <summary>สถานะของสลิปหนึ่งใบบนหน้า — <paramref name="State"/> = รหัส (หน้าเว็บใช้เลือกสีเท่านั้น) · <paramref name="Note"/> = เหตุ/ทางไปต่อ</summary>
     public sealed record SlipView(string State, string Label, string? Note);
 
+    /// <summary>รหัสความล้มเหลวของ "พนักงานปฏิเสธสลิป" (<c>PaymentIntent.FailureCode</c> — ผู้เขียน: <c>PaymentGatewayController.RejectSlip</c>) ·
+    /// ฝ่ายค้าน LOW-1: ป้าย "ผู้ขายไม่รับสลิป" ขึ้นเฉพาะรหัสนี้ — ล้มด้วยเหตุอื่น (ระบบสร้างรายการไม่สำเร็จ ฯลฯ) ไม่แต่งว่าผู้ขายปฏิเสธ</summary>
+    public const string SlipRejectedCode = "slip_rejected";
+
+    public const string SlipFailed = "failed";
+
     /// <summary>
-    /// สถานะสลิปที่ลูกค้าเห็น — รอตรวจ (ยังไม่ใช่ "ชำระแล้ว") · ยืนยันแล้ว · ปฏิเสธ (เหตุที่พนักงานพิมพ์ถึงลูกค้า หรือข้อความกลาง — แนบใหม่ได้) ·
+    /// สถานะสลิปที่ลูกค้าเห็น — รอตรวจ (ยังไม่ใช่ "ชำระแล้ว") · ยืนยันแล้ว · ปฏิเสธ (<paramref name="failureCode"/> = <see cref="SlipRejectedCode"/> เท่านั้น —
+    /// เหตุที่พนักงานพิมพ์ถึงลูกค้า หรือข้อความกลาง · แนบใหม่ได้) · ล้มด้วยเหตุอื่น = "ส่งสลิปไม่สำเร็จ" (ไม่บอกว่าผู้ขายปฏิเสธ) ·
     /// คืนเงิน/หมดอายุ = ปิดแล้ว (ไม่เดาเหตุ)
     /// </summary>
-    public static SlipView SlipState(bool en, PaymentIntentStatus status, string? customerReason)
+    public static SlipView SlipState(bool en, PaymentIntentStatus status, string? failureCode, string? customerReason)
     {
         if (PaymentIntentPolicy.IsOpen(status))
             return new SlipView(SlipPending, T(en, "รอผู้ขายตรวจสลิป", "Waiting for the seller to check the slip"),
@@ -57,8 +64,11 @@ public static class CustomerDocPageAfterPay
         return status switch
         {
             PaymentIntentStatus.Succeeded => new SlipView(SlipConfirmed, T(en, "ผู้ขายยืนยันการรับเงินแล้ว", "The seller confirmed this payment"), null),
-            PaymentIntentStatus.Failed => new SlipView(SlipRejected, T(en, "ผู้ขายไม่รับสลิปนี้", "The seller did not accept this slip"),
+            PaymentIntentStatus.Failed when failureCode == SlipRejectedCode => new SlipView(SlipRejected,
+                T(en, "ผู้ขายไม่รับสลิปนี้", "The seller did not accept this slip"),
                 NormalizeRejectReason(customerReason) ?? DefaultRejectNote(en)),
+            PaymentIntentStatus.Failed => new SlipView(SlipFailed, T(en, "ส่งสลิปไม่สำเร็จ", "The slip could not be submitted"),
+                T(en, "กรุณาแนบสลิปใหม่อีกครั้ง หรือติดต่อผู้ขาย", "Please attach the slip again, or contact the seller")),
             _ => new SlipView(SlipClosed, T(en, "รายการนี้ปิดแล้ว", "This entry is closed"),
                 T(en, "หากมีข้อสงสัย กรุณาติดต่อผู้ขาย", "Please contact the seller if you have questions")),
         };
@@ -94,6 +104,14 @@ public static class CustomerDocPageAfterPay
 
     public const string KindReceipt = "receipt";
 
+    /// <summary>
+    /// รอบ 267 P4 ฝ่ายค้าน MED-1 (267-1-46): ใบเสร็จใบนี้ "เป็นของ" เอกสาร <paramref name="docId"/> ไหม — ผูก <c>RelatedDocumentId</c> กับใบนี้ (ใบเสร็จรายใบ
+    /// รวมใบที่ออกจากการชำระที่บันทึกบนใบอื่นแล้วจัดสรรมา) หรือเป็น <c>Payment.ReceiptDocumentId</c> ของการชำระของใบนี้ที่ไม่ได้จัดสรรไปใบอื่น และไม่ได้ผูกใบอื่น ·
+    /// ใบเสร็จที่ผูกใบอื่น = ไม่ใช่ของใบนี้เสมอ (ผู้ถือลิงก์ของ X ไม่ได้ใบกำกับของ Y)
+    /// </summary>
+    public static bool ReceiptBelongsTo(Guid docId, Guid? receiptRelatedDocumentId, bool isUnspreadOwnPaymentReceipt)
+        => receiptRelatedDocumentId == docId || (receiptRelatedDocumentId == null && isUnspreadOwnPaymentReceipt);
+
     public static string ReceiptKindLabel(bool en) => T(en, "ใบเสร็จ/ใบกำกับภาษีจากการชำระของท่าน", "Receipt / tax invoice for your payment");
 
     // ═══════════════ ปุ่ม "ชำระใบนี้" ของใบที่เกี่ยวข้อง (ใบวางบิล → ใบแจ้งหนี้ในบิล · ใบเสนอราคา → ใบแจ้งหนี้ที่ออกต่อ) ═══════════════
@@ -114,6 +132,11 @@ public static class CustomerDocPageAfterPay
     public static string RelatedLinkRefusedMessage(bool en) => T(en,
         "เปิดหน้าชำระของเอกสารนี้ไม่ได้ในขณะนี้ — กรุณาติดต่อผู้ขาย",
         "This document's payment page is not available right now — please contact the seller");
+
+    /// <summary>ฝ่ายค้าน MED-2 (267-1-47): ใบนั้นยังไม่มีลิงก์ที่ใช้ได้ ⇒ ไม่ออกให้เอง — บันทึกคำขอถึงผู้ขายแล้ว (หรือขอไปแล้วภายในวันนี้)</summary>
+    public static string RelatedLinkRequestedMessage(bool en, bool newlyRecorded) => newlyRecorded
+        ? T(en, "ยังไม่มีลิงก์ชำระของเอกสารนี้ — แจ้งผู้ขายให้ส่งลิงก์ให้ท่านแล้ว", "There is no payment link for this document yet — we have asked the seller to send you one")
+        : T(en, "แจ้งผู้ขายให้ส่งลิงก์ชำระของเอกสารนี้ไปแล้ว — กรุณารอการติดต่อจากผู้ขาย", "The seller has already been asked to send a payment link for this document — please wait for them");
 
     // ═══════════════ หนังสือรับรอง 50 ทวิ ═══════════════
 

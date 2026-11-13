@@ -432,8 +432,12 @@ public class CustomerDocPageRound267DbTests
         db.ChangeTracker.Clear();
         Assert.Null(await db.Documents.AsNoTracking().Where(d => d.Id == dn.Id).Select(d => d.DeliverySignedAt).SingleAsync());
         // ทิศตรงข้าม: Rev ที่เห็นตรงกับใบ ⇒ เซ็นรับได้
+        // ฝ่ายค้าน 267-P2 L5: token ของหน้าเอกสารต้องส่ง hash เนื้อหาที่เห็นด้วย
+        var dnNow = await db.Documents.AsNoTracking().Include(d => d.Lines).SingleAsync(d => d.Id == dn.Id && d.CompanyId == s.CompanyId);
+        db.ChangeTracker.Clear();
         Assert.IsType<OkObjectResult>(await LegacyPage(db).SignDelivery(link.Token!,
-            new PublicQuotationController.DeliverySignRequest("", sig, RevisionNumber: 2, Signer: Sg("สมศักดิ์", "รับของ"))));
+            new PublicQuotationController.DeliverySignRequest("", sig, RevisionNumber: 2, Signer: Sg("สมศักดิ์", "รับของ"),
+                ContentHash: DocumentSignedContent.Hash(dnNow, dnNow.Lines))));
         db.ChangeTracker.Clear();
         Assert.NotNull(await db.Documents.AsNoTracking().Where(d => d.Id == dn.Id).Select(d => d.DeliverySignedAt).SingleAsync());
         // พ้น 14 วัน ⇒ ปฏิเสธ

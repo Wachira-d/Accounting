@@ -447,7 +447,9 @@ public class CustomerDocPageRound267Tests
         Assert.Equal(CustomerDocPage.RespondStaleMessage, CustomerDocPage.RespondStaleReason(true, 1, 1, "x", "h"));     // hash เนื้อหาไม่ตรง
         Assert.Contains("เอกสารถูกแก้ไข", CustomerDocPage.RespondStaleMessage);
         // ทิศตรงข้าม: ฉบับที่เห็น = ฉบับปัจจุบัน ⇒ ผ่าน (hash ไม่ส่งมา = ไม่บังคับ · ตัวพิมพ์ไม่มีผล)
-        Assert.Null(CustomerDocPage.RespondStaleReason(true, 1, 1, null, "h"));
+        // ฝ่ายค้าน 267-P2 L5: ลิงก์หน้าเอกสารไม่ส่ง hash ที่เห็น = ไม่ผ่าน (เดิม null)
+        Assert.Equal(CustomerDocPage.RespondStaleMessage, CustomerDocPage.RespondStaleReason(true, 1, 1, null, "h"));
+        Assert.Null(CustomerDocPage.RespondStaleReason(true, 1, 1, "h", "h"));
         Assert.Null(CustomerDocPage.RespondStaleReason(true, 1, 1, "AB", "ab"));
         // ลิงก์รุ่นก่อน (ถูกล้างตอนออก Rev อยู่แล้ว) ไม่บังคับเลข Rev — หน้าที่แคชไว้ยังใช้ได้ · แต่ถ้าส่งมาต้องตรง
         Assert.Null(CustomerDocPage.RespondStaleReason(false, null, 3, null, "h"));

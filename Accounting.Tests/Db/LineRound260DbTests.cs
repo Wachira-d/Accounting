@@ -19,6 +19,10 @@ namespace Accounting.Tests.Db;
 /// ปลายทางทดสอบ LINE ที่ระบบรู้จัก = ของบริษัทนี้ที่ผูกกับ OA ของบริษัทเท่านั้น
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 269 (CI db-test run 43359763858 · Expected "Sent" Actual "Sending"): ContactLineQueueService.ProcessPendingAsync จองแถว "Pending" ที่ถึงเวลา
+// ของทุกบริษัทในฐานร่วม (ORDER BY ScheduledFor · FOR UPDATE SKIP LOCKED) — เทสต์ตั้ง ScheduledFor ย้อน 5 ปีให้แถวตัวเองมาก่อน ⇒ ผู้ส่งของคลาสอื่น
+// ที่รันขนานจองแถวนี้ไปก่อน (สถานะ "กำลังส่ง") แล้วเทสต์นี้อ่านเจอกลางทาง · คลาสที่เรียกผู้ส่งคิว/กวาดทุกบริษัทอยู่ collection เดียวกัน (ไม่รันขนาน)
+[Collection("SubscriptionExpirySweep")]
 public class LineRound260DbTests
 {
     private readonly ITestOutputHelper _out;
