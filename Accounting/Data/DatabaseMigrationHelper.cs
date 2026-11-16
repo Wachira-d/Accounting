@@ -287,6 +287,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PartnerConsentMigration.Statements());   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ต่อคู่ × ขอบเขต · append-only)
         list.AddRange(Accounting.Helpers.Round264SlipReadMigration.Statements());   // รอบ 264 P2 — ผลอ่านสลิป (QR + คู่กรณี) บน intent/สลิป LINE · ธนาคาร/เลขปิดบางผู้โอนบนแถวแจ้งคู่ค้า
         list.AddRange(Accounting.Helpers.Round268Migration.Statements());   // รอบ 268 — ช่องทางของเงินมัดจำการจองต่องวด (268-1-3)
+        list.AddRange(Accounting.Helpers.Round271Migration.Statements());   // รอบ 271 — ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว (SupersededByCertId ฯลฯ)
         return list;
     }
 

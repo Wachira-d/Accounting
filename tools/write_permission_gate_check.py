@@ -266,6 +266,7 @@ READ_ONLY_POSTS = {
     # จึงตั้งใจไม่ผูกกับ BillingManage (ไม่งั้นฟีเจอร์นี้ตายสำหรับสมาชิกทั่วไป
     # ซึ่งเป็นกลุ่มเป้าหมายของมันพอดี) — เป็นการตัดสินใจ ไม่ใช่การลืม
     "ClaimReward",
+    "CheckWhtLink",          # รอบ 271 — ตรวจเทียบใบสำคัญจ่าย ↔ 50 ทวิ (WhtCertLinkPlan) คืนผล ไม่เขียน · ตัวเขียนจริง LinkWhtCert มีด่าน CanApprove
     "SuggestPvAccounting",   # ถาม AI แนะนำผังบัญชี — ไม่เขียนเอกสาร
     "ParseAddress",          # แปลงที่อยู่ free-text → structured
 }

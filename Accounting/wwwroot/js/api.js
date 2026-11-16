@@ -1058,6 +1058,15 @@ const API = {
       bulkGenerateWht: (d) => API.post(`${base}/withholding-tax-certs/bulk-generate`, d),
       // รอบ 204 — พรีวิวผู้จ่ายออกภาษีแทน (เซิร์ฟเวอร์คิด · WhtGrossUp) — เรียกระหว่างพิมพ์ ⇒ ผู้เรียกห่อ API.quietly
       whtGrossUpPreview: (d) => API.post(`${base}/withholding-tax-certs/gross-up-preview`, d),
+      // รอบ 271 — ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว (ผลตรวจทั้งหมดจากเซิร์ฟเวอร์ · Helpers/WhtCertLinkPlan)
+      getWhtCertSummary: (q = '') => API.get(`${base}/withholding-tax-certs/summary${q}`),
+      getWhtLinkCandidatesForm: (q) => API.get(`${base}/withholding-tax-certs/link-candidates${q}`),
+      getWhtPvCandidates: (certId) => API.get(`${base}/withholding-tax-certs/${certId}/pv-candidates`),
+      setWhtNoSource: (certId, body) => API.post(`${base}/withholding-tax-certs/${certId}/no-source-document`, body),
+      getDocWhtLinkStatus: (docId) => API.get(`${base}/document/${docId}/wht-link-status`),
+      getDocWhtLinkCandidates: (docId, paymentId) => API.get(`${base}/document/${docId}/wht-link-candidates${paymentId ? `?paymentId=${encodeURIComponent(paymentId)}` : ''}`),
+      checkDocWhtLink: (docId, body) => API.post(`${base}/document/${docId}/wht-link/check`, body),
+      linkDocWhtCert: (docId, body) => API.post(`${base}/document/${docId}/wht-link`, body),
       // ===== CMS / Website Builder =====
       cmsListSites: (q = '') => API.get(`${base}/cms/sites${q}`),
       cmsGetSite: (id) => API.get(`${base}/cms/sites/${id}`),

@@ -1041,6 +1041,62 @@ public class DocumentController : ControllerBase
         return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.ChangeWhtPayeeResponse>(true, result, "เปลี่ยนผู้ถูกหักภาษีแล้ว"));
     }
 
+    // ── รอบ 271: ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว (ตัวตัดสินเดียว Helpers/WhtCertLinkPlan) ──
+
+    /// <summary>กล่อง "50 ทวิ ของใบนี้" ในหน้ารายละเอียด — ใบที่ผูก + เปลี่ยนการผูกได้ไหม (เซิร์ฟเวอร์ตัดสิน · ปุ่มปิดพร้อมเหตุ ไม่ซ่อน)</summary>
+    [HttpGet("{documentId:guid}/wht-link-status")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Tax.WhtDocumentLinkStatus>>> GetWhtLinkStatus(
+        Guid companyId, Guid documentId, [FromServices] IWithholdingTaxCertService whtCerts)
+    {
+        var sens = await DenySensitiveAsync(companyId, documentId, "ดู 50 ทวิ ของเอกสาร");
+        if (sens != null) return Forbid403<Accounting.Models.DTOs.Tax.WhtDocumentLinkStatus>(sens);
+        var result = await whtCerts.GetDocumentLinkStatusAsync(companyId, documentId);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.WhtDocumentLinkStatus>(true, result));
+    }
+
+    /// <summary>ผู้สมัครของใบที่บันทึกแล้ว (โมดัลเปลี่ยนการผูก) — ใบเดิมหรือเดือนจ่ายอยู่ในเดือนที่ยื่นแล้ว ⇒ <c>filedBlock</c> (271-0-2)</summary>
+    [HttpGet("{documentId:guid}/wht-link-candidates")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkCandidatesResponse>>> GetWhtLinkCandidates(
+        Guid companyId, Guid documentId, [FromQuery] Guid? paymentId, [FromServices] IWithholdingTaxCertService whtCerts)
+    {
+        var sens = await DenySensitiveAsync(companyId, documentId, "ดู 50 ทวิ ของเอกสาร");
+        if (sens != null) return Forbid403<Accounting.Models.DTOs.Tax.WhtLinkCandidatesResponse>(sens);
+        var result = await whtCerts.GetLinkCandidatesForDocumentAsync(companyId, documentId, paymentId);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkCandidatesResponse>(true, result));
+    }
+
+    public record WhtLinkCheckBody(Guid CertId, Guid? PaymentId);
+
+    /// <summary>ตรวจเทียบก่อนกดยืนยัน (ไม่เขียน) — ใช้ทั้งโมดัลเปลี่ยนการผูกและกล่องยืนยันอนุมัติ</summary>
+    [HttpPost("{documentId:guid}/wht-link/check")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkCheckResponse>>> CheckWhtLink(
+        Guid companyId, Guid documentId, [FromBody] WhtLinkCheckBody body, [FromServices] IWithholdingTaxCertService whtCerts)
+    {
+        var sens = await DenySensitiveAsync(companyId, documentId, "ดู 50 ทวิ ของเอกสาร");
+        if (sens != null) return Forbid403<Accounting.Models.DTOs.Tax.WhtLinkCheckResponse>(sens);
+        var result = await whtCerts.CheckLinkAsync(companyId, documentId, body.CertId, body.PaymentId);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkCheckResponse>(true, result));
+    }
+
+    /// <summary>ผูก/เปลี่ยนการผูกหลังอนุมัติ (ทางเข้าเดียว · ใช้ทั้งจากหน้าเอกสารและโมดัลกลับทิศของหน้า 50 ทวิ) — สิทธิ์อนุมัติของชนิดเอกสาร ·
+    /// งานของคน (ปฏิเสธ API key) · เดือนที่ยื่นแล้ว = 409 <c>RD-50BIS-LINK-FILED</c> ไม่มีสิทธิ์ใดผ่าน (271-0-2)</summary>
+    [HttpPost("{documentId:guid}/wht-link")]
+    [Accounting.Filters.RejectApiKey("ผูก/เปลี่ยนการผูก 50 ทวิ")]
+    public async Task<ActionResult<ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkResult>>> LinkWhtCert(
+        Guid companyId, Guid documentId, [FromBody] Accounting.Models.DTOs.Tax.WhtLinkRequest request,
+        [FromServices] IWithholdingTaxCertService whtCerts)
+    {
+        var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null)
+            return NotFound(new ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkResult>(false, null, "ไม่พบเอกสาร"));
+        if (!await DocumentPermissionHelper.CanApproveAsync(_permissions, companyId, userIdGuid, docType.Value))
+            return Forbid403<Accounting.Models.DTOs.Tax.WhtLinkResult>(
+                $"ไม่มีสิทธิ์ผูก/เปลี่ยน 50 ทวิ ของเอกสาร {docType} (ต้องการ Document.Approve)");
+        var result = await whtCerts.LinkCertToDocumentAsync(companyId, documentId, request, userIdGuid);
+        return Ok(new ApiResponse<Accounting.Models.DTOs.Tax.WhtLinkResult>(true, result, result.Message));
+    }
+
     /// <summary>เปลี่ยน "แหล่งเงิน" (บัญชี Cr เงินสด/ธนาคาร) ของเอกสารจ่าย/รับ
     /// สดหลัง approve — แก้เคส OCR เลือกธนาคารผิดโดยไม่ต้อง void. post
     /// correcting-JE (Dr ผังเก่า / Cr ผังใหม่). ดู gate ใน
