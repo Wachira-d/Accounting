@@ -505,7 +505,7 @@ public class PlatformBillingPhase2DbTests
             Assert.InRange((row.ExpiresAt - DateTime.UtcNow).TotalDays, 13.9, 14.1);   // ค่าตั้งต้น 14 วัน
 
             // โทเคนผิด/รูปผิด = ไม่พบ
-            Assert.Null(await svc.ViewAsync("x" + created.Token[1..], null));
+            Assert.Null(await svc.ViewAsync((created.Token[0] == 'x' ? "y" : "x") + created.Token[1..], null));   // รอบ 271: เดิมโทเคนขึ้นต้นด้วย x (1/64) ⇒ ได้โทเคนเดิม = เทสต์ล้มสุ่ม
             Assert.Null(await svc.ViewAsync("<script>", null));
 
             var view = await svc.ViewAsync(created.Token, "10.0.0.9");
