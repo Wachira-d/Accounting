@@ -9713,4 +9713,4 @@ _Last verified against codebase: 2026-11-16 (รอบ 271 — §5.4 ผูก�
 
 ยังรอเจ้าของ: สลิปจริงธนาคารอื่น/สปส./ใบแจ้งชำระของกรม (เพิ่มแถวตาราง) · ผู้ให้บริการอีเมลขาเข้า (adapter) · backlog: สลิปเดียวหลายแบบ · ยื่นเพิ่มเติม · ค่าธรรมเนียมธนาคาร · อ่านใบแจ้งชำระ PDF อัตโนมัติ
 
-_Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit cd71dee0)_

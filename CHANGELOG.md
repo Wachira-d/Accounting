@@ -7276,4 +7276,4 @@ P2 `ProviderAutomationConsents` (append-only/ห้ามลบ) + `ProviderCons
 P3 `TaxPaymentRequests` + หน้า `tax-slip-desk.html` · P4 `TaxSlipEvidences` · `Helpers/TaxSlipMatch` · `TaxSlipBankAccount` · `TaxSlipReplyCard` · `TaxSlipRefHash` · `TaxSlipRemitService` → `RemitAsync` (ร่วมธุรกรรม) ·
 ที่มาบน `StatutoryRemittances` (Source/SlipEvidenceId/ActedByProviderCompanyId/ProviderConsentId/ControlCodeLast4) · ป้ายหน้านำส่ง "ชำระแล้ว · ยังไม่ได้บันทึกเลขรับ" ·
 P5 `TaxSlipReviewService` (ธงเตือนเท่านั้น) · `TaxSlipJob` (JobLock) · P6 `/api/inbound-email` หลัง `IInboundEmailAdapter` (production fail-fast) ·
-เทสต์ pure +44 · Db +6 · กติกา R272 +18 + ฝ่ายค้าน R272-1…12 · `ocr_helper_test_check` ครอบ 3 ตัวตัดสินใหม่ · build + test + Db test ผ่านในเครื่องนี้ · commit <เติมในคอมมิตตามหลัง>_
+เทสต์ pure +44 · Db +6 · กติกา R272 +18 + ฝ่ายค้าน R272-1…12 · `ocr_helper_test_check` ครอบ 3 ตัวตัดสินใหม่ · build + test + Db test ผ่านในเครื่องนี้ · commit cd71dee0_
