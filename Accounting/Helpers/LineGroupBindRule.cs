@@ -135,8 +135,23 @@ public static class LineGroupBindRule
         _ => false,
     };
 
+    /// <summary>รอบ 272 (ดีไซน์ §1.2 · แพ็ก P4) — event กลุ่มของ OA กลางที่ไปเส้น<b>สลิปชำระภาษี</b> (pure): รูป/ไฟล์ PDF ในกลุ่ม ⇒ <see cref="CentralSlipRoute.Media"/> ·
+    /// ปุ่มเลือกรายการของสลิปภาษี (postback ขึ้นต้น <c>tsc|</c>) ⇒ <see cref="CentralSlipRoute.Choice"/> · อื่น ๆ ⇒ None (ตัวจัดการกลุ่มเดิม) ·
+    /// <b>ด่านนี้ไม่เปิดการอ่าน</b> — ผู้รับ (<c>TaxSlipIntakeService.HandleLineMediaAsync</c>) ตรวจว่ากลุ่มผูกผู้ติดต่อของบริษัทผู้ให้บริการก่อนแตะไฟล์/เขียนฐาน
+    /// (กลุ่มที่ไม่ได้ผูก = ไม่อ่าน ไม่เก็บ เหมือนก่อนรอบนี้ · PDPA ม.22) · ห้อง (room) ไม่รองรับ</summary>
+    public static CentralSlipRoute CentralGroupSlipRoute(string? eventType, string? sourceType, string? messageType, string? fileName, string? postbackData)
+    {
+        if (sourceType != "group") return CentralSlipRoute.None;
+        if (eventType == "message" && LineChatSlipRule.IsSlipMessage(messageType, fileName)) return CentralSlipRoute.Media;
+        if (eventType == "postback" && TaxSlipRefHash.IsOurs(postbackData)) return CentralSlipRoute.Choice;
+        return CentralSlipRoute.None;
+    }
+
     /// <summary>รอบ 256 — คำตอบของ OA กลางต่อ event ในกลุ่ม/ห้อง<b>เมื่อยังไม่ได้ตั้งบริษัทผู้ให้บริการ</b> (pure): ตอบเฉพาะคำสั่ง #HeyNextAcc/#ByeNextAcc · ข้อความอื่น/เข้ากลุ่ม ⇒ null
     /// (ไม่ทักทายตอนเข้ากลุ่ม — OA กลางอยู่ในกลุ่มทีมของแอดมินด้วย · ไม่อ่าน/ไม่เก็บข้อความกลุ่ม PDPA ม.22) · มีบริษัทผู้ให้บริการ ⇒ <c>ContactLineGroupService.HandleCentralGroupEventAsync</c> (256-2)</summary>
     public static string? CentralOaGroupReply(string? eventType, string? text)
         => eventType == "message" && Parse(text) != LineGroupCommand.None ? Replies.CentralOaNotSupported : null;
 }
+
+/// <summary>รอบ 272: เส้นของ event กลุ่ม OA กลาง (<see cref="LineGroupBindRule.CentralGroupSlipRoute"/>)</summary>
+public enum CentralSlipRoute { None = 0, Media = 1, Choice = 2 }

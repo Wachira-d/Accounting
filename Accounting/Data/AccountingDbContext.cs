@@ -462,6 +462,10 @@ public class AccountingDbContext : DbContext
     public DbSet<PartnerPaymentPlan> PartnerPaymentPlans => Set<PartnerPaymentPlan>();   // รอบ 264 P4 (Helpers/PartnerPaymentPlanMigration)
     public DbSet<PartnerPaymentNotice> PartnerPaymentNotices => Set<PartnerPaymentNotice>();   // รอบ 258-3 F-H3 (Helpers/PartnerPaymentNoticeMigration)
     public DbSet<PartnerAutomationConsent> PartnerAutomationConsents => Set<PartnerAutomationConsent>();   // รอบ 264 P1 (Helpers/PartnerConsentMigration)
+    public DbSet<ProviderAutomationConsent> ProviderAutomationConsents => Set<ProviderAutomationConsent>();   // รอบ 272 P2 (Helpers/Round272Migration)
+    public DbSet<ProviderConsentRequest> ProviderConsentRequests => Set<ProviderConsentRequest>();   // รอบ 272 P2
+    public DbSet<TaxPaymentRequest> TaxPaymentRequests => Set<TaxPaymentRequest>();   // รอบ 272 P3
+    public DbSet<TaxSlipEvidence> TaxSlipEvidences => Set<TaxSlipEvidence>();   // รอบ 272 P4
     public DbSet<WorkflowAutomationConfig> WorkflowAutomationConfigs => Set<WorkflowAutomationConfig>();
 
     // ===== CMS & Multi-Site =====
@@ -3779,6 +3783,75 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.PartnerBranchCode).HasMaxLength(5);
             e.Property(x => x.Message).HasMaxLength(500);
             e.HasIndex(x => new { x.CompanyId, x.CreatedAt }).HasDatabaseName("IX_PartnerLinkRequests_Company_Created");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 272 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/Round272Migration
+        modelBuilder.Entity<ProviderAutomationConsent>(e =>
+        {
+            e.Property(x => x.Scope).HasMaxLength(32);
+            e.Property(x => x.TaxTypes).HasMaxLength(300);
+            e.Property(x => x.EvidenceHash).HasMaxLength(64);
+            e.Property(x => x.EvidenceSource).HasMaxLength(16);
+            e.Property(x => x.IpAddress).HasMaxLength(64);
+            e.Property(x => x.UserAgent).HasMaxLength(300);
+            e.Property(x => x.WithdrawReason).HasMaxLength(500);
+            e.Property(x => x.MaxAmount).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.ProviderCompanyId, x.Scope, x.EvidenceSource }).IsUnique()
+                .HasFilter("\"WithdrawnAt\" IS NULL").HasDatabaseName("IX_ProviderAutomationConsents_Active");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<ProviderConsentRequest>(e =>
+        {
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.RequestedVia).HasMaxLength(32);
+            e.HasIndex(x => new { x.CompanyId, x.ProviderCompanyId }).IsUnique().HasFilter("\"Status\" = 'Open'").HasDatabaseName("IX_ProviderConsentRequests_Open");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<TaxPaymentRequest>(e =>
+        {
+            e.Property(x => x.RemittanceType).HasMaxLength(32);
+            e.Property(x => x.ControlCodeHash).HasMaxLength(64);
+            e.Property(x => x.ControlCodeLast4).HasMaxLength(8);
+            e.Property(x => x.SentVia).HasMaxLength(16);
+            e.Property(x => x.SendNote).HasMaxLength(500);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.Property(x => x.Surcharge).HasPrecision(18, 2);
+            e.Property(x => x.Penalty).HasPrecision(18, 2);
+            e.Property(x => x.BooksAmountAtSend).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.ControlCodeHash }).IsUnique().HasFilter("\"Status\" <> 'Cancelled'").HasDatabaseName("IX_TaxPaymentRequests_ControlCode");
+            e.HasIndex(x => new { x.ProviderCompanyId, x.Status }).HasDatabaseName("IX_TaxPaymentRequests_Provider");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<TaxSlipEvidence>(e =>
+        {
+            e.Property(x => x.Source).HasMaxLength(8);
+            e.Property(x => x.ExternalMessageId).HasMaxLength(200);
+            e.Property(x => x.SourceKey).HasMaxLength(64);
+            e.Property(x => x.FileSha256).HasMaxLength(64);
+            e.Property(x => x.StoragePath).HasMaxLength(500);
+            e.Property(x => x.ContentType).HasMaxLength(64);
+            e.Property(x => x.Agency).HasMaxLength(32);
+            e.Property(x => x.BankCode).HasMaxLength(3);
+            e.Property(x => x.BankTxnHash).HasMaxLength(64);
+            e.Property(x => x.BankTxnLast4).HasMaxLength(8);
+            e.Property(x => x.ControlCodeHash).HasMaxLength(64);
+            e.Property(x => x.ControlCodeLast4).HasMaxLength(8);
+            e.Property(x => x.TaxIdMasked).HasMaxLength(32);
+            e.Property(x => x.Status).HasMaxLength(20);
+            e.Property(x => x.RuleCode).HasMaxLength(40);
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.Property(x => x.PreselectAccounts).HasMaxLength(400);
+            e.Property(x => x.LastCardText).HasMaxLength(1000);
+            e.Property(x => x.LastCardOutcome).HasMaxLength(300);
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.Property(x => x.Fee).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.Source, x.ExternalMessageId }).IsUnique().HasDatabaseName("IX_TaxSlipEvidences_Message");
+            e.HasIndex(x => new { x.CompanyId, x.FileSha256 }).IsUnique().HasDatabaseName("IX_TaxSlipEvidences_File");
+            e.HasIndex(x => new { x.CompanyId, x.BankCode, x.BankTxnHash }).IsUnique().HasFilter("\"BankTxnHash\" IS NOT NULL").HasDatabaseName("IX_TaxSlipEvidences_BankTxn");
+            e.HasIndex(x => new { x.ClientCompanyId, x.ControlCodeHash }).IsUnique()
+                .HasFilter("\"Status\" = 'Remitted' AND \"ControlCodeHash\" IS NOT NULL").HasDatabaseName("IX_TaxSlipEvidences_ControlRemitted");
+            e.HasIndex(x => new { x.CompanyId, x.Status }).HasDatabaseName("IX_TaxSlipEvidences_Status");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 264 P1 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/PartnerConsentMigration (unique บางส่วน: แถวที่ยังไม่ถอนหนึ่งแถวต่อบริษัท·คู่·ขอบเขต)

@@ -198,6 +198,8 @@ DELEGATE_ARGS = [
 
 # ทางเข้าที่แตะไฟล์แนบแต่ตั้งใจไม่ผ่านด่านนี้ — ต้องมีเหตุผลทุกแถว (เพิ่มแถว = การตัดสินใจที่ตั้งใจ)
 EXEMPT = {
+    ("Accounting/Controllers/TaxSlipDeskController.cs", "PowerOfAttorney"):
+        "รอบ 272 (272-1-6) — สร้างไฟล์ใหม่จากไฟล์ที่ผู้ใช้เพิ่งอัปโหลด (หนังสือมอบอำนาจ) ผูกผู้ติดต่อของบริษัทผู้ให้บริการ · ไม่รับ id ไฟล์เดิม · ด่าน = Tax.File + บริษัทผู้ให้บริการ",
     ("Accounting/Controllers/IntegrationController.cs", "AttachFilesAsync"):
         "แนบไฟล์ให้เอกสารที่คีย์ integration เพิ่งสร้างในคำขอเดียวกัน — ด่านคือคีย์ + scope (write_permission_gate_check)",
     (OCR, "UploadAndScan"):

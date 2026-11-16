@@ -21135,6 +21135,105 @@ REVIEWER_CASES += [
 ]
 
 
+# ═══ รอบ 272 — สลิปชำระภาษีจากกลุ่ม LINE/อีเมล ⇒ บันทึกนำส่งในบัญชีลูกค้า (erp-review/2026-11-16/team-272-tax-slip-autoremit.md · คำตัดสิน 272-0-1/2 · 272-1-x) ═══
+_R272_WHY = "รอบ 272 (272-0-1/272-0-2 · DECISIONS 272-1-x): "
+_R272_REMIT = "Services/Implementations/TaxSlipRemitService.cs"
+_R272_INTAKE = "Services/Implementations/TaxSlipIntakeService.cs"
+_R272_CONSENT = "Services/Implementations/ProviderConsentService.cs"
+RULES += [
+    dict(file=_R272_REMIT, method="ApplyAsync",
+         must=["_consent.CheckForWriteAsync(", "_remit.RemitAsync(", "_files.UploadBytesAsync(", "AddChainedAuditLog("],
+         must_lit=["pg_advisory_xact_lock", "FOR UPDATE"],
+         must_re=[r"if\s*\(\s*a\.StaffUserId\s*==\s*null\s*&&\s*!\s*verdict\.Ok\s*\)\s*throw\b",
+                  r"if\s*\(\s*a\.StaffUserId\s*!=\s*null\s*&&\s*!\s*verdict\.AllowsStaffClick\s*&&\s*!\s*a\.StaffIsClientTaxFiler\s*\)\s*throw\b",
+                  r"if\s*\(\s*a\.BankAccountId\s*==\s*null\s*&&\s*a\.BankGlAccountId\s*==\s*null\s*\)\s*throw\b"],
+         before=[("_consent.CheckForWriteAsync(", "_remit.RemitAsync("), ("ExecuteSqlRawAsync(", "_consent.CheckForWriteAsync(")],
+         forbid=["new StatutoryRemittance", "CreateJournalEntryAsync(", "PostJournalEntryAsync(", "_db.AuditLogs.Add("],
+         why=_R272_WHY + "ผู้เขียนเดียว: ความยินยอมตรวจใต้ล็อกก่อน RemitAsync ตัวเดียว (ไม่สร้าง JE/แถวนำส่งเอง) · ไม่รู้บัญชีที่จ่าย = ไม่บันทึก (ไม่ถอยไปบัญชีตั้งต้น) · audit chain"),
+    dict(file=_R272_INTAKE, method="HandleLineMediaAsync",
+         must=["_channel.GroupBindingAsync(", "_links.DownloadNextAccMessageContentAsync(", "IntakeAsync("],
+         must_re=[r"if\s*\(\s*!\s*binding\.AnyEndpoint\s*\|\|\s*binding\.ContactIds\.Count\s*==\s*0\s*\)\s*return\s+false\s*;"],
+         before=[("_channel.GroupBindingAsync(", "_links.DownloadNextAccMessageContentAsync(")],
+         why=_R272_WHY + "ด่านผูกกลุ่มก่อนแตะไฟล์: กลุ่มที่ไม่ผูกผู้ติดต่อของบริษัทผู้ให้บริการ = ไม่อ่าน ไม่เก็บ (PDPA ม.22)"),
+    dict(file=_R272_INTAKE, method="IntakeAsync",
+         must=["GovPaymentSlip.Identify(", "SlipEvidenceRule.Sha256Hex(", "TaxSlipRefHash.BankTxn(", "ProcessAsync("],
+         before=[("SlipEvidenceRule.Sha256Hex(", "_reader.ReadAsync("), ("GovPaymentSlip.Identify(", "_db.TaxSlipEvidences.Add(")],
+         forbid=["Agency.ControlCode;", "ControlCodeHash = agency.ControlCode"],
+         why=_R272_WHY + "กันซ้ำไฟล์ก่อนอ่าน · ระบุหน่วยงานก่อนเก็บ · Control Code เก็บเป็นแฮชเท่านั้น"),
+    dict(file=_R272_INTAKE, method="DecideAndActAsync",
+         must=["TaxSlipMatch.Decide(", "clientIds.Contains(c.Id)", "_remit.GetDashboardAsync("],
+         forbid=["c.TaxId == agency.TaxId", "Companies.AsNoTracking().Where(c => c.TaxId"],
+         why=_R272_WHY + "บริษัทเลือกจากชุดที่ช่องทางผูกเท่านั้น (ห้ามค้นเลขภาษีทั้งฐาน · กฎ M) · ยอดค้างจาก dashboard ตัวเดียว"),
+    dict(file=_R272_INTAKE, method="AutoApplyAsync",
+         must=["_consent.CheckAsync(", "BankAsync(", "ApplyAndReplyAsync(", "_consent.EnsureRequestAsync("],
+         must_re=[r"if\s*\(\s*!\s*bank\.CanAuto\s*\)"],
+         before=[("_consent.CheckAsync(", "ApplyAndReplyAsync("), ("BankAsync(", "ApplyAndReplyAsync(")],
+         why=_R272_WHY + "ความยินยอม + บัญชีที่จ่ายตัดสินก่อนบันทึก · ยังไม่ยินยอม ⇒ พัก + เปิดคำขอ (T3)"),
+    dict(file=_R272_INTAKE, method="BankAsync", must=["SlipAccountMatch.Match(", "TaxSlipBankAccount.Decide(", "b.CompanyId == client"],
+         why=_R272_WHY + "บัญชีที่จ่ายจากตัวตัดสินเดียว (ชั้น 1-4) ในบัญชีของบริษัทลูกค้าเท่านั้น"),
+    dict(file=_R272_INTAKE, method="ApplyAndReplyAsync", must=["_remitter.ApplyAsync(", "FinishAsync("],
+         forbid=["catch { }", "catch {}", "catch (Exception)"],
+         why=_R272_WHY + "ด่าน/RemitAsync ปฏิเสธ ⇒ คิวพนักงานพร้อมเหตุจริง + การ์ด (ไม่กลืน · กฎ #4 E)"),
+    dict(file=_R272_INTAKE, method="HandleChoicePostbackAsync", must=["TaxSlipRefHash.Verify(", "ParseCandidates(", "AutoApplyAsync("],
+         before=[("TaxSlipRefHash.Verify(", "AutoApplyAsync(")],
+         why=_R272_WHY + "ปุ่มเลือกในกลุ่มต้องลงลายเซ็นของช่องทางเดิม · เลือกได้เฉพาะในชุดผู้สมัคร · ไม่ใช่การยินยอม (ตรวจซ้ำตอนบันทึก)"),
+    dict(file=_R272_INTAKE, method="FinishAsync", must=["_channel.SendSlipCardAsync(", "TaxSlipReplyCard.Text("],
+         why=_R272_WHY + "ทุกผลมีการ์ดตอบกลับ (ห้าม silent no-op)"),
+    dict(file="Controllers/LineWebhookController.cs", method="TryTaxSlipAsync",
+         must=["LineGroupBindRule.CentralGroupSlipRoute(", "_taxSlips!.HandleLineMediaAsync(", "_taxSlips!.HandleChoicePostbackAsync("],
+         before=[("LineGroupBindRule.CentralGroupSlipRoute(", "_taxSlips!.HandleLineMediaAsync(")],
+         why=_R272_WHY + "event กลุ่มของ OA กลางไปเส้นสลิปภาษีผ่านตัวตัดสินเส้นเดียว"),
+    dict(file=_R272_CONSENT, method="CheckForWriteAsync", must=["_db.Database.CurrentTransaction == null", "EvaluateAsync("],
+         must_lit=["FOR SHARE"], before=[("ExecuteSqlInterpolatedAsync(", "EvaluateAsync(")],
+         why=_R272_WHY + "ตัวตรวจตอนเขียนต้องอยู่ในธุรกรรมและล็อกแถวความยินยอมก่อนประเมิน (ถอนแทรกไม่ได้)"),
+    dict(file=_R272_CONSENT, method="EvaluateAsync", must=["ProviderConsent.Allows(", "GrantProblemForAsync("],
+         why=_R272_WHY + "ตรวจสดทุกครั้ง รวมสิทธิ์ผู้ให้ ณ ตอนนี้"),
+    dict(file=_R272_CONSENT, method="GrantAsync",
+         must=["GrantProblemForAsync(", "ProviderConsent.ConfirmProblem(", "ProviderConsent.Hash(", "ProviderConsent.NormalizeTypes(", "AddChainedAuditLog("],
+         before=[("GrantProblemForAsync(", "_db.ProviderAutomationConsents.Add(")],
+         why=_R272_WHY + "272-1-7 ผู้ให้ (เจ้าของ หรือ Tax.File+CompanySettings.Edit · ไม่ใช่พนักงานผู้ให้บริการ) · hash canonical · พิมพ์ยืนยัน"),
+    dict(file=_R272_CONSENT, method="GrantProblemForAsync", must=["ProviderConsent.GrantProblem(", "cu.CompanyId == providerId"],
+         why=_R272_WHY + "ผู้ขอให้เองไม่ได้ (สมาชิกบริษัทผู้ให้บริการ ⇒ ปฏิเสธ)"),
+    dict(file="Services/Implementations/TaxPaymentRequestService.cs", method="CreateAsync",
+         must=["TaxSlipMatch.RequestProblem(", "TaxSlipRefHash.ControlCode(", "TaxSlipRefHash.Last4(", "AddChainedAuditLog(", "_consent.EnsureRequestAsync(", "_channel.PostToClientAsync("],
+         forbid=["ControlCodeHash = cc,", "ControlCodeHash = req.ControlCode"],
+         why=_R272_WHY + "272-1-2 ใบขอชำระ: สมุดต้องตรงก่อนส่ง · Control Code เก็บเป็นแฮช · T2 ขอความยินยอมเอง"),
+    dict(file="Services/Implementations/TaxSlipReviewService.cs", method="ReviewAsync",
+         must=["Verdict(", "AddChainedAuditLog("], forbid=["MatchedJournalEntryId = r.JournalEntryId", "ReverseJournalEntryAsync(", "VoidRemittanceAsync("],
+         why=_R272_WHY + "P5 ตัวตรวจทานเป็นธงเตือนเท่านั้น — ไม่ผูก/ไม่กลับรายการเอง"),
+    dict(file="Services/Background/TaxSlipJob.cs", method="ExecuteAsync", must=["JobLock.RunExclusiveAsync("],
+         why=_R272_WHY + "งานเบื้องหลังกันรันซ้ำข้ามเครื่อง (F4 ข้อ 6)"),
+    dict(file="Services/Implementations/StatutoryRemittanceService.cs", method="RemitAsync", must=["_db.Database.CurrentTransaction == null"],
+         why=_R272_WHY + "RemitAsync ร่วมธุรกรรมของเส้นสลิป (ล็อกความยินยอมจน commit) · เส้นมือเปิดเอง"),
+]
+REVIEWER_CASES += [
+    # ถอดด่านความยินยอมของการบันทึกเอง ⇒ ต้องฟ้อง
+    ("R272-1", "ApplyAsync", "if (a.StaffUserId == null && !verdict.Ok)", "if (false)", True),
+    # ตรวจความยินยอมนอกล็อก (อ่านอย่างเดียว) ⇒ ต้องฟ้อง
+    ("R272-2", "ApplyAsync", "await _consent.CheckForWriteAsync(c.CompanyId", "await _consent.CheckAsync(c.CompanyId", True),
+    # ไม่รู้บัญชีแล้วปล่อยให้ RemitAsync ถอยไปบัญชีตั้งต้น ⇒ ต้องฟ้อง
+    ("R272-3", "ApplyAsync", "if (a.BankAccountId == null && a.BankGlAccountId == null)", "if (a.BankAccountId == Guid.Empty)", True),
+    # พนักงานกดโดยไม่มีทั้งความยินยอม/หนังสือมอบอำนาจ/สิทธิ์ในบริษัทลูกค้า ⇒ ต้องฟ้อง
+    ("R272-4", "ApplyAsync", "if (a.StaffUserId != null && !verdict.AllowsStaffClick && !a.StaffIsClientTaxFiler)", "if (a.StaffUserId != null && false)", True),
+    # ดาวน์โหลดรูปก่อนตรวจว่ากลุ่มผูก ⇒ ต้องฟ้อง
+    ("R272-5", "HandleLineMediaAsync", "if (!binding.AnyEndpoint || binding.ContactIds.Count == 0) return false;", "", True),
+    # ค้นบริษัทด้วยเลขภาษีทั้งฐาน ⇒ ต้องฟ้อง
+    ("R272-6", "DecideAndActAsync", "Where(c => clientIds.Contains(c.Id))", "Where(c => c.TaxId == agency.TaxId)", True),
+    # บัญชีที่จ่ายตัดสินไม่ได้แต่บันทึกต่อ ⇒ ต้องฟ้อง
+    ("R272-7", "AutoApplyAsync", "if (!bank.CanAuto)", "if (bank.Kind == TaxSlipBankAccount.Kind.NotOurs)", True),
+    # ปุ่มเลือกไม่ตรวจลายเซ็น ⇒ ต้องฟ้อง
+    ("R272-8", "HandleChoicePostbackAsync", "if (!TaxSlipRefHash.Verify(pb, idHash))", "if (pb == null)", True),
+    # ตัวตรวจตอนเขียนนอกธุรกรรม ⇒ ต้องฟ้อง
+    ("R272-9", "CheckForWriteAsync", "if (_db.Database.CurrentTransaction == null)", "if (false)", True),
+    # ใบขอชำระเก็บ Control Code ดิบ ⇒ ต้องฟ้อง
+    ("R272-10", "CreateAsync", "ControlCodeHash = TaxSlipRefHash.ControlCode(cc)!,", "ControlCodeHash = cc,", True),
+    # ตัวตรวจทานผูกรายการเดินบัญชีเอง ⇒ ต้องฟ้อง
+    ("R272-11", "ReviewAsync", "r.ReviewStatus = verdict;", "r.ReviewStatus = verdict; var __t = new BankTransaction(); __t.MatchedJournalEntryId = r.JournalEntryId;", True),
+    # ทิศตรงข้าม: จัดบรรทัดใหม่ของด่านความยินยอม ⇒ ต้องไม่ฟ้อง
+    ("R272-12", "ApplyAsync", "if (a.StaffUserId == null && !verdict.Ok)", "if (a.StaffUserId == null\n                && !verdict.Ok)", False),
+]
+
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

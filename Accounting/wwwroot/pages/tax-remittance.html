@@ -81,6 +81,7 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <a class="btn btn-secondary btn-sm" href="/pages/tax-calendar.html">📅 ปฏิทินนำส่ง</a>
         <a class="btn btn-secondary btn-sm" href="/pages/tax.html">📊 รายงานภาษี</a>
+        <a class="btn btn-secondary btn-sm" href="/pages/tax-slip-desk.html" title="รอบ 272: สำหรับสำนักงานบัญชีผู้ให้บริการ — ส่งเอกสารชำระภาษีให้ลูกค้า + คิวสลิปภาษีที่ลูกค้าส่งกลับ">🧾 สลิปภาษีของลูกค้า</a>
         <button class="btn btn-secondary btn-sm" onclick="Page.load()" title="โหลดยอดใหม่จากเซิร์ฟเวอร์">↻ รีเฟรช</button>
       </div>
     </div>
@@ -659,7 +660,7 @@
                       + (((r.penalty || 0) + (r.otherFine || 0)) > 0 ? `<div class="text-xs text-gray-400">เพิ่ม ${Layout.money(r.lateFee || 0)} · ปรับ ${Layout.money((r.penalty || 0) + (r.otherFine || 0))}</div>` : '')
                     : '-'}</td>
                   <td data-label="วันที่จ่าย">${Layout.date(r.payDate)}</td>
-                  <td data-label="เลขรับ">${Layout.esc(r.filingNumber || '-')}${r.settledOutside ? '<div class="text-xs" style="color:#64748b">ชำระนอกระบบ (ผูกใบสำคัญ)</div>' : ''}</td>
+                  <td data-label="เลขรับ">${Layout.esc(r.filingNumber || '-')}${r.settledOutside ? '<div class="text-xs" style="color:#64748b">ชำระนอกระบบ (ผูกใบสำคัญ)</div>' : ''}${r.sourceLabel ? `<div class="text-xs" style="color:#0369a1">${Layout.esc(r.sourceLabel)}</div>` : ''}${r.filingNote ? `<div class="text-xs" style="color:#b45309">${Layout.esc(r.filingNote)}</div>` : ''}${r.reviewLabel ? `<div class="text-xs" style="color:#64748b">${Layout.esc(r.reviewLabel)}</div>` : ''}</td>
                   <td class="text-center" data-label="ใบเสร็จ">${r.receiptAttachmentId
                     ? `<button class="btn btn-sm btn-ghost" onclick="Page.viewReceipt('${r.receiptAttachmentId}')" title="เปิดดูใบเสร็จ/หลักฐานที่แนบไว้">📎 ดู</button>`
                     : `<button class="btn btn-sm btn-ghost" onclick="Page.attachFromHistory('${r.id}', '${this.period(r.periodYear, r.periodMonth)}')" title="ยังไม่มีไฟล์แนบ — แนบใบเสร็จ/สลิปย้อนหลังได้">＋แนบ</button>`}</td>

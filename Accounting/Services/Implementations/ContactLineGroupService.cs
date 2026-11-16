@@ -20,11 +20,13 @@ public class ContactLineGroupService : IContactLineGroupService
     private readonly INextAccLineConfig _nextAcc;
     private readonly IChatRateLimiter _limiter;
     private readonly ILogger<ContactLineGroupService> _logger;
+    /// <summary>รอบ 272 (T1 ของทาง B): ผูกกลุ่มผ่าน OA กลางกับผู้ติดต่อที่เป็นบริษัทลูกค้า ⇒ ขอความยินยอมเอง · null = เทสต์/ประกอบบางส่วน</summary>
+    private readonly ProviderConsentService? _providerConsent;
 
     public ContactLineGroupService(AccountingDbContext db, ISecretProtector secrets, ILineNotifyService line, IContactRecipientResolver recipients,
-        INextAccLineConfig nextAcc, IChatRateLimiter limiter, ILogger<ContactLineGroupService> logger)
+        INextAccLineConfig nextAcc, IChatRateLimiter limiter, ILogger<ContactLineGroupService> logger, ProviderConsentService? providerConsent = null)
     {
-        _db = db; _secrets = secrets; _line = line; _recipients = recipients; _nextAcc = nextAcc; _limiter = limiter; _logger = logger;
+        _db = db; _secrets = secrets; _line = line; _recipients = recipients; _nextAcc = nextAcc; _limiter = limiter; _logger = logger; _providerConsent = providerConsent;
     }
 
     // ───────────── webhook ─────────────
@@ -154,6 +156,32 @@ public class ContactLineGroupService : IContactLineGroupService
                 return LineGroupEventOutcome.Nothing;
         }
         return LineGroupEventOutcome.Nothing;
+    }
+
+    /// <summary>รอบ 272 T1 (ทาง B · ดีไซน์ §5.4): ผูกกลุ่มผ่าน OA กลางกับผู้ติดต่อ <c>NextAccTenant</c> ⇒ ถ้าบริษัทลูกค้ายังไม่อนุญาต เปิดคำขอ + การ์ดในกลุ่มบอกตรง ๆ ว่า
+    /// "ยังบันทึกให้ไม่ได้จนกว่าเจ้าของจะอนุญาตบนเว็บ" · ล้ม ⇒ log Error ไม่ย้อนการผูก (คำขอเปิดซ้ำได้ที่จังหวะ T2/T3 หรือปุ่มของพนักงาน)</summary>
+    private async Task AskProviderConsentAfterBindAsync(Guid providerId, Guid contactId, string groupId, Guid? actorUserId, CancellationToken ct)
+    {
+        if (_providerConsent == null) return;
+        try
+        {
+            var ext = await _db.Contacts.AsNoTracking().Where(c => c.Id == contactId && c.CompanyId == providerId && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem)
+                .Select(c => c.ExternalId).FirstOrDefaultAsync(ct);
+            if (!Guid.TryParse(ext, out var clientId) || clientId == providerId) return;
+            var (req, isNew) = await _providerConsent.EnsureRequestAsync(clientId, providerId, ProviderConsentService.ViaGroupBind, actorUserId, ct);
+            if (req == null) return;   // อนุญาตไว้แล้ว
+            var name = await _db.Companies.AsNoTracking().Where(c => c.Id == clientId).Select(c => c.Name).FirstOrDefaultAsync(ct);
+            var baseUrl = await SystemBaseUrl.ResolveAsync(_db, null, ct);
+            var link = string.IsNullOrWhiteSpace(baseUrl) ? "อนุญาตได้ที่เมนู ค่าบริการ › สำนักงานบัญชี NextAcc ทำแทน" : baseUrl.TrimEnd('/') + ProviderConsent.PageUrl(clientId);
+            var text = TaxSlipReplyCard.Text(TaxSlipReplyCard.Kind.BoundAskConsent, new TaxSlipReplyCard.Facts(CompanyName: name, Link: link), false);
+            var r = await _line.TryPushContactTextAsync(providerId, NotifyEndpointKind.ScopeNextAcc, LineTargetKind.ContactGroup, groupId, TaxSlipReplyCard.Clean(text), Guid.NewGuid());
+            if (!r.Ok) _logger.LogError("การ์ดขออนุญาตบันทึกสลิปภาษีหลังผูกกลุ่ม (บริษัท {Client}) ส่งไม่สำเร็จ: {Error}", clientId, r.Error);
+            if (req != null && !isNew) _logger.LogInformation("ผูกกลุ่มใหม่ของบริษัท {Client} — ใช้คำขอความยินยอมที่เปิดอยู่", clientId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "เปิดคำขอความยินยอม (สลิปภาษี) หลังผูกกลุ่มไม่สำเร็จ");
+        }
     }
 
     /// <summary>ฝ่ายค้าน M1 (PDPA ม.22): กลุ่มขอเลิก/เตะบอทกลาง ⇒ ปลดทุกปลายทาง scope <c>nextacc</c> ของกลุ่มนี้<b>ทุกบริษัท</b> — การค้นหาบริษัทข้ามผู้เช่าโดยตั้งใจ
@@ -440,6 +468,7 @@ public class ContactLineGroupService : IContactLineGroupService
         var announce = await _line.TryPushContactTextAsync(companyId, endpointScope, LineTargetKind.ContactGroup, groupId,
             LineGroupBindRule.Replies.Bound(companyName, c.ContactName, topics.Select(NotifyTopics.Label)), Guid.NewGuid());
         if (!announce.Ok) _logger.LogWarning("ประกาศผูกกลุ่ม LINE ไม่สำเร็จ (company {Company}): {Error}", companyId, announce.Error);
+        if (announce.Ok && endpointScope == NotifyEndpointKind.ScopeNextAcc) await AskProviderConsentAfterBindAsync(companyId, contactId, groupId, actor.UserId, ct);
 
         var overview = await _recipients.GetOverviewAsync(companyId, contactId, canEdit: true, ct)
             ?? throw new BusinessRuleException("ไม่พบผู้ติดต่อ", "NOTIFY-CONTACT-NOT-FOUND", 404);

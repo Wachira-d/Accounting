@@ -52,6 +52,10 @@ public interface ICustomerLineLinkService
     /// ใหญ่เกิน <paramref name="maxBytes"/> / ไม่มี token / LINE ไม่ตอบ ⇒ null (log ระดับ Error)</summary>
     Task<byte[]?> DownloadMessageContentAsync(Guid companyId, string messageId, int maxBytes, CancellationToken ct = default);
 
+    /// <summary>รอบ 272: ดึงไฟล์ของข้อความ (รูป/PDF) ในกลุ่มของ <b>LINE OA กลาง</b> ด้วย token ของ OA กลาง (สลิปภาษีที่ลูกค้าส่งในกลุ่มของสำนักงานบัญชี) ·
+    /// ผู้เรียกเดียว <c>TaxSlipIntakeService</c> (หลังด่านผูกกลุ่มแล้ว) · ค่าเริ่มต้นของ interface = ไม่รองรับ (ตัวจำลองในเทสต์ไม่ต้อง implement)</summary>
+    Task<byte[]?> DownloadNextAccMessageContentAsync(string messageId, int maxBytes, CancellationToken ct = default) => Task.FromResult<byte[]?>(null);
+
     /// <summary>LINE userId ที่ลูกค้าผูกเองและยังใช้ได้กับ OA ปัจจุบัน — ระเบียน (การจอง/ออเดอร์) &gt; สมาชิก &gt; สมาชิกที่ผูกผู้ติดต่อ ERP · ไม่มี ⇒ null</summary>
     Task<string?> ResolveLineUserIdAsync(Guid companyId, CustomerLineTarget target, CancellationToken ct = default);
 }

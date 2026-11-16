@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สลิปภาษีของลูกค้า - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .ts-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:14px; }
+    .ts-card h3 { font-size:15px; font-weight:700; margin:0 0 8px; }
+    .ts-muted { color:#64748b; font-size:13px; }
+    .ts-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; }
+    .ts-grid label { display:block; font-size:13px; color:#334155; margin-bottom:4px; }
+    .ts-row { border-top:1px solid #f1f5f9; padding:10px 0; }
+    .ts-badge { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; background:#f1f5f9; color:#334155; }
+    .ts-warn { background:#fef3c7; color:#92400e; }
+    .ts-ok { background:#dcfce7; color:#166534; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">สลิปภาษีของลูกค้า</h2>
+        <p class="page-subtitle">ส่งเอกสารชำระภาษีให้ลูกค้า (กรอก Control Code ครั้งเดียว) · สลิปที่ลูกค้าส่งกลับในกลุ่ม LINE/อีเมล ระบบอ่านในเครื่อง (ไม่มี AI) แล้วบันทึกนำส่งในบัญชีลูกค้าเมื่อผ่านทุกด่าน
+          และลูกค้าอนุญาตแล้ว · ที่ตัดสินเองไม่ได้อยู่ในคิวด้านล่าง · ทุกผลแจ้งกลับกลุ่ม/อีเมลเสมอ</p></div>
+      <div><button class="btn btn-secondary" onclick="Desk.load()">รีเฟรช</button></div>
+    </div>
+    <div id="tsErr" role="alert" class="ts-card" style="display:none;color:#b91c1c"></div>
+    <div class="ts-card" id="tsSettings"><div class="ts-muted">กำลังโหลด...</div></div>
+
+    <div class="ts-card">
+      <h3>ส่งเอกสารชำระภาษี (ใบขอชำระ)</h3>
+      <div class="ts-grid">
+        <div><label for="tsClient">ลูกค้า</label><select id="tsClient" class="form-select" onchange="Desk.loadPending()"></select></div>
+        <div><label for="tsPending">งวดที่ค้าง (จากสมุดของลูกค้า)</label><select id="tsPending" class="form-select" onchange="Desk.pickPending()"></select></div>
+        <div><label for="tsAmount">ยอดภาษีบนใบแจ้งชำระ</label><input id="tsAmount" class="form-input" inputmode="decimal"></div>
+        <div><label for="tsSurcharge">เงินเพิ่มบนใบแจ้งชำระ</label><input id="tsSurcharge" class="form-input" inputmode="decimal" value="0"></div>
+        <div><label for="tsPenalty">เบี้ยปรับบนใบแจ้งชำระ</label><input id="tsPenalty" class="form-input" inputmode="decimal" value="0"></div>
+        <div><label for="tsControl">Control Code (ตามใบแจ้งชำระของกรม)</label><input id="tsControl" class="form-input" inputmode="numeric" autocomplete="off"></div>
+        <div><label for="tsExpires">Control Code หมดอายุ (ถ้ามี)</label><input id="tsExpires" type="date" class="form-input"></div>
+        <div><label for="tsDue">ชำระภายใน</label><input id="tsDue" type="date" class="form-input"></div>
+      </div>
+      <div style="margin-top:8px">
+        <label for="tsAmend"><input type="checkbox" id="tsAmend"> ยื่นเพิ่มเติม (สลิปจะเข้าคิวพนักงาน)</label>
+        <label for="tsAnyway" style="margin-left:12px"><input type="checkbox" id="tsAnyway"> ส่งไปก่อนแม้ยอดในสมุดไม่ตรง · ให้สลิปเข้าคิวพนักงาน</label>
+      </div>
+      <div style="margin-top:8px"><button class="btn btn-primary" onclick="Desk.send()">ส่งใบแจ้งชำระเข้ากลุ่ม/อีเมลของลูกค้า</button>
+        <button class="btn btn-secondary" onclick="Desk.requestConsent()">ส่งคำขออนุญาตอีกครั้ง</button>
+        <label for="tsPoa" class="btn btn-secondary" style="margin-left:4px">แนบหนังสือมอบอำนาจ<input type="file" id="tsPoa" accept="application/pdf,image/*" style="display:none" onchange="Desk.uploadPoa(this)"></label></div>
+      <div id="tsClientNote" class="ts-muted" style="margin-top:6px"></div>
+    </div>
+
+    <div class="ts-card">
+      <h3>สลิปภาษีรอตรวจ <label for="tsAll" class="ts-muted" style="font-weight:400;margin-left:8px"><input type="checkbox" id="tsAll" onchange="Desk.load()"> แสดงที่ปิดแล้วด้วย</label></h3>
+      <div id="tsQueue" class="ts-muted">กำลังโหลด...</div>
+    </div>
+
+    <div class="ts-card">
+      <h3>ใบขอชำระที่ส่งแล้ว</h3>
+      <div id="tsRequests" class="ts-muted">กำลังโหลด...</div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // รอบ 272 — ทุกค่า/ป้าย/เหตุ/ผู้สมัคร/บัญชีที่ preselect มาจากเซิร์ฟเวอร์ (GET …/tax-slip-desk) · หน้าไม่ตัดสินเอง ·
+    // ปุ่มบันทึกส่งได้แค่ "ลำดับผู้สมัคร + บัญชี" (ยอด/งวดแก้จากหน้านี้ไม่ได้ — เซิร์ฟเวอร์ไม่รับ)
+    const Desk = {
+      data: null, pending: [],
+      base() { return `/api/companies/${Layout.getCompanyId()}/tax-slip-desk`; },
+      err(msg) { const el = document.getElementById('tsErr'); el.style.display = msg ? '' : 'none'; el.textContent = msg || ''; },
+      async init() {
+        if (!Layout.init('tax-remittance')) return;
+        Layout.setTitle('สลิปภาษีของลูกค้า');
+        await this.load();
+      },
+      async load() {
+        try {
+          this.data = (await API.get(this.base() + (document.getElementById('tsAll').checked ? '?all=true' : ''))).data;
+          this.err(null); this.render();
+        } catch (e) { this.err(e.message || 'โหลดไม่สำเร็จ'); }
+      },
+      render() {
+        const d = this.data || {}, e = Layout.esc;
+        document.getElementById('tsSettings').innerHTML =
+          `<label for="tsEnabled"><input type="checkbox" id="tsEnabled" ${d.enabled ? 'checked' : ''} onchange="Desk.toggle(this.checked)"> รับสลิปชำระภาษีจากกลุ่ม LINE/อีเมลของลูกค้า</label>`
+          + (d.readerAvailable ? '' : `<div class="note warn" style="margin-top:6px">${e(d.readerNote || '')}</div>`);
+        const sel = document.getElementById('tsClient');
+        const keep = sel.value;
+        sel.innerHTML = '<option value="">— เลือกลูกค้า —</option>' + (d.clients || []).map(c =>
+          `<option value="${e(c.contactId)}">${e(c.name)} · ${e(c.consentLabel)}${c.hasLineGroup ? '' : ' · ไม่มีกลุ่ม LINE'}</option>`).join('');
+        if (keep) sel.value = keep;
+        const q = d.queue || [];
+        document.getElementById('tsQueue').innerHTML = q.length ? q.map(r => this.row(r)).join('') : 'ไม่มีสลิปรอตรวจ';
+        const rq = d.requests || [];
+        document.getElementById('tsRequests').innerHTML = rq.length ? rq.map(r => `<div class="ts-row">${e(r.clientName)} · ${e(r.formLabel)} · ${e(Layout.money(r.total))} · Control ••${e(r.controlLast4)} · `
+          + `<span class="ts-badge ${r.booksMismatch ? 'ts-warn' : ''}">${e(r.status)}${r.booksMismatch ? ' · สมุดไม่ตรง' : ''}</span> · ส่ง ${e(Layout.date(r.sentAt))}`
+          + `<div class="ts-muted">${e(r.sendNote || '')}</div>`
+          + (r.status === 'รอชำระ' ? `<button class="btn btn-sm btn-ghost" onclick="Desk.cancelRequest('${e(r.id)}')">ยกเลิก</button>` : '') + `</div>`).join('') : 'ยังไม่มี';
+      },
+      row(r) {
+        const e = Layout.esc;
+        const cands = (r.candidates || []).map(c => `<option value="${c.index}">${e(c.label)} · ${e(Layout.money(c.total))}</option>`).join('');
+        const accs = (r.accounts || []).map(a => `<option value="${e(a.id)}" ${a.preselected ? 'selected' : ''}>${e(a.label)}</option>`).join('');
+        return `<div class="ts-row"><div><b>${e(r.clientName || 'ไม่รู้บริษัท')}</b> · ${e(r.agency || 'หน่วยงานไม่รู้จัก')} · ${r.amount != null ? e(Layout.money(r.amount)) : 'ยอดอ่านไม่ได้'}`
+          + (r.slipDate ? ` · ${e(Layout.date(r.slipDate))}` : '') + (r.controlLast4 ? ` · Control ••${e(r.controlLast4)}` : '') + (r.taxIdMasked ? ` · ${e(r.taxIdMasked)}` : '')
+          + ` · <span class="ts-badge ${r.status === 'Remitted' ? 'ts-ok' : 'ts-warn'}">${e(r.statusLabel)}</span>${r.consentLabel ? ` · ${e(r.consentLabel)}` : ''}</div>`
+          + `<div class="ts-muted">${e(r.reason || '')}${r.ruleCode ? ' [' + e(r.ruleCode) + ']' : ''}${r.lastCardOutcome ? ' · การ์ด: ' + e(r.lastCardOutcome) : ''}</div>`
+          + (r.canRemit ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">`
+              + `<label for="c_${e(r.id)}" class="ts-muted">รายการ</label><select id="c_${e(r.id)}" class="form-select" style="max-width:260px">${cands}</select>`
+              + `<label for="a_${e(r.id)}" class="ts-muted">บัญชีที่จ่าย</label><select id="a_${e(r.id)}" class="form-select" style="max-width:220px"><option value="">— เลือก —</option>${accs}</select>`
+              + `<button class="btn btn-sm btn-primary" onclick="Desk.remit('${e(r.id)}')">บันทึกนำส่ง</button></div>`
+            : (r.candidates || []).length === 0 && ['ToStaff', 'AwaitingChoice'].includes(r.status) ? `<div class="ts-muted">ไม่มีรายการที่ยอดตรง — ตรวจ/แก้สมุดของลูกค้าที่หน้านำส่งของบริษัทนั้น แล้วปิดสลิปนี้</div>` : '')
+          + (['ToStaff', 'AwaitingChoice', 'AwaitingConsent', 'Received'].includes(r.status) ? `<button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="Desk.reject('${e(r.id)}')">ไม่บันทึก</button>` : '')
+          + `</div>`;
+      },
+      async toggle(on) {
+        try { const r = await API.put(this.base() + '/settings', { enabled: on }); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await this.load(); }
+        catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); await this.load(); }
+      },
+      async loadPending() {
+        const id = document.getElementById('tsClient').value, sel = document.getElementById('tsPending'), e = Layout.esc;
+        sel.innerHTML = ''; this.pending = [];
+        if (!id) return;
+        try {
+          this.pending = (await API.get(`${this.base()}/clients/${id}/pending`)).data || [];
+          sel.innerHTML = '<option value="">— เลือกงวด —</option>' + this.pending.map((p, i) => `<option value="${i}">${e(p.label)} · ค้าง ${e(Layout.money(p.amount))}</option>`).join('');
+          document.getElementById('tsClientNote').textContent = this.pending.length ? '' : 'ไม่มีงวดค้างในสมุดของลูกค้า (ยอดบนใบแจ้งชำระต้องตรงสมุด — หรือติ๊ก "ส่งไปก่อน")';
+        } catch (err) { document.getElementById('tsClientNote').textContent = err.message || 'โหลดงวดไม่สำเร็จ'; }
+      },
+      pickPending() {
+        const p = this.pending[Number(document.getElementById('tsPending').value)];
+        if (!p) return;
+        document.getElementById('tsAmount').value = p.amount;
+        if (p.dueDate) document.getElementById('tsDue').value = String(p.dueDate).slice(0, 10);
+      },
+      async send() {
+        const p = this.pending[Number(document.getElementById('tsPending').value)];
+        const contactId = document.getElementById('tsClient').value;
+        if (!contactId || !p) { Layout.toast('เลือกลูกค้าและงวดก่อน', 'error'); return; }
+        const num = id => Number(String(document.getElementById(id).value || '0').replace(/,/g, ''));
+        const date = id => document.getElementById(id).value || null;
+        try {
+          const r = await API.post(this.base() + '/requests', {
+            contactId, remittanceType: p.type, periodYear: p.year, periodMonth: p.month, amount: num('tsAmount'), surcharge: num('tsSurcharge'), penalty: num('tsPenalty'),
+            controlCode: document.getElementById('tsControl').value, controlCodeExpiresAt: date('tsExpires'), dueDate: date('tsDue'),
+            isAmendment: document.getElementById('tsAmend').checked, sendAnyway: document.getElementById('tsAnyway').checked,
+          });
+          Layout.toast(r?.message || 'ส่งแล้ว', 'success');
+          document.getElementById('tsControl').value = '';
+          await this.load();
+        } catch (e) { Layout.toast(e.message || 'ส่งไม่สำเร็จ', 'error'); }
+      },
+      async requestConsent() {
+        const id = document.getElementById('tsClient').value;
+        if (!id) { Layout.toast('เลือกลูกค้าก่อน', 'error'); return; }
+        try { const r = await API.post(`${this.base()}/clients/${id}/request-consent`, {}); Layout.toast(r?.message || 'ส่งแล้ว', 'success'); }
+        catch (e) { Layout.toast(e.message || 'ส่งไม่สำเร็จ', 'error'); }
+      },
+      async uploadPoa(input) {
+        const id = document.getElementById('tsClient').value;
+        if (!id || !input.files || !input.files[0]) { Layout.toast('เลือกลูกค้าก่อน', 'error'); input.value = ''; return; }
+        const fd = new FormData(); fd.append('file', input.files[0]);
+        try { const r = await API.upload(`${this.base()}/clients/${id}/power-of-attorney`, fd); Layout.toast(r?.message || 'แนบแล้ว', 'success'); await this.load(); }
+        catch (e) { Layout.toast(e.message || 'แนบไม่สำเร็จ', 'error'); }
+        input.value = '';
+      },
+      async remit(id) {
+        const c = document.getElementById('c_' + id), a = document.getElementById('a_' + id);
+        if (!a || !a.value) { Layout.toast('เลือกบัญชีที่จ่าย', 'error'); return; }
+        try { const r = await API.post(`${this.base()}/slips/${id}/remit`, { candidateIndex: Number(c.value), bankAccountId: a.value }); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await this.load(); }
+        catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); await this.load(); }
+      },
+      async reject(id) {
+        const reason = prompt('เหตุที่ไม่บันทึก (ลูกค้าจะเห็นในกลุ่ม)', 'ไม่ใช่สลิปชำระภาษีของงวดที่ค้าง');
+        if (reason === null) return;
+        try { const r = await API.post(`${this.base()}/slips/${id}/reject`, { reason }); Layout.toast(r?.message || 'ปิดแล้ว', 'success'); await this.load(); }
+        catch (e) { Layout.toast(e.message || 'ปิดไม่สำเร็จ', 'error'); }
+      },
+      async cancelRequest(id) {
+        if (!confirm('ยกเลิกใบขอชำระนี้? สลิปที่ส่งมาภายหลังจะไม่จับกับใบนี้')) return;
+        try { const r = await API.post(`${this.base()}/requests/${id}/cancel`, {}); Layout.toast(r?.message || 'ยกเลิกแล้ว', 'success'); await this.load(); }
+        catch (e) { Layout.toast(e.message || 'ยกเลิกไม่สำเร็จ', 'error'); }
+      },
+    };
+    window.Desk = Desk;
+    document.addEventListener('DOMContentLoaded', () => Desk.init());
+  </script>
+</body>
+</html>

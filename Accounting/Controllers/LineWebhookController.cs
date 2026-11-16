@@ -25,11 +25,14 @@ public class LineWebhookController : ControllerBase
     private readonly IContactLineGroupService? _groups;
     /// <summary>รอบ 262 (คำตัดสิน 262-1-2): LINE ผู้ใช้ 1:1 ของผู้ติดต่อของบริษัทผู้ให้บริการผ่าน OA กลาง (รหัสผูก · "หยุด" · บล็อก) — OA กลางคือ OA ของบริษัทนั้น</summary>
     private readonly IContactLineBindingService? _contactLine;
+    /// <summary>รอบ 272: สลิปชำระภาษีในกลุ่มของ OA กลาง (null = เทสต์/ประกอบบางส่วน ⇒ พฤติกรรมเดิม: รูปในกลุ่มไม่อ่าน)</summary>
+    private readonly Accounting.Services.Implementations.TaxSlipIntakeService? _taxSlips;
 
     public LineWebhookController(ILineBotService bot, ILogger<LineWebhookController> logger, ICustomerLineLinkService? customerLinks = null,
-        ICustomerRelinkInviteService? relink = null, IContactLineGroupService? groups = null, IContactLineBindingService? contactLine = null)
+        ICustomerRelinkInviteService? relink = null, IContactLineGroupService? groups = null, IContactLineBindingService? contactLine = null,
+        Accounting.Services.Implementations.TaxSlipIntakeService? taxSlips = null)
     {
-        _bot = bot; _logger = logger; _customerLinks = customerLinks; _relink = relink; _groups = groups; _contactLine = contactLine;
+        _bot = bot; _logger = logger; _customerLinks = customerLinks; _relink = relink; _groups = groups; _contactLine = contactLine; _taxSlips = taxSlips;
     }
 
     [HttpPost]
@@ -175,6 +178,8 @@ public class LineWebhookController : ControllerBase
     /// </list></summary>
     private async Task HandleGroupEventAsync(JsonElement ev, JsonElement src, string? type, string? destination)
     {
+        // รอบ 272: รูป/PDF/ปุ่มเลือกของสลิปภาษี ⇒ เส้นสลิปภาษี (ด่านผูกกลุ่มอยู่ในตัวรับ — กลุ่มไม่ผูก = ไม่อ่าน ไม่เขียนฐาน)
+        if (_taxSlips != null && await TryTaxSlipAsync(ev, src, type, destination)) return;
         var groupText = type == "message" && ev.TryGetProperty("message", out var gm) && gm.TryGetProperty("type", out var gmt)
             && gmt.GetString() == "text" && gm.TryGetProperty("text", out var gtx) ? gtx.GetString() : null;
         if (!Accounting.Helpers.LineGroupBindRule.CentralGroupEventActionable(type, groupText)) return;
@@ -204,6 +209,42 @@ public class LineWebhookController : ControllerBase
         {
             _logger.LogError(ex, "LINE webhook OA กลาง: ประมวลเหตุการณ์กลุ่ม {EventId} ล้ม — ถอนการประทับ (ส่งซ้ำได้เฉพาะสั่ง Redelivery เอง)", eventId);
             if (marked) await _groups.UnmarkEventSeenAsync(eventId, CancellationToken.None);
+        }
+    }
+
+    /// <summary>รอบ 272 — event กลุ่มของ OA กลางที่เป็นของเส้นสลิปภาษี (ตัวตัดสินเส้นเดียว <see cref="Accounting.Helpers.LineGroupBindRule.CentralGroupSlipRoute"/>) ·
+    /// คืน true = จัดการแล้ว · ล้ม ⇒ log Error (แถวสลิปที่รับแล้วเข้าคิวพนักงานในตัวรับเอง) · webhook ตอบ 200 เสมอ</summary>
+    private async Task<bool> TryTaxSlipAsync(JsonElement ev, JsonElement src, string? type, string? destination)
+    {
+        var msg = ev.TryGetProperty("message", out var m) ? m : default;
+        var msgType = msg.ValueKind == JsonValueKind.Object && msg.TryGetProperty("type", out var mt) ? mt.GetString() : null;
+        var fileName = msg.ValueKind == JsonValueKind.Object && msg.TryGetProperty("fileName", out var fn) ? fn.GetString() : null;
+        var data = ev.TryGetProperty("postback", out var pb) && pb.TryGetProperty("data", out var pd) ? pd.GetString() : null;
+        var srcType = src.TryGetProperty("type", out var st) ? st.GetString() : null;
+        var route = Accounting.Helpers.LineGroupBindRule.CentralGroupSlipRoute(type, srcType, msgType, fileName, data);
+        if (route == Accounting.Helpers.CentralSlipRoute.None) return false;
+        var groupId = src.TryGetProperty("groupId", out var g) ? g.GetString() ?? "" : "";
+        var replyToken = ev.TryGetProperty("replyToken", out var rt) ? rt.GetString() : null;
+        try
+        {
+            if (route == Accounting.Helpers.CentralSlipRoute.Media)
+            {
+                var messageId = msg.TryGetProperty("id", out var mid) ? mid.GetString() ?? "" : "";
+                return await _taxSlips!.HandleLineMediaAsync(destination, groupId, messageId, msgType, fileName, replyToken);
+            }
+            var reply = await _taxSlips!.HandleChoicePostbackAsync(destination, groupId, data, replyToken);
+            if (reply != null && !string.IsNullOrEmpty(replyToken) && _customerLinks != null)
+                await _customerLinks.ReplyAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, replyToken, Accounting.Helpers.TaxSlipReplyCard.Clean(reply));
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "LINE webhook OA กลาง: สลิปภาษีในกลุ่มล้ม ({Route})", route);
+            // ห้ามเงียบ: บอกในกลุ่มว่ายังไม่ได้บันทึก (แถวที่รับแล้วอยู่ในคิวพนักงานเอง)
+            if (!string.IsNullOrEmpty(replyToken) && _customerLinks != null)
+                await _customerLinks.ReplyAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, replyToken,
+                    Accounting.Helpers.TaxSlipReplyCard.Text(Accounting.Helpers.TaxSlipReplyCard.Kind.Failed, new(), false));
+            return true;
         }
     }
 

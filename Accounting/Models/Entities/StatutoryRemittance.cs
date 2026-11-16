@@ -59,4 +59,20 @@ public class StatutoryRemittance : TenantEntity
     /// <summary>รอบ 228 ฝ่ายค้าน S3 — "ชำระนอกระบบแล้ว": แถวนี้ผูกใบสำคัญ (JE) ที่ผู้ใช้ลงเองไว้ก่อน (<see cref="JournalEntryId"/>) ไม่ใช่ JE ที่เส้นนำส่งสร้าง ⇒
     /// ยกเลิกแถวนี้ = ปลดการผูกเท่านั้น <b>ไม่กลับรายการ</b> JE ของผู้ใช้ · แถวเดิม = false</summary>
     public bool SettledOutside { get; set; }
+
+    // ═══ รอบ 272 แพ็ก P4 — ที่มาของการนำส่ง (ห้ามยืมช่อง Note/FilingNumber · กฎ #4 E) ═══
+    /// <summary><c>Manual</c> (เดิม/null) · <c>Slip</c> = บันทึกจากสลิปภาษีที่ลูกค้าส่งในกลุ่ม LINE/อีเมลของสำนักงานบัญชี</summary>
+    public string? Source { get; set; }
+    /// <summary>แถว <c>TaxSlipEvidences</c> (ในบริษัทผู้ให้บริการ) ที่เป็นหลักฐาน</summary>
+    public Guid? SlipEvidenceId { get; set; }
+    /// <summary>บริษัทผู้ให้บริการที่บันทึกแทน</summary>
+    public Guid? ActedByProviderCompanyId { get; set; }
+    /// <summary>แถวความยินยอม <c>ProviderAutomationConsents</c> ที่ใช้ (null = พนักงานที่เป็นสมาชิกบริษัทบันทึกเอง)</summary>
+    public Guid? ProviderConsentId { get; set; }
+    /// <summary>Control Code 4 ตัวท้าย (ค่าเต็มไม่เก็บ)</summary>
+    public string? ControlCodeLast4 { get; set; }
+    /// <summary>รอบ 272 P5 ตัวตรวจทานหลังนำส่ง: null = ยังไม่ตรวจ · <c>StatementFound</c> · <c>OtherAccount</c> · <c>NotFound</c> (ธงเตือน — ไม่กลับรายการเอง)</summary>
+    public string? ReviewStatus { get; set; }
+    public string? ReviewNote { get; set; }
+    public DateTime? ReviewedAt { get; set; }
 }
