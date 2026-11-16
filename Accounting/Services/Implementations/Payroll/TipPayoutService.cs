@@ -201,6 +201,9 @@ public class TipPayoutService : ITipPayoutService
                                 Condition: "หักภาษี ณ ที่จ่าย")
                         });
                     var cert = await _whtCert.CreateAsync(companyId, certReq, actor);
+                    // รอบ 271 (§4.7 ทิศตรงข้าม): ใบทิปไม่มีใบสำคัญจ่ายโดยชอบ (ผูกกับรอบจ่ายทิป) ⇒ ไม่ขึ้น "ยังไม่ผูกเอกสาร" บนหน้า 50 ทวิ (D5 · audit)
+                    await _whtCert.SetNoSourceDocumentAsync(companyId, cert.Id,
+                        new Models.DTOs.Tax.WhtCertNoSourceRequest($"ทิป/ค่าบริการพนักงาน งวด {periodStart:yyyy-MM-dd} ถึง {periodEnd:yyyy-MM-dd} (ผูกกับรอบจ่ายทิป)"), null);
                     var idx = lines.FindIndex(l => l.StaffId == t.StaffId);
                     if (idx >= 0) lines[idx] = lines[idx] with { Wht50TawiCertId = cert.Id };
                 }

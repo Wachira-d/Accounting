@@ -65,10 +65,53 @@ public class WithholdingTaxCertController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResponse<WithholdingTaxCertResponse>>>> GetAll(
         Guid companyId,
         [FromQuery] TaxType? taxFormType, [FromQuery] int? year, [FromQuery] int? month,
+        [FromQuery] WithholdingTaxCertStatus? status = null, [FromQuery] string? link = null, [FromQuery] string? q = null,
+        [FromQuery] Guid? documentId = null,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var result = await _whtService.GetAllAsync(companyId, taxFormType, year, month, new PagedRequest(page, pageSize));
+        // รอบ 271 (F2): สถานะ · การผูก · ค้นหา กรองที่เซิร์ฟเวอร์ (เดิมหน้าเว็บกรองแค่ 20 แถวของหน้าที่โหลด)
+        var result = await _whtService.GetListAsync(companyId,
+            new WhtCertListFilter(taxFormType, year, month, status, link, q, documentId), new PagedRequest(page, pageSize));
         return Ok(new ApiResponse<PagedResponse<WithholdingTaxCertResponse>>(true, result));
+    }
+
+    /// <summary>รอบ 271 (F2): การ์ดสรุปนับทั้งชุดตามตัวกรอง (แบบ/ปี/เดือน/ค้นหา) — ไม่ใช่เฉพาะหน้าที่โหลด</summary>
+    [HttpGet("summary")]
+    public async Task<ActionResult<ApiResponse<WhtCertListSummary>>> GetSummary(Guid companyId,
+        [FromQuery] TaxType? taxFormType, [FromQuery] int? year, [FromQuery] int? month, [FromQuery] string? q = null)
+    {
+        var result = await _whtService.GetListSummaryAsync(companyId, new WhtCertListFilter(taxFormType, year, month, null, null, q));
+        return Ok(new ApiResponse<WhtCertListSummary>(true, result));
+    }
+
+    /// <summary>รอบ 271: ผู้สมัคร "ออกใบไว้แล้ว — ผูกกับ 50 ทวิ ที่มีอยู่" ของฟอร์มใบสำคัญจ่าย (ค่าที่ฟอร์มแสดง · ผลตรวจรายใบจาก WhtCertLinkPlan)</summary>
+    [HttpGet("link-candidates")]
+    public async Task<ActionResult<ApiResponse<WhtLinkCandidatesResponse>>> GetLinkCandidates(Guid companyId,
+        [FromQuery] Guid payeeId, [FromQuery] decimal wht, [FromQuery] decimal income, [FromQuery] DateTime date,
+        [FromQuery] WithholdingTaxCertType? certType = null, [FromQuery] string? codes = null, [FromQuery] bool foreign = false,
+        [FromQuery] Guid? documentId = null, [FromQuery] Guid? selected = null)
+    {
+        var result = await _whtService.GetLinkCandidatesForFormAsync(companyId,
+            new WhtLinkFormQuery(payeeId, wht, income, date, certType, codes, foreign, documentId, selected));
+        return Ok(new ApiResponse<WhtLinkCandidatesResponse>(true, result));
+    }
+
+    /// <summary>รอบ 271: โมดัลกลับทิศ "ผูกกับใบสำคัญจ่าย…" — ใบสำคัญจ่ายที่น่าจะเป็นของใบนี้ (ผูกจริงผ่าน POST document/{pv}/wht-link ทางเดียว)</summary>
+    [HttpGet("{certId:guid}/pv-candidates")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<WhtCertPvCandidateDto>>>> GetPvCandidates(Guid companyId, Guid certId)
+    {
+        var result = await _whtService.GetPvCandidatesForCertAsync(companyId, certId);
+        return Ok(new ApiResponse<IReadOnlyList<WhtCertPvCandidateDto>>(true, result));
+    }
+
+    /// <summary>รอบ 271 (D5): ยืนยันว่าใบมือนี้ไม่มีใบสำคัญจ่ายในระบบ (เหตุผล) — ป้าย "ยังไม่ผูก" ⇒ "ไม่มีใบสำคัญจ่าย" · <c>clear: true</c> = ถอนการยืนยัน</summary>
+    [HttpPost("{certId:guid}/no-source-document")]
+    [Accounting.Filters.RejectApiKey("ยืนยันว่า 50 ทวิ ไม่มีใบสำคัญจ่าย")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.TaxFile)]
+    public async Task<ActionResult<ApiResponse<bool>>> SetNoSourceDocument(Guid companyId, Guid certId, [FromBody] WhtCertNoSourceRequest request)
+    {
+        await _whtService.SetNoSourceDocumentAsync(companyId, certId, request, JwtHelper.GetUserIdFromClaims(User));
+        return Ok(new ApiResponse<bool>(true, true, request.Clear ? "ถอนการยืนยันแล้ว — ใบกลับเป็น \"ยังไม่ผูก\"" : "บันทึกแล้ว — ใบนี้ไม่มีใบสำคัญจ่ายในระบบ"));
     }
 
     /// <summary>ออก 50 ทวิ · ฝ่ายค้านรอบ 204 L5: ผู้ถูกหักไม่มีเลขผู้เสียภาษี ⇒ 409 (<c>RD-50BIS-ISSUE-NO-TAXID</c>) พร้อมทางไปต่อ —

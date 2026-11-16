@@ -1853,6 +1853,8 @@ public partial class DocumentService : IDocumentService
             // คำขอเจ้าของ 2026-10-12 — ติ๊ก "สร้าง 50 ทวิ อัตโนมัติ" (ไม่ส่ง = เปิด = พฤติกรรมเดิม) + ผู้ถูกหักแยกจากผู้รับเงิน
             doc.WhtCertAutoIssue = request.WhtCertAutoIssue ?? true;
             doc.WhtPayeeContactId = await ResolveWhtPayeeContactIdAsync(companyId, doc, request.WhtPayeeContactId);
+            // รอบ 271 — "ออกใบไว้แล้ว — ผูกกับ 50 ทวิ ที่มีอยู่" (ความตั้งใจ · ตรวจเต็มตอนผูกจริงด้วย WhtCertLinkPlan) · ไม่ส่ง/Guid.Empty = ระบบออกใบตามเดิม
+            (doc.WhtLinkCertId, doc.WhtLinkAckCodes) = await ResolveWhtLinkIntentAsync(companyId, doc, request.WhtLinkCertId, request.WhtLinkAckCodes);
             // รอบ 204 (คำตัดสินข้อ 148 (4)) — ผู้จ่ายออกภาษีแทน: ไม่ส่ง = หัก ณ ที่จ่าย (พฤติกรรมเดิม) · ใบฝั่งรับเงินตั้งไม่ได้ (ล้มดัง)
             doc.WhtCertType = await ResolveWhtCertTypeAsync(companyId, doc, request.WhtCertType);
             // รอบ 204 (ทีม B · §65 ตรี (3)) — ผู้จ่ายรับภาระภาษีตามสัญญา: ไม่ส่ง ⇒ ค่าตั้งต้นของผู้ถูกหัก (ผู้ติดต่อที่ 50 ทวิ ออกในนาม — WhtCertIssuePlan.PayeeOf) ·
@@ -3261,6 +3263,19 @@ public partial class DocumentService : IDocumentService
         // คำขอเจ้าของ 2026-10-12 — 50 ทวิ อัตโนมัติ/ผู้ถูกหัก: null = คงค่าเดิม · Guid.Empty = กลับไปใช้ผู้ติดต่อของเอกสาร ·
         // เปลี่ยนผู้ติดต่อจนตรงกับผู้ถูกหัก ⇒ ล้าง (ไม่เก็บสำเนาที่ไม่มีความหมาย)
         if (request.WhtCertAutoIssue.HasValue) doc.WhtCertAutoIssue = request.WhtCertAutoIssue.Value;
+        // รอบ 271 — ใบ 50 ทวิ ที่จะผูก: null = คงค่าเดิม · Guid.Empty = ล้าง · ใบที่อนุมัติแล้วเปลี่ยนที่นี่ไม่ได้ (ล็อก + บอกทางไปต่อ — ห้าม silent no-op)
+        if (request.WhtLinkCertId.HasValue || request.WhtLinkAckCodes != null)
+        {
+            var wantLink = request.WhtLinkCertId.HasValue ? request.WhtLinkCertId : doc.WhtLinkCertId;
+            var wantAck = request.WhtLinkAckCodes ?? Accounting.Helpers.WhtCertLinkPlan.ParseAckCodes(doc.WhtLinkAckCodes).ToList();
+            var normalized = wantLink is Guid nl && nl != Guid.Empty ? wantLink : null;
+            if (normalized != doc.WhtLinkCertId
+                && doc.Status is not (DocumentStatus.Draft or DocumentStatus.Rejected or DocumentStatus.WaitingApproval))
+                throw new BusinessRuleException(
+                    "ใบนี้อนุมัติแล้ว — เปลี่ยน 50 ทวิ ที่ผูกได้ที่หน้ารายละเอียด → \"เปลี่ยน 50 ทวิ ที่ผูก\" (ตรวจเดือนที่ยื่นแล้ว + ยกเลิกใบเดิมให้)",
+                    Accounting.Helpers.WhtCertLinkPlan.IntentRuleCode);
+            (doc.WhtLinkCertId, doc.WhtLinkAckCodes) = await ResolveWhtLinkIntentAsync(companyId, doc, wantLink, wantAck);
+        }
         // ฝ่ายค้านรอบ 204 (หลัง 7b88c053): หัวเอกสารที่ "เปลี่ยนจริง" ในคำขอนี้เท่านั้นเข้าด่านขัดกับผู้ถูกหักรายบรรทัด (ฟอร์มส่งค่าเดิมกลับทุกครั้ง)
         var updHeaderChanged = Accounting.Helpers.WhtPayeeSplit.ChangedHeaderRequest(doc.ContactId, request.WhtPayeeContactId, doc.WhtPayeeContactId);
         if (request.WhtPayeeContactId.HasValue)
@@ -4177,6 +4192,27 @@ public partial class DocumentService : IDocumentService
     // ชื่อชนิดจากตารางเดียว (Helpers/DocumentTypeNames · รอบ 196) — เดิมเป็นสำเนา 5 ชนิดของตัวเอง
     // (ผู้เรียกทุกจุดส่งเฉพาะ RevisableTypes ⇒ ข้อความเหมือนเดิมทุกตัว)
     private static string DocTypeLabel(DocumentType t) => Accounting.Helpers.DocumentTypeNames.Title(t, "th");
+
+    /// <summary>รอบ 271 — ความตั้งใจ "ผูก 50 ทวิ ที่ออกไว้แล้ว" บนใบ: ว่าง/Guid.Empty = null (ระบบออกใบตามเดิม) · ใบที่เราไม่ใช่ผู้หัก = ปฏิเสธ
+    /// (ห้าม silent no-op) · ใบต้องเป็นของบริษัทนี้ ไม่ยกเลิก ไม่ผูกเอกสารอื่น (tenant isolation · 271-0-3) · ตรวจคู่เต็ม (R1–R11) ตอนผูกจริง</summary>
+    private async Task<(Guid? CertId, string? AckCodes)> ResolveWhtLinkIntentAsync(Guid companyId, Document doc, Guid? requested,
+        IEnumerable<string>? ackCodes)
+    {
+        if (requested is not Guid certId || certId == Guid.Empty) return (null, null);
+        if (!Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType))
+            throw new BusinessRuleException("ผูก 50 ทวิ ได้เฉพาะเอกสารฝั่งผู้จ่าย (ใบสำคัญจ่าย/ค่าใช้จ่าย/ใบแจ้งหนี้ซื้อ)",
+                Accounting.Helpers.WhtCertLinkPlan.IntentRuleCode);
+        var cert = await _db.WithholdingTaxCerts.AsNoTracking()
+            .Where(w => w.Id == certId && w.CompanyId == companyId)
+            .Select(w => new { w.CertificateNumber, w.Status, w.DocumentId, w.SourcePayrollRunId }).FirstOrDefaultAsync()
+            ?? throw new BusinessRuleException("ไม่พบ 50 ทวิ ที่เลือกผูก", Accounting.Helpers.WhtCertLinkPlan.IntentRuleCode);
+        if (cert.Status == Accounting.Models.DTOs.Tax.WithholdingTaxCertStatus.Voided)
+            throw new BusinessRuleException($"{cert.CertificateNumber} ถูกยกเลิกแล้ว — เลือกใบอื่น", Accounting.Helpers.WhtCertLinkPlan.IntentRuleCode);
+        if (cert.SourcePayrollRunId != null || (cert.DocumentId is Guid other && other != doc.Id))
+            throw new BusinessRuleException($"{cert.CertificateNumber} ผูกกับเอกสาร/รอบเงินเดือนอื่นอยู่แล้ว — หนึ่ง 50 ทวิ ผูกได้หนึ่งการจ่าย",
+                Accounting.Helpers.WhtCertLinkPlan.IntentRuleCode);
+        return (certId, Accounting.Helpers.WhtCertLinkPlan.JoinAckCodes(ackCodes));
+    }
 
     /// <summary>ผู้ถูกหักภาษี ณ ที่จ่ายที่จะเก็บบนใบ (คำขอเจ้าของ 2026-10-12 · ประกันผ่านโบรกเกอร์) — ว่าง/Guid.Empty/ซ้ำผู้ติดต่อ = null ·
     /// ใบที่เราไม่ใช่ผู้หัก = ปฏิเสธ (ห้ามรับแล้วไม่มีผล — silent no-op) · ต้องเป็นผู้ติดต่อของบริษัทนี้ที่ยังไม่ถูกลบ</summary>
@@ -21924,6 +21960,9 @@ public partial class DocumentService : IDocumentService
         // คำขอเจ้าของ 2026-10-12 — เก็บแล้วต้อง echo กลับ (กฎ #4 A) + ป้าย "ออก 50 ทวิ อัตโนมัติไม่สำเร็จ" (ล้มดัง)
         WhtCertAutoIssue: d.WhtCertAutoIssue,
         WhtPayeeContactId: d.WhtPayeeContactId,
+        // รอบ 271 — echo ความตั้งใจผูก 50 ทวิ ที่ออกไว้แล้ว + คำเตือนที่รับทราบ (ฟอร์มแก้ร่าง hydrate · กฎ #4 A)
+        WhtLinkCertId: d.WhtLinkCertId,
+        WhtLinkAckCodes: Accounting.Helpers.WhtCertLinkPlan.ParseAckCodes(d.WhtLinkAckCodes),
         // รอบ 204 — ผู้จ่ายออกภาษีแทน (echo กลับให้ฟอร์มแก้ไข)
         WhtCertType: Accounting.Helpers.WhtGrossUp.Normalize(d.WhtCertType),
         WhtPayerBorneAmount: d.WhtPayerBorneAmount,
@@ -23319,6 +23358,29 @@ public partial class DocumentService : IDocumentService
                         warnings.Add($"{Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix} {lp.Name}: {lpPnd2Mix}");
                 }
             }
+        }
+
+        // ── รอบ 271: "ออกใบไว้แล้ว — ผูกกับ 50 ทวิ ที่มีอยู่" — กล่องยืนยันอนุมัติบอกผล (ผูก / ผูกไม่ได้) ก่อนกด (ตัวตรวจเดียว WhtCertLinkPlan ผ่าน CheckLinkAsync) ·
+        // ชุด [WHT-PAYEE] ⇒ ทางเข้าที่ไม่มีคนผ่าน (ผูกไม่ได้ = ป้าย + audit + คำตอบ ตอนผูกจริง · 271-1-4) — ไม่บล็อกการจ่ายเงิน
+        if (doc.WhtLinkCertId is Guid linkIntent && _whtService != null
+            && doc.WithholdingTaxAmount > 0m && Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType))
+        {
+            string linkLine;
+            try
+            {
+                var chk = await _whtService.CheckLinkAsync(companyId, doc.Id, linkIntent, null);
+                var unacked = chk.Candidate.Warnings.Where(w => !Accounting.Helpers.WhtCertLinkPlan.ParseAckCodes(doc.WhtLinkAckCodes).Contains(w.Code)).ToList();
+                linkLine = !chk.CanLink
+                    ? $"⛔ ผูก 50 ทวิ {chk.Candidate.CertificateNumber} ไม่ได้: {string.Join(" · ", chk.Candidate.Blocks.Select(b => b.Message))} — อนุมัติต่อได้ แต่ระบบจะไม่ออก/ไม่ผูกใบ (แก้ที่หน้ารายละเอียดหลังอนุมัติ)"
+                    : unacked.Count > 0
+                        ? $"⛔ ผูก 50 ทวิ {chk.Candidate.CertificateNumber} ยังไม่ได้: มีคำเตือนที่ยังไม่รับทราบ ({string.Join(" · ", unacked.Select(w => w.Message))}) — เปิดแก้ร่างแล้วติ๊กรับทราบ หรืออนุมัติต่อแล้วผูกที่หน้ารายละเอียด"
+                        : $"50 ทวิ: ผูกกับ {chk.Candidate.CertificateNumber} (ไม่ออกใบใหม่) — นับในแบบ {chk.Candidate.FormLabel} เดือน {chk.Candidate.TaxMonth:00}/{chk.Candidate.TaxYear + 543} ครั้งเดียว";
+            }
+            catch (Exception ex) when (ex is BusinessRuleException or KeyNotFoundException)
+            {
+                linkLine = $"⛔ ผูก 50 ทวิ ที่เลือกไว้ไม่ได้: {ex.Message} — อนุมัติต่อได้ แต่ระบบจะไม่ออก/ไม่ผูกใบ";
+            }
+            warnings.Add(Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix + " " + linkLine);
         }
 
         // ── ทีม A (2a · 2026-10-13): ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จที่อ้างใบซื้อ หักภาษีเกินยอดที่เหลือหลังใบลดหนี้ ──

@@ -54,6 +54,16 @@ public class WithholdingTaxCert : TenantEntity
     /// <summary>ผู้จ่ายยกเลิกใบที่ส่งไปแล้ว — แจ้งผู้ขายเมื่อไร (ครั้งเดียว)</summary>
     public DateTime? PartnerVoidNotifiedAt { get; set; }
 
+    // ── รอบ 271: ผูกใบสำคัญจ่ายกับ 50 ทวิ ที่ออกไว้แล้ว (Helpers/WhtCertLinkPlan) ──
+    /// <summary>เวลาที่ใบนี้ถูก "ผูก" กับเอกสารด้วยมือ (ผู้ใช้เลือกใบที่ออกไว้แล้วแทนการให้ระบบออกใหม่) · null = ระบบออกใบเอง/ยังไม่เคยผูก</summary>
+    public DateTime? LinkedAt { get; set; }
+    /// <summary>ผู้ผูก (null = ระบบ/ไม่ทราบ)</summary>
+    public Guid? LinkedByUserId { get; set; }
+    /// <summary>ใบนี้ถูกยกเลิกเพราะถูกแทนด้วยใบอื่นตอนเปลี่ยนการผูก (แบบ <c>Document.ReplacedByDocumentId</c>) · null = ไม่ได้ถูกแทน</summary>
+    public Guid? SupersededByCertId { get; set; }
+    /// <summary>D5: ผู้ใช้ยืนยันว่าใบมือนี้ไม่มีใบสำคัญจ่ายในระบบ (เหตุผล) — ป้าย "ยังไม่ผูก" เปลี่ยนเป็น "ไม่มีใบสำคัญจ่าย" · null = ยังไม่ยืนยัน</summary>
+    public string? NoSourceDocumentReason { get; set; }
+
     public ICollection<WithholdingTaxCertLine> Lines { get; set; } = new List<WithholdingTaxCertLine>();
 }
 
