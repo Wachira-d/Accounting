@@ -240,10 +240,18 @@ public partial class TaxService
     {
         // A filing-lock applies when ANY TaxReportLine references this
         // document and its parent TaxReport.FilingLockedAt is set.
-        return await _db.TaxReports.AnyAsync(r =>
-            r.CompanyId == companyId
-            && r.FilingLockedAt != null
-            && r.Lines.Any(l => l.DocumentId == documentId));
+        if (await _db.TaxReports.AnyAsync(r =>
+                r.CompanyId == companyId
+                && r.FilingLockedAt != null
+                && r.Lines.Any(l => l.DocumentId == documentId)))
+            return true;
+        // รอบ 271 ฝ่ายค้าน H1: 50 ทวิ ที่ผูกเข้ามาทีหลัง (ผูกครั้งแรกในเดือนที่ยื่นแล้ว · 271-1-2) — แถวในรายงานที่ล็อกยังชี้ DocumentId เดิม (null) ⇒
+        // ตรวจจาก "ใบ + เดือนของใบ" ด้วย: ใบที่นับเข้าแบบ (WhtCertFilingScope.Filed) ของเอกสารนี้ อยู่ในรายงานแบบ+เดือนเดียวกันที่ล็อกแล้ว
+        return await _db.WithholdingTaxCerts.AnyAsync(w =>
+            w.CompanyId == companyId && w.DocumentId == documentId
+            && Accounting.Helpers.WhtCertFilingScope.Filed.Contains(w.Status)
+            && _db.TaxReports.Any(r => r.CompanyId == companyId && r.FilingLockedAt != null
+                && r.TaxType == w.TaxFormType && r.Year == w.TaxYear && r.Month == w.TaxMonth));
     }
 
     /// <summary>

@@ -68,7 +68,8 @@ public record WhtLinkCheckResponse(
     bool CanLink);
 
 /// <summary>คำขอผูก/เปลี่ยนการผูก — <b>ไม่มี</b> ช่องรับทราบเดือนที่ยื่นแล้ว (271-0-2) และไม่มีทางเลือก "ลบใบเดิม" (271-0-1)</summary>
-public record WhtLinkRequest(Guid CertId, Guid? PaymentId, string? Reason, List<string>? AcknowledgeWarnings);
+/// <param name="ExpectedCurrentCertId">ฝ่ายค้าน M6: ใบปัจจุบันที่ผู้ใช้เห็นตอนเปิดโมดัล (null = ยังไม่มีใบ) — ไม่ตรงของจริง ⇒ 409</param>
+public record WhtLinkRequest(Guid CertId, Guid? PaymentId, string? Reason, List<string>? AcknowledgeWarnings, Guid? ExpectedCurrentCertId = null);
 
 public record WhtLinkResult(Guid LinkedCertId, string LinkedCertNumber, Guid? VoidedCertId, string? VoidedCertNumber, string Message);
 

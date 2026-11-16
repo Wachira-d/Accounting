@@ -179,7 +179,10 @@ public record PendingWhtDocumentResponse(
     /// <summary>รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — แถวต่อผู้ถูกหัก (ยอด · มีใบแล้วไหม) · ใบรายเดียว = null</summary>
     List<PendingWhtPayeeInfo>? Payees = null,
     /// <summary>รอบ 204 (ข้อ 142/145): 50 ทวิ ที่ออกแล้วต้องตรวจ/ออกใหม่ (<c>WhtCertReviewNote</c>) — ใบโผล่ในลิสต์แม้มีใบแล้ว</summary>
-    string? ReviewReason = null);
+    string? ReviewReason = null,
+    /// <summary>รอบ 271 ฝ่ายค้าน M1: ใบนี้ตั้งใจผูก 50 ทวิ ที่ออกไว้แล้ว (เลข/id ของใบนั้น) — ลิสต์ไม่เสนอ "สร้างใบ" (สร้าง = นับซ้ำ) แต่เสนอ "ผูก" แทน · null = ไม่มีความตั้งใจ</summary>
+    Guid? LinkIntentCertId = null,
+    string? LinkIntentCertNumber = null);
 
 /// <summary>ผู้ถูกหักหนึ่งรายของใบหลายผู้ถูกหัก (รอบ 204 ข้อ 143) — ยอด/แบบมาจากเซิร์ฟเวอร์ (<c>WhtPayeeSplit</c>)</summary>
 public record PendingWhtPayeeInfo(
