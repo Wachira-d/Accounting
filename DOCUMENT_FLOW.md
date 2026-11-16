@@ -9670,3 +9670,28 @@ _Last verified against codebase: 2026-11-13 (รอบ 270 ชุดแก้ฝ
 _Last verified against codebase: 2026-11-13 (รอบ 270 ชุดแก้ฝ่ายค้าน — §2.12g-270: H1 เงินของใบมัดจำกติกาเดียว · M1 คิวแจ้งแชต backoff · M2 เครื่องหมายอัตราศูนย์ชัด · M3 ตัวตรวจย้อนหลัง OCR 0% · M4 idempotency fail-closed เส้นเงิน/เอกสาร · L1–L7 (คำตัดสิน 270-2-1…7) — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit a9d8f384)_
 _Last verified against codebase: 2026-11-13 (รอบ 264 P4 ชุดแก้ฝ่ายค้าน — §2.12g-264-P4: H1 กุญแจกันซ้ำแจ้งโอน · H2 ขอบเขต AcceptPayerSlipCopy ของผู้ขาย · M1 บรรทัดเดียวต่อการจ่ายเดียว · M2 จองแผนก่อน PV + outbox · M3 ปิดการแจ้งด้วย PV ของแผน · M4 พร้อมเพย์ไม่บันทึกเอง · M5 ภาษีหักของเรา · M6 A2 ไม่ใช้ความยินยอม · M7 TextVersion + กระดิ่งผู้ขาย · L1/L2/L4–L9 — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 11e00f10)_
 _Last verified against codebase: 2026-11-13 (รอบ 267 แพ็ก P5 ชุดแก้ฝ่ายค้าน — §2.12n-P5 ข้อ 7: MED-1…7 · LOW-1…10 (คำตัดสิน 267-1-78…85) — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 69875c09)_
+
+## TAX272 — สลิปชำระภาษีจากกลุ่ม LINE/อีเมล ⇒ บันทึกนำส่งในบัญชีลูกค้า (รอบ 272 · สถานะปัจจุบัน · `erp-review/2026-11-16/team-272-tax-slip-autoremit.md`)
+
+**ใคร:** บริษัทผู้ให้บริการ (สำนักงานบัญชี NextAcc = `SiteSettings.PlatformCompanyId`) กับบริษัทลูกค้า (ผู้ติดต่อ `ExternalSystem=NextAccTenant` · `ExternalId` = CompanyId ลูกค้า)
+
+1. **ส่งเอกสารชำระ (P3 · 272-1-2)** — หน้า `pages/tax-slip-desk.html` (ลิงก์จากหน้านำส่ง) · เลือกลูกค้า → งวดค้างจาก `GetDashboardAsync` ของลูกค้า → กรอกยอดบนใบแจ้งชำระ + Control Code ⇒
+   `TaxPaymentRequestService.CreateAsync`: `TaxSlipMatch.RequestProblem` (สมุดไม่ตรง = บล็อก · "ส่งไปก่อน" = `BooksMismatch`) · เก็บแฮช HMAC + 4 ตัวท้าย (`TaxSlipRefHash`) ·
+   การ์ดเข้ากลุ่ม LINE (OA กลาง)/อีเมลของผู้ติดต่อ (`TaxSlipChannelService.PostToClientAsync`) · ยังไม่อนุญาต ⇒ เปิดคำขอ (T2) + บรรทัด "จะบันทึกให้เมื่อเจ้าของอนุญาต"
+2. **ความยินยอม (P2 · 272-0-2 · ทาง B)** — การ์ด "สำนักงานบัญชี NextAcc ทำแทนบริษัทนี้" ในศูนย์บิล `billing.html#provider-consent` · ผู้ให้ = เจ้าของ หรือ Tax.File+CompanySettings.Edit (272-1-7) ·
+   ขั้นดู (hash) → ขั้นยืนยัน (พิมพ์ "ยินยอม") · แถว `ProviderAutomationConsents` append-only/ห้ามลบ (trigger `Round272Migration`) · ระบบขอเอง T1 ผูกกลุ่ม / T2 ใบขอชำระแรก / T3 สลิปแรก ·
+   หนังสือมอบอำนาจที่พนักงานแนบ = `staff-poa` (ไม่เปิดบันทึกเอง · 272-1-6) · ถอนได้ทุกเมื่อ (การ์ด "ถอนแล้ว" ในกลุ่ม)
+3. **รับสลิป (P4)** — webhook OA กลาง: รูป/PDF/ปุ่มในกลุ่ม ⇒ `LineGroupBindRule.CentralGroupSlipRoute` ⇒ `TaxSlipIntakeService.HandleLineMediaAsync` — **ด่านผูกก่อนแตะไฟล์** (กลุ่มไม่ผูกผู้ติดต่อ = ไม่อ่าน ไม่เก็บ) ·
+   สวิตช์ `CompanySettings.TaxSlipIntakeEnabled` ของบริษัทผู้ให้บริการ (ปิด ⇒ ลูกค้าที่อนุญาตแล้วได้คำตอบ "ปิดรับชั่วคราว") · กันซ้ำ: ข้อความ · ไฟล์ (sha) · รายการธนาคาร (แฮช Txn) · Control Code ที่บันทึกแล้ว ·
+   อ่านในเครื่อง (ไม่มี AI · 272-1-10) → `GovPaymentSlip.Identify` (ตารางแถวเดียว 98037@KBank · 272-1-1) → `TaxSlipMatch.Decide` (ชุดบริษัทที่ช่องทางผูกเท่านั้น · 272-1-3)
+4. **บันทึก (272-0-1)** — `One` + ความยินยอมใช้ได้ + `TaxSlipBankAccount` ตัดสินได้ ⇒ `TaxSlipRemitService.ApplyAsync`: ธุรกรรมเดียว · ล็อกแถว + advisory งวด → `ProviderConsentService.CheckForWriteAsync` (FOR SHARE) →
+   **`StatutoryRemittanceService.RemitAsync` ตัวเดียว** (ร่วมธุรกรรม · 272-1-15) → แนบสลิป (`StatutoryRemittance` attachment) → ประทับ `Source=Slip` · `SlipEvidenceId` · `ActedByProviderCompanyId` · `ProviderConsentId` · `ControlCodeLast4` →
+   audit chain ทั้งสองบริษัท → กระดิ่งลูกค้า (`tax_slip.remitted`) · **ไม่มีเลขรับ** ⇒ หน้านำส่งแสดง "ชำระแล้ว · ยังไม่ได้บันทึกเลขรับ" (272-1-4)
+5. **ไม่บันทึกเอง** — `Many` ⇒ ปุ่มเลือกในกลุ่ม (ลงลายเซ็น · 24 ชม.) · ยังไม่อนุญาต ⇒ พัก `AwaitingConsent` 30 วัน · บัญชีตัดสินไม่ได้/ยอดไม่ตรง/ไม่รู้หน่วยงาน/สมุดไม่ตรง/ยื่นเพิ่มเติม/ค่าธรรมเนียม ⇒ คิว "สลิปภาษีรอตรวจ" + กระดิ่งพนักงาน ·
+   พนักงานกด 1 คลิก (เลือกจากผู้สมัคร + บัญชี) ผ่านด่านเดียวกัน (ต้องมีความยินยอม/หนังสือมอบอำนาจ หรือเป็นผู้ยื่นภาษีของลูกค้าเอง) · **ทุกผลมีการ์ดตอบกลับ** (`TaxSlipReplyCard` · ประทับผลการส่งบนแถว)
+6. **งานเบื้องหลัง** `TaxSlipJob` (10 นาที · JobLock): ประมวลสลิปพักหลังอนุญาตใหม่ทั้งชุดด่าน · หมดอายุ ⇒ คิว · ปุ่มเลือกเกิน 24 ชม. ⇒ คิว · **P5 ตรวจทาน** `TaxSlipReviewService` — เทียบรายการเดินบัญชี ±3 วัน (ธง StatementFound/OtherAccount/NotFound หลัง 10 วัน · ไม่ผูก/ไม่กลับรายการเอง)
+7. **อีเมลขาเข้า (P6 · 272-1-8)** — `POST /api/inbound-email` (ลายเซ็น `WebhookSignature` · SPF/DKIM) → `TaxSlipIntakeService.HandleEmailAsync` เส้นเดียวกัน · ปิดไว้จนตั้ง `InboundEmail:Enabled` + `INBOUND_EMAIL_SECRET` (production fail-fast)
+
+ยังรอเจ้าของ: สลิปจริงธนาคารอื่น/สปส./ใบแจ้งชำระของกรม (เพิ่มแถวตาราง) · ผู้ให้บริการอีเมลขาเข้า (adapter) · backlog: สลิปเดียวหลายแบบ · ยื่นเพิ่มเติม · ค่าธรรมเนียมธนาคาร · อ่านใบแจ้งชำระ PDF อัตโนมัติ
+
+_Last verified against codebase: 2026-11-16 (รอบ 272 แพ็ก P1–P6 — §TAX272: GovPaymentSlip (98037@KBank) · TaxSlipMatch (D-2/D-3) · ProviderConsent (ทาง B) · ใบขอชำระ · RemitAsync ตัวเดียว · ตรวจทานหลังนำส่ง · อีเมลขาเข้าหลัง interface — build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL) — commit <เติมในคอมมิตตามหลัง>)_

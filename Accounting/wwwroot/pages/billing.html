@@ -84,6 +84,9 @@
       <div class="card"><h3>ใบแจ้งหนี้</h3><div id="invoices">กำลังโหลด...</div></div>
       <!-- รอบ 262 (คำตัดสิน 262-1-3): ผูก LINE รับใบแจ้งหนี้/ทวง/ใบเสร็จค่าบริการ (ผ่าน LINE OA กลาง) — สถานะ/เหตุ/ข้อความจากเซิร์ฟเวอร์ -->
       <div class="card" id="lineBillCard"><h3>รับใบแจ้งหนี้ค่าบริการทาง LINE</h3><div id="lineBill">กำลังโหลด...</div></div>
+      <!-- รอบ 272 (คำตัดสินเจ้าของ 272-0-2 · ทาง B): สำนักงานบัญชี NextAcc ทำแทน — สถานะ/ข้อความ/แบบ/สลิปที่พัก/ผู้มีสิทธิ์ทั้งหมดจากเซิร์ฟเวอร์ (GET …/provider-consent) ·
+           ยืนยันบนเว็บเท่านั้น (พิมพ์ "ยินยอม") · ถอนได้ทุกเมื่อ -->
+      <div class="card" id="provider-consent"><h3>สำนักงานบัญชี NextAcc ทำแทนบริษัทนี้</h3><div id="providerConsentBox">กำลังโหลด...</div></div>
       <!-- รอบ 230 (PLATFORM_OMISE_AUDIT §5.2): บัตรที่บันทึกไว้ + ตัดบัตรอัตโนมัติ — ค่าทั้งหมดจากเซิร์ฟเวอร์ (js/billing-saved-cards.js) -->
       <div class="card" id="savedCardsCard"><h3>บัตรที่บันทึกไว้ · ตัดบัตรอัตโนมัติ</h3><div id="savedCards">กำลังโหลด...</div></div>
       <div class="card"><h3>ประวัติการชำระ</h3><div id="payments">กำลังโหลด...</div></div>
@@ -879,5 +882,72 @@
     })();
   </script>
   <script src="/js/billing-saved-cards.js"></script>
+  <script>
+    // รอบ 272: การ์ดความยินยอมของสำนักงานบัญชี — server computes · page displays (ปุ่มอนุญาตแสดงเฉพาะเมื่อผู้ใช้นี้ให้ได้ · ไม่มีปุ่มที่กดแล้วล้ม)
+    const ProviderConsentCard = {
+      view: null,
+      base() { return `/api/companies/${Layout.getCompanyId()}/provider-consent`; },
+      async load() {
+        const box = document.getElementById('providerConsentBox');
+        try { this.view = (await API.get(this.base())).data; this.render(); }
+        catch (e) { box.innerHTML = `<div class="note bad">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`; }
+      },
+      render() {
+        const v = this.view || {}, e = Layout.esc, box = document.getElementById('providerConsentBox');
+        if (!v.available) { box.innerHTML = `<div class="muted">${e(v.unavailableReason || 'ไม่ใช้กับบริษัทนี้')}</div>`; return; }
+        let h = `<div style="margin-bottom:8px"><b>สถานะ:</b> ${e(v.statusLabel || '')}</div>`;
+        if (v.active) {
+          h += `<div class="note ok" style="margin-bottom:8px">อนุญาตโดย ${e(v.active.grantedByName)} · ${e(Layout.date(v.active.grantedAt))} · แบบ: ${e((v.active.taxTypeLabels || []).join(', '))}`
+            + (v.active.payAccountLabel ? ` · บัญชีชำระภาษี ${e(v.active.payAccountLabel)}` : '') + (v.active.hashOk ? '' : ' · ⚠ หลักฐานไม่ตรง (ให้ใหม่)') + `</div>`
+            + `<button class="btn btn-sm btn-outline" style="color:#b91c1c" onclick="ProviderConsentCard.withdraw('${e(v.active.id)}')">ถอนการอนุญาต</button>`;
+        }
+        if (v.powerOfAttorney) h += `<div class="muted" style="margin:8px 0">${e(v.powerOfAttorney.sourceLabel)} · ${e(Layout.date(v.powerOfAttorney.grantedAt))}</div>`;
+        if ((v.held || []).length) h += `<div class="note warn" style="margin:8px 0">มีสลิปรออยู่ ${e(String(v.held.length))} ใบ: ${v.held.map(x => e(x.label)).join(' · ')}</div>`;
+        if (!v.active) {
+          h += `<div class="muted" style="margin:8px 0;white-space:pre-wrap">${e(v.text || '')}</div>`;
+          if (v.callerCannotGrantReason) {
+            h += `<div class="note warn">${e(v.callerCannotGrantReason)}</div>`
+              + ((v.grantors || []).length ? `<div class="muted" style="margin-top:6px">ผู้ที่อนุญาตได้: ${v.grantors.map(e).join(', ')}</div>` : '');
+          } else {
+            h += `<div style="margin:8px 0"><b>แบบที่อนุญาต</b></div>` + (v.types || []).map((t, i) =>
+              `<label for="pcType${i}" style="display:inline-flex;gap:4px;margin:0 12px 6px 0;align-items:center"><input type="checkbox" id="pcType${i}" data-type="${e(t.type)}" ${t.selected ? 'checked' : ''} ${t.enabled ? '' : 'disabled'}> ${e(t.label)}</label>`).join('')
+              + `<div style="margin:8px 0"><label for="pcAccount">บัญชีที่ใช้จ่ายภาษีเป็นหลัก (ไม่บังคับ)</label> <select id="pcAccount" class="form-select"><option value="">— ไม่ระบุ —</option>`
+              + (v.payAccounts || []).map(a => `<option value="${e(a.id)}">${e(a.label)}</option>`).join('') + `</select></div>`
+              + ((v.held || []).length ? `<div style="margin:8px 0"><label for="pcHeld"><input type="checkbox" id="pcHeld" checked> รวมสลิป ${e(String(v.held.length))} ใบที่ส่งมาก่อนวันนี้และรออยู่</label></div>` : '')
+              + `<div style="margin:8px 0"><label for="pcTyped">พิมพ์ “${e(v.confirmPhrase || '')}” เพื่อยืนยัน</label> <input id="pcTyped" class="form-input" style="max-width:160px"></div>`
+              + `<button class="btn btn-primary" onclick="ProviderConsentCard.grant()">อนุญาต</button>`
+              + `<div class="muted" style="margin-top:6px">ข้อความรุ่น ${e(String(v.textVersion || ''))} · บันทึกผู้ให้ · เวลา · IP · hash ของข้อความนี้</div>`;
+          }
+        }
+        box.innerHTML = h;
+      },
+      input() {
+        const types = Array.from(document.querySelectorAll('#providerConsentBox input[data-type]')).filter(x => x.checked && !x.disabled).map(x => x.getAttribute('data-type'));
+        const acc = document.getElementById('pcAccount')?.value || null;
+        const held = document.getElementById('pcHeld');
+        return { taxTypes: types, maxAmount: null, payBankAccountId: acc, includeHeld: held ? held.checked : false };
+      },
+      async grant() {
+        const body = this.input();
+        try {
+          const pv = (await API.post(`${this.base()}/preview`, Object.assign({ shownVersion: 0, shownHash: null, typed: null }, body))).data;
+          const r = await API.post(this.base(), Object.assign({ shownVersion: pv.version, shownHash: pv.hash, typed: document.getElementById('pcTyped')?.value || '' }, body));
+          Layout.toast(r?.message || 'อนุญาตแล้ว', 'success');
+          await this.load();
+        } catch (err) { Layout.toast(err.message || 'อนุญาตไม่สำเร็จ', 'error'); }
+      },
+      async withdraw(id) {
+        if (!confirm('ถอนการอนุญาต? ต่อจากนี้ระบบจะไม่บันทึกจากสลิป (รายการที่บันทึกแล้วไม่ถูกแตะ)')) return;
+        try { const r = await API.del(`${this.base()}/${encodeURIComponent(id)}`); Layout.toast(r?.message || 'ถอนแล้ว', 'success'); await this.load(); }
+        catch (err) { Layout.toast(err.message || 'ถอนไม่สำเร็จ', 'error'); }
+      },
+    };
+    window.ProviderConsentCard = ProviderConsentCard;
+    (async () => {
+      for (let i = 0; i < 50 && !(window.Layout && Layout.getCompanyId && Layout.getCompanyId()); i++) await new Promise(r => setTimeout(r, 100));
+      await ProviderConsentCard.load();
+      if (location.hash === '#provider-consent' && window.HubTabs) { HubTabs.show('docs', false); document.getElementById('provider-consent')?.scrollIntoView(); }
+    })();
+  </script>
 </body>
 </html>

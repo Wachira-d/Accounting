@@ -519,7 +519,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 Pp36Recognized: r.RemittanceType == "VatPp36" ? Pp36RecognizedOf(r) : (bool?)null,
                 Penalty: r.Penalty, OtherFine: r.OtherFine,
                 PeriodLabel: PeriodLabelOf(r.RemittanceType, r.PeriodYear, r.RemittanceType == Accounting.Helpers.StampDutySchedule.RemittanceType ? r.Note : null),
-                SettledOutside: r.SettledOutside))
+                SettledOutside: r.SettledOutside,
+                SourceLabel: Accounting.Helpers.TaxSlipRemitView.SourceLabel(r.Source, r.ControlCodeLast4),
+                FilingNote: Accounting.Helpers.TaxSlipRemitView.FilingNote(r.Source, r.FilingNumber),
+                ReviewLabel: Accounting.Helpers.TaxSlipRemitView.ReviewLabel(r.Source, r.ReviewStatus)))
             .ToList();
 
         pending = pending.OrderByDescending(p => p.IsOverdue)
@@ -1515,7 +1518,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             }
         }
 
-        await using var tx = await _db.Database.BeginTransactionAsync();
+        // รอบ 272 (ดีไซน์ §4.1): เส้นสลิปภาษี (TaxSlipRemitService) เรียกภายในธุรกรรมของตัวเองที่ล็อกความยินยอมไว้ (FOR SHARE จน commit) ⇒ ร่วมธุรกรรมนั้น ·
+        // เส้นมือเดิมไม่มีธุรกรรมรอบนอก ⇒ เปิดเอง (พฤติกรรมเดิมทุกประการ)
+        var ownTx = _db.Database.CurrentTransaction == null;
+        await using var tx = ownTx ? await _db.Database.BeginTransactionAsync() : null;
         try
         {
             if (isWcf)
@@ -1614,7 +1620,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             }
 
             await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+            if (tx != null) await tx.CommitAsync();
 
             _logger.LogInformation("Remitted {Type} {Month}/{Year} amount {Amt} (+fee {Fee} +penalty {Pen} +fine {Fine}) → JE {Je}",
                 type, req.PeriodMonth, req.PeriodYear, amount, lateFee, applied.Penalty, applied.OtherFine, je.Id);
@@ -1636,7 +1642,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }
         catch
         {
-            await tx.RollbackAsync();
+            if (tx != null) await tx.RollbackAsync();
             // P0-2 คลาสเดียวกัน: ของที่แก้/เพิ่มค้างใน change tracker (รายการนำส่ง · แถวผูก · ธงบนเอกสาร) ต้องไม่ถูก SaveChanges ถัดไปของผู้เรียกบันทึกครึ่งเดียว
             _db.ChangeTracker.Clear();
             throw;

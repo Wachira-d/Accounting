@@ -106,7 +106,11 @@ public record RemittanceHistoryItem(
     // รอบ 228: ป้ายงวดของแบบรายครึ่งปี/รายปี/รายตราสาร — null = แบบรายเดือน
     string? PeriodLabel = null,
     // รอบ 228 ฝ่ายค้าน S3: ผูกใบสำคัญที่ลงเอง (ไม่ใช่ JE ของเส้นนำส่ง) — ยกเลิกไม่กลับรายการ
-    bool SettledOutside = false);
+    bool SettledOutside = false,
+    // รอบ 272: ป้ายที่มา (บันทึกจากสลิปภาษีโดย NextAcc) · บรรทัดรองเรื่องเลขรับ (272-1-4) · ธงตรวจทานกับรายการเดินบัญชี (P5) — server computes (Helpers/TaxSlipRemitView) · null = ไม่มี
+    string? SourceLabel = null,
+    string? FilingNote = null,
+    string? ReviewLabel = null);
 
 /// <summary>ภ.พ.36 ที่นำส่งแล้วแต่ยัง "ไม่ได้กดรับรู้ภาษีซื้อ" — ภาษีซื้อจึงยัง
 /// ไม่ขึ้นใน ภ.พ.30 (ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่

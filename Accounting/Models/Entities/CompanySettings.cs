@@ -261,6 +261,11 @@ public class CompanySettings : TenantEntity
     /// (ใบเดียว = แจ้งโอนให้เอง · หลายใบ = ลูกค้ากดเลือก · ไม่ตรง = คิวพนักงาน) · ไม่ปิดหนี้เอง · ผู้อ่าน: <c>LineChatSlipService</c> + แถวความพร้อมแท็บ LINE ·
     /// ปิด ⇒ คำตอบเดิมของรอบ 259 (แนบสลิปที่หน้าชำระ)</summary>
     public bool LineChatSlipIntakeEnabled { get; set; } = true;
+
+    /// <summary>รอบ 272 (ดีไซน์ §8.1 สวิตช์ของเส้นนี้): บริษัทผู้ให้บริการรับสลิปชำระภาษีของลูกค้าจากกลุ่ม LINE/อีเมล ⇒ บันทึกนำส่งในบัญชีลูกค้า ·
+    /// ปิด ⇒ รูปในกลุ่มกลับไปพฤติกรรมเดิม (ไม่อ่าน) ยกเว้นกลุ่มของลูกค้าที่เคยอนุญาต ได้คำตอบ "ระบบปิดรับสลิปชั่วคราว" · ผู้อ่าน <c>TaxSlipIntakeService</c> ·
+    /// ผู้เขียน หน้า <c>tax-slip-desk.html</c></summary>
+    public bool TaxSlipIntakeEnabled { get; set; } = true;
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }
     /// <summary>รอบ 260-4 (team-A L8 · คำตัดสิน 260-4-1): ชั่วโมงเงียบของการ์ด LINE ถึงลูกค้า (เวลาไทย) — ตัวตัดสิน <c>Helpers/LineQuietHours</c> ·

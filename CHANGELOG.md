@@ -7267,3 +7267,12 @@ MED-1 LINE ล็อกอินใหม่ทุกครั้ง + ล้า
 MED-3 DSR ด้วยอีเมล หรือ ชื่อ+เลขเอกสาร (หลายคน = DPO เลือก) · MED-4 ล้างอีเมล/IP/UA บนแถวความยินยอม + รายงาน · MED-5 ใบวางบิลจ่ายทั้งใบเข้างานหลังรับชำระ (ส่งใบเสร็จรายใบ) ·
 MED-6 ข้ามบริษัท/พนักงานบันทึกแทน ลงหลักฐานผ่านผู้เขียนเดียว + เส้น API ตั้งภาพฉาย · MED-7 ออก Rev ใบสั่งซื้อที่รับทราบต้องยืนยัน + ฉบับที่ลงนามก่อน · LOW-1…10 (ไม่แยกคีย์ของ LOW-3 พร้อมเหตุ) ·
 เทสต์ pure +10 · Db +1 (ขยาย 5) · กติกา R267f +30 + ฝ่ายค้าน R267F-1…6 · build + test + Db test ผ่านในเครื่องนี้ (PostgreSQL ฐานใหม่) · commit 69875c09_
+
+_รอบ 272 (2026-11-16 · `erp-review/2026-11-16/team-272-tax-slip-autoremit.md` · คำตัดสินเจ้าของ 272-0-1/2 · ผู้ประสานงาน 272-1-1…13 · ทีม 272-1-14/15):
+สลิปชำระภาษีที่ลูกค้าส่งในกลุ่ม LINE (OA กลาง)/อีเมลของสำนักงานบัญชี ⇒ บันทึกนำส่งในบัญชีลูกค้าเองเมื่อผ่านทุกด่าน + ตอบผลกลับทุกครั้ง ·
+P1 `OcrSlipText.Reading.Bill` (Comp Code · Ref1 · Control Code · Txn · Fee จากป้าย) + `Helpers/GovPaymentSlip` (ตารางแถวเดียว 98037@KBank · อื่น ๆ ไม่บันทึกเอง) ·
+P2 `ProviderAutomationConsents` (append-only/ห้ามลบ) + `ProviderConsentRequests` + `Helpers/ProviderConsent` + การ์ดศูนย์บิล · ระบบขอเอง T1/T2/T3 · หนังสือมอบอำนาจไม่เปิดบันทึกเอง ·
+P3 `TaxPaymentRequests` + หน้า `tax-slip-desk.html` · P4 `TaxSlipEvidences` · `Helpers/TaxSlipMatch` · `TaxSlipBankAccount` · `TaxSlipReplyCard` · `TaxSlipRefHash` · `TaxSlipRemitService` → `RemitAsync` (ร่วมธุรกรรม) ·
+ที่มาบน `StatutoryRemittances` (Source/SlipEvidenceId/ActedByProviderCompanyId/ProviderConsentId/ControlCodeLast4) · ป้ายหน้านำส่ง "ชำระแล้ว · ยังไม่ได้บันทึกเลขรับ" ·
+P5 `TaxSlipReviewService` (ธงเตือนเท่านั้น) · `TaxSlipJob` (JobLock) · P6 `/api/inbound-email` หลัง `IInboundEmailAdapter` (production fail-fast) ·
+เทสต์ pure +44 · Db +6 · กติกา R272 +18 + ฝ่ายค้าน R272-1…12 · `ocr_helper_test_check` ครอบ 3 ตัวตัดสินใหม่ · build + test + Db test ผ่านในเครื่องนี้ · commit <เติมในคอมมิตตามหลัง>_

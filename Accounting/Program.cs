@@ -162,6 +162,15 @@ Accounting.Helpers.CustomerSignerProfileRule.ConfigureKey(Accounting.Helpers.Enc
     Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),
     builder.Environment.IsProduction(), "ตั๋ว LINE Login ของผู้ลงนามเอกสาร (HMAC)"));
 
+// รอบ 272: กุญแจ HMAC ของ Control Code/เลขที่รายการ/ปุ่มเลือกของสลิปภาษี — แหล่งเดียวกับข้างบน · production fail-fast (กฎ #4 C)
+Accounting.Helpers.TaxSlipRefHash.ConfigureKey(Accounting.Helpers.EncryptionKeyResolver.RequireUsable(
+    Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),
+    builder.Environment.IsProduction(), "แฮชเลขอ้างอิงสลิปภาษี (HMAC)"));
+// รอบ 272 P6: อีเมลขาเข้า — เปิดใช้แล้วไม่มีรหัสลับใน production = boot ไม่ขึ้น · ไม่เปิดใช้ ⇒ webhook ตอบ 503 พร้อมเหตุ
+Accounting.Helpers.InboundEmailRule.Configure(Accounting.Helpers.InboundEmailRule.RequireSecret(
+    builder.Configuration.GetValue<bool>(Accounting.Helpers.InboundEmailRule.EnabledConfig), builder.Environment.IsProduction(),
+    Environment.GetEnvironmentVariable(Accounting.Helpers.InboundEmailRule.SecretEnv) ?? builder.Configuration["InboundEmail:Secret"]));
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -919,6 +928,15 @@ builder.Services.AddScoped<IDocumentPayLinkService, DocumentPayLinkService>();
 builder.Services.AddScoped<IPostPaymentAutomationService, PostPaymentAutomationService>();
 builder.Services.AddScoped<PartnerPaymentNoticeService>();   // รอบ 258-3 F-H3 — แจ้งผู้ซื้อคู่ค้าว่าผู้ขายรับเงินแล้ว (ผู้ซื้อกดบันทึกจ่ายเอง)
 builder.Services.AddScoped<PartnerConsentService>();   // รอบ 264 P1 — ความยินยอม "งานอัตโนมัติกับคู่ค้า" (ผู้เขียนเดียว + CheckAsync ที่ท่อ P3/P5 เรียก)
+// รอบ 272 — สลิปชำระภาษีจากกลุ่ม LINE/อีเมล ⇒ บันทึกนำส่งในบัญชีลูกค้า (ไม่มี AI · ความยินยอมผู้ให้บริการ · ผู้เขียนเดียว RemitAsync)
+builder.Services.AddScoped<Accounting.Services.Implementations.ProviderConsentService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.TaxSlipChannelService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.TaxSlipRemitService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.TaxSlipIntakeService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.TaxPaymentRequestService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.TaxSlipReviewService>();
+builder.Services.AddSingleton<Accounting.Helpers.IInboundEmailAdapter, Accounting.Helpers.JsonInboundEmailAdapter>();   // P6 — เปลี่ยนเจ้าผู้รับอีเมลได้ที่ adapter
+builder.Services.AddHostedService<Accounting.Services.Background.TaxSlipJob>();   // รอบ 272 — สลิปที่พัก/รอเลือก + ตรวจทานหลังนำส่ง (JobLock)
 builder.Services.AddScoped<PartnerPayablePipeline>();   // รอบ 264 P3 — ท่อฝั่งผู้ซื้อ: บันทึกจ่ายเองภายใต้ความยินยอม AutoRecordPayment (AutopilotJob ขั้น PartnerPayable)
 builder.Services.AddScoped<PartnerPayablePipeline.IBankLineEvidence, BankPaymentLineEvidence>();   // รอบ 264 P4 (264-5-10) — ชั้นรายการเดินบัญชีฝั่งเงินออก (ตาราง BankTransactions เดิม)
 builder.Services.AddScoped<PartnerOutboundPaymentService>();   // รอบ 264 P4 (264-5-11/12) — ผู้ซื้อเริ่มจ่าย: จ่ายจากระบบของเรา · แจ้งโอนให้ผู้ขาย
