@@ -178,8 +178,7 @@ public partial class TaxService
     /// <summary>บรรทัดรายงาน ภ.ง.ด. ที่ลงไฟล์ยื่น — ไม่เอาบรรทัด "[สรุป]" (SUMMARY) และบรรทัดที่ผู้ทำบัญชีติ๊กออก ·
     /// ตัวเดียวของปุ่ม e-Filing (.txt) และชีต "ใบแนบ" ใน Excel ของรายงาน (รอบ 2026-10-14 ทีม X1 — สองไฟล์ห้าม drift)</summary>
     internal static List<TaxReportLine> PndDetailLines(TaxReport report)
-        => report.Lines
-            .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded)
+        => Accounting.Helpers.WhtReportTotals.CountedLines(report.Lines)
             .OrderBy(x => x.LineOrder)
             .ToList();
 

@@ -293,7 +293,7 @@ public class TaxGlReconciliationService
             {
                 // (1) บรรทัดในรายงานที่ถูก "ติ๊กออก" — อยู่ใน GL แต่ไม่นับในแบบ
                 var excluded = report.Lines
-                    .Where(l => l.IsExcluded && l.IncomeTypeCode != "SUMMARY")
+                    .Where(l => l.IsExcluded && !Accounting.Helpers.WhtReportTotals.IsSummary(l))
                     .Where(l => isOutputVat
                         // ตัวจำแนกฝั่งตัวเดียวของระบบ (Helpers/VatReportLineKind) —
                         // แถวยอดรวมของแบบไม่ใช่รายการเอกสาร จึงไม่เข้าทั้งสองฝั่ง

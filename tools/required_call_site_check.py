@@ -21178,6 +21178,23 @@ REVIEWER_CASES += [
 ]
 
 
+# ── รอบ 273 (ผู้ใช้รายงาน ภ.ง.ด.53 ต.ค. 2569: RD-WHT-002 357.30 vs 178.65 = ×2): ยอดหัว ภ.ง.ด. กับตัวตรวจก่อนยื่น
+#    ต้องเดินตัวตั้งเดียว Helpers/WhtReportTotals — ตัวตรวจเดิม r.Lines.Sum ทุกแถว (รวมแถว [สรุป] + แถวติ๊กออก) ──
+_R273_WHY = "รอบ 273 · ยอดหัว ภ.ง.ด. = ตัวตรวจ RD-WHT-002 = ไฟล์ยื่น (ตัวตั้งเดียว WhtReportTotals · F2 ข้อ 4) · "
+_R273_CHECK = "Services/Implementations/Tax/TaxComplianceChecker.cs"
+RULES += [
+    dict(file=_R273_CHECK, method="CheckPnd3_53", must=["WhtReportTotals.Of(", "WhtReportTotals.CountedLines("],
+         forbid=["r.Lines.Sum(", "r.Lines.Count("],
+         why=_R273_WHY + "ตัวตรวจห้ามบวกทุกแถวเอง (แถว [สรุป] ⇒ ×2)"),
+    dict(file=_R273_CHECK, method="CheckPnd1", must=["WhtReportTotals.Of("], forbid=["r.Lines.Sum("],
+         why=_R273_WHY + "ภ.ง.ด.1 กติกาเดียวกัน"),
+    dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport", must=["WhtReportTotals.Apply("],
+         forbid=["report.TotalTaxWithheld = report.Lines"],
+         why=_R273_WHY + "ยอดหัวตอน generate"),
+    dict(file="Services/Implementations/TaxService.cs", method="RecalcWhtTotals", must=["WhtReportTotals.Apply("],
+         why=_R273_WHY + "ยอดหัวตอนคำนวณใหม่"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

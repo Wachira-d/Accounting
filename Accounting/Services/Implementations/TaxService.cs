@@ -2065,7 +2065,7 @@ public partial class TaxService : ITaxService
                 IncomeAmount = group.Sum(l => l.IncomeAmount),
                 TaxRate = 0,
                 TaxAmount = group.Sum(l => l.TaxAmount),
-                IncomeTypeCode = "SUMMARY"
+                IncomeTypeCode = Accounting.Helpers.VatReportLineKind.Summary
             });
         }
 
@@ -2176,10 +2176,8 @@ public partial class TaxService : ITaxService
         // เดิมตรงนี้ไม่กรอง IsExcluded ⇒ ยอดหัวตอน generate กับตอน recalc หลัง
         // ติ๊กบรรทัด ใช้คนละสูตร (defect class "สูตรเดียวกันต้องมีที่เดียว") —
         // สำคัญขึ้นเมื่อรายงานมีบรรทัด cert ร่างที่ excluded ตั้งแต่ generate
-        report.TotalIncome = report.Lines
-            .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded).Sum(l => l.IncomeAmount);
-        report.TotalTaxWithheld = report.Lines
-            .Where(l => l.IncomeTypeCode != "SUMMARY" && !l.IsExcluded).Sum(l => l.TaxAmount);
+        // รอบ 273: ผ่านตัวตั้งตัวเดียว Helpers/WhtReportTotals (ตัวเดียวกับตัวตรวจก่อนยื่น RD-WHT-002)
+        Accounting.Helpers.WhtReportTotals.Apply(report);
         // ใบแนบ ภ.ง.ด.3/53 เรียงตามวันที่จ่ายเหมือนกัน (ตรวจง่าย + ตรงแบบยื่น)
         NormalizeReportLineOrder(report);
     }
@@ -3388,8 +3386,7 @@ public partial class TaxService : ITaxService
                 // ภ.พ.36 เก็บยอดนำส่งใน OutputVat/NetVat — เดิมเข้า else ล่างซึ่ง
                 // อัปเดตแค่ TotalTaxWithheld ⇒ ติ๊กบรรทัดออกแล้ว "VAT นำส่ง" บนจอ
                 // (อ่าน outputVat/netVat) ค้างค่าเดิม
-                var pp36Active = report.Lines
-                    .Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY").ToList();
+                var pp36Active = Accounting.Helpers.WhtReportTotals.CountedLines(report.Lines).ToList();
                 report.TotalIncome = pp36Active.Sum(l => l.IncomeAmount);
                 report.OutputVat = pp36Active.Sum(l => l.TaxAmount);
                 report.InputVat = 0;
@@ -3397,9 +3394,7 @@ public partial class TaxService : ITaxService
             }
             else
             {
-                var active = report.Lines.Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY");
-                report.TotalIncome = active.Sum(l => l.IncomeAmount);
-                report.TotalTaxWithheld = active.Sum(l => l.TaxAmount);
+                Accounting.Helpers.WhtReportTotals.Apply(report);   // รอบ 273: ตัวตั้งเดียวกับตัวตรวจก่อนยื่น
             }
         }
 
@@ -3575,11 +3570,7 @@ public partial class TaxService : ITaxService
     {
         if (report.TaxType is not (TaxType.WithholdingTax1 or TaxType.WithholdingTax2 or TaxType.WithholdingTax3
             or TaxType.WithholdingTax53 or TaxType.WithholdingTax54)) return;
-        var active = report.Lines
-            .Where(l => !l.IsExcluded && l.IncomeTypeCode != "SUMMARY")
-            .ToList();
-        report.TotalIncome = active.Sum(l => l.IncomeAmount);
-        report.TotalTaxWithheld = active.Sum(l => l.TaxAmount);
+        Accounting.Helpers.WhtReportTotals.Apply(report);   // รอบ 273: ตัวตั้งเดียวกับตัวตรวจก่อนยื่น RD-WHT-002
     }
 
     // หมายเหตุ §82/5(6) (ดึงเอกสาร): ตัวตัดอัตโนมัติจาก keyword (IsProhibitedVehicleExpense)
